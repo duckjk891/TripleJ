@@ -1,0 +1,20 @@
+{
+  "name": "onecompany-platform",
+  "private": true,
+  "workspaces": [
+    "frontend/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:web\" \"npm run dev:game\"",
+    "dev:web": "npm run dev -w @onecompany/minihompi-web",
+    "dev:game": "npm run dev -w @onecompany/office-game",
+    "dev:api": "cd backend/minihompi-api && uvicorn main:app --reload --port 8000",
+    "dev:game-api": "cd backend/office-game-api && uvicorn main:app --reload --port 8001",
+    "build": "npm run build -ws",
+    "lint": "npm run lint -ws"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "~5.6.3"
+  }
+}

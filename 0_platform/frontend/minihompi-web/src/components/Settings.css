@@ -1,0 +1,122 @@
+.settings-container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.settings-title {
+  font-size: 1.5rem;
+  color: #7b5ea7;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #f0e6f6;
+}
+
+.settings-section {
+  background: white;
+  border-radius: 12px;
+  padding: 1.2rem;
+  margin-bottom: 1rem;
+  border: 1px solid #f0e6f6;
+}
+
+.settings-section-title {
+  font-size: 1rem;
+  color: #7b5ea7;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.settings-field {
+  margin-bottom: 1rem;
+}
+
+.settings-field:last-child {
+  margin-bottom: 0;
+}
+
+.settings-label {
+  display: block;
+  font-size: 0.85rem;
+  color: #a78bca;
+  margin-bottom: 0.4rem;
+  font-weight: 500;
+}
+
+.settings-input {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1.5px solid #e8d5f5;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #333;
+  background: #fdfbff;
+  transition: border-color 0.2s;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: #c9a8e8;
+}
+
+.settings-input::placeholder {
+  color: #bba8d0;
+}
+
+.settings-select {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1.5px solid #e8d5f5;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #333;
+  background: #fdfbff;
+  cursor: pointer;
+}
+
+.settings-select:focus {
+  outline: none;
+  border-color: #c9a8e8;
+}
+
+.settings-btn {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.settings-btn.upload-btn {
+  background: #f5f0fa;
+  color: #7b5ea7;
+  border: 1px solid #e8d5f5;
+}
+
+.settings-btn.upload-btn:hover {
+  background: #e8d5f5;
+}
+
+.settings-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-btn.save-btn {
+  background: linear-gradient(135deg, #c9a8e8, #e8a8c9);
+  color: white;
+  padding: 0.8rem 2rem;
+  font-size: 0.95rem;
+}
+
+.settings-btn.save-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.settings-btn.save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

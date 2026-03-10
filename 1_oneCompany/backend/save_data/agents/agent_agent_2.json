@@ -1,0 +1,199 @@
+{
+  "id": "agent_2",
+  "name": "박영희",
+  "occupation": "디자이너",
+  "traits": "꼼꼼한, 사교적",
+  "backstory": "3년차 UI/UX 디자이너; 예술을 사랑함; 동료들과 대화하는 것을 즐김",
+  "daily_routine": "디자인 작업, 미팅, 점심 식사",
+  "position": {
+    "x": 35,
+    "y": 8
+  },
+  "location_name": "Cafe",
+  "current_action": "서 있는 중",
+  "memories": [
+    {
+      "id": "9eed840d-6b9f-4011-9ca5-507119b1a735",
+      "content": "3년차 UI/UX 디자이너",
+      "created_at": "2026-02-27T13:59:50.148806",
+      "last_accessed_at": "2026-02-27T13:59:50.148806",
+      "importance": 3,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "0caf6782-ff9b-48d5-86a5-e850b8225ac7",
+      "content": "예술을 사랑함",
+      "created_at": "2026-02-27T13:59:50.148806",
+      "last_accessed_at": "2026-02-27T13:59:50.148806",
+      "importance": 3,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "6b2f9848-15ac-4294-bfb4-f417c046d002",
+      "content": "동료들과 대화하는 것을 즐김",
+      "created_at": "2026-02-27T13:59:50.148806",
+      "last_accessed_at": "2026-02-27T13:59:58.219512",
+      "importance": 7,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "41b39a6d-afcf-4dcb-8b97-7c4949459a4b",
+      "content": "박영희 noticed Counter is idle",
+      "created_at": "2026-02-27T13:59:58.216073",
+      "last_accessed_at": "2026-02-27T13:59:58.219512",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "59f6e24b-864d-4f3c-9a45-92b622f42e56",
+      "content": "박영희 noticed Cafe Table 01 is empty",
+      "created_at": "2026-02-27T13:59:58.217292",
+      "last_accessed_at": "2026-02-27T13:59:58.219512",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "11c5fddb-364f-4052-a5dd-51afde6046ee",
+      "content": "박영희 noticed Cafe Table 02 is empty",
+      "created_at": "2026-02-27T13:59:58.217551",
+      "last_accessed_at": "2026-02-27T13:59:58.219512",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "8dec06f9-beb3-4007-bdfb-50ab1e5192a6",
+      "content": "박영희 noticed Cafe Table 03 is empty",
+      "created_at": "2026-02-27T13:59:58.217598",
+      "last_accessed_at": "2026-02-27T13:59:58.219512",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    }
+  ],
+  "importance_sum_since_last_reflection": 21,
+  "daily_plan": [
+    {
+      "start_time": "09:00",
+      "end_time": "10:30",
+      "description": "Working",
+      "location": "Open Space",
+      "completed": false
+    },
+    {
+      "start_time": "10:30",
+      "end_time": "11:00",
+      "description": "Coffee break",
+      "location": "Kitchen",
+      "completed": false
+    },
+    {
+      "start_time": "11:00",
+      "end_time": "12:00",
+      "description": "Working",
+      "location": "Open Space",
+      "completed": false
+    },
+    {
+      "start_time": "12:00",
+      "end_time": "13:00",
+      "description": "Lunch",
+      "location": "Cafe",
+      "completed": false
+    },
+    {
+      "start_time": "13:00",
+      "end_time": "15:00",
+      "description": "Meeting",
+      "location": "Meeting Room",
+      "completed": false
+    },
+    {
+      "start_time": "15:00",
+      "end_time": "17:00",
+      "description": "Working",
+      "location": "Open Space",
+      "completed": false
+    },
+    {
+      "start_time": "17:00",
+      "end_time": "18:00",
+      "description": "Walk in the park",
+      "location": "Park",
+      "completed": false
+    }
+  ],
+  "spatial_memory": {
+    "_items": {
+      "counter": {
+        "name": "Counter",
+        "state": "idle",
+        "last_seen": "2026-02-27T14:00:13.370694"
+      },
+      "cafe_table_01": {
+        "name": "Cafe Table 01",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370698"
+      },
+      "cafe_table_02": {
+        "name": "Cafe Table 02",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370701"
+      },
+      "cafe_table_03": {
+        "name": "Cafe Table 03",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370704"
+      }
+    },
+    "Cafe": {
+      "_items": {
+        "self_location": {
+          "name": "박영희",
+          "state": "서 있는 중",
+          "last_seen": "2026-02-27T14:00:13.370708"
+        }
+      }
+    }
+  },
+  "spatial_flat": {
+    "counter": {
+      "name": "Counter",
+      "state": "idle",
+      "last_seen": "2026-02-27T14:00:13.370694"
+    },
+    "cafe_table_01": {
+      "name": "Cafe Table 01",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370698"
+    },
+    "cafe_table_02": {
+      "name": "Cafe Table 02",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370701"
+    },
+    "cafe_table_03": {
+      "name": "Cafe Table 03",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370704"
+    },
+    "self_location": {
+      "name": "박영희",
+      "state": "서 있는 중",
+      "last_seen": "2026-02-27T14:00:13.370708"
+    }
+  },
+  "relationships": {}
+}

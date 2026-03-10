@@ -1,0 +1,56 @@
+.preset-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-label {
+  font-size: 0.8rem;
+  color: #666;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.preset-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.preset-btn {
+  padding: 3px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+  color: #24292f;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.preset-btn:hover:not(:disabled) {
+  background: #7b5ea7;
+  color: #fff;
+  border-color: #7b5ea7;
+}
+
+.preset-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preset-btn--loading {
+  background: #e6d5f0;
+  border-color: #7b5ea7;
+}
+
+.preset-message {
+  font-size: 0.72rem;
+  color: #7b5ea7;
+  animation: preset-fade 4s ease-out forwards;
+}
+
+@keyframes preset-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}

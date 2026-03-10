@@ -1,0 +1,132 @@
+.song-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  gap: 14px;
+  border-bottom: 1px solid var(--color-border);
+  transition: background-color 0.15s;
+}
+
+.song-item:hover {
+  background-color: var(--color-hover);
+}
+
+.song-item__rank {
+  width: 32px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-sub);
+  flex-shrink: 0;
+}
+
+.song-item__rank--top3 {
+  color: var(--color-primary);
+}
+
+.song-item__art {
+  width: 50px;
+  height: 50px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #fff;
+  flex-shrink: 0;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.song-item__art-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.2s;
+  font-size: 20px;
+}
+
+.song-item__art:hover .song-item__art-play {
+  opacity: 1;
+}
+
+.song-item__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.song-item__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.song-item__title:hover {
+  text-decoration: underline;
+}
+
+.song-item__artist {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.song-item__artist a:hover {
+  text-decoration: underline;
+  color: var(--color-text);
+}
+
+.song-item__album {
+  width: 180px;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.song-item__album a:hover {
+  text-decoration: underline;
+  color: var(--color-text);
+}
+
+.song-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.song-item__action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--color-text-sub);
+  font-size: 16px;
+  transition: all 0.2s;
+}
+
+.song-item__action-btn:hover {
+  background: var(--color-bg);
+  color: var(--color-primary);
+}
+
+.song-item__action-btn--liked {
+  color: var(--color-danger);
+}

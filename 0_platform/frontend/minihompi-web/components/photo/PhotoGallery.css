@@ -1,0 +1,87 @@
+.photo-gallery {
+  height: 100%;
+}
+
+.photo-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.photo-header h3 {
+  color: #7b5ea7;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.photo-upload-btn {
+  padding: 0.4rem 1rem;
+  background: linear-gradient(135deg, #c9a8e8, #e8a8c9);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.photo-upload-btn:hover {
+  opacity: 0.85;
+}
+
+.photo-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #bba8d0;
+}
+
+.photo-empty p {
+  margin: 0.3rem 0;
+}
+
+.photo-empty-sub {
+  font-size: 0.85rem;
+  color: #d4a5c9;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+}
+
+.photo-item {
+  background: #faf7fd;
+  border: 1.5px solid #f0e6f6;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.photo-item:hover {
+  border-color: #d4bce8;
+  transform: translateY(-2px);
+}
+
+.photo-img-wrapper {
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: #f0e6f6;
+}
+
+.photo-img-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-caption {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.78rem;
+  color: #6b5b7b;
+  margin: 0;
+  text-align: center;
+}

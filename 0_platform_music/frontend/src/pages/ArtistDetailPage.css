@@ -1,0 +1,99 @@
+.artist-detail {
+  padding: 24px 0;
+}
+
+.artist-detail__header {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin-bottom: 40px;
+  padding: 32px;
+  background: var(--color-white);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+}
+
+.artist-detail__avatar {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56px;
+  color: #fff;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.artist-detail__info h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.artist-detail__meta {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--color-text-sub);
+}
+
+.artist-detail__meta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.artist-detail__stats {
+  display: flex;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+.artist-detail__stat {
+  text-align: center;
+}
+
+.artist-detail__stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.artist-detail__stat-label {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-top: 2px;
+}
+
+/* Sections */
+.artist-detail__section {
+  margin-bottom: 32px;
+}
+
+.artist-detail__section-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+.artist-detail__songs {
+  background: var(--color-white);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.artist-detail__albums {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 20px;
+}
+
+.artist-detail__loading {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--color-text-sub);
+}

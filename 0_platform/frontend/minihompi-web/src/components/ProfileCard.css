@@ -1,0 +1,81 @@
+.profile-card {
+  text-align: center;
+}
+
+.profile-image-wrap {
+  width: 140px;
+  height: 140px;
+  margin: 0 auto 1rem;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 3px solid #e8d5f5;
+  background: #f5f0fa;
+}
+
+.profile-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-image-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  background: linear-gradient(135deg, #f0e6f6, #f5e0f0);
+  color: #c9a8e8;
+}
+
+.profile-nickname {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #7b5ea7;
+  margin-bottom: 0.4rem;
+}
+
+.profile-status {
+  font-size: 0.8rem;
+  color: #a78bca;
+  margin-bottom: 1.2rem;
+  padding: 0.4rem 0.8rem;
+  background: #f5f0fa;
+  border-radius: 10px;
+  border: 1px dashed #e0d0f0;
+}
+
+.profile-counter {
+  background: white;
+  border-radius: 12px;
+  padding: 0.8rem;
+  border: 1.5px solid #f0e6f6;
+}
+
+.counter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.2rem 0;
+}
+
+.counter-label {
+  font-size: 0.7rem;
+  color: #bba8d0;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.counter-value {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.counter-value.today {
+  color: #d47fa6;
+}
+
+.counter-value.total {
+  color: #7b5ea7;
+}

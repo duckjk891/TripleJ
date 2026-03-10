@@ -1,0 +1,18 @@
+{
+  "name": "onecompany-frontend",
+  "version": "0.1.0",
+  "description": "Generative Agents Game Frontend",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "phaser": "^3.70.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}

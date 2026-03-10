@@ -1,0 +1,67 @@
+.bgm-player {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.bgm-icon {
+  font-size: 1.1rem;
+  color: #c9a8e8;
+}
+
+.bgm-title {
+  font-size: 0.8rem;
+  color: #7b5ea7;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.bgm-controls {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.bgm-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid #d4bce8;
+  background: white;
+  color: #7b5ea7;
+  font-size: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.bgm-btn:hover {
+  background: #f0e6f6;
+}
+
+.bgm-bar {
+  flex: 1;
+  height: 4px;
+  background: #f0e6f6;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bgm-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #c9a8e8, #e8a8c9);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.bgm-bar-fill.playing {
+  width: 45%;
+  animation: bgm-progress 10s linear infinite;
+}
+
+@keyframes bgm-progress {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}

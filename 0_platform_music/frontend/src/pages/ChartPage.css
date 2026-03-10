@@ -1,0 +1,87 @@
+.chart-page {
+  padding: 24px 0;
+}
+
+.chart-page__title {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.chart-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.chart-tab {
+  padding: 8px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  transition: all 0.2s;
+}
+
+.chart-tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.chart-tab--active {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.chart-tab--active:hover {
+  color: #fff;
+}
+
+.chart-list {
+  background: var(--color-white);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.chart-list__header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 2px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-sub);
+  gap: 14px;
+}
+
+.chart-list__header-rank {
+  width: 32px;
+  text-align: center;
+}
+
+.chart-list__header-art {
+  width: 50px;
+}
+
+.chart-list__header-info {
+  flex: 1;
+}
+
+.chart-list__header-album {
+  width: 180px;
+}
+
+.chart-list__header-actions {
+  width: 112px;
+  text-align: center;
+}
+
+.chart-loading {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--color-text-sub);
+}

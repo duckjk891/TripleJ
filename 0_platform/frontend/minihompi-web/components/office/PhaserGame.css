@@ -1,0 +1,56 @@
+.game-iframe-container {
+  position: relative;
+  background: linear-gradient(135deg, #f0e6f6 0%, #e6d5f0 100%);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(123, 94, 167, 0.2);
+}
+
+/* Override globals.css max-width:100% rule on canvas */
+.game-iframe-container canvas {
+  max-width: none;
+}
+
+.game-loading,
+.game-error {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f0e6f6 0%, #e6d5f0 100%);
+  color: #7b5ea7;
+  font-size: 14px;
+  gap: 12px;
+}
+
+.game-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e6d5f0;
+  border-top-color: #7b5ea7;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.game-error button {
+  padding: 8px 16px;
+  background: #7b5ea7;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.game-error button:hover {
+  background: #6a4e96;
+}

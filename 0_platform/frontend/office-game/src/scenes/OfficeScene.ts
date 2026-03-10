@@ -1,0 +1,434 @@
+/**
+ * OfficeScene
+ * 사무실 전용 메인 씬 - 1_oneCompany MainScene.ts 참조
+ * 캐릭터 생성, 애니메이션, 카메라 설정, GameBridge 연동
+ */
+
+import Phaser from 'phaser';
+import { MapRenderer } from '../systems/MapRenderer';
+import { CharacterManager } from '../systems/CharacterManager';
+import { GameTimeManager } from '../systems/GameTimeManager';
+import { MAP_CONFIG } from '../config/gameConfig';
+import { Character } from '../entities/Character';
+import { GameBridge } from '../bridge/GameBridge';
+
+export class OfficeScene extends Phaser.Scene {
+  private mapRenderer!: MapRenderer;
+  public characterManager!: CharacterManager;
+  public gameTimeManager!: GameTimeManager;
+  private dayNightOverlay!: Phaser.GameObjects.Rectangle;
+  private bridge: GameBridge;
+
+  // WebSocket unsubscribe functions
+  private wsUnsubscribers: (() => void)[] = [];
+
+  // 대화 중인 에이전트 추적 (Priority 3: 대화 중 액션 오버라이드 방지)
+  private conversatingAgents: Set<string> = new Set();
+
+  constructor() {
+    super({ key: 'OfficeScene' });
+    this.bridge = GameBridge.getInstance();
+  }
+
+  preload(): void {
+    // 캐릭터 스프라이트 시트 로드
+    // 32x32 크기, 12열 x 8행 구조
+    this.load.spritesheet('characters', '/assets/sprites/characters.png', {
+      frameWidth: 32,
+      frameHeight: 32,
+    });
+  }
+
+  create(): void {
+    const worldWidth = MAP_CONFIG.width * MAP_CONFIG.tileSize;
+    const worldHeight = MAP_CONFIG.height * MAP_CONFIG.tileSize;
+
+    // 맵 렌더링
+    this.mapRenderer = new MapRenderer(this);
+    this.mapRenderer.render();
+
+    // 캐릭터 애니메이션 생성
+    this.createCharacterAnimations();
+
+    // 게임 시간 매니저 (9시 시작)
+    this.gameTimeManager = new GameTimeManager(9);
+
+    // 캐릭터 매니저
+    this.characterManager = new CharacterManager(this, this.gameTimeManager);
+
+    // 주야간 오버레이
+    this.dayNightOverlay = this.add
+      .rectangle(
+        worldWidth / 2,
+        worldHeight / 2,
+        worldWidth,
+        worldHeight,
+        0x0a0a2e,
+        0
+      )
+      .setDepth(300);
+
+    // 카메라 설정 (맵 전체가 보이도록)
+    this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
+    this.cameras.main.setZoom(1);
+    this.cameras.main.scrollX = 0;
+    this.cameras.main.scrollY = 0;
+
+    // UI Scene 시작
+    this.scene.launch('OfficeUIScene');
+
+    // 캐릭터 클릭 이벤트
+    this.events.on('character-clicked', (character: Character) => {
+      this.scene.get('OfficeUIScene').events.emit('show-character-info', character);
+    });
+
+    // GameBridge 연결
+    this.bridge.connectScene(this);
+    this.setupBridgeCommands();
+
+    // WebSocket 연결 및 이벤트 구독
+    this.bridge.connectWebSocket();
+    this.setupSimulationEvents();
+
+    console.log('OfficeScene created - Office map loaded');
+  }
+
+  private createCharacterAnimations(): void {
+    // 캐릭터 타입별로 다른 행 사용 (0-7)
+    // 각 캐릭터는 4방향 x 3프레임 애니메이션
+    for (let charType = 0; charType < 8; charType++) {
+      const baseFrame = charType * 12;
+
+      // 아래 방향
+      this.anims.create({
+        key: `char${charType}_walk_down`,
+        frames: this.anims.generateFrameNumbers('characters', {
+          start: baseFrame + 0,
+          end: baseFrame + 2,
+        }),
+        frameRate: 8,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: `char${charType}_idle_down`,
+        frames: [{ key: 'characters', frame: baseFrame + 1 }],
+        frameRate: 1,
+      });
+
+      // 왼쪽 방향
+      this.anims.create({
+        key: `char${charType}_walk_left`,
+        frames: this.anims.generateFrameNumbers('characters', {
+          start: baseFrame + 3,
+          end: baseFrame + 5,
+        }),
+        frameRate: 8,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: `char${charType}_idle_left`,
+        frames: [{ key: 'characters', frame: baseFrame + 4 }],
+        frameRate: 1,
+      });
+
+      // 오른쪽 방향
+      this.anims.create({
+        key: `char${charType}_walk_right`,
+        frames: this.anims.generateFrameNumbers('characters', {
+          start: baseFrame + 6,
+          end: baseFrame + 8,
+        }),
+        frameRate: 8,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: `char${charType}_idle_right`,
+        frames: [{ key: 'characters', frame: baseFrame + 7 }],
+        frameRate: 1,
+      });
+
+      // 위 방향
+      this.anims.create({
+        key: `char${charType}_walk_up`,
+        frames: this.anims.generateFrameNumbers('characters', {
+          start: baseFrame + 9,
+          end: baseFrame + 11,
+        }),
+        frameRate: 8,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: `char${charType}_idle_up`,
+        frames: [{ key: 'characters', frame: baseFrame + 10 }],
+        frameRate: 1,
+      });
+    }
+  }
+
+  /**
+   * GameBridge 커맨드 핸들링 설정
+   */
+  private setupBridgeCommands(): void {
+    this.events.on('bridge-command', (command: any) => {
+      switch (command.type) {
+        case 'CREATE_CHARACTER':
+          if (command.payload) {
+            const { name, occupation, spriteType, x, y } = command.payload;
+            const avatarId = ['blue', 'red', 'green', 'purple', 'orange', 'pink', 'cyan', 'yellow'][spriteType] || 'blue';
+            this.characterManager.createCharacter(name, occupation, avatarId, x, y);
+          }
+          break;
+
+        case 'REMOVE_CHARACTER':
+          if (command.payload?.characterId) {
+            this.characterManager.removeCharacter(command.payload.characterId);
+          }
+          break;
+
+        case 'PAUSE_GAME':
+          this.pauseSimulation();
+          break;
+
+        case 'RESUME_GAME':
+          this.resumeSimulation();
+          break;
+
+        case 'SET_TIME_SCALE':
+          if (command.payload?.scale) {
+            this.gameTimeManager.setSpeed(command.payload.scale);
+          }
+          break;
+      }
+    });
+  }
+
+  update(time: number, delta: number): void {
+    // 일시정지가 아닐 때만 시뮬레이션 진행
+    if (!this.gameTimeManager.getIsPaused()) {
+      this.gameTimeManager.update();
+      this.characterManager.update(time, delta);
+      this.updateDayNightCycle();
+
+      // GameBridge에 시간 업데이트
+      this.bridge.updateGameTime(this.gameTimeManager.getTimeInfo());
+    }
+  }
+
+  pauseSimulation(): void {
+    this.gameTimeManager.pause();
+    this.time.paused = true;
+    this.bridge.emit({
+      type: 'GAME_PAUSED',
+      payload: undefined,
+      timestamp: Date.now(),
+    });
+  }
+
+  resumeSimulation(): void {
+    this.gameTimeManager.resume();
+    this.time.paused = false;
+    this.bridge.emit({
+      type: 'GAME_RESUMED',
+      payload: undefined,
+      timestamp: Date.now(),
+    });
+  }
+
+  private updateDayNightCycle(): void {
+    const hour = this.gameTimeManager.getHour();
+    let alpha = 0;
+    let color = 0x0a0a2e;
+
+    if (hour >= 21 || hour < 5) {
+      // 밤
+      alpha = 0.3;
+      color = 0x0a0a2e;
+    } else if (hour >= 5 && hour < 7) {
+      // 새벽 -> 아침
+      alpha = 0.3 * (7 - hour) / 2;
+      color = 0x1a1040;
+    } else if (hour >= 18 && hour < 21) {
+      // 저녁
+      alpha = 0.25 * (hour - 18) / 3;
+      color = 0x2e1a0a;
+    }
+    // 낮 (7~18): alpha = 0
+
+    this.dayNightOverlay.setFillStyle(color, alpha);
+  }
+
+  getCollisionRects(): Phaser.GameObjects.Rectangle[] {
+    return this.mapRenderer.getCollisionRects();
+  }
+
+  /**
+   * WebSocket simulation 이벤트 구독 설정
+   */
+  private setupSimulationEvents(): void {
+    // simulation_action: 캐릭터 행동 업데이트
+    this.wsUnsubscribers.push(
+      this.bridge.onSimulationAction((msg) => {
+        // Priority 3: 대화 중인 에이전트는 액션 건너뜀
+        if (this.conversatingAgents.has(msg.agent_id)) {
+          console.log(`[OfficeScene] Skipping action during conversation for agent: ${msg.agent_id}`);
+          return;
+        }
+
+        // Fix 1C: 미등록 agent_id인 경우 자동 생성 (position이 있을 때만)
+        let char = this.characterManager.getCharacterByAgentId(msg.agent_id);
+        if (!char && msg.position) {
+          char = this.characterManager.createFromBackend(msg.agent_id, undefined, msg.position.x, msg.position.y);
+        }
+
+        if (!char) {
+          console.warn(`[OfficeScene] No character for agent ${msg.agent_id} and no position to auto-create`);
+          return;
+        }
+
+        // Fix 1A: applyBackendAction으로 position 유무에 관계없이 올바르게 처리
+        if (msg.action) {
+          const pos = msg.position ? { x: msg.position.x, y: msg.position.y } : undefined;
+          this.characterManager.applyBackendAction(msg.agent_id, msg.action, pos);
+        } else if (msg.position) {
+          char.moveToTile(msg.position.x, msg.position.y);
+        }
+      })
+    );
+
+    // simulation_conversation: 대화 표시
+    this.wsUnsubscribers.push(
+      this.bridge.onSimulationConversation((msg) => {
+        this.showConversationSequence(msg.agents, msg.dialogue);
+      })
+    );
+
+    // simulation_reflection: 리플렉션 → 생각 버블 표시 (Priority 4)
+    this.wsUnsubscribers.push(
+      this.bridge.onSimulationReflection((msg) => {
+        const char = this.characterManager.getCharacterByAgentId(msg.agent_id);
+        if (char && msg.reflections.length > 0) {
+          const thought = `(${msg.reflections[0]})`;
+          char.setAction(thought);
+          console.log(`[OfficeScene] Reflection for ${msg.agent_id}: ${thought}`);
+        }
+      })
+    );
+
+    // simulation_time: 시간 동기화
+    this.wsUnsubscribers.push(
+      this.bridge.onSimulationTime((msg) => {
+        // Update local time display if backend sends time
+        this.bridge.updateGameTime({
+          hour: msg.hour,
+          minute: msg.minute,
+          day: msg.day,
+          timeScale: msg.speed,
+        });
+
+        // Priority 4: paused 상태 동기화
+        if (msg.paused && !this.gameTimeManager.getIsPaused()) {
+          this.pauseSimulation();
+          console.log('[OfficeScene] Backend paused → local paused');
+        } else if (!msg.paused && this.gameTimeManager.getIsPaused()) {
+          this.resumeSimulation();
+          console.log('[OfficeScene] Backend resumed → local resumed');
+        }
+      })
+    );
+
+    // world_objects_update: 월드 오브젝트 상태 변경 (Priority 4)
+    this.wsUnsubscribers.push(
+      this.bridge.onWorldObjectsUpdate((msg) => {
+        console.log('[OfficeScene] World objects update:', msg.objects.length, 'objects', msg.objects);
+      })
+    );
+
+    // state_sync: 전체 상태 동기화
+    this.wsUnsubscribers.push(
+      this.bridge.onStateSync((msg) => {
+        for (const charData of msg.characters) {
+          // Fix 1C: 미등록 agent_id 시 자동 생성
+          let char = this.characterManager.getCharacterByAgentId(charData.agent_id);
+          if (!char) {
+            char = this.characterManager.createFromBackend(
+              charData.agent_id,
+              charData.name,
+              charData.position?.x ?? 5,
+              charData.position?.y ?? 5,
+            );
+          }
+
+          if (charData.position) {
+            char.moveToTile(charData.position.x, charData.position.y);
+          }
+          if (charData.action) {
+            char.setAction(charData.action);
+          }
+        }
+      })
+    );
+
+    // backend connection change: toggle backend-driven mode
+    this.wsUnsubscribers.push(
+      this.bridge.onBackendConnectionChange((connected) => {
+        this.characterManager.setBackendDriven(connected);
+        console.log('[OfficeScene] Backend driven mode:', connected);
+      })
+    );
+  }
+
+  /**
+   * 대화 시퀀스 표시 (순차적으로 대사를 보여줌)
+   * Priority 3: 대화 중 에이전트를 conversatingAgents에 등록하여 액션 오버라이드 방지
+   */
+  private showConversationSequence(
+    agents: { id: string; name: string }[],
+    dialogue: { speaker: string; text: string }[]
+  ): void {
+    // 대화 참여자 등록
+    for (const agent of agents) {
+      this.conversatingAgents.add(agent.id);
+    }
+
+    let delay = 0;
+    const TURN_DELAY = 3000;
+
+    for (const turn of dialogue) {
+      const agent = agents.find((a) => a.name === turn.speaker || a.id === turn.speaker);
+      if (!agent) continue;
+
+      this.time.delayedCall(delay, () => {
+        const char = this.characterManager.getCharacterByAgentId(agent.id);
+        if (char) {
+          char.showDialogue(turn.speaker, turn.text, TURN_DELAY - 500);
+        }
+      });
+
+      delay += TURN_DELAY;
+    }
+
+    // 대화 시퀀스 완료 후 참여자 해제
+    this.time.delayedCall(delay, () => {
+      for (const agent of agents) {
+        this.conversatingAgents.delete(agent.id);
+      }
+      console.log('[OfficeScene] Conversation ended, agents released:', agents.map(a => a.id));
+    });
+  }
+
+  /**
+   * 씬 종료 시 정리
+   */
+  shutdown(): void {
+    // WebSocket 구독 해제
+    this.wsUnsubscribers.forEach((unsub) => unsub());
+    this.wsUnsubscribers = [];
+
+    this.bridge.disconnectWebSocket();
+    this.bridge.disconnectScene();
+  }
+}

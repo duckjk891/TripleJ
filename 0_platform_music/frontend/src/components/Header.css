@@ -1,0 +1,148 @@
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-height);
+  background: var(--color-white);
+  border-bottom: 1px solid var(--color-border);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+}
+
+.header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.header__logo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.header__logo img {
+  height: 32px;
+  width: auto;
+}
+
+.header__nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-left: 40px;
+}
+
+.header__nav a {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text);
+  transition: color 0.2s;
+  white-space: nowrap;
+}
+
+.header__nav a:hover,
+.header__nav a.active {
+  color: var(--color-primary);
+}
+
+.header__search {
+  display: flex;
+  align-items: center;
+  background: var(--color-bg);
+  border-radius: 20px;
+  padding: 8px 16px;
+  margin-left: auto;
+  margin-right: 20px;
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.header__search input {
+  flex: 1;
+  background: transparent;
+  font-size: 13px;
+  color: var(--color-text);
+  width: 100%;
+}
+
+.header__search input::placeholder {
+  color: var(--color-text-sub);
+}
+
+.header__search-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub);
+  font-size: 16px;
+  margin-left: 8px;
+}
+
+.header__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.header__login-btn,
+.header__register-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.header__login-btn {
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  background: transparent;
+}
+
+.header__login-btn:hover {
+  background: var(--color-primary-light);
+}
+
+.header__register-btn {
+  color: #fff;
+  background: var(--color-primary);
+}
+
+.header__register-btn:hover {
+  background: var(--color-primary-dark);
+}
+
+.header__user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header__nickname {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.header__logout-btn {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.header__logout-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-sub);
+}

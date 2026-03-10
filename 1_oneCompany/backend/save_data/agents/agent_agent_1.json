@@ -1,0 +1,262 @@
+{
+  "id": "agent_1",
+  "name": "김철수",
+  "occupation": "개발자",
+  "traits": "창의적, 부지런한",
+  "backstory": "5년차 풀스택 개발자; 커피를 좋아함; 팀 리더 역할을 맡고 있음",
+  "daily_routine": "코딩, 코드리뷰, 팀미팅",
+  "position": {
+    "x": 10,
+    "y": 10
+  },
+  "location_name": "Main Office > Open Space",
+  "current_action": "서 있는 중",
+  "memories": [
+    {
+      "id": "96d86ed4-9b5c-476d-986c-eba42dee3ef6",
+      "content": "5년차 풀스택 개발자",
+      "created_at": "2026-02-27T13:59:50.056752",
+      "last_accessed_at": "2026-02-27T13:59:58.213839",
+      "importance": 3,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "789357f7-6021-4cd6-851a-b7bdb31eaa03",
+      "content": "커피를 좋아함",
+      "created_at": "2026-02-27T13:59:50.056752",
+      "last_accessed_at": "2026-02-27T13:59:58.213839",
+      "importance": 3,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "7e77fdf7-43c5-411a-b552-402e91347c49",
+      "content": "팀 리더 역할을 맡고 있음",
+      "created_at": "2026-02-27T13:59:50.056752",
+      "last_accessed_at": "2026-02-27T13:59:58.213839",
+      "importance": 3,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "565d64fa-3930-4e37-9fc1-dea229f7dc71",
+      "content": "김철수 noticed Desk 01 is empty",
+      "created_at": "2026-02-27T13:59:58.209120",
+      "last_accessed_at": "2026-02-27T13:59:58.209120",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "9e160c05-99f7-40b5-a709-198a6c5b1b6e",
+      "content": "김철수 noticed Desk 02 is empty",
+      "created_at": "2026-02-27T13:59:58.209169",
+      "last_accessed_at": "2026-02-27T13:59:58.209169",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "5a1b95b5-b28d-44b5-a2aa-d861b235bf8d",
+      "content": "김철수 noticed Desk 03 is empty",
+      "created_at": "2026-02-27T13:59:58.209195",
+      "last_accessed_at": "2026-02-27T13:59:58.209195",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "7232617e-c136-4183-ac9b-a6809e783e24",
+      "content": "김철수 noticed Desk 04 is empty",
+      "created_at": "2026-02-27T13:59:58.209220",
+      "last_accessed_at": "2026-02-27T13:59:58.209220",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "3f02fabe-9d19-48c1-98fe-925d3b398d2b",
+      "content": "김철수 noticed Desk 05 is empty",
+      "created_at": "2026-02-27T13:59:58.209242",
+      "last_accessed_at": "2026-02-27T13:59:58.209242",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "1ca1392f-6dc3-4784-bf07-3943ede27036",
+      "content": "김철수 noticed Desk 06 is empty",
+      "created_at": "2026-02-27T13:59:58.209264",
+      "last_accessed_at": "2026-02-27T13:59:58.213839",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    },
+    {
+      "id": "900940d5-211a-495c-a69d-e9de8d598dfd",
+      "content": "김철수 noticed Meeting Table is empty",
+      "created_at": "2026-02-27T13:59:58.209285",
+      "last_accessed_at": "2026-02-27T13:59:58.213839",
+      "importance": 2,
+      "memory_type": "observation",
+      "depth": 0,
+      "associated_ids": []
+    }
+  ],
+  "importance_sum_since_last_reflection": 23,
+  "daily_plan": [
+    {
+      "start_time": "09:00",
+      "end_time": "10:30",
+      "description": "Working",
+      "location": "Open Space",
+      "completed": false
+    },
+    {
+      "start_time": "10:30",
+      "end_time": "11:00",
+      "description": "Coffee break",
+      "location": "Kitchen",
+      "completed": false
+    },
+    {
+      "start_time": "11:00",
+      "end_time": "12:00",
+      "description": "Working",
+      "location": "Open Space",
+      "completed": false
+    },
+    {
+      "start_time": "12:00",
+      "end_time": "13:00",
+      "description": "Lunch",
+      "location": "Cafe",
+      "completed": false
+    },
+    {
+      "start_time": "13:00",
+      "end_time": "15:00",
+      "description": "Meeting",
+      "location": "Meeting Room",
+      "completed": false
+    },
+    {
+      "start_time": "15:00",
+      "end_time": "17:00",
+      "description": "Working",
+      "location": "Open Space",
+      "completed": false
+    },
+    {
+      "start_time": "17:00",
+      "end_time": "18:00",
+      "description": "Walk in the park",
+      "location": "Park",
+      "completed": false
+    }
+  ],
+  "spatial_memory": {
+    "_items": {
+      "desk_01": {
+        "name": "Desk 01",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370612"
+      },
+      "desk_02": {
+        "name": "Desk 02",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370631"
+      },
+      "desk_03": {
+        "name": "Desk 03",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370635"
+      },
+      "desk_04": {
+        "name": "Desk 04",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370638"
+      },
+      "desk_05": {
+        "name": "Desk 05",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370642"
+      },
+      "desk_06": {
+        "name": "Desk 06",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370645"
+      },
+      "meeting_table": {
+        "name": "Meeting Table",
+        "state": "empty",
+        "last_seen": "2026-02-27T14:00:13.370649"
+      }
+    },
+    "Main Office": {
+      "_items": {},
+      "Open Space": {
+        "_items": {
+          "self_location": {
+            "name": "김철수",
+            "state": "서 있는 중",
+            "last_seen": "2026-02-27T14:00:13.370660"
+          }
+        }
+      }
+    }
+  },
+  "spatial_flat": {
+    "desk_01": {
+      "name": "Desk 01",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370612"
+    },
+    "desk_02": {
+      "name": "Desk 02",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370631"
+    },
+    "desk_03": {
+      "name": "Desk 03",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370635"
+    },
+    "desk_04": {
+      "name": "Desk 04",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370638"
+    },
+    "desk_05": {
+      "name": "Desk 05",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370642"
+    },
+    "desk_06": {
+      "name": "Desk 06",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370645"
+    },
+    "meeting_table": {
+      "name": "Meeting Table",
+      "state": "empty",
+      "last_seen": "2026-02-27T14:00:13.370649"
+    },
+    "self_location": {
+      "name": "김철수",
+      "state": "서 있는 중",
+      "last_seen": "2026-02-27T14:00:13.370660"
+    }
+  },
+  "relationships": {}
+}

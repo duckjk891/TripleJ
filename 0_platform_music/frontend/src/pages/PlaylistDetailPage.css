@@ -1,0 +1,112 @@
+.playlist-detail {
+  padding: 24px 0;
+}
+
+.playlist-detail__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 32px;
+  padding: 24px;
+  background: var(--color-white);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+}
+
+.playlist-detail__icon {
+  width: 120px;
+  height: 120px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.playlist-detail__info {
+  flex: 1;
+}
+
+.playlist-detail__type {
+  font-size: 12px;
+  color: var(--color-primary);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.playlist-detail__title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.playlist-detail__desc {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  margin-bottom: 12px;
+}
+
+.playlist-detail__meta {
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.playlist-detail__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.playlist-detail__play-btn {
+  padding: 8px 24px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.2s;
+}
+
+.playlist-detail__play-btn:hover {
+  background: var(--color-primary-dark);
+}
+
+.playlist-detail__delete-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  border-radius: 20px;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.playlist-detail__delete-btn:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.playlist-detail__songs {
+  background: var(--color-white);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.playlist-detail__empty {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--color-text-sub);
+  font-size: 14px;
+}
+
+.playlist-detail__loading {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--color-text-sub);
+}
