@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import SongItem from '../components/SongItem';
+import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './ChartPage.css';
 
@@ -14,9 +16,12 @@ const GENRES = [
 ];
 
 export default function ChartPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('top100');
   const [songs, setSongs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     const fetchChart = async () => {
@@ -28,7 +33,13 @@ export default function ChartPage() {
         } else {
           res = await api.getGenreChart(activeTab);
         }
-        setSongs(res.data);
+        const fetchedSongs = res.data;
+        setSongs(fetchedSongs);
+
+        if (user && fetchedSongs.length > 0) {
+          const { data } = await api.checkLikes(fetchedSongs.map(s => s.id).join(','));
+          setLikedIds(new Set(data.liked_ids));
+        }
       } catch (err) {
         console.error('Failed to load chart:', err);
         setSongs([]);
@@ -37,7 +48,20 @@ export default function ChartPage() {
       }
     };
     fetchChart();
-  }, [activeTab]);
+  }, [activeTab, user]);
+
+  const handleToggleLike = async (songId) => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      if (likedIds.has(songId)) {
+        await api.unlikeSong(songId);
+        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+      } else {
+        await api.likeSong(songId);
+        setLikedIds(prev => new Set([...prev, songId]));
+      }
+    } catch (err) { console.error(err); }
+  };
 
   return (
     <div className="page-content">
@@ -73,6 +97,8 @@ export default function ChartPage() {
                 song={song}
                 rank={song.rank || idx + 1}
                 songs={songs}
+                isLiked={likedIds.has(song.id)}
+                onToggleLike={handleToggleLike}
               />
             ))}
             {songs.length === 0 && (

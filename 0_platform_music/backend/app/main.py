@@ -1,12 +1,19 @@
+import os
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .database import init_database
-from .routes import auth, songs, albums, artists, charts, playlists, likes
+from .routes import auth, songs, albums, artists, charts, playlists, likes, upload
 
 init_database()
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
+os.makedirs(os.path.join(UPLOAD_DIR, "music"), exist_ok=True)
+os.makedirs(os.path.join(UPLOAD_DIR, "images", "albums"), exist_ok=True)
+os.makedirs(os.path.join(UPLOAD_DIR, "images", "artists"), exist_ok=True)
 
 app = FastAPI(title="Music Platform API")
 
@@ -25,6 +32,7 @@ app.include_router(artists.router)
 app.include_router(charts.router)
 app.include_router(playlists.router)
 app.include_router(likes.router)
+app.include_router(upload.router)
 
 
 @app.get("/api/health")
@@ -35,3 +43,5 @@ def health():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": "서버 내부 오류가 발생했습니다."})
+
+app.mount("/api/files", StaticFiles(directory=UPLOAD_DIR), name="uploads")

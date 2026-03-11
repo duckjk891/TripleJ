@@ -7,43 +7,72 @@ export function PlayerProvider({ children }) {
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
   const [volume, setVolume] = useState(80);
-  const intervalRef = useRef(null);
+  const audioRef = useRef(new Audio());
 
   const currentSong = currentIndex >= 0 ? playlist[currentIndex] : null;
-  const duration = currentSong?.duration || 240; // 기본 4분
+  const duration = audioDuration || currentSong?.duration || 240;
 
-  // 재생 시뮬레이션
+  // Audio 이벤트 리스너
   useEffect(() => {
-    if (isPlaying) {
-      intervalRef.current = setInterval(() => {
-        setCurrentTime((prev) => {
-          if (prev >= duration) {
-            // 자동 다음 곡
-            setCurrentIndex((idx) => {
-              if (idx < playlist.length - 1) {
-                return idx + 1;
-              }
-              setIsPlaying(false);
-              return idx;
-            });
-            return 0;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+    const audio = audioRef.current;
+
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
     };
-  }, [isPlaying, duration, playlist.length]);
+
+    const onLoadedMetadata = () => {
+      setAudioDuration(audio.duration);
+    };
+
+    const onEnded = () => {
+      setCurrentIndex((idx) => {
+        if (idx < playlist.length - 1) {
+          return idx + 1;
+        }
+        setIsPlaying(false);
+        return idx;
+      });
+    };
+
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+
+    return () => {
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.pause();
+    };
+  }, [playlist.length]);
+
+  // currentIndex 변경 시 새 곡 로드
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (currentIndex >= 0 && playlist[currentIndex]) {
+      const song = playlist[currentIndex];
+      audio.src = `/api/stream/${song.id}`;
+      setCurrentTime(0);
+      setAudioDuration(0);
+      audio.play().catch((err) => {
+        console.error('Audio play failed:', err);
+      });
+    }
+  }, [currentIndex, playlist]);
+
+  // 볼륨 동기화
+  useEffect(() => {
+    audioRef.current.volume = volume / 100;
+  }, [volume]);
 
   const play = useCallback((song, songs) => {
     if (song) {
@@ -52,7 +81,6 @@ export function PlayerProvider({ children }) {
         const idx = songs.findIndex((s) => s.id === song.id);
         setCurrentIndex(idx >= 0 ? idx : 0);
       } else {
-        // 단일 곡 재생
         const existIdx = playlist.findIndex((s) => s.id === song.id);
         if (existIdx >= 0) {
           setCurrentIndex(existIdx);
@@ -61,44 +89,47 @@ export function PlayerProvider({ children }) {
           setCurrentIndex(playlist.length);
         }
       }
-      setCurrentTime(0);
-      setIsPlaying(true);
     } else {
-      setIsPlaying(true);
+      audioRef.current.play().catch((err) => {
+        console.error('Audio play failed:', err);
+      });
     }
   }, [playlist]);
 
   const pause = useCallback(() => {
-    setIsPlaying(false);
+    audioRef.current.pause();
   }, []);
 
   const togglePlay = useCallback(() => {
     if (currentSong) {
-      setIsPlaying((prev) => !prev);
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play().catch((err) => {
+          console.error('Audio play failed:', err);
+        });
+      }
     }
-  }, [currentSong]);
+  }, [currentSong, isPlaying]);
 
   const next = useCallback(() => {
     if (currentIndex < playlist.length - 1) {
       setCurrentIndex(currentIndex + 1);
-      setCurrentTime(0);
-      setIsPlaying(true);
     }
   }, [currentIndex, playlist.length]);
 
   const prev = useCallback(() => {
-    if (currentTime > 3) {
-      // 3초 이상 지났으면 처음부터
-      setCurrentTime(0);
+    if (audioRef.current.currentTime > 3) {
+      audioRef.current.currentTime = 0;
     } else if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
-      setCurrentTime(0);
-      setIsPlaying(true);
     }
-  }, [currentIndex, currentTime]);
+  }, [currentIndex]);
 
   const seekTo = useCallback((time) => {
-    setCurrentTime(Math.max(0, Math.min(time, duration)));
+    const clampedTime = Math.max(0, Math.min(time, duration));
+    audioRef.current.currentTime = clampedTime;
+    setCurrentTime(clampedTime);
   }, [duration]);
 
   const changeVolume = useCallback((vol) => {
@@ -113,10 +144,13 @@ export function PlayerProvider({ children }) {
   }, []);
 
   const clearPlaylist = useCallback(() => {
+    audioRef.current.pause();
+    audioRef.current.src = '';
     setPlaylist([]);
     setCurrentIndex(-1);
     setIsPlaying(false);
     setCurrentTime(0);
+    setAudioDuration(0);
   }, []);
 
   return (

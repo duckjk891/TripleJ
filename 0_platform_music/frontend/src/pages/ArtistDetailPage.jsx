@@ -1,18 +1,22 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { FiDisc, FiMusic } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
 import AlbumCard from '../components/AlbumCard';
+import { useAuth } from '../contexts/AuthContext';
 import { getAvatarColor, getInitial } from '../utils';
 import * as api from '../api';
 import './ArtistDetailPage.css';
 
 export default function ArtistDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [artist, setArtist] = useState(null);
   const [songs, setSongs] = useState([]);
   const [albums, setAlbums] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     const fetchArtist = async () => {
@@ -24,8 +28,14 @@ export default function ArtistDetailPage() {
           api.getArtistAlbums(id),
         ]);
         setArtist(artistRes.data);
-        setSongs(songsRes.data);
+        const fetchedSongs = songsRes.data;
+        setSongs(fetchedSongs);
         setAlbums(albumsRes.data);
+
+        if (user && fetchedSongs.length > 0) {
+          const { data } = await api.checkLikes(fetchedSongs.map(s => s.id).join(','));
+          setLikedIds(new Set(data.liked_ids));
+        }
       } catch (err) {
         console.error('Failed to load artist:', err);
       } finally {
@@ -33,7 +43,20 @@ export default function ArtistDetailPage() {
       }
     };
     fetchArtist();
-  }, [id]);
+  }, [id, user]);
+
+  const handleToggleLike = async (songId) => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      if (likedIds.has(songId)) {
+        await api.unlikeSong(songId);
+        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+      } else {
+        await api.likeSong(songId);
+        setLikedIds(prev => new Set([...prev, songId]));
+      }
+    } catch (err) { console.error(err); }
+  };
 
   if (loading) {
     return (
@@ -97,6 +120,8 @@ export default function ArtistDetailPage() {
                   song={song}
                   rank={idx + 1}
                   songs={songs}
+                  isLiked={likedIds.has(song.id)}
+                  onToggleLike={handleToggleLike}
                 />
               ))}
             </div>

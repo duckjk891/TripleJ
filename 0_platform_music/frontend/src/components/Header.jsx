@@ -28,6 +28,7 @@ export default function Header() {
           <NavLink to="/chart">차트</NavLink>
           <NavLink to="/search">최신음악</NavLink>
           <NavLink to="/playlist">플레이리스트</NavLink>
+          {user && <NavLink to="/upload">업로드</NavLink>}
         </nav>
 
         <form className="header__search" onSubmit={handleSearch}>

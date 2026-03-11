@@ -101,10 +101,32 @@ export const removeSongFromPlaylist = (playlistId, songId) =>
 export const getLikes = (params) =>
   API.get('/likes', { params });
 
+export const checkLikes = (songIds) =>
+  API.get('/likes/check', { params: { song_ids: songIds } });
+
 export const likeSong = (songId) =>
   API.post(`/likes/${songId}`);
 
 export const unlikeSong = (songId) =>
   API.delete(`/likes/${songId}`);
+
+// Upload
+export const uploadSong = (formData, onProgress) =>
+  API.post('/songs/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: onProgress,
+  });
+
+export const uploadImage = (formData) =>
+  API.post('/upload/image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+// Create Artist / Album
+export const createArtist = (name, genre, description) =>
+  API.post('/artists', { name, genre, description });
+
+export const createAlbum = (title, artistId, genre, description) =>
+  API.post('/albums', { title, artist_id: artistId, genre, description });
 
 export default API;

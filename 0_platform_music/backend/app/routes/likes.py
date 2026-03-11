@@ -1,11 +1,31 @@
 import math
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ..auth import get_current_user
 from ..database import get_db, dict_rows
 
 router = APIRouter(prefix="/api/likes")
+
+
+@router.get("/check")
+def check_likes(song_ids: str = Query(""), current_user=Depends(get_current_user), db=Depends(get_db)):
+    ids = []
+    for s in song_ids.split(","):
+        s = s.strip()
+        if s.isdigit():
+            ids.append(int(s))
+
+    if not ids:
+        return {"liked_ids": []}
+
+    placeholders = ",".join("?" for _ in ids)
+    rows = db.execute(
+        f"SELECT song_id FROM likes WHERE user_id = ? AND song_id IN ({placeholders})",
+        [current_user["id"]] + ids,
+    ).fetchall()
+
+    return {"liked_ids": [r["song_id"] for r in rows]}
 
 
 @router.get("/")

@@ -2,3 +2,5 @@ fastapi
 uvicorn
 pyjwt
 bcrypt
+python-multipart
+mutagen

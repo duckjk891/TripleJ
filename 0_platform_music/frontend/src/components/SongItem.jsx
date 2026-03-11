@@ -1,14 +1,38 @@
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { FiPlay, FiHeart, FiPlus } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
+import { useAuth } from '../contexts/AuthContext';
 import { getAlbumGradient } from '../utils';
+import AddToPlaylistModal from './AddToPlaylistModal';
 import './SongItem.css';
 
-export default function SongItem({ song, rank, showAlbum = true, songs }) {
+export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike }) {
   const { play } = usePlayer();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 
   const handlePlay = () => {
     play(song, songs);
+  };
+
+  const handleLike = () => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+    if (onToggleLike) {
+      onToggleLike(song.id);
+    }
+  };
+
+  const handleAddToPlaylist = () => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+    setShowPlaylistModal(true);
   };
 
   return (
@@ -21,10 +45,14 @@ export default function SongItem({ song, rank, showAlbum = true, songs }) {
 
       <div
         className="song-item__art"
-        style={{ background: getAlbumGradient(song.album_id || song.id) }}
+        style={!(song.cover_image && song.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(song.album_id || song.id) } : {}}
         onClick={handlePlay}
       >
-        ♪
+        {song.cover_image && song.cover_image.startsWith('/api/files') ? (
+          <img src={song.cover_image} alt="" className="song-item__art-img" />
+        ) : (
+          <span>♪</span>
+        )}
         <div className="song-item__art-play">
           <FiPlay />
         </div>
@@ -49,13 +77,24 @@ export default function SongItem({ song, rank, showAlbum = true, songs }) {
         <button className="song-item__action-btn" onClick={handlePlay} title="재생">
           <FiPlay />
         </button>
-        <button className="song-item__action-btn" title="좋아요">
-          <FiHeart />
+        <button
+          className={`song-item__action-btn ${isLiked ? 'song-item__action-btn--liked' : ''}`}
+          onClick={handleLike}
+          title="좋아요"
+        >
+          <FiHeart style={isLiked ? { color: '#e74c3c', fill: '#e74c3c' } : {}} />
         </button>
-        <button className="song-item__action-btn" title="플레이리스트 추가">
+        <button className="song-item__action-btn" onClick={handleAddToPlaylist} title="플레이리스트 추가">
           <FiPlus />
         </button>
       </div>
+
+      {showPlaylistModal && (
+        <AddToPlaylistModal
+          songId={song.id}
+          onClose={() => setShowPlaylistModal(false)}
+        />
+      )}
     </div>
   );
 }

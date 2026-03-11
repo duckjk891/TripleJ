@@ -42,9 +42,13 @@ export default function MusicPlayer() {
         <div className="player__song-info">
           <div
             className="player__album-art"
-            style={{ background: getAlbumGradient(currentSong.album_id || currentSong.id) }}
+            style={!(currentSong.cover_image && currentSong.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(currentSong.album_id || currentSong.id) } : {}}
           >
-            ♪
+            {currentSong.cover_image && currentSong.cover_image.startsWith('/api/files') ? (
+              <img src={currentSong.cover_image} alt="" className="player__album-img" />
+            ) : (
+              <span>♪</span>
+            )}
           </div>
           <div className="player__text">
             <div className="player__title">{currentSong.title}</div>

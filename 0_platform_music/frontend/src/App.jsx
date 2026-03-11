@@ -13,6 +13,7 @@ import PlaylistPage from './pages/PlaylistPage';
 import PlaylistDetailPage from './pages/PlaylistDetailPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import UploadPage from './pages/UploadPage';
 import './App.css';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
             <Route path="/artist/:id" element={<ArtistDetailPage />} />
             <Route path="/playlist" element={<PlaylistPage />} />
             <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
+            <Route path="/upload" element={<UploadPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
           </Routes>

@@ -44,6 +44,14 @@
   font-size: 20px;
   color: #fff;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.player__album-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
 }
 
 .player__text {

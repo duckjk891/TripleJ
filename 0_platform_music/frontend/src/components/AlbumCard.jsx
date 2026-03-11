@@ -10,9 +10,13 @@ export default function AlbumCard({ album }) {
     <div className="album-card" onClick={() => navigate(`/album/${album.id}`)}>
       <div
         className="album-card__cover"
-        style={{ background: getAlbumGradient(album.id) }}
+        style={!(album.cover_image && album.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(album.id) } : {}}
       >
-        ♪
+        {album.cover_image && album.cover_image.startsWith('/api/files') ? (
+          <img src={album.cover_image} alt="" className="album-card__cover-img" />
+        ) : (
+          <span>♪</span>
+        )}
         <div className="album-card__play-overlay">
           <div className="album-card__play-btn">
             <FiPlay />

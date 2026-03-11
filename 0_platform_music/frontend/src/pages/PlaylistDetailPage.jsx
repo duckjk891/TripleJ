@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { FiPlay, FiTrash2 } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
 import { usePlayer } from '../contexts/PlayerContext';
+import { useAuth } from '../contexts/AuthContext';
 import { getAlbumGradient, formatDate } from '../utils';
 import * as api from '../api';
 import './PlaylistDetailPage.css';
@@ -11,8 +12,10 @@ export default function PlaylistDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { play } = usePlayer();
+  const { user } = useAuth();
   const [playlist, setPlaylist] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     const fetchPlaylist = async () => {
@@ -20,6 +23,11 @@ export default function PlaylistDetailPage() {
       try {
         const { data } = await api.getPlaylist(id);
         setPlaylist(data);
+
+        if (user && data.songs?.length > 0) {
+          const likesRes = await api.checkLikes(data.songs.map(s => s.id).join(','));
+          setLikedIds(new Set(likesRes.data.liked_ids));
+        }
       } catch (err) {
         console.error('Failed to load playlist:', err);
       } finally {
@@ -27,7 +35,7 @@ export default function PlaylistDetailPage() {
       }
     };
     fetchPlaylist();
-  }, [id]);
+  }, [id, user]);
 
   const handlePlayAll = () => {
     if (playlist?.songs?.length) {
@@ -43,6 +51,19 @@ export default function PlaylistDetailPage() {
     } catch (err) {
       console.error('Failed to delete playlist:', err);
     }
+  };
+
+  const handleToggleLike = async (songId) => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      if (likedIds.has(songId)) {
+        await api.unlikeSong(songId);
+        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+      } else {
+        await api.likeSong(songId);
+        setLikedIds(prev => new Set([...prev, songId]));
+      }
+    } catch (err) { console.error(err); }
   };
 
   if (loading) {
@@ -103,6 +124,8 @@ export default function PlaylistDetailPage() {
                 song={song}
                 rank={idx + 1}
                 songs={playlist.songs}
+                isLiked={likedIds.has(song.id)}
+                onToggleLike={handleToggleLike}
               />
             ))
           ) : (

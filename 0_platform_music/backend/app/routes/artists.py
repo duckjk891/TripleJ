@@ -1,10 +1,19 @@
 import math
+from typing import Optional
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from ..auth import get_current_user
 from ..database import get_db, dict_row, dict_rows
 
 router = APIRouter(prefix="/api/artists")
+
+
+class ArtistCreate(BaseModel):
+    name: str
+    genre: Optional[str] = None
+    description: Optional[str] = None
 
 
 @router.get("/")
@@ -24,6 +33,20 @@ def list_artists(page: int = 1, limit: int = 20, db=Depends(get_db)):
         "artists": dict_rows(rows),
         "pagination": {"page": page, "limit": limit, "total": total, "totalPages": math.ceil(total / limit) if limit else 0},
     }
+
+
+@router.post("/", status_code=201)
+def create_artist(body: ArtistCreate, current_user=Depends(get_current_user), db=Depends(get_db)):
+    if not body.name:
+        return JSONResponse(status_code=400, content={"error": "아티스트 이름은 필수입니다."})
+
+    cur = db.execute(
+        "INSERT INTO artists (name, genre, description) VALUES (?, ?, ?)",
+        (body.name, body.genre, body.description),
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM artists WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict_row(row)
 
 
 @router.get("/{artist_id}")

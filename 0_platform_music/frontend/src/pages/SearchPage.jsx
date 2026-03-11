@@ -3,11 +3,13 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { FiSearch } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
 import AlbumCard from '../components/AlbumCard';
+import { useAuth } from '../contexts/AuthContext';
 import { getAvatarColor, getInitial } from '../utils';
 import * as api from '../api';
 import './SearchPage.css';
 
 export default function SearchPage() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const query = searchParams.get('q') || '';
@@ -16,12 +18,14 @@ export default function SearchPage() {
   const [albums, setAlbums] = useState([]);
   const [artists, setArtists] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     if (!query) {
       setSongs([]);
       setAlbums([]);
       setArtists([]);
+      setLikedIds(new Set());
       return;
     }
 
@@ -34,7 +38,8 @@ export default function SearchPage() {
           api.getArtists({ limit: 50 }),
         ]);
 
-        setSongs(songsRes.data.songs || []);
+        const fetchedSongs = songsRes.data.songs || [];
+        setSongs(fetchedSongs);
 
         // 앨범 클라이언트 필터링
         const filteredAlbums = (albumsRes.data.albums || []).filter(
@@ -49,6 +54,11 @@ export default function SearchPage() {
           (a) => a.name.toLowerCase().includes(query.toLowerCase())
         );
         setArtists(filteredArtists);
+
+        if (user && fetchedSongs.length > 0) {
+          const { data } = await api.checkLikes(fetchedSongs.map(s => s.id).join(','));
+          setLikedIds(new Set(data.liked_ids));
+        }
       } catch (err) {
         console.error('Search failed:', err);
       } finally {
@@ -57,7 +67,20 @@ export default function SearchPage() {
     };
 
     fetchResults();
-  }, [query]);
+  }, [query, user]);
+
+  const handleToggleLike = async (songId) => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      if (likedIds.has(songId)) {
+        await api.unlikeSong(songId);
+        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+      } else {
+        await api.likeSong(songId);
+        setLikedIds(prev => new Set([...prev, songId]));
+      }
+    } catch (err) { console.error(err); }
+  };
 
   if (!query) {
     return (
@@ -112,7 +135,13 @@ export default function SearchPage() {
               <div className="search-results">
                 {songs.length > 0 ? (
                   songs.map((song) => (
-                    <SongItem key={song.id} song={song} songs={songs} />
+                    <SongItem
+                      key={song.id}
+                      song={song}
+                      songs={songs}
+                      isLiked={likedIds.has(song.id)}
+                      onToggleLike={handleToggleLike}
+                    />
                   ))
                 ) : (
                   <div className="search-empty">검색 결과가 없습니다.</div>

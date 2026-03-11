@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { FiChevronRight } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
 import AlbumCard from '../components/AlbumCard';
+import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './MainPage.css';
 
 export default function MainPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [chartSongs, setChartSongs] = useState([]);
   const [latestAlbums, setLatestAlbums] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     const fetchData = async () => {
@@ -18,8 +22,14 @@ export default function MainPage() {
           api.getTop100(),
           api.getLatestAlbums(10),
         ]);
-        setChartSongs(chartRes.data.slice(0, 10));
+        const songs = chartRes.data.slice(0, 10);
+        setChartSongs(songs);
         setLatestAlbums(albumRes.data);
+
+        if (user && songs.length > 0) {
+          const { data } = await api.checkLikes(songs.map(s => s.id).join(','));
+          setLikedIds(new Set(data.liked_ids));
+        }
       } catch (err) {
         console.error('Failed to load main page data:', err);
       } finally {
@@ -27,7 +37,20 @@ export default function MainPage() {
       }
     };
     fetchData();
-  }, []);
+  }, [user]);
+
+  const handleToggleLike = async (songId) => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      if (likedIds.has(songId)) {
+        await api.unlikeSong(songId);
+        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+      } else {
+        await api.likeSong(songId);
+        setLikedIds(prev => new Set([...prev, songId]));
+      }
+    } catch (err) { console.error(err); }
+  };
 
   if (loading) {
     return (
@@ -68,6 +91,8 @@ export default function MainPage() {
                 song={song}
                 rank={song.rank || idx + 1}
                 songs={chartSongs}
+                isLiked={likedIds.has(song.id)}
+                onToggleLike={handleToggleLike}
               />
             ))}
           </div>
