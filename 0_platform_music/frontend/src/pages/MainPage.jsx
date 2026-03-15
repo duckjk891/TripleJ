@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FiChevronRight } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
-import AlbumCard from '../components/AlbumCard';
+import TrackCard from '../components/TrackCard';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './MainPage.css';
@@ -11,20 +11,20 @@ export default function MainPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [chartSongs, setChartSongs] = useState([]);
-  const [latestAlbums, setLatestAlbums] = useState([]);
+  const [latestTracks, setLatestTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [chartRes, albumRes] = await Promise.all([
+        const [chartRes, trackRes] = await Promise.all([
           api.getTop100(),
-          api.getLatestAlbums(10),
+          api.getLatestTracks(10),
         ]);
         const songs = chartRes.data.slice(0, 10);
         setChartSongs(songs);
-        setLatestAlbums(albumRes.data);
+        setLatestTracks(trackRes.data.tracks || []);
 
         if (user && songs.length > 0) {
           const { data } = await api.checkLikes(songs.map(s => s.id).join(','));
@@ -67,9 +67,9 @@ export default function MainPage() {
       <div className="container main-page">
         {/* Banner */}
         <div className="main-banner">
-          <div className="main-banner__title">멜론 차트 TOP 100</div>
+          <div className="main-banner__title">AIMU 인기 차트</div>
           <div className="main-banner__sub">
-            지금 가장 많이 듣는 음악을 확인하세요
+            AI가 만든 음악을 발견하세요
           </div>
           <Link to="/chart" className="main-banner__btn">
             차트 보러가기
@@ -79,7 +79,7 @@ export default function MainPage() {
         {/* TOP 100 */}
         <div className="main-section">
           <div className="main-section__header">
-            <h2 className="main-section__title">멜론 차트 TOP 10</h2>
+            <h2 className="main-section__title">AI Music TOP 10</h2>
             <Link to="/chart" className="main-section__more">
               더보기 <FiChevronRight />
             </Link>
@@ -101,11 +101,11 @@ export default function MainPage() {
         {/* Latest Albums */}
         <div className="main-section">
           <div className="main-section__header">
-            <h2 className="main-section__title">최신 앨범</h2>
+            <h2 className="main-section__title">신규 AI 트랙</h2>
           </div>
           <div className="main-albums">
-            {latestAlbums.map((album) => (
-              <AlbumCard key={album.id} album={album} />
+            {latestTracks.map((track) => (
+              <TrackCard key={track.id} track={track} tracks={latestTracks} />
             ))}
           </div>
         </div>

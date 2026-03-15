@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Music Platform API - Comprehensive Test Script
-Tests all new and existing endpoints against a running server at http://localhost:8001.
+AIMU Platform API v2.0 - Comprehensive Test Script
+
+Tests all endpoints against a running server at http://localhost:8001.
+Requires: PostgreSQL, MongoDB, Redis, MinIO running via docker-compose.
+
 Usage: python test_api.py
 """
 
+import io
+import struct
 import sys
 import uuid
-import struct
 import wave
-import io
 import zlib
+
 import requests
 
 BASE_URL = "http://localhost:8001"
@@ -20,6 +24,11 @@ USER_ID = None
 TEST_EMAIL = f"tester_{uuid.uuid4().hex[:8]}@test.com"
 TEST_PASSWORD = "testpass123"
 TEST_NICKNAME = "TestUser"
+
+# Store IDs for cross-test references
+CREATED_TRACK_ID = None
+SECOND_USER_TOKEN = None
+SECOND_USER_ID = None
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +71,7 @@ def create_test_wav():
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(44100)
-        w.writeframes(b"\x00\x00" * 22050)  # 0.5s silence
+        w.writeframes(b"\x00\x00" * 22050)
     buf.seek(0)
     return buf
 
@@ -75,8 +84,8 @@ def create_test_png():
         return struct.pack(">I", len(data)) + c + crc
 
     signature = b"\x89PNG\r\n\x1a\n"
-    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)  # 1x1 RGB
-    raw_row = b"\x00\xff\x00\x00"  # filter=none, R=255 G=0 B=0
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    raw_row = b"\x00\xff\x00\x00"
     idat_data = zlib.compress(raw_row)
 
     png = signature + _chunk(b"IHDR", ihdr_data) + _chunk(b"IDAT", idat_data) + _chunk(b"IEND", b"")
@@ -129,6 +138,26 @@ def test_register_duplicate():
     log("POST /api/auth/register (duplicate)", ok, r.status_code)
 
 
+def test_register_second_user():
+    """Register a second user for follow tests."""
+    global SECOND_USER_TOKEN, SECOND_USER_ID
+    print("\n[2c] Auth - Register second user")
+    email2 = f"tester2_{uuid.uuid4().hex[:8]}@test.com"
+    r = post("/api/auth/register", json={
+        "email": email2,
+        "password": TEST_PASSWORD,
+        "nickname": "TestUser2",
+    })
+    ok = r.status_code == 201
+    data = r.json()
+    if ok and "token" in data:
+        SECOND_USER_TOKEN = data["token"]
+        SECOND_USER_ID = data.get("user", {}).get("id")
+        log("POST /api/auth/register (user2)", True, r.status_code, f"user_id={SECOND_USER_ID}")
+    else:
+        log("POST /api/auth/register (user2)", False, r.status_code, str(data))
+
+
 def test_login():
     global TOKEN
     print("\n[3] Auth - Login")
@@ -174,49 +203,23 @@ def test_me_no_token():
     log("GET /api/auth/me (no token)", ok, r.status_code)
 
 
-def test_create_artist():
-    """NEW endpoint: POST /api/artists"""
-    print("\n[5] Artist - Create")
-    r = post("/api/artists", json={
-        "name": "TestArtist",
-        "genre": "록",
-    }, headers=auth_headers())
-    ok = r.status_code == 201
-    data = r.json()
-    artist_id = data.get("id") if ok else None
-    log("POST /api/artists", ok, r.status_code, f"artist_id={artist_id}")
-    return artist_id
+# --- Tracks (v2.0, replaces songs) ---
 
-
-def test_create_album(artist_id):
-    """NEW endpoint: POST /api/albums"""
-    print("\n[6] Album - Create")
-    r = post("/api/albums", json={
-        "title": "TestAlbum",
-        "artist_id": artist_id,
-        "genre": "록",
-    }, headers=auth_headers())
-    ok = r.status_code == 201
-    data = r.json()
-    album_id = data.get("id") if ok else None
-    log("POST /api/albums", ok, r.status_code, f"album_id={album_id}")
-    return album_id
-
-
-def test_upload_song(artist_id, album_id):
-    """NEW endpoint: POST /api/songs/upload"""
-    print("\n[7] Song - Upload")
+def test_upload_track():
+    """POST /api/tracks/upload"""
+    global CREATED_TRACK_ID
+    print("\n[5] Track - Upload")
     wav = create_test_wav()
-    files = {"file": ("test_song.wav", wav, "audio/wav")}
+    files = {"file": ("test_track.wav", wav, "audio/wav")}
     data = {
-        "title": "TestSong",
-        "artist_id": str(artist_id),
+        "title": "TestTrack",
+        "genre": "록,인디",
+        "mood": "강렬한",
+        "tags": "테스트,자동화",
     }
-    if album_id:
-        data["album_id"] = str(album_id)
 
     r = requests.post(
-        f"{BASE_URL}/api/songs/upload",
+        f"{BASE_URL}/api/tracks/upload",
         files=files,
         data=data,
         headers=auth_headers(),
@@ -224,64 +227,114 @@ def test_upload_song(artist_id, album_id):
     )
     ok = r.status_code == 201
     rdata = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-    song_id = rdata.get("id") if ok else None
-    log("POST /api/songs/upload", ok, r.status_code, f"song_id={song_id}")
-    return song_id
+    CREATED_TRACK_ID = rdata.get("id") if ok else None
+    log("POST /api/tracks/upload", ok, r.status_code, f"track_id={CREATED_TRACK_ID}")
+    return CREATED_TRACK_ID
 
 
-def test_stream_song(song_id):
-    """NEW endpoint: GET /api/songs/stream/{song_id}"""
-    print("\n[8] Song - Stream")
-    r = get(f"/api/songs/stream/{song_id}", stream=True)
-    ct = r.headers.get("content-type", "")
-    ok = r.status_code == 200 and "audio" in ct
-    log("GET /api/songs/stream/{song_id}", ok, r.status_code, f"Content-Type={ct}")
-    r.close()
+def test_list_tracks():
+    print("\n[6] Track - List")
+    r = get("/api/tracks")
+    ok = r.status_code == 200 and "tracks" in r.json()
+    data = r.json()
+    log("GET /api/tracks", ok, r.status_code, f"count={len(data.get('tracks', []))}")
 
 
-def test_like_song(song_id):
-    print("\n[9] Like - Add")
-    r = post(f"/api/likes/{song_id}", headers=auth_headers())
+def test_list_tracks_genre_filter():
+    print("\n[6b] Track - List with genre filter")
+    r = get("/api/tracks", params={"genre": "록"})
+    ok = r.status_code == 200
+    data = r.json()
+    log("GET /api/tracks?genre=록", ok, r.status_code, f"count={len(data.get('tracks', []))}")
+
+
+def test_search_tracks():
+    print("\n[7] Track - Search")
+    r = get("/api/tracks/search", params={"q": "Test"})
+    ok = r.status_code == 200 and "tracks" in r.json()
+    log("GET /api/tracks/search?q=Test", ok, r.status_code, f"count={len(r.json().get('tracks', []))}")
+
+
+def test_search_tracks_empty():
+    print("\n[7b] Track - Search empty query")
+    r = get("/api/tracks/search")
+    ok = r.status_code == 400
+    log("GET /api/tracks/search (no q)", ok, r.status_code)
+
+
+def test_get_track(track_id):
+    print("\n[8] Track - Get by ID")
+    r = get(f"/api/tracks/{track_id}")
+    ok = r.status_code == 200 and r.json().get("id") == track_id
+    log(f"GET /api/tracks/{track_id}", ok, r.status_code)
+
+
+def test_get_track_not_found():
+    print("\n[8b] Track - Get non-existent")
+    fake_id = "000000000000000000000000"
+    r = get(f"/api/tracks/{fake_id}")
+    ok = r.status_code == 404
+    log("GET /api/tracks/{fake_id}", ok, r.status_code)
+
+
+def test_stream_track(track_id):
+    """GET /api/tracks/stream/{track_id} - returns presigned URL."""
+    print("\n[9] Track - Stream (presigned URL)")
+    r = get(f"/api/tracks/stream/{track_id}")
+    ok = r.status_code == 200 and "stream_url" in r.json()
+    log(f"GET /api/tracks/stream/{track_id}", ok, r.status_code)
+
+
+# --- Likes ---
+
+def test_like_track(track_id):
+    print("\n[10] Like - Add")
+    r = post(f"/api/likes/{track_id}", headers=auth_headers())
     ok = r.status_code == 201
-    log(f"POST /api/likes/{song_id}", ok, r.status_code)
+    log(f"POST /api/likes/{track_id}", ok, r.status_code)
 
 
-def test_like_check(song_id):
-    """NEW endpoint: GET /api/likes/check"""
-    print("\n[10] Like - Check")
-    r = get("/api/likes/check", params={"song_ids": song_id}, headers=auth_headers())
+def test_like_check(track_id):
+    print("\n[11] Like - Check")
+    r = get("/api/likes/check", params={"song_ids": track_id}, headers=auth_headers())
     ok = r.status_code == 200
     data = r.json() if ok else {}
     liked_ids = data.get("liked_ids", [])
-    has_song = song_id in liked_ids
-    log("GET /api/likes/check (liked)", ok and has_song, r.status_code,
-        f"liked_ids={liked_ids}, expected {song_id} in list")
+    has_track = track_id in liked_ids
+    log("GET /api/likes/check (liked)", ok and has_track, r.status_code,
+        f"liked_ids={liked_ids}")
 
 
-def test_unlike_song(song_id):
-    print("\n[11] Like - Remove")
-    r = delete(f"/api/likes/{song_id}", headers=auth_headers())
+def test_unlike_track(track_id):
+    print("\n[12] Like - Remove")
+    r = delete(f"/api/likes/{track_id}", headers=auth_headers())
     ok = r.status_code == 200
-    log(f"DELETE /api/likes/{song_id}", ok, r.status_code)
+    log(f"DELETE /api/likes/{track_id}", ok, r.status_code)
 
 
-def test_like_check_after_unlike(song_id):
-    """Verify song is no longer liked."""
-    print("\n[12] Like - Check after unlike")
-    r = get("/api/likes/check", params={"song_ids": song_id}, headers=auth_headers())
+def test_like_check_after_unlike(track_id):
+    print("\n[13] Like - Check after unlike")
+    r = get("/api/likes/check", params={"song_ids": track_id}, headers=auth_headers())
     ok = r.status_code == 200
     data = r.json() if ok else {}
     liked_ids = data.get("liked_ids", [])
-    not_liked = song_id not in liked_ids
-    log("GET /api/likes/check (unliked)", ok and not_liked, r.status_code,
-        f"liked_ids={liked_ids}, expected empty")
+    not_liked = track_id not in liked_ids
+    log("GET /api/likes/check (unliked)", ok and not_liked, r.status_code)
 
+
+def test_likes_list():
+    print("\n[13b] Like - List")
+    r = get("/api/likes", headers=auth_headers())
+    ok = r.status_code == 200 and "likes" in r.json()
+    log("GET /api/likes", ok, r.status_code)
+
+
+# --- Playlists ---
 
 def test_create_playlist():
-    print("\n[13] Playlist - Create")
+    print("\n[14] Playlist - Create")
     r = post("/api/playlists", json={
         "title": "TestPlaylist",
-        "description": "Test description",
         "is_public": True,
     }, headers=auth_headers())
     ok = r.status_code == 201
@@ -291,30 +344,46 @@ def test_create_playlist():
     return pl_id
 
 
-def test_add_song_to_playlist(pl_id, song_id):
-    print("\n[14] Playlist - Add song")
-    r = post(f"/api/playlists/{pl_id}/songs", json={"song_id": song_id}, headers=auth_headers())
+def test_add_track_to_playlist(pl_id, track_id):
+    print("\n[15] Playlist - Add track")
+    r = post(f"/api/playlists/{pl_id}/tracks", json={"track_id": track_id}, headers=auth_headers())
     ok = r.status_code == 201
-    log(f"POST /api/playlists/{pl_id}/songs", ok, r.status_code)
+    log(f"POST /api/playlists/{pl_id}/tracks", ok, r.status_code)
 
 
-def test_get_playlist(pl_id, expected_song_id):
-    print("\n[15] Playlist - Get (with songs)")
+def test_get_playlist(pl_id, expected_track_id):
+    print("\n[16] Playlist - Get (with tracks)")
     r = get(f"/api/playlists/{pl_id}", headers=auth_headers())
     ok = r.status_code == 200
     data = r.json() if ok else {}
-    songs = data.get("songs", [])
-    has_song = any(s.get("id") == expected_song_id for s in songs)
-    log(f"GET /api/playlists/{pl_id}", ok and has_song, r.status_code,
-        f"songs count={len(songs)}, has expected song={has_song}")
+    tracks = data.get("tracks", [])
+    has_track = any(t.get("id") == expected_track_id for t in tracks)
+    log(f"GET /api/playlists/{pl_id}", ok and has_track, r.status_code,
+        f"tracks count={len(tracks)}")
 
 
-def test_upload_image(album_id):
-    """NEW endpoint: POST /api/upload/image"""
-    print("\n[16] Image - Upload")
+def test_list_playlists():
+    print("\n[17] Playlist - List")
+    r = get("/api/playlists", headers=auth_headers())
+    ok = r.status_code == 200 and isinstance(r.json(), list)
+    log("GET /api/playlists", ok, r.status_code)
+
+
+def test_playlists_no_auth():
+    print("\n[17b] Playlist - No auth")
+    r = get("/api/playlists")
+    ok = r.status_code == 401
+    log("GET /api/playlists (no token)", ok, r.status_code)
+
+
+# --- Image Upload ---
+
+def test_upload_cover_image(track_id):
+    """POST /api/upload/image (cover type)"""
+    print("\n[18] Image - Upload cover")
     png = create_test_png()
-    files = {"file": ("test.png", png, "image/png")}
-    data = {"type": "album", "id": str(album_id)}
+    files = {"file": ("cover.png", png, "image/png")}
+    data = {"type": "cover", "id": track_id}
 
     r = requests.post(
         f"{BASE_URL}/api/upload/image",
@@ -326,135 +395,130 @@ def test_upload_image(album_id):
     ok = r.status_code == 201
     rdata = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     url = rdata.get("file_url", "")
-    log("POST /api/upload/image", ok, r.status_code, f"file_url={url}")
+    log("POST /api/upload/image (cover)", ok, r.status_code, f"url={'yes' if url else 'no'}")
 
 
-# ---------------------------------------------------------------------------
-# Existing API regression tests
-# ---------------------------------------------------------------------------
+# --- Charts ---
 
-def test_existing_apis():
-    print("\n=== Existing API Regression Tests ===")
-
-    # Songs
-    print("\n[R1] Songs - List")
-    r = get("/api/songs")
-    ok = r.status_code == 200 and "songs" in r.json()
-    log("GET /api/songs", ok, r.status_code)
-
-    print("\n[R2] Songs - List with genre filter")
-    r = get("/api/songs", params={"genre": "발라드"})
-    ok = r.status_code == 200
-    data = r.json()
-    if ok and data.get("songs"):
-        all_ballad = all(s.get("genre") == "발라드" for s in data["songs"])
-        log("GET /api/songs?genre=발라드", all_ballad, r.status_code, f"count={len(data['songs'])}")
-    else:
-        log("GET /api/songs?genre=발라드", ok, r.status_code)
-
-    print("\n[R3] Songs - Search")
-    r = get("/api/songs/search", params={"q": "Shine"})
-    ok = r.status_code == 200 and "songs" in r.json()
-    log("GET /api/songs/search?q=Shine", ok, r.status_code, f"count={len(r.json().get('songs', []))}")
-
-    print("\n[R4] Songs - Search empty query")
-    r = get("/api/songs/search")
-    ok = r.status_code == 400
-    log("GET /api/songs/search (no q)", ok, r.status_code)
-
-    print("\n[R5] Songs - Get by ID")
-    r = get("/api/songs/1")
-    ok = r.status_code == 200 and r.json().get("id") == 1
-    log("GET /api/songs/1", ok, r.status_code)
-
-    print("\n[R6] Songs - Get non-existent")
-    r = get("/api/songs/99999")
-    ok = r.status_code == 404
-    log("GET /api/songs/99999", ok, r.status_code)
-
-    # Albums
-    print("\n[R7] Albums - List")
-    r = get("/api/albums")
-    ok = r.status_code == 200 and "albums" in r.json()
-    log("GET /api/albums", ok, r.status_code, f"count={len(r.json().get('albums', []))}")
-
-    print("\n[R8] Albums - Latest")
-    r = get("/api/albums/latest")
-    ok = r.status_code == 200 and isinstance(r.json(), list)
-    log("GET /api/albums/latest", ok, r.status_code, f"count={len(r.json())}")
-
-    print("\n[R9] Albums - Get by ID")
-    r = get("/api/albums/1")
-    ok = r.status_code == 200 and "songs" in r.json()
-    log("GET /api/albums/1", ok, r.status_code, f"songs={len(r.json().get('songs', []))}")
-
-    print("\n[R10] Albums - Get non-existent")
-    r = get("/api/albums/99999")
-    ok = r.status_code == 404
-    log("GET /api/albums/99999", ok, r.status_code)
-
-    # Artists
-    print("\n[R11] Artists - List")
-    r = get("/api/artists")
-    ok = r.status_code == 200 and "artists" in r.json()
-    log("GET /api/artists", ok, r.status_code, f"count={len(r.json().get('artists', []))}")
-
-    print("\n[R12] Artists - Get by ID")
-    r = get("/api/artists/1")
-    ok = r.status_code == 200 and r.json().get("id") == 1
-    log("GET /api/artists/1", ok, r.status_code)
-
-    print("\n[R13] Artists - Get non-existent")
-    r = get("/api/artists/99999")
-    ok = r.status_code == 404
-    log("GET /api/artists/99999", ok, r.status_code)
-
-    print("\n[R14] Artists - Albums")
-    r = get("/api/artists/1/albums")
-    ok = r.status_code == 200 and isinstance(r.json(), list)
-    log("GET /api/artists/1/albums", ok, r.status_code, f"count={len(r.json())}")
-
-    print("\n[R15] Artists - Songs")
-    r = get("/api/artists/1/songs")
-    ok = r.status_code == 200 and isinstance(r.json(), list)
-    log("GET /api/artists/1/songs", ok, r.status_code, f"count={len(r.json())}")
-
-    # Charts
-    print("\n[R16] Charts - Top 100")
+def test_charts_top100():
+    print("\n[19] Charts - Top 100 (daily)")
     r = get("/api/charts/top100")
     ok = r.status_code == 200 and isinstance(r.json(), list)
     log("GET /api/charts/top100", ok, r.status_code, f"count={len(r.json())}")
 
-    print("\n[R17] Charts - Genre")
+
+def test_charts_top100_weekly():
+    print("\n[19b] Charts - Top 100 (weekly)")
+    r = get("/api/charts/top100", params={"chart_type": "weekly"})
+    ok = r.status_code == 200 and isinstance(r.json(), list)
+    log("GET /api/charts/top100?chart_type=weekly", ok, r.status_code)
+
+
+def test_charts_genre():
+    print("\n[20] Charts - Genre")
     r = get("/api/charts/genre/댄스")
     ok = r.status_code == 200 and isinstance(r.json(), list)
     log("GET /api/charts/genre/댄스", ok, r.status_code, f"count={len(r.json())}")
 
-    # Playlists (auth required)
-    print("\n[R18] Playlists - List")
-    r = get("/api/playlists", headers=auth_headers())
+
+# --- Artists (v2.0: creators) ---
+
+def test_list_artists():
+    print("\n[21] Artists (Creators) - List")
+    r = get("/api/artists")
+    ok = r.status_code == 200 and "artists" in r.json()
+    log("GET /api/artists", ok, r.status_code, f"count={len(r.json().get('artists', []))}")
+
+
+def test_get_artist():
+    print("\n[22] Artists (Creators) - Get by ID")
+    if not USER_ID:
+        log("GET /api/artists/{id}", False, msg="No USER_ID")
+        return
+    r = get(f"/api/artists/{USER_ID}")
+    ok = r.status_code == 200 and r.json().get("id") == USER_ID
+    log(f"GET /api/artists/{USER_ID}", ok, r.status_code)
+
+
+def test_get_artist_tracks():
+    print("\n[23] Artists (Creators) - Tracks")
+    if not USER_ID:
+        log("GET /api/artists/{id}/tracks", False, msg="No USER_ID")
+        return
+    r = get(f"/api/artists/{USER_ID}/tracks")
     ok = r.status_code == 200 and isinstance(r.json(), list)
-    log("GET /api/playlists", ok, r.status_code)
+    log(f"GET /api/artists/{USER_ID}/tracks", ok, r.status_code, f"count={len(r.json())}")
 
-    print("\n[R19] Playlists - No auth")
-    r = get("/api/playlists")
-    ok = r.status_code == 401
-    log("GET /api/playlists (no token)", ok, r.status_code)
 
-    # Likes (auth required)
-    print("\n[R20] Likes - List")
-    r = get("/api/likes", headers=auth_headers())
-    ok = r.status_code == 200 and "likes" in r.json()
-    log("GET /api/likes", ok, r.status_code)
+# --- Follows ---
 
-    print("\n[R21] Likes - No auth")
-    r = get("/api/likes")
-    ok = r.status_code == 401
-    log("GET /api/likes (no token)", ok, r.status_code)
+def test_follow_user():
+    print("\n[24] Follow - Follow user")
+    if not SECOND_USER_ID:
+        log("POST /api/follows/{id}", False, msg="No second user")
+        return
+    r = post(f"/api/follows/{SECOND_USER_ID}", headers=auth_headers())
+    ok = r.status_code == 201
+    log(f"POST /api/follows/{SECOND_USER_ID}", ok, r.status_code)
+
+
+def test_follow_self():
+    print("\n[24b] Follow - Follow self")
+    if not USER_ID:
+        log("POST /api/follows/{id} (self)", False, msg="No USER_ID")
+        return
+    r = post(f"/api/follows/{USER_ID}", headers=auth_headers())
+    ok = r.status_code == 400
+    log("POST /api/follows/{id} (self)", ok, r.status_code)
+
+
+def test_follow_duplicate():
+    print("\n[24c] Follow - Duplicate follow")
+    if not SECOND_USER_ID:
+        log("POST /api/follows/{id} (dup)", False, msg="No second user")
+        return
+    r = post(f"/api/follows/{SECOND_USER_ID}", headers=auth_headers())
+    ok = r.status_code == 409
+    log("POST /api/follows/{id} (duplicate)", ok, r.status_code)
+
+
+def test_get_following():
+    print("\n[25] Follow - Following list")
+    r = get("/api/follows/following", headers=auth_headers())
+    ok = r.status_code == 200 and "following" in r.json()
+    data = r.json() if ok else {}
+    log("GET /api/follows/following", ok, r.status_code, f"count={len(data.get('following', []))}")
+
+
+def test_get_followers():
+    print("\n[26] Follow - Followers list (from user2's perspective)")
+    r = get("/api/follows/followers", headers=auth_headers(SECOND_USER_TOKEN))
+    ok = r.status_code == 200 and "followers" in r.json()
+    data = r.json() if ok else {}
+    log("GET /api/follows/followers", ok, r.status_code, f"count={len(data.get('followers', []))}")
+
+
+def test_unfollow_user():
+    print("\n[27] Follow - Unfollow")
+    if not SECOND_USER_ID:
+        log("DELETE /api/follows/{id}", False, msg="No second user")
+        return
+    r = delete(f"/api/follows/{SECOND_USER_ID}", headers=auth_headers())
+    ok = r.status_code == 200
+    log(f"DELETE /api/follows/{SECOND_USER_ID}", ok, r.status_code)
+
+
+# --- Logout ---
+
+def test_logout():
+    print("\n[28] Auth - Logout")
+    r = post("/api/auth/logout", headers=auth_headers())
+    ok = r.status_code == 200
+    log("POST /api/auth/logout", ok, r.status_code)
 
 
 # ---------------------------------------------------------------------------
-# Cleanup helpers
+# Cleanup
 # ---------------------------------------------------------------------------
 
 def cleanup_playlist(pl_id):
@@ -468,12 +532,12 @@ def cleanup_playlist(pl_id):
 
 def main():
     print("=" * 60)
-    print("  Music Platform API Test Suite")
+    print("  AIMU Platform API v2.0 Test Suite")
     print(f"  Server: {BASE_URL}")
     print(f"  Test user: {TEST_EMAIL}")
     print("=" * 60)
 
-    # --- Health check (gate) ---
+    # --- Health ---
     if not test_health():
         print("\n*** Server is not running. Aborting. ***")
         sys.exit(1)
@@ -484,48 +548,68 @@ def main():
         sys.exit(1)
 
     test_register_duplicate()
+    test_register_second_user()
     test_login()
     test_login_wrong_password()
     test_me()
     test_me_no_token()
 
-    # --- New endpoints: create artist, album, upload song ---
-    artist_id = test_create_artist()
-    album_id = test_create_album(artist_id) if artist_id else None
+    # --- Track upload ---
+    track_id = test_upload_track()
+    if not track_id:
+        print("\n*** Track upload failed. Some tests will be skipped. ***")
 
-    # For upload/stream tests we need valid IDs. If create failed (not yet implemented),
-    # fall back to existing seed data.
-    use_artist_id = artist_id or 1
-    use_album_id = album_id or 1
+    # --- Track listing/search ---
+    test_list_tracks()
+    test_list_tracks_genre_filter()
+    test_search_tracks()
+    test_search_tracks_empty()
 
-    song_id = test_upload_song(use_artist_id, use_album_id)
-
-    # For streaming/like/playlist tests, fall back to seed song 1 if upload not available.
-    use_song_id = song_id or 1
-
-    if song_id:
-        test_stream_song(song_id)
-    else:
-        print("\n[8] Song - Stream (SKIPPED - upload not available, testing with seed song)")
-        test_stream_song(1)
+    if track_id:
+        test_get_track(track_id)
+        test_stream_track(track_id)
+    test_get_track_not_found()
 
     # --- Like flow ---
-    test_like_song(use_song_id)
-    test_like_check(use_song_id)
-    test_unlike_song(use_song_id)
-    test_like_check_after_unlike(use_song_id)
+    if track_id:
+        test_like_track(track_id)
+        test_like_check(track_id)
+        test_unlike_track(track_id)
+        test_like_check_after_unlike(track_id)
+    test_likes_list()
 
     # --- Playlist flow ---
     pl_id = test_create_playlist()
-    if pl_id:
-        test_add_song_to_playlist(pl_id, use_song_id)
-        test_get_playlist(pl_id, use_song_id)
+    if pl_id and track_id:
+        test_add_track_to_playlist(pl_id, track_id)
+        test_get_playlist(pl_id, track_id)
+    test_list_playlists()
+    test_playlists_no_auth()
 
     # --- Image upload ---
-    test_upload_image(use_album_id)
+    if track_id:
+        test_upload_cover_image(track_id)
 
-    # --- Existing API regression ---
-    test_existing_apis()
+    # --- Charts ---
+    test_charts_top100()
+    test_charts_top100_weekly()
+    test_charts_genre()
+
+    # --- Artists (Creators) ---
+    test_list_artists()
+    test_get_artist()
+    test_get_artist_tracks()
+
+    # --- Follows ---
+    test_follow_user()
+    test_follow_self()
+    test_follow_duplicate()
+    test_get_following()
+    test_get_followers()
+    test_unfollow_user()
+
+    # --- Logout ---
+    test_logout()
 
     # --- Cleanup ---
     cleanup_playlist(pl_id)

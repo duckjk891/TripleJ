@@ -30,7 +30,7 @@ export default function MusicPlayer() {
     return (
       <div className="player">
         <div className="player__inner">
-          <div className="player__empty">재생 중인 곡이 없습니다</div>
+          <div className="player__empty">재생할 트랙을 선택하세요</div>
         </div>
       </div>
     );

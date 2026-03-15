@@ -1,13 +1,13 @@
 // ID 기반으로 HSL 그라데이션 색상 생성
 export function getAlbumGradient(id) {
   const hue = ((id || 0) * 137) % 360;
-  return `linear-gradient(135deg, hsl(${hue}, 60%, 50%), hsl(${(hue + 40) % 360}, 70%, 40%))`;
+  return `linear-gradient(135deg, hsl(${250 + (hue % 60)}, 60%, 45%), hsl(${180 + ((hue + 30) % 60)}, 70%, 40%))`;
 }
 
 // 아티스트 아바타 배경색
 export function getAvatarColor(id) {
   const hue = ((id || 0) * 97) % 360;
-  return `hsl(${hue}, 55%, 50%)`;
+  return `hsl(${250 + (hue % 60)}, 55%, 50%)`;
 }
 
 // 이름 첫글자 추출

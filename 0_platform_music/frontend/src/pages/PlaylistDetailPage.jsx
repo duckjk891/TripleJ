@@ -130,7 +130,7 @@ export default function PlaylistDetailPage() {
             ))
           ) : (
             <div className="playlist-detail__empty">
-              플레이리스트에 곡이 없습니다. 곡을 추가해보세요.
+              플레이리스트에 트랙이 없습니다. 트랙을 추가해보세요.
             </div>
           )}
         </div>

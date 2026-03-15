@@ -5,11 +5,11 @@ export default function Footer() {
     <footer className="footer">
       <div className="footer__inner">
         <div className="footer__info">
-          <span className="footer__brand">melon</span>
+          <span className="footer__brand">AIMU</span>
           <p className="footer__text">
-            (주) 멜론컴퍼니 | 대표이사 : 홍길동<br />
-            서울특별시 강남구 테헤란로 1234<br />
-            &copy; MELON COMPANY. All Rights Reserved.
+            (주) AIMU | AI Music Universe<br />
+            AI로 만든 음악을 공유하는 플랫폼<br />
+            &copy; 2024 AIMU. All Rights Reserved.
           </p>
         </div>
         <div className="footer__links">

@@ -90,7 +90,7 @@
 }
 
 .album-detail__songs {
-  background: var(--color-white);
+  background: var(--color-card);
   border-radius: 8px;
   border: 1px solid var(--color-border);
   overflow: hidden;
@@ -100,4 +100,12 @@
   text-align: center;
   padding: 60px 0;
   color: var(--color-text-sub);
+}
+
+@media (max-width: 768px) {
+  .album-detail__header { flex-direction: column; align-items: center; text-align: center; gap: 16px; }
+  .album-detail__cover { width: 180px; height: 180px; font-size: 48px; }
+  .album-detail__title { font-size: 22px; }
+  .album-detail__meta { justify-content: center; flex-wrap: wrap; }
+  .album-detail__play-all { margin-top: 12px; }
 }

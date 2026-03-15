@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: 'http://localhost:8001/api',
+  baseURL: `${window.location.protocol}//${window.location.hostname}:9000/api`,
 });
 
 // JWT 토큰 자동 첨부
@@ -110,9 +110,16 @@ export const likeSong = (songId) =>
 export const unlikeSong = (songId) =>
   API.delete(`/likes/${songId}`);
 
-// Upload
-export const uploadSong = (formData, onProgress) =>
-  API.post('/songs/upload', formData, {
+// Tracks (v2.0)
+export const getLatestTracks = (limit = 10) =>
+  API.get('/tracks', { params: { limit, sort: 'created_at' } });
+
+export const searchTracks = (q, params) =>
+  API.get('/tracks/search', { params: { q, ...params } });
+
+// Upload (v2.0 - tracks API)
+export const uploadTrack = (formData, onProgress) =>
+  API.post('/tracks/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress,
   });
@@ -122,11 +129,32 @@ export const uploadImage = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 
-// Create Artist / Album
-export const createArtist = (name, genre, description) =>
-  API.post('/artists', { name, genre, description });
+// My tracks
+export const getMyTracks = (params) => API.get('/tracks/my', { params });
+export const deleteTrack = (id) => API.delete(`/tracks/${id}`);
+export const updateTrack = (id, data) => API.put(`/tracks/${id}`, data);
 
-export const createAlbum = (title, artistId, genre, description) =>
-  API.post('/albums', { title, artist_id: artistId, genre, description });
+// Legacy aliases
+export const uploadSong = uploadTrack;
+
+// AI Generation (작업실)
+export const generateLyrics = (data) => API.post('/generate/lyrics/', data);
+export const createGeneration = (data) => API.post('/generate/', data);
+export const startMusicGeneration = (id) => API.post(`/generate/${id}/start/`);
+export const getGenerations = (params) => API.get('/generate/', { params });
+export const getGeneration = (id) => API.get(`/generate/${id}`);
+export const deleteGeneration = (id) => API.delete(`/generate/${id}`);
+export const streamGeneration = (id) => API.get(`/generate/${id}/stream/`);
+
+// Admin
+export const getAdminDashboard = () => API.get('/admin/dashboard');
+export const getAdminUsers = (params) => API.get('/admin/users', { params });
+export const getAdminUser = (id) => API.get(`/admin/users/${id}`);
+export const updateUserRole = (id, role) => API.put(`/admin/users/${id}/role`, { role });
+export const banUser = (id, is_banned, reason) => API.put(`/admin/users/${id}/ban`, { is_banned, reason });
+export const getAdminTracks = (params) => API.get('/admin/tracks', { params });
+export const deleteAdminTrack = (id) => API.delete(`/admin/tracks/${id}`);
+export const updateTrackVisibility = (id, is_public) => API.put(`/admin/tracks/${id}/visibility`, { is_public });
+export const getAdminLogs = (params) => API.get('/admin/logs', { params });
 
 export default API;

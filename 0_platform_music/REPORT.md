@@ -444,3 +444,784 @@ python tests/test_api.py
 ```
 
 **프로젝트가 100% 완성되었습니다.**
+
+---
+---
+
+## v2.0 -- 멀티 DB 아키텍처 전환 보고서
+### 작성일: 2026-03-11
+
+---
+
+## 1. 전체 아키텍처
+
+```
+                          +--------------------+
+                          |    클라이언트       |
+                          |  React 19 + Vite 7 |
+                          +--------+-----------+
+                                   |
+                          HTTPS / REST API
+                                   |
+                          +--------v-----------+
+                          |   FastAPI v2.0     |
+                          |   (Port 8001)      |
+                          |                    |
+                          |  +-- lifespan ---+ |
+                          |  | DB init/close | |
+                          |  | APScheduler   | |
+                          |  +---------------+ |
+                          +--+--+--+--+--+-----+
+                             |  |  |  |  |
+              +--------------+  |  |  |  +---------------+
+              |                 |  |  |                   |
+     +--------v--------+ +-----v--v------+ +------v------+------v--------+
+     |  PostgreSQL 16  | |   MongoDB 7   | |   Redis 7   |  MinIO S3    |
+     |  Port: 5432     | |  Port: 27017  | |  Port: 6379 |  Port: 9000  |
+     |                 | |               | |             |  Console:9001|
+     | +-------------+ | | +-----------+ | | +---------+ | +----------+ |
+     | | users       | | | | tracks    | | | | chart:  | | | audio/   | |
+     | | follows     | | | | comments  | | | |  daily  | | | covers/  | |
+     | | likes       | | | |           | | | |  weekly | | | profiles/| |
+     | | playlists   | | | |           | | | |  all    | | |          | |
+     | | playlist_   | | | |           | | | | session | | |          | |
+     | |   tracks    | | | |           | | | | cache:* | | |          | |
+     | +-------------+ | | +-----------+ | | | play    | | +----------+ |
+     |                 | |               | | |  count  | |              |
+     +-----------------+ +---------------+ | |  buffer | |              |
+                                           | +---------+ |              |
+                                           +-------------+--------------+
+                                                  |
+                                          +-------v--------+
+                                          | Elasticsearch  |
+                                          |   8.12.0       |
+                                          |  Port: 9200    |
+                                          | (2단계 예정)   |
+                                          +----------------+
+```
+
+---
+
+## 2. DB별 역할 분담 다이어그램
+
+```
++================================================================================+
+|                        데이터 분산 아키텍처                                     |
++================================================================================+
+|                                                                                |
+|  PostgreSQL 16 (관계형, 트랜잭션 무결성)                                       |
+|  +-------------------+-------------------+-------------------+                 |
+|  | users             | follows           | likes             |                 |
+|  | UUID PK           | follower_id (FK)  | user_id (FK)     |                 |
+|  | email UNIQUE      | followee_id (FK)  | track_id VARCHAR  |                 |
+|  | password_hash     | composite PK      |   (Mongo ObjectId)|                 |
+|  | nickname          | self-follow 방지  | composite PK     |                 |
+|  | bio, plan         |                   |                   |                 |
+|  | profile_image     |                   |                   |                 |
+|  +-------------------+-------------------+-------------------+                 |
+|  | playlists         | playlist_tracks                       |                 |
+|  | UUID PK           | playlist_id (FK)                     |                 |
+|  | user_id (FK)      | track_id VARCHAR (Mongo ObjectId)    |                 |
+|  | title, is_public  | position, added_at                   |                 |
+|  +-------------------+---------------------------------------+                 |
+|                                                                                |
+|  MongoDB 7 (유연한 스키마, 배열 필드)                                          |
+|  +-------------------------------------------+                                |
+|  | tracks 컬렉션                              |                                |
+|  | _id: ObjectId                              |                                |
+|  | title, uploader_id (PG UUID)               |                                |
+|  | genre: [String], mood: [String]            |                                |
+|  | tags: [String], ai_model, prompt           |                                |
+|  | audio_url (MinIO), cover_image_url (MinIO) |                                |
+|  | play_count, like_count, comment_count      |                                |
+|  | duration_sec, bpm, key, language            |                                |
+|  | is_public, created_at, updated_at          |                                |
+|  +-------------------------------------------+                                |
+|  | comments 컬렉션                            |                                |
+|  | _id, track_id (ObjectId), user_id (UUID)   |                                |
+|  | user_nickname, content, created_at         |                                |
+|  +-------------------------------------------+                                |
+|                                                                                |
+|  Redis 7 (실시간, 캐시, 세션)                                                  |
+|  +-------------------------------------------+                                |
+|  | chart:daily:{YYYYMMDD}  (Sorted Set, 48h) |                                |
+|  | chart:weekly:{YYYY-Www} (Sorted Set, 14d) |                                |
+|  | chart:alltime           (Sorted Set)      |                                |
+|  | session:{user_id}       (Hash, 7d TTL)    |                                |
+|  | cache:track:{id}        (String, 10min)   |                                |
+|  | cache:top100:daily      (String, 5min)    |                                |
+|  | cache:top100:weekly     (String, 10min)   |                                |
+|  | playcount:buffer:{id}   (Counter, 1m)     |                                |
+|  +-------------------------------------------+                                |
+|                                                                                |
+|  MinIO S3 (오브젝트 스토리지)                                                  |
+|  +-------------------------------------------+                                |
+|  | music-platform-audio/                      |                                |
+|  |   tracks/{uploader_id}/{track_id}.mp3      |                                |
+|  | music-platform-images/                     |                                |
+|  |   covers/{uploader_id}/{track_id}.jpg      |                                |
+|  |   profiles/{user_id}.jpg                   |                                |
+|  +-------------------------------------------+                                |
++================================================================================+
+```
+
+---
+
+## 3. 데이터 플로우 다이어그램
+
+### 트랙 업로드 플로우 (v2.0)
+```
+ 사용자                 프론트엔드                 FastAPI v2               DB/Storage
+   |                      |                          |                        |
+   |  1. 업로드 폼 작성    |                          |                        |
+   |--------------------->|                          |                        |
+   |                      |                          |                        |
+   |                      |  2. POST /api/tracks/    |                        |
+   |                      |     upload (multipart)   |                        |
+   |                      |------------------------->|                        |
+   |                      |                          |  3. MinIO put_object   |
+   |                      |                          |  (오디오 파일)          |
+   |                      |                          |----------------------->|
+   |                      |                          |                        |
+   |                      |                          |  4. MongoDB insert_one |
+   |                      |                          |  (tracks 컬렉션)       |
+   |                      |                          |----------------------->|
+   |                      |                          |                        |
+   |                      |<-------------------------|  track 정보 반환       |
+   |  5. 완료             |                          |                        |
+   |<---------------------|                          |                        |
+```
+
+### 재생수 동기화 플로우 (v2.0)
+```
+ 사용자       FastAPI          Redis                MongoDB           Redis Charts
+   |            |                |                     |                  |
+   | GET track  |                |                     |                  |
+   |----------->|                |                     |                  |
+   |            | INCR           |                     |                  |
+   |            | playcount:     |                     |                  |
+   |            | buffer:{id}    |                     |                  |
+   |            |--------------->|                     |                  |
+   |<-----------|                |                     |                  |
+   |            |                |                     |                  |
+   |            |   (매 60초 APScheduler)               |                  |
+   |            |                |                     |                  |
+   |            | SCAN + GETDEL  |                     |                  |
+   |            |--------------->|                     |                  |
+   |            |<---------------|  count 값            |                  |
+   |            |                |                     |                  |
+   |            | update_one     |                     |                  |
+   |            | $inc play_count|                     |                  |
+   |            |------------------------------------>|                  |
+   |            |                |                     |                  |
+   |            | ZINCRBY chart:daily/weekly/alltime   |                  |
+   |            |---------------------------------------------------->|
+   |            |                |                     |                  |
+   |            | DEL cache:top100:*                   |                  |
+   |            |---------------------------------------------------->|
+```
+
+### 좋아요 플로우 (v2.0 -- PG + Mongo 크로스 업데이트)
+```
+ 사용자       FastAPI          PostgreSQL           MongoDB
+   |            |                |                     |
+   | POST       |                |                     |
+   | /likes/    |                |                     |
+   | {track_id} |                |                     |
+   |----------->|                |                     |
+   |            | INSERT likes   |                     |
+   |            | (user_id,      |                     |
+   |            |  track_id)     |                     |
+   |            |--------------->|                     |
+   |            |                |                     |
+   |            | update_one     |                     |
+   |            | $inc           |                     |
+   |            | like_count + 1 |                     |
+   |            |------------------------------------>|
+   |            |                |                     |
+   |<-----------|  "좋아요 추가" |                     |
+```
+
+### 차트 조회 플로우 (v2.0 -- Redis + Mongo)
+```
+ 사용자       FastAPI          Redis                MongoDB
+   |            |                |                     |
+   | GET        |                |                     |
+   | /charts/   |                |                     |
+   | top100     |                |                     |
+   |----------->|                |                     |
+   |            | GET cache:     |                     |
+   |            | top100:daily   |                     |
+   |            |--------------->|                     |
+   |            |<---------------|  HIT? -> 즉시 반환  |
+   |            |                |                     |
+   |            | (MISS)         |                     |
+   |            | ZREVRANGE      |                     |
+   |            | chart:daily:   |                     |
+   |            | {date} 0 99   |                     |
+   |            |--------------->|                     |
+   |            |<---------------|  track_id 목록      |
+   |            |                |                     |
+   |            | find $in       |                     |
+   |            | [track_ids]    |                     |
+   |            |------------------------------------>|
+   |            |<------------------------------------|  상세 정보
+   |            |                |                     |
+   |            | SETEX cache:   |                     |
+   |            | top100:daily   |                     |
+   |            |--------------->|                     |
+   |<-----------|  차트 반환     |                     |
+```
+
+---
+
+## 4. 폴더 구조 트리 (v2.0)
+
+```
+0_platform_music/
+|
++-- PLAN.md                              # 프로젝트 계획서 (v1.0 + v2.0)
++-- REPORT.md                            # 보고서 (v1.0 + v2.0, 이 파일)
+|
++-- backend/
+|   +-- docker-compose.yml               # [v2.0] 5개 DB 서비스 오케스트레이션
+|   +-- .env                             # [v2.0] 환경 변수 (DB 접속 정보)
+|   +-- .env.example                     # [v2.0] 환경 변수 템플릿
+|   +-- requirements.txt                 # [수정] 기존 6개 + 신규 8개 패키지
+|   +-- music.db                         # [레거시] SQLite DB (더 이상 사용 안 함)
+|   |
+|   +-- infra/                           # [v2.0] DB 초기화 스크립트
+|   |   +-- init_postgres.sql            #   PostgreSQL 테이블 + 인덱스 (5개 테이블)
+|   |   +-- init_mongo.js               #   MongoDB 컬렉션 + 인덱스 (tracks, comments)
+|   |   +-- init_minio.py               #   MinIO 버킷 생성 스크립트
+|   |
+|   +-- uploads/                         # [레거시] 로컬 파일 저장소 -> MinIO로 대체
+|   |
+|   +-- tests/
+|   |   +-- test_api.py                  # API 테스트 (v1.0 기준, 수정 필요)
+|   |
+|   +-- app/
+|       +-- __init__.py
+|       +-- main.py                      # [v2.0] lifespan + APScheduler + 9개 라우터
+|       +-- config.py                    # [v2.0] pydantic-settings 기반 설정
+|       +-- auth.py                      # [v2.0] JWT + Redis 세션 검증
+|       +-- database.py                  # [레거시] SQLite 모듈 (미사용)
+|       |
+|       +-- database/                    # [v2.0] 멀티 DB 연결 패키지
+|       |   +-- __init__.py              #   통합 export
+|       |   +-- postgres.py              #   asyncpg 연결 풀 (init/get_pg/close)
+|       |   +-- mongodb.py              #   motor 비동기 클라이언트 (init/get_mongo/close)
+|       |   +-- redis.py                #   redis.asyncio (init/get_redis/close)
+|       |   +-- minio.py               #   minio-py S3 클라이언트 (init/get_minio)
+|       |   +-- elasticsearch.py        #   AsyncElasticsearch (2단계용)
+|       |
+|       +-- models/                      # [v2.0] Pydantic 모델
+|       |   +-- __init__.py
+|       |   +-- user.py                  #   UserCreate, LoginRequest, UserResponse
+|       |   +-- track.py                #   TrackCreate, TrackUploadForm, TrackResponse
+|       |   +-- playlist.py             #   PlaylistCreate, PlaylistUpdate, AddTrack
+|       |
+|       +-- routes/                      # 라우트 (전면 재작성)
+|       |   +-- __init__.py
+|       |   +-- auth.py                  # [v2.0] PostgreSQL + Redis 세션
+|       |   +-- tracks.py               # [v2.0] MongoDB CRUD + MinIO + Redis 캐시
+|       |   +-- albums.py               # [v2.0] Mongo 기반 앨범 조회 (호환)
+|       |   +-- artists.py              # [v2.0] PG users + Mongo 집계 (호환)
+|       |   +-- charts.py               # [v2.0] Redis Sorted Set + Mongo 배치
+|       |   +-- playlists.py            # [v2.0] PG + Mongo 크로스 쿼리
+|       |   +-- likes.py                # [v2.0] PG likes + Mongo like_count 동기화
+|       |   +-- upload.py               # [v2.0] MinIO presigned URL 업로드
+|       |   +-- follows.py              # [v2.0] 신규 팔로우/언팔로우
+|       |   +-- songs.py                # [레거시] SQLite 기반 (미사용)
+|       |
+|       +-- services/                    # [v2.0] 백그라운드 서비스
+|           +-- __init__.py
+|           +-- playcount_sync.py        #   Redis -> MongoDB 재생수 동기화 (60초 배치)
+|
++-- frontend/                            # (변경 없음, v1.0 유지)
+    +-- ...
+```
+
+---
+
+## 5. 구현 완료 목록
+
+### 인프라 (db-infra)
+| 태스크 | 내용 | 생성/수정 파일 |
+|--------|------|----------------|
+| D1 | Docker Compose 작성 | docker-compose.yml |
+| D2 | 환경 변수 파일 | .env, .env.example |
+| D3 | pydantic-settings 설정 | app/config.py |
+| D4 | PostgreSQL 초기화 | infra/init_postgres.sql |
+| D5 | MongoDB 초기화 | infra/init_mongo.js |
+| D6 | MinIO 버킷 생성 | infra/init_minio.py |
+| D7 | DB 연결 모듈 패키지 | app/database/*.py (6개 파일) |
+| D8 | requirements.txt 업데이트 | requirements.txt |
+
+### 마이그레이션 (be-migrate)
+| 태스크 | 내용 | 생성/수정 파일 |
+|--------|------|----------------|
+| M1 | main.py lifespan 리팩터링 | app/main.py |
+| M2 | Pydantic 모델 | app/models/*.py (4개 파일) |
+| M3 | auth.py JWT + Redis 세션 | app/auth.py |
+| M4 | routes/auth.py -> PostgreSQL | app/routes/auth.py |
+| M5 | routes/tracks.py (MongoDB + MinIO + Redis) | app/routes/tracks.py |
+| M6 | routes/charts.py -> Redis Sorted Set | app/routes/charts.py |
+| M7 | routes/playlists.py (PG + Mongo) | app/routes/playlists.py |
+| M8 | routes/likes.py (PG + Mongo 동기화) | app/routes/likes.py |
+| M9 | routes/upload.py -> MinIO | app/routes/upload.py |
+| M10 | routes/follows.py 신규 | app/routes/follows.py |
+| M11 | 시드 데이터 스크립트 | (be-migrate 자체 구현) |
+| M12 | 재생수 동기화 서비스 | app/services/playcount_sync.py |
+| M13 | 테스트 수정 | (기존 test_api.py 유지, 향후 수정) |
+
+---
+
+## 6. API 엔드포인트 테이블 (v2.0)
+
+### 인증 (Auth)
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| POST | /api/auth/register | 회원가입 | PG + Redis | 불필요 |
+| POST | /api/auth/login | 로그인 | PG + Redis | 불필요 |
+| GET | /api/auth/me | 내 정보 조회 | PG + Redis | 필요 |
+| POST | /api/auth/logout | 로그아웃 | Redis | 필요 |
+
+### 트랙 (Tracks) -- 구 Songs
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| GET | /api/tracks | 트랙 목록 (필터: genre, mood, tag) | Mongo | 불필요 |
+| GET | /api/tracks/search | 트랙 검색 (regex) | Mongo | 불필요 |
+| GET | /api/tracks/{id} | 트랙 상세 + 캐시 + 재생수 | Mongo + Redis | 불필요 |
+| POST | /api/tracks/upload | 트랙 업로드 (multipart) | Mongo + MinIO | 필요 |
+| GET | /api/tracks/stream/{id} | 오디오 스트리밍 (presigned URL) | Mongo + MinIO | 불필요 |
+
+### 차트 (Charts)
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| GET | /api/charts/top100 | TOP100 (daily/weekly/alltime) | Redis + Mongo | 불필요 |
+| GET | /api/charts/genre/{genre} | 장르별 차트 | Mongo | 불필요 |
+
+### 플레이리스트 (Playlists)
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| GET | /api/playlists | 내 플레이리스트 목록 | PG | 필요 |
+| POST | /api/playlists | 플레이리스트 생성 | PG | 필요 |
+| GET | /api/playlists/{id} | 플레이리스트 상세 | PG + Mongo | 필요 |
+| PUT | /api/playlists/{id} | 플레이리스트 수정 | PG | 필요 |
+| DELETE | /api/playlists/{id} | 플레이리스트 삭제 | PG | 필요 |
+| POST | /api/playlists/{id}/tracks | 트랙 추가 | PG + Mongo | 필요 |
+| DELETE | /api/playlists/{id}/tracks/{tid} | 트랙 제거 | PG | 필요 |
+
+### 좋아요 (Likes)
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| GET | /api/likes | 좋아요한 트랙 목록 | PG + Mongo | 필요 |
+| GET | /api/likes/check | 좋아요 일괄 확인 | PG | 필요 |
+| POST | /api/likes/{track_id} | 좋아요 추가 | PG + Mongo | 필요 |
+| DELETE | /api/likes/{track_id} | 좋아요 취소 | PG + Mongo | 필요 |
+
+### 팔로우 (Follows) -- 신규
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| POST | /api/follows/{user_id} | 팔로우 | PG | 필요 |
+| DELETE | /api/follows/{user_id} | 언팔로우 | PG | 필요 |
+| GET | /api/follows/followers | 팔로워 목록 | PG | 필요 |
+| GET | /api/follows/following | 팔로잉 목록 | PG | 필요 |
+
+### 아티스트 (Artists) -- 호환 계층
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| GET | /api/artists | 크리에이터 목록 | PG + Mongo | 불필요 |
+| GET | /api/artists/{id} | 크리에이터 상세 | PG + Mongo | 불필요 |
+| GET | /api/artists/{id}/tracks | 크리에이터 트랙 | Mongo | 불필요 |
+
+### 업로드 (Upload)
+| 메서드 | 경로 | 설명 | DB | 인증 |
+|--------|------|------|----|------|
+| POST | /api/upload/image | 이미지 업로드 (cover/profile) | MinIO + Mongo/PG | 필요 |
+| GET | /api/upload/presigned-url | Presigned URL 발급 | MinIO | 필요 |
+
+### 기타
+| 메서드 | 경로 | 설명 | 인증 |
+|--------|------|------|------|
+| GET | /api/health | 헬스 체크 | 불필요 |
+
+**총 API 엔드포인트: 31개** (v1.0 27개 -> v2.0 31개, 신규 8개, 변경 23개)
+
+---
+
+## 7. v1.0 -> v2.0 변경 요약
+
+```
+ 항목                         v1.0                     v2.0
+====================================================================
+ 데이터베이스                  SQLite 단일              PG + Mongo + Redis + MinIO + ES
+ 연결 방식                     동기 sqlite3             비동기 asyncpg + motor + aioredis
+ 사용자 PK                     INTEGER AUTO             UUID
+ 곡/트랙 저장소                songs 테이블 (SQLite)    tracks 컬렉션 (MongoDB)
+ 장르 데이터                   TEXT (단일 값)           [String] 배열 (다중 값)
+ 파일 저장                     로컬 uploads/            MinIO S3 오브젝트 스토리지
+ 차트                          charts 테이블 (SQLite)   Redis Sorted Set
+ 세션                          없음 (토큰만)            Redis 세션 + JWT
+ 캐시                          없음                     Redis (track, top100)
+ 재생수 카운팅                 즉시 DB UPDATE           Redis 버퍼 -> 60초 배치 동기화
+ 검색                          SQL LIKE                 MongoDB regex (1단계) -> ES (2단계)
+ 팔로우                        미구현                   PostgreSQL follows 테이블
+ 라우터                        8개 (동기)               9개 (비동기)
+ 배경 작업                     없음                     APScheduler (재생수 동기화)
+ 설정 관리                     하드코딩                 pydantic-settings + .env
+ 인프라                        없음                     Docker Compose (5 서비스)
+====================================================================
+```
+
+---
+
+## 8. 에이전트별 수행 작업 요약
+
+### planner (계획 총괄)
+| 작업 | 내용 |
+|------|------|
+| 기존 코드 분석 | v1.0 백엔드 14개 파일 분석, 스키마/API 파악 |
+| PLAN.md v2.0 작성 | 10개 섹션 아키텍처 설계서 작성 |
+| 태스크 분배 | D1-D8 (db-infra), M1-M13 (be-migrate) 할당 |
+| 품질 검토 | 인프라 결과물 리뷰, 불일치 발견/수정 요청, 임포트 경로 감시 |
+
+### db-infra (인프라 구축)
+| 작업 | 내용 | 파일 수 |
+|------|------|---------|
+| Docker Compose | 5개 DB 서비스 오케스트레이션 | 1 |
+| 환경 설정 | .env, .env.example, config.py | 3 |
+| DB 초기화 | PG SQL, Mongo JS, MinIO Python | 3 |
+| 연결 모듈 | postgres, mongodb, redis, minio, ES, __init__ | 6 |
+| 의존성 | requirements.txt 업데이트 | 1 |
+| **합계** | | **14개 파일** |
+
+### be-migrate (백엔드 마이그레이션)
+| 작업 | 내용 | 파일 수 |
+|------|------|---------|
+| 앱 코어 | main.py, auth.py 리팩터링 | 2 |
+| Pydantic 모델 | user, track, playlist + __init__ | 4 |
+| 라우트 마이그레이션 | auth, tracks, charts, playlists, likes, upload, follows, artists, albums | 9 |
+| 백그라운드 서비스 | playcount_sync.py + __init__ | 2 |
+| **합계** | | **17개 파일** |
+
+---
+
+## 9. 레거시 파일 (삭제 가능)
+
+다음 파일은 v2.0에서 더 이상 사용되지 않으며 안전하게 삭제 가능합니다:
+
+| 파일 | 설명 |
+|------|------|
+| `app/database.py` | 구 SQLite 연결/스키마 모듈 (미 import) |
+| `app/routes/songs.py` | 구 SQLite 기반 곡 라우트 (미 import) |
+| `music.db` | SQLite 데이터베이스 파일 |
+| `uploads/` | 로컬 파일 저장 디렉토리 (MinIO로 대체) |
+
+---
+
+## 10. 실행 방법 (v2.0)
+
+### 1단계: Docker 서비스 시작
+```bash
+cd backend
+docker compose up -d
+
+# 헬스 체크 확인
+docker compose ps
+```
+
+### 2단계: MinIO 버킷 초기화
+```bash
+python infra/init_minio.py
+```
+
+### 3단계: 백엔드 실행
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+### 4단계: 프론트엔드 실행 (변경 없음)
+```bash
+cd ../frontend
+npm install
+npm run dev  # port 4000
+```
+
+---
+
+## 11. 향후 작업 (2단계, 3단계)
+
+### 2단계: Elasticsearch 추가
+- ES 인덱스 매핑 적용 (nori 한글 분석기)
+- `database/elasticsearch.py` 활성화
+- `routes/search.py` 전문 검색 API 작성
+- MongoDB -> ES 실시간 동기화 서비스
+
+### 3단계: 성능 최적화
+- Redis 캐시 전략 고도화 (cache-aside + write-through)
+- 차트 배치 갱신 스케줄러 (일간/주간 롤업)
+- MongoDB 복합 인덱스 튜닝 (explain 분석)
+- 커넥션 풀 튜닝 (asyncpg pool_size, motor maxPoolSize)
+- Presigned URL 캐싱 (MinIO URL 재사용)
+
+**v2.0 멀티 DB 아키텍처 전환이 완료되었습니다.**
+
+---
+---
+
+## v3.0 -- 관리자 모드 (Admin System) 보고서
+### 작성일: 2026-03-14
+
+---
+
+## 1. 개요
+
+AIMU 플랫폼에 관리자(Admin) 시스템을 추가했다. 관리자는 대시보드에서 플랫폼 현황을 모니터링하고, 사용자/트랙을 관리할 수 있다. 일반 사용자는 관리자 페이지에 접근할 수 없다.
+
+---
+
+## 2. 아키텍처 다이어그램
+
+```
+  일반 사용자                              관리자
+  (role=user)                            (role=admin)
+       |                                      |
+       v                                      v
+  +----------+    +----------+    +---------------------+
+  | 일반 FE  |    | Header   |    | Admin FE            |
+  | 페이지   |    | (관리자  |    | /admin               |
+  | /, /chart|    |  링크)   |    | /admin/users         |
+  | /search  |    +----------+    | /admin/tracks        |
+  | /upload  |                    +----------+-----------+
+  +-----+----+                               |
+        |                                    |
+        v                                    v
+  +-----------+                    +---------------------+
+  | 기존 API  |                    | /api/admin/*        |
+  | /api/*    |                    | (get_admin_user)    |
+  +-----------+                    +-----+----+----------+
+        |                                |    |
+        v                                v    v
+  +-----+-----+    +----------+    +-----+----+----------+
+  |  PG users |    |  Mongo   |    |  PG admin_logs     |
+  |  (role)   |    |  tracks  |    |  (감사 로그)        |
+  | (is_banned)|   +----------+    +--------------------+
+  +-----------+
+```
+
+---
+
+## 3. 데이터베이스 변경
+
+### PostgreSQL users 테이블 확장
+```
+기존 컬럼                        신규 컬럼
+-----------                      -----------
+id (UUID PK)                     role VARCHAR(20) DEFAULT 'user'
+email                                CHECK ('user', 'admin')
+password_hash                    is_banned BOOLEAN DEFAULT FALSE
+nickname                         banned_at TIMESTAMPTZ
+profile_image                    ban_reason TEXT
+bio, plan
+created_at, updated_at
+```
+
+### 신규 테이블: admin_logs
+```
+admin_logs
+├── id          UUID PK
+├── admin_id    UUID FK → users
+├── action      VARCHAR(50)  -- ban_user, unban_user, change_role, delete_track, change_visibility
+├── target_type VARCHAR(20)  -- user, track
+├── target_id   VARCHAR(100)
+├── details     JSONB
+└── created_at  TIMESTAMPTZ
+```
+
+---
+
+## 4. API 엔드포인트 (v3.0 추가분)
+
+### 관리자 API (`/api/admin/*`) — 모두 admin 역할 필요
+| 메서드 | 경로 | 설명 | DB |
+|--------|------|------|----|
+| GET | /api/admin/dashboard | 대시보드 통계 | PG + Mongo |
+| GET | /api/admin/users | 사용자 목록 (검색/필터/페이지네이션) | PG |
+| GET | /api/admin/users/{id} | 사용자 상세 | PG + Mongo |
+| PUT | /api/admin/users/{id}/role | 역할 변경 | PG |
+| PUT | /api/admin/users/{id}/ban | 밴/밴 해제 | PG + Redis |
+| GET | /api/admin/tracks | 트랙 목록 (숨김 포함) | Mongo |
+| DELETE | /api/admin/tracks/{id} | 트랙 삭제 | Mongo + MinIO + Redis |
+| PUT | /api/admin/tracks/{id}/visibility | 공개/비공개 전환 | Mongo + Redis |
+| GET | /api/admin/logs | 관리 활동 로그 | PG |
+
+### 기존 API 변경
+| 엔드포인트 | 변경 내용 |
+|------------|-----------|
+| POST /api/auth/register | 응답에 `role` 필드 추가 |
+| POST /api/auth/login | `is_banned` 체크 + `role` 반환 |
+| GET /api/auth/me | `role` 반환 |
+
+**총 API: 40개** (v2.0 31개 + 관리자 9개)
+
+---
+
+## 5. 프론트엔드 페이지 구성
+
+### 관리자 전용 페이지
+| 페이지 | 경로 | 기능 |
+|--------|------|------|
+| AdminDashboardPage | /admin | 통계 카드 4개 (총 사용자, 트랙, 재생수, 오늘 가입자) + 최근 사용자/트랙 테이블 |
+| AdminUsersPage | /admin/users | 사용자 검색, 역할 변경, 밴/밴 해제, 페이지네이션 |
+| AdminTracksPage | /admin/tracks | 트랙 검색, 공개/비공개 필터, 삭제, 공개 전환, 페이지네이션 |
+
+### 컴포넌트
+| 컴포넌트 | 설명 |
+|----------|------|
+| AdminLayout | 사이드바 (240px) + 콘텐츠 영역 레이아웃 |
+| AdminRoute | 관리자 권한 체크 + 비관리자 리다이렉트 |
+
+### 기존 컴포넌트 수정
+| 컴포넌트 | 변경 |
+|----------|------|
+| Header.jsx | 관리자일 때 "관리자" NavLink 표시 |
+| AuthContext.jsx | `isAdmin` 계산 값 추가 |
+| App.jsx | admin 라우트 3개 추가, 관리자 페이지에서 Header/Footer/MusicPlayer 숨김 |
+| api/index.js | admin API 함수 9개 추가 |
+
+---
+
+## 6. 보안 설계
+
+```
+ 요청 흐름:
+
+ Client → JWT Token → get_current_user() → get_admin_user()
+                         |                       |
+                         v                       v
+                   Redis 세션 확인          role == 'admin' ?
+                   (id, email,                  |
+                    nickname, role)         YES: 통과
+                                           NO: 403 "관리자 권한이 필요합니다."
+
+ 밴 처리 흐름:
+ Admin → PUT /ban → PG is_banned=TRUE → Redis session 삭제 → 밴 사용자 즉시 로그아웃
+                                          |
+                                    로그인 시 is_banned 체크 → 403 "계정이 정지되었습니다."
+
+ 자기 자신 보호:
+ - 자신의 역할 변경 불가
+ - 자신을 밴 불가
+
+ 감사 로그:
+ 모든 관리 활동 → admin_logs 테이블 기록 (누가, 언제, 무엇을, 왜)
+```
+
+---
+
+## 7. 파일 변경 목록
+
+### 신규 파일 (9개)
+| 파일 | 설명 |
+|------|------|
+| `backend/app/routes/admin.py` | 관리자 API 라우터 (9 엔드포인트, 486줄) |
+| `frontend/src/components/AdminLayout.jsx` | 관리자 레이아웃 |
+| `frontend/src/components/AdminLayout.css` | 관리자 레이아웃 스타일 |
+| `frontend/src/pages/admin/AdminDashboardPage.jsx` | 대시보드 페이지 |
+| `frontend/src/pages/admin/AdminDashboardPage.css` | 대시보드 스타일 |
+| `frontend/src/pages/admin/AdminUsersPage.jsx` | 사용자 관리 페이지 |
+| `frontend/src/pages/admin/AdminUsersPage.css` | 사용자 관리 스타일 |
+| `frontend/src/pages/admin/AdminTracksPage.jsx` | 트랙 관리 페이지 |
+| `frontend/src/pages/admin/AdminTracksPage.css` | 트랙 관리 스타일 |
+
+### 수정 파일 (7개)
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/infra/init_postgres.sql` | role, is_banned 컬럼 + admin_logs 테이블 |
+| `backend/app/auth.py` | get_admin_user 의존성 추가 |
+| `backend/app/routes/auth.py` | role 반환, 밴 체크, 세션에 role 저장 |
+| `backend/app/main.py` | admin 라우터 등록 |
+| `frontend/src/api/index.js` | admin API 함수 9개 |
+| `frontend/src/contexts/AuthContext.jsx` | isAdmin 계산 값 |
+| `frontend/src/App.jsx` | admin 라우트 + AdminRoute 보호 + 레이아웃 분기 |
+| `frontend/src/components/Header.jsx` | 관리자 링크 |
+
+---
+
+## 8. 검증 결과
+
+### 문법 검증
+```
+ 항목                              결과
+──────────────────────────────────────────
+ backend/app/routes/admin.py       OK (Python 3.8 호환)
+ backend/app/auth.py               OK
+ backend/app/routes/auth.py        OK
+ backend/app/main.py               OK
+ admin router import               OK
+```
+
+### 프론트엔드 빌드
+```
+ 항목                              결과
+──────────────────────────────────────────
+ vite build                        성공 (2.59s)
+ 모듈 수                           143개
+ CSS 크기                          38.39 KB (+6.34 KB)
+ JS 크기                           332.48 KB (+12.55 KB)
+ 에러/경고                         없음
+```
+
+### 검증 체크리스트
+```
+ [x] 9개 관리자 API 엔드포인트 구현
+ [x] get_admin_user 미들웨어 (role 검증)
+ [x] 자기 자신 역할 변경/밴 방지
+ [x] 밴 시 Redis 세션 삭제 (즉시 로그아웃)
+ [x] 로그인 시 is_banned 체크
+ [x] 모든 관리 활동 admin_logs 기록
+ [x] 프론트엔드 관리자 페이지 3개 (대시보드, 사용자, 트랙)
+ [x] AdminRoute로 비관리자 접근 차단
+ [x] Header에 관리자 링크 (admin만 표시)
+ [x] 관리자 페이지에서 Header/Footer/MusicPlayer 숨김
+ [x] 페이지네이션 필드명 일치 (pagination.totalPages)
+ [x] MongoDB 필드명 일치 (uploader_nickname)
+```
+
+---
+
+## 9. 관리자 계정 설정 방법
+
+```sql
+-- PostgreSQL에서 직접 관리자 설정
+UPDATE users SET role = 'admin' WHERE email = 'admin@aimu.com';
+```
+
+---
+
+## 10. 실행 방법 (v3.0)
+
+v2.0과 동일. 단, 최초 실행 시 PostgreSQL에 새 컬럼/테이블 추가 필요:
+
+```bash
+# Docker DB 서비스 실행
+cd backend && docker compose up -d
+
+# PostgreSQL에 스키마 변경 적용 (이미 init_postgres.sql에 포함)
+docker exec -i aimu-postgres psql -U aimu_user -d aimu < infra/init_postgres.sql
+
+# 백엔드 실행
+uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload
+
+# 프론트엔드 실행 (별도 터미널)
+cd ../frontend && npm run dev
+```
+
+관리자로 접속: `http://localhost:4000/admin`
+
+---
+
+**v3.0 관리자 모드 구현이 완료되었습니다.**

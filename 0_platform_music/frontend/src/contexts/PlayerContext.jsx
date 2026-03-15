@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
+import API from '../api';
 
 const PlayerContext = createContext(null);
 
@@ -60,12 +61,19 @@ export function PlayerProvider({ children }) {
     const audio = audioRef.current;
     if (currentIndex >= 0 && playlist[currentIndex]) {
       const song = playlist[currentIndex];
-      audio.src = `/api/stream/${song.id}`;
       setCurrentTime(0);
       setAudioDuration(0);
-      audio.play().catch((err) => {
-        console.error('Audio play failed:', err);
-      });
+      // Fetch presigned stream URL from backend
+      API.get(`/tracks/stream/${song.id}`)
+        .then((res) => {
+          audio.src = res.data.stream_url;
+          audio.play().catch((err) => {
+            console.error('Audio play failed:', err);
+          });
+        })
+        .catch((err) => {
+          console.error('Failed to get stream URL:', err);
+        });
     }
   }, [currentIndex, playlist]);
 

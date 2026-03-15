@@ -48,7 +48,7 @@ export default function RegisterPage() {
       <div className="register-page">
         <form className="register-card" onSubmit={handleSubmit}>
           <div className="register-card__logo">
-            <img src="/melon-logo.svg" alt="멜론" />
+            <img src="/aimu-logo.svg" alt="AIMU" />
           </div>
           <h1 className="register-card__title">회원가입</h1>
 

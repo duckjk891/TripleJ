@@ -34,7 +34,7 @@ export default function LoginPage() {
       <div className="login-page">
         <form className="login-card" onSubmit={handleSubmit}>
           <div className="login-card__logo">
-            <img src="/melon-logo.svg" alt="멜론" />
+            <img src="/aimu-logo.svg" alt="AIMU" />
           </div>
           <h1 className="login-card__title">로그인</h1>
 

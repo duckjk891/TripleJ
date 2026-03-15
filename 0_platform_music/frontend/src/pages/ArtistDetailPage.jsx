@@ -62,7 +62,7 @@ export default function ArtistDetailPage() {
     return (
       <div className="page-content">
         <div className="container">
-          <div className="artist-detail__loading">아티스트 정보를 불러오는 중...</div>
+          <div className="artist-detail__loading">크리에이터 정보를 불러오는 중...</div>
         </div>
       </div>
     );
@@ -72,7 +72,7 @@ export default function ArtistDetailPage() {
     return (
       <div className="page-content">
         <div className="container">
-          <div className="artist-detail__loading">아티스트를 찾을 수 없습니다.</div>
+          <div className="artist-detail__loading">크리에이터를 찾을 수 없습니다.</div>
         </div>
       </div>
     );
@@ -92,7 +92,7 @@ export default function ArtistDetailPage() {
             <h1>{artist.name}</h1>
             <div className="artist-detail__meta">
               {artist.genre && <span><FiDisc /> {artist.genre}</span>}
-              {artist.debut_date && <span>데뷔: {artist.debut_date}</span>}
+              {artist.debut_date && <span>활동 시작: {artist.debut_date}</span>}
             </div>
             <div className="artist-detail__stats">
               <div className="artist-detail__stat">
@@ -101,7 +101,7 @@ export default function ArtistDetailPage() {
               </div>
               <div className="artist-detail__stat">
                 <div className="artist-detail__stat-value">{artist.song_count || songs.length}</div>
-                <div className="artist-detail__stat-label">곡</div>
+                <div className="artist-detail__stat-label">트랙</div>
               </div>
             </div>
           </div>
@@ -111,7 +111,7 @@ export default function ArtistDetailPage() {
           <div className="artist-detail__section">
             <h2 className="artist-detail__section-title">
               <FiMusic style={{ verticalAlign: 'middle', marginRight: 8 }} />
-              인기곡
+              인기 트랙
             </h2>
             <div className="artist-detail__songs">
               {songs.map((song, idx) => (

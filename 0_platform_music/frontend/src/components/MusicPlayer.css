@@ -4,7 +4,7 @@
   left: 0;
   right: 0;
   height: var(--player-height);
-  background: var(--color-white);
+  background: var(--color-bg-secondary);
   border-top: 1px solid var(--color-border);
   z-index: 1001;
   display: flex;
@@ -217,4 +217,18 @@
   text-align: center;
   color: var(--color-text-sub);
   font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .player { height: 64px; }
+  .player__inner { padding: 0 12px; gap: 10px; }
+  .player__song-info { min-width: 0; gap: 8px; }
+  .player__album-art { width: 40px; height: 40px; }
+  .player__title { font-size: 12px; max-width: 100px; }
+  .player__artist { font-size: 11px; max-width: 100px; }
+  .player__volume { display: none; }
+  .player__progress { display: none; }
+  .player__buttons { gap: 12px; }
+  .player__btn--play { width: 32px; height: 32px; font-size: 14px; }
+  .player__btn--prev, .player__btn--next { font-size: 16px; }
 }

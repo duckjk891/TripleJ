@@ -1,47 +1,73 @@
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
-from .database import init_database
-from .routes import auth, songs, albums, artists, charts, playlists, likes, upload
+load_dotenv()
 
-init_database()
+from .config import settings
+from .database.postgres import init_postgres, close_postgres
+from .database.mongodb import init_mongodb, close_mongodb
+from .database.redis import init_redis, close_redis
+from .database.minio import init_minio
+from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
-os.makedirs(os.path.join(UPLOAD_DIR, "music"), exist_ok=True)
-os.makedirs(os.path.join(UPLOAD_DIR, "images", "albums"), exist_ok=True)
-os.makedirs(os.path.join(UPLOAD_DIR, "images", "artists"), exist_ok=True)
 
-app = FastAPI(title="Music Platform API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: connect to all databases
+    await init_postgres(settings.postgres_dsn)
+    await init_mongodb(settings.computed_mongo_url, settings.mongo_db)
+    await init_redis(settings.computed_redis_url)
+    init_minio(settings.minio_endpoint, settings.minio_user, settings.minio_password)
+    print("All database connections established.")
+
+    # Start background scheduler for playcount sync
+    from .services.playcount_sync import start_playcount_scheduler
+    scheduler = start_playcount_scheduler()
+
+    yield
+
+    # Shutdown
+    scheduler.shutdown(wait=False)
+    await close_postgres()
+    await close_mongodb()
+    await close_redis()
+    print("All database connections closed.")
+
+
+app = FastAPI(title="AIMU Platform API v2", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(auth.router)
-app.include_router(songs.router)
+app.include_router(admin.router)
+app.include_router(tracks.router)
 app.include_router(albums.router)
 app.include_router(artists.router)
 app.include_router(charts.router)
 app.include_router(playlists.router)
 app.include_router(likes.router)
 app.include_router(upload.router)
+app.include_router(follows.router)
+app.include_router(generate.router)
 
 
 @app.get("/api/health")
-def health():
+async def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": "서버 내부 오류가 발생했습니다."})
-
-app.mount("/api/files", StaticFiles(directory=UPLOAD_DIR), name="uploads")

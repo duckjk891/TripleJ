@@ -1,91 +1,135 @@
+"""
+v2.0: Artists concept replaced by uploaders (users who upload tracks).
+These endpoints provide backward compatibility by aggregating data from
+MongoDB tracks and PostgreSQL users.
+"""
+
 import math
-from typing import Optional
+import uuid
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
-from ..auth import get_current_user
-from ..database import get_db, dict_row, dict_rows
+from ..database.postgres import get_pg
+from ..database.mongodb import get_mongo
 
 router = APIRouter(prefix="/api/artists")
 
 
-class ArtistCreate(BaseModel):
-    name: str
-    genre: Optional[str] = None
-    description: Optional[str] = None
+def _serialize_track(doc: dict) -> dict:
+    if doc is None:
+        return None
+    doc["id"] = str(doc.pop("_id"))
+    for key in ("created_at", "updated_at"):
+        if key in doc and isinstance(doc[key], datetime):
+            doc[key] = doc[key].isoformat()
+    return doc
 
 
 @router.get("/")
-def list_artists(page: int = 1, limit: int = 20, db=Depends(get_db)):
+async def list_artists(page: int = 1, limit: int = 20, conn=Depends(get_pg)):
+    """List users who have uploaded tracks (creators)."""
+    mongo = get_mongo()
     offset = (page - 1) * limit
 
-    rows = db.execute("""
-        SELECT a.*,
-            (SELECT COUNT(*) FROM albums WHERE artist_id = a.id) as album_count,
-            (SELECT COUNT(*) FROM songs WHERE artist_id = a.id) as song_count
-        FROM artists a ORDER BY a.name LIMIT ? OFFSET ?
-    """, (limit, offset)).fetchall()
+    # Aggregate distinct uploaders from MongoDB
+    pipeline = [
+        {"$group": {
+            "_id": "$uploader_id",
+            "nickname": {"$first": "$uploader_nickname"},
+            "track_count": {"$sum": 1},
+            "total_plays": {"$sum": "$play_count"},
+        }},
+        {"$sort": {"total_plays": -1}},
+        {"$skip": offset},
+        {"$limit": limit},
+    ]
+    results = await mongo.tracks.aggregate(pipeline).to_list(length=limit)
+    total_pipeline = [{"$group": {"_id": "$uploader_id"}}, {"$count": "total"}]
+    total_result = await mongo.tracks.aggregate(total_pipeline).to_list(length=1)
+    total = total_result[0]["total"] if total_result else 0
 
-    total = db.execute("SELECT COUNT(*) FROM artists").fetchone()[0]
+    artists = []
+    for r in results:
+        # Fetch profile info from PostgreSQL
+        user_row = None
+        try:
+            user_row = await conn.fetchrow(
+                "SELECT id, nickname, profile_image, bio FROM users WHERE id = $1",
+                uuid.UUID(r["_id"]),
+            )
+        except (ValueError, Exception):
+            pass
+
+        artists.append({
+            "id": r["_id"],
+            "name": user_row["nickname"] if user_row else r["nickname"],
+            "image": user_row["profile_image"] if user_row else None,
+            "bio": user_row["bio"] if user_row else None,
+            "track_count": r["track_count"],
+            "total_plays": r["total_plays"],
+        })
 
     return {
-        "artists": dict_rows(rows),
-        "pagination": {"page": page, "limit": limit, "total": total, "totalPages": math.ceil(total / limit) if limit else 0},
+        "artists": artists,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": math.ceil(total / limit) if limit else 0,
+        },
     }
 
 
-@router.post("/", status_code=201)
-def create_artist(body: ArtistCreate, current_user=Depends(get_current_user), db=Depends(get_db)):
-    if not body.name:
-        return JSONResponse(status_code=400, content={"error": "아티스트 이름은 필수입니다."})
-
-    cur = db.execute(
-        "INSERT INTO artists (name, genre, description) VALUES (?, ?, ?)",
-        (body.name, body.genre, body.description),
-    )
-    db.commit()
-    row = db.execute("SELECT * FROM artists WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return dict_row(row)
-
-
 @router.get("/{artist_id}")
-def get_artist(artist_id: int, db=Depends(get_db)):
-    row = db.execute("""
-        SELECT a.*,
-            (SELECT COUNT(*) FROM albums WHERE artist_id = a.id) as album_count,
-            (SELECT COUNT(*) FROM songs WHERE artist_id = a.id) as song_count
-        FROM artists a WHERE a.id = ?
-    """, (artist_id,)).fetchone()
+async def get_artist(artist_id: str, conn=Depends(get_pg)):
+    """Get creator profile by user ID."""
+    mongo = get_mongo()
 
-    if not row:
+    # Aggregate stats from MongoDB
+    pipeline = [
+        {"$match": {"uploader_id": artist_id}},
+        {"$group": {
+            "_id": "$uploader_id",
+            "nickname": {"$first": "$uploader_nickname"},
+            "track_count": {"$sum": 1},
+            "total_plays": {"$sum": "$play_count"},
+            "total_likes": {"$sum": "$like_count"},
+        }},
+    ]
+    results = await mongo.tracks.aggregate(pipeline).to_list(length=1)
+
+    # Fetch profile from PostgreSQL
+    user_row = None
+    try:
+        user_row = await conn.fetchrow(
+            "SELECT id, nickname, profile_image, bio, created_at FROM users WHERE id = $1",
+            uuid.UUID(artist_id),
+        )
+    except (ValueError, Exception):
+        pass
+
+    if not results and not user_row:
         return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
-    return dict_row(row)
+
+    stats = results[0] if results else {}
+    return {
+        "id": artist_id,
+        "name": user_row["nickname"] if user_row else stats.get("nickname", ""),
+        "image": user_row["profile_image"] if user_row else None,
+        "bio": user_row["bio"] if user_row else None,
+        "track_count": stats.get("track_count", 0),
+        "total_plays": stats.get("total_plays", 0),
+        "total_likes": stats.get("total_likes", 0),
+        "created_at": user_row["created_at"].isoformat() if user_row and user_row["created_at"] else None,
+    }
 
 
-@router.get("/{artist_id}/albums")
-def get_artist_albums(artist_id: int, db=Depends(get_db)):
-    if not db.execute("SELECT id FROM artists WHERE id = ?", (artist_id,)).fetchone():
-        return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
-
-    rows = db.execute("""
-        SELECT al.*, a.name as artist_name
-        FROM albums al JOIN artists a ON al.artist_id = a.id
-        WHERE al.artist_id = ? ORDER BY al.release_date DESC
-    """, (artist_id,)).fetchall()
-    return dict_rows(rows)
-
-
-@router.get("/{artist_id}/songs")
-def get_artist_songs(artist_id: int, limit: int = 10, db=Depends(get_db)):
-    if not db.execute("SELECT id FROM artists WHERE id = ?", (artist_id,)).fetchone():
-        return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
-
-    rows = db.execute("""
-        SELECT s.*, a.name as artist_name, al.title as album_title, al.cover_image
-        FROM songs s
-        JOIN artists a ON s.artist_id = a.id
-        LEFT JOIN albums al ON s.album_id = al.id
-        WHERE s.artist_id = ? ORDER BY s.play_count DESC LIMIT ?
-    """, (artist_id, limit)).fetchall()
-    return dict_rows(rows)
+@router.get("/{artist_id}/tracks")
+async def get_artist_tracks(artist_id: str, limit: int = 20):
+    """Get tracks by a specific creator."""
+    mongo = get_mongo()
+    cursor = mongo.tracks.find({"uploader_id": artist_id, "is_public": True}).sort("play_count", -1).limit(limit)
+    tracks = await cursor.to_list(length=limit)
+    return [_serialize_track(t) for t in tracks]

@@ -8,7 +8,7 @@
   gap: 32px;
   margin-bottom: 40px;
   padding: 32px;
-  background: var(--color-white);
+  background: var(--color-card);
   border-radius: 12px;
   border: 1px solid var(--color-border);
 }
@@ -80,7 +80,7 @@
 }
 
 .artist-detail__songs {
-  background: var(--color-white);
+  background: var(--color-card);
   border-radius: 8px;
   border: 1px solid var(--color-border);
   overflow: hidden;
@@ -96,4 +96,13 @@
   text-align: center;
   padding: 60px 0;
   color: var(--color-text-sub);
+}
+
+@media (max-width: 768px) {
+  .artist-detail__header { flex-direction: column; align-items: center; text-align: center; padding: 20px; gap: 16px; }
+  .artist-detail__avatar { width: 100px; height: 100px; font-size: 36px; }
+  .artist-detail__info h1 { font-size: 22px; }
+  .artist-detail__meta { justify-content: center; flex-wrap: wrap; }
+  .artist-detail__stats { justify-content: center; }
+  .artist-detail__albums { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }

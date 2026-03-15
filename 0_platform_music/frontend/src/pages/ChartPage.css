@@ -21,7 +21,7 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--color-text-sub);
-  background: var(--color-white);
+  background: var(--color-card);
   border: 1px solid var(--color-border);
   transition: all 0.2s;
 }
@@ -42,7 +42,7 @@
 }
 
 .chart-list {
-  background: var(--color-white);
+  background: var(--color-card);
   border-radius: 8px;
   border: 1px solid var(--color-border);
   overflow: hidden;
@@ -84,4 +84,11 @@
   text-align: center;
   padding: 60px 0;
   color: var(--color-text-sub);
+}
+
+@media (max-width: 768px) {
+  .chart-page__title { font-size: 20px; }
+  .chart-tabs { gap: 6px; }
+  .chart-tab { padding: 6px 14px; font-size: 12px; }
+  .chart-list__header { display: none; }
 }

@@ -103,7 +103,7 @@ export default function AlbumDetailPage() {
           </div>
         </div>
 
-        <h2 className="album-detail__songs-title">수록곡</h2>
+        <h2 className="album-detail__songs-title">트랙 목록</h2>
         <div className="album-detail__songs">
           {album.songs?.map((song, idx) => (
             <SongItem

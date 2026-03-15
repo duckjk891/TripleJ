@@ -84,7 +84,7 @@
 .playlist-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -92,7 +92,8 @@
 }
 
 .playlist-modal {
-  background: var(--color-white);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 32px;
   width: 400px;
@@ -169,4 +170,11 @@
   text-align: center;
   padding: 60px 0;
   color: var(--color-text-sub);
+}
+
+@media (max-width: 768px) {
+  .playlist-page__header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .playlist-page__title { font-size: 20px; }
+  .playlist-page__grid { grid-template-columns: 1fr; }
+  .playlist-modal { padding: 24px; width: calc(100vw - 32px); }
 }

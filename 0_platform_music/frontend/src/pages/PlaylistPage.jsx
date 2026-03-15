@@ -56,7 +56,7 @@ export default function PlaylistPage() {
               <FiMusic />
             </div>
             <div className="playlist-page__login-text">
-              로그인하여 나만의 플레이리스트를 만들어보세요
+              로그인하여 나만의 AI 플레이리스트를 만들어보세요
             </div>
             <Link to="/login" className="playlist-page__login-btn">
               로그인

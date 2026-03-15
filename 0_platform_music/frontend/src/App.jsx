@@ -1,6 +1,7 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { PlayerProvider } from './contexts/PlayerContext';
+import { useAuth } from './contexts/AuthContext';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import MusicPlayer from './components/MusicPlayer';
@@ -14,29 +15,55 @@ import PlaylistDetailPage from './pages/PlaylistDetailPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import UploadPage from './pages/UploadPage';
+import MyMusicPage from './pages/MyMusicPage';
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+import AdminUsersPage from './pages/admin/AdminUsersPage';
+import AdminTracksPage from './pages/admin/AdminTracksPage';
 import './App.css';
+
+function AdminRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user || user.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+function AppContent() {
+  const location = useLocation();
+  const isAdminPage = location.pathname.startsWith('/admin');
+
+  return (
+    <div className="app">
+      {!isAdminPage && <Header />}
+      <Routes>
+        <Route path="/" element={<MainPage />} />
+        <Route path="/chart" element={<ChartPage />} />
+        <Route path="/search" element={<SearchPage />} />
+        <Route path="/album/:id" element={<AlbumDetailPage />} />
+        <Route path="/artist/:id" element={<ArtistDetailPage />} />
+        <Route path="/playlist" element={<PlaylistPage />} />
+        <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
+        <Route path="/upload" element={<UploadPage />} />
+        <Route path="/my-music" element={<MyMusicPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
+        <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
+        <Route path="/admin/tracks" element={<AdminRoute><AdminTracksPage /></AdminRoute>} />
+      </Routes>
+      {!isAdminPage && <Footer />}
+      {!isAdminPage && <MusicPlayer />}
+    </div>
+  );
+}
 
 function App() {
   return (
     <AuthProvider>
       <PlayerProvider>
-        <div className="app">
-          <Header />
-          <Routes>
-            <Route path="/" element={<MainPage />} />
-            <Route path="/chart" element={<ChartPage />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/album/:id" element={<AlbumDetailPage />} />
-            <Route path="/artist/:id" element={<ArtistDetailPage />} />
-            <Route path="/playlist" element={<PlaylistPage />} />
-            <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
-            <Route path="/upload" element={<UploadPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-          </Routes>
-          <Footer />
-          <MusicPlayer />
-        </div>
+        <AppContent />
       </PlayerProvider>
     </AuthProvider>
   );

@@ -50,23 +50,22 @@ export class OfficeScene extends Phaser.Scene {
       frameHeight: 32,
     });
 
-    // 캐릭터 스프라이트 로드 (4명 - 16x16 사이즈)
-    // Adam: 24열 x 7행 구조 (walk: 6프레임, idle: 4프레임 등)
+    // 캐릭터 스프라이트 로드 (4명 - 16x32 사이즈, 캐릭터가 2타일 높이)
     this.load.spritesheet('char_adam', '/assets/characters/Adam_16x16.png', {
       frameWidth: 16,
-      frameHeight: 16,
+      frameHeight: 32,
     });
     this.load.spritesheet('char_alex', '/assets/characters/Alex_16x16.png', {
       frameWidth: 16,
-      frameHeight: 16,
+      frameHeight: 32,
     });
     this.load.spritesheet('char_amelia', '/assets/characters/Amelia_16x16.png', {
       frameWidth: 16,
-      frameHeight: 16,
+      frameHeight: 32,
     });
     this.load.spritesheet('char_bob', '/assets/characters/Bob_16x16.png', {
       frameWidth: 16,
-      frameHeight: 16,
+      frameHeight: 32,
     });
 
     // 기존 캐릭터 스프라이트도 로드 (폴백용)
@@ -154,17 +153,14 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   /**
-   * 새 캐릭터 스프라이트 애니메이션 생성 (16x16)
-   * Modern_Interiors 캐릭터 스프라이트 레이아웃 (실제 분석 결과):
-   * - 각 캐릭터 시트는 24열 x 14행 구조
-   * - 행 0: idle 아래 (4프레임)
-   * - 행 1: walk 아래 (6프레임)
-   * - 행 2: idle 오른쪽 (4프레임)
-   * - 행 3: walk 오른쪽 (6프레임)
-   * - 행 4: idle 위 (4프레임)
-   * - 행 5: walk 위 (6프레임)
-   * - 행 6: idle 왼쪽 (4프레임)
-   * - 행 7: walk 왼쪽 (6프레임)
+   * 새 캐릭터 스프라이트 애니메이션 생성 (16x32)
+   * 스프라이트시트: 384x224 → 24열 × 7행 (16x32 프레임)
+   * - 행 0: idle 아래 (4프레임, 정면)
+   * - 행 1: walk 아래 (cols 0-5, 정면) + walk 위 (cols 6-11, 뒷모습)
+   * - 행 2: walk 오른쪽 (cols 0-5) + walk 왼쪽 (cols 6-11)
+   * - 행 3-4: 특수 포즈
+   * - 행 5: 추가 걷기 애니메이션
+   * - 행 6: 특수 포즈
    */
   private createNewCharacterAnimations(): void {
     const framesPerRow = 24;
@@ -172,8 +168,7 @@ export class OfficeScene extends Phaser.Scene {
     for (const spriteKey of CHARACTER_SPRITES) {
       if (!this.textures.exists(spriteKey)) continue;
 
-      // === 아래 방향 ===
-      // idle 아래 (행 0)
+      // idle 아래 (행 0, cols 0-3)
       this.anims.create({
         key: `${spriteKey}_idle_down`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
@@ -184,19 +179,18 @@ export class OfficeScene extends Phaser.Scene {
         repeat: -1,
       });
 
-      // walk 아래 (행 1)
+      // walk 아래 (행 1, cols 0-5)
       this.anims.create({
         key: `${spriteKey}_walk_down`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
-          start: framesPerRow * 1,
-          end: framesPerRow * 1 + 5,
+          start: framesPerRow,
+          end: framesPerRow + 5,
         }),
         frameRate: 8,
         repeat: -1,
       });
 
-      // === 오른쪽 방향 ===
-      // idle 오른쪽 (행 2)
+      // idle 오른쪽 (행 2, cols 0-3)
       this.anims.create({
         key: `${spriteKey}_idle_right`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
@@ -207,58 +201,56 @@ export class OfficeScene extends Phaser.Scene {
         repeat: -1,
       });
 
-      // walk 오른쪽 (행 3)
+      // walk 오른쪽 (행 2, cols 0-5)
       this.anims.create({
         key: `${spriteKey}_walk_right`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
-          start: framesPerRow * 3,
-          end: framesPerRow * 3 + 5,
+          start: framesPerRow * 2,
+          end: framesPerRow * 2 + 5,
         }),
         frameRate: 8,
         repeat: -1,
       });
 
-      // === 위 방향 ===
-      // idle 위 (행 4)
+      // idle 위 (행 1, cols 6-9)
       this.anims.create({
         key: `${spriteKey}_idle_up`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
-          start: framesPerRow * 4,
-          end: framesPerRow * 4 + 3,
+          start: framesPerRow + 6,
+          end: framesPerRow + 9,
         }),
         frameRate: 4,
         repeat: -1,
       });
 
-      // walk 위 (행 5)
+      // walk 위 (행 1, cols 6-11)
       this.anims.create({
         key: `${spriteKey}_walk_up`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
-          start: framesPerRow * 5,
-          end: framesPerRow * 5 + 5,
+          start: framesPerRow + 6,
+          end: framesPerRow + 11,
         }),
         frameRate: 8,
         repeat: -1,
       });
 
-      // === 왼쪽 방향 ===
-      // idle 왼쪽 (행 6)
+      // idle 왼쪽 (행 2, cols 6-9)
       this.anims.create({
         key: `${spriteKey}_idle_left`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
-          start: framesPerRow * 6,
-          end: framesPerRow * 6 + 3,
+          start: framesPerRow * 2 + 6,
+          end: framesPerRow * 2 + 9,
         }),
         frameRate: 4,
         repeat: -1,
       });
 
-      // walk 왼쪽 (행 7)
+      // walk 왼쪽 (행 2, cols 6-11)
       this.anims.create({
         key: `${spriteKey}_walk_left`,
         frames: this.anims.generateFrameNumbers(spriteKey, {
-          start: framesPerRow * 7,
-          end: framesPerRow * 7 + 5,
+          start: framesPerRow * 2 + 6,
+          end: framesPerRow * 2 + 11,
         }),
         frameRate: 8,
         repeat: -1,

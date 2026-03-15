@@ -13,6 +13,10 @@ const GENRES = [
   { key: 'R&B', label: 'R&B' },
   { key: '인디', label: '인디' },
   { key: '록', label: '록' },
+  { key: 'Electronic', label: 'Electronic' },
+  { key: 'Ambient', label: 'Ambient' },
+  { key: 'Lo-fi', label: 'Lo-fi' },
+  { key: 'Cinematic', label: 'Cinematic' },
 ];
 
 export default function ChartPage() {
@@ -66,7 +70,7 @@ export default function ChartPage() {
   return (
     <div className="page-content">
       <div className="container chart-page">
-        <h1 className="chart-page__title">멜론 차트</h1>
+        <h1 className="chart-page__title">AI Music Chart</h1>
 
         <div className="chart-tabs">
           {GENRES.map((g) => (
@@ -85,11 +89,11 @@ export default function ChartPage() {
         ) : (
           <div className="chart-list">
             <div className="chart-list__header">
-              <span className="chart-list__header-rank">순위</span>
+              <span className="chart-list__header-rank">#</span>
               <span className="chart-list__header-art" />
-              <span className="chart-list__header-info">곡/아티스트</span>
+              <span className="chart-list__header-info">트랙/크리에이터</span>
               <span className="chart-list__header-album">앨범</span>
-              <span className="chart-list__header-actions">듣기/좋아요</span>
+              <span className="chart-list__header-actions">Actions</span>
             </div>
             {songs.map((song, idx) => (
               <SongItem

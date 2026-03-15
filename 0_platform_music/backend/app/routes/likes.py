@@ -1,74 +1,138 @@
 import math
+import uuid
+from datetime import datetime
+
+from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ..auth import get_current_user
-from ..database import get_db, dict_rows
+from ..database.postgres import get_pg
+from ..database.mongodb import get_mongo
 
 router = APIRouter(prefix="/api/likes")
 
 
-@router.get("/check")
-def check_likes(song_ids: str = Query(""), current_user=Depends(get_current_user), db=Depends(get_db)):
-    ids = []
-    for s in song_ids.split(","):
-        s = s.strip()
-        if s.isdigit():
-            ids.append(int(s))
+def _serialize_track(doc: dict) -> dict:
+    if doc is None:
+        return None
+    doc["id"] = str(doc.pop("_id"))
+    for key in ("created_at", "updated_at"):
+        if key in doc and isinstance(doc[key], datetime):
+            doc[key] = doc[key].isoformat()
+    return doc
 
+
+@router.get("/check")
+async def check_likes(song_ids: str = Query(""), current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    # Parse track IDs (support both old integer IDs and new ObjectId strings)
+    ids = [s.strip() for s in song_ids.split(",") if s.strip()]
     if not ids:
         return {"liked_ids": []}
 
-    placeholders = ",".join("?" for _ in ids)
-    rows = db.execute(
-        f"SELECT song_id FROM likes WHERE user_id = ? AND song_id IN ({placeholders})",
-        [current_user["id"]] + ids,
-    ).fetchall()
+    user_id = uuid.UUID(current_user["id"])
+    rows = await conn.fetch(
+        "SELECT track_id FROM likes WHERE user_id = $1 AND track_id = ANY($2::varchar[])",
+        user_id, ids,
+    )
 
-    return {"liked_ids": [r["song_id"] for r in rows]}
+    return {"liked_ids": [r["track_id"] for r in rows]}
 
 
 @router.get("/")
-def list_likes(page: int = 1, limit: int = 20, current_user=Depends(get_current_user), db=Depends(get_db)):
+async def list_likes(page: int = 1, limit: int = 20, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    user_id = uuid.UUID(current_user["id"])
     offset = (page - 1) * limit
 
-    rows = db.execute("""
-        SELECT l.created_at as liked_at, s.*, a.name as artist_name, al.title as album_title, al.cover_image
-        FROM likes l
-        JOIN songs s ON l.song_id = s.id
-        JOIN artists a ON s.artist_id = a.id
-        LEFT JOIN albums al ON s.album_id = al.id
-        WHERE l.user_id = ? ORDER BY l.created_at DESC LIMIT ? OFFSET ?
-    """, (current_user["id"], limit, offset)).fetchall()
+    rows = await conn.fetch(
+        "SELECT track_id, created_at FROM likes WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        user_id, limit, offset,
+    )
 
-    total = db.execute("SELECT COUNT(*) FROM likes WHERE user_id = ?", (current_user["id"],)).fetchone()[0]
+    total_row = await conn.fetchrow("SELECT COUNT(*) as cnt FROM likes WHERE user_id = $1", user_id)
+    total = total_row["cnt"]
+
+    # Cross-query MongoDB for track details
+    track_ids = [ObjectId(r["track_id"]) for r in rows if ObjectId.is_valid(r["track_id"])]
+    likes_list = []
+
+    if track_ids:
+        mongo = get_mongo()
+        docs = await mongo.tracks.find({"_id": {"$in": track_ids}}).to_list(length=len(track_ids))
+        docs_map = {str(d["_id"]): d for d in docs}
+
+        for r in rows:
+            doc = docs_map.get(r["track_id"])
+            if doc:
+                t = _serialize_track(doc)
+                t["liked_at"] = r["created_at"].isoformat() if r["created_at"] else None
+                likes_list.append(t)
 
     return {
-        "likes": dict_rows(rows),
-        "pagination": {"page": page, "limit": limit, "total": total, "totalPages": math.ceil(total / limit) if limit else 0},
+        "likes": likes_list,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": math.ceil(total / limit) if limit else 0,
+        },
     }
 
 
-@router.post("/{song_id}", status_code=201)
-def like_song(song_id: int, current_user=Depends(get_current_user), db=Depends(get_db)):
-    if not db.execute("SELECT id FROM songs WHERE id = ?", (song_id,)).fetchone():
-        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+@router.post("/{track_id}", status_code=201)
+async def like_track(track_id: str, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
-    if db.execute("SELECT id FROM likes WHERE user_id = ? AND song_id = ?", (current_user["id"], song_id)).fetchone():
-        return JSONResponse(status_code=409, content={"error": "이미 좋아요한 곡입니다."})
+    # Verify track exists in MongoDB
+    mongo = get_mongo()
+    track = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+    if not track:
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
 
-    db.execute("INSERT INTO likes (user_id, song_id) VALUES (?, ?)", (current_user["id"], song_id))
-    db.execute("UPDATE songs SET like_count = like_count + 1 WHERE id = ?", (song_id,))
-    db.commit()
+    user_id = uuid.UUID(current_user["id"])
+
+    # Check if already liked
+    existing = await conn.fetchrow(
+        "SELECT user_id FROM likes WHERE user_id = $1 AND track_id = $2",
+        user_id, track_id,
+    )
+    if existing:
+        return JSONResponse(status_code=409, content={"error": "이미 좋아요한 트랙입니다."})
+
+    # Insert like in PostgreSQL
+    await conn.execute(
+        "INSERT INTO likes (user_id, track_id) VALUES ($1, $2)",
+        user_id, track_id,
+    )
+
+    # Increment like_count in MongoDB
+    await mongo.tracks.update_one(
+        {"_id": ObjectId(track_id)},
+        {"$inc": {"like_count": 1}},
+    )
+
     return {"message": "좋아요가 추가되었습니다."}
 
 
-@router.delete("/{song_id}")
-def unlike_song(song_id: int, current_user=Depends(get_current_user), db=Depends(get_db)):
-    cur = db.execute("DELETE FROM likes WHERE user_id = ? AND song_id = ?", (current_user["id"], song_id))
-    if cur.rowcount == 0:
-        return JSONResponse(status_code=404, content={"error": "좋아요하지 않은 곡입니다."})
+@router.delete("/{track_id}")
+async def unlike_track(track_id: str, current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    user_id = uuid.UUID(current_user["id"])
 
-    db.execute("UPDATE songs SET like_count = CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END WHERE id = ?", (song_id,))
-    db.commit()
+    result = await conn.execute(
+        "DELETE FROM likes WHERE user_id = $1 AND track_id = $2",
+        user_id, track_id,
+    )
+
+    if result == "DELETE 0":
+        return JSONResponse(status_code=404, content={"error": "좋아요하지 않은 트랙입니다."})
+
+    # Decrement like_count in MongoDB
+    if ObjectId.is_valid(track_id):
+        mongo = get_mongo()
+        await mongo.tracks.update_one(
+            {"_id": ObjectId(track_id), "like_count": {"$gt": 0}},
+            {"$inc": {"like_count": -1}},
+        )
+
     return {"message": "좋아요가 취소되었습니다."}

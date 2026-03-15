@@ -7,7 +7,7 @@
 }
 
 .register-card {
-  background: var(--color-white);
+  background: var(--color-card);
   border-radius: 12px;
   border: 1px solid var(--color-border);
   padding: 40px;
@@ -57,7 +57,7 @@
 
 .register-card__input:focus {
   border-color: var(--color-primary);
-  background: var(--color-white);
+  background: var(--color-card);
 }
 
 .register-card__error {
@@ -66,7 +66,7 @@
   margin-bottom: 16px;
   text-align: center;
   padding: 8px;
-  background: #fff5f5;
+  background: rgba(239, 68, 68, 0.1);
   border-radius: 6px;
 }
 
@@ -87,7 +87,7 @@
 }
 
 .register-card__submit:disabled {
-  background: #ccc;
+  background: #3D3D5C;
   cursor: not-allowed;
 }
 
@@ -106,4 +106,10 @@
 
 .register-card__footer a:hover {
   text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .register-page { padding: 24px 16px; }
+  .register-card { padding: 24px 20px; }
+  .register-card__title { font-size: 18px; margin-bottom: 20px; }
 }

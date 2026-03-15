@@ -1,7 +1,7 @@
 .add-playlist-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9,7 +9,8 @@
 }
 
 .add-playlist-modal {
-  background: var(--color-white);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 24px;
   width: 380px;
@@ -98,7 +99,7 @@
 
 .add-playlist-modal__message--error {
   color: var(--color-danger);
-  background: #fff0f0;
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .add-playlist-modal__create {
@@ -169,4 +170,9 @@
 
 .add-playlist-modal__close:hover {
   color: var(--color-text);
+}
+
+@media (max-width: 768px) {
+  .add-playlist-modal { padding: 20px; width: calc(100vw - 32px); }
+  .add-playlist-modal__title { font-size: 16px; }
 }

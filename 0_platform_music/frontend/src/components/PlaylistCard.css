@@ -1,5 +1,5 @@
 .playlist-card {
-  background: var(--color-white);
+  background: var(--color-card);
   border-radius: 8px;
   border: 1px solid var(--color-border);
   padding: 20px;
@@ -8,7 +8,7 @@
 }
 
 .playlist-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.15);
   transform: translateY(-2px);
 }
 

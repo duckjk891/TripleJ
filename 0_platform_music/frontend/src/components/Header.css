@@ -4,7 +4,7 @@
   left: 0;
   right: 0;
   height: var(--header-height);
-  background: var(--color-white);
+  background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
   z-index: 1000;
   display: flex;
@@ -145,4 +145,46 @@
 .header__logout-btn:hover {
   color: var(--color-text);
   border-color: var(--color-text-sub);
+}
+
+.header__menu-btn {
+  display: none;
+  font-size: 22px;
+  color: var(--color-text);
+}
+
+.header__nav-close {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .header__menu-btn { display: flex; align-items: center; }
+  .header__search { display: none; }
+  .header__nav {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--color-bg-secondary);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 32px;
+    margin-left: 0;
+    z-index: 2000;
+    display: none;
+  }
+  .header__nav--open { display: flex; }
+  .header__nav a { font-size: 20px; }
+  .header__nav-close {
+    display: block;
+    position: absolute;
+    top: 20px; right: 20px;
+    font-size: 24px;
+    color: var(--color-text);
+  }
+  .header__logo img { height: 26px; }
+  .header__inner { padding: 0 12px; }
+  .header__actions { gap: 8px; }
+  .header__login-btn, .header__register-btn { padding: 5px 12px; font-size: 12px; }
+  .header__nickname { font-size: 12px; }
+  .header__logout-btn { font-size: 11px; padding: 3px 8px; }
 }

@@ -1,0 +1,232 @@
+.admin-tracks {
+  max-width: 1100px;
+}
+
+.admin-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--color-text);
+}
+
+.admin-loading,
+.admin-error {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--color-text-sub);
+}
+
+.admin-error {
+  color: var(--color-danger);
+}
+
+.admin-tracks__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.admin-tracks__filters .admin-search-form {
+  margin-bottom: 0;
+}
+
+.admin-tracks__visibility-filter {
+  display: flex;
+  gap: 4px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.admin-filter-btn {
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  transition: all 0.2s;
+}
+
+.admin-filter-btn:hover {
+  color: var(--color-text);
+}
+
+.admin-filter-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.admin-tracks__title-cell {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shared styles already defined in AdminUsersPage.css are reused here via class names.
+   The following are duplicated for standalone usage: */
+
+.admin-search-form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.admin-search-input-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 400px;
+}
+
+.admin-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-sub);
+  font-size: 1rem;
+}
+
+.admin-search-input {
+  width: 100%;
+  padding: 10px 12px 10px 36px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.admin-search-input::placeholder {
+  color: var(--color-text-sub);
+}
+
+.admin-search-btn {
+  padding: 10px 20px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.admin-search-btn:hover {
+  background: var(--color-primary-dark);
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-table--full {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.admin-table--full th {
+  text-align: left;
+  padding: 12px 14px;
+  color: var(--color-text-sub);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.admin-table--full td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-table--full tbody tr:hover {
+  background: var(--color-hover);
+}
+
+.admin-table--full tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.admin-badge--green {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.admin-badge--gray {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.admin-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-btn:hover {
+  background: var(--color-hover);
+}
+
+.admin-btn--small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.admin-btn--danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.admin-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-empty {
+  text-align: center;
+  color: var(--color-text-sub) !important;
+  padding: 20px 14px !important;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.admin-pagination__info {
+  font-size: 0.9rem;
+  color: var(--color-text-sub);
+}

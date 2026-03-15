@@ -1,5 +1,5 @@
 .footer {
-  background: var(--color-white);
+  background: var(--color-bg-secondary);
   border-top: 1px solid var(--color-border);
   padding: 30px 0;
   margin-bottom: var(--player-height);
@@ -45,4 +45,14 @@
 
 .footer__links a:hover {
   color: var(--color-text);
+}
+
+@media (max-width: 768px) {
+  .footer__inner {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 16px;
+  }
+  .footer__links { flex-wrap: wrap; justify-content: center; }
 }
