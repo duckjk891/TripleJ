@@ -1225,3 +1225,69 @@ cd ../frontend && npm run dev
 ---
 
 **v3.0 관리자 모드 구현이 완료되었습니다.**
+
+---
+
+## v2.1 AI 커버 이미지 자동 생성 (나노바나나/Gemini)
+
+### 개요
+업로드 페이지에서 곡 정보(제목, 장르, 분위기)를 기반으로 Google Gemini 이미지 생성 모델을 사용하여 앨범 커버 이미지를 자동 생성하는 기능.
+
+### 사용 모델
+- **Google Gemini `gemini-3-pro-image-preview`** (나노바나나)
+- REST API 직접 호출 (httpx) — google-genai SDK는 Python 3.8 미지원으로 불가
+
+### 구현 파일
+
+| 구분 | 파일 | 변경 내용 |
+|------|------|-----------|
+| 백엔드 서비스 | `backend/app/services/cover_generator.py` | Gemini REST API로 이미지 생성, base64 디코딩하여 PNG bytes 반환 |
+| 백엔드 라우트 | `backend/app/routes/upload.py` | `POST /api/upload/generate-cover` (이미지 생성 → MinIO 저장), `GET /api/upload/cover-preview/{path}` (MinIO 프록시) |
+| 백엔드 설정 | `backend/app/config.py` | `google_api_key` 필드 추가 |
+| 프론트엔드 페이지 | `frontend/src/pages/UploadPage.jsx` | AI 커버 생성 버튼, 로딩 스피너, 미리보기, 재생성/제거 UI |
+| 프론트엔드 스타일 | `frontend/src/pages/UploadPage.css` | AI 커버 관련 스타일 추가 |
+| 프론트엔드 API | `frontend/src/api/index.js` | `generateCover()` 함수 추가 |
+
+### API 엔드포인트
+
+#### `POST /api/upload/generate-cover`
+- **인증**: JWT Bearer 토큰 필수
+- **요청 본문**:
+  ```json
+  {
+    "title": "곡 제목 (필수)",
+    "genre": "장르 (선택)",
+    "mood": "분위기 (선택)",
+    "style": "시각 스타일 (선택)"
+  }
+  ```
+- **응답**:
+  ```json
+  {
+    "image_url": "/api/upload/cover-preview/covers/generated/{user_id}/{uuid}.png",
+    "object_name": "covers/generated/{user_id}/{uuid}.png",
+    "message": "커버 이미지가 생성되었습니다."
+  }
+  ```
+
+#### `GET /api/upload/cover-preview/{object_name:path}`
+- MinIO에 저장된 커버 이미지를 프록시하여 외부 접근 가능하게 함
+- presigned URL의 localhost 문제 회피
+
+### 흐름
+1. 사용자가 업로드 페이지에서 곡 제목 입력 후 "AI 커버 생성" 버튼 클릭
+2. 프론트엔드 → `POST /api/upload/generate-cover` 호출
+3. 백엔드가 Gemini API로 프롬프트 전송 (제목, 장르, 분위기 포함)
+4. 생성된 이미지를 MinIO `aimu-images` 버킷에 저장
+5. 프론트엔드에서 미리보기 표시, 재생성/제거 가능
+6. 업로드 시 `cover_object_name`으로 트랙에 연결
+
+### 테스트 결과
+- API 엔드포인트 정상 동작 확인 (인증, 파라미터 검증, Gemini API 호출)
+- Gemini API 응답: 429 할당량 초과 — API 키 요금제 확인 필요
+- 코드 로직 및 에러 핸들링 정상 동작
+
+### 참고 사항
+- Gemini API 무료 tier는 분당/일별 요청 제한이 있음. 유료 플랜 활성화 필요할 수 있음
+- 이미지에 텍스트가 포함되지 않도록 프롬프트에 명시적으로 지시
+- 타임아웃 120초 설정 (이미지 생성 소요 시간 고려)

@@ -27,6 +27,10 @@ export default function UploadPage() {
   const [imageFile, setImageFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
 
+  const [generatingCover, setGeneratingCover] = useState(false);
+  const [aiCoverPreview, setAiCoverPreview] = useState(null);
+  const [aiCoverObjectName, setAiCoverObjectName] = useState(null);
+
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -39,6 +43,38 @@ export default function UploadPage() {
     if (file && file.type.startsWith('audio/')) {
       setAudioFile(file);
     }
+  };
+
+  const handleGenerateCover = async () => {
+    if (!title.trim()) {
+      alert('커버를 생성하려면 먼저 곡 제목을 입력해주세요.');
+      return;
+    }
+    setGeneratingCover(true);
+    try {
+      const { data } = await api.generateCover({
+        title: title.trim(),
+        genre: genre || null,
+        mood: mood || null,
+        style: null,
+      });
+      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+      const token = localStorage.getItem('token');
+      const proxyUrl = `${base}/api/upload/cover-preview/${encodeURIComponent(data.object_name)}?token=${encodeURIComponent(token)}`;
+      setAiCoverPreview(proxyUrl);
+      setAiCoverObjectName(data.object_name);
+      // Clear manual image file since AI cover is chosen
+      setImageFile(null);
+    } catch (err) {
+      alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
+    } finally {
+      setGeneratingCover(false);
+    }
+  };
+
+  const handleClearAiCover = () => {
+    setAiCoverPreview(null);
+    setAiCoverObjectName(null);
   };
 
   const handleSubmit = async (e) => {
@@ -62,14 +98,15 @@ export default function UploadPage() {
       if (tags.trim()) formData.append('tags', tags.trim());
       if (mood.trim()) formData.append('mood', mood.trim());
       if (lyrics.trim()) formData.append('lyrics', lyrics.trim());
+      if (aiCoverObjectName) formData.append('cover_object_name', aiCoverObjectName);
 
       const { data: track } = await api.uploadTrack(formData, (progressEvent) => {
         const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
         setProgress(pct);
       });
 
-      // Upload cover image if provided
-      if (imageFile && track?.id) {
+      // Upload cover image if provided (skip if AI cover was used)
+      if (imageFile && !aiCoverObjectName && track?.id) {
         const imgFormData = new FormData();
         imgFormData.append('file', imageFile);
         imgFormData.append('type', 'track');
@@ -184,18 +221,59 @@ export default function UploadPage() {
           {/* Cover image */}
           <div className="upload-card__field">
             <label className="upload-card__label">커버 이미지 (선택)</label>
-            <div className="upload-card__dropzone" onClick={() => imageInputRef.current?.click()} style={{ padding: '20px' }}>
-              <div className="upload-card__dropzone-icon"><FiImage /></div>
-              <div className="upload-card__dropzone-text"><strong>클릭</strong>하여 이미지를 선택하세요</div>
-              <div className="upload-card__dropzone-hint">JPG, PNG, WebP</div>
-            </div>
-            <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} style={{ display: 'none' }} onChange={(e) => setImageFile(e.target.files[0] || null)} />
-            {imageFile && (
-              <div className="upload-card__file-info">
-                <span className="upload-card__file-icon"><FiImage /></span>
-                <span className="upload-card__file-name">{imageFile.name}</span>
-                <button type="button" className="upload-card__file-remove" onClick={() => setImageFile(null)}><FiX /></button>
+
+            {/* AI cover preview */}
+            {aiCoverPreview && (
+              <div className="upload-cover-preview">
+                <img src={aiCoverPreview} alt="AI 생성 커버" className="upload-cover-preview__img" />
+                <div className="upload-cover-preview__actions">
+                  <button type="button" className="upload-cover-regenerate" onClick={handleGenerateCover} disabled={generatingCover}>
+                    {generatingCover ? '생성 중...' : '다시 생성'}
+                  </button>
+                  <button type="button" className="upload-cover-remove" onClick={handleClearAiCover}>제거</button>
+                </div>
               </div>
+            )}
+
+            {/* Show upload dropzone and AI button only when no AI cover is set */}
+            {!aiCoverPreview && (
+              <>
+                <div className="upload-card__dropzone" onClick={() => imageInputRef.current?.click()} style={{ padding: '20px' }}>
+                  <div className="upload-card__dropzone-icon"><FiImage /></div>
+                  <div className="upload-card__dropzone-text"><strong>클릭</strong>하여 이미지를 선택하세요</div>
+                  <div className="upload-card__dropzone-hint">JPG, PNG, WebP</div>
+                </div>
+                <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} style={{ display: 'none' }} onChange={(e) => { setImageFile(e.target.files[0] || null); handleClearAiCover(); }} />
+                {imageFile && (
+                  <div className="upload-card__file-info">
+                    <span className="upload-card__file-icon"><FiImage /></span>
+                    <span className="upload-card__file-name">{imageFile.name}</span>
+                    <button type="button" className="upload-card__file-remove" onClick={() => setImageFile(null)}><FiX /></button>
+                  </div>
+                )}
+
+                <div className="upload-cover-divider">
+                  <span className="upload-cover-divider__line" />
+                  <span className="upload-cover-divider__text">또는</span>
+                  <span className="upload-cover-divider__line" />
+                </div>
+
+                <button
+                  type="button"
+                  className="upload-cover-ai-btn"
+                  onClick={handleGenerateCover}
+                  disabled={generatingCover}
+                >
+                  {generatingCover ? (
+                    <>
+                      <span className="upload-cover-spinner" />
+                      AI 커버 생성 중...
+                    </>
+                  ) : (
+                    'AI 커버 생성'
+                  )}
+                </button>
+              </>
             )}
           </div>
 

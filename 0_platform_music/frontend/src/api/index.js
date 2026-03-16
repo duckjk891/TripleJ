@@ -134,6 +134,9 @@ export const getMyTracks = (params) => API.get('/tracks/my', { params });
 export const deleteTrack = (id) => API.delete(`/tracks/${id}`);
 export const updateTrack = (id, data) => API.put(`/tracks/${id}`, data);
 
+// AI Cover
+export const generateCover = (data) => API.post('/upload/generate-cover', data);
+
 // Legacy aliases
 export const uploadSong = uploadTrack;
 

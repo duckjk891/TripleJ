@@ -3,10 +3,12 @@ import mimetypes
 import os
 import uuid as uuid_lib
 from datetime import timedelta
+from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
 from ..auth import get_current_user
 from ..config import settings
@@ -15,6 +17,13 @@ from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
 
 router = APIRouter(prefix="/api/upload")
+
+
+class GenerateCoverRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    style: Optional[str] = None
 
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -122,3 +131,78 @@ async def get_presigned_url(
         return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
 
     return {"url": url}
+
+
+@router.post("/generate-cover")
+async def generate_cover(
+    body: GenerateCoverRequest,
+    current_user=Depends(get_current_user),
+):
+    """Generate AI cover image using Google Gemini."""
+    if not settings.google_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Google API 키가 설정되지 않았습니다."},
+        )
+
+    title = body.title.strip()
+    if not title:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "곡 제목을 입력해주세요."},
+        )
+
+    try:
+        from ..services.cover_generator import generate_cover_image
+
+        image_bytes = await generate_cover_image(
+            title=title,
+            genre=body.genre,
+            mood=body.mood,
+            style=body.style,
+        )
+
+        # Save to MinIO
+        object_name = "covers/generated/{}/{}.png".format(
+            current_user["id"], uuid_lib.uuid4().hex
+        )
+
+        minio_client = get_minio()
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(image_bytes),
+            length=len(image_bytes),
+            content_type="image/png",
+        )
+
+        return {
+            "image_url": "/api/upload/cover-preview/{}".format(object_name),
+            "object_name": object_name,
+            "message": "커버 이미지가 생성되었습니다.",
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "커버 생성 실패: {}".format(str(e)[:200])},
+        )
+
+
+@router.get("/cover-preview/{object_name:path}")
+async def cover_preview(object_name: str):
+    """Proxy cover image from MinIO for external access."""
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+        )
+        data = response.read()
+        response.close()
+        response.release_conn()
+        return Response(content=data, media_type="image/png")
+    except Exception:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "이미지를 찾을 수 없습니다."},
+        )

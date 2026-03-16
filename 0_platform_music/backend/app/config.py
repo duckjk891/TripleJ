@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
+    # Google Gemini (AI cover image generation)
+    google_api_key: str = ""
+
     # YuE Music Generation
     yue_model_dir: str = ""  # Path to YuEGP directory
     yue_output_dir: str = "./yue_output"

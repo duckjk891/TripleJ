@@ -1830,3 +1830,99 @@ UPDATE users SET role = 'admin' WHERE email = 'admin@aimu.com';
   - `0_platform/frontend/minihompi-web/components/game/scenes/OfficeScene.ts`
   - `0_platform/frontend/minihompi-web/src/components/game/scenes/OfficeScene.ts`
 - **우선순위**: 낮음 (캐릭터 표시가 핵심 기능은 아님)
+
+---
+
+## v2.1 -- AI 커버 이미지 자동 생성 (나노바나나)
+### 작성일: 2026-03-16
+
+---
+
+### 1. 개요
+
+트랙 업로드 시 커버 이미지를 **Google 나노바나나 (Gemini Image Generation)** 모델로 자동 생성하는 기능.
+사용자가 곡 제목, 장르, 분위기 등을 입력하면 AI가 적합한 앨범 커버 이미지를 만들어 자동으로 설정한다.
+
+### 2. 기술 스택
+
+| 항목 | 기술 |
+|------|------|
+| AI 모델 | Google Gemini (`gemini-2.0-flash-exp` 또는 최신 이미지 생성 모델) |
+| SDK | `google-genai` Python 패키지 |
+| 인증 | Google AI Studio API Key (환경변수 `GOOGLE_API_KEY`) |
+| 이미지 저장 | MinIO (`aimu-images` 버킷) |
+| 프론트엔드 | UploadPage.jsx 내 "AI 커버 생성" 버튼 추가 |
+
+### 3. 구현 계획
+
+#### B7: 백엔드 — AI 커버 이미지 생성 API
+
+**파일**: `backend/app/services/cover_generator.py` (신규)
+
+```python
+# google-genai SDK를 사용한 이미지 생성
+from google import genai
+from google.genai import types
+
+async def generate_cover_image(
+    title: str,
+    genre: str = None,
+    mood: str = None,
+    style: str = None,
+) -> bytes:
+    """곡 메타데이터 기반 커버 이미지 생성. PNG bytes 반환."""
+```
+
+- 프롬프트 구성: 곡 제목 + 장르 + 분위기를 조합하여 "앨범 커버 아트" 프롬프트 생성
+- 응답에서 `inline_data` 파트의 이미지 바이너리 추출
+- 생성된 이미지를 MinIO에 업로드 후 object_name 반환
+
+**파일**: `backend/app/routes/upload.py` (수정)
+
+```
+POST /api/upload/generate-cover
+Body: { "title": str, "genre": str?, "mood": str?, "style": str? }
+Response: { "image_url": str (presigned URL), "object_name": str }
+```
+
+- 인증 필요 (get_current_user)
+- rate limit 고려 (사용자당 분당 5회)
+- 생성된 이미지를 MinIO `aimu-images` 버킷에 저장
+- presigned URL과 object_name 반환
+
+**파일**: `backend/app/config.py` (수정)
+- `google_api_key: str = ""` 필드 추가
+- `.env`에 `GOOGLE_API_KEY` 추가
+
+#### F6: 프론트엔드 — AI 커버 생성 UI
+
+**파일**: `frontend/src/pages/UploadPage.jsx` (수정)
+
+- 커버 이미지 섹션에 "AI 커버 생성" 버튼 추가
+- 버튼 클릭 시:
+  1. 현재 입력된 곡 제목/장르/분위기 수집
+  2. `POST /api/upload/generate-cover` 호출
+  3. 생성된 이미지를 미리보기로 표시
+  4. 업로드 시 해당 이미지를 커버로 사용
+- 로딩 상태 표시 (스피너 + "AI가 커버를 그리고 있습니다...")
+- "다시 생성" 버튼으로 재생성 가능
+
+#### T3: 테스트
+
+1. API 단위 테스트: `/api/upload/generate-cover` 엔드포인트 응답 확인
+2. 통합 테스트: 업로드 페이지에서 AI 커버 생성 → 미리보기 → 트랙 업로드 플로우
+3. 에러 케이스: API 키 없을 때, 모델 에러 시 fallback 처리
+
+### 4. 작업 순서
+
+```
+B7-1: google-genai 설치 + config 설정 ─┐
+B7-2: cover_generator.py 서비스 구현   ─┤→ B7-3: API 엔드포인트 구현 → F6: 프론트 UI → T3: 테스트
+```
+
+### 5. 주의사항
+
+1. **API 비용**: 이미지 1장당 약 $0.04. 무분별한 생성 방지를 위해 rate limit 적용
+2. **프롬프트 품질**: "album cover art" 키워드 포함, 정사각형(1:1) 비율 지정
+3. **Fallback**: API 실패 시 기존 수동 업로드 방식으로 대체 가능하도록 UI 구성
+4. **이미지 크기**: 생성 후 적절한 크기(512x512 또는 1024x1024)로 설정
