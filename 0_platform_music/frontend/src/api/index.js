@@ -137,6 +137,10 @@ export const updateTrack = (id, data) => API.put(`/tracks/${id}`, data);
 // AI Cover
 export const generateCover = (data) => API.post('/upload/generate-cover', data);
 
+// AI Music Video
+export const generateMV = (data) => API.post('/upload/generate-mv', data);
+export const checkMVStatus = (operationName) => API.get(`/upload/mv-status/${encodeURIComponent(operationName)}`);
+
 // Legacy aliases
 export const uploadSong = uploadTrack;
 
@@ -148,6 +152,7 @@ export const getGenerations = (params) => API.get('/generate/', { params });
 export const getGeneration = (id) => API.get(`/generate/${id}`);
 export const deleteGeneration = (id) => API.delete(`/generate/${id}`);
 export const streamGeneration = (id) => API.get(`/generate/${id}/stream/`);
+export const uploadFromGeneration = (data) => API.post('/tracks/upload-from-generation', data);
 
 // Admin
 export const getAdminDashboard = () => API.get('/admin/dashboard');

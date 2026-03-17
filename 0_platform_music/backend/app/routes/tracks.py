@@ -362,6 +362,130 @@ async def upload_track(
     return _serialize_track(doc)
 
 
+class UploadFromGenerationBody(BaseModel):
+    generation_id: str
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    tags: Optional[str] = None
+    prompt: Optional[str] = None
+    lyrics: Optional[str] = None
+    cover_object_name: Optional[str] = None
+    ai_model: Optional[str] = "YuE"
+
+
+@router.post("/upload-from-generation", status_code=201)
+async def upload_from_generation(
+    body: UploadFromGenerationBody,
+    current_user=Depends(get_current_user),
+):
+    """Create a track from a completed AI generation."""
+    if not ObjectId.is_valid(body.generation_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 생성 ID입니다."})
+
+    mongo = get_mongo()
+
+    # Find generation and verify ownership
+    gen_doc = await mongo.generations.find_one({"_id": ObjectId(body.generation_id)})
+    if not gen_doc:
+        return JSONResponse(status_code=404, content={"error": "생성 요청을 찾을 수 없습니다."})
+    if gen_doc.get("user_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+    if gen_doc.get("status") != "completed":
+        return JSONResponse(status_code=400, content={"error": "완료된 생성 요청만 업로드할 수 있습니다."})
+    if not gen_doc.get("result_audio_url"):
+        return JSONResponse(status_code=400, content={"error": "생성된 오디오 파일이 없습니다."})
+
+    track_id = ObjectId()
+    uploader_id = current_user["id"]
+    source_object_name = gen_doc["result_audio_url"]
+
+    # Determine extension from source
+    ext = ".wav" if source_object_name.endswith(".wav") else ".mp3"
+    dest_object_name = f"tracks/{uploader_id}/{str(track_id)}{ext}"
+
+    # Copy audio file in MinIO (get + put since copy_object requires CopySource)
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=source_object_name,
+        )
+        audio_data = response.read()
+        response.close()
+        response.release_conn()
+
+        content_type = "audio/wav" if ext == ".wav" else "audio/mpeg"
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=dest_object_name,
+            data=io.BytesIO(audio_data),
+            length=len(audio_data),
+            content_type=content_type,
+        )
+    except Exception:
+        return JSONResponse(status_code=500, content={"error": "오디오 파일 복사에 실패했습니다."})
+
+    # Extract duration with mutagen
+    duration_sec = 0
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(audio_data)
+            tmp_path = tmp.name
+        from mutagen import File as MutagenFile
+        audio = MutagenFile(tmp_path)
+        if audio and audio.info:
+            duration_sec = int(audio.info.length)
+        os.unlink(tmp_path)
+    except Exception:
+        pass
+
+    # Parse comma-separated fields into arrays
+    genre_list = [g.strip() for g in body.genre.split(",") if g.strip()] if body.genre else []
+    mood_list = [m.strip() for m in body.mood.split(",") if m.strip()] if body.mood else []
+    tags_list = [t.strip() for t in body.tags.split(",") if t.strip()] if body.tags else []
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "_id": track_id,
+        "title": body.title,
+        "uploader_id": uploader_id,
+        "uploader_nickname": current_user.get("nickname", ""),
+        "ai_model": body.ai_model,
+        "prompt": body.prompt,
+        "ai_model_version": None,
+        "genre": genre_list,
+        "mood": mood_list,
+        "tags": tags_list,
+        "bpm": gen_doc.get("bpm"),
+        "key": gen_doc.get("key"),
+        "duration_sec": duration_sec,
+        "language": None,
+        "lyrics": body.lyrics,
+        "audio_url": dest_object_name,
+        "cover_image_url": body.cover_object_name,
+        "waveform_data": [],
+        "play_count": 0,
+        "like_count": 0,
+        "comment_count": 0,
+        "is_public": True,
+        "generation_id": str(gen_doc["_id"]),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    await mongo.tracks.insert_one(doc)
+
+    # Update generation with result_track_id
+    await mongo.generations.update_one(
+        {"_id": ObjectId(body.generation_id)},
+        {"$set": {"result_track_id": str(track_id), "updated_at": now}},
+    )
+
+    return _serialize_track(doc)
+
+
 @router.get("/stream/{track_id}")
 async def stream_track(track_id: str):
     """Return a presigned URL for streaming the track from MinIO."""

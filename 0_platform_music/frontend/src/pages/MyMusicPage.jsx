@@ -19,6 +19,12 @@ export default function MyMusicPage() {
   const { user } = useAuth();
   const { play, currentSong, isPlaying, togglePlay } = usePlayer();
   const [activeTab, setActiveTab] = useState('tracks');
+  const [generationPrefill, setGenerationPrefill] = useState(null);
+
+  const handleSendToUpload = (genData) => {
+    setGenerationPrefill(genData);
+    setActiveTab('upload');
+  };
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState('created_at');
@@ -254,7 +260,7 @@ export default function MyMusicPage() {
         {/* Tab 2: Upload */}
         {activeTab === 'upload' && (
           <div className="mymusic-upload-tab">
-            <UploadPage />
+            <UploadPage generationPrefill={generationPrefill} onClearPrefill={() => setGenerationPrefill(null)} />
           </div>
         )}
 
@@ -265,7 +271,7 @@ export default function MyMusicPage() {
 
         {/* Tab 4: Studio2 */}
         {activeTab === 'studio2' && (
-          <StudioTab2 />
+          <StudioTab2 onSendToUpload={handleSendToUpload} />
         )}
       </div>
     </div>

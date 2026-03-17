@@ -860,6 +860,28 @@
   cursor: not-allowed;
 }
 
+/* ─── Upload Button ─── */
+.s2__gen-upload {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.s2__gen-upload:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
   .s2__steps {

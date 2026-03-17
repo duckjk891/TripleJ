@@ -1291,3 +1291,98 @@ cd ../frontend && npm run dev
 - Gemini API 무료 tier는 분당/일별 요청 제한이 있음. 유료 플랜 활성화 필요할 수 있음
 - 이미지에 텍스트가 포함되지 않도록 프롬프트에 명시적으로 지시
 - 타임아웃 120초 설정 (이미지 생성 소요 시간 고려)
+
+---
+
+## v2.2 작업실2 → 새 업로드 연동
+
+### 개요
+작업실2(StudioTab2)에서 완료된 AI 생성 음악을 "업로드하기" 버튼으로 새 업로드 탭에 자동 전달. 제목, 장르, 분위기, 프롬프트, 가사, 오디오가 자동 세팅.
+
+### 구현 파일
+
+| 구분 | 파일 | 변경 내용 |
+|------|------|-----------|
+| 백엔드 | `routes/tracks.py` | `POST /api/tracks/upload-from-generation` — generation에서 트랙 생성 |
+| 프론트 | `pages/MyMusicPage.jsx` | `generationPrefill` 상태, 탭 간 데이터 브릿지 |
+| 프론트 | `components/StudioTab2.jsx` | 완료 카드에 "업로드하기" 버튼 추가 |
+| 프론트 | `pages/UploadPage.jsx` | prefill 수신, 폼 자동 입력, generation 연결 업로드 |
+| 프론트 | `api/index.js` | `uploadFromGeneration()` 함수 추가 |
+
+### 테스트 결과
+- 엔드포인트 등록 확인, 유효성 검증 (422/400/404) 모두 통과
+- 프론트엔드 컴파일 에러 없음, 모든 파일 변경사항 정상 반영
+
+---
+
+## v2.3 AI 뮤직비디오 생성 (Veo 2)
+
+### 개요
+업로드 페이지에서 커버 이미지를 초기 프레임으로 사용하여 Google Veo 2 모델로 뮤직비디오 동영상을 자동 생성. 비동기 폴링 방식으로 생성 상태 추적.
+
+### 사용 모델
+- **Google Veo 2** (`veo-2`)
+- REST API 직접 호출 (httpx) — `predictLongRunning` 비동기 엔드포인트
+- 이미지 기반 비디오 생성 (커버 → 초기 프레임)
+
+### 구현 파일
+
+| 구분 | 파일 | 변경 내용 |
+|------|------|-----------|
+| 백엔드 서비스 | `backend/app/services/mv_generator.py` | Veo 2 API 호출 (생성 시작, 상태 폴링, 비디오 다운로드) |
+| 백엔드 라우트 | `backend/app/routes/upload.py` | 3개 엔드포인트 추가 (아래 참조) |
+| 프론트엔드 페이지 | `frontend/src/pages/UploadPage.jsx` | 뮤직비디오 생성 버튼, 폴링, 미리보기, 재생성/제거 UI |
+| 프론트엔드 스타일 | `frontend/src/pages/UploadPage.css` | 뮤직비디오 관련 스타일 추가 |
+| 프론트엔드 API | `frontend/src/api/index.js` | `generateMV()`, `checkMVStatus()` 함수 추가 |
+
+### API 엔드포인트
+
+#### `POST /api/upload/generate-mv`
+- **인증**: JWT Bearer 토큰 필수
+- **요청 본문**:
+  ```json
+  {
+    "title": "곡 제목 (필수)",
+    "genre": "장르 (선택)",
+    "mood": "분위기 (선택)",
+    "cover_object_name": "MinIO 커버 이미지 경로 (필수)"
+  }
+  ```
+- **응답**: `{"operation_name": "operations/xxx", "message": "뮤직비디오 생성이 시작되었습니다."}`
+
+#### `GET /api/upload/mv-status/{operation_name:path}`
+- **인증**: JWT Bearer 토큰 필수
+- **진행 중 응답**: `{"done": false}`
+- **완료 응답**: `{"done": true, "video_url": "/api/upload/mv-preview/...", "object_name": "mv/generated/..."}`
+- **에러 응답**: `{"done": true, "error": "에러 메시지"}`
+
+#### `GET /api/upload/mv-preview/{object_name:path}`
+- MinIO에 저장된 뮤직비디오를 프록시 (media_type: video/mp4)
+
+### 흐름
+1. 사용자가 커버 이미지 생성 후 "AI 뮤직비디오 생성" 버튼 클릭
+2. `POST /api/upload/generate-mv` → Veo 2 API 호출 → operation_name 반환
+3. 프론트엔드에서 10초 간격으로 `GET /api/upload/mv-status/{op}` 폴링
+4. 완료 시 비디오 다운로드 → MinIO 저장 → 미리보기 표시
+5. 업로드 시 `mv_object_name`으로 트랙에 연결
+
+### 테스트 결과
+
+| 테스트 | 결과 |
+|--------|------|
+| 백엔드 시작 (import 에러 없음) | PASS |
+| 프론트엔드 컴파일 | PASS |
+| 3개 MV 엔드포인트 등록 | PASS |
+| mv_generator.py 문법 검증 | PASS |
+| 커버 없이 요청 → 에러 | PASS |
+| 존재하지 않는 커버 → 에러 | PASS |
+| 가짜 operation 폴링 → 에러 | PASS |
+| 프론트엔드 MV UI 코드 반영 | PASS |
+| API 함수 등록 | PASS |
+| CSS 스타일 반영 | PASS |
+
+### 참고 사항
+- Veo 2 생성 소요시간: 약 1~3분
+- 생성된 비디오는 Google 서버에서 2일 보관 후 삭제 → MinIO에 즉시 저장
+- 비디오 최대 8초, 오디오 미포함 (뮤직비디오 배경 영상 용도)
+- 커버 이미지가 있어야만 뮤직비디오 생성 버튼 활성화

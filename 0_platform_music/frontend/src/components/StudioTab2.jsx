@@ -4,6 +4,7 @@ import {
   FiClock, FiTrash2, FiRefreshCw, FiEdit3, FiSliders,
   FiCheck, FiArrowLeft, FiArrowRight, FiLoader,
   FiToggleLeft, FiToggleRight, FiPlay, FiPause, FiDownload,
+  FiUploadCloud,
 } from 'react-icons/fi';
 import * as api from '../api';
 import './StudioTab2.css';
@@ -31,7 +32,7 @@ const VOCAL_PRESETS = [
 
 const STRUCTURE_TAGS = ['[Verse]', '[Chorus]', '[Bridge]', '[Outro]', '[Intro]', '[Pre-Chorus]', '[Instrumental]'];
 
-export default function StudioTab2() {
+export default function StudioTab2({ onSendToUpload }) {
   // ─── Mode: 'simple' or 'custom' ───
   const [mode, setMode] = useState('custom');
 
@@ -771,6 +772,21 @@ export default function StudioTab2() {
                     >
                       <FiDownload /> 다운로드
                     </button>
+                    {onSendToUpload && (
+                      <button
+                        className="s2__gen-upload"
+                        onClick={() => onSendToUpload({
+                          generationId: gen.id,
+                          title: gen.title,
+                          genre: gen.genre,
+                          mood: gen.mood,
+                          prompt: gen.prompt,
+                          lyrics: gen.lyrics,
+                        })}
+                      >
+                        <FiUploadCloud /> 업로드하기
+                      </button>
+                    )}
                   </div>
                 )}
 

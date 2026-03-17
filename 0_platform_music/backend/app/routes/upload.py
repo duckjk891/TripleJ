@@ -25,6 +25,13 @@ class GenerateCoverRequest(BaseModel):
     mood: Optional[str] = None
     style: Optional[str] = None
 
+
+class GenerateMVRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    cover_object_name: Optional[str] = None  # MinIO object name of cover image
+
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
@@ -205,4 +212,108 @@ async def cover_preview(object_name: str):
         return JSONResponse(
             status_code=404,
             content={"error": "이미지를 찾을 수 없습니다."},
+        )
+
+
+@router.post("/generate-mv")
+async def generate_mv(
+    body: GenerateMVRequest,
+    current_user=Depends(get_current_user),
+):
+    """Start AI music video generation using Google Veo 2."""
+    if not settings.google_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Google API 키가 설정되지 않았습니다."},
+        )
+
+    title = body.title.strip()
+    if not title:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "곡 제목을 입력해주세요."},
+        )
+
+    try:
+        from ..services.mv_generator import start_mv_generation
+
+        operation_name = await start_mv_generation(
+            title=title,
+            genre=body.genre,
+            mood=body.mood,
+        )
+
+        return {
+            "operation_name": operation_name,
+            "message": "뮤직비디오 생성이 시작되었습니다.",
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "뮤직비디오 생성 시작 실패: {}".format(str(e)[:200])},
+        )
+
+
+@router.get("/mv-status/{operation_name:path}")
+async def mv_status(
+    operation_name: str,
+    current_user=Depends(get_current_user),
+):
+    """Check music video generation status and save result when done."""
+    try:
+        from ..services.mv_generator import check_mv_status, download_video
+
+        result = await check_mv_status(operation_name)
+
+        if not result["done"]:
+            return {"done": False}
+
+        if result.get("error"):
+            return {"done": True, "error": result["error"]}
+
+        # Video is ready — download and save to MinIO
+        video_bytes = await download_video(result["video_uri"])
+
+        object_name = "mv/generated/{}/{}.mp4".format(
+            current_user["id"], uuid_lib.uuid4().hex
+        )
+
+        minio_client = get_minio()
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(video_bytes),
+            length=len(video_bytes),
+            content_type="video/mp4",
+        )
+
+        return {
+            "done": True,
+            "video_url": "/api/upload/mv-preview/{}".format(object_name),
+            "object_name": object_name,
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "뮤직비디오 상태 확인 실패: {}".format(str(e)[:200])},
+        )
+
+
+@router.get("/mv-preview/{object_name:path}")
+async def mv_preview(object_name: str):
+    """Proxy music video from MinIO for playback."""
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+        )
+        data = response.read()
+        response.close()
+        response.release_conn()
+        return Response(content=data, media_type="video/mp4")
+    except Exception:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "뮤직비디오를 찾을 수 없습니다."},
         )

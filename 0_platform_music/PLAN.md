@@ -1926,3 +1926,130 @@ B7-2: cover_generator.py 서비스 구현   ─┤→ B7-3: API 엔드포인트 
 2. **프롬프트 품질**: "album cover art" 키워드 포함, 정사각형(1:1) 비율 지정
 3. **Fallback**: API 실패 시 기존 수동 업로드 방식으로 대체 가능하도록 UI 구성
 4. **이미지 크기**: 생성 후 적절한 크기(512x512 또는 1024x1024)로 설정
+
+---
+
+## v2.2 작업실2 → 새 업로드 연동 (생성 음악 바로 업로드)
+
+### 1. 개요
+
+작업실2(StudioTab2)에서 완료된 AI 생성 음악을 "업로드하기" 버튼 한 번으로 새 업로드 탭으로 전달.
+제목, 장르, 분위기, 프롬프트, 가사, 오디오 파일이 자동 세팅되어 사용자는 수정 후 바로 업로드 가능.
+
+### 2. 데이터 흐름
+
+```
+StudioTab2 (완료된 생성 카드)
+  → "업로드하기" 클릭
+  → onSendToUpload({ generationId, title, genre, mood, prompt, lyrics })
+
+MyMusicPage (부모 컴포넌트)
+  → generationPrefill 상태 설정
+  → activeTab을 'upload'로 전환
+  → UploadPage에 prefill props 전달
+
+UploadPage
+  → useEffect로 폼 필드 자동 입력
+  → "AI 생성 오디오 (자동 연결)" 배지 표시
+  → 사용자 수정 → AI 커버 생성 → 업로드
+  → POST /api/tracks/upload-from-generation 호출
+
+Backend (tracks.py)
+  → generation 레코드 확인 (소유자, 완료 상태)
+  → MinIO에서 오디오 복사 (generated/ → tracks/)
+  → MongoDB에 트랙 문서 생성
+  → generation 레코드에 result_track_id 연결
+```
+
+### 3. 작업 분담
+
+#### B8: 백엔드 — `POST /api/tracks/upload-from-generation` 엔드포인트
+
+**파일**: `backend/app/routes/tracks.py`
+
+- `generation_id` (필수), `title`, `genre`, `mood`, `tags`, `prompt`, `lyrics`, `cover_object_name`, `ai_model` 파라미터
+- generation 레코드 검증 (소유자 확인, status=completed, result_audio_url 존재)
+- MinIO 오디오 복사: `generated/{id}/mix.wav` → `tracks/{user_id}/{track_id}.wav`
+- mutagen으로 duration 추출
+- MongoDB tracks 컬렉션에 문서 삽입
+- generation 문서에 `result_track_id` 업데이트
+
+#### F7: 프론트엔드 — 3개 파일 수정
+
+1. **`MyMusicPage.jsx`**: `generationPrefill` 상태 추가, StudioTab2에 `onSendToUpload` 전달, UploadPage에 prefill props 전달
+2. **`StudioTab2.jsx`**: 완료된 생성 카드에 "업로드하기" 버튼 추가, `onSendToUpload` prop 수신
+3. **`UploadPage.jsx`**: `generationPrefill` prop 수신, useEffect로 폼 자동 입력, `fromGeneration` 상태로 오디오 파일 대체 표시, submit 시 `uploadFromGeneration` API 호출
+4. **`api/index.js`**: `uploadFromGeneration` 함수 추가
+
+#### T4: 테스트
+
+1. "업로드하기" 클릭 → 탭 전환 + 폼 자동 입력 확인
+2. 오디오 파일 없이 generation 연결로 업로드 성공 확인
+3. AI 커버 생성 후 업로드 확인
+4. 일반 업로드(prefill 없이) 기존 동작 유지 확인
+
+---
+
+## v2.3 AI 뮤직비디오 생성 (Veo 2)
+
+### 1. 개요
+
+업로드 페이지에서 커버 이미지를 기반으로 Google Veo 2 모델을 사용하여 뮤직비디오 동영상을 자동 생성.
+커버 이미지를 초기 프레임으로 사용하고, 곡 정보(제목, 장르, 분위기)로 프롬프트를 구성.
+
+### 2. Veo 2 API 구조
+
+- **모델**: `veo-2`
+- **엔드포인트**: `POST /v1beta/models/veo-2:predictLongRunning`
+- **비동기 처리**: 작업 시작 → operation name 반환 → 폴링(10초 간격) → 완료 시 video URI 추출 → 다운로드
+- **이미지 기반 생성**: 커버 이미지를 base64로 전달 → 초기 프레임으로 사용
+- **제약**: 최대 8초, 오디오 미포함, 비디오 2일 보관
+
+### 3. 데이터 흐름
+
+```
+UploadPage (커버 이미지 + 곡 정보)
+  → "뮤직비디오 생성" 버튼 클릭
+  → POST /api/upload/generate-mv
+
+Backend (upload.py)
+  → 커버 이미지를 MinIO에서 가져오기
+  → base64 인코딩
+  → Veo 2 API 호출 (predictLongRunning)
+  → operation name 반환
+
+Frontend
+  → 폴링 시작: GET /api/upload/mv-status/{operation_id}
+  → 완료 시 미리보기 표시
+
+Backend (폴링 응답)
+  → Google API 폴링
+  → 완료 시 비디오 다운로드 → MinIO 저장
+  → 비디오 URL 반환
+```
+
+### 4. 작업 분담
+
+#### B9: 백엔드 — 뮤직비디오 생성 서비스 + API
+
+1. **`backend/app/services/mv_generator.py`** (신규)
+   - `start_mv_generation(cover_image_bytes, title, genre, mood)` → operation_name 반환
+   - `check_mv_status(operation_name)` → {done, video_url} 반환
+   - `download_and_store_mv(video_uri, user_id)` → MinIO object_name 반환
+
+2. **`backend/app/routes/upload.py`** (수정)
+   - `POST /api/upload/generate-mv` — 뮤직비디오 생성 시작
+   - `GET /api/upload/mv-status/{operation_id}` — 상태 폴링
+   - `GET /api/upload/mv-preview/{object_name:path}` — MinIO 프록시
+
+#### F8: 프론트엔드 — 뮤직비디오 생성 UI
+
+1. **`UploadPage.jsx`** — 커버 이미지 아래에 "뮤직비디오 생성" 버튼, 진행 상태, 미리보기
+2. **`UploadPage.css`** — 뮤직비디오 관련 스타일
+3. **`api/index.js`** — `generateMV`, `checkMVStatus` 함수 추가
+
+#### T5: 테스트
+
+1. API 엔드포인트 동작 확인
+2. 폴링 → 완료 → 미리보기 플로우 확인
+3. 업로드 시 뮤직비디오 연결 확인
