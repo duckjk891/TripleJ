@@ -824,6 +824,64 @@
   color: #fbbf24;
 }
 
+.s2__gen-tag--model {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+}
+
+/* ─── Model Cards ─── */
+.s2__model-cards {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.s2__model-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 20px;
+  border: 2px solid var(--color-border, #333);
+  border-radius: 10px;
+  background: var(--color-bg-card, #1a1a2e);
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 160px;
+}
+
+.s2__model-card:hover {
+  border-color: var(--color-primary, #00d4aa);
+}
+
+.s2__model-card--active {
+  border-color: var(--color-primary, #00d4aa);
+  background: rgba(0, 212, 170, 0.1);
+}
+
+.s2__model-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text, #fff);
+}
+
+.s2__model-desc {
+  font-size: 11px;
+  color: var(--color-text-sub, #888);
+  margin-top: 4px;
+  text-align: center;
+}
+
+/* ─── Suno Note ─── */
+.s2__suno-note {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-text-sub);
+  background: rgba(124, 58, 237, 0.06);
+  border: 1px solid rgba(124, 58, 237, 0.15);
+  border-radius: 8px;
+  text-align: center;
+}
+
 .s2__gen-bottom {
   display: flex;
   justify-content: space-between;

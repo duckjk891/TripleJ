@@ -30,11 +30,17 @@ const VOCAL_PRESETS = [
   { value: 'female_husky', label: '여성 - 허스키' },
 ];
 
+const MODEL_OPTIONS = [
+  { id: 'yue', name: 'YuE', desc: '오픈소스 음악 생성 AI (보컬 + 반주)' },
+  { id: 'suno', name: 'Suno', desc: 'AI 음악 생성 서비스 (고품질 보컬 + 반주)' },
+];
+
 const STRUCTURE_TAGS = ['[Verse]', '[Chorus]', '[Bridge]', '[Outro]', '[Intro]', '[Pre-Chorus]', '[Instrumental]'];
 
 export default function StudioTab2({ onSendToUpload }) {
   // ─── Mode: 'simple' or 'custom' ───
   const [mode, setMode] = useState('custom');
+  const [selectedModel, setSelectedModel] = useState('yue');
 
   // ─── Step state: 1=prompt, 2=lyrics confirm, 3=generate music ───
   const [step, setStep] = useState(1);
@@ -192,6 +198,7 @@ export default function StudioTab2({ onSendToUpload }) {
         key: musicalKey || null,
         reference_style: referenceText.trim() || null,
         start_music_gen: true,
+        model: selectedModel,
       };
 
       await api.createGeneration(body);
@@ -272,6 +279,7 @@ export default function StudioTab2({ onSendToUpload }) {
         lyrics: lyricsData.lyrics || '',
         start_music_gen: true,
         duration: 30,
+        model: selectedModel,
       });
 
       setSuccessMsg('가사가 자동 생성되었고, 음악 생성이 시작되었습니다!');
@@ -361,6 +369,23 @@ export default function StudioTab2({ onSendToUpload }) {
       {mode === 'simple' && (
         <div className="s2__form">
           <div className="s2__section">
+            <label className="s2__label">AI 모델</label>
+            <div className="s2__model-cards">
+              {MODEL_OPTIONS.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`s2__model-card ${selectedModel === m.id ? 's2__model-card--active' : ''}`}
+                  onClick={() => setSelectedModel(m.id)}
+                >
+                  <span className="s2__model-name">{m.name}</span>
+                  <span className="s2__model-desc">{m.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="s2__section">
             <label className="s2__main-label">
               <FiZap className="s2__label-icon" />
               어떤 음악을 만들고 싶나요?
@@ -391,7 +416,9 @@ export default function StudioTab2({ onSendToUpload }) {
             )}
           </button>
           <div className="s2__note">
-            ChatGPT가 가사를 자동 생성하고, YuE AI가 음악을 만듭니다.
+            {selectedModel === 'suno'
+              ? 'ChatGPT가 가사를 자동 생성하고, Suno AI가 음악을 만듭니다.'
+              : 'ChatGPT가 가사를 자동 생성하고, YuE AI가 음악을 만듭니다.'}
           </div>
         </div>
       )}
@@ -591,6 +618,24 @@ export default function StudioTab2({ onSendToUpload }) {
             <pre className="s2__preview-lyrics">{lyrics || '(Instrumental)'}</pre>
           </div>
 
+          {/* Model Selection */}
+          <div className="s2__section">
+            <label className="s2__label">AI 모델</label>
+            <div className="s2__model-cards">
+              {MODEL_OPTIONS.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`s2__model-card ${selectedModel === m.id ? 's2__model-card--active' : ''}`}
+                  onClick={() => setSelectedModel(m.id)}
+                >
+                  <span className="s2__model-name">{m.name}</span>
+                  <span className="s2__model-desc">{m.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Style */}
           <div className="s2__section">
             <label className="s2__main-label">
@@ -640,45 +685,52 @@ export default function StudioTab2({ onSendToUpload }) {
 
           {showAdvanced && (
             <div className="s2__advanced">
-              <div className="s2__advanced-row">
-                <div className="s2__field">
-                  <label className="s2__label">BPM</label>
-                  <input
-                    className="s2__input"
-                    type="number"
-                    min="40" max="240"
-                    value={bpm}
-                    onChange={(e) => setBpm(e.target.value)}
-                    placeholder="60 ~ 180"
-                  />
+              {selectedModel !== 'suno' && (
+                <div className="s2__advanced-row">
+                  <div className="s2__field">
+                    <label className="s2__label">BPM</label>
+                    <input
+                      className="s2__input"
+                      type="number"
+                      min="40" max="240"
+                      value={bpm}
+                      onChange={(e) => setBpm(e.target.value)}
+                      placeholder="60 ~ 180"
+                    />
+                  </div>
+                  <div className="s2__field">
+                    <label className="s2__label">키 (Key)</label>
+                    <select
+                      className="s2__select"
+                      value={musicalKey}
+                      onChange={(e) => setMusicalKey(e.target.value)}
+                    >
+                      <option value="">자동</option>
+                      {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].map((k) => (
+                        <option key={k} value={k}>{k} Major / Minor</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="s2__field">
+                    <label className="s2__label">길이</label>
+                    <select
+                      className="s2__select"
+                      value={duration}
+                      onChange={(e) => setDuration(Number(e.target.value))}
+                    >
+                      <option value={30}>30초 (~1 segment)</option>
+                      <option value={60}>1분 (~2 segments)</option>
+                      <option value={90}>1분 30초 (~3 segments)</option>
+                      <option value={120}>2분 (~4 segments)</option>
+                    </select>
+                  </div>
                 </div>
-                <div className="s2__field">
-                  <label className="s2__label">키 (Key)</label>
-                  <select
-                    className="s2__select"
-                    value={musicalKey}
-                    onChange={(e) => setMusicalKey(e.target.value)}
-                  >
-                    <option value="">자동</option>
-                    {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].map((k) => (
-                      <option key={k} value={k}>{k} Major / Minor</option>
-                    ))}
-                  </select>
+              )}
+              {selectedModel === 'suno' && (
+                <div className="s2__suno-note">
+                  Suno는 자체적으로 곡 길이, BPM, 키를 결정합니다.
                 </div>
-                <div className="s2__field">
-                  <label className="s2__label">길이</label>
-                  <select
-                    className="s2__select"
-                    value={duration}
-                    onChange={(e) => setDuration(Number(e.target.value))}
-                  >
-                    <option value={30}>30초 (~1 segment)</option>
-                    <option value={60}>1분 (~2 segments)</option>
-                    <option value={90}>1분 30초 (~3 segments)</option>
-                    <option value={120}>2분 (~4 segments)</option>
-                  </select>
-                </div>
-              </div>
+              )}
               <div className="s2__field">
                 <label className="s2__label">참고 스타일 / 레퍼런스</label>
                 <input
@@ -713,7 +765,9 @@ export default function StudioTab2({ onSendToUpload }) {
           </div>
 
           <div className="s2__note">
-            YuE AI 모델이 음악을 생성합니다. 30초당 약 15~30분 소요됩니다.
+            {selectedModel === 'suno'
+              ? 'Suno AI가 음악을 생성합니다. 약 1~3분 소요됩니다.'
+              : 'YuE AI 모델이 음악을 생성합니다. 30초당 약 15~30분 소요됩니다.'}
           </div>
         </div>
       )}
@@ -748,6 +802,11 @@ export default function StudioTab2({ onSendToUpload }) {
                   </span>
                 </div>
                 <div className="s2__gen-meta">
+                  {gen.model && (
+                    <span className="s2__gen-tag s2__gen-tag--model">
+                      {gen.model === 'yue' ? 'YuE' : gen.model === 'suno' ? 'Suno' : gen.model}
+                    </span>
+                  )}
                   {gen.genre && <span className="s2__gen-tag">{gen.genre}</span>}
                   {gen.mood && <span className="s2__gen-tag">{gen.mood}</span>}
                   {gen.style && <span className="s2__gen-tag s2__gen-tag--style">{gen.style}</span>}

@@ -11,7 +11,68 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import logging
+import re
+
 from ..config import settings
+
+logger = logging.getLogger(__name__)
+
+
+async def _translate_to_english(text: str, mode: str = "general") -> str:
+    """Translate Korean text to English using ChatGPT.
+
+    Args:
+        text: The text to translate.
+        mode: "general" for genre/tags, "lyrics" to preserve section tags.
+
+    Returns the English translation, or the original text on failure.
+    """
+    if not text or not text.strip():
+        return text
+
+    # Skip if no Korean characters present
+    if not re.search(r'[\uac00-\ud7a3]', text):
+        return text
+
+    # Skip if OpenAI API key is not configured
+    if not settings.openai_api_key:
+        logger.warning("OpenAI API key not set – skipping Korean→English translation")
+        return text
+
+    if mode == "lyrics":
+        system_msg = (
+            "You are a translator. Translate the given Korean song lyrics to English. "
+            "Keep all section tags like [verse], [chorus], [intro], [outro], [bridge], "
+            "[prechorus] exactly as they are. Only translate the lyrics text. "
+            "Output ONLY the translated lyrics, nothing else."
+        )
+    else:
+        system_msg = (
+            "You are a translator. Translate the given Korean text to English. "
+            "Output ONLY the English translation, nothing else. "
+            "No explanations, no commentary, no quotes."
+        )
+
+    try:
+        from .lyrics_generator import _get_client
+
+        client = _get_client()
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.3,
+            max_tokens=500,
+        )
+        translated = response.choices[0].message.content.strip()
+        logger.info("Translated Korean→English: %s → %s", text[:80], translated[:80])
+        return translated
+    except Exception as exc:
+        logger.warning("Translation failed, using original text: %s", exc)
+        return text
 
 
 def _get_yue_dir() -> str:
@@ -31,7 +92,11 @@ def _get_output_dir() -> str:
 
 
 def _build_genre_tags(genre: str = None, mood: str = None, style: str = None, vocal: str = None) -> str:
-    """Build genre/style tag string for YuE input."""
+    """Build genre/style tag string for YuE input.
+
+    YuE expects short English-like tags (e.g. 'pop', 'chill', 'male vocal').
+    Long sentences or Korean text in the style field must be filtered out.
+    """
     tags = []
 
     if genre:
@@ -39,7 +104,12 @@ def _build_genre_tags(genre: str = None, mood: str = None, style: str = None, vo
     if mood:
         tags.extend([m.strip().lower() for m in mood.split(",")])
     if style:
-        tags.extend([s.strip().lower() for s in style.split(",")])
+        for s in style.split(","):
+            s = s.strip().lower()
+            # Skip overly long strings (not valid YuE tags)
+            if len(s) > 30:
+                continue
+            tags.append(s)
 
     # Add vocal info
     if vocal == "instrumental":
@@ -65,13 +135,12 @@ def _format_lyrics_for_yue(lyrics: str) -> str:
 
     # YuE expects lowercase section tags
     formatted = lyrics
-    import re as _re
 
     # Normalize section tags to lowercase, remove numbered suffixes for YuE compatibility
     def _normalize_tag(m):
         tag = m.group(1).lower().strip()
         # Remove numbers like [Verse 1] -> [verse]
-        tag = _re.sub(r'\s*\d+$', '', tag)
+        tag = re.sub(r'\s*\d+$', '', tag)
         # Map compound tags to simple ones (regex \w+ friendly)
         simple_map = {
             'pre-chorus': 'prechorus',
@@ -82,7 +151,7 @@ def _format_lyrics_for_yue(lyrics: str) -> str:
         tag = simple_map.get(tag, tag.replace('-', '').replace(' ', ''))
         return f'[{tag}]'
 
-    formatted = _re.sub(r'\[([^\]]+)\]', _normalize_tag, formatted)
+    formatted = re.sub(r'\[([^\]]+)\]', _normalize_tag, formatted)
 
     # Ensure sections are separated by double newlines
     lines = formatted.split("\n")
@@ -118,6 +187,7 @@ async def generate_music(
     bpm: int = None,
     key: str = None,
     mongo_db=None,
+    model: str = "yue",
 ) -> dict:
     """
     Generate music using YuE model.
@@ -133,14 +203,20 @@ async def generate_music(
     job_output = os.path.join(output_dir, job_id)
     os.makedirs(job_output, exist_ok=True)
 
-    # Write genre file
+    # Build genre tags and format lyrics
     genre_tags = _build_genre_tags(genre, mood, style, vocal)
+    formatted_lyrics = _format_lyrics_for_yue(lyrics)
+
+    # Translate Korean → English for YuE (only calls API if Korean is detected)
+    genre_tags = await _translate_to_english(genre_tags, mode="general")
+    formatted_lyrics = await _translate_to_english(formatted_lyrics, mode="lyrics")
+
+    # Write genre file
     genre_file = os.path.join(job_output, "genre.txt")
     with open(genre_file, "w", encoding="utf-8") as f:
         f.write(genre_tags)
 
     # Write lyrics file
-    formatted_lyrics = _format_lyrics_for_yue(lyrics)
     lyrics_file = os.path.join(job_output, "lyrics.txt")
     with open(lyrics_file, "w", encoding="utf-8") as f:
         f.write(formatted_lyrics)
@@ -159,11 +235,12 @@ async def generate_music(
         )
 
     try:
-        # Determine model based on lyrics language
-        has_korean = any("\uac00" <= c <= "\ud7a3" for c in (lyrics or ""))
-        has_japanese = any("\u3040" <= c <= "\u30ff" for c in (lyrics or ""))
+        # Determine model based on lyrics language (after translation)
+        has_korean = any("\uac00" <= c <= "\ud7a3" for c in (formatted_lyrics or ""))
+        has_japanese = any("\u3040" <= c <= "\u30ff" for c in (formatted_lyrics or ""))
 
         if has_korean or has_japanese:
+            # Fallback: if translation failed/was skipped, use multilingual model
             stage1_model = "m-a-p/YuE-s1-7B-anneal-jp-kr-cot"
         else:
             stage1_model = "m-a-p/YuE-s1-7B-anneal-en-cot"
@@ -216,7 +293,7 @@ async def generate_music(
         stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
-            error_msg = stderr.decode("utf-8", errors="replace")[-500:]
+            error_msg = stderr.decode("utf-8", errors="replace")[-2000:]
             if mongo_db is not None:
                 await mongo_db.generations.update_one(
                     {"_id": ObjectId(generation_id)},

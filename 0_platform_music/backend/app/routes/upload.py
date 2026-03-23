@@ -1,12 +1,14 @@
+import asyncio
 import io
+import logging
 import mimetypes
 import os
 import uuid as uuid_lib
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -16,6 +18,8 @@ from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/upload")
 
 
@@ -24,12 +28,14 @@ class GenerateCoverRequest(BaseModel):
     genre: Optional[str] = None
     mood: Optional[str] = None
     style: Optional[str] = None
+    character_object_name: Optional[str] = None
 
 
 class GenerateMVRequest(BaseModel):
     title: str
     genre: Optional[str] = None
     mood: Optional[str] = None
+    lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None  # MinIO object name of cover image
 
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
@@ -159,6 +165,21 @@ async def generate_cover(
             content={"error": "곡 제목을 입력해주세요."},
         )
 
+    # Load character sheet if requested
+    character_image_bytes = None
+    if body.character_object_name:
+        try:
+            minio_client = get_minio()
+            response = minio_client.get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=body.character_object_name,
+            )
+            character_image_bytes = response.read()
+            response.close()
+            response.release_conn()
+        except Exception as e:
+            logger.warning("Failed to load character image: %s", e)
+
     try:
         from ..services.cover_generator import generate_cover_image
 
@@ -167,6 +188,7 @@ async def generate_cover(
             genre=body.genre,
             mood=body.mood,
             style=body.style,
+            character_image_bytes=character_image_bytes,
         )
 
         # Save to MinIO
@@ -218,9 +240,19 @@ async def cover_preview(object_name: str):
 @router.post("/generate-mv")
 async def generate_mv(
     body: GenerateMVRequest,
+    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
 ):
-    """Start AI music video generation using Google Veo 2."""
+    """Start AI music video generation using the 20-scene pipeline.
+
+    Creates a background job that:
+      1. Splits lyrics into ~20 scenes (ChatGPT)
+      2. Generates scene images (Gemini)
+      3. Generates scene videos from images (Veo 3.1)
+      4. Concatenates all clips into a final video (ffmpeg)
+
+    Returns a job_id for polling via /mv-status/{job_id}.
+    """
     if not settings.google_api_key:
         return JSONResponse(
             status_code=503,
@@ -234,74 +266,127 @@ async def generate_mv(
             content={"error": "곡 제목을 입력해주세요."},
         )
 
-    try:
-        from ..services.mv_generator import start_mv_generation
+    mongo = get_mongo()
 
-        operation_name = await start_mv_generation(
-            title=title,
-            genre=body.genre,
-            mood=body.mood,
-        )
+    # Optionally load cover image from MinIO
+    cover_image_bytes = None
+    if body.cover_object_name:
+        try:
+            minio_client = get_minio()
+            response = minio_client.get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=body.cover_object_name,
+            )
+            cover_image_bytes = response.read()
+            response.close()
+            response.release_conn()
+        except Exception as e:
+            logger.warning("Failed to load cover image: %s", e)
 
-        return {
-            "operation_name": operation_name,
-            "message": "뮤직비디오 생성이 시작되었습니다.",
-        }
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "뮤직비디오 생성 시작 실패: {}".format(str(e)[:200])},
-        )
+    # Create mv_jobs document
+    job_doc = {
+        "user_id": current_user["id"],
+        "title": title,
+        "status": "pending",
+        "progress": 0,
+        "total_scenes": 0,
+        "completed_scenes": 0,
+        "scene_thumbnails": [],
+        "result_video_url": "",
+        "error_message": "",
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    result = await mongo.mv_jobs.insert_one(job_doc)
+    job_id = result.inserted_id
+
+    # Launch pipeline in background
+    from ..services.mv_generator import run_mv_pipeline
+
+    background_tasks.add_task(
+        run_mv_pipeline,
+        job_id=job_id,
+        title=title,
+        genre=body.genre,
+        mood=body.mood,
+        lyrics=body.lyrics,
+        cover_image_bytes=cover_image_bytes,
+        mongo_db=mongo,
+    )
+
+    return {
+        "job_id": str(job_id),
+        "message": "뮤직비디오 생성이 시작되었습니다. (20장면 파이프라인)",
+    }
 
 
-@router.get("/mv-status/{operation_name:path}")
+@router.get("/mv-status/{job_id}")
 async def mv_status(
-    operation_name: str,
+    job_id: str,
     current_user=Depends(get_current_user),
 ):
-    """Check music video generation status and save result when done."""
-    try:
-        from ..services.mv_generator import check_mv_status, download_video
-
-        result = await check_mv_status(operation_name)
-
-        if not result["done"]:
-            return {"done": False}
-
-        if result.get("error"):
-            return {"done": True, "error": result["error"]}
-
-        # Video is ready — download and save to MinIO
-        video_bytes = await download_video(result["video_uri"])
-
-        object_name = "mv/generated/{}/{}.mp4".format(
-            current_user["id"], uuid_lib.uuid4().hex
-        )
-
-        minio_client = get_minio()
-        minio_client.put_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=object_name,
-            data=io.BytesIO(video_bytes),
-            length=len(video_bytes),
-            content_type="video/mp4",
-        )
-
-        return {
-            "done": True,
-            "video_url": "/api/upload/mv-preview/{}".format(object_name),
-            "object_name": object_name,
-        }
-    except Exception as e:
+    """Check music video generation job status."""
+    if not ObjectId.is_valid(job_id):
         return JSONResponse(
-            status_code=500,
-            content={"error": "뮤직비디오 상태 확인 실패: {}".format(str(e)[:200])},
+            status_code=400,
+            content={"error": "유효하지 않은 작업 ID입니다."},
         )
+
+    mongo = get_mongo()
+    job = await mongo.mv_jobs.find_one({"_id": ObjectId(job_id)})
+
+    if not job:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "작업을 찾을 수 없습니다."},
+        )
+
+    # Generate presigned URLs for scene thumbnails
+    scene_thumbnail_urls = []
+    minio_client = get_minio()
+    for thumb_name in (job.get("scene_thumbnails") or []):
+        if thumb_name:
+            try:
+                url = minio_client.presigned_get_object(
+                    bucket_name=settings.minio_bucket_images,
+                    object_name=thumb_name,
+                    expires=timedelta(hours=24),
+                )
+                scene_thumbnail_urls.append(url)
+            except Exception:
+                scene_thumbnail_urls.append("")
+        else:
+            scene_thumbnail_urls.append("")
+
+    # Generate presigned URL for result video
+    result_video_url = ""
+    if job.get("result_video_url"):
+        try:
+            result_video_url = minio_client.presigned_get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=job["result_video_url"],
+                expires=timedelta(hours=24),
+            )
+        except Exception:
+            result_video_url = "/api/upload/mv-preview/{}".format(
+                job["result_video_url"]
+            )
+
+    return {
+        "status": job.get("status", "pending"),
+        "progress": job.get("progress", 0),
+        "total_scenes": job.get("total_scenes", 0),
+        "completed_scenes": job.get("completed_scenes", 0),
+        "scene_thumbnails": scene_thumbnail_urls,
+        "result_video_url": result_video_url,
+        "object_name": job.get("result_video_url", ""),
+        "error_message": job.get("error_message", ""),
+    }
 
 
 @router.get("/mv-preview/{object_name:path}")
 async def mv_preview(object_name: str):
-    """Proxy music video from MinIO for playback."""
+    """Proxy music video or scene thumbnail from MinIO for playback."""
     minio_client = get_minio()
     try:
         response = minio_client.get_object(
@@ -311,9 +396,18 @@ async def mv_preview(object_name: str):
         data = response.read()
         response.close()
         response.release_conn()
-        return Response(content=data, media_type="video/mp4")
+
+        # Determine content type from extension
+        if object_name.endswith(".png"):
+            media_type = "image/png"
+        elif object_name.endswith(".jpg") or object_name.endswith(".jpeg"):
+            media_type = "image/jpeg"
+        else:
+            media_type = "video/mp4"
+
+        return Response(content=data, media_type=media_type)
     except Exception:
         return JSONResponse(
             status_code=404,
-            content={"error": "뮤직비디오를 찾을 수 없습니다."},
+            content={"error": "파일을 찾을 수 없습니다."},
         )

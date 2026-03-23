@@ -139,7 +139,37 @@ export const generateCover = (data) => API.post('/upload/generate-cover', data);
 
 // AI Music Video
 export const generateMV = (data) => API.post('/upload/generate-mv', data);
-export const checkMVStatus = (operationName) => API.get(`/upload/mv-status/${encodeURIComponent(operationName)}`);
+export const checkMVStatus = (jobId) => API.get(`/upload/mv-status/${jobId}`);
+
+// MV Draft System
+export const createMVJob = (data) => API.post('/mv/create', data);
+export const getMVJobs = () => API.get('/mv/jobs');
+export const getMVJobDetail = (jobId) => API.get(`/mv/jobs/${jobId}`);
+export const deleteMVJob = (jobId) => API.delete(`/mv/jobs/${jobId}`);
+export const generateMVImages = (jobId, data) => API.post(`/mv/jobs/${jobId}/generate-images`, data || {});
+export const uploadMVSceneImage = (jobId, sceneNumber, formData) =>
+    API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/upload-image`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+export const regenerateMVSceneImage = (jobId, sceneNumber) =>
+    API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/regenerate-image`);
+export const generateMVVideos = (jobId, videoModel) => API.post(`/mv/jobs/${jobId}/generate-videos`, videoModel ? { video_model: videoModel } : {});
+export const concatenateMV = (jobId) => API.post(`/mv/jobs/${jobId}/concatenate`);
+export const saveMVDraft = (jobId, data) => API.post(`/mv/jobs/${jobId}/save-draft`, data);
+export const cancelMVJob = (jobId) => API.post(`/mv/jobs/${jobId}/cancel`);
+export const mergeAudioMV = (jobId, audioObjectName) =>
+    API.post(`/mv/jobs/${jobId}/merge-audio`, { audio_object_name: audioObjectName });
+export const getMVModels = () => API.get('/mv/models');
+
+// Character
+export const generateCharacterSheet = (formData) =>
+  API.post('/character/generate-sheet', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+export const saveCharacter = (data) => API.post('/character/save', data);
+export const getMyCharacter = () => API.get('/character/me');
+export const deleteMyCharacter = () => API.delete('/character/me');
 
 // Legacy aliases
 export const uploadSong = uploadTrack;
@@ -153,6 +183,7 @@ export const getGeneration = (id) => API.get(`/generate/${id}`);
 export const deleteGeneration = (id) => API.delete(`/generate/${id}`);
 export const streamGeneration = (id) => API.get(`/generate/${id}/stream/`);
 export const uploadFromGeneration = (data) => API.post('/tracks/upload-from-generation', data);
+export const getGenerationModels = () => API.get('/generate/models/');
 
 // Admin
 export const getAdminDashboard = () => API.get('/admin/dashboard');

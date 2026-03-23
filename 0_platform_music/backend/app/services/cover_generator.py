@@ -22,6 +22,7 @@ async def generate_cover_image(
     genre: str = None,
     mood: str = None,
     style: str = None,
+    character_image_bytes: bytes = None,
 ) -> bytes:
     """Generate album cover image using Gemini. Returns PNG bytes."""
 
@@ -35,15 +36,37 @@ async def generate_cover_image(
     if style:
         prompt_parts.append("Visual style: {}".format(style))
     prompt_parts.append(
-        "The image should be square (1:1 aspect ratio), visually striking, "
-        "suitable as a music album cover. Do NOT include any text or letters "
-        "in the image."
+        "The image MUST be in photorealistic style — like a real photograph "
+        "taken with a high-end camera. Use realistic lighting, textures, and "
+        "depth of field. The image should be square (1:1 aspect ratio), "
+        "visually striking, suitable as a music album cover. "
+        "Do NOT include any text or letters in the image."
     )
+
+    if character_image_bytes:
+        prompt_parts.append(
+            "IMPORTANT: The provided character reference sheet shows the main character. "
+            "Feature this person prominently in the album cover as the main subject. "
+            "Maintain the person's exact appearance (face, hair, features) from the reference. "
+            "The character must be photorealistic, not illustrated or stylized."
+        )
 
     prompt = " ".join(prompt_parts)
 
+    # Build request parts
+    request_parts = [{"text": prompt}]
+
+    if character_image_bytes:
+        char_b64 = base64.b64encode(character_image_bytes).decode("utf-8")
+        request_parts.append({
+            "inlineData": {
+                "mimeType": "image/png",
+                "data": char_b64,
+            }
+        })
+
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "contents": [{"parts": request_parts}],
         "generationConfig": {
             "responseModalities": ["TEXT", "IMAGE"],
         },

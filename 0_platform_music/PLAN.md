@@ -2053,3 +2053,1217 @@ Backend (폴링 응답)
 1. API 엔드포인트 동작 확인
 2. 폴링 → 완료 → 미리보기 플로우 확인
 3. 업로드 시 뮤직비디오 연결 확인
+
+---
+
+## v2.4 -- 20장면 AI 뮤직비디오 파이프라인 (Enhanced MV)
+### 작성일: 2026-03-17
+
+---
+
+### 1. 개요
+
+기존 v2.3의 단일 텍스트→영상 방식을 **20장면 파이프라인**으로 교체.
+가사를 장면별로 분할하고, 각 장면의 이미지를 생성한 뒤, 이미지 기반 영상 클립을 만들어 합치는 구조.
+
+### 2. 파이프라인 흐름
+
+```
+가사 + 메타데이터
+      │
+      ▼
+[1] ChatGPT: 가사 → ~20개 장면 분할 (각 장면에 시각적 설명)
+      │
+      ▼
+[2] Gemini (gemini-3-pro-image-preview): 장면별 이미지 생성 (순차)
+      │                    ↓ MinIO에 썸네일 저장
+      ▼
+[3] Veo 3.1 (veo-3.1-generate-preview): 이미지 → 8초 영상 클립 (순차, rate limit 대응)
+      │     referenceImages + bytesBase64Encoded 방식
+      ▼
+[4] ffmpeg: 모든 클립 합치기 (stream-copy → fallback re-encode)
+      │
+      ▼
+[5] MinIO: 최종 영상 업로드 + MongoDB 상태 업데이트
+```
+
+### 3. 핵심 기술 결정
+
+| 항목 | 결정 | 이유 |
+|------|------|------|
+| 영상 생성 모델 | Veo 3.1 (not Veo 2) | Veo 3.1만 이미지 입력(referenceImages) 지원 |
+| 이미지 입력 포맷 | `bytesBase64Encoded` + `referenceType: "asset"` | `inlineData` 방식은 Veo에서 미지원 |
+| durationSeconds | **반드시 8초** | referenceImages 사용 시 4초/6초 → 400 에러 발생 |
+| personGeneration | 미사용 (omit) | Veo 3.1에서 이 파라미터 포함 시 에러 |
+| 동시 영상 생성 | Semaphore(1) + 장면별 2초 지연 | Semaphore(3)은 429 rate limit 유발 |
+| 429 에러 대응 | 최대 3회 재시도 + 60/120/180초 백오프 | API rate limit 대응 |
+| 이미지 일관성 | 커버 이미지를 Gemini `inlineData`로 참조 전달 | 장면 이미지가 커버와 동일한 화풍 유지 |
+| 이미지 생성 간격 | 3초 딜레이 | Gemini rate limit 방지 |
+| 실패 처리 | 장면별 3회 재시도, 50% 이상 실패 시 전체 중단 | 부분 실패 허용 |
+| 합치기 도구 | ffmpeg (imageio-ffmpeg fallback) | 범용, pip으로 설치 가능 |
+
+### 3-1. 디버깅 이력 (트러블슈팅)
+
+| 문제 | 원인 | 해결 |
+|------|------|------|
+| `mv-status/undefined` 폴링 | localStorage에 잘못된 값 잔존 + useRef 미사용으로 interval 추적 불가 | `useRef`로 interval 관리, ObjectId 형식 검증, cleanup 함수 추가 |
+| Veo 3.1 400 "use case not supported" | `durationSeconds: 4`로 설정 — referenceImages는 8초 필수 | `durationSeconds: 8`로 변경 |
+| Veo 3.1 429 rate limit | Semaphore(3) 동시 요청이 API 할당량 초과 | Semaphore(1) + 장면별 2초 stagger + 429 시 60초 백오프 |
+| 장면 이미지가 커버와 전혀 다른 스타일 | 장면 이미지를 커버 참조 없이 독립 생성 | 커버 이미지를 Gemini에 `inlineData`로 전달 + 스타일 매칭 프롬프트 |
+
+### 4. 파일 변경 내역
+
+#### 백엔드
+
+**`app/services/mv_generator.py`** — 전면 재작성
+- `split_lyrics_into_scenes()` — ChatGPT로 가사 → ~20 장면
+- `generate_scene_image()` — Gemini 이미지 생성 (커버 이미지 참조로 스타일 일관성 유지)
+- `start_scene_video()` — Veo 3.1 영상 생성 (이미지 입력, 8초, Semaphore(1))
+- `check_scene_video_status()` — 영상 생성 상태 폴링
+- `download_video()` — Google URI에서 영상 다운로드
+- `concatenate_videos()` — ffmpeg로 클립 합치기
+- `run_mv_pipeline()` — 전체 오케스트레이터 (BackgroundTask)
+
+**`app/routes/upload.py`** — MV 엔드포인트 교체
+- `POST /api/upload/generate-mv` → job_id 기반 (operation_name → job_id)
+- `GET /api/upload/mv-status/{job_id}` → MongoDB mv_jobs 조회
+- 기존 엔드포인트(cover, image, presigned-url) 변경 없음
+
+#### 프론트엔드
+
+**`src/pages/UploadPage.jsx`** — MV UI 업데이트
+- 진행률 바 + 퍼센트 표시
+- 장면 썸네일 그리드 (4열)
+- 상태별 한국어 라벨 (장면 분석 중 → 이미지 생성 중 → 영상 생성 중 → 합치는 중)
+- localStorage로 job_id 유지 (페이지 이탈 후 복귀 시 재개)
+- `useRef`로 interval 관리 + cleanup 함수
+- ObjectId 형식 검증 (24자 hex) + 잘못된 localStorage 자동 제거
+- 5초 간격 폴링 (기존 10초 → 5초)
+
+**`src/pages/UploadPage.css`** — 진행률 바, 썸네일 그리드 스타일
+
+**`src/api/index.js`** — `checkMVStatus` 파라미터 변경 (operationName → jobId)
+
+### 5. MongoDB 스키마: mv_jobs
+
+```json
+{
+  "_id": ObjectId,
+  "user_id": "uuid-string",
+  "title": "곡 제목",
+  "status": "pending|splitting|generating_images|generating_videos|concatenating|completed|failed",
+  "progress": 0-100,
+  "total_scenes": 20,
+  "completed_scenes": 15,
+  "scene_thumbnails": ["mv/thumbnails/{job_id}/000.png", ...],
+  "result_video_url": "mv/generated/{job_id}/final.mp4",
+  "error_message": "",
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+### 6. 의존성 추가
+
+- `imageio-ffmpeg` — pip으로 설치 가능한 ffmpeg 바이너리 (시스템 ffmpeg 없을 때 fallback)
+
+---
+
+## v2.5 — MV 임시저장/이어하기 시스템
+
+### 1. 배경 및 문제점
+- v2.4의 MV 파이프라인은 단일 백그라운드 태스크로, 중간 실패 시 생성물(이미지 포함) 소실
+- 429 에러로 영상 생성 중단 시, 이미 만든 씬 이미지를 다시 만들어야 함 → 크레딧 낭비
+- 사용자가 직접 이미지를 업로드하거나 교체할 수 없음
+- 작업 중간에 저장하고 나중에 이어할 수 없음
+
+### 2. 핵심 컨셉: 이메일 임시저장 방식
+- 새업로드 탭에서 작업 중 [임시저장] → MongoDB에 전체 상태 저장
+- 내 음악 페이지 > "임시저장" 탭에서 저장 목록 확인
+- [불러오기] 클릭 → 새업로드 탭으로 이동, 모든 상태 복원 → 이어서 작업
+
+### 3. 새업로드 탭 (UploadPage) MV 섹션 변경
+
+#### STEP 1: 씬 생성
+- [씬 생성하기] 버튼 → 가사 기반으로 ChatGPT가 ~20개 씬 분할 + Gemini가 씬 이미지 생성
+- 생성된 씬 목록: 이미지 썸네일 + 설명 + 가사 구간
+- 씬별 액션: [이미지 업로드] (사용자 파일), [이미지 재생성] (Gemini 재호출)
+
+#### STEP 2: 영상 생성
+- [영상 생성하기] 버튼 → Veo 3.1로 씬 이미지 기반 8초 클립 순차 생성
+- 진행률 표시: 프로그레스 바 + 완료 씬 수
+- 429 에러 시: "일시정지" 상태 + [재시도하기] 버튼 (완료된 씬 스킵)
+- 전체 완료 시: ffmpeg 합치기 → 최종 영상 미리보기
+
+#### 임시저장 버튼
+- 새업로드 탭 하단에 [임시저장] 버튼
+- 저장 내용: 제목, 장르, 분위기, 가사, 커버이미지, 씬 이미지+스토리, 영상 진행상태 전부
+- MongoDB mv_drafts 컬렉션에 사용자별 저장
+
+### 4. 내 음악 페이지 (MyMusicPage) "임시저장" 탭
+- 기존 탭 옆에 "임시저장" 탭 추가
+- 임시저장 목록: 커버 썸네일, 제목, 씬/영상 진행도, 저장일
+- [불러오기] → /upload 페이지로 이동 + 상태 전부 복원
+- [삭제] → MongoDB + MinIO 파일 삭제
+
+### 5. API 엔드포인트
+| Method | Path | 설명 |
+|--------|------|------|
+| POST | `/api/mv/create` | MV 작업 생성 + 씬 분할 시작 |
+| GET | `/api/mv/jobs` | 사용자 임시저장 목록 |
+| GET | `/api/mv/jobs/{id}` | 작업 상세 (씬별 presigned URL) |
+| POST | `/api/mv/jobs/{id}/generate-images` | 씬 이미지 생성 |
+| POST | `/api/mv/jobs/{id}/scenes/{n}/upload-image` | 사용자 이미지 업로드 |
+| POST | `/api/mv/jobs/{id}/scenes/{n}/regenerate-image` | 단일 씬 이미지 재생성 |
+| POST | `/api/mv/jobs/{id}/generate-videos` | 영상 생성/이어하기 |
+| POST | `/api/mv/jobs/{id}/concatenate` | 합치기 |
+| DELETE | `/api/mv/jobs/{id}` | 작업 삭제 |
+
+### 6. 파일 구조
+```
+backend/app/
+├── routes/mv.py            # EXISTING — MV API 라우터 (이미 구현됨)
+├── services/mv_pipeline.py  # EXISTING — 4단계 파이프라인 (이미 구현됨)
+└── services/mv_generator.py # EXISTING — 저수준 API 호출 함수들
+
+frontend/src/
+├── pages/UploadPage.jsx    # MODIFIED — MV 섹션을 STEP1/STEP2 구조로 변경 + 임시저장 버튼
+├── pages/UploadPage.css    # MODIFIED — 씬 목록, 프로그레스, 임시저장 스타일
+├── pages/MyMusicPage.jsx   # MODIFIED — "임시저장" 탭 추가
+├── pages/MyMusicPage.css   # MODIFIED — 임시저장 탭 스타일
+├── api/index.js            # MODIFIED — MV API 함수 추가
+```
+
+### 7. 429 Rate Limit 대응
+- 씬당 최대 5회 재시도 (백오프: 3분 → 5분 → 7분 → 10분 → 15분)
+- 연속 3개 씬 실패 시 파이프라인 조기 중단 → status "paused"
+- 사용자가 [재시도하기] 클릭 → 완료된 씬 스킵, 미완료 씬만 처리
+
+### v2.5.1 — 커버 확정 후 씬 생성 분리
+
+#### 문제
+씬 이미지 생성 시 커버 스타일을 참조하는데, 커버가 없거나 커버를 나중에 바꾸면 20장을 다시 만들어야 함.
+
+#### 변경사항
+- [씬 생성하기] 버튼: 커버 이미지 없으면 비활성(disabled) + 안내 텍스트
+- 백엔드: `POST /api/mv/create`에서 `cover_object_name` 필수 검증 (400 에러)
+- 커버 변경 감지: 씬 생성 후 커버를 바꾸면 경고 배너 + [씬 초기화] 버튼
+- 드래프트 복원 시 `mvCoverObjectName` 복원
+
+---
+
+## v2.6 — Suno 모델 통합
+
+### 개요
+기존 YuE 모델 옆에 Suno 모델 선택 카드를 추가하여, 사용자가 Suno API로 고품질 AI 음악을 생성할 수 있게 한다. 간편 모드와 커스텀 모드 모두 지원.
+
+### Suno API 스펙
+- **Base URL**: `https://api.sunoapi.org/api/v1`
+- **인증**: `Authorization: Bearer {SUNO_API_KEY}`
+- **생성 요청**: `POST /generate`
+  - Body: `{ "prompt": str, "model": "V4", "customMode": bool, "instrumental": bool, "style": str, "title": str }`
+  - 응답: `{ "code": 200, "data": { "taskId": "xxx" } }`
+- **상태 확인**: `GET /generate/record-info?taskId={taskId}`
+  - 응답: `{ "data": { "status": "SUCCESS", "response": { "sunoData": [{ "audioUrl": "...", "title": "...", "duration": 198 }] } } }`
+- 비동기 생성 → polling 필요
+- 매 요청당 2곡 생성
+- `customMode: true`이면 prompt에 가사 포함 가능
+
+### 백엔드 변경사항
+
+#### 1. `config.py` — Suno API 키 설정 추가
+- `suno_api_key: str` 필드 추가 (환경변수 `SUNO_API_KEY`에서 로드)
+
+#### 2. `.env` — 환경변수 추가
+```
+SUNO_API_KEY=b0c13153451cf641dc692a107a816c77
+```
+
+#### 3. `backend/app/services/suno_generator.py` — 새 파일 생성
+- **함수**: `generate_music_suno(generation_id, lyrics, genre, mood, style, vocal, title, mongo_db)`
+- **흐름**:
+  1. Suno API POST `/generate` 호출 → `taskId` 수신
+  2. GET `/generate/record-info?taskId={taskId}`로 polling (5초 간격, 최대 5분)
+  3. `status == "SUCCESS"` 시 `sunoData[0].audioUrl`에서 mp3 다운로드
+  4. MinIO에 업로드 → MongoDB generation 문서 업데이트
+  5. 2곡 생성되므로 첫 번째 곡 기본 사용 (output_files에 둘 다 저장 가능)
+- **prompt 구성**:
+  - 간편 모드 (`customMode: false`): genre + mood + style 조합으로 prompt 생성
+  - 커스텀 모드 (`customMode: true`): lyrics를 prompt에 포함, style 태그 설정
+- **progress 업데이트**: 10%(요청 완료) → 50%(polling 중) → 100%(완료)
+- **에러 처리**: API 실패, timeout, 다운로드 실패 시 status "failed" + error 메시지
+
+#### 4. `generate.py` — 라우트 분기 추가
+- `_run_music_generation`에서 `model == "suno"` 분기:
+  ```python
+  if model == "suno":
+      await generate_music_suno(generation_id, lyrics, genre, mood, style, vocal, title, mongo_db)
+  else:
+      await generate_music(...)  # 기존 YuE
+  ```
+- `GenerateRequest`에 `title: Optional[str] = None` 필드 추가 (Suno용)
+
+#### 5. `/models/` 엔드포인트 — Suno 모델 정보 추가
+```python
+{
+    "id": "suno",
+    "name": "Suno",
+    "description": "AI 음악 생성 서비스 (고품질 보컬 + 반주)",
+    "status": "available"
+}
+```
+
+### 프론트엔드 변경사항
+
+#### 1. `StudioTab2.jsx` — MODEL_OPTIONS에 Suno 추가
+```javascript
+{ id: 'suno', name: 'Suno', desc: 'AI 음악 생성 서비스 (고품질 보컬 + 반주)' }
+```
+
+#### 2. 모델별 UI 분기 처리
+- **Suno 선택 시 숨길 항목**:
+  - Duration(곡 길이) 설정 → Suno가 자동 결정하므로 숨기기 또는 비활성화
+  - BPM 설정 → 불필요, 숨기기
+  - Key(조성) 설정 → 불필요, 숨기기
+- **조건 분기**: `selectedModel === 'suno'`일 때 해당 섹션 렌더링 스킵
+- 간편 모드 / 커스텀 모드 모두 동일하게 적용
+
+### 수정 파일 목록
+```
+backend/
+├── app/config.py                    # MODIFIED — suno_api_key 추가
+├── app/routes/generate.py           # MODIFIED — suno 분기 + title 파라미터
+├── app/services/suno_generator.py   # NEW — Suno API 연동 서비스
+├── .env                             # MODIFIED — SUNO_API_KEY 추가
+
+frontend/
+├── src/components/StudioTab2.jsx    # MODIFIED — MODEL_OPTIONS + 모델별 UI 분기
+```
+
+---
+
+## v2.6.1 — Suno 보컬 연동 수정
+
+### 목적
+Suno 모델로 음악 생성 시 보컬이 가사를 실제로 부르도록 수정.
+현재 instrumental 곡만 나오는 문제를 3가지 축으로 해결한다.
+
+### 원인 분석
+1. Suno API의 `style` 문자열에 보컬 관련 정보가 빠져 있음
+2. `instrumental` 파라미터가 명시적으로 `false`로 전달되지 않을 가능성
+3. 가사에 `[Verse]`, `[Chorus]` 등 구조 태그가 없으면 Suno가 가사를 무시할 수 있음
+
+### 수정 사항
+
+#### 백엔드 (`suno_generator.py`)
+
+##### 1. SUNO_VOCAL_MAP 딕셔너리 추가
+프론트에서 전달되는 vocal 프리셋 값을 Suno style 문자열로 변환하는 매핑 테이블.
+
+```python
+SUNO_VOCAL_MAP = {
+    "male_warm":      "soft male vocal, warm, smooth",
+    "male_powerful":  "powerful male vocal, belted, strong",
+    "male_husky":     "raspy male vocal, husky, gritty",
+    "female_warm":    "soft female vocal, breathy, warm",
+    "female_powerful":"powerful female vocal, belted, strong",
+    "female_husky":   "raspy female vocal, husky, sultry",
+}
+```
+
+##### 2. style 구성 시 보컬 정보 추가
+- `vocal` 파라미터가 `SUNO_VOCAL_MAP`에 존재하면 해당 값을 `style_parts` 리스트에 추가
+- 최종 style 문자열: `"{장르}, {분위기}, {보컬 스타일}"` 형태
+
+##### 3. vocalGender 파라미터 추가
+- `vocal`이 `male_*`이면 `"m"`, `female_*`이면 `"f"` → Suno API payload에 `vocalGender` 포함
+- `instrumental`일 경우 `vocalGender` 생략
+
+##### 4. instrumental 명시적 bool 변환
+- `vocal == "instrumental"`이면 `instrumental = True`, 그 외에는 `instrumental = False`
+- Suno API payload에 `"instrumental": bool(instrumental)` 명시 전달
+
+##### 5. 가사 구조 태그 자동 추가 헬퍼 함수
+```python
+def ensure_lyrics_structure(lyrics: str) -> str:
+    """가사에 [Verse], [Chorus] 등 구조 태그가 없으면 자동으로 추가"""
+```
+- 정규식으로 `[Verse]`, `[Chorus]`, `[Bridge]`, `[Intro]`, `[Outro]` 등 존재 여부 확인
+- 태그가 하나도 없으면:
+  - 줄 단위로 분할 → 빈 줄 기준으로 블록 분리
+  - 첫 번째 블록: `[Verse 1]`
+  - 두 번째 블록: `[Chorus]`
+  - 세 번째 블록: `[Verse 2]`
+  - 네 번째 블록: `[Chorus]`
+  - 다섯 번째 이후: `[Bridge]` → `[Outro]` 순
+- `instrumental=True`이면 이 함수 스킵
+
+#### 프론트엔드
+- **변경 없음** — 이미 `VOCAL_PRESETS` 상수와 vocal state가 존재하며, API 호출 시 `vocal` 값을 전달 중
+
+### 수정 파일 목록
+```
+backend/
+├── app/services/suno_generator.py   # MODIFIED — SUNO_VOCAL_MAP, vocalGender, instrumental 명시, 가사 구조 태그 헬퍼
+```
+
+---
+
+## v2.7 — 뮤직비디오 음악 합치기 (STEP 3)
+
+### 목표
+MV 영상 생성 완료 후 STEP 3으로 "뮤직비디오 합치기" 단계를 추가. 영상(final_video.mp4)과 음악 파일(suno/yue로 생성된 mp3)을 ffmpeg로 합쳐서 최종 뮤직비디오를 만드는 기능.
+
+### mvStep 매핑 변경
+| mvStep | 상태 | 설명 |
+|--------|------|------|
+| 0 | draft/failed | 없음 |
+| 1 | splitting, generating_images | 씬 생성 중 |
+| 2 | scenes_ready, images_ready, videos_ready | 씬 완료 |
+| 3 | generating_videos, concatenating | 영상 생성 중 |
+| 4 | paused | 일시정지 |
+| 5 | video_ready, merging_audio | 영상 완료, 음악 합치기 대기/진행 |
+| 6 | completed | 최종 완료 |
+
+### 백엔드
+
+#### 1. mv_pipeline.py — `run_phase5_merge_audio` 추가
+- MinIO에서 `final.mp4` 다운로드
+- MinIO에서 음악 파일(mp3) 다운로드
+- ffmpeg: `ffmpeg -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest output.mp4`
+- 결과를 `mv/{job_id}/music_video.mp4`로 MinIO 업로드
+- MongoDB 업데이트: `result_music_video_url` 필드, status "completed"
+
+#### 2. Phase4 상태 변경
+- 기존: phase4 완료 → status "completed"
+- 변경: phase4 완료 → status "video_ready" (음악 합치기 전)
+
+#### 3. mv.py — `POST /api/mv/jobs/{id}/merge-audio` 엔드포인트 추가
+- `MergeAudioRequest(audio_object_name: str)` 파라미터
+- 백그라운드로 `run_phase5_merge_audio` 실행
+- ACTIVE_STATUSES에 "merging_audio" 추가
+
+#### 4. Job 응답에 `result_music_video_url` 필드 추가
+
+### 프론트엔드
+
+#### 1. api/index.js — `mergeAudioMV(jobId, audioObjectName)` 추가
+
+#### 2. UploadPage.jsx
+- `mapStatusToStep` 수정: video_ready/merging_audio → 5, completed → 6
+- 새 state: `mvMergingAudio`, `mvMusicVideoPreview`, `mvMusicVideoObjectName`
+- `handleMergeAudio` 함수 추가 — AI 생성 오디오 경로 자동 연결
+- STEP 3 UI 추가:
+  - 영상 미리보기 (무음)
+  - 오디오 파일 연결 상태 표시
+  - [뮤직비디오 합치기] 버튼
+  - 합치는 중이면 스피너
+- 완료 시 최종 뮤직비디오 미리보기 + 다시 만들기/제거 버튼
+- 업로드 시 `mv_object_name`에 최종 뮤직비디오 우선 사용
+
+#### 3. UploadPage.css — STEP 3 관련 스타일 추가
+
+### 수정 파일 목록
+```
+backend/
+├── app/routes/mv.py                # MODIFIED — MergeAudioRequest, merge-audio endpoint, ACTIVE_STATUSES, result_music_video_url 응답
+├── app/services/mv_pipeline.py     # MODIFIED — phase4 status "video_ready", run_phase5_merge_audio 추가
+
+frontend/
+├── src/api/index.js                # MODIFIED — mergeAudioMV 함수 추가
+├── src/pages/UploadPage.jsx        # MODIFIED — STEP 3 UI, mvStep 6단계, handleMergeAudio
+├── src/pages/UploadPage.css        # MODIFIED — STEP 3 스타일
+```
+
+---
+
+## v2.8 — 내 캐릭터 시스템 + 씬 프롬프트
+
+### 개요
+
+두 가지 기능을 동시에 구현한다:
+
+**A. 내 캐릭터 시스템** — 사용자가 사진을 업로드하면 Gemini로 실사(photorealistic) 캐릭터 시트를 생성하고, 이를 커버 이미지 및 MV 씬 이미지 생성 시 참조 이미지로 활용한다.
+
+**B. 씬 이미지 프롬프트 입력** — MV 씬 생성 전에 "도시 배경 위주로", "밤 분위기로" 같은 사용자 지시사항을 입력할 수 있는 필드를 추가한다.
+
+---
+
+### 백엔드 변경 사항
+
+#### 1. `backend/app/services/character_generator.py` (신규)
+
+캐릭터 시트 생성 서비스. Gemini REST API를 사용한다.
+
+```python
+"""
+AI Character Sheet Generator using Google Gemini REST API.
+Generates photorealistic character sheet from a reference photo.
+"""
+import base64
+import httpx
+from ..config import settings
+
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-3-pro-image-preview:generateContent"
+)
+
+async def generate_character_sheet(photo_bytes: bytes, mime_type: str = "image/jpeg") -> bytes:
+    """Generate photorealistic character sheet from reference photo.
+
+    Returns PNG bytes of the character sheet image.
+    """
+    photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
+
+    prompt = (
+        "Based on the person in this reference photo, create a photorealistic character sheet. "
+        "The character sheet MUST include the following angles/poses of the SAME person, "
+        "arranged in a grid layout on a single image:\n"
+        "1. Front-facing portrait (head and shoulders)\n"
+        "2. Left 45-degree angle portrait\n"
+        "3. Right 45-degree angle portrait\n"
+        "4. Full body standing pose\n"
+        "5. Smiling expression close-up\n"
+        "6. Serious/neutral expression close-up\n\n"
+        "CRITICAL REQUIREMENTS:\n"
+        "- MUST be photorealistic style — like real photographs taken with a high-end camera\n"
+        "- Do NOT use anime, cartoon, illustration, or any stylized art style\n"
+        "- Maintain consistent appearance (face, hair, skin tone, clothing) across all angles\n"
+        "- Use neutral studio-like background (light gray or white)\n"
+        "- High quality, sharp details, realistic lighting\n"
+        "- Label each view with small text (Front, Left 45°, Right 45°, Full Body, Smile, Serious)\n"
+        "- Output as a single combined image in landscape orientation"
+    )
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inlineData": {"mimeType": mime_type, "data": photo_b64}},
+            ]
+        }],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"],
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            GEMINI_API_URL,
+            params={"key": settings.google_api_key},
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        detail = resp.text[:300]
+        raise ValueError("Gemini API error (HTTP {}): {}".format(resp.status_code, detail))
+
+    data = resp.json()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError("No candidates in Gemini response")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    for part in parts:
+        inline_data = part.get("inlineData")
+        if inline_data and inline_data.get("data"):
+            return base64.b64decode(inline_data["data"])
+
+    raise ValueError("No image generated from Gemini response")
+```
+
+**핵심 포인트:**
+- `cover_generator.py`와 동일한 Gemini REST API 패턴 사용 (httpx + base64)
+- 원본 사진을 `inlineData`로 전달하여 Gemini가 해당 인물을 기반으로 캐릭터 시트를 생성
+- 프롬프트에서 실사(photorealistic) 스타일을 명시적으로 요구하고 애니메이션 스타일을 금지
+- 6개 앵글/표정을 하나의 그리드 이미지로 출력
+
+#### 2. `backend/app/routes/character.py` (신규)
+
+캐릭터 CRUD API 라우터.
+
+```python
+"""
+Character API routes — generate, save, retrieve, delete user's AI character.
+"""
+import io
+import os
+import uuid as uuid_lib
+from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
+
+from ..auth import get_current_user
+from ..config import settings
+from ..database.minio import get_minio
+from ..database.mongodb import get_mongo
+
+router = APIRouter(prefix="/api/character", tags=["Character"])
+
+ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
+```
+
+**엔드포인트:**
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| `POST` | `/api/character/generate-sheet` | 사진 업로드 → Gemini 캐릭터 시트 생성 → 임시 저장 → presigned URL 반환 |
+| `POST` | `/api/character/save` | 임시 캐릭터 시트를 확정 저장 (MongoDB `characters` 컬렉션) |
+| `GET` | `/api/character/me` | 내 캐릭터 조회 (시트 이미지 presigned URL 포함) |
+| `DELETE` | `/api/character/me` | 내 캐릭터 삭제 (MongoDB + MinIO) |
+
+**`POST /api/character/generate-sheet` 상세:**
+```python
+@router.post("/generate-sheet")
+async def generate_sheet(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    # 1. 파일 검증 (확장자, 크기)
+    # 2. character_generator.generate_character_sheet(photo_bytes, mime_type) 호출
+    # 3. 결과를 MinIO에 임시 저장: characters/temp/{user_id}/{uuid}.png
+    # 4. presigned URL + object_name 반환
+    # 5. proxy endpoint도 제공: /api/character/preview/{object_name}
+```
+
+**`POST /api/character/save` 상세:**
+```python
+class SaveCharacterRequest(BaseModel):
+    sheet_object_name: str  # generate-sheet에서 받은 object_name
+
+@router.post("/save")
+async def save_character(body: SaveCharacterRequest, current_user=...):
+    # 1. temp 위치의 이미지를 확인
+    # 2. characters/{user_id}/sheet.png 으로 복사 (또는 이동)
+    # 3. MongoDB characters 컬렉션에 upsert:
+    #    { user_id, sheet_object_name, created_at, updated_at }
+    # 4. 기존 캐릭터 있으면 덮어쓰기 (1인 1캐릭터)
+```
+
+**`GET /api/character/me` 상세:**
+```python
+@router.get("/me")
+async def get_my_character(current_user=...):
+    # 1. MongoDB characters 컬렉션에서 user_id로 조회
+    # 2. 없으면 {"character": null}
+    # 3. 있으면 sheet_object_name의 presigned URL과 함께 반환
+```
+
+**`DELETE /api/character/me` 상세:**
+```python
+@router.delete("/me")
+async def delete_my_character(current_user=...):
+    # 1. MongoDB에서 삭제
+    # 2. MinIO에서 characters/{user_id}/ 하위 파일 삭제
+```
+
+**`GET /api/character/preview/{object_name:path}` 상세:**
+```python
+@router.get("/preview/{object_name:path}")
+async def character_preview(object_name: str):
+    # MinIO 프록시 (cover_preview와 동일 패턴)
+```
+
+#### 3. `backend/app/services/cover_generator.py` (수정)
+
+`generate_cover_image` 함수에 `character_image_bytes` 파라미터를 추가한다.
+
+```python
+async def generate_cover_image(
+    title: str,
+    genre: str = None,
+    mood: str = None,
+    style: str = None,
+    character_image_bytes: bytes = None,  # ← 추가
+) -> bytes:
+```
+
+**변경 내용:**
+- `character_image_bytes`가 제공되면 프롬프트에 다음을 추가:
+  ```
+  "IMPORTANT: The provided character reference sheet shows the main character. "
+  "Feature this person prominently in the album cover as the main subject. "
+  "Maintain the person's exact appearance (face, hair, features) from the reference."
+  ```
+- `request_parts`에 캐릭터 시트 이미지를 `inlineData`로 추가 (cover_image_bytes를 전달하는 것과 동일한 패턴)
+
+#### 4. `backend/app/routes/upload.py` (수정)
+
+`GenerateCoverRequest`에 `character_object_name` 필드를 추가한다.
+
+```python
+class GenerateCoverRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    style: Optional[str] = None
+    character_object_name: Optional[str] = None  # ← 추가
+```
+
+`generate_cover` 엔드포인트에서:
+- `character_object_name`이 있으면 MinIO에서 캐릭터 시트 이미지를 로드
+- `generate_cover_image()`에 `character_image_bytes=character_bytes` 전달
+
+#### 5. `backend/app/services/mv_generator.py` (수정)
+
+**5-1. `split_lyrics_into_scenes` 수정:**
+
+```python
+async def split_lyrics_into_scenes(
+    lyrics: Optional[str],
+    title: str,
+    genre: Optional[str] = None,
+    mood: Optional[str] = None,
+    scene_count: int = 20,
+    user_scene_prompt: Optional[str] = None,  # ← 추가
+) -> List[dict]:
+```
+
+- `user_scene_prompt`가 있으면 시스템 프롬프트에 추가:
+  ```
+  Additional user direction for scene imagery: "{user_scene_prompt}"
+  Incorporate this direction into each scene's visual description.
+  ```
+
+**5-2. `generate_scene_image` 수정:**
+
+```python
+async def generate_scene_image(
+    scene_description: str,
+    style_prompt: str = "",
+    cover_image_bytes: Optional[bytes] = None,
+    character_image_bytes: Optional[bytes] = None,  # ← 추가
+) -> bytes:
+```
+
+- `character_image_bytes`가 제공되면:
+  - 프롬프트에 추가:
+    ```
+    "IMPORTANT: The provided character reference sheet shows the main character "
+    "of this music video. This character MUST appear prominently in this scene, "
+    "maintaining their exact appearance from the reference. Photorealistic style."
+    ```
+  - `request_parts`에 캐릭터 시트를 `inlineData`로 추가 (cover_image와 별도)
+
+#### 6. `backend/app/services/mv_pipeline.py` (수정)
+
+**6-1. `_load_character_image` 헬퍼 추가:**
+```python
+def _load_character_image(character_object_name: Optional[str]) -> Optional[bytes]:
+    """Load character sheet image bytes from MinIO."""
+    # _load_cover_image와 동일한 패턴
+```
+
+**6-2. `run_phase1_split` 수정:**
+- job에서 `user_scene_prompt` 필드를 읽어서 `split_lyrics_into_scenes()`에 전달
+
+**6-3. `run_phase2_images` 수정:**
+- job에서 `character_object_name` 필드를 읽어서 캐릭터 이미지 로드
+- `generate_scene_image()`에 `character_image_bytes=...` 전달
+
+#### 7. `backend/app/routes/mv.py` (수정)
+
+**7-1. `CreateMVRequest` 수정:**
+```python
+class CreateMVRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    lyrics: Optional[str] = None
+    cover_object_name: Optional[str] = None
+    audio_duration_sec: Optional[float] = None
+    scene_prompt: Optional[str] = None           # ← 추가
+    character_object_name: Optional[str] = None   # ← 추가
+```
+
+**7-2. `create_mv` 수정:**
+- `job_doc`에 `scene_prompt`와 `character_object_name` 필드를 저장
+
+**7-3. `regenerate_scene_image_endpoint` 수정:**
+- 캐릭터 이미지도 로드하여 `generate_scene_image()`에 전달
+
+**7-4. `get_mv_job` 응답에 `scene_prompt`, `character_object_name` 필드 추가**
+
+#### 8. `backend/app/main.py` (수정)
+
+```python
+from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character  # character 추가
+
+app.include_router(character.router)  # 추가
+```
+
+---
+
+### 프론트엔드 변경 사항
+
+#### 1. `frontend/src/api/index.js` (수정)
+
+캐릭터 API 함수 추가:
+
+```javascript
+// Character
+export const generateCharacterSheet = (formData) =>
+  API.post('/character/generate-sheet', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+
+export const saveCharacter = (data) =>
+  API.post('/character/save', data);
+
+export const getMyCharacter = () =>
+  API.get('/character/me');
+
+export const deleteMyCharacter = () =>
+  API.delete('/character/me');
+```
+
+`generateCover`에 `character_object_name` 전달 가능하도록 (기존 `data` 객체에 이미 포함 가능하므로 변경 불필요).
+
+#### 2. `frontend/src/pages/MyMusicPage.jsx` (수정)
+
+**2-1. "내 캐릭터" 탭 추가:**
+```jsx
+// 탭 버튼 추가 (tracks, upload, studio, studio2, drafts와 같은 레벨)
+<button
+  className={`mymusic-tab ${activeTab === 'character' ? 'mymusic-tab--active' : ''}`}
+  onClick={() => setActiveTab('character')}
+>
+  내 캐릭터
+</button>
+```
+
+**2-2. `CharacterSection` 컴포넌트 (MyMusicPage.jsx 내부에 정의):**
+
+```jsx
+function CharacterSection() {
+  const [character, setCharacter] = useState(null);      // 저장된 캐릭터
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);    // 시트 생성 중
+  const [previewUrl, setPreviewUrl] = useState(null);     // 임시 시트 미리보기
+  const [previewObjectName, setPreviewObjectName] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const photoInputRef = useRef(null);
+
+  // 초기 로드: 내 캐릭터 조회
+  useEffect(() => {
+    api.getMyCharacter().then(({data}) => {
+      setCharacter(data.character);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  // 캐릭터 시트 생성
+  const handleGenerate = async () => {
+    if (!photoFile) { alert('사진을 먼저 선택해주세요.'); return; }
+    setGenerating(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', photoFile);
+      const { data } = await api.generateCharacterSheet(formData);
+      setPreviewUrl(data.preview_url);
+      setPreviewObjectName(data.object_name);
+    } catch (err) {
+      alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // 저장
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.saveCharacter({ sheet_object_name: previewObjectName });
+      // 재조회
+      const { data } = await api.getMyCharacter();
+      setCharacter(data.character);
+      setPreviewUrl(null);
+      setPreviewObjectName(null);
+      setPhotoFile(null);
+    } catch (err) {
+      alert(err.response?.data?.error || '저장에 실패했습니다.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 삭제
+  const handleDelete = async () => {
+    if (!window.confirm('캐릭터를 삭제하시겠습니까?')) return;
+    await api.deleteMyCharacter();
+    setCharacter(null);
+  };
+
+  // UI:
+  //   캐릭터 없으면 → 사진 업로드 영역 + [캐릭터 시트 생성하기] 버튼
+  //   생성 중이면 → 스피너
+  //   미리보기 있으면 → 시트 이미지 표시 + [저장하기] [다시 생성] 버튼
+  //   캐릭터 있으면 → 시트 이미지 표시 + [수정] [삭제] 버튼
+}
+```
+
+**2-3. 탭 콘텐츠 영역에 렌더링:**
+```jsx
+{activeTab === 'character' && (
+  <CharacterSection />
+)}
+```
+
+#### 3. `frontend/src/pages/UploadPage.jsx` (수정)
+
+**3-1. 새 state 추가:**
+```javascript
+const [includeCharacter, setIncludeCharacter] = useState(false);
+const [myCharacter, setMyCharacter] = useState(null);
+const [scenePrompt, setScenePrompt] = useState('');   // 씬 프롬프트
+```
+
+**3-2. 초기 로드 시 내 캐릭터 조회:**
+```javascript
+useEffect(() => {
+  api.getMyCharacter().then(({data}) => {
+    if (data.character) setMyCharacter(data.character);
+  }).catch(() => {});
+}, []);
+```
+
+**3-3. 커버 이미지 영역에 "내 캐릭터 포함하기" 토글 추가:**
+- `myCharacter`가 있을 때만 노출
+- 토글 ON이면 `handleGenerateCover` 호출 시 `character_object_name`을 함께 전달:
+  ```javascript
+  const { data } = await api.generateCover({
+    title: title.trim(),
+    genre: genre || null,
+    mood: mood || null,
+    style: null,
+    character_object_name: includeCharacter ? myCharacter.sheet_object_name : null,
+  });
+  ```
+
+**3-4. MV STEP 1 영역에 두 가지 추가:**
+
+a) "내 캐릭터를 주인공으로" 토글:
+```jsx
+{myCharacter && (
+  <label className="upload-mv-character-toggle">
+    <input
+      type="checkbox"
+      checked={includeCharacter}
+      onChange={(e) => setIncludeCharacter(e.target.checked)}
+    />
+    내 캐릭터를 주인공으로
+  </label>
+)}
+```
+
+b) 씬 프롬프트 입력란:
+```jsx
+<div className="upload-card__field">
+  <label className="upload-card__label">씬 분위기 지시 (선택)</label>
+  <textarea
+    className="upload-card__textarea"
+    value={scenePrompt}
+    onChange={(e) => setScenePrompt(e.target.value)}
+    placeholder="예: 도시 배경 위주로, 밤 분위기, 네온 조명 강조"
+    rows={2}
+  />
+</div>
+```
+
+**3-5. `handleCreateScenes` 수정:**
+```javascript
+const { data } = await api.createMVJob({
+  title: title.trim(),
+  genre: genre || null,
+  mood: mood || null,
+  lyrics: lyrics.trim() || null,
+  cover_object_name: aiCoverObjectName || null,
+  audio_duration_sec: audioDuration || null,
+  scene_prompt: scenePrompt.trim() || null,                              // ← 추가
+  character_object_name: includeCharacter ? myCharacter?.sheet_object_name : null,  // ← 추가
+});
+```
+
+#### 4. `frontend/src/pages/MyMusicPage.css` (수정)
+
+캐릭터 섹션 스타일 추가:
+
+```css
+/* Character Section */
+.mymusic-character { margin-top: 8px; }
+
+.mymusic-character__sheet {
+  text-align: center;
+  padding: 24px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.mymusic-character__sheet-img {
+  width: 100%;
+  max-width: 600px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+
+.mymusic-character__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.mymusic-character__btn { /* 기본 버튼 */ }
+.mymusic-character__btn--primary { /* AI 생성 그라데이션 */ }
+.mymusic-character__btn--danger { /* 삭제 빨간색 */ }
+
+.mymusic-character__upload-area { /* 사진 업로드 드롭존 */ }
+.mymusic-character__preview { /* 생성된 시트 미리보기 */ }
+```
+
+#### 5. `frontend/src/pages/UploadPage.css` (수정)
+
+캐릭터 토글 + 씬 프롬프트 스타일 추가:
+
+```css
+/* Character toggle */
+.upload-mv-character-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.upload-mv-character-toggle input[type="checkbox"] {
+  accent-color: var(--color-primary);
+}
+
+/* Scene prompt textarea — 기존 upload-card__textarea 스타일 재사용 */
+```
+
+---
+
+### 데이터 모델
+
+#### MongoDB `characters` 컬렉션
+
+```json
+{
+  "_id": ObjectId,
+  "user_id": "uuid-string",
+  "sheet_object_name": "characters/{user_id}/sheet.png",
+  "original_photo_object_name": "characters/{user_id}/original.jpg",
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+#### MongoDB `mv_jobs` 컬렉션 (기존 필드에 추가)
+
+```json
+{
+  "scene_prompt": "도시 배경 위주로, 밤 분위기",
+  "character_object_name": "characters/{user_id}/sheet.png"
+}
+```
+
+---
+
+### 작업 흐름 상세
+
+#### A. 캐릭터 생성 흐름
+
+```
+1. 사용자 → MyMusicPage "내 캐릭터" 탭 클릭
+2. 사진 업로드 (원본 얼굴 사진)
+3. [캐릭터 시트 생성하기] 클릭
+   → POST /api/character/generate-sheet (multipart: file)
+   → character_generator.generate_character_sheet(photo_bytes)
+   → Gemini가 실사 캐릭터 시트 이미지 생성
+   → MinIO에 임시 저장
+   → 미리보기 URL 반환
+4. 사용자가 시트를 확인
+5. [저장하기] 클릭
+   → POST /api/character/save {sheet_object_name}
+   → MongoDB characters 컬렉션에 upsert
+6. 완료: 시트 이미지가 표시됨
+```
+
+#### B. 커버 이미지에 캐릭터 활용
+
+```
+1. UploadPage 진입 시 api.getMyCharacter()로 내 캐릭터 조회
+2. 캐릭터 있으면 "내 캐릭터 포함하기" 토글 표시
+3. 토글 ON + [AI 커버 생성] 클릭
+   → POST /api/upload/generate-cover {title, genre, mood, character_object_name}
+   → upload.py에서 MinIO에서 캐릭터 시트 로드
+   → cover_generator.generate_cover_image(character_image_bytes=...)
+   → Gemini가 캐릭터를 포함한 커버 이미지 생성
+```
+
+#### C. MV 씬에 캐릭터 + 프롬프트 활용
+
+```
+1. STEP 1 영역에서:
+   - "내 캐릭터를 주인공으로" 토글
+   - "씬 분위기 지시" textarea 입력
+2. [씬 생성하기] 클릭
+   → POST /api/mv/create {title, genre, mood, lyrics, cover_object_name,
+                            scene_prompt, character_object_name}
+   → Phase 1: split_lyrics_into_scenes(user_scene_prompt=scene_prompt)
+     → ChatGPT가 씬 분할 시 사용자 지시사항 반영
+   → Phase 2: generate_scene_image(character_image_bytes=...)
+     → Gemini가 각 씬 이미지 생성 시 캐릭터 참조
+3. MV 영상 (Veo): 씬 이미지에 이미 캐릭터가 포함되어 있으므로 자연스럽게 반영
+```
+
+---
+
+### 수정 파일 목록
+
+```
+backend/
+├── app/services/character_generator.py   # NEW — Gemini 캐릭터 시트 생성
+├── app/routes/character.py               # NEW — 캐릭터 CRUD API
+├── app/main.py                           # MODIFIED — character 라우터 등록
+├── app/services/cover_generator.py       # MODIFIED — character_image_bytes 파라미터 추가
+├── app/services/mv_generator.py          # MODIFIED — split에 user_scene_prompt, generate_scene_image에 character_image_bytes 추가
+├── app/services/mv_pipeline.py           # MODIFIED — 캐릭터 이미지 로드 + 전달, scene_prompt 전달
+├── app/routes/upload.py                  # MODIFIED — GenerateCoverRequest에 character_object_name 추가
+├── app/routes/mv.py                      # MODIFIED — CreateMVRequest에 scene_prompt, character_object_name 추가
+
+frontend/
+├── src/api/index.js                      # MODIFIED — 캐릭터 API 함수 4개 추가
+├── src/pages/MyMusicPage.jsx             # MODIFIED — "내 캐릭터" 탭 + CharacterSection 컴포넌트
+├── src/pages/MyMusicPage.css             # MODIFIED — 캐릭터 섹션 스타일
+├── src/pages/UploadPage.jsx              # MODIFIED — 캐릭터 토글 + 씬 프롬프트 입력란
+├── src/pages/UploadPage.css              # MODIFIED — 캐릭터 토글 + 씬 프롬프트 스타일
+```
+
+### 구현 순서
+
+```
+Phase 1: 백엔드 캐릭터 인프라 (독립)
+  1. character_generator.py 생성
+  2. character.py 라우터 생성
+  3. main.py에 라우터 등록
+
+Phase 2: 백엔드 캐릭터 통합
+  4. cover_generator.py 수정 (character_image_bytes)
+  5. upload.py 수정 (character_object_name 전달)
+  6. mv_generator.py 수정 (user_scene_prompt + character_image_bytes)
+  7. mv_pipeline.py 수정 (캐릭터 로드 + 전달)
+  8. mv.py 수정 (scene_prompt + character_object_name)
+
+Phase 3: 프론트엔드
+  9. api/index.js — 캐릭터 API 함수
+  10. MyMusicPage.jsx + CSS — 내 캐릭터 탭
+  11. UploadPage.jsx + CSS — 캐릭터 토글 + 씬 프롬프트
+```
+
+---
+
+## v2.9 — Kling 영상 모델 통합
+
+### 목표
+MV 영상 생성 시 Veo 3.1(Google) 외에 Kling v1(Kling AI) 모델을 선택할 수 있도록 지원.
+음악 생성에서 YuE/Suno를 선택하는 것처럼, 영상 모델도 Veo/Kling 중 선택 가능.
+
+### 변경 파일
+
+#### 백엔드
+```
+├── backend/app/config.py                        # MODIFIED — kling_access_key, kling_secret_key 추가
+├── backend/.env                                 # MODIFIED — KLING_ACCESS_KEY, KLING_SECRET_KEY 추가
+├── backend/app/services/kling_video_generator.py # NEW — Kling API 서비스
+│   ├── _generate_jwt_token()      — JWT 토큰 생성 (HS256)
+│   ├── start_scene_video_kling()  — image-to-video 요청, task_id 반환
+│   ├── check_scene_video_status_kling() — 상태 확인
+│   └── download_video_kling()     — 영상 다운로드
+├── backend/app/routes/mv.py                     # MODIFIED
+│   ├── CreateMVRequest.video_model 필드 추가 ("veo" | "kling")
+│   ├── GenerateVideosRequest.video_model 필드 추가
+│   ├── create_mv() — video_model 검증 + job_doc 저장
+│   ├── generate_videos() — video_model 분기 + pipeline 전달
+│   ├── get_mv_job() — video_model 응답 포함
+│   └── GET /api/mv/models — 사용 가능한 영상 모델 목록
+├── backend/app/services/mv_pipeline.py          # MODIFIED
+│   ├── kling_video_generator import 추가
+│   └── run_phase3_videos() — video_model 파라미터 + Kling/Veo 분기
+```
+
+#### 프론트엔드
+```
+├── frontend/src/api/index.js                    # MODIFIED — generateMVVideos에 videoModel 파라미터, getMVModels 추가
+├── frontend/src/pages/UploadPage.jsx            # MODIFIED — videoModel state, 모델 선택 카드 UI
+├── frontend/src/pages/UploadPage.css            # MODIFIED — 영상 모델 선택 카드 스타일
+```
+
+### Kling API 스펙
+- **Base URL**: `https://api.klingai.com`
+- **인증**: JWT 토큰 (HS256, 30분 유효)
+- **Image-to-Video**: `POST /v1/videos/image2video`
+- **상태 확인**: `GET /v1/videos/image2video/{task_id}`
+- **응답**: `task_status` = submitted | processing | succeed | failed
+
+### 구현 순서
+```
+Phase 1: 백엔드 Kling 인프라
+  1. config.py — kling_access_key, kling_secret_key
+  2. .env — KLING_ACCESS_KEY, KLING_SECRET_KEY
+  3. kling_video_generator.py 신규 생성
+
+Phase 2: 백엔드 파이프라인 통합
+  4. mv.py — CreateMVRequest/GenerateVideosRequest에 video_model 추가
+  5. mv.py — create_mv()에 video_model 저장, generate_videos()에 분기
+  6. mv.py — GET /api/mv/models 엔드포인트
+  7. mv_pipeline.py — run_phase3_videos()에 video_model 분기
+
+Phase 3: 프론트엔드
+  8. api/index.js — generateMVVideos videoModel 파라미터, getMVModels
+  9. UploadPage.jsx — videoModel state + 모델 선택 카드 UI
+  10. UploadPage.css — 영상 모델 선택 카드 스타일
+```
+
+---
+
+## v2.9.1 — 모델별 씬 계산 + 스토리 아크
+
+### 변경 사항
+
+#### A. 영상 모델별 씬 개수 동적 계산
+- 영상 모델 선택을 STEP 1 (씬 생성 전)으로 이동
+- 씬 개수 계산 로직: `ceil(음악길이 / 클립길이)`
+  - Veo: 클립 8초 → `ceil(audio_duration / 8)`
+  - Kling: 클립 10초 → `ceil(audio_duration / 10)`
+- 씬 생성 후 모델 변경 불가 (STEP 2에서는 읽기 전용 표시)
+
+#### B. Kling duration "5" → "10" 변경
+- `kling_video_generator.py`: `"duration": "5"` → `"duration": "10"`
+- `mv.py` GET /api/mv/models: Kling 설명을 "10초"로 업데이트
+
+#### C. 씬 분할 프롬프트에 스토리 아크 추가
+- `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE`: 도입-전개-클라이맥스-결말 구조 지시 추가
+- `SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE`: 동일한 스토리 아크 지시 추가
+- 시각적 연속성 규칙 추가 (setting, lighting, character 일관성)
+
+### 수정 파일
+```
+백엔드:
+  1. mv.py — video_model 검증을 scene_count 계산 전으로 이동, 모델별 CLIP_DURATION 분기
+  2. kling_video_generator.py — duration "5" → "10"
+  3. mv_generator.py — 두 프롬프트 템플릿에 스토리 아크 + 시각 연속성 지시 추가
+
+프론트엔드:
+  4. UploadPage.jsx — 영상 모델 선택 UI를 STEP 1로 이동, STEP 2에서는 읽기 전용 표시
+```

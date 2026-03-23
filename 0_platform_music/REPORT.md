@@ -1386,3 +1386,453 @@ cd ../frontend && npm run dev
 - 생성된 비디오는 Google 서버에서 2일 보관 후 삭제 → MinIO에 즉시 저장
 - 비디오 최대 8초, 오디오 미포함 (뮤직비디오 배경 영상 용도)
 - 커버 이미지가 있어야만 뮤직비디오 생성 버튼 활성화
+
+---
+
+## v2.4 20장면 AI 뮤직비디오 파이프라인 (Enhanced MV)
+### 작성일: 2026-03-17
+
+### 변경 개요
+기존 Veo 2 단일 텍스트→영상 방식을 **20장면 이미지 기반 파이프라인**으로 교체.
+가사의 흐름을 반영한 일관성 있는 뮤직비디오를 생성할 수 있게 됨.
+
+### 파이프라인 구조
+
+```
+[사용자 입력: 제목, 장르, 분위기, 가사]
+         │
+         ▼
+  [ChatGPT] 가사 → 20개 장면 분할 (시각적 설명 포함)
+         │
+         ▼
+  [Gemini] 장면별 이미지 생성 (순차, 16:9, 커버 이미지 참조로 스타일 통일)
+         │           └→ MinIO 썸네일 저장, 3초 간격
+         ▼
+  [Veo 3.1] 이미지 → 8초 영상 클립 (순차, Semaphore(1))
+         │         └→ referenceImages + bytesBase64Encoded + 429 백오프
+         ▼
+  [ffmpeg] 클립 합치기 (stream-copy or re-encode)
+         │
+         ▼
+  [MinIO] 최종 영상 저장 → MongoDB 상태 업데이트
+```
+
+### 수정된 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/services/mv_generator.py` | 전면 재작성: 7개 함수 파이프라인 |
+| `backend/app/routes/upload.py` | MV 엔드포인트 job 기반으로 교체 |
+| `frontend/src/pages/UploadPage.jsx` | 진행률 바, 썸네일 그리드, localStorage 복구 |
+| `frontend/src/pages/UploadPage.css` | 진행률/썸네일 스타일 추가 |
+| `frontend/src/api/index.js` | checkMVStatus 파라미터 변경 |
+
+### 핵심 API 변경
+
+| 변경 전 (v2.3) | 변경 후 (v2.4) |
+|----------------|----------------|
+| `POST /generate-mv` → `{operation_name}` | `POST /generate-mv` → `{job_id}` |
+| `GET /mv-status/{operation_name}` | `GET /mv-status/{job_id}` |
+| Veo 2 텍스트 전용 | Veo 3.1 이미지 입력 (referenceImages) |
+| 단일 8초 영상 | ~20개 8초 클립 합성 (약 160초) |
+| 실시간 생성→완료 | 백그라운드 작업 + 진행률 추적 |
+| 커버 참조 없음 | 커버 이미지 기반 스타일 일관성 유지 |
+
+### Veo 3.1 이미지 입력 포맷 (검증 완료)
+
+```json
+{
+  "instances": [{
+    "prompt": "scene description",
+    "referenceImages": [{
+      "image": {
+        "bytesBase64Encoded": "<base64>",
+        "mimeType": "image/png"
+      },
+      "referenceType": "asset"
+    }]
+  }],
+  "parameters": {
+    "aspectRatio": "16:9",
+    "durationSeconds": 8
+  }
+}
+```
+
+**주의 (검증 완료)**:
+- `personGeneration` 파라미터를 포함하면 Veo 3.1에서 에러 발생 — 반드시 생략
+- `durationSeconds`는 referenceImages 사용 시 **반드시 8** — 4초/6초로 설정하면 400 "use case not supported" 에러
+- `aspectRatio`는 referenceImages 사용 시 `"16:9"`만 지원
+
+### 테스트 결과
+
+| 테스트 | 결과 |
+|--------|------|
+| 백엔드 import 검증 | PASS |
+| POST /generate-mv → job_id 반환 | PASS |
+| GET /mv-status/{job_id} → 상태 조회 | PASS |
+| ChatGPT 장면 분할 (20장면) | PASS |
+| Gemini 장면 이미지 생성 (커버 참조) | PASS |
+| 썸네일 MinIO 저장 + 프리사인 URL | PASS |
+| ffmpeg 설치 (imageio-ffmpeg) | PASS |
+| 프론트엔드 진행률 바 UI | PASS |
+| localStorage 작업 복구 (useRef) | PASS |
+| Veo 3.1 referenceImages (8초) | PASS |
+| Veo 3.1 API 직접 테스트 (200 확인) | PASS |
+
+### 디버깅 이력
+
+| 문제 | 원인 | 해결 |
+|------|------|------|
+| `mv-status/undefined` 폴링 반복 | localStorage에 잘못된 값 잔존 + setInterval ID를 로컬 변수로 관리해 cleanup 불가 | `useRef`로 interval 관리, `stopMvPolling()` 헬퍼 추가, ObjectId 형식(24자 hex) 검증, useEffect cleanup 함수 |
+| Veo 3.1 400 "use case not supported" | `durationSeconds: 4` — referenceImages는 **8초 전용** | `durationSeconds: 8`로 변경 (API 테스트 200 확인) |
+| Veo 3.1 429 rate limit (0/20 성공) | Semaphore(3)으로 동시 요청 → API 할당량 초과 | Semaphore(1) + 장면별 2초 stagger + 429 시 60/120/180초 백오프 (3회 재시도) |
+| 장면 이미지가 커버와 스타일 불일치 | 장면 이미지를 커버 참조 없이 텍스트만으로 독립 생성 | 커버 이미지를 Gemini에 `inlineData`로 전달 + "참조 이미지의 스타일/색감/분위기를 맞춰라" 프롬프트 |
+| Gemini 이미지 생성 429 | 20개 이미지를 딜레이 없이 연속 요청 | 이미지 간 3초 대기 + 429 시 30초 대기 후 자동 재시도 |
+
+### 참고 사항
+- 전체 파이프라인 소요시간: 약 30~60분 (20장면 × 8초 클립, API 속도에 따라 변동)
+- 50% 이상 장면 실패 시 전체 작업 중단
+- 장면별 최대 3회 재시도 (429 에러 시 백오프 적용)
+- ffmpeg가 시스템에 없으면 `imageio-ffmpeg` pip 패키지의 바이너리 사용
+- 가사가 없으면 제목/장르/분위기 기반으로 20개 장면 자동 생성
+- 커버 이미지가 있으면 모든 장면 이미지가 커버의 화풍을 따라감
+
+---
+
+## v2.5 — MV 임시저장/이어하기 시스템
+
+### 1. 구현 개요
+기존 새업로드 탭의 MV 섹션을 STEP1(씬 생성)/STEP2(영상 생성) 구조로 변경하고,
+이메일 임시저장 방식으로 작업 중간 저장 + 내 음악 > 임시저장 탭에서 불러오기 기능 구현.
+
+### 2. 아키텍처
+```
+작업실2 → 생성기록 → [업로드하기] → 새업로드 탭
+                                        │
+                    ┌───────────────────┤
+                    │                   │
+              커버 이미지 생성      MV 섹션 (2단계)
+                    │                   │
+                    │         STEP 1: [씬 생성하기]
+                    │           ChatGPT 씬 분할 + Gemini 이미지 생성
+                    │           씬별 이미지 업로드/재생성 가능
+                    │                   │
+                    │         STEP 2: [영상 생성하기]
+                    │           Veo 3.1 영상 생성 (순차, 이어하기 가능)
+                    │           429 → 일시정지 → [재시도하기]
+                    │                   │
+                    │         [임시저장]   [업로드]
+                    │              │
+                    └──────────────┤
+                                   ▼
+                    내 음악 > 임시저장 탭
+                    [불러오기] → 새업로드 탭 복원
+```
+
+### 3. 파일 변경 목록
+
+| 파일 | 유형 | 변경 |
+|------|------|------|
+| `backend/app/routes/mv.py` | Backend | MV API 라우터 (10개 엔드포인트, save-draft 추가) |
+| `backend/app/services/mv_pipeline.py` | Backend | Phase 1+2 통합 함수, 이어하기 로직 |
+| `frontend/src/pages/UploadPage.jsx` | Frontend | MV 섹션 STEP1/STEP2 + 임시저장 버튼 |
+| `frontend/src/pages/UploadPage.css` | Frontend | 씬 카드, 프로그레스, 임시저장 스타일 |
+| `frontend/src/pages/MyMusicPage.jsx` | Frontend | "임시저장" 탭 + 드래프트 목록 |
+| `frontend/src/pages/MyMusicPage.css` | Frontend | 드래프트 카드 스타일 |
+| `frontend/src/api/index.js` | Frontend | MV Draft API 함수 10개 추가 |
+
+### 4. API 엔드포인트
+
+| Method | Path | 설명 |
+|--------|------|------|
+| POST | `/api/mv/create` | MV 생성 + 씬 분할 + 이미지 생성 (Phase1+2 통합) |
+| GET | `/api/mv/jobs` | 사용자 임시저장 목록 |
+| GET | `/api/mv/jobs/{id}` | 작업 상세 (씬별 presigned URL + 폼 필드) |
+| POST | `/api/mv/jobs/{id}/generate-images` | 이미지 생성 (선택적 씬 지정) |
+| POST | `/api/mv/jobs/{id}/scenes/{n}/upload-image` | 사용자 이미지 업로드 |
+| POST | `/api/mv/jobs/{id}/scenes/{n}/regenerate-image` | 단일 씬 이미지 재생성 |
+| POST | `/api/mv/jobs/{id}/generate-videos` | 영상 생성/이어하기 (완료 씬 스킵) |
+| POST | `/api/mv/jobs/{id}/concatenate` | 수동 합치기 |
+| POST | `/api/mv/jobs/{id}/save-draft` | 폼 필드 임시저장 |
+| DELETE | `/api/mv/jobs/{id}` | 작업 + MinIO 파일 삭제 |
+
+### 5. 핵심 기능
+
+- **2단계 MV 생성**: 씬 생성(이미지) → 영상 생성으로 분리, 각 단계 독립 실행
+- **임시저장**: 새업로드 탭 하단 [임시저장] → MongoDB에 전체 상태 저장
+- **불러오기**: 내 음악 > 임시저장 탭 → [불러오기] → 새업로드 탭에 전체 복원
+- **이어하기**: 429 에러 시 "paused" 상태 → [재시도하기] 버튼으로 미완료 씬만 처리
+- **씬별 이미지 관리**: 사용자 업로드 또는 AI 재생성 가능
+
+### 6. 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| Backend import 검증 | PASS |
+| API 라우트 등록 (12개) | PASS |
+| API 경로 FE/BE 일치 | PASS |
+| Props 연결 (draftData) | PASS |
+| Polling useRef 패턴 | PASS |
+| CSS 클래스 일치 | PASS |
+
+### 7. 테스터 발견 버그 및 수정
+
+| 버그 | 수정 내용 |
+|------|-----------|
+| image_source "uploaded" → "upload" 불일치 | UploadPage.jsx 수정 |
+| object_name → result_object_name 필드명 | UploadPage.jsx 수정 |
+| scenes_ready, videos_ready 상태 매핑 누락 | UploadPage.jsx mapStatusToStep 수정 |
+| MyMusicPage 상태 배지 draft/scenes_ready/videos_ready 누락 | STATUS_MAP 추가 |
+
+### v2.5.1 — 커버 확정 후 씬 생성 분리
+
+| 변경 파일 | 내용 |
+|-----------|------|
+| `backend/app/routes/mv.py` | `cover_object_name` 필수 검증 추가 |
+| `frontend/src/pages/UploadPage.jsx` | 씬 생성 버튼 비활성화, 커버 변경 감지, 경고 배너 |
+| `frontend/src/pages/UploadPage.css` | 비활성 버튼, 힌트, 경고 배너 스타일 |
+
+테스트 결과: 전체 PASS (백엔드 import, 커버 검증, 버튼 비활성화, 경고 배너, CSS)
+
+### v2.5.2 — 음악 길이 기반 씬 개수 동적 산출
+
+#### 개요
+기존 고정 20씬 → `ceil(audio_duration_sec / 8)` 동적 계산 (최소 5, 최대 60).
+각 씬 영상 8초 × N씬 생성 후, ffmpeg로 실제 음악 길이에 맞춰 트리밍.
+
+#### 변경 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/routes/mv.py` | `CreateMVRequest`에 `audio_duration_sec` 필드 추가, `scene_count = ceil(audio_duration_sec / 8)` 클램프 [5,60], job 문서에 저장 |
+| `backend/app/services/mv_generator.py` | 프롬프트 상수 → 템플릿 (`{scene_count}`, `{scene_min}`, `{scene_max}`), `split_lyrics_into_scenes(scene_count)` 파라미터 추가 |
+| `backend/app/services/mv_pipeline.py` | `run_phase1_split`에서 job doc의 `scene_count` 전달, `run_phase4_concatenate`에서 ffmpeg `-t` 트리밍 |
+| `frontend/src/pages/UploadPage.jsx` | `getAudioDuration()` 헬퍼 (HTML5 Audio loadedmetadata), `handleCreateScenes`에서 `audio_duration_sec` 전달 |
+
+#### 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| Backend import 검증 | PASS |
+| CreateMVRequest audio_duration_sec 필드 | PASS |
+| scene_count 계산 로직 (ceil/clamp) | PASS |
+| 프롬프트 템플릿 {scene_count} 치환 | PASS |
+| mv_pipeline scene_count 전달 | PASS |
+| ffmpeg -t 트리밍 명령어 | PASS |
+| Frontend getAudioDuration 함수 | PASS |
+| API 호출 시 audio_duration_sec 전달 | PASS |
+
+---
+
+## v2.6 — Suno 모델 통합
+### 작성일: 2026-03-18
+
+#### 개요
+기존 YuE(로컬) 모델 외에 Suno API를 통한 클라우드 음악 생성 모델을 추가.
+간편 모드 / 커스텀 모드 모두에서 모델 선택 카드로 YuE 또는 Suno를 선택 가능.
+
+#### 변경 파일
+
+| 파일 | 유형 | 변경 내용 |
+|------|------|-----------|
+| `backend/app/config.py` | Backend | `suno_api_key`, `suno_api_url` 설정 추가 |
+| `backend/.env` | Config | `SUNO_API_KEY` 환경변수 추가 |
+| `backend/app/services/suno_generator.py` | Backend (신규) | Suno API 호출, polling, 오디오 다운로드, MinIO 업로드, progress 관리 |
+| `backend/app/routes/generate.py` | Backend | `model=="suno"` 분기, `/models/` 엔드포인트에 Suno 추가 |
+| `frontend/src/components/StudioTab2.jsx` | Frontend | MODEL_OPTIONS에 Suno 카드 추가, Suno 선택 시 BPM/Key/Duration 숨김 |
+| `frontend/src/components/StudioTab2.css` | Frontend | Suno 안내 메시지 스타일 |
+
+#### Suno API 연동 흐름
+```
+1. POST /api/v1/generate → taskId 반환
+2. GET /api/v1/generate/record-info?taskId={id} → polling (5초 간격, 최대 5분)
+3. status: PENDING → TEXT_SUCCESS → FIRST_SUCCESS → SUCCESS
+4. SUCCESS 시 audioUrl에서 MP3 다운로드 → MinIO 업로드
+5. MongoDB generation 문서 업데이트 (status: completed)
+```
+
+#### 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| Backend config suno 설정 | PASS |
+| Backend .env SUNO_API_KEY | PASS |
+| suno_generator.py 구조 (API 호출, polling, 업로드) | PASS |
+| generate.py model 분기 + /models/ 확장 | PASS |
+| Frontend MODEL_OPTIONS Suno 추가 | PASS |
+| 커스텀 모드 Suno 선택 시 BPM/Key/Duration 숨김 | PASS |
+| 생성 기록 Suno 모델 태그 표시 | PASS |
+| MinIO 버킷명 일치 (minio_bucket_music) | PASS |
+
+### v2.6.1 — Suno 보컬 연동 수정
+#### 작성일: 2026-03-18
+
+#### 개요
+Suno 생성 시 보컬이 가사를 부르지 않는 문제 수정. style에 보컬 정보 추가, vocalGender 전달, 가사 구조 태그 자동 추가.
+
+#### 변경 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/services/suno_generator.py` | SUNO_VOCAL_MAP(8개 프리셋), _ensure_lyrics_structure 헬퍼, style에 보컬 정보 포함, vocalGender 전달, instrumental 명시적 bool |
+
+#### 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| SUNO_VOCAL_MAP 8개 프리셋 | PASS |
+| _ensure_lyrics_structure 로직 | PASS |
+| style에 보컬 정보 포함 | PASS |
+| is_instrumental 명시적 bool | PASS |
+| vocalGender 전달 | PASS |
+| prompt에 구조 태그 적용 | PASS |
+| FE/BE 보컬 프리셋 키 매칭 | PASS (불일치 수정: male_soft, female_sweet 추가) |
+
+---
+
+## v2.7 — 뮤직비디오 음악 합치기 (STEP 3)
+### 작성일: 2026-03-18
+
+#### 개요
+MV 영상 생성 완료 후, 생성된 음악 파일(Suno/YuE)과 영상을 ffmpeg로 합쳐서 최종 뮤직비디오를 만드는 STEP 3 추가.
+
+#### 흐름 변경
+- Phase4 완료: `"completed"` → `"video_ready"` (영상만 완료)
+- Phase5 추가: 영상 + 음악 ffmpeg 합치기 → `"completed"` (최종 완료)
+
+#### 변경 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/services/mv_pipeline.py` | Phase4 완료 상태 `video_ready`로 변경, `run_phase5_merge_audio` 함수 추가 |
+| `backend/app/routes/mv.py` | `POST /merge-audio` 엔드포인트, `MergeAudioRequest`, `merging_audio` 상태 추가 |
+| `frontend/src/api/index.js` | `mergeAudioMV` API 함수 추가 |
+| `frontend/src/pages/UploadPage.jsx` | STEP 3 UI, mvStep 5/6 매핑, 음악 자동 연결, 합치기 버튼 |
+| `frontend/src/pages/UploadPage.css` | merge 관련 스타일 추가 |
+
+#### Veo 모델 변경
+- `veo-3.1-generate-preview` → `veo-3.0-fast-generate` (비용 1/5, 한도 1,200 RPM)
+
+#### 테스트 결과: 21/21 PASS
+
+---
+
+## v2.8 — 내 캐릭터 시스템 + 씬 프롬프트
+### 작성일: 2026-03-18
+
+#### 개요
+1. 내 캐릭터 탭에서 사진 업로드 → AI 실사 캐릭터 시트 생성 → 저장
+2. 커버/MV 씬 이미지 생성 시 캐릭터를 주인공으로 포함
+3. 씬 생성 전 사용자가 분위기/배경 프롬프트 입력 가능
+
+#### 신규 파일
+
+| 파일 | 내용 |
+|------|------|
+| `backend/app/services/character_generator.py` | Gemini 실사 캐릭터 시트 생성 (photorealistic, 애니메이션 금지) |
+| `backend/app/routes/character.py` | 캐릭터 CRUD API (generate-sheet, save, me, delete) |
+
+#### 수정 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/main.py` | character 라우터 등록 |
+| `backend/app/services/cover_generator.py` | character_image_bytes 파라미터, 캐릭터 주인공 프롬프트 |
+| `backend/app/routes/upload.py` | character_object_name 필드, MinIO 로드 |
+| `backend/app/services/mv_generator.py` | split: user_scene_prompt, generate: character_image_bytes |
+| `backend/app/services/mv_pipeline.py` | 캐릭터 이미지 로드 + scene_prompt 전달 |
+| `backend/app/routes/mv.py` | CreateMVRequest에 scene_prompt, character_object_name 추가 |
+| `frontend/src/api/index.js` | 캐릭터 API 함수 4개 추가 |
+| `frontend/src/pages/MyMusicPage.jsx` | "내 캐릭터" 탭 + CharacterSection 컴포넌트 |
+| `frontend/src/pages/MyMusicPage.css` | 캐릭터 섹션 스타일 |
+| `frontend/src/pages/UploadPage.jsx` | 캐릭터 포함 토글, 씬 프롬프트 입력란 |
+| `frontend/src/pages/UploadPage.css` | 캐릭터 토글 스타일 |
+
+#### 테스트 결과: 14/14 PASS
+
+### v2.8.1 — 캐릭터 시트 디테일 강화
+#### 작성일: 2026-03-18
+
+#### 개요
+캐릭터 시트 프롬프트를 6개 뷰 → 15개 뷰로 대폭 확장. 조사 결과 반영하여 3가지 핵심 디테일 추가.
+
+#### 추가된 디테일
+1. **다양한 표정 (4종)** — 미소/슬픔/놀람/진지 (기존 2종 → 4종)
+2. **손 디테일 클로즈업** — AI 약점인 손 표현 개선
+3. **다양한 포즈 (앉기/걷기)** — 정적 포즈 외 동적 장면 일관성
+
+#### 캐릭터 시트 구성 (4행 15뷰)
+- ROW 1: 정면, 좌 3/4, 우측 프로필, 뒷모습
+- ROW 2: 전신 정면, 앉기 포즈, 걷기 포즈
+- ROW 3: 미소/슬픔/놀람/진지 표정
+- ROW 4: 손/눈/입술 클로즈업, 색상 팔레트
+
+#### 변경 파일
+| 파일 | 변경 |
+|------|------|
+| `backend/app/services/character_generator.py` | 프롬프트 6뷰 → 15뷰 확장 |
+
+---
+
+## v2.9 — Kling 영상 모델 통합
+### 작성일: 2026-03-19
+
+#### 개요
+MV 영상 생성 시 Veo 외에 Kling 모델을 선택할 수 있도록 추가. 공식 Kling API (JWT 인증) 직접 연동.
+
+#### 신규 파일
+
+| 파일 | 내용 |
+|------|------|
+| `backend/app/services/kling_video_generator.py` | JWT 인증, image-to-video, 상태 polling, 영상 다운로드 |
+
+#### 수정 파일
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/app/config.py` | kling_access_key, kling_secret_key 설정 |
+| `backend/.env` | KLING_ACCESS_KEY, KLING_SECRET_KEY 추가 |
+| `backend/app/routes/mv.py` | video_model 필드, /api/mv/models 엔드포인트 |
+| `backend/app/services/mv_pipeline.py` | run_phase3_videos에서 veo/kling 분기 |
+| `frontend/src/api/index.js` | generateMVVideos에 videoModel 전달, getMVModels |
+| `frontend/src/pages/UploadPage.jsx` | 영상 모델 선택 카드 UI (Veo/Kling) |
+| `frontend/src/pages/UploadPage.css` | 모델 카드 스타일 |
+
+#### 테스트 결과: 8/8 PASS
+
+### v2.9.1 — 모델별 씬 계산 + 스토리 아크
+#### 작성일: 2026-03-19
+
+#### 개요
+1. 영상 모델 선택을 STEP 1(씬 생성 전)으로 이동 — 모델별 클립 길이가 달라서 씬 개수에 영향
+2. Kling duration 5초 → 10초로 변경
+3. 씬 분할 프롬프트에 스토리 아크(도입/전개/클라이맥스/결말) 지시 추가
+
+#### 씬 개수 계산
+| 모델 | 클립 길이 | 2분30초 곡 씬 수 |
+|---|---|---|
+| Veo 3.1 | 8초 | ceil(150/8) = 19씬 |
+| Kling V3 | 10초 | ceil(150/10) = 15씬 |
+
+#### 변경 파일
+| 파일 | 변경 |
+|------|------|
+| `backend/app/routes/mv.py` | video_model별 CLIP_DURATION 분기 (8/10) |
+| `backend/app/services/kling_video_generator.py` | duration "5" → "10" |
+| `backend/app/services/mv_generator.py` | 두 프롬프트 템플릿에 스토리 아크 지시 추가 |
+| `frontend/src/pages/UploadPage.jsx` | 모델 선택 STEP1로 이동, STEP2에서 읽기전용 |
+
+#### 테스트 결과: 8/8 PASS
+
+### v2.9.2 — 뮤직비디오 퍼포먼스 씬 교차 배치
+#### 작성일: 2026-03-19
+
+#### 개요
+씬 분할 프롬프트에 "performance scene" 교차 배치 지시 추가.
+3~4개 스토리 씬마다 주인공이 카메라를 보며 노래하는 퍼포먼스 씬을 삽입하여 진짜 뮤직비디오 느낌을 구현.
+
+#### 변경 파일
+| 파일 | 변경 |
+|------|------|
+| `backend/app/services/mv_generator.py` | 두 프롬프트 템플릿에 performance scene 교차 지시 추가 |

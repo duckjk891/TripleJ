@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiUploadCloud, FiMusic, FiX, FiImage, FiZap } from 'react-icons/fi';
+import { FiUploadCloud, FiMusic, FiX, FiImage, FiZap, FiRefreshCw, FiAlertTriangle, FiCheck, FiPlay } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './UploadPage.css';
@@ -10,11 +10,30 @@ const AI_TOOLS = ['Suno', 'Udio', 'AIVA', 'Stable Audio', 'MusicGen (Meta)', 'Yu
 const AUDIO_ACCEPT = '.mp3,.wav,.ogg,.flac,.m4a';
 const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp';
 
-export default function UploadPage({ generationPrefill, onClearPrefill }) {
+function RetryCountdown({ retryAt }) {
+  const [remaining, setRemaining] = useState(0);
+  useEffect(() => {
+    const target = new Date(retryAt + 'Z').getTime();
+    const tick = () => {
+      const diff = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+      setRemaining(diff);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [retryAt]);
+  const min = Math.floor(remaining / 60);
+  const sec = remaining % 60;
+  return <span className="upload-mv-retry-countdown">{min}:{String(sec).padStart(2, '0')} 후 재시도</span>;
+}
+
+export default function UploadPage({ generationPrefill, onClearPrefill, draftData, onClearDraft }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const audioInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const mvPollIntervalRef = useRef(null);
+  const sceneImageInputRefs = useRef({});
 
   const [title, setTitle] = useState('');
   const [genre, setGenre] = useState('');
@@ -32,16 +51,37 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
   const [aiCoverPreview, setAiCoverPreview] = useState(null);
   const [aiCoverObjectName, setAiCoverObjectName] = useState(null);
 
-  const [generatingMV, setGeneratingMV] = useState(false);
+  // Character & Scene Prompt
+  const [myCharacter, setMyCharacter] = useState(null);
+  const [includeCharacter, setIncludeCharacter] = useState(false);
+  const [scenePrompt, setScenePrompt] = useState('');
+
+  // Video Model Selection
+  const [videoModel, setVideoModel] = useState('veo');
+
+  // MV Draft System states
+  const [mvJobId, setMvJobId] = useState(null);
+  const [mvJob, setMvJob] = useState(null);
+  const [mvStep, setMvStep] = useState(0); // 0=no job, 1=generating scenes, 2=scenes ready, 3=generating videos, 4=paused, 5=video ready/merging, 6=completed
+  const [mvMergingAudio, setMvMergingAudio] = useState(false);
+  const [mvMusicVideoPreview, setMvMusicVideoPreview] = useState(null);
+  const [mvMusicVideoObjectName, setMvMusicVideoObjectName] = useState(null);
   const [mvPreview, setMvPreview] = useState(null);
   const [mvObjectName, setMvObjectName] = useState(null);
-  const [mvProgress, setMvProgress] = useState('');
+  const [mvProgressPct, setMvProgressPct] = useState(0);
+  const [mvRegeneratingScene, setMvRegeneratingScene] = useState(null);
+  const [mvUploadingScene, setMvUploadingScene] = useState(null);
+  const [mvCoverObjectName, setMvCoverObjectName] = useState(null);
+  const [scenesInvalidated, setScenesInvalidated] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftSaveMsg, setDraftSaveMsg] = useState('');
 
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Prefill from generation
   useEffect(() => {
     if (generationPrefill) {
       setTitle(generationPrefill.title || '');
@@ -54,6 +94,97 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
       if (onClearPrefill) onClearPrefill();
     }
   }, [generationPrefill]);
+
+  // Load user's character
+  useEffect(() => {
+    api.getMyCharacter()
+      .then(({ data }) => {
+        if (data.character) setMyCharacter(data.character);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Restore from draft
+  useEffect(() => {
+    if (draftData) {
+      setTitle(draftData.title || '');
+      setGenre(draftData.genre || '');
+      setMood(draftData.mood || '');
+      setPrompt(draftData.prompt || '');
+      setLyrics(draftData.lyrics || '');
+      setTags(draftData.tags || '');
+      setAiTool(draftData.ai_model || '');
+      if (draftData.audio_generation_id) {
+        setFromGeneration(draftData.audio_generation_id);
+      }
+      if (draftData.job_id) {
+        setMvJobId(draftData.job_id);
+        loadMvJobDetail(draftData.job_id).then(() => {
+          // mvCoverObjectName will be set after job loads
+        });
+      }
+      if (onClearDraft) onClearDraft();
+    }
+  }, [draftData]);
+
+  const loadMvJobDetail = async (jobId) => {
+    try {
+      const { data } = await api.getMVJobDetail(jobId);
+      setMvJob(data);
+      const st = mapStatusToStep(data.status);
+      setMvStep(st);
+      if (data.cover_object_name) {
+        setMvCoverObjectName(data.cover_object_name);
+        setAiCoverObjectName(data.cover_object_name);
+        if (data.cover_url) {
+          setAiCoverPreview(data.cover_url);
+        }
+      }
+      if (data.result_video_url) {
+        setMvPreview(data.result_video_url);
+        setMvObjectName(data.result_object_name || null);
+      }
+      if (data.result_music_video_url) {
+        setMvMusicVideoPreview(data.result_music_video_url);
+        setMvMusicVideoObjectName(data.result_music_video_object_name || null);
+      }
+      if (data.video_model) {
+        setVideoModel(data.video_model);
+      }
+      // If in an active state, start polling
+      if (['splitting', 'generating_images', 'generating_videos', 'concatenating', 'merging_audio'].includes(data.status)) {
+        startMvPolling(jobId);
+      }
+    } catch (err) {
+      console.error('[MV] Failed to load job detail:', err);
+    }
+  };
+
+  const mapStatusToStep = (status) => {
+    switch (status) {
+      case 'splitting':
+      case 'generating_images':
+        return 1;
+      case 'scenes_ready':
+      case 'images_ready':
+      case 'videos_ready':
+        return 2;
+      case 'generating_videos':
+      case 'concatenating':
+        return 3;
+      case 'paused':
+        return 4;
+      case 'video_ready':
+      case 'merging_audio':
+        return 5;
+      case 'completed':
+        return 6;
+      case 'failed':
+        return 0;
+      default:
+        return 0;
+    }
+  };
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -76,14 +207,18 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
         genre: genre || null,
         mood: mood || null,
         style: null,
+        character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
       });
       const base = `${window.location.protocol}//${window.location.hostname}:9000`;
       const token = localStorage.getItem('token');
       const proxyUrl = `${base}/api/upload/cover-preview/${encodeURIComponent(data.object_name)}?token=${encodeURIComponent(token)}`;
       setAiCoverPreview(proxyUrl);
       setAiCoverObjectName(data.object_name);
-      // Clear manual image file since AI cover is chosen
       setImageFile(null);
+      // Invalidate scenes if they were already generated with a different cover
+      if (mvStep >= 2 && mvCoverObjectName) {
+        setScenesInvalidated(true);
+      }
     } catch (err) {
       alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
     } finally {
@@ -94,62 +229,276 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
   const handleClearAiCover = () => {
     setAiCoverPreview(null);
     setAiCoverObjectName(null);
+    if (mvStep >= 2) {
+      setScenesInvalidated(true);
+    }
   };
 
-  const handleGenerateMV = async () => {
+  // --- MV Draft System ---
+
+  const stopMvPolling = useCallback(() => {
+    if (mvPollIntervalRef.current) {
+      clearInterval(mvPollIntervalRef.current);
+      mvPollIntervalRef.current = null;
+    }
+  }, []);
+
+  const startMvPolling = useCallback((jobId, intervalMs = 3000) => {
+    if (!jobId || jobId === 'undefined' || jobId === 'null') {
+      return;
+    }
+    stopMvPolling();
+
+    mvPollIntervalRef.current = setInterval(async () => {
+      try {
+        const { data } = await api.getMVJobDetail(jobId);
+        setMvJob(data);
+        setMvProgressPct(data.progress || 0);
+
+        const newStep = mapStatusToStep(data.status);
+        setMvStep(newStep);
+
+        if (data.status === 'images_ready' || data.status === 'scenes_ready' || data.status === 'videos_ready') {
+          stopMvPolling();
+        } else if (data.status === 'video_ready') {
+          stopMvPolling();
+          if (data.result_video_url) {
+            setMvPreview(data.result_video_url);
+            setMvObjectName(data.result_object_name || null);
+          }
+          setMvMergingAudio(false);
+        } else if (data.status === 'completed') {
+          stopMvPolling();
+          if (data.result_video_url) {
+            setMvPreview(data.result_video_url);
+            setMvObjectName(data.result_object_name || null);
+          }
+          if (data.result_music_video_url) {
+            setMvMusicVideoPreview(data.result_music_video_url);
+            setMvMusicVideoObjectName(data.result_music_video_object_name || null);
+          }
+          setMvMergingAudio(false);
+        } else if (data.status === 'paused') {
+          stopMvPolling();
+        } else if (data.status === 'failed') {
+          stopMvPolling();
+          alert('뮤직비디오 생성 실패: ' + (data.error_message || '알 수 없는 오류'));
+          setMvStep(0);
+        }
+      } catch (err) {
+        stopMvPolling();
+        console.error('[MV] Polling error:', err);
+      }
+    }, intervalMs);
+  }, [stopMvPolling]);
+
+  useEffect(() => {
+    return () => stopMvPolling();
+  }, [stopMvPolling]);
+
+  const getAudioDuration = () => {
+    return new Promise((resolve) => {
+      if (fromGeneration) {
+        // Try existing audio element first
+        const audioEl = document.querySelector('.upload-card__gen-player');
+        if (audioEl && audioEl.duration && isFinite(audioEl.duration)) {
+          resolve(audioEl.duration);
+          return;
+        }
+        // Fallback: create temp Audio
+        const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+        const token = localStorage.getItem('token') || '';
+        const tmpAudio = new Audio(`${base}/api/generate/${fromGeneration}/stream/?token=${encodeURIComponent(token)}`);
+        tmpAudio.addEventListener('loadedmetadata', () => resolve(tmpAudio.duration));
+        tmpAudio.addEventListener('error', () => resolve(null));
+      } else if (audioFile) {
+        const url = URL.createObjectURL(audioFile);
+        const tmpAudio = new Audio(url);
+        tmpAudio.addEventListener('loadedmetadata', () => {
+          resolve(tmpAudio.duration);
+          URL.revokeObjectURL(url);
+        });
+        tmpAudio.addEventListener('error', () => resolve(null));
+      } else {
+        resolve(null);
+      }
+    });
+  };
+
+  const handleCreateScenes = async () => {
     if (!title.trim()) {
       alert('곡 제목을 입력해주세요.');
       return;
     }
-
-    setGeneratingMV(true);
-    setMvProgress('뮤직비디오 생성 요청 중...');
-
+    setMvStep(1);
+    setMvProgressPct(0);
     try {
-      const { data } = await api.generateMV({
+      const audioDuration = await getAudioDuration();
+      const { data } = await api.createMVJob({
         title: title.trim(),
         genre: genre || null,
         mood: mood || null,
+        lyrics: lyrics.trim() || null,
         cover_object_name: aiCoverObjectName || null,
+        audio_duration_sec: audioDuration || null,
+        scene_prompt: scenePrompt.trim() || null,
+        character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
+        video_model: videoModel,
       });
-
-      const operationName = data.operation_name;
-      setMvProgress('뮤직비디오 생성 중... (최대 2~3분 소요)');
-
-      const pollInterval = setInterval(async () => {
-        try {
-          const { data: status } = await api.checkMVStatus(operationName);
-          if (status.done) {
-            clearInterval(pollInterval);
-            if (status.error) {
-              alert('뮤직비디오 생성 실패: ' + status.error);
-              setGeneratingMV(false);
-              setMvProgress('');
-            } else {
-              const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-              setMvPreview(`${base}${status.video_url}`);
-              setMvObjectName(status.object_name);
-              setGeneratingMV(false);
-              setMvProgress('');
-            }
-          }
-        } catch (err) {
-          clearInterval(pollInterval);
-          alert('상태 확인 실패: ' + (err.response?.data?.error || err.message));
-          setGeneratingMV(false);
-          setMvProgress('');
-        }
-      }, 10000);
+      const jobId = data.job_id;
+      if (!jobId) {
+        alert('MV 작업 ID를 받지 못했습니다.');
+        setMvStep(0);
+        return;
+      }
+      setMvJobId(jobId);
+      setMvCoverObjectName(aiCoverObjectName);
+      setScenesInvalidated(false);
+      startMvPolling(jobId, 3000);
     } catch (err) {
-      alert(err.response?.data?.error || '뮤직비디오 생성에 실패했습니다.');
-      setGeneratingMV(false);
-      setMvProgress('');
+      alert(err.response?.data?.error || '씬 생성에 실패했습니다.');
+      setMvStep(0);
+    }
+  };
+
+  const handleUploadSceneImage = async (sceneNumber, file) => {
+    if (!file || !mvJobId) return;
+    setMvUploadingScene(sceneNumber);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.uploadMVSceneImage(mvJobId, sceneNumber, formData);
+      // Refresh job detail
+      const { data: updated } = await api.getMVJobDetail(mvJobId);
+      setMvJob(updated);
+    } catch (err) {
+      alert(err.response?.data?.error || '이미지 업로드에 실패했습니다.');
+    } finally {
+      setMvUploadingScene(null);
+    }
+  };
+
+  const handleRegenerateSceneImage = async (sceneNumber) => {
+    if (!mvJobId) return;
+    setMvRegeneratingScene(sceneNumber);
+    try {
+      await api.regenerateMVSceneImage(mvJobId, sceneNumber);
+      const { data: updated } = await api.getMVJobDetail(mvJobId);
+      setMvJob(updated);
+    } catch (err) {
+      alert(err.response?.data?.error || '이미지 재생성에 실패했습니다.');
+    } finally {
+      setMvRegeneratingScene(null);
+    }
+  };
+
+  const handleGenerateVideos = async () => {
+    if (!mvJobId) return;
+    setMvStep(3);
+    setMvProgressPct(0);
+    try {
+      await api.generateMVVideos(mvJobId, videoModel);
+      startMvPolling(mvJobId, 5000);
+    } catch (err) {
+      alert(err.response?.data?.error || '영상 생성에 실패했습니다.');
+      setMvStep(2);
+    }
+  };
+
+  const handleRetryVideos = async () => {
+    if (!mvJobId) return;
+    setMvStep(3);
+    try {
+      await api.generateMVVideos(mvJobId, videoModel);
+      startMvPolling(mvJobId, 5000);
+    } catch (err) {
+      alert(err.response?.data?.error || '재시도에 실패했습니다.');
+      setMvStep(4);
+    }
+  };
+
+  const handleCancelMV = async () => {
+    if (!mvJobId) return;
+    try {
+      await api.cancelMVJob(mvJobId);
+    } catch (err) {
+      alert(err.response?.data?.error || '중지 요청에 실패했습니다.');
+    }
+  };
+
+  const handleMergeAudio = async () => {
+    if (!mvJobId) return;
+
+    // Determine the audio object name from the generation
+    let audioObjName = null;
+    if (fromGeneration) {
+      // Audio from AI generation is stored as generations/{id}/output.mp3
+      audioObjName = `generations/${fromGeneration}/output.mp3`;
+    } else if (audioFile) {
+      // For uploaded files, we need to get it from the track upload path
+      // The audio file needs to be uploaded first - show hint
+      alert('오디오 파일을 먼저 업로드해야 합니다. AI 생성 오디오를 사용하세요.');
+      return;
+    } else {
+      alert('오디오 파일이 연결되어 있지 않습니다.');
+      return;
+    }
+
+    setMvMergingAudio(true);
+    try {
+      await api.mergeAudioMV(mvJobId, audioObjName);
+      startMvPolling(mvJobId, 3000);
+    } catch (err) {
+      alert(err.response?.data?.error || '음악 합치기에 실패했습니다.');
+      setMvMergingAudio(false);
     }
   };
 
   const handleClearMV = () => {
     setMvPreview(null);
     setMvObjectName(null);
+    setMvMusicVideoPreview(null);
+    setMvMusicVideoObjectName(null);
+    setMvJobId(null);
+    setMvJob(null);
+    setMvStep(0);
+    setMvProgressPct(0);
+    setMvMergingAudio(false);
+    stopMvPolling();
+  };
+
+  const handleSaveDraft = async () => {
+    setSavingDraft(true);
+    setDraftSaveMsg('');
+    try {
+      let currentJobId = mvJobId;
+      if (!currentJobId) {
+        // Create a job first if none exists
+        const { data } = await api.createMVJob({
+          title: title.trim() || '제목 없음',
+          genre: genre || null,
+          mood: mood || null,
+          lyrics: lyrics.trim() || null,
+          cover_object_name: aiCoverObjectName || null,
+        });
+        currentJobId = data.job_id;
+        setMvJobId(currentJobId);
+      }
+      await api.saveMVDraft(currentJobId, {
+        genre: genre || null,
+        mood: mood || null,
+        tags: tags.trim() || null,
+        prompt: prompt.trim() || null,
+        ai_model: aiTool || null,
+        audio_generation_id: fromGeneration || null,
+      });
+      setDraftSaveMsg('임시저장되었습니다');
+      setTimeout(() => setDraftSaveMsg(''), 3000);
+    } catch (err) {
+      alert(err.response?.data?.error || '임시저장에 실패했습니다.');
+    } finally {
+      setSavingDraft(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -167,7 +516,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
       let track;
 
       if (fromGeneration) {
-        // Upload from AI generation - audio is already on the server
         const { data } = await api.uploadFromGeneration({
           generation_id: fromGeneration,
           title: title.trim(),
@@ -178,11 +526,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
           lyrics: lyrics.trim() || undefined,
           ai_model: aiTool || undefined,
           cover_object_name: aiCoverObjectName || undefined,
-          mv_object_name: mvObjectName || undefined,
+          mv_object_name: mvMusicVideoObjectName || mvObjectName || undefined,
         });
         track = data;
       } else {
-        // Normal file upload
         const formData = new FormData();
         formData.append('file', audioFile);
         formData.append('title', title.trim());
@@ -193,7 +540,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
         if (mood.trim()) formData.append('mood', mood.trim());
         if (lyrics.trim()) formData.append('lyrics', lyrics.trim());
         if (aiCoverObjectName) formData.append('cover_object_name', aiCoverObjectName);
-        if (mvObjectName) formData.append('mv_object_name', mvObjectName);
+        if (mvMusicVideoObjectName) formData.append('mv_object_name', mvMusicVideoObjectName);
+        else if (mvObjectName) formData.append('mv_object_name', mvObjectName);
 
         const { data } = await api.uploadTrack(formData, (progressEvent) => {
           const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -202,7 +550,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
         track = data;
       }
 
-      // Upload cover image if provided (skip if AI cover was used)
       if (imageFile && !aiCoverObjectName && track?.id) {
         const imgFormData = new FormData();
         imgFormData.append('file', imageFile);
@@ -218,6 +565,32 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
       setError(err.response?.data?.error || '업로드에 실패했습니다.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Helpers
+  const getCompletedImageCount = () => {
+    if (!mvJob?.scenes) return 0;
+    return mvJob.scenes.filter(s => s.image_url).length;
+  };
+
+  const getCompletedVideoCount = () => {
+    if (!mvJob?.scenes) return 0;
+    return mvJob.scenes.filter(s => s.video_url || s.video_status === 'completed').length;
+  };
+
+  const getStatusText = () => {
+    if (!mvJob) return '';
+    if (mvJob.retry_info?.active) {
+        return `429 에러 — 재시도 대기 중 (${mvJob.retry_info.attempt}/${mvJob.retry_info.max_retries})`;
+    }
+    switch (mvJob.status) {
+      case 'splitting': return '장면 분석 중...';
+      case 'generating_images': return `장면 이미지 생성 중... (${getCompletedImageCount()}/${mvJob.total_scenes || 0})`;
+      case 'generating_videos': return `영상 클립 생성 중... (${getCompletedVideoCount()}/${mvJob.total_scenes || 0})`;
+      case 'concatenating': return '영상 합치는 중...';
+      case 'merging_audio': return '음악과 영상을 합치는 중...';
+      default: return '처리 중...';
     }
   };
 
@@ -343,7 +716,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
           <div className="upload-card__field">
             <label className="upload-card__label">커버 이미지 (선택)</label>
 
-            {/* AI cover preview */}
             {aiCoverPreview && (
               <div className="upload-cover-preview">
                 <img src={aiCoverPreview} alt="AI 생성 커버" className="upload-cover-preview__img" />
@@ -356,7 +728,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
               </div>
             )}
 
-            {/* Show upload dropzone and AI button only when no AI cover is set */}
             {!aiCoverPreview && (
               <>
                 <div className="upload-card__dropzone" onClick={() => imageInputRef.current?.click()} style={{ padding: '20px' }}>
@@ -379,6 +750,17 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
                   <span className="upload-cover-divider__line" />
                 </div>
 
+                {myCharacter && (
+                  <label className="upload-character-toggle">
+                    <input
+                      type="checkbox"
+                      checked={includeCharacter}
+                      onChange={(e) => setIncludeCharacter(e.target.checked)}
+                    />
+                    내 캐릭터 포함하기
+                  </label>
+                )}
+
                 <button
                   type="button"
                   className="upload-cover-ai-btn"
@@ -398,36 +780,364 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
             )}
           </div>
 
-          {/* Music Video */}
+          {/* Music Video - Draft System */}
           <div className="upload-card__field">
             <label className="upload-card__label">뮤직비디오 (선택)</label>
 
-            {mvPreview ? (
+            {/* Step 6: Completed - show final music video */}
+            {mvStep === 6 && mvMusicVideoPreview ? (
               <div className="upload-mv-preview">
-                <video src={mvPreview} controls className="upload-mv-preview__video" />
+                <video src={mvMusicVideoPreview} controls className="upload-mv-preview__video" />
+                <div className="upload-mv-preview__badge">
+                  <FiCheck /> 뮤직비디오 완성
+                </div>
                 <div className="upload-mv-preview__actions">
-                  <button type="button" className="upload-mv-regenerate" onClick={handleGenerateMV} disabled={generatingMV}>
-                    {generatingMV ? '생성 중...' : '다시 생성'}
+                  <button type="button" className="upload-mv-regenerate" onClick={handleClearMV}>
+                    다시 만들기
                   </button>
                   <button type="button" className="upload-mv-remove" onClick={handleClearMV}>제거</button>
                 </div>
               </div>
             ) : (
-              <button
-                type="button"
-                className="upload-mv-ai-btn"
-                onClick={handleGenerateMV}
-                disabled={generatingMV}
-              >
-                {generatingMV ? (
-                  <>
-                    <span className="upload-cover-spinner" />
-                    {mvProgress || '뮤직비디오 생성 중...'}
-                  </>
-                ) : (
-                  '🎬 AI 뮤직비디오 생성'
+              <>
+                {/* STEP 1: Scene Generation */}
+                <div className="upload-mv-step">
+                  <div className="upload-mv-step__title">STEP 1: 씬 생성</div>
+
+                  {mvStep === 0 && (
+                    <>
+                      {myCharacter && (
+                        <label className="upload-character-toggle">
+                          <input
+                            type="checkbox"
+                            checked={includeCharacter}
+                            onChange={(e) => setIncludeCharacter(e.target.checked)}
+                          />
+                          내 캐릭터를 주인공으로
+                        </label>
+                      )}
+
+                      <div className="upload-card__field" style={{ marginBottom: 12 }}>
+                        <label className="upload-card__label">씬 분위기 지시 (선택)</label>
+                        <textarea
+                          className="upload-card__textarea"
+                          value={scenePrompt}
+                          onChange={(e) => setScenePrompt(e.target.value)}
+                          placeholder="예: 도시 배경 위주로, 밤 분위기, 네온 조명 강조"
+                          rows={2}
+                          style={{ minHeight: '60px' }}
+                        />
+                      </div>
+
+                      <div className="upload-mv-video-model-selector">
+                        <div className="upload-mv-video-model-selector__label">영상 모델 선택 (씬 개수에 영향)</div>
+                        <div className="upload-mv-video-model-selector__cards">
+                          <button
+                            type="button"
+                            className={`upload-mv-video-model-card${videoModel === 'veo' ? ' upload-mv-video-model-card--active' : ''}`}
+                            onClick={() => setVideoModel('veo')}
+                          >
+                            <div className="upload-mv-video-model-card__name">Veo 3.1</div>
+                            <div className="upload-mv-video-model-card__provider">Google</div>
+                            <div className="upload-mv-video-model-card__desc">고품질 8초 영상</div>
+                          </button>
+                          <button
+                            type="button"
+                            className={`upload-mv-video-model-card${videoModel === 'kling' ? ' upload-mv-video-model-card--active' : ''}`}
+                            onClick={() => setVideoModel('kling')}
+                          >
+                            <div className="upload-mv-video-model-card__name">Kling V3</div>
+                            <div className="upload-mv-video-model-card__provider">Kling AI</div>
+                            <div className="upload-mv-video-model-card__desc">이미지 기반 10초 영상</div>
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="upload-mv-ai-btn"
+                        onClick={handleCreateScenes}
+                        disabled={!aiCoverObjectName}
+                      >
+                        씬 생성하기
+                      </button>
+                      {!aiCoverObjectName && (
+                        <div className="upload-mv-hint">커버 이미지를 먼저 생성해주세요</div>
+                      )}
+                    </>
+                  )}
+
+                  {mvStep === 1 && (
+                    <div className="upload-mv-progress">
+                      <div className="upload-mv-progress__header">
+                        <span className="upload-cover-spinner" />
+                        <span>{getStatusText()}</span>
+                      </div>
+                      <div className="upload-mv-progress__bar">
+                        <div className="upload-mv-progress__fill" style={{ width: `${mvProgressPct}%` }} />
+                      </div>
+                      <div className="upload-mv-progress__text">{mvProgressPct}%</div>
+                      <button
+                        type="button"
+                        className="upload-mv-cancel-btn"
+                        onClick={handleCancelMV}
+                      >
+                        <FiX /> 중지하기
+                      </button>
+                    </div>
+                  )}
+
+                  {scenesInvalidated && mvStep >= 2 && (
+                    <div className="upload-mv-warning">
+                      커버 이미지가 변경되었습니다. 씬 이미지와 일관성을 위해 다시 생성하는 것을 권장합니다.
+                      <button type="button" className="upload-mv-warning__btn" onClick={() => {
+                        setMvStep(0);
+                        setMvJob(null);
+                        setMvJobId(null);
+                        setScenesInvalidated(false);
+                      }}>씬 초기화</button>
+                    </div>
+                  )}
+
+                  {/* Scenes list (visible when step >= 2) */}
+                  {mvStep >= 2 && mvJob?.scenes && mvJob.scenes.length > 0 && (
+                    <div className="upload-mv-scenes-list">
+                      <div className="upload-mv-scenes-list__label">
+                        생성된 장면 ({getCompletedImageCount()}/{mvJob.scenes.length})
+                      </div>
+                      <div className="upload-mv-scenes-list__grid">
+                        {mvJob.scenes.map((scene, i) => (
+                          <div key={scene.scene_number || i} className="upload-mv-scene-card">
+                            <div className="upload-mv-scene-card__img-wrap">
+                              {scene.image_url ? (
+                                <img
+                                  src={scene.image_url}
+                                  alt={`씬 ${scene.scene_number || i + 1}`}
+                                  className="upload-mv-scene-card__img"
+                                />
+                              ) : (
+                                <div className="upload-mv-scene-card__img-placeholder">
+                                  <FiImage />
+                                </div>
+                              )}
+                              {scene.video_url && (
+                                <div className="upload-mv-scene-card__video-badge">
+                                  <FiPlay /> 영상 완료
+                                </div>
+                              )}
+                            </div>
+                            <div className="upload-mv-scene-card__info">
+                              <div className="upload-mv-scene-card__desc">
+                                {scene.description || `씬 ${scene.scene_number || i + 1}`}
+                              </div>
+                              {scene.lyrics_segment && (
+                                <div className="upload-mv-scene-card__lyrics">
+                                  {scene.lyrics_segment}
+                                </div>
+                              )}
+                              {scene.image_source && (
+                                <div className="upload-mv-scene-card__source">
+                                  {scene.image_source === 'upload' ? '직접 업로드' : 'AI 생성'}
+                                </div>
+                              )}
+                            </div>
+                            {mvStep === 2 && (
+                              <div className="upload-mv-scene-card__actions">
+                                <button
+                                  type="button"
+                                  className="upload-mv-scene-card__action-btn"
+                                  onClick={() => {
+                                    const ref = sceneImageInputRefs.current[scene.scene_number || i + 1];
+                                    if (ref) ref.click();
+                                  }}
+                                  disabled={mvUploadingScene === (scene.scene_number || i + 1)}
+                                >
+                                  {mvUploadingScene === (scene.scene_number || i + 1) ? (
+                                    <><span className="upload-cover-spinner" /> 업로드 중</>
+                                  ) : (
+                                    <><FiUploadCloud /> 이미지 업로드</>
+                                  )}
+                                </button>
+                                <input
+                                  ref={(el) => { sceneImageInputRefs.current[scene.scene_number || i + 1] = el; }}
+                                  type="file"
+                                  accept={IMAGE_ACCEPT}
+                                  style={{ display: 'none' }}
+                                  onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if (file) handleUploadSceneImage(scene.scene_number || i + 1, file);
+                                    e.target.value = '';
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  className="upload-mv-scene-card__action-btn upload-mv-scene-card__action-btn--secondary"
+                                  onClick={() => handleRegenerateSceneImage(scene.scene_number || i + 1)}
+                                  disabled={mvRegeneratingScene === (scene.scene_number || i + 1)}
+                                >
+                                  {mvRegeneratingScene === (scene.scene_number || i + 1) ? (
+                                    <><span className="upload-cover-spinner" /> 생성 중</>
+                                  ) : (
+                                    <><FiRefreshCw /> 이미지 재생성</>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* STEP 2: Video Generation */}
+                {mvStep >= 2 && (
+                  <div className="upload-mv-step">
+                    <div className="upload-mv-step__title">STEP 2: 영상 생성</div>
+
+                    {mvStep === 2 && (
+                      <>
+                        <div className="upload-mv-video-model-selector">
+                          <div className="upload-mv-video-model-selector__label">
+                            선택된 모델: {videoModel === 'kling' ? 'Kling V3 (10초)' : 'Veo 3.1 (8초)'}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="upload-mv-ai-btn"
+                          onClick={handleGenerateVideos}
+                        >
+                          {videoModel === 'kling' ? 'Kling으로 영상 생성하기' : 'Veo로 영상 생성하기'}
+                        </button>
+                      </>
+                    )}
+
+                    {mvStep === 3 && (
+                      <div className="upload-mv-progress">
+                        <div className="upload-mv-progress__header">
+                          <span className="upload-cover-spinner" />
+                          <span>{getStatusText()}</span>
+                        </div>
+                        <div className="upload-mv-progress__bar">
+                          <div className="upload-mv-progress__fill" style={{ width: `${mvProgressPct}%` }} />
+                        </div>
+                        <div className="upload-mv-progress__text">
+                          {mvJob ? `영상 ${getCompletedVideoCount()}/${mvJob.total_scenes || 0}` : ''} ({mvProgressPct}%)
+                        </div>
+                        {mvJob?.retry_info?.active && (
+                          <div className="upload-mv-retry-banner">
+                            <FiAlertTriangle className="upload-mv-retry-banner__icon" />
+                            <div className="upload-mv-retry-banner__content">
+                              <span className="upload-mv-retry-banner__title">
+                                API 할당량 초과 (429) — 재시도 대기 중
+                              </span>
+                              <span className="upload-mv-retry-banner__detail">
+                                {mvJob.retry_info.attempt}/{mvJob.retry_info.max_retries}번째 시도 · 장면 {mvJob.retry_info.scene_number} · <RetryCountdown retryAt={mvJob.retry_info.retry_at} />
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          className="upload-mv-cancel-btn"
+                          onClick={handleCancelMV}
+                        >
+                          <FiX /> 중지하기
+                        </button>
+                      </div>
+                    )}
+
+                    {mvStep === 4 && (
+                      <div className="upload-mv-paused-banner">
+                        <div className="upload-mv-paused-banner__icon">
+                          <FiAlertTriangle />
+                        </div>
+                        <div className="upload-mv-paused-banner__text">
+                          {mvJob?.error_message?.includes('중지') ? '사용자에 의해 중지됨' : 'API 할당량 초과로 일시정지됨'}
+                          {mvJob && (
+                            <span className="upload-mv-paused-banner__progress">
+                              (영상 {getCompletedVideoCount()}/{mvJob.total_scenes || 0} 완료)
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="upload-mv-retry-btn"
+                          onClick={handleRetryVideos}
+                        >
+                          <FiRefreshCw /> 재시도하기
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
-              </button>
+
+                {/* STEP 3: Merge Audio */}
+                {mvStep >= 5 && (
+                  <div className="upload-mv-step">
+                    <div className="upload-mv-step__title">STEP 3: 뮤직비디오 합치기</div>
+
+                    {/* Video preview (silent) */}
+                    {mvPreview && (
+                      <div className="upload-mv-merge-preview">
+                        <video src={mvPreview} controls muted className="upload-mv-merge-preview__video" />
+                        <div className="upload-mv-merge-preview__label">영상 (무음)</div>
+                      </div>
+                    )}
+
+                    {/* Audio info */}
+                    <div className="upload-mv-merge-audio-info">
+                      {fromGeneration ? (
+                        <div className="upload-mv-merge-audio-badge">
+                          <FiMusic />
+                          <span>AI 생성 오디오 연결됨</span>
+                        </div>
+                      ) : audioFile ? (
+                        <div className="upload-mv-merge-audio-badge">
+                          <FiMusic />
+                          <span>{audioFile.name}</span>
+                        </div>
+                      ) : (
+                        <div className="upload-mv-merge-audio-badge upload-mv-merge-audio-badge--warn">
+                          <FiAlertTriangle />
+                          <span>오디오 파일이 연결되지 않았습니다</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {mvStep === 5 && !mvMergingAudio && mvJob?.status === 'video_ready' && (
+                      <button
+                        type="button"
+                        className="upload-mv-ai-btn"
+                        onClick={handleMergeAudio}
+                        disabled={!fromGeneration && !audioFile}
+                      >
+                        뮤직비디오 합치기
+                      </button>
+                    )}
+
+                    {(mvMergingAudio || mvJob?.status === 'merging_audio') && (
+                      <div className="upload-mv-progress">
+                        <div className="upload-mv-progress__header">
+                          <span className="upload-cover-spinner" />
+                          <span>음악과 영상을 합치는 중...</span>
+                        </div>
+                        <div className="upload-mv-progress__bar">
+                          <div className="upload-mv-progress__fill" style={{ width: `${mvProgressPct}%` }} />
+                        </div>
+                        <div className="upload-mv-progress__text">{mvProgressPct}%</div>
+                      </div>
+                    )}
+
+                    {mvJob?.error_message && mvJob.status === 'video_ready' && (
+                      <div className="upload-mv-warning">
+                        {mvJob.error_message}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -447,9 +1157,28 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
             </div>
           )}
 
-          <button className="upload-card__submit" type="submit" disabled={uploading}>
-            {uploading ? '업로드 중...' : '업로드'}
-          </button>
+          {/* Draft save message */}
+          {draftSaveMsg && (
+            <div className="upload-card__success">
+              <FiCheck style={{ marginRight: 6, verticalAlign: 'middle' }} />
+              {draftSaveMsg}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="upload-card__actions">
+            <button
+              type="button"
+              className="upload-card__draft-btn"
+              onClick={handleSaveDraft}
+              disabled={savingDraft || uploading}
+            >
+              {savingDraft ? '저장 중...' : '임시저장'}
+            </button>
+            <button className="upload-card__submit" type="submit" disabled={uploading}>
+              {uploading ? '업로드 중...' : '업로드'}
+            </button>
+          </div>
         </form>
       </div>
     </div>

@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # Google Gemini (AI cover image generation)
     google_api_key: str = ""
 
+    # Suno API
+    suno_api_key: str = ""
+    suno_api_url: str = "https://api.sunoapi.org"
+
+    # Kling Video Generation
+    kling_access_key: str = ""
+    kling_secret_key: str = ""
+
     # YuE Music Generation
     yue_model_dir: str = ""  # Path to YuEGP directory
     yue_output_dir: str = "./yue_output"

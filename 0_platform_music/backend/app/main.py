@@ -14,7 +14,7 @@ from .database.postgres import init_postgres, close_postgres
 from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
-from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate
+from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character
 
 
 @asynccontextmanager
@@ -25,6 +25,19 @@ async def lifespan(app: FastAPI):
     await init_redis(settings.computed_redis_url)
     init_minio(settings.minio_endpoint, settings.minio_user, settings.minio_password)
     print("All database connections established.")
+
+    # Recover stuck MV jobs (active status but no running task after server restart)
+    try:
+        from .database.mongodb import get_mongo
+        mongo = get_mongo()
+        stuck_result = await mongo.mv_jobs.update_many(
+            {"status": {"$in": ["splitting", "generating_images", "generating_videos", "concatenating"]}},
+            {"$set": {"status": "paused", "error_message": "서버 재시작으로 인해 중지됨", "cancel_requested": False, "retry_info": None}},
+        )
+        if stuck_result.modified_count > 0:
+            print(f"Recovered {stuck_result.modified_count} stuck MV jobs → paused")
+    except Exception as e:
+        print(f"MV job recovery failed: {e}")
 
     # Start background scheduler for playcount sync
     from .services.playcount_sync import start_playcount_scheduler
@@ -61,6 +74,8 @@ app.include_router(likes.router)
 app.include_router(upload.router)
 app.include_router(follows.router)
 app.include_router(generate.router)
+app.include_router(mv.router)
+app.include_router(character.router)
 
 
 @app.get("/api/health")

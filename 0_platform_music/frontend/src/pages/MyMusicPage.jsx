@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause } from 'react-icons/fi';
+import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
 import * as api from '../api';
@@ -15,16 +15,377 @@ const SORT_OPTIONS = [
   { value: 'like_count', label: '좋아요순' },
 ];
 
+const STATUS_MAP = {
+  draft: { label: '초안', color: '#94A3B8' },
+  splitting: { label: '씬 분석 중', color: '#7C3AED' },
+  scenes_ready: { label: '씬 분할 완료', color: '#06B6D4' },
+  generating_images: { label: '이미지 생성 중', color: '#7C3AED' },
+  images_ready: { label: '이미지 완료', color: '#06B6D4' },
+  generating_videos: { label: '영상 생성 중', color: '#7C3AED' },
+  videos_ready: { label: '영상 부분 완료', color: '#06B6D4' },
+  concatenating: { label: '합치는 중', color: '#7C3AED' },
+  paused: { label: '일시정지', color: '#f59e0b' },
+  completed: { label: '완료', color: '#1ed760' },
+  failed: { label: '실패', color: '#EF4444' },
+};
+
+function DraftsSection({ onLoadDraft }) {
+  const [drafts, setDrafts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const fetchDrafts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.getMVJobs();
+      setDrafts(data.jobs || []);
+    } catch (err) {
+      console.error('Failed to fetch MV jobs:', err);
+      setDrafts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDrafts();
+  }, [fetchDrafts]);
+
+  const handleDelete = async (jobId, title) => {
+    if (!window.confirm(`"${title || '제목 없음'}" 초안을 삭제하시겠습니까?`)) return;
+    setDeletingId(jobId);
+    try {
+      await api.deleteMVJob(jobId);
+      setDrafts((prev) => prev.filter((d) => d.job_id !== jobId));
+    } catch (err) {
+      alert(err.response?.data?.error || '삭제에 실패했습니다.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  };
+
+  const getStatusBadge = (status) => {
+    const info = STATUS_MAP[status] || { label: status || '알 수 없음', color: '#94A3B8' };
+    return (
+      <span
+        className="mymusic-draft-card__status"
+        style={{ background: `${info.color}20`, color: info.color }}
+      >
+        {info.label}
+      </span>
+    );
+  };
+
+  if (loading) {
+    return <div className="mymusic-loading">로딩 중...</div>;
+  }
+
+  if (drafts.length === 0) {
+    return (
+      <div className="mymusic-empty">
+        <div className="mymusic-empty__icon"><FiFolder /></div>
+        <p className="mymusic-empty__text">저장된 초안이 없습니다.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mymusic-drafts">
+      <div className="mymusic-drafts__list">
+        {drafts.map((draft) => (
+          <div key={draft.job_id} className="mymusic-draft-card">
+            <div className="mymusic-draft-card__thumb">
+              {draft.thumbnail_url ? (
+                <img src={draft.thumbnail_url} alt={draft.title || '초안'} className="mymusic-draft-card__thumb-img" />
+              ) : (
+                <div className="mymusic-draft-card__thumb-placeholder">
+                  <FiFilm />
+                </div>
+              )}
+            </div>
+            <div className="mymusic-draft-card__info">
+              <div className="mymusic-draft-card__title">{draft.title || '제목 없음'}</div>
+              <div className="mymusic-draft-card__meta">
+                {getStatusBadge(draft.status)}
+                <span className="mymusic-draft-card__date">{formatDate(draft.created_at)}</span>
+              </div>
+              <div className="mymusic-draft-card__progress">
+                <span className="mymusic-draft-card__progress-item">
+                  <FiImage className="mymusic-draft-card__progress-icon" />
+                  이미지 {draft.completed_image_count || 0}/{draft.total_scenes || 0}
+                </span>
+                <span className="mymusic-draft-card__progress-item">
+                  <FiFilm className="mymusic-draft-card__progress-icon" />
+                  영상 {draft.completed_video_count || 0}/{draft.total_scenes || 0}
+                </span>
+              </div>
+            </div>
+            <div className="mymusic-draft-card__actions">
+              <button
+                className="mymusic-draft-card__load-btn"
+                onClick={() => onLoadDraft(draft.job_id)}
+              >
+                불러오기
+              </button>
+              <button
+                className="mymusic-draft-card__delete-btn"
+                onClick={() => handleDelete(draft.job_id, draft.title)}
+                disabled={deletingId === draft.job_id}
+              >
+                <FiTrash2 />
+                {deletingId === draft.job_id ? '삭제 중' : '삭제'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CharacterSection() {
+  const [character, setCharacter] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewObjectName, setPreviewObjectName] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const photoInputRef = useRef(null);
+
+  useEffect(() => {
+    api.getMyCharacter()
+      .then(({ data }) => setCharacter(data.character))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!photoFile) {
+      alert('사진을 먼저 선택해주세요.');
+      return;
+    }
+    setGenerating(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', photoFile);
+      const { data } = await api.generateCharacterSheet(formData);
+      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+      setPreviewUrl(`${base}${data.preview_url}`);
+      setPreviewObjectName(data.object_name);
+    } catch (err) {
+      alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!previewObjectName) return;
+    setSaving(true);
+    try {
+      await api.saveCharacter({ sheet_object_name: previewObjectName });
+      const { data } = await api.getMyCharacter();
+      setCharacter(data.character);
+      setPreviewUrl(null);
+      setPreviewObjectName(null);
+      setPhotoFile(null);
+    } catch (err) {
+      alert(err.response?.data?.error || '저장에 실패했습니다.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('캐릭터를 삭제하시겠습니까?')) return;
+    try {
+      await api.deleteMyCharacter();
+      setCharacter(null);
+    } catch (err) {
+      alert(err.response?.data?.error || '삭제에 실패했습니다.');
+    }
+  };
+
+  const handleRegenerate = () => {
+    setCharacter(null);
+    setPreviewUrl(null);
+    setPreviewObjectName(null);
+    setPhotoFile(null);
+  };
+
+  if (loading) {
+    return <div className="mymusic-loading">로딩 중...</div>;
+  }
+
+  // Saved character exists
+  if (character) {
+    return (
+      <div className="mymusic-character">
+        <div className="mymusic-character__sheet">
+          <img
+            src={character.sheet_url}
+            alt="내 캐릭터 시트"
+            className="mymusic-character__sheet-img"
+          />
+          <div className="mymusic-character__actions">
+            <button
+              className="mymusic-character__btn mymusic-character__btn--primary"
+              onClick={handleRegenerate}
+            >
+              <FiRefreshCw /> 다시 만들기
+            </button>
+            <button
+              className="mymusic-character__btn mymusic-character__btn--danger"
+              onClick={handleDelete}
+            >
+              <FiTrash2 /> 삭제
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Preview exists (generated but not saved)
+  if (previewUrl) {
+    return (
+      <div className="mymusic-character">
+        <div className="mymusic-character__sheet">
+          <div className="mymusic-character__sheet-label">생성된 캐릭터 시트 미리보기</div>
+          <img
+            src={previewUrl}
+            alt="캐릭터 시트 미리보기"
+            className="mymusic-character__sheet-img"
+          />
+          <div className="mymusic-character__actions">
+            <button
+              className="mymusic-character__btn mymusic-character__btn--primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? '저장 중...' : '저장하기'}
+            </button>
+            <button
+              className="mymusic-character__btn"
+              onClick={handleGenerate}
+              disabled={generating}
+            >
+              {generating ? '생성 중...' : '다시 생성'}
+            </button>
+            <button
+              className="mymusic-character__btn"
+              onClick={() => { setPreviewUrl(null); setPreviewObjectName(null); }}
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No character — show upload form
+  return (
+    <div className="mymusic-character">
+      <div className="mymusic-character__empty">
+        <div className="mymusic-character__empty-icon"><FiUser /></div>
+        <p className="mymusic-character__empty-text">
+          아직 캐릭터가 없습니다. 사진을 업로드하여 AI 캐릭터 시트를 만들어보세요.
+        </p>
+        <p className="mymusic-character__empty-hint">
+          실사(photorealistic) 스타일로 정면, 측면, 전신, 표정 변화 등 다양한 앵글의 캐릭터 시트가 생성됩니다.
+        </p>
+
+        <div className="mymusic-character__upload-area">
+          <div
+            className="mymusic-character__dropzone"
+            onClick={() => photoInputRef.current?.click()}
+          >
+            <div className="mymusic-character__dropzone-icon"><FiImage /></div>
+            <div className="mymusic-character__dropzone-text">
+              <strong>클릭</strong>하여 얼굴 사진을 선택하세요
+            </div>
+            <div className="mymusic-character__dropzone-hint">JPG, PNG, WebP (10MB 이하)</div>
+          </div>
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp"
+            style={{ display: 'none' }}
+            onChange={(e) => setPhotoFile(e.target.files[0] || null)}
+          />
+          {photoFile && (
+            <div className="mymusic-character__file-info">
+              <FiImage />
+              <span className="mymusic-character__file-name">{photoFile.name}</span>
+              <button
+                className="mymusic-character__file-remove"
+                onClick={() => setPhotoFile(null)}
+              >
+                <FiTrash2 />
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button
+          className="mymusic-character__generate-btn"
+          onClick={handleGenerate}
+          disabled={!photoFile || generating}
+        >
+          {generating ? (
+            <>
+              <span className="mymusic-character__spinner" />
+              캐릭터 시트 생성 중...
+            </>
+          ) : (
+            '캐릭터 시트 생성하기'
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MyMusicPage() {
   const { user } = useAuth();
   const { play, currentSong, isPlaying, togglePlay } = usePlayer();
   const [activeTab, setActiveTab] = useState('tracks');
   const [generationPrefill, setGenerationPrefill] = useState(null);
+  const [draftData, setDraftData] = useState(null);
 
   const handleSendToUpload = (genData) => {
     setGenerationPrefill(genData);
     setActiveTab('upload');
   };
+
+  const handleLoadDraft = async (jobId) => {
+    try {
+      const { data } = await api.getMVJobDetail(jobId);
+      setDraftData({
+        job_id: data.job_id,
+        title: data.title || '',
+        genre: data.genre || '',
+        mood: data.mood || '',
+        prompt: data.prompt || '',
+        lyrics: data.lyrics || '',
+        tags: data.tags || '',
+        ai_model: data.ai_model || '',
+        audio_generation_id: data.audio_generation_id || null,
+      });
+      setActiveTab('upload');
+    } catch (err) {
+      alert(err.response?.data?.error || '초안을 불러오는데 실패했습니다.');
+    }
+  };
+
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState('created_at');
@@ -84,12 +445,10 @@ export default function MyMusicPage() {
   };
 
   const handlePlay = (track) => {
-    // If already playing this track, toggle play/pause
     if (currentSong?.id === track.id) {
       togglePlay();
       return;
     }
-    // Map track to song format for PlayerContext
     const song = {
       id: track.id,
       title: track.title,
@@ -149,6 +508,18 @@ export default function MyMusicPage() {
             onClick={() => setActiveTab('studio2')}
           >
             작업실2
+          </button>
+          <button
+            className={`mymusic-tab ${activeTab === 'character' ? 'mymusic-tab--active' : ''}`}
+            onClick={() => setActiveTab('character')}
+          >
+            내 캐릭터
+          </button>
+          <button
+            className={`mymusic-tab ${activeTab === 'drafts' ? 'mymusic-tab--active' : ''}`}
+            onClick={() => setActiveTab('drafts')}
+          >
+            임시저장
           </button>
         </div>
 
@@ -260,7 +631,12 @@ export default function MyMusicPage() {
         {/* Tab 2: Upload */}
         {activeTab === 'upload' && (
           <div className="mymusic-upload-tab">
-            <UploadPage generationPrefill={generationPrefill} onClearPrefill={() => setGenerationPrefill(null)} />
+            <UploadPage
+              generationPrefill={generationPrefill}
+              onClearPrefill={() => setGenerationPrefill(null)}
+              draftData={draftData}
+              onClearDraft={() => setDraftData(null)}
+            />
           </div>
         )}
 
@@ -272,6 +648,16 @@ export default function MyMusicPage() {
         {/* Tab 4: Studio2 */}
         {activeTab === 'studio2' && (
           <StudioTab2 onSendToUpload={handleSendToUpload} />
+        )}
+
+        {/* Tab 6: Character */}
+        {activeTab === 'character' && (
+          <CharacterSection />
+        )}
+
+        {/* Tab 7: Drafts */}
+        {activeTab === 'drafts' && (
+          <DraftsSection onLoadDraft={handleLoadDraft} />
         )}
       </div>
     </div>

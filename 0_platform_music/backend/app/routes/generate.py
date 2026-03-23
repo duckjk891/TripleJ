@@ -47,6 +47,7 @@ class GenerateRequest(BaseModel):
     reference_style: Optional[str] = None
     lyrics: Optional[str] = None
     start_music_gen: Optional[bool] = False  # True to start YuE generation
+    model: Optional[str] = "yue"  # AI 모델 ID
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -58,36 +59,55 @@ def _serialize(doc: dict) -> dict:
     for key in ("created_at", "updated_at", "completed_at"):
         if key in doc and isinstance(doc[key], datetime):
             doc[key] = doc[key].isoformat()
+    doc["model"] = doc.get("model", "yue")
     return doc
 
 
 # ─── Background task for YuE music generation ───────────────
 
-def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int):
+def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int, model: str = "yue", title: str = None):
     """Wrapper to run async music generation in background."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         import motor.motor_asyncio
-        from ..services.music_generator import generate_music
 
         # Create a new motor client for this event loop
         mongo_client = motor.motor_asyncio.AsyncIOMotorClient(settings.computed_mongo_url)
         mongo_db = mongo_client[settings.mongo_db]
-        segments = max(1, (duration or 30) // 30)
 
-        loop.run_until_complete(
-            generate_music(
-                generation_id=generation_id,
-                lyrics=lyrics,
-                genre=genre,
-                mood=mood,
-                style=style,
-                vocal=vocal,
-                duration_segments=segments,
-                mongo_db=mongo_db,
+        if model == "suno":
+            from ..services.suno_generator import generate_music_suno
+
+            loop.run_until_complete(
+                generate_music_suno(
+                    generation_id=generation_id,
+                    lyrics=lyrics,
+                    genre=genre,
+                    mood=mood,
+                    style=style,
+                    vocal=vocal,
+                    title=title,
+                    mongo_db=mongo_db,
+                )
             )
-        )
+        else:
+            from ..services.music_generator import generate_music
+
+            segments = max(1, (duration or 30) // 30)
+            loop.run_until_complete(
+                generate_music(
+                    generation_id=generation_id,
+                    lyrics=lyrics,
+                    genre=genre,
+                    mood=mood,
+                    style=style,
+                    vocal=vocal,
+                    duration_segments=segments,
+                    mongo_db=mongo_db,
+                    model=model,
+                )
+            )
     except Exception as e:
         print(f"Music generation error for {generation_id}: {e}")
         import traceback
@@ -161,6 +181,7 @@ async def create_generation(
         "instruments": body.instruments,
         "reference_style": body.reference_style,
         "lyrics": body.lyrics,
+        "model": body.model or "yue",
         "status": "pending",
         "progress": 0,
         "result_track_id": None,
@@ -176,7 +197,7 @@ async def create_generation(
     doc["_id"] = result.inserted_id
     gen_id = str(result.inserted_id)
 
-    # Start YuE music generation if requested
+    # Start music generation if requested
     if body.start_music_gen and body.lyrics:
         background_tasks.add_task(
             _run_music_generation,
@@ -187,6 +208,8 @@ async def create_generation(
             style=body.style,
             vocal=body.vocal,
             duration=body.duration or 30,
+            model=body.model or "yue",
+            title=body.title,
         )
 
     return _serialize(doc)
@@ -226,9 +249,36 @@ async def start_music_generation(
         style=doc.get("style"),
         vocal=doc.get("vocal"),
         duration=doc.get("duration", 30),
+        model=doc.get("model", "yue"),
+        title=doc.get("title"),
     )
 
     return {"message": "음악 생성이 시작되었습니다.", "id": gen_id}
+
+
+@router.get("/models/")
+async def list_models(current_user=Depends(get_current_user)):
+    """List available AI music generation models."""
+    return {"models": [
+        {
+            "id": "yue",
+            "name": "YuE",
+            "description": "오픈소스 음악 생성 AI (보컬 + 반주)",
+            "supports_vocal": True,
+            "supports_instrumental": True,
+            "max_duration": 120,
+            "default": True,
+        },
+        {
+            "id": "suno",
+            "name": "Suno",
+            "description": "AI 음악 생성 서비스 (고품질 보컬 + 반주)",
+            "supports_vocal": True,
+            "supports_instrumental": True,
+            "max_duration": 240,
+            "default": False,
+        },
+    ]}
 
 
 @router.get("/")
