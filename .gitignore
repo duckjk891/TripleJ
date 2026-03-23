@@ -42,3 +42,19 @@ htmlcov/
 # Temp files
 *.tmp
 *.temp
+
+# Model weights & checkpoints
+*.pth
+*.bin
+*.onnx
+*.h5
+*.safetensors
+
+# ML framework / large repos
+0_platform_music/backend/YuEGP/
+
+# Generated outputs
+0_platform_music/backend/yue_output/
+
+# Uploaded files
+0_platform_music/backend/uploads/
