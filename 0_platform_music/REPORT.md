@@ -1836,3 +1836,34 @@ MV 영상 생성 시 Veo 외에 Kling 모델을 선택할 수 있도록 추가. 
 | 파일 | 변경 |
 |------|------|
 | `backend/app/services/mv_generator.py` | 두 프롬프트 템플릿에 performance scene 교차 지시 추가 |
+
+---
+
+## v1 - 2026-03-23 - 폴더명 변경 영향 점검 및 수정
+
+### 요청 작업
+상위 폴더명 `1_oneCompany` → `1_tripleJ` 변경에 따른 코드 점검 및 수정
+
+### 수행 결과
+- **전체 코드베이스 검색 완료** (frontend/src, backend/app, 설정파일, docker-compose 등)
+- `1_oneCompany` 또는 `oneCompany` 문자열 발견: **1건 (2줄)**
+  - `backend/.env` — `YUE_MODEL_DIR`, `YUE_OUTPUT_DIR` 절대 경로
+- **수정 파일**: `backend/.env` (41~42번째 줄)
+  - `1_oneCompany` → `1_tripleJ` 경로 수정 완료
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/.env` | `YUE_MODEL_DIR`, `YUE_OUTPUT_DIR` 경로의 `1_oneCompany` → `1_tripleJ` |
+
+### 테스트 결과
+- [PASS] 백엔드 서버(port 9000) 정상 기동 확인 — uvicorn 정상 시작, `Application startup complete`
+- [PASS] 프론트엔드 서버(port 4000) 정상 기동 확인 — Vite v7.3.1 정상 시작
+- [PASS] 프론트엔드 페이지 로드 확인 — HTTP 200, HTML 정상 반환
+- [PASS] 백엔드 API 응답 확인 — `/api/charts/top100` 정상 JSON 응답
+- [PASS] 인증 API 확인 — `/api/auth/me` 정상 응답 (401 인증 필요 메시지)
+- [PASS] .env 환경변수 로드 정상 — 서버 기동 시 DB 연결 성공
+
+### 특이사항
+- 프론트엔드 코드, 백엔드 Python 소스, docker-compose.yml, package.json, requirements.txt 등에는 `1_oneCompany` 하드코딩이 전혀 없었음
+- `.env.example`은 상대경로를 사용하고 있어 영향 없음
+- 유일한 문제는 `.env` 파일의 YuE AI 모델 관련 절대경로 2건뿐이었으며, 즉시 수정 완료

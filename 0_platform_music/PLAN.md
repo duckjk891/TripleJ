@@ -3267,3 +3267,33 @@ Phase 3: 프론트엔드
 프론트엔드:
   4. UploadPage.jsx — 영상 모델 선택 UI를 STEP 1로 이동, STEP 2에서는 읽기 전용 표시
 ```
+
+---
+
+## v1 - 2026-03-23 - 폴더명 변경 영향 점검 및 수정
+### 요청 작업
+상위 폴더명 1_oneCompany → 1_tripleJ 변경에 따른 코드 점검 및 수정
+
+### 점검 결과
+- **전체 코드베이스 검색** (소스코드, 설정파일, docker-compose, package.json, requirements.txt, import문 등)
+- `1_oneCompany` 또는 `oneCompany` 문자열 발견: **1건**
+  - `backend/.env` 41~42번째 줄: `YUE_MODEL_DIR`, `YUE_OUTPUT_DIR` 절대 경로에 `1_oneCompany` 하드코딩
+- 프론트엔드 소스코드: 해당 문자열 없음 (문제 없음)
+- 백엔드 소스코드(app/): 해당 문자열 없음 (문제 없음)
+- docker-compose.yml: 해당 문자열 없음 (상대경로 사용)
+- package.json, requirements.txt: 해당 문자열 없음
+- .env.example: 상대경로 사용, 문제 없음
+- vite.config.js: 절대경로 미사용, 문제 없음
+
+### 프론트엔드 에이전트 할당 업무
+- 수정 사항 없음 (프론트엔드 코드에 영향 없음)
+
+### 백엔드 에이전트 할당 업무
+- `backend/.env` 파일의 `YUE_MODEL_DIR`, `YUE_OUTPUT_DIR` 경로를 `1_oneCompany` → `1_tripleJ`로 수정 (**완료**)
+
+### 테스터 에이전트 테스트 항목
+- [ ] 백엔드 서버(port 9000) 정상 기동 확인
+- [ ] 프론트엔드 서버(port 4000) 정상 기동 확인
+- [ ] 프론트엔드 → 백엔드 API 호출 정상 동작 확인
+- [ ] 주요 기능 동작 확인 (페이지 로드, API 응답 등)
+- [ ] .env 환경변수 로드 정상 확인 (YUE_MODEL_DIR, YUE_OUTPUT_DIR 경로)
