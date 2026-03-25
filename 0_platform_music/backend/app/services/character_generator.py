@@ -39,14 +39,18 @@ MASTER_PROMPT = r"""다음 절차를 반드시 순서대로 따르시오:
 STEP 1
 사용자에게 다음과 같이 질문하시오:
 "캐릭터의 특징을 나열하여 주세요."
-사용자의 답변이 오기 전에는 절대 다음 단계로 진행하지 마시오.
+
+[사용자 답변]:
+{step1_answer}
 
 --------------------------------------------------
 
 STEP 2
 사용자에게 다음과 같이 질문하시오:
 "이미지의 Art Style을 입력해주세요."
-사용자의 답변이 오기 전에는 절대 다음 단계로 진행하지 마시오.
+
+[사용자 답변]:
+Photorealistic (실사)
 
 --------------------------------------------------
 
@@ -680,19 +684,12 @@ async def generate_character_sheet(
 
     # ── Step A: Generate character sheet prompt via text model ──────────────
     step_a_prompt = (
-        "아래는 캐릭터 시트를 생성하기 위한 마스터 프롬프트이다.\n"
-        "이 마스터 프롬프트의 절차를 따라 캐릭터 시트 프롬프트를 생성하라.\n\n"
-        "단, STEP 1과 STEP 2의 질문에 대한 답변은 아래와 같이 미리 제공한다:\n\n"
-        "--- STEP 1 답변 ---\n"
-        "{}\n\n"
-        "--- STEP 2 답변 ---\n"
-        "Photorealistic (실사)\n\n"
-        "위 답변이 주어졌으므로 STEP 1, STEP 2의 질문 단계를 건너뛰고, "
-        "바로 STEP 4부터 진행하여 최종 캐릭터 시트 프롬프트를 코드블록으로 출력하라.\n\n"
-        "=== 마스터 프롬프트 시작 ===\n\n"
-        "{}\n\n"
-        "=== 마스터 프롬프트 끝 ==="
-    ).format(step1_answer, MASTER_PROMPT)
+        "아래 마스터 프롬프트의 절차를 따라 캐릭터 시트 프롬프트를 생성하라.\n"
+        "STEP 1, STEP 2에는 이미 사용자 답변이 포함되어 있으므로 "
+        "질문 단계를 건너뛰고 바로 STEP 4부터 진행하여 "
+        "최종 캐릭터 시트 프롬프트를 코드블록으로 출력하라.\n\n"
+        + MASTER_PROMPT.format(step1_answer=step1_answer)
+    )
 
     logger.info("Step A: Generating character sheet prompt via Gemini text model...")
     sheet_prompt_text = await _call_gemini_text(step_a_prompt, image_parts)

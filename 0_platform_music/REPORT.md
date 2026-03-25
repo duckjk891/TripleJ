@@ -2318,3 +2318,37 @@ Suno AI로 생성된 음악의 보컬을 사용자의 Kits.AI 음성 모델로 �
 - `_USER_TEXT_SUFFIX` 상수로 중복 제거 — 8개 1_xxx 프롬프트가 동일한 suffix를 문자열 연결
 - `.format()` 사용 (f-string 아님) — 중괄호 충돌 방지
 - user_text가 비어있으면 `.format()` 호출하지 않음 — 0_xxx 프롬프트에는 플레이스홀더 없으므로 안전
+
+---
+
+## v12 — 마스터 프롬프트 구조 개선: 답변 인라인 삽입
+
+### 변경 요약
+STEP 1/2 답변이 마스터 프롬프트 앞에 분리 배치되던 구조를, 마스터 프롬프트 안에서 각 질문 바로 뒤에 답변이 인라인 삽입되도록 개선하였다.
+
+### 변경 파일
+- `backend/app/services/character_generator.py`
+
+### 변경 상세
+
+#### MASTER_PROMPT 상수
+- STEP 1: "사용자의 답변이 오기 전에는 절대 다음 단계로 진행하지 마시오." 제거, 대신 `[사용자 답변]: {step1_answer}` 플레이스홀더 삽입
+- STEP 2: 동일 문구 제거, `[사용자 답변]: Photorealistic (실사)` 고정값 삽입
+- STEP 4~8, CHARACTER SHEET TEMPLATE 등 나머지 전체 원본 유지
+
+#### step_a_prompt 조립 (generate_character_sheet 함수)
+변경 전:
+```
+"--- STEP 1 답변 ---\n{step1_answer}\n--- STEP 2 답변 ---\nPhotorealistic\n=== 마스터 프롬프트 ===\n{MASTER_PROMPT}"
+```
+
+변경 후:
+```
+"아래 마스터 프롬프트의 절차를 따라 ...\n" + MASTER_PROMPT.format(step1_answer=step1_answer)
+```
+
+### 변경하지 않은 것
+- STEP1_ANSWERS 딕셔너리 16가지 — 그대로
+- refine_character_sheet() 함수
+- 헬퍼 함수 (_call_gemini_text, _call_gemini_image, _build_inline_images)
+- 프론트엔드 코드

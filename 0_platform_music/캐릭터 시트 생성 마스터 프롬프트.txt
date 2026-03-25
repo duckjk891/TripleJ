@@ -1,0 +1,337 @@
+다음 절차를 반드시 순서대로 따르시오:
+
+--------------------------------------------------
+
+STEP 1  
+사용자에게 다음과 같이 질문하시오:  
+"캐릭터의 특징을 나열하여 주세요."  
+사용자의 답변이 오기 전에는 절대 다음 단계로 진행하지 마시오.
+
+--------------------------------------------------
+
+STEP 2  
+사용자에게 다음과 같이 질문하시오:  
+"이미지의 Art Style을 입력해주세요."  
+사용자의 답변이 오기 전에는 절대 다음 단계로 진행하지 마시오.
+
+--------------------------------------------------
+
+STEP 4  
+사용자의 입력을 기반으로 “고정 요소”와 “변형 가능 요소”를 분리하시오.
+
+[고정 요소]
+- 사용자가 명시적으로 입력한 모든 특징
+- 성별, 나이, 인종, 핵심 외형 등
+
+[변형 가능 요소]
+- 사용자가 입력하지 않은 모든 세부 요소
+- 색상, 재질, 디테일 구조, 악세사리, 세부 치수 등
+
+--------------------------------------------------
+
+[입력 해석 및 우선순위 규칙]
+
+사용자의 입력은 아래 두 가지 유형으로 분류하시오:
+
+1) 명확한 묘사 (Explicit Traits)
+- 외형, 수치, 색상, 구조 등 직접적으로 정의된 정보
+- 예: "검은 머리", "단발", "키 170cm", "마른 체형"
+
+2) 암시적 표현 (Implicit Traits)
+- 분위기, 성격, 인상, 감정 등 간접적인 정보
+- 예: "차가운 느낌", "도도한 성격", "몽환적인 분위기"
+
+--------------------------------------------------
+
+[반영 규칙]
+
+1. 명확한 묘사는 해당 항목에 그대로 반영할 것 (수정 금지)
+
+2. 암시적 표현은 직접적으로 항목에 쓰지 말고,
+   그 의미를 해석하여 비어 있는 세부 항목들에 구체적인 형태로 변환하여 반영할 것
+
+--------------------------------------------------
+
+[충돌 해결 규칙]
+
+- 명확한 묘사 > 암시적 표현
+
+- 두 요소가 충돌할 경우:
+  → 명확한 묘사를 절대 우선으로 유지할 것
+  → 암시적 표현은 해당 범위 내에서만 제한적으로 반영할 것
+
+--------------------------------------------------
+
+[출력 금지 규칙]
+
+- 분위기, 성격 등의 추상적 표현을 그대로 출력하지 말 것
+- 반드시 물리적/시각적 요소로 변환하여 작성할 것
+
+--------------------------------------------------
+
+STEP 5  
+고정 요소와 변형 가능 요소를 기반으로, 하나의 캐릭터 시트를 생성하시오.
+
+규칙:
+
+[공통 규칙]
+- 고정 요소는 반드시 유지할 것
+- 전체 레이아웃 구조는 템플릿을 그대로 따를 것
+
+[생성 규칙]
+- 변형 가능 요소를 활용하여 누락된 모든 디테일을 보완할 것
+- 모든 요소는 구체적이고 명확하게 정의할 것
+- 모호하거나 추상적인 표현은 사용하지 말 것
+
+--------------------------------------------------
+
+STEP 6  
+각 시트에 대해, 누락된 모든 정보를 보완하여 완전한 스펙을 생성하시오.
+
+모든 요소는 반드시 아래 기준으로 정의할 것:
+
+- Position (위치)
+- Size (치수)
+- Shape (형태)
+- Material (재질)
+- State (상태)
+
+모호한 표현 금지.
+
+--------------------------------------------------
+
+[포즈 제약 규칙]
+
+- 캐릭터는 반드시 반듯하게 선 정자세를 유지할 것
+- 과장된 동작이나 역동적인 포즈는 금지
+- 팔과 다리는 신체 구조에 맞게 자연스럽게 정렬될 것
+- 소지품이 있을 경우, 물리적으로 자연스럽고 어색하지 않은 방식으로 들고 있을 것
+
+--------------------------------------------------
+
+STEP 7  
+각 시트는 아래 템플릿을 절대 수정하지 말고 그대로 사용하여 생성하시오.
+
+- 구조 변경 금지
+- 항목 삭제 금지
+- 순서 변경 금지
+- 모든 항목은 최대한 상세하게 작성
+
+--------------------------------------------------
+
+STEP 8 (출력 규칙)
+
+- 각 시트는 반드시 하나의 코드블록으로 출력할 것
+- 코드블록 외에는 어떤 텍스트도 출력하지 말 것
+
+--------------------------------------------------
+
+<CHARACTER SHEET TEMPLATE>
+
+**[OVERALL COMPOSITION - FIXED LAYOUT]**
+A professional character design sheet featuring a single [Gender] character, [Art Style], high-quality, 4k resolution, neutral grey studio background (#808080).
+
+The canvas is divided into FOUR vertical sections (1x4 layout), arranged from left to right:
+
+--------------------------------------------------
+
+[SECTION 1 - RIGHT 45° FULL BODY]
+- Full body view from a 45-degree angle facing right
+- Character stands upright in a neutral, straight posture
+- Arms relaxed naturally at the sides unless holding a prop
+- If holding a prop, the pose must naturally incorporate the item
+
+--------------------------------------------------
+
+[SECTION 2 - LEFT 45° FULL BODY]
+- Full body view from a 45-degree angle facing left
+- Same posture and proportional consistency as Section 1
+- No pose variation except mirrored orientation
+
+--------------------------------------------------
+
+[SECTION 3 - BACK FULL BODY]
+- Full body view from directly behind
+- Upright neutral standing posture
+- Clear visibility of back structure (hair, outfit, silhouette)
+
+--------------------------------------------------
+
+[SECTION 4 - FACE DETAIL STACK (VERTICAL 3-SPLIT)]
+
+Top:
+- Face view from a 45-degree angle facing right
+
+Middle:
+- Face view from a 45-degree angle facing left
+
+Bottom:
+- Face view from directly behind
+
+Rules:
+- Equal vertical spacing
+- Zoomed-in framing focused on head only
+- Consistent scale and alignment
+
+--------------------------------------------------
+
+[GLOBAL LAYOUT RULES]
+
+- All sections must maintain consistent character proportions
+- No perspective distortion between sections
+- Strict alignment and equal spacing across all divisions
+- No rearrangement of section order
+- Clean separation between sections
+
+--------------------------------------------------
+
+**[CHARACTER SPECIFICATION - FULL DEFINITION]**
+
+[Identity]
+- Gender:
+- Age:
+- Ethnicity:
+
+[Body]
+- Height:
+- Proportion:
+- Build:
+- Shoulder width:
+- Waist:
+- Hip:
+- Posture:
+
+[Pose]
+- A-pose
+- Arms:
+- Elbows:
+- Hands:
+- Legs:
+- Weight distribution:
+
+--------------------------------------------------
+
+[Face]
+- Shape:
+- Jaw:
+- Chin:
+- Eyes:
+- Eye color:
+- Eye size:
+- Brows:
+- Nose:
+- Lips:
+- Skin:
+- Expression:
+
+[Makeup]
+- Base:
+- Blush:
+- Eyeshadow:
+- Eyeliner:
+- Mascara:
+- Lips:
+
+--------------------------------------------------
+
+[Hair]
+- Length:
+- Part:
+- Structure:
+- Strand thickness:
+- Layering:
+- Volume:
+- Flow:
+- Color:
+- Surface:
+- State:
+
+--------------------------------------------------
+
+[Outfit]
+
+Top:
+- Type:
+- Length:
+- Fit:
+- Neckline:
+- Sleeve:
+- Fabric:
+- Wrinkles:
+
+Skirt:
+- Type:
+- Waist position:
+- Length:
+- Shape:
+- Structure:
+- Pleats:
+- Fabric:
+- Movement:
+
+--------------------------------------------------
+
+[Footwear]
+- Type:
+- Heel height:
+- Sole thickness:
+- Shape:
+- Coverage:
+- Material:
+- Color:
+- Fit:
+- State:
+
+--------------------------------------------------
+
+[Accessories / Wear Position]
+
+Earrings:
+- Type:
+- Length:
+- Material:
+- Position:
+- Movement:
+
+Necklace:
+- Type:
+- Lengths:
+- Position:
+- Material:
+
+Rings:
+- Count:
+- Placement:
+- Material:
+
+Bracelet:
+- Wrist:
+- Fit:
+- Material:
+
+--------------------------------------------------
+
+[Props]
+- 
+
+--------------------------------------------------
+
+**[TECHNICAL SPECIFICATIONS]**
+
+[Lighting]
+- Key:
+- Fill:
+- Rim:
+- Shadow:
+
+[Rendering Style]
+- 
+
+[Color Control]
+- 
+
+[Consistency Rules]
+- 
+
+[Final Constraint]
+- 

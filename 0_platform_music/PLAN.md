@@ -3810,3 +3810,41 @@ key = f"{1 if user_text else 0}_{1 if top else 0}{1 if bottom else 0}{1 if shoes
 - [x] FormData에 user_text append
 - [x] 상태 초기화 로직 (save/regenerate 시 characterText 클리어)
 - [x] CSS 스타일 추가
+
+---
+
+## v12 — 마스터 프롬프트 구조 개선: 답변을 질문 바로 뒤에 삽입
+
+### 배경
+기존에는 STEP 1/2 답변을 마스터 프롬프트 앞에 별도 블록으로 배치하고, 마스터 프롬프트 원본을 그 뒤에 통째로 붙였다. 이 구조는 LLM이 답변과 질문을 매칭하기 어렵게 만들 수 있다.
+
+### 목표
+마스터 프롬프트 안에서 STEP 1, STEP 2 질문 바로 뒤에 사용자 답변이 인라인으로 삽입되도록 변경한다.
+
+### 수정 대상
+- `backend/app/services/character_generator.py`
+
+### 수정 내용
+
+#### 1. MASTER_PROMPT 상수 수정
+- STEP 1: "사용자의 답변이 오기 전에는..." 문구 제거, `[사용자 답변]: {step1_answer}` 플레이스홀더 삽입
+- STEP 2: "사용자의 답변이 오기 전에는..." 문구 제거, `[사용자 답변]: Photorealistic (실사)` 고정 답변 삽입
+- STEP 4~8, CHARACTER SHEET TEMPLATE 등 나머지는 원본 그대로 유지
+- MASTER_PROMPT 안에 `{step1_answer}` 외 중괄호 없음 확인 완료 (이스케이프 불필요)
+
+#### 2. step_a_prompt 조립 방식 변경
+- 기존: 답변 블록 + "=== 마스터 프롬프트 ===" + MASTER_PROMPT 를 `.format(step1_answer, MASTER_PROMPT)` 로 조립
+- 변경: 간결한 지시문 + `MASTER_PROMPT.format(step1_answer=step1_answer)` 로 인라인 치환
+
+#### 3. 변경하지 않는 것
+- STEP1_ANSWERS 딕셔너리 (16가지) — 그대로 유지
+- `refine_character_sheet()` 함수
+- `_call_gemini_text()`, `_call_gemini_image()`, `_build_inline_images()` 등 헬퍼 함수
+- 프론트엔드 코드
+
+### 체크리스트
+- [x] MASTER_PROMPT STEP 1에 `{step1_answer}` 플레이스홀더 삽입
+- [x] MASTER_PROMPT STEP 2에 고정 답변 "Photorealistic (실사)" 삽입
+- [x] STEP 1/2 "사용자의 답변이 오기 전에는..." 문구 제거
+- [x] step_a_prompt 조립: 답변 분리 블록 제거, MASTER_PROMPT.format() 인라인 치환으로 변경
+- [x] 중괄호 충돌 없음 확인
