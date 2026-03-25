@@ -476,6 +476,58 @@
   border-radius: 8px;
 }
 
+/* Audio Source Selector (Original vs Voice Converted) */
+.upload-card__audio-source-selector {
+  padding: 14px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.upload-card__audio-source-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.upload-card__audio-source-options {
+  display: flex;
+  gap: 8px;
+}
+
+.upload-card__audio-source-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+  background: var(--color-card);
+  border: 2px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.upload-card__audio-source-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.upload-card__audio-source-btn--active {
+  border-color: var(--color-primary);
+  background: rgba(108, 92, 231, 0.1);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
 /* Music Video Generation */
 .upload-mv-ai-btn {
   width: 100%;
@@ -723,6 +775,34 @@
   font-size: 11px;
   color: var(--color-primary);
   font-weight: 500;
+}
+.upload-mv-scene-card__section-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.upload-mv-scene-card__section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-primary);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.upload-mv-scene-card__use-seconds {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: rgba(255,255,255,0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.upload-mv-scene-card__section-mood {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-style: italic;
 }
 
 .upload-mv-scene-card__actions {

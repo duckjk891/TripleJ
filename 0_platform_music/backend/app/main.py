@@ -14,7 +14,7 @@ from .database.postgres import init_postgres, close_postgres
 from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
-from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character
+from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_convert
 
 
 @asynccontextmanager
@@ -76,6 +76,8 @@ app.include_router(follows.router)
 app.include_router(generate.router)
 app.include_router(mv.router)
 app.include_router(character.router)
+app.include_router(voice_persona.router)
+app.include_router(voice_convert.router)
 
 
 @app.get("/api/health")

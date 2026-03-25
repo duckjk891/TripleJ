@@ -17,12 +17,14 @@ from typing import List, Optional
 from ..config import settings
 from ..database.minio import get_minio
 from .mv_generator import (
+    analyze_music_structure,
     split_lyrics_into_scenes,
     generate_scene_image,
     start_scene_video,
     check_scene_video_status,
     download_video,
     concatenate_videos,
+    trim_video_clip,
     _get_ffmpeg_path,
 )
 from .kling_video_generator import (
@@ -92,11 +94,58 @@ def _load_character_image(character_object_name: Optional[str]) -> Optional[byte
         return None
 
 
+def _load_audio_from_minio(audio_object_name: Optional[str]) -> Optional[bytes]:
+    """Load audio bytes from MinIO music bucket."""
+    if not audio_object_name:
+        return None
+    try:
+        minio_client = get_minio()
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=audio_object_name,
+        )
+        data = response.read()
+        response.close()
+        response.release_conn()
+        return data
+    except Exception as e:
+        logger.warning("Failed to load audio '%s': %s", audio_object_name, e)
+        return None
+
+
+async def _resolve_audio_object_name(job: dict, mongo_db) -> Optional[str]:
+    """Resolve audio object name from job or its linked generation."""
+    # Direct audio_object_name on the job
+    audio_obj = job.get("audio_object_name")
+    if audio_obj:
+        return audio_obj
+
+    # Try to get from linked generation
+    gen_id = job.get("audio_generation_id")
+    if gen_id:
+        try:
+            from bson import ObjectId
+            gen_doc = await mongo_db.generations.find_one(
+                {"_id": ObjectId(gen_id)},
+                {"result_audio_url": 1},
+            )
+            if gen_doc and gen_doc.get("result_audio_url"):
+                return gen_doc["result_audio_url"]
+        except Exception as e:
+            logger.warning("Failed to resolve audio from generation %s: %s", gen_id, e)
+
+    return None
+
+
 # ── Phase 1: Split lyrics into scenes ────────────────────────────────────────
 
 
 async def run_phase1_split(job_id, mongo_db) -> None:
-    """Split lyrics into scenes, save to mv_jobs.scenes array."""
+    """Split lyrics into scenes, save to mv_jobs.scenes array.
+
+    If audio is available, first analyzes music structure via Gemini,
+    then uses section-aware scene planning.
+    """
     job = await _get_job(mongo_db, job_id)
     if not job:
         logger.error("Phase1: job %s not found", job_id)
@@ -104,11 +153,51 @@ async def run_phase1_split(job_id, mongo_db) -> None:
 
     await _update_job(mongo_db, job_id, {
         "status": "splitting",
-        "progress": 2,
+        "progress": 1,
     })
 
     scene_count = job.get("scene_count", 20)
+    music_sections = None
 
+    # ── Phase 1a: Analyze music structure (if audio available) ──
+    audio_object_name = await _resolve_audio_object_name(job, mongo_db)
+    if audio_object_name:
+        logger.info("Phase1: analyzing music structure for job %s (audio: %s)", job_id, audio_object_name)
+        await _update_job(mongo_db, job_id, {"progress": 1})
+
+        try:
+            audio_bytes = _load_audio_from_minio(audio_object_name)
+            if audio_bytes:
+                # Determine mime type
+                mime_type = "audio/mp3"
+                if audio_object_name.endswith(".wav"):
+                    mime_type = "audio/wav"
+                elif audio_object_name.endswith(".m4a"):
+                    mime_type = "audio/mp4"
+
+                music_sections = await analyze_music_structure(audio_bytes, mime_type)
+
+                # Save to job
+                await _update_job(mongo_db, job_id, {
+                    "music_sections": music_sections,
+                    "progress": 3,
+                })
+                logger.info(
+                    "Phase1: job %s music structure: %d sections",
+                    job_id, len(music_sections),
+                )
+            else:
+                logger.warning("Phase1: could not load audio bytes for job %s", job_id)
+        except Exception as e:
+            logger.warning(
+                "Phase1: music structure analysis failed for job %s: %s (continuing without)",
+                job_id, e,
+            )
+            # Non-fatal: continue without music sections
+
+    await _update_job(mongo_db, job_id, {"progress": 3})
+
+    # ── Phase 1b: Scene planning ──
     try:
         scenes_raw = await split_lyrics_into_scenes(
             lyrics=job.get("lyrics"),
@@ -117,6 +206,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
             mood=job.get("mood"),
             scene_count=scene_count,
             user_scene_prompt=job.get("scene_prompt"),
+            music_sections=music_sections,
         )
     except Exception as e:
         logger.error("Phase1: failed to split lyrics for job %s: %s", job_id, e)
@@ -129,7 +219,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
     # Build scenes array with status fields
     scenes = []
     for s in scenes_raw:
-        scenes.append({
+        scene_doc = {
             "scene_number": s.get("scene_number", len(scenes) + 1),
             "description": s.get("description", ""),
             "lyrics_segment": s.get("lyrics_segment", ""),
@@ -138,7 +228,18 @@ async def run_phase1_split(job_id, mongo_db) -> None:
             "video_object_name": None,
             "video_status": "pending",
             "video_error": None,
-        })
+        }
+        # Section-aware fields (present when music_sections was used)
+        if s.get("use_seconds"):
+            scene_doc["use_seconds"] = float(s["use_seconds"])
+        if s.get("section"):
+            scene_doc["section"] = s["section"]
+        if s.get("section_mood"):
+            scene_doc["section_mood"] = s["section_mood"]
+        if s.get("clip_mood"):
+            scene_doc["clip_mood"] = s["clip_mood"]
+
+        scenes.append(scene_doc)
 
     await _update_job(mongo_db, job_id, {
         "status": "scenes_ready",
@@ -455,6 +556,31 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                     video_bytes = await download_video_kling(video_download_url)
                 else:
                     video_bytes = await download_video(video_download_url)
+
+                # Trim video to use_seconds if specified (section-aware pipeline)
+                use_seconds = scene.get("use_seconds")
+                if use_seconds and use_seconds > 0:
+                    tmpdir_trim = tempfile.mkdtemp(prefix="mv_trim_")
+                    try:
+                        raw_path = os.path.join(tmpdir_trim, "raw_{:03d}.mp4".format(sn))
+                        trimmed_path = os.path.join(tmpdir_trim, "trimmed_{:03d}.mp4".format(sn))
+                        with open(raw_path, "wb") as f:
+                            f.write(video_bytes)
+
+                        trim_ok = await trim_video_clip(raw_path, trimmed_path, use_seconds)
+                        if trim_ok and os.path.exists(trimmed_path):
+                            with open(trimmed_path, "rb") as f:
+                                video_bytes = f.read()
+                            logger.info(
+                                "Phase3: scene %d trimmed to %.1fs", sn, use_seconds
+                            )
+                        else:
+                            logger.warning(
+                                "Phase3: scene %d trim failed, using untrimmed", sn
+                            )
+                    finally:
+                        shutil.rmtree(tmpdir_trim, ignore_errors=True)
+
                 video_object = "mv/{}/videos/{:03d}.mp4".format(str(job_id), sn)
                 minio_client.put_object(
                     bucket_name=settings.minio_bucket_images,
@@ -756,11 +882,11 @@ async def run_phase5_merge_audio(job_id, mongo_db, audio_object_name: str) -> No
             })
             return
 
-        # Download audio
+        # Download audio (audio files are in the music bucket, not images)
         audio_path = os.path.join(tmpdir, "audio.mp3")
         try:
             resp = minio_client.get_object(
-                bucket_name=settings.minio_bucket_images,
+                bucket_name=settings.minio_bucket_music,
                 object_name=audio_object_name,
             )
             with open(audio_path, "wb") as f:

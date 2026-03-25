@@ -49,6 +49,7 @@ class CreateMVRequest(BaseModel):
     scene_prompt: Optional[str] = None
     character_object_name: Optional[str] = None
     video_model: Optional[str] = "veo"  # "veo" or "kling"
+    audio_generation_id: Optional[str] = None
 
 
 class GenerateImagesRequest(BaseModel):
@@ -108,7 +109,7 @@ def _presign(object_name: Optional[str], bucket: Optional[str] = None) -> Option
 
 def _scene_to_dict(scene: dict) -> dict:
     """Convert scene doc to response dict with presigned URLs."""
-    return {
+    result = {
         "scene_number": scene.get("scene_number"),
         "description": scene.get("description", ""),
         "lyrics_segment": scene.get("lyrics_segment", ""),
@@ -120,6 +121,16 @@ def _scene_to_dict(scene: dict) -> dict:
         "video_status": scene.get("video_status", "pending"),
         "video_error": scene.get("video_error"),
     }
+    # Section-aware fields (present when music structure analysis was used)
+    if scene.get("use_seconds") is not None:
+        result["use_seconds"] = scene["use_seconds"]
+    if scene.get("section"):
+        result["section"] = scene["section"]
+    if scene.get("section_mood"):
+        result["section_mood"] = scene["section_mood"]
+    if scene.get("clip_mood"):
+        result["clip_mood"] = scene["clip_mood"]
+    return result
 
 
 # ── POST /api/mv/create ─────────────────────────────────────────────────────
@@ -184,6 +195,7 @@ async def create_mv(
         "scene_prompt": body.scene_prompt,
         "character_object_name": body.character_object_name,
         "video_model": video_model,
+        "audio_generation_id": body.audio_generation_id,
         "status": "draft",
         "progress": 0,
         "error_message": "",
@@ -307,6 +319,7 @@ async def get_mv_job(
         "scene_prompt": job.get("scene_prompt"),
         "character_object_name": job.get("character_object_name"),
         "video_model": job.get("video_model", "veo"),
+        "music_sections": job.get("music_sections"),
         # Draft form fields (for restoring the upload page)
         "audio_generation_id": job.get("audio_generation_id"),
         "audio_file_name": job.get("audio_file_name"),

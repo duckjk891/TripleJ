@@ -372,6 +372,7 @@ class UploadFromGenerationBody(BaseModel):
     lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None
     ai_model: Optional[str] = "YuE"
+    use_voice_converted: Optional[bool] = False
 
 
 @router.post("/upload-from-generation", status_code=201)
@@ -396,9 +397,17 @@ async def upload_from_generation(
     if not gen_doc.get("result_audio_url"):
         return JSONResponse(status_code=400, content={"error": "생성된 오디오 파일이 없습니다."})
 
+    # Determine audio source: voice converted or original
+    if body.use_voice_converted:
+        vc_url = gen_doc.get("voice_converted_url")
+        if not vc_url:
+            return JSONResponse(status_code=400, content={"error": "보이스 변환된 오디오 파일이 없습니다."})
+        source_object_name = vc_url
+    else:
+        source_object_name = gen_doc["result_audio_url"]
+
     track_id = ObjectId()
     uploader_id = current_user["id"]
-    source_object_name = gen_doc["result_audio_url"]
 
     # Determine extension from source
     ext = ".wav" if source_object_name.endswith(".wav") else ".mp3"

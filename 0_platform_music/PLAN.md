@@ -3297,3 +3297,516 @@ Phase 3: 프론트엔드
 - [ ] 프론트엔드 → 백엔드 API 호출 정상 동작 확인
 - [ ] 주요 기능 동작 확인 (페이지 로드, API 응답 등)
 - [ ] .env 환경변수 로드 정상 확인 (YUE_MODEL_DIR, YUE_OUTPUT_DIR 경로)
+
+## v2 - 2026-03-23 - Voice Persona (내 목소리) 기능 추가
+### 요청 작업
+- 내 캐릭터 탭에 목소리 추가 기능
+- 목소리 파일 업로드 → Suno Persona 자동 생성 (4단계 워크플로우)
+- 작업실2에서 내 Persona 보컬 선택 가능
+
+### 워크플로우 (Suno 써드파티 API)
+1. 사용자가 노래 파일(mp3/wav) 업로드 → MinIO 저장 → presigned URL 생성
+2. upload-cover API: presigned URL → Suno AI 커버 곡 생성 (내 목소리 톤 반영)
+3. separate-vocals API: AI 커버 곡에서 보컬 스템 추출
+4. generate-persona API: 추출된 보컬로 Suno Persona 생성
+
+### MongoDB 컬렉션 설계: voice_personas
+```json
+{
+  "_id": ObjectId,
+  "user_id": "uuid",
+  "name": "내 목소리 1",
+  "description": "따뜻한 남성 보컬",
+  "persona_id": "suno-persona-id",
+  "status": "pending|uploading|covering|separating|creating_persona|completed|failed",
+  "progress": 0-100,
+  "error_message": null,
+  "source_audio_object": "voice-personas/{user_id}/{uuid}.mp3",
+  "cover_task_id": null,
+  "cover_audio_url": null,
+  "separate_task_id": null,
+  "vocal_audio_url": null,
+  "persona_task_id": null,
+  "created_at": datetime,
+  "updated_at": datetime
+}
+```
+
+### 백엔드 작업
+1. **새 서비스 파일**: `backend/app/services/voice_persona_service.py`
+   - Suno API 4단계 워크플로우 구현 (upload-cover → separate-vocals → generate-persona)
+   - 각 단계별 상태/진행률 업데이트
+   - 폴링 로직으로 각 API 완료 대기
+
+2. **새 라우트 파일**: `backend/app/routes/voice_persona.py`
+   - POST `/api/voice-persona/create` - 음성 파일 업로드 + Persona 생성 시작
+   - GET `/api/voice-persona/list` - 내 Persona 목록 조회
+   - GET `/api/voice-persona/{id}` - Persona 상태 조회
+   - DELETE `/api/voice-persona/{id}` - Persona 삭제
+
+3. **generate.py 수정**: GenerateRequest에 persona_id 필드 추가, Suno 생성 시 전달
+4. **suno_generator.py 수정**: persona_id 파라미터 지원
+5. **main.py 수정**: voice_persona 라우터 등록
+
+### 프론트엔드 작업
+1. **api/index.js**: Voice Persona API 함수 추가
+2. **MyMusicPage.jsx (CharacterSection)**: 목소리 추가 UI
+   - 음성 파일 업로드 영역
+   - Persona 이름/설명 입력
+   - 생성 진행률 표시
+   - 내 Persona 목록 표시 (삭제 가능)
+3. **StudioTab2.jsx**: 보컬 선택에 "내 목소리" 옵션 추가
+   - Persona 목록 fetch → 보컬 프리셋에 동적 추가
+   - Persona 선택 시 persona_id를 generation 요청에 포함
+
+### 테스터 테스트 항목
+- [ ] 내 캐릭터 탭에서 음성 파일 업로드 가능 확인
+- [ ] Persona 생성 요청 정상 동작 (4단계 상태 전이)
+- [ ] Persona 목록 조회 정상 동작
+- [ ] Persona 삭제 정상 동작
+- [ ] 작업실2에서 Persona 보컬 선택 옵션 노출 확인
+- [ ] Persona 선택 후 음악 생성 시 persona_id 전달 확인
+- [ ] 백엔드 서버(port 9000) 정상 기동 확인
+- [ ] 프론트엔드 서버(port 4000) 정상 기동 확인
+
+---
+
+## v3 — Voice Persona 보컬/커버 미리듣기 및 다운로드
+
+### 배경
+Voice Persona 4단계 워크플로우 완료 후 cover_audio_url, vocal_audio_url은 Suno 임시 URL이라 시간이 지나면 만료됨. 보컬/커버 오디오를 MinIO에 영구 저장하고 미리듣기/다운로드 기능을 추가해야 함.
+
+### 백엔드 구현 계획
+
+1. **voice_persona_service.py** — 보컬 분리 성공 후 vocal_url, cover_audio_url을 MinIO에 다운로드/저장
+   - 저장 경로: `voice-personas/{user_id}/{persona_id}/vocal.mp3`, `voice-personas/{user_id}/{persona_id}/cover.mp3`
+   - 버킷: settings.minio_bucket_music
+   - MongoDB에 `vocal_object_name`, `cover_object_name` 필드 추가
+
+2. **voice_persona.py 라우트** — 스트리밍/다운로드 엔드포인트 추가
+   - `GET /api/voice-persona/{id}/vocal/stream` — 보컬 스트리밍 (미리듣기)
+   - `GET /api/voice-persona/{id}/cover/stream` — 커버 스트리밍
+   - `GET /api/voice-persona/{id}/vocal/download` — 보컬 다운로드
+   - `GET /api/voice-persona/{id}/cover/download` — 커버 다운로드
+   - list/get API 응답에 `vocal_url`, `cover_url` (presigned URL), `has_vocal`, `has_cover` 필드 추가
+   - delete 시 vocal/cover MinIO 객체도 함께 삭제
+
+### 프론트엔드 구현 계획
+
+1. **MyMusicPage.jsx** VoicePersonaSection — 보컬/커버 재생 및 다운로드 버튼
+2. **MyMusicPage.css** — 오디오 액션 버튼 스타일
+3. **api/index.js** — stream/download URL 헬퍼 추가
+
+### 테스터 테스트 항목
+- [ ] 완료된 Persona에서 보컬 미리듣기 재생 가능
+- [ ] 완료된 Persona에서 커버 미리듣기 재생 가능
+- [ ] 보컬 다운로드 버튼 정상 동작
+- [ ] 커버 다운로드 버튼 정상 동작
+- [ ] Persona 삭제 시 MinIO 저장 파일도 함께 삭제
+- [ ] 새로 생성하는 Persona의 보컬/커버가 MinIO에 영구 저장
+
+---
+
+## v4 — Kits.AI 보컬 변환 (Voice Conversion) 기능
+
+### 목표
+Suno에서 생성된 음악의 보컬을 사용자의 Kits.AI 목소리 모델로 교체하는 기능 구현
+
+### 기술 스택
+- **Kits.AI API**: 보컬/반주 분리 (Vocal Separation) + 음성 변환 (Voice Conversion)
+- **ffmpeg**: 변환된 보컬 + 반주 합치기
+- **MinIO**: 결과 파일 저장
+- **MongoDB**: 변환 상태/결과 추적
+
+### 백엔드 구현 계획
+
+#### 1. 설정 추가
+- `.env`: `KITS_API_KEY`, `KITS_API_URL`
+- `app/config.py`: `kits_api_key`, `kits_api_url` 설정 필드
+
+#### 2. `app/services/kits_service.py` (신규)
+- `convert_voice(generation_id, voice_model_id, mongo_db)` — 전체 파이프라인:
+  a. MinIO에서 Suno 출력 다운로드
+  b. Kits API: POST /vocal-separations (보컬/반주 분리) + 폴링
+  c. 분리된 보컬/반주 다운로드
+  d. Kits API: POST /voice-conversions (보컬→사용자 목소리) + 폴링
+  e. 변환된 보컬 다운로드
+  f. ffmpeg amix로 변환 보컬 + 반주 합치기
+  g. 결과 MinIO 업로드: `generated/{id}/voice_converted.mp3`
+  h. MongoDB 업데이트
+- `get_voice_models()` — Kits API 모델 목록 조회
+- `_poll_kits_job()` — 상태 폴링 헬퍼 (진행률 MongoDB 반영)
+- ffmpeg 경로: `shutil.which` → miniconda fallback → `imageio_ffmpeg`
+
+#### 3. `app/routes/voice_convert.py` (신규)
+- `POST /api/voice-convert/{generation_id}` — 변환 시작 (BackgroundTasks)
+- `GET /api/voice-convert/{generation_id}/status` — 상태 조회
+- `GET /api/voice-convert/{generation_id}/stream` — 변환 결과 스트리밍
+- `GET /api/voice-convert/{generation_id}/download` — 변환 결과 다운로드
+- `GET /api/kits/voice-models` — Kits 모델 목록 프록시
+
+#### 4. `app/main.py` — voice_convert 라우터 등록
+
+### 프론트엔드 구현 계획
+
+#### 1. `api/index.js`
+- `startVoiceConvert()`, `getVoiceConvertStatus()`, `getKitsVoiceModels()`
+- `voiceConvertStreamUrl()`, `voiceConvertDownloadUrl()` 헬퍼
+
+#### 2. `StudioTab2.jsx`
+- 완료된 Suno 생성 카드에 "내 목소리로 변환" 버튼
+- 변환 중 진행률 표시 (프로그레스바)
+- 변환 완료 시 재생/다운로드 버튼
+- Kits 모델 선택 모달 (강도, 볼륨 믹스, 피치 조절 옵션)
+
+### MongoDB generations 컬렉션 추가 필드
+- `voice_conversion_status`: pending | converting | merging | uploading | completed | failed
+- `voice_conversion_progress`: 0~100
+- `voice_conversion_error`: 에러 메시지
+- `voice_converted_url`: MinIO 오브젝트 경로
+- `voice_converted_backing_url`: 반주 트랙 경로
+- `voice_model_id`: 사용된 Kits 모델 ID
+- `voice_conversion_completed_at`: 완료 시간
+
+### 테스트 항목
+- [ ] Kits 모델 목록 조회 정상 동작
+- [ ] Suno 완료 카드에서 "내 목소리로 변환" 버튼 표시
+- [ ] 변환 시작 후 진행률 실시간 표시
+- [ ] 변환 완료 후 재생/다운로드 정상 동작
+- [ ] 변환 실패 시 에러 메시지 표시 + 재시도 가능
+- [ ] 이미 변환 중일 때 중복 요청 방지
+
+---
+
+## v5 — 내 목소리 섹션 분리 (우회 방식 / Kits.AI)
+
+### 목표
+"내 캐릭터" 탭의 "내 목소리" 섹션을 **우회 방식**(Suno Persona)과 **Kits.AI** 두 서브탭으로 분리하고,
+작업실2의 "내 목소리로 변환" 모달에서도 두 그룹을 구분하여 표시한다.
+
+### 변경 파일
+| 파일 | 변경 내용 |
+|------|----------|
+| `frontend/src/pages/MyMusicPage.jsx` | VoicePersonaSection에 서브탭(suno/kits) 추가, Kits.AI 모델 목록 조회 및 표시 |
+| `frontend/src/pages/MyMusicPage.css` | 서브탭 스타일(.vp-subtabs, .vp-subtab), Kits.AI 탭 스타일(.vp-kits) 추가 |
+| `frontend/src/components/StudioTab2.jsx` | VC 모달에 두 그룹(우회 방식/Kits.AI) 표시, 선택 타입에 따른 분기 처리 |
+| `frontend/src/components/StudioTab2.css` | 그룹 헤더 스타일(.s2__vc-group-header) 추가 |
+
+### 구현 상세
+
+#### 1. MyMusicPage — VoicePersonaSection
+- `voiceSubTab` state 추가 ('suno' | 'kits')
+- **우회 방식 탭**: 기존 Persona CRUD 로직 그대로 유지
+- **Kits.AI 탭**: `getKitsVoiceModels()` 호출하여 모델 목록 표시, demoUrl 있으면 미리듣기, 하단에 kits.ai 모델 생성 링크
+
+#### 2. StudioTab2 — VC 모달
+- `vcSelectedType` state 추가 ('suno_persona' | 'kits')
+- 모달 내 목소리 목록을 두 그룹으로 분리 (그룹 헤더로 구분)
+- 우회 방식 선택 시: 원곡의 가사/스타일을 복사하여 persona_id로 새 Suno 생성
+- Kits.AI 선택 시: 기존 voice-convert API로 보컬분리→변환→합치기
+- 고급 설정(강도, 볼륨, 피치)은 Kits.AI 선택 시에만 표시
+
+### 테스트 항목
+- [ ] 내 캐릭터 > 내 목소리 섹션에 "우회 방식" / "Kits.AI" 서브탭 표시
+- [ ] 우회 방식 탭: 기존 Persona 업로드/목록/미리듣기/삭제 정상 동작
+- [ ] Kits.AI 탭: 모델 목록 자동 조회 및 표시
+- [ ] Kits.AI 탭: demoUrl 있는 모델 미리듣기 가능
+- [ ] Kits.AI 탭: 하단 안내 문구 및 모델 생성 링크 표시
+- [ ] 작업실2 VC 모달: 두 그룹(우회 방식/Kits.AI) 구분 표시
+- [ ] 우회 방식 선택 시 Suno persona로 새 곡 생성
+- [ ] Kits.AI 선택 시 기존 voice-convert API 호출
+
+---
+
+## v6 — 업로드 페이지: 원본/내 목소리 버전 오디오 소스 선택
+
+### 목표
+작업실2에서 "업로드하기" 버튼을 눌러 업로드 페이지로 넘어갈 때, voice conversion이 완료된 곡이라면 **원본(AI 보컬)** 또는 **내 목소리 버전** 중에서 선택하여 업로드할 수 있게 한다. 선택한 오디오를 미리 재생할 수 있다.
+
+### 변경 파일
+
+1. **`frontend/src/components/StudioTab2.jsx`**
+   - `onSendToUpload` 호출 시 `hasVoiceConverted: gen.voice_conversion_status === 'completed'` 플래그 추가
+
+2. **`frontend/src/pages/MyMusicPage.jsx`**
+   - 변경 불필요 (`handleSendToUpload`가 genData를 그대로 전달)
+
+3. **`frontend/src/pages/UploadPage.jsx`**
+   - `hasVoiceConverted`, `useVoiceConverted` state 추가
+   - prefill useEffect에서 `hasVoiceConverted` 설정
+   - 오디오 소스 선택 UI (원본 / 내 목소리 버전 버튼)
+   - `<audio>` 태그의 src를 선택에 따라 원본 스트림 또는 voice-convert 스트림으로 전환
+   - `uploadFromGeneration` 호출 시 `use_voice_converted` 파라미터 추가
+   - `getAudioDuration`에서 선택된 소스 사용
+   - `handleMergeAudio`에서 voice_converted_url 지원
+
+4. **`frontend/src/pages/UploadPage.css`**
+   - `.upload-card__audio-source-selector` 및 관련 스타일 추가
+
+5. **`backend/app/routes/tracks.py`**
+   - `UploadFromGenerationBody`에 `use_voice_converted: Optional[bool] = False` 추가
+   - `upload_from_generation` 엔드포인트에서 `use_voice_converted`가 true면 `voice_converted_url`에서 MinIO 파일 복사
+
+### 체크리스트
+- [x] StudioTab2에서 hasVoiceConverted 플래그 전달
+- [x] UploadPage에서 오디오 소스 선택 UI 표시
+- [x] 선택에 따라 미리 재생 가능 (audio 태그 src 전환)
+- [x] 업로드 시 use_voice_converted 파라미터 전달
+- [x] 백엔드에서 voice_converted_url 기반 파일 복사 지원
+- [x] MV 합치기 시 선택된 오디오 소스 반영
+
+---
+
+## v7 — 뮤직비디오 생성 파이프라인: 음악 구조 싱크 개선
+
+### 목표
+뮤직비디오 생성 시 음악 구조(Intro/Verse/Chorus 등)에 맞춰 영상 씬 전환이 싱크되도록 파이프라인을 개선한다. Gemini API로 음악 파일을 분석하여 섹션 구조를 추출하고, 이를 기반으로 ChatGPT가 섹션별 클립 계획을 수립한다.
+
+### 변경 파일
+
+#### 1. `backend/app/services/mv_generator.py`
+- **신규 함수** `analyze_music_structure(audio_bytes, mime_type)`: Gemini에 오디오를 보내 섹션 구조 분석 (label, start, end, mood)
+- **신규 함수** `trim_video_clip(input_path, output_path, duration)`: ffmpeg로 영상 클립을 지정 시간만큼 트림
+- **신규 프롬프트** `SECTION_SCENE_PLAN_SYSTEM_PROMPT`: 섹션 구조 기반 씬 계획 프롬프트
+- **신규 함수** `_split_with_music_sections()`: 섹션 구조 기반 ChatGPT 씬 계획 (내부 함수)
+- **수정 함수** `split_lyrics_into_scenes()`: `music_sections` 파라미터 추가, 있으면 섹션 기반 계획 수행
+
+#### 2. `backend/app/services/mv_pipeline.py`
+- **신규 함수** `_load_audio_from_minio()`: MinIO 음악 버킷에서 오디오 로드
+- **신규 함수** `_resolve_audio_object_name()`: job 또는 연결된 generation에서 오디오 경로 해석
+- **수정 함수** `run_phase1_split()`:
+  - 오디오 파일이 있으면 먼저 `analyze_music_structure()` 호출
+  - 결과를 `music_sections`로 MongoDB에 저장
+  - `split_lyrics_into_scenes()`에 `music_sections` 전달
+  - scenes 배열에 `use_seconds`, `section`, `section_mood`, `clip_mood` 필드 추가
+- **수정** `run_phase3_videos()`: 영상 생성 후 `use_seconds` 필드가 있으면 ffmpeg trim 수행
+
+#### 3. `backend/app/routes/mv.py`
+- `CreateMVRequest`에 `audio_generation_id` 필드 추가
+- job_doc 생성 시 `audio_generation_id` 저장
+- `_scene_to_dict()`에 `use_seconds`, `section`, `section_mood`, `clip_mood` 필드 추가
+- job detail 응답에 `music_sections` 필드 추가
+
+#### 4. `frontend/src/pages/UploadPage.jsx`
+- `createMVJob` 호출 시 `audio_generation_id` 전달
+- 씬 카드에 section label, use_seconds, section_mood 정보 표시
+
+#### 5. `frontend/src/pages/UploadPage.css`
+- `.upload-mv-scene-card__section-info`, `__section-label`, `__use-seconds`, `__section-mood` 스타일 추가
+
+### 파이프라인 흐름
+
+```
+Phase 1a: Gemini 음악 구조 분석 (audio → sections JSON)
+    ↓
+Phase 1b: ChatGPT 섹션 기반 씬 계획 (sections + lyrics → clips)
+    ↓
+Phase 2: 씬 이미지 생성 (Gemini, 기존과 동일)
+    ↓
+Phase 3: 씬 영상 생성 (Veo/Kling) + ffmpeg trim(use_seconds)
+    ↓
+Phase 4: 트림된 클립 이어붙이기 (ffmpeg concat)
+    ↓
+Phase 5: 오디오 합치기 (기존과 동일)
+```
+
+### 호환성
+- `music_sections`가 없으면(오디오 없음/분석 실패) 기존 flat scene 분할로 fallback
+- `use_seconds` 필드가 없는 기존 씬은 trim 없이 그대로 사용
+- 기존 MV job은 영향 없음
+
+### 체크리스트
+- [x] `analyze_music_structure()` 함수 구현
+- [x] `trim_video_clip()` 함수 구현
+- [x] 섹션 기반 씬 계획 프롬프트 및 로직
+- [x] `run_phase1_split()` 음악 구조 분석 단계 추가
+- [x] `run_phase3_videos()` 트림 단계 추가
+- [x] `_scene_to_dict()` 섹션 정보 필드 추가
+- [x] 프론트엔드 씬 카드에 섹션 정보 표시
+- [x] 기존 MV job 호환성 유지
+
+---
+
+## v8 — 캐릭터 시트 생성 마스터 프롬프트 적용
+
+### 배경
+기존 캐릭터 시트 생성은 단일 Gemini 이미지 모델 호출로 하드코딩된 프롬프트를 사용했다. 결과물의 품질과 일관성이 부족했다. 마스터 프롬프트(전문가가 설계한 다단계 캐릭터 시트 생성 절차)를 도입하여 고품질 캐릭터 시트를 생성한다.
+
+### 핵심 변경: 2단계 프로세스
+
+#### Step A — Gemini 텍스트 모델로 캐릭터 시트 프롬프트 생성
+- **모델**: `gemini-2.5-flash` (텍스트 전용)
+- **입력**: 마스터 프롬프트 전체 + 원본 사진 (inlineData) + 미리 작성된 답변
+  - STEP 1 답변: "첨부된 사진 속 인물의 외모 특징을 분석하여 사용"
+  - STEP 2 답변: "Photorealistic (실사)"
+- **출력**: 코드블록 안의 완전한 캐릭터 시트 프롬프트 텍스트
+- Gemini가 사진을 분석하여 Identity, Body, Face, Hair, Outfit 등 모든 항목을 상세하게 채움
+
+#### Step B — Gemini 이미지 모델로 캐릭터 시트 이미지 생성
+- **모델**: `gemini-3-pro-image-preview` (나노바나나 Pro)
+- **입력**: Step A에서 생성된 캐릭터 시트 프롬프트 + 원본 사진 (참조 이미지)
+- **출력**: PNG 캐릭터 시트 이미지
+
+### 수정 파일
+
+#### 1. `backend/app/services/character_generator.py` (전면 재작성)
+- 마스터 프롬프트를 `MASTER_PROMPT` 상수로 하드코딩
+- `_call_gemini_text()`: Gemini 텍스트 모델 호출 (Step A)
+- `_call_gemini_image()`: Gemini 이미지 모델 호출 (Step B)
+- `_extract_code_block()`: 응답에서 코드블록 추출
+- `generate_character_sheet()`: 기존 시그니처 유지, 내부를 2단계 프로세스로 변경
+
+### 프론트엔드
+- 변경 없음 (백엔드 함수 시그니처 동일)
+
+### 라우트
+- 변경 없음 (`routes/character.py` 그대로)
+
+### 체크리스트
+- [x] 마스터 프롬프트 txt 파일 내용 확인 및 코드에 포함
+- [x] `_call_gemini_text()` 구현 (gemini-2.5-flash)
+- [x] `_call_gemini_image()` 구현 (gemini-3-pro-image-preview)
+- [x] `generate_character_sheet()` 2단계 프로세스로 재작성
+- [x] 함수 시그니처 유지 (라우트 변경 불필요)
+- [x] 기존 단일 호출 대비 품질 향상 기대
+
+---
+
+## v9 — 캐릭터 시트 의상 이미지 선택적 첨부 (8가지 프롬프트 분기)
+
+### 목표
+캐릭터 시트 생성 시, 사용자가 상의/하의/신발 이미지를 선택적으로 첨부하면, 첨부 조합(000~111)에 따라 8가지 STEP 1 답변 중 적합한 것을 선택하여 캐릭터 시트를 생성한다.
+
+### 설계
+- 분기 키: `key = f"{1 if top else 0}{1 if bottom else 0}{1 if shoes else 0}"` → "000"~"111"
+- 마스터 프롬프트 전체와 STEP 2 답변("Photorealistic 실사")은 항상 동일
+- STEP 1 답변 부분만 8가지로 분기
+- 각 프롬프트에서 "두번째/세번째/네번째 이미지" 순서는 실제 첨부 순서(사진→상의→하의→신발)에 대응
+
+### 백엔드
+1. `backend/app/services/character_generator.py`
+   - `STEP1_ANSWERS` 딕셔너리 (8가지 답변)
+   - `_build_inline_images()` 헬퍼 (사진 + 의상 이미지 동적 구성)
+   - `_call_gemini_text()`, `_call_gemini_image()` 시그니처를 image_parts 리스트로 변경
+   - `generate_character_sheet()` 시그니처에 top/bottom/shoes 파라미터 추가
+
+2. `backend/app/routes/character.py`
+   - `generate_sheet` 엔드포인트에 `top_image`, `bottom_image`, `shoes_image` 옵션 파라미터 추가
+   - `_read_optional_image()` 헬퍼 함수
+
+### 프론트엔드
+1. `frontend/src/pages/MyMusicPage.jsx`
+   - `topFile`, `bottomFile`, `shoesFile` 상태 추가
+   - 의상 업로드 영역 3개 (상의/하의/신발) 나란히 배치
+   - 각각 미리보기 + X(제거) 버튼
+   - FormData에 의상 파일 포함하여 API 전송
+
+2. `frontend/src/pages/MyMusicPage.css`
+   - `.mymusic-character__outfit-*` 스타일 추가
+
+3. `frontend/src/api/index.js`
+   - 변경 없음 (기존 FormData 방식 그대로 활용)
+
+### 체크리스트
+- [x] STEP1_ANSWERS 8가지 딕셔너리 정의
+- [x] _build_inline_images() 헬퍼 구현
+- [x] _call_gemini_text/image 시그니처 image_parts 리스트로 변경
+- [x] generate_character_sheet() 시그니처 확장 (top/bottom/shoes)
+- [x] routes/character.py에 옵션 파일 파라미터 추가
+- [x] 프론트엔드 의상 업로드 UI 구현
+- [x] FormData에 의상 파일 포함
+- [x] 상태 초기화 로직 (save/regenerate 시 outfit 파일도 클리어)
+
+---
+
+## v10 — 캐릭터 시트 수정 요청 (Refine) 기능
+
+### 목표
+캐릭터 시트 생성 후 미리보기 상태에서, 사용자가 수정 요청 텍스트를 입력하면 현재 캐릭터 시트 이미지 + 원본 사진을 Gemini에 다시 보내서 수정된 캐릭터 시트를 생성. 반복 수정 가능.
+
+### 백엔드
+
+1. `backend/app/services/character_generator.py`
+   - `refine_character_sheet()` 함수 추가
+   - 현재 시트 이미지(PNG) + 원본 사진 + 수정 요청 텍스트 → Gemini image model → 수정된 시트 이미지
+   - 기존 `_call_gemini_image()` 재활용
+
+2. `backend/app/routes/character.py`
+   - `POST /api/character/refine` 엔드포인트 추가
+   - 파라미터: `sheet_image` (UploadFile), `photo` (UploadFile), `refine_request` (str Form)
+   - 수정된 이미지를 MinIO temp에 저장, preview_url + object_name 반환
+
+### 프론트엔드
+
+1. `frontend/src/api/index.js`
+   - `refineCharacterSheet(formData)` 함수 추가
+
+2. `frontend/src/pages/MyMusicPage.jsx` — CharacterSection
+   - state 추가: `refineMode`, `refineText`, `refining`
+   - 미리보기 상태에서 [수정 요청] 버튼 추가
+   - 클릭 시 textarea + [수정 적용하기] 버튼 표시
+   - 현재 미리보기 이미지를 fetch → blob, photoFile, refineText를 FormData로 `/api/character/refine` POST
+   - 응답으로 미리보기 교체 (반복 수정 가능)
+
+3. `frontend/src/pages/MyMusicPage.css`
+   - `.mymusic-character__refine` 관련 스타일 추가
+
+### 체크리스트
+- [x] refine_character_sheet() 서비스 함수 구현
+- [x] POST /api/character/refine 엔드포인트 구현
+- [x] refineCharacterSheet API 함수 추가
+- [x] 프론트엔드 수정 요청 UI (버튼 + textarea + 적용 버튼)
+- [x] 반복 수정 지원 (수정 결과가 새 미리보기로 교체)
+- [x] 상태 초기화 로직 (save/regenerate/cancel 시 refine 상태도 클리어)
+- [x] CSS 스타일 추가
+
+---
+
+## v11 — 캐릭터 시트 생성 시 사용자 텍스트 입력 지원 (16가지 프롬프트 분기)
+
+### 목적
+캐릭터 시트 생성 시, 사용자가 캐릭터 특징을 텍스트로 직접 입력할 수 있게 한다. 기존 8가지 프롬프트(의상 조합)에 텍스트 유무를 추가하여 총 16가지 프롬프트로 분기한다.
+
+### 분기 키 설계
+```
+key = f"{1 if user_text else 0}_{1 if top else 0}{1 if bottom else 0}{1 if shoes else 0}"
+```
+- 텍스트 없음 (0_xxx): 기존 8가지와 동일, 변경 없음
+- 텍스트 있음 (1_xxx): 기존 프롬프트 + 사용자 텍스트 우선 반영 문구 추가
+- user_text가 비어있으면 key가 "0_xxx"가 되므로 기존과 완전히 동일하게 동작
+
+### 백엔드 수정
+
+1. `backend/app/services/character_generator.py`
+   - `STEP1_ANSWERS` 딕셔너리 8개 → 16개 확장 (키 형식: "0_000"~"0_111", "1_000"~"1_111")
+   - `_USER_TEXT_SUFFIX` 상수 추가 — `{user_text}` 플레이스홀더 포함
+   - `generate_character_sheet()` 에 `user_text: str = ""` 파라미터 추가
+   - 분기 키 계산: `"{text_flag}_{top}{bottom}{shoes}"`
+   - 선택된 프롬프트에서 `.format(user_text=user_text)` 으로 치환
+
+2. `backend/app/routes/character.py`
+   - `generate_sheet` 엔드포인트에 `user_text: str = Form("")` 파라미터 추가
+   - `generate_character_sheet()` 호출 시 `user_text=user_text.strip()` 전달
+
+### 프론트엔드 수정
+
+1. `frontend/src/pages/MyMusicPage.jsx` — CharacterSection
+   - `characterText` state 추가
+   - 사진 업로드 영역과 의상 이미지 영역 사이에 textarea 추가
+   - FormData에 `user_text` 추가
+   - handleSave, handleRegenerate 시 `characterText` 초기화
+
+2. `frontend/src/pages/MyMusicPage.css`
+   - `.mymusic-character__text-section`, `__text-label`, `__text-input` 스타일 추가
+
+### 체크리스트
+- [x] STEP1_ANSWERS 16개로 확장 (0_xxx 기존 유지, 1_xxx 텍스트 블록 추가)
+- [x] _USER_TEXT_SUFFIX 상수 정의
+- [x] generate_character_sheet() user_text 파라미터 추가
+- [x] 분기 키 계산 로직 변경
+- [x] .format(user_text=...) 치환 로직
+- [x] POST /generate-sheet 엔드포인트 user_text Form 파라미터 추가
+- [x] 프론트엔드 characterText state + textarea UI
+- [x] FormData에 user_text append
+- [x] 상태 초기화 로직 (save/regenerate 시 characterText 클리어)
+- [x] CSS 스타일 추가

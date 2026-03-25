@@ -57,6 +57,7 @@ async def generate_music_suno(
     vocal: str = None,
     title: str = None,
     mongo_db=None,
+    persona_id: str = None,
 ) -> dict:
     """Generate music using Suno API."""
 
@@ -107,6 +108,10 @@ async def generate_music_suno(
         body["title"] = title[:80]
     if vocal_info:
         body["vocalGender"] = vocal_info["gender"]
+
+    # If a Suno Voice Persona is selected, include it in the request
+    if persona_id:
+        body["personaId"] = persona_id
 
     # Update progress: starting
     await _update_progress(mongo_db, generation_id, 10, "processing")

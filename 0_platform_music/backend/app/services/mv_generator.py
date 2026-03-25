@@ -15,6 +15,7 @@ import base64
 import io
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -45,6 +46,11 @@ VEO_OPERATION_URL = (
     "https://generativelanguage.googleapis.com/v1beta/{}"
 )
 
+GEMINI_AUDIO_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-2.5-flash:generateContent"
+)
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -71,6 +77,154 @@ def _ffmpeg_available() -> bool:
     return _get_ffmpeg_path() is not None
 
 
+# ── 0. Analyze Music Structure (Gemini Audio) ────────────────────────────────
+
+
+MUSIC_STRUCTURE_PROMPT = """\
+You are a music structure analyzer. Analyze the provided audio file and identify its structural sections.
+
+For each section, provide:
+- "label": section label (e.g., "Intro", "Verse1", "Chorus1", "Bridge", "Outro", etc.)
+- "start": start time in seconds (float, 1 decimal)
+- "end": end time in seconds (float, 1 decimal)
+- "mood": brief mood/atmosphere description of this section (in Korean, 2-5 words, e.g., "잔잔한 피아노", "강렬한 드럼 비트")
+
+Output ONLY a JSON array, no markdown fences, no extra text:
+[
+  {"label": "Intro", "start": 0.0, "end": 12.5, "mood": "잔잔한 피아노"},
+  {"label": "Verse1", "start": 12.5, "end": 38.0, "mood": "차분한 기타 멜로디"},
+  ...
+]
+
+Rules:
+- Cover the entire duration of the audio from start to end.
+- Sections must be contiguous (no gaps).
+- Use standard music section labels.
+- Be precise with timestamps.
+- Output valid JSON only.
+"""
+
+
+async def analyze_music_structure(audio_bytes: bytes, mime_type: str = "audio/mp3") -> List[dict]:
+    """Send audio to Gemini and get music structure sections.
+
+    Returns list of {"label", "start", "end", "mood"}.
+    """
+    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": MUSIC_STRUCTURE_PROMPT},
+                {
+                    "inlineData": {
+                        "mimeType": mime_type,
+                        "data": audio_b64,
+                    }
+                },
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 4000,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        resp = await client.post(
+            GEMINI_AUDIO_URL,
+            params={"key": settings.google_api_key},
+            json=payload,
+        )
+
+    if resp.status_code == 429:
+        logger.warning("Gemini audio analysis 429, waiting 30s before retry...")
+        await asyncio.sleep(30)
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(
+                GEMINI_AUDIO_URL,
+                params={"key": settings.google_api_key},
+                json=payload,
+            )
+
+    if resp.status_code != 200:
+        detail = resp.text[:300]
+        raise ValueError(
+            "Gemini 음악 구조 분석 실패 (HTTP {}): {}".format(resp.status_code, detail)
+        )
+
+    data = resp.json()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError("Gemini 음악 구조 분석: 응답에 후보가 없습니다.")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    raw_text = ""
+    for part in parts:
+        if part.get("text"):
+            raw_text += part["text"]
+
+    raw_text = raw_text.strip()
+
+    # Strip markdown code fences if present
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        raw_text = raw_text.strip()
+
+    sections = json.loads(raw_text)
+
+    if not isinstance(sections, list) or len(sections) == 0:
+        raise ValueError("Gemini가 유효한 섹션 목록을 반환하지 않았습니다.")
+
+    # Validate and clean sections
+    for s in sections:
+        s["start"] = float(s.get("start", 0))
+        s["end"] = float(s.get("end", 0))
+        if not s.get("label"):
+            s["label"] = "Unknown"
+        if not s.get("mood"):
+            s["mood"] = ""
+
+    logger.info("Music structure analysis: %d sections found", len(sections))
+    return sections
+
+
+# ── 0.5 Trim Video Clip (ffmpeg) ─────────────────────────────────────────────
+
+
+async def trim_video_clip(input_path: str, output_path: str, duration: float) -> bool:
+    """Trim a video clip to the specified duration using ffmpeg.
+
+    Returns True if successful, False otherwise.
+    """
+    ffmpeg_bin = _get_ffmpeg_path()
+    if not ffmpeg_bin:
+        logger.warning("ffmpeg not available for trimming, skipping trim")
+        return False
+
+    proc = await asyncio.create_subprocess_exec(
+        ffmpeg_bin, "-y",
+        "-i", input_path,
+        "-t", str(duration),
+        "-c", "copy",
+        output_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        logger.warning(
+            "ffmpeg trim failed (returncode %d): %s",
+            proc.returncode, stderr.decode()[:300],
+        )
+        return False
+
+    return True
+
+
 # ── 1. Split Lyrics into Scenes (ChatGPT) ────────────────────────────────────
 
 SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE = """\
@@ -88,15 +242,12 @@ IMPORTANT: First, design an overall story arc for the music video:
 Then distribute the lyrics across these scenes following this narrative structure.
 Each scene should naturally flow into the next, creating a cohesive visual story.
 
-MUSIC VIDEO PERFORMANCE SCENES:
-- Every 3-4 story scenes, insert a "performance" scene where the main character \
-looks directly at the camera and sings/lip-syncs the lyrics passionately.
-- Performance scenes should vary in setting/angle: close-up face singing, \
-medium shot singing, dramatic wide shot singing, etc.
-- Alternate between STORY scenes (narrative, emotional, cinematic) and \
-PERFORMANCE scenes (character singing to camera) throughout the video.
-- This creates the classic music video feel of switching between storytelling \
-and the artist performing.
+IMPORTANT VISUAL STYLE:
+- Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera.
+- Instead, focus entirely on cinematic storytelling: the character living through the narrative, \
+showing emotions through actions and expressions naturally, not performing to an audience.
+- Use varied cinematic angles: wide establishing shots, close-ups of hands/expressions, \
+over-the-shoulder shots, silhouettes, reflections, and atmospheric montages.
 
 Output ONLY a JSON array with objects like:
 [
@@ -109,7 +260,7 @@ Rules:
 - Each scene description should be 1-3 sentences of vivid, cinematic imagery.
 - Distribute lyrics evenly across scenes.
 - If some sections are instrumental/intro/outro, create atmospheric visual scenes.
-- Mark performance scenes clearly in the description (e.g. "close-up of the main character looking at camera, singing emotionally").
+- NEVER describe the character singing, performing, or looking at the camera.
 - Ensure visual continuity: maintain consistent setting, lighting, and character appearance across scenes.
 - Output valid JSON only, no markdown fences, no extra text.
 """
@@ -127,13 +278,12 @@ IMPORTANT: Design an overall story arc for the music video:
 
 Each scene should naturally flow into the next, creating a cohesive visual story.
 
-MUSIC VIDEO PERFORMANCE SCENES:
-- Every 3-4 story scenes, insert a "performance" scene where the main character \
-looks directly at the camera and sings/performs passionately.
-- Performance scenes should vary in setting/angle: close-up face singing, \
-medium shot singing, dramatic wide shot singing, etc.
-- Alternate between STORY scenes (narrative, emotional, cinematic) and \
-PERFORMANCE scenes (character singing to camera) throughout the video.
+IMPORTANT VISUAL STYLE:
+- Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera.
+- Instead, focus entirely on cinematic storytelling: the character living through the narrative, \
+showing emotions through actions and expressions naturally, not performing to an audience.
+- Use varied cinematic angles: wide establishing shots, close-ups of hands/expressions, \
+over-the-shoulder shots, silhouettes, reflections, and atmospheric montages.
 
 Output ONLY a JSON array with objects like:
 [
@@ -145,8 +295,58 @@ Rules:
 - Create exactly {scene_count} scenes.
 - Each scene description should be 1-3 sentences of vivid, cinematic imagery.
 - The scenes should tell a visual story that fits the genre and mood.
-- Mark performance scenes clearly in the description (e.g. "close-up of the main character looking at camera, singing emotionally").
+- NEVER describe the character singing, performing, or looking at the camera.
 - Ensure visual continuity: maintain consistent setting, lighting, and character appearance across scenes.
+- Output valid JSON only, no markdown fences, no extra text.
+"""
+
+# ── Section-aware scene planning prompt (used when music_sections available) ──
+
+SECTION_SCENE_PLAN_SYSTEM_PROMPT = """\
+You are a music video scene planner. You will be given:
+1. Music structure sections with timestamps and mood
+2. Song lyrics (if available)
+3. Song metadata (title, genre, mood)
+
+For each music section, compute:
+- clip_count = ceil(section_duration / 10)
+- use_seconds = section_duration / clip_count
+
+Then for each clip, create a vivid cinematic visual description.
+
+IMPORTANT VISUAL STYLE:
+- Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera.
+- Focus entirely on cinematic storytelling: the character living through the narrative, \
+showing emotions through actions and expressions naturally.
+- Use varied cinematic angles: wide shots, close-ups, over-the-shoulder, silhouettes, reflections.
+- Maintain visual continuity across all clips.
+
+Output ONLY a JSON array of section objects:
+[
+  {{
+    "section": "Intro",
+    "section_start": 0.0,
+    "section_end": 13.0,
+    "section_mood": "빗소리, 차분한 피아노",
+    "clips": [
+      {{
+        "clip_number": 1,
+        "use_seconds": 6.5,
+        "description": "Rain-drenched city skyline at twilight...",
+        "lyrics_segment": "",
+        "mood": "빗소리, 차분한 피아노"
+      }}
+    ]
+  }}
+]
+
+Rules:
+- Each clip's use_seconds must sum up to the section duration (within 0.5s tolerance).
+- Distribute lyrics across clips according to their timing in each section.
+- For instrumental sections (Intro/Outro/Bridge), create atmospheric visual scenes with empty lyrics_segment.
+- Each clip description: 1-3 sentences of vivid, cinematic imagery in English.
+- Reflect each section's mood in the clip descriptions.
+- NEVER describe the character singing, performing, or looking at the camera.
 - Output valid JSON only, no markdown fences, no extra text.
 """
 
@@ -158,13 +358,26 @@ async def split_lyrics_into_scenes(
     mood: Optional[str] = None,
     scene_count: int = 20,
     user_scene_prompt: Optional[str] = None,
+    music_sections: Optional[List[dict]] = None,
 ) -> List[dict]:
     """Use ChatGPT to split lyrics into visual scenes.
 
-    Returns list of {"scene_number", "description", "lyrics_segment"}.
+    If music_sections is provided, uses section-aware planning that produces
+    clips synced to music structure. Otherwise falls back to flat scene list.
+
+    Returns list of scene dicts. When music_sections is used, each scene dict
+    includes: scene_number, description, lyrics_segment, use_seconds, section, section_mood.
     """
     client = _get_openai_client()
 
+    # ── Section-aware planning path ──
+    if music_sections and len(music_sections) > 0:
+        return await _split_with_music_sections(
+            client, lyrics, title, genre, mood,
+            user_scene_prompt, music_sections,
+        )
+
+    # ── Legacy path (no music sections) ──
     scene_min = max(scene_count - 5, 3)
     scene_max = scene_count + 5
     prompt_vars = {
@@ -221,6 +434,119 @@ async def split_lyrics_into_scenes(
         raise ValueError("ChatGPT가 유효한 장면 목록을 생성하지 못했습니다.")
 
     return scenes
+
+
+async def _split_with_music_sections(
+    client,
+    lyrics: Optional[str],
+    title: str,
+    genre: Optional[str],
+    mood: Optional[str],
+    user_scene_prompt: Optional[str],
+    music_sections: List[dict],
+) -> List[dict]:
+    """Section-aware scene planning using music structure.
+
+    Returns flat list of scene dicts with use_seconds, section, section_mood.
+    """
+    system_prompt = SECTION_SCENE_PLAN_SYSTEM_PROMPT
+
+    if user_scene_prompt and user_scene_prompt.strip():
+        system_prompt += (
+            "\n\nAdditional user direction for scene imagery: \"{}\"\n"
+            "Incorporate this direction into each clip's visual description."
+        ).format(user_scene_prompt.strip())
+
+    # Build user message with all context
+    user_message = "Title: {}\n".format(title)
+    if genre:
+        user_message += "Genre: {}\n".format(genre)
+    if mood:
+        user_message += "Mood: {}\n".format(mood)
+
+    user_message += "\n## Music Structure Sections:\n"
+    user_message += json.dumps(music_sections, ensure_ascii=False, indent=2)
+
+    if lyrics and lyrics.strip():
+        user_message += "\n\n## Lyrics:\n{}".format(lyrics)
+    else:
+        user_message += "\n\n(No lyrics — create atmospheric visual scenes for all sections)"
+
+    # Calculate total expected clips for max_tokens sizing
+    total_clips = 0
+    for sec in music_sections:
+        dur = sec["end"] - sec["start"]
+        total_clips += math.ceil(dur / 10)
+
+    max_tokens = min(max(total_clips * 200, 4000), 16000)
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        max_tokens=max_tokens,
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+
+    section_plans = json.loads(raw)
+
+    if not isinstance(section_plans, list) or len(section_plans) == 0:
+        raise ValueError("ChatGPT가 유효한 섹션별 씬 계획을 생성하지 못했습니다.")
+
+    # Flatten section clips into a flat scene list
+    flat_scenes = []
+    scene_number = 1
+    for sec_plan in section_plans:
+        section_label = sec_plan.get("section", "Unknown")
+        section_start = float(sec_plan.get("section_start", 0))
+        section_end = float(sec_plan.get("section_end", 0))
+        section_mood = sec_plan.get("section_mood", "")
+
+        clips = sec_plan.get("clips", [])
+        if not clips:
+            # Fallback: create one clip for the whole section
+            dur = section_end - section_start
+            clips = [{
+                "clip_number": 1,
+                "use_seconds": dur,
+                "description": "Atmospheric scene for {} section".format(section_label),
+                "lyrics_segment": "",
+                "mood": section_mood,
+            }]
+
+        for clip in clips:
+            flat_scenes.append({
+                "scene_number": scene_number,
+                "description": clip.get("description", ""),
+                "lyrics_segment": clip.get("lyrics_segment", ""),
+                "use_seconds": float(clip.get("use_seconds", 10)),
+                "section": section_label,
+                "section_start": section_start,
+                "section_end": section_end,
+                "section_mood": section_mood,
+                "clip_mood": clip.get("mood", section_mood),
+            })
+            scene_number += 1
+
+    if len(flat_scenes) == 0:
+        raise ValueError("ChatGPT가 유효한 장면 목록을 생성하지 못했습니다.")
+
+    logger.info(
+        "Section-aware planning: %d sections → %d clips",
+        len(section_plans), len(flat_scenes),
+    )
+    return flat_scenes
 
 
 # ── 2. Generate Scene Image (Gemini) ─────────────────────────────────────────

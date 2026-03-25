@@ -170,6 +170,42 @@ export const generateCharacterSheet = (formData) =>
 export const saveCharacter = (data) => API.post('/character/save', data);
 export const getMyCharacter = () => API.get('/character/me');
 export const deleteMyCharacter = () => API.delete('/character/me');
+export const refineCharacterSheet = (formData) =>
+  API.post('/character/refine', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+  });
+
+// Voice Persona
+export const createVoicePersona = (formData) =>
+  API.post('/voice-persona/create', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+export const getVoicePersonas = () => API.get('/voice-persona/list');
+export const getVoicePersona = (id) => API.get(`/voice-persona/${id}`);
+export const deleteVoicePersona = (id) => API.delete(`/voice-persona/${id}`);
+export const streamVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-persona/${id}/vocal/stream`;
+export const streamVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/stream`;
+export const downloadVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-persona/${id}/vocal/download`;
+export const downloadVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/download`;
+
+// Voice Conversion (Kits.AI)
+export const startVoiceConvert = (generationId, data) =>
+  API.post(`/voice-convert/${generationId}`, data);
+export const getVoiceConvertStatus = (generationId) =>
+  API.get(`/voice-convert/${generationId}/status`);
+export const getKitsVoiceModels = () => API.get('/kits/voice-models');
+export const voiceConvertStreamUrl = (generationId) => {
+  const token = localStorage.getItem('token');
+  const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+  return `${base}/api/voice-convert/${generationId}/stream?token=${encodeURIComponent(token)}`;
+};
+export const voiceConvertDownloadUrl = (generationId) => {
+  const token = localStorage.getItem('token');
+  const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+  return `${base}/api/voice-convert/${generationId}/download?token=${encodeURIComponent(token)}`;
+};
 
 // Legacy aliases
 export const uploadSong = uploadTrack;

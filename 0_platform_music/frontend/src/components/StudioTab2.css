@@ -1011,3 +1011,260 @@
     padding: 2px 8px;
   }
 }
+
+/* ── Voice Persona in Vocal Selection ── */
+.s2__persona-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.s2__label--persona {
+  margin-bottom: 8px;
+  color: var(--color-primary);
+}
+
+.s2__vocal-btn--persona {
+  border-style: dashed;
+  display: flex;
+  align-items: center;
+}
+
+.s2__vocal-btn--persona.s2__vocal-btn--active {
+  border-style: solid;
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.s2__persona-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-primary);
+  padding: 6px 10px;
+  background: rgba(30, 215, 96, 0.08);
+  border-radius: 6px;
+}
+
+/* ── Voice Conversion (Kits.AI) ── */
+.s2__gen-vc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #8b5cf6, #06b6d4);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.s2__gen-vc:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+}
+
+.s2__gen-vc--retry {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Voice Conversion Status */
+.s2__vc-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 8px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #a78bfa;
+  flex-wrap: wrap;
+}
+
+.s2__vc-status--error {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
+  color: var(--color-danger);
+}
+
+.s2__vc-progress {
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.s2__vc-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.s2__vc-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #06b6d4);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+/* Voice Converted Audio Player */
+.s2__vc-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 8px;
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.s2__vc-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-right: auto;
+}
+
+/* Voice Conversion Modal */
+.s2__vc-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.s2__vc-modal {
+  background: var(--color-card, #1e1e2e);
+  border: 1px solid var(--color-border, #333);
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 520px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.s2__vc-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.s2__vc-modal-desc {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.s2__vc-section {
+  margin-bottom: 16px;
+}
+
+.s2__vc-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-sub);
+  background: var(--color-bg, #121220);
+  border-radius: 8px;
+}
+
+.s2__vc-models {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.s2__vc-model-btn {
+  padding: 12px;
+  border: 2px solid var(--color-border, #333);
+  border-radius: 10px;
+  background: var(--color-bg, #121220);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.s2__vc-model-btn:hover {
+  border-color: #8b5cf6;
+}
+
+.s2__vc-model-btn--active {
+  border-color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.s2__vc-model-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.s2__vc-hint {
+  display: block;
+  font-size: 11px;
+  color: #94A3B8;
+  margin: 2px 0 4px;
+}
+
+.s2__vc-slider {
+  width: 100%;
+  accent-color: #8b5cf6;
+  cursor: pointer;
+}
+
+.s2__vc-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.s2__vc-modal-actions .s2__submit {
+  flex: 2;
+}
+
+.s2__vc-modal-actions .s2__btn-back {
+  flex: 1;
+}
+
+/* ── Voice Conversion Group Headers ── */
+.s2__vc-group-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  text-align: center;
+  padding: 8px 0 6px;
+  letter-spacing: 1px;
+}
+
+.s2__vc-model-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

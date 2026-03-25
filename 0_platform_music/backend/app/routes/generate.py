@@ -48,6 +48,7 @@ class GenerateRequest(BaseModel):
     lyrics: Optional[str] = None
     start_music_gen: Optional[bool] = False  # True to start YuE generation
     model: Optional[str] = "yue"  # AI 모델 ID
+    persona_id: Optional[str] = None  # Suno Voice Persona ID
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -56,7 +57,7 @@ def _serialize(doc: dict) -> dict:
     if doc is None:
         return None
     doc["id"] = str(doc.pop("_id"))
-    for key in ("created_at", "updated_at", "completed_at"):
+    for key in ("created_at", "updated_at", "completed_at", "voice_conversion_completed_at"):
         if key in doc and isinstance(doc[key], datetime):
             doc[key] = doc[key].isoformat()
     doc["model"] = doc.get("model", "yue")
@@ -65,7 +66,7 @@ def _serialize(doc: dict) -> dict:
 
 # ─── Background task for YuE music generation ───────────────
 
-def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int, model: str = "yue", title: str = None):
+def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int, model: str = "yue", title: str = None, persona_id: str = None):
     """Wrapper to run async music generation in background."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -89,6 +90,7 @@ def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str
                     vocal=vocal,
                     title=title,
                     mongo_db=mongo_db,
+                    persona_id=persona_id,
                 )
             )
         else:
@@ -182,6 +184,7 @@ async def create_generation(
         "reference_style": body.reference_style,
         "lyrics": body.lyrics,
         "model": body.model or "yue",
+        "persona_id": body.persona_id,
         "status": "pending",
         "progress": 0,
         "result_track_id": None,
@@ -210,6 +213,7 @@ async def create_generation(
             duration=body.duration or 30,
             model=body.model or "yue",
             title=body.title,
+            persona_id=body.persona_id,
         )
 
     return _serialize(doc)
@@ -251,6 +255,7 @@ async def start_music_generation(
         duration=doc.get("duration", 30),
         model=doc.get("model", "yue"),
         title=doc.get("title"),
+        persona_id=doc.get("persona_id"),
     )
 
     return {"message": "음악 생성이 시작되었습니다.", "id": gen_id}

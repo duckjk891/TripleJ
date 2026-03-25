@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     kling_access_key: str = ""
     kling_secret_key: str = ""
 
+    # Kits.AI Voice Conversion
+    kits_api_key: str = ""
+    kits_api_url: str = "https://arpeggi.io/api/kits/v1"
+
     # YuE Music Generation
     yue_model_dir: str = ""  # Path to YuEGP directory
     yue_output_dir: str = "./yue_output"

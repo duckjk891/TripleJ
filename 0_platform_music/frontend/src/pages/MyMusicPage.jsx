@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw } from 'react-icons/fi';
+import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw, FiMic, FiPlus, FiCheck, FiLoader, FiDownload, FiVolume2, FiSquare, FiEdit3 } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
 import * as api from '../api';
@@ -157,7 +157,17 @@ function CharacterSection() {
   const [previewObjectName, setPreviewObjectName] = useState(null);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
+  const [topFile, setTopFile] = useState(null);
+  const [bottomFile, setBottomFile] = useState(null);
+  const [shoesFile, setShoesFile] = useState(null);
+  const [characterText, setCharacterText] = useState('');
+  const [refineMode, setRefineMode] = useState(false);
+  const [refineText, setRefineText] = useState('');
+  const [refining, setRefining] = useState(false);
   const photoInputRef = useRef(null);
+  const topInputRef = useRef(null);
+  const bottomInputRef = useRef(null);
+  const shoesInputRef = useRef(null);
 
   useEffect(() => {
     api.getMyCharacter()
@@ -175,6 +185,10 @@ function CharacterSection() {
     try {
       const formData = new FormData();
       formData.append('file', photoFile);
+      if (topFile) formData.append('top_image', topFile);
+      if (bottomFile) formData.append('bottom_image', bottomFile);
+      if (shoesFile) formData.append('shoes_image', shoesFile);
+      formData.append('user_text', characterText);
       const { data } = await api.generateCharacterSheet(formData);
       const base = `${window.location.protocol}//${window.location.hostname}:9000`;
       setPreviewUrl(`${base}${data.preview_url}`);
@@ -196,6 +210,12 @@ function CharacterSection() {
       setPreviewUrl(null);
       setPreviewObjectName(null);
       setPhotoFile(null);
+      setTopFile(null);
+      setBottomFile(null);
+      setShoesFile(null);
+      setCharacterText('');
+      setRefineMode(false);
+      setRefineText('');
     } catch (err) {
       alert(err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
@@ -218,6 +238,45 @@ function CharacterSection() {
     setPreviewUrl(null);
     setPreviewObjectName(null);
     setPhotoFile(null);
+    setTopFile(null);
+    setBottomFile(null);
+    setShoesFile(null);
+    setCharacterText('');
+    setRefineMode(false);
+    setRefineText('');
+  };
+
+  const handleRefine = async () => {
+    if (!refineText.trim()) {
+      alert('수정 요청 내용을 입력해주세요.');
+      return;
+    }
+    if (!previewUrl || !photoFile) {
+      alert('미리보기 이미지와 원본 사진이 필요합니다.');
+      return;
+    }
+    setRefining(true);
+    try {
+      // Fetch current preview image as blob
+      const sheetResp = await fetch(previewUrl);
+      const sheetBlob = await sheetResp.blob();
+
+      const formData = new FormData();
+      formData.append('sheet_image', sheetBlob, 'sheet.png');
+      formData.append('photo', photoFile);
+      formData.append('refine_request', refineText.trim());
+
+      const { data } = await api.refineCharacterSheet(formData);
+      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+      setPreviewUrl(`${base}${data.preview_url}`);
+      setPreviewObjectName(data.object_name);
+      setRefineText('');
+      setRefineMode(false);
+    } catch (err) {
+      alert(err.response?.data?.error || '캐릭터 시트 수정에 실패했습니다.');
+    } finally {
+      setRefining(false);
+    }
   };
 
   if (loading) {
@@ -268,24 +327,59 @@ function CharacterSection() {
             <button
               className="mymusic-character__btn mymusic-character__btn--primary"
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || refining}
             >
               {saving ? '저장 중...' : '저장하기'}
             </button>
             <button
               className="mymusic-character__btn"
+              onClick={() => setRefineMode(!refineMode)}
+              disabled={refining || generating}
+            >
+              <FiEdit3 /> 수정 요청
+            </button>
+            <button
+              className="mymusic-character__btn"
               onClick={handleGenerate}
-              disabled={generating}
+              disabled={generating || refining}
             >
               {generating ? '생성 중...' : '다시 생성'}
             </button>
             <button
               className="mymusic-character__btn"
-              onClick={() => { setPreviewUrl(null); setPreviewObjectName(null); }}
+              onClick={() => { setPreviewUrl(null); setPreviewObjectName(null); setRefineMode(false); setRefineText(''); }}
+              disabled={refining}
             >
               취소
             </button>
           </div>
+
+          {refineMode && (
+            <div className="mymusic-character__refine">
+              <textarea
+                className="mymusic-character__refine-input"
+                placeholder="수정할 내용을 입력하세요. (예: 머리 색을 빨간색으로 변경, 의상을 정장으로 변경)"
+                value={refineText}
+                onChange={(e) => setRefineText(e.target.value)}
+                rows={3}
+                disabled={refining}
+              />
+              <button
+                className="mymusic-character__refine-btn"
+                onClick={handleRefine}
+                disabled={refining || !refineText.trim()}
+              >
+                {refining ? (
+                  <>
+                    <span className="mymusic-character__spinner" />
+                    수정 중...
+                  </>
+                ) : (
+                  '수정 적용하기'
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -305,14 +399,32 @@ function CharacterSection() {
 
         <div className="mymusic-character__upload-area">
           <div
-            className="mymusic-character__dropzone"
-            onClick={() => photoInputRef.current?.click()}
+            className="mymusic-character__photo-box"
+            onClick={() => !photoFile && photoInputRef.current?.click()}
           >
-            <div className="mymusic-character__dropzone-icon"><FiImage /></div>
-            <div className="mymusic-character__dropzone-text">
-              <strong>클릭</strong>하여 얼굴 사진을 선택하세요
-            </div>
-            <div className="mymusic-character__dropzone-hint">JPG, PNG, WebP (10MB 이하)</div>
+            {photoFile ? (
+              <>
+                <img
+                  src={URL.createObjectURL(photoFile)}
+                  alt="인물 사진 미리보기"
+                  className="mymusic-character__photo-preview"
+                />
+                <button
+                  className="mymusic-character__photo-remove"
+                  onClick={(e) => { e.stopPropagation(); setPhotoFile(null); }}
+                >
+                  <FiTrash2 />
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="mymusic-character__dropzone-icon"><FiImage /></div>
+                <div className="mymusic-character__dropzone-text">
+                  <strong>클릭</strong>하여 얼굴 사진을 선택하세요
+                </div>
+                <div className="mymusic-character__dropzone-hint">JPG, PNG, WebP (10MB 이하)</div>
+              </>
+            )}
           </div>
           <input
             ref={photoInputRef}
@@ -321,18 +433,125 @@ function CharacterSection() {
             style={{ display: 'none' }}
             onChange={(e) => setPhotoFile(e.target.files[0] || null)}
           />
-          {photoFile && (
-            <div className="mymusic-character__file-info">
-              <FiImage />
-              <span className="mymusic-character__file-name">{photoFile.name}</span>
+        </div>
+
+        {/* Character text description */}
+        <div className="mymusic-character__text-section">
+          <label className="mymusic-character__text-label">
+            캐릭터 특징 설명 (선택)
+          </label>
+          <textarea
+            className="mymusic-character__text-input"
+            placeholder="예: 차가운 분위기, 키 180cm, 날카로운 눈매, 슬림한 체형"
+            value={characterText}
+            onChange={(e) => setCharacterText(e.target.value)}
+            rows={3}
+          />
+        </div>
+
+        {/* Outfit image uploads */}
+        <p className="mymusic-character__outfit-hint">
+          다른 의상으로 변경하고 싶으면 이미지를 첨부하세요 (선택)
+        </p>
+        <div className="mymusic-character__outfit-row">
+          {/* Top */}
+          <div className="mymusic-character__outfit-box">
+            <div
+              className="mymusic-character__outfit-dropzone"
+              onClick={() => topInputRef.current?.click()}
+            >
+              {topFile ? (
+                <img
+                  src={URL.createObjectURL(topFile)}
+                  alt="상의 미리보기"
+                  className="mymusic-character__outfit-preview"
+                />
+              ) : (
+                <span className="mymusic-character__outfit-label">상의</span>
+              )}
+            </div>
+            <input
+              ref={topInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp"
+              style={{ display: 'none' }}
+              onChange={(e) => setTopFile(e.target.files[0] || null)}
+            />
+            {topFile && (
               <button
-                className="mymusic-character__file-remove"
-                onClick={() => setPhotoFile(null)}
+                className="mymusic-character__outfit-remove"
+                onClick={() => setTopFile(null)}
               >
                 <FiTrash2 />
               </button>
+            )}
+          </div>
+
+          {/* Bottom */}
+          <div className="mymusic-character__outfit-box">
+            <div
+              className="mymusic-character__outfit-dropzone"
+              onClick={() => bottomInputRef.current?.click()}
+            >
+              {bottomFile ? (
+                <img
+                  src={URL.createObjectURL(bottomFile)}
+                  alt="하의 미리보기"
+                  className="mymusic-character__outfit-preview"
+                />
+              ) : (
+                <span className="mymusic-character__outfit-label">하의</span>
+              )}
             </div>
-          )}
+            <input
+              ref={bottomInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp"
+              style={{ display: 'none' }}
+              onChange={(e) => setBottomFile(e.target.files[0] || null)}
+            />
+            {bottomFile && (
+              <button
+                className="mymusic-character__outfit-remove"
+                onClick={() => setBottomFile(null)}
+              >
+                <FiTrash2 />
+              </button>
+            )}
+          </div>
+
+          {/* Shoes */}
+          <div className="mymusic-character__outfit-box">
+            <div
+              className="mymusic-character__outfit-dropzone"
+              onClick={() => shoesInputRef.current?.click()}
+            >
+              {shoesFile ? (
+                <img
+                  src={URL.createObjectURL(shoesFile)}
+                  alt="신발 미리보기"
+                  className="mymusic-character__outfit-preview"
+                />
+              ) : (
+                <span className="mymusic-character__outfit-label">신발</span>
+              )}
+            </div>
+            <input
+              ref={shoesInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp"
+              style={{ display: 'none' }}
+              onChange={(e) => setShoesFile(e.target.files[0] || null)}
+            />
+            {shoesFile && (
+              <button
+                className="mymusic-character__outfit-remove"
+                onClick={() => setShoesFile(null)}
+              >
+                <FiTrash2 />
+              </button>
+            )}
+          </div>
         </div>
 
         <button
@@ -350,6 +569,466 @@ function CharacterSection() {
           )}
         </button>
       </div>
+    </div>
+  );
+}
+
+const PERSONA_STATUS_MAP = {
+  pending: { label: '대기 중', color: '#94A3B8' },
+  uploading: { label: '업로드 중', color: '#7C3AED' },
+  covering: { label: 'AI 커버 생성 중', color: '#7C3AED' },
+  separating: { label: '보컬 분리 중', color: '#06B6D4' },
+  creating_persona: { label: 'Persona 생성 중', color: '#F59E0B' },
+  completed: { label: '완료', color: '#1ed760' },
+  failed: { label: '실패', color: '#EF4444' },
+};
+
+function VoicePersonaSection() {
+  const [voiceSubTab, setVoiceSubTab] = useState('suno'); // 'suno' | 'kits'
+  const [personas, setPersonas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [voiceFile, setVoiceFile] = useState(null);
+  const [personaName, setPersonaName] = useState('');
+  const [personaDesc, setPersonaDesc] = useState('');
+  const [deletingId, setDeletingId] = useState(null);
+  const [playingAudio, setPlayingAudio] = useState(null); // { id, type: 'vocal'|'cover' }
+  const audioRef = useRef(null);
+  const voiceInputRef = useRef(null);
+  const pollRef = useRef(null);
+
+  // Kits.AI models
+  const [kitsModels, setKitsModels] = useState([]);
+  const [kitsLoading, setKitsLoading] = useState(false);
+  const [kitsLoaded, setKitsLoaded] = useState(false);
+
+  const handlePlayAudio = (personaId, type, url) => {
+    if (!url) return;
+    // If same audio is playing, stop it
+    if (playingAudio && playingAudio.id === personaId && playingAudio.type === type) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      setPlayingAudio(null);
+      return;
+    }
+    // Stop any currently playing audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    const token = localStorage.getItem('token');
+    // Use presigned URL directly (already has auth in URL params)
+    const audio = new Audio(url);
+    audio.onended = () => {
+      setPlayingAudio(null);
+      audioRef.current = null;
+    };
+    audio.onerror = () => {
+      setPlayingAudio(null);
+      audioRef.current = null;
+    };
+    audio.play().catch(() => {
+      setPlayingAudio(null);
+      audioRef.current = null;
+    });
+    audioRef.current = audio;
+    setPlayingAudio({ id: personaId, type });
+  };
+
+  const handleDownload = (personaId, type) => {
+    const token = localStorage.getItem('token');
+    const baseURL = `${window.location.protocol}//${window.location.hostname}:9000/api`;
+    const url = `${baseURL}/voice-persona/${personaId}/${type}/download`;
+    // Open in new tab with auth — use fetch + blob for auth'd download
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => {
+        if (!res.ok) throw new Error('Download failed');
+        return res.blob();
+      })
+      .then(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${type}_${personaId}.mp3`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(err => alert('다운로드에 실패했습니다.'));
+  };
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  const fetchPersonas = useCallback(async () => {
+    try {
+      const { data } = await api.getVoicePersonas();
+      setPersonas(data.personas || []);
+    } catch (err) {
+      console.error('Failed to fetch voice personas:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPersonas();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [fetchPersonas]);
+
+  // Poll for in-progress personas
+  useEffect(() => {
+    const hasActive = personas.some(
+      (p) => p.status !== 'completed' && p.status !== 'failed'
+    );
+    if (hasActive && !pollRef.current) {
+      pollRef.current = setInterval(fetchPersonas, 8000);
+    } else if (!hasActive && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, [personas, fetchPersonas]);
+
+  // Fetch Kits.AI models when switching to kits tab
+  useEffect(() => {
+    if (voiceSubTab === 'kits' && !kitsLoaded) {
+      setKitsLoading(true);
+      api.getKitsVoiceModels()
+        .then(({ data }) => {
+          const models = data.voice_models?.data || data.voice_models || [];
+          setKitsModels(Array.isArray(models) ? models : []);
+          setKitsLoaded(true);
+        })
+        .catch(() => {
+          setKitsModels([]);
+          setKitsLoaded(true);
+        })
+        .finally(() => setKitsLoading(false));
+    }
+  }, [voiceSubTab, kitsLoaded]);
+
+  const handleCreate = async () => {
+    if (!voiceFile) {
+      alert('음성 파일을 선택해주세요.');
+      return;
+    }
+    if (!personaName.trim()) {
+      alert('Persona 이름을 입력해주세요.');
+      return;
+    }
+    setCreating(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', voiceFile);
+      formData.append('name', personaName.trim());
+      formData.append('description', personaDesc.trim());
+      await api.createVoicePersona(formData);
+      setVoiceFile(null);
+      setPersonaName('');
+      setPersonaDesc('');
+      setShowForm(false);
+      fetchPersonas();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Voice Persona 생성에 실패했습니다.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDelete = async (id, name) => {
+    if (!window.confirm(`"${name}" Persona를 삭제하시겠습니까?`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteVoicePersona(id);
+      setPersonas((prev) => prev.filter((p) => p.id !== id));
+    } catch (err) {
+      alert(err.response?.data?.error || '삭제에 실패했습니다.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const getStatusBadge = (status, progress) => {
+    const info = PERSONA_STATUS_MAP[status] || { label: status, color: '#94A3B8' };
+    return (
+      <span
+        className="vp-card__status"
+        style={{ background: `${info.color}20`, color: info.color }}
+      >
+        {info.label}{progress > 0 && progress < 100 ? ` (${progress}%)` : ''}
+      </span>
+    );
+  };
+
+  if (loading) {
+    return <div className="mymusic-loading">로딩 중...</div>;
+  }
+
+  return (
+    <div className="vp-section">
+      <div className="vp-section__header">
+        <h3 className="vp-section__title"><FiMic /> 내 목소리 (Voice Persona)</h3>
+      </div>
+
+      {/* Sub-tabs: 우회 방식 | Kits.AI */}
+      <div className="vp-subtabs">
+        <button
+          className={`vp-subtab ${voiceSubTab === 'suno' ? 'vp-subtab--active' : ''}`}
+          onClick={() => setVoiceSubTab('suno')}
+        >
+          우회 방식
+        </button>
+        <button
+          className={`vp-subtab ${voiceSubTab === 'kits' ? 'vp-subtab--active' : ''}`}
+          onClick={() => setVoiceSubTab('kits')}
+        >
+          Kits.AI
+        </button>
+      </div>
+
+      {/* ── 우회 방식 탭 ── */}
+      {voiceSubTab === 'suno' && (
+        <>
+          <div className="vp-subtab-toolbar">
+            <button
+              className="vp-section__add-btn"
+              onClick={() => setShowForm(!showForm)}
+            >
+              <FiPlus /> 목소리 추가
+            </button>
+          </div>
+
+          {showForm && (
+            <div className="vp-form">
+              <p className="vp-form__hint">
+                자신이 부른 노래 파일(mp3, wav 등)을 업로드하면 AI가 목소리를 분석하여 Voice Persona를 생성합니다.
+                이후 작업실2에서 음악 생성 시 이 목소리로 노래를 만들 수 있습니다.
+              </p>
+
+              <div className="vp-form__field">
+                <label className="vp-form__label">Persona 이름</label>
+                <input
+                  className="vp-form__input"
+                  type="text"
+                  value={personaName}
+                  onChange={(e) => setPersonaName(e.target.value)}
+                  placeholder="예: 내 목소리"
+                  maxLength={50}
+                />
+              </div>
+
+              <div className="vp-form__field">
+                <label className="vp-form__label">설명 (스타일)</label>
+                <input
+                  className="vp-form__input"
+                  type="text"
+                  value={personaDesc}
+                  onChange={(e) => setPersonaDesc(e.target.value)}
+                  placeholder="예: 따뜻한 남성 보컬, soft pop style"
+                  maxLength={200}
+                />
+              </div>
+
+              <div
+                className="vp-form__dropzone"
+                onClick={() => voiceInputRef.current?.click()}
+              >
+                <FiMic className="vp-form__dropzone-icon" />
+                <div className="vp-form__dropzone-text">
+                  <strong>클릭</strong>하여 노래 파일을 선택하세요
+                </div>
+                <div className="vp-form__dropzone-hint">MP3, WAV, M4A, OGG, FLAC (50MB 이하)</div>
+              </div>
+              <input
+                ref={voiceInputRef}
+                type="file"
+                accept=".mp3,.wav,.m4a,.ogg,.flac"
+                style={{ display: 'none' }}
+                onChange={(e) => setVoiceFile(e.target.files[0] || null)}
+              />
+              {voiceFile && (
+                <div className="vp-form__file-info">
+                  <FiMusic />
+                  <span className="vp-form__file-name">{voiceFile.name}</span>
+                  <button className="vp-form__file-remove" onClick={() => setVoiceFile(null)}>
+                    <FiTrash2 />
+                  </button>
+                </div>
+              )}
+
+              <div className="vp-form__actions">
+                <button
+                  className="vp-form__submit"
+                  onClick={handleCreate}
+                  disabled={creating || !voiceFile || !personaName.trim()}
+                >
+                  {creating ? (
+                    <><FiLoader className="vp-spin" /> Persona 생성 중...</>
+                  ) : (
+                    <><FiPlus /> Voice Persona 생성</>
+                  )}
+                </button>
+                <button className="vp-form__cancel" onClick={() => setShowForm(false)}>
+                  취소
+                </button>
+              </div>
+            </div>
+          )}
+
+          {personas.length === 0 && !showForm ? (
+            <div className="vp-empty">
+              <FiMic className="vp-empty__icon" />
+              <p className="vp-empty__text">아직 등록된 목소리가 없습니다.</p>
+              <p className="vp-empty__hint">
+                "목소리 추가" 버튼을 눌러 자신의 노래 파일을 업로드하세요.
+              </p>
+            </div>
+          ) : (
+            <div className="vp-list">
+              {personas.map((p) => (
+                <div key={p.id} className={`vp-card ${p.status === 'completed' ? 'vp-card--completed' : ''}`}>
+                  <div className="vp-card__icon">
+                    {p.status === 'completed' ? <FiCheck /> : <FiMic />}
+                  </div>
+                  <div className="vp-card__info">
+                    <div className="vp-card__name">{p.name}</div>
+                    {p.description && <div className="vp-card__desc">{p.description}</div>}
+                    <div className="vp-card__meta">
+                      {getStatusBadge(p.status, p.progress)}
+                      {p.error_message && (
+                        <span className="vp-card__error" title={p.error_message}>
+                          <FiAlertCircle /> {p.error_message.substring(0, 80)}
+                        </span>
+                      )}
+                    </div>
+                    {p.status !== 'completed' && p.status !== 'failed' && p.progress > 0 && (
+                      <div className="vp-card__progress-bar">
+                        <div
+                          className="vp-card__progress-fill"
+                          style={{ width: `${p.progress}%` }}
+                        />
+                      </div>
+                    )}
+                    {p.status === 'completed' && (p.has_vocal || p.has_cover) && (
+                      <div className="vp-card__audio-actions">
+                        {p.has_vocal && (
+                          <>
+                            <button
+                              className={`vp-card__audio-btn ${playingAudio?.id === p.id && playingAudio?.type === 'vocal' ? 'vp-card__audio-btn--playing' : ''}`}
+                              onClick={() => handlePlayAudio(p.id, 'vocal', p.vocal_url)}
+                              title="보컬 미리듣기"
+                            >
+                              {playingAudio?.id === p.id && playingAudio?.type === 'vocal' ? <FiSquare /> : <FiPlay />}
+                              <span>보컬</span>
+                            </button>
+                            <button
+                              className="vp-card__audio-btn vp-card__audio-btn--download"
+                              onClick={() => handleDownload(p.id, 'vocal')}
+                              title="보컬 다운로드"
+                            >
+                              <FiDownload />
+                            </button>
+                          </>
+                        )}
+                        {p.has_cover && (
+                          <>
+                            <button
+                              className={`vp-card__audio-btn ${playingAudio?.id === p.id && playingAudio?.type === 'cover' ? 'vp-card__audio-btn--playing' : ''}`}
+                              onClick={() => handlePlayAudio(p.id, 'cover', p.cover_url)}
+                              title="커버 미리듣기"
+                            >
+                              {playingAudio?.id === p.id && playingAudio?.type === 'cover' ? <FiSquare /> : <FiPlay />}
+                              <span>커버</span>
+                            </button>
+                            <button
+                              className="vp-card__audio-btn vp-card__audio-btn--download"
+                              onClick={() => handleDownload(p.id, 'cover')}
+                              title="커버 다운로드"
+                            >
+                              <FiDownload />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="vp-card__delete"
+                    onClick={() => handleDelete(p.id, p.name)}
+                    disabled={deletingId === p.id}
+                  >
+                    <FiTrash2 />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Kits.AI 탭 ── */}
+      {voiceSubTab === 'kits' && (
+        <div className="vp-kits">
+          {kitsLoading ? (
+            <div className="mymusic-loading">Kits.AI 모델 로딩 중...</div>
+          ) : kitsModels.length === 0 ? (
+            <div className="vp-empty">
+              <FiMic className="vp-empty__icon" />
+              <p className="vp-empty__text">등록된 Kits.AI 목소리 모델이 없습니다.</p>
+              <p className="vp-empty__hint">
+                Kits.AI 웹에서 목소리 모델을 학습시킨 후 이곳에서 확인할 수 있습니다.
+              </p>
+            </div>
+          ) : (
+            <div className="vp-list">
+              {kitsModels.map((m) => (
+                <div key={m.id} className="vp-card vp-card--completed">
+                  <div className="vp-card__icon">
+                    <FiCheck />
+                  </div>
+                  <div className="vp-card__info">
+                    <div className="vp-card__name">{m.title || m.name || `Model ${m.id}`}</div>
+                    <div className="vp-card__desc">ID: {m.id}</div>
+                    {m.demoUrl && (
+                      <div className="vp-card__audio-actions">
+                        <button
+                          className={`vp-card__audio-btn ${playingAudio?.id === m.id && playingAudio?.type === 'kits-demo' ? 'vp-card__audio-btn--playing' : ''}`}
+                          onClick={() => handlePlayAudio(m.id, 'kits-demo', m.demoUrl)}
+                          title="데모 미리듣기"
+                        >
+                          {playingAudio?.id === m.id && playingAudio?.type === 'kits-demo' ? <FiSquare /> : <FiPlay />}
+                          <span>데모</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="vp-kits__footer">
+            <p className="vp-kits__hint">모델 생성은 kits.ai 웹에서 진행해주세요</p>
+            <a
+              href="https://app.kits.ai/voices/instant"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="vp-kits__link"
+            >
+              Kits.AI에서 모델 생성하기
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -652,7 +1331,10 @@ export default function MyMusicPage() {
 
         {/* Tab 6: Character */}
         {activeTab === 'character' && (
-          <CharacterSection />
+          <>
+            <CharacterSection />
+            <VoicePersonaSection />
+          </>
         )}
 
         {/* Tab 7: Drafts */}

@@ -34,7 +34,6 @@ def _generate_jwt_token(access_key: str, secret_key: str) -> str:
     now = int(time.time())
     payload = {
         "iss": access_key,
-        "iat": now,
         "exp": now + 1800,
         "nbf": now - 5,
     }

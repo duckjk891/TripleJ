@@ -10,7 +10,7 @@ import uuid as uuid_lib
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -34,12 +34,34 @@ class SaveCharacterRequest(BaseModel):
 # ── POST /api/character/generate-sheet ──────────────────────────────────────
 
 
+async def _read_optional_image(upload: Optional[UploadFile]) -> tuple:
+    """Read an optional UploadFile and return (bytes, mime_type) or (None, None)."""
+    if upload is None or upload.filename is None or upload.filename == "":
+        return None, None
+    ext = os.path.splitext(upload.filename)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXT:
+        return None, None
+    data = await upload.read()
+    if len(data) > MAX_IMAGE_SIZE or len(data) == 0:
+        return None, None
+    mime = mimetypes.guess_type(upload.filename)[0] or "image/jpeg"
+    return data, mime
+
+
 @router.post("/generate-sheet")
 async def generate_sheet(
     file: UploadFile = File(...),
+    top_image: Optional[UploadFile] = File(None),
+    bottom_image: Optional[UploadFile] = File(None),
+    shoes_image: Optional[UploadFile] = File(None),
+    user_text: str = Form(""),
     current_user=Depends(get_current_user),
 ):
-    """Upload a reference photo and generate a photorealistic character sheet."""
+    """Upload a reference photo and generate a photorealistic character sheet.
+
+    Optional outfit images (top_image, bottom_image, shoes_image) can be
+    attached to override the corresponding outfit sections in the prompt.
+    """
     if not settings.google_api_key:
         return JSONResponse(
             status_code=503,
@@ -63,6 +85,11 @@ async def generate_sheet(
 
     mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
+    # Read optional outfit images
+    top_bytes, top_mime = await _read_optional_image(top_image)
+    bottom_bytes, bottom_mime = await _read_optional_image(bottom_image)
+    shoes_bytes, shoes_mime = await _read_optional_image(shoes_image)
+
     # Generate character sheet
     try:
         from ..services.character_generator import generate_character_sheet
@@ -70,6 +97,13 @@ async def generate_sheet(
         sheet_bytes = await generate_character_sheet(
             photo_bytes=contents,
             mime_type=mime_type,
+            top_bytes=top_bytes,
+            top_mime=top_mime,
+            bottom_bytes=bottom_bytes,
+            bottom_mime=bottom_mime,
+            shoes_bytes=shoes_bytes,
+            shoes_mime=shoes_mime,
+            user_text=user_text.strip(),
         )
     except Exception as e:
         return JSONResponse(
@@ -111,6 +145,91 @@ async def generate_sheet(
         "original_object_name": original_object,
         "preview_url": preview_url,
         "message": "캐릭터 시트가 생성되었습니다.",
+    }
+
+
+# ── POST /api/character/refine ─────────────────────────────────────────────
+
+
+@router.post("/refine")
+async def refine_sheet(
+    sheet_image: UploadFile = File(...),
+    photo: UploadFile = File(...),
+    refine_request: str = Form(...),
+    current_user=Depends(get_current_user),
+):
+    """Refine an existing character sheet based on user's modification request."""
+    if not settings.google_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Google API 키가 설정되지 않았습니다."},
+        )
+
+    # Read sheet image
+    sheet_bytes = await sheet_image.read()
+    if len(sheet_bytes) > MAX_IMAGE_SIZE or len(sheet_bytes) == 0:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "캐릭터 시트 이미지가 유효하지 않습니다."},
+        )
+
+    # Read original photo
+    photo_ext = os.path.splitext(photo.filename or "")[1].lower()
+    if photo_ext not in ALLOWED_IMAGE_EXT:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+        )
+    photo_bytes = await photo.read()
+    if len(photo_bytes) > MAX_IMAGE_SIZE or len(photo_bytes) == 0:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "사진 이미지가 유효하지 않습니다."},
+        )
+    photo_mime = mimetypes.guess_type(photo.filename or "")[0] or "image/jpeg"
+
+    if not refine_request.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "수정 요청 내용을 입력해주세요."},
+        )
+
+    # Call refine service
+    try:
+        from ..services.character_generator import refine_character_sheet
+
+        refined_bytes = await refine_character_sheet(
+            current_sheet_bytes=sheet_bytes,
+            photo_bytes=photo_bytes,
+            photo_mime=photo_mime,
+            refine_request=refine_request.strip(),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "캐릭터 시트 수정 실패: {}".format(str(e)[:200])},
+        )
+
+    # Save refined sheet to MinIO (temp location)
+    user_id = current_user["id"]
+    sheet_object = "characters/temp/{}/{}.png".format(
+        user_id, uuid_lib.uuid4().hex
+    )
+    minio_client = get_minio()
+    minio_client.put_object(
+        bucket_name=settings.minio_bucket_images,
+        object_name=sheet_object,
+        data=io.BytesIO(refined_bytes),
+        length=len(refined_bytes),
+        content_type="image/png",
+    )
+
+    preview_url = "/api/character/preview/{}".format(sheet_object)
+
+    return {
+        "object_name": sheet_object,
+        "preview_url": preview_url,
+        "message": "캐릭터 시트가 수정되었습니다.",
     }
 
 
