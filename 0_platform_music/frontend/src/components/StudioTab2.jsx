@@ -37,6 +37,592 @@ const MODEL_OPTIONS = [
 
 const STRUCTURE_TAGS = ['[Verse]', '[Chorus]', '[Bridge]', '[Outro]', '[Intro]', '[Pre-Chorus]', '[Instrumental]'];
 
+function MrPitchAdjustPanel({ generationId, onMergeComplete }) {
+  const [mrPitch, setMrPitch] = useState(0);
+  const [vocalVolume, setVocalVolume] = useState(0.7);
+  const [mrVolume, setMrVolume] = useState(0.85);
+  const [merging, setMerging] = useState(false);
+
+  const audioCtxRef = useRef(null);
+  const vocalBufferRef = useRef(null);
+  const mrBufferRef = useRef(null);
+  const vocalSourceRef = useRef(null);
+  const mrSourceRef = useRef(null);
+  const vocalGainRef = useRef(null);
+  const mrGainRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [playMode, setPlayMode] = useState('both');
+  const [pitchedMrBuffer, setPitchedMrBuffer] = useState(null);
+  const [pitchedMrPitch, setPitchedMrPitch] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+
+  useEffect(() => {
+    const loadAudio = async () => {
+      const token = localStorage.getItem('token');
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtxRef.current = ctx;
+
+      try {
+        const vocalResp = await fetch(api.streamConvertedVocal(generationId), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const vocalData = await vocalResp.arrayBuffer();
+        vocalBufferRef.current = await ctx.decodeAudioData(vocalData);
+
+        const mrResp = await fetch(api.streamBacking(generationId), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const mrData = await mrResp.arrayBuffer();
+        mrBufferRef.current = await ctx.decodeAudioData(mrData);
+
+        setLoading(false);
+      } catch (err) {
+        console.error('Failed to load audio:', err);
+      }
+    };
+    loadAudio();
+
+    return () => {
+      stopPlayback();
+      if (audioCtxRef.current) audioCtxRef.current.close();
+    };
+  }, [generationId]);
+
+  const stopPlayback = () => {
+    try { vocalSourceRef.current?.stop(); } catch {}
+    try { mrSourceRef.current?.stop(); } catch {}
+    setIsPlaying(false);
+  };
+
+  const startPlayback = () => {
+    if (!audioCtxRef.current || !vocalBufferRef.current || !mrBufferRef.current) return;
+    stopPlayback();
+
+    const ctx = audioCtxRef.current;
+
+    const vocalSource = ctx.createBufferSource();
+    vocalSource.buffer = vocalBufferRef.current;
+    const vocalGain = ctx.createGain();
+    vocalGain.gain.value = playMode === 'mr' ? 0 : vocalVolume;
+    vocalSource.connect(vocalGain).connect(ctx.destination);
+    vocalGainRef.current = vocalGain;
+    vocalSourceRef.current = vocalSource;
+
+    // MR source: use pitched buffer if available, otherwise original
+    const mrBuffer = (pitchedMrBuffer && pitchedMrPitch === mrPitch)
+      ? pitchedMrBuffer
+      : mrBufferRef.current;
+
+    const mrSource = ctx.createBufferSource();
+    mrSource.buffer = mrBuffer;
+    const mrGain = ctx.createGain();
+    mrGain.gain.value = playMode === 'vocal' ? 0 : mrVolume;
+    mrSource.connect(mrGain).connect(ctx.destination);
+    mrGainRef.current = mrGain;
+    mrSourceRef.current = mrSource;
+
+    vocalSource.start();
+    mrSource.start();
+    setIsPlaying(true);
+
+    vocalSource.onended = () => setIsPlaying(false);
+  };
+
+  useEffect(() => {
+    if (vocalGainRef.current) {
+      vocalGainRef.current.gain.value = playMode === 'mr' ? 0 : vocalVolume;
+    }
+  }, [vocalVolume, playMode]);
+
+  useEffect(() => {
+    if (mrGainRef.current) {
+      mrGainRef.current.gain.value = playMode === 'vocal' ? 0 : mrVolume;
+    }
+  }, [mrVolume, playMode]);
+
+  useEffect(() => {
+    // pitchedMrPitch와 mrPitch가 다르면 미리듣기 버튼으로 유도
+    // (실시간 변경 없음 - 서버 처리 필요)
+  }, [mrPitch]);
+
+  const handlePreviewPitch = async () => {
+    if (mrPitch === pitchedMrPitch && pitchedMrBuffer) return;
+    setLoadingPreview(true);
+    try {
+      const { data } = await api.previewMrPitched(generationId, mrPitch);
+      const ctx = audioCtxRef.current;
+      const buffer = await ctx.decodeAudioData(data);
+      setPitchedMrBuffer(buffer);
+      setPitchedMrPitch(mrPitch);
+    } catch (err) {
+      alert('MR 피치 변환 실패: ' + (err.message || ''));
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const handleMerge = async () => {
+    setMerging(true);
+    try {
+      await api.mergeVoiceConversion(generationId, {
+        mr_pitch_shift: mrPitch,
+        vocal_volume: vocalVolume,
+        mr_volume: mrVolume,
+      });
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const { data } = await api.getVoiceConvertStatus(generationId);
+        if (data.voice_conversion_status === 'completed') {
+          onMergeComplete();
+          return;
+        }
+        if (data.voice_conversion_status === 'failed') {
+          alert('합치기 실패: ' + (data.voice_conversion_error || ''));
+          break;
+        }
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || '합치기에 실패했습니다.');
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const handleReset = () => {
+    setMrPitch(0);
+    setVocalVolume(0.7);
+    setMrVolume(0.85);
+  };
+
+  if (loading) {
+    return (
+      <div className="mr-pitch__panel">
+        <div className="mr-pitch__loading">
+          <FiLoader className="s2__spin" /> 오디오 로딩 중...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mr-pitch__panel">
+      <div className="mr-pitch__header">
+        <FiSliders className="mr-pitch__icon" />
+        <span>MR 음정 조절 & 합치기</span>
+      </div>
+
+      {/* Play Mode Selector */}
+      <div className="mr-pitch__mode-tabs">
+        <button
+          className={`mr-pitch__mode-tab ${playMode === 'vocal' ? 'mr-pitch__mode-tab--active' : ''}`}
+          onClick={() => setPlayMode('vocal')}
+        >
+          <FiMic /> 보컬만
+        </button>
+        <button
+          className={`mr-pitch__mode-tab ${playMode === 'mr' ? 'mr-pitch__mode-tab--active' : ''}`}
+          onClick={() => setPlayMode('mr')}
+        >
+          <FiMusic /> MR만
+        </button>
+        <button
+          className={`mr-pitch__mode-tab ${playMode === 'both' ? 'mr-pitch__mode-tab--active' : ''}`}
+          onClick={() => setPlayMode('both')}
+        >
+          <FiZap /> 합쳐서
+        </button>
+      </div>
+
+      {/* Play / Stop */}
+      <button
+        className={`mr-pitch__play-btn ${isPlaying ? 'mr-pitch__play-btn--active' : ''}`}
+        onClick={isPlaying ? stopPlayback : startPlayback}
+      >
+        {isPlaying ? <><FiPause /> 정지</> : <><FiPlay /> 미리 듣기</>}
+      </button>
+
+      {/* MR Pitch Slider */}
+      <div className="mr-pitch__section">
+        <label className="mr-pitch__label">MR 음정 조절</label>
+        <div className="mr-pitch__value-display">
+          {mrPitch > 0 ? '+' : ''}{mrPitch} 반음
+        </div>
+        <input
+          type="range"
+          className="mr-pitch__slider"
+          min={-12}
+          max={12}
+          step={0.5}
+          value={mrPitch}
+          onChange={(e) => setMrPitch(parseFloat(e.target.value))}
+        />
+        <div className="mr-pitch__quick-btns">
+          <button onClick={() => setMrPitch((p) => Math.max(-12, p - 1))}>-1</button>
+          <button onClick={() => setMrPitch((p) => Math.max(-12, p - 0.5))}>-0.5</button>
+          <button onClick={() => setMrPitch(0)}>원래 음정</button>
+          <button onClick={() => setMrPitch((p) => Math.min(12, p + 0.5))}>+0.5</button>
+          <button onClick={() => setMrPitch((p) => Math.min(12, p + 1))}>+1</button>
+        </div>
+        <div className="mr-pitch__preview-btn-wrap">
+          <button
+            className="mr-pitch__preview-btn"
+            onClick={handlePreviewPitch}
+            disabled={loadingPreview || mrPitch === 0}
+          >
+            {loadingPreview ? '변환 중...' : `이 음정(${mrPitch > 0 ? '+' : ''}${mrPitch})으로 미리듣기 적용`}
+          </button>
+          {pitchedMrPitch !== null && pitchedMrPitch === mrPitch && (
+            <span className="mr-pitch__preview-applied">&#10003; 적용됨</span>
+          )}
+          {mrPitch === 0 && (
+            <span className="mr-pitch__preview-note">원래 음정은 변환 불필요</span>
+          )}
+        </div>
+      </div>
+
+      {/* Vocal Volume Slider */}
+      <div className="mr-pitch__section">
+        <label className="mr-pitch__label">
+          보컬 볼륨 <span className="mr-pitch__vol-val">{Math.round(vocalVolume * 100)}%</span>
+        </label>
+        <input
+          type="range"
+          className="mr-pitch__slider"
+          min={0}
+          max={1}
+          step={0.05}
+          value={vocalVolume}
+          onChange={(e) => setVocalVolume(parseFloat(e.target.value))}
+        />
+      </div>
+
+      {/* MR Volume Slider */}
+      <div className="mr-pitch__section">
+        <label className="mr-pitch__label">
+          MR 볼륨 <span className="mr-pitch__vol-val">{Math.round(mrVolume * 100)}%</span>
+        </label>
+        <input
+          type="range"
+          className="mr-pitch__slider"
+          min={0}
+          max={1}
+          step={0.05}
+          value={mrVolume}
+          onChange={(e) => setMrVolume(parseFloat(e.target.value))}
+        />
+      </div>
+
+      {/* Action Buttons */}
+      <div className="mr-pitch__actions">
+        <button className="mr-pitch__reset-btn" onClick={handleReset}>
+          <FiRefreshCw /> 원래 음정으로 초기화
+        </button>
+        <button
+          className="mr-pitch__merge-btn"
+          onClick={handleMerge}
+          disabled={merging}
+        >
+          {merging ? (
+            <><FiLoader className="s2__spin" /> 합치는 중...</>
+          ) : (
+            <><FiCheck /> 이 설정으로 최종 합치기</>
+          )}
+        </button>
+      </div>
+
+      {merging && (
+        <div className="mr-pitch__merging-status">
+          <FiLoader className="s2__spin" />
+          <span>서버에서 합치는 중... 잠시만 기다려주세요.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DEFAULT_LYRICS = `[Verse]
+새벽 공기를 마시며 걸어가는 이 길
+어제의 나를 두고 오늘을 시작해
+흐릿한 가로등 아래 긴 그림자 하나
+조용히 나를 따라와
+
+[Chorus]
+괜찮아 천천히 가도 돼
+멈춰도 돼 쉬어가도 돼
+이 길의 끝에 뭐가 있든
+지금 이 한 걸음이면 돼
+
+[Verse]
+창문 너머로 보이는 하늘은 여전히
+어제와 같은 색인데
+내 마음만 달라져 있어
+작은 용기 하나 품고서
+
+[Chorus]
+괜찮아 천천히 가도 돼
+멈춰도 돼 쉬어가도 돼
+이 길의 끝에 뭐가 있든
+지금 이 한 걸음이면 돼
+
+[Outro]
+한 걸음 또 한 걸음
+나는 걸어가고 있어`;
+
+const WONDERA_MODELS = [
+  { value: 'auto', label: 'Auto (자동 선택)' },
+  { value: 'wondera-2.1', label: 'Wondera 2.1' },
+  { value: 'wondera-2.2', label: 'Wondera 2.2' },
+  { value: 'wondera-o1', label: 'Wondera O1' },
+  { value: 'wondera-o2', label: 'Wondera O2' },
+];
+
+function WonderaTestSection() {
+  // Upload state
+  const [vocalFile, setVocalFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [vocalId, setVocalId] = useState(null);
+
+  // Generate state
+  const [wLyrics, setWLyrics] = useState(DEFAULT_LYRICS);
+  const [wPrompt, setWPrompt] = useState('k-pop, ballad, emotional, female vocal');
+  const [wModel, setWModel] = useState('auto');
+
+  // Generation tasks
+  const [, setAiTaskId] = useState(null);
+  const [, setMyTaskId] = useState(null);
+  const [aiStatus, setAiStatus] = useState(null);
+  const [myStatus, setMyStatus] = useState(null);
+  const [aiResult, setAiResult] = useState(null);
+  const [myResult, setMyResult] = useState(null);
+  const [aiError, setAiError] = useState(null);
+  const [myError, setMyError] = useState(null);
+
+  // Upload handler
+  const handleUpload = async () => {
+    if (!vocalFile) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', vocalFile);
+      const { data } = await api.wonderaUploadVocal(formData);
+      const id = data?.data?.id;
+      if (id) {
+        setVocalId(id);
+      } else {
+        alert('업로드 실패: ID를 받지 못했습니다. 응답: ' + JSON.stringify(data));
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || '업로드 실패');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Poll helper
+  const pollTask = async (taskId, setStatus, setResult, setError) => {
+    setStatus('generating');
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const { data } = await api.wonderaQuery(taskId);
+        const taskData = data?.data || data;
+        const status = taskData?.status;
+
+        if (status === 'succeeded') {
+          setStatus('succeeded');
+          setResult(taskData);
+          return;
+        } else if (status === 'failed' || status === 'timeouted' || status === 'cancelled') {
+          setStatus('failed');
+          setError(taskData?.error_info || status);
+          return;
+        }
+      } catch (err) {
+        console.error('Poll error:', err);
+      }
+    }
+    setStatus('failed');
+    setError('시간 초과');
+  };
+
+  // Generate AI vocal version (no vocal_id)
+  const handleGenerateAI = async () => {
+    setAiStatus('generating');
+    setAiResult(null);
+    setAiError(null);
+    try {
+      const payload = { lyrics: wLyrics, model: wModel, prompt: wPrompt };
+      const { data } = await api.wonderaGenerate(payload);
+      const taskId = data?.data?.task_id;
+      if (!taskId) {
+        setAiStatus('failed');
+        setAiError('task_id를 받지 못했습니다. 응답: ' + JSON.stringify(data));
+        return;
+      }
+      setAiTaskId(taskId);
+      pollTask(taskId, setAiStatus, setAiResult, setAiError);
+    } catch (err) {
+      setAiStatus('failed');
+      setAiError(err.response?.data?.error || '생성 실패');
+    }
+  };
+
+  // Generate my voice version (with vocal_id)
+  const handleGenerateMy = async () => {
+    if (!vocalId) {
+      alert('먼저 목소리 파일을 업로드해주세요.');
+      return;
+    }
+    setMyStatus('generating');
+    setMyResult(null);
+    setMyError(null);
+    try {
+      const payload = { lyrics: wLyrics, model: wModel, vocal_id: vocalId };
+      if (wPrompt) payload.prompt = wPrompt;
+      const { data } = await api.wonderaGenerate(payload);
+      const taskId = data?.data?.task_id;
+      if (!taskId) {
+        setMyStatus('failed');
+        setMyError('task_id를 받지 못했습니다. 응답: ' + JSON.stringify(data));
+        return;
+      }
+      setMyTaskId(taskId);
+      pollTask(taskId, setMyStatus, setMyResult, setMyError);
+    } catch (err) {
+      setMyStatus('failed');
+      setMyError(err.response?.data?.error || '생성 실패');
+    }
+  };
+
+  // Extract audio URL from result
+  const getAudioUrl = (result) => {
+    if (!result) return null;
+    const songs = result.songs || result.data?.songs || [];
+    if (songs.length > 0) return songs[0].audio_url || songs[0].url;
+    return result.audio_url || result.url || null;
+  };
+
+  return (
+    <div className="wondera-test">
+      <h3 className="wondera-test__title">🧪 Wondera API 테스트</h3>
+
+      {/* Upload */}
+      <div className="wondera-test__section">
+        <label className="wondera-test__label">① 내 목소리 업로드 (mp3, m4a / 15~30초)</label>
+        <div className="wondera-test__upload-row">
+          <input
+            type="file"
+            accept=".mp3,.m4a"
+            onChange={(e) => setVocalFile(e.target.files[0])}
+          />
+          <button
+            className="wondera-test__btn"
+            onClick={handleUpload}
+            disabled={!vocalFile || uploading}
+          >
+            {uploading ? '업로드 중...' : '업로드'}
+          </button>
+        </div>
+        {vocalId && (
+          <div className="wondera-test__success">✓ vocal_id: {vocalId}</div>
+        )}
+      </div>
+
+      {/* Lyrics & Style */}
+      <div className="wondera-test__section">
+        <label className="wondera-test__label">② 가사 & 스타일</label>
+        <textarea
+          className="wondera-test__textarea"
+          value={wLyrics}
+          onChange={(e) => setWLyrics(e.target.value)}
+          rows={12}
+        />
+        <div className="wondera-test__row">
+          <div className="wondera-test__field">
+            <label>스타일 프롬프트</label>
+            <input
+              type="text"
+              value={wPrompt}
+              onChange={(e) => setWPrompt(e.target.value)}
+              placeholder="k-pop, ballad, emotional..."
+            />
+          </div>
+          <div className="wondera-test__field">
+            <label>모델</label>
+            <select value={wModel} onChange={(e) => setWModel(e.target.value)}>
+              {WONDERA_MODELS.map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Generate */}
+      <div className="wondera-test__section">
+        <label className="wondera-test__label">③ 생성</label>
+        <div className="wondera-test__gen-row">
+          <button
+            className="wondera-test__btn wondera-test__btn--ai"
+            onClick={handleGenerateAI}
+            disabled={aiStatus === 'generating' || !wLyrics}
+          >
+            {aiStatus === 'generating' ? '생성 중...' : '🎵 AI 보컬로 생성'}
+          </button>
+          <button
+            className="wondera-test__btn wondera-test__btn--my"
+            onClick={handleGenerateMy}
+            disabled={myStatus === 'generating' || !wLyrics || !vocalId}
+          >
+            {myStatus === 'generating' ? '생성 중...' : '🎤 내 목소리로 생성'}
+          </button>
+        </div>
+
+        {aiStatus === 'generating' && <div className="wondera-test__status">AI 보컬: 생성 중... (최대 3분 소요)</div>}
+        {myStatus === 'generating' && <div className="wondera-test__status">내 목소리: 생성 중... (최대 3분 소요)</div>}
+        {aiError && <div className="wondera-test__error">AI 보컬 에러: {aiError}</div>}
+        {myError && <div className="wondera-test__error">내 목소리 에러: {myError}</div>}
+      </div>
+
+      {/* Results */}
+      {(aiResult || myResult) && (
+        <div className="wondera-test__section">
+          <label className="wondera-test__label">④ 결과 비교</label>
+          <div className="wondera-test__results">
+            {aiResult && (
+              <div className="wondera-test__result-card">
+                <h4>AI 보컬 버전</h4>
+                {getAudioUrl(aiResult) ? (
+                  <>
+                    <audio controls src={getAudioUrl(aiResult)} style={{width:'100%'}} />
+                    <a href={getAudioUrl(aiResult)} download className="wondera-test__download">⬇ 다운로드</a>
+                  </>
+                ) : (
+                  <div className="wondera-test__raw">응답: {JSON.stringify(aiResult, null, 2)}</div>
+                )}
+              </div>
+            )}
+            {myResult && (
+              <div className="wondera-test__result-card wondera-test__result-card--my">
+                <h4>내 목소리 버전</h4>
+                {getAudioUrl(myResult) ? (
+                  <>
+                    <audio controls src={getAudioUrl(myResult)} style={{width:'100%'}} />
+                    <a href={getAudioUrl(myResult)} download className="wondera-test__download">⬇ 다운로드</a>
+                  </>
+                ) : (
+                  <div className="wondera-test__raw">응답: {JSON.stringify(myResult, null, 2)}</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function StudioTab2({ onSendToUpload }) {
   // ─── Mode: 'simple' or 'custom' ───
   const [mode, setMode] = useState('custom');
@@ -123,7 +709,7 @@ export default function StudioTab2({ onSendToUpload }) {
   useEffect(() => {
     const hasProcessing = generations.some((g) =>
       g.status === 'processing' || g.status === 'pending' ||
-      (g.voice_conversion_status && g.voice_conversion_status !== 'completed' && g.voice_conversion_status !== 'failed' && g.voice_conversion_status !== null)
+      (g.voice_conversion_status && g.voice_conversion_status !== 'completed' && g.voice_conversion_status !== 'failed' && g.voice_conversion_status !== 'awaiting_merge' && g.voice_conversion_status !== null)
     );
     if (hasProcessing && !pollRef.current) {
       pollRef.current = setInterval(fetchHistory, 10000);
@@ -478,6 +1064,7 @@ export default function StudioTab2({ onSendToUpload }) {
       case 'pending': return '대기 중';
       case 'converting': return '변환 중';
       case 'merging': return '합치는 중';
+      case 'awaiting_merge': return 'MR 조절 대기';
       case 'uploading': return '업로드 중';
       case 'completed': return '완료';
       case 'failed': return '실패';
@@ -510,6 +1097,12 @@ export default function StudioTab2({ onSendToUpload }) {
           onClick={() => setMode('custom')}
         >
           <FiSliders /> 커스텀 모드
+        </button>
+        <button
+          className={`s2__mode-btn ${mode === 'wondera' ? 's2__mode-btn--active' : ''}`}
+          onClick={() => setMode('wondera')}
+        >
+          <FiMusic /> 테스트 Wondera
         </button>
       </div>
 
@@ -949,6 +1542,10 @@ export default function StudioTab2({ onSendToUpload }) {
       )}
       </>)}
 
+      {mode === 'wondera' && (
+        <WonderaTestSection />
+      )}
+
       {/* ─── Generation History ─── */}
       <div className="s2__history">
         <div className="s2__history-header">
@@ -1036,7 +1633,11 @@ export default function StudioTab2({ onSendToUpload }) {
                 )}
 
                 {/* Voice Conversion Status */}
-                {gen.voice_conversion_status && gen.voice_conversion_status !== 'completed' && gen.voice_conversion_status !== 'failed' && (
+                {gen.voice_conversion_status === 'awaiting_merge' && (
+                  <MrPitchAdjustPanel generationId={gen.id} onMergeComplete={() => fetchHistory()} />
+                )}
+
+                {gen.voice_conversion_status && gen.voice_conversion_status !== 'completed' && gen.voice_conversion_status !== 'failed' && gen.voice_conversion_status !== 'awaiting_merge' && (
                   <div className="s2__vc-status">
                     <FiRepeat className="s2__spin" />
                     <span>목소리 변환: {vcStatusLabel(gen.voice_conversion_status)}</span>

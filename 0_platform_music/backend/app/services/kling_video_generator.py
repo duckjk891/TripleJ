@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # ── API URLs ──────────────────────────────────────────────────────────────────
 
-KLING_BASE_URL = "https://api.klingai.com"
-KLING_IMAGE2VIDEO_URL = "{}/v1/videos/image2video".format(KLING_BASE_URL)
+KLING_BASE_URL = "https://api-singapore.klingai.com"
+KLING_OMNI_VIDEO_URL = "{}/v1/videos/omni-video".format(KLING_BASE_URL)
 
 
 # ── JWT Token Generation ─────────────────────────────────────────────────────
@@ -63,33 +63,91 @@ def _get_auth_header() -> dict:
 async def start_scene_video_kling(
     prompt: str,
     image_bytes: Optional[bytes] = None,
+    prev_scene_image_bytes: Optional[bytes] = None,
+    character_image_bytes: Optional[bytes] = None,
+    lyrics_segment: str = None,
+    scene_type: str = "drama",
+    duration: float = 10.0,
 ) -> str:
-    """Start image-to-video generation via Kling API.
+    """Start image-to-video generation via Kling Omni Video API.
+
+    Uses image_list at top level (no input wrapper).
+    - image_bytes: current scene image as first_frame (auto-applied, no prompt ref)
+    - prev_scene_image_bytes: previous scene image for continuity (<<<image_1>>>)
+    - character_image_bytes: character sheet for consistency (<<<image_2>>> or <<<image_1>>>)
 
     Returns task_id for status polling.
     """
     if not settings.kling_access_key or not settings.kling_secret_key:
         raise ValueError("Kling API 키가 설정되지 않았습니다.")
 
-    video_prompt = "{}, smooth cinematic camera movement".format(prompt)
+    mv_context = "A cinematic scene from a professional music video. "
 
-    body = {
-        "model_name": "kling-v3",
-        "prompt": video_prompt,
-        "mode": "std",
-        "duration": "10",
-    }
+    # Build reference descriptions for prompt
+    # first_frame images are auto-applied and NOT counted in <<<image_N>>> indexing
+    # Only non-first_frame reference images get <<<image_N>>> references
+    ref_parts = []
+    if prev_scene_image_bytes:
+        ref_parts.append("Maintain visual continuity with the previous scene shown in <<<image_1>>>.")
+    if character_image_bytes:
+        img_idx = 2 if prev_scene_image_bytes else 1
+        ref_parts.append("The character in <<<image_{}>>> must appear prominently, maintaining exact appearance.".format(img_idx))
 
+    ref_text = " ".join(ref_parts)
+
+    if scene_type == "lipsync" and lyrics_segment:
+        video_prompt = "{}{} {} ONLY the main character appears in this scene, no other people. The main character faces the camera ALONE and sings these lyrics with synchronized lip movements: \"{}\"".format(
+            mv_context, prompt, ref_text, lyrics_segment
+        )
+    else:
+        video_prompt = "{}{} {} Smooth cinematic camera movement.".format(mv_context, prompt, ref_text)
+
+    # Build image_list (TOP LEVEL, no "input" wrapper)
+    image_list = []
+
+    # 1. Current scene image -> first_frame (video start frame, auto-applied)
     if image_bytes:
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-        body["image"] = image_b64
+        image_list.append({
+            "image_url": "{}".format(image_b64),
+            "type": "first_frame",
+        })
+
+    # 2. Previous scene image -> reference (no type) -> <<<image_1>>>
+    if prev_scene_image_bytes:
+        prev_b64 = base64.b64encode(prev_scene_image_bytes).decode("utf-8")
+        image_list.append({
+            "image_url": "{}".format(prev_b64),
+        })
+
+    # 3. Character sheet -> reference (no type) -> <<<image_2>>> or <<<image_1>>>
+    if character_image_bytes:
+        char_b64 = base64.b64encode(character_image_bytes).decode("utf-8")
+        image_list.append({
+            "image_url": "{}".format(char_b64),
+        })
+
+    # Kling duration: 3~15초, 정수 문자열
+    kling_duration = max(3, min(15, int(round(duration))))
+
+    body = {
+        "model_name": "kling-v3-omni",
+        "prompt": video_prompt,
+        "mode": "pro",
+        "duration": str(kling_duration),
+        "aspect_ratio": "16:9",
+        "sound": "off",
+    }
+
+    if image_list:
+        body["image_list"] = image_list  # TOP LEVEL, no "input" wrapper
 
     headers = _get_auth_header()
     headers["Content-Type"] = "application/json"
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            KLING_IMAGE2VIDEO_URL,
+            KLING_OMNI_VIDEO_URL,
             headers=headers,
             json=body,
         )
@@ -124,7 +182,7 @@ async def check_scene_video_status_kling(task_id: str) -> dict:
 
     Returns {"done": bool, "video_url": str or None, "error": str or None}
     """
-    url = "{}/v1/videos/image2video/{}".format(KLING_BASE_URL, task_id)
+    url = "{}/v1/videos/omni-video/{}".format(KLING_BASE_URL, task_id)
     headers = _get_auth_header()
 
     async with httpx.AsyncClient(timeout=30.0) as client:

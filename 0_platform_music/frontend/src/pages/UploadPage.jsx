@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiUploadCloud, FiMusic, FiX, FiImage, FiZap, FiRefreshCw, FiAlertTriangle, FiCheck, FiPlay } from 'react-icons/fi';
+import { FiUploadCloud, FiMusic, FiX, FiImage, FiZap, FiRefreshCw, FiAlertTriangle, FiCheck, FiPlay, FiDownload, FiLoader } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './UploadPage.css';
@@ -72,11 +72,16 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [mvObjectName, setMvObjectName] = useState(null);
   const [mvProgressPct, setMvProgressPct] = useState(0);
   const [mvRegeneratingScene, setMvRegeneratingScene] = useState(null);
+  const [generatingSceneVideo, setGeneratingSceneVideo] = useState(null);
   const [mvUploadingScene, setMvUploadingScene] = useState(null);
   const [mvCoverObjectName, setMvCoverObjectName] = useState(null);
   const [scenesInvalidated, setScenesInvalidated] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftSaveMsg, setDraftSaveMsg] = useState('');
+  const [selectedScene, setSelectedScene] = useState(null);
+  const [selectedVideo, setSelectedVideo] = useState(null);
+  const [vocalPreview, setVocalPreview] = useState(null); // {original_audio_url, vocal_audio_url, scene_number}
+  const [separatingVocal, setSeparatingVocal] = useState(null); // scene_number being separated
 
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -156,7 +161,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         setVideoModel(data.video_model);
       }
       // If in an active state, start polling
-      if (['splitting', 'generating_images', 'generating_videos', 'concatenating', 'merging_audio'].includes(data.status)) {
+      if (['splitting', 'generating_images', 'generating_videos', 'synclabs_processing', 'concatenating', 'merging_audio'].includes(data.status)) {
         startMvPolling(jobId);
       }
     } catch (err) {
@@ -174,6 +179,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       case 'videos_ready':
         return 2;
       case 'generating_videos':
+      case 'synclabs_processing':
       case 'concatenating':
         return 3;
       case 'paused':
@@ -256,7 +262,13 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
     mvPollIntervalRef.current = setInterval(async () => {
       try {
         const { data } = await api.getMVJobDetail(jobId);
-        setMvJob(data);
+        setMvJob(prev => {
+          // Preserve previous scenes if the new response doesn't include them
+          if (prev?.scenes?.length && (!data.scenes || data.scenes.length === 0)) {
+            return { ...data, scenes: prev.scenes };
+          }
+          return data;
+        });
         setMvProgressPct(data.progress || 0);
 
         const newStep = mapStatusToStep(data.status);
@@ -397,6 +409,86 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       alert(err.response?.data?.error || '이미지 재생성에 실패했습니다.');
     } finally {
       setMvRegeneratingScene(null);
+    }
+  };
+
+  const handleGenerateSceneVideo = async (sceneNumber) => {
+    const jobId = mvJob?.job_id || mvJobId;
+    if (!jobId) return;
+    setGeneratingSceneVideo(sceneNumber);
+    try {
+      await api.generateSceneVideo(jobId, sceneNumber);
+      // 개별 씬 영상 생성 전용 폴링 (5초 간격, 최대 120회 = 10분)
+      const pollInterval = setInterval(async () => {
+        try {
+          const { data } = await api.getMVJobDetail(jobId);
+          setMvJob(data);
+          // 해당 씬의 video_status 확인
+          const targetScene = data.scenes?.find(s => s.scene_number === sceneNumber);
+          if (targetScene && targetScene.video_status !== 'generating') {
+            clearInterval(pollInterval);
+            setGeneratingSceneVideo(null);
+          }
+        } catch (err) {
+          console.error('Poll error:', err);
+        }
+      }, 5000);
+      // 10분 타임아웃
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setGeneratingSceneVideo(null);
+      }, 600000);
+    } catch (err) {
+      alert(err.response?.data?.error || '영상 생성 실패');
+      setGeneratingSceneVideo(null);
+    }
+  };
+
+  const handleRetrySyncLabs = async (sceneNumber) => {
+    const jobId = mvJob?.job_id || mvJob?.id || mvJobId;
+    if (!jobId) {
+      alert('작업 ID를 찾을 수 없습니다.');
+      return;
+    }
+    try {
+      const resp = await api.retrySyncLabs(jobId, sceneNumber);
+      console.log('retrySyncLabs response:', resp);
+      alert('립싱크 시도를 시작했습니다. 잠시 후 새로고침해주세요.');
+    } catch (err) {
+      console.error('retrySyncLabs error:', err);
+      const msg = err?.response?.data?.error || err?.message || '립싱크 재시도 실패';
+      alert(msg);
+    }
+  };
+
+  const handleStartLipsync = async (sceneNumber) => {
+    const jobId = mvJob?.job_id || mvJob?.id || mvJobId;
+    if (!jobId) return;
+    setSeparatingVocal(sceneNumber);
+    try {
+      const { data } = await api.separateVocal(jobId, sceneNumber);
+      // Backend returns data URLs (base64) directly - no need for fetch
+      setVocalPreview(data);
+    } catch (err) {
+      console.error('보컬분리 에러:', err);
+      const msg = err.response?.data?.error || err.message || '보컬 분리 실패';
+      alert('보컬 분리 실패: ' + msg);
+    } finally {
+      setSeparatingVocal(null);
+    }
+  };
+
+  const handleConfirmLipsync = async () => {
+    if (!vocalPreview) return;
+    const jobId = mvJob?.job_id || mvJob?.id || mvJobId;
+    if (!jobId) return;
+    const sceneNumber = vocalPreview.scene_number;
+    setVocalPreview(null);
+    try {
+      await api.retrySyncLabs(jobId, sceneNumber);
+      alert('립싱크 처리를 시작했습니다. 잠시 후 새로고침해주세요.');
+    } catch (err) {
+      alert(err.response?.data?.error || '립싱크 시작 실패');
     }
   };
 
@@ -604,6 +696,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       case 'splitting': return '장면 분석 중...';
       case 'generating_images': return `장면 이미지 생성 중... (${getCompletedImageCount()}/${mvJob.total_scenes || 0})`;
       case 'generating_videos': return `영상 클립 생성 중... (${getCompletedVideoCount()}/${mvJob.total_scenes || 0})`;
+      case 'synclabs_processing': return `립싱크 자동 적용 중... (${mvJob.synclabs_completed || 0}/${mvJob.synclabs_total || '?'})`;
       case 'concatenating': return '영상 합치는 중...';
       case 'merging_audio': return '음악과 영상을 합치는 중...';
       default: return '처리 중...';
@@ -959,28 +1052,51 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                                   src={scene.image_url}
                                   alt={`씬 ${scene.scene_number || i + 1}`}
                                   className="upload-mv-scene-card__img"
+                                  onClick={() => setSelectedScene(scene)}
+                                  style={{ cursor: 'pointer' }}
                                 />
                               ) : (
                                 <div className="upload-mv-scene-card__img-placeholder">
                                   <FiImage />
                                 </div>
                               )}
+                              {/* Video status overlay */}
                               {scene.video_url && (
-                                <div className="upload-mv-scene-card__video-badge">
-                                  <FiPlay /> 영상 완료
+                                <div
+                                  className="upload-mv-scene-card__video-overlay"
+                                  onClick={(e) => { e.stopPropagation(); setSelectedVideo(scene); }}
+                                >
+                                  <FiPlay className="upload-mv-scene-card__play-icon" />
+                                </div>
+                              )}
+                              {scene.video_status === 'generating' && (
+                                <div className="upload-mv-scene-card__video-generating">
+                                  <FiLoader className="upload-mv-scene-card__spinner" />
+                                  생성중
+                                </div>
+                              )}
+                              {scene.video_status === 'pending' && !scene.video_url && scene.video_status !== 'generating' && (
+                                <div className="upload-mv-scene-card__video-pending">
+                                  ⏳
+                                </div>
+                              )}
+                              {scene.video_status === 'failed' && (
+                                <div className="upload-mv-scene-card__video-failed">
+                                  ❌ 실패
                                 </div>
                               )}
                             </div>
                             <div className="upload-mv-scene-card__info">
-                              {(scene.section || scene.use_seconds) && (
+                              {(scene.section || scene.use_seconds || scene.scene_type) && (
                                 <div className="upload-mv-scene-card__section-info">
                                   {scene.section && <span className="upload-mv-scene-card__section-label">{scene.section}</span>}
+                                  {scene.scene_type === 'lipsync' && <span className="upload-mv-scene-card__lipsync-badge">🎤 립싱크</span>}
                                   {scene.use_seconds && <span className="upload-mv-scene-card__use-seconds">{scene.use_seconds.toFixed(1)}s</span>}
                                   {scene.section_mood && <span className="upload-mv-scene-card__section-mood">{scene.section_mood}</span>}
                                 </div>
                               )}
                               <div className="upload-mv-scene-card__desc">
-                                {scene.description || `씬 ${scene.scene_number || i + 1}`}
+                                {scene.description_ko || scene.description || `씬 ${scene.scene_number || i + 1}`}
                               </div>
                               {scene.lyrics_segment && (
                                 <div className="upload-mv-scene-card__lyrics">
@@ -991,6 +1107,90 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                                 <div className="upload-mv-scene-card__source">
                                   {scene.image_source === 'upload' ? '직접 업로드' : 'AI 생성'}
                                 </div>
+                              )}
+                              {scene.video_url && (
+                                <a
+                                  href={scene.video_url}
+                                  download
+                                  className="upload-mv-scene-card__video-download"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <FiDownload /> 영상
+                                </a>
+                              )}
+                              {/* Lipsync scene actions */}
+                              {scene.scene_type === 'lipsync' && scene.video_url && (
+                                <div className="upload-mv-scene-card__lipsync-actions">
+                                  {scene.video_synclabs_url ? (
+                                    <>
+                                      <span className="upload-mv-scene-card__sync-done">
+                                        ✓ 립싱크 적용{scene.video_source === 'kling+synclabs' ? ' (자동)' : ''}
+                                      </span>
+                                      <button className="upload-mv-scene-card__sync-try-btn" onClick={(e) => { e.stopPropagation(); handleStartLipsync(scene.scene_number); }} disabled={separatingVocal === scene.scene_number}>
+                                        {separatingVocal === scene.scene_number ? '보컬 분리 중...' : '🔄 재시도'}
+                                      </button>
+                                    </>
+                                  ) : scene.sync_error ? (
+                                    <>
+                                      <span className="upload-mv-scene-card__sync-error-text">
+                                        🔇 실패: {scene.sync_error.length > 40 ? scene.sync_error.substring(0, 40) + '...' : scene.sync_error}
+                                      </span>
+                                      <button className="upload-mv-scene-card__sync-try-btn" onClick={(e) => { e.stopPropagation(); handleStartLipsync(scene.scene_number); }} disabled={separatingVocal === scene.scene_number}>
+                                        {separatingVocal === scene.scene_number ? '보컬 분리 중...' : '🔄 재시도'}
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button className="upload-mv-scene-card__sync-try-btn" onClick={(e) => { e.stopPropagation(); handleStartLipsync(scene.scene_number); }} disabled={separatingVocal === scene.scene_number}>
+                                      {separatingVocal === scene.scene_number ? '보컬 분리 중...' : '🎤 립싱크 시도'}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                              {/* Non-lipsync sync error fallback */}
+                              {scene.scene_type !== 'lipsync' && scene.sync_error && (
+                                <div className="upload-mv-scene-card__sync-error">
+                                  <span className="upload-mv-scene-card__sync-error-text">
+                                    🔇 립싱크 실패: {scene.sync_error.length > 50 ? scene.sync_error.substring(0, 50) + '...' : scene.sync_error}
+                                  </span>
+                                  <button
+                                    className="upload-mv-scene-card__sync-retry-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleStartLipsync(scene.scene_number);
+                                    }}
+                                    disabled={separatingVocal === scene.scene_number}
+                                  >
+                                    {separatingVocal === scene.scene_number ? '보컬 분리 중...' : '🔄 립싱크 재시도'}
+                                  </button>
+                                </div>
+                              )}
+                              {scene.scene_type !== 'lipsync' && scene.video_source === 'kling (sync failed)' && !scene.sync_error && (
+                                <div className="upload-mv-scene-card__sync-error">
+                                  <span className="upload-mv-scene-card__sync-error-text">🔇 립싱크 실패</span>
+                                  <button
+                                    className="upload-mv-scene-card__sync-retry-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleStartLipsync(scene.scene_number);
+                                    }}
+                                    disabled={separatingVocal === scene.scene_number}
+                                  >
+                                    {separatingVocal === scene.scene_number ? '보컬 분리 중...' : '🔄 립싱크 재시도'}
+                                  </button>
+                                </div>
+                              )}
+                              {/* Individual scene video generate button */}
+                              {scene.image_url && !scene.video_url && scene.video_status !== 'generating' && (
+                                <button
+                                  className="upload-mv-scene-card__gen-video-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleGenerateSceneVideo(scene.scene_number);
+                                  }}
+                                  disabled={generatingSceneVideo === scene.scene_number}
+                                >
+                                  🎬 영상 생성
+                                </button>
                               )}
                             </div>
                             {mvStep === 2 && (
@@ -1075,7 +1275,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                           <div className="upload-mv-progress__fill" style={{ width: `${mvProgressPct}%` }} />
                         </div>
                         <div className="upload-mv-progress__text">
-                          {mvJob ? `영상 ${getCompletedVideoCount()}/${mvJob.total_scenes || 0}` : ''} ({mvProgressPct}%)
+                          {mvJob?.status === 'synclabs_processing'
+                            ? `립싱크 ${mvJob.synclabs_completed || 0}/${mvJob.synclabs_total || '?'}`
+                            : mvJob ? `영상 ${getCompletedVideoCount()}/${mvJob.total_scenes || 0}` : ''
+                          } ({mvProgressPct}%)
                         </div>
                         {mvJob?.retry_info?.active && (
                           <div className="upload-mv-retry-banner">
@@ -1233,6 +1436,166 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           </div>
         </form>
       </div>
+
+      {selectedScene && (
+        <div className="upload-mv-scene-modal-overlay" onClick={() => setSelectedScene(null)}>
+          <div className="upload-mv-scene-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="upload-mv-scene-modal__close" onClick={() => setSelectedScene(null)}>
+              ✕
+            </button>
+
+            <div className="upload-mv-scene-modal__image-wrap">
+              {selectedScene.image_url ? (
+                <img
+                  src={selectedScene.image_url}
+                  alt={`씬 ${selectedScene.scene_number}`}
+                  className="upload-mv-scene-modal__image"
+                />
+              ) : (
+                <div className="upload-mv-scene-modal__placeholder">
+                  <FiImage /> 이미지 없음
+                </div>
+              )}
+            </div>
+
+            <div className="upload-mv-scene-modal__info">
+              <h3 className="upload-mv-scene-modal__title">
+                씬 {selectedScene.scene_number}
+                {selectedScene.scene_type === 'lipsync' && (
+                  <span className="upload-mv-scene-modal__lipsync-badge">🎤 립싱크</span>
+                )}
+              </h3>
+
+              {selectedScene.section && (
+                <div className="upload-mv-scene-modal__section">
+                  {selectedScene.section}
+                  {selectedScene.use_seconds && ` (${selectedScene.use_seconds.toFixed(1)}초)`}
+                </div>
+              )}
+
+              <div className="upload-mv-scene-modal__desc">
+                {selectedScene.description_ko || selectedScene.description || '설명 없음'}
+              </div>
+
+              {selectedScene.lyrics_segment && (
+                <div className="upload-mv-scene-modal__lyrics">
+                  <span className="upload-mv-scene-modal__lyrics-label">🎵 가사</span>
+                  <p>{selectedScene.lyrics_segment}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedVideo && (
+        <div className="upload-mv-scene-modal-overlay" onClick={() => setSelectedVideo(null)}>
+          <div className="upload-mv-scene-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="upload-mv-scene-modal__close" onClick={() => setSelectedVideo(null)}>
+              ✕
+            </button>
+
+            {selectedVideo.scene_type === 'lipsync' && selectedVideo.video_synclabs_url ? (
+              <div className="upload-mv-scene-modal__compare">
+                <div className="upload-mv-scene-modal__compare-item">
+                  <h4>🎬 Kling 원본</h4>
+                  <video
+                    src={selectedVideo.video_with_audio_url || selectedVideo.video_url}
+                    controls
+                    className="upload-mv-scene-modal__video"
+                  />
+                </div>
+                <div className="upload-mv-scene-modal__compare-item">
+                  <h4>🎤 립싱크 버전</h4>
+                  <video
+                    src={selectedVideo.video_with_audio_synclabs_url || selectedVideo.video_synclabs_url}
+                    controls
+                    className="upload-mv-scene-modal__video"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="upload-mv-scene-modal__video-wrap">
+                <video
+                  src={selectedVideo.video_with_audio_url || selectedVideo.video_url}
+                  controls
+                  autoPlay
+                  className="upload-mv-scene-modal__video"
+                />
+              </div>
+            )}
+
+            <div className="upload-mv-scene-modal__info">
+              <h3 className="upload-mv-scene-modal__title">
+                씬 {selectedVideo.scene_number}
+                {selectedVideo.scene_type === 'lipsync' && (
+                  <span className="upload-mv-scene-modal__lipsync-badge">🎤 립싱크</span>
+                )}
+              </h3>
+
+              {selectedVideo.section && (
+                <div className="upload-mv-scene-modal__section">
+                  {selectedVideo.section}
+                  {selectedVideo.use_seconds && ` (${selectedVideo.use_seconds.toFixed(1)}초)`}
+                </div>
+              )}
+
+              <div className="upload-mv-scene-modal__desc">
+                {selectedVideo.description_ko || selectedVideo.description || '설명 없음'}
+              </div>
+
+              {selectedVideo.lyrics_segment && (
+                <div className="upload-mv-scene-modal__lyrics">
+                  <span className="upload-mv-scene-modal__lyrics-label">🎵 가사</span>
+                  <p>{selectedVideo.lyrics_segment}</p>
+                </div>
+              )}
+
+              <a href={selectedVideo.video_url} download className="upload-mv-scene-modal__download-btn">
+                <FiDownload /> 영상 다운로드
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {vocalPreview && (
+        <div className="upload-mv-scene-modal-overlay" onClick={() => setVocalPreview(null)}>
+          <div className="upload-mv-scene-modal" onClick={(e) => e.stopPropagation()} style={{maxWidth: '500px'}}>
+            <button className="upload-mv-scene-modal__close" onClick={() => setVocalPreview(null)}>✕</button>
+
+            <div className="upload-mv-scene-modal__info">
+              <h3 className="upload-mv-scene-modal__title">🎤 보컬 분리 결과 - 씬 {vocalPreview.scene_number}</h3>
+
+              <div style={{marginBottom: '1rem'}}>
+                <label style={{color: '#aaa', fontSize: '0.85rem', display: 'block', marginBottom: '4px'}}>🎵 원본 (보컬+MR)</label>
+                <audio controls src={vocalPreview.original_audio_url} style={{width: '100%'}} />
+              </div>
+
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{color: '#aaa', fontSize: '0.85rem', display: 'block', marginBottom: '4px'}}>🎤 분리된 보컬만</label>
+                <audio controls src={vocalPreview.vocal_audio_url} style={{width: '100%'}} />
+              </div>
+
+              <div style={{display: 'flex', gap: '0.75rem', justifyContent: 'center'}}>
+                <button
+                  className="upload-mv-scene-card__sync-try-btn"
+                  style={{padding: '8px 20px', fontSize: '0.9rem'}}
+                  onClick={handleConfirmLipsync}
+                >
+                  ✓ 이 보컬로 립싱크 진행
+                </button>
+                <button
+                  onClick={() => setVocalPreview(null)}
+                  style={{padding: '8px 20px', fontSize: '0.9rem', background: '#555', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer'}}
+                >
+                  ✕ 취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

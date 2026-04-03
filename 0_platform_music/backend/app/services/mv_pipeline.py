@@ -137,6 +137,93 @@ async def _resolve_audio_object_name(job: dict, mongo_db) -> Optional[str]:
     return None
 
 
+# ── Lyrics-to-Scene Matching ─────────────────────────────────────────────────
+
+
+def _assign_lyrics_to_scenes(scenes: list, lyrics: str) -> None:
+    """Parse lyrics by section tags and assign to matching scenes."""
+    if not lyrics:
+        return
+
+    import re
+
+    # Step 1: Parse lyrics into sections
+    # Match [SectionTag] or [SectionTag: vocal direction]
+    pattern = r'\[([^\]]+)\]'
+    parts = re.split(pattern, lyrics)
+
+    # parts = ["", "Intro", "\nbody...\n", "Verse 1: rap flow", "\nbody...\n", ...]
+    parsed_sections = []
+    for i in range(1, len(parts), 2):
+        tag_raw = parts[i]
+        content = parts[i + 1].strip() if i + 1 < len(parts) else ""
+
+        # Extract base section name (remove vocal direction after ":")
+        base_tag = tag_raw.split(":")[0].strip().lower()
+        # Remove numbers and spaces: "verse 1" -> "verse", "pre-chorus" -> "pre-chorus"
+        base_name = re.sub(r'\s*\d+\s*$', '', base_tag).strip()
+
+        parsed_sections.append({
+            "tag_raw": tag_raw,
+            "base_name": base_name,
+            "content": content,
+        })
+
+    if not parsed_sections:
+        return
+
+    # Step 2: Number each section by type (first chorus -> chorus1, second -> chorus2)
+    section_counters: dict = {}
+    for ps in parsed_sections:
+        name = ps["base_name"]
+        section_counters[name] = section_counters.get(name, 0) + 1
+        ps["numbered_name"] = "{}{}".format(name, section_counters[name])
+
+    # Step 3: Match scenes to parsed sections
+    for scene in scenes:
+        scene_section = (scene.get("section") or "").lower().replace(" ", "").replace("-", "")
+        if not scene_section:
+            continue
+
+        for ps in parsed_sections:
+            numbered = ps["numbered_name"].replace("-", "")
+            if numbered == scene_section:
+                if not scene.get("lyrics_segment"):
+                    scene["lyrics_segment"] = ps["content"]
+                break
+
+    # Step 4: Handle multiple scenes per section (distribute lyrics by lines)
+    section_scene_groups: dict = {}
+    for scene in scenes:
+        section = (scene.get("section") or "").lower().replace(" ", "").replace("-", "")
+        if not section:
+            continue
+        if section not in section_scene_groups:
+            section_scene_groups[section] = []
+        section_scene_groups[section].append(scene)
+
+    for section, group in section_scene_groups.items():
+        if len(group) <= 1:
+            continue
+        # Multiple scenes share same section — first one has all lyrics, distribute
+        all_lyrics = group[0].get("lyrics_segment", "")
+        if not all_lyrics:
+            continue
+        lines = [line for line in all_lyrics.split("\n") if line.strip()]
+        if not lines:
+            continue
+
+        per_scene = max(1, len(lines) // len(group))
+        for idx, sc in enumerate(group):
+            start = idx * per_scene
+            end = start + per_scene if idx < len(group) - 1 else len(lines)
+            sc["lyrics_segment"] = "\n".join(lines[start:end])
+
+    logger.info("Lyrics assigned to %d scenes from %d parsed sections",
+                len([s for s in scenes if s.get("lyrics_segment")]),
+                len(parsed_sections))
+
+
 # ── Phase 1: Split lyrics into scenes ────────────────────────────────────────
 
 
@@ -158,6 +245,42 @@ async def run_phase1_split(job_id, mongo_db) -> None:
 
     scene_count = job.get("scene_count", 20)
     music_sections = None
+
+    # ── Phase 0: Generate MV Scenario (required, max 3 retries) ──
+    scenario = None
+    for attempt in range(3):
+        try:
+            from .mv_generator import generate_mv_scenario
+            character_name = job.get("character_name")
+            scenario = await generate_mv_scenario(
+                title=job["title"],
+                genre=job.get("genre"),
+                mood=job.get("mood"),
+                lyrics=job.get("lyrics"),
+                character_name=character_name,
+            )
+            if scenario and len(scenario.strip()) > 50:
+                await _update_job(mongo_db, job_id, {
+                    "scenario": scenario,
+                    "progress": 1,
+                })
+                logger.info("Phase0: scenario generated for job %s (%d chars, attempt %d)", job_id, len(scenario), attempt + 1)
+                break
+            else:
+                logger.warning("Phase0: scenario too short (%d chars), retrying (attempt %d/3)", len(scenario or ""), attempt + 1)
+                scenario = None
+        except Exception as e:
+            logger.warning("Phase0: scenario generation failed (attempt %d/3): %s", attempt + 1, e)
+            if attempt < 2:
+                await asyncio.sleep(3 * (attempt + 1))  # 지수 백오프: 3초, 6초
+
+    if not scenario:
+        logger.error("Phase0: scenario generation failed after 3 attempts for job %s", job_id)
+        await _update_job(mongo_db, job_id, {
+            "status": "failed",
+            "error_message": "MV 시나리오 생성에 실패했습니다. 다시 시도해주세요.",
+        })
+        return
 
     # ── Phase 1a: Analyze music structure (if audio available) ──
     audio_object_name = await _resolve_audio_object_name(job, mongo_db)
@@ -195,24 +318,69 @@ async def run_phase1_split(job_id, mongo_db) -> None:
             )
             # Non-fatal: continue without music sections
 
+    # ── Assign scene_type based on section labels ──
+    if music_sections:
+        # Check if any section has rap
+        has_rap = any("rap" in (s.get("label") or "").lower() for s in music_sections)
+
+        for section in music_sections:
+            label = (section.get("label") or "").lower()
+            if has_rap:
+                # Rap exists → only rap gets lipsync
+                if "rap" in label or "hiphop" in label or "hip-hop" in label:
+                    section["scene_type"] = "lipsync"
+                else:
+                    section["scene_type"] = "drama"
+            else:
+                # No rap → chorus gets lipsync
+                if label.startswith("chorus"):
+                    section["scene_type"] = "lipsync"
+                else:
+                    section["scene_type"] = "drama"
+        logger.info("Phase1: scene_type assigned based on music sections (has_rap=%s)", has_rap)
+
     await _update_job(mongo_db, job_id, {"progress": 3})
 
-    # ── Phase 1b: Scene planning ──
-    try:
-        scenes_raw = await split_lyrics_into_scenes(
-            lyrics=job.get("lyrics"),
-            title=job["title"],
-            genre=job.get("genre"),
-            mood=job.get("mood"),
-            scene_count=scene_count,
-            user_scene_prompt=job.get("scene_prompt"),
-            music_sections=music_sections,
-        )
-    except Exception as e:
-        logger.error("Phase1: failed to split lyrics for job %s: %s", job_id, e)
+    # ── Phase 1b: Scene planning (with validation + retry) ──
+    scenes_raw = None
+    for attempt in range(3):
+        try:
+            scenes_raw = await split_lyrics_into_scenes(
+                lyrics=job.get("lyrics"),
+                title=job["title"],
+                genre=job.get("genre"),
+                mood=job.get("mood"),
+                scene_count=scene_count,
+                user_scene_prompt=job.get("scene_prompt"),
+                music_sections=music_sections,
+                scenario=scenario,
+            )
+        except Exception as e:
+            logger.warning("Phase1b: scene split failed (attempt %d/3): %s", attempt + 1, e)
+            if attempt < 2:
+                await asyncio.sleep(3 * (attempt + 1))
+            continue
+
+        # Validate: all scenes must have image_prompt and video_prompt
+        missing = []
+        for s in scenes_raw:
+            if not s.get("image_prompt") or not s.get("video_prompt"):
+                missing.append(s.get("scene_number", "?"))
+
+        if not missing:
+            logger.info("Phase1b: all %d scenes have image_prompt + video_prompt (attempt %d)", len(scenes_raw), attempt + 1)
+            break
+        else:
+            logger.warning("Phase1b: scenes %s missing prompts, retrying (attempt %d/3)", missing, attempt + 1)
+            scenes_raw = None
+            if attempt < 2:
+                await asyncio.sleep(3 * (attempt + 1))
+
+    if not scenes_raw:
+        logger.error("Phase1b: scene planning failed after 3 attempts for job %s", job_id)
         await _update_job(mongo_db, job_id, {
             "status": "failed",
-            "error_message": "장면 분할 실패: {}".format(str(e)[:300]),
+            "error_message": "씬 분할에 실패했습니다. 모든 씬에 이미지/영상 프롬프트가 필요합니다.",
         })
         return
 
@@ -221,7 +389,10 @@ async def run_phase1_split(job_id, mongo_db) -> None:
     for s in scenes_raw:
         scene_doc = {
             "scene_number": s.get("scene_number", len(scenes) + 1),
-            "description": s.get("description", ""),
+            "description": s.get("image_prompt", ""),  # 하위호환용 (image_prompt 복사)
+            "image_prompt": s.get("image_prompt", ""),
+            "video_prompt": s.get("video_prompt", ""),
+            "description_ko": s.get("description_ko", ""),
             "lyrics_segment": s.get("lyrics_segment", ""),
             "image_object_name": None,
             "image_source": None,
@@ -229,6 +400,16 @@ async def run_phase1_split(job_id, mongo_db) -> None:
             "video_status": "pending",
             "video_error": None,
         }
+        # scene_type from music section (if available)
+        scene_type = "drama"  # default
+        if s.get("scene_type"):
+            scene_type = s["scene_type"]
+        elif s.get("section"):
+            section_label = s["section"].lower()
+            if section_label.startswith("chorus"):
+                scene_type = "lipsync"
+        scene_doc["scene_type"] = scene_type
+
         # Section-aware fields (present when music_sections was used)
         if s.get("use_seconds"):
             scene_doc["use_seconds"] = float(s["use_seconds"])
@@ -240,6 +421,26 @@ async def run_phase1_split(job_id, mongo_db) -> None:
             scene_doc["clip_mood"] = s["clip_mood"]
 
         scenes.append(scene_doc)
+
+    # Sort by scene_number to ensure correct ordering for accumulation
+    scenes.sort(key=lambda x: x.get("scene_number", 0))
+
+    # Assign lyrics to scenes based on section matching
+    _assign_lyrics_to_scenes(scenes, job.get("lyrics", ""))
+
+    # Calculate section_start / section_end from use_seconds accumulation
+    cumulative = 0.0
+    for scene in scenes:
+        use_sec = scene.get("use_seconds")
+        if use_sec:
+            scene["section_start"] = round(cumulative, 3)
+            scene["section_end"] = round(cumulative + float(use_sec), 3)
+            cumulative += float(use_sec)
+        else:
+            # use_seconds가 없으면 기본 10초
+            scene["section_start"] = round(cumulative, 3)
+            scene["section_end"] = round(cumulative + 10.0, 3)
+            cumulative += 10.0
 
     await _update_job(mongo_db, job_id, {
         "status": "scenes_ready",
@@ -321,6 +522,7 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
         return
 
     generated_count = 0
+    prev_scene_image_bytes = None  # Track previous scene image for continuity
 
     for idx, (i, scene) in enumerate(target_scenes):
         # Check for cancellation between scenes
@@ -334,11 +536,20 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
             return
 
         sn = scene.get("scene_number", i + 1)
+        scene_desc = scene.get("image_prompt", "")
+
+        # Scene 1: use cover image as reference; Scene 2+: use previous scene image
+        if prev_scene_image_bytes is not None:
+            ref_image = prev_scene_image_bytes
+        else:
+            ref_image = cover_image_bytes
+
         try:
             img_bytes = await generate_scene_image(
-                scene["description"],
-                cover_image_bytes=cover_image_bytes,
+                scene_desc,
+                cover_image_bytes=ref_image,
                 character_image_bytes=character_image_bytes,
+                scene_type=scene.get("scene_type", "drama"),
             )
 
             # Save to MinIO
@@ -355,6 +566,9 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
             scenes[i]["image_object_name"] = object_name
             scenes[i]["image_source"] = "gemini"
             generated_count += 1
+
+            # Save this scene's image for next scene's reference
+            prev_scene_image_bytes = img_bytes
 
         except Exception as e:
             logger.warning("Phase2: scene %d image failed: %s", sn, e)
@@ -422,6 +636,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
     })
 
     minio_client = get_minio()
+    character_image_bytes = _load_character_image(job.get("character_object_name"))
 
     # Determine which scenes to process
     target_scenes = []
@@ -448,6 +663,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
 
     max_retries = 5
     rate_limit_backoffs = [180, 300, 420, 600, 900]
+    prev_scene_image_for_video = None  # Track previous scene image for Kling continuity
 
     for idx, (i, scene) in enumerate(target_scenes):
         # Check for cancellation between scenes
@@ -488,19 +704,98 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
         scenes[i]["video_status"] = "generating"
         await _update_job(mongo_db, job_id, {"scenes": scenes})
 
-        # Try to generate video with retries
+        # # ── [DISABLED] Lipsync branch: Sync Labs (kept for future use) ──
+        # scene_type = scene.get("scene_type", "drama")
+        # if scene_type == "lipsync" and settings.sync_api_key:
+        #     try:
+        #         from .sync_labs_service import generate_lipsync, cut_audio_segment
+        #
+        #         # Get audio for this scene segment
+        #         audio_object = await _resolve_audio_object_name(job, mongo_db)
+        #         if not audio_object:
+        #             raise ValueError("No audio available for lipsync scene")
+        #
+        #         audio_resp = minio_client.get_object(
+        #             bucket_name=settings.minio_bucket_music,
+        #             object_name=audio_object,
+        #         )
+        #         full_audio = audio_resp.read()
+        #         audio_resp.close()
+        #         audio_resp.release_conn()
+        #
+        #         # Get start/end times
+        #         start_sec = scene.get("section_start", 0)
+        #         end_sec = scene.get("section_end", start_sec + 10)
+        #
+        #         segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
+        #
+        #         # Generate lipsync video
+        #         lipsync_video = await generate_lipsync(
+        #             image_bytes=image_bytes,
+        #             audio_bytes=segment_audio,
+        #             model="lipsync-2",
+        #         )
+        #
+        #         # Save to MinIO
+        #         video_object = "mv/{}/videos/{:03d}_lipsync.mp4".format(str(job_id), sn)
+        #         minio_client.put_object(
+        #             bucket_name=settings.minio_bucket_images,
+        #             object_name=video_object,
+        #             data=io.BytesIO(lipsync_video),
+        #             length=len(lipsync_video),
+        #             content_type="video/mp4",
+        #         )
+        #
+        #         scenes[i]["video_object_name"] = video_object
+        #         scenes[i]["video_status"] = "completed"
+        #         scenes[i]["video_error"] = None
+        #         scenes[i]["video_source"] = "sync_labs"
+        #
+        #         logger.info("Phase3: lipsync scene %d completed via Sync Labs", sn)
+        #
+        #         # Update progress and continue to next scene
+        #         completed_video_count = sum(
+        #             1 for s in scenes if s.get("video_status") == "completed"
+        #         )
+        #         progress = int(45 + (idx + 1) / total_to_process * 40)
+        #         await _update_job(mongo_db, job_id, {
+        #             "scenes": scenes,
+        #             "completed_video_count": completed_video_count,
+        #             "progress": min(progress, 85),
+        #         })
+        #         if idx < total_to_process - 1:
+        #             await asyncio.sleep(15)
+        #         continue
+        #
+        #     except Exception as e:
+        #         logger.error("Phase3: lipsync failed for scene %d: %s, falling back to video gen", sn, e)
+        #         scenes[i]["video_error"] = "Lipsync 실패, 영상 생성으로 대체: {}".format(str(e)[:200])
+        #         # Fall through to regular video generation below
+
+        # Try to generate video with retries (all scenes via Veo 3.1 Fast)
         video_generated = False
         consecutive_429 = 0
 
         for attempt in range(max_retries):
             try:
+                scene_desc_for_video = scene.get("image_prompt", "")
+                scene_video_prompt = scene.get("video_prompt")
                 if use_kling:
                     task_or_op = await start_scene_video_kling(
-                        scene["description"], image_bytes
+                        prompt=scene_desc_for_video,
+                        image_bytes=image_bytes,
+                        prev_scene_image_bytes=prev_scene_image_for_video,
+                        character_image_bytes=character_image_bytes,
+                        lyrics_segment=scene.get("lyrics_segment", ""),
+                        scene_type=scene.get("scene_type", "drama"),
+                        duration=float(scene.get("use_seconds", 10)),
                     )
                 else:
                     task_or_op = await start_scene_video(
-                        scene["description"], image_bytes
+                        scene_desc_for_video, image_bytes,
+                        video_prompt=scene_video_prompt,
+                        lyrics_segment=scene.get("lyrics_segment", ""),
+                        scene_type=scene.get("scene_type", "drama"),
                     )
                 consecutive_429 = 0  # API accepted
                 await _update_job(mongo_db, job_id, {"retry_info": None})
@@ -594,6 +889,9 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                 scenes[i]["video_status"] = "completed"
                 scenes[i]["video_error"] = None
                 video_generated = True
+
+                # Save current scene image for next scene's Kling reference
+                prev_scene_image_for_video = image_bytes
                 break
 
             except Exception as e:
@@ -686,6 +984,195 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
             "status": "generating_videos",
             "retry_info": None,
         })
+
+        # ── Phase 3.5: 립싱크 씬 자동 Sync Labs 적용 ──
+        lipsync_scenes = [s for s in scenes if s.get("scene_type") == "lipsync"
+                          and s.get("video_status") == "completed"
+                          and s.get("video_object_name")
+                          and not s.get("video_synclabs_object")]
+        if lipsync_scenes:
+            logger.info("Phase3.5: auto Sync Labs for %d lipsync scenes", len(lipsync_scenes))
+            await _update_job(mongo_db, job_id, {
+                "status": "synclabs_processing",
+                "progress": 89,
+                "synclabs_total": len(lipsync_scenes),
+                "synclabs_completed": 0,
+            })
+            try:
+                from .sync_labs_service import generate_lipsync_from_video, cut_audio_segment
+                from .demucs_service import enhance_vocal_demucs
+                import subprocess
+
+                audio_obj = await _resolve_audio_object_name(job, mongo_db)
+                if audio_obj:
+                    audio_resp = minio_client.get_object(
+                        bucket_name=settings.minio_bucket_music, object_name=audio_obj)
+                    full_audio = audio_resp.read()
+                    audio_resp.close(); audio_resp.release_conn()
+
+                    for scene in lipsync_scenes:
+                        sn = scene["scene_number"]
+                        sidx = next(i for i, s in enumerate(scenes) if s.get("scene_number") == sn)
+                        try:
+                            start_sec = scene.get("section_start", 0)
+                            end_sec = scene.get("section_end", start_sec + 10)
+                            segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
+
+                            # 보컬 분리
+                            logger.info("Phase3.5: separating vocals for scene %d", sn)
+                            vocal_bytes = await enhance_vocal_demucs(segment_audio, "segment.mp3")
+
+                            # 보컬 분리 결과 MinIO에 저장
+                            orig_obj = "mv/{}/scenes/{:03d}_original_segment.mp3".format(str(job_id), sn)
+                            vocal_obj = "mv/{}/scenes/{:03d}_vocal_only.wav".format(str(job_id), sn)
+                            minio_client.put_object(bucket_name=settings.minio_bucket_music,
+                                                    object_name=orig_obj, data=io.BytesIO(segment_audio),
+                                                    length=len(segment_audio), content_type="audio/mpeg")
+                            minio_client.put_object(bucket_name=settings.minio_bucket_music,
+                                                    object_name=vocal_obj, data=io.BytesIO(vocal_bytes),
+                                                    length=len(vocal_bytes), content_type="audio/wav")
+                            scenes[sidx]["separated_original_object"] = orig_obj
+                            scenes[sidx]["separated_vocal_object"] = vocal_obj
+
+                            # Sync Labs 호출 (분리된 보컬로)
+                            logger.info("Phase3.5: calling Sync Labs for scene %d", sn)
+                            vid_resp = minio_client.get_object(
+                                bucket_name=settings.minio_bucket_images,
+                                object_name=scene["video_object_name"])
+                            video_bytes = vid_resp.read()
+                            vid_resp.close(); vid_resp.release_conn()
+
+                            synced_video = await generate_lipsync_from_video(
+                                video_bytes=video_bytes, audio_bytes=vocal_bytes, model="lipsync-2")
+
+                            # 오디오 제거 후 무음 영상만 저장 (Phase 4에서 사용)
+                            with tempfile.TemporaryDirectory() as tmpdir:
+                                synced_path = os.path.join(tmpdir, "synced.mp4")
+                                silent_path = os.path.join(tmpdir, "silent.mp4")
+                                with open(synced_path, "wb") as f:
+                                    f.write(synced_video)
+                                ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
+                                subprocess.run([ffmpeg_bin, "-y", "-i", synced_path, "-an", "-c:v", "copy", silent_path],
+                                              capture_output=True, timeout=30)
+                                if os.path.exists(silent_path):
+                                    with open(silent_path, "rb") as f:
+                                        silent_video = f.read()
+                                else:
+                                    silent_video = synced_video
+
+                            synclabs_obj = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(str(job_id), sn)
+                            minio_client.put_object(bucket_name=settings.minio_bucket_images,
+                                                    object_name=synclabs_obj, data=io.BytesIO(silent_video),
+                                                    length=len(silent_video), content_type="video/mp4")
+                            scenes[sidx]["video_synclabs_object"] = synclabs_obj
+                            scenes[sidx]["video_source"] = "kling+synclabs"
+                            scenes[sidx]["sync_error"] = None
+                            logger.info("Phase3.5: scene %d Sync Labs completed", sn)
+
+                        except Exception as sync_err:
+                            logger.warning("Phase3.5: scene %d Sync Labs failed: %s", sn, str(sync_err)[:300])
+                            scenes[sidx]["sync_error"] = str(sync_err)[:300]
+                            scenes[sidx]["video_source"] = "kling (sync failed)"
+
+                        # Update progress per scene
+                        synclabs_done = sum(
+                            1 for ls in lipsync_scenes
+                            if any(
+                                s.get("scene_number") == ls["scene_number"]
+                                and (s.get("video_synclabs_object") or s.get("sync_error"))
+                                for s in scenes
+                            )
+                        )
+                        await _update_job(mongo_db, job_id, {
+                            "scenes": scenes,
+                            "synclabs_completed": synclabs_done,
+                        })
+
+                    await _update_job(mongo_db, job_id, {"scenes": scenes})
+            except Exception as phase35_err:
+                logger.warning("Phase3.5: failed: %s", str(phase35_err)[:300])
+        else:
+            logger.info("Phase3.5: no lipsync scenes to process")
+
+        # ── Phase 3.6: Merge each scene video with its audio segment ──
+        try:
+            audio_obj_for_merge = await _resolve_audio_object_name(job, mongo_db)
+            if audio_obj_for_merge:
+                import subprocess
+                logger.info("Phase3.6: merging audio segments into scene videos for job %s", job_id)
+                audio_resp = minio_client.get_object(
+                    bucket_name=settings.minio_bucket_music,
+                    object_name=audio_obj_for_merge,
+                )
+                full_audio_for_merge = audio_resp.read()
+                audio_resp.close(); audio_resp.release_conn()
+
+                for i, scene in enumerate(scenes):
+                    if (scene.get("video_status") != "completed"
+                            or not scene.get("video_object_name")
+                            or scene.get("section_start") is None):
+                        continue
+                    try:
+                        # 립싱크 씬은 Sync Labs 버전 우선 사용
+                        vid_obj = scene.get("video_synclabs_object") or scene["video_object_name"]
+                        vid_resp = minio_client.get_object(
+                            bucket_name=settings.minio_bucket_images,
+                            object_name=vid_obj,
+                        )
+                        vid_bytes = vid_resp.read()
+                        vid_resp.close(); vid_resp.release_conn()
+
+                        with tempfile.TemporaryDirectory() as tmpdir:
+                            vid_path = os.path.join(tmpdir, "video.mp4")
+                            aud_path = os.path.join(tmpdir, "audio.mp3")
+                            out_path = os.path.join(tmpdir, "merged.mp4")
+
+                            with open(vid_path, "wb") as f:
+                                f.write(vid_bytes)
+                            with open(aud_path, "wb") as f:
+                                f.write(full_audio_for_merge)
+
+                            start = scene["section_start"]
+                            end = scene["section_end"]
+
+                            ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
+                            subprocess.run(
+                                [ffmpeg_bin, "-y",
+                                 "-i", vid_path,
+                                 "-ss", str(start), "-to", str(end), "-i", aud_path,
+                                 "-c:v", "copy", "-c:a", "aac",
+                                 "-map", "0:v:0", "-map", "1:a:0",
+                                 "-shortest", out_path],
+                                capture_output=True, timeout=30,
+                            )
+
+                            if os.path.exists(out_path):
+                                with open(out_path, "rb") as f:
+                                    merged = f.read()
+                                merged_obj = "mv/{}/scenes/{:03d}_video_audio.mp4".format(
+                                    str(job_id), scene["scene_number"],
+                                )
+                                minio_client.put_object(
+                                    bucket_name=settings.minio_bucket_images,
+                                    object_name=merged_obj,
+                                    data=io.BytesIO(merged),
+                                    length=len(merged),
+                                    content_type="video/mp4",
+                                )
+                                scenes[i]["video_with_audio_object"] = merged_obj
+                    except Exception as merge_err:
+                        logger.warning(
+                            "Phase3.6: scene %d merge failed: %s",
+                            scene.get("scene_number", i), str(merge_err)[:200],
+                        )
+
+                await _update_job(mongo_db, job_id, {"scenes": scenes})
+                logger.info("Phase3.6: audio merge completed for job %s", job_id)
+            else:
+                logger.info("Phase3.6: no audio available, skipping audio merge")
+        except Exception as merge_phase_err:
+            logger.warning("Phase3.6: audio merge phase failed: %s", str(merge_phase_err)[:200])
+
         await run_phase4_concatenate(job_id, mongo_db)
     else:
         # Not all done — set to videos_ready so user can see progress
@@ -733,15 +1220,20 @@ async def run_phase4_concatenate(job_id, mongo_db) -> None:
     tmpdir = tempfile.mkdtemp(prefix="mv_concat_")
 
     try:
-        # Download all completed video clips
+        # Download all completed video clips (prefer Sync Labs version for lipsync scenes)
         video_paths = []
         for scene in completed_scenes:
             sn = scene["scene_number"]
             local_path = os.path.join(tmpdir, "scene_{:03d}.mp4".format(sn))
+            # 립싱크 씬은 Sync Labs 결과물 우선 사용
+            video_obj = scene["video_object_name"]
+            if scene.get("video_synclabs_object"):
+                video_obj = scene["video_synclabs_object"]
+                logger.info("Phase4: scene %d using Sync Labs version", sn)
             try:
                 resp = minio_client.get_object(
                     bucket_name=settings.minio_bucket_images,
-                    object_name=scene["video_object_name"],
+                    object_name=video_obj,
                 )
                 with open(local_path, "wb") as f:
                     for chunk in resp.stream(32 * 1024):

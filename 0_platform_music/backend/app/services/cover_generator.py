@@ -23,6 +23,7 @@ async def generate_cover_image(
     mood: str = None,
     style: str = None,
     character_image_bytes: bytes = None,
+    scenario: str = None,
 ) -> bytes:
     """Generate album cover image using Gemini. Returns PNG bytes."""
 
@@ -42,6 +43,12 @@ async def generate_cover_image(
         "visually striking, suitable as a music album cover. "
         "Do NOT include any text or letters in the image."
     )
+
+    if scenario:
+        prompt_parts.append(
+            "MV Scenario: {}. Use this narrative to inform the cover image's "
+            "mood, setting, and key visual elements.".format(scenario[:1000])
+        )
 
     if character_image_bytes:
         prompt_parts.append(

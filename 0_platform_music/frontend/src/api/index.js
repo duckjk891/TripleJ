@@ -154,12 +154,18 @@ export const uploadMVSceneImage = (jobId, sceneNumber, formData) =>
 export const regenerateMVSceneImage = (jobId, sceneNumber) =>
     API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/regenerate-image`);
 export const generateMVVideos = (jobId, videoModel) => API.post(`/mv/jobs/${jobId}/generate-videos`, videoModel ? { video_model: videoModel } : {});
+export const generateSceneVideo = (jobId, sceneNumber) =>
+  API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/generate-video`);
 export const concatenateMV = (jobId) => API.post(`/mv/jobs/${jobId}/concatenate`);
 export const saveMVDraft = (jobId, data) => API.post(`/mv/jobs/${jobId}/save-draft`, data);
 export const cancelMVJob = (jobId) => API.post(`/mv/jobs/${jobId}/cancel`);
 export const mergeAudioMV = (jobId, audioObjectName) =>
     API.post(`/mv/jobs/${jobId}/merge-audio`, { audio_object_name: audioObjectName });
 export const getMVModels = () => API.get('/mv/models');
+export const retrySyncLabs = (jobId, sceneNumber) =>
+  API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/retry-sync`);
+export const separateVocal = (jobId, sceneNumber) =>
+  API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/separate-vocal`, {}, { timeout: 300000 });
 
 // Character
 export const generateCharacterSheet = (formData) =>
@@ -190,6 +196,26 @@ export const streamVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-pe
 export const downloadVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-persona/${id}/vocal/download`;
 export const downloadVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/download`;
 
+// Vocal Repair (Dolby.io)
+export const uploadVoiceForRepair = (formData) =>
+  API.post('/vocal-repair/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+export const startVocalEnhance = (repairId, method = 'both') =>
+  API.post(`/vocal-repair/${repairId}/enhance`, { method });
+export const getVocalRepairStatus = (repairId) =>
+  API.get(`/vocal-repair/${repairId}/status`);
+export const vocalRepairOriginalStreamUrl = (repairId) =>
+  `${API.defaults.baseURL}/vocal-repair/${repairId}/original/stream`;
+export const vocalRepairEnhancedStreamUrl = (repairId, method) =>
+  `${API.defaults.baseURL}/vocal-repair/${repairId}/enhanced/stream?method=${method}`;
+export const vocalRepairOriginalDownloadUrl = (repairId) =>
+  `${API.defaults.baseURL}/vocal-repair/${repairId}/original/download`;
+export const vocalRepairEnhancedDownloadUrl = (repairId, method) =>
+  `${API.defaults.baseURL}/vocal-repair/${repairId}/enhanced/download?method=${method}`;
+export const getVocalRepairList = () => API.get('/vocal-repair/list');
+
 // Voice Conversion (Kits.AI)
 export const startVoiceConvert = (generationId, data) =>
   API.post(`/voice-convert/${generationId}`, data);
@@ -206,6 +232,32 @@ export const voiceConvertDownloadUrl = (generationId) => {
   const base = `${window.location.protocol}//${window.location.hostname}:9000`;
   return `${base}/api/voice-convert/${generationId}/download?token=${encodeURIComponent(token)}`;
 };
+
+// Voice Conversion - MR Pitch Adjust & Merge
+export const streamConvertedVocal = (generationId) =>
+  `${API.defaults.baseURL}/voice-convert/${generationId}/converted-vocal/stream`;
+export const streamBacking = (generationId) =>
+  `${API.defaults.baseURL}/voice-convert/${generationId}/backing/stream`;
+export const mergeVoiceConversion = (generationId, data) =>
+  API.post(`/voice-convert/${generationId}/merge`, data);
+
+// Voice Conversion - MR Pitch Preview (server-side rubberband)
+export const previewMrPitched = (generationId, pitchShift) =>
+  API.post(`/voice-convert/${generationId}/preview-mr`,
+    { pitch_shift: pitchShift },
+    { responseType: 'arraybuffer', timeout: 30000 }
+  );
+
+// Wondera Test
+export const wonderaUploadVocal = (formData) =>
+  API.post('/wondera/upload-vocal', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+export const wonderaGenerate = (data) =>
+  API.post('/wondera/generate', data, { timeout: 60000 });
+export const wonderaQuery = (taskId) =>
+  API.get(`/wondera/query/${taskId}`);
 
 // Legacy aliases
 export const uploadSong = uploadTrack;

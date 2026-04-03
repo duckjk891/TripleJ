@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw, FiMic, FiPlus, FiCheck, FiLoader, FiDownload, FiVolume2, FiSquare, FiEdit3 } from 'react-icons/fi';
+import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw, FiMic, FiPlus, FiCheck, FiLoader, FiDownload, FiVolume2, FiSquare, FiEdit3, FiStopCircle, FiArrowRight } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
 import * as api from '../api';
@@ -569,6 +569,625 @@ function CharacterSection() {
           )}
         </button>
       </div>
+    </div>
+  );
+}
+
+const REPAIR_STATUS_MAP = {
+  uploading: { label: '업로드 중', color: '#7C3AED' },
+  uploaded: { label: '업로드 완료', color: '#06B6D4' },
+  enhancing: { label: '다듬기 중', color: '#F59E0B' },
+  completed: { label: '완료', color: '#1ed760' },
+  failed: { label: '실패', color: '#EF4444' },
+};
+
+function VoiceRecordSection() {
+  // Recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [recordedBlob, setRecordedBlob] = useState(null);
+  const [recordedFileName, setRecordedFileName] = useState('');
+  const mediaRecorderRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+  const chunksRef = useRef([]);
+
+  // File upload state
+  const [uploadFile, setUploadFile] = useState(null);
+  const fileInputRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  // Repair process state
+  const [uploading, setUploading] = useState(false);
+  const [repairId, setRepairId] = useState(null);
+  const [repairStatus, setRepairStatus] = useState(null);
+  const [repairProgress, setRepairProgress] = useState(0);
+  const [repairError, setRepairError] = useState(null);
+  const pollRef = useRef(null);
+
+  // Method selection state
+  const [useLalal, setUseLalal] = useState(true);
+  const [useDemucs, setUseDemucs] = useState(true);
+
+  // Audio playback state
+  const [originalBlobUrl, setOriginalBlobUrl] = useState(null);
+  const [lalalBlobUrl, setLalalBlobUrl] = useState(null);
+  const [demucsBlobUrl, setDemucsBlobUrl] = useState(null);
+  const [playingType, setPlayingType] = useState(null); // 'original' | 'lalal' | 'demucs'
+  const originalAudioRef = useRef(null);
+  const lalalAudioRef = useRef(null);
+  const demucsAudioRef = useRef(null);
+  const [originalTime, setOriginalTime] = useState(0);
+  const [lalalTime, setLalalTime] = useState(0);
+  const [demucsTime, setDemucsTime] = useState(0);
+  const [originalDuration, setOriginalDuration] = useState(0);
+  const [lalalDuration, setLalalDuration] = useState(0);
+  const [demucsDuration, setDemucsDuration] = useState(0);
+
+  // Per-method status from polling
+  const [lalalStatus, setLalalStatus] = useState(null);
+  const [demucsStatus, setDemucsStatus] = useState(null);
+
+  // History
+  const [repairList, setRepairList] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      if (originalBlobUrl) URL.revokeObjectURL(originalBlobUrl);
+      if (lalalBlobUrl) URL.revokeObjectURL(lalalBlobUrl);
+      if (demucsBlobUrl) URL.revokeObjectURL(demucsBlobUrl);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
+
+  // ── Recording ──
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      chunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        setRecordedBlob(blob);
+        setRecordedFileName(`recording_${Date.now()}.webm`);
+        stream.getTracks().forEach((t) => t.stop());
+      };
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      alert('마이크 접근 권한이 필요합니다.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // ── File upload handlers ──
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+  const ACCEPTED_TYPES = '.mp3,.wav,.m4a,.ogg,.flac,.webm';
+
+  const handleFileSelect = (file) => {
+    if (!file) return;
+    if (file.size > MAX_FILE_SIZE) {
+      alert('파일 크기가 50MB를 초과합니다.');
+      return;
+    }
+    setUploadFile(file);
+    setRecordedBlob(null);
+    setRecordedFileName('');
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  };
+
+  // Get the active file (either recorded or uploaded)
+  const activeFile = uploadFile || (recordedBlob ? new File([recordedBlob], recordedFileName, { type: 'audio/webm' }) : null);
+
+  // ── Vocal repair process ──
+  const handleStartRepair = async () => {
+    if (!activeFile) {
+      alert('녹음하거나 파일을 업로드해주세요.');
+      return;
+    }
+    setUploading(true);
+    setRepairError(null);
+    setRepairStatus(null);
+    setRepairProgress(0);
+    setOriginalBlobUrl(null);
+    setLalalBlobUrl(null);
+    setDemucsBlobUrl(null);
+    setLalalStatus(null);
+    setDemucsStatus(null);
+    setRepairId(null);
+
+    const method = useLalal && useDemucs ? 'both' : useLalal ? 'lalal' : 'demucs';
+
+    try {
+      // Step 1: Upload
+      const formData = new FormData();
+      formData.append('file', activeFile);
+      const { data: uploadData } = await api.uploadVoiceForRepair(formData);
+      const id = uploadData.repair_id || uploadData.id;
+      setRepairId(id);
+
+      // Step 2: Start enhance with method
+      await api.startVocalEnhance(id, method);
+      setRepairStatus('enhancing');
+
+      // Step 3: Poll status
+      pollRef.current = setInterval(async () => {
+        try {
+          const { data: statusData } = await api.getVocalRepairStatus(id);
+          const status = statusData.status;
+          const progress = statusData.progress || 0;
+          setRepairStatus(status);
+          setRepairProgress(progress);
+          if (statusData.lalal_status) setLalalStatus(statusData.lalal_status);
+          if (statusData.demucs_status) setDemucsStatus(statusData.demucs_status);
+
+          if (status === 'completed') {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            // Fetch audio blob URLs with auth
+            await loadAudioBlobs(id, method);
+          } else if (status === 'failed') {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            setRepairError(statusData.error || '보컬 다듬기에 실패했습니다.');
+          }
+        } catch (err) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setRepairError('상태 조회에 실패했습니다.');
+          setRepairStatus('failed');
+        }
+      }, 5000);
+    } catch (err) {
+      setRepairError(err.response?.data?.error || '업로드에 실패했습니다.');
+      setRepairStatus('failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const loadAudioBlobs = async (id, method) => {
+    const token = localStorage.getItem('token');
+    const headers = { Authorization: `Bearer ${token}` };
+    try {
+      const fetches = [fetch(api.vocalRepairOriginalStreamUrl(id), { headers })];
+      const fetchKeys = ['original'];
+
+      if (method === 'lalal' || method === 'both') {
+        fetches.push(fetch(api.vocalRepairEnhancedStreamUrl(id, 'lalal'), { headers }));
+        fetchKeys.push('lalal');
+      }
+      if (method === 'demucs' || method === 'both') {
+        fetches.push(fetch(api.vocalRepairEnhancedStreamUrl(id, 'demucs'), { headers }));
+        fetchKeys.push('demucs');
+      }
+
+      const results = await Promise.all(fetches);
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].ok) {
+          const blob = await results[i].blob();
+          const url = URL.createObjectURL(blob);
+          if (fetchKeys[i] === 'original') setOriginalBlobUrl(url);
+          else if (fetchKeys[i] === 'lalal') setLalalBlobUrl(url);
+          else if (fetchKeys[i] === 'demucs') setDemucsBlobUrl(url);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load audio blobs:', err);
+    }
+  };
+
+  // ── Audio playback ──
+  const audioRefs = { original: originalAudioRef, lalal: lalalAudioRef, demucs: demucsAudioRef };
+
+  const togglePlay = (type) => {
+    const audioRef = audioRefs[type];
+
+    if (playingType === type) {
+      audioRef.current?.pause();
+      setPlayingType(null);
+      return;
+    }
+
+    // Pause all others
+    Object.entries(audioRefs).forEach(([key, ref]) => {
+      if (key !== type && ref.current) ref.current.pause();
+    });
+
+    if (audioRef.current) {
+      audioRef.current.play().catch(() => {});
+      setPlayingType(type);
+    }
+  };
+
+  // ── Download ──
+  const handleDownload = async (type) => {
+    if (!repairId) return;
+    const token = localStorage.getItem('token');
+    let url;
+    if (type === 'original') {
+      url = api.vocalRepairOriginalDownloadUrl(repairId);
+    } else {
+      url = api.vocalRepairEnhancedDownloadUrl(repairId, type);
+    }
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${type}_${repairId}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    } catch {
+      alert('다운로드에 실패했습니다.');
+    }
+  };
+
+  // ── Reset ──
+  const handleReset = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (originalBlobUrl) URL.revokeObjectURL(originalBlobUrl);
+    if (lalalBlobUrl) URL.revokeObjectURL(lalalBlobUrl);
+    if (demucsBlobUrl) URL.revokeObjectURL(demucsBlobUrl);
+    setRepairId(null);
+    setRepairStatus(null);
+    setRepairProgress(0);
+    setRepairError(null);
+    setOriginalBlobUrl(null);
+    setLalalBlobUrl(null);
+    setDemucsBlobUrl(null);
+    setLalalStatus(null);
+    setDemucsStatus(null);
+    setPlayingType(null);
+    setUploadFile(null);
+    setRecordedBlob(null);
+    setRecordedFileName('');
+  };
+
+  const getStatusBadge = (status) => {
+    const info = REPAIR_STATUS_MAP[status] || { label: status || '알 수 없음', color: '#94A3B8' };
+    return (
+      <span
+        className="voice-record__status-badge"
+        style={{ background: `${info.color}20`, color: info.color }}
+      >
+        {info.label}
+      </span>
+    );
+  };
+
+  return (
+    <div className="voice-record">
+      <div className="voice-record__header">
+        <h3 className="voice-record__title"><FiMic /> 내 목소리 녹음 + 보컬 다듬기</h3>
+      </div>
+
+      {/* ── Step 1: Record or Upload ── */}
+      {!repairStatus && !uploading && (
+        <div className="voice-record__input-area">
+          {/* Recording */}
+          <div className="voice-record__record-box">
+            <p className="voice-record__hint">마이크로 직접 녹음하거나, 파일을 업로드하세요.</p>
+            <div className="voice-record__record-controls">
+              {!isRecording ? (
+                <button
+                  className="voice-record__rec-btn"
+                  onClick={startRecording}
+                  disabled={!!recordedBlob}
+                >
+                  <span className="voice-record__rec-dot" />
+                  녹음 시작
+                </button>
+              ) : (
+                <button
+                  className="voice-record__rec-btn voice-record__rec-btn--recording"
+                  onClick={stopRecording}
+                >
+                  <FiStopCircle />
+                  녹음 정지 ({formatTime(recordingTime)})
+                </button>
+              )}
+            </div>
+            {recordedBlob && (
+              <div className="voice-record__file-info">
+                <FiMusic />
+                <span className="voice-record__file-name">{recordedFileName}</span>
+                <button
+                  className="voice-record__file-remove"
+                  onClick={() => { setRecordedBlob(null); setRecordedFileName(''); }}
+                >
+                  <FiTrash2 />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div className="voice-record__divider">또는</div>
+
+          {/* File upload */}
+          <div
+            className={`voice-record__dropzone ${dragOver ? 'voice-record__dropzone--active' : ''}`}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <FiUploadCloud className="voice-record__dropzone-icon" />
+            <div className="voice-record__dropzone-text">
+              <strong>클릭</strong> 또는 파일을 드래그하세요
+            </div>
+            <div className="voice-record__dropzone-hint">MP3, WAV, M4A, OGG, FLAC (50MB 이하)</div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPTED_TYPES}
+            style={{ display: 'none' }}
+            onChange={(e) => handleFileSelect(e.target.files[0])}
+          />
+          {uploadFile && (
+            <div className="voice-record__file-info">
+              <FiMusic />
+              <span className="voice-record__file-name">{uploadFile.name}</span>
+              <button
+                className="voice-record__file-remove"
+                onClick={() => setUploadFile(null)}
+              >
+                <FiTrash2 />
+              </button>
+            </div>
+          )}
+
+          {/* Method selection */}
+          <div className="voice-record__method-select">
+            <p className="voice-record__method-label">다듬기 방식 선택:</p>
+            <div className="voice-record__method-options">
+              <label className={`voice-record__method-checkbox ${useLalal ? 'voice-record__method-checkbox--active voice-record__method-checkbox--lalal' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={useLalal}
+                  onChange={(e) => setUseLalal(e.target.checked)}
+                />
+                <span className="voice-record__method-name">LALAL.AI</span>
+                <span className="voice-record__method-desc">고품질 AI 분리</span>
+              </label>
+              <label className={`voice-record__method-checkbox ${useDemucs ? 'voice-record__method-checkbox--active voice-record__method-checkbox--demucs' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={useDemucs}
+                  onChange={(e) => setUseDemucs(e.target.checked)}
+                />
+                <span className="voice-record__method-name">Demucs (오픈소스)</span>
+                <span className="voice-record__method-desc">Meta AI 오픈소스</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Start repair button */}
+          <button
+            className="voice-record__enhance-btn"
+            onClick={handleStartRepair}
+            disabled={!activeFile || uploading || (!useLalal && !useDemucs)}
+          >
+            <FiVolume2 /> 보컬 다듬기 시작
+          </button>
+          {!useLalal && !useDemucs && (
+            <p className="voice-record__method-warning">최소 하나의 방식을 선택해주세요.</p>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 2: Processing ── */}
+      {(uploading || (repairStatus && repairStatus !== 'completed' && repairStatus !== 'failed')) && (
+        <div className="voice-record__processing">
+          <div className="voice-record__processing-header">
+            {getStatusBadge(uploading ? 'uploading' : repairStatus)}
+          </div>
+          <div className="voice-record__progress-bar">
+            <div
+              className="voice-record__progress-fill"
+              style={{ width: `${uploading ? 10 : repairProgress}%` }}
+            />
+          </div>
+          <p className="voice-record__processing-text">
+            {uploading ? '파일 업로드 중...' : 'AI가 보컬을 다듬고 있습니다. 잠시만 기다려주세요...'}
+          </p>
+          {!uploading && (lalalStatus || demucsStatus) && (
+            <div className="voice-record__method-status-list">
+              {lalalStatus && (
+                <div className="voice-record__method-status">
+                  <span className="voice-record__method-status-dot voice-record__method-status-dot--lalal" />
+                  <span>LALAL.AI: {lalalStatus === 'completed' ? '완료' : lalalStatus === 'failed' ? '실패' : '처리 중...'}</span>
+                </div>
+              )}
+              {demucsStatus && (
+                <div className="voice-record__method-status">
+                  <span className="voice-record__method-status-dot voice-record__method-status-dot--demucs" />
+                  <span>Demucs: {demucsStatus === 'completed' ? '완료' : demucsStatus === 'failed' ? '실패' : '처리 중...'}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 3: Error ── */}
+      {repairStatus === 'failed' && (
+        <div className="voice-record__error">
+          <FiAlertCircle />
+          <span>{repairError || '보컬 다듬기에 실패했습니다.'}</span>
+          <button className="voice-record__retry-btn" onClick={handleReset}>
+            <FiRefreshCw /> 다시 시도
+          </button>
+        </div>
+      )}
+
+      {/* ── Step 4: Completed — Preview ── */}
+      {repairStatus === 'completed' && (
+        <div className="voice-record__result">
+          <div className="voice-record__result-header">
+            {getStatusBadge('completed')}
+            <button className="voice-record__reset-btn" onClick={handleReset}>
+              <FiRefreshCw /> 새로 시작
+            </button>
+          </div>
+
+          <div className="voice-record__results-grid">
+            {/* Original */}
+            <div className="voice-record__player-card">
+              <div className="voice-record__player-label">원본</div>
+              {originalBlobUrl && (
+                <>
+                  <audio
+                    ref={originalAudioRef}
+                    src={originalBlobUrl}
+                    onTimeUpdate={() => setOriginalTime(originalAudioRef.current?.currentTime || 0)}
+                    onLoadedMetadata={() => setOriginalDuration(originalAudioRef.current?.duration || 0)}
+                    onEnded={() => setPlayingType(null)}
+                  />
+                  <div className="voice-record__player-controls">
+                    <button
+                      className={`voice-record__play-btn ${playingType === 'original' ? 'voice-record__play-btn--active' : ''}`}
+                      onClick={() => togglePlay('original')}
+                    >
+                      {playingType === 'original' ? <FiPause /> : <FiPlay />}
+                    </button>
+                    <span className="voice-record__player-time">
+                      {formatTime(originalTime)} / {formatTime(originalDuration)}
+                    </span>
+                    <button
+                      className="voice-record__download-btn"
+                      onClick={() => handleDownload('original')}
+                      title="원본 다운로드"
+                    >
+                      <FiDownload />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* LALAL.AI Result */}
+            {lalalBlobUrl && (
+              <div className="voice-record__player-card voice-record__player-card--lalal">
+                <div className="voice-record__player-label voice-record__player-label--lalal">LALAL.AI</div>
+                <audio
+                  ref={lalalAudioRef}
+                  src={lalalBlobUrl}
+                  onTimeUpdate={() => setLalalTime(lalalAudioRef.current?.currentTime || 0)}
+                  onLoadedMetadata={() => setLalalDuration(lalalAudioRef.current?.duration || 0)}
+                  onEnded={() => setPlayingType(null)}
+                />
+                <div className="voice-record__player-controls">
+                  <button
+                    className={`voice-record__play-btn ${playingType === 'lalal' ? 'voice-record__play-btn--active' : ''}`}
+                    onClick={() => togglePlay('lalal')}
+                  >
+                    {playingType === 'lalal' ? <FiPause /> : <FiPlay />}
+                  </button>
+                  <span className="voice-record__player-time">
+                    {formatTime(lalalTime)} / {formatTime(lalalDuration)}
+                  </span>
+                  <button
+                    className="voice-record__download-btn voice-record__download-btn--lalal"
+                    onClick={() => handleDownload('lalal')}
+                    title="LALAL.AI 결과 다운로드"
+                  >
+                    <FiDownload />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Demucs Result */}
+            {demucsBlobUrl && (
+              <div className="voice-record__player-card voice-record__player-card--demucs">
+                <div className="voice-record__player-label voice-record__player-label--demucs">Demucs (오픈소스)</div>
+                <audio
+                  ref={demucsAudioRef}
+                  src={demucsBlobUrl}
+                  onTimeUpdate={() => setDemucsTime(demucsAudioRef.current?.currentTime || 0)}
+                  onLoadedMetadata={() => setDemucsDuration(demucsAudioRef.current?.duration || 0)}
+                  onEnded={() => setPlayingType(null)}
+                />
+                <div className="voice-record__player-controls">
+                  <button
+                    className={`voice-record__play-btn ${playingType === 'demucs' ? 'voice-record__play-btn--active' : ''}`}
+                    onClick={() => togglePlay('demucs')}
+                  >
+                    {playingType === 'demucs' ? <FiPause /> : <FiPlay />}
+                  </button>
+                  <span className="voice-record__player-time">
+                    {formatTime(demucsTime)} / {formatTime(demucsDuration)}
+                  </span>
+                  <button
+                    className="voice-record__download-btn voice-record__download-btn--demucs"
+                    onClick={() => handleDownload('demucs')}
+                    title="Demucs 결과 다운로드"
+                  >
+                    <FiDownload />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Next step guide */}
+          <div className="voice-record__next-step">
+            <p className="voice-record__next-step-text">
+              결과가 마음에 드시나요? 다듬어진 보컬로 AI 보이스 모델을 학습시켜보세요.
+            </p>
+            <button
+              className="voice-record__next-step-btn"
+              onClick={() => {
+                const vpSection = document.querySelector('.vp-section');
+                if (vpSection) vpSection.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
+              보이스 모델 학습하기 <FiArrowRight />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1333,6 +1952,7 @@ export default function MyMusicPage() {
         {activeTab === 'character' && (
           <>
             <CharacterSection />
+            <VoiceRecordSection />
             <VoicePersonaSection />
           </>
         )}

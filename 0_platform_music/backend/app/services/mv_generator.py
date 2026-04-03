@@ -39,7 +39,7 @@ GEMINI_IMAGE_URL = (
 
 VEO31_GENERATE_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    "veo-3.1-generate-preview:predictLongRunning"
+    "veo-3.1-fast-generate-preview:predictLongRunning"
 )
 
 VEO_OPERATION_URL = (
@@ -225,13 +225,72 @@ async def trim_video_clip(input_path: str, output_path: str, duration: float) ->
     return True
 
 
+# ── 0.9 Generate MV Scenario (ChatGPT) ─────────────────────────────────────
+
+
+async def generate_mv_scenario(
+    title: str,
+    genre: str = None,
+    mood: str = None,
+    lyrics: str = None,
+    character_name: str = None,
+) -> str:
+    """Generate a novel-style MV scenario using ChatGPT.
+
+    Returns a short story (500-1000 chars) describing the music video narrative.
+    If character_name is provided, uses it as the protagonist.
+    """
+    client = _get_openai_client()
+
+    system_prompt = (
+        "You are a professional music video director and screenplay writer. "
+        "Given a song's title, genre, mood, and lyrics, write a short novel-style scenario "
+        "for the music video. Write it as a vivid short story (500-1000 characters in Korean). "
+        "Describe the narrative arc: setting, characters, key moments, and emotional progression. "
+        "Do NOT break it into scenes or numbers. Write it as flowing prose like a short novel synopsis. "
+        "Focus on visual storytelling - describe what the CAMERA would see, not abstract emotions.\n\n"
+        "IMPORTANT: Only the main character (protagonist) is the singer/vocalist in this music video. "
+        "Other characters may appear in story scenes but they NEVER sing, rap, or lip-sync. "
+        "During chorus and rap sections, ONLY the main character performs."
+    )
+
+    user_parts = []
+    user_parts.append("제목: {}".format(title))
+    if genre:
+        user_parts.append("장르: {}".format(genre))
+    if mood:
+        user_parts.append("분위기: {}".format(mood))
+    if character_name:
+        user_parts.append("주인공 이름: {} (이 캐릭터를 주인공으로 사용해주세요)".format(character_name))
+    else:
+        user_parts.append("주인공: 특정 캐릭터 없음 (일반적인 인물로 묘사)")
+    if lyrics:
+        user_parts.append("가사:\n{}".format(lyrics[:3000]))
+
+    user_prompt = "\n".join(user_parts)
+
+    resp = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.8,
+        max_tokens=2000,
+    )
+
+    scenario = resp.choices[0].message.content.strip()
+    logger.info("MV scenario generated: %d chars", len(scenario))
+    return scenario
+
+
 # ── 1. Split Lyrics into Scenes (ChatGPT) ────────────────────────────────────
 
 SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE = """\
 Split the following song lyrics into approximately {scene_count} scenes for a music video.
-For each scene, provide a vivid visual description (in English) that captures \
-the emotion and meaning of the lyrics segment. The description should be \
-suitable as a prompt for AI image/video generation.
+For each scene, provide TWO separate prompts:
+1. image_prompt: A vivid visual description for AI image generation (camera composition, lighting, color)
+2. video_prompt: Camera movement and motion instructions for AI video generation
 
 IMPORTANT: First, design an overall story arc for the music video:
 - Introduction (first 2-3 scenes): Set the scene, introduce the mood/character/setting.
@@ -249,18 +308,57 @@ showing emotions through actions and expressions naturally, not performing to an
 - Use varied cinematic angles: wide establishing shots, close-ups of hands/expressions, \
 over-the-shoulder shots, silhouettes, reflections, and atmospheric montages.
 
+For image_prompt, include specific camera composition:
+- Shot type: extreme wide, wide, medium, close-up, extreme close-up
+- Camera angle: eye-level, low angle, high angle, bird's eye, dutch angle
+- Lighting: natural, golden hour, backlit, rim light, neon, harsh shadows
+- Depth of field: shallow bokeh, deep focus, rack focus subject
+- Color palette: warm/cool tones, specific colors
+
+For video_prompt, include specific camera movement:
+- Camera motion: tracking shot, pan left/right, tilt up/down, dolly in/out, crane, steadicam, handheld
+- Speed: slow motion, normal speed, time-lapse
+- Transition: fade, dissolve, cut, whip pan
+- Subject movement: walking toward/away, turning, reaching out
+
+{scenario_context}
+
+Each scene must include a "scene_type" field:
+- "drama": cinematic storytelling scene (character NOT looking at camera)
+- "lipsync": character faces camera directly, singing/performing (close-up face shot)
+
+scene_type rules (priority-based):
+- If ANY section has label containing "Rap", "rap", "Hip-hop", or "Hiphop": ONLY those Rap sections get scene_type "lipsync". All Chorus sections become "drama".
+- If NO Rap sections exist: Chorus sections get scene_type "lipsync".
+- All other sections (Intro, Verse, Bridge, Outro): always "drama".
+
+For "lipsync" scenes:
+- ONLY the main character (protagonist from the character sheet) appears in the scene. NO other people, NO other characters.
+- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up
+- The main character should appear to be singing or rapping with mouth open
+- Do NOT include any other person, couple, group, or background characters in lipsync scenes
+- For Rap: intense expression, rhythmic head movement
+- For Chorus (when no rap): emotional singing expression
+
+For "drama" scenes:
+- The main character and other characters may appear together for storytelling
+- But ONLY the main character is the singer - other characters never sing or perform
+
 Output ONLY a JSON array with objects like:
 [
-  {{"scene_number": 1, "description": "visual description ...", "lyrics_segment": "lyrics text ..."}},
+  {{"scene_number": 1, "scene_type": "drama", "image_prompt": "English image prompt...", "video_prompt": "English video prompt...", "description_ko": "한글 장면 설명 (2-3문장)", "lyrics_segment": "lyrics text ..."}},
   ...
 ]
 
 Rules:
 - Aim for approximately {scene_count} scenes (minimum {scene_min}, maximum {scene_max}).
-- Each scene description should be 1-3 sentences of vivid, cinematic imagery.
+- Each image_prompt should be 1-3 sentences of vivid, cinematic imagery with specific camera/lighting details.
+- Each video_prompt should specify camera movement and motion details.
+- "description_ko": A Korean-language description of the scene (2-3 sentences). Describe what is visually happening in this scene in natural Korean. This is shown to Korean-speaking users, NOT used for image generation.
 - Distribute lyrics evenly across scenes.
 - If some sections are instrumental/intro/outro, create atmospheric visual scenes.
-- NEVER describe the character singing, performing, or looking at the camera.
+- For "drama" scenes: NEVER describe the character singing, performing, or looking at the camera.
+- For "lipsync" scenes: character MUST face the camera directly in a close-up shot.
 - Ensure visual continuity: maintain consistent setting, lighting, and character appearance across scenes.
 - Output valid JSON only, no markdown fences, no extra text.
 """
@@ -269,6 +367,9 @@ SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE = """\
 Generate approximately {scene_count} scenes for a music video based on the given song metadata.
 Since no lyrics are provided, create vivid visual scenes that match the title, genre, \
 and mood of the song.
+For each scene, provide TWO separate prompts:
+1. image_prompt: A vivid visual description for AI image generation (camera composition, lighting, color)
+2. video_prompt: Camera movement and motion instructions for AI video generation
 
 IMPORTANT: Design an overall story arc for the music video:
 - Introduction (first 2-3 scenes): Set the scene, introduce the mood/character/setting.
@@ -285,24 +386,63 @@ showing emotions through actions and expressions naturally, not performing to an
 - Use varied cinematic angles: wide establishing shots, close-ups of hands/expressions, \
 over-the-shoulder shots, silhouettes, reflections, and atmospheric montages.
 
+For image_prompt, include specific camera composition:
+- Shot type: extreme wide, wide, medium, close-up, extreme close-up
+- Camera angle: eye-level, low angle, high angle, bird's eye, dutch angle
+- Lighting: natural, golden hour, backlit, rim light, neon, harsh shadows
+- Depth of field: shallow bokeh, deep focus, rack focus subject
+- Color palette: warm/cool tones, specific colors
+
+For video_prompt, include specific camera movement:
+- Camera motion: tracking shot, pan left/right, tilt up/down, dolly in/out, crane, steadicam, handheld
+- Speed: slow motion, normal speed, time-lapse
+- Transition: fade, dissolve, cut, whip pan
+- Subject movement: walking toward/away, turning, reaching out
+
+{scenario_context}
+
+Each scene must include a "scene_type" field:
+- "drama": cinematic storytelling scene (character NOT looking at camera)
+- "lipsync": character faces camera directly, singing/performing (close-up face shot)
+
+scene_type rules (priority-based):
+- If ANY section has label containing "Rap", "rap", "Hip-hop", or "Hiphop": ONLY those Rap sections get scene_type "lipsync". All Chorus sections become "drama".
+- If NO Rap sections exist: Chorus sections get scene_type "lipsync".
+- All other sections (Intro, Verse, Bridge, Outro): always "drama".
+
+For "lipsync" scenes:
+- ONLY the main character (protagonist from the character sheet) appears in the scene. NO other people, NO other characters.
+- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up
+- The main character should appear to be singing or rapping with mouth open
+- Do NOT include any other person, couple, group, or background characters in lipsync scenes
+- For Rap: intense expression, rhythmic head movement
+- For Chorus (when no rap): emotional singing expression
+
+For "drama" scenes:
+- The main character and other characters may appear together for storytelling
+- But ONLY the main character is the singer - other characters never sing or perform
+
 Output ONLY a JSON array with objects like:
 [
-  {{"scene_number": 1, "description": "visual description ...", "lyrics_segment": ""}},
+  {{"scene_number": 1, "scene_type": "drama", "image_prompt": "English image prompt...", "video_prompt": "English video prompt...", "description_ko": "한글 장면 설명 (2-3문장)", "lyrics_segment": ""}},
   ...
 ]
 
 Rules:
 - Create exactly {scene_count} scenes.
-- Each scene description should be 1-3 sentences of vivid, cinematic imagery.
+- Each image_prompt should be 1-3 sentences of vivid, cinematic imagery with specific camera/lighting details.
+- Each video_prompt should specify camera movement and motion details.
+- "description_ko": A Korean-language description of the scene (2-3 sentences). Describe what is visually happening in this scene in natural Korean. This is shown to Korean-speaking users, NOT used for image generation.
 - The scenes should tell a visual story that fits the genre and mood.
-- NEVER describe the character singing, performing, or looking at the camera.
+- For "drama" scenes: NEVER describe the character singing, performing, or looking at the camera.
+- For "lipsync" scenes: character MUST face the camera directly in a close-up shot.
 - Ensure visual continuity: maintain consistent setting, lighting, and character appearance across scenes.
 - Output valid JSON only, no markdown fences, no extra text.
 """
 
 # ── Section-aware scene planning prompt (used when music_sections available) ──
 
-SECTION_SCENE_PLAN_SYSTEM_PROMPT = """\
+SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE = """\
 You are a music video scene planner. You will be given:
 1. Music structure sections with timestamps and mood
 2. Song lyrics (if available)
@@ -312,7 +452,9 @@ For each music section, compute:
 - clip_count = ceil(section_duration / 10)
 - use_seconds = section_duration / clip_count
 
-Then for each clip, create a vivid cinematic visual description.
+Then for each clip, create TWO separate prompts:
+1. image_prompt: A vivid visual description for AI image generation (camera composition, lighting, color)
+2. video_prompt: Camera movement and motion instructions for AI video generation
 
 IMPORTANT VISUAL STYLE:
 - Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera.
@@ -320,6 +462,21 @@ IMPORTANT VISUAL STYLE:
 showing emotions through actions and expressions naturally.
 - Use varied cinematic angles: wide shots, close-ups, over-the-shoulder, silhouettes, reflections.
 - Maintain visual continuity across all clips.
+
+For image_prompt, include specific camera composition:
+- Shot type: extreme wide, wide, medium, close-up, extreme close-up
+- Camera angle: eye-level, low angle, high angle, bird's eye, dutch angle
+- Lighting: natural, golden hour, backlit, rim light, neon, harsh shadows
+- Depth of field: shallow bokeh, deep focus, rack focus subject
+- Color palette: warm/cool tones, specific colors
+
+For video_prompt, include specific camera movement:
+- Camera motion: tracking shot, pan left/right, tilt up/down, dolly in/out, crane, steadicam, handheld
+- Speed: slow motion, normal speed, time-lapse
+- Transition: fade, dissolve, cut, whip pan
+- Subject movement: walking toward/away, turning, reaching out
+
+{scenario_context}
 
 Output ONLY a JSON array of section objects:
 [
@@ -332,7 +489,9 @@ Output ONLY a JSON array of section objects:
       {{
         "clip_number": 1,
         "use_seconds": 6.5,
-        "description": "Rain-drenched city skyline at twilight...",
+        "image_prompt": "Rain-drenched city skyline at twilight, extreme wide shot, high angle...",
+        "video_prompt": "Slow dolly in toward the city, gentle rain particles falling...",
+        "description_ko": "황혼 무렵 비에 젖은 도시 스카이라인이 펼쳐진다. 높은 곳에서 내려다보는 극광각 쇼트로 도시의 웅장함과 고독함이 동시에 느껴진다.",
         "lyrics_segment": "",
         "mood": "빗소리, 차분한 피아노"
       }}
@@ -340,13 +499,37 @@ Output ONLY a JSON array of section objects:
   }}
 ]
 
+Each clip must include a "scene_type" field:
+- "drama": cinematic storytelling scene (character NOT looking at camera)
+- "lipsync": character faces camera directly, singing/performing (close-up face shot)
+
+scene_type rules (priority-based):
+- If ANY section has label containing "Rap", "rap", "Hip-hop", or "Hiphop": ONLY those Rap sections get scene_type "lipsync". All Chorus sections become "drama".
+- If NO Rap sections exist: Chorus sections get scene_type "lipsync".
+- All other sections (Intro, Verse, Bridge, Outro): always "drama".
+
+For "lipsync" clips:
+- ONLY the main character (protagonist from the character sheet) appears in the scene. NO other people, NO other characters.
+- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up
+- The main character should appear to be singing or rapping with mouth open
+- Do NOT include any other person, couple, group, or background characters in lipsync scenes
+- For Rap: intense expression, rhythmic head movement
+- For Chorus (when no rap): emotional singing expression
+
+For "drama" clips:
+- The main character and other characters may appear together for storytelling
+- But ONLY the main character is the singer - other characters never sing or perform
+
 Rules:
 - Each clip's use_seconds must sum up to the section duration (within 0.5s tolerance).
 - Distribute lyrics across clips according to their timing in each section.
 - For instrumental sections (Intro/Outro/Bridge), create atmospheric visual scenes with empty lyrics_segment.
-- Each clip description: 1-3 sentences of vivid, cinematic imagery in English.
+- Each clip image_prompt: 1-3 sentences of vivid, cinematic imagery in English with specific camera/lighting details.
+- Each clip video_prompt: specify camera movement and motion details.
+- "description_ko": A Korean-language description of the scene (2-3 sentences). Describe what is visually happening in this scene in natural Korean. This is shown to Korean-speaking users, NOT used for image generation.
 - Reflect each section's mood in the clip descriptions.
-- NEVER describe the character singing, performing, or looking at the camera.
+- For "drama" clips: NEVER describe the character singing, performing, or looking at the camera.
+- For "lipsync" clips: character MUST face the camera directly in a close-up shot.
 - Output valid JSON only, no markdown fences, no extra text.
 """
 
@@ -359,14 +542,16 @@ async def split_lyrics_into_scenes(
     scene_count: int = 20,
     user_scene_prompt: Optional[str] = None,
     music_sections: Optional[List[dict]] = None,
+    scenario: Optional[str] = None,
 ) -> List[dict]:
     """Use ChatGPT to split lyrics into visual scenes.
 
     If music_sections is provided, uses section-aware planning that produces
     clips synced to music structure. Otherwise falls back to flat scene list.
 
-    Returns list of scene dicts. When music_sections is used, each scene dict
-    includes: scene_number, description, lyrics_segment, use_seconds, section, section_mood.
+    Returns list of scene dicts with image_prompt, video_prompt, lyrics_segment.
+    When music_sections is used, each scene dict also includes:
+    use_seconds, section, section_mood.
     """
     client = _get_openai_client()
 
@@ -374,16 +559,27 @@ async def split_lyrics_into_scenes(
     if music_sections and len(music_sections) > 0:
         return await _split_with_music_sections(
             client, lyrics, title, genre, mood,
-            user_scene_prompt, music_sections,
+            user_scene_prompt, music_sections, scenario,
         )
 
     # ── Legacy path (no music sections) ──
     scene_min = max(scene_count - 5, 3)
     scene_max = scene_count + 5
+
+    # Build scenario context for prompt templates
+    scenario_context = ""
+    if scenario:
+        scenario_context = (
+            "MV SCENARIO (follow this narrative):\n{}\n\n"
+            "Based on this scenario, distribute the story across scenes. "
+            "Each scene should follow the narrative arc described above."
+        ).format(scenario)
+
     prompt_vars = {
         "scene_count": scene_count,
         "scene_min": scene_min,
         "scene_max": scene_max,
+        "scenario_context": scenario_context,
     }
 
     if lyrics and lyrics.strip():
@@ -444,12 +640,25 @@ async def _split_with_music_sections(
     mood: Optional[str],
     user_scene_prompt: Optional[str],
     music_sections: List[dict],
+    scenario: Optional[str] = None,
 ) -> List[dict]:
     """Section-aware scene planning using music structure.
 
-    Returns flat list of scene dicts with use_seconds, section, section_mood.
+    Returns flat list of scene dicts with image_prompt, video_prompt,
+    use_seconds, section, section_mood.
     """
-    system_prompt = SECTION_SCENE_PLAN_SYSTEM_PROMPT
+    # Build scenario context
+    scenario_context = ""
+    if scenario:
+        scenario_context = (
+            "MV SCENARIO (follow this narrative):\n{}\n\n"
+            "Based on this scenario, distribute the story across scenes. "
+            "Each scene should follow the narrative arc described above."
+        ).format(scenario)
+
+    system_prompt = SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE.format(
+        scenario_context=scenario_context,
+    )
 
     if user_scene_prompt and user_scene_prompt.strip():
         system_prompt += (
@@ -520,15 +729,28 @@ async def _split_with_music_sections(
             clips = [{
                 "clip_number": 1,
                 "use_seconds": dur,
-                "description": "Atmospheric scene for {} section".format(section_label),
+                "image_prompt": "Atmospheric scene for {} section".format(section_label),
+                "video_prompt": "Slow dolly in, atmospheric ambient movement",
                 "lyrics_segment": "",
                 "mood": section_mood,
             }]
 
         for clip in clips:
+            # Support both new (image_prompt/video_prompt) and old (description) format
+            image_prompt = clip.get("image_prompt") or clip.get("description", "")
+            video_prompt = clip.get("video_prompt", "")
+
+            # Determine scene_type: from clip, or infer from section label
+            clip_scene_type = clip.get("scene_type", "")
+            if not clip_scene_type:
+                clip_scene_type = "lipsync" if section_label.lower().startswith("chorus") else "drama"
+
             flat_scenes.append({
                 "scene_number": scene_number,
-                "description": clip.get("description", ""),
+                "description": image_prompt,  # backward compat
+                "image_prompt": image_prompt,
+                "video_prompt": video_prompt,
+                "description_ko": clip.get("description_ko", ""),
                 "lyrics_segment": clip.get("lyrics_segment", ""),
                 "use_seconds": float(clip.get("use_seconds", 10)),
                 "section": section_label,
@@ -536,6 +758,7 @@ async def _split_with_music_sections(
                 "section_end": section_end,
                 "section_mood": section_mood,
                 "clip_mood": clip.get("mood", section_mood),
+                "scene_type": clip_scene_type,
             })
             scene_number += 1
 
@@ -557,6 +780,7 @@ async def generate_scene_image(
     style_prompt: str = "",
     cover_image_bytes: Optional[bytes] = None,
     character_image_bytes: Optional[bytes] = None,
+    scene_type: str = "drama",
 ) -> bytes:
     """Generate a single scene image using Gemini. Returns PNG bytes.
 
@@ -581,12 +805,20 @@ async def generate_scene_image(
         )
 
     if character_image_bytes:
-        prompt_parts.append(
-            "IMPORTANT: The provided character reference sheet shows the main character "
-            "of this music video. This character MUST appear prominently in this scene, "
-            "maintaining their exact appearance (face, hair, features) from the reference. "
-            "Photorealistic style only — no anime, cartoon, or illustration."
-        )
+        if scene_type == "lipsync":
+            prompt_parts.append(
+                "IMPORTANT: ONLY the main character from the provided character reference sheet appears in this scene. "
+                "NO other people or characters. The main character is ALONE, facing the camera, singing/performing. "
+                "Maintain their exact appearance (face, hair, features) from the reference. "
+                "Photorealistic style only."
+            )
+        else:
+            prompt_parts.append(
+                "IMPORTANT: The provided character reference sheet shows the main character "
+                "of this music video. This character MUST appear prominently in this scene, "
+                "maintaining their exact appearance (face, hair, features) from the reference. "
+                "Photorealistic style only — no anime, cartoon, or illustration."
+            )
 
     prompt = ". ".join(prompt_parts)
 
@@ -663,13 +895,34 @@ async def generate_scene_image(
 async def start_scene_video(
     scene_description: str,
     image_bytes: Optional[bytes] = None,
+    video_prompt: str = None,
+    lyrics_segment: str = None,
+    scene_type: str = "drama",
 ) -> str:
     """Start video generation. Tries Veo 3.1 with image, falls back to Veo 2 text-only.
 
     Returns operation_name.
     """
 
-    prompt = "{}, smooth cinematic camera movement".format(scene_description)
+    # Music video context prefix
+    mv_context = "A cinematic scene from a professional music video. "
+
+    if scene_type == "lipsync" and lyrics_segment:
+        # Lipsync scene: include lyrics for Veo to sync mouth movements
+        if video_prompt:
+            prompt = "{}{}. Camera/Motion: {}. The character is singing these lyrics with synchronized lip movements: \"{}\"".format(
+                mv_context, scene_description, video_prompt, lyrics_segment
+            )
+        else:
+            prompt = "{}{}. The character faces the camera and sings these lyrics with perfectly synchronized lip movements, close-up shot: \"{}\"".format(
+                mv_context, scene_description, lyrics_segment
+            )
+    else:
+        # Drama scene: regular cinematic
+        if video_prompt:
+            prompt = "{}{}. Camera/Motion: {}".format(mv_context, scene_description, video_prompt)
+        else:
+            prompt = "{}{}, smooth cinematic camera movement".format(mv_context, scene_description)
 
     if image_bytes:
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -902,7 +1155,9 @@ async def _generate_single_scene_video(
     for attempt in range(max_retries):
         try:
             operation_name = await start_scene_video(
-                scene["description"], image_bytes
+                scene.get("image_prompt") or scene.get("description", ""),
+                image_bytes,
+                video_prompt=scene.get("video_prompt"),
             )
             consecutive_429 = 0  # API accepted the request
 
@@ -1030,6 +1285,7 @@ async def run_mv_pipeline(
                 img_bytes = await generate_scene_image(
                     scene["description"],
                     cover_image_bytes=cover_image_bytes,
+                    scene_type=scene.get("scene_type", "drama"),
                 )
                 scene_images.append(img_bytes)
 

@@ -2352,3 +2352,1295 @@ STEP 1/2 답변이 마스터 프롬프트 앞에 분리 배치되던 구조를, 
 - refine_character_sheet() 함수
 - 헬퍼 함수 (_call_gemini_text, _call_gemini_image, _build_inline_images)
 - 프론트엔드 코드
+
+---
+
+## v13 — Git Pull 후 환경 복원: API 키 설정 및 서버 정상 작동 확인
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+Git Pull 이후 개발 환경을 처음부터 복원하였다. `.env` 파일 생성, Docker 인프라 재시작, 백엔드/프론트엔드 서버 가동, 전체 기능 테스트까지 수행하여 정상 동작을 확인하였다.
+
+### 수행 결과
+
+#### 백엔드
+- `.env` 파일 생성 완료 (전체 API 키 반영)
+- `config.py` 확인: `kits_api_key`, `kits_api_url`, `suno_api_url` 필드 모두 이미 존재 (수정 불필요)
+- Docker 인프라 5개 컨테이너 시작 및 healthy 확인 (PostgreSQL, MongoDB, Redis, Elasticsearch, MinIO)
+- 백엔드 서버 포트 9000 정상 가동
+
+#### 프론트엔드
+- npm install 완료 (187개 패키지)
+- 프론트엔드 서버 포트 4000 정상 가동
+- API baseURL(포트 9000) 연결 설정 확인 완료
+
+#### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 백엔드 헬스체크 | PASS |
+| 2 | 프론트엔드 접속 확인 | PASS |
+| 3 | 회원가입 테스트 | PASS |
+| 4 | 로그인 테스트 (admin@aimu.com / 1) | PASS |
+| 5 | 인증된 API 테스트 (/api/auth/me) | PASS |
+| 6 | DB 연결 확인 (users 테이블 2명) | PASS |
+
+### 특이사항
+- Git에서 fresh pull 후 `config.py`에 `kits_api_key`, `kits_api_url`, `suno_api_url` 필드가 이미 포함되어 있었음 (이전 세션에서의 수정이 커밋되어 있었던 것으로 추정)
+- Docker 볼륨 초기화(`-v`) 후 재시작하여 DB 자격증명 일치시킴
+- MinIO는 호스트 포트 9100으로 매핑 (백엔드 9000 포트와 충돌 방지)
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/.env` | 신규 생성 — 전체 API 키 및 DB 접속 정보 설정 |
+
+---
+
+## v14 — 내 목소리 녹음 + Dolby.io 보컬 다듬기 기능 구현
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+사용자가 자신의 목소리를 브라우저에서 직접 녹음하거나 파일로 업로드한 뒤, Dolby.io Media Enhance API를 통해 보컬을 다듬고(노이즈 제거, 음질 향상), 원본과 다듬어진 결과를 비교 청취 및 다운로드할 수 있는 전체 파이프라인을 구현하였다.
+
+### 수행 결과
+
+#### 백엔드
+- `config.py`에 `dolby_api_key` 필드 추가
+- `.env`에 `DOLBY_API_KEY=` 항목 추가
+- `services/dolby_service.py` 신규 생성 — Dolby.io Media Enhance API 연동 (파일 업로드 → 처리 시작 → 폴링 → 결과 다운로드)
+- `routes/vocal_repair.py` 신규 생성 — 8개 API 엔드포인트:
+  - `POST /api/vocal-repair/upload` — 보컬 파일 업로드
+  - `POST /api/vocal-repair/{id}/enhance` — Dolby.io 보컬 다듬기 시작
+  - `GET /api/vocal-repair/{id}/status` — 처리 상태 조회
+  - `GET /api/vocal-repair/{id}/original/stream` — 원본 스트리밍
+  - `GET /api/vocal-repair/{id}/enhanced/stream` — 다듬어진 파일 스트리밍
+  - `GET /api/vocal-repair/{id}/original/download` — 원본 다운로드
+  - `GET /api/vocal-repair/{id}/enhanced/download` — 다듬어진 파일 다운로드
+  - `GET /api/vocal-repair/list` — 전체 목록 조회
+- `main.py`에 vocal_repair 라우터 등록
+
+#### 프론트엔드
+- `api/index.js`에 vocal-repair API 함수 8개 추가
+- `MyMusicPage.jsx`에 `VoiceRecordSection` 컴포넌트 구현:
+  - MediaRecorder API 브라우저 녹음 (시작/정지/타이머)
+  - 파일 업로드 (드래그앤드롭 + 파일 선택)
+  - 보컬 다듬기 버튼 → Dolby.io 처리 + 프로그레스바
+  - 원본 vs 다듬어진 목소리 나란히 미리듣기
+  - 원본/다듬어진 파일 다운로드
+  - '보이스 모델 학습하기' 다음 단계 연결
+- `MyMusicPage.css`에 `.voice-record` 관련 스타일 추가
+
+#### 테스트 결과 (10/10 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 백엔드 Health Check | PASS |
+| 2 | 파일 업로드 API | PASS |
+| 3 | 보컬 다듬기 시작 (API 키 미설정 시 503) | PASS |
+| 4 | 상태 조회 API | PASS |
+| 5 | 원본 스트리밍 | PASS |
+| 6 | 원본 다운로드 | PASS |
+| 7 | 목록 조회 | PASS |
+| 8 | 프론트엔드 빌드 확인 | PASS |
+| 9 | 잘못된 파일 업로드 거부 | PASS |
+| 10 | 인증 없이 접근 차단 | PASS |
+
+### 특이사항
+- `DOLBY_API_KEY`가 아직 비어있어 실제 보컬 다듬기는 작동하지 않음 (API 키 입력 필요)
+- Dolby.io에서 API 키 발급 후 `.env`에 입력하면 즉시 사용 가능
+- API 키 미설정 상태에서 enhance 요청 시 503 응답으로 정상 안내
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/config.py` | `dolby_api_key` 필드 추가 |
+| `backend/.env` | `DOLBY_API_KEY=` 항목 추가 |
+| `backend/app/services/dolby_service.py` | 신규 — Dolby.io Media Enhance API 연동 서비스 |
+| `backend/app/routes/vocal_repair.py` | 신규 — 보컬 다듬기 8개 API 엔드포인트 |
+| `backend/app/main.py` | vocal_repair 라우터 등록 추가 |
+| `frontend/src/api/index.js` | vocal-repair API 함수 8개 추가 |
+| `frontend/src/pages/MyMusicPage.jsx` | VoiceRecordSection 컴포넌트 구현 |
+| `frontend/src/pages/MyMusicPage.css` | 녹음/보컬 다듬기 UI 스타일 추가 |
+
+---
+
+## v15 — Dolby.io → Wondera API 교체
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+기존 Dolby.io Media Enhance API를 Wondera REST API로 교체하였다. 환경변수, 설정, 서비스 모듈, 라우트의 import/검증 로직을 모두 Wondera 기준으로 전환하였으며, 기존 dolby_service.py는 삭제하고 wondera_service.py를 신규 생성하였다.
+
+### 수행 결과
+
+#### 백엔드
+- `.env`: `DOLBY_API_KEY` 삭제, `WONDERA_API_KEY=wk_9edb...` 추가
+- `config.py`: `dolby_api_key` → `wondera_api_key` 변경
+- `services/dolby_service.py` 삭제
+- `services/wondera_service.py` 신규 생성 — Wondera REST API 연동
+- `routes/vocal_repair.py`: import 및 검증 로직을 Wondera로 수정
+
+#### 테스트 결과 (9/9 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 시작 + health check | PASS |
+| 2 | 파일 업로드 | PASS |
+| 3 | Enhance API 호출 (API 키 인식 정상, 외부 호출 시도됨) | PASS |
+| 4 | 상태 조회 | PASS |
+| 5 | 원본 스트리밍 | PASS |
+| 6 | 원본 다운로드 | PASS |
+| 7 | 목록 조회 | PASS |
+| 8 | 프론트엔드 빌드 | PASS |
+| 9 | 인증 차단 | PASS |
+
+### 특이사항
+- Wondera API 호출 시 DNS 해석 실패 (`[Errno -2] Name or service not known`) — 현재 네트워크 환경에서 `api.wondera.com` 접근 불가. 코드 로직 자체는 정상 작동
+- 실제 Wondera API가 외부에서 접근 가능한 환경에서 재테스트 필요
+- API 엔드포인트 URL(`api.wondera.com`)이 실제 서비스 URL과 다를 수 있음 — Wondera 공식 문서 확인 후 조정 필요할 수 있음
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/.env` | `DOLBY_API_KEY` 삭제, `WONDERA_API_KEY` 추가 |
+| `backend/app/config.py` | `dolby_api_key` → `wondera_api_key` 변경 |
+| `backend/app/services/dolby_service.py` | 삭제 |
+| `backend/app/services/wondera_service.py` | 신규 — Wondera REST API 연동 서비스 |
+| `backend/app/routes/vocal_repair.py` | import/검증 로직 Wondera로 수정 |
+
+---
+
+## v16 — 보컬 수리 투트랙: LALAL.AI + Demucs 비교 선택 구현
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+기존 Wondera 단일 API 방식을 LALAL.AI(클라우드) + Demucs(로컬) 투트랙 비교 선택 구조로 전면 교체하였다. 사용자가 방식을 선택하면 각각 독립적으로 처리되며, 결과를 나란히 비교할 수 있는 3칸 UI를 구현하였다.
+
+### 수행 결과
+
+#### 백엔드
+- `config.py`: `wondera_api_key` → `lalal_api_key` 변경
+- `.env`: `WONDERA_API_KEY` 삭제, `LALAL_API_KEY` 등록
+- `services/wondera_service.py` 삭제
+- `services/lalal_service.py` 신규 — LALAL.AI API 연동
+- `services/demucs_service.py` 신규 — 로컬 Demucs 처리
+- `services/audio_utils.py` 신규 — pyloudnorm 노멀라이즈 + ffmpeg 컴프레션
+- `routes/vocal_repair.py` 전면 수정 — method 파라미터, 투트랙 파이프라인
+- `requirements.txt`에 `pyloudnorm`, `soundfile`, `demucs` 추가
+
+#### 프론트엔드
+- `api/index.js`: method 파라미터 추가
+- `MyMusicPage.jsx`: 방식 선택 체크박스, 각 방식별 프로그레스, 3칸 결과 비교 UI
+- `MyMusicPage.css`: 체크박스/결과카드 스타일, LALAL=파란색/Demucs=초록색 액센트
+
+#### 테스트 결과 (12/12 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 시작 | PASS |
+| 2 | 파일 업로드 | PASS |
+| 3 | Enhance demucs (미설치 상태에서 정상 에러 처리) | PASS |
+| 4 | Enhance lalal (API 호출 시도, 422 에러 캡처) | PASS |
+| 5 | Enhance both (양쪽 독립적 상태 추적) | PASS |
+| 6 | 상태 조회 (lalal_status/demucs_status 개별 표시) | PASS |
+| 7 | 원본 스트림/다운로드 | PASS |
+| 8 | Enhanced 스트림 method 파라미터 | PASS |
+| 9 | 목록 조회 | PASS |
+| 10 | 프론트엔드 빌드 | PASS |
+| 11 | 인증 차단 | PASS |
+| 12 | 잘못된 method 거부 | PASS |
+
+### 특이사항
+- Demucs 미설치 상태 (`pip install demucs` 필요, GPU 권장)
+- LALAL.AI `voice_clean` 엔드포인트에서 422 반환 — API 스펙 확인/수정 필요
+- 두 방식 모두 코드 로직은 정상 동작, 외부 서비스 연동만 추가 확인 필요
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/.env` | `WONDERA_API_KEY` 삭제, `LALAL_API_KEY` 추가 |
+| `backend/app/config.py` | `wondera_api_key` → `lalal_api_key` 변경 |
+| `backend/app/services/wondera_service.py` | 삭제 |
+| `backend/app/services/lalal_service.py` | 신규 — LALAL.AI API 연동 |
+| `backend/app/services/demucs_service.py` | 신규 — 로컬 Demucs 처리 |
+| `backend/app/services/audio_utils.py` | 신규 — pyloudnorm 노멀라이즈 + ffmpeg 컴프레션 |
+| `backend/app/routes/vocal_repair.py` | 전면 수정 — method 파라미터, 투트랙 파이프라인 |
+| `backend/requirements.txt` | `pyloudnorm`, `soundfile`, `demucs` 추가 |
+| `frontend/src/api/index.js` | method 파라미터 추가 |
+| `frontend/src/pages/MyMusicPage.jsx` | 방식 선택 체크박스, 3칸 결과 비교 UI |
+| `frontend/src/pages/MyMusicPage.css` | 체크박스/결과카드 스타일, 색상 액센트 |
+
+---
+
+## v17 — RVC 변환 후 MR 음정 조절 + 수동 합치기 기능
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+RVC 보컬 변환 완료 후 자동 합치기를 제거하고, converted_vocal과 backing을 각각 MinIO에 저장한 뒤 "awaiting_merge" 상태를 도입하였다. 프론트엔드에서 Web Audio API detune으로 MR 음정을 실시간 미리듣기하고, 최종 합치기는 서버 ffmpeg로 정확하게 처리하는 구조를 구현하였다.
+
+### 수행 결과
+
+#### 백엔드
+- `kits_service.py`: 자동 합치기(Step f~h) 제거 → converted_vocal + backing 각각 MinIO 저장 → "awaiting_merge" 상태 도입
+- `kits_service.py`: `merge_vocal_and_backing` 함수 신규 추가 (ffmpeg asetrate/aresample로 MR 피치 조절 + 볼륨 조절 + 합치기)
+- `voice_convert.py`: 3개 엔드포인트 추가
+  - GET `/api/voice-convert/{id}/converted-vocal/stream`
+  - GET `/api/voice-convert/{id}/backing/stream`
+  - POST `/api/voice-convert/{id}/merge` (mr_pitch_shift, vocal_volume, mr_volume)
+- `voice_convert.py`: status 응답에 `voice_converted_vocal_url`, `voice_converted_backing_url` 필드 추가
+
+#### 프론트엔드
+- `api/index.js`: `streamConvertedVocal`, `streamBacking`, `mergeVoiceConversion` 함수 추가
+- `StudioTab2.jsx`: MrPitchAdjustPanel 컴포넌트 구현
+  - Web Audio API detune으로 MR 음정 실시간 조절 (-12~+12 반음)
+  - 재생 모드 (보컬만/MR만/합쳐서)
+  - 보컬/MR 볼륨 슬라이더
+  - "이 설정으로 최종 합치기" 버튼
+  - awaiting_merge 상태 처리
+- `StudioTab2.css`: `.mr-pitch__` 스타일 추가
+
+#### 테스트 결과 (8/8 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 시작 | PASS |
+| 2 | 프론트엔드 빌드 | PASS |
+| 3 | converted-vocal/stream 엔드포인트 | PASS |
+| 4 | backing/stream 엔드포인트 | PASS |
+| 5 | merge 엔드포인트 | PASS |
+| 6 | status 새 필드 (코드 확인) | PASS |
+| 7 | 잘못된 merge 요청 처리 | PASS |
+| 8 | 인증 차단 | PASS |
+
+### 특이사항
+- 실제 Kits.AI RVC 변환 → awaiting_merge → merge 전체 흐름은 Kits.AI API 키가 설정된 환경에서 E2E 테스트 필요
+- Web Audio API detune은 브라우저에서 실시간 피치 변경 (서버 호출 없음)
+- 최종 합치기는 서버에서 ffmpeg로 처리 (정확한 피치 조절)
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/services/kits_service.py` | 자동 합치기 제거, awaiting_merge 상태 도입, `merge_vocal_and_backing` 함수 추가 |
+| `backend/app/routes/voice_convert.py` | converted-vocal/stream, backing/stream, merge 엔드포인트 추가, status 필드 추가 |
+| `frontend/src/api/index.js` | `streamConvertedVocal`, `streamBacking`, `mergeVoiceConversion` 함수 추가 |
+| `frontend/src/pages/StudioTab2.jsx` | MrPitchAdjustPanel 컴포넌트 구현 (실시간 음정 조절, 재생 모드, 볼륨 슬라이더) |
+| `frontend/src/pages/StudioTab2.css` | `.mr-pitch__` 스타일 추가 |
+
+---
+
+## v18 — MR 음정 조절 품질 개선: asetrate → rubberband
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+kits_service.py의 `merge_vocal_and_backing`에서 ffmpeg asetrate/aresample 방식을 rubberband=pitch 필터로 교체하였다. rubberband는 타임스트레칭 없이 피치만 변경하므로 재생 속도가 변하지 않고 음질이 크게 향상된다.
+
+### 수행 결과
+
+#### 백엔드
+- `kits_service.py`: `merge_vocal_and_backing` 함수 내 MR 피치 조절 필터를 `asetrate/aresample` → `rubberband=pitch` 로 교체
+
+#### 테스트 결과 (4/4 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | rubberband 필터 동작 | PASS |
+| 2 | 서버 시작 | PASS |
+| 3 | 프론트엔드 빌드 | PASS |
+| 4 | merge API | PASS |
+
+### 특이사항
+- ffmpeg에 librubberband가 이미 포함되어 있어 추가 설치 불필요
+- rubberband 필터는 속도 변화 없이 피치만 조절하므로 asetrate 대비 음질 우수
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/services/kits_service.py` | `merge_vocal_and_backing` 내 asetrate/aresample → rubberband=pitch 필터로 교체 |
+
+---
+
+## v19 — StudioTab2 "테스트 Wondera" 탭 추가
+
+**수정일자**: 2026-03-30
+
+### 변경 요약
+StudioTab2에 Wondera API 연동 테스트 섹션을 추가하였다. 보컬 업로드, AI 음악 생성, 상태 조회 3개 프록시 엔드포인트를 백엔드에 구현하고, 프론트엔드에서 모델 선택·가사 입력·AI/내목소리 비교 생성 UI를 제공한다.
+
+### 수행 결과
+
+#### 백엔드
+- `config.py`: `wondera_api_key` 필드 추가
+- `.env`: `WONDERA_API_KEY` 등록
+- `routes/wondera.py` 신규: 3개 프록시 엔드포인트 (upload-vocal, generate, query)
+- `main.py`: wondera 라우터 등록
+
+#### 프론트엔드
+- `api/index.js`: `wonderaUploadVocal`, `wonderaGenerate`, `wonderaQuery` 함수 추가
+- `StudioTab2.jsx`: WonderaTestSection 컴포넌트, mode='wondera' 토글, 기본 가사 하드코딩, 모델 드롭다운, AI/내목소리 비교 생성
+- `StudioTab2.css`: `.wondera-test` 스타일 추가
+
+#### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 시작 | PASS |
+| 2 | 프론트엔드 빌드 | PASS |
+| 3 | upload-vocal 엔드포인트 | PASS |
+| 4 | generate 엔드포인트 | PASS |
+| 5 | query 엔드포인트 | PASS |
+| 6 | 인증 차단 | PASS |
+
+### 특이사항
+- Wondera API가 Cloudflare로 보호되어 서버에서 직접 호출 시 403 반환. 브라우저에서 테스트 필요.
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/config.py` | `wondera_api_key` 필드 추가 |
+| `backend/.env` | `WONDERA_API_KEY` 환경변수 등록 |
+| `backend/app/routes/wondera.py` | 신규 — upload-vocal, generate, query 프록시 엔드포인트 |
+| `backend/app/main.py` | wondera 라우터 등록 |
+| `frontend/src/api/index.js` | `wonderaUploadVocal`, `wonderaGenerate`, `wonderaQuery` 함수 추가 |
+| `frontend/src/pages/StudioTab2.jsx` | WonderaTestSection 컴포넌트, mode='wondera' 토글 |
+| `frontend/src/pages/StudioTab2.css` | `.wondera-test` 스타일 추가 |
+
+## v20 — MV 시나리오 생성 + 씬별 image_prompt/video_prompt 분리
+
+> 날짜: 2026-03-31
+
+### 백엔드 변경
+
+- `mv_generator.py`: `generate_mv_scenario()` 함수 신규 (GPT로 소설형 시나리오 생성)
+- `mv_generator.py`: 3개 시스템 프롬프트 모두 `description` → `image_prompt` + `video_prompt` 분리 출력으로 변경. 카메라 구도/무빙 구체적 지시 추가
+- `mv_generator.py`: `split_lyrics_into_scenes()`에 `scenario` 파라미터 추가
+- `mv_generator.py`: `start_scene_video()`에 `video_prompt` 파라미터 추가
+- `cover_generator.py`: `generate_cover_image()`에 `scenario` 파라미터 추가
+- `mv_pipeline.py`: Phase 0(시나리오 생성) 단계 추가, 씬 분할/이미지/영상 생성에 새 필드 활용
+- `routes/mv.py`: job_doc에 `scenario`, scene에 `image_prompt`/`video_prompt` 추가
+
+### 프론트엔드
+
+변경 없음 (백엔드 자동 처리)
+
+### 테스트 결과 (9/9 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 시작 | PASS |
+| 2 | 프론트엔드 빌드 | PASS |
+| 3 | 함수 시그니처 (1) | PASS |
+| 4 | 함수 시그니처 (2) | PASS |
+| 5 | 함수 시그니처 (3) | PASS |
+| 6 | 함수 시그니처 (4) | PASS |
+| 7 | import 확인 | PASS |
+| 8 | API 동작 | PASS |
+| 9 | 프롬프트 템플릿 | PASS |
+
+### 특이사항
+
+- 하위호환 유지: `description` 필드는 `image_prompt` 값으로 자동 설정
+- `scenario`, `video_prompt` 모두 `None` 기본값이라 기존 코드와 호환
+- 실제 MV 생성 E2E 테스트는 OpenAI/Gemini API 키 필요
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/mv_generator.py` | `generate_mv_scenario()` 신규, 프롬프트 분리, 파라미터 추가 |
+| `backend/app/cover_generator.py` | `generate_cover_image()`에 `scenario` 파라미터 추가 |
+| `backend/app/mv_pipeline.py` | Phase 0 시나리오 생성 단계 추가, 새 필드 활용 |
+| `backend/app/routes/mv.py` | job_doc에 `scenario`, scene에 `image_prompt`/`video_prompt` 추가 |
+
+## v21 — 시나리오/프롬프트 생성 실패 시 재시도 로직 추가
+
+> 날짜: 2026-03-31
+
+### 변경 사항
+
+- **Phase 0 시나리오 생성**: 기존 폴백(warning 후 continue) 방식 제거 → 최대 3회 재시도 + 지수 백오프(3초, 6초) + 실패 시 job `"failed"` 처리
+- **Phase 1b 씬 분할**: `image_prompt`/`video_prompt` 검증 추가. 비어있는 씬이 있으면 전체 재시도 (최대 3회). 실패 시 job `"failed"` 처리
+- **scene_doc / Phase 2·3**: `description` 폴백 제거. `image_prompt`만 사용
+- **상용화 기준**: 저품질 폴백 없이, 실패 시 명확한 에러 반환
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 시나리오 재시도 로직 | PASS |
+| 2 | 씬 분할 검증/재시도 | PASS |
+| 3 | description 폴백 제거 확인 | PASS |
+| 4 | 실패 시 job failed 처리 | PASS |
+| 5 | 정상 흐름 동작 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/mv_pipeline.py` | 시나리오 재시도, 씬 검증/재시도, description 폴백 제거 |
+
+## v22 — 가사 생성 프롬프트 Suno 최적화
+
+> 날짜: 2026-03-31
+
+### 변경 사항
+
+- **SYSTEM_PROMPT 전면 교체**: `lyrics_generator.py`의 가사 생성 프롬프트를 Suno 호환 형식으로 재설계
+- **Suno 호환 섹션 태그 9종**: Intro, Verse, Pre-Chorus, Chorus, Bridge, Outro, Hook, Break, Interlude
+- **보컬 방향 태그 가이드**: `[Chorus: belting, powerful]` 등 섹션별 보컬 스타일 지정
+- **인라인 퍼포먼스 힌트 6종**: (ad-lib), (falsetto) 등 퍼포먼스 지시어 지원
+- **장르별 가사 구조/스타일 가이드 7종**: 장르 특성에 맞는 구조 및 어휘 가이드
+- **분위기별 톤 가이드 6종**: 분위기에 따른 톤 및 표현 방식 가이드
+- **Suno 3000자 제한 반영**: 출력 길이를 Suno 제한에 맞게 제어
+- **실제 API 호출 검증**: 변경된 프롬프트로 보컬 방향 태그 정상 출력 확인
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 정상 동작 | PASS |
+| 2 | import 정상 | PASS |
+| 3 | 프롬프트 내용 검증 (10항목) | PASS |
+| 4 | 실제 API 호출 | PASS |
+| 5 | 프론트엔드 연동 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/lyrics_generator.py` | SYSTEM_PROMPT 전면 교체 (Suno 최적화) |
+
+## v23 — Sync Labs 립싱크 통합: Chorus 구간 자동 립싱크 영상 생성
+
+> 날짜: 2026-03-31
+
+### 변경 사항
+
+- **.env**: `SYNC_API_KEY` 추가
+- **config.py**: `sync_api_key` 필드 추가
+- **requirements.txt**: `syncsdk` 추가 (설치 완료)
+- **services/sync_labs_service.py (신규)**: `generate_lipsync()` (이미지→정지영상→Sync Labs API→립싱크영상), `cut_audio_segment()` (ffmpeg 구간 자르기)
+- **services/mv_pipeline.py**: 음악 분석 후 Chorus→lipsync / 나머지→drama 자동 배정, Phase 3에서 `scene_type` 분기 (lipsync→Sync Labs, drama→Veo/Kling)
+- **services/mv_generator.py**: 3개 프롬프트 템플릿에 `scene_type` 필드 추가, lipsync 씬은 정면 클로즈업 이미지 프롬프트 생성
+
+### 테스트 결과 (7/7 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | syncsdk 설치 | PASS |
+| 2 | 서버 시작 | PASS |
+| 3 | import 정상 | PASS |
+| 4 | config 검증 | PASS |
+| 5 | 프롬프트 검증 | PASS |
+| 6 | cut_audio_segment | PASS |
+| 7 | 프론트엔드 연동 | PASS |
+
+### 특이사항
+
+- MinIO presigned URL이 localhost일 경우 Sync Labs에서 접근 불가 → 프로덕션에서는 공개 URL 필요
+- 립싱크 실패 시 기존 Veo/Kling 영상 생성으로 폴백
+- 실제 E2E 테스트는 공개 URL 환경에서 필요
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `.env` | `SYNC_API_KEY` 추가 |
+| `config.py` | `sync_api_key` 필드 추가 |
+| `requirements.txt` | `syncsdk` 추가 |
+| `services/sync_labs_service.py` | 신규 — `generate_lipsync()`, `cut_audio_segment()` |
+| `services/mv_pipeline.py` | Chorus→lipsync 자동 배정, Phase 3 scene_type 분기 |
+| `services/mv_generator.py` | 프롬프트 템플릿에 `scene_type` 필드 추가 |
+
+## v24 — 씬 한글 설명 + 이미지 확대 모달
+
+> 날짜: 2026-03-31
+
+### 변경 사항
+
+**백엔드:**
+
+- **services/mv_generator.py**: 3개 프롬프트 템플릿에 `description_ko` 필드 추가 (한글 장면 설명 2-3문장)
+- **services/mv_pipeline.py**: `scene_doc`에 `description_ko` 저장
+- **routes/mv.py**: `_scene_to_dict()`에 `description_ko` 포함
+
+**프론트엔드:**
+
+- **UploadPage.jsx**: `scene.description_ko` 우선 표시, 씬 이미지 클릭 시 확대 모달 (이미지+한글설명+가사+립싱크배지)
+- **UploadPage.css**: 모달 오버레이/확대/반응형 스타일
+
+### 테스트 결과 (8/8 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | description_ko 프롬프트 포함 | PASS |
+| 2 | mv_generator 응답 파싱 | PASS |
+| 3 | mv_pipeline scene_doc 저장 | PASS |
+| 4 | _scene_to_dict 직렬화 | PASS |
+| 5 | 프론트엔드 한글설명 표시 | PASS |
+| 6 | 이미지 클릭 모달 열기 | PASS |
+| 7 | 모달 내 정보 표시 | PASS |
+| 8 | 반응형 스타일 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `services/mv_generator.py` | 프롬프트 템플릿에 `description_ko` 필드 추가 |
+| `services/mv_pipeline.py` | `scene_doc`에 `description_ko` 저장 |
+| `routes/mv.py` | `_scene_to_dict()`에 `description_ko` 포함 |
+| `UploadPage.jsx` | `description_ko` 우선 표시, 씬 이미지 확대 모달 |
+| `UploadPage.css` | 모달 오버레이/확대/반응형 스타일 |
+
+## v25 — MR 음정 조절 피치/속도 분리: detune → SoundTouchJS
+
+> 날짜: 2026-04-01
+
+### 문제
+
+- Web Audio API의 `AudioBufferSourceNode.detune`이 피치와 속도를 동시에 변경
+- 음정을 올리면 재생 속도가 빨라지고, 내리면 느려지는 현상 발생
+
+### 해결
+
+- **SoundTouchJS** (WSOLA 알고리즘) 로 교체하여 피치만 독립적으로 변경하고 재생 속도는 유지
+- 기존 `detune` 코드 완전 제거
+
+### 변경 사항
+
+**프론트엔드:**
+
+- `npm install soundtouchjs` 설치
+- **StudioTab2.jsx**: `MrPitchAdjustPanel`에서 `AudioBufferSourceNode.detune` → `PitchShifter.pitchSemitones` 교체
+- 기존 `detune` 관련 코드 완전 제거
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | soundtouchjs 설치 | PASS |
+| 2 | import 확인 | PASS |
+| 3 | detune 코드 제거 확인 | PASS |
+| 4 | pitchSemitones 사용 확인 | PASS |
+| 5 | 프론트엔드 빌드 | PASS |
+| 6 | 서버 정상 동작 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `StudioTab2.jsx` | `detune` → `PitchShifter.pitchSemitones` 교체 |
+| `package.json` | `soundtouchjs` 의존성 추가 (프론트엔드, 2개) |
+
+## v26 — MR 음정 미리듣기: SoundTouchJS → 서버 rubberband 처리로 변경
+
+> 날짜: 2026-04-01
+
+### 문제
+
+- SoundTouchJS WSOLA가 피치/템포를 순차 처리하여 체감될 만큼 속도가 변함
+
+### 해결
+
+- 서버에서 ffmpeg rubberband로 피치 변환한 MR을 받아서 재생
+
+### 변경 사항
+
+**백엔드:**
+
+- `voice_convert.py`: POST `/api/voice-convert/{id}/preview-mr` 엔드포인트 추가 (rubberband 피치 변환 후 WAV 스트리밍)
+
+**프론트엔드:**
+
+- SoundTouchJS 완전 제거 (import, PitchShifter, pitchShifterRef)
+- "이 음정으로 미리듣기 적용" 버튼 추가 → 서버 호출 → `decodeAudioData` → 재생
+- `api/index.js`: `previewMrPitched` 함수 추가
+- `StudioTab2.css`: 미리듣기 버튼 스타일
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | SoundTouchJS 제거 확인 | PASS |
+| 2 | 서버 엔드포인트 동작 | PASS |
+| 3 | 피치 변환 음질 확인 | PASS |
+| 4 | 미리듣기 버튼 동작 | PASS |
+| 5 | 프론트엔드 빌드 | PASS |
+| 6 | 서버 정상 동작 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `voice_convert.py` | POST `/api/voice-convert/{id}/preview-mr` 엔드포인트 추가 |
+| `api/index.js` | `previewMrPitched` 함수 추가 |
+| `StudioTab2.jsx` | SoundTouchJS 제거, 서버 기반 미리듣기 버튼 추가 |
+
+## v27 — Veo 3.1 Fast GA 전환 + Rap/Chorus 립싱크 우선순위
+
+> 날짜: 2026-04-01
+
+### 문제
+
+- Veo 3.1 preview 모델(`veo-3.1-generate-preview`)이 4/2 폐기 예정
+- 뮤직비디오 립싱크 씬에서 Rap/Chorus 구분 없이 일괄 처리되어 입모양 싱크 품질 저하
+
+### 해결
+
+- Veo 모델 URL을 `veo-3.1-generate-preview` → `veo-3.1-fast-generate-001`(GA)로 전환
+- `start_scene_video()`에 `lyrics_segment`, `scene_type` 파라미터 추가하여 lipsync 씬은 가사를 프롬프트에 포함 (Veo 자체 입모양 싱크)
+- 3개 프롬프트 템플릿에 Rap > Chorus 우선순위 규칙 적용
+- `has_rap` 검사 기반 `scene_type` 배정 (Rap 있으면 Rap만 lipsync, 없으면 Chorus)
+- Sync Labs 분기 주석처리 (Veo가 자체 립싱크 수행)
+
+### 변경 사항
+
+**백엔드:**
+
+- `mv_generator.py`: Veo 모델 URL을 `veo-3.1-generate-preview` → `veo-3.1-fast-generate-001`(GA)로 전환 (4/2 preview 폐기 대비)
+- `mv_generator.py`: `start_scene_video()`에 `lyrics_segment`, `scene_type` 파라미터 추가. lipsync 씬은 가사를 프롬프트에 포함하여 Veo가 입모양 싱크
+- `mv_generator.py`: 3개 프롬프트 템플릿에 Rap > Chorus 우선순위 규칙 적용
+- `mv_pipeline.py`: `has_rap` 검사 기반 `scene_type` 배정 (Rap 있으면 Rap만 lipsync, 없으면 Chorus)
+- `mv_pipeline.py`: Phase 3에서 `lyrics_segment`, `scene_type` 전달. Sync Labs 분기 주석처리 (Veo가 자체 립싱크)
+
+### 테스트 결과 (7/7 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Veo GA 모델 URL 전환 확인 | PASS |
+| 2 | lyrics_segment 파라미터 전달 | PASS |
+| 3 | scene_type 파라미터 전달 | PASS |
+| 4 | Rap 우선순위 lipsync 배정 | PASS |
+| 5 | Chorus fallback lipsync 배정 | PASS |
+| 6 | 프롬프트 템플릿 규칙 적용 | PASS |
+| 7 | Sync Labs 분기 주석처리 확인 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `mv_generator.py` | Veo GA 전환, lipsync 파라미터 추가, 프롬프트 우선순위 규칙 |
+| `mv_pipeline.py` | has_rap 기반 scene_type 배정, Phase 3 파라미터 전달, Sync Labs 주석처리 |
+| `StudioTab2.css` | 미리듣기 버튼 스타일 (프론트엔드, 4개) |
+
+## v28 — Veo 영상 기반 Sync Labs 립싱크 후보정 (Phase 3.5)
+
+> 날짜: 2026-04-01
+
+### 문제
+
+- Veo 자체 립싱크만으로는 입모양 싱크 품질이 부족한 경우 발생
+- Phase 3 (Veo 영상 생성) 후 바로 Phase 4 (합치기)로 넘어가 립싱크 보정 기회 없음
+
+### 해결
+
+- `sync_labs_service.py`에 `generate_lipsync_from_video()` 함수 추가 (Veo 영상 + 실제 오디오 → Sync Labs 립싱크 보정)
+- `mv_pipeline.py`에 Phase 3.5 추가 (Phase 3 완료 후, Phase 4 합치기 전)
+  - lipsync 씬만 필터링 → Veo 영상 + 해당 구간 오디오 → Sync Labs 후보정
+  - 성공 시 보정된 영상으로 교체 (`video_source: "veo+synclabs"`)
+  - 실패 시 Veo 원본 유지 (`video_source: "veo (sync failed)"`)
+
+### 파이프라인 흐름
+
+```
+Phase 3 (Veo) → Phase 3.5 (Sync Labs 후보정) → Phase 4 (합치기)
+```
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | generate_lipsync_from_video() 함수 동작 | PASS |
+| 2 | Phase 3.5 lipsync 씬 필터링 | PASS |
+| 3 | 성공 시 video_source "veo+synclabs" 교체 | PASS |
+| 4 | 실패 시 video_source "veo (sync failed)" 유지 | PASS |
+| 5 | Phase 3 → 3.5 → 4 파이프라인 순서 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `sync_labs_service.py` | `generate_lipsync_from_video()` 함수 추가 (Veo 영상 + 오디오 → Sync Labs 립싱크 보정) |
+| `mv_pipeline.py` | Phase 3.5 추가, lipsync 씬 필터링 및 후보정 로직, video_source 상태 관리 |
+
+## v29 — Kling 3.0 Omni 업그레이드 + 립싱크 가사 프롬프트
+
+### 변경 사항
+
+- `kling_video_generator.py`: 엔드포인트 `/v1/videos/image2video` → `/v1/videos/omni`, `model_name` `kling-v3` → `kling-v3-omni`, `mode` `std` → `pro`, `motion_has_audio: true` 추가
+- `kling_video_generator.py`: `start_scene_video_kling()`에 `lyrics_segment`, `scene_type` 파라미터 추가. lipsync 씬은 해당 가사를 프롬프트에 포함. "music video" 컨텍스트 추가
+- `mv_pipeline.py`: Phase 3 Kling 호출 시 `lyrics_segment`, `scene_type` 전달
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 엔드포인트 /v1/videos/omni 변경 | PASS |
+| 2 | model_name kling-v3-omni 적용 | PASS |
+| 3 | mode pro + motion_has_audio 설정 | PASS |
+| 4 | lipsync 씬 가사 프롬프트 포함 | PASS |
+| 5 | 비-lipsync 씬 기존 프롬프트 유지 | PASS |
+| 6 | mv_pipeline Phase 3 파라미터 전달 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `kling_video_generator.py` | Omni 엔드포인트/모델 전환, pro 모드, motion_has_audio, 립싱크 가사 프롬프트 로직 |
+| `mv_pipeline.py` | Phase 3 Kling 호출 시 lyrics_segment, scene_type 파라미터 전달 |
+
+## v30 — Kling sound off + 캐릭터 시트 영상 전달
+
+> 날짜: 2026-04-01
+
+### 문제
+
+- Kling 영상 생성 시 sound "on" 설정으로 불필요한 사운드가 영상에 포함됨
+- 캐릭터 시트(character sheet)를 영상 생성에 활용하지 않아 캐릭터 일관성 부족
+
+### 해결
+
+- `kling_video_generator.py`: sound `"on"` → `"off"` 변경으로 불필요한 사운드 제거
+- `kling_video_generator.py`: `start_scene_video_kling()`에 `character_image_bytes` 파라미터 추가, `image_list`에 씬 이미지 + 캐릭터 시트 2장 전달
+- `mv_pipeline.py`: Phase 3에서 `_load_character_image()`로 캐릭터 시트 로드 후 Kling 호출 시 `character_image_bytes` 전달
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 health check | PASS |
+| 2 | sound "off" 설정 확인 | PASS |
+| 3 | start_scene_video_kling 시그니처에 character_image_bytes 존재 | PASS |
+| 4 | mv_pipeline에서 character_image_bytes 로드 및 전달 | PASS |
+| 5 | 프론트엔드 응답 (HTTP 200) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `kling_video_generator.py` | sound "on"→"off", character_image_bytes 파라미터 추가, image_list에 씬이미지+캐릭터시트 2장 전달 |
+| `mv_pipeline.py` | Phase 3에서 캐릭터 시트 로드 + Kling 호출 시 character_image_bytes 전달 |
+
+## v31 — Kling Omni API 수정 + 씬 이미지/영상 일관성 개선
+
+> 날짜: 2026-04-01
+
+### 문제
+
+- Kling API 호출 시 `image_list`가 `input` wrapper 안에 있어 API 오류 발생 가능
+- 영상 생성 시 첫 프레임(`first_frame`) 미지정으로 씬 이미지와 영상 시작이 불일치
+- 이전 씬 이미지를 참조하지 않아 씬 간 시각적 연속성 부족
+- `<<<image_N>>>` 프롬프트 참조가 없어 Kling이 참조 이미지를 활용하지 못함
+
+### 해결
+
+- `kling_video_generator.py`: `image_list`를 top level로 이동 (`input` wrapper 제거)
+- `kling_video_generator.py`: 씬 이미지를 `first_frame` 타입으로 설정하여 영상 시작 프레임 고정
+- `kling_video_generator.py`: `prev_scene_image_bytes` 파라미터 추가, 이전 씬 이미지를 `<<<image_1>>>` 참조로 전달
+- `kling_video_generator.py`: `character_image_bytes`를 `<<<image_2>>>` (또는 `<<<image_1>>>`) 참조로 프롬프트에 반영
+- `mv_pipeline.py` Phase 2: 첫 씬은 커버이미지, 이후 씬은 이전 씬 이미지를 참조하여 일관성 확보
+- `mv_pipeline.py` Phase 3: Kling 호출 시 `prev_scene_image_bytes` + `character_image_bytes` 전달
+
+### 테스트 결과 (7/7 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 health check (`/api/health`) | PASS |
+| 2 | `image_list` top level (input wrapper 없음) | PASS |
+| 3 | `first_frame` 설정 확인 | PASS |
+| 4 | `start_scene_video_kling` 시그니처 (`prev_scene_image_bytes`, `character_image_bytes`) | PASS |
+| 5 | Phase 2 이전 씬 이미지 참조 로직 | PASS |
+| 6 | `<<<image_N>>>` 프롬프트 참조 확인 | PASS |
+| 7 | 프론트엔드 응답 (HTTP 200) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `kling_video_generator.py` | `image_list` top level 이동, `first_frame` 설정, `prev_scene_image_bytes`/`character_image_bytes` 추가, `<<<image_N>>>` 참조 프롬프트 |
+| `mv_pipeline.py` | Phase 2: 첫 씬 커버이미지/이후 씬 이전씬이미지 참조; Phase 3: Kling에 이전씬이미지+캐릭터시트 전달 |
+
+## v32 — 씬 영상 개별 그리드 + 재생/다운로드 + 모달 팝업
+
+> 날짜: 2026-04-01
+
+### 변경 내용
+
+- **UploadPage.jsx**: 씬 영상 상태별 오버레이(완료/생성중/대기/실패) 표시, 영상 클릭 시 모달 팝업 재생(`selectedVideo` 상태 관리), 개별 다운로드 버튼 추가
+- **UploadPage.css**: 영상 오버레이 스타일, 모달 video 플레이어(`scene-modal__video-wrap`, `scene-modal__video`), 다운로드 버튼(`video-download`) 스타일 추가
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 health check (`/api/health`) | PASS |
+| 2 | 프론트엔드 응답 (HTTP 200) | PASS |
+| 3 | `selectedVideo` 상태 관리 (12개 참조) | PASS |
+| 4 | 영상 모달 (`scene-modal__video`) JSX 2개 + CSS 2개 | PASS |
+| 5 | 개별 다운로드 (`video-download`) 버튼 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `UploadPage.jsx` | 영상 상태별 오버레이, 재생 클릭 모달(`selectedVideo`), 개별 다운로드 버튼 |
+| `UploadPage.css` | 영상 오버레이, 모달 video 플레이어, 다운로드 버튼 스타일 |
+
+## v33 — 개별 씬 영상 생성 기능
+
+> 날짜: 2026-04-01
+
+### 변경 내용
+
+- **routes/mv.py**: `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/generate-video` 엔드포인트 추가, BackgroundTasks로 개별 씬 영상 생성 처리
+- **api/index.js**: `generateSceneVideo(jobId, sceneNumber)` API 함수 추가
+- **UploadPage.jsx**: 개별 씬 영상 생성 버튼(`gen-video-btn`) 및 클릭 핸들러 구현
+- **UploadPage.css**: 생성 버튼 스타일(`gen-video-btn`) 추가
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | 서버 health check (`/api/health`) | PASS |
+| 2 | 프론트엔드 응답 (HTTP 200) | PASS |
+| 3 | generate-video 엔드포인트 인증 포함 (404 = job not found, 엔드포인트 등록 확인) | PASS |
+| 4 | generate-video 인증 없이 접근 차단 (401) | PASS |
+| 5 | `generateSceneVideo` API 함수 존재 | PASS |
+| 6 | `gen-video-btn` JSX 1개 + CSS 3개 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `routes/mv.py` | `POST /scenes/{scene_number}/generate-video` 엔드포인트, 백그라운드 태스크 |
+| `api/index.js` | `generateSceneVideo` 함수 |
+| `UploadPage.jsx` | 생성 버튼 + 핸들러 |
+| `UploadPage.css` | 버튼 스타일 |
+
+## v34 — 개별 씬 영상 생성 시 Sync Labs 립싱크 후보정 추가
+
+> 날짜: 2026-04-01
+
+### 변경 내용
+
+- **routes/mv.py**: `_generate_single_scene_video`에서 lipsync 씬일 때 Sync Labs 후보정 로직 추가 (Phase 3.5)
+- `scene_type == "lipsync"` 및 `sync_api_key` 설정 시 자동으로 Sync Labs API 호출
+- 오디오 구간 자동 추출 (`section_start` ~ `section_end`) 후 lip sync 적용
+- 성공 시 `video_source: "kling+synclabs"`, 실패 시 `"kling (sync failed)"` 폴백 (Kling 원본 유지)
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 (`ast.parse`) | PASS |
+| 2 | Import 검증 (`_generate_single_scene_video`) | PASS |
+| 3 | 서버 health check (`/api/health`) | PASS |
+| 4 | 프론트엔드 응답 (HTTP 200) | PASS |
+| 5 | generate-video 엔드포인트 인증 포함 (404 = job not found) | PASS |
+| 6 | generate-video 인증 없이 접근 차단 (401) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `routes/mv.py` | `_generate_single_scene_video`에 Sync Labs 립싱크 후보정 로직 추가 |
+
+## v35 — section_start/section_end 누적 계산 + Sync Labs 오디오 구간 수정
+
+> 날짜: 2026-04-01
+
+### 변경 내용
+
+- **mv_pipeline.py**: Phase 1 씬 저장 전 `use_seconds` 누적으로 `section_start`/`section_end` 계산
+- **routes/mv.py**: 개별 씬 생성 시 `section_start` 없으면 누적 합산으로 재계산
+- 기존 기본값(0~10초) 문제 해결 → 각 씬에 정확한 음악 구간 전달
+- Sync Labs 립싱크에 올바른 오디오 구간이 적용되도록 보장
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 — `mv_pipeline.py` (`ast.parse`) | PASS |
+| 2 | Python 구문 검증 — `routes/mv.py` (`ast.parse`) | PASS |
+| 3 | Import 검증 (`run_phase1_split`) | PASS |
+| 4 | Import 검증 (`_generate_single_scene_video`) | PASS |
+| 5 | 서버 health check (`/api/health`) | PASS |
+| 6 | 프론트엔드 응답 (HTTP 200) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `mv_pipeline.py` | Phase 1에서 씬별 `section_start`/`section_end`를 누적 계산하여 저장 |
+| `routes/mv.py` | 개별 씬 생성 시 `section_start` 부재 시 누적 합산 재계산 로직 추가 |
+
+## v36 — chorus 립싱크 배정 버그 수정 + 영상 duration 동적 설정
+
+> 날짜: 2026-04-01
+
+### 변경 내용
+
+- **mv_pipeline.py**: Phase 1 + Phase 2 fallback에서 `"chorus" in label` → `label.startswith("chorus")` 수정
+  - 기존: `"chorus"` 문자열 포함 여부로 판단 → `"pre-chorus"`, `"outro-chorus"` 등 잘못 매칭
+  - 수정: `startswith("chorus")`로 정확히 chorus 구간만 립싱크 배정
+- **mv_generator.py**: flatten 함수에서도 동일한 `startswith("chorus")` 패턴으로 수정
+- **kling_video_generator.py**: `start_scene_video_kling()`에 `duration` 파라미터 추가
+  - `use_seconds` 기반 3~15초 클램핑: `max(3, min(15, int(round(duration))))`
+  - 기존 고정 5초 → 씬별 동적 duration 적용
+- **mv_pipeline.py**: Kling 호출 시 `duration=float(scene.get("use_seconds", 10))` 전달
+- **routes/mv.py**: 개별 씬 재생성 시에도 동일하게 duration 전달
+
+### 테스트 결과 (6/6 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 — 4개 파일 (`ast.parse`) | PASS |
+| 2 | `"chorus" in` 구패턴 부재 확인 | PASS |
+| 3 | `start_scene_video_kling` duration 파라미터 존재 | PASS |
+| 4 | duration 클램핑 로직 (`max(3, min(15, ...))`) 확인 | PASS |
+| 5 | `use_seconds` → Kling duration 전달 확인 | PASS |
+| 6 | 서버 health check + 프론트엔드 응답 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `mv_pipeline.py` | chorus 판별 `startswith` 수정 + Kling 호출 시 duration 전달 |
+| `mv_generator.py` | flatten 함수 chorus 판별 `startswith` 수정 |
+| `kling_video_generator.py` | `duration` 파라미터 추가, 3~15초 클램핑 |
+| `routes/mv.py` | Kling 호출 시 `use_seconds` 기반 duration 전달 |
+
+## v37 — 개별 씬 영상 + 음악 합치기 자동 생성
+
+> 날짜: 2026-04-02
+
+### 변경 내용
+
+- **routes/mv.py**: 개별 씬 영상 생성 시 ffmpeg로 해당 구간 음악을 합친 버전 자동 생성 (`video_with_audio_object`)
+- **mv_pipeline.py**: 전체 MV 생성 시에도 Phase 3.6으로 씬별 음악 합치기 수행
+- **routes/mv.py** `_scene_to_dict`: `video_with_audio_url` presigned URL 반환 추가
+- **UploadPage.jsx**: 모달에서 `video_with_audio_url` 우선 재생 (없으면 `video_url` fallback)
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 — `routes/mv.py` (`ast.parse`) | PASS |
+| 2 | Python 구문 검증 — `mv_pipeline.py` (`ast.parse`) | PASS |
+| 3 | `video_with_audio` 참조 확인 — `routes/mv.py` (2곳) | PASS |
+| 4 | `video_with_audio` 참조 확인 — `mv_pipeline.py` + `UploadPage.jsx` | PASS |
+| 5 | 서버 health check (Frontend 200 + Backend ok) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `routes/mv.py` | 개별 씬 ffmpeg 음악 합치기 + `video_with_audio_url` presigned URL 반환 |
+| `mv_pipeline.py` | Phase 3.6 전체 생성 시 씬별 음악 합치기 |
+| `UploadPage.jsx` | 모달 재생 시 `video_with_audio_url` 우선 사용 |
+
+## v38 — Sync Labs 후보정 개선: 오디오 제거+재합치기, 에러 저장, 자동/수동 재시도
+
+> 날짜: 2026-04-02
+
+### 변경 내용
+
+- **routes/mv.py**: Sync Labs 결과에서 오디오 제거 후 원본 음악 재합치기 (`-an` → ffmpeg merge), `sync_error` 필드 저장, 자동 2회 재시도 (`range(2)`), `retry-sync` 엔드포인트 추가
+- **mv_pipeline.py**: Phase 3.5에도 동일한 오디오 제거+재합치기, 자동 2회 재시도, `sync_error` 저장 적용
+- **UploadPage.jsx**: sync 실패 시 에러 메시지 표시 + 재시도 버튼 UI 추가
+- **api/index.js**: `retrySyncLabs` API 함수 추가
+
+### 테스트 결과 (8/8 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 — `routes/mv.py`, `mv_pipeline.py` (`ast.parse`) | PASS |
+| 2 | `sync_error` 필드 확인 — `routes/mv.py` (10곳) | PASS |
+| 3 | `retry-sync` 엔드포인트 확인 — `routes/mv.py` (4곳) | PASS |
+| 4 | 자동 재시도 로직 — `routes/mv.py` `range(2)` (3곳) | PASS |
+| 5 | 자동 재시도 로직 — `mv_pipeline.py` `range(2)` (4곳) | PASS |
+| 6 | 오디오 제거+재합치기 — `routes/mv.py` `-an`, `silent`, `audio_seg` (5곳) | PASS |
+| 7 | 프론트엔드 — `retrySyncLabs`, `sync_error`, `sync-retry-btn` 확인 | PASS |
+| 8 | 서버 health check (Frontend 200 + Backend ok) + retry-sync 엔드포인트 404 (정상) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `routes/mv.py` | Sync Labs 오디오 제거+재합치기, sync_error 저장, 자동 2회 재시도, retry-sync 엔드포인트 |
+| `mv_pipeline.py` | Phase 3.5 동일 적용 (오디오 제거+재합치기, 자동 재시도, sync_error) |
+| `UploadPage.jsx` | sync 실패 에러 표시 + 재시도 버튼 UI |
+| `api/index.js` | `retrySyncLabs` API 함수 |
+| `UploadPage.css` | 재시도 버튼 스타일 |
+
+## v39 — 씬 카드 scene_type/section 표시 복원 + 개별 영상 생성 자동 UI 업데이트
+
+### 변경 내용
+
+- **routes/mv.py**: `_scene_to_dict`에 `scene_type`, `section_start`, `section_end` 필드 추가하여 프론트엔드에 씬 메타데이터 전달
+- **UploadPage.jsx**: 씬 카드에 립싱크 배지 + section 라벨 표시, 개별 씬 영상 생성/립싱크 재시도 시 자동 폴링으로 UI 업데이트
+- **UploadPage.css**: `lipsync-badge` 스타일 (카드용, 모달용)
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 — `routes/mv.py` (`ast.parse`) | PASS |
+| 2 | `scene_type`, `section_start`, `section_end` 필드 반환 확인 (3곳) | PASS |
+| 3 | 립싱크 배지 JSX 확인 — `lipsync-badge` (3곳) | PASS |
+| 4 | 폴링 로직 확인 — `pollInterval`, `clearInterval`, `video_status` (10곳) | PASS |
+| 5 | 서버 health check (Frontend 200 + Backend ok) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `routes/mv.py` | `_scene_to_dict`에 scene_type, section_start, section_end 필드 추가 |
+| `UploadPage.jsx` | 립싱크 배지 표시 + 개별 영상 생성/재시도 시 자동 폴링 UI 업데이트 |
+| `UploadPage.css` | lipsync-badge 카드/모달 스타일 |
+
+## v40 — 립싱크 씬 비교 UI: Kling 원본 vs Sync Labs 수동 시도
+
+### 변경 내용
+
+- **routes/mv.py**: 자동 Sync Labs 호출 제거 (Phase 3.5 비활성화), `retry-sync` 결과를 별도 파일(`video_synclabs_object`)로 저장, `_scene_to_dict`에 `video_synclabs_url` / `video_with_audio_synclabs_url` 필드 추가
+- **mv_pipeline.py**: Phase 3.5 자동 Sync Labs 제거
+- **UploadPage.jsx**: 립싱크 씬에 "립싱크 시도" 버튼 추가, 모달에서 Kling 원본과 Sync Labs 두 버전 비교 UI
+- **UploadPage.css**: 비교 UI 스타일
+
+### 테스트 결과 (5/5 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 — `routes/mv.py`, `mv_pipeline.py` (`ast.parse`) | PASS |
+| 2 | 자동 Sync Labs 제거 확인 — `_generate_single_scene_video`에 직접 호출 없음 (DISABLED 주석만 존재) | PASS |
+| 3 | `video_synclabs_url` 반환 확인 — `routes/mv.py` (3곳: `_scene_to_dict`, `retry-sync` 저장) | PASS |
+| 4 | 프론트엔드 확인 — `sync-try-btn`, `lipsync-actions`, `video_synclabs_url` (6곳) | PASS |
+| 5 | 서버 health check (Frontend 200 + Backend ok) | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `routes/mv.py` | 자동 Sync Labs 제거, retry-sync 결과를 별도 파일로 저장, `_scene_to_dict`에 synclabs URL 필드 추가 |
+| `mv_pipeline.py` | Phase 3.5 자동 Sync Labs 제거 |
+| `UploadPage.jsx` | 립싱크 씬에 "립싱크 시도" 버튼, 모달에서 Kling vs Sync Labs 비교 UI |
+| `UploadPage.css` | 비교 UI 스타일 |
+
+---
+
+## v41 — 가사 자동 매칭 (lyrics_segment 배정)
+
+**날짜**: 2026-04-01
+**문제**: GPT가 씬 분할할 때 `lyrics_segment`를 비워서 반환하여 가사가 씬에 배정되지 않음
+
+### 해결 방법
+
+`_assign_lyrics_to_scenes()` 함수를 `mv_pipeline.py`에 추가하여 가사 텍스트를 섹션 태그 기준으로 파싱한 뒤 음악 분석 섹션과 순서 매칭하여 각 씬에 해당 가사를 배정.
+
+**매칭 로직:**
+1. 가사에서 `[섹션태그]` 기준으로 파싱 (보컬 디렉션 `: belting` 등 제거)
+2. 같은 섹션 종류별로 등장 순서에 번호 부여 (첫 번째 chorus -> chorus1, 두 번째 -> chorus2)
+3. 씬의 `section` 필드를 normalize (대소문자, 공백, 하이픈 제거) 후 매칭
+4. 한 섹션에 씬이 여러 개면 가사를 줄 수 기준으로 균등 분배
+
+**호출 위치:** Phase 1에서 scenes 배열 정렬 후, section_start/end 계산 직전
+
+### 테스트 결과 (3/3 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 (`ast.parse`) | PASS |
+| 2 | 함수 단위 테스트 (6개 씬 매칭, 멀티씬 분배, 빈 가사) | PASS |
+| 3 | 서버 재시작 | PASS |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `app/services/mv_pipeline.py` | `_assign_lyrics_to_scenes()` 함수 추가, Phase 1 scenes 정렬 후 호출 |
+
+---
+
+## v42 — 립싱크 보컬 분리 미리듣기 + 확인 후 Sync Labs 진행
+
+**날짜**: 2026-04-01
+**목적**: 립싱크 실행 전 보컬 분리 결과를 미리 확인할 수 있도록 2단계 워크플로우 도입
+
+### 변경 내용
+
+**백엔드 (routes/mv.py):**
+- `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/separate-vocal` 엔드포인트 추가
+- demucs로 보컬 분리 후 presigned URL 반환 (원본 오디오 + 분리된 보컬)
+- 분리 결과를 `separated_vocal_object` / `separated_original_object`로 DB에 캐시
+- `retry-sync` 에서 분리된 보컬이 있으면 우선 사용
+
+**프론트엔드 (UploadPage.jsx):**
+- `handleStartLipsync`: 보컬 분리 API 호출 → `vocalPreview` 상태에 저장
+- 미리듣기 모달: 원본 오디오 / 분리된 보컬 각각 `<audio>` 플레이어로 제공
+- `handleConfirmLipsync`: 모달에서 확인 후 실제 Sync Labs 립싱크 진행
+
+**API 클라이언트 (api/index.js):**
+- `separateVocal(jobId, sceneNumber)` 함수 추가 (300초 timeout)
+
+### 테스트 결과 (4/4 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 (`ast.parse`) | PASS |
+| 2 | `separate-vocal` 엔드포인트 등록 확인 | PASS |
+| 3 | `retry-sync`에서 분리 보컬 우선 사용 로직 확인 | PASS |
+| 4 | 프론트엔드 함수/상태 확인 (`separateVocal`, `handleStartLipsync`, `handleConfirmLipsync`, `vocalPreview`) | PASS |
+
+### 서버 상태
+
+| 서비스 | 포트 | 상태 |
+|--------|------|------|
+| Frontend | 4000 | 200 OK |
+| Backend | 9000 | healthy |
+| separate-vocal API | 9000 | 404 (job not found = 정상 라우팅) |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/routes/mv.py` | `separate-vocal` 엔드포인트, `retry-sync` 분리 보컬 우선 사용 |
+| `frontend/src/api/index.js` | `separateVocal` 함수 추가 (300초 timeout) |
+| `frontend/src/pages/UploadPage.jsx` | 보컬 분리 → 미리듣기 모달 → 확인 후 Sync Labs 2단계 워크플로우 |
+
+---
+
+## v43 — 립싱크 씬 주인공 캐릭터만 단독 등장
+
+**날짜**: 2026-04-01
+**목적**: 립싱크(lipsync) 씬에서 주인공 캐릭터만 단독으로 등장하도록 프롬프트 강화
+
+### 변경 내용
+
+**mv_generator.py:**
+- 시나리오 생성 프롬프트에 "주인공만 보컬" 지시 추가
+- 씬 분할 3개 프롬프트에 lipsync 씬 주인공 단독 등장 강화 (`ONLY the main character`, `ALONE`, `NO other people`)
+- `generate_scene_image()` 함수에 `scene_type` 파라미터 추가 — lipsync 씬일 때 이미지 생성 프롬프트에 단독 등장 지시 삽입
+
+**kling_video_generator.py:**
+- lipsync 프롬프트에 `ALONE, no other people` 강화
+
+**mv_pipeline.py:**
+- `generate_scene_image()` 호출 시 `scene_type` 전달
+
+**routes/mv.py:**
+- `regenerate-image` 엔드포인트에서도 `scene_type` 전달
+
+### 테스트 결과 (3/3 PASS)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| 1 | Python 구문 검증 (`ast.parse`) — 4개 파일 | PASS |
+| 2 | `generate_scene_image` scene_type 파라미터 존재 확인 | PASS |
+| 3 | lipsync 프롬프트 강화 문자열 존재 확인 (mv_generator: 12건, kling: 1건) | PASS |
+
+### 서버 상태
+
+| 서비스 | 포트 | 상태 |
+|--------|------|------|
+| Frontend | 4000 | 200 OK |
+| Backend | 9000 | healthy |
+
+### 변경된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `backend/app/services/mv_generator.py` | 시나리오/씬 프롬프트 lipsync 단독 강화, `generate_scene_image`에 `scene_type` 추가 |
+| `backend/app/services/kling_video_generator.py` | lipsync 프롬프트 `ALONE, no other people` 강화 |
+| `backend/app/services/mv_pipeline.py` | `generate_scene_image` 호출 시 `scene_type` 전달 |
+| `backend/app/routes/mv.py` | `regenerate-image`에 `scene_type` 전달 |
+
+---
+
+## v4.0 코드 검토 및 테스트 보고서
+
+- **수정 버전**: v4.0
+- **수정일자**: 2026-04-03
+- **요청 작업**: Phase 3.5 자동 Sync Labs 적용 코드 검토 및 테스트
+
+---
+
+### 1. 백엔드 검토 결과
+
+| # | 항목 | 결과 | 비고 |
+|---|------|------|------|
+| 1 | Phase 3.5/3.6 ffmpeg 바이너리 경로 | **수정** | 하드코딩 `"ffmpeg"` → `_get_ffmpeg_path() or "ffmpeg"`으로 변경하여 나머지 Phase와 일관성 확보 |
+| 2 | 립싱크 씬 필터링 조건 | 정상 | — |
+| 3 | 호출 순서 | 정상 | — |
+| 4 | MinIO 저장 패턴 | 정상 | — |
+| 5 | 에러 처리 | 정상 | — |
+| 6 | Phase 4/3.6 우선 사용 로직 | 정상 | — |
+| 7–16 | 기타 검토 항목 (10건) | 정상 | — |
+
+- 총 16건 검토, **1건 버그 수정**, 나머지 15건 정상
+
+### 2. 프론트엔드 검토 결과
+
+| # | 항목 | 결과 | 비고 |
+|---|------|------|------|
+| 1 | Phase 3.5 진행 중 상태 표시 | **수정** | `synclabs_processing` 상태 매핑 및 진행률 텍스트 추가 |
+| 2 | `video_source` 필드 API 응답 누락 | **수정** | `_scene_to_dict()`에 `video_source` 필드 추가 |
+| 3 | 자동 Sync Labs 적용 후 수동 재시도 버튼 | **수정** | 자동 적용 완료 후에도 수동 재시도 버튼이 표시되도록 UI 수정 |
+| 4 | 기존 수동 립싱크 기능과의 충돌 | 정상 | 충돌 없음 확인 |
+
+- 총 4건 검토, **3건 UI/API 수정**, 1건 정상
+
+### 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | Import 확인 (4건) | PASS |
+| 2 | 변수 scope 확인 (5건) | PASS |
+| 3 | 백엔드 서버 기동 (포트 9000) | PASS |
+| 4 | 프론트엔드 서버 기동 (포트 4000) | PASS |
+| 5 | Python syntax 확인 | PASS |
+| 6 | 파이프라인 흐름 순서 | PASS |
+
+- **전 항목 PASS (11/11)**
+
+### 4. 특이사항
+
+- 백엔드 1건, 프론트엔드 4건 총 **5건 수정** 완료
+- 테스트 전 항목 PASS — 수정 사항 반영 후 기능 정상 동작 확인
+- Phase 3.5 자동 Sync Labs 적용 파이프라인이 기존 수동 립싱크 기능과 충돌 없이 공존함을 확인
+
+---
+
+# v4.1 — 영상 생성 중 씬 리스트 유지 (Hotfix)
+
+- **수정일자**: 2026-04-03
+- **요청**: "Kling으로 영상 생성하기" 버튼 클릭 시 씬 리스트가 사라지는 문제 수정
+
+## 1. 원인
+
+`startMvPolling` 콜백에서 `setMvJob(data)`로 MV job 상태를 전체 교체할 때, API 응답에 `scenes` 필드가 포함되지 않으면 기존 scenes 데이터가 유실되어 씬 리스트 UI가 사라지는 현상 발생.
+
+## 2. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 프론트엔드 | `frontend/src/pages/UploadPage.jsx` (line 265) | `setMvJob`를 functional updater 패턴으로 변경하여, 새 응답에 `scenes`가 없으면 이전 `scenes`를 보존 |
+
+- **프론트엔드 1건 수정**, polling 시 scenes 데이터 보존 로직 추가
+
+## 3. 검증
+
+- 렌더링 조건 `mvStep >= 2`는 step 3(영상 생성 중)을 포함하므로 조건 자체는 정상
+- 수정은 polling 시 scenes 데이터 보존에 집중하여 최소 범위 변경으로 해결

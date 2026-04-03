@@ -1,12 +1,17 @@
 """Kits.AI voice conversion service.
 
-Pipeline:
+Pipeline (convert_voice):
   1. Download Suno output from MinIO
   2. Vocal separation via Kits API
   3. Voice conversion (vocal -> user's voice model) via Kits API
-  4. Merge converted vocal + backing track via ffmpeg
-  5. Upload result to MinIO
-  6. Update MongoDB generation document
+  4. Upload converted vocal + backing to MinIO
+  5. Set status to awaiting_merge
+
+Pipeline (merge_vocal_and_backing):
+  1. Download converted vocal + backing from MinIO
+  2. Apply MR pitch shift + volume via ffmpeg
+  3. Upload merged result to MinIO
+  4. Update MongoDB generation document
 """
 import asyncio
 import io
@@ -134,9 +139,8 @@ async def convert_voice(
       c. Download separated vocal + backing
       d. Voice conversion on vocal via Kits API
       e. Download converted vocal
-      f. Merge converted vocal + backing via ffmpeg
-      g. Upload to MinIO
-      h. Update MongoDB
+      f. Save converted vocal + backing to MinIO
+      g. Set status to awaiting_merge (user merges manually via /merge endpoint)
     """
     base_url = settings.kits_api_url.rstrip("/")
     headers = _kits_headers()
@@ -284,49 +288,23 @@ async def convert_voice(
 
         logger.info("VC %s: Downloaded converted vocal (%d bytes)", generation_id, len(cv_resp.content))
 
-        # ── Step f: Merge converted vocal + backing via ffmpeg ──
-        await _update_vc_progress(mongo_db, generation_id, 82, "merging")
+        # ── Step f: Save converted vocal to MinIO (don't merge yet) ──
+        await _update_vc_progress(mongo_db, generation_id, 85, "uploading")
 
-        ffmpeg_bin = _get_ffmpeg_path()
-        if not ffmpeg_bin:
-            raise RuntimeError("ffmpeg가 설치되어 있지 않습니다. 오디오 합치기를 할 수 없습니다.")
+        with open(converted_vocal_path, "rb") as f:
+            converted_vocal_bytes = f.read()
 
-        output_path = os.path.join(tmpdir, "voice_converted.mp3")
-
-        proc = await asyncio.create_subprocess_exec(
-            ffmpeg_bin, "-y",
-            "-i", converted_vocal_path,
-            "-i", backing_path,
-            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2[out]",
-            "-map", "[out]",
-            "-codec:a", "libmp3lame", "-b:a", "192k",
-            output_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg 합치기 실패: {stderr.decode()[:500]}")
-
-        logger.info("VC %s: Merged audio via ffmpeg", generation_id)
-
-        # ── Step g: Upload to MinIO ──
-        await _update_vc_progress(mongo_db, generation_id, 90, "uploading")
-
-        with open(output_path, "rb") as f:
-            result_bytes = f.read()
-
-        result_object = f"generated/{generation_id}/voice_converted.mp3"
+        converted_vocal_object = f"generated/{generation_id}/converted_vocal.wav"
         minio_client.put_object(
             bucket_name=settings.minio_bucket_music,
-            object_name=result_object,
-            data=io.BytesIO(result_bytes),
-            length=len(result_bytes),
-            content_type="audio/mpeg",
+            object_name=converted_vocal_object,
+            data=io.BytesIO(converted_vocal_bytes),
+            length=len(converted_vocal_bytes),
+            content_type="audio/wav",
         )
 
-        # Also save the separated backing track for potential future use
+        # backing.wav is already saved from earlier code (Step c)
+        # Make sure it's saved
         with open(backing_path, "rb") as f:
             backing_bytes = f.read()
         backing_object = f"generated/{generation_id}/backing.wav"
@@ -338,18 +316,17 @@ async def convert_voice(
             content_type="audio/wav",
         )
 
-        logger.info("VC %s: Uploaded result to MinIO: %s", generation_id, result_object)
+        logger.info("VC %s: Saved converted vocal and backing to MinIO", generation_id)
 
-        # ── Step h: Update MongoDB ──
-        await _update_vc_progress(mongo_db, generation_id, 100, "completed", {
-            "voice_converted_url": result_object,
+        # ── Step g: Set status to awaiting_merge ──
+        await _update_vc_progress(mongo_db, generation_id, 90, "awaiting_merge", {
+            "voice_converted_vocal_url": converted_vocal_object,
             "voice_converted_backing_url": backing_object,
             "voice_model_id": voice_model_id,
-            "voice_conversion_completed_at": datetime.utcnow(),
         })
 
-        logger.info("VC %s: Voice conversion pipeline completed", generation_id)
-        return {"voice_converted_url": result_object}
+        logger.info("VC %s: Voice conversion done, awaiting merge", generation_id)
+        return {"voice_converted_vocal_url": converted_vocal_object, "voice_converted_backing_url": backing_object}
 
     except Exception as e:
         logger.error("VC %s: Pipeline failed: %s", generation_id, e)
@@ -363,3 +340,110 @@ async def convert_voice(
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
             pass
+
+
+async def merge_vocal_and_backing(
+    generation_id: str,
+    mongo_db,
+    mr_pitch_shift: float = 0.0,
+    vocal_volume: float = 1.0,
+    mr_volume: float = 1.0,
+) -> dict:
+    """Merge converted vocal + pitch-shifted MR into final audio."""
+    minio_client = get_minio()
+    tmpdir = tempfile.mkdtemp(prefix="kits_merge_")
+
+    try:
+        # Get document
+        from bson import ObjectId
+        doc = await mongo_db.generations.find_one({"_id": ObjectId(generation_id)})
+        if not doc:
+            raise ValueError("Generation not found")
+
+        vocal_object = doc.get("voice_converted_vocal_url")
+        backing_object = doc.get("voice_converted_backing_url")
+        if not vocal_object or not backing_object:
+            raise ValueError("Converted vocal or backing not found")
+
+        # Download files from MinIO
+        vocal_path = os.path.join(tmpdir, "vocal.wav")
+        backing_path = os.path.join(tmpdir, "backing.wav")
+
+        resp = minio_client.get_object(bucket_name=settings.minio_bucket_music, object_name=vocal_object)
+        with open(vocal_path, "wb") as f:
+            f.write(resp.read())
+        resp.close(); resp.release_conn()
+
+        resp = minio_client.get_object(bucket_name=settings.minio_bucket_music, object_name=backing_object)
+        with open(backing_path, "wb") as f:
+            f.write(resp.read())
+        resp.close(); resp.release_conn()
+
+        await _update_vc_progress(mongo_db, generation_id, 92, "merging")
+
+        # Build ffmpeg filter for MR pitch shift + volume adjustment
+        ffmpeg_bin = _get_ffmpeg_path()
+        if not ffmpeg_bin:
+            raise RuntimeError("ffmpeg가 설치되어 있지 않습니다.")
+
+        output_path = os.path.join(tmpdir, "voice_converted.mp3")
+
+        # Build filter complex
+        # Vocal: volume adjustment
+        vocal_filter = "volume={}".format(vocal_volume)
+
+        # MR: pitch shift (using rubberband) + volume
+        # rubberband preserves tempo while shifting pitch
+        if mr_pitch_shift != 0:
+            import math
+            pitch_ratio = math.pow(2, mr_pitch_shift / 12.0)
+            mr_filter = "rubberband=pitch={},volume={}".format(pitch_ratio, mr_volume)
+        else:
+            mr_filter = "volume={}".format(mr_volume)
+
+        filter_complex = "[0:a]{}[v];[1:a]{}[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=2[out]".format(
+            vocal_filter, mr_filter
+        )
+
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg_bin, "-y",
+            "-i", vocal_path,
+            "-i", backing_path,
+            "-filter_complex", filter_complex,
+            "-map", "[out]",
+            "-codec:a", "libmp3lame", "-b:a", "192k",
+            output_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg merge failed: {stderr.decode()[:500]}")
+
+        # Upload to MinIO
+        with open(output_path, "rb") as f:
+            result_bytes = f.read()
+
+        result_object = f"generated/{generation_id}/voice_converted.mp3"
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=result_object,
+            data=io.BytesIO(result_bytes),
+            length=len(result_bytes),
+            content_type="audio/mpeg",
+        )
+
+        await _update_vc_progress(mongo_db, generation_id, 100, "completed", {
+            "voice_converted_url": result_object,
+            "voice_conversion_completed_at": datetime.utcnow(),
+            "mr_pitch_shift": mr_pitch_shift,
+            "vocal_volume": vocal_volume,
+            "mr_volume": mr_volume,
+        })
+
+        logger.info("VC %s: Merge completed with pitch_shift=%.1f", generation_id, mr_pitch_shift)
+        return {"voice_converted_url": result_object}
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)

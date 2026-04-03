@@ -3848,3 +3848,3571 @@ key = f"{1 if user_text else 0}_{1 if top else 0}{1 if bottom else 0}{1 if shoes
 - [x] STEP 1/2 "사용자의 답변이 오기 전에는..." 문구 제거
 - [x] step_a_prompt 조립: 답변 분리 블록 제거, MASTER_PROMPT.format() 인라인 치환으로 변경
 - [x] 중괄호 충돌 없음 확인
+
+---
+
+## v13 — Git Pull 후 환경 복원 (2026-03-30)
+
+### 배경
+프로젝트 폴더를 삭제 후 Git에서 새로 pull 받은 상태이다. `.env` 파일은 `.gitignore`에 의해 제외되어 존재하지 않고, Docker 인프라도 재구성이 필요하다.
+
+### 현재 상태 확인 결과
+- `backend/.env` — **없음** (Git에서 pull 시 제외됨)
+- `backend/app/config.py` — `kits_api_key`, `kits_api_url` 필드 **이미 존재** (수정 불필요)
+- `backend/docker-compose.yml` — 환경변수 기반 설정 **정상**, MinIO 포트 매핑 `${MINIO_API_PORT:-9100}:9000` **정상**
+- `backend/requirements.txt` — 의존성 목록 **정상**
+- `frontend/package.json` — **존재** (npm install 필요)
+
+### 작업 계획
+
+총 6단계, 3개 에이전트가 병렬/순차로 수행한다.
+
+---
+
+#### STEP 1: backend/.env 파일 생성 [백엔드 에이전트]
+
+`backend/.env` 파일을 아래 내용으로 생성한다. `config.py`의 `Settings` 클래스가 `env_file=".env"`로 자동 로드하므로 변수명은 config.py 필드명과 동일하게 맞춘다 (대소문자 무관, pydantic-settings가 case-insensitive 매칭).
+
+```env
+# === 인프라 서비스 ===
+
+# PostgreSQL
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=aimu
+POSTGRES_USER=aimu_user
+POSTGRES_PASSWORD=aimu_pass_2024
+
+# MongoDB
+MONGO_HOST=localhost
+MONGO_PORT=27017
+MONGO_DB=aimu
+MONGO_USER=aimu_user
+MONGO_PASSWORD=aimu_pass_2024
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=aimu_pass_2024
+
+# Elasticsearch
+ES_HOST=localhost
+ES_PORT=9200
+
+# MinIO (호스트 포트 9100 -> 컨테이너 9000)
+MINIO_HOST=localhost
+MINIO_API_PORT=9100
+MINIO_ACCESS_KEY=aimu_minio_admin
+MINIO_SECRET_KEY=aimu_minio_pass_2024
+MINIO_BUCKET_MUSIC=music-platform-audio
+MINIO_BUCKET_IMAGES=music-platform-images
+
+# === 인증 ===
+
+# JWT
+JWT_SECRET=aimu-platform-secret-key-2024
+JWT_ALGORITHM=HS256
+
+# === 외부 AI API 키 ===
+
+# OpenAI
+OPENAI_API_KEY=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
+OPENAI_MODEL=gpt-4o-mini
+
+# Google Gemini
+GOOGLE_API_KEY=AIzaSyA5_p_dGUxI9bPz1zveuT8J6xDC6PBj7y4
+
+# Kling AI
+KLING_ACCESS_KEY=AABMgmAhdAbFMHApaGyrP9MnJTTh3Yg9
+KLING_SECRET_KEY=ChmtNCanh4EbHfkFNf4EEC3h8nJ9PTKB
+
+# Suno
+SUNO_API_KEY=b0c13153451cf641dc692a107a816c77
+SUNO_API_URL=https://api.sunoapi.org
+
+# Kits.AI
+KITS_API_KEY=QO0BFe3I.G8rftNyWEJUHPNJH2HIm8-Kl
+KITS_API_URL=https://arpeggi.io/api/kits/v1
+
+# === YuE Music Generation ===
+YUE_MODEL_DIR=/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend/YuEGP
+YUE_OUTPUT_DIR=/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend/yue_output
+YUE_VRAM_PROFILE=4
+YUE_PYTHON=/home/duckjk89/miniconda3/envs/yuegp/bin/python
+```
+
+**주의사항:**
+- `MINIO_API_PORT=9100`으로 설정 — docker-compose.yml이 이 값을 호스트 포트로 사용하고 컨테이너 내부 9000에 매핑함
+- config.py의 `minio_api_port` 기본값이 `9000`이므로, .env에서 `MINIO_API_PORT=9100`을 명시해야 docker-compose 포트 매핑과 일치함
+- `MINIO_BUCKET_MUSIC`, `MINIO_BUCKET_IMAGES` 값이 config.py 기본값(`aimu-music`, `aimu-images`)과 다름 — .env 값이 우선 적용됨
+
+---
+
+#### STEP 2: Docker Compose로 인프라 서비스 시작 [백엔드 에이전트]
+
+STEP 1 완료 후 수행한다. docker-compose.yml이 `.env`에서 환경변수를 자동으로 읽는다.
+
+```bash
+cd /mnt/d/projects/TripleJ/0_platform_music/backend
+docker compose up -d
+```
+
+시작 후 헬스체크 확인:
+```bash
+docker compose ps
+```
+
+모든 5개 서비스(postgres, mongodb, redis, elasticsearch, minio)가 healthy 상태인지 확인한다.
+
+**트러블슈팅:**
+- 기존 볼륨이 다른 비밀번호로 초기화된 경우: `docker compose down -v && docker compose up -d` (볼륨 삭제 후 재생성)
+- Elasticsearch 메모리 부족: `vm.max_map_count` 설정 확인 (`sudo sysctl -w vm.max_map_count=262144`)
+
+---
+
+#### STEP 3: 백엔드 의존성 설치 [백엔드 에이전트]
+
+STEP 2와 병렬 수행 가능하다.
+
+```bash
+cd /mnt/d/projects/TripleJ/0_platform_music/backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**참고:** 시스템 Python이 3.8인 경우 `google-genai` SDK가 설치 불가하지만, 이미 httpx 기반 REST API 호출로 대체되어 있으므로 문제없다 (requirements.txt 주석 참조).
+
+---
+
+#### STEP 4: 프론트엔드 의존성 설치 [프론트엔드 에이전트]
+
+STEP 1~3과 병렬 수행 가능하다.
+
+```bash
+cd /mnt/d/projects/TripleJ/0_platform_music/frontend
+npm install
+```
+
+---
+
+#### STEP 5: 서버 시작 [백엔드 에이전트 + 프론트엔드 에이전트]
+
+STEP 2, 3, 4 모두 완료 후 수행한다.
+
+**백엔드 (포트 9000):**
+```bash
+cd /mnt/d/projects/TripleJ/0_platform_music/backend
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload
+```
+
+**프론트엔드 (포트 4000):**
+```bash
+cd /mnt/d/projects/TripleJ/0_platform_music/frontend
+npm run dev -- --port 4000
+```
+
+---
+
+#### STEP 6: 검증 [테스터 에이전트]
+
+STEP 5 완료 후 수행한다.
+
+| # | 검증 항목 | 방법 | 기대 결과 |
+|---|----------|------|----------|
+| 1 | 백엔드 헬스 | `curl http://localhost:9000/docs` | Swagger UI 응답 |
+| 2 | DB 연결 | `curl http://localhost:9000/api/songs` | 곡 목록 JSON |
+| 3 | 프론트엔드 | 브라우저에서 `http://localhost:4000` | 메인 페이지 렌더링 |
+| 4 | 회원가입/로그인 | 프론트엔드에서 회원가입 후 로그인 | 토큰 발급, 유저 정보 표시 |
+| 5 | MinIO | `curl http://localhost:9100/minio/health/live` | OK |
+| 6 | Redis | `docker exec aimu-redis redis-cli -a aimu_pass_2024 ping` | PONG |
+
+---
+
+### 에이전트별 작업 할당 요약
+
+| 에이전트 | 작업 | 순서 |
+|---------|------|------|
+| **백엔드 에이전트** | STEP 1: .env 생성 | 1st |
+| **백엔드 에이전트** | STEP 2: Docker Compose 시작 | 2nd (STEP 1 후) |
+| **백엔드 에이전트** | STEP 3: pip install | 2nd (STEP 1 후, STEP 2와 병렬) |
+| **프론트엔드 에이전트** | STEP 4: npm install | 1st (독립 수행) |
+| **백엔드 에이전트** | STEP 5a: 백엔드 서버 시작 | 3rd (STEP 2,3 후) |
+| **프론트엔드 에이전트** | STEP 5b: 프론트엔드 서버 시작 | 2nd (STEP 4 후) |
+| **테스터 에이전트** | STEP 6: 통합 검증 | 4th (STEP 5 후) |
+
+### 의존성 그래프
+
+```
+STEP 1 (.env 생성)
+  ├──> STEP 2 (Docker) ──┐
+  └──> STEP 3 (pip)    ──┼──> STEP 5a (백엔드 시작) ──┐
+                          │                              ├──> STEP 6 (검증)
+STEP 4 (npm) ────────────────> STEP 5b (프론트 시작) ──┘
+```
+
+### 체크리스트
+- [ ] STEP 1: backend/.env 파일 생성 완료
+- [ ] STEP 2: Docker Compose 서비스 5개 healthy
+- [ ] STEP 3: Python venv + pip install 완료
+- [ ] STEP 4: npm install 완료
+- [ ] STEP 5a: 백엔드 서버 포트 9000 정상 시작
+- [ ] STEP 5b: 프론트엔드 서버 포트 4000 정상 시작
+- [ ] STEP 6: 통합 검증 6항목 통과
+
+---
+
+## v14 — 내 목소리 녹음 + Dolby.io 보컬 다듬기 (2026-03-30)
+
+### 목적
+'내 캐릭터' 탭에서 사용자가 자신의 목소리를 녹음(또는 파일 업로드)하고, Dolby.io Media Enhance API를 통해 노이즈 제거/보컬 프레즌스 부스트 등 보컬 다듬기 처리를 할 수 있는 기능을 추가한다. 처리된 음성은 향후 보이스 모델 학습의 입력으로 사용된다.
+
+### 전체 흐름
+```
+사용자 녹음/파일 업로드
+  → POST /api/vocal-repair/upload (MinIO에 원본 저장)
+  → POST /api/vocal-repair/{id}/enhance (Dolby.io Media Enhance API 호출)
+  → GET /api/vocal-repair/{id}/status (폴링으로 상태 확인)
+  → 완료 시 원본 vs 다듬어진 파일 나란히 미리듣기
+  → 다운로드 / 보이스 모델 학습 연결
+```
+
+### 파일 변경 목록
+
+| 구분 | 파일 경로 | 작업 |
+|------|----------|------|
+| 백엔드 | `backend/app/config.py` | `dolby_api_key` 필드 추가 |
+| 백엔드 | `backend/.env` | `DOLBY_API_KEY=` 추가 |
+| 백엔드 | `backend/app/services/dolby_service.py` | **신규 생성** — Dolby.io Media Enhance API 연동 서비스 |
+| 백엔드 | `backend/app/routes/vocal_repair.py` | **신규 생성** — 보컬 다듬기 API 라우트 7개 |
+| 백엔드 | `backend/app/main.py` | `vocal_repair` 라우터 import + 등록 |
+| 프론트 | `frontend/src/api/index.js` | vocal-repair API 함수 7개 추가 |
+| 프론트 | `frontend/src/pages/MyMusicPage.jsx` | `VoiceRecordSection` 컴포넌트 추가 |
+| 프론트 | `frontend/src/pages/MyMusicPage.css` | VoiceRecordSection 스타일 추가 |
+
+---
+
+### STEP 1: 백엔드 — 환경설정 [백엔드 에이전트]
+
+#### 1-1. `backend/app/config.py` — `dolby_api_key` 추가
+
+`kits_api_url` 필드 아래에 추가:
+
+```python
+# Dolby.io Media Enhance
+dolby_api_key: str = ""
+```
+
+#### 1-2. `backend/.env` — `DOLBY_API_KEY` 추가
+
+Kits.AI 섹션 아래에 추가:
+
+```env
+# Dolby.io Media Enhance
+DOLBY_API_KEY=
+```
+
+사용자가 나중에 https://dashboard.dolby.io 에서 API 키를 발급받아 입력한다.
+
+---
+
+### STEP 2: 백엔드 — Dolby.io 서비스 [백엔드 에이전트]
+
+**파일:** `backend/app/services/dolby_service.py` (신규 생성)
+
+Dolby.io Media Enhance API 연동 서비스 클래스를 구현한다.
+
+#### 주요 메서드
+
+```python
+class DolbyService:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api.dolby.com/media"
+
+    async def upload_to_dolby(self, file_bytes: bytes, filename: str) -> str:
+        """Dolby.io 임시 스토리지에 파일 업로드, dlb:// URL 반환"""
+        # 1. POST /media/input 으로 presigned URL 획득
+        # 2. PUT presigned URL 에 파일 업로드
+        # 3. dlb:// input URL 반환
+
+    async def start_enhance(self, input_url: str, output_url: str) -> str:
+        """Media Enhance API 호출, job_id 반환"""
+        # POST /media/enhance
+        # content.type = "voice_recording"
+        # audio.noise.reduction.enable = True
+        # audio.voice.isolation.enable = True  (보컬 분리/강화)
+
+    async def check_status(self, job_id: str) -> dict:
+        """작업 상태 조회 → {"status": "Pending"|"Running"|"Success"|"Failed", "progress": 0~100}"""
+        # GET /media/enhance?job_id=...
+
+    async def download_from_dolby(self, dlb_output_url: str) -> bytes:
+        """Dolby.io 임시 스토리지에서 결과 파일 다운로드"""
+        # POST /media/output → presigned URL → GET 다운로드
+```
+
+#### Dolby.io API 인증 헤더
+```
+Authorization: Bearer {dolby_api_key}
+Content-Type: application/json
+```
+
+#### Enhance 요청 파라미터 (content.type = "voice_recording")
+```json
+{
+    "input": "dlb://input/user_voice.wav",
+    "output": "dlb://output/user_voice_enhanced.wav",
+    "content": {
+        "type": "voice_recording"
+    },
+    "audio": {
+        "noise": {
+            "reduction": {
+                "enable": true
+            }
+        }
+    }
+}
+```
+
+#### 에러 처리
+- API 키 미설정 시 `HTTPException(503, "Dolby.io API 키가 설정되지 않았습니다")`
+- Dolby.io API 오류 시 상태 코드 및 메시지 전달
+- httpx.AsyncClient 사용 (timeout=120초)
+
+---
+
+### STEP 3: 백엔드 — API 라우트 [백엔드 에이전트]
+
+**파일:** `backend/app/routes/vocal_repair.py` (신규 생성)
+
+`router = APIRouter(prefix="/api/vocal-repair", tags=["vocal-repair"])`
+
+#### 3-1. `POST /api/vocal-repair/upload`
+
+- 인증 필요 (`get_current_user`)
+- `UploadFile` 로 음성 파일 수신 (허용 확장자: mp3, wav, m4a, ogg, flac, webm)
+- webm 포함 — 브라우저 MediaRecorder 기본 출력 형식
+- MinIO `aimu-music` 버킷에 `vocal-repair/{user_id}/{uuid}.{ext}` 경로로 저장
+- MongoDB `vocal_repairs` 컬렉션에 문서 생성:
+  ```json
+  {
+      "_id": ObjectId,
+      "user_id": "...",
+      "original_minio_path": "vocal-repair/user123/abc-def.wav",
+      "enhanced_minio_path": null,
+      "dolby_job_id": null,
+      "status": "uploaded",
+      "original_filename": "my_voice.wav",
+      "content_type": "audio/wav",
+      "file_size": 1234567,
+      "created_at": "2026-03-30T...",
+      "updated_at": "2026-03-30T..."
+  }
+  ```
+- 응답: `{"id": "...", "status": "uploaded"}`
+
+#### 3-2. `POST /api/vocal-repair/{id}/enhance`
+
+- 인증 필요 + 소유자 확인
+- MongoDB에서 문서 조회, status가 "uploaded" 또는 "failed"인 경우만 허용
+- DolbyService를 사용:
+  1. MinIO에서 원본 파일 읽기
+  2. `upload_to_dolby()` → dlb:// input URL
+  3. `start_enhance()` → job_id
+  4. MongoDB 문서 업데이트: `status="processing"`, `dolby_job_id=job_id`
+- 응답: `{"id": "...", "status": "processing", "dolby_job_id": "..."}`
+
+#### 3-3. `GET /api/vocal-repair/{id}/status`
+
+- 인증 필요 + 소유자 확인
+- status가 "processing"이면 DolbyService.check_status() 호출하여 최신 상태 확인
+  - Dolby 상태가 "Success"이면:
+    1. `download_from_dolby()` → 결과 파일 bytes
+    2. MinIO에 `vocal-repair/{user_id}/{uuid}_enhanced.{ext}` 저장
+    3. MongoDB 업데이트: `status="completed"`, `enhanced_minio_path=...`
+  - Dolby 상태가 "Failed"이면:
+    1. MongoDB 업데이트: `status="failed"`, `error_message=...`
+- 응답: `{"id": "...", "status": "uploaded|processing|completed|failed", "progress": 0~100}`
+
+#### 3-4. `GET /api/vocal-repair/{id}/original/stream`
+
+- 인증 (query param `token` 방식 — 오디오 `<audio src>` 용)
+- MinIO에서 원본 파일 읽어 `StreamingResponse` 반환
+- Content-Type 설정 (저장된 content_type 사용)
+
+#### 3-5. `GET /api/vocal-repair/{id}/enhanced/stream`
+
+- 3-4와 동일 구조, `enhanced_minio_path` 사용
+- status가 "completed"가 아니면 404
+
+#### 3-6. `GET /api/vocal-repair/{id}/original/download`
+
+- 3-4와 동일, `Content-Disposition: attachment` 헤더 추가
+
+#### 3-7. `GET /api/vocal-repair/{id}/enhanced/download`
+
+- 3-5와 동일, `Content-Disposition: attachment` 헤더 추가
+
+#### 3-8. `GET /api/vocal-repair/list`
+
+- 인증 필요
+- 해당 사용자의 vocal_repairs 목록 반환 (최신순)
+- 응답: `[{"id": "...", "status": "...", "original_filename": "...", "created_at": "..."}]`
+
+---
+
+### STEP 4: 백엔드 — 라우터 등록 [백엔드 에이전트]
+
+**파일:** `backend/app/main.py`
+
+#### 4-1. import 추가
+
+`voice_convert` import 라인에 `vocal_repair` 추가:
+
+```python
+from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_convert, vocal_repair
+```
+
+#### 4-2. 라우터 등록 추가
+
+`voice_convert.router` 아래에 추가:
+
+```python
+app.include_router(vocal_repair.router)
+```
+
+---
+
+### STEP 5: 프론트엔드 — API 함수 [프론트엔드 에이전트]
+
+**파일:** `frontend/src/api/index.js`
+
+Voice Conversion 섹션 아래에 추가:
+
+```javascript
+// Vocal Repair (Dolby.io Enhance)
+export const uploadVocalRepair = (formData) =>
+  API.post('/vocal-repair/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+export const startVocalEnhance = (id) =>
+  API.post(`/vocal-repair/${id}/enhance`);
+
+export const getVocalRepairStatus = (id) =>
+  API.get(`/vocal-repair/${id}/status`);
+
+export const getVocalRepairList = () =>
+  API.get('/vocal-repair/list');
+
+export const vocalRepairOriginalStreamUrl = (id) => {
+  const base = API.defaults.baseURL.replace('/api', '');
+  const token = localStorage.getItem('token') || '';
+  return `${base}/api/vocal-repair/${id}/original/stream?token=${encodeURIComponent(token)}`;
+};
+
+export const vocalRepairEnhancedStreamUrl = (id) => {
+  const base = API.defaults.baseURL.replace('/api', '');
+  const token = localStorage.getItem('token') || '';
+  return `${base}/api/vocal-repair/${id}/enhanced/stream?token=${encodeURIComponent(token)}`;
+};
+
+export const vocalRepairOriginalDownloadUrl = (id) => {
+  const base = API.defaults.baseURL.replace('/api', '');
+  const token = localStorage.getItem('token') || '';
+  return `${base}/api/vocal-repair/${id}/original/download?token=${encodeURIComponent(token)}`;
+};
+
+export const vocalRepairEnhancedDownloadUrl = (id) => {
+  const base = API.defaults.baseURL.replace('/api', '');
+  const token = localStorage.getItem('token') || '';
+  return `${base}/api/vocal-repair/${id}/enhanced/download?token=${encodeURIComponent(token)}`;
+};
+```
+
+---
+
+### STEP 6: 프론트엔드 — VoiceRecordSection 컴포넌트 [프론트엔드 에이전트]
+
+**파일:** `frontend/src/pages/MyMusicPage.jsx`
+
+CharacterSection과 VoicePersonaSection 사이에 `VoiceRecordSection` 컴포넌트를 추가한다.
+
+#### 6-1. 컴포넌트 상태 (state)
+
+```javascript
+const [isRecording, setIsRecording] = useState(false);
+const [recordedBlob, setRecordedBlob] = useState(null);
+const [uploadedFile, setUploadedFile] = useState(null);
+const [repairId, setRepairId] = useState(null);
+const [repairStatus, setRepairStatus] = useState(null);  // uploaded | processing | completed | failed
+const [repairProgress, setRepairProgress] = useState(0);
+const [repairList, setRepairList] = useState([]);
+const [selectedRepairId, setSelectedRepairId] = useState(null);
+const mediaRecorderRef = useRef(null);
+const audioChunksRef = useRef([]);
+```
+
+#### 6-2. 녹음 기능 (MediaRecorder API)
+
+```javascript
+const startRecording = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+  mediaRecorderRef.current = mediaRecorder;
+  audioChunksRef.current = [];
+
+  mediaRecorder.ondataavailable = (e) => audioChunksRef.current.push(e.data);
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    setRecordedBlob(blob);
+    stream.getTracks().forEach(t => t.stop());
+  };
+
+  mediaRecorder.start();
+  setIsRecording(true);
+};
+
+const stopRecording = () => {
+  mediaRecorderRef.current?.stop();
+  setIsRecording(false);
+};
+```
+
+#### 6-3. 파일 업로드 옵션
+
+- `<input type="file" accept=".mp3,.wav,.m4a,.ogg,.flac" />`
+- 파일 선택 시 `setUploadedFile(file)`
+- 녹음 결과 또는 업로드 파일 중 하나를 사용
+
+#### 6-4. 업로드 + 보컬 다듬기 흐름
+
+```javascript
+const handleUploadAndEnhance = async () => {
+  const formData = new FormData();
+  if (recordedBlob) {
+    formData.append('file', recordedBlob, 'recording.webm');
+  } else if (uploadedFile) {
+    formData.append('file', uploadedFile);
+  }
+
+  // 1. 업로드
+  const uploadRes = await uploadVocalRepair(formData);
+  const id = uploadRes.data.id;
+  setRepairId(id);
+  setRepairStatus('uploaded');
+
+  // 2. 다듬기 시작
+  await startVocalEnhance(id);
+  setRepairStatus('processing');
+
+  // 3. 폴링
+  const pollInterval = setInterval(async () => {
+    const statusRes = await getVocalRepairStatus(id);
+    setRepairProgress(statusRes.data.progress || 0);
+    if (statusRes.data.status === 'completed' || statusRes.data.status === 'failed') {
+      clearInterval(pollInterval);
+      setRepairStatus(statusRes.data.status);
+      setSelectedRepairId(id);
+      fetchRepairList();  // 목록 갱신
+    }
+  }, 3000);
+};
+```
+
+#### 6-5. UI 레이아웃
+
+```
+┌─────────────────────────────────────────────────────┐
+│  🎙️ 내 목소리 녹음 & 보컬 다듬기                        │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  [● 녹음 시작]  [■ 녹음 정지]                          │
+│  ── 또는 ──                                          │
+│  [📁 파일 업로드] (mp3, wav, m4a, ogg, flac)           │
+│                                                     │
+│  선택된 파일: recording.webm (2.3MB)                   │
+│                                                     │
+│  [✨ 보컬 다듬기 시작]                                  │
+│                                                     │
+│  처리 중... ████████░░░░░░░ 55%                       │
+│                                                     │
+│  ┌──────────────────┬──────────────────┐             │
+│  │  🔊 원본          │  🔊 다듬어진 버전   │             │
+│  │  ▶ ━━━━━━━ 0:45  │  ▶ ━━━━━━━ 0:45  │             │
+│  │  [⬇ 다운로드]     │  [⬇ 다운로드]     │             │
+│  └──────────────────┴──────────────────┘             │
+│                                                     │
+│  [🎤 보이스 모델 학습하기 →]                            │
+│                                                     │
+│  ── 이전 녹음 목록 ──                                  │
+│  • my_voice.wav (2026-03-30) — 완료 [선택]            │
+│  • test_voice.mp3 (2026-03-29) — 실패 [재시도]         │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+#### 6-6. character 탭 렌더링 순서 변경
+
+기존:
+```jsx
+{activeTab === 'character' && (
+  <>
+    <CharacterSection ... />
+    <VoicePersonaSection ... />
+  </>
+)}
+```
+
+변경:
+```jsx
+{activeTab === 'character' && (
+  <>
+    <CharacterSection ... />
+    <VoiceRecordSection ... />
+    <VoicePersonaSection ... />
+  </>
+)}
+```
+
+---
+
+### STEP 7: 프론트엔드 — CSS 스타일 [프론트엔드 에이전트]
+
+**파일:** `frontend/src/pages/MyMusicPage.css`
+
+기존 `mymusic-voice-persona` 스타일 패턴을 참고하여 아래 클래스 추가:
+
+- `.mymusic-vocal-repair` — 섹션 컨테이너
+- `.mymusic-vocal-repair__title` — 섹션 제목
+- `.mymusic-vocal-repair__record-controls` — 녹음 버튼 영역
+- `.mymusic-vocal-repair__record-btn` — 녹음 시작/정지 버튼 (녹음 중 빨간색 깜빡임)
+- `.mymusic-vocal-repair__file-upload` — 파일 업로드 영역
+- `.mymusic-vocal-repair__enhance-btn` — 보컬 다듬기 버튼
+- `.mymusic-vocal-repair__progress` — 프로그레스 바
+- `.mymusic-vocal-repair__preview` — 원본 vs 다듬어진 파일 나란히 보기 (display: grid, grid-template-columns: 1fr 1fr)
+- `.mymusic-vocal-repair__preview-card` — 각 오디오 카드
+- `.mymusic-vocal-repair__download-btn` — 다운로드 버튼
+- `.mymusic-vocal-repair__next-step` — 보이스 모델 학습 연결 버튼
+- `.mymusic-vocal-repair__history` — 이전 녹음 목록
+
+---
+
+### STEP 8: 테스트 [테스터 에이전트]
+
+#### 8-1. 백엔드 API 테스트
+
+| # | 테스트 항목 | 방법 | 기대 결과 |
+|---|-----------|------|----------|
+| 1 | 파일 업로드 | `curl -X POST -F "file=@test.wav" http://localhost:9000/api/vocal-repair/upload -H "Authorization: Bearer {token}"` | `{"id": "...", "status": "uploaded"}` |
+| 2 | 목록 조회 | `GET /api/vocal-repair/list` | 업로드한 파일 목록 반환 |
+| 3 | 다듬기 시작 | `POST /api/vocal-repair/{id}/enhance` | `{"status": "processing"}` |
+| 4 | 상태 조회 | `GET /api/vocal-repair/{id}/status` | progress 값 변화 확인 |
+| 5 | 원본 스트리밍 | `GET /api/vocal-repair/{id}/original/stream?token=...` | 오디오 스트리밍 응답 |
+| 6 | 다듬어진 파일 스트리밍 | `GET /api/vocal-repair/{id}/enhanced/stream?token=...` | 완료 후 오디오 스트리밍 |
+| 7 | 다운로드 | `GET /api/vocal-repair/{id}/original/download?token=...` | Content-Disposition 헤더 포함 |
+| 8 | API 키 미설정 | DOLBY_API_KEY 비어있는 상태에서 enhance 호출 | 503 응답 |
+| 9 | 잘못된 파일 형식 | `.txt` 파일 업로드 시도 | 400 응답 |
+| 10 | 권한 없는 접근 | 다른 사용자의 repair ID로 접근 | 403 응답 |
+
+#### 8-2. 프론트엔드 UI 테스트
+
+| # | 테스트 항목 | 기대 결과 |
+|---|-----------|----------|
+| 1 | 녹음 시작/정지 | 녹음 버튼 토글, 녹음 중 UI 표시, 정지 후 Blob 생성 |
+| 2 | 파일 업로드 | 허용 확장자만 선택 가능, 파일명/크기 표시 |
+| 3 | 보컬 다듬기 | 업로드 → 처리 시작 → 프로그레스 → 완료 |
+| 4 | 미리듣기 | 원본/다듬어진 오디오 나란히 재생 |
+| 5 | 다운로드 | 원본/다듬어진 파일 다운로드 |
+| 6 | 이전 녹음 목록 | 목록 표시, 선택 시 미리듣기 전환 |
+| 7 | 에러 처리 | 마이크 권한 거부 시 안내 메시지, API 오류 시 사용자 알림 |
+
+---
+
+### 에이전트별 작업 할당 요약
+
+| 에이전트 | STEP | 작업 내용 | 의존성 |
+|---------|------|----------|--------|
+| **백엔드 에이전트** | STEP 1 | config.py에 dolby_api_key 추가, .env에 DOLBY_API_KEY 추가 | 없음 |
+| **백엔드 에이전트** | STEP 2 | `dolby_service.py` 생성 (Dolby.io API 연동) | STEP 1 |
+| **백엔드 에이전트** | STEP 3 | `vocal_repair.py` 라우트 생성 (API 8개) | STEP 2 |
+| **백엔드 에이전트** | STEP 4 | main.py에 라우터 등록 | STEP 3 |
+| **프론트엔드 에이전트** | STEP 5 | api/index.js에 vocal-repair API 함수 추가 | 없음 (STEP 3과 병렬) |
+| **프론트엔드 에이전트** | STEP 6 | VoiceRecordSection 컴포넌트 구현 | STEP 5 |
+| **프론트엔드 에이전트** | STEP 7 | CSS 스타일 추가 | STEP 6과 병렬 |
+| **테스터 에이전트** | STEP 8 | 백엔드 API + 프론트엔드 UI 통합 테스트 | STEP 4, 6, 7 완료 후 |
+
+### 의존성 그래프
+
+```
+STEP 1 (config/env)
+  └──> STEP 2 (dolby_service.py)
+         └──> STEP 3 (vocal_repair.py 라우트)
+                └──> STEP 4 (main.py 등록) ──────────────┐
+                                                          ├──> STEP 8 (테스트)
+STEP 5 (API 함수) ──> STEP 6 (VoiceRecordSection) ──┐    │
+                      STEP 7 (CSS) ──────────────────┼────┘
+                                                     │
+                                        (STEP 6, 7 병렬 가능)
+```
+
+### 주의사항
+
+1. **Dolby.io API 키 필요**: 실제 동작을 위해 https://dashboard.dolby.io 에서 API 키를 발급받아 `.env`에 설정해야 함. 키가 없으면 업로드까지만 동작하고, enhance 호출 시 503 응답.
+2. **webm 지원**: 브라우저 MediaRecorder는 기본적으로 webm 포맷으로 녹음함. 업로드 허용 확장자에 webm 포함 필수.
+3. **폴링 간격**: 3초 간격으로 상태 폴링. Dolby.io 처리는 보통 파일 길이의 50~100% 시간 소요.
+4. **MinIO 경로**: `vocal-repair/{user_id}/{uuid}.{ext}` — 기존 voice-persona와 분리.
+5. **MongoDB 컬렉션**: `vocal_repairs` — 기존 컬렉션과 분리.
+6. **보이스 모델 학습 연결**: '보이스 모델 학습하기' 버튼은 이번 버전에서는 UI만 배치. 실제 학습 로직은 다음 버전에서 구현.
+
+### 체크리스트
+- [ ] STEP 1: config.py dolby_api_key 추가
+- [ ] STEP 1: .env DOLBY_API_KEY 추가
+- [ ] STEP 2: dolby_service.py 생성 (upload_to_dolby, start_enhance, check_status, download_from_dolby)
+- [ ] STEP 3: vocal_repair.py 라우트 8개 (upload, enhance, status, stream x2, download x2, list)
+- [ ] STEP 4: main.py 라우터 import + 등록
+- [ ] STEP 5: api/index.js vocal-repair 함수 8개
+- [ ] STEP 6: VoiceRecordSection 컴포넌트 (녹음, 업로드, 다듬기, 미리듣기, 다운로드)
+- [ ] STEP 7: CSS 스타일 추가
+- [ ] STEP 8-1: 백엔드 API 테스트 10항목
+- [ ] STEP 8-2: 프론트엔드 UI 테스트 7항목
+
+---
+
+## v15 — Dolby.io → Wondera API 교체 (2026-03-30)
+
+### 배경
+
+v14에서 구현한 보컬 다듬기(Vocal Enhancement) 기능은 Dolby.io Media API를 사용했으나, Wondera API로 교체한다. 기존 기능 동작(업로드 → enhance → 상태 조회 → 다운로드/스트리밍)의 흐름은 동일하게 유지하며, 내부 서비스 레이어만 교체한다.
+
+### 변경 대상 파일 (백엔드 4개)
+
+| # | 파일 | 작업 내용 |
+|---|------|----------|
+| 1 | `backend/.env` | `DOLBY_API_KEY=` 항목 삭제, `WONDERA_API_KEY=wk_9edb4ebb...` 추가 |
+| 2 | `backend/app/config.py` | `dolby_api_key: str = ""` → `wondera_api_key: str = ""` 변경 |
+| 3 | `backend/app/services/dolby_service.py` | 파일 삭제 후 `backend/app/services/wondera_service.py` 신규 생성 (Wondera API 연동) |
+| 4 | `backend/app/routes/vocal_repair.py` | `from ..services.dolby_service import enhance_vocal` → `from ..services.wondera_service import enhance_vocal` 변경, API 키 검증 로직에서 `dolby_api_key` → `wondera_api_key` 변경, 에러 메시지 텍스트 수정 |
+
+### STEP별 작업 계획
+
+#### STEP 1: 환경 변수 교체 [백엔드 에이전트]
+
+- `backend/.env`
+  - `DOLBY_API_KEY=` 행 삭제
+  - `WONDERA_API_KEY=wk_9edb4ebb41e19a142a39c74a0c9f49ec4fbac6a387311a62b8b638a56cd78647` 추가
+- `backend/app/config.py`
+  - `dolby_api_key: str = ""` → `wondera_api_key: str = ""` 변경
+
+#### STEP 2: 서비스 레이어 교체 [백엔드 에이전트]
+
+- `backend/app/services/dolby_service.py` 삭제
+- `backend/app/services/wondera_service.py` 신규 생성
+  - Wondera API 엔드포인트 연동
+  - `enhance_vocal(file_bytes, filename, settings)` 함수 시그니처 유지 (라우트 호환)
+  - `wondera_api_key` 사용하여 인증
+
+#### STEP 3: 라우트 수정 [백엔드 에이전트]
+
+- `backend/app/routes/vocal_repair.py`
+  - import 경로 변경: `dolby_service` → `wondera_service`
+  - API 키 검증: `settings.dolby_api_key` → `settings.wondera_api_key`
+  - 에러 메시지: `"Dolby API 키가 설정되지 않았습니다."` → `"Wondera API 키가 설정되지 않았습니다."`
+
+#### STEP 4: 테스트 [테스터 에이전트]
+
+- 기존 v14 테스트 항목 재실행 (STEP 8-1의 항목 1~10)
+- 특히 항목 8: `WONDERA_API_KEY` 비어있는 상태에서 enhance 호출 시 503 응답 확인
+
+### 의존성 그래프
+
+```
+STEP 1 (env/config 교체)
+  └──> STEP 2 (wondera_service.py 생성, dolby_service.py 삭제)
+         └──> STEP 3 (vocal_repair.py import/검증 수정)
+                └──> STEP 4 (테스트)
+```
+
+### 주의사항
+
+1. **함수 시그니처 호환**: `wondera_service.py`의 `enhance_vocal` 함수는 기존 `dolby_service.py`와 동일한 인자/반환값을 유지해야 라우트 수정을 최소화할 수 있다.
+2. **프론트엔드 변경 없음**: API 경로(`/api/vocal-repair/*`)는 그대로 유지되므로 프론트엔드 수정은 불필요하다.
+3. **API 키 보안**: `.env` 파일은 `.gitignore`에 포함되어 있으므로 커밋되지 않음을 확인할 것.
+
+### 체크리스트
+
+- [ ] STEP 1: `.env` — `DOLBY_API_KEY` 삭제, `WONDERA_API_KEY` 추가
+- [ ] STEP 1: `config.py` — `dolby_api_key` → `wondera_api_key` 변경
+- [ ] STEP 2: `dolby_service.py` 삭제
+- [ ] STEP 2: `wondera_service.py` 생성 (Wondera API 연동, enhance_vocal 함수)
+- [ ] STEP 3: `vocal_repair.py` — import 및 API 키 검증 로직 수정
+- [ ] STEP 4: 백엔드 API 테스트 재실행 (v14 STEP 8-1 항목 기준)
+
+---
+
+## v16 — 보컬 수리 투트랙: LALAL.AI + Demucs 비교 선택 (2026-03-30)
+
+### 배경
+
+v14~v15에서 구현한 보컬 다듬기(Vocal Enhancement)는 단일 외부 API(Dolby.io → Wondera)에 의존했다. 이번 버전에서는 두 가지 처리 방식(LALAL.AI API / Demucs 로컬 처리)을 동시에 제공하여 사용자가 직접 결과를 비교하고 선택할 수 있도록 한다.
+
+### 처리 파이프라인
+
+```
+녹음/업로드 (기존 POST /upload 유지)
+  ↓
+[1] 노멀라이즈 → pyloudnorm (서버 내)
+  ↓
+[2] 노이즈+에코 제거 → LALAL.AI API 또는 Demucs (사용자 선택)
+  ↓
+[3] 볼륨 균일화(컴프레션) → ffmpeg (서버 내)
+  ↓
+결과 비교 (원본 / LALAL.AI 결과 / Demucs 결과)
+```
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/config.py` | `wondera_api_key` → `lalal_api_key` 변경 |
+| 2 | `backend/app/services/wondera_service.py` | 삭제 |
+| 3 | `backend/app/services/lalal_service.py` | 신규 생성 — LALAL.AI API 연동 |
+| 4 | `backend/app/services/demucs_service.py` | 신규 생성 — Demucs 로컬 처리 |
+| 5 | `backend/app/routes/vocal_repair.py` | 대폭 수정 — 파이프라인 + 듀얼 방식 |
+| 6 | `backend/requirements.txt` | `pyloudnorm`, `demucs` 추가 |
+| 7 | `frontend/src/api/index.js` | enhance 호출 시 method 파라미터, stream/download URL에 method 쿼리 |
+| 8 | `frontend/src/pages/MyMusicPage.jsx` | VoiceRecordSection 수정 — 방식 선택 + 비교 UI |
+
+### STEP별 작업 계획
+
+#### STEP 1: 환경 변수 및 설정 교체 [백엔드 에이전트]
+
+**config.py 수정**
+- `wondera_api_key: str = ""` 행을 `lalal_api_key: str = ""` 로 변경
+- 주석도 `# Wondera Vocal Enhancement` → `# LALAL.AI Vocal Enhancement` 변경
+
+**requirements.txt 추가**
+- 파일 끝에 다음 추가:
+```
+pyloudnorm
+demucs
+soundfile
+```
+
+**.env 확인**
+- `LALAL_API_KEY=a68fd72f25624a9b` 이미 등록 확인 (변경 불필요)
+- `WONDERA_API_KEY=...` 행 삭제
+
+#### STEP 2: 서비스 레이어 교체 [백엔드 에이전트]
+
+**wondera_service.py 삭제**
+- `backend/app/services/wondera_service.py` 삭제
+
+**lalal_service.py 신규 생성**
+- 파일: `backend/app/services/lalal_service.py`
+- LALAL.AI REST API v2 연동 (https://www.lalal.ai/api/)
+- 함수:
+  - `async def enhance_vocal_lalal(audio_bytes: bytes, filename: str) -> bytes`
+    1. `POST https://www.lalal.ai/api/upload/` — 파일 업로드, `id` 반환
+    2. `POST https://www.lalal.ai/api/split/` — 분리 시작 (stem: `voice_clean`, filter_type: 2=noise+echo)
+    3. 폴링: `GET https://www.lalal.ai/api/check/?id={id}` — status가 2(완료)가 될 때까지 3초 간격
+    4. 완료 시 `stem_track` URL에서 WAV 다운로드
+- 인증: 헤더 `Authorization: license {LALAL_API_KEY}`
+- settings.lalal_api_key 사용
+
+**demucs_service.py 신규 생성**
+- 파일: `backend/app/services/demucs_service.py`
+- 함수:
+  - `async def enhance_vocal_demucs(audio_bytes: bytes, filename: str) -> bytes`
+    1. 임시 디렉토리에 입력 파일 저장
+    2. `demucs.separate.main(["--two-stems", "vocals", "-n", "htdemucs", input_path])` 호출 (asyncio.to_thread로 감싸기)
+    3. 출력 디렉토리에서 `vocals.wav` 읽기
+    4. 임시 디렉토리 정리 후 bytes 반환
+- GPU 없는 환경 대비: `--device cpu` 옵션 추가
+
+#### STEP 3: 파이프라인 유틸 함수 [백엔드 에이전트]
+
+**vocal_repair.py 내부에 헬퍼 함수 추가** (또는 별도 `audio_pipeline.py` 생성)
+
+1. `normalize_audio(audio_bytes: bytes) -> bytes`
+   - pyloudnorm으로 -14 LUFS 타겟 노멀라이즈
+   - soundfile로 읽기/쓰기
+
+2. `compress_audio(audio_bytes: bytes) -> bytes`
+   - ffmpeg subprocess로 컴프레션 적용
+   - `ffmpeg -i input.wav -af "acompressor=threshold=-20dB:ratio=4:attack=5:release=50" output.wav`
+   - asyncio.create_subprocess_exec 사용
+
+#### STEP 4: vocal_repair.py 라우트 대폭 수정 [백엔드 에이전트]
+
+**POST /upload** — 변경 없음 (기존 유지)
+
+**POST /{repair_id}/enhance** — 수정
+- Request body에 `method` 파라미터 추가: `"lalal"` | `"demucs"` | `"both"` (기본값: `"lalal"`)
+- Pydantic 모델 추가:
+  ```python
+  class EnhanceRequest(BaseModel):
+      method: str = "lalal"  # "lalal", "demucs", "both"
+  ```
+- API 키 검증: method가 `"lalal"` 또는 `"both"`일 때만 lalal_api_key 체크
+- 파이프라인 실행 (background task):
+  1. MinIO에서 원본 다운로드
+  2. `normalize_audio()` 적용
+  3. method에 따라 분기:
+     - `"lalal"`: `enhance_vocal_lalal()` 호출
+     - `"demucs"`: `enhance_vocal_demucs()` 호출
+     - `"both"`: 두 함수를 asyncio.gather로 병렬 호출
+  4. 각 결과에 `compress_audio()` 적용
+  5. MinIO에 저장:
+     - LALAL.AI 결과: `vocal-repair/{user_id}/{repair_id}/enhanced_lalal.wav`
+     - Demucs 결과: `vocal-repair/{user_id}/{repair_id}/enhanced_demucs.wav`
+  6. MongoDB 업데이트:
+     - `enhanced_lalal_object`: LALAL.AI 결과 경로 (또는 null)
+     - `enhanced_demucs_object`: Demucs 결과 경로 (또는 null)
+     - `method`: 사용된 방식
+     - `status`: "completed"
+
+**MongoDB 문서 스키마 변경**
+- 기존: `enhanced_object: str | null`
+- 변경: `enhanced_lalal_object: str | null`, `enhanced_demucs_object: str | null`, `method: str`
+- upload 시 초기값: 둘 다 null
+
+**GET /{repair_id}/status** — 수정
+- 응답에 `method` 필드 추가
+- `enhanced_lalal_object`, `enhanced_demucs_object` 존재 여부를 `has_lalal`, `has_demucs` boolean으로 반환
+
+**GET /{repair_id}/enhanced/stream** — 수정
+- 쿼리 파라미터 `method` 추가: `"lalal"` | `"demucs"` (필수)
+- method에 따라 `enhanced_lalal_object` 또는 `enhanced_demucs_object` 스트리밍
+
+**GET /{repair_id}/enhanced/download** — 수정
+- 쿼리 파라미터 `method` 추가: `"lalal"` | `"demucs"` (필수)
+- 파일명: `enhanced_lalal_{id[:8]}.wav` 또는 `enhanced_demucs_{id[:8]}.wav`
+
+**GET /list** — 수정
+- 응답에 `method`, `has_lalal`, `has_demucs` 필드 추가
+
+#### STEP 5: 프론트엔드 API 함수 수정 [프론트엔드 에이전트]
+
+**`frontend/src/api/index.js`**
+
+- `startVocalEnhance` 수정:
+  ```javascript
+  export const startVocalEnhance = (repairId, method = 'lalal') =>
+    API.post(`/vocal-repair/${repairId}/enhance`, { method });
+  ```
+
+- `vocalRepairEnhancedStreamUrl` 수정:
+  ```javascript
+  export const vocalRepairEnhancedStreamUrl = (repairId, method = 'lalal') =>
+    `${API.defaults.baseURL}/vocal-repair/${repairId}/enhanced/stream?method=${method}`;
+  ```
+
+- `vocalRepairEnhancedDownloadUrl` 수정:
+  ```javascript
+  export const vocalRepairEnhancedDownloadUrl = (repairId, method = 'lalal') =>
+    `${API.defaults.baseURL}/vocal-repair/${repairId}/enhanced/download?method=${method}`;
+  ```
+
+- 나머지 함수(upload, status, original stream/download, list)는 변경 없음
+
+#### STEP 6: VoiceRecordSection UI 수정 [프론트엔드 에이전트]
+
+**`frontend/src/pages/MyMusicPage.jsx` — VoiceRecordSection 함수 내부**
+
+1. **상태 추가**:
+   ```javascript
+   const [enhanceMethod, setEnhanceMethod] = useState('both');
+   // 'lalal', 'demucs', 'both'
+   const [lalalProgress, setLalalProgress] = useState(0);
+   const [demucsProgress, setDemucsProgress] = useState(0);
+   const [hasLalal, setHasLalal] = useState(false);
+   const [hasDemucs, setHasDemucs] = useState(false);
+   ```
+
+2. **방식 선택 UI** (업로드 완료 후, "다듬기" 버튼 위에 표시):
+   - 라디오 버튼 3개: "LALAL.AI" / "Demucs" / "둘 다 비교"
+   - "LALAL.AI": 클라우드 기반, 빠름, API 키 필요
+   - "Demucs": 서버 로컬 처리, GPU 있으면 빠름
+   - "둘 다 비교": 두 결과를 나란히 비교
+
+3. **다듬기 버튼 클릭 핸들러 수정**:
+   - `startVocalEnhance(repairId, enhanceMethod)` 호출
+   - 폴링 시 `has_lalal`, `has_demucs` 상태 반영
+
+4. **결과 비교 영역** (status === 'completed' 일 때):
+   - 3칸 나란히 배치 (flexbox):
+     - **원본**: 기존 오디오 플레이어 + 다운로드 버튼
+     - **LALAL.AI 결과** (hasLalal일 때): 오디오 플레이어 + 다운로드 버튼
+     - **Demucs 결과** (hasDemucs일 때): 오디오 플레이어 + 다운로드 버튼
+   - 각 오디오 플레이어는 `<audio>` 태그 + 인증 토큰을 위해 fetch blob URL 패턴 사용 (기존 방식 따름)
+   - 다운로드 버튼: method별 downloadUrl 사용
+
+5. **프로그레스바**:
+   - method가 "both"일 때 프로그레스바 2개 표시 (LALAL.AI / Demucs)
+   - 단일 방식일 때 프로그레스바 1개
+
+#### STEP 7: 테스트 [테스터 에이전트]
+
+**백엔드 API 테스트** (총 12항목)
+
+1. POST /upload — 정상 업로드 → 200, id 반환
+2. POST /upload — 허용되지 않는 확장자 → 400
+3. POST /upload — 50MB 초과 → 400
+4. POST /{id}/enhance `{"method": "lalal"}` — LALAL_API_KEY 없으면 503
+5. POST /{id}/enhance `{"method": "demucs"}` — API 키 없어도 정상 시작 (Demucs는 로컬)
+6. POST /{id}/enhance `{"method": "both"}` — 정상 시작
+7. POST /{id}/enhance — 이미 처리 중 → 409
+8. GET /{id}/status — 상태 반환 (method, has_lalal, has_demucs 포함)
+9. GET /{id}/enhanced/stream?method=lalal — 정상 스트리밍
+10. GET /{id}/enhanced/stream?method=demucs — 정상 스트리밍
+11. GET /{id}/enhanced/download?method=lalal — 파일 다운로드
+12. GET /{id}/enhanced/download?method=demucs — 파일 다운로드
+
+**프론트엔드 UI 테스트** (총 8항목)
+
+1. 방식 선택 라디오 버튼 3개 표시 확인
+2. "LALAL.AI" 선택 후 다듬기 → enhance 호출 시 method=lalal 확인
+3. "Demucs" 선택 후 다듬기 → enhance 호출 시 method=demucs 확인
+4. "둘 다 비교" 선택 후 다듬기 → enhance 호출 시 method=both 확인
+5. 완료 후 결과 비교 영역에 원본 + 해당 방식 결과 표시 확인
+6. "둘 다 비교" 완료 시 3칸 나란히 표시 확인
+7. 각 결과 오디오 재생 정상 확인
+8. 각 결과 다운로드 버튼 동작 확인
+
+### 의존성 그래프
+
+```
+STEP 1 (config/env/requirements)
+  └──> STEP 2 (wondera 삭제, lalal_service + demucs_service 생성)
+         └──> STEP 3 (파이프라인 유틸: normalize + compress)
+                └──> STEP 4 (vocal_repair.py 라우트 대폭 수정)
+                       └──────────────────────────────────────────┐
+                                                                   ├──> STEP 7 (테스트)
+STEP 5 (API 함수 수정) ──> STEP 6 (VoiceRecordSection UI 수정) ──┘
+```
+
+### 주의사항
+
+1. **LALAL.AI API 키**: `.env`에 `LALAL_API_KEY=a68fd72f25624a9b` 이미 등록됨. LALAL.AI는 license 기반 인증이므로 헤더 형식 확인 필요 (`Authorization: license {key}`).
+2. **Demucs 설치 크기**: demucs 패키지는 PyTorch 의존성이 크므로 (약 2GB+), 서버 디스크 여유 확인. CPU 모드 기본 사용.
+3. **ffmpeg 필수**: 컴프레션 단계에서 ffmpeg를 subprocess로 호출하므로 서버에 ffmpeg 설치 필요 (`apt install ffmpeg`).
+4. **pyloudnorm + soundfile**: 노멀라이즈에 사용. soundfile은 libsndfile 시스템 라이브러리 필요 (`apt install libsndfile1`).
+5. **MongoDB 하위 호환**: 기존 `enhanced_object` 필드를 사용하는 문서가 있을 수 있음. 마이그레이션은 불필요하나, 조회 시 `enhanced_object` 필드도 fallback으로 확인할 것.
+6. **"both" 모드 시간**: LALAL.AI (네트워크) + Demucs (CPU 처리) 병렬 실행이므로, 둘 중 느린 쪽 시간이 전체 소요 시간. Demucs CPU 모드는 1분 음원 기준 약 2~5분 소요 가능.
+7. **MinIO 경로 분리**: LALAL.AI 결과(`enhanced_lalal.wav`)와 Demucs 결과(`enhanced_demucs.wav`)를 동일 prefix 아래 파일명으로 구분.
+8. **프론트엔드 인증 토큰**: stream/download URL에 쿼리 파라미터로 method를 추가할 때, 기존 인증 방식(Authorization 헤더 또는 쿠키)과 충돌 없는지 확인.
+
+### 체크리스트
+
+- [ ] STEP 1: `config.py` — `wondera_api_key` → `lalal_api_key` 변경
+- [ ] STEP 1: `.env` — `WONDERA_API_KEY` 행 삭제 (LALAL_API_KEY는 이미 존재)
+- [ ] STEP 1: `requirements.txt` — `pyloudnorm`, `demucs`, `soundfile` 추가
+- [ ] STEP 2: `wondera_service.py` 삭제
+- [ ] STEP 2: `lalal_service.py` 생성 (upload → split → check → download)
+- [ ] STEP 2: `demucs_service.py` 생성 (로컬 demucs 처리)
+- [ ] STEP 3: 파이프라인 유틸 함수 (normalize_audio, compress_audio)
+- [ ] STEP 4: `vocal_repair.py` — enhance 엔드포인트에 method 파라미터 추가
+- [ ] STEP 4: `vocal_repair.py` — 파이프라인 적용 (normalize → 처리 → compress)
+- [ ] STEP 4: `vocal_repair.py` — MongoDB 스키마 변경 (enhanced_lalal_object, enhanced_demucs_object)
+- [ ] STEP 4: `vocal_repair.py` — stream/download에 method 쿼리 파라미터 추가
+- [ ] STEP 5: `api/index.js` — startVocalEnhance에 method 파라미터 추가
+- [ ] STEP 5: `api/index.js` — stream/download URL에 method 쿼리 추가
+- [ ] STEP 6: VoiceRecordSection — 방식 선택 라디오 버튼 UI
+- [ ] STEP 6: VoiceRecordSection — 결과 비교 3칸 레이아웃
+- [ ] STEP 6: VoiceRecordSection — 각 방식별 다운로드 버튼
+- [ ] STEP 7: 백엔드 API 테스트 12항목
+- [ ] STEP 7: 프론트엔드 UI 테스트 8항목
+
+---
+
+## v17 — RVC 변환 후 MR 음정 조절 미리듣기 + 수동 합치기 (2026-03-30)
+
+### 배경
+
+현재 음성 변환(Voice Conversion) 파이프라인은 RVC 변환 완료 후 자동으로 보컬+MR을 합치고(Step f) 최종 mp3를 생성한다. 사용자가 MR 음정을 변경하고 싶거나 보컬/MR 볼륨 비율을 조절하고 싶어도, 다시 전체 파이프라인을 돌려야 한다. 이번 버전에서는 RVC 변환 후 합치기 전에 "일시정지"하여, 프론트엔드에서 Web Audio API로 MR 피치와 볼륨을 실시간 미리듣기한 뒤 사용자가 만족하면 서버에서 최종 합치기를 수행하도록 변경한다.
+
+### 변경된 파이프라인
+
+```
+[기존]
+Step b: 보컬 분리 → vocal.wav + backing.wav
+Step d: RVC 변환 → converted_vocal.wav
+Step f: ffmpeg 자동 합치기 → voice_converted.mp3 (상태: completed)
+
+[변경]
+Step b: 보컬 분리 → vocal.wav + backing.wav
+Step d: RVC 변환 → converted_vocal.wav
+Step NEW: converted_vocal.wav + backing.wav를 MinIO에 저장
+          상태를 "awaiting_merge"로 변경
+          → 사용자가 프론트에서 MR 피치/볼륨 실시간 조절 + 미리듣기
+          → 사용자가 "최종 합치기" 클릭
+Step f: 서버에서 ffmpeg로 MR 피치 조절 + 보컬/MR 볼륨 조절 + 합치기
+        → voice_converted.mp3 생성, 상태를 "completed"로 변경
+```
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/services/kits_service.py` | `convert_voice` 함수에서 Step f(합치기) 제거, Step NEW(awaiting_merge) 추가 |
+| 2 | `backend/app/routes/voice_convert.py` | 새 엔드포인트 3개 추가 (보컬 스트리밍, MR 스트리밍, 최종 합치기) |
+| 3 | `frontend/src/api/index.js` | 새 API 함수 3개 추가 |
+| 4 | `frontend/src/components/StudioTab2.jsx` | MR 음정 조절 패널 UI + Web Audio API 미리듣기 |
+| 5 | `frontend/src/components/StudioTab2.css` | MR 조절 패널 스타일 |
+
+### STEP별 작업 계획
+
+#### STEP 1: kits_service.py — 파이프라인 분리 [백엔드 에이전트]
+
+**파일: `backend/app/services/kits_service.py`**
+
+현재 `convert_voice` 함수의 Step f(합치기) ~ Step h(MongoDB 업데이트)를 변경한다.
+
+**변경 내용:**
+
+1. Step e(변환된 보컬 다운로드) 후, 기존 Step f(ffmpeg 합치기)를 **제거**
+2. 대신 converted_vocal.wav를 MinIO에 업로드:
+   ```python
+   # Step NEW: Upload converted vocal to MinIO (backing은 이미 업로드됨)
+   converted_vocal_object = f"generated/{generation_id}/converted_vocal.wav"
+   minio_client.put_object(
+       bucket_name=settings.minio_bucket_music,
+       object_name=converted_vocal_object,
+       data=io.BytesIO(cv_bytes),
+       length=len(cv_bytes),
+       content_type="audio/wav",
+   )
+   ```
+3. backing.wav MinIO 업로드는 기존 코드 유지 (이미 `generated/{id}/backing.wav`로 업로드 중)
+4. MongoDB 상태를 `"awaiting_merge"`로 변경:
+   ```python
+   await _update_vc_progress(mongo_db, generation_id, 80, "awaiting_merge", {
+       "voice_converted_vocal_url": converted_vocal_object,
+       "voice_converted_backing_url": backing_object,
+       "voice_model_id": voice_model_id,
+   })
+   ```
+5. 기존 Step g(최종 mp3 업로드), Step h(completed 상태 변경) 코드를 삭제
+6. 함수가 `{"status": "awaiting_merge"}` 반환
+
+**주의:** 합치기 로직(ffmpeg amix)은 삭제하지 않고 별도 함수 `merge_vocal_and_backing`으로 추출한다 (STEP 2에서 사용).
+
+**새 함수 추가: `merge_vocal_and_backing`**
+```python
+async def merge_vocal_and_backing(
+    generation_id: str,
+    mongo_db,
+    mr_pitch_shift: float = 0,
+    vocal_volume: float = 1.0,
+    mr_volume: float = 1.0,
+) -> dict:
+    """Merge converted vocal + backing with optional MR pitch shift and volume control.
+
+    Args:
+        mr_pitch_shift: MR 피치 변경량 (반음 단위, -12 ~ +12)
+        vocal_volume: 보컬 볼륨 (0.0 ~ 2.0)
+        mr_volume: MR 볼륨 (0.0 ~ 2.0)
+    """
+```
+
+이 함수의 처리 흐름:
+1. MinIO에서 `generated/{id}/converted_vocal.wav`와 `generated/{id}/backing.wav` 다운로드
+2. ffmpeg로 MR 피치 조절 (mr_pitch_shift != 0인 경우):
+   - `rubberband` 필터 사용: `rubberband=pitch={2^(mr_pitch_shift/12)}`
+   - rubberband 미설치 시 fallback: `asetrate=44100*{2^(shift/12)},aresample=44100,atempo={2^(-shift/12)}`
+3. ffmpeg로 보컬/MR 볼륨 조절 + 합치기:
+   ```
+   ffmpeg -y
+     -i converted_vocal.wav -i backing_pitched.wav
+     -filter_complex "[0:a]volume={vocal_volume}[v];[1:a]volume={mr_volume}[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=2[out]"
+     -map "[out]" -codec:a libmp3lame -b:a 192k
+     output.mp3
+   ```
+4. 결과를 MinIO에 `generated/{id}/voice_converted.mp3`로 업로드
+5. MongoDB 상태를 `"completed"`로 변경:
+   ```python
+   await _update_vc_progress(mongo_db, generation_id, 100, "completed", {
+       "voice_converted_url": result_object,
+       "voice_conversion_completed_at": datetime.utcnow(),
+       "merge_settings": {
+           "mr_pitch_shift": mr_pitch_shift,
+           "vocal_volume": vocal_volume,
+           "mr_volume": mr_volume,
+       },
+   })
+   ```
+
+#### STEP 2: voice_convert.py — 새 엔드포인트 3개 추가 [백엔드 에이전트]
+
+**파일: `backend/app/routes/voice_convert.py`**
+
+**2-1. 변환된 보컬 스트리밍 엔드포인트**
+```python
+@router.get("/api/voice-convert/{generation_id}/converted-vocal/stream")
+async def stream_converted_vocal(generation_id: str, current_user=Depends(get_current_user)):
+```
+- 인증 + 소유권 확인
+- `voice_conversion_status`가 `"awaiting_merge"` 또는 `"completed"`일 때만 허용
+- MinIO에서 `voice_converted_vocal_url` 필드의 객체를 스트리밍
+- Content-Type: `audio/wav`
+
+**2-2. MR(backing) 스트리밍 엔드포인트**
+```python
+@router.get("/api/voice-convert/{generation_id}/backing/stream")
+async def stream_backing(generation_id: str, current_user=Depends(get_current_user)):
+```
+- 인증 + 소유권 확인
+- `voice_conversion_status`가 `"awaiting_merge"` 또는 `"completed"`일 때만 허용
+- MinIO에서 `voice_converted_backing_url` 필드의 객체를 스트리밍
+- Content-Type: `audio/wav`
+
+**2-3. 최종 합치기 엔드포인트**
+```python
+class MergeRequest(BaseModel):
+    mr_pitch_shift: float = 0       # -12 ~ +12 반음
+    vocal_volume: float = 1.0       # 0.0 ~ 2.0
+    mr_volume: float = 1.0          # 0.0 ~ 2.0
+
+@router.post("/api/voice-convert/{generation_id}/merge")
+async def merge_voice_conversion(
+    generation_id: str,
+    body: MergeRequest,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+```
+- 인증 + 소유권 확인
+- `voice_conversion_status`가 `"awaiting_merge"`일 때만 허용 (이미 `completed`면 재합치기 허용할지는 선택)
+- 입력값 검증: `mr_pitch_shift`는 -12~+12, `vocal_volume`/`mr_volume`은 0.0~2.0
+- 상태를 `"merging"`으로 변경 후 백그라운드 태스크로 `merge_vocal_and_backing` 호출
+- 백그라운드 태스크 래퍼: `_run_merge` (기존 `_run_voice_convert`와 동일한 패턴, 별도 이벤트 루프 생성)
+
+**2-4. status 응답 필드 추가**
+기존 `get_voice_conversion_status` 엔드포인트의 응답에 필드 추가:
+```python
+return {
+    ...기존 필드,
+    "voice_converted_vocal_url": doc.get("voice_converted_vocal_url"),
+    "voice_converted_backing_url": doc.get("voice_converted_backing_url"),
+    "merge_settings": doc.get("merge_settings"),
+}
+```
+
+**2-5. 기존 폴링 상태 체크에 "awaiting_merge" 반영**
+기존 `start_voice_conversion`의 상태 체크에서 `"awaiting_merge"`도 재변환 가능하도록 허용:
+```python
+if vc_status in ("converting", "merging", "uploading"):
+    return JSONResponse(status_code=409, content={"error": "이미 변환 중입니다."})
+```
+
+#### STEP 3: api/index.js — 새 API 함수 추가 [프론트엔드 에이전트]
+
+**파일: `frontend/src/api/index.js`**
+
+기존 Voice Conversion 섹션 아래에 추가:
+```javascript
+// Voice Conversion — MR Pitch Preview & Merge
+export const voiceConvertVocalStreamUrl = (generationId) => {
+  const token = localStorage.getItem('token');
+  const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+  return `${base}/api/voice-convert/${generationId}/converted-vocal/stream?token=${encodeURIComponent(token)}`;
+};
+export const voiceConvertBackingStreamUrl = (generationId) => {
+  const token = localStorage.getItem('token');
+  const base = `${window.location.protocol}//${window.location.hostname}:9000`;
+  return `${base}/api/voice-convert/${generationId}/backing/stream?token=${encodeURIComponent(token)}`;
+};
+export const mergeVoiceConvert = (generationId, data) =>
+  API.post(`/voice-convert/${generationId}/merge`, data);
+```
+
+#### STEP 4: StudioTab2.jsx — MR 음정 조절 패널 UI [프론트엔드 에이전트]
+
+**파일: `frontend/src/components/StudioTab2.jsx`**
+
+**4-1. 새 state 변수 추가**
+```javascript
+// MR Pitch Merge Panel
+const [mrPanelGenId, setMrPanelGenId] = useState(null);  // 현재 패널이 열린 generation ID
+const [mrPitchShift, setMrPitchShift] = useState(0);      // -12 ~ +12 반음
+const [vocalVolume, setVocalVolume] = useState(1.0);       // 0 ~ 2
+const [mrVolume, setMrVolume] = useState(1.0);             // 0 ~ 2
+const [merging, setMerging] = useState(false);
+
+// Web Audio API refs
+const audioCtxRef = useRef(null);
+const vocalSourceRef = useRef(null);
+const mrSourceRef = useRef(null);
+const vocalGainRef = useRef(null);
+const mrGainRef = useRef(null);
+const vocalBufferRef = useRef(null);
+const mrBufferRef = useRef(null);
+const [previewPlaying, setPreviewPlaying] = useState(false);
+const [buffersLoaded, setBuffersLoaded] = useState(false);
+```
+
+**4-2. Web Audio API 함수들**
+
+`loadAudioBuffers(genId)`:
+- `voiceConvertVocalStreamUrl(genId)`와 `voiceConvertBackingStreamUrl(genId)`에서 AudioBuffer 로드
+- `fetch` + `audioCtx.decodeAudioData`
+- 두 버퍼를 `vocalBufferRef`, `mrBufferRef`에 저장
+- `setBuffersLoaded(true)`
+
+`startPreview()`:
+- AudioContext 생성 (없으면)
+- vocalBuffer → AudioBufferSourceNode → GainNode → destination
+- mrBuffer → AudioBufferSourceNode (detune 적용) → GainNode → destination
+- `mrSource.detune.value = mrPitchShift * 100` (cents 단위)
+- `vocalGain.gain.value = vocalVolume`
+- `mrGain.gain.value = mrVolume`
+- 두 소스 동시 start
+
+`stopPreview()`:
+- 재생 중인 소스 노드 stop + disconnect
+
+`updatePreviewParams()` (useEffect):
+- mrPitchShift, vocalVolume, mrVolume 변경 시 실시간 업데이트
+- `mrSourceRef.current.detune.value = mrPitchShift * 100`
+- `vocalGainRef.current.gain.value = vocalVolume`
+- `mrGainRef.current.gain.value = mrVolume`
+
+**4-3. 합치기 요청 함수**
+
+`handleMerge(genId)`:
+```javascript
+setMerging(true);
+try {
+  await api.mergeVoiceConvert(genId, {
+    mr_pitch_shift: mrPitchShift,
+    vocal_volume: vocalVolume,
+    mr_volume: mrVolume,
+  });
+  // 합치기가 백그라운드로 시작됨 → 폴링이 자동으로 감지
+  setMrPanelGenId(null);
+  fetchHistory();
+} catch (err) { ... }
+finally { setMerging(false); }
+```
+
+**4-4. UI 변경 — 기존 voice_conversion_status 분기 수정**
+
+현재 (line 1039~1049): `status !== 'completed' && status !== 'failed'`일 때 진행 표시
+변경: `"awaiting_merge"`를 별도 분기로 처리
+
+```jsx
+{/* 변환 진행 중 (pending, converting, merging, uploading) */}
+{gen.voice_conversion_status &&
+ !['completed', 'failed', 'awaiting_merge'].includes(gen.voice_conversion_status) && (
+  <div className="s2__vc-status">
+    <FiRepeat className="s2__spin" />
+    <span>목소리 변환: {vcStatusLabel(gen.voice_conversion_status)}</span>
+    {gen.voice_conversion_progress > 0 && (
+      <span className="s2__vc-progress">{gen.voice_conversion_progress}%</span>
+    )}
+    <div className="s2__vc-bar">
+      <div className="s2__vc-bar-fill" style={{ width: `${gen.voice_conversion_progress || 0}%` }} />
+    </div>
+  </div>
+)}
+
+{/* awaiting_merge: MR 음정 조절 패널 */}
+{gen.voice_conversion_status === 'awaiting_merge' && (
+  <div className="s2__mr-panel">
+    <div className="s2__mr-panel-header">
+      <FiSliders /> MR 음정 조절 & 미리듣기
+    </div>
+
+    {/* 음정 슬라이더 */}
+    <div className="s2__mr-pitch">
+      <label>MR 음정: {mrPanelGenId === gen.id ? (mrPitchShift > 0 ? `+${mrPitchShift}` : mrPitchShift) : 0} 반음</label>
+      <div className="s2__mr-pitch-controls">
+        <button onClick={() => setMrPitchShift(p => Math.max(-12, p - 1))}>-1</button>
+        <button onClick={() => setMrPitchShift(p => Math.max(-12, p - 0.5))}>-0.5</button>
+        <input type="range" min="-12" max="12" step="0.5"
+          value={mrPanelGenId === gen.id ? mrPitchShift : 0}
+          onChange={e => { setMrPanelGenId(gen.id); setMrPitchShift(parseFloat(e.target.value)); }}
+        />
+        <button onClick={() => setMrPitchShift(p => Math.min(12, p + 0.5))}>+0.5</button>
+        <button onClick={() => setMrPitchShift(p => Math.min(12, p + 1))}>+1</button>
+      </div>
+    </div>
+
+    {/* 볼륨 슬라이더 */}
+    <div className="s2__mr-volumes">
+      <div className="s2__mr-vol">
+        <label>보컬 볼륨: {Math.round((mrPanelGenId === gen.id ? vocalVolume : 1) * 100)}%</label>
+        <input type="range" min="0" max="2" step="0.05"
+          value={mrPanelGenId === gen.id ? vocalVolume : 1}
+          onChange={e => { setMrPanelGenId(gen.id); setVocalVolume(parseFloat(e.target.value)); }}
+        />
+      </div>
+      <div className="s2__mr-vol">
+        <label>MR 볼륨: {Math.round((mrPanelGenId === gen.id ? mrVolume : 1) * 100)}%</label>
+        <input type="range" min="0" max="2" step="0.05"
+          value={mrPanelGenId === gen.id ? mrVolume : 1}
+          onChange={e => { setMrPanelGenId(gen.id); setMrVolume(parseFloat(e.target.value)); }}
+        />
+      </div>
+    </div>
+
+    {/* 미리듣기 버튼 */}
+    <div className="s2__mr-preview">
+      <button onClick={() => previewPlaying ? stopPreview() : startPreview(gen.id)}
+              disabled={!buffersLoaded && !previewPlaying}>
+        {previewPlaying ? <><FiPause /> 미리듣기 중지</> : <><FiPlay /> 합친 미리듣기</>}
+      </button>
+      <button onClick={() => { setMrPitchShift(0); setVocalVolume(1); setMrVolume(1); }}>
+        <FiRefreshCw /> 초기화
+      </button>
+    </div>
+
+    {/* 최종 합치기 버튼 */}
+    <button className="s2__mr-merge-btn" onClick={() => handleMerge(gen.id)} disabled={merging}>
+      {merging ? <><FiLoader className="s2__spin" /> 합치는 중...</> : <><FiCheck /> 이 설정으로 최종 합치기</>}
+    </button>
+  </div>
+)}
+```
+
+**4-5. 폴링 로직 수정**
+
+기존 (line 124-126): `voice_conversion_status`가 `completed`/`failed`/`null`이 아니면 폴링
+변경: `"awaiting_merge"`도 폴링 중지 대상에 추가:
+```javascript
+const hasProcessing = generations.some((g) =>
+  g.status === 'processing' || g.status === 'pending' ||
+  (g.voice_conversion_status &&
+   !['completed', 'failed', 'awaiting_merge'].includes(g.voice_conversion_status))
+);
+```
+
+**4-6. vcStatusLabel 함수에 "awaiting_merge" 추가**
+```javascript
+case 'awaiting_merge': return 'MR 음정 조절 대기 중';
+```
+
+**4-7. 패널 열릴 때 AudioBuffer 자동 로드**
+
+`useEffect`로 `mrPanelGenId` 또는 generation의 `voice_conversion_status`가 `"awaiting_merge"`로 바뀔 때 자동으로 `loadAudioBuffers` 호출:
+```javascript
+useEffect(() => {
+  const awaitingGen = generations.find(g =>
+    g.voice_conversion_status === 'awaiting_merge' && g.id
+  );
+  if (awaitingGen && mrPanelGenId !== awaitingGen.id) {
+    setMrPanelGenId(awaitingGen.id);
+    setMrPitchShift(0);
+    setVocalVolume(1);
+    setMrVolume(1);
+    setBuffersLoaded(false);
+    loadAudioBuffers(awaitingGen.id);
+  }
+}, [generations]);
+```
+
+#### STEP 5: StudioTab2.css — MR 조절 패널 스타일 [프론트엔드 에이전트]
+
+**파일: `frontend/src/components/StudioTab2.css`**
+
+새 클래스 추가:
+- `.s2__mr-panel` — 패널 컨테이너 (배경색, 패딩, 둥근 모서리, 그라데이션 보더)
+- `.s2__mr-panel-header` — 패널 제목 (아이콘 + 텍스트)
+- `.s2__mr-pitch` — 음정 슬라이더 영역
+- `.s2__mr-pitch-controls` — 버튼 + range input 가로 배치 (flexbox)
+- `.s2__mr-volumes` — 볼륨 슬라이더 2개 가로 배치
+- `.s2__mr-vol` — 개별 볼륨 슬라이더
+- `.s2__mr-preview` — 미리듣기/초기화 버튼 영역
+- `.s2__mr-merge-btn` — 최종 합치기 버튼 (강조색, 큰 크기)
+- range input 커스텀 스타일 (accent-color 또는 -webkit-slider)
+
+### 테스트 계획
+
+#### 백엔드 테스트
+
+1. RVC 변환 완료 후 상태가 `"awaiting_merge"`로 변경되는지 확인
+2. MinIO에 `converted_vocal.wav`와 `backing.wav`가 정상 저장되는지 확인
+3. `GET /status` 응답에 `voice_converted_vocal_url`, `voice_converted_backing_url` 포함 확인
+4. `GET /converted-vocal/stream` — WAV 스트리밍 정상 확인
+5. `GET /backing/stream` — WAV 스트리밍 정상 확인
+6. `POST /merge` — `mr_pitch_shift=0` (기본값)으로 합치기 정상 확인
+7. `POST /merge` — `mr_pitch_shift=2` (2반음 올림)으로 합치기 후 피치 변경 확인
+8. `POST /merge` — `mr_pitch_shift=-3` (3반음 내림)으로 합치기 확인
+9. `POST /merge` — `vocal_volume=0.5, mr_volume=1.5`로 볼륨 조절 확인
+10. `POST /merge` — 잘못된 상태(`converting`)에서 호출 시 에러 응답 확인
+11. 합치기 완료 후 상태가 `"completed"`로 변경, `voice_converted_url` 설정 확인
+12. 합치기 완료 후 기존 stream/download 엔드포인트로 최종 mp3 재생/다운로드 확인
+
+#### 프론트엔드 테스트
+
+1. RVC 변환 완료 시 MR 음정 조절 패널 자동 표시 확인
+2. 음정 슬라이더 드래그 시 값 실시간 표시 확인
+3. ±0.5, ±1 버튼 클릭 시 슬라이더 값 변경 확인
+4. 보컬/MR 볼륨 슬라이더 동작 확인
+5. "합친 미리듣기" 클릭 시 Web Audio API로 두 소스 동시 재생 확인
+6. 미리듣기 중 음정/볼륨 변경 시 실시간 반영 확인 (detune + gain)
+7. "초기화" 버튼 클릭 시 모든 값 기본값 복원 확인
+8. "이 설정으로 최종 합치기" 클릭 → POST /merge 호출 → 진행 표시 확인
+9. 합치기 완료 후 기존 completed UI(재생/다운로드/업로드) 정상 표시 확인
+10. 페이지 새로고침 후 `awaiting_merge` 상태 유지 + 패널 재표시 확인
+
+### 의존성 그래프
+
+```
+STEP 1 (kits_service.py — 파이프라인 분리 + merge 함수)
+  └──> STEP 2 (voice_convert.py — 새 엔드포인트 3개)
+         └──────────────────────────────────────┐
+STEP 3 (api/index.js — API 함수) ──────────────┤
+                                                ├──> STEP 4 (StudioTab2.jsx — UI)
+STEP 5 (StudioTab2.css — 스타일) ──────────────┘
+```
+
+### 주의사항
+
+1. **rubberband 필터**: ffmpeg에 `librubberband`가 설치되어 있어야 `rubberband` 피치 필터 사용 가능. 미설치 시 `asetrate+aresample+atempo` 조합으로 fallback 구현 필수.
+2. **WAV 파일 크기**: converted_vocal.wav와 backing.wav는 비압축 WAV이므로 1분 기준 약 10MB. 프론트엔드에서 fetch 시 로딩 시간 고려하여 로딩 인디케이터 표시.
+3. **Web Audio API detune**: `AudioBufferSourceNode.detune`은 cents 단위 (100 cents = 1 반음). `mrPitchShift * 100`으로 변환.
+4. **AudioBufferSourceNode 재사용 불가**: `source.start()` 후에는 재사용 불가. 재생할 때마다 새 소스 노드 생성 필요.
+5. **CORS**: MinIO 또는 백엔드 프록시에서 WAV 스트리밍 시 CORS 헤더가 올바르게 설정되어 있어야 `fetch` + `decodeAudioData` 가능.
+6. **awaiting_merge 상태 폴링 제외**: `awaiting_merge`는 사용자 액션을 기다리는 상태이므로 자동 폴링 대상에서 제외해야 불필요한 API 호출을 방지.
+7. **재합치기 허용**: `completed` 상태에서도 "다시 합치기" 버튼을 제공하여 다른 피치/볼륨으로 재합치기 가능하도록 고려. 이 경우 `POST /merge`에서 `completed` 상태도 허용.
+8. **백그라운드 태스크 이벤트 루프**: `_run_merge` 래퍼는 기존 `_run_voice_convert`와 동일한 패턴으로 별도 이벤트 루프에서 실행해야 함 (Motor 클라이언트 새로 생성 필요).
+
+### 체크리스트
+
+- [ ] STEP 1: `kits_service.py` — `convert_voice`에서 Step f(ffmpeg 합치기) 제거
+- [ ] STEP 1: `kits_service.py` — converted_vocal.wav MinIO 업로드 추가
+- [ ] STEP 1: `kits_service.py` — 상태를 `"awaiting_merge"`로 변경
+- [ ] STEP 1: `kits_service.py` — `merge_vocal_and_backing` 함수 신규 작성
+- [ ] STEP 1: `kits_service.py` — ffmpeg MR 피치 조절 (rubberband + fallback)
+- [ ] STEP 1: `kits_service.py` — ffmpeg 보컬/MR 볼륨 조절 + 합치기
+- [ ] STEP 2: `voice_convert.py` — `GET /converted-vocal/stream` 엔드포인트
+- [ ] STEP 2: `voice_convert.py` — `GET /backing/stream` 엔드포인트
+- [ ] STEP 2: `voice_convert.py` — `POST /merge` 엔드포인트 + `MergeRequest` 모델
+- [ ] STEP 2: `voice_convert.py` — `_run_merge` 백그라운드 래퍼
+- [ ] STEP 2: `voice_convert.py` — status 응답에 `voice_converted_vocal_url`, `voice_converted_backing_url` 추가
+- [ ] STEP 2: `voice_convert.py` — 상태 체크에 `"awaiting_merge"` 반영
+- [ ] STEP 3: `api/index.js` — `voiceConvertVocalStreamUrl` 함수
+- [ ] STEP 3: `api/index.js` — `voiceConvertBackingStreamUrl` 함수
+- [ ] STEP 3: `api/index.js` — `mergeVoiceConvert` 함수
+- [ ] STEP 4: `StudioTab2.jsx` — MR 패널 state 변수 추가
+- [ ] STEP 4: `StudioTab2.jsx` — Web Audio API 함수 (loadBuffers, startPreview, stopPreview)
+- [ ] STEP 4: `StudioTab2.jsx` — 음정 슬라이더 + ±0.5/±1 버튼 UI
+- [ ] STEP 4: `StudioTab2.jsx` — 보컬/MR 볼륨 슬라이더 UI
+- [ ] STEP 4: `StudioTab2.jsx` — 미리듣기/초기화 버튼
+- [ ] STEP 4: `StudioTab2.jsx` — "최종 합치기" 버튼 + handleMerge 함수
+- [ ] STEP 4: `StudioTab2.jsx` — 폴링 로직에 `"awaiting_merge"` 제외 추가
+- [ ] STEP 4: `StudioTab2.jsx` — vcStatusLabel에 `"awaiting_merge"` 추가
+- [ ] STEP 5: `StudioTab2.css` — MR 패널 전체 스타일
+
+## v18 — MR 음정 조절 품질 개선: asetrate → rubberband (2026-03-30)
+
+### 배경
+
+현재 `merge_vocal_and_backing` 함수에서 MR 음정 조절 시 ffmpeg의 `asetrate + aresample` 필터를 사용한다. 이 방식은 샘플레이트를 변경하여 피치를 조절하는 원시적인 방법으로, 음질 열화(포먼트 왜곡, 메탈릭한 느낌)가 발생한다. ffmpeg에 내장된 `rubberband` 필터로 교체하면 타임스트레칭 알고리즘 기반의 고품질 피치 시프트가 가능하다.
+
+### 현재 코드 (변경 전)
+
+**파일: `backend/app/services/kits_service.py` — `merge_vocal_and_backing` 함수 (L395~L404)**
+
+```python
+# MR: pitch shift (using asetrate + aresample) + volume
+# asetrate changes pitch by changing sample rate, atempo compensates speed
+if mr_pitch_shift != 0:
+    # Calculate rate multiplier: 2^(semitones/12)
+    import math
+    rate_mult = math.pow(2, mr_pitch_shift / 12.0)
+    # asetrate changes both pitch and speed, aresample restores original speed
+    mr_filter = "asetrate=44100*{},aresample=44100,volume={}".format(rate_mult, mr_volume)
+else:
+    mr_filter = "volume={}".format(mr_volume)
+```
+
+**문제점:**
+- `asetrate`는 샘플레이트를 물리적으로 변경하여 피치를 올림/내림 → 포먼트(음색)까지 함께 변형
+- `aresample`로 원래 샘플레이트로 복원하지만, 이미 왜곡된 음질은 복원 불가
+- 반음 단위 이상 시프트 시 "치프먼크"/"로봇" 같은 부자연스러운 소리 발생
+
+### 변경 내용
+
+**파일: `backend/app/services/kits_service.py` — `merge_vocal_and_backing` 함수**
+
+`asetrate + aresample` 필터를 `rubberband` 필터로 교체한다.
+
+```python
+# MR: pitch shift (using rubberband for high-quality pitch shifting) + volume
+if mr_pitch_shift != 0:
+    import math
+    ratio = math.pow(2, mr_pitch_shift / 12.0)
+    mr_filter = "rubberband=pitch={},volume={}".format(ratio, mr_volume)
+else:
+    mr_filter = "volume={}".format(mr_volume)
+```
+
+**변경 포인트:**
+- `asetrate=44100*{rate_mult},aresample=44100` → `rubberband=pitch={ratio}`
+- rubberband 라이브러리는 타임스트레칭 기반으로 속도를 유지하면서 피치만 변경
+- 포먼트 보존으로 자연스러운 음정 변경
+- `ratio` 계산식은 동일: `2^(semitones/12)`
+
+### 사전 조건
+
+- ffmpeg이 `--enable-librubberband` 옵션으로 빌드되어 있어야 함
+- 시스템에 `librubberband-dev` 패키지 설치 필요:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install librubberband-dev
+
+  # 확인: ffmpeg이 rubberband 필터를 지원하는지 체크
+  ffmpeg -filters 2>/dev/null | grep rubberband
+  ```
+- Docker 환경이라면 Dockerfile에 패키지 추가 필요
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/services/kits_service.py` | `merge_vocal_and_backing` 함수의 MR 피치 조절 필터를 `asetrate/aresample` → `rubberband=pitch=` 로 교체 |
+
+### 체크리스트
+
+- [ ] STEP 1: `kits_service.py` — `merge_vocal_and_backing` 함수에서 `asetrate/aresample` 필터를 `rubberband=pitch=` 필터로 교체
+- [ ] STEP 2: 서버에서 `ffmpeg -filters | grep rubberband` 로 rubberband 필터 지원 확인
+- [ ] STEP 3: (필요시) `librubberband-dev` 패키지 설치 또는 Dockerfile 업데이트
+- [ ] STEP 4: MR 음정 ±1~±6 반음 범위에서 합치기 테스트 → 음질 비교
+
+---
+
+## v19 — StudioTab2 "테스트 Wondera" 탭 추가 (2026-03-30)
+
+### 배경
+
+Wondera API를 통한 음악 생성 기능을 테스트하기 위해 StudioTab2에 새로운 모드 탭을 추가한다. 브라우저에서 직접 Wondera API를 호출하면 Cloudflare가 차단하므로, 백엔드에서 프록시 라우트를 구성하여 우회한다.
+
+### Wondera API 정보
+
+- Base URL: `https://api.wondera.ai/v1`
+- 인증: `x-api-key: {key}` 헤더
+- 보컬 업로드: `POST /v1/files/upload` (multipart/form-data, fields: file + purpose="vocal")
+- 음악 생성: `POST /v1/song/generate` (JSON body: lyrics, model, prompt, vocal_id)
+- 상태 조회: `GET /v1/song/query/{task_id}`
+
+### 변경 내용
+
+#### 1. 백엔드 — Wondera 프록시 라우트
+
+**신규 파일: `backend/app/routes/wondera.py`**
+
+3개의 프록시 엔드포인트를 생성한다. 모든 요청에 `x-api-key` 헤더와 브라우저 유사 `User-Agent`를 붙여 Cloudflare 우회를 시도한다.
+
+```python
+# backend/app/routes/wondera.py
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+import httpx
+from app.config import settings
+
+router = APIRouter(prefix="/api/wondera", tags=["wondera"])
+
+WONDERA_BASE = "https://api.wondera.ai/v1"
+HEADERS = {
+    "x-api-key": settings.wondera_api_key,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
+
+# ── 보컬 업로드 프록시 ──
+@router.post("/upload-vocal")
+async def upload_vocal(file: UploadFile = File(...)):
+    """보컬 파일을 Wondera에 업로드하고 vocal_id를 반환"""
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{WONDERA_BASE}/files/upload",
+            headers=HEADERS,
+            files={"file": (file.filename, await file.read(), file.content_type)},
+            data={"purpose": "vocal"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+# ── 음악 생성 프록시 ──
+class GenerateRequest(BaseModel):
+    lyrics: str
+    model: str = "auto"
+    prompt: str = ""
+    vocal_id: Optional[str] = None
+
+@router.post("/generate")
+async def generate_song(req: GenerateRequest):
+    """Wondera 음악 생성 요청을 프록시"""
+    body = req.dict(exclude_none=True)
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{WONDERA_BASE}/song/generate",
+            headers={**HEADERS, "Content-Type": "application/json"},
+            json=body,
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+# ── 생성 상태 조회 프록시 ──
+@router.get("/query/{task_id}")
+async def query_task(task_id: str):
+    """task_id로 생성 진행 상황 조회"""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{WONDERA_BASE}/song/query/{task_id}",
+            headers=HEADERS,
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+```
+
+#### 2. 백엔드 — config.py에 wondera_api_key 추가
+
+**파일: `backend/app/config.py` (L66 `lalal_api_key` 아래)**
+
+현재 Wondera 관련 설정이 없으므로 추가한다.
+
+```python
+    # LALAL.AI Vocal Enhancement
+    lalal_api_key: str = ""
+
+    # Wondera Music Generation
+    wondera_api_key: str = ""
+```
+
+#### 3. 백엔드 — .env에 WONDERA_API_KEY 추가
+
+**파일: `backend/.env`**
+
+```
+WONDERA_API_KEY=여기에_실제_키_입력
+```
+
+#### 4. 백엔드 — main.py에 wondera 라우터 등록
+
+**파일: `backend/app/main.py` (L81 `vocal_repair` 라우터 아래)**
+
+```python
+from app.routes import wondera          # 추가
+...
+app.include_router(vocal_repair.router)
+app.include_router(wondera.router)      # 추가
+```
+
+#### 5. 프론트엔드 — StudioTab2.jsx mode에 'wondera' 추가
+
+**파일: `frontend/src/components/StudioTab2.jsx`**
+
+**(a) mode 상태 — L310 변경 없음 (기본값 'custom' 유지)**
+
+**(b) 모드 토글 바 — L770~L783 영역에 버튼 추가**
+
+```jsx
+{/* ─── Mode Toggle ─── */}
+<div className="s2__mode-bar">
+  <button
+    className={`s2__mode-btn ${mode === 'simple' ? 's2__mode-btn--active' : ''}`}
+    onClick={() => setMode('simple')}
+  >
+    <FiZap /> 간편 모드
+  </button>
+  <button
+    className={`s2__mode-btn ${mode === 'custom' ? 's2__mode-btn--active' : ''}`}
+    onClick={() => setMode('custom')}
+  >
+    <FiSliders /> 커스텀 모드
+  </button>
+  {/* ▼ 추가 */}
+  <button
+    className={`s2__mode-btn ${mode === 'wondera' ? 's2__mode-btn--active' : ''}`}
+    onClick={() => setMode('wondera')}
+  >
+    🧪 테스트 Wondera
+  </button>
+</div>
+```
+
+**(c) WonderaTestSection — mode === 'wondera' 블록 추가 (custom 블록 닫힌 직후)**
+
+StudioTab2.jsx 내부에 인라인으로 작성한다. 별도 컴포넌트 파일이 아닌 같은 파일 내 JSX 블록으로 구현.
+
+```jsx
+{mode === 'wondera' && (
+  <div className="s2__form">
+    <h3 style={{ marginBottom: 12 }}>🧪 Wondera 음악 생성 테스트</h3>
+
+    {/* 보컬 업로드 */}
+    <div className="s2__section">
+      <label className="s2__label">보컬 파일 업로드 (mp3, m4a)</label>
+      <input
+        type="file"
+        accept=".mp3,.m4a"
+        onChange={handleWonderaVocalUpload}
+      />
+      {wonderaVocalId && (
+        <p style={{ color: '#4caf50', fontSize: 13 }}>
+          ✅ vocal_id: {wonderaVocalId}
+        </p>
+      )}
+    </div>
+
+    {/* 가사 */}
+    <div className="s2__section">
+      <label className="s2__label">가사</label>
+      <textarea
+        className="s2__textarea"
+        rows={8}
+        value={wonderaLyrics}
+        onChange={e => setWonderaLyrics(e.target.value)}
+        placeholder="가사를 입력하세요..."
+      />
+    </div>
+
+    {/* 스타일 프롬프트 */}
+    <div className="s2__section">
+      <label className="s2__label">스타일 프롬프트</label>
+      <input
+        className="s2__input"
+        value={wonderaPrompt}
+        onChange={e => setWonderaPrompt(e.target.value)}
+        placeholder="예: K-pop, ballad, female vocal"
+      />
+    </div>
+
+    {/* 모델 선택 */}
+    <div className="s2__section">
+      <label className="s2__label">모델</label>
+      <select
+        className="s2__select"
+        value={wonderaModel}
+        onChange={e => setWonderaModel(e.target.value)}
+      >
+        <option value="auto">auto (자동 선택)</option>
+        <option value="wondera-2.1">wondera-2.1</option>
+        <option value="wondera-2.2">wondera-2.2</option>
+        <option value="wondera-o1">wondera-o1</option>
+        <option value="wondera-o2">wondera-o2</option>
+      </select>
+    </div>
+
+    {/* 생성 버튼 */}
+    <div className="s2__section" style={{ display: 'flex', gap: 12 }}>
+      <button
+        className="s2__btn s2__btn--primary"
+        onClick={() => handleWonderaGenerate(false)}
+        disabled={wonderaLoading}
+      >
+        🎵 AI 보컬로 생성
+      </button>
+      <button
+        className="s2__btn s2__btn--secondary"
+        onClick={() => handleWonderaGenerate(true)}
+        disabled={wonderaLoading || !wonderaVocalId}
+      >
+        🎤 내 목소리로 생성
+      </button>
+    </div>
+
+    {/* 로딩 / 상태 */}
+    {wonderaLoading && (
+      <p style={{ color: '#ff9800' }}>⏳ 생성 중... (task: {wonderaTaskId})</p>
+    )}
+
+    {/* 결과 2칸 비교 */}
+    {wonderaResults.length > 0 && (
+      <div className="s2__section">
+        <label className="s2__label">결과 비교</label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          {wonderaResults.map((r, i) => (
+            <div key={i} style={{ background: '#1e1e2e', borderRadius: 8, padding: 12 }}>
+              <p style={{ fontSize: 13, marginBottom: 8 }}>#{i + 1}</p>
+              <audio controls src={r.url} style={{ width: '100%' }} />
+              <a
+                href={r.url}
+                download
+                style={{ display: 'block', marginTop: 8, color: '#7c5cfc', fontSize: 13 }}
+              >
+                ⬇ 다운로드
+              </a>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+  </div>
+)}
+```
+
+**(d) 상태 변수 추가 — 컴포넌트 상단 (L310 근처)**
+
+```jsx
+// Wondera test states
+const [wonderaVocalId, setWonderaVocalId] = useState(null);
+const [wonderaLyrics, setWonderaLyrics] = useState(
+  '[verse]\n여기에 기본 가사\n\n[chorus]\n후렴 가사'
+);
+const [wonderaPrompt, setWonderaPrompt] = useState('K-pop, dance, energetic');
+const [wonderaModel, setWonderaModel] = useState('auto');
+const [wonderaLoading, setWonderaLoading] = useState(false);
+const [wonderaTaskId, setWonderaTaskId] = useState(null);
+const [wonderaResults, setWonderaResults] = useState([]);
+```
+
+**(e) 핸들러 함수 추가**
+
+```jsx
+// ── Wondera: 보컬 업로드 ──
+const handleWonderaVocalUpload = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/api/wondera/upload-vocal', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Upload failed');
+    setWonderaVocalId(data.id || data.file_id || data.vocal_id);
+  } catch (err) {
+    alert('보컬 업로드 실패: ' + err.message);
+  }
+};
+
+// ── Wondera: 음악 생성 ──
+const handleWonderaGenerate = async (useMyVocal) => {
+  setWonderaLoading(true);
+  setWonderaResults([]);
+  try {
+    const body = {
+      lyrics: wonderaLyrics,
+      model: wonderaModel,
+      prompt: wonderaPrompt,
+    };
+    if (useMyVocal && wonderaVocalId) {
+      body.vocal_id = wonderaVocalId;
+    }
+    const res = await fetch('/api/wondera/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Generate failed');
+    const taskId = data.task_id;
+    setWonderaTaskId(taskId);
+    // Poll until complete
+    pollWonderaTask(taskId);
+  } catch (err) {
+    alert('생성 실패: ' + err.message);
+    setWonderaLoading(false);
+  }
+};
+
+// ── Wondera: 폴링 ──
+const pollWonderaTask = async (taskId) => {
+  const MAX_POLLS = 120; // 최대 10분 (5초 간격)
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    try {
+      const res = await fetch(`/api/wondera/query/${taskId}`);
+      const data = await res.json();
+      if (data.status === 'completed' || data.status === 'success') {
+        const songs = data.songs || data.data?.songs || [];
+        setWonderaResults(songs.map(s => ({ url: s.url || s.audio_url })));
+        setWonderaLoading(false);
+        return;
+      }
+      if (data.status === 'failed' || data.status === 'error') {
+        throw new Error(data.message || 'Generation failed');
+      }
+      // else: still processing, continue polling
+    } catch (err) {
+      alert('조회 실패: ' + err.message);
+      setWonderaLoading(false);
+      return;
+    }
+  }
+  alert('타임아웃: 10분 초과');
+  setWonderaLoading(false);
+};
+```
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/routes/wondera.py` | **신규** — Wondera API 프록시 라우트 3개 (upload-vocal, generate, query) |
+| 2 | `backend/app/config.py` | `wondera_api_key` 설정 추가 (L66 lalal_api_key 아래) |
+| 3 | `backend/.env` | `WONDERA_API_KEY` 환경변수 추가 |
+| 4 | `backend/app/main.py` | wondera 라우터 import + include_router 등록 (L81 아래) |
+| 5 | `frontend/src/components/StudioTab2.jsx` | mode='wondera' 토글 버튼 + 상태변수 + 핸들러 + JSX 블록 추가 |
+
+### 체크리스트
+
+- [ ] STEP 1: `backend/app/config.py` — `wondera_api_key: str = ""` 추가 (lalal_api_key 아래)
+- [ ] STEP 2: `backend/.env` — `WONDERA_API_KEY=실제키` 추가
+- [ ] STEP 3: `backend/app/routes/wondera.py` — 신규 생성 (upload-vocal, generate, query 프록시)
+- [ ] STEP 4: `backend/app/main.py` — `from app.routes import wondera` + `app.include_router(wondera.router)` 추가
+- [ ] STEP 5: `frontend/src/components/StudioTab2.jsx` — Wondera 상태변수 7개 추가 (L310 근처)
+- [ ] STEP 6: `frontend/src/components/StudioTab2.jsx` — 핸들러 3개 추가 (handleWonderaVocalUpload, handleWonderaGenerate, pollWonderaTask)
+- [ ] STEP 7: `frontend/src/components/StudioTab2.jsx` — 모드 토글에 "테스트 Wondera" 버튼 추가 (L783 근처)
+- [ ] STEP 8: `frontend/src/components/StudioTab2.jsx` — `{mode === 'wondera' && (...)}` JSX 블록 추가
+- [ ] STEP 9: 백엔드 재시작 후 `POST /api/wondera/generate` 테스트
+- [ ] STEP 10: 프론트에서 "테스트 Wondera" 탭 → AI 보컬로 생성 → 결과 확인
+
+## v20 — MV 생성 파이프라인 개선: 시나리오 생성 + image_prompt/video_prompt 분리 (2026-03-31)
+
+### 배경
+
+현재 MV 파이프라인은 씬 분할 시 `description` 하나로 이미지 생성과 영상 생성을 모두 처리한다. 이미지에 필요한 정보(구도, 조명, 색감)와 영상에 필요한 정보(카메라 무빙, 화면 전환, 움직임)가 혼재되어 있어 각각의 품질이 최적화되지 않는다.
+
+또한 씬 분할 GPT가 전체 스토리를 즉흥적으로 만들기 때문에, 먼저 소설형 시나리오를 생성한 뒤 이를 기반으로 씬을 분할하면 더 일관된 스토리텔링이 가능하다.
+
+### 현재 파이프라인 흐름
+
+```
+1. 씬 분할 (GPT) → [{scene_number, description, lyrics_segment}]
+2. 커버 이미지 생성 (Gemini) → 제목+장르+분위기만 사용
+3. 씬 이미지 생성 (Gemini) → description으로 이미지 생성
+4. 영상 생성 (Veo/Kling) → description + "smooth cinematic camera movement"
+5. 합치기
+```
+
+### 개선 파이프라인 흐름
+
+```
+1. [NEW] 시나리오 생성 (GPT) → 소설형 스토리 텍스트
+2. [개선] 커버 이미지 생성 (Gemini) → 시나리오 전문 포함
+3. [개선] 씬 분할 (GPT) → image_prompt + video_prompt 분리
+4. [개선] 씬 이미지 생성 (Gemini) → image_prompt 사용
+5. [개선] 영상 생성 (Veo/Kling) → image_prompt + video_prompt 합쳐서 사용
+6. 합치기 (기존 유지)
+```
+
+### 1단계: 시나리오 생성 (NEW)
+
+`mv_generator.py`에 `generate_mv_scenario()` 함수를 신규 추가한다.
+
+**입력:**
+- `title` (str) — 곡 제목
+- `genre` (str, optional) — 장르
+- `mood` (str, optional) — 분위기
+- `lyrics` (str, optional) — 가사
+- `character_name` (str, optional) — 캐릭터 이름 (사용 시 주인공 이름으로)
+
+**출력:**
+- `str` — 짧은 소설형 시나리오 텍스트 (500~1000자 내외, 한국어)
+
+**GPT 시스템 프롬프트 설계:**
+
+```
+You are a music video scenario writer. Write a short cinematic scenario 
+(a mini novel, 500-1000 characters in Korean) for a music video.
+
+Input: song title, genre, mood, lyrics, and optionally a character name.
+
+Rules:
+- Write a vivid, cinematic short story that captures the emotional arc of the song.
+- If a character name is provided, use that name as the protagonist.
+- If no character name, use a generic protagonist (e.g., "한 남자", "한 여자").
+- Structure: 도입(분위기 설정) → 전개(감정 심화) → 절정(클라이맥스) → 결말(여운)
+- Focus on visual imagery: locations, lighting, weather, character actions/expressions.
+- Do NOT include dialogue or song lyrics in the scenario.
+- Output the scenario text only, no JSON, no markdown.
+```
+
+### 2단계: 커버 이미지 생성 개선
+
+`cover_generator.py`의 `generate_cover_image()` 함수 시그니처를 변경한다.
+
+**현재:**
+```python
+async def generate_cover_image(
+    title: str,
+    genre: str = None,
+    mood: str = None,
+    style: str = None,
+    character_image_bytes: bytes = None,
+) -> bytes:
+```
+
+**변경:**
+```python
+async def generate_cover_image(
+    title: str,
+    genre: str = None,
+    mood: str = None,
+    style: str = None,
+    character_image_bytes: bytes = None,
+    scenario: str = None,           # NEW
+) -> bytes:
+```
+
+**프롬프트 변경:**
+- `scenario`가 있으면 프롬프트에 추가:
+  ```
+  "Story synopsis for visual reference: {scenario}"
+  ```
+
+### 3단계: 씬 분할 개선
+
+`mv_generator.py`의 `split_lyrics_into_scenes()` 함수에 `scenario` 파라미터를 추가하고, 출력 JSON 구조를 변경한다.
+
+**현재 시그니처:**
+```python
+async def split_lyrics_into_scenes(
+    lyrics: Optional[str],
+    title: str,
+    genre: Optional[str] = None,
+    mood: Optional[str] = None,
+    scene_count: int = 20,
+    user_scene_prompt: Optional[str] = None,
+    music_sections: Optional[List[dict]] = None,
+) -> List[dict]:
+```
+
+**변경 시그니처:**
+```python
+async def split_lyrics_into_scenes(
+    lyrics: Optional[str],
+    title: str,
+    genre: Optional[str] = None,
+    mood: Optional[str] = None,
+    scene_count: int = 20,
+    user_scene_prompt: Optional[str] = None,
+    music_sections: Optional[List[dict]] = None,
+    scenario: Optional[str] = None,     # NEW
+) -> List[dict]:
+```
+
+**현재 출력 JSON:**
+```json
+[
+  {"scene_number": 1, "description": "...", "lyrics_segment": "..."}
+]
+```
+
+**변경 출력 JSON:**
+```json
+[
+  {
+    "scene_number": 1,
+    "image_prompt": "카메라 구도, 조명, 색감, 인물 배치, 배경 묘사 포함한 스틸 이미지 프롬프트",
+    "video_prompt": "카메라 무빙(패닝, 틸트, 줌 등), 인물 동작, 화면 전환 효과 프롬프트",
+    "lyrics_segment": "가사 구간"
+  }
+]
+```
+
+**시스템 프롬프트 변경 핵심:**
+- `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE`에 시나리오 컨텍스트 추가
+- `description` 대신 `image_prompt`와 `video_prompt` 두 필드를 출력하도록 변경
+- `image_prompt`: 정적인 한 장면 — 구도(wide shot, close-up 등), 조명(golden hour, neon 등), 색감(warm tones, desaturated 등), 인물 위치와 표정, 배경 디테일
+- `video_prompt`: 동적인 움직임 — 카메라 무빙(slow pan left, dolly in 등), 인물 동작(walks slowly, turns around 등), 환경 변화(wind blows hair, rain starts 등)
+- `SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE`도 동일하게 변경
+- `SECTION_SCENE_PLAN_SYSTEM_PROMPT`도 동일하게 변경 (clip 내에 `image_prompt`, `video_prompt` 분리)
+
+**하위호환:** `_split_with_music_sections()` 내부 flatten 로직에서 `description` 대신 `image_prompt` 사용. 기존 `description` 필드는 `image_prompt`로 대체됨.
+
+### 4단계: 씬 이미지 생성 개선
+
+`mv_pipeline.py`의 `run_phase2_images()`에서:
+
+**현재 (L338-339):**
+```python
+img_bytes = await generate_scene_image(
+    scene["description"],
+    ...
+)
+```
+
+**변경:**
+```python
+img_bytes = await generate_scene_image(
+    scene.get("image_prompt") or scene.get("description", ""),
+    ...
+)
+```
+
+`image_prompt`가 있으면 사용하고, 없으면 기존 `description`으로 폴백한다.
+
+### 5단계: 영상 생성 개선
+
+`mv_pipeline.py`의 `run_phase3_videos()`에서:
+
+**현재 (L498-504):**
+```python
+if use_kling:
+    task_or_op = await start_scene_video_kling(
+        scene["description"], image_bytes
+    )
+else:
+    task_or_op = await start_scene_video(
+        scene["description"], image_bytes
+    )
+```
+
+**변경:**
+```python
+# image_prompt + video_prompt 합치기
+video_full_prompt = scene.get("image_prompt") or scene.get("description", "")
+if scene.get("video_prompt"):
+    video_full_prompt = "{} | Camera/Motion: {}".format(
+        video_full_prompt, scene["video_prompt"]
+    )
+
+if use_kling:
+    task_or_op = await start_scene_video_kling(
+        video_full_prompt, image_bytes
+    )
+else:
+    task_or_op = await start_scene_video(
+        video_full_prompt, image_bytes
+    )
+```
+
+`start_scene_video()` 내부에서 기존에 붙이던 `"smooth cinematic camera movement"`는 제거하거나 `video_prompt`가 없을 때만 폴백으로 유지한다.
+
+### 6단계: mv_pipeline.py Phase 1 수정
+
+`run_phase1_split()`에서 시나리오 생성 단계를 Phase 1a 전에 추가한다.
+
+**현재 흐름:**
+```
+Phase 1a: 음악 구조 분석 (Gemini Audio)
+Phase 1b: 씬 분할 (GPT)
+```
+
+**변경 흐름:**
+```
+Phase 1-scenario: 시나리오 생성 (GPT) — NEW
+Phase 1a: 음악 구조 분석 (Gemini Audio) — 기존 유지
+Phase 1b: 씬 분할 (GPT) — scenario 파라미터 추가
+```
+
+**코드 변경 (L143 `run_phase1_split` 함수 내부):**
+
+```python
+# ── Phase 1-scenario: Generate MV scenario ──
+scenario = None
+try:
+    from .mv_generator import generate_mv_scenario
+    scenario = await generate_mv_scenario(
+        title=job["title"],
+        genre=job.get("genre"),
+        mood=job.get("mood"),
+        lyrics=job.get("lyrics"),
+        character_name=None,  # TODO: job에 character_name 추가 시 연결
+    )
+    await _update_job(mongo_db, job_id, {
+        "scenario": scenario,
+        "progress": 1,
+    })
+    logger.info("Phase1: scenario generated for job %s (%d chars)", job_id, len(scenario))
+except Exception as e:
+    logger.warning("Phase1: scenario generation failed for job %s: %s (continuing without)", job_id, e)
+    # Non-fatal: continue without scenario
+
+# ... (기존 Phase 1a: music structure analysis) ...
+
+# ── Phase 1b: Scene planning ── (scenario 전달 추가)
+scenes_raw = await split_lyrics_into_scenes(
+    lyrics=job.get("lyrics"),
+    title=job["title"],
+    genre=job.get("genre"),
+    mood=job.get("mood"),
+    scene_count=scene_count,
+    user_scene_prompt=job.get("scene_prompt"),
+    music_sections=music_sections,
+    scenario=scenario,          # NEW
+)
+```
+
+### 7단계: scene_doc 필드 변경
+
+`run_phase1_split()`에서 scenes 배열 생성 시:
+
+**현재 (L222-231):**
+```python
+scene_doc = {
+    "scene_number": s.get("scene_number", len(scenes) + 1),
+    "description": s.get("description", ""),
+    "lyrics_segment": s.get("lyrics_segment", ""),
+    ...
+}
+```
+
+**변경:**
+```python
+scene_doc = {
+    "scene_number": s.get("scene_number", len(scenes) + 1),
+    "description": s.get("image_prompt") or s.get("description", ""),  # 하위호환
+    "image_prompt": s.get("image_prompt", ""),
+    "video_prompt": s.get("video_prompt", ""),
+    "lyrics_segment": s.get("lyrics_segment", ""),
+    ...
+}
+```
+
+`description`은 `image_prompt`의 값으로 채워서 기존 로직과의 하위호환성을 유지한다.
+
+### 8단계: routes/mv.py 변경
+
+**`_scene_to_dict()` 함수 (L110-133):**
+- `image_prompt`와 `video_prompt` 필드를 응답에 추가:
+
+```python
+result = {
+    "scene_number": scene.get("scene_number"),
+    "description": scene.get("description", ""),
+    "image_prompt": scene.get("image_prompt", ""),      # NEW
+    "video_prompt": scene.get("video_prompt", ""),      # NEW
+    "lyrics_segment": scene.get("lyrics_segment", ""),
+    ...
+}
+```
+
+**`job_doc` (L186-209):**
+- `scenario` 필드 추가:
+
+```python
+job_doc = {
+    ...
+    "scenario": None,       # NEW — Phase 1에서 자동 생성됨
+    "status": "draft",
+    ...
+}
+```
+
+**job 응답에 `scenario` 포함:**
+- `GET /api/mv/jobs/{id}` 응답에 `scenario` 필드가 자동으로 포함됨 (MongoDB doc 그대로 반환)
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/services/mv_generator.py` | `generate_mv_scenario()` 신규 추가 + `split_lyrics_into_scenes()` 시그니처/프롬프트 수정 (image_prompt/video_prompt 분리 출력) + `start_scene_video()` 프롬프트 조건부 변경 |
+| 2 | `backend/app/services/cover_generator.py` | `generate_cover_image()` — `scenario` 파라미터 추가 + 프롬프트 반영 |
+| 3 | `backend/app/services/mv_pipeline.py` | `run_phase1_split()` — 시나리오 생성 단계 추가 + `split_lyrics_into_scenes()` 호출에 scenario 전달 + scene_doc에 image_prompt/video_prompt 필드 추가 + Phase 2에서 image_prompt 사용 + Phase 3에서 video_prompt 사용 |
+| 4 | `backend/app/routes/mv.py` | `job_doc`에 `scenario: None` 추가 + `_scene_to_dict()`에 image_prompt/video_prompt 추가 |
+
+### 체크리스트
+
+- [ ] STEP 1: `backend/app/services/mv_generator.py` — `generate_mv_scenario()` 함수 추가 (GPT 호출, 소설형 시나리오 반환)
+- [ ] STEP 2: `backend/app/services/mv_generator.py` — `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE` 수정 (description → image_prompt + video_prompt 분리, scenario 컨텍스트)
+- [ ] STEP 3: `backend/app/services/mv_generator.py` — `SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE` 수정 (동일)
+- [ ] STEP 4: `backend/app/services/mv_generator.py` — `SECTION_SCENE_PLAN_SYSTEM_PROMPT` 수정 (clip 내 image_prompt/video_prompt 분리)
+- [ ] STEP 5: `backend/app/services/mv_generator.py` — `split_lyrics_into_scenes()` 시그니처에 `scenario` 파라미터 추가, user_message에 시나리오 포함
+- [ ] STEP 6: `backend/app/services/mv_generator.py` — `_split_with_music_sections()` 시그니처에 `scenario` 전달, flatten 시 `image_prompt` 사용
+- [ ] STEP 7: `backend/app/services/mv_generator.py` — `start_scene_video()` 내 프롬프트 조건부 변경 (`video_prompt`가 이미 포함된 경우 `"smooth cinematic camera movement"` 생략)
+- [ ] STEP 8: `backend/app/services/cover_generator.py` — `generate_cover_image()`에 `scenario` 파라미터 추가 + 프롬프트 반영
+- [ ] STEP 9: `backend/app/services/mv_pipeline.py` — `run_phase1_split()` 상단에 시나리오 생성 단계 추가, MongoDB에 저장
+- [ ] STEP 10: `backend/app/services/mv_pipeline.py` — `split_lyrics_into_scenes()` 호출에 `scenario=scenario` 추가
+- [ ] STEP 11: `backend/app/services/mv_pipeline.py` — scene_doc 생성 시 `image_prompt`, `video_prompt` 필드 추가
+- [ ] STEP 12: `backend/app/services/mv_pipeline.py` — `run_phase2_images()` L338에서 `scene.get("image_prompt") or scene.get("description")` 사용
+- [ ] STEP 13: `backend/app/services/mv_pipeline.py` — `run_phase3_videos()` L498에서 image_prompt + video_prompt 합친 프롬프트 사용
+- [ ] STEP 14: `backend/app/routes/mv.py` — `job_doc`에 `"scenario": None` 추가
+- [ ] STEP 15: `backend/app/routes/mv.py` — `_scene_to_dict()`에 `image_prompt`, `video_prompt` 필드 추가
+- [ ] STEP 16: 테스트 — MV 생성 실행, 시나리오 생성 확인, scene에 image_prompt/video_prompt 분리 확인
+- [ ] STEP 17: 테스트 — 생성된 이미지가 image_prompt 기반인지 확인
+- [ ] STEP 18: 테스트 — 생성된 영상이 video_prompt의 카메라 무빙을 반영하는지 확인
+
+## v21 — 시나리오/프롬프트 생성 실패 시 재시도 로직 추가 (2026-03-31)
+
+### 배경
+
+현재 Phase 0 시나리오 생성이 실패하면 `logger.warning` 후 시나리오 없이 진행(continue)하고,
+Phase 1b에서 `split_lyrics_into_scenes` 결과의 `image_prompt`/`video_prompt`가 비어있어도 그대로 사용한다.
+GPT API 일시 장애나 타임아웃 등으로 생성이 실패하는 경우, 폴백 대신 **최대 3회 재시도**하고
+그래도 실패 시 명확한 에러 처리를 하도록 개선한다.
+
+### 변경 사항
+
+#### 1단계: `mv_pipeline.py` — Phase 0 시나리오 생성 재시도
+
+**현재 (L162-180):**
+```python
+# ── Phase 0: Generate MV Scenario ──
+scenario = None
+try:
+    from .mv_generator import generate_mv_scenario
+    ...
+    scenario = await generate_mv_scenario(...)
+    ...
+except Exception as e:
+    logger.warning("Phase0: scenario generation failed for job %s: %s (continuing without)", job_id, e)
+```
+
+**변경:**
+```python
+# ── Phase 0: Generate MV Scenario ──
+scenario = None
+MAX_RETRIES = 3
+for attempt in range(1, MAX_RETRIES + 1):
+    try:
+        from .mv_generator import generate_mv_scenario
+        character_name = job.get("character_name")
+        scenario = await generate_mv_scenario(
+            title=job["title"],
+            genre=job.get("genre"),
+            mood=job.get("mood"),
+            lyrics=job.get("lyrics"),
+            character_name=character_name,
+        )
+        await _update_job(mongo_db, job_id, {
+            "scenario": scenario,
+            "progress": 1,
+        })
+        logger.info("Phase0: scenario generated for job %s (%d chars, attempt %d)", job_id, len(scenario), attempt)
+        break  # 성공 시 루프 탈출
+    except Exception as e:
+        logger.warning("Phase0: scenario generation failed for job %s (attempt %d/%d): %s", job_id, attempt, MAX_RETRIES, e)
+        if attempt == MAX_RETRIES:
+            logger.error("Phase0: scenario generation failed after %d attempts for job %s", MAX_RETRIES, job_id)
+            await _update_job(mongo_db, job_id, {
+                "status": "failed",
+                "error_message": "시나리오 생성 실패 ({}회 재시도 후): {}".format(MAX_RETRIES, str(e)[:300]),
+            })
+            return
+        await asyncio.sleep(2 * attempt)  # 백오프: 2초, 4초
+```
+
+- `warning` 후 `continue` 대신, 최대 3회 재시도 + 지수 백오프
+- 3회 모두 실패 시 job 상태를 `"failed"`로 설정하고 `return` (파이프라인 중단)
+
+#### 2단계: `mv_pipeline.py` — Phase 1b 씬 분할 후 image_prompt/video_prompt 검증 및 재생성
+
+**위치:** Phase 1b `split_lyrics_into_scenes` 호출 직후, `scenes` 배열 생성 전 (L240 부근)
+
+**추가:**
+```python
+# ── Phase 1b-1: Validate & retry scenes with missing prompts ──
+MAX_PROMPT_RETRIES = 3
+for prompt_attempt in range(1, MAX_PROMPT_RETRIES + 1):
+    missing = [
+        s for s in scenes_raw
+        if not (s.get("image_prompt") or s.get("description", "")).strip()
+        or not s.get("video_prompt", "").strip()
+    ]
+    if not missing:
+        break  # 모든 씬에 프롬프트 존재
+
+    logger.warning(
+        "Phase1b: %d scenes missing image_prompt/video_prompt (attempt %d/%d), re-requesting",
+        len(missing), prompt_attempt, MAX_PROMPT_RETRIES,
+    )
+    if prompt_attempt == MAX_PROMPT_RETRIES:
+        logger.error("Phase1b: still %d scenes with missing prompts after %d retries for job %s", len(missing), MAX_PROMPT_RETRIES, job_id)
+        await _update_job(mongo_db, job_id, {
+            "status": "failed",
+            "error_message": "씬 프롬프트 생성 실패: {}개 씬의 image_prompt/video_prompt 누락 ({}회 재시도 후)".format(len(missing), MAX_PROMPT_RETRIES),
+        })
+        return
+
+    await asyncio.sleep(2 * prompt_attempt)
+    scenes_raw = await split_lyrics_into_scenes(
+        lyrics=job.get("lyrics"),
+        title=job["title"],
+        genre=job.get("genre"),
+        mood=job.get("mood"),
+        scene_count=scene_count,
+        user_scene_prompt=job.get("scene_prompt"),
+        music_sections=music_sections,
+        scenario=scenario,
+    )
+```
+
+- 씬 분할 결과에서 `image_prompt`(또는 `description`)와 `video_prompt`가 비어있는 씬을 검출
+- 누락된 씬이 있으면 전체 씬 분할을 재요청 (최대 3회)
+- 3회 재시도 후에도 누락 씬이 있으면 job을 `"failed"`로 처리
+
+#### 3단계: `mv_generator.py` — `split_lyrics_into_scenes` 결과 검증
+
+**위치:** `split_lyrics_into_scenes()` 함수 끝, `return` 직전
+
+**추가:**
+```python
+# Validate all scenes have required prompt fields
+for i, scene in enumerate(result_scenes):
+    ip = (scene.get("image_prompt") or scene.get("description", "")).strip()
+    vp = scene.get("video_prompt", "").strip()
+    if not ip:
+        logger.warning("split_lyrics_into_scenes: scene %d missing image_prompt", i + 1)
+    if not vp:
+        logger.warning("split_lyrics_into_scenes: scene %d missing video_prompt", i + 1)
+```
+
+- 반환 전에 각 씬의 `image_prompt`와 `video_prompt` 존재 여부를 로그로 경고
+- 파이프라인 레벨에서 재시도 판단에 활용되도록 정보 제공
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/services/mv_pipeline.py` | Phase 0 시나리오 생성: warning+continue → 최대 3회 재시도 + 실패 시 job `"failed"` 처리 |
+| 2 | `backend/app/services/mv_pipeline.py` | Phase 1b 후: image_prompt/video_prompt 누락 씬 검증 → 최대 3회 재시도 + 실패 시 job `"failed"` 처리 |
+| 3 | `backend/app/services/mv_generator.py` | `split_lyrics_into_scenes()` 반환 전 image_prompt/video_prompt 존재 검증 로그 추가 |
+
+### 체크리스트
+
+- [ ] STEP 1: `backend/app/services/mv_pipeline.py` — Phase 0 시나리오 생성 try/except를 최대 3회 재시도 루프로 변경, 실패 시 job `"failed"` 처리
+- [ ] STEP 2: `backend/app/services/mv_pipeline.py` — Phase 1b `split_lyrics_into_scenes` 호출 후 image_prompt/video_prompt 누락 검증 및 최대 3회 재시도 추가
+- [ ] STEP 3: `backend/app/services/mv_generator.py` — `split_lyrics_into_scenes()` 반환 전 각 씬 프롬프트 필드 검증 로그 추가
+- [ ] STEP 4: 테스트 — 시나리오 생성 실패 시 재시도 동작 확인 (모킹 등)
+- [ ] STEP 5: 테스트 — image_prompt/video_prompt 누락 시 재시도 후 에러 처리 확인
+
+## v22 — 가사 생성 프롬프트 Suno 최적화 (2026-03-31)
+
+### 배경
+
+현재 `lyrics_generator.py`의 시스템 프롬프트는 기본적인 섹션 태그(`[Verse]`, `[Chorus]` 등)만 지시하고 있어, Suno의 메타태그 시스템을 활용하지 못하고 있음. 프론트엔드에서 이미 genre, mood 등 풍부한 데이터를 수집하고 있으므로, 이를 최대한 활용하여 Suno 최적화 가사를 생성하도록 개선.
+
+### 프론트엔드에서 가사 생성 시 전달하는 데이터 (Step 1)
+
+| 필드 | 설명 | 비고 |
+|------|------|------|
+| `description` | 곡 설명 (자유 텍스트) | 필수 |
+| `genres` | 장르 다중선택 | Pop, K-Pop, Hip-hop, R&B, Rock, Electronic, Lo-fi, Jazz, Classical, Ambient, Cinematic, 발라드, 댄스, 인디, Folk, Reggae, Metal, Soul |
+| `moods` | 분위기 다중선택 | Energetic, Chill, Dark, Happy, Sad, Epic, Romantic, Dreamy, Aggressive, Peaceful, Nostalgic, Funky |
+| `language` | 언어 | ko / en |
+
+> **참고:** vocal preset, BPM, Key 등은 Step 2/3에서 선택하므로 가사 생성 시점에는 사용 불가. 보컬 방향은 genre/mood로부터 GPT가 자동 추론하도록 유도.
+
+### 개선 내용: SYSTEM_PROMPT 전면 교체
+
+#### 현재 프롬프트 (Before)
+
+```python
+SYSTEM_PROMPT = """You are a professional songwriter and lyricist.
+Generate song lyrics based on the user's description.
+
+Rules:
+1. Use section tags: [Verse], [Chorus], [Bridge], [Outro], [Intro], [Pre-Chorus]
+2. Each section should have 2-4 lines
+3. Include at least 2 verses and 1 chorus
+4. Match the mood, genre, and theme described by the user
+5. If the user specifies a language, write in that language. Default to Korean.
+6. Keep each line concise (under 30 characters for Korean, under 60 for English)
+7. Make the lyrics emotionally resonant and singable
+8. Separate sections with a blank line
+
+Output ONLY the lyrics with section tags. No explanations or commentary."""
+```
+
+#### 새 프롬프트 (After)
+
+```python
+SYSTEM_PROMPT = """You are an elite songwriter who writes lyrics optimized for Suno AI music generation.
+Generate song lyrics based on the user's description, genre, and mood.
+
+## Suno Meta-Tag Rules
+
+### Section Tags (필수)
+- 기본 태그: [Intro], [Verse], [Pre-Chorus], [Chorus], [Bridge], [Outro]
+- 추가 태그: [Hook], [Break], [Interlude], [Drop], [Refrain]
+- 보컬 방향 포함 가능: [Verse: whispered, soft], [Chorus: belting, powerful], [Bridge: falsetto, ethereal]
+- 보컬 방향은 장르/분위기에서 자연스럽게 추론하여 적절한 섹션에만 추가
+
+### Performance Hints (선택적, 괄호 안에)
+- (ad-lib), (harmonize), (falsetto), (spoken), (whispered), (raspy)
+- (call and response), (layered vocals), (vocal chop)
+- 남용 금지: 곡 전체에 2-4회만 사용
+
+### Instrumental Cues (선택적)
+- [Instrumental Break], [Guitar Solo], [Piano Interlude]
+- 적절한 위치에 짧은 인스트루멘탈 구간 배치 가능
+
+## 장르별 가사 구조 가이드
+
+- **발라드/R&B/Soul**: Intro → Verse 1 → Chorus → Verse 2 → Chorus → Bridge → Chorus → Outro. 서정적이고 감정적인 표현. 보컬 방향: soft → building → powerful.
+- **K-Pop/Pop/댄스**: Intro → Verse 1 → Pre-Chorus → Chorus → Verse 2 → Pre-Chorus → Chorus → Bridge → Final Chorus → Outro. 캐치한 훅과 반복. Pre-Chorus로 빌드업.
+- **Hip-hop**: Intro → Verse 1 (8-16줄) → Hook → Verse 2 (8-16줄) → Hook → Bridge/Verse 3 → Hook → Outro. 라임 스킴과 플로우 강조. 긴 벌스 허용.
+- **Rock/Metal**: Intro → Verse 1 → Chorus → Verse 2 → Chorus → Guitar Solo/Break → Chorus → Outro. 강렬한 에너지 빌드업.
+- **Electronic/Lo-fi/Ambient**: Intro → Verse 1 → Drop/Chorus → Break → Verse 2 → Drop/Chorus → Outro. 반복적 구조. 짧은 가사 + 공간감.
+- **Jazz/Folk/인디**: Verse 1 → Verse 2 → Chorus → Verse 3 → Chorus → Outro. 스토리텔링 중심.
+
+## 작성 규칙
+
+1. 장르에 맞는 구조를 선택하되, 유연하게 변형 가능
+2. 각 섹션은 2-6줄 (힙합 벌스는 8-16줄 허용)
+3. Chorus는 기억에 남는 멜로디감 있는 가사로 작성
+4. 한국어: 줄당 15-25자 / 영어: 줄당 30-50자 (Suno가 잘 처리하는 길이)
+5. 전체 가사 길이: 3000자 이내 (Suno 최적 범위)
+6. 분위기(mood)를 가사 톤과 어휘 선택에 적극 반영
+7. 섹션 사이에 빈 줄 하나씩 삽입
+8. 가사만 출력. 설명, 주석, 코멘트 없음.
+
+## 분위기별 톤 가이드
+
+- **Energetic/Happy/Funky**: 밝고 리듬감 있는 어휘, 짧은 문장, 감탄사 활용
+- **Chill/Dreamy/Peaceful**: 부드럽고 여유로운 표현, 자연/감각 이미지
+- **Dark/Aggressive**: 강렬하고 날카로운 어휘, 대비와 긴장감
+- **Sad/Nostalgic**: 회상적 표현, 과거 시제, 감정적 디테일
+- **Epic/Cinematic**: 웅장한 스케일, 메타포, 서사적 구조
+- **Romantic**: 친밀한 2인칭 화법, 감각적 디테일"""
+```
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `backend/app/services/lyrics_generator.py` | `SYSTEM_PROMPT` 상수를 Suno 최적화 버전으로 전면 교체 |
+
+### 체크리스트
+
+- [ ] STEP 1: `backend/app/services/lyrics_generator.py` — `SYSTEM_PROMPT` 상수를 위의 새 프롬프트로 교체
+- [ ] STEP 2: 테스트 — 발라드 장르 + Sad 분위기로 가사 생성하여 섹션 태그/보컬 방향/톤 확인
+- [ ] STEP 3: 테스트 — Hip-hop 장르 + Energetic 분위기로 가사 생성하여 긴 벌스/라임/Hook 구조 확인
+- [ ] STEP 4: 테스트 — Electronic 장르 + Dreamy 분위기로 가사 생성하여 Drop/Break 태그 확인
+- [ ] STEP 5: 생성된 가사를 Suno에 입력하여 메타태그 인식 및 음악 품질 확인
+
+---
+
+## v23 — Sync Labs 립싱크 통합: Chorus 구간 자동 립싱크 영상 생성 (2026-03-31)
+
+### 목적
+
+뮤직비디오의 Chorus 구간에 캐릭터가 실제로 노래하는 것처럼 보이는 립싱크 영상을 자동 생성한다. Sync Labs API를 활용하여 이미지 + 오디오 → 립싱크 영상을 만들고, 기존 MV 파이프라인에 자연스럽게 통합한다.
+
+### Sync Labs API 정보
+
+- **SDK**: `pip install syncsdk`
+- **인증**: `SYNC_API_KEY` 환경변수
+- **생성**: `sync.generations.create(input=[Video(url=...), Audio(url=...)], model="lipsync-2")`
+- **폴링**: `sync.generations.get(job_id)` → status: `COMPLETED` / `FAILED` / `REJECTED`
+- **결과**: `generation.output_url`
+- **제한**: 오디오 최대 300초, 파일 최대 20MB
+- **입력**: 비디오 URL + 오디오 URL (공개 URL 필요)
+
+### 현재 파이프라인 (변경 전)
+
+```
+1. 음악 분석 → 섹션 라벨 (Intro, Verse, Chorus 등) + 시작/끝 시간
+2. 시나리오 생성
+3. 씬 분할 → image_prompt + video_prompt
+4. 씬 이미지 생성 (Gemini)
+5. 영상 생성 (Veo/Kling) ← 모든 씬 동일 방식
+6. 합치기
+```
+
+### 변경 후 파이프라인
+
+```
+1. 음악 분석 → 섹션 라벨 + 시작/끝 시간
+2. 섹션별 scene_type 자동 배정 (Chorus → lipsync, 나머지 → drama)
+3. 시나리오 생성
+4. 씬 분할 → image_prompt + video_prompt + scene_type
+5. 씬 이미지 생성 (Gemini)
+   - lipsync 씬: 정면 클로즈업 캐릭터 이미지 프롬프트
+   - drama 씬: 기존 방식
+6. 영상 생성 (scene_type 분기)
+   - drama → 기존 Veo/Kling
+   - lipsync → ffmpeg 오디오 구간 자르기 + 이미지→정지영상 변환 + Sync Labs API
+7. 합치기
+```
+
+### 변경 대상 파일
+
+| # | 파일 | 작업 |
+|---|------|------|
+| 1 | `.env` | `SYNC_API_KEY` 환경변수 추가 |
+| 2 | `backend/app/config.py` | `sync_api_key: Optional[str]` 필드 추가 |
+| 3 | `requirements.txt` | `syncsdk` 패키지 추가 |
+| 4 | `backend/app/services/sync_labs_service.py` | **신규** — Sync Labs API 래퍼 서비스 |
+| 5 | `backend/app/services/mv_pipeline.py` | scene_type 분기 로직 + 립싱크 흐름 추가 |
+| 6 | `backend/app/services/mv_generator.py` | 씬 분할 프롬프트에 scene_type 반영 |
+
+### 상세 구현
+
+#### STEP 1: 환경 설정
+
+- `.env`에 `SYNC_API_KEY=sk-...` 추가
+- `config.py`에 `sync_api_key: Optional[str] = Field(default=None, env="SYNC_API_KEY")` 추가
+- `requirements.txt`에 `syncsdk` 추가
+
+#### STEP 2: `services/sync_labs_service.py` 신규 생성
+
+```python
+# 핵심 함수
+async def generate_lipsync(video_url: str, audio_url: str, model: str = "lipsync-2") -> str:
+    """
+    비디오 URL + 오디오 URL → 립싱크 영상 URL 반환
+    1. sync.generations.create() 호출
+    2. 폴링으로 완료 대기 (최대 5분, 10초 간격)
+    3. generation.output_url 반환
+    """
+
+async def image_to_static_video(image_path: str, duration: float, output_path: str) -> str:
+    """
+    ffmpeg로 이미지를 정지 영상으로 변환
+    ffmpeg -loop 1 -i image.png -c:v libx264 -t {duration} -pix_fmt yuv420p output.mp4
+    """
+
+async def extract_audio_segment(audio_path: str, start: float, end: float, output_path: str) -> str:
+    """
+    ffmpeg로 오디오의 특정 구간 자르기
+    ffmpeg -i audio.mp3 -ss {start} -to {end} -c copy output.mp3
+    """
+
+async def upload_to_minio_presigned(file_path: str) -> str:
+    """
+    MinIO에 파일 업로드 후 presigned URL 반환
+    Sync Labs는 공개 URL이 필요하므로 presigned URL 사용
+    """
+
+async def process_lipsync_scene(image_path: str, audio_path: str, start: float, end: float) -> str:
+    """
+    전체 립싱크 처리 파이프라인:
+    1. 오디오 구간 자르기 (extract_audio_segment)
+    2. 이미지 → 정지 영상 변환 (image_to_static_video)
+    3. MinIO 업로드 + presigned URL 생성
+    4. Sync Labs API 호출 (generate_lipsync)
+    5. 결과 영상 다운로드 + 저장
+    """
+```
+
+#### STEP 3: `mv_pipeline.py` 수정
+
+- 음악 분석 결과에서 섹션 라벨 확인 후 `scene_type` 자동 배정:
+  - `Chorus`, `Final Chorus` → `scene_type: "lipsync"`
+  - 그 외 (`Intro`, `Verse`, `Bridge`, `Outro` 등) → `scene_type: "drama"`
+- Phase 3 (영상 생성) 에서 scene_type 분기:
+  ```
+  if scene.scene_type == "lipsync":
+      result = await sync_labs_service.process_lipsync_scene(...)
+  else:
+      result = await generate_video_veo_or_kling(...)
+  ```
+
+#### STEP 4: `mv_generator.py` 수정
+
+- 씬 분할 프롬프트에 `scene_type` 정보 포함
+- lipsync 씬의 `image_prompt`에 자동으로 정면 클로즈업 지시 추가:
+  - "캐릭터 정면 클로즈업, 입이 잘 보이는 각도, 중립 표정 또는 살짝 미소"
+  - 배경은 단순하게 (립싱크 품질에 영향)
+
+### 주의사항
+
+1. **공개 URL 필요**: Sync Labs는 공개 접근 가능한 URL만 허용 → MinIO presigned URL (만료 1시간) 사용
+2. **보컬 분리 권장**: 전체 믹스보다 보컬만 전달하면 립싱크 품질 향상 → 향후 Demucs 연동 고려
+3. **이미지→비디오 변환**: Sync Labs는 비디오 입력만 지원 → ffmpeg로 이미지를 짧은 정지 영상으로 변환
+4. **파일 크기 제한**: 20MB 이내로 유지 → 오디오/비디오 압축 필요 시 ffmpeg 옵션 조정
+5. **오디오 길이 제한**: 300초(5분) 이내 → Chorus 구간은 보통 30~60초이므로 문제없음
+6. **타임아웃**: Sync Labs 생성은 수 분 소요 가능 → 비동기 폴링 + 적절한 타임아웃 설정
+
+### 체크리스트
+
+- [ ] STEP 1: `.env`에 `SYNC_API_KEY` 추가
+- [ ] STEP 1: `config.py`에 `sync_api_key` 필드 추가
+- [ ] STEP 1: `requirements.txt`에 `syncsdk` 추가
+- [ ] STEP 2: `services/sync_labs_service.py` 신규 생성 — Sync Labs API 래퍼
+- [ ] STEP 3: `mv_pipeline.py` — scene_type 자동 배정 + 립싱크 분기 로직
+- [ ] STEP 4: `mv_generator.py` — 씬 분할 프롬프트에 scene_type 반영
+- [ ] STEP 5: 테스트 — Chorus 포함 곡으로 MV 생성하여 립싱크 씬 확인
+- [ ] STEP 6: 테스트 — 립싱크 영상 품질 및 싱크 정확도 확인
+
+## v24 — 씬 한글 설명 + 이미지 확대 모달 (2026-03-31)
+
+### 목적
+
+1. 씬 설명을 한글로 표시: GPT가 씬 분할 시 영어 `image_prompt`와 함께 한글 `description_ko`를 동시 생성하여, 프론트엔드에서 사용자에게 한글 장면 설명을 보여준다.
+2. 씬 이미지 클릭 시 확대 다이얼로그: 이미지 + 한글 설명 + 가사를 포함한 모달 팝업을 띄워 씬 상세 정보를 확인할 수 있게 한다.
+
+### 현재 구조
+
+- 씬 분할 시 JSON: `{scene_number, image_prompt(영어), video_prompt(영어), lyrics_segment}`
+- 프론트엔드: `scene.description`으로 영어 설명 표시 (UploadPage.jsx, line 983)
+- 이미지 클릭 기능 없음
+
+### 구현 계획
+
+#### STEP 1: `mv_generator.py` — 씬 분할 프롬프트에 `description_ko` 필드 추가
+
+- 3개 시스템 프롬프트(20씬/기본/캐릭터) 모두 수정
+- 각 씬 JSON 출력 형식에 `"description_ko": "한글 장면 설명"` 필드 추가
+- GPT가 `image_prompt`(영어)와 `description_ko`(한글)를 동시 생성하도록 지시
+
+**변경 전 JSON 형식:**
+```json
+{
+  "scene_number": 1,
+  "image_prompt": "A lonely figure standing...",
+  "video_prompt": "Camera slowly zooms in...",
+  "lyrics_segment": "첫 번째 가사..."
+}
+```
+
+**변경 후 JSON 형식:**
+```json
+{
+  "scene_number": 1,
+  "image_prompt": "A lonely figure standing...",
+  "video_prompt": "Camera slowly zooms in...",
+  "lyrics_segment": "첫 번째 가사...",
+  "description_ko": "외로운 인물이 비 내리는 거리에 서 있다"
+}
+```
+
+#### STEP 2: `mv_pipeline.py` — scene_doc에 `description_ko` 저장
+
+- 씬 분할 결과 파싱 시 `description_ko` 필드를 scene_doc에 포함
+- DB(MongoDB)에 `description_ko` 필드 저장
+
+#### STEP 3: `routes/mv.py` — API 응답에 `description_ko` 포함
+
+- `_scene_to_dict()` 함수에서 `description_ko` 필드를 응답 JSON에 포함
+- 프론트엔드가 `scene.description_ko`로 접근 가능하도록 함
+
+#### STEP 4: `UploadPage.jsx` — 한글 설명 표시 + 이미지 클릭 모달
+
+**4-1. 한글 설명 표시:**
+- 씬 카드의 설명 텍스트: `scene.description` → `scene.description_ko || scene.description`
+- `description_ko`가 없는 기존 데이터는 영어 `description`으로 폴백
+
+**4-2. 이미지 클릭 모달 상태 추가:**
+- `selectedScene` 상태 추가 (클릭한 씬 정보 저장)
+- 씬 이미지에 `onClick` → `setSelectedScene(scene)` 핸들러
+- 이미지에 `cursor: pointer` 스타일 + hover 효과
+
+**4-3. SceneDetailModal 컴포넌트:**
+- 오버레이 배경 (클릭 시 닫기)
+- 확대된 이미지 (최대 80vw × 80vh)
+- 한글 설명 (`description_ko || description`)
+- 가사 (`lyrics_segment`)
+- 닫기 버튼 (X)
+- ESC 키 닫기 지원
+
+#### STEP 5: `UploadPage.css` — 모달 스타일
+
+- `.scene-modal-overlay`: 반투명 검정 배경, z-index 최상위, flex 중앙 정렬
+- `.scene-modal-content`: 흰색 카드, 둥근 모서리, 그림자
+- `.scene-modal-image`: max-width/max-height 제한, object-fit: contain
+- `.scene-modal-description`: 한글 설명 텍스트 스타일
+- `.scene-modal-lyrics`: 가사 영역 스타일 (이탤릭 또는 인용 블록)
+- `.scene-modal-close`: 우상단 X 버튼
+
+### 체크리스트
+
+- [ ] STEP 1: `mv_generator.py` — 3개 프롬프트에 `description_ko` 필드 추가
+- [ ] STEP 2: `mv_pipeline.py` — scene_doc에 `description_ko` 저장
+- [ ] STEP 3: `routes/mv.py` — `_scene_to_dict()`에 `description_ko` 포함
+- [ ] STEP 4: `UploadPage.jsx` — 한글 설명 표시 + 이미지 클릭 모달
+- [ ] STEP 5: `UploadPage.css` — 모달 오버레이 + 확대 스타일
+- [ ] STEP 6: 테스트 — 새 MV 생성 시 `description_ko` 정상 생성 확인
+- [ ] STEP 7: 테스트 — 이미지 클릭 모달 동작 확인 (확대 이미지 + 한글 설명 + 가사)
+
+---
+
+## v25 — MR 음정 조절: detune → SoundTouchJS 피치 시프트 교체 (2026-04-01)
+
+### 배경 / 문제
+
+현재 `MrPitchAdjustPanel` 컴포넌트(`StudioTab2.jsx` L40-306)에서 MR 음정 조절 시 `AudioBufferSourceNode.detune`을 사용한다.
+`detune`은 리샘플링 방식이라 **피치를 올리면 속도가 빨라지고, 내리면 느려진다** (키보드 샘플러 효과).
+사용자가 MR 반주의 키(음정)만 변경하고 싶은데 템포까지 바뀌어 보컬과 싱크가 틀어지는 문제가 있다.
+
+### 해결 방안
+
+**SoundTouchJS** (WSOLA 알고리즘 기반, `npm install soundtouchjs` 완료)로 교체한다.
+SoundTouchJS는 피치와 속도를 독립적으로 제어할 수 있어, 피치만 변경하면서 원래 속도를 유지할 수 있다.
+
+- **라이브러리**: `soundtouchjs` v0.3.0 (이미 설치됨)
+- **핵심 클래스**: `SoundTouch`, `SimpleFilter`, `WebAudioBufferSource`, `getWebAudioNode`
+- **알고리즘**: WSOLA (Waveform Similarity Overlap-Add) — 타임스트레칭/피치시프팅을 독립 수행
+
+### 변경 파일
+
+`frontend/src/components/StudioTab2.jsx` — `MrPitchAdjustPanel` 컴포넌트 (1개 파일만)
+
+### 상세 변경 내역
+
+#### STEP 1: import 추가
+
+```jsx
+// StudioTab2.jsx 최상단에 추가
+import { SoundTouch, SimpleFilter, WebAudioBufferSource, getWebAudioNode } from 'soundtouchjs';
+```
+
+#### STEP 2: ref 추가
+
+기존 `mrSourceRef`는 SoundTouch 노드 참조용으로 계속 사용.
+SoundTouch 인스턴스를 유지할 ref를 추가한다.
+
+```jsx
+const soundTouchRef = useRef(null);     // SoundTouch 인스턴스
+const stNodeRef = useRef(null);         // getWebAudioNode() 반환값 (ScriptProcessorNode)
+```
+
+#### STEP 3: `startPlayback()` 함수 — MR 재생 로직 교체
+
+**변경 전** (L109-116):
+```jsx
+const mrSource = ctx.createBufferSource();
+mrSource.buffer = mrBufferRef.current;
+mrSource.detune.value = mrPitch * 100;
+const mrGain = ctx.createGain();
+mrGain.gain.value = playMode === 'vocal' ? 0 : mrVolume;
+mrSource.connect(mrGain).connect(ctx.destination);
+mrGainRef.current = mrGain;
+mrSourceRef.current = mrSource;
+```
+
+**변경 후**:
+```jsx
+// SoundTouch 인스턴스 생성
+const st = new SoundTouch();
+st.pitch = Math.pow(2, mrPitch / 12);   // 반음 → 배율 변환 (0 = 1.0, +12 = 2.0, -12 = 0.5)
+st.tempo = 1.0;                          // 속도 유지
+soundTouchRef.current = st;
+
+// WebAudioBufferSource로 AudioBuffer 래핑
+const stSource = new WebAudioBufferSource(mrBufferRef.current);
+const stFilter = new SimpleFilter(stSource, st);
+
+// ScriptProcessorNode 생성 (Web Audio 파이프라인 연결)
+const stNode = getWebAudioNode(ctx, stFilter);
+stNodeRef.current = stNode;
+
+// Gain 노드 연결
+const mrGain = ctx.createGain();
+mrGain.gain.value = playMode === 'vocal' ? 0 : mrVolume;
+stNode.connect(mrGain).connect(ctx.destination);
+mrGainRef.current = mrGain;
+mrSourceRef.current = stNode;  // stopPlayback에서 disconnect 용도로 사용
+```
+
+#### STEP 4: `stopPlayback()` 함수 — SoundTouch 정리
+
+**변경 전** (L89-93):
+```jsx
+const stopPlayback = () => {
+  try { vocalSourceRef.current?.stop(); } catch {}
+  try { mrSourceRef.current?.stop(); } catch {}
+  setIsPlaying(false);
+};
+```
+
+**변경 후**:
+```jsx
+const stopPlayback = () => {
+  try { vocalSourceRef.current?.stop(); } catch {}
+  try { stNodeRef.current?.disconnect(); } catch {}
+  stNodeRef.current = null;
+  soundTouchRef.current = null;
+  setIsPlaying(false);
+};
+```
+
+> `ScriptProcessorNode`는 `.stop()`이 없으므로 `.disconnect()`로 정지시킨다.
+
+#### STEP 5: `useEffect([mrPitch])` — 실시간 피치 변경 로직
+
+**변경 전** (L138-142):
+```jsx
+useEffect(() => {
+  if (mrSourceRef.current) {
+    mrSourceRef.current.detune.value = mrPitch * 100;
+  }
+}, [mrPitch]);
+```
+
+**변경 후**:
+```jsx
+useEffect(() => {
+  if (soundTouchRef.current) {
+    soundTouchRef.current.pitch = Math.pow(2, mrPitch / 12);
+  }
+}, [mrPitch]);
+```
+
+> 슬라이더를 움직이면 SoundTouch 인스턴스의 `pitch` 속성이 실시간 변경됨.
+> 재생 중 즉시 반영됨 (재시작 불필요).
+
+#### STEP 6: cleanup `useEffect` — 언마운트 시 정리
+
+기존 cleanup (L83-86)에 SoundTouch 정리 추가:
+
+```jsx
+return () => {
+  stopPlayback();
+  if (audioCtxRef.current) audioCtxRef.current.close();
+};
+```
+
+> `stopPlayback()` 내에서 `stNodeRef`, `soundTouchRef`를 null 처리하므로 별도 수정 불필요.
+
+### 피치 변환 공식
+
+| mrPitch (반음) | `Math.pow(2, mrPitch / 12)` | 효과 |
+|---|---|---|
+| 0 | 1.0 | 원래 음정 |
+| +1 | 1.0595 | 반음 올림 |
+| +12 | 2.0 | 1옥타브 올림 |
+| -1 | 0.9439 | 반음 내림 |
+| -12 | 0.5 | 1옥타브 내림 |
+
+### 주의사항
+
+1. **`getWebAudioNode()`는 내부적으로 `ScriptProcessorNode`를 사용** — 향후 `AudioWorklet` 기반으로 마이그레이션 필요할 수 있음 (현재 브라우저 호환성 우수)
+2. **보컬은 변경 없음** — 보컬은 기존 `AudioBufferSourceNode`로 그대로 재생
+3. **서버 합치기(`handleMerge`)는 변경 없음** — 서버 쪽은 이미 `pydub`로 독립적 피치시프트 처리 중 (`mr_pitch_shift` 파라미터)
+4. **`onended` 이벤트 처리** — `ScriptProcessorNode`는 `onended`가 없으므로, 보컬의 `onended`로 재생 종료를 감지 (기존 로직 유지)
+
+### 체크리스트
+
+- [ ] STEP 1: `soundtouchjs` import 추가
+- [ ] STEP 2: `soundTouchRef`, `stNodeRef` ref 추가
+- [ ] STEP 3: `startPlayback()` — `AudioBufferSourceNode.detune` → SoundTouch 파이프라인으로 교체
+- [ ] STEP 4: `stopPlayback()` — `disconnect()` 방식으로 변경
+- [ ] STEP 5: `useEffect([mrPitch])` — `detune` → `SoundTouch.pitch` 실시간 변경
+- [ ] STEP 6: 테스트 — 피치 변경 시 속도 유지 확인
+- [ ] STEP 7: 테스트 — 보컬/MR/합쳐서 모드 전환 정상 동작 확인
+- [ ] STEP 8: 테스트 — 슬라이더 실시간 피치 변경 확인 (재생 중)
+
+## v26 — MR 음정 미리듣기: 클라이언트 SoundTouchJS → 서버 rubberband 처리로 변경 (2026-04-01)
+
+### 배경 및 문제
+
+v25에서 SoundTouchJS(WSOLA)로 클라이언트 피치 시프트를 구현했으나, 내부적으로 **피치 변환 → 템포 보상**을 순차 처리하기 때문에 체감될 만큼 재생 속도가 변하는 문제가 있음.
+
+### 해결 방향
+
+피치 변환을 클라이언트에서 처리하지 않고, **서버에서 rubberband**로 고품질 피치 시프트 수행 후 변환된 MR 파일을 받아서 재생하는 방식으로 변경.
+
+**플로우**: 슬라이더로 음정 선택 → "이 음정으로 미리듣기" 버튼 클릭 → 서버에서 rubberband 피치 변환 → 변환된 MR 파일(또는 스트리밍 URL) 수신 → 클라이언트에서 재생
+
+### 백엔드 변경 (voice_convert.py)
+
+#### 새 엔드포인트 추가
+
+```
+POST /api/voice-convert/{id}/preview-mr
+Body: { "pitch_shift": float }  // 반음 단위 (예: +2, -3)
+```
+
+- `backing.wav`를 rubberband CLI로 피치 변환
+  ```bash
+  rubberband -p {pitch_shift} input.wav output.wav
+  ```
+- **옵션 A**: 변환된 MR을 MinIO에 임시 저장 → 스트리밍 URL 반환
+  - 장점: 같은 피치 재요청 시 캐시 가능
+  - 단점: 임시 파일 정리 필요
+- **옵션 B**: 변환된 MR을 직접 스트리밍 응답으로 반환
+  - 장점: 별도 저장/정리 불필요
+  - 단점: 매번 변환 수행
+
+**권장: 옵션 A** (동일 피치 반복 미리듣기 시 캐시 활용 가능)
+
+#### 응답 형식
+
+```json
+{
+  "url": "https://minio.../temp/preview_mr_{id}_{pitch}.wav",
+  "pitch_shift": 2,
+  "duration": 180.5
+}
+```
+
+### 프론트엔드 변경 (StudioTab2.jsx — MrPitchAdjustPanel)
+
+#### STEP 1: SoundTouchJS 제거
+
+- `soundtouchjs` import 제거
+- `SoundTouch`, `SimpleFilter`, `getWebAudioNode` 관련 코드 삭제
+- `soundTouchRef`, `stNodeRef` ref 제거
+
+#### STEP 2: MR 재생을 일반 AudioBufferSourceNode로 변경
+
+- 피치 변환 없이 원본 MR을 `AudioBufferSourceNode`로 재생 (v25 이전 방식)
+- `detune` 조작 없음 — 순수 원본 재생
+
+#### STEP 3: "이 음정으로 미리듣기" 버튼 추가
+
+```jsx
+<Button
+  onClick={handlePreviewPitchedMr}
+  disabled={isLoadingPreview || mrPitch === 0}
+>
+  {isLoadingPreview ? '변환 중...' : '이 음정으로 미리듣기'}
+</Button>
+```
+
+- 클릭 시 `POST /api/voice-convert/{id}/preview-mr` 호출 (body: `{ pitch_shift: mrPitch }`)
+- 로딩 상태 표시 (예상 2~3초)
+- 응답으로 받은 URL을 `fetch` → `arrayBuffer` → `decodeAudioData`하여 `previewMrBufferRef`에 저장
+- 즉시 변환된 MR 재생 시작
+
+#### STEP 4: 재생 모드별 동작
+
+| 모드 | 보컬 | MR |
+|---|---|---|
+| MR만 | — | 서버에서 받은 피치 변환 MR 재생 |
+| 보컬만 | 원본 보컬 재생 | — |
+| 합쳐서 미리듣기 | 원본 보컬 재생 | 서버에서 받은 피치 변환 MR + 원본 보컬 동시 재생 |
+
+#### STEP 5: 상태 관리
+
+```jsx
+const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+const [previewPitch, setPreviewPitch] = useState(null);  // 현재 변환된 MR의 피치
+const previewMrBufferRef = useRef(null);  // 변환된 MR AudioBuffer
+```
+
+- 슬라이더 변경 시 `previewPitch !== mrPitch`이면 "이 음정으로 미리듣기" 버튼 활성화
+- 변환 완료 후 `previewPitch = mrPitch`로 업데이트
+- 피치 0(원본)이면 버튼 비활성화, 기존 원본 MR 재생
+
+### 체크리스트
+
+- [ ] 백엔드: `POST /api/voice-convert/{id}/preview-mr` 엔드포인트 구현
+- [ ] 백엔드: rubberband CLI 연동 및 MinIO 임시 저장 로직
+- [ ] 프론트엔드: SoundTouchJS 관련 코드 제거
+- [ ] 프론트엔드: MR 재생을 원본 AudioBufferSourceNode로 복원
+- [ ] 프론트엔드: "이 음정으로 미리듣기" 버튼 및 API 호출 로직 추가
+- [ ] 프론트엔드: 로딩 상태 UI 표시
+- [ ] 프론트엔드: 합쳐서 미리듣기 모드에서 변환된 MR + 원본 보컬 동시 재생
+- [ ] 테스트: 피치 변환 품질 확인 (속도 변화 없이 음정만 변경되는지)
+- [ ] 테스트: 캐시 동작 확인 (같은 피치 재요청 시 즉시 응답)
+- [ ] 테스트: 모드 전환(MR만/보컬만/합쳐서) 정상 동작 확인
+
+## v27 — Veo 3.1 Fast GA 전환 및 립싱크 씬 우선순위 개선 (2026-04-01)
+
+### 배경
+
+- Veo preview 모델이 내일(4/2) 폐기 예정 → GA 모델(`veo-3.1-fast-generate-001`)로 전환 필요
+- Veo 3.1 Fast는 가사 립싱크를 자동 처리하므로 Sync Labs 외부 서비스가 불필요
+- 립싱크 씬 우선순위: Rap 구간이 립싱크에 가장 적합하므로 Rap > Chorus 순으로 배정
+
+### 변경 사항
+
+#### 1. `mv_generator.py` — Veo 모델 GA 전환 + 가사 프롬프트 포함
+
+- `VEO31_GENERATE_URL`: `veo-3.1-generate-preview` → `veo-3.1-fast-generate-001` 변경
+- `start_scene_video()` 함수 매개변수 추가:
+  - `lyrics_segment: str = None` — 해당 씬의 가사 텍스트
+  - `scene_type: str = "drama"` — 씬 유형 (drama / lipsync)
+- lipsync 씬일 때 프롬프트에 가사를 포함하여 Veo가 립싱크를 자동 생성하도록 처리
+
+#### 2. `mv_pipeline.py` — 씬 타입 배정 및 Sync Labs 제거
+
+- scene_type 배정 로직 개선:
+  - Rap 구간이 있으면 → Rap 씬만 `lipsync`으로 배정
+  - Rap 구간이 없으면 → Chorus 씬을 `lipsync`으로 배정
+- Phase 3에서 `start_scene_video()` 호출 시 `lyrics_segment`, `scene_type` 전달
+- Sync Labs 분기 코드 제거 또는 비활성화 (Veo 3.1 Fast가 직접 처리)
+
+#### 3. `mv_generator.py` — 씬 분할 프롬프트 업데이트
+
+- scene_type 결정 규칙을 Rap > Chorus 우선순위로 업데이트
+- 씬 분할 시 Rap 구간을 lipsync 후보로 우선 지정
+
+### 체크리스트
+
+- [ ] `mv_generator.py`: `VEO31_GENERATE_URL`을 `veo-3.1-fast-generate-001`로 변경
+- [ ] `mv_generator.py`: `start_scene_video()`에 `lyrics_segment`, `scene_type` 매개변수 추가
+- [ ] `mv_generator.py`: lipsync 씬일 때 가사를 프롬프트에 포함하는 로직 추가
+- [ ] `mv_generator.py`: 씬 분할 프롬프트에서 scene_type 규칙 업데이트 (Rap > Chorus)
+- [ ] `mv_pipeline.py`: Rap > Chorus 우선순위로 scene_type 배정 로직 구현
+- [ ] `mv_pipeline.py`: Phase 3에서 `lyrics_segment`, `scene_type` 전달
+- [ ] `mv_pipeline.py`: Sync Labs 분기 코드 제거/비활성화
+- [ ] 테스트: GA 모델로 영상 생성 정상 동작 확인
+- [ ] 테스트: Rap 구간 립싱크 품질 확인
+- [ ] 테스트: Rap 없는 곡에서 Chorus 립싱크 폴백 확인
+
+## v28 — Veo 영상 기반 Sync Labs 립싱크 후보정 Phase 3.5 추가 (2026-04-01)
+
+### 배경
+
+- Veo 3.1 Fast의 자체 립싱크 품질이 불안정한 경우가 있음
+- 전략 변경: 모든 씬을 Veo로 먼저 생성한 뒤, lipsync 씬만 Sync Labs로 후보정
+- 기존 `sync_labs_service.py`는 이미지→정지영상→Sync Labs 호출 방식 → Veo 영상을 직접 전달하는 방식으로 확장
+
+### 변경 사항
+
+#### 1. `sync_labs_service.py` — 영상 기반 립싱크 함수 추가
+
+- 새 함수 `generate_lipsync_from_video(video_bytes, audio_bytes)` 추가
+  - 기존 `generate_lipsync(image_bytes, audio_bytes)`는 유지 (하위 호환)
+  - 이미지→정지영상 변환 단계 없이 Veo 영상을 직접 Sync Labs에 전달
+  - MinIO presigned URL로 영상/오디오 업로드 후 Sync Labs API에 URL 전달
+  - 폴링 방식으로 결과 대기, 완료 시 결과 영상 bytes 반환
+
+#### 2. `mv_pipeline.py` — Phase 3.5 (Sync Labs 후보정) 추가
+
+- Phase 3 (Veo 영상 생성) 이후, Phase 4 (합치기) 이전에 **Phase 3.5** 삽입
+- Phase 3.5 로직:
+  1. 모든 씬 중 `scene_type == "lipsync"` 이고 Veo 영상 생성이 완료된 씬만 필터링
+  2. 각 lipsync 씬에 대해:
+     - MinIO에서 Veo 영상 다운로드 (video_bytes)
+     - `cut_audio_segment()`로 해당 구간 오디오 자르기 (audio_bytes)
+     - `generate_lipsync_from_video(video_bytes, audio_bytes)` 호출
+     - 성공 시: 결과 영상으로 MinIO에 교체 저장 (같은 키)
+     - 실패 시: Veo 원본 영상 유지 (폴백), 로그 경고 출력
+  3. 모든 lipsync 씬 처리 완료 후 Phase 4로 진행
+
+### 체크리스트
+
+- [ ] `sync_labs_service.py`: `generate_lipsync_from_video(video_bytes, audio_bytes)` 함수 추가
+- [ ] `sync_labs_service.py`: MinIO presigned URL 생성 및 Sync Labs API 호출 로직 구현
+- [ ] `mv_pipeline.py`: Phase 3.5 단계 추가 (Phase 3 이후, Phase 4 이전)
+- [ ] `mv_pipeline.py`: lipsync 씬 필터링 로직 구현
+- [ ] `mv_pipeline.py`: MinIO에서 Veo 영상 다운로드 → Sync Labs 호출 → 결과 교체 저장
+- [ ] `mv_pipeline.py`: Sync Labs 실패 시 Veo 원본 유지 폴백 처리
+- [ ] `mv_pipeline.py`: Phase 3.5 진행 상태 로깅
+- [ ] 테스트: Sync Labs API에 Veo 영상 전달 정상 동작 확인
+- [ ] 테스트: 실패 시 폴백(Veo 원본 유지) 정상 동작 확인
+- [ ] 테스트: Phase 3 → 3.5 → 4 전체 파이프라인 정상 흐름 확인
+
+## v29 — Kling 영상 생성 3.0 Omni 업그레이드 + 립싱크 씬 가사 프롬프트 (2026-04-01)
+
+### 배경
+
+- Kling v3 → v3 Omni 모델로 업그레이드하여 오디오+립싱크 내장 지원 활용
+- 기존 `/v1/videos/image2video` 엔드포인트를 `/v1/videos/omni`로 전환
+- lipsync 씬에 해당 구간 가사를 프롬프트에 포함하여 립싱크 품질 향상
+- "music video" 컨텍스트를 프롬프트에 추가하여 영상 스타일 일관성 강화
+
+### 변경 사항
+
+#### 1. `kling_video_generator.py`
+
+- 엔드포인트 변경: `/v1/videos/image2video` → `/v1/videos/omni`
+- model_name 변경: `kling-v3` → `kling-v3-omni`
+- 요청 body에 `motion_has_audio: true` 추가 (오디오+립싱크 활성화)
+- `start_scene_video_kling()` 함수 시그니처에 `lyrics_segment`, `scene_type` 매개변수 추가
+- lipsync 씬(`scene_type == "lipsync"`)일 때 해당 구간 가사를 프롬프트에 포함
+  - 예: `"[Lyrics: 가사 내용] Singer performing with emotional expression..."`
+- 모든 씬 프롬프트에 "music video" 컨텍스트 키워드 추가
+
+#### 2. `mv_pipeline.py`
+
+- Phase 3에서 Kling 호출 시 `lyrics_segment`, `scene_type` 인자 전달
+  - 기존 씬 데이터에서 해당 구간 가사 및 씬 타입 추출하여 전달
+
+### 체크리스트
+
+- [ ] `kling_video_generator.py`: 엔드포인트 `/v1/videos/image2video` → `/v1/videos/omni` 변경
+- [ ] `kling_video_generator.py`: model_name `kling-v3` → `kling-v3-omni` 변경
+- [ ] `kling_video_generator.py`: `motion_has_audio: true` 추가
+- [ ] `kling_video_generator.py`: `start_scene_video_kling()` 시그니처에 `lyrics_segment`, `scene_type` 추가
+- [ ] `kling_video_generator.py`: lipsync 씬 가사 프롬프트 포함 로직 구현
+- [ ] `kling_video_generator.py`: "music video" 컨텍스트 프롬프트 추가
+- [ ] `mv_pipeline.py`: Phase 3 Kling 호출 시 `lyrics_segment`, `scene_type` 전달
+- [ ] 테스트: Omni 엔드포인트로 영상 생성 정상 동작 확인
+- [ ] 테스트: lipsync 씬 가사 포함 프롬프트 정상 생성 확인
+- [ ] 테스트: motion_has_audio 활성화 시 오디오+립싱크 품질 확인
+
+## v32 — 씬 영상 개별 그리드 + 재생/다운로드 + 모달 팝업 UI (2026-04-02)
+
+### 배경
+
+- 백엔드: 씬별 `video_url` (presigned URL) 이미 반환 중
+- 프론트엔드: 씬 이미지는 그리드로 보여주고 있지만, 영상은 최종 합본만 보여줌
+- 개별 씬 영상을 확인하고 다운로드할 수 있는 UI가 필요
+
+### 변경 사항 (프론트엔드만)
+
+#### 1. `UploadPage.jsx`
+
+- 씬 카드에 영상 완료 시 **재생 버튼(▶)** 오버레이 표시 (기존 "영상 완료" 배지 대체)
+- 재생 버튼 클릭 시 **모달 팝업** 열기:
+  - `<video>` 플레이어로 해당 씬 영상 재생 (presigned URL 사용)
+  - 한글 씬 설명 텍스트 표시
+  - 다운로드 버튼 (presigned URL을 `<a download>` 링크로 제공)
+  - 모달 외부 클릭 또는 X 버튼으로 닫기
+- 각 씬 카드에 **개별 다운로드 버튼(⬇)** 추가 (영상 완료 상태일 때만 활성화)
+- 씬 영상 생성 중: **프로그레스 표시** (스피너 + "영상 생성 중..." 텍스트)
+- 씬 영상 대기 중: **⏳ 아이콘** + "대기 중" 텍스트 표시
+
+#### 2. `UploadPage.css`
+
+- 씬 영상 카드 스타일:
+  - 재생 버튼 오버레이 (반투명 원형 배경 + ▶ 아이콘, 호버 시 확대)
+  - 다운로드 버튼 위치 및 스타일 (카드 우하단, 아이콘 버튼)
+  - 생성 중/대기 중 상태 오버레이 스타일
+- 모달 스타일:
+  - 풀스크린 백드롭 (반투명 검정)
+  - 중앙 정렬 모달 컨테이너 (max-width: 800px)
+  - `<video>` 플레이어: width 100%, controls 속성
+  - 씬 설명 텍스트 영역
+  - 다운로드 버튼 스타일
+  - 닫기(X) 버튼 (모달 우상단)
+
+### 체크리스트
+
+- [ ] `UploadPage.jsx`: 씬 카드에 영상 완료 시 재생 버튼(▶) 오버레이 추가
+- [ ] `UploadPage.jsx`: 모달 컴포넌트 구현 (video 플레이어 + 한글 설명 + 다운로드)
+- [ ] `UploadPage.jsx`: 모달 열기/닫기 상태 관리 (useState)
+- [ ] `UploadPage.jsx`: 각 씬 카드에 개별 다운로드 버튼(⬇) 추가
+- [ ] `UploadPage.jsx`: 생성 중 씬 프로그레스 표시 (스피너 + 텍스트)
+- [ ] `UploadPage.jsx`: 대기 중 씬 ⏳ 아이콘 표시
+- [ ] `UploadPage.css`: 재생 버튼 오버레이 스타일
+- [ ] `UploadPage.css`: 다운로드 버튼 스타일
+- [ ] `UploadPage.css`: 생성 중/대기 중 상태 오버레이 스타일
+- [ ] `UploadPage.css`: 모달 백드롭 + 컨테이너 스타일
+- [ ] `UploadPage.css`: 모달 내 video 플레이어 스타일
+- [ ] `UploadPage.css`: 모달 닫기 버튼 스타일
+- [ ] 테스트: 씬 카드 재생 버튼 클릭 시 모달 정상 열림 확인
+- [ ] 테스트: 모달 내 영상 재생 정상 동작 확인
+- [ ] 테스트: 개별 다운로드 버튼 정상 동작 확인
+- [ ] 테스트: 생성 중/대기 중 상태 표시 정상 확인
+
+## v33 — 개별 씬 영상 생성 기능 (2026-04-02)
+
+### 배경
+
+- 현재 `POST /api/mv/jobs/{job_id}/generate-videos`로 전체 씬 영상을 일괄 생성
+- 특정 씬만 개별적으로 영상을 생성/재생성할 수 있는 기능 필요
+- 기존 전체 생성 기능은 그대로 유지하면서 개별 생성 추가
+
+### 변경 사항
+
+#### 1. 백엔드 — `app/routes/mv.py`
+
+- `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/generate-video` 엔드포인트 추가
+  - 기존 `regenerate-image` 엔드포인트 패턴 참고 (job 소유권 확인, 씬 조회 등)
+  - 해당 씬의 이미지 바이트를 MinIO에서 로드
+  - 캐릭터 시트(`character_object_name`)가 있으면 함께 로드
+  - `BackgroundTasks`로 비동기 영상 생성 실행
+  - job의 `video_model` 설정에 따라 Kling 또는 Veo 호출
+  - 생성 완료 시 해당 씬의 `video_object_name`, `video_url` 업데이트
+  - 생성 중 해당 씬의 `video_status`를 `generating` → `completed` / `failed`로 관리
+
+#### 2. 프론트엔드 — `frontend/src/api/index.js`
+
+- `generateSceneVideo(jobId, sceneNumber)` API 함수 추가
+  - `API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/generate-video`)`
+  - 기존 `regenerateMVSceneImage` 패턴과 동일한 형태
+
+#### 3. 프론트엔드 — `frontend/src/pages/UploadPage.jsx`
+
+- 각 씬 카드에 **[🎬 생성]** 버튼 추가 (영상 미생성 상태일 때만 표시)
+- 클릭 시 `generateSceneVideo(jobId, sceneNumber)` 호출
+- 호출 후 해당 씬의 상태를 `generating`으로 변경하여 UI에 스피너 표시
+- 기존 폴링 로직(`fetchJobStatus`)으로 생성 완료 감지 및 UI 업데이트
+- 전체 영상 생성 버튼은 기존 그대로 유지
+
+### 체크리스트
+
+- [ ] `app/routes/mv.py`: `POST .../scenes/{scene_number}/generate-video` 엔드포인트 추가
+- [ ] `app/routes/mv.py`: 씬 이미지 MinIO 로드 로직
+- [ ] `app/routes/mv.py`: 캐릭터 시트 로드 로직
+- [ ] `app/routes/mv.py`: BackgroundTasks로 비동기 영상 생성 (Kling/Veo 분기)
+- [ ] `app/routes/mv.py`: 생성 완료 시 씬 video_object_name, video_url DB 업데이트
+- [ ] `app/routes/mv.py`: 씬 video_status 상태 관리 (generating → completed/failed)
+- [ ] `frontend/src/api/index.js`: `generateSceneVideo(jobId, sceneNumber)` 함수 추가
+- [ ] `UploadPage.jsx`: 씬 카드에 [🎬 생성] 버튼 추가 (영상 미생성 시)
+- [ ] `UploadPage.jsx`: 버튼 클릭 시 API 호출 및 로컬 상태 업데이트
+- [ ] `UploadPage.jsx`: 폴링으로 생성 완료 감지 및 UI 반영
+- [ ] 테스트: 개별 씬 영상 생성 API 정상 동작 확인
+- [ ] 테스트: 전체 영상 생성과 개별 생성 간 충돌 없음 확인
+- [ ] 테스트: 생성 중 폴링으로 상태 업데이트 정상 동작 확인
+
+## v38 — Sync Labs 후보정 개선: 오디오 재합치기, 에러 저장, 자동/수동 재시도 (2026-04-02)
+
+### 배경
+
+- Sync Labs 결과 영상에 자체 오디오가 포함되어 원본 음악과 불일치하는 문제 발생
+- Sync Labs 호출 실패 시 에러 정보가 저장되지 않아 디버깅 어려움
+- 일시적 API 장애에 대한 자동 재시도가 없어 수동 개입 필요
+- 사용자가 실패한 립싱크를 직접 재시도할 수 있는 수단이 없음
+
+### 변경 사항
+
+#### 1. `app/routes/mv.py` — Sync Labs 결과 오디오 제거 + 원본 음악 재합치기
+
+- Sync Labs 결과 영상에서 `ffmpeg -an`으로 오디오 트랙 제거
+- 원본 음악의 해당 구간을 `cut_audio_segment()`로 추출
+- 오디오 제거된 영상 + 원본 음악 구간을 `ffmpeg`로 합치기 (mux)
+- 최종 결과물을 MinIO에 저장
+
+#### 2. `app/routes/mv.py` — sync_error 필드에 에러 메시지 저장
+
+- Sync Labs API 호출 실패 시 에러 메시지를 씬의 `sync_error` 필드에 저장
+- DB 업데이트하여 에러 상태 영구 기록
+
+#### 3. `app/routes/mv.py` — Sync Labs 자동 재시도 (최대 2회, 지수 백오프)
+
+- Sync Labs API 호출 실패 시 자동 재시도 로직 추가
+- 최대 2회 재시도 (총 3회 시도)
+- 지수 백오프: 1차 재시도 30초 대기, 2차 재시도 60초 대기
+- 모든 재시도 실패 시 `sync_error`에 최종 에러 저장
+
+#### 4. `app/routes/mv.py` — 수동 재시도 엔드포인트
+
+- `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/retry-sync` 엔드포인트 추가
+- job 소유권 확인, 해당 씬 조회
+- `BackgroundTasks`로 Sync Labs 후보정 비동기 재실행
+- 기존 동일 로직 적용 (오디오 제거+재합치기, 에러 저장, 자동 재시도)
+
+#### 5. `app/routes/mv.py` — `_scene_to_dict`에 sync_error 반환
+
+- `_scene_to_dict` 함수에 `sync_error` 필드 추가하여 프론트엔드에 에러 정보 전달
+
+#### 6. `mv_pipeline.py` — Phase 3.5에 동일 적용
+
+- Phase 3.5 (Sync Labs 후보정)에도 동일한 개선 사항 적용:
+  - Sync Labs 결과 오디오 제거 + 원본 음악 구간 재합치기
+  - `sync_error` 필드에 에러 메시지 저장
+  - 자동 재시도 (최대 2회, 지수 백오프)
+
+#### 7. `frontend/src/api/index.js` — retrySyncLabs 함수 추가
+
+- `retrySyncLabs(jobId, sceneNumber)` API 함수 추가
+  - `API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/retry-sync`)`
+
+#### 8. `frontend/src/pages/UploadPage.jsx` — sync 실패 에러 표시 + 재시도 버튼
+
+- 씬 카드에 `sync_error`가 있을 경우 에러 메시지 표시 (빨간색 텍스트)
+- **[🔄 립싱크 재시도]** 버튼 표시 (sync 실패 상태일 때만)
+- 버튼 클릭 시 `retrySyncLabs(jobId, sceneNumber)` 호출
+- 호출 후 해당 씬 상태를 `syncing`으로 변경하여 UI에 스피너 표시
+- 폴링으로 재시도 완료 감지 및 UI 업데이트
+
+### 체크리스트
+
+- [ ] `app/routes/mv.py`: Sync Labs 결과에서 ffmpeg -an으로 오디오 제거
+- [ ] `app/routes/mv.py`: 원본 음악 구간 추출 및 오디오 제거된 영상과 합치기
+- [ ] `app/routes/mv.py`: sync_error 필드에 에러 메시지 저장 로직
+- [ ] `app/routes/mv.py`: 자동 재시도 로직 (최대 2회, 지수 백오프 30초/60초)
+- [ ] `app/routes/mv.py`: `POST .../scenes/{scene_number}/retry-sync` 엔드포인트 추가
+- [ ] `app/routes/mv.py`: `_scene_to_dict`에 sync_error 필드 추가
+- [ ] `mv_pipeline.py`: Phase 3.5에 오디오 제거+재합치기 적용
+- [ ] `mv_pipeline.py`: Phase 3.5에 sync_error 저장 적용
+- [ ] `mv_pipeline.py`: Phase 3.5에 자동 재시도 적용
+- [ ] `frontend/src/api/index.js`: `retrySyncLabs(jobId, sceneNumber)` 함수 추가
+- [ ] `UploadPage.jsx`: sync_error 에러 메시지 표시 (빨간색 텍스트)
+- [ ] `UploadPage.jsx`: [🔄 립싱크 재시도] 버튼 추가 및 API 호출
+- [ ] `UploadPage.jsx`: 재시도 중 스피너 표시 및 폴링 업데이트
+- [ ] 테스트: Sync Labs 결과 오디오 제거 + 원본 음악 합치기 정상 동작
+- [ ] 테스트: 에러 발생 시 sync_error 필드 저장 확인
+- [ ] 테스트: 자동 재시도 및 지수 백오프 정상 동작
+- [ ] 테스트: 수동 재시도 엔드포인트 정상 동작
+- [ ] 테스트: 프론트엔드 에러 표시 및 재시도 버튼 정상 동작
+
+---
+
+# v4.0 -- Phase 3.5 자동 Sync Labs 적용 코드 검토 및 테스트
+
+- **수정일자**: 2026-04-03
+- **요청 작업**: MV 파이프라인 Phase 3.5 자동 Sync Labs 활성화, Phase 4 / Phase 3.6 Sync Labs 우선 사용 코드에 대한 면밀한 검토 및 테스트
+
+---
+
+## 1. 백엔드 검토 항목
+
+### 1-1. Phase 3.5 코드 로직 검증
+- [ ] 립싱크 씬 판별 로직 (lipsync == True) 정확성 확인
+- [ ] Demucs 보컬 분리 호출 로직 검증 (입력 파일 경로, 출력 경로, 에러 처리)
+- [ ] Sync Labs API 호출 파라미터 검증 (영상 URL, 오디오 URL, 모델 선택)
+- [ ] Sync Labs 결과 다운로드 및 무음 영상 저장 로직 검증
+- [ ] `video_synclabs_object` 필드가 씬 데이터에 올바르게 저장되는지 확인
+- [ ] 비동기 처리 흐름 (async/await) 정합성 확인
+
+### 1-2. Phase 4 Sync Labs 우선 로직 검증
+- [ ] `video_synclabs_object` 존재 시 원본 대신 사용하는 분기문 확인
+- [ ] `video_synclabs_object` 미존재 시 기존 로직으로 fallback 되는지 확인
+- [ ] concatenate 시 영상 해상도/코덱 호환성 이슈 여부 확인
+
+### 1-3. Phase 3.6 수정 검증
+- [ ] 오디오 합치기에서 `video_synclabs_object` 우선 사용 로직 확인
+- [ ] Sync Labs 영상의 오디오 트랙 처리 방식 확인 (무음 처리 vs 원본 오디오)
+- [ ] 기존 씬과 Sync Labs 씬이 혼재할 때의 오디오 합치기 정합성
+
+### 1-4. 에러 핸들링
+- [ ] Sync Labs API 실패 시 fallback 처리 확인 (원본 영상 유지)
+- [ ] Demucs 분리 실패 시 예외 처리 확인
+- [ ] 네트워크 타임아웃 / 429 Rate Limit 처리 여부
+- [ ] 파일 I/O 에러 (디스크 공간 부족, 권한 문제) 처리 여부
+
+### 1-5. Edge Case 확인
+- [ ] 립싱크 씬이 0개인 경우 (Phase 3.5 스킵 여부)
+- [ ] 모든 씬이 립싱크인 경우
+- [ ] Sync Labs 결과 영상 길이가 원본과 다른 경우
+- [ ] 이미 Sync Labs 처리된 씬에 대해 재실행 시 동작
+- [ ] 씬 번호 순서가 비연속적인 경우
+
+---
+
+## 2. 프론트엔드 검토 항목
+
+### 2-1. 파이프라인 변경에 따른 영향도 확인
+- [ ] MV 생성 진행상태 표시에서 Phase 3.5 단계가 반영되는지 확인
+- [ ] Sync Labs 처리 중 상태 메시지 / 프로그레스 표시 확인
+- [ ] Sync Labs 성공/실패 결과가 UI에 올바르게 반영되는지 확인
+
+### 2-2. Sync Labs 결과 반영 UI
+- [ ] 씬 미리보기에서 Sync Labs 적용된 영상이 표시되는지 확인
+- [ ] 최종 MV 결과물에서 Sync Labs 영상이 올바르게 포함되는지 확인
+- [ ] 기존 v3.0 에러 표시/재시도 UI와의 호환성 확인
+
+---
+
+## 3. 테스트 항목
+
+### 3-1. 코드 정적 분석
+- [ ] import 문제 확인 (누락된 모듈, 미사용 import)
+- [ ] 변수명 일관성 검증 (`video_synclabs_object` 등 필드명 통일)
+- [ ] 로직 흐름 검증 (분기문 조건, 반복문, 예외 전파)
+- [ ] 타입 힌트 / 파라미터 검증
+
+### 3-2. 서버 기동 확인
+- [ ] 백엔드 서버 정상 기동 (import 에러 없음)
+- [ ] 프론트엔드 빌드 정상 완료
+- [ ] 기존 API 엔드포인트 비파괴 확인 (regression 없음)
+
+### 3-3. API 엔드포인트 기본 동작 확인
+- [ ] `POST /mv/generate` 정상 호출 가능 여부
+- [ ] MV 파이프라인 전체 흐름 (Phase 1 ~ Phase 5) 시뮬레이션
+- [ ] 립싱크 씬 포함 MV 생성 요청 시 Phase 3.5 자동 실행 확인
+- [ ] Sync Labs 결과가 Phase 4 / Phase 3.6에 올바르게 전달되는지 확인
+
+---
+
+## 4. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 검토 | 20 | 0/20 |
+| 프론트엔드 검토 | 6 | 0/6 |
+| 테스트 | 8 | 0/8 |
+| **합계** | **34** | **0/34** |
+
+---
+
+# v4.1 — 영상 생성 중 씬 리스트 유지 (Hotfix)
+
+- **수정일자**: 2026-04-03
+- **요청**: "Kling으로 영상 생성하기" 버튼 클릭 시 씬 리스트가 사라지는 문제 수정
+
+## 1. 문제 분석
+
+| 항목 | 내용 |
+|------|------|
+| 증상 | 영상 생성 버튼 클릭 후 polling 시작 시 씬 리스트 UI가 사라짐 |
+| 원인 | `startMvPolling` 콜백에서 `setMvJob(data)`로 상태를 전체 교체하면서, API 응답에 `scenes`가 포함되지 않으면 기존 scenes 데이터가 유실됨 |
+| 영향 범위 | 프론트엔드 1파일 (`UploadPage.jsx`) |
+
+## 2. 수정 내역
+
+| # | 파일 | 수정 내용 |
+|---|------|-----------|
+| 1 | `frontend/src/pages/UploadPage.jsx` (line 265) | `setMvJob(data)` → functional updater 패턴으로 변경. 새 응답에 `scenes`가 없으면 이전 `scenes`를 보존 |
+
+## 3. 검증
+
+- 렌더링 조건 `mvStep >= 2`는 step 3(영상 생성 중)을 포함하므로 조건 자체는 정상
+- polling 시 scenes 데이터 보존 로직 추가로 씬 리스트 유지 확인

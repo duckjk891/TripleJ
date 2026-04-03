@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     kits_api_key: str = ""
     kits_api_url: str = "https://arpeggi.io/api/kits/v1"
 
+    # LALAL.AI Vocal Enhancement
+    lalal_api_key: str = ""
+
+    # Wondera AI Music Generation
+    wondera_api_key: str = ""
+
+    # Sync Labs (Lip Sync)
+    sync_api_key: str = ""
+
     # YuE Music Generation
     yue_model_dir: str = ""  # Path to YuEGP directory
     yue_output_dir: str = "./yue_output"
