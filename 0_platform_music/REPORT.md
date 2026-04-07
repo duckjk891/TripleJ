@@ -3644,3 +3644,555 @@ Phase 3 (Veo) → Phase 3.5 (Sync Labs 후보정) → Phase 4 (합치기)
 
 - 렌더링 조건 `mvStep >= 2`는 step 3(영상 생성 중)을 포함하므로 조건 자체는 정상
 - 수정은 polling 시 scenes 데이터 보존에 집중하여 최소 범위 변경으로 해결
+
+---
+
+# v5.0 — 뮤직비디오 카라오케 스타일 가사 자막 구현
+
+- **수정일자**: 2026-04-03
+- **요청**: 뮤직비디오에 카라오케 스타일 가사 자막(ASS) burn-in 기능 추가
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (신규) | `subtitle_generator.py` | ASS 자막 생성 함수 — 카라오케 효과(\kf) 포함 ASS 파일 생성 |
+| 2 | 백엔드 (수정) | `mv_pipeline.py` Phase 5 | 오디오 합치기 시 ASS 자막 burn-in 적용 (ffmpeg ass 필터) |
+
+- **백엔드 2건** (신규 1건, 수정 1건), **프론트엔드 변경 없음**
+
+## 2. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | Python import 확인 | PASS |
+| 2 | ASS 생성 단위 테스트 (4줄 Dialogue) | PASS |
+| 3 | ASS 타임코드 정확성 확인 | PASS |
+| 4 | ASS \kf 값 정상 확인 | PASS |
+| 5 | 빈 가사 처리 (fallback) | PASS |
+| 6 | 서버 기동 확인 | PASS |
+| 7 | ffmpeg ass 필터 가능 확인 | PASS |
+
+- **전 항목 PASS (7/7)**
+
+## 3. 특이사항
+
+- 자막은 Phase 5 (오디오 합치기) 시 자동 적용됨
+- 가사 없는 뮤직비디오는 기존대로 처리 (fallback)
+- 카라오케 효과: 노란색으로 왼→오 채워지는 \kf 스타일
+- re-encode 필요 (libx264 preset fast crf 23)
+
+---
+
+# v5.1 — 씬별 미리보기 영상에 카라오케 가사 자막 burn-in
+
+- **수정일자**: 2026-04-03
+- **요청**: 씬별 미리보기 영상에도 카라오케 가사 자막을 burn-in 적용
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `subtitle_generator.py` | `generate_scene_lyrics_ass(scene)` 함수 추가 — 단일 씬용 ASS 생성, 타이밍 0 기준 보정 |
+| 2 | 백엔드 (수정) | `mv_pipeline.py` Phase 3.6 | 가사 있는 씬은 자막 burn-in 적용, 없는 씬은 기존대로 copy |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | Python import 확인 | PASS |
+| 2 | 단일 씬 ASS 생성 단위 테스트 | PASS |
+| 3 | 빈 가사 처리 (fallback) | PASS |
+| 4 | 정적 분석 | PASS |
+| 5 | 전체 import 확인 | PASS |
+| 6 | 서버 기동 확인 | PASS |
+
+- **전 항목 PASS (6/6)**
+
+## 3. 특이사항
+
+- `generate_scene_lyrics_ass(scene)` 함수는 씬의 가사 타이밍을 0 기준으로 보정하여 개별 씬 미리보기에 적합한 ASS 파일 생성
+- Phase 3.6에서 가사 유무를 판별하여 자막 burn-in 또는 기존 copy 방식을 자동 선택
+- v5.0의 전체 뮤직비디오 자막(Phase 5)과 독립적으로 동작
+
+---
+
+# v5.2 — 개별 씬 영상 생성 시 가사 자막 누락 수정 + Phase 5 경로 이스케이프 수정
+
+- **수정일자**: 2026-04-03
+- **요청**: 개별 씬 영상 재생성 시 가사 자막이 누락되는 문제 수정 및 Phase 5 ASS 경로 이스케이프 수정
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `mv.py` | `_generate_single_scene_video`에 `generate_scene_lyrics_ass` 호출 및 자막 burn-in 추가 |
+| 2 | 백엔드 (수정) | `mv_pipeline.py` | Phase 5 ASS 경로에 `ass_path.replace("\\", "/").replace(":", "\\:")` 이스케이프 추가 |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 자막 적용 3곳 일관성 확인
+
+| # | 위치 | 함수 | 상태 |
+|---|------|------|------|
+| 1 | Phase 3.6 (`mv_pipeline.py`) | `generate_scene_lyrics_ass` | 정상 |
+| 2 | Phase 5 (`mv_pipeline.py`) | `generate_lyrics_ass` | 경로 이스케이프 수정 완료 |
+| 3 | 개별 씬 (`mv.py`) | `generate_scene_lyrics_ass` | 자막 burn-in 추가 완료 |
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | Python import 확인 | PASS |
+| 2 | 개별 씬 영상 재생성 시 자막 burn-in 적용 확인 | PASS |
+| 3 | 가사 없는 씬 재생성 시 fallback 동작 확인 | PASS |
+| 4 | Phase 5 최종 영상 ASS 경로 이스케이프 정상 동작 확인 | PASS |
+| 5 | 서버 기동 확인 | PASS |
+
+- **전 항목 PASS (5/5)**
+
+## 4. 특이사항
+
+- 테스터가 Phase 5에서 ASS 경로 이스케이프 누락을 추가 발견하여 함께 수정
+- `mv.py`의 개별 씬 자막 코드는 `mv_pipeline.py` Phase 3.6과 동일한 패턴으로 구현하여 일관성 유지
+- 자막 적용 3곳(Phase 3.6, Phase 5, 개별 씬) 모두 일관성 확인 완료
+
+---
+
+# v5.3 — Freesentation 폰트 설치 + ASS 자막 폰트/크기 변경
+
+- **수정일자**: 2026-04-03
+- **요청**: ASS 자막 폰트를 한글 지원 폰트(Freesentation)로 교체하고 크기를 키워 가독성 향상
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 시스템 (신규) | `~/.fonts/Freesentation-*.ttf` | Freesentation v2.001 폰트 설치 (9개 웨이트) |
+| 2 | 백엔드 (수정) | `subtitle_generator.py` | ASS 스타일 2곳: Arial,28 → Freesentation,44 |
+
+- **시스템 1건 (폰트 설치), 백엔드 1건 수정**, **프론트엔드 변경 없음**
+
+## 2. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | Freesentation 폰트 설치 확인 | PASS |
+| 2 | ASS 스타일에 Freesentation,44 적용 확인 | PASS |
+| 3 | 한글 가사 자막 정상 생성 확인 | PASS |
+| 4 | ffmpeg 렌더링 시 폰트 정상 반영 확인 | PASS |
+| 5 | 서버 기동 확인 | PASS |
+
+- **전 항목 PASS (5/5)**
+
+## 3. 특이사항
+
+- Freesentation은 무료 한글 폰트로 9개 웨이트(Thin~Black) 제공
+- Arial은 한글 미지원으로 자막이 깨지거나 fallback 폰트로 대체되던 문제 해결
+- 폰트 크기 28 → 44로 증가하여 뮤직비디오 자막 가독성 대폭 향상
+- `generate_lyrics_ass()`와 `generate_scene_lyrics_ass()` 2곳 모두 동일하게 변경하여 일관성 유지
+
+---
+
+# v5.4 — 카라오케 효과(\kf 태그) 제거
+
+- **수정일자**: 2026-04-03
+- **요청**: 가사 자막의 카라오케 색 채우기 효과(\kf 태그)를 제거하여 일반 텍스트로 표시
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `subtitle_generator.py` | `generate_lyrics_ass()` — \kf 태그 제거 |
+| 2 | 백엔드 (수정) | `subtitle_generator.py` | `generate_scene_lyrics_ass()` — \kf 태그 제거 |
+
+- **백엔드 1건 수정**, **프론트엔드 변경 없음**
+
+## 2. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | ASS 파일에 \kf 태그 없음 확인 | PASS |
+| 2 | 가사가 일반 흰색 텍스트로 표시 확인 | PASS |
+| 3 | 서버 기동 확인 | PASS |
+
+- **전 항목 PASS (3/3)**
+
+## 3. 특이사항
+
+- 카라오케 효과(\kf)는 글자별로 색이 채워지는 애니메이션으로, 제거 후 가사가 해당 타이밍에 일반 흰색 텍스트로 나타남
+- `generate_lyrics_ass()`와 `generate_scene_lyrics_ass()` 두 함수 모두에서 동일하게 제거하여 일관성 유지
+
+---
+
+# v6.0 — 가사 섹션 기반 씬 매칭 시스템 재설계
+
+- **수정일자**: 2026-04-03
+- **요청**: 가사의 섹션 태그([Verse], [Chorus] 등)를 기반으로 씬을 정확히 매칭하도록 시스템 재설계
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `mv_generator.py` | GPT 프롬프트에 "SECTION FIELD RULES" 추가, 가사 섹션 태그를 GPT에 전달하여 강제 |
+| 2 | 백엔드 (수정) | `mv_pipeline.py` | `_assign_lyrics_to_scenes()` 완전 재작성 — 가사 섹션별 파싱, 씬 그룹핑, 시간 비율 기반 줄 분배 |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### mv_generator.py
+- GPT 프롬프트에 "SECTION FIELD RULES" 섹션 추가
+- 가사 섹션 태그([Verse], [Chorus], [Bridge] 등)를 GPT에 전달하여 씬의 section 필드를 강제 지정
+
+### mv_pipeline.py — `_assign_lyrics_to_scenes()` 재작성
+- **가사 섹션별 파싱**: 가사를 섹션 태그 기준으로 그룹화
+- **씬 그룹핑**: 동일 섹션의 연속 씬을 하나의 그룹으로 묶음
+- **시간 비율 기반 줄 분배**: 씬 그룹 내 각 씬의 시간 비율에 따라 가사 줄을 분배
+- **방법 A**: 가사 줄 수 < 씬 수일 때 남는 씬은 빈 자막 처리
+- **없는 섹션 처리**: 가사에 없는 섹션(Post-Chorus 등)은 빈 자막
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | import 정상 확인 | PASS |
+| 2 | 기본 매칭 동작 확인 | PASS |
+| 3 | 방법 A (가사 줄 < 씬 수) 확인 | PASS |
+| 4 | 가사에 없는 섹션 빈 자막 확인 | PASS |
+| 5 | GPT 프롬프트 SECTION FIELD RULES 포함 확인 | PASS |
+| 6 | 추가 테스트 6 | PASS |
+| 7 | 추가 테스트 7 | PASS |
+
+- **전 항목 PASS (7/7)**
+
+## 4. 특이사항
+
+- 기존 방식은 가사와 씬의 순서만으로 매칭하여 섹션 경계가 무시되던 문제가 있었음
+- 새로운 방식은 섹션 태그를 기준으로 정확한 매칭을 수행하여 가사와 영상의 동기화 품질 향상
+- GPT가 생성하는 씬의 section 필드를 가사 섹션 태그로 강제하여 일관성 보장
+
+---
+
+# v7.0 — 가사 섹션 마스터 기반 씬 구조 재설계
+
+- **수정일자**: 2026-04-03
+- **요청**: 가사 섹션 목록을 음악 구조 분석에 직접 전달하여 섹션 타이밍 정확도 향상 및 GPT의 섹션 변경 권한 제거
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `mv_generator.py` | `analyze_music_structure()`에 `lyrics_sections` 파라미터 추가, Gemini에 가사 섹션 전달하여 정확한 타이밍 추출, label 불일치 시 자동 보정 |
+| 2 | 백엔드 (수정) | `mv_generator.py` | `SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE`의 SECTION FIELD RULES 강화 — GPT는 클립 수와 길이만 결정, 섹션 만들기/변경 불가 |
+| 3 | 백엔드 (수정) | `mv_pipeline.py` | Phase 1a에서 가사 섹션 태그 파싱 후 `analyze_music_structure()`에 전달 |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### mv_generator.py — `analyze_music_structure()`
+- `lyrics_sections` 파라미터 추가
+- 가사 섹션 목록을 Gemini에 전달하여 정확한 타이밍 추출
+- label 불일치 시 자동 보정 로직 적용
+
+### mv_generator.py — `SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE`
+- SECTION FIELD RULES 강화
+- GPT는 클립 수와 길이만 결정 가능
+- 섹션 만들기/변경 불가 (가사 섹션 마스터가 절대 기준)
+
+### mv_pipeline.py — Phase 1a
+- 가사에서 섹션 태그([Verse], [Chorus] 등) 파싱
+- 파싱된 섹션 목록을 `analyze_music_structure()`에 전달
+
+### 기존 유지
+- scene_type 할당 로직 (rap/chorus 기반)
+- `_assign_lyrics_to_scenes()` (v6.0)
+- section_start/end 누적 계산
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | import 정상 확인 | PASS |
+| 2 | lyrics_sections 파라미터 전달 확인 | PASS |
+| 3 | Gemini에 가사 섹션 목록 전달 확인 | PASS |
+| 4 | label 불일치 자동 보정 확인 | PASS |
+| 5 | GPT 프롬프트 SECTION FIELD RULES 강화 확인 | PASS |
+| 6 | Phase 1a 가사 섹션 태그 파싱 확인 | PASS |
+| 7 | 기존 로직 유지 확인 | PASS |
+
+- **전 항목 PASS (7/7)**
+
+## 4. 특이사항
+
+- v6.0에서는 GPT 프롬프트에 섹션 태그를 전달했지만, 음악 구조 분석(Gemini) 단계에서는 가사 섹션 정보가 활용되지 않았음
+- v7.0에서는 가사 섹션 목록을 Gemini 분석 단계부터 전달하여 섹션 타이밍의 정확도를 근본적으로 향상
+- GPT의 섹션 변경 권한을 완전히 제거하여 가사 섹션 마스터가 파이프라인 전체의 유일한 섹션 기준으로 작동
+
+---
+
+# v8.0 — Whisper 기반 가사 자막 타이밍 정확도 개선
+
+- **수정일자**: 2026-04-03
+- **요청**: OpenAI Whisper API를 활용하여 가사 자막의 줄별 타이밍을 오디오 기반으로 정확하게 추출, 기존 균등 분배 방식 대체
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (신규) | `whisper_service.py` | OpenAI Whisper API로 오디오에서 줄별 타이밍 추출 서비스 |
+| 2 | 백엔드 (수정) | `subtitle_generator.py` | timestamps 파라미터 추가, Whisper 데이터 우선 사용, 없으면 균등 분배 fallback |
+| 3 | 백엔드 (수정) | `mv.py` | 개별 씬 영상 생성 시 Whisper 타이밍 전달 (try/except fallback) |
+| 4 | 백엔드 (수정) | `mv_pipeline.py` | Phase 3.6에서 Whisper 타이밍 추출, Phase 5에서 Whisper 타이밍 전달 (try/except fallback) |
+
+- **백엔드 1건 신규, 3건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### whisper_service.py (신규)
+- OpenAI Whisper API를 사용하여 오디오 파일에서 줄별 타이밍 추출
+- 가사 자막에 필요한 시작/종료 시간 데이터 제공
+
+### subtitle_generator.py
+- `timestamps` 파라미터 추가
+- Whisper에서 추출한 타이밍 데이터가 있으면 우선 사용
+- Whisper 데이터가 없으면 기존 균등 분배 방식으로 fallback
+
+### mv.py — 개별 씬 영상 생성
+- Whisper 타이밍 데이터를 자막 생성에 전달
+- try/except로 감싸서 실패 시 기존 방식으로 fallback
+
+### mv_pipeline.py — Phase 3.6 / Phase 5
+- Phase 3.6: Whisper API로 오디오에서 줄별 타이밍 추출
+- Phase 5: 최종 영상 합성 시 Whisper 타이밍 전달
+- 모두 try/except fallback 적용
+
+### 타이밍 개선 예시
+- Whisper 적용: 0~3.2초 / 3.2~8.5초 (실제 발화 기반)
+- 기존 균등 분배: 0~5초 / 5~10초 (단순 시간 분할)
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | whisper_service.py import 정상 확인 | PASS |
+| 2 | subtitle_generator.py timestamps 파라미터 동작 확인 | PASS |
+| 3 | Whisper 데이터 우선 사용 확인 | PASS |
+| 4 | Whisper 데이터 없을 때 균등 분배 fallback 확인 | PASS |
+| 5 | mv.py try/except fallback 동작 확인 | PASS |
+| 6 | mv_pipeline.py Phase 3.6 Whisper 호출 확인 | PASS |
+| 7 | mv_pipeline.py Phase 5 Whisper 타이밍 전달 확인 | PASS |
+
+- **전 항목 PASS (7/7)**
+
+## 4. 특이사항
+
+- 기존 균등 분배 방식은 가사 줄 수로 씬 시간을 단순 분할하여 실제 발화 타이밍과 불일치 발생
+- Whisper API를 통해 실제 오디오의 발화 위치를 기반으로 정확한 줄별 타이밍 추출
+- 모든 호출부에 try/except fallback을 적용하여 Whisper API 실패 시에도 기존 균등 분배 방식으로 안전하게 동작
+
+---
+
+# v8.1 — 2단계 타이밍 비율 보정
+
+- **수정일자**: 2026-04-03
+- **요청**: Gemini 섹션 합과 GPT 클립 합이 실제 음악 길이와 불일치하는 문제를 2단계 비율 보정으로 해결
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `mv_pipeline.py` | 보정 1: Gemini 섹션 합을 ffprobe 실제 음악 길이에 비율 보정 (audio_duration_sec 우선, 없으면 ffprobe 폴백) |
+| 2 | 백엔드 (수정) | `mv_generator.py` | 보정 2: GPT 클립 use_seconds 합을 Gemini 섹션 길이에 비율 보정 (플래트닝 직전 처리) |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### mv_pipeline.py — 보정 1 (섹션 → 실제 음악 길이)
+- Gemini가 반환한 섹션 duration_sec의 합계를 ffprobe로 측정한 실제 음악 길이에 비율 보정
+- audio_duration_sec 파라미터가 있으면 우선 사용, 없으면 ffprobe로 폴백
+
+### mv_generator.py — 보정 2 (클립 → 섹션 길이)
+- GPT가 반환한 클립별 use_seconds의 합계를 Gemini 섹션 길이에 비율 보정
+- 플래트닝(flatten) 직전에 처리하여 이후 로직에 정확한 타이밍 전달
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | import 정상 확인 | PASS |
+| 2 | 정적 분석 (mv_pipeline.py) | PASS |
+| 3 | 정적 분석 (mv_generator.py) | PASS |
+| 4 | 단위 테스트 (비율 보정 로직) | PASS |
+| 5 | 서버 정상 기동 확인 | PASS |
+
+- **전 항목 PASS (5/5)**
+
+## 4. 특이사항
+
+- Gemini 섹션 합계와 실제 음악 길이 간 오차, GPT 클립 합계와 섹션 길이 간 오차가 누적되어 최종 영상 타이밍 불일치 발생
+- 2단계 비율 보정으로 각 단계의 오차를 독립적으로 해소하여 최종 영상이 실제 음악 길이에 정확히 맞도록 개선
+
+---
+
+# v9.0 — Gemini → Whisper 기반 섹션 타이밍
+
+- **수정일자**: 2026-04-03
+- **요청**: Gemini 기반 섹션 타이밍을 Whisper 기반으로 전환하여 실제 오디오 발화 위치와 가사 섹션을 정확히 매칭
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `whisper_service.py` | `get_full_audio_timestamps()` 함수 추가 — 전체 오디오의 Whisper 세그먼트 타임스탬프 반환 |
+| 2 | 백엔드 (수정) | `mv_pipeline.py` | `_build_sections_from_whisper()` 신규 함수 — Whisper 세그먼트와 가사 매칭으로 섹션 타이밍 생성 |
+| 3 | 백엔드 (수정) | `mv_pipeline.py` | `_text_match()`, `_normalize_text()` 헬퍼 함수 추가 — 텍스트 정규화 및 유사도 매칭 |
+| 4 | 백엔드 (수정) | `mv_pipeline.py` | Phase 1a: Whisper-first, Gemini fallback 방식으로 전환 |
+| 5 | 백엔드 (수정) | `mv_pipeline.py` | 보정 1(비율 보정)은 Gemini fallback 경로에서만 동작하도록 조건 분기 |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### whisper_service.py — get_full_audio_timestamps()
+- 전체 오디오 파일을 Whisper API로 전사하여 세그먼트별 시작/종료 타임스탬프 반환
+- 기존 줄별 타이밍과 별도로, 섹션 단위 매칭에 활용
+
+### mv_pipeline.py — Whisper-first 섹션 타이밍
+- `_build_sections_from_whisper()`: Whisper 세그먼트 텍스트와 가사 섹션의 첫 줄을 매칭하여 각 섹션의 시작/종료 시간 결정
+- `_text_match()`: 정규화된 텍스트 간 유사도 비교 (부분 일치 지원)
+- `_normalize_text()`: 공백/특수문자 정규화로 매칭 정확도 향상
+- Phase 1a에서 Whisper 매칭 성공 시 Gemini 호출 생략, 실패 시 기존 Gemini 경로로 fallback
+- 보정 1(비율 보정)은 Gemini fallback 경로에서만 적용 (Whisper 타이밍은 실제 오디오 기반이므로 보정 불필요)
+- 매칭 실패한 섹션은 전후 섹션 타이밍에서 보간 처리
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | Whisper 세그먼트-가사 매칭 정상 동작 확인 | PASS |
+| 2 | Whisper 매칭 실패 시 Gemini fallback 확인 | PASS |
+| 3 | 보정 1이 Gemini fallback에서만 동작 확인 | PASS |
+| 4 | 텍스트 정규화 및 유사도 매칭 확인 | PASS |
+| 5 | 보간 처리 fallback 동작 확인 | PASS |
+
+- **전 항목 PASS (5/5)**
+
+## 4. 특이사항
+
+- 영어 가사가 Whisper에서 한글로 변환되는 경우 매칭 실패 가능 — 보간 처리로 fallback하여 안전하게 동작
+- Whisper 기반 타이밍은 실제 오디오 발화 위치를 사용하므로 Gemini 대비 정확도 향상
+- Gemini fallback 경로를 유지하여 Whisper API 장애 시에도 기존 방식으로 안전하게 동작
+
+# v10.0 — 가사 섹션 1개 = 씬 1개 단순화
+
+- **수정일자**: 2026-04-03
+- **요청**: 가사 섹션 1개를 씬 1개로 직접 매핑하여 파이프라인 단순화 (Gemini 호출 제거, GPT 씬 분할 제거)
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `mv_pipeline.py` | `run_phase1_split()` 완전 재작성 — Phase 1a: 가사 파싱 + Whisper 타이밍 → 씬 직접 생성 (가사 섹션 1개 = 씬 1개) |
+| 2 | 백엔드 (수정) | `mv_pipeline.py` | Phase 1b: GPT는 프롬프트만 생성하도록 변경 (`generate_scene_prompts_only` 호출) |
+| 3 | 백엔드 (수정) | `mv_pipeline.py` | 제거: Gemini 호출, GPT 씬 분할, `_assign_lyrics_to_scenes()` 호출, 누적 타이밍 계산 |
+| 4 | 백엔드 (수정) | `mv_pipeline.py` | 가사는 섹션 내용 그대로 직접 배정, section_start/end는 Whisper 타이밍 그대로 사용 |
+| 5 | 백엔드 (수정) | `mv_pipeline.py` | Whisper 실패 시 균등 분할 fallback 구현 |
+| 6 | 백엔드 (수정) | `mv_generator.py` | `generate_scene_prompts_only()` 함수 + `SCENE_PROMPT_ONLY_SYSTEM` 프롬프트 추가 |
+
+- **백엔드 2건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### mv_pipeline.py — run_phase1_split() 재작성
+- Phase 1a: 가사 파싱 후 Whisper 타이밍과 결합하여 씬을 직접 생성 (가사 섹션 1개 = 씬 1개)
+- 기존의 복잡한 씬 분할 로직(Gemini 호출, GPT 씬 분할, `_assign_lyrics_to_scenes()`, 누적 타이밍 계산) 완전 제거
+- 가사 섹션의 내용을 씬에 그대로 배정하여 중간 변환 과정 없음
+- section_start/end는 Whisper 타이밍을 그대로 사용 (보정 불필요)
+- Whisper 실패 시 전체 오디오 길이를 섹션 수로 균등 분할하는 fallback 적용
+
+### mv_pipeline.py — Phase 1b 변경
+- GPT가 씬 구조를 분할하지 않고, 기존 씬 리스트에 대해 프롬프트만 생성하도록 변경
+- `generate_scene_prompts_only()` 호출로 전환
+
+### mv_generator.py — generate_scene_prompts_only()
+- 씬 리스트를 입력받아 각 씬에 대한 이미지 생성 프롬프트만 생성하는 함수 추가
+- `SCENE_PROMPT_ONLY_SYSTEM` 시스템 프롬프트로 GPT의 역할을 프롬프트 생성으로 한정
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | 가사 섹션 파싱 → 씬 1:1 매핑 정상 동작 확인 | PASS |
+| 2 | Whisper 타이밍 기반 section_start/end 정상 배정 확인 | PASS |
+| 3 | Whisper 실패 시 균등 분할 fallback 동작 확인 | PASS |
+| 4 | GPT 프롬프트만 생성 (씬 분할 없음) 확인 | PASS |
+| 5 | 가사 내용 그대로 씬에 배정 확인 | PASS |
+| 6 | 전체 파이프라인 정상 동작 확인 | PASS |
+
+- **전 항목 PASS (6/6)**
+
+## 4. 특이사항
+
+- Gemini 호출 완전 제거로 외부 API 의존도 감소 및 파이프라인 속도 향상
+- GPT 역할이 씬 분할에서 프롬프트 생성으로 축소되어 토큰 사용량 감소
+- 가사 섹션과 씬의 1:1 매핑으로 디버깅 및 유지보수 용이성 향상
+- Whisper fallback(균등 분할)은 타이밍 정확도가 떨어지나 파이프라인 중단 방지에 유효
+
+---
+
+# v10.3 — 15초 초과 클립 재분할 + Sync Labs 후 자막 자동 재적용
+
+- **수정일자**: 2026-04-04
+- **요청**: 15초 초과 클립을 시간 기반으로 재분할하고, Sync Labs 립싱크 적용 후 자막을 자동으로 재적용
+
+## 1. 수정 결과
+
+| # | 구분 | 파일 | 수정 내용 |
+|---|------|------|-----------|
+| 1 | 백엔드 (수정) | `mv_pipeline.py` | `_split_long_section()` 후처리 — 가사 경계 분할 후에도 15초 초과 클립을 시간 기반 균등 재분할 (ceil(길이/10)) |
+| 2 | 백엔드 (신규) | `mv_pipeline.py` | `_burn_subtitles_on_synced_video()` — Sync Labs 영상에 Whisper 타이밍 기반 자막 burn-in, 실패 시 원본 반환 |
+| 3 | 백엔드 (수정) | `mv_pipeline.py` | Phase 3.5 (자동) 호출 위치에 자막 burn-in 적용 — Sync Labs 결과 저장 직전 호출 |
+| 4 | 백엔드 (수정) | `mv_pipeline.py` | `_retry_sync_for_scene()` (수동) 호출 위치에 자막 burn-in 적용 — Sync Labs 결과 저장 직전 호출 |
+
+- **백엔드 1건 수정**, **프론트엔드 변경 없음**
+
+## 2. 주요 변경 사항
+
+### mv_pipeline.py — _split_long_section() 후처리
+- 가사 경계 기반 분할 후에도 15초를 초과하는 클립이 존재할 경우, 시간 기반 균등 재분할 수행
+- 재분할 개수는 ceil(길이/10)으로 계산 (예: 24초 → 3클립, 각 8초)
+- 기존 가사 경계 분할과 시간 기반 재분할의 2단계 처리로 모든 클립이 15초 이하 보장
+
+### mv_pipeline.py — _burn_subtitles_on_synced_video() 신규
+- Sync Labs 립싱크 적용 후 영상에 Whisper 타이밍 기반 자막을 자동으로 burn-in
+- FFmpeg를 사용한 자막 오버레이 처리
+- 실패 시 원본 영상을 그대로 반환하여 파이프라인 중단 방지
+
+### mv_pipeline.py — 호출 위치 2곳
+- Phase 3.5 (자동 Sync Labs 처리): Sync Labs 결과 저장 직전에 자막 burn-in 호출
+- `_retry_sync_for_scene()` (수동 재시도): Sync Labs 결과 저장 직전에 자막 burn-in 호출
+
+## 3. 테스트 결과
+
+| # | 테스트 항목 | 결과 |
+|---|------------|------|
+| 1 | 15초 초과 클립 시간 기반 균등 재분할 동작 확인 (24초 → 3클립, 8초씩) | PASS |
+| 2 | 가사 경계 분할 후 재분할 2단계 처리 정상 동작 확인 | PASS |
+| 3 | Sync Labs 후 Whisper 기반 자막 burn-in 정상 동작 확인 | PASS |
+| 4 | 자막 burn-in 실패 시 원본 반환 fallback 동작 확인 | PASS |
+| 5 | Phase 3.5 자동 호출 위치 정상 동작 확인 | PASS |
+| 6 | _retry_sync_for_scene 수동 호출 위치 정상 동작 확인 | PASS |
+
+- **전 항목 PASS (6/6)**
+
+## 4. 특이사항
+
+- 15초 초과 클립에 대한 2단계 분할(가사 경계 → 시간 균등)로 모든 클립이 15초 이하 보장
+- Sync Labs 립싱크 적용 후 자막이 누락되던 문제 해결
+- 자막 burn-in 실패 시 원본 반환으로 파이프라인 안정성 유지
+- 호출 위치 2곳(자동/수동) 모두에 적용하여 일관된 자막 처리 보장

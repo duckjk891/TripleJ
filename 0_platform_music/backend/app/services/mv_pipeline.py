@@ -17,8 +17,6 @@ from typing import List, Optional
 from ..config import settings
 from ..database.minio import get_minio
 from .mv_generator import (
-    analyze_music_structure,
-    split_lyrics_into_scenes,
     generate_scene_image,
     start_scene_video,
     check_scene_video_status,
@@ -27,6 +25,7 @@ from .mv_generator import (
     trim_video_clip,
     _get_ffmpeg_path,
 )
+from .subtitle_generator import generate_lyrics_ass
 from .kling_video_generator import (
     start_scene_video_kling,
     check_scene_video_status_kling,
@@ -137,87 +136,514 @@ async def _resolve_audio_object_name(job: dict, mongo_db) -> Optional[str]:
     return None
 
 
-# ── Lyrics-to-Scene Matching ─────────────────────────────────────────────────
+# ── Whisper-based Section Building ───────────────────────────────────────────
+
+
+def _normalize_text(text: str) -> str:
+    """Remove punctuation/spaces and lowercase for fuzzy matching."""
+    import re
+    return re.sub(r'[^a-zA-Z0-9가-힣]', '', text).lower()
+
+
+def _text_match(lyrics_line: str, whisper_text: str, min_chars: int = 3) -> bool:
+    """Check if a lyrics line matches a Whisper segment text.
+
+    Uses multiple strategies for robust matching:
+    1. First min_chars characters prefix match
+    2. Any 4+ char substring match
+    3. Handles Whisper misrecognition (e.g., "벚꽃이" → "outbreaks이")
+    """
+    norm_line = _normalize_text(lyrics_line)
+    norm_seg = _normalize_text(whisper_text)
+    if not norm_line or not norm_seg:
+        return False
+    # Strategy 1: prefix match (first 3 chars)
+    prefix = norm_line[:max(min_chars, min(6, len(norm_line)))]
+    if prefix in norm_seg:
+        return True
+    # Strategy 2: any 4+ char substring from lyrics found in whisper
+    for start in range(0, len(norm_line) - 3):
+        chunk = norm_line[start:start + 4]
+        if chunk in norm_seg:
+            return True
+    return False
+
+
+def _build_sections_from_whisper(
+    whisper_segments: list[dict],
+    lyrics: str,
+    audio_duration: float,
+) -> list[dict]:
+    """Whisper 세그먼트와 가사를 매칭하여 섹션별 타이밍을 확정한다.
+
+    Args:
+        whisper_segments: [{"text", "start", "end"}, ...] from Whisper
+        lyrics: 전체 가사 텍스트 (섹션 태그 포함)
+        audio_duration: 음악 총 길이 (초)
+
+    Returns:
+        music_sections: [{"label", "start", "end", "mood"}, ...]
+    """
+    import re
+
+    if not lyrics or not lyrics.strip():
+        return []
+
+    # 1. 가사를 섹션별로 파싱
+    pattern = r'\[([^\]]+)\]'
+    parts = re.split(pattern, lyrics)
+    sections = []
+
+    # parts[0] = text before first tag (usually empty)
+    # parts[1] = first tag, parts[2] = content after first tag, etc.
+    for i in range(1, len(parts), 2):
+        tag = parts[i].split(":")[0].strip()  # "Verse 1: rap flow" → "Verse 1"
+        content = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        sections.append({"tag": tag, "lines": lines})
+
+    if not sections:
+        return []
+
+    # 2. 모든 가사 줄을 순서대로 나열하고 섹션 경계 기록
+    all_lines = []  # (section_idx, line_text)
+    for sec_idx, sec in enumerate(sections):
+        for line in sec["lines"]:
+            all_lines.append((sec_idx, line))
+
+    # 3. 가사 줄을 Whisper 세그먼트에 순서대로 1:1 매칭
+    #    Whisper seg를 순서대로 소비하면서, 각 가사 줄과 매칭되는 seg 찾기
+    line_timings = []  # (section_idx, start, end) for each matched line
+    seg_idx = 0
+    for sec_idx, line_text in all_lines:
+        found = False
+        # 현재 seg_idx부터 최대 10개까지 탐색 (ad-lib/yeah 등 건너뛰기)
+        for j in range(seg_idx, min(seg_idx + 10, len(whisper_segments))):
+            if _text_match(line_text, whisper_segments[j]["text"]):
+                line_timings.append((sec_idx, whisper_segments[j]["start"], whisper_segments[j]["end"]))
+                seg_idx = j + 1
+                found = True
+                break
+        if not found:
+            # 매칭 실패 시 None 기록
+            line_timings.append((sec_idx, None, None))
+
+    # 4. 섹션별로 매칭된 줄들의 시작/끝 집계
+    section_timings = []
+    for sec_idx, sec in enumerate(sections):
+        matched = [(s, e) for si, s, e in line_timings if si == sec_idx and s is not None]
+        if matched:
+            section_timings.append((sec["tag"], matched[0][0], matched[-1][1], True))
+        else:
+            section_timings.append((sec["tag"], None, None, len(sec["lines"]) == 0))
+
+    # 3. 타이밍 보간: 매칭 안 된 섹션은 이전/다음 섹션 사이로 채움
+    music_sections = []
+    for idx, (tag, start, end, has_vocals) in enumerate(section_timings):
+        if start is not None and end is not None:
+            music_sections.append({
+                "label": tag,
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "mood": "",
+            })
+        else:
+            # 이전 섹션 끝 찾기
+            prev_end = 0.0
+            for prev_idx in range(idx - 1, -1, -1):
+                if section_timings[prev_idx][2] is not None:
+                    prev_end = section_timings[prev_idx][2]
+                    break
+                elif music_sections and prev_idx < len(music_sections):
+                    for ms in reversed(music_sections):
+                        if ms["end"] > 0:
+                            prev_end = ms["end"]
+                            break
+                    break
+
+            # 다음 섹션 시작 찾기
+            next_start = audio_duration
+            for next_idx in range(idx + 1, len(section_timings)):
+                if section_timings[next_idx][1] is not None:
+                    next_start = section_timings[next_idx][1]
+                    break
+
+            music_sections.append({
+                "label": tag,
+                "start": round(prev_end, 3),
+                "end": round(next_start, 3),
+                "mood": "",
+            })
+
+    # 4. 첫 섹션이 0초가 아니면 앞에 시작을 0으로 조정
+    if music_sections and music_sections[0]["start"] > 0.5:
+        # 첫 섹션 이름이 Intro가 아니면 Intro 삽입
+        if not music_sections[0]["label"].lower().startswith("intro"):
+            music_sections.insert(0, {
+                "label": "Intro",
+                "start": 0.0,
+                "end": music_sections[0]["start"],
+                "mood": "",
+            })
+        else:
+            music_sections[0]["start"] = 0.0
+
+    # 5. 마지막 섹션 end를 audio_duration으로 보정
+    if music_sections:
+        if music_sections[-1]["end"] < audio_duration - 1.0:
+            # Outro가 이미 있으면 확장, 없으면 추가
+            if music_sections[-1]["label"].lower().startswith("outro"):
+                music_sections[-1]["end"] = round(audio_duration, 3)
+            else:
+                music_sections.append({
+                    "label": "Outro",
+                    "start": music_sections[-1]["end"],
+                    "end": round(audio_duration, 3),
+                    "mood": "",
+                })
+        music_sections[-1]["end"] = round(audio_duration, 3)
+
+    # 6. 시작=0으로 보장
+    if music_sections:
+        music_sections[0]["start"] = 0.0
+
+    # 7. 섹션 간 공백 제거: 이전 섹션 end = 다음 섹션 start
+    for i in range(len(music_sections) - 1):
+        gap = music_sections[i + 1]["start"] - music_sections[i]["end"]
+        if gap > 0.01:
+            # 공백이 있으면 이전 섹션 end를 다음 섹션 start로 확장
+            music_sections[i]["end"] = music_sections[i + 1]["start"]
+        elif gap < -0.01:
+            # 겹침이 있으면 다음 섹션 start를 이전 섹션 end로 조정
+            music_sections[i + 1]["start"] = music_sections[i]["end"]
+
+    logger.info(
+        "Whisper section builder: %d sections from %d whisper segments",
+        len(music_sections), len(whisper_segments),
+    )
+    return music_sections
+
+
+# ── 15초 초과 섹션 자동 분할 ───────────────────────────────────────────────
+
+MAX_CLIP_SEC = 15.0   # Kling 최대
+TARGET_CLIP_SEC = 10.0  # 목표 클립 길이
+
+
+def _split_long_section(sec: dict, whisper_segments: list, lyrics_lines: list) -> list[dict]:
+    """15초 초과 섹션을 Whisper 줄 타이밍 기반으로 분할.
+
+    Args:
+        sec: {"label", "start", "end", "mood"}
+        whisper_segments: 전체 Whisper 세그먼트 (줄별 타이밍)
+        lyrics_lines: 해당 섹션의 가사 줄 리스트
+
+    Returns:
+        분할된 씬 리스트: [{"section", "start", "end", "lyrics_segment"}, ...]
+    """
+    import math
+
+    sec_start = sec["start"]
+    sec_end = sec["end"]
+    sec_dur = sec_end - sec_start
+    label = sec["label"]
+
+    if sec_dur <= MAX_CLIP_SEC:
+        return [{"section": label, "start": sec_start, "end": sec_end,
+                 "lyrics_segment": "\n".join(lyrics_lines)}]
+
+    # 해당 섹션 시간 범위에 속하는 Whisper 세그먼트 찾기
+    sec_segs = []
+    for ws in whisper_segments:
+        ws_start = float(ws.get("start", 0))
+        ws_end = float(ws.get("end", 0))
+        # 세그먼트가 섹션 범위와 겹치면 포함
+        if ws_end > sec_start + 0.5 and ws_start < sec_end - 0.5:
+            sec_segs.append(ws)
+
+    if not sec_segs:
+        # Whisper 세그먼트 없으면 균등 분할
+        clip_count = math.ceil(sec_dur / TARGET_CLIP_SEC)
+        clip_dur = sec_dur / clip_count
+        clips = []
+        lines_per_clip = max(1, len(lyrics_lines) // clip_count) if lyrics_lines else 0
+        for i in range(clip_count):
+            c_start = sec_start + i * clip_dur
+            c_end = sec_start + (i + 1) * clip_dur
+            if lyrics_lines:
+                l_start = i * lines_per_clip
+                l_end = l_start + lines_per_clip if i < clip_count - 1 else len(lyrics_lines)
+                c_lyrics = "\n".join(lyrics_lines[l_start:l_end])
+            else:
+                c_lyrics = ""
+            clips.append({
+                "section": "{}-{}".format(label, i + 1),
+                "start": round(c_start, 3), "end": round(c_end, 3),
+                "lyrics_segment": c_lyrics,
+            })
+        return clips
+
+    # Whisper 세그먼트 경계를 분할 후보로 사용
+    # 각 세그먼트 end 시점에서 자를 수 있음
+    # 누적 시간이 TARGET_CLIP_SEC을 넘으면 거기서 자름
+    clips = []
+    clip_start = sec_start
+    clip_lyrics = []
+    line_idx = 0
+
+    for seg in sec_segs:
+        seg_end = float(seg.get("end", 0))
+        elapsed = seg_end - clip_start
+
+        # 이 세그먼트에 해당하는 가사 줄 배정
+        if line_idx < len(lyrics_lines):
+            clip_lyrics.append(lyrics_lines[line_idx])
+            line_idx += 1
+
+        # TARGET 초과하면 여기서 자름
+        if elapsed >= TARGET_CLIP_SEC and clip_lyrics:
+            clip_num = len(clips) + 1
+            clips.append({
+                "section": "{}-{}".format(label, clip_num),
+                "start": round(clip_start, 3), "end": round(seg_end, 3),
+                "lyrics_segment": "\n".join(clip_lyrics),
+            })
+            clip_start = seg_end
+            clip_lyrics = []
+
+    # 남은 부분 마지막 클립으로
+    remaining_lyrics = lyrics_lines[line_idx:]
+    clip_lyrics.extend(remaining_lyrics)
+    if clip_start < sec_end - 0.1:
+        clip_num = len(clips) + 1
+        section_name = "{}-{}".format(label, clip_num) if clips else label
+        clips.append({
+            "section": section_name,
+            "start": round(clip_start, 3), "end": round(sec_end, 3),
+            "lyrics_segment": "\n".join(clip_lyrics),
+        })
+
+    # 클립이 1개뿐이면 원래 이름 유지
+    if len(clips) == 1:
+        clips[0]["section"] = label
+
+    # 분할 완료 후 후처리: 15초 초과 클립 재분할
+    final_clips = []
+    for clip in clips:
+        clip_dur = clip["end"] - clip["start"]
+        if clip_dur > MAX_CLIP_SEC:
+            # 시간 기반 균등 분할
+            sub_count = math.ceil(clip_dur / TARGET_CLIP_SEC)
+            sub_dur = clip_dur / sub_count
+            # 가사도 균등 분배
+            clip_lyrics_lines = [l for l in clip["lyrics_segment"].split("\n") if l.strip()] if clip["lyrics_segment"] else []
+            for k in range(sub_count):
+                sub_start = clip["start"] + k * sub_dur
+                sub_end = clip["start"] + (k + 1) * sub_dur
+                # 가사 분배
+                if clip_lyrics_lines:
+                    lines_per = max(1, len(clip_lyrics_lines) // sub_count)
+                    l_start = k * lines_per
+                    l_end = l_start + lines_per if k < sub_count - 1 else len(clip_lyrics_lines)
+                    sub_lyrics = "\n".join(clip_lyrics_lines[l_start:l_end])
+                else:
+                    sub_lyrics = ""
+                sub_section = "{}.{}".format(clip["section"], k + 1) if sub_count > 1 else clip["section"]
+                final_clips.append({
+                    "section": sub_section,
+                    "start": round(sub_start, 3),
+                    "end": round(sub_end, 3),
+                    "lyrics_segment": sub_lyrics,
+                })
+        else:
+            final_clips.append(clip)
+    return final_clips
+
+
+# ── Lyrics Section Parser ──────────────────────────────────────────────────
+
+
+def _parse_lyrics_sections(lyrics: str) -> list[dict]:
+    """가사에서 섹션 태그를 파싱하여 [{tag, content}, ...] 반환."""
+    import re
+    if not lyrics or not lyrics.strip():
+        return []
+    pattern = r'\[([^\]]+)\]'
+    parts = re.split(pattern, lyrics)
+    sections = []
+    for i in range(1, len(parts), 2):
+        tag = parts[i].split(":")[0].strip()
+        content = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        sections.append({"tag": tag, "content": content})
+    return sections
+
+
+# ── Lyrics-to-Scene Matching (legacy) ──────────────────────────────────────
 
 
 def _assign_lyrics_to_scenes(scenes: list, lyrics: str) -> None:
-    """Parse lyrics by section tags and assign to matching scenes."""
+    """가사 섹션 기반으로 씬에 가사를 배정한다.
+
+    1. 원본 가사를 섹션 태그로 파싱 → {normalized_name: lyrics_content}
+    2. 각 씬의 section 필드에서 부모 섹션명 추출
+       - "Chorus" → "chorus1" (첫번째)
+       - "Verse1" → "verse1"
+       - 씬의 section 필드를 normalize
+    3. 같은 부모 섹션에 속한 씬들을 그룹핑
+    4. 가사 줄을 시간 비율(use_seconds)로 분배
+       - 가사 줄 < 씬 수: 남는 씬은 빈 자막
+       - 가사 줄 >= 씬 수: 시간 비율로 분배
+    """
     if not lyrics:
         return
 
     import re
 
-    # Step 1: Parse lyrics into sections
-    # Match [SectionTag] or [SectionTag: vocal direction]
+    # ── helper: normalize section name ──────────────────────────────────
+    def _normalize(name: str) -> str:
+        """'Verse 1' / 'Verse1' / 'Verse 1-2' → 'verse1', 'Pre-Chorus' → 'prechorus1'.
+        Strips clip suffix (-1, -2, ...) to get parent section name."""
+        s = name.split(":")[0].strip()          # remove vocal direction
+        # Remove clip suffix: "Verse 1-2" → "Verse 1", "Chorus-3" → "Chorus"
+        s = re.sub(r'-\d+$', '', s).strip()
+        s = s.lower().replace(" ", "").replace("-", "")
+        # If no trailing digit, append '1' (first occurrence default)
+        if not s or s[-1].isdigit():
+            return s
+        return s + "1"
+
+    # ── Step 1: parse lyrics into ordered sections ─────────────────────
     pattern = r'\[([^\]]+)\]'
     parts = re.split(pattern, lyrics)
 
     # parts = ["", "Intro", "\nbody...\n", "Verse 1: rap flow", "\nbody...\n", ...]
-    parsed_sections = []
+    parsed_sections: list[dict] = []
+    # Track occurrence count per base name to auto-number
+    base_counter: dict[str, int] = {}
     for i in range(1, len(parts), 2):
         tag_raw = parts[i]
         content = parts[i + 1].strip() if i + 1 < len(parts) else ""
 
-        # Extract base section name (remove vocal direction after ":")
-        base_tag = tag_raw.split(":")[0].strip().lower()
-        # Remove numbers and spaces: "verse 1" -> "verse", "pre-chorus" -> "pre-chorus"
+        # base name without number: "verse 1" → "verse", "pre-chorus" → "prechorus"
+        base_tag = tag_raw.split(":")[0].strip()
         base_name = re.sub(r'\s*\d+\s*$', '', base_tag).strip()
+        base_key = base_name.lower().replace(" ", "").replace("-", "")
+
+        base_counter[base_key] = base_counter.get(base_key, 0) + 1
+        numbered = "{}{}".format(base_key, base_counter[base_key])
 
         parsed_sections.append({
             "tag_raw": tag_raw,
-            "base_name": base_name,
+            "normalized": numbered,
             "content": content,
         })
 
     if not parsed_sections:
         return
 
-    # Step 2: Number each section by type (first chorus -> chorus1, second -> chorus2)
-    section_counters: dict = {}
+    # Build lookup: normalized_name → lyrics content
+    lyrics_by_section: dict[str, str] = {}
     for ps in parsed_sections:
-        name = ps["base_name"]
-        section_counters[name] = section_counters.get(name, 0) + 1
-        ps["numbered_name"] = "{}{}".format(name, section_counters[name])
+        lyrics_by_section[ps["normalized"]] = ps["content"]
 
-    # Step 3: Match scenes to parsed sections
+    # ── Step 2 & 3: group scenes by normalized section name ────────────
+    scene_normalized: list[str] = []
+
     for scene in scenes:
-        scene_section = (scene.get("section") or "").lower().replace(" ", "").replace("-", "")
-        if not scene_section:
-            continue
+        raw = (scene.get("section") or "").strip()
+        norm = _normalize(raw)
+        scene_normalized.append(norm)
 
-        for ps in parsed_sections:
-            numbered = ps["numbered_name"].replace("-", "")
-            if numbered == scene_section:
-                if not scene.get("lyrics_segment"):
-                    scene["lyrics_segment"] = ps["content"]
-                break
+    # Track how many times each base (without trailing digit) appears
+    # so we can auto-number scenes whose section field has no digit.
+    # But since _normalize already appends '1' when no digit, we need
+    # to handle the case where GPT returns "Chorus" for multiple
+    # consecutive scenes that should all map to the same section.
+    # Strategy: scenes with the SAME normalized name in a row belong
+    # to the same section occurrence. When a different section appears
+    # and later the same name reappears, increment the counter.
+    final_norm: list[str] = []
+    _seen_runs: dict[str, int] = {}
+    _prev: str = ""
+    for norm in scene_normalized:
+        # Extract base (without trailing digits)
+        base = re.sub(r'\d+$', '', norm)
+        if norm != _prev:
+            # New run: increment counter for this base if we've seen it before
+            if base in _seen_runs and _prev != norm:
+                # Check if this is truly a new occurrence (not continuation)
+                _seen_runs[base] = _seen_runs[base] + 1
+            elif base not in _seen_runs:
+                _seen_runs[base] = 1
+        count = _seen_runs.get(base, 1)
+        final_norm.append("{}{}".format(base, count))
+        _prev = norm
 
-    # Step 4: Handle multiple scenes per section (distribute lyrics by lines)
-    section_scene_groups: dict = {}
-    for scene in scenes:
-        section = (scene.get("section") or "").lower().replace(" ", "").replace("-", "")
-        if not section:
-            continue
-        if section not in section_scene_groups:
-            section_scene_groups[section] = []
-        section_scene_groups[section].append(scene)
+    # Group scenes by their final normalized section name (preserve order)
+    from collections import OrderedDict
+    section_groups: OrderedDict[str, list[dict]] = OrderedDict()
+    for scene, norm in zip(scenes, final_norm):
+        if norm not in section_groups:
+            section_groups[norm] = []
+        section_groups[norm].append(scene)
 
-    for section, group in section_scene_groups.items():
-        if len(group) <= 1:
-            continue
-        # Multiple scenes share same section — first one has all lyrics, distribute
-        all_lyrics = group[0].get("lyrics_segment", "")
-        if not all_lyrics:
-            continue
-        lines = [line for line in all_lyrics.split("\n") if line.strip()]
+    # ── Step 4: distribute lyrics lines to scenes per section ──────────
+    for norm, group in section_groups.items():
+        content = lyrics_by_section.get(norm, "")
+        lines = [line for line in content.split("\n") if line.strip()] if content else []
+
         if not lines:
+            # No lyrics for this section (e.g. Intro, Outro, Bridge)
+            for sc in group:
+                sc["lyrics_segment"] = ""
             continue
 
-        per_scene = max(1, len(lines) // len(group))
-        for idx, sc in enumerate(group):
-            start = idx * per_scene
-            end = start + per_scene if idx < len(group) - 1 else len(lines)
-            sc["lyrics_segment"] = "\n".join(lines[start:end])
+        num_scenes = len(group)
+        num_lines = len(lines)
+
+        if num_lines <= num_scenes:
+            # 가사 줄 < 씬 수: 앞 씬들에 1줄씩, 남는 씬은 빈 자막
+            for idx, sc in enumerate(group):
+                if idx < num_lines:
+                    sc["lyrics_segment"] = lines[idx]
+                else:
+                    sc["lyrics_segment"] = ""
+        else:
+            # 가사 줄 >= 씬 수: 시간 비율(use_seconds)로 분배
+            durations = [float(sc.get("use_seconds", 10)) for sc in group]
+            total_dur = sum(durations)
+
+            if total_dur <= 0:
+                # fallback: equal distribution
+                durations = [1.0] * num_scenes
+                total_dur = float(num_scenes)
+
+            # Calculate proportional line counts (minimum 1 per scene)
+            raw_counts = [(d / total_dur) * num_lines for d in durations]
+            # Round down first, then distribute remainder
+            counts = [max(1, int(c)) for c in raw_counts]
+
+            # Adjust to match total line count
+            while sum(counts) > num_lines:
+                # Reduce the scene with the most over-allocation
+                max_idx = max(range(num_scenes),
+                              key=lambda i: counts[i] - raw_counts[i])
+                if counts[max_idx] > 1:
+                    counts[max_idx] -= 1
+                else:
+                    break
+
+            while sum(counts) < num_lines:
+                # Add to the scene with most under-allocation
+                min_idx = min(range(num_scenes),
+                              key=lambda i: counts[i] - raw_counts[i])
+                counts[min_idx] += 1
+
+            offset = 0
+            for idx, sc in enumerate(group):
+                end = offset + counts[idx]
+                sc["lyrics_segment"] = "\n".join(lines[offset:end])
+                offset = end
 
     logger.info("Lyrics assigned to %d scenes from %d parsed sections",
                 len([s for s in scenes if s.get("lyrics_segment")]),
@@ -228,10 +654,10 @@ def _assign_lyrics_to_scenes(scenes: list, lyrics: str) -> None:
 
 
 async def run_phase1_split(job_id, mongo_db) -> None:
-    """Split lyrics into scenes, save to mv_jobs.scenes array.
+    """Split lyrics into scenes: 가사 섹션 1개 = 씬 1개.
 
-    If audio is available, first analyzes music structure via Gemini,
-    then uses section-aware scene planning.
+    v10.0: 대폭 단순화. Whisper로 섹션 타이밍 확정 후,
+    GPT는 이미지/영상 프롬프트만 생성.
     """
     job = await _get_job(mongo_db, job_id)
     if not job:
@@ -243,7 +669,6 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         "progress": 1,
     })
 
-    scene_count = job.get("scene_count", 20)
     music_sections = None
 
     # ── Phase 0: Generate MV Scenario (required, max 3 retries) ──
@@ -282,165 +707,303 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         })
         return
 
-    # ── Phase 1a: Analyze music structure (if audio available) ──
+    # ── Phase 1a: 가사 파싱 + Whisper 타이밍 ──
+    lyrics = job.get("lyrics", "")
+    sections = _parse_lyrics_sections(lyrics)
+
     audio_object_name = await _resolve_audio_object_name(job, mongo_db)
     if audio_object_name:
-        logger.info("Phase1: analyzing music structure for job %s (audio: %s)", job_id, audio_object_name)
+        logger.info("Phase1a: analyzing music structure for job %s (audio: %s)", job_id, audio_object_name)
         await _update_job(mongo_db, job_id, {"progress": 1})
 
         try:
             audio_bytes = _load_audio_from_minio(audio_object_name)
             if audio_bytes:
-                # Determine mime type
-                mime_type = "audio/mp3"
+                # Determine file format
+                _file_format = "mp3"
                 if audio_object_name.endswith(".wav"):
-                    mime_type = "audio/wav"
+                    _file_format = "wav"
                 elif audio_object_name.endswith(".m4a"):
-                    mime_type = "audio/mp4"
+                    _file_format = "m4a"
 
-                music_sections = await analyze_music_structure(audio_bytes, mime_type)
+                # ── Measure audio duration via ffprobe ──
+                audio_duration = job.get("audio_duration_sec")
+                if not audio_duration:
+                    try:
+                        import subprocess as _sp_probe
+                        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(audio_object_name)[1] or ".mp3", delete=False) as _tmp_audio:
+                            _tmp_audio.write(audio_bytes)
+                            _tmp_audio_path = _tmp_audio.name
+                        _probe = _sp_probe.run(
+                            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                             "-of", "default=noprint_wrappers=1:nokey=1", _tmp_audio_path],
+                            capture_output=True, text=True, timeout=30,
+                        )
+                        audio_duration = float(_probe.stdout.strip())
+                        os.unlink(_tmp_audio_path)
+                        logger.info("Phase1a: measured audio duration via ffprobe: %.3f sec", audio_duration)
+                    except Exception as _probe_err:
+                        logger.warning("Phase1a: ffprobe duration measurement failed: %s", _probe_err)
+                        audio_duration = None
 
-                # Save to job
-                await _update_job(mongo_db, job_id, {
-                    "music_sections": music_sections,
-                    "progress": 3,
-                })
-                logger.info(
-                    "Phase1: job %s music structure: %d sections",
-                    job_id, len(music_sections),
-                )
+                # ── Demucs 보컬 분리 → Whisper 분석 ──
+                if lyrics and sections:
+                    import re as _re
+                    _lyrics_plain = _re.sub(r'\[([^\]]+)\]', '', lyrics).strip()
+                    _aud_dur = audio_duration or 180.0
+
+                    for _attempt in range(3):
+                        try:
+                            # Step 1: Demucs 보컬 분리 (악기 제거 → Whisper 안정성 향상)
+                            _whisper_input = audio_bytes
+                            _whisper_format = _file_format
+                            try:
+                                from .demucs_service import enhance_vocal_demucs
+                                import subprocess as _sp_conv
+                                _vocal_wav = await enhance_vocal_demucs(audio_bytes, "full_audio.mp3")
+                                if _vocal_wav and len(_vocal_wav) > 1000:
+                                    # WAV→MP3 변환 (Whisper 25MB 제한 대응)
+                                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as _wf:
+                                        _wf.write(_vocal_wav)
+                                        _wav_path = _wf.name
+                                    _mp3_path = _wav_path.replace(".wav", ".mp3")
+                                    _sp_conv.run(["ffmpeg", "-y", "-i", _wav_path, "-codec:a", "libmp3lame", "-b:a", "128k", _mp3_path],
+                                                 capture_output=True, timeout=60)
+                                    if os.path.exists(_mp3_path):
+                                        with open(_mp3_path, "rb") as _mf:
+                                            _whisper_input = _mf.read()
+                                        _whisper_format = "mp3"
+                                        os.unlink(_wav_path)
+                                        os.unlink(_mp3_path)
+                                        logger.info("Phase1a: Demucs vocal→MP3 done (%d bytes)", len(_whisper_input))
+                                    else:
+                                        _whisper_input = _vocal_wav
+                                        _whisper_format = "wav"
+                                        os.unlink(_wav_path)
+                                else:
+                                    logger.warning("Phase1a: Demucs returned small output, using original audio")
+                            except Exception as _demucs_err:
+                                logger.warning("Phase1a: Demucs failed, using original audio: %s", str(_demucs_err)[:200])
+
+                            # Step 2: Whisper 분석
+                            from .whisper_service import get_full_audio_timestamps
+                            whisper_segments = get_full_audio_timestamps(
+                                _whisper_input, file_format=_whisper_format,
+                                lyrics_hint=_lyrics_plain[:500] if _lyrics_plain else None,
+                            )
+
+                            if not whisper_segments:
+                                raise ValueError("Whisper returned no segments")
+
+                            # Step 3: 섹션 빌드
+                            _candidate = _build_sections_from_whisper(whisper_segments, lyrics, _aud_dur)
+                            if not _candidate:
+                                raise ValueError("Section builder returned empty")
+
+                            # Step 4: 검증 - 비정상 섹션 감지
+                            _valid = True
+                            _zero_count = 0
+                            for _sec in _candidate:
+                                _dur = _sec["end"] - _sec["start"]
+                                if _dur > _aud_dur * 0.4:
+                                    logger.warning("Phase1a: section '%s' too long (%.1fs / %.1fs)", _sec["label"], _dur, _aud_dur)
+                                    _valid = False
+                                    break
+                                if _dur < 0.1:
+                                    _zero_count += 1
+                            if _zero_count >= 4:
+                                logger.warning("Phase1a: %d zero-length sections", _zero_count)
+                                _valid = False
+
+                            if _valid:
+                                music_sections = _candidate
+                                logger.info("Phase1a: Whisper sections OK (attempt %d): %d sections", _attempt + 1, len(music_sections))
+                                break
+                            else:
+                                logger.warning("Phase1a: invalid sections (attempt %d/3), retrying", _attempt + 1)
+                        except Exception as _whisper_err:
+                            logger.warning("Phase1a: attempt %d/3 failed: %s", _attempt + 1, str(_whisper_err)[:200])
+
+                # Save music_sections + whisper_segments to job
+                if music_sections:
+                    _save_data = {
+                        "music_sections": music_sections,
+                        "progress": 3,
+                    }
+                    if whisper_segments:
+                        _save_data["whisper_segments"] = whisper_segments
+                    await _update_job(mongo_db, job_id, _save_data)
+                    logger.info(
+                        "Phase1a: job %s music structure: %d sections",
+                        job_id, len(music_sections),
+                    )
             else:
-                logger.warning("Phase1: could not load audio bytes for job %s", job_id)
+                logger.warning("Phase1a: could not load audio bytes for job %s", job_id)
         except Exception as e:
             logger.warning(
-                "Phase1: music structure analysis failed for job %s: %s (continuing without)",
+                "Phase1a: music structure analysis failed for job %s: %s (continuing without)",
                 job_id, e,
             )
-            # Non-fatal: continue without music sections
-
-    # ── Assign scene_type based on section labels ──
-    if music_sections:
-        # Check if any section has rap
-        has_rap = any("rap" in (s.get("label") or "").lower() for s in music_sections)
-
-        for section in music_sections:
-            label = (section.get("label") or "").lower()
-            if has_rap:
-                # Rap exists → only rap gets lipsync
-                if "rap" in label or "hiphop" in label or "hip-hop" in label:
-                    section["scene_type"] = "lipsync"
-                else:
-                    section["scene_type"] = "drama"
-            else:
-                # No rap → chorus gets lipsync
-                if label.startswith("chorus"):
-                    section["scene_type"] = "lipsync"
-                else:
-                    section["scene_type"] = "drama"
-        logger.info("Phase1: scene_type assigned based on music sections (has_rap=%s)", has_rap)
 
     await _update_job(mongo_db, job_id, {"progress": 3})
 
-    # ── Phase 1b: Scene planning (with validation + retry) ──
-    scenes_raw = None
+    # ── 씬 생성: 가사 섹션 1개 = 씬 1개 ──
+    if not music_sections:
+        # Whisper 실패 시 가사 섹션 기반으로 균등 분할
+        if sections:
+            total_duration = float(job.get("audio_duration_sec") or 180.0)
+            sec_duration = total_duration / len(sections)
+            music_sections = []
+            for idx, sec in enumerate(sections):
+                music_sections.append({
+                    "label": sec["tag"],
+                    "start": round(idx * sec_duration, 3),
+                    "end": round((idx + 1) * sec_duration, 3),
+                    "mood": "",
+                })
+        else:
+            logger.error("Phase1: no lyrics sections and no music sections for job %s", job_id)
+            await _update_job(mongo_db, job_id, {
+                "status": "failed",
+                "error_message": "가사 섹션을 파싱할 수 없습니다.",
+            })
+            return
+
+    # has_rap 판단: 가사 섹션 태그 중 "rap" 포함 여부
+    has_rap = any("rap" in sec["tag"].lower() for sec in sections) if sections else False
+
+    # Whisper 세그먼트 가져오기 (분할에 사용)
+    _ws_segments = whisper_segments if whisper_segments else job.get("whisper_segments", [])
+
+    scenes = []
+    scene_num = 1
+    for i, sec in enumerate(music_sections):
+        label = sec["label"]
+        duration = sec["end"] - sec["start"]
+
+        # 0초 섹션은 건너뛰기 (Break 등 매칭 실패한 짧은 섹션)
+        if duration < 0.5:
+            logger.info("Phase1: skipping zero-length section '%s'", label)
+            continue
+
+        # 해당 섹션의 가사 찾기
+        matching_section = next((s for s in sections if s["tag"] == label), None)
+        lyrics_content = matching_section["content"] if matching_section else ""
+        lyrics_lines = [l.strip() for l in lyrics_content.split("\n") if l.strip()] if lyrics_content else []
+
+        # scene_type 결정
+        label_lower = label.lower()
+        if has_rap:
+            if "rap" in label_lower or "hiphop" in label_lower or "hip-hop" in label_lower:
+                scene_type = "lipsync"
+            else:
+                scene_type = "drama"
+        else:
+            if label_lower.startswith("chorus"):
+                scene_type = "lipsync"
+            else:
+                scene_type = "drama"
+
+        # 15초 초과 시 자동 분할
+        clips = _split_long_section(sec, _ws_segments, lyrics_lines)
+
+        for clip in clips:
+            clip_dur = clip["end"] - clip["start"]
+            if clip_dur < 0.5:
+                continue
+            scenes.append({
+                "scene_number": scene_num,
+                "section": clip["section"],
+                "scene_type": scene_type,
+                "lyrics_segment": clip["lyrics_segment"],
+                "use_seconds": round(clip_dur, 2),
+                "section_start": round(clip["start"], 3),
+                "section_end": round(clip["end"], 3),
+                "section_mood": sec.get("mood", ""),
+                "description": "",
+                "image_prompt": "",
+                "video_prompt": "",
+                "description_ko": "",
+                "image_object_name": None,
+                "image_source": None,
+                "video_object_name": None,
+                "video_status": "pending",
+                "video_error": None,
+            })
+            scene_num += 1
+
+    logger.info("Phase1: %d scenes created from lyrics sections (has_rap=%s)", len(scenes), has_rap)
+
+    # ── Phase 1b: GPT에게 씬 목록 전달 → 프롬프트만 받기 (3회 재시도) ──
+    from .mv_generator import generate_scene_prompts_only
+
+    scene_input = [
+        {
+            "scene_number": s["scene_number"],
+            "section": s["section"],
+            "duration": s["use_seconds"],
+            "lyrics": s["lyrics_segment"],
+            "scene_type": s["scene_type"],
+        }
+        for s in scenes
+    ]
+
+    prompts_result = None
     for attempt in range(3):
         try:
-            scenes_raw = await split_lyrics_into_scenes(
-                lyrics=job.get("lyrics"),
+            prompts_result = await generate_scene_prompts_only(
+                scenes_input=scene_input,
                 title=job["title"],
                 genre=job.get("genre"),
                 mood=job.get("mood"),
-                scene_count=scene_count,
-                user_scene_prompt=job.get("scene_prompt"),
-                music_sections=music_sections,
                 scenario=scenario,
+                user_scene_prompt=job.get("scene_prompt"),
             )
         except Exception as e:
-            logger.warning("Phase1b: scene split failed (attempt %d/3): %s", attempt + 1, e)
+            logger.warning("Phase1b: prompt generation failed (attempt %d/3): %s", attempt + 1, e)
             if attempt < 2:
                 await asyncio.sleep(3 * (attempt + 1))
             continue
 
         # Validate: all scenes must have image_prompt and video_prompt
-        missing = []
-        for s in scenes_raw:
-            if not s.get("image_prompt") or not s.get("video_prompt"):
-                missing.append(s.get("scene_number", "?"))
-
-        if not missing:
-            logger.info("Phase1b: all %d scenes have image_prompt + video_prompt (attempt %d)", len(scenes_raw), attempt + 1)
-            break
+        if prompts_result and len(prompts_result) == len(scenes):
+            missing = [
+                p.get("scene_number", "?")
+                for p in prompts_result
+                if not p.get("image_prompt") or not p.get("video_prompt")
+            ]
+            if not missing:
+                logger.info("Phase1b: all %d scenes have prompts (attempt %d)", len(scenes), attempt + 1)
+                break
+            else:
+                logger.warning("Phase1b: scenes %s missing prompts, retrying (attempt %d/3)", missing, attempt + 1)
+                prompts_result = None
         else:
-            logger.warning("Phase1b: scenes %s missing prompts, retrying (attempt %d/3)", missing, attempt + 1)
-            scenes_raw = None
-            if attempt < 2:
-                await asyncio.sleep(3 * (attempt + 1))
+            logger.warning(
+                "Phase1b: prompt count mismatch (got %d, expected %d), retrying (attempt %d/3)",
+                len(prompts_result) if prompts_result else 0, len(scenes), attempt + 1,
+            )
+            prompts_result = None
 
-    if not scenes_raw:
-        logger.error("Phase1b: scene planning failed after 3 attempts for job %s", job_id)
+        if attempt < 2:
+            await asyncio.sleep(3 * (attempt + 1))
+
+    if not prompts_result:
+        logger.error("Phase1b: prompt generation failed after 3 attempts for job %s", job_id)
         await _update_job(mongo_db, job_id, {
             "status": "failed",
-            "error_message": "씬 분할에 실패했습니다. 모든 씬에 이미지/영상 프롬프트가 필요합니다.",
+            "error_message": "씬 프롬프트 생성에 실패했습니다. 다시 시도해주세요.",
         })
         return
 
-    # Build scenes array with status fields
-    scenes = []
-    for s in scenes_raw:
-        scene_doc = {
-            "scene_number": s.get("scene_number", len(scenes) + 1),
-            "description": s.get("image_prompt", ""),  # 하위호환용 (image_prompt 복사)
-            "image_prompt": s.get("image_prompt", ""),
-            "video_prompt": s.get("video_prompt", ""),
-            "description_ko": s.get("description_ko", ""),
-            "lyrics_segment": s.get("lyrics_segment", ""),
-            "image_object_name": None,
-            "image_source": None,
-            "video_object_name": None,
-            "video_status": "pending",
-            "video_error": None,
-        }
-        # scene_type from music section (if available)
-        scene_type = "drama"  # default
-        if s.get("scene_type"):
-            scene_type = s["scene_type"]
-        elif s.get("section"):
-            section_label = s["section"].lower()
-            if section_label.startswith("chorus"):
-                scene_type = "lipsync"
-        scene_doc["scene_type"] = scene_type
-
-        # Section-aware fields (present when music_sections was used)
-        if s.get("use_seconds"):
-            scene_doc["use_seconds"] = float(s["use_seconds"])
-        if s.get("section"):
-            scene_doc["section"] = s["section"]
-        if s.get("section_mood"):
-            scene_doc["section_mood"] = s["section_mood"]
-        if s.get("clip_mood"):
-            scene_doc["clip_mood"] = s["clip_mood"]
-
-        scenes.append(scene_doc)
-
-    # Sort by scene_number to ensure correct ordering for accumulation
-    scenes.sort(key=lambda x: x.get("scene_number", 0))
-
-    # Assign lyrics to scenes based on section matching
-    _assign_lyrics_to_scenes(scenes, job.get("lyrics", ""))
-
-    # Calculate section_start / section_end from use_seconds accumulation
-    cumulative = 0.0
+    # 프롬프트를 씬에 채워넣기
+    prompt_by_number = {p["scene_number"]: p for p in prompts_result}
     for scene in scenes:
-        use_sec = scene.get("use_seconds")
-        if use_sec:
-            scene["section_start"] = round(cumulative, 3)
-            scene["section_end"] = round(cumulative + float(use_sec), 3)
-            cumulative += float(use_sec)
-        else:
-            # use_seconds가 없으면 기본 10초
-            scene["section_start"] = round(cumulative, 3)
-            scene["section_end"] = round(cumulative + 10.0, 3)
-            cumulative += 10.0
+        p = prompt_by_number.get(scene["scene_number"], {})
+        scene["image_prompt"] = p.get("image_prompt", "")
+        scene["video_prompt"] = p.get("video_prompt", "")
+        scene["description_ko"] = p.get("description_ko", "")
+        scene["description"] = scene["image_prompt"]  # 하위호환용
 
     await _update_job(mongo_db, job_id, {
         "status": "scenes_ready",
@@ -601,6 +1164,74 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
         "Phase2: job %s — %d images generated (%d total)",
         job_id, generated_count, completed_image_count,
     )
+
+
+# ── Sync Labs 후 자막 재적용 ──────────────────────────────────────────────────
+
+
+def _burn_subtitles_on_synced_video(video_bytes: bytes, scene: dict, audio_bytes: bytes) -> bytes:
+    """Sync Labs 후보정된 영상에 가사 자막을 다시 burn-in한다.
+
+    Args:
+        video_bytes: Sync Labs에서 반환된 영상 (무음 또는 유음)
+        scene: 씬 데이터 (lyrics_segment, section_start, section_end 포함)
+        audio_bytes: 해당 씬의 오디오 구간 (Whisper 타이밍 추출용)
+
+    Returns:
+        자막이 burn-in된 영상 bytes. 실패 시 원본 반환.
+    """
+    if not scene.get("lyrics_segment"):
+        return video_bytes  # 가사 없으면 그냥 반환
+
+    for _retry in range(3):
+        try:
+            from .subtitle_generator import generate_scene_lyrics_ass
+            from .whisper_service import get_lyrics_timestamps
+            import subprocess, tempfile, os
+
+            # Whisper로 타이밍 추출
+            timestamps = None
+            try:
+                timestamps = get_lyrics_timestamps(audio_bytes)
+            except Exception:
+                pass
+
+            # ASS 자막 생성
+            ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
+            if not ass_content:
+                return video_bytes
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                vid_path = os.path.join(tmpdir, "input.mp4")
+                ass_path = os.path.join(tmpdir, "lyrics.ass")
+                out_path = os.path.join(tmpdir, "output.mp4")
+
+                with open(vid_path, "wb") as f:
+                    f.write(video_bytes)
+                with open(ass_path, "w", encoding="utf-8") as f:
+                    f.write(ass_content)
+
+                ass_filter = ass_path.replace("\\", "/").replace(":", "\\:")
+                ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
+                subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", vid_path,
+                     "-vf", "ass={}".format(ass_filter),
+                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                     "-c:a", "copy",
+                     out_path],
+                    capture_output=True, timeout=60,
+                )
+
+                if os.path.exists(out_path):
+                    with open(out_path, "rb") as f:
+                        return f.read()
+
+            logger.warning("Subtitle burn-in: output not created (attempt %d/3)", _retry + 1)
+        except Exception as e:
+            logger.warning("Subtitle burn-in failed (attempt %d/3): %s", _retry + 1, str(e)[:200])
+
+    logger.warning("Subtitle burn-in: all 3 attempts failed, returning original video")
+    return video_bytes
 
 
 # ── Phase 3: Generate videos ─────────────────────────────────────────────────
@@ -1060,6 +1691,9 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                                 else:
                                     silent_video = synced_video
 
+                            # Sync Labs 후 자막 재적용
+                            silent_video = _burn_subtitles_on_synced_video(silent_video, scene, segment_audio)
+
                             synclabs_obj = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(str(job_id), sn)
                             minio_client.put_object(bucket_name=settings.minio_bucket_images,
                                                     object_name=synclabs_obj, data=io.BytesIO(silent_video),
@@ -1099,6 +1733,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
             audio_obj_for_merge = await _resolve_audio_object_name(job, mongo_db)
             if audio_obj_for_merge:
                 import subprocess
+                from .subtitle_generator import generate_scene_lyrics_ass
                 logger.info("Phase3.6: merging audio segments into scene videos for job %s", job_id)
                 audio_resp = minio_client.get_object(
                     bucket_name=settings.minio_bucket_music,
@@ -1136,15 +1771,47 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                             end = scene["section_end"]
 
                             ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
-                            subprocess.run(
-                                [ffmpeg_bin, "-y",
-                                 "-i", vid_path,
-                                 "-ss", str(start), "-to", str(end), "-i", aud_path,
-                                 "-c:v", "copy", "-c:a", "aac",
-                                 "-map", "0:v:0", "-map", "1:a:0",
-                                 "-shortest", out_path],
-                                capture_output=True, timeout=30,
-                            )
+
+                            # Generate lyrics subtitle for this scene (Whisper timing)
+                            timestamps = None
+                            if scene.get("lyrics_segment"):
+                                try:
+                                    from .sync_labs_service import cut_audio_segment
+                                    from .whisper_service import get_lyrics_timestamps
+                                    segment_audio = cut_audio_segment(full_audio_for_merge, start, end)
+                                    timestamps = get_lyrics_timestamps(segment_audio)
+                                except Exception as whisper_err:
+                                    logger.warning("Phase3.6 Whisper timing failed for scene %d: %s", i, str(whisper_err)[:200])
+                            ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
+
+                            if ass_content:
+                                ass_path = os.path.join(tmpdir, "lyrics.ass")
+                                with open(ass_path, "w", encoding="utf-8") as f:
+                                    f.write(ass_content)
+                                # Re-encode with subtitle burn-in
+                                escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+                                subprocess.run(
+                                    [ffmpeg_bin, "-y",
+                                     "-i", vid_path,
+                                     "-ss", str(start), "-to", str(end), "-i", aud_path,
+                                     "-vf", "ass={}".format(escaped_ass),
+                                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                     "-c:a", "aac",
+                                     "-map", "0:v:0", "-map", "1:a:0",
+                                     "-shortest", out_path],
+                                    capture_output=True, timeout=60,
+                                )
+                            else:
+                                # No lyrics — stream copy (fast)
+                                subprocess.run(
+                                    [ffmpeg_bin, "-y",
+                                     "-i", vid_path,
+                                     "-ss", str(start), "-to", str(end), "-i", aud_path,
+                                     "-c:v", "copy", "-c:a", "aac",
+                                     "-map", "0:v:0", "-map", "1:a:0",
+                                     "-shortest", out_path],
+                                    capture_output=True, timeout=30,
+                                )
 
                             if os.path.exists(out_path):
                                 with open(out_path, "rb") as f:
@@ -1403,18 +2070,69 @@ async def run_phase5_merge_audio(job_id, mongo_db, audio_object_name: str) -> No
             })
             return
 
+        # Generate karaoke-style lyrics subtitle (ASS) with Whisper timing
+        scenes = job.get("scenes", [])
+        all_timestamps: dict[int, list[dict]] = {}
+        try:
+            from .sync_labs_service import cut_audio_segment
+            from .whisper_service import get_lyrics_timestamps
+            with open(audio_path, "rb") as _af:
+                full_audio_bytes = _af.read()
+            for s_idx, sc in enumerate(scenes):
+                if not sc.get("lyrics_segment") or not sc.get("lyrics_segment", "").strip():
+                    continue
+                s_start = sc.get("section_start")
+                s_end = sc.get("section_end")
+                if s_start is None or s_end is None:
+                    continue
+                try:
+                    seg_audio = cut_audio_segment(full_audio_bytes, float(s_start), float(s_end))
+                    ts = get_lyrics_timestamps(seg_audio)
+                    if ts:
+                        all_timestamps[s_idx] = ts
+                except Exception as w_err:
+                    logger.warning("Phase5 Whisper timing failed for scene %d: %s", s_idx, str(w_err)[:200])
+        except Exception as whisper_init_err:
+            logger.warning("Phase5 Whisper init failed, using equal distribution: %s", str(whisper_init_err)[:200])
+
+        ass_content = generate_lyrics_ass(scenes, all_timestamps=all_timestamps if all_timestamps else None)
+        ass_path = os.path.join(tmpdir, "lyrics.ass")
+        has_lyrics = False
+        if ass_content:
+            with open(ass_path, "w", encoding="utf-8") as f:
+                f.write(ass_content)
+            has_lyrics = True
+            logger.info("Phase5: generated lyrics subtitle for job %s", job_id)
+
         output_path = os.path.join(tmpdir, "music_video.mp4")
-        proc = await asyncio.create_subprocess_exec(
-            ffmpeg_path, "-y",
-            "-i", video_path,
-            "-i", audio_path,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            output_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+
+        if has_lyrics:
+            # Subtitle burn-in requires re-encoding video
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg_path, "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-vf", "ass={}".format(ass_path.replace("\\", "/").replace(":", "\\:")),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac",
+                "-shortest",
+                output_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            # No lyrics — copy video stream as-is
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg_path, "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                output_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         _, stderr = await proc.communicate()
 
         if proc.returncode != 0:

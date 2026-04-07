@@ -735,15 +735,44 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                                 start = scene["section_start"]
                                 end = scene["section_end"]
 
-                                subprocess.run(
-                                    ["ffmpeg", "-y",
-                                     "-i", vid_path,
-                                     "-ss", str(start), "-to", str(end), "-i", aud_path,
-                                     "-c:v", "copy", "-c:a", "aac",
-                                     "-map", "0:v:0", "-map", "1:a:0",
-                                     "-shortest", out_path],
-                                    capture_output=True, timeout=30,
-                                )
+                                # 가사 자막 생성 (Whisper 타이밍 추출)
+                                from ..services.subtitle_generator import generate_scene_lyrics_ass
+                                timestamps = None
+                                if scene.get("lyrics_segment"):
+                                    try:
+                                        from ..services.sync_labs_service import cut_audio_segment
+                                        from ..services.whisper_service import get_lyrics_timestamps
+                                        segment_audio = cut_audio_segment(full_audio, start, end)
+                                        timestamps = get_lyrics_timestamps(segment_audio)
+                                    except Exception as whisper_err:
+                                        logger.warning("Whisper timing failed: %s", str(whisper_err)[:200])
+                                ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
+                                if ass_content:
+                                    ass_path = os.path.join(tmpdir, "lyrics.ass")
+                                    with open(ass_path, "w", encoding="utf-8") as f:
+                                        f.write(ass_content)
+                                    ass_filter = ass_path.replace("\\", "/").replace(":", "\\:")
+                                    subprocess.run(
+                                        ["ffmpeg", "-y",
+                                         "-i", vid_path,
+                                         "-ss", str(start), "-to", str(end), "-i", aud_path,
+                                         "-vf", "ass={}".format(ass_filter),
+                                         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                         "-c:a", "aac",
+                                         "-map", "0:v:0", "-map", "1:a:0",
+                                         "-shortest", out_path],
+                                        capture_output=True, timeout=60,
+                                    )
+                                else:
+                                    subprocess.run(
+                                        ["ffmpeg", "-y",
+                                         "-i", vid_path,
+                                         "-ss", str(start), "-to", str(end), "-i", aud_path,
+                                         "-c:v", "copy", "-c:a", "aac",
+                                         "-map", "0:v:0", "-map", "1:a:0",
+                                         "-shortest", out_path],
+                                        capture_output=True, timeout=30,
+                                    )
 
                                 if os.path.exists(out_path):
                                     with open(out_path, "rb") as f:
@@ -1301,6 +1330,10 @@ async def _retry_sync_for_scene(job_id, scene_number, mongo_db):
                     final_video = f.read()
             else:
                 final_video = synced_video
+
+        # Sync Labs 후 자막 재적용
+        from ..services.mv_pipeline import _burn_subtitles_on_synced_video
+        final_video = _burn_subtitles_on_synced_video(final_video, scene, original_segment_audio)
 
         # Save Sync Labs result to SEPARATE file (원본 Kling 영상 유지)
         synclabs_object = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(job_id, scene_number)

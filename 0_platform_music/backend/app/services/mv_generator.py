@@ -105,17 +105,44 @@ Rules:
 """
 
 
-async def analyze_music_structure(audio_bytes: bytes, mime_type: str = "audio/mp3") -> List[dict]:
+async def analyze_music_structure(
+    audio_bytes: bytes,
+    mime_type: str = "audio/mp3",
+    lyrics_sections: list[str] = None,
+) -> List[dict]:
     """Send audio to Gemini and get music structure sections.
+
+    If lyrics_sections is provided, Gemini is asked to find timestamps
+    for those exact sections in order (lyrics-section-master mode).
+    Otherwise falls back to free-form analysis (legacy behaviour).
 
     Returns list of {"label", "start", "end", "mood"}.
     """
+    # Choose prompt: lyrics-guided or free-form
+    if lyrics_sections:
+        section_list = "\n".join(
+            "{}. {}".format(i + 1, tag) for i, tag in enumerate(lyrics_sections)
+        )
+        prompt_text = (
+            "Analyze the audio and find the exact timestamps for each of the following sections IN ORDER:\n"
+            "{}\n\n"
+            "Return JSON array. Each object must have:\n"
+            "- \"label\": the exact section name as listed above (do NOT rename or skip any)\n"
+            "- \"start\": start time in seconds\n"
+            "- \"end\": end time in seconds\n"
+            "- \"mood\": brief mood description in Korean (2-5 words)\n\n"
+            "The sections must appear in the given order and cover the entire audio duration.\n"
+            "Output ONLY valid JSON, no markdown."
+        ).format(section_list)
+    else:
+        prompt_text = MUSIC_STRUCTURE_PROMPT
+
     audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
     payload = {
         "contents": [{
             "parts": [
-                {"text": MUSIC_STRUCTURE_PROMPT},
+                {"text": prompt_text},
                 {
                     "inlineData": {
                         "mimeType": mime_type,
@@ -186,6 +213,31 @@ async def analyze_music_structure(audio_bytes: bytes, mime_type: str = "audio/mp
             s["label"] = "Unknown"
         if not s.get("mood"):
             s["mood"] = ""
+
+    # Validate lyrics-section alignment when lyrics_sections was provided
+    if lyrics_sections:
+        returned_labels = [s["label"] for s in sections]
+        if len(returned_labels) != len(lyrics_sections):
+            logger.warning(
+                "Gemini returned %d sections but lyrics have %d sections. "
+                "Returned: %s / Expected: %s",
+                len(returned_labels), len(lyrics_sections),
+                returned_labels, lyrics_sections,
+            )
+        else:
+            mismatched = [
+                (i, exp, got)
+                for i, (exp, got) in enumerate(zip(lyrics_sections, returned_labels))
+                if exp != got
+            ]
+            if mismatched:
+                logger.warning(
+                    "Gemini section labels mismatch (forcing to lyrics tags): %s",
+                    mismatched,
+                )
+                # Force labels to match lyrics section tags
+                for i, exp, _got in mismatched:
+                    sections[i]["label"] = exp
 
     logger.info("Music structure analysis: %d sections found", len(sections))
     return sections
@@ -520,6 +572,14 @@ For "drama" clips:
 - The main character and other characters may appear together for storytelling
 - But ONLY the main character is the singer - other characters never sing or perform
 
+SECTION FIELD RULES (CRITICAL — violations will be rejected):
+- The "section" field in each output object MUST match EXACTLY one of the music_sections labels provided in the input.
+- Do NOT invent, rename, merge, or skip any section. Use the label strings EXACTLY as given (e.g., "Chorus", NOT "Chorus1", "Post-Chorus", "Chorus 2", etc.).
+- Your job is ONLY to decide clip_count and use_seconds for each given section; the section list itself is fixed.
+- If a section needs multiple clips, every clip shares the same "section" value.
+
+{{available_sections_block}}
+
 Rules:
 - Each clip's use_seconds must sum up to the section duration (within 0.5s tolerance).
 - Distribute lyrics across clips according to their timing in each section.
@@ -656,9 +716,24 @@ async def _split_with_music_sections(
             "Each scene should follow the narrative arc described above."
         ).format(scenario)
 
+    # Extract available section tags from lyrics for prompt enforcement
+    available_sections_block = ""
+    if lyrics and lyrics.strip():
+        import re as _re
+        _section_tags = _re.findall(r'\[([^\]]+)\]', lyrics)
+        # Clean: take base name before ":"
+        _clean_tags = list(dict.fromkeys(
+            tag.split(":")[0].strip() for tag in _section_tags
+        ))
+        if _clean_tags:
+            available_sections_block = (
+                "Available section tags from lyrics (use ONLY these): "
+                + ", ".join('"{}"'.format(t) for t in _clean_tags)
+            )
+
     system_prompt = SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE.format(
         scenario_context=scenario_context,
-    )
+    ).replace("{{available_sections_block}}", available_sections_block)
 
     if user_scene_prompt and user_scene_prompt.strip():
         system_prompt += (
@@ -735,7 +810,21 @@ async def _split_with_music_sections(
                 "mood": section_mood,
             }]
 
-        for clip in clips:
+        # ── 보정 2: GPT 클립 use_seconds 합을 Gemini 섹션 길이에 맞춤 ──
+        section_duration = section_end - section_start
+        if section_duration > 0 and clips:
+            gpt_total = sum(float(c.get("use_seconds", 10)) for c in clips)
+            if gpt_total > 0 and abs(gpt_total - section_duration) > 0.1:
+                correction_ratio = section_duration / gpt_total
+                logger.info(
+                    "Section '%s': correcting clip timing ratio=%.4f (gpt=%.1f, section=%.1f)",
+                    section_label, correction_ratio, gpt_total, section_duration,
+                )
+                for c in clips:
+                    c["use_seconds"] = round(float(c.get("use_seconds", 10)) * correction_ratio, 2)
+
+        clip_count = len(clips)
+        for clip_idx, clip in enumerate(clips):
             # Support both new (image_prompt/video_prompt) and old (description) format
             image_prompt = clip.get("image_prompt") or clip.get("description", "")
             video_prompt = clip.get("video_prompt", "")
@@ -745,6 +834,12 @@ async def _split_with_music_sections(
             if not clip_scene_type:
                 clip_scene_type = "lipsync" if section_label.lower().startswith("chorus") else "drama"
 
+            # 씬 섹션 네이밍: 클립 1개면 "Verse 1", 여러개면 "Verse 1-1", "Verse 1-2"
+            if clip_count > 1:
+                scene_section = "{}-{}".format(section_label, clip_idx + 1)
+            else:
+                scene_section = section_label
+
             flat_scenes.append({
                 "scene_number": scene_number,
                 "description": image_prompt,  # backward compat
@@ -753,7 +848,7 @@ async def _split_with_music_sections(
                 "description_ko": clip.get("description_ko", ""),
                 "lyrics_segment": clip.get("lyrics_segment", ""),
                 "use_seconds": float(clip.get("use_seconds", 10)),
-                "section": section_label,
+                "section": scene_section,
                 "section_start": section_start,
                 "section_end": section_end,
                 "section_mood": section_mood,
@@ -770,6 +865,147 @@ async def _split_with_music_sections(
         len(section_plans), len(flat_scenes),
     )
     return flat_scenes
+
+
+# ── 1b. Generate Scene Prompts Only (v10.0) ────────────────────────────────
+
+
+SCENE_PROMPT_ONLY_SYSTEM = """\
+You are a music video scene prompt generator.
+You will receive a list of scenes with their section name, duration, lyrics, and scene_type.
+Your job is ONLY to generate visual prompts for each scene. Do NOT change the scene structure.
+
+For each scene, provide:
+1. image_prompt: A vivid visual description for AI image generation (English, 1-3 sentences)
+2. video_prompt: Camera movement instructions for AI video generation (English)
+3. description_ko: Korean description of the scene (2-3 sentences)
+
+IMPORTANT VISUAL STYLE:
+- Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera (EXCEPT for "lipsync" scene_type).
+- Focus entirely on cinematic storytelling: the character living through the narrative, \
+showing emotions through actions and expressions naturally.
+- Use varied cinematic angles: wide shots, close-ups, over-the-shoulder, silhouettes, reflections.
+- Maintain visual continuity across all scenes.
+
+For image_prompt, include specific camera composition:
+- Shot type: extreme wide, wide, medium, close-up, extreme close-up
+- Camera angle: eye-level, low angle, high angle, bird's eye, dutch angle
+- Lighting: natural, golden hour, backlit, rim light, neon, harsh shadows
+- Depth of field: shallow bokeh, deep focus, rack focus subject
+- Color palette: warm/cool tones, specific colors
+
+For video_prompt, include specific camera movement:
+- Camera motion: tracking shot, pan left/right, tilt up/down, dolly in/out, crane, steadicam, handheld
+- Speed: slow motion, normal speed, time-lapse
+- Transition: fade, dissolve, cut, whip pan
+- Subject movement: walking toward/away, turning, reaching out
+
+scene_type rules:
+- "drama": cinematic storytelling scene. Character NOT looking at camera. Focus on narrative actions and emotions.
+- "lipsync": character faces camera directly, singing/performing. ONLY the main character appears, close-up frontal shot, mouth open singing.
+
+For "lipsync" scenes:
+- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up
+- The main character should appear to be singing or rapping with mouth open
+- Do NOT include any other person in lipsync scenes
+
+For "drama" scenes:
+- NEVER describe the character singing, performing, or looking at the camera
+
+{scenario_context}
+
+Output ONLY a JSON array matching the input scene order:
+[
+  {{"scene_number": 1, "image_prompt": "...", "video_prompt": "...", "description_ko": "..."}},
+  ...
+]
+
+Output valid JSON only, no markdown fences, no extra text.
+"""
+
+
+async def generate_scene_prompts_only(
+    scenes_input: List[dict],
+    title: str,
+    genre: Optional[str] = None,
+    mood: Optional[str] = None,
+    scenario: Optional[str] = None,
+    user_scene_prompt: Optional[str] = None,
+) -> List[dict]:
+    """GPT에게 씬 목록을 전달하고 image_prompt, video_prompt, description_ko만 받는다.
+
+    Args:
+        scenes_input: [{"scene_number", "section", "duration", "lyrics", "scene_type"}, ...]
+        title: 곡 제목
+        genre: 장르
+        mood: 분위기
+        scenario: MV 시나리오
+        user_scene_prompt: 사용자 씬 지시
+
+    Returns:
+        [{"scene_number", "image_prompt", "video_prompt", "description_ko"}, ...]
+    """
+    client = _get_openai_client()
+
+    # Build scenario context
+    scenario_context = ""
+    if scenario:
+        scenario_context = (
+            "MV SCENARIO (follow this narrative):\n{}\n\n"
+            "Based on this scenario, distribute the story across scenes. "
+            "Each scene should follow the narrative arc described above."
+        ).format(scenario)
+
+    system_prompt = SCENE_PROMPT_ONLY_SYSTEM.format(
+        scenario_context=scenario_context,
+    )
+
+    if user_scene_prompt and user_scene_prompt.strip():
+        system_prompt += (
+            "\n\nAdditional user direction for scene imagery: \"{}\"\n"
+            "Incorporate this direction into each scene's visual description."
+        ).format(user_scene_prompt.strip())
+
+    # Build user message
+    user_message = "Title: {}\n".format(title)
+    if genre:
+        user_message += "Genre: {}\n".format(genre)
+    if mood:
+        user_message += "Mood: {}\n".format(mood)
+    user_message += "\n## Scenes to generate prompts for:\n"
+    user_message += json.dumps(scenes_input, ensure_ascii=False, indent=2)
+
+    max_tokens = min(max(len(scenes_input) * 200, 4000), 16000)
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        max_tokens=max_tokens,
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+
+    result = json.loads(raw)
+
+    if not isinstance(result, list) or len(result) == 0:
+        raise ValueError("ChatGPT가 유효한 프롬프트 목록을 생성하지 못했습니다.")
+
+    logger.info(
+        "generate_scene_prompts_only: %d prompts generated for %d scenes",
+        len(result), len(scenes_input),
+    )
+    return result
 
 
 # ── 2. Generate Scene Image (Gemini) ─────────────────────────────────────────

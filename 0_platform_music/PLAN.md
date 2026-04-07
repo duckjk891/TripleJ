@@ -2276,7 +2276,7 @@ frontend/src/
 
 #### 2. `.env` — 환경변수 추가
 ```
-SUNO_API_KEY=b0c13153451cf641dc692a107a816c77
+SUNO_API_KEY=your-suno-api-key-here
 ```
 
 #### 3. `backend/app/services/suno_generator.py` — 새 파일 생성
@@ -3916,22 +3916,22 @@ JWT_ALGORITHM=HS256
 # === 외부 AI API 키 ===
 
 # OpenAI
-OPENAI_API_KEY=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
+OPENAI_API_KEY=your-openai-api-key-here
 OPENAI_MODEL=gpt-4o-mini
 
 # Google Gemini
-GOOGLE_API_KEY=AIzaSyA5_p_dGUxI9bPz1zveuT8J6xDC6PBj7y4
+GOOGLE_API_KEY=your-google-api-key-here
 
 # Kling AI
-KLING_ACCESS_KEY=AABMgmAhdAbFMHApaGyrP9MnJTTh3Yg9
-KLING_SECRET_KEY=ChmtNCanh4EbHfkFNf4EEC3h8nJ9PTKB
+KLING_ACCESS_KEY=your-kling-access-key-here
+KLING_SECRET_KEY=your-kling-secret-key-here
 
 # Suno
-SUNO_API_KEY=b0c13153451cf641dc692a107a816c77
+SUNO_API_KEY=your-suno-api-key-here
 SUNO_API_URL=https://api.sunoapi.org
 
 # Kits.AI
-KITS_API_KEY=QO0BFe3I.G8rftNyWEJUHPNJH2HIm8-Kl
+KITS_API_KEY=your-kits-api-key-here
 KITS_API_URL=https://arpeggi.io/api/kits/v1
 
 # === YuE Music Generation ===
@@ -7416,3 +7416,1825 @@ const previewMrBufferRef = useRef(null);  // 변환된 MR AudioBuffer
 
 - 렌더링 조건 `mvStep >= 2`는 step 3(영상 생성 중)을 포함하므로 조건 자체는 정상
 - polling 시 scenes 데이터 보존 로직 추가로 씬 리스트 유지 확인
+
+---
+
+# v5.0 — 뮤직비디오 카라오케 스타일 가사 자막
+
+- **작성일자**: 2026-04-03
+- **목표**: 뮤직비디오에 가사를 카라오케 스타일(노래방) 자막으로 burn-in
+- **방식**: ffmpeg ASS 자막의 `\kf` 태그로 왼→오 색 채우기 효과 (간단 버전 — 균등 배분)
+
+## 배경
+
+- 각 씬에 `lyrics_segment`, `section_start`, `section_end` 데이터가 이미 존재
+- ffmpeg ASS 자막의 `\kf` 태그로 노래방 스타일 효과 (왼→오 색 채우기) 구현 가능
+- 간단 버전: 씬 구간에 가사를 균등 배분하여 대략적 카라오케 효과
+- 현재 파이프라인: Phase 3 → 3.5 → 3.6 → Phase 4 (영상 합치기) → Phase 5 (오디오 합치기)
+
+## 1. 백엔드 변경
+
+### 1-1. ASS 자막 생성 함수 신규 작성
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/services/subtitle_generator.py` (신규) |
+| 역할 | 모든 씬의 가사 데이터로부터 ASS 자막 파일 내용을 생성 |
+
+**구현 요구사항**:
+
+- **입력**: 씬 리스트 (각 씬에 `lyrics_segment`, `section_start`, `section_end` 포함)
+- **출력**: ASS 형식 문자열 (파일로 저장)
+- **가사 타이밍 처리**:
+  - 각 씬의 `section_start` ~ `section_end` 구간을 가사 줄 수로 균등 분할
+  - 각 줄에 `\kf` 태그 적용 (해당 줄의 지속 시간을 글자 수로 균등 배분)
+- **ASS 스타일링**:
+  - 한글 폰트 지정 (Noto Sans KR 또는 시스템 가용 폰트 fallback)
+  - 화면 하단 중앙 배치 (`Alignment=2`)
+  - 테두리(outline) 및 그림자(shadow) 적용으로 가독성 확보
+  - Primary 컬러: 흰색, Secondary 컬러(채우기 색): 노란색 또는 하늘색
+  - 폰트 크기: 영상 해상도에 맞게 적절히 설정
+
+**핵심 로직 (의사코드)**:
+
+```
+for each scene:
+    lines = lyrics_segment.split('\n')
+    duration = section_end - section_start
+    line_duration = duration / len(lines)
+
+    for i, line in enumerate(lines):
+        start = section_start + i * line_duration
+        end = start + line_duration
+        k_per_char = (line_duration * 100) / len(line)  # centiseconds
+        kf_text = build_kf_tags(line, k_per_char)
+        emit ASS Dialogue line(start, end, kf_text)
+```
+
+### 1-2. Phase 5에서 자막 burn-in 적용
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/services/mv_pipeline.py` |
+| 위치 | Phase 5 (merge audio) |
+| 변경 | 오디오 합치기 시 자막도 함께 burn-in |
+
+**변경 내용**:
+
+- Phase 5 시작 시 `subtitle_generator`를 호출하여 ASS 파일 생성
+- 기존 ffmpeg 명령에 `-vf "ass=lyrics.ass"` 필터 추가
+- 최종 명령 형태:
+  ```
+  ffmpeg -i video.mp4 -i audio.mp3 -vf "ass=lyrics.ass" -c:v libx264 -c:a aac output.mp4
+  ```
+- 자막 생성 실패 시 자막 없이 기존 방식으로 fallback (파이프라인 중단 방지)
+
+## 2. 프론트엔드 변경
+
+- **변경 없음** — Phase 5 결과물에 자막이 자동 포함됨
+- 추후 자막 on/off 토글이 필요하면 별도 버전에서 추가
+
+## 3. 테스트
+
+### 3-1. 단위 테스트
+
+- [ ] ASS 헤더 생성 정상 확인 (스타일, 해상도 등)
+- [ ] 가사 줄 분할 및 타이밍 계산 정확성 검증
+- [ ] `\kf` 태그 생성 로직 검증 (글자 수 기반 균등 배분)
+- [ ] 빈 가사 / 가사 없는 씬 처리 (에러 없이 스킵)
+- [ ] 특수문자 포함 가사 처리 확인
+
+### 3-2. 통합 테스트
+
+- [ ] 생성된 ASS 파일이 ffmpeg `ass` 필터로 정상 적용되는지 확인
+- [ ] Phase 5 전체 흐름에서 자막 burn-in 포함 최종 영상 생성 확인
+- [ ] 자막 생성 실패 시 fallback 동작 확인
+
+### 3-3. 서버 기동 확인
+
+- [ ] 백엔드 서버 정상 기동 (import 에러 없음)
+- [ ] 기존 API 엔드포인트 비파괴 확인 (regression 없음)
+
+## 4. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (subtitle_generator.py 신규) | 1 | 0/1 |
+| 백엔드 (mv_pipeline.py 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 9 | 0/9 |
+| **합계** | **11** | **0/11** |
+
+---
+
+# v5.1 — 씬별 미리보기 영상에 카라오케 가사 자막 burn-in
+
+- **작성일자**: 2026-04-03
+- **목표**: Phase 3.6 (씬별 오디오 합치기)에서도 카라오케 스타일 가사 자막을 burn-in하여, 씬 단위 미리보기 영상에서 가사가 보이도록 한다
+- **선행 작업**: v5.0 (카라오케 자막 기능 — `subtitle_generator.py` 및 Phase 5 적용)
+
+## 배경
+
+- v5.0에서 Phase 5 (최종 오디오 합치기)에 카라오케 자막 기능을 구현 완료
+- `subtitle_generator.py`의 `generate_lyrics_ass(scenes)` 함수가 이미 존재
+- Phase 3.6은 씬별 미리보기 전용 (`video_with_audio_object`)이며, Phase 4/5는 원본 영상을 사용하므로 자막 중첩 문제 없음
+- Phase 3.6에서는 **해당 씬 1개의 가사만** 자막으로 넣어야 함 (전체 씬이 아닌)
+- 씬별 영상은 `section_start`~`section_end`가 아닌 **0초부터 시작**하므로, 자막 타이밍을 0 기준으로 보정해야 함
+
+## 1. 백엔드 변경
+
+### 1-1. 단일 씬용 ASS 생성 함수 추가
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/services/subtitle_generator.py` |
+| 변경 | 단일 씬용 ASS 생성 함수 추가 (또는 기존 함수 래핑) |
+
+**구현 요구사항**:
+
+- **방법 A (래핑)**: 기존 `generate_lyrics_ass(scenes)`에 단일 씬을 리스트로 감싸서 전달하되, 타이밍을 0 기준으로 보정
+- **방법 B (신규 함수)**: `generate_scene_lyrics_ass(scene)` 함수 신규 작성
+- **핵심**: 씬의 `section_start` 값을 오프셋으로 빼서, 자막 타이밍이 0초부터 시작하도록 보정
+
+**타이밍 보정 로직**:
+
+```
+offset = scene['section_start']
+adjusted_scene = copy(scene)
+adjusted_scene['section_start'] = 0
+adjusted_scene['section_end'] = scene['section_end'] - offset
+# 이 adjusted_scene을 단일 리스트로 generate_lyrics_ass에 전달
+```
+
+### 1-2. Phase 3.6에서 자막 burn-in 적용
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/services/mv_pipeline.py` |
+| 위치 | Phase 3.6 (씬별 오디오 합치기 — `video_with_audio_object` 생성 부분) |
+| 변경 | 자막 burn-in 추가 |
+
+**변경 내용**:
+
+- Phase 3.6에서 각 씬의 오디오를 합칠 때, 해당 씬의 가사 ASS 파일을 생성
+- 기존 ffmpeg 명령 변경:
+  - **기존**: `-c:v copy` (영상 스트림 복사)
+  - **변경**: `-vf "ass=scene_lyrics.ass" -c:v libx264 -preset fast -crf 23` (자막 필터 + 재인코딩)
+- ASS 파일은 임시 파일로 생성 후 ffmpeg 완료 시 삭제
+- 자막 생성 실패 시 자막 없이 기존 방식(`-c:v copy`)으로 fallback (파이프라인 중단 방지)
+
+**ffmpeg 명령 변경 예시**:
+
+```
+# 기존
+ffmpeg -i scene_video.mp4 -i scene_audio.mp3 -c:v copy -c:a aac output.mp4
+
+# 변경
+ffmpeg -i scene_video.mp4 -i scene_audio.mp3 \
+  -vf "ass=scene_lyrics.ass" \
+  -c:v libx264 -preset fast -crf 23 \
+  -c:a aac output.mp4
+```
+
+## 2. 프론트엔드 변경
+
+- **변경 없음** — 이미 씬별 미리보기 영상을 재생하는 UI가 존재
+
+## 3. 주의사항
+
+- Phase 3.6의 자막은 **미리보기 전용**이며, Phase 5의 최종 영상 자막과는 독립적
+- `-c:v copy` → 재인코딩으로 변경되므로 Phase 3.6 처리 시간이 다소 증가할 수 있음
+- `preset fast`와 `crf 23`으로 품질/속도 균형 유지 (미리보기용이므로 최고 품질 불필요)
+
+## 4. 테스트
+
+### 4-1. 단위 테스트
+
+- [ ] 단일 씬 ASS 생성 시 타이밍이 0초부터 시작하는지 확인
+- [ ] 타이밍 보정 로직 정확성 검증 (`section_start` 오프셋 차감)
+- [ ] 가사가 없는 씬 처리 (에러 없이 자막 스킵)
+
+### 4-2. 통합 테스트
+
+- [ ] Phase 3.6에서 자막 burn-in 포함 씬별 미리보기 영상 생성 확인
+- [ ] 생성된 미리보기 영상에서 카라오케 자막이 정상 표시되는지 확인
+- [ ] 자막 생성 실패 시 fallback 동작 확인 (자막 없이 `-c:v copy`로 정상 생성)
+- [ ] Phase 5 최종 영상에 자막 중첩이 발생하지 않는지 확인
+
+### 4-3. 서버 기동 확인
+
+- [ ] 백엔드 서버 정상 기동 (import 에러 없음)
+- [ ] 기존 API 엔드포인트 비파괴 확인 (regression 없음)
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (subtitle_generator.py 수정) | 1 | 0/1 |
+| 백엔드 (mv_pipeline.py 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 7 | 0/7 |
+
+---
+
+# v5.2 — 개별 씬 영상 생성 시 가사 자막 누락 수정 + Phase 5 경로 이스케이프 수정
+
+- **작성일자**: 2026-04-03
+- **목표**: 개별 씬 영상 재생성 시 가사 자막이 누락되는 문제 수정 및 Phase 5 ASS 경로 이스케이프 수정
+
+## 배경
+
+- v5.1에서 Phase 3.6 (파이프라인 내 씬별 미리보기)에 가사 자막 burn-in을 추가했으나, 개별 씬 영상 재생성 경로(`mv.py`의 `_generate_single_scene_video`)에는 자막 적용이 누락됨
+- Phase 5 (`mv_pipeline.py`)에서 ASS 경로에 Windows 경로 구분자(`\`, `:`)가 이스케이프 없이 ffmpeg에 전달되어 필터 파싱 오류 가능성 존재
+
+## 1. 백엔드 변경
+
+### 1-1. 개별 씬 영상 자막 burn-in 추가
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/routes/mv.py` |
+| 위치 | `_generate_single_scene_video` 함수 |
+| 변경 | Phase 3.6과 동일한 방식으로 `generate_scene_lyrics_ass` 호출 및 자막 burn-in 적용 |
+
+**변경 내용**:
+
+- 씬에 가사(`lyrics_segment`)가 있을 경우, `generate_scene_lyrics_ass(scene)`으로 ASS 파일 생성
+- ffmpeg 명령에 `-vf "ass=scene_lyrics.ass"` 필터 추가 (재인코딩)
+- 가사가 없거나 자막 생성 실패 시 기존 방식(`-c:v copy`)으로 fallback
+
+### 1-2. Phase 5 ASS 경로 이스케이프 수정
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/services/mv_pipeline.py` |
+| 위치 | Phase 5 (오디오 합치기 — 최종 영상 생성) |
+| 변경 | ASS 경로에 `ass_path.replace("\\", "/").replace(":", "\\:")` 이스케이프 추가 |
+
+**변경 내용**:
+
+- Windows 환경에서 ffmpeg의 ASS 필터는 경로 내 `\`와 `:`를 특수 문자로 해석
+- `\` → `/`로 변환, `:` → `\:`로 이스케이프하여 ffmpeg 필터 파싱 오류 방지
+
+## 2. 프론트엔드 변경
+
+- **변경 없음**
+
+## 3. 자막 적용 3곳 일관성 확인
+
+| # | 위치 | 함수 | 상태 |
+|---|------|------|------|
+| 1 | Phase 3.6 (`mv_pipeline.py`) | `generate_scene_lyrics_ass` | 기존 정상 |
+| 2 | Phase 5 (`mv_pipeline.py`) | `generate_lyrics_ass` | 경로 이스케이프 수정 |
+| 3 | 개별 씬 (`mv.py`) | `generate_scene_lyrics_ass` | 신규 추가 |
+
+## 4. 테스트
+
+- [ ] Python import 확인
+- [ ] 개별 씬 영상 재생성 시 자막 burn-in 적용 확인
+- [ ] 가사 없는 씬 재생성 시 fallback 동작 확인
+- [ ] Phase 5 최종 영상 ASS 경로 이스케이프 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv.py` 수정) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 5 | 0/5 |
+
+---
+
+# v5.3 — Freesentation 폰트 설치 + ASS 자막 폰트/크기 변경
+
+- **수정일자**: 2026-04-03
+- **요청**: ASS 자막 폰트를 한글 지원 폰트(Freesentation)로 교체하고 크기를 키워 가독성 향상
+
+## 1. 백엔드 변경
+
+### 1-1. Freesentation 폰트 설치
+
+| 항목 | 내용 |
+|------|------|
+| 폰트 | Freesentation v2.001 (9개 웨이트) |
+| 설치 경로 | `~/.fonts/` |
+| 설치 방식 | GitHub Release에서 TTF 다운로드 후 `fc-cache -fv` 적용 |
+
+### 1-2. ASS 자막 스타일 변경
+
+| 항목 | 내용 |
+|------|------|
+| 파일 | `backend/app/services/subtitle_generator.py` |
+| 위치 | ASS 스타일 정의부 (2곳) |
+| 변경 | 폰트: Arial → Freesentation, 크기: 28 → 44 |
+
+**변경 내용**:
+
+- `generate_lyrics_ass()` (전체 뮤직비디오용) 스타일: Arial,28 → Freesentation,44
+- `generate_scene_lyrics_ass()` (개별 씬용) 스타일: Arial,28 → Freesentation,44
+- 한글 자막 깨짐 방지 및 가독성 향상
+
+## 2. 프론트엔드 변경
+
+- **변경 없음**
+
+## 3. 테스트
+
+- [ ] Freesentation 폰트 설치 확인 (`fc-list | grep Freesentation`)
+- [ ] ASS 스타일에 Freesentation,44 적용 확인
+- [ ] 한글 가사 자막 정상 생성 확인
+- [ ] ffmpeg 렌더링 시 폰트 정상 반영 확인
+- [ ] 서버 기동 확인
+
+## 4. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 폰트 설치 | 1 | 0/1 |
+| 백엔드 (`subtitle_generator.py` 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 5 | 0/5 |
+
+---
+
+# v5.4 — 카라오케 효과(\kf 태그) 제거
+
+- **수정일자**: 2026-04-03
+- **요청**: 가사 자막의 카라오케 색 채우기 효과(\kf 태그)를 제거하여 일반 텍스트로 표시
+
+## 1. 백엔드 변경
+
+| # | 파일 | 수정 내용 |
+|---|------|-----------|
+| 1 | `backend/app/services/subtitle_generator.py` | `generate_lyrics_ass()` — \kf 태그 제거, 일반 텍스트 출력 |
+| 2 | `backend/app/services/subtitle_generator.py` | `generate_scene_lyrics_ass()` — \kf 태그 제거, 일반 텍스트 출력 |
+
+**변경 내용**:
+
+- `generate_lyrics_ass()` (전체 뮤직비디오용): \kf 태그 제거 → 가사가 해당 타이밍에 일반 흰색 텍스트로 표시
+- `generate_scene_lyrics_ass()` (개별 씬용): \kf 태그 제거 → 동일하게 일반 텍스트로 표시
+- 카라오케 색 채우기 애니메이션 완전 제거
+
+## 2. 프론트엔드 변경
+
+- **변경 없음**
+
+## 3. 테스트
+
+- [ ] ASS 파일에 \kf 태그 없음 확인
+- [ ] 가사가 일반 흰색 텍스트로 표시 확인
+- [ ] 서버 기동 확인
+
+## 4. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`subtitle_generator.py` 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 3 | 0/3 |
+
+---
+
+# v6.0 — 가사 섹션 기반 씬 매칭 시스템 재설계
+
+- **수정일자**: 2026-04-03
+- **요청**: 가사 생성 GPT와 씬 분할 GPT가 독립적으로 섹션을 만들어 불일치 발생 (예: 가사에 없는 `[Post-Chorus]`를 씬에서 생성). 가사 섹션을 마스터로 삼아 씬 섹션이 반드시 가사 섹션에서 파생되도록 재설계.
+
+## 핵심 설계 원칙
+
+| # | 원칙 | 설명 |
+|---|------|------|
+| 1 | **가사 섹션이 마스터** | 씬의 section 이름은 반드시 원본 가사의 `[SectionTag]`에서 파생 |
+| 2 | **1:N 매핑** | 가사 섹션 1개 → 씬 N개 (예: `Chorus1-1`, `Chorus1-2`, ...) |
+| 3 | **가사 줄 분배** | 같은 가사 섹션에 속한 씬들에 가사 줄을 시간 비율로 분배 |
+| 4 | **방법 A** | 가사 줄보다 씬이 많으면 남는 씬은 자막 없음 (빈 `lyrics_segment`) |
+
+## 1. 백엔드 변경
+
+### 1-1. `backend/app/services/mv_generator.py` — GPT 프롬프트 수정
+
+| 항목 | 내용 |
+|------|------|
+| 대상 | `SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE` (L445~L534) |
+| 목적 | GPT가 씬 섹션 이름을 가사의 섹션 태그에서 그대로 가져오도록 강제 |
+
+**추가할 프롬프트 지시 사항**:
+
+```
+Section naming rules:
+- You MUST use the exact section tags from the provided lyrics as your section names.
+- Do NOT invent new section names that do not exist in the lyrics (e.g., do NOT create "Post-Chorus" if the lyrics have no [Post-Chorus] tag).
+- If a section produces multiple clips, name them with a hyphenated sub-index: Section-1, Section-2, etc.
+  Example: lyrics have [Chorus 1] → clips become "Chorus1-1", "Chorus1-2", ...
+- Instrumental sections (Intro/Outro) without lyrics tags are allowed as-is.
+```
+
+**현재 동작**: GPT가 음악 구조 분석 결과를 기반으로 자유롭게 섹션 이름을 생성 → 가사와 불일치.
+**변경 후**: GPT가 가사의 `[SectionTag]`를 그대로 사용 → 가사-씬 섹션 1:1 대응 보장.
+
+### 1-2. `backend/app/services/mv_pipeline.py` — `_assign_lyrics_to_scenes()` 재작성
+
+| 항목 | 내용 |
+|------|------|
+| 대상 | `_assign_lyrics_to_scenes()` 함수 (L144~L225) |
+| 목적 | 1:N 매핑 기반 가사 줄 분배 로직으로 교체 |
+
+**현재 로직의 문제점**:
+- 씬의 section 이름과 가사 섹션을 단순 문자열 매칭 → GPT가 다른 이름을 쓰면 매칭 실패
+- 복수 씬 분배 시 균등 분할만 지원 (시간 비율 미반영)
+
+**새 로직 (의사코드)**:
+
+```python
+def _assign_lyrics_to_scenes(scenes: list, lyrics: str) -> None:
+    # Step 1: 가사를 섹션별로 파싱
+    #   [Verse 1] → {"tag": "Verse 1", "base": "verse", "number": 1, "lines": [...]}
+    #   [Chorus 1] → {"tag": "Chorus 1", "base": "chorus", "number": 1, "lines": [...]}
+
+    # Step 2: 씬의 section 필드에서 부모 섹션명 추출
+    #   "Chorus1-2" → parent="Chorus1", sub_index=2
+    #   "Verse1"    → parent="Verse1",  sub_index=None
+    #   정규식: r'^(.+?)(?:-(\d+))?$'
+
+    # Step 3: 같은 parent 섹션에 속한 씬들을 그룹핑
+    #   parent_groups = {"chorus1": [scene_a, scene_b], "verse1": [scene_c], ...}
+
+    # Step 4: 각 그룹에 대해 가사 줄 분배
+    #   - 해당 parent에 매칭되는 parsed lyrics 섹션 찾기
+    #   - 씬들의 use_seconds 비율로 줄 수 배분
+    #   - 줄이 남으면 마지막 씬에 몰아주기
+    #   - 씬이 남으면 빈 lyrics_segment (방법 A)
+```
+
+**분배 알고리즘 상세**:
+
+```
+lines = ["가사줄1", "가사줄2", ..., "가사줄8"]
+scenes_in_group = [scene_A(5s), scene_B(5s), scene_C(3s)]  # total 13s
+
+비율: A=5/13=0.385, B=5/13=0.385, C=3/13=0.231
+줄 배분: A=floor(8*0.385)=3줄, B=floor(8*0.385)=3줄, C=나머지 2줄
+
+결과:
+  scene_A.lyrics_segment = "가사줄1\n가사줄2\n가사줄3"
+  scene_B.lyrics_segment = "가사줄4\n가사줄5\n가사줄6"
+  scene_C.lyrics_segment = "가사줄7\n가사줄8"
+```
+
+## 2. 프론트엔드 변경
+
+- **변경 없음** (씬 데이터 구조 자체는 동일, section 이름 규칙만 변경)
+
+## 3. 데이터 흐름 (변경 전 vs 변경 후)
+
+### 변경 전
+
+```
+[가사 GPT]          [씬 분할 GPT]
+  Verse 1              Verse1
+  Chorus 1             Chorus1
+  Verse 2              Post-Chorus1  ← 가사에 없음!
+  Chorus 2             Verse2
+  Bridge               Chorus2
+  Outro                Bridge1
+                       Outro1
+→ 매칭 실패 (Post-Chorus1에 대응하는 가사 없음)
+```
+
+### 변경 후
+
+```
+[가사 GPT]          [씬 분할 GPT]
+  Verse 1              Verse1-1, Verse1-2
+  Chorus 1             Chorus1-1, Chorus1-2
+  Verse 2              Verse2-1
+  Chorus 2             Chorus2-1, Chorus2-2
+  Bridge               Bridge1-1
+  Outro                Outro1-1
+→ 모든 씬이 가사 섹션에서 파생, 1:N 매핑으로 가사 줄 분배
+```
+
+## 4. 테스트
+
+- [ ] 가사에 없는 섹션이 씬에 생성되지 않는지 확인
+- [ ] 1:N 매핑 (Chorus1-1, Chorus1-2 등) 정상 생성 확인
+- [ ] 가사 줄이 시간 비율로 올바르게 분배되는지 확인
+- [ ] 가사 줄 < 씬 수일 때 남는 씬의 lyrics_segment가 빈 문자열인지 확인
+- [ ] 가사 줄 > 씬 수일 때 마지막 씬에 남은 줄이 몰리는지 확인
+- [ ] Instrumental 섹션(Intro/Outro)에 가사 없이 정상 처리되는지 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_generator.py` 프롬프트 수정) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` 함수 재작성) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 8 | 0/8 |
+
+---
+
+# v7.0 — 가사 섹션 마스터 기반 씬 구조 재설계
+
+> 수정일자: 2026-04-03
+
+## 0. 현재 문제
+
+1. **Gemini 오디오 분석이 자체 섹션명을 생성** — 가사에 정의된 섹션 태그와 불일치
+2. **GPT가 오디오 분석 섹션 기반으로 씬을 분할** — 가사 섹션과 안 맞음
+3. **가사 배정 실패** — 씬 섹션명 ≠ 가사 섹션명이므로 매칭 불가
+
+## 1. 해결 방향
+
+```
+1. 가사에서 섹션 태그 파싱 → [Intro, Verse 1, Break, Chorus, ...]
+2. Gemini 오디오 분석에 가사 섹션 목록 전달 → "이 섹션들의 시작/끝 시간을 찾아라"
+3. 결과: 각 가사 섹션의 정확한 시간 확보
+4. GPT에게 전달: "Verse 1은 5.5~20.0초(14.5초)다. 이 안에서 클립을 나눠라"
+5. GPT 결과의 각 클립: section = 부모 가사 섹션명 유지
+6. 가사 배정: 섹션명으로 매칭 (v6.0 로직)
+```
+
+**데이터 흐름 요약**
+
+```
+가사 파싱                    Gemini 오디오 분석              GPT 씬 분할
+──────────                 ──────────────────            ──────────────
+[Verse 1]  ──┐             "Verse 1: 5.5~20.0s"  ──┐    Verse1-1 (5.5~12.0s)
+[Chorus]   ──┼─ 섹션 목록 ─→ "Chorus: 20.0~35.0s" ──┼──→ Chorus1-1 (20.0~27.0s)
+[Bridge]   ──┘             "Bridge: 35.0~45.0s"  ──┘    Chorus1-2 (27.0~35.0s)
+                                                         Bridge1-1 (35.0~45.0s)
+```
+
+## 2. 구체적 변경
+
+### 2-1. `mv_generator.py`
+
+| 변경 대상 | 변경 내용 |
+|-----------|----------|
+| `analyze_music_structure()` | 가사 섹션 태그 목록을 입력으로 받아서, Gemini에게 "이 섹션들의 타이밍을 찾아라"고 지시 |
+| `SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE` | GPT에게 섹션명+타이밍이 **확정된** 상태로 전달. GPT는 클립 수와 길이만 결정 |
+| `_split_with_music_sections()` | 플래트닝 시 `section` 필드에 가사 섹션명 유지 |
+
+### 2-2. `mv_pipeline.py`
+
+| 변경 대상 | 변경 내용 |
+|-----------|----------|
+| Phase 1a | 가사에서 섹션 태그 파싱 → `analyze_music_structure()`에 전달 |
+| Phase 1b | 이미 가사 섹션 기반으로 매칭되므로 `_assign_lyrics_to_scenes()`는 v6.0 유지 |
+| `section_start`/`section_end` 계산 | `use_seconds` 누적 방식 유지 |
+
+### 2-3. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전 (v6.0)
+
+```
+[가사 GPT]          [Gemini 오디오]       [씬 분할 GPT]
+  Verse 1              Verse A              VerseA-1, VerseA-2
+  Chorus               Post-Chorus          PostChorus1
+  Bridge               Chorus2              Chorus2-1
+  Outro                Bridge1              Bridge1-1
+                       Outro1               Outro1-1
+→ Gemini이 자체 섹션명 생성 → GPT가 그대로 사용 → 가사 섹션과 불일치 → 매칭 실패
+```
+
+### 변경 후 (v7.0)
+
+```
+[가사 GPT]          [Gemini 오디오]              [씬 분할 GPT]
+  Verse 1    ──→     Verse 1: 5.5~20.0s   ──→    Verse1-1, Verse1-2
+  Chorus     ──→     Chorus: 20.0~35.0s   ──→    Chorus1-1, Chorus1-2
+  Bridge     ──→     Bridge: 35.0~45.0s   ──→    Bridge1-1
+  Outro      ──→     Outro: 45.0~55.0s    ──→    Outro1-1
+→ 가사 섹션이 마스터, Gemini는 타이밍만 탐색, GPT는 클립만 분할
+→ 모든 씬의 section이 가사 섹션에서 파생 → 매칭 보장
+```
+
+## 4. 테스트
+
+- [ ] 가사 섹션 태그 파싱이 정확한지 확인 (`[Intro]`, `[Verse 1]` 등)
+- [ ] Gemini에 가사 섹션 목록 전달 시 올바른 타이밍이 반환되는지 확인
+- [ ] GPT 씬 분할 결과의 section 필드가 가사 섹션명과 일치하는지 확인
+- [ ] 가사에 없는 섹션이 씬에 생성되지 않는지 확인
+- [ ] 1:N 매핑 (Chorus1-1, Chorus1-2 등) 정상 생성 확인
+- [ ] 가사 줄이 시간 비율로 올바르게 분배되는지 확인
+- [ ] Instrumental 섹션(Intro/Outro)에 가사 없이 정상 처리되는지 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_generator.py` 수정) | 3 | 0/3 |
+| 백엔드 (`mv_pipeline.py` 수정) | 3 | 0/3 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 9 | 0/9 |
+
+---
+
+# v8.0 — Whisper 기반 가사 자막 타이밍 정확도 개선
+
+> 수정일자: 2026-04-03
+
+## 0. 현재 문제
+
+- 가사 자막은 씬 구간 내에서 **줄 수로 균등 분배** → 실제 노래 속도와 안 맞음
+- 빠른 구간은 자막이 너무 일찍 넘어가고, 느린 구간은 자막이 늦게 넘어감
+- 실제 음성 타이밍 정보가 없어 정확한 자막 전환 불가
+
+## 1. 해결 방향
+
+```
+1. 씬의 오디오 구간을 Whisper API에 전송
+2. Whisper가 줄별 타이밍(start/end) 반환
+3. 해당 타이밍으로 ASS 자막 생성 (기존 균등 분배 대체)
+4. Whisper 실패 시 기존 균등 분배로 fallback
+```
+
+**데이터 흐름 요약**
+
+```
+오디오 구간           Whisper API                   ASS 자막 생성
+──────────          ──────────────────            ──────────────
+씬 A (0.0~15.0s)  → "벚꽃 피는..."  0.0~3.2s   → Dialogue: 0:00:00.00,0:00:03.20,...
+                    "봄바람 불어..." 3.2~6.8s   → Dialogue: 0:00:03.20,0:00:06.80,...
+                    "하늘 아래..."  6.8~12.1s   → Dialogue: 0:00:06.80,0:00:12.10,...
+
+씬 B (15.0~30.0s) → "사랑의 노래..." 0.0~4.5s  → Dialogue: 0:00:15.00,0:00:19.50,...
+                    ...
+```
+
+## 2. 구체적 변경
+
+### 2-1. 새 서비스: `whisper_service.py`
+
+| 항목 | 내용 |
+|------|------|
+| 함수 | `get_lyrics_timestamps(audio_bytes, lyrics_text) -> list[dict]` |
+| 역할 | 오디오 구간을 Whisper API에 전송하여 줄별 타이밍 추출 |
+| 반환 형식 | `[{"text": "벚꽃 피는...", "start": 0.0, "end": 3.2}, ...]` |
+| API 호출 | `client.audio.transcriptions.create(model="whisper-1", response_format="verbose_json", timestamp_granularities=["segment"])` |
+
+### 2-2. `subtitle_generator.py` 수정
+
+| 변경 대상 | 변경 내용 |
+|-----------|----------|
+| `generate_scene_lyrics_ass(scene, timestamps=None)` | `timestamps`가 있으면 Whisper 타이밍 사용, 없으면 기존 균등 분배 (fallback) |
+| `generate_lyrics_ass(scenes, all_timestamps=None)` | Phase 5용 전체 자막도 동일하게 timestamps 지원 |
+
+### 2-3. 자막 생성 호출부 수정 (3곳)
+
+| 호출부 | 파일 | 변경 내용 |
+|--------|------|----------|
+| 개별 씬 생성 | `mv.py` | 오디오 구간 자르기 → Whisper → timestamps → ASS 생성 |
+| Phase 3.6 | `mv_pipeline.py` | 동일 |
+| Phase 5 | `mv_pipeline.py` | 전체 오디오 → 씬별 Whisper → 전체 ASS 생성 |
+
+### 2-4. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전
+
+```
+씬 구간: 0.0 ~ 12.0초 (12초)
+가사 3줄 → 균등 분배: 각 4.0초씩
+
+Dialogue: 0:00:00.00,0:00:04.00,벚꽃 피는 거리를 걸어가며
+Dialogue: 0:00:04.00,0:00:08.00,봄바람이 살며시 불어오면
+Dialogue: 0:00:08.00,0:00:12.00,하늘 아래 너와 나의 이야기
+→ 실제 노래 속도와 무관하게 4초씩 고정
+```
+
+### 변경 후
+
+```
+씬 구간: 0.0 ~ 12.0초 (12초)
+Whisper 분석 결과 기반:
+
+Dialogue: 0:00:00.00,0:00:03.20,벚꽃 피는 거리를 걸어가며
+Dialogue: 0:00:03.20,0:00:06.80,봄바람이 살며시 불어오면
+Dialogue: 0:00:06.80,0:00:12.00,하늘 아래 너와 나의 이야기
+→ 실제 음성 타이밍에 맞춰 자막 전환
+```
+
+## 4. 테스트
+
+- [ ] `whisper_service.py` 단독 호출 시 타이밍이 올바르게 반환되는지 확인
+- [ ] Whisper API 실패 시 기존 균등 분배 fallback 정상 동작 확인
+- [ ] 개별 씬 생성 (`mv.py`) 경로에서 Whisper 타이밍 기반 ASS 자막 생성 확인
+- [ ] Phase 3.6 (`mv_pipeline.py`) 경로에서 Whisper 타이밍 기반 ASS 자막 생성 확인
+- [ ] Phase 5 (`mv_pipeline.py`) 전체 자막에서 Whisper 타이밍 기반 ASS 자막 생성 확인
+- [ ] 한국어/영어/일본어 등 다국어 가사에서 Whisper 타이밍 정확도 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`whisper_service.py` 신규) | 1 | 0/1 |
+| 백엔드 (`subtitle_generator.py` 수정) | 2 | 0/2 |
+| 백엔드 (호출부 수정: `mv.py`, `mv_pipeline.py`) | 3 | 0/3 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 8 | 0/8 |
+
+---
+
+# v8.1 — 2단계 타이밍 비율 보정
+
+> 수정일자: 2026-04-03
+
+## 0. 문제
+
+1. **Gemini 섹션 시간 합 ≠ 음악 총 길이 (ffprobe)**
+   - Gemini가 분석한 섹션들의 시간 합계가 ffprobe로 측정한 실제 음악 길이와 불일치
+2. **GPT 클립 use_seconds 합 ≠ Gemini 섹션 길이**
+   - GPT가 반환한 클립들의 use_seconds 합계가 해당 Gemini 섹션의 길이와 불일치
+
+## 1. 해결 방향
+
+2단계 비율 보정을 적용하여, AI가 추정한 시간 값을 실제 음악 길이에 맞춤.
+
+```
+보정 1: Gemini 섹션 → ffprobe 총 길이
+─────────────────────────────────────
+ffprobe 총 길이 = 159초
+Gemini 섹션 합  = 238초 (Intro 30 + Verse 60 + Chorus 48 + ...)
+비율            = 159 / 238 = 0.6681
+→ 모든 섹션 시간 × 0.6681 (Intro 30→20.04, Verse 60→40.08, ...)
+
+보정 2: GPT 클립 → Gemini 섹션 길이 (보정 후)
+─────────────────────────────────────
+Chorus 섹션 보정 후 = 19초
+GPT 클립 합         = 20초 (clip1 8 + clip2 7 + clip3 5)
+비율                = 19 / 20 = 0.95
+→ 각 클립 use_seconds × 0.95 (clip1 8→7.6, clip2 7→6.65, clip3 5→4.75)
+```
+
+## 2. 구체적 변경
+
+### 2-1. `mv_pipeline.py` 수정
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| Phase 1a 후 (Gemini 분석 직후) | ffprobe로 음악 총 길이 확정 → Gemini 섹션 시간 비율 보정 |
+| Phase 1b 후 (GPT 클립 생성 직후) | 각 섹션별 GPT 클립 use_seconds 합 확인 → 섹션 길이에 맞춰 비율 보정 |
+
+**보정 1 로직 (Phase 1a 후)**
+
+```python
+# ffprobe로 실제 총 길이 확정
+actual_duration = get_audio_duration(audio_path)  # ffprobe
+
+# Gemini 섹션 합 계산
+gemini_total = sum(s["duration"] for s in sections)
+
+# 비율 보정
+if abs(gemini_total - actual_duration) > 0.5:  # 0.5초 이상 차이 시
+    ratio = actual_duration / gemini_total
+    for s in sections:
+        s["duration"] *= ratio
+        s["start_time"] = recalculate  # 누적 합으로 재계산
+```
+
+**보정 2 로직 (Phase 1b 후)**
+
+```python
+# 각 섹션별 GPT 클립 보정
+for section in sections:
+    section_duration = section["duration"]  # 보정 1 적용 후 값
+    clip_total = sum(c["use_seconds"] for c in section["clips"])
+    
+    if abs(clip_total - section_duration) > 0.1:  # 0.1초 이상 차이 시
+        ratio = section_duration / clip_total
+        for c in section["clips"]:
+            c["use_seconds"] *= ratio
+```
+
+### 2-2. `mv_generator.py` 수정
+
+| 변경 대상 | 변경 내용 |
+|-----------|----------|
+| `_split_with_music_sections()` | 플래트닝 시 보정된 시간 값 사용 확인, 필요 시 최종 보정 적용 |
+
+### 2-3. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전
+
+```
+Gemini 분석: Intro 30s + Verse1 60s + Chorus 48s + ... = 238s
+실제 음악:   159s
+→ 모든 타이밍 37% 초과 → 영상이 음악보다 길어짐
+
+GPT 클립: clip1 8s + clip2 7s + clip3 5s = 20s
+Gemini Chorus: 19s
+→ 클립 합이 섹션보다 1s 초과 → 마지막 클립이 음악 밖으로 넘침
+```
+
+### 변경 후
+
+```
+보정 1 적용: Intro 20.04s + Verse1 40.08s + Chorus 32.06s + ... = 159s ✓
+보정 2 적용: clip1 7.6s + clip2 6.65s + clip3 4.75s = 19s ✓
+→ 영상 길이 = 음악 길이, 모든 클립이 섹션 내에 정확히 수용
+```
+
+## 4. 테스트
+
+- [ ] ffprobe 총 길이 추출 정상 동작 확인
+- [ ] 보정 1: Gemini 섹션 합 = ffprobe 총 길이 확인
+- [ ] 보정 1: 각 섹션 start_time 누적 합 정확성 확인
+- [ ] 보정 2: 각 섹션 내 GPT 클립 use_seconds 합 = 섹션 duration 확인
+- [ ] 보정 차이가 임계값 이하(0.5초/0.1초)일 때 보정 스킵 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_pipeline.py` 수정) | 2 | 0/2 |
+| 백엔드 (`mv_generator.py` 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 7 | 0/7 |
+
+---
+
+# v9.0 — Gemini 오디오 분석을 Whisper 기반 섹션 타이밍으로 대체
+
+> 수정일자: 2026-04-03
+
+## 0. 문제
+
+Gemini 오디오 분석이 섹션 경계를 부정확하게 잡아서 가사-음악 싱크가 맞지 않음.
+238초로 분석된 것을 159초로 비율 보정(v8.1)해도, 상대적인 섹션 위치 자체가 틀리기 때문에 근본적으로 해결되지 않음.
+
+## 1. 해결 방향
+
+Whisper로 전체 음악을 분석하여 가사 텍스트의 실제 위치(타임스탬프)를 찾고, 이를 기반으로 섹션 경계를 확정한다.
+
+```
+전체 음악 → Whisper API → 세그먼트별 텍스트+타이밍
+    ↓
+가사 섹션별 텍스트와 Whisper 세그먼트 매칭
+    ↓
+각 섹션의 실제 시작/끝 시간 확정
+    ↓
+인스트루멘탈 구간(보컬 없는 곳)은 빈 공간으로 자동 계산
+```
+
+## 2. 구체적 변경
+
+### 2-1. `whisper_service.py` 수정
+
+| 변경 대상 | 변경 내용 |
+|-----------|----------|
+| `get_full_audio_timestamps()` 신규 | 전체 오디오를 Whisper에 보내서 모든 세그먼트의 텍스트+타이밍 반환 |
+
+**함수 시그니처**
+
+```python
+def get_full_audio_timestamps(audio_bytes: bytes, file_format: str = "mp3") -> list[dict]:
+    """전체 오디오를 Whisper API에 보내 세그먼트별 텍스트+타이밍을 반환.
+
+    Returns:
+        List of {"text": str, "start": float, "end": float}
+    """
+```
+
+- 기존 `get_lyrics_timestamps()`와 구현은 동일하나, 용도와 네이밍을 구분하여 전체 음원 분석 전용으로 사용
+- 기존 함수가 이미 동일 기능을 제공하므로, 래퍼 함수로 구현하거나 기존 함수를 그대로 재사용해도 무방
+
+### 2-2. `mv_pipeline.py` Phase 1a 수정
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| Phase 1a 전체 | Gemini `analyze_music_structure()` 대신 Whisper 기반 섹션 타이밍 추출 |
+| Gemini 코드 | 삭제하지 않고 Whisper 실패 시 fallback으로 유지 |
+| 보정 1 로직 | Whisper 경로에서는 불필요 (실제 타이밍이므로), Gemini fallback 시에만 적용 |
+
+**Phase 1a 새 로직**
+
+```python
+# ── Phase 1a: Whisper 기반 섹션 타이밍 추출 ──
+
+# Step 1: 가사 섹션 태그 파싱 → 각 섹션의 가사 텍스트 확보
+lyrics_text = job.get("lyrics", "")
+sections_with_lyrics = parse_lyrics_sections(lyrics_text)
+# → [{"label": "Verse 1", "lines": ["벚꽃 피는 거리를", "봄바람이 불어오면"]},
+#    {"label": "Chorus", "lines": ["사랑해 너를", "영원히"]}, ...]
+
+# Step 2: 전체 오디오를 Whisper에 전송 → 세그먼트별 타이밍
+from .whisper_service import get_full_audio_timestamps
+whisper_segments = get_full_audio_timestamps(audio_bytes, file_format)
+# → [{"text": "벚꽃 피는 거리를 걸어가며", "start": 15.2, "end": 19.8},
+#    {"text": "봄바람이 살며시 불어오면", "start": 19.8, "end": 24.1}, ...]
+
+# Step 3: 각 가사 섹션의 텍스트를 Whisper 세그먼트에서 순서대로 매칭
+music_sections = match_sections_to_whisper(sections_with_lyrics, whisper_segments, audio_duration)
+
+# Step 4: 결과를 기존 music_sections 형식으로 변환
+# → [{"label": "Intro", "start": 0.0, "end": 15.2, "mood": "..."},
+#    {"label": "Verse 1", "start": 15.2, "end": 38.5, "mood": "..."}, ...]
+```
+
+**섹션-Whisper 매칭 알고리즘 (`match_sections_to_whisper`)**
+
+```python
+def match_sections_to_whisper(
+    sections_with_lyrics: list[dict],
+    whisper_segments: list[dict],
+    audio_duration: float,
+) -> list[dict]:
+    """가사 섹션 텍스트를 Whisper 세그먼트에 순서대로 매칭하여 섹션 경계를 확정.
+
+    매칭 로직:
+    1. Whisper 세그먼트를 순서대로 소비 (인덱스 포인터 방식)
+    2. 각 가사 섹션의 첫 줄 텍스트가 현재 Whisper 세그먼트와 유사하면 섹션 시작
+    3. 다음 섹션의 첫 줄이 매칭될 때까지 현재 섹션에 포함
+    4. 보컬 없는 섹션 (Intro, Interlude, Outro 등 가사 없는 것)은
+       앞뒤 보컬 섹션 사이의 빈 공간으로 자동 계산
+    5. 텍스트 유사도는 공백/특수문자 제거 후 부분 문자열 매칭 또는
+       SequenceMatcher ratio >= 0.5 기준
+    """
+```
+
+**보컬 없는 섹션 처리**
+
+```
+예시:
+  Whisper 세그먼트: 15.2초 ~ 140.5초 (보컬 구간)
+  음악 총 길이: 159초
+
+  Intro (가사 없음): 0.0 ~ 15.2  ← 첫 보컬 세그먼트 시작 전
+  Verse 1 (가사 있음): 15.2 ~ 38.5  ← Whisper 매칭
+  Chorus (가사 있음): 38.5 ~ 55.0  ← Whisper 매칭
+  Interlude (가사 없음): 55.0 ~ 62.3  ← Chorus 끝 ~ Bridge 시작
+  Bridge (가사 있음): 62.3 ~ 80.0  ← Whisper 매칭
+  ...
+  Outro (가사 없음): 140.5 ~ 159.0  ← 마지막 보컬 세그먼트 끝 ~ 음악 끝
+```
+
+### 2-3. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전 (Gemini + 비율 보정)
+
+```
+Gemini 분석: Intro 30s + Verse1 60s + Chorus 48s + ... = 238s
+비율 보정:   Intro 20.04s + Verse1 40.08s + Chorus 32.06s + ... = 159s
+→ 비율은 맞지만 섹션 경계 위치 자체가 부정확
+→ Verse1이 실제로 15~38초인데 Gemini는 20~60초로 분석
+→ 보정해도 13.4~40.1초가 되어 시작점부터 어긋남
+```
+
+### 변경 후 (Whisper 기반)
+
+```
+Whisper 세그먼트: "벚꽃 피는 거리를" 15.2~19.8s, "봄바람이" 19.8~24.1s, ...
+가사 매칭: Verse1의 첫 줄 "벚꽃 피는 거리를" → 15.2초에서 시작
+→ Verse1: 15.2 ~ 38.5초 (실제 보컬 위치 기반)
+→ Intro: 0.0 ~ 15.2초 (자동 계산)
+→ 실제 음성 위치에 기반하므로 가사-음악 싱크 정확
+```
+
+## 4. 테스트
+
+- [ ] `whisper_service.py`의 `get_full_audio_timestamps()` 전체 음원으로 호출 시 세그먼트 정상 반환 확인
+- [ ] 가사 섹션 파싱 (`parse_lyrics_sections`) 정상 동작 확인 (다양한 태그 형식)
+- [ ] 섹션-Whisper 매칭 (`match_sections_to_whisper`) 정상 동작 확인
+- [ ] 보컬 없는 섹션 (Intro, Interlude, Outro) 자동 계산 정확성 확인
+- [ ] Whisper 실패 시 Gemini fallback 정상 동작 확인
+- [ ] 기존 보정 1 로직이 Gemini fallback 시에만 적용되는지 확인
+- [ ] 한국어/영어/일본어 가사에서 Whisper 세그먼트 매칭 정확도 확인
+- [ ] 결과가 기존 `music_sections` 형식과 호환되는지 확인 (후속 Phase에 영향 없음)
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`whisper_service.py` 수정) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` Phase 1a 수정) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 10 | 0/10 |
+
+# v10.0 — 가사 섹션 1개 = 씬 1개 단순화
+
+> 수정일자: 2026-04-03
+
+## 0. 문제
+
+기존 파이프라인이 불필요하게 복잡함:
+- Gemini 분석 → GPT 씬 분할 → 가사 매칭의 3단계 파이프라인
+- GPT가 씬 개수와 경계를 자의적으로 결정하여 가사 섹션과 불일치
+- `_assign_lyrics_to_scenes()`에서 가사를 씬에 재매칭하는 과정에서 누락/중복 발생
+
+## 1. 해결 방향
+
+가사 섹션 1개 = 씬 1개로 단순화한다.
+
+```
+가사 텍스트 → 섹션 태그 파싱 → 섹션 목록
+    ↓
+전체 오디오 → Whisper → 각 섹션의 실제 타이밍 확정
+    ↓
+가사 섹션 1개 = 씬 1개 (가사는 섹션 내용 그대로)
+    ↓
+GPT는 각 씬의 이미지/영상 프롬프트만 생성
+```
+
+## 2. 구체적 변경
+
+### 2-1. `mv_pipeline.py` Phase 1a 수정
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| Phase 1a | Gemini 분석 제거, 가사 파싱 + Whisper 타이밍 → 씬 목록 직접 생성 |
+| `_assign_lyrics_to_scenes()` | 호출 제거 (가사는 이미 씬에 직접 배정) |
+
+**Phase 1a 새 로직**
+
+```python
+# ── Phase 1a: 가사 파싱 + Whisper 타이밍 → 씬 목록 직접 생성 ──
+
+# Step 1: 가사 섹션 태그 파싱 → 섹션 목록
+lyrics_text = job.get("lyrics", "")
+sections = parse_lyrics_sections(lyrics_text)
+# → [{"label": "Verse 1", "lines": ["벚꽃 피는 거리를", ...]},
+#    {"label": "Chorus", "lines": ["사랑해 너를", ...]}, ...]
+
+# Step 2: Whisper로 각 섹션의 실제 타이밍 확정
+whisper_segments = get_full_audio_timestamps(audio_bytes, file_format)
+music_sections = match_sections_to_whisper(sections, whisper_segments, audio_duration)
+
+# Step 3: 가사 섹션 1개 = 씬 1개로 직접 변환
+scenes = []
+for i, sec in enumerate(music_sections):
+    label_lower = sec["label"].lower()
+    # scene_type 결정: rap/chorus → lipsync, 나머지 → drama
+    if "rap" in label_lower or "chorus" in label_lower:
+        scene_type = "lipsync"
+    else:
+        scene_type = "drama"
+
+    scenes.append({
+        "scene_number": i + 1,
+        "section_label": sec["label"],
+        "section_start": sec["start"],
+        "section_end": sec["end"],
+        "scene_type": scene_type,
+        "lyrics": "\n".join(sec.get("lines", [])),
+        "image_prompt": None,   # Phase 1b에서 GPT가 채움
+        "video_prompt": None,   # Phase 1b에서 GPT가 채움
+    })
+```
+
+### 2-2. `mv_pipeline.py` Phase 1b 수정
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| Phase 1b | GPT에게 씬 목록 전달 → 이미지/영상 프롬프트만 생성 요청 |
+| GPT 프롬프트 | 씬 분할/가사 배정 지시 제거, 프롬프트 생성만 요청 |
+
+**Phase 1b 새 로직**
+
+```python
+# ── Phase 1b: GPT → 각 씬의 이미지/영상 프롬프트 생성 ──
+
+# scenes 리스트를 GPT에 전달하여 각 씬의 image_prompt, video_prompt만 받기
+# GPT는 씬 개수/경계/가사를 변경하지 않음
+# 입력: scenes (scene_number, section_label, lyrics, scene_type)
+# 출력: 각 scene_number에 대한 image_prompt, video_prompt
+```
+
+### 2-3. 제거 항목
+
+| 제거 대상 | 사유 |
+|-----------|------|
+| Gemini `analyze_music_structure()` 호출 | 가사 파싱 + Whisper로 대체 |
+| GPT 씬 분할 로직 | 가사 섹션 = 씬이므로 불필요 |
+| `_assign_lyrics_to_scenes()` 호출 | 가사가 이미 씬에 직접 포함 |
+
+### 2-4. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전 (v9.0: Whisper 타이밍 + GPT 씬 분할 + 가사 매칭)
+
+```
+가사 파싱 → 섹션 목록
+Whisper → 섹션 타이밍 확정
+GPT → 씬 분할 (씬 개수/경계를 GPT가 결정)
+_assign_lyrics_to_scenes() → 가사를 씬에 재매칭
+→ GPT가 섹션과 다른 씬 경계를 만들어 가사 누락/중복 발생
+```
+
+### 변경 후 (v10.0: 가사 섹션 = 씬)
+
+```
+가사 파싱 → 섹션 목록
+Whisper → 섹션 타이밍 확정
+가사 섹션 1개 = 씬 1개 (직접 변환, GPT 개입 없음)
+GPT → 이미지/영상 프롬프트만 생성
+→ 가사-씬 매칭이 100% 정확, 파이프라인 단순화
+```
+
+## 4. 테스트
+
+- [ ] 가사 섹션 파싱 → 씬 직접 변환 정상 동작 확인
+- [ ] scene_type 자동 할당 정확성 확인 (rap/chorus → lipsync, 나머지 → drama)
+- [ ] section_start/end가 Whisper 타이밍 그대로 사용되는지 확인
+- [ ] GPT가 씬 구조를 변경하지 않고 프롬프트만 생성하는지 확인
+- [ ] `_assign_lyrics_to_scenes()` 호출이 제거되었는지 확인
+- [ ] Gemini 분석 호출이 제거되었는지 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_pipeline.py` Phase 1a 수정) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` Phase 1b 수정) | 1 | 0/1 |
+| 백엔드 (제거: Gemini, GPT 씬 분할, 가사 매칭) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 8 | 0/8 |
+
+# v10.1 — Demucs 보컬 분리 후 Whisper 분석으로 안정성 개선
+
+> 수정일자: 2026-04-04
+
+## 0. 문제
+
+원본 음악(보컬+악기)을 Whisper에 넣으면 결과가 매번 달라서 섹션 타이밍이 불안정함.
+- 반주(드럼, 기타, 베이스 등)가 섞인 상태에서 Whisper가 음성을 인식
+- 같은 파일을 반복 분석해도 세그먼트 경계가 달라짐
+- 섹션 타이밍이 불안정하여 가사-영상 싱크 품질 저하
+
+## 1. 해결 방향
+
+원본 음악 → Demucs(보컬 분리) → 분리된 보컬만 → Whisper → 안정적 타이밍
+
+```
+원본 음악 파일 (보컬 + 악기)
+    ↓
+Demucs 보컬 분리 (기존 enhance_vocal_demucs 재사용)
+    ↓
+분리된 보컬 트랙 (악기 제거됨)
+    ↓
+Whisper 분석 (깨끗한 보컬만 → 인식 안정적)
+    ↓
+안정적인 세그먼트 타이밍
+    ↓
+_build_sections_from_whisper → 씬 생성 (기존과 동일)
+```
+
+## 2. 구체적 변경
+
+### 2-1. `mv_pipeline.py` Phase 1a 수정
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| Phase 1a (Whisper 호출 전) | Demucs로 보컬 분리 후, 분리된 보컬을 Whisper에 전달 |
+
+**Phase 1a 변경 로직**
+
+```python
+# ── Phase 1a: 가사 파싱 + Demucs 보컬 분리 + Whisper 타이밍 → 씬 목록 ──
+
+# Step 1: 가사 섹션 태그 파싱 → 섹션 목록 (기존과 동일)
+lyrics_text = job.get("lyrics", "")
+sections = parse_lyrics_sections(lyrics_text)
+
+# Step 2: Demucs로 보컬 분리 (NEW)
+from app.services.demucs_service import enhance_vocal_demucs
+vocal_bytes = await enhance_vocal_demucs(audio_bytes, file_name)
+
+# Step 3: 분리된 보컬을 Whisper에 전달 (기존: audio_bytes → 변경: vocal_bytes)
+whisper_segments = get_full_audio_timestamps(vocal_bytes, file_format)
+
+# Step 4: 결과 검증 + 재시도 (NEW)
+music_sections = _build_sections_from_whisper(sections, whisper_segments, audio_duration)
+music_sections = _validate_and_retry_whisper(
+    music_sections, vocal_bytes, file_format, sections, audio_duration, max_retries=2
+)
+
+# Step 5: 가사 섹션 1개 = 씬 1개로 직접 변환 (기존과 동일)
+```
+
+### 2-2. 결과 검증 로직 추가 (`mv_pipeline.py`)
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| `mv_pipeline.py` 신규 함수 | `_validate_and_retry_whisper()` 추가 |
+
+**검증 로직**
+
+```python
+def _validate_and_retry_whisper(
+    music_sections: list,
+    vocal_bytes: bytes,
+    file_format: str,
+    sections: list,
+    audio_duration: float,
+    max_retries: int = 2,
+) -> list:
+    """Whisper 결과 검증 후 비정상이면 재시도, 최종 실패 시 균등 분할 fallback."""
+
+    for attempt in range(max_retries + 1):
+        if _is_valid_sections(music_sections, audio_duration):
+            return music_sections
+
+        if attempt < max_retries:
+            # 재시도: Whisper 재분석
+            logger.warning(f"Whisper 결과 비정상 (시도 {attempt + 1}), 재시도...")
+            whisper_segments = get_full_audio_timestamps(vocal_bytes, file_format)
+            music_sections = _build_sections_from_whisper(
+                sections, whisper_segments, audio_duration
+            )
+
+    # 최종 실패 → 균등 분할 fallback
+    logger.warning("Whisper 재시도 모두 실패, 균등 분할 fallback 적용")
+    return _fallback_even_split(sections, audio_duration)
+
+
+def _is_valid_sections(music_sections: list, audio_duration: float) -> bool:
+    """하나의 섹션이 전체의 40% 이상이면 비정상으로 판단."""
+    if not music_sections:
+        return False
+    for sec in music_sections:
+        sec_duration = sec["end"] - sec["start"]
+        if sec_duration / audio_duration > 0.4:
+            return False
+    return True
+
+
+def _fallback_even_split(sections: list, audio_duration: float) -> list:
+    """섹션을 균등하게 분할."""
+    n = len(sections)
+    if n == 0:
+        return []
+    seg_len = audio_duration / n
+    result = []
+    for i, sec in enumerate(sections):
+        result.append({
+            "label": sec["label"],
+            "lines": sec.get("lines", []),
+            "start": round(seg_len * i, 2),
+            "end": round(seg_len * (i + 1), 2),
+        })
+    return result
+```
+
+### 2-3. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전 (v10.0: 원본 음원 → Whisper)
+
+```
+원본 음원 (보컬+악기) → Whisper → 세그먼트 타이밍
+→ 악기 간섭으로 인식 불안정
+→ 같은 파일 반복 분석 시 결과 달라짐
+→ 검증/재시도 없음
+```
+
+### 변경 후 (v10.1: Demucs 보컬 분리 → Whisper)
+
+```
+원본 음원 → Demucs 보컬 분리 → 깨끗한 보컬 → Whisper → 세그먼트 타이밍
+→ 악기 제거되어 인식 안정적
+→ 반복 분석해도 결과 일관됨
+→ 비정상 결과 검증 + 재시도 (최대 2회) + 균등 분할 fallback
+```
+
+## 4. 테스트
+
+- [ ] Demucs 보컬 분리가 정상 동작하는지 확인 (`enhance_vocal_demucs` 호출)
+- [ ] 분리된 보컬만으로 Whisper 분석 시 세그먼트 정상 반환 확인
+- [ ] 같은 파일 반복 분석 시 결과 일관성 확인 (3회 반복)
+- [ ] `_is_valid_sections()` 40% 초과 섹션 감지 정상 동작 확인
+- [ ] 비정상 결과 시 재시도 로직 동작 확인 (최대 2회)
+- [ ] 재시도 실패 시 균등 분할 fallback 정상 동작 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_pipeline.py` Phase 1a 수정: Demucs 추가) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` 검증 로직 추가) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 8 | 0/8 |
+
+---
+
+# v10.2 — 15초 초과 섹션 자동 분할 (Whisper 줄 타이밍 기반)
+
+> 수정일자: 2026-04-04
+
+## 0. 문제
+
+Kling 영상 생성 API 최대 길이는 **15초**인데, Whisper 기반 섹션 타이밍에서 15초를 초과하는 섹션이 빈번하게 발생한다.
+
+| 섹션 예시 | 실측 길이 | 문제 |
+|-----------|-----------|------|
+| Chorus | 19초 | Kling 15초 제한 초과 |
+| Bridge | 24초 | Kling 15초 제한 초과 |
+| Outro | 28초 | Kling 15초 제한 초과 |
+
+현재 코드는 섹션 1개 = 씬 1개로 매핑하므로, 15초 초과 섹션은 영상 생성 시 잘리거나 실패한다.
+
+## 1. 해결 방향
+
+Phase 1a에서 Whisper 세그먼트(줄 단위 타이밍)를 job에 보존하고, 씬 생성 시 15초 초과 섹션을 **가사 줄 경계**에서 자동 분할하여 각 클립이 10초 이하가 되도록 한다.
+
+```
+Phase 1a: Whisper 세그먼트 → job.whisper_segments에 저장
+    ↓
+씬 생성 시: 섹션별 duration 확인
+    ↓
+15초 초과? → 해당 섹션의 Whisper 줄 타이밍으로 분할
+    ↓
+분할 기준: 줄 경계에서 나눠서 각 클립 ≤ 10초
+    ↓
+분할된 씬: "Chorus-1", "Chorus-2" 등으로 명명
+    ↓
+가사도 줄 단위로 분배
+```
+
+## 2. 구체적 변경
+
+### 2-1. Phase 1a: Whisper 세그먼트 저장 (`mv_pipeline.py`)
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| Phase 1a (Whisper 분석 후) | `whisper_segments`를 job에 저장 (`job.whisper_segments`) |
+
+**변경 로직**
+
+```python
+# Step 2: Whisper 분석 후 세그먼트 저장
+whisper_segments = get_full_audio_timestamps(...)
+
+# whisper_segments를 job에 저장 (씬 분할 시 줄 타이밍 참조용)
+await _update_job(mongo_db, job_id, {
+    "whisper_segments": whisper_segments,
+})
+```
+
+### 2-2. 씬 생성 시 15초 초과 섹션 자동 분할 (`mv_pipeline.py`)
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| 씬 생성 루프 (기존 `for i, sec in enumerate(music_sections)`) | 15초 초과 시 `_split_long_section()` 호출 |
+| 신규 함수 `_split_long_section()` | Whisper 줄 타이밍 기반으로 10초 이하 클립 분할 |
+
+**15초 초과 섹션 분할 로직**
+
+```python
+MAX_CLIP_SEC = 15.0
+TARGET_CLIP_SEC = 10.0
+
+
+def _split_long_section(
+    sec: dict,
+    whisper_segments: list[dict],
+    lyrics_lines: list[str],
+) -> list[dict]:
+    """15초 초과 섹션을 Whisper 줄 타이밍 기반으로 분할.
+
+    Args:
+        sec: {"label", "start", "end", "mood"} 섹션 정보
+        whisper_segments: [{"text", "start", "end"}, ...] 전체 Whisper 세그먼트
+        lyrics_lines: 해당 섹션의 가사 줄 리스트
+
+    Returns:
+        분할된 서브섹션 리스트:
+        [{"label": "Chorus-1", "start", "end", "mood", "lyrics_lines": [...]}, ...]
+    """
+    duration = sec["end"] - sec["start"]
+    if duration <= MAX_CLIP_SEC:
+        return [sec]
+
+    # 해당 섹션 범위 내의 Whisper 세그먼트 필터링
+    seg_in_range = [
+        s for s in whisper_segments
+        if s["start"] >= sec["start"] - 0.5 and s["end"] <= sec["end"] + 0.5
+    ]
+
+    if not seg_in_range:
+        # Whisper 세그먼트 없으면 균등 분할 fallback
+        return _fallback_split(sec, duration)
+
+    # 줄 경계에서 분할: 누적 시간이 TARGET_CLIP_SEC 초과 시 분할점
+    sub_sections = []
+    sub_start = seg_in_range[0]["start"]
+    sub_lines = []
+    sub_idx = 1
+
+    for i, seg in enumerate(seg_in_range):
+        sub_lines.append(seg["text"])
+        sub_end = seg["end"]
+        sub_duration = sub_end - sub_start
+        is_last = (i == len(seg_in_range) - 1)
+
+        if sub_duration >= TARGET_CLIP_SEC or is_last:
+            sub_sections.append({
+                "label": f"{sec['label']}-{sub_idx}",
+                "start": round(sub_start, 3),
+                "end": round(sub_end, 3),
+                "mood": sec.get("mood", ""),
+                "lyrics_lines": sub_lines[:],
+            })
+            sub_idx += 1
+            sub_lines = []
+            if not is_last:
+                sub_start = seg_in_range[i + 1]["start"]
+
+    return sub_sections
+
+
+def _fallback_split(sec: dict, duration: float) -> list[dict]:
+    """Whisper 세그먼트 없을 때 균등 분할."""
+    n_parts = max(2, int(duration / TARGET_CLIP_SEC) + 1)
+    part_dur = duration / n_parts
+    result = []
+    for i in range(n_parts):
+        result.append({
+            "label": f"{sec['label']}-{i + 1}",
+            "start": round(sec["start"] + part_dur * i, 3),
+            "end": round(sec["start"] + part_dur * (i + 1), 3),
+            "mood": sec.get("mood", ""),
+            "lyrics_lines": [],
+        })
+    return result
+```
+
+**씬 생성 루프 변경**
+
+```python
+# ── 씬 생성: 가사 섹션 1개 = 씬 1개 (15초 초과 시 자동 분할) ──
+whisper_segments_saved = job.get("whisper_segments", [])
+
+scenes = []
+scene_num = 1
+for i, sec in enumerate(music_sections):
+    label = sec["label"]
+    duration = sec["end"] - sec["start"]
+
+    if duration < 0.5:
+        continue
+
+    matching_section = next((s for s in sections if s["tag"] == label), None)
+    lyrics_content = matching_section["content"] if matching_section else ""
+    lyrics_lines = [l.strip() for l in lyrics_content.split("\n") if l.strip()]
+
+    # 15초 초과 섹션 자동 분할
+    if duration > MAX_CLIP_SEC:
+        sub_sections = _split_long_section(sec, whisper_segments_saved, lyrics_lines)
+    else:
+        sub_sections = [{
+            **sec,
+            "lyrics_lines": lyrics_lines,
+        }]
+
+    for sub in sub_sections:
+        sub_duration = sub["end"] - sub["start"]
+        sub_label = sub["label"]
+        sub_lyrics = "\n".join(sub.get("lyrics_lines", []))
+
+        # scene_type 결정 (기존 로직 동일)
+        label_lower = sub_label.lower()
+        if has_rap:
+            scene_type = "lipsync" if any(k in label_lower for k in ("rap", "hiphop", "hip-hop")) else "drama"
+        else:
+            scene_type = "lipsync" if label_lower.startswith("chorus") else "drama"
+
+        scenes.append({
+            "scene_number": scene_num,
+            "section": sub_label,
+            "scene_type": scene_type,
+            "lyrics_segment": sub_lyrics,
+            "use_seconds": round(sub_duration, 2),
+            "section_start": round(sub["start"], 3),
+            "section_end": round(sub["end"], 3),
+            "section_mood": sub.get("mood", ""),
+            "description": "",
+            "image_prompt": "",
+            "video_prompt": "",
+            "description_ko": "",
+            "image_object_name": None,
+            "image_source": None,
+            "video_object_name": None,
+            "video_status": "pending",
+            "video_error": None,
+        })
+        scene_num += 1
+```
+
+### 2-3. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전 (v10.1: 섹션 1개 = 씬 1개)
+
+```
+Chorus (19초) → 씬 1개 (19초) → Kling 15초 제한 초과 → 영상 잘림/실패
+Bridge (24초) → 씬 1개 (24초) → Kling 15초 제한 초과
+Outro  (28초) → 씬 1개 (28초) → Kling 15초 제한 초과
+```
+
+### 변경 후 (v10.2: 15초 초과 자동 분할)
+
+```
+Chorus (19초) → Chorus-1 (10초) + Chorus-2 (9초) → 각각 Kling 제한 이내
+Bridge (24초) → Bridge-1 (8초) + Bridge-2 (8초) + Bridge-3 (8초) → OK
+Outro  (28초) → Outro-1 (10초) + Outro-2 (10초) + Outro-3 (8초) → OK
+```
+
+## 4. 테스트
+
+- [ ] Phase 1a에서 `whisper_segments`가 job에 정상 저장되는지 확인
+- [ ] 15초 이하 섹션은 분할 없이 그대로 1개 씬으로 생성되는지 확인
+- [ ] 15초 초과 섹션이 `_split_long_section()`으로 자동 분할되는지 확인
+- [ ] 분할된 씬 이름이 "Section-1", "Section-2" 형식인지 확인
+- [ ] 분할된 각 클립이 10초 이하인지 확인
+- [ ] 가사가 줄 단위로 분배되는지 확인
+- [ ] Whisper 세그먼트 없는 경우 균등 분할 fallback 동작 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_pipeline.py` Phase 1a: whisper_segments 저장) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` 신규 함수: `_split_long_section`) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py` 씬 생성 루프: 분할 적용) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |
+| 테스트 | 9 | 0/9 |
+
+---
+
+# v10.3 — 15초 초과 클립 재분할 + Sync Labs 후 자막 자동 재적용
+
+> 수정일자: 2026-04-04
+
+## 0. 문제
+
+### 문제 A: 가사 줄 경계 분할 후에도 15초 초과 클립 발생
+
+`_split_long_section()`은 Whisper 세그먼트의 줄 경계에서 분할하지만, 가사 줄 간격이 넓어 하나의 줄이 15초를 넘는 경우 분할 결과에 여전히 15초 초과 클립이 남을 수 있다. 이 경우 Kling 영상 생성 API 제한에 걸린다.
+
+### 문제 B: Sync Labs 결과 영상에 자막이 사라짐
+
+Phase 3.6에서 자막 burn-in을 수행하지만, Sync Labs를 거치면 영상이 대체되므로 자막이 사라진다. Phase 3.5 (자동 Sync Labs)와 수동 retry-sync 모두에서 자막이 손실된다.
+
+## 1. 해결 방향
+
+| 문제 | 해결 |
+|------|------|
+| A: 15초 초과 잔여 클립 | `_split_long_section()` 결과를 후처리하여, 15초 초과 클립이 있으면 시간 기반 균등 재분할 (`ceil(길이/10)`개) |
+| B: Sync Labs 후 자막 손실 | 재사용 가능한 `_burn_subtitles_on_video()` 함수를 만들어, Sync Labs 결과 저장 직전에 호출 |
+
+## 2. 변경 상세
+
+### 2-1. `_split_long_section()` 후처리 — 15초 초과 클립 재분할 (`mv_pipeline.py`)
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| `_split_long_section()` 함수 끝 (return 직전) | 결과 리스트를 순회하며 15초 초과 클립을 시간 기반 균등 재분할 |
+
+**변경 로직**
+
+```python
+import math
+
+# 기존 분할 결과 (clips) 에서 15초 초과 클립 재분할
+final_clips = []
+for clip in clips:
+    clip_dur = clip["end"] - clip["start"]
+    if clip_dur > MAX_CLIP_SEC:
+        # 시간 기반 균등 분할: ceil(길이/10)개
+        n_parts = math.ceil(clip_dur / TARGET_CLIP_SEC)
+        part_dur = clip_dur / n_parts
+        clip_lines = clip.get("lyrics_segment", "").split("\n") if clip.get("lyrics_segment") else []
+        lines_per_part = max(1, len(clip_lines) // n_parts) if clip_lines else 0
+
+        # 기존 section 이름에서 base와 suffix 추출
+        base_section = clip["section"]
+        for j in range(n_parts):
+            p_start = clip["start"] + j * part_dur
+            p_end = clip["start"] + (j + 1) * part_dur
+            if clip_lines:
+                l_s = j * lines_per_part
+                l_e = l_s + lines_per_part if j < n_parts - 1 else len(clip_lines)
+                p_lyrics = "\n".join(clip_lines[l_s:l_e])
+            else:
+                p_lyrics = ""
+            final_clips.append({
+                "section": "{}.{}".format(base_section, j + 1),
+                "start": round(p_start, 3),
+                "end": round(p_end, 3),
+                "lyrics_segment": p_lyrics,
+            })
+    else:
+        final_clips.append(clip)
+
+return final_clips
+```
+
+**재분할 예시**
+
+```
+Chorus-1 (8초)  → 그대로 유지
+Chorus-2 (18초) → Chorus-2.1 (9초) + Chorus-2.2 (9초)   # ceil(18/10) = 2
+Chorus-3 (6초)  → 그대로 유지
+```
+
+### 2-2. Sync Labs 후 자막 재적용 — `_burn_subtitles_on_video()` 신규 함수 (`mv_pipeline.py`)
+
+| 변경 위치 | 변경 내용 |
+|-----------|----------|
+| 신규 함수 `_burn_subtitles_on_video()` | 영상 bytes + scene + audio_bytes → 자막 burn-in된 영상 bytes 반환 |
+| Phase 3.5 (자동 Sync Labs) | `synclabs_obj` 저장 직전에 `_burn_subtitles_on_video()` 호출 |
+| `mv.py` `_retry_sync_for_scene()` (수동 retry-sync) | `synclabs_object` 저장 직전에 `_burn_subtitles_on_video()` 호출 |
+
+**신규 함수**
+
+```python
+def _burn_subtitles_on_video(
+    video_bytes: bytes,
+    scene: dict,
+    audio_bytes: bytes | None = None,
+) -> bytes:
+    """Sync Labs 결과 영상에 가사 자막을 burn-in하여 반환.
+
+    Args:
+        video_bytes: 자막을 입힐 영상 (mp4)
+        scene: 씬 정보 dict (lyrics_segment, section_start, section_end 등)
+        audio_bytes: 해당 구간 오디오 bytes (Whisper 타이밍 추출용, 없으면 기본 타이밍)
+
+    Returns:
+        자막이 burn-in된 영상 bytes. 실패 시 원본 video_bytes 그대로 반환.
+    """
+    import tempfile, subprocess
+    from .subtitle_generator import generate_scene_lyrics_ass
+
+    if not scene.get("lyrics_segment"):
+        return video_bytes
+
+    try:
+        # Whisper 타이밍 추출 (audio_bytes가 있는 경우)
+        timestamps = None
+        if audio_bytes:
+            try:
+                from .whisper_service import get_lyrics_timestamps
+                timestamps = get_lyrics_timestamps(audio_bytes)
+            except Exception:
+                pass
+
+        ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
+        if not ass_content:
+            return video_bytes
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vid_path = os.path.join(tmpdir, "input.mp4")
+            ass_path = os.path.join(tmpdir, "lyrics.ass")
+            out_path = os.path.join(tmpdir, "output.mp4")
+
+            with open(vid_path, "wb") as f:
+                f.write(video_bytes)
+            with open(ass_path, "w", encoding="utf-8") as f:
+                f.write(ass_content)
+
+            escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+            ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
+
+            subprocess.run(
+                [ffmpeg_bin, "-y",
+                 "-i", vid_path,
+                 "-vf", "ass={}".format(escaped_ass),
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                 "-c:a", "copy",
+                 out_path],
+                capture_output=True, timeout=60,
+            )
+
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                with open(out_path, "rb") as f:
+                    return f.read()
+
+        return video_bytes
+
+    except Exception as e:
+        logger.warning("_burn_subtitles_on_video failed: %s", str(e)[:200])
+        return video_bytes
+```
+
+**Phase 3.5 호출 지점 (자동 Sync Labs)**
+
+```python
+# 기존: silent_video를 바로 저장
+# 변경: silent_video에 자막 burn-in 후 저장
+
+# Sync Labs 결과에 자막 재적용
+segment_audio_for_sub = cut_audio_segment(full_audio_for_merge, start, end)
+silent_video = _burn_subtitles_on_video(silent_video, scene, segment_audio_for_sub)
+
+synclabs_obj = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(str(job_id), sn)
+minio_client.put_object(...)
+```
+
+**수동 retry-sync 호출 지점 (`mv.py` `_retry_sync_for_scene()`)**
+
+```python
+# 기존: final_video를 바로 저장
+# 변경: final_video에 자막 burn-in 후 저장
+
+from ..services.mv_pipeline import _burn_subtitles_on_video
+final_video = _burn_subtitles_on_video(final_video, scene, original_segment_audio)
+
+synclabs_object = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(job_id, scene_number)
+minio_client.put_object(...)
+```
+
+### 2-3. 프론트엔드
+
+변경 없음.
+
+## 3. 변경 전후 비교
+
+### 변경 전 (v10.2)
+
+```
+_split_long_section() 결과:
+  Chorus-1 (8초)  → OK
+  Chorus-2 (18초) → Kling 15초 제한 초과 (줄 경계 분할로도 해결 안 됨)
+
+Sync Labs 결과:
+  씬 영상 (자막 있음) → Sync Labs → 씬 영상 (자막 없음) → 최종 영상에서 자막 누락
+```
+
+### 변경 후 (v10.3)
+
+```
+_split_long_section() 결과 + 재분할:
+  Chorus-1 (8초)  → OK
+  Chorus-2 (18초) → Chorus-2.1 (9초) + Chorus-2.2 (9초) → 모든 클립 15초 이하
+
+Sync Labs 결과:
+  씬 영상 → Sync Labs → _burn_subtitles_on_video() → 씬 영상 (자막 복원) → 최종 영상 자막 유지
+```
+
+## 4. 테스트
+
+- [ ] 가사 줄 경계 분할 후 15초 초과 클립이 시간 기반 재분할되는지 확인
+- [ ] 재분할된 클립 이름이 "Section-N.M" 형식인지 확인
+- [ ] 재분할 시 가사가 균등 분배되는지 확인
+- [ ] 15초 이하 클립은 재분할 없이 유지되는지 확인
+- [ ] Phase 3.5 (자동 Sync Labs) 후 자막이 영상에 burn-in되는지 확인
+- [ ] 수동 retry-sync 후 자막이 영상에 burn-in되는지 확인
+- [ ] `_burn_subtitles_on_video()` 실패 시 원본 영상이 그대로 반환되는지 확인
+- [ ] 가사가 없는 씬에서 `_burn_subtitles_on_video()`가 원본을 그대로 반환하는지 확인
+- [ ] 기존 뮤직비디오 생성 파이프라인 정상 동작 확인
+- [ ] 서버 기동 확인
+
+## 5. 체크리스트 요약
+
+| 구분 | 항목 수 | 완료 |
+|------|---------|------|
+| 백엔드 (`mv_pipeline.py`: `_split_long_section()` 15초 초과 재분할) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py`: 신규 함수 `_burn_subtitles_on_video()`) | 1 | 0/1 |
+| 백엔드 (`mv_pipeline.py`: Phase 3.5 자막 재적용 호출) | 1 | 0/1 |
+| 백엔드 (`mv.py`: retry-sync 자막 재적용 호출) | 1 | 0/1 |
+| 프론트엔드 | 0 | — |

@@ -923,7 +923,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
             <label className="upload-card__label">뮤직비디오 (선택)</label>
 
             {/* Step 6: Completed - show final music video */}
-            {mvStep === 6 && mvMusicVideoPreview ? (
+            {mvStep === 6 && mvMusicVideoPreview && (
               <div className="upload-mv-preview">
                 <video src={mvMusicVideoPreview} controls className="upload-mv-preview__video" />
                 <div className="upload-mv-preview__badge">
@@ -936,8 +936,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                   <button type="button" className="upload-mv-remove" onClick={handleClearMV}>제거</button>
                 </div>
               </div>
-            ) : (
-              <>
+            )}
+
+            <>
                 {/* STEP 1: Scene Generation */}
                 <div className="upload-mv-step">
                   <div className="upload-mv-step__title">STEP 1: 씬 생성</div>
@@ -1393,7 +1394,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                   </div>
                 )}
               </>
-            )}
           </div>
 
           {/* Lyrics */}
