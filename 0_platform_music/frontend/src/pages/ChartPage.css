@@ -65,6 +65,12 @@
   gap: 12px;
 }
 
+/* HOT100/일간/주간/월간: 2개 stat 컬럼 */
+.chart-list--2col .chart-list__header,
+.chart-list--2col .chart-item {
+  grid-template-columns: 40px 52px 48px 1fr 80px 80px 112px;
+}
+
 .chart-list__header {
   padding: 12px 16px;
   border-bottom: 2px solid var(--color-border);

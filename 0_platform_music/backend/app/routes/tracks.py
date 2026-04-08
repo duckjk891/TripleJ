@@ -569,6 +569,13 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
 
     await pipe.execute()
 
+    # Save to MongoDB for persistence
+    await mongo.download_logs.insert_one({
+        "user_id": user_id,
+        "track_id": track_id,
+        "downloaded_at": now,
+    })
+
     # Increment download_count in MongoDB
     await mongo.tracks.update_one(
         {"_id": ObjectId(track_id)},

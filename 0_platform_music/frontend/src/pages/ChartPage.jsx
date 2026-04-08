@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import AddToPlaylistModal from '../components/AddToPlaylistModal';
@@ -91,6 +91,21 @@ export default function ChartPage() {
     setPlaylistModalSongId(songId);
   };
 
+  const handleDownload = async (trackId) => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      const { data } = await api.downloadTrackFile(trackId);
+      const a = document.createElement('a');
+      a.href = data.download_url;
+      a.download = data.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  };
+
   const formatUpdateTime = (timeStr) => {
     if (!timeStr) return '';
     try {
@@ -137,14 +152,16 @@ export default function ChartPage() {
         {loading ? (
           <div className="chart-loading">차트를 불러오는 중...</div>
         ) : (
-          <div className="chart-list">
+          <div className={`chart-list ${activeTab === 'top100' ? '' : 'chart-list--2col'}`}>
             <div className="chart-list__header">
               <span className="chart-list__col-rank">순위</span>
               <span className="chart-list__col-change" />
               <span className="chart-list__col-cover" />
               <span className="chart-list__col-info">곡/아티스트</span>
-              <span className="chart-list__col-stat">24h 청취</span>
-              <span className="chart-list__col-stat">1h 청취</span>
+              {activeTab === 'top100' && <span className="chart-list__col-stat">24h 청취</span>}
+              {activeTab === 'top100' && <span className="chart-list__col-stat">1h 청취</span>}
+              {activeTab === 'hot100' && <span className="chart-list__col-stat">1h 청취</span>}
+              {(activeTab === 'daily' || activeTab === 'weekly' || activeTab === 'monthly') && <span className="chart-list__col-stat">청취자</span>}
               <span className="chart-list__col-stat">다운로드</span>
               <span className="chart-list__col-actions" />
             </div>
@@ -187,8 +204,10 @@ export default function ChartPage() {
                     </div>
                   </div>
 
-                  <span className="chart-item__stat">{(track.listeners_24h || 0).toLocaleString()}</span>
-                  <span className="chart-item__stat">{(track.listeners_1h || 0).toLocaleString()}</span>
+                  {activeTab === 'top100' && <span className="chart-item__stat">{(track.listeners_24h || 0).toLocaleString()}</span>}
+                  {activeTab === 'top100' && <span className="chart-item__stat">{(track.listeners_1h || 0).toLocaleString()}</span>}
+                  {activeTab === 'hot100' && <span className="chart-item__stat">{(track.listeners_1h || 0).toLocaleString()}</span>}
+                  {(activeTab === 'daily' || activeTab === 'weekly' || activeTab === 'monthly') && <span className="chart-item__stat">{(track.listeners_24h || 0).toLocaleString()}</span>}
                   <span className="chart-item__stat">{(track.downloads || 0).toLocaleString()}</span>
 
                   <div className="chart-item__actions">
@@ -204,6 +223,9 @@ export default function ChartPage() {
                     </button>
                     <button className="chart-item__btn" onClick={() => handleAddToPlaylist(track.id)} title="플레이리스트 추가">
                       <FiPlus />
+                    </button>
+                    <button className="chart-item__btn" onClick={() => handleDownload(track.id)} title="다운로드">
+                      <FiDownload />
                     </button>
                   </div>
                 </div>

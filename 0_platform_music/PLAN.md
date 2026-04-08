@@ -9434,3 +9434,57 @@ Sync Labs 결과:
 1. 차트에서 아티스트명 클릭 시 프로필 페이지 이동 확인
 2. 프로필 페이지에서 해당 크리에이터의 트랙 목록 표시 확인
 3. 빌드 정상 확인
+
+---
+
+## v35 — 차트 데이터 MongoDB 영구 저장 + 서버 시작 시 Redis 복구 (2026-04-08)
+
+### 요청 사항
+차트 데이터(재생/다운로드 기록)를 Redis에만 저장하면 서버 재시작 시 날아가는 문제 해결.
+MongoDB에 영구 기록 저장 + 서버 시작 시 Redis 자동 복구.
+
+### 작업 내용 (백엔드만)
+
+#### 1. MongoDB 컬렉션 추가
+- `play_logs`: {user_id, track_id, played_at(KST)}
+- `download_logs`: {user_id, track_id, downloaded_at(KST)}
+- 인덱스: {user_id: 1, track_id: 1, played_at: -1}
+
+#### 2. record-play 수정 (charts.py)
+- 기존: Redis에만 저장
+- 변경: Redis + MongoDB play_logs에 동시 저장
+
+#### 3. download 수정 (tracks.py)
+- 기존: Redis에만 저장
+- 변경: Redis + MongoDB download_logs에 동시 저장
+
+#### 4. Redis 복구 함수 (신규: services/chart_recovery.py)
+- MongoDB play_logs/download_logs에서 현재 시간 기준으로 읽어서 Redis SET 재구축
+- 시간 윈도우: hourly(1시간), daily(오늘), weekly(이번주), monthly(이번달)
+
+#### 5. 서버 시작 시 복구 호출 (main.py)
+- lifespan에서 Redis 복구 함수 호출
+
+### 프론트엔드: 변경 없음
+### 테스트 항목
+1. 재생 시 MongoDB play_logs에 기록 저장 확인
+2. 다운로드 시 MongoDB download_logs에 기록 저장 확인
+3. 서버 재시작 후 Redis에 데이터 복구 확인
+4. 복구 후 차트 순위 정상 표시 확인
+
+---
+
+## v36 — 차트 탭별 컬럼 분기 (2026-04-08)
+
+### 요청 사항
+각 차트 탭에 해당 차트 계산에 사용되는 컬럼만 표시:
+- TOP100: 24h 청취 / 1h 청취 / 다운로드 (3개)
+- HOT100: 1h 청취 / 다운로드 (2개)
+- 일간: 청취자 / 다운로드 (2개)
+- 주간: 청취자 / 다운로드 (2개)
+- 월간: 청취자 / 다운로드 (2개)
+
+### 작업: 프론트엔드만
+- ChartPage.jsx: 탭별 조건부 컬럼 렌더링
+- ChartPage.css: 2컬럼 grid 추가 (일간/주간/월간용)
+- 백엔드: 변경 없음

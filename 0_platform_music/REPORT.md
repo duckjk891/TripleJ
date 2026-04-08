@@ -4386,3 +4386,66 @@ TOP100:
 |------|------|
 | 프론트엔드 빌드 | ✅ PASS |
 | 백엔드 변경 | 없음 (기존 API 활용) |
+
+---
+
+## v35 — 차트 데이터 MongoDB 영구 저장 + 서버 시작 시 Redis 복구 (2026-04-08)
+
+### 요청 작업
+차트 데이터(재생/다운로드 기록)를 MongoDB에 영구 저장하고, 서버 재시작 시 Redis 자동 복구
+
+### 수행 결과
+
+#### 수정/생성된 파일
+| 파일 | 내용 |
+|------|------|
+| `charts.py` | record_play에 `play_logs` MongoDB 저장 추가 |
+| `tracks.py` | download에 `download_logs` MongoDB 저장 추가 |
+| `services/chart_recovery.py` | 신규 - Redis 복구 함수 |
+| `main.py` | 서버 시작 시 복구 호출 추가 |
+
+#### 동작 방식
+```
+재생/다운로드 시: Redis + MongoDB 동시 저장
+서버 재시작 시: MongoDB → Redis 자동 복구
+```
+
+#### MongoDB 컬렉션
+- `play_logs`: {user_id, track_id, played_at}
+- `download_logs`: {user_id, track_id, downloaded_at}
+- 인덱스 자동 생성 (played_at, downloaded_at 기준)
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| chart_recovery.py | ✅ PASS |
+| MongoDB 로그 저장 | ✅ PASS |
+| main.py 복구 호출 | ✅ PASS |
+| Redis 키 패턴 일관성 | ✅ PASS |
+| KST 시간대 일관성 | ✅ PASS |
+| 멱등성 (중복 실행 안전) | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v36 — 차트 탭별 컬럼 분기 (2026-04-08)
+
+### 요청 작업
+각 차트 탭에 순위 계산에 사용되는 데이터 컬럼만 표시
+
+### 수행 결과
+
+| 탭 | 컬럼 | 계산 방식 |
+|---|---|---|
+| TOP100 | 24h 청취 / 1h 청취 / 다운로드 | (24h×50% + 1h×50%) × (스트리밍40% + 다운로드60%) |
+| HOT100 | 1h 청취 / 다운로드 | 1h × (스트리밍40% + 다운로드60%), 30일 이내 곡만 |
+| 일간 | 청취자 / 다운로드 | 오늘 전체 (스트리밍40% + 다운로드60%) |
+| 주간 | 청취자 / 다운로드 | 이번주 전체 (스트리밍40% + 다운로드60%) |
+| 월간 | 청취자 / 다운로드 | 이번달 전체 (스트리밍40% + 다운로드60%) |
+
+### 변경 파일
+- ChartPage.jsx: 탭별 조건부 컬럼 렌더링
+- ChartPage.css: 2컬럼 grid 클래스 추가
+
+### 테스트: 빌드 ✅ PASS

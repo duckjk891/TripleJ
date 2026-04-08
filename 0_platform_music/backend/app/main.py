@@ -39,6 +39,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"MV job recovery failed: {e}")
 
+    # Recover Redis chart data from MongoDB
+    try:
+        from .database.redis import get_redis
+        from .services.chart_recovery import rebuild_redis_from_mongo
+        redis = get_redis()
+        await rebuild_redis_from_mongo(mongo, redis)
+    except Exception as e:
+        print(f"Chart data recovery failed: {e}")
+
     # Start background scheduler for playcount sync
     from .services.playcount_sync import start_playcount_scheduler
     scheduler = start_playcount_scheduler()

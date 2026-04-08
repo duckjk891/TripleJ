@@ -196,6 +196,13 @@ async def record_play(
 
     await pipe.execute()
 
+    # Save to MongoDB for persistence (fire-and-forget style)
+    await mongo.play_logs.insert_one({
+        "user_id": user_id,
+        "track_id": track_id,
+        "played_at": now,
+    })
+
     return {"ok": True}
 
 
