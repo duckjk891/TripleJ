@@ -3,26 +3,27 @@
 }
 
 .chart-page__title {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
   margin-bottom: 20px;
 }
 
+/* Tabs */
 .chart-tabs {
   display: flex;
   gap: 8px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
 
 .chart-tab {
-  padding: 8px 18px;
+  padding: 10px 24px;
   border-radius: 20px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--color-text-sub);
   background: var(--color-card);
   border: 1px solid var(--color-border);
+  cursor: pointer;
   transition: all 0.2s;
 }
 
@@ -41,6 +42,14 @@
   color: #fff;
 }
 
+/* Update time */
+.chart-update-time {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  margin-bottom: 16px;
+}
+
+/* Chart list */
 .chart-list {
   background: var(--color-card);
   border-radius: 8px;
@@ -48,47 +57,333 @@
   overflow: hidden;
 }
 
-.chart-list__header {
-  display: flex;
+.chart-list__header,
+.chart-item {
+  display: grid;
+  grid-template-columns: 40px 52px 48px 1fr 80px 80px 80px 112px;
   align-items: center;
+  gap: 12px;
+}
+
+.chart-list__header {
   padding: 12px 16px;
   border-bottom: 2px solid var(--color-border);
   font-size: 12px;
   color: var(--color-text-sub);
-  gap: 14px;
 }
 
-.chart-list__header-rank {
-  width: 32px;
+.chart-list__col-rank {
   text-align: center;
 }
 
-.chart-list__header-art {
-  width: 50px;
+.chart-list__col-change {
+  text-align: center;
 }
 
-.chart-list__header-info {
+.chart-list__col-stat {
+  text-align: center;
+}
+
+.chart-list__col-actions {
+  /* empty header for actions column */
+}
+
+/* Chart item */
+.chart-item {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.15s;
+}
+
+.chart-item:last-child {
+  border-bottom: none;
+}
+
+.chart-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Rank number */
+.chart-item__rank {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+.chart-item__rank--r1 {
+  font-size: 22px;
+  font-weight: 800;
+  color: #ffd700;
+}
+
+.chart-item__rank--r2 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #c0c0c0;
+}
+
+.chart-item__rank--r3 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #cd7f32;
+}
+
+/* Rank change */
+.chart-item__change {
+  text-align: center;
+}
+
+.rank-change {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rank-change--up {
+  color: #e74c3c;
+}
+
+.rank-change--down {
+  color: #3498db;
+}
+
+.rank-change--same {
+  color: var(--color-text-sub);
+}
+
+.rank-change--new {
+  color: #2ecc71;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+/* Cover art */
+.chart-item__cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+  background: var(--color-border);
+}
+
+.chart-item__cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chart-item__cover-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--color-text-sub);
+  background: linear-gradient(135deg, var(--color-border) 0%, var(--color-card) 100%);
+}
+
+.chart-item__cover-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #fff;
+  font-size: 16px;
+}
+
+.chart-item__cover:hover .chart-item__cover-play {
+  opacity: 1;
+}
+
+/* Song info */
+.chart-item__info {
   flex: 1;
+  min-width: 0;
 }
 
-.chart-list__header-album {
-  width: 180px;
+.chart-item__title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.15s;
 }
 
-.chart-list__header-actions {
-  width: 112px;
+.chart-item__title:hover {
+  color: var(--color-primary);
+}
+
+.chart-item__artist {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-item__artist-link {
+  color: var(--color-text-sub);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.chart-item__artist-link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.chart-item__stat {
   text-align: center;
+  font-size: 13px;
+  color: var(--color-text-sub);
+  font-variant-numeric: tabular-nums;
 }
 
+/* Top 3 item */
+.chart-item--top3 .chart-item__title {
+  font-size: 15px;
+}
+
+/* Actions */
+.chart-item__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.chart-item__btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-sub);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 14px;
+}
+
+.chart-item__btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.chart-item__btn--liked {
+  border-color: #e74c3c;
+}
+
+/* Loading */
 .chart-loading {
   text-align: center;
   padding: 60px 0;
   color: var(--color-text-sub);
 }
 
+/* Mobile responsive */
 @media (max-width: 768px) {
-  .chart-page__title { font-size: 20px; }
-  .chart-tabs { gap: 6px; }
-  .chart-tab { padding: 6px 14px; font-size: 12px; }
-  .chart-list__header { display: none; }
+  .chart-page__title {
+    font-size: 20px;
+  }
+
+  .chart-tabs {
+    gap: 6px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .chart-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chart-tab {
+    padding: 8px 16px;
+    font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .chart-list__header {
+    display: none;
+  }
+
+  .chart-item__stat {
+    display: none;
+  }
+
+  .chart-item {
+    grid-template-columns: 28px 40px 40px 1fr auto;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .chart-item__rank {
+    font-size: 14px;
+  }
+
+  .chart-item__rank--r1 {
+    font-size: 18px;
+  }
+
+  .chart-item__rank--r2,
+  .chart-item__rank--r3 {
+    font-size: 16px;
+  }
+
+  .chart-item__change {
+  }
+
+  .rank-change {
+    font-size: 10px;
+  }
+
+  .chart-item__cover {
+    width: 40px !important;
+    height: 40px;
+  }
+
+  .chart-item__title {
+    font-size: 13px;
+  }
+
+  .chart-item__artist {
+    font-size: 11px;
+  }
+
+  .chart-item__actions {
+    gap: 2px;
+  }
+
+  .chart-item__btn {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chart-item {
+    grid-template-columns: 24px 32px 36px 1fr auto;
+  }
+
+  .rank-change {
+    font-size: 9px;
+  }
+
+  .chart-item__btn:nth-child(3) {
+    display: none;
+  }
 }

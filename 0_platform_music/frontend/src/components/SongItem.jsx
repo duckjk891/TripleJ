@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
+import * as api from '../api';
 import { getAlbumGradient } from '../utils';
 import AddToPlaylistModal from './AddToPlaylistModal';
 import './SongItem.css';
@@ -33,6 +34,21 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
       return;
     }
     setShowPlaylistModal(true);
+  };
+
+  const handleDownload = async () => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      const { data } = await api.downloadTrackFile(song.id);
+      const a = document.createElement('a');
+      a.href = data.download_url;
+      a.download = data.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
   };
 
   return (
@@ -86,6 +102,9 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         </button>
         <button className="song-item__action-btn" onClick={handleAddToPlaylist} title="플레이리스트 추가">
           <FiPlus />
+        </button>
+        <button className="song-item__action-btn" onClick={handleDownload} title="다운로드">
+          <FiDownload />
         </button>
       </div>
 

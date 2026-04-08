@@ -1,52 +1,67 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import SongItem from '../components/SongItem';
+import { useNavigate, Link } from 'react-router-dom';
+import { FiPlay, FiHeart, FiPlus } from 'react-icons/fi';
+import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
+import AddToPlaylistModal from '../components/AddToPlaylistModal';
 import * as api from '../api';
 import './ChartPage.css';
 
-const GENRES = [
+const CHART_TABS = [
   { key: 'top100', label: 'TOP 100' },
-  { key: '발라드', label: '발라드' },
-  { key: '댄스', label: '댄스' },
-  { key: '힙합', label: '힙합' },
-  { key: 'R&B', label: 'R&B' },
-  { key: '인디', label: '인디' },
-  { key: '록', label: '록' },
-  { key: 'Electronic', label: 'Electronic' },
-  { key: 'Ambient', label: 'Ambient' },
-  { key: 'Lo-fi', label: 'Lo-fi' },
-  { key: 'Cinematic', label: 'Cinematic' },
+  { key: 'hot100', label: 'HOT 100' },
+  { key: 'daily', label: '일간' },
+  { key: 'weekly', label: '주간' },
+  { key: 'monthly', label: '월간' },
 ];
+
+function RankChange({ change }) {
+  if (change === null || change === undefined) {
+    return <span className="rank-change rank-change--new">NEW</span>;
+  }
+  if (change > 0) {
+    return <span className="rank-change rank-change--up">▲ {change}</span>;
+  }
+  if (change < 0) {
+    return <span className="rank-change rank-change--down">▼ {Math.abs(change)}</span>;
+  }
+  return <span className="rank-change rank-change--same">-</span>;
+}
 
 export default function ChartPage() {
   const { user } = useAuth();
+  const { play } = usePlayer();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('top100');
-  const [songs, setSongs] = useState([]);
+  const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [likedIds, setLikedIds] = useState(new Set());
+  const [updateTime, setUpdateTime] = useState('');
+  const [playlistModalSongId, setPlaylistModalSongId] = useState(null);
 
   useEffect(() => {
     const fetchChart = async () => {
       setLoading(true);
       try {
-        let res;
-        if (activeTab === 'top100') {
-          res = await api.getTop100();
-        } else {
-          res = await api.getGenreChart(activeTab);
-        }
-        const fetchedSongs = res.data;
-        setSongs(fetchedSongs);
+        const res = await api.getChart(activeTab);
+        const fetched = res.data;
+        setTracks(Array.isArray(fetched) ? fetched : []);
 
-        if (user && fetchedSongs.length > 0) {
-          const { data } = await api.checkLikes(fetchedSongs.map(s => s.id).join(','));
+        // Extract update time from first track
+        if (fetched.length > 0 && fetched[0].chart_update_time) {
+          setUpdateTime(fetched[0].chart_update_time);
+        } else {
+          setUpdateTime('');
+        }
+
+        if (user && fetched.length > 0) {
+          const { data } = await api.checkLikes(fetched.map((t) => t.id).join(','));
           setLikedIds(new Set(data.liked_ids));
         }
       } catch (err) {
         console.error('Failed to load chart:', err);
-        setSongs([]);
+        setTracks([]);
+        setUpdateTime('');
       } finally {
         setLoading(false);
       }
@@ -59,58 +74,155 @@ export default function ChartPage() {
     try {
       if (likedIds.has(songId)) {
         await api.unlikeSong(songId);
-        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+        setLikedIds((prev) => { const s = new Set(prev); s.delete(songId); return s; });
       } else {
         await api.likeSong(songId);
-        setLikedIds(prev => new Set([...prev, songId]));
+        setLikedIds((prev) => new Set([...prev, songId]));
       }
     } catch (err) { console.error(err); }
+  };
+
+  const handlePlay = (track) => {
+    play(track, tracks);
+  };
+
+  const handleAddToPlaylist = (songId) => {
+    if (!user) { navigate('/login'); return; }
+    setPlaylistModalSongId(songId);
+  };
+
+  const formatUpdateTime = (timeStr) => {
+    if (!timeStr) return '';
+    try {
+      const d = new Date(timeStr);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      return `${yyyy}.${mm}.${dd} ${hh}:${min} 기준`;
+    } catch {
+      return timeStr;
+    }
+  };
+
+  const coverUrl = (track) => {
+    if (track.cover_image && track.cover_image.startsWith('/api/files')) {
+      return track.cover_image;
+    }
+    return null;
   };
 
   return (
     <div className="page-content">
       <div className="container chart-page">
-        <h1 className="chart-page__title">AI Music Chart</h1>
+        <h1 className="chart-page__title">AIMU 차트</h1>
 
         <div className="chart-tabs">
-          {GENRES.map((g) => (
+          {CHART_TABS.map((tab) => (
             <button
-              key={g.key}
-              className={`chart-tab ${activeTab === g.key ? 'chart-tab--active' : ''}`}
-              onClick={() => setActiveTab(g.key)}
+              key={tab.key}
+              className={`chart-tab ${activeTab === tab.key ? 'chart-tab--active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
             >
-              {g.label}
+              {tab.label}
             </button>
           ))}
         </div>
+
+        {updateTime && (
+          <div className="chart-update-time">{formatUpdateTime(updateTime)}</div>
+        )}
 
         {loading ? (
           <div className="chart-loading">차트를 불러오는 중...</div>
         ) : (
           <div className="chart-list">
             <div className="chart-list__header">
-              <span className="chart-list__header-rank">#</span>
-              <span className="chart-list__header-art" />
-              <span className="chart-list__header-info">트랙/크리에이터</span>
-              <span className="chart-list__header-album">앨범</span>
-              <span className="chart-list__header-actions">Actions</span>
+              <span className="chart-list__col-rank">순위</span>
+              <span className="chart-list__col-change" />
+              <span className="chart-list__col-cover" />
+              <span className="chart-list__col-info">곡/아티스트</span>
+              <span className="chart-list__col-stat">24h 청취</span>
+              <span className="chart-list__col-stat">1h 청취</span>
+              <span className="chart-list__col-stat">다운로드</span>
+              <span className="chart-list__col-actions" />
             </div>
-            {songs.map((song, idx) => (
-              <SongItem
-                key={song.id}
-                song={song}
-                rank={song.rank || idx + 1}
-                songs={songs}
-                isLiked={likedIds.has(song.id)}
-                onToggleLike={handleToggleLike}
-              />
-            ))}
-            {songs.length === 0 && (
+
+            {tracks.map((track, idx) => {
+              const rank = track.rank || idx + 1;
+              const isTop3 = rank <= 3;
+              const img = coverUrl(track);
+
+              return (
+                <div key={track.id} className={`chart-item ${isTop3 ? 'chart-item--top3' : ''}`}>
+                  <span className={`chart-item__rank ${isTop3 ? `chart-item__rank--r${rank}` : ''}`}>
+                    {rank}
+                  </span>
+
+                  <span className="chart-item__change">
+                    <RankChange change={track.change} />
+                  </span>
+
+                  <div className="chart-item__cover" onClick={() => handlePlay(track)}>
+                    {img ? (
+                      <img src={img} alt="" className="chart-item__cover-img" />
+                    ) : (
+                      <div className="chart-item__cover-placeholder">♪</div>
+                    )}
+                    <div className="chart-item__cover-play"><FiPlay /></div>
+                  </div>
+
+                  <div className="chart-item__info">
+                    <div className="chart-item__title" onClick={() => handlePlay(track)}>
+                      {track.title}
+                    </div>
+                    <div className="chart-item__artist">
+                      <Link
+                        to={user && user.id === track.uploader_id ? '/my-music' : `/artist/${track.uploader_id}`}
+                        className="chart-item__artist-link"
+                      >
+                        {track.artist_name}
+                      </Link>
+                    </div>
+                  </div>
+
+                  <span className="chart-item__stat">{(track.listeners_24h || 0).toLocaleString()}</span>
+                  <span className="chart-item__stat">{(track.listeners_1h || 0).toLocaleString()}</span>
+                  <span className="chart-item__stat">{(track.downloads || 0).toLocaleString()}</span>
+
+                  <div className="chart-item__actions">
+                    <button className="chart-item__btn" onClick={() => handlePlay(track)} title="재생">
+                      <FiPlay />
+                    </button>
+                    <button
+                      className={`chart-item__btn ${likedIds.has(track.id) ? 'chart-item__btn--liked' : ''}`}
+                      onClick={() => handleToggleLike(track.id)}
+                      title="좋아요"
+                    >
+                      <FiHeart style={likedIds.has(track.id) ? { color: '#e74c3c', fill: '#e74c3c' } : {}} />
+                    </button>
+                    <button className="chart-item__btn" onClick={() => handleAddToPlaylist(track.id)} title="플레이리스트 추가">
+                      <FiPlus />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {tracks.length === 0 && (
               <div className="chart-loading">차트 데이터가 없습니다.</div>
             )}
           </div>
         )}
       </div>
+
+      {playlistModalSongId && (
+        <AddToPlaylistModal
+          songId={playlistModalSongId}
+          onClose={() => setPlaylistModalSongId(null)}
+        />
+      )}
     </div>
   );
 }

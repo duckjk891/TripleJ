@@ -219,9 +219,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         style: null,
         character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
       });
-      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-      const token = localStorage.getItem('token');
-      const proxyUrl = `${base}/api/upload/cover-preview/${encodeURIComponent(data.object_name)}?token=${encodeURIComponent(token)}`;
+      const proxyUrl = api.coverPreviewUrl(data.object_name);
       setAiCoverPreview(proxyUrl);
       setAiCoverObjectName(data.object_name);
       setImageFile(null);
@@ -322,11 +320,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           return;
         }
         // Fallback: create temp Audio
-        const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-        const token = localStorage.getItem('token') || '';
         const streamUrl = useVoiceConverted
-          ? `${base}/api/voice-convert/${fromGeneration}/stream?token=${encodeURIComponent(token)}`
-          : `${base}/api/generate/${fromGeneration}/stream/?token=${encodeURIComponent(token)}`;
+          ? api.voiceConvertStreamUrl(fromGeneration)
+          : api.generationStreamUrl(fromGeneration);
         const tmpAudio = new Audio(streamUrl);
         tmpAudio.addEventListener('loadedmetadata', () => resolve(tmpAudio.duration));
         tmpAudio.addEventListener('error', () => resolve(null));
@@ -772,8 +768,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                   className="upload-card__gen-player"
                   src={
                     useVoiceConverted
-                      ? `${window.location.protocol}//${window.location.hostname}:9000/api/voice-convert/${fromGeneration}/stream?token=${encodeURIComponent(localStorage.getItem('token') || '')}`
-                      : `${window.location.protocol}//${window.location.hostname}:9000/api/generate/${fromGeneration}/stream/?token=${encodeURIComponent(localStorage.getItem('token') || '')}`
+                      ? api.voiceConvertStreamUrl(fromGeneration)
+                      : api.generationStreamUrl(fromGeneration)
                   }
                 />
               </div>

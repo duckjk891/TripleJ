@@ -190,8 +190,7 @@ function CharacterSection() {
       if (shoesFile) formData.append('shoes_image', shoesFile);
       formData.append('user_text', characterText);
       const { data } = await api.generateCharacterSheet(formData);
-      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-      setPreviewUrl(`${base}${data.preview_url}`);
+      setPreviewUrl(api.characterPreviewUrl(data.preview_url));
       setPreviewObjectName(data.object_name);
     } catch (err) {
       alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
@@ -258,8 +257,8 @@ function CharacterSection() {
     setRefining(true);
     try {
       // Fetch current preview image as blob
-      const sheetResp = await fetch(previewUrl);
-      const sheetBlob = await sheetResp.blob();
+      const sheetResp = await api.fetchAsBlob(previewUrl);
+      const sheetBlob = sheetResp.data;
 
       const formData = new FormData();
       formData.append('sheet_image', sheetBlob, 'sheet.png');
@@ -267,8 +266,7 @@ function CharacterSection() {
       formData.append('refine_request', refineText.trim());
 
       const { data } = await api.refineCharacterSheet(formData);
-      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-      setPreviewUrl(`${base}${data.preview_url}`);
+      setPreviewUrl(api.characterPreviewUrl(data.preview_url));
       setPreviewObjectName(data.object_name);
       setRefineText('');
       setRefineMode(false);
@@ -782,30 +780,26 @@ function VoiceRecordSection() {
   };
 
   const loadAudioBlobs = async (id, method) => {
-    const token = localStorage.getItem('token');
-    const headers = { Authorization: `Bearer ${token}` };
     try {
-      const fetches = [fetch(api.vocalRepairOriginalStreamUrl(id), { headers })];
+      const fetches = [api.fetchVocalRepairOriginal(id)];
       const fetchKeys = ['original'];
 
       if (method === 'lalal' || method === 'both') {
-        fetches.push(fetch(api.vocalRepairEnhancedStreamUrl(id, 'lalal'), { headers }));
+        fetches.push(api.fetchVocalRepairEnhanced(id, 'lalal'));
         fetchKeys.push('lalal');
       }
       if (method === 'demucs' || method === 'both') {
-        fetches.push(fetch(api.vocalRepairEnhancedStreamUrl(id, 'demucs'), { headers }));
+        fetches.push(api.fetchVocalRepairEnhanced(id, 'demucs'));
         fetchKeys.push('demucs');
       }
 
       const results = await Promise.all(fetches);
       for (let i = 0; i < results.length; i++) {
-        if (results[i].ok) {
-          const blob = await results[i].blob();
-          const url = URL.createObjectURL(blob);
-          if (fetchKeys[i] === 'original') setOriginalBlobUrl(url);
-          else if (fetchKeys[i] === 'lalal') setLalalBlobUrl(url);
-          else if (fetchKeys[i] === 'demucs') setDemucsBlobUrl(url);
-        }
+        const blob = new Blob([results[i].data]);
+        const url = URL.createObjectURL(blob);
+        if (fetchKeys[i] === 'original') setOriginalBlobUrl(url);
+        else if (fetchKeys[i] === 'lalal') setLalalBlobUrl(url);
+        else if (fetchKeys[i] === 'demucs') setDemucsBlobUrl(url);
       }
     } catch (err) {
       console.error('Failed to load audio blobs:', err);
@@ -838,17 +832,9 @@ function VoiceRecordSection() {
   // ── Download ──
   const handleDownload = async (type) => {
     if (!repairId) return;
-    const token = localStorage.getItem('token');
-    let url;
-    if (type === 'original') {
-      url = api.vocalRepairOriginalDownloadUrl(repairId);
-    } else {
-      url = api.vocalRepairEnhancedDownloadUrl(repairId, type);
-    }
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error('Download failed');
-      const blob = await res.blob();
+      const res = await api.downloadVocalRepair(repairId, type, type !== 'original' ? type : undefined);
+      const blob = new Blob([res.data]);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${type}_${repairId}.mp3`;
@@ -1258,16 +1244,9 @@ function VoicePersonaSection() {
   };
 
   const handleDownload = (personaId, type) => {
-    const token = localStorage.getItem('token');
-    const baseURL = `${window.location.protocol}//${window.location.hostname}:9000/api`;
-    const url = `${baseURL}/voice-persona/${personaId}/${type}/download`;
-    // Open in new tab with auth — use fetch + blob for auth'd download
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    api.downloadVoicePersona(personaId, type)
       .then(res => {
-        if (!res.ok) throw new Error('Download failed');
-        return res.blob();
-      })
-      .then(blob => {
+        const blob = new Blob([res.data]);
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = `${type}_${personaId}.mp3`;

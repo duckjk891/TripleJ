@@ -75,6 +75,13 @@ export const getTop100 = () =>
 export const getGenreChart = (genre, limit = 50) =>
   API.get(`/charts/genre/${genre}`, { params: { limit } });
 
+// Charts (v2 - Melon-style)
+export const getChart = (chartType) =>
+  API.get(`/charts/${chartType}`);
+
+export const recordPlay = (trackId) =>
+  API.post('/charts/record-play', { track_id: trackId });
+
 // Playlists
 export const getPlaylists = () =>
   API.get('/playlists');
@@ -224,13 +231,11 @@ export const getVoiceConvertStatus = (generationId) =>
 export const getKitsVoiceModels = () => API.get('/kits/voice-models');
 export const voiceConvertStreamUrl = (generationId) => {
   const token = localStorage.getItem('token');
-  const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-  return `${base}/api/voice-convert/${generationId}/stream?token=${encodeURIComponent(token)}`;
+  return `${API.defaults.baseURL}/voice-convert/${generationId}/stream?token=${encodeURIComponent(token)}`;
 };
 export const voiceConvertDownloadUrl = (generationId) => {
   const token = localStorage.getItem('token');
-  const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-  return `${base}/api/voice-convert/${generationId}/download?token=${encodeURIComponent(token)}`;
+  return `${API.defaults.baseURL}/voice-convert/${generationId}/download?token=${encodeURIComponent(token)}`;
 };
 
 // Voice Conversion - MR Pitch Adjust & Merge
@@ -259,6 +264,10 @@ export const wonderaGenerate = (data) =>
 export const wonderaQuery = (taskId) =>
   API.get(`/wondera/query/${taskId}`);
 
+// Track download
+export const downloadTrackFile = (trackId) =>
+  API.post(`/tracks/download/${trackId}`);
+
 // Legacy aliases
 export const uploadSong = uploadTrack;
 
@@ -283,5 +292,55 @@ export const getAdminTracks = (params) => API.get('/admin/tracks', { params });
 export const deleteAdminTrack = (id) => API.delete(`/admin/tracks/${id}`);
 export const updateTrackVisibility = (id, is_public) => API.put(`/admin/tracks/${id}/visibility`, { is_public });
 export const getAdminLogs = (params) => API.get('/admin/logs', { params });
+
+// Cover preview URL helper
+export const coverPreviewUrl = (objectName) => {
+  const token = localStorage.getItem('token');
+  return `${API.defaults.baseURL}/upload/cover-preview/${encodeURIComponent(objectName)}?token=${encodeURIComponent(token || '')}`;
+};
+
+// Generation stream URL helper
+export const generationStreamUrl = (genId) => {
+  const token = localStorage.getItem('token');
+  return `${API.defaults.baseURL}/generate/${genId}/stream/?token=${encodeURIComponent(token || '')}`;
+};
+
+// Character sheet preview URL helper
+export const characterPreviewUrl = (previewPath) =>
+  `${API.defaults.baseURL.replace('/api', '')}${previewPath}`;
+
+// Fetch audio as arraybuffer (for Web Audio API usage)
+export const fetchAudioBuffer = (url) =>
+  API.get(url, { responseType: 'arraybuffer' });
+
+// Fetch a full URL as blob (for images/files already constructed via API helpers)
+export const fetchAsBlob = (fullUrl) =>
+  axios.get(fullUrl, { responseType: 'blob' });
+
+// Fetch vocal repair streams
+export const fetchVocalRepairOriginal = (repairId) =>
+  API.get(`/vocal-repair/${repairId}/original/stream`, { responseType: 'arraybuffer' });
+
+export const fetchVocalRepairEnhanced = (repairId, method) =>
+  API.get(`/vocal-repair/${repairId}/enhanced/stream`, { params: { method }, responseType: 'arraybuffer' });
+
+// Fetch voice convert streams
+export const fetchConvertedVocal = (generationId) =>
+  API.get(`/voice-convert/${generationId}/converted-vocal/stream`, { responseType: 'arraybuffer' });
+
+export const fetchBacking = (generationId) =>
+  API.get(`/voice-convert/${generationId}/backing/stream`, { responseType: 'arraybuffer' });
+
+// Download vocal repair
+export const downloadVocalRepair = (repairId, type, method) => {
+  const endpoint = type === 'original'
+    ? `/vocal-repair/${repairId}/original/download`
+    : `/vocal-repair/${repairId}/enhanced/download`;
+  return API.get(endpoint, { params: method ? { method } : {}, responseType: 'blob' });
+};
+
+// Download voice persona
+export const downloadVoicePersona = (personaId, type) =>
+  API.get(`/voice-persona/${personaId}/${type}/download`, { responseType: 'blob' });
 
 export default API;

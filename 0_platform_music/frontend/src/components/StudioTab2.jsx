@@ -59,22 +59,15 @@ function MrPitchAdjustPanel({ generationId, onMergeComplete }) {
 
   useEffect(() => {
     const loadAudio = async () => {
-      const token = localStorage.getItem('token');
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       audioCtxRef.current = ctx;
 
       try {
-        const vocalResp = await fetch(api.streamConvertedVocal(generationId), {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const vocalData = await vocalResp.arrayBuffer();
-        vocalBufferRef.current = await ctx.decodeAudioData(vocalData);
+        const vocalResp = await api.fetchConvertedVocal(generationId);
+        vocalBufferRef.current = await ctx.decodeAudioData(vocalResp.data);
 
-        const mrResp = await fetch(api.streamBacking(generationId), {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const mrData = await mrResp.arrayBuffer();
-        mrBufferRef.current = await ctx.decodeAudioData(mrData);
+        const mrResp = await api.fetchBacking(generationId);
+        mrBufferRef.current = await ctx.decodeAudioData(mrResp.data);
 
         setLoading(false);
       } catch (err) {
@@ -912,9 +905,7 @@ export default function StudioTab2({ onSendToUpload }) {
 
   // ─── Build stream URL (proxied through backend) ───
   const getStreamUrl = (genId) => {
-    const token = localStorage.getItem('token');
-    const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-    return `${base}/api/generate/${genId}/stream/?token=${encodeURIComponent(token)}`;
+    return api.generationStreamUrl(genId);
   };
 
   // ─── Play generated audio ───

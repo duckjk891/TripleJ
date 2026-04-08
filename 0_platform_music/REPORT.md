@@ -4196,3 +4196,193 @@ Phase 3 (Veo) → Phase 3.5 (Sync Labs 후보정) → Phase 4 (합치기)
 - Sync Labs 립싱크 적용 후 자막이 누락되던 문제 해결
 - 자막 burn-in 실패 시 원본 반환으로 파이프라인 안정성 유지
 - 호출 위치 2곳(자동/수동) 모두에 적용하여 일관된 자막 처리 보장
+
+---
+
+## v30 — 멜론 기반 음원차트 알고리즘 구현 (2026-04-07)
+
+### 요청 작업
+멜론 차트 계산 방식(`melonChart.md`)을 기반으로 AIMU 플랫폼의 음원차트 시스템 전면 재설계
+
+### 수행 결과
+
+#### 백엔드 (`backend/app/routes/charts.py` 전면 재작성)
+- **재생 기록 API** (`POST /api/charts/record-play`): 곡 재생 시 Redis에 순 청취자 기록
+  - 시간별/일간/주간/월간 4개 시간 윈도우 동시 기록
+  - Redis SET으로 1인 1회 자동 중복 제거 (SADD 멱등성)
+  - 비로그인 사용자: play_count만 증가, 차트 미반영
+- **차트 API** (`GET /api/charts/{chart_type}`): 5종 차트 지원
+  - `top100`: 주간 24h×50% + 1h×50%, 심야(01~07시) 24h×100%
+  - `hot100`: 최근 1h 순청취자 (발매 30일 이내 곡만)
+  - `daily`: 오늘 순 청취자 수
+  - `weekly`: 이번 주 순 청취자 수
+  - `monthly`: 이번 달 순 청취자 수
+- KST(UTC+9) 시간대 적용
+- 5분 캐시, Redis 파이프라인 사용
+- Redis 데이터 없을 시 MongoDB play_count fallback
+
+#### 프론트엔드
+- **ChartPage.jsx** 전면 재작성: 5개 탭 (TOP100, HOT100, 일간, 주간, 월간)
+- **ChartPage.css** 전면 재작성: 순위 등락 표시 (▲▼-NEW), TOP3 골드/실버/브론즈
+- **api/index.js**: `getChart()`, `recordPlay()` 추가
+- **PlayerContext.jsx**: 곡 재생 시 `recordPlay()` 자동 호출 (fire-and-forget)
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법/빌드 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| API 엔드포인트 매칭 | ✅ PASS |
+| 비로그인 재생 처리 | ✅ PASS |
+| 빈 데이터 처리 | ✅ PASS |
+| Redis 키 패턴 일관성 | ✅ PASS |
+| KST 시간대 처리 | ✅ PASS |
+| 서버 구동 확인 | ✅ PASS |
+
+### 버그 수정
+1. (중간) 비공개 트랙 필터링 시 순위 번호 빈 구멍 → 필터링 후 순위 재부여
+2. (낮음) `_serialize_track`에서 원본 dict 변경 → shallow copy 추가
+
+### 특이사항
+- 순위 등락(change) 값은 현재 0(placeholder) — 이전 차트 대비 등락 계산은 추후 구현 필요
+- 다운로드 기능 미구현이므로 차트 점수 = 스트리밍 100% (멜론은 스트리밍 40% + 다운로드 60%)
+
+---
+
+## v31 — 프론트엔드 API 호출 통일 (2026-04-07)
+
+### 요청 작업
+프론트엔드의 모든 백엔드 통신을 `api/index.js` 모듈 경유로 통일
+
+### 수행 결과
+
+#### 수정된 파일 (4개)
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `api/index.js` | 11개 API 함수 추가, voiceConvertStreamUrl/DownloadUrl을 API.defaults.baseURL 사용으로 변경 |
+| `UploadPage.jsx` | 3곳 직접 URL 구성 → api 모듈 함수 호출로 교체 |
+| `MyMusicPage.jsx` | 6곳 직접 URL/fetch → api 모듈 함수 호출로 교체 |
+| `StudioTab2.jsx` | 3곳 직접 URL/fetch → api 모듈 함수 호출로 교체 |
+
+#### 추가된 API 함수 (api/index.js)
+- `coverPreviewUrl()` - 커버 이미지 미리보기 URL
+- `generationStreamUrl()` - 생성 음악 스트리밍 URL
+- `characterPreviewUrl()` - 캐릭터시트 미리보기 URL
+- `fetchAudioBuffer()` - 오디오 arraybuffer fetch
+- `fetchAsBlob()` - blob fetch
+- `fetchVocalRepairOriginal()` - 보컬수리 원본 스트림
+- `fetchVocalRepairEnhanced()` - 보컬수리 강화 스트림
+- `fetchConvertedVocal()` - 변환 보컬 스트림
+- `fetchBacking()` - MR 스트림
+- `downloadVocalRepair()` - 보컬수리 다운로드
+- `downloadVoicePersona()` - 보이스페르소나 다운로드
+
+### 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| 직접 URL 구성 잔존 여부 | ✅ 0건 (api/index.js:4 제외) |
+| fetch() 직접 호출 잔존 여부 | ✅ 0건 |
+| 프론트엔드 빌드 | ✅ PASS |
+| import 정합성 | ✅ PASS |
+| 응답 형태 일관성 | ✅ PASS |
+| 버그 | 0건 |
+
+### 특이사항
+- `window.location.hostname:9000`은 `api/index.js:4` (Axios baseURL)에만 존재
+- URL 헬퍼 함수(audio/img src용)는 URL 문자열 반환, 데이터 요청 함수는 Axios 응답 반환으로 구분
+- 백엔드 변경 없음
+
+---
+
+## v32 — 트랙 다운로드 기능 + 차트 다운로드 가중치 반영 (2026-04-07)
+
+### 요청 작업
+트랙 다운로드 기능 구현 + 멜론 방식 차트 점수에 다운로드 가중치 반영 (스트리밍 40% + 다운로드 60%)
+
+### 수행 결과
+
+#### 백엔드
+1. **다운로드 API** (`POST /api/tracks/download/{track_id}`)
+   - 인증 필수, MinIO presigned URL + 파일명 반환
+   - Redis에 다운로드 순이용자 기록 (1인 1회 자동 중복 제거)
+   - MongoDB download_count 증가
+2. **차트 알고리즘 수정** (charts.py)
+   - 기존: 스트리밍 100%
+   - 변경: **스트리밍 40% + 다운로드 60%** (멜론 방식)
+   - TOP100, HOT100, 일간, 주간, 월간 모두 적용
+
+#### 프론트엔드
+1. **다운로드 버튼** (SongItem.jsx): FiDownload 아이콘 추가
+2. **API 함수** (api/index.js): `downloadTrackFile()` 추가
+3. **ChartPage.css**: 액션 컬럼 너비 조정 (112px → 148px)
+
+### 차트 점수 공식 (변경 후)
+
+```
+음원 점수 = 스트리밍 순청취자 × 40% + 다운로드 순이용자 × 60%
+
+TOP100:
+  주간(08~24시): 음원점수_24h × 50% + 음원점수_1h × 50%
+  심야(01~07시): 음원점수_24h × 100%
+```
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| 다운로드 API 구현 | ✅ PASS |
+| 차트 40/60 가중치 | ✅ PASS |
+| Redis 키 패턴 일관성 | ✅ PASS |
+| 다운로드 버튼 UI | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v33 — 차트 통계 컬럼 표시 (24h청취, 1h청취, 다운로드) (2026-04-07)
+
+### 요청 작업
+차트 리스트에 각 곡의 24시간 청취자 수, 1시간 청취자 수, 다운로드 수를 숫자 컬럼으로 표시
+
+### 수행 결과
+
+#### 백엔드 (charts.py)
+- 차트 응답에 `listeners_24h`, `listeners_1h`, `downloads` 필드 추가
+- 모든 차트 계산 함수에서 원시 카운트를 stats dict로 전달
+- fallback(play_count 정렬)에서도 0값 stats 포함
+
+#### 프론트엔드 (ChartPage.jsx/css)
+- 헤더에 "24h 청취 / 1h 청취 / 다운로드" 3개 컬럼 추가
+- 각 곡에 숫자 표시 (toLocaleString으로 천단위 콤마)
+- 모바일(768px 이하)에서는 통계 컬럼 숨김
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| 통계 필드 반환 | ✅ PASS |
+| 통계 컬럼 표시 | ✅ PASS |
+| 모바일 반응형 | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v34 — 차트 아티스트명 클릭 → 크리에이터 프로필 이동 (2026-04-08)
+
+### 요청 작업
+차트에서 아티스트명 클릭 시 해당 크리에이터의 프로필 페이지로 이동
+
+### 수행 결과
+- ChartPage.jsx: 아티스트명을 `<Link>` 컴포넌트로 변경
+  - 본인 → `/my-music` 이동
+  - 타인 → `/artist/{uploader_id}` 이동
+- ChartPage.css: 아티스트 링크 호버 스타일 추가
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 프론트엔드 빌드 | ✅ PASS |
+| 백엔드 변경 | 없음 (기존 API 활용) |

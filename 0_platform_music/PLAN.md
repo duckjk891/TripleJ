@@ -9238,3 +9238,199 @@ Sync Labs 결과:
 | 백엔드 (`mv_pipeline.py`: Phase 3.5 자막 재적용 호출) | 1 | 0/1 |
 | 백엔드 (`mv.py`: retry-sync 자막 재적용 호출) | 1 | 0/1 |
 | 프론트엔드 | 0 | — |
+
+---
+
+## v30 — 멜론 기반 음원차트 알고리즘 구현 (2026-04-07)
+
+### 요청 사항
+멜론 차트 계산 방식(`melonChart.md`)을 기반으로 AIMU 플랫폼의 음원차트 시스템을 전면 재설계한다.
+
+### 현재 상태
+- 백엔드: `charts.py`에 단순 `play_count` 정렬만 존재
+- 프론트엔드: `ChartPage.jsx`에 장르별 탭(TOP100, 발라드, 댄스...) 구조
+- Redis: `chart:daily:YYYYMMDD` 등 Sorted Set 존재하나, 순 청취자 로직 없음
+- 재생 기록: `stream_track()` 엔드포인트에서 presigned URL만 반환, 재생 기록 미저장
+
+### 목표
+1. **멜론식 차트 탭**: TOP100, HOT100, 일간, 주간, 월간
+2. **순 청취자 기반 점수 계산**: 1인 1시간/1일 1회 카운트
+3. **멜론식 점수 공식**: 스트리밍 100% (다운로드 기능 미구현이므로)
+4. **TOP100**: 24시간 이용량 50% + 1시간 이용량 50% (심야 01~07시: 24시간 100%)
+5. **HOT100**: 최근 1시간 이용량만 (발매 30일 이내 곡)
+6. **일간/주간/월간**: 해당 기간 순 청취자 수 기준
+7. **재생 기록 API**: 곡 재생 시 백엔드에 기록 → Redis에 순 청취자 집계
+
+### 작업 분배
+
+#### 백엔드 (backend-dev)
+1. **재생 기록 API** (`POST /api/charts/record-play`)
+   - 로그인 사용자 + track_id → Redis에 순 청취자 기록
+   - `chart:hourly:{YYYYMMDDHH}:{track_id}` SET에 user_id 추가 (1시간 윈도우)
+   - `chart:daily:{YYYYMMDD}:{track_id}` SET에 user_id 추가 (1일 윈도우)
+   - `chart:weekly:{YYYY-W##}:{track_id}` SET에 user_id 추가
+   - `chart:monthly:{YYYYMM}:{track_id}` SET에 user_id 추가
+
+2. **차트 계산 API** (`GET /api/charts/{chart_type}`)
+   - `top100`: 24h 순청취자 50% + 1h 순청취자 50% (심야 01~07시: 24h 100%)
+   - `hot100`: 최근 1h 순청취자 (발매 30일 이내 곡만)
+   - `daily`: 오늘 순 청취자 수 순위
+   - `weekly`: 이번 주 순 청취자 수 순위
+   - `monthly`: 이번 달 순 청취자 수 순위
+
+3. **`charts.py` 전면 재작성**
+
+#### 프론트엔드 (frontend-dev)
+1. **ChartPage.jsx 전면 재작성**
+   - 탭: TOP100 / HOT100 / 일간 / 주간 / 월간
+   - 차트 기준 시간 표시
+   - 1~100위 리스트 (순위 + 등락 + 곡명 + 아티스트 + 앨범)
+2. **재생 기록 호출**: PlayerContext에서 곡 재생 시 `POST /api/charts/record-play` 호출
+3. **API 클라이언트**: `api/index.js`에 새 차트 API 함수 추가
+
+#### 테스트 항목
+1. 곡 재생 시 `record-play` API 호출 확인
+2. 같은 곡 반복 재생 시 1시간 내 1회만 카운트 확인
+3. TOP100 탭에서 차트 데이터 로드 확인
+4. HOT100 탭에서 발매 30일 이내 곡만 표시 확인
+5. 일간/주간/월간 탭 전환 시 데이터 로드 확인
+6. 차트 기준 시간 표시 확인
+7. 심야(01~07시) TOP100에서 1시간 이용량 무시 확인
+
+---
+
+## v31 — 프론트엔드 API 호출 통일 (2026-04-07)
+
+### 요청 사항
+프론트엔드에서 백엔드로 접근하는 모든 통신을 `api/index.js` API 모듈을 경유하도록 통일한다.
+직접 URL 구성(`window.location.hostname:9000`)과 `fetch()` 직접 호출을 모두 제거한다.
+
+### 수정 대상 (총 19곳)
+
+#### A. 직접 URL 구성 (11곳)
+1. `api/index.js:234` - voiceConvertStreamUrl
+2. `api/index.js:239` - voiceConvertDownloadUrl
+3. `StudioTab2.jsx:916` - getStreamUrl 헬퍼
+4. `UploadPage.jsx:222` - 커버 프리뷰 URL
+5. `UploadPage.jsx:325` - 오디오 스트림 URL
+6. `UploadPage.jsx:775-776` - JSX 내 인라인 오디오 src
+7. `MyMusicPage.jsx:193` - 캐릭터시트 프리뷰 URL
+8. `MyMusicPage.jsx:270` - 캐릭터시트 수정 프리뷰 URL
+9. `MyMusicPage.jsx:1262` - 보이스페르소나 다운로드 URL
+
+#### B. fetch() 직접 호출 (8곳)
+1. `StudioTab2.jsx:67` - 변환 보컬 스트림
+2. `StudioTab2.jsx:73` - MR 스트림
+3. `MyMusicPage.jsx:261` - 캐릭터시트 프리뷰 fetch
+4. `MyMusicPage.jsx:788` - 보컬수리 원본 스트림
+5. `MyMusicPage.jsx:792` - 보컬수리 LALAL 스트림
+6. `MyMusicPage.jsx:796` - 보컬수리 Demucs 스트림
+7. `MyMusicPage.jsx:849` - 보컬수리 다운로드
+8. `MyMusicPage.jsx:1265` - 보이스페르소나 다운로드
+
+### 해결 방식
+1. `api/index.js`에 누락된 API 함수 추가 (arraybuffer/blob responseType)
+2. 각 컴포넌트에서 직접 URL/fetch 제거 → api 모듈 함수 호출로 교체
+3. `<audio src={url}>` 등 HTML 요소에는 api/index.js의 URL 헬퍼 함수 사용
+4. `api/index.js:4`의 baseURL 구성은 Axios 인스턴스 설정이므로 유지 (이것이 유일한 URL 구성 포인트)
+
+### 작업 분배
+- **프론트엔드**: 위 19곳 전부 수정
+- **백엔드**: 변경 없음 (API 엔드포인트 이미 정상)
+- **테스트**: 빌드 확인 + API 호출 패턴 검증
+
+---
+
+## v32 — 트랙 다운로드 기능 + 차트 다운로드 가중치 반영 (2026-04-07)
+
+### 요청 사항
+1. 트랙 다운로드 기능 구현 (MP3 파일 다운로드)
+2. 멜론 방식으로 차트 점수에 다운로드 반영: 스트리밍 40% + 다운로드 60%
+3. 다운로드 카운트 규칙: 1인당 최초 1회만 카운트 (재다운로드 미반영)
+4. 모든 API 호출은 api/index.js 경유
+
+### 작업 분배
+
+#### 백엔드 (backend-dev)
+1. **다운로드 API** (`POST /api/tracks/{track_id}/download`)
+   - 인증 필수
+   - MinIO에서 오디오 파일을 가져와 StreamingResponse로 반환
+   - Redis에 다운로드 순이용자 기록 (1인 1회 중복 제거)
+     - `chart:downloads:daily:{YYYYMMDD}:{track_id}` SET에 user_id
+     - `chart:downloads:weekly:{YYYY-W##}:{track_id}` SET에 user_id
+     - `chart:downloads:monthly:{YYYYMM}:{track_id}` SET에 user_id
+   - 다운로드 트랙 인덱스도 기록
+     - `chart:dl_tracks:daily:{YYYYMMDD}` SET에 track_id
+     - etc.
+   - MongoDB에 download_count 증가
+
+2. **차트 계산 수정** (`charts.py`)
+   - TOP100: `(스트리밍순청취자 × 40% + 다운로드순이용자 × 60%)` 기반으로 변경
+     - 주간: 위 점수의 24h×50% + 1h×50%
+     - 심야: 위 점수의 24h×100%
+   - 일간/주간/월간: 스트리밍 40% + 다운로드 60%
+   - HOT100: 스트리밍 40% + 다운로드 60% (1시간 기준)
+
+#### 프론트엔드 (frontend-dev)
+1. **다운로드 버튼** 추가: SongItem 컴포넌트에 다운로드 아이콘 추가
+2. **api/index.js**: `downloadTrackFile(trackId)` 함수 추가
+3. 다운로드 시 blob으로 받아서 브라우저 다운로드 트리거
+
+#### 테스트 항목
+1. 다운로드 버튼 클릭 시 파일 다운로드 동작 확인
+2. 다운로드 시 Redis에 순이용자 기록 확인
+3. 같은 트랙 재다운로드 시 Redis SET 크기 변화 없음 확인
+4. 차트 점수에 다운로드 가중치(60%) 반영 확인
+5. 빌드 정상 확인
+
+---
+
+## v33 — 차트 통계 컬럼 표시 (24h청취, 1h청취, 다운로드) (2026-04-07)
+
+### 요청 사항
+차트 리스트에 각 곡의 24시간 청취자 수, 1시간 청취자 수, 다운로드 수를 숫자 컬럼으로 표시한다.
+테스트 시 차트 점수 계산 데이터를 눈으로 확인할 수 있도록.
+
+### 작업 분배
+
+#### 백엔드
+- `_build_chart_response`에서 각 트랙에 통계 필드 추가:
+  - `listeners_24h`: 24시간 순 청취자 수
+  - `listeners_1h`: 1시간 순 청취자 수
+  - `downloads`: 다운로드 순 이용자 수 (해당 차트 기간 기준)
+- 차트 계산 함수에서 개별 카운트를 ranked 결과에 포함시켜 전달
+
+#### 프론트엔드
+- ChartPage.jsx: 헤더 + 아이템에 3개 숫자 컬럼 추가
+- ChartPage.css: 새 컬럼 스타일 + 모바일 대응
+
+---
+
+## v34 — 차트 아티스트명 클릭 → 크리에이터 프로필 이동 (2026-04-08)
+
+### 요청 사항
+차트에서 아티스트명을 클릭하면 해당 크리에이터의 프로필 페이지로 이동하여 그 사람의 공개 트랙 목록을 볼 수 있게 한다.
+- 본인 계정: 모든 탭 접근 가능 (기존 /my-music)
+- 타인 계정: 공개 트랙만 볼 수 있음 (/artist/{id})
+
+### 현재 상태
+- `/artist/:id` 라우트 + ArtistDetailPage 이미 존재
+- 백엔드 `GET /api/artists/{id}/tracks`에서 `is_public: True` 필터 적용됨
+- 차트에서 아티스트명이 텍스트로만 표시 (클릭 불가)
+- 차트 API 응답에 `uploader_id` 포함됨
+
+### 작업 분배
+
+#### 프론트엔드
+1. ChartPage.jsx: 아티스트명을 클릭 가능한 Link로 변경
+   - 본인이면 → `/my-music`으로 이동
+   - 타인이면 → `/artist/{uploader_id}`로 이동
+2. ChartPage.css: 아티스트명 링크 스타일 (호버 시 밑줄/색상)
+
+#### 백엔드
+- 변경 없음 (이미 구현됨)
+
+#### 테스트
+1. 차트에서 아티스트명 클릭 시 프로필 페이지 이동 확인
+2. 프로필 페이지에서 해당 크리에이터의 트랙 목록 표시 확인
+3. 빌드 정상 확인

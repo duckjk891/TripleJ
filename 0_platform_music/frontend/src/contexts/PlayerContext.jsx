@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import API from '../api';
+import { recordPlay } from '../api';
 
 const PlayerContext = createContext(null);
 
@@ -67,9 +68,14 @@ export function PlayerProvider({ children }) {
       API.get(`/tracks/stream/${song.id}`)
         .then((res) => {
           audio.src = res.data.stream_url;
-          audio.play().catch((err) => {
-            console.error('Audio play failed:', err);
-          });
+          audio.play()
+            .then(() => {
+              // Fire-and-forget: record play for chart scoring
+              recordPlay(song.id).catch(() => {});
+            })
+            .catch((err) => {
+              console.error('Audio play failed:', err);
+            });
         })
         .catch((err) => {
           console.error('Failed to get stream URL:', err);
