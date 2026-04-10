@@ -625,7 +625,7 @@ export default function StudioTab2({ onSendToUpload }) {
   const [myPersonas, setMyPersonas] = useState([]);
   const [selectedPersonaId, setSelectedPersonaId] = useState(null);
 
-  // ─── Step state: 1=prompt, 2=lyrics confirm, 3=generate music ───
+  // ─── Step state: 1=prompt, 2=lyrics confirm, 3=params, 4=prompt preview ───
   const [step, setStep] = useState(1);
 
   // Simple mode
@@ -651,6 +651,27 @@ export default function StudioTab2({ onSendToUpload }) {
   const [duration, setDuration] = useState(60);
   const [referenceText, setReferenceText] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Step 3: Reference audio upload (Suno only)
+  const [referenceFile, setReferenceFile] = useState(null);
+  const [referenceUploading, setReferenceUploading] = useState(false);
+  const [referenceData, setReferenceData] = useState(null);
+
+  // Suno advanced parameter toggles
+  const [negativeTagsOn, setNegativeTagsOn] = useState(false);
+  const [negativeTagsVal, setNegativeTagsVal] = useState('');
+  const [styleWeightOn, setStyleWeightOn] = useState(false);
+  const [styleWeightVal, setStyleWeightVal] = useState('');
+  const [weirdnessOn, setWeirdnessOn] = useState(false);
+  const [weirdnessVal, setWeirdnessVal] = useState('');
+  const [audioWeightOn, setAudioWeightOn] = useState(false);
+  const [audioWeightVal, setAudioWeightVal] = useState('');
+  const [bpmOn, setBpmOn] = useState(false);
+  const [bpmVal, setBpmVal] = useState('');
+  const [keyOn, setKeyOn] = useState(false);
+  const [keyVal, setKeyVal] = useState('');
+  const [personaModelOn, setPersonaModelOn] = useState(false);
+  const [personaModelVal, setPersonaModelVal] = useState('style_persona');
 
   // General state
   const [submitting, setSubmitting] = useState(false);
@@ -787,6 +808,144 @@ export default function StudioTab2({ onSendToUpload }) {
     setStep(3);
   };
 
+  // ─── Build Prompt Preview ───
+  const buildPromptPreview = (model, params) => {
+    const lines = [];
+
+    if (model === 'suno' || model === 'yue') {
+      // First sentence: genre + mood + vocal
+      const genreStr = params.genre || '';
+      const moodStr = params.mood || '';
+      const vocalLabel = (() => {
+        if (params.isInstrumental) return null;
+        const preset = VOCAL_PRESETS.find((v) => v.value === params.vocal);
+        return preset && preset.value ? preset.label : null;
+      })();
+
+      let firstSentence = '';
+      const parts = [];
+      if (genreStr) parts.push(`${genreStr} 장르의`);
+      if (moodStr) parts.push(`${moodStr}한 분위기로,`);
+
+      if (params.isInstrumental) {
+        if (parts.length > 0) {
+          firstSentence = `${parts.join(' ')} 연주곡(Instrumental)을 생성합니다.`;
+        } else {
+          firstSentence = '연주곡(Instrumental)을 생성합니다.';
+        }
+      } else if (vocalLabel) {
+        if (parts.length > 0) {
+          firstSentence = `${parts.join(' ')} ${vocalLabel} 보컬이 부르는 곡을 생성합니다.`;
+        } else {
+          firstSentence = `${vocalLabel} 보컬이 부르는 곡을 생성합니다.`;
+        }
+      } else {
+        if (parts.length > 0) {
+          firstSentence = `${parts.join(' ')} 곡을 생성합니다.`;
+        } else {
+          firstSentence = '곡을 생성합니다.';
+        }
+      }
+      lines.push(firstSentence);
+
+      // BPM + Key line
+      const bpmValue = model === 'suno' ? (params.bpmOn ? params.bpmVal : null) : params.bpm;
+      const keyValue = model === 'suno' ? (params.keyOn ? params.keyVal : null) : params.musicalKey;
+      if (bpmValue && keyValue) {
+        lines.push(`템포는 ${bpmValue} BPM, 키는 ${keyValue}입니다.`);
+      } else if (bpmValue) {
+        lines.push(`템포는 ${bpmValue} BPM입니다.`);
+      } else if (keyValue) {
+        lines.push(`키는 ${keyValue}입니다.`);
+      }
+
+      // Model-specific info
+      if (model === 'suno') {
+        if (params.negativeTagsOn && params.negativeTagsVal) lines.push(`제외할 스타일로 ${params.negativeTagsVal}이(가) 지정되어 있습니다.`);
+        if (params.styleWeightOn && params.styleWeightVal) lines.push(`스타일 가중치는 ${params.styleWeightVal}로 설정되어 있습니다.`);
+        if (params.weirdnessOn && params.weirdnessVal) lines.push(`창의성(Weirdness)은 ${params.weirdnessVal}로 설정되어 있습니다.`);
+        if (params.audioWeightOn && params.audioWeightVal) lines.push(`오디오 가중치는 ${params.audioWeightVal}로 설정되어 있습니다.`);
+        if (params.personaModelOn && params.personaModelVal) lines.push(`페르소나 모델은 ${params.personaModelVal === 'voice_persona' ? 'Voice Persona' : 'Style Persona'}로 설정되어 있습니다.`);
+      } else if (model === 'yue') {
+        const segments = Math.round((params.duration || 60) / 30);
+        lines.push(`YuE 모델로 ${segments}개 세그먼트(약 ${params.duration || 60}초)를 생성합니다.`);
+      }
+
+      if (params.style) {
+        lines.push(`추가 스타일 설명으로 "${params.style}"이(가) 포함되어 있습니다.`);
+      }
+      if (params.referenceText) {
+        lines.push(`참고할 스타일로 "${params.referenceText}"이(가) 지정되어 있습니다.`);
+      }
+      if (params.referenceData) {
+        lines.push(`업로드한 참고 음악(${params.referenceData.filename}, ${Math.round(params.referenceData.duration_sec)}초)의 스타일을 참고하여 생성합니다.`);
+      }
+    } else {
+      // Wondera or unknown
+      lines.push(`${model} 모델로 곡을 생성합니다.`);
+      if (params.style) {
+        lines.push(`추가 스타일 설명으로 "${params.style}"이(가) 포함되어 있습니다.`);
+      }
+    }
+
+    return lines.join('\n');
+  };
+
+  const getPreviewLyrics = () => {
+    if (!lyrics.trim()) return null;
+    const lyricsLines = lyrics.trim().split('\n');
+    const preview = lyricsLines.slice(0, 4).join('\n');
+    if (lyricsLines.length > 4) {
+      return `${preview}\n... (총 ${lyricsLines.length}줄)`;
+    }
+    return preview;
+  };
+
+  // ─── Reference Audio Upload (Suno only) ───
+  const handleReferenceUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('audio/')) {
+      setError('오디오 파일만 업로드할 수 있습니다.');
+      return;
+    }
+
+    // Validate duration (max 8 minutes = 480 seconds)
+    setReferenceFile(file);
+    setReferenceUploading(true);
+    setError('');
+
+    try {
+      const { data } = await api.uploadReferenceAudio(file);
+      if (data.duration_sec > 480) {
+        setError('참고 음악은 최대 8분까지 업로드할 수 있습니다.');
+        setReferenceFile(null);
+        setReferenceUploading(false);
+        return;
+      }
+      setReferenceData(data);
+    } catch (err) {
+      setError(err.response?.data?.error || '참고 음악 업로드에 실패했습니다.');
+      setReferenceFile(null);
+    } finally {
+      setReferenceUploading(false);
+    }
+  };
+
+  const handleReferenceRemove = () => {
+    setReferenceFile(null);
+    setReferenceData(null);
+  };
+
+  const formatDuration = (sec) => {
+    if (!sec) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   // ─── Step 3: Generate Music ───
   const handleGenerateMusic = async () => {
     setError('');
@@ -803,12 +962,20 @@ export default function StudioTab2({ onSendToUpload }) {
         style: styleText.trim() || null,
         vocal: isInstrumental ? 'instrumental' : vocal || null,
         duration,
-        bpm: bpm ? parseInt(bpm) : null,
-        key: musicalKey || null,
+        bpm: bpmOn ? parseInt(bpmVal) || null : (bpm ? parseInt(bpm) : null),
+        key: keyOn ? keyVal || null : (musicalKey || null),
         reference_style: referenceText.trim() || null,
         start_music_gen: true,
         model: selectedModel,
         persona_id: selectedPersonaId || null,
+        negative_tags: negativeTagsOn ? negativeTagsVal.trim() || null : null,
+        style_weight: styleWeightOn ? parseFloat(styleWeightVal) || null : null,
+        weirdness: weirdnessOn ? parseFloat(weirdnessVal) || null : null,
+        audio_weight: audioWeightOn ? parseFloat(audioWeightVal) || null : null,
+        persona_model: personaModelOn ? personaModelVal || null : null,
+        reference_audio_url: referenceData?.upload_url || null,
+        reference_audio_name: referenceData?.filename || null,
+        reference_audio_duration: referenceData?.duration_sec || null,
       };
 
       await api.createGeneration(body);
@@ -828,6 +995,22 @@ export default function StudioTab2({ onSendToUpload }) {
       setBpm('');
       setMusicalKey('');
       setReferenceText('');
+      setNegativeTagsOn(false);
+      setNegativeTagsVal('');
+      setStyleWeightOn(false);
+      setStyleWeightVal('');
+      setWeirdnessOn(false);
+      setWeirdnessVal('');
+      setAudioWeightOn(false);
+      setAudioWeightVal('');
+      setBpmOn(false);
+      setBpmVal('');
+      setKeyOn(false);
+      setKeyVal('');
+      setPersonaModelOn(false);
+      setPersonaModelVal('style_persona');
+      setReferenceFile(null);
+      setReferenceData(null);
       fetchHistory();
     } catch (err) {
       setError(err.response?.data?.error || '요청에 실패했습니다.');
@@ -1168,9 +1351,14 @@ export default function StudioTab2({ onSendToUpload }) {
           <span className="s2__step-label">가사 확인</span>
         </div>
         <div className="s2__step-line" />
-        <div className={`s2__step ${step >= 3 ? 's2__step--active' : ''}`}>
+        <div className={`s2__step ${step >= 3 ? 's2__step--active' : ''} ${step > 3 ? 's2__step--done' : ''}`}>
           <span className="s2__step-num">3</span>
-          <span className="s2__step-label">음악 생성</span>
+          <span className="s2__step-label">파라미터 설정</span>
+        </div>
+        <div className="s2__step-line" />
+        <div className={`s2__step ${step >= 4 ? 's2__step--active' : ''}`}>
+          <span className="s2__step-num">4</span>
+          <span className="s2__step-label">프롬프트 확인</span>
         </div>
       </div>
 
@@ -1504,6 +1692,258 @@ export default function StudioTab2({ onSendToUpload }) {
             </div>
           )}
 
+          {/* ─── Suno Advanced Parameters ─── */}
+          {selectedModel === 'suno' && (
+            <div className="studio2__suno-params">
+              <h4 className="studio2__suno-params-title">Suno 상세 파라미터</h4>
+
+              {/* 제외 스타일 */}
+              <div className={`studio2__param-row ${!negativeTagsOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">제외 스타일</span>
+                    <p className="studio2__param-desc">원하지 않는 스타일을 입력하면 해당 요소를 배제합니다</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={negativeTagsOn} onChange={(e) => setNegativeTagsOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="text"
+                  disabled={!negativeTagsOn}
+                  value={negativeTagsVal}
+                  onChange={(e) => setNegativeTagsVal(e.target.value)}
+                  placeholder="헤비메탈, 시끄러운 드럼, 디스토션 기타"
+                />
+              </div>
+
+              {/* 스타일 강도 */}
+              <div className={`studio2__param-row ${!styleWeightOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">스타일 강도</span>
+                    <p className="studio2__param-desc">지정한 장르/분위기를 얼마나 엄격히 따를지 (0=자유, 1=엄격)</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={styleWeightOn} onChange={(e) => setStyleWeightOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="number"
+                  min="0" max="1" step="0.1"
+                  disabled={!styleWeightOn}
+                  value={styleWeightVal}
+                  onChange={(e) => setStyleWeightVal(e.target.value)}
+                  placeholder="0.5"
+                />
+              </div>
+
+              {/* 실험성 조절 */}
+              <div className={`studio2__param-row ${!weirdnessOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">실험성 조절</span>
+                    <p className="studio2__param-desc">0에 가까울수록 대중적, 1에 가까울수록 독특하고 실험적</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={weirdnessOn} onChange={(e) => setWeirdnessOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="number"
+                  min="0" max="1" step="0.1"
+                  disabled={!weirdnessOn}
+                  value={weirdnessVal}
+                  onChange={(e) => setWeirdnessVal(e.target.value)}
+                  placeholder="0.3"
+                />
+              </div>
+
+              {/* 오디오 영향도 */}
+              <div className={`studio2__param-row ${!audioWeightOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">오디오 영향도</span>
+                    <p className="studio2__param-desc">참조 오디오가 결과물에 미치는 영향 (0=무시, 1=강하게 반영)</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={audioWeightOn} onChange={(e) => setAudioWeightOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="number"
+                  min="0" max="1" step="0.1"
+                  disabled={!audioWeightOn}
+                  value={audioWeightVal}
+                  onChange={(e) => setAudioWeightVal(e.target.value)}
+                  placeholder="0.5"
+                />
+              </div>
+
+              {/* BPM */}
+              <div className={`studio2__param-row ${!bpmOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">BPM</span>
+                    <p className="studio2__param-desc">곡의 빠르기 (60=느린 발라드, 120=보통, 180=빠른 댄스)</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={bpmOn} onChange={(e) => setBpmOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="number"
+                  min="40" max="240"
+                  disabled={!bpmOn}
+                  value={bpmVal}
+                  onChange={(e) => setBpmVal(e.target.value)}
+                  placeholder="120"
+                />
+              </div>
+
+              {/* Key (조성) */}
+              <div className={`studio2__param-row ${!keyOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">Key (조성)</span>
+                    <p className="studio2__param-desc">곡의 음악적 키 (major=밝은 느낌, minor=어두운 느낌)</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={keyOn} onChange={(e) => setKeyOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="text"
+                  disabled={!keyOn}
+                  value={keyVal}
+                  onChange={(e) => setKeyVal(e.target.value)}
+                  placeholder="F minor"
+                />
+              </div>
+
+              {/* 페르소나 타입 */}
+              <div className={`studio2__param-row ${!personaModelOn ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">페르소나 타입</span>
+                    <p className="studio2__param-desc">style=스타일만 참고, voice=목소리까지 참고</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input type="checkbox" checked={personaModelOn} onChange={(e) => setPersonaModelOn(e.target.checked)} />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+                <select
+                  className="studio2__param-input"
+                  disabled={!personaModelOn}
+                  value={personaModelVal}
+                  onChange={(e) => setPersonaModelVal(e.target.value)}
+                >
+                  <option value="style_persona">Style Persona (스타일만)</option>
+                  <option value="voice_persona">Voice Persona (목소리까지)</option>
+                </select>
+              </div>
+
+              {/* 준비 중인 기능 */}
+              <div className="studio2__locked-features">
+                <h4 className="studio2__locked-title">준비 중인 기능 (API 지원 대기)</h4>
+
+                <div className="studio2__locked-item">
+                  <span className="studio2__locked-icon">🔒</span>
+                  <div>
+                    <span className="studio2__locked-name">보이스 클로닝</span>
+                    <p className="studio2__locked-desc">내 목소리를 녹음/업로드하여 그 목소리로 노래를 생성합니다</p>
+                    <span className="studio2__locked-badge">비공식 API 지원 대기 중</span>
+                  </div>
+                </div>
+
+                <div className="studio2__locked-item">
+                  <span className="studio2__locked-icon">🔒</span>
+                  <div>
+                    <span className="studio2__locked-name">커스텀 모델 학습</span>
+                    <p className="studio2__locked-desc">내 곡 6개 이상을 학습시켜 나만의 AI 모델을 만듭니다 (최대 3개)</p>
+                    <span className="studio2__locked-badge">비공식 API 지원 대기 중</span>
+                  </div>
+                </div>
+
+                <div className="studio2__locked-item">
+                  <span className="studio2__locked-icon">🔒</span>
+                  <div>
+                    <span className="studio2__locked-name">My Taste</span>
+                    <p className="studio2__locked-desc">AI가 내 취향을 학습해서 점점 더 맞는 곡을 생성합니다</p>
+                    <span className="studio2__locked-badge">비공식 API 지원 대기 중</span>
+                  </div>
+                </div>
+
+                <div className="studio2__locked-item">
+                  <span className="studio2__locked-icon">🔒</span>
+                  <div>
+                    <span className="studio2__locked-name">MIDI 변환</span>
+                    <p className="studio2__locked-desc">생성된 오디오를 MIDI 파일로 변환하여 DAW에서 편집 가능</p>
+                    <span className="studio2__locked-badge">비공식 API 지원 대기 중</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Reference Audio Upload (Suno only) ─── */}
+          {selectedModel === 'suno' && (
+            <div className="s2__section s2__reference">
+              <label className="s2__main-label">
+                <FiMusic className="s2__label-icon" />
+                참고 음악 (선택사항)
+              </label>
+              {referenceData ? (
+                <div className="s2__reference-info">
+                  <div className="s2__reference-file">
+                    <span className="s2__reference-icon">🎵</span>
+                    <div className="s2__reference-details">
+                      <span className="s2__reference-name">{referenceData.filename}</span>
+                      <span className="s2__reference-duration">{formatDuration(referenceData.duration_sec)}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="s2__reference-delete"
+                      onClick={handleReferenceRemove}
+                    >
+                      <FiTrash2 /> 삭제
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="s2__reference-upload">
+                  <label className="s2__reference-btn">
+                    {referenceUploading ? (
+                      <><FiLoader className="s2__spin" /> 업로드 중...</>
+                    ) : (
+                      <><FiUploadCloud /> 파일 선택 (최대 8분)</>
+                    )}
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      style={{ display: 'none' }}
+                      onChange={handleReferenceUpload}
+                      disabled={referenceUploading}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+
           {error && <div className="s2__msg s2__msg--error">{error}</div>}
           {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
 
@@ -1513,13 +1953,78 @@ export default function StudioTab2({ onSendToUpload }) {
             </button>
             <button
               className="s2__submit"
+              onClick={() => setStep(4)}
+            >
+              <FiCheck /> 프롬프트 확인 <FiArrowRight />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Step 4: Prompt Preview ─── */}
+      {step === 4 && (
+        <div className="s2__form">
+          <div className="prompt-preview">
+            <h3 className="prompt-preview__title">프롬프트 미리보기</h3>
+
+            <div className="prompt-preview__model">
+              <strong>선택된 모델:</strong>{' '}
+              {MODEL_OPTIONS.find((m) => m.id === selectedModel)?.name || selectedModel}
+            </div>
+
+            <div className="prompt-preview__text">
+              {buildPromptPreview(selectedModel, {
+                genre: selectedGenres.join(', '),
+                mood: selectedMoods.join(', '),
+                vocal,
+                isInstrumental,
+                bpm: bpm || null,
+                musicalKey: musicalKey || null,
+                bpmOn,
+                bpmVal: bpmVal || null,
+                keyOn,
+                keyVal: keyVal || null,
+                style: styleText.trim() || null,
+                referenceText: referenceText.trim() || null,
+                duration,
+                negativeTagsOn,
+                negativeTagsVal,
+                styleWeightOn,
+                styleWeightVal,
+                weirdnessOn,
+                weirdnessVal,
+                audioWeightOn,
+                audioWeightVal,
+                personaModelOn,
+                personaModelVal,
+                referenceData,
+              })}
+            </div>
+
+            {lyrics.trim() && (
+              <div className="prompt-preview__lyrics-section">
+                <strong>가사 미리보기:</strong>
+                <pre className="prompt-preview__lyrics">{getPreviewLyrics()}</pre>
+              </div>
+            )}
+          </div>
+
+          {error && <div className="s2__msg s2__msg--error">{error}</div>}
+          {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
+
+          <div className="s2__btn-row">
+            <button className="s2__btn-back" onClick={() => setStep(3)}>
+              <FiArrowLeft /> 수정하기
+            </button>
+            <button
+              className="s2__submit"
               onClick={handleGenerateMusic}
               disabled={submitting}
             >
               {submitting ? (
                 <><FiLoader className="s2__spin" /> 생성 요청 중...</>
               ) : (
-                <><FiZap /> 음악 생성 시작</>
+                <><FiZap /> 생성하기 <FiArrowRight /></>
               )}
             </button>
           </div>

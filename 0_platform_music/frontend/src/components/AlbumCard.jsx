@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { FiPlay } from 'react-icons/fi';
 import { getAlbumGradient } from '../utils';
+import * as api from '../api';
 import './AlbumCard.css';
 
 export default function AlbumCard({ album }) {
@@ -10,10 +11,10 @@ export default function AlbumCard({ album }) {
     <div className="album-card" onClick={() => navigate(`/album/${album.id}`)}>
       <div
         className="album-card__cover"
-        style={!(album.cover_image && album.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(album.id) } : {}}
+        style={!album.cover_image ? { background: getAlbumGradient(album.id) } : {}}
       >
-        {album.cover_image && album.cover_image.startsWith('/api/files') ? (
-          <img src={album.cover_image} alt="" className="album-card__cover-img" />
+        {album.cover_image ? (
+          <img src={album.cover_image.startsWith('/api/') ? album.cover_image : api.coverPreviewUrl(album.cover_image)} alt="" className="album-card__cover-img" />
         ) : (
           <span>♪</span>
         )}

@@ -12,6 +12,9 @@ export function PlayerProvider({ children }) {
   const [audioDuration, setAudioDuration] = useState(0);
   const [volume, setVolume] = useState(80);
   const audioRef = useRef(new Audio());
+  // Video mode: when active, seekTo/togglePlay/time updates target video instead of audio
+  const [videoMode, setVideoMode] = useState(false);
+  const videoRef = useRef(null);
 
   const currentSong = currentIndex >= 0 ? playlist[currentIndex] : null;
   const duration = audioDuration || currentSong?.duration || 240;
@@ -111,20 +114,34 @@ export function PlayerProvider({ children }) {
   }, [playlist]);
 
   const pause = useCallback(() => {
-    audioRef.current.pause();
-  }, []);
+    if (videoMode && videoRef.current) {
+      videoRef.current.pause();
+    } else {
+      audioRef.current.pause();
+    }
+  }, [videoMode]);
 
   const togglePlay = useCallback(() => {
     if (currentSong) {
-      if (isPlaying) {
-        audioRef.current.pause();
+      if (videoMode && videoRef.current) {
+        if (isPlaying) {
+          videoRef.current.pause();
+        } else {
+          videoRef.current.play().catch((err) => {
+            console.error('Video play failed:', err);
+          });
+        }
       } else {
-        audioRef.current.play().catch((err) => {
-          console.error('Audio play failed:', err);
-        });
+        if (isPlaying) {
+          audioRef.current.pause();
+        } else {
+          audioRef.current.play().catch((err) => {
+            console.error('Audio play failed:', err);
+          });
+        }
       }
     }
-  }, [currentSong, isPlaying]);
+  }, [currentSong, isPlaying, videoMode]);
 
   const next = useCallback(() => {
     if (currentIndex < playlist.length - 1) {
@@ -133,18 +150,27 @@ export function PlayerProvider({ children }) {
   }, [currentIndex, playlist.length]);
 
   const prev = useCallback(() => {
-    if (audioRef.current.currentTime > 3) {
-      audioRef.current.currentTime = 0;
+    const activeTime = (videoMode && videoRef.current) ? videoRef.current.currentTime : audioRef.current.currentTime;
+    if (activeTime > 3) {
+      if (videoMode && videoRef.current) {
+        videoRef.current.currentTime = 0;
+      } else {
+        audioRef.current.currentTime = 0;
+      }
     } else if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
     }
-  }, [currentIndex]);
+  }, [currentIndex, videoMode]);
 
   const seekTo = useCallback((time) => {
     const clampedTime = Math.max(0, Math.min(time, duration));
-    audioRef.current.currentTime = clampedTime;
+    if (videoMode && videoRef.current) {
+      videoRef.current.currentTime = clampedTime;
+    } else {
+      audioRef.current.currentTime = clampedTime;
+    }
     setCurrentTime(clampedTime);
-  }, [duration]);
+  }, [duration, videoMode]);
 
   const changeVolume = useCallback((vol) => {
     setVolume(Math.max(0, Math.min(100, vol)));
@@ -154,6 +180,22 @@ export function PlayerProvider({ children }) {
     setPlaylist((prev) => {
       if (prev.find((s) => s.id === song.id)) return prev;
       return [...prev, song];
+    });
+  }, []);
+
+  const removeFromPlaylist = useCallback((songId) => {
+    setPlaylist((prev) => {
+      const idx = prev.findIndex((s) => s.id === songId);
+      if (idx < 0) return prev;
+      const next = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      // Adjust currentIndex if needed
+      setCurrentIndex((ci) => {
+        if (next.length === 0) return -1;
+        if (idx < ci) return ci - 1;
+        if (idx === ci) return Math.min(ci, next.length - 1);
+        return ci;
+      });
+      return next;
     });
   }, []);
 
@@ -185,7 +227,15 @@ export function PlayerProvider({ children }) {
         seekTo,
         changeVolume,
         addToPlaylist,
+        removeFromPlaylist,
         clearPlaylist,
+        audioRef,
+        videoRef,
+        videoMode,
+        setVideoMode,
+        setCurrentTime,
+        setAudioDuration,
+        setIsPlaying,
       }}
     >
       {children}

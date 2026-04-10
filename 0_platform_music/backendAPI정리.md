@@ -26,7 +26,8 @@
 16. [보컬 수리 API](#16-보컬-수리-api-apivocal-repair)
 17. [Wondera API](#17-wondera-api-apiwondera)
 18. [관리자 API](#18-관리자-api-apiadmin)
-19. [헬스체크](#19-헬스체크)
+19. [보상 API](#19-보상-api-apirewards)
+20. [헬스체크](#20-헬스체크)
 
 ---
 
@@ -394,6 +395,28 @@ GET /api/tracks/stream/{track_id}
   "stream_url": "https://minio-presigned-url..."
 }
 ```
+
+---
+
+### 트랙 다운로드
+
+```
+POST /api/tracks/download/{track_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**응답 (200):**
+```json
+{
+  "download_url": "https://minio-presigned-url...",
+  "filename": "곡제목.mp3"
+}
+```
+
+> 다운로드 시 차트 점수에 반영됩니다 (Redis SET + MongoDB download_logs 기록).
 
 ---
 
@@ -1805,7 +1828,111 @@ GET /api/admin/logs?page=1&limit=20
 
 ---
 
-## 19. 헬스체크
+## 19. 보상 API (`/api/rewards`)
+
+> Google AdMob 보상형 광고 SSV (Server-Side Verification) 연동
+
+### AdMob SSV 콜백
+
+```
+GET /api/rewards/admob-callback
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 (ECDSA 서명 검증) |
+
+> 이 엔드포인트는 **Google AdMob 서버가 직접 호출**합니다. 프론트엔드/앱에서 호출하지 않습니다.
+
+**쿼리 파라미터 (Google이 전송):**
+
+| 파라미터 | 설명 |
+|---------|------|
+| custom_data | 사용자 ID (앱에서 광고 요청 시 설정) |
+| reward_amount | 보상 수량 |
+| reward_item | 보상 항목명 |
+| signature | ECDSA 서명 (Base64) |
+| key_id | 서명 검증용 공개키 ID |
+| transaction_id | 거래 고유 ID (중복 방지) |
+| ad_network | 광고 네트워크 |
+| ad_unit | 광고 단위 ID |
+| timestamp | 타임스탬프 |
+
+**응답 (200):**
+```json
+{"status": "ok"}
+```
+
+**검증 실패 시 (400/403):**
+```json
+{"error": "Invalid signature"}
+```
+
+---
+
+### 보상 내역 조회
+
+```
+GET /api/rewards/history
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**응답 (200):**
+```json
+{
+  "transactions": [
+    {
+      "transaction_id": "abc123",
+      "user_id": "uuid",
+      "ad_unit": "ca-app-pub-...",
+      "reward_amount": 1,
+      "reward_item": "skip_wait",
+      "created_at": "2026-04-09T12:00:00",
+      "verified": true
+    }
+  ]
+}
+```
+
+---
+
+### 보상 잔여량 조회
+
+```
+GET /api/rewards/balance
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**응답 (200):**
+```json
+{
+  "user_id": "uuid",
+  "skip_wait_count": 5,
+  "last_updated": "2026-04-09T12:00:00"
+}
+```
+
+> `skip_wait_count`는 광고 시청 시 1씩 증가합니다. 대기시간 감소에 사용할 때 차감 로직은 별도 구현 필요.
+
+---
+
+### 앱 연동 가이드
+
+1. **AdMob 앱 ID**: `ca-app-pub-9319844406990199~9049486551`
+2. **광고 단위 ID**: `ca-app-pub-9319844406990199/4353460006`
+3. **테스트 광고 단위 ID**: `ca-app-pub-3940256099942544/5224354917`
+4. 앱에서 보상형 광고 요청 시 `custom_data`에 **사용자 ID(UUID)**를 설정
+5. AdMob SSV 콜백 URL을 `https://{서버주소}/api/rewards/admob-callback`으로 설정
+
+---
+
+## 20. 헬스체크
 
 ```
 GET /api/health

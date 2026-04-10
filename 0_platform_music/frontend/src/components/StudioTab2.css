@@ -1841,3 +1841,346 @@
     flex-direction: column;
   }
 }
+
+/* ─── Suno Advanced Parameters ─── */
+.studio2__suno-params {
+  margin-top: 24px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 20px;
+}
+
+.studio2__suno-params-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.studio2__param-row {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  transition: opacity 0.2s;
+}
+
+.studio2__param-row--off {
+  opacity: 0.5;
+}
+
+.studio2__param-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.studio2__param-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.studio2__param-desc {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin: 4px 0 0 0;
+}
+
+.studio2__param-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.studio2__param-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.studio2__param-input::placeholder {
+  color: var(--color-text-sub);
+  opacity: 0.6;
+}
+
+/* Toggle Switch */
+.studio2__toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.studio2__toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.studio2__toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--color-border);
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.studio2__toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.studio2__toggle input:checked + .studio2__toggle-slider {
+  background-color: var(--color-primary);
+}
+
+.studio2__toggle input:checked + .studio2__toggle-slider:before {
+  transform: translateX(20px);
+}
+
+/* Locked Features */
+.studio2__locked-features {
+  margin-top: 32px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 20px;
+}
+
+.studio2__locked-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  margin-bottom: 12px;
+}
+
+.studio2__locked-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+.studio2__locked-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.studio2__locked-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio2__locked-desc {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin: 2px 0 4px 0;
+}
+
+.studio2__locked-badge {
+  font-size: 11px;
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb, 99, 102, 241), 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* ─── Prompt Preview (Step 4) ─── */
+.prompt-preview {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.prompt-preview__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prompt-preview__title::before {
+  content: '\1F4DD';
+}
+
+.prompt-preview__model {
+  font-size: 14px;
+  color: var(--color-text);
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: rgba(124, 58, 237, 0.06);
+  border-radius: 8px;
+  border-left: 3px solid var(--color-primary);
+}
+
+.prompt-preview__model strong {
+  color: var(--color-text-sub);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.prompt-preview__text {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  padding: 16px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.prompt-preview__lyrics-section {
+  margin-top: 4px;
+}
+
+.prompt-preview__lyrics-section strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+  margin-bottom: 8px;
+}
+
+.prompt-preview__lyrics {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--color-text-sub);
+  white-space: pre-wrap;
+  font-family: inherit;
+  padding: 12px 14px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  margin: 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.prompt-preview__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+/* ─── Reference Audio Upload ─── */
+.s2__reference {
+  margin-top: 8px;
+}
+
+.s2__reference-info {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.s2__reference-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.s2__reference-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.s2__reference-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.s2__reference-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.s2__reference-duration {
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.s2__reference-delete {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.s2__reference-delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.s2__reference-upload {
+  display: flex;
+  align-items: center;
+}
+
+.s2__reference-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text-sub);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.s2__reference-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb, 99, 102, 241), 0.05);
+}
+
+.s2__spin {
+  animation: s2-spin 1s linear infinite;
+}
+
+@keyframes s2-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

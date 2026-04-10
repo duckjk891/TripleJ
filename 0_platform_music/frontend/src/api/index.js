@@ -136,6 +136,13 @@ export const uploadImage = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 
+// Track detail
+export const getTrackDetail = (id) =>
+  API.get(`/tracks/${id}`);
+
+export const getTrackMusicVideo = (trackId) =>
+  API.get(`/tracks/${trackId}/music-video`);
+
 // My tracks
 export const getMyTracks = (params) => API.get('/tracks/my', { params });
 export const deleteTrack = (id) => API.delete(`/tracks/${id}`);
@@ -271,6 +278,16 @@ export const downloadTrackFile = (trackId) =>
 // Legacy aliases
 export const uploadSong = uploadTrack;
 
+// Reference Audio Upload (참고 음악 업로드)
+export const uploadReferenceAudio = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return API.post('/generate/upload-reference/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+};
+
 // AI Generation (작업실)
 export const generateLyrics = (data) => API.post('/generate/lyrics/', data);
 export const createGeneration = (data) => API.post('/generate/', data);
@@ -342,5 +359,9 @@ export const downloadVocalRepair = (repairId, type, method) => {
 // Download voice persona
 export const downloadVoicePersona = (personaId, type) =>
   API.get(`/voice-persona/${personaId}/${type}/download`, { responseType: 'blob' });
+
+// AdMob Rewards
+export const getRewardHistory = () => API.get('/rewards/history');
+export const getRewardBalance = () => API.get('/rewards/balance');
 
 export default API;

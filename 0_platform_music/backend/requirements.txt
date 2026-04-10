@@ -19,6 +19,7 @@ pymongo
 elasticsearch[async]
 openai
 httpx
+cryptography
 # google-genai is used via REST API (httpx) since system Python 3.8 doesn't support the SDK
 pyloudnorm
 soundfile

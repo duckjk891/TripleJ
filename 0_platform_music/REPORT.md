@@ -4449,3 +4449,163 @@ TOP100:
 - ChartPage.css: 2컬럼 grid 클래스 추가
 
 ### 테스트: 빌드 ✅ PASS
+
+---
+
+## v37 — Suno 상세 파라미터 ON/OFF 토글 UI + 백엔드 연동 (2026-04-08)
+
+### 요청 작업
+작업실2 커스텀 모드 3단계에서 Suno API 모든 상세 파라미터를 ON/OFF 토글로 제어 가능하게 구현
+
+### 수행 결과
+
+#### 추가된 ON/OFF 파라미터 (Suno 전용, 7개)
+| 파라미터 | 설명 | 입력 타입 |
+|---------|------|----------|
+| 제외 스타일 | 빼고 싶은 스타일 지정 | 텍스트 |
+| 스타일 강도 | 장르/분위기 엄격도 (0~1) | 숫자 |
+| 실험성 조절 | 대중적↔실험적 (0~1) | 숫자 |
+| 오디오 영향도 | 참조 오디오 반영도 (0~1) | 숫자 |
+| BPM | 곡의 빠르기 | 숫자 |
+| Key (조성) | 음악적 키 | 텍스트 |
+| 페르소나 타입 | style/voice 구분 | 드롭다운 |
+
+#### 잠금 표시 기능 (4개)
+- 보이스 클로닝, 커스텀 모델 학습, My Taste, MIDI 변환
+- "비공식 API 지원 대기 중" 배지 표시
+
+#### 수정 파일
+| 파일 | 내용 |
+|------|------|
+| generate.py | GenerateRequest에 5개 필드 추가, MongoDB 저장, 전달 |
+| suno_generator.py | 7개 파라미터 수신, Suno API body에 조건부 포함 |
+| StudioTab2.jsx | 14개 상태변수, ON/OFF 토글 UI, 잠금 기능 4개 |
+| StudioTab2.css | 토글 스위치, 파라미터 카드, 잠금 아이템 스타일 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| GenerateRequest 모델 | ✅ PASS |
+| Suno API body 구성 | ✅ PASS |
+| 프론트엔드 토글 UI | ✅ PASS |
+| 잠금 기능 표시 | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v38 — Whisper 타임스탬프 1회 호출 후 재사용 (2026-04-08)
+
+### 요청 작업
+Whisper를 Phase 1a에서 1번만 호출하고, 이후 단계에서는 저장된 타임스탬프를 재사용
+
+### 수행 결과
+
+#### 변경 전 (Whisper 4회 호출)
+```
+Phase 1a: Whisper 호출 ① → 저장 ✅
+Phase 3.5: Whisper 호출 ② → 불필요한 중복 ❌
+Phase 3.6: Whisper 호출 ③ → 불필요한 중복 ❌
+Phase 5:   Whisper 호출 ④ → 불필요한 중복 ❌
+```
+
+#### 변경 후 (Whisper 1회만 호출)
+```
+Phase 1a: Whisper 호출 → whisper_segments 저장
+Phase 3.5: 저장된 데이터에서 필터링 ✅
+Phase 3.6: 저장된 데이터에서 필터링 ✅
+Phase 5:   저장된 데이터에서 필터링 ✅
+```
+
+#### 수정 파일
+| 파일 | 내용 |
+|------|------|
+| mv_pipeline.py | `_get_scene_timestamps()` 헬퍼 추가, Whisper 중복 호출 4곳 제거 |
+| mv.py | 2곳 caller 수정 (timestamps 파라미터로 변경) |
+
+#### 효과
+- Whisper API 호출 3회 절약 (비용/시간 절감)
+- 자막 타이밍 일관성 보장 (동일 데이터 재사용)
+- 코드 단순화 (오디오 자르기 + Whisper 호출 블록 제거)
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| Whisper 호출 Phase 1a만 존재 | ✅ PASS |
+| _get_scene_timestamps 헬퍼 | ✅ PASS |
+| 모든 caller 수정 완료 | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v39 — 커버 이미지 표시 수정 + API 규칙 준수 (2026-04-08)
+
+### 요청 작업
+커버 이미지가 ♪ 플레이스홀더로 표시되는 문제 수정 + 인라인 URL 구성 → api/index.js 헬퍼 사용으로 변경
+
+### 수행 결과
+#### 원인
+- cover_image가 MinIO object name(`covers/generated/...`) 형태인데
+- 프론트에서 `/api/files`로 시작하는 것만 이미지로 인식 → 나머지는 ♪ 표시
+
+#### 수정된 파일 (4개)
+| 파일 | 수정 내용 |
+|------|----------|
+| ChartPage.jsx | `coverUrl()` → `api.coverPreviewUrl()` 사용 |
+| SongItem.jsx | 인라인 URL → `api.coverPreviewUrl()` 사용 |
+| MusicPlayer.jsx | `/api/files` 체크 → `api.coverPreviewUrl()` 사용 |
+| AlbumCard.jsx | `/api/files` 체크 → `api.coverPreviewUrl()` 사용 |
+
+#### API 규칙 준수 확인
+- 인라인 URL 구성: 0건 ✅
+- `/api/files` 하드코딩: 0건 ✅
+- 전부 `api.coverPreviewUrl()` 통해 URL 생성 ✅
+
+### 테스트: 빌드 ✅ PASS
+
+---
+
+## v40 — 플레이어 전용 페이지 (/player) 구현 (2026-04-08)
+
+### 요청 작업
+곡 재생 시 플레이어 전용 페이지에서 커버 이미지 + 프롬프트 정보 + 플레이리스트 큐 표시
+
+### 수행 결과
+
+#### 신규 파일
+- `PlayerPage.jsx` + `PlayerPage.css`: 플레이어 전용 페이지
+
+#### 수정 파일
+| 파일 | 내용 |
+|------|------|
+| App.jsx | `/player` 라우트 추가 |
+| api/index.js | `getTrackDetail(id)` 추가 |
+| SongItem.jsx | "+" 버튼 → 재생 큐 추가로 변경 (AddToPlaylistModal 제거) |
+| ChartPage.jsx | "+" 버튼 → 재생 큐 추가로 변경 (AddToPlaylistModal 제거) |
+| MusicPlayer.jsx | 곡 정보 클릭 → /player 페이지 이동 |
+
+#### 플레이어 페이지 구성
+- 좌측: 커버 이미지(대형) + 곡명 + 아티스트
+- 우측 탭 1 - 프롬프트 정보: 음악 생성 프롬프트, 장르, 분위기, AI 모델, BPM, Key, 가사
+- 우측 탭 2 - 플레이리스트: 재생 큐 목록 (현재 재생곡 하이라이트)
+- "+" 버튼: 재생 큐에 곡 추가
+
+### 테스트: 빌드 ✅ PASS
+
+---
+
+## v41 — 프롬프트 정보 탭에 generation 상세 파라미터 표시 (2026-04-08)
+
+### 요청 작업
+플레이어 페이지 프롬프트 정보 탭에 모든 음악 생성 파라미터 표시 (값 없으면 `-`)
+
+### 수행 결과
+- PlayerPage.jsx: track의 generation_id로 api.getGeneration() 추가 호출
+- 표시되는 파라미터 (18개):
+  - tracks에서: 프롬프트, 장르, 분위기, AI모델, 길이, BPM, Key, 가사, 재생수, 좋아요수, 다운로드수
+  - generations에서: 보컬, 스타일, 제외스타일, 스타일강도, 실험성, 오디오영향도, 페르소나, 페르소나타입, 참조스타일
+- 모든 레이블 항상 표시, 값 없으면 `-`
+
+### 테스트: 빌드 ✅ PASS

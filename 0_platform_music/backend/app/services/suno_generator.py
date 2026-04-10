@@ -12,6 +12,7 @@ from ..database.minio import get_minio
 logger = logging.getLogger(__name__)
 
 SUNO_GENERATE_URL = "{base}/api/v1/generate"
+SUNO_UPLOAD_COVER_URL = "{base}/api/v1/generate/upload-cover"
 SUNO_STATUS_URL = "{base}/api/v1/generate/record-info"
 
 SUNO_VOCAL_MAP = {
@@ -58,6 +59,14 @@ async def generate_music_suno(
     title: str = None,
     mongo_db=None,
     persona_id: str = None,
+    negative_tags: str = None,
+    style_weight: float = None,
+    weirdness: float = None,
+    audio_weight: float = None,
+    persona_model: str = None,
+    bpm: int = None,
+    key: str = None,
+    reference_audio_url: str = None,
 ) -> dict:
     """Generate music using Suno API."""
 
@@ -86,6 +95,11 @@ async def generate_music_suno(
     elif vocal and vocal.lower() != "instrumental":
         style_parts.append("vocal")
 
+    if bpm:
+        style_parts.append(f"{bpm} BPM")
+    if key:
+        style_parts.append(f"{key}")
+
     style_str = ", ".join(style_parts) if style_parts else "pop"
 
     # Determine if instrumental
@@ -95,15 +109,23 @@ async def generate_music_suno(
     use_custom = bool(lyrics and lyrics.strip())
     prompt_text = _ensure_lyrics_structure(lyrics.strip()) if use_custom else (title or "A beautiful song")
 
+    # Determine whether to use upload-cover endpoint (reference audio)
+    use_upload_cover = bool(reference_audio_url)
+
     # Request body
     body = {
         "prompt": prompt_text,
-        "model": "V5",
+        "model": "V5_5" if use_upload_cover else "V5",
         "customMode": use_custom,
         "instrumental": is_instrumental,
         "style": style_str[:1000],  # V5 limit
         "callBackUrl": "https://localhost/callback",  # Required by API, unused (we poll instead)
     }
+
+    # Add uploadUrl for reference audio (upload-cover endpoint)
+    if use_upload_cover:
+        body["uploadUrl"] = reference_audio_url
+
     if title and use_custom:
         body["title"] = title[:80]
     if vocal_info:
@@ -113,13 +135,37 @@ async def generate_music_suno(
     if persona_id:
         body["personaId"] = persona_id
 
+    # Add optional advanced parameters
+    if negative_tags:
+        body["negativeTags"] = negative_tags
+    if style_weight is not None:
+        body["styleWeight"] = style_weight
+    if weirdness is not None:
+        body["weirdnessConstraint"] = weirdness
+    if audio_weight is not None:
+        body["audioWeight"] = audio_weight
+    if persona_model:
+        body["personaModel"] = persona_model
+
     # Update progress: starting
     await _update_progress(mongo_db, generation_id, 10, "processing")
 
     # Step 1: Submit generation request
+    generate_endpoint = (
+        f"{base_url}/api/v1/generate/upload-cover"
+        if use_upload_cover
+        else f"{base_url}/api/v1/generate"
+    )
+    logger.info(
+        "Suno: using %s endpoint for generation %s (reference_audio=%s)",
+        "upload-cover" if use_upload_cover else "generate",
+        generation_id,
+        bool(reference_audio_url),
+    )
+
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            f"{base_url}/api/v1/generate",
+            generate_endpoint,
             headers=headers,
             json=body,
         )

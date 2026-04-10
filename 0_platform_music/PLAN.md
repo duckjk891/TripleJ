@@ -9488,3 +9488,110 @@ MongoDB에 영구 기록 저장 + 서버 시작 시 Redis 자동 복구.
 - ChartPage.jsx: 탭별 조건부 컬럼 렌더링
 - ChartPage.css: 2컬럼 grid 추가 (일간/주간/월간용)
 - 백엔드: 변경 없음
+
+---
+
+## v37 — Suno 상세 파라미터 ON/OFF 토글 UI + 백엔드 연동 (2026-04-08)
+
+### 요청 사항
+작업실2 커스텀 모드 3단계(음악 생성)에서 Suno API의 모든 상세 파라미터를 ON/OFF 토글로 제어 가능하게 구현.
+각 파라미터마다 설명 + placeholder 예시 + 비활성 상태 관리.
+하단에 비공식 API 미지원 기능(보이스클로닝, 커스텀모델, My Taste, MIDI) 잠금 표시.
+
+### 새로 추가할 ON/OFF 파라미터 (Suno 전용)
+1. 제외 스타일 (negativeTags) - 텍스트 입력
+2. 스타일 강도 (styleWeight) - 0~1 숫자
+3. 실험성 조절 (weirdnessConstraint) - 0~1 숫자
+4. 오디오 영향도 (audioWeight) - 0~1 숫자
+5. BPM - 숫자 입력 (현재 프론트에서 받지만 Suno에 미전송)
+6. Key (조성) - 드롭다운 (현재 프론트에서 받지만 Suno에 미전송)
+7. 페르소나 타입 (personaModel) - style_persona / voice_persona
+
+### 작업 분배
+
+#### 백엔드 (backend-dev)
+1. generate.py GenerateRequest 모델에 필드 추가:
+   - negative_tags, style_weight, weirdness, audio_weight, persona_model
+2. generate.py에서 새 필드를 MongoDB에 저장 + suno_generator에 전달
+3. suno_generator.py에서 새 파라미터를 Suno API body에 포함
+4. BPM/Key를 style 텍스트에 append하여 전송
+
+#### 프론트엔드 (frontend-dev)
+1. StudioTab2.jsx 3단계에 ON/OFF 토글 파라미터 UI 추가 (Suno 선택 시만 표시)
+2. 각 파라미터: 토글 + 설명 텍스트 + placeholder 예시 + input
+3. OFF면 비활성(회색), ON이면 활성
+4. handleGenerateMusic에서 ON인 파라미터만 request body에 포함
+5. 하단에 잠금 기능 4개 표시 (보이스클로닝, 커스텀모델, My Taste, MIDI)
+
+---
+
+## v38 — Whisper 타임스탬프 1회 호출 후 재사용 (2026-04-08)
+
+### 요청 사항
+현재 Whisper를 Phase 1a, Phase 3, Phase 3.5, Phase 3.6, Phase 5에서 중복 호출하고 있어서 자막 타이밍이 일관되지 않음. Phase 1a에서 1번만 호출하고 저장한 뒤, 이후 단계에서는 저장된 타임스탬프를 재사용하도록 수정.
+
+### 현재 문제
+- Phase 1a: Whisper 호출 ① → whisper_segments를 job에 저장 ✅
+- Phase 3.5 _burn_subtitles_on_synced_video: Whisper 호출 ② (불필요)
+- Phase 3.6: Whisper 호출 ③ (불필요)
+- Phase 5: Whisper 호출 ④ (불필요)
+
+### 해결 방법
+1. Phase 1a에서 뽑은 whisper_segments가 이미 job document에 저장돼있음
+2. 각 씬의 section_start/section_end 범위에 해당하는 세그먼트를 필터링하여 사용
+3. Phase 3.5, 3.6, 5에서 Whisper 호출 제거 → job에서 저장된 데이터 사용
+
+### 작업: 백엔드만 (mv_pipeline.py)
+- `_get_scene_timestamps(whisper_segments, section_start, section_end)` 헬퍼 함수 추가
+  - 전체 whisper_segments에서 해당 씬 시간 범위의 세그먼트만 필터링
+  - 시작 시간을 0 기준으로 조정 (씬 영상은 0초부터 시작하므로)
+- `_burn_subtitles_on_synced_video`: Whisper 호출 → job의 whisper_segments에서 필터링
+- Phase 3.6: Whisper 호출 → job의 whisper_segments에서 필터링
+- Phase 5: Whisper 호출 → job의 whisper_segments에서 필터링
+
+### 프론트엔드: 변경 없음
+
+---
+
+## v40 — 플레이어 전용 페이지 (/player) 구현 (2026-04-08)
+
+### 요청 사항
+곡 재생 시 플레이어 전용 페이지로 이동.
+- 좌측: 커버 이미지 크게 + 곡명/아티스트
+- 우측 2개 탭: 프롬프트 정보 / 플레이리스트(재생 큐)
+- 하단: 기존 재생 컨트롤러 유지
+- "+" 버튼 누르면 재생 큐(플레이리스트 탭)에 추가
+
+### 작업 분배
+
+#### 백엔드
+- api/index.js에 `getTrackDetail(id)` 함수 추가 (GET /api/tracks/{id} 호출)
+- 백엔드 GET /api/tracks/{track_id}는 이미 존재 (prompt, genre, mood, ai_model, lyrics 등 포함)
+
+#### 프론트엔드
+1. **PlayerPage.jsx + PlayerPage.css** 신규 생성
+   - 좌측: 커버 이미지(대형) + 곡명 + 아티스트명
+   - 우측: 2개 탭
+     - 프롬프트 정보: GET /api/tracks/{id}에서 가져온 prompt, genre, mood, ai_model, lyrics, 커버 프롬프트
+     - 플레이리스트: PlayerContext의 playlist 배열 표시 (현재 재생곡 하이라이트)
+   - 하단: 기존 MusicPlayer 컴포넌트 그대로 사용
+
+2. **App.jsx**: `/player` 라우트 추가
+
+3. **SongItem.jsx / ChartPage.jsx**: "+" 버튼 → PlayerContext.addToPlaylist 호출로 변경
+   - 재생 큐에 곡 추가 (기존 saved playlist 모달 대신)
+
+4. **api/index.js**: `getTrackDetail(id)` 함수 추가
+
+---
+
+## v41 — 프롬프트 정보 탭에 generation 상세 파라미터 표시 (2026-04-08)
+
+### 요청 사항
+플레이어 페이지 프롬프트 정보 탭에 모든 음악 생성 파라미터를 표시.
+tracks의 generation_id로 generations 컬렉션을 조회하여 세밀한 파라미터도 가져온다.
+값이 없는 항목은 레이블은 보이되 값을 `-`로 표시.
+
+### 작업: 프론트엔드만 (PlayerPage.jsx)
+- track의 generation_id로 api.getGeneration() 추가 호출
+- 모든 파라미터 레이블 항상 표시, 값 없으면 `-`

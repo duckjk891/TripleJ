@@ -3,7 +3,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
-import AddToPlaylistModal from '../components/AddToPlaylistModal';
 import * as api from '../api';
 import './ChartPage.css';
 
@@ -30,14 +29,13 @@ function RankChange({ change }) {
 
 export default function ChartPage() {
   const { user } = useAuth();
-  const { play } = usePlayer();
+  const { play, addToPlaylist } = usePlayer();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('top100');
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [likedIds, setLikedIds] = useState(new Set());
   const [updateTime, setUpdateTime] = useState('');
-  const [playlistModalSongId, setPlaylistModalSongId] = useState(null);
 
   useEffect(() => {
     const fetchChart = async () => {
@@ -86,9 +84,9 @@ export default function ChartPage() {
     play(track, tracks);
   };
 
-  const handleAddToPlaylist = (songId) => {
+  const handleAddToPlaylist = (track) => {
     if (!user) { navigate('/login'); return; }
-    setPlaylistModalSongId(songId);
+    addToPlaylist(track);
   };
 
   const handleDownload = async (trackId) => {
@@ -122,10 +120,9 @@ export default function ChartPage() {
   };
 
   const coverUrl = (track) => {
-    if (track.cover_image && track.cover_image.startsWith('/api/files')) {
-      return track.cover_image;
-    }
-    return null;
+    if (!track.cover_image) return null;
+    if (track.cover_image.startsWith('/api/')) return track.cover_image;
+    return api.coverPreviewUrl(track.cover_image);
   };
 
   return (
@@ -221,7 +218,7 @@ export default function ChartPage() {
                     >
                       <FiHeart style={likedIds.has(track.id) ? { color: '#e74c3c', fill: '#e74c3c' } : {}} />
                     </button>
-                    <button className="chart-item__btn" onClick={() => handleAddToPlaylist(track.id)} title="플레이리스트 추가">
+                    <button className="chart-item__btn" onClick={() => handleAddToPlaylist(track)} title="플레이리스트 추가">
                       <FiPlus />
                     </button>
                     <button className="chart-item__btn" onClick={() => handleDownload(track.id)} title="다운로드">
@@ -239,12 +236,6 @@ export default function ChartPage() {
         )}
       </div>
 
-      {playlistModalSongId && (
-        <AddToPlaylistModal
-          songId={playlistModalSongId}
-          onClose={() => setPlaylistModalSongId(null)}
-        />
-      )}
     </div>
   );
 }

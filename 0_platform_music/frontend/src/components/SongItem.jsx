@@ -1,18 +1,15 @@
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import { getAlbumGradient } from '../utils';
-import AddToPlaylistModal from './AddToPlaylistModal';
 import './SongItem.css';
 
 export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike }) {
-  const { play } = usePlayer();
+  const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 
   const handlePlay = () => {
     play(song, songs);
@@ -33,7 +30,7 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
       navigate('/login');
       return;
     }
-    setShowPlaylistModal(true);
+    addToPlaylist(song);
   };
 
   const handleDownload = async () => {
@@ -61,11 +58,11 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
 
       <div
         className="song-item__art"
-        style={!(song.cover_image && song.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(song.album_id || song.id) } : {}}
+        style={!song.cover_image ? { background: getAlbumGradient(song.album_id || song.id) } : {}}
         onClick={handlePlay}
       >
-        {song.cover_image && song.cover_image.startsWith('/api/files') ? (
-          <img src={song.cover_image} alt="" className="song-item__art-img" />
+        {song.cover_image ? (
+          <img src={song.cover_image.startsWith('/api/') ? song.cover_image : api.coverPreviewUrl(song.cover_image)} alt="" className="song-item__art-img" />
         ) : (
           <span>♪</span>
         )}
@@ -108,12 +105,6 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         </button>
       </div>
 
-      {showPlaylistModal && (
-        <AddToPlaylistModal
-          songId={song.id}
-          onClose={() => setShowPlaylistModal(false)}
-        />
-      )}
     </div>
   );
 }
