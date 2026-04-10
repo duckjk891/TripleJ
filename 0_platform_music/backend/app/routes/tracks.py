@@ -37,6 +37,33 @@ def _serialize_track(doc: dict) -> dict:
     return doc
 
 
+async def _find_completed_mv(mongo, generation_id: str) -> Optional[dict]:
+    """Find a completed MV job linked to the given generation_id."""
+    if not generation_id:
+        return None
+    mv_job = await mongo.mv_jobs.find_one({
+        "audio_generation_id": generation_id,
+        "status": "completed",
+        "result_music_video_url": {"$exists": True, "$ne": None},
+    })
+    return mv_job
+
+
+def _mv_presigned_url(object_name: Optional[str]) -> Optional[str]:
+    """Generate a presigned URL for an MV object in the images bucket."""
+    if not object_name:
+        return None
+    try:
+        minio_client = get_minio()
+        return minio_client.presigned_get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            expires=timedelta(hours=24),
+        )
+    except Exception:
+        return None
+
+
 def _serialize_tracks(docs: list) -> list:
     return [_serialize_track(d) for d in docs]
 
@@ -235,6 +262,28 @@ async def update_track(
     return _serialize_track(updated_doc)
 
 
+@router.get("/{track_id}/music-video")
+async def get_track_music_video(track_id: str):
+    """Return presigned URL for the track's music video, or 404 if none exists."""
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"generation_id": 1})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+    mv_job = await _find_completed_mv(mongo, doc.get("generation_id"))
+    if not mv_job:
+        return JSONResponse(status_code=404, content={"error": "뮤직비디오를 찾을 수 없습니다."})
+
+    mv_url = _mv_presigned_url(mv_job.get("result_music_video_url"))
+    if not mv_url:
+        return JSONResponse(status_code=404, content={"error": "뮤직비디오 파일을 찾을 수 없습니다."})
+
+    return {"has_music_video": True, "music_video_url": mv_url}
+
+
 @router.get("/{track_id}")
 async def get_track(track_id: str):
     if not ObjectId.is_valid(track_id):
@@ -256,6 +305,15 @@ async def get_track(track_id: str):
         return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
 
     track = _serialize_track(doc)
+
+    # Attach music video info
+    mv_job = await _find_completed_mv(mongo, track.get("generation_id"))
+    if mv_job:
+        track["has_music_video"] = True
+        track["music_video_url"] = _mv_presigned_url(mv_job.get("result_music_video_url"))
+    else:
+        track["has_music_video"] = False
+        track["music_video_url"] = None
 
     # Increment playcount buffer in Redis
     await redis.incr(f"playcount:buffer:{track_id}")
@@ -517,3 +575,83 @@ async def stream_track(track_id: str):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     return {"stream_url": url}
+
+
+@router.post("/download/{track_id}")
+async def download_track(track_id: str, user: dict = Depends(get_current_user)):
+    """Download a track file and record it for chart calculation."""
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"audio_url": 1, "title": 1})
+    if not doc or not doc.get("audio_url"):
+        return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    # Record download for charts
+    redis = get_redis()
+    user_id = str(user.get("id") or user.get("user_id"))
+
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    year, week, _ = now.isocalendar()
+    keys = {
+        "hourly": now.strftime("%Y%m%d%H"),
+        "daily": now.strftime("%Y%m%d"),
+        "weekly": f"{year}-W{week:02d}",
+        "monthly": now.strftime("%Y%m"),
+    }
+
+    pipe = redis.pipeline()
+    # Download dedup sets (1 user = 1 count per period)
+    dl_keys_ttl = [
+        (f"chart:downloads:hourly:{keys['hourly']}:{track_id}", 2 * 3600),
+        (f"chart:downloads:daily:{keys['daily']}:{track_id}", 2 * 86400),
+        (f"chart:downloads:weekly:{keys['weekly']}:{track_id}", 8 * 86400),
+        (f"chart:downloads:monthly:{keys['monthly']}:{track_id}", 32 * 86400),
+    ]
+    for key, ttl in dl_keys_ttl:
+        pipe.sadd(key, user_id)
+        pipe.expire(key, ttl)
+
+    # Download track index sets
+    dl_index_ttl = [
+        (f"chart:dl_tracks:hourly:{keys['hourly']}", 2 * 3600),
+        (f"chart:dl_tracks:daily:{keys['daily']}", 2 * 86400),
+        (f"chart:dl_tracks:weekly:{keys['weekly']}", 8 * 86400),
+        (f"chart:dl_tracks:monthly:{keys['monthly']}", 32 * 86400),
+    ]
+    for key, ttl in dl_index_ttl:
+        pipe.sadd(key, track_id)
+        pipe.expire(key, ttl)
+
+    await pipe.execute()
+
+    # Save to MongoDB for persistence
+    await mongo.download_logs.insert_one({
+        "user_id": user_id,
+        "track_id": track_id,
+        "downloaded_at": now,
+    })
+
+    # Increment download_count in MongoDB
+    await mongo.tracks.update_one(
+        {"_id": ObjectId(track_id)},
+        {"$inc": {"download_count": 1}},
+    )
+
+    # Get presigned URL for download
+    minio_client = get_minio()
+    try:
+        url = minio_client.presigned_get_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=doc["audio_url"],
+            expires=timedelta(hours=1),
+        )
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    title = doc.get("title", "track")
+    ext = doc["audio_url"].rsplit(".", 1)[-1] if "." in doc["audio_url"] else "mp3"
+
+    return {"download_url": url, "filename": f"{title}.{ext}"}

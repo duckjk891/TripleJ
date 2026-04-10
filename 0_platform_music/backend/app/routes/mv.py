@@ -735,17 +735,13 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                                 start = scene["section_start"]
                                 end = scene["section_end"]
 
-                                # 가사 자막 생성 (Whisper 타이밍 추출)
+                                # 가사 자막 생성 (saved Whisper timestamps 재사용)
                                 from ..services.subtitle_generator import generate_scene_lyrics_ass
+                                from ..services.mv_pipeline import _get_scene_timestamps
                                 timestamps = None
                                 if scene.get("lyrics_segment"):
-                                    try:
-                                        from ..services.sync_labs_service import cut_audio_segment
-                                        from ..services.whisper_service import get_lyrics_timestamps
-                                        segment_audio = cut_audio_segment(full_audio, start, end)
-                                        timestamps = get_lyrics_timestamps(segment_audio)
-                                    except Exception as whisper_err:
-                                        logger.warning("Whisper timing failed: %s", str(whisper_err)[:200])
+                                    _ws = job.get("whisper_segments", [])
+                                    timestamps = _get_scene_timestamps(_ws, float(start), float(end))
                                 ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
                                 if ass_content:
                                     ass_path = os.path.join(tmpdir, "lyrics.ass")
@@ -1332,8 +1328,10 @@ async def _retry_sync_for_scene(job_id, scene_number, mongo_db):
                 final_video = synced_video
 
         # Sync Labs 후 자막 재적용
-        from ..services.mv_pipeline import _burn_subtitles_on_synced_video
-        final_video = _burn_subtitles_on_synced_video(final_video, scene, original_segment_audio)
+        from ..services.mv_pipeline import _burn_subtitles_on_synced_video, _get_scene_timestamps
+        _ws = job.get("whisper_segments", [])
+        _scene_ts = _get_scene_timestamps(_ws, float(scene.get("section_start", 0)), float(scene.get("section_end", 0)))
+        final_video = _burn_subtitles_on_synced_video(final_video, scene, timestamps=_scene_ts)
 
         # Save Sync Labs result to SEPARATE file (원본 Kling 영상 유지)
         synclabs_object = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(job_id, scene_number)

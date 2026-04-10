@@ -1,9 +1,11 @@
+import { useNavigate } from 'react-router-dom';
 import {
   FiPlay, FiPause, FiSkipBack, FiSkipForward,
   FiVolume2, FiVolumeX,
 } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { getAlbumGradient } from '../utils';
+import * as api from '../api';
 import './MusicPlayer.css';
 
 function formatTime(seconds) {
@@ -13,6 +15,7 @@ function formatTime(seconds) {
 }
 
 export default function MusicPlayer() {
+  const navigate = useNavigate();
   const {
     currentSong, isPlaying, currentTime, duration, volume,
     togglePlay, next, prev, seekTo, changeVolume,
@@ -39,13 +42,13 @@ export default function MusicPlayer() {
   return (
     <div className="player">
       <div className="player__inner">
-        <div className="player__song-info">
+        <div className="player__song-info" onClick={() => navigate('/player')} style={{ cursor: 'pointer' }}>
           <div
             className="player__album-art"
-            style={!(currentSong.cover_image && currentSong.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(currentSong.album_id || currentSong.id) } : {}}
+            style={!currentSong.cover_image ? { background: getAlbumGradient(currentSong.album_id || currentSong.id) } : {}}
           >
-            {currentSong.cover_image && currentSong.cover_image.startsWith('/api/files') ? (
-              <img src={currentSong.cover_image} alt="" className="player__album-img" />
+            {currentSong.cover_image ? (
+              <img src={currentSong.cover_image.startsWith('/api/') ? currentSong.cover_image : api.coverPreviewUrl(currentSong.cover_image)} alt="" className="player__album-img" />
             ) : (
               <span>♪</span>
             )}

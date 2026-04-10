@@ -136,6 +136,39 @@ async def _resolve_audio_object_name(job: dict, mongo_db) -> Optional[str]:
     return None
 
 
+def _get_scene_timestamps(whisper_segments: list[dict], section_start: float, section_end: float) -> list[dict]:
+    """Extract and re-base Whisper timestamps for a specific scene time range.
+
+    Filters the full whisper_segments to only those overlapping with
+    [section_start, section_end], then shifts times so they start at 0
+    (since per-scene videos start at 0 seconds).
+
+    Args:
+        whisper_segments: Full list of Whisper segments [{"text", "start", "end"}, ...]
+        section_start: Scene start time in seconds (absolute)
+        section_end: Scene end time in seconds (absolute)
+
+    Returns:
+        List of segments with times relative to scene start (0-based).
+    """
+    if not whisper_segments:
+        return []
+    result = []
+    for seg in whisper_segments:
+        seg_start = float(seg.get("start", 0))
+        seg_end = float(seg.get("end", 0))
+        # Check if segment overlaps with the scene range
+        if seg_end <= section_start or seg_start >= section_end:
+            continue
+        # Re-base to 0 (scene video starts at 0)
+        result.append({
+            "text": seg.get("text", ""),
+            "start": max(0.0, seg_start - section_start),
+            "end": min(section_end - section_start, seg_end - section_start),
+        })
+    return result
+
+
 # ── Whisper-based Section Building ───────────────────────────────────────────
 
 
@@ -1169,13 +1202,13 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
 # ── Sync Labs 후 자막 재적용 ──────────────────────────────────────────────────
 
 
-def _burn_subtitles_on_synced_video(video_bytes: bytes, scene: dict, audio_bytes: bytes) -> bytes:
+def _burn_subtitles_on_synced_video(video_bytes: bytes, scene: dict, timestamps: list[dict] = None) -> bytes:
     """Sync Labs 후보정된 영상에 가사 자막을 다시 burn-in한다.
 
     Args:
         video_bytes: Sync Labs에서 반환된 영상 (무음 또는 유음)
         scene: 씬 데이터 (lyrics_segment, section_start, section_end 포함)
-        audio_bytes: 해당 씬의 오디오 구간 (Whisper 타이밍 추출용)
+        timestamps: 해당 씬의 Whisper 타이밍 (pre-computed, 0-based)
 
     Returns:
         자막이 burn-in된 영상 bytes. 실패 시 원본 반환.
@@ -1186,15 +1219,7 @@ def _burn_subtitles_on_synced_video(video_bytes: bytes, scene: dict, audio_bytes
     for _retry in range(3):
         try:
             from .subtitle_generator import generate_scene_lyrics_ass
-            from .whisper_service import get_lyrics_timestamps
             import subprocess, tempfile, os
-
-            # Whisper로 타이밍 추출
-            timestamps = None
-            try:
-                timestamps = get_lyrics_timestamps(audio_bytes)
-            except Exception:
-                pass
 
             # ASS 자막 생성
             ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
@@ -1692,7 +1717,9 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                                     silent_video = synced_video
 
                             # Sync Labs 후 자막 재적용
-                            silent_video = _burn_subtitles_on_synced_video(silent_video, scene, segment_audio)
+                            _ws = job.get("whisper_segments", [])
+                            _scene_ts = _get_scene_timestamps(_ws, float(scene.get("section_start", 0)), float(scene.get("section_end", 0)))
+                            silent_video = _burn_subtitles_on_synced_video(silent_video, scene, timestamps=_scene_ts)
 
                             synclabs_obj = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(str(job_id), sn)
                             minio_client.put_object(bucket_name=settings.minio_bucket_images,
@@ -1772,16 +1799,11 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
 
                             ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
 
-                            # Generate lyrics subtitle for this scene (Whisper timing)
+                            # Generate lyrics subtitle for this scene (reuse saved Whisper timestamps)
                             timestamps = None
                             if scene.get("lyrics_segment"):
-                                try:
-                                    from .sync_labs_service import cut_audio_segment
-                                    from .whisper_service import get_lyrics_timestamps
-                                    segment_audio = cut_audio_segment(full_audio_for_merge, start, end)
-                                    timestamps = get_lyrics_timestamps(segment_audio)
-                                except Exception as whisper_err:
-                                    logger.warning("Phase3.6 Whisper timing failed for scene %d: %s", i, str(whisper_err)[:200])
+                                _ws = job.get("whisper_segments", [])
+                                timestamps = _get_scene_timestamps(_ws, float(start), float(end))
                             ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
 
                             if ass_content:
@@ -2073,11 +2095,8 @@ async def run_phase5_merge_audio(job_id, mongo_db, audio_object_name: str) -> No
         # Generate karaoke-style lyrics subtitle (ASS) with Whisper timing
         scenes = job.get("scenes", [])
         all_timestamps: dict[int, list[dict]] = {}
-        try:
-            from .sync_labs_service import cut_audio_segment
-            from .whisper_service import get_lyrics_timestamps
-            with open(audio_path, "rb") as _af:
-                full_audio_bytes = _af.read()
+        _ws = job.get("whisper_segments", [])
+        if _ws:
             for s_idx, sc in enumerate(scenes):
                 if not sc.get("lyrics_segment") or not sc.get("lyrics_segment", "").strip():
                     continue
@@ -2085,15 +2104,9 @@ async def run_phase5_merge_audio(job_id, mongo_db, audio_object_name: str) -> No
                 s_end = sc.get("section_end")
                 if s_start is None or s_end is None:
                     continue
-                try:
-                    seg_audio = cut_audio_segment(full_audio_bytes, float(s_start), float(s_end))
-                    ts = get_lyrics_timestamps(seg_audio)
-                    if ts:
-                        all_timestamps[s_idx] = ts
-                except Exception as w_err:
-                    logger.warning("Phase5 Whisper timing failed for scene %d: %s", s_idx, str(w_err)[:200])
-        except Exception as whisper_init_err:
-            logger.warning("Phase5 Whisper init failed, using equal distribution: %s", str(whisper_init_err)[:200])
+                scene_ts = _get_scene_timestamps(_ws, float(s_start), float(s_end))
+                if scene_ts:
+                    all_timestamps[s_idx] = scene_ts
 
         ass_content = generate_lyrics_ass(scenes, all_timestamps=all_timestamps if all_timestamps else None)
         ass_path = os.path.join(tmpdir, "lyrics.ass")

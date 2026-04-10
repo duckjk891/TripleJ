@@ -4196,3 +4196,416 @@ Phase 3 (Veo) → Phase 3.5 (Sync Labs 후보정) → Phase 4 (합치기)
 - Sync Labs 립싱크 적용 후 자막이 누락되던 문제 해결
 - 자막 burn-in 실패 시 원본 반환으로 파이프라인 안정성 유지
 - 호출 위치 2곳(자동/수동) 모두에 적용하여 일관된 자막 처리 보장
+
+---
+
+## v30 — 멜론 기반 음원차트 알고리즘 구현 (2026-04-07)
+
+### 요청 작업
+멜론 차트 계산 방식(`melonChart.md`)을 기반으로 AIMU 플랫폼의 음원차트 시스템 전면 재설계
+
+### 수행 결과
+
+#### 백엔드 (`backend/app/routes/charts.py` 전면 재작성)
+- **재생 기록 API** (`POST /api/charts/record-play`): 곡 재생 시 Redis에 순 청취자 기록
+  - 시간별/일간/주간/월간 4개 시간 윈도우 동시 기록
+  - Redis SET으로 1인 1회 자동 중복 제거 (SADD 멱등성)
+  - 비로그인 사용자: play_count만 증가, 차트 미반영
+- **차트 API** (`GET /api/charts/{chart_type}`): 5종 차트 지원
+  - `top100`: 주간 24h×50% + 1h×50%, 심야(01~07시) 24h×100%
+  - `hot100`: 최근 1h 순청취자 (발매 30일 이내 곡만)
+  - `daily`: 오늘 순 청취자 수
+  - `weekly`: 이번 주 순 청취자 수
+  - `monthly`: 이번 달 순 청취자 수
+- KST(UTC+9) 시간대 적용
+- 5분 캐시, Redis 파이프라인 사용
+- Redis 데이터 없을 시 MongoDB play_count fallback
+
+#### 프론트엔드
+- **ChartPage.jsx** 전면 재작성: 5개 탭 (TOP100, HOT100, 일간, 주간, 월간)
+- **ChartPage.css** 전면 재작성: 순위 등락 표시 (▲▼-NEW), TOP3 골드/실버/브론즈
+- **api/index.js**: `getChart()`, `recordPlay()` 추가
+- **PlayerContext.jsx**: 곡 재생 시 `recordPlay()` 자동 호출 (fire-and-forget)
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법/빌드 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| API 엔드포인트 매칭 | ✅ PASS |
+| 비로그인 재생 처리 | ✅ PASS |
+| 빈 데이터 처리 | ✅ PASS |
+| Redis 키 패턴 일관성 | ✅ PASS |
+| KST 시간대 처리 | ✅ PASS |
+| 서버 구동 확인 | ✅ PASS |
+
+### 버그 수정
+1. (중간) 비공개 트랙 필터링 시 순위 번호 빈 구멍 → 필터링 후 순위 재부여
+2. (낮음) `_serialize_track`에서 원본 dict 변경 → shallow copy 추가
+
+### 특이사항
+- 순위 등락(change) 값은 현재 0(placeholder) — 이전 차트 대비 등락 계산은 추후 구현 필요
+- 다운로드 기능 미구현이므로 차트 점수 = 스트리밍 100% (멜론은 스트리밍 40% + 다운로드 60%)
+
+---
+
+## v31 — 프론트엔드 API 호출 통일 (2026-04-07)
+
+### 요청 작업
+프론트엔드의 모든 백엔드 통신을 `api/index.js` 모듈 경유로 통일
+
+### 수행 결과
+
+#### 수정된 파일 (4개)
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `api/index.js` | 11개 API 함수 추가, voiceConvertStreamUrl/DownloadUrl을 API.defaults.baseURL 사용으로 변경 |
+| `UploadPage.jsx` | 3곳 직접 URL 구성 → api 모듈 함수 호출로 교체 |
+| `MyMusicPage.jsx` | 6곳 직접 URL/fetch → api 모듈 함수 호출로 교체 |
+| `StudioTab2.jsx` | 3곳 직접 URL/fetch → api 모듈 함수 호출로 교체 |
+
+#### 추가된 API 함수 (api/index.js)
+- `coverPreviewUrl()` - 커버 이미지 미리보기 URL
+- `generationStreamUrl()` - 생성 음악 스트리밍 URL
+- `characterPreviewUrl()` - 캐릭터시트 미리보기 URL
+- `fetchAudioBuffer()` - 오디오 arraybuffer fetch
+- `fetchAsBlob()` - blob fetch
+- `fetchVocalRepairOriginal()` - 보컬수리 원본 스트림
+- `fetchVocalRepairEnhanced()` - 보컬수리 강화 스트림
+- `fetchConvertedVocal()` - 변환 보컬 스트림
+- `fetchBacking()` - MR 스트림
+- `downloadVocalRepair()` - 보컬수리 다운로드
+- `downloadVoicePersona()` - 보이스페르소나 다운로드
+
+### 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| 직접 URL 구성 잔존 여부 | ✅ 0건 (api/index.js:4 제외) |
+| fetch() 직접 호출 잔존 여부 | ✅ 0건 |
+| 프론트엔드 빌드 | ✅ PASS |
+| import 정합성 | ✅ PASS |
+| 응답 형태 일관성 | ✅ PASS |
+| 버그 | 0건 |
+
+### 특이사항
+- `window.location.hostname:9000`은 `api/index.js:4` (Axios baseURL)에만 존재
+- URL 헬퍼 함수(audio/img src용)는 URL 문자열 반환, 데이터 요청 함수는 Axios 응답 반환으로 구분
+- 백엔드 변경 없음
+
+---
+
+## v32 — 트랙 다운로드 기능 + 차트 다운로드 가중치 반영 (2026-04-07)
+
+### 요청 작업
+트랙 다운로드 기능 구현 + 멜론 방식 차트 점수에 다운로드 가중치 반영 (스트리밍 40% + 다운로드 60%)
+
+### 수행 결과
+
+#### 백엔드
+1. **다운로드 API** (`POST /api/tracks/download/{track_id}`)
+   - 인증 필수, MinIO presigned URL + 파일명 반환
+   - Redis에 다운로드 순이용자 기록 (1인 1회 자동 중복 제거)
+   - MongoDB download_count 증가
+2. **차트 알고리즘 수정** (charts.py)
+   - 기존: 스트리밍 100%
+   - 변경: **스트리밍 40% + 다운로드 60%** (멜론 방식)
+   - TOP100, HOT100, 일간, 주간, 월간 모두 적용
+
+#### 프론트엔드
+1. **다운로드 버튼** (SongItem.jsx): FiDownload 아이콘 추가
+2. **API 함수** (api/index.js): `downloadTrackFile()` 추가
+3. **ChartPage.css**: 액션 컬럼 너비 조정 (112px → 148px)
+
+### 차트 점수 공식 (변경 후)
+
+```
+음원 점수 = 스트리밍 순청취자 × 40% + 다운로드 순이용자 × 60%
+
+TOP100:
+  주간(08~24시): 음원점수_24h × 50% + 음원점수_1h × 50%
+  심야(01~07시): 음원점수_24h × 100%
+```
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| 다운로드 API 구현 | ✅ PASS |
+| 차트 40/60 가중치 | ✅ PASS |
+| Redis 키 패턴 일관성 | ✅ PASS |
+| 다운로드 버튼 UI | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v33 — 차트 통계 컬럼 표시 (24h청취, 1h청취, 다운로드) (2026-04-07)
+
+### 요청 작업
+차트 리스트에 각 곡의 24시간 청취자 수, 1시간 청취자 수, 다운로드 수를 숫자 컬럼으로 표시
+
+### 수행 결과
+
+#### 백엔드 (charts.py)
+- 차트 응답에 `listeners_24h`, `listeners_1h`, `downloads` 필드 추가
+- 모든 차트 계산 함수에서 원시 카운트를 stats dict로 전달
+- fallback(play_count 정렬)에서도 0값 stats 포함
+
+#### 프론트엔드 (ChartPage.jsx/css)
+- 헤더에 "24h 청취 / 1h 청취 / 다운로드" 3개 컬럼 추가
+- 각 곡에 숫자 표시 (toLocaleString으로 천단위 콤마)
+- 모바일(768px 이하)에서는 통계 컬럼 숨김
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| 통계 필드 반환 | ✅ PASS |
+| 통계 컬럼 표시 | ✅ PASS |
+| 모바일 반응형 | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v34 — 차트 아티스트명 클릭 → 크리에이터 프로필 이동 (2026-04-08)
+
+### 요청 작업
+차트에서 아티스트명 클릭 시 해당 크리에이터의 프로필 페이지로 이동
+
+### 수행 결과
+- ChartPage.jsx: 아티스트명을 `<Link>` 컴포넌트로 변경
+  - 본인 → `/my-music` 이동
+  - 타인 → `/artist/{uploader_id}` 이동
+- ChartPage.css: 아티스트 링크 호버 스타일 추가
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 프론트엔드 빌드 | ✅ PASS |
+| 백엔드 변경 | 없음 (기존 API 활용) |
+
+---
+
+## v35 — 차트 데이터 MongoDB 영구 저장 + 서버 시작 시 Redis 복구 (2026-04-08)
+
+### 요청 작업
+차트 데이터(재생/다운로드 기록)를 MongoDB에 영구 저장하고, 서버 재시작 시 Redis 자동 복구
+
+### 수행 결과
+
+#### 수정/생성된 파일
+| 파일 | 내용 |
+|------|------|
+| `charts.py` | record_play에 `play_logs` MongoDB 저장 추가 |
+| `tracks.py` | download에 `download_logs` MongoDB 저장 추가 |
+| `services/chart_recovery.py` | 신규 - Redis 복구 함수 |
+| `main.py` | 서버 시작 시 복구 호출 추가 |
+
+#### 동작 방식
+```
+재생/다운로드 시: Redis + MongoDB 동시 저장
+서버 재시작 시: MongoDB → Redis 자동 복구
+```
+
+#### MongoDB 컬렉션
+- `play_logs`: {user_id, track_id, played_at}
+- `download_logs`: {user_id, track_id, downloaded_at}
+- 인덱스 자동 생성 (played_at, downloaded_at 기준)
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| chart_recovery.py | ✅ PASS |
+| MongoDB 로그 저장 | ✅ PASS |
+| main.py 복구 호출 | ✅ PASS |
+| Redis 키 패턴 일관성 | ✅ PASS |
+| KST 시간대 일관성 | ✅ PASS |
+| 멱등성 (중복 실행 안전) | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v36 — 차트 탭별 컬럼 분기 (2026-04-08)
+
+### 요청 작업
+각 차트 탭에 순위 계산에 사용되는 데이터 컬럼만 표시
+
+### 수행 결과
+
+| 탭 | 컬럼 | 계산 방식 |
+|---|---|---|
+| TOP100 | 24h 청취 / 1h 청취 / 다운로드 | (24h×50% + 1h×50%) × (스트리밍40% + 다운로드60%) |
+| HOT100 | 1h 청취 / 다운로드 | 1h × (스트리밍40% + 다운로드60%), 30일 이내 곡만 |
+| 일간 | 청취자 / 다운로드 | 오늘 전체 (스트리밍40% + 다운로드60%) |
+| 주간 | 청취자 / 다운로드 | 이번주 전체 (스트리밍40% + 다운로드60%) |
+| 월간 | 청취자 / 다운로드 | 이번달 전체 (스트리밍40% + 다운로드60%) |
+
+### 변경 파일
+- ChartPage.jsx: 탭별 조건부 컬럼 렌더링
+- ChartPage.css: 2컬럼 grid 클래스 추가
+
+### 테스트: 빌드 ✅ PASS
+
+---
+
+## v37 — Suno 상세 파라미터 ON/OFF 토글 UI + 백엔드 연동 (2026-04-08)
+
+### 요청 작업
+작업실2 커스텀 모드 3단계에서 Suno API 모든 상세 파라미터를 ON/OFF 토글로 제어 가능하게 구현
+
+### 수행 결과
+
+#### 추가된 ON/OFF 파라미터 (Suno 전용, 7개)
+| 파라미터 | 설명 | 입력 타입 |
+|---------|------|----------|
+| 제외 스타일 | 빼고 싶은 스타일 지정 | 텍스트 |
+| 스타일 강도 | 장르/분위기 엄격도 (0~1) | 숫자 |
+| 실험성 조절 | 대중적↔실험적 (0~1) | 숫자 |
+| 오디오 영향도 | 참조 오디오 반영도 (0~1) | 숫자 |
+| BPM | 곡의 빠르기 | 숫자 |
+| Key (조성) | 음악적 키 | 텍스트 |
+| 페르소나 타입 | style/voice 구분 | 드롭다운 |
+
+#### 잠금 표시 기능 (4개)
+- 보이스 클로닝, 커스텀 모델 학습, My Taste, MIDI 변환
+- "비공식 API 지원 대기 중" 배지 표시
+
+#### 수정 파일
+| 파일 | 내용 |
+|------|------|
+| generate.py | GenerateRequest에 5개 필드 추가, MongoDB 저장, 전달 |
+| suno_generator.py | 7개 파라미터 수신, Suno API body에 조건부 포함 |
+| StudioTab2.jsx | 14개 상태변수, ON/OFF 토글 UI, 잠금 기능 4개 |
+| StudioTab2.css | 토글 스위치, 파라미터 카드, 잠금 아이템 스타일 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| 프론트엔드 빌드 | ✅ PASS |
+| GenerateRequest 모델 | ✅ PASS |
+| Suno API body 구성 | ✅ PASS |
+| 프론트엔드 토글 UI | ✅ PASS |
+| 잠금 기능 표시 | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v38 — Whisper 타임스탬프 1회 호출 후 재사용 (2026-04-08)
+
+### 요청 작업
+Whisper를 Phase 1a에서 1번만 호출하고, 이후 단계에서는 저장된 타임스탬프를 재사용
+
+### 수행 결과
+
+#### 변경 전 (Whisper 4회 호출)
+```
+Phase 1a: Whisper 호출 ① → 저장 ✅
+Phase 3.5: Whisper 호출 ② → 불필요한 중복 ❌
+Phase 3.6: Whisper 호출 ③ → 불필요한 중복 ❌
+Phase 5:   Whisper 호출 ④ → 불필요한 중복 ❌
+```
+
+#### 변경 후 (Whisper 1회만 호출)
+```
+Phase 1a: Whisper 호출 → whisper_segments 저장
+Phase 3.5: 저장된 데이터에서 필터링 ✅
+Phase 3.6: 저장된 데이터에서 필터링 ✅
+Phase 5:   저장된 데이터에서 필터링 ✅
+```
+
+#### 수정 파일
+| 파일 | 내용 |
+|------|------|
+| mv_pipeline.py | `_get_scene_timestamps()` 헬퍼 추가, Whisper 중복 호출 4곳 제거 |
+| mv.py | 2곳 caller 수정 (timestamps 파라미터로 변경) |
+
+#### 효과
+- Whisper API 호출 3회 절약 (비용/시간 절감)
+- 자막 타이밍 일관성 보장 (동일 데이터 재사용)
+- 코드 단순화 (오디오 자르기 + Whisper 호출 블록 제거)
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| 백엔드 문법 | ✅ PASS |
+| Whisper 호출 Phase 1a만 존재 | ✅ PASS |
+| _get_scene_timestamps 헬퍼 | ✅ PASS |
+| 모든 caller 수정 완료 | ✅ PASS |
+| 버그 | 0건 |
+
+---
+
+## v39 — 커버 이미지 표시 수정 + API 규칙 준수 (2026-04-08)
+
+### 요청 작업
+커버 이미지가 ♪ 플레이스홀더로 표시되는 문제 수정 + 인라인 URL 구성 → api/index.js 헬퍼 사용으로 변경
+
+### 수행 결과
+#### 원인
+- cover_image가 MinIO object name(`covers/generated/...`) 형태인데
+- 프론트에서 `/api/files`로 시작하는 것만 이미지로 인식 → 나머지는 ♪ 표시
+
+#### 수정된 파일 (4개)
+| 파일 | 수정 내용 |
+|------|----------|
+| ChartPage.jsx | `coverUrl()` → `api.coverPreviewUrl()` 사용 |
+| SongItem.jsx | 인라인 URL → `api.coverPreviewUrl()` 사용 |
+| MusicPlayer.jsx | `/api/files` 체크 → `api.coverPreviewUrl()` 사용 |
+| AlbumCard.jsx | `/api/files` 체크 → `api.coverPreviewUrl()` 사용 |
+
+#### API 규칙 준수 확인
+- 인라인 URL 구성: 0건 ✅
+- `/api/files` 하드코딩: 0건 ✅
+- 전부 `api.coverPreviewUrl()` 통해 URL 생성 ✅
+
+### 테스트: 빌드 ✅ PASS
+
+---
+
+## v40 — 플레이어 전용 페이지 (/player) 구현 (2026-04-08)
+
+### 요청 작업
+곡 재생 시 플레이어 전용 페이지에서 커버 이미지 + 프롬프트 정보 + 플레이리스트 큐 표시
+
+### 수행 결과
+
+#### 신규 파일
+- `PlayerPage.jsx` + `PlayerPage.css`: 플레이어 전용 페이지
+
+#### 수정 파일
+| 파일 | 내용 |
+|------|------|
+| App.jsx | `/player` 라우트 추가 |
+| api/index.js | `getTrackDetail(id)` 추가 |
+| SongItem.jsx | "+" 버튼 → 재생 큐 추가로 변경 (AddToPlaylistModal 제거) |
+| ChartPage.jsx | "+" 버튼 → 재생 큐 추가로 변경 (AddToPlaylistModal 제거) |
+| MusicPlayer.jsx | 곡 정보 클릭 → /player 페이지 이동 |
+
+#### 플레이어 페이지 구성
+- 좌측: 커버 이미지(대형) + 곡명 + 아티스트
+- 우측 탭 1 - 프롬프트 정보: 음악 생성 프롬프트, 장르, 분위기, AI 모델, BPM, Key, 가사
+- 우측 탭 2 - 플레이리스트: 재생 큐 목록 (현재 재생곡 하이라이트)
+- "+" 버튼: 재생 큐에 곡 추가
+
+### 테스트: 빌드 ✅ PASS
+
+---
+
+## v41 — 프롬프트 정보 탭에 generation 상세 파라미터 표시 (2026-04-08)
+
+### 요청 작업
+플레이어 페이지 프롬프트 정보 탭에 모든 음악 생성 파라미터 표시 (값 없으면 `-`)
+
+### 수행 결과
+- PlayerPage.jsx: track의 generation_id로 api.getGeneration() 추가 호출
+- 표시되는 파라미터 (18개):
+  - tracks에서: 프롬프트, 장르, 분위기, AI모델, 길이, BPM, Key, 가사, 재생수, 좋아요수, 다운로드수
+  - generations에서: 보컬, 스타일, 제외스타일, 스타일강도, 실험성, 오디오영향도, 페르소나, 페르소나타입, 참조스타일
+- 모든 레이블 항상 표시, 값 없으면 `-`
+
+### 테스트: 빌드 ✅ PASS

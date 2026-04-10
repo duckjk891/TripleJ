@@ -16,6 +16,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import UploadPage from './pages/UploadPage';
 import MyMusicPage from './pages/MyMusicPage';
+import PlayerPage from './pages/PlayerPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminTracksPage from './pages/admin/AdminTracksPage';
@@ -47,6 +48,7 @@ function AppContent() {
         <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/my-music" element={<MyMusicPage />} />
+        <Route path="/player" element={<PlayerPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />

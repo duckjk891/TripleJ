@@ -14,7 +14,7 @@ from .database.postgres import init_postgres, close_postgres
 from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
-from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_convert, vocal_repair, wondera
+from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_convert, vocal_repair, wondera, rewards
 
 
 @asynccontextmanager
@@ -38,6 +38,15 @@ async def lifespan(app: FastAPI):
             print(f"Recovered {stuck_result.modified_count} stuck MV jobs → paused")
     except Exception as e:
         print(f"MV job recovery failed: {e}")
+
+    # Recover Redis chart data from MongoDB
+    try:
+        from .database.redis import get_redis
+        from .services.chart_recovery import rebuild_redis_from_mongo
+        redis = get_redis()
+        await rebuild_redis_from_mongo(mongo, redis)
+    except Exception as e:
+        print(f"Chart data recovery failed: {e}")
 
     # Start background scheduler for playcount sync
     from .services.playcount_sync import start_playcount_scheduler
@@ -80,6 +89,7 @@ app.include_router(voice_persona.router)
 app.include_router(voice_convert.router)
 app.include_router(vocal_repair.router)
 app.include_router(wondera.router)
+app.include_router(rewards.router)
 
 
 @app.get("/api/health")

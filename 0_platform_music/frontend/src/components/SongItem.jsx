@@ -1,17 +1,15 @@
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
+import * as api from '../api';
 import { getAlbumGradient } from '../utils';
-import AddToPlaylistModal from './AddToPlaylistModal';
 import './SongItem.css';
 
 export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike }) {
-  const { play } = usePlayer();
+  const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 
   const handlePlay = () => {
     play(song, songs);
@@ -32,7 +30,22 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
       navigate('/login');
       return;
     }
-    setShowPlaylistModal(true);
+    addToPlaylist(song);
+  };
+
+  const handleDownload = async () => {
+    if (!user) { navigate('/login'); return; }
+    try {
+      const { data } = await api.downloadTrackFile(song.id);
+      const a = document.createElement('a');
+      a.href = data.download_url;
+      a.download = data.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
   };
 
   return (
@@ -45,11 +58,11 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
 
       <div
         className="song-item__art"
-        style={!(song.cover_image && song.cover_image.startsWith('/api/files')) ? { background: getAlbumGradient(song.album_id || song.id) } : {}}
+        style={!song.cover_image ? { background: getAlbumGradient(song.album_id || song.id) } : {}}
         onClick={handlePlay}
       >
-        {song.cover_image && song.cover_image.startsWith('/api/files') ? (
-          <img src={song.cover_image} alt="" className="song-item__art-img" />
+        {song.cover_image ? (
+          <img src={song.cover_image.startsWith('/api/') ? song.cover_image : api.coverPreviewUrl(song.cover_image)} alt="" className="song-item__art-img" />
         ) : (
           <span>♪</span>
         )}
@@ -87,14 +100,11 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         <button className="song-item__action-btn" onClick={handleAddToPlaylist} title="플레이리스트 추가">
           <FiPlus />
         </button>
+        <button className="song-item__action-btn" onClick={handleDownload} title="다운로드">
+          <FiDownload />
+        </button>
       </div>
 
-      {showPlaylistModal && (
-        <AddToPlaylistModal
-          songId={song.id}
-          onClose={() => setShowPlaylistModal(false)}
-        />
-      )}
     </div>
   );
 }
