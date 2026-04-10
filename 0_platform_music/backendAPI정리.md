@@ -28,6 +28,8 @@
 18. [관리자 API](#18-관리자-api-apiadmin)
 19. [보상 API](#19-보상-api-apirewards)
 20. [헬스체크](#20-헬스체크)
+21. [Songs API (레거시)](#21-songs-api-레거시-apisongs)
+22. [Albums API (레거시)](#22-albums-api-레거시-apialbums)
 
 ---
 
@@ -417,6 +419,33 @@ POST /api/tracks/download/{track_id}
 ```
 
 > 다운로드 시 차트 점수에 반영됩니다 (Redis SET + MongoDB download_logs 기록).
+
+---
+
+### 트랙 뮤직비디오 조회
+
+```
+GET /api/tracks/{track_id}/music-video
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**응답 (200):**
+```json
+{
+  "has_music_video": true,
+  "music_video_url": "https://minio-presigned-url..."
+}
+```
+
+**뮤직비디오가 없는 경우 (404):**
+```json
+{"error": "뮤직비디오를 찾을 수 없습니다."}
+```
+
+> 트랙에 연결된 완료된 MV 작업이 있을 경우 presigned URL을 반환합니다.
 
 ---
 
@@ -898,7 +927,95 @@ GET /api/upload/mv-preview/{object_name}
 
 ---
 
+### MV 생성 (레거시)
+
+```
+POST /api/upload/generate-mv
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | application/json |
+
+**요청 본문:**
+```json
+{
+  "title": "곡 제목",
+  "genre": "K-Pop",
+  "mood": "Happy",
+  "lyrics": "[Verse 1]\n가사...",
+  "cover_object_name": "covers/.../image.png"
+}
+```
+
+**응답 (200):**
+```json
+{"job_id": "objectid", "message": "뮤직비디오 생성이 시작되었습니다. (20장면 파이프라인)"}
+```
+
+> 레거시 20장면 파이프라인 MV 생성. 새로운 MV 작업은 `/api/mv/create`를 사용하세요.
+
+---
+
+### MV 생성 상태 조회 (레거시)
+
+```
+GET /api/upload/mv-status/{job_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**응답 (200):**
+```json
+{
+  "status": "completed",
+  "progress": 100,
+  "total_scenes": 20,
+  "completed_scenes": 20,
+  "scene_thumbnails": ["presigned_url", "..."],
+  "result_video_url": "presigned_url",
+  "object_name": "mv/.../final.mp4",
+  "error_message": ""
+}
+```
+
+---
+
 ## 11. AI 음악 생성 API (`/api/generate`)
+
+### 레퍼런스 오디오 업로드
+
+```
+POST /api/generate/upload-reference/
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | multipart/form-data |
+
+**폼 필드:**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| file | File | O | 레퍼런스 오디오 파일 (mp3, wav, m4a, ogg, flac / 최대 50MB / 최대 8분) |
+
+**응답 (200):**
+```json
+{
+  "upload_url": "https://minio-presigned-url...",
+  "object_name": "reference/uuid/xxx.mp3",
+  "filename": "original_filename.mp3",
+  "duration_sec": 195.5
+}
+```
+
+> Suno upload-cover 생성 시 사용할 레퍼런스 오디오를 MinIO에 업로드합니다. 반환된 `upload_url`과 `object_name`을 음악 생성 요청의 `reference_audio_url`, `reference_audio_name` 필드에 전달합니다.
+
+---
 
 ### 가사 생성
 
@@ -1946,6 +2063,135 @@ GET /api/health
 ```json
 {"status": "ok", "timestamp": "2026-04-07T21:00:00Z"}
 ```
+
+---
+
+## 21. Songs API (레거시) (`/api/songs`)
+
+> v1 SQLite 기반 레거시 API입니다. v2에서는 `/api/tracks`를 사용하세요.
+
+### 곡 목록 조회
+
+```
+GET /api/songs/
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**쿼리 파라미터:** page, limit, genre
+
+---
+
+### 곡 검색
+
+```
+GET /api/songs/search
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**쿼리 파라미터:** q (필수), page, limit
+
+---
+
+### 곡 상세 조회
+
+```
+GET /api/songs/{song_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+> 조회 시 play_count가 자동 증가합니다.
+
+---
+
+### 곡 업로드
+
+```
+POST /api/songs/upload
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | multipart/form-data |
+
+**폼 필드:**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| file | File | O | 오디오 파일 |
+| title | str | O | 곡 제목 |
+| artist_id | int | O | 아티스트 ID |
+| album_id | int | - | 앨범 ID |
+| genre | str | - | 장르 |
+| lyrics | str | - | 가사 |
+
+---
+
+### 곡 스트리밍
+
+```
+GET /api/songs/stream/{song_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+| 응답 | 오디오 파일 |
+
+---
+
+## 22. Albums API (레거시) (`/api/albums`)
+
+> v2에서 앨범 기능은 지원 중단(deprecated)되었습니다. 트랙은 업로더에게 직접 귀속됩니다.
+
+### 앨범 목록
+
+```
+GET /api/albums/
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**응답 (200):** 항상 빈 목록 반환
+
+---
+
+### 최신 앨범
+
+```
+GET /api/albums/latest
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**응답 (200):** 항상 빈 배열 반환
+
+---
+
+### 앨범 상세
+
+```
+GET /api/albums/{album_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**응답 (404):** `{"error": "v2.0에서 앨범 기능은 지원되지 않습니다."}`
 
 ---
 
