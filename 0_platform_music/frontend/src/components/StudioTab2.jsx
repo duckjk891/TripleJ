@@ -653,6 +653,7 @@ export default function StudioTab2({ onSendToUpload }) {
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [selectedMoods, setSelectedMoods] = useState([]);
   const [selectedStyles, setSelectedStyles] = useState([]);
+  const [durationMinutes, setDurationMinutes] = useState(2);
 
   // Step 2: Lyrics (from ChatGPT)
   const [title, setTitle] = useState('');
@@ -829,6 +830,7 @@ export default function StudioTab2({ onSendToUpload }) {
         genre: selectedGenres.join(', ') || null,
         mood: selectedMoods.join(', ') || null,
         style: getCombinedStyle(),
+        duration_minutes: durationMinutes,
         language: 'ko',
       });
       setTitle(data.title || '');
@@ -1155,6 +1157,7 @@ export default function StudioTab2({ onSendToUpload }) {
       setSelectedGenres([]);
       setSelectedMoods([]);
       setSelectedStyles([]);
+      setDurationMinutes(2);
       setStyleText('');
       setVocal('');
       setSelectedPersonaId(null);
@@ -1613,6 +1616,22 @@ export default function StudioTab2({ onSendToUpload }) {
                   onClick={() => toggleStyle(s)}
                 >
                   {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="s2__section">
+            <label className="s2__label">음악 길이 — 가사 분량 기준</label>
+            <div className="s2__chips">
+              {[1, 2, 3].map((min) => (
+                <button
+                  key={min}
+                  type="button"
+                  className={`s2__chip ${durationMinutes === min ? 's2__chip--active' : ''}`}
+                  onClick={() => setDurationMinutes(min)}
+                >
+                  {min}분
                 </button>
               ))}
             </div>
