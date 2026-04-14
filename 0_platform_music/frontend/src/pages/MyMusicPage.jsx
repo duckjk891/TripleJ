@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw, FiMic, FiPlus, FiCheck, FiLoader, FiDownload, FiVolume2, FiSquare, FiEdit3, FiStopCircle, FiArrowRight } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
@@ -150,6 +150,8 @@ function DraftsSection({ onLoadDraft }) {
 }
 
 function CharacterSection() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [character, setCharacter] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -157,17 +159,45 @@ function CharacterSection() {
   const [previewObjectName, setPreviewObjectName] = useState(null);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
-  const [topFile, setTopFile] = useState(null);
-  const [bottomFile, setBottomFile] = useState(null);
-  const [shoesFile, setShoesFile] = useState(null);
+  const [selectedTop, setSelectedTop] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('char_selectedTop')); } catch { return null; }
+  });
+  const [selectedBottom, setSelectedBottom] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('char_selectedBottom')); } catch { return null; }
+  });
+  const [selectedShoes, setSelectedShoes] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('char_selectedShoes')); } catch { return null; }
+  });
   const [characterText, setCharacterText] = useState('');
   const [refineMode, setRefineMode] = useState(false);
   const [refineText, setRefineText] = useState('');
   const [refining, setRefining] = useState(false);
   const photoInputRef = useRef(null);
-  const topInputRef = useRef(null);
-  const bottomInputRef = useRef(null);
-  const shoesInputRef = useRef(null);
+
+  // Persist selections to sessionStorage
+  useEffect(() => {
+    if (selectedTop) sessionStorage.setItem('char_selectedTop', JSON.stringify(selectedTop));
+    else sessionStorage.removeItem('char_selectedTop');
+  }, [selectedTop]);
+  useEffect(() => {
+    if (selectedBottom) sessionStorage.setItem('char_selectedBottom', JSON.stringify(selectedBottom));
+    else sessionStorage.removeItem('char_selectedBottom');
+  }, [selectedBottom]);
+  useEffect(() => {
+    if (selectedShoes) sessionStorage.setItem('char_selectedShoes', JSON.stringify(selectedShoes));
+    else sessionStorage.removeItem('char_selectedShoes');
+  }, [selectedShoes]);
+
+  // Receive selected item from ItemSelectPage via navigation state
+  useEffect(() => {
+    if (location.state?.selectedItem && location.state?.category) {
+      const { selectedItem, category } = location.state;
+      if (category === '상의') setSelectedTop(selectedItem);
+      else if (category === '하의') setSelectedBottom(selectedItem);
+      else if (category === '신발') setSelectedShoes(selectedItem);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   useEffect(() => {
     api.getMyCharacter()
@@ -185,9 +215,24 @@ function CharacterSection() {
     try {
       const formData = new FormData();
       formData.append('file', photoFile);
-      if (topFile) formData.append('top_image', topFile);
-      if (bottomFile) formData.append('bottom_image', bottomFile);
-      if (shoesFile) formData.append('shoes_image', shoesFile);
+
+      // Fetch selected item images and append as files
+      const itemEntries = [
+        { key: 'top_image', item: selectedTop },
+        { key: 'bottom_image', item: selectedBottom },
+        { key: 'shoes_image', item: selectedShoes },
+      ];
+      for (const { key, item } of itemEntries) {
+        if (item?.image_object_name) {
+          try {
+            const resp = await api.fetchAsBlob(api.adImageUrl(item.image_object_name));
+            formData.append(key, resp.data, `${key}.png`);
+          } catch (e) {
+            console.warn(`Failed to fetch ${key} image:`, e);
+          }
+        }
+      }
+
       formData.append('user_text', characterText);
       const { data } = await api.generateCharacterSheet(formData);
       setPreviewUrl(api.characterPreviewUrl(data.preview_url));
@@ -209,9 +254,6 @@ function CharacterSection() {
       setPreviewUrl(null);
       setPreviewObjectName(null);
       setPhotoFile(null);
-      setTopFile(null);
-      setBottomFile(null);
-      setShoesFile(null);
       setCharacterText('');
       setRefineMode(false);
       setRefineText('');
@@ -237,9 +279,9 @@ function CharacterSection() {
     setPreviewUrl(null);
     setPreviewObjectName(null);
     setPhotoFile(null);
-    setTopFile(null);
-    setBottomFile(null);
-    setShoesFile(null);
+    setSelectedTop(null);
+    setSelectedBottom(null);
+    setSelectedShoes(null);
     setCharacterText('');
     setRefineMode(false);
     setRefineText('');
@@ -277,6 +319,93 @@ function CharacterSection() {
     }
   };
 
+  const renderOutfitSection = () => (
+    <>
+      <p className="mymusic-character__outfit-hint">의상 아이템을 선택하세요 (선택)</p>
+      <div className="mymusic-character__outfit-row">
+        <div className="mymusic-character__outfit-box">
+          {selectedTop ? (
+            <>
+              <div className="mymusic-character__outfit-dropzone mymusic-character__outfit-dropzone--selected">
+                <img src={api.adImageUrl(selectedTop.image_object_name)} alt={selectedTop.name} className="mymusic-character__outfit-preview" />
+              </div>
+              <div className="mymusic-character__outfit-name">{selectedTop.name}</div>
+              <button className="mymusic-character__outfit-change-btn" onClick={() => navigate('/items/상의')}>변경</button>
+              <button className="mymusic-character__outfit-remove" onClick={() => setSelectedTop(null)}><FiTrash2 /></button>
+            </>
+          ) : (
+            <button className="mymusic-character__outfit-select-btn" onClick={() => navigate('/items/상의')}>상의 선택하기 &#9654;</button>
+          )}
+        </div>
+        <div className="mymusic-character__outfit-box">
+          {selectedBottom ? (
+            <>
+              <div className="mymusic-character__outfit-dropzone mymusic-character__outfit-dropzone--selected">
+                <img src={api.adImageUrl(selectedBottom.image_object_name)} alt={selectedBottom.name} className="mymusic-character__outfit-preview" />
+              </div>
+              <div className="mymusic-character__outfit-name">{selectedBottom.name}</div>
+              <button className="mymusic-character__outfit-change-btn" onClick={() => navigate('/items/하의')}>변경</button>
+              <button className="mymusic-character__outfit-remove" onClick={() => setSelectedBottom(null)}><FiTrash2 /></button>
+            </>
+          ) : (
+            <button className="mymusic-character__outfit-select-btn" onClick={() => navigate('/items/하의')}>하의 선택하기 &#9654;</button>
+          )}
+        </div>
+        <div className="mymusic-character__outfit-box">
+          {selectedShoes ? (
+            <>
+              <div className="mymusic-character__outfit-dropzone mymusic-character__outfit-dropzone--selected">
+                <img src={api.adImageUrl(selectedShoes.image_object_name)} alt={selectedShoes.name} className="mymusic-character__outfit-preview" />
+              </div>
+              <div className="mymusic-character__outfit-name">{selectedShoes.name}</div>
+              <button className="mymusic-character__outfit-change-btn" onClick={() => navigate('/items/신발')}>변경</button>
+              <button className="mymusic-character__outfit-remove" onClick={() => setSelectedShoes(null)}><FiTrash2 /></button>
+            </>
+          ) : (
+            <button className="mymusic-character__outfit-select-btn" onClick={() => navigate('/items/신발')}>신발 선택하기 &#9654;</button>
+          )}
+        </div>
+      </div>
+    </>
+  );
+
+  const renderSavedOutfitSection = () => {
+    const items = [
+      { label: '상의', data: selectedTop },
+      { label: '하의', data: selectedBottom },
+      { label: '신발', data: selectedShoes },
+    ];
+    if (!items.some((i) => i.data)) return null;
+    return (
+      <>
+        <p className="mymusic-character__outfit-hint">착용 아이템</p>
+        <div className="mymusic-character__outfit-row">
+          {items.map((item) => (
+            <div key={item.label} className="mymusic-character__outfit-box">
+              {item.data ? (
+                <a
+                  href={item.data.product_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mymusic-character__outfit-link"
+                  onClick={() => api.recordAdClick(item.data.id).catch(() => {})}
+                >
+                  <div className="mymusic-character__outfit-dropzone mymusic-character__outfit-dropzone--selected">
+                    <img src={api.adImageUrl(item.data.image_object_name)} alt={item.data.name} className="mymusic-character__outfit-preview" />
+                  </div>
+                  <div className="mymusic-character__outfit-name">{item.data.name}</div>
+                  <div className="mymusic-character__outfit-shop">쇼핑몰에서 보기 ▶</div>
+                </a>
+              ) : (
+                <div className="mymusic-character__outfit-empty">{item.label} 미선택</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
   if (loading) {
     return <div className="mymusic-loading">로딩 중...</div>;
   }
@@ -306,6 +435,7 @@ function CharacterSection() {
             </button>
           </div>
         </div>
+        {renderSavedOutfitSection()}
       </div>
     );
   }
@@ -379,6 +509,7 @@ function CharacterSection() {
             </div>
           )}
         </div>
+        {renderOutfitSection()}
       </div>
     );
   }
@@ -447,110 +578,7 @@ function CharacterSection() {
           />
         </div>
 
-        {/* Outfit image uploads */}
-        <p className="mymusic-character__outfit-hint">
-          다른 의상으로 변경하고 싶으면 이미지를 첨부하세요 (선택)
-        </p>
-        <div className="mymusic-character__outfit-row">
-          {/* Top */}
-          <div className="mymusic-character__outfit-box">
-            <div
-              className="mymusic-character__outfit-dropzone"
-              onClick={() => topInputRef.current?.click()}
-            >
-              {topFile ? (
-                <img
-                  src={URL.createObjectURL(topFile)}
-                  alt="상의 미리보기"
-                  className="mymusic-character__outfit-preview"
-                />
-              ) : (
-                <span className="mymusic-character__outfit-label">상의</span>
-              )}
-            </div>
-            <input
-              ref={topInputRef}
-              type="file"
-              accept=".jpg,.jpeg,.png,.webp"
-              style={{ display: 'none' }}
-              onChange={(e) => setTopFile(e.target.files[0] || null)}
-            />
-            {topFile && (
-              <button
-                className="mymusic-character__outfit-remove"
-                onClick={() => setTopFile(null)}
-              >
-                <FiTrash2 />
-              </button>
-            )}
-          </div>
-
-          {/* Bottom */}
-          <div className="mymusic-character__outfit-box">
-            <div
-              className="mymusic-character__outfit-dropzone"
-              onClick={() => bottomInputRef.current?.click()}
-            >
-              {bottomFile ? (
-                <img
-                  src={URL.createObjectURL(bottomFile)}
-                  alt="하의 미리보기"
-                  className="mymusic-character__outfit-preview"
-                />
-              ) : (
-                <span className="mymusic-character__outfit-label">하의</span>
-              )}
-            </div>
-            <input
-              ref={bottomInputRef}
-              type="file"
-              accept=".jpg,.jpeg,.png,.webp"
-              style={{ display: 'none' }}
-              onChange={(e) => setBottomFile(e.target.files[0] || null)}
-            />
-            {bottomFile && (
-              <button
-                className="mymusic-character__outfit-remove"
-                onClick={() => setBottomFile(null)}
-              >
-                <FiTrash2 />
-              </button>
-            )}
-          </div>
-
-          {/* Shoes */}
-          <div className="mymusic-character__outfit-box">
-            <div
-              className="mymusic-character__outfit-dropzone"
-              onClick={() => shoesInputRef.current?.click()}
-            >
-              {shoesFile ? (
-                <img
-                  src={URL.createObjectURL(shoesFile)}
-                  alt="신발 미리보기"
-                  className="mymusic-character__outfit-preview"
-                />
-              ) : (
-                <span className="mymusic-character__outfit-label">신발</span>
-              )}
-            </div>
-            <input
-              ref={shoesInputRef}
-              type="file"
-              accept=".jpg,.jpeg,.png,.webp"
-              style={{ display: 'none' }}
-              onChange={(e) => setShoesFile(e.target.files[0] || null)}
-            />
-            {shoesFile && (
-              <button
-                className="mymusic-character__outfit-remove"
-                onClick={() => setShoesFile(null)}
-              >
-                <FiTrash2 />
-              </button>
-            )}
-          </div>
-        </div>
+        {renderOutfitSection()}
 
         <button
           className="mymusic-character__generate-btn"
@@ -1634,9 +1662,16 @@ function VoicePersonaSection() {
 export default function MyMusicPage() {
   const { user } = useAuth();
   const { play, currentSong, isPlaying, togglePlay } = usePlayer();
-  const [activeTab, setActiveTab] = useState('tracks');
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState(() => location.state?.tab || 'tracks');
   const [generationPrefill, setGenerationPrefill] = useState(null);
   const [draftData, setDraftData] = useState(null);
+
+  useEffect(() => {
+    if (location.state?.tab) {
+      setActiveTab(location.state.tab);
+    }
+  }, [location.state]);
 
   const handleSendToUpload = (genData) => {
     setGenerationPrefill(genData);

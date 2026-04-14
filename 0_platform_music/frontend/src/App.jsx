@@ -17,10 +17,21 @@ import RegisterPage from './pages/RegisterPage';
 import UploadPage from './pages/UploadPage';
 import MyMusicPage from './pages/MyMusicPage';
 import PlayerPage from './pages/PlayerPage';
+import BusinessPage from './pages/BusinessPage';
+import ItemSelectPage from './pages/ItemSelectPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminTracksPage from './pages/admin/AdminTracksPage';
 import './App.css';
+
+function BusinessRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user || (user.role !== 'customer' && user.role !== 'admin')) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
 
 function AdminRoute({ children }) {
   const { user, loading } = useAuth();
@@ -48,9 +59,11 @@ function AppContent() {
         <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/my-music" element={<MyMusicPage />} />
+        <Route path="/items/:category" element={<ItemSelectPage />} />
         <Route path="/player" element={<PlayerPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/business" element={<BusinessRoute><BusinessPage /></BusinessRoute>} />
         <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
         <Route path="/admin/tracks" element={<AdminRoute><AdminTracksPage /></AdminRoute>} />

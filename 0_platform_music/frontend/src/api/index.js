@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: `${window.location.protocol}//${window.location.hostname}:9000/api`,
+  baseURL: `${window.location.protocol}//${window.location.hostname}:9001/api`,
 });
 
 // JWT 토큰 자동 첨부
@@ -270,6 +270,14 @@ export const wonderaGenerate = (data) =>
   API.post('/wondera/generate', data, { timeout: 60000 });
 export const wonderaQuery = (taskId) =>
   API.get(`/wondera/query/${taskId}`);
+export const uploadWonderaFile = (formData) =>
+  API.post('/wondera/upload-file', formData, {
+    timeout: 60000,
+  });
+export const generateWonderaSong = (body) =>
+  API.post('/wondera/generate', body, { timeout: 60000 });
+export const queryWonderaSong = (taskId) =>
+  API.get(`/wondera/query/${taskId}`);
 
 // Track download
 export const downloadTrackFile = (trackId) =>
@@ -359,6 +367,27 @@ export const downloadVocalRepair = (repairId, type, method) => {
 // Download voice persona
 export const downloadVoicePersona = (personaId, type) =>
   API.get(`/voice-persona/${personaId}/${type}/download`, { responseType: 'blob' });
+
+// Business (고객사 광고 시스템)
+export const getBusinessProfile = () => API.get('/business/profile');
+export const updateBusinessProfile = (data) => API.put('/business/profile', data);
+export const getAdItems = () => API.get('/business/ads');
+export const createAdItem = (formData) =>
+  API.post('/business/ads', formData);
+export const updateAdItem = (itemId, formData) =>
+  API.put(`/business/ads/${itemId}`, formData);
+export const deleteAdItem = (itemId) => API.delete(`/business/ads/${itemId}`);
+export const toggleAdItem = (itemId) => API.patch(`/business/ads/${itemId}/toggle`);
+export const getBusinessDashboard = (period = 'daily') =>
+  API.get('/business/dashboard', { params: { period } });
+export const recordAdImpression = (itemId) =>
+  API.post(`/business/ads/${itemId}/impression`);
+export const recordAdClick = (itemId) =>
+  API.post(`/business/ads/${itemId}/click`);
+export const getActiveAds = (category) =>
+  API.get('/business/ads/active', { params: category ? { category } : {} });
+export const adImageUrl = (objectName) =>
+  `${window.location.protocol}//${window.location.hostname}:9001/api/business/items/image/${objectName}`;
 
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');

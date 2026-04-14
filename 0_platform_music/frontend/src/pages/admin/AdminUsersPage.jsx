@@ -47,14 +47,9 @@ export default function AdminUsersPage() {
     fetchUsers();
   };
 
-  const handleRoleChange = async (user) => {
-    const newRole = user.role === 'admin' ? 'user' : 'admin';
-    const confirmed = window.confirm(
-      `${user.nickname}의 역할을 "${newRole}"로 변경하시겠습니까?`
-    );
-    if (!confirmed) return;
+  const handleRoleChange = async (userId, newRole) => {
     try {
-      await updateUserRole(user.id, newRole);
+      await updateUserRole(userId, newRole);
       fetchUsers();
     } catch {
       alert('역할 변경에 실패했습니다.');
@@ -139,12 +134,15 @@ export default function AdminUsersPage() {
                       </td>
                       <td>{formatDate(u.created_at)}</td>
                       <td className="admin-actions">
-                        <button
-                          className="admin-btn admin-btn--small"
-                          onClick={() => handleRoleChange(u)}
+                        <select
+                          className="admin-role-select"
+                          value={u.role}
+                          onChange={(e) => handleRoleChange(u.id, e.target.value)}
                         >
-                          역할 변경
-                        </button>
+                          <option value="user">user</option>
+                          <option value="customer">customer</option>
+                          <option value="admin">admin</option>
+                        </select>
                         <button
                           className={`admin-btn admin-btn--small ${u.is_banned ? 'admin-btn--primary' : 'admin-btn--danger'}`}
                           onClick={() => handleBan(u)}

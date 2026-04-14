@@ -9,15 +9,30 @@ import {
 import * as api from '../api';
 import './StudioTab2.css';
 
+// 장르: 음악의 카테고리 (어떤 종류의 음악인지)
 const GENRE_PRESETS = [
-  'Pop', 'K-Pop', 'Hip-hop', 'R&B', 'Rock', 'Electronic',
-  'Lo-fi', 'Jazz', 'Classical', 'Ambient', 'Cinematic',
-  '발라드', '댄스', '인디', 'Folk', 'Reggae', 'Metal', 'Soul',
+  'Pop', 'K-Pop', 'City-Pop', 'Hip-hop', 'R&B', 'Rock', 'Electronic',
+  'EDM', 'House', 'Techno', 'Trance', 'Dubstep', 'Drum and Bass',
+  'Trap', 'Lo-fi', 'Jazz', 'Blues', 'Classical', 'Opera',
+  'Ambient', 'Cinematic', 'Folk', 'Country', 'Reggae', 'Reggaeton',
+  'Metal', 'Punk', 'Grunge', 'Soul', 'Funk', 'Gospel',
+  'Afrobeat', 'Bossa Nova', 'Salsa', 'Synthwave',
+  '발라드', '댄스', '인디', '트로트',
 ];
 
+// 분위기: 음악이 주는 감정/느낌 (어떤 기분의 음악인지)
 const MOOD_PRESETS = [
   'Energetic', 'Chill', 'Dark', 'Happy', 'Sad', 'Epic',
   'Romantic', 'Dreamy', 'Aggressive', 'Peaceful', 'Nostalgic', 'Funky',
+  'Melancholic', 'Euphoric', 'Haunting', 'Joyful', 'Intense',
+  'Uplifting', 'Mysterious', 'Intimate', 'Triumphant', 'Playful',
+];
+
+// 스타일: 음악의 질감/프로덕션 (어떤 느낌으로 만들지)
+const STYLE_PRESETS = [
+  'Lo-fi', 'Polished', 'Gritty', 'Raw', 'Warm', 'Crisp',
+  'Vintage', 'Modern', 'Atmospheric', 'Minimal', 'Lush', 'Acoustic',
+  'Cinematic', 'Orchestral', 'Punchy', 'Bright', 'Sparse',
 ];
 
 const VOCAL_PRESETS = [
@@ -33,6 +48,7 @@ const VOCAL_PRESETS = [
 const MODEL_OPTIONS = [
   { id: 'yue', name: 'YuE', desc: '오픈소스 음악 생성 AI (보컬 + 반주)' },
   { id: 'suno', name: 'Suno', desc: 'AI 음악 생성 서비스 (고품질 보컬 + 반주)' },
+  { id: 'wondera', name: 'Wondera', desc: 'AI 음악 코파일럿 (다양한 참조 옵션)' },
 ];
 
 const STRUCTURE_TAGS = ['[Verse]', '[Chorus]', '[Bridge]', '[Outro]', '[Intro]', '[Pre-Chorus]', '[Instrumental]'];
@@ -636,6 +652,8 @@ export default function StudioTab2({ onSendToUpload }) {
   const [description, setDescription] = useState('');
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [selectedMoods, setSelectedMoods] = useState([]);
+  const [selectedStyles, setSelectedStyles] = useState([]);
+  const [durationMinutes, setDurationMinutes] = useState(2);
 
   // Step 2: Lyrics (from ChatGPT)
   const [title, setTitle] = useState('');
@@ -657,6 +675,16 @@ export default function StudioTab2({ onSendToUpload }) {
   const [referenceUploading, setReferenceUploading] = useState(false);
   const [referenceData, setReferenceData] = useState(null);
 
+  // Step 3: Wondera-specific states
+  const [wonderaModel, setWonderaModel] = useState('auto');
+  const [wonderaNumber, setWonderaNumber] = useState(2);
+  const [wonderaPrompt, setWonderaPrompt] = useState('');
+  const [wonderaReferenceData, setWonderaReferenceData] = useState(null);
+  const [wonderaVocalData, setWonderaVocalData] = useState(null);
+  const [wonderaMelodyData, setWonderaMelodyData] = useState(null);
+  const [wonderaEnableStream, setWonderaEnableStream] = useState(false);
+  const [wonderaUploading, setWonderaUploading] = useState(null);
+
   // Suno advanced parameter toggles
   const [negativeTagsOn, setNegativeTagsOn] = useState(false);
   const [negativeTagsVal, setNegativeTagsVal] = useState('');
@@ -672,6 +700,9 @@ export default function StudioTab2({ onSendToUpload }) {
   const [keyVal, setKeyVal] = useState('');
   const [personaModelOn, setPersonaModelOn] = useState(false);
   const [personaModelVal, setPersonaModelVal] = useState('style_persona');
+
+  // Draft (임시저장)
+  const [draftId, setDraftId] = useState(null);
 
   // General state
   const [submitting, setSubmitting] = useState(false);
@@ -757,6 +788,19 @@ export default function StudioTab2({ onSendToUpload }) {
     );
   };
 
+  const toggleStyle = (s) => {
+    setSelectedStyles((prev) =>
+      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
+    );
+  };
+
+  const getCombinedStyle = () => {
+    const parts = [];
+    if (selectedStyles.length > 0) parts.push(selectedStyles.join(', '));
+    if (styleText.trim()) parts.push(styleText.trim());
+    return parts.join(', ') || null;
+  };
+
   const insertTag = (tag) => {
     const ta = lyricsRef.current;
     if (!ta) return;
@@ -785,6 +829,8 @@ export default function StudioTab2({ onSendToUpload }) {
         prompt: description.trim(),
         genre: selectedGenres.join(', ') || null,
         mood: selectedMoods.join(', ') || null,
+        style: getCombinedStyle(),
+        duration_minutes: durationMinutes,
         language: 'ko',
       });
       setTitle(data.title || '');
@@ -798,14 +844,38 @@ export default function StudioTab2({ onSendToUpload }) {
     }
   };
 
-  // ─── Step 2 → 3: Confirm Lyrics ───
-  const handleConfirmLyrics = () => {
+  // ─── Step 2 → 3: Confirm Lyrics (+ 임시저장) ───
+  const handleConfirmLyrics = async () => {
     if (!lyrics.trim()) {
       setError('가사를 입력해주세요.');
       return;
     }
     setError('');
     setStep(3);
+
+    // 임시저장: draftId가 없을 때만 저장 (부가 기능이므로 실패해도 무시)
+    if (!draftId) {
+      try {
+        const body = {
+          prompt: description.trim(),
+          title: title.trim() || null,
+          lyrics: lyrics.trim(),
+          genre: selectedGenres.join(', ') || null,
+          mood: selectedMoods.join(', ') || null,
+          style: getCombinedStyle(),
+          vocal: vocal || null,
+          model: selectedModel,
+          start_music_gen: false,
+        };
+        const { data } = await api.createGeneration(body);
+        if (data?.id) {
+          setDraftId(data.id);
+          fetchHistory();
+        }
+      } catch (err) {
+        console.warn('임시저장 실패 (무시):', err);
+      }
+    }
   };
 
   // ─── Build Prompt Preview ───
@@ -880,8 +950,25 @@ export default function StudioTab2({ onSendToUpload }) {
       if (params.referenceData) {
         lines.push(`업로드한 참고 음악(${params.referenceData.filename}, ${Math.round(params.referenceData.duration_sec)}초)의 스타일을 참고하여 생성합니다.`);
       }
+    } else if (model === 'wondera') {
+      const modelLabel = WONDERA_MODELS.find((m) => m.value === params.wonderaModel)?.label || params.wonderaModel;
+      lines.push(`Wondera ${modelLabel} 모델로 ${params.wonderaNumber || 2}곡을 생성합니다.`);
+      if (params.wonderaPrompt && !params.wonderaReferenceData && !params.wonderaMelodyData) {
+        lines.push(`추가 스타일 설명으로 "${params.wonderaPrompt}"이(가) 포함되어 있습니다.`);
+      }
+      if (params.wonderaReferenceData) {
+        lines.push(`업로드한 참고 음악(${params.wonderaReferenceData.name || params.wonderaReferenceData.filename || '파일'})의 스타일을 참고하여 생성합니다.`);
+      }
+      if (params.wonderaVocalData) {
+        lines.push(`업로드한 참고 보컬(${params.wonderaVocalData.name || params.wonderaVocalData.filename || '파일'})이 적용됩니다.`);
+      }
+      if (params.wonderaMelodyData) {
+        lines.push(`업로드한 참고 멜로디(${params.wonderaMelodyData.name || params.wonderaMelodyData.filename || '파일'})가 적용됩니다.`);
+      }
+      if (params.wonderaEnableStream) {
+        lines.push('실시간 스트리밍이 활성화되어 있습니다.');
+      }
     } else {
-      // Wondera or unknown
       lines.push(`${model} 모델로 곡을 생성합니다.`);
       if (params.style) {
         lines.push(`추가 스타일 설명으로 "${params.style}"이(가) 포함되어 있습니다.`);
@@ -939,6 +1026,26 @@ export default function StudioTab2({ onSendToUpload }) {
     setReferenceData(null);
   };
 
+  // ─── Wondera File Upload Handler ───
+  const handleWonderaFileUpload = async (file, purpose) => {
+    setWonderaUploading(purpose);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('purpose', purpose);
+      const { data } = await api.uploadWonderaFile(formData);
+      const fileData = data.data || data;
+      if (purpose === 'reference') setWonderaReferenceData(fileData);
+      else if (purpose === 'vocal') setWonderaVocalData(fileData);
+      else if (purpose === 'melody') setWonderaMelodyData(fileData);
+    } catch (err) {
+      setError(err.response?.data?.error || '파일 업로드 실패');
+    } finally {
+      setWonderaUploading(null);
+    }
+  };
+
   const formatDuration = (sec) => {
     if (!sec) return '0:00';
     const m = Math.floor(sec / 60);
@@ -953,41 +1060,104 @@ export default function StudioTab2({ onSendToUpload }) {
     setSubmitting(true);
 
     try {
-      const body = {
-        prompt: description.trim(),
-        title: title.trim() || null,
-        lyrics: lyrics.trim(),
-        genre: selectedGenres.join(', ') || null,
-        mood: selectedMoods.join(', ') || null,
-        style: styleText.trim() || null,
-        vocal: isInstrumental ? 'instrumental' : vocal || null,
-        duration,
-        bpm: bpmOn ? parseInt(bpmVal) || null : (bpm ? parseInt(bpm) : null),
-        key: keyOn ? keyVal || null : (musicalKey || null),
-        reference_style: referenceText.trim() || null,
-        start_music_gen: true,
-        model: selectedModel,
-        persona_id: selectedPersonaId || null,
-        negative_tags: negativeTagsOn ? negativeTagsVal.trim() || null : null,
-        style_weight: styleWeightOn ? parseFloat(styleWeightVal) || null : null,
-        weirdness: weirdnessOn ? parseFloat(weirdnessVal) || null : null,
-        audio_weight: audioWeightOn ? parseFloat(audioWeightVal) || null : null,
-        persona_model: personaModelOn ? personaModelVal || null : null,
-        reference_audio_url: referenceData?.upload_url || null,
-        reference_audio_name: referenceData?.filename || null,
-        reference_audio_duration: referenceData?.duration_sec || null,
-      };
+      if (selectedModel === 'wondera') {
+        // Wondera path
+        const wonderaBody = {
+          lyrics: lyrics.trim(),
+          model: wonderaModel,
+          number: wonderaNumber,
+        };
+        if (wonderaPrompt.trim() && !wonderaReferenceData && !wonderaMelodyData) {
+          wonderaBody.prompt = wonderaPrompt.trim();
+        }
+        if (wonderaReferenceData) wonderaBody.reference_id = wonderaReferenceData.id;
+        if (wonderaVocalData) wonderaBody.vocal_id = wonderaVocalData.id;
+        if (wonderaMelodyData) wonderaBody.melody_id = wonderaMelodyData.id;
+        if (wonderaEnableStream) wonderaBody.enable_stream = true;
+        if (title.trim()) wonderaBody.title = title.trim();
 
-      await api.createGeneration(body);
-      setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
+        await api.generateWonderaSong(wonderaBody);
+        setSuccessMsg('Wondera 음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
 
-      // Reset
+        // Reset wondera states
+        setWonderaModel('auto');
+        setWonderaNumber(2);
+        setWonderaPrompt('');
+        setWonderaReferenceData(null);
+        setWonderaVocalData(null);
+        setWonderaMelodyData(null);
+        setWonderaEnableStream(false);
+      } else if (draftId) {
+        // 임시저장된 draft 삭제 후 최신 파라미터로 새로 생성
+        await api.deleteGeneration(draftId).catch(() => {});
+        setDraftId(null);
+        const body = {
+          prompt: description.trim(),
+          title: title.trim() || null,
+          lyrics: lyrics.trim(),
+          genre: selectedGenres.join(', ') || null,
+          mood: selectedMoods.join(', ') || null,
+          style: getCombinedStyle(),
+          vocal: isInstrumental ? 'instrumental' : vocal || null,
+          duration,
+          bpm: bpmOn ? parseInt(bpmVal) || null : (bpm ? parseInt(bpm) : null),
+          key: keyOn ? keyVal || null : (musicalKey || null),
+          reference_style: referenceText.trim() || null,
+          start_music_gen: true,
+          model: selectedModel,
+          persona_id: selectedPersonaId || null,
+          negative_tags: negativeTagsOn ? negativeTagsVal.trim() || null : null,
+          style_weight: styleWeightOn ? parseFloat(styleWeightVal) || null : null,
+          weirdness: weirdnessOn ? parseFloat(weirdnessVal) || null : null,
+          audio_weight: audioWeightOn ? parseFloat(audioWeightVal) || null : null,
+          persona_model: personaModelOn ? personaModelVal || null : null,
+          reference_audio_url: referenceData?.upload_url || null,
+          reference_audio_name: referenceData?.filename || null,
+          reference_audio_duration: referenceData?.duration_sec || null,
+        };
+        await api.createGeneration(body);
+        setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
+      } else {
+        // YuE / Suno path
+        const body = {
+          prompt: description.trim(),
+          title: title.trim() || null,
+          lyrics: lyrics.trim(),
+          genre: selectedGenres.join(', ') || null,
+          mood: selectedMoods.join(', ') || null,
+          style: getCombinedStyle(),
+          vocal: isInstrumental ? 'instrumental' : vocal || null,
+          duration,
+          bpm: bpmOn ? parseInt(bpmVal) || null : (bpm ? parseInt(bpm) : null),
+          key: keyOn ? keyVal || null : (musicalKey || null),
+          reference_style: referenceText.trim() || null,
+          start_music_gen: true,
+          model: selectedModel,
+          persona_id: selectedPersonaId || null,
+          negative_tags: negativeTagsOn ? negativeTagsVal.trim() || null : null,
+          style_weight: styleWeightOn ? parseFloat(styleWeightVal) || null : null,
+          weirdness: weirdnessOn ? parseFloat(weirdnessVal) || null : null,
+          audio_weight: audioWeightOn ? parseFloat(audioWeightVal) || null : null,
+          persona_model: personaModelOn ? personaModelVal || null : null,
+          reference_audio_url: referenceData?.upload_url || null,
+          reference_audio_name: referenceData?.filename || null,
+          reference_audio_duration: referenceData?.duration_sec || null,
+        };
+
+        await api.createGeneration(body);
+        setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
+      }
+
+      // Common reset
+      setDraftId(null);
       setStep(1);
       setDescription('');
       setTitle('');
       setLyrics('');
       setSelectedGenres([]);
       setSelectedMoods([]);
+      setSelectedStyles([]);
+      setDurationMinutes(2);
       setStyleText('');
       setVocal('');
       setSelectedPersonaId(null);
@@ -1041,10 +1211,31 @@ export default function StudioTab2({ onSendToUpload }) {
     }
   };
 
+  // ─── Draft 판별 헬퍼 ───
+  const isDraft = (gen) =>
+    gen.status === 'pending' && !gen.result_audio_url && (gen.progress === 0 || !gen.progress);
+
+  // ─── 이어서 작업: draft → Step 3 복원 ───
+  const handleResumeDraft = (gen) => {
+    setDescription(gen.prompt || '');
+    setTitle(gen.title || '');
+    setLyrics(gen.lyrics || '');
+    setSelectedGenres(gen.genre ? gen.genre.split(', ').filter(Boolean) : []);
+    setSelectedMoods(gen.mood ? gen.mood.split(', ').filter(Boolean) : []);
+    setStyleText(gen.style || '');
+    setVocal(gen.vocal || '');
+    setSelectedModel(gen.model || 'yue');
+    setDraftId(gen.id);
+    setError('');
+    setSuccessMsg('');
+    setStep(3);
+  };
+
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
     const d = new Date(dateStr);
-    return d.toLocaleDateString('ko-KR', {
+    return d.toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul',
       month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
     });
   };
@@ -1246,7 +1437,8 @@ export default function StudioTab2({ onSendToUpload }) {
     }
   };
 
-  const statusLabel = (status) => {
+  const statusLabel = (status, gen) => {
+    if (gen && isDraft(gen)) return '📝 임시저장 (가사)';
     switch (status) {
       case 'pending': return '대기 중';
       case 'processing': return '생성 중';
@@ -1382,7 +1574,7 @@ export default function StudioTab2({ onSendToUpload }) {
           </div>
 
           <div className="s2__section">
-            <label className="s2__label">장르 (선택)</label>
+            <label className="s2__label">장르 — 어떤 종류의 음악인지 (선택)</label>
             <div className="s2__chips">
               {GENRE_PRESETS.map((g) => (
                 <button
@@ -1398,7 +1590,7 @@ export default function StudioTab2({ onSendToUpload }) {
           </div>
 
           <div className="s2__section">
-            <label className="s2__label">분위기 (선택)</label>
+            <label className="s2__label">분위기 — 어떤 감정/느낌의 음악인지 (선택)</label>
             <div className="s2__chips">
               {MOOD_PRESETS.map((m) => (
                 <button
@@ -1408,6 +1600,38 @@ export default function StudioTab2({ onSendToUpload }) {
                   onClick={() => toggleMood(m)}
                 >
                   {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="s2__section">
+            <label className="s2__label">스타일 — 음악의 질감/프로덕션 느낌 (선택)</label>
+            <div className="s2__chips">
+              {STYLE_PRESETS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`s2__chip ${selectedStyles.includes(s) ? 's2__chip--active' : ''}`}
+                  onClick={() => toggleStyle(s)}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="s2__section">
+            <label className="s2__label">음악 길이 — 가사 분량 기준</label>
+            <div className="s2__chips">
+              {[1, 2, 3].map((min) => (
+                <button
+                  key={min}
+                  type="button"
+                  className={`s2__chip ${durationMinutes === min ? 's2__chip--active' : ''}`}
+                  onClick={() => setDurationMinutes(min)}
+                >
+                  {min}분
                 </button>
               ))}
             </div>
@@ -1506,7 +1730,7 @@ export default function StudioTab2({ onSendToUpload }) {
           {error && <div className="s2__msg s2__msg--error">{error}</div>}
 
           <div className="s2__btn-row">
-            <button className="s2__btn-back" onClick={() => setStep(1)}>
+            <button className="s2__btn-back" onClick={() => { setDraftId(null); setStep(1); }}>
               <FiArrowLeft /> 이전
             </button>
             <button
@@ -1944,6 +2168,232 @@ export default function StudioTab2({ onSendToUpload }) {
             </div>
           )}
 
+          {/* ─── Wondera Parameters ─── */}
+          {selectedModel === 'wondera' && (
+            <div className="studio2__wondera-params">
+              <h4 className="studio2__wondera-params-title">Wondera 파라미터</h4>
+
+              {/* 모델 버전 */}
+              <div className="studio2__param-row">
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">모델 버전</span>
+                    <p className="studio2__param-desc">사용할 Wondera 모델 버전을 선택합니다</p>
+                  </div>
+                </div>
+                <select
+                  className="studio2__param-input"
+                  value={wonderaModel}
+                  onChange={(e) => setWonderaModel(e.target.value)}
+                >
+                  {WONDERA_MODELS.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 생성 곡 수 */}
+              <div className="studio2__param-row">
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">생성 곡 수</span>
+                    <p className="studio2__param-desc">한 번에 생성할 곡의 수를 선택합니다</p>
+                  </div>
+                </div>
+                <select
+                  className="studio2__param-input"
+                  value={wonderaNumber}
+                  onChange={(e) => setWonderaNumber(Number(e.target.value))}
+                >
+                  <option value={1}>1곡</option>
+                  <option value={2}>2곡</option>
+                  <option value={3}>3곡</option>
+                </select>
+              </div>
+
+              {/* 스타일 설명 (prompt) */}
+              <div className={`studio2__param-row ${(!!wonderaReferenceData || !!wonderaMelodyData) ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">스타일 설명 (prompt)</span>
+                    <p className="studio2__param-desc">
+                      원하는 음악 스타일을 자유롭게 설명합니다 (최대 1024자)
+                      {(wonderaReferenceData || wonderaMelodyData) && (
+                        <span className="studio2__wondera-conflict"> — 참고 음악 또는 멜로디 사용 시 비활성화</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <input
+                  className="studio2__param-input"
+                  type="text"
+                  value={wonderaPrompt}
+                  onChange={(e) => setWonderaPrompt(e.target.value)}
+                  placeholder="k-pop, ballad, emotional, female vocal..."
+                  maxLength={1024}
+                  disabled={!!wonderaReferenceData || !!wonderaMelodyData}
+                />
+                <div className="studio2__wondera-charcount">{wonderaPrompt.length} / 1,024</div>
+              </div>
+
+              {/* 참고 음악 (reference) */}
+              <div className={`studio2__param-row ${(!!wonderaPrompt.trim() || !!wonderaMelodyData) ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">참고 음악 (reference)</span>
+                    <p className="studio2__param-desc">
+                      30초 이내의 참고 음악을 업로드합니다 (mp3/m4a)
+                      {(wonderaPrompt.trim() || wonderaMelodyData) && (
+                        <span className="studio2__wondera-conflict"> — prompt 또는 melody와 동시 사용 불가</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {wonderaReferenceData ? (
+                  <div className="studio2__wondera-file-info">
+                    <span className="studio2__wondera-file-name">{wonderaReferenceData.name || wonderaReferenceData.filename || '업로드됨'}</span>
+                    <button
+                      type="button"
+                      className="studio2__wondera-file-remove"
+                      onClick={() => setWonderaReferenceData(null)}
+                    >
+                      <FiTrash2 /> 삭제
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`studio2__wondera-upload-btn ${(!!wonderaPrompt.trim() || !!wonderaMelodyData) ? 'studio2__wondera-upload-btn--disabled' : ''}`}>
+                    {wonderaUploading === 'reference' ? (
+                      <><FiLoader className="s2__spin" /> 업로드 중...</>
+                    ) : (
+                      <><FiUploadCloud /> 파일 선택</>
+                    )}
+                    <input
+                      type="file"
+                      accept=".mp3,.m4a"
+                      style={{ display: 'none' }}
+                      disabled={!!wonderaPrompt.trim() || !!wonderaMelodyData || wonderaUploading === 'reference'}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleWonderaFileUpload(f, 'reference');
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* 참고 보컬 (vocal) */}
+              <div className={`studio2__param-row ${!!wonderaMelodyData ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">참고 보컬 (vocal)</span>
+                    <p className="studio2__param-desc">
+                      15~30초의 보컬 샘플을 업로드합니다 (mp3/m4a)
+                      {wonderaMelodyData && (
+                        <span className="studio2__wondera-conflict"> — melody와 동시 사용 불가</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {wonderaVocalData ? (
+                  <div className="studio2__wondera-file-info">
+                    <span className="studio2__wondera-file-name">{wonderaVocalData.name || wonderaVocalData.filename || '업로드됨'}</span>
+                    <button
+                      type="button"
+                      className="studio2__wondera-file-remove"
+                      onClick={() => setWonderaVocalData(null)}
+                    >
+                      <FiTrash2 /> 삭제
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`studio2__wondera-upload-btn ${!!wonderaMelodyData ? 'studio2__wondera-upload-btn--disabled' : ''}`}>
+                    {wonderaUploading === 'vocal' ? (
+                      <><FiLoader className="s2__spin" /> 업로드 중...</>
+                    ) : (
+                      <><FiUploadCloud /> 파일 선택</>
+                    )}
+                    <input
+                      type="file"
+                      accept=".mp3,.m4a"
+                      style={{ display: 'none' }}
+                      disabled={!!wonderaMelodyData || wonderaUploading === 'vocal'}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleWonderaFileUpload(f, 'vocal');
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* 참고 멜로디 (melody) */}
+              <div className={`studio2__param-row ${(!!wonderaPrompt.trim() || !!wonderaReferenceData || !!wonderaVocalData) ? 'studio2__param-row--off' : ''}`}>
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">참고 멜로디 (melody)</span>
+                    <p className="studio2__param-desc">
+                      5~60초의 멜로디 파일을 업로드합니다 (mp3/m4a/mid)
+                      {(wonderaPrompt.trim() || wonderaReferenceData || wonderaVocalData) && (
+                        <span className="studio2__wondera-conflict"> — 단독으로만 사용 가능 (prompt/reference/vocal과 동시 불가)</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {wonderaMelodyData ? (
+                  <div className="studio2__wondera-file-info">
+                    <span className="studio2__wondera-file-name">{wonderaMelodyData.name || wonderaMelodyData.filename || '업로드됨'}</span>
+                    <button
+                      type="button"
+                      className="studio2__wondera-file-remove"
+                      onClick={() => setWonderaMelodyData(null)}
+                    >
+                      <FiTrash2 /> 삭제
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`studio2__wondera-upload-btn ${(!!wonderaPrompt.trim() || !!wonderaReferenceData || !!wonderaVocalData) ? 'studio2__wondera-upload-btn--disabled' : ''}`}>
+                    {wonderaUploading === 'melody' ? (
+                      <><FiLoader className="s2__spin" /> 업로드 중...</>
+                    ) : (
+                      <><FiUploadCloud /> 파일 선택</>
+                    )}
+                    <input
+                      type="file"
+                      accept=".mp3,.m4a,.mid,.midi"
+                      style={{ display: 'none' }}
+                      disabled={!!wonderaPrompt.trim() || !!wonderaReferenceData || !!wonderaVocalData || wonderaUploading === 'melody'}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleWonderaFileUpload(f, 'melody');
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* 실시간 스트리밍 */}
+              <div className="studio2__param-row">
+                <div className="studio2__param-header">
+                  <div>
+                    <span className="studio2__param-name">실시간 스트리밍</span>
+                    <p className="studio2__param-desc">생성 과정을 실시간으로 스트리밍합니다</p>
+                  </div>
+                  <label className="studio2__toggle">
+                    <input
+                      type="checkbox"
+                      checked={wonderaEnableStream}
+                      onChange={(e) => setWonderaEnableStream(e.target.checked)}
+                    />
+                    <span className="studio2__toggle-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && <div className="s2__msg s2__msg--error">{error}</div>}
           {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
 
@@ -1984,7 +2434,7 @@ export default function StudioTab2({ onSendToUpload }) {
                 bpmVal: bpmVal || null,
                 keyOn,
                 keyVal: keyVal || null,
-                style: styleText.trim() || null,
+                style: getCombinedStyle(),
                 referenceText: referenceText.trim() || null,
                 duration,
                 negativeTagsOn,
@@ -1998,6 +2448,13 @@ export default function StudioTab2({ onSendToUpload }) {
                 personaModelOn,
                 personaModelVal,
                 referenceData,
+                wonderaModel,
+                wonderaNumber,
+                wonderaPrompt: wonderaPrompt.trim() || null,
+                wonderaReferenceData,
+                wonderaVocalData,
+                wonderaMelodyData,
+                wonderaEnableStream,
               })}
             </div>
 
@@ -2032,6 +2489,8 @@ export default function StudioTab2({ onSendToUpload }) {
           <div className="s2__note">
             {selectedModel === 'suno'
               ? 'Suno AI가 음악을 생성합니다. 약 1~3분 소요됩니다.'
+              : selectedModel === 'wondera'
+              ? 'Wondera AI가 음악을 생성합니다. 약 1~3분 소요됩니다.'
               : 'YuE AI 모델이 음악을 생성합니다. 30초당 약 15~30분 소요됩니다.'}
           </div>
         </div>
@@ -2066,8 +2525,8 @@ export default function StudioTab2({ onSendToUpload }) {
                     {gen.title && <div className="s2__gen-title">{gen.title}</div>}
                     <div className="s2__gen-prompt">{gen.prompt}</div>
                   </div>
-                  <span className={`s2__gen-status s2__gen-status--${gen.status}`}>
-                    {gen.status === 'processing' && gen.progress ? `${gen.progress}%` : statusLabel(gen.status)}
+                  <span className={`s2__gen-status s2__gen-status--${gen.status} ${isDraft(gen) ? 's2__draft-badge' : ''}`}>
+                    {gen.status === 'processing' && gen.progress ? `${gen.progress}%` : statusLabel(gen.status, gen)}
                   </span>
                 </div>
                 <div className="s2__gen-meta">
@@ -2084,6 +2543,18 @@ export default function StudioTab2({ onSendToUpload }) {
                   )}
                   {gen.duration && <span className="s2__gen-tag">{gen.duration}초</span>}
                 </div>
+                {/* Draft: 이어서 작업 버튼 */}
+                {isDraft(gen) && (
+                  <div className="s2__gen-player">
+                    <button
+                      className="s2__draft-resume"
+                      onClick={() => handleResumeDraft(gen)}
+                    >
+                      <FiEdit3 /> 이어서 작업
+                    </button>
+                  </div>
+                )}
+
                 {/* Play/Download for completed generations */}
                 {gen.status === 'completed' && (
                   <div className="s2__gen-player">
