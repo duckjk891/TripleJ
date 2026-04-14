@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import './Header.css';
 
 export default function Header() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, isBusiness } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
@@ -35,6 +35,7 @@ export default function Header() {
           <NavLink to="/search" onClick={closeMenu}>Discover</NavLink>
           <NavLink to="/playlist" onClick={closeMenu}>플레이리스트</NavLink>
           {user && <NavLink to="/my-music" onClick={closeMenu}>내 음악</NavLink>}
+          {user && isBusiness && <NavLink to="/business" onClick={closeMenu}>회사관리</NavLink>}
           {user && isAdmin && <NavLink to="/admin" onClick={closeMenu}>관리자</NavLink>}
         </nav>
 

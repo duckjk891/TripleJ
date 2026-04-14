@@ -2176,11 +2176,119 @@
   background: rgba(var(--color-primary-rgb, 99, 102, 241), 0.05);
 }
 
-.s2__spin {
-  animation: s2-spin 1s linear infinite;
+/* ─── Wondera Parameters ─── */
+.studio2__wondera-params {
+  margin-top: 24px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 20px;
 }
 
-@keyframes s2-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.studio2__wondera-params-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.studio2__wondera-conflict {
+  color: #ef4444;
+  font-weight: 500;
+}
+
+.studio2__wondera-charcount {
+  text-align: right;
+  font-size: 11px;
+  color: var(--color-text-sub);
+  margin-top: 4px;
+}
+
+.studio2__wondera-file-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.studio2__wondera-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio2__wondera-file-remove {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  background: transparent;
+  color: #ef4444;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.studio2__wondera-file-remove:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.studio2__wondera-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text-sub);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.studio2__wondera-upload-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb, 99, 102, 241), 0.05);
+}
+
+.studio2__wondera-upload-btn--disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+/* ─── Draft (임시저장) Styles ─── */
+.s2__draft-badge {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #f59e0b !important;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.s2__draft-resume {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.s2__draft-resume:hover {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
 }

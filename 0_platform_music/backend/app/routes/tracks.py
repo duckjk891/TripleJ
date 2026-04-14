@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..auth import get_current_user
@@ -282,6 +282,49 @@ async def get_track_music_video(track_id: str):
         return JSONResponse(status_code=404, content={"error": "뮤직비디오 파일을 찾을 수 없습니다."})
 
     return {"has_music_video": True, "music_video_url": mv_url}
+
+
+@router.get("/stream-proxy/{track_id}")
+async def stream_track_proxy(track_id: str):
+    """모바일 클라이언트용: MinIO 오디오를 직접 프록시 스트리밍"""
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"audio_url": 1})
+    if not doc or not doc.get("audio_url"):
+        return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    audio_url = doc["audio_url"]
+
+    # Determine content type from file extension
+    if audio_url.endswith(".wav"):
+        content_type = "audio/wav"
+    else:
+        content_type = "audio/mpeg"
+
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=audio_url,
+        )
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    def iter_audio():
+        try:
+            for chunk in response.stream(64 * 1024):
+                yield chunk
+        finally:
+            response.close()
+            response.release_conn()
+
+    return StreamingResponse(
+        iter_audio(),
+        media_type=content_type,
+        headers={"Accept-Ranges": "bytes"},
+    )
 
 
 @router.get("/{track_id}")

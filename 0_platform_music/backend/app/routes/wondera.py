@@ -57,9 +57,13 @@ async def upload_vocal(
 
 class GenerateRequest(BaseModel):
     lyrics: str
-    model: str = "auto"
-    prompt: Optional[str] = None
-    vocal_id: Optional[str] = None
+    model: str = "auto"  # auto, wondera-2.1, wondera-2.2, wondera-o1, wondera-o2
+    number: Optional[int] = 2  # 생성할 곡 수 (1~3)
+    prompt: Optional[str] = None  # 스타일 설명 (최대 1024자)
+    reference_id: Optional[str] = None  # 참고 음악 파일 ID
+    vocal_id: Optional[str] = None  # 참고 보컬 파일 ID
+    melody_id: Optional[str] = None  # 참고 멜로디 파일 ID
+    enable_stream: Optional[bool] = False  # 스트리밍 URL 반환
 
 
 @router.post("/generate")
@@ -71,14 +75,32 @@ async def generate_song(
     if not settings.wondera_api_key:
         return JSONResponse(status_code=503, content={"error": "Wondera API 키가 설정되지 않았습니다."})
 
+    # 파라미터 조합 검증
+    if body.prompt and body.reference_id:
+        return JSONResponse(status_code=400, content={"error": "prompt와 reference_id는 동시에 사용할 수 없습니다."})
+    if body.prompt and body.melody_id:
+        return JSONResponse(status_code=400, content={"error": "prompt와 melody_id는 동시에 사용할 수 없습니다."})
+    if body.reference_id and body.melody_id:
+        return JSONResponse(status_code=400, content={"error": "reference_id와 melody_id는 동시에 사용할 수 없습니다."})
+    if body.melody_id and body.vocal_id:
+        return JSONResponse(status_code=400, content={"error": "melody_id와 vocal_id는 동시에 사용할 수 없습니다."})
+
     payload = {
         "lyrics": body.lyrics,
         "model": body.model,
     }
+    if body.number is not None:
+        payload["number"] = body.number
     if body.prompt:
         payload["prompt"] = body.prompt
+    if body.reference_id:
+        payload["reference_id"] = body.reference_id
     if body.vocal_id:
         payload["vocal_id"] = body.vocal_id
+    if body.melody_id:
+        payload["melody_id"] = body.melody_id
+    if body.enable_stream:
+        payload["enable_stream"] = body.enable_stream
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
@@ -93,6 +115,48 @@ async def generate_song(
 
     result = resp.json()
     logger.info("Wondera: song generate started, task_id=%s", result.get("data", {}).get("task_id"))
+    return result
+
+
+ALLOWED_PURPOSES = {"reference", "vocal", "melody"}
+
+
+@router.post("/upload-file")
+async def upload_wondera_file(
+    file: UploadFile = File(...),
+    purpose: str = Form(...),
+    current_user=Depends(get_current_user),
+):
+    """Upload file to Wondera API with specified purpose (reference, vocal, melody)."""
+    if not settings.wondera_api_key:
+        return JSONResponse(status_code=503, content={"error": "Wondera API 키가 설정되지 않았습니다."})
+
+    if purpose not in ALLOWED_PURPOSES:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "purpose는 reference, vocal, melody 중 하나여야 합니다."},
+        )
+
+    contents = await file.read()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            "{}/files/upload".format(WONDERA_API_BASE),
+            headers=_wondera_headers(),
+            files={"file": (file.filename, contents, "audio/mpeg")},
+            data={"purpose": purpose},
+        )
+
+    if resp.status_code != 200:
+        logger.error("Wondera file upload failed: %s", resp.text[:500])
+        return JSONResponse(
+            status_code=resp.status_code,
+            content={"error": "Wondera 파일 업로드 실패: {}".format(resp.text[:300])},
+        )
+
+    result = resp.json()
+    file_data = result.get("data", {})
+    logger.info("Wondera: file uploaded, id=%s, purpose=%s", file_data.get("id"), purpose)
     return result
 
 
