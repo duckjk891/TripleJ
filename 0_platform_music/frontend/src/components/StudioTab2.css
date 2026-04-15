@@ -541,6 +541,27 @@
   color: #fff;
 }
 
+.s2__custom-input {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  width: 200px;
+  transition: border-color 0.2s;
+}
+
+.s2__custom-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.s2__custom-input::placeholder {
+  color: var(--color-text-sub);
+}
+
 /* ─── Vocal Grid ─── */
 .s2__vocal-grid {
   display: grid;
@@ -2291,4 +2312,46 @@
   background: linear-gradient(135deg, #d97706, #b45309);
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+/* ─── Prompt Preview: API translated values ─── */
+.prompt-preview__api-values {
+  margin-top: 16px;
+}
+
+.prompt-preview__api-box {
+  margin-top: 8px;
+  padding: 12px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #93c5fd;
+  line-height: 1.6;
+}
+
+/* ─── Hint ─── */
+.s2__hint {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--color-primary);
+}
+
+/* ─── Duet Settings ─── */
+.s2__duet-settings {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.s2__duet-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

@@ -252,6 +252,26 @@
   color: var(--color-text);
 }
 
+.biz-form-preview {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.biz-form-preview__img {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+}
+
+.biz-form-preview__label {
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
 .biz-form-actions {
   display: flex;
   justify-content: flex-end;
@@ -263,6 +283,48 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.biz-ads__table-wrap {
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.biz-ads__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.biz-ads__table th {
+  text-align: left;
+  padding: 12px 10px;
+  color: var(--color-text-sub);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.biz-ads__table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  vertical-align: middle;
+}
+
+.biz-ads__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.biz-ads__table tbody tr:hover {
+  background: var(--color-hover);
+}
+
+.biz-ads__row--inactive {
+  opacity: 0.5;
 }
 
 .biz-ads__item {
@@ -370,6 +432,11 @@
 }
 
 .biz-ads__date {
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+.biz-ads__stats {
   font-size: 0.78rem;
   color: var(--color-text-sub);
 }
@@ -482,7 +549,7 @@
 
 .biz-dashboard__summary {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin-bottom: 28px;
 }
@@ -568,6 +635,153 @@
   object-fit: cover;
 }
 
+.biz-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.biz-link-btn:hover {
+  text-decoration: underline;
+}
+
+/* ── 통계 그래프 ── */
+.biz-chart {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 28px;
+}
+
+.biz-chart__legend {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+}
+
+.biz-chart__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.biz-chart__legend-color {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.biz-chart__legend-color--impressions {
+  background: #3b82f6;
+}
+
+.biz-chart__legend-color--clicks {
+  background: #8b5cf6;
+}
+
+.biz-chart__legend-color--ctr {
+  background: #f59e0b;
+}
+
+.biz-chart__legend-color--users {
+  background: #10b981;
+}
+
+.biz-chart__container {
+  display: flex;
+  gap: 4px;
+  align-items: flex-end;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.biz-chart__group {
+  flex: 1;
+  min-width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.biz-chart__bars {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 160px;
+  width: 100%;
+  justify-content: center;
+}
+
+.biz-chart__bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  flex: 1;
+  max-width: 24px;
+}
+
+.biz-chart__bar-value {
+  font-size: 0.68rem;
+  color: var(--color-text-sub);
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+
+.biz-chart__bar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  transition: height 0.3s ease;
+}
+
+.biz-chart__bar--impressions {
+  background: #3b82f6;
+}
+
+.biz-chart__bar--clicks {
+  background: #8b5cf6;
+}
+
+.biz-chart__label {
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+  text-align: center;
+}
+
+.biz-chart__line-values {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.biz-chart__line-val {
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.biz-chart__line-val--ctr {
+  color: #f59e0b;
+}
+
+.biz-chart__line-val--users {
+  color: #10b981;
+}
+
 /* ── 반응형 ── */
 @media (max-width: 768px) {
   .biz-page__inner {
@@ -585,7 +799,15 @@
   }
 
   .biz-dashboard__summary {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .biz-chart__bars {
+    height: 120px;
+  }
+
+  .biz-chart__group {
+    min-width: 48px;
   }
 
   .biz-ads__item {
