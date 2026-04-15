@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: `${window.location.protocol}//${window.location.hostname}:9001/api`,
+  baseURL: `${window.location.protocol}//${window.location.hostname}:9003/api`,
 });
 
 // JWT 토큰 자동 첨부
@@ -297,6 +297,7 @@ export const uploadReferenceAudio = (file) => {
 };
 
 // AI Generation (작업실)
+export const translateTags = (tags) => API.post('/generate/translate-tags', { tags });
 export const generateLyrics = (data) => API.post('/generate/lyrics/', data);
 export const createGeneration = (data) => API.post('/generate/', data);
 export const startMusicGeneration = (id) => API.post(`/generate/${id}/start/`);
@@ -378,8 +379,11 @@ export const updateAdItem = (itemId, formData) =>
   API.put(`/business/ads/${itemId}`, formData);
 export const deleteAdItem = (itemId) => API.delete(`/business/ads/${itemId}`);
 export const toggleAdItem = (itemId) => API.patch(`/business/ads/${itemId}/toggle`);
-export const getBusinessDashboard = (period = 'daily') =>
-  API.get('/business/dashboard', { params: { period } });
+export const getBusinessDashboard = (period = 'daily', category) => {
+  const params = { period };
+  if (category && category !== '전체') params.category = category;
+  return API.get('/business/dashboard', { params });
+};
 export const recordAdImpression = (itemId) =>
   API.post(`/business/ads/${itemId}/impression`);
 export const recordAdClick = (itemId) =>
@@ -387,7 +391,7 @@ export const recordAdClick = (itemId) =>
 export const getActiveAds = (category) =>
   API.get('/business/ads/active', { params: category ? { category } : {} });
 export const adImageUrl = (objectName) =>
-  `${window.location.protocol}//${window.location.hostname}:9001/api/business/items/image/${objectName}`;
+  `${window.location.protocol}//${window.location.hostname}:9003/api/business/items/image/${objectName}`;
 
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');

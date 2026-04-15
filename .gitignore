@@ -58,3 +58,9 @@ htmlcov/
 
 # Uploaded files
 0_platform_music/backend/uploads/
+
+# Vite cache
+.vite/
+
+# Database files
+*.db

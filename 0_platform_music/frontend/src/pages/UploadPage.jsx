@@ -6,7 +6,7 @@ import * as api from '../api';
 import './UploadPage.css';
 
 const GENRES = ['발라드', '댄스', '힙합', 'R&B', '인디', '록', 'Electronic', 'Ambient', 'Lo-fi', 'Cinematic', '기타'];
-const AI_TOOLS = ['Suno', 'Udio', 'AIVA', 'Stable Audio', 'MusicGen (Meta)', 'YuE', '기타'];
+const AI_TOOLS = ['Suno', 'Udio', 'AIVA', 'Stable Audio', 'MusicGen (Meta)', '기타'];
 const AUDIO_ACCEPT = '.mp3,.wav,.ogg,.flac,.m4a';
 const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp';
 
@@ -99,7 +99,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       setFromGeneration(generationPrefill.generationId);
       setHasVoiceConverted(!!generationPrefill.hasVoiceConverted);
       setUseVoiceConverted(false);
-      setAiTool('YuE');
+      setAiTool('Suno');
       if (onClearPrefill) onClearPrefill();
     }
   }, [generationPrefill]);
