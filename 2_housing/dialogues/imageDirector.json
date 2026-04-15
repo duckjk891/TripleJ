@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "speaker": "imageDirector",
+    "text": "안녕하세요! 이미지 디렉터예요. 곡의 커버 이미지를 만들어볼까요?",
+    "next": 2
+  },
+  {
+    "id": 2,
+    "speaker": "imageDirector",
+    "text": "곡의 분위기에 맞는 멋진 커버를 AI가 생성해드릴게요. 준비되셨나요?",
+    "action": "navigate:CoverGeneration"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "speaker": "composer",
+    "text": "안녕하세요! 저는 Suno 작곡가예요. 다양한 장르의 음악을 만들 수 있어요!",
+    "next": 2
+  },
+  {
+    "id": 2,
+    "speaker": "composer",
+    "text": "가사를 보여주시면, 멋진 곡으로 만들어 드릴게요. 준비되셨나요?",
+    "action": "navigate:MusicGeneration"
+  }
+]

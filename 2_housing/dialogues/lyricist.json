@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "speaker": "lyricist",
+    "text": "안녕하세요! 저는 작사 디렉터예요. 어떤 노래를 만들고 싶으세요?",
+    "next": 2
+  },
+  {
+    "id": 2,
+    "speaker": "lyricist",
+    "text": "좋아요! 그럼 먼저 가사에 대한 몇 가지를 여쭤볼게요. 저를 따라오세요!",
+    "action": "navigate:LyricsInput"
+  }
+]

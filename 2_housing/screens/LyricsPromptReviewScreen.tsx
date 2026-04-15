@@ -1,0 +1,582 @@
+import { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  Image,
+  TouchableOpacity,
+  TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
+  Alert,
+  Switch,
+} from 'react-native';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLyricsStore } from '../stores/lyricsStore';
+import { useTimerStore } from '../stores/timerStore';
+
+const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
+
+const GENRE_OPTIONS = ['K-Pop', 'R&B', '힙합', '클래식', 'BGM', '록', '일렉트로닉', '가요'];
+const MOOD_OPTIONS = ['밝은', '어두운', '감성적', '에너지틱', '몽환적'];
+const TEMPO_OPTIONS = ['느린', '보통', '빠른'];
+const LANGUAGE_OPTIONS = ['한국어', '영어', '일본어', '중국어'];
+const DURATION_OPTIONS = [
+  { value: 30, label: '30초' },
+  { value: 60, label: '1분' },
+  { value: 120, label: '2분' },
+  { value: 180, label: '3분' },
+  { value: 240, label: '4분' },
+  { value: 300, label: '5분' },
+];
+
+type EditField = 'genre' | 'mood' | 'style' | 'content' | 'perspective' | 'language' | 'structure' | 'duration' | 'rap' | null;
+
+const CONTENT_OPTIONS = ['사랑', '이별', '짝사랑', '우정', '성장·자기계발', '자유·일탈', '희망·꿈', '외로움·그리움', '일상의 소소함', '청춘·방황'];
+const PERSPECTIVE_OPTIONS = ['1인칭 — 나', '2인칭 — 너에게 말하는', '3인칭 — 관찰자', '독백체', '대화체'];
+const STYLE_OPTIONS = ['어쿠스틱', '피아노 발라드', '일렉트로닉', '밴드 사운드', '오케스트라', '로파이', '레트로', '트로피컬'];
+const STRUCTURE_OPTIONS = ['절 — 후렴 (2절)', '절 — 후렴 — 브릿지', '절 — 후렴 (3절)', '절 — 후렴 — 절 — 후렴 — 브릿지 — 후렴', '자유 형식'];
+
+type Props = NativeStackScreenProps<any, 'LyricsPromptReview'>;
+
+export default function LyricsPromptReviewScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const store = useLyricsStore();
+  const timerStore = useTimerStore();
+  const [editablePrompt, setEditablePrompt] = useState(store.generatedPrompt);
+  const [editingField, setEditingField] = useState<EditField>(null);
+  const [customInput, setCustomInput] = useState('');
+
+  const buildPromptText = () => {
+    const durationText = store.duration >= 60 ? `${Math.floor(store.duration / 60)}분` : `${store.duration}초`;
+    const rapText = store.hasRap ? ', 랩 파트 포함' : '';
+    const styleText = store.style ? ` 스타일은 ${store.style}입니다.` : '';
+    const refText = store.reference ? ` ${store.reference} 스타일을 참고해주세요.` : '';
+    const kwText = store.keywords ? ` 키워드는 ${store.keywords}입니다.` : '';
+    return `${store.language} ${store.genre} 장르의 ${store.mood} 분위기 노래 가사를 작성해주세요. 곡 길이는 약 ${durationText}이고, ${store.perspective} 시점으로 ${store.content}에 대한 내용입니다. 구조는 ${store.structure}${rapText}.${styleText}${kwText}${refText}`;
+  };
+
+  // 선택요약 수정 시 자동 반영
+  useEffect(() => {
+    const prompt = buildPromptText();
+    setEditablePrompt(prompt);
+    store.setGeneratedPrompt(prompt);
+  }, [store.genre, store.mood, store.content, store.perspective, store.language, store.structure, store.duration, store.hasRap, store.style, store.keywords, store.reference]);
+
+  const handleGenerate = () => {
+    store.setGeneratedPrompt(editablePrompt);
+    timerStore.startTask('lyricist', '작사 대기중');
+    navigation.navigate('Map' as any);
+  };
+
+  const handleFieldEdit = (field: EditField) => {
+    setEditingField(field);
+    setCustomInput('');
+  };
+
+  const handleSelectOption = (value: string) => {
+    switch (editingField) {
+      case 'genre': store.setGenre(value); break;
+      case 'mood': store.setMood(value); break;
+      case 'style': store.setStyle(value); break;
+      case 'content': store.setContent(value); break;
+      case 'perspective': store.setPerspective(value); break;
+      case 'language': store.setLanguage(value); break;
+      case 'structure': store.setStructure(value); break;
+    }
+    setEditingField(null);
+    // useEffect가 자동 반영
+  };
+
+  const handleDurationSelect = (value: number) => {
+    if (value > 300) {
+      Alert.alert('알림', '5분 미만으로 입력해주세요.');
+      return;
+    }
+    store.setDuration(value);
+    setEditingField(null);
+    // useEffect가 자동 반영
+  };
+
+  const handleRapToggle = (value: boolean) => {
+    store.setHasRap(value);
+    setEditingField(null);
+    // useEffect가 자동 반영
+  };
+
+  const handleCustomSubmit = () => {
+    if (!customInput.trim()) return;
+    handleSelectOption(customInput.trim());
+  };
+
+  const getOptionsForField = (): string[] => {
+    switch (editingField) {
+      case 'genre': return GENRE_OPTIONS;
+      case 'mood': return MOOD_OPTIONS;
+      case 'style': return STYLE_OPTIONS;
+      case 'content': return CONTENT_OPTIONS;
+      case 'perspective': return PERSPECTIVE_OPTIONS;
+      case 'language': return LANGUAGE_OPTIONS;
+      case 'structure': return STRUCTURE_OPTIONS;
+      default: return [];
+    }
+  };
+
+  const getFieldTitle = (): string => {
+    switch (editingField) {
+      case 'genre': return '장르 선택';
+      case 'mood': return '분위기 선택';
+      case 'style': return '스타일 선택';
+      case 'content': return '주제 선택';
+      case 'perspective': return '시점 선택';
+      case 'language': return '언어 선택';
+      case 'structure': return '구조 선택';
+      case 'duration': return '곡 길이 선택';
+      case 'rap': return '랩 파트';
+      default: return '';
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}
+    >
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Director message */}
+        <View style={styles.directorRow}>
+          <View style={styles.portraitContainer}>
+            <Image source={LYRICIST_PORTRAIT} style={styles.portraitImage} />
+          </View>
+          <View style={styles.directorBubble}>
+            <Text style={styles.directorName}>작사 디렉터</Text>
+            <Text style={styles.directorText}>
+              이렇게 작사할까요? 항목을 탭하면 수정할 수 있어요!
+            </Text>
+          </View>
+        </View>
+
+        {/* Summary - clickable items (위) */}
+        <View style={styles.summarySection}>
+          <Text style={styles.sectionTitle}>선택 요약 (탭하여 수정)</Text>
+          <View style={styles.summaryGrid}>
+            <TouchableOpacity onPress={() => handleFieldEdit('genre')}>
+              <SummaryItem label="장르" value={store.genre} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('mood')}>
+              <SummaryItem label="분위기" value={store.mood} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('style')}>
+              <SummaryItem label="스타일" value={store.style || '-'} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('content')}>
+              <SummaryItem label="주제" value={store.content} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('perspective')}>
+              <SummaryItem label="시점" value={store.perspective} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('language')}>
+              <SummaryItem label="언어" value={store.language} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('structure')}>
+              <SummaryItem label="구조" value={store.structure} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('duration')}>
+              <SummaryItem label="길이" value={store.duration >= 60 ? `${Math.floor(store.duration / 60)}분` : `${store.duration}초`} editable />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('rap')}>
+              <SummaryItem label="랩" value={store.hasRap ? '포함' : '없음'} editable />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Prompt review (아래) */}
+        <View style={styles.promptSection}>
+          <Text style={styles.sectionTitle}>요청사항</Text>
+          <TextInput
+            style={styles.promptInput}
+            value={editablePrompt}
+            onChangeText={setEditablePrompt}
+            multiline
+            textAlignVertical="top"
+            placeholderTextColor="#555"
+          />
+        </View>
+
+        {/* Buttons */}
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.backButtonText}>뒤로 가기</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.generateButton}
+            onPress={handleGenerate}
+          >
+            <Text style={styles.generateButtonText}>가사 생성 시작</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ height: 40 }} />
+      </ScrollView>
+
+      {/* Edit Modal */}
+      <Modal
+        visible={editingField !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditingField(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setEditingField(null)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{getFieldTitle()}</Text>
+
+            {editingField === 'rap' ? (
+              <View style={styles.rapToggleRow}>
+                <Text style={styles.rapToggleLabel}>랩 파트 포함</Text>
+                <Switch
+                  value={store.hasRap}
+                  onValueChange={handleRapToggle}
+                  trackColor={{ false: '#333', true: '#e94560' }}
+                  thumbColor={store.hasRap ? '#fff' : '#888'}
+                />
+              </View>
+            ) : editingField === 'duration' ? (
+              <View style={styles.optionsContainer}>
+                {DURATION_OPTIONS.map((d) => (
+                  <TouchableOpacity
+                    key={d.value}
+                    style={[
+                      styles.optionButton,
+                      store.duration === d.value && styles.optionSelected,
+                    ]}
+                    onPress={() => handleDurationSelect(d.value)}
+                  >
+                    <Text
+                      style={[
+                        styles.optionText,
+                        store.duration === d.value && styles.optionTextSelected,
+                      ]}
+                    >
+                      {d.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <>
+                <View style={styles.optionsContainer}>
+                  {getOptionsForField().map((opt) => (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[
+                        styles.optionButton,
+                        ((editingField === 'genre' && store.genre === opt) ||
+                          (editingField === 'mood' && store.mood === opt) ||
+                          (editingField === 'style' && store.style === opt) ||
+                          (editingField === 'content' && store.content === opt) ||
+                          (editingField === 'perspective' && store.perspective === opt) ||
+                          (editingField === 'language' && store.language === opt) ||
+                          (editingField === 'structure' && store.structure === opt)) &&
+                          styles.optionSelected,
+                      ]}
+                      onPress={() => handleSelectOption(opt)}
+                    >
+                      <Text
+                        style={[
+                          styles.optionText,
+                          ((editingField === 'genre' && store.genre === opt) ||
+                            (editingField === 'mood' && store.mood === opt) ||
+                            (editingField === 'style' && store.style === opt) ||
+                            (editingField === 'content' && store.content === opt) ||
+                            (editingField === 'perspective' && store.perspective === opt) ||
+                            (editingField === 'language' && store.language === opt) ||
+                            (editingField === 'structure' && store.structure === opt)) &&
+                            styles.optionTextSelected,
+                        ]}
+                      >
+                        {opt}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={styles.customRow}>
+                  <TextInput
+                    style={styles.customInput}
+                    placeholder="직접 입력..."
+                    placeholderTextColor="#666"
+                    value={customInput}
+                    onChangeText={setCustomInput}
+                    onSubmitEditing={handleCustomSubmit}
+                  />
+                  <TouchableOpacity
+                    style={[styles.customSubmit, !customInput.trim() && styles.customSubmitDisabled]}
+                    onPress={handleCustomSubmit}
+                    disabled={!customInput.trim()}
+                  >
+                    <Text style={styles.customSubmitText}>확인</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </KeyboardAvoidingView>
+  );
+}
+
+function SummaryItem({ label, value, editable }: { label: string; value: string; editable?: boolean }) {
+  return (
+    <View style={[styles.summaryItem, editable && styles.summaryItemEditable]}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <View style={styles.summaryValueRow}>
+        <Text style={styles.summaryValue}>{value}</Text>
+        {editable && <Text style={styles.editIcon}>{'✎'}</Text>}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0a1a',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingTop: 16,
+  },
+  directorRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 24,
+  },
+  portraitContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#e94560',
+    marginRight: 12,
+  },
+  portraitImage: {
+    width: 60,
+    height: 180,
+    resizeMode: 'cover',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  directorBubble: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e94560',
+    padding: 12,
+  },
+  directorName: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#e94560',
+    marginBottom: 4,
+  },
+  directorText: {
+    fontSize: 14,
+    color: '#fff',
+    lineHeight: 20,
+  },
+  promptSection: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 10,
+  },
+  promptInput: {
+    backgroundColor: '#1a1a2e',
+    borderWidth: 1,
+    borderColor: '#e94560',
+    borderRadius: 12,
+    padding: 14,
+    color: '#fff',
+    fontSize: 14,
+    minHeight: 160,
+    lineHeight: 22,
+  },
+  summarySection: {
+    marginBottom: 24,
+  },
+  summaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  summaryItem: {
+    backgroundColor: '#1a1a2e',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  summaryItemEditable: {
+    borderColor: '#e94560',
+    borderStyle: 'dashed',
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: '#888',
+    marginBottom: 2,
+  },
+  summaryValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  summaryValue: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  editIcon: {
+    fontSize: 12,
+    color: '#e94560',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  backButton: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    borderWidth: 1,
+    borderColor: '#e94560',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  backButtonText: {
+    color: '#e94560',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  generateButton: {
+    flex: 2,
+    backgroundColor: '#e94560',
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  generateButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  optionsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  optionButton: {
+    backgroundColor: '#0a0a1a',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  optionSelected: {
+    backgroundColor: '#e94560',
+    borderColor: '#e94560',
+  },
+  optionText: {
+    color: '#aaa',
+    fontSize: 14,
+  },
+  optionTextSelected: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  customRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  customInput: {
+    flex: 1,
+    backgroundColor: '#0a0a1a',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: '#fff',
+    fontSize: 14,
+  },
+  customSubmit: {
+    backgroundColor: '#e94560',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  customSubmitDisabled: {
+    backgroundColor: '#333',
+  },
+  customSubmitText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  rapToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  rapToggleLabel: {
+    color: '#fff',
+    fontSize: 16,
+  },
+});

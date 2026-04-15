@@ -1,0 +1,31 @@
+# .gitignore 기본 항목
+node_modules/
+.expo/
+dist/
+web-build/
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+*.pem
+.env*.local
+*.tsbuildinfo
+
+# EAS 빌드에 불필요한 파일 (루트의 참고용 이미지, 문서)
+*.md
+*.py
+KakaoTalk_Photo_*
+Gemini_Generated_Image_*
+스크린샷*
+image (1).png
+image (2).png
+Gemini_Generated_Image_*
+package-lock.json

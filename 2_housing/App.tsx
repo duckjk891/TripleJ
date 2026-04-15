@@ -1,187 +1,239 @@
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
-import {
-  StyleSheet,
-  View,
-  Image,
-  ScrollView,
-  Text,
-  Modal,
-  TouchableOpacity,
-  useWindowDimensions,
-} from 'react-native';
-import Character, { DirectorType } from './components/Character';
+import { Text, TouchableOpacity } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { DirectorType } from './components/Character';
 
-const MAP_IMAGE = require('./assets/map_rendered.png');
-const MAP_WIDTH = 704;
-const MAP_HEIGHT = 2208;
+import SplashScreen from './screens/SplashScreen';
+import ChartScreen from './screens/ChartScreen';
+import PlaylistScreen from './screens/PlaylistScreen';
+import MapScreen from './screens/MapScreen';
+import MyMusicScreen from './screens/MyMusicScreen';
+import SettingsScreen from './screens/SettingsScreen';
+import DialogueScreen from './screens/DialogueScreen';
+import LyricsInputScreen from './screens/LyricsInputScreen';
+import LyricsPromptReviewScreen from './screens/LyricsPromptReviewScreen';
+import LyricsLoadingScreen from './screens/LyricsLoadingScreen';
+import LyricsResultScreen from './screens/LyricsResultScreen';
+import ComposerInputScreen from './screens/ComposerInputScreen';
+import ComposerSelectScreen from './screens/ComposerSelectScreen';
+import MusicGenerationScreen from './screens/MusicGenerationScreen';
+import MusicLoadingScreen from './screens/MusicLoadingScreen';
+import MusicResultScreen from './screens/MusicResultScreen';
+import CoverGenerationScreen from './screens/CoverGenerationScreen';
+import PlayerScreen from './screens/PlayerScreen';
 
-// 디렉터 초상화
-const PORTRAITS: Record<DirectorType, any> = {
-  artist: require('./assets/portraits/artist_director.png'),
-  lyricist: require('./assets/portraits/lyricist_director.png'),
-  composer: require('./assets/portraits/composer_director.png'),
-  image: require('./assets/portraits/image_director.png'),
-  video: require('./assets/portraits/video_director.png'),
+export type StudioStackParamList = {
+  Map: undefined;
+  Dialogue: {
+    directorType: DirectorType;
+    directorName: string;
+    directorRole: string;
+    directorY: number;
+  };
+  LyricsInput: undefined;
+  LyricsPromptReview: undefined;
+  LyricsLoading: undefined;
+  LyricsResult: undefined;
+  ComposerInput: undefined;
+  ComposerSelect: undefined;
+  MusicGeneration: undefined;
+  MusicLoading: undefined;
+  MusicResult: undefined;
+  CoverGeneration: undefined;
 };
 
-const DIRECTOR_NAMES: Record<DirectorType, string> = {
-  artist: '아티스트 디렉터',
-  lyricist: '작사 디렉터',
-  composer: '작곡 디렉터',
-  image: '이미지 디렉터',
-  video: '영상 디렉터',
+export type RootStackParamList = {
+  Splash: undefined;
+  MainTabs: undefined;
+  Settings: undefined;
+  Player: { track: any };
 };
 
-const DIRECTOR_ROLES: Record<DirectorType, string> = {
-  artist: '아티스트 캐릭터를 생성하고 관리합니다',
-  lyricist: 'AI로 가사를 작성합니다',
-  composer: 'AI로 음악을 제작합니다',
-  image: '앨범 자켓과 MV 씬 이미지를 디자인합니다',
-  video: '뮤직비디오를 제작합니다',
-};
+const RootStack = createNativeStackNavigator<RootStackParamList>();
+const StudioStack = createNativeStackNavigator<StudioStackParamList>();
+const Tab = createBottomTabNavigator();
 
-// TMX 바닥 레이어 분석 기반 방 좌표 (원본 px)
-// 방1: 행6-13 (y=192~448), 방2: 행16-23 (y=512~768), 방3: 행26-33 (y=832~1088)
-// 방4: 행36-43 (y=1152~1408), 방5: 행46-53 (y=1472~1728)
-// 각 방 x범위: 열1-12 (x=32~384)
-const DIRECTORS = [
-  { type: 'artist' as DirectorType, x: 208, y: 340 },    // 방1 아티스트
-  { type: 'composer' as DirectorType, x: 208, y: 660 },   // 방2 작곡
-  { type: 'lyricist' as DirectorType, x: 208, y: 980 },   // 방3 녹음(작사)
-  { type: 'image' as DirectorType, x: 208, y: 1300 },     // 방4 이미지
-  { type: 'video' as DirectorType, x: 208, y: 1620 },     // 방5 영상
-];
-
-export default function App() {
-  const { width: screenWidth } = useWindowDimensions();
-  const mapScale = screenWidth / MAP_WIDTH;
-  const displayHeight = MAP_HEIGHT * mapScale;
-
-  const [selectedDirector, setSelectedDirector] = useState<DirectorType | null>(null);
-
+function StudioNavigator() {
   return (
-    <View style={styles.container}>
-      <StatusBar style="light" />
-      <ScrollView
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        bounces={false}
-      >
-        {/* 맵 + 캐릭터를 감싸는 컨테이너 */}
-        <View style={{ width: screenWidth, height: displayHeight }}>
-          {/* 맵 이미지 (뒤쪽 레이어) */}
-          <Image
-            source={MAP_IMAGE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: screenWidth,
-              height: displayHeight,
-            }}
-            resizeMode="contain"
-          />
-
-          {/* 캐릭터 배치 (앞쪽 레이어) */}
-          {DIRECTORS.map((d) => (
-            <Character
-              key={d.type}
-              type={d.type}
-              x={d.x}
-              y={d.y}
-              mapScale={mapScale}
-              onPress={() => setSelectedDirector(d.type)}
-            />
-          ))}
-        </View>
-      </ScrollView>
-
-      {/* 디렉터 탭 시 간단한 대화창 */}
-      <Modal
-        visible={selectedDirector !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectedDirector(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.dialogBox}>
-            {selectedDirector && (
-              <>
-                <Image
-                  source={PORTRAITS[selectedDirector]}
-                  style={styles.portrait}
-                />
-                <Text style={styles.directorName}>
-                  {DIRECTOR_NAMES[selectedDirector]}
-                </Text>
-                <Text style={styles.directorRole}>
-                  {DIRECTOR_ROLES[selectedDirector]}
-                </Text>
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() => setSelectedDirector(null)}
-                >
-                  <Text style={styles.closeText}>닫기</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
-    </View>
+    <StudioStack.Navigator
+      initialRouteName="Map"
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: '#0a0a1a' },
+        animation: 'fade',
+      }}
+    >
+      <StudioStack.Screen name="Map" component={MapScreen} />
+      <StudioStack.Screen
+        name="Dialogue"
+        component={DialogueScreen}
+        options={{
+          presentation: 'transparentModal',
+          animation: 'fade',
+        }}
+      />
+      <StudioStack.Screen name="LyricsInput" component={LyricsInputScreen} />
+      <StudioStack.Screen
+        name="LyricsPromptReview"
+        component={LyricsPromptReviewScreen}
+      />
+      <StudioStack.Screen
+        name="LyricsLoading"
+        component={LyricsLoadingScreen}
+        options={{ gestureEnabled: false }}
+      />
+      <StudioStack.Screen name="LyricsResult" component={LyricsResultScreen} />
+      <StudioStack.Screen name="ComposerInput" component={ComposerInputScreen} />
+      <StudioStack.Screen
+        name="ComposerSelect"
+        component={ComposerSelectScreen}
+      />
+      <StudioStack.Screen
+        name="MusicGeneration"
+        component={MusicGenerationScreen}
+      />
+      <StudioStack.Screen
+        name="MusicLoading"
+        component={MusicLoadingScreen}
+        options={{ gestureEnabled: false }}
+      />
+      <StudioStack.Screen name="MusicResult" component={MusicResultScreen} />
+      <StudioStack.Screen name="CoverGeneration" component={CoverGenerationScreen} />
+    </StudioStack.Navigator>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  dialogBox: {
-    backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-  },
-  portrait: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 3,
-    borderColor: '#e94560',
-    marginBottom: 12,
-  },
-  directorName: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-  },
-  directorRole: {
-    fontSize: 14,
-    color: '#aaa',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  closeButton: {
-    backgroundColor: '#e94560',
-    paddingHorizontal: 40,
-    paddingVertical: 12,
-    borderRadius: 25,
-  },
-  closeText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-});
+function MainTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: '#0a0a1a',
+          borderTopColor: '#1a1a2e',
+          borderTopWidth: 1,
+        },
+        tabBarActiveTintColor: '#e94560',
+        tabBarInactiveTintColor: '#666',
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600',
+        },
+        tabBarIconStyle: {
+          marginTop: 0,
+        },
+      }}
+    >
+      <Tab.Screen
+        name="Chart"
+        component={ChartScreen}
+        options={({ navigation }) => ({
+          tabBarLabel: '차트',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size - 6, color }}>{'☰'}</Text>
+          ),
+          headerShown: true,
+          headerTitle: '차트',
+          headerStyle: { backgroundColor: '#0a0a1a' },
+          headerTintColor: '#fff',
+          headerRight: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
+              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+            </TouchableOpacity>
+          ),
+        })}
+      />
+      <Tab.Screen
+        name="Playlist"
+        component={PlaylistScreen}
+        options={({ navigation }) => ({
+          tabBarLabel: '플레이리스트',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size - 6, color }}>{'♬'}</Text>
+          ),
+          headerShown: true,
+          headerTitle: '플레이리스트',
+          headerStyle: { backgroundColor: '#0a0a1a' },
+          headerTintColor: '#fff',
+          headerRight: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
+              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+            </TouchableOpacity>
+          ),
+        })}
+      />
+      <Tab.Screen
+        name="Studio"
+        component={StudioNavigator}
+        options={({ navigation }) => ({
+          tabBarLabel: '작업실',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size - 6, color }}>{'✦'}</Text>
+          ),
+          headerShown: true,
+          headerTitle: '작업실',
+          headerStyle: { backgroundColor: '#0a0a1a' },
+          headerTintColor: '#fff',
+          headerRight: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
+              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+            </TouchableOpacity>
+          ),
+        })}
+      />
+      <Tab.Screen
+        name="MyMusic"
+        component={MyMusicScreen}
+        options={({ navigation }) => ({
+          tabBarLabel: '마이뮤직',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size - 6, color }}>{'♪'}</Text>
+          ),
+          headerShown: true,
+          headerTitle: '마이뮤직',
+          headerStyle: { backgroundColor: '#0a0a1a' },
+          headerTintColor: '#fff',
+          headerRight: () => (
+            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
+              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+            </TouchableOpacity>
+          ),
+        })}
+      />
+    </Tab.Navigator>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="light" />
+      <NavigationContainer>
+        <RootStack.Navigator
+          initialRouteName="Splash"
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: '#0a0a1a' },
+            animation: 'fade',
+          }}
+        >
+          <RootStack.Screen name="Splash" component={SplashScreen} />
+          <RootStack.Screen name="MainTabs" component={MainTabs} />
+          <RootStack.Screen
+            name="Player"
+            component={PlayerScreen}
+            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          />
+          <RootStack.Screen
+            name="Settings"
+            component={SettingsScreen}
+            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          />
+        </RootStack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
+  );
+}

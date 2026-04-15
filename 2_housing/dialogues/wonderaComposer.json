@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "speaker": "composer",
+    "text": "안녕하세요! 저는 Wondera 작곡가예요. 고품질 음악 제작이 전문이에요.",
+    "next": 2
+  },
+  {
+    "id": 2,
+    "speaker": "composer",
+    "text": "레퍼런스 음악을 참고해서 원하시는 스타일로 만들어 드릴 수 있어요!",
+    "action": "navigate:MusicGeneration"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "speaker": "lyricist",
+    "text": "가사가 준비됐으니, 이제 작곡을 할 차례예요!",
+    "next": 2
+  },
+  {
+    "id": 2,
+    "speaker": "lyricist",
+    "text": "제가 믿을 수 있는 작곡가 두 분을 소개해드릴게요.",
+    "action": "navigate:ComposerSelect"
+  }
+]
