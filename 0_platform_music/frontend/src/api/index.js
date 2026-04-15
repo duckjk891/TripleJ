@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: `${window.location.protocol}//${window.location.hostname}:9002/api`,
+  baseURL: `${window.location.protocol}//${window.location.hostname}:9003/api`,
 });
 
 // JWT 토큰 자동 첨부
@@ -391,7 +391,7 @@ export const recordAdClick = (itemId) =>
 export const getActiveAds = (category) =>
   API.get('/business/ads/active', { params: category ? { category } : {} });
 export const adImageUrl = (objectName) =>
-  `${window.location.protocol}//${window.location.hostname}:9002/api/business/items/image/${objectName}`;
+  `${window.location.protocol}//${window.location.hostname}:9003/api/business/items/image/${objectName}`;
 
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');
