@@ -87,19 +87,31 @@ async def sync_playcounts():
         logger.info(f"Synced playcounts for {total_synced} tracks.")
 
 
+_scheduler = None
+
+
 def start_playcount_scheduler():
-    """Start the APScheduler background job for playcount sync."""
+    """Start the APScheduler background job for playcount sync.
+
+    Reload-safe: reuses existing scheduler if already running,
+    preventing duplicate spawn processes under uvicorn --reload.
+    """
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        logger.info("Playcount sync scheduler already running, skipping duplicate start.")
+        return _scheduler
+
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.interval import IntervalTrigger
 
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
+    _scheduler = AsyncIOScheduler()
+    _scheduler.add_job(
         sync_playcounts,
         trigger=IntervalTrigger(seconds=SYNC_INTERVAL_SECONDS),
         id="playcount_sync",
         name="Redis->MongoDB playcount sync",
         replace_existing=True,
     )
-    scheduler.start()
+    _scheduler.start()
     logger.info(f"Playcount sync scheduler started (interval: {SYNC_INTERVAL_SECONDS}s).")
-    return scheduler
+    return _scheduler

@@ -23,40 +23,46 @@ async def generate_cover_image(
     mood: str = None,
     style: str = None,
     character_image_bytes: bytes = None,
-    scenario: str = None,
+    user_prompt: str = None,
 ) -> bytes:
     """Generate album cover image using Gemini. Returns PNG bytes."""
 
-    # Build prompt
+    # Build prompt — two distinct paths based on character sheet usage
     prompt_parts = ["Create a beautiful album cover art image."]
     prompt_parts.append('Song title: "{}"'.format(title))
     if genre:
         prompt_parts.append("Genre: {}".format(genre))
     if mood:
         prompt_parts.append("Mood/atmosphere: {}".format(mood))
-    if style:
-        prompt_parts.append("Visual style: {}".format(style))
-    prompt_parts.append(
-        "The image MUST be in photorealistic style — like a real photograph "
-        "taken with a high-end camera. Use realistic lighting, textures, and "
-        "depth of field. The image should be square (1:1 aspect ratio), "
-        "visually striking, suitable as a music album cover. "
-        "Do NOT include any text or letters in the image."
-    )
-
-    if scenario:
-        prompt_parts.append(
-            "MV Scenario: {}. Use this narrative to inform the cover image's "
-            "mood, setting, and key visual elements.".format(scenario[:1000])
-        )
 
     if character_image_bytes:
+        # [A] With character sheet — enforce photorealistic style
+        prompt_parts.append(
+            "The image MUST be in photorealistic style — like a real photograph "
+            "taken with a high-end camera. Use realistic lighting, textures, and "
+            "depth of field. The image should be square (1:1 aspect ratio), "
+            "visually striking, suitable as a music album cover. "
+            "Do NOT include any text or letters in the image."
+        )
         prompt_parts.append(
             "IMPORTANT: The provided character reference sheet shows the main character. "
             "Feature this person prominently in the album cover as the main subject. "
             "Maintain the person's exact appearance (face, hair, features) from the reference. "
             "The character must be photorealistic, not illustrated or stylized."
         )
+        if user_prompt:
+            prompt_parts.append("Additional direction: {}".format(user_prompt))
+    else:
+        # [B] Without character sheet — user can request any style
+        if style:
+            prompt_parts.append("Visual style: {}".format(style))
+        prompt_parts.append(
+            "The image should be square (1:1 aspect ratio), "
+            "visually striking, suitable as a music album cover. "
+            "Do NOT include any text or letters in the image."
+        )
+        if user_prompt:
+            prompt_parts.append("Style and direction: {}".format(user_prompt))
 
     prompt = " ".join(prompt_parts)
 
@@ -73,6 +79,15 @@ async def generate_cover_image(
         })
 
     payload = {
+        "systemInstruction": {
+            "parts": [{"text": (
+                "You are a world-class album cover art director and photographer. "
+                "You specialize in creating iconic, visually striking album covers "
+                "that capture the essence of music through photorealistic imagery. "
+                "You have deep expertise in composition, lighting, color theory, "
+                "and visual storytelling for the music industry."
+            )}]
+        },
         "contents": [{"parts": request_parts}],
         "generationConfig": {
             "responseModalities": ["TEXT", "IMAGE"],

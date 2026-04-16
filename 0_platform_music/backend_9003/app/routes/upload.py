@@ -29,6 +29,7 @@ class GenerateCoverRequest(BaseModel):
     mood: Optional[str] = None
     style: Optional[str] = None
     character_object_name: Optional[str] = None
+    user_prompt: Optional[str] = None  # user's free-form style description
 
 
 class GenerateMVRequest(BaseModel):
@@ -189,6 +190,7 @@ async def generate_cover(
             mood=body.mood,
             style=body.style,
             character_image_bytes=character_image_bytes,
+            user_prompt=body.user_prompt,
         )
 
         # Save to MinIO

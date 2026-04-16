@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # OpenAI (ChatGPT for lyrics generation)
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    openai_model_advanced: str = "gpt-5.4"
+
+    # Anthropic (Claude)
+    anthropic_api_key: str = ""
 
     # Google Gemini (AI cover image generation)
     google_api_key: str = ""

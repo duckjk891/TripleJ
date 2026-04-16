@@ -16,7 +16,7 @@
   --color-hover: #1E1E38;
   --header-height: 64px;
   --player-height: 80px;
-  --max-width: 1200px;
+  --max-width: 1400px;
 }
 
 * {
@@ -83,7 +83,7 @@ img {
 .container {
   max-width: var(--max-width);
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 24px;
   width: 100%;
 }
 

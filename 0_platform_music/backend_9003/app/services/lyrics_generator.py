@@ -1,13 +1,18 @@
 """
-Lyrics generation service using OpenAI ChatGPT API.
+Lyrics generation service using OpenAI ChatGPT API and Anthropic Claude API.
 Takes a user prompt and generates structured lyrics with section tags.
+Supports model selection: single model or dual-model comparison.
 """
 
+import asyncio
+
+import anthropic
 from openai import AsyncOpenAI
 
 from ..config import settings
 
 _client = None
+_anthropic_client = None
 
 
 def _get_client() -> AsyncOpenAI:
@@ -15,6 +20,13 @@ def _get_client() -> AsyncOpenAI:
     if _client is None:
         _client = AsyncOpenAI(api_key=settings.openai_api_key)
     return _client
+
+
+def _get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _anthropic_client
 
 
 SYSTEM_PROMPT_SOLO = """You are a professional songwriter specializing in writing lyrics optimized for Suno AI music generation.
@@ -143,25 +155,13 @@ If language is Korean, write primarily in Korean with occasional English OK for 
 """
 
 
-async def generate_lyrics(
-    prompt: str,
-    genre: str = None,
-    mood: str = None,
-    style: str = None,
-    duration_minutes: int = 2,
-    duet: bool = False,
-    duet_main_vocal_style: str = None,
-    duet_sub_vocal_style: str = None,
-    language: str = "ko",
-) -> dict:
-    """
-    Generate lyrics from a user prompt using ChatGPT.
-
-    Returns:
-        dict with 'lyrics' (str) and 'title' (str)
-    """
-    client = _get_client()
-
+def _build_user_message(
+    prompt: str, genre: str, mood: str, style: str,
+    duration_minutes: int, duet: bool,
+    duet_main_vocal_style: str, duet_sub_vocal_style: str,
+    language: str,
+) -> str:
+    """Build user message for lyrics generation (shared by OpenAI and Claude paths)."""
     user_message = f"곡 설명: {prompt}"
     if genre:
         user_message += f"\n장르: {genre}"
@@ -174,7 +174,6 @@ async def generate_lyrics(
     else:
         user_message += "\n한국어로 가사를 작성해주세요."
 
-    # 음악 길이에 따른 가사 분량 가이드
     duration_guide = {
         1: "약 1분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 1개 + Chorus + Outro.",
         2: "약 2분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 2개 + Chorus 반복 + Outro. 가사를 충분히 길게 작성해주세요.",
@@ -183,7 +182,6 @@ async def generate_lyrics(
     guide = duration_guide.get(duration_minutes, duration_guide[2])
     user_message += f"\n{guide}"
 
-    # 듀엣 보컬 스타일 가이드
     if duet and (duet_main_vocal_style or duet_sub_vocal_style):
         user_message += "\n\n듀엣 보컬 가이드:"
         if duet_main_vocal_style:
@@ -191,11 +189,30 @@ async def generate_lyrics(
         if duet_sub_vocal_style:
             user_message += f"\n- 상대 보컬 느낌: {duet_sub_vocal_style} (이 느낌에 맞는 파트를 배분해주세요)"
 
-    # Generate lyrics
+    return user_message
+
+
+async def _generate_lyrics_openai(
+    prompt: str, genre: str, mood: str, style: str,
+    duration_minutes: int, duet: bool,
+    duet_main_vocal_style: str, duet_sub_vocal_style: str,
+    language: str,
+    model_name: str = None,
+) -> dict:
+    """Generate lyrics using OpenAI ChatGPT."""
+    client = _get_client()
+    model = model_name or settings.openai_model
+
+    system_prompt = SYSTEM_PROMPT_DUET if duet else SYSTEM_PROMPT_SOLO
+    user_message = _build_user_message(
+        prompt, genre, mood, style, duration_minutes, duet,
+        duet_main_vocal_style, duet_sub_vocal_style, language,
+    )
+
     lyrics_response = await client.chat.completions.create(
-        model=settings.openai_model,
+        model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT_DUET if duet else SYSTEM_PROMPT_SOLO},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         temperature=0.8,
@@ -204,9 +221,8 @@ async def generate_lyrics(
 
     lyrics = lyrics_response.choices[0].message.content.strip()
 
-    # Generate title
     title_response = await client.chat.completions.create(
-        model=settings.openai_model,
+        model=model,
         messages=[
             {
                 "role": "system",
@@ -224,4 +240,124 @@ async def generate_lyrics(
     return {
         "title": title,
         "lyrics": lyrics,
+        "model": model,
     }
+
+
+async def _generate_lyrics_claude(
+    prompt: str, genre: str, mood: str, style: str,
+    duration_minutes: int, duet: bool,
+    duet_main_vocal_style: str, duet_sub_vocal_style: str,
+    language: str,
+    model_name: str = "claude-opus-4-6",
+) -> dict:
+    """Generate lyrics using Anthropic Claude."""
+    client = _get_anthropic_client()
+    model = model_name
+
+    system_prompt = SYSTEM_PROMPT_DUET if duet else SYSTEM_PROMPT_SOLO
+    user_message = _build_user_message(
+        prompt, genre, mood, style, duration_minutes, duet,
+        duet_main_vocal_style, duet_sub_vocal_style, language,
+    )
+
+    lyrics_response = await client.messages.create(
+        model=model,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+        temperature=0.8,
+        max_tokens=1500,
+    )
+
+    lyrics = lyrics_response.content[0].text.strip()
+
+    title_response = await client.messages.create(
+        model=model,
+        system=(
+            "Generate a short, catchy song title (1-5 words) for the following lyrics. "
+            "Output ONLY the title, nothing else. Match the language of the lyrics."
+        ),
+        messages=[{"role": "user", "content": lyrics}],
+        temperature=0.7,
+        max_tokens=50,
+    )
+
+    title = title_response.content[0].text.strip().strip('"\'')
+
+    return {
+        "title": title,
+        "lyrics": lyrics,
+        "model": model,
+    }
+
+
+async def generate_lyrics(
+    prompt: str,
+    genre: str = None,
+    mood: str = None,
+    style: str = None,
+    duration_minutes: int = 2,
+    duet: bool = False,
+    duet_main_vocal_style: str = None,
+    duet_sub_vocal_style: str = None,
+    language: str = "ko",
+    models: list = None,
+) -> dict:
+    """
+    Generate lyrics from a user prompt.
+
+    Args:
+        models: List of model names to use. If None or empty, uses default OpenAI model.
+                 Supported: "gpt-4o-mini", "claude-opus-4-6", etc.
+                 If two models given, runs both in parallel and returns comparison results.
+
+    Returns:
+        Single model: {"title": ..., "lyrics": ..., "model": "gpt-4o-mini"}
+        Both models: {"results": [{"title":..., "lyrics":..., "model":"gpt-4o-mini"}, {"title":..., "lyrics":..., "model":"claude-opus-4-6"}]}
+    """
+    common_args = dict(
+        prompt=prompt,
+        genre=genre,
+        mood=mood,
+        style=style,
+        duration_minutes=duration_minutes,
+        duet=duet,
+        duet_main_vocal_style=duet_main_vocal_style,
+        duet_sub_vocal_style=duet_sub_vocal_style,
+        language=language,
+    )
+
+    # Default behavior: use existing OpenAI model (backward compatible)
+    if not models:
+        result = await _generate_lyrics_openai(**common_args)
+        return result
+
+    def _make_task(model_name: str):
+        if model_name.startswith("claude-"):
+            return _generate_lyrics_claude(**common_args, model_name=model_name)
+        else:
+            return _generate_lyrics_openai(**common_args, model_name=model_name)
+
+    if len(models) == 1:
+        return await _make_task(models[0])
+
+    # Two models: run in parallel
+    results = await asyncio.gather(
+        _make_task(models[0]),
+        _make_task(models[1]),
+        return_exceptions=True,
+    )
+
+    # Filter out exceptions, return successful results
+    valid_results = []
+    for r in results:
+        if isinstance(r, Exception):
+            continue
+        valid_results.append(r)
+
+    if len(valid_results) == 0:
+        raise RuntimeError("All model calls failed")
+    if len(valid_results) == 1:
+        return valid_results[0]
+
+    return {"results": valid_results}

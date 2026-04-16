@@ -68,6 +68,7 @@ async def start_scene_video_kling(
     lyrics_segment: str = None,
     scene_type: str = "drama",
     duration: float = 10.0,
+    video_prompt: Optional[str] = None,
 ) -> str:
     """Start image-to-video generation via Kling Omni Video API.
 
@@ -95,12 +96,17 @@ async def start_scene_video_kling(
 
     ref_text = " ".join(ref_parts)
 
+    camera_motion = "Camera/Motion: {}. ".format(video_prompt) if video_prompt else ""
+
     if scene_type == "lipsync" and lyrics_segment:
-        video_prompt = "{}{} {} ONLY the main character appears in this scene, no other people. The main character faces the camera ALONE and sings these lyrics with synchronized lip movements: \"{}\"".format(
-            mv_context, prompt, ref_text, lyrics_segment
+        final_prompt = "{}{} {} {}ONLY the main character appears in this scene, no other people. The main character faces the camera ALONE and sings these lyrics with synchronized lip movements: \"{}\"".format(
+            mv_context, prompt, ref_text, camera_motion, lyrics_segment
         )
     else:
-        video_prompt = "{}{} {} Smooth cinematic camera movement.".format(mv_context, prompt, ref_text)
+        if video_prompt:
+            final_prompt = "{}{} {} {}".format(mv_context, prompt, ref_text, camera_motion)
+        else:
+            final_prompt = "{}{} {} Smooth cinematic camera movement.".format(mv_context, prompt, ref_text)
 
     # Build image_list (TOP LEVEL, no "input" wrapper)
     image_list = []
@@ -132,7 +138,7 @@ async def start_scene_video_kling(
 
     body = {
         "model_name": "kling-v3-omni",
-        "prompt": video_prompt,
+        "prompt": final_prompt,
         "mode": "pro",
         "duration": str(kling_duration),
         "aspect_ratio": "16:9",

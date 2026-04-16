@@ -180,6 +180,8 @@ export const retrySyncLabs = (jobId, sceneNumber) =>
   API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/retry-sync`);
 export const separateVocal = (jobId, sceneNumber) =>
   API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/separate-vocal`, {}, { timeout: 300000 });
+export const selectScenario = (jobId, model) => API.post(`/mv/jobs/${jobId}/select-scenario`, { model });
+export const selectPrompts = (jobId, model) => API.post(`/mv/jobs/${jobId}/select-prompts`, { model });
 
 // Character
 export const generateCharacterSheet = (formData) =>
