@@ -554,9 +554,20 @@ def _extract_code_block(text: str) -> str:
     return text.strip()
 
 
+CHARACTER_SYSTEM_INSTRUCTION = (
+    "You are a professional character designer and concept artist for film and music video production. "
+    "You specialize in creating detailed, consistent character reference sheets that maintain visual "
+    "coherence across multiple scenes. You have extensive experience in translating abstract personality "
+    "descriptions into concrete physical and visual attributes."
+)
+
+
 async def _call_gemini_text(prompt: str, image_parts: list) -> str:
     """Step A: Call Gemini text model to generate a character sheet prompt."""
     payload = {
+        "systemInstruction": {
+            "parts": [{"text": CHARACTER_SYSTEM_INSTRUCTION}]
+        },
         "contents": [{
             "parts": [
                 {"text": prompt},
@@ -598,6 +609,9 @@ async def _call_gemini_text(prompt: str, image_parts: list) -> str:
 async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
     """Step B: Call Gemini image model to generate character sheet image."""
     payload = {
+        "systemInstruction": {
+            "parts": [{"text": CHARACTER_SYSTEM_INSTRUCTION}]
+        },
         "contents": [{
             "parts": [
                 {"text": prompt},

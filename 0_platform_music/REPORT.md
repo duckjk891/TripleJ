@@ -4609,3 +4609,246 @@ Phase 5:   저장된 데이터에서 필터링 ✅
 - 모든 레이블 항상 표시, 값 없으면 `-`
 
 ### 테스트: 빌드 ✅ PASS
+
+---
+
+## v14 — 2026-04-16 — Kling 영상 생성 시 video_prompt 적용
+
+### 요청 작업
+- MV 영상 생성 시 GPT가 생성한 `video_prompt`가 Veo에서만 사용되고 Kling에서는 무시되는 버그 수정
+
+### 수행 결과
+
+#### 수정된 파일 (3개)
+1. **`backend_9003/app/services/kling_video_generator.py`**
+   - `start_scene_video_kling()` 함수에 `video_prompt: Optional[str] = None` 파라미터 추가
+   - 로컬 변수명 `video_prompt` → `final_prompt`로 변경 (파라미터 shadowing 방지)
+   - `video_prompt` 있을 시 `Camera/Motion: {video_prompt}` 형태로 프롬프트에 반영 (Veo와 동일 패턴)
+   - lipsync/drama 씬 모두 적용
+
+2. **`backend_9003/app/services/mv_pipeline.py`** (line ~1448)
+   - `run_phase3_videos` 내 Kling 호출부에 `video_prompt=scene_video_prompt` 전달 추가
+
+3. **`backend_9003/app/routes/mv.py`** (line ~677)
+   - 단건 씬 영상 생성 Kling 호출부에 `video_prompt=scene.get("video_prompt")` 전달 추가
+
+### 테스트 결과
+- 14/14 항목 전체 PASS
+- Python import/syntax 정상
+- 함수 시그니처 `video_prompt` 파라미터 존재 확인
+- 모든 호출부에서 `video_prompt` 전달 확인 (grep)
+
+### 특이사항
+- 프론트엔드 변경 없음 (API 스펙 변경 없음, 백엔드 내부 로직만 수정)
+- `video_prompt`가 None인 경우 기존 fallback 동작 유지 ("Smooth cinematic camera movement.")
+- 기존 Veo 경로 영향 없음
+
+---
+
+## v15 — 2026-04-16 — MV 파이프라인 분리: image_prompt / video_prompt 2단계 생성
+
+### 요청 작업
+- image_prompt와 video_prompt를 GPT가 동시 생성하던 것을 분리
+- 씬 이미지 생성 후 Gemini 2.5 Pro가 이미지를 보고 video_prompt를 작성하도록 변경
+
+### 수행 결과
+
+#### 수정된 파일 (3개)
+
+1. **`backend_9003/app/services/mv_generator.py`**
+   - `SCENE_PROMPT_ONLY_SYSTEM` 프롬프트에서 video_prompt 생성 지시 전체 제거
+   - 출력 JSON에서 `video_prompt` 필드 제거 → `image_prompt` + `description_ko`만 생성
+   - 새 상수 `GEMINI_VIDEO_PROMPT_URL` 추가 (`gemini-2.5-pro:generateContent`)
+   - 새 상수 `VIDEO_PROMPT_SYSTEM` 추가 (시네마토그래퍼 역할 부여)
+   - 새 함수 `generate_video_prompts_from_images()` 추가
+     - Gemini 2.5 Pro 멀티모달 API 호출
+     - 입력: 씬 이미지(bytes) + image_prompt + scene_type + lyrics_segment + scene_number
+     - 출력: video_prompt (plain text, 2-3 sentences)
+     - 실패 시 fallback: "Smooth cinematic camera movement, slow dolly forward."
+
+2. **`backend_9003/app/services/mv_pipeline.py`**
+   - Phase 1b: video_prompt 검증 제거 → image_prompt만 검증
+   - Phase 1b: 씬에 `video_prompt = ""` 설정 (나중에 Phase 2.5에서 채움)
+   - Phase 2.5 추가 (이미지 생성 완료 후, images_ready 전):
+     - 이미지가 있지만 video_prompt가 없는 씬을 순회
+     - MinIO에서 이미지 로드 → Gemini 2.5 Pro 호출 → video_prompt 저장
+     - 씬 간 2초 딜레이, 실패 시 fallback
+
+3. **`backend_9003/app/routes/mv.py`**
+   - `_generate_single_scene_video` 함수에 on-demand Phase 2.5 추가
+   - video_prompt가 없으면 씬 이미지로 Gemini 2.5 Pro 호출하여 생성
+   - 생성된 video_prompt를 MongoDB에 저장 후 Kling 호출에 전달
+
+### 파이프라인 변경 요약
+```
+[이전] GPT → image_prompt + video_prompt 동시 생성 → Gemini 이미지 → Kling/Veo 영상
+[이후] GPT → image_prompt만 생성 → Gemini 이미지 → Gemini 2.5 Pro (이미지 보고 video_prompt) → Kling/Veo 영상
+```
+
+### 테스트 결과
+- 7/7 항목 전체 PASS
+- Python import/syntax 정상
+- 함수 시그니처 확인
+- Phase 2.5 흐름 검증 (이미지 로드 → Gemini 호출 → MongoDB 저장)
+- on-demand 생성 흐름 검증
+
+### 특이사항
+- 프론트엔드 변경 없음
+- 기존에 video_prompt가 이미 있는 씬은 건너뜀 (수동 오버라이드 보존)
+- Gemini 2.5 Pro API 키는 기존 `GOOGLE_API_KEY` 공유 사용
+
+---
+
+## v16 — 2026-04-16 — AI 모델 선택 시스템 (가사/시나리오/Image Prompt)
+
+### 요청 작업
+- 가사 생성, 시나리오 작성, Image Prompt 생성에서 AI 모델을 선택할 수 있는 시스템 구현
+- 하나만 선택하면 해당 모델 결과만, 둘 다 선택하면 양쪽 결과물을 비교하여 선택 가능
+
+### 수행 결과
+
+#### 백엔드 수정 (7개 파일)
+1. **config.py** — `anthropic_api_key`, `openai_model_advanced` 설정 추가
+2. **.env** — `ANTHROPIC_API_KEY` 추가
+3. **requirements.txt** — `anthropic` 패키지 추가
+4. **lyrics_generator.py** — Claude Opus 4.6 지원 추가, `models` 파라미터로 단일/듀얼 실행, 듀얼 시 `asyncio.gather`로 병렬 처리
+5. **mv_generator.py** — 시나리오에 Claude, Image Prompt에 GPT-5.4 지원, `models` 파라미터 추가
+6. **routes/generate.py** — `LyricsRequest`에 `models` 필드 추가
+7. **routes/mv.py** — `CreateMVRequest`에 `scenario_models`, `prompt_models` 추가, `select-scenario`, `select-prompts` 엔드포인트 추가
+8. **mv_pipeline.py** — 듀얼 결과 시 `scenario_review`/`prompts_review` 상태로 전환, 유저 선택 후 파이프라인 재개
+
+#### 프론트엔드 수정 (3개 파일)
+1. **api/index.js** — `selectScenario`, `selectPrompts` API 함수 추가
+2. **StudioTab2.jsx** — 가사 생성 모델 선택 체크박스 (GPT-4o-mini / Claude Opus 4.6), 듀얼 비교 뷰 + "이걸로 선택" 버튼
+3. **UploadPage.jsx** — 시나리오 모델 선택 (GPT-4o-mini / Claude Opus 4.6), Image Prompt 모델 선택 (GPT-4o-mini / GPT-5.4), `scenario_review`/`prompts_review` 상태 처리 + 비교 뷰
+
+### 모델 매칭
+| 단계 | 모델 A (기존) | 모델 B (추가) |
+|------|-------------|-------------|
+| 가사 생성 | gpt-4o-mini ($0.003/회) | Claude Opus 4.6 ($0.10/회) |
+| 시나리오 | gpt-4o-mini ($0.002/회) | Claude Opus 4.6 ($0.08/회) |
+| Image Prompt | gpt-4o-mini ($0.005/회) | GPT-5.4 ($0.08/회) |
+
+### 테스트 결과
+- 47/47 항목 전체 PASS
+- Python import/syntax 정상
+- anthropic 패키지 설치 확인 (v0.95.0)
+- 단일 모델 선택 시 기존과 동일 동작 (하위호환)
+- 듀얼 모델 선택 시 양쪽 결과 반환 확인
+- 프론트엔드 모델 선택 UI, 비교 뷰, 선택 버튼 확인
+
+### 특이사항
+- 모델 미선택 시 기존 `settings.openai_model` 사용 (하위호환 유지)
+- 듀얼 모델 실행 시 `asyncio.gather`로 병렬 처리하여 대기시간 최소화
+- MV 파이프라인에서 듀얼 결과 시 `scenario_review`/`prompts_review` 상태로 일시정지 → 유저 선택 후 재개
+
+---
+
+## v17 — 2026-04-16 — 추가 모델 확장 + 레이아웃 개선
+
+### 요청 작업
+- 각 단계에 추가 AI 모델 확장 (5개→최대 5개 모델 비교 가능)
+- 프론트엔드 레이아웃 넓히기 (다수 결과물 비교 공간 확보)
+- 모델 체크박스에 토큰 단가 + 1회 예상 비용 + 원화 환산 표시
+
+### 수행 결과
+
+#### 백엔드 (2개 파일)
+1. **lyrics_generator.py** — `_generate_lyrics_claude()`에 `model_name` 파라미터 추가, `startswith("claude-")` 라우팅으로 변경하여 모든 Claude 모델 자동 지원
+2. **mv_generator.py**:
+   - `_generate_scenario_claude()`에 `model_name` 파라미터 추가
+   - `_generate_scenario_gemini()` 함수 신규 추가 (Gemini 2.5 Pro REST API)
+   - `_generate_scene_prompts_claude()` 함수 신규 추가
+   - 라우팅: `claude-*` → Claude, `gemini-*` → Gemini, 나머지 → OpenAI (generic startswith 방식)
+
+#### 프론트엔드 (4개 파일)
+1. **index.css** — `--max-width` 1200px → 1400px 확장
+2. **UploadPage.css** — `.upload-page` max-width 600px → 1400px 확장
+3. **StudioTab2.jsx** — `LYRICS_MODELS` 상수 배열(5개), `.map()` 렌더링, 3줄 가격 라벨 (모델명/토큰단가/1회비용+원화), 반응형 그리드 `repeat(auto-fill, minmax(300px, 1fr))`
+4. **UploadPage.jsx** — `SCENARIO_MODELS`(5개), `PROMPT_MODELS`(4개) 상수 배열, 동일 패턴 적용
+
+#### 최종 모델 구성
+| 단계 | 모델 (총 개수) |
+|------|--------------|
+| 가사 생성 | GPT-4o-mini, Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.4 mini (5개) |
+| 시나리오 | GPT-4o-mini, Claude Opus 4.6, Claude Sonnet 4.6, GPT-5.4, Gemini 2.5 Pro (5개) |
+| Image Prompt | GPT-4o-mini, GPT-5.4, GPT-5.4 mini, Claude Sonnet 4.6 (4개) |
+
+### 테스트 결과
+- 20/20 항목 전체 PASS
+
+### 특이사항
+- 백엔드 라우팅을 `startswith` 방식으로 변경하여 향후 모델 추가 시 코드 변경 불필요
+- 프론트엔드 체크박스를 상수 배열 + `.map()` 방식으로 리팩토링하여 모델 추가가 배열에 항목 추가만으로 가능
+- 레이아웃 확장은 CSS 변수(`--max-width`)를 통해 전역 적용
+
+---
+
+## v18 — 2026-04-16 — 커버 이미지 프롬프트 템플릿 분리 + 사용자 자유 입력
+
+### 요청 작업
+- 캐릭터 시트 사용/미사용에 따라 프롬프트 템플릿 분리
+- 사용자 자유 입력 필드 추가 (스타일/분위기/구도 등 자유 지정)
+- 미사용 시나리오 참조 제거
+
+### 수행 결과
+
+#### 백엔드 (2개 파일)
+1. **cover_generator.py** — 프롬프트를 캐릭터 유무에 따라 분리
+   - [A] 캐릭터 O: 실사 강제 + 캐릭터 시트 + 캐릭터 지시 + 사용자 입력
+   - [B] 캐릭터 X: 실사 강제 없음 (자유 스타일) + 사용자 입력
+   - 공통: 곡 제목/장르/분위기, 이미지 내 글자 금지, systemInstruction 유지
+   - `scenario` 파라미터 완전 제거, `user_prompt` 파라미터 추가
+2. **routes/upload.py** — `GenerateCoverRequest`에 `user_prompt` 필드 추가, API 호출 시 전달
+
+#### 프론트엔드 (1개 파일)
+1. **UploadPage.jsx** — "커버 스타일 설명" textarea 추가
+   - 커버 미생성 상태, 재생성 상태 양쪽 모두 표시
+   - `handleGenerateCover`에서 `user_prompt` API 전달
+
+### 테스트 결과
+- 15/15 항목 전체 PASS
+- 캐릭터 O 시 실사 강제 확인
+- 캐릭터 X 시 실사 강제 없음 확인
+- 양쪽 모두 user_prompt 반영 확인
+- scenario 파라미터 완전 제거 확인
+
+### 특이사항
+- 캐릭터 미사용 시 "애니메이션 풍", "수채화", "사이버펑크" 등 자유 스타일 요청 가능
+- 캐릭터 사용 시에도 추가 방향 지시 가능 (배경, 구도, 소품 등)
+
+---
+
+## v19 — 2026-04-16 — UploadPage UI 정리: 단계 구분 및 레이아웃 개선
+
+### 요청 작업
+- UI 요소들이 뒤죽박죽 섞여있는 문제 해결
+- 모델 선택이 한곳에 몰려있는 문제 → 섹션별 분리
+- "내 캐릭터 포함하기" 체크박스가 커버 재생성 시 안 보이는 문제 수정
+
+### 수행 결과
+
+#### 프론트엔드 (1개 파일)
+**UploadPage.jsx**
+
+1. **커버 이미지 섹션 재구성**
+   - "내 캐릭터 포함하기" 체크박스를 조건부 블록 밖으로 이동 → 항상 표시
+   - 커버 스타일 textarea도 항상 표시
+   - AI 생성 버튼을 통합 (커버 있으면 "다시 생성", 없으면 "AI 커버 생성")
+
+2. **MV STEP 1 섹션 분리**
+   - "씬 분위기 지시" — 분위기 textarea
+   - "영상 모델" — Veo 3.1 / Kling V3 카드
+   - "AI 모델 설정" — 시나리오 모델 + Image Prompt 모델 체크박스
+   - 각 섹션에 구분선(borderBottom) + 제목(#aaa) 추가
+
+3. **중복 제거**
+   - STEP 1 안의 "내 캐릭터를 주인공으로" 체크박스 제거 (커버 섹션으로 통합)
+
+### 테스트 결과
+- 14/14 항목 전체 PASS
+- 기능 변경 없음 (UI 재배치만)
+- 모든 state/handler/API 호출 정상 동작 확인
+
+### 특이사항
+- 백엔드 변경 없음 (프론트엔드 전용)

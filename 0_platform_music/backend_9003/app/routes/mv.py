@@ -50,6 +50,12 @@ class CreateMVRequest(BaseModel):
     character_object_name: Optional[str] = None
     video_model: Optional[str] = "veo"  # "veo" or "kling"
     audio_generation_id: Optional[str] = None
+    scenario_models: Optional[List[str]] = None  # for scenario generation (e.g. ["gpt-4o-mini", "claude-opus-4-6"])
+    prompt_models: Optional[List[str]] = None    # for image prompt generation (e.g. ["gpt-4o-mini", "gpt-5.4"])
+
+
+class SelectModelRequest(BaseModel):
+    model: str  # which model's result to use
 
 
 class GenerateImagesRequest(BaseModel):
@@ -210,6 +216,8 @@ async def create_mv(
         "character_object_name": body.character_object_name,
         "video_model": video_model,
         "audio_generation_id": body.audio_generation_id,
+        "scenario_models": body.scenario_models,
+        "prompt_models": body.prompt_models,
         "scenario": None,
         "status": "draft",
         "progress": 0,
@@ -661,6 +669,28 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
             except Exception:
                 pass
 
+        # Generate video_prompt if missing (Phase 2.5 on-demand)
+        scene_video_prompt = scene.get("video_prompt")
+        if not scene_video_prompt:
+            try:
+                from ..services.mv_generator import generate_video_prompts_from_images
+                scene_video_prompt = await generate_video_prompts_from_images(
+                    image_bytes=image_bytes,
+                    image_prompt=scene.get("image_prompt", ""),
+                    scene_type=scene.get("scene_type", "drama"),
+                    lyrics_segment=scene.get("lyrics_segment", ""),
+                    scene_number=scene.get("scene_number", 0),
+                )
+                # Save it back to MongoDB
+                scenes[scene_idx]["video_prompt"] = scene_video_prompt
+                await mongo_db.mv_jobs.update_one(
+                    {"_id": ObjectId(job_id)},
+                    {"$set": {"scenes": scenes}},
+                )
+            except Exception as e:
+                logger.warning("On-demand video_prompt generation failed: %s", e)
+                scene_video_prompt = "Smooth cinematic camera movement."
+
         # Generate video via Kling
         from ..services.kling_video_generator import start_scene_video_kling, check_scene_video_status_kling, download_video_kling
         import asyncio
@@ -674,6 +704,7 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
             lyrics_segment=scene.get("lyrics_segment", ""),
             scene_type=scene.get("scene_type", "drama"),
             duration=float(scene.get("use_seconds", 10)),
+            video_prompt=scene_video_prompt,
         )
 
         # Poll for completion (max 10 min)
@@ -1478,4 +1509,139 @@ async def separate_vocal(
         "vocal_audio_url": "data:audio/wav;base64," + base64.b64encode(vocal_bytes).decode(),
         "scene_number": scene_number,
         "cached": False,
+    }
+
+
+# ── POST /api/mv/jobs/{job_id}/select-scenario ─────────────────────────────
+
+@router.post("/jobs/{job_id}/select-scenario")
+async def select_scenario(
+    job_id: str,
+    body: SelectModelRequest,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+    """User picks which model's scenario to use when dual models were run."""
+    oid = _validate_object_id(job_id)
+    mongo = get_mongo()
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    scenario_results = job.get("scenario_results")
+    if not scenario_results:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "선택할 시나리오 결과가 없습니다."},
+        )
+
+    # Find the selected model's scenario
+    selected = None
+    for r in scenario_results:
+        if r.get("model") == body.model:
+            selected = r.get("scenario")
+            break
+
+    if not selected:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"모델 '{body.model}'의 시나리오 결과를 찾을 수 없습니다."},
+        )
+
+    # Update job with the selected scenario and continue pipeline
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {"$set": {
+            "scenario": selected,
+            "selected_scenario_model": body.model,
+            "status": "splitting",
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+
+    # Continue the pipeline (phase 1 scene splitting will use the selected scenario)
+    from ..services.mv_pipeline import run_phase1_split, run_phase2_images
+    background_tasks.add_task(_continue_after_scenario_select, oid, mongo)
+
+    return {
+        "job_id": job_id,
+        "selected_model": body.model,
+        "message": "시나리오가 선택되었습니다. 씬 분할이 계속됩니다.",
+    }
+
+
+async def _continue_after_scenario_select(job_id, mongo_db):
+    """Continue pipeline after user selects a scenario."""
+    from ..services.mv_pipeline import run_phase1_split, run_phase2_images, _get_job
+
+    # run_phase1_split will use job["scenario"] which is now set
+    await run_phase1_split(job_id, mongo_db)
+
+    job = await _get_job(mongo_db, job_id)
+    if not job or job.get("status") == "failed":
+        return
+
+    await run_phase2_images(job_id, mongo_db)
+
+
+# ── POST /api/mv/jobs/{job_id}/select-prompts ──────────────────────────────
+
+@router.post("/jobs/{job_id}/select-prompts")
+async def select_prompts(
+    job_id: str,
+    body: SelectModelRequest,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+    """User picks which model's prompts to use when dual models were run."""
+    oid = _validate_object_id(job_id)
+    mongo = get_mongo()
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    prompt_results = job.get("prompt_results")
+    if not prompt_results:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "선택할 프롬프트 결과가 없습니다."},
+        )
+
+    # Find the selected model's prompts
+    selected = None
+    for r in prompt_results:
+        if r.get("model") == body.model:
+            selected = r.get("prompts")
+            break
+
+    if not selected:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"모델 '{body.model}'의 프롬프트 결과를 찾을 수 없습니다."},
+        )
+
+    # Apply selected prompts to scenes
+    scenes = job.get("scenes", [])
+    prompt_by_number = {p["scene_number"]: p for p in selected}
+    for scene in scenes:
+        p = prompt_by_number.get(scene["scene_number"], {})
+        scene["image_prompt"] = p.get("image_prompt", "")
+        scene["video_prompt"] = ""
+        scene["description_ko"] = p.get("description_ko", "")
+        scene["description"] = scene["image_prompt"]
+
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {"$set": {
+            "scenes": scenes,
+            "selected_prompt_model": body.model,
+            "status": "scenes_ready",
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+
+    # Continue with image generation
+    from ..services.mv_pipeline import run_phase2_images
+    background_tasks.add_task(run_phase2_images, oid, mongo)
+
+    return {
+        "job_id": job_id,
+        "selected_model": body.model,
+        "message": "프롬프트가 선택되었습니다. 이미지 생성이 시작됩니다.",
     }

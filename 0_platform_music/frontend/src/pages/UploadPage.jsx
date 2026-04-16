@@ -10,6 +10,21 @@ const AI_TOOLS = ['Suno', 'Udio', 'AIVA', 'Stable Audio', 'MusicGen (Meta)', '�
 const AUDIO_ACCEPT = '.mp3,.wav,.ogg,.flac,.m4a';
 const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp';
 
+const SCENARIO_MODELS = [
+  { id: 'gpt-4o-mini', name: 'GPT-4o-mini', color: '#00d4aa', inPrice: '$0.15/M', outPrice: '$0.60/M', perCall: '$0.002', perCallKRW: '≈3원' },
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', color: '#a855f7', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.05', perCallKRW: '≈70원' },
+  { id: 'gpt-5.4', name: 'GPT-5.4', color: '#10b981', inPrice: '$2.50/M', outPrice: '$15.00/M', perCall: '$0.05', perCallKRW: '≈70원' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', color: '#ef4444', inPrice: '$1.00/M', outPrice: '$10.00/M', perCall: '$0.03', perCallKRW: '≈42원' },
+];
+
+const PROMPT_MODELS = [
+  { id: 'gpt-4o-mini', name: 'GPT-4o-mini', color: '#00d4aa', inPrice: '$0.15/M', outPrice: '$0.60/M', perCall: '$0.005', perCallKRW: '≈7원' },
+  { id: 'gpt-5.4', name: 'GPT-5.4', color: '#a855f7', inPrice: '$2.50/M', outPrice: '$15.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
+  { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', color: '#10b981', inPrice: '$0.75/M', outPrice: '$4.50/M', perCall: '$0.025', perCallKRW: '≈35원' },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.06', perCallKRW: '≈84원' },
+];
+
 function RetryCountdown({ retryAt }) {
   const [remaining, setRemaining] = useState(0);
   useEffect(() => {
@@ -57,9 +72,14 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [myCharacter, setMyCharacter] = useState(null);
   const [includeCharacter, setIncludeCharacter] = useState(false);
   const [scenePrompt, setScenePrompt] = useState('');
+  const [coverUserPrompt, setCoverUserPrompt] = useState('');
 
   // Video Model Selection
   const [videoModel, setVideoModel] = useState('veo');
+
+  // AI 모델 선택 (시나리오 / 이미지 프롬프트)
+  const [scenarioModels, setScenarioModels] = useState(['gpt-4o-mini']);
+  const [promptModels, setPromptModels] = useState(['gpt-4o-mini']);
 
   // MV Draft System states
   const [mvJobId, setMvJobId] = useState(null);
@@ -174,6 +194,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       case 'splitting':
       case 'generating_images':
         return 1;
+      case 'scenario_review':
+        return 1.5;
+      case 'prompts_review':
+        return 1.7;
       case 'scenes_ready':
       case 'images_ready':
       case 'videos_ready':
@@ -218,6 +242,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         mood: mood || null,
         style: null,
         character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
+        user_prompt: coverUserPrompt.trim() || null,
       });
       const proxyUrl = api.coverPreviewUrl(data.object_name);
       setAiCoverPreview(proxyUrl);
@@ -272,7 +297,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         const newStep = mapStatusToStep(data.status);
         setMvStep(newStep);
 
-        if (data.status === 'images_ready' || data.status === 'scenes_ready' || data.status === 'videos_ready') {
+        if (data.status === 'scenario_review' || data.status === 'prompts_review') {
+          stopMvPolling();
+        } else if (data.status === 'images_ready' || data.status === 'scenes_ready' || data.status === 'videos_ready') {
           stopMvPolling();
         } else if (data.status === 'video_ready') {
           stopMvPolling();
@@ -360,6 +387,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
         video_model: videoModel,
         audio_generation_id: fromGeneration || null,
+        scenario_models: scenarioModels,
+        prompt_models: promptModels,
       });
       const jobId = data.job_id;
       if (!jobId) {
@@ -690,6 +719,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
     }
     switch (mvJob.status) {
       case 'splitting': return '장면 분석 중...';
+      case 'scenario_review': return '시나리오 비교 선택 대기 중...';
+      case 'prompts_review': return 'Image Prompt 비교 선택 대기 중...';
       case 'generating_images': return `장면 이미지 생성 중... (${getCompletedImageCount()}/${mvJob.total_scenes || 0})`;
       case 'generating_videos': return `영상 클립 생성 중... (${getCompletedVideoCount()}/${mvJob.total_scenes || 0})`;
       case 'synclabs_processing': return `립싱크 자동 적용 중... (${mvJob.synclabs_completed || 0}/${mvJob.synclabs_total || '?'})`;
@@ -854,9 +885,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
               <div className="upload-cover-preview">
                 <img src={aiCoverPreview} alt="AI 생성 커버" className="upload-cover-preview__img" />
                 <div className="upload-cover-preview__actions">
-                  <button type="button" className="upload-cover-regenerate" onClick={handleGenerateCover} disabled={generatingCover}>
-                    {generatingCover ? '생성 중...' : '다시 생성'}
-                  </button>
                   <button type="button" className="upload-cover-remove" onClick={handleClearAiCover}>제거</button>
                 </div>
               </div>
@@ -883,35 +911,59 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                   <span className="upload-cover-divider__text">또는</span>
                   <span className="upload-cover-divider__line" />
                 </div>
-
-                {myCharacter && (
-                  <label className="upload-character-toggle">
-                    <input
-                      type="checkbox"
-                      checked={includeCharacter}
-                      onChange={(e) => setIncludeCharacter(e.target.checked)}
-                    />
-                    내 캐릭터 포함하기
-                  </label>
-                )}
-
-                <button
-                  type="button"
-                  className="upload-cover-ai-btn"
-                  onClick={handleGenerateCover}
-                  disabled={generatingCover}
-                >
-                  {generatingCover ? (
-                    <>
-                      <span className="upload-cover-spinner" />
-                      AI 커버 생성 중...
-                    </>
-                  ) : (
-                    'AI 커버 생성'
-                  )}
-                </button>
               </>
             )}
+
+            {/* Always visible - character toggle + style input + AI button */}
+            {myCharacter && (
+              <label className="upload-character-toggle">
+                <input
+                  type="checkbox"
+                  checked={includeCharacter}
+                  onChange={(e) => setIncludeCharacter(e.target.checked)}
+                />
+                내 캐릭터 포함하기
+              </label>
+            )}
+
+            <div style={{ marginTop: '10px' }}>
+              <label style={{ fontSize: '13px', color: '#888', marginBottom: '4px', display: 'block' }}>
+                커버 스타일 설명 (선택)
+              </label>
+              <textarea
+                value={coverUserPrompt}
+                onChange={(e) => setCoverUserPrompt(e.target.value)}
+                placeholder={"예: 애니메이션 풍, 벚꽃이 흩날리는 도쿄 거리\n예: 사이버펑크 네온 도시, 비 오는 밤\n예: 수채화 느낌의 파스텔톤 풍경"}
+                style={{
+                  width: '100%',
+                  minHeight: '70px',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #333',
+                  background: '#1a1a1a',
+                  color: '#ddd',
+                  fontSize: '13px',
+                  resize: 'vertical',
+                  lineHeight: '1.5',
+                }}
+              />
+            </div>
+
+            <button
+              type="button"
+              className="upload-cover-ai-btn"
+              onClick={handleGenerateCover}
+              disabled={generatingCover}
+            >
+              {generatingCover ? (
+                <>
+                  <span className="upload-cover-spinner" />
+                  AI 커버 생성 중...
+                </>
+              ) : (
+                aiCoverPreview ? '다시 생성' : 'AI 커버 생성'
+              )}
+            </button>
           </div>
 
           {/* Music Video - Draft System */}
@@ -941,50 +993,97 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
 
                   {mvStep === 0 && (
                     <>
-                      {myCharacter && (
-                        <label className="upload-character-toggle">
-                          <input
-                            type="checkbox"
-                            checked={includeCharacter}
-                            onChange={(e) => setIncludeCharacter(e.target.checked)}
+                      {/* Section 1: 씬 분위기 지시 */}
+                      <div style={{ marginTop: '20px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#aaa', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #333' }}>
+                          씬 분위기 지시
+                        </div>
+                        <div className="upload-card__field" style={{ marginBottom: 0 }}>
+                          <textarea
+                            className="upload-card__textarea"
+                            value={scenePrompt}
+                            onChange={(e) => setScenePrompt(e.target.value)}
+                            placeholder="예: 도시 배경 위주로, 밤 분위기, 네온 조명 강조"
+                            rows={2}
+                            style={{ minHeight: '60px' }}
                           />
-                          내 캐릭터를 주인공으로
-                        </label>
-                      )}
-
-                      <div className="upload-card__field" style={{ marginBottom: 12 }}>
-                        <label className="upload-card__label">씬 분위기 지시 (선택)</label>
-                        <textarea
-                          className="upload-card__textarea"
-                          value={scenePrompt}
-                          onChange={(e) => setScenePrompt(e.target.value)}
-                          placeholder="예: 도시 배경 위주로, 밤 분위기, 네온 조명 강조"
-                          rows={2}
-                          style={{ minHeight: '60px' }}
-                        />
+                        </div>
                       </div>
 
-                      <div className="upload-mv-video-model-selector">
-                        <div className="upload-mv-video-model-selector__label">영상 모델 선택 (씬 개수에 영향)</div>
-                        <div className="upload-mv-video-model-selector__cards">
-                          <button
-                            type="button"
-                            className={`upload-mv-video-model-card${videoModel === 'veo' ? ' upload-mv-video-model-card--active' : ''}`}
-                            onClick={() => setVideoModel('veo')}
-                          >
-                            <div className="upload-mv-video-model-card__name">Veo 3.1</div>
-                            <div className="upload-mv-video-model-card__provider">Google</div>
-                            <div className="upload-mv-video-model-card__desc">고품질 8초 영상</div>
-                          </button>
-                          <button
-                            type="button"
-                            className={`upload-mv-video-model-card${videoModel === 'kling' ? ' upload-mv-video-model-card--active' : ''}`}
-                            onClick={() => setVideoModel('kling')}
-                          >
-                            <div className="upload-mv-video-model-card__name">Kling V3</div>
-                            <div className="upload-mv-video-model-card__provider">Kling AI</div>
-                            <div className="upload-mv-video-model-card__desc">이미지 기반 10초 영상</div>
-                          </button>
+                      {/* Section 2: 영상 모델 */}
+                      <div style={{ marginTop: '20px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#aaa', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #333' }}>
+                          영상 모델
+                        </div>
+                        <div className="upload-mv-video-model-selector">
+                          <div className="upload-mv-video-model-selector__label">영상 모델 선택 (씬 개수에 영향)</div>
+                          <div className="upload-mv-video-model-selector__cards">
+                            <button
+                              type="button"
+                              className={`upload-mv-video-model-card${videoModel === 'veo' ? ' upload-mv-video-model-card--active' : ''}`}
+                              onClick={() => setVideoModel('veo')}
+                            >
+                              <div className="upload-mv-video-model-card__name">Veo 3.1</div>
+                              <div className="upload-mv-video-model-card__provider">Google</div>
+                              <div className="upload-mv-video-model-card__desc">고품질 8초 영상</div>
+                            </button>
+                            <button
+                              type="button"
+                              className={`upload-mv-video-model-card${videoModel === 'kling' ? ' upload-mv-video-model-card--active' : ''}`}
+                              onClick={() => setVideoModel('kling')}
+                            >
+                              <div className="upload-mv-video-model-card__name">Kling V3</div>
+                              <div className="upload-mv-video-model-card__provider">Kling AI</div>
+                              <div className="upload-mv-video-model-card__desc">이미지 기반 10초 영상</div>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Section 3: AI 모델 설정 */}
+                      <div style={{ marginTop: '20px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#aaa', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #333' }}>
+                          AI 모델 설정
+                        </div>
+
+                        {/* 시나리오 AI 모델 선택 */}
+                        <div style={{ marginBottom: '18px' }}>
+                          <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>시나리오 AI 모델</label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                            {SCENARIO_MODELS.map(model => (
+                              <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '10px 14px', borderRadius: '8px', border: scenarioModels.includes(model.id) ? `2px solid ${model.color}` : '2px solid #333', background: scenarioModels.includes(model.id) ? `${model.color}15` : '#1a1a1a', fontSize: '13px', color: '#ddd', minWidth: '180px' }}>
+                                <input type="checkbox" checked={scenarioModels.includes(model.id)} onChange={() => {
+                                  setScenarioModels(prev => prev.includes(model.id) ? prev.filter(m => m !== model.id) : [...prev, model.id]);
+                                }} style={{ accentColor: model.color, marginTop: '2px' }} />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <span style={{ fontWeight: 600 }}>{model.name}</span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>in {model.inPrice}  out {model.outPrice}</span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                          {scenarioModels.length === 0 && <p style={{ color: '#ff6b6b', fontSize: '12px', marginTop: '4px' }}>최소 1개 모델을 선택하세요</p>}
+                        </div>
+
+                        {/* Image Prompt AI 모델 선택 */}
+                        <div style={{ marginBottom: '14px' }}>
+                          <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>Image Prompt AI 모델</label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                            {PROMPT_MODELS.map(model => (
+                              <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '10px 14px', borderRadius: '8px', border: promptModels.includes(model.id) ? `2px solid ${model.color}` : '2px solid #333', background: promptModels.includes(model.id) ? `${model.color}15` : '#1a1a1a', fontSize: '13px', color: '#ddd', minWidth: '180px' }}>
+                                <input type="checkbox" checked={promptModels.includes(model.id)} onChange={() => {
+                                  setPromptModels(prev => prev.includes(model.id) ? prev.filter(m => m !== model.id) : [...prev, model.id]);
+                                }} style={{ accentColor: model.color, marginTop: '2px' }} />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <span style={{ fontWeight: 600 }}>{model.name}</span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>in {model.inPrice}  out {model.outPrice}</span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                          {promptModels.length === 0 && <p style={{ color: '#ff6b6b', fontSize: '12px', marginTop: '4px' }}>최소 1개 모델을 선택하세요</p>}
                         </div>
                       </div>
 
@@ -992,7 +1091,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                         type="button"
                         className="upload-mv-ai-btn"
                         onClick={handleCreateScenes}
-                        disabled={!aiCoverObjectName}
+                        disabled={!aiCoverObjectName || scenarioModels.length === 0 || promptModels.length === 0}
                       >
                         씬 생성하기
                       </button>
@@ -1019,6 +1118,87 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                       >
                         <FiX /> 중지하기
                       </button>
+                    </div>
+                  )}
+
+                  {/* 시나리오 비교 선택 */}
+                  {mvStep === 1.5 && mvJob?.scenario_results && (
+                    <div style={{ marginTop: '16px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff', marginBottom: '12px' }}>시나리오 비교 - 하나를 선택하세요</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                        {mvJob.scenario_results.map((result, idx) => {
+                          const modelInfo = SCENARIO_MODELS.find(m => m.id === result.model) || { name: result.model, color: '#888' };
+                          return (
+                            <div key={idx} style={{ background: '#1a1a1a', borderRadius: '12px', padding: '16px', border: `1px solid ${modelInfo.color}33`, borderTop: `3px solid ${modelInfo.color}` }}>
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: modelInfo.color, marginBottom: '12px' }}>
+                                {modelInfo.name}
+                              </div>
+                              <pre style={{ color: '#ccc', fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: '300px', overflow: 'auto', lineHeight: 1.6 }}>
+                                {typeof result.scenario === 'string' ? result.scenario : JSON.stringify(result.scenario, null, 2)}
+                              </pre>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await api.selectScenario(mvJobId, result.model);
+                                    startMvPolling(mvJobId, 3000);
+                                  } catch (err) {
+                                    alert(err.response?.data?.error || '시나리오 선택에 실패했습니다.');
+                                  }
+                                }}
+                                style={{ marginTop: '12px', width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: modelInfo.color, color: '#000', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}
+                              >
+                                이걸로 선택
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 이미지 프롬프트 비교 선택 */}
+                  {mvStep === 1.7 && mvJob?.prompt_results && (
+                    <div style={{ marginTop: '16px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff', marginBottom: '12px' }}>Image Prompt 비교 - 하나를 선택하세요</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                        {mvJob.prompt_results.map((result, idx) => {
+                          const modelInfo = PROMPT_MODELS.find(m => m.id === result.model) || { name: result.model, color: '#888' };
+                          return (
+                            <div key={idx} style={{ background: '#1a1a1a', borderRadius: '12px', padding: '16px', border: `1px solid ${modelInfo.color}33`, borderTop: `3px solid ${modelInfo.color}` }}>
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: modelInfo.color, marginBottom: '12px' }}>
+                                {modelInfo.name}
+                              </div>
+                              <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                                {Array.isArray(result.prompts) ? result.prompts.map((p, pi) => (
+                                  <div key={pi} style={{ marginBottom: '8px', padding: '8px', background: '#222', borderRadius: '6px' }}>
+                                    <div style={{ color: '#888', fontSize: '11px', marginBottom: '4px' }}>Scene {pi + 1}</div>
+                                    <div style={{ color: '#ccc', fontSize: '12px', lineHeight: 1.5 }}>{p.description_ko || p.prompt || JSON.stringify(p)}</div>
+                                  </div>
+                                )) : (
+                                  <pre style={{ color: '#ccc', fontSize: '12px', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                                    {typeof result.prompts === 'string' ? result.prompts : JSON.stringify(result.prompts, null, 2)}
+                                  </pre>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await api.selectPrompts(mvJobId, result.model);
+                                    startMvPolling(mvJobId, 3000);
+                                  } catch (err) {
+                                    alert(err.response?.data?.error || '프롬프트 선택에 실패했습니다.');
+                                  }
+                                }}
+                                style={{ marginTop: '12px', width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: modelInfo.color, color: '#000', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}
+                              >
+                                이걸로 선택
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 

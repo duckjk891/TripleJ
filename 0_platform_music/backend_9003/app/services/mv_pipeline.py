@@ -18,6 +18,7 @@ from ..config import settings
 from ..database.minio import get_minio
 from .mv_generator import (
     generate_scene_image,
+    generate_video_prompts_from_images,
     start_scene_video,
     check_scene_video_status,
     download_video,
@@ -705,32 +706,56 @@ async def run_phase1_split(job_id, mongo_db) -> None:
     music_sections = None
 
     # ── Phase 0: Generate MV Scenario (required, max 3 retries) ──
-    scenario = None
-    for attempt in range(3):
-        try:
-            from .mv_generator import generate_mv_scenario
-            character_name = job.get("character_name")
-            scenario = await generate_mv_scenario(
-                title=job["title"],
-                genre=job.get("genre"),
-                mood=job.get("mood"),
-                lyrics=job.get("lyrics"),
-                character_name=character_name,
-            )
-            if scenario and len(scenario.strip()) > 50:
-                await _update_job(mongo_db, job_id, {
-                    "scenario": scenario,
-                    "progress": 1,
-                })
-                logger.info("Phase0: scenario generated for job %s (%d chars, attempt %d)", job_id, len(scenario), attempt + 1)
-                break
-            else:
-                logger.warning("Phase0: scenario too short (%d chars), retrying (attempt %d/3)", len(scenario or ""), attempt + 1)
-                scenario = None
-        except Exception as e:
-            logger.warning("Phase0: scenario generation failed (attempt %d/3): %s", attempt + 1, e)
-            if attempt < 2:
-                await asyncio.sleep(3 * (attempt + 1))  # 지수 백오프: 3초, 6초
+    # Skip if scenario already exists (e.g., user already selected from dual results)
+    scenario = job.get("scenario")
+    if scenario and len(scenario.strip()) > 50:
+        logger.info("Phase0: using existing scenario for job %s (%d chars)", job_id, len(scenario))
+    else:
+        scenario = None
+        scenario_models = job.get("scenario_models")
+        for attempt in range(3):
+            try:
+                from .mv_generator import generate_mv_scenario
+                character_name = job.get("character_name")
+                result = await generate_mv_scenario(
+                    title=job["title"],
+                    genre=job.get("genre"),
+                    mood=job.get("mood"),
+                    lyrics=job.get("lyrics"),
+                    character_name=character_name,
+                    models=scenario_models,
+                )
+
+                # Handle dual-model results
+                if isinstance(result, dict) and "results" in result:
+                    # Dual models: save both results and pause for user selection
+                    await _update_job(mongo_db, job_id, {
+                        "scenario_results": result["results"],
+                        "status": "scenario_review",
+                        "progress": 1,
+                    })
+                    logger.info(
+                        "Phase0: dual scenario results for job %s (%d models, attempt %d)",
+                        job_id, len(result["results"]), attempt + 1,
+                    )
+                    return  # Stop here; user must select via /select-scenario endpoint
+
+                # Single model result (string)
+                scenario = result
+                if scenario and len(scenario.strip()) > 50:
+                    await _update_job(mongo_db, job_id, {
+                        "scenario": scenario,
+                        "progress": 1,
+                    })
+                    logger.info("Phase0: scenario generated for job %s (%d chars, attempt %d)", job_id, len(scenario), attempt + 1)
+                    break
+                else:
+                    logger.warning("Phase0: scenario too short (%d chars), retrying (attempt %d/3)", len(scenario or ""), attempt + 1)
+                    scenario = None
+            except Exception as e:
+                logger.warning("Phase0: scenario generation failed (attempt %d/3): %s", attempt + 1, e)
+                if attempt < 2:
+                    await asyncio.sleep(3 * (attempt + 1))  # 지수 백오프: 3초, 6초
 
     if not scenario:
         logger.error("Phase0: scenario generation failed after 3 attempts for job %s", job_id)
@@ -970,6 +995,8 @@ async def run_phase1_split(job_id, mongo_db) -> None:
     # ── Phase 1b: GPT에게 씬 목록 전달 → 프롬프트만 받기 (3회 재시도) ──
     from .mv_generator import generate_scene_prompts_only
 
+    prompt_models = job.get("prompt_models")
+
     scene_input = [
         {
             "scene_number": s["scene_number"],
@@ -991,6 +1018,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                 mood=job.get("mood"),
                 scenario=scenario,
                 user_scene_prompt=job.get("scene_prompt"),
+                models=prompt_models,
             )
         except Exception as e:
             logger.warning("Phase1b: prompt generation failed (attempt %d/3): %s", attempt + 1, e)
@@ -998,12 +1026,28 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                 await asyncio.sleep(3 * (attempt + 1))
             continue
 
-        # Validate: all scenes must have image_prompt and video_prompt
+        # Handle dual-model results
+        if isinstance(prompts_result, dict) and "results" in prompts_result:
+            # Dual models: save both results and pause for user selection
+            await _update_job(mongo_db, job_id, {
+                "prompt_results": prompts_result["results"],
+                "status": "prompts_review",
+                "progress": 4,
+                "total_scenes": len(scenes),
+                "scenes": scenes,
+            })
+            logger.info(
+                "Phase1b: dual prompt results for job %s (%d models, attempt %d)",
+                job_id, len(prompts_result["results"]), attempt + 1,
+            )
+            return  # Stop here; user must select via /select-prompts endpoint
+
+        # Validate: all scenes must have image_prompt (video_prompt is generated later in Phase 2.5)
         if prompts_result and len(prompts_result) == len(scenes):
             missing = [
                 p.get("scene_number", "?")
                 for p in prompts_result
-                if not p.get("image_prompt") or not p.get("video_prompt")
+                if not p.get("image_prompt")
             ]
             if not missing:
                 logger.info("Phase1b: all %d scenes have prompts (attempt %d)", len(scenes), attempt + 1)
@@ -1029,12 +1073,12 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         })
         return
 
-    # 프롬프트를 씬에 채워넣기
+    # 프롬프트를 씬에 채워넣기 (video_prompt는 Phase 2.5에서 이미지 기반으로 생성)
     prompt_by_number = {p["scene_number"]: p for p in prompts_result}
     for scene in scenes:
         p = prompt_by_number.get(scene["scene_number"], {})
         scene["image_prompt"] = p.get("image_prompt", "")
-        scene["video_prompt"] = p.get("video_prompt", "")
+        scene["video_prompt"] = ""  # Phase 2.5에서 Gemini가 이미지를 보고 생성
         scene["description_ko"] = p.get("description_ko", "")
         scene["description"] = scene["image_prompt"]  # 하위호환용
 
@@ -1183,6 +1227,47 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
         # Delay between image generations
         if idx < total_to_generate - 1:
             await asyncio.sleep(3)
+
+    # ── Phase 2.5: Generate video_prompts from scene images (Gemini 2.5 Pro) ──
+    logger.info("Phase2.5: generating video prompts from scene images for job %s", job_id)
+
+    for i, scene in enumerate(scenes):
+        if not scene.get("image_object_name"):
+            continue  # no image, skip
+        if scene.get("video_prompt"):
+            continue  # already has video_prompt (e.g. manual override), skip
+
+        try:
+            # Load scene image from MinIO
+            resp = minio_client.get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=scene["image_object_name"],
+            )
+            scene_image_bytes = resp.read()
+            resp.close()
+            resp.release_conn()
+
+            video_prompt = await generate_video_prompts_from_images(
+                image_bytes=scene_image_bytes,
+                image_prompt=scene.get("image_prompt", ""),
+                scene_type=scene.get("scene_type", "drama"),
+                lyrics_segment=scene.get("lyrics_segment", ""),
+                scene_number=scene.get("scene_number", i + 1),
+            )
+
+            scenes[i]["video_prompt"] = video_prompt
+            logger.info("Phase2.5: scene %d video_prompt generated", scene.get("scene_number", i + 1))
+
+        except Exception as e:
+            logger.warning("Phase2.5: scene %d video_prompt failed: %s", scene.get("scene_number", i + 1), e)
+            scenes[i]["video_prompt"] = "Smooth cinematic camera movement, slow dolly forward."  # fallback
+
+        # Update progress
+        await _update_job(mongo_db, job_id, {"scenes": scenes})
+
+        # Small delay between API calls
+        if i < len(scenes) - 1:
+            await asyncio.sleep(2)
 
     # Final status
     completed_image_count = sum(1 for s in scenes if s.get("image_object_name"))
@@ -1445,6 +1530,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                         lyrics_segment=scene.get("lyrics_segment", ""),
                         scene_type=scene.get("scene_type", "drama"),
                         duration=float(scene.get("use_seconds", 10)),
+                        video_prompt=scene_video_prompt,
                     )
                 else:
                     task_or_op = await start_scene_video(

@@ -22,6 +22,7 @@ import tempfile
 from datetime import datetime
 from typing import List, Optional
 
+import anthropic
 import httpx
 
 from ..config import settings
@@ -51,6 +52,112 @@ GEMINI_AUDIO_URL = (
     "gemini-2.5-flash:generateContent"
 )
 
+GEMINI_VIDEO_PROMPT_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-2.5-pro:generateContent"
+)
+
+# ── Phase 2.5: Generate video_prompt from scene image (Gemini 2.5 Pro) ──────
+
+VIDEO_PROMPT_SYSTEM = """\
+You are an elite music video cinematographer analyzing a scene image to plan camera movement.
+
+Given a generated scene image, analyze the following:
+- Subject position and pose within the frame
+- Lighting direction, quality, and color temperature
+- Depth layers (foreground, midground, background)
+- Emotional tone conveyed by composition and color
+
+Based on your analysis, prescribe:
+1. CAMERA MOVEMENT: type (static, pan, tilt, dolly, truck, crane, steadicam, handheld, drone orbit) \
+and speed (very slow creep, slow, moderate, fast, whip).
+2. PLAYBACK SPEED: fps recommendation (24fps normal, 48/60/120fps slow motion, speed ramp).
+3. SUBJECT ACTION: what the subject should do during the shot (walking, turning, reaching, standing still, dancing, etc.).
+4. TRANSITION: how this shot ends (cut, dissolve, fade, whip pan, match cut).
+
+Rules:
+- For "lipsync" scenes: use static or very slow dolly, keep focus on the face, minimal camera movement.
+- For "drama" scenes: use varied cinematic movements based on what you see in the image — \
+match movement to emotion (slow for melancholy, dynamic for energy).
+- Output plain text, 2-3 sentences, English only.
+- Do NOT output JSON. Just write the camera direction as natural sentences.
+"""
+
+
+async def generate_video_prompts_from_images(
+    image_bytes: bytes,
+    image_prompt: str = "",
+    scene_type: str = "drama",
+    lyrics_segment: str = "",
+    scene_number: int = 1,
+) -> str:
+    """Gemini 2.5 Pro multimodal로 씬 이미지를 분석하여 video_prompt를 생성한다.
+
+    Args:
+        image_bytes: 생성된 씬 이미지 (PNG)
+        image_prompt: 해당 씬의 image_prompt 텍스트
+        scene_type: "drama" 또는 "lipsync"
+        lyrics_segment: 해당 씬의 가사
+        scene_number: 씬 번호
+
+    Returns:
+        video_prompt 문자열 (plain text, 2-3 sentences)
+    """
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    user_text = (
+        f"Scene {scene_number} | Type: {scene_type}\n"
+        f"Image prompt used: {image_prompt}\n"
+    )
+    if lyrics_segment:
+        user_text += f"Lyrics: {lyrics_segment}\n"
+    user_text += (
+        "\nAnalyze this scene image and write the optimal camera movement direction "
+        "for a music video clip. Output 2-3 sentences of plain text."
+    )
+
+    payload = {
+        "systemInstruction": {
+            "parts": [{"text": VIDEO_PROMPT_SYSTEM}]
+        },
+        "contents": [{"parts": [
+            {"text": user_text},
+            {"inlineData": {"mimeType": "image/png", "data": image_b64}},
+        ]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 1024,
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                GEMINI_VIDEO_PROMPT_URL,
+                params={"key": settings.google_api_key},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        # Extract text from Gemini response
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                video_prompt = parts[0].get("text", "").strip()
+                if video_prompt:
+                    logger.info("Phase2.5: scene %d video_prompt generated (%d chars)", scene_number, len(video_prompt))
+                    return video_prompt
+
+        logger.warning("Phase2.5: scene %d — empty response from Gemini", scene_number)
+        return "Smooth cinematic camera movement, slow dolly forward."
+
+    except Exception as e:
+        logger.warning("Phase2.5: scene %d Gemini call failed: %s", scene_number, e)
+        return "Smooth cinematic camera movement, slow dolly forward."
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -58,6 +165,17 @@ def _get_openai_client():
     """Get or create the AsyncOpenAI client (singleton)."""
     from .lyrics_generator import _get_client
     return _get_client()
+
+
+_mv_anthropic_client = None
+
+
+def _get_anthropic_client():
+    """Get or create the AsyncAnthropic client (singleton)."""
+    global _mv_anthropic_client
+    if _mv_anthropic_client is None:
+        _mv_anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _mv_anthropic_client
 
 
 def _get_ffmpeg_path() -> Optional[str]:
@@ -280,20 +398,8 @@ async def trim_video_clip(input_path: str, output_path: str, duration: float) ->
 # ── 0.9 Generate MV Scenario (ChatGPT) ─────────────────────────────────────
 
 
-async def generate_mv_scenario(
-    title: str,
-    genre: str = None,
-    mood: str = None,
-    lyrics: str = None,
-    character_name: str = None,
-) -> str:
-    """Generate a novel-style MV scenario using ChatGPT.
-
-    Returns a short story (500-1000 chars) describing the music video narrative.
-    If character_name is provided, uses it as the protagonist.
-    """
-    client = _get_openai_client()
-
+def _build_scenario_prompts(title, genre, mood, lyrics, character_name):
+    """Build system and user prompts for MV scenario generation."""
     system_prompt = (
         "You are a professional music video director and screenplay writer. "
         "Given a song's title, genre, mood, and lyrics, write a short novel-style scenario "
@@ -320,9 +426,19 @@ async def generate_mv_scenario(
         user_parts.append("가사:\n{}".format(lyrics[:3000]))
 
     user_prompt = "\n".join(user_parts)
+    return system_prompt, user_prompt
+
+
+async def _generate_scenario_openai(
+    title, genre, mood, lyrics, character_name, model_name=None,
+):
+    """Generate MV scenario using OpenAI."""
+    client = _get_openai_client()
+    system_prompt, user_prompt = _build_scenario_prompts(title, genre, mood, lyrics, character_name)
+    model = model_name or settings.openai_model
 
     resp = await client.chat.completions.create(
-        model=settings.openai_model,
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -332,8 +448,124 @@ async def generate_mv_scenario(
     )
 
     scenario = resp.choices[0].message.content.strip()
-    logger.info("MV scenario generated: %d chars", len(scenario))
+    logger.info("MV scenario generated (OpenAI %s): %d chars", model, len(scenario))
     return scenario
+
+
+async def _generate_scenario_claude(
+    title, genre, mood, lyrics, character_name, model_name="claude-opus-4-6",
+):
+    """Generate MV scenario using Anthropic Claude."""
+    client = _get_anthropic_client()
+    system_prompt, user_prompt = _build_scenario_prompts(title, genre, mood, lyrics, character_name)
+
+    resp = await client.messages.create(
+        model=model_name,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+        temperature=0.8,
+        max_tokens=2000,
+    )
+
+    scenario = resp.content[0].text.strip()
+    logger.info("MV scenario generated (Claude %s): %d chars", model_name, len(scenario))
+    return scenario
+
+
+async def _generate_scenario_gemini(
+    title, genre, mood, lyrics, character_name,
+):
+    """Generate MV scenario using Google Gemini 2.5 Pro."""
+    system_prompt, user_prompt = _build_scenario_prompts(title, genre, mood, lyrics, character_name)
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+
+    payload = {
+        "systemInstruction": {
+            "parts": [{"text": system_prompt}]
+        },
+        "contents": [{"parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "temperature": 0.8,
+            "maxOutputTokens": 2000,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            url,
+            params={"key": settings.google_api_key},
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError("Gemini scenario generation returned no candidates")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    scenario = ""
+    for part in parts:
+        if part.get("text"):
+            scenario += part["text"]
+
+    scenario = scenario.strip()
+    logger.info("MV scenario generated (Gemini): %d chars", len(scenario))
+    return scenario
+
+
+async def generate_mv_scenario(
+    title: str,
+    genre: str = None,
+    mood: str = None,
+    lyrics: str = None,
+    character_name: str = None,
+    models: list = None,
+):
+    """Generate a novel-style MV scenario.
+
+    Args:
+        models: List of model names. If None, uses default OpenAI model.
+                 Supported: OpenAI models, "claude-opus-4-6".
+                 If two models given, runs both in parallel.
+
+    Returns:
+        Single model (or default): scenario string (backward compatible)
+        Both models: {"results": [{"scenario": "...", "model": "gpt-4o-mini"}, {"scenario": "...", "model": "claude-opus-4-6"}]}
+    """
+    common_args = dict(title=title, genre=genre, mood=mood, lyrics=lyrics, character_name=character_name)
+
+    if not models:
+        return await _generate_scenario_openai(**common_args)
+
+    async def _run(model_name):
+        if model_name.startswith("claude-"):
+            scenario = await _generate_scenario_claude(**common_args, model_name=model_name)
+        elif model_name.startswith("gemini-"):
+            scenario = await _generate_scenario_gemini(**common_args)
+        else:  # gpt-*
+            scenario = await _generate_scenario_openai(**common_args, model_name=model_name)
+        return {"scenario": scenario, "model": model_name}
+
+    if len(models) == 1:
+        result = await _run(models[0])
+        return result["scenario"]
+
+    # Two models: run in parallel
+    results = await asyncio.gather(
+        _run(models[0]),
+        _run(models[1]),
+        return_exceptions=True,
+    )
+
+    valid_results = [r for r in results if not isinstance(r, Exception)]
+    if len(valid_results) == 0:
+        raise RuntimeError("All scenario generation calls failed")
+    if len(valid_results) == 1:
+        return valid_results[0]["scenario"]
+
+    return {"results": valid_results}
 
 
 # ── 1. Split Lyrics into Scenes (ChatGPT) ────────────────────────────────────
@@ -871,52 +1103,92 @@ async def _split_with_music_sections(
 
 
 SCENE_PROMPT_ONLY_SYSTEM = """\
-You are a music video scene prompt generator.
-You will receive a list of scenes with their section name, duration, lyrics, and scene_type.
+You are an elite music video cinematographer and director of photography (DP) \
+with 20 years of experience shooting award-winning music videos. \
+You think in terms of lenses, light, and emotion. \
+You will receive a list of scenes with their section name, duration, lyrics, and scene_type. \
 Your job is ONLY to generate visual prompts for each scene. Do NOT change the scene structure.
 
 For each scene, provide:
-1. image_prompt: A vivid visual description for AI image generation (English, 1-3 sentences)
-2. video_prompt: Camera movement instructions for AI video generation (English)
-3. description_ko: Korean description of the scene (2-3 sentences)
+1. image_prompt: A comprehensive cinematic description for AI image generation (English, 2-4 sentences). \
+   Must include ALL of the following elements:
+2. description_ko: Korean description of the scene (2-3 sentences)
 
 IMPORTANT VISUAL STYLE:
 - Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera (EXCEPT for "lipsync" scene_type).
 - Focus entirely on cinematic storytelling: the character living through the narrative, \
 showing emotions through actions and expressions naturally.
-- Use varied cinematic angles: wide shots, close-ups, over-the-shoulder, silhouettes, reflections.
+- Use varied cinematic techniques across scenes — avoid repeating the same lens/angle/movement combo.
 - Maintain visual continuity across all scenes.
 
-For image_prompt, include specific camera composition:
-- Shot type: extreme wide, wide, medium, close-up, extreme close-up
-- Camera angle: eye-level, low angle, high angle, bird's eye, dutch angle
-- Lighting: natural, golden hour, backlit, rim light, neon, harsh shadows
-- Depth of field: shallow bokeh, deep focus, rack focus subject
-- Color palette: warm/cool tones, specific colors
+══════════════════════════════════════════════════
+ image_prompt MUST include ALL of these elements:
+══════════════════════════════════════════════════
 
-For video_prompt, include specific camera movement:
-- Camera motion: tracking shot, pan left/right, tilt up/down, dolly in/out, crane, steadicam, handheld
-- Speed: slow motion, normal speed, time-lapse
-- Transition: fade, dissolve, cut, whip pan
-- Subject movement: walking toward/away, turning, reaching out
+1. LENS & FOCAL LENGTH (mandatory — vary across scenes):
+   - Wide: 16mm, 24mm, 35mm (environment, isolation, context)
+   - Standard: 50mm (natural perspective, everyday feel)
+   - Telephoto: 85mm, 100mm, 135mm (compression, intimacy, emotion)
+   - Macro: 100mm macro (extreme detail — tears, fingers, textures)
+   - Anamorphic: anamorphic lens with oval bokeh and horizontal flare (cinematic widescreen feel)
+   Example: "Shot on 85mm f/1.4 lens with creamy bokeh"
 
-scene_type rules:
+2. SHOT TYPE:
+   - Extreme wide, wide, medium wide, medium, medium close-up, close-up, extreme close-up, insert/detail shot
+
+3. CAMERA ANGLE:
+   - Eye-level, low angle, high angle, bird's eye, worm's eye, dutch/tilted angle, over-the-shoulder, POV
+
+4. LIGHTING (be specific about direction and quality):
+   - Type: natural, artificial, mixed
+   - Quality: soft/diffused, hard/harsh, dappled
+   - Direction: front, side, back, rim, top, under
+   - Source: golden hour sun, overcast sky, neon signs, candles, window light, streetlamp, moonlight
+   - Effect: lens flare, god rays, silhouette, chiaroscuro
+   Example: "Warm golden hour backlight creating a rim light around her hair, soft fill from a reflector"
+
+5. DEPTH OF FIELD & FOCUS:
+   - Shallow (f/1.4-2.8): subject sharp, background melted into bokeh
+   - Medium (f/4-5.6): subject and partial background in focus
+   - Deep (f/8-16): everything sharp
+   - Focus technique: rack focus from foreground to subject, pull focus to reveal, split diopter
+   Example: "Shallow depth of field at f/1.8, rack focus from the rain-streaked window to her face"
+
+6. COLOR PALETTE & GRADE:
+   - Temperature: warm, cool, neutral
+   - Specific tones: teal and orange, desaturated pastels, high contrast monochrome, neon-lit cyberpunk
+   - Film stock reference: Kodak Portra 400 warmth, Fuji Velvia saturation, bleach bypass
+   Example: "Cool blue-teal tones with warm skin highlights, reminiscent of Kodak Vision3 500T"
+
+7. SCENE CONTENT & EMOTION:
+   - What the character is doing (specific actions, gestures, expressions)
+   - Environment and set details
+   - Props and wardrobe details if relevant
+   - Emotional tone conveyed through body language
+
+══════════════════════════════════════════════════
+ scene_type rules:
+══════════════════════════════════════════════════
+
 - "drama": cinematic storytelling scene. Character NOT looking at camera. Focus on narrative actions and emotions.
 - "lipsync": character faces camera directly, singing/performing. ONLY the main character appears, close-up frontal shot, mouth open singing.
 
 For "lipsync" scenes:
-- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up
+- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up or medium close-up
+- Use 50mm or 85mm lens for flattering facial proportions
 - The main character should appear to be singing or rapping with mouth open
 - Do NOT include any other person in lipsync scenes
+- Lighting should emphasize the face: key light at 45 degrees, subtle fill, hair/rim light
 
 For "drama" scenes:
 - NEVER describe the character singing, performing, or looking at the camera
+- Vary lenses across drama scenes — don't use the same focal length for consecutive scenes
 
 {scenario_context}
 
 Output ONLY a JSON array matching the input scene order:
 [
-  {{"scene_number": 1, "image_prompt": "...", "video_prompt": "...", "description_ko": "..."}},
+  {{"scene_number": 1, "image_prompt": "...", "description_ko": "..."}},
   ...
 ]
 
@@ -924,30 +1196,10 @@ Output valid JSON only, no markdown fences, no extra text.
 """
 
 
-async def generate_scene_prompts_only(
-    scenes_input: List[dict],
-    title: str,
-    genre: Optional[str] = None,
-    mood: Optional[str] = None,
-    scenario: Optional[str] = None,
-    user_scene_prompt: Optional[str] = None,
-) -> List[dict]:
-    """GPT에게 씬 목록을 전달하고 image_prompt, video_prompt, description_ko만 받는다.
-
-    Args:
-        scenes_input: [{"scene_number", "section", "duration", "lyrics", "scene_type"}, ...]
-        title: 곡 제목
-        genre: 장르
-        mood: 분위기
-        scenario: MV 시나리오
-        user_scene_prompt: 사용자 씬 지시
-
-    Returns:
-        [{"scene_number", "image_prompt", "video_prompt", "description_ko"}, ...]
-    """
-    client = _get_openai_client()
-
-    # Build scenario context
+def _build_scene_prompt_messages(
+    scenes_input, title, genre, mood, scenario, user_scene_prompt,
+):
+    """Build system and user messages for scene prompt generation."""
     scenario_context = ""
     if scenario:
         scenario_context = (
@@ -966,7 +1218,6 @@ async def generate_scene_prompts_only(
             "Incorporate this direction into each scene's visual description."
         ).format(user_scene_prompt.strip())
 
-    # Build user message
     user_message = "Title: {}\n".format(title)
     if genre:
         user_message += "Genre: {}\n".format(genre)
@@ -975,21 +1226,11 @@ async def generate_scene_prompts_only(
     user_message += "\n## Scenes to generate prompts for:\n"
     user_message += json.dumps(scenes_input, ensure_ascii=False, indent=2)
 
-    max_tokens = min(max(len(scenes_input) * 200, 4000), 16000)
+    return system_prompt, user_message
 
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=0.7,
-        max_tokens=max_tokens,
-    )
 
-    raw = response.choices[0].message.content.strip()
-
-    # Strip markdown code fences if present
+def _parse_scene_prompts_raw(raw: str) -> list:
+    """Parse raw JSON response from scene prompt generation."""
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
         if raw.endswith("```"):
@@ -999,13 +1240,135 @@ async def generate_scene_prompts_only(
     result = json.loads(raw)
 
     if not isinstance(result, list) or len(result) == 0:
-        raise ValueError("ChatGPT가 유효한 프롬프트 목록을 생성하지 못했습니다.")
+        raise ValueError("AI가 유효한 프롬프트 목록을 생성하지 못했습니다.")
 
+    return result
+
+
+async def _generate_scene_prompts_openai(
+    scenes_input, title, genre, mood, scenario, user_scene_prompt, model_name=None,
+):
+    """Generate scene prompts using OpenAI."""
+    client = _get_openai_client()
+    model = model_name or settings.openai_model
+    system_prompt, user_message = _build_scene_prompt_messages(
+        scenes_input, title, genre, mood, scenario, user_scene_prompt,
+    )
+
+    max_tokens = min(max(len(scenes_input) * 200, 4000), 16000)
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        max_tokens=max_tokens,
+    )
+
+    raw = response.choices[0].message.content.strip()
+    result = _parse_scene_prompts_raw(raw)
     logger.info(
-        "generate_scene_prompts_only: %d prompts generated for %d scenes",
-        len(result), len(scenes_input),
+        "generate_scene_prompts_only (OpenAI %s): %d prompts generated for %d scenes",
+        model, len(result), len(scenes_input),
     )
     return result
+
+
+async def _generate_scene_prompts_claude(
+    scenes_input, title, genre, mood, scenario, user_scene_prompt, model_name="claude-opus-4-6",
+):
+    """Generate scene prompts using Anthropic Claude."""
+    client = _get_anthropic_client()
+    system_prompt, user_message = _build_scene_prompt_messages(
+        scenes_input, title, genre, mood, scenario, user_scene_prompt,
+    )
+
+    max_tokens = min(max(len(scenes_input) * 200, 4000), 16000)
+
+    response = await client.messages.create(
+        model=model_name,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+        temperature=0.7,
+        max_tokens=max_tokens,
+    )
+
+    raw = response.content[0].text.strip()
+    result = _parse_scene_prompts_raw(raw)
+    logger.info(
+        "generate_scene_prompts_only (Claude %s): %d prompts generated for %d scenes",
+        model_name, len(result), len(scenes_input),
+    )
+    return result
+
+
+async def generate_scene_prompts_only(
+    scenes_input: List[dict],
+    title: str,
+    genre: Optional[str] = None,
+    mood: Optional[str] = None,
+    scenario: Optional[str] = None,
+    user_scene_prompt: Optional[str] = None,
+    models: list = None,
+) -> list:
+    """GPT에게 씬 목록을 전달하고 image_prompt, description_ko만 받는다.
+
+    video_prompt는 Phase 2.5에서 Gemini 2.5 Pro가 이미지를 보고 생성한다.
+
+    Args:
+        scenes_input: [{"scene_number", "section", "duration", "lyrics", "scene_type"}, ...]
+        title: 곡 제목
+        genre: 장르
+        mood: 분위기
+        scenario: MV 시나리오
+        user_scene_prompt: 사용자 씬 지시
+        models: List of model names. If None, uses default OpenAI model.
+                 If contains "gpt-5.4", uses that for OpenAI call.
+                 If two models given, runs both in parallel.
+
+    Returns:
+        Single model: [{"scene_number", "image_prompt", "description_ko"}, ...] (backward compatible)
+        Both models: {"results": [{"prompts": [...], "model": "gpt-4o-mini"}, {"prompts": [...], "model": "gpt-5.4"}]}
+    """
+    common_args = dict(
+        scenes_input=scenes_input,
+        title=title,
+        genre=genre,
+        mood=mood,
+        scenario=scenario,
+        user_scene_prompt=user_scene_prompt,
+    )
+
+    if not models:
+        return await _generate_scene_prompts_openai(**common_args)
+
+    async def _run(model_name):
+        if model_name.startswith("claude-"):
+            prompts = await _generate_scene_prompts_claude(**common_args, model_name=model_name)
+        else:  # gpt-*
+            prompts = await _generate_scene_prompts_openai(**common_args, model_name=model_name)
+        return {"prompts": prompts, "model": model_name}
+
+    if len(models) == 1:
+        result = await _run(models[0])
+        return result["prompts"]
+
+    # Two models: run in parallel
+    results = await asyncio.gather(
+        _run(models[0]),
+        _run(models[1]),
+        return_exceptions=True,
+    )
+
+    valid_results = [r for r in results if not isinstance(r, Exception)]
+    if len(valid_results) == 0:
+        raise RuntimeError("All scene prompt generation calls failed")
+    if len(valid_results) == 1:
+        return valid_results[0]["prompts"]
+
+    return {"results": valid_results}
 
 
 # ── 2. Generate Scene Image (Gemini) ─────────────────────────────────────────

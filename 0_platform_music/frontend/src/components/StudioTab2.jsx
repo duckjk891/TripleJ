@@ -9,6 +9,14 @@ import {
 import * as api from '../api';
 import './StudioTab2.css';
 
+const LYRICS_MODELS = [
+  { id: 'gpt-4o-mini', name: 'GPT-4o-mini', color: '#00d4aa', inPrice: '$0.15/M', outPrice: '$0.60/M', perCall: '$0.003', perCallKRW: '≈4원' },
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', color: '#a855f7', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.10', perCallKRW: '≈140원' },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.06', perCallKRW: '≈84원' },
+  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', color: '#f59e0b', inPrice: '$1.00/M', outPrice: '$5.00/M', perCall: '$0.02', perCallKRW: '≈28원' },
+  { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', color: '#10b981', inPrice: '$0.75/M', outPrice: '$4.50/M', perCall: '$0.015', perCallKRW: '≈21원' },
+];
+
 // 장르: 음악의 카테고리 (어떤 종류의 음악인지)
 const GENRE_PRESETS = [
   { label: '팝', value: 'Pop' },
@@ -806,6 +814,11 @@ export default function StudioTab2({ onSendToUpload }) {
   // Draft (임시저장)
   const [draftId, setDraftId] = useState(null);
 
+  // AI 모델 선택 (가사 생성)
+  const [lyricsModels, setLyricsModels] = useState(['gpt-4o-mini']);
+  const [lyricsResults, setLyricsResults] = useState(null);
+  const [showLyricsCompare, setShowLyricsCompare] = useState(false);
+
   // 번역 캐시 state (handleGenerateLyrics에서 1회 번역 후 저장)
   const [translatedGenre, setTranslatedGenre] = useState(null);
   const [translatedMood, setTranslatedMood] = useState(null);
@@ -990,10 +1003,19 @@ export default function StudioTab2({ onSendToUpload }) {
         duet: isDuet,
         duet_main_vocal_style: isDuet ? duetMainStyle.trim() || null : null,
         duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
+        models: lyricsModels,
       });
-      setTitle(data.title || '');
-      setLyrics(data.lyrics || '');
-      setStep(2);
+      if (data.results && Array.isArray(data.results)) {
+        // 듀얼 모델 결과 → 비교 UI 표시
+        setLyricsResults(data.results);
+        setShowLyricsCompare(true);
+      } else {
+        setTitle(data.title || '');
+        setLyrics(data.lyrics || '');
+        setShowLyricsCompare(false);
+        setLyricsResults(null);
+        setStep(2);
+      }
     } catch (err) {
       const msg = err.response?.data?.error || '가사 생성에 실패했습니다.';
       setError(msg);
@@ -1974,10 +1996,30 @@ export default function StudioTab2({ onSendToUpload }) {
           {error && <div className="s2__msg s2__msg--error">{error}</div>}
           {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
 
+          {/* AI 모델 선택 */}
+          <div className="model-select-section" style={{ marginBottom: '12px' }}>
+            <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>AI 모델 선택</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+              {LYRICS_MODELS.map(model => (
+                <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '10px 14px', borderRadius: '8px', border: lyricsModels.includes(model.id) ? `2px solid ${model.color}` : '2px solid #333', background: lyricsModels.includes(model.id) ? `${model.color}15` : '#1a1a1a', fontSize: '13px', color: '#ddd', minWidth: '180px' }}>
+                  <input type="checkbox" checked={lyricsModels.includes(model.id)} onChange={() => {
+                    setLyricsModels(prev => prev.includes(model.id) ? prev.filter(m => m !== model.id) : [...prev, model.id]);
+                  }} style={{ accentColor: model.color, marginTop: '2px' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontWeight: 600 }}>{model.name}</span>
+                    <span style={{ color: '#666', fontSize: '11px' }}>in {model.inPrice}  out {model.outPrice}</span>
+                    <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {lyricsModels.length === 0 && <p style={{ color: '#ff6b6b', fontSize: '12px', marginTop: '4px' }}>최소 1개 모델을 선택하세요</p>}
+          </div>
+
           <button
             className="s2__submit"
             onClick={handleGenerateLyrics}
-            disabled={generatingLyrics}
+            disabled={generatingLyrics || lyricsModels.length === 0}
           >
             {generatingLyrics ? (
               <>
@@ -1991,6 +2033,35 @@ export default function StudioTab2({ onSendToUpload }) {
               </>
             )}
           </button>
+
+          {/* 모델 비교 뷰 */}
+          {showLyricsCompare && lyricsResults && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
+              {lyricsResults.map((result, idx) => {
+                const modelInfo = LYRICS_MODELS.find(m => m.id === result.model) || { name: result.model, color: '#888' };
+                return (
+                  <div key={idx} style={{ background: '#1a1a1a', borderRadius: '12px', padding: '16px', border: `1px solid ${modelInfo.color}33`, borderTop: `3px solid ${modelInfo.color}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: modelInfo.color }}>
+                        {modelInfo.name}
+                      </span>
+                    </div>
+                    <h4 style={{ color: '#fff', marginBottom: '8px' }}>{result.title}</h4>
+                    <pre style={{ color: '#ccc', fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: '300px', overflow: 'auto', lineHeight: 1.6 }}>{result.lyrics}</pre>
+                    <button onClick={() => {
+                      setTitle(result.title);
+                      setLyrics(result.lyrics);
+                      setShowLyricsCompare(false);
+                      setLyricsResults(null);
+                      setStep(2);
+                    }} style={{ marginTop: '12px', width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: modelInfo.color, color: '#000', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}>
+                      이걸로 선택
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Or skip to manual lyrics */}
           <button

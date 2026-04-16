@@ -13,7 +13,7 @@ import mimetypes
 import os
 import uuid as uuid_lib
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
@@ -44,6 +44,7 @@ class LyricsRequest(BaseModel):
     duet_main_vocal_style: Optional[str] = None
     duet_sub_vocal_style: Optional[str] = None
     language: Optional[str] = "ko"
+    models: Optional[List[str]] = None  # e.g. ["gpt-4o-mini", "claude-opus-4-6"]
 
 
 class GenerateRequest(BaseModel):
@@ -288,6 +289,7 @@ async def generate_lyrics_endpoint(
             duet_main_vocal_style=body.duet_main_vocal_style,
             duet_sub_vocal_style=body.duet_sub_vocal_style,
             language=body.language or "ko",
+            models=body.models,
         )
         return result
     except Exception as e:
