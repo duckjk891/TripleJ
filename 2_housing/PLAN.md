@@ -1334,3 +1334,210 @@ interface DialogueState {
 1. 모든 `9000` 참조를 `9001`로 변경 (api.ts, 6개 스크린 파일)
 2. Wondera API 호출 필드 정리 - 백엔드 스키마에 맞게 수정
 3. 대화 UI → API 매핑 점검표 작성
+
+
+---
+
+## v24 - 2026-04-17 - 자연 대기시간 재책정 (Suno 6시간 기준점)
+
+### 수정일자
+2026-04-17
+
+### 요청 작업
+- **사용자 요청**: 자연 대기시간이 짧게 느껴짐. **Suno(작곡, 1,000원)를 자연대기 6시간 기준점**으로 잡고, 다른 모델들의 대기시간을 가격에 비례하여 재책정
+- 수정 대상: `2_housing/stores/timerStore.ts` 의 `MODEL_QUEUE_CONFIG`
+- 백엔드 코드는 절대 수정 금지 (순수 클라이언트 사이드 UX 타이머이므로 백엔드 영향 없음)
+
+### 계산 근거 (Cost-proportional Wait Model)
+- 기준점: **Suno 1,000원 = 21,600초 (6시간)**
+- 공식: `target_wait_sec = (model_cost / 1000) × 21,600`
+- `cost_ratio = 모델가격 / 1,000원`
+
+### 모델별 목표 자연대기시간 (수학적 계산)
+| 모델 | 비용 | cost_ratio | 목표 대기 | 환산 |
+|------|------|-----------|----------|------|
+| GPT-4o Mini | 50원 | 0.05 | 1,080초 | **18분** |
+| Claude Sonnet | 200원 | 0.20 | 4,320초 | **72분 (1.2h)** |
+| Image (Gemini) | 200원 | 0.20 | 4,320초 | **72분 (1.2h)** |
+| GPT-4o | 300원 | 0.30 | 6,480초 | **108분 (1.8h)** |
+| GPT-4 Turbo | 500원 | 0.50 | 10,800초 | **180분 (3h)** |
+| Wondera | 500원 | 0.50 | 10,800초 | **180분 (3h)** |
+| Suno (composer) | 1,000원 | 1.00 | 21,600초 | **360분 (6h)** ★기준★ |
+| Claude Opus | 1,500원 | 1.50 | 32,400초 | **540분 (9h)** |
+| MV (Video) | 3,000원 | 3.00 | 64,800초 | **1,080분 (18h)** |
+| Artist | - | - | ~900초 | **15분 (그대로 유지)** |
+
+### 권장 queueNumber × tickIntervalSec 조합
+- **tickIntervalSec 통일 정책**: 30초로 통일 (Artist만 20초 유지, 유아 사용자가 가벼운 작업도 빨리 체감하도록)
+- queueNumber = 목표시간(초) ÷ tickIntervalSec
+- min/max는 목표값 ±10% (±15% in heavy ones for variability)
+
+| 모델 | tickIntervalSec | minQueue | maxQueue | 평균 대기 | 비고 |
+|------|----------------|----------|----------|---------|------|
+| lyrics_gpt4o_mini | 30 | 32 | 40 | ~18분 | 1,080s ÷ 30 = 36 → 32~40 |
+| lyrics_claude_sonnet | 30 | 130 | 158 | ~72분 | 4,320s ÷ 30 = 144 → 130~158 |
+| image | 30 | 130 | 158 | ~72분 | 4,320s ÷ 30 = 144 → 130~158 |
+| lyrics_gpt4o | 30 | 195 | 237 | ~108분 | 6,480s ÷ 30 = 216 → 195~237 |
+| lyrics_gpt4_turbo | 30 | 324 | 396 | ~180분 | 10,800s ÷ 30 = 360 → 324~396 |
+| wondera | 30 | 324 | 396 | ~180분 | 10,800s ÷ 30 = 360 → 324~396 |
+| composer (Suno) | 30 | 648 | 792 | ~360분 (6h) | 21,600s ÷ 30 = 720 → 648~792 ★기준★ |
+| lyrics_claude_opus | 30 | 972 | 1,188 | ~540분 (9h) | 32,400s ÷ 30 = 1,080 → 972~1,188 |
+| video (MV) | 30 | 1,944 | 2,376 | ~1,080분 (18h) | 64,800s ÷ 30 = 2,160 → 1,944~2,376 |
+| artist | 20 | 30 | 50 | ~10~17분 | 그대로 유지 |
+
+### adReduce 광고 보상 비율 재조정 (자연대기 비례 5~8%)
+- 자연 대기가 길어졌으므로 광고 1회 보상도 비례적으로 늘려야 사용자 경험(UX) 유지
+- **정책**: 광고 1회당 평균 자연대기의 약 **5~8%** 단축 (즉 광고 12~20회면 완료)
+- adReduce는 **queueNumber 단위**로 차감되므로, `평균 queueNumber × 0.05~0.08` 적용
+
+| 모델 | avg queue | adReduce min (5%) | adReduce max (8%) |
+|------|-----------|-------------------|-------------------|
+| lyrics_gpt4o_mini | 36 | 2 | 3 |
+| lyrics_claude_sonnet | 144 | 7 | 12 |
+| image | 144 | 7 | 12 |
+| lyrics_gpt4o | 216 | 11 | 17 |
+| lyrics_gpt4_turbo | 360 | 18 | 29 |
+| wondera | 360 | 18 | 29 |
+| composer (Suno) | 720 | 36 | 58 |
+| lyrics_claude_opus | 1,080 | 54 | 86 |
+| video (MV) | 2,160 | 108 | 173 |
+| artist | 40 | 5 | 10 (그대로) |
+
+### 부수효과 검토
+1. **MapScreen.tsx tick 인터벌**: 이미 1초 간격으로 모든 디렉터를 체크하면서 각 디렉터의 `tickIntervalSec`을 보고 reduce를 호출하므로, queueNumber/tickIntervalSec 변경에 자동 적응. **영향 없음.**
+2. **getAdReduce**: 광고 보상 값이 10배 이상 커지지만 reduceQueue() 자체는 max(0, n-amount) 형태라 안전함.
+3. **persist 스토리지**: timerStore는 zustand persist 미사용(메모리 only) → 기존 진행 중 작업이 새 설정으로 인해 이상 동작할 가능성 없음.
+4. **백엔드 API**: 타이머는 순수 UI 표시용. 백엔드 generation 응답이 도착하면 `completeTask()` 호출되어 즉시 종료. 따라서 자연대기 시간이 길어도 실제 결과 도착 시 바로 표시됨. **백엔드 영향 0.**
+
+### 수정 대상 파일
+- `/Users/pearl/TripleJ/2_housing/stores/timerStore.ts` 의 `MODEL_QUEUE_CONFIG` 객체 전면 교체
+- 상단 주석에 "Suno = 6시간(21,600초) 자연 대기 기준점" 명시
+
+
+## v25 - 2026-04-17 - Suno 6시간 기준 대기시간 재책정 (확정판, v24 미반영분 적용)
+
+### 요청 작업 요약
+- **사용자 재요청**: "Suno 자연대기를 6시간 기준으로 잡고, 가격에 비례해서 다른 모델들의 대기시간도 재책정해줘. 현재 자연대기가 너무 짧음."
+- **현황**: v24에서 동일 의도의 계획이 작성되었으나 `2_housing/stores/timerStore.ts`에 **미반영** 상태. 현재 코드는 Suno 360~720 / 30s = 평균 약 4.5시간(이전 v12 설정)으로 6시간보다 짧음.
+- **본 v25**: v24 계산을 그대로 채택·확정하고 frontend-dev에 직접 적용 가능한 코드 블록 제공.
+- **백엔드 영향 없음** (UI 타이머는 순수 클라이언트 사이드, completeTask로 백엔드 응답 시 즉시 종료됨).
+
+### Cost-proportional 계산 (Suno 1,000원 = 6시간 = 21,600초 기준)
+
+`target_wait_sec = (cost / 1000원) × 21,600초`
+
+| 모델 | 가격(원) | cost_ratio | 목표 자연대기(평균) | 현재 평균 → 새 평균 |
+|------|---------|-----------|--------------------|----|
+| GPT-4o Mini (작사)        |    50 | 0.05 |   1,080s = **18분**       | 13.3분 → **18분** |
+| Claude Sonnet (작사)      |   200 | 0.20 |   4,320s = **72분 (1.2h)**| 33.5분 → **72분** |
+| Image (Gemini)            |   200 | 0.20 |   4,320s = **72분 (1.2h)**| 33.3분 → **72분** |
+| GPT-4o (작사)             |   300 | 0.30 |   6,480s = **108분 (1.8h)**| 41.6분 → **108분** |
+| GPT-4 Turbo (작사)        |   500 | 0.50 |  10,800s = **180분 (3h)** | 75분 → **180분** |
+| Wondera (작곡)            |   500 | 0.50 |  10,800s = **180분 (3h)** | 150분 → **180분** |
+| **Suno (작곡) ★기준**     | 1,000 | 1.00 |  21,600s = **360분 (6h)** | 270분 → **360분** |
+| Claude Opus (작사)        | 1,500 | 1.50 |  32,400s = **540분 (9h)** | 137.5분 → **540분** |
+| MV (Video)                | 3,000 | 3.00 |  64,800s = **1,080분 (18h)**| 500분 → **1,080분** |
+| Artist (저렴, 유지)       |     - |   -  |     ~900s = **15분**       | 13.3분 → 13.3분 (유지) |
+
+### 결정된 새 MODEL_QUEUE_CONFIG (TypeScript, 그대로 복붙)
+
+```typescript
+// ─── 모델별 대기번호 설정 ───
+// 기준: Suno = 6시간(21,600초) 자연 대기 (Cost-proportional Wait Model)
+// target_wait_sec = (model_cost / 1,000원) × 21,600
+// queueNumber × tickIntervalSec(30) = target_wait_sec
+// min/max는 평균 ±10% 범위로 변동성 부여
+// 광고 보상 = 평균 queueNumber × 5~8% (광고 12~20회면 완료)
+const MODEL_QUEUE_CONFIG: Record<string, QueueConfig> = {
+  // ─── 작사 모델 (5종) ───
+  'lyrics_gpt4o_mini': {
+    minQueue: 32, maxQueue: 40,        // ~50원 (cost_ratio 0.05)
+    tickIntervalSec: 30,               // 자연대기: 16~20분 (평균 18분)
+    adReduce: { min: 2, max: 3 },
+    label: 'GPT-4o Mini 작사',
+  },
+  'lyrics_claude_sonnet': {
+    minQueue: 130, maxQueue: 158,      // ~200원 (cost_ratio 0.20)
+    tickIntervalSec: 30,               // 자연대기: 65~79분 (평균 72분 = 1.2h)
+    adReduce: { min: 7, max: 12 },
+    label: 'Claude Sonnet 작사',
+  },
+  'lyrics_gpt4o': {
+    minQueue: 195, maxQueue: 237,      // ~300원 (cost_ratio 0.30)
+    tickIntervalSec: 30,               // 자연대기: 97~118분 (평균 108분 = 1.8h)
+    adReduce: { min: 11, max: 17 },
+    label: 'GPT-4o 작사',
+  },
+  'lyrics_gpt4_turbo': {
+    minQueue: 324, maxQueue: 396,      // ~500원 (cost_ratio 0.50)
+    tickIntervalSec: 30,               // 자연대기: 162~198분 (평균 180분 = 3h)
+    adReduce: { min: 18, max: 29 },
+    label: 'GPT-4 Turbo 작사',
+  },
+  'lyrics_claude_opus': {
+    minQueue: 972, maxQueue: 1188,     // ~1,500원 (cost_ratio 1.50)
+    tickIntervalSec: 30,               // 자연대기: 486~594분 (평균 540분 = 9h)
+    adReduce: { min: 54, max: 86 },
+    label: 'Claude Opus 작사',
+  },
+
+  // ─── 작곡 모델 ───
+  'composer': {
+    minQueue: 648, maxQueue: 792,      // Suno ~1,000원 ★기준점★
+    tickIntervalSec: 30,               // 자연대기: 324~396분 (평균 360분 = 6h)
+    adReduce: { min: 36, max: 58 },
+    label: 'Suno 작곡',
+  },
+  'wondera': {
+    minQueue: 324, maxQueue: 396,      // Wondera ~500원 (cost_ratio 0.50)
+    tickIntervalSec: 30,               // 자연대기: 162~198분 (평균 180분 = 3h)
+    adReduce: { min: 18, max: 29 },
+    label: 'Wondera 작곡',
+  },
+
+  // ─── 이미지 ───
+  'image': {
+    minQueue: 130, maxQueue: 158,      // Gemini ~200원 (cost_ratio 0.20)
+    tickIntervalSec: 30,               // 자연대기: 65~79분 (평균 72분 = 1.2h)
+    adReduce: { min: 7, max: 12 },
+    label: '커버 이미지',
+  },
+
+  // ─── 기타 ───
+  'artist': {
+    minQueue: 30, maxQueue: 50,        // 저렴, 유지
+    tickIntervalSec: 20,               // 자연대기: 10~17분 (그대로)
+    adReduce: { min: 5, max: 10 },
+    label: '아티스트',
+  },
+  'video': {
+    minQueue: 1944, maxQueue: 2376,    // MV ~3,000원 (cost_ratio 3.00)
+    tickIntervalSec: 30,               // 자연대기: 972~1,188분 (평균 1,080분 = 18h)
+    adReduce: { min: 108, max: 173 },
+    label: 'MV 생성',
+  },
+};
+```
+
+### 광고 감소량 비례 조정 권장 여부 → **권장 (필수)**
+- 자연대기가 평균 1.3~3.9배 길어졌으므로 광고 1회당 보상도 비례 확대 필요. 그렇지 않으면 사용자가 광고를 봐도 체감이 거의 없게 됨.
+- **정책**: 평균 queueNumber의 **5~8% 단축**으로 통일. 즉 광고 약 12~20회 시청 시 완료 가능.
+- 위 코드 블록의 `adReduce` 값이 이 정책을 이미 반영함.
+- **예외**: Artist는 원래 짧으므로 5~10 그대로 유지.
+
+### 영향 범위 (수정 파일 목록)
+- `/Users/pearl/TripleJ/2_housing/stores/timerStore.ts`
+  - **L25~L93**: `MODEL_QUEUE_CONFIG` 객체 전면 교체 (위 TypeScript 코드 블록으로)
+  - **L12~L15**: 상단 주석을 위 코드 블록의 주석으로 갱신
+- **그 외 파일 수정 불필요** (MapScreen.tsx, AdMob 핸들러, 백엔드 API 등은 전부 이 config를 참조하므로 자동 적응)
+
+### 부수효과 재검토
+1. **MapScreen tick 인터벌**: 1초 단위 글로벌 tick → tickIntervalSec(30) 보고 reduce 호출, 자동 적응. 영향 없음.
+2. **AdMob 광고 보상**: getAdReduce()는 새 adReduce 범위를 그대로 사용. 안전.
+3. **persist 미사용**: timerStore는 메모리 only → 진행 중 작업에 대한 마이그레이션 불필요.
+4. **백엔드**: completeTask()가 백엔드 응답 시 즉시 호출되므로 자연대기보다 빨리 결과가 와도 정상 종료. **백엔드 코드 수정 0건**.
+5. **MV 18h 우려**: MV는 cost_ratio 3.0이므로 수학적으로 18시간이 정당하나, 실제 Kling+FFmpeg는 5~15분에 완료됨. 백엔드 응답이 항상 자연대기보다 빨라 completeTask가 먼저 트리거되므로 UX 문제 없음. (광고 173/회로 약 12회면 완료 가능.)
+
+### 다음 단계 (메인 에이전트가 처리)
+- frontend-dev에게 timerStore.ts L25~L93 교체 지시 (위 코드 블록 그대로)
+- 반영 후 tester가 Suno 평균 ≈360분, Opus 평균 ≈540분, MV 평균 ≈1,080분 산출되는지 단위 테스트 수행

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useLayoutEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -16,6 +16,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
+import { usePlayerStore } from '../stores/playerStore';
 
 interface ChartTrack {
   id: string;
@@ -32,12 +33,13 @@ interface ChartTrack {
   lyrics?: string;
 }
 
-type ChartTab = 'top100' | 'weekly' | 'monthly';
+type ChartTab = 'top100' | 'weekly' | 'monthly' | 'new';
 
 const TABS: { key: ChartTab; label: string; endpoint: string }[] = [
   { key: 'top100', label: 'TOP 100', endpoint: '/charts/top100' },
-  { key: 'weekly', label: '주간차트', endpoint: '/charts/weekly' },
-  { key: 'monthly', label: '월간차트', endpoint: '/charts/monthly' },
+  { key: 'weekly', label: '주간', endpoint: '/charts/weekly' },
+  { key: 'monthly', label: '월간', endpoint: '/charts/monthly' },
+  { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },
 ];
 
 const RANK_COLORS: Record<number, string> = {
@@ -58,6 +60,11 @@ export default function ChartScreen() {
   const [selectedTrackId, setSelectedTrackId] = useState<string>('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [likedTracks, setLikedTracks] = useState<Set<string>>(new Set());
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ChartTrack[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchSubmitted, setSearchSubmitted] = useState(false);
 
   const fetchChart = useCallback(async (tab: ChartTab) => {
     const endpoint = TABS.find((t) => t.key === tab)?.endpoint || '/charts/top100';
@@ -74,11 +81,34 @@ export default function ChartScreen() {
     }
   }, []);
 
+  // 탭 전환 시 + 포커스 시 항상 새로고침
   useFocusEffect(
     useCallback(() => {
       fetchChart(activeTab);
     }, [activeTab])
   );
+
+  // 상단바에 검색 아이콘 + 설정 아이콘 배치 (검색이 설정 왼쪽)
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+          <TouchableOpacity
+            onPress={() => setShowSearchModal(true)}
+            style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+          >
+            <Text style={{ fontSize: 18, color: '#fff' }}>{'🔍'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings' as never)}
+            style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+          >
+            <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -158,14 +188,51 @@ export default function ChartScreen() {
     setShowPlaylistModal(false);
   };
 
+  const handleSearch = async (q: string) => {
+    const query = q.trim();
+    if (!query) return;
+    setSearchLoading(true);
+    setSearchSubmitted(true);
+    try {
+      const res = await api.get(`/tracks/search`, { params: { q: query, limit: 50 } });
+      const data = res.data?.tracks || [];
+      setSearchResults(data);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const closeSearchModal = () => {
+    setShowSearchModal(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchSubmitted(false);
+  };
+
+  const playerStore = usePlayerStore();
+
   const handleTrackPress = (track: ChartTrack) => {
+    // 차트 목록을 queue로 설정
+    const idx = tracks.findIndex((t) => t.id === track.id);
+    playerStore.setQueue(tracks);
+    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    navigation.navigate('Player', { track });
+  };
+
+  const handleSearchTrackPress = (track: ChartTrack) => {
+    const idx = searchResults.findIndex((t) => t.id === track.id);
+    playerStore.setQueue(searchResults);
+    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    closeSearchModal();
     navigation.navigate('Player', { track });
   };
 
   const getCoverUri = (track: ChartTrack): string | null => {
     const img = track.cover_image || track.cover_image_url;
     if (!img) return null;
-    return `http://192.168.219.106:9001/api/upload/cover-preview/${encodeURIComponent(img)}`;
+    return `http://192.168.219.106:9003/api/upload/cover-preview/${encodeURIComponent(img)}`;
   };
 
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
@@ -173,6 +240,7 @@ export default function ChartScreen() {
     const rankColor = RANK_COLORS[rank] || '#888';
     const coverUri = getCoverUri(item);
     const isLiked = likedTracks.has(item.id);
+    const isNewTab = activeTab === 'new';
 
     return (
       <TouchableOpacity
@@ -180,7 +248,13 @@ export default function ChartScreen() {
         activeOpacity={0.7}
         onPress={() => handleTrackPress(item)}
       >
-        <Text style={[styles.rankNumber, { color: rankColor }]}>{rank}</Text>
+        {isNewTab ? (
+          <View style={styles.newBadge}>
+            <Text style={styles.newBadgeText}>NEW</Text>
+          </View>
+        ) : (
+          <Text style={[styles.rankNumber, { color: rankColor }]}>{rank}</Text>
+        )}
 
         <View style={styles.coverContainer}>
           {coverUri ? (
@@ -262,7 +336,7 @@ export default function ChartScreen() {
           data={tracks}
           keyExtractor={(item) => item.id}
           renderItem={renderTrack}
-          contentContainerStyle={{ paddingBottom: 80 }}
+          contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -280,14 +354,99 @@ export default function ChartScreen() {
         </View>
       )}
 
-      {/* FAB button */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => navigation.navigate('MyMusic')}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.fabText}>+</Text>
-      </TouchableOpacity>
+      {/* FAB button - 미니 플레이어 활성화 시 숨김 */}
+      {!playerStore.track && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => navigation.navigate('MyMusic')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.fabText}>+</Text>
+        </TouchableOpacity>
+      )}
+      {/* 검색 모달 (전체 트랙 검색) */}
+      <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
+        <View style={styles.searchModalContainer}>
+          {/* 검색 헤더 */}
+          <View style={styles.searchHeader}>
+            <TouchableOpacity onPress={closeSearchModal} style={styles.searchBackButton}>
+              <Text style={styles.searchBackIcon}>{'←'}</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="곡 제목, 아티스트, 태그 검색"
+              placeholderTextColor="#666"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onSubmitEditing={() => handleSearch(searchQuery)}
+              returnKeyType="search"
+              autoFocus
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity
+                onPress={() => {
+                  setSearchQuery('');
+                  setSearchResults([]);
+                  setSearchSubmitted(false);
+                }}
+                style={styles.searchClearButton}
+              >
+                <Text style={styles.searchClearIcon}>{'✕'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 결과 영역 */}
+          {searchLoading ? (
+            <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 40 }} />
+          ) : searchResults.length > 0 ? (
+            <FlatList
+              data={searchResults}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => {
+                const coverUri = getCoverUri(item);
+                return (
+                  <TouchableOpacity
+                    style={styles.searchResultItem}
+                    activeOpacity={0.7}
+                    onPress={() => handleSearchTrackPress(item)}
+                  >
+                    <View style={styles.coverContainer}>
+                      {coverUri ? (
+                        <Image source={{ uri: coverUri }} style={styles.coverImage} />
+                      ) : (
+                        <View style={styles.coverPlaceholder}>
+                          <Text style={styles.coverPlaceholderIcon}>{'♪'}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.trackInfo}>
+                      <Text style={styles.trackTitle} numberOfLines={1}>{item.title}</Text>
+                      <Text style={styles.trackArtist} numberOfLines={1}>
+                        {item.artist_name || '알 수 없는 아티스트'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+              keyboardShouldPersistTaps="handled"
+            />
+          ) : searchSubmitted ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyIcon}>{'🔍'}</Text>
+              <Text style={styles.emptyText}>검색 결과가 없습니다</Text>
+              <Text style={styles.emptyHint}>다른 검색어로 시도해보세요</Text>
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyIcon}>{'🎵'}</Text>
+              <Text style={styles.emptyText}>곡을 검색해보세요</Text>
+              <Text style={styles.emptyHint}>제목, 아티스트, 태그로 검색 가능</Text>
+            </View>
+          )}
+        </View>
+      </Modal>
+
       {/* 플레이리스트 선택 모달 */}
       <Modal visible={showPlaylistModal} transparent animationType="slide" onRequestClose={() => setShowPlaylistModal(false)}>
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
@@ -337,6 +496,57 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a1a',
   },
+  searchModalContainer: {
+    flex: 1,
+    backgroundColor: '#0a0a1a',
+    paddingTop: 50,
+  },
+  searchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a2e',
+  },
+  searchBackButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchBackIcon: {
+    fontSize: 24,
+    color: '#fff',
+  },
+  searchInput: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#fff',
+    fontSize: 14,
+    marginHorizontal: 4,
+  },
+  searchClearButton: {
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchClearIcon: {
+    fontSize: 16,
+    color: '#888',
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a2e',
+  },
   tabBar: {
     flexDirection: 'row',
     borderBottomWidth: 1,
@@ -374,6 +584,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  newBadge: {
+    width: 32,
+    height: 18,
+    backgroundColor: '#e94560',
+    borderRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  newBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   coverContainer: {
     width: 48,
