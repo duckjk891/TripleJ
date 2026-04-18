@@ -57,31 +57,96 @@ GEMINI_VIDEO_PROMPT_URL = (
     "gemini-2.5-pro:generateContent"
 )
 
-# ── Phase 2.5: Generate video_prompt from scene image (Gemini 2.5 Pro) ──────
+# ── Video Prompt Templates (4 variants) ──────────────────────────────────────
 
-VIDEO_PROMPT_SYSTEM = """\
-You are an elite music video cinematographer analyzing a scene image to plan camera movement.
+VIDEO_PROMPT_VEO_CHARACTER = """\
+You are an elite music video cinematographer planning camera movement for Google Veo 3.1.
 
-Given a generated scene image, analyze the following:
-- Subject position and pose within the frame
-- Lighting direction, quality, and color temperature
-- Depth layers (foreground, midground, background)
-- Emotional tone conveyed by composition and color
+Analyze the scene image — subject position, lighting, depth, emotion — then write a \
+cinematic camera direction in natural, descriptive language.
 
-Based on your analysis, prescribe:
-1. CAMERA MOVEMENT: type (static, pan, tilt, dolly, truck, crane, steadicam, handheld, drone orbit) \
-and speed (very slow creep, slow, moderate, fast, whip).
-2. PLAYBACK SPEED: fps recommendation (24fps normal, 48/60/120fps slow motion, speed ramp).
-3. SUBJECT ACTION: what the subject should do during the shot (walking, turning, reaching, standing still, dancing, etc.).
-4. TRANSITION: how this shot ends (cut, dissolve, fade, whip pan, match cut).
+Veo style guide:
+- Write as a film director giving natural instructions, not technical specs
+- Describe the feel and flow: "The camera drifts slowly toward her face as warm light catches the tears"
+- Blend movements naturally — Veo interprets mood and merges motions smoothly
+- 3-6 sentences, 100-150 words ideal
+- Place camera movement first, then subject action, then atmospheric details
 
-Rules:
-- For "lipsync" scenes: use static or very slow dolly, keep focus on the face, minimal camera movement.
-- For "drama" scenes: use varied cinematic movements based on what you see in the image — \
-match movement to emotion (slow for melancholy, dynamic for energy).
-- Output plain text, 2-3 sentences, English only.
-- Do NOT output JSON. Just write the camera direction as natural sentences.
+Character rules:
+- The main character's appearance must remain consistent with the reference image
+- Mention specific wardrobe/hair details to help Veo maintain identity across shots
+- For lipsync scenes: slow, intimate camera movement, close-up on face
+
+Output plain English text only. No JSON, no bullet points.
 """
+
+VIDEO_PROMPT_VEO_FREE = """\
+You are an elite music video cinematographer planning camera movement for Google Veo 3.1.
+
+Analyze the scene image — subject position, lighting, depth, emotion — then write a \
+cinematic camera direction in natural, descriptive language.
+
+Veo style guide:
+- Write as a film director giving natural instructions, not technical specs
+- Describe the feel and flow: "The camera sweeps across the rain-soaked street, pulling back to reveal the empty bench"
+- Blend movements naturally — Veo interprets mood and merges motions smoothly
+- 3-6 sentences, 100-150 words ideal
+- Place camera movement first, then environmental action, then atmospheric details
+- Any artistic style is welcome — match the visual tone of the image
+
+For lipsync scenes: slow, intimate camera movement, close-up on face.
+
+Output plain English text only. No JSON, no bullet points.
+"""
+
+VIDEO_PROMPT_KLING_CHARACTER = """\
+You are an elite music video cinematographer planning camera movement for Kling 3.0 Omni.
+
+Analyze the scene image — subject position, lighting, depth, emotion — then write \
+precise, structured camera directions that Kling can execute literally.
+
+Kling style guide:
+- Write as a technical shot list with specific parameters
+- Specify: camera type, direction, speed, duration (e.g., "tracking shot, left to right, slow, 5 seconds")
+- Kling executes multi-phase movements sequentially — list them in order
+- Include exact angles when relevant (e.g., "45-degree low angle")
+- Keep prompt structured: Camera → Subject Action → Environment → Texture/Grain
+
+Character rules:
+- Reference <<<image_N>>> for character consistency
+- The character in the reference must appear prominently with exact same appearance
+- Specify character's physical actions precisely (e.g., "turns head 90 degrees to the left over 2 seconds")
+- For lipsync scenes: static camera or very slow dolly, frontal angle, focus locked on face
+
+Output plain English text only. No JSON.
+"""
+
+VIDEO_PROMPT_KLING_FREE = """\
+You are an elite music video cinematographer planning camera movement for Kling 3.0 Omni.
+
+Analyze the scene image — subject position, lighting, depth, emotion — then write \
+precise, structured camera directions that Kling can execute literally.
+
+Kling style guide:
+- Write as a technical shot list with specific parameters
+- Specify: camera type, direction, speed, duration (e.g., "tracking shot, left to right, slow, 5 seconds")
+- Kling executes multi-phase movements sequentially — list them in order
+- Include exact angles when relevant (e.g., "45-degree low angle")
+- Keep prompt structured: Camera → Subject/Environment Action → Lighting → Texture/Grain
+- Any visual style is welcome — match the artistic tone of the image
+
+For lipsync scenes: static camera or very slow dolly, frontal angle, focus locked on face.
+
+Output plain English text only. No JSON.
+"""
+
+
+def _select_video_prompt_template(video_model: str, has_character: bool) -> str:
+    """Select the appropriate video prompt system template."""
+    if video_model == "veo":
+        return VIDEO_PROMPT_VEO_CHARACTER if has_character else VIDEO_PROMPT_VEO_FREE
+    else:  # kling
+        return VIDEO_PROMPT_KLING_CHARACTER if has_character else VIDEO_PROMPT_KLING_FREE
 
 
 async def generate_video_prompts_from_images(
@@ -90,8 +155,11 @@ async def generate_video_prompts_from_images(
     scene_type: str = "drama",
     lyrics_segment: str = "",
     scene_number: int = 1,
+    model: str = "gemini-2.5-pro",
+    video_model: str = "veo",
+    has_character: bool = False,
 ) -> str:
-    """Gemini 2.5 Pro multimodal로 씬 이미지를 분석하여 video_prompt를 생성한다.
+    """Multimodal로 씬 이미지를 분석하여 video_prompt를 생성한다.
 
     Args:
         image_bytes: 생성된 씬 이미지 (PNG)
@@ -99,11 +167,13 @@ async def generate_video_prompts_from_images(
         scene_type: "drama" 또는 "lipsync"
         lyrics_segment: 해당 씬의 가사
         scene_number: 씬 번호
+        model: 사용할 모델 (기본값 "gemini-2.5-pro", "claude-*" 지원)
 
     Returns:
         video_prompt 문자열 (plain text, 2-3 sentences)
     """
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    system_prompt = _select_video_prompt_template(video_model, has_character)
 
     user_text = (
         f"Scene {scene_number} | Type: {scene_type}\n"
@@ -116,46 +186,85 @@ async def generate_video_prompts_from_images(
         "for a music video clip. Output 2-3 sentences of plain text."
     )
 
-    payload = {
-        "systemInstruction": {
-            "parts": [{"text": VIDEO_PROMPT_SYSTEM}]
-        },
-        "contents": [{"parts": [
-            {"text": user_text},
-            {"inlineData": {"mimeType": "image/png", "data": image_b64}},
-        ]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 1024,
-        },
-    }
+    if model.startswith("claude-"):
+        # ── Claude (Anthropic) path ──
+        try:
+            anthropic_client = _get_anthropic_client()
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                GEMINI_VIDEO_PROMPT_URL,
-                params={"key": settings.google_api_key},
-                json=payload,
+            user_content = [
+                {"type": "text", "text": user_text},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": image_b64,
+                    },
+                },
+            ]
+
+            response = await anthropic_client.messages.create(
+                model=model,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_content}],
+                temperature=0.7,
             )
-            resp.raise_for_status()
-            data = resp.json()
 
-        # Extract text from Gemini response
-        candidates = data.get("candidates", [])
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if parts:
-                video_prompt = parts[0].get("text", "").strip()
-                if video_prompt:
-                    logger.info("Phase2.5: scene %d video_prompt generated (%d chars)", scene_number, len(video_prompt))
-                    return video_prompt
+            video_prompt = response.content[0].text.strip()
+            if video_prompt:
+                logger.info("Phase2.5: scene %d video_prompt generated via %s (%d chars)", scene_number, model, len(video_prompt))
+                return video_prompt
 
-        logger.warning("Phase2.5: scene %d — empty response from Gemini", scene_number)
-        return "Smooth cinematic camera movement, slow dolly forward."
+            logger.warning("Phase2.5: scene %d — empty response from %s", scene_number, model)
+            return "Smooth cinematic camera movement, slow dolly forward."
 
-    except Exception as e:
-        logger.warning("Phase2.5: scene %d Gemini call failed: %s", scene_number, e)
-        return "Smooth cinematic camera movement, slow dolly forward."
+        except Exception as e:
+            logger.warning("Phase2.5: scene %d %s call failed: %s", scene_number, model, e)
+            return "Smooth cinematic camera movement, slow dolly forward."
+
+    else:
+        # ── Gemini path (default) ──
+        payload = {
+            "systemInstruction": {
+                "parts": [{"text": system_prompt}]
+            },
+            "contents": [{"parts": [
+                {"text": user_text},
+                {"inlineData": {"mimeType": "image/png", "data": image_b64}},
+            ]}],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 1024,
+            },
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    GEMINI_VIDEO_PROMPT_URL,
+                    params={"key": settings.google_api_key},
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            # Extract text from Gemini response
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    video_prompt = parts[0].get("text", "").strip()
+                    if video_prompt:
+                        logger.info("Phase2.5: scene %d video_prompt generated (%d chars)", scene_number, len(video_prompt))
+                        return video_prompt
+
+            logger.warning("Phase2.5: scene %d — empty response from Gemini", scene_number)
+            return "Smooth cinematic camera movement, slow dolly forward."
+
+        except Exception as e:
+            logger.warning("Phase2.5: scene %d Gemini call failed: %s", scene_number, e)
+            return "Smooth cinematic camera movement, slow dolly forward."
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1113,6 +1222,10 @@ For each scene, provide:
 1. image_prompt: A comprehensive cinematic description for AI image generation (English, 2-4 sentences). \
    Must include ALL of the following elements:
 2. description_ko: Korean description of the scene (2-3 sentences)
+3. video_image_prompt: A natural-language scene description optimized for video generation models (English, 2-3 sentences). \
+   Describe the scene as a film director would: what's happening, the mood, the environment, character actions. \
+   Do NOT include technical camera specs (no lens mm, no f-stops, no bokeh). \
+   Focus on narrative content that a video AI can animate.
 
 IMPORTANT VISUAL STYLE:
 - Do NOT include scenes where the character looks directly at the camera or sings/lip-syncs to camera (EXCEPT for "lipsync" scene_type).
@@ -1186,9 +1299,13 @@ For "drama" scenes:
 
 {scenario_context}
 
+IMPORTANT distinction between image_prompt and video_image_prompt:
+- image_prompt is for AI IMAGE generation (Gemini/NanoBanana): include technical specs like lens focal length, f-stop, bokeh, specific lighting setup, color grade reference
+- video_image_prompt is for AI VIDEO generation context (Veo/Kling): describe the scene naturally as a director would, focusing on what's happening, mood, environment, and character actions — NO camera technical specs
+
 Output ONLY a JSON array matching the input scene order:
 [
-  {{"scene_number": 1, "image_prompt": "...", "description_ko": "..."}},
+  {{"scene_number": 1, "image_prompt": "...", "video_image_prompt": "...", "description_ko": "..."}},
   ...
 ]
 

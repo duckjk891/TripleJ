@@ -15,6 +15,7 @@ const LYRICS_MODELS = [
   { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.06', perCallKRW: '≈84원' },
   { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', color: '#f59e0b', inPrice: '$1.00/M', outPrice: '$5.00/M', perCall: '$0.02', perCallKRW: '≈28원' },
   { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', color: '#10b981', inPrice: '$0.75/M', outPrice: '$4.50/M', perCall: '$0.015', perCallKRW: '≈21원' },
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.10', perCallKRW: '≈140원' },
 ];
 
 // 장르: 음악의 카테고리 (어떤 종류의 음악인지)

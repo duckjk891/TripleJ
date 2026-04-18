@@ -980,6 +980,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                 "section_mood": sec.get("mood", ""),
                 "description": "",
                 "image_prompt": "",
+                "video_image_prompt": "",
                 "video_prompt": "",
                 "description_ko": "",
                 "image_object_name": None,
@@ -1078,6 +1079,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
     for scene in scenes:
         p = prompt_by_number.get(scene["scene_number"], {})
         scene["image_prompt"] = p.get("image_prompt", "")
+        scene["video_image_prompt"] = p.get("video_image_prompt", "")
         scene["video_prompt"] = ""  # Phase 2.5에서 Gemini가 이미지를 보고 생성
         scene["description_ko"] = p.get("description_ko", "")
         scene["description"] = scene["image_prompt"]  # 하위호환용
@@ -1249,10 +1251,13 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
 
             video_prompt = await generate_video_prompts_from_images(
                 image_bytes=scene_image_bytes,
-                image_prompt=scene.get("image_prompt", ""),
+                image_prompt=scene.get("video_image_prompt") or scene.get("image_prompt", ""),
                 scene_type=scene.get("scene_type", "drama"),
                 lyrics_segment=scene.get("lyrics_segment", ""),
                 scene_number=scene.get("scene_number", i + 1),
+                model=job.get("video_prompt_model") or "gemini-2.5-pro",
+                video_model=job.get("video_model", "veo"),
+                has_character=bool(job.get("character_object_name")),
             )
 
             scenes[i]["video_prompt"] = video_prompt
@@ -1519,7 +1524,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
 
         for attempt in range(max_retries):
             try:
-                scene_desc_for_video = scene.get("image_prompt", "")
+                scene_desc_for_video = scene.get("video_image_prompt") or scene.get("image_prompt", "")
                 scene_video_prompt = scene.get("video_prompt")
                 if use_kling:
                     task_or_op = await start_scene_video_kling(

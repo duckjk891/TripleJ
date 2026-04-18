@@ -4852,3 +4852,336 @@ Phase 5:   저장된 데이터에서 필터링 ✅
 
 ### 특이사항
 - 백엔드 변경 없음 (프론트엔드 전용)
+
+---
+
+## v20 — 2026-04-16 — 모바일 앱용 오디오 스트리밍 프록시 엔드포인트 추가
+
+### 요청 작업 (앱팀 수정요청서)
+- 모바일 앱에서 음악 재생 시 MinIO presigned URL이 localhost로 생성되어 403 에러 발생
+- `GET /api/tracks/stream-proxy/{track_id}` 프록시 엔드포인트 추가 요청
+
+### 수행 결과
+
+#### 백엔드 (2개 폴더, 동일 코드)
+- **backend_9003/app/routes/tracks.py** — `stream-proxy/{track_id}` 엔드포인트 추가
+- **backend_9004/app/routes/tracks.py** — 동일하게 추가
+- 기존 엔드포인트에 .ogg, .flac, .m4a Content-Type 감지 추가
+- StreamingResponse로 MinIO에서 직접 클라이언트로 전달
+
+#### 프론트엔드
+- 변경 없음 (모바일 앱팀이 이미 해당 엔드포인트 기준으로 코드 작성 완료)
+
+### 테스트 결과
+- 코드 검증: 전항목 PASS
+- 양쪽 파일 diff: byte-identical (동일 코드 확인)
+- backend_9004 venv 설치 진행 중 (코드 자체는 정상)
+
+### 특이사항
+- 앱팀 호출 방식: `GET http://192.168.219.106:9003/api/tracks/stream-proxy/{track_id}`
+- 9003 포트 방화벽 + 포트포워딩 완료
+
+---
+
+## v21 — 2026-04-17 — Claude Opus 4.7 모델 추가 (Image Prompt / Video Prompt / 커버 프롬프트)
+
+### 요청 작업
+- Claude Opus 4.7 (claude-opus-4-7)을 3곳에 선택 가능 모델로 추가
+- Visual Acuity 98.5%, 3.75MP 고해상도 이미지 이해 활용
+
+### 수행 결과
+
+#### 백엔드 (9003 + 9004 동일 적용, 5개 파일)
+1. **mv_generator.py** — `generate_video_prompts_from_images()`에 `model` 파라미터 추가, Claude 경로(Anthropic vision API) + Gemini 경로 분기
+2. **mv_pipeline.py** — Phase 2.5에서 `video_prompt_model`을 job에서 읽어 전달
+3. **mv.py** — `CreateMVRequest`에 `video_prompt_model` 필드 추가, MongoDB 저장, on-demand에서도 모델 전달
+4. **cover_generator.py** — `prompt_model` 파라미터 추가, Claude로 AI 강화 프롬프트 생성 → Gemini 이미지 생성에 전달, 실패 시 기존 프로그래밍 방식 fallback
+5. **upload.py** — `GenerateCoverRequest`에 `prompt_model` 필드 추가
+
+#### 프론트엔드 (1개 파일)
+**UploadPage.jsx**:
+- `PROMPT_MODELS`에 claude-opus-4-7 추가 (Image Prompt 체크박스)
+- `VIDEO_PROMPT_MODELS` 상수 추가 (Gemini 2.5 Pro / Claude Opus 4.7 라디오 버튼)
+- `COVER_PROMPT_MODELS` 상수 추가 (기본 / Claude Opus 4.7 라디오 버튼)
+- 각각 state + UI + API 전달 구현
+
+### 모델 선택 현황 (최종)
+| 단계 | 선택 가능 모델 |
+|------|--------------|
+| ① 가사 | GPT-4o-mini, Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.4 mini |
+| ② 시나리오 | GPT-4o-mini, Claude Opus 4.6, Claude Sonnet 4.6, GPT-5.4, Gemini 2.5 Pro |
+| ③ Image Prompt | GPT-4o-mini, GPT-5.4, GPT-5.4 mini, Claude Sonnet 4.6, **Claude Opus 4.7** |
+| ⑤ Video Prompt | Gemini 2.5 Pro, **Claude Opus 4.7** |
+| 커버 프롬프트 | 기본(직접구성), **Claude Opus 4.7** |
+
+### 테스트 결과
+- 28/28 항목 전체 PASS
+- 9003/9004 파리티 확인
+- Python import/syntax 정상
+- 함수 시그니처 파라미터 확인
+
+### 특이사항
+- Video Prompt와 커버 프롬프트는 라디오 버튼(단일 선택), Image Prompt는 체크박스(다중 선택)
+- Claude Opus 4.7 가격: $5/M in, $25/M out (4.6과 동일, 토크나이저 변경으로 실질 최대 35% 증가 가능)
+- 커버 프롬프트에서 Claude 선택 시: Claude가 창의적 프롬프트 생성 → Gemini가 이미지 생성 (2단계)
+
+---
+
+## v22 — 2026-04-17 — 영상 모델별 × 캐릭터 유무별 Video Prompt 템플릿 분리
+
+### 요청 작업
+- Veo와 Kling이 이해하는 프롬프트 형식이 다르므로 각각 최적화된 템플릿으로 분리
+- 캐릭터 유무에 따라 지시 내용 분리
+- 총 4개 템플릿 구현
+
+### 수행 결과
+
+#### 백엔드 (9003 + 9004 동일, 3개 파일)
+
+1. **mv_generator.py** — 기존 `VIDEO_PROMPT_SYSTEM` 1개 → 4개 분리
+   - `VIDEO_PROMPT_VEO_CHARACTER`: 자연어 서술 + 캐릭터 일관성 지시 + referenceImages 활용
+   - `VIDEO_PROMPT_VEO_FREE`: 자연어 서술 + 자유 스타일
+   - `VIDEO_PROMPT_KLING_CHARACTER`: 기술 스펙 구조 + <<<image_N>>> 캐릭터 참조
+   - `VIDEO_PROMPT_KLING_FREE`: 기술 스펙 구조 + 자유 스타일
+   - `_select_video_prompt_template()` 선택 함수 추가
+   - `generate_video_prompts_from_images()`에 `video_model`, `has_character` 파라미터 추가
+   - Claude/Gemini 양쪽 경로 모두 선택된 템플릿 적용
+
+2. **mv_pipeline.py** — Phase 2.5에서 `video_model`, `has_character` 전달
+
+3. **mv.py** — on-demand 영상 생성에서도 동일 전달
+
+#### 프론트엔드
+- 변경 없음 (video_model, character 정보는 이미 job에 저장됨)
+
+### 프롬프트 스타일 차이
+| | Veo | Kling |
+|---|---|---|
+| 톤 | "The camera drifts slowly..." | "tracking shot, left to right, slow, 5 seconds" |
+| 동작 | 블렌딩 (자연스러운 합성) | 순차 실행 (리터럴) |
+| 캐릭터 | 의상/외형 반복 서술 | <<<image_N>>> 태그 참조 |
+
+### 테스트 결과
+- 16/16 항목 전체 PASS
+- 9003/9004 byte-identical 확인
+- Python import/syntax 정상
+
+### 특이사항
+- 하위호환 유지: video_model 기본값 "veo", has_character 기본값 False
+- 기존 VIDEO_PROMPT_SYSTEM 상수 완전 제거
+
+---
+
+## v23 — 2026-04-17 — 커버 프롬프트 상세화 + video_image_prompt 동시 생성 + 영상 모델 전달
+
+### 요청 작업
+1. 커버 이미지 프롬프트에 렌즈/구도/조명 상세 추가
+2. image_prompt 생성 시 video_image_prompt를 1회 호출로 동시 생성
+3. 영상 생성 시 image_prompt 대신 video_image_prompt 전달
+
+### 수행 결과
+
+#### 백엔드 (9003 + 9004 동일, 4개 파일)
+
+1. **cover_generator.py**
+   - Path A (캐릭터 O): 초점거리(50mm/85mm/35mm), 프로 조명(key/fill/rim), 피사계심도 추가
+   - Path B (캐릭터 X): 구도, 초점거리, 피사계심도, 조명, 색감 기법 추가
+   - systemInstruction 양쪽: "focal length, depth of field" 전문성 추가
+
+2. **mv_generator.py**
+   - `SCENE_PROMPT_ONLY_SYSTEM` 출력에 `video_image_prompt` 필드 추가
+   - `image_prompt`: Nano Banana용 (렌즈mm, f값, 보케, 색보정 레퍼런스 등 기술 스펙)
+   - `video_image_prompt`: 영상 모델용 (장면 서술, 분위기, 인물 행동 — 기술 스펙 없음)
+   - 구분 설명 명시하여 GPT/Claude가 차이를 이해하도록 지시
+
+3. **mv_pipeline.py**
+   - Phase 1 씬 초기화: `video_image_prompt: ""` 필드 추가
+   - Phase 1b: `video_image_prompt` 저장
+   - Phase 2.5: `video_image_prompt` 우선 사용 (or fallback → image_prompt)
+   - Phase 3: `scene_desc_for_video`에 `video_image_prompt` 우선 사용
+
+4. **mv.py**
+   - on-demand 영상 생성: `video_image_prompt` 우선 사용
+   - `_scene_to_dict`: `video_image_prompt` 포함
+   - `select-prompts`: `video_image_prompt` 저장
+
+#### 프론트엔드
+- 변경 없음
+
+### 테스트 결과
+- 6/6 항목 전체 PASS
+- 9003/9004 byte-identical 확인
+- Python import/syntax 정상
+
+### 특이사항
+- API 호출 횟수 증가 없음 (GPT/Claude 1회 호출로 image_prompt + video_image_prompt 동시 출력)
+- or fallback 패턴으로 기존 데이터 하위호환 유지 (video_image_prompt 없으면 image_prompt 사용)
+
+---
+
+## v24 — 2026-04-17 — Seedance 2.0 연동 + video_image_prompt 모델별 분기
+
+### 요청 작업
+1. Seedance 2.0 (fal.ai 경유) 영상 생성 모델 추가
+2. video_image_prompt를 선택한 영상 모델 전용 형식으로 생성
+3. backend_9004에만 적용
+
+### 수행 결과
+
+#### 백엔드 (backend_9004만, 5개 파일)
+
+1. **config.py** — `fal_api_key` 설정 추가
+2. **seedance_video_generator.py** (신규 생성)
+   - fal.ai REST API로 Seedance 2.0 호출
+   - `start_scene_video_seedance()`, `check_scene_video_status_seedance()`, `download_video_seedance()`
+   - 큐 기반 비동기 처리 (request_id → 폴링 → 결과 조회)
+3. **mv_generator.py**
+   - `VIDEO_PROMPT_SEEDANCE_CHARACTER/FREE` 템플릿 2개 추가
+   - `_select_video_prompt_template()`에 seedance 분기
+   - `VIDEO_IMAGE_PROMPT_GUIDE_VEO/KLING/SEEDANCE` 3개 가이드 상수
+   - `SCENE_PROMPT_ONLY_SYSTEM`에 `{video_image_prompt_guide}` 동적 삽입
+   - `generate_scene_prompts_only()`에 `video_model` 파라미터 추가
+4. **mv_pipeline.py** — Phase 1b에 video_model 전달, Phase 3에 seedance 분기 (시작/폴링/다운로드)
+5. **mv.py** — 단건 영상 생성에 seedance 분기 추가
+
+#### 프론트엔드 (1개 파일)
+- **UploadPage.jsx** — Seedance 2.0 영상 모델 카드 추가 (ByteDance, 15초, $0.13/초)
+
+### 영상 모델 현황 (최종)
+| 모델 | 개발사 | 최대 길이 | 비용 | 프롬프트 스타일 |
+|------|--------|----------|------|--------------|
+| Veo 3.1 | Google | 8초 | $0.15/초 | 자연어 서술형 |
+| Kling 3.0 Omni | Kuaishou | 15초 | $0.168/초 | 기술 스펙 구조 |
+| **Seedance 2.0** | ByteDance | 15초 | $0.13/초 | 감독 지시형 |
+
+### video_image_prompt 모델별 가이드
+- Veo: 자연어 서술 (3~6문장, 분위기 중심)
+- Kling: 기술 스펙 (Camera→Subject→Environment→Texture)
+- Seedance: 감독 지시 (Action+Scene+Style+Camera, 60~100단어)
+
+### 테스트 결과
+- 28/28 항목 전체 PASS
+- backend_9003 미변경 확인
+- Python import/syntax 정상
+
+### 특이사항
+- Seedance 2.0은 fal.ai 경유 (BytePlus 글로벌 정식 API 미출시)
+- "preserve composition and colors" 필수 포함
+- backend_9003에는 적용하지 않음 (앱팀용 안정 버전 유지)
+
+---
+
+## v25 — 2026-04-17 — Seedance lipsync 씬에 오디오 전달 + Sync Labs 후보정 유지
+
+### 요청 작업
+- Seedance lipsync 씬 영상 생성 시 해당 구간 음악 파일을 같이 전달하여 오디오 기반 립싱크 생성
+- 초벌 후 마음에 안 들면 기존 Sync Labs 후보정 경로 사용 가능
+
+### 수행 결과
+
+#### 백엔드 (backend_9004만, 3개 파일)
+
+1. **seedance_video_generator.py**
+   - `audio_bytes` 파라미터 추가
+   - lipsync 씬 + 오디오 시: "@Audio1" 립싱크 지시 프롬프트에 추가
+   - 오디오를 base64 data URI로 fal.ai에 전달 (`audio_url` 필드)
+
+2. **mv_pipeline.py**
+   - `_slice_audio_segment()` 헬퍼 함수 추가 (ffmpeg로 구간 잘라 MP3 반환)
+   - Phase 3 시작 전 전체 오디오 1회 로드 (Seedance일 때만)
+   - lipsync 씬: `section_start`~`section_end` 구간 잘라서 `audio_bytes` 전달
+   - non-lipsync 씬: `audio_bytes=None` (오디오 안 보냄)
+
+3. **mv.py**
+   - 단건 영상 생성에서도 동일한 오디오 로드/슬라이스/전달 로직
+
+#### Sync Labs 후보정
+- 기존 코드 변경 없음
+- 사용자가 "🎤 립싱크 시도" 클릭 시 Sync Labs 경로 그대로 동작
+
+### 테스트 결과
+- 14/14 항목 전체 PASS
+- Sync Labs 기존 로직 미변경 확인
+- Python import/syntax 정상
+
+### 특이사항
+- Seedance는 오디오+영상 동시 생성이라 Sync Labs 없이도 립싱크 품질 좋을 것으로 기대
+- 프론트엔드 변경 없음 (기존 UI가 모든 모델 공통으로 립싱크 재시도 버튼 제공)
+
+---
+
+## v26 — 2026-04-17 — Whisper → Suno 자체 타임스탬프 교체
+
+### 요청 작업
+- Whisper API 기반 가사 타임스탬프 추출을 Suno 자체 `get-timestamped-lyrics` API로 교체
+- 더 정확한 단어 단위 타임스탬프 + 추가 비용 없음
+
+### 수행 결과
+
+#### 백엔드 (backend_9004만, 3개 파일)
+
+1. **suno_generator.py** — 음악 생성 완료 시 `suno_task_id`와 `suno_audio_id`를 MongoDB에 저장
+
+2. **suno_timestamp_service.py** (신규 생성)
+   - `get_suno_timestamps(task_id, audio_id)` — Suno API 호출, 단어별 타임스탬프 조회
+   - `_words_to_segments()` — 단어 단위 → 세그먼트 단위 변환 (0.5초 이상 간격으로 분리)
+   - 출력 형식: `[{"text", "start", "end"}]` (Whisper와 동일 형식으로 하위호환)
+
+3. **mv_pipeline.py** — Phase 1a 재구성
+   - Suno 타임스탬프 먼저 시도 (generation_id로 taskId/audioId 조회)
+   - 성공 시 Suno 세그먼트 사용 (Whisper 건너뜀)
+   - 실패 시 기존 Demucs + Whisper 파이프라인으로 fallback
+
+#### 유지
+- `whisper_service.py` — 삭제하지 않고 fallback으로 유지
+
+### 테스트 결과
+- 19/20 항목 PASS (1개는 테스트 스펙 함수명 오타, 코드 정상)
+- Python import/syntax 정상
+- Whisper 기존 코드 보존 확인
+
+### 특이사항
+- Suno 타임스탬프는 원본 생성 데이터 기반이라 음악+보컬 혼합 인식 문제 없음
+- 한국어 가사 정확도 대폭 향상 기대
+- Whisper API 호출 비용 ($0.006/분) 절감
+- 기존에 Suno 외 다른 방법으로 생성한 음악은 Whisper fallback으로 처리
+
+---
+
+## v27 — 2026-04-18 — 9003 백엔드 외부 노출 점검 (cloudflared)
+
+### 요청 작업
+모바일 앱 LTE/5G 환경 테스트를 위한 cloudflared 터널 설정 검토
+
+### 수행 결과
+- **백엔드 코드 변경 없음**
+- 9003 백엔드 점검:
+  - CORS `allow_origins=["*"]` (line 67-73) ✓
+  - TrustedHostMiddleware 미적용 ✓
+  - `/api/tracks/stream-proxy/{id}` 엔드포인트 (line 288) ✓ — 모바일 음악 재생 시 MinIO presigned URL 우회용
+
+### 사용자(Windows) 작업 안내
+```powershell
+winget install Cloudflare.cloudflared
+cloudflared tunnel --url http://localhost:9003
+```
+→ 발급된 `*.trycloudflare.com` URL을 Mac 프론트팀에 전달
+
+### 특이사항
+- cloudflared quick tunnel은 재실행 시 URL 변경
+- 윈도우 슬립 시 터널 끊김 → 슬립 해제 필요
+- 영구 URL 필요 시 named tunnel 셋업 (Cloudflare 계정 + 도메인 필요)
+
+---
+
+## v28 — 2026-04-18 — MV 진행률 단계별 분리
+
+### 수행 결과 (프론트엔드만)
+- `UploadPage.jsx`에 `getImageProgressPct()`, `getVideoProgressPct()` 함수 추가
+- mvStep === 1: 씬이미지 생성 진행률 (이미지 카운트/총 씬수)
+- mvStep === 3: 영상 생성 진행률 (영상 카운트/총 씬수)
+- 립싱크/머지 단계는 기존 합산 진행률 유지
+
+### 특이사항
+- 백엔드 변경 없음
+- 단계별로 0~100%씩 독립 표시

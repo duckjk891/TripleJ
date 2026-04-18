@@ -52,6 +52,7 @@ class CreateMVRequest(BaseModel):
     audio_generation_id: Optional[str] = None
     scenario_models: Optional[List[str]] = None  # for scenario generation (e.g. ["gpt-4o-mini", "claude-opus-4-6"])
     prompt_models: Optional[List[str]] = None    # for image prompt generation (e.g. ["gpt-4o-mini", "gpt-5.4"])
+    video_prompt_model: Optional[str] = None     # for video prompt generation (e.g. "claude-opus-4-7")
 
 
 class SelectModelRequest(BaseModel):
@@ -119,6 +120,7 @@ def _scene_to_dict(scene: dict) -> dict:
         "scene_number": scene.get("scene_number"),
         "description": scene.get("description", ""),
         "image_prompt": scene.get("image_prompt") or scene.get("description", ""),
+        "video_image_prompt": scene.get("video_image_prompt", ""),
         "video_prompt": scene.get("video_prompt", ""),
         "description_ko": scene.get("description_ko", ""),
         "lyrics_segment": scene.get("lyrics_segment", ""),
@@ -218,6 +220,7 @@ async def create_mv(
         "audio_generation_id": body.audio_generation_id,
         "scenario_models": body.scenario_models,
         "prompt_models": body.prompt_models,
+        "video_prompt_model": body.video_prompt_model,
         "scenario": None,
         "status": "draft",
         "progress": 0,
@@ -676,10 +679,13 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                 from ..services.mv_generator import generate_video_prompts_from_images
                 scene_video_prompt = await generate_video_prompts_from_images(
                     image_bytes=image_bytes,
-                    image_prompt=scene.get("image_prompt", ""),
+                    image_prompt=scene.get("video_image_prompt") or scene.get("image_prompt", ""),
                     scene_type=scene.get("scene_type", "drama"),
                     lyrics_segment=scene.get("lyrics_segment", ""),
                     scene_number=scene.get("scene_number", 0),
+                    model=job.get("video_prompt_model") or "gemini-2.5-pro",
+                    video_model=job.get("video_model", "veo"),
+                    has_character=bool(job.get("character_object_name")),
                 )
                 # Save it back to MongoDB
                 scenes[scene_idx]["video_prompt"] = scene_video_prompt
@@ -695,7 +701,7 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
         from ..services.kling_video_generator import start_scene_video_kling, check_scene_video_status_kling, download_video_kling
         import asyncio
 
-        scene_desc = scene.get("image_prompt") or scene.get("description", "")
+        scene_desc = scene.get("video_image_prompt") or scene.get("image_prompt") or scene.get("description", "")
         task_id = await start_scene_video_kling(
             prompt=scene_desc,
             image_bytes=image_bytes,
@@ -1622,6 +1628,7 @@ async def select_prompts(
     for scene in scenes:
         p = prompt_by_number.get(scene["scene_number"], {})
         scene["image_prompt"] = p.get("image_prompt", "")
+        scene["video_image_prompt"] = p.get("video_image_prompt", "")
         scene["video_prompt"] = ""
         scene["description_ko"] = p.get("description_ko", "")
         scene["description"] = scene["image_prompt"]

@@ -16,6 +16,7 @@ const SCENARIO_MODELS = [
   { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.05', perCallKRW: '≈70원' },
   { id: 'gpt-5.4', name: 'GPT-5.4', color: '#10b981', inPrice: '$2.50/M', outPrice: '$15.00/M', perCall: '$0.05', perCallKRW: '≈70원' },
   { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', color: '#ef4444', inPrice: '$1.00/M', outPrice: '$10.00/M', perCall: '$0.03', perCallKRW: '≈42원' },
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
 ];
 
 const PROMPT_MODELS = [
@@ -23,6 +24,17 @@ const PROMPT_MODELS = [
   { id: 'gpt-5.4', name: 'GPT-5.4', color: '#a855f7', inPrice: '$2.50/M', outPrice: '$15.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
   { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', color: '#10b981', inPrice: '$0.75/M', outPrice: '$4.50/M', perCall: '$0.025', perCallKRW: '≈35원' },
   { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.06', perCallKRW: '≈84원' },
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.10', perCallKRW: '≈140원' },
+];
+
+const VIDEO_PROMPT_MODELS = [
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', color: '#ef4444', inPrice: '$1.00/M', outPrice: '$10.00/M', perCall: '$0.02', perCallKRW: '≈28원' },
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.10', perCallKRW: '≈140원' },
+];
+
+const COVER_PROMPT_MODELS = [
+  { id: '', name: '기본 (직접 구성)', color: '#666', inPrice: '-', outPrice: '-', perCall: '무료', perCallKRW: '0원' },
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
 ];
 
 function RetryCountdown({ retryAt }) {
@@ -80,6 +92,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   // AI 모델 선택 (시나리오 / 이미지 프롬프트)
   const [scenarioModels, setScenarioModels] = useState(['gpt-4o-mini']);
   const [promptModels, setPromptModels] = useState(['gpt-4o-mini']);
+  const [videoPromptModel, setVideoPromptModel] = useState('gemini-2.5-pro');
+  const [coverPromptModel, setCoverPromptModel] = useState('');
 
   // MV Draft System states
   const [mvJobId, setMvJobId] = useState(null);
@@ -243,6 +257,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         style: null,
         character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
         user_prompt: coverUserPrompt.trim() || null,
+        prompt_model: coverPromptModel || null,
       });
       const proxyUrl = api.coverPreviewUrl(data.object_name);
       setAiCoverPreview(proxyUrl);
@@ -389,6 +404,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         audio_generation_id: fromGeneration || null,
         scenario_models: scenarioModels,
         prompt_models: promptModels,
+        video_prompt_model: videoPromptModel,
       });
       const jobId = data.job_id;
       if (!jobId) {
@@ -712,6 +728,19 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
     return mvJob.scenes.filter(s => s.video_url || s.video_status === 'completed').length;
   };
 
+  // 단계별 독립 진행률 (0~100)
+  const getImageProgressPct = () => {
+    const total = mvJob?.total_scenes || mvJob?.scenes?.length || 0;
+    if (!total) return 0;
+    return Math.round((getCompletedImageCount() / total) * 100);
+  };
+
+  const getVideoProgressPct = () => {
+    const total = mvJob?.total_scenes || mvJob?.scenes?.length || 0;
+    if (!total) return 0;
+    return Math.round((getCompletedVideoCount() / total) * 100);
+  };
+
   const getStatusText = () => {
     if (!mvJob) return '';
     if (mvJob.retry_info?.active) {
@@ -926,6 +955,21 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
               </label>
             )}
 
+            <div style={{ marginTop: '10px', marginBottom: '10px' }}>
+              <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>커버 프롬프트 AI</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                {COVER_PROMPT_MODELS.map(model => (
+                  <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '8px 12px', borderRadius: '8px', border: coverPromptModel === model.id ? `2px solid ${model.color}` : '2px solid #333', background: coverPromptModel === model.id ? `${model.color}15` : '#1a1a1a', fontSize: '12px', color: '#ddd' }}>
+                    <input type="radio" name="coverPromptModel" checked={coverPromptModel === model.id} onChange={() => setCoverPromptModel(model.id)} style={{ accentColor: model.color, marginTop: '2px' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontWeight: 600 }}>{model.name}</span>
+                      <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
             <div style={{ marginTop: '10px' }}>
               <label style={{ fontSize: '13px', color: '#888', marginBottom: '4px', display: 'block' }}>
                 커버 스타일 설명 (선택)
@@ -1036,6 +1080,15 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                               <div className="upload-mv-video-model-card__provider">Kling AI</div>
                               <div className="upload-mv-video-model-card__desc">이미지 기반 10초 영상</div>
                             </button>
+                            <button
+                              type="button"
+                              className={`upload-mv-video-model-card${videoModel === 'seedance' ? ' upload-mv-video-model-card--active' : ''}`}
+                              onClick={() => setVideoModel('seedance')}
+                            >
+                              <div className="upload-mv-video-model-card__name">Seedance 2.0</div>
+                              <div className="upload-mv-video-model-card__provider">ByteDance</div>
+                              <div className="upload-mv-video-model-card__desc">시네마틱 15초 영상 · $0.13/초</div>
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1085,6 +1138,22 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                           </div>
                           {promptModels.length === 0 && <p style={{ color: '#ff6b6b', fontSize: '12px', marginTop: '4px' }}>최소 1개 모델을 선택하세요</p>}
                         </div>
+
+                        <div style={{ marginTop: '18px' }}>
+                          <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>Video Prompt (카메라 무빙)</label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                            {VIDEO_PROMPT_MODELS.map(model => (
+                              <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '10px 14px', borderRadius: '8px', border: videoPromptModel === model.id ? `2px solid ${model.color}` : '2px solid #333', background: videoPromptModel === model.id ? `${model.color}15` : '#1a1a1a', fontSize: '13px', color: '#ddd', minWidth: '180px' }}>
+                                <input type="radio" name="videoPromptModel" checked={videoPromptModel === model.id} onChange={() => setVideoPromptModel(model.id)} style={{ accentColor: model.color, marginTop: '2px' }} />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <span style={{ fontWeight: 600 }}>{model.name}</span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>in {model.inPrice}  out {model.outPrice}</span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
                       </div>
 
                       <button
@@ -1108,9 +1177,14 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                         <span>{getStatusText()}</span>
                       </div>
                       <div className="upload-mv-progress__bar">
-                        <div className="upload-mv-progress__fill" style={{ width: `${mvProgressPct}%` }} />
+                        <div className="upload-mv-progress__fill" style={{ width: `${mvJob?.status === 'generating_images' ? getImageProgressPct() : mvProgressPct}%` }} />
                       </div>
-                      <div className="upload-mv-progress__text">{mvProgressPct}%</div>
+                      <div className="upload-mv-progress__text">
+                        {mvJob?.status === 'generating_images'
+                          ? `씬 이미지 ${getCompletedImageCount()}/${mvJob.total_scenes || 0} (${getImageProgressPct()}%)`
+                          : `${mvProgressPct}%`
+                        }
+                      </div>
                       <button
                         type="button"
                         className="upload-mv-cancel-btn"
@@ -1427,9 +1501,11 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                     {mvStep === 2 && (
                       <>
                         <div className="upload-mv-video-model-selector">
-                          <div className="upload-mv-video-model-selector__label">
-                            선택된 모델: {videoModel === 'kling' ? 'Kling V3 (10초)' : 'Veo 3.1 (8초)'}
-                          </div>
+                          {(() => {
+                            const vm = mvJob?.video_model || videoModel;
+                            const label = vm === 'kling' ? 'Kling V3 (10초)' : vm === 'seedance' ? 'Seedance 2.0 (10초)' : 'Veo 3.1 (8초)';
+                            return <div className="upload-mv-video-model-selector__label">선택된 모델: {label}</div>;
+                          })()}
                         </div>
 
                         <button
@@ -1437,7 +1513,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                           className="upload-mv-ai-btn"
                           onClick={handleGenerateVideos}
                         >
-                          {videoModel === 'kling' ? 'Kling으로 영상 생성하기' : 'Veo로 영상 생성하기'}
+                          {(() => {
+                            const vm = mvJob?.video_model || videoModel;
+                            return vm === 'kling' ? 'Kling으로 영상 생성하기' : vm === 'seedance' ? 'Seedance로 영상 생성하기' : 'Veo로 영상 생성하기';
+                          })()}
                         </button>
                       </>
                     )}
@@ -1449,13 +1528,13 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                           <span>{getStatusText()}</span>
                         </div>
                         <div className="upload-mv-progress__bar">
-                          <div className="upload-mv-progress__fill" style={{ width: `${mvProgressPct}%` }} />
+                          <div className="upload-mv-progress__fill" style={{ width: `${mvJob?.status === 'synclabs_processing' ? mvProgressPct : getVideoProgressPct()}%` }} />
                         </div>
                         <div className="upload-mv-progress__text">
                           {mvJob?.status === 'synclabs_processing'
-                            ? `립싱크 ${mvJob.synclabs_completed || 0}/${mvJob.synclabs_total || '?'}`
-                            : mvJob ? `영상 ${getCompletedVideoCount()}/${mvJob.total_scenes || 0}` : ''
-                          } ({mvProgressPct}%)
+                            ? `립싱크 ${mvJob.synclabs_completed || 0}/${mvJob.synclabs_total || '?'} (${mvProgressPct}%)`
+                            : mvJob ? `영상 ${getCompletedVideoCount()}/${mvJob.total_scenes || 0} (${getVideoProgressPct()}%)` : ''
+                          }
                         </div>
                         {mvJob?.retry_info?.active && (
                           <div className="upload-mv-retry-banner">
