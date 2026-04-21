@@ -37,6 +37,13 @@ const COVER_PROMPT_MODELS = [
   { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
 ];
 
+const SCENARIO_STYLES = [
+  { id: 'drama', label: '드라마형', desc: '인물·사건·감정 중심 단편영화', enabled: true },
+  { id: 'mood', label: '무드형', desc: '감정·분위기 중심 영상시', enabled: false },
+  { id: 'literal', label: '리터럴형', desc: '가사 그대로 시각화', enabled: false },
+  { id: 'ai_auto', label: 'AI 자동', desc: 'AI가 곡 분석 후 스타일 결정', enabled: false },
+];
+
 function RetryCountdown({ retryAt }) {
   const [remaining, setRemaining] = useState(0);
   useEffect(() => {
@@ -54,7 +61,7 @@ function RetryCountdown({ retryAt }) {
   return <span className="upload-mv-retry-countdown">{min}:{String(sec).padStart(2, '0')} 후 재시도</span>;
 }
 
-export default function UploadPage({ generationPrefill, onClearPrefill, draftData, onClearDraft }) {
+export default function UploadPage({ generationPrefill, onClearPrefill, draftData, onClearDraft, myCharacterFromParent }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const audioInputRef = useRef(null);
@@ -85,6 +92,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [includeCharacter, setIncludeCharacter] = useState(false);
   const [scenePrompt, setScenePrompt] = useState('');
   const [coverUserPrompt, setCoverUserPrompt] = useState('');
+  const [showScenario, setShowScenario] = useState(false);
 
   // Video Model Selection
   const [videoModel, setVideoModel] = useState('veo');
@@ -94,6 +102,12 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [promptModels, setPromptModels] = useState(['gpt-4o-mini']);
   const [videoPromptModel, setVideoPromptModel] = useState('gemini-2.5-pro');
   const [coverPromptModel, setCoverPromptModel] = useState('');
+
+  // Scenario style (PLAN v30 구현1): drama=default, 나머지는 준비 중 (disabled)
+  const [scenarioStyle, setScenarioStyle] = useState('drama');
+  // 보컬 성별 / 관계 — 아직 별도 UI 없음. 백엔드가 기본값 처리하도록 전달.
+  const [vocalGender, setVocalGender] = useState('female');
+  const [relationship, setRelationship] = useState(null);
 
   // MV Draft System states
   const [mvJobId, setMvJobId] = useState(null);
@@ -138,14 +152,18 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
     }
   }, [generationPrefill]);
 
-  // Load user's character
+  // Load user's character — prefer parent-provided, fallback to own fetch
   useEffect(() => {
+    if (myCharacterFromParent) {
+      setMyCharacter(myCharacterFromParent);
+      return;
+    }
     api.getMyCharacter()
       .then(({ data }) => {
         if (data.character) setMyCharacter(data.character);
       })
       .catch(() => {});
-  }, []);
+  }, [myCharacterFromParent]);
 
   // Restore from draft
   useEffect(() => {
@@ -405,6 +423,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         scenario_models: scenarioModels,
         prompt_models: promptModels,
         video_prompt_model: videoPromptModel,
+        scenario_style: scenarioStyle,
+        vocal_gender: vocalGender,
+        relationship: relationship,
       });
       const jobId = data.job_id;
       if (!jobId) {
@@ -628,6 +649,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           mood: mood || null,
           lyrics: lyrics.trim() || null,
           cover_object_name: aiCoverObjectName || null,
+          scenario_style: scenarioStyle,
+          vocal_gender: vocalGender,
+          relationship: relationship,
         });
         currentJobId = data.job_id;
         setMvJobId(currentJobId);
@@ -943,17 +967,25 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
               </>
             )}
 
-            {/* Always visible - character toggle + style input + AI button */}
-            {myCharacter && (
-              <label className="upload-character-toggle">
-                <input
-                  type="checkbox"
-                  checked={includeCharacter}
-                  onChange={(e) => setIncludeCharacter(e.target.checked)}
-                />
-                내 캐릭터 포함하기
-              </label>
-            )}
+            {/* Always visible - character toggle (disabled when no character) */}
+            <label
+              className="upload-character-toggle"
+              style={!myCharacter ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+              title={!myCharacter ? '먼저 마이뮤직 → 내 캐릭터 탭에서 캐릭터를 등록하세요.' : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={includeCharacter && !!myCharacter}
+                disabled={!myCharacter}
+                onChange={(e) => setIncludeCharacter(e.target.checked)}
+              />
+              내 캐릭터 포함하기
+              {!myCharacter && (
+                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#888' }}>
+                  (캐릭터 미등록)
+                </span>
+              )}
+            </label>
 
             <div style={{ marginTop: '10px', marginBottom: '10px' }}>
               <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>커버 프롬프트 AI</label>
@@ -1156,6 +1188,58 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                         </div>
                       </div>
 
+                      {/* 시나리오 스타일 선택 (PLAN v30 구현1) */}
+                      <div style={{ marginTop: '20px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#aaa', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #333' }}>
+                          시나리오 스타일
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                          {SCENARIO_STYLES.map(style => {
+                            const selected = scenarioStyle === style.id;
+                            const disabled = !style.enabled;
+                            return (
+                              <label
+                                key={style.id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'flex-start',
+                                  gap: '8px',
+                                  cursor: disabled ? 'not-allowed' : 'pointer',
+                                  padding: '10px 14px',
+                                  borderRadius: '8px',
+                                  border: selected ? '2px solid #00d4aa' : '2px solid #333',
+                                  background: selected ? '#00d4aa15' : '#1a1a1a',
+                                  fontSize: '13px',
+                                  color: '#ddd',
+                                  opacity: disabled ? 0.5 : 1,
+                                  position: 'relative',
+                                }}
+                              >
+                                <input
+                                  type="radio"
+                                  name="scenarioStyle"
+                                  checked={selected}
+                                  disabled={disabled}
+                                  onChange={() => { if (!disabled) setScenarioStyle(style.id); }}
+                                  style={{ accentColor: '#00d4aa', marginTop: '2px' }}
+                                />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                                  <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {style.label}
+                                    {disabled && (
+                                      <span style={{ fontSize: '10px', fontWeight: 500, color: '#888', background: '#2a2a2a', padding: '2px 6px', borderRadius: '4px', border: '1px solid #444' }}>
+                                        준비 중
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span style={{ color: '#666', fontSize: '11px' }}>{style.desc}</span>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+
                       <button
                         type="button"
                         className="upload-mv-ai-btn"
@@ -1285,6 +1369,27 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                         setMvJobId(null);
                         setScenesInvalidated(false);
                       }}>씬 초기화</button>
+                    </div>
+                  )}
+
+                  {/* Scenario display (visible when step >= 2 and scenario exists) */}
+                  {mvStep >= 2 && mvJob?.scenario && (
+                    <div style={{ marginTop: '16px', marginBottom: '16px', background: '#1a1a1a', borderRadius: '12px', border: '1px solid #333', overflow: 'hidden' }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowScenario(!showScenario)}
+                        style={{ width: '100%', padding: '14px 16px', background: 'transparent', border: 'none', color: '#e11d48', fontSize: '14px', fontWeight: 600, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                      >
+                        <span>📖 MV 시나리오 보기</span>
+                        <span>{showScenario ? '▲' : '▼'}</span>
+                      </button>
+                      {showScenario && (
+                        <div style={{ padding: '0 16px 16px', borderTop: '1px solid #333' }}>
+                          <pre style={{ color: '#ddd', fontSize: '13px', whiteSpace: 'pre-wrap', lineHeight: 1.7, marginTop: '12px', fontFamily: 'inherit' }}>
+                            {mvJob.scenario}
+                          </pre>
+                        </div>
+                      )}
                     </div>
                   )}
 

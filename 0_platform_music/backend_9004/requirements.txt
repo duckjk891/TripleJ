@@ -25,4 +25,3 @@ cryptography
 pyloudnorm
 soundfile
 demucs
-syncsdk

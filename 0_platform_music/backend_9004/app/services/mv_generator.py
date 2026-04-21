@@ -583,68 +583,375 @@ def _build_scenario_prompts(title, genre, mood, lyrics, character_name):
     return system_prompt, user_prompt
 
 
+# ── Drama Scenario Prompt (PLAN.md v30) ──────────────────────────────────────
+
+def _build_drama_scenario_prompts(
+    title,
+    genre,
+    mood,
+    lyrics,
+    vocal_gender=None,
+    relationship=None,
+    has_user_character=False,
+    has_cover_person=False,
+):
+    """Build system/user prompts for drama-style MV scenario generation.
+
+    Returns a system + user prompt pair that instructs the LLM to emit a strict
+    JSON document with `characters`, `locations`, and `scenario` fields.
+    """
+    # ── character1 gender rule (forced by vocal_gender) ──
+    vg = (vocal_gender or "").strip().lower() or None
+    if vg == "female":
+        c1_gender_rule = (
+            "character1.gender는 반드시 \"female\"이어야 합니다. 절대 변경하지 마세요. "
+            "남성으로 묘사하지 마세요."
+        )
+        opposite_gender = "male"
+    elif vg == "male":
+        c1_gender_rule = (
+            "character1.gender는 반드시 \"male\"이어야 합니다. 절대 변경하지 마세요. "
+            "여성으로 묘사하지 마세요."
+        )
+        opposite_gender = "female"
+    elif vg == "neutral":
+        c1_gender_rule = (
+            "character1.gender는 \"neutral\"로 설정하고, 성별이 모호한 중성적인 인물로 "
+            "묘사하세요. 한국어 이름도 중성적인 이름을 사용하세요."
+        )
+        opposite_gender = None
+    else:
+        c1_gender_rule = (
+            "character1.gender는 \"female\" 또는 \"male\" 중 이야기에 맞게 선택하세요."
+        )
+        opposite_gender = None
+
+    # ── character1 appearance rule ──
+    if has_user_character:
+        c1_look_rule = (
+            "사용자가 제공한 캐릭터 시트의 외형(헤어스타일, 의상, 분위기 등)을 따르세요. "
+            "description에는 그 캐릭터의 특징을 자연스러운 한국어로 요약하세요."
+        )
+    elif has_cover_person:
+        c1_look_rule = (
+            "커버 이미지에 등장하는 인물의 외형(헤어스타일, 의상, 분위기 등)을 참조하여 "
+            "description을 작성하세요."
+        )
+    else:
+        c1_look_rule = (
+            "제공된 vocal_gender, 장르, 분위기를 바탕으로 자유롭게 외형을 설계하세요."
+        )
+
+    # ── character2 rule ──
+    rel = (relationship or "").strip().lower() or None
+    if rel == "ex_lover":
+        if opposite_gender:
+            c2_rule = (
+                "character2를 반드시 포함하세요. character2.gender는 반드시 \"{}\" 이어야 "
+                "합니다 (character1과 반대 성별). role은 \"옛 연인\", 둘은 과거에 연인이었지만 "
+                "지금은 헤어진 관계로 묘사하세요."
+            ).format(opposite_gender)
+        else:
+            c2_rule = (
+                "character2를 반드시 포함하세요. role은 \"옛 연인\", 둘은 과거에 연인이었지만 "
+                "지금은 헤어진 관계로 묘사하세요. gender는 이야기에 맞게 선택하세요."
+            )
+    elif rel == "friend":
+        c2_rule = (
+            "character2를 포함하세요. role은 \"친구\"로, character1의 오랜 친구로 자연스럽게 "
+            "묘사하세요. gender는 AI가 이야기에 맞게 자유롭게 결정합니다."
+        )
+    elif rel == "colleague":
+        c2_rule = (
+            "character2를 포함하세요. role은 \"동료\"로, 같은 직장/활동 영역에서 만난 동료로 "
+            "묘사하세요. gender는 AI가 이야기에 맞게 자유롭게 결정합니다."
+        )
+    elif rel == "family":
+        c2_rule = (
+            "character2를 포함하세요. role은 \"가족\" (부모/형제/자매 등 중 하나를 선택)로, "
+            "혈연/가족 관계로 자연스럽게 묘사하세요. gender는 AI가 이야기에 맞게 자유롭게 "
+            "결정합니다."
+        )
+    else:
+        c2_rule = (
+            "character2는 생략하세요 (단독 주인공 서사). characters 객체에 character2 키를 "
+            "포함하지 마세요."
+        )
+
+    system_prompt = (
+        "당신은 음악 비디오 감독이자 단편영화 시나리오 작가입니다. "
+        "인물(인물 메타데이터) + 사건(스토리) + 감정의 흐름을 갖춘 단편영화식 서사를 작성하세요.\n\n"
+        "## 출력 규칙 (엄격)\n"
+        "- 반드시 아래 형식의 **JSON only** 로 응답하세요. 마크다운 코드 펜스(```), 설명, "
+        "머리말/꼬리말 일체 금지. JSON 그 자체만 출력하세요.\n"
+        "- 모든 한국어 텍스트(이름/설명/본문)는 자연스러운 한국어로 작성하세요.\n"
+        "- scenario 본문에는 characters/locations에 정의한 이름을 직접 사용하세요. "
+        "\"주인공\", \"그녀\", \"장소1\" 같은 플레이스홀더 표현은 금지합니다.\n"
+        "- scenario 본문 길이는 한국어로 500~1000자를 유지하세요. 번호 매기지 말고 산문으로 쓰세요.\n\n"
+        "## character1 규칙 (절대 준수)\n"
+        "- {c1_gender_rule}\n"
+        "- {c1_look_rule}\n"
+        "- role은 \"주인공\"으로 설정하세요.\n"
+        "- name은 한국식 이름(이지훈, 김수민 등)으로 설정하세요.\n"
+        "- description은 외모/의상/분위기를 1-2문장의 한국어로 작성하세요.\n\n"
+        "## character2 규칙\n"
+        "- {c2_rule}\n"
+        "- character2가 포함되는 경우, name은 한국식 이름, description은 외모/의상/분위기를 "
+        "1-2문장의 한국어로 작성하세요.\n\n"
+        "## locations 규칙\n"
+        "- 이야기에 필요한 만큼만 1~3개의 장소를 정의하세요 (location1, location2, location3).\n"
+        "- 각 장소의 description은 분위기/조명/디테일을 1-2문장의 한국어로 작성하세요.\n\n"
+        "## 창작 규칙\n"
+        "- 뮤직비디오의 주연(가창자)은 오직 character1입니다. 다른 인물은 노래/랩/립싱크를 "
+        "하지 않습니다.\n"
+        "- 영상이 보여줄 장면, 즉 카메라가 포착할 시각 요소 중심으로 쓰세요.\n\n"
+        "## 출력 형식 (이 구조를 그대로 따르세요)\n"
+        "{{\n"
+        "  \"characters\": {{\n"
+        "    \"character1\": {{\"name\": \"한국이름\", \"gender\": \"female|male|neutral\", \"role\": \"주인공\", \"description\": \"외모/의상/분위기 1-2문장 (한국어)\"}},\n"
+        "    \"character2\": {{\"name\": \"한국이름\", \"gender\": \"female|male\", \"role\": \"옛 연인\", \"description\": \"...\"}}\n"
+        "  }},\n"
+        "  \"locations\": {{\n"
+        "    \"location1\": {{\"name\": \"장소이름\", \"description\": \"분위기/조명/디테일 1-2문장 (한국어)\"}},\n"
+        "    \"location2\": {{\"name\": \"...\", \"description\": \"...\"}}\n"
+        "  }},\n"
+        "  \"scenario\": \"단편영화식 서사 본문 500-1000자 (한국어). 등장인물 이름과 장소 이름을 직접 사용. 예: '지훈은 5년 전 헤어진 옛 연인 수민이 자주 가던 재즈 카페로 들어선다...'\"\n"
+        "}}"
+    ).format(
+        c1_gender_rule=c1_gender_rule,
+        c1_look_rule=c1_look_rule,
+        c2_rule=c2_rule,
+    )
+
+    user_parts = []
+    user_parts.append("제목: {}".format(title))
+    if genre:
+        user_parts.append("장르: {}".format(genre))
+    if mood:
+        user_parts.append("분위기: {}".format(mood))
+    user_parts.append("vocal_gender: {}".format(vg or "지정 없음"))
+    user_parts.append("relationship: {}".format(rel or "없음 (단독 주인공)"))
+    user_parts.append(
+        "사용자 캐릭터 시트 제공 여부: {}".format("예" if has_user_character else "아니오")
+    )
+    user_parts.append(
+        "커버 이미지 인물 참조 여부: {}".format("예" if has_cover_person else "아니오")
+    )
+    if lyrics:
+        user_parts.append("가사:\n{}".format(lyrics[:3000]))
+    user_parts.append(
+        "\n위 조건을 바탕으로 위에서 지정한 JSON 스키마대로만 응답하세요."
+    )
+
+    user_prompt = "\n".join(user_parts)
+    return system_prompt, user_prompt
+
+
+def _parse_drama_scenario_json(text: str) -> dict:
+    """Parse LLM response into drama scenario dict.
+
+    Tries strict json.loads first; falls back to extracting the largest JSON
+    object substring. Returns a dict with keys {characters, locations, scenario}.
+    Raises ValueError on unrecoverable failure.
+    """
+    if not text:
+        raise ValueError("Empty scenario response")
+
+    text = text.strip()
+    # Strip markdown code fences if any snuck through
+    if text.startswith("```"):
+        # remove opening fence line
+        _lines = text.split("\n", 1)
+        text = _lines[1] if len(_lines) > 1 else ""
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+        text = text.strip()
+        # also strip "json" language marker if present as first word
+        if text.startswith("json\n") or text.startswith("json\r\n"):
+            text = text.split("\n", 1)[1] if "\n" in text else ""
+            text = text.strip()
+
+    try:
+        data = json.loads(text)
+    except Exception:
+        # Fallback: try to find the outermost {...} block
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            snippet = text[start:end + 1]
+            try:
+                data = json.loads(snippet)
+            except Exception as inner_exc:
+                raise ValueError(
+                    "Failed to parse drama scenario JSON: {}".format(str(inner_exc)[:200])
+                )
+        else:
+            raise ValueError("No JSON object found in drama scenario response")
+
+    if not isinstance(data, dict):
+        raise ValueError("Drama scenario JSON is not an object")
+
+    # Minimal validation / normalization
+    characters = data.get("characters") or {}
+    locations = data.get("locations") or {}
+    scenario = data.get("scenario") or ""
+    if not isinstance(scenario, str):
+        scenario = str(scenario)
+    scenario = scenario.strip()
+    if len(scenario) < 50:
+        raise ValueError(
+            "Drama scenario body too short ({} chars)".format(len(scenario))
+        )
+
+    return {
+        "characters": characters if isinstance(characters, dict) else {},
+        "locations": locations if isinstance(locations, dict) else {},
+        "scenario": scenario,
+    }
+
+
+def _build_scenario_prompts_dispatch(
+    scenario_style,
+    title,
+    genre,
+    mood,
+    lyrics,
+    character_name,
+    vocal_gender,
+    relationship,
+    has_user_character,
+    has_cover_person,
+):
+    """Dispatch to drama prompt builder.
+
+    Non-drama styles fall back to drama with a warning (PLAN.md v30 구현1).
+    Returns (system_prompt, user_prompt, is_drama).
+    """
+    style = (scenario_style or "drama").strip().lower() or "drama"
+    if style != "drama":
+        logger.warning(
+            "scenario_style '%s' not implemented — falling back to drama prompt",
+            style,
+        )
+        style = "drama"
+    system_prompt, user_prompt = _build_drama_scenario_prompts(
+        title=title,
+        genre=genre,
+        mood=mood,
+        lyrics=lyrics,
+        vocal_gender=vocal_gender,
+        relationship=relationship,
+        has_user_character=has_user_character,
+        has_cover_person=has_cover_person,
+    )
+    return system_prompt, user_prompt, True
+
+
 async def _generate_scenario_openai(
     title, genre, mood, lyrics, character_name, model_name=None,
+    scenario_style="drama", vocal_gender=None, relationship=None,
+    has_user_character=False, has_cover_person=False,
 ):
-    """Generate MV scenario using OpenAI."""
+    """Generate MV scenario using OpenAI. Returns dict for drama, str otherwise."""
     client = _get_openai_client()
-    system_prompt, user_prompt = _build_scenario_prompts(title, genre, mood, lyrics, character_name)
+    system_prompt, user_prompt, is_drama = _build_scenario_prompts_dispatch(
+        scenario_style, title, genre, mood, lyrics, character_name,
+        vocal_gender, relationship, has_user_character, has_cover_person,
+    )
     model = model_name or settings.openai_model
 
-    resp = await client.chat.completions.create(
-        model=model,
-        messages=[
+    create_kwargs = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.8,
-        max_tokens=2000,
-    )
+        "temperature": 0.8,
+        "max_tokens": 2500,
+    }
+    if is_drama:
+        # Force strict JSON output
+        create_kwargs["response_format"] = {"type": "json_object"}
 
-    scenario = resp.choices[0].message.content.strip()
-    logger.info("MV scenario generated (OpenAI %s): %d chars", model, len(scenario))
-    return scenario
+    resp = await client.chat.completions.create(**create_kwargs)
+    raw = resp.choices[0].message.content.strip()
+
+    if is_drama:
+        parsed = _parse_drama_scenario_json(raw)
+        logger.info(
+            "MV drama scenario generated (OpenAI %s): %d chars body, %d chars, %d locations",
+            model, len(parsed["scenario"]),
+            len(parsed.get("characters", {})), len(parsed.get("locations", {})),
+        )
+        return parsed
+
+    logger.info("MV scenario generated (OpenAI %s): %d chars", model, len(raw))
+    return raw
 
 
 async def _generate_scenario_claude(
     title, genre, mood, lyrics, character_name, model_name="claude-opus-4-6",
+    scenario_style="drama", vocal_gender=None, relationship=None,
+    has_user_character=False, has_cover_person=False,
 ):
-    """Generate MV scenario using Anthropic Claude."""
+    """Generate MV scenario using Anthropic Claude. Returns dict for drama, str otherwise."""
     client = _get_anthropic_client()
-    system_prompt, user_prompt = _build_scenario_prompts(title, genre, mood, lyrics, character_name)
+    system_prompt, user_prompt, is_drama = _build_scenario_prompts_dispatch(
+        scenario_style, title, genre, mood, lyrics, character_name,
+        vocal_gender, relationship, has_user_character, has_cover_person,
+    )
 
     scenario_kwargs = {
         "model": model_name,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_prompt}],
-        "max_tokens": 2000,
+        "max_tokens": 2500,
     }
     if "opus-4-7" not in model_name:
         scenario_kwargs["temperature"] = 0.8
     resp = await client.messages.create(**scenario_kwargs)
 
-    scenario = resp.content[0].text.strip()
-    logger.info("MV scenario generated (Claude %s): %d chars", model_name, len(scenario))
-    return scenario
+    raw = resp.content[0].text.strip()
+
+    if is_drama:
+        parsed = _parse_drama_scenario_json(raw)
+        logger.info(
+            "MV drama scenario generated (Claude %s): %d chars body",
+            model_name, len(parsed["scenario"]),
+        )
+        return parsed
+
+    logger.info("MV scenario generated (Claude %s): %d chars", model_name, len(raw))
+    return raw
 
 
 async def _generate_scenario_gemini(
     title, genre, mood, lyrics, character_name,
+    scenario_style="drama", vocal_gender=None, relationship=None,
+    has_user_character=False, has_cover_person=False,
 ):
-    """Generate MV scenario using Google Gemini 2.5 Pro."""
-    system_prompt, user_prompt = _build_scenario_prompts(title, genre, mood, lyrics, character_name)
+    """Generate MV scenario using Google Gemini 2.5 Pro. Returns dict for drama, str otherwise."""
+    system_prompt, user_prompt, is_drama = _build_scenario_prompts_dispatch(
+        scenario_style, title, genre, mood, lyrics, character_name,
+        vocal_gender, relationship, has_user_character, has_cover_person,
+    )
 
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+
+    generation_config = {
+        "temperature": 0.8,
+        "maxOutputTokens": 2500,
+    }
+    if is_drama:
+        # Gemini supports response_mime_type for JSON
+        generation_config["responseMimeType"] = "application/json"
 
     payload = {
         "systemInstruction": {
             "parts": [{"text": system_prompt}]
         },
         "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "temperature": 0.8,
-            "maxOutputTokens": 2000,
-        },
+        "generationConfig": generation_config,
     }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -661,14 +968,23 @@ async def _generate_scenario_gemini(
         raise ValueError("Gemini scenario generation returned no candidates")
 
     parts = candidates[0].get("content", {}).get("parts", [])
-    scenario = ""
+    raw = ""
     for part in parts:
         if part.get("text"):
-            scenario += part["text"]
+            raw += part["text"]
 
-    scenario = scenario.strip()
-    logger.info("MV scenario generated (Gemini): %d chars", len(scenario))
-    return scenario
+    raw = raw.strip()
+
+    if is_drama:
+        parsed = _parse_drama_scenario_json(raw)
+        logger.info(
+            "MV drama scenario generated (Gemini): %d chars body",
+            len(parsed["scenario"]),
+        )
+        return parsed
+
+    logger.info("MV scenario generated (Gemini): %d chars", len(raw))
+    return raw
 
 
 async def generate_mv_scenario(
@@ -678,35 +994,71 @@ async def generate_mv_scenario(
     lyrics: str = None,
     character_name: str = None,
     models: list = None,
+    scenario_style: str = "drama",
+    vocal_gender: Optional[str] = None,
+    relationship: Optional[str] = None,
+    has_user_character: bool = False,
+    has_cover_person: bool = False,
 ):
-    """Generate a novel-style MV scenario.
+    """Generate an MV scenario.
+
+    Drama style (default) returns a structured dict with characters/locations/scenario.
+    Non-drama styles currently fall back to drama.
 
     Args:
         models: List of model names. If None, uses default OpenAI model.
-                 Supported: OpenAI models, "claude-opus-4-6".
+                 Supported: OpenAI models, "claude-opus-4-*", "gemini-*".
                  If two models given, runs both in parallel.
+        scenario_style: "drama" (only implemented), or falls back to drama.
+        vocal_gender: "female"/"male"/"neutral" or None — forced onto character1.
+        relationship: "ex_lover"/"friend"/"colleague"/"family" or None —
+            controls character2 presence and rules.
+        has_user_character: True if user uploaded a character sheet (external ref).
+        has_cover_person: True if cover image contains a person to reference.
 
     Returns:
-        Single model (or default): scenario string (backward compatible)
-        Both models: {"results": [{"scenario": "...", "model": "gpt-4o-mini"}, {"scenario": "...", "model": "claude-opus-4-6"}]}
+        Single model (drama): dict {characters, locations, scenario}
+        Single model (non-drama / fallback): currently dict via drama fallback
+        Both models: {"results": [{"meta": dict, "scenario": str, "model": str}, ...]}
     """
-    common_args = dict(title=title, genre=genre, mood=mood, lyrics=lyrics, character_name=character_name)
+    common_args = dict(
+        title=title, genre=genre, mood=mood, lyrics=lyrics,
+        character_name=character_name,
+        scenario_style=scenario_style,
+        vocal_gender=vocal_gender,
+        relationship=relationship,
+        has_user_character=has_user_character,
+        has_cover_person=has_cover_person,
+    )
 
     if not models:
         return await _generate_scenario_openai(**common_args)
 
     async def _run(model_name):
         if model_name.startswith("claude-"):
-            scenario = await _generate_scenario_claude(**common_args, model_name=model_name)
+            result = await _generate_scenario_claude(**common_args, model_name=model_name)
         elif model_name.startswith("gemini-"):
-            scenario = await _generate_scenario_gemini(**common_args)
+            result = await _generate_scenario_gemini(**common_args)
         else:  # gpt-*
-            scenario = await _generate_scenario_openai(**common_args, model_name=model_name)
-        return {"scenario": scenario, "model": model_name}
+            result = await _generate_scenario_openai(**common_args, model_name=model_name)
+        # Normalize return shape
+        if isinstance(result, dict):
+            # drama: {characters, locations, scenario}
+            return {
+                "meta": result,
+                "scenario": result.get("scenario", ""),
+                "model": model_name,
+            }
+        # plain string (non-drama legacy path — currently unused but future-proof)
+        return {
+            "meta": {"characters": {}, "locations": {}, "scenario": result},
+            "scenario": result,
+            "model": model_name,
+        }
 
     if len(models) == 1:
         result = await _run(models[0])
-        return result["scenario"]
+        return result["meta"]  # dict for single-model runs
 
     # Two models: run in parallel
     results = await asyncio.gather(
@@ -719,7 +1071,7 @@ async def generate_mv_scenario(
     if len(valid_results) == 0:
         raise RuntimeError("All scenario generation calls failed")
     if len(valid_results) == 1:
-        return valid_results[0]["scenario"]
+        return valid_results[0]["meta"]
 
     return {"results": valid_results}
 
@@ -1332,17 +1684,38 @@ showing emotions through actions and expressions naturally.
 - "lipsync": character faces camera directly, singing/performing. ONLY the main character appears, close-up frontal shot, mouth open singing.
 
 For "lipsync" scenes:
-- image_prompt MUST describe the main character ALONE, facing camera directly, frontal close-up or medium close-up
+- MUST use `@character1` variable reference for the protagonist (do NOT use raw name or "the main character" / "the singer" / "she" / "he"). The character1 sheet is auto-attached only when the `@character1` token literally appears in image_prompt.
+- image_prompt MUST describe @character1 ALONE, facing camera directly, frontal close-up or medium close-up
 - Use 50mm or 85mm lens for flattering facial proportions
-- The main character should appear to be singing or rapping with mouth open
-- Do NOT include any other person in lipsync scenes
+- @character1 should appear to be singing or rapping with mouth open
+- Do NOT include any other person in lipsync scenes (no @character2, no extras)
 - Lighting should emphasize the face: key light at 45 degrees, subtle fill, hair/rim light
 
 For "drama" scenes:
 - NEVER describe the character singing, performing, or looking at the camera
 - Vary lenses across drama scenes — don't use the same focal length for consecutive scenes
+- When the scenario describes a recurring character or location, MUST use the `@characterN` / `@locationN` variable reference instead of the raw name. The system attaches matching asset sheets only when the variable token literally appears in image_prompt.
 
 {scenario_context}
+
+══════════════════════════════════════════════════
+ VARIABLE REFERENCES (caption-free consistency):
+══════════════════════════════════════════════════
+
+When referring to recurring characters or locations in image_prompt or video_image_prompt, \
+USE VARIABLE REFERENCES instead of raw names. This lets the system automatically attach \
+pre-generated character/location sheets to guarantee visual consistency.
+
+- Characters: use @character1, @character2 (not "John", not "the woman")
+- Locations: use @location1, @location2, @location3 (not "cafe", not "his bedroom")
+- Example: "@character1 sits alone at @location1, looking out the window as @character2 approaches from behind."
+- Example: "Close-up of @character1's face inside @location2, warm lamp light on her cheek."
+- The variable must match exactly one of the available references listed below.
+- If a variable reference appears in image_prompt, the corresponding asset sheet will be \
+attached to the image generator automatically — do NOT repeat physical descriptions of the \
+character/location in that prompt.
+
+{asset_refs_line}
 
 IMPORTANT distinction between image_prompt and video_image_prompt:
 - image_prompt is for AI IMAGE generation (Gemini/NanoBanana): include technical specs like lens focal length, f-stop, bokeh, specific lighting setup, color grade reference
@@ -1401,7 +1774,7 @@ def _get_video_image_prompt_guide(video_model: str) -> str:
 
 def _build_scene_prompt_messages(
     scenes_input, title, genre, mood, scenario, user_scene_prompt,
-    video_model="veo",
+    video_model="veo", asset_keys=None,
 ):
     """Build system and user messages for scene prompt generation."""
     scenario_context = ""
@@ -1412,9 +1785,20 @@ def _build_scene_prompt_messages(
             "Each scene should follow the narrative arc described above."
         ).format(scenario)
 
+    if asset_keys:
+        asset_refs_line = "Available references for this MV: {}".format(
+            ", ".join("@{}".format(k) for k in asset_keys)
+        )
+    else:
+        asset_refs_line = (
+            "(No pre-generated asset references for this MV — describe characters "
+            "and locations with plain text.)"
+        )
+
     system_prompt = SCENE_PROMPT_ONLY_SYSTEM.format(
         scenario_context=scenario_context,
         video_image_prompt_guide=_get_video_image_prompt_guide(video_model),
+        asset_refs_line=asset_refs_line,
     )
 
     if user_scene_prompt and user_scene_prompt.strip():
@@ -1452,14 +1836,14 @@ def _parse_scene_prompts_raw(raw: str) -> list:
 
 async def _generate_scene_prompts_openai(
     scenes_input, title, genre, mood, scenario, user_scene_prompt, model_name=None,
-    video_model="veo",
+    video_model="veo", asset_keys=None,
 ):
     """Generate scene prompts using OpenAI."""
     client = _get_openai_client()
     model = model_name or settings.openai_model
     system_prompt, user_message = _build_scene_prompt_messages(
         scenes_input, title, genre, mood, scenario, user_scene_prompt,
-        video_model=video_model,
+        video_model=video_model, asset_keys=asset_keys,
     )
 
     max_tokens = min(max(len(scenes_input) * 500, 8000), 32000)
@@ -1485,13 +1869,13 @@ async def _generate_scene_prompts_openai(
 
 async def _generate_scene_prompts_claude(
     scenes_input, title, genre, mood, scenario, user_scene_prompt, model_name="claude-opus-4-6",
-    video_model="veo",
+    video_model="veo", asset_keys=None,
 ):
     """Generate scene prompts using Anthropic Claude."""
     client = _get_anthropic_client()
     system_prompt, user_message = _build_scene_prompt_messages(
         scenes_input, title, genre, mood, scenario, user_scene_prompt,
-        video_model=video_model,
+        video_model=video_model, asset_keys=asset_keys,
     )
 
     max_tokens = min(max(len(scenes_input) * 500, 8000), 32000)
@@ -1524,6 +1908,7 @@ async def generate_scene_prompts_only(
     user_scene_prompt: Optional[str] = None,
     models: list = None,
     video_model: str = "veo",
+    asset_keys: Optional[list] = None,
 ) -> list:
     """GPT에게 씬 목록을 전달하고 image_prompt, description_ko만 받는다.
 
@@ -1553,6 +1938,7 @@ async def generate_scene_prompts_only(
         scenario=scenario,
         user_scene_prompt=user_scene_prompt,
         video_model=video_model,
+        asset_keys=asset_keys,
     )
 
     if not models:
@@ -1594,12 +1980,16 @@ async def generate_scene_image(
     cover_image_bytes: Optional[bytes] = None,
     character_image_bytes: Optional[bytes] = None,
     scene_type: str = "drama",
+    reference_images: Optional[list] = None,
 ) -> bytes:
     """Generate a single scene image using Gemini. Returns PNG bytes.
 
     If cover_image_bytes is provided, it is included as a reference so
     that Gemini produces images in a visually consistent style.
     If character_image_bytes is provided, the character appears in the scene.
+    If reference_images (list of bytes) is provided, each image is attached as
+    additional inlineData (character/location sheet references resolved from
+    @character1/@location1 variable references in the prompt).
     """
 
     prompt_parts = [scene_description]
@@ -1633,6 +2023,15 @@ async def generate_scene_image(
                 "Photorealistic style only — no anime, cartoon, or illustration."
             )
 
+    if reference_images:
+        prompt_parts.append(
+            "Additional character/location reference sheets are attached. "
+            "Characters referenced as @character1, @character2 must match the attached "
+            "character sheets exactly (face, hair, outfit). Locations referenced as "
+            "@location1, @location2, @location3 must match the attached location "
+            "establishing shots (setting, lighting, atmosphere)."
+        )
+
     prompt = ". ".join(prompt_parts)
 
     # Build request parts
@@ -1657,6 +2056,19 @@ async def generate_scene_image(
                 "data": char_b64,
             }
         })
+
+    # Include additional reference images (character/location assets)
+    if reference_images:
+        for ref_bytes in reference_images:
+            if not ref_bytes:
+                continue
+            ref_b64 = base64.b64encode(ref_bytes).decode("utf-8")
+            request_parts.append({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": ref_b64,
+                }
+            })
 
     payload = {
         "contents": [{"parts": request_parts}],

@@ -1948,6 +1948,7 @@ export default function MyMusicPage() {
               onClearPrefill={() => setGenerationPrefill(null)}
               draftData={draftData}
               onClearDraft={() => setDraftData(null)}
+              myCharacterFromParent={character}
             />
           </div>
         )}

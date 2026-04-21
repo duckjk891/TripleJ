@@ -161,6 +161,7 @@ const MODEL_OPTIONS = [
 const STRUCTURE_TAGS = ['[Verse]', '[Chorus]', '[Bridge]', '[Outro]', '[Intro]', '[Pre-Chorus]', '[Instrumental]'];
 
 function MrPitchAdjustPanel({ generationId, onMergeComplete }) {
+  const [expanded, setExpanded] = useState(false);
   const [mrPitch, setMrPitch] = useState(0);
   const [vocalVolume, setVocalVolume] = useState(0.7);
   const [mrVolume, setMrVolume] = useState(0.85);
@@ -181,29 +182,60 @@ function MrPitchAdjustPanel({ generationId, onMergeComplete }) {
   const [loadingPreview, setLoadingPreview] = useState(false);
 
   useEffect(() => {
-    const loadAudio = async () => {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      audioCtxRef.current = ctx;
+    if (!expanded) return;
 
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtxRef.current = ctx;
+
+    // 이미 로드된 상태면 fetch 스킵 (접었다 다시 펼친 경우)
+    if (vocalBufferRef.current && mrBufferRef.current) {
+      setLoading(false);
+      return () => {
+        try { vocalSourceRef.current?.stop(); } catch {}
+        try { mrSourceRef.current?.stop(); } catch {}
+        setIsPlaying(false);
+        if (audioCtxRef.current) {
+          audioCtxRef.current.close();
+          audioCtxRef.current = null;
+        }
+      };
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const loadAudio = async () => {
       try {
-        const vocalResp = await api.fetchConvertedVocal(generationId);
+        const vocalResp = await api.fetchConvertedVocal(generationId, { signal: controller.signal });
+        if (cancelled) return;
         vocalBufferRef.current = await ctx.decodeAudioData(vocalResp.data);
 
-        const mrResp = await api.fetchBacking(generationId);
+        const mrResp = await api.fetchBacking(generationId, { signal: controller.signal });
+        if (cancelled) return;
         mrBufferRef.current = await ctx.decodeAudioData(mrResp.data);
 
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       } catch (err) {
+        if (err?.name === 'CanceledError' || err?.name === 'AbortError' || controller.signal.aborted) {
+          return;
+        }
         console.error('Failed to load audio:', err);
       }
     };
     loadAudio();
 
     return () => {
-      stopPlayback();
-      if (audioCtxRef.current) audioCtxRef.current.close();
+      cancelled = true;
+      controller.abort();
+      try { vocalSourceRef.current?.stop(); } catch {}
+      try { mrSourceRef.current?.stop(); } catch {}
+      setIsPlaying(false);
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
+      }
     };
-  }, [generationId]);
+  }, [generationId, expanded]);
 
   const stopPlayback = () => {
     try { vocalSourceRef.current?.stop(); } catch {}
@@ -311,9 +343,46 @@ function MrPitchAdjustPanel({ generationId, onMergeComplete }) {
     setMrVolume(0.85);
   };
 
+  const toggleButton = (
+    <button
+      type="button"
+      className="mr-pitch__toggle-btn"
+      onClick={() => setExpanded((v) => !v)}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '6px 12px',
+        fontSize: 13,
+        color: '#cbd5e1',
+        background: 'rgba(100, 116, 139, 0.15)',
+        border: '1px solid rgba(148, 163, 184, 0.3)',
+        borderRadius: 6,
+        cursor: 'pointer',
+      }}
+    >
+      {expanded ? '▲ MR 피치 조절 패널 접기' : '▼ MR 피치 조절 패널 펼치기'}
+    </button>
+  );
+
+  if (!expanded) {
+    return (
+      <div
+        className="mr-pitch__panel mr-pitch__panel--collapsed"
+        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}
+      >
+        {toggleButton}
+        <span style={{ fontSize: 12, color: '#94a3b8', opacity: 0.6 }}>
+          (클릭 시 음원 로드)
+        </span>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="mr-pitch__panel">
+        <div style={{ marginBottom: 10 }}>{toggleButton}</div>
         <div className="mr-pitch__loading">
           <FiLoader className="s2__spin" /> 오디오 로딩 중...
         </div>
@@ -323,6 +392,7 @@ function MrPitchAdjustPanel({ generationId, onMergeComplete }) {
 
   return (
     <div className="mr-pitch__panel">
+      <div style={{ marginBottom: 10 }}>{toggleButton}</div>
       <div className="mr-pitch__header">
         <FiSliders className="mr-pitch__icon" />
         <span>MR 음정 조절 & 합치기</span>

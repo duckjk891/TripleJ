@@ -52,10 +52,16 @@ async def lifespan(app: FastAPI):
     from .services.playcount_sync import start_playcount_scheduler
     sync_task = start_playcount_scheduler()
 
+    # Start background task for MV asset cleanup (24h retention, hourly sweep)
+    import asyncio as _asyncio
+    from .services.mv_assets import cleanup_loop as _mv_asset_cleanup_loop
+    asset_cleanup_task = _asyncio.create_task(_mv_asset_cleanup_loop(3600))
+
     yield
 
     # Shutdown
     sync_task.cancel()
+    asset_cleanup_task.cancel()
     await close_postgres()
     await close_mongodb()
     await close_redis()

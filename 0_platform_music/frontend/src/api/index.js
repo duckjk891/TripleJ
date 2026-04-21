@@ -156,7 +156,14 @@ export const generateMV = (data) => API.post('/upload/generate-mv', data);
 export const checkMVStatus = (jobId) => API.get(`/upload/mv-status/${jobId}`);
 
 // MV Draft System
-export const createMVJob = (data) => API.post('/mv/create', data);
+// PLAN v30 구현1: scenario_style / vocal_gender / relationship 필드를 명시적으로 포함
+export const createMVJob = (data) =>
+  API.post('/mv/create', {
+    ...data,
+    scenario_style: data?.scenario_style ?? 'drama',
+    vocal_gender: data?.vocal_gender ?? null,
+    relationship: data?.relationship ?? null,
+  });
 export const getMVJobs = () => API.get('/mv/jobs');
 export const getMVJobDetail = (jobId) => API.get(`/mv/jobs/${jobId}`);
 export const deleteMVJob = (jobId) => API.delete(`/mv/jobs/${jobId}`);
@@ -189,9 +196,34 @@ export const generateCharacterSheet = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000,
   });
-export const saveCharacter = (data) => API.post('/character/save', data);
-export const getMyCharacter = () => API.get('/character/me');
-export const deleteMyCharacter = () => API.delete('/character/me');
+export const saveCharacter = async (data) => {
+  const resp = await API.post('/character/save', data);
+  try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
+  return resp;
+};
+export const getMyCharacter = async () => {
+  const CACHE_KEY = 'aimu:myCharacter';
+  const TTL_MS = 5 * 60 * 1000; // 5분
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (cached.ts && Date.now() - cached.ts < TTL_MS) {
+        return { data: cached.data };
+      }
+    }
+  } catch {}
+  const resp = await API.get('/character/me');
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: resp.data }));
+  } catch {}
+  return resp;
+};
+export const deleteMyCharacter = async () => {
+  const resp = await API.delete('/character/me');
+  try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
+  return resp;
+};
 export const refineCharacterSheet = (formData) =>
   API.post('/character/refine', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -353,11 +385,11 @@ export const fetchVocalRepairEnhanced = (repairId, method) =>
   API.get(`/vocal-repair/${repairId}/enhanced/stream`, { params: { method }, responseType: 'arraybuffer' });
 
 // Fetch voice convert streams
-export const fetchConvertedVocal = (generationId) =>
-  API.get(`/voice-convert/${generationId}/converted-vocal/stream`, { responseType: 'arraybuffer' });
+export const fetchConvertedVocal = (generationId, config = {}) =>
+  API.get(`/voice-convert/${generationId}/converted-vocal/stream`, { responseType: 'arraybuffer', ...config });
 
-export const fetchBacking = (generationId) =>
-  API.get(`/voice-convert/${generationId}/backing/stream`, { responseType: 'arraybuffer' });
+export const fetchBacking = (generationId, config = {}) =>
+  API.get(`/voice-convert/${generationId}/backing/stream`, { responseType: 'arraybuffer', ...config });
 
 // Download vocal repair
 export const downloadVocalRepair = (repairId, type, method) => {

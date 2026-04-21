@@ -53,6 +53,11 @@ class CreateMVRequest(BaseModel):
     scenario_models: Optional[List[str]] = None  # for scenario generation (e.g. ["gpt-4o-mini", "claude-opus-4-6"])
     prompt_models: Optional[List[str]] = None    # for image prompt generation (e.g. ["gpt-4o-mini", "gpt-5.4"])
     video_prompt_model: Optional[str] = None     # for video prompt generation (e.g. "claude-opus-4-7")
+    # ── Drama scenario controls (PLAN.md v30) ─────────────────────────────
+    scenario_style: Optional[str] = "drama"  # ("drama", "mood", "literal", "ai_auto") — currently only drama is implemented
+    vocal_gender: Optional[str] = None       # ("female", "male", "neutral") — 시나리오 character1에 강제 사용
+    relationship: Optional[str] = None       # ("ex_lover", "friend", "colleague", "family", None) — character2 관계
+    include_my_character: Optional[bool] = False  # "내 캐릭터 포함" 체크 여부
 
 
 class SelectModelRequest(BaseModel):
@@ -193,6 +198,31 @@ async def create_mv(
             content={"error": "지원하지 않는 영상 모델입니다. (veo, kling, seedance)"},
         )
 
+    # Validate scenario_style — only "drama" is implemented; others fall back with warning
+    scenario_style = (body.scenario_style or "drama").strip().lower()
+    if scenario_style not in ("drama", "mood", "literal", "ai_auto"):
+        logger.warning(
+            "Unknown scenario_style '%s' — falling back to 'drama'", scenario_style,
+        )
+        scenario_style = "drama"
+    elif scenario_style != "drama":
+        logger.warning(
+            "scenario_style '%s' not yet implemented — falling back to 'drama'",
+            scenario_style,
+        )
+        scenario_style = "drama"
+
+    # Validate vocal_gender / relationship (allow None, but normalize casing)
+    vocal_gender = (body.vocal_gender or "").strip().lower() or None
+    if vocal_gender and vocal_gender not in ("female", "male", "neutral"):
+        logger.warning("Unknown vocal_gender '%s' — using None", vocal_gender)
+        vocal_gender = None
+
+    relationship = (body.relationship or "").strip().lower() or None
+    if relationship and relationship not in ("ex_lover", "friend", "colleague", "family"):
+        logger.warning("Unknown relationship '%s' — using None", relationship)
+        relationship = None
+
     # Compute dynamic scene count based on audio duration and video model
     # Veo: 8-second clips, Kling: 10-second clips, Seedance: 10-second clips (up to 15s)
     if video_model == "kling":
@@ -223,7 +253,13 @@ async def create_mv(
         "scenario_models": body.scenario_models,
         "prompt_models": body.prompt_models,
         "video_prompt_model": body.video_prompt_model,
+        # Drama scenario controls
+        "scenario_style": scenario_style,
+        "vocal_gender": vocal_gender,
+        "relationship": relationship,
+        "include_my_character": bool(body.include_my_character),
         "scenario": None,
+        "scenario_meta": None,
         "status": "draft",
         "progress": 0,
         "error_message": "",
@@ -347,6 +383,11 @@ async def get_mv_job(
         "synclabs_total": job.get("synclabs_total"),
         "synclabs_completed": job.get("synclabs_completed"),
         "scenario": job.get("scenario"),
+        "scenario_meta": job.get("scenario_meta"),
+        "scenario_style": job.get("scenario_style", "drama"),
+        "vocal_gender": job.get("vocal_gender"),
+        "relationship": job.get("relationship"),
+        "include_my_character": job.get("include_my_character", False),
         "scene_prompt": job.get("scene_prompt"),
         "character_object_name": job.get("character_object_name"),
         "video_model": job.get("video_model", "veo"),
@@ -538,6 +579,22 @@ async def regenerate_scene_image_endpoint(
         except Exception as e:
             logger.warning("Failed to load character image: %s", e)
 
+    # Resolve @character1/@location1 references → attach matching asset bytes
+    from ..services.mv_assets import parse_asset_references, load_asset_from_minio
+    scene_refs: list = []
+    assets_meta = job.get("assets") or {}
+    if assets_meta:
+        scene_desc_combined = "{} {}".format(
+            scenes[scene_idx].get("image_prompt", "") or "",
+            scenes[scene_idx].get("video_image_prompt", "") or "",
+        )
+        for _key in parse_asset_references(scene_desc_combined):
+            _a = assets_meta.get(_key)
+            if isinstance(_a, dict) and _a.get("object_name"):
+                _b = load_asset_from_minio(_a["object_name"])
+                if _b:
+                    scene_refs.append(_b)
+
     # Generate image (synchronous — single Gemini call)
     try:
         scene_desc = scenes[scene_idx].get("image_prompt") or scenes[scene_idx].get("description", "")
@@ -546,6 +603,7 @@ async def regenerate_scene_image_endpoint(
             cover_image_bytes=cover_image_bytes,
             character_image_bytes=character_image_bytes,
             scene_type=scenes[scene_idx].get("scene_type", "drama"),
+            reference_images=scene_refs or None,
         )
     except Exception as e:
         return JSONResponse(
@@ -1361,11 +1419,49 @@ async def _retry_sync_for_scene(job_id, scene_number, mongo_db):
                     scene_idx = i
                     break
 
-        start_sec = scene.get("section_start", 0)
-        end_sec = scene.get("section_end", start_sec + 10)
+        # ── section_start/end 유효성 가드 ──
+        raw_start = scene.get("section_start")
+        raw_end = scene.get("section_end")
+        if raw_start is None or raw_end is None:
+            scenes[scene_idx]["sync_error"] = "씬의 시간 정보(section_start/end)가 없어 Sync Labs를 건너뜁니다."
+            scenes[scene_idx]["video_source"] = "kling (sync skipped)"
+            await mongo_db.mv_jobs.update_one(
+                {"_id": _ObjectId(job_id)},
+                {"$set": {"scenes": scenes, "updated_at": datetime.utcnow()}}
+            )
+            return
+        try:
+            start_sec = float(raw_start)
+            end_sec = float(raw_end)
+        except (TypeError, ValueError):
+            scenes[scene_idx]["sync_error"] = "section_start/end가 숫자가 아닙니다 (start={}, end={})".format(raw_start, raw_end)
+            scenes[scene_idx]["video_source"] = "kling (sync skipped)"
+            await mongo_db.mv_jobs.update_one(
+                {"_id": _ObjectId(job_id)},
+                {"$set": {"scenes": scenes, "updated_at": datetime.utcnow()}}
+            )
+            return
+        if start_sec < 0 or end_sec <= start_sec or (end_sec - start_sec) < 0.5:
+            scenes[scene_idx]["sync_error"] = "유효하지 않은 구간 (start={:.3f}, end={:.3f})".format(start_sec, end_sec)
+            scenes[scene_idx]["video_source"] = "kling (sync skipped)"
+            await mongo_db.mv_jobs.update_one(
+                {"_id": _ObjectId(job_id)},
+                {"$set": {"scenes": scenes, "updated_at": datetime.utcnow()}}
+            )
+            return
 
         # 분리된 보컬이 있으면 Sync Labs에 보컬만 전달, 없으면 전체 구간
-        original_segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
+        try:
+            original_segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
+        except (RuntimeError, ValueError) as cut_err:
+            scenes[scene_idx]["sync_error"] = "오디오 구간 컷팅 실패: {}".format(str(cut_err)[:200])
+            scenes[scene_idx]["video_source"] = "kling (sync failed)"
+            await mongo_db.mv_jobs.update_one(
+                {"_id": _ObjectId(job_id)},
+                {"$set": {"scenes": scenes, "updated_at": datetime.utcnow()}}
+            )
+            return
+
         if scene.get("separated_vocal_object"):
             vocal_resp = minio_client.get_object(
                 bucket_name=settings.minio_bucket_music,
@@ -1375,6 +1471,14 @@ async def _retry_sync_for_scene(job_id, scene_number, mongo_db):
             vocal_resp.close()
             vocal_resp.release_conn()
         else:
+            sync_audio = original_segment_audio
+
+        # 보컬 분리 결과가 너무 작으면 원본 segment로 fallback
+        if not sync_audio or len(sync_audio) < 5120:
+            logger.warning(
+                "Retry sync: scene %s vocal too small (%db), falling back to original segment",
+                scene_number, len(sync_audio) if sync_audio else 0,
+            )
             sync_audio = original_segment_audio
 
         # Call Sync Labs (보컬만 전달하여 립싱크 정확도 향상)
@@ -1587,24 +1691,35 @@ async def select_scenario(
             content={"error": "선택할 시나리오 결과가 없습니다."},
         )
 
-    # Find the selected model's scenario
-    selected = None
+    # Find the selected model's scenario (new shape: {"meta", "scenario", "model"})
+    selected_scenario = None
+    selected_meta = None
     for r in scenario_results:
         if r.get("model") == body.model:
-            selected = r.get("scenario")
+            # New drama format stores both meta (dict) and scenario (str)
+            selected_scenario = r.get("scenario")
+            selected_meta = r.get("meta")
+            # Backward-compat: legacy result shape was {"scenario": str, "model": str} only
+            if not selected_meta and isinstance(selected_scenario, str):
+                selected_meta = {
+                    "characters": {},
+                    "locations": {},
+                    "scenario": selected_scenario,
+                }
             break
 
-    if not selected:
+    if not selected_scenario:
         return JSONResponse(
             status_code=400,
             content={"error": f"모델 '{body.model}'의 시나리오 결과를 찾을 수 없습니다."},
         )
 
-    # Update job with the selected scenario and continue pipeline
+    # Update job with the selected scenario (body + meta) and continue pipeline
     await mongo.mv_jobs.update_one(
         {"_id": oid},
         {"$set": {
-            "scenario": selected,
+            "scenario": selected_scenario,
+            "scenario_meta": selected_meta,
             "selected_scenario_model": body.model,
             "status": "splitting",
             "updated_at": datetime.utcnow(),

@@ -5185,3 +5185,286 @@ cloudflared tunnel --url http://localhost:9003
 ### 특이사항
 - 백엔드 변경 없음
 - 단계별로 0~100%씩 독립 표시
+
+---
+
+## v29 — 2026-04-19 — MV 시나리오 표시
+
+### 수행 결과
+- `UploadPage.jsx`에 `showScenario` state 추가
+- 씬 리스트 위에 시나리오 토글 영역 추가 (📖 MV 시나리오 보기 / ▼▲ 펼치기)
+- 시나리오 텍스트는 pre-wrap으로 줄바꿈 유지하며 표시
+- 백엔드 변경 없음
+
+---
+
+## v30 — 2026-04-18 — 시나리오 스타일 선택 + 시나리오 메타데이터/자산 사전생성
+
+### 요청 작업 (PLAN.md v30 요약)
+- 구현1: 시나리오 스타일 4개 라디오(drama/mood/literal/ai_auto) 노출. 드라마형만 활성, 나머지는 "준비 중" + 백엔드 폴백. 드라마 프롬프트는 JSON 출력(인물/장소/시나리오 본문)을 강제하는 단편영화식 서사로 개편. 보컬 성별/관계/내 캐릭터 포함 여부를 character1/character2 규칙에 반영.
+- 구현2: Phase 1.5 "자산 사전생성" 추가 — scenario_meta(characters/locations)에서 Nano Banana Pro로 캐릭터 시트/장소 시트를 사전 생성해 MinIO 업로드 + MongoDB `assets` 필드 저장. 씬 프롬프트는 @character1/@location1 같은 변수 참조를 사용. Phase 2에서 변수 파싱해 해당 자산 바이트를 Gemini inlineData로 자동 첨부. 완료/실패 MV는 24h 경과 후 1시간 주기 백그라운드 루프로 MongoDB+MinIO에서 정리.
+
+### 수행 결과 (구현1)
+- `app/routes/mv.py`:
+  - `CreateMVRequest`에 `scenario_style`, `vocal_gender`, `relationship`, `include_my_character` 4개 필드 추가 (기본값 drama/None/None/False).
+  - `create_mv` 라우터에서 4개 옵션 정규화 및 drama 외 스타일 → drama 폴백, job_doc에 저장.
+- `app/services/mv_generator.py`:
+  - `_build_drama_scenario_prompts()` 신규. `character1.gender`를 vocal_gender로 강제("절대 변경하지 마세요"), ex_lover 관계 시 반대 성별 강제.
+  - 출력 스키마를 `{characters, locations, scenario}` JSON으로 엄격 지정.
+  - OpenAI: `response_format={"type":"json_object"}`, Gemini: `responseMimeType: "application/json"` 설정.
+  - `_parse_drama_scenario_json()` — `json.loads` 우선 + 마크다운 펜스 제거 + `{...}` 블록 추출 fallback.
+- `frontend/src/pages/UploadPage.jsx`:
+  - `SCENARIO_STYLES` 4개 상수 + `scenarioStyle` state (default 'drama').
+  - 씬 생성 버튼 위에 라디오 그리드 UI, disabled 옵션은 "준비 중" 뱃지 표시.
+  - createMVJob payload에 `scenario_style`, `vocal_gender`, `relationship` 전달.
+- `frontend/src/api/index.js`:
+  - `createMVJob`이 `scenario_style ?? 'drama'`, `vocal_gender ?? null`, `relationship ?? null`을 명시 매핑.
+
+### 수행 결과 (구현2)
+- `app/services/mv_assets.py` (신규):
+  - `_gemini_generate_image()` — Nano Banana Pro (`gemini-3-pro-image-preview`) 호출, ref_images 지원.
+  - `generate_character_sheet_asset(name, gender, description, ref_image=None)` — 3각도 캐릭터 시트.
+  - `generate_location_sheet_asset(name, description)` — 와이드 장소 샷 (사람 없음).
+  - `parse_asset_references(prompt)` — 정규식 `@(character\d+|location\d+)`로 등장 순서·중복제거 반환.
+  - `upload_asset_to_minio(bytes, job_id, key)` / `load_asset_from_minio(object_name)` — MinIO I/O.
+  - `cleanup_expired_assets(retention_hours=24)` — 완료/실패 MV의 자산을 24h 후 MinIO 삭제 + `assets_cleared:true` 마킹.
+  - `cleanup_loop(interval_sec=3600)` — 1시간 주기 백그라운드 루프.
+- `app/services/mv_pipeline.py`:
+  - Phase 0에서 `scenario_style/vocal_gender/relationship/has_user_character/has_cover_person`을 `generate_mv_scenario`에 전달. `scenario_meta` + `scenario`(본문) 분리 저장.
+  - Phase 1b에서 `scenario_meta`의 character/location 키를 `asset_keys`로 수집해 `generate_scene_prompts_only`에 주입.
+  - `run_phase1_split` 말미에서 `run_phase1_5_assets` 호출 (scenario_meta 존재 시).
+  - `run_phase1_5_assets` — 캐릭터/장소를 `asyncio.gather`로 병렬 생성, user_char_bytes를 character1 ref로 전달. MongoDB `assets`에 `{type, name, gender?, description, object_name, created_at}` 저장.
+  - `run_phase2_images` — `asset_bytes_cache` 빌드 → 씬별 image_prompt+video_image_prompt를 합쳐 변수 파싱 → `generate_scene_image(reference_images=...)`로 전달.
+- `app/services/mv_generator.py`:
+  - `SCENE_PROMPT_ONLY_SYSTEM`에 `VARIABLE REFERENCES` 섹션 + `{asset_refs_line}` 플레이스홀더 추가.
+  - `_build_scene_prompt_messages(..., asset_keys=None)` / `generate_scene_prompts_only(..., asset_keys=None)` 에 파라미터 주입.
+  - `generate_scene_image(..., reference_images: Optional[list]=None)` — 바이트 리스트를 추가 inlineData로 첨부.
+- `app/routes/mv.py`:
+  - `regenerate_scene_image_endpoint` 단건 재생성도 `parse_asset_references` + `load_asset_from_minio` 호출하여 `reference_images`를 `generate_scene_image`에 전달.
+- `app/main.py` lifespan:
+  - `asyncio.create_task(cleanup_loop(3600))` 등록, shutdown에서 cancel.
+
+### 테스트 결과
+
+#### Step 1 — 정적 검증
+- [PASS] Python AST: mv_assets.py, mv.py, mv_generator.py, mv_pipeline.py, main.py — 5/5 PASS
+- [PASS] Import graph: venv에서 `from app.services import mv_assets, mv_generator, mv_pipeline; from app.routes import mv; from app import main` 성공 (business.py의 deprecation warning 1건만 출력)
+- [PASS] JSX 파싱: `@babel/parser`로 UploadPage.jsx 파싱 성공
+- [PASS] 식별자: `SCENARIO_STYLES`, `scenarioStyle`, `scenario_style` 모두 정의/사용
+
+#### Step 2 — 코드 일치 (PLAN.md v30 체크리스트)
+구현1 (9/9 PASS):
+- [PASS] `CreateMVRequest`에 4개 필드 존재 (routes/mv.py L56-60)
+- [PASS] create_mv 라우터의 drama 외 폴백 (routes/mv.py L201-213)
+- [PASS] `_build_drama_scenario_prompts` 존재 + character1.gender 강제 규칙 (mv_generator.py L588, L606-627)
+- [PASS] OpenAI `response_format={"type":"json_object"}` (mv_generator.py L874)
+- [PASS] Gemini `responseMimeType: "application/json"` (mv_generator.py L947)
+- [PASS] `_parse_drama_scenario_json` 존재 + `json.loads` 우선 + fallback (mv_generator.py L750-790)
+- [PASS] UploadPage.jsx에 SCENARIO_STYLES 4개, drama만 enabled (UploadPage.jsx L40-45)
+- [PASS] createMVJob payload에 `scenario_style` 포함 (UploadPage.jsx L422, L648)
+- [PASS] api/index.js에 `scenario_style` 매핑 (api/index.js L163)
+
+구현2-A 시나리오 JSON (3/3 PASS):
+- [PASS] `generate_mv_scenario` 단일 모델 반환이 dict (mv_generator.py L1061)
+- [PASS] Phase 0에서 `scenario_meta` + `scenario` 둘 다 MongoDB 저장 (mv_pipeline.py L805-809)
+- [PASS] /select-scenario가 신규 `{meta, scenario, model}` 스키마 처리 + 레거시 폴백 (routes/mv.py L1651-1662)
+
+구현2-B Phase 1.5 (5/5 PASS):
+- [PASS] mv_assets.py에 5개 함수 모두 존재: generate_character_sheet_asset, generate_location_sheet_asset, parse_asset_references, upload_asset_to_minio, load_asset_from_minio
+- [PASS] run_phase1_5_assets 정의 + run_phase1_split 말미에서 호출 (mv_pipeline.py L1232-1236, L1242)
+- [PASS] character1 생성 시 `character_object_name` 있으면 ref로 전달 (mv_pipeline.py L1263-1273)
+- [PASS] 캐릭터/장소를 `asyncio.gather` 병렬 (mv_pipeline.py L1321)
+- [PASS] MongoDB `assets` 필드에 `{type, name, gender?, description, object_name, created_at}` 저장 (mv_pipeline.py L1283-1307)
+
+구현2-C 변수 참조 (5/5 PASS):
+- [PASS] SCENE_PROMPT_ONLY_SYSTEM에 `VARIABLE REFERENCES` 가이드 + @character1/@location1 예시 포함 (mv_generator.py L1699-1716)
+- [PASS] `generate_scene_prompts_only`에 `asset_keys` 파라미터 (mv_generator.py L1909)
+- [PASS] `generate_scene_image`에 `reference_images: Optional[list]` (mv_generator.py L1981, L2024-2031, L2059-2069)
+- [PASS] run_phase2_images가 asset 캐시 + 변수 파싱 + reference_images 전달 (mv_pipeline.py L1382-1450)
+- [PASS] mv.py의 regenerate_scene_image 단건 라우터도 동일 처리 (routes/mv.py L582-607)
+
+구현2-D 24h 정리 (2/2 PASS):
+- [PASS] `cleanup_expired_assets(retention_hours=24)` + `cleanup_loop(interval_sec=3600)` 존재 (mv_assets.py L144, L179)
+- [PASS] main.py lifespan에서 `asyncio.create_task(cleanup_loop(3600))` 등록 + shutdown에서 cancel (main.py L56-58, L64)
+
+#### Step 3 — 단위 검증 (parse_asset_references)
+- [PASS] `"@character1 sits at @location1 alone"` → `["character1", "location1"]`
+- [PASS] `"@character1 and @character2 walk to @location3 then @character1 leaves @location3"` → `["character1", "character2", "location3"]`
+- [PASS] `"no refs here"` → `[]`
+- [PASS] `""` → `[]`
+- [PASS] `None` → `[]`
+- 정규식 `@(character\d+|location\d+)` 확인 (mv_assets.py L25)
+
+#### Step 4 — 회귀 영향
+- [PASS] 기존 v29 `📖 MV 시나리오 보기` 토글은 `mvJob.scenario` 문자열을 그대로 표시 (UploadPage.jsx L1364-1382). 새 JSON 포맷에서도 Phase 0이 `scenario` 필드에 본문 문자열을 저장하므로 정상.
+- [PASS] `/select-scenario`가 신규 스키마(meta+scenario+model)와 레거시 스키마(scenario+model) 둘 다 처리.
+- [PASS] 단건 재생성, 영상 생성, 머지 단계는 reference_images가 Optional이라 레거시 잡(assets 없음)에서도 정상 작동.
+
+#### Step 5 — 서버 기동
+- [PASS] `uvicorn app.main:app --port 9004`로 기동 → `/api/health` 200 OK 응답 확인 ("All database connections established." 로그 + cleanup_loop 태스크 등록 성공). shutdown 시 태스크 취소 + DB 연결 정상 종료.
+
+### 카운트 요약
+- 정적 검증: 4/4 PASS
+- 코드 일치 검증: 24/24 PASS (구현1: 9, 구현2-A: 3, 구현2-B: 5, 구현2-C: 5, 구현2-D: 2)
+- 단위 검증: 5/5 PASS
+- 회귀 점검: 3/3 PASS
+- 서버 기동: 1/1 PASS
+- 총 37/37 PASS, 0 FAIL
+
+### 특이사항
+- `has_cover_person`은 현재 placeholder `False`로 하드코딩됨 (mv_pipeline.py L760). 커버 이미지 인물 분석은 v31 이후 작업으로 문서화됨.
+- 다른 스타일(mood/literal/ai_auto)은 UI에서 disabled 처리, 백엔드에서도 drama로 폴백 (라우터 + generator dispatch 양쪽 모두).
+- 24h 정리는 백그라운드 lifespan 태스크로 1시간마다 sweep. 정리 대상은 `status ∈ {completed, failed} AND updated_at < now-24h AND assets_cleared != true` 조건.
+- Frontend에서 `vocalGender` 기본값이 'female'로 하드코딩(UploadPage.jsx L109), 관계는 null. 별도 UI는 아직 없으며 백엔드가 기본값을 그대로 전달받는 구조(PLAN.md는 이 부분 UI를 명시하지 않음).
+- Phase 1.5 실패 시 `logger.warning`만 남기고 파이프라인은 계속 진행(mv_pipeline.py L1235). 이는 변수 참조 없이도 씬 생성이 되도록 하기 위한 graceful degradation.
+- 민감정보 없음 확인 (모든 API 키는 `settings.google_api_key` 등 env 참조, 본 REPORT에 평문 없음).
+
+
+---
+
+## v31 — 2026-04-19 — lipsync 씬 @character1 변수 참조 강제 (보강)
+
+### 요청 작업
+v30에서 추가한 VARIABLE REFERENCES 가이드와 lipsync 가이드 사이에 명시적 연결이 없어, lipsync 씬에서 모델이 "the main character" 같은 평문 묘사를 사용할 경우 character1 시트가 자동 첨부되지 않는 빈틈을 보강.
+
+### 수행 결과 (backend_9004 only)
+- `app/services/mv_generator.py` SCENE_PROMPT_ONLY_SYSTEM의 텍스트 보강 (코드 흐름/시그니처 변경 없음)
+  - "For lipsync scenes:" 블록 첫 줄에 강제 지시 추가:
+    "MUST use `@character1` variable reference for the protagonist (do NOT use raw name or 'the main character' / 'the singer' / 'she' / 'he'). The character1 sheet is auto-attached only when the `@character1` token literally appears in image_prompt."
+  - 동일 블록 본문 내 "main character" 언급 → "@character1"로 치환 ("@character1 ALONE, facing camera...", "@character1 should appear to be singing...")
+  - "no @character2, no extras" 명시
+  - "For drama scenes:" 블록 끝에 추가:
+    "When the scenario describes a recurring character or location, MUST use the `@characterN` / `@locationN` variable reference instead of the raw name. The system attaches matching asset sheets only when the variable token literally appears in image_prompt."
+
+### 테스트 결과
+- [PASS] AST: `python3 -m ast.parse mv_generator.py` 통과
+- [PASS] grep 검증: line 1687/1688/1690/1697에 새 지시 정확히 삽입됨
+- [PASS] format() 검증: SCENE_PROMPT_ONLY_SYSTEM이 3개 placeholder(scenario_context/video_image_prompt_guide/asset_refs_line) 모두 보유, 더미 값으로 format() 호출 정상 (out len 6783)
+- [PASS] 결과 문자열에 `@character1` 강제 한 줄 + `@characterN` drama 한 줄 모두 포함 확인
+- [PASS] 백엔드 재기동: `fuser -k 9004/tcp` → uvicorn 재시작 → "Application startup complete" + lifespan cleanup 등록
+- [PASS] `/api/health` 200 OK
+- [PASS] frontend 4000 영향 없음 (200 OK 유지)
+
+### 특이사항
+- 코드 흐름/함수 시그니처 변경 없음 — 텍스트(시스템 프롬프트) 보강만 수행
+- `generate_scene_image`의 lipsync 분기(scene_type=="lipsync"일 때 "ONLY main character ALONE")와 mv_pipeline의 scene_type 결정 로직(chorus/rap → lipsync)은 v30 그대로 유지
+- run_phase2_images에서 `parse_asset_references`가 image_prompt+video_image_prompt를 합쳐 변수를 추출하므로 강제된 `@character1`이 들어오면 character1 시트가 자동 첨부됨
+
+
+---
+
+## v32 — 2026-04-19 — Sync Labs 422 audio metadata 수정 + 음악 미리듣기 패널 lazy load
+
+### 요청 작업
+1. **A (백엔드)**: Sync Labs 립싱크 후보정 시 반복 발생하던 `422 "Unable to retrieve audio metadata"` 차단. ffmpeg `-ss` 위치/출력 메타데이터 정규화 + ffprobe 사전검증 + 입력/구간/출력 크기 가드로 우리 쪽 문제는 우리가 먼저 명확한 에러 메시지로 raise하도록 한다.
+2. **B (프론트엔드)**: 마이뮤직 진입 시 `MrPitchAdjustPanel`이 즉시 converted-vocal/backing 스트림을 대량 요청하던 문제 해결. 접은 상태로 default 렌더 → 토글로 펼쳤을 때만 fetch + AudioContext 생성, 접으면 AbortController.abort() + close로 정리, 재펼침 시 버퍼 캐시 재활용.
+
+### 수행 결과 (백엔드, A)
+- `backend_9004/app/services/sync_labs_service.py`
+  - `cut_audio_segment(audio_bytes, start_sec, end_sec)` 전면 강화:
+    - 입력 검증: bytes 길이(< 1024), start/end 타입, start<0, end<=start, end-start<0.5 각각 `ValueError`
+    - ffmpeg 호출: `-ss`/`-to`를 `-i` 앞으로 이동(fast input seek), `-vn -ar 44100 -ac 2 -codec:a libmp3lame -b:a 192k`로 메타데이터 일관성 확보
+    - 실패 진단: returncode != 0 시 stderr tail 로깅 + `RuntimeError` with rc/stderr 포함
+    - 출력 크기 < 1024b → `RuntimeError("Cut audio too small")`
+    - ffprobe로 duration 재검증, < 0.3초 → `RuntimeError`
+  - `generate_lipsync_from_video(video_bytes, audio_bytes)` 사전검증:
+    - `audio_bytes` < 5120b 시 `ValueError("Sync Labs용 오디오가 너무 작습니다...")`, `video_bytes` < 1024b 시 유사 ValueError
+    - ffprobe JSON으로 streams / codec_type=audio / codec_name / duration 확인, 하나라도 실패 시 우리 측 한국어 메시지로 `ValueError` (Sync Labs 422 차단)
+- `backend_9004/app/services/mv_pipeline.py` (Phase 3.5, line 2036~2156)
+  - `cut_audio_segment` 호출 직전 `section_start`/`section_end` 타입/순서/유효 duration 가드 (실패 시 한국어 sync_error 저장 후 continue)
+  - cut 실패 시 `try/except (RuntimeError, ValueError)` → `"오디오 구간 컷팅 실패: ..."`로 sync_error 저장 후 continue
+  - Demucs enhance_vocal 결과 < 5120b 시 원본 segment_audio fallback 경고 로그
+- `backend_9004/app/routes/mv.py::_retry_sync_for_scene` (line 1391~1551)
+  - 동일한 section_start/end/duration 가드 + `cut_audio_segment` try/except 래핑
+  - vocal sync_audio가 너무 작으면 원본 segment fallback
+  - 외곽 `except Exception`에서 sync_error에 한국어/원인 포함 메시지 저장 후 early return
+
+### 수행 결과 (프론트엔드, B)
+- `frontend/src/api/index.js`
+  - `fetchConvertedVocal(generationId, config = {})`, `fetchBacking(generationId, config = {})` — 두 번째 인자에 axios config 스프레드하여 AbortSignal 등 커스텀 옵션 전달 가능
+- `frontend/src/components/StudioTab2.jsx::MrPitchAdjustPanel` (line 163~401)
+  - `expanded` state (default `false`) 신규. 초기 마운트 시 오디오 fetch/AudioContext 생성 안 함
+  - 토글 버튼 "▼ MR 피치 조절 패널 펼치기" / "▲ MR 피치 조절 패널 접기" 추가
+  - `useEffect` 가드: `if (!expanded) return;` 최상단. expanded=true일 때만 AudioContext 생성 + fetchConvertedVocal/fetchBacking 호출 (AbortController.signal 전달)
+  - 접기/언마운트 cleanup: `controller.abort()` + `audioCtxRef.current.close()` + source.stop()
+  - 이미 로드된 버퍼가 있으면 fetch 스킵 (캐시 재활용)
+  - 취소 에러(`CanceledError`/`AbortError`/`signal.aborted`) 무시, 실제 오류만 `console.error`
+- dep 배열: `[generationId, expanded]`
+
+### 테스트 결과
+- **정적 검증 (3/3 PASS)**:
+  - Python AST: `sync_labs_service.py`, `mv_pipeline.py`, `routes/mv.py` 모두 파싱 성공
+  - JSX 파싱: `@babel/parser` plugins:['jsx'] → StudioTab2.jsx OK
+  - 식별자: `expanded` state / 가드 / 토글 모두 존재 (line 164/185/238/364/368), `AbortController`/`controller.abort()`/`signal` 모두 존재 (line 204/209/213/219/229), backend `ffprobe`/`returncode`/`stderr` 다수 존재
+- **단위 검증 (5/5 PASS, venv 사용)**:
+  - 짧은 구간(0.1초) → `ValueError: 구간이 너무 짧습니다 (0.100초, 최소 0.5초)` ✓
+  - 빈 audio → `ValueError: 입력 오디오가 너무 작습니다 (size=0b)` ✓
+  - 역순(5.0→3.0) → `ValueError: end_sec(3.0) <= start_sec(5.0)` ✓
+  - 너무 작은 바이트(100b) → `ValueError: 입력 오디오가 너무 작습니다 (size=100b)` ✓
+  - 음수 start → `ValueError: start_sec가 음수입니다 (-1.0)` ✓
+- **라이브 검증 (3/3 PASS)**:
+  - 백엔드 StatReload 감지 + `Application startup complete` 확인, `/api/health` 200 OK
+  - 프론트엔드 4000 200 OK. 최근 voice-convert/*/stream 호출이 로그 line 1019 이후 발생하지 않음 (현재 3040+ lines) — lazy-load 적용 후 대량 스트림 중단 확인
+  - 실제 진행 중 MV job `69e3c317273f778041f4184f` scene 13에 retry-sync 1건 트리거: 200 응답, async 실행 후 DB의 `sync_error`에 wrap된 메시지(`"Sync Labs 립싱크 후보정 실패: status_code: 422, body: ..."`) 저장 확인. `cut_audio_segment` 경로에서는 예외 없이 통과 → Sync Labs API 호출 지점에서 422 발생 → 우리 측 `ValueError`로 wrap되어 scene.sync_error에 저장됨 (새 code path 정상 동작)
+- **회귀 (2/2 PASS)**:
+  - v31 `getMyCharacter` sessionStorage 캐싱(TTL 5분) 그대로 유지 (`api/index.js` line 204-221)
+  - `/api/mv/...` 라우터 목록 15개 그대로 유지 (retry-sync/separate-vocal 포함)
+
+### 특이사항
+- **scene 13 retry-sync 결과 해석**: 우리의 로컬 ffprobe 검증(streams/codec/duration)은 통과했음. 즉 출력 오디오는 로컬에서는 유효. Sync Labs가 우리 MinIO 프리사인 URL(ngrok)로 페치한 후 자체 decoder에서 메타데이터 추출에 실패한 것으로 보임. 이 경우 우리 코드에서는 Sync Labs 원본 에러를 `ValueError("Sync Labs 립싱크 후보정 실패: ...")`로 wrap하여 sync_error에 저장. 우리 쪽 입력이 이상할 때("Cut audio too small", "오디오 구간 컷팅 실패", "Sync Labs용 오디오가 너무 작습니다" 등)는 더 이상 Sync Labs까지 도달하지 않고 우리 쪽 한국어 메시지만 노출됨.
+- **추가 조사 여지**: Sync Labs가 ngrok presigned URL을 일부 씬에서만 422로 거절하는 이유는 ngrok 응답 content-type/Range 헤더 또는 MP3 헤더 정렬 이슈 가능성. 현재 PR 범위 밖이므로 다음 PLAN에서 "Sync Labs 업로드 경로를 MinIO presigned → 별도 storage로 우회" 옵션 고려 필요.
+- **환경**: backend venv 살아있어 단위 검증 실행 완료. Demucs 경로는 실제 호출하지 않음 (scene 13은 separated_vocal_object=None이라 원본 segment로 fallback되는 경로가 실제 실행됨).
+
+
+---
+
+## v33 — 2026-04-19 — Sync Labs 직접 파일 업로드 전환 (ngrok/MinIO-temp 의존 제거)
+
+### 요청 작업
+- **v33 refactor**: 이전(v32)의 MinIO presigned + ngrok 공개 URL 방식을 폐기하고, 씬 비디오/오디오 바이트를 Sync Labs `/v2/generate` 엔드포인트로 직접 multipart 업로드. httpx 기반 raw API 호출로 `syncsdk` 패키지 의존 제거. `ngrok_url` 설정 필드 및 `.env`의 `NGROK_URL` 환경변수 삭제.
+- **v33.1 보강**:
+  - P1: 업로드 사전 체크 — `SYNC_MAX_UPLOAD_BYTES = 20 * 1024 * 1024` 상수, video/audio 각 20MB 초과 시 즉시 `ValueError` 발생시켜 Sync Labs가 413/422로 거절하기 전에 로컬 차단.
+  - P2: 폴링 오류 조기 중단 — `POLLING_ERROR_LIMIT = 6` 상수, `consecutive_errors` 카운터를 두어 6회(≈60초) 연속 500류 폴링 실패 시 루프 중단. 정상 응답(`PROCESSING`/`COMPLETED`) 수신 시 카운터 0 리셋.
+
+### 수행 결과
+#### v33 refactor
+- `backend_9004/app/services/sync_labs_service.py` 전면 refactor:
+  - `_sync_create_with_files(video_bytes, audio_bytes, model)` — multipart/form-data POST to `/v2/generate`
+  - `_sync_get_status(job_id)` — GET `/v2/generate/{id}`
+  - `generate_lipsync(...)` / `generate_lipsync_from_video(...)` 헬퍼
+- `config.py`에서 `ngrok_url` 필드 제거
+- `.env`에서 `NGROK_URL` 제거
+- `requirements.txt`에서 `syncsdk` 제거
+
+#### v33.1 보강
+- 20MB 파일 사전 체크 (line 34, 39)
+- `POLLING_ERROR_LIMIT` 조기 중단 (line 170, 334)
+- `consecutive_errors` 카운터 + 정상 응답 시 리셋 (line 162/183/326/347)
+
+### 테스트 결과
+
+#### 정적 검증
+- [PASS] `/api/health` → 200 OK (`{"status":"ok",...}`)
+- [PASS] `grep SYNC_MAX_UPLOAD_BYTES|POLLING_ERROR_LIMIT|consecutive_errors` → 10+ 히트 (상수/가드/카운터 모두 존재)
+- [PASS] `grep -i ngrok backend_9004/` → docstring 주석(`"v33: direct multipart upload to Sync Labs (no MinIO/ngrok)."`) 외 활성 코드 경로 없음. 구버전 backend_9002만 잔존 (v33 대상 아님)
+- [PASS] `requirements.txt`에 `syncsdk` 없음
+
+#### End-to-end 실전 검증
+- 대상 MV job_id: `69e3c317273f778041f4184f`
+- 대상 scene_number: **12** (scene_type=lipsync, section_start=107.76, section_end=120.4, video_object_name=`mv/.../videos/012.mp4`, 초기 sync_error="Sync Labs 립싱크 후보정 실패: status_code: 422, body: {'message': 'Unable to retrieve audio metadata...', 'statusCode': 422}")
+- retry-sync HTTP 응답: **200 OK (0.023s)** — `{"message":"립싱크 재시도를 시작합니다.","scene_number":12}`
+- 백그라운드 태스크 처리 시간: ~6분 내 완료 (모니터 타임아웃 이전에 Mongo 문서 업데이트됨)
+- 최종 scene 12 상태 (GET `/api/mv/jobs/{id}`로 확인):
+  - `video_source`: `"kling (sync failed)"` → **`"kling+synclabs"`** (성공 마커)
+  - `sync_error`: `"Sync Labs 립싱크 후보정 실패: ... 422 ..."` → **`null`** (클리어)
+  - `video_synclabs_url`: **신규 생성** → `mv/69e3c317273f778041f4184f/scenes/012_video_synclabs.mp4`
+  - `video_with_audio_synclabs_url`: **신규 생성** → `mv/.../scenes/012_video_audio_synclabs.mp4`
+- MinIO 파일 검증: presigned URL로 GET → **3,415,329 bytes** 다운로드 성공, `file` 명령 결과 `ISO Media, MP4 Base Media v1 [ISO 14496-12:2003]` (유효한 MP4)
+- 결론: **REAL PASS** — v32에서 422로 실패하던 scene이 v33+v33.1 코드에서 Sync Labs 업로드 → 폴링 → 다운로드 → ffmpeg 오디오 합성 → MinIO 저장까지 전 경로 성공.
+
+### 특이사항
+- **ngrok 의존 완전 제거**: v32의 "MinIO presigned → ngrok 공개 URL" 경유 방식을 폐기하고, Sync Labs가 요구하는 multipart 바이너리 업로드로 직접 전환. 로컬 개발과 상용 환경에서 동일 코드가 동작 (ngrok tunnel 기동 여부 무관).
+- **이전 실패의 근본 원인**: v32까지는 Sync Labs가 ngrok presigned MinIO URL을 페치할 때 간헐적으로 "Unable to retrieve audio metadata" 422를 반환했음. 직접 업로드로 전환하니 동일 씬(동일 비디오/오디오)이 정상 처리됨 → ngrok 터널을 통한 Range/Content-Type 헤더 처리 이슈였을 가능성 높음.
+- **로그 출력 경로**: uvicorn 기본 액세스 로그만 stdout에 출력됨. `sync_labs_service.py` 내 `logger.info()` (예: `SyncLabs: job created, id=...`)는 Python logging 설정 미구성으로 터미널에 찍히지 않았으나, Mongo 문서 상태 변화(`video_source`, `sync_error`, `video_synclabs_url`)와 MinIO 실제 객체 존재로 end-to-end 동작 확인됨. 다음 PR에서 logging 레벨/핸들러 통합 검토 필요.
+- **P1/P2 트리거 여부**: scene 12 비디오(12.64초)는 20MB 미만, 폴링도 정상 진행되어 P1/P2 방어 경로는 이번 검증에서 발동되지 않음. 코드 존재 + AST 파싱 기준 정상.
+- **잔여 실패 씬**: scene 8/9/13은 동일 job에 여전히 `sync_error` 남아있음 (이번 검증 범위에서는 12만 retry). 동일 로직이므로 재시도 시 동일하게 PASS 예상.

@@ -749,7 +749,16 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         logger.info("Phase0: using existing scenario for job %s (%d chars)", job_id, len(scenario))
     else:
         scenario = None
+        scenario_meta = None
         scenario_models = job.get("scenario_models")
+        # Drama scenario controls (PLAN.md v30)
+        scenario_style = job.get("scenario_style", "drama") or "drama"
+        vocal_gender = job.get("vocal_gender")
+        relationship = job.get("relationship")
+        has_user_character = bool(job.get("character_object_name"))
+        # Cover-image person analysis is planned for Phase 1.5 — placeholder False for now
+        has_cover_person = False
+
         for attempt in range(3):
             try:
                 from .mv_generator import generate_mv_scenario
@@ -761,11 +770,18 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                     lyrics=job.get("lyrics"),
                     character_name=character_name,
                     models=scenario_models,
+                    scenario_style=scenario_style,
+                    vocal_gender=vocal_gender,
+                    relationship=relationship,
+                    has_user_character=has_user_character,
+                    has_cover_person=has_cover_person,
                 )
 
                 # Handle dual-model results
                 if isinstance(result, dict) and "results" in result:
-                    # Dual models: save both results and pause for user selection
+                    # Dual models: save both results (meta + scenario) and pause for user selection
+                    # Each result now has shape: {"meta": dict, "scenario": str, "model": str}
+                    # Preserve backward compatibility by also flattening scenario for /select-scenario
                     await _update_job(mongo_db, job_id, {
                         "scenario_results": result["results"],
                         "status": "scenario_review",
@@ -777,18 +793,29 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                     )
                     return  # Stop here; user must select via /select-scenario endpoint
 
-                # Single model result (string)
-                scenario = result
+                # Single-model result: dict (drama) or str (legacy fallback)
+                if isinstance(result, dict):
+                    scenario_meta = result
+                    scenario = result.get("scenario", "")
+                else:
+                    scenario_meta = {"characters": {}, "locations": {}, "scenario": result}
+                    scenario = result
+
                 if scenario and len(scenario.strip()) > 50:
                     await _update_job(mongo_db, job_id, {
                         "scenario": scenario,
+                        "scenario_meta": scenario_meta,
                         "progress": 1,
                     })
-                    logger.info("Phase0: scenario generated for job %s (%d chars, attempt %d)", job_id, len(scenario), attempt + 1)
+                    logger.info(
+                        "Phase0: scenario generated for job %s (%d chars body, attempt %d, style=%s)",
+                        job_id, len(scenario), attempt + 1, scenario_style,
+                    )
                     break
                 else:
                     logger.warning("Phase0: scenario too short (%d chars), retrying (attempt %d/3)", len(scenario or ""), attempt + 1)
                     scenario = None
+                    scenario_meta = None
             except Exception as e:
                 logger.warning("Phase0: scenario generation failed (attempt %d/3): %s", attempt + 1, e)
                 if attempt < 2:
@@ -1105,6 +1132,13 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         for s in scenes
     ]
 
+    # Collect asset keys (@character1, @location1, …) available for variable references
+    _scenario_meta = job.get("scenario_meta") or {}
+    asset_keys = (
+        list((_scenario_meta.get("characters") or {}).keys())
+        + list((_scenario_meta.get("locations") or {}).keys())
+    )
+
     prompts_result = None
     for attempt in range(3):
         try:
@@ -1117,6 +1151,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                 user_scene_prompt=job.get("scene_prompt"),
                 models=prompt_models,
                 video_model=job.get("video_model", "veo"),
+                asset_keys=asset_keys or None,
             )
         except Exception as e:
             logger.warning("Phase1b: prompt generation failed (attempt %d/3): %s", attempt + 1, e)
@@ -1192,6 +1227,108 @@ async def run_phase1_split(job_id, mongo_db) -> None:
 
     logger.info("Phase1: job %s split into %d scenes", job_id, len(scenes))
 
+    # ── Phase 1.5: 자산 사전생성 (drama 스타일이고 scenario_meta가 있을 때만) ──
+    _job_after = await _get_job(mongo_db, job_id)
+    if _job_after and _job_after.get("scenario_meta"):
+        try:
+            await run_phase1_5_assets(job_id, mongo_db)
+        except Exception as e:
+            logger.warning("Phase1.5 failed (continuing): %s", e)
+
+
+# ── Phase 1.5: Pre-generate character/location assets ───────────────────────
+
+
+async def run_phase1_5_assets(job_id, mongo_db) -> None:
+    """Phase 1.5: scenario_meta 기반 캐릭터/장소 자산 사전생성."""
+    job = await _get_job(mongo_db, job_id)
+    if not job:
+        return
+    meta = job.get("scenario_meta") or {}
+    characters = meta.get("characters") or {}
+    locations = meta.get("locations") or {}
+    if not characters and not locations:
+        logger.info("Phase1.5: no assets to generate for job %s", job_id)
+        return
+
+    await _update_job(mongo_db, job_id, {"status": "generating_assets", "progress": 5})
+
+    from .mv_assets import (
+        generate_character_sheet_asset,
+        generate_location_sheet_asset,
+        upload_asset_to_minio,
+    )
+
+    # 사용자 캐릭터 시트가 있으면 character1 생성 시 ref로 사용
+    user_char_bytes = None
+    if job.get("character_object_name"):
+        user_char_bytes = _load_character_image(job.get("character_object_name"))
+    # 커버 인물 분석은 v30 범위 외 — character_object_name 없으면 cover를 ref로 줄지 말지 결정
+    # (보수적: 커버는 ref로 주지 않음; 보컬 성별 + description만으로 생성)
+
+    assets = {}
+
+    # 캐릭터 생성 (병렬)
+    async def _make_char(key, info):
+        ref = user_char_bytes if key == "character1" and user_char_bytes else None
+        try:
+            img = await generate_character_sheet_asset(
+                name=info.get("name", key),
+                gender=info.get("gender", "neutral"),
+                description=info.get("description", ""),
+                ref_image=ref,
+            )
+            obj = await upload_asset_to_minio(img, job_id, key)
+            return key, {
+                "type": "character",
+                "name": info.get("name", key),
+                "gender": info.get("gender"),
+                "description": info.get("description", ""),
+                "object_name": obj,
+                "created_at": datetime.utcnow(),
+            }
+        except Exception as e:
+            logger.exception("Phase1.5: char %s gen failed: %s", key, e)
+            return key, None
+
+    async def _make_loc(key, info):
+        try:
+            img = await generate_location_sheet_asset(
+                name=info.get("name", key),
+                description=info.get("description", ""),
+            )
+            obj = await upload_asset_to_minio(img, job_id, key)
+            return key, {
+                "type": "location",
+                "name": info.get("name", key),
+                "description": info.get("description", ""),
+                "object_name": obj,
+                "created_at": datetime.utcnow(),
+            }
+        except Exception as e:
+            logger.exception("Phase1.5: loc %s gen failed: %s", key, e)
+            return key, None
+
+    tasks = []
+    for k, v in characters.items():
+        if isinstance(v, dict):
+            tasks.append(_make_char(k, v))
+    for k, v in locations.items():
+        if isinstance(v, dict):
+            tasks.append(_make_loc(k, v))
+
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, tuple) and r[1] is not None:
+                assets[r[0]] = r[1]
+
+    await _update_job(mongo_db, job_id, {
+        "assets": assets,
+        "progress": 8,
+    })
+    logger.info("Phase1.5: generated %d assets for job %s", len(assets), job_id)
+
 
 # ── Phase 1+2 Combined: Split lyrics then generate images ─────────────────────
 
@@ -1241,6 +1378,16 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
     character_image_bytes = _load_character_image(job.get("character_object_name"))
     minio_client = get_minio()
 
+    # Asset registry: {"character1": bytes, ...} for variable-reference resolution
+    from .mv_assets import parse_asset_references, load_asset_from_minio
+    assets_meta = job.get("assets") or {}
+    asset_bytes_cache: dict = {}
+    for _k, _a in assets_meta.items():
+        if isinstance(_a, dict) and _a.get("object_name"):
+            _b = load_asset_from_minio(_a["object_name"])
+            if _b:
+                asset_bytes_cache[_k] = _b
+
     # Determine which scenes to process
     target_scenes = []
     for i, scene in enumerate(scenes):
@@ -1283,12 +1430,24 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
         else:
             ref_image = cover_image_bytes
 
+        # Resolve @character1/@location1 references → attach matching asset bytes
+        scene_refs: list = []
+        if asset_bytes_cache:
+            _combined_prompt = "{} {}".format(
+                scene_desc, scene.get("video_image_prompt", "") or "",
+            )
+            for _key in parse_asset_references(_combined_prompt):
+                _b = asset_bytes_cache.get(_key)
+                if _b:
+                    scene_refs.append(_b)
+
         try:
             img_bytes = await generate_scene_image(
                 scene_desc,
                 cover_image_bytes=ref_image,
                 character_image_bytes=character_image_bytes,
                 scene_type=scene.get("scene_type", "drama"),
+                reference_images=scene_refs or None,
             )
 
             # Save to MinIO
@@ -1889,13 +2048,51 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                         sn = scene["scene_number"]
                         sidx = next(i for i, s in enumerate(scenes) if s.get("scene_number") == sn)
                         try:
-                            start_sec = scene.get("section_start", 0)
-                            end_sec = scene.get("section_end", start_sec + 10)
-                            segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
+                            # ── section_start/end 유효성 가드 ──
+                            raw_start = scene.get("section_start")
+                            raw_end = scene.get("section_end")
+                            if raw_start is None or raw_end is None:
+                                msg = "씬의 시간 정보(section_start/end)가 없어 Sync Labs를 건너뜁니다."
+                                logger.warning("Phase3.5: scene %d skipped: %s", sn, msg)
+                                scenes[sidx]["sync_error"] = msg
+                                scenes[sidx]["video_source"] = "kling (sync skipped)"
+                                continue
+                            try:
+                                start_sec = float(raw_start)
+                                end_sec = float(raw_end)
+                            except (TypeError, ValueError):
+                                msg = "section_start/end가 숫자가 아닙니다 (start={}, end={})".format(raw_start, raw_end)
+                                logger.warning("Phase3.5: scene %d skipped: %s", sn, msg)
+                                scenes[sidx]["sync_error"] = msg
+                                scenes[sidx]["video_source"] = "kling (sync skipped)"
+                                continue
+                            if start_sec < 0 or end_sec <= start_sec or (end_sec - start_sec) < 0.5:
+                                msg = "유효하지 않은 구간 (start={:.3f}, end={:.3f})".format(start_sec, end_sec)
+                                logger.warning("Phase3.5: scene %d skipped: %s", sn, msg)
+                                scenes[sidx]["sync_error"] = msg
+                                scenes[sidx]["video_source"] = "kling (sync skipped)"
+                                continue
+
+                            try:
+                                segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
+                            except (RuntimeError, ValueError) as cut_err:
+                                msg = "오디오 구간 컷팅 실패: {}".format(str(cut_err)[:200])
+                                logger.warning("Phase3.5: scene %d %s", sn, msg)
+                                scenes[sidx]["sync_error"] = msg
+                                scenes[sidx]["video_source"] = "kling (sync failed)"
+                                continue
 
                             # 보컬 분리
                             logger.info("Phase3.5: separating vocals for scene %d", sn)
                             vocal_bytes = await enhance_vocal_demucs(segment_audio, "segment.mp3")
+
+                            # 보컬 분리 결과가 너무 작으면 원본 segment로 fallback
+                            if not vocal_bytes or len(vocal_bytes) < 5120:
+                                logger.warning(
+                                    "Phase3.5: scene %d vocal too small (%db), falling back to original segment",
+                                    sn, len(vocal_bytes) if vocal_bytes else 0,
+                                )
+                                vocal_bytes = segment_audio
 
                             # 보컬 분리 결과 MinIO에 저장
                             orig_obj = "mv/{}/scenes/{:03d}_original_segment.mp3".format(str(job_id), sn)

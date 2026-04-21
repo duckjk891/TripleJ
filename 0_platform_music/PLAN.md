@@ -10051,3 +10051,396 @@ Response: { alignedWords: [{ word, startS, endS, success }], hoot_cer, lyrics }
 - mvStep === 1 (이미지 생성): 이미지 카운트 기반 진행률
 - mvStep === 3 (영상 생성): 영상 카운트 기반 진행률
 - 백엔드 변경 없음 (서버 progress는 합산값으로 유지)
+
+---
+
+## v29 — 2026-04-19 — MV 시나리오 표시 (씬 이미지 영역)
+
+### 요청 작업
+- 씬 이미지 생성 후 어떤 시나리오가 사용됐는지 확인 가능하게 표시
+
+### 수정 대상 (프론트엔드만)
+- `UploadPage.jsx` — STEP 2에 시나리오 펼치기/접기 토글 추가
+- 백엔드 변경 없음 (mvJob.scenario 이미 반환 중)
+
+
+---
+
+## v30 — 2026-04-18 — 시나리오 스타일 선택 + 시나리오 메타데이터/자산 사전생성
+
+### 요청 작업
+
+#### 구현1 — 시나리오 스타일 선택 + 드라마형 본격 구현
+1. 사용자가 "씬 생성하기" 누르기 전에 시나리오 스타일을 선택할 수 있도록 4개 라디오 버튼 노출
+   - 드라마형 (default, 활성)
+   - 무드형 (disabled, "준비 중")
+   - 리터럴형 (disabled, "준비 중")
+   - AI 자동 (disabled, "준비 중")
+2. 드라마형 시나리오 프롬프트 — 인물 + 사건 + 감정 중심의 단편영화식 서사
+3. 다른 스타일은 백엔드에서 일단 드라마형으로 폴백
+
+#### 구현2 — 시나리오 메타데이터 + 자산 사전생성
+1. 드라마 시나리오 출력 형식을 JSON 구조로 변경
+   - `characters`: { character1: {name, gender, role, description}, character2?: {...} }
+   - `locations`: { location1: {name, description}, location2?: {...}, location3?: {...} }
+   - `scenario`: 이름을 직접 사용한 단편영화식 본문 (예: "지훈은 5년 전 헤어진 옛 연인 수민이 자주 가던 재즈 카페...")
+2. 등장인물 결정 로직
+   - character1 (주인공): 보컬 성별 강제
+     - "내 캐릭터 포함" 체크 → 사용자 캐릭터 시트 사용
+     - 미체크 + 커버에 인물 있음 → 커버 인물 사용
+     - 미체크 + 커버 인물 없음 → 보컬 성별 기반 신규 생성
+   - character2 (상대 인물): 관계 기반 성별 결정
+     - "옛 연인" → 반대 성별 강제
+     - "친구/동료/가족" → AI 자동
+     - 필요 없으면 생략
+3. 장소: 1~3개 (필요한 만큼만)
+4. NEW Phase 1.5 — 자산 사전생성 (씬 이미지 생성 직전에 실행)
+   - 캐릭터 시트 이미지 생성 (Nano Banana Pro)
+   - 장소 시트 이미지 생성 (Nano Banana Pro)
+   - MongoDB `mv_jobs.assets` 필드에 메타데이터 저장
+   - MinIO에 이미지 업로드 → object_name 저장
+5. 씬 image_prompt에 변수 참조 사용 (예: `@character1 sits at @location1 alone`)
+6. 씬 이미지 생성 시 변수 파싱 → 해당 자산 이미지를 Nano Banana 입력에 자동 첨부
+7. 24h 자동 정리 — MV 완료 24시간 경과 자산은 백그라운드 잡으로 MongoDB+MinIO 모두 삭제
+
+### 수정 대상
+
+#### 백엔드 (backend_9004 only)
+1. `app/routes/mv.py`
+   - `CreateMVRequest`에 `scenario_style: Optional[str] = "drama"` 필드 추가
+   - 옵션 검증: ("drama", "mood", "literal", "ai_auto") — drama 외에는 내부에서 drama로 폴백
+   - job_doc에 `scenario_style` 저장
+2. `app/services/mv_generator.py`
+   - `_build_scenario_prompts()` → `_build_drama_scenario_prompts()` 신규: JSON 출력 강제, 단편영화식 (인물/사건/감정/장소 메타+본문)
+   - 보컬 성별, 관계 정보, 사용자 캐릭터/커버 인물 여부를 입력으로 받음
+   - `generate_mv_scenario()` → JSON dict 반환으로 변경: `{characters, locations, scenario}`
+   - 기존 plain-text scenario 호출처는 `result["scenario"]`로 사용
+   - 씬 프롬프트 시스템(`SCENE_PROMPT_ONLY_SYSTEM`)에 변수 참조 가이드 추가:
+     "장소/등장인물 언급 시 반드시 `@character1`, `@location1` 같은 변수로 표기"
+3. `app/services/mv_pipeline.py`
+   - `run_phase1_split` Phase 0에서 새 입력(보컬 성별, 관계, 사용자 캐릭터, 커버 분석 결과) 전달
+   - scenario JSON 결과 파싱 → `scenario_meta`(JSON) + `scenario`(본문 문자열) 분리 저장 (하위 호환)
+   - **NEW Phase 1.5** (`run_phase1_5_assets`): 캐릭터 시트 + 장소 시트 생성 → MinIO 업로드 → MongoDB `assets` 저장
+   - Phase 2(이미지 생성) 시작 시 변수 파서 호출, 해당 자산 이미지 바이트들을 `generate_scene_image()` 입력에 추가
+4. `app/services/mv_generator.py` `generate_scene_image()`
+   - `reference_images: List[bytes]` 파라미터 추가 (변수에서 매핑된 캐릭터/장소 시트들)
+   - Gemini 호출 시 모든 reference 이미지를 inlineData로 첨부
+5. `app/services/mv_assets.py` (신규)
+   - `generate_character_sheet(name, gender, description, ref_image=None)` — Nano Banana Pro 호출
+   - `generate_location_sheet(name, description, ref_image=None)` — Nano Banana Pro 호출
+   - `parse_asset_references(prompt)` — `@character1`, `@location1` 패턴 추출
+   - `cleanup_expired_assets()` — 24h 경과 MV의 자산 정리 (MongoDB+MinIO)
+6. `app/main.py`
+   - 앱 startup에서 백그라운드 정리 작업 등록 (1시간마다 실행, 24h 경과 항목 삭제)
+
+#### 프론트엔드 (frontend/src)
+1. `pages/UploadPage.jsx`
+   - SCENARIO_STYLES 상수 4개 (drama/mood/literal/ai_auto)
+   - `scenarioStyle` state (default "drama")
+   - 라디오 버튼 그룹 UI (씬 생성하기 버튼 위, 시나리오 모델 선택 옆/아래)
+   - drama 외 옵션은 disabled + "준비 중" 라벨
+   - createMVJob 호출 시 `scenario_style` 전달
+2. `api/index.js`
+   - `createMVJob()` payload에 `scenario_style` 필드 추가
+
+### 보안 (민감정보 표기)
+- API 키는 `.env`/`config.py`에 보관, 본 PLAN/REPORT에는 `YOUR_*` 플레이스홀더만 사용
+- `fal_api_key`, `google_api_key`, `openai_api_key`, `anthropic_api_key`, `suno_api_key` 등 모두 환경변수 참조 그대로
+
+### 테스트 계획 (Tester)
+1. 프론트엔드 4000 + backend_9004 띄움
+2. 시나리오 스타일 라디오 버튼 4개 노출 확인 + 드라마형만 선택 가능 확인
+3. 드라마형 선택 → 씬 생성 → 시나리오 JSON 응답에 characters/locations/scenario 포함 확인
+4. Phase 1.5 — 캐릭터/장소 시트가 MinIO에 업로드되고 MongoDB `assets`에 메타데이터 저장 확인
+5. 씬 image_prompt에 `@character1`/`@location1` 같은 참조가 포함되는지 확인
+6. 씬 이미지 생성 시 자산 이미지가 Gemini 입력으로 첨부되는지 로그 확인
+7. character1: 보컬 성별 강제 검증 (예: 보컬 여성 → character1.gender = "female")
+8. character2: "옛 연인" 관계 → 반대 성별 강제 검증
+9. 장소 1~3개 범위 검증
+10. 24h 정리 작업 — 임의로 24h 이전 timestamp로 만든 더미 잡의 자산이 정리되는지 확인 (또는 단위 테스트)
+11. 다른 스타일(mood/literal/ai_auto) 선택 시도 → UI에서 차단되는지 확인 (백엔드는 폴백)
+12. 회귀 — 기존 v29 시나리오 표시(📖 토글)가 새 JSON 시나리오 본문으로 정상 표시되는지 확인
+
+
+---
+
+## v31 — 2026-04-19 — lipsync 씬 @character1 변수 참조 강제 (보강)
+
+### 배경
+v30에서 `VARIABLE REFERENCES` 가이드(@character1/@location1)를 추가했으나, lipsync 씬에 대해 변수 참조를 강제하는 명시적 지시가 빠져 있었다. 결과적으로 모델이 lipsync 씬 image_prompt에서 "the main character" 같은 평문 묘사를 사용하면 character1 시트가 자동 첨부되지 않아 일관성이 흔들릴 위험이 있다.
+
+### 요청 작업
+- SCENE_PROMPT_ONLY_SYSTEM의 "For lipsync scenes" 블록에 `@character1` 변수 강제 사용 지시 추가
+- "For drama scenes" 블록에도 등장인물/장소 변수를 일관되게 사용하라는 가이드 보강
+
+### 수정 대상 (backend_9004 only)
+- `app/services/mv_generator.py` — `SCENE_PROMPT_ONLY_SYSTEM` 상수 내부의 lipsync/drama 블록 텍스트만 수정 (코드 흐름 변경 없음, 1~2줄 추가)
+
+### 변경 디테일
+**For "lipsync" scenes:** 블록에 추가:
+- "MUST use `@character1` variable reference for the protagonist (do NOT use raw name or 'the main character')."
+
+**For "drama" scenes:** 블록에 추가:
+- "When the scenario describes a recurring character or location, MUST use the `@characterN` / `@locationN` variable reference instead of the raw name. The system attaches matching asset sheets only when the variable token appears."
+
+### 프론트엔드 변경 없음
+### 24h 정리, Phase 1.5, scene_type 결정 로직 등은 변경 없음
+
+### 테스트 계획
+1. `grep -n "@character1" backend_9004/app/services/mv_generator.py`로 lipsync 블록에 `@character1` 강제 한 줄이 추가됐는지 확인
+2. `python3 -c "import ast; ast.parse(open('app/services/mv_generator.py').read())"` 통과
+3. uvicorn --reload 자동 재로드 정상 확인 (이미 떠있는 서버에서 자동 반영)
+4. `/api/health` 200 OK 유지 확인
+5. SCENE_PROMPT_ONLY_SYSTEM.format(...) 호출이 여전히 정상 (asset_refs_line, scenario_context, video_image_prompt_guide 3개 placeholder 모두 채워짐)
+
+
+---
+
+## v32 — 2026-04-19 — Sync Labs 422 audio metadata 수정 + 음악 미리듣기 패널 lazy load
+
+### 요청 작업
+
+#### A. Sync Labs 422 'Unable to retrieve audio metadata' 수정
+- 증상: lipsync 씬 Phase 3.5 자동 실행 + retry-sync 단건 모두 422 반복
+- 응답 본문: `{"message": "Unable to retrieve audio metadata. Please check that your audio is not corrupt and try again.", "statusCode": 422}`
+- 즉 우리가 업로드한 audio.mp3가 손상되었거나 0초/무성/메타데이터 누락
+
+#### B. 음악 미리듣기 패널(MrPitchAdjustPanel) lazy load
+- 증상: 마이뮤직/스튜디오 진입 시 voice_conversion_status === 'awaiting_merge' 상태 generation마다 자동으로 큰 vocal/backing audio를 arraybuffer로 prefetch → HTTP/1.1 connection 6슬롯 점유 → character/me 등 모든 다른 요청이 큐에 밀림
+
+### 원인 분석
+
+#### A 원인
+- `backend_9004/app/services/sync_labs_service.py::cut_audio_segment()`
+  - `subprocess.run(["ffmpeg", ...], capture_output=True, timeout=30)` — **returncode 검사 없음**
+  - 출력 파일 존재만 체크(`os.path.exists`), **size 검증 없음**
+  - 결과: ffmpeg가 실패해도 빈 파일이거나 유효하지 않은 mp3여도 그대로 반환 → Sync Labs 422
+- demucs 보컬 분리 후 무성구간이면 거의 무음 mp3 → Sync Labs가 메타데이터 못 읽을 가능성
+
+#### B 원인
+- `frontend/src/components/StudioTab2.jsx::MrPitchAdjustPanel`의 `useEffect` (line 183-206) — 컴포넌트 마운트 즉시 `fetchConvertedVocal` + `fetchBacking`을 무조건 호출
+- StudioTab2가 generation 리스트 렌더링 시 `voice_conversion_status === 'awaiting_merge'`인 모든 generation에 대해 `<MrPitchAdjustPanel>`을 마운트 (line 3025)
+- 결과: 곡 N개 × 2 = 2N 동시 audio 다운로드 → connection slot 점유
+
+### 수정 대상
+
+#### 백엔드 (backend_9004 only)
+1. `app/services/sync_labs_service.py::cut_audio_segment()`
+   - `subprocess.run` 결과 returncode 체크 → 0이 아니면 stderr 포함하여 RuntimeError
+   - 출력 파일 size > 1KB 검증
+   - ffprobe로 duration 검증 (> 0.5초)
+   - 시간 범위 음수/역순 입력 방어 (`end_sec <= start_sec` → ValueError)
+2. `app/services/sync_labs_service.py::generate_lipsync_from_video()`
+   - audio_bytes 수신 직후 minimum size 검증 (예: > 5KB)
+   - ffprobe로 audio_bytes의 duration/codec 사전 검증, 실패 시 명확한 에러
+3. `app/services/mv_pipeline.py` Phase 3.5 자동 + `app/routes/mv.py::_retry_sync_for_scene`
+   - `cut_audio_segment` 호출 전후 가드: `section_start/section_end` 유효성 체크, audio_bytes 유효성 체크
+   - 보컬 분리 후 결과가 너무 작으면 (< 5KB) 보컬 분리 없이 원본 segment를 fallback
+
+#### 프론트엔드 (frontend/src)
+1. `components/StudioTab2.jsx::MrPitchAdjustPanel`
+   - `expanded` state 추가 (default `false`)
+   - JSX 최상단에 "▼ MR 피치 조절 패널 펼치기" 버튼 노출
+   - `expanded === true`일 때만 audio fetch useEffect 실행
+   - `useEffect` deps에 `expanded` 추가
+   - 펼친 후 접기도 가능 — 접으면 audio context close + state cleanup
+   - AbortController 추가 — unmount/접기 시 in-flight 요청 cancel
+
+### 보안
+- API 키 직접 작성 금지, env/settings 참조 유지
+
+### 테스트 계획 (Tester)
+1. **A — Sync Labs 422 수정 검증**
+   - cut_audio_segment에 (audio, 5.0, 5.0) 넣고 ValueError 검증
+   - cut_audio_segment에 (b"", 0.0, 5.0) 넣고 RuntimeError 검증
+   - 정상 audio + 정상 범위 → 출력 mp3 size > 1KB + ffprobe duration > 0.5s
+   - 실제 retry-sync 호출하여 422 안 나오고 sync_job_id 받는지
+2. **B — 패널 lazy load 검증**
+   - 시크릿 창에서 마이뮤직 진입 후 Network 탭에서 voice-convert/.../stream 자동 호출이 0건인지
+   - 패널 펼치기 클릭 → 그때 voice-convert/.../stream 호출 발생
+   - 접기 클릭 → 진행 중 요청 cancel 또는 정상 종료 후 audio context close
+3. **회귀**: character/me 캐싱 유지, v30/v31 시나리오 흐름 영향 없음
+
+
+---
+
+## v33 — 2026-04-19 — Sync Labs 직접 파일 업로드 전환 (ngrok/MinIO-temp 의존 제거)
+
+### 배경
+- v32에서 Sync Labs 422 'Unable to retrieve audio metadata' 원인을 우리 쪽 cut_audio_segment 검증 강화로 일부 해결했으나, 근본 원인은 Sync Labs 서버가 우리가 준 ngrok URL로 오디오 fetch 시 실패
+- WSL-Windows 네트워크 구조(Windows ngrok은 WSL 백엔드가 `localhost:4040`으로 못 잡음) + ngrok 버전 업그레이드 필요 등 개발 환경 난점
+- 상용화에서도 ngrok을 계속 쓸 수 없음 → 근본 구조 변경 필요
+- Sync Labs 공식 API 문서 확인 결과: `POST /v2/generate`에 **multipart/form-data로 파일 직접 업로드** 지원 (각 20MB 제한). 우리 lipsync 씬(10초)은 훨씬 작음 → 딱 맞음
+
+### 요청 작업
+- Sync Labs 호출을 URL 방식 → multipart 직접 업로드로 refactor
+- ngrok/MinIO-temp 의존 완전 제거
+- sync Python SDK 의존 제거 (httpx raw API 직접 호출)
+- config.py/.env 정리
+
+### 수정 대상 (backend_9004 only)
+1. `app/services/sync_labs_service.py` — 전면 refactor
+   - 제거: `_get_ngrok_url`, `_get_public_minio_client`, `_presign_public`, MinIO sync-temp 업로드/삭제, sync SDK import
+   - 추가: `_sync_create_with_files()` (multipart POST), `_sync_get_status()` (GET status)
+   - 재작성: `generate_lipsync()` + `generate_lipsync_from_video()` — 둘 다 파일 바이트를 직접 업로드
+   - 유지: v32 사전검증(size/ffprobe 메타데이터/duration) 로직 전부
+2. `app/config.py` — `ngrok_url` 필드 제거
+3. `.env` — `NGROK_URL` 블록 제거
+4. `requirements.txt` — `syncsdk` 제거 (sync_labs_service.py가 유일한 사용처였음)
+
+### Sync Labs API 스펙
+- POST `https://api.sync.so/v2/generate`
+- Content-Type: `multipart/form-data`
+- Header: `x-api-key: YOUR_SYNC_API_KEY`
+- Fields: `video` (file), `audio` (file), `model` (string), `options` (JSON string)
+- Size limit: 20MB per file
+- Response: `{"id": "..."}`
+- Poll: GET `https://api.sync.so/v2/generate/{id}` → `status` + `outputUrl`
+
+### 테스트 계획 (Tester)
+1. 정적: sync_labs_service.py / config.py AST 파싱 통과
+2. `grep ngrok|_presign|from sync|get_minio` on sync_labs_service.py → 잔존 0건 (주석 제외)
+3. config.py에 `ngrok_url` 없음 확인
+4. 백엔드 재기동 `/api/health` 200
+5. ngrok 완전 꺼도 `retry-sync` 호출 → 422 안 나오고 새 `_sync_create_with_files`로 sync_job_id 생성되는지
+6. lipsync 씬 1개 완료까지 진행 → `video_synclabs_object` 저장 확인
+7. 회귀: character/me 캐싱, v30/v31/v32 시나리오 흐름 영향 없음
+
+### 상용화 플러스
+- ngrok 완전 독립 → 로컬 개발/상용 서버/어떤 배포 환경이든 동일 코드로 작동
+- MinIO 임시 업로드/삭제 제거 → MinIO는 정식 MV asset 저장에만 사용
+- 상용화 시 자체 서버에 MinIO 퍼블릭 배포 불필요 (Sync Labs 용도로는)
+- sync SDK 버전 업그레이드 걱정 없음 (raw API 사용)
+
+
+---
+
+## v33.1 — 2026-04-19 — v33 감사 결과 (Sync Labs 공식 스펙 교차검증)
+
+### 검증 방법
+- 공식 문서: `https://sync.so/docs/api-reference/api/generate-api/create-with-files`, `https://sync.so/docs/quickstart`, `https://sync.so/docs/api-reference/api/generate-api/create`, `https://sync.so/openapi.json`
+- 검증 대상: `backend_9004/app/services/sync_labs_service.py`
+- 호출부: `backend_9004/app/services/mv_pipeline.py:2036-2118`, `backend_9004/app/routes/mv.py:1391-1489`
+- API 키는 `settings.sync_api_key`(env) 참조만, 본 문서에는 `YOUR_SYNC_API_KEY` 플레이스홀더로만 표기
+
+### 공식 스펙 요약 (확정)
+| 항목 | 공식 스펙 |
+|---|---|
+| Base URL | `https://api.sync.so/v2` |
+| Create endpoint | `POST /v2/generate` (multipart/form-data) |
+| Status endpoint | `GET /v2/generate/{id}` |
+| Auth header | `x-api-key: YOUR_SYNC_API_KEY` |
+| Multipart fields | `video` (binary), `audio` (binary), `model` (string, required), `options` (JSON string), `input` (array, 선택), `webhookUrl` (선택) |
+| `options` 인코딩 | multipart 내 JSON string (form-data value) |
+| 유효 model 값 | `sync-3`, `lipsync-2`, `lipsync-1.9.0-beta`, `lipsync-2-pro`, `react-1` |
+| 성공 응답 코드 | **201 Created** (문서 명시) |
+| 응답 JSON 필드 | `id`, `status`, `outputUrl`, `outputDuration`, `createdAt`, `error`, `error_code` |
+| 상태 enum | `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`, `REJECTED` (OpenAPI `GenerationStatus`) |
+| 에러 메시지 필드 | **`error`** (camelCase `errorMessage` 아님) |
+| 출력 URL 필드 | **`outputUrl`** (camelCase, snake_case `output_url` 아님) |
+| 파일 크기 제한 | **파일당 20MB** (초과 시 `input` 배열로 URL 전달 필요) |
+| 에러 코드 | 400 (bad request), 401 (unauthorized), 500 (server) |
+
+### 우리 코드와 대조 결과
+
+| # | 항목 | 공식 | 현재 구현 (sync_labs_service.py) | 일치? |
+|---|---|---|---|---|
+| 1 | Base URL | `https://api.sync.so/v2` | `SYNC_API_BASE = "https://api.sync.so/v2"` (L21) | 일치 |
+| 2 | Create path | `POST /v2/generate` | `client.post(f"{SYNC_API_BASE}/generate", ...)` (L42) | 일치 |
+| 3 | Status path | `GET /v2/generate/{id}` | `client.get(f"{SYNC_API_BASE}/generate/{job_id}", ...)` (L65) | 일치 |
+| 4 | 인증 헤더 | `x-api-key` | `{"x-api-key": settings.sync_api_key}` (L32, L62) | 일치 |
+| 5 | multipart `video` 필드 | `video` (binary) | `files["video"] = ("scene.mp4", bytes, "video/mp4")` (L34) | 일치 |
+| 6 | multipart `audio` 필드 | `audio` (binary) | `files["audio"] = ("audio.mp3", bytes, "audio/mpeg")` (L35) | 일치 |
+| 7 | `model` 필드 | 필수 string | `data = {"model": model}` (L37) | 일치 |
+| 8 | `options` 인코딩 | multipart JSON string | `data["options"] = json.dumps(options)` (L39) | 일치 |
+| 9 | 모델 값 `lipsync-2` | 유효 | 호출부 기본값 `"lipsync-2"` (service L84/L188, mv_pipeline L2118, routes/mv L1488) | 일치 |
+| 10 | 성공 코드 | 201 | `if resp.status_code not in (200, 201, 202)` (L47) — 201 포함 | 일치 (느슨하지만 문제 없음) |
+| 11 | 응답 `id` | `id` | `body.get("id") or body.get("generationId")` (L54) | 일치 (하위호환 fallback) |
+| 12 | 상태값 `COMPLETED` | 대문자 | `if status == "COMPLETED"` (L154, L299) | 일치 |
+| 13 | 실패 상태값 | `FAILED`, `REJECTED` | `if status in ("FAILED", "REJECTED")` (L162, L303) | 일치 |
+| 14 | `outputUrl` 필드 | camelCase | `body.get("outputUrl") or body.get("output_url")` (L76) | 일치 (하위호환 fallback) |
+| 15 | 에러 필드 | `error` | `body.get("errorMessage") or body.get("error")` (L77) | 일치 (fallback로 캡처됨, 단 `errorMessage`는 공식 아님) |
+| 16 | httpx multipart 문법 | `files=` + `data=` 병용 시 multipart | `client.post(..., files=files, data=data)` (L40-46) | 일치 (httpx 공식 사용법) |
+
+### 누락/잠재 이슈
+
+| # | 이슈 | 심각도 | 근거 |
+|---|---|---|---|
+| I1 | 20MB 파일 크기 사전 체크 없음 (`video_bytes`, `audio_bytes` 모두) | 중 | 공식 명시 "Maximum 20MB per file; use URLs via `input` array for larger files". 현재는 상한만 없어 Sync Labs가 413/400으로 거부할 때까지 업로드 대역폭을 낭비함. 10초 씬이라 보통 초과하진 않지만, Veo/Kling 출력 비트레이트가 높으면 위험. 명확한 에러 메시지도 못 줌 |
+| I2 | poll 간격 10s × 120회 = 20분 | 저 | Sync Labs 문서/경험상 lipsync-2 1씬은 1-5분. 20분은 여유가 매우 크고 불필요하게 길지만 타임아웃 정책이므로 기능적 문제는 없음. 다만 첫 poll 전 10초 딜레이도 불필요(즉시 첫 조회 후 대기가 더 반응성 좋음) |
+| I3 | `_sync_get_status`가 `POLLING_ERROR` 반환 시 poll 루프에서 처리 안 됨 | 중 | `generate_lipsync` / `generate_lipsync_from_video`의 poll 루프는 `"COMPLETED"` / `"FAILED"` / `"REJECTED"`만 분기. `POLLING_ERROR`나 `PENDING`/`PROCESSING`은 그냥 계속 돔 — 일시적 5xx일 땐 의도대로 재시도지만, 영구 4xx(404 등)여도 20분간 무한 재시도. 로그는 남지만 조기 중단 로직은 없음 |
+| I4 | Rate limit 가드 없음 | 저 | 여러 scene 동시 `_sync_create_with_files` 호출 시(Phase 3.5에서는 sequential이지만 추후 병렬화 대비 기록). 공식 문서에 구체적 rate limit 수치는 없음 |
+| I5 | `options` 기본값 `{"sync_mode": "cut_off"}` | 정보 | 공식 스펙상 유효한 옵션. `cut_off`는 비디오/오디오 길이가 다를 때 짧은 쪽에 맞춰 자르는 모드로 우리 씬 파이프라인에 적합 |
+| I6 | 상태값 `PENDING`/`PROCESSING` 명시적 처리 부재 | 정보 | 분기 안 맞으면 `else: logger.info(...)`로 흘러가므로 기능상 OK. 하지만 `"status"`가 빈 문자열일 때도 같은 경로 — 에러 변별이 약함 |
+
+### 수정 필요 항목 리스트
+
+#### 필수 수정 (권장 적용)
+
+**P1. 사전 파일 크기 체크 (20MB 상한)**
+- 파일: `backend_9004/app/services/sync_labs_service.py`
+- 함수: `_sync_create_with_files` (L24-57) 최상단 또는 두 `generate_*` 함수의 검증 블록에 추가
+- 수정안:
+  ```python
+  MAX_BYTES = 20 * 1024 * 1024  # Sync Labs 공식 20MB 제한
+  if len(video_bytes) > MAX_BYTES:
+      raise ValueError(
+          "Sync Labs 비디오가 20MB 제한 초과 ({:.1f}MB)".format(len(video_bytes)/1024/1024)
+      )
+  if len(audio_bytes) > MAX_BYTES:
+      raise ValueError(
+          "Sync Labs 오디오가 20MB 제한 초과 ({:.1f}MB)".format(len(audio_bytes)/1024/1024)
+      )
+  ```
+- 위치: `_sync_create_with_files`의 `headers = {...}` 직전 (L31 이전)에 넣으면 두 호출 경로 모두 커버됨
+- 사유: I1 방어. 업로드 전 즉시 실패로 대역폭/시간 절약 + 명확한 에러 메시지
+
+**P2. poll 루프 조기 중단 (영구 상태 조회 실패 방어)**
+- 파일: `backend_9004/app/services/sync_labs_service.py`
+- 함수: `generate_lipsync` (L148-170), `generate_lipsync_from_video` (L294-313) 두 군데
+- 수정안: `POLLING_ERROR` 연속 N회(예: 6회 = 1분)면 중단
+  ```python
+  polling_error_streak = 0
+  for attempt in range(120):
+      await asyncio.sleep(10)
+      s = await _sync_get_status(sync_job_id)
+      status = s["status"]
+      if status == "POLLING_ERROR":
+          polling_error_streak += 1
+          if polling_error_streak >= 6:
+              raise ValueError("Sync Labs 상태 조회 연속 실패: {}".format(s.get("error")))
+          continue
+      polling_error_streak = 0
+      if status == "COMPLETED": ...
+  ```
+- 사유: I3. 404(잘못된 job_id) 등 영구 오류 시 20분 낭비 방지
+
+#### 권장 수정 (품질 개선, 선택적)
+
+**P3. poll 타임아웃 단축 (20분 → 10분)**
+- 파일: 동일
+- 수정: `for attempt in range(120)` → `for attempt in range(60)` (10분)
+- 사유: I2. lipsync-2 1씬 보통 1-5분. 10분이면 충분한 여유. 단, 서비스 운영 중 Sync Labs 혼잡 시점 데이터가 있으면 유지 가능
+
+**P4. 첫 poll 지연 제거 (반응성)**
+- 수정: poll 루프에서 `await asyncio.sleep(10)`을 `if attempt > 0: await asyncio.sleep(10)` 혹은 첫 호출 즉시 조회 후 sleep
+- 사유: I2. 씬이 빨리 끝나는 경우 불필요한 10초 대기 제거
+
+**P5. 문서적 정리 — `errorMessage` fallback 제거 가능(유지해도 무방)**
+- 위치: L77 `body.get("errorMessage") or body.get("error")`
+- 공식은 `error`. `errorMessage`는 과거 SDK 추정 필드. 현재 fallback으로 두어도 동작에 문제 없음 (선택)
+
+#### 수정 불필요 항목
+- 엔드포인트/메서드/인증 헤더/필드명/응답 필드명/상태값 enum/호출부 시그니처/httpx multipart 문법 — 모두 공식 스펙과 일치 확인
+- 호출부(`mv_pipeline.py:2117-2118`, `routes/mv.py:1485-1489`)의 `generate_lipsync_from_video(video_bytes=..., audio_bytes=..., model="lipsync-2")` 시그니처 및 반환 bytes 처리 로직 — 현 서비스 함수와 일치
+
+### 결론
+- **엔드포인트/인증/필드 매핑 전 항목이 공식 스펙과 일치** — v33의 핵심 스펙 준수는 정확
+- **수정 필요 (권장): P1 (20MB 사전 체크)**, **P2 (POLLING_ERROR 연속 실패 조기 중단)**
+- **선택 개선: P3/P4/P5**
+- 모델 값(`lipsync-2`), 모든 필드명(`video`/`audio`/`model`/`options`), 응답 파싱(`id`, `outputUrl`, `error`, `COMPLETED`/`FAILED`/`REJECTED`), `options` JSON-string 인코딩 — 전부 정확
+
+### 확인 불가 (문서 접근 제한)
+- `https://sync.so/openapi.yaml` — 별도 YAML 파일 존재 확인 못 함 (JSON 버전으로 교차검증 완료로 갈음)
+- 정확한 rate limit 수치(분당 요청 수) — 공식 문서에 명시 안 됨. 플랜별 상이 추정
+- `PENDING`/`PROCESSING` 외 중간 상태값(예: `QUEUED`) 존재 여부 — OpenAPI `GenerationStatus` enum 기준으로는 5개 상태만 확인
