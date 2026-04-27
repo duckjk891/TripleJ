@@ -16,18 +16,22 @@ import {
   generateWithWondera,
   getGenerationStatus,
 } from '../services/musicService';
+import { BACKEND_BASE_URL } from '../services/api';
+import { useGemsStore } from '../stores/gemsStore';
+import { GEM_REWARDS } from '../data/directors';
+import { colors } from '../theme/colors';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
 
 type Props = NativeStackScreenProps<any, 'MusicLoading'>;
 
-const LOADING_MESSAGES = [
-  '멜로디를 구상하고 있어요...',
-  '화음을 넣고 있어요...',
-  '작곡 중이에요...',
-  '믹싱 중이에요...',
-  '마무리 중이에요...',
+const LOADING_STEPS = [
+  { label: '멜로디', message: '멜로디를 구상하고 있어요...' },
+  { label: '화음', message: '화음을 넣고 있어요...' },
+  { label: '작곡', message: '작곡 중이에요...' },
+  { label: '믹싱', message: '믹싱 중이에요...' },
+  { label: '마무리', message: '마무리 중이에요...' },
 ];
 
 export default function MusicLoadingScreen({ navigation }: Props) {
@@ -39,13 +43,24 @@ export default function MusicLoadingScreen({ navigation }: Props) {
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
 
-  // Cycle loading messages
+  // Advance loading step (cap at last; progress % from poll drives earlier jumps)
   useEffect(() => {
     const interval = setInterval(() => {
-      setMessageIndex((i) => (i + 1) % LOADING_MESSAGES.length);
+      setMessageIndex((i) => Math.min(i + 1, LOADING_STEPS.length - 1));
     }, 4000);
     return () => clearInterval(interval);
   }, []);
+
+  // Sync step with progress % when available (0-100 → step index)
+  useEffect(() => {
+    if (progress > 0) {
+      const stepFromProgress = Math.min(
+        Math.floor((progress / 100) * LOADING_STEPS.length),
+        LOADING_STEPS.length - 1
+      );
+      setMessageIndex((i) => Math.max(i, stepFromProgress));
+    }
+  }, [progress]);
 
   // Pulse animation
   useEffect(() => {
@@ -89,6 +104,9 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           vocal: store.vocal || undefined,
           vocalStyle: store.vocalStyle || undefined,
           referenceFile: store.referenceFile || undefined,
+          isDuet: lyricsStore.isDuet || undefined,
+          subVocal: store.subVocal || undefined,
+          subVocalStyle: store.subVocalStyle || undefined,
         };
 
         let result: any;
@@ -133,10 +151,10 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                 // Build playable URL
                 let url: string;
                 if (trackId) {
-                  url = `http://192.168.219.106:9001/api/tracks/stream/${trackId}`;
+                  url = `${BACKEND_BASE_URL}/api/tracks/stream/${trackId}`;
                 } else if (rawUrl) {
                   // result_audio_url is a MinIO object name; use generation stream endpoint
-                  url = `http://192.168.219.106:9001/api/generate/${genId}/stream/`;
+                  url = `${BACKEND_BASE_URL}/api/generate/${genId}/stream/`;
                 } else {
                   url = '';
                 }
@@ -144,6 +162,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                 if (trackId) store.setGenerationId(trackId);
                 store.setStatus('completed');
                 store.setIsLoading(false);
+                useGemsStore.getState().earn(GEM_REWARDS.TRACK_MUSIC_DONE, 'track_music_done', trackId);
                 navigation.replace('MusicResult');
               } else if (status.status === 'failed' || status.status === 'error') {
                 if (pollInterval) clearInterval(pollInterval);
@@ -169,9 +188,9 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           // Build playable URL
           let url: string;
           if (trackId) {
-            url = `http://192.168.219.106:9001/api/tracks/stream/${trackId}`;
+            url = `${BACKEND_BASE_URL}/api/tracks/stream/${trackId}`;
           } else if (rawUrl) {
-            url = `http://192.168.219.106:9001/api/generate/${genId}/stream/`;
+            url = `${BACKEND_BASE_URL}/api/generate/${genId}/stream/`;
           } else {
             url = '';
           }
@@ -179,6 +198,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           if (trackId) store.setGenerationId(trackId);
           store.setStatus('completed');
           store.setIsLoading(false);
+          useGemsStore.getState().earn(GEM_REWARDS.TRACK_MUSIC_DONE, 'track_music_done', trackId);
           navigation.replace('MusicResult');
         }
       } catch (err: any) {
@@ -211,9 +231,41 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           </View>
         </Animated.View>
 
-        <Text style={styles.loadingText}>{LOADING_MESSAGES[messageIndex]}</Text>
+        <Text style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</Text>
 
-        <ActivityIndicator size="large" color="#e94560" style={styles.spinner} />
+        <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
+
+        {/* 스텝 인디케이터 */}
+        <View style={styles.stepRow}>
+          {LOADING_STEPS.map((s, i) => {
+            const state = i < messageIndex ? 'done' : i === messageIndex ? 'active' : 'pending';
+            return (
+              <View key={s.label} style={styles.stepItem}>
+                <View
+                  style={[
+                    styles.stepDot,
+                    state === 'active' && styles.stepDotActive,
+                    state === 'done' && styles.stepDotDone,
+                  ]}
+                >
+                  <Text style={styles.stepDotText}>
+                    {state === 'done' ? '✓' : i + 1}
+                  </Text>
+                </View>
+                <Text
+                  style={[
+                    styles.stepLabel,
+                    state === 'active' && styles.stepLabelActive,
+                    state === 'done' && styles.stepLabelDone,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {s.label}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
 
         {progress > 0 && (
           <View style={styles.progressContainer}>
@@ -228,8 +280,8 @@ export default function MusicLoadingScreen({ navigation }: Props) {
 
         <View style={styles.noteContainer}>
           <Text style={styles.noteText}>
-            작곡 디렉터가 음악을 생성하고 있습니다.{'\n'}
-            잠시만 기다려주세요. 1~3분 정도 소요될 수 있어요.
+            작곡 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}
+            1~3분 정도 소요될 수 있어요.
           </Text>
         </View>
       </View>
@@ -240,7 +292,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   content: {
     flex: 1,
@@ -254,7 +306,7 @@ const styles = StyleSheet.create({
     borderRadius: 60,
     overflow: 'hidden',
     borderWidth: 3,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginBottom: 32,
   },
   portraitImage: {
@@ -268,12 +320,59 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 24,
     textAlign: 'center',
   },
   spinner: {
-    marginBottom: 24,
+    marginBottom: 20,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 20,
+    paddingHorizontal: 4,
+  },
+  stepItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  stepDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1.5,
+    borderColor: colors.border.subtle,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  stepDotActive: {
+    backgroundColor: colors.accent.primary,
+    borderColor: colors.accent.primary,
+  },
+  stepDotDone: {
+    backgroundColor: colors.bg.surface2,
+    borderColor: colors.accent.primary,
+  },
+  stepDotText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text.primary,
+  },
+  stepLabel: {
+    fontSize: 10,
+    color: colors.text.muted,
+    textAlign: 'center',
+  },
+  stepLabelActive: {
+    color: colors.accent.primary,
+    fontWeight: '700',
+  },
+  stepLabelDone: {
+    color: colors.text.secondary,
   },
   progressContainer: {
     width: '100%',
@@ -285,32 +384,32 @@ const styles = StyleSheet.create({
   progressBar: {
     flex: 1,
     height: 8,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 4,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 4,
   },
   progressText: {
-    color: '#aaa',
+    color: colors.text.secondary,
     fontSize: 14,
     fontWeight: '600',
     minWidth: 40,
     textAlign: 'right',
   },
   noteContainer: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
   },
   noteText: {
     fontSize: 13,
-    color: '#888',
+    color: colors.text.secondary,
     textAlign: 'center',
     lineHeight: 20,
   },

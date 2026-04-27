@@ -17,6 +17,9 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useTimerStore } from '../stores/timerStore';
+import { useAuthStore } from '../stores/authStore';
+import { useDirectorsStore } from '../stores/directorsStore';
+import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -33,7 +36,9 @@ const DURATION_OPTIONS = [
   { value: 300, label: '5분' },
 ];
 
-type EditField = 'genre' | 'mood' | 'style' | 'content' | 'perspective' | 'language' | 'structure' | 'duration' | 'rap' | null;
+type EditField = 'genre' | 'mood' | 'style' | 'content' | 'perspective' | 'language' | 'structure' | 'duration' | 'rap' | 'duet' | null;
+
+const DUET_OPTIONS = ['솔로', '듀엣'];
 
 const CONTENT_OPTIONS = ['사랑', '이별', '짝사랑', '우정', '성장·자기계발', '자유·일탈', '희망·꿈', '외로움·그리움', '일상의 소소함', '청춘·방황'];
 const PERSPECTIVE_OPTIONS = ['1인칭 — 나', '2인칭 — 너에게 말하는', '3인칭 — 관찰자', '독백체', '대화체'];
@@ -46,6 +51,8 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const store = useLyricsStore();
   const timerStore = useTimerStore();
+  const { user } = useAuthStore();
+  const titleLabel = user?.display_title || '대표';
   const [editablePrompt, setEditablePrompt] = useState(store.generatedPrompt);
   const [editingField, setEditingField] = useState<EditField>(null);
   const [customInput, setCustomInput] = useState('');
@@ -53,10 +60,11 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
   const buildPromptText = () => {
     const durationText = store.duration >= 60 ? `${Math.floor(store.duration / 60)}분` : `${store.duration}초`;
     const rapText = store.hasRap ? ', 랩 파트 포함' : '';
+    const duetText = store.isDuet ? '. 듀엣 곡으로 메인 보컬과 서브 보컬 파트를 구분하여 작성해주세요' : '';
     const styleText = store.style ? ` 스타일은 ${store.style}입니다.` : '';
     const refText = store.reference ? ` ${store.reference} 스타일을 참고해주세요.` : '';
     const kwText = store.keywords ? ` 키워드는 ${store.keywords}입니다.` : '';
-    return `${store.language} ${store.genre} 장르의 ${store.mood} 분위기 노래 가사를 작성해주세요. 곡 길이는 약 ${durationText}이고, ${store.perspective} 시점으로 ${store.content}에 대한 내용입니다. 구조는 ${store.structure}${rapText}.${styleText}${kwText}${refText}`;
+    return `${store.language} ${store.genre} 장르의 ${store.mood} 분위기 노래 가사를 작성해주세요. 곡 길이는 약 ${durationText}이고, ${store.perspective} 시점으로 ${store.content}에 대한 내용입니다. 구조는 ${store.structure}${rapText}${duetText}.${styleText}${kwText}${refText}`;
   };
 
   // 선택요약 수정 시 자동 반영
@@ -64,11 +72,12 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
     const prompt = buildPromptText();
     setEditablePrompt(prompt);
     store.setGeneratedPrompt(prompt);
-  }, [store.genre, store.mood, store.content, store.perspective, store.language, store.structure, store.duration, store.hasRap, store.style, store.keywords, store.reference]);
+  }, [store.genre, store.mood, store.content, store.perspective, store.language, store.structure, store.duration, store.hasRap, store.isDuet, store.style, store.keywords, store.reference]);
 
   const handleGenerate = () => {
     store.setGeneratedPrompt(editablePrompt);
-    timerStore.startTask('lyricist', '작사 대기중');
+    const modelKey = useDirectorsStore.getState().getSelectedModelKey('lyricist');
+    timerStore.startTask('lyricist', '작사', modelKey);
     navigation.navigate('Map' as any);
   };
 
@@ -86,6 +95,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
       case 'perspective': store.setPerspective(value); break;
       case 'language': store.setLanguage(value); break;
       case 'structure': store.setStructure(value); break;
+      case 'duet': store.setIsDuet(value === '듀엣'); break;
     }
     setEditingField(null);
     // useEffect가 자동 반영
@@ -121,6 +131,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
       case 'perspective': return PERSPECTIVE_OPTIONS;
       case 'language': return LANGUAGE_OPTIONS;
       case 'structure': return STRUCTURE_OPTIONS;
+      case 'duet': return DUET_OPTIONS;
       default: return [];
     }
   };
@@ -136,6 +147,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
       case 'structure': return '구조 선택';
       case 'duration': return '곡 길이 선택';
       case 'rap': return '랩 파트';
+      case 'duet': return '듀엣 여부';
       default: return '';
     }
   };
@@ -159,14 +171,26 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
           <View style={styles.directorBubble}>
             <Text style={styles.directorName}>작사 디렉터</Text>
             <Text style={styles.directorText}>
-              이렇게 작사할까요? 항목을 탭하면 수정할 수 있어요!
+              {`${titleLabel}님의 12가지 답변을 모아\n아래 프롬프트로 정리했어요`}
             </Text>
           </View>
         </View>
 
+        {/* 답변 → 프롬프트 흐름 안내 */}
+        <View style={styles.flowHint}>
+          <Text style={styles.flowHintText}>
+            <Text style={{ color: colors.accent.primary, fontWeight: '700' }}>① 답변 요약</Text>
+            <Text>{'  →  '}</Text>
+            <Text style={{ color: colors.accent.primary, fontWeight: '700' }}>② 작사 디렉터에 전달할 내용</Text>
+          </Text>
+          <Text style={styles.flowHintSubtext}>
+            요약 카드를 탭하면 수정할 수 있고, 프롬프트도 직접 다듬을 수 있어요
+          </Text>
+        </View>
+
         {/* Summary - clickable items (위) */}
         <View style={styles.summarySection}>
-          <Text style={styles.sectionTitle}>선택 요약 (탭하여 수정)</Text>
+          <Text style={styles.sectionTitle}>{`① ${titleLabel}님의 선택 (탭하여 수정)`}</Text>
           <View style={styles.summaryGrid}>
             <TouchableOpacity onPress={() => handleFieldEdit('genre')}>
               <SummaryItem label="장르" value={store.genre} editable />
@@ -195,19 +219,25 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             <TouchableOpacity onPress={() => handleFieldEdit('rap')}>
               <SummaryItem label="랩" value={store.hasRap ? '포함' : '없음'} editable />
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleFieldEdit('duet')}>
+              <SummaryItem label="듀엣" value={store.isDuet ? '듀엣' : '솔로'} editable />
+            </TouchableOpacity>
           </View>
         </View>
 
         {/* Prompt review (아래) */}
         <View style={styles.promptSection}>
-          <Text style={styles.sectionTitle}>요청사항</Text>
+          <Text style={styles.sectionTitle}>② 작사 디렉터에 전달할 내용 (자동 생성됨)</Text>
+          <Text style={styles.promptHelper}>
+            ✏ 직접 다듬으셔도 좋아요. 위 답변을 수정하면 자동으로 다시 생성돼요.
+          </Text>
           <TextInput
             style={styles.promptInput}
             value={editablePrompt}
             onChangeText={setEditablePrompt}
             multiline
             textAlignVertical="top"
-            placeholderTextColor="#555"
+            placeholderTextColor={colors.text.muted}
           />
         </View>
 
@@ -251,8 +281,8 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                 <Switch
                   value={store.hasRap}
                   onValueChange={handleRapToggle}
-                  trackColor={{ false: '#333', true: '#e94560' }}
-                  thumbColor={store.hasRap ? '#fff' : '#888'}
+                  trackColor={{ false: colors.border.subtle, true: colors.accent.primary }}
+                  thumbColor={store.hasRap ? colors.text.primary : colors.text.secondary}
                 />
               </View>
             ) : editingField === 'duration' ? (
@@ -318,7 +348,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                   <TextInput
                     style={styles.customInput}
                     placeholder="직접 입력..."
-                    placeholderTextColor="#666"
+                    placeholderTextColor={colors.text.muted}
                     value={customInput}
                     onChangeText={setCustomInput}
                     onSubmitEditing={handleCustomSubmit}
@@ -355,7 +385,7 @@ function SummaryItem({ label, value, editable }: { label: string; value: string;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   scrollView: {
     flex: 1,
@@ -375,7 +405,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginRight: 12,
   },
   portraitImage: {
@@ -388,39 +418,64 @@ const styles = StyleSheet.create({
   },
   directorBubble: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     padding: 12,
   },
   directorName: {
     fontSize: 13,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     marginBottom: 4,
   },
   directorText: {
     fontSize: 14,
-    color: '#fff',
+    color: colors.text.primary,
     lineHeight: 20,
   },
   promptSection: {
     marginBottom: 20,
   },
+  flowHint: {
+    backgroundColor: colors.bg.surface1,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent.primary,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  flowHintText: {
+    fontSize: 13,
+    color: colors.text.primary,
+    fontWeight: '600',
+  },
+  flowHintSubtext: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  promptHelper: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginBottom: 8,
+    fontStyle: 'italic',
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 10,
   },
   promptInput: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 12,
     padding: 14,
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 14,
     minHeight: 160,
     lineHeight: 22,
@@ -434,20 +489,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   summaryItem: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
   },
   summaryItemEditable: {
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderStyle: 'dashed',
   },
   summaryLabel: {
     fontSize: 11,
-    color: '#888',
+    color: colors.text.secondary,
     marginBottom: 2,
   },
   summaryValueRow: {
@@ -457,12 +512,12 @@ const styles = StyleSheet.create({
   },
   summaryValue: {
     fontSize: 14,
-    color: '#fff',
+    color: colors.text.primary,
     fontWeight: '600',
   },
   editIcon: {
     fontSize: 12,
-    color: '#e94560',
+    color: colors.accent.primary,
   },
   buttonRow: {
     flexDirection: 'row',
@@ -470,27 +525,27 @@ const styles = StyleSheet.create({
   },
   backButton: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   backButtonText: {
-    color: '#e94560',
+    color: colors.accent.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
   generateButton: {
     flex: 2,
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   generateButtonText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -501,7 +556,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -510,7 +565,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 16,
     textAlign: 'center',
   },
@@ -521,23 +576,23 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   optionButton: {
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   optionSelected: {
-    backgroundColor: '#e94560',
-    borderColor: '#e94560',
+    backgroundColor: colors.accent.primary,
+    borderColor: colors.accent.primary,
   },
   optionText: {
-    color: '#aaa',
+    color: colors.text.secondary,
     fontSize: 14,
   },
   optionTextSelected: {
-    color: '#fff',
+    color: colors.text.primary,
     fontWeight: 'bold',
   },
   customRow: {
@@ -546,26 +601,26 @@ const styles = StyleSheet.create({
   },
   customInput: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 14,
   },
   customSubmit: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   customSubmitDisabled: {
-    backgroundColor: '#333',
+    backgroundColor: colors.border.subtle,
   },
   customSubmitText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontWeight: 'bold',
     fontSize: 14,
   },
@@ -576,7 +631,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   rapToggleLabel: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 16,
   },
 });

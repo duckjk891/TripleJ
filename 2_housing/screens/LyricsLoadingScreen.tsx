@@ -11,16 +11,19 @@ import {
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { generateLyrics } from '../services/lyricsService';
+import { useGemsStore } from '../stores/gemsStore';
+import { GEM_REWARDS } from '../data/directors';
+import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
 type Props = NativeStackScreenProps<any, 'LyricsLoading'>;
 
-const LOADING_MESSAGES = [
-  '영감을 모으고 있어요...',
-  '가사를 쓰고 있어요...',
-  '운율을 맞추고 있어요...',
-  '마무리 중이에요...',
+const LOADING_STEPS = [
+  { label: '영감 수집', message: '영감을 모으고 있어요...' },
+  { label: '가사 작성', message: '가사를 쓰고 있어요...' },
+  { label: '운율 정리', message: '운율을 맞추고 있어요...' },
+  { label: '마무리', message: '마무리 중이에요...' },
 ];
 
 export default function LyricsLoadingScreen({ navigation }: Props) {
@@ -29,10 +32,10 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
   const dotAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Cycle loading messages
+  // Advance loading step (cap at last step, API finish will navigate away)
   useEffect(() => {
     const interval = setInterval(() => {
-      setMessageIndex((i) => (i + 1) % LOADING_MESSAGES.length);
+      setMessageIndex((i) => Math.min(i + 1, LOADING_STEPS.length - 1));
     }, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -73,6 +76,8 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           genre: store.genre,
           mood: store.mood,
           language: store.language,
+          style: store.style || undefined,
+          duration_minutes: store.duration >= 60 ? Math.round(store.duration / 60) : undefined,
         });
 
         if (isMounted) {
@@ -82,6 +87,8 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           store.setGeneratedTitle(title);
           store.setGeneratedLyrics(lyrics);
           store.setIsLoading(false);
+          // 캐시 보상 지급
+          useGemsStore.getState().earn(GEM_REWARDS.TRACK_LYRICS_DONE, 'track_lyrics_done');
           navigation.replace('LyricsResult');
         }
       } catch (err: any) {
@@ -118,13 +125,45 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           </View>
         </Animated.View>
 
-        <Text style={styles.loadingText}>{LOADING_MESSAGES[messageIndex]}</Text>
+        <Text style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</Text>
 
-        <ActivityIndicator size="large" color="#e94560" style={styles.spinner} />
+        <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
+
+        {/* 스텝 인디케이터 */}
+        <View style={styles.stepRow}>
+          {LOADING_STEPS.map((s, i) => {
+            const state = i < messageIndex ? 'done' : i === messageIndex ? 'active' : 'pending';
+            return (
+              <View key={s.label} style={styles.stepItem}>
+                <View
+                  style={[
+                    styles.stepDot,
+                    state === 'active' && styles.stepDotActive,
+                    state === 'done' && styles.stepDotDone,
+                  ]}
+                >
+                  <Text style={styles.stepDotText}>
+                    {state === 'done' ? '✓' : i + 1}
+                  </Text>
+                </View>
+                <Text
+                  style={[
+                    styles.stepLabel,
+                    state === 'active' && styles.stepLabelActive,
+                    state === 'done' && styles.stepLabelDone,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {s.label}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
 
         <View style={styles.noteContainer}>
           <Text style={styles.noteText}>
-            작사 디렉터가 가사를 생성하고 있습니다.{'\n'}잠시만 기다려주세요...
+            작사 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}잠시만 기다려주세요...
           </Text>
         </View>
       </View>
@@ -135,7 +174,7 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   content: {
     flex: 1,
@@ -149,7 +188,7 @@ const styles = StyleSheet.create({
     borderRadius: 60,
     overflow: 'hidden',
     borderWidth: 3,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginBottom: 32,
   },
   portraitImage: {
@@ -163,23 +202,70 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 24,
     textAlign: 'center',
   },
   spinner: {
-    marginBottom: 32,
+    marginBottom: 24,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 24,
+    paddingHorizontal: 4,
+  },
+  stepItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1.5,
+    borderColor: colors.border.subtle,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  stepDotActive: {
+    backgroundColor: colors.accent.primary,
+    borderColor: colors.accent.primary,
+  },
+  stepDotDone: {
+    backgroundColor: colors.bg.surface2,
+    borderColor: colors.accent.primary,
+  },
+  stepDotText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text.primary,
+  },
+  stepLabel: {
+    fontSize: 10,
+    color: colors.text.muted,
+    textAlign: 'center',
+  },
+  stepLabelActive: {
+    color: colors.accent.primary,
+    fontWeight: '700',
+  },
+  stepLabelDone: {
+    color: colors.text.secondary,
   },
   noteContainer: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
   },
   noteText: {
     fontSize: 13,
-    color: '#888',
+    color: colors.text.secondary,
     textAlign: 'center',
     lineHeight: 20,
   },

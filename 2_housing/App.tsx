@@ -1,10 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
-import { Text, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity, View, Platform } from 'react-native';
+import { colors } from './theme/colors';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DirectorType } from './components/Character';
+import MiniPlayer from './components/MiniPlayer';
 
 import SplashScreen from './screens/SplashScreen';
 import ChartScreen from './screens/ChartScreen';
@@ -24,6 +26,9 @@ import MusicLoadingScreen from './screens/MusicLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
+import ArtistDirectorScreen from './screens/ArtistDirectorScreen';
+import ArtistDetailScreen from './screens/ArtistDetailScreen';
+import DirectorLineupScreen from './screens/DirectorLineupScreen';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -50,6 +55,9 @@ export type RootStackParamList = {
   MainTabs: undefined;
   Settings: undefined;
   Player: { track: any };
+  ArtistDirector: undefined;
+  ArtistDetail: { artistId: string; artistName?: string };
+  DirectorLineup: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -62,7 +70,7 @@ function StudioNavigator() {
       initialRouteName="Map"
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: '#0a0a1a' },
+        contentStyle: { backgroundColor: colors.bg.deepest },
         animation: 'fade',
       }}
     >
@@ -106,24 +114,32 @@ function StudioNavigator() {
   );
 }
 
+function MiniPlayerWrapper() {
+  const insets = require('react-native-safe-area-context').useSafeAreaInsets();
+  // 탭 바 높이: 49(기본) + safeArea bottom
+  const tabBarHeight = 49 + insets.bottom;
+  return (
+    <View style={{ position: 'absolute', bottom: tabBarHeight, left: 0, right: 0, zIndex: 999 }}>
+      <MiniPlayer />
+    </View>
+  );
+}
+
 function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#0a0a1a',
-          borderTopColor: '#1a1a2e',
+          backgroundColor: colors.bg.deepest,
+          borderTopColor: colors.border.subtle,
           borderTopWidth: 1,
         },
-        tabBarActiveTintColor: '#e94560',
-        tabBarInactiveTintColor: '#666',
+        tabBarActiveTintColor: colors.accent.primary,
+        tabBarInactiveTintColor: colors.text.muted,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',
-        },
-        tabBarIconStyle: {
-          marginTop: 0,
         },
       }}
     >
@@ -137,11 +153,11 @@ function MainTabs() {
           ),
           headerShown: true,
           headerTitle: '차트',
-          headerStyle: { backgroundColor: '#0a0a1a' },
-          headerTintColor: '#fff',
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
           headerRight: () => (
             <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
             </TouchableOpacity>
           ),
         })}
@@ -156,11 +172,11 @@ function MainTabs() {
           ),
           headerShown: true,
           headerTitle: '플레이리스트',
-          headerStyle: { backgroundColor: '#0a0a1a' },
-          headerTintColor: '#fff',
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
           headerRight: () => (
             <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
             </TouchableOpacity>
           ),
         })}
@@ -175,11 +191,11 @@ function MainTabs() {
           ),
           headerShown: true,
           headerTitle: '작업실',
-          headerStyle: { backgroundColor: '#0a0a1a' },
-          headerTintColor: '#fff',
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
           headerRight: () => (
             <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
             </TouchableOpacity>
           ),
         })}
@@ -194,11 +210,11 @@ function MainTabs() {
           ),
           headerShown: true,
           headerTitle: '마이뮤직',
-          headerStyle: { backgroundColor: '#0a0a1a' },
-          headerTintColor: '#fff',
+          headerStyle: { backgroundColor: colors.bg.deepest },
+          headerTintColor: colors.text.primary,
           headerRight: () => (
             <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
             </TouchableOpacity>
           ),
         })}
@@ -212,27 +228,34 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar style="light" />
       <NavigationContainer>
-        <RootStack.Navigator
-          initialRouteName="Splash"
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: '#0a0a1a' },
-            animation: 'fade',
-          }}
-        >
-          <RootStack.Screen name="Splash" component={SplashScreen} />
-          <RootStack.Screen name="MainTabs" component={MainTabs} />
-          <RootStack.Screen
-            name="Player"
-            component={PlayerScreen}
-            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-          />
-          <RootStack.Screen
-            name="Settings"
-            component={SettingsScreen}
-            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-          />
-        </RootStack.Navigator>
+        <View style={{ flex: 1 }}>
+          <RootStack.Navigator
+            initialRouteName="Splash"
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.bg.deepest },
+              animation: 'fade',
+            }}
+          >
+            <RootStack.Screen name="Splash" component={SplashScreen} />
+            <RootStack.Screen name="MainTabs" component={MainTabs} />
+            <RootStack.Screen
+              name="Player"
+              component={PlayerScreen}
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <RootStack.Screen
+              name="Settings"
+              component={SettingsScreen}
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <RootStack.Screen name="ArtistDirector" component={ArtistDirectorScreen} />
+            <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
+            <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
+          </RootStack.Navigator>
+          {/* 미니 플레이어 - 탭 바 위에 absolute 배치 */}
+          <MiniPlayerWrapper />
+        </View>
       </NavigationContainer>
     </SafeAreaProvider>
   );
