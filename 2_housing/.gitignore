@@ -39,3 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Reference screenshots / temp images (not version controlled)
+KakaoTalk_Photo_*
+image (*).png
+스크린샷*.png
