@@ -51,12 +51,24 @@ export const DIRECTOR_STAGES: Record<string, DirectorStage[]> = {
     { name: '최종 렌더', icon: '🖼', description: '최종 해상도로 렌더링 중이에요' },
   ],
   artist: [
-    { name: '페르소나 구상', icon: '💭', description: '캐릭터의 성격과 인상을 구체화하고 있어요' },
-    { name: '이름 짓기', icon: '📝', description: '세계관에 맞는 이름을 짓고 있어요' },
-    { name: '장르 배치', icon: '🎸', description: '어떤 음악을 할 아티스트인지 결정 중이에요' },
-    { name: '성격 설정', icon: '🎭', description: '팬들에게 어떻게 다가갈지 설정 중이에요' },
-    { name: '스토리 구성', icon: '📖', description: '데뷔 배경과 커리어 라인을 짜고 있어요' },
-    { name: '마무리', icon: '✨', description: '프로필 카드를 다듬고 있어요' },
+    { name: '페이스 분석', icon: '🔍', description: '대표님이 올린 사진을 자세히 살펴보고 있어요' },
+    { name: '인상 잡기', icon: '✏️', description: '머리와 얼굴 인상을 잡고 있어요' },
+    { name: '컬러 설정', icon: '🎨', description: '피부톤과 색감을 다듬고 있어요' },
+    { name: '체형 작업', icon: '💃', description: '체형과 비율을 그리고 있어요' },
+    { name: '분위기 입히기', icon: '✨', description: '캐릭터 무드를 입히고 있어요' },
+    { name: '시트 완성', icon: '🖼', description: '캐릭터 시트를 마무리 중이에요' },
+  ],
+  artist_refine: [
+    { name: '요청 분석', icon: '🔍', description: '요청한 부분을 분석하고 있어요' },
+    { name: '재해석', icon: '🎨', description: '캐릭터에 자연스럽게 녹이는 방법을 찾고 있어요' },
+    { name: '적용', icon: '✏️', description: '시트에 반영하고 있어요' },
+    { name: '다듬기', icon: '✨', description: '디테일을 정리 중이에요' },
+  ],
+  artist_outfit: [
+    { name: '의상 분석', icon: '👗', description: '고른 의상을 살펴보고 있어요' },
+    { name: '매칭', icon: '🎨', description: '캐릭터와 어울리게 매칭 중이에요' },
+    { name: '입히기', icon: '✏️', description: '시트에 입혀보고 있어요' },
+    { name: '마무리', icon: '✨', description: '실루엣을 다듬고 있어요' },
   ],
   video: [
     { name: '스토리보드', icon: '📋', description: '곡에 맞는 씬을 나누고 스토리를 구성 중이에요' },
@@ -138,12 +150,24 @@ const MODEL_QUEUE_CONFIG: Record<string, QueueConfig> = {
     label: '커버 이미지',
   },
 
-  // ─── 기타 ───
+  // ─── 아티스트 ───
   'artist': {
-    minQueue: 30, maxQueue: 50,
+    minQueue: 30, maxQueue: 50,         // ~50원, 캐릭터 시트 생성: 10~17분
     tickIntervalSec: 20,
     adReduce: { min: 5, max: 10 },
-    label: '아티스트',
+    label: '아티스트 캐릭터',
+  },
+  'artist_refine': {
+    minQueue: 15, maxQueue: 25,         // 미세조정: 4~7분 (짧음)
+    tickIntervalSec: 18,
+    adReduce: { min: 4, max: 8 },
+    label: '아티스트 미세조정',
+  },
+  'artist_outfit': {
+    minQueue: 15, maxQueue: 25,         // 옷 입히기: 4~7분 (짧음)
+    tickIntervalSec: 18,
+    adReduce: { min: 4, max: 8 },
+    label: '아티스트 코디',
   },
   'video': {
     minQueue: 500, maxQueue: 1000,    // MV 최고비용

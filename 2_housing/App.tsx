@@ -26,7 +26,10 @@ import MusicLoadingScreen from './screens/MusicLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
-import ArtistDirectorScreen from './screens/ArtistDirectorScreen';
+import ArtistInputScreen from './screens/ArtistInputScreen';
+import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
+import ArtistResultScreen from './screens/ArtistResultScreen';
+import ArtistCodyScreen from './screens/ArtistCodyScreen';
 import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
 
@@ -55,7 +58,10 @@ export type RootStackParamList = {
   MainTabs: undefined;
   Settings: undefined;
   Player: { track: any };
-  ArtistDirector: undefined;
+  ArtistInput: undefined;
+  ArtistLoading: { mode: 'sheet' | 'refine' | 'outfit'; userText?: string; refineRequest?: string; outfitDesc?: string };
+  ArtistResult: undefined;
+  ArtistCody: undefined;
   ArtistDetail: { artistId: string; artistName?: string };
   DirectorLineup: undefined;
 };
@@ -249,7 +255,14 @@ export default function App() {
               component={SettingsScreen}
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
-            <RootStack.Screen name="ArtistDirector" component={ArtistDirectorScreen} />
+            <RootStack.Screen name="ArtistInput" component={ArtistInputScreen} />
+            <RootStack.Screen
+              name="ArtistLoading"
+              component={ArtistLoadingScreen}
+              options={{ gestureEnabled: false }}
+            />
+            <RootStack.Screen name="ArtistResult" component={ArtistResultScreen} />
+            <RootStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
           </RootStack.Navigator>

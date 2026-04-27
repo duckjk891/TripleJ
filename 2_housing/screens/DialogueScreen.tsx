@@ -132,17 +132,8 @@ export default function DialogueScreen({ route, navigation }: Props) {
           {
             id: 2,
             speaker: 'artist',
-            text: '얼굴 사진 한 장과 컨셉만 알려주시면 캐릭터로 만들어드릴게요.',
-            next: 3,
-          },
-          {
-            id: 3,
-            speaker: 'artist',
-            text: '준비되셨으면 시작해볼까요?',
-            choices: [
-              { text: '네, 만들어볼게요!', action: 'navigate:ArtistDirector' },
-              { text: '나중에 할게요', action: 'navigate:goBack' },
-            ],
+            text: '얼굴 사진 한 장과 캐릭터의 인상만 알려주시면 제가 만들어드릴게요!',
+            action: 'navigate:ArtistInput',
           },
         ] as DialogueNode[];
       case 'video':
@@ -215,7 +206,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
           return;
         }
         // RootStack 라우트는 parent navigator로 이동
-        const ROOT_TARGETS = ['ArtistDirector', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+        const ROOT_TARGETS = ['ArtistInput', 'ArtistLoading', 'ArtistResult', 'ArtistCody', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
         if (ROOT_TARGETS.includes(target)) {
           navigation.getParent()?.navigate(target as any);
         } else {
@@ -248,7 +239,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
           navigation.goBack();
           return;
         }
-        const ROOT_TARGETS = ['ArtistDirector', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+        const ROOT_TARGETS = ['ArtistInput', 'ArtistLoading', 'ArtistResult', 'ArtistCody', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
         if (ROOT_TARGETS.includes(target)) {
           navigation.getParent()?.navigate(target as any);
         } else {

@@ -332,7 +332,7 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // 아티스트 디렉터: 다른 디렉터처럼 Dialogue 화면을 거친 후 ArtistDirector로 이동
+    // 아티스트 디렉터: 다른 디렉터처럼 Dialogue 화면을 거친 후 ArtistInput으로 이동
     if (type === 'artist') {
       const director = DIRECTORS.find((d) => d.type === 'artist');
       navigation.navigate('Dialogue', {

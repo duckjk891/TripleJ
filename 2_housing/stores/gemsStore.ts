@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GEM_REWARDS } from '../data/directors';
 
 interface GemTransaction {
@@ -14,50 +16,62 @@ interface GemsState {
   transactions: GemTransaction[];
   earn: (delta: number, reason: string, refId?: string) => void;
   spend: (delta: number, reason: string, refId?: string) => boolean; // 잔액 부족 시 false
-  initIfEmpty: () => void; // 최초 가입 시 100 보너스
+  initIfEmpty: () => void; // 최초 가입 시 100 보너스 (persist hydration 후 빈 상태일 때만)
 }
 
-export const useGemsStore = create<GemsState>((set, get) => ({
-  balance: 0,
-  transactions: [],
+export const useGemsStore = create<GemsState>()(
+  persist(
+    (set, get) => ({
+      balance: 0,
+      transactions: [],
 
-  earn: (delta, reason, refId) => {
-    if (delta <= 0) return;
-    const tx: GemTransaction = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      delta,
-      reason,
-      refId,
-      at: Date.now(),
-    };
-    set((state) => ({
-      balance: state.balance + delta,
-      transactions: [tx, ...state.transactions].slice(0, 100),
-    }));
-  },
+      earn: (delta, reason, refId) => {
+        if (delta <= 0) return;
+        const tx: GemTransaction = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          delta,
+          reason,
+          refId,
+          at: Date.now(),
+        };
+        set((state) => ({
+          balance: state.balance + delta,
+          transactions: [tx, ...state.transactions].slice(0, 100),
+        }));
+      },
 
-  spend: (delta, reason, refId) => {
-    if (delta <= 0) return true;
-    const { balance } = get();
-    if (balance < delta) return false;
-    const tx: GemTransaction = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      delta: -delta,
-      reason,
-      refId,
-      at: Date.now(),
-    };
-    set((state) => ({
-      balance: state.balance - delta,
-      transactions: [tx, ...state.transactions].slice(0, 100),
-    }));
-    return true;
-  },
+      spend: (delta, reason, refId) => {
+        if (delta <= 0) return true;
+        const { balance } = get();
+        if (balance < delta) return false;
+        const tx: GemTransaction = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          delta: -delta,
+          reason,
+          refId,
+          at: Date.now(),
+        };
+        set((state) => ({
+          balance: state.balance - delta,
+          transactions: [tx, ...state.transactions].slice(0, 100),
+        }));
+        return true;
+      },
 
-  initIfEmpty: () => {
-    const { balance, transactions } = get();
-    if (balance === 0 && transactions.length === 0) {
-      get().earn(GEM_REWARDS.SIGNUP, 'signup');
+      initIfEmpty: () => {
+        const { balance, transactions } = get();
+        if (balance === 0 && transactions.length === 0) {
+          get().earn(GEM_REWARDS.SIGNUP, 'signup');
+        }
+      },
+    }),
+    {
+      name: 'gems-storage-v1',
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({
+        balance: state.balance,
+        transactions: state.transactions,
+      }),
     }
-  },
-}));
+  )
+);

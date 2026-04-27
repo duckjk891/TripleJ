@@ -2091,3 +2091,141 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 10. 저장 후 코디 진입 → 옷 선택 → "이 옷으로 입혀보기" → refine 422 없이 성공 → 옷 입은 시트
 11. preview에서 "이 부분 수정" 텍스트 입력 → refine 호출 → 갱신
 - 2-10: 성장 곡선 UI
+
+---
+
+## v41 - 2026-04-27 - AsyncStorage persist + 아티스트 디렉터 6단계 대화 + previewUrl 자동 + 프로필 수정 백엔드 요청
+
+### 요청 작업
+1. **A. AsyncStorage persist** — `gemsStore`, `directorsStore`, `playerStore` 영속화 (앱 재시작 후에도 잔액·영입·플레이어 상태 유지)
+2. **B-1. DialogueScreen 'artist' 정리** — "준비되었으면 시작해볼까요? / 네 / 나중에" 노드 제거, 인사 후 자동으로 ArtistDirector 진입
+3. **B-2. ArtistDirectorScreen 6단계 대화** — 단조로운 한 줄 컨셉 입력을 머리/얼굴/피부/체형/키/분위기 6개 질문으로 분할. 각 단계 빠른 선택 칩 + 자유 입력 + [건너뛰기]/[다음]
+4. **B-3. previewUrl 자동 채우기** — 기존 myCharacter 보유자 진입 시 백엔드 `preview_url` 응답을 즉시 `previewUrl` state에 주입 → "옷 갈아입기"가 매끄럽게 동작
+5. **C. 백엔드 요청서 작성** — 프로필 수정(닉네임/비밀번호/bio) PATCH 엔드포인트가 백엔드에 부재. `백엔드_요청_프로필수정.md` 작성 (실제 PATCH 호출 구현은 백엔드 반영 후)
+
+### 계획 & 근거
+
+- **A**: zustand `persist` 미들웨어 + `createJSONStorage(() => AsyncStorage)`. `expo install @react-native-async-storage/async-storage`로 SDK 54 호환 버전 설치. 각 store에 `name` 부여:
+  - `gems-storage-v1`: balance + transactions
+  - `directors-storage-v1`: hiredIds + selectedByCategory
+  - `player-storage-v1`: track / queue / currentIndex 만 (sound 객체는 native module이라 직렬화 불가, isPlayerScreenOpen은 휘발성). `partialize`로 제외
+  - `initIfEmpty`는 그대로 둠 — persist hydration 후에 빈 상태일 때만 동작
+- **B-1**: DialogueScreen.tsx `case 'artist'` 노드 3개를 2개로 축소. 노드 2의 next는 제거하고 `action: 'navigate:ArtistDirector'`. ROOT_TARGETS 분기는 v40에서 이미 추가됨
+- **B-2**: 새 step 타입 `q_hair`, `q_face`, `q_skin`, `q_body`, `q_height`, `q_mood` 추가. 단계별 답변 state `styleAnswers`. 각 단계 UI 공통 컴포넌트 (`renderQuestionStep`):
+  - 빠른 칩 탭 → 입력창에 토큰 추가 (이미 있으면 제거)
+  - [건너뛰기] → 답변 빈 문자열로 다음 단계
+  - [다음] → 답변 저장, 다음 단계
+  - 마지막 q_mood [다음]에서 자동 generating 진입
+  - 칩 풀:
+    - 머리: [긴 생머리, 단발, 컬리, 짧은컷, 검정, 갈색, 밝은톤]
+    - 얼굴: [큰 눈, 날카로운, 부드러운, 둥근 얼굴, 갸름한 얼굴]
+    - 피부: [하얀, 자연스러운, 그을린]
+    - 체형: [마른, 보통, 글래머, 근육질]
+    - 키: [아담, 보통, 키 큰]
+    - 분위기: [도시적, 청순, 강렬한 록, 청량, 몽환적]
+  - finalText 합성: `머리는 X, 얼굴은 Y, 피부는 Z, 체형은 W, 키는 V, 분위기는 U` (빈 항목은 스킵)
+- **B-3**: useEffect `/character/me` 응답에서 `preview_url`이 있으면 `setPreviewUrl(BACKEND_BASE_URL + preview_url)` 와 `setPreviewObjectName(sheet_object_name)`. 기존 `existingPreview` 변수는 `previewUrl`로 대체 가능
+- **C**: 백엔드 grep 결과 `auth.py`에 PATCH/PUT 라우트 부재. `upload.py`로 profile_image 업로드만 가능. 닉네임/비밀번호/bio 변경 엔드포인트가 모두 없음. 요청서 작성:
+  - `PATCH /api/auth/me/profile` — 닉네임, bio, display_title, company_name 부분 업데이트
+  - `PATCH /api/auth/me/password` — 현재 비밀번호 검증 + 새 비밀번호
+  - 응답 스키마, 에러 케이스, 검증 규칙 명시
+
+### 테스트 계획
+1. `tsc --noEmit` PASS (0 errors)
+2. **A 영속**:
+   - 곡 생성 → 잔액 +30/+50/+20 적립 → 앱 완전 종료 → 재시작 → 잔액 그대로
+   - 디렉터 영입 → 앱 재시작 → 영입 유지
+   - (참고) 100💎 자동 재지급 안 됨 (이미 데이터 있으므로 initIfEmpty 스킵)
+3. **B-1**: 작업실에서 아티스트 디렉터 클릭 → 인사 2개 → **선택지 없이 자동으로 ArtistDirector** 진입
+4. **B-2**: ArtistDirector → 사진 업로드 → 6단계 질문 차례대로 → 각 단계 칩 탭/직접 입력/건너뛰기 → 마지막 [다음]에서 generating
+5. **B-3**: 기존 캐릭터 보유 상태로 ArtistDirector 진입 → 상단 myArtistCard 표시 → "옷 갈아입기" 탭 → cody 단계로 즉시 진입 (refine 호출 시 422 없이 성공)
+6. **C**: `백엔드_요청_프로필수정.md` 파일 존재, 스키마 정확
+
+### 특이사항 예상
+- A 적용 시 첫 진입에서 hydration 잠깐 빈 상태로 보일 수 있음 → 필요시 `onRehydrateStorage` 콜백으로 처리. 이번엔 깜박임 무시(MVP)
+- B-2 답변이 모두 빈 경우(전부 건너뛰기) → 기존 "건너뛰고 만들기" 동작과 동일하게 baseAttire만 전송
+- B-3는 refresh 후엔 동작하지만, 앱 종료 후엔 useEffect의 `/character/me` 호출이 다시 일어나므로 (네트워크 의존). persist는 character 상태까지는 안 함 (서버 정답이 우선)
+
+---
+
+## v42 - 2026-04-27 - 아티스트 디렉터 화면 분리 + timerStore 통합 + 옷 카테고리 8개 확장
+
+### 요청 작업
+1. 아티스트 만들기를 작사/작곡처럼 **단계적 진행 + 자연 대기 + 광고 단축** 패턴으로 재구성
+2. "만들어볼게요" → 로딩 화면(단계 진행) → **큐 다 끝난 후** 시트 표시
+3. 시트 후 **미세조정도 단계적 대기** 거치고 옷 입히기로 이동
+4. 옷 입히기도 동일하게 단계적 대기
+5. **옷 카테고리 확장**: 상의/하의/신발 + 헤어스타일/헤어컬러(염색)/악세서리/안경/문신 (총 8개)
+
+### 계획 & 근거
+
+#### 신규 화면 4개 (작사 패턴 차용)
+| 화면 | 역할 | 작사 대응 |
+|---|---|---|
+| `ArtistInputScreen` | 사진 + 6단계 질문 (현재 questioning) → "만들기" | LyricsInput |
+| `ArtistLoadingScreen` | API 호출(sheet/refine/outfit 모드 분기) + 단계 진행 + 큐 동기화 + 광고 단축 | LyricsLoading |
+| `ArtistResultScreen` | preview + [미세조정 / 옷 입히기 / 저장 / 작업실로] | LyricsResult |
+| `ArtistCodyScreen` | 8 카테고리 선택 → "이 옷으로 입혀보기" | (작사엔 없음, 신규) |
+
+#### timerStore 변경
+- `DIRECTOR_STAGES.artist` 6단계를 캐릭터 만들기용으로 교체:
+  1. 페이스 분석 🔍
+  2. 인상 잡기 ✏️
+  3. 컬러 설정 🎨
+  4. 체형 작업 💃
+  5. 분위기 입히기 ✨
+  6. 시트 완성 🖼
+- `MODEL_QUEUE_CONFIG`에 모델 추가:
+  - `artist`: 그대로 (minQueue 30~50, tickIntervalSec 20s) — 캐릭터 시트 생성
+  - `artist_refine` (신규): minQueue 15~25, tickIntervalSec 18s — 미세조정용 짧은 큐
+  - `artist_outfit` (신규): minQueue 15~25, tickIntervalSec 18s — 옷 입히기용 짧은 큐
+- `DIRECTOR_STAGES`에 `artist_refine`, `artist_outfit` 4단계 추가 (옵션, 또는 artist 재사용)
+
+#### Loading 동작 (sheet/refine/outfit 공통)
+```
+1. 화면 진입 → API 호출 시작 (백그라운드)
+2. timerStore.startTask('artist', ...) 동시 시작
+3. 단계 메시지: getCurrentStage(artist) 기반 (DIRECTOR_STAGES.artist 사용)
+4. 사용자 광고 시청 시 reduceQueue → 단계 빠르게 진행 (큐 화면 안에서 광고 모달)
+5. 큐 0 + API 응답 두 조건 모두 충족 시 → 다음 화면 navigation.replace
+6. 큐 0인데 API 미응답 → "거의 다 됐어요!" 메시지 유지 + 스피너
+7. 실패 시 alert + 이전 화면 복귀
+```
+
+#### 옷 카테고리 8개 정의
+| 카테고리 | 백엔드 category | 샘플 (광고 0개일 때) |
+|---|---|---|
+| 상의 | 상의 (기존) | 흰 티, 후디, 데님 셔츠 등 |
+| 하의 | 하의 (기존) | 청바지, 슬랙스, 스커트 등 |
+| 신발 | 신발 (기존) | 스니커즈, 부츠, 로퍼 등 |
+| 헤어스타일 | 헤어스타일 | 단발컷, 보브, 슬릭백, 포니테일, 양갈래 |
+| 헤어컬러 | 헤어컬러 | 블랙, 브라운, 블론드, 핑크, 그라데이션 |
+| 악세서리 | 악세서리 | 후프 귀걸이, 진주 목걸이, 체인, 가죽 팔찌, 골드 팔찌 |
+| 안경 | 안경 | 라운드, 스퀘어, 캣아이, 선글라스, 보스턴 |
+| 문신 | 문신 | 손목 별, 어깨 패턴, 팔뚝 글자, 발목 별자리, 등 라인 |
+
+→ 백엔드 ad active API는 새 카테고리 들어오면 빈 배열 응답 (백엔드 수정 금지) → 모두 SAMPLE_ITEMS fallback. 프론트만 동작.
+→ 한 번에 최대 8개 선택 가능. 선택된 항목들을 `refine_request` 텍스트로 합쳐 백엔드 호출 (예: "상의: X, 하의: Y, 헤어스타일: Z, 안경: W…").
+
+#### 기타
+- `App.tsx`: ArtistInput / ArtistLoading / ArtistResult / ArtistCody 라우트 추가
+- `DialogueScreen` artist case의 action `'navigate:ArtistDirector'` → `'navigate:ArtistInput'`로 변경 + ROOT_TARGETS 업데이트
+- `MapScreen` artist 분기에서 ArtistDirector로 직접 가던 코드도 ArtistInput으로 변경
+- 기존 `ArtistDirectorScreen.tsx` 삭제 (또는 ArtistInputScreen으로 rename) — Auth/myCharacter 진입 분기는 ArtistInputScreen에서 처리
+- `ArtistDetailScreen`은 그대로 유지 (별도 용도)
+
+### 테스트 계획
+1. `tsc --noEmit` PASS
+2. **흐름**:
+   - 작업실 → 아티스트 디렉터 → 인사 → ArtistInput → 사진 + 6질문 → 만들기 → ArtistLoading 단계 진행 → 큐 0 + API 응답 → ArtistResult 시트 표시
+   - 광고 시청 → 큐 단축 → 단계 빠르게 진행
+   - 미세조정 → ArtistLoading(refine) → ArtistResult 복귀
+   - 옷 입히기 → ArtistCody (8 카테고리) → ArtistLoading(outfit) → ArtistResult 복귀
+3. **8 카테고리**: 각 카테고리 모달에서 샘플 5개 표시 (백엔드 광고 없음)
+4. **MapScreen 통합**: ArtistInput에서 만들기 진입 시 MapScreen 캐릭터 위 "캐릭터 만드는 중" 진행 표시 (다른 디렉터처럼)
+
+### 특이사항 예상
+- 백엔드 character API는 그대로 (수정 금지). refine은 outfit 모드에서도 그대로 사용 — 텍스트로 옷 설명 전달
+- 큐 + API 동기화 race condition: useEffect로 둘 다 watch
+- 카테고리 8개라 모달이 길어짐 → 가로 스크롤 카테고리 탭으로 처리 (또는 그리드 + 스크롤)
+
