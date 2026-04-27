@@ -14,9 +14,11 @@ import {
   TextInput,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import api from '../services/api';
+import { LinearGradient } from 'expo-linear-gradient';
+import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { colors } from '../theme/colors';
 
 interface ChartTrack {
   id: string;
@@ -26,8 +28,8 @@ interface ChartTrack {
   cover_image_url?: string;
   play_count?: number;
   like_count?: number;
-  genre?: string;
-  mood?: string;
+  genre?: string | string[];
+  mood?: string | string[];
   audio_url?: string;
   duration_sec?: number;
   lyrics?: string;
@@ -42,6 +44,7 @@ const TABS: { key: ChartTab; label: string; endpoint: string }[] = [
   { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },
 ];
 
+// TODO: 테마화 검토 (랭크 메달 색: 금/은/동)
 const RANK_COLORS: Record<number, string> = {
   1: '#FFD700',
   2: '#C0C0C0',
@@ -97,13 +100,13 @@ export default function ChartScreen() {
             onPress={() => setShowSearchModal(true)}
             style={{ paddingHorizontal: 10, paddingVertical: 6 }}
           >
-            <Text style={{ fontSize: 18, color: '#fff' }}>{'🔍'}</Text>
+            <Text style={{ fontSize: 18, color: colors.text.primary }}>{'🔍'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => navigation.navigate('Settings' as never)}
             style={{ paddingHorizontal: 8, paddingVertical: 6 }}
           >
-            <Text style={{ fontSize: 22, color: '#fff' }}>{'⋮'}</Text>
+            <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
           </TouchableOpacity>
         </View>
       ),
@@ -232,12 +235,12 @@ export default function ChartScreen() {
   const getCoverUri = (track: ChartTrack): string | null => {
     const img = track.cover_image || track.cover_image_url;
     if (!img) return null;
-    return `http://192.168.219.106:9003/api/upload/cover-preview/${encodeURIComponent(img)}`;
+    return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
   };
 
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
     const rank = index + 1;
-    const rankColor = RANK_COLORS[rank] || '#888';
+    const rankColor = RANK_COLORS[rank] || colors.text.secondary;
     const coverUri = getCoverUri(item);
     const isLiked = likedTracks.has(item.id);
     const isNewTab = activeTab === 'new';
@@ -277,6 +280,14 @@ export default function ChartScreen() {
             {item.artist_name || '알 수 없는 아티스트'}
           </Text>
           <View style={styles.statsRow}>
+            {(() => {
+              const g = Array.isArray(item.genre) ? item.genre[0] : item.genre;
+              return g ? (
+                <View style={styles.genreBadge}>
+                  <Text style={styles.genreBadgeText} numberOfLines={1}>{g}</Text>
+                </View>
+              ) : null;
+            })()}
             {item.play_count != null && (
               <Text style={styles.statText}>{'▶'} {item.play_count.toLocaleString()}</Text>
             )}
@@ -313,6 +324,12 @@ export default function ChartScreen() {
 
   return (
     <View style={styles.container}>
+      {/* 황혼 그라데이션 배경 (상단 은은하게) */}
+      <LinearGradient
+        colors={['#2a1758', 'transparent']}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 160 }}
+        pointerEvents="none"
+      />
       {/* Tab bar */}
       <View style={styles.tabBar}>
         {TABS.map((tab) => (
@@ -330,7 +347,7 @@ export default function ChartScreen() {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
       ) : tracks.length > 0 ? (
         <FlatList
           data={tracks}
@@ -341,8 +358,8 @@ export default function ChartScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={handleRefresh}
-              tintColor="#e94560"
-              colors={['#e94560']}
+              tintColor={colors.accent.primary}
+              colors={[colors.accent.primary]}
             />
           }
         />
@@ -375,7 +392,7 @@ export default function ChartScreen() {
             <TextInput
               style={styles.searchInput}
               placeholder="곡 제목, 아티스트, 태그 검색"
-              placeholderTextColor="#666"
+              placeholderTextColor={colors.text.muted}
               value={searchQuery}
               onChangeText={setSearchQuery}
               onSubmitEditing={() => handleSearch(searchQuery)}
@@ -398,7 +415,7 @@ export default function ChartScreen() {
 
           {/* 결과 영역 */}
           {searchLoading ? (
-            <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 40 }} />
+            <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
           ) : searchResults.length > 0 ? (
             <FlatList
               data={searchResults}
@@ -450,38 +467,38 @@ export default function ChartScreen() {
       {/* 플레이리스트 선택 모달 */}
       <Modal visible={showPlaylistModal} transparent animationType="slide" onRequestClose={() => setShowPlaylistModal(false)}>
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
-          <View style={{ backgroundColor: '#1a1a2e', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '60%' }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 16 }}>플레이리스트에 담기</Text>
+          <View style={{ backgroundColor: colors.bg.surface1, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '60%' }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text.primary, marginBottom: 16 }}>플레이리스트에 담기</Text>
 
             {playlists.length > 0 && (
               <View style={{ marginBottom: 16 }}>
                 {playlists.map((pl: any) => (
                   <TouchableOpacity
                     key={pl.id}
-                    style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#333' }}
+                    style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border.subtle }}
                     onPress={() => addToExistingPlaylist(pl.id)}
                   >
-                    <Text style={{ color: '#fff', fontSize: 15 }}>{pl.title || pl.name}</Text>
-                    <Text style={{ color: '#666', fontSize: 12 }}>{pl.track_count ?? 0}곡</Text>
+                    <Text style={{ color: colors.text.primary, fontSize: 15 }}>{pl.title || pl.name}</Text>
+                    <Text style={{ color: colors.text.muted, fontSize: 12 }}>{pl.track_count ?? 0}곡</Text>
                   </TouchableOpacity>
                 ))}
               </View>
             )}
 
-            <Text style={{ color: '#999', fontSize: 13, marginBottom: 8 }}>새 플레이리스트 만들기</Text>
+            <Text style={{ color: colors.text.secondary, fontSize: 13, marginBottom: 8 }}>새 플레이리스트 만들기</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TextInput
-                style={{ flex: 1, backgroundColor: '#0a0a1a', borderRadius: 10, padding: 12, color: '#fff', borderWidth: 1, borderColor: '#333' }}
+                style={{ flex: 1, backgroundColor: colors.bg.deepest, borderRadius: 10, padding: 12, color: colors.text.primary, borderWidth: 1, borderColor: colors.border.subtle }}
                 placeholder="플레이리스트 이름"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.text.muted}
                 value={newPlaylistName}
                 onChangeText={setNewPlaylistName}
               />
               <TouchableOpacity
-                style={{ backgroundColor: '#e94560', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' }}
+                style={{ backgroundColor: colors.accent.primary, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' }}
                 onPress={createAndAddToPlaylist}
               >
-                <Text style={{ color: '#fff', fontWeight: 'bold' }}>만들기</Text>
+                <Text style={{ color: colors.text.primary, fontWeight: 'bold' }}>만들기</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -494,11 +511,11 @@ export default function ChartScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   searchModalContainer: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
     paddingTop: 50,
   },
   searchHeader: {
@@ -507,7 +524,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a2e',
+    borderBottomColor: colors.bg.surface1,
   },
   searchBackButton: {
     width: 40,
@@ -517,15 +534,15 @@ const styles = StyleSheet.create({
   },
   searchBackIcon: {
     fontSize: 24,
-    color: '#fff',
+    color: colors.text.primary,
   },
   searchInput: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 14,
     marginHorizontal: 4,
   },
@@ -537,7 +554,7 @@ const styles = StyleSheet.create({
   },
   searchClearIcon: {
     fontSize: 16,
-    color: '#888',
+    color: colors.text.secondary,
   },
   searchResultItem: {
     flexDirection: 'row',
@@ -545,12 +562,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a2e',
+    borderBottomColor: colors.bg.surface1,
   },
   tabBar: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a2e',
+    borderBottomColor: colors.bg.surface1,
     paddingHorizontal: 8,
   },
   tabItem: {
@@ -561,15 +578,15 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabItemActive: {
-    borderBottomColor: '#e94560',
+    borderBottomColor: colors.accent.primary,
   },
   tabLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: colors.text.muted,
   },
   tabLabelActive: {
-    color: '#e94560',
+    color: colors.accent.primary,
   },
   trackItem: {
     flexDirection: 'row',
@@ -577,7 +594,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a2e',
+    borderBottomColor: colors.bg.surface1,
   },
   rankNumber: {
     width: 32,
@@ -588,13 +605,13 @@ const styles = StyleSheet.create({
   newBadge: {
     width: 32,
     height: 18,
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 4,
     justifyContent: 'center',
     alignItems: 'center',
   },
   newBadgeText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 10,
     fontWeight: 'bold',
     letterSpacing: 0.5,
@@ -613,14 +630,14 @@ const styles = StyleSheet.create({
   coverPlaceholder: {
     width: 48,
     height: 48,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 8,
   },
   coverPlaceholderIcon: {
     fontSize: 22,
-    color: '#444',
+    color: colors.border.default,
   },
   trackInfo: {
     flex: 1,
@@ -629,21 +646,36 @@ const styles = StyleSheet.create({
   trackTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 2,
   },
   trackArtist: {
     fontSize: 13,
-    color: '#888',
+    color: colors.text.secondary,
     marginBottom: 4,
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    gap: 8,
   },
   statText: {
     fontSize: 11,
-    color: '#666',
+    color: colors.text.muted,
+  },
+  genreBadge: {
+    backgroundColor: 'rgba(168, 85, 247, 0.18)',
+    borderColor: colors.accent.primary,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    maxWidth: 80,
+  },
+  genreBadgeText: {
+    fontSize: 10,
+    color: colors.accent.primaryGlow,
+    fontWeight: '700',
   },
   actionButton: {
     width: 34,
@@ -653,14 +685,14 @@ const styles = StyleSheet.create({
   },
   likeIcon: {
     fontSize: 20,
-    color: '#555',
+    color: colors.text.muted,
   },
   likeIconActive: {
-    color: '#e94560',
+    color: colors.accent.primary,
   },
   addIcon: {
     fontSize: 22,
-    color: '#555',
+    color: colors.text.muted,
     fontWeight: '300',
   },
   emptyContainer: {
@@ -671,17 +703,17 @@ const styles = StyleSheet.create({
   },
   emptyIcon: {
     fontSize: 64,
-    color: '#333',
+    color: colors.border.subtle,
     marginBottom: 16,
   },
   emptyText: {
     fontSize: 16,
-    color: '#666',
+    color: colors.text.muted,
     marginBottom: 8,
   },
   emptyHint: {
     fontSize: 13,
-    color: '#444',
+    color: colors.border.default,
   },
   fab: {
     position: 'absolute',
@@ -690,10 +722,10 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#e94560',
+    shadowColor: colors.accent.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
@@ -701,7 +733,7 @@ const styles = StyleSheet.create({
   },
   fabText: {
     fontSize: 28,
-    color: '#fff',
+    color: colors.text.primary,
     fontWeight: '300',
     marginTop: -2,
   },

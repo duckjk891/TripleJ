@@ -13,6 +13,7 @@ import {
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { colors } from '../theme/colors';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -231,7 +232,7 @@ export default function ComposerInputScreen({ navigation }: Props) {
                   ? currentConfig.freeTextPlaceholder
                   : '직접 입력...'
               }
-              placeholderTextColor="#666"
+              placeholderTextColor={colors.text.muted}
               value={customInput}
               onChangeText={setCustomInput}
               multiline={currentConfig.freeText}
@@ -260,7 +261,7 @@ export default function ComposerInputScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   chatArea: {
     flex: 1,
@@ -290,7 +291,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
   },
   smallPortraitImage: {
     width: 36,
@@ -306,11 +307,11 @@ const styles = StyleSheet.create({
     maxWidth: '80%',
   },
   directorBubble: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.text.primary,
     borderBottomLeftRadius: 4,
   },
   userBubble: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderBottomRightRadius: 4,
     alignSelf: 'flex-end',
   },
@@ -319,14 +320,14 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   directorText: {
-    color: '#111',
+    color: colors.bg.deepest,
   },
   userText: {
-    color: '#fff',
+    color: colors.text.primary,
   },
   inputArea: {
     borderTopWidth: 1,
-    borderTopColor: '#1a1a2e',
+    borderTopColor: colors.bg.surface1,
     paddingBottom: 30,
   },
   choicesScroll: {
@@ -340,22 +341,22 @@ const styles = StyleSheet.create({
   choiceButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
   choiceNumber: {
-    color: '#e94560',
+    color: colors.accent.primary,
     fontWeight: 'bold',
     fontSize: 14,
     marginRight: 10,
     width: 20,
   },
   choiceText: {
-    color: '#ddd',
+    color: colors.text.secondary,
     fontSize: 14,
   },
   inputRow: {
@@ -367,27 +368,27 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 14,
     maxHeight: 100,
   },
   sendButton: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   sendButtonDisabled: {
-    backgroundColor: '#333',
+    backgroundColor: colors.border.subtle,
   },
   sendButtonText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontWeight: 'bold',
     fontSize: 14,
   },

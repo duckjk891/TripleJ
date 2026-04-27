@@ -14,7 +14,8 @@ import { Audio } from 'expo-av';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
-import api from '../services/api';
+import api, { BACKEND_BASE_URL } from '../services/api';
+import { colors } from '../theme/colors';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
@@ -44,13 +45,22 @@ export default function MusicResultScreen({ navigation }: Props) {
     let mounted = true;
 
     const loadAudio = async () => {
-      if (!store.resultUrl) return;
+      if (!store.resultUrl && !store.generationId && !store.savedTrackId) return;
 
-      // Ensure URL uses accessible IP instead of localhost
-      let audioUrl = store.resultUrl;
-      if (audioUrl.includes('localhost') || audioUrl.includes('127.0.0.1') || audioUrl.includes('minio:')) {
-        audioUrl = audioUrl.replace(/localhost|127\.0\.0\.1/g, '192.168.219.106');
-        audioUrl = audioUrl.replace(/minio:\d+/, '192.168.219.106:5000');
+      // 백엔드 프록시 우선 사용 (LTE/cloudflared 환경에서도 동작)
+      // 저장된 트랙: stream-proxy / 생성 직후: generate stream / 폴백: 원본 URL
+      let audioUrl: string;
+      if (store.savedTrackId) {
+        audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${store.savedTrackId}`;
+      } else if (store.generationId) {
+        audioUrl = `${BACKEND_BASE_URL}/api/generate/${store.generationId}/stream/`;
+      } else {
+        audioUrl = store.resultUrl as string;
+        // 폴백: 동일 LAN 환경에서 MinIO 직접 접근용 (LTE에서는 작동 안 함)
+        if (audioUrl.includes('localhost') || audioUrl.includes('127.0.0.1') || audioUrl.includes('minio:')) {
+          audioUrl = audioUrl.replace(/localhost|127\.0\.0\.1/g, '192.168.219.106');
+          audioUrl = audioUrl.replace(/minio:\d+/, '192.168.219.106:5000');
+        }
       }
       console.log('[MusicResult] Loading audio from:', audioUrl);
 
@@ -94,7 +104,7 @@ export default function MusicResultScreen({ navigation }: Props) {
         sound.unloadAsync();
       }
     };
-  }, [store.resultUrl]);
+  }, [store.resultUrl, store.generationId, store.savedTrackId]);
 
   // Cleanup
   useEffect(() => {
@@ -178,6 +188,7 @@ export default function MusicResultScreen({ navigation }: Props) {
 
       if (trackId) store.setSavedTrackId(trackId);
       setIsSaved(true);
+      lyricsStore.reset();
       Alert.alert('저장 완료', '마이뮤직에서 확인할 수 있어요!');
     } catch (err: any) {
       const status = err?.response?.status;
@@ -190,7 +201,33 @@ export default function MusicResultScreen({ navigation }: Props) {
     }
   };
 
-  const handleGenerateCover = () => {
+  const handleGenerateCover = async () => {
+    // 곡이 아직 저장 안 되었으면 먼저 저장
+    if (!isSaved && store.generationId) {
+      try {
+        const payload = {
+          generation_id: store.generationId,
+          title: lyricsStore.generatedTitle
+            || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
+          genre: store.genre || undefined,
+          mood: store.mood || undefined,
+          prompt: store.lyrics || undefined,
+          lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
+          ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
+        };
+        const res = await api.post('/tracks/upload-from-generation', payload);
+        const trackId = res.data?.id;
+        if (trackId) {
+          try { await api.put(`/tracks/${trackId}`, { is_public: false }); } catch {}
+          store.setSavedTrackId(trackId);
+        }
+        setIsSaved(true);
+        lyricsStore.reset();
+      } catch (err: any) {
+        Alert.alert('저장 실패', err?.response?.data?.error || '곡 저장에 실패했습니다.');
+        return;
+      }
+    }
     navigation.navigate('CoverGeneration');
   };
 
@@ -335,7 +372,7 @@ export default function MusicResultScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   scrollView: {
     flex: 1,
@@ -355,7 +392,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginRight: 12,
   },
   portraitImage: {
@@ -368,33 +405,33 @@ const styles = StyleSheet.create({
   },
   directorBubble: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     padding: 12,
   },
   directorName: {
     fontSize: 13,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     marginBottom: 4,
   },
   directorText: {
     fontSize: 14,
-    color: '#fff',
+    color: colors.text.primary,
     lineHeight: 20,
   },
   errorBox: {
-    backgroundColor: '#2e1a1a',
+    backgroundColor: colors.bg.surface2,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 12,
     padding: 14,
     marginBottom: 16,
   },
   errorText: {
-    color: '#ff6b6b',
+    color: colors.status.error,
     fontSize: 13,
     lineHeight: 20,
   },
@@ -402,10 +439,10 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   playerCard: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     padding: 24,
     alignItems: 'center',
   },
@@ -413,12 +450,12 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg.surface2,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
     borderWidth: 3,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     overflow: 'hidden',
   },
   albumImage: {
@@ -432,12 +469,12 @@ const styles = StyleSheet.create({
   trackTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 4,
   },
   trackSubtitle: {
     fontSize: 13,
-    color: '#888',
+    color: colors.text.secondary,
     marginBottom: 20,
   },
   progressContainer: {
@@ -447,13 +484,13 @@ const styles = StyleSheet.create({
   progressBar: {
     width: '100%',
     height: 6,
-    backgroundColor: '#333',
+    backgroundColor: colors.border.subtle,
     borderRadius: 3,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 3,
   },
   timeRow: {
@@ -462,17 +499,17 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   timeText: {
-    color: '#666',
+    color: colors.text.muted,
     fontSize: 12,
   },
   playButton: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 30,
     paddingVertical: 14,
     paddingHorizontal: 48,
   },
   playButtonText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -485,18 +522,18 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
   },
   coverButton: {
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg.surface2,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   coverButtonText: {
-    color: '#e94560',
+    color: colors.accent.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -504,55 +541,55 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   regenerateButton: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   regenerateButtonText: {
-    color: '#e94560',
+    color: colors.accent.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
   saveButton: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   saveButtonText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
   mvButton: {
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg.surface2,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
   },
   mvButtonDisabled: {
     opacity: 0.5,
   },
   mvButtonText: {
-    color: '#666',
+    color: colors.text.muted,
     fontSize: 16,
     fontWeight: 'bold',
   },
   backButton: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
   },
   backButtonText: {
-    color: '#aaa',
+    color: colors.text.secondary,
     fontSize: 16,
     fontWeight: '600',
   },

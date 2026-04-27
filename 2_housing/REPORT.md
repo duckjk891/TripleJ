@@ -994,3 +994,633 @@ v21에서 추가한 `handleSave()` → `POST /api/tracks/upload-from-generation`
 - backend_9001은 원격 PC(WSL)에서 실행 중이며 추가로 `business.py` 라우트 포함
 - 참고 음악 파일 업로드 기능은 UI에서 수집하지만 API 호출 미구현 → 향후 `/generate/upload-reference/` 연동 필요
 - Wondera 모델 선택 시 사용 가능한 모델: auto, wondera-2.1, wondera-2.2, wondera-o1, wondera-o2
+
+---
+
+## v28 - 2026-04-22 - Sprint 2 잔여 + Sprint 3 통합 + Tailscale 전환
+
+### 요청 작업
+1. Sprint 2 잔여 (2-7/2-8 로딩 단계 세분화, 2-10 성장 곡선 UI)
+2. Sprint 3 (이전 커밋에 반영된 아티스트 디렉터 + 착용 광고)
+3. 백엔드 서버 Tailscale 전환 (`http://100.127.225.55:9003`)
+
+### 수행 결과
+
+| 작업 | 상태 | 설명 |
+|------|------|------|
+| 2-7 로딩 단계 세분화 (LyricsLoading) | ✅ | 4단계 스텝 인디케이터 (영감→작사→운율→마무리) |
+| 2-7 로딩 단계 세분화 (MusicLoading) | ✅ | 5단계 인디케이터 + progress % 연동 |
+| 2-7 로딩 단계 세분화 (CoverGeneration) | ✅ | 4단계 인디케이터 (구상→색감→디자인→마무리) |
+| 2-8 단계별 광고 훅 | 🟡 | 인디케이터 구조만 준비, AdMob 통합은 후속 |
+| 2-10 성장 곡선 UI | ✅ | MyMusicScreen 헤더를 그라데이션 성장 카드로 교체 |
+| Tailscale URL 전환 | ✅ | `services/api.ts` BACKEND_BASE_URL 수정 |
+
+### 파일 변경
+| 파일 | 변경 내용 |
+|------|-----------|
+| `services/api.ts` | BACKEND_BASE_URL → `http://100.127.225.55:9003` |
+| `screens/LyricsLoadingScreen.tsx` | LOADING_STEPS 구조 + 스텝 인디케이터 UI + 스타일 |
+| `screens/MusicLoadingScreen.tsx` | LOADING_STEPS + progress % ↔ 스텝 동기화 |
+| `screens/CoverGenerationScreen.tsx` | LOADING_STEPS + 스텝 인디케이터 UI |
+| `screens/MyMusicScreen.tsx` | LinearGradient import, 성장 카드 UI, 성장 스타일 |
+| `PLAN.md` | v28 계획 추가 |
+| `REPORT.md` | v28 결과 기록 |
+
+### 테스트 결과
+| 테스트 항목 | 결과 |
+|------------|------|
+| TypeScript 컴파일 (`tsc --noEmit`) | PASS (0 errors, 550 files) |
+| `LOADING_MESSAGES` 잔존 검사 | PASS (모두 `LOADING_STEPS`로 대체됨) |
+| cloudflared URL 잔존 검사 | PASS (api.ts 주석 한 줄만 이력 보존) |
+
+### 특이사항
+- **2-8 단계별 광고**: timerStore/AdMob 연동은 범위가 커서 이번 통합 PR에서 UI 구조까지만. 다음 스프린트에 "이 단계 광고로 스킵" 버튼을 각 스텝에 추가 예정.
+- **MinIO 폴백 IP (192.168.219.106)**: `MusicResultScreen.tsx`에 남아 있지만 `savedTrackId`/`generationId` 모두 없는 극단 케이스에만 동작 — Tailscale MinIO 포트 미확정으로 보류.
+- **성장 카드 레벨 공식**: `Math.floor(tracks.length / 3) + 1` — 3곡마다 +1 레벨, 베스트 트랙은 최다 재생수 기준.
+- **Tailscale 전제**: 사용자 MAC 100.106.9.84 / 서버 100.127.225.55 같은 tailnet 전제. 테스트 시 두 기기 모두 Tailscale 연결 필요.
+
+---
+
+## v29 - 2026-04-22 - 회원가입 스펙 / 로그 API 문서 / 프롬프트 통합
+
+### 요청 작업
+1. 회원가입 필드 추가(기획사명/호칭) — 백엔드 스펙 문서화
+2. 로그 API 엔드포인트 확인 + 앱팀 사용법 전달
+3. PlayerScreen 프롬프트 표시를 "작곡 프롬프트 하나"로 통합
+
+### 수행 결과
+
+| 작업 | 상태 | 결과 |
+|------|------|------|
+| 회원가입 스펙 문서 | ✅ | `회원가입_필드_백엔드_요청.md` 생성 — DB/모델/라우트/호환성/테스트 7개 섹션 |
+| 로그 API ping 검증 | ✅ | `/api/_logs/tail\|download\|info` 전부 HTTP 401 → **엔드포인트 존재 확정** |
+| 로그 API 사용법 문서 | ✅ | `백엔드_로그_API_사용법.md` 생성 — curl 예시 / 보안 경고 / alias 권장 |
+| PlayerScreen 프롬프트 통합 | ✅ | 라벨 "작곡 프롬프트"로 변경 + 핵심 파라미터 칩 박스 추가 |
+
+### 파일 변경
+| 파일 | 변경 내용 |
+|------|-----------|
+| `screens/PlayerScreen.tsx` | prompt 탭 UI 개편 (라벨/헬퍼/칩 박스 6개 필드), 스타일 7개 추가 |
+| `회원가입_필드_백엔드_요청.md` | 신규 — 백엔드 담당(jaekyu891)에게 전달용 스펙 |
+| `백엔드_로그_API_사용법.md` | 신규 — 앱팀 운영/디버깅 가이드 |
+| `PLAN.md` | v29 계획 추가 |
+| `REPORT.md` | v29 결과 기록 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| TypeScript 컴파일 (`tsc --noEmit`) | PASS (0 errors) |
+| 로그 API ping (4개) | `/health` 200, `/_logs/*` 401 (예상 동작) |
+| PlayerScreen 수동 | 사용자 Expo Go에서 프롬프트 탭 육안 확인 필요 |
+
+### 특이사항
+- **메모리 제약 준수**: backend_9003 코드 미수정. 회원가입 필드는 **스펙 문서로만** 백엔드 담당에게 전달하고, 머지 후 프론트 리팩토링 (SignupScreen 통합, onboardingStore 제거) 예정.
+- **로그 토큰 관리**: `LOG_ACCESS_TOKEN`은 `.env` gitignore — 앱팀 공유는 카톡/슬랙 DM 등 안전 채널로만. 문서에 경고 명시.
+- **프롬프트 UI**: 현재 백엔드 `Track` 모델이 `prompt` 필드 1개뿐이라 작사/작곡 분리는 불가. 작곡 프롬프트 하나로 통합하되 핵심 파라미터를 칩으로 재구성해 가독성 확보.
+- **PANN 로고**: 이번 PR 범위 제외. `logo_prompts.md` 기반 AI 생성은 사용자 작업 대기.
+
+### 다음 단계
+- 사용자 앱 테스트 (Tailscale 전환 + v28/v29 UI 변경 전체)
+- 이상 없으면 통합 PR(Sprint 2 잔여 + Sprint 3 + v29) 커밋/푸시
+- 백엔드 담당이 회원가입 필드 머지하면 프론트 SignupScreen 리팩토링 착수
+
+---
+
+## v30 - 2026-04-22 - 회원가입 필드 프론트 통합 (Onboarding 완전 제거)
+
+### 요청 작업
+백엔드에 `company_name`/`display_title` 필드 머지 완료 → 프론트가 Onboarding에서 읽는 구조를 **회원가입 → DB → user 구독** 으로 전환
+
+### 수행 결과
+
+| 파일 | 변경 |
+|------|------|
+| `stores/authStore.ts` | `AuthUser`에 `company_name?/display_title?` 추가. `register` 시그니처 확장 (+companyName, +displayTitle), POST body에 조건부 포함 |
+| `screens/SettingsScreen.tsx` | 회원가입 모드에 2개 필드 추가 (기획사명/호칭), 기본값/자동 생성 로직, helperText, 프로필 카드에 company_name+display_title 표시 |
+| `screens/SplashScreen.tsx` | `useOnboardingStore` 임포트 제거, `isCompleted` 분기 제거 → 항상 `MainTabs`로 이동 |
+| `screens/MyMusicScreen.tsx` | `useOnboardingStore` 제거, 성장 카드 라벨을 `user.company_name`/`user.display_title` 기반으로 전환 |
+| `App.tsx` | `OnboardingScreen` import / 라우트 / 타입 3곳 제거 |
+| `screens/OnboardingScreen.tsx` | **파일 삭제** |
+| `stores/onboardingStore.ts` | **파일 삭제** |
+| `PLAN.md` | v30 계획 추가 |
+| `REPORT.md` | v30 결과 기록 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| TypeScript 컴파일 (`tsc --noEmit`) | PASS (0 errors) |
+| `onboardingStore`/`OnboardingScreen` 참조 잔존 | PASS (코드 0건, 기록 문서만 잔존) |
+| Splash → MainTabs 직행 | 코드상 확정 |
+
+### 사용자 확인 필요 사항
+1. Expo Go 재로드 (Metro 캐시 삭제 권장: `npx expo start --clear`)
+2. **기존 계정으로 로그인** — `company_name`/`display_title` NULL이면 fallback(`${닉네임} 엔터테인먼트` / "대표") 표시됨
+3. **신규 회원가입** — 필드 2개 보이는지, 저장 후 MyMusicScreen 성장 카드에 반영되는지
+4. 로그아웃 후 재로그인 — 값 그대로 유지 확인 (DB 영속)
+
+### 특이사항
+- 회원가입 폼에 helperText 추가: "PANN에서는 기획사명과 호칭으로 불러드려요. 나중에 설정에서 변경할 수 있어요." (단, 현재 Settings의 "닉네임/비번 변경"은 아직 준비 중 — 백엔드 `PATCH /api/auth/me/profile` 추후 요청 필요)
+- 프로필 카드 `companyText` 색상은 `accent.primary`(보라)로 강조, `nicknameText`에 호칭 인라인 결합
+- 기존 사용자는 DB에 두 필드 NULL이므로 **fallback 렌더**로 자연스럽게 전환됨
+
+---
+
+## v31 - 2026-04-22 - MapScreen 게스트 UI 정리 + 프로필 편집 기능
+
+### 요청 작업
+1. 작업실 로그인 전 화면은 **맵 + 캐릭터만** 순수하게 표시
+2. 기존 사용자도 기획사명/호칭을 **Settings에서 변경** 가능하도록
+
+### 수행 결과
+
+| 파일 | 변경 |
+|------|------|
+| `screens/MapScreen.tsx` | 스테퍼 바 / 방 라벨 / 펄스 글로우 모두 `user &&` 조건부로 전환 |
+| `stores/authStore.ts` | `updateProfile(patch)` 액션 추가 (`PATCH /auth/me/profile`) |
+| `screens/SettingsScreen.tsx` | 프로필 카드에 "기획사 정보 편집" 버튼, 편집 모달 (기획사명/호칭 입력), 저장 시 authStore로 병합, 스타일 9개 추가 |
+| `PLAN.md` | v31 계획 추가 |
+| `REPORT.md` | v31 결과 기록 |
+
+### 백엔드 엔드포인트 확인 (ping)
+| Endpoint | HTTP | 판정 |
+|----------|------|------|
+| `PATCH /api/auth/me/profile` | 401 | **존재**, 토큰 필요 |
+| `PATCH /api/auth/me` | 405 | 미구현 |
+| `PUT /api/auth/me` | 405 | 미구현 |
+| `PUT /api/users/me` | 404 | 미구현 |
+
+→ 백엔드 담당이 이미 `PATCH /api/auth/me/profile`를 구현해둠 — 프론트에서 바로 연동 가능.
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| TypeScript 컴파일 (`tsc --noEmit`) | PASS (0 errors) |
+| MapScreen 게스트 UI 제거 | 코드상 스테퍼/라벨/펄스 모두 user 가드 처리됨 |
+| Settings 프로필 편집 모달 | 코드상 완성, UX 수동 확인 필요 |
+
+### 확인 절차 (Expo Go)
+
+**1. MapScreen 로그인 전**
+- Settings → 로그아웃
+- 하단 탭 "작업실" → 맵 + 캐릭터만 보여야 함
+- 상단 "오늘의 작업" 스테퍼 **없음**, 방 라벨 **없음**, 펄스 **없음**
+- 캐릭터 탭 시 기존 로그인 유도 오버레이만 동작
+
+**2. 로그인 후 원복 확인**
+- Settings → 로그인
+- 작업실 재진입 → 스테퍼/라벨/펄스/첫 방문 튜토리얼 모두 정상 등장
+
+**3. 프로필 편집**
+- Settings → 프로필 카드 아래 "기획사 정보 편집" 버튼 탭
+- 모달에서 기획사명/호칭 수정 → 저장
+- 완료 Alert → 카드 즉시 갱신
+- 로그아웃 → 재로그인 → 수정값 유지 (DB 영속 확인)
+
+### 특이사항
+- **게스트 UX 일관성**: 튜토리얼 `useEffect`는 `user && !tutorialShownRef.current` 조건이라 자동으로 안 뜸. 추가 게이팅 불필요
+- **기본값 자동 채움**: 편집 모달에서 빈 값 저장 시 `${nickname} 엔터테인먼트` / `대표`로 자동 치환하여 서버에 전송 — 백엔드 NULL 허용 여부와 무관하게 일관 동작
+- **에러 응답 처리**: `updateProfile`가 `error.response.data.detail` 또는 `.error` 둘 다 커버 (FastAPI 디폴트/커스텀 에러 모두 대응)
+- **로그 API / PATCH API는 backend_9003에 이미 반영**된 상태 — 본 PR에서는 프론트만 수정
+
+---
+
+## v32 - 2026-04-22 - 작업실 UX 대개편
+
+### 요청 작업 (6건)
+헤더 엔터명 / 디렉터명 라벨 / 헤더 튜토리얼 / 펄스 중앙·문구 / 대화 호칭 / **디렉터 단계별 스테퍼 팝업 (핵심)**
+
+### 수행 결과
+
+| 항목 | 상태 | 파일 |
+|------|------|------|
+| 헤더 엔터명 (로그아웃 시 "작업실") | ✅ | MapScreen useLayoutEffect → parent.setOptions |
+| 헤더 ❓ 튜토리얼 토글 | ✅ | headerLeft 주입, 자동 팝업 제거 |
+| 방 라벨 → 디렉터 명 (캐릭터 아래) | ✅ | DIRECTOR_NAMES 보라 배경 라벨 y+50 |
+| 펄스 확대 + "클릭해서 작업 시작!" | ✅ | 140 mapScale 원 + 보라 배지 y+90 |
+| 대화 호칭 반영 | ✅ | LyricsPromptReviewScreen `{titleLabel}님` |
+| "작사 대기중" → "작사중" | ✅ | LyricsPromptReviewScreen startTask |
+| 상단 스테퍼 제거 | ✅ | MapScreen stepperBar 블록 삭제 |
+| **단계 스테퍼 팝업 신설** | ✅ | 6단계 시스템 + 광고=한 단계 스킵 |
+
+### 파일 변경
+| 파일 | 변경 |
+|------|------|
+| `stores/timerStore.ts` | `TimerTask.initialQueue`, `DIRECTOR_STAGES`(6종×6단계), `TOTAL_STAGES`, `getCurrentStage`, `getStageSize` |
+| `screens/MapScreen.tsx` | useLayoutEffect 헤더/튜토리얼 버튼, 펄스 UI, 디렉터명 라벨, 상단 스테퍼 제거, 단계 스테퍼 팝업, showAdAndReduceQueue 개선, 스타일 16개 신규 |
+| `screens/LyricsPromptReviewScreen.tsx` | useAuthStore 구독, 4곳의 호칭/문구 교체, taskName "작사중" |
+| `PLAN.md` | v32 계획 추가 |
+| `REPORT.md` | v32 결과 기록 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| TypeScript 컴파일 | PASS (0 errors) |
+| 6개 요청 반영 여부 | 모두 코드상 반영 — 사용자 수동 확인 필요 |
+
+### 특이사항 및 설계 근거
+- **단계 계산 공식**: `stage = floor((1 - queueNumber / initialQueue) × 6)` → 0~5 범위, 진행률에 자연스럽게 대응
+- **광고 1회 = 한 단계 스킵**: `reduceAmount = max(stageSize, baseReduce)` — 기본 adReduce가 작을 수 있어 stageSize 하한 적용
+- **단계 설명 문구**: 각 디렉터별로 맥락 있는 6개 설명 (ex. 작사: 테마 해석 → 운율 → 초안 → 감정 → 후렴 → 최종). 단순 숫자가 아닌 "내가 일을 맡긴 디렉터가 지금 뭘 하는지" 체감 강화
+- **튜토리얼 자동 팝업 제거**: 사용자 요청대로 헤더 ❓로 **수동 토글만** 남김. 첫 방문 자동 오픈은 혼란 주므로 제외
+- **디렉터명 라벨 위치 y+50**: 캐릭터 바로 아래 살짝 떨어뜨려서 가독성 + 맵 구조 훼손 최소화. 로그아웃 시엔 완전 숨김
+- **SplashScreen "당신의 1인 기획사"**: 프리로그인 브랜드 태그라인이라 호칭 교체 대상 아님 (유저 명시 안 함, 유지)
+- **고아 스타일**: 기존 popupContainer/popupTitle 등 미사용 스타일은 이번 PR에서 제거하지 않고 남김 (런타임 영향 없음, 최소 diff 유지)
+
+### 사용자 확인 (Expo Go)
+1. Metro 재시작 (`--clear`) — timerStore 구조 변경으로 캐시 무효화 필요
+2. 작업실 헤더 엔터명, ❓ 버튼, 맵 상단 스테퍼 없음 확인
+3. 펄스/문구 위치 적절한지
+4. 작업 진행 → 디렉터 재클릭 → 단계 스테퍼 팝업 / "광고 보고 이 단계 빠르게 끝내기" 동작
+5. 프롬프트 리뷰 화면 호칭/문구 반영
+
+---
+
+## v33 - 2026-04-22 - 로그아웃 시 작업실 헤더 ❓ 제거
+
+### 요청 작업
+로그아웃 상태에서 작업실 헤더에 튜토리얼 ❓ 아이콘이 보여 "❓ 작업실"처럼 표시되던 것을 `작업실`만 보이도록 수정
+
+### 수행 결과
+| 파일 | 변경 |
+|------|------|
+| `screens/MapScreen.tsx` | `useLayoutEffect` → `headerLeft: user ? () => ❓ 버튼 : undefined` 삼항 처리. 의존성에 `user` 추가 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| TypeScript 컴파일 | PASS (0 errors) |
+| 로그아웃 시 헤더 | "작업실"만 표시 (❓ 숨김) — 코드상 확정 |
+| 로그인 시 헤더 | 좌측 ❓ + 엔터명 표시 — 기존 동작 유지 |
+
+### 특이사항
+- `headerLeft: undefined`로 설정하면 React Navigation이 `headerLeft` 자체를 렌더링하지 않음 (빈 `View`가 아닌 진짜 제거)
+- `user` 의존성 추가로 로그아웃 후에도 즉시 헤더 갱신
+
+---
+
+## v34 - 2026-04-22 - 헤더 툴팁 정렬 + 캐릭터 이동 + 맵 bg/fg 분리
+
+### 요청 작업
+1. 도움말 툴팁을 **헤더 ⓘ 아이콘**을 정확히 가리키도록 재배치
+2. 캐릭터 이동 구현 + 벽/가구1 < 캐릭터 < 가구2+ 레이어링 + 박스 없는 텍스트 라벨이 함께 움직이도록
+
+### 수행 결과
+
+| 파일 | 변경 |
+|------|------|
+| `render_map.py` | TMX 레이어를 이름 기반으로 bg/fg 분리 렌더 (`BG_LAYER_NAMES` 셋). `map_bg.png`(바닥~가구1), `map_fg.png`(가구2~가구5) 2장 + 기존 `map_rendered.png` 유지 |
+| `assets/map_bg.png` | **신규 생성** 71KB |
+| `assets/map_fg.png` | **신규 생성** 51KB (투명 배경) |
+| `components/Character.tsx` | Animated.View wrapper + offsetX/Y translate, walk 단계마다 방향별 ±WALK_RADIUS 이동(2500ms). idle에서 원점 감쇠. `name`/`roleEn` props + textShadow 기반 박스없는 라벨 내부 렌더 |
+| `screens/MapScreen.tsx` | `MAP_BG` 배경 + `MAP_FG` 전경(zIndex 15, pointerEvents none 부모 View로 감싸 `Image` 제약 우회), Character에 name/roleEn 전달, 기존 인라인 네임태그 제거, 툴팁 `right: 52, marginRight: -4`로 ⓘ 중앙 정렬, "클릭해서 작업 시작!" zIndex 26으로 fg 위 |
+
+### 레이어 구조 최종
+```
+zIndex 26 : "클릭해서 작업 시작!" 배지   ← 항상 보임
+zIndex 25 : 디렉터 네임 라벨 (Character 내부) ← 캐릭터와 함께 이동, 가구 뚫고 보임
+zIndex 15 : 가구2~가구5 (map_fg.png)   ← 캐릭터 앞 (터치 투과)
+zIndex 10 : 캐릭터 스프라이트 + 이동 transform
+zIndex  1 : 다음 액션 스포트라이트 펄스
+zIndex  0 : 바닥/벽/가구1 (map_bg.png)
+```
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+| bg/fg PNG 생성 | PASS (render_map.py 실행 완료) |
+| 레이어 합산 타일 수 | bg 2070 + fg 274 = 2344 타일 (전체와 일치) |
+
+### 특이사항
+- **Image의 pointerEvents 이슈**: React Native의 `Image` 컴포넌트는 `pointerEvents` prop을 직접 받지 못함. 부모 `View`에 감싸서 해결
+- **캐릭터 이동 범위**: WALK_RADIUS_X=60, WALK_RADIUS_Y=35 (맵 좌표). mapScale(~0.5) 기준 실제 화면 ±30/±17px 이동. 방 범위(약 140x280 타일 공간)를 벗어나지 않는 안전 값
+- **idle 복귀**: walk 후 idle/read/drink 시 원점으로 1500ms 감쇠 → 무한 드리프트 방지. 방 밖 탈출 없음
+- **라벨 가독성**: 박스 제거 → textShadow로 어두운 외곽선 효과 (shadowRadius 3~4). 밝은 바닥에서도 어두운 배경 위에서도 판독 가능
+- **Character 컴포넌트 리팩토링**: 외곽 TouchableOpacity → Animated.View + 내부 TouchableOpacity로 구조 변경 (transform은 Animated.View에만 적용 가능)
+- **튜토리얼 툴팁 정렬**: `right: 52`는 ⓘ/⋮ 아이콘의 상대 위치 계산 기반 (marginRight 12 + ⋮ 38 + ⓘ 왼쪽 반 20 ≈ 70 근방, 꼬리 살짝 오른쪽으로 오프셋)
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+1. 작업실 헤더 ⓘ 바로 아래에 "도움말을 보려면 클릭하세요" 말풍선 정확히 정렬
+2. 캐릭터가 3초마다 walk 단계에서 살짝 이동 → idle로 돌아오며 원점 근방 유지
+3. 캐릭터 이름이 **박스 없이** 텍스트만 떠 있고, 이동 시 함께 따라옴
+4. 가구2 이상의 오브젝트(의자 뒤, 액자 앞 등)가 캐릭터를 일부 가림
+5. 벽/가구1은 캐릭터 뒤에 (자연스러움)
+
+---
+
+## v35 - 2026-04-22 - 힌트 헤더 내부 이동, 이동 반경 축소, 라벨 캐릭터 아래
+
+### 요청 4건
+1. 힌트 말풍선을 ⓘ **왼쪽 헤더 내부**에 배치
+2. 캐릭터 이동을 **바닥만** (가구 회피)
+3. 네임태그를 **캐릭터 아래**, 최대한 가깝게
+4. "클릭해서 작업 시작!"을 **펄스 위쪽**
+
+### 수행 결과
+
+| 파일 | 변경 |
+|------|------|
+| `screens/MapScreen.tsx` | `useLayoutEffect` headerRight 재구성 — `[말풍선][꼬리▶][ⓘ][⋮]`. 본문의 tutorialHintWrap 블록 제거. DIRECTORS 배열에 `walkRadiusX/Y` 필드 추가. Character에 walkRadiusX/Y props 전달. "클릭 시작" 배지 y위치 `(d.y - 70) * mapScale - 40`로 변경 |
+| `components/Character.tsx` | 상수 WALK_RADIUS_X/Y 제거 → props 받음 (기본 30/15). 라벨 wrapper `top: -40` → `top: 64 * spriteScale + 2`. 순서: 이름(굵은) 위, roleEn 아래. characterStyles 재배열 |
+
+### 스타일 변경
+| 스타일 | 변경 |
+|--------|------|
+| `tutorialHintWrap`, `tutorialHintTail`, `tutorialHintBubble`, `tutorialHintText` | **제거** |
+| `headerHintBubble`, `headerHintText`, `headerHintTail` | **신규** (헤더 내부 flex row용) |
+
+### 디렉터별 walk 반경
+| 디렉터 | walkRadiusX | walkRadiusY |
+|--------|-------------|-------------|
+| artist  | 35 | 20 |
+| lyricist | 35 | 20 |
+| composer | 30 | 18 |
+| wondera  | 30 | 18 |
+| image    | 35 | 20 |
+| video    | 35 | 20 |
+
+기존 60/35 → 대폭 축소. 작곡실(composer+wondera 동거)만 더 좁게.
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+
+### 특이사항
+- **헤더 내부 말풍선**: `useLayoutEffect` 의존성에 `showTutorialHint`, `showTutorial` 추가로 상태 변화 즉시 반영. 다른 대안(본문 top: 0)보다 헤더 내 수평 배치가 UX 명확
+- **walk 반경**: 가구 위치가 맵마다 다르므로 완벽한 충돌 회피는 TMX 픽셀 마스크가 필요. 현재는 "바닥 중심점 근방"으로 보수적 반경 지정 → 실제 테스트에서 특정 방에서 여전히 가구 침범하면 해당 디렉터만 추가 축소
+- **네임태그 위치**: `64 * spriteScale + 2`는 sprite 바로 아래 2px. 스프라이트 크기가 mapScale 따라 변해도 자동 추종
+- **"클릭 시작" 배지**: 펄스 내부가 아닌 **위쪽** 공간에 배치 → 캐릭터 위→배지→펄스 원→캐릭터 전체 구조가 명확
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+1. 로그인 상태 Studio 헤더: `[도움말을 보려면 클릭▶] ⓘ ⋮` 한 줄 배치 확인
+2. 힌트 말풍선/ⓘ 어느 쪽 탭해도 힌트 dismiss 확인
+3. 각 캐릭터가 방 바닥 안에서만 이동 (책상/의자 위로 안 가는지)
+4. 네임태그가 캐릭터 발 바로 아래 2px 간격으로 붙어 있고, 함께 이동
+5. 다음 액션 디렉터의 "클릭해서 작업 시작!" 배지가 펄스 위쪽(캐릭터 위)에 표시
+
+---
+
+## v36 - 2026-04-22 - Walk zone을 TMX 바닥 레이어에서 자동 추출
+
+### 요청 작업
+v35의 임의 반경(35/20) 대신, TMX의 실제 바닥/가구 데이터를 기반으로 방별 이동 영역을 자동 산출
+
+### 수행 결과
+
+| 파일 | 변경 |
+|------|------|
+| `render_map.py` | `json`, `deque` 임포트. `BLOCKER_LAYER_NAMES`, `DIRECTOR_POSITIONS`, `WALK_FLOOD_MAX_DEPTH=4` 상수 추가. 렌더 루프에 `floor_tiles`/`blocker_tiles` 수집. 렌더 후 nearest_walkable anchor + BFS로 방별 zone 생성. `assets/director_walk_zones.json` 저장 |
+| `assets/director_walk_zones.json` | **신규** 생성 (0.6KB, 디렉터 6개 × 10~24 타일 delta) |
+| `screens/MapScreen.tsx` | `WALK_ZONES` JSON require. `DIRECTORS` 배열에서 walkRadiusX/Y 필드 제거. Character에 `walkDeltas={WALK_ZONES[d.type]}` 전달 |
+| `components/Character.tsx` | Props walkRadiusX/Y → `walkDeltas: Array<[number, number]>`. `currentDeltaRef`로 현재 위치 추적. walk 로직 재구성 — zone 샘플링 + 재추첨(<32px) + 방향 자동 산출. idle/read/drink 원점 복귀 제거 |
+
+### 실행 결과 (render_map.py 로그)
+```
+바닥 타일: 1315, 차단 타일: 754, 보행 가능 타일: 716
+
+[artist]   base=(208,340)  anchor=(6,10)  (208,336)   zone=10 타일
+[lyricist] base=(208,660)  anchor=(8,20)  (272,656)   zone=24 타일  ← 가장 넓음
+[composer] base=(208,980)  anchor=(6,29)  (208,944)   zone=15 타일
+[wondera]  base=(320,980)  anchor=(9,30)  (304,976)   zone=15 타일
+[image]    base=(208,1300) anchor=(6,39)  (208,1264)  zone=16 타일
+[video]    base=(208,1620) anchor=(5,50)  (176,1616)  zone=20 타일
+```
+
+각 디렉터의 **실제 방 바닥 구조**가 반영됨 (10~24 타일 = 방마다 실질적으로 다른 영역).
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `python3 render_map.py` | SUCCESS (이미지 3장 + JSON 1장 출력) |
+| `tsc --noEmit` | PASS (0 errors) |
+| JSON 포맷 검증 | `[dx, dy]` 쌍 배열 — Character.walkDeltas 시그니처와 일치 |
+| 원점 이탈 방지 | 모든 delta가 같은 방 내 연결 영역 → BFS로 수학적 보장 |
+
+### 특이사항 / 설계 근거
+
+- **앵커 재산출**: 디렉터 베이스 좌표가 가구 타일(책상 등)에 걸려 있으면 그 타일은 walkable이 아님 → nearest_walkable로 가장 가까운 바닥 타일을 앵커로 삼음. 실제로 4명의 디렉터는 앵커가 base와 다름 (예: lyricist base=(208,660) → anchor=(272,656))
+- **BFS 깊이 4**: 4타일 Manhattan = 약 128px 반경. 대부분 방이 7~10타일 폭이므로 방의 절반~전체 커버
+- **재추첨 로직**: 현재 위치와 < 32px면 재추첨 (최대 3회). "같은 자리 왕복" 방지, 자연스러운 패턴
+- **원점 복귀 제거**: idle/read/drink 시 원점(0,0) 돌아가지 않음. 일하다가 책상 쪽으로 가서 read → 다시 걸어서 다른 자리 이동. 더 현실적
+- **TMX 변경 대응**: 방 구조 수정 시 `python3 render_map.py` 한 번으로 zone 재산출 + PNG 재렌더 동시 처리
+- **크기**: JSON 0.6KB — 번들 부담 없음
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+1. 각 방마다 캐릭터 이동 패턴이 실제 방 모양을 따르는지 (가구 피해서 바닥만)
+2. 작사실(lyricist, 24 타일)이 가장 활동적, 아티스트룸(artist, 10 타일)이 가장 제한적 — 이동 빈도/범위 차이
+3. 책상/의자 위로 캐릭터가 올라가는 케이스 0건
+4. 캐릭터가 네임태그와 함께 움직이는지
+
+---
+
+## v37 - 2026-04-24 - UI 정돈 7건 + 아티스트 디렉터 생성 플로우
+
+### 요청 7건 전체 반영
+
+| # | 요청 | 결과 |
+|---|------|------|
+| 1 | 캐릭터 제자리 + 라벨 작은 박스 | ✅ `Character.tsx` walk 제거, 둥근 테두리 보라 박스 라벨 |
+| 2 | "~ 중" / "~ 일을 완료했어요!" / 대기번호 숨김 | ✅ `MapScreen.tsx` 티켓 + 팝업 문구 교체 |
+| 3 | 단계당 광고 1회 비용 재계산 | ✅ `비용_재계산_v37.md` 분석 문서 |
+| 4 | 작곡 세부 설정 대화형 전환 | ✅ Switch 제거, 6개 sub-step + "건너뛰기/적용" 버튼 |
+| 5 | 아티스트 디렉터 재구성 | ✅ 사진→코디→스타일 텍스트→생성→프리뷰→저장/수정 |
+| 6 | 솔로 시 서브보컬 차단 검증 | ✅ musicService isDuet 게이팅 정상 확인 |
+| 7 | "대기번호 드릴게요" → "시작할게요" | ✅ 커버/작곡 멘트 교체 |
+
+### 파일 변경
+
+| 파일 | 변경 |
+|------|------|
+| `components/Character.tsx` | walk 로직 비활성 (walkDeltas 수신만), 라벨을 `nameBadge` 둥근 박스 + 10pt 텍스트로 축소 (roleEn 제거) |
+| `screens/MapScreen.tsx` | 캐릭터 위 티켓: "taskName 중" / "taskName 일을 완료했어요!"; 진행률 텍스트에서 "대기번호 #N" 삭제; 보상 팝업 "단계가 앞당겨졌어요!"; 튜토리얼 문구 수정; Character에 walkDeltas/roleEn 전달 제거 |
+| `screens/LyricsPromptReviewScreen.tsx` | `startTask('lyricist', '작사중')` → `'작사'` |
+| `screens/CoverGenerationScreen.tsx` | "대기번호를 드릴게요!" → "커버 작업을 시작할게요!..." |
+| `screens/MusicGenerationScreen.tsx` | DIRECTOR_MESSAGES 7→12항목, case 6 단일 페이지 → case 6~11 분할 (제외 스타일 / 자유도 / 실험성 / 오디오 세기 / BPM / Key). Switch 제거, [건너뛰기/적용] 버튼 + 슬라이더 끝점 라벨. handleGenerate에 "작곡 시작할게요!" 채팅 추가 후 1.5초 뒤 Map 이동. 새 스타일 `sliderEndLabel/sliderValueCenter/twoBtnRow/skipBtn/applyBtn` |
+| `screens/ArtistDirectorScreen.tsx` | **완전 재작성** — 목록 UI 제거, 대화 플로우로 전환. welcome → photo_done → cody(상의/하의/신발 각 모달) → style_text → generating → preview → done. API 연동: `GET /character/me`, `POST /character/generate-sheet`(FormData), `POST /character/save`, `POST /character/refine`, `DELETE /character/me`, `GET /business/ads/active?category=`, `POST /business/ads/{id}/impression` |
+| `비용_재계산_v37.md` | **신규** — 광고 1회=1단계 가정 모델별 손익 분석표 |
+| `PLAN.md` | v37 계획 추가 |
+| `REPORT.md` | v37 결과 기록 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+| #6 솔로→서브보컬 차단 | 코드 검증 완료 (musicService.ts:92-110) |
+
+### 특이사항
+
+- **#1 캐릭터 이동 비활성 이유**: 가구 있는 맵에서 여전히 부자연스러운 곳으로 이동하는 이슈 확인됨. walkDeltas 데이터와 로직은 보존(향후 재활성 시 복원 가능), Character 렌더만 제자리로 고정
+- **#3 수치 정책**: 단계당 광고 1회(총 6회) 규칙은 저가 모델에서만 흑자. 고가 모델(Opus/Suno/MV)은 "Pro 유료 플랜 + 광고 제거"로 풀어야 지속가능. timerStore 수치 자체는 변경 불필요
+- **#4 Switch 제거 후 저장 로직**: 기존 `*On` state는 유지(값 저장 필요), 각 단계에서 `apply` 파라미터로 `setXxxOn(apply)` 호출. 이후 `handleGenerate`에서 기존 저장 로직 그대로 재사용 → 변경 최소화
+- **#5 ImagePicker 부재**: `expo-image-picker` 미설치. `expo-document-picker`의 `type: 'image/*'`로 대응. 사진 앨범 UX는 OS 파일 탐색기로 동작. 향후 ImagePicker 설치 시 1줄 교체 가능
+- **#5 multipart 업로드 (RN)**: FormData에 `{ uri, name, type }` 객체를 그대로 append하는 RN 전용 패턴 사용. 광고 아이템 이미지는 백엔드 URL을 fetch 후 FormData에 추가 (참고 웹 프론트 방식 이식)
+- **#5 백엔드 API 의존성**: `/character/*`, `/business/ads/active` 등 이미 백엔드에 구현되어 있음 가정. 없으면 해당 단계에서 에러 alert로 표시
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+
+1. **#1** 맵에서 캐릭터가 움직이지 않고 제자리에 고정. 작은 둥근 보라 테두리 박스에 "작사 디렉터" 등 표시
+2. **#2** 작사 완료 후 티켓에 "작사 일을 완료했어요!" / 진행 중엔 "작사 중" (대기번호 숫자 없음)
+3. **#4** 작곡 디렉터 대화 진행 → 보컬/보컬 스타일/참고 파일 이후 제외 스타일/자유도/실험성/오디오 세기/BPM/Key 6단계 모두 질문식으로 + 건너뛰기 가능
+4. **#5** 작업실 맵 → 아티스트 디렉터 클릭 → 대화 플로우 진행 → 사진 올리기 → 코디 모달에서 상의/하의/신발 선택 → 스타일 텍스트 → 생성 → 프리뷰 → 저장
+5. **#7** 커버/작곡 완료 시 "~를 시작할게요!" 메시지 후 맵으로 복귀
+
+---
+
+## v38 - 2026-04-24 - 플레이어/차트/플레이리스트/레이어 + 영입 설계
+
+### 요청 5건 반영
+
+| # | 요청 | 결과 |
+|---|------|------|
+| 1 | 미니→풀 전환 시 재생바 멈춤 | ✅ `setOnPlaybackStatusUpdate` 재설정 |
+| 2 | 차트에 장르 표시 | ✅ genreBadge 추가 |
+| 3 | 플레이리스트 썸네일 모자이크 | ✅ 4곡 커버 2x2 그리드 |
+| 4 | 캐릭터 맵 최상위 | ✅ Character zIndex 10→20 |
+| 5 | 디렉터 영입 시스템 | ✅ 설계 문서 `디렉터_영입_시스템_설계_v38.md` |
+
+### 파일 변경
+| 파일 | 변경 |
+|------|------|
+| `screens/PlayerScreen.tsx` | 미니에서 sound 이어받을 때 `playerStore.sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate)` 재등록 |
+| `screens/ChartScreen.tsx` | ChartTrack.genre/mood 타입 `string \| string[]` 유연화. renderTrack statsRow에 `genreBadge` 렌더. 관련 스타일 추가 |
+| `screens/PlaylistScreen.tsx` | Playlist interface에 cover_images 추가. fetchPlaylists에서 Promise.all로 각 /playlists/{id} 호출해 상위 4곡 커버 수집. renderPlaylist 모자이크 조건부 렌더. 스타일 `playlistMosaic/mosaicCell/mosaicImg` 추가 |
+| `components/Character.tsx` | zIndex 10 → 20 (fg 15 위) |
+| `디렉터_영입_시스템_설계_v38.md` | **신규** — 설계 제안 문서 7장 |
+| `PLAN.md` | v38 계획 |
+| `REPORT.md` | v38 결과 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+
+### 특이사항
+
+- **#1 원인 분석**: MiniPlayer가 loadAndPlayNewTrack에서 한 번만 `setOnPlaybackStatusUpdate`를 호출. 이 콜백은 MiniPlayer 클로저라 PlayerScreen local state(position, duration)를 모름. PlayerScreen 진입 시 콜백을 자기 것으로 교체 → local state와 store 둘 다 업데이트. PlayerScreen 언마운트 후에는 콜백이 유지되지만 store는 계속 업데이트되므로 MiniPlayer 표시 정상
+- **#3 성능 고려**: N+1 API 호출. 플레이리스트 수가 100+이면 문제. 현재는 개인 플레이리스트라 적어 OK. 장기적으로 백엔드에 `GET /playlists/?include=top_covers` 같은 파라미터 추가 요청 가능
+- **#4 라벨/배지도 함께 올라감**: 디렉터 네임 라벨은 Character 내부(zIndex 25)에 있어 캐릭터 뒤로 숨지 않음. "클릭해서 작업 시작!" 배지는 별도 zIndex 26으로 유지. 레이어 일관성 확보
+- **#5 설계 미승인 상태**: 문서에 4개 결정 지점 명시. 사용자 답변 후 Phase 1 MVP(캐시 스토어 + 영입 화면 + 선택 모달 + 캐시 지급 훅) 착수 예정
+
+### 사용자 확인 (Expo Go, 선택)
+1. 곡 재생 → 미니 플레이어에서 풀스크린 전환 → 재생바 계속 움직이는지
+2. 차트 TOP 100 → 각 트랙 이름 아래 작은 보라 테두리 배지(장르명)
+3. 플레이리스트 탭 → 카드 썸네일이 2x2 커버 그리드
+4. 맵 → 가구 앞에 캐릭터 나타나는지 (이전에 가려졌던 의자/책상 뒤 위치)
+5. `디렉터_영입_시스템_설계_v38.md` 읽어보고 결정 지점 4개 답변
+
+---
+
+## v39 - 2026-04-24 - 디렉터 영입 시스템 Phase 1 MVP 구현
+
+### 요청 작업
+v38 설계 문서 기반 Phase 1 MVP 전체 구현.
+
+### 수행 결과
+| 항목 | 상태 | 핵심 |
+|------|------|------|
+| 카탈로그 | ✅ | 9명 디렉터 하드코딩 (작사 5 / 작곡 2 / 이미지 1 / MV 1 / 아티스트 1) |
+| gemsStore | ✅ | in-memory 잔액 + 거래 로그 (최근 100건). earn/spend/initIfEmpty |
+| directorsStore | ✅ | hiredIds / selectedByCategory / hire / selectForCategory / getSelectedModelKey / initIfEmpty |
+| DirectorLineupScreen | ✅ | 카테고리별 2열 그리드, 별점(tier), 영입/선택/잔액 부족 분기 |
+| 라우트 등록 | ✅ | App.tsx RootStack에 DirectorLineup 추가 |
+| 헤더 💎 잔액 | ✅ | 작업실 헤더에 잔액 Pill, 탭 시 영입 화면 이동 |
+| 디렉터 선택 모달 | ✅ | 작사 디렉터 2명 이상이면 캐릭터 클릭 시 모달, 선택 후 대화 진행 |
+| 캐시 지급 훅 | ✅ | LyricsLoading(30) / MusicLoading(50, 2곳) / CoverGeneration(20) / 광고 시청(+5) |
+| modelKey 바인딩 | ✅ | LyricsPromptReview & MusicGeneration에서 선택된 디렉터의 modelKey로 startTask |
+
+### 파일 변경
+| 파일 | 변경 |
+|------|------|
+| `data/directors.ts` | **신규** — DirectorCatalog interface, DIRECTOR_CATALOG 9명, INITIAL_DIRECTOR_IDS, GEM_REWARDS/COSTS |
+| `stores/gemsStore.ts` | **신규** — zustand 잔액/거래 로그 |
+| `stores/directorsStore.ts` | **신규** — 영입 + 선택 상태 관리 |
+| `screens/DirectorLineupScreen.tsx` | **신규** — 영입 UI |
+| `App.tsx` | DirectorLineup import + RootStackParamList + RootStack.Screen |
+| `screens/MapScreen.tsx` | useGemsStore/useDirectorsStore import, 로그인 시 initIfEmpty 실행, 헤더 💎 잔액 Pill, 작사 디렉터 선택 모달, 광고 시청 +5 💎 보너스, 관련 스타일 추가 |
+| `screens/LyricsPromptReviewScreen.tsx` | useDirectorsStore import, startTask에 getSelectedModelKey('lyricist') 전달 |
+| `screens/MusicGenerationScreen.tsx` | selectedModel 기반 dirType/modelKey 결정 후 startTask 호출 |
+| `screens/LyricsLoadingScreen.tsx` | 가사 생성 성공 시 earn(30) |
+| `screens/MusicLoadingScreen.tsx` | 음악 완료 2곳 earn(50) + trackId refId |
+| `screens/CoverGenerationScreen.tsx` | handleConfirm에 earn(20) |
+| `PLAN.md` | v39 계획 추가 |
+| `REPORT.md` | v39 결과 기록 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+
+### 특이사항 및 후속 작업 (v40 이후)
+
+- **Persist 미설정**: AsyncStorage 미설치로 zustand persist 적용 불가 → 앱 재시작 시 잔액/영입 초기화됨. `initIfEmpty`가 자동으로 재지급하는데, 이 동작은 **매번 가입 보너스(100💎) 지급** = 현 단계 의도 (MVP 데모). 프로덕션 배포 전 반드시 AsyncStorage persist 추가 필요
+- **백엔드 미연동**: 실제 서비스 시 gem 잔액 서버 측 검증 필요. 현재는 전적으로 클라이언트 상태 → 조작 가능. v40 백엔드 스펙 전달 예정
+- **modelKey 경로**: timerStore.startTask의 세 번째 인자는 이미 존재했으나 이전까지 활용 안 됨. 이제 디렉터별 실제 대기번호/틱 간격이 다른 모델 설정(`MODEL_QUEUE_CONFIG`) 적용됨. 예) 오퍼스 영입 후 작사 시 자연대기 100~175분
+- **wondera/composer 구분**: 맵에서 Suno 방과 Wondera 방이 별도 타일이라 각자 다른 DirectorType. musicStore.selectedModel이 실제 모델 디스패치 기준
+- **선택 모달 범위**: 현재 작사만 적용. 작곡은 각 방이 1명 카테고리라 모달 불필요. 후속에 같은 카테고리 디렉터 추가 시 그대로 확장
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+1. 로그인 직후 작업실 헤더 오른쪽에 **💎 100** 표시
+2. 💎 탭 → 영입 화면 오픈 → **미니 / 원더라 / 지민 / 해나**만 "선택됨" 상태, 나머지는 가격 표시
+3. 곡 생성 (작사→작곡→커버) 완료 시마다 잔액 증가 확인 (+30 / +50 / +20)
+4. 광고 시청 (단계 스킵) 시 **+5 💎** 증가
+5. 영입 화면에서 **소네트(800💎)** 영입 (100+30+50+20+5×N 모아 도달)
+6. 다시 맵 → 작사 디렉터 클릭 시 **"어느 분께 맡기시겠어요?"** 모달 등장
+7. 소네트 선택 후 대화 진행 → timerStore가 실제로 `lyrics_claude_sonnet` 모델 설정 (대기번호 60~100) 사용 확인
+
+---
+
+## v40 - 2026-04-25 - 자동재생 / Wondera 제거 / 아티스트 디렉터 흐름 정비 6건
+
+### 요청 6건 모두 반영
+
+| # | 요청 | 결과 |
+|---|------|------|
+| 1 | 풀↔미니 전환 시 다음 곡 자동 재생 끊김 | ✅ PlayerScreen onPlaybackStatusUpdate.didJustFinish에서 navigation.replace로 다음 곡 진입 |
+| 2 | Wondera 제거 / "작곡 디렉터" 단일 표기 | ✅ 맵 + 카탈로그 + 라벨 + startTask 정리 |
+| 3 | 아티스트 디렉터 Dialogue 진입 + safe area + 얼굴 포트레이트 | ✅ Dialogue 우회 + ROOT_TARGETS 분기 + 44x44 비율 유지 + insets.bottom |
+| 4 | 광고 샘플 5개 fallback | ✅ ArtistDirectorScreen SAMPLE_ITEMS |
+| 5 | /character/refine 422 | ✅ sheet_image+photo+refine_request 필드로 재작성 |
+| 6 | 속옷 캐릭터 + 재생성 불가 + 코디 분리 | ✅ Step 재설계, baseAttire prepend, 다시만들기 제거 |
+
+### 파일 변경
+| 파일 | 변경 |
+|------|------|
+| `screens/PlayerScreen.tsx` | onPlaybackStatusUpdate didJustFinish에 자동 다음 곡 navigation.replace |
+| `screens/MapScreen.tsx` | DIRECTORS에서 wondera 제거, DIRECTOR_NAMES/ROLES 통일, wondera 분기 제거, artist 분기를 Dialogue 호출로 변경 |
+| `screens/DialogueScreen.tsx` | case 'artist' dialogue 확장(3노드+선택지), handleAction/handleChoice에 ROOT_TARGETS + goBack 분기 |
+| `screens/MusicGenerationScreen.tsx` | wondera 분기 제거, startTask('composer','작곡','composer') 고정 |
+| `screens/DirectorLineupScreen.tsx` | CATEGORY_LABEL composer/wondera 통일, order에서 wondera 제거 |
+| `data/directors.ts` | cmp_wondera 삭제, cmp_suno hireCost 0/isDefault, INITIAL_DIRECTOR_IDS suno로 |
+| `screens/ArtistDirectorScreen.tsx` | Step 7→7개 재정의, SAMPLE_ITEMS 더미, 포트레이트 사이즈 44+비율, paddingBottom+insets, handleGenerate에 baseAttire prepend, handleSave→cody, handleApplyOutfit 신설(refine 호출), handleRefine 필드 수정, handleRegenerate 제거, preview 3버튼 재구성 |
+| `PLAN.md` | v40 계획 |
+| `REPORT.md` | v40 결과 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+
+### 특이사항
+
+- **#1 navigation.replace 패턴**: PlayerScreen이 unmount되며 sound 정리 → mount 시 새 trackId로 loadAndPlay 자동 트리거. 별도 라이프사이클 관리 불필요. 미니로 다시 줄여도 store 유지되므로 상태 일관됨
+- **#2 wondera 보존**: DirectorType enum에서 'wondera'는 남겨둠 (Character.tsx의 SPRITE_SHEETS에 wondera_director.png 있음). 추후 다시 등장시킬 가능성에 대비. 단 맵에서 노출은 안 됨
+- **#3 ROOT_TARGETS**: StudioStack 안에서 RootStack 라우트로 점프해야 하는 케이스(ArtistDirector, ArtistDetail, DirectorLineup, Player, Settings)에 한해 parent navigator 호출. dialogue node 시스템을 깨지 않으면서 확장
+- **#3 포트레이트 비율**: 95x405 sprite를 44x44에 cover하면 가로 맞춤 → 세로 187 → 위 44만 보임 (머리). 다른 사이즈 sprite도 동일 비율 공식이라 자동 호환. 필요시 lyricist(119x405) 등에 동일 패턴 가능
+- **#4 SAMPLE_ITEMS**: image_object_name 없이 만들어 회색 placeholder로 표시. 실제 광고 등록되면 자동 대체
+- **#5 refine 필드**: 백엔드 character.py:154-159 기준. sheet_image와 photo는 File, refine_request는 Form 문자열. previewUrl(현재 시트 URL) + photoUri(원본 사진) 그대로 전송 — RN FormData가 URL 기반 파일 참조 자동 처리
+- **#6 흐름**:
+  - 사진 → 컨셉 → 속옷 캐릭터 → 저장 → 코디 → 옷 입히기 → 다음 옷 / 끝내기
+  - 캐릭터는 한 번 생성 후 재생성 X (정책). 옷만 무한 갈아입기 가능 (refine 사용)
+  - 기존 캐릭터 보유자는 진입 시 myArtistCard 노출 + "옷 갈아입기" 단일 액션
+- **#6 후속 작업**: 기존 myCharacter가 있을 때 previewUrl을 자동 설정하는 로직(백엔드의 character preview endpoint URL)이 필요. 이번 PR에선 새로 만든 직후 흐름만 매끄럽고, 다음 세션 진입 시 옷 갈아입기는 백엔드 URL 추가로 보강 예정
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+1. 차트 → 곡 재생 → 미니 토글 → 풀스크린 → 곡 끝나면 자동으로 다음 곡 시작
+2. 작업실에서 작곡 디렉터 1명만 (Wondera 사라짐)
+3. 아티스트 디렉터 클릭 → 대화창에서 인사 → 시작하기 → 아티스트 생성 화면
+4. 원형 포트레이트에 얼굴 보임 / 하단 버튼이 홈 인디케이터에 안 잘림
+5. 코디 모달 → 등록된 광고 없으면 샘플 5개 자동 노출
+6. 사진 → 컨셉 → 속옷 차림(흰 민소매 + 검정 쫄바지) 캐릭터 생성
+7. preview에서 "옷 입히러 가기" → 코디 → "이 옷으로 입혀보기" → 옷 입은 시트 (422 없음)
+8. preview에서 "이 부분 수정" 텍스트 → 미세조정 성공

@@ -14,6 +14,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -92,7 +93,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
               value={editedTitle}
               onChangeText={setEditedTitle}
               placeholder="곡 제목을 입력하세요"
-              placeholderTextColor="#555"
+              placeholderTextColor={colors.text.muted}
             />
           ) : (
             <Text style={styles.titleDisplay}>{editedTitle || '제목 없음'}</Text>
@@ -155,7 +156,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   scrollView: {
     flex: 1,
@@ -175,7 +176,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginRight: 12,
   },
   portraitImage: {
@@ -188,33 +189,33 @@ const styles = StyleSheet.create({
   },
   directorBubble: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     padding: 12,
   },
   directorName: {
     fontSize: 13,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     marginBottom: 4,
   },
   directorText: {
     fontSize: 14,
-    color: '#fff',
+    color: colors.text.primary,
     lineHeight: 20,
   },
   errorBox: {
-    backgroundColor: '#2e1a1a',
+    backgroundColor: colors.bg.surface2,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 12,
     padding: 14,
     marginBottom: 16,
   },
   errorText: {
-    color: '#ff6b6b',
+    color: colors.status.error,
     fontSize: 13,
     lineHeight: 20,
   },
@@ -224,16 +225,16 @@ const styles = StyleSheet.create({
   titleDisplay: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     marginTop: 8,
   },
   titleInput: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 12,
     padding: 12,
-    color: '#e94560',
+    color: colors.accent.primary,
     fontSize: 18,
     fontWeight: 'bold',
     marginTop: 8,
@@ -250,33 +251,33 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
   },
   editButton: {
     fontSize: 14,
-    color: '#e94560',
+    color: colors.accent.primary,
     fontWeight: '600',
   },
   lyricsBox: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
     borderRadius: 12,
     padding: 16,
     minHeight: 200,
   },
   lyricsText: {
-    color: '#ddd',
+    color: colors.text.secondary,
     fontSize: 15,
     lineHeight: 26,
   },
   lyricsInputEditing: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 12,
     padding: 16,
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 15,
     lineHeight: 26,
     minHeight: 200,
@@ -285,26 +286,26 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   regenerateButton: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   regenerateButtonText: {
-    color: '#e94560',
+    color: colors.accent.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
   composeButton: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
   composeButtonText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },

@@ -13,8 +13,10 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import api from '../services/api';
+import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
+import { usePlayerStore } from '../stores/playerStore';
+import { colors } from '../theme/colors';
 
 interface Playlist {
   id: string;
@@ -23,14 +25,16 @@ interface Playlist {
   track_count?: number;
   description?: string;
   created_at?: string;
+  cover_images?: string[]; // 내부 상위 4곡 커버 (프론트에서 부가 로드)
 }
 
 function getCoverUrl(img: string): string {
-  return `http://192.168.219.106:9001/api/upload/cover-preview/${encodeURIComponent(img)}`;
+  return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
 }
 
 export default function PlaylistScreen({ navigation }: any) {
   const { user } = useAuthStore();
+  const { track: playingTrack } = usePlayerStore();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -45,7 +49,25 @@ export default function PlaylistScreen({ navigation }: any) {
     setLoading(true);
     try {
       const res = await api.get('/playlists/');
-      setPlaylists(res.data.playlists || res.data || []);
+      const raw: Playlist[] = res.data.playlists || res.data || [];
+      setPlaylists(raw); // 기본 목록 먼저 렌더
+      // 각 플레이리스트의 상위 4곡 커버 병렬 로드 (실패해도 카드는 유지)
+      const enriched = await Promise.all(
+        raw.map(async (p) => {
+          try {
+            const detail = await api.get(`/playlists/${p.id}`);
+            const tracks: any[] = detail.data.tracks || [];
+            const cover_images = tracks
+              .map((t: any) => t.cover_image || t.cover_image_url)
+              .filter(Boolean)
+              .slice(0, 4);
+            return { ...p, cover_images };
+          } catch {
+            return { ...p, cover_images: [] };
+          }
+        })
+      );
+      setPlaylists(enriched);
     } catch {
       // Backend not available
     } finally {
@@ -122,51 +144,78 @@ export default function PlaylistScreen({ navigation }: any) {
     fetchPlaylistTracks(playlist.id);
   };
 
-  const renderPlaylist = ({ item }: { item: Playlist }) => (
-    <TouchableOpacity
-      style={styles.playlistItem}
-      activeOpacity={0.7}
-      onPress={() => handlePlaylistPress(item)}
-      onLongPress={() => handleDeletePlaylist(item)}
-    >
-      <View style={styles.playlistIcon}>
-        <Text style={styles.playlistIconText}>{'♫'}</Text>
-      </View>
-      <View style={styles.playlistInfo}>
-        <Text style={styles.playlistName} numberOfLines={1}>{item.name || item.title}</Text>
-        {item.description ? (
-          <Text style={styles.playlistDesc} numberOfLines={1}>{item.description}</Text>
-        ) : null}
-        <Text style={styles.playlistCount}>
-          {item.track_count != null ? `${item.track_count}곡` : '0곡'}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+  const renderPlaylist = ({ item }: { item: Playlist }) => {
+    const covers = item.cover_images || [];
+    const hasCovers = covers.length > 0;
+    return (
+      <TouchableOpacity
+        style={styles.playlistItem}
+        activeOpacity={0.7}
+        onPress={() => handlePlaylistPress(item)}
+        onLongPress={() => handleDeletePlaylist(item)}
+      >
+        {hasCovers ? (
+          <View style={styles.playlistMosaic}>
+            {[0, 1, 2, 3].map((i) => {
+              const c = covers[i];
+              return (
+                <View key={i} style={styles.mosaicCell}>
+                  {c ? (
+                    <Image source={{ uri: getCoverUrl(c) }} style={styles.mosaicImg} />
+                  ) : (
+                    <View style={[styles.mosaicImg, { backgroundColor: colors.bg.surface2 }]} />
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.playlistIcon}>
+            <Text style={styles.playlistIconText}>{'♫'}</Text>
+          </View>
+        )}
+        <View style={styles.playlistInfo}>
+          <Text style={styles.playlistName} numberOfLines={1}>{item.name || item.title}</Text>
+          {item.description ? (
+            <Text style={styles.playlistDesc} numberOfLines={1}>{item.description}</Text>
+          ) : null}
+          <Text style={styles.playlistCount}>
+            {item.track_count != null ? `${item.track_count}곡` : `${covers.length}곡`}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderTrack = ({ item }: { item: any }) => (
     <TouchableOpacity
       style={styles.trackItem}
       activeOpacity={0.7}
-      onPress={() => navigation.navigate('Player', { track: item })}
+      onPress={() => {
+        // 플레이리스트 곡 목록을 queue로 설정
+        const idx = playlistTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
+        usePlayerStore.getState().setQueue(playlistTracks);
+        usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
+        navigation.navigate('Player', { track: item });
+      }}
     >
       {item.cover_image || item.cover_image_url ? (
         <Image source={{ uri: getCoverUrl(item.cover_image || item.cover_image_url) }} style={styles.trackCover} />
       ) : (
-        <View style={[styles.trackCover, { backgroundColor: '#1a1a2e', justifyContent: 'center', alignItems: 'center' }]}>
-          <Text style={{ fontSize: 20, color: '#444' }}>{'♪'}</Text>
+        <View style={[styles.trackCover, { backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' }]}>
+          <Text style={{ fontSize: 20, color: colors.border.default }}>{'♪'}</Text>
         </View>
       )}
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={{ fontSize: 15, fontWeight: '600', color: '#fff', marginBottom: 4 }} numberOfLines={1}>{item.title}</Text>
-        <Text style={{ fontSize: 12, color: '#888' }}>{item.artist_name || item.uploader_nickname || 'AI'}</Text>
+        <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 4 }} numberOfLines={1}>{item.title}</Text>
+        <Text style={{ fontSize: 12, color: colors.text.secondary }}>{item.artist_name || item.uploader_nickname || 'AI'}</Text>
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
-          <Text style={{ fontSize: 11, color: '#666' }}>{'▶'} {item.play_count ?? 0}</Text>
-          <Text style={{ fontSize: 11, color: '#666' }}>{'♥'} {item.like_count ?? 0}</Text>
+          <Text style={{ fontSize: 11, color: colors.text.muted }}>{'▶'} {item.play_count ?? 0}</Text>
+          <Text style={{ fontSize: 11, color: colors.text.muted }}>{'♥'} {item.like_count ?? 0}</Text>
         </View>
       </View>
       <TouchableOpacity onPress={() => handleRemoveTrackFromPlaylist(String(item.id || item.track_id))} style={{ padding: 8 }}>
-        <Text style={{ color: '#666', fontSize: 14 }}>{'✕'}</Text>
+        <Text style={{ color: colors.text.muted, fontSize: 14 }}>{'✕'}</Text>
       </TouchableOpacity>
     </TouchableOpacity>
   );
@@ -174,7 +223,7 @@ export default function PlaylistScreen({ navigation }: any) {
   return (
     <View style={styles.container}>
       {loading ? (
-        <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
       ) : !user ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.promoIcon}>{'♫'}</Text>
@@ -194,23 +243,23 @@ export default function PlaylistScreen({ navigation }: any) {
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
             <TouchableOpacity onPress={() => { setSelectedPlaylist(null); setPlaylistTracks([]); }}>
-              <Text style={{ color: '#e94560', fontSize: 14 }}>{'← 목록으로'}</Text>
+              <Text style={{ color: colors.accent.primary, fontSize: 14 }}>{'← 목록으로'}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => { setRenameText(selectedPlaylist.name || selectedPlaylist.title || ''); setShowRenameModal(true); }}>
-              <Text style={{ color: '#888', fontSize: 13 }}>이름 변경</Text>
+              <Text style={{ color: colors.text.secondary, fontSize: 13 }}>이름 변경</Text>
             </TouchableOpacity>
           </View>
-          <Text style={{ paddingHorizontal: 20, fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12 }}>{selectedPlaylist.name || selectedPlaylist.title}</Text>
-          <Text style={{ paddingHorizontal: 20, fontSize: 12, color: '#666', marginBottom: 12 }}>{playlistTracks.length}곡 · 길게 눌러서 삭제</Text>
+          <Text style={{ paddingHorizontal: 20, fontSize: 20, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>{selectedPlaylist.name || selectedPlaylist.title}</Text>
+          <Text style={{ paddingHorizontal: 20, fontSize: 12, color: colors.text.muted, marginBottom: 12 }}>{playlistTracks.length}곡 · 길게 눌러서 삭제</Text>
           {loadingTracks ? (
-            <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 20 }} />
           ) : playlistTracks.length > 0 ? (
             <FlatList
               data={playlistTracks}
               keyExtractor={(item) => String(item.id || item.track_id)}
               renderItem={renderTrack}
-              contentContainerStyle={{ paddingBottom: 80 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#e94560" />}
+              contentContainerStyle={{ paddingBottom: playingTrack ? 140 : 80 }}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.accent.primary} />}
             />
           ) : (
             <View style={styles.emptyContainer}>
@@ -223,8 +272,8 @@ export default function PlaylistScreen({ navigation }: any) {
           data={playlists}
           keyExtractor={(item) => item.id}
           renderItem={renderPlaylist}
-          contentContainerStyle={{ paddingBottom: 80 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#e94560" colors={['#e94560']} />}
+          contentContainerStyle={{ paddingBottom: playingTrack ? 140 : 80 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.accent.primary} colors={[colors.accent.primary]} />}
         />
       ) : (
         <View style={styles.emptyContainer}>
@@ -236,22 +285,22 @@ export default function PlaylistScreen({ navigation }: any) {
       {/* 이름 변경 모달 */}
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowRenameModal(false)}>
-          <View style={{ backgroundColor: '#1a1a2e', borderRadius: 16, padding: 20, width: '80%' }}>
-            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#fff', marginBottom: 12 }}>플레이리스트 이름 변경</Text>
+          <View style={{ backgroundColor: colors.bg.surface1, borderRadius: 16, padding: 20, width: '80%' }}>
+            <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>플레이리스트 이름 변경</Text>
             <TextInput
-              style={{ backgroundColor: '#0a0a1a', borderRadius: 10, padding: 12, color: '#fff', borderWidth: 1, borderColor: '#333', marginBottom: 16 }}
+              style={{ backgroundColor: colors.bg.deepest, borderRadius: 10, padding: 12, color: colors.text.primary, borderWidth: 1, borderColor: colors.border.subtle, marginBottom: 16 }}
               value={renameText}
               onChangeText={setRenameText}
               placeholder="새 이름"
-              placeholderTextColor="#555"
+              placeholderTextColor={colors.text.muted}
               autoFocus
             />
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, backgroundColor: '#333' }} onPress={() => setShowRenameModal(false)}>
-                <Text style={{ color: '#aaa' }}>취소</Text>
+              <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, backgroundColor: colors.border.subtle }} onPress={() => setShowRenameModal(false)}>
+                <Text style={{ color: colors.text.secondary }}>취소</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, backgroundColor: '#e94560' }} onPress={handleRenamePlaylist}>
-                <Text style={{ color: '#fff', fontWeight: 'bold' }}>변경</Text>
+              <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, backgroundColor: colors.accent.primary }} onPress={handleRenamePlaylist}>
+                <Text style={{ color: colors.text.primary, fontWeight: 'bold' }}>변경</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -264,7 +313,7 @@ export default function PlaylistScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   playlistItem: {
     flexDirection: 'row',
@@ -272,20 +321,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a2e',
+    borderBottomColor: colors.bg.surface1,
   },
   playlistIcon: {
-    width: 48,
-    height: 48,
+    width: 52,
+    height: 52,
     borderRadius: 8,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
   },
   playlistIconText: {
     fontSize: 22,
-    color: '#e94560',
+    color: colors.accent.primary,
+  },
+  playlistMosaic: {
+    width: 52,
+    height: 52,
+    borderRadius: 8,
+    overflow: 'hidden',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginRight: 14,
+    backgroundColor: colors.bg.surface1,
+  },
+  mosaicCell: {
+    width: '50%',
+    height: '50%',
+  },
+  mosaicImg: {
+    width: '100%',
+    height: '100%',
   },
   playlistInfo: {
     flex: 1,
@@ -296,7 +363,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a2e',
+    borderBottomColor: colors.bg.surface1,
   },
   trackCover: {
     width: 48,
@@ -306,17 +373,17 @@ const styles = StyleSheet.create({
   playlistName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 2,
   },
   playlistDesc: {
     fontSize: 13,
-    color: '#888',
+    color: colors.text.secondary,
     marginBottom: 2,
   },
   playlistCount: {
     fontSize: 12,
-    color: '#666',
+    color: colors.text.muted,
   },
   emptyContainer: {
     flex: 1,
@@ -326,17 +393,17 @@ const styles = StyleSheet.create({
   },
   emptyIcon: {
     fontSize: 64,
-    color: '#333',
+    color: colors.border.subtle,
     marginBottom: 16,
   },
   emptyText: {
     fontSize: 16,
-    color: '#666',
+    color: colors.text.muted,
     marginBottom: 8,
   },
   emptyHint: {
     fontSize: 13,
-    color: '#444',
+    color: colors.border.default,
   },
   promoIcon: {
     fontSize: 48,
@@ -345,24 +412,24 @@ const styles = StyleSheet.create({
   promoTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 12,
   },
   promoDesc: {
     fontSize: 15,
-    color: '#999',
+    color: colors.text.secondary,
     textAlign: 'center',
     lineHeight: 24,
     marginBottom: 28,
   },
   loginButton: {
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 24,
     paddingVertical: 14,
     paddingHorizontal: 40,
   },
   loginButtonText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },

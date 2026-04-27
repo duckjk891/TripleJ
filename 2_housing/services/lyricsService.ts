@@ -5,6 +5,8 @@ export const generateLyrics = async (params: {
   genre?: string;
   mood?: string;
   language?: string;
+  style?: string;
+  duration_minutes?: number;
 }) => {
   const response = await api.post('/generate/lyrics/', params);
   return response.data;

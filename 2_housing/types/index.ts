@@ -48,6 +48,9 @@ export interface MusicParams {
   bpm?: string;
   musicalKey?: string;
   negativeTags?: string;
+  isDuet?: boolean;
+  subVocal?: string;
+  subVocalStyle?: string;
 }
 
 export type GenerationStatus = 'idle' | 'pending' | 'processing' | 'completed' | 'failed';

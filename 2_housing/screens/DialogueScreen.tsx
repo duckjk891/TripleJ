@@ -16,6 +16,7 @@ import { DialogueNode } from '../types';
 import lyricistDialogue from '../dialogues/lyricist.json';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+import { colors } from '../theme/colors';
 
 const MAP_IMAGE = require('../assets/map_rendered.png');
 const MAP_WIDTH = 704;
@@ -125,13 +126,23 @@ export default function DialogueScreen({ route, navigation }: Props) {
           {
             id: 1,
             speaker: 'artist',
-            text: '안녕하세요! 아티스트 디렉터입니다.',
+            text: '안녕하세요! 우리 기획사의 새로운 아티스트를 함께 만들어볼까요?',
             next: 2,
           },
           {
             id: 2,
             speaker: 'artist',
-            text: '아직 서비스 준비 중이에요. 조금만 기다려주세요! 곧 멋진 아티스트를 만들어드릴게요.',
+            text: '얼굴 사진 한 장과 컨셉만 알려주시면 캐릭터로 만들어드릴게요.',
+            next: 3,
+          },
+          {
+            id: 3,
+            speaker: 'artist',
+            text: '준비되셨으면 시작해볼까요?',
+            choices: [
+              { text: '네, 만들어볼게요!', action: 'navigate:ArtistDirector' },
+              { text: '나중에 할게요', action: 'navigate:goBack' },
+            ],
           },
         ] as DialogueNode[];
       case 'video':
@@ -199,7 +210,17 @@ export default function DialogueScreen({ route, navigation }: Props) {
     if (currentNode.action) {
       const [actionType, target] = currentNode.action.split(':');
       if (actionType === 'navigate') {
-        navigation.navigate(target as any);
+        if (target === 'goBack') {
+          navigation.goBack();
+          return;
+        }
+        // RootStack 라우트는 parent navigator로 이동
+        const ROOT_TARGETS = ['ArtistDirector', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+        if (ROOT_TARGETS.includes(target)) {
+          navigation.getParent()?.navigate(target as any);
+        } else {
+          navigation.navigate(target as any);
+        }
         return;
       }
     }
@@ -223,7 +244,16 @@ export default function DialogueScreen({ route, navigation }: Props) {
     if (action) {
       const [actionType, target] = action.split(':');
       if (actionType === 'navigate') {
-        navigation.navigate(target as any);
+        if (target === 'goBack') {
+          navigation.goBack();
+          return;
+        }
+        const ROOT_TARGETS = ['ArtistDirector', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+        if (ROOT_TARGETS.includes(target)) {
+          navigation.getParent()?.navigate(target as any);
+        } else {
+          navigation.navigate(target as any);
+        }
         return;
       }
     }
@@ -355,7 +385,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: colors.bg.deepest,
   },
   tapArea: {
     flex: 1,
@@ -383,13 +413,13 @@ const styles = StyleSheet.create({
   nameText: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 4,
   },
   dialogueBox: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.text.primary,
     borderRadius: 16,
     marginHorizontal: 12,
     marginBottom: 8,
@@ -399,15 +429,15 @@ const styles = StyleSheet.create({
   },
   dialogueText: {
     fontSize: 15,
-    color: '#111',
+    color: colors.bg.deepest,
     lineHeight: 24,
   },
   cursor: {
-    color: '#e94560',
+    color: colors.accent.primary,
   },
   continueHint: {
     fontSize: 12,
-    color: '#999',
+    color: colors.text.secondary,
     textAlign: 'right',
     marginTop: 8,
   },
@@ -416,14 +446,16 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   choiceButton: {
+    // TODO: 테마화 검토 (대화 선택지 - 밝은 회색 배경)
     backgroundColor: '#e8e8e8',
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: colors.text.secondary,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
   },
   choiceText: {
+    // TODO: 테마화 검토 (밝은 회색 배경 위 짙은 텍스트)
     color: '#222',
     fontSize: 14,
     textAlign: 'center',

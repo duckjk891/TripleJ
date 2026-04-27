@@ -5,7 +5,9 @@ import {
   Text,
   Animated,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { colors } from '../theme/colors';
 
 type RootStackParamList = {
   Splash: undefined;
@@ -34,14 +36,19 @@ export default function SplashScreen({ navigation }: Props) {
     ]).start();
 
     const timer = setTimeout(() => {
-      navigation.replace('MainTabs' as any);
+      // 기획사명/호칭은 회원가입 시 저장되므로 Onboarding 단계 불필요
+      navigation.replace('MainTabs');
     }, 2500);
 
     return () => clearTimeout(timer);
   }, []);
 
   return (
-    <View style={styles.container}>
+    <LinearGradient
+      colors={[colors.bg.deepest, '#1e0e4a', '#4c1d95', '#2a1758']}
+      locations={[0, 0.35, 0.7, 1]}
+      style={styles.container}
+    >
       <Animated.View
         style={[
           styles.content,
@@ -51,17 +58,16 @@ export default function SplashScreen({ navigation }: Props) {
           },
         ]}
       >
-        <Text style={styles.title}>TripleJ</Text>
-        <Text style={styles.subtitle}>Music Production Studio</Text>
+        <Text style={styles.title}>PANN</Text>
+        <Text style={styles.subtitle}>당신의 1인 기획사</Text>
       </Animated.View>
-    </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -71,13 +77,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 48,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     letterSpacing: 4,
     marginBottom: 12,
   },
   subtitle: {
     fontSize: 16,
-    color: '#888',
+    color: colors.text.secondary,
     letterSpacing: 2,
   },
 });

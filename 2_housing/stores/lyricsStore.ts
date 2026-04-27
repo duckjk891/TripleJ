@@ -11,6 +11,7 @@ interface LyricsState {
   keywords: string;
   duration: number;
   hasRap: boolean;
+  isDuet: boolean;
   reference: string;
   tempo: string;
   generatedPrompt: string;
@@ -28,6 +29,7 @@ interface LyricsState {
   setKeywords: (v: string) => void;
   setDuration: (v: number) => void;
   setHasRap: (v: boolean) => void;
+  setIsDuet: (v: boolean) => void;
   setReference: (v: string) => void;
   setTempo: (v: string) => void;
   setGeneratedPrompt: (v: string) => void;
@@ -49,6 +51,7 @@ const initialState = {
   keywords: '',
   duration: 120,
   hasRap: false,
+  isDuet: false,
   reference: '',
   tempo: '보통',
   generatedPrompt: '',
@@ -70,6 +73,7 @@ export const useLyricsStore = create<LyricsState>((set) => ({
   setKeywords: (keywords) => set({ keywords }),
   setDuration: (duration) => set({ duration }),
   setHasRap: (hasRap) => set({ hasRap }),
+  setIsDuet: (isDuet) => set({ isDuet }),
   setReference: (reference) => set({ reference }),
   setTempo: (tempo) => set({ tempo }),
   setGeneratedPrompt: (generatedPrompt) => set({ generatedPrompt }),

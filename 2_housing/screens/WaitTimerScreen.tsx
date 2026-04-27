@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Character, { DirectorType } from '../components/Character';
+import { colors } from '../theme/colors';
 
 // AdMob Rewarded Ad
 let RewardedAd: any = null;
@@ -228,7 +229,7 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
@@ -246,14 +247,14 @@ const styles = StyleSheet.create({
   taskName: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 24,
   },
   timerBox: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     paddingVertical: 20,
     paddingHorizontal: 40,
     alignItems: 'center',
@@ -261,19 +262,19 @@ const styles = StyleSheet.create({
   },
   timerLabel: {
     fontSize: 14,
-    color: '#888',
+    color: colors.text.secondary,
     marginBottom: 8,
   },
   timerText: {
     fontSize: 40,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     fontVariant: ['tabular-nums'],
   },
   adButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 24,
@@ -281,16 +282,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   adButtonDisabled: {
-    backgroundColor: '#555',
+    backgroundColor: colors.text.muted,
   },
   adButtonIcon: {
     fontSize: 20,
-    color: '#fff',
+    color: colors.text.primary,
   },
   adButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
   },
   adButtonSub: {
     fontSize: 12,
@@ -302,7 +303,7 @@ const styles = StyleSheet.create({
   },
   skipButtonText: {
     fontSize: 13,
-    color: '#555',
+    color: colors.text.muted,
     textDecorationLine: 'underline',
   },
 });

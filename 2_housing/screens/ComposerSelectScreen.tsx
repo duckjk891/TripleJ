@@ -13,6 +13,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
@@ -150,7 +151,7 @@ export default function ComposerSelectScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: colors.bg.deepest,
   },
   scrollView: {
     flex: 1,
@@ -170,7 +171,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginRight: 12,
   },
   portraitImage: {
@@ -183,47 +184,47 @@ const styles = StyleSheet.create({
   },
   directorBubble: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     padding: 12,
   },
   directorName: {
     fontSize: 13,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: colors.accent.primary,
     marginBottom: 4,
   },
   directorText: {
     fontSize: 14,
-    color: '#fff',
+    color: colors.text.primary,
     lineHeight: 20,
   },
   composerCard: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.bg.surface1,
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: '#333',
+    borderColor: colors.border.subtle,
     padding: 16,
     marginBottom: 16,
     position: 'relative',
   },
   composerCardRecommended: {
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
   },
   recommendBadge: {
     position: 'absolute',
     top: -10,
     right: 16,
-    backgroundColor: '#e94560',
+    backgroundColor: colors.accent.primary,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 4,
     zIndex: 1,
   },
   recommendText: {
-    color: '#fff',
+    color: colors.text.primary,
     fontSize: 12,
     fontWeight: 'bold',
   },
@@ -238,7 +239,7 @@ const styles = StyleSheet.create({
     borderRadius: 35,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: '#e94560',
+    borderColor: colors.accent.primary,
     marginRight: 14,
   },
   composerPortraitImage: {
@@ -255,12 +256,12 @@ const styles = StyleSheet.create({
   composerName: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text.primary,
     marginBottom: 6,
   },
   composerDescription: {
     fontSize: 13,
-    color: '#aaa',
+    color: colors.text.secondary,
     lineHeight: 20,
   },
   specialtiesContainer: {
@@ -268,7 +269,7 @@ const styles = StyleSheet.create({
   },
   specialtiesLabel: {
     fontSize: 12,
-    color: '#888',
+    color: colors.text.secondary,
     marginBottom: 6,
   },
   specialtiesChips: {
@@ -277,23 +278,23 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   specialtyChip: {
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg.surface2,
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   specialtyText: {
-    color: '#ccc',
+    color: colors.text.secondary,
     fontSize: 12,
   },
   selectIndicator: {
     alignItems: 'center',
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#333',
+    borderTopColor: colors.border.subtle,
   },
   selectText: {
-    color: '#e94560',
+    color: colors.accent.primary,
     fontSize: 15,
     fontWeight: 'bold',
   },

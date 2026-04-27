@@ -1,10 +1,11 @@
 import axios from 'axios';
 
-// 백엔드 서버 IP (다른 PC에서 실행 중)
-const BACKEND_HOST = '192.168.219.106';
-const BACKEND_PORT = 9001;
+// 백엔드 서버 (Tailscale 내부망 — MAC 100.106.9.84, 서버 100.127.225.55)
+// 이전: cloudflared 터널 'https://acoustic-texas-coral-chorus.trycloudflare.com'
+// Tailscale 전환: 같은 tailnet 내 어디서든 100.127.225.55:9003 로 접근 가능
+export const BACKEND_BASE_URL = 'http://100.127.225.55:9003';
 
-const baseURL = `http://${BACKEND_HOST}:${BACKEND_PORT}/api`;
+const baseURL = `${BACKEND_BASE_URL}/api`;
 console.log('[API] Base URL:', baseURL);
 
 const api = axios.create({

@@ -16,6 +16,11 @@ interface MusicState {
   bpm: string;
   musicalKey: string;
   negativeTags: string;
+  subVocal: string;
+  subVocalStyle: string;
+  coverTrackId: string | null;
+  coverTrackTitle: string | null;
+  coverStyle: string | null;
   generationId: string | null;
   savedTrackId: string | null;
   status: GenerationStatus;
@@ -35,6 +40,11 @@ interface MusicState {
   setBpm: (bpm: string) => void;
   setMusicalKey: (musicalKey: string) => void;
   setNegativeTags: (negativeTags: string) => void;
+  setSubVocal: (v: string) => void;
+  setSubVocalStyle: (v: string) => void;
+  setCoverTrackId: (v: string | null) => void;
+  setCoverTrackTitle: (v: string | null) => void;
+  setCoverStyle: (v: string | null) => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
   setStatus: (status: GenerationStatus) => void;
@@ -59,6 +69,11 @@ const initialState = {
   bpm: '',
   musicalKey: '',
   negativeTags: '',
+  subVocal: '',
+  subVocalStyle: '',
+  coverTrackId: null,
+  coverTrackTitle: null,
+  coverStyle: null,
   generationId: null,
   savedTrackId: null,
   status: 'idle' as GenerationStatus,
@@ -83,6 +98,11 @@ export const useMusicStore = create<MusicState>((set) => ({
   setBpm: (bpm) => set({ bpm }),
   setMusicalKey: (musicalKey) => set({ musicalKey }),
   setNegativeTags: (negativeTags) => set({ negativeTags }),
+  setSubVocal: (subVocal) => set({ subVocal }),
+  setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),
+  setCoverTrackId: (coverTrackId) => set({ coverTrackId }),
+  setCoverTrackTitle: (coverTrackTitle) => set({ coverTrackTitle }),
+  setCoverStyle: (coverStyle) => set({ coverStyle }),
   setGenerationId: (generationId) => set({ generationId }),
   setSavedTrackId: (savedTrackId) => set({ savedTrackId }),
   setStatus: (status) => set({ status }),
