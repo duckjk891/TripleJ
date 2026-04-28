@@ -27,6 +27,7 @@ import MusicResultScreen from './screens/MusicResultScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
+import RoyaltyScreen from './screens/RoyaltyScreen';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
@@ -65,6 +66,7 @@ export type RootStackParamList = {
   ArtistCody: undefined;
   ArtistDetail: { artistId: string; artistName?: string };
   DirectorLineup: undefined;
+  Royalty: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -266,6 +268,7 @@ export default function App() {
             <RootStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
+            <RootStack.Screen name="Royalty" component={RoyaltyScreen} />
           </RootStack.Navigator>
           {/* 미니 플레이어 - 탭 바 위에 absolute 배치 */}
           <MiniPlayerWrapper />

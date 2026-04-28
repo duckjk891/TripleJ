@@ -20,6 +20,7 @@ import { useGemsStore } from '../stores/gemsStore';
 import { useDirectorsStore } from '../stores/directorsStore';
 import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
+import { useFanSimulationStore } from '../stores/fanSimulationStore';
 import { getArtistRank, getCompanyTier } from '../data/levels';
 import { DIRECTOR_CATALOG, getDirectorById } from '../data/directors';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -236,6 +237,20 @@ export default function MapScreen({ navigation }: Props) {
       ])
     ).start();
   }, []);
+
+  // 가상 팬덤 재생 시뮬레이션 — 24h 갭일 때만 1회 실행
+  useEffect(() => {
+    if (!user) return;
+    const result = useFanSimulationStore.getState().runIfDue();
+    if (result && result.plays > 0) {
+      const dayLabel = result.daysApplied > 1 ? `${result.daysApplied}일치 ` : '';
+      Alert.alert(
+        '📊 오늘의 청취 리포트',
+        `${dayLabel}가상 팬덤이 너의 곡을 ${result.plays.toLocaleString()}회 재생했어요!\n인기도 EXP +${result.plays}`,
+        [{ text: '확인' }]
+      );
+    }
+  }, [user]);
 
   // 튜토리얼은 헤더 "❓" 버튼으로 수동 오픈 (자동 팝업 제거)
 

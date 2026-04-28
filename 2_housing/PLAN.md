@@ -2302,3 +2302,77 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - gemsStore.spend hook을 직접 수정하지 않고, 각 spend 호출 위치에서 companyStore.addExp를 함께 호출 (느슨한 결합)
 - 레벨업 모달은 단일 컴포넌트에서 큐를 처리해 "동시 2개 레벨업" 시 순차 표시
 
+---
+
+## v44 - 2026-04-28 - 음원 저작권 다운로드 결제 시스템 + 가상 팬덤 재생 시뮬레이션 (Phase 4 sub 2)
+
+### 요청 작업
+- 사용자가 만든 음원에 저작권 자동 등록, 다른 사용자가 다운로드 시 실제 ₩ 결제 → 정산
+- 듣기는 무료 (스트리밍은 인기도 EXP만 기여)
+- 가상 팬덤이 매일 발매 곡을 들어주는 시뮬레이션 (재생 카운트 + 인기도)
+
+### 가격 정책 (확정안 A)
+- 곡당 ₩500 (모든 곡 고정 시작 — 추후 creator 설정 옵션은 v45+)
+- 부가세 9% (₩45)
+- PG 수수료 3% (₩14)
+- 플랫폼 수수료 22% (₩100)
+- **Creator 몫 ₩341** (약 68%)
+- 최소 출금 ₩10,000 / 출금 수수료 ₩1,000 정액
+
+### 분담
+1. **프론트 UI (즉시 가능)** — 결제는 mock 처리
+   - PurchaseModal 컴포넌트 (가격·라이선스·결제 버튼)
+   - PlayerScreen에 "💿 다운로드 ₩500" 버튼 추가
+   - RoyaltyScreen (Settings > 내 정산) — 누적 매출 / 출금 가능액 (백엔드 부재 시 0원)
+2. **재생 시뮬레이션 (게임 메커닉)**
+   - `fanSimulationStore`: lastRunAt, dailyPlayLog
+   - 앱 진입 시 또는 MapScreen mount 시 시뮬레이션 실행
+   - 발매 곡 × 아티스트 레벨 × 기획사 등급 × 발매일 부스트로 일일 재생수 계산
+   - 결과를 artistStore.addExp(plays, 'play')에 반영 + "📊 오늘의 청취 수 +X" 토스트
+3. **백엔드 요청서** — `백엔드_요청_저작권정산.md`
+   - DB 테이블 4개, API 엔드포인트, PG 통합 (토스페이먼츠), 정산 정책
+
+### 파일 변경 계획
+| 파일 | 변경 |
+|------|------|
+| `data/pricing.ts` | **신규** — 가격 상수 (TRACK_PRICE_KRW=500, VAT_RATE=0.09, PG_RATE=0.03, PLATFORM_RATE=0.22, CREATOR_RATE=0.66, MIN_PAYOUT=10000, PAYOUT_FEE=1000), `splitRevenue(price)` 헬퍼 |
+| `stores/fanSimulationStore.ts` | **신규** — lastRunAt + 일일 시뮬레이션 함수 + 결과 누적 |
+| `stores/royaltyStore.ts` | **신규** — 누적 매출/출금가능액 (백엔드 부재 시 더미). 향후 백엔드 ledger와 동기화 |
+| `components/PurchaseModal.tsx` | **신규** — 결제 모달 (가격 분해 표시 + 라이선스 동의 + 결제 버튼) |
+| `screens/PlayerScreen.tsx` | "💿 다운로드 ₩500" 버튼 추가 (자기 곡이면 "내 곡 무료 다운로드") |
+| `screens/RoyaltyScreen.tsx` | **신규** — 정산 화면 (누적 매출, 출금, 시뮬레이션 통계) |
+| `screens/SettingsScreen.tsx` | "내 정산" 메뉴 추가 |
+| `App.tsx` | RootStack에 Royalty 라우트 + 앱 시작 시 fanSimulation 실행 hook |
+| `백엔드_요청_저작권정산.md` | **신규** — DB·API·PG·정산 정책 명세서 |
+
+### 시뮬레이션 알고리즘 안
+```
+일일 가상 재생 수 = floor(
+  artistLevel * 5
+  + companyLevel * 3
+  + songsReleased * 2
+  + (artistLevel >= 7 ? 20 : 0)   // 인기 칭호 부스트
+  + (companyLevel >= 5 ? 10 : 0)  // 중소 등급 부스트
+) * (1 + Math.min(daysSinceLastRun, 7))  // 오랜만에 들어온 사용자 보상
+```
+
+예시:
+- 신규 사용자 (artist Lv.1, company Lv.1, 곡 0개) → 일 8회 재생 (시작은 미미)
+- 라이징 (Lv.4, 중소 Lv.5, 곡 5개) → 일 65회
+- 톱스타 (Lv.13, 메이저 Lv.10, 곡 15개) → 일 150회 + 인기/메이저 보너스
+
+### 테스트 계획
+1. `tsc --noEmit` PASS
+2. PlayerScreen에 "💿 다운로드 ₩500" 노출
+3. 다운로드 탭 → PurchaseModal → "결제하기" → "백엔드 결제 시스템 준비 중" Alert
+4. 자기 곡일 때 — "🆓 내 곡 무료 다운로드" 라벨로 변경 (백엔드 user_id 매칭)
+5. RoyaltyScreen 진입 — 가격 분해 / 누적 매출(0원) / 출금(disabled)
+6. 앱 진입 시 / MapScreen mount 시 fanSimulation 실행 → "📊 오늘의 청취 +N회 (인기도 +X)" 토스트
+7. 시뮬 후 artistStore.totalPlays 증가, 일정 도달 시 아티스트 레벨업
+
+### 특이사항
+- 결제는 mock (Alert로 안내) — 실제 PG 통합은 백엔드 반영 후 v45+
+- 자기 곡 판단: `useAuthStore.user.id === track.user_id` (백엔드 응답에 user_id 있는지 확인)
+- 시뮬레이션은 매일 자정 cron이 아니라 사용자 진입 시 lastRunAt 갭으로 한 번에 처리 (백엔드 cron 없이 동작)
+- RoyaltyScreen은 백엔드 부재 시 "백엔드 정산 시스템 반영 후 활성화" placeholder가 적절
+

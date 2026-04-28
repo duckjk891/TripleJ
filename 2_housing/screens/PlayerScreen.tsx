@@ -19,6 +19,9 @@ import Slider from '@react-native-community/slider';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
+import { useAuthStore } from '../stores/authStore';
+import PurchaseModal from '../components/PurchaseModal';
+import { TRACK_PRICE_KRW, formatKrw } from '../data/pricing';
 import { colors } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -73,6 +76,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const playerStore = usePlayerStore();
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [showPurchase, setShowPurchase] = useState(false);
+  const currentUser = useAuthStore((s) => s.user);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
@@ -361,7 +366,31 @@ export default function PlayerScreen({ route, navigation }: any) {
           <Text style={styles.actionIcon}>+</Text>
           <Text style={styles.actionLabel}>담기</Text>
         </TouchableOpacity>
+
+        {/* 다운로드 (구매) */}
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={() => {
+            const isOwn = currentUser?.id && track?.uploader_id && currentUser.id === track.uploader_id;
+            if (isOwn) {
+              Alert.alert('내 곡', '본인 곡은 결제 없이 다운로드할 수 있어요. (백엔드 반영 후 활성화)');
+              return;
+            }
+            setShowPurchase(true);
+          }}
+        >
+          <Text style={styles.actionIcon}>💿</Text>
+          <Text style={styles.actionLabel}>{formatKrw(TRACK_PRICE_KRW)}</Text>
+        </TouchableOpacity>
       </View>
+
+      <PurchaseModal
+        visible={showPurchase}
+        trackTitle={track?.title || '제목 없음'}
+        trackArtist={track?.artist_name || track?.uploader_nickname}
+        onClose={() => setShowPurchase(false)}
+        onPurchase={() => setShowPurchase(false)}
+      />
 
       {/* 아티스트 착용/협찬 아이템 (있을 때만) */}
       {ads.length > 0 && (

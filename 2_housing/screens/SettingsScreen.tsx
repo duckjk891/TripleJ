@@ -112,10 +112,17 @@ export default function SettingsScreen({ navigation }: any) {
           <Text style={styles.settingArrow}>{'>'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.settingRow, styles.settingRowLast]}
+          style={styles.settingRow}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
         >
           <Text style={styles.settingLabel}>비밀번호 변경</Text>
+          <Text style={styles.settingArrow}>{'>'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowLast]}
+          onPress={() => navigation.navigate('Royalty' as never)}
+        >
+          <Text style={styles.settingLabel}>💸 내 정산</Text>
           <Text style={styles.settingArrow}>{'>'}</Text>
         </TouchableOpacity>
 
