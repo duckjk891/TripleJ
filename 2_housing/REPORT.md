@@ -1892,3 +1892,47 @@ v38 설계 문서 기반 Phase 1 MVP 전체 구현.
 4. **Settings → 내 정산**: 큰 카드(₩0 누적), 가격 분해, 활동 통계 표시. 출금 버튼은 disabled (₩10,000 미달)
 5. **가상 팬덤**: 곡 1개 이상 발매한 상태에서 24h 후 앱 진입 → "📊 오늘의 청취 +N회" Alert + 아티스트 EXP 적립
 6. **첫 진입**: 발매 곡 없거나 첫 사용 → 시뮬 안 돔, lastRunAt만 기록
+
+---
+
+## v45 - 2026-04-28 - 영수증 디렉터 수수료 분배 + Persona Model (D)
+
+### 요청 작업
+1. **추가 요청**: 플랫폼 수수료(₩100)가 작사·작곡·이미지·아티스트 디렉터에게 분배되는 명목으로 영수증에 표시
+2. **D**: 작곡.md 미반영 파라미터 — Persona Model (Style/Voice). 확인 결과 Style Weight·Weirdness·Audio Weight·BPM·Key는 v40에서 이미 반영됨. **Persona Model 1개만 추가**
+
+### 디렉터 분배 비율
+| 디렉터 | 비율 | 곡당 ₩ |
+|---|---|---|
+| ✍️ 작사 | 30% | ₩30 |
+| 🎵 작곡 | 40% | ₩40 |
+| 🎨 이미지 | 15% | ₩15 |
+| 🎤 아티스트 | 15% | ₩15 |
+
+### 파일 변경
+| 파일 | 변경 |
+|------|------|
+| `data/pricing.ts` | `DIRECTOR_FEE_SPLIT` 상수 + `splitPlatformFee()` 헬퍼 |
+| `components/PurchaseModal.tsx` | 영수증 분해에 디렉터별 분배 4줄 추가 (들여쓰기 + italic) |
+| `screens/RoyaltyScreen.tsx` | 가격 분해 카드에 디렉터별 분배 추가, `rowDeepSub` 스타일 |
+| `stores/musicStore.ts` | `personaModel: '' \| 'style' \| 'voice'` 필드 + setter |
+| `types/index.ts` | `MusicParams.personaModel?` 추가 |
+| `services/musicService.ts` | generateWithSuno body에 `persona_model: params.personaModel` 추가 |
+| `screens/MusicGenerationScreen.tsx` | DIRECTOR_MESSAGES 13개로 확장. case 12 라디오 UI (Style/Voice). `handlePersonaConfirm` 추가. handleGenerate에서 `musicStore.setPersonaModel` |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+
+### 특이사항
+- 디렉터 분배는 **명목 표시** — 실제 백엔드 정산은 플랫폼 1건으로 처리. 사용자 인지 효과 ("디렉터들이 일한 보상")
+- Persona Model은 백엔드가 모르는 필드면 무시 → 하위 호환
+- v40에서 이미 Suno 고급 파라미터 대부분 반영돼 있어 v45 D는 작아짐 (Persona 1개)
+- v46 정정: "디렉터 의상/스킨 잠금해제" → "**아티스트 의상/악세서리 잠금해제**" (디렉터는 영입 시스템 그대로, 아티스트의 ArtistCody 8 카테고리 안 SAMPLE_ITEMS에 unlockLevel 부여)
+
+### 사용자 확인
+1. PlayerScreen → 💿 다운로드 ₩500 탭 → PurchaseModal에 가격 분해 + **플랫폼 수수료 ₩100 아래 디렉터 4명 분배** 표시
+2. Settings → 내 정산 → 가격 분해 카드에 동일 분배 확인
+3. 작곡 디렉터 흐름 — 키(case 11) 다음에 **페르소나 모델 단계(case 12)** 등장. Style/Voice 라디오 + 자동/적용
+4. 페르소나 선택 후 곡 만들기 → musicStore에 personaModel 저장, /generate API에 persona_model 전달

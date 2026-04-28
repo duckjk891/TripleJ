@@ -8,6 +8,7 @@ import {
   PAYOUT_FEE_KRW,
   TRACK_PRICE_KRW,
   splitRevenue,
+  splitPlatformFee,
   formatKrw,
 } from '../data/pricing';
 import { colors } from '../theme/colors';
@@ -88,9 +89,15 @@ export default function RoyaltyScreen({ navigation }: any) {
             <Text style={styles.rowSubAmount}>{formatKrw(split.pgFee)}</Text>
           </View>
           <View style={styles.row}>
-            <Text style={styles.rowSub}>· 플랫폼 수수료 (22%)</Text>
+            <Text style={styles.rowSub}>· 플랫폼 수수료 (22%) — 디렉터 보상</Text>
             <Text style={styles.rowSubAmount}>{formatKrw(split.platformFee)}</Text>
           </View>
+          {splitPlatformFee(split.platformFee).map((d) => (
+            <View key={d.key} style={styles.row}>
+              <Text style={styles.rowDeepSub}>   ↳ {d.emoji} {d.label}</Text>
+              <Text style={styles.rowDeepSubAmount}>{formatKrw(d.amount)}</Text>
+            </View>
+          ))}
           <View style={styles.divider} />
           <View style={styles.row}>
             <Text style={[styles.rowLabel, { color: colors.accent.primary }]}>
@@ -172,6 +179,8 @@ const styles = StyleSheet.create({
   rowAmount: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
   rowSub: { color: colors.text.muted, fontSize: 12 },
   rowSubAmount: { color: colors.text.muted, fontSize: 12 },
+  rowDeepSub: { color: colors.text.muted, fontSize: 11, fontStyle: 'italic' },
+  rowDeepSubAmount: { color: colors.text.muted, fontSize: 11, fontStyle: 'italic' },
   divider: { height: 1, backgroundColor: colors.border.subtle, marginVertical: 6 },
 
   notice: {

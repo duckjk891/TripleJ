@@ -45,6 +45,7 @@ const DIRECTOR_MESSAGES = [
   '참고 음원의 세기는 얼마만큼 반영할까요?',
   '템포(BPM)를 정해둘까요? 기본은 자동이에요.',
   '곡의 분위기 키(조성)를 골라주세요. 건너뛰면 자동이에요.',
+  '마지막으로, 페르소나 모델을 선택해주세요. 스타일을 따라할지, 보이스를 따라할지!',
 ];
 
 interface ChatMessage {
@@ -87,6 +88,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [weirdnessOn, setWeirdnessOn] = useState(false);
   const [audioWeight, setAudioWeight] = useState(0.5);
   const [audioWeightOn, setAudioWeightOn] = useState(false);
+  const [personaModel, setPersonaModel] = useState<'' | 'style' | 'voice'>('');
+  const [personaModelOn, setPersonaModelOn] = useState(false);
   const [bpmValue, setBpmValue] = useState(120);
   const [bpmOn, setBpmOn] = useState(false);
   const [musicalKey, setMusicalKey] = useState('');
@@ -249,10 +252,17 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setBpmOn(apply);
     advanceStep(apply ? `BPM ${Math.round(bpmValue)}` : '자동 템포', 11);
   };
+  const handlePersonaConfirm = (apply: boolean) => {
+    setPersonaModelOn(apply && !!personaModel);
+    const label = personaModel === 'style' ? 'Style Persona' : personaModel === 'voice' ? 'Voice Persona' : '';
+    advanceStep(apply && label ? `페르소나: ${label}` : '자동', 13);
+  };
+
   const handleKeyConfirm = (apply: boolean) => {
     setMusicalKeyOn(apply && !!musicalKey);
     advanceStep(apply && musicalKey ? `키: ${musicalKey}` : '자동 키', 12);
   };
+  // 참고: handlePersonaConfirm은 위에 정의됨 (case 12에서 호출)
 
   // Step 6: Reference - file upload
   const handlePickReference = async () => {
@@ -336,6 +346,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setBpm(bpmOn ? String(bpmValue) : '');
     musicStore.setMusicalKey(musicalKeyOn ? musicalKey : '');
     musicStore.setNegativeTags(negativeTagsOn ? negativeTags.trim() : '');
+    musicStore.setPersonaModel(personaModelOn ? personaModel : '');
     musicStore.setSubVocal(subVocalGender);
     musicStore.setSubVocalStyle(subVocalStyle);
     setChatHistory((prev) => [
@@ -690,6 +701,43 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 style={[styles.applyBtn, !musicalKey && { opacity: 0.4 }]}
                 onPress={() => handleKeyConfirm(true)}
                 disabled={!musicalKey}
+              >
+                <Text style={styles.applyBtnText}>적용</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
+
+      case 12:
+        // Persona Model (Style Persona / Voice Persona)
+        return (
+          <View style={styles.inputArea}>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+              <TouchableOpacity
+                style={[styles.keyChip, { flex: 1 }, personaModel === 'style' && styles.keyChipSelected]}
+                onPress={() => setPersonaModel(personaModel === 'style' ? '' : 'style')}
+              >
+                <Text style={[styles.keyChipText, personaModel === 'style' && styles.keyChipTextSelected]}>
+                  🎨 Style Persona
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.keyChip, { flex: 1 }, personaModel === 'voice' && styles.keyChipSelected]}
+                onPress={() => setPersonaModel(personaModel === 'voice' ? '' : 'voice')}
+              >
+                <Text style={[styles.keyChipText, personaModel === 'voice' && styles.keyChipTextSelected]}>
+                  🎤 Voice Persona
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.twoBtnRow}>
+              <TouchableOpacity style={styles.skipBtn} onPress={() => handlePersonaConfirm(false)}>
+                <Text style={styles.skipBtnText}>자동</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.applyBtn, !personaModel && { opacity: 0.4 }]}
+                onPress={() => handlePersonaConfirm(true)}
+                disabled={!personaModel}
               >
                 <Text style={styles.applyBtnText}>적용</Text>
               </TouchableOpacity>

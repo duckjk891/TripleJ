@@ -2376,3 +2376,37 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - 시뮬레이션은 매일 자정 cron이 아니라 사용자 진입 시 lastRunAt 갭으로 한 번에 처리 (백엔드 cron 없이 동작)
 - RoyaltyScreen은 백엔드 부재 시 "백엔드 정산 시스템 반영 후 활성화" placeholder가 적절
 
+---
+
+## v45 - 2026-04-28 - 영수증 디렉터 수수료 분배 + Persona Model 파라미터 (D)
+
+### 요청 작업
+1. **추가 요청**: 플랫폼 수수료(₩100)가 작사·작곡·이미지·아티스트 디렉터에게 분배되는 명목으로 영수증에 표시
+2. **D (TODO)**: 작곡.md 미반영 파라미터 — `Persona Model` (Style Persona / Voice Persona)
+   - 확인 결과 Style Weight / Weirdness / Audio Weight / BPM / Key는 v40에서 이미 반영됨. **Persona Model 1개만 빠짐**
+
+### 디렉터 분배 비율 (플랫폼 수수료 ₩100 기준)
+| 디렉터 | 비율 | 곡당 ₩ | 근거 |
+|---|---|---|---|
+| 작사 디렉터 | 30% | ₩30 | LLM 호출 비용 |
+| 작곡 디렉터 | 40% | ₩40 | Suno (가장 비싼 외부 비용) |
+| 이미지 디렉터 | 15% | ₩15 | 커버 생성 |
+| 아티스트 디렉터 | 15% | ₩15 | 캐릭터 시트 |
+
+### 파일 변경 계획
+| 파일 | 변경 |
+|------|------|
+| `data/pricing.ts` | `DIRECTOR_FEE_SPLIT` 상수 + `splitPlatformFee(platformFee)` 헬퍼 |
+| `components/PurchaseModal.tsx` | 영수증에 디렉터별 분배 4줄 추가 (들여쓰기 표시) |
+| `screens/RoyaltyScreen.tsx` | 가격 분해 카드에 디렉터별 분배 추가 |
+| `stores/musicStore.ts` | `personaModel: 'style' \| 'voice' \| ''` 필드 + setter |
+| `screens/MusicGenerationScreen.tsx` | DIRECTOR_MESSAGES 13개로 확장, case 12 라디오 UI, handleGenerate에 personaModel 반영 |
+| `services/musicService.ts` | `GenerateParams.persona_model?` 추가, FormData에 전달 |
+
+### 특이사항 예상
+- 디렉터 분배는 명목 표시 — 실제 백엔드 정산은 플랫폼 1건으로 처리. 사용자에게 "디렉터들이 일한 보상" 인지시키는 UX 효과
+- Persona Model은 Suno API 비공식 가능성 — 백엔드가 모르는 필드면 무시되니 하위 호환
+
+### 다음 작업 메모 (v46 후보)
+- **아티스트 의상/악세서리 잠금해제** (Phase 4 sub 3 정정) — ArtistCody 8 카테고리 안의 SAMPLE_ITEMS에 `unlockLevel` 필드 추가, 아티스트 레벨 미달이면 잠금 표시 + 미선택. 디렉터 의상/스킨은 범위에서 제외 (사용자 정책)
+

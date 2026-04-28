@@ -128,6 +128,7 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     bpm: params.bpm ? parseInt(params.bpm) : undefined,
     key: params.musicalKey || undefined,
     negative_tags: params.negativeTags || undefined,
+    persona_model: params.personaModel || undefined,
     model: 'suno',
     duration: 120,
     start_music_gen: true,

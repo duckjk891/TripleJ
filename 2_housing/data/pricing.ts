@@ -34,3 +34,34 @@ export function splitRevenue(priceKrw: number = TRACK_PRICE_KRW): RevenueSplit {
 export function formatKrw(amount: number): string {
   return `₩${amount.toLocaleString()}`;
 }
+
+/**
+ * 플랫폼 수수료(₩100)를 디렉터들에게 분배하는 명목 비율.
+ * 영수증에 "디렉터들이 일한 보상" 명목으로 표시.
+ * 실제 정산은 백엔드에서 플랫폼 1건으로 처리됨.
+ */
+export interface DirectorFeeShare {
+  key: 'lyricist' | 'composer' | 'image' | 'artist';
+  label: string;
+  emoji: string;
+  ratio: number; // 플랫폼 수수료 대비 비율 (합계 1.0)
+}
+
+export const DIRECTOR_FEE_SPLIT: DirectorFeeShare[] = [
+  { key: 'lyricist', label: '작사 디렉터', emoji: '✍️', ratio: 0.30 },
+  { key: 'composer', label: '작곡 디렉터', emoji: '🎵', ratio: 0.40 },
+  { key: 'image',    label: '이미지 디렉터', emoji: '🎨', ratio: 0.15 },
+  { key: 'artist',   label: '아티스트 디렉터', emoji: '🎤', ratio: 0.15 },
+];
+
+export interface DirectorFeeRow extends DirectorFeeShare {
+  amount: number;
+}
+
+/** 플랫폼 수수료(₩) → 디렉터별 분배 행 배열 */
+export function splitPlatformFee(platformFeeKrw: number): DirectorFeeRow[] {
+  return DIRECTOR_FEE_SPLIT.map((d) => ({
+    ...d,
+    amount: Math.round(platformFeeKrw * d.ratio),
+  }));
+}

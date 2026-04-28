@@ -8,7 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TRACK_PRICE_KRW, splitRevenue, formatKrw } from '../data/pricing';
+import { TRACK_PRICE_KRW, splitRevenue, splitPlatformFee, formatKrw } from '../data/pricing';
 import { colors } from '../theme/colors';
 
 interface Props {
@@ -66,9 +66,15 @@ export default function PurchaseModal({ visible, trackTitle, trackArtist, onClos
               <Text style={styles.subAmount}>{formatKrw(split.pgFee)}</Text>
             </View>
             <View style={styles.row}>
-              <Text style={styles.subLabel}>· 플랫폼 수수료</Text>
+              <Text style={styles.subLabel}>· 플랫폼 수수료 (디렉터 보상)</Text>
               <Text style={styles.subAmount}>{formatKrw(split.platformFee)}</Text>
             </View>
+            {splitPlatformFee(split.platformFee).map((d) => (
+              <View key={d.key} style={styles.row}>
+                <Text style={styles.deepSubLabel}>   ↳ {d.emoji} {d.label}</Text>
+                <Text style={styles.deepSubAmount}>{formatKrw(d.amount)}</Text>
+              </View>
+            ))}
             <View style={styles.divider} />
             <View style={styles.row}>
               <Text style={styles.creatorLabel}>🎤 아티스트에게 가는 금액</Text>
@@ -140,6 +146,8 @@ const styles = StyleSheet.create({
   amount: { color: colors.text.primary, fontSize: 14, fontWeight: '700' },
   subLabel: { color: colors.text.muted, fontSize: 12 },
   subAmount: { color: colors.text.muted, fontSize: 12 },
+  deepSubLabel: { color: colors.text.muted, fontSize: 11, fontStyle: 'italic' },
+  deepSubAmount: { color: colors.text.muted, fontSize: 11, fontStyle: 'italic' },
   creatorLabel: { color: colors.accent.primary, fontSize: 13, fontWeight: '700' },
   creatorAmount: { color: colors.accent.primary, fontSize: 14, fontWeight: '800' },
   divider: { height: 1, backgroundColor: colors.border.subtle, marginVertical: 6 },
