@@ -18,6 +18,7 @@ import { Audio } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
+import { useArtistStore } from '../stores/artistStore';
 import { colors } from '../theme/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -104,6 +105,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       setIsPlaying(status.isPlaying);
       playerStore.setIsPlaying(status.isPlaying);
       if (status.didJustFinish) {
+        // 재생 완료 EXP — 내 아티스트 +1
+        useArtistStore.getState().addExp(1, 'play');
         // 자동 다음곡: queue에 다음이 있으면 새 곡으로 전환
         const store = usePlayerStore.getState();
         if (store.queue.length > 0 && store.currentIndex >= 0 && store.currentIndex < store.queue.length - 1) {

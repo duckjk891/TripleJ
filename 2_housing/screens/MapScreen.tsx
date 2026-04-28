@@ -18,6 +18,9 @@ import Character, { DirectorType } from '../components/Character';
 import { useTimerStore, DIRECTOR_STAGES, TOTAL_STAGES } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { useDirectorsStore } from '../stores/directorsStore';
+import { useArtistStore } from '../stores/artistStore';
+import { useCompanyStore } from '../stores/companyStore';
+import { getArtistRank, getCompanyTier } from '../data/levels';
 import { DIRECTOR_CATALOG, getDirectorById } from '../data/directors';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
@@ -135,6 +138,11 @@ export default function MapScreen({ navigation }: Props) {
 
   // 영입 시스템
   const gemBalance = useGemsStore((s) => s.balance);
+  const artistLevel = useArtistStore((s) => s.level);
+  const artistSongs = useArtistStore((s) => s.songsReleased);
+  const companyLevel = useCompanyStore((s) => s.level);
+  const artistRank = getArtistRank(artistLevel);
+  const companyTier = getCompanyTier(companyLevel);
   const initGems = useGemsStore((s) => s.initIfEmpty);
   const { hiredIds, selectedByCategory, selectForCategory, initIfEmpty: initDirectors } =
     useDirectorsStore();
@@ -173,9 +181,23 @@ export default function MapScreen({ navigation }: Props) {
             </TouchableOpacity>
           )}
           {user && (
+            <View style={styles.levelPill}>
+              <Text style={styles.levelPillText}>
+                {companyTier.emoji} Lv.{companyLevel}
+              </Text>
+            </View>
+          )}
+          {user && artistSongs > 0 && (
+            <View style={[styles.levelPill, { marginLeft: 4 }]}>
+              <Text style={styles.levelPillText}>
+                {artistRank.emoji} Lv.{artistLevel}
+              </Text>
+            </View>
+          )}
+          {user && (
             <TouchableOpacity
               onPress={() => parent.navigate('DirectorLineup' as never)}
-              style={styles.gemPill}
+              style={[styles.gemPill, { marginLeft: 4 }]}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
               <Text style={styles.gemPillText}>💎 {gemBalance.toLocaleString()}</Text>
@@ -871,6 +893,20 @@ const styles = StyleSheet.create({
   gemPillText: {
     fontSize: 12,
     color: colors.accent.primaryGlow,
+    fontWeight: '700',
+  },
+  // 헤더 레벨 칩 (기획사·아티스트)
+  levelPill: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  levelPillText: {
+    fontSize: 11,
+    color: colors.text.primary,
     fontWeight: '700',
   },
   // 디렉터 선택 모달 행

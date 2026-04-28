@@ -18,6 +18,8 @@ import {
 } from '../services/musicService';
 import { BACKEND_BASE_URL } from '../services/api';
 import { useGemsStore } from '../stores/gemsStore';
+import { useArtistStore } from '../stores/artistStore';
+import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import { colors } from '../theme/colors';
 
@@ -163,6 +165,9 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                 store.setStatus('completed');
                 store.setIsLoading(false);
                 useGemsStore.getState().earn(GEM_REWARDS.TRACK_MUSIC_DONE, 'track_music_done', trackId);
+                // 곡 발매 EXP — 아티스트 +50 / 기획사 +30
+                useArtistStore.getState().addExp(50, 'release');
+                useCompanyStore.getState().addExp(30, 'release');
                 navigation.replace('MusicResult');
               } else if (status.status === 'failed' || status.status === 'error') {
                 if (pollInterval) clearInterval(pollInterval);

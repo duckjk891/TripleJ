@@ -2229,3 +2229,76 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - 큐 + API 동기화 race condition: useEffect로 둘 다 watch
 - 카테고리 8개라 모달이 길어짐 → 가로 스크롤 카테고리 탭으로 처리 (또는 그리드 + 스크롤)
 
+---
+
+## v43 - 2026-04-28 - 아티스트 레벨업 + 기획사 레벨업 시스템 (Phase 4 sub 1)
+
+### 요청 작업
+디렉터가 아니라 **사용자가 만든 아티스트 캐릭터**와 **기획사(사용자 본인)** 가 레벨업하는 매니지먼트 메타. 디렉터는 "직원/도구", 아티스트와 기획사가 "성장 주체".
+
+### 디자인 결정
+
+#### 아티스트 레벨업 (myCharacter)
+- **데이터**: `artistStore` (zustand + AsyncStorage persist)
+  - exp, level, songsReleased, totalPlays
+- **EXP 소스**:
+  - 곡 발매 +50 (CoverGenerationScreen handleConfirm 또는 MusicLoadingScreen 완료 시)
+  - 곡 1회 재생 완료 +1 (PlayerScreen didJustFinish)
+- **칭호**: 신인 (Lv1–3) → 라이징 (4–6) → 인기 (7–10) → 톱스타 (11–15) → 레전드 (16+)
+- **EXP 곡선**: Lv N → N+1 = `100 * N` EXP (Lv1→2는 100, Lv2→3은 200, …)
+- **레벨업 보상**: +50💎 + 새 칭호
+
+#### 기획사 레벨업 (사용자 본인)
+- **데이터**: `companyStore` (zustand + AsyncStorage persist)
+  - exp, level, totalSongs, totalDirectorsHired, totalSpent
+- **EXP 소스**:
+  - 곡 발매 +30
+  - 디렉터 영입 +20 (DirectorLineupScreen handleHire)
+  - 100💎 사용마다 +5 (gemsStore.spend hook 또는 누적 추적)
+- **등급**: 인디 (Lv1) → 중소 (5) → 메이저 (10) → 글로벌 (20)
+- **EXP 곡선**: Lv N → N+1 = `200 * N` EXP
+- **레벨업 보상**: +100💎 + 새 등급 (다음 v44부터 등급별 신규 디렉터/맵 잠금해제)
+
+#### UI
+- **MapScreen 헤더**: 💎 잔액 옆에 작은 칩 2개
+  - `🏢 메이저 Lv.10` (기획사 등급)
+  - `🎤 인기 Lv.7` (아티스트 칭호)
+  - 캐릭터 미생성 상태면 아티스트 칩 숨김
+- **레벨업 모달** (`LevelUpModal` 컴포넌트 신규):
+  - 곡 발매·재생·영입·💎 사용 직후 EXP 추가 → 레벨업 발생 시 자동 표시
+  - 토스트 형태로 화면 상단에서 슬라이드, 3초 후 자동 dismiss + 사용자 탭 시 닫힘
+  - 내용: "🎉 [아티스트/기획사]가 Lv.N으로 올라갔어요! +XX💎"
+
+### 파일 변경 계획
+
+| 파일 | 변경 |
+|------|------|
+| `stores/artistStore.ts` | **신규** — exp/level/songsReleased/totalPlays + addExp(returns leveledUp/bonus) + persist |
+| `stores/companyStore.ts` | **신규** — exp/level/totalSongs/totalDirectorsHired/totalSpent + addExp + persist |
+| `data/levels.ts` | **신규** — 칭호/등급 라벨 함수 + EXP 곡선 함수 |
+| `components/LevelUpModal.tsx` | **신규** — 토스트 형태 모달 (zustand 기반 글로벌 큐) |
+| `stores/levelUpQueueStore.ts` | **신규** — 레벨업 알림 큐 (여러 개 한꺼번에 발생 시 순차 표시) |
+| `screens/MapScreen.tsx` | 헤더에 기획사 등급 / 아티스트 칭호 칩 추가 |
+| `screens/MusicLoadingScreen.tsx` | 곡 완성 시 artist/company addExp 호출 |
+| `screens/CoverGenerationScreen.tsx` | 커버 생성 시 (곡 발매 시점) artist/company addExp |
+| `screens/PlayerScreen.tsx` | didJustFinish 시 artist addExp(+1, 'play') |
+| `screens/DirectorLineupScreen.tsx` | 디렉터 영입 시 company addExp(+20, 'hire') |
+| `App.tsx` | RootStack 외각에 `<LevelUpModal />` mount (전역 토스트) |
+
+### 테스트 계획
+1. `tsc --noEmit` PASS
+2. **EXP 적립**:
+   - 곡 발매 → MapScreen 헤더에 EXP 진행바 또는 칩의 Lv 변화 (요약 표시 OK)
+   - 재생 1곡 완료 → 아티스트 EXP +1
+   - 디렉터 영입 → 기획사 EXP +20
+3. **레벨업**:
+   - 아티스트 EXP 100 도달 → "🎉 라이징 Lv.4가 됐어요!" 토스트 + +50💎
+   - 기획사 EXP 200 도달 → "🎉 인디 Lv.2가 됐어요!" 토스트 + +100💎
+4. **Persist**: 앱 재시작 후 레벨/EXP 유지
+
+### 특이사항 예상
+- 좋아요 EXP는 v44 추가 (백엔드 응답 활용 + 폴링 정책 결정 필요)
+- 재생 카운트는 PlayerScreen의 didJustFinish 트리거 (50% 이상 재생 시도 정책 등은 v44)
+- gemsStore.spend hook을 직접 수정하지 않고, 각 spend 호출 위치에서 companyStore.addExp를 함께 호출 (느슨한 결합)
+- 레벨업 모달은 단일 컴포넌트에서 큐를 처리해 "동시 2개 레벨업" 시 순차 표시
+

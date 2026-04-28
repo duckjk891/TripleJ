@@ -1754,3 +1754,66 @@ v38 설계 문서 기반 Phase 1 MVP 전체 구현.
 6. "옷 입히러 가기" → ArtistCody → 8 카테고리 그리드 → 여러 카테고리 선택 → "이 옷으로 입히기 (대기 필요)" → ArtistLoading(outfit) → 4단계 진행 → ArtistResult 복귀
 7. [저장] → 작업실 복귀
 8. 다시 아티스트 디렉터 진입 시 → ArtistInput 상단에 기존 아티스트 카드 → "옷 갈아입기/미세조정" → ArtistResult로 직접 진입 (`/character/me`로 hydrate)
+
+---
+
+## v43 - 2026-04-28 - 아티스트 레벨업 + 기획사 레벨업 시스템 (Phase 4 sub 1)
+
+### 요청 작업
+디렉터가 아닌 **사용자가 만든 아티스트** + **기획사 본인**이 레벨업하는 매니지먼트 메타 도입.
+
+### 수행 결과
+
+| 항목 | 상태 | 핵심 |
+|------|------|------|
+| 아티스트 레벨업 시스템 | ✅ | `artistStore` + 칭호(신인→레전드) + EXP 곡선 |
+| 기획사 레벨업 시스템 | ✅ | `companyStore` + 등급(인디→글로벌) + EXP 곡선 |
+| 레벨업 토스트 | ✅ | `LevelUpModal` 전역 mount, 큐 기반 순차 표시 |
+| EXP 트리거 | ✅ | 곡 발매·재생 완료·디렉터 영입·💎 사용 4곳 |
+| MapScreen 헤더 칩 | ✅ | 기획사 등급 + (캐릭터 보유 시) 아티스트 칭호 |
+| Persist | ✅ | AsyncStorage 영속화 (앱 재시작 후 유지) |
+
+### 파일 변경
+
+| 파일 | 변경 |
+|------|------|
+| `data/levels.ts` | **신규** — `getArtistRank` / `getCompanyTier` / EXP 곡선 / 보너스 함수. 5단계 칭호 (신인 🌱 → 라이징 ⭐ → 인기 🔥 → 톱스타 👑 → 레전드 💎), 4단계 등급 (인디 🏠 → 중소 🏢 → 메이저 🏛️ → 글로벌 🌐) |
+| `stores/artistStore.ts` | **신규** — exp/level/songsReleased/totalPlays. `addExp(delta, source)` — 한 번 호출에 다단계 레벨업 처리, 매 레벨업마다 levelUpQueue enqueue + gemsStore에 보너스 💎 earn. AsyncStorage persist |
+| `stores/companyStore.ts` | **신규** — exp/level/totalSongs/totalDirectorsHired/totalSpent. `addExp(delta, source)` 동일 패턴 + `trackSpend(gemAmount)` — 누적 사용량이 100💎 단위 임계값 통과 시 +5 EXP |
+| `stores/levelUpQueueStore.ts` | **신규** — `LevelUpEvent` 큐 (kind/newLevel/rankLabel/emoji/bonus). `enqueue` / `dequeue` |
+| `components/LevelUpModal.tsx` | **신규** — 전역 토스트 컴포넌트. slide-in/fade-in 애니메이션, 3.5s 자동 dismiss, 사용자 탭 즉시 닫힘. 큐가 있으면 첫 번째 이벤트 표시 후 dequeue → 다음 이벤트 자동 |
+| `App.tsx` | RootStack 외각에 `<LevelUpModal />` 전역 mount (모든 화면 위에 zIndex 9999) |
+| `screens/MapScreen.tsx` | 헤더 칩에 기획사 등급(emoji+Lv) / 아티스트 칭호(`songsReleased > 0`일 때만) 추가. levelPill 스타일 추가 |
+| `screens/MusicLoadingScreen.tsx` | 곡 완성 직후 (polling/direct 모두) `useArtistStore.addExp(50, 'release')` + `useCompanyStore.addExp(30, 'release')` |
+| `screens/PlayerScreen.tsx` | `didJustFinish` 시 `useArtistStore.addExp(1, 'play')` (자동 다음곡 분기 전에 호출되어 trigger 보장) |
+| `screens/DirectorLineupScreen.tsx` | 디렉터 영입 시 `useCompanyStore.addExp(20, 'hire')` + 유료 영입은 `trackSpend(hireCost)`로 누적 추적. 무료 영입(hireCost === 0)도 +20 EXP 적립 |
+| `PLAN.md` | v43 계획 추가 |
+| `REPORT.md` | v43 결과 기록 |
+
+### 테스트 결과
+| 항목 | 결과 |
+|------|------|
+| `tsc --noEmit` | PASS (0 errors) |
+
+### 특이사항
+
+- **EXP 곡선**:
+  - 아티스트: Lv N → N+1 = `100 * N` EXP. Lv1→2 = 100, Lv2→3 = 200, …
+  - 기획사: Lv N → N+1 = `200 * N` EXP. 기획사가 두 배 더 천천히 성장
+- **레벨업 보상**: 모두 고정 (아티스트 +50💎 / 기획사 +100💎). 추후 `level × 10` 식으로 곡선화 가능
+- **다단계 레벨업 처리**: `addExp` 함수 안에서 `while (exp >= expForNextLevel(level))`로 처리해 한 번 호출에 여러 레벨 점프 가능. 각 레벨마다 토스트 enqueue + 보너스 지급
+- **TrackSpend 정책**: gemsStore.spend 함수 자체는 안 건드림 (느슨한 결합). 대신 `companyStore.trackSpend(amount)`를 직접 호출하는 위치는 현재 DirectorLineupScreen만. 향후 다른 spend 위치 추가 시 같은 패턴
+- **칭호 표시 조건**: 아티스트 칩은 `songsReleased > 0`일 때만 (캐릭터만 만들고 곡은 안 낸 사용자는 숨김). 기획사 칩은 항상 표시
+- **레벨업 토스트 큐**: 동시 레벨업(아티스트+기획사 둘 다 한 번에) 시 순차 표시. 첫 토스트 dismiss 후 다음 자동 진입
+- **AsyncStorage persist**: `artist-storage-v1`, `company-storage-v1` 키. v41에서 도입한 zustand persist 패턴 그대로 사용
+- **재생 카운트 정책**: 현재는 `didJustFinish` (곡 끝까지 재생) 한정. 50% 이상 등 정책은 v44~ 정교화
+- **좋아요 EXP 미반영**: 백엔드에 `/likes/{track_id}` POST/DELETE는 있으나 "내 트랙들이 받은 좋아요 수"는 클라이언트 측에서 폴링하기 부담. v44에서 `/tracks/my` 응답에 likes_count 필드 활용 검토
+
+### 사용자 확인 (Expo Go, `--clear` 권장)
+
+1. **첫 진입**: MapScreen 헤더 우측에 `🏠 Lv.1` (인디 1단계) 칩 + `💎 100` 잔액 칩
+2. **곡 만들기**: 작사 → 작곡 → 커버 (완성) → MusicLoading 종료 시 토스트 미발생 (EXP 100 미달). MapScreen 복귀 시 칩 동일
+3. **곡 2~3개 만들고 재생까지 하면**: 아티스트 EXP 100 도달 → "🎉 아티스트가 Lv.2! 라이징 · 보너스 +50💎" 토스트
+4. **디렉터 영입 5명+ 곡 발매 누적**: 기획사 EXP 200 도달 → "🎉 기획사가 Lv.2! 인디 · 보너스 +100💎" (Lv.5 도달 시 "중소"로 등급 변경)
+5. **앱 종료 → 재시작**: 레벨/EXP/카운트 모두 유지
+6. **헤더 칩 확인**: 캐릭터 만들고 곡 1개라도 발매하면 아티스트 칭호 칩(`🌱 Lv.1`) 등장

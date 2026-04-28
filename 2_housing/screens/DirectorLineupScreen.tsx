@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DIRECTOR_CATALOG, DirectorCatalog } from '../data/directors';
 import { useDirectorsStore } from '../stores/directorsStore';
 import { useGemsStore } from '../stores/gemsStore';
+import { useCompanyStore } from '../stores/companyStore';
 import { useAuthStore } from '../stores/authStore';
 import type { DirectorType } from '../components/Character';
 import { colors } from '../theme/colors';
@@ -68,6 +69,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
     }
     if (d.hireCost === 0) {
       hire(d.id);
+      useCompanyStore.getState().addExp(20, 'hire');
       return;
     }
     Alert.alert(
@@ -84,6 +86,10 @@ export default function DirectorLineupScreen({ navigation }: any) {
               return;
             }
             hire(d.id);
+            // 기획사 EXP: 영입 +20 / 사용한 💎 trackSpend
+            const company = useCompanyStore.getState();
+            company.addExp(20, 'hire');
+            company.trackSpend(d.hireCost);
             Alert.alert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요!`);
           },
         },

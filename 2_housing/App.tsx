@@ -26,6 +26,7 @@ import MusicLoadingScreen from './screens/MusicLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
+import LevelUpModal from './components/LevelUpModal';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
@@ -268,6 +269,8 @@ export default function App() {
           </RootStack.Navigator>
           {/* 미니 플레이어 - 탭 바 위에 absolute 배치 */}
           <MiniPlayerWrapper />
+          {/* 레벨업 토스트 - 전역 표시 (모든 화면 위에 떠오름) */}
+          <LevelUpModal />
         </View>
       </NavigationContainer>
     </SafeAreaProvider>
