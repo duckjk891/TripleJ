@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -18,6 +19,8 @@ from ..database.redis import get_redis
 from ..database.minio import get_minio
 
 router = APIRouter(prefix="/api/tracks")
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_AUDIO_EXT = {".mp3", ".wav", ".ogg", ".flac", ".m4a"}
 MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50MB
@@ -32,6 +35,7 @@ def _serialize_track(doc: dict) -> dict:
         if key in doc and isinstance(doc[key], datetime):
             doc[key] = doc[key].isoformat()
     # Add aliases for frontend compatibility
+    doc["artist_id"] = doc.get("uploader_id")
     doc["artist_name"] = doc.get("uploader_nickname", "AI")
     doc["cover_image"] = doc.get("cover_image_url")
     return doc
@@ -215,10 +219,26 @@ async def delete_track(
     # Delete from MongoDB
     await mongo.tracks.delete_one({"_id": ObjectId(track_id)})
 
-    # Clear Redis cache
+    # Clear Redis cache (both legacy v1 and current v2 keys)
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
+    await redis.delete(f"cache:track:v2:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
+
+    # v69 — cascade: pull this track id from owner's albums, then delete
+    # any albums that ended up empty.
+    affected = await mongo.albums.update_many(
+        {"track_ids": track_id, "owner_id": current_user["id"]},
+        {"$pull": {"track_ids": track_id}},
+    )
+    deleted = await mongo.albums.delete_many({
+        "owner_id": current_user["id"],
+        "track_ids": {"$size": 0},
+    })
+    logger.info(
+        "[TrackDelete] cascade track=%s affected_albums=%d deleted_albums=%d",
+        track_id, affected.modified_count, deleted.deleted_count,
+    )
 
     return {"message": "트랙이 삭제되었습니다."}
 
@@ -253,9 +273,10 @@ async def update_track(
         {"$set": update_data},
     )
 
-    # Clear Redis cache
+    # Clear Redis cache (both legacy v1 and current v2 keys)
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
+    await redis.delete(f"cache:track:v2:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # Fetch and return updated document
@@ -283,6 +304,80 @@ async def get_track_music_video(track_id: str):
         return JSONResponse(status_code=404, content={"error": "뮤직비디오 파일을 찾을 수 없습니다."})
 
     return {"has_music_video": True, "music_video_url": mv_url}
+
+
+# v44 — Beat extraction status & retry for tracks
+def _serialize_track_beats_payload(doc: dict) -> dict:
+    started = doc.get("beats_started_at")
+    completed = doc.get("beats_completed_at")
+    return {
+        "status": doc.get("beats_status") or "pending",
+        "tempo": doc.get("tempo"),
+        "beats": doc.get("beats") or [],
+        "downbeats": doc.get("downbeats") or [],
+        "started_at": started.isoformat() if isinstance(started, datetime) else None,
+        "completed_at": completed.isoformat() if isinstance(completed, datetime) else None,
+        "error": doc.get("beats_error"),
+    }
+
+
+@router.get("/{track_id}/beats")
+async def get_track_beats(
+    track_id: str,
+    current_user=Depends(get_current_user),
+):
+    """Return beat extraction status + data for a track. Public tracks accessible to anyone authenticated."""
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+    is_owner = doc.get("uploader_id") == current_user["id"]
+    if not is_owner and not doc.get("is_public", True):
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+
+    return _serialize_track_beats_payload(doc)
+
+
+@router.post("/{track_id}/beats/retry")
+async def retry_track_beats(
+    track_id: str,
+    current_user=Depends(get_current_user),
+):
+    """Reset and re-trigger beat extraction for a track (owner only)."""
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+    if doc.get("uploader_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "자신의 트랙만 재시도할 수 있습니다."})
+    if not doc.get("audio_url"):
+        return JSONResponse(status_code=400, content={"error": "오디오 파일이 없습니다."})
+
+    await mongo.tracks.update_one(
+        {"_id": ObjectId(track_id)},
+        {"$set": {
+            "beats_status": "pending",
+            "beats_error": None,
+            "beats_started_at": None,
+            "beats_completed_at": None,
+            "tempo": None,
+            "beats": [],
+            "downbeats": [],
+        }},
+    )
+
+    import asyncio as _asyncio
+    from ..services.beat_extraction import detect_beats_for_track
+    _asyncio.create_task(detect_beats_for_track(track_id))
+
+    return {"message": "비트 재추출이 시작되었습니다.", "status": "pending"}
 
 
 @router.get("/stream-proxy/{track_id}")
@@ -329,8 +424,8 @@ async def get_track(track_id: str):
     redis = get_redis()
     mongo = get_mongo()
 
-    # Check Redis cache
-    cached = await redis.get(f"cache:track:{track_id}")
+    # Check Redis cache (v2: schema bumped to include cover_character)
+    cached = await redis.get(f"cache:track:v2:{track_id}")
     if cached:
         track = json.loads(cached)
         # Increment playcount buffer
@@ -343,8 +438,15 @@ async def get_track(track_id: str):
 
     track = _serialize_track(doc)
 
+    # Look up linked completed mv_job once; reuse for both music_video and cover_character.
+    mv_job = None
+    try:
+        mv_job = await _find_completed_mv(mongo, track.get("generation_id"))
+    except Exception:
+        logger.exception("[TrackCoverChar] mv_job lookup failed track=%s", track_id)
+        mv_job = None
+
     # Attach music video info
-    mv_job = await _find_completed_mv(mongo, track.get("generation_id"))
     if mv_job:
         track["has_music_video"] = True
         track["music_video_url"] = _mv_presigned_url(mv_job.get("result_music_video_url"))
@@ -352,17 +454,69 @@ async def get_track(track_id: str):
         track["has_music_video"] = False
         track["music_video_url"] = None
 
+    # Build cover_character (only when mv_job opted in and snapshot exists)
+    cover_character = None
+    try:
+        logger.info(
+            "[TrackCoverChar] track=%s mv_job=%s include=%s items=%d",
+            track_id,
+            str(mv_job.get("_id")) if mv_job else None,
+            bool(mv_job and mv_job.get("include_my_character")),
+            len((mv_job.get("user_character_snapshot") or {}).get("used_items") or []) if mv_job else 0,
+        )
+        # v71: mv_job 의 snapshot 이 1순위, 없으면 트랙 도큐먼트 자체의 snapshot 으로 fallback
+        # (MV 없이 cover 만 만든 곡도 cover_character 노출 가능).
+        snap_source = None
+        if (
+            mv_job
+            and mv_job.get("include_my_character") is True
+            and mv_job.get("user_character_snapshot")
+        ):
+            snap_source = mv_job.get("user_character_snapshot")
+        elif track.get("user_character_snapshot"):
+            snap_source = track.get("user_character_snapshot")
+            logger.info("[TrackCoverChar] fallback to track snapshot track=%s", track_id)
+
+        if snap_source:
+            snap = snap_source or {}
+            cover_character = {
+                "name": snap.get("name") or "",
+                "age": snap.get("age") or "",
+                "personality_tags": snap.get("personality_tags") or [],
+                "personality_text": snap.get("personality_text") or "",
+                "sheet_preview_path": (
+                    "/api/character/preview/" + snap["sheet_object_name"]
+                    if snap.get("sheet_object_name") else None
+                ),
+                "used_items": [
+                    {
+                        "id": it.get("id"),
+                        "name": it.get("name") or "",
+                        "image_object_name": it.get("image_object_name") or "",
+                        "product_url": it.get("product_url"),
+                        "category": it.get("category"),
+                    }
+                    for it in (snap.get("used_items") or [])
+                ],
+            }
+    except Exception:
+        logger.exception("[TrackCoverChar] failed track=%s", track_id)
+        cover_character = None
+
+    track["cover_character"] = cover_character
+
     # Increment playcount buffer in Redis
     await redis.incr(f"playcount:buffer:{track_id}")
 
-    # Cache for 10 minutes
-    await redis.setex(f"cache:track:{track_id}", 600, json.dumps(track, default=str))
+    # Cache for 10 minutes (v2 key)
+    await redis.setex(f"cache:track:v2:{track_id}", 600, json.dumps(track, default=str))
 
     return track
 
 
 @router.post("/upload", status_code=201)
 async def upload_track(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str = Form(...),
     genre: str = Form(None),
@@ -449,10 +603,22 @@ async def upload_track(
         "is_public": is_public,
         "created_at": now,
         "updated_at": now,
+        # v44 — beat extraction status (background task fires after insert)
+        "beats_status": "pending",
+        "tempo": None,
+        "beats": [],
+        "downbeats": [],
+        "beats_started_at": None,
+        "beats_completed_at": None,
+        "beats_error": None,
     }
 
     mongo = get_mongo()
     await mongo.tracks.insert_one(doc)
+
+    # v44 — fire-and-forget beat extraction in a fresh event loop
+    from ..services.beat_extraction import run_track_beat_extraction_in_background
+    background_tasks.add_task(run_track_beat_extraction_in_background, str(track_id))
 
     return _serialize_track(doc)
 
@@ -466,13 +632,19 @@ class UploadFromGenerationBody(BaseModel):
     prompt: Optional[str] = None
     lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None
+    mv_object_name: Optional[str] = None
     ai_model: Optional[str] = "Suno"
     use_voice_converted: Optional[bool] = False
+    # v71: MV 안 만들고 cover 만 만든 곡도 cover_character 노출 가능하도록
+    # publish 시점의 사용자 캐릭터 snapshot 을 트랙 도큐먼트에 박음.
+    # 구조는 mv_jobs.user_character_snapshot 와 동일.
+    user_character_snapshot: Optional[dict] = None
 
 
 @router.post("/upload-from-generation", status_code=201)
 async def upload_from_generation(
     body: UploadFromGenerationBody,
+    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
 ):
     """Create a track from a completed AI generation."""
@@ -551,6 +723,32 @@ async def upload_from_generation(
     tags_list = [t.strip() for t in body.tags.split(",") if t.strip()] if body.tags else []
 
     now = datetime.now(timezone.utc)
+
+    # v44 — Inherit beats from the generation if already extracted, otherwise
+    # mark pending and fire background extraction.
+    gen_beats_status = gen_doc.get("beats_status")
+    inherit_beats = gen_beats_status == "completed" and gen_doc.get("beats")
+    if inherit_beats:
+        beats_fields = {
+            "beats_status": "completed",
+            "tempo": gen_doc.get("tempo"),
+            "beats": gen_doc.get("beats") or [],
+            "downbeats": gen_doc.get("downbeats") or [],
+            "beats_started_at": gen_doc.get("beats_started_at"),
+            "beats_completed_at": gen_doc.get("beats_completed_at"),
+            "beats_error": None,
+        }
+    else:
+        beats_fields = {
+            "beats_status": "pending",
+            "tempo": None,
+            "beats": [],
+            "downbeats": [],
+            "beats_started_at": None,
+            "beats_completed_at": None,
+            "beats_error": None,
+        }
+
     doc = {
         "_id": track_id,
         "title": body.title,
@@ -575,8 +773,10 @@ async def upload_from_generation(
         "comment_count": 0,
         "is_public": True,
         "generation_id": str(gen_doc["_id"]),
+        "user_character_snapshot": body.user_character_snapshot,
         "created_at": now,
         "updated_at": now,
+        **beats_fields,
     }
 
     await mongo.tracks.insert_one(doc)
@@ -586,6 +786,11 @@ async def upload_from_generation(
         {"_id": ObjectId(body.generation_id)},
         {"$set": {"result_track_id": str(track_id), "updated_at": now}},
     )
+
+    # v44 — Trigger background extraction only if we couldn't inherit
+    if not inherit_beats:
+        from ..services.beat_extraction import run_track_beat_extraction_in_background
+        background_tasks.add_task(run_track_beat_extraction_in_background, str(track_id))
 
     return _serialize_track(doc)
 

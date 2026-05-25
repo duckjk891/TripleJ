@@ -46,6 +46,7 @@ def _serialize_track(doc: dict) -> dict:
         if key in doc and isinstance(doc[key], datetime):
             doc[key] = doc[key].isoformat()
     # Add aliases for frontend compatibility
+    doc["artist_id"] = doc.get("uploader_id")
     doc["artist_name"] = doc.get("uploader_nickname", "AI")
     doc["cover_image"] = doc.get("cover_image_url")
     return doc

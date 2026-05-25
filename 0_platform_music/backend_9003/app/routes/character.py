@@ -8,7 +8,7 @@ import mimetypes
 import os
 import uuid as uuid_lib
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
@@ -26,9 +26,42 @@ router = APIRouter(prefix="/api/character", tags=["Character"])
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
+DEFAULT_PERSONALITY_TAGS = [
+    "내향적", "외향적", "감성적", "이성적", "유머러스", "진지함",
+    "쿨함", "따뜻함", "반항적", "순수함", "냉소적", "낙천적",
+]
+
+NAME_MAX_LEN = 50
+AGE_MAX_LEN = 30
+PERSONALITY_TEXT_MAX_LEN = 500
+PERSONALITY_TAG_MAX_LEN = 20
+PERSONALITY_TAGS_MAX_COUNT = 20
+
+
+class UsedItemPayload(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    image_object_name: Optional[str] = None
+    product_url: Optional[str] = None
+    category: Optional[str] = None  # "상의" | "하의" | "신발"
+
 
 class SaveCharacterRequest(BaseModel):
     sheet_object_name: str
+    used_items: Optional[List[UsedItemPayload]] = None
+    name: Optional[str] = None
+    age: Optional[str] = None
+    personality_tags: Optional[List[str]] = None
+    personality_text: Optional[str] = None
+
+
+# ── GET /api/character/personality-tags ─────────────────────────────────────
+
+
+@router.get("/personality-tags")
+async def get_personality_tags():
+    """Return curated default personality tag list for character setup UI."""
+    return {"tags": DEFAULT_PERSONALITY_TAGS}
 
 
 # ── POST /api/character/generate-sheet ──────────────────────────────────────
@@ -246,6 +279,39 @@ async def save_character(
     minio_client = get_minio()
     mongo = get_mongo()
 
+    name_val = (body.name or "").strip()
+    age_val = (body.age or "").strip()
+    personality_text_val = (body.personality_text or "").strip()
+    raw_tags = body.personality_tags or []
+    personality_tags_val = [t.strip() for t in raw_tags if isinstance(t, str) and t.strip()]
+
+    if len(name_val) > NAME_MAX_LEN:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "이름은 {}자 이하여야 합니다.".format(NAME_MAX_LEN)},
+        )
+    if len(age_val) > AGE_MAX_LEN:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "나이는 {}자 이하여야 합니다.".format(AGE_MAX_LEN)},
+        )
+    if len(personality_text_val) > PERSONALITY_TEXT_MAX_LEN:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "성격 설명은 {}자 이하여야 합니다.".format(PERSONALITY_TEXT_MAX_LEN)},
+        )
+    if len(personality_tags_val) > PERSONALITY_TAGS_MAX_COUNT:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "성격 태그는 최대 {}개까지 선택할 수 있습니다.".format(PERSONALITY_TAGS_MAX_COUNT)},
+        )
+    for tag in personality_tags_val:
+        if len(tag) > PERSONALITY_TAG_MAX_LEN:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "각 성격 태그는 {}자 이하여야 합니다.".format(PERSONALITY_TAG_MAX_LEN)},
+            )
+
     # Verify the temp sheet exists in MinIO
     try:
         stat = minio_client.stat_object(
@@ -292,12 +358,19 @@ async def save_character(
         )
 
     # Upsert in MongoDB
+    used_items_data = [item.model_dump() for item in (body.used_items or [])]
+
     await mongo.characters.update_one(
         {"user_id": user_id},
         {
             "$set": {
                 "user_id": user_id,
                 "sheet_object_name": permanent_object,
+                "used_items": used_items_data,
+                "name": name_val,
+                "age": age_val,
+                "personality_tags": personality_tags_val,
+                "personality_text": personality_text_val,
                 "updated_at": datetime.utcnow(),
             },
             "$setOnInsert": {
@@ -309,6 +382,10 @@ async def save_character(
 
     return {
         "sheet_object_name": permanent_object,
+        "name": name_val,
+        "age": age_val,
+        "personality_tags": personality_tags_val,
+        "personality_text": personality_text_val,
         "message": "캐릭터가 저장되었습니다.",
     }
 
@@ -346,6 +423,11 @@ async def get_my_character(
         "character": {
             "sheet_object_name": char.get("sheet_object_name"),
             "sheet_url": sheet_url,
+            "used_items": char.get("used_items", []),
+            "name": char.get("name") or "",
+            "age": char.get("age") or "",
+            "personality_tags": char.get("personality_tags") or [],
+            "personality_text": char.get("personality_text") or "",
             "created_at": char.get("created_at", "").isoformat() if char.get("created_at") else None,
             "updated_at": char.get("updated_at", "").isoformat() if char.get("updated_at") else None,
         }

@@ -15,6 +15,8 @@ import tempfile
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from bson import ObjectId
+
 from ..config import settings
 from ..database.minio import get_minio
 from .mv_generator import (
@@ -38,27 +40,50 @@ from .seedance_video_generator import (
     check_scene_video_status_seedance,
     download_video_seedance,
 )
+# v66: Grok Imagine Video (xAI 직접)
+from .grok_video_generator import (
+    start_scene_video_grok,
+    check_scene_video_status_grok,
+    download_video_grok,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_oid(job_id):
+    """v62 — Accept str(hex) or ObjectId; return ObjectId.
+
+    Cascade 경로(`run_phase1_split(str(job_oid), ...)`) 와 백그라운드 태스크 경로
+    (`run_phase2_images(oid, ...)`) 가 서로 다른 형태로 전달해 _id 매칭이 깨지던
+    버그를 가드한다. 변환 실패 시 입력 그대로 반환 (옛 ad-hoc 호출 호환).
+    """
+    if isinstance(job_id, ObjectId):
+        return job_id
+    try:
+        return ObjectId(str(job_id))
+    except Exception:
+        return job_id
 
 
 async def _update_job(mongo_db, job_id, update: dict) -> None:
     """Helper to update mv_jobs document."""
     update["updated_at"] = datetime.utcnow()
     await mongo_db.mv_jobs.update_one(
-        {"_id": job_id},
+        {"_id": _coerce_oid(job_id)},
         {"$set": update},
     )
 
 
 async def _get_job(mongo_db, job_id) -> Optional[dict]:
     """Load job document from MongoDB."""
-    return await mongo_db.mv_jobs.find_one({"_id": job_id})
+    return await mongo_db.mv_jobs.find_one({"_id": _coerce_oid(job_id)})
 
 
 async def _is_cancelled(mongo_db, job_id) -> bool:
     """Check if cancel has been requested for this job."""
-    job = await mongo_db.mv_jobs.find_one({"_id": job_id}, {"cancel_requested": 1})
+    job = await mongo_db.mv_jobs.find_one(
+        {"_id": _coerce_oid(job_id)}, {"cancel_requested": 1}
+    )
     return bool(job and job.get("cancel_requested"))
 
 
@@ -174,25 +199,28 @@ async def _resolve_audio_object_name(job: dict, mongo_db) -> Optional[str]:
     return None
 
 
-def _get_scene_timestamps(whisper_segments: list[dict], section_start: float, section_end: float) -> list[dict]:
-    """Extract and re-base Whisper timestamps for a specific scene time range.
+def _get_scene_timestamps(lyric_timestamps: list[dict], section_start: float, section_end: float) -> list[dict]:
+    """Extract and re-base lyric timestamps for a specific scene time range.
 
-    Filters the full whisper_segments to only those overlapping with
+    Filters the full lyric_timestamps to only those overlapping with
     [section_start, section_end], then shifts times so they start at 0
     (since per-scene videos start at 0 seconds).
 
+    v43: renamed from whisper_segments — same shape, source is now Suno API
+    timestamps (Whisper STT removed).
+
     Args:
-        whisper_segments: Full list of Whisper segments [{"text", "start", "end"}, ...]
+        lyric_timestamps: Full list of lyric segments [{"text", "start", "end"}, ...]
         section_start: Scene start time in seconds (absolute)
         section_end: Scene end time in seconds (absolute)
 
     Returns:
         List of segments with times relative to scene start (0-based).
     """
-    if not whisper_segments:
+    if not lyric_timestamps:
         return []
     result = []
-    for seg in whisper_segments:
+    for seg in lyric_timestamps:
         seg_start = float(seg.get("start", 0))
         seg_end = float(seg.get("end", 0))
         # Check if segment overlaps with the scene range
@@ -205,6 +233,11 @@ def _get_scene_timestamps(whisper_segments: list[dict], section_start: float, se
             "end": min(section_end - section_start, seg_end - section_start),
         })
     return result
+
+
+def _read_lyric_timestamps(job: dict) -> list[dict]:
+    """Backward-shim reader for v43: prefer new key, fall back to old whisper_segments."""
+    return job.get("lyric_timestamps") or job.get("whisper_segments") or []
 
 
 # ── Whisper-based Section Building ───────────────────────────────────────────
@@ -241,14 +274,18 @@ def _text_match(lyrics_line: str, whisper_text: str, min_chars: int = 3) -> bool
 
 
 def _build_sections_from_whisper(
-    whisper_segments: list[dict],
+    lyric_timestamps: list[dict],
     lyrics: str,
     audio_duration: float,
 ) -> list[dict]:
-    """Whisper 세그먼트와 가사를 매칭하여 섹션별 타이밍을 확정한다.
+    """가사 타임스탬프와 가사 텍스트를 매칭하여 섹션별 타이밍을 확정.
+
+    v43: param renamed from whisper_segments to lyric_timestamps. Source is
+    now Suno API timestamps (Whisper STT removed). Function name retained
+    for stability.
 
     Args:
-        whisper_segments: [{"text", "start", "end"}, ...] from Whisper
+        lyric_timestamps: [{"text", "start", "end"}, ...] (Suno API)
         lyrics: 전체 가사 텍스트 (섹션 태그 포함)
         audio_duration: 음악 총 길이 (초)
 
@@ -289,9 +326,9 @@ def _build_sections_from_whisper(
     for sec_idx, line_text in all_lines:
         found = False
         # 현재 seg_idx부터 최대 10개까지 탐색 (ad-lib/yeah 등 건너뛰기)
-        for j in range(seg_idx, min(seg_idx + 10, len(whisper_segments))):
-            if _text_match(line_text, whisper_segments[j]["text"]):
-                line_timings.append((sec_idx, whisper_segments[j]["start"], whisper_segments[j]["end"]))
+        for j in range(seg_idx, min(seg_idx + 10, len(lyric_timestamps))):
+            if _text_match(line_text, lyric_timestamps[j]["text"]):
+                line_timings.append((sec_idx, lyric_timestamps[j]["start"], lyric_timestamps[j]["end"]))
                 seg_idx = j + 1
                 found = True
                 break
@@ -389,146 +426,260 @@ def _build_sections_from_whisper(
             music_sections[i + 1]["start"] = music_sections[i]["end"]
 
     logger.info(
-        "Whisper section builder: %d sections from %d whisper segments",
-        len(music_sections), len(whisper_segments),
+        "Section builder: %d sections from %d lyric timestamps",
+        len(music_sections), len(lyric_timestamps),
     )
     return music_sections
 
 
-# ── 15초 초과 섹션 자동 분할 ───────────────────────────────────────────────
+# ── v43: Beat-aligned 섹션 분할 (madmom downbeat 기반) ─────────────────────
 
 MAX_CLIP_SEC = 15.0   # Kling 최대
 TARGET_CLIP_SEC = 10.0  # 목표 클립 길이
 
+# Per-model clip-duration cap (pipeline-side enforcement).
+# Real model APIs accept up to 15s, but we cap below for safety / quality.
+MV_MODEL_MAX_CLIP = {"veo": 8.0, "kling": 10.0, "seedance": 10.0}
 
-def _split_long_section(sec: dict, whisper_segments: list, lyrics_lines: list) -> list[dict]:
-    """15초 초과 섹션을 Whisper 줄 타이밍 기반으로 분할.
+
+def _snap_sections_to_downbeats(
+    sections: list[dict], downbeats: list[float], tol: float = 1.5
+) -> list[dict]:
+    """Snap each section's start/end to the nearest downbeat within ±tol seconds.
+
+    v43: helps Phase 1's whisper-derived section boundaries land on musical
+    bar boundaries so that subsequent _split_by_downbeats stays in phase.
+
+    Rules:
+      - section.start: pick latest downbeat ≤ original (so chorus etc. doesn't
+        start earlier than intended; can shift start later by ≤ 1 bar).
+      - section.end: pick earliest downbeat ≥ original (extend slightly).
+      - If no downbeat within ±tol of the original boundary, leave it.
+      - Maintain monotonic ordering (no overlaps, no negative durations).
+    """
+    if not sections or not downbeats:
+        return sections
+    db = sorted(float(d) for d in downbeats)
+
+    out = []
+    for sec in sections:
+        s = float(sec["start"])
+        e = float(sec["end"])
+
+        # Candidate for start: latest downbeat ≤ s, within tol.
+        new_s = s
+        candidates = [d for d in db if d <= s + 1e-6 and abs(d - s) <= tol]
+        if candidates:
+            new_s = max(candidates)
+
+        # Candidate for end: earliest downbeat ≥ e, within tol.
+        new_e = e
+        candidates = [d for d in db if d >= e - 1e-6 and abs(d - e) <= tol]
+        if candidates:
+            new_e = min(candidates)
+
+        # Sanity: keep ordering relative to previous section.
+        if out and new_s < out[-1]["end"]:
+            new_s = out[-1]["end"]
+        if new_e <= new_s:
+            new_e = e  # revert end snap if it would invert
+
+        out.append({**sec, "start": round(new_s, 3), "end": round(new_e, 3)})
+
+    return out
+
+
+def _split_by_downbeats(
+    section: dict,
+    downbeats: list[float],
+    beats: list[float],
+    max_clip: float,
+    lyric_timestamps: list[dict] | None,
+    lyrics_lines: list[str] | None,
+) -> list[dict]:
+    """v43 — Split a section into clips using downbeats as primary cut points.
+
+    Greedy algorithm: from cursor, pick the LATEST downbeat ≤ cursor + max_clip
+    so each clip is as long as possible (= as few clips as possible, music-aware
+    cuts only). If no downbeat fits, fall back to regular beats; if even those
+    don't, fall back to equal split for the remainder.
+
+    Each returned clip dict: {"section", "start", "end", "lyrics_segment"}.
 
     Args:
-        sec: {"label", "start", "end", "mood"}
-        whisper_segments: 전체 Whisper 세그먼트 (줄별 타이밍)
-        lyrics_lines: 해당 섹션의 가사 줄 리스트
-
-    Returns:
-        분할된 씬 리스트: [{"section", "start", "end", "lyrics_segment"}, ...]
+        section: {"label", "start", "end", "mood"}
+        downbeats: list of absolute downbeat timestamps (seconds)
+        beats: list of all beat timestamps (fallback for sparse downbeats)
+        max_clip: per-model max clip duration (seconds)
+        lyric_timestamps: full Suno-style segments [{"text","start","end"}, ...]
+            used for per-clip lyrics text. Empty/None → use lyrics_lines fallback.
+        lyrics_lines: section's lyric lines (used as equal-distribution fallback
+            when lyric_timestamps unavailable, e.g., self-uploaded tracks).
     """
     import math
 
-    sec_start = sec["start"]
-    sec_end = sec["end"]
+    sec_start = float(section["start"])
+    sec_end = float(section["end"])
+    label = section["label"]
     sec_dur = sec_end - sec_start
-    label = sec["label"]
+    max_clip = float(max_clip)
+    lyrics_lines = lyrics_lines or []
 
-    if sec_dur <= MAX_CLIP_SEC:
-        return [{"section": label, "start": sec_start, "end": sec_end,
-                 "lyrics_segment": "\n".join(lyrics_lines)}]
+    # Single-clip fast path
+    if sec_dur <= max_clip + 1e-6:
+        return [{
+            "section": label,
+            "start": round(sec_start, 3),
+            "end": round(sec_end, 3),
+            "lyrics_segment": _lyrics_for_range(
+                sec_start, sec_end, lyric_timestamps, lyrics_lines, 0, 1,
+            ),
+        }]
 
-    # 해당 섹션 시간 범위에 속하는 Whisper 세그먼트 찾기
-    sec_segs = []
-    for ws in whisper_segments:
-        ws_start = float(ws.get("start", 0))
-        ws_end = float(ws.get("end", 0))
-        # 세그먼트가 섹션 범위와 겹치면 포함
-        if ws_end > sec_start + 0.5 and ws_start < sec_end - 0.5:
-            sec_segs.append(ws)
+    inner_db = sorted(float(b) for b in (downbeats or []) if sec_start < float(b) < sec_end)
+    inner_beats = sorted(float(b) for b in (beats or []) if sec_start < float(b) < sec_end)
 
-    if not sec_segs:
-        # Whisper 세그먼트 없으면 균등 분할
-        clip_count = math.ceil(sec_dur / TARGET_CLIP_SEC)
-        clip_dur = sec_dur / clip_count
-        clips = []
-        lines_per_clip = max(1, len(lyrics_lines) // clip_count) if lyrics_lines else 0
-        for i in range(clip_count):
-            c_start = sec_start + i * clip_dur
-            c_end = sec_start + (i + 1) * clip_dur
-            if lyrics_lines:
-                l_start = i * lines_per_clip
-                l_end = l_start + lines_per_clip if i < clip_count - 1 else len(lyrics_lines)
-                c_lyrics = "\n".join(lyrics_lines[l_start:l_end])
-            else:
-                c_lyrics = ""
-            clips.append({
-                "section": "{}-{}".format(label, i + 1),
-                "start": round(c_start, 3), "end": round(c_end, 3),
-                "lyrics_segment": c_lyrics,
-            })
-        return clips
+    cuts: list[float] = []  # ordered cut positions strictly between sec_start and sec_end
+    cursor = sec_start
 
-    # Whisper 세그먼트 경계를 분할 후보로 사용
-    # 각 세그먼트 end 시점에서 자를 수 있음
-    # 누적 시간이 TARGET_CLIP_SEC을 넘으면 거기서 자름
+    while sec_end - cursor > max_clip + 1e-6:
+        target = cursor + max_clip
+        # Primary: downbeats
+        cands = [b for b in inner_db if cursor + 1e-6 < b <= target + 1e-6]
+        if not cands:
+            # Secondary: regular beats (for very low BPM / sparse downbeats)
+            cands = [b for b in inner_beats if cursor + 1e-6 < b <= target + 1e-6]
+        if not cands:
+            # Last resort: equal-split the remaining tail
+            remaining = sec_end - cursor
+            n = max(1, int(math.ceil(remaining / max_clip)))
+            step = remaining / n
+            for j in range(1, n):
+                cuts.append(cursor + step * j)
+            cursor = sec_end
+            break
+        # Latest viable cut → longest clip ≤ max_clip
+        cut = max(cands)
+        cuts.append(cut)
+        cursor = cut
+
+    # Build clip ranges from cuts
+    bounds = [sec_start] + cuts + [sec_end]
+    n_clips = len(bounds) - 1
     clips = []
-    clip_start = sec_start
-    clip_lyrics = []
-    line_idx = 0
-
-    for seg in sec_segs:
-        seg_end = float(seg.get("end", 0))
-        elapsed = seg_end - clip_start
-
-        # 이 세그먼트에 해당하는 가사 줄 배정
-        if line_idx < len(lyrics_lines):
-            clip_lyrics.append(lyrics_lines[line_idx])
-            line_idx += 1
-
-        # TARGET 초과하면 여기서 자름
-        if elapsed >= TARGET_CLIP_SEC and clip_lyrics:
-            clip_num = len(clips) + 1
-            clips.append({
-                "section": "{}-{}".format(label, clip_num),
-                "start": round(clip_start, 3), "end": round(seg_end, 3),
-                "lyrics_segment": "\n".join(clip_lyrics),
-            })
-            clip_start = seg_end
-            clip_lyrics = []
-
-    # 남은 부분 마지막 클립으로
-    remaining_lyrics = lyrics_lines[line_idx:]
-    clip_lyrics.extend(remaining_lyrics)
-    if clip_start < sec_end - 0.1:
-        clip_num = len(clips) + 1
-        section_name = "{}-{}".format(label, clip_num) if clips else label
+    for i in range(n_clips):
+        a = bounds[i]
+        b = bounds[i + 1]
+        sec_name = label if n_clips == 1 else "{}-{}".format(label, i + 1)
         clips.append({
-            "section": section_name,
-            "start": round(clip_start, 3), "end": round(sec_end, 3),
-            "lyrics_segment": "\n".join(clip_lyrics),
+            "section": sec_name,
+            "start": round(a, 3),
+            "end": round(b, 3),
+            "lyrics_segment": _lyrics_for_range(
+                a, b, lyric_timestamps, lyrics_lines, i, n_clips,
+            ),
         })
+    return clips
 
-    # 클립이 1개뿐이면 원래 이름 유지
-    if len(clips) == 1:
-        clips[0]["section"] = label
 
-    # 분할 완료 후 후처리: 15초 초과 클립 재분할
-    final_clips = []
-    for clip in clips:
-        clip_dur = clip["end"] - clip["start"]
-        if clip_dur > MAX_CLIP_SEC:
-            # 시간 기반 균등 분할
-            sub_count = math.ceil(clip_dur / TARGET_CLIP_SEC)
-            sub_dur = clip_dur / sub_count
-            # 가사도 균등 분배
-            clip_lyrics_lines = [l for l in clip["lyrics_segment"].split("\n") if l.strip()] if clip["lyrics_segment"] else []
-            for k in range(sub_count):
-                sub_start = clip["start"] + k * sub_dur
-                sub_end = clip["start"] + (k + 1) * sub_dur
-                # 가사 분배
-                if clip_lyrics_lines:
-                    lines_per = max(1, len(clip_lyrics_lines) // sub_count)
-                    l_start = k * lines_per
-                    l_end = l_start + lines_per if k < sub_count - 1 else len(clip_lyrics_lines)
-                    sub_lyrics = "\n".join(clip_lyrics_lines[l_start:l_end])
-                else:
-                    sub_lyrics = ""
-                sub_section = "{}.{}".format(clip["section"], k + 1) if sub_count > 1 else clip["section"]
-                final_clips.append({
-                    "section": sub_section,
-                    "start": round(sub_start, 3),
-                    "end": round(sub_end, 3),
-                    "lyrics_segment": sub_lyrics,
-                })
-        else:
-            final_clips.append(clip)
-    return final_clips
+def _lyrics_for_range(
+    a: float,
+    b: float,
+    lyric_timestamps: list[dict] | None,
+    lyrics_lines: list[str],
+    clip_idx: int,
+    n_clips: int,
+) -> str:
+    """Pick lyric text overlapping [a, b]; fallback to even-distribution of lines."""
+    if lyric_timestamps:
+        texts = []
+        for ls in lyric_timestamps:
+            ls_start = float(ls.get("start", 0) or 0)
+            ls_end = float(ls.get("end", 0) or 0)
+            # Overlap test (with small tolerance to avoid edge double-count)
+            if ls_end > a + 0.05 and ls_start < b - 0.05:
+                t = (ls.get("text") or "").strip()
+                if t:
+                    texts.append(t)
+        if texts:
+            return "\n".join(texts)
+    # Fallback: equal distribution of lyrics_lines across n_clips
+    if not lyrics_lines:
+        return ""
+    if n_clips <= 1:
+        return "\n".join(lyrics_lines)
+    per = max(1, len(lyrics_lines) // n_clips)
+    li = clip_idx * per
+    le = li + per if clip_idx < n_clips - 1 else len(lyrics_lines)
+    return "\n".join(lyrics_lines[li:le])
+
+
+def _request_video_duration(scene_dur: float, model: str) -> int:
+    """v43 — Round scene_dur up to the integer-second grid the model API accepts.
+
+    - kling:    5 if d ≤ 5 else 10
+    - seedance: clamp(ceil(d), 4, 15)
+    - veo:      4 if d ≤ 4 else (6 if d ≤ 6 else 8)
+
+    Returned int is what we pass to the model API; actual clip is then trimmed
+    to the float scene_dur via _trim_video_to_duration.
+    """
+    import math
+    d = max(0.1, float(scene_dur))
+    m = (model or "").lower()
+    if m == "kling":
+        return 5 if d <= 5.0 + 1e-6 else 10
+    if m == "seedance":
+        return max(4, min(15, int(math.ceil(d))))
+    if m == "grok":
+        # v66: Grok Imagine Video — max 10s, ceil
+        return max(1, min(10, int(math.ceil(d))))
+    # veo (default)
+    if d <= 4.0 + 1e-6:
+        return 4
+    if d <= 6.0 + 1e-6:
+        return 6
+    return 8
+
+
+def _trim_video_to_duration(video_bytes: bytes, target_dur: float) -> bytes:
+    """v43 — Re-encode to exactly target_dur seconds via ffmpeg ``-t``.
+
+    Returns trimmed bytes. On any failure, returns the original bytes and logs
+    a warning — never blocks the pipeline.
+    """
+    if not video_bytes or target_dur <= 0:
+        return video_bytes
+    try:
+        ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            in_path = os.path.join(tmpdir, "in.mp4")
+            out_path = os.path.join(tmpdir, "out.mp4")
+            with open(in_path, "wb") as f:
+                f.write(video_bytes)
+            proc = subprocess.run(
+                [
+                    ffmpeg_bin, "-y",
+                    "-i", in_path,
+                    "-t", "{:.3f}".format(float(target_dur)),
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-an",
+                    out_path,
+                ],
+                capture_output=True, timeout=120,
+            )
+            if proc.returncode != 0 or not os.path.exists(out_path):
+                logger.warning(
+                    "trim_video: ffmpeg failed (target=%.3fs): %s",
+                    target_dur, proc.stderr[-200:].decode("utf-8", errors="replace"),
+                )
+                return video_bytes
+            with open(out_path, "rb") as f:
+                return f.read()
+    except Exception as e:
+        logger.warning("trim_video: failed: %s — using original bytes", str(e)[:200])
+        return video_bytes
+
 
 
 # ── Lyrics Section Parser ──────────────────────────────────────────────────
@@ -742,7 +893,7 @@ async def run_phase1_split(job_id, mongo_db) -> None:
 
     music_sections = None
 
-    # ── Phase 0: Generate MV Scenario (required, max 3 retries) ──
+    # ── Phase 0: Generate MV Scenario (v45 = Stage 1 Brainstorm + Stage 2 Beat Sheet) ──
     # Skip if scenario already exists (e.g., user already selected from dual results)
     scenario = job.get("scenario")
     if scenario and len(scenario.strip()) > 50:
@@ -755,14 +906,154 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         scenario_style = job.get("scenario_style", "drama") or "drama"
         vocal_gender = job.get("vocal_gender")
         relationship = job.get("relationship")
+        # v49: 사용자 사건 시드 (≤300자, None=시드 없음). 본문은 PII 가능 → 로그에 길이만.
+        user_event_seed = job.get("user_event_seed")
+        _seed_len = len((user_event_seed or "").strip()) if user_event_seed else 0
+        logger.info(
+            "[Phase0] job=%s seed_len=%d (시드 본문 미출력 — PII 보호)",
+            job_id, _seed_len,
+        )
         has_user_character = bool(job.get("character_object_name"))
-        # Cover-image person analysis is planned for Phase 1.5 — placeholder False for now
-        has_cover_person = False
 
+        # v38: pull character1 meta from user_character_snapshot (captured at job-create time)
+        snapshot = job.get("user_character_snapshot") or None
+        character1_meta = None
+        if isinstance(snapshot, dict):
+            character1_meta = {
+                "name": snapshot.get("name") or "",
+                "age": snapshot.get("age") or "",
+                "personality_tags": snapshot.get("personality_tags") or [],
+                "personality_text": snapshot.get("personality_text") or "",
+            }
+
+        # v63: 커버 인물 자산화 흐름 — "내 캐릭터" 가 없을 때만 커버를 후보로 본다.
+        # 체크박스 (use_cover_person_as_character1, default False) + 커버 PNG 가 있을 때
+        # vision LLM 으로 외형 description 영문 1~2문장 추출. character1_meta.description
+        # 으로 주입하면 시나리오 LLM 이 "변경 금지" 룰로 그대로 받아쓴다.
+        use_cover_person = (
+            bool(job.get("use_cover_person_as_character1"))
+            and not has_user_character
+            and bool(job.get("cover_object_name"))
+        )
+        has_cover_person = False
+        if use_cover_person:
+            try:
+                from .mv_generator import extract_character_description_from_cover
+                cover_bytes = _load_cover_image(job.get("cover_object_name"))
+                cover_desc = await extract_character_description_from_cover(cover_bytes)
+                if cover_desc:
+                    has_cover_person = True
+                    if character1_meta is None:
+                        character1_meta = {
+                            "name": "",
+                            "age": "",
+                            "personality_tags": [],
+                            "personality_text": "",
+                        }
+                    character1_meta["description"] = cover_desc
+                    logger.info(
+                        "[Phase0] job=%s cover-person description injected (len=%d)",
+                        job_id, len(cover_desc),
+                    )
+                else:
+                    logger.info(
+                        "[Phase0] job=%s use_cover_person on but no person detected",
+                        job_id,
+                    )
+            except Exception as _cv_err:
+                logger.warning(
+                    "[Phase0] cover person extract failed: %s — proceeding without",
+                    str(_cv_err)[:200],
+                )
+
+        # v42: user-supplied location name (used as anchor in scenario LLM prompt)
+        _user_loc_snap = job.get("user_location_snapshot") or None
+        user_location_name = None
+        if isinstance(_user_loc_snap, dict):
+            _ln = (_user_loc_snap.get("name") or "").strip()
+            if _ln:
+                user_location_name = _ln
+
+        # v45: lazy fetch audio_duration_sec for events count derivation.
+        # Phase 0 runs before Phase 1a, but generations doc may already have duration_sec.
+        audio_duration_sec = job.get("audio_duration_sec") or None
+        if not audio_duration_sec:
+            try:
+                _gen_id = job.get("audio_generation_id")
+                if _gen_id:
+                    from bson import ObjectId as _ObjId
+                    _gen_doc = await mongo_db.generations.find_one(
+                        {"_id": _ObjId(_gen_id)}, {"duration_sec": 1, "duration": 1},
+                    )
+                    if _gen_doc:
+                        audio_duration_sec = _gen_doc.get("duration_sec") or _gen_doc.get("duration")
+                if not audio_duration_sec:
+                    _trk_id = job.get("audio_track_id")
+                    if _trk_id:
+                        from bson import ObjectId as _ObjId
+                        _trk_doc = await mongo_db.tracks.find_one(
+                            {"_id": _ObjId(_trk_id)}, {"duration_sec": 1, "duration": 1},
+                        )
+                        if _trk_doc:
+                            audio_duration_sec = _trk_doc.get("duration_sec") or _trk_doc.get("duration")
+            except Exception as _dur_err:
+                logger.warning("Phase0: audio_duration_sec lookup failed (%s) — events count fallback", _dur_err)
+                audio_duration_sec = None
+        try:
+            if audio_duration_sec is not None:
+                audio_duration_sec = float(audio_duration_sec)
+        except Exception:
+            audio_duration_sec = None
+
+        # ── v45 Stage 1: Brainstorm (4 candidates, single model) ──
+        from .mv_generator import (
+            generate_mv_scenario, generate_mv_brainstorm, RetryableScenarioError,
+        )
+
+        brainstorm_result = None
+        # Stage 1 uses the first selected scenario model, or default. Single model only.
+        _brain_model = None
+        if scenario_models and isinstance(scenario_models, list) and scenario_models:
+            _brain_model = scenario_models[0]
+        try:
+            brainstorm_result = await generate_mv_brainstorm(
+                title=job["title"],
+                genre=job.get("genre"),
+                mood=job.get("mood"),
+                lyrics=job.get("lyrics"),
+                vocal_gender=vocal_gender,
+                relationship=relationship,
+                model_name=_brain_model,
+                user_event_seed=user_event_seed,
+            )
+            logger.info(
+                "Phase0 v45: brainstorm OK for job %s — %d candidates, model=%s, seed_len=%d",
+                job_id, len(brainstorm_result.get("candidates", [])), _brain_model or "(default)",
+                _seed_len,
+            )
+        except Exception as _brain_err:
+            logger.warning(
+                "Phase0 v45: brainstorm failed (%s) — continuing without it", _brain_err,
+            )
+            brainstorm_result = None
+
+        # ── v45 Stage 2: Beat Sheet (3 retries) ──
+        # Strategy: attempts 1~2 use strict=True (RetryableScenarioError → retry).
+        # Final attempt 3 uses strict=False (soft mode) to allow graceful
+        # degradation when small models cannot satisfy spec — the metrics dict
+        # records soft_failures for downstream observation.
         for attempt in range(3):
             try:
-                from .mv_generator import generate_mv_scenario
                 character_name = job.get("character_name")
+                # v50: Stage 2 temperature uplift (창의성 회복) —
+                #   첫 시도 0.85 (v49: 0.8), retry 1.0 (v49: 0.95). Claude 는 호출 직전
+                #   `_claude_temp_cap` 으로 1.0 캡 (mv_generator.py).
+                _temp = 1.0 if attempt > 0 else 0.85
+                _strict = attempt < 2  # soft on the last attempt
+                logger.info(
+                    "[Phase0] Stage2 attempt=%d temp=%.2f strict=%s",
+                    attempt + 1, _temp, _strict,
+                )
                 result = await generate_mv_scenario(
                     title=job["title"],
                     genre=job.get("genre"),
@@ -775,25 +1066,34 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                     relationship=relationship,
                     has_user_character=has_user_character,
                     has_cover_person=has_cover_person,
+                    character1_meta=character1_meta,
+                    location_name=user_location_name,
+                    brainstorm_candidates=brainstorm_result,
+                    audio_duration_sec=audio_duration_sec,
+                    user_event_seed=user_event_seed,
+                    temperature=_temp,
+                    strict=_strict,
                 )
 
                 # Handle dual-model results
                 if isinstance(result, dict) and "results" in result:
-                    # Dual models: save both results (meta + scenario) and pause for user selection
-                    # Each result now has shape: {"meta": dict, "scenario": str, "model": str}
-                    # Preserve backward compatibility by also flattening scenario for /select-scenario
-                    await _update_job(mongo_db, job_id, {
+                    _dual_update = {
                         "scenario_results": result["results"],
+                        "scenario_brainstorm": brainstorm_result or {},
                         "status": "scenario_review",
                         "progress": 1,
-                    })
+                    }
+                    # v48: archetype 가중치 영속화 (brainstorm_result 안에 포함됨)
+                    if isinstance(brainstorm_result, dict) and brainstorm_result.get("archetype_weights"):
+                        _dual_update["scenario_archetype_weights"] = brainstorm_result.get("archetype_weights")
+                    await _update_job(mongo_db, job_id, _dual_update)
                     logger.info(
                         "Phase0: dual scenario results for job %s (%d models, attempt %d)",
                         job_id, len(result["results"]), attempt + 1,
                     )
                     return  # Stop here; user must select via /select-scenario endpoint
 
-                # Single-model result: dict (drama) or str (legacy fallback)
+                # Single-model result: dict (drama with v45 fields) or str (legacy fallback)
                 if isinstance(result, dict):
                     scenario_meta = result
                     scenario = result.get("scenario", "")
@@ -802,24 +1102,87 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                     scenario = result
 
                 if scenario and len(scenario.strip()) > 50:
-                    await _update_job(mongo_db, job_id, {
+                    # v45: persist all new fields. Existing jobs without these read .get(..., default).
+                    update_fields = {
                         "scenario": scenario,
                         "scenario_meta": scenario_meta,
                         "progress": 1,
-                    })
+                    }
+                    if isinstance(scenario_meta, dict):
+                        # v45 fields (only present when LLM produced them) — persist with
+                        # `scenario_` prefix for clear ownership inside mv_jobs document.
+                        _v45_keys = [
+                            "narrative",
+                            "premise",
+                            "character_states",
+                            "central_conflict",
+                            "emotional_core",
+                            "narrative_arc",
+                            "events",
+                        ]
+                        for _k in _v45_keys:
+                            if _k in scenario_meta:
+                                update_fields["scenario_" + _k] = scenario_meta.get(_k)
+                        # v46: inferred_relationship 영속화 (LLM 자율 판단 결과).
+                        # 사용자 명시 시 None — 그래도 키는 항상 저장(None) 해 일관성 유지.
+                        if "inferred_relationship" in scenario_meta:
+                            update_fields["scenario_inferred_relationship"] = scenario_meta.get(
+                                "inferred_relationship"
+                            )
+                        # v47: selected_archetype 영속화 (Stage 2 가 어떤 brainstorm
+                        # 후보의 plot_archetype 을 채택했는지). 미존재 또는 null 일 수 있음.
+                        if "selected_archetype" in scenario_meta:
+                            update_fields["scenario_selected_archetype"] = scenario_meta.get(
+                                "selected_archetype"
+                            )
+                    if brainstorm_result:
+                        update_fields["scenario_brainstorm"] = brainstorm_result
+                        # v48: archetype 가중치 영속화 (brainstorm_result 안에 포함됨)
+                        if isinstance(brainstorm_result, dict) and brainstorm_result.get("archetype_weights"):
+                            update_fields["scenario_archetype_weights"] = brainstorm_result.get("archetype_weights")
+                    await _update_job(mongo_db, job_id, update_fields)
+                    # v48: weights_top1 키워드 추가 (server.log grep 용)
+                    _v48_weights = (
+                        brainstorm_result.get("archetype_weights")
+                        if isinstance(brainstorm_result, dict) else None
+                    )
+                    _v48_top1 = None
+                    if isinstance(_v48_weights, dict) and _v48_weights:
+                        _v48_top1 = max(_v48_weights.items(), key=lambda kv: kv[1])
                     logger.info(
-                        "Phase0: scenario generated for job %s (%d chars body, attempt %d, style=%s)",
+                        "Phase0: scenario generated for job %s (%d chars body, attempt %d, "
+                        "style=%s, narrative=%d, events=%d, infer_rel=%s, archetype=%s, "
+                        "weights_top1=%s, seed_len=%d)",
                         job_id, len(scenario), attempt + 1, scenario_style,
+                        len(scenario_meta.get("narrative") or "") if isinstance(scenario_meta, dict) else 0,
+                        len(scenario_meta.get("events") or []) if isinstance(scenario_meta, dict) else 0,
+                        (scenario_meta.get("inferred_relationship") if isinstance(scenario_meta, dict) else None) or "null",
+                        (scenario_meta.get("selected_archetype") if isinstance(scenario_meta, dict) else None) or "null",
+                        ((_v48_top1[0], round(_v48_top1[1], 3)) if _v48_top1 else "null"),
+                        _seed_len,
                     )
                     break
                 else:
-                    logger.warning("Phase0: scenario too short (%d chars), retrying (attempt %d/3)", len(scenario or ""), attempt + 1)
+                    logger.warning(
+                        "Phase0: scenario too short (%d chars), retrying (attempt %d/3)",
+                        len(scenario or ""), attempt + 1,
+                    )
                     scenario = None
                     scenario_meta = None
-            except Exception as e:
-                logger.warning("Phase0: scenario generation failed (attempt %d/3): %s", attempt + 1, e)
+            except RetryableScenarioError as e:
+                logger.warning(
+                    "Phase0 v45: semantic check failed (attempt %d/3): %s",
+                    attempt + 1, str(e)[:200],
+                )
                 if attempt < 2:
-                    await asyncio.sleep(3 * (attempt + 1))  # 지수 백오프: 3초, 6초
+                    await asyncio.sleep(3 * (attempt + 1))
+            except Exception as e:
+                logger.warning(
+                    "Phase0: scenario generation failed (attempt %d/3): %s",
+                    attempt + 1, e,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(3 * (attempt + 1))
 
     if not scenario:
         logger.error("Phase0: scenario generation failed after 3 attempts for job %s", job_id)
@@ -829,10 +1192,12 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         })
         return
 
-    # ── Phase 1a: 가사 파싱 + Whisper 타이밍 ──
+    # ── Phase 1a: 가사 파싱 + 비트/다운비트 + Suno 타임스탬프 (v43) ──
+    # v43: Whisper STT + Demucs 보컬 분리 제거. Suno API 타임스탬프만 사용.
+    # 직접 업로드 트랙은 lyric_timestamps=[] 로 두고 자막 미부여(MV 생성은 정상).
     lyrics = job.get("lyrics", "")
     sections = _parse_lyrics_sections(lyrics)
-    whisper_segments = None
+    lyric_timestamps = None  # was: whisper_segments
 
     audio_object_name = await _resolve_audio_object_name(job, mongo_db)
     if audio_object_name:
@@ -842,13 +1207,6 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         try:
             audio_bytes = _load_audio_from_minio(audio_object_name)
             if audio_bytes:
-                # Determine file format
-                _file_format = "mp3"
-                if audio_object_name.endswith(".wav"):
-                    _file_format = "wav"
-                elif audio_object_name.endswith(".m4a"):
-                    _file_format = "m4a"
-
                 # ── Measure audio duration via ffprobe ──
                 audio_duration = job.get("audio_duration_sec")
                 if not audio_duration:
@@ -869,7 +1227,99 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                         logger.warning("Phase1a: ffprobe duration measurement failed: %s", _probe_err)
                         audio_duration = None
 
-                # ── Try Suno timestamps first (more accurate, no extra cost) ──
+                # ── Beat detection (madmom) — v44: reuse stored beats if available ──
+                try:
+                    beat_info = None
+                    reused_from = None
+
+                    # Try generation-level stored beats first
+                    _gen_id_for_beats = job.get("audio_generation_id")
+                    if _gen_id_for_beats:
+                        try:
+                            from bson import ObjectId as _ObjId
+                            _gen_doc = await mongo_db.generations.find_one(
+                                {"_id": _ObjId(_gen_id_for_beats)},
+                                {"beats_status": 1, "tempo": 1, "beats": 1, "downbeats": 1},
+                            )
+                            if (
+                                _gen_doc
+                                and _gen_doc.get("beats_status") == "completed"
+                                and _gen_doc.get("beats")
+                            ):
+                                beat_info = {
+                                    "tempo": _gen_doc.get("tempo"),
+                                    "beats": _gen_doc.get("beats") or [],
+                                    "downbeats": _gen_doc.get("downbeats") or [],
+                                }
+                                reused_from = f"generation {_gen_id_for_beats}"
+                        except Exception as _gen_beat_err:
+                            logger.warning(
+                                "Phase1a: generation beats lookup failed: %s",
+                                _gen_beat_err,
+                            )
+
+                    # Fall back to track-level stored beats
+                    if beat_info is None:
+                        _track_id_for_beats = job.get("audio_track_id")
+                        if _track_id_for_beats:
+                            try:
+                                from bson import ObjectId as _ObjId
+                                _track_doc = await mongo_db.tracks.find_one(
+                                    {"_id": _ObjId(_track_id_for_beats)},
+                                    {"beats_status": 1, "tempo": 1, "beats": 1, "downbeats": 1},
+                                )
+                                if (
+                                    _track_doc
+                                    and _track_doc.get("beats_status") == "completed"
+                                    and _track_doc.get("beats")
+                                ):
+                                    beat_info = {
+                                        "tempo": _track_doc.get("tempo"),
+                                        "beats": _track_doc.get("beats") or [],
+                                        "downbeats": _track_doc.get("downbeats") or [],
+                                    }
+                                    reused_from = f"track {_track_id_for_beats}"
+                            except Exception as _track_beat_err:
+                                logger.warning(
+                                    "Phase1a: track beats lookup failed: %s",
+                                    _track_beat_err,
+                                )
+
+                    # Inline extraction fallback (race / no source / failed extraction)
+                    if beat_info is None:
+                        from .audio_utils import detect_beats
+                        beat_info = await detect_beats(audio_bytes)
+                        reused_from = None  # extracted inline
+
+                    if beat_info:
+                        _beat_update = {
+                            "tempo": beat_info.get("tempo"),
+                            "beats": beat_info.get("beats") or [],
+                            "downbeats": beat_info.get("downbeats") or [],
+                        }
+                        await _update_job(mongo_db, job_id, _beat_update)
+                        job.update(_beat_update)
+                        if reused_from:
+                            logger.info(
+                                "Phase1a: reused stored beats from %s — %d beats / %d downbeats, tempo=%s",
+                                reused_from,
+                                len(beat_info.get("beats") or []),
+                                len(beat_info.get("downbeats") or []),
+                                beat_info.get("tempo"),
+                            )
+                        else:
+                            logger.info(
+                                "Phase1a: extracted inline — %d beats / %d downbeats, tempo=%s",
+                                len(beat_info.get("beats") or []),
+                                len(beat_info.get("downbeats") or []),
+                                beat_info.get("tempo"),
+                            )
+                    else:
+                        logger.info("Phase1a: beat detection returned empty result")
+                except Exception as _beat_err:
+                    logger.warning("Phase1a: beat detection failed: %s", _beat_err)
+
+                # ── Suno API timestamps (only path; v43 dropped Whisper fallback) ──
                 _suno_segments = None
                 if lyrics and sections:
                     try:
@@ -891,132 +1341,74 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                     except Exception as e:
                         logger.warning("Phase1a: Suno timestamp fetch failed: %s", e)
 
-                # ── Demucs 보컬 분리 → Whisper 분석 (fallback) ──
                 if lyrics and sections:
-                    import re as _re
-                    _lyrics_plain = _re.sub(r'\[([^\]]+)\]', '', lyrics).strip()
                     _aud_dur = audio_duration or 180.0
-
                     if _suno_segments:
-                        # Use Suno segments directly (same format as Whisper: text/start/end)
-                        whisper_segments = _suno_segments
-
-                        # Build sections from Suno timestamps
-                        _candidate = _build_sections_from_whisper(whisper_segments, lyrics, _aud_dur)
+                        lyric_timestamps = _suno_segments
+                        _candidate = _build_sections_from_whisper(lyric_timestamps, lyrics, _aud_dur)
                         if _candidate:
-                            # Validate sections
+                            # Validate sections (same heuristic as before)
                             _valid = True
                             _zero_count = 0
                             for _sec in _candidate:
                                 _dur = _sec["end"] - _sec["start"]
                                 if _dur > _aud_dur * 0.4:
-                                    logger.warning("Phase1a: Suno section '%s' too long (%.1fs / %.1fs)", _sec["label"], _dur, _aud_dur)
+                                    logger.warning(
+                                        "Phase1a: Suno section '%s' too long (%.1fs / %.1fs)",
+                                        _sec["label"], _dur, _aud_dur,
+                                    )
                                     _valid = False
                                     break
                                 if _dur < 0.1:
                                     _zero_count += 1
                             if _zero_count >= 4:
-                                logger.warning("Phase1a: %d zero-length sections from Suno", _zero_count)
+                                logger.warning(
+                                    "Phase1a: %d zero-length sections from Suno", _zero_count,
+                                )
                                 _valid = False
 
                             if _valid:
                                 music_sections = _candidate
-                                logger.info("Phase1a: Suno sections OK: %d sections", len(music_sections))
-                            else:
-                                logger.warning("Phase1a: Suno sections invalid, falling back to Whisper")
-                                _suno_segments = None
-                                whisper_segments = None
-                        else:
-                            logger.warning("Phase1a: Suno section builder returned empty, falling back to Whisper")
-                            _suno_segments = None
-                            whisper_segments = None
-
-                    if not _suno_segments:
-                        # Fall back to Whisper
-                        for _attempt in range(3):
-                            try:
-                                # Step 1: Demucs 보컬 분리 (악기 제거 → Whisper 안정성 향상)
-                                _whisper_input = audio_bytes
-                                _whisper_format = _file_format
-                                try:
-                                    from .demucs_service import enhance_vocal_demucs
-                                    import subprocess as _sp_conv
-                                    _vocal_wav = await enhance_vocal_demucs(audio_bytes, "full_audio.mp3")
-                                    if _vocal_wav and len(_vocal_wav) > 1000:
-                                        # WAV→MP3 변환 (Whisper 25MB 제한 대응)
-                                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as _wf:
-                                            _wf.write(_vocal_wav)
-                                            _wav_path = _wf.name
-                                        _mp3_path = _wav_path.replace(".wav", ".mp3")
-                                        _sp_conv.run(["ffmpeg", "-y", "-i", _wav_path, "-codec:a", "libmp3lame", "-b:a", "128k", _mp3_path],
-                                                     capture_output=True, timeout=60)
-                                        if os.path.exists(_mp3_path):
-                                            with open(_mp3_path, "rb") as _mf:
-                                                _whisper_input = _mf.read()
-                                            _whisper_format = "mp3"
-                                            os.unlink(_wav_path)
-                                            os.unlink(_mp3_path)
-                                            logger.info("Phase1a: Demucs vocal→MP3 done (%d bytes)", len(_whisper_input))
-                                        else:
-                                            _whisper_input = _vocal_wav
-                                            _whisper_format = "wav"
-                                            os.unlink(_wav_path)
-                                    else:
-                                        logger.warning("Phase1a: Demucs returned small output, using original audio")
-                                except Exception as _demucs_err:
-                                    logger.warning("Phase1a: Demucs failed, using original audio: %s", str(_demucs_err)[:200])
-
-                                # Step 2: Whisper 분석
-                                from .whisper_service import get_full_audio_timestamps
-                                whisper_segments = get_full_audio_timestamps(
-                                    _whisper_input, file_format=_whisper_format,
-                                    lyrics_hint=_lyrics_plain[:500] if _lyrics_plain else None,
+                                logger.info(
+                                    "Phase1a: Suno sections OK: %d sections", len(music_sections),
                                 )
+                            else:
+                                logger.warning(
+                                    "Phase1a: Suno sections invalid — proceeding without lyric timestamps",
+                                )
+                                lyric_timestamps = None
+                        else:
+                            logger.warning(
+                                "Phase1a: Suno section builder empty — proceeding without lyric timestamps",
+                            )
+                            lyric_timestamps = None
 
-                                if not whisper_segments:
-                                    raise ValueError("Whisper returned no segments")
+                # ── B4: Snap section boundaries to detected downbeats ──
+                if music_sections:
+                    _dbs = job.get("downbeats") or []
+                    if _dbs:
+                        music_sections = _snap_sections_to_downbeats(music_sections, _dbs, tol=1.5)
+                        logger.info(
+                            "Phase1a: snapped %d sections to downbeats", len(music_sections),
+                        )
 
-                                # Step 3: 섹션 빌드
-                                _candidate = _build_sections_from_whisper(whisper_segments, lyrics, _aud_dur)
-                                if not _candidate:
-                                    raise ValueError("Section builder returned empty")
-
-                                # Step 4: 검증 - 비정상 섹션 감지
-                                _valid = True
-                                _zero_count = 0
-                                for _sec in _candidate:
-                                    _dur = _sec["end"] - _sec["start"]
-                                    if _dur > _aud_dur * 0.4:
-                                        logger.warning("Phase1a: section '%s' too long (%.1fs / %.1fs)", _sec["label"], _dur, _aud_dur)
-                                        _valid = False
-                                        break
-                                    if _dur < 0.1:
-                                        _zero_count += 1
-                                if _zero_count >= 4:
-                                    logger.warning("Phase1a: %d zero-length sections", _zero_count)
-                                    _valid = False
-
-                                if _valid:
-                                    music_sections = _candidate
-                                    logger.info("Phase1a: Whisper sections OK (attempt %d): %d sections", _attempt + 1, len(music_sections))
-                                    break
-                                else:
-                                    logger.warning("Phase1a: invalid sections (attempt %d/3), retrying", _attempt + 1)
-                            except Exception as _whisper_err:
-                                logger.warning("Phase1a: attempt %d/3 failed: %s", _attempt + 1, str(_whisper_err)[:200])
-
-                # Save music_sections + whisper_segments to job
+                # Save music_sections + lyric_timestamps + has_subtitles to job
                 if music_sections:
                     _save_data = {
                         "music_sections": music_sections,
                         "progress": 3,
+                        "has_subtitles": bool(lyric_timestamps),
                     }
-                    if whisper_segments:
-                        _save_data["whisper_segments"] = whisper_segments
+                    if lyric_timestamps:
+                        _save_data["lyric_timestamps"] = lyric_timestamps
                     await _update_job(mongo_db, job_id, _save_data)
+                    # Mirror into in-memory job for downstream phases
+                    job["has_subtitles"] = bool(lyric_timestamps)
+                    if lyric_timestamps:
+                        job["lyric_timestamps"] = lyric_timestamps
                     logger.info(
-                        "Phase1a: job %s music structure: %d sections",
-                        job_id, len(music_sections),
+                        "Phase1a: job %s music structure: %d sections (has_subtitles=%s)",
+                        job_id, len(music_sections), bool(lyric_timestamps),
                     )
             else:
                 logger.warning("Phase1a: could not load audio bytes for job %s", job_id)
@@ -1054,7 +1446,8 @@ async def run_phase1_split(job_id, mongo_db) -> None:
     has_rap = any("rap" in sec["tag"].lower() for sec in sections) if sections else False
 
     # Whisper 세그먼트 가져오기 (분할에 사용)
-    _ws_segments = whisper_segments if whisper_segments else job.get("whisper_segments", [])
+    # v43: prefer in-memory lyric_timestamps; fall back to job doc with backward-shim.
+    _ws_segments = lyric_timestamps if lyric_timestamps else _read_lyric_timestamps(job)
 
     scenes = []
     scene_num = 1
@@ -1085,8 +1478,17 @@ async def run_phase1_split(job_id, mongo_db) -> None:
             else:
                 scene_type = "drama"
 
-        # 15초 초과 시 자동 분할
-        clips = _split_long_section(sec, _ws_segments, lyrics_lines)
+        # v43: 다운비트 우선 비트정렬 분할 (모델별 max_clip)
+        _vmodel = (job.get("video_model") or "veo").lower()
+        _max_clip = MV_MODEL_MAX_CLIP.get(_vmodel, 8.0)
+        clips = _split_by_downbeats(
+            sec,
+            downbeats=job.get("downbeats") or [],
+            beats=job.get("beats") or [],
+            max_clip=_max_clip,
+            lyric_timestamps=_ws_segments,
+            lyrics_lines=lyrics_lines,
+        )
 
         for clip in clips:
             clip_dur = clip["end"] - clip["start"]
@@ -1106,6 +1508,11 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                 "video_image_prompt": "",
                 "video_prompt": "",
                 "description_ko": "",
+                # v56 — Korean prompts (sibling of English image_prompt/video_prompt).
+                # Empty default; populated by scene-split LLM, Phase 1b retry,
+                # cascade translate phase, or GET lazy translation.
+                "image_prompt_ko": "",
+                "video_prompt_ko": "",
                 "image_object_name": None,
                 "image_source": None,
                 "video_object_name": None,
@@ -1139,7 +1546,21 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         + list((_scenario_meta.get("locations") or {}).keys())
     )
 
+    # v42: user-supplied location anchor for prompt-only LLM
+    _user_loc_snap_pb1 = job.get("user_location_snapshot") or None
+    user_location_name = None
+    if isinstance(_user_loc_snap_pb1, dict):
+        _ln_pb1 = (_user_loc_snap_pb1.get("name") or "").strip()
+        if _ln_pb1:
+            user_location_name = _ln_pb1
+
     prompts_result = None
+    # v45 — pull narrative + events + emotional_core + premise + character_states from job
+    _v45_narrative = job.get("scenario_narrative") or None
+    _v45_events = job.get("scenario_events") or None
+    _v45_emotional_core = job.get("scenario_emotional_core") or None
+    _v45_premise = job.get("scenario_premise") or None
+    _v45_character_states = job.get("scenario_character_states") or None
     for attempt in range(3):
         try:
             prompts_result = await generate_scene_prompts_only(
@@ -1152,6 +1573,12 @@ async def run_phase1_split(job_id, mongo_db) -> None:
                 models=prompt_models,
                 video_model=job.get("video_model", "veo"),
                 asset_keys=asset_keys or None,
+                location_name=user_location_name,
+                narrative=_v45_narrative,
+                scenario_events=_v45_events,
+                emotional_core=_v45_emotional_core,
+                premise=_v45_premise,
+                character_states=_v45_character_states,
             )
         except Exception as e:
             logger.warning("Phase1b: prompt generation failed (attempt %d/3): %s", attempt + 1, e)
@@ -1214,7 +1641,95 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         scene["video_image_prompt"] = p.get("video_image_prompt", "")
         scene["video_prompt"] = ""  # Phase 2.5에서 Gemini가 이미지를 보고 생성
         scene["description_ko"] = p.get("description_ko", "")
+        # v56 — Korean image_prompt (Phase 1b LLM is asked to output both en+ko).
+        # video_prompt_ko stays "" here; will be filled in Phase 2.5 or by lazy translation.
+        scene["image_prompt_ko"] = p.get("image_prompt_ko", "") or ""
+        scene.setdefault("video_prompt_ko", "")
         scene["description"] = scene["image_prompt"]  # 하위호환용
+        # v45: capture event_index from scene-split LLM (None when no event mapped)
+        _ev_idx = p.get("event_index")
+        if isinstance(_ev_idx, int):
+            scene["event_index"] = _ev_idx
+        else:
+            scene["event_index"] = None
+
+    # ── v37: sanitize raw character names → @characterN tokens ──
+    from .mv_generator import sanitize_scene_character_tags
+    characters_meta = (_scenario_meta.get("characters") or {})
+    sanitize_scene_character_tags(scenes, characters_meta)
+
+    if "character1" in characters_meta:
+        failing = [
+            s["scene_number"]
+            for s in scenes
+            if "@character1" not in (s.get("image_prompt") or "")
+        ]
+        if failing:
+            logger.warning(
+                "Phase1b v37: scenes %s lack @character1 after sanitize; retrying once",
+                failing,
+            )
+            try:
+                retry_input = [
+                    {
+                        "scene_number": s["scene_number"],
+                        "section": s["section"],
+                        "duration": s["use_seconds"],
+                        "lyrics": s["lyrics_segment"],
+                        "scene_type": s["scene_type"],
+                    }
+                    for s in scenes if s["scene_number"] in failing
+                ]
+                retry_result = await generate_scene_prompts_only(
+                    scenes_input=retry_input,
+                    title=job["title"],
+                    genre=job.get("genre"),
+                    mood=job.get("mood"),
+                    scenario=scenario,
+                    user_scene_prompt=job.get("scene_prompt"),
+                    models=prompt_models,
+                    video_model=job.get("video_model", "veo"),
+                    asset_keys=asset_keys or None,
+                    location_name=user_location_name,
+                    narrative=_v45_narrative,
+                    scenario_events=_v45_events,
+                    emotional_core=_v45_emotional_core,
+                    premise=_v45_premise,
+                    character_states=_v45_character_states,
+                )
+                if isinstance(retry_result, dict) and "results" in retry_result:
+                    retry_result = retry_result["results"][0]["prompts"]
+                retry_by_number = {p["scene_number"]: p for p in (retry_result or [])}
+                retry_scenes = []
+                for scene in scenes:
+                    if scene["scene_number"] in failing and scene["scene_number"] in retry_by_number:
+                        p = retry_by_number[scene["scene_number"]]
+                        scene["image_prompt"] = p.get("image_prompt", "") or scene["image_prompt"]
+                        scene["video_image_prompt"] = p.get("video_image_prompt", "") or scene["video_image_prompt"]
+                        scene["description_ko"] = p.get("description_ko", "") or scene["description_ko"]
+                        # v56 — retry path: capture image_prompt_ko if provided (else keep existing).
+                        scene["image_prompt_ko"] = p.get("image_prompt_ko", "") or scene.get("image_prompt_ko", "")
+                        scene["description"] = scene["image_prompt"]
+                        # v45: preserve event_index from retry response (overwrites only when given)
+                        _retry_ev = p.get("event_index")
+                        if isinstance(_retry_ev, int):
+                            scene["event_index"] = _retry_ev
+                        retry_scenes.append(scene)
+                if retry_scenes:
+                    sanitize_scene_character_tags(retry_scenes, characters_meta)
+
+                still_failing = [
+                    s["scene_number"]
+                    for s in scenes
+                    if "@character1" not in (s.get("image_prompt") or "")
+                ]
+                if still_failing:
+                    logger.error(
+                        "Phase1b v37: scenes %s still lack @character1 after 1 retry; proceeding non-blocking",
+                        still_failing,
+                    )
+            except Exception as e:
+                logger.error("Phase1b v37: retry failed: %s; proceeding non-blocking", e)
 
     await _update_job(mongo_db, job_id, {
         "status": "scenes_ready",
@@ -1251,18 +1766,83 @@ async def run_phase1_5_assets(job_id, mongo_db) -> None:
         logger.info("Phase1.5: no assets to generate for job %s", job_id)
         return
 
+    # v38: user_character_snapshot overrides character1 meta (user input wins over LLM)
+    snapshot = job.get("user_character_snapshot") or None
+    if isinstance(snapshot, dict) and isinstance(characters.get("character1"), dict):
+        c1 = dict(characters["character1"])
+        snap_name = (snapshot.get("name") or "").strip()
+        snap_age = (snapshot.get("age") or "").strip()
+        snap_tags = snapshot.get("personality_tags") or []
+        snap_text = (snapshot.get("personality_text") or "").strip()
+        if snap_name:
+            c1["name"] = snap_name
+        if snap_age:
+            c1["age"] = snap_age
+        if snap_tags or snap_text:
+            c1["personality"] = {"tags": snap_tags, "text": snap_text}
+        characters["character1"] = c1
+
+    # v55: 씬+자산은 동일 image_model 사용. 옛 도큐먼트는 nb_pro 기본값.
+    image_model = (job.get("image_model") or "nb_pro").strip() or "nb_pro"
+    logger.info("[AssetGen] job=%s image_model=%s", job_id, image_model)
+
     await _update_job(mongo_db, job_id, {"status": "generating_assets", "progress": 5})
 
     from .mv_assets import (
         generate_character_sheet_asset,
         generate_location_sheet_asset,
+        load_asset_from_minio,
         upload_asset_to_minio,
     )
 
     # 사용자 캐릭터 시트가 있으면 character1 생성 시 ref로 사용
+    # v63 우선순위 체인:
+    #   1순위: user_character_snapshot.sheet_object_name (마이뮤직 등록 시트)
+    #   2순위: job.character_object_name ("내 캐릭터 포함" 직접 첨부)
+    #   3순위: use_cover_person_as_character1 == True + cover_object_name → 커버 PNG
+    #   4순위: 없음 → LLM description 만으로 생성 (mv_assets prompt 의 spec)
     user_char_bytes = None
-    if job.get("character_object_name"):
+    user_char_source = "none"
+    snapshot_sheet_obj = None
+    if isinstance(snapshot, dict):
+        snapshot_sheet_obj = snapshot.get("sheet_object_name")
+    if snapshot_sheet_obj:
+        user_char_bytes = _load_character_image(snapshot_sheet_obj)
+        if user_char_bytes:
+            user_char_source = "snapshot_sheet"
+    if not user_char_bytes and job.get("character_object_name"):
         user_char_bytes = _load_character_image(job.get("character_object_name"))
+        if user_char_bytes:
+            user_char_source = "character_object_name"
+    # v63: 3순위 — 체크박스 + 커버 PNG. 1/2순위가 모두 비었을 때만 활성.
+    if (
+        not user_char_bytes
+        and job.get("use_cover_person_as_character1")
+        and job.get("cover_object_name")
+    ):
+        cover_bytes = _load_cover_image(job.get("cover_object_name"))
+        if cover_bytes:
+            user_char_bytes = cover_bytes
+            user_char_source = "cover_person"
+    logger.info(
+        "[AssetGen] job=%s character1_ref_source=%s",
+        job_id, user_char_source,
+    )
+
+    # v42: 사용자 location 스냅샷 — location1 자동생성을 SKIP하고 사용자 PNG를 자산화.
+    # 보조 location2/3 생성 시 style_ref 로 사용한다.
+    user_location_snapshot = job.get("user_location_snapshot") or None
+    user_loc_bytes = None
+    if isinstance(user_location_snapshot, dict):
+        user_loc_obj = user_location_snapshot.get("object_name")
+        if user_loc_obj:
+            user_loc_bytes = load_asset_from_minio(user_loc_obj)
+            if not user_loc_bytes:
+                logger.warning(
+                    "Phase1.5: user_location_snapshot object %s could not be loaded; "
+                    "falling back to auto-generated location1",
+                    user_loc_obj,
+                )
     # 커버 인물 분석은 v30 범위 외 — character_object_name 없으면 cover를 ref로 줄지 말지 결정
     # (보수적: 커버는 ref로 주지 않음; 보컬 성별 + description만으로 생성)
 
@@ -1271,12 +1851,24 @@ async def run_phase1_5_assets(job_id, mongo_db) -> None:
     # 캐릭터 생성 (병렬)
     async def _make_char(key, info):
         ref = user_char_bytes if key == "character1" and user_char_bytes else None
+        age_val = (info.get("age") or "").strip() if isinstance(info.get("age"), str) else ""
+        pers = info.get("personality") if isinstance(info.get("personality"), dict) else {}
+        p_tags_raw = pers.get("tags") if isinstance(pers, dict) else None
+        p_tags = [t for t in (p_tags_raw or []) if isinstance(t, str) and t.strip()]
+        p_text = pers.get("text") if isinstance(pers, dict) else ""
+        if not isinstance(p_text, str):
+            p_text = ""
+        p_text = p_text.strip()
         try:
             img = await generate_character_sheet_asset(
                 name=info.get("name", key),
                 gender=info.get("gender", "neutral"),
                 description=info.get("description", ""),
                 ref_image=ref,
+                age=age_val or None,
+                personality_tags=p_tags or None,
+                personality_text=p_text or None,
+                image_model=image_model,
             )
             obj = await upload_asset_to_minio(img, job_id, key)
             return key, {
@@ -1284,6 +1876,9 @@ async def run_phase1_5_assets(job_id, mongo_db) -> None:
                 "name": info.get("name", key),
                 "gender": info.get("gender"),
                 "description": info.get("description", ""),
+                "age": age_val,
+                "personality_tags": p_tags,
+                "personality_text": p_text,
                 "object_name": obj,
                 "created_at": datetime.utcnow(),
             }
@@ -1292,10 +1887,31 @@ async def run_phase1_5_assets(job_id, mongo_db) -> None:
             return key, None
 
     async def _make_loc(key, info):
+        # v42: location1 + user_location_snapshot 조합이면 자동생성 SKIP하고
+        # 사용자 PNG를 그대로 자산 경로에 복사한다.
+        if key == "location1" and user_loc_bytes:
+            try:
+                obj = await upload_asset_to_minio(user_loc_bytes, job_id, key)
+                snap_name = (user_location_snapshot or {}).get("name") or info.get("name", key)
+                return key, {
+                    "type": "location",
+                    "name": snap_name,
+                    "description": info.get("description", ""),
+                    "object_name": obj,
+                    "source": "user",
+                    "created_at": datetime.utcnow(),
+                }
+            except Exception as e:
+                logger.exception("Phase1.5: user location1 copy failed: %s", e)
+                return key, None
         try:
+            # location2/3: 사용자 location1 이 있으면 그 톤을 따르도록 style_ref 첨부
+            style_ref = user_loc_bytes if (key != "location1" and user_loc_bytes) else None
             img = await generate_location_sheet_asset(
                 name=info.get("name", key),
                 description=info.get("description", ""),
+                style_ref=style_ref,
+                image_model=image_model,
             )
             obj = await upload_asset_to_minio(img, job_id, key)
             return key, {
@@ -1309,19 +1925,95 @@ async def run_phase1_5_assets(job_id, mongo_db) -> None:
             logger.exception("Phase1.5: loc %s gen failed: %s", key, e)
             return key, None
 
+    # v59: progress 단계화 + outer wait_for 가드 + 0개 성공 시 명시적 failed 마킹.
+    # 한 task 가 영구 hang 해도 외부 wait_for(2400s, 40분) 가 잘라낸다.
+    # 그동안 사용자에게는 progress 5→8 사이 점진적 갱신이 보이도록 한다.
+
+    import time as _time
+    _phase15_t0 = _time.monotonic()
+
+    # _make_char/_make_loc 을 progress-aware wrapper 로 감싼다.
+    progress_state = {"done": 0, "total": 0}
+
+    async def _track(coro):
+        try:
+            result = await coro
+        finally:
+            progress_state["done"] += 1
+            try:
+                total = max(progress_state["total"], 1)
+                done = progress_state["done"]
+                # 5(시작) ~ 8(종료) 사이를 선형 분배. 5 + floor(done/total * 3) — 4 단계.
+                p = 5 + int((done / total) * 3)
+                if p > 8:
+                    p = 8
+                await _update_job(mongo_db, job_id, {"progress": p})
+            except Exception as _e:  # progress update 실패는 치명적이지 않음
+                logger.warning("[Phase1.5] progress update failed: %s", _e)
+        return result
+
     tasks = []
     for k, v in characters.items():
         if isinstance(v, dict):
-            tasks.append(_make_char(k, v))
+            tasks.append(_track(_make_char(k, v)))
+
+    # v42: LLM이 location1 을 누락했더라도 user_loc_bytes 가 있으면 보강 등록한다.
+    if user_loc_bytes and not isinstance(locations.get("location1"), dict):
+        locations["location1"] = {
+            "name": (user_location_snapshot or {}).get("name") or "사용자 장소",
+            "description": "",
+        }
+
     for k, v in locations.items():
         if isinstance(v, dict):
-            tasks.append(_make_loc(k, v))
+            tasks.append(_track(_make_loc(k, v)))
+
+    progress_state["total"] = len(tasks)
+    total_assets = len(tasks)
+    logger.info(
+        "[Phase1.5] job=%s total_assets=%d image_model=%s — starting parallel gen",
+        job_id, total_assets, image_model,
+    )
 
     if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=2400.0,  # 40분 외부 가드
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "[Phase1.5] job=%s outer wait_for timeout (2400s) — aborting asset phase",
+                job_id,
+            )
+            await _update_job(mongo_db, job_id, {
+                "status": "failed",
+                "error_message": "자산 생성 단계가 40분 외부 가드를 초과했습니다. 잠시 후 다시 시도해주세요.",
+            })
+            return
         for r in results:
             if isinstance(r, tuple) and r[1] is not None:
                 assets[r[0]] = r[1]
+
+    elapsed_s = int(_time.monotonic() - _phase15_t0)
+    logger.info(
+        "[Phase1.5] job=%s done assets=%d/%d elapsed_s=%d",
+        job_id, len(assets), total_assets, elapsed_s,
+    )
+
+    # v59: 시도한 자산이 1개 이상인데 성공이 0개면 명시적 failed 로 사용자에게 알린다.
+    # 부분 실패(>=1 성공)는 기존대로 warning 만 — 후속 phase 가 부분 ref 로 진행.
+    if total_assets > 0 and len(assets) == 0:
+        logger.error(
+            "[Phase1.5] job=%s all %d asset generations failed — marking job failed",
+            job_id, total_assets,
+        )
+        await _update_job(mongo_db, job_id, {
+            "assets": assets,
+            "status": "failed",
+            "error_message": "캐릭터/장소 자산 생성에 모두 실패했습니다. 모델 설정 또는 외부 API 상태를 확인해주세요.",
+        })
+        return
 
     await _update_job(mongo_db, job_id, {
         "assets": assets,
@@ -1378,6 +2070,10 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
     character_image_bytes = _load_character_image(job.get("character_object_name"))
     minio_client = get_minio()
 
+    # v55: 씬+자산 동일 image_model 사용. 옛 도큐먼트는 nb_pro 기본값.
+    image_model_p2 = (job.get("image_model") or "nb_pro").strip() or "nb_pro"
+    logger.info("[SceneImage] job=%s image_model=%s (phase2)", job_id, image_model_p2)
+
     # Asset registry: {"character1": bytes, ...} for variable-reference resolution
     from .mv_assets import parse_asset_references, load_asset_from_minio
     assets_meta = job.get("assets") or {}
@@ -1387,6 +2083,15 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
             _b = load_asset_from_minio(_a["object_name"])
             if _b:
                 asset_bytes_cache[_k] = _b
+
+    # v42: user-supplied location name for prompt-side anchor (bytes are
+    # already attached via reference_images when @location1 appears in prompt).
+    _user_loc_snap_p2 = job.get("user_location_snapshot") or None
+    user_location_name_p2 = None
+    if isinstance(_user_loc_snap_p2, dict):
+        _ln_p2 = (_user_loc_snap_p2.get("name") or "").strip()
+        if _ln_p2:
+            user_location_name_p2 = _ln_p2
 
     # Determine which scenes to process
     target_scenes = []
@@ -1442,13 +2147,19 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
                     scene_refs.append(_b)
 
         try:
+            # v41: LoRA system removed — scene generation is Nano Banana only.
+            # v55: image_model 분기 — nb_pro(기본) / gpt_image_2.
             img_bytes = await generate_scene_image(
                 scene_desc,
                 cover_image_bytes=ref_image,
                 character_image_bytes=character_image_bytes,
                 scene_type=scene.get("scene_type", "drama"),
                 reference_images=scene_refs or None,
+                user_location_name=user_location_name_p2,
+                image_model=image_model_p2,
+                scene_number=sn,
             )
+            image_source = "gemini"
 
             # Save to MinIO
             object_name = "mv/{}/scenes/{:03d}.png".format(str(job_id), sn)
@@ -1462,7 +2173,7 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
 
             # Update scene in MongoDB
             scenes[i]["image_object_name"] = object_name
-            scenes[i]["image_source"] = "gemini"
+            scenes[i]["image_source"] = image_source
             generated_count += 1
 
             # Save this scene's image for next scene's reference
@@ -1489,11 +2200,21 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
     # ── Phase 2.5: Generate video_prompts from scene images (Gemini 2.5 Pro) ──
     logger.info("Phase2.5: generating video prompts from scene images for job %s", job_id)
 
+    # v45: pull scenario events + emotional core for per-scene event lookup.
+    _scenario_events = job.get("scenario_events") or []
+    _emotional_core = job.get("scenario_emotional_core") or ""
+
     for i, scene in enumerate(scenes):
         if not scene.get("image_object_name"):
             continue  # no image, skip
         if scene.get("video_prompt"):
             continue  # already has video_prompt (e.g. manual override), skip
+
+        # v45: find the event mapped to this scene (event_index from scene-split LLM)
+        _event_for_scene = None
+        _ev_idx = scene.get("event_index")
+        if isinstance(_ev_idx, int) and 0 <= _ev_idx < len(_scenario_events):
+            _event_for_scene = _scenario_events[_ev_idx]
 
         try:
             # Load scene image from MinIO
@@ -1514,14 +2235,48 @@ async def run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]]
                 model=job.get("video_prompt_model") or "gemini-2.5-pro",
                 video_model=job.get("video_model", "veo"),
                 has_character=bool(job.get("character_object_name")),
+                duration=float(scene.get("use_seconds", 5.0)),
+                scene_event=_event_for_scene,
+                emotional_core=_emotional_core,
             )
 
-            scenes[i]["video_prompt"] = video_prompt
-            logger.info("Phase2.5: scene %d video_prompt generated", scene.get("scene_number", i + 1))
+            # v60: Phase 2.5 결과가 빈 문자열이면 Phase 1b 의 video_prompt 유지 (덮어쓰지 않음).
+            #      empty 는 generate_video_prompts_from_images 의 v60 fallback 시그널.
+            if video_prompt:
+                scenes[i]["video_prompt"] = video_prompt
+                # v56 — auto-translate the newly generated English video_prompt to Korean.
+                try:
+                    from .translation import translate_en_to_ko
+                    _vp_ko = await translate_en_to_ko(
+                        video_prompt or "", context_hint="MV scene video prompt",
+                    )
+                    scenes[i]["video_prompt_ko"] = _vp_ko
+                    logger.info(
+                        "[TranslateEnKo] new video_prompt_ko scene=%d len=%d",
+                        scene.get("scene_number", i + 1), len(_vp_ko or ""),
+                    )
+                except Exception as _tr_err:
+                    logger.warning(
+                        "[TranslateEnKo] phase2_5 failed scene=%d err=%s",
+                        scene.get("scene_number", i + 1), str(_tr_err)[:200],
+                    )
+                    scenes[i].setdefault("video_prompt_ko", "")
+                logger.info("Phase2.5: scene %d video_prompt generated", scene.get("scene_number", i + 1))
+            else:
+                # v60: Phase 1b 의 video_prompt 가 살아있으므로 영상 생성은 그대로 진행 가능.
+                logger.warning(
+                    "[Phase2.5] scene %d empty refinement → keeping Phase 1b video_prompt as-is",
+                    scene.get("scene_number", i + 1),
+                )
+                scenes[i].setdefault("video_prompt_ko", "")
 
         except Exception as e:
-            logger.warning("Phase2.5: scene %d video_prompt failed: %s", scene.get("scene_number", i + 1), e)
-            scenes[i]["video_prompt"] = "Smooth cinematic camera movement, slow dolly forward."  # fallback
+            # v60: 예외 시에도 Phase 1b 의 video_prompt 그대로 유지. "Smooth..." 강제 박기 제거.
+            logger.warning(
+                "[Phase2.5] scene %d refinement failed: %s — keeping Phase 1b video_prompt",
+                scene.get("scene_number", i + 1), e,
+            )
+            scenes[i].setdefault("video_prompt_ko", "")
 
         # Update progress
         await _update_job(mongo_db, job_id, {"scenes": scenes})
@@ -1628,6 +2383,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
         video_model = job.get("video_model", "veo")
     use_kling = (video_model == "kling")
     use_seedance = (video_model == "seedance")
+    use_grok = (video_model == "grok")  # v66
 
     logger.info("Phase3: job %s using video model: %s", job_id, video_model)
 
@@ -1664,7 +2420,10 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
         })
         return
 
-    max_retries = 5
+    # v64: max_retries 를 5 → 3 으로 낮춤. content_policy_violation 같은 비-rate-limit
+    # 에러는 retry 가 거의 무의미 (씬 15 케이스에서 8회 반복 거부 확인). rate-limit 시
+    # backoffs 도 슬라이스 사용.
+    max_retries = 3
     rate_limit_backoffs = [180, 300, 420, 600, 900]
     prev_scene_image_for_video = None  # Track previous scene image for Kling continuity
 
@@ -1790,7 +2549,24 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
             try:
                 scene_desc_for_video = scene.get("video_image_prompt") or scene.get("image_prompt", "")
                 scene_video_prompt = scene.get("video_prompt")
+                # v60: 행동/감정/맥락 description — 영상 모델 prompt 의 별도 슬롯에 합쳐짐.
+                scene_description_en = scene.get("description") or ""
+                # v64: 영상 모델 호출 직전, 위험 표현 → 안전 표현 정적 후처리 1회 패스.
+                # Mongo 원본은 변경하지 않음 (UI 표시용은 그대로 유지). 호출 인자만 정화.
+                from .mv_generator import sanitize_video_prompt as _sanitize
+                scene_desc_for_video = _sanitize(scene_desc_for_video)
+                scene_video_prompt = _sanitize(scene_video_prompt)
+                scene_description_en = _sanitize(scene_description_en)
+                # v43: scene 의 정확한 duration (= section_end - section_start) 을 모델별 정수 그리드로 ceil.
+                _scene_dur_exact = float(
+                    scene.get("section_end", 0) - scene.get("section_start", 0)
+                )
+                if _scene_dur_exact <= 0:
+                    _scene_dur_exact = float(scene.get("use_seconds", 10))
+                # Stash exact duration on scene for trim post-processing later.
+                scene["_exact_duration_sec"] = _scene_dur_exact
                 if use_kling:
+                    _req_dur = _request_video_duration(_scene_dur_exact, "kling")
                     task_or_op = await start_scene_video_kling(
                         prompt=scene_desc_for_video,
                         image_bytes=image_bytes,
@@ -1798,34 +2574,66 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                         character_image_bytes=character_image_bytes,
                         lyrics_segment=scene.get("lyrics_segment", ""),
                         scene_type=scene.get("scene_type", "drama"),
-                        duration=float(scene.get("use_seconds", 10)),
+                        duration=float(_req_dur),
                         video_prompt=scene_video_prompt,
+                        description=scene_description_en,
                     )
+                    logger.info("Phase3: scene %d kling duration: exact=%.3f, requested=%d",
+                                sn, _scene_dur_exact, _req_dur)
                 elif use_seedance:
-                    # For lipsync scenes, slice audio segment and pass to Seedance
-                    scene_audio_bytes = None
-                    if scene.get("scene_type") == "lipsync" and seedance_audio_bytes:
-                        scene_audio_bytes = _slice_audio_segment(
-                            seedance_audio_bytes,
-                            scene.get("section_start", 0),
-                            scene.get("section_end", 10),
-                        )
-
+                    # v72: audio embedding disabled — Phase 3.5 sync labs handles all lipsync.
+                    _req_dur = _request_video_duration(_scene_dur_exact, "seedance")
+                    logger.info(
+                        "[SeedAudioOff] job=%s scene=%d type=%s (audio not embedded; sync labs will handle)",
+                        job_id, sn, scene.get("scene_type"),
+                    )
                     task_or_op = await start_scene_video_seedance(
                         prompt=scene_desc_for_video,
                         image_bytes=image_bytes,
                         video_prompt=scene_video_prompt,
                         lyrics_segment=scene.get("lyrics_segment", ""),
                         scene_type=scene.get("scene_type", "drama"),
-                        duration=float(scene.get("use_seconds", 10)),
-                        audio_bytes=scene_audio_bytes,
+                        duration=float(_req_dur),
+                        audio_bytes=None,
+                        description=scene_description_en,
+                    )
+                    logger.info("Phase3: scene %d seedance duration: exact=%.3f, requested=%d",
+                                sn, _scene_dur_exact, _req_dur)
+                elif use_grok:
+                    # v66: Grok Imagine Video (xAI 직접). image.url 필요 →
+                    # MinIO presigned URL 발급해서 전달.
+                    # 주의: xAI 서버가 우리 MinIO 호스트로 접근 가능해야 동작
+                    # (MINIO_HOST 가 public 또는 인터넷 reachable). Tailscale 환경
+                    # 단독 운영 시 도달 불가 — 향후 public hosting 검토 필요.
+                    _req_dur = _request_video_duration(_scene_dur_exact, "grok")
+                    image_url = minio_client.presigned_get_object(
+                        bucket_name=settings.minio_bucket_images,
+                        object_name=scene["image_object_name"],
+                        expires=timedelta(hours=1),
+                    )
+                    task_or_op = await start_scene_video_grok(
+                        prompt=scene_desc_for_video,
+                        image_url=image_url,
+                        video_prompt=scene_video_prompt,
+                        lyrics_segment=scene.get("lyrics_segment", ""),
+                        scene_type=scene.get("scene_type", "drama"),
+                        duration=float(_req_dur),
+                        description=scene_description_en,
+                    )
+                    logger.info(
+                        "Phase3: scene %d grok duration: exact=%.3f, requested=%d",
+                        sn, _scene_dur_exact, _req_dur,
                     )
                 else:
+                    # v43 NOTE: Veo with referenceImages is fixed at 8s by Google API
+                    # (start_scene_video has no duration param). Trim post-processing
+                    # will cap to exact scene_dur.
                     task_or_op = await start_scene_video(
                         scene_desc_for_video, image_bytes,
                         video_prompt=scene_video_prompt,
                         lyrics_segment=scene.get("lyrics_segment", ""),
                         scene_type=scene.get("scene_type", "drama"),
+                        description=scene_description_en,
                     )
                 consecutive_429 = 0  # API accepted
                 await _update_job(mongo_db, job_id, {"retry_info": None})
@@ -1854,6 +2662,8 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                         status_result = await check_scene_video_status_kling(task_or_op)
                     elif use_seedance:
                         status_result = await check_scene_video_status_seedance(task_or_op)
+                    elif use_grok:
+                        status_result = await check_scene_video_status_grok(task_or_op)
                     else:
                         status_result = await check_scene_video_status(task_or_op)
                     if status_result["done"]:
@@ -1869,11 +2679,31 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                     break
 
                 if status_result.get("error"):
-                    logger.warning("Phase3: scene %d error: %s", sn, status_result["error"])
+                    _err_text = status_result["error"]
+                    logger.warning("Phase3: scene %d error: %s", sn, _err_text)
+                    # v64: content_policy_violation / partner_validation_failed 는
+                    # 동일 prompt retry 가 거의 무의미. 즉시 fail 마킹.
+                    _err_lower = _err_text.lower()
+                    if (
+                        "content_policy_violation" in _err_lower
+                        or "partner_validation_failed" in _err_lower
+                        or "sensitive content" in _err_lower
+                    ):
+                        logger.warning(
+                            "[VideoRetry] scene %d content-policy hit — skipping retry, marking failed",
+                            sn,
+                        )
+                        scenes[i]["video_status"] = "failed"
+                        scenes[i]["video_error"] = (
+                            "콘텐츠 안전 필터 거부 — 씬 카드의 [이미지 재생성] 또는 "
+                            "프롬프트 수정 후 [재시도]를 눌러주세요. (원본 에러: "
+                            + _err_text[:160] + ")"
+                        )
+                        break
                     if attempt < max_retries - 1:
                         continue
                     scenes[i]["video_status"] = "failed"
-                    scenes[i]["video_error"] = status_result["error"]
+                    scenes[i]["video_error"] = _err_text
                     break
 
                 # Download and save video
@@ -1883,10 +2713,24 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                     video_bytes = await download_video_kling(video_download_url)
                 elif use_seedance:
                     video_bytes = await download_video_seedance(video_download_url)
+                elif use_grok:
+                    video_bytes = await download_video_grok(video_download_url)
                 else:
                     video_bytes = await download_video(video_download_url)
 
-                # Trim video to use_seconds if specified (section-aware pipeline)
+                # v43: First trim to the EXACT scene duration (float seconds) — model API only accepts
+                # integer-second grid, so the returned video is ≥ exact duration; this trim makes
+                # downstream concat frame-accurate. On failure, returns original bytes.
+                _exact_dur = float(scene.get("_exact_duration_sec") or 0)
+                if _exact_dur > 0.1:
+                    _before = len(video_bytes) if video_bytes else 0
+                    video_bytes = _trim_video_to_duration(video_bytes, _exact_dur)
+                    logger.info(
+                        "Phase3: scene %d trimmed to exact %.3fs (bytes %d → %d)",
+                        sn, _exact_dur, _before, len(video_bytes) if video_bytes else 0,
+                    )
+
+                # Trim video to use_seconds if specified (legacy section-aware pipeline path)
                 use_seconds = scene.get("use_seconds")
                 if use_seconds and use_seconds > 0:
                     tmpdir_trim = tempfile.mkdtemp(prefix="mv_trim_")
@@ -1931,6 +2775,24 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
             except Exception as e:
                 error_str = str(e)
                 is_rate_limit = "429" in error_str
+                # v64: content_policy_violation 류는 retry 무의미 — 즉시 fail.
+                _err_lower = error_str.lower()
+                if (
+                    "content_policy_violation" in _err_lower
+                    or "partner_validation_failed" in _err_lower
+                    or "sensitive content" in _err_lower
+                ):
+                    logger.warning(
+                        "[VideoRetry] scene %d content-policy hit (exception path) — marking failed",
+                        sn,
+                    )
+                    scenes[i]["video_status"] = "failed"
+                    scenes[i]["video_error"] = (
+                        "콘텐츠 안전 필터 거부 — 씬 카드의 [이미지 재생성] 또는 "
+                        "프롬프트 수정 후 [재시도]를 눌러주세요. (원본: "
+                        + error_str[:160] + ")"
+                    )
+                    break
 
                 if is_rate_limit:
                     consecutive_429 += 1
@@ -2034,7 +2896,7 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
             })
             try:
                 from .sync_labs_service import generate_lipsync_from_video, cut_audio_segment
-                from .demucs_service import enhance_vocal_demucs
+                # v43: Demucs 제거 — raw audio segment 그대로 Sync Labs 에 투입.
                 import subprocess
 
                 audio_obj = await _resolve_audio_object_name(job, mongo_db)
@@ -2082,29 +2944,16 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                                 scenes[sidx]["video_source"] = "kling (sync failed)"
                                 continue
 
-                            # 보컬 분리
-                            logger.info("Phase3.5: separating vocals for scene %d", sn)
-                            vocal_bytes = await enhance_vocal_demucs(segment_audio, "segment.mp3")
+                            # v43: Demucs 보컬 분리 제거 — raw segment 를 그대로 Sync Labs 에 전달.
+                            vocal_bytes = segment_audio
 
-                            # 보컬 분리 결과가 너무 작으면 원본 segment로 fallback
-                            if not vocal_bytes or len(vocal_bytes) < 5120:
-                                logger.warning(
-                                    "Phase3.5: scene %d vocal too small (%db), falling back to original segment",
-                                    sn, len(vocal_bytes) if vocal_bytes else 0,
-                                )
-                                vocal_bytes = segment_audio
-
-                            # 보컬 분리 결과 MinIO에 저장
+                            # 원본 segment 만 MinIO 에 보관 (legacy 키 유지: separated_vocal_object).
                             orig_obj = "mv/{}/scenes/{:03d}_original_segment.mp3".format(str(job_id), sn)
-                            vocal_obj = "mv/{}/scenes/{:03d}_vocal_only.wav".format(str(job_id), sn)
                             minio_client.put_object(bucket_name=settings.minio_bucket_music,
                                                     object_name=orig_obj, data=io.BytesIO(segment_audio),
                                                     length=len(segment_audio), content_type="audio/mpeg")
-                            minio_client.put_object(bucket_name=settings.minio_bucket_music,
-                                                    object_name=vocal_obj, data=io.BytesIO(vocal_bytes),
-                                                    length=len(vocal_bytes), content_type="audio/wav")
                             scenes[sidx]["separated_original_object"] = orig_obj
-                            scenes[sidx]["separated_vocal_object"] = vocal_obj
+                            scenes[sidx]["separated_vocal_object"] = orig_obj  # alias for backward UI
 
                             # Sync Labs 호출 (분리된 보컬로)
                             logger.info("Phase3.5: calling Sync Labs for scene %d", sn)
@@ -2132,10 +2981,11 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                                 else:
                                     silent_video = synced_video
 
-                            # Sync Labs 후 자막 재적용
-                            _ws = job.get("whisper_segments", [])
-                            _scene_ts = _get_scene_timestamps(_ws, float(scene.get("section_start", 0)), float(scene.get("section_end", 0)))
-                            silent_video = _burn_subtitles_on_synced_video(silent_video, scene, timestamps=_scene_ts)
+                            # Sync Labs 후 자막 재적용 (v43: has_subtitles 가드)
+                            if job.get("has_subtitles") or _read_lyric_timestamps(job):
+                                _ws = _read_lyric_timestamps(job)
+                                _scene_ts = _get_scene_timestamps(_ws, float(scene.get("section_start", 0)), float(scene.get("section_end", 0)))
+                                silent_video = _burn_subtitles_on_synced_video(silent_video, scene, timestamps=_scene_ts)
 
                             synclabs_obj = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(str(job_id), sn)
                             minio_client.put_object(bucket_name=settings.minio_bucket_images,
@@ -2215,10 +3065,10 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
 
                             ffmpeg_bin = _get_ffmpeg_path() or "ffmpeg"
 
-                            # Generate lyrics subtitle for this scene (reuse saved Whisper timestamps)
+                            # Generate lyrics subtitle for this scene (v43: has_subtitles 가드, lyric_timestamps backward-shim)
                             timestamps = None
-                            if scene.get("lyrics_segment"):
-                                _ws = job.get("whisper_segments", [])
+                            if scene.get("lyrics_segment") and (job.get("has_subtitles") or _read_lyric_timestamps(job)):
+                                _ws = _read_lyric_timestamps(job)
                                 timestamps = _get_scene_timestamps(_ws, float(start), float(end))
                             ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
 
@@ -2508,10 +3358,10 @@ async def run_phase5_merge_audio(job_id, mongo_db, audio_object_name: str) -> No
             })
             return
 
-        # Generate karaoke-style lyrics subtitle (ASS) with Whisper timing
+        # Generate karaoke-style lyrics subtitle (v43: lyric_timestamps backward-shim, has_subtitles guard)
         scenes = job.get("scenes", [])
         all_timestamps: dict[int, list[dict]] = {}
-        _ws = job.get("whisper_segments", [])
+        _ws = _read_lyric_timestamps(job) if (job.get("has_subtitles") or job.get("lyric_timestamps") or job.get("whisper_segments")) else []
         if _ws:
             for s_idx, sc in enumerate(scenes):
                 if not sc.get("lyrics_segment") or not sc.get("lyrics_segment", "").strip():
@@ -2602,3 +3452,1061 @@ async def run_phase5_merge_audio(job_id, mongo_db, audio_object_name: str) -> No
         })
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v51 — Scene-level partial cascade helpers
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# 사용자 편집(PATCH) 후 트리거되는 부분 cascade. 씬 단위로만 작동한다.
+#
+#   description  → image_prompt → image → video_prompt
+#   image_prompt → image → video_prompt
+#   video_prompt → (no cascade)
+#
+# 사용자가 PATCH 한 필드는 scene.user_edited_fields 에 누적되며, cascade 진행 시
+# 그 필드는 자동 재계산을 건너뛴다 (사용자 의도 보존). cascade 가 자동으로 어떤
+# 필드를 재계산하면 user_edited_fields 에서 그 필드를 제거한다.
+#
+# 영상 폐기는 마킹만 (video_status="invalidated_by_cascade"). MinIO 파일 즉시
+# 삭제 X — 롤백 가능성 위해 보존.
+
+import uuid as _uuid_v51
+
+
+async def _v51_get_scene_idx(mongo_db, job_oid, scene_number: int) -> Optional[int]:
+    job = await mongo_db.mv_jobs.find_one({"_id": job_oid}, {"scenes": 1})
+    if not job:
+        return None
+    for i, s in enumerate(job.get("scenes", [])):
+        if s.get("scene_number") == scene_number:
+            return i
+    return None
+
+
+async def _v51_set_scene_fields(mongo_db, job_oid, scene_idx: int, fields: dict) -> None:
+    """Set arbitrary fields on scenes[scene_idx] via positional $set."""
+    update = {"updated_at": datetime.utcnow()}
+    for k, v in fields.items():
+        update["scenes.{}.{}".format(scene_idx, k)] = v
+    await mongo_db.mv_jobs.update_one({"_id": job_oid}, {"$set": update})
+
+
+async def _v51_get_scene(mongo_db, job_oid, scene_idx: int) -> Optional[dict]:
+    job = await mongo_db.mv_jobs.find_one({"_id": job_oid}, {"scenes": 1})
+    if not job:
+        return None
+    scenes = job.get("scenes") or []
+    if scene_idx < 0 or scene_idx >= len(scenes):
+        return None
+    return scenes[scene_idx]
+
+
+async def _v51_is_user_edited(mongo_db, job_oid, scene_idx: int, field: str) -> bool:
+    """v51 호환 wrapper. v54: 내부적으로 _v54_is_field_user_edited 통합 헬퍼에 위임.
+
+    v54 통합 — scene-level 직접 조회 대신 통합 함수 호출. 동작은 동일.
+    """
+    job = await mongo_db.mv_jobs.find_one({"_id": job_oid}, {"scenes": 1})
+    if not job:
+        return False
+    return _v54_is_field_user_edited(job, "scene", scene_idx, field)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v54 — user_edited_fields 보존 정책 통합 헬퍼
+#
+# 3 레벨 (씬 / event / scenario top-level) 의 user_edited_fields 체크를 1개
+# 함수로 통일. v51/v52/v53 cascade 헬퍼들이 이 함수 호출하여 일관 분기.
+#
+# 옛 도큐먼트 (필드 자체 없음) → False 안전 반환.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _v54_is_field_user_edited(job: dict, scope: str, target: Optional[int], field: str) -> bool:
+    """3 레벨 통합 user_edited_fields 체크.
+
+    Args:
+        job: Mongo mv_jobs 도큐먼트 (이미 fetch 한 상태).
+        scope: "scene" | "event" | "scenario".
+        target: scope="scene" → scene_idx (0-based). scope="event" → event_idx (0-based, =order-1). scope="scenario" → None.
+        field: 필드명.
+
+    Returns:
+        True — 사용자가 직접 편집한 필드. False — 그 외 (옛 도큐먼트 / 범위 초과 / scope 오류 모두 안전 처리).
+    """
+    if not isinstance(job, dict):
+        return False
+
+    result = False
+    try:
+        if scope == "scene":
+            scenes = job.get("scenes") or []
+            if isinstance(target, int) and 0 <= target < len(scenes):
+                edited = scenes[target].get("user_edited_fields") or []
+                result = field in edited
+        elif scope == "event":
+            events = job.get("scenario_events") or []
+            if isinstance(target, int) and 0 <= target < len(events):
+                edited = events[target].get("user_edited_fields") or []
+                result = field in edited
+        elif scope == "scenario":
+            edited = job.get("scenario_user_edited_fields") or []
+            result = field in edited
+    except Exception:
+        result = False
+
+    logger.debug(
+        "[V54FieldCheck] scope=%s target=%s field=%s edited=%s",
+        scope, target, field, result,
+    )
+    return result
+
+
+async def _v51_remove_user_edited_field(mongo_db, job_oid, scene_idx: int, field: str) -> None:
+    scene = await _v51_get_scene(mongo_db, job_oid, scene_idx)
+    if not scene:
+        return
+    edited = list(scene.get("user_edited_fields") or [])
+    if field in edited:
+        edited = [f for f in edited if f != field]
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {"user_edited_fields": edited})
+
+
+async def _v51_check_cancel(mongo_db, job_oid, scene_idx: int) -> bool:
+    scene = await _v51_get_scene(mongo_db, job_oid, scene_idx)
+    if not scene:
+        return True  # disappeared → treat as cancelled
+    return bool(scene.get("cancel_requested"))
+
+
+async def _v51_invalidate_video(mongo_db, job_oid, scene_idx: int, scene_number: int) -> None:
+    """B5 — image 가 cascade 로 갱신되었을 때 그 씬의 영상을 마킹만 으로 폐기.
+
+    MinIO 파일은 삭제하지 않는다 (롤백 가능성).
+    """
+    await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+        "video_status": "invalidated_by_cascade",
+        "video_object_name": None,
+        "video_with_audio_object": None,
+        "video_synclabs_object": None,
+        "video_with_audio_synclabs_object": None,
+        "video_error": None,
+    })
+    logger.warning("[CascadeVideoInvalidate] job=%s scene=%d", job_oid, scene_number)
+
+
+async def _v51_regen_image_prompt_single(job: dict, scene_idx: int) -> Optional[dict]:
+    """Phase 1b 의 단일 씬 변형. generate_scene_prompts_only 를 1-element list 로 호출.
+
+    Returns: prompts dict {"scene_number", "image_prompt", "video_image_prompt", ...} or None on failure.
+    """
+    from .mv_generator import generate_scene_prompts_only
+
+    scenes = job.get("scenes", [])
+    if scene_idx < 0 or scene_idx >= len(scenes):
+        return None
+    s = scenes[scene_idx]
+
+    scene_input = [{
+        "scene_number": s.get("scene_number"),
+        "section": s.get("section", ""),
+        "duration": float(s.get("use_seconds") or 5.0),
+        "lyrics": s.get("lyrics_segment", ""),
+        "scene_type": s.get("scene_type", "drama"),
+    }]
+
+    _scenario_meta = job.get("scenario_meta") or {}
+    asset_keys = (
+        list((_scenario_meta.get("characters") or {}).keys())
+        + list((_scenario_meta.get("locations") or {}).keys())
+    )
+
+    user_location_name = None
+    _user_loc_snap = job.get("user_location_snapshot") or None
+    if isinstance(_user_loc_snap, dict):
+        _ln = (_user_loc_snap.get("name") or "").strip()
+        if _ln:
+            user_location_name = _ln
+
+    try:
+        # Use single model (first of prompt_models, or default OpenAI)
+        prompt_models = job.get("prompt_models") or None
+        models_arg = [prompt_models[0]] if prompt_models else None
+        result = await generate_scene_prompts_only(
+            scenes_input=scene_input,
+            title=job.get("title", ""),
+            genre=job.get("genre"),
+            mood=job.get("mood"),
+            scenario=job.get("scenario"),
+            user_scene_prompt=job.get("scene_prompt"),
+            models=models_arg,
+            video_model=job.get("video_model", "veo"),
+            asset_keys=asset_keys or None,
+            location_name=user_location_name,
+            narrative=job.get("scenario_narrative"),
+            scenario_events=job.get("scenario_events"),
+            emotional_core=job.get("scenario_emotional_core"),
+            premise=job.get("scenario_premise"),
+            character_states=job.get("scenario_character_states"),
+        )
+    except Exception as e:
+        logger.warning("[CascadePhase] phase1b single-scene failed: %s", e)
+        return None
+
+    # Result is a list of 1 prompt
+    if isinstance(result, dict) and "results" in result:
+        # Dual-model result (rare for single-scene single-model call) — flatten
+        first = (result.get("results") or [{}])[0]
+        prompts = first.get("prompts") or []
+    else:
+        prompts = result or []
+
+    if not prompts or not isinstance(prompts, list):
+        return None
+    return prompts[0] if prompts else None
+
+
+async def _v51_regen_video_prompt_single(job: dict, scene_idx: int) -> Optional[str]:
+    """Phase 2.5 의 단일 씬 변형 — 이미 생성된 image 를 읽어 video_prompt 만 재생성."""
+    scenes = job.get("scenes", [])
+    if scene_idx < 0 or scene_idx >= len(scenes):
+        return None
+    scene = scenes[scene_idx]
+    if not scene.get("image_object_name"):
+        return None
+
+    try:
+        minio_client = get_minio()
+        resp = minio_client.get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=scene["image_object_name"],
+        )
+        scene_image_bytes = resp.read()
+        resp.close()
+        resp.release_conn()
+    except Exception as e:
+        logger.warning("[CascadePhase] phase2.5 image load failed: %s", e)
+        return None
+
+    _scenario_events = job.get("scenario_events") or []
+    _emotional_core = job.get("scenario_emotional_core") or ""
+    _event_for_scene = None
+    _ev_idx = scene.get("event_index")
+    if isinstance(_ev_idx, int) and 0 <= _ev_idx < len(_scenario_events):
+        _event_for_scene = _scenario_events[_ev_idx]
+
+    try:
+        video_prompt = await generate_video_prompts_from_images(
+            image_bytes=scene_image_bytes,
+            image_prompt=scene.get("video_image_prompt") or scene.get("image_prompt", ""),
+            scene_type=scene.get("scene_type", "drama"),
+            lyrics_segment=scene.get("lyrics_segment", ""),
+            scene_number=scene.get("scene_number", scene_idx + 1),
+            model=job.get("video_prompt_model") or "gemini-2.5-pro",
+            video_model=job.get("video_model", "veo"),
+            has_character=bool(job.get("character_object_name")),
+            duration=float(scene.get("use_seconds", 5.0)),
+            scene_event=_event_for_scene,
+            emotional_core=_emotional_core,
+        )
+        return video_prompt
+    except Exception as e:
+        logger.warning("[CascadePhase] phase2.5 LLM failed: %s", e)
+        return None
+
+
+async def _v51_run_cascade(job_oid, scene_number: int, mongo_db, trigger_field: str) -> None:
+    """Background task: cascade dispatch.
+
+    trigger_field=
+      - "description":      phase1b → phase2 → phase2.5
+      - "image_prompt":     phase2 → phase2.5
+      - "video_prompt":     no-op
+      - "description_ko":   translate_to_en → "description" cascade (phase1b → phase2 → phase2.5)
+      - "image_prompt_ko":  translate_to_en → "image_prompt" cascade (phase2 → phase2.5)
+      - "video_prompt_ko":  translate_to_en → completed (영상 단계는 별도 trigger)
+    """
+    cascade_id = str(_uuid_v51.uuid4())
+    scene_idx = await _v51_get_scene_idx(mongo_db, job_oid, scene_number)
+    if scene_idx is None:
+        logger.warning("[CascadePhase] job=%s scene=%d not found, skip", job_oid, scene_number)
+        return
+
+    # ── v56 — Korean trigger handling (translate_*_to_en phase) ──────────────
+    # 한국어 trigger → ko→en 번역 → 영어 필드 갱신 → 대응 영어 trigger 로 위임.
+    _V56_KO_TRIGGERS = {
+        "description_ko": "description",
+        "image_prompt_ko": "image_prompt",
+        "video_prompt_ko": "video_prompt",
+    }
+    if trigger_field in _V56_KO_TRIGGERS:
+        en_field = _V56_KO_TRIGGERS[trigger_field]
+
+        # Initialize running state for translation phase
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+            "cascade_status": "running",
+            "cascade_progress": 0,
+            "cascade_started_at": datetime.utcnow(),
+            "cascade_completed_at": None,
+            "cascade_id": cascade_id,
+            "cancel_requested": False,
+        })
+        logger.info(
+            "[CascadePhase] job=%s scene=%d phase=translate_%s_to_en cascade_id=%s",
+            job_oid, scene_number, en_field, cascade_id,
+        )
+
+        scene = await _v51_get_scene(mongo_db, job_oid, scene_idx)
+        ko_text = (scene or {}).get(trigger_field, "") or ""
+        try:
+            from .translation import translate_ko_to_en
+            new_en = await translate_ko_to_en(
+                ko_text,
+                context_hint="MV scene {}".format(en_field.replace("_", " ")),
+            )
+        except Exception as _tr_err:
+            logger.error(
+                "[CascadePhase] job=%s scene=%d phase=translate_%s_to_en failed err=%s",
+                job_oid, scene_number, en_field, str(_tr_err)[:200],
+            )
+            await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                "cascade_status": "failed",
+                "cascade_completed_at": datetime.utcnow(),
+            })
+            return
+
+        # Persist translated English field. Mark English as "auto-synced" (remove from
+        # user_edited_fields if previously edited there — Korean now the source of truth).
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {en_field: new_en or ""})
+        await _v51_remove_user_edited_field(mongo_db, job_oid, scene_idx, en_field)
+        logger.info(
+            "[CascadePhase] job=%s scene=%d phase=translate_%s_to_en done en_len=%d",
+            job_oid, scene_number, en_field, len(new_en or ""),
+        )
+
+        # video_prompt_ko → cascade end (영상 단계 X)
+        if en_field == "video_prompt":
+            await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                "cascade_status": "completed",
+                "cascade_progress": 100,
+                "cascade_completed_at": datetime.utcnow(),
+                "cancel_requested": False,
+            })
+            logger.info(
+                "[CascadePhase] job=%s scene=%d phase=video_prompt_ko_completed",
+                job_oid, scene_number,
+            )
+            return
+
+        # description_ko / image_prompt_ko → delegate to English cascade.
+        # 영어가 방금 새로 채워졌으므로 그 영어를 사용자 편집으로 보지 않도록 보장 (위 remove 이미 처리).
+        trigger_field = en_field
+        # Fall through to the English cascade below (preserving cascade_id for telemetry).
+
+    if trigger_field == "video_prompt":
+        # No-op cascade
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+            "cascade_status": "completed",
+            "cascade_progress": 100,
+            "cascade_started_at": datetime.utcnow(),
+            "cascade_completed_at": datetime.utcnow(),
+            "cascade_id": cascade_id,
+            "cancel_requested": False,
+        })
+        logger.info(
+            "[CascadePhase] job=%s scene=%d phase=video_prompt_noop", job_oid, scene_number,
+        )
+        return
+
+    # Initialize running state (English-triggered cascade or after _ko translation phase).
+    # When falling through from _ko phase, this $set re-initializes — that's intentional.
+    await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+        "cascade_status": "running",
+        "cascade_progress": 0,
+        "cascade_started_at": datetime.utcnow(),
+        "cascade_completed_at": None,
+        "cascade_id": cascade_id,
+        "cancel_requested": False,
+    })
+    logger.info(
+        "[CascadePhase] job=%s scene=%d phase=%s_start cascade_id=%s",
+        job_oid, scene_number, trigger_field, cascade_id,
+    )
+
+    try:
+        # ── Phase 1b (only for trigger_field == "description") ───────────
+        if trigger_field == "description":
+            if await _v51_check_cancel(mongo_db, job_oid, scene_idx):
+                await _v51_finalize_cancelled(mongo_db, job_oid, scene_idx, scene_number)
+                return
+
+            if await _v51_is_user_edited(mongo_db, job_oid, scene_idx, "image_prompt"):
+                logger.info(
+                    "[CascadePhase] job=%s scene=%d phase=phase1b_skip_user_edited",
+                    job_oid, scene_number,
+                )
+            else:
+                logger.info(
+                    "[CascadePhase] job=%s scene=%d phase=phase1b_enter", job_oid, scene_number,
+                )
+                job = await _get_job(mongo_db, job_oid)
+                if not job:
+                    return
+                p = await _v51_regen_image_prompt_single(job, scene_idx)
+                if p:
+                    # v56 — also capture image_prompt_ko from Phase 1b LLM output (best-effort);
+                    # if LLM omitted ko, we'll translate from the new English prompt below.
+                    new_image_prompt_en = p.get("image_prompt", "") or ""
+                    new_image_prompt_ko = p.get("image_prompt_ko", "") or ""
+                    if new_image_prompt_en and not new_image_prompt_ko:
+                        try:
+                            from .translation import translate_en_to_ko
+                            new_image_prompt_ko = await translate_en_to_ko(
+                                new_image_prompt_en, context_hint="MV scene image prompt",
+                            )
+                            logger.info(
+                                "[TranslateEnKo] new image_prompt_ko scene=%d len=%d",
+                                scene_number, len(new_image_prompt_ko or ""),
+                            )
+                        except Exception as _tr_err:
+                            logger.warning(
+                                "[TranslateEnKo] phase1b_post failed scene=%d err=%s",
+                                scene_number, str(_tr_err)[:200],
+                            )
+                            new_image_prompt_ko = ""
+                    await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                        "image_prompt": new_image_prompt_en,
+                        "video_image_prompt": p.get("video_image_prompt", "") or "",
+                        "description_ko": p.get("description_ko", ""),
+                        "image_prompt_ko": new_image_prompt_ko,
+                    })
+                    # cascade auto-regenerated → remove from user_edited_fields
+                    await _v51_remove_user_edited_field(mongo_db, job_oid, scene_idx, "image_prompt")
+                    # v56 — image_prompt_ko also auto-synced → drop from user_edited_fields
+                    await _v51_remove_user_edited_field(mongo_db, job_oid, scene_idx, "image_prompt_ko")
+
+            await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {"cascade_progress": 33})
+
+        # ── Phase 2 (image regenerate) — always runs for description / image_prompt
+        if await _v51_check_cancel(mongo_db, job_oid, scene_idx):
+            await _v51_finalize_cancelled(mongo_db, job_oid, scene_idx, scene_number)
+            return
+
+        logger.info(
+            "[CascadePhase] job=%s scene=%d phase=phase2_enter", job_oid, scene_number,
+        )
+        # Run phase2_images for this single scene
+        await run_phase2_images(job_oid, mongo_db, scene_numbers=[scene_number])
+
+        progress_after_phase2 = 66 if trigger_field == "description" else 50
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+            "cascade_progress": progress_after_phase2,
+        })
+
+        # ── B5: image changed → invalidate video ─────────────────────────
+        await _v51_invalidate_video(mongo_db, job_oid, scene_idx, scene_number)
+
+        # ── Phase 2.5 (video_prompt regenerate) ──────────────────────────
+        if await _v51_check_cancel(mongo_db, job_oid, scene_idx):
+            await _v51_finalize_cancelled(mongo_db, job_oid, scene_idx, scene_number)
+            return
+
+        if await _v51_is_user_edited(mongo_db, job_oid, scene_idx, "video_prompt"):
+            logger.info(
+                "[CascadePhase] job=%s scene=%d phase=phase2_5_skip_user_edited",
+                job_oid, scene_number,
+            )
+        else:
+            logger.info(
+                "[CascadePhase] job=%s scene=%d phase=phase2_5_enter", job_oid, scene_number,
+            )
+            job = await _get_job(mongo_db, job_oid)
+            if job:
+                vp = await _v51_regen_video_prompt_single(job, scene_idx)
+                if vp:
+                    # v56 — auto-translate new English video_prompt to Korean (sibling sync).
+                    new_vp_ko = ""
+                    try:
+                        from .translation import translate_en_to_ko
+                        new_vp_ko = await translate_en_to_ko(
+                            vp, context_hint="MV scene video prompt",
+                        )
+                        logger.info(
+                            "[TranslateEnKo] new video_prompt_ko scene=%d len=%d",
+                            scene_number, len(new_vp_ko or ""),
+                        )
+                    except Exception as _tr_err:
+                        logger.warning(
+                            "[TranslateEnKo] cascade_phase2_5 failed scene=%d err=%s",
+                            scene_number, str(_tr_err)[:200],
+                        )
+                    await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                        "video_prompt": vp,
+                        "video_prompt_ko": new_vp_ko,
+                    })
+                    await _v51_remove_user_edited_field(mongo_db, job_oid, scene_idx, "video_prompt")
+                    await _v51_remove_user_edited_field(mongo_db, job_oid, scene_idx, "video_prompt_ko")
+
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+            "cascade_status": "completed",
+            "cascade_progress": 100,
+            "cascade_completed_at": datetime.utcnow(),
+        })
+        logger.info(
+            "[CascadePhase] job=%s scene=%d phase=completed", job_oid, scene_number,
+        )
+
+    except Exception as e:
+        logger.error(
+            "[CascadePhase] job=%s scene=%d phase=failed err=%s",
+            job_oid, scene_number, str(e)[:300],
+        )
+        await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+            "cascade_status": "failed",
+            "cascade_completed_at": datetime.utcnow(),
+        })
+
+
+async def _v51_finalize_cancelled(mongo_db, job_oid, scene_idx: int, scene_number: int) -> None:
+    await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+        "cascade_status": "cancelled",
+        "cascade_completed_at": datetime.utcnow(),
+        "cancel_requested": False,
+    })
+    logger.info(
+        "[CascadePhase] job=%s scene=%d phase=cancelled", job_oid, scene_number,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v52 — 시나리오 events 단위 부분 수정 + 매핑 씬 cascade
+#
+# 사용자는 시나리오 패널의 events 카드 안 5개 필드 (trigger / protagonist_action /
+# motivation / emotion_shift / props) 를 부분 수정한다. PATCH 가 Mongo 의
+# scenario_events[i] 를 즉시 갱신하면, 그 event 에 매핑된 (scene.event_index === i)
+# 모든 씬에 대해 v51 의 cascade ("description" 트리거) 를 순차 실행한다.
+#
+# 핵심 단순화:
+#   v51 의 _v51_run_cascade(trigger_field="description") 가 phase1b → phase2 → phase2.5
+#   를 모두 처리한다. phase1b (image_prompt 재생성) 안의 generate_scene_prompts_only
+#   는 이미 Mongo 의 갱신된 scenario_events 를 읽기 때문에 별도 Phase 1 LLM 호출
+#   없이도 변경된 event 컨텍스트가 반영된다. 따라서 v52 는 "B3 wrapper" 안에서
+#   추가 LLM 호출 없이 직접 v51 cascade 를 wrapping 한다.
+#
+#   단, scene.user_edited_fields 에 "description" 이 있으면 사용자 의도 보존을 위해
+#   그 씬의 cascade 를 통째로 skip 한다 (description 보존 + 후속도 의미 없음).
+#
+# 추적자: [EventCascade] / [CascadePhase] (v51 재사용) / [EventCascadeCancel]
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _v52_get_affected_scenes(mongo_db, job_oid, event_order: int) -> List[int]:
+    """event_order (1-based) 에 매핑된 씬 번호 list.
+
+    매핑은 scene.event_index === event_order - 1.
+    옛 도큐먼트 (event_index 키 누락) 는 자동 제외 + warning 로그.
+    """
+    job = await mongo_db.mv_jobs.find_one({"_id": job_oid}, {"scenes": 1})
+    if not job:
+        return []
+    scenes = job.get("scenes") or []
+    affected = []
+    missing = 0
+    for s in scenes:
+        ev_idx = s.get("event_index")
+        if ev_idx is None:
+            missing += 1
+            continue
+        if isinstance(ev_idx, int) and ev_idx == event_order - 1:
+            sn = s.get("scene_number")
+            if isinstance(sn, int):
+                affected.append(sn)
+    if missing:
+        logger.warning(
+            "[EventCascade] missing event_index — skipping cascade for %d scenes (legacy doc)",
+            missing,
+        )
+    return affected
+
+
+async def _v52_event_cascade(job_oid, event_order: int, mongo_db) -> None:
+    """v52 백그라운드 헬퍼 — event 에 매핑된 모든 씬에 대해 v51 cascade 순차 실행.
+
+    매핑된 씬 0개 → 즉시 종료 + warning 로그.
+    각 씬에 대해:
+      - scene.user_edited_fields 에 "description" 있으면 그 씬은 skip + 로그.
+      - 그렇지 않으면 _v51_run_cascade(scene_number, "description") 호출.
+        (Phase 1b 재호출 시 generate_scene_prompts_only 가 갱신된 scenario_events
+        를 다시 읽으므로 변경된 event 컨텍스트가 자동 반영됨.)
+    """
+    affected = await _v52_get_affected_scenes(mongo_db, job_oid, event_order)
+    if not affected:
+        logger.warning(
+            "[EventCascade] job=%s event_order=%d affected_scenes=[] (no mapped scenes)",
+            str(job_oid), event_order,
+        )
+        return
+
+    logger.info(
+        "[EventCascade] job=%s event_order=%d affected_scenes=%s",
+        str(job_oid), event_order, affected,
+    )
+
+    for scene_number in affected:
+        scene_idx = await _v51_get_scene_idx(mongo_db, job_oid, scene_number)
+        if scene_idx is None:
+            logger.warning(
+                "[EventCascade] missing scene_idx — skipping cascade scene=%d",
+                scene_number,
+            )
+            continue
+
+        # description 보존 — 사용자가 직접 description 을 편집했으면 cascade 자체 skip.
+        if await _v51_is_user_edited(mongo_db, job_oid, scene_idx, "description"):
+            logger.info(
+                "[CascadePhase] job=%s scene=%d phase=phase1_partial_skip_user_edited",
+                str(job_oid), scene_number,
+            )
+            # 그래도 cascade_status 는 "completed" 로 마킹 (skipped 처럼 인식되도록)
+            await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                "cascade_status": "completed",
+                "cascade_progress": 100,
+                "cascade_started_at": datetime.utcnow(),
+                "cascade_completed_at": datetime.utcnow(),
+                "cancel_requested": False,
+            })
+            continue
+
+        # Phase 1 (description) — 갱신된 events 가 Mongo 에 이미 있으므로 별도 LLM 호출
+        # 없이 v51 cascade 진입. v51 cascade 안의 phase1b 가 그 events 를 다시 읽는다.
+        logger.info(
+            "[CascadePhase] job=%s scene=%d phase=phase1_partial",
+            str(job_oid), scene_number,
+        )
+        try:
+            await _v51_run_cascade(job_oid, scene_number, mongo_db, "description")
+        except Exception as e:
+            logger.error(
+                "[EventCascade] cascade failed scene=%d err=%s",
+                scene_number, str(e)[:300],
+            )
+            # 다음 씬은 계속 진행
+
+
+async def _v52_cancel_event_cascade(mongo_db, job_oid, event_order: int) -> List[int]:
+    """v52 — event 에 매핑된 모든 씬에 일괄 cancel_requested=True.
+
+    이미 idle/completed 인 씬은 변경 없음 (idempotent). 응답으로 cancel 신호를
+    실제로 보낸 씬 목록 반환.
+    """
+    affected = await _v52_get_affected_scenes(mongo_db, job_oid, event_order)
+    cancelled = []
+    for scene_number in affected:
+        scene_idx = await _v51_get_scene_idx(mongo_db, job_oid, scene_number)
+        if scene_idx is None:
+            continue
+        scene = await _v51_get_scene(mongo_db, job_oid, scene_idx)
+        if not scene:
+            continue
+        cur_status = scene.get("cascade_status") or "idle"
+        if cur_status == "running":
+            await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {"cancel_requested": True})
+            cancelled.append(scene_number)
+    logger.info(
+        "[EventCascadeCancel] job=%s event_order=%d cancelled_scenes=%s",
+        str(job_oid), event_order, cancelled,
+    )
+    return cancelled
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v53 — 시나리오 상위 편집 + events 추가/삭제 + 전체 cascade
+#
+# 사용자는 시나리오 패널에서 narrative / premise / character_states /
+# central_conflict / emotional_core / narrative_arc (상위 6 필드) + events 배열을
+# 한 번에 편집한다. PATCH 가 Mongo 의 `scenario_<field>` 또는 `scenario_events` 를
+# 즉시 갱신하면, [전체 저장 + 모든 씬 재생성] 버튼을 눌러 전체 cascade 를 시작한다.
+#
+# Phase 흐름:
+#   Phase 0 (선택)  events 보강 — narrative 만 사용자 편집한 케이스에서 events 만 LLM
+#                  재추출. 사용자가 events 도 직접 편집했으면 skip.
+#   Phase 1        씬 분할 — run_phase1_split 재호출 (Phase 0 안의 시나리오 LLM 호출은
+#                  이미 scenario 가 존재하므로 자동 skip). 옛 scenes 는 scenes_archive 에 보관.
+#   Phase 1b       씬별 image_prompt 생성 — run_phase1_split 안에 포함됨.
+#   Phase 2        씬별 image 재생성 — run_phase2_images.
+#   Phase 2.5      씬별 video_prompt 재생성 — _v51_regen_video_prompt_single loop.
+#   Phase Final    영상 폐기 — _v51_invalidate_video loop (마킹만, MinIO 파일 보존).
+#
+# 각 phase 진입 시 cancel_requested 체크. True 면 cascade_status="cancelled" 마감.
+#
+# 추적자: [ScenarioCascade] (전체) / [CascadePhase] (씬 단위, v51 재사용) /
+#         [CascadeVideoInvalidate] (v51 재사용)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_V53_PHASE_PROGRESS = {
+    "events_extract": 16,
+    "scene_split": 33,
+    "scene_image_prompt": 50,
+    "scene_image": 75,
+    "scene_video_prompt": 90,
+    "video_invalidate": 100,
+}
+
+
+async def _v53_set_cascade(mongo_db, job_oid, fields: dict) -> None:
+    """job-level cascade_* 필드 일괄 갱신."""
+    update = {"updated_at": datetime.utcnow()}
+    for k, v in fields.items():
+        update[k] = v
+    await mongo_db.mv_jobs.update_one({"_id": job_oid}, {"$set": update})
+
+
+async def _v53_is_cancelled(mongo_db, job_oid) -> bool:
+    """job-level cancel_requested 체크 (전체 cascade 용)."""
+    doc = await mongo_db.mv_jobs.find_one({"_id": job_oid}, {"cancel_requested": 1})
+    return bool(doc and doc.get("cancel_requested"))
+
+
+async def _v53_finalize_cancelled(mongo_db, job_oid) -> None:
+    await _v53_set_cascade(mongo_db, job_oid, {
+        "cascade_phase": "cancelled",
+        "cascade_completed_at": datetime.utcnow(),
+        "cancel_requested": False,
+    })
+    logger.info("[ScenarioCascade] job=%s phase=cancelled", str(job_oid))
+
+
+async def _v53_finalize_failed(mongo_db, job_oid, err: str) -> None:
+    await _v53_set_cascade(mongo_db, job_oid, {
+        "cascade_phase": "failed",
+        "cascade_completed_at": datetime.utcnow(),
+        "cascade_error": str(err)[:300],
+    })
+    logger.error("[ScenarioCascade] job=%s phase=failed err=%s", str(job_oid), str(err)[:300])
+
+
+async def _v53_extract_events_only(job: dict, mongo_db, job_oid) -> bool:
+    """B7 — narrative 가 사용자 편집된 상태에서, events 만 LLM 재추출.
+
+    기존 generate_mv_scenario (Stage 2) 를 strict=False 로 1회 호출하여 result dict
+    에서 `events` 만 채택, 나머지 필드 (narrative/premise/character_states 등) 는
+    사용자 입력 그대로 유지 (출력 무시). 검증 실패 시 False 반환 (cascade 실패 마킹은
+    호출자에서 결정).
+
+    Returns:
+        True — events 갱신 성공. False — LLM 호출 실패 또는 검증 실패.
+    """
+    from .mv_generator import generate_mv_scenario, RetryableScenarioError
+
+    # 기존 generate_mv_scenario 의 입력 매개변수 재구성
+    snapshot = job.get("user_character_snapshot") or None
+    character1_meta = None
+    if isinstance(snapshot, dict):
+        character1_meta = {
+            "name": snapshot.get("name") or "",
+            "age": snapshot.get("age") or "",
+            "personality_tags": snapshot.get("personality_tags") or [],
+            "personality_text": snapshot.get("personality_text") or "",
+        }
+
+    user_loc_snap = job.get("user_location_snapshot") or None
+    user_location_name = None
+    if isinstance(user_loc_snap, dict):
+        _ln = (user_loc_snap.get("name") or "").strip()
+        if _ln:
+            user_location_name = _ln
+
+    audio_duration_sec = None
+    try:
+        if job.get("audio_duration_sec") is not None:
+            audio_duration_sec = float(job["audio_duration_sec"])
+    except Exception:
+        audio_duration_sec = None
+
+    has_user_character = bool(job.get("character_object_name"))
+    scenario_models = job.get("scenario_models")
+
+    # 한 번 호출 + soft (strict=False) 으로 RetryableScenarioError 도 events 가 비어도 통과 가능
+    for attempt in range(2):
+        try:
+            logger.info(
+                "[ScenarioCascade] events_extract attempt=%d strict=False", attempt + 1,
+            )
+            result = await generate_mv_scenario(
+                title=job.get("title", ""),
+                genre=job.get("genre"),
+                mood=job.get("mood"),
+                lyrics=job.get("lyrics"),
+                character_name=job.get("character_name"),
+                models=scenario_models,
+                scenario_style=job.get("scenario_style", "drama") or "drama",
+                vocal_gender=job.get("vocal_gender"),
+                relationship=job.get("relationship"),
+                has_user_character=has_user_character,
+                has_cover_person=False,
+                character1_meta=character1_meta,
+                location_name=user_location_name,
+                brainstorm_candidates=job.get("scenario_brainstorm") or None,
+                audio_duration_sec=audio_duration_sec,
+                user_event_seed=job.get("user_event_seed"),
+                temperature=0.85,
+                strict=False,
+            )
+
+            # dual-model results 는 첫 번째 만 사용 (cascade 단순화)
+            if isinstance(result, dict) and "results" in result:
+                first = (result.get("results") or [{}])[0]
+                if isinstance(first, dict):
+                    result = first.get("scenario") if isinstance(first.get("scenario"), dict) else first
+                else:
+                    result = {}
+
+            new_events = None
+            if isinstance(result, dict):
+                new_events = result.get("events")
+
+            if not isinstance(new_events, list) or len(new_events) == 0:
+                logger.warning(
+                    "[ScenarioCascade] events_extract attempt=%d empty events", attempt + 1,
+                )
+                continue
+
+            # order 재계산 + user_edited_fields=[] (LLM 산출물이므로 사용자 편집 표시 X)
+            normalized = []
+            for i, ev in enumerate(new_events):
+                if not isinstance(ev, dict):
+                    continue
+                ev_norm = dict(ev)
+                ev_norm["order"] = i + 1
+                ev_norm["user_edited_fields"] = []
+                normalized.append(ev_norm)
+
+            if not normalized:
+                continue
+
+            await mongo_db.mv_jobs.update_one(
+                {"_id": job_oid},
+                {"$set": {"scenario_events": normalized, "updated_at": datetime.utcnow()}},
+            )
+            logger.info(
+                "[ScenarioCascade] events_extract success events_count=%d attempt=%d",
+                len(normalized), attempt + 1,
+            )
+            return True
+
+        except RetryableScenarioError as e:
+            logger.warning(
+                "[ScenarioCascade] events_extract retryable attempt=%d err=%s",
+                attempt + 1, str(e)[:200],
+            )
+        except Exception as e:
+            logger.warning(
+                "[ScenarioCascade] events_extract failed attempt=%d err=%s",
+                attempt + 1, str(e)[:200],
+            )
+
+    return False
+
+
+async def _v53_archive_scenes(mongo_db, job_oid) -> None:
+    """B8 — Phase 1 진입 직전 옛 scenes 통째 → scenes_archive 의 head (1회분만 유지).
+
+    옛 archive 가 이미 있으면 폐기 (1 회분만 보관).
+    """
+    job = await mongo_db.mv_jobs.find_one(
+        {"_id": job_oid}, {"scenes": 1},
+    )
+    if not job:
+        return
+    scenes = job.get("scenes") or []
+    if not scenes:
+        return
+    # 1회분만 — 새 archive 가 통째로 교체
+    archive_entry = {
+        "archived_at": datetime.utcnow(),
+        "scenes": scenes,
+    }
+    await mongo_db.mv_jobs.update_one(
+        {"_id": job_oid},
+        {"$set": {"scenes_archive": [archive_entry], "updated_at": datetime.utcnow()}},
+    )
+    logger.info(
+        "[ScenarioCascade] job=%s archive_count=%d", str(job_oid), len(scenes),
+    )
+
+
+async def _v53_full_cascade(job_oid, mongo_db) -> None:
+    """B4 — v53 전체 cascade 백그라운드 헬퍼.
+
+    Phase 0 (선택)  events_extract — narrative 편집되었지만 events 미편집 시 LLM 재추출.
+    Phase 1         scene_split — run_phase1_split 재호출 (Phase 0 LLM 자동 skip).
+    Phase 2         scene_image — run_phase2_images.
+    Phase 2.5       scene_video_prompt — 모든 씬 video_prompt 재생성.
+    Phase Final     video_invalidate — 모든 씬 영상 폐기 (마킹만).
+    """
+    try:
+        job = await _get_job(mongo_db, job_oid)
+        if not job:
+            logger.error("[ScenarioCascade] job=%s not found, skip", str(job_oid))
+            return
+
+        # v54: 통합 헬퍼로 일관 분기
+        narrative_edited = _v54_is_field_user_edited(job, "scenario", None, "narrative")
+        events_edited = _v54_is_field_user_edited(job, "scenario", None, "events")
+
+        # ── Phase 0: events 보강 ──────────────────────────────────────────────
+        if await _v53_is_cancelled(mongo_db, job_oid):
+            await _v53_finalize_cancelled(mongo_db, job_oid)
+            return
+
+        if narrative_edited and not events_edited:
+            await _v53_set_cascade(mongo_db, job_oid, {
+                "cascade_phase": "events_extract",
+                "cascade_progress": _V53_PHASE_PROGRESS["events_extract"],
+            })
+            logger.info(
+                "[ScenarioCascade] job=%s phase=events_extract progress=%d",
+                str(job_oid), _V53_PHASE_PROGRESS["events_extract"],
+            )
+            ok = await _v53_extract_events_only(job, mongo_db, job_oid)
+            if not ok:
+                logger.warning(
+                    "[ScenarioCascade] job=%s phase=events_extract failed — proceeding with existing events",
+                    str(job_oid),
+                )
+            # job 갱신본 다시 읽기 (events 가 갱신됐을 수 있음)
+            job = await _get_job(mongo_db, job_oid)
+            if not job:
+                return
+        else:
+            logger.info(
+                "[ScenarioCascade] job=%s phase=events_extract_skip narrative_edited=%s events_edited=%s",
+                str(job_oid), narrative_edited, events_edited,
+            )
+
+        # ── Phase 1 + 1b: 씬 분할 + image_prompt 생성 ─────────────────────────
+        if await _v53_is_cancelled(mongo_db, job_oid):
+            await _v53_finalize_cancelled(mongo_db, job_oid)
+            return
+
+        # 옛 scenes archive 보관 (B8)
+        await _v53_archive_scenes(mongo_db, job_oid)
+
+        await _v53_set_cascade(mongo_db, job_oid, {
+            "cascade_phase": "scene_split",
+            "cascade_progress": _V53_PHASE_PROGRESS["scene_split"],
+        })
+        logger.info(
+            "[ScenarioCascade] job=%s phase=scene_split progress=%d",
+            str(job_oid), _V53_PHASE_PROGRESS["scene_split"],
+        )
+
+        # run_phase1_split 안의 Phase 0 LLM 호출은 `if scenario and len > 50: skip` 로
+        # 자동 우회 (cascade 진입 전 시나리오 도큐먼트가 이미 존재하므로). Phase 1a
+        # (가사 파싱 + 비트) + Phase 1b (image_prompt 생성) 만 실행.
+        try:
+            await run_phase1_split(str(job_oid), mongo_db)
+        except Exception as e:
+            await _v53_finalize_failed(mongo_db, job_oid, "scene_split: " + str(e))
+            return
+
+        await _v53_set_cascade(mongo_db, job_oid, {
+            "cascade_phase": "scene_image_prompt",
+            "cascade_progress": _V53_PHASE_PROGRESS["scene_image_prompt"],
+        })
+        logger.info(
+            "[ScenarioCascade] job=%s phase=scene_image_prompt progress=%d",
+            str(job_oid), _V53_PHASE_PROGRESS["scene_image_prompt"],
+        )
+
+        # ── Phase 2: 모든 씬 image 재생성 ─────────────────────────────────────
+        if await _v53_is_cancelled(mongo_db, job_oid):
+            await _v53_finalize_cancelled(mongo_db, job_oid)
+            return
+
+        await _v53_set_cascade(mongo_db, job_oid, {
+            "cascade_phase": "scene_image",
+            "cascade_progress": _V53_PHASE_PROGRESS["scene_image"],
+        })
+        logger.info(
+            "[ScenarioCascade] job=%s phase=scene_image progress=%d",
+            str(job_oid), _V53_PHASE_PROGRESS["scene_image"],
+        )
+
+        try:
+            await run_phase2_images(str(job_oid), mongo_db)
+        except Exception as e:
+            await _v53_finalize_failed(mongo_db, job_oid, "scene_image: " + str(e))
+            return
+
+        # ── Phase 2.5: 모든 씬 video_prompt 재생성 ────────────────────────────
+        if await _v53_is_cancelled(mongo_db, job_oid):
+            await _v53_finalize_cancelled(mongo_db, job_oid)
+            return
+
+        await _v53_set_cascade(mongo_db, job_oid, {
+            "cascade_phase": "scene_video_prompt",
+            "cascade_progress": _V53_PHASE_PROGRESS["scene_video_prompt"],
+        })
+        logger.info(
+            "[ScenarioCascade] job=%s phase=scene_video_prompt progress=%d",
+            str(job_oid), _V53_PHASE_PROGRESS["scene_video_prompt"],
+        )
+
+        job = await _get_job(mongo_db, job_oid)
+        scenes = (job or {}).get("scenes") or []
+        for scene_idx, scene in enumerate(scenes):
+            if await _v53_is_cancelled(mongo_db, job_oid):
+                await _v53_finalize_cancelled(mongo_db, job_oid)
+                return
+            try:
+                vp = await _v51_regen_video_prompt_single(job, scene_idx)
+                if vp:
+                    await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                        "video_prompt": vp,
+                    })
+            except Exception as e:
+                logger.warning(
+                    "[ScenarioCascade] phase2.5 scene=%d failed err=%s",
+                    scene.get("scene_number") or scene_idx, str(e)[:200],
+                )
+
+        # ── Phase Final: 모든 씬 영상 폐기 (마킹만) ───────────────────────────
+        if await _v53_is_cancelled(mongo_db, job_oid):
+            await _v53_finalize_cancelled(mongo_db, job_oid)
+            return
+
+        await _v53_set_cascade(mongo_db, job_oid, {
+            "cascade_phase": "video_invalidate",
+            "cascade_progress": _V53_PHASE_PROGRESS["video_invalidate"],
+        })
+        logger.info(
+            "[ScenarioCascade] job=%s phase=video_invalidate progress=%d",
+            str(job_oid), _V53_PHASE_PROGRESS["video_invalidate"],
+        )
+
+        job = await _get_job(mongo_db, job_oid)
+        scenes = (job or {}).get("scenes") or []
+        for scene_idx, scene in enumerate(scenes):
+            try:
+                await _v51_invalidate_video(
+                    mongo_db, job_oid, scene_idx, scene.get("scene_number") or scene_idx,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[ScenarioCascade] video_invalidate scene=%d failed err=%s",
+                    scene.get("scene_number") or scene_idx, str(e)[:200],
+                )
+
+        await _v53_set_cascade(mongo_db, job_oid, {
+            "cascade_phase": "completed",
+            "cascade_progress": 100,
+            "cascade_completed_at": datetime.utcnow(),
+            "cancel_requested": False,
+        })
+        logger.info("[ScenarioCascade] job=%s phase=completed", str(job_oid))
+
+    except Exception as e:
+        await _v53_finalize_failed(mongo_db, job_oid, str(e))

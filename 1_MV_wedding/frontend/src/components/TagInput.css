@@ -1,0 +1,53 @@
+.tag-input__box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+  min-height: 44px;
+}
+
+.tag-input__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background-color: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.tag-input__chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+}
+
+.tag-input__chip-remove:hover {
+  color: #b3261e;
+}
+
+.tag-input__field {
+  flex: 1;
+  min-width: 140px;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.tag-input__hint {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: var(--muted);
+}

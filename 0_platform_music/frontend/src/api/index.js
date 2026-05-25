@@ -55,6 +55,46 @@ export const getLatestAlbums = (limit = 10) =>
 export const getAlbum = (id) =>
   API.get(`/albums/${id}`);
 
+// v69 — Albums (CRUD + 트랙/커버)
+export const getMyAlbums = (params) =>
+  API.get('/albums/my', { params });
+
+export const createAlbum = (formData) =>
+  API.post('/albums', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+export const updateAlbum = (id, payload) =>
+  API.patch(`/albums/${id}`, payload);
+
+export const deleteAlbum = (id) =>
+  API.delete(`/albums/${id}`);
+
+export const addTracksToAlbum = (id, trackIds) =>
+  API.post(`/albums/${id}/tracks`, { track_ids: trackIds });
+
+export const removeTrackFromAlbum = (albumId, trackId) =>
+  API.delete(`/albums/${albumId}/tracks/${trackId}`);
+
+export const reorderAlbumTracks = (id, trackIds) =>
+  API.put(`/albums/${id}/tracks/order`, { track_ids: trackIds });
+
+export const updateAlbumCover = (id, formData) =>
+  API.patch(`/albums/${id}/cover`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+export const generateAlbumCover = (payload) =>
+  API.post('/albums/cover/generate', payload);
+
+export const albumCoverPreviewUrl = (objectName) => {
+  if (!objectName) return '';
+  if (objectName.startsWith('http') || objectName.startsWith('/api/')) {
+    return objectName;
+  }
+  return `/api/files/${objectName}`;
+};
+
 // Artists
 export const getArtists = (params) =>
   API.get('/artists', { params });
@@ -66,7 +106,7 @@ export const getArtistAlbums = (id) =>
   API.get(`/artists/${id}/albums`);
 
 export const getArtistSongs = (id, limit = 10) =>
-  API.get(`/artists/${id}/songs`, { params: { limit } });
+  API.get(`/artists/${id}/tracks`, { params: { limit } });
 
 // Charts
 export const getTop100 = () =>
@@ -430,5 +470,72 @@ export const adImageUrl = (objectName) =>
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');
 export const getRewardBalance = () => API.get('/rewards/balance');
+
+// ─────────────────────────────────────────────────────────────
+// v69-restore: 유저 미커밋 변경에서 손실된 21개 함수 재구현
+// (호출처 시그니처 + 백엔드 라우트 path/method 역추출 기반)
+// ─────────────────────────────────────────────────────────────
+
+// Beats (generations/tracks)
+export const getGenerationBeats = (genId) =>
+  API.get(`/generate/${genId}/beats`);
+export const getTrackBeats = (trackId) =>
+  API.get(`/tracks/${trackId}/beats`);
+export const retryGenerationBeats = (genId) =>
+  API.post(`/generate/${genId}/beats/retry`);
+export const retryTrackBeats = (trackId) =>
+  API.post(`/tracks/${trackId}/beats/retry`);
+
+// Cover refine/revert (upload session)
+export const refineCover = (coverSessionId, payload) =>
+  API.post('/upload/refine-cover', { cover_session_id: coverSessionId, ...payload });
+export const revertCover = (coverSessionId, targetVersion) =>
+  API.post('/upload/revert-cover', { cover_session_id: coverSessionId, target_version: targetVersion });
+
+// My locations (character locations)
+export const listMyLocations = () =>
+  API.get('/character/locations');
+export const locationPreviewUrl = (objectName) => {
+  if (!objectName) return '';
+  if (objectName.startsWith('http') || objectName.startsWith('/api/')) return objectName;
+  return `${window.location.protocol}//${window.location.hostname}:9004/api/character/preview/${objectName}`;
+};
+
+// MV scene patch / cascade
+export const patchMVScene = (jobId, sceneNumber, payload) =>
+  API.patch(`/mv/jobs/${jobId}/scenes/${sceneNumber}`, payload);
+export const cascadeRegenerateMVScene = (jobId, sceneNumber, field) =>
+  API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/cascade-regenerate`, { field });
+export const cancelCascadeMVScene = (jobId, sceneNumber) =>
+  API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/cancel-cascade`);
+
+// MV scenario event patch / cascade
+export const patchMVScenarioEvent = (jobId, order, payload) =>
+  API.patch(`/mv/jobs/${jobId}/scenario/events/${order}`, payload);
+export const cascadeRegenerateMVEvent = (jobId, order) =>
+  API.post(`/mv/jobs/${jobId}/scenario/events/${order}/cascade-regenerate`);
+export const cancelCascadeMVEvent = (jobId, order) =>
+  API.post(`/mv/jobs/${jobId}/scenario/events/${order}/cancel-cascade`);
+
+// MV scenario patch / events / cascade
+export const patchMVScenario = (jobId, payload) =>
+  API.patch(`/mv/jobs/${jobId}/scenario`, payload);
+export const patchMVScenarioEvents = (jobId, events) =>
+  API.patch(`/mv/jobs/${jobId}/scenario/events`, { events });
+export const cascadeRegenerateMVScenario = (jobId) =>
+  API.post(`/mv/jobs/${jobId}/scenario/cascade-regenerate`);
+export const cancelCascadeMVScenario = (jobId) =>
+  API.post(`/mv/jobs/${jobId}/scenario/cancel-cascade`);
+
+// MV user-edited
+export const resetUserEdits = (jobId, payload) =>
+  API.post(`/mv/jobs/${jobId}/user-edited/reset`, payload || {});
+export const getUserEditedSummary = (jobId) =>
+  API.get(`/mv/jobs/${jobId}/user-edited/summary`);
+
+// Frontend remote logging
+export const sendFrontendLogs = (batch) =>
+  API.post('/_logs/frontend', batch);
+export const frontendLogsBeaconUrl = `${window.location.protocol}//${window.location.hostname}:9004/api/_logs/frontend`;
 
 export default API;

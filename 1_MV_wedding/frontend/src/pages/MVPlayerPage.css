@@ -1,0 +1,33 @@
+.player__title {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.player__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.player__video {
+  width: 100%;
+  background-color: #000;
+  border-radius: 12px;
+  aspect-ratio: 16 / 9;
+}
+
+.player__meta-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.player__meta-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}

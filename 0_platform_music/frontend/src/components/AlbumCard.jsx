@@ -1,20 +1,28 @@
 import { useNavigate } from 'react-router-dom';
 import { FiPlay } from 'react-icons/fi';
 import { getAlbumGradient } from '../utils';
-import * as api from '../api';
 import './AlbumCard.css';
+
+function resolveCoverUrl(cover) {
+  if (!cover) return '';
+  if (cover.startsWith('http') || cover.startsWith('/api/')) return cover;
+  // object_name 형태로 들어오면 /api/files/ 로 매핑
+  return `/api/files/${cover}`;
+}
 
 export default function AlbumCard({ album }) {
   const navigate = useNavigate();
+  const coverUrl = resolveCoverUrl(album.cover_image);
+  const hasCover = !!coverUrl;
 
   return (
     <div className="album-card" onClick={() => navigate(`/album/${album.id}`)}>
       <div
         className="album-card__cover"
-        style={!album.cover_image ? { background: getAlbumGradient(album.id) } : {}}
+        style={!hasCover ? { background: getAlbumGradient(album.id) } : {}}
       >
-        {album.cover_image ? (
-          <img src={album.cover_image.startsWith('/api/') ? album.cover_image : api.coverPreviewUrl(album.cover_image)} alt="" className="album-card__cover-img" />
+        {hasCover ? (
+          <img src={coverUrl} alt="" className="album-card__cover-img" />
         ) : (
           <span>♪</span>
         )}

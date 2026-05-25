@@ -25,3 +25,12 @@ cryptography
 pyloudnorm
 soundfile
 demucs
+librosa>=0.10
+# v43: madmom for true downbeat detection (Python 3.11 compat — install from git main).
+# Build deps (Cython, numpy) must precede madmom; pip auto-resolves but --no-build-isolation may be needed.
+Cython
+imageio-ffmpeg
+madmom @ git+https://github.com/CPJKU/madmom.git@main
+# v60: Phase 2.5 multimodal 첨부 이미지 압축용 (Claude 5MB base64 제한 우회)
+Pillow
+

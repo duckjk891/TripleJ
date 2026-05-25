@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FiChevronRight } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
 import TrackCard from '../components/TrackCard';
+import AlbumCard from '../components/AlbumCard';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './MainPage.css';
@@ -12,19 +13,28 @@ export default function MainPage() {
   const navigate = useNavigate();
   const [chartSongs, setChartSongs] = useState([]);
   const [latestTracks, setLatestTracks] = useState([]);
+  const [latestAlbums, setLatestAlbums] = useState([]);
   const [loading, setLoading] = useState(true);
   const [likedIds, setLikedIds] = useState(new Set());
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [chartRes, trackRes] = await Promise.all([
+        const [chartRes, trackRes, albumRes] = await Promise.all([
           api.getTop100(),
           api.getLatestTracks(10),
+          api.getLatestAlbums(10).catch((err) => {
+            console.warn('[MainPage] latest albums fetch failed', { status: err.response?.status });
+            return { data: { albums: [] } };
+          }),
         ]);
         const songs = chartRes.data.slice(0, 10);
         setChartSongs(songs);
         setLatestTracks(trackRes.data.tracks || []);
+        const albums = Array.isArray(albumRes.data)
+          ? albumRes.data
+          : albumRes.data.albums || [];
+        setLatestAlbums(albums);
 
         if (user && songs.length > 0) {
           const { data } = await api.checkLikes(songs.map(s => s.id).join(','));
@@ -98,7 +108,7 @@ export default function MainPage() {
           </div>
         </div>
 
-        {/* Latest Albums */}
+        {/* Latest Tracks */}
         <div className="main-section">
           <div className="main-section__header">
             <h2 className="main-section__title">신규 AI 트랙</h2>
@@ -109,6 +119,20 @@ export default function MainPage() {
             ))}
           </div>
         </div>
+
+        {/* Latest Albums (v69) */}
+        {latestAlbums.length > 0 && (
+          <div className="main-section">
+            <div className="main-section__header">
+              <h2 className="main-section__title">최신 앨범</h2>
+            </div>
+            <div className="main-albums">
+              {latestAlbums.map((album) => (
+                <AlbumCard key={album.id} album={album} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

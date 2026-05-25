@@ -1,0 +1,33 @@
+.auth-page {
+  display: flex;
+  justify-content: center;
+  padding: 32px 0;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+}
+
+.auth-title {
+  margin: 0 0 24px;
+  font-size: 22px;
+}
+
+.auth-submit {
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  margin-top: 8px;
+}
+
+.auth-foot {
+  margin-top: 16px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.auth-foot a {
+  color: var(--accent);
+  font-weight: 600;
+}

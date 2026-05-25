@@ -284,9 +284,26 @@ async def generate_music_suno(
         "completed_at": datetime.utcnow(),
         "suno_task_id": task_id,
         "suno_audio_id": suno_data.get("id", ""),
+        "beats_status": "pending",
     })
 
     logger.info("Suno: generation %s completed, object=%s", generation_id, object_name)
+
+    # v44 — Background beat extraction (same loop, await to keep wrapper-loop
+    # alive until completion). The user-facing generation status is already
+    # "completed" so a polling client can use the audio URL immediately;
+    # `beats_status` is a separate field tracked via /generate/{id}/beats.
+    # We pass the loop-local motor `mongo_db` through so updates land in DB.
+    try:
+        from .beat_extraction import detect_beats_for_generation_with_db
+
+        await detect_beats_for_generation_with_db(generation_id, mongo_db)
+    except Exception as _be:
+        logger.warning(
+            "Suno: post-completion beat extraction failed for %s: %s",
+            generation_id, _be,
+        )
+
     return {"result_audio_url": object_name, "output_files": output_files}
 
 

@@ -525,6 +525,79 @@ async def delete_generation(
     return {"message": "삭제되었습니다."}
 
 
+# v44 — Beat extraction status & retry
+def _serialize_beats_payload(doc: dict) -> dict:
+    """Build the beats response payload from a generation/track doc."""
+    started = doc.get("beats_started_at")
+    completed = doc.get("beats_completed_at")
+    return {
+        "status": doc.get("beats_status") or "pending",
+        "tempo": doc.get("tempo"),
+        "beats": doc.get("beats") or [],
+        "downbeats": doc.get("downbeats") or [],
+        "started_at": started.isoformat() if isinstance(started, datetime) else None,
+        "completed_at": completed.isoformat() if isinstance(completed, datetime) else None,
+        "error": doc.get("beats_error"),
+    }
+
+
+@router.get("/{gen_id}/beats")
+async def get_generation_beats(
+    gen_id: str,
+    current_user=Depends(get_current_user),
+):
+    """Return beat extraction status + data for a generation."""
+    if not ObjectId.is_valid(gen_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "생성 요청을 찾을 수 없습니다."})
+    if doc.get("user_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+
+    return _serialize_beats_payload(doc)
+
+
+@router.post("/{gen_id}/beats/retry")
+async def retry_generation_beats(
+    gen_id: str,
+    current_user=Depends(get_current_user),
+):
+    """Reset the beat status to pending and re-trigger extraction."""
+    if not ObjectId.is_valid(gen_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "생성 요청을 찾을 수 없습니다."})
+    if doc.get("user_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+    if doc.get("status") != "completed" or not doc.get("result_audio_url"):
+        return JSONResponse(status_code=400, content={"error": "완료된 생성만 재시도할 수 있습니다."})
+
+    await mongo.generations.update_one(
+        {"_id": ObjectId(gen_id)},
+        {"$set": {
+            "beats_status": "pending",
+            "beats_error": None,
+            "beats_started_at": None,
+            "beats_completed_at": None,
+            "tempo": None,
+            "beats": [],
+            "downbeats": [],
+        }},
+    )
+
+    # Fire-and-forget on the main FastAPI loop (this request runs there).
+    from ..services.beat_extraction import detect_beats_for_generation
+    asyncio.create_task(detect_beats_for_generation(gen_id))
+
+    return {"message": "비트 재추출이 시작되었습니다.", "status": "pending"}
+
+
 @router.get("/{gen_id}/stream/")
 async def stream_generation(
     gen_id: str,

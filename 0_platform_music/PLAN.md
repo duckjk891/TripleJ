@@ -10444,3 +10444,10788 @@ v30에서 `VARIABLE REFERENCES` 가이드(@character1/@location1)를 추가했�
 - `https://sync.so/openapi.yaml` — 별도 YAML 파일 존재 확인 못 함 (JSON 버전으로 교차검증 완료로 갈음)
 - 정확한 rate limit 수치(분당 요청 수) — 공식 문서에 명시 안 됨. 플랜별 상이 추정
 - `PENDING`/`PROCESSING` 외 중간 상태값(예: `QUEUED`) 존재 여부 — OpenAPI `GenerationStatus` enum 기준으로는 5개 상태만 확인
+
+
+---
+
+## v34 — 2026-04-22 — backend_9003 로그 파일 자동 생성 + 앱팀용 로그 조회 API
+
+### 배경
+- backend_9003은 앱팀(외부 동료, Tailscale 경유)이 사용하는 인스턴스.
+- 앱팀은 A 컴퓨터 WSL 파일시스템에 직접 접근 불가 (Tailscale Share node로 IP만 노출).
+- 앱팀이 디버깅 시 서버 로그를 확인할 수 있어야 하나, 현재는 우리가 직접 전달해줘야만 함.
+- 9004(개발용)는 사용자가 직접 모니터링하므로 대상 아님. 9003만 작업.
+
+### 요청 작업
+1. backend_9003 폴더에 `run.sh` 실행 스크립트 작성 (서버 기동 + 로그 파일 자동 생성/초기화)
+2. backend_9003에 로그 조회 REST API 라우터 추가 (`app/routes/_logs.py`)
+3. config.py에 토큰 필드 추가 + `.env`에 토큰 값 추가
+4. 프론트엔드 변경 없음 (앱팀 디버깅 용도, 일반 사용자 노출 X → `frontend/api/index.js` 미수정)
+5. backend_9004는 절대 수정하지 않음
+
+### 상세 명세
+
+#### 1. `backend_9003/run.sh` (신규)
+- shebang: `#!/bin/bash`
+- `set -e`로 실패 시 즉시 중단
+- 실행 위치 보정: 스크립트 디렉토리로 cd
+- `mkdir -p logs`로 logs 폴더 보장
+- 핵심 한 줄:
+  ```
+  exec ./venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9003 --reload 2>&1 \
+    | awk '{print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush()}' \
+    | tee logs/server.log
+  ```
+- `tee` (`-a` 없음) → 매 실행 시 `logs/server.log` 자동 초기화
+- `awk strftime` → 외부 패키지 의존 없이 줄별 타임스탬프
+- `chmod +x run.sh`
+
+#### 2. `backend_9003/app/routes/_logs.py` (신규)
+- `APIRouter(prefix="/_logs", tags=["_logs"])`
+- 로그 파일 경로: `Path(__file__).resolve().parent.parent.parent / "logs" / "server.log"` (= backend_9003/logs/server.log)
+- 토큰 검증 헬퍼 `_verify_token(token_query: Optional[str], x_log_token: Optional[str])`:
+  - settings.log_access_token이 비어있으면 503 (서비스 비활성)
+  - X-Log-Token 헤더 또는 ?token= 쿼리 둘 중 하나 매칭이면 통과
+  - 불일치 시 401
+- 엔드포인트:
+  - `GET /api/_logs/tail?lines=200&token=...` → 마지막 N줄 plain text (PlainTextResponse), default lines=200, max 5000
+  - `GET /api/_logs/download?token=...` → FileResponse, media_type="text/plain", filename="server_9003.log"
+  - `GET /api/_logs/info?token=...` → JSON: {exists, size_bytes, modified_at, line_count_estimate}
+- 에러 처리:
+  - 파일 없음 → 404 (`{"detail": "로그 파일이 아직 생성되지 않았습니다."}`)
+  - lines 검증 (1~5000)
+
+#### 3. `backend_9003/app/config.py` 수정
+- `log_access_token: str = ""` 필드 추가 (기본 빈 문자열, 비어있으면 API 비활성)
+
+#### 4. `backend_9003/app/main.py` 수정
+- `from .routes import _logs` import 추가 (또는 기존 import 라인에 추가)
+- `app.include_router(_logs.router, prefix="/api")` 등록
+
+#### 5. `backend_9003/.env` 신규/수정
+- `LOG_ACCESS_TOKEN=<32바이트 랜덤 hex>` 추가
+- 9004의 .env가 이미 있으면 그것을 기반으로 9003용 신규 작성 (포트만 다름, 같은 DB 공유)
+
+### 보안
+- 토큰값은 PLAN.md에 평문으로 절대 기록 안 함. PLAN/REPORT에 표기 시 `YOUR_LOG_TOKEN` 플레이스홀더 사용.
+- 토큰은 `.env`로만 관리, git push 금지(이미 .gitignore에 .env 등재됨 가정).
+- API는 GET이지만 query string에 토큰 노출되므로 X-Log-Token 헤더 권장 (둘 다 지원).
+
+### 테스트 계획 (Tester)
+1. **정적 검증**:
+   - `python -c "from app.routes import _logs"` import 성공
+   - `python -c "from app.config import settings; print(settings.log_access_token != '')"` True
+   - `app/main.py`에 `_logs.router` 등록 라인 grep 매칭
+2. **run.sh 동작**:
+   - 기존 9003 uvicorn kill (`fuser -k 9003/tcp`)
+   - `./run.sh` 실행 → 백그라운드, `logs/server.log` 생성 확인 (`ls -la logs/`)
+   - 첫 줄에 `[YYYY-MM-DD HH:MM:SS]` 형식 타임스탬프 확인
+   - 한번 더 재시작 → 파일 크기 0으로 reset 확인
+3. **API 동작**:
+   - 토큰 없이: `curl -i http://localhost:9003/api/_logs/tail?lines=10` → 401
+   - 잘못된 토큰: `curl -i "http://localhost:9003/api/_logs/tail?lines=10&token=wrong"` → 401
+   - 올바른 토큰 (헤더): `curl -i -H "X-Log-Token: <TOKEN>" http://localhost:9003/api/_logs/tail?lines=10` → 200 + plain text
+   - 올바른 토큰 (쿼리): `curl -i "http://localhost:9003/api/_logs/tail?lines=10&token=<TOKEN>"` → 200
+   - download: `curl -O -H "X-Log-Token: <TOKEN>" http://localhost:9003/api/_logs/download` → 파일 저장
+   - info: 토큰 통과 시 JSON 메타 반환
+4. **Tailscale 경유**:
+   - `curl -i -H "X-Log-Token: <TOKEN>" http://100.127.225.55:9003/api/_logs/tail?lines=10` → 200
+5. **회귀**:
+   - `/api/health` 200 유지
+   - 9004는 영향 없음 (포트 LISTEN, /api/health 200)
+
+### 체크리스트
+- [ ] backend_9003/run.sh 신규 + chmod +x
+- [ ] backend_9003/app/routes/_logs.py 신규
+- [ ] backend_9003/app/config.py에 log_access_token 필드
+- [ ] backend_9003/app/main.py에 _logs 라우터 등록
+- [ ] backend_9003/.env 작성 + LOG_ACCESS_TOKEN 추가
+- [ ] backend_9004 무수정 검증 (git diff 확인)
+- [ ] 정적 검증 (import + grep)
+- [ ] run.sh 동작 (로그 파일 생성/초기화/타임스탬프)
+- [ ] API 동작 (토큰 없음/잘못/올바름 × tail/download/info)
+- [ ] Tailscale 경유 동작
+- [ ] 회귀 (9004 영향 없음, 4000 영향 없음)
+
+
+---
+
+## v35 — 2026-04-22 — 회원가입 필드 확장 (기획사명/호칭) + 프로필 수정 API
+
+### 배경
+- 앱팀 요청: 프론트 Onboarding 화면에서 로컬 zustand에만 저장하던 **기획사명**/**호칭**을 회원가입 시점에 DB에 영속시켜 재설치/다른 기기 로그인 시에도 유지되게 함.
+- 백엔드 9003(앱팀용)/9004(개발용)와 웹 프론트(4000) 모두 동시에 작업. DB는 공유이므로 ALTER TABLE은 한 번.
+
+### 요청 작업 (확정)
+1. `users` 테이블에 컬럼 2개 추가 — `company_name VARCHAR(100)`, `display_title VARCHAR(20)` (NULL 허용)
+2. 백엔드 9003/9004 동일 코드 변경:
+   - `app/models/user.py`: `UserCreate`/`UserResponse`에 2필드 추가
+   - `app/routes/auth.py`: `register`, `login`, `me` 응답에 2필드 포함
+   - `PATCH /api/auth/me/profile` 신규 엔드포인트 (프로필 수정)
+   - `infra/init_postgres.sql`에도 ADD COLUMN 반영 (신규 환경용)
+3. 웹 프론트 4000:
+   - `RegisterPage`에 기획사명/호칭 입력 필드 추가 (4필드 전부 필수 입력)
+   - `api/index.js`의 `register()` 시그니처 확장 + `updateProfile()` 신규
+   - `AuthContext`의 user에 두 필드 포함
+   - NULL 값은 화면에서 **"없음"** fallback 처리 (기획사명/호칭 모두)
+   - 프로필 수정 UI를 마이페이지 영역의 정석 위치에 추가 (구현자 판단)
+
+### 확정 결정 사항 (Q&A 반영)
+| # | 결정 | 내용 |
+|---|------|------|
+| 1 | 프로필 수정 기능 | **포함** (PATCH API + 웹 UI) |
+| 2 | 웹 표시 위치 | 구현자 판단, 정석 위치 |
+| 3 | 기존 가입자 UPDATE | **하지 않음**, NULL 그대로 유지 |
+| 4 | 프론트 NULL 표시 | 기획사명/호칭 둘 다 **"없음"** |
+| 5 | 백엔드 기본값 | 앱팀 스펙 그대로 — `display_title="대표"`, `company_name=None` |
+| 6 | 웹 회원가입 필수 여부 | **4필드 필수 입력** (앱팀 SignupScreen과 동일 UX) |
+
+### 상세 명세
+
+#### A. DB 스키마 변경 (1회)
+- 실제 DB(PostgreSQL `aimu`)에 ALTER TABLE:
+  ```sql
+  ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS company_name VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS display_title VARCHAR(20);
+  ```
+- 신규 환경용 파일 동기화: `backend_9003/infra/init_postgres.sql`, `backend_9004/infra/init_postgres.sql` 둘 다 users 테이블 CREATE 문에 두 컬럼 추가
+
+#### B. 백엔드 (9003, 9004 동일하게 반영)
+
+**B-1. `app/models/user.py`**
+- `UserCreate`:
+  ```python
+  email: str
+  password: str
+  nickname: str
+  company_name: Optional[str] = None
+  display_title: Optional[str] = "대표"
+  ```
+- `UserResponse`에 `company_name: Optional[str] = None`, `display_title: Optional[str] = None` 추가
+- 신규 `ProfileUpdate` 모델:
+  ```python
+  class ProfileUpdate(BaseModel):
+      company_name: Optional[str] = None
+      display_title: Optional[str] = None
+      bio: Optional[str] = None
+  ```
+
+**B-2. `app/routes/auth.py`**
+- `POST /register`:
+  - INSERT에 `company_name`, `display_title` 포함 (display_title 미입력 시 "대표" 적용)
+  - RETURNING에도 포함
+  - 응답 user 객체에 두 필드 포함
+- `POST /login`:
+  - SELECT에 두 필드 추가
+  - 응답 user 객체에 두 필드 포함
+- `GET /me`:
+  - SELECT에 두 필드 추가
+  - 응답에 두 필드 포함
+- `PATCH /me/profile` (신규):
+  - 인증 필수(`get_current_user`)
+  - body: `ProfileUpdate` (모두 Optional — 보낸 필드만 업데이트)
+  - `UPDATE users SET ... WHERE id=$...` 동적 구성 (보낸 필드만)
+  - 업데이트 후 현재 user 정보 반환 (GET /me와 동일 형식)
+
+**B-3. 검증 규칙**
+- `company_name`: 길이 ≤ 100 (Pydantic Field(max_length=100))
+- `display_title`: 길이 ≤ 20 (Pydantic Field(max_length=20))
+- 초과 시 422
+
+#### C. 웹 프론트 (4000)
+
+**C-1. `frontend/src/api/index.js`**
+- `register` 확장:
+  ```js
+  export const register = (email, password, nickname, companyName, displayTitle) =>
+    API.post('/auth/register', {
+      email, password, nickname,
+      company_name: companyName,
+      display_title: displayTitle,
+    });
+  ```
+- 신규 `updateProfile`:
+  ```js
+  export const updateProfile = ({ company_name, display_title, bio }) =>
+    API.patch('/auth/me/profile', { company_name, display_title, bio });
+  ```
+
+**C-2. `frontend/src/pages/RegisterPage.jsx`**
+- 기획사명/호칭 입력 필드 2개 추가 (4필드 모두 필수 입력 + 전면 validation)
+- register() 호출 시 4개 인자 전달
+- 성공 시 기존 리디렉션 로직 유지
+
+**C-3. `frontend/src/contexts/AuthContext.jsx`**
+- `register(email, password, nickname, companyName, displayTitle)` 시그니처 확장
+- user 객체에 company_name/display_title 포함
+
+**C-4. NULL 표시 유틸 + 적용 위치**
+- 유틸: `frontend/src/utils.js`에 `displayOrNone(value)` 헬퍼 추가 (NULL/undefined/빈문자 → "없음")
+- 적용 대상 페이지(구현자 판단으로 정석 위치):
+  - **MyMusicPage** 상단 프로필 영역 (기획사명/호칭 표시)
+  - 또는 **BusinessPage** 프로필 섹션
+  - **Header 사용자 드롭다운**에 호칭 노출 (선택)
+
+**C-5. 프로필 수정 UI**
+- 위치: MyMusicPage의 프로필 카드 내부 "편집" 버튼 → 인라인 폼 열림 OR 별도 모달
+- 필드: 기획사명, 호칭, (기존이 있으면 bio도)
+- 저장 시 `updateProfile()` 호출 → AuthContext의 user 갱신
+
+### 영향 범위 / 비영향 범위
+- **영향**: users 테이블 스키마, /register, /login, /me, /me/profile, 웹 RegisterPage, AuthContext, MyMusicPage
+- **비영향**: 다른 모든 라우트(tracks/charts/mv 등), 다른 페이지, 9001/9002/backend(기본)는 대상 아님
+- **호환성**: 기존 가입자 NULL 허용 + 웹 fallback "없음" + 구버전 웹 클라이언트는 register에 2필드 빼고도 백엔드가 Optional이라 수용 → 완전 backward compatible
+
+### 테스트 계획 (Tester)
+
+#### 정적 검증
+1. 9003/9004 각각 `./venv/bin/python -c "from app.models.user import UserCreate, UserResponse, ProfileUpdate; from app.routes import auth; print('OK')"` 성공
+2. 9003/9004 각각 `./venv/bin/python -c "from app.config import settings"` 통과 (no breakage)
+3. 웹 frontend `grep "register = " src/api/index.js` → 5인자 시그니처 확인
+
+#### DB 스키마
+4. `docker exec aimu-postgres psql -U aimu_user -d aimu -c "\d users"` → company_name, display_title 컬럼 존재
+
+#### 백엔드 API (9003, 9004 각각)
+5. `POST /api/auth/register` with 4필드 → 201 + 응답 user에 두 필드 포함
+6. `POST /api/auth/register` with 2필드만(email/password/nickname) → 201 + display_title="대표", company_name=null
+7. `GET /api/auth/me` (Bearer token) → 응답에 두 필드 포함
+8. `POST /api/auth/login` → 응답 user에 두 필드 포함
+9. `PATCH /api/auth/me/profile` (company_name만 변경) → 200 + 변경 반영, display_title 미변경
+10. `PATCH /api/auth/me/profile` (display_title 빈문자 or null) → 200 + NULL로 저장
+11. `company_name` 101자 초과 → 422
+12. `display_title` 21자 초과 → 422
+13. 기존 가입자(NULL 상태) 로그인 → 200 + display_title=null 응답
+
+#### 프론트 E2E (4000)
+14. RegisterPage에서 4필드 모두 입력 → 회원가입 성공 → 자동 로그인 → 마이페이지에 입력한 기획사명/호칭 표시
+15. 기존 NULL 사용자로 로그인 → 마이페이지에 "없음" 표시
+16. 프로필 수정 UI에서 기획사명 변경 → 저장 → 화면 즉시 반영
+17. 로그아웃/재로그인 → 저장된 값 유지 (영속성 확인)
+
+#### 회귀
+18. `/api/health` 9003/9004 200
+19. 4000 `/` 200
+20. 기존 `/api/charts/top100` 등 다른 엔드포인트 200 (인증 불필요한 것 샘플 1~2개)
+
+### 보안
+- 응답/로그에 password_hash 평문 노출 금지
+- `PATCH /me/profile`은 본인 토큰으로만 자신의 정보 수정 가능
+
+### 체크리스트
+- [ ] DB ALTER 실행 + `\d users`로 컬럼 확인
+- [ ] 9003/9004 `infra/init_postgres.sql` 동기화
+- [ ] 9003/9004 `app/models/user.py` 수정
+- [ ] 9003/9004 `app/routes/auth.py` 수정 + PATCH 라우터
+- [ ] 9003/9004 서버 재기동 + /api/health 200
+- [ ] frontend/src/api/index.js 수정
+- [ ] frontend/src/pages/RegisterPage.jsx 수정
+- [ ] frontend/src/contexts/AuthContext.jsx 수정
+- [ ] frontend/src/utils.js 헬퍼 추가
+- [ ] 마이페이지 프로필 표시 + 수정 UI
+- [ ] Tester 전 항목 PASS
+- [ ] REPORT.md v35 append
+
+
+---
+
+## v36 — 2026-04-22 — 캐릭터 시트 저장 시 사용 아이템(상의/하의/신발) 영속화 + 항상 표시
+
+### 배경
+- '내 캐릭터' 탭에서 캐릭터 시트 생성 후 사용한 아이템 칸이 **사라짐** (사용자 보고)
+- 원인 3가지:
+  1. **`renderSavedOutfitSection`** (frontend `MyMusicPage.jsx` line 379)에 `if (!items.some(i => i.data)) return null;` → 모든 슬롯 null이면 섹션 자체 unmount
+  2. **`handleSave`** 시 selectedTop/Bottom/Shoes를 백엔드로 전송하지 않음 — sessionStorage에만 의존
+  3. **백엔드 character API에 `used_items` 필드 없음** — MongoDB `characters` 컬렉션에 sheet_object_name만 저장. 새로고침/다른 기기 진입 시 아이템 정보 휘발
+
+### 요청 작업
+1. 백엔드 9003/9004 동일하게:
+   - `SaveCharacterRequest`에 `used_items: Optional[list[dict]] = None` 필드 추가
+   - `POST /api/character/save` 핸들러: used_items를 MongoDB `characters` 컬렉션에 함께 upsert
+   - `GET /api/character/me` 응답: `used_items` 포함 (없으면 빈 list)
+   - `DELETE /api/character/me` 시 used_items도 함께 정리 (MongoDB document 삭제로 자동)
+2. 웹 프론트(4000):
+   - `api/index.js` `saveCharacter` 시그니처 확장 — used_items 인자 받음
+   - `MyMusicPage` `CharacterSection.handleSave`에서 selectedTop/Bottom/Shoes를 `used_items` payload로 전송 (필요 필드만 추출: id, name, image_object_name, product_url, category)
+   - `renderSavedOutfitSection`:
+     - early return (`if (!items.some(...)) return null;`) **제거** — 항상 3 슬롯 표시
+     - 데이터 우선순위: `character.used_items` (백엔드 영속) → sessionStorage(`selectedTop` 등) → null("미선택" placeholder)
+     - 빈 슬롯은 기존 `mymusic-character__outfit-empty` "OO 미선택" placeholder 사용
+
+### 데이터 스키마
+
+#### `used_items` 항목 형식 (백엔드 ↔ 프론트 약속)
+```json
+{
+  "id": "<ad_item_id>",
+  "name": "흰색 라운드 티셔츠",
+  "image_object_name": "items/abc.png",
+  "product_url": "https://...",
+  "category": "상의" | "하의" | "신발"
+}
+```
+- 모든 필드 Optional (방어적). 최소 `category`로 어느 슬롯인지 식별
+- 프론트 → 백엔드 전송 시 위 형태 그대로
+- 백엔드 → 프론트 응답 시 위 형태 그대로
+
+#### MongoDB `characters` 도큐먼트 변경
+```
+{
+  user_id: ...,
+  sheet_object_name: ...,
+  created_at: ...,
+  updated_at: ...,
+  used_items: [   ← 신규
+    {id, name, image_object_name, product_url, category},
+    ...
+  ]
+}
+```
+
+### 상세 명세
+
+#### A. 백엔드 (9003 + 9004 동일)
+
+**A-1. `app/routes/character.py`**
+- `SaveCharacterRequest`:
+  ```python
+  class UsedItemPayload(BaseModel):
+      id: Optional[str] = None
+      name: Optional[str] = None
+      image_object_name: Optional[str] = None
+      product_url: Optional[str] = None
+      category: Optional[str] = None
+
+  class SaveCharacterRequest(BaseModel):
+      sheet_object_name: str
+      used_items: Optional[List[UsedItemPayload]] = None
+  ```
+- `save_character` 핸들러:
+  - upsert 시 `used_items` 함께 저장 (`body.used_items`가 None이면 `[]`로 저장)
+  - `model_dump()`로 dict 변환
+- `get_my_character` 응답:
+  - `used_items` 키 포함 (없으면 `[]`)
+- 변경 영향 없음: `delete_my_character` (전체 도큐먼트 삭제), `generate-sheet`, `refine`, `preview`
+
+**A-2. 검증 규칙**
+- `used_items` 길이 ≤ 10 (Pydantic Field(default=None))
+- 각 항목 string 길이 합리적 상한 (e.g., name ≤ 200, product_url ≤ 1000)
+
+#### B. 웹 프론트
+
+**B-1. `frontend/src/api/index.js`**
+- `saveCharacter` 시그니처 확장 — 기존 단일 객체 인자에 `used_items` 키만 추가하면 backward compatible:
+  ```js
+  export const saveCharacter = async ({ sheet_object_name, used_items }) => {
+    const resp = await API.post('/character/save', { sheet_object_name, used_items });
+    try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
+    return resp;
+  };
+  ```
+
+**B-2. `frontend/src/pages/MyMusicPage.jsx` CharacterSection**
+- `handleSave` 호출 시 used_items 추출:
+  ```js
+  const buildUsedItems = () => {
+    const list = [];
+    if (selectedTop) list.push({ id: selectedTop.id, name: selectedTop.name, image_object_name: selectedTop.image_object_name, product_url: selectedTop.product_url, category: '상의' });
+    if (selectedBottom) list.push({ ...same..., category: '하의' });
+    if (selectedShoes) list.push({ ...same..., category: '신발' });
+    return list;
+  };
+  await api.saveCharacter({ sheet_object_name: previewObjectName, used_items: buildUsedItems() });
+  ```
+- `renderSavedOutfitSection`:
+  - early return 제거
+  - `character?.used_items`로부터 카테고리별 lookup 빌드
+  - 우선순위: `character.used_items[category]` → sessionStorage → null
+  - 빈 슬롯은 "OO 미선택" placeholder 표시 (변경/추가 버튼은 캐릭터 저장된 이후엔 노출 안 함 — 기존 UX 보존)
+
+### 영향 범위
+- **영향**: 9003/9004 character router, MongoDB characters 도큐먼트, 프론트 saveCharacter/CharacterSection
+- **비영향**: 다른 라우트, 다른 페이지, 다른 백엔드 인스턴스
+- **호환성**: 
+  - 기존 character 도큐먼트(used_items 없음) → 응답에서 `used_items: []`로 폴백
+  - 구버전 프론트 → 백엔드가 used_items optional이라 수용
+  - 신규 프론트 + 기존 character → "미선택" placeholder만 표시 (정상)
+
+### 테스트 계획 (Tester)
+1. **정적**: 9003/9004 import OK, frontend grep
+2. **DB 상태**: 작업 전 characters 컬렉션 dump 확인
+3. **백엔드 API**:
+   - `POST /api/character/save` with `used_items` 3개 → 200, MongoDB 확인
+   - `GET /api/character/me` → 응답에 used_items 포함
+   - `POST /api/character/save` without `used_items` (구버전 클라이언트) → 200, used_items=[]
+   - 빈 used_items로 저장 → 응답 used_items=[]
+4. **프론트**:
+   - 회원가입(또는 기존 유저 로그인) → 사진 업로드 → 캐릭터 시트 생성 → 아이템 3개 선택 → 저장 → "내 캐릭터" 탭에 시트 + 3 슬롯 모두 표시
+   - 새로고침 후 같은 탭 → 슬롯 여전히 표시 (영속성 확인)
+   - 아이템 0개 선택 후 저장 → 3 슬롯에 "미선택" placeholder 표시 (섹션 사라지지 않음)
+   - 아이템 1개만 선택 후 저장 → 1개는 표시, 나머지 2개 "미선택"
+5. **회귀**:
+   - 캐릭터 삭제 → 정상 삭제, 다음 진입 시 빈 상태
+   - 9004 `/api/health` 200, 9003 `/api/health` 200, 4000 `/` 200
+
+### 보안
+- used_items 항목은 사용자 입력이지만 product_url 등 자유 텍스트는 그대로 저장 (XSS 위험 없음 — React가 자동 escape)
+- 본인의 character 도큐먼트만 조회/수정/삭제 (`get_current_user["id"]` 기준)
+
+### 체크리스트
+- [ ] backend_9003 character.py: SaveCharacterRequest 확장, save_character upsert, get_my_character 응답
+- [ ] backend_9004 동일
+- [ ] frontend api/index.js: saveCharacter 시그니처
+- [ ] frontend MyMusicPage.jsx: handleSave used_items 전송
+- [ ] frontend MyMusicPage.jsx: renderSavedOutfitSection always render + character.used_items 우선
+- [ ] Tester 전 항목 PASS
+- [ ] REPORT.md v36 append
+
+## v37 — 2026-04-25 — MV Phase 1b 씬 프롬프트 `@characterN` 태그 강제 (프롬프트 강화 + 후처리 sanitizer + 검증 게이트)
+
+### 배경
+- 사용자 보고: 최근 MV 작업에서 **20씬 중 6씬만 `@character1` 태그 사용**, 나머지 14씬은 raw 이름("Han Jiyu", "Jiyu" 등) 사용 → 캐릭터 일관성 깨짐
+- 영향: `parse_asset_references()`(`backend_9004/app/services/mv_assets.py:97`)는 `@character1` 리터럴 토큰만 인식 → 14개 씬에서 캐릭터 시트 reference 미첨부 → 이미지 생성 시 동일 인물 보장 실패
+- 추가 컨텍스트: 사용자가 **"내 캐릭터 미사용"(OFF 모드)** 으로 진행해도 Phase 1.5(`run_phase1_5_assets`, `mv_pipeline.py:1242`)는 **정상 작동** — 캐릭터 시트는 생성되어 `assets`에 저장됨. 문제는 오직 **Phase 1b의 씬 프롬프트 LLM 출력에 raw 이름이 섞이는 것**
+- 사용자 결정: **OFF/ON 템플릿 분기는 이미 `_build_drama_scenario_prompts()`(`mv_generator.py:588`)에 존재 — 분기 추가 불필요. 태그 컴플라이언스만 잡으면 됨**
+
+### 근본 원인
+- **Phase 1b 시스템 프롬프트** (`backend_9004/app/services/mv_generator.py` 약 1687~1715행) 내 "MUST use @character1" 규칙이 LLM에 의해 일관되게 준수되지 않음
+- Phase 1.5(에셋 생성)는 정상 → 캐릭터 시트는 항상 존재
+- Phase 1b 출력 `image_prompt` / `video_image_prompt` 에서 raw 이름이 그대로 남음 → 다운스트림 `parse_asset_references()` miss
+
+### 해결 전략 (3-Layer 방어)
+1. **Layer 1 — 프롬프트 강화 (예방)**: Phase 1b 시스템 프롬프트에 명시적 금지 패턴 + 강제 어조 추가
+2. **Layer 2 — 후처리 sanitizer (보정)**: LLM 응답 받은 직후, MongoDB 저장 직전에 raw 이름을 `@characterN`으로 자동 치환
+3. **Layer 3 — 검증 게이트 (탐지/재생성)**: sanitizer 통과 후에도 `@character1` 누락 씬이 있으면 **그 씬만** 1회 재생성 시도, 실패 시 구조화 경고 로그
+
+### 범위 (Scope)
+- **백엔드 only** (9003 + 9004 동일하게)
+- **프론트엔드**: 조사 결과 따라 결정. 현재 가정상 UI는 `image_prompt` 텍스트를 사용자에게 직접 보여주지 않음 (씬 카드에 prompt raw text 표시 없음). 검증 후 코드 변경 없으면 보고만.
+- 기존 잘못된 작업 1건(`69eabc93529d63dc3c95161d`, 14씬 깨짐) → **일회성 repair 스크립트**로 MongoDB 직접 보정 (Phase 0~1 재실행 없이 복구)
+
+### 손볼 파일
+- **backend_9004/app/services/mv_generator.py** — Phase 1b 시스템 프롬프트 강화 (T1)
+- **backend_9004/app/services/mv_generator.py** — sanitizer 함수 추가 + Phase 1b 흐름에 삽입 (T2)
+- **backend_9004/app/services/mv_generator.py** — 검증 + 1회 재생성 (T3)
+- **backend_9004/scripts/repair_v37_scene_tags.py** *(신규)* — 일회성 repair 스크립트 (T4)
+- **backend_9003** 동일 위치에 동일 변경 미러링 (v-시리즈 관행)
+
+### 상세 명세
+
+#### T1 — Phase 1b 시스템 프롬프트 강화 (`mv_generator.py` 1687~1715)
+- 기존: "MUST use @character1" 한 줄 → LLM이 종종 무시
+- 변경 후 추가 규칙(영어로 강한 어조):
+  - **ABSOLUTE RULE**: every reference to a character in `image_prompt` and `video_image_prompt` MUST be the literal token `@character1` (or `@character2`, `@character3`...). NO exceptions.
+  - **FORBIDDEN** (raw 이름·대명사·역할 호칭 모두 금지):
+    - 한글 이름 (예: `한지유`, `지유`)
+    - 로마자 이름 (예: `Han Jiyu`, `Jiyu`, `Hanjiyu`)
+    - 대명사 (`she`, `he`, `her`, `him`, `they`)
+    - 역할 호칭 (`the singer`, `the main character`, `the artist`, `the protagonist`, `the woman`, `the man`)
+  - **CORRECT 예시**: `@character1 walks through neon-lit alley, looking back at camera`
+  - **WRONG 예시**: `Han Jiyu walks through neon-lit alley, the singer looking back`
+  - 이 규칙을 `image_prompt`, `video_image_prompt` 양쪽에 동일 적용
+
+#### T2 — 후처리 sanitizer (`sanitize_scene_character_tags`)
+- 위치: `mv_generator.py` 모듈 함수로 신규 추가, Phase 1b 응답 파싱 직후·MongoDB 저장 직전에 호출
+- 입력: parsed scene list, `scenario_meta.characters` (각 캐릭터의 `name`(한글) + 가능한 로마자 변형)
+- 동작:
+  1. 각 캐릭터 i (1-indexed)에 대해 치환 후보 리스트 빌드:
+     - `characters[i].name` (한글, 예: `한지유`)
+     - `characters[i].name_romanized` 또는 LLM이 emit한 변형 (예: `Han Jiyu`, `Jiyu`, `Hanjiyu`) — `scenario_meta` 또는 휴리스틱(공백 제거/성만/이름만)으로 도출
+  2. 각 씬의 `image_prompt`, `video_image_prompt` 두 필드에 대해:
+     - **whole-word, case-insensitive** 정규식으로 raw 이름을 `@character{i}`로 치환
+     - 단, 이미 `@character{i}` 안에 포함된 경우(예: `@character1`라는 문자열)는 건드리지 않음 (lookbehind/lookahead로 보호)
+  3. 1번 캐릭터(주인공)에 한해 **모호하지 않은** 일반 호칭도 치환:
+     - `the singer`, `the main character`, `the artist`, `the protagonist` → `@character1`
+     - 단, 캐릭터 1명일 때만 적용 (다인물 시 모호 → 치환 skip)
+     - 대명사(`she`, `he`)는 위험(맥락 의존) → 1차 릴리즈에서는 **치환 skip** 하고 검증 게이트(T3)에서 catch
+  4. `characters[*].name` 필드 자체에 LLM이 raw 이름을 넣은 경우도 동일 정규로 검사 (방어적)
+  5. 동일 스캔/치환 결과로 메트릭 집계: `{scenes_scanned, scenes_modified, total_replacements_by_name}`
+  6. 구조화 로그: `logger.info("v37 sanitizer", extra={"job_id": ..., "scenes_modified": N, "replacements": {...}})`
+- 멱등성: 이미 `@character1`인 텍스트에 다시 돌려도 변화 없음 (테스트로 보장)
+
+#### T3 — 검증 게이트 + 1회 재생성
+- 위치: sanitizer 호출 직후 (`mv_generator.py` Phase 1b 끝)
+- 검사: `scenario_meta.characters` 길이 ≥ 1 일 때, **모든 씬의 `image_prompt`** 가 `@character1` 토큰을 포함하는지 확인
+- 누락 씬 발견 시:
+  1. 누락 씬 인덱스 리스트 수집 → 구조화 경고 로그 (`logger.warning("v37 validation gate failed", extra={"job_id":..., "missing_scenes":[...]})`)
+  2. **해당 씬만** 재생성 system 프롬프트로 1회 더 호출 (Phase 1b와 동일 모델·동일 컨텍스트, "이 씬만 다시" 지시)
+  3. 재생성 응답에도 sanitizer 재적용
+  4. 그래도 누락이면 → ERROR 레벨 로그(차단은 안 함, MV 생성은 진행) + 메트릭 노출. 이미지 생성 시점에 캐릭터 시트가 attach 안 되어 미세하게 일관성 떨어질 뿐, MV 자체는 진행
+- 재시도 횟수 cap: **1회** (무한 루프 방지)
+
+#### T4 — 일회성 repair 스크립트 `scripts/repair_v37_scene_tags.py`
+- 입력 인자: `--job-id 69eabc93529d63dc3c95161d`
+- 동작:
+  1. MongoDB에서 해당 job 도큐먼트 로드 (`mv_jobs` 컬렉션 가정)
+  2. `job.scenario_meta.characters` 추출
+  3. T2 sanitizer 함수 그대로 호출하여 `job.scenes` 보정
+  4. dry-run 모드(`--dry-run`)는 변경 사항만 출력, 실제 저장은 `--apply` 플래그
+  5. `--apply` 시 `mv_jobs` 도큐먼트 `$set: {scenes: ...}` upsert
+  6. 결과 메트릭 출력 (변경된 씬 수, 치환된 raw 이름 수)
+- 위치: `backend_9004/scripts/repair_v37_scene_tags.py` (9003에도 동일 미러)
+
+#### T5 — 9003 미러링
+- 위 T1~T4 변경사항을 `backend_9003`에도 동일하게 적용 (v-시리즈 관행)
+- 단, 9003 코드 베이스가 9004와 살짝 어긋나는 부분이 있으면 9004 기준으로 patch 후 9003 import 경로/시그니처만 맞춰서 재적용
+
+### 영향 범위
+- **영향**: `mv_generator.py` Phase 1b 흐름, MongoDB `mv_jobs` 도큐먼트의 `scenes[*].image_prompt` / `video_image_prompt` / `characters[*].name` 필드
+- **비영향**: Phase 0(시나리오 메타), Phase 1.5(에셋 생성), Phase 2(이미지/영상 생성), Phase 3(립싱크), 다른 라우터, 프론트엔드(예상)
+- **호환성**: 
+  - sanitizer는 멱등 → 기존 정상 씬에 돌려도 무해
+  - 이미 `@character1` 형태인 씬은 변화 없음
+  - repair 스크립트는 dry-run 기본, 사용자 확인 후 `--apply`
+
+### 수용 기준 (Acceptance Criteria)
+1. **모든** 씬의 `image_prompt`에 등장하는 캐릭터는 **`@characterN`** 형태로만 표기됨 (raw 한글/로마자 이름·일반 호칭 0건)
+2. **모든** 씬의 `video_image_prompt`도 동일 (image_prompt와 동일 규칙)
+3. `characters[*].name` 필드 자체에 raw 이름이 남아도, scene 본문에는 `@characterN`만 등장
+4. Phase 1.5(에셋) 동작 회귀 없음 — 캐릭터 시트·로케이션 시트 정상 생성 (ON/OFF 모드 모두)
+5. 기존 깨진 job `69eabc93529d63dc3c95161d` repair 후 20/20 씬 모두 `@character1` 포함
+6. 신규 MV 생성 1건(테스트) → 0건 raw 이름, 검증 게이트 통과
+7. 9003/9004 동일하게 변경 반영, import 정상
+
+### 테스트 계획 (Tester가 수행)
+- **TT1 (단위)**: 합성 시나리오 도큐먼트(raw 이름 섞인 5개 씬) → sanitizer 호출 → 모든 raw 이름이 `@characterN`으로 치환, 멱등성 검증
+- **TT2 (E2E 신규 작업)**: fal.ai 크레딧 충전됨 → 새 MV 작업 1건 Phase 0~1b까지 실행 → 모든 씬 태그 검증
+- **TT3 (Repair)**: `scripts/repair_v37_scene_tags.py --job-id 69eabc93529d63dc3c95161d --dry-run` → 변경사항 확인 → `--apply` → MongoDB 재조회 → 20/20 씬에 `@character1`
+- **TT4 (회귀)**: ON 모드(사용자 캐릭터 사용) + OFF 모드(미사용) 각각 1건 Phase 1.5 → 캐릭터 시트 정상 생성, assets 컬렉션에 저장됨
+- **TT5 (프론트)**: 4000 UploadPage / StudioTab2 / MyMusicPage 진입 → 시나리오 카드 / 씬 카드에 깨짐 없음. (`image_prompt` raw text를 사용자에게 노출하는 UI가 있는지 grep — 있으면 `@character1` 표기가 시각적으로 어색하지 않은지 확인)
+
+### 보안
+- repair 스크립트는 운영자만 실행 (DB 자격 증명 환경변수 — 코드에 하드코딩 금지, 기존 `.env` 사용)
+- API 키·시크릿 신규 도입 없음
+- 사용자 입력(시나리오) 정규식 매칭에 사용 → `re.escape()`로 안전 처리
+
+### 체크리스트
+- [ ] backend_9004 mv_generator.py: Phase 1b 시스템 프롬프트 강화 (T1)
+- [ ] backend_9004 mv_generator.py: `sanitize_scene_character_tags` 신규 함수 + Phase 1b에서 호출 (T2)
+- [ ] backend_9004 mv_generator.py: 검증 게이트 + 1회 재생성 (T3)
+- [ ] backend_9004 scripts/repair_v37_scene_tags.py 신규 (T4)
+- [ ] backend_9003 동일 변경 미러링 (T5)
+- [ ] Tester TT1~TT5 전 항목 PASS
+- [ ] 기존 깨진 job `69eabc93529d63dc3c95161d` repair `--apply` 완료
+- [ ] REPORT.md v37 append
+
+## v38 — 2026-04-25 — 캐릭터 메타 확장(이름/나이/성격) + MV Phase 0/1.5 주입 + 스냅샷 정책
+
+### 배경
+- 사용자 피드백: 현재 "내 캐릭터" 탭은 사진 기반 캐릭터 시트만 저장 — **이름 / 나이 / 성격** 같은 서사적 메타가 없음. 그 결과 MV 시나리오(Phase 0)와 캐릭터 시트(Phase 1.5)가 "20대 남성, 감성적" 같은 구체적 연령·성격을 반영하지 못하고 LLM이 매번 임의 설정
+- v37에서 `@character1` 태그 강제 시스템이 완성됨 — v38은 그 위에 **캐릭터 메타 3필드 확장**을 얹는 것. v37 태그 규칙은 그대로 유지, 본 변경은 Phase 0 입력 스키마와 Phase 1.5 자산 생성 인자·MongoDB 스냅샷 저장만 손봄
+- 정책 결정(확정): **스냅샷 정책 = 옵션 2 (MV 생성 시점에 프로필 복사 저장)**. 이후 사용자가 프로필을 수정해도 기존 MV 작품의 캐릭터 설정은 고정
+
+### 데이터 모델 확장
+| 항목 | 타입 | 필수 | 비고 |
+|---|---|---|---|
+| `name` | str | optional | 자유 텍스트. 기존 스키마에 없음 → 신규 필드 (MongoDB `characters` 컬렉션) |
+| `age` | str | optional | 자유 텍스트 (숫자 강제 안 함. "20대 초반" 같은 표현 허용) |
+| `personality_tags` | List[str] | optional | 0~N개. 기본 12개 태그 중에서 선택하거나 비워둠 |
+| `personality_text` | str | optional | 자유 텍스트. 태그와 병행 가능 |
+
+**기본 성격 태그 (12개, 배포 시드)**: 내향적 / 외향적 / 감성적 / 이성적 / 유머러스 / 진지함 / 쿨함 / 따뜻함 / 반항적 / 순수함 / 냉소적 / 낙천적
+
+- 기존 캐릭터는 위 4필드가 모두 optional이므로 **마이그레이션 스크립트 불필요** (missing = None/[]로 취급)
+- MongoDB `mv_jobs` 도큐먼트에 신규 필드 `user_character_snapshot: {name, age, personality_tags, personality_text, sheet_object_name, used_items}` 추가 — 'include_my_character' ON 시에만 저장
+
+### 범위 (Scope)
+- **백엔드**: 
+  - 9004: character route(저장/조회 확장) + mv route(스냅샷 복사) + mv_generator(Phase 0 프롬프트 확장) + mv_pipeline(Phase 1.5 주입) + mv_assets(character sheet 인자 확장)
+  - 9003: **character route만** 확장 (저장/조회 + 성격 태그 엔드포인트). 9003은 MV/scenario 시스템 없음 (v37 특이사항 참조) → MV 관련 변경은 9003에 미적용
+- **프론트엔드**: `MyMusicPage.jsx` CharacterSection에 이름/나이/성격 태그/성격 텍스트 4개 필드 추가 + 기존 캐릭터 로드 시 프리필 + `api/index.js`에 헬퍼 함수 추가
+
+### 손볼 파일 (절대경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py` — `SaveCharacterRequest` 확장, `GET /me` 응답 확장, `GET /personality-tags` 신규 (T1, T2)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/mv.py` — `POST /api/mv/create`에서 `include_my_character=True`일 때 `characters` 컬렉션 조회 → `mv_jobs.user_character_snapshot` 복사 (T3)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_generator.py` `_build_drama_scenario_prompts` (588~748행) — system/user 프롬프트에 character1.age·personality 규칙 + 출력 JSON 스키마 확장 (T4)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_pipeline.py` `run_phase0_scenario` 호출 site(≈750~780) + `run_phase1_5_assets` (1308~1396) — 스냅샷 전달 + character1 주입 분기 (T5)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_assets.py` `generate_character_sheet_asset` (63~79) — 시그니처에 `age`/`personality_tags`/`personality_text` 추가 + 프롬프트 반영 (T6)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9003/app/routes/character.py` — 9004와 동일 확장 (T7, character만; MV는 스킵)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/api/index.js` — `getPersonalityTags()` 추가, `saveCharacter` payload 확장 (T9)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx` CharacterSection — 4개 입력 필드 UI + 프리필 + 저장 payload 확장 (T10, T11)
+
+### 상세 명세
+
+#### T1 — Character 저장/조회 API 확장 (9004)
+- `SaveCharacterRequest` 모델에 필드 추가:
+  - `name: Optional[str] = None`
+  - `age: Optional[str] = None`
+  - `personality_tags: Optional[List[str]] = None`
+  - `personality_text: Optional[str] = None`
+- `POST /api/character/save`: MongoDB upsert `$set` 블록에 위 4필드 포함 (빈 값은 None/[]로 저장, 또는 미설정)
+- `GET /api/character/me`: 응답에 `name`, `age`, `personality_tags`, `personality_text` 4필드 추가 (없으면 null / [])
+- 입력 검증:
+  - `personality_tags`는 문자열 리스트, 각 원소 whitespace trim, 빈 문자열 제거. 기본 12개 태그에 없는 커스텀 태그도 허용(화이트리스트 강제 안 함 — 유저가 자유 텍스트 태그도 추가 가능)
+  - `name` / `age` / `personality_text`는 길이 상한 (예: name 50자, age 30자, personality_text 500자) — 초과 시 400
+- **후방 호환**: 기존 캐릭터(필드 없는 도큐먼트) 조회 시 null / []로 반환, 프론트에서 정상 프리필되어야 함
+
+#### T2 — `GET /api/character/personality-tags` 신규 (9004)
+- 인증 불필요 (공개 참조 데이터)
+- 응답: `{"tags": ["내향적", "외향적", "감성적", "이성적", "유머러스", "진지함", "쿨함", "따뜻함", "반항적", "순수함", "냉소적", "낙천적"]}`
+- 코드 상수로 정의 (DB 시드 불필요). 향후 확장 시 상수만 수정
+
+#### T3 — MV create 시 스냅샷 복사 (9004, `routes/mv.py`)
+- `POST /api/mv/create` 핸들러(≈166~285):
+  - `body.include_my_character == True`인 경우:
+    1. `mongo.characters.find_one({"user_id": current_user["id"]})` 로드
+    2. 캐릭터 없으면 400 에러 `"내 캐릭터 포함"이 활성화되어 있지만 저장된 캐릭터가 없습니다.` 반환 (기존 `character_object_name`이 전달되는 경로가 있으면 그쪽도 체크)
+    3. `user_character_snapshot` 딕셔너리 구성: `{name, age, personality_tags, personality_text, sheet_object_name, used_items}` (복사본)
+  - `job_doc`에 `user_character_snapshot: user_character_snapshot_or_None` 추가
+- `include_my_character == False` 시 `user_character_snapshot: None`
+- 프론트가 현재 `character_object_name`을 별도로 넘기는 경로(예: 단건 사진 업로드)도 있음 — 그 경우 스냅샷은 만들지 않고 기존 로직 유지. 스냅샷은 **"내 저장 캐릭터"** 사용 시에만 발동
+
+#### T4 — Phase 0 시나리오 프롬프트 확장 (9004, `mv_generator.py:588~748`)
+- `_build_drama_scenario_prompts` 시그니처에 인자 추가:
+  - `character1_meta: Optional[dict] = None` — ON일 때 `{name, age, personality_tags, personality_text}` 전달. OFF일 때 None
+- system 프롬프트 `## character1 규칙` 블록에 규칙 추가:
+  - ON 경우 (`character1_meta` 있음):
+    - `name`: 사용자 제공값 그대로 사용 (LLM 임의 변경 금지)
+    - `age`: 사용자 제공값 그대로 사용
+    - `personality.tags`, `personality.text`: 사용자 제공값 그대로 유지
+    - description에 age/personality를 자연스럽게 반영
+    - **시나리오 본문**: 해당 age/personality에 어울리는 서사/말투/장면으로 작성 (예: "30대 후반, 감성적·따뜻함" → 회상 톤의 카페 씬)
+  - OFF 경우:
+    - LLM이 장르·분위기·vocal_gender에 어울리는 `name`, `age`, `personality.tags`(0~3개), `personality.text`를 **모두 직접 생성**
+    - age는 한국어 자유 텍스트 허용 (예: "20대 중반", "고등학생", "35세")
+    - personality.tags는 v38 기본 12개 중에서 골라 담되 LLM 판단으로 0~3개 선택 (0개도 허용, 4개 이상 금지)
+    - personality.text는 1문장 한국어
+- **출력 JSON 스키마 확장** (기존 구조 유지하며 `age`/`personality` 키 추가):
+  ```
+  character1: {"name", "gender", "age", "personality": {"tags": [...], "text": "..."}, "role", "description"}
+  character2: {"name", "gender", "age", "personality": {"tags": [...], "text": "..."}, "role", "description"}
+  ```
+- character2도 동일 필드. LLM이 관계/성별 규칙에 어울리는 age/personality 자동 생성
+- `_parse_drama_scenario_json` — 기존 파서 호환 필요. 새 `age`/`personality` 키는 선택적으로 읽되 없으면 기본값 (`age: ""`, `personality: {tags: [], text: ""}`)으로 보정
+- v37 sanitizer와 충돌 없음 — sanitizer는 `scenes[*].image_prompt` 만 건드림, characters 메타는 name 방어적 검사만
+
+#### T5 — Phase 1.5 자산 생성 주입 (9004, `mv_pipeline.py`)
+**Phase 0 호출 site (`run_phase0_scenario` ≈750~780):**
+- `job.user_character_snapshot` 있으면 그 값으로 `character1_meta` 구성 → `generate_mv_scenario(..., character1_meta=...)` 로 전달
+- `has_user_character=True`는 기존대로 유지
+- OFF 모드: `character1_meta=None` 전달
+
+**Phase 1.5 (`run_phase1_5_assets` 1308~1396):**
+- `job.user_character_snapshot` 있으면 (ON):
+  - `characters["character1"]`을 **덮어쓰기**: `name`/`age`/`personality`를 스냅샷 값으로 강제 치환 (LLM이 생성한 값보다 사용자 입력 우선)
+  - `generate_character_sheet_asset` 호출 시 `age`/`personality_tags`/`personality_text` 인자에 스냅샷 값 전달
+  - `ref_image`는 기존처럼 `character_object_name` 로드(기존 흐름 유지) + `user_character_snapshot.sheet_object_name`도 ref로 사용 가능
+- OFF 모드:
+  - `characters["character1"]` = `scenario_meta.characters.character1` 값 그대로 (Phase 0 LLM이 생성한 age/personality 포함)
+  - `generate_character_sheet_asset`에 그 값 그대로 전달
+- `assets` 메타 저장 시 `age`, `personality_tags`, `personality_text` 필드도 함께 저장 (이미지 object_name 외에도 메타 보존)
+- character2, character3도 동일하게 age/personality를 `generate_character_sheet_asset`에 전달 (항상 scenario_meta 기준)
+
+#### T6 — `generate_character_sheet_asset` 시그니처 확장 (9004, `mv_assets.py:63~79`)
+- 시그니처 변경:
+  ```
+  async def generate_character_sheet_asset(
+      name, gender, description,
+      age: Optional[str] = None,
+      personality_tags: Optional[List[str]] = None,
+      personality_text: Optional[str] = None,
+      ref_image: Optional[bytes] = None,
+  ) -> bytes
+  ```
+- 프롬프트 확장: 기존 `"Subject: {name}, gender: {gender}. {description}"` 뒤에 조건부 문장 추가:
+  - `age`가 있으면: `"Approximate age: {age}. Match the facial maturity, styling and demeanor typical for this age."`
+  - `personality_tags` 또는 `personality_text`가 있으면: `"Personality cues (reflect in expression/pose/wardrobe vibe): {tags_joined}. {personality_text}"`
+- 기본값 None → 기존 동작과 동일 (후방 호환). Phase 1.5 외부에서 부르는 호출처 있으면 영향 없음
+- `_gemini_generate_image` 본체 변경 없음 — 프롬프트만 풍부해짐
+
+#### T7 — 9003 미러링 (character route 한정)
+- 9003 `app/routes/character.py`에 T1, T2와 동일 변경 적용 (`SaveCharacterRequest` 확장 + `GET /me` 응답 확장 + `GET /personality-tags` 엔드포인트)
+- 9003은 `mv_generator` / `mv_pipeline` / `mv_assets` / `mv.py` 중 MV 시스템이 v37 보고 기준 없음 → T3, T4, T5, T6 **적용 스킵**
+- 9003의 character route만 앱팀이 사용할 수 있도록 동기화. 앱팀 측에서 MV 프리셋 조합 시 이 필드를 사용할 경우를 대비
+
+#### T8 — API 명세 정의 (프론트 전달용)
+- 백엔드 확정 후 프론트에 다음 스펙 전달:
+  - `GET /api/character/personality-tags` → `{tags: string[]}`
+  - `POST /api/character/save` payload: `{sheet_object_name, used_items, name?, age?, personality_tags?, personality_text?}`
+  - `GET /api/character/me` 응답: `{character: {sheet_object_name, sheet_url, used_items, name, age, personality_tags, personality_text, created_at, updated_at} | null}`
+- REPORT.md v38에 최종 스펙 기록
+
+#### T9 — 프론트 api/index.js 확장
+- `getPersonalityTags()` 신규 — `API.get('/character/personality-tags')`. 세션 캐시(TTL 1일) 권장 (기본 태그는 거의 안 변함)
+- `saveCharacter({sheet_object_name, used_items, name, age, personality_tags, personality_text})` — 기존 시그니처 확장, 선택적 4필드를 payload에 포함. 누락 시 해당 필드 전송 생략 또는 null 전송 (백엔드가 둘 다 허용)
+- `getMyCharacter()`는 시그니처 변경 없이 응답에 새 필드가 자연스럽게 포함됨 (프론트에서 useState로 읽어 프리필)
+
+#### T10 — MyMusicPage CharacterSection UI 확장
+- `frontend/src/pages/MyMusicPage.jsx` `CharacterSection` 컴포넌트 (약 153~500행):
+  - `useState`: `characterName`, `characterAge`, `selectedTags` (배열), `personalityText` 신규
+  - `useState`: `availableTags` — 마운트 시 `getPersonalityTags()` 로드하여 저장
+  - 기존 사진 업로드 / 아이템 선택 UI 아래에 **"캐릭터 프로필"** 섹션 신규 (또는 기존 `characterText` 입력란 위/아래):
+    - 이름 input (`<input type="text" placeholder="이름 (자유)" />`)
+    - 나이 input (`<input type="text" placeholder="나이 (자유 텍스트, 예: 20대 초반)" />`)
+    - 성격 태그 셀렉터: 12개 토글 버튼 (또는 chip) 복수선택. `selectedTags` 배열 관리
+    - 성격 자유 텍스트 input (`<textarea placeholder="성격 자유 서술 (선택)" />`)
+  - `handleSave`에서 `api.saveCharacter({...기존, name: characterName, age: characterAge, personality_tags: selectedTags, personality_text: personalityText})` 호출
+  - 성공 후 `sessionStorage.removeItem('aimu:myCharacter')`는 기존대로 동작. 이어서 `getMyCharacter()` 재조회 + 프리필
+- CSS 추가 (MyMusicPage.css): 태그 버튼 스타일(선택됨/미선택), 입력 필드 정렬
+
+#### T11 — 기존 캐릭터 프리필
+- `useEffect`에서 `api.getMyCharacter()` 결과의 `character` 객체에 새 4필드가 있으면 대응 state에 세팅:
+  - `setCharacterName(character.name || '')`
+  - `setCharacterAge(character.age || '')`
+  - `setSelectedTags(character.personality_tags || [])`
+  - `setPersonalityText(character.personality_text || '')`
+- 기존 캐릭터(필드 없음) 도큐먼트 → 빈 값으로 프리필됨, 사용자가 저장 누르면 신규 필드가 추가되는 형태
+
+### 영향 범위
+- **영향**:
+  - MongoDB `characters` 컬렉션 도큐먼트 스키마 확장 (4필드 추가, optional)
+  - MongoDB `mv_jobs` 도큐먼트 스키마 확장 (`user_character_snapshot` 필드 추가)
+  - Phase 0 시나리오 JSON 스키마 (characters[*]에 `age`, `personality` 키 추가)
+  - Phase 1.5 `assets[characterN]` 메타에 `age`, `personality_tags`, `personality_text` 추가
+- **비영향**:
+  - v37 sanitizer(씬 프롬프트) — 관여 필드 겹침 없음
+  - Phase 1b 씬 생성(`generate_scene_prompts_only`) — 입력은 scenario + characters, 메타 확장은 프롬프트 생성에 긍정적이지만 signature 변경 없음
+  - Phase 2 이미지 생성, Phase 3 립싱크 — 변경 없음
+  - 프론트 기타 페이지 (UploadPage, StudioTab2 등) — 본 변경은 MyMusicPage CharacterSection 한정
+- **후방 호환**:
+  - 기존 캐릭터 도큐먼트(4필드 없음) 그대로 조회 가능, 저장 시 신규 필드 추가
+  - 기존 `mv_jobs` 도큐먼트(user_character_snapshot 없음) → Phase 0/1.5는 기존대로 scenario_meta 값만 사용
+  - `_parse_drama_scenario_json`는 새 필드 누락 시 기본값으로 보정 → 구 LLM 응답 호환
+
+### 수용 기준 (Acceptance Criteria)
+1. `GET /api/character/personality-tags`가 12개 기본 태그 배열 반환 (인증 불필요)
+2. `POST /api/character/save`에 `name`/`age`/`personality_tags`/`personality_text` 포함해 저장 성공, 빈 값·미포함 모두 허용
+3. `GET /api/character/me` 응답에 4신규 필드 포함 (없으면 null/[])
+4. MyMusicPage CharacterSection에서 이름/나이/성격 태그/성격 텍스트 입력 후 저장 → 페이지 리로드 시 프리필 확인
+5. `include_my_character=True`로 MV 생성 시 `mv_jobs.user_character_snapshot`에 유저 값이 복사됨 (프로필 수정 후에도 기존 MV의 snapshot 값 불변)
+6. `include_my_character=False`로 MV 생성 시 Phase 0 출력 `scenario_meta.characters.character1`에 `age`, `personality.tags`, `personality.text` 필드 포함 (LLM이 자동 생성)
+7. Phase 1.5 생성된 `assets[characterN]` 메타에 `age`, `personality_tags`, `personality_text` 저장됨
+8. 9003 `/api/character/save` / `/api/character/me` / `/api/character/personality-tags` 9004와 동일 동작
+9. v37 회귀 없음 — `@character1` 태그 sanitizer / 검증 게이트 정상 동작
+10. 9003/9004/4000 헬스 200
+
+### 테스트 계획 (Tester가 수행)
+- **TT1 (단위, 9004)**: `GET /api/character/personality-tags` → 12개 태그 배열 확인 (순서/문자열 일치)
+- **TT2 (단위, 9004)**: 캐릭터 저장 API — 4신규 필드 포함 payload(모든 값 채움) / 빈 값 payload / 필드 생략 payload 3케이스 → 모두 200, DB 도큐먼트 직접 확인
+- **TT3 (E2E 프론트)**: 로그인 → MyMusicPage "내 캐릭터" 탭 → 이름/나이/성격 태그(복수선택)/성격 텍스트 입력 → 저장 → 새로고침 → 모든 값 프리필 확인
+- **TT4 (E2E 스냅샷 ON)**: T3 완료 후 "내 캐릭터 포함" ON으로 MV 생성 → MongoDB `mv_jobs` 신규 도큐먼트 조회 → `user_character_snapshot`에 유저 입력값 4개 모두 복사됨 확인
+- **TT5 (E2E OFF)**: "내 캐릭터 포함" OFF로 MV 생성 → `scenario_meta.characters.character1`에 LLM 생성한 `age`, `personality.tags`, `personality.text` 포함 확인. character2가 있으면 동일
+- **TT6 (스냅샷 불변성)**: TT4 완료 후 MyMusicPage에서 나이·성격 수정 → 기존 MV job의 `user_character_snapshot` 재조회 → 값 변경되지 않음 확인
+- **TT7 (Phase 1.5 메타)**: TT4·TT5 각각의 job에서 `assets.character1`에 `age`, `personality_tags`, `personality_text` 필드 존재 확인
+- **TT8 (9003 parity)**: 9003 `/api/character/personality-tags` / save / me 엔드포인트 동작 확인 (9004와 동일 응답 구조)
+- **TT9 (헬스)**: 9003 / 9004 / 4000 `/api/health` 또는 인덱스 200
+- **TT10 (v37 회귀)**: TT5의 job Phase 1b 완료 후 씬 `image_prompt`에 `@character1` 태그 포함, raw 이름 0건 (v37 sanitizer 회귀 없음)
+
+### 보안
+- 신규 시크릿·API 키 도입 없음
+- `personality_tags` / `personality_text` / `name` / `age`는 사용자 자유 입력 → 서버 저장 시 길이 상한(위 T1 스펙)만 검증, XSS·SQL injection 위험 없음 (MongoDB + JSON 응답 + React 자동 escape)
+- `user_character_snapshot`은 사용자 본인의 캐릭터 프로필 복사본 → 추가 민감정보 없음
+- 기본 12개 태그 상수는 코드 하드코딩, 환경변수·시크릿 아님
+- REPORT.md / PLAN.md에 평문 토큰·키 0건
+
+### 체크리스트
+- [ ] backend_9004 routes/character.py: `SaveCharacterRequest` 확장, `/me` 응답 확장, `/personality-tags` 신규 (T1, T2)
+- [ ] backend_9004 routes/mv.py: `POST /create` `user_character_snapshot` 복사 저장 (T3)
+- [ ] backend_9004 services/mv_generator.py: `_build_drama_scenario_prompts` character1/character2 age·personality 규칙 + JSON 스키마 확장 (T4)
+- [ ] backend_9004 services/mv_pipeline.py: Phase 0 호출에 `character1_meta` 전달 + Phase 1.5에서 스냅샷 주입 + assets 메타 저장 (T5)
+- [ ] backend_9004 services/mv_assets.py: `generate_character_sheet_asset` 시그니처 확장 + 프롬프트 반영 (T6)
+- [ ] backend_9003 routes/character.py: T1, T2 미러 (T7)
+- [ ] API 명세 프론트 핸드오프 문서화 (T8)
+- [ ] frontend/src/api/index.js: `getPersonalityTags` + `saveCharacter` 확장 (T9)
+- [ ] frontend/src/pages/MyMusicPage.jsx: CharacterSection UI 확장 + 프리필 (T10, T11)
+- [ ] Tester TT1~TT10 전 항목 PASS
+- [ ] REPORT.md v38 append
+
+## v39 — 2026-04-25 — MV 품질 개선 (비트 정렬 컷 + 주인공샷 + 모델별 duration 인지 + 긴 세그먼트 분할 + 사용자 지시 우선)
+
+### 배경
+- `비교.md` 분석 결과 K-pop MV 톤이 약한 이유 = ② 비트 정렬 컷 부재 + ④ 주인공샷(첫 등장 강제 클로즈업) 부재 → 두 항목이 ROI 최상위
+- 현재 Phase 4 `run_phase4_concatenate` (`mv_pipeline.py:2409`)는 단순 ffmpeg concat. 비트 분석 라이브러리(`madmom` / `librosa.beat` / `essentia`) import 0건. 컷 위치가 음악 드롭에서 어긋나 "MV 같은 펀치"가 안 살아남
+- Phase 1b 프롬프트(`SCENE_PROMPT_ONLY_SYSTEM`, `mv_generator.py:1918`)에 인물 첫 등장 규칙 없음 → 매 씬마다 모델이 인물을 새로 학습하며 외형 drift 발생
+- Phase 2.5 `generate_video_prompts_from_images` (`mv_generator.py:196`)는 클립 길이를 모르고 모션 프롬프트를 작성 → 3초 클립에 다단계 무브먼트, 10초 클립에 단발 동작 같은 미스매치
+- 현재 `_split_long_section` (`mv_pipeline.py:404~531`)은 15초 초과 섹션을 Whisper 줄 경계로 분할하지만 비트 무관 → W1과 통합해 "비트에도 정렬 + 모델별 max 길이 캡 둘 다 만족"하는 단일 알고리즘으로 리팩터링 필요
+- 사용자가 `scene_prompt`에 명확한 지시("벚꽃길 데이트", "비 오는 도시 야경")를 줄 때 W2/W1 규칙과 충돌할 가능성 있음 → 1줄 보험 클로즈로 충돌 시 사용자 의도 우선
+
+### 근거 / 비교 결과 (`비교.md`에서 검증)
+| 항목 | 우리 코드 상태 (실제 검증) | 개선 필요 | v39 작업 ID |
+|---|---|---|---|
+| 비트 정렬 컷 | 0건. `audio_utils.py` = pyloudnorm만 | ★ 매우 필요 | W1 |
+| 주인공/보컬샷 첫 등장 강제 | 강제 규칙 0개 | ★ 매우 필요 | W2 |
+| Seedance 정적 묘사 금지 (모션만) | 이미 잘 됨 | 제외 | — |
+| 클립 duration 인지 video_prompt | `generate_video_prompts_from_images`에 duration 인자 없음 | 필요 | W3 |
+| 긴 세그먼트 분할 | `_split_long_section`은 시간/Whisper 경계로만 분할, 비트·모델 max 무관 | 필요 | W4 |
+| 사용자 지시 우선 (안전장치) | 프롬프트 명시 없음 | 보험 | W5 |
+
+### 검증 결과 — 스펙 vs 실제 코드 (조정 사항)
+1. **`mv_generator.py:1334`은 코드가 아니라 LLM 시스템 프롬프트 텍스트**. 실제 `use_seconds` 산정 알고리즘은:
+   - 신규 경로(현재 활성): `_split_long_section` (`mv_pipeline.py:404~531`)이 결정
+   - 레거시 경로(`split_lyrics_into_scenes` 안의 `SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE`)는 LLM이 결정
+   → W1 작업 대상은 **`_split_long_section` 리팩터링**으로 정정. 1334행 LLM 프롬프트 텍스트는 부수 정리만(legacy)
+2. **모델별 max duration (스펙 vs 실제)**:
+   - Veo: 코드 하드코딩 `durationSeconds: 8` (`mv_generator.py:2502, 2511`). `start_scene_video`는 `duration` kwarg 없음 → 항상 8초 생성, Phase 3에서 `trim_video_clip`(line 2012)으로 잘라 맞춤. **Veo MAX_CLIP = 8** ✓ (스펙 일치)
+   - Kling: `max(3, min(15, int(round(duration))))` → **실제 max 15초**, 스펙은 10초 ⚠️
+   - Seedance: `max(5, min(15, int(round(duration))))` → **실제 max 15초**, 스펙은 10초 ⚠️
+   - 기존 `MAX_CLIP_SEC = 15.0` (`mv_pipeline.py:400`)이 실제 ceiling. **결정**: v39 모델별 캡은 보수적으로 Veo=8 / Kling=10 / Seedance=10 적용 (안정성·짧은 generation 시간 우선, 15초까지 확장은 추후 옵션). 코드는 모듈 상수 `MV_MODEL_MAX_CLIP = {"veo": 8, "kling": 10, "seedance": 10}`로 정의
+3. **madmom 의존성 — HIGH 리스크, 대체 결정**:
+   - 현재 `backend_9004/venv` = Python 3.11.15 + NumPy 2.4.4
+   - madmom 0.16.1(2018)은 NumPy<1.24, Python 3.7-3.9 공식 지원. `np.float`/`np.int` 제거 API 사용. Cython 컴파일 이슈 빈번
+   - **결정: madmom 미도입. `librosa.beat.beat_track()` 사용**. Python 3.11/NumPy 2.x 호환. onset envelope 기반 beat tracking → tempo + beat timestamps 추출. 다운비트는 4박자 기준 휴리스틱(`every Nth beat where N=4`) — 댄스/팝 4/4박자 가정. 정확도는 madmom 대비 낮지만 "컷이 비트에 박힌다"는 효과는 동일하게 달성. requirements.txt에 `librosa>=0.10` 추가
+   - 대안 검토: `BeatNet`(PyTorch RNN, demucs 의존성 재활용 가능하지만 모델 다운로드 +200MB), `essentia`(C++ 빌드 필요) → **librosa가 ROI 최상**
+4. **W3 — Phase 2.5 호출처에서 `use_seconds`는 이미 scene dict에 존재** (`mv_pipeline.py:1621` 호출 시점에 scene["use_seconds"]가 채워져 있음). 시그니처에 `duration` 추가 + 호출 site에 `duration=scene.get("use_seconds", 5.0)` 1줄만 추가하면 됨 ✓
+5. **W2 대상 프롬프트 — 신규 활성 경로는 `SCENE_PROMPT_ONLY_SYSTEM` (`mv_generator.py:1918`)**. `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE` (1170행)은 레거시 `split_lyrics_into_scenes` 경로용 → 두 곳 모두 손대되 1918을 메인으로
+6. **`_split_long_section`은 신규 함수가 아니라 기존 함수 리팩터링** (스펙은 "new function"이라 했으나 이미 존재). 기존 시그니처 유지하며 비트 정렬 + 모델별 캡 로직 추가. 헬퍼 `_align_to_beats(start, end, beats)`, `_split_long_segment(start, end, beats, max_clip)`을 새로 추가
+7. **시나리오 카운트 영향 평가**: 비트 정렬 결과 클립 수가 늘어날 수 있음(현재 보통 8~20개 → 12~30개 예상). Phase 1b `max_tokens = min(max(len*500, 8000), 32000)` (`mv_generator.py:2179`)는 64개까지 여유. 프론트(`UploadPage.jsx:1446, 1832, 1899`)는 `use_seconds.toFixed(1)`로 동적 표시 중 → **UI 변경 불필요**
+8. **9003 미러 — 적용 안 함** (팀 룰: 9004 only). 9003에도 `mv_pipeline.py`/`mv_generator.py`/`audio_utils.py` 존재하지만 본 변경은 9003에 미적용
+
+### 범위 (Scope)
+- **9004 only**. 9003 미러 X
+- **백엔드 9004**: `audio_utils.py` (비트 추출 신규), `mv_pipeline.py` (`_split_long_section` 리팩터링 + Phase 1 비트 사용 + Phase 2.5 호출 인자 추가), `mv_generator.py` (Phase 1b 프롬프트 강화 + Phase 2.5 함수 시그니처 + 6개 video_prompt 템플릿 duration-aware 가이드), `requirements.txt` (`librosa>=0.10` 추가)
+- **프론트엔드**: 변경 없음 (UI는 동적 scene count 이미 처리)
+
+### 핵심 알고리즘
+
+#### W1 — 비트 추출 (`audio_utils.py` 신규 함수)
+```
+def detect_beats(audio_bytes: bytes, downbeat_every: int = 4) -> dict:
+    """
+    Returns:
+      {
+        "tempo": float,            # BPM
+        "beats": List[float],      # 모든 비트 timestamp (sec)
+        "downbeats": List[float],  # downbeat_every 개마다 1개 (보통 N=4 → 1, 5, 9, ...)
+      }
+    """
+    # 1. ffmpeg로 wav 변환 → librosa.load(sr=22050, mono=True)
+    # 2. tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+    # 3. beats = librosa.frames_to_time(beat_frames, sr=sr).tolist()
+    # 4. downbeats = beats[::downbeat_every]
+    # 5. 실패/예외 시 빈 dict 반환 (호출자가 fallback 처리)
+```
+
+#### W4 — 모델별 max 캡 + 비트 정렬 분할
+```python
+# mv_pipeline.py 모듈 상수
+MV_MODEL_MAX_CLIP = {"veo": 8.0, "kling": 10.0, "seedance": 10.0}
+
+def _split_long_segment(start_t: float, end_t: float, beats: list[float], max_clip: float) -> list[tuple[float, float]]:
+    """
+    [start_t, end_t] 구간을 max_clip 이하 클립들로 분할.
+    가능하면 beats 안에 있는 시점에서 자르고, 비트가 없으면 균등 분할.
+    """
+    seg_dur = end_t - start_t
+    if seg_dur <= max_clip:
+        return [(start_t, end_t)]
+
+    # 후보 컷 = (start_t, end_t) 사이의 beats
+    candidates = [b for b in beats if start_t + 0.5 < b < end_t - 0.5]
+    if not candidates:
+        # fallback: 균등 분할
+        n = math.ceil(seg_dur / max_clip)
+        step = seg_dur / n
+        return [(start_t + i*step, start_t + (i+1)*step) for i in range(n)]
+
+    # greedy: max_clip을 넘지 않는 최대 비트에서 자름
+    out = []
+    cur = start_t
+    while end_t - cur > max_clip + 0.5:
+        cuts = [b for b in candidates if cur + 1.0 < b <= cur + max_clip and b > cur]
+        if not cuts:
+            # 비트가 max_clip 안에 없으면 강제 균등 분할
+            split = cur + max_clip
+        else:
+            split = max(cuts)  # max_clip 가까이로 채워서 자름
+        out.append((cur, split))
+        cur = split
+    out.append((cur, end_t))
+    return out
+```
+
+#### W4 — `_split_long_section` 리팩터링
+- 시그니처에 `beats: list[float] | None`, `max_clip: float` 추가
+- 기존 Whisper-경계 분할은 유지하되, Whisper 분할 결과 클립이 여전히 `max_clip` 초과면 `_split_long_segment(..., beats, max_clip)`으로 추가 분할
+- Whisper 세그먼트가 없는 케이스(현 fallback 균등 분할)에도 `_split_long_segment` 적용 → 비트 정렬 시도
+
+#### W2 — 주인공샷 규칙 (`SCENE_PROMPT_ONLY_SYSTEM` 추가 블록)
+```
+══════════════════════════════════════════════════
+ ABSOLUTE RULE — PROTAGONIST INTRO SHOT (주인공샷 / 보컬샷):
+══════════════════════════════════════════════════
+
+When a recurring character (@character1, @character2, …) appears for the FIRST time
+across the entire scene list, that scene MUST be a STATIC close-up:
+- Shot type: close-up or medium close-up of the character's face
+- Subject motion: minimal — character is essentially still (subtle breathing, blink, soft gaze allowed)
+- Camera motion: STATIC, slow zoom-in, or slow dolly-in only. NO whip pan, NO crash zoom, NO handheld shake on first appearance
+- The character should be the SOLE subject of the frame
+
+This rule applies to EACH @characterN's FIRST scene independently. From the SECOND
+appearance onward, the character may perform any action (walking, dancing, running, etc.).
+
+Why: This "introduce-then-act" pattern locks the model's understanding of the character's
+appearance, dramatically improving cross-scene visual consistency (anti-drift). It mirrors
+the K-pop MV convention of opening with a held close-up before motion begins.
+```
+
+#### W5 — 사용자 지시 우선 클로즈 (Phase 1b 프롬프트 최상단 1줄)
+```
+PRIORITY OVERRIDE: If the user's `scene_prompt` (free-form direction) explicitly
+contradicts any rule below, follow the user's direction first.
+```
+
+#### W3 — Duration-aware 가이드 (6개 video_prompt 템플릿 공통 추가 블록)
+각 모델별 보이스(Veo=descriptive / Kling=technical / Seedance=concise)는 보존, 마지막에 1개 paragraph 추가:
+```
+DURATION-AWARE MOTION (clip_duration={duration:.1f}s):
+- ≤3.0s: Single fast motion only (whip pan, crash zoom, snap dolly). One beat, one move.
+- 3.1-6.0s: Single medium-paced movement (slow dolly-in, smooth tracking, gentle pan). Develop one moment.
+- 6.1-10.0s: Slow primary movement + subtle subject motion (eyes turning, breath, hand gesture). Build atmosphere.
+Match motion energy to duration: short clips need punch, long clips need slow elegance.
+```
+- Veo 템플릿은 위 가이드를 자연어로 풀어 쓰기 ("for short 3-second clips, drive a single decisive movement…")
+- Kling 템플릿은 기술 스펙 어조("3s clip → 1 camera op only, no multi-phase")
+- Seedance 템플릿은 간결하게 ("≤3s = one fast move; 6-10s = slow + subtle.")
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/requirements.txt` — `librosa>=0.10` 추가 (W1)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/audio_utils.py` — `detect_beats(audio_bytes, downbeat_every=4) -> dict` 신규 함수 (W1)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_pipeline.py`
+  - 상수 추가 `MV_MODEL_MAX_CLIP` (≈400행 부근 `MAX_CLIP_SEC` 옆) (W4)
+  - `_split_long_section` 시그니처에 `beats`, `max_clip` 추가 + 분할 로직에서 `_split_long_segment` 호출 (404~531행) (W1, W4)
+  - `_split_long_segment` 신규 헬퍼 추가 (≈531행 직후) (W1, W4)
+  - `run_phase1_split` Phase 1a에 `detect_beats` 호출 1회 (audio_bytes 이미 로드된 위치, ≈856~1019행 사이) → `job_doc.beats`/`downbeats` 저장 (W1)
+  - `_split_long_section` 호출 site (≈1101행) — `beats`, `max_clip` 인자 전달 (W1, W4)
+  - Phase 2.5 `generate_video_prompts_from_images` 호출 site (1621~1630행) — `duration=float(scene.get("use_seconds", 5.0))` 추가 (W3)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_generator.py`
+  - 6개 video_prompt 템플릿 duration-aware 블록 추가 (`VIDEO_PROMPT_VEO_CHARACTER` 63행, `VEO_FREE` 84행, `KLING_CHARACTER` 103행, `KLING_FREE` 125행, `SEEDANCE_CHARACTER` 145행, `SEEDANCE_FREE` 166행) (W3)
+  - `generate_video_prompts_from_images` 시그니처에 `duration: float = 5.0` 추가 + system_prompt에 `.format(duration=duration)` 주입 (196~314행) (W3)
+  - `SCENE_PROMPT_ONLY_SYSTEM` 강화: 최상단에 W5 PRIORITY OVERRIDE 1줄 + 본문에 W2 PROTAGONIST INTRO SHOT 블록 (1918행~) (W2, W5)
+  - (옵션) 레거시 `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE` (1170행)도 동일 W2/W5 블록 미러 — 안전망
+
+### 작업 분해 (W1~W5)
+
+#### W1 — Beat-aligned cut alignment
+- **W1-1** `requirements.txt`에 `librosa>=0.10` 추가, `pip install` 실행, import smoke test 통과
+- **W1-2** `audio_utils.py`에 `detect_beats(audio_bytes, downbeat_every=4)` 구현. 실패 시 `{"tempo": 0.0, "beats": [], "downbeats": []}` 반환 (예외 던지지 않음)
+- **W1-3** `mv_pipeline.py` Phase 1a에 비트 추출 1회 호출 → MongoDB job 도큐먼트에 `beats`(list[float])/`tempo`(float) 저장. audio_bytes 로드 시점(≈856행, ffprobe 직후) 권장
+- **W1-4** `_split_long_section` 시그니처에 `beats=None, max_clip=15.0` 추가. 기존 Whisper-경계 분할 통과 후 `_split_long_segment(start, end, beats, max_clip)`으로 finer-grained 분할
+- **W1-5** 호출 site(≈1101행)에서 `beats=job.get("beats")`, `max_clip=MV_MODEL_MAX_CLIP[job.get("video_model","veo")]` 전달
+
+#### W2 — 주인공샷 첫 등장 강제
+- **W2-1** `SCENE_PROMPT_ONLY_SYSTEM` (mv_generator.py:1918) 본문에 `ABSOLUTE RULE — PROTAGONIST INTRO SHOT` 블록 삽입 (위 핵심 알고리즘 텍스트)
+- **W2-2** (옵션) 레거시 `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE` (1170행)에도 동일 블록 미러 — 호출 가능성이 있는 fallback 안전망
+- **W2-3** 검증: 단일 LLM 호출에서 첫 등장 룰 준수율 측정 (수동 샘플링, 후속 sanitizer/gate는 v40 후보)
+
+#### W3 — Duration-aware video_prompt
+- **W3-1** 6개 템플릿(`VIDEO_PROMPT_VEO_CHARACTER`/`VEO_FREE`/`KLING_CHARACTER`/`KLING_FREE`/`SEEDANCE_CHARACTER`/`SEEDANCE_FREE`)에 duration-aware 블록 추가. 모델별 보이스 보존
+- **W3-2** `_select_video_prompt_template`은 그대로 유지. `generate_video_prompts_from_images` 시그니처에 `duration: float = 5.0` 추가 + 선택된 system_prompt에 `.format(duration=duration)` 적용
+- **W3-3** Phase 2.5 호출 site(`mv_pipeline.py:1621`)에서 `duration=float(scene.get("use_seconds", 5.0))` 전달
+
+#### W4 — Long-segment splitting (모델별 max + beat-aligned)
+- **W4-1** `mv_pipeline.py` 모듈 상수 `MV_MODEL_MAX_CLIP = {"veo": 8.0, "kling": 10.0, "seedance": 10.0}` 추가 (≈400행)
+- **W4-2** `_split_long_segment(start_t, end_t, beats, max_clip)` 헬퍼 신규 (위 의사코드)
+- **W4-3** W1-4와 통합 — `_split_long_section` 후처리에서 `clip_dur > max_clip`이면 `_split_long_segment` 사용
+- **W4-4** 한 씬이 여러 클립으로 쪼개진 경우 → Phase 2 `image_prompt`/`first-frame image`는 동일하게 공유 (현재 코드 그대로 유지). Phase 2.5에서 `video_prompt`만 클립별 별도 생성(자연스럽게 정적→동적 변화 유도). v39에서는 추가 변화 강제 X — Phase 2.5 LLM에 duration이 짧아진 게 인지되어 자연스럽게 다양한 모션 생성됨
+
+#### W5 — 사용자 지시 우선 클로즈
+- **W5-1** `SCENE_PROMPT_ONLY_SYSTEM` 최상단(``\nYou are an elite music video cinematographer...`` 직전)에 1줄 `PRIORITY OVERRIDE: ...` 삽입
+- **W5-2** (옵션) `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE`에도 동일 미러
+
+### 영향 범위
+- **영향**:
+  - `audio_utils.py` 신규 export `detect_beats`
+  - MongoDB `mv_jobs` 도큐먼트에 `beats: list[float]`, `tempo: float` 신규 필드 추가 (optional)
+  - Phase 1 결과 씬 개수가 평균 30~50% 증가할 가능성(긴 섹션이 더 많은 클립으로 쪼개짐) → Phase 2/2.5/3 LLM·영상 호출 횟수 증가, 비용·시간 증가 가능. **부하 안전선**: `MAX_CLIP_SEC=15.0` 그대로 두고 W4의 model-cap이 추가 분할 → 최악 케이스 50% 증가 추정
+  - Phase 2.5 video_prompt가 duration에 따라 모션 톤 달라짐
+  - Phase 1b 프롬프트 비대화(시스템 프롬프트 ~3KB → ~5KB) → OpenAI/Claude 입력 토큰 +1K 정도. max_tokens 영향 없음
+- **비영향**:
+  - v37 sanitizer (`@characterN` 강제) — 무관
+  - v38 character meta 확장 — 무관
+  - Phase 0 시나리오 — 무관
+  - Phase 4 ffmpeg concat 자체 — 그대로. 분할은 Phase 1에서 끝남
+  - 프론트엔드 — 무관
+- **후방 호환**:
+  - `beats` 필드 없는 기존 job 도큐먼트도 `_split_long_section`은 `beats=None` fallback으로 정상 동작
+  - `duration` 인자 기본값 5.0 → 기존 호출처 영향 없음
+
+### 수용 기준 (Acceptance Criteria)
+1. `requirements.txt`에 `librosa>=0.10` 라인 1건. `pip install` 후 `python -c "import librosa; print(librosa.__version__)"` 성공
+2. `audio_utils.detect_beats(audio_bytes)` — 30초 이상 음원에서 BPM(60~200 사이) + beats 리스트(>=20개) 반환. 실패해도 빈 dict 반환(예외 X)
+3. Phase 1a 완료 후 MongoDB job 도큐먼트에 `beats: list[float]` 필드 존재. 길이 ≥ 음원 초수 × 1.5 (예: 180초 곡 → 270개 이상)
+4. 새 알고리즘 적용 후, 클립 길이가 `MV_MODEL_MAX_CLIP[video_model]`을 초과하는 케이스 0건 (모든 `scenes[*].use_seconds <= max_clip + 0.5`)
+5. 클립 cut 시점이 가장 가까운 beat 시점에서 ±0.5s 이내 (수동 검증, 5개 샘플)
+6. Phase 1b 출력 씬 중 각 `@characterN`의 첫 등장 씬의 `image_prompt`에 `close-up` 또는 `close up` 또는 `medium close-up` 키워드 포함 + `static` 또는 `still` 또는 `zoom` 또는 `dolly` 키워드 포함 (수동 5케이스 샘플링)
+7. Phase 2.5 video_prompt가 짧은 클립(≤3s)에서 `whip` / `crash` / `snap` / `fast` 같은 짧은 모션 키워드 우세, 긴 클립(≥7s)에서 `slow` / `gentle` / `subtle` 키워드 우세 (수동 샘플링)
+8. 사용자 `scene_prompt`에 `"새 캐릭터 첫 등장도 액션으로 가자"` 같이 W2와 충돌하는 지시를 넣었을 때, LLM이 사용자 지시를 우선 따름 (수동 1케이스)
+9. 비트 추출 실패 케이스(예: 무음 / 잡음 / 너무 짧은 음원 5초)에서도 Phase 1 정상 완료 (균등 분할 fallback)
+10. v37/v38 회귀 없음: `@character1` 태그 sanitizer 정상 동작, 캐릭터 메타 4필드 정상 주입
+11. 9003/9004/4000 헬스 200
+
+### 테스트 계획 (Tester가 수행)
+- **TT1 (단위)** `audio_utils.detect_beats` — 30초 wav, 60초 wav, 무음 5초 wav 3종 입력 → 정상 반환·BPM 범위·실패시 빈 dict 검증
+- **TT2 (단위)** `_split_long_segment` — `(0, 12, [2, 4, 6, 8, 10], max=8)` → 결과 [(0, 8), (8, 12)] 또는 비트 끝 분할 검증. `(0, 25, [], max=10)` → 균등 3등분 (0,8.33), (8.33,16.67), (16.67,25)
+- **TT3 (단위)** `_split_long_section` — 30초 섹션 + Whisper 5세그먼트 + beats 30개 + max=8 → 모든 클립 ≤8초 + 컷이 비트 시점 검증
+- **TT4 (E2E veo)** 한국어 가사·드라마 시나리오·video_model=veo로 MV 생성 → MongoDB `mv_jobs.scenes[*].use_seconds` 모두 ≤ 8.5초
+- **TT5 (E2E kling)** 동일 케이스 video_model=kling → 모든 `use_seconds` ≤ 10.5초
+- **TT6 (E2E seedance)** 동일 케이스 video_model=seedance → 모든 `use_seconds` ≤ 10.5초
+- **TT7 (Phase 1b 주인공샷)** TT4 완료 후 `scenes[]`에서 각 `@characterN` 첫 등장 씬의 `image_prompt` 추출 → close-up/static/zoom-in 패턴 5/5 충족
+- **TT8 (Phase 2.5 duration-aware)** TT4의 short(≤3s) 클립과 long(≥7s) 클립 video_prompt를 비교 → 짧은 쪽이 fast/whip/crash 키워드, 긴 쪽이 slow/subtle 키워드 우세
+- **TT9 (사용자 지시 우선)** `scene_prompt="every scene must start with an explosive action shot, no static intros"` 로 MV 생성 → 첫 씬도 액션이 들어감(주인공샷 룰이 양보)
+- **TT10 (비트 추출 실패 안전망)** 5초 무음 wav만 업로드된 시나리오 → 균등 분할 fallback으로 정상 진행, status=video_ready 도달
+- **TT11 (회귀 v37)** TT4 결과의 `image_prompt`에 `@character1` 토큰 포함, raw 한국어 이름 0건
+- **TT12 (회귀 v38)** TT4 시점 user_character_snapshot ON으로 생성 → assets.character1에 age/personality_tags/personality_text 포함
+- **TT13 (헬스)** 9004 + 4000 `/api/health` 200
+
+### 보안
+- 신규 시크릿·API 키 도입 없음 (librosa는 로컬 처리)
+- `beats` 필드는 timestamp 배열로 민감 정보 0건
+- `detect_beats`는 audio_bytes를 일시 wav로 변환 후 즉시 정리 (`tempfile.TemporaryDirectory` 사용)
+- LLM 프롬프트 강화는 텍스트만 — 인젝션 위험 없음 (사용자 입력은 별도 영역에 분리)
+- requirements.txt 추가 라이브러리 `librosa`는 BSD-3-Clause 라이선스 (상업 이용 가능)
+
+### 체크리스트
+- [ ] backend_9004 requirements.txt: `librosa>=0.10` 추가 + 설치 검증 (W1-1)
+- [ ] backend_9004 services/audio_utils.py: `detect_beats()` 신규 (W1-2)
+- [ ] backend_9004 services/mv_pipeline.py: `MV_MODEL_MAX_CLIP` 상수 + Phase 1a beats 추출 + `_split_long_section` 리팩터링 + `_split_long_segment` 헬퍼 (W1-3,4,5 / W4-1,2,3)
+- [ ] backend_9004 services/mv_generator.py: 6개 video_prompt 템플릿 duration-aware 블록 + `generate_video_prompts_from_images` 시그니처 확장 (W3-1,2)
+- [ ] backend_9004 services/mv_pipeline.py: Phase 2.5 호출에 `duration` 전달 (W3-3)
+- [ ] backend_9004 services/mv_generator.py: `SCENE_PROMPT_ONLY_SYSTEM`에 PROTAGONIST INTRO SHOT 블록 + PRIORITY OVERRIDE 1줄 (W2-1, W5-1)
+- [ ] backend_9004 services/mv_generator.py: (옵션) `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE` 레거시 미러 (W2-2, W5-2)
+- [ ] Tester TT1~TT13 전 항목 PASS
+- [ ] REPORT.md v39 append
+
+## v40 — 2026-04-25 — 캐릭터 LoRA 학습 (Replicate fast-flux-trainer) + Phase 2 첫 프레임 LoRA 라우팅
+
+### 배경
+- v39까지 확립된 파이프라인은 Phase 2(`mv_pipeline.py:1742` `generate_scene_image` 호출, 실 함수는 `mv_generator.py:2369`)에서 매 씬 첫 프레임을 Gemini(`gemini-3-pro-image-preview`)로 새로 생성. 마스터 캐릭터 시트(`character_image_bytes`)는 reference로 첨부되지만, Gemini가 매번 약간씩 다른 얼굴을 생성하는 "drift" 문제가 잔존
+- 동일 인물의 일관성을 강제하려면 사용자별 LoRA(저랭크 어댑터)를 학습해 둔 뒤, 첫 프레임 생성기를 LoRA-aware 모델로 라우팅해야 함. 사용자가 사진을 다시 업로드할 필요 없이 **마스터 캐릭터 시트 1장에서 15~20장의 변형(다른 각도/조명/표정)을 자동 생성** → Replicate `fast-flux-trainer`에 zip 업로드 → LoRA 산출물(safetensors) 보관 → Phase 2 1차 프레임을 flux+LoRA 엔드포인트로 라우팅
+- 사용자 결정 (확정 사항)
+  1. 학습 데이터: 별도 사진 업로드 X. 마스터 시트로부터 자동 변형 (Gemini 활용) 15~20장 자동 생성
+  2. 비용 정책: v40 범위 외. 결제 훅·과금 게이트 추가 X (추후 결정)
+  3. UI: Option B = 모달 다이얼로그. '내 캐릭터' 영역에 작은 상태 배지(🟢 학습됨 / 🟡 학습중 / ⚪ 미학습) → 클릭 시 모달 오픈
+
+### 검증 결과 — 스펙 vs 실제 코드 (조정 사항)
+- **`replicate` SDK 미설치**: `backend_9004/venv` (Python 3.11.15)에서 `pip show replicate` → 없음. 설치 필요. 공식 SDK는 NumPy 의존이 없고 httpx 호환 → 도입 안전. **다만** v39에서 madmom 호환성 문제가 있었던 사례를 의식해, v40은 가능하면 **httpx 직접 호출(REST)** 우선, SDK는 install이 깨끗하면 폴백으로 채택 — 즉 백엔드 코드는 SDK 의존성 없이 작성 (HTTP)
+- **현재 `characters` 컬렉션 스키마**(`routes/character.py:363~381`): `user_id`, `sheet_object_name`, `used_items`, `name`, `age`, `personality_tags`, `personality_text`, `created_at`, `updated_at`. **lora_*** 필드 0개 — v40에서 추가
+- **Phase 2 첫 프레임 generator는 `generate_scene_image`** (`mv_generator.py:2369~2507`) 단일 진입점. Gemini REST 호출 (`GEMINI_IMAGE_URL` = `gemini-3-pro-image-preview:generateContent`). **호출 site는 `mv_pipeline.py:1742`** — 여기서 LoRA 보유 여부 분기 → LoRA 있으면 `generate_scene_image_with_lora()`(신규) 호출, 없으면 기존 Gemini 경로 그대로
+- **Scene 1과 Scene 2+ 처리 분기**(`mv_pipeline.py:1724~1728`): scene 1은 cover image 참조, scene 2+는 prev scene image 참조. 즉 "첫 프레임"은 모든 씬에 해당하는 게 아니라 **scene 1만이 진정한 "첫 프레임"**이고, scene 2+는 prev frame을 인풋으로 한 변환 성격. 따라서 v40 Phase 2 라우팅은 **LoRA를 모든 씬에 일괄 적용 vs scene 1만 LoRA + scene 2+는 기존 Gemini를 prev로 유지** 두 옵션이 있음 → 결정: **모든 씬에 LoRA 적용**(prev frame은 reference image로만 첨부, 본질적으로는 LoRA가 face identity 잠금) — 일관성·구현 단순성 우선. 단 scene_type=`drama` 중 캐릭터 미등장 씬에서는 LoRA 비적용(불필요한 face injection 방지). 기준: scene dict에 `@character1` 토큰이 있거나 `character_image_bytes` 첨부 조건 만족
+- **`fast-flux-trainer` 산출물 = LoRA safetensors URL**. Replicate output schema는 `version` 모델별로 다르지만 `fast-flux-trainer`는 trained model의 새 version 자체를 만들어 다음에 `replicate run owner/model:version` 형태로 사용 가능 → MongoDB에 저장할 항목: `version_id`(예: `username/your-model:abc123`), `weights_url`(safetensors 직링크 — 옵션), `trigger_word`(학습 시 지정), `trained_at`
+- **LoRA 추론 엔드포인트 후보 (Q1 결정 사항)**:
+  - (a) `black-forest-labs/flux-dev-lora` (Replicate) — Replicate trainer로 만든 LoRA 직접 호환. 입력: prompt + lora_scale + 학습된 weights URL. **결정: 채택**(같은 플랫폼이므로 마찰 최소)
+  - (b) fal.ai `flux-lora` — 옵션이지만 fast-flux-trainer 산출물과 weights 형식 호환 검증 필요 → **fallback 후보**
+  - (c) Gemini + LoRA injection — Gemini는 LoRA 미지원 → 제외
+  - **최종 결정**: 추론 = `black-forest-labs/flux-dev-lora` on Replicate. 학습 = `replicate/fast-flux-trainer`. 동일 플랫폼·토큰 1개로 해결
+- **트리거 워드**: `fast-flux-trainer`는 `trigger_word`(예: `"TOK"`) 명시 권장. 사용자별 unique 토큰 생성: `f"u{user_id_short}_char"` (영문+숫자만, 8~12자). 이 토큰을 추론 시 prompt 앞단에 자동 prepend
+- **Phase 2 prompt 변형**: LoRA 분기 진입 시 `prompt = f"{trigger_word}, {original_image_prompt}, photorealistic, ..."` 로 트리거 prepend. 마스터 시트 reference 첨부는 LoRA 모드에선 생략(가능, 그러나 1차 검증 단계에선 함께 첨부해도 무방 → 코드는 boolean 토글 옵션으로 작성)
+- **Background task 패턴**: `mv.py`에서 이미 `BackgroundTasks.add_task` 사용 중. 학습은 짧지 않음(보통 5~30분) → FastAPI BackgroundTasks가 프로세스 재시작에 취약하므로, 학습 잡은 **MongoDB `lora_jobs` 컬렉션에 영속 상태 기록 + asyncio polling task**로 구현. 즉 시작 시 Replicate prediction 생성 → prediction_id 저장 → 별도 polling 코루틴(서버 부팅 시 자동 재개)이 30초 간격으로 status 확인 → 완료 시 MongoDB 업데이트. 서버 재시작 후 `lora_jobs.status in ["training", "polling"]`인 잡을 부팅 hook(`main.py` `lifespan`)에서 polling 재개
+- **동시성 / 락**: 한 user 당 동시 1잡. `lora_status="training"` 일 때 `POST /train-lora` 재요청은 409. 재학습은 명시적 `DELETE /lora` 후 다시 `POST /train-lora`
+- **민감도**: `REPLICATE_API_TOKEN`은 `.env` 전용. 코드/PLAN/REPORT엔 placeholder만
+- **9003 미러 — 적용 안 함** (팀 룰: 9004 only)
+
+### 범위 (Scope)
+- **9004 only**. 9003 미러 X
+- **백엔드 9004**:
+  - `requirements.txt` — 신규 의존성 0개(httpx 직접 호출). zip 작업은 표준 `zipfile` 모듈
+  - `.env.example` + `app/config.py` — `REPLICATE_API_TOKEN` 추가
+  - `app/services/character_variations.py` (신규) — 마스터 시트로부터 15~20장 변형 생성 (Gemini)
+  - `app/services/lora_trainer.py` (신규) — Replicate 학습 오케스트레이션 (zip 빌드 → upload → predict 시작 → polling → MinIO 저장)
+  - `app/services/mv_generator.py` — `generate_scene_image_with_lora()` 신규 함수 (Replicate `flux-dev-lora` 호출)
+  - `app/services/mv_pipeline.py` — Phase 2 호출 분기 (LoRA 보유 시 LoRA 경로)
+  - `app/routes/character.py` — `POST /train-lora`, `GET /lora-status`, `DELETE /lora` 신규 엔드포인트
+  - `app/main.py` — `lifespan`에서 미완료 LoRA 잡 polling 재개
+  - MongoDB `characters` 컬렉션 — `lora_status`, `lora_artifact`, `lora_progress`, `lora_trigger_word` 필드 추가 (optional, 후방 호환)
+- **프론트엔드**:
+  - `src/api/index.js` — `getLoraStatus`, `startLoraTraining`, `deleteLora` 함수 추가
+  - `src/components/LoraTrainingModal.jsx` (신규) — 상태별(미학습/학습중/학습됨) 모달 컴포넌트
+  - `src/components/LoraTrainingModal.css` (신규)
+  - `src/pages/MyMusicPage.jsx` `CharacterSection` — 시트 옆 상태 배지 + 클릭 핸들러 + 폴링 훅 (학습중일 때만 5초 간격 폴링)
+  - `src/pages/MyMusicPage.css` — 배지 스타일 추가
+
+### 핵심 설계
+
+#### 데이터 흐름
+```
+[user clicks 'AI 학습 시작' in modal]
+   │
+   ▼
+POST /api/character/train-lora ──┐
+   │                              │ (1) BG task: build_variations
+   │                              ▼
+   │              character_variations.generate_variations(sheet_bytes, n=18)
+   │                              │  Gemini 18 calls, neutral bg/different angles/expressions
+   │                              ▼
+   │              MinIO: characters/{user_id}/lora_dataset/var_{0..17}.png
+   │                              │
+   │                              ▼ (2) lora_trainer.start_training
+   │              build zip (in-memory) → upload to Replicate file API
+   │                              │
+   │                              ▼
+   │              Replicate prediction = predictions.create(
+   │                  model="replicate/fast-flux-trainer",
+   │                  input={input_images_url, trigger_word, training_steps=1000})
+   │                              │
+   │                              ▼ MongoDB: characters.lora_status="training"
+   │                              │  characters.lora_progress={prediction_id, ...}
+   ▼
+GET /api/character/lora-status (polled by FE every 5s)
+   ├── reads MongoDB characters.lora_status / progress
+
+[BG polling task — every 30s]
+   │ poll Replicate predictions/{prediction_id}
+   │   status=succeeded → output URL = trained model version
+   │     → save to MongoDB characters.lora_artifact={version_id, weights_url, trigger_word, trained_at}
+   │     → lora_status="done"
+   │   status=failed → lora_status="failed", error in lora_progress
+   ▼
+
+[Later: MV Phase 2 generation]
+   for each scene:
+     if user has lora_artifact AND scene has @character1 (or character_image_bytes):
+        img = await generate_scene_image_with_lora(
+            prompt, trigger_word, lora_version_id, prev_or_cover_ref_bytes)
+     else:
+        img = await generate_scene_image(...)   # 기존 Gemini 경로
+```
+
+#### Replicate REST API 호출 패턴 (`lora_trainer.py`)
+```python
+# 1) 입력 이미지 zip을 Replicate file 업로드(혹은 사전 서명된 MinIO URL을 input_images로 직접 전달)
+#    fast-flux-trainer 입력 스펙(Replicate 모델 페이지 기준):
+#      input_images: zip URL (https), 5~30 images recommended
+#      trigger_word: str
+#      autocaption: bool (default True)
+#      training_steps: int (default 1000)
+#      lora_rank: int (default 16)
+
+# 2) prediction 생성
+POST https://api.replicate.com/v1/predictions
+  Authorization: Token {REPLICATE_API_TOKEN}
+  body: {"version": "<fast-flux-trainer version sha>", "input": {...}}
+
+# 3) polling
+GET https://api.replicate.com/v1/predictions/{id} → status, logs, output
+   status: "starting"|"processing"|"succeeded"|"failed"|"canceled"
+
+# 4) 완료 시 output: 새 모델 버전(예: "your-username/flux-userN-lora:abc123def...")
+```
+
+`fast-flux-trainer` 정확 input/output 스펙은 backend-dev가 구현 시 Replicate 페이지에서 최종 확인 — Q3 (Open question)
+
+#### Phase 2 LoRA 분기 (`mv_pipeline.py:1741~1748` 근처)
+```python
+# Pseudocode (실제 코드는 backend-dev가 작성)
+char_doc = await mongo.characters.find_one({"user_id": job["user_id"]})
+lora_artifact = (char_doc or {}).get("lora_artifact")
+trigger_word = (char_doc or {}).get("lora_trigger_word")
+
+scene_has_character = bool(character_image_bytes) or "@character1" in (scene_desc + " " + (scene.get("video_image_prompt") or ""))
+
+if lora_artifact and scene_has_character:
+    img_bytes = await generate_scene_image_with_lora(
+        scene_desc,
+        trigger_word=trigger_word,
+        lora_version=lora_artifact["version_id"],
+        ref_image_bytes=ref_image,   # cover or prev frame
+        scene_type=scene.get("scene_type", "drama"),
+    )
+    scenes[i]["image_source"] = "flux-lora"
+else:
+    img_bytes = await generate_scene_image(...)   # 기존 분기 그대로
+    scenes[i]["image_source"] = "gemini"
+```
+
+#### `character_variations.generate_variations` (신규 모듈)
+- 입력: 마스터 시트 bytes
+- 출력: List[bytes] (PNG, 18장)
+- 알고리즘: 18종 prompt template (정면/반측/측면 각 3 × 표정(미소/무표정/사색) × 조명(스튜디오/햇빛/실내) 조합) 미리 정의 → 각 prompt + 마스터 시트 reference로 Gemini 이미지 호출 (`gemini-3-pro-image-preview` 동일). neutral grey 배경 강제, 단일 인물 강제, 텍스트/UI 금지 — 실수로 캐릭터 시트 레이아웃이 다시 나오지 않도록 "single full-body shot, no grid layout, no labels, no text" 명시
+- 실패한 변형은 skip (최소 12장 확보 시 진행, 미달 시 학습 중단 + lora_status="failed")
+- 동시 실행: asyncio.gather로 병렬화하되 동시 4개로 제한(asyncio.Semaphore) — Gemini rate limit 안전마진
+
+#### `lora_jobs` MongoDB 컬렉션 (운영용 보조 — 옵션)
+- `characters` 도큐먼트의 `lora_*` 필드만으로도 동작 가능. 별도 `lora_jobs` 컬렉션은 **추가하지 않음** — 단순화 (단일 컬렉션 내 polling state 관리)
+- 필드 구조 (`characters` 컬렉션 확장):
+  - `lora_status`: "idle" | "preparing" | "training" | "polling" | "done" | "failed" (없으면 idle)
+  - `lora_progress`: {"step": str, "percent": int 0~100, "message": str, "started_at": ISO, "eta_sec": int|null, "prediction_id": str|null}
+  - `lora_artifact`: {"version_id": str, "weights_url": str|null, "trigger_word": str, "trained_at": ISO, "dataset_object_prefix": str}
+  - `lora_trigger_word`: str (artifact가 없어도 학습 시작 시 미리 결정/기록 — 재시도 시 동일 사용)
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/.env.example` — `REPLICATE_API_TOKEN=` 라인 추가 (placeholder)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/config.py` — `replicate_api_token: str = ""` 필드 추가 (≈80행, fal_api_key 인근)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py` — **신규 파일**. `generate_variations(sheet_bytes: bytes, n: int = 18) -> List[bytes]`
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/lora_trainer.py` — **신규 파일**. `start_training(user_id, sheet_bytes, mongo, minio_client) -> str(prediction_id)`, `poll_training(user_id, prediction_id, mongo) -> None`, `cancel_training(user_id, prediction_id) -> bool`, helpers `_build_zip(images: List[bytes]) -> bytes`, `_upload_zip_to_replicate(zip_bytes) -> str(url)`, `_make_trigger_word(user_id) -> str`
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_generator.py`
+  - `GEMINI_IMAGE_URL` 상수 인근에 `REPLICATE_API_BASE = "https://api.replicate.com/v1"` 추가
+  - `generate_scene_image_with_lora()` 신규 함수 (`generate_scene_image` 직후 ≈2510행)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_pipeline.py`
+  - Phase 2 루프 시작 전(`run_phase2_images` ≈1675행)에 user의 character 도큐먼트 1회 fetch → `lora_artifact`/`trigger_word` 캐시
+  - 1741~1748행 분기 — LoRA 보유 시 `generate_scene_image_with_lora` 호출, 미보유 시 기존 경로
+  - 1762행 `image_source` 값에 "flux-lora" 케이스 추가
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py`
+  - `POST /api/character/train-lora` 엔드포인트 추가 (≈462행 직전, DELETE /me 위)
+  - `GET /api/character/lora-status` 엔드포인트 추가
+  - `DELETE /api/character/lora` 엔드포인트 추가
+  - 요청 시 `BackgroundTasks` 사용해 학습 시작 (`start_training` → asyncio task)
+  - `GET /me` 응답에 `lora_status`, `lora_trained_at` 포함 (배지 즉시 표시용)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/main.py`
+  - `lifespan` startup hook에 `resume_pending_lora_jobs(mongo)` 호출 추가 — 서버 재시작 후 미완료 polling 재개
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/api/index.js`
+  - `getLoraStatus`, `startLoraTraining`, `deleteLora` 함수 추가 (≈272행, refineCharacterSheet 뒤)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx` — **신규 파일**
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.css` — **신규 파일**
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx`
+  - `CharacterSection` 함수(153행~)에 `loraStatus` state + 폴링 useEffect + `showLoraModal` state 추가
+  - 587~615행(saved character render) 안에 상태 배지 1개 추가 + 클릭 핸들러
+  - 모달 마운트 (return JSX 끝부분에)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.css` — `.mymusic-character__lora-badge` 스타일 추가
+
+### 작업 분해
+
+#### Backend (B-tasks)
+- **B1** Config — `app/config.py`에 `replicate_api_token: str = ""` 필드 1줄 추가. `.env.example`에 `REPLICATE_API_TOKEN=` placeholder 추가
+- **B2** `services/character_variations.py` 신규 — `generate_variations(sheet_bytes, n=18) -> List[bytes]`. 18종 prompt template 사전 정의. 동시 4개 Semaphore. 실패는 skip, 최소 12장 미달 시 ValueError. 입력은 마스터 시트 PNG, 출력은 단일 인물 풀바디 + 다양 각도/표정/조명, neutral grey 배경
+- **B3** `services/lora_trainer.py` 신규 — Replicate REST 호출 (httpx). 함수:
+  - `_make_trigger_word(user_id) -> str` — `f"u{hash(user_id)[:8]}char"` 형식
+  - `_build_dataset_zip(images: List[bytes]) -> bytes` — 표준 zipfile, image_001.png~image_NNN.png
+  - `_upload_dataset(zip_bytes) -> str(url)` — Replicate `POST /v1/files` (multipart) 또는 MinIO 사전서명 URL → 둘 중 동작 검증되는 쪽으로 (Open Q3)
+  - `start_training(user_id, sheet_object_name, mongo, minio_client) -> str(prediction_id)`
+    1. MongoDB lora_status="preparing"
+    2. 시트 bytes 다운로드 → `generate_variations` 호출
+    3. 변형들 MinIO에 저장 (`characters/{user_id}/lora_dataset/var_NN.png`)
+    4. zip 빌드 → upload
+    5. `POST /v1/predictions` (model=fast-flux-trainer, input={input_images, trigger_word, training_steps=1000, lora_rank=16})
+    6. lora_status="training", lora_progress.prediction_id 저장
+    7. asyncio.create_task(`poll_training`) 백그라운드 시작
+    8. return prediction_id
+  - `poll_training(user_id, prediction_id, mongo)` — 30초 간격 polling 루프 (최대 60분). status==succeeded 시 output 파싱 → `lora_artifact` 저장, lora_status="done". failed 시 lora_status="failed" + 에러 메시지
+  - `resume_pending_lora_jobs(mongo)` — 서버 부팅 시 호출. `lora_status in ["training", "polling"]`인 모든 char 도큐먼트에 대해 polling 코루틴 재기동
+- **B4** `routes/character.py` — 신규 엔드포인트 3개:
+  - `POST /api/character/train-lora` — 사용자가 character 보유 + lora_status not in ["preparing","training","polling"] 검증. `BackgroundTasks.add_task(lora_trainer.start_training, ...)`. 응답 `{prediction_id, status: "training"}`
+  - `GET /api/character/lora-status` — MongoDB에서 `lora_status`, `lora_progress`, `lora_artifact` 응답
+  - `DELETE /api/character/lora` — lora_status="training"이면 cancel 시도(Replicate `POST /v1/predictions/{id}/cancel`), MinIO `characters/{user_id}/lora_dataset/` 정리, `lora_*` 필드 unset
+  - `GET /me` 응답에 `lora_status`, `lora_trained_at`, `lora_trigger_word` 추가 (FE 배지용)
+- **B5** `services/mv_generator.py` — `generate_scene_image_with_lora(scene_description, trigger_word, lora_version, ref_image_bytes=None, scene_type="drama") -> bytes` 추가. Replicate `predictions.create(version=lora_version, input={prompt: f"{trigger_word}, {scene_description}, ...", image: ref_image or None, num_inference_steps: 28, guidance_scale: 3.5, lora_scale: 1.0, aspect_ratio: "16:9"})`. 동기 wait(`Prefer: wait` 헤더 사용 → 60초 내 결과) 또는 polling. 결과 image URL → httpx GET → bytes 반환
+- **B6** `services/mv_pipeline.py` Phase 2 분기 — `run_phase2_images` 시작부에 `char_doc = await mongo_db.characters.find_one({"user_id": job["user_id"]})`, `lora_artifact`/`trigger_word`/`scene_has_character` 판정. 1741~1748 분기 추가. 새 image_source = "flux-lora" 라벨링
+- **B7** `app/main.py` lifespan startup — `from .services.lora_trainer import resume_pending_lora_jobs`, await 호출. shutdown은 별도 처리 X (asyncio task는 graceful 종료에 맡김)
+- **B8** Idempotency / 락 — `start_training` 진입 시 `find_one_and_update({"user_id": ..., "lora_status": {"$in": [None, "idle", "failed", "done"]}}, {"$set": {"lora_status": "preparing"}})` 형태의 atomic guard. 실패하면 409
+- **B9** (선택) `requirements.txt` 검토 — replicate SDK는 도입하지 않음(httpx 직접). 추가 의존성 0건
+
+#### Frontend (F-tasks)
+- **F1** `src/api/index.js` — 함수 3개 추가:
+  ```js
+  export const getLoraStatus = () => API.get('/character/lora-status');
+  export const startLoraTraining = () => API.post('/character/train-lora');
+  export const deleteLora = () => API.delete('/character/lora');
+  ```
+- **F2** `src/components/LoraTrainingModal.jsx` 신규 — props: `{open, onClose, onStarted, onCompleted}`. 내부 state: `loraStatus`(`untrained`|`training`|`done`|`failed`), `progress`(0~100), `step`(string). 마운트 시 `getLoraStatus()` 호출, training이면 5초 폴링. 상태별 view:
+  - `untrained`: 헤드라인 "AI 캐릭터 학습으로 일관성 향상" + 4~5개 benefit bullet + "AI 학습 시작" CTA (클릭 시 `startLoraTraining()` → polling 시작)
+  - `training`: progress bar + step 텍스트("변형 이미지 생성 중...", "Replicate 업로드 중...", "학습 진행 중 (43%)...") + ETA + "백그라운드로 닫기" 버튼 (모달만 닫음, 폴링은 부모로 위임)
+  - `done`: "학습 완료" 헤더 + trained_at 표시 + "재학습" 버튼(컨펌 후 `deleteLora` → `startLoraTraining`) + (Phase 2: LoRA 변형 4장 미리보기는 v40에서는 placeholder만, 실 호출은 v40.1)
+  - `failed`: 에러 메시지 + "다시 시도" 버튼
+- **F3** `src/components/LoraTrainingModal.css` 신규 — 모달 오버레이 + 카드 + progress bar 스타일
+- **F4** `src/pages/MyMusicPage.jsx` `CharacterSection` 수정 (587~615행 saved character 영역):
+  - `loraStatus` state + `loraTrainedAt` state 추가 (`getMyCharacter` 응답에서 hydrate)
+  - `showLoraModal` boolean state
+  - 시트 옆(또는 캐릭터 액션 버튼 옆)에 `<button className="mymusic-character__lora-badge mymusic-character__lora-badge--{status}" onClick={() => setShowLoraModal(true)}>{label}</button>` 1개 추가. label = "🟢 학습됨" / "🟡 학습 중 ({percent}%)" / "⚪ 미학습"
+  - 학습 중 상태일 때만 부모도 5초 폴링 (배지 텍스트 갱신용)
+  - return JSX 말미에 `{showLoraModal && <LoraTrainingModal ...>}` 마운트
+- **F5** `src/pages/MyMusicPage.css` — 배지 스타일 (3종 색상)
+
+#### Tester (TT-tasks)
+- **TT1** `character_variations.generate_variations` 단위 테스트 — 마스터 시트 1장 입력, 18장 시도 → ≥12장 PNG bytes 반환. 단일 인물 (얼굴 1개) 검증은 수동 (5장 샘플)
+- **TT2** `lora_trainer._build_dataset_zip` 단위 — 18장 입력 → zipfile 디코드 가능 + 18 entries 검증
+- **TT3** `lora_trainer.start_training` 통합 (스텁) — Replicate API mock 사용. MongoDB lora_status가 idle→preparing→training 순으로 갱신되는지 검증
+- **TT4** E2E 학습 — 실 Replicate(예산 허용 시) 또는 fixture로 prediction_id 주입 → polling 코루틴이 succeeded 응답 시 lora_artifact 저장, lora_status="done" 검증
+- **TT5** `POST /api/character/train-lora` 응답 200 + 중복 호출 시 409 (B8)
+- **TT6** `GET /api/character/lora-status` 응답 schema 검증 + `untrained`/`training`/`done` 3가지 케이스
+- **TT7** `DELETE /api/character/lora` — training 중 호출 시 cancel 시도 + MongoDB lora_* 필드 unset + MinIO dataset 디렉터리 정리
+- **TT8** Phase 2 LoRA 라우팅 — fixture로 user에 `lora_artifact` 주입한 뒤 MV 생성 잡 실행 → `mv_jobs.scenes[*].image_source == "flux-lora"`인 씬이 ≥1건. lora_artifact 없는 user는 `image_source == "gemini"`만
+- **TT9** Phase 2 LoRA 결과 일관성 — 실 학습 LoRA로 3씬 이상 생성 후 face hash/distance 측정. v37/v38/v39 회귀(같은 시나리오에서) Gemini-only 대비 face consistency 향상 (정성 평가 OK)
+- **TT10** UI — `미학습` 상태에서 배지 클릭 → 모달 열림 → "AI 학습 시작" 클릭 → 백엔드 호출 200 → 모달이 training 뷰로 전환 → 5초 후 progress 갱신
+- **TT11** UI — training 중 "백그라운드로 닫기" 클릭 → 모달 닫힘 + 메인 배지가 🟡 표시 + 다시 클릭 시 progress 동일 진행 표시
+- **TT12** 회귀 v36~v39 — character 저장/조회/삭제, MV 생성 정상. v39 비트 정렬 + 주인공샷 동작 그대로
+- **TT13** 서버 재기동 시 미완료 polling 자동 재개 — lora_status="training" 상태에서 backend 재시작 → 5분 내 polling 코루틴이 다시 동작 (로그로 확인)
+- **TT14** 헬스 — 9004 + 4000 `/api/health` 200
+
+### 영향 범위
+- **영향**:
+  - `app/config.py`에 `replicate_api_token` 1필드 신규
+  - MongoDB `characters` 컬렉션 — `lora_status`/`lora_progress`/`lora_artifact`/`lora_trigger_word` 4개 필드 신규 (모두 optional, 기존 도큐먼트 후방 호환)
+  - MinIO `aimu-images` 버킷 — `characters/{user_id}/lora_dataset/var_NN.png` 신규 prefix
+  - 신규 라우트: `POST /api/character/train-lora`, `GET /api/character/lora-status`, `DELETE /api/character/lora`
+  - `GET /api/character/me` 응답 — `lora_status`, `lora_trained_at`, `lora_trigger_word` 필드 추가 (기존 클라이언트는 무시 가능 → 후방 호환)
+  - Phase 2 image generation은 lora_artifact 보유 user에 한해 경로 분기 → 기존 user는 100% 동일
+  - 외부 API 신규 사용: Replicate (`fast-flux-trainer`, `flux-dev-lora`)
+- **비영향**:
+  - v37~v39 정상 동작 (sanitizer, 캐릭터 메타, 비트 정렬, 주인공샷, duration-aware video_prompt 모두 무관)
+  - Phase 0/1/1.5/2.5/3/4/5 — 모두 무관 (오직 Phase 2 image gen 분기만 변경)
+  - 기존 사용자(LoRA 미학습)는 코드 경로/응답 100% 동일
+- **후방 호환**:
+  - 기존 character 도큐먼트는 lora_* 필드 없음 → 코드는 None/idle을 모두 "미학습"으로 처리
+  - `image_source="gemini"` 케이스가 default로 유지됨
+
+### 수용 기준 (Acceptance Criteria)
+1. `.env.example`에 `REPLICATE_API_TOKEN=` 라인 1건. `app/config.py.settings.replicate_api_token` 속성 존재
+2. `services/character_variations.generate_variations(sheet_bytes, n=18)` — 정상 케이스에서 ≥12장 PNG 반환. 입력이 너무 작은 이미지(≤500x500)도 정상 처리. Gemini 실패 시 raise 안 하고 skip
+3. `services/lora_trainer.start_training` — 정상 호출 시 MongoDB `characters.{lora_status: "training", lora_progress.prediction_id: "..."}` 갱신. asyncio task가 detached 상태로 polling 시작
+4. `POST /api/character/train-lora` — 첫 호출 200 + `prediction_id` 응답. 두 번째 호출(이미 training 중) 409
+5. `GET /api/character/lora-status` — 학습 미시작 user → `{status: "idle"}`. 학습 중 user → `{status: "training", progress: {percent, step, eta_sec}, prediction_id}`. 완료 user → `{status: "done", artifact: {...}}`
+6. `DELETE /api/character/lora` — 200 + lora_* 필드 unset + Replicate cancel 시도 (실패해도 200 반환). MinIO `characters/{user_id}/lora_dataset/` 객체 0건
+7. Phase 2: `lora_artifact` 보유 user의 MV 생성 잡 → `scenes[*]` 중 `@character1`을 포함한 씬 ≥1건이 `image_source: "flux-lora"`. 그 외(`scene_has_character == False`) 씬은 `image_source: "gemini"`
+8. Phase 2: `lora_artifact` 미보유 user의 MV → 모든 씬 `image_source: "gemini"` (기존 동작 100% 회귀 없음)
+9. 서버 재시작 후, lora_status="training" 도큐먼트의 polling이 60초 내 자동 재개 (로그 `resume_pending_lora_jobs`)
+10. 프론트: `미학습` 상태에서 배지 클릭 → 모달 → "AI 학습 시작" → 백엔드 200 응답 → 모달 view 즉시 `training`. 5초 후 progress 갱신 표시
+11. 프론트: training 중 모달 닫고 다시 열어도 동일한 진행률 표시. 메인 화면 배지가 🟡 표시
+12. 프론트: 학습 완료 후 페이지 새로고침해도 🟢 배지 + trained_at 표시
+13. v37/v38/v39 회귀 없음 — 캐릭터 저장/조회/삭제 정상, MV 생성 정상(LoRA 경로 미사용 시), 비트 정렬·주인공샷 룰 정상
+14. 9004 + 4000 헬스 200
+
+### 테스트 계획 (Tester가 수행)
+- 위 TT1~TT14 전 항목
+
+### 보안
+- `REPLICATE_API_TOKEN`은 `.env`에만 저장, PLAN/REPORT/코드 어디에도 실값 X (placeholder만)
+- `lora_artifact.weights_url`은 Replicate 사인된 URL — 만료/회전 정책은 Replicate 측 → 추론 시 항상 `version_id`(model:sha 형식) 사용 권장. weights_url은 보조 메타로만 보관
+- LoRA 학습 데이터셋(MinIO `characters/{user_id}/lora_dataset/`)은 사용자 개인 식별 가능 정보 → 학습 완료 후 30일 자동 정리 정책은 v40 범위 외(Open Q5). 일단은 영구 보관(재학습 데이터 재활용 가능성)
+- 사용자별 trigger_word는 user_id 기반 해시(역방향 추정 어렵게) — 다만 trigger word는 보안 시크릿이 아님 (모델 추론 시 prompt에 노출됨)
+- Replicate 호출은 백엔드에서만 발생 (FE는 백엔드 엔드포인트만 호출). 토큰이 브라우저로 전달되지 않음
+- prediction_id는 사용자 고유 — 다른 user의 lora_status 조회 차단(`user_id`로 격리)
+
+### Open Questions (backend-dev가 구현 시 확정)
+- **Q1 (해결됨)** 추론 엔드포인트 = Replicate `black-forest-labs/flux-dev-lora`. 학습 = `replicate/fast-flux-trainer`. 동일 플랫폼 + 토큰 1개
+- **Q2 (해결됨)** 학습 데이터 = 마스터 시트로부터 Gemini로 18장 자동 변형 (`gemini-3-pro-image-preview`)
+- **Q3 (open)** `fast-flux-trainer` input 파라미터 정확 키 이름(`input_images` vs `input_zip` 등) 및 file upload 방식(Replicate `POST /v1/files` multipart vs 사전서명 URL) — 구현 시 Replicate 모델 페이지 schema에서 최종 확인
+- **Q4 (open)** `flux-dev-lora` input의 LoRA weights 지정 방식 — `version_id`만으로 추론 가능한지 vs 별도 `lora_weights` URL 필드 필요한지 — 구현 시 모델 페이지 확인
+- **Q5 (open)** 학습 데이터셋 자동 삭제 정책 (30일 후?) — v40 범위 외, v40.1에서 결정
+- **Q6 (open)** Replicate 실패/타임아웃(60분 초과) 시 자동 재시도 정책 — v40에서는 재시도 X, lora_status="failed" + 사용자가 재학습 트리거하는 형태
+- **Q7 (open)** 비용 표시 — 사용자에게 학습/추론 비용 미리 알림? v40 범위 외(요구 사항: 결제 훅 X, 비용 정책 미정)
+
+### 체크리스트
+- [ ] backend_9004 .env.example: `REPLICATE_API_TOKEN=` placeholder 1줄 (B1)
+- [ ] backend_9004 app/config.py: `replicate_api_token: str = ""` 필드 (B1)
+- [ ] backend_9004 services/character_variations.py 신규 생성 (B2)
+- [ ] backend_9004 services/lora_trainer.py 신규 생성 (B3)
+- [ ] backend_9004 services/mv_generator.py: `generate_scene_image_with_lora()` 추가 (B5)
+- [ ] backend_9004 services/mv_pipeline.py: Phase 2 LoRA 분기 (B6)
+- [ ] backend_9004 routes/character.py: 3개 신규 엔드포인트 + GET /me 응답 확장 (B4)
+- [ ] backend_9004 app/main.py: `lifespan`에서 `resume_pending_lora_jobs` 호출 (B7)
+- [ ] backend_9004 atomic guard로 동시 학습 차단 (B8)
+- [ ] frontend src/api/index.js: 3개 함수 추가 (F1)
+- [ ] frontend src/components/LoraTrainingModal.jsx + .css 신규 (F2, F3)
+- [ ] frontend src/pages/MyMusicPage.jsx: 배지 + 폴링 + 모달 마운트 (F4)
+- [ ] frontend src/pages/MyMusicPage.css: 배지 스타일 (F5)
+- [ ] Tester TT1~TT14 전 항목 PASS
+- [ ] REPORT.md v40 append
+
+## v40-2 — 2026-04-25 — LoRA 정밀화 (B2 face-only variation + Stage 3 2-step 합성 + UI 비용 라벨)
+
+### 배경
+- v40-1 출하 후 사용자 피드백:
+  1. **의상 처리 약함**: B2 변형 18장은 "Maintain identical face, hair, skin tone, and outfit from the reference sheet" 룰을 강제 → LoRA가 의상 패턴까지 학습. 결과적으로 추론 시 새로운 의상(@character1이 다른 옷을 입은 시나리오)에서 LoRA가 옛 옷을 강제 주입하는 bias 발생
+  2. **Stage 3 단순 LoRA 호출의 한계**: 현재 `generate_scene_image_with_lora()`는 prompt + LoRA + (옵션) prev frame 1장만 입력. 마스터 시트의 정확한 의상/소품/액세서리는 LoRA가 학습한 면(face) 외에는 재현 보장 X. 시나리오 의상이 매 씬 일관되게 유지되려면 Nano Banana(Gemini)의 multi-image conditioning이 필수
+  3. **비용 가시성 부재**: 사용자가 클릭하면 결제가 발생하는 버튼인데도 가격 표시가 없음 → "AI 학습 시작", "다시 만들기" 등에 비용 라벨 추가 요구
+
+- 사용자 결정 사항(확정):
+  - **B2 face-only**: 변형 프롬프트를 face-focused + NEUTRAL/MINIMAL clothing(흰티/단순셔츠 + plain background)로 재작성. LoRA가 face identity만 학습 → 추론 시 의상 자유도 확보
+  - **Stage 3 = Option 3 (2-step)**:
+    - Step 3a: Nano Banana(Gemini)에 [마스터 시트 + 씬 프롬프트 + 직전 씬 ref] 전달 → 의상 보존된 합성 이미지 (얼굴은 약간 drift)
+    - Step 3b: FLUX-LoRA img2img(낮은 strength)로 Step 3a 결과를 입력 image로 받아 face-locked 최종 씬 산출
+    - 비용: $0.03/씬 → $0.05/씬 (60% 증가, 20씬 MV에서 +$0.40)
+  - **Stage 2(마스터 시트)는 변경 없음**: `/api/character/generate-sheet`가 이미 photo + top + bottom + shoes를 받아 Nano Banana로 마스터 시트 생성 (`character_generator.generate_character_sheet`) — 그대로 재활용
+  - **UI 비용 라벨**: 결제 발생 버튼 전체에 `~$X` 또는 `~$X (1회)` 형식으로 표기
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `services/character_variations.py` — 현재 18종 prompt
+- **확인된 사실**: 18개 프롬프트 전부에 `"Maintain identical face, hair, skin tone, **and outfit** from the reference sheet."` 라인이 들어가 있음 (line 39~59 모두 동일)
+- **즉, 현재는 outfit-bound variation**. 사용자 요구(face-only, neutral clothing)와 정반대
+- **변경 필요**: 18개 프롬프트 전수 재작성 — face/hair/skin tone만 유지 + outfit은 "white plain T-shirt OR neutral grey simple shirt, plain neutral grey background" 등 minimal/neutral로 강제
+
+#### 2. `services/mv_generator.py` — 현재 `generate_scene_image_with_lora()` (line 2513~2628)
+- **현재 시그니처**: `(image_prompt, lora_url, trigger_word, reference_image_bytes=None) -> bytes`
+- **현재 동작**: Replicate `black-forest-labs/flux-dev-lora` 호출. input dict:
+  ```
+  prompt = f"{trigger_word} {image_prompt}, cinematic widescreen 16:9 ..."
+  lora_weights = lora_url
+  aspect_ratio = "16:9"
+  guidance_scale = 3.5
+  num_inference_steps = 28
+  lora_scale = 1.0
+  (옵션) image = data:image/png;base64,... + prompt_strength = 0.7
+  ```
+- **검증 (Q1 — img2img 지원 여부)**: 현재 코드가 이미 `image` + `prompt_strength`를 사용 중 → flux-dev-lora는 **img2img 모드 정식 지원** 확정. 별도 endpoint 변경 불필요
+- **변경 필요**: 함수 자체를 2-step orchestration으로 재작성. 새 시그니처는 sheet bytes를 인자로 추가:
+  - `(image_prompt, lora_url, trigger_word, master_sheet_bytes, prev_scene_bytes=None) -> bytes`
+  - Step 3a: 내부에서 `generate_scene_image()` 호출 (기존 Gemini 함수 재활용 — `cover_image_bytes=prev_or_cover`, `character_image_bytes=master_sheet_bytes`)
+  - Step 3b: 그 결과 PNG bytes를 `image` 데이터 URL로 넣고 `prompt_strength=0.35~0.45`(낮음)로 flux-dev-lora 호출
+
+#### 3. `services/mv_generator.py` — `generate_scene_image()` (line 2369~2507)
+- **확인**: Gemini REST에 prompt + cover_image_bytes(옵션) + character_image_bytes(옵션) + reference_images list(옵션) 모두 inlineData 멀티파트로 전송. Phase 2 Step 3a에 그대로 재활용 가능 — 마스터 시트는 `character_image_bytes`로, 직전 씬은 `cover_image_bytes`로 매핑
+
+#### 4. `services/mv_pipeline.py` — Phase 2 routing (line 1675~1801)
+- **확인된 사실**:
+  - `cover_image_bytes = _load_cover_image(job.get("cover_object_name"))` — 1675행
+  - `character_image_bytes = _load_character_image(job.get("character_object_name"))` — 1676행 (= 마스터 시트가 이미 한 번 로드됨!)
+  - `lora_url`/`lora_trigger_word` — 1683~1709행 (job 시작 1회 lookup, 캐시됨)
+  - 1785행 `if use_lora: img_bytes = await generate_scene_image_with_lora(image_prompt=scene_desc, lora_url=lora_url, trigger_word=lora_trigger_word, reference_image_bytes=ref_image)`
+  - **즉, master sheet bytes(=`character_image_bytes`)는 이미 Phase 2 시작 시 로드되어 있고 LoRA 분기에 전달만 안 했을 뿐**. 변경 = 1785행 호출 시 `master_sheet_bytes=character_image_bytes` 인자 1개 추가
+- **`sheet_object_name` vs `character_object_name`**:
+  - `characters` 컬렉션에서 `sheet_object_name`은 마스터 시트 MinIO 키 (`routes/character.py:319,339,347,368,384,409,413` 등)
+  - `mv_jobs`에는 `character_object_name`이 저장되며, 이건 MV 작성 시 사용자가 선택한 캐릭터 시트 MinIO 키. **두 값은 동일 객체를 가리킴**(MV 생성 시 character의 sheet_object_name이 job 도큐먼트의 character_object_name으로 복사됨 — `mv_pipeline.py`의 _load_character_image 검증)
+  - **결론**: Phase 2 Stage 3a/3b는 이미 로드돼 있는 `character_image_bytes`를 마스터 시트로 사용 — 신규 fetch 불필요
+
+#### 5. `services/character_generator.generate_character_sheet()` (line 653~728)
+- **확인**: photo + (top|bottom|shoes 옵션) + user_text → STEP 1 answer 생성 → STEP A로 prompt 생성 → STEP B로 이미지 생성. **이미 정상 동작 + Stage 2 요구 충족**. 코드 변경 0건. v40-2 작업은 "재활용" 명시만 함 (Stage 2 master sheet flow 기존 그대로)
+
+#### 6. `routes/character.py` — `/generate-sheet` 엔드포인트 (line 84~)
+- **확인**: `SaveCharacterRequest.sheet_object_name: str` 필드 존재 (line 50). `/save` 시 임시 객체를 `permanent_object`로 옮긴 뒤 `characters` 컬렉션에 저장(line 368, 384). `/me` 응답에 `sheet_object_name` 포함(line 413)
+- **결론**: master sheet의 영속 위치는 `characters.sheet_object_name`. Phase 2가 직접 참조하는 건 `mv_jobs.character_object_name`이지만, 두 값은 동일 객체 — 변경 0건
+
+#### 7. `frontend/src/pages/UploadPage.jsx` — 기존 비용 라벨 스타일 (CRITICAL — 사용자가 일치 요구)
+- **발견된 패턴**: 비용 라벨은 `model.perCall` + `model.perCallKRW`를 한 줄에 묶음 — 예시:
+  - line 16: `{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.05', perCallKRW: '≈70원' }`
+  - line 1146: `<span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>`
+- **video model 카드 패턴** (line 1117~1123, Seedance):
+  - `<div className="upload-mv-video-model-card__desc">시네마틱 15초 영상 · $0.13/초</div>` ← 가격 + 단위를 desc에 인라인
+  - **단, Veo/Kling 카드(line 1102, 1108)에는 가격 라벨이 없음 — 사용자 피드백 = "추가하라"** 그러므로 일관성 = 모든 모델 카드에 `· $X/씬` 또는 `· $X` 추가도 함께 진행
+
+#### 8. `frontend/src/components/LoraTrainingModal.jsx` — 비용 라벨 위치
+- **확인**: `renderIdle()` (186~220행)에 "AI 학습 시작" 버튼 존재. `lora-modal__meta` 섹션에 "소요 시간 / 약 2분" 메타 1건만 있음 → **비용 라벨 추가 위치 확정**
+  - "소요 시간" 줄 다음에 "비용 / **~$2 (1회 결제, 영구 사용)**" 줄 1개 추가
+  - 버튼 자체에는 텍스트 변경 없이 라벨만 modal__meta로
+- `renderDone()`의 "재학습" 버튼: `lora-modal__meta`에 "재학습 비용 / **~$2**" 1줄 추가
+- `renderFailed()`의 "다시 시도" 버튼: 비용 라벨 추가하되 "재시도 비용 / **~$2**" (실패는 학습 다시 돌아가야 하므로 동일)
+
+#### 9. `frontend/src/pages/MyMusicPage.jsx` — `CharacterSection`
+- **확인**: 645~696행이 saved character 영역. "다시 만들기" 버튼이 line 677에 존재 (`<FiRefreshCw /> 다시 만들기`)
+- **추가 위치**: 버튼 텍스트에 인라인 비용 라벨. 옵션 A(권장): 버튼 안에 `<span>` 추가 — `<FiRefreshCw /> 다시 만들기 <span style={{fontSize: '11px', color: '#888'}}>~$0.02</span>`. 옵션 B: 버튼 아래 작은 헬퍼 텍스트 한 줄
+
+### 결정 사항 (v40-2 핵심)
+1. **B2 prompt 재작성**: 18개 프롬프트 전수 교체 — face/hair/skin tone identity만 유지, outfit은 neutral 화이트티 또는 단순 셔츠로 강제, 배경은 plain neutral grey
+2. **Stage 3 = 2-step**: `generate_scene_image_with_lora()` 재작성. Step 3a(Nano Banana, 마스터 시트 + prev) → Step 3b(flux-dev-lora img2img, prompt_strength=0.4 미만)
+3. **Stage 2는 무변경 재활용**: `/generate-sheet` + `character_generator.generate_character_sheet()` 그대로 사용
+4. **UI 비용 라벨**: UploadPage 기존 스타일(`{perCall} ({perCallKRW})` 형식 / 영상 모델은 `· $X/단위` desc 인라인)과 정합
+5. **비용 추정치 (v40-2 합의)**:
+   - 캐릭터 시트 1장 (Stage 2): ~$0.02 (Gemini 이미지 1회 + 텍스트 1회)
+   - LoRA 학습 1회: ~$2 (Gemini 변형 18 × $0.02 = ~$0.36 + Replicate fast-flux-trainer ~$1.5~$2)
+   - MV 씬 1장 (LoRA 미사용): ~$0.03 (Gemini 1회)
+   - MV 씬 1장 (LoRA 사용 = 2-step): ~$0.05 (Gemini ~$0.03 + flux-dev-lora ~$0.02)
+   - 영상 클립: 모델별 (Veo ~$0.50/8초, Kling ~$0.40/10초, Seedance ~$0.13/초 = ~$1.95/15초)
+
+### 핵심 알고리즘
+
+#### 3-stage flow 다이어그램
+```
+[Stage 1] User 업로드: photo + top + bottom + shoes + user_text
+   ↓ POST /api/character/generate-sheet  ($0.02)
+   ↓ character_generator.generate_character_sheet (Nano Banana 2-step)
+   ↓
+[Stage 2] master sheet PNG (저장: characters.sheet_object_name)
+   ↓ User clicks "AI 학습 시작" ($2)
+   ↓ POST /api/character/train-lora
+   ↓ B2: generate_variations(sheet_bytes, n=18)  ← face-only neutral clothing
+   ↓ B3: lora_trainer.start_training (Replicate fast-flux-trainer)
+   ↓
+[학습 완료] characters.lora_artifact, lora_trigger_word 저장
+
+[Stage 3 — MV Phase 2 per scene] ($0.05/씬)
+   for each scene with @character1:
+       ┌─ Step 3a (Nano Banana) ────────────────────────────────┐
+       │  inputs:                                                │
+       │    text:  scene image_prompt                            │
+       │    image: master_sheet_bytes (= character_image_bytes)  │
+       │    image: prev_scene_bytes (or cover_image_bytes)       │
+       │  output: composed_scene_png (의상 보존, 얼굴 약간 변형)  │
+       └─────────────────────────────────────────────────────────┘
+                          ↓
+       ┌─ Step 3b (flux-dev-lora img2img) ──────────────────────┐
+       │  inputs:                                                │
+       │    prompt:          f"{trigger_word} {image_prompt}..." │
+       │    lora_weights:    lora_url                            │
+       │    image:           composed_scene_png (data URL)       │
+       │    prompt_strength: 0.4   ← 낮춰서 Step 3a 보존         │
+       │    lora_scale:      1.0                                 │
+       │  output: face-locked final scene PNG                    │
+       └─────────────────────────────────────────────────────────┘
+```
+
+#### Pseudo-code (`generate_scene_image_with_lora` 재작성)
+```python
+async def generate_scene_image_with_lora(
+    image_prompt: str,
+    lora_url: str,
+    trigger_word: str,
+    master_sheet_bytes: bytes,        # NEW (Stage 3a 핵심)
+    prev_scene_bytes: Optional[bytes] = None,  # cover 또는 직전 씬
+    cover_image_bytes: Optional[bytes] = None,
+    scene_type: str = "drama",
+    additional_refs: Optional[list] = None,
+) -> bytes:
+    # Step 3a: Nano Banana 합성
+    composed = await generate_scene_image(
+        scene_description=image_prompt,
+        cover_image_bytes=prev_scene_bytes or cover_image_bytes,
+        character_image_bytes=master_sheet_bytes,
+        scene_type=scene_type,
+        reference_images=additional_refs,
+    )
+    # Step 3b: flux-dev-lora img2img refine
+    full_prompt = f"{trigger_word} {image_prompt}, cinematic widescreen 16:9 music video still frame, photorealistic"
+    composed_b64 = base64.b64encode(composed).decode("utf-8")
+    inp = {
+        "prompt": full_prompt,
+        "lora_weights": lora_url,
+        "image": f"data:image/png;base64,{composed_b64}",
+        "prompt_strength": 0.4,        # Step 3a 보존이 우선
+        "aspect_ratio": "16:9",
+        "output_format": "png",
+        "num_outputs": 1,
+        "guidance_scale": 3.5,
+        "num_inference_steps": 28,
+        "lora_scale": 1.0,
+    }
+    # ... 기존 Replicate predictions REST 호출 그대로 ...
+    return refined_png_bytes
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py` — 18개 `VARIATION_PROMPTS` 전수 재작성 (face-only + neutral clothing)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_generator.py` — `generate_scene_image_with_lora()` (2513~2628행) 2-step으로 재작성, 시그니처에 `master_sheet_bytes` 추가
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_pipeline.py` — 1785행 `generate_scene_image_with_lora` 호출 인자에 `master_sheet_bytes=character_image_bytes` 추가, `prev_scene_bytes=ref_image` 매핑 명확화
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx` — `renderIdle/renderDone/renderFailed` 비용 메타 추가
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx` — "다시 만들기" 버튼 옆 비용 라벨 (`~$0.02`)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/UploadPage.jsx` — 영상 모델 카드 desc에 가격 라벨 통일(Veo `· $0.50/씬`, Kling `· $0.40/씬`, Seedance는 이미 `· $0.13/초` 존재) + MV 생성 영역에 LoRA 사용 시 씬당 ~$0.05 안내 줄
+
+### 작업 분해
+
+#### Backend (9004 only)
+- **B11** (`character_variations.py`) — `VARIATION_PROMPTS` 18개 전수 재작성. 핵심 룰:
+  - "Maintain identical face, hair, skin tone, and **outfit** from..." → "Maintain identical **face shape, eyes, nose, mouth, hair, and skin tone** from the reference sheet. Outfit and setting may differ as specified below"
+  - 모든 프롬프트에 `"plain white T-shirt OR simple grey crew-neck shirt, no logo, no graphic"` 형 의상 명시
+  - 배경: `"plain neutral grey seamless studio backdrop, no props, no scene context"`
+  - 각도/조명/표정/프레이밍 다양화 룰은 그대로 유지 (face 학습 다양성은 필요)
+- **B12** (`mv_generator.py`) — `generate_scene_image_with_lora()` 2-step 재작성:
+  - 새 인자 `master_sheet_bytes: bytes` (필수), `prev_scene_bytes: Optional[bytes]`, `cover_image_bytes: Optional[bytes]`, `scene_type: str = "drama"`, `additional_refs: Optional[list] = None`
+  - Step 3a: 내부에서 `generate_scene_image()` 호출 (인자 매핑 위 pseudo-code 참고)
+  - Step 3b: flux-dev-lora img2img — `image=data:URL`, `prompt_strength=0.4`, 그 외 기존 파라미터 유지
+  - 두 단계 모두 실패 시 명확한 ValueError, 단계 표시 ("step3a"/"step3b")
+- **B13** (`mv_pipeline.py`) — 1785행 호출 시그니처 업데이트:
+  - `await generate_scene_image_with_lora(image_prompt=scene_desc, lora_url=lora_url, trigger_word=lora_trigger_word, master_sheet_bytes=character_image_bytes, prev_scene_bytes=ref_image, scene_type=scene.get("scene_type", "drama"), additional_refs=scene_refs or None)`
+  - `character_image_bytes`가 None인 경우(=user가 character 미선택)는 LoRA 경로 진입 자체를 막음 (`use_lora = use_lora and character_image_bytes is not None`)
+- **B14** (검증 only — 코드 변경 0건) — `routes/character.py` `/generate-sheet`가 Stage 2 마스터 시트 생성 정상 동작함을 확인. `sheet_object_name`이 `characters.sheet_object_name`에 영속, MV 생성 시 `mv_jobs.character_object_name`으로 복사되는 흐름 문서화 → REPORT.md에 명시
+- **B15** (선택 — 권장) — `routes/character.py` `GET /lora-status` 응답에 비용 상수 노출:
+  - `{"costs": {"training_usd": 2.0, "scene_with_lora_usd": 0.05, "sheet_generation_usd": 0.02}}` 1 dict 추가
+  - FE는 이 값을 우선 사용하고 fallback으로 하드코딩 — 미래 가격 변경 시 BE만 수정
+  - **결정**: B15는 v40-2에 포함 (비용 표시는 BE 출처가 단일 소스로 깔끔)
+
+#### Frontend
+- **F8** (`LoraTrainingModal.jsx`) — 3개 view 비용 라벨 삽입:
+  - `renderIdle` (line 186~220): "소요 시간 / 약 2분" `lora-modal__meta` 다음에 추가:
+    ```jsx
+    <div className="lora-modal__meta">
+      <span className="lora-modal__meta-label">비용</span>
+      <span className="lora-modal__meta-value">~$2 (1회 결제, 영구 사용)</span>
+    </div>
+    ```
+  - `renderDone` (line 275~313): trained_at 메타 다음에 "재학습 비용 / ~$2" 추가
+  - `renderFailed` (line 315~344): error-box 다음에 "재시도 비용 / ~$2" 추가
+  - 비용 값은 props로 받거나 `lora?.costs?.training_usd`에서 hydrate (B15 연계). 없으면 `~$2` 하드코딩 fallback
+- **F9** (`MyMusicPage.jsx` `CharacterSection`) — line 677 "다시 만들기" 버튼 텍스트 옆에 비용 inline:
+  ```jsx
+  <FiRefreshCw /> 다시 만들기
+  <span style={{ marginLeft: '6px', fontSize: '11px', color: '#888', fontWeight: 400 }}>~$0.02</span>
+  ```
+  - 또한 line 727 미리보기 화면의 "다시 생성" 버튼에도 동일 라벨 추가
+- **F10** (`UploadPage.jsx`):
+  - line 1102, 1108 영상 모델 카드 desc 통일:
+    - Veo: `<div className="upload-mv-video-model-card__desc">고품질 8초 영상 · ~$0.50/씬</div>`
+    - Kling: `<div className="upload-mv-video-model-card__desc">이미지 기반 10초 영상 · ~$0.40/씬</div>`
+    - Seedance: 기존 `· $0.13/초` 유지
+  - MV 생성 버튼 인근(line 1243~ "MV 만들기" 버튼 위)에 LoRA 사용 시 비용 안내:
+    ```jsx
+    {/* MV 비용 안내 */}
+    <div style={{ fontSize: '12px', color: '#888', margin: '8px 0', padding: '8px 12px', background: '#1a1a1a', borderRadius: '6px' }}>
+      예상 비용: 씬당 ~$0.03 (LoRA 미사용) / ~$0.05 (LoRA 적용 시) · 영상 모델 비용 별도
+    </div>
+    ```
+- **F11** (style sanity) — F8/F9/F10에서 사용한 색상(#888) / 폰트(11~12px) / `· ` 구분자가 UploadPage 기존 스타일(line 1145, 1146)과 정합되는지 PR 리뷰 시 검증
+
+#### Tester (TT-tasks — v40-2)
+- **TT1** `character_variations.VARIATION_PROMPTS` — 18개 모두 face-focused (수동 grep 5/5 샘플 검증):
+  - 각 프롬프트에 `"face shape, eyes, nose, mouth, hair, and skin tone"` 또는 동등 face-only identity 룰 포함
+  - 의상 라인은 모두 `"plain"`/`"white T-shirt"`/`"neutral"` 키워드 포함, `"outfit from the reference sheet"` 문구 0건
+- **TT2** `generate_scene_image_with_lora()` 2-step 시그니처:
+  - `inspect.signature` → `master_sheet_bytes` 인자 존재. import 정상. Stage 3a에서 `generate_scene_image` 호출 검증 (mock으로 호출 카운트)
+  - prompt_strength = 0.4로 flux-dev-lora 호출 (mock으로 payload 검증)
+- **TT3** Phase 2 라우팅 — `mv_pipeline.py` 1785행 호출 시 `master_sheet_bytes=character_image_bytes`가 전달되는지 코드 검증. LoRA 보유 + character 미보유 user는 LoRA 경로 진입 차단 (use_lora=False) 검증
+- **TT4** 마스터 시트 로드 — Phase 2 시작 시 `_load_character_image(job.get("character_object_name"))`가 None 아닌 bytes 반환 (fixture). 신규 fetch 0건 (성능 회귀 X)
+- **TT5** UI cost labels (수동 시각 확인):
+  - LoRA 모달 idle 뷰에 "비용 / ~$2 (1회 결제, 영구 사용)" 표시
+  - LoRA 모달 done 뷰에 "재학습 비용 / ~$2"
+  - MyMusicPage "다시 만들기" 버튼에 "~$0.02" 인라인
+  - UploadPage 영상 모델 3개 카드 desc에 가격 통일 표시
+  - UploadPage MV 생성 영역에 "씬당 ~$0.03 / ~$0.05 (LoRA)" 박스 표시
+- **TT6** 회귀 v37 — `@character1` sanitizer 정상, raw 한국어 이름 0건
+- **TT7** 회귀 v38 — character 메타(이름/나이/성격) Phase 0/1.5 주입 정상
+- **TT8** 회귀 v39 — beats 추출 + 클립 길이 모델 max 이하 + 주인공샷 룰 정상
+- **TT9** 회귀 v40-1 — LoRA 미보유 user는 모든 씬 `image_source: "gemini"` (기존 동작 100%). LoRA 보유 user는 character 등장 씬 `image_source: "flux-lora"` (단, 내부적으로는 2-step이지만 라벨은 동일 유지 — 또는 신규 라벨 `"flux-lora-2step"` 도입은 v40-2 결정 사항: **기존 라벨 유지** 권장 — DB 스키마 변경 회피)
+- **TT10** 9004 + 4000 `/api/health` 200
+
+### 비용 라벨 사양 (UI 어디에 어떤 문구로)
+| 위치 | 트리거 | 라벨 문구 | 스타일 |
+|------|--------|-----------|--------|
+| `LoraTrainingModal.jsx` renderIdle | "AI 학습 시작" 버튼 위 메타 | 비용 / **~$2 (1회 결제, 영구 사용)** | `.lora-modal__meta` (기존) |
+| `LoraTrainingModal.jsx` renderDone | "재학습" 버튼 위 메타 | 재학습 비용 / **~$2** | `.lora-modal__meta` |
+| `LoraTrainingModal.jsx` renderFailed | "다시 시도" 버튼 위 메타 | 재시도 비용 / **~$2** | `.lora-modal__meta` |
+| `MyMusicPage.jsx` saved character | "다시 만들기" 버튼 인라인 | `~$0.02` | inline span, 11px #888 |
+| `MyMusicPage.jsx` preview view | "다시 생성" 버튼 인라인 | `~$0.02` | inline span, 11px #888 |
+| `UploadPage.jsx` Veo 카드 desc | Veo 모델 카드 | `고품질 8초 영상 · ~$0.50/씬` | desc div (기존 Seedance 패턴) |
+| `UploadPage.jsx` Kling 카드 desc | Kling 모델 카드 | `이미지 기반 10초 영상 · ~$0.40/씬` | 동일 |
+| `UploadPage.jsx` MV 생성 영역 | "MV 만들기" 버튼 위 박스 | `예상 비용: 씬당 ~$0.03 (LoRA 미사용) / ~$0.05 (LoRA 적용 시) · 영상 모델 비용 별도` | 12px #888 박스 |
+
+(b15 연계 권장 — `/lora-status` 응답의 `costs` dict를 우선, fallback으로 위 하드코딩)
+
+### 영향 범위
+- **영향**:
+  - `services/character_variations.py` 18개 프롬프트 텍스트 변경 → 학습 데이터 분포 변경 → 향후 신규 학습되는 LoRA의 의상 의존성 감소
+  - `services/mv_generator.py` `generate_scene_image_with_lora()` 시그니처 + 동작 변경 (필수 인자 1개 추가). `mv_pipeline.py` 호출 site 동시 수정 → 외부에서 부르는 곳 0건이므로 안전
+  - 비용: LoRA 사용 씬당 +$0.02 (Gemini 1콜 추가). 20씬 MV에서 +$0.40
+  - UI에 가격 노출 → 전환율 영향(긍정적: 신뢰감 / 부정적: 미세한 가격 마찰)
+- **비영향**:
+  - v37 sanitizer / v38 character meta / v39 beats·주인공샷·duration-aware video_prompt — 무관
+  - Stage 1 (`generate_character_sheet`) — 변경 0건
+  - LoRA 학습 자체(`lora_trainer.py`) — 변경 0건
+  - 기존에 학습된 LoRA(outfit-bound)는 그대로 사용 가능 — Stage 3 2-step에서 Step 3a가 의상을 supply하므로 기존 LoRA가 face만 잡으면 됨. 단, 의상 학습된 LoRA는 약한 의상 bleed가 남을 수 있음 → REPORT.md에 "이전 LoRA는 재학습 권장" 노트
+  - LoRA 미보유 user — 100% 동일 (Phase 2 분기에서 `use_lora=False` 그대로)
+- **후방 호환**:
+  - `characters` 컬렉션 스키마 변경 0건
+  - `mv_jobs` 컬렉션 스키마 변경 0건
+  - `image_source = "flux-lora"` 라벨 그대로 유지 (2-step 내부 변경은 라벨에 노출 X)
+
+### 수용 기준 (Acceptance Criteria)
+1. `character_variations.VARIATION_PROMPTS` 18개 모두에 `"outfit from the reference sheet"` 문구 0건. 모두 face-only identity rule 포함. neutral clothing 키워드 (`"plain"`/`"white T-shirt"`/`"simple"`) 포함
+2. `generate_scene_image_with_lora` 시그니처에 `master_sheet_bytes: bytes` 필수 인자 존재. import 정상
+3. 함수 내부에서 Step 3a로 `generate_scene_image()` 1회 호출(Gemini), Step 3b로 Replicate flux-dev-lora 1회 호출(`prompt_strength <= 0.45`) — 단위 테스트(mock) PASS
+4. `mv_pipeline.py` 1785행 호출에 `master_sheet_bytes=character_image_bytes` 인자 전달
+5. LoRA 보유 + character_image_bytes 보유 user MV → character 등장 씬 `image_source="flux-lora"` (≥1건). 기존 라벨 유지
+6. LoRA 미보유 user MV → 모든 씬 `image_source="gemini"` (회귀 0건)
+7. `routes/character.py` `/generate-sheet` 정상 동작 (변경 0건이지만 회귀 점검)
+8. `GET /lora-status` 응답에 `costs: {training_usd, scene_with_lora_usd, sheet_generation_usd}` 3 키 존재 (B15)
+9. UI: LoraTrainingModal idle 뷰에 "~$2 (1회 결제, 영구 사용)" 표시 (수동 확인)
+10. UI: MyMusicPage "다시 만들기" 버튼에 "~$0.02" 표시
+11. UI: UploadPage 영상 모델 3개 카드 모두 가격 desc 표시
+12. UI: UploadPage MV 생성 영역에 LoRA 비용 안내 박스 표시
+13. v37/v38/v39/v40-1 회귀 0건
+14. 9004 + 4000 헬스 200
+
+### 테스트 계획 (Tester)
+- 위 TT1~TT10 전 항목
+
+### 보안
+- 비용 라벨은 모두 클라이언트 표시용 정적 문자열 또는 BE에서 내려준 상수 — 시크릿 0건
+- B12 2-step에서 Replicate 토큰은 백엔드만 사용 (기존 그대로). FE 노출 0건
+- master_sheet_bytes는 이미 Phase 2 시작 시 MinIO에서 로드된 bytes를 함수 인자로 패스(메모리 내) — 신규 영속/노출 0건
+- B11 프롬프트는 사용자 입력 0건 (정적 상수) → 인젝션 위험 0
+- B15 `costs` dict는 정적 (시크릿 X) — 변경 시 재배포 필요
+
+### Open Questions
+- **Q-v40-2-1 (해결됨)** flux-dev-lora img2img 지원 — 현재 코드가 이미 `image` + `prompt_strength`를 사용 중 → **정식 지원 확정**. 별도 endpoint 변경 불필요
+- **Q-v40-2-2 (해결됨)** master sheet 로드 — Phase 2 시작 시 `_load_character_image(job.character_object_name)`로 이미 한 번 로드됨. 추가 fetch 불필요. `characters.sheet_object_name`(시트 영속 키)과 `mv_jobs.character_object_name`(MV에 선택된 시트)은 동일 객체 참조
+- **Q-v40-2-3 (해결됨)** B2 현재 outfit-diverse 여부 — **outfit-bound** (18개 프롬프트 모두 "Maintain ... and outfit" 강제). 의상 학습 → 추론 시 의상 자유도 저하 → 재작성 필수
+- **Q-v40-2-4 (open)** Step 3b prompt_strength 최적값 — 0.35 vs 0.40 vs 0.45. v40-2는 **0.40**으로 출하 후 사용자 정성 평가로 ±0.05 미세 조정. 코드 상수로 두어 추후 변경 용이
+- **Q-v40-2-5 (open)** B15 비용 상수 노출 — `/lora-status`에 묶을 것인가 별도 `/costs` 엔드포인트로 뺄 것인가. v40-2는 `/lora-status`에 inline. v41에서 비용 정보가 더 늘어나면 분리 검토
+- **Q-v40-2-6 (open)** 기존 LoRA(outfit-bound) 재학습 강제 정책 — 사용자 통지 + 자동 재학습 옵션은 v40-2 범위 외. 일단 기존 LoRA는 그대로 사용 가능(Step 3a가 의상 supply하므로 face만 작동) + REPORT.md에 "권장: 재학습으로 의상 자유도 향상" 안내 명시
+
+### 체크리스트
+- [ ] backend_9004 `services/character_variations.py`: VARIATION_PROMPTS 18개 face-only 재작성 (B11)
+- [ ] backend_9004 `services/mv_generator.py`: `generate_scene_image_with_lora()` 2-step 재작성 (B12)
+- [ ] backend_9004 `services/mv_pipeline.py`: 1785행 호출에 `master_sheet_bytes` + `prev_scene_bytes` 매핑 (B13)
+- [ ] backend_9004 `routes/character.py`: `/generate-sheet` 회귀 검증 + REPORT 명시 (B14)
+- [ ] backend_9004 `routes/character.py`: `GET /lora-status` 응답에 `costs` dict 추가 (B15)
+- [ ] frontend `src/components/LoraTrainingModal.jsx`: 3개 뷰 비용 메타 (F8)
+- [ ] frontend `src/pages/MyMusicPage.jsx`: "다시 만들기" / "다시 생성" 버튼 비용 인라인 (F9)
+- [ ] frontend `src/pages/UploadPage.jsx`: 영상 모델 카드 가격 통일 + MV 비용 안내 박스 (F10)
+- [ ] frontend 비용 라벨 스타일 정합성 (F11)
+- [ ] Tester TT1~TT10 PASS
+- [ ] REPORT.md v40-2 append
+
+## v40-3 — 2026-04-25 — Option B: PuLID-FLUX 기반 face variation + UI 2-stage 분리 (Identity / Outfit)
+
+### 배경
+- v40-2 출하 후 사용자 피드백:
+  1. **B11(face-only) prompt 변경만으로는 식별성 약함**: Gemini로 "얼굴만 동일, 의상/배경은 neutral"을 강제해도, Gemini는 사진→사진 identity 보존이 PuLID급 face-attention 모델만 못함. 결과적으로 18 변형 중 face drift가 발생하는 샘플이 섞이고 LoRA가 평균 얼굴로 수렴
+  2. **현재 UI 흐름 = 1-step**: 사진 + 의상 3종 + 텍스트를 한 번에 받아 마스터 시트 1장을 만든 뒤 학습 → 의상을 바꾸려면 시트 재생성 후 재학습 필요. 사용자는 "한 번 학습 후 의상만 자유롭게 교체"를 원함
+  3. **비용 가시성 부재 (Stage 2 갱신)**: LoRA 적용 마스터 시트와 fallback 마스터 시트 비용 차이를 사용자가 모름
+
+- 사용자 결정 사항(Option B 확정):
+  - **B16 (face variation 엔진 교체)**: Gemini → **Replicate `bytedance/flux-pulid`** (PuLID-FLUX v0.9). 입력은 사용자의 ORIGINAL 사진(마스터 시트 X), 18 face variation 생성 후 LoRA 학습
+  - **UI 2-stage 분리**:
+    - **Step 1 카드 (Identity)**: 원본 사진 1장 업로드 → 학습 (의상 입력 없음)
+    - **Step 2 카드 (Outfit)**: 상의/하의/신발 + 선택 텍스트 → 마스터 시트 (LoRA 있으면 FLUX-LoRA 합성, 없으면 Nano Banana fallback)
+    - **Stage 3 (Scenes)**: v40-2 그대로 (변경 0건)
+  - Step 2는 Step 1 학습 안 됐어도 동작 (Nano Banana fallback)
+  - 학습 후에도 Step 2를 다시 눌러 의상만 교체 가능
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `services/character_variations.py` — 현재 v40-2 상태 (line 1~199)
+- **확인된 사실**: v40-2 작업으로 이미 face-only neutral clothing 18 prompt 적용 완료(`_FACE_ONLY_GUARDRAIL` line 42~46). 입력은 sheet PNG bytes (`generate_variations(sheet_bytes, n=18)` line 152), Gemini `gemini-3-pro-image-preview`로 18 호출 (`_call_gemini_variation` line 74~149)
+- **변경 필요 (B16)**: 함수 시그니처 의미 변경 — sheet bytes → original photo bytes. Gemini 호출 → PuLID-FLUX 호출. 18 prompt 자체는 face-only 룰을 그대로 재활용(텍스트는 PuLID에도 그대로 의미 있음). 모듈 위치는 그대로(`character_variations.py`) 두되, 함수명을 더 명확히 `generate_face_variations(photo_bytes, n=18)`로 변경 또는 alias 유지
+- **하위 호환**: `lora_trainer.start_training(user_id, sheet_bytes, ...)` (line 246~) → 인자 의미 변경 (sheet bytes → photo bytes). 호출 site 1군데(`routes/character.py` line 605~610) 동시 변경 필요
+
+#### 2. `services/lora_trainer.py` — line 246~353 `start_training`
+- **확인된 사실**: 270~273행 `from .character_variations import generate_variations; variations = await generate_variations(sheet_bytes, n=18)`. 290행 `dataset_images = [sheet_bytes] + variations` (마스터 시트를 anchor로 dataset에 포함)
+- **변경 필요 (B22)**: 인자 이름 `sheet_bytes` → `photo_bytes` (semantic). 290행 anchor 처리 변경 — `dataset_images = [photo_bytes] + variations` (원본 사진을 첫 샘플로). 또는 anchor 제거(원본 photo는 18 변형 중 하나가 0도 정면이므로 중복 가능). 권장: 원본 photo를 그대로 첫 샘플로 포함 (18+1=19장)
+
+#### 3. `routes/character.py` — line 525~624 `/train-lora`
+- **확인된 사실**: 549행 user의 character 도큐먼트에서 `sheet_object_name` 확인 → 580~589행 `minio_client.get_object(... char["sheet_object_name"])` → `sheet_bytes` 로드 → 605~610행 `_run_lora_pipeline_bg(user_id, sheet_bytes, char.get("name"))`로 백그라운드 트리거
+- **변경 필요 (B19)**: 549행은 `original_photo_object_name` 확인으로 변경. 583행은 `char["original_photo_object_name"]`로부터 로드. fallback: 만약 사용자가 v40-2 이전 캐릭터(`original_photo_object_name` 없음)면 503 또는 "원본 사진을 다시 업로드해주세요" 안내 (B17 endpoint로 유도)
+- **새 endpoint (B17)**: `POST /api/character/upload-original-photo` — multipart로 original photo 1장 받아 MinIO `characters/{user_id}/original.{ext}`에 저장 + `characters.original_photo_object_name` 업서트. 사진 외에는 어떤 인풋도 받지 않음
+
+#### 4. `routes/character.py` — line 93~190 `/generate-sheet`
+- **확인된 사실**: 현재 시그니처 = `file (photo) + top_image + bottom_image + shoes_image + user_text`. line 137~149 `generate_character_sheet(photo_bytes=contents, ...)` 호출 (Nano Banana 2-step). 156~168행 원본 photo MinIO 임시 저장 (`characters/temp/{user_id}/original_*`), 170~180행 결과 sheet MinIO 임시 저장
+- **변경 필요 (B20)**:
+  - **분기 추가**: 호출 시점에 user의 `characters.lora_status == "done"` + `lora_artifact` 존재 여부 확인
+    - **LoRA 분기** (학습됨): photo 인자 무시 (또는 옵션). 의상 3종 + user_text를 받아 `generate_character_sheet_with_lora(top, bottom, shoes, user_text, lora_url, trigger_word)` 신규 함수 호출 — 내부적으로 FLUX-LoRA로 마스터 시트(=4섹션 레이아웃) 생성. ($0.05)
+    - **Fallback 분기** (학습 안 됨): 기존 그대로 — photo는 user의 `original_photo_object_name`에서 로드 (없으면 file 인자로 받은 photo로) + 의상 3종 + user_text → Nano Banana 2-step. ($0.02)
+  - **photo 입력 처리**: file 파라미터를 Optional로 변경. 미지정 시 `original_photo_object_name`에서 자동 로드(LoRA 미학습 + 원본 사진은 있는 케이스)
+  - **endpoint 별도 분리도 가능**: `/generate-sheet` (LoRA용 — photo 없음)와 `/generate-sheet-fallback`. v40-3 권장은 **단일 endpoint + 내부 분기** (FE 단순화)
+
+#### 5. `services/character_generator.py` — line 653~728 `generate_character_sheet`
+- **확인된 사실**: photo + top/bottom/shoes + user_text → STEP A(Gemini text)로 sheet prompt 생성 → STEP B(Gemini image, 4섹션 레이아웃)로 PNG 생성. 이미 v40-2에서 변경 0건으로 재활용
+- **변경 필요 (B20-helper)**: LoRA 분기용 신규 함수 `generate_character_sheet_with_lora(top_bytes, bottom_bytes, shoes_bytes, user_text, lora_url, trigger_word) -> bytes` 추가:
+  - 내부적으로 STEP A는 Gemini text(photo 없이 의상 + user_text만으로) → sheet prompt
+  - STEP B 대체: Replicate `flux-dev-lora` 호출, prompt에 trigger_word + sheet prompt + 4섹션 레이아웃 강제, `lora_weights=lora_url`. 의상 3장은 reference image로 (flux-dev-lora의 `image` slot으로 합성 또는 prompt에 텍스트 묘사로 인코딩 — flux-dev-lora는 multi-image conditioning 미지원이므로 **현실적 옵션**: 첫 단계 의상 3장 → Gemini text로 의상 묘사 추출 → 그걸 prompt에 합쳐 flux-lora 호출). 즉, "Gemini text로 의상 분석 + flux-lora로 face-locked 시트 생성" 2-step
+  - 4섹션 grid는 flux-lora가 단일 이미지에 강제 가능한지 검증 필요 — 만약 약하면 4번의 flux-lora 호출(섹션별)로 분할 후 PIL composite. 비용은 4 × $0.05 = $0.20. 이 경우 전체 LoRA Stage 2 비용 ≈ $0.20~$0.25
+  - **결정**: v40-3 첫 출하는 단일 flux-lora 호출(4섹션 grid 강제 prompt) 시도 → 결과 미흡하면 v40-4에서 PIL composite 도입
+
+#### 6. `services/mv_generator.py` — line 2510~2675 `generate_scene_image_with_lora`
+- **확인된 사실**: v40-2에서 이미 2-step (Step 3a Nano Banana + Step 3b flux-dev-lora img2img)로 재작성 완료. master_sheet_bytes 인자 존재. **v40-3 변경 0건** (Stage 3는 v40-2 그대로 동작)
+- **단, 마스터 시트 출처 영향**: Stage 2가 LoRA 분기로 생성한 시트도 Stage 3 Step 3a의 `character_image_bytes`로 그대로 사용 가능 — 의상 supply 역할 동일
+
+#### 7. `routes/character.py` — `/save` (line 282~399), `/me` (line 405~440), `/lora-status` (line 627~633)
+- **확인된 사실**: `SaveCharacterRequest`(line 58~64) — `sheet_object_name`만 받음, `original_photo_object_name`은 별도 저장 없음. 현재 `/generate-sheet`가 임시 photo를 `characters/temp/{user_id}/original_*`에 저장(line 158~168)하지만 `/save`는 이를 영속하지 않음
+- **변경 필요 (B18)**:
+  - `characters` 컬렉션에 `original_photo_object_name: Optional[str]` 추가 (인덱스 불필요, $set 한 줄)
+  - `SaveCharacterRequest`에 `original_photo_object_name: Optional[str]` 추가 (FE가 generate-sheet 응답의 `original_object_name`을 save에 같이 보내도록)
+  - `/generate-sheet` 응답: 이미 `original_object_name` 있음(line 187) — FE에서 그대로 사용
+  - `/save` 시 임시 path → 영속 path 복사 (`characters/{user_id}/original.{ext}`) + MongoDB upsert
+  - `/me` 응답에 `original_photo_object_name` 노출 (LoRA 학습 기능 활성/비활성 판단용)
+  - `/lora-status` 응답 `costs` dict 확장: `pulid_variation_usd` 추가, `training_usd` 갱신 (B21)
+
+#### 8. `frontend/src/pages/MyMusicPage.jsx` — `CharacterSection` (line 154~861)
+- **확인된 사실**:
+  - **단일 카드 구조** — 사진/의상/텍스트/프로필을 한 화면에 모아 "캐릭터 시트 생성하기" 1버튼으로 처리 (line 776~860)
+  - LoRA 모달은 saved character 영역(line 627~697)에서만 노출. AI 학습 버튼 클릭 시 모달 오픈
+  - 현재 비용 라벨: "다시 만들기" 버튼 옆 `~$0.02` (line 678) + "다시 생성" 버튼 옆 `~$0.02` (line 732)
+- **변경 필요 (F13)**:
+  - **Step 1 카드** (신규): "1단계 — 내 사진 + AI 학습". photo file picker + "AI 학습 시작" 버튼 + 학습 상태 뱃지 + LoraTrainingModal(재활용). 의상/프로필 입력 없음. 비용 라벨 `~$2 (1회 결제, 영구 사용)`
+  - **Step 2 카드** (신규): "2단계 — 의상 선택 + 마스터 시트". 의상 3종(상의/하의/신발) + user_text + "마스터 시트 만들기" 버튼 + 미리보기 + 저장. 비용 라벨 동적: LoRA 학습됨 = `~$0.05 (LoRA 적용)`, 미학습 = `~$0.02 (기본)`
+  - **Step 2는 Step 1 미학습 시에도 사용 가능** (fallback 안내 텍스트 표시)
+  - 캐릭터 프로필(이름/나이/성격)은 Step 2에 포함 (시트 저장 시 함께 저장)
+  - 기존 saved character 뷰(line 628~697)는 그대로 — 단, "다시 만들기"는 Step 2(의상 변경) 흐름으로 이동, "AI 학습" 버튼은 학습 안 됐으면 Step 1 카드로 스크롤
+
+#### 9. `frontend/src/api/index.js` — character API (line 202~276)
+- **확인된 사실**: `generateCharacterSheet`, `saveCharacter`, `getMyCharacter`, `deleteMyCharacter`, `refineCharacterSheet`, `getLoraStatus`, `startLoraTraining`, `deleteLora` 존재
+- **변경 필요 (F12)**:
+  - 신규 `uploadOriginalPhoto(file)` — multipart POST `/api/character/upload-original-photo`
+  - `saveCharacter` payload에 `original_photo_object_name` 추가 (Step 2 시트 저장 시 같이 저장 — generate-sheet 응답에서 받은 값 또는 기존 character의 original_photo_object_name)
+  - `getMyCharacter` 캐시 무효화 (Step 1 학습 완료 후 갱신 필요) — 이미 sessionStorage 캐시 있으니 학습 완료 시 `sessionStorage.removeItem('aimu:myCharacter')` 호출 추가
+
+#### 10. PuLID-FLUX 모델 검증 (Replicate)
+- **확정 슬러그**: `bytedance/flux-pulid` (PuLID-FLUX v0.9, $0.022/run)
+- **API**: 표준 Replicate REST `POST /v1/models/bytedance/flux-pulid/predictions` — 기존 `lora_trainer.py`와 동일 패턴, **httpx REST만 사용 (SDK X)**
+- **인증**: 기존 `REPLICATE_API_TOKEN` 그대로
+- **입력 파라미터** (모델 페이지 + readme 종합): `main_face_image` (식별 사진 URL/data URI), `prompt` (텍스트), `negative_prompt`, `num_inference_steps` (default 20), `guidance_scale` (default 4), `id_weight` (default 1.0), `start_step` (default 0), `true_cfg`, `seed`, `width` (default 896), `height` (default 1152). **정확한 필드명은 코드 작성 시 `GET /v1/models/bytedance/flux-pulid` 응답의 `latest_version.openapi_schema`로 확정** (B16 작업 첫 단계)
+- **입력 사진 인코딩**: data URI (`data:image/png;base64,...`) — flux-dev-lora의 `image` 인자와 동일 패턴 (mv_generator.py line 2606 예시 존재)
+- **비용 추정 갱신**:
+  - PuLID 18 호출 = 18 × $0.022 = **~$0.40**
+  - LoRA training = ~$1.50~$2.00 (Replicate fast-flux-trainer, 변동 없음)
+  - **합계 (Stage 1): ~$2.40** (planner 가정 ~$2.54 → 실측 ~$2.40)
+- **Fallback 모델**: 만약 `bytedance/flux-pulid`가 inactive하거나 새 버전이 깨졌을 경우 — `zsxkib/flux-pulid` 또는 InstantID(`instantx/instantid`, FLUX 미지원이라 차선)로 교체. 현재 v40-3 출하 = `bytedance/flux-pulid` 단일 의존, 슬러그 상수화하여 후속 swap 용이
+
+### 결정 사항 (v40-3 핵심)
+1. **Face variation 엔진 교체**: Gemini → PuLID-FLUX (`bytedance/flux-pulid`). 입력은 ORIGINAL photo (마스터 시트 X). 18 prompt 텍스트는 v40-2 face-only 룰 그대로 재활용 (PuLID도 prompt-based 변형 지원)
+2. **UI 2-stage 분리**:
+   - Step 1 = Identity (사진 + 학습) — 의상 입력 없음
+   - Step 2 = Outfit (의상 + 마스터 시트) — Step 1 학습됐으면 LoRA 분기, 안 됐으면 Nano Banana fallback
+3. **`characters.original_photo_object_name` 필드 추가**: Step 1 사진의 영속 저장 위치. 후속 재학습/시트 재생성 시 항상 이 사진 사용
+4. **Step 2 비용 동적 표시**: LoRA 보유 시 ~$0.05 (FLUX-LoRA call), 미보유 시 ~$0.02 (Nano Banana — 기존 동작)
+5. **Stage 3는 v40-2 무변경**: `generate_scene_image_with_lora` 그대로
+6. **Stage 1 비용 갱신**: ~$2.40 (PuLID $0.40 + 학습 $2.00). UI 라벨은 보수적으로 **~$2.54** 표시(상한)도 무방하나 **~$2.50**으로 단순화 권장
+
+### 핵심 알고리즘
+
+#### 3-stage flow 다이어그램 (v40-3)
+```
+[Stage 1 — Identity] (Step 1 카드)
+   User 업로드: original photo 1장
+   ↓ POST /api/character/upload-original-photo  (free, MinIO 저장만)
+   ↓ characters.original_photo_object_name 영속
+   ↓ User clicks "AI 학습 시작" (~$2.50)
+   ↓ POST /api/character/train-lora
+   ↓   B16: generate_face_variations(photo_bytes, n=18)
+   ↓        → PuLID-FLUX 18 호출 (~$0.40)
+   ↓   B22: lora_trainer.start_training (Replicate fast-flux-trainer, ~$2.00)
+   ↓
+[학습 완료] characters.lora_artifact, lora_trigger_word 저장
+
+[Stage 2 — Outfit] (Step 2 카드)
+   User 업로드: top/bottom/shoes + user_text
+   ↓ POST /api/character/generate-sheet
+   ↓ 분기:
+   ↓   IF lora_status == "done":
+   ↓     → generate_character_sheet_with_lora(top, bottom, shoes, user_text, lora_url, trigger_word)
+   ↓     → flux-dev-lora 호출, 4섹션 grid prompt 강제 (~$0.05)
+   ↓   ELSE (fallback):
+   ↓     → generate_character_sheet(photo_bytes, top, bottom, shoes, user_text)
+   ↓     → Nano Banana 2-step (~$0.02)
+   ↓     → photo_bytes는 characters.original_photo_object_name에서 로드 (없으면 file 인자)
+   ↓
+[저장] /api/character/save → characters.sheet_object_name 영속
+   사용자는 의상만 바꿔 Step 2를 다시 실행 가능 (Step 1 재학습 불필요)
+
+[Stage 3 — MV per scene] ($0.05/씬)  ← v40-2 그대로
+   generate_scene_image_with_lora(image_prompt, lora_url, trigger_word, master_sheet_bytes, ...)
+```
+
+#### Pseudo-code (`generate_face_variations` 신규)
+```python
+async def generate_face_variations(photo_bytes: bytes, n: int = 18) -> List[bytes]:
+    """PuLID-FLUX로 18 face variation 생성. 입력은 ORIGINAL photo bytes."""
+    if not settings.replicate_api_token:
+        raise ValueError("REPLICATE_API_TOKEN not configured")
+
+    photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
+    photo_url = "data:image/png;base64,{}".format(photo_b64)
+
+    prompts = _select_prompts(n)  # v40-2 18 face-only prompts (재활용)
+    semaphore = asyncio.Semaphore(4)
+
+    async def _one(prompt: str, idx: int) -> Optional[bytes]:
+        async with semaphore:
+            payload = {
+                "input": {
+                    "main_face_image": photo_url,
+                    "prompt": prompt,
+                    "num_inference_steps": 20,
+                    "guidance_scale": 4,
+                    "id_weight": 1.0,
+                    "width": 896,
+                    "height": 1152,
+                },
+            }
+            # Replicate POST /v1/models/bytedance/flux-pulid/predictions
+            # poll until succeeded → fetch image URL → download bytes
+            ...
+            return image_bytes
+
+    results = await asyncio.gather(
+        *(_one(p, i) for i, p in enumerate(prompts)),
+        return_exceptions=True,
+    )
+    return [r for r in results if isinstance(r, bytes)]
+```
+
+#### Pseudo-code (`generate_character_sheet_with_lora` 신규)
+```python
+async def generate_character_sheet_with_lora(
+    top_bytes: Optional[bytes],
+    bottom_bytes: Optional[bytes],
+    shoes_bytes: Optional[bytes],
+    user_text: str,
+    lora_url: str,
+    trigger_word: str,
+) -> bytes:
+    # Step A: Gemini text로 의상 묘사 추출 + 4섹션 layout prompt 생성
+    outfit_prompt = await _gemini_describe_outfits(top_bytes, bottom_bytes, shoes_bytes, user_text)
+    full_prompt = f"{trigger_word} character reference sheet, 4-section vertical layout (right 45° full body | left 45° full body | back full body | face details), {outfit_prompt}, photorealistic, neutral grey studio backdrop"
+
+    # Step B: flux-dev-lora 단일 호출, 4섹션 grid 강제
+    inp = {
+        "prompt": full_prompt,
+        "lora_weights": lora_url,
+        "aspect_ratio": "16:9",  # 또는 4:3 (4섹션 grid 강제용)
+        "guidance_scale": 3.5,
+        "num_inference_steps": 28,
+        "lora_scale": 1.0,
+        "output_format": "png",
+        "num_outputs": 1,
+    }
+    # Replicate POST /v1/models/black-forest-labs/flux-dev-lora/predictions
+    ...
+    return sheet_png_bytes
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py` — `generate_variations`를 `generate_face_variations(photo_bytes, n)`로 변경 (PuLID-FLUX 호출). 18 prompts 재활용. 함수명/인자 시그니처 변경 (B16)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/lora_trainer.py` — `start_training` 인자 sheet_bytes → photo_bytes (semantic), variations 호출 = `generate_face_variations`, dataset 첫 샘플로 photo 포함 (B22)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_generator.py` — `generate_character_sheet_with_lora()` 신규 함수 추가 (B20-helper)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py`:
+  - 신규 `POST /upload-original-photo` 엔드포인트 (B17)
+  - `SaveCharacterRequest`에 `original_photo_object_name` 필드 추가, `/save` 시 임시 → 영속 복사 + MongoDB upsert (B18)
+  - `/me` 응답에 `original_photo_object_name` 노출 (B18)
+  - `/train-lora` — 580~589행 `sheet_object_name` → `original_photo_object_name` 로드 (B19)
+  - `/generate-sheet` — LoRA 분기 + Nano Banana fallback (B20)
+  - `/lora-status` `costs` 갱신 — `pulid_variation_usd` 추가, `training_usd` 갱신 (B21)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/api/index.js` — `uploadOriginalPhoto(file)` 추가, `saveCharacter` payload에 `original_photo_object_name` 추가 (F12)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx` — `CharacterSection` 2-stage 카드 구조로 재작성 (F13). 비용 라벨 갱신 (F14, F15)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx` — copy 갱신: 소요 시간 ~2분 → ~3분 (PuLID 18 호출 시간 추가), 비용 ~$2 → ~$2.50 (F16)
+
+### 작업 분해
+
+#### Backend (9004 only)
+
+- **B16** (`services/character_variations.py`) — Gemini → PuLID-FLUX 교체:
+  - 새 함수 `generate_face_variations(photo_bytes: bytes, n: int = 18) -> List[bytes]`
+  - Replicate REST: `POST /v1/models/bytedance/flux-pulid/predictions`, 인증 = 기존 `REPLICATE_API_TOKEN`
+  - 입력 dict: `{"main_face_image": "data:image/png;base64,...", "prompt": <prompt_i>, "num_inference_steps": 20, "guidance_scale": 4, "id_weight": 1.0, "width": 896, "height": 1152}` (정확한 필드명은 첫 호출 전에 `GET /v1/models/bytedance/flux-pulid`로 schema 확인 후 확정)
+  - Polling: 기존 `lora_trainer._get_training` 패턴과 유사 (`GET /v1/predictions/{id}` until terminal). 5분 내 완료 expected (PuLID는 L40S에서 1초/장 + 큐 대기 ≈ 30초/장)
+  - Concurrency = `asyncio.Semaphore(4)` (Replicate 동시 호출 제한 보수치)
+  - 18개 prompt는 v40-2 `VARIATION_PROMPTS` 그대로 재활용 (PuLID도 prompt-based 변형 잘 작동). `_FACE_ONLY_GUARDRAIL` 텍스트 의미 동일
+  - 실패 시 None 반환, 12개 미만이면 warning log (기존과 동일 contract)
+  - 하위 호환 alias: 기존 `generate_variations(sheet_bytes, n)`는 `generate_face_variations(sheet_bytes, n)`로 redirect (인자명만 의미 변경)
+
+- **B17** (`routes/character.py`) — `POST /api/character/upload-original-photo`:
+  - multipart `file: UploadFile`만 받음. validation = ALLOWED_IMAGE_EXT + 10MB
+  - MinIO 영속 path: `characters/{user_id}/original.{ext}` (덮어쓰기 OK)
+  - MongoDB upsert: `{"$set": {"user_id": user_id, "original_photo_object_name": <path>, "updated_at": now}, "$setOnInsert": {"created_at": now}}`
+  - 응답: `{"original_photo_object_name": <path>, "preview_url": "/api/character/preview/<path>"}`
+  - 401/400/413/500 표준 에러 처리
+
+- **B18** (`routes/character.py` + MongoDB schema) — `original_photo_object_name` 필드:
+  - `SaveCharacterRequest` Pydantic 모델에 `original_photo_object_name: Optional[str] = None` 추가
+  - `/save` (line 282~399) 처리: body에 값 있으면 임시 경로(`characters/temp/...`)에서 영속 경로(`characters/{user_id}/original.{ext}`)로 복사 + MongoDB `$set`. 이미 `/upload-original-photo`로 영속화됐으면 path 그대로 유지(no copy)
+  - `/me` 응답(line 405~440): `original_photo_object_name` + `original_photo_url` (proxy URL) 노출
+  - 후방 호환: 기존 character는 필드 부재 → null 반환 → FE는 "원본 사진 재업로드 필요" 안내
+
+- **B19** (`routes/character.py` `/train-lora`) — original photo 사용:
+  - 549~555행 (현재 `sheet_object_name` 확인) → **변경**: `original_photo_object_name` 확인. 없으면 404 + "원본 사진을 먼저 업로드해주세요"
+  - 580~589행 (현재 `char["sheet_object_name"]`로 sheet 로드) → **변경**: `char["original_photo_object_name"]`로 photo 로드
+  - 605~610행 `_run_lora_pipeline_bg(user_id, sheet_bytes, char.get("name"))` → **변경**: `_run_lora_pipeline_bg(user_id, photo_bytes, char.get("name"))` (인자 의미 변경, 함수 인자명도 photo_bytes로 rename — B22 연계)
+  - 503 가드: `replicate_api_token` 미설정. **google_api_key 가드는 제거** (PuLID는 Replicate만 필요)
+
+- **B20** (`routes/character.py` `/generate-sheet`) — LoRA 분기 + fallback:
+  - `file: UploadFile` 인자를 `Optional` 처리 (LoRA 분기에서는 photo 불필요)
+  - 라우터 시작 시 user의 character 도큐먼트 로드 → `lora_status == "done"` and `lora_artifact.object_name` 존재 여부 판단
+  - **LoRA 분기**:
+    - Replicate에서 LoRA presigned URL 생성 (또는 MinIO 객체를 Replicate가 fetch 가능하도록 임시 URL 생성). v40-1/40-2 Stage 3에서 이미 `lora_url`을 사용 중이므로 동일 헬퍼 재활용
+    - `generate_character_sheet_with_lora(top_bytes, bottom_bytes, shoes_bytes, user_text, lora_url, trigger_word)` 호출
+    - 응답에 `mode: "lora"`, `cost_usd: 0.05` 포함
+  - **Fallback 분기**:
+    - photo 인자가 없으면 `original_photo_object_name`에서 로드. 둘 다 없으면 400 + "원본 사진이 필요합니다"
+    - 기존 `generate_character_sheet(photo_bytes, ...)` 호출 그대로
+    - 응답에 `mode: "nano_banana"`, `cost_usd: 0.02` 포함
+  - 응답 dict 양 분기 동일: `{"object_name", "original_object_name", "preview_url", "message", "mode", "cost_usd"}`
+
+- **B21** (`routes/character.py` `_serialize_lora_state` + `COSTS`) — 비용 dict 확장:
+  ```python
+  COSTS = {
+      "training_usd": 2.5,            # PuLID 0.4 + fast-flux-trainer 2.0 (round to 2.5)
+      "pulid_variation_usd": 0.4,     # NEW (참고용 — UI는 training_usd만 사용)
+      "scene_with_lora_usd": 0.05,    # 변동 없음
+      "sheet_with_lora_usd": 0.05,    # NEW (Stage 2 LoRA 분기)
+      "sheet_fallback_usd": 0.02,     # 변동 없음 (기존 sheet_generation_usd rename 또는 alias)
+  }
+  ```
+  - `/me` + `/lora-status` 모두 동일 dict 반환 (이미 `_serialize_lora_state` 사용)
+  - 후방 호환: 기존 키 `sheet_generation_usd` → `sheet_fallback_usd`로 rename. FE가 hot-deploy 직후에도 fallback 처리되도록 양쪽 키 모두 노출 (`sheet_generation_usd: 0.02` 보존)
+
+- **B22** (`services/lora_trainer.py`) — photo 인자 받기:
+  - `start_training(user_id, sheet_bytes, ...)` → `start_training(user_id, photo_bytes, ...)` rename
+  - 270~273행: `from .character_variations import generate_face_variations; variations = await generate_face_variations(photo_bytes, n=18)`
+  - 290행: `dataset_images = [photo_bytes] + variations` (anchor = original photo)
+  - 함수 docstring + parameter name 변경. 호출 site 1군데(`routes/character.py`) B19와 함께 변경
+
+#### Frontend
+- **F12** (`api/index.js`) — 신규 함수 + payload 확장:
+  ```js
+  export const uploadOriginalPhoto = (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return API.post('/character/upload-original-photo', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
+  };
+  ```
+  - `saveCharacter`의 payload에 `original_photo_object_name` 키 추가 (caller가 옵셔널로 전달)
+
+- **F13** (`MyMusicPage.jsx` `CharacterSection`) — 2-stage 카드 구조:
+  - 단일 큰 카드를 두 개로 분리:
+    - **Step 1 카드** ("1단계: 내 사진 + AI 학습"):
+      - photo file picker (기존 `mymusic-character__photo-box` UI 재활용)
+      - "사진 업로드" 버튼 → `api.uploadOriginalPhoto(photoFile)` 호출 → 성공 시 character 캐시 무효화 + `original_photo_url` 갱신
+      - "AI 학습 시작" 버튼 → `LoraTrainingModal` 오픈 (기존 컴포넌트 그대로)
+      - 학습 상태 뱃지 (기존 `mymusic-character__lora-badge` 재활용)
+      - **의상/프로필 입력 컴포넌트 표시 X** (renderOutfitSection / renderProfileSection 미호출)
+    - **Step 2 카드** ("2단계: 의상 선택 + 마스터 시트"):
+      - 의상 3종(상의/하의/신발) — 기존 `renderOutfitSection` 재활용
+      - 캐릭터 프로필 (이름/나이/성격/자유 텍스트) — 기존 `renderProfileSection` 재활용
+      - "마스터 시트 만들기" 버튼 → `api.generateCharacterSheet(formData)` 호출 (FormData에 photo 인자 omit, top/bottom/shoes/user_text만)
+      - 시트 미리보기 + "저장" / "다시 생성" / "취소" / "수정 요청" — 기존 preview view 재활용
+      - "다른 옷으로 다시 만들기" 버튼 (saved character 시) → Step 2 카드만 다시 활성화 (Step 1 재학습 X)
+  - Step 1 학습 상태가 'done'이면 Step 2 활성, 아니면 Step 2도 사용 가능하지만 fallback 안내 텍스트 표시
+  - 화면 상단에 "1단계 완료 → 2단계로" 진행 인디케이터(작은 뱃지) 추가 (선택)
+
+- **F14** (cost label 갱신) — Stage 1:
+  - `LoraTrainingModal.jsx` `renderIdle` 메타: `~$2 (1회 결제, 영구 사용)` → **`~$2.50 (1회 결제, 영구 사용)`** (B21 `costs.training_usd` 동적 사용 권장)
+  - `renderDone` / `renderFailed` 메타: `~$2` → `~$2.50`
+  - Step 1 카드 "AI 학습 시작" 버튼 옆 또는 아래에 같은 라벨 표시
+
+- **F15** (Step 2 cost 동적 라벨) — `MyMusicPage.jsx` `CharacterSection`:
+  - "마스터 시트 만들기" 버튼 옆/아래:
+    ```jsx
+    {lora?.lora_status === 'done' ? (
+      <span style={{ fontSize: '11px', color: '#888' }}>~$0.05 (LoRA 적용)</span>
+    ) : (
+      <span style={{ fontSize: '11px', color: '#888' }}>~$0.02 (기본)</span>
+    )}
+    ```
+  - "다시 생성" / "다시 만들기" 버튼 라벨도 동일 분기로 갱신 (현재 하드코딩 `~$0.02` 제거)
+  - `lora?.costs?.sheet_with_lora_usd` / `sheet_fallback_usd` 우선, fallback 하드코딩
+
+- **F16** (`LoraTrainingModal.jsx`) — copy 갱신:
+  - `renderIdle` 메타 "소요 시간 / 약 2분" → **"소요 시간 / 약 3분"** (PuLID 18 호출 ~30초/장 × 4 동시 = 추가 ~2분 + 학습 ~2분 = ~4분이지만 사용자에게 보수적으로 ~3분 표시 / open Q-v40-3-3 참고)
+  - 비용 `~$2` → `~$2.50` (F14와 동일 변경, 한 군데서 일괄)
+
+#### Tester (TT-tasks — v40-3)
+- **TT11** (B16) `generate_face_variations` 시그니처:
+  - `inspect.signature` → `(photo_bytes: bytes, n: int = 18)` 매칭
+  - mock httpx로 `bytedance/flux-pulid` 슬러그 + `main_face_image` 키 + photo data URI payload 검증
+  - 18개 prompt는 v40-2 `VARIATION_PROMPTS`와 일치 (`assert prompts == VARIATION_PROMPTS[:18]`)
+- **TT12** (B17) `/upload-original-photo`:
+  - 정상 흐름: PNG 업로드 → 200 + `original_photo_object_name` + `preview_url`. MinIO에 객체 존재. MongoDB 도큐먼트 업서트
+  - 인증 없음 → 401. 잘못된 확장자 → 400. >10MB → 400 또는 413
+- **TT13** (B18) `characters.original_photo_object_name`:
+  - `/me` 응답에 키 존재. `/save`에 값 전달 시 영속화 확인
+  - 기존 character (필드 부재) → null 반환, FE 비파괴 처리
+- **TT14** (B19) `/train-lora`:
+  - `original_photo_object_name` 부재 → 404 + 안내 메시지. 존재 → 202 + 백그라운드 시작. `_run_lora_pipeline_bg` 인자가 photo bytes (sheet bytes 아님)
+  - 회귀: 학습 완료 시 `lora_artifact` 정상 저장, `lora_trigger_word` 존재
+- **TT15** (B20) `/generate-sheet` 분기:
+  - LoRA 분기 (lora_status='done') → 응답 `mode='lora'`, `cost_usd=0.05`. flux-dev-lora REST 호출 검증 (mock)
+  - Fallback 분기 (lora_status≠'done') → 응답 `mode='nano_banana'`, `cost_usd=0.02`. 기존 generate_character_sheet 호출 검증
+  - photo 인자 미지정 + `original_photo_object_name` 존재 → 자동 로드. 둘 다 없으면 400
+- **TT16** (B21) `/lora-status` `costs`:
+  - 키 5개 존재: `training_usd`, `pulid_variation_usd`, `scene_with_lora_usd`, `sheet_with_lora_usd`, `sheet_fallback_usd` (+ `sheet_generation_usd` alias)
+  - 값 = COSTS dict와 일치
+- **TT17** (B22) `lora_trainer.start_training`:
+  - 인자명 photo_bytes (코드 검증). `generate_face_variations` 호출 (mock으로 카운트). `dataset_images[0] == photo_bytes` 검증
+- **TT18** (F12) `api.uploadOriginalPhoto`:
+  - `/character/upload-original-photo`로 multipart POST. 응답 처리 정상
+- **TT19** (F13) UI 2-stage:
+  - Step 1 카드만 표시 시: photo upload 버튼, AI 학습 버튼, 학습 상태 뱃지. 의상/프로필 컴포넌트 미표시
+  - Step 2 카드: 의상 3종 + 프로필. 마스터 시트 생성 버튼 활성. preview 표시 후 저장
+  - Step 1 미학습 상태에서도 Step 2 사용 가능 (fallback 안내 텍스트 표시)
+  - 학습 후 Step 2 다시 클릭 → 다른 의상으로 새 시트 생성, Step 1 미실행 (재학습 X)
+- **TT20** (F14, F15, F16) 비용 라벨:
+  - Step 1 카드 + LoRA 모달 idle: "~$2.50 (1회 결제, 영구 사용)"
+  - Step 2 LoRA 분기: "~$0.05 (LoRA 적용)"
+  - Step 2 fallback: "~$0.02 (기본)"
+  - LoraTrainingModal 소요 시간: "약 3분"
+- **TT21** 회귀 v40-2:
+  - LoRA 보유 user MV → character 등장 씬 `image_source="flux-lora"`, Step 3 2-step 동작 정상
+  - 마스터 시트는 Stage 2(LoRA 분기 또는 fallback) 출력물이 그대로 Stage 3 Step 3a `character_image_bytes`로 사용됨
+- **TT22** 회귀 v37/v38/v39/v40-1:
+  - `@character1` sanitizer / character meta 주입 / beats·주인공샷 / image_source 라벨 모두 무변경 0건 회귀
+- **TT23** 9004 + 4000 `/api/health` 200
+
+### 비용 표 갱신 (v40-3 합의)
+| 항목 | v40-2 | v40-3 | 변경 사유 |
+|------|-------|-------|-----------|
+| Stage 1 (Identity 학습 1회) | ~$2.00 | **~$2.50** | PuLID 18 호출 ~$0.40 추가 |
+| Stage 2 (마스터 시트 — LoRA 적용) | — | **~$0.05** | 신규: flux-dev-lora 1회 |
+| Stage 2 (마스터 시트 — Fallback) | ~$0.02 | ~$0.02 | 변동 없음 (Nano Banana) |
+| Stage 3 (씬 1장 — LoRA 사용) | ~$0.05 | ~$0.05 | 변동 없음 (v40-2 그대로) |
+| Stage 3 (씬 1장 — LoRA 미사용) | ~$0.03 | ~$0.03 | 변동 없음 |
+| 영상 클립 | Veo $0.50/8s, Kling $0.40/10s, Seedance $0.13/s | 동일 | 변동 없음 |
+
+### 영향 범위
+- **DB schema 변경**:
+  - `characters` 컬렉션에 `original_photo_object_name: Optional[str]` 신규 필드. 기존 도큐먼트는 null → FE에서 안내 + 재업로드 유도 (마이그레이션 스크립트 불필요)
+- **API 변경**:
+  - 신규: `POST /api/character/upload-original-photo`
+  - 변경: `/api/character/save` body에 `original_photo_object_name` 옵션 키 추가 (후방 호환)
+  - 변경: `/api/character/me` 응답에 `original_photo_object_name`, `original_photo_url` 추가
+  - 변경: `/api/character/train-lora` — 사전 조건이 `sheet_object_name` → `original_photo_object_name`. 기존 학습된 사용자도 `original_photo_object_name` 없으면 재업로드 필요(원샷 안내)
+  - 변경: `/api/character/generate-sheet` — LoRA 분기 추가, photo 인자가 Optional
+  - 변경: `/api/character/lora-status` `costs` dict 키 확장
+- **외부 의존성 추가**:
+  - Replicate `bytedance/flux-pulid` (PuLID-FLUX v0.9). 기존 REPLICATE_API_TOKEN 그대로 사용. **신규 SDK 의존성 0건** (httpx REST만)
+- **무영향**:
+  - v37 sanitizer / v38 character meta / v39 beats·주인공샷·duration-aware video_prompt — 무관
+  - Stage 3 Phase 2 라우팅 (`mv_pipeline.py`) — 변경 0건
+  - LoRA 학습 트레이너 자체 (`lora_trainer.py`의 Replicate 호출 부분) — 인자명만 rename, 동작 동일
+  - 기존 학습된 LoRA(v40-2 outfit-bound 또는 v40-2 face-only) — 그대로 사용 가능. v40-3 신규 학습은 face identity 정확도 향상
+
+### 수용 기준 (Acceptance Criteria)
+1. `services/character_variations.py`에 `generate_face_variations(photo_bytes, n=18)` 함수 존재. Replicate `bytedance/flux-pulid` REST 호출. 18 prompt = v40-2 `VARIATION_PROMPTS` 재활용
+2. `POST /api/character/upload-original-photo` 정상 동작. MinIO 저장 + MongoDB upsert. `original_photo_object_name` 영속
+3. `characters` 컬렉션에 `original_photo_object_name` 필드 정상 저장 / 노출 (`/me` 응답 포함)
+4. `POST /api/character/train-lora`가 `original_photo_object_name`을 사전 조건으로 사용. photo bytes로 학습 데이터셋 구성
+5. `POST /api/character/generate-sheet` LoRA 분기 동작:
+   - `lora_status='done'` user → `mode='lora'`, `cost_usd=0.05`, flux-dev-lora 호출
+   - 그 외 user → `mode='nano_banana'`, `cost_usd=0.02`, 기존 Nano Banana 호출
+6. `/api/character/lora-status` 응답 `costs`에 `training_usd=2.5`, `sheet_with_lora_usd=0.05`, `sheet_fallback_usd=0.02`, `pulid_variation_usd=0.4`, `scene_with_lora_usd=0.05` 5키 존재
+7. `lora_trainer.start_training` 인자명 `photo_bytes`. `generate_face_variations` 호출. dataset 첫 샘플 = original photo
+8. FE: MyMusicPage `CharacterSection`이 Step 1 카드(사진+학습) + Step 2 카드(의상+시트)로 분리 표시
+9. FE: Step 2 비용 라벨 동적 — LoRA 보유 시 "~$0.05 (LoRA 적용)", 미보유 시 "~$0.02 (기본)"
+10. FE: LoraTrainingModal "소요 시간 / 약 3분", "비용 / ~$2.50 (1회 결제, 영구 사용)"
+11. FE: `api.uploadOriginalPhoto(file)` 함수 존재
+12. Stage 3 (`generate_scene_image_with_lora`) — 변경 0건. v40-2 회귀 0건
+13. v37/v38/v39/v40-1/v40-2 회귀 0건
+14. 9004 + 4000 헬스 200
+
+### 테스트 계획 (Tester)
+- 위 TT11~TT23 전 항목
+
+### 보안
+- PuLID-FLUX 호출은 백엔드 only — Replicate 토큰 노출 0건
+- 원본 사진은 인증 사용자 한정 MinIO 영속 (`characters/{user_id}/original.{ext}`). preview는 기존 `/api/character/preview/{path}` 프록시(인증 없는 read 허용 — 기존과 동일 보안 모델). 후속 v41에서 `Authorization` 게이팅 검토 가능
+- `original_photo_object_name`은 사용자 본인 user_id 기준 path가 들어감. 다른 사용자 path를 요청해도 라우터 단에서 user_id mismatch면 차단됨 (`save`/`generate-sheet`/`train-lora` 모두 `current_user["id"]` 필터)
+- PuLID payload는 사용자 입력 prompt 0건 (정적 18 상수) → prompt injection 위험 0
+- 모델 슬러그(`bytedance/flux-pulid`)는 코드 상수. 슬러그 외부 입력 0건 → SSRF/임의 모델 호출 위험 0
+
+### Open Questions
+- **Q-v40-3-1 (해결됨)** PuLID-FLUX 가용성 — `bytedance/flux-pulid` Replicate 모델 페이지 확인됨, $0.022/run, 표준 REST API 지원. **fallback 모델**: `zsxkib/flux-pulid` (alt) 또는 `bytedance/pulid` (SDXL, FLUX 미지원). v40-3 first ship = `bytedance/flux-pulid`, 슬러그 상수화로 후속 swap 용이
+- **Q-v40-3-2 (open)** PuLID 입력 필드명 정확성 — 모델 페이지에서 `main_face_image` 추정. **B16 작업 첫 단계**: `GET /v1/models/bytedance/flux-pulid` 응답의 `latest_version.openapi_schema`로 정확한 키명 확정 후 코드 작성
+- **Q-v40-3-3 (open)** Stage 1 학습 시간 estimate — PuLID 18 호출(~30초/장 큐 포함, 동시 4) ≈ ~2.5분 + fast-flux-trainer ~2분 = **~4.5분**. UI 라벨 "약 3분"은 과소 추정. v40-3 first ship = "약 4분" 권장. 사용자 정성 평가로 보정
+- **Q-v40-3-4 (open)** Step 2 LoRA 분기 4섹션 grid 신뢰도 — flux-dev-lora 단일 호출로 4섹션 grid 강제가 약하면 PIL composite (4번 호출) 필요. v40-3 first ship = 단일 호출 시도, 정성 평가 미흡 시 v40-4에서 PIL composite 도입. 비용 영향: $0.05 → $0.20 (단일→4분할)
+- **Q-v40-3-5 (open)** 기존 character 마이그레이션 — v40-3 이전 character는 `original_photo_object_name` 부재. UX = "원본 사진을 다시 업로드해주세요" 모달 + 자동 redirect to Step 1. 자동 마이그레이션 (sheet → photo 추출)은 v40-3 범위 외
+- **Q-v40-3-6 (open)** PuLID 18 prompt 적합성 — v40-2의 face-only prompt가 PuLID에서도 효과적인지 정성 평가. PuLID는 식별성을 모델이 강하게 잡아주므로 의상/배경 prompt만 다양화해도 충분할 수 있음. v40-3 first ship = v40-2 prompt 그대로, A/B 평가 후 v40-4 단순화 검토
+
+### 체크리스트
+- [ ] backend_9004 `services/character_variations.py`: `generate_face_variations` (PuLID-FLUX) 신규 + alias (B16)
+- [ ] backend_9004 `services/lora_trainer.py`: `start_training` 인자 photo_bytes로 rename + face_variations 호출 (B22)
+- [ ] backend_9004 `services/character_generator.py`: `generate_character_sheet_with_lora` 신규 (B20-helper)
+- [ ] backend_9004 `routes/character.py`: `POST /upload-original-photo` 신규 (B17)
+- [ ] backend_9004 `routes/character.py`: `SaveCharacterRequest` + `/save` + `/me`에 `original_photo_object_name` (B18)
+- [ ] backend_9004 `routes/character.py`: `/train-lora` original photo 사용 (B19)
+- [ ] backend_9004 `routes/character.py`: `/generate-sheet` LoRA 분기 + fallback (B20)
+- [ ] backend_9004 `routes/character.py`: `COSTS` dict + `_serialize_lora_state` 갱신 (B21)
+- [ ] frontend `src/api/index.js`: `uploadOriginalPhoto` + saveCharacter payload 확장 (F12)
+- [ ] frontend `src/pages/MyMusicPage.jsx`: CharacterSection Step 1 / Step 2 카드 분리 (F13)
+- [ ] frontend cost label Stage 1 ~$2.50 (F14)
+- [ ] frontend Step 2 동적 비용 라벨 (F15)
+- [ ] frontend `LoraTrainingModal.jsx` copy 갱신 (소요 시간 ~3분, 비용 ~$2.50) (F16)
+- [ ] Tester TT11~TT23 PASS
+- [ ] REPORT.md v40-3 append
+
+---
+
+## v40-4 — 2026-04-28 — LoRA 학습 라이브 썸네일 그리드 (UX) — 18 PuLID 변형 실시간 표시
+
+### 배경
+- **v40-3 상태**: PuLID-FLUX 기반 18 face variation → fast-flux-trainer LoRA 학습 정상 종료 확인 (사용자 검증 완료, 2026-04-27)
+- **사용자 피드백**: 학습 시작 후 `preparing_dataset` phase가 길게 (실측 ~3~4분, PuLID 18 호출 sequential + 10.5s 간격) 진행되는데 모달은 "학습 진행 중 / 5%~15%" 텍스트만 표시 → 사용자는 **무엇이 만들어지고 있는지 시각적으로 알 수 없음**
+- **요청 UX**: `preparing_dataset` 단계 동안 **18 슬롯 썸네일 그리드 (3행 × 6열)** 가 모달 안에 노출되며, 각 PuLID 변형이 완성될 때마다 실시간으로 슬롯이 채워짐. `training` phase로 진입 후에도 그리드는 유지(전체 학습 데이터 가시화)
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `services/character_variations.py` — `generate_face_variations(photo_bytes, n=18)` (line 288~348)
+- **확인된 사실**: 이미 **strictly sequential** 루프 — `semaphore = asyncio.Semaphore(1)` (line 326) + `await asyncio.sleep(10.5)` 간격 (line 338). 메인 루프 line 329~338:
+  ```python
+  for idx, prompt in enumerate(prompts):
+      r = await _call_pulid_with_retry(prompt, photo_data_uri, client, semaphore, idx + 1)
+      if r:
+          successes.append(r)
+      if idx < len(prompts) - 1:
+          await asyncio.sleep(10.5)
+  ```
+- **콜백 hook 지점**: `if r:` 블록 직후 (line 333~334 이후). 실패 변형은 r=None이므로 콜백 호출 X (또는 별도 `on_variation_failed` 콜백 옵션 가능 — v40-4 first ship에서는 success-only)
+- **변경 필요 (B23)**: 함수 시그니처에 `on_variation_complete: Optional[Callable[[int, bytes], Awaitable[None]]] = None` 추가. 콜백이 동기/비동기 모두 처리되도록 `inspect.iscoroutinefunction` 분기 또는 단순히 항상 await + sync는 wrap (가장 깔끔: 콜백은 async로 통일하고 sync는 호출처가 wrapping)
+- **에러 격리**: 콜백 호출이 예외를 던져도 PuLID 루프는 계속 진행해야 함. `try/except` 로 감싸 warning만 로그
+- **결론**: prompt에서 우려한 "async loop 구조 충돌"은 없음. **단일 콜백 hook으로 충분, yield-based generator 불필요**
+
+#### 2. `services/lora_trainer.py` — `start_training` (line 315~447)
+- **확인된 사실**: line 340 `lora_progress = {"phase": "preparing_dataset", "percent": 5}` 설정 후 line 348~349 `from .character_variations import generate_face_variations; variations = await generate_face_variations(photo_bytes, n=18)`. line 373~379에서 `{"phase": "uploading_dataset", "percent": 15, "variations_count": len(variations)}` 갱신
+- **변경 필요 (B24)**: `start_training` 안에 클로저 콜백 정의:
+  ```python
+  async def _on_variation(idx: int, png_bytes: bytes):
+      object_name = "characters/{}/lora_variations/var_{:02d}.png".format(user_id, idx)
+      try:
+          minio_client = get_minio()
+          minio_client.put_object(
+              bucket_name=settings.minio_bucket_images,
+              object_name=object_name,
+              data=io.BytesIO(png_bytes),
+              length=len(png_bytes),
+              content_type="image/png",
+          )
+          # MongoDB $push 로 list에 append. progress.percent도 점진적으로 증가
+          progress_pct = 5 + int(20 * (idx / 18))  # 5% → 25%
+          await mongo_db.characters.update_one(
+              {"user_id": user_id},
+              {
+                  "$push": {"lora_variation_thumbnails": object_name},
+                  "$set": {
+                      "lora_progress": {
+                          "phase": "preparing_dataset",
+                          "percent": progress_pct,
+                          "variations_done": idx,
+                          "variations_total": 18,
+                      },
+                      "updated_at": datetime.utcnow(),
+                  },
+              },
+          )
+      except Exception as e:
+          logger.warning("LoRA variation thumbnail upload failed (idx=%s): %s", idx, e)
+
+  variations = await generate_face_variations(photo_bytes, n=18, on_variation_complete=_on_variation)
+  ```
+- 그 외 부분(zip / upload / training start / poll) 변경 0건
+
+#### 3. `routes/character.py` — `_serialize_lora_state` (line 642~660), `/me` (line 560~597), `/lora-status` (line 791~796)
+- **확인된 사실**: `_serialize_lora_state` 가 `/lora-status` 응답을 만듦. `/me` 는 별도로 자체 dict를 빌드 (line 575~597) — **두 군데 모두 갱신 필요**
+- **변경 필요 (B25)**:
+  - `_serialize_lora_state` 에 `variation_thumbnails: List[str]` (preview URL list) 추가:
+    ```python
+    obj_names = char.get("lora_variation_thumbnails") or []
+    thumbnail_urls = [
+        "/api/character/preview/{}".format(name) for name in obj_names
+    ]
+    return {
+        ...,
+        "variation_thumbnails": thumbnail_urls,
+    }
+    ```
+  - `/me` 응답 dict에도 동일 키 추가 (또는 `/me` 가 `_serialize_lora_state` 를 부분 사용하도록 리팩터링)
+
+#### 4. `routes/character.py` — `/train-lora` (line 686~787) — 학습 시작 시 reset
+- **확인된 사실**: line 720~735 atomic guard 설정 시 `lora_progress`, `lora_error` 만 초기화. `lora_variation_thumbnails` 는 미정의(이전 학습 잔재 가능)
+- **변경 필요 (B26)**:
+  - line 723~735 atomic guard `$set` 에 `"lora_variation_thumbnails": []` 추가
+  - 이전 변형 썸네일 MinIO 객체는 delete 안 해도 됨 (object_name 패턴 동일하므로 새 학습이 덮어씀). 그러나 18 < N(이전) 인 경우 잔재가 생기므로 best-effort 정리 권장 (B27 참고)
+
+#### 5. `routes/character.py` — `/lora` DELETE (line 799~844), `_run_lora_pipeline_bg` (line 663~683) — 실패/취소 정리
+- **확인된 사실**: `delete_lora` (line 831~842) `$set` 에 LoRA 관련 필드 초기화하지만 `lora_variation_thumbnails` 미포함. 또한 MinIO 정리는 `lora_artifact.object_name` 만 (line 818~828)
+- **변경 필요 (B27)**:
+  - `delete_lora` `$set` 에 `"lora_variation_thumbnails": []` 추가
+  - MinIO 정리: `characters/{user_id}/lora_variations/` prefix walk + 일괄 삭제 (best-effort)
+  - `_run_lora_pipeline_bg` 의 except 블록은 `lora_trainer.start_training` 안에서 이미 `lora_status='failed'` 처리하지만 thumbnails 정리는 하지 않음. 학습 실패 시 다음 시도까지 그리드를 표시할지(UX) 또는 정리할지 결정 필요. **first ship**: 실패 시 그리드 유지 (디버깅 / 재시도 후 재반영). **DELETE /lora** 또는 **다음 /train-lora** 시 정리 (B26 reset 시점)
+
+#### 6. `frontend/src/components/LoraTrainingModal.jsx` — `renderTraining` (line 232~283)
+- **확인된 사실**: progress bar (line 247~255) + 단계 텍스트 (line 257~259) + ETA (line 260~263) + 백그라운드 hint (line 264~266). `lora?.lora_progress?.percent` / `step` 사용
+- **변경 필요 (F17~F20)**:
+  - `lora?.variation_thumbnails` 배열 read → 18 슬롯 그리드 렌더 (`<LoraVariationGrid />` inline 또는 별도 컴포넌트)
+  - 슬롯 상태:
+    - **완료**: `<img src={url}>` (썸네일 표시)
+    - **로딩 중** (next slot, only during preparing_dataset): 작은 spinner + 흐릿한 placeholder
+    - **대기**: 회색 placeholder
+  - 단계 텍스트: `lora?.lora_progress?.phase === 'preparing_dataset'` 일 때 `학습용 이미지 생성 중 (N/18)` (N = thumbnails.length). 그 외에는 기존 step 그대로
+  - 그리드는 `preparing_dataset` + `training` + `succeeded` 모든 phase에서 표시 (단, `idle` 상태에서는 미표시)
+  - 폴링 속도(5000ms) 그대로 — PuLID 호출이 30~60초/장이므로 5s 폴은 1~2번 lag 정도, 충분
+
+#### 7. `frontend/src/components/LoraTrainingModal.css` — line 1~250
+- **확인된 사실**: 기존 `.lora-modal__progress-track`, `.lora-modal__meta`, `.lora-modal__hint` 등 클래스 존재. 모달 너비 `width: 440px` (line 17)
+- **변경 필요 (F19)**:
+  - **모달 너비 확장**: 440px → **560px** (또는 `min-width: 560px`) — 18 슬롯 그리드 (3×6, 슬롯당 ~80px) 수용
+  - `.lora-modal__grid` — `display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;`
+  - `.lora-modal__slot` — `aspect-ratio: 1; border-radius: 4px; background: var(--color-hover); display: flex; align-items: center; justify-content: center; overflow: hidden;`
+  - `.lora-modal__slot--done img` — `width: 100%; height: 100%; object-fit: cover;`
+  - `.lora-modal__slot--loading` — spinner CSS (기존 `.lora-modal__spinner` 재활용)
+  - `.lora-modal__slot--pending` — 회색만 (background: var(--color-border))
+
+#### 8. `frontend/src/api/index.js` — preview URL 헬퍼
+- **확인된 사실**: line 428~429 `characterPreviewUrl(previewPath)` — 기존 헬퍼. `lora.variation_thumbnails` 가 이미 `/api/character/preview/...` 절대경로이므로 `characterPreviewUrl` 그대로 통과 가능. 또는 백엔드가 full preview URL 을 반환하므로 FE는 그대로 `<img src={url}>` 사용
+- **변경 필요 (F-shared)**: api 함수 추가 0건. URL은 백엔드가 이미 완성된 path 형태로 반환
+
+#### 9. MongoDB schema 영향
+- **신규 필드**: `characters.lora_variation_thumbnails: List[str]` (object_name 리스트)
+- 인덱스 불필요. 기존 도큐먼트는 필드 부재 → BE 가 빈 리스트로 폴백
+- 마이그레이션 스크립트 불필요
+
+### 결정 사항 (v40-4 핵심)
+1. **콜백 기반 구현**: `generate_face_variations` 에 `on_variation_complete` 비동기 콜백 옵션 추가. yield-based generator 변경 X (호출처 영향 최소)
+2. **저장 위치**: MinIO `characters/{user_id}/lora_variations/var_{idx:02d}.png` (00~17). bucket = `settings.minio_bucket_images` (기존)
+3. **URL serving**: 기존 `/api/character/preview/{object_name:path}` 프록시 재활용. 신규 endpoint 0개
+4. **MongoDB 필드**: `lora_variation_thumbnails: List[str]` (object_name) 별도 필드. `lora_progress` 안에 embed 하지 않음 (poll 응답 비대 방지 + reset 단순화)
+5. **API 응답 노출**: `_serialize_lora_state` + `/me` 응답에 `variation_thumbnails: List[str]` (preview URL 리스트) 추가
+6. **Reset 시점**: `/train-lora` 진입 시 `lora_variation_thumbnails = []` (B26). `DELETE /lora` 시 list 비우기 + MinIO prefix 정리 (B27)
+7. **실패/취소 처리**: 학습 실패 시 그리드 유지 (디버깅 가치). 다음 학습 시작 시 reset
+8. **Frontend 폴링**: 5000ms 그대로. PuLID 호출 30~60초/장이므로 충분
+9. **모달 너비**: 440px → **560px** (18 슬롯 그리드 수용). 다른 phase에서도 시각적 일관성 위해 영구 변경 (또는 conditional max-width — 단순화 위해 영구 변경 권장)
+10. **그리드 표시 phase**: `preparing_dataset` + `training` + `succeeded`. `idle` / `failed` 에서도 thumbnails > 0 이면 표시 (디버깅 가치)
+
+### 핵심 알고리즘
+
+#### 콜백 흐름
+```
+[/train-lora 진입]
+  ↓ atomic guard set: lora_status='training', lora_variation_thumbnails=[]
+  ↓ background task: _run_lora_pipeline_bg(user_id, photo_bytes, character_name)
+    ↓ start_training(user_id, photo_bytes, character_name, mongo_db)
+      ↓ set lora_progress={phase: 'preparing_dataset', percent: 5}
+      ↓ generate_face_variations(photo_bytes, n=18, on_variation_complete=_on_variation)
+        for idx in 0..17:
+          PuLID call (30~60s, sequential, 10.5s gap)
+          if success:
+            ↓ await _on_variation(idx+1, png_bytes)  ← B23 hook
+              ↓ MinIO put: characters/{uid}/lora_variations/var_{N:02d}.png
+              ↓ MongoDB $push lora_variation_thumbnails + $set lora_progress.percent
+        return successes
+      ↓ set lora_progress={phase: 'uploading_dataset', percent: 15}
+      ↓ ... (zip + upload + training start)
+
+[/lora-status poll @ 5s 주기]
+  ↓ char.lora_variation_thumbnails (List[str] object_name)
+  ↓ _serialize_lora_state → variation_thumbnails: ["/api/character/preview/...", ...]
+  ↓ FE: thumbnails.length === N
+  ↓ <Grid> render: slots [0..N-1] = <img>, slot N = spinner, slots N+1..17 = placeholder
+```
+
+#### Pseudo-code (`generate_face_variations` 콜백 시그니처)
+```python
+from typing import Awaitable, Callable, Optional
+import inspect
+
+async def generate_face_variations(
+    photo_bytes: bytes,
+    n: int = 18,
+    on_variation_complete: Optional[Callable[[int, bytes], Awaitable[None]]] = None,
+) -> List[bytes]:
+    # ... (기존 setup)
+    successes: List[bytes] = []
+    async with httpx.AsyncClient() as client:
+        for idx, prompt in enumerate(prompts):
+            r = await _call_pulid_with_retry(prompt, photo_data_uri, client, semaphore, idx + 1)
+            if r:
+                successes.append(r)
+                if on_variation_complete is not None:
+                    try:
+                        result = on_variation_complete(idx + 1, r)
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception as e:
+                        logger.warning("variation callback raised: %s", e)
+            if idx < len(prompts) - 1:
+                await asyncio.sleep(10.5)
+    # ... (기존 logging + return)
+    return successes
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py` — `generate_face_variations` 시그니처 확장 (B23)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/lora_trainer.py` — `start_training` 안에 `_on_variation` 클로저 + `generate_face_variations` 호출 시 콜백 전달 (B24)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py`:
+  - `_serialize_lora_state` 에 `variation_thumbnails` 추가 (B25)
+  - `/me` 응답 dict 에 `variation_thumbnails` 추가 (B25)
+  - `/train-lora` atomic guard `$set` 에 `lora_variation_thumbnails: []` 초기화 (B26)
+  - `DELETE /lora` `$set` + MinIO prefix 정리 (B27)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx` — `renderTraining` 안에 그리드 컴포넌트 (F17), 단계 텍스트 동적 (F18), grid는 `done` phase에서도 유지 (F20)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.css` — 모달 너비 560px + `.lora-modal__grid` / `.lora-modal__slot` 클래스 (F19)
+
+### 작업 분해
+
+#### Backend (9004 only)
+
+- **B23** (`services/character_variations.py`) — 콜백 hook 추가:
+  - `generate_face_variations` 시그니처: `(photo_bytes: bytes, n: int = 18, on_variation_complete: Optional[Callable[[int, bytes], Awaitable[None]]] = None) -> List[bytes]`
+  - 메인 루프 line 329~338 안 `if r:` 블록 다음에 콜백 호출 (try/except 로 격리, async/sync 모두 지원)
+  - 콜백 인덱스는 1-based (사용자 가시 번호와 일치, 1~18)
+  - 기존 호출처는 콜백 미전달 → 동작 불변 (하위 호환)
+
+- **B24** (`services/lora_trainer.py` `start_training`) — `_on_variation` 클로저 + thumbnails 누적:
+  - `start_training` 함수 안 (line 348 직전) `_on_variation(idx, png_bytes)` async 클로저 정의
+  - 클로저 내부:
+    1. MinIO put: bucket=`settings.minio_bucket_images`, object_name=`characters/{user_id}/lora_variations/var_{idx:02d}.png`, data=`io.BytesIO(png_bytes)`, content_type=`image/png`
+    2. MongoDB `$push`: `lora_variation_thumbnails` 에 object_name 추가
+    3. MongoDB `$set`: `lora_progress` 점진 갱신 — `{phase: 'preparing_dataset', percent: 5 + int(20 * idx / 18), variations_done: idx, variations_total: 18, ...}`
+  - try/except 로 격리: MinIO 또는 Mongo 실패해도 PuLID 루프 계속 (warning log)
+  - line 348~349 호출 변경: `variations = await generate_face_variations(photo_bytes, n=18, on_variation_complete=_on_variation)`
+  - **주의**: `_set_character_fields` 헬퍼는 `$set` 만 지원. `$push` 까지 필요하므로 직접 `mongo_db.characters.update_one` 호출 (또는 `_set_character_fields` 확장)
+
+- **B25** (`routes/character.py`) — 응답 노출:
+  - `_serialize_lora_state(char)` 에 `variation_thumbnails` 추가:
+    ```python
+    obj_names = (char or {}).get("lora_variation_thumbnails") or []
+    return {
+        ...,
+        "variation_thumbnails": [
+            "/api/character/preview/{}".format(name) for name in obj_names
+        ],
+    }
+    ```
+  - `/me` 응답 dict 에도 동일 키 추가 (line 575~597)
+  - 빈 리스트 fallback (필드 부재 시 `[]` 반환, FE 로직 단순화)
+
+- **B26** (`routes/character.py` `/train-lora`) — reset:
+  - line 727 atomic guard `$set` 안에 `"lora_variation_thumbnails": []` 추가:
+    ```python
+    {"$set": {
+        "lora_status": "training",
+        "lora_progress": {"phase": "queued", "percent": 0},
+        "lora_error": None,
+        "lora_variation_thumbnails": [],  # NEW
+        "updated_at": datetime.utcnow(),
+    }}
+    ```
+  - guard 실패 (이미 training) 시에는 reset 하지 않음 (이미 진행 중인 학습의 그리드 보존)
+
+- **B27** (`routes/character.py` `DELETE /lora`) — 정리:
+  - line 831 `$set` 안에 `"lora_variation_thumbnails": []` 추가
+  - MinIO prefix `characters/{user_id}/lora_variations/` 일괄 삭제 (best-effort, `list_objects` + `remove_objects`). 실패 시 warning만 (기존 `lora_artifact.object_name` 삭제 패턴과 동일)
+
+#### Frontend
+
+- **F17** (`LoraTrainingModal.jsx` `renderTraining`) — 18 슬롯 그리드:
+  - `renderTraining` 안 progress bar 다음에 그리드 섹션 추가 (백그라운드 hint 직전)
+  - 그리드 렌더 로직 (inline 컴포넌트 또는 별도 함수):
+    ```jsx
+    const thumbs = lora?.variation_thumbnails || [];
+    const total = 18;
+    const phase = lora?.lora_progress?.phase;
+    const isPreparing = phase === 'preparing_dataset' || phase === 'queued';
+    const apiBase = api.API_BASE || ''; // (또는 thumbs URL 그대로 사용)
+    return (
+      <div className="lora-modal__grid">
+        {Array.from({ length: total }, (_, i) => {
+          if (i < thumbs.length) {
+            return (
+              <div key={i} className="lora-modal__slot lora-modal__slot--done">
+                <img src={thumbs[i]} alt={`variation ${i + 1}`} />
+              </div>
+            );
+          }
+          if (isPreparing && i === thumbs.length) {
+            return (
+              <div key={i} className="lora-modal__slot lora-modal__slot--loading">
+                <span className="lora-modal__spinner" />
+              </div>
+            );
+          }
+          return <div key={i} className="lora-modal__slot lora-modal__slot--pending" />;
+        })}
+      </div>
+    );
+    ```
+  - 그리드는 `idle` 상태에서는 미표시 (renderIdle 미포함). `renderTraining` / `renderDone` / `renderFailed` 모두 thumbs.length > 0 이면 표시 (F20 참조)
+
+- **F18** (`LoraTrainingModal.jsx`) — 단계 텍스트 동적:
+  - `renderTraining` 안 step 라인:
+    ```jsx
+    let stepText = lora?.lora_progress?.step;
+    if (lora?.lora_progress?.phase === 'preparing_dataset') {
+      const done = (lora?.variation_thumbnails || []).length;
+      stepText = `학습용 이미지 생성 중 (${done}/18)`;
+    } else if (!stepText) {
+      stepText = lora?.lora_progress?.phase || '준비 중';
+    }
+    ```
+  - phase 별 한글 텍스트 정리:
+    - `queued` → "대기 중"
+    - `preparing_dataset` → `학습용 이미지 생성 중 (N/18)`
+    - `uploading_dataset` → "데이터셋 업로드 중"
+    - `starting_training` → "학습 준비 중"
+    - `training` / `processing` → "AI 모델 학습 중"
+    - `succeeded` → "완료"
+
+- **F19** (`LoraTrainingModal.css`) — 그리드 스타일 + 모달 너비:
+  - `.lora-modal { width: 560px; }` (440px → 560px)
+  - 신규:
+    ```css
+    .lora-modal__grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 4px;
+      margin: 8px 0;
+    }
+    .lora-modal__slot {
+      aspect-ratio: 1;
+      border-radius: 4px;
+      background: var(--color-hover);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .lora-modal__slot--done img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .lora-modal__slot--loading {
+      background: var(--color-border);
+    }
+    .lora-modal__slot--pending {
+      background: var(--color-border);
+      opacity: 0.4;
+    }
+    ```
+  - 모바일(폭 < 480px) 반응형: 모달 width auto + grid 6열 유지 (슬롯이 작아져도 18장 그대로 표시)
+
+- **F20** (`LoraTrainingModal.jsx`) — `renderDone` / `renderFailed` 에서도 그리드 노출:
+  - `renderDone` 안 trainedAt 메타 다음에 동일 그리드 섹션 추가 (단, isPreparing=false이므로 spinner 슬롯 없음, 빈 슬롯은 `pending` 만)
+  - `renderFailed` 안 error-box 다음에 동일 그리드 (디버깅용 — 어디까지 진행됐는지 확인)
+  - `renderIdle` 에서는 미표시
+
+#### Tester (TT)
+
+- **TT24** (B23) `generate_face_variations` 콜백 hook:
+  - `inspect.signature` → `on_variation_complete: Optional[Callable] = None` 매개변수 존재
+  - mock callback (AsyncMock) 전달 → 18 PuLID 호출 (mock httpx) → callback이 정확히 N번 (성공 카운트) 호출됨
+  - callback 인자: (idx: int, png_bytes: bytes), idx는 1-based
+  - callback 예외 → 루프 계속 진행 (warning 로그)
+
+- **TT25** (B24) `lora_trainer.start_training` thumbnails 누적:
+  - mock generate_face_variations + mock on_variation_complete 직접 호출 → MinIO put_object 호출됨 (object_name 패턴 검증)
+  - MongoDB `$push lora_variation_thumbnails` 동작 (실 Mongo 또는 mongomock)
+  - `lora_progress.percent` 점진 증가 (5 → 25 사이)
+
+- **TT26** (B25) `_serialize_lora_state` + `/me`:
+  - `lora_variation_thumbnails` 부재 → `variation_thumbnails: []` 반환
+  - `lora_variation_thumbnails: ["a", "b"]` → `variation_thumbnails: ["/api/character/preview/a", "/api/character/preview/b"]`
+  - `/lora-status` + `/me` 양쪽 모두 동일 키 노출
+
+- **TT27** (B26) `/train-lora` reset:
+  - 이전 학습 시 `lora_variation_thumbnails: ["a", "b"]` 가진 상태에서 `/train-lora` POST → atomic guard 통과 후 필드 `[]` 로 초기화
+  - 동시 호출 (이미 training) 시 409 응답 + 기존 thumbnails 보존
+
+- **TT28** (B27) `DELETE /lora`:
+  - 응답 200, MongoDB `lora_variation_thumbnails = []`, MinIO `characters/{uid}/lora_variations/` 객체 삭제 시도 (mock minio 호출 카운트)
+  - MinIO 실패해도 200 응답 (best-effort)
+
+- **TT29** (F17) FE 그리드 렌더:
+  - `lora.variation_thumbnails = []` + phase=`preparing_dataset` → 슬롯 0=spinner, 1~17=pending
+  - `lora.variation_thumbnails = [url1, url2, url3]` + phase=`preparing_dataset` → 슬롯 0~2=img, 3=spinner, 4~17=pending
+  - `lora.variation_thumbnails = [...18]` + phase=`training` → 슬롯 0~17=img, spinner 없음
+  - `lora.variation_thumbnails = [...18]` + status=`done` → 그리드 유지
+
+- **TT30** (F18) FE 단계 텍스트:
+  - phase=`preparing_dataset` + thumbs.length=4 → "학습용 이미지 생성 중 (4/18)"
+  - phase=`training` → "AI 모델 학습 중"
+  - phase=`uploading_dataset` → "데이터셋 업로드 중"
+
+- **TT31** (F19) CSS 검증:
+  - 모달 width 560px (DOM 측정 또는 computed style)
+  - `.lora-modal__grid` 6열 grid 적용
+  - 슬롯 aspect-ratio 1:1
+
+- **TT32** 회귀 v40-3:
+  - `generate_face_variations(photo_bytes, n=18)` (콜백 미전달) 호출 → 기존 동작 그대로 (콜백 옵션이므로 하위 호환)
+  - `start_training` 콜백 전달 시 + 미전달 시 모두 정상 학습 완료 (mock end-to-end)
+  - LoRA 학습 완료 시 `lora_status='done'`, `lora_artifact.object_name` 정상
+
+- **TT33** 9004 헬스 200 + `/api/character/me` `/api/character/lora-status` 200
+
+### 비용
+- **변경 0건**. v40-4는 UX-only. PuLID 18 호출은 학습 흐름의 일부로 이미 v40-3 비용에 포함 (~$0.40)
+- MinIO 추가 저장: 18 PNG × ~500KB = ~9MB / user / 학습 — 무시할 수준
+- MongoDB 추가 필드: `lora_variation_thumbnails` (object_name 18개 string list, ~2KB) — 무시할 수준
+
+### 영향 범위
+- **DB schema 변경**:
+  - `characters` 컬렉션에 `lora_variation_thumbnails: List[str]` 신규 필드. 기존 도큐먼트는 부재 → BE 빈 리스트 폴백. 마이그레이션 불필요
+- **API 변경**:
+  - `/api/character/me` 응답에 `variation_thumbnails: List[str]` 추가 (후방 호환 — FE 미사용 시 무시)
+  - `/api/character/lora-status` 응답에 `variation_thumbnails: List[str]` 추가
+  - 신규 endpoint 0개. 신규 라우트 0개
+- **외부 의존성 추가**: 0건
+- **무영향**:
+  - PuLID 호출 자체 (`_call_pulid_variation`, `_call_pulid_with_retry`) — 변경 0건
+  - LoRA 학습 (`fast-flux-trainer`) — 변경 0건
+  - Stage 2 / Stage 3 generation — 변경 0건
+  - v40-3 `original_photo_object_name`, `lora_artifact`, `lora_trigger_word` — 변경 0건
+  - v37/v38/v39/v40/v40-1/v40-2/v40-3 모든 회귀 — 0건
+
+### 수용 기준 (Acceptance Criteria)
+1. `services/character_variations.py` `generate_face_variations` 시그니처에 `on_variation_complete: Optional[Callable[[int, bytes], Awaitable[None]]] = None` 매개변수 존재. 미전달 시 기존 동작
+2. PuLID 변형이 성공할 때마다 (1-based idx 1~18) 콜백이 호출됨. 콜백 예외는 격리되어 메인 루프 계속 진행
+3. `services/lora_trainer.py` `start_training` 안에서 `_on_variation` 콜백으로 MinIO 업로드 + MongoDB `$push lora_variation_thumbnails` + `lora_progress.percent` 점진 갱신
+4. MinIO 객체 path = `characters/{user_id}/lora_variations/var_{idx:02d}.png`
+5. `routes/character.py` `_serialize_lora_state` + `/me` 응답에 `variation_thumbnails: List[str]` (preview URL 리스트) 노출
+6. `/train-lora` atomic guard 시 `lora_variation_thumbnails = []` 초기화. 진행 중일 때(409)는 보존
+7. `DELETE /lora` 시 `lora_variation_thumbnails = []` + MinIO prefix `characters/{uid}/lora_variations/` 정리
+8. FE: `LoraTrainingModal.renderTraining` 안에 18 슬롯 그리드 (3행 × 6열) 렌더. 완료 슬롯=img, 다음 슬롯=spinner (preparing_dataset 시), 나머지=placeholder
+9. FE: 단계 텍스트 `preparing_dataset` 시 "학습용 이미지 생성 중 (N/18)" 동적 갱신
+10. FE: 그리드는 `training` / `done` / `failed` 상태에서도 유지 (idle 제외)
+11. FE: 모달 너비 560px, 6열 grid CSS 정상 적용
+12. v40-3 학습 end-to-end 회귀 0건 — `generate_face_variations` 콜백 미전달 시 기존 동작
+13. 9004 `/api/health` 200, `/api/character/me` 200, `/api/character/lora-status` 200
+
+### 테스트 계획 (Tester)
+- TT24~TT33 전 항목 PASS
+
+### 보안
+- 변형 썸네일은 `characters/{user_id}/lora_variations/...` 경로 — user_id 기반 격리. 다른 user_id path는 라우터에서 `current_user["id"]` 필터로 차단
+- preview URL은 기존 `/api/character/preview/{path}` 프록시 — 인증 없는 read 허용 (기존 보안 모델과 동일, sheet 이미지와 동일 정책). 후속 v41 에서 `Authorization` 게이팅 일괄 검토
+- 콜백 예외는 격리됨 — 사용자 입력 영향 0
+- MinIO `put_object` 는 백엔드 only — credentials 노출 0
+- 새 외부 의존성 0건 → 공급망 위험 0
+
+### Open Questions
+- **Q-v40-4-1 (open)** PuLID variation이 1~2개 실패하면 그리드는 빈 슬롯 (spinner 사라지고 다음 idx로 넘어감) 처리됨 — UX상 사용자가 "왜 4번 슬롯이 비었지?" 의문 가능. **first ship**: 실패 슬롯도 placeholder로 보임 (디버깅 가치). 추후 `lora_variation_failures: List[int]` 별도 필드로 관리하면 X 마크 표시 가능 (v40-5 후보)
+- **Q-v40-4-2 (open)** 폴링 5s + PuLID 30~60s/장 = 사용자가 보는 갱신 lag = 최대 5s. 충분히 부드럽지만, WebSocket 또는 SSE로 즉시 push 도 가능. **first ship**: 5s polling 그대로 (인프라 변경 0건)
+- **Q-v40-4-3 (open)** 모달 닫고 다시 열었을 때 그리드 즉시 표시 — `lora` prop 이 폴링으로 채워지므로 첫 폴 결과 후 (5s 이내) 표시됨. 첫 fetch 즉시 호출되므로 거의 무지각. UX 충분
+- **Q-v40-4-4 (open)** 학습 실패 후 그리드 잔재 — `renderFailed` 에서도 그리드 표시 결정 (F20). 사용자가 "재시도" 클릭 시 `/train-lora` 진입 → B26 reset 으로 비워짐. 일관성 유지
+- **Q-v40-4-5 (open)** Step 1 카드(MyMusicPage)에서도 그리드 미니어처 표시? — first ship 범위 외. LoraTrainingModal 만 변경 (사용자 ASCII 스펙 준수)
+
+### 체크리스트
+- [ ] backend_9004 `services/character_variations.py`: `on_variation_complete` 콜백 hook (B23)
+- [ ] backend_9004 `services/lora_trainer.py`: `_on_variation` 클로저 + MinIO/Mongo 누적 (B24)
+- [ ] backend_9004 `routes/character.py`: `_serialize_lora_state` + `/me` 응답에 `variation_thumbnails` (B25)
+- [ ] backend_9004 `routes/character.py`: `/train-lora` atomic guard reset (B26)
+- [ ] backend_9004 `routes/character.py`: `DELETE /lora` thumbnails + MinIO prefix 정리 (B27)
+- [ ] frontend `LoraTrainingModal.jsx`: `renderTraining` 18 슬롯 그리드 (F17)
+- [ ] frontend `LoraTrainingModal.jsx`: 단계 텍스트 동적 (F18)
+- [ ] frontend `LoraTrainingModal.css`: 모달 너비 560px + 그리드 스타일 (F19)
+- [ ] frontend `LoraTrainingModal.jsx`: `renderDone` / `renderFailed` 그리드 유지 (F20)
+- [ ] Tester TT24~TT33 PASS
+- [ ] REPORT.md v40-4 append
+
+---
+
+## v40-5 — 2026-04-28 — Retrain UX (재학습 활성화 + 학습 데이터 삭제)
+
+### 배경
+- **현상 1 — 재학습 버튼 disabled 버그**: 학습 완료(`lora_status === 'done'`) 상태에서 Step 1 카드 하단의 "재학습" 버튼이 마우스 금지(`not-allowed`) 상태로 노출됨. 원인: `MyMusicPage.jsx:771-775` disabled 조건이 `(!photoFile && !character?.sheet_url)` 인데, **사용자가 v40-3 흐름으로 LoRA만 학습한 상태(아직 마스터 시트 미생성)** 에서는 `character.sheet_url` 부재 + `photoFile` 부재로 항상 true → 영원히 disabled. 본래 의도: **새 사진 선택 OR 기존 원본 사진 보유** 시 활성화 — 즉 비교 대상이 `sheet_url`이 아니라 `original_photo_object_name` 이어야 함
+- **현상 2 — 학습 데이터 삭제 기능 부재**: 사용자가 "학습된 LoRA + 업로드한 원본 사진을 모두 지우고 처음부터 다시 시작하고 싶다"는 시나리오 지원 없음. 기존 `DELETE /api/character/lora`는 LoRA artifact + 변형 썸네일만 삭제하고 `original_photo_object_name` 필드/MinIO 객체는 보존 → "완전 초기화"가 불가
+- **사용자 시나리오 3종**:
+  - **케이스 A — 재학습(같은 사진)**: 학습 완료 후 "재학습" 클릭 → 같은 `original_photo_object_name` 으로 PuLID + LoRA 재훈련 (~$2.50)
+  - **케이스 B — 사진 바꿔서 재학습**: 사진 영역 클릭 → 새 파일 선택 → "재학습" 클릭 → 새 사진 업로드 후 재훈련 (기존 사진 덮어쓰기)
+  - **케이스 C — 학습 데이터 완전 삭제**: "학습 데이터 삭제" 버튼 클릭 → confirm → LoRA + 원본 사진 + 변형 썸네일 일괄 삭제 → UI 빈 placeholder 복귀
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `routes/character.py` — `DELETE /api/character/lora` (line 815~882) — 현재 동작
+- **확인된 사실**:
+  - 입력: `current_user` 만 (body 없음)
+  - 처리: `lora_status='training'` 이면 409 반환 (line 827~831). 그 외:
+    - MinIO `lora_artifact.object_name` 삭제 (best-effort, line 834~844)
+    - MinIO prefix `characters/{user_id}/lora_variations/` 일괄 삭제 (best-effort, v40-4의 B27, line 846~864)
+    - MongoDB `$set` 으로 `lora_status='idle'` + `lora_progress=None` + `lora_artifact=None` + `lora_trigger_word=None` + `lora_training_id=None` + `lora_error=None` + `lora_variation_thumbnails=[]` (line 867~880)
+- **미처리 항목**: `original_photo_object_name` 필드는 그대로 유지. MinIO `characters/{user_id}/original.{ext}` 객체도 그대로 유지. 이는 v40-3 설계 의도(LoRA만 지우고 사진은 보존하여 빠른 재학습) 와 일치 — **변경 X**
+- **결론**: 케이스 C의 "전체 삭제" 흐름은 기존 `DELETE /lora`로는 충족 불가. 신규 endpoint 필요
+
+#### 2. `routes/character.py` — `POST /api/character/upload-original-photo` (line 100~176) — 덮어쓰기 동작
+- **확인된 사실**:
+  - 입력: `file: UploadFile` (jpg/png/webp, ≤10MB)
+  - 처리: object_name = `characters/{user_id}/original{ext}` (사용자별 고정 path) → `minio_client.put_object` (line 137~145) → `mongo.characters.update_one` upsert with `$set: {original_photo_object_name: object_name}` (line 158~171)
+  - **덮어쓰기**: ext가 같으면 같은 object_name → MinIO put이 그대로 덮어씀. ext가 다르면 (예: 이전 .jpg, 신규 .png) 새 object 생성되고 **기존 .jpg는 잔재**. MongoDB는 항상 최신 object_name으로 갱신
+  - **확인**: 케이스 B(사진 바꿔서 재학습)는 동작은 하나 ext 다른 경우 stale 객체 발생 — first ship에서는 무시 (10MB max → 비용 미미). 후속 정리는 케이스 C에서 prefix walk 로 일괄 정리됨
+- **결론**: 신규 endpoint 불필요. 기존 `/upload-original-photo` 로 케이스 B 충족
+
+#### 3. `routes/character.py` — `POST /api/character/train-lora` (line 700~803) — 재학습 시 기존 LoRA 처리
+- **확인된 사실**:
+  - line 727: `char = await mongo.characters.find_one({"user_id": user_id})` 로 캐릭터 조회 → `original_photo_object_name` 체크 (line 728~732, 부재 시 404)
+  - line 736~751: atomic guard `find_one_and_update({"user_id": user_id, "lora_status": {"$ne": "training"}}, ...)` 로 status flip. **`$set`** 에 `lora_status='training'`, `lora_progress={"phase":"queued","percent":0}`, `lora_error=None`, `lora_variation_thumbnails=[]` (v40-4 B26로 이미 추가) 만 들어있음
+  - **`lora_artifact` 는 미초기화** — 즉 재학습 진입 시 기존 artifact가 그대로 남아있다가 `poll_training` 성공 시 `_set_character_fields(..., {"lora_status":"done","lora_artifact":artifact_meta})` (lora_trainer.py:595~600) 으로 덮어씀
+  - **MinIO LoRA 파일 처리**: `_lora_object_name(user_id) = "characters/{}/lora.safetensors"` (lora_trainer.py:65~66) — 사용자별 고정 path → 새 학습 성공 시 `put_object` 가 자동 덮어씀 (line 569~577). 따라서 stale 파일 없음 ✅
+  - **재학습 실패 시**: 새 학습이 fail이면 `lora_status='failed'` 로 가지만 기존 `lora_artifact` 메타는 여전히 남아있음 → FE는 "실패" 표시하면서도 이전 artifact의 trained_at을 표기할 위험. **first ship에서는 무시** — 사용자가 "다시 시도" 누르면 atomic guard 통과 + 새 학습 진행 → 정상화됨. 후속 보강 후보(Q-v40-5-1)
+- **결론**: 케이스 A/B 모두 기존 `/train-lora` 호출만으로 자동 정리됨. **백엔드 변경 불필요**. 단, atomic guard 시점에 `lora_artifact=None`으로 명시 클리어하면 더 안전 — first ship에서 추가 (B29 minor)
+
+#### 4. `routes/character.py` — `_serialize_lora_state` (line 650~674) — 응답 형태
+- **확인된 사실**: line 666~674 — 표준 응답 dict 구조. 필드: `lora_status`, `lora_progress`, `lora_artifact`, `lora_trigger_word`, `lora_error`, `variation_thumbnails`, `costs`. `original_photo_object_name`은 미포함 (그건 `/me` 응답에서만 노출, line 591)
+- **변경 필요**: 신규 endpoint `DELETE /api/character/training-data` 응답이 `_serialize_lora_state` 형태로 통일 (FE가 lora 상태 갱신용으로 동일 dict 기대) + `original_photo_object_name: ""` 추가 필드 (FE가 character state 클리어용). first ship: 응답에 두 dict를 묶어 `{**_serialize_lora_state(...), "original_photo_object_name": ""}` 반환
+
+#### 5. `services/lora_trainer.py` `start_training` (line 315~491) — 기존 artifact 영향 검증
+- **확인된 사실**:
+  - line 338~344: `_set_character_fields(... {"lora_status":"training", "lora_progress":{phase:"preparing_dataset",percent:5}, "lora_trigger_word":<new>, "lora_training_id":None, "lora_error":None})` — **`lora_artifact` 는 건드리지 않음**. 즉 이전 학습 artifact dict가 학습 진행 중에도 살아있음
+  - 새 trigger_word는 매번 uuid4 기반 신규 생성 (line 81~82) → 이전 LoRA와 구분됨
+  - poll_training 종료 시 (`succeeded`) line 595~600 에서 새 `lora_artifact` 로 덮어씀
+- **결론**: 정상. 다만 atomic guard에서 `lora_artifact=None` 명시 클리어 시 학습 진행 중 FE가 stale artifact를 표시하는 위험 제거 가능. **first ship**: B29 에서 atomic guard `$set`에 `lora_artifact=None` 추가 (안전성)
+
+#### 6. `frontend/src/pages/MyMusicPage.jsx` `renderStep1Card` — 재학습 버튼 분기
+- **확인된 사실 (line 681~793)**:
+  - 버튼 label 분기: `inProgress` → "학습 중...", `uploadingOriginal` → "사진 업로드 중...", `done` → "재학습" (FiRefreshCw), `failed` → "다시 시도" (FiAlertCircle), default → "AI 학습 시작" (FiZap)
+  - **disabled 조건 (line 771~775)**: `uploadingOriginal || inProgress || (!photoFile && !character?.sheet_url)`
+  - **버그 발생 경로**: `lora_status === 'done'` + 마스터 시트 미생성 (`character.sheet_url == null`) + 사진 미선택 (`photoFile == null`) → disabled = true
+  - **버그 미발생 경로 (왜 일부 사용자에게는 동작?)**: 사용자가 마스터 시트까지 생성한 상태에서는 `character.sheet_url` 존재 → disabled false. 단, v40-3 흐름에서는 학습 후 시트 생성이 별개 단계이므로 **단순 학습-only 사용자는 영구 disabled**
+  - photoFile state는 line 163, original_photo_object_name 필드는 line 192의 originalPhotoObjectName 과 다름 (originalPhotoObjectName은 신규 업로드 직후 응답을 cache하는 용도). character의 영속 필드인 `character?.original_photo_object_name` 을 참조해야 함
+- **변경 필요 (F22)**: disabled 조건을 `uploadingOriginal || inProgress || (!photoFile && !character?.original_photo_object_name)` 로 정정. 이로써 케이스 A(기존 사진), 케이스 B(새 사진), 빈 상태 모두 정확히 판별
+
+#### 7. `frontend/src/pages/MyMusicPage.jsx` `handleStartTraining` (line 377~398)
+- **확인된 사실**:
+  ```js
+  if (!photoFile && !character?.sheet_url) {  // ← 동일 버그
+    alert('먼저 사진을 선택해주세요.'); return;
+  }
+  setUploadingOriginal(true);
+  if (photoFile && !originalPhotoObjectName) {
+    await api.uploadOriginalPhoto(photoFile);  // 새 사진만 업로드
+  }
+  setIsLoraModalOpen(true);  // 모달 진입 → handleStart() 또는 handleRetrain() 으로 train-lora 호출
+  ```
+- **케이스 A 흐름 (기존 사진)**: photoFile=null, character.original_photo_object_name 존재 → 가드 통과 → upload 스킵 → 모달 오픈 → 모달 안 "재학습" 버튼 클릭 → `handleRetrain` (LoraTrainingModal.jsx:147~164) → `await api.deleteLora()` → `lora_status=idle` 로 setState (state만, train-lora는 아직 미호출) → **모달은 idle 상태가 되어 renderIdle 표시 → "AI 학습 시작" 버튼 노출** → 사용자가 한 번 더 클릭 → train-lora 호출
+- **이슈**: 재학습이 2-step (deleteLora → 사용자가 다시 시작 클릭) 으로 되어있음 — 사용자 사양은 1-click. **변경 필요 (F24)**: `handleRetrain` 수정 — `deleteLora()` 호출 후 즉시 `startLoraTraining()` 도 호출 (atomic 흐름) OR (간단) 그냥 `startLoraTraining()` 만 호출 (백엔드가 atomic guard로 기존 LoRA를 덮어씀 — Plan Verification 3, 5 결과로 검증됨)
+- **결정**: 후자 채택. `handleRetrain`에서 `deleteLora` 제거 → `startLoraTraining`만 호출. 백엔드가 atomic하게 status→training으로 flip + lora_artifact=None 클리어 (B29) + 새 학습 진행. 이로써 트랜잭션 단순화, race window 제거
+- **케이스 B 흐름 (새 사진)**: photoFile 존재 → uploadOriginalPhoto 호출 → MinIO 덮어쓰기 → 모달 오픈 → "재학습" → train-lora 호출 (백엔드는 새 original_photo_object_name으로 학습) — F24 수정 후 단일 클릭 흐름으로 완성
+
+#### 8. `frontend/src/components/LoraTrainingModal.jsx` `handleRetrain` (line 147~164)
+- **확인된 사실**: 현재 `await api.deleteLora()` + `onLoraUpdate({lora_status:'idle',...})` 만 호출. 그 후 사용자가 idle 상태에서 "AI 학습 시작" 버튼 다시 눌러야 함
+- **변경 필요 (F-modal)**: `deleteLora` 호출 제거. 대신 `await api.startLoraTraining()` 호출 → 백엔드가 atomic guard + lora_artifact 클리어로 자동 처리 → state를 'training'으로 갱신
+- 즉 `handleRetrain` ≈ `handleStart` 와 동일하게 하되 confirm 다이얼로그만 유지
+
+#### 9. `frontend/src/api/index.js` — 기존 함수
+- **확인된 사실 (line 230~290)**:
+  - `uploadOriginalPhoto(file)` (line 232~238) — multipart, `/character/upload-original-photo`
+  - `getLoraStatus()` (line 288) — GET `/character/lora-status`
+  - `startLoraTraining()` (line 289) — POST `/character/train-lora`
+  - `deleteLora()` (line 290) — DELETE `/character/lora`
+- **변경 필요 (F21)**: `deleteTrainingData()` 추가 — DELETE `/character/training-data`. sessionStorage 캐시(`aimu:myCharacter`) 도 invalidate
+
+### 결정 사항 (v40-5 핵심)
+1. **신규 endpoint**: `DELETE /api/character/training-data` — 옵션 (c). 의미 명확("학습 데이터 일괄 삭제"), 단일 책임. 기존 `DELETE /lora`는 보존(역할: "LoRA만 삭제, 사진은 유지" — 후속 시나리오에서 재사용 가능)
+2. **재학습 버튼 disabled 조건**: `(!photoFile && !character?.original_photo_object_name)` 로 정정. **케이스 A는 기존 사진만으로도 활성화, 케이스 B는 새 사진 선택만으로도 활성화**
+3. **재학습 1-click 흐름**: 모달 안 `handleRetrain` 에서 `deleteLora` 호출 제거 → `startLoraTraining` 만 호출. 백엔드 `/train-lora` atomic guard가 기존 lora_artifact 자동 클리어 (B29). 단일 호출, race window 0
+4. **백엔드 atomic guard 보강 (B29)**: `/train-lora` atomic guard `$set` 에 `lora_artifact: None` 추가 — 학습 진행 중 stale artifact 노출 방지
+5. **전체 삭제 endpoint 응답 형태**: `{**_serialize_lora_state({}), "original_photo_object_name": "", "message": "학습 데이터가 삭제되었습니다."}` — FE는 이걸로 lora state + character state 일괄 갱신
+6. **MinIO 정리 범위 (`/training-data`)**:
+   - LoRA artifact: `lora_artifact.object_name` (보통 `characters/{uid}/lora.safetensors`) — best-effort
+   - 변형 썸네일: prefix `characters/{uid}/lora_variations/` 일괄 삭제 — best-effort
+   - 원본 사진: `character.original_photo_object_name` 객체 — best-effort
+   - 마스터 시트(`character.sheet_object_name`) 는 **삭제하지 않음** — 학습 데이터 ≠ 캐릭터 자체. "캐릭터 삭제"는 별도 `DELETE /api/character/me` 가 담당
+7. **MongoDB 클리어 필드**: `lora_status='idle'`, `lora_progress=None`, `lora_artifact=None`, `lora_trigger_word=None`, `lora_training_id=None`, `lora_error=None`, `lora_variation_thumbnails=[]`, `original_photo_object_name=""` (또는 `$unset`)
+8. **`lora_status='training'` 시 거부**: 409 — 진행 중에는 데이터 일관성 보장을 위해 거부 (사용자는 학습 취소 → 삭제 흐름)
+9. **삭제 버튼 노출 조건**: `lora_status in ['done', 'failed']` 일 때만. `idle`(데이터 없음) / `training`(거부) 시에는 버튼 숨김
+10. **삭제 버튼 위치/스타일**: Step 1 카드 안 `step-action` div 안에 "재학습" 버튼 우측 (또는 아래 행) — `--danger` 변형 클래스. confirm 다이얼로그 텍스트: "학습된 데이터와 원본 사진이 모두 삭제됩니다. 계속하시겠습니까?"
+
+### 핵심 알고리즘
+
+#### 케이스 A — 재학습 (같은 사진)
+```
+[FE: Step 1 카드, lora_status='done', character.original_photo_object_name 존재, photoFile=null]
+  ↓ [재학습 버튼 활성화] (F22 — !photoFile=true && !original_photo_object_name=false → disabled false)
+  ↓ 사용자 클릭 → handleStartTraining
+    if (!photoFile && !character?.original_photo_object_name) → false (가드 통과)
+    photoFile=null → uploadOriginalPhoto 스킵
+    setIsLoraModalOpen(true)
+  ↓ 모달: lora_status='done' → renderDone → "재학습" 버튼
+  ↓ 사용자 클릭 → handleRetrain (F-modal 수정 후)
+    confirm "기존 학습 결과를 삭제하고 다시 학습하시겠습니까?"
+    await api.startLoraTraining()  ← deleteLora 제거됨
+  ↓ [백엔드 /train-lora]
+    atomic guard: lora_status: done → training (B29: lora_artifact=None 클리어 추가)
+    background_tasks: _run_lora_pipeline_bg(user_id, photo_bytes(<기존 original.png>), ...)
+  ↓ [백엔드 start_training]
+    lora_progress={phase:'preparing_dataset',percent:5}, lora_trigger_word=<new>
+    PuLID 18 변형 (v40-4 콜백 hook으로 thumbnails 갱신)
+    fast-flux-trainer 호출
+  ↓ poll_training → succeeded → MinIO put characters/{uid}/lora.safetensors (덮어쓰기)
+  ↓ MongoDB: lora_status='done', lora_artifact={...new}, lora_trigger_word=<new>
+[FE: 폴링으로 갱신 → 재학습 완료 표시]
+```
+
+#### 케이스 B — 사진 바꿔서 재학습
+```
+[FE: Step 1 카드, lora_status='done', 사용자가 사진 영역 클릭 → 새 파일 선택]
+  ↓ photoFile state 업데이트, originalPhotoObjectName=null
+  ↓ [재학습 버튼 활성화] (photoFile=true → disabled false)
+  ↓ 사용자 클릭 → handleStartTraining
+    가드 통과
+    photoFile && !originalPhotoObjectName → await api.uploadOriginalPhoto(photoFile)
+      → 백엔드: MinIO put characters/{uid}/original.<ext> (덮어쓰기), MongoDB 갱신
+      → setOriginalPhotoObjectName(data.object_name)
+    setIsLoraModalOpen(true)
+  ↓ 모달: lora_status='done' → renderDone → "재학습" 클릭 → handleRetrain
+    confirm → api.startLoraTraining
+  ↓ [백엔드] 케이스 A와 동일 (단, original_photo_object_name 이 새 사진을 가리킴)
+[학습 완료 시 새 사진 기반 LoRA로 갱신]
+```
+
+#### 케이스 C — 학습 데이터 완전 삭제
+```
+[FE: Step 1 카드, lora_status in ['done','failed'] → "학습 데이터 삭제" 버튼 노출]
+  ↓ 사용자 클릭 → handleDeleteTrainingData
+    confirm "학습된 데이터와 원본 사진이 모두 삭제됩니다. 계속하시겠습니까?"
+    await api.deleteTrainingData()
+  ↓ [백엔드 DELETE /api/character/training-data]
+    char = mongo.characters.find_one({user_id})
+    if char.lora_status == 'training' → 409
+    
+    # MinIO best-effort cleanup
+    if lora_artifact.object_name: minio.remove_object(lora_artifact.object_name)
+    list_objects(prefix="characters/{uid}/lora_variations/") → remove_objects
+    if original_photo_object_name: minio.remove_object(original_photo_object_name)
+    
+    # MongoDB clear
+    update_one($set: {
+        lora_status: 'idle', lora_progress: None, lora_artifact: None,
+        lora_trigger_word: None, lora_training_id: None, lora_error: None,
+        lora_variation_thumbnails: [], original_photo_object_name: "",
+        updated_at: now()
+    })
+    return {**_serialize_lora_state({}), "original_photo_object_name": "", "message": ...}
+  ↓ [FE]
+    setLora({...lora_status:'idle', lora_artifact:null, variation_thumbnails:[], ...})
+    setCharacter({...character, original_photo_object_name: ""})
+    setPhotoFile(null), setOriginalPhotoObjectName(null)
+    sessionStorage.removeItem('aimu:myCharacter')
+[Step 1 카드: 빈 placeholder ("클릭하여 얼굴 사진을 선택하세요"), "AI 학습 시작" 버튼]
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py`:
+  - `/train-lora` atomic guard `$set` 에 `lora_artifact: None` 추가 (B29)
+  - 신규 `DELETE /api/character/training-data` 라우터 함수 (B28)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/api/index.js`:
+  - `deleteTrainingData()` 함수 추가 (F21) + `aimu:myCharacter` 캐시 invalidate
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx`:
+  - `renderStep1Card` 버튼 disabled 조건 정정 (F22)
+  - `handleDeleteTrainingData` 핸들러 신규 + "학습 데이터 삭제" 버튼 렌더 (F23)
+  - `handleStartTraining` 가드 정정 — `!character?.sheet_url` → `!character?.original_photo_object_name` (F24-a)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx`:
+  - `handleRetrain` 수정 — `deleteLora` 제거, `startLoraTraining` 직접 호출 (F24-b)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.css`:
+  - `.mymusic-character__step-delete-btn` 신규 (danger 변형) (F25)
+
+### 작업 분해
+
+#### Backend (9004 only)
+
+- **B28** (`routes/character.py`) — 신규 `DELETE /api/character/training-data` endpoint:
+  - 라우트 위치: `delete_lora` 함수(line 815~882) 직후
+  - 함수 시그니처: `async def delete_training_data(current_user=Depends(get_current_user))`
+  - 처리:
+    1. `char = await mongo.characters.find_one({"user_id": user_id})`. 없으면 404
+    2. `if char.get("lora_status") == "training"`: return 409 (메시지 동일 — "학습이 진행 중입니다.")
+    3. **MinIO best-effort 삭제** (각각 try/except 로 격리, warning만 로그):
+       - `lora_artifact.object_name` 삭제
+       - prefix `characters/{user_id}/lora_variations/` 일괄 삭제 (`list_objects` + `remove_objects`)
+       - `char.get("original_photo_object_name")` 객체 삭제
+    4. **MongoDB `$set`**:
+       ```python
+       {
+           "lora_status": "idle",
+           "lora_progress": None,
+           "lora_artifact": None,
+           "lora_trigger_word": None,
+           "lora_training_id": None,
+           "lora_error": None,
+           "lora_variation_thumbnails": [],
+           "original_photo_object_name": "",
+           "updated_at": datetime.utcnow(),
+       }
+       ```
+    5. 응답: `{**_serialize_lora_state({}), "original_photo_object_name": "", "message": "학습 데이터가 삭제되었습니다."}`
+  - 인증: 기존 `Depends(get_current_user)` 만. 401은 dependency가 처리
+
+- **B29** (`routes/character.py` `/train-lora` atomic guard) — `lora_artifact` 클리어:
+  - line 736~751 atomic guard `$set` 안에 `"lora_artifact": None` 추가:
+    ```python
+    {"$set": {
+        "lora_status": "training",
+        "lora_progress": {"phase": "queued", "percent": 0},
+        "lora_error": None,
+        "lora_artifact": None,  # NEW (v40-5)
+        "lora_variation_thumbnails": [],
+        "updated_at": datetime.utcnow(),
+    }}
+    ```
+  - guard 미통과(이미 training) 시에는 클리어 X (기존 진행 중 학습 보존)
+  - **하위 호환**: poll_training 성공 시 새 artifact 로 덮어씀 (lora_trainer.py:595~600). 영향 0
+
+#### Frontend
+
+- **F21** (`api/index.js`) — `deleteTrainingData()` 함수:
+  ```js
+  // v40-5: delete LoRA + original photo + variation thumbnails (full reset)
+  export const deleteTrainingData = async () => {
+    const resp = await API.delete('/character/training-data');
+    try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
+    return resp;
+  };
+  ```
+  - 위치: `deleteLora` 직후 (line 290 근처)
+
+- **F22** (`MyMusicPage.jsx` `renderStep1Card`) — 버튼 disabled 조건 정정:
+  - line 771~775 변경 전:
+    ```jsx
+    disabled={uploadingOriginal || inProgress || (!photoFile && !character?.sheet_url)}
+    ```
+  - 변경 후:
+    ```jsx
+    disabled={uploadingOriginal || inProgress || (!photoFile && !character?.original_photo_object_name)}
+    ```
+
+- **F23** (`MyMusicPage.jsx` `renderStep1Card`) — "학습 데이터 삭제" 버튼:
+  - 핸들러:
+    ```jsx
+    const handleDeleteTrainingData = async () => {
+      if (!window.confirm('학습된 데이터와 원본 사진이 모두 삭제됩니다. 계속하시겠습니까?')) return;
+      try {
+        const { data } = await api.deleteTrainingData();
+        setLora({
+          lora_status: 'idle',
+          lora_progress: null,
+          lora_artifact: null,
+          lora_trigger_word: null,
+          lora_error: null,
+          variation_thumbnails: [],
+          costs: data?.costs || lora?.costs,
+        });
+        setCharacter((prev) => prev ? { ...prev, original_photo_object_name: '' } : prev);
+        setPhotoFile(null);
+        setOriginalPhotoObjectName(null);
+      } catch (e) {
+        const status = e?.response?.status;
+        if (status === 409) alert('학습이 진행 중입니다. 먼저 학습을 취소해주세요.');
+        else alert(e?.response?.data?.error || '학습 데이터 삭제에 실패했습니다.');
+      }
+    };
+    ```
+  - 버튼 렌더 (line 766~789 `step-action` div 안, "재학습/AI 학습 시작" 버튼 우측):
+    ```jsx
+    {(done || failed) && (
+      <button
+        type="button"
+        className="mymusic-character__step-delete-btn"
+        onClick={handleDeleteTrainingData}
+        disabled={uploadingOriginal || inProgress}
+      >
+        <FiTrash2 /> 학습 데이터 삭제
+      </button>
+    )}
+    ```
+
+- **F24-a** (`MyMusicPage.jsx` `handleStartTraining`) — 가드 정정:
+  - line 378 변경 전: `if (!photoFile && !character?.sheet_url) {`
+  - 변경 후: `if (!photoFile && !character?.original_photo_object_name) {`
+
+- **F24-b** (`LoraTrainingModal.jsx` `handleRetrain`) — 1-click 재학습:
+  - line 147~164 변경 후:
+    ```jsx
+    const handleRetrain = async () => {
+      if (!window.confirm('기존 학습 결과를 삭제하고 다시 학습하시겠습니까?')) return;
+      setError(null);
+      setLoading(true);
+      try {
+        const { data } = await api.startLoraTraining();
+        onLoraUpdate?.({
+          lora_status: data?.lora_status || 'training',
+          lora_progress: data?.lora_progress || { phase: 'queued', percent: 0 },
+          lora_artifact: null,
+          lora_trigger_word: data?.lora_trigger_word || null,
+          variation_thumbnails: [],
+          error_message: null,
+        });
+      } catch (e) {
+        const status = e?.response?.status;
+        if (status === 409) {
+          setError('이미 학습이 진행 중입니다.');
+          fetchStatus();
+        } else if (status === 503) {
+          setError('LoRA 학습 서비스가 설정되지 않았습니다. 관리자에게 문의해주세요.');
+        } else {
+          setError(e?.response?.data?.error || '재학습 시작에 실패했습니다.');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    ```
+  - **삭제**: `await api.deleteLora()` 호출 라인 제거. 백엔드 atomic guard가 자동 처리 (B29)
+
+- **F25** (`MyMusicPage.css`) — 삭제 버튼 스타일:
+  ```css
+  .mymusic-character__step-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 16px;
+    background: transparent;
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .mymusic-character__step-delete-btn:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.7);
+  }
+  .mymusic-character__step-delete-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  ```
+
+#### Tester (TT)
+
+- **TT34** (B28) `DELETE /api/character/training-data` happy path:
+  - Setup: char with `lora_status='done'`, `lora_artifact.object_name='characters/u1/lora.safetensors'`, `original_photo_object_name='characters/u1/original.jpg'`, `lora_variation_thumbnails=[3 entries]`
+  - Call DELETE → 200, response body 안 `lora_status='idle'`, `lora_artifact=null`, `original_photo_object_name=''`
+  - MongoDB 검증: 모든 LoRA 필드 클리어 + `original_photo_object_name=""`
+  - MinIO 검증: lora.safetensors / original.jpg / lora_variations/* 모두 remove_object 호출됨
+
+- **TT35** (B28) 401 (미인증):
+  - 토큰 없음 → 401
+
+- **TT36** (B28) 409 (training 중):
+  - char with `lora_status='training'` → 409, MinIO/Mongo 변경 X
+
+- **TT37** (B28) 404 (캐릭터 부재):
+  - char 도큐먼트 없음 → 404
+
+- **TT38** (B28) MinIO 부분 실패 시 best-effort:
+  - lora.safetensors 삭제는 실패 (mock raise) 해도 응답 200 + Mongo 클리어 정상 (warning 로그)
+
+- **TT39** (B29) `/train-lora` atomic guard `lora_artifact=None`:
+  - char with `lora_status='done'`, `lora_artifact={object_name:'old',...}` → POST `/train-lora`
+  - atomic guard 통과 후 MongoDB 검증: `lora_status='training'`, `lora_artifact=None`
+  - 이후 background task 진행 무관(mock)
+
+- **TT40** (F21) `api.deleteTrainingData()`:
+  - axios mock → DELETE `/character/training-data` 호출 + sessionStorage `aimu:myCharacter` 제거 검증
+
+- **TT41** (F22) 버튼 disabled 조건:
+  - `lora_status='done'`, `character.original_photo_object_name='characters/u1/original.jpg'`, `photoFile=null` → 버튼 enabled
+  - `lora_status='done'`, `character.original_photo_object_name=''`, `photoFile=null` → disabled
+  - `photoFile=File`, `character.original_photo_object_name=''` → enabled
+  - `lora_status='training'` → 항상 disabled
+
+- **TT42** (F23) 학습 데이터 삭제 버튼:
+  - `lora_status='done'` → 버튼 노출
+  - `lora_status='failed'` → 버튼 노출
+  - `lora_status='idle'` → 버튼 미노출
+  - `lora_status='training'` → 버튼 미노출 (또는 disabled)
+  - 클릭 → confirm → `api.deleteTrainingData` 호출 + state 클리어 (lora.lora_status='idle', character.original_photo_object_name='', photoFile=null)
+
+- **TT43** (F24-a) `handleStartTraining` 가드:
+  - `photoFile=null`, `character.original_photo_object_name=''` → alert "사진 선택"
+  - `photoFile=null`, `character.original_photo_object_name='...'` → 가드 통과 → 모달 오픈
+  - `photoFile=File` → uploadOriginalPhoto 호출 후 모달 오픈
+
+- **TT44** (F24-b) 모달 `handleRetrain` 1-click:
+  - `lora_status='done'` 상태에서 모달 "재학습" 클릭 → confirm → `api.startLoraTraining` 호출 (deleteLora 호출 X)
+  - 응답 후 `onLoraUpdate({lora_status:'training', ...})` 발화
+
+- **TT45** 회귀 v40-3/4:
+  - 기존 `DELETE /lora` 동작 (LoRA만 삭제, original_photo 유지) 변경 X
+  - `/train-lora` 정상 학습 흐름(첫 학습) 변경 X — atomic guard `lora_artifact=None` 은 첫 학습 시 이미 None이므로 영향 0
+  - v40-4 변형 썸네일 그리드 동작 정상
+
+- **TT46** 9004 헬스 200 + `/api/character/me` 200 + `/api/character/lora-status` 200 + `/api/character/training-data` 405(GET) / 200(DELETE)
+
+### 비용
+- **변경 0건**. v40-5는 UX-only.
+- 케이스 A 재학습: 기존과 동일 ~$2.50 (PuLID + LoRA)
+- 케이스 B 재학습: 기존과 동일 ~$2.50 + (사진 업로드는 무료, 자체 인프라)
+- 케이스 C 삭제: 무료 (MinIO/Mongo 삭제만)
+
+### 영향 범위
+- **DB schema 변경**: 0건. 기존 필드 클리어/공백만
+- **API 변경**:
+  - 신규 endpoint: `DELETE /api/character/training-data` (B28)
+  - `POST /api/character/train-lora` atomic guard 동작 변경 — `$set` 에 `lora_artifact: None` 추가 (B29). 응답 형태 변경 X. 클라이언트 영향 0 (이미 학습 진행 중 표시는 lora_status로 판단)
+  - `DELETE /api/character/lora` 변경 X (역할 분리 유지)
+  - `POST /api/character/upload-original-photo` 변경 X
+- **외부 의존성 추가**: 0건
+- **무영향**:
+  - LoRA 학습 파이프라인 (`lora_trainer.py`) — 변경 0건
+  - `_serialize_lora_state` 응답 구조 — 변경 0건 (기존 필드 그대로)
+  - Stage 2 / Stage 3 generation — 변경 0건
+  - v40-3 `original_photo_object_name`, `lora_artifact`, `lora_trigger_word` 필드 — 변경 0건
+  - v40-4 `lora_variation_thumbnails` 필드 — 변경 0건
+  - v37/v38/v39/v40/v40-1/v40-2/v40-3/v40-4 모든 회귀 — 0건
+
+### 수용 기준 (Acceptance Criteria)
+1. 백엔드 `DELETE /api/character/training-data` 신설. 401(미인증) / 404(캐릭터 부재) / 409(`lora_status='training'`) / 200(성공) 정상 동작
+2. 200 응답 시 MongoDB 필드 클리어: `lora_status='idle'`, `lora_progress=None`, `lora_artifact=None`, `lora_trigger_word=None`, `lora_training_id=None`, `lora_error=None`, `lora_variation_thumbnails=[]`, `original_photo_object_name=""`
+3. 200 응답 시 MinIO best-effort 삭제: lora artifact 객체, `characters/{uid}/lora_variations/` prefix 일괄, `original_photo_object_name` 객체. 실패해도 200 + warning 로그
+4. `POST /api/character/train-lora` atomic guard `$set` 에 `lora_artifact: None` 포함 (B29). guard 미통과 시 보존
+5. FE `MyMusicPage.jsx` Step 1 카드 "재학습/AI 학습 시작" 버튼 disabled 조건이 `(!photoFile && !character?.original_photo_object_name)` 로 정정 (F22)
+6. FE `handleStartTraining` 가드 동일하게 정정 (F24-a)
+7. FE `MyMusicPage.jsx` Step 1 카드에 "학습 데이터 삭제" 버튼 추가. `lora_status in ['done','failed']` 일 때만 노출 (F23). 클릭 시 confirm → API 호출 → state 일괄 클리어
+8. FE `LoraTrainingModal.handleRetrain` 이 `api.deleteLora` 호출 제거하고 `api.startLoraTraining` 직접 호출 (F24-b). 1-click 재학습
+9. FE `api.deleteTrainingData()` 함수 export. sessionStorage `aimu:myCharacter` invalidate
+10. CSS `.mymusic-character__step-delete-btn` (danger 변형) 신규 (F25)
+11. 케이스 A 검증: 학습 완료 + 기존 사진 보유 시 "재학습" 버튼 활성, 클릭 → confirm → 모달 → "재학습" → train-lora 호출 + 새 LoRA 학습
+12. 케이스 B 검증: 학습 완료 + 사진 영역 클릭 → 새 파일 → "재학습" → upload-original-photo + 모달 → "재학습" → train-lora 호출
+13. 케이스 C 검증: 학습 완료/실패 상태 → "학습 데이터 삭제" → confirm → API → UI 빈 placeholder 복귀
+14. 회귀: v40-3/4 흐름 모두 정상 (첫 학습, LoRA 변형 그리드, sheet 생성)
+15. 9004 `/api/health` 200, `/api/character/me` 200, `/api/character/lora-status` 200
+
+### 테스트 계획 (Tester)
+- TT34~TT46 전 항목 PASS
+- 케이스 A/B/C 사용자 시나리오 수동 검증 (개발 환경 — Replicate 토큰 placeholder)
+- 회귀: v40-3 첫 학습, v40-4 변형 그리드 모두 정상
+
+### 보안
+- `DELETE /api/character/training-data` 는 `Depends(get_current_user)` 로 401 게이팅. user_id 기반 필터링 — 다른 사용자 데이터 접근 불가 (기존 character API 패턴)
+- MinIO 삭제 대상 path는 모두 `characters/{current_user.id}/...` prefix 기반 — IDOR 위험 0
+- confirm 다이얼로그는 UX 보호장치. 클라이언트 단독으로 우회 가능하나 백엔드 atomic 동작은 idempotent (이미 idle인 사용자도 재호출 가능 — 단순 no-op)
+- 새 외부 의존성 0건 → 공급망 위험 0
+- API 토큰(Replicate, Google) 영향 X — 학습 호출 변경 없음
+
+### Open Questions
+- **Q-v40-5-1 (open)** 재학습 실패 시 stale `lora_artifact` 메타 — first ship: B29 atomic guard `$set: lora_artifact=None` 으로 학습 진입 즉시 클리어 → 학습 실패 시 `lora_status='failed'` + `lora_artifact=None` (poll에서 재설정 안함). 즉 자동 정상화. ✅ 후속 보강 불필요
+- **Q-v40-5-2 (open)** 케이스 B에서 ext 다른 stale 객체 (`old_original.jpg` vs new `original.png`) 잔재 — first ship: 무시 (10MB 미만, 무시 가능). 케이스 C(전체 삭제) 시 prefix walk가 아닌 단일 object 삭제이므로 정확한 path 알아야 정리됨. 만약 prefix walk 확장하면 깔끔하지만 first ship에서는 단순화 — 향후 v40-6에서 검토
+- **Q-v40-5-3 (open)** 모달의 "재학습" 버튼이 1-click이 되면 사용자가 클릭 즉시 학습이 시작되어 "취소" 가능 시간이 짧음. confirm 다이얼로그가 충분한 안전장치인지? — first ship: 충분 (현재도 confirm은 존재)
+- **Q-v40-5-4 (open)** "학습 데이터 삭제" 버튼이 Step 1 카드 안에 있는 것이 발견 가능성에 충분한지? — first ship: 사용자가 "학습 완료" 상태에서 그 카드를 다시 보는 일이 거의 없으므로 발견 가능성 낮음. 후속에는 별도 "설정" 영역 또는 LoraTrainingModal 안에도 노출 검토 (Q-v40-6 후보)
+- **Q-v40-5-5 (open)** 학습 완료 후 마스터 시트만 별도 삭제하고 싶은 사용자 시나리오? — 본 v40-5 범위 외. 기존 `DELETE /api/character/me` (전체 캐릭터 삭제) 만 존재. 마스터 시트만 재생성하려면 Step 2 다시 실행하면 됨
+
+### 체크리스트
+- [ ] backend_9004 `routes/character.py`: `DELETE /api/character/training-data` 신규 (B28)
+- [ ] backend_9004 `routes/character.py`: `/train-lora` atomic guard `lora_artifact: None` 추가 (B29)
+- [ ] frontend `api/index.js`: `deleteTrainingData()` 추가 (F21)
+- [ ] frontend `MyMusicPage.jsx`: 버튼 disabled 조건 정정 (F22)
+- [ ] frontend `MyMusicPage.jsx`: "학습 데이터 삭제" 버튼 + 핸들러 추가 (F23)
+- [ ] frontend `MyMusicPage.jsx`: `handleStartTraining` 가드 정정 (F24-a)
+- [ ] frontend `LoraTrainingModal.jsx`: `handleRetrain` 1-click 재학습 (F24-b)
+- [ ] frontend `MyMusicPage.css`: `.mymusic-character__step-delete-btn` 스타일 추가 (F25)
+- [ ] Tester TT34~TT46 PASS
+- [ ] REPORT.md v40-5 append
+
+## v40-6 — 2026-04-28 — 커버 이미지에도 LoRA 2-step 적용 (얼굴 잠금)
+
+### 배경
+- **현상**: v40-3 이후 마스터 시트는 LoRA 정제(2-step)로 얼굴이 잠겨 있고, v40-2 이후 씬 첫 프레임도 LoRA 정제(Stage 3 2-step)로 얼굴이 잠겨 있음. 그러나 **커버 이미지는 여전히 Nano Banana 단일 호출**(현재 `cover_generator.generate_cover_image`) — 마스터 시트를 ref로 받아 얼굴을 흉내내지만 **LoRA로 잠그지 않음** → 커버 얼굴이 씬 얼굴과 미세하게 어긋남
+- **사용자 영향**: 커버 이미지가 첫 씬의 ref로 다시 들어가는 흐름(`cover_object_name → cover_image_bytes` in mv pipeline) 때문에 **커버 얼굴 드리프트가 첫 씬으로 전파**될 수 있음. 일관된 얼굴 잠금이 필요
+- **목표**: 사용자가 (a) "캐릭터 포함" ON + (b) LoRA 학습 완료(`lora_status='done'`) + (c) `lora_artifact.source_url` 존재 — 셋 다 만족할 때 v40-2/v40-3 의 2-step 패턴(Nano Banana 합성 + flux-dev-lora img2img 정제)을 커버에도 적용
+
+### 동작 분기 매트릭스
+```
+케이스 │ "캐릭터 포함" │ LoRA 상태 │ 커버 생성 방식                                 │ 비용
+───────┼──────────────┼─────────┼─────────────────────────────────────────────┼──────
+A      │ OFF          │ —       │ Nano Banana 단일 (text only / no character ref) │ ~$0.02
+B      │ ON           │ 미학습   │ Nano Banana 단일 + 마스터 시트 ref (현재 그대로) │ ~$0.02
+C ★NEW │ ON           │ 학습됨   │ Nano Banana 합성 + flux-dev-lora img2img 정제   │ ~$0.05
+```
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `backend_9004/app/services/cover_generator.py` — `generate_cover_image()` 시그니처 (line 20~28)
+- **확인된 사실**:
+  ```python
+  async def generate_cover_image(
+      title: str,
+      genre: str = None,
+      mood: str = None,
+      style: str = None,
+      character_image_bytes: bytes = None,
+      user_prompt: str = None,
+      prompt_model: str = None,
+  ) -> bytes:
+  ```
+- **호출 흐름**:
+  - `prompt_model` 이 `claude-*` 이면 Anthropic 클라이언트(`mv_generator._get_anthropic_client`)로 Claude system prompt 호출 → `enhanced_prompt` 생성 (line 36~75)
+  - 그 외에는 프로그램적으로 prompt_parts 구성 — `character_image_bytes` 유무로 [A] photorealistic 강제 / [B] 자유 스타일로 분기 (line 88~127)
+  - Gemini REST 호출(`gemini-3-pro-image-preview:generateContent`) — `request_parts` 안에 텍스트 + (있다면) `inlineData` 캐릭터 이미지 (line 130~140)
+  - 응답에서 `candidates[0].content.parts[*].inlineData.data` base64 디코드 → PNG bytes 반환 (line 186~196)
+- **결론**: 시그니처 끝에 `lora_url: Optional[str] = None`, `lora_trigger_word: Optional[str] = None` 두 파라미터를 추가하고, 두 값이 모두 truthy 일 때만 함수 종료 직전에 Step 2(flux-dev-lora img2img) 호출로 분기 → 그 외에는 기존 1-step 그대로 반환. **시그니처 호환성 100%** (positional 호출 site 없음, kwarg 호출만 있음)
+
+#### 2. `backend_9004/app/routes/upload.py` — `/api/upload/generate-cover` (line 151~221)
+- **확인된 사실**:
+  - `GenerateCoverRequest` 모델 (line 26~33): `title, genre, mood, style, character_object_name, user_prompt, prompt_model`
+  - 핸들러: `body.character_object_name` 있으면 MinIO에서 PNG 바이트 로드 → `character_image_bytes` (line 170~183)
+  - `generate_cover_image(...)` 호출 시 character_image_bytes 와 함께 전달 (line 188~196)
+  - 결과를 MinIO에 `covers/generated/{user_id}/{uuid}.png` 로 저장하고 proxy URL 반환 (line 198~216)
+- **변경 필요 (B31)**:
+  - `body.character_object_name` truthy 시점에 추가로 MongoDB `mongo.characters.find_one({"user_id": current_user["id"]})` 조회 → `lora_status, lora_artifact, lora_trigger_word` 추출
+  - 모두 만족 (`lora_status == "done"` and `lora_artifact.source_url` and `lora_trigger_word`) 시 `lora_url=...`, `lora_trigger_word=...` 를 generate_cover_image 에 추가 전달
+  - **API 시그니처(요청 body) 변경 X** — 백엔드가 자체적으로 lora 상태를 조회 (FE 계약 동일)
+- **새 endpoint 추가 X** — 기존 `/generate-cover` 내부 분기만 추가
+
+#### 3. `backend_9004/app/services/mv_generator.py` `generate_scene_image_with_lora` Step 3b (line 2589~2675)
+- **확인된 사실**:
+  ```python
+  full_prompt = "{} {}, cinematic widescreen 16:9 music video still frame, photorealistic".format(trigger_word, image_prompt)
+  inp = {
+      "prompt": full_prompt,
+      "lora_weights": lora_url,
+      "aspect_ratio": "16:9",
+      "output_format": "png",
+      "num_outputs": 1,
+      "guidance_scale": 3.5,
+      "num_inference_steps": 28,
+      "lora_scale": 1.0,
+      "image": "data:image/png;base64,{}".format(step3a_b64),
+      "prompt_strength": 0.4,
+  }
+  # endpoint: black-forest-labs/flux-dev-lora/predictions
+  # poll until terminal, fetch first output URL, GET image bytes
+  ```
+- **차이점 (커버 vs. 씬)**: 커버는 **1:1**, 씬은 **16:9**. 커버는 **앨범 표지**, 씬은 **music video still frame**. trigger word prepend 패턴은 동일
+- **재사용 옵션 분석**:
+  - **옵션 a — `mv_generator.generate_scene_image_with_lora` 재사용**: aspect_ratio가 16:9 고정 + master_sheet_bytes/cover_image_bytes/scene_type/extra_refs 등 씬 전용 슬롯이 너무 많음 → 커버에 부적합
+  - **옵션 b — 공용 `_flux_lora_img2img(image_bytes, lora_url, trigger_word, prompt_suffix, aspect_ratio)` 헬퍼 추출**: 회귀 위험. v40-2/v40-3 두 호출처를 동시에 리팩터해야 함. **first ship에서는 비채택** (Q-v40-6-1)
+  - **옵션 c — `cover_generator` 안에 inline 으로 동일 패턴 작성**: 커버 전용 prompt + 1:1 aspect ratio + Replicate 호출 코드. 코드 중복 ~80줄. **회귀 위험 0**, 가독성 양호
+- **결정**: **옵션 c 채택**. v40-6 first ship 안정성 최우선. 헬퍼 추출은 후속 v40-7 에서 검토 (Q-v40-6-1)
+
+#### 4. `backend_9004/app/services/character_generator.py` `generate_character_sheet_with_lora` (line 732~910)
+- **확인된 사실**: 동일 2-step 패턴(Nano Banana → flux-dev-lora img2img)을 character sheet 용도로 이미 사용 중. `lora_scale=0.9`, `prompt_strength=0.4`, `num_inference_steps=28`, `guidance_scale=3.5`. **Replicate 응답 polling 로직 + fallback 로직(실패 시 composed_bytes 반환)** 이 잘 정리되어 있음 → 커버 inline 코드의 **참고 모델**로 사용
+- **fallback 정책 채택 (B30)**: Replicate 호출 실패 시(타임아웃/HTTP 오류/no output URL) **에러 throw 하지 않고** Step 1(Nano Banana) 결과를 그대로 반환. 사용자에게는 "LoRA 정제 실패" 라는 부분 실패가 노출되지 않고 "Nano Banana 커버" 가 정상 노출. 로그에 warning 만 기록. (character_generator 와 일관)
+
+#### 5. `backend_9004/app/routes/character.py` `lora_artifact` 구조 (line 244~252, 583~603)
+- **확인된 사실**:
+  - `char_doc.get("lora_artifact") or {}` → dict
+  - `lora_artifact.get("source_url")` — **HTTP URL** (Replicate-hosted `.safetensors` 또는 자체 호스팅 URL). flux-dev-lora 의 `lora_weights` 또는 `hf_lora` 입력에 직접 사용 가능
+  - `char_doc.get("lora_trigger_word")` — 별도 필드(예: `pann_user_a1b2`)
+  - 학습 완료 판별: `lora_status == "done"` and bool(source_url) and bool(trigger_word)
+- **`/generate-cover` 라우트에서의 조회**: `mongo.characters.find_one({"user_id": current_user["id"]})` — 단일 사용자 1 캐릭터 가정(기존 character API 와 동일 패턴)
+
+#### 6. `frontend/src/pages/UploadPage.jsx` 커버 생성 UI (line 264~293, line 970~1042)
+- **확인된 사실**:
+  - `handleGenerateCover` (line 264~293) → `api.generateCover({title, genre, mood, style:null, character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null, user_prompt, prompt_model})`
+  - `myCharacter` state 는 `getMyCharacter` 응답으로 채워짐 — character 객체 안에 **`lora_status`, `lora_artifact`, `lora_trigger_word`** 가 이미 들어있음 (`_serialize_lora_state` 통합 응답, character.py:594~599)
+  - **현재 비용 라벨 부재** — "AI 커버 생성" 버튼 위에 "예상 비용: ~$0.02" 같은 라벨이 없음. (line 1028~1042 의 button 만 있음)
+- **변경 필요 (F26)**: 버튼 위에 작은 비용 안내 라벨 추가
+  - 케이스 A/B (LoRA 미학습): `예상 비용: ~$0.02 (Nano Banana)`
+  - 케이스 C (LoRA 학습됨 + 캐릭터 포함): `예상 비용: ~$0.05 (Nano Banana + LoRA 정제)`
+  - 동적 판별: `includeCharacter && myCharacter && myCharacter.lora_status === 'done' && myCharacter.lora_artifact?.source_url`
+- **변경 필요 (F27, 선택)**: 결과 안내 — 커버 생성 응답에 백엔드가 `lora_applied: true/false` 필드를 반환 → FE 가 작은 뱃지("LoRA 얼굴 잠금 적용됨") 노출. 미적용/실패 시(=fallback) `lora_applied=false`. **first ship 에서 채택 (B30 응답 + F27)**
+
+#### 7. `frontend/src/api/index.js` `generateCover` (line 161)
+- **확인된 사실**: `export const generateCover = (data) => API.post('/upload/generate-cover', data);`
+- **변경 필요 X** — body 스키마 변경 없음. 응답에 `lora_applied` 필드만 추가됨 (백엔드 B30 출력)
+
+#### 8. 다른 페이지 커버 생성 호출 (UploadPage 외)
+- 검색 결과: `generateCover` 또는 `/upload/generate-cover` 호출은 **`UploadPage.jsx` 만** (다른 페이지에 없음). 즉 FE 변경 범위는 UploadPage 1개 파일
+
+### 결정 사항 (v40-6 핵심)
+1. **2-step 트리거 조건**: `character_image_bytes` 존재 AND `lora_url` 존재 AND `lora_trigger_word` 존재 — 셋 다 만족 시에만 Step 2 진입. 그 외에는 기존 Nano Banana 1-step 그대로 (회귀 위험 0)
+2. **시그니처 확장 (B30)**: `cover_generator.generate_cover_image()` 끝에 `lora_url: Optional[str] = None`, `lora_trigger_word: Optional[str] = None` 추가 (kwarg-only 호출이므로 호환)
+3. **route 분기 (B31)**: `/generate-cover` 핸들러가 `body.character_object_name` truthy 일 때만 character 도큐먼트 조회. lora 상태 충족 시 lora_url/trigger 추출해서 cover_generator 에 전달. 응답에 `lora_applied` 필드 추가
+4. **헬퍼 추출 X**: `cover_generator.py` 안에 inline 2-step 코드. v40-7 에서 공용 `_flux_lora_img2img` 헬퍼 추출 검토 (Q-v40-6-1)
+5. **Replicate 파라미터 (커버)**:
+   - aspect_ratio: **`1:1`** (씬은 16:9, 커버는 1:1 정사각)
+   - prompt_strength: 0.4 (구도 보존, 얼굴만 정제)
+   - lora_scale: 1.0 (씬과 동일)
+   - num_inference_steps: 28, guidance_scale: 3.5, output_format: png
+   - prompt suffix: `square album cover art, photorealistic, sharp focus, professional photography, high detail`
+   - **trigger_word prepend**: `"{trigger_word}, {step1_prompt 또는 sheet 그대로 정제 의도}"` 패턴
+6. **prompt 구성 (커버 Step 2)**: 씬과 달리 커버는 image_prompt 가 따로 없으므로, **trigger_word + 짧은 커버용 정제 의도** 만 사용. 예시:
+   ```
+   {trigger}, square 1:1 album cover art, photorealistic portrait, professional studio lighting, sharp focus on face, high detail. Preserve the existing composition, lighting, color palette, and outfit from the input image — only refine the face identity to match the trained character.
+   ```
+7. **fallback 정책**: Replicate 단계 실패 시 Step 1(Nano Banana) 결과 그대로 반환. 응답 `lora_applied=false`. 사용자에게는 "커버 생성 성공" 으로 노출 (부분 실패 숨김)
+8. **응답 스키마 추가 (B30 → B31)**:
+   - `cover_generator.generate_cover_image()` 반환 타입 변경: `bytes` → `tuple[bytes, bool]` 또는 `dict {image_bytes, lora_applied}` — **첫 옵션 채택 (튜플)**, 호출 site 1군데(`upload.py:188~196`) 만 수정
+   - `/generate-cover` 응답: 기존 `{image_url, object_name, message}` 에 `lora_applied: bool` 추가
+9. **비용 라벨 (F26)**: UploadPage 커버 카드 안 "AI 커버 생성" 버튼 바로 위에 작은 회색 텍스트 라벨 추가. `myCharacter.lora_status` 와 `includeCharacter` 로 동적 판별
+10. **LoRA 적용 뱃지 (F27)**: 커버 생성 후 `aiCoverPreview` 노출 영역(line 936~961)에 응답 `lora_applied=true` 면 "LoRA 얼굴 잠금" 작은 뱃지 노출
+11. **회귀 보호 (필수)**:
+    - 케이스 A (캐릭터 미포함): `character_object_name=null` → 기존 동작 그대로 (lora 분기 미진입)
+    - 케이스 B (캐릭터 포함, LoRA 미학습): `character_object_name` 존재하지만 `lora_status != 'done'` → 기존 Nano Banana + character ref 동작 그대로
+    - 케이스 C (NEW): 셋 다 만족 시에만 2-step 진입
+12. **MinIO 저장 위치 변경 X**: 결과 PNG는 기존과 동일하게 `covers/generated/{user_id}/{uuid}.png` 로 저장 (1-step 결과든 2-step 결과든 동일 경로)
+
+### 핵심 알고리즘
+
+#### 케이스 A — 캐릭터 미포함
+```
+[FE] handleGenerateCover → api.generateCover({character_object_name: null, ...})
+  ↓ [/generate-cover]
+    body.character_object_name == null → character_image_bytes=None
+    lora 조회 스킵 (character_object_name 없음)
+    generate_cover_image(title, ..., character_image_bytes=None, lora_url=None, lora_trigger_word=None)
+  ↓ [cover_generator]
+    Step 1: Gemini Nano Banana 호출 (text only / 자유 스타일)
+    lora_url=None → Step 2 스킵
+    return (image_bytes, lora_applied=False)
+  ↓ [/generate-cover] MinIO put_object → response {image_url, object_name, lora_applied: false}
+[FE] 커버 표시. 비용: ~$0.02
+```
+
+#### 케이스 B — 캐릭터 포함, LoRA 미학습
+```
+[FE] handleGenerateCover → api.generateCover({character_object_name: 'characters/.../sheet.png', ...})
+  ↓ [/generate-cover]
+    character_object_name truthy → MinIO get_object → character_image_bytes (마스터 시트 PNG)
+    mongo.characters.find_one({user_id}) → lora_status='idle' or 'training' or 'failed'
+    use_lora_branch = False
+    generate_cover_image(..., character_image_bytes=<sheet>, lora_url=None, lora_trigger_word=None)
+  ↓ [cover_generator]
+    Step 1: Gemini Nano Banana (캐릭터 ref 첨부, photorealistic 강제)
+    lora_url=None → Step 2 스킵
+    return (image_bytes, False)
+  ↓ response: lora_applied: false. 비용: ~$0.02
+```
+
+#### 케이스 C ★NEW — 캐릭터 포함, LoRA 학습됨
+```
+[FE] handleGenerateCover → api.generateCover({character_object_name: '...', ...})
+  ↓ [/generate-cover]
+    character_image_bytes 로드 (Step 1 ref)
+    char = mongo.characters.find_one({user_id})
+    lora_artifact = char.lora_artifact or {}
+    if lora_status == 'done' and lora_artifact.source_url and char.lora_trigger_word:
+        lora_url = lora_artifact.source_url
+        lora_trigger_word = char.lora_trigger_word
+        use_lora_branch = True
+  ↓ generate_cover_image(..., character_image_bytes=<sheet>, lora_url=<url>, lora_trigger_word=<trigger>)
+    [Step 1] Gemini Nano Banana — 마스터 시트 ref + 곡 정보 + user_prompt → 1024x1024 PNG (구도/분위기 ✅, 얼굴 △)
+    [Step 2] flux-dev-lora img2img:
+       prompt = "{trigger}, square 1:1 album cover art, photorealistic portrait, ... Preserve the existing composition..."
+       image = data:image/png;base64,{step1_b64}
+       lora_weights = lora_url
+       aspect_ratio = "1:1"
+       prompt_strength = 0.4
+       lora_scale = 1.0
+       guidance_scale = 3.5
+       num_inference_steps = 28
+       num_outputs = 1
+       output_format = "png"
+       Prefer: wait=60
+    POST https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions
+    poll until terminal (deadline 180s, fallback to Step 1 on timeout/error)
+    download first output URL → return (final_bytes, lora_applied=True)
+  ↓ /generate-cover MinIO put → response {image_url, object_name, lora_applied: true}
+[FE] 커버 표시 + "LoRA 얼굴 잠금 적용됨" 뱃지. 비용: ~$0.05
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/cover_generator.py`:
+  - `generate_cover_image` 시그니처 끝에 `lora_url`, `lora_trigger_word` 추가 (B30)
+  - 함수 본문 끝(반환 직전)에 Step 2 inline 블록 추가 — Replicate flux-dev-lora img2img 호출 + polling + fallback (B30)
+  - 반환 타입을 `bytes` → `tuple[bytes, bool]` 로 변경 (B30)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/upload.py`:
+  - `/generate-cover` 핸들러 수정 (B31):
+    - `body.character_object_name` 있을 때 `mongo.characters.find_one({user_id})` 조회 + lora 상태 추출
+    - `generate_cover_image(..., lora_url=lora_url, lora_trigger_word=lora_trigger_word)` 로 호출
+    - 반환 튜플 분해: `image_bytes, lora_applied = await generate_cover_image(...)`
+    - 응답에 `"lora_applied": lora_applied` 추가
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/UploadPage.jsx`:
+  - 커버 생성 비용 라벨 추가 (F26) — "AI 커버 생성" 버튼 바로 위
+  - `aiCoverPreview` 영역에 LoRA 적용 뱃지 (F27)
+  - `handleGenerateCover` 응답에서 `lora_applied` 받아 state 저장 — `setAiCoverLoraApplied(data.lora_applied)`
+
+### 작업 분해
+
+#### Backend (9004 only)
+
+- **B30** (`services/cover_generator.py`) — `generate_cover_image` 2-step 확장:
+  - 시그니처 끝에 추가:
+    ```python
+    lora_url: Optional[str] = None,
+    lora_trigger_word: Optional[str] = None,
+    ```
+  - 함수 마지막에 (Step 1 이미지 추출 직후, 반환 직전) 분기:
+    ```python
+    step1_bytes = base64.b64decode(inline_data["data"])
+
+    # ── Step 2: FLUX-LoRA img2img refine (커버 얼굴 잠금) ──
+    if not (lora_url and lora_trigger_word and settings.replicate_api_token):
+        return step1_bytes, False  # 기존 1-step 동작
+
+    refine_prompt = (
+        "{trigger}, square 1:1 album cover art, photorealistic portrait, "
+        "professional studio lighting, sharp focus on face, high detail, "
+        "magazine quality. Preserve the existing composition, lighting, color "
+        "palette, and clothing from the input image — only refine the face "
+        "identity to match the trained character. No text or letters."
+    ).format(trigger=lora_trigger_word)
+
+    step1_b64 = base64.b64encode(step1_bytes).decode("utf-8")
+    payload = {
+        "input": {
+            "prompt": refine_prompt,
+            "image": "data:image/png;base64,{}".format(step1_b64),
+            "lora_weights": lora_url,
+            "lora_scale": 1.0,
+            "aspect_ratio": "1:1",
+            "prompt_strength": 0.4,
+            "num_inference_steps": 28,
+            "guidance_scale": 3.5,
+            "output_format": "png",
+            "num_outputs": 1,
+        },
+    }
+    headers = {
+        "Authorization": "Token {}".format(settings.replicate_api_token),
+        "Content-Type": "application/json",
+        "Prefer": "wait=60",
+    }
+    create_url = (
+        "https://api.replicate.com/v1/models/"
+        "black-forest-labs/flux-dev-lora/predictions"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(create_url, headers=headers, json=payload)
+        if resp.status_code not in (200, 201, 202):
+            logger.warning("Cover Step 2 HTTP %d → fallback", resp.status_code)
+            return step1_bytes, False
+        pred = resp.json()
+        # poll up to 180s — same pattern as character_generator.generate_character_sheet_with_lora
+        # (생략: status polling, output URL 추출, 이미지 다운로드, 실패 시 fallback)
+        ...
+        return final_bytes, True
+    except Exception as e:
+        logger.warning("Cover Step 2 error %s → fallback", str(e)[:200])
+        return step1_bytes, False
+    ```
+  - **반환 타입 변경**: `bytes` → `tuple[bytes, bool]`. 호출 site 1군데(`upload.py`)만 수정
+  - **fallback 정책**: 모든 단계에서 실패 시 `(step1_bytes, False)` 로 graceful 반환
+
+- **B31** (`routes/upload.py`) — `/generate-cover` lora 분기:
+  - import 추가: `from ..database.mongodb import get_mongo` (이미 있음 line 18)
+  - `body.character_object_name` truthy 블록 안에서 character_image_bytes 로드 직후:
+    ```python
+    lora_url = None
+    lora_trigger_word = None
+    try:
+        mongo = get_mongo()
+        char_doc = await mongo.characters.find_one(
+            {"user_id": current_user["id"]}
+        ) or {}
+        if char_doc.get("lora_status") == "done":
+            artifact = char_doc.get("lora_artifact") or {}
+            src = artifact.get("source_url")
+            trig = char_doc.get("lora_trigger_word")
+            if src and trig:
+                lora_url = src
+                lora_trigger_word = trig
+                logger.info(
+                    "generate-cover: using LoRA branch user=%s trigger=%s",
+                    current_user["id"], trig,
+                )
+    except Exception as e:
+        logger.warning("generate-cover: lora lookup failed: %s", e)
+    ```
+  - 호출 변경:
+    ```python
+    image_bytes, lora_applied = await generate_cover_image(
+        title=title,
+        genre=body.genre,
+        mood=body.mood,
+        style=body.style,
+        character_image_bytes=character_image_bytes,
+        user_prompt=body.user_prompt,
+        prompt_model=body.prompt_model,
+        lora_url=lora_url,
+        lora_trigger_word=lora_trigger_word,
+    )
+    ```
+  - 응답:
+    ```python
+    return {
+        "image_url": "/api/upload/cover-preview/{}".format(object_name),
+        "object_name": object_name,
+        "lora_applied": lora_applied,
+        "message": "커버 이미지가 생성되었습니다.",
+    }
+    ```
+
+- **B32** (옵션 — first ship에서는 비채택): 공용 `_flux_lora_img2img` 헬퍼 추출. 회귀 위험으로 **v40-7 검토** (Q-v40-6-1)
+
+#### Frontend
+
+- **F26** (`UploadPage.jsx`) — 커버 비용 라벨:
+  - 위치: line 1028 의 `<button>` 바로 위
+  - 추가:
+    ```jsx
+    {(() => {
+      const willUseLora = includeCharacter
+        && !!myCharacter
+        && myCharacter.lora_status === 'done'
+        && !!myCharacter?.lora_artifact?.source_url;
+      return (
+        <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
+          예상 비용: {willUseLora
+            ? '~$0.05 (Nano Banana + LoRA 얼굴 잠금)'
+            : '~$0.02 (Nano Banana)'}
+        </div>
+      );
+    })()}
+    ```
+
+- **F27** (`UploadPage.jsx`) — LoRA 적용 뱃지 (선택):
+  - state: `const [aiCoverLoraApplied, setAiCoverLoraApplied] = useState(false);`
+  - `handleGenerateCover` 응답 처리:
+    ```js
+    setAiCoverPreview(proxyUrl);
+    setAiCoverObjectName(data.object_name);
+    setAiCoverLoraApplied(!!data.lora_applied);  // NEW
+    ```
+  - 미리보기 영역(line 936~961) 안에 뱃지 추가:
+    ```jsx
+    {aiCoverLoraApplied && (
+      <div className="upload-cover-preview__lora-badge">
+        LoRA 얼굴 잠금 적용됨
+      </div>
+    )}
+    ```
+  - 뱃지 스타일은 기존 `upload-cover-preview__badge` 와 동일 톤(녹색/파스텔). 구현 시 inline style 도 가능
+
+#### Tester (TT)
+
+- **TT47** (B30) `cover_generator.generate_cover_image()` 시그니처 호환성:
+  - lora_url=None, lora_trigger_word=None 으로 호출 시 기존 1-step 동작 그대로, 반환 `(bytes, False)`
+  - lora_url, lora_trigger_word 둘 다 truthy 시 Step 2 진입
+  - 둘 중 하나만 truthy 시 Step 2 스킵 (`(bytes, False)`)
+
+- **TT48** (B30) Step 2 happy path:
+  - mock Replicate API 200 응답(즉시 succeeded + output URL) → 반환 `(final_bytes, True)`
+  - prompt 안에 trigger_word prepend 검증
+  - aspect_ratio="1:1" 검증
+
+- **TT49** (B30) Step 2 fallback:
+  - Replicate HTTP 503 → `(step1_bytes, False)` graceful 반환 + warning 로그
+  - Replicate 타임아웃(deadline 초과) → fallback
+  - Replicate succeeded 이지만 output URL 없음 → fallback
+
+- **TT50** (B30) `settings.replicate_api_token` 미설정 시:
+  - lora_url, trigger 모두 truthy 여도 즉시 fallback `(step1_bytes, False)`
+
+- **TT51** (B31) `/generate-cover` 케이스 A:
+  - body.character_object_name=null → character_image_bytes=None, lora 조회 스킵
+  - 응답 `lora_applied: false`
+
+- **TT52** (B31) `/generate-cover` 케이스 B (LoRA 미학습):
+  - body.character_object_name='...' + char.lora_status='idle' → use_lora_branch=False
+  - 응답 `lora_applied: false`
+
+- **TT53** (B31) `/generate-cover` 케이스 C (LoRA 학습됨):
+  - body.character_object_name='...' + char.lora_status='done', lora_artifact.source_url='https://...', lora_trigger_word='pann_user_x'
+  - generate_cover_image 호출 인자에 lora_url, lora_trigger_word 모두 전달됨 (mock 검증)
+  - 응답 `lora_applied: true`
+
+- **TT54** (B31) `/generate-cover` 케이스 C 부분 (artifact 부재):
+  - lora_status='done' 이지만 lora_artifact.source_url 부재 → use_lora_branch=False
+  - 응답 `lora_applied: false`
+
+- **TT55** (F26) 비용 라벨 동적 표시:
+  - includeCharacter=false → "~$0.02 (Nano Banana)"
+  - includeCharacter=true, myCharacter.lora_status='idle' → "~$0.02 (Nano Banana)"
+  - includeCharacter=true, myCharacter.lora_status='done', lora_artifact.source_url 존재 → "~$0.05 (Nano Banana + LoRA 얼굴 잠금)"
+  - myCharacter=null → "~$0.02"
+
+- **TT56** (F27) LoRA 적용 뱃지:
+  - 응답 lora_applied=true → 뱃지 노출
+  - lora_applied=false → 뱃지 미노출
+  - 다시 생성 클릭 시 새 응답 lora_applied 로 갱신
+
+- **TT57** 회귀 v37/v38/v40/v40-1~5:
+  - v40-3 마스터 시트 with-LoRA 흐름 정상 (`/generate-sheet` 변경 0)
+  - v40-2 Stage 3 씬 with-LoRA 흐름 정상 (`mv_generator.generate_scene_image_with_lora` 변경 0)
+  - v40-5 학습 데이터 삭제 / 재학습 흐름 정상
+  - 케이스 B (LoRA 미학습 + 캐릭터 포함) 흐름 변경 0 — 기존 photorealistic 강제 prompt 그대로
+
+- **TT58** 9004 헬스 + endpoint 시각:
+  - `/api/health` 200
+  - `/api/upload/generate-cover` 200 (인증 + 케이스 A/B/C)
+  - 응답 body 안 `lora_applied` 필드 항상 존재(boolean)
+
+### 비용
+- 케이스 A/B (LoRA 미학습): **~$0.02** (Nano Banana 단일) — 기존과 동일
+- 케이스 C (LoRA 학습됨 + 캐릭터 포함) ★NEW: **~$0.05** (Nano Banana ~$0.02 + flux-dev-lora ~$0.03)
+- Step 2 fallback 시: **~$0.02** (Step 1만 과금) — 부분 실패 시 사용자 비용 부담 최소화
+- Replicate 토큰 미설정 시: **~$0.02** (기존 동작) — 환경 의존 없음
+
+### 영향 범위
+- **DB schema 변경**: 0건
+- **API 변경**:
+  - `POST /api/upload/generate-cover` 응답에 `lora_applied: bool` 필드 추가 (기존 클라이언트는 무시 가능 — 하위 호환)
+  - 요청 body 변경 X
+- **외부 의존성 추가**: 0건 (Replicate flux-dev-lora 는 v40-2/v40-3 에서 이미 사용 중)
+- **함수 시그니처 변경 (1건, 호환)**: `cover_generator.generate_cover_image` — 끝에 optional kwargs 2개 추가, 반환 `bytes` → `tuple[bytes, bool]`. 호출 site는 `upload.py:188~196` 1군데뿐 → 단일 patch 로 동기화
+- **무영향**:
+  - `mv_generator.generate_scene_image_with_lora` (Stage 3 씬) — 변경 0건
+  - `character_generator.generate_character_sheet_with_lora` (Stage 2 시트) — 변경 0건
+  - `lora_trainer.py` 학습 파이프라인 — 변경 0건
+  - `_serialize_lora_state` 응답 구조 — 변경 0건
+  - 기존 케이스 A/B 사용자 흐름 — 변경 0건
+  - v37/v38/v39/v40/v40-1~5 회귀 — 0건
+
+### 수용 기준 (Acceptance Criteria)
+1. 백엔드 `cover_generator.generate_cover_image()` 가 `lora_url`, `lora_trigger_word` 둘 다 truthy + `replicate_api_token` 설정 시에만 Step 2 진입. 그 외 1-step 동작 (B30)
+2. Step 2 진입 시 Replicate `black-forest-labs/flux-dev-lora` POST 호출, `aspect_ratio="1:1"`, `prompt_strength=0.4`, `lora_scale=1.0`, prompt 안에 `trigger_word` prepend
+3. Step 2 폴링 deadline 180s. 모든 실패 케이스(HTTP 오류/타임아웃/no output)에서 graceful fallback 으로 Step 1 결과 반환 (`lora_applied=False`)
+4. `cover_generator.generate_cover_image()` 반환 타입 `tuple[bytes, bool]` (image_bytes, lora_applied) (B30)
+5. `routes/upload.py` `/generate-cover` 가 `body.character_object_name` 있을 때만 character 도큐먼트 조회. lora_status='done' AND lora_artifact.source_url AND lora_trigger_word 셋 다 만족 시 lora_url/trigger 추출 (B31)
+6. `/generate-cover` 응답 body 에 `lora_applied: bool` 항상 포함 (B31)
+7. FE `UploadPage.jsx` 커버 생성 버튼 위에 동적 비용 라벨 노출 (F26)
+8. FE 커버 미리보기에 lora_applied=true 시 "LoRA 얼굴 잠금 적용됨" 뱃지 노출 (F27)
+9. 케이스 A/B 사용자 흐름 회귀 0건 — 응답 lora_applied=false, Nano Banana 단일 동작
+10. 케이스 C 사용자 흐름 검증 — lora_applied=true, 커버 얼굴이 LoRA 학습 정체성과 일치
+11. 9004 `/api/health` 200, `/api/upload/generate-cover` 200 (모든 케이스)
+12. v37/v38/v40/v40-1/v40-2/v40-3/v40-4/v40-5 모든 회귀 0건
+
+### 테스트 계획 (Tester)
+- TT47~TT58 전 항목 PASS
+- 케이스 A/B/C 사용자 시나리오 수동 검증:
+  - A: 캐릭터 미등록 사용자 — 커버 1장 생성, 자유 스타일 OK
+  - B: 캐릭터 등록 + LoRA 미학습 사용자 — 커버 1장, 마스터 시트 ref 활용, 얼굴 △
+  - C: 캐릭터 등록 + LoRA 학습 완료 사용자 — 커버 1장, 얼굴이 LoRA 정체성과 일치, 비용 라벨 ~$0.05
+- 회귀: v40-3 마스터 시트 생성 / v40-2 씬 first-frame 생성 / v40-5 학습 데이터 삭제 모두 정상
+
+### 보안
+- `/generate-cover` 는 기존 `Depends(get_current_user)` 로 401 게이팅 (변경 없음)
+- character 도큐먼트 조회는 `user_id == current_user["id"]` 필터 → IDOR 위험 0
+- Replicate 호출 토큰은 `settings.replicate_api_token` (서버 환경변수, 클라이언트 노출 X)
+- LoRA `source_url` 은 Replicate-hosted CDN URL (사용자 자체 학습 결과). 공급망 위험 0 (기존 v40-2/v40-3 와 동일)
+- API 토큰 placeholder 정책 준수 — 코드 안 토큰 하드코딩 X
+
+### Open Questions
+- **Q-v40-6-1 (open)** 공용 `_flux_lora_img2img(image_bytes, lora_url, trigger_word, prompt, aspect_ratio, ...)` 헬퍼 추출 — first ship 비채택. 현재 호출처 3개 (`mv_generator.generate_scene_image_with_lora` Step 3b, `character_generator.generate_character_sheet_with_lora` Step 2, 신규 `cover_generator.generate_cover_image` Step 2). 코드 중복 ~80줄 × 3 = ~240줄. v40-7 에서 회귀 테스트 충분히 수행 후 추출 검토
+- **Q-v40-6-2 (open)** 커버 Step 2 prompt 의 정제 의도 — "Preserve composition, only refine face" 로 표현 vs. "Make it look like {trigger}" 직접 표현 둘 중 무엇이 더 좋은 결과? — first ship: 전자 (씬/시트 패턴 일치). A/B 측정은 사용자 피드백 후 v40-7 검토
+- **Q-v40-6-3 (open)** Step 2 lora_scale 값 — 시트는 0.9, 씬은 1.0. 커버는 일단 1.0 으로 시작 (씬과 동일, 정체성 강하게 잠금). 만약 결과가 너무 "LoRA 정체성 강함 → 곡 분위기 손상" 이면 v40-7 에서 0.85~0.9 로 조정 검토
+- **Q-v40-6-4 (open)** Step 2 prompt 의 1:1 aspect_ratio 강제 — Gemini Step 1 이 1:1 를 잘 못 지키면 Step 2 에서 다시 1:1 로 수렴. Step 1 결과가 1:1 이 아닐 경우(드물지만) Step 2 가 crop/resize 처리 (Replicate 의 aspect_ratio 파라미터가 처리). first ship: 검증 없이 신뢰
+- **Q-v40-6-5 (open)** 커버 비용 ~$0.05 가 사용자에게 부담스러운 경우 "LoRA 정제 OFF" 토글 추가 — first ship 비채택. 사용자가 LoRA 학습을 통해 일관된 정체성을 원했다면 커버에도 일관성을 원할 가능성이 높음. v40-7 에서 사용자 피드백 후 검토
+
+### 체크리스트
+- [ ] backend_9004 `services/cover_generator.py`: `generate_cover_image` 시그니처 + Step 2 inline + 반환 튜플 (B30)
+- [ ] backend_9004 `routes/upload.py`: `/generate-cover` lora 조회/전달 + lora_applied 응답 (B31)
+- [ ] frontend `UploadPage.jsx`: 동적 비용 라벨 (F26)
+- [ ] frontend `UploadPage.jsx`: lora_applied 뱃지 + state (F27)
+- [ ] Tester TT47~TT58 PASS
+- [ ] REPORT.md v40-6 append
+
+
+## v40-7 — 2026-04-28 — LoRA 학습 결과 미리보기 (Trained Face Preview)
+
+### 배경
+- **현상**: 학습이 끝나도 사용자는 "AI가 내 얼굴을 어떻게 외웠는가"를 직접 볼 수 없음. 현재 노출되는 시각 자료는 모두 LoRA **단독 출력이 아니라 합성 결과**:
+  - PuLID 18장 학습 데이터 그리드 (LoraTrainingModal `renderVariationGrid`, v40-4) — 학습 전 변형 데이터
+  - 마스터 시트 (Step 2: Nano Banana 합성 + flux-dev-lora img2img 정제, v40-3) — 의상까지 합쳐진 결과
+  - 씬 첫 프레임 (Stage 3: master sheet ref + flux-dev-lora img2img, v40-2) — MV 생성해야 보임
+- **순수 LoRA 단독 출력은 어디서도 못 봄** → 사용자는 학습 성공 화면에서 "얼굴이 진짜 학습됐나?" 확신할 수 없음
+- **목표**: 학습 성공 직후 자동으로 FLUX-LoRA text-to-image 1장(중성 인물 프롬프트)을 생성해서 "이게 학습된 얼굴" 단독 미리보기를 제공
+
+### 결정 사항 (v40-7 핵심)
+1. **자동 생성 (1-click 적게)**: 학습 완료 직후 (`poll_training` 안 artifact 다운로드 직후) 자동으로 1장 생성. 사용자 클릭 0회. 비용 +$0.03 (학습 비용 $2.50 → **$2.53**)
+2. **프롬프트 — 중성/심플 (face-only 가이드 일관)**:
+   ```
+   "{trigger_word} portrait, neutral expression, plain neutral grey
+    studio backdrop, soft even studio lighting, looking at camera,
+    photorealistic, sharp focus on face."
+   ```
+3. **저장 위치**: MinIO `characters/{user_id}/lora_preview.png` + Mongo `characters.lora_preview_object_name`
+4. **노출**: `/lora-status`, `/me` 응답에 `lora_preview_url: str` (proxy URL `/api/character/preview/...`) 추가
+5. **UI**: `LoraTrainingModal.renderDone()` 에 "학습된 얼굴 미리보기" 슬롯 추가. `MyMusicPage.renderStep1Card()` 학습 완료 영역에도 노출 (선택)
+6. **재학습 시**: 새 미리보기로 덮어쓰기 (atomic guard `$set` 에 `lora_preview_object_name=""` 포함). `DELETE /lora` / `DELETE /training-data` 시 같이 정리
+7. **graceful 실패**: 미리보기 생성 실패해도 학습은 성공으로 처리 (best-effort). 로그 warning 만, `lora_preview_object_name` 미설정 → FE 는 "미리보기 준비 중" 또는 placeholder
+8. **flux-dev-lora text-to-image (img2img 아님)**: v40-2/v40-3/v40-6 와 다른 패턴 — `image` 입력 **없이** prompt + lora 만 → 순수 LoRA 출력
+9. **endpoint 일관**: `POST /v1/models/black-forest-labs/flux-dev-lora/predictions` (v40-3 Step 2 / v40-6 Step 2 와 동일 모델, t2i 모드). aspect_ratio: `1:1` 정사각
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `backend_9004/app/services/lora_trainer.py` `poll_training` 학습 성공 처리 (line 533~601)
+- **확인된 사실**:
+  ```python
+  if status == "succeeded":
+      artifact_url = _extract_artifact_url(doc)              # line 547
+      ...
+      artifact_bytes = await _download_artifact(artifact_url)# line 558
+      ...
+      object_name = _lora_object_name(user_id)               # line 568
+      minio_client.put_object(... object_name, artifact_bytes ...)  # line 571~577
+      ...
+      artifact_meta = {                                      # line 587
+          "object_name": object_name,
+          "version_id": doc.get("version") or doc.get("id"),
+          "trained_at": datetime.utcnow().isoformat(),
+          "size_bytes": len(artifact_bytes),
+          "trigger_word": (await _get_character(...) or {}).get("lora_trigger_word"),
+          "source_url": artifact_url,
+      }
+      await _set_character_fields(mongo_db, user_id, {       # line 595
+          "lora_status": "done",
+          "lora_progress": None,
+          "lora_artifact": artifact_meta,
+          "lora_error": None,
+      })
+      return {"status": "succeeded", "artifact": artifact_meta}
+  ```
+- **결론 — 미리보기 생성 hook 포인트**: `artifact_meta` 구성 직후 + `lora_status='done'` 으로 갱신 **직전** 사이에 미리보기 호출 삽입. `lora_status='done'` 갱신 시점에 `lora_preview_object_name` 도 같은 `$set` 에 포함 → 1번의 Mongo 업데이트로 atomic. 미리보기 실패 시 try/except 로 감싸서 빈 문자열 또는 None 으로 fallback (학습 자체는 성공 유지)
+- **trigger_word / lora_url 접근**: `artifact_url` (= source_url) 과 `(await _get_character(mongo_db, user_id) or {}).get("lora_trigger_word")` 둘 다 이미 line 592 에서 호출됨 → 같은 변수 재사용 가능 (Mongo 추가 round-trip 없음)
+- **MinIO put 패턴**: line 571~577 의 `minio_client.put_object(bucket_name=settings.minio_bucket_images, object_name=..., data=io.BytesIO(...), length=..., content_type=...)` — preview 도 동일 패턴 (`content_type="image/png"`, prefix `characters/{user_id}/lora_preview.png`)
+
+#### 2. `backend_9004/app/services/character_generator.py` `generate_character_sheet_with_lora()` Step 2 (line 786~910)
+- **확인된 사실** (v40-3 패턴):
+  ```python
+  payload = {
+      "input": {
+          "prompt": refine_prompt,
+          "image": composed_data_uri,    # img2img 입력 — 미리보기엔 없음
+          "hf_lora": lora_url,
+          "lora_scale": 0.9,
+          "prompt_strength": 0.4,         # img2img 전용 — 미리보기엔 없음
+          "num_inference_steps": 28,
+          "guidance_scale": 3.5,
+          "output_format": "png",
+          "num_outputs": 1,
+      },
+  }
+  url = "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions"
+  # POST with "Prefer: wait" header, then poll get_url until terminal (180s deadline)
+  # output: list 또는 string of HTTP URL → GET → bytes
+  ```
+- **차이점 (미리보기 vs. Stage 2)**: 미리보기는 **t2i** (`image` / `prompt_strength` 둘 다 제거). aspect_ratio `1:1` 추가, `lora_scale=1.0`. 폴링/타임아웃/output 추출 로직은 그대로 차용 가능
+- **결론**: `lora_trainer.py` 안에 inline `_generate_lora_preview()` 헬퍼 작성. character_generator Step 2 의 polling/output URL 추출 패턴을 t2i 모드로 단순화하여 복제 (Q-v40-6-1 헬퍼 추출은 v40-8 이후 검토)
+
+#### 3. `backend_9004/app/services/cover_generator.py` v40-6 Step 2 (line 235~247)
+- **확인된 사실**:
+  ```python
+  inp = {
+      "prompt": full_prompt,
+      "hf_lora": lora_url,        # v40-6 에서 hf_lora 사용
+      ...
+      "aspect_ratio": "1:1",
+      "output_format": "png",
+      ...
+  }
+  url = "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions"
+  ```
+- **결론**: `hf_lora` 필드명이 v40-3 sheet / v40-6 cover 모두에서 사용됨 → 미리보기도 `hf_lora=lora_url` 동일. `aspect_ratio="1:1"` 동일. 단, **`image` / `prompt_strength` 제거** (t2i 모드)
+
+#### 4. `backend_9004/app/routes/character.py` `_serialize_lora_state` (line 650~674)
+- **확인된 사실**:
+  ```python
+  def _serialize_lora_state(char: Optional[dict]) -> dict:
+      if not char:
+          return {
+              "lora_status": "idle", "lora_progress": None, "lora_artifact": None,
+              "lora_trigger_word": None, "lora_error": None,
+              "variation_thumbnails": [], "costs": dict(COSTS),
+          }
+      thumb_objs = char.get("lora_variation_thumbnails") or []
+      thumb_urls = ["/api/character/preview/{}".format(o) for o in thumb_objs if o]
+      return {
+          "lora_status": ..., "lora_progress": ..., "lora_artifact": ...,
+          "lora_trigger_word": ..., "lora_error": ...,
+          "variation_thumbnails": thumb_urls,
+          "costs": dict(COSTS),
+      }
+  ```
+- **변경 필요 (B35)**: 두 분기 모두에 `"lora_preview_url": ""` (no-char) / `"lora_preview_url": "/api/character/preview/{}".format(char.get("lora_preview_object_name")) if char.get("lora_preview_object_name") else ""` (char 있음) 추가. `/me` 응답(line 581~605) 에도 동일 처리 — `_serialize_lora_state` 가 통합 사용처가 아니므로 별도 한 줄 추가 필요
+
+#### 5. `backend_9004/app/routes/character.py` `/me` 응답 빌더 (line 560~605)
+- **확인된 사실**: `/me` 는 `_serialize_lora_state` 를 호출하지 않고 직접 dict 구성 (line 581~604) → 별도로 `lora_preview_url` 라인 추가 필요. 같은 proxy URL 패턴: `/api/character/preview/{}".format(char.get("lora_preview_object_name"))`
+
+#### 6. `backend_9004/app/routes/character.py` `DELETE /lora` (line 818~885)
+- **확인된 사실**:
+  - LoRA artifact MinIO 삭제 (line 837~847): `artifact = char.get("lora_artifact") or {}; object_name = artifact.get("object_name")` → `minio_client.remove_object(...)`
+  - LoRA variation thumbnails prefix walk 삭제 (line 849~867)
+  - Mongo `$set`: `lora_status='idle'`, `lora_progress=None`, `lora_artifact=None`, `lora_trigger_word=None`, `lora_training_id=None`, `lora_error=None`, `lora_variation_thumbnails=[]`, `updated_at=...` (line 870~882)
+- **변경 필요 (B36)**:
+  - `char.get("lora_preview_object_name")` 있으면 `minio_client.remove_object(...)` (best-effort try/except)
+  - Mongo `$set` 에 `"lora_preview_object_name": ""` 추가
+
+#### 7. `backend_9004/app/routes/character.py` `DELETE /training-data` (line 888~968)
+- **확인된 사실**: 동일 cleanup 패턴 + `original_photo_object_name` 추가 삭제. Mongo `$set` 에 `lora_status, lora_progress, lora_artifact, lora_trigger_word, lora_error, lora_variation_thumbnails, original_photo_object_name=""` 클리어
+- **변경 필요 (B37)**:
+  - `char.get("lora_preview_object_name")` 있으면 best-effort MinIO 삭제
+  - Mongo `$set` 에 `"lora_preview_object_name": ""` 추가
+
+#### 8. `backend_9004/app/routes/character.py` `/train-lora` atomic guard (line 736~753)
+- **확인된 사실**:
+  ```python
+  guard = await mongo.characters.find_one_and_update(
+      {"user_id": user_id, "lora_status": {"$ne": "training"}},
+      {"$set": {
+          "lora_status": "training",
+          "lora_progress": {"phase": "queued", "percent": 0},
+          "lora_error": None,
+          "lora_variation_thumbnails": [],
+          "lora_artifact": None,           # v40-5: clear stale artifact
+          "updated_at": datetime.utcnow(),
+      }},
+  )
+  ```
+- **변경 필요 (B38)**: `$set` 에 `"lora_preview_object_name": ""` 추가 → 재학습 시 stale preview 방지. 새 미리보기가 학습 완료 직후 같은 path 로 덮어쓰지만, 학습 진행 중 사용자가 `/me`/`/lora-status` 조회하면 stale URL 반환되는 것 차단
+
+#### 9. `frontend/src/components/LoraTrainingModal.jsx` `renderDone()` (line 342~385)
+- **확인된 사실**:
+  - 학습일(`trainedAt`) 표시 → `renderVariationGrid({showLoading: false})` (PuLID 18장 그리드) → 재학습 비용 → "이제부터 생성하는 MV..." 안내 → 재학습/닫기 버튼
+  - `lora.lora_artifact?.trained_at` 사용 (line 343)
+- **변경 필요 (F28)**: `renderVariationGrid({showLoading: false})` 직전(또는 직후) 에 새 슬롯 추가:
+  ```jsx
+  <div className="lora-modal__preview">
+    <div className="lora-modal__preview-label">학습된 얼굴 미리보기</div>
+    {lora?.lora_preview_url ? (
+      <img src={api.characterPreviewUrl(lora.lora_preview_url)} alt="학습된 얼굴" className="lora-modal__preview-img" />
+    ) : (
+      <div className="lora-modal__preview-placeholder">미리보기 준비 중...</div>
+    )}
+  </div>
+  ```
+  CSS 클래스는 `LoraTrainingModal.css` 에 추가 (정사각 1:1, 200~240px 크기 권장)
+
+#### 10. `frontend/src/pages/MyMusicPage.jsx` `renderStep1Card()` (line 713~834)
+- **확인된 사실**: 학습 완료 시 `<FiCheck /> 학습 완료 + trainedAt date` 만 노출. 사진 박스(`mymusic-character__photo-box`)는 학습 데이터(원본 사진)를 보여줌
+- **변경 옵션 (F29)**: 학습 완료 시 `done && lora?.lora_preview_url` 이면 photo-box 옆 또는 하단에 작은 "AI 학습 결과" 미리보기 썸네일 추가 (선택). 모달에만 둬도 OK — 첫 ship 에서는 모달만으로 충분, F29 는 후속 검토
+
+#### 11. `frontend/src/api/index.js` `lora_preview_url` 노출
+- **확인된 사실**: `getLoraStatus`, `getMyCharacter` 모두 단순 `API.get` 래퍼 — 응답 shape 확장만으로 자동 노출 (FE state 안 `lora.lora_preview_url` 로 접근 가능)
+- **변경 필요 X** — API 헬퍼 추가 없음. `characterPreviewUrl(...)` 헬퍼는 이미 존재 (line 429~430)
+
+### 동작 분기 매트릭스
+```
+케이스           │ lora_preview 생성       │ 학습 결과               │ FE 표시
+─────────────────┼────────────────────────┼────────────────────────┼─────────────────
+A 정상           │ 성공                   │ status=done, preview ✅ │ 모달에 미리보기 1장
+B 미리보기 실패  │ Replicate t2i 실패     │ status=done, preview X  │ "미리보기 준비 중"
+C 학습 자체 실패 │ 호출 안됨              │ status=failed           │ 미리보기 슬롯 미노출(failed 화면)
+D 재학습 후 성공 │ 새 미리보기 덮어쓰기   │ status=done, preview ✅ │ 새 얼굴 표시
+E 학습 데이터 삭제│ MinIO + Mongo 정리    │ status=idle             │ 슬롯 비활성
+```
+
+### 핵심 알고리즘
+
+#### `_generate_lora_preview` 헬퍼 (B33)
+```python
+async def _generate_lora_preview(
+    user_id: str,
+    lora_url: str,
+    trigger_word: str,
+) -> Optional[str]:
+    """Generate a single-shot LoRA preview portrait via flux-dev-lora t2i.
+
+    Returns MinIO object_name on success, None on graceful failure.
+    Best-effort: caller (poll_training) wraps in try/except and continues
+    even when this returns None (학습 자체는 성공으로 처리).
+    """
+    if not settings.replicate_api_token:
+        return None  # graceful: 환경 미설정 → preview 없음
+    if not lora_url or not trigger_word:
+        return None
+
+    prompt = (
+        "{trigger} portrait, neutral expression, plain neutral grey "
+        "studio backdrop, soft even studio lighting, looking at camera, "
+        "photorealistic, sharp focus on face."
+    ).format(trigger=trigger_word)
+
+    payload = {
+        "input": {
+            "prompt": prompt,
+            "hf_lora": lora_url,
+            "lora_scale": 1.0,
+            "aspect_ratio": "1:1",
+            "num_inference_steps": 28,
+            "guidance_scale": 3.5,
+            "output_format": "png",
+            "num_outputs": 1,
+        },
+    }
+    headers = {
+        "Authorization": "Token {}".format(settings.replicate_api_token),
+        "Content-Type": "application/json",
+        "Prefer": "wait",
+    }
+    url = "https://api.replicate.com/v1/models/black-forest-labs/flux-dev-lora/predictions"
+
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code not in (200, 201):
+                logger.warning("LoRA preview HTTP %d: %s", resp.status_code, resp.text[:300])
+                return None
+            data = resp.json()
+            get_url = (data.get("urls") or {}).get("get")
+            status = data.get("status")
+            import time as _time
+            start = _time.time()
+            while status not in ("succeeded", "failed", "canceled"):
+                if not get_url or (_time.time() - start) > 180:
+                    logger.warning("LoRA preview poll timeout/no-url status=%s", status)
+                    return None
+                await asyncio.sleep(2.0)
+                poll = await client.get(get_url, headers=headers, timeout=30.0)
+                if poll.status_code != 200:
+                    return None
+                data = poll.json()
+                status = data.get("status")
+            if status != "succeeded":
+                logger.warning("LoRA preview status=%s", status)
+                return None
+            out = data.get("output")
+            out_url = None
+            if isinstance(out, list) and out:
+                cand = out[0]
+                if isinstance(cand, str) and cand.startswith("http"):
+                    out_url = cand
+            elif isinstance(out, str) and out.startswith("http"):
+                out_url = out
+            if not out_url:
+                return None
+            img_resp = await client.get(out_url, timeout=120.0)
+            if img_resp.status_code != 200:
+                return None
+            preview_bytes = img_resp.content
+    except Exception as e:
+        logger.warning("LoRA preview generation failed: %s", e)
+        return None
+
+    # MinIO 저장
+    object_name = "characters/{}/lora_preview.png".format(user_id)
+    try:
+        minio_client = get_minio()
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(preview_bytes),
+            length=len(preview_bytes),
+            content_type="image/png",
+        )
+    except Exception as e:
+        logger.warning("LoRA preview MinIO put failed: %s", e)
+        return None
+
+    return object_name
+```
+
+#### `poll_training` 통합 (B34)
+```python
+# 기존 line 587~601 영역 수정:
+artifact_meta = { ... }   # 그대로
+# v40-7 NEW: 미리보기 생성 (best-effort)
+preview_object_name = ""
+try:
+    trigger = artifact_meta.get("trigger_word") or ""
+    if artifact_url and trigger:
+        po = await _generate_lora_preview(user_id, artifact_url, trigger)
+        if po:
+            preview_object_name = po
+except Exception as e:
+    logger.warning("LoRA preview generation wrapper failed: %s", e)
+    preview_object_name = ""
+
+await _set_character_fields(mongo_db, user_id, {
+    "lora_status": "done",
+    "lora_progress": None,
+    "lora_artifact": artifact_meta,
+    "lora_preview_object_name": preview_object_name,   # v40-7 NEW
+    "lora_error": None,
+})
+return {"status": "succeeded", "artifact": artifact_meta}
+```
+
+#### `_serialize_lora_state` 확장 (B35)
+```python
+def _serialize_lora_state(char: Optional[dict]) -> dict:
+    if not char:
+        return {
+            "lora_status": "idle", "lora_progress": None, "lora_artifact": None,
+            "lora_trigger_word": None, "lora_error": None,
+            "variation_thumbnails": [],
+            "lora_preview_url": "",     # v40-7 NEW
+            "costs": dict(COSTS),
+        }
+    thumb_objs = char.get("lora_variation_thumbnails") or []
+    thumb_urls = ["/api/character/preview/{}".format(o) for o in thumb_objs if o]
+    preview_obj = char.get("lora_preview_object_name") or ""
+    preview_url = "/api/character/preview/{}".format(preview_obj) if preview_obj else ""
+    return {
+        "lora_status": char.get("lora_status") or "idle",
+        "lora_progress": char.get("lora_progress"),
+        "lora_artifact": char.get("lora_artifact"),
+        "lora_trigger_word": char.get("lora_trigger_word"),
+        "lora_error": char.get("lora_error"),
+        "variation_thumbnails": thumb_urls,
+        "lora_preview_url": preview_url,    # v40-7 NEW
+        "costs": dict(COSTS),
+    }
+```
+
+#### `/me` 응답 확장 (B35)
+```python
+# routes/character.py:581~604 의 character dict 안에 추가:
+preview_obj = char.get("lora_preview_object_name") or ""
+preview_url = "/api/character/preview/{}".format(preview_obj) if preview_obj else ""
+return {
+    "character": {
+        ...,                                  # 기존 모든 필드 그대로
+        "lora_preview_url": preview_url,      # v40-7 NEW
+    }
+}
+```
+
+#### `DELETE /lora` cleanup (B36)
+```python
+# 기존 line 837~847 (artifact 삭제) 직후에 추가:
+preview_obj = char.get("lora_preview_object_name")
+if preview_obj:
+    try:
+        minio_client.remove_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=preview_obj,
+        )
+    except Exception as e:
+        logger.warning("LoRA preview cleanup failed (%s): %s", preview_obj, e)
+
+# 기존 Mongo $set 에 "lora_preview_object_name": "" 추가
+```
+
+#### `DELETE /training-data` cleanup (B37)
+```python
+# 기존 case 1~3 (artifact / variations / original) 옆에 case 4 추가:
+preview_obj = char.get("lora_preview_object_name")
+if preview_obj:
+    try:
+        minio_client.remove_object(bucket_name=bucket, object_name=preview_obj)
+    except Exception as e:
+        logger.warning("LoRA preview cleanup failed: %s", e)
+
+# Mongo $set 에 "lora_preview_object_name": "" 추가
+```
+
+#### `/train-lora` atomic guard 확장 (B38)
+```python
+# 기존 $set 에 한 줄 추가:
+"lora_preview_object_name": "",   # v40-7: clear stale preview on retrain
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/lora_trainer.py` — `_generate_lora_preview` 헬퍼 추가 (B33), `poll_training` 통합 (B34)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py` — `_serialize_lora_state` (B35), `/me` 응답 (B35), `DELETE /lora` (B36), `DELETE /training-data` (B37), `/train-lora` atomic guard (B38)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx` — `renderDone()` 미리보기 슬롯 (F28)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.css` — `.lora-modal__preview*` 클래스
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx` — `renderStep1Card()` 학습 완료 영역 미리보기 (F29, 선택)
+
+### Hand-off task list
+
+#### Backend (B33 ~ B38)
+- **B33** `lora_trainer.py`: `_generate_lora_preview(user_id, lora_url, trigger_word) -> Optional[str]` 헬퍼 추가. flux-dev-lora **text-to-image** 호출(image/prompt_strength 없음), aspect_ratio="1:1", lora_scale=1.0, prompt = 결정사항 #2 의 중성 prompt. 성공 시 MinIO `characters/{uid}/lora_preview.png` 저장 후 object_name 반환. 모든 실패 graceful (return None, warning log)
+- **B34** `lora_trainer.py` `poll_training`: status='succeeded' + artifact 다운로드 + MinIO put 직후, `lora_status='done'` 으로 갱신하기 전에 `_generate_lora_preview` 호출. try/except 로 감싸서 실패해도 진행. `_set_character_fields` 의 `$set` dict 에 `"lora_preview_object_name": preview_object_name (or "")` 포함
+- **B35** `routes/character.py`: `_serialize_lora_state` 두 분기 모두에 `lora_preview_url` 추가 (proxy URL 변환). `/me` 응답 dict 에도 `lora_preview_url` 추가 (별도 한 줄)
+- **B36** `routes/character.py` `DELETE /lora`: artifact 삭제 옆에 `char.get("lora_preview_object_name")` MinIO 삭제 best-effort. Mongo `$set` 에 `"lora_preview_object_name": ""` 추가
+- **B37** `routes/character.py` `DELETE /training-data`: case 1~3 옆에 case 4 (preview MinIO 삭제) 추가. Mongo `$set` 에 `"lora_preview_object_name": ""` 추가
+- **B38** `routes/character.py` `/train-lora` atomic guard `find_one_and_update` 의 `$set` dict 에 `"lora_preview_object_name": ""` 추가 (재학습 시 stale preview 방지)
+
+#### Frontend (F28 ~ F29)
+- **F28** `LoraTrainingModal.jsx` `renderDone()`: `renderVariationGrid({showLoading:false})` 호출 직전(또는 학습일 표시 직후) 에 "학습된 얼굴 미리보기" 슬롯 추가. `lora?.lora_preview_url` truthy → `<img src={api.characterPreviewUrl(lora.lora_preview_url)} ...>`. falsy → placeholder + "미리보기 준비 중" 텍스트. CSS 클래스 `.lora-modal__preview`, `.lora-modal__preview-label`, `.lora-modal__preview-img`, `.lora-modal__preview-placeholder` 를 `LoraTrainingModal.css` 에 추가 (정사각 200~240px, 1:1, border-radius 일관)
+- **F29** (선택, 후속) `MyMusicPage.jsx` `renderStep1Card()`: `done && lora?.lora_preview_url` 이면 photo-box 영역에 "AI 학습 결과" 작은 썸네일 추가. **first ship 에서는 모달만으로 충분 → F29 는 v40-8 후보**
+
+#### Tester (TT59 ~ TT70)
+- **TT59** (B33) `_generate_lora_preview` 단위:
+  - replicate_api_token 미설정 → return None (graceful)
+  - lora_url='' / trigger_word='' → return None
+  - Replicate HTTP 오류 → return None, warning log
+  - polling timeout (>180s) → return None
+  - output URL 없음 → return None
+  - 정상 → MinIO put 검증, object_name 반환
+
+- **TT60** (B34) `poll_training` 미리보기 통합:
+  - 학습 성공 + 미리보기 성공 → Mongo `lora_status='done'`, `lora_preview_object_name='characters/{uid}/lora_preview.png'`
+  - 학습 성공 + 미리보기 실패 → Mongo `lora_status='done'`, `lora_preview_object_name=''` (학습은 성공 유지) ★ graceful 핵심
+  - 학습 성공 + `_generate_lora_preview` raise → wrapper try/except → `lora_preview_object_name=''` (예외 누수 X)
+
+- **TT61** (B35) `/lora-status` 응답에 `lora_preview_url` 포함:
+  - 학습 완료 + 미리보기 있음 → `lora_preview_url='/api/character/preview/characters/{uid}/lora_preview.png'`
+  - 학습 완료 + 미리보기 없음 (graceful 실패) → `lora_preview_url=''`
+  - 학습 idle → `lora_preview_url=''`
+
+- **TT62** (B35) `/me` 응답에 `lora_preview_url` 포함:
+  - 응답 `character.lora_preview_url` 필드 존재 (string, 항상)
+
+- **TT63** (B36) `DELETE /lora`:
+  - 미리보기 있음 → MinIO `lora_preview.png` 삭제됨, Mongo `lora_preview_object_name=''`
+  - 미리보기 없음 → 정상 처리(에러 없음)
+  - MinIO 삭제 실패 → warning log, response 200 유지 (best-effort)
+
+- **TT64** (B37) `DELETE /training-data`:
+  - 미리보기 + variation thumbnails + original photo 모두 삭제됨
+  - Mongo: `lora_preview_object_name=''`, 기존 모든 필드 클리어 동작 그대로
+
+- **TT65** (B38) `/train-lora` atomic guard:
+  - 재학습 호출 시 Mongo `lora_preview_object_name=''` 으로 클리어됨 (학습 진행 중 `/me` 응답 `lora_preview_url=''`)
+  - 학습 완료 후 새 미리보기 path 로 갱신 (이전과 같은 `lora_preview.png` path 지만 내용은 새 LoRA 결과)
+
+- **TT66** (F28) Modal `renderDone()` 슬롯:
+  - `lora.lora_preview_url=''` → "미리보기 준비 중" placeholder
+  - `lora.lora_preview_url='/api/character/preview/...'` → `<img>` 노출, characterPreviewUrl helper 통과
+  - 학습일/PuLID 그리드/재학습 비용/안내문구 모두 기존대로 노출 (회귀 0)
+
+- **TT67** (재학습 시나리오 end-to-end):
+  - 1차 학습 → 미리보기 A 생성
+  - 사용자 "재학습" 클릭 → atomic guard 가 `lora_preview_object_name=''` 클리어 → 학습 진행 중 모달은 placeholder
+  - 2차 학습 완료 → 미리보기 B 생성 (같은 path, 새 bytes)
+  - FE `getLoraStatus` 응답으로 새 미리보기 표시
+
+- **TT68** 비용 라벨 갱신:
+  - 학습 비용 표시($2.50 → $2.53)는 first ship 에서 텍스트 변경 없음 — `~$2.50` 그대로 노출(반올림 차이 무시) **OR** `~$2.53` 으로 갱신. **결정**: COSTS["training_usd"]=2.5 그대로 유지(라벨도 그대로). 미리보기 비용은 학습 패키지 안에 포함되어 있다고 사용자에게 인식 — 추가 결제 없음
+  - **변경 0건** (UI 수치 갱신 없음)
+
+- **TT69** 9004 헬스 + 회귀:
+  - `/api/health` 200
+  - `/api/character/lora-status` 200 (응답에 `lora_preview_url` 항상 포함)
+  - `/api/character/me` 200 (응답에 `character.lora_preview_url` 항상 포함)
+  - v37/v38/v40/v40-1/v40-2/v40-3/v40-4/v40-5/v40-6 모든 회귀 0건
+
+- **TT70** 미리보기 graceful 실패 시 사용자 경험:
+  - 학습 성공으로 표시 (모달 `renderDone()`)
+  - 미리보기 슬롯만 "준비 중" placeholder
+  - PuLID 그리드/학습일/재학습 버튼 모두 정상 노출
+  - "학습 실패" 라는 부정 신호 노출 X (학습 자체는 성공이므로)
+
+### 비용
+- 미리보기 1장: **+$0.03** (flux-dev-lora t2i 단일 호출, 1024x1024)
+- 학습 1회 총 비용: $2.50 → **$2.53** (PuLID $0.40 + fast-flux-trainer $2.10 + preview $0.03)
+- **UI 표기 정책**: 첫 ship 에서는 `~$2.50` 라벨 유지(반올림 무시). v40-8 에서 사용자 피드백 후 갱신 검토 (Q-v40-7-3)
+- 미리보기 fallback (Replicate 토큰 미설정 / 호출 실패) 시: 추가 비용 0 — 학습 비용만 과금
+- 재학습 시 새 미리보기: +$0.03 (1회 학습마다)
+
+### 영향 범위
+- **DB schema 변경**: 1건 (Mongo `characters` 컬렉션에 `lora_preview_object_name: str` 필드 추가 — `$set` 으로 자연 추가, 기존 도큐먼트 호환)
+- **API 변경**:
+  - `GET /api/character/lora-status` 응답에 `lora_preview_url: str` 추가 (기존 클라이언트는 무시 가능 — 하위 호환)
+  - `GET /api/character/me` 응답 `character` 객체에 `lora_preview_url: str` 추가
+  - 요청 body 변경 X
+- **외부 의존성 추가**: 0건 (Replicate flux-dev-lora 는 v40-2/v40-3/v40-6 에서 이미 사용 중)
+- **함수 시그니처 변경**: 0건 (private 헬퍼 추가만)
+- **무영향**:
+  - `start_training` (학습 시작) — 변경 0건
+  - `cancel_training` — 변경 0건
+  - `resume_pending_lora_jobs` — 변경 0건
+  - `character_generator.generate_character_sheet*` (Stage 2 시트) — 변경 0건
+  - `cover_generator.generate_cover_image` (v40-6 Step 2) — 변경 0건
+  - `mv_generator.generate_scene_image_with_lora` (Stage 3 씬) — 변경 0건
+  - 기존 학습 흐름(idle → training → done/failed) — 변경 0건
+  - v40-1~6 회귀 — 0건
+
+### 수용 기준 (Acceptance Criteria)
+1. 백엔드 `lora_trainer._generate_lora_preview()` 가 flux-dev-lora **text-to-image** 모드(image/prompt_strength 없음) 로 호출, aspect_ratio="1:1", trigger_word prepend (B33)
+2. 미리보기 prompt 는 결정사항 #2 의 중성 portrait 문자열 그대로 사용 (face-only 가이드 일관)
+3. `poll_training` 이 학습 성공 직후 `_generate_lora_preview` 호출 → 결과 object_name 또는 "" 을 `lora_preview_object_name` 에 저장. 미리보기 실패 시 `lora_status='done'` 유지(graceful) (B34)
+4. `_serialize_lora_state` (`/lora-status`) + `/me` 응답 모두에 `lora_preview_url: str` 항상 포함(없으면 빈 문자열) (B35)
+5. `DELETE /lora` 가 MinIO `lora_preview.png` + Mongo `lora_preview_object_name` 정리 (B36)
+6. `DELETE /training-data` 가 MinIO `lora_preview.png` + Mongo `lora_preview_object_name` 정리 (B37)
+7. `/train-lora` atomic guard `$set` 에 `lora_preview_object_name=""` 포함 → 재학습 시 stale preview 차단 (B38)
+8. FE `LoraTrainingModal.renderDone()` 에 "학습된 얼굴 미리보기" 슬롯 노출. URL 있으면 `<img>`, 없으면 placeholder (F28)
+9. 미리보기 graceful 실패 시 학습 자체는 "완료" 로 표시되고 모달 / Step 1 카드 모두 정상 노출 (TT70)
+10. 9004 `/api/health` 200, `/api/character/lora-status` / `/api/character/me` 200 (`lora_preview_url` 필드 항상 존재)
+11. v37/v38/v40/v40-1/v40-2/v40-3/v40-4/v40-5/v40-6 모든 회귀 0건
+
+### 테스트 계획 (Tester)
+- TT59 ~ TT70 전 항목 PASS
+- 사용자 시나리오 수동 검증:
+  - **A 정상**: 새 사용자 → 사진 업로드 → 학습 시작 → 약 3분 대기 → 모달 `renderDone()` 에 PuLID 18장 그리드 + "학습된 얼굴 미리보기" 1장 노출 (얼굴이 학습 정체성과 일치)
+  - **B graceful**: Replicate 토큰 일시 중단 시뮬 → 학습은 성공, 미리보기 슬롯은 "준비 중" placeholder. 학습 자체 success 표시 유지
+  - **D 재학습**: A 시나리오 후 "재학습" 클릭 → 학습 진행 중에는 미리보기 슬롯 비활성 → 2차 학습 성공 시 새 미리보기로 갱신
+  - **E 삭제**: "학습 데이터 삭제" 클릭 → MinIO + Mongo 모두 클리어, 모달은 idle 화면으로 복귀
+- 회귀: v40-3 마스터 시트 / v40-2 씬 first-frame / v40-5 학습 데이터 삭제 / v40-6 커버 LoRA 정제 모두 정상
+
+### 보안
+- `_generate_lora_preview` 는 server-side only 호출 — Replicate token 클라이언트 노출 X
+- `lora_preview_url` 은 proxy URL (`/api/character/preview/...`) — MinIO 직접 URL 노출 X
+- IDOR 방지: `/api/character/preview/{object_name:path}` 핸들러는 현재 인증 없음 (기존 v40-3 정책). object_name path 안 user_id prefix 가 자체 게이팅 역할 — `lora_preview.png` 도 같은 prefix 정책 (v40-7 에서 추가 게이팅 미도입; v40-8 에서 일괄 검토 — Q-v40-7-4)
+- API 토큰 placeholder 정책 준수 — 코드 안 토큰 하드코딩 X
+- 미리보기 prompt 안 사용자 입력 0 — prompt injection 위험 0 (trigger_word 는 서버 생성 `pann_user_xxxx` 만 prepend)
+
+### Open Questions
+- **Q-v40-7-1 (open)** 미리보기 비용 라벨 노출 — first ship 에서는 `~$2.50` 그대로(미리보기 비용 흡수 표시). UI 텍스트 갱신 없음. 사용자 피드백 후 v40-8 에서 `~$2.53` 으로 갱신 검토. **결정**: 미리보기는 학습의 일부로 인식 → 별도 가격 노출 X
+- **Q-v40-7-2 (open)** 미리보기 prompt 다양화 — 현재 1장만 생성(중성 portrait). 사용자가 "다양한 표정/각도"로 보고 싶다면 3~4장 생성? — first ship 비채택. 1장은 "학습 정체성 검증" 목적 충분. v40-8 에서 사용자 피드백 후 검토(추가 비용 ~$0.10)
+- **Q-v40-7-3 (open)** 미리보기 텍스트 라벨 — "학습된 얼굴 미리보기" vs. "내 캐릭터 LoRA 결과" vs. "AI 학습 결과 미리보기" — first ship 채택: **"학습된 얼굴 미리보기"** (사용자 친화적, 명확). 후속 카피 라이팅 검토 (Q-v40-7-3)
+- **Q-v40-7-4 (open)** `/api/character/preview/{object_name:path}` IDOR — 현재 모든 `characters/{user_id}/...` path 가 인증 없이 proxy 됨. v40-7 에서 `lora_preview.png` 도 같은 정책 따름 (회귀 위험 0). v40-8 에서 일괄 게이팅 도입 검토 (예: `?token=` 또는 path 안 user_id 검증)
+- **Q-v40-7-5 (open)** 미리보기 재생성 버튼 — 사용자가 "다시 생성" 누르면 새 LoRA 출력 1장 생성 (LoRA 학습 자체는 그대로). 현재 비채택 — 1장으로 충분. v40-8 에서 검토
+- **Q-v40-7-6 (open)** F29 `MyMusicPage.renderStep1Card()` 에도 미리보기 노출 — first ship 비채택. 모달만으로 충분. v40-8 에서 사용자 피드백 후 검토(Step 1 카드 안 photo-box 옆 작은 썸네일)
+
+### 체크리스트
+- [ ] backend_9004 `services/lora_trainer.py`: `_generate_lora_preview` 헬퍼 (B33)
+- [ ] backend_9004 `services/lora_trainer.py`: `poll_training` 통합 + Mongo `lora_preview_object_name` 저장 (B34)
+- [ ] backend_9004 `routes/character.py`: `_serialize_lora_state` + `/me` 응답 `lora_preview_url` (B35)
+- [ ] backend_9004 `routes/character.py`: `DELETE /lora` MinIO + Mongo cleanup (B36)
+- [ ] backend_9004 `routes/character.py`: `DELETE /training-data` MinIO + Mongo cleanup (B37)
+- [ ] backend_9004 `routes/character.py`: `/train-lora` atomic guard `$set` 확장 (B38)
+- [ ] frontend `LoraTrainingModal.jsx` + `.css`: `renderDone()` 미리보기 슬롯 (F28)
+- [ ] frontend `MyMusicPage.jsx`: Step 1 카드 미리보기 (F29, 선택 / 후속)
+- [ ] Tester TT59~TT70 PASS
+- [ ] REPORT.md v40-7 append
+
+## v40-8 — 2026-04-28 — 18가지 의상 변수화 (LoRA 학습 데이터 다양화) + 미리보기/그리드 클릭 라이트박스
+
+### 배경
+- **현상 1 — 학습 데이터 의상 단일화 위험**: `backend_9004/app/services/character_variations.py` 의 `_FACE_ONLY_GUARDRAIL` 상수(line 66~70)가 18개 PuLID variation prompt **모두에** "plain white T-shirt OR simple grey crew-neck shirt" 를 강제 → 결과적으로 18장이 거의 같은 옷차림. LoRA 가 "이 사람 + 이 옷" 을 한 묶음으로 학습할 위험 (의상 overfit). 의도(face-only)와 반대 효과
+- **현상 2 — 미리보기/그리드 작아서 검증 어려움**: v40-7 의 학습된 얼굴 미리보기(`lora_preview_url`, max 280px) + v40-4 의 18장 PuLID 그리드(슬롯 ~50px) 가 모달 안에서 작게 표시 → 사용자가 "얼굴이 진짜 학습됐는가" 시각 검증 어려움. 클릭으로 크게 볼 방법 없음
+- **목표**:
+  1. PuLID 18장 prompt 의 의상을 **18가지 다른 상의+하의 조합**으로 변수화 → LoRA 가 "옷은 무관, 얼굴만 학습"
+  2. `LoraTrainingModal` 안 미리보기 1장 + 그리드 18장 모두 **클릭 시 라이트박스 확대**, ESC / 백드롭 클릭 닫기
+
+### 결정 사항 (v40-8 핵심)
+
+#### 1. 의상 변수화 — 상의+하의만, 악세사리 일체 NO
+- **제약**: 신발 X (인물 사진은 face/upper-body 위주라 잘 안 보임), 모자/안경/목걸이/귀걸이/시계/반지/팔찌/스카프/벨트 등 **모든 악세사리 NO** → 학습은 "깨끗한 얼굴 + 의상 다양성" 만. 신발/악세사리는 학습 후 사용자가 "착용 아이템" 으로 입힘 (v37 character outfit/accessory 흐름)
+- **18가지 상의+하의 (사용자 제안 그대로 채택, 색상/스타일/캐주얼·세미포멀·스포티 mix)**:
+  ```python
+  OUTFITS_18 = [
+      "a plain white basic T-shirt and dark indigo blue jeans",
+      "a black turtleneck and grey slacks",
+      "a navy blue crew-neck sweater and khaki chino pants",
+      "a beige hoodie and black jogger pants",
+      "a light blue button-up shirt and dark blue jeans",
+      "a grey wool sweater and black slacks",
+      "an olive green polo shirt and brown chino pants",
+      "a soft pink long-sleeve shirt and white wide-leg pants",
+      "a black blazer over a plain white shirt and grey suit pants",
+      "a burgundy cardigan over a plain T-shirt and dark blue jeans",
+      "a plain white hoodie and black training pants",
+      "a cream-colored sweater and olive green cargo pants",
+      "a light grey henley shirt and navy chino pants",
+      "a dark green flannel shirt and dark wash jeans",
+      "a mustard yellow blouse and dark trousers",
+      "a charcoal grey suit jacket over a white shirt and matching grey suit pants",
+      "a black leather jacket over a plain T-shirt and dark blue jeans",
+      "a soft pink sweatshirt and black leggings",
+  ]
+  ```
+- **악세사리 NO 강제 (구 `_FACE_ONLY_GUARDRAIL` → `_NO_ACCESSORIES_GUARDRAIL` 로 분할/재명명)**:
+  ```
+  "Maintain identical face shape, eyes, nose, mouth, hair, and skin tone from the reference. "
+  "The character wears NO accessories whatsoever — no glasses, no sunglasses, no earrings, "
+  "no necklace, no bracelet, no watch, no rings, no hat, no cap, no scarf, no belt visible. "
+  "Clean, accessory-free face and body. "
+  "Background: plain neutral grey seamless studio backdrop."
+  ```
+  → 의상 부분(흰 티/회색 크루넥) 제거, 악세사리 NO 강조 추가, 배경 그대로
+
+#### 2. Prompt 템플릿 분리
+- 18개 `VARIATION_PROMPTS` 리스트 → `VARIATION_PROMPTS_TEMPLATE` (각 항목에 `{outfit}` placeholder)
+- 각 항목의 **각도/조명/표정/프레이밍** 18가지 변화는 v40-3 그대로 보존 (전면/3-4 좌우/측면 + 자연광/골든아워/스튜디오/네온 + 무표정/미소/사색/시선 변화 + 클로즈업/medium/full-body/walking/seated)
+- 의상 부분만 분리해서 placeholder 처리:
+  ```python
+  VARIATION_PROMPTS_TEMPLATE: List[str] = [
+      "Photorealistic portrait. The exact same person from the reference, facing directly toward the camera (front view, 0 degrees). Neutral expression. Natural daylight, soft and even. No props, no scene context. Sharp focus on the face. The character wears {outfit}. " + _NO_ACCESSORIES_GUARDRAIL,
+      ...  # (총 18개)
+  ]
+  ```
+
+#### 3. Prompt 조립 — `generate_face_variations` 안
+- 기존(v40-3) 코드 (line 322~328):
+  ```python
+  for i in range(n):
+      base_prompt = VARIATION_PROMPTS[i % len(VARIATION_PROMPTS)]
+      if i >= len(VARIATION_PROMPTS):
+          base_prompt = base_prompt + " (variant {})".format(i + 1)
+      prompts.append(base_prompt)
+  ```
+- v40-8 변경:
+  ```python
+  for i in range(n):
+      template = VARIATION_PROMPTS_TEMPLATE[i % len(VARIATION_PROMPTS_TEMPLATE)]
+      outfit = OUTFITS_18[i % len(OUTFITS_18)]
+      base_prompt = template.format(outfit=outfit)
+      if i >= len(VARIATION_PROMPTS_TEMPLATE):
+          base_prompt = base_prompt + " (variant {})".format(i + 1)
+      prompts.append(base_prompt)
+  ```
+  → n=18(default) 일 때 18개 모두 다른 의상. n>18 일 때 cycle, suffix 로 uniqueness 보강
+
+#### 4. 라이트박스 — 기존 BusinessPage 패턴 재사용
+- 확인된 기존 패턴: `frontend/src/pages/BusinessPage.jsx:111` (`zoomImage` state) + `:387~394` (오버레이 JSX) + `BusinessPage.css:370~411` (`.biz-zoom-overlay`, `.biz-zoom-content`, `.biz-zoom-content img`, `.biz-zoom-close`)
+- 패턴 구조 (CSS 변수 / classname 만 LoRA modal 컨텍스트로 변경):
+  ```jsx
+  {zoomImage && (
+    <div className="lora-modal__lightbox-backdrop" onClick={() => setZoomImage(null)}>
+      <div className="lora-modal__lightbox-content" onClick={(e) => e.stopPropagation()}>
+        <img src={zoomImage} alt="확대 이미지" className="lora-modal__lightbox-img" />
+        <button className="lora-modal__lightbox-close" onClick={() => setZoomImage(null)}>✕</button>
+      </div>
+    </div>
+  )}
+  ```
+- **z-index**: 기존 `.lora-modal-overlay` z=2000, BusinessPage `biz-zoom-overlay` z=9999 → LoRA 라이트박스 **z=10000** (모달 위에 떠야 함)
+- **ESC 키 닫기**: BusinessPage 패턴엔 없음 → v40-8 에서 추가 (`useEffect` keydown listener, zoomImage 활성화 시에만 등록, ESC 시 `setZoomImage(null)`). 백드롭 클릭은 BusinessPage 동일 패턴으로 충분
+- **클릭 가능 슬롯**: 미리보기 1장 (renderDone 슬롯, `lora_preview_url` 있을 때만), 그리드 18장 중 **완료된 슬롯만**(`thumbnails[i]` 있을 때만). pending/loading 슬롯은 클릭 무시 (cursor 도 default)
+
+#### 5. 라이트박스 표시 URL
+- 미리보기: `api.characterPreviewUrl(lora.lora_preview_url)` 그대로 사용 (확대 시에도 동일 proxy URL — Replicate 원본 1024x1024 그대로 전송됨)
+- 그리드: `api.characterPreviewUrl(thumbnails[i])` 그대로 (1024x1024 PNG)
+- 별도 "고해상도" endpoint 불필요 — MinIO 저장본이 이미 풀 해상도
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `backend_9004/app/services/character_variations.py` 현재 구조 (line 66~95)
+- **확인된 사실**:
+  - `_FACE_ONLY_GUARDRAIL` 상수(line 66~70): 다중라인 string 1개. "white T-shirt OR grey crew-neck" + "plain neutral grey backdrop" 의 2개 의미를 합친 상태
+  - `VARIATION_PROMPTS: List[str]`(line 72~95): 18개 string. 각 항목 끝에 `+ _FACE_ONLY_GUARDRAIL` concat. 1-4 angles / 5-8 lighting / 9-12 expressions / 13-18 framings
+  - `generate_face_variations`(line 289~363): line 322~328 에서 `VARIATION_PROMPTS[i % len(VARIATION_PROMPTS)]` 인덱싱. cycle + variant 접미사 처리
+- **결론 — B39 변경 범위**:
+  - 상수 분할: `_FACE_ONLY_GUARDRAIL` → `_NO_ACCESSORIES_GUARDRAIL` (의상 부분 제거 + 악세사리 NO 강조 추가)
+  - 신규 `OUTFITS_18: List[str]` 18개 (상의+하의)
+  - 변수명 변경: `VARIATION_PROMPTS` → `VARIATION_PROMPTS_TEMPLATE`. 각 항목에 `The character wears {outfit}.` 끼워 넣기 (각도/조명/표정/프레이밍 부분은 100% 보존)
+  - `generate_face_variations` 안 prompt 조립부 한 블록만 수정(line 322~328)
+- **호환성**: `VARIATION_PROMPTS` 변수명은 외부에서 참조하는 곳 없음 (모듈 안에서만 사용). 안전하게 rename 가능 — 단, **다른 모듈에서 import 하는지 확인 필요**
+
+#### 2. `VARIATION_PROMPTS` import 사용처 검색
+- **확인 필요 (B39 시작 시)**:
+  ```bash
+  grep -rn "VARIATION_PROMPTS\|from.*character_variations" backend_9004/
+  ```
+- **예상**: 모듈 내부에서만 사용. import 사용처 없음 → rename 안전
+- **방어책**: rename 불가 시 `VARIATION_PROMPTS = VARIATION_PROMPTS_TEMPLATE` alias 추가 (호환성). 첫 ship 에서는 alias 없이 진행, 검색 결과에 따라 결정
+
+#### 3. `frontend/src/components/LoraTrainingModal.jsx` `renderVariationGrid` (line 200~224)
+- **확인된 사실**:
+  - line 207~221 의 `Array.from({length: 18}, (_, i) => ...)` 매핑. 슬롯 분기:
+    - `url` truthy → `<div className="lora-modal__slot lora-modal__slot--done"><img src={...} /></div>` (line 211~215)
+    - `isCurrent` → `<div className="lora-modal__slot lora-modal__slot--loading" />` (line 218)
+    - else → `<div className="lora-modal__slot lora-modal__slot--pending" />` (line 220)
+- **변경 필요 (F30)**:
+  - "done" 슬롯 `<div>` 에 `onClick={() => setZoomImage(api.characterPreviewUrl(url))}` + `style={{cursor: 'zoom-in'}}` (또는 CSS 클래스로 cursor 부여)
+  - loading/pending 슬롯은 클릭 핸들러 없음(cursor default 유지)
+
+#### 4. `LoraTrainingModal.jsx` 미리보기 슬롯 (line 362~378, v40-7 추가)
+- **확인된 사실**:
+  - line 364~369: `<img src={api.characterPreviewUrl(lora.lora_preview_url)} alt="학습된 얼굴" className="lora-modal__preview-img" />`
+  - placeholder (line 370~374): 클릭 핸들러 없음 (당연 — 이미지 없음)
+- **변경 필요 (F30)**:
+  - `<img>` 에 `onClick={() => setZoomImage(api.characterPreviewUrl(lora.lora_preview_url))}` + cursor zoom-in
+  - placeholder 는 그대로 (이미지 없으니 클릭 의미 없음)
+
+#### 5. `LoraTrainingModal.jsx` 컴포넌트 state 추가
+- **확인된 사실**: 현재 state — `loading`, `error`, `pollTimerRef`, `isMountedRef` (line 35~38). zoomImage 없음
+- **변경 필요 (F30)**:
+  - `const [zoomImage, setZoomImage] = useState(null);` 추가
+  - `useEffect` ESC 키 listener (zoomImage 활성화 시에만 등록 / cleanup):
+    ```jsx
+    useEffect(() => {
+      if (!zoomImage) return;
+      const handler = (e) => { if (e.key === 'Escape') setZoomImage(null); };
+      window.addEventListener('keydown', handler);
+      return () => window.removeEventListener('keydown', handler);
+    }, [zoomImage]);
+    ```
+  - 라이트박스 JSX 를 컴포넌트 최상위 return 의 `<div className="lora-modal-overlay">` 형제(또는 안)에 삽입. 모달 닫기 핸들러(`onClose`) 와 충돌 방지 — 라이트박스가 열린 상태에서 ESC → 라이트박스만 닫고 모달은 유지
+
+#### 6. ESC 키 + 모달 onClose 충돌
+- **확인된 사실**: 현재 LoraTrainingModal 은 ESC 키로 모달 자체 닫기 기능 없음 (백드롭 클릭만 — line 456: `<div className="lora-modal-overlay" onClick={onClose}>`)
+- **결론**: ESC 키는 v40-8 에서 라이트박스 전용 → 모달 ESC 충돌 없음. 라이트박스 keydown handler 가 zoomImage truthy 일 때만 등록됨 → 라이트박스 닫힌 상태에서는 ESC 가 영향 없음 (기존 동작 유지)
+
+#### 7. `LoraTrainingModal.css` 라이트박스 CSS 추가 위치
+- **확인된 사실**: 파일 끝 line 328~341 의 `@media (max-width: 480px)` 모바일 분기. 그 위(line 326)에 새 클래스 추가 권장
+- **변경 필요 (F31)**:
+  ```css
+  /* v40-8: 미리보기/그리드 클릭 시 라이트박스 확대 */
+  .lora-modal__lightbox-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;          /* 모달(2000) 위 */
+    padding: 24px;
+    cursor: zoom-out;
+  }
+  .lora-modal__lightbox-content {
+    position: relative;
+    max-width: 95vw;
+    max-height: 95vh;
+    cursor: default;
+  }
+  .lora-modal__lightbox-img {
+    max-width: 95vw;
+    max-height: 95vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+    display: block;
+  }
+  .lora-modal__lightbox-close {
+    position: absolute;
+    top: -16px;
+    right: -16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #fff;
+    color: #000;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+  /* zoom-in cursor on clickable slots / preview img */
+  .lora-modal__slot--done { cursor: zoom-in; }
+  .lora-modal__preview-img { cursor: zoom-in; }
+  ```
+
+#### 8. 기존 BusinessPage zoomImage 패턴 (재확인)
+- **확인된 사실**: `BusinessPage.jsx:111` `useState(null)`, `:387~394` JSX, `BusinessPage.css:370~411` `.biz-zoom-overlay`/`-content`/`-close`. ESC 키 없음. 백드롭 클릭 + ✕ 버튼만
+- **결론**: 패턴 재사용 OK. ESC 는 LoRA modal 에서 신규 추가(v40-8 의 개선). UploadPage / 다른 페이지의 zoomImage 변형은 본 v40-8 범위 외(향후 일괄 통일 검토 — Q-v40-8-1)
+
+#### 9. `lora.variation_thumbnails` URL 형식 (api 응답 ↔ JSX 사용 mismatch 점검)
+- **확인된 사실**:
+  - `_serialize_lora_state` (routes/character.py:650+): `thumb_urls = ["/api/character/preview/{}".format(o) for o in thumb_objs if o]` → 이미 proxy URL 형식
+  - `LoraTrainingModal.jsx:213`: `<img src={api.characterPreviewUrl(url)} ... />` → `characterPreviewUrl` 헬퍼가 두 번 prefix 붙이는지 확인
+- **확인 필요 (F30 시작 시)**: `api.characterPreviewUrl` 구현 — backend prefix 처리 방식. 만약 `/api/character/preview/...` 를 absolute URL 로 변환만 한다면 OK. 만약 또 prefix 를 붙이면 v40-4 부터 깨져 있어야 함 → 현재 동작 정상이므로 헬퍼는 안전. 라이트박스에서도 동일한 헬퍼 사용 (재가공 X)
+
+#### 10. 다국어/접근성
+- **확인된 사실**: 모달 close 버튼은 `aria-label="닫기"` 사용 (LoraTrainingModal.jsx:298). BusinessPage zoom close 는 aria-label 없음
+- **변경 권장 (F30)**: 라이트박스 close 버튼에 `aria-label="확대 이미지 닫기"` 추가. 라이트박스 backdrop 에 `role="dialog" aria-modal="true"` 권장(선택)
+
+### 동작 분기 매트릭스
+```
+케이스                 │ 라이트박스 동작
+───────────────────────┼─────────────────────────────────────
+A 미리보기 1장 클릭    │ zoomImage=preview URL → 라이트박스 열림
+B 그리드 done 슬롯 클릭│ zoomImage=thumb URL → 라이트박스 열림
+C 그리드 loading 클릭  │ 무반응 (cursor default, onClick 없음)
+D 그리드 pending 클릭  │ 무반응 (cursor default, onClick 없음)
+E 미리보기 placeholder │ 무반응 (이미지 없음)
+F 라이트박스에서 ESC   │ zoomImage=null → 라이트박스만 닫힘, 모달 유지
+G 라이트박스 백드롭 클릭│ zoomImage=null → 라이트박스만 닫힘, 모달 유지
+H 라이트박스 ✕ 버튼   │ zoomImage=null → 라이트박스만 닫힘, 모달 유지
+I 라이트박스 이미지 클릭│ stopPropagation → 닫히지 않음
+J 라이트박스 열린 상태 │ 모달 자체는 백그라운드 유지(z-index 10000 > 2000)
+   에서 모달 닫기 백드롭│ → 모달 닫기는 라이트박스 닫은 후에만 가능
+   클릭                │
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py`
+  — `_FACE_ONLY_GUARDRAIL` → `_NO_ACCESSORIES_GUARDRAIL` 분할/재명명, `OUTFITS_18` 신규, `VARIATION_PROMPTS` → `VARIATION_PROMPTS_TEMPLATE` 변환, `generate_face_variations` 조립부 수정 (B39)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx`
+  — `zoomImage` state, ESC keydown useEffect, 미리보기 `<img>` onClick, 그리드 done 슬롯 onClick, 라이트박스 JSX (F30)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.css`
+  — `.lora-modal__lightbox-backdrop`/`-content`/`-img`/`-close`, slot done + preview-img cursor (F31)
+
+### Hand-off task list
+
+#### Backend (B39)
+- **B39** `backend_9004/app/services/character_variations.py`:
+  - 모듈 docstring 위 v40-3 → v40-8 변경 노트 1줄 추가 (학습 데이터 의상 다양화)
+  - **`_FACE_ONLY_GUARDRAIL` 제거** → `_NO_ACCESSORIES_GUARDRAIL` 신규 (의상 부분 빼고, 악세사리 NO 강조 + 배경 유지). 본문은 결정사항 #1 의 정확한 문자열 그대로
+  - **`OUTFITS_18: List[str]` 신규** 18개 (결정사항 #1 의 18개 영문 outfit 문자열 그대로)
+  - **`VARIATION_PROMPTS` → `VARIATION_PROMPTS_TEMPLATE: List[str]`**: 기존 18개 prompt 의 각도/조명/표정/프레이밍 부분은 1자도 안 바꾸고, 끝의 `+ _FACE_ONLY_GUARDRAIL` 을 `+ "The character wears {outfit}. " + _NO_ACCESSORIES_GUARDRAIL` 로 교체
+  - **`generate_face_variations` 조립부**(현재 line 322~328) 를 결정사항 #3 코드로 교체 — `template.format(outfit=OUTFITS_18[i % len(OUTFITS_18)])`
+  - **사전 점검**: `grep -rn "VARIATION_PROMPTS\|character_variations" backend_9004/` 로 외부 참조 0 확인. 있으면 `VARIATION_PROMPTS = VARIATION_PROMPTS_TEMPLATE` alias 1줄 추가
+  - 비용/네트워크 호출 변화 0 (PuLID 호출 횟수/payload 크기 동일, prompt 텍스트만 다양화)
+
+#### Frontend (F30, F31)
+- **F30** `frontend/src/components/LoraTrainingModal.jsx`:
+  - `useState(null)` 로 `zoomImage` 추가 (다른 state 옆 line 35~38 영역)
+  - `useEffect` 로 ESC keydown listener 추가 (zoomImage 활성화 시에만 등록/cleanup)
+  - `renderVariationGrid` 의 done 슬롯 (line 211~215) 에 `onClick={() => setZoomImage(api.characterPreviewUrl(url))}` 추가. loading/pending 슬롯은 그대로 (클릭 핸들러 없음)
+  - `renderDone` 의 `<img>` (line 365~369) 에 `onClick={() => setZoomImage(api.characterPreviewUrl(lora.lora_preview_url))}` 추가
+  - 컴포넌트 최상위 return (line 455~462) 의 `<div className="lora-modal-overlay">` **밖** (또는 안 — 어느 쪽이든 동작하지만 z-index 10000 으로 충분히 위에 뜸)에 라이트박스 JSX 조건부 렌더(`{zoomImage && (...)}`):
+    ```jsx
+    {zoomImage && (
+      <div className="lora-modal__lightbox-backdrop" onClick={() => setZoomImage(null)} role="dialog" aria-modal="true">
+        <div className="lora-modal__lightbox-content" onClick={(e) => e.stopPropagation()}>
+          <img src={zoomImage} alt="확대 이미지" className="lora-modal__lightbox-img" />
+          <button className="lora-modal__lightbox-close" onClick={() => setZoomImage(null)} aria-label="확대 이미지 닫기">✕</button>
+        </div>
+      </div>
+    )}
+    ```
+  - 권장 위치: 기존 `<div className="lora-modal-overlay">...</div>` 와 fragment 로 묶기 (`<>...{zoomImage && ...}</>`)
+- **F31** `frontend/src/components/LoraTrainingModal.css`:
+  - `@media (max-width: 480px)` 직전(line 326 영역)에 결정사항 #7 의 라이트박스 CSS 5개 클래스 추가
+  - 기존 `.lora-modal__slot--done` 에 `cursor: zoom-in` 추가 (또는 별도 라인). `.lora-modal__preview-img` 에도 `cursor: zoom-in`
+  - 모바일 분기에서 라이트박스 `--close` 버튼 위치 조정 권장 (option, 화면 안쪽으로 -16→8 등). 첫 ship 에서는 desktop 우선 OK
+
+#### Tester (TT71 ~ TT79)
+- **TT71** (B39) `character_variations.py` 단위/구조:
+  - `len(OUTFITS_18) == 18`
+  - `len(VARIATION_PROMPTS_TEMPLATE) == 18`
+  - 각 template 안 `{outfit}` placeholder 정확히 1개 존재 (`prompt.count("{outfit}") == 1`)
+  - `_NO_ACCESSORIES_GUARDRAIL` 문자열 안 "no glasses", "no earrings", "no necklace", "no hat", "no scarf", "no watch", "no rings" 모두 포함
+  - `_FACE_ONLY_GUARDRAIL` 심볼 부재(또는 alias 만 존재)
+- **TT72** (B39) `generate_face_variations` 호출 시 prompt 다양성 (mock):
+  - n=18 → 18개 prompt 모두 서로 다른 outfit 문자열 포함 (set(outfit_excerpt) == 18)
+  - n=20 → 20개 prompt, outfit cycle (i=0,18 같은 outfit / i=1,19 같은 outfit), 19~20 에 " (variant 19)"/(variant 20)" 접미사
+  - n=10 → 10개 prompt, OUTFITS_18[0..9] 사용
+- **TT73** (B39) Prompt 본문 무결성:
+  - 각 prompt 안 "Photorealistic" 시작 (각도/조명/표정 의도 보존)
+  - 각 prompt 안 "Maintain identical face shape" 포함 (가이드 보존)
+  - 각 prompt 안 "no glasses, no sunglasses, no earrings" 포함
+  - 각 prompt 안 "plain neutral grey seamless studio backdrop" 포함
+  - 각 prompt 안 "The character wears " 다음에 outfit 텍스트 (e.g. "white basic T-shirt", "black turtleneck") 정확히 1번 등장. 기존 v40-3 의 "plain white T-shirt OR simple grey crew-neck shirt" 문자열은 **부재** (제거됨)
+- **TT74** (B39) Replicate 실호출 회귀 (수동, 가능 시):
+  - 사진 1장 → 학습 시작 → 18장 PuLID 결과가 시각적으로 18가지 다른 옷차림 (의상 색상/형태 차이 명확)
+  - 모든 18장에서 안경/모자/목걸이/귀걸이/시계 미착용 (시각 검증)
+  - 얼굴 정체성 일관성 v40-3 대비 동등 이상 (PuLID id_weight, num_steps 변화 없음)
+- **TT75** (F30) `LoraTrainingModal` 미리보기 클릭:
+  - `lora.lora_preview_url` 있을 때 `<img>` 에 cursor:zoom-in
+  - 클릭 시 라이트박스 표시 (`zoomImage` state 진입)
+  - 라이트박스 안 `<img>` src 가 미리보기 URL 과 동일
+- **TT76** (F30) 그리드 클릭:
+  - done 슬롯(`thumbnails[i]` 있음) → cursor:zoom-in, 클릭 시 라이트박스
+  - loading 슬롯 → 클릭 무반응 (zoomImage state 진입 X)
+  - pending 슬롯 → 클릭 무반응
+- **TT77** (F30/F31) 라이트박스 닫기:
+  - ESC 키 → 라이트박스 닫힘, 모달 유지 (`isOpen=true` 변하지 않음)
+  - 백드롭 클릭 → 라이트박스 닫힘, 모달 유지
+  - ✕ 버튼 클릭 → 라이트박스 닫힘
+  - 라이트박스 안 이미지 클릭 → 닫히지 **않음** (stopPropagation)
+- **TT78** (F31) z-index/모달 공존:
+  - 라이트박스 열린 상태에서 모달 백그라운드 어두워짐 (이중 백드롭 — 의도된 동작 OK)
+  - 라이트박스 닫은 후 모달은 정상 노출 (state 손상 0)
+  - 학습 진행 중에 그리드 done 슬롯 클릭 → 라이트박스 열림 → 닫음 → 학습 progress polling 영향 없음 (`pollTimerRef` 정상)
+- **TT79** 9004 회귀:
+  - `/api/character/lora-status` 200 (응답 schema 변화 0 — backend B39 는 prompt 텍스트만 바꿈)
+  - `/api/character/me` 200
+  - v37/v38/v40-1~7 모든 회귀 0건
+  - LoRA 학습 → 완료 → 미리보기 표시 (v40-7) → 클릭 확대 (v40-8) end-to-end PASS
+
+### 비용
+- 추가 비용 0 (Replicate 호출 횟수/payload 동일, prompt 텍스트만 다양화). PuLID 모델은 prompt 길이 차이가 비용에 영향 없음
+- LoRA 학습 자체 비용 변화 0 ($2.50)
+- 라이트박스는 client-side only — 네트워크 추가 호출 0 (이미 받은 PNG 를 다시 표시)
+
+### 영향 범위
+- **DB schema 변경**: 0건 (Mongo characters 컬렉션 그대로)
+- **API 변경**: 0건 (응답 shape 그대로)
+- **외부 의존성 추가**: 0건
+- **함수 시그니처 변경**: 0건 (`generate_face_variations(photo_bytes, n, on_variation_complete)` 그대로)
+- **모듈 내부 심볼 변경**: 1건 (`VARIATION_PROMPTS` → `VARIATION_PROMPTS_TEMPLATE`. 외부 참조 없음 확인 후 진행 — 있으면 alias)
+- **무영향**:
+  - PuLID 호출 흐름(`_call_pulid_variation`, `_call_pulid_with_retry`) — 변경 0
+  - LoRA 학습 파이프라인(`lora_trainer.start_training`, `poll_training`, v40-7 `_generate_lora_preview`) — 변경 0
+  - `_serialize_lora_state` (routes/character.py) — 변경 0
+  - `MyMusicPage`, `UploadPage`, 모든 다른 페이지 — 변경 0
+  - 학습/재학습/취소/삭제 흐름 — 변경 0
+
+### 수용 기준 (Acceptance Criteria)
+1. `character_variations.py` 안 `_FACE_ONLY_GUARDRAIL` 심볼 부재(또는 alias 처리). `_NO_ACCESSORIES_GUARDRAIL` 신규, 악세사리 7+ 종 명시 (B39)
+2. `OUTFITS_18` 18개 (상의+하의), 신발 X, 악세사리 X (B39)
+3. `VARIATION_PROMPTS_TEMPLATE` 18개, 각 항목에 `{outfit}` placeholder 1개, 각도/조명/표정/프레이밍 전부 v40-3 유지 (B39)
+4. `generate_face_variations` 가 n=18 호출 시 18개 모두 다른 outfit 으로 PuLID 호출 (B39)
+5. `LoraTrainingModal` 미리보기 `<img>` 클릭 시 라이트박스 표시 (F30)
+6. `LoraTrainingModal` 그리드 done 슬롯 클릭 시 라이트박스. loading/pending 슬롯은 무반응 (F30)
+7. ESC 키 / 백드롭 클릭 / ✕ 버튼 모두 라이트박스 닫기. 모달은 유지 (F30)
+8. 라이트박스 z-index 10000 > 모달 2000 → 항상 위에 노출 (F31)
+9. 9004 `/api/health` 200, 모든 v37/v38/v40-1~7 회귀 0
+10. 라이트박스 cursor zoom-in (clickable) / zoom-out (backdrop) / default (loading/pending) 일관
+
+### 테스트 계획 (Tester)
+- TT71 ~ TT79 전 항목 PASS
+- 사용자 시나리오 수동:
+  - **A 학습 + 다양 의상**: 새 사진 → 학습 시작 → 18장 PuLID 결과가 시각적으로 다른 옷차림 (그리드 직접 비교). 모든 슬롯에서 악세사리 미착용
+  - **B 클릭 확대 — 미리보기**: 학습 완료 후 모달 `renderDone` 의 미리보기 클릭 → 95vw/95vh 라이트박스 → 얼굴 디테일 명확 검증 가능
+  - **C 클릭 확대 — 그리드**: 모달 그리드 18장 중 임의 슬롯 클릭 → 라이트박스 확대 → 닫고 다른 슬롯 클릭 → 정상 동작
+  - **D 닫기 인터랙션**: 라이트박스에서 ESC / 백드롭 / ✕ 모두 닫힘. 모달 유지
+  - **E 학습 진행 중 클릭**: 학습 도중 done 된 슬롯 (1~18 점진 채워짐) 클릭 → 라이트박스 정상. polling 5초 간격 영향 0
+- 회귀: v40-7 미리보기 자동 생성 / v40-5 재학습 / v40-4 그리드 라이브 채움 / v40-3 PuLID 호출 모두 정상
+
+### 보안
+- 추가 보안 표면 0 — 라이트박스는 클라이언트 단의 단순 `<img>` 확대. URL 은 기존 proxy URL 재사용
+- API 토큰 placeholder 정책 준수 — 코드 안 토큰 하드코딩 X
+- prompt 안 사용자 입력 0 (outfit 18개는 모두 서버 내부 상수)
+- accessibility: `role="dialog" aria-modal="true"`, close 버튼 `aria-label="확대 이미지 닫기"`
+
+### Open Questions
+- **Q-v40-8-1 (open)** 라이트박스 컴포넌트 통일 — UploadPage, BusinessPage, LoraTrainingModal 등 zoomImage 패턴이 분산되어 있음. v40-9+ 에서 `<ImageLightbox>` 공용 컴포넌트로 추출 검토. 본 v40-8 에서는 인라인 (BusinessPage 패턴 채택)
+- **Q-v40-8-2 (open)** 의상 18가지 다양성 평가 — 사용자 제안 그대로 채택. 첫 ship 후 시각 검증으로 "더 다양 필요" / "특정 색상 편향" 발견 시 v40-9 에서 재선정. 후보: 트렌치 코트, 데님 자켓, 후디 + 청바지 등 추가
+- **Q-v40-8-3 (open)** 신발 포함 여부 — 현재 신발 X. 만약 PuLID 가 full-body shot (5번 prompt = 13/15/17번) 에서 발 영역도 렌더링한다면, 신발도 다양화하는 게 학습에 좋을 수 있음. v40-9 검토. 단 첫 ship 에서는 "신발 무관" 신호로 충분 (full-body shot 도 PuLID 가 자체 판단해서 그림)
+- **Q-v40-8-4 (open)** 악세사리 NO 강제의 강도 — flux-PuLID 가 18번 모두 100% 악세사리 미착용을 지킬지 시각 검증 필요. 만약 일부 슬롯에서 안경/귀걸이가 새어 나오면 negative prompt 도입 검토 (PuLID schema 에 negative_prompt 지원 여부 확인 필요)
+- **Q-v40-8-5 (open)** ESC 키 동시성 — 라이트박스 ESC 가 모달 자체 ESC 단축키 추가(향후 v40-9+) 와 충돌하지 않도록 stopPropagation 검토
+- **Q-v40-8-6 (open)** F29 `MyMusicPage.renderStep1Card` 미리보기 (v40-7 의 후보) — v40-8 도 비채택 (모달만으로 충분). v40-9+ 에서 사용자 피드백 후 검토
+- **Q-v40-8-7 (open)** 그리드/미리보기 라이트박스에 "다음/이전" 네비게이션 — 18장을 좌우 화살표/키보드로 순회. v40-9+ 검토 (UX 향상). 첫 ship 은 단일 이미지 표시만
+
+### 체크리스트
+- [ ] backend_9004 `services/character_variations.py`: 가이드 분할 + OUTFITS_18 + 템플릿 변환 + 조립부 수정 (B39)
+- [ ] frontend `LoraTrainingModal.jsx`: zoomImage state + ESC + 미리보기/그리드 onClick + 라이트박스 JSX (F30)
+- [ ] frontend `LoraTrainingModal.css`: 라이트박스 5 클래스 + slot/preview cursor (F31)
+- [ ] Tester TT71~TT79 PASS
+- [ ] REPORT.md v40-8 append
+
+## v40-9 — 2026-04-28 — 학습용 18장 생성기 PuLID-FLUX → Nano Banana (Gemini) 회귀
+
+### 배경
+- **현상 1 — PuLID 출력 품질 변동성**: v40-3 에서 도입한 PuLID-FLUX (`bytedance/flux-pulid`) 가 18장 중 일부 슬롯 (예: var_13, var_14 같은 full-body / mid-stride / seated 변형) 이 photorealistic 의도와 어긋나 3D 카툰 스타일로 빠지는 현상이 관측됨. PuLID 의 `id_weight=1`, `num_steps=20`, `guidance_scale=4` 조합이 prompt 의 "Photorealistic" 지시보다 학습된 face token 가중치에 끌려가서 일관성 떨어짐
+- **현상 2 — Nano Banana 의 photo-ref 일관성 우위**: PANN 다른 곳 (`cover_generator.generate_cover_image`, `character_generator.generate_character_sheet`, `mv_generator.generate_scene_image_with_lora` Step 1 등) 에서 이미 사용 중인 Gemini `gemini-3-pro-image-preview` 가 사진을 inlineData 로 직접 받아서 photorealistic 일관성이 매우 좋음. PuLID 로 갔던 명목상 이유 ("얼굴 정체성 보존") 는 Nano Banana 도 photo ref + "exact same person from the reference" prompt 로 충분히 달성 가능
+- **현상 3 — 모델 통일성 / 운영 단순화**: PANN 의 모든 image-edit 흐름이 Nano Banana 인데 학습 데이터 생성만 PuLID 로 분리되어 있어, 코드 점검 / 비용 추적 / 장애 대응이 복잡. 통일하면 token 환경(`GOOGLE_API_KEY`)/SDK 패턴/에러 처리 일관
+- **목표**:
+  1. `character_variations.generate_face_variations(photo_bytes, n=18, on_variation_complete)` 시그니처는 1자도 안 바꾸고 내부 구현만 PuLID → Gemini 로 교체
+  2. v40-8 의 `OUTFITS_18` 18가지 의상 다양성 / `VARIATION_PROMPTS_TEMPLATE` 18가지 각도·조명·표정·프레이밍 / `_NO_ACCESSORIES_GUARDRAIL` 악세사리 차단 전부 그대로 유지
+  3. PuLID 전용 헬퍼 (`_call_pulid_variation`, `_call_pulid_with_retry`, `_get_pulid_version_id`, `_PULID_VERSION_CACHE`, `_headers_wait`, `PULID_*` 상수) 완전 제거
+  4. Gemini 패턴 헬퍼 (`_call_gemini_variation`) 신설 — `cover_generator.generate_cover_image` 와 `character_generator._call_gemini_image` 의 패턴 그대로 답습
+  5. `lora_trainer.start_training` 의 호출자 코드는 변경 0 — 시그니처 호환성 유지가 안전 회귀의 절대 기준
+
+### 결정 사항 (v40-9 핵심)
+
+#### 1. Gemini 멀티모달 호출 패턴 — `cover_generator` + `character_generator` 의 합성
+- **엔드포인트**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent`
+  - `cover_generator.py:18~21` 와 `character_generator.py:29~32` 모두 동일한 endpoint 사용 → v40-9 도 그대로
+- **인증**: `params={"key": settings.google_api_key}` (`cover_generator.py:185`, `character_generator.py:587/630` 동일)
+- **요청 구조** (`character_generator._call_gemini_image:610~625` 의 패턴 채택):
+  ```python
+  payload = {
+      "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+      "contents": [{
+          "parts": [
+              {"text": prompt},                                                    # variation prompt (template + outfit + guardrail)
+              {"inlineData": {"mimeType": photo_mime, "data": photo_b64}},         # user's original photo
+          ]
+      }],
+      "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+  }
+  ```
+- **응답 파싱** (`character_generator._call_gemini_image:640~651` / `cover_generator.py:195~211` 동일 패턴):
+  ```python
+  data = resp.json()
+  candidates = data.get("candidates", [])
+  parts = candidates[0].get("content", {}).get("parts", [])
+  for part in parts:
+      inline_data = part.get("inlineData")
+      if inline_data and inline_data.get("data"):
+          return base64.b64decode(inline_data["data"])
+  return None  # 무 inlineData 시 None (PuLID 와 같은 graceful return 의미론 보존)
+  ```
+- **타임아웃**: `httpx.AsyncClient(timeout=180.0)` (`character_generator.py:627` 와 동일 — Gemini 이미지 한 장에 보통 10~30초 소요)
+- **HTTP 에러 처리** — PuLID 의 `_call_pulid_variation` 와 동일한 graceful 의미론을 유지하기 위해 raise 가 아닌 `return None`:
+  - `cover_generator` 는 `raise ValueError` 를 쓰지만 (단발 호출), v40-9 는 18 슬롯 중 일부 실패 시 나머지로 학습 진행하는 정책이라 `return None` 이 옳음. 실패 카운팅은 호출자(`generate_face_variations`) 가 합산
+
+#### 2. System instruction (Gemini 의 image generation 가이드)
+- **결정 — `cover_generator` 의 character-image 분기 system_text 채택**:
+  ```python
+  GEMINI_VARIATION_SYSTEM = (
+      "You are a world-class portrait photographer specializing in identity-preserving "
+      "photorealistic portrait variations from a single reference photo. You generate "
+      "photorealistic, sharply-focused images that preserve the exact facial identity, "
+      "hair, and skin tone of the reference person across diverse angles, lighting "
+      "conditions, expressions, and framings. Always produce real-photograph-quality "
+      "imagery — never illustrated, stylized, or 3D-cartoon."
+  )
+  ```
+  - `cover_generator` 의 character-image system_text (line 156~161) 와 의도 동일하지만 "album cover" 대신 "portrait variations from reference photo" 로 도메인 변경. "never illustrated, stylized, or 3D-cartoon" 한 줄은 v40-3 에서 관측된 카툰 회귀 현상 (현상 1) 직접 차단
+
+#### 3. concurrency / rate limit / retry
+- **PuLID 시절**: `Semaphore(1)` + 호출 간 10.5s sleep + 12s/15s 백오프 (Replicate 의 worst-case 6/min burst 1 정책 대응) → 18장 학습에 약 4~5분 소요
+- **v40-9 Gemini**: rate limit 이 PuLID 처럼 엄격하지 않음 (Google generativelanguage 는 분당 60+ RPM 가능, 무료 60/min, 유료 더 높음). `cover_generator` / `character_generator` 둘 다 rate-limit 대응 코드 없이 그냥 호출
+- **결정 — `Semaphore(4)`, 호출 간 sleep 0, retry 1회 (5초 백오프)**:
+  - 18장 ÷ 4 동시 = 4~5 batch 라운드 → 총 60~120초 (Gemini 응답 평균 20~30초)
+  - retry 는 PuLID 보다 가볍게 — Gemini 에러는 대개 503/500 일시 장애 또는 content-policy 거부 (재시도 무의미). 1회만 재시도해서 일시 장애만 커버. content-policy 거부는 1회 retry 도 동일 거부일 가능성 높지만 비용 부담은 작음
+- **timeout**: 호출당 180초 (Gemini 이미지 큰 prompt 일 때 60초 가까이 걸리는 경우 있음)
+
+#### 4. `generate_face_variations` 본체 변경 (시그니처 그대로)
+- **PuLID 시절** (현재 line 319~395):
+  ```python
+  async def generate_face_variations(photo_bytes, n=18, on_variation_complete=None) -> List[bytes]:
+      if not settings.replicate_api_token:
+          return []
+      photo_b64 = base64.b64encode(photo_bytes).decode()
+      photo_data_uri = "data:image/jpeg;base64,{}".format(photo_b64)
+      # ... prompts 조립 ...
+      semaphore = asyncio.Semaphore(1)
+      async with httpx.AsyncClient() as client:
+          for idx, prompt in enumerate(prompts):
+              r = await _call_pulid_with_retry(prompt, photo_data_uri, client, semaphore, idx+1)
+              # ... callback, sleep 10.5s ...
+  ```
+- **v40-9 변경**:
+  ```python
+  async def generate_face_variations(photo_bytes, n=18, on_variation_complete=None) -> List[bytes]:
+      if not settings.google_api_key:
+          logger.error("generate_face_variations: GOOGLE_API_KEY not configured; cannot call Gemini. Returning empty list.")
+          return []
+      photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
+      photo_mime = "image/jpeg"  # PuLID 시절과 동일 — content-sniffing 의존
+      # ... prompts 조립부 그대로 (line 353~360) ...
+      semaphore = asyncio.Semaphore(4)
+      successes: List[bytes] = []
+      async with httpx.AsyncClient(timeout=180.0) as client:
+          # 동시 4개 fan-out + 결과 순차 처리 (콜백 순서를 인덱스로 보장)
+          tasks = [
+              asyncio.create_task(
+                  _call_gemini_with_retry(prompt, photo_b64, photo_mime, client, semaphore, idx+1)
+              )
+              for idx, prompt in enumerate(prompts)
+          ]
+          # gather 가 완료된 순서대로 callback 호출하기 위해 as_completed 사용 안 함.
+          # 대신 인덱스 순으로 await — 일부 task 가 늦게 끝나도 콜백 순서 보장 (그리드 1→18 채워짐)
+          for idx, task in enumerate(tasks):
+              r = await task
+              if r:
+                  successes.append(r)
+                  if on_variation_complete is not None:
+                      try:
+                          result = on_variation_complete(idx+1, r)
+                          if inspect.isawaitable(result):
+                              await result
+                      except Exception as e:
+                          logger.warning("on_variation_complete callback raised: %s", e)
+      logger.info("Gemini face variations: %d/%d succeeded", len(successes), n)
+      if len(successes) < 12:
+          logger.warning("Gemini face variations: only %d/%d succeeded (below recommended 12 for LoRA training)", len(successes), n)
+      return successes
+  ```
+- **콜백 순서 — 중요한 결정**: 그리드 라이브 채움 (v40-4) 은 `on_variation_complete(idx, bytes)` 가 **순서대로** 호출되는 것을 가정 (idx=1, 2, 3, ... 18). v40-9 는 4-fan-out 으로 여러 task 가 동시 진행되지만, **콜백 발화 순서는 인덱스 순**으로 강제 (위 코드의 `for idx, task in enumerate(tasks)` 루프) — task 1 이 task 2 보다 늦게 끝나도 task 1 의 콜백을 먼저 부른다. 그리드 UX 무회귀
+- **MIME 결정**: 학습 단계에서 사용자 사진은 character.py 라우트에서 jpeg/png/webp 어느 것이든 받을 수 있음. 현재 PuLID 코드는 무조건 `image/jpeg` 로 하드코딩 — Gemini 도 content-sniffing 이라 동일하게 해도 동작. 다만 v40-9 에서 향후 호출자가 mime 을 넘기게 할 여지를 남겨 두기 위해 함수 안에서 변수로 분리 (`photo_mime = "image/jpeg"`) — 시그니처는 유지
+
+#### 5. 제거할 PuLID 잔재 (전부 모듈 내부 — 외부 참조 0 검증 완료)
+- 함수: `_call_pulid_variation`, `_call_pulid_with_retry`, `_get_pulid_version_id`, `_headers_wait`
+- 상수: `REPLICATE_API_BASE`, `PULID_MODEL_SLUG`, `PULID_PREDICTIONS_URL`, `PULID_MODEL_INFO_URL`, `_PULID_VERSION_CACHE`
+- import: 모듈 import 자체 (httpx 등) 는 유지
+
+#### 6. 모듈 docstring 갱신
+- 기존 v40-3/v40-8 노트는 보존하되, **상단에 v40-9 회귀 노트 1블록 추가**:
+  ```
+  v40-9 change vs. v40-3/v40-8:
+    - Source replaced from Replicate `bytedance/flux-pulid` (v40-3) BACK to
+      Gemini `gemini-3-pro-image-preview` (Nano Banana) for the 18-image
+      training dataset.
+    - Reason: PuLID exhibited inconsistent stylistic regression (occasional
+      3D-cartoon outputs in full-body/mid-stride slots) despite "Photorealistic"
+      prompt prefix. Nano Banana's photo-ref → photo conditioning is more
+      consistent and matches the model already used by cover_generator,
+      character_generator, and mv_generator scene compositing — model unification.
+    - OUTFITS_18, VARIATION_PROMPTS_TEMPLATE, _NO_ACCESSORIES_GUARDRAIL all
+      preserved verbatim from v40-8 (no prompt-text changes).
+    - Function signature `generate_face_variations(photo_bytes, n, on_variation_complete)`
+      preserved verbatim — caller (lora_trainer.start_training) requires no edits.
+    - Concurrency: Semaphore(4) (Gemini has gentler rate limits than PuLID).
+    - Cost: ~$0.36 (18 × ~$0.02) vs. PuLID ~$0.40 (18 × $0.022).
+  ```
+  - 기존 line 28~36 의 PuLID schema 주석 (`main_face_image (uri)`, `id_weight (0-3)`, etc.) 는 의미 사라지므로 제거
+  - 대신 Gemini schema 한 줄 요약 추가:
+    ```
+    - Gemini multimodal endpoint:
+        POST https://generativelanguage.googleapis.com/v1beta/models/
+             gemini-3-pro-image-preview:generateContent?key={GOOGLE_API_KEY}
+        Body: { systemInstruction, contents: [{parts:[{text}, {inlineData}]}],
+                generationConfig: { responseModalities: ["TEXT", "IMAGE"] } }
+    ```
+
+#### 7. lora_trainer.py 갱신
+- **호출 시그니처 변경 0** — `from .character_variations import generate_face_variations` (line 436), `await generate_face_variations(photo_bytes, n=18, on_variation_complete=_on_variation)` (line 479) 모두 그대로
+- **모듈 docstring 한 줄 보강** (line 6 영역의 "via PuLID-FLUX" 문구):
+  - 기존: `1. Generate 18 photorealistic FACE variations of the user's *original photo* via PuLID-FLUX (replaces v40's Gemini-on-sheet path)`
+  - v40-9: `1. Generate 18 photorealistic FACE variations of the user's *original photo* via Nano Banana (Gemini) — v40-9 reverted from v40-3's PuLID-FLUX after consistency issues`
+- **로그 문자열 확인** — `logger.exception("LoRA: variation generation failed for user %s", user_id)` 같은 로그는 모델 무관하므로 변경 0
+- **인사이드 주석 line 414~419** ("v40-3: input switched from sheet_bytes to photo_bytes...PuLID-FLUX needs single face image as main_face_image") 도 v40-9 노트로 1줄 보강 권장 (B41 옵션):
+  - 추가: `v40-9: Variations now produced by Nano Banana (Gemini) — PuLID was unstable.`
+
+#### 8. 환경 변수 / 설정 검증
+- **`settings.google_api_key`**: 이미 `cover_generator` (line 185), `character_generator` (line 587, 630), `mv_generator` (scene image), `lyrics_generator` 등 다수 모듈에서 사용 중. .env 에 있어야 동작. v40-9 에서 신규 추가 0
+- **`settings.replicate_api_token`**: v40-9 에서 character_variations 가 더 이상 사용 안 함. 단 lora_trainer 가 학습 자체 (`fast-flux-trainer`) + 미리보기 (`flux-dev-lora`) 에서 여전히 필요. 토큰 자체는 유지 (제거 X)
+- **검증 방법**: B42 에서 `settings.google_api_key` truthy 확인 (없으면 v40-9 generate_face_variations 가 빈 리스트 반환 → 학습 dataset 부족으로 실패하지만 graceful — 호출자가 error_message 기록)
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `backend_9004/app/services/character_variations.py` 현재 구조 (line 1~399 전수 확인)
+- **확인된 사실 (line 단위)**:
+  - line 1~41: 모듈 docstring (v40-3 PuLID schema, v40-8 변경 노트 포함)
+  - line 43~51: import (asyncio, base64, inspect, logging, Awaitable/Callable/List/Optional, httpx, settings)
+  - line 55~61: PuLID 상수 (`REPLICATE_API_BASE`, `PULID_MODEL_SLUG`, `PULID_PREDICTIONS_URL`, `PULID_MODEL_INFO_URL`, `_PULID_VERSION_CACHE`)
+  - line 70~76: `_NO_ACCESSORIES_GUARDRAIL` 5줄 (v40-8 그대로 — **변경 0**)
+  - line 81~100: `OUTFITS_18` 18개 (v40-8 그대로 — **변경 0**)
+  - line 102~125: `VARIATION_PROMPTS_TEMPLATE` 18개 (v40-8 그대로 — **변경 0**)
+  - line 128~136: `_headers_wait()` — PuLID 전용 (Replicate token + Prefer:wait)
+  - line 139~158: `_get_pulid_version_id` — version 캐시
+  - line 161~285: `_call_pulid_variation` — sync REST + 폴링 + 이미지 fetch (≈125줄)
+  - line 288~316: `_call_pulid_with_retry` — 3 attempts, 12/15s 백오프
+  - line 319~395: `generate_face_variations` — token 체크, photo data URI, prompts 조립, semaphore=1 + 10.5s sleep 루프, 콜백, success 카운팅
+- **결론 — B40 변경 범위**:
+  - **유지 (1자도 변경 0)**: line 70~76 (`_NO_ACCESSORIES_GUARDRAIL`), line 81~100 (`OUTFITS_18`), line 102~125 (`VARIATION_PROMPTS_TEMPLATE`), line 353~360 의 prompt 조립 루프 (template.format + outfit cycle + variant suffix)
+  - **삭제**: line 55~61 (PuLID 상수 5개), line 128~136 (`_headers_wait`), line 139~158 (`_get_pulid_version_id`), line 161~285 (`_call_pulid_variation`), line 288~316 (`_call_pulid_with_retry`)
+  - **신규**: 상수 `GEMINI_VARIATION_API_URL`, `GEMINI_VARIATION_SYSTEM`, 함수 `_call_gemini_variation`, 함수 `_call_gemini_with_retry`
+  - **재작성**: line 319~395 의 `generate_face_variations` 본체 — 시그니처는 동일, 내부만 Gemini 흐름. token 체크 (`google_api_key`), photo b64 (data URI 가 아니라 inlineData), Semaphore(4), gather + 인덱스 순 callback, sleep 제거
+  - **docstring**: line 1~41 의 v40-3 PuLID schema 블록을 v40-9 Gemini 노트로 교체. v40-8 outfit 노트는 유지
+- **호환성**: 외부 참조 검증 완료 (아래 #2)
+
+#### 2. 외부 import 사용처 검색 (`grep -rn "from.*character_variations\|character_variations import\|_call_pulid\|_PULID_VERSION_CACHE\|_get_pulid_version" backend_9004/`)
+- **확인된 사실 (PuLID-specific symbols)**:
+  - `lora_trainer.py:436`: `from .character_variations import generate_face_variations` — public API 함수만 import
+  - 모든 PuLID 헬퍼 (`_call_pulid_variation`, `_call_pulid_with_retry`, `_get_pulid_version_id`, `_PULID_VERSION_CACHE`)는 character_variations.py 내부 참조뿐
+- **결론**: PuLID 헬퍼 전부 안전하게 제거 가능. `generate_face_variations` 시그니처만 유지하면 lora_trainer 변경 0
+
+#### 3. `cover_generator.generate_cover_image` Gemini 호출 패턴 분석 (line 142~211)
+- **확인된 사실**:
+  - line 143~152: `request_parts = [{"text": prompt}]`. character image 있으면 `request_parts.append({"inlineData": {"mimeType": "image/png", "data": char_b64}})`
+  - line 154~170: 분기 system_text — character 있으면 photorealistic 강조, 없으면 any-style 허용
+  - line 172~180: payload 조립 — `systemInstruction` + `contents:[{parts:request_parts}]` + `generationConfig:{responseModalities:["TEXT","IMAGE"]}`
+  - line 182~187: `httpx.AsyncClient(timeout=120.0).post(GEMINI_API_URL, params={"key": settings.google_api_key}, json=payload)`
+  - line 189~193: 200 아니면 `raise ValueError("Gemini API error (HTTP {})...")`
+  - line 195~211: candidates → parts → for loop → `inline_data.get("data")` → `base64.b64decode`
+- **결론**: 이 패턴 그대로 v40-9 `_call_gemini_variation` 에 채택. 단 v40-9 는 raise 대신 return None (graceful — 18 슬롯 중 일부 실패 허용). timeout 은 180.0 (Gemini 이미지 큰 prompt 시 충분한 마진)
+
+#### 4. `character_generator._call_gemini_image` 패턴 분석 (line 610~651)
+- **확인된 사실**:
+  - line 612~625: payload — `systemInstruction:{parts:[{text:CHARACTER_SYSTEM_INSTRUCTION}]}` + `contents:[{parts:[{text:prompt}, *image_parts]}]` + `generationConfig:{responseModalities:["TEXT","IMAGE"]}`
+  - line 627~632: `httpx.AsyncClient(timeout=180.0).post(GEMINI_IMAGE_API_URL, params={"key": settings.google_api_key}, json=payload)`
+  - line 634~638: 200 아니면 `raise ValueError`
+  - line 640~651: candidates → parts → for → inline_data → b64decode → `return base64.b64decode(inline_data["data"])` 즉시 return
+- **결론**: 이 패턴이 v40-9 와 더 가까움 (`timeout=180.0`, image_parts 포함). character_generator 와 cover_generator 둘 다 raise 의미론이지만 v40-9 는 return None (위 #3 결론과 동일)
+
+#### 5. `lora_trainer.start_training` 호출자 흐름 (line 403~580)
+- **확인된 사실**:
+  - line 436: `from .character_variations import generate_face_variations`
+  - line 444~477: `_on_variation` async closure — idx, png_bytes 받아서 MinIO put + Mongo `$push` thumbnail object_name + `$set` lora_progress (5+20*idx/18)%
+  - line 479~481: `variations = await generate_face_variations(photo_bytes, n=18, on_variation_complete=_on_variation)`
+  - line 491~498: `if len(variations) < 6: raise ValueError("Insufficient variations generated")`
+  - line 503: `dataset_images = [photo_bytes] + variations` — 19장 학습
+- **결론**: `generate_face_variations` 시그니처 (`photo_bytes: bytes, n: int = 18, on_variation_complete: Optional[Callable[[int, bytes], Awaitable[None]]] = None`) → `List[bytes]` 그대로 유지하면 lora_trainer **변경 0**. 단 docstring 의 "via PuLID-FLUX" → "via Nano Banana (Gemini)" 갱신은 권장 (B41 — 코드 변경 0, 주석 1줄)
+
+#### 6. `_generate_lora_preview` (line 273~358) — 변경 0
+- **확인된 사실**: 학습 완료 후 `flux-dev-lora` 로 t2i 1장 생성. v40-7 신규. character_variations 와 무관 (Replicate 직접 호출). v40-9 영향 0
+
+#### 7. `settings.google_api_key` 가용성 검증
+- **확인된 사실** (config.py:55): `google_api_key: str = ""` 기본값 빈 문자열. .env 에서 주입
+- **다른 모듈 사용**: `cover_generator.py:185`, `character_generator.py:587/630`, `mv_generator` (scene compositing), `lyrics_generator` 등 — 이미 다수 모듈에서 사용 중
+- **결론**: 환경변수 추가 0. 현재 .env 에 GOOGLE_API_KEY 가 없다면 v40-9 generate_face_variations 가 graceful 빈 리스트 반환 → lora_trainer 가 "Insufficient variations" 로 학습 실패 표시. 사용자 측 동작 결과 동일 (PuLID 시절 token 누락 동작과 동일 의미론)
+
+#### 8. 콜백 순서 보장 — UX 영향 분석 (LoraTrainingModal 그리드 라이브 채움 v40-4)
+- **확인된 사실**: v40-4 그리드는 `lora_variation_thumbnails` 배열을 `$push` 로 받아서 그리는데, push 순서가 곧 그리드 1→18 채움 순서. `_on_variation` 안 idx 는 1-based 단순 progress 표시이고, 실제 array push 의 인덱스가 그리드 슬롯 매핑
+- **PuLID 시절**: `Semaphore(1)` 직렬 → idx=1 → idx=2 → ... idx=18 순서로 콜백. 그리드도 1번부터 채워짐
+- **v40-9 (4 fan-out)**: 만약 콜백 순서를 task 완료 순으로 두면 그리드가 무작위 슬롯부터 채워짐 (예: idx=3 이 먼저 끝나서 그리드 슬롯 3 부터 채워지는 건 OK 지만, 이후 idx=1 의 결과가 슬롯 1 에 들어가야 하는데 push 만 쓰면 thumbnail 배열이 [3, 1, 2, ...] 가 됨 — 그리드 슬롯 mapping 이 깨짐!)
+- **결론 — 콜백 순서를 인덱스 순으로 강제**: v40-9 는 동시 4개 task 가 모두 완료되더라도 callback 은 idx=1 → idx=2 → ... 순서로 발화 (위 결정사항 #4 의 `for idx, task in enumerate(tasks): r = await task` 패턴). 이렇게 하면 그리드 슬롯 매핑은 PuLID 시절과 동일. 다만 사용자 체감으로는 "그리드가 한 슬롯씩 도는 게 아니라 묶음으로 채워짐" — 그래도 1→18 순서는 보장
+- **추가 안전장치**: 그리드 채움이 4-batch 단위로 visible bursty 하다는 점만 v40-9 release notes 에 기록
+
+#### 9. 비용 / 성능 회귀 추정
+- **PuLID (v40-3 ~ v40-8)**:
+  - 단가: ~$0.022/이미지 (Replicate flux-pulid) → 18 × $0.022 = **$0.40**
+  - 시간: Semaphore(1) 직렬 + 10.5s 호출 간 sleep + PuLID 자체 처리 ~15s = (15+10.5) × 17 + 15 ≈ **433초 (≈7분)**
+- **Nano Banana (v40-9)**:
+  - 단가: ~$0.02/이미지 (Gemini gemini-3-pro-image-preview, image generation) → 18 × $0.02 = **$0.36** (-$0.04)
+  - 시간: Semaphore(4) 동시 + 호출 간 sleep 0 + Gemini 자체 처리 ~20s = ceil(18/4) = 5 batch × 20s ≈ **100초 (≈1분 40초)**
+- **개선 효과**: 비용 -10%, 학습 데이터 생성 시간 -75% (≈4분 단축). 학습 자체 (fast-flux-trainer ~12분) 는 변경 0 → 사용자 체감 학습 총시간 단축
+
+### 동작 분기 매트릭스
+```
+시나리오                        │ v40-9 동작
+────────────────────────────────┼─────────────────────────────────────────────
+A 사용자 사진 업로드 + 학습 시작│ (불변) lora_trainer.start_training 호출
+B generate_face_variations 호출 │ google_api_key truthy → Gemini 4-fan-out
+C google_api_key 누락           │ ERROR 로그 + return [] (graceful)
+                                │ → lora_trainer 가 "Insufficient variations" 실패 표시
+D Gemini 호출 200 + 이미지 OK   │ inlineData.data b64 decode → bytes 반환
+E Gemini 호출 200 + 이미지 없음 │ return None (그 슬롯만 실패, 다른 슬롯 진행)
+F Gemini 호출 5xx 1회           │ retry 1회 (5초 백오프) → 성공 시 OK
+G Gemini 호출 4xx (content rej.)│ retry 1회 → 동일 거부면 None (그 슬롯 실패)
+H 18 중 13장 성공                │ logger.info ".../18 succeeded" + 학습 진행
+I 18 중 5장 성공 (<6 임계)       │ lora_trainer 가 "Insufficient" 실패 표시
+J 콜백 순서                      │ idx=1 → 2 → ... → 18 순서 강제 (4-batch bursty)
+K LoraTrainingModal 그리드       │ 슬롯 1번부터 채워짐 (4슬롯 단위 burst OK)
+L 학습 완료 + LoRA 미리보기     │ (불변) v40-7 _generate_lora_preview 동작 0
+M PuLID 잔재 코드 호출           │ ImportError (의도된 fail-fast) — 외부 참조 0 으로 발생 안 함
+```
+
+### 손볼 파일 (절대 경로)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py`
+  — PuLID 헬퍼/상수 전부 제거, `_call_gemini_variation` + `_call_gemini_with_retry` 신규, `generate_face_variations` 본체 재작성, docstring v40-9 노트 추가, OUTFITS_18/VARIATION_PROMPTS_TEMPLATE/_NO_ACCESSORIES_GUARDRAIL 1자 변경 0 (B40)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/lora_trainer.py`
+  — docstring "via PuLID-FLUX" → "via Nano Banana (Gemini) — v40-9 reverted from v40-3" 1줄, line 414~419 인사이드 주석에 v40-9 노트 1줄. 코드 변경 0 (B41)
+- 환경 검증 (실파일 변경 0)
+  — `.env` / settings.google_api_key truthy 확인 (B42)
+
+### Hand-off task list
+
+#### Backend (B40, B41, B42)
+
+- **B40** `backend_9004/app/services/character_variations.py` — PuLID → Gemini 회귀 (단일 파일 큰 변경):
+  1. **모듈 docstring 갱신** (line 1~41):
+     - 기존 "v40-3 change vs. v40-2" 블록 (line 9~14) 와 "Implementation notes:" 블록 (line 22~41) 의 PuLID schema 부분 (line 28~36) 제거
+     - 신규 "v40-9 change vs. v40-3/v40-8" 블록 추가 (결정사항 #6 의 정확한 노트)
+     - 신규 Implementation notes — Gemini multimodal endpoint 설명 (결정사항 #6 후반부)
+     - v40-8 outfit/accessory 노트 (line 16~20) 는 그대로 유지
+  2. **PuLID 상수 제거** (line 55~61): `REPLICATE_API_BASE`, `PULID_MODEL_SLUG`, `PULID_PREDICTIONS_URL`, `PULID_MODEL_INFO_URL`, `_PULID_VERSION_CACHE` 5개 다 삭제
+  3. **OUTFITS_18 / VARIATION_PROMPTS_TEMPLATE / _NO_ACCESSORIES_GUARDRAIL — 1자 변경 0** (line 70~125 그대로 유지)
+  4. **PuLID 헬퍼 4개 제거**: `_headers_wait` (line 128~136), `_get_pulid_version_id` (line 139~158), `_call_pulid_variation` (line 161~285), `_call_pulid_with_retry` (line 288~316) 전부 삭제 (≈190줄)
+  5. **Gemini 상수 신규 추가** (제거된 PuLID 상수 위치):
+     ```python
+     GEMINI_VARIATION_API_URL = (
+         "https://generativelanguage.googleapis.com/v1beta/models/"
+         "gemini-3-pro-image-preview:generateContent"
+     )
+     GEMINI_VARIATION_SYSTEM = (
+         "You are a world-class portrait photographer specializing in identity-preserving "
+         "photorealistic portrait variations from a single reference photo. You generate "
+         "photorealistic, sharply-focused images that preserve the exact facial identity, "
+         "hair, and skin tone of the reference person across diverse angles, lighting "
+         "conditions, expressions, and framings. Always produce real-photograph-quality "
+         "imagery — never illustrated, stylized, or 3D-cartoon."
+     )
+     ```
+  6. **`_call_gemini_variation` 신규 함수**:
+     ```python
+     async def _call_gemini_variation(
+         prompt: str,
+         photo_b64: str,
+         photo_mime: str,
+         client: httpx.AsyncClient,
+         semaphore: asyncio.Semaphore,
+         index: int,
+     ) -> Optional[bytes]:
+         """Single Gemini multimodal prediction (photo + prompt → image).
+         Returns PNG bytes or None on failure (graceful, mirroring v40-3 PuLID)."""
+         payload = {
+             "systemInstruction": {"parts": [{"text": GEMINI_VARIATION_SYSTEM}]},
+             "contents": [{"parts": [
+                 {"text": prompt},
+                 {"inlineData": {"mimeType": photo_mime, "data": photo_b64}},
+             ]}],
+             "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+         }
+         async with semaphore:
+             try:
+                 resp = await client.post(
+                     GEMINI_VARIATION_API_URL,
+                     params={"key": settings.google_api_key},
+                     json=payload,
+                     timeout=180.0,
+                 )
+             except Exception as e:
+                 logger.warning("Gemini variation %d: HTTP error: %s", index, e)
+                 return None
+             if resp.status_code != 200:
+                 logger.warning(
+                     "Gemini variation %d: HTTP %d: %s",
+                     index, resp.status_code, resp.text[:300],
+                 )
+                 return None
+             try:
+                 data = resp.json()
+             except Exception as e:
+                 logger.warning("Gemini variation %d: invalid JSON: %s", index, e)
+                 return None
+             candidates = data.get("candidates", [])
+             if not candidates:
+                 logger.warning("Gemini variation %d: no candidates", index)
+                 return None
+             parts = candidates[0].get("content", {}).get("parts", [])
+             for part in parts:
+                 inline_data = part.get("inlineData")
+                 if inline_data and inline_data.get("data"):
+                     try:
+                         return base64.b64decode(inline_data["data"])
+                     except Exception as e:
+                         logger.warning(
+                             "Gemini variation %d: b64decode failed: %s", index, e,
+                         )
+                         return None
+             logger.warning("Gemini variation %d: no inline image in response", index)
+             return None
+     ```
+  7. **`_call_gemini_with_retry` 신규 함수** (PuLID 의 retry 헬퍼 자리에):
+     ```python
+     async def _call_gemini_with_retry(
+         prompt: str,
+         photo_b64: str,
+         photo_mime: str,
+         client: httpx.AsyncClient,
+         semaphore: asyncio.Semaphore,
+         index: int,
+         max_retries: int = 2,
+     ) -> Optional[bytes]:
+         """Retry once with 5s backoff on transient failure."""
+         for attempt in range(max_retries):
+             result = await _call_gemini_variation(
+                 prompt, photo_b64, photo_mime, client, semaphore, index,
+             )
+             if result is not None:
+                 return result
+             if attempt < max_retries - 1:
+                 logger.info(
+                     "Gemini variation %d: retrying in 5s (attempt %d/%d)",
+                     index, attempt + 2, max_retries,
+                 )
+                 await asyncio.sleep(5.0)
+         return None
+     ```
+  8. **`generate_face_variations` 본체 재작성** (line 319~395 교체) — 결정사항 #4 의 정확한 코드:
+     - token 체크: `if not settings.google_api_key: return []` + ERROR 로그 (PuLID 의 `replicate_api_token` 체크 패턴 그대로)
+     - photo 인코딩: `photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")`, `photo_mime = "image/jpeg"`
+     - **photo_data_uri 변수 제거** (Gemini 는 inlineData 사용 — data URI 안 씀)
+     - prompts 조립부 (line 353~360) — **1자 변경 0** (template.format(outfit) + variant suffix)
+     - `semaphore = asyncio.Semaphore(4)` (PuLID 1 → 4)
+     - `httpx.AsyncClient(timeout=180.0)` (PuLID 의 default 60s → 180s — Gemini 이미지 큰 prompt 대응)
+     - tasks 생성 + 인덱스 순 await + 콜백 (결정사항 #4 의 정확한 코드)
+     - **호출 간 sleep 제거** (PuLID 의 10.5s 제거)
+     - 시그니처/리턴/로그 ("Gemini face variations: %d/%d succeeded", warning <12) 그대로
+  9. **시그니처 변경 0** — `async def generate_face_variations(photo_bytes, n=18, on_variation_complete=None) -> List[bytes]` 그대로
+  10. **수용 기준**:
+     - line `_call_pulid_variation`/`_call_pulid_with_retry`/`_get_pulid_version_id`/`_PULID_VERSION_CACHE` 부재
+     - line `_call_gemini_variation`/`_call_gemini_with_retry` 존재
+     - `OUTFITS_18` 18개, `VARIATION_PROMPTS_TEMPLATE` 18개, `_NO_ACCESSORIES_GUARDRAIL` 모두 v40-8 과 byte-identical
+     - `generate_face_variations` 시그니처 byte-identical
+
+- **B41** `backend_9004/app/services/lora_trainer.py` — docstring 1줄 갱신, 코드 변경 0:
+  1. line 6 의 "via PuLID-FLUX (replaces v40's Gemini-on-sheet path)" → "via Nano Banana (Gemini) — v40-9 reverted from v40-3's PuLID-FLUX after consistency issues"
+  2. line 414~419 인사이드 주석 마지막에 1줄 추가: `v40-9: Variations now produced by Nano Banana (Gemini) — PuLID was unstable.`
+  3. **로직/시그니처/import 변경 0** — `from .character_variations import generate_face_variations` 그대로, 호출도 그대로
+  4. **수용 기준**: `git diff backend_9004/app/services/lora_trainer.py` → 추가된 줄이 모두 주석/docstring (코드 라인 0)
+
+- **B42** 환경 검증 (실파일 변경 0):
+  1. `cat /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/.env | grep GOOGLE_API_KEY` 으로 키 존재 확인 (없으면 사용자에게 보고 — placeholder 정책상 코드/PLAN 에 실토큰 넣지 않음)
+  2. `cover_generator.generate_cover_image` 가 정상 동작 중인지 9004 서버 로그 확인 (Gemini API 다른 경로에서 잘 호출되고 있다면 v40-9 도 동작 보장)
+  3. **수용 기준**: 사용자 측 .env 에 GOOGLE_API_KEY 설정 있음을 확인 (또는 미설정 시 사용자에게 명시적으로 알림)
+
+#### Frontend
+- **변경 없음** (백엔드 내부 변경만)
+- 사이드 이펙트 0:
+  - `LoraTrainingModal` v40-7 미리보기 / v40-8 라이트박스 / v40-4 그리드 라이브 채움 — 모두 백엔드 응답 schema 동일 (object_name 배열 + lora_status)
+  - 그리드 채움 패턴이 PuLID 1슬롯씩 → Gemini 4슬롯씩 burst 으로 바뀜 (UX 차이) — F30~F31 변경 없음, 다만 사용자가 "더 빠르게 채워짐" 체감
+
+#### Tester (TT80 ~ TT86)
+- **TT80** (B40) `_call_gemini_variation` 단위:
+  - 함수 import 가능 (`from app.services.character_variations import _call_gemini_variation`)
+  - 시그니처: `(prompt: str, photo_b64: str, photo_mime: str, client, semaphore, index: int) -> Optional[bytes]`
+  - mock httpx 응답 200 + inlineData.data → bytes 반환
+  - mock 200 + parts[0] 에 inlineData 없음 → None 반환 + warning 로그
+  - mock 5xx → None 반환 + warning 로그
+  - mock 4xx (content policy) → None 반환 + warning 로그
+- **TT81** (B40) `_call_gemini_with_retry` 단위:
+  - 첫 호출 None → 5초 sleep → 2번째 호출 → 성공 bytes
+  - 첫/2번째 모두 None → 최종 None
+  - 첫 호출 success → 즉시 return (retry 안 함)
+- **TT82** (B40) `generate_face_variations` 시그니처/흐름:
+  - `import inspect; inspect.signature(generate_face_variations).parameters.keys() == ['photo_bytes', 'n', 'on_variation_complete']` (PuLID 시절과 동일)
+  - `settings.google_api_key=""` 시 빈 리스트 + ERROR 로그
+  - mock httpx 18 호출 모두 성공 → 18 bytes 반환, callback 18번 호출 (idx=1~18 순서)
+  - mock 18 호출 중 5장 None → 13 bytes 반환, callback 13번 (idx=1,2,3,...의 성공한 index 만, 단조증가 보장)
+  - 시그니처 호환: `await generate_face_variations(b"abc", n=18, on_variation_complete=None)` 동작
+- **TT83** (B40) PuLID 잔재 부재:
+  - `_call_pulid_variation`, `_call_pulid_with_retry`, `_get_pulid_version_id`, `_PULID_VERSION_CACHE`, `_headers_wait` 모두 ImportError (모듈에서 제거됨)
+  - `REPLICATE_API_BASE`, `PULID_MODEL_SLUG`, `PULID_PREDICTIONS_URL`, `PULID_MODEL_INFO_URL` 모두 ImportError
+  - `OUTFITS_18`, `VARIATION_PROMPTS_TEMPLATE`, `_NO_ACCESSORIES_GUARDRAIL` import 가능 + v40-8 와 byte-identical (`hash` 비교)
+- **TT84** (B41) lora_trainer 호환:
+  - `from app.services.lora_trainer import start_training, poll_training, cancel_training` 정상
+  - `start_training` 시그니처 변경 0 (`user_id, photo_bytes, character_name, mongo_db`)
+  - line 479 의 `await generate_face_variations(photo_bytes, n=18, on_variation_complete=_on_variation)` 코드 라인 변경 0 (`git diff` 으로 검증)
+  - `_generate_lora_preview` (line 273~358) 코드 라인 변경 0
+- **TT85** E2E (사용자 수동 — 4000 포트):
+  - 새 사진 업로드 → 학습 시작 → 그리드가 PuLID 시절보다 빠르게 채워짐 (4슬롯 burst 단위, 약 1~2분 안에 18장 완료)
+  - 18장 모두 photorealistic — 3D 카툰 스타일 슬롯 부재 (특히 var_13~17 의 close-up/medium/full-body 슬롯)
+  - 의상 18가지 다양 (v40-8 효과 유지 — burgundy cardigan, charcoal grey suit, etc. 시각 식별 가능)
+  - 악세사리 미착용 (안경/모자/목걸이 등 부재)
+  - 학습 자체 (fast-flux-trainer ~12분) → 완료 → LoRA 미리보기 (v40-7) 정상 표시
+  - 라이트박스 (v40-8) 미리보기/그리드 클릭 정상 동작
+- **TT86** 9004 회귀:
+  - `/api/health` 200
+  - `/api/character/me` 200
+  - `/api/character/lora-status` 200 (응답 schema 변화 0)
+  - v37/v38/v40-1~8 회귀 0건
+  - cover_generator (v40-6 LoRA 적용) 정상
+  - mv_generator scene 합성 정상
+
+### 비용
+- **추가 비용 0** (Gemini API 는 PANN 의 다른 경로에서 이미 사용 중 — 신규 키/플랜 불필요)
+- **단위 비용 절감**: PuLID 시절 ~$0.40/학습 → Gemini ~$0.36/학습 (-10%)
+- **시간 절감**: 학습 데이터 생성 7분 → 1분 40초 (-75%, 약 4분 단축). 학습 자체는 변경 0
+- **외부 의존성**: Replicate (PuLID inference 경로) 더 이상 사용 안 함. 단 Replicate 자체는 학습/미리보기/cover-LoRA-refine 에서 계속 사용 — 토큰 제거 0
+
+### 영향 범위
+- **DB schema 변경**: 0건
+- **API endpoint 변경**: 0건 (응답 shape 그대로)
+- **외부 의존성 추가**: 0건 (GOOGLE_API_KEY 이미 사용 중)
+- **함수 시그니처 변경**: 0건 (`generate_face_variations(photo_bytes, n, on_variation_complete)` byte-identical)
+- **모듈 내부 심볼 변경**:
+  - 제거: `_call_pulid_variation`, `_call_pulid_with_retry`, `_get_pulid_version_id`, `_PULID_VERSION_CACHE`, `_headers_wait`, `REPLICATE_API_BASE`, `PULID_MODEL_SLUG`, `PULID_PREDICTIONS_URL`, `PULID_MODEL_INFO_URL` (외부 참조 0 검증 완료)
+  - 신규: `_call_gemini_variation`, `_call_gemini_with_retry`, `GEMINI_VARIATION_API_URL`, `GEMINI_VARIATION_SYSTEM`
+- **무영향**:
+  - `OUTFITS_18`, `VARIATION_PROMPTS_TEMPLATE`, `_NO_ACCESSORIES_GUARDRAIL` (1 byte 도 안 바뀜)
+  - LoRA 학습 파이프라인 (`lora_trainer.start_training`, `poll_training`, `cancel_training`, `resume_pending_lora_jobs`)
+  - LoRA 미리보기 (`_generate_lora_preview` v40-7) — Replicate flux-dev-lora 호출
+  - 커버 LoRA 정밀화 (v40-6 cover_generator Step 2)
+  - MV scene 합성 (mv_generator)
+  - `LoraTrainingModal` v40-4/v40-7/v40-8 (그리드 / 미리보기 / 라이트박스)
+  - `MyMusicPage`, `UploadPage`, 기타 모든 페이지
+
+### 수용 기준 (Acceptance Criteria)
+1. `character_variations.py` 안 PuLID 헬퍼 (`_call_pulid_variation`, `_call_pulid_with_retry`, `_get_pulid_version_id`, `_PULID_VERSION_CACHE`, `_headers_wait`) 모두 부재 (B40)
+2. `_call_gemini_variation`, `_call_gemini_with_retry`, `GEMINI_VARIATION_API_URL`, `GEMINI_VARIATION_SYSTEM` 신규 존재 (B40)
+3. `OUTFITS_18`, `VARIATION_PROMPTS_TEMPLATE`, `_NO_ACCESSORIES_GUARDRAIL` v40-8 와 byte-identical (B40)
+4. `generate_face_variations(photo_bytes, n, on_variation_complete)` 시그니처 byte-identical (B40)
+5. Gemini 호출 시 `Semaphore(4)`, 호출 간 sleep 제거, retry max 2 (1회 재시도) (B40)
+6. 콜백이 인덱스 순서 (1→18) 발화 — 4 fan-out 이어도 그리드 슬롯 순서 보장 (B40)
+7. `lora_trainer.py` 코드 라인 변경 0 (주석/docstring 만 갱신) (B41)
+8. `from .character_variations import generate_face_variations` 임포트 정상 (B41)
+9. `settings.google_api_key` 사용 가능 — 9004 다른 경로에서 이미 동작 (B42)
+10. 9004 `/api/health` 200, v37/v38/v40-1~8 모든 회귀 0
+11. 학습 데이터 생성 시간 PuLID 7분 → Gemini 1~2분 (-75%)
+12. 18장 시각 검증 — photorealistic 일관성 (3D 카툰 슬롯 부재), 의상 다양 (v40-8 효과 유지), 악세사리 미착용
+
+### 테스트 계획 (Tester)
+- TT80 ~ TT86 전 항목 PASS
+- 수동 시나리오:
+  - **A 신규 학습**: 새 사진 → 학습 시작 → 그리드 1~2분 안에 4슬롯 burst 단위로 18장 완료. var_13/14/15 (close-up/medium/full-body) 슬롯 모두 photorealistic
+  - **B 의상 다양성 (v40-8 회귀)**: 18장 시각 비교 — 흰 티+청바지, 검정 터틀넥+회색 슬랙스, ... charcoal suit, 가죽 자켓, 분홍 스웨트셔츠 등 명확히 다른 옷차림
+  - **C 악세사리 차단**: 18장 모두 안경/모자/목걸이/귀걸이/시계 미착용
+  - **D 학습 → 완료**: fast-flux-trainer ~12분 → 학습 성공 → MinIO `lora.safetensors` 저장 → v40-7 미리보기 자동 생성 → v40-8 라이트박스 클릭 확대 정상
+  - **E 사용자 사진 jpeg/png/webp**: 셋 다 동작 (Gemini content-sniffing). 단 mime 은 함수 안 `image/jpeg` 하드코딩 — 향후 호출자가 mime 전달하게 하는 건 v40-10+ 검토
+  - **F GOOGLE_API_KEY 누락 시 graceful**: .env 에서 키 일시 제거 → 학습 시도 → "Insufficient variations generated: 0" 로 우아하게 실패 (서버 크래시 X)
+- 회귀:
+  - cover_generator (v40-6 LoRA 적용) — 학습 끝난 캐릭터 LoRA 가 커버에 적용 정상
+  - character_generator (v37 character sheet) — 정상
+  - mv_generator scene 합성 — 정상
+  - lora_trainer.poll_training — Replicate 학습 폴링 정상
+  - lora_trainer._generate_lora_preview (v40-7) — flux-dev-lora 미리보기 정상
+
+### 보안
+- **추가 보안 표면 0** — Gemini API 는 다른 경로에서 이미 사용 중. v40-9 가 신규 토큰/엔드포인트 도입 0
+- **API 토큰 placeholder 정책** — 코드/PLAN 안 토큰 하드코딩 0. `settings.google_api_key` 만 참조
+- **prompt 안 사용자 입력**: 0 — `OUTFITS_18` + `VARIATION_PROMPTS_TEMPLATE` 모두 서버 내부 상수. 사용자 입력은 사진 (inlineData) 만
+- **이미지 업로드 검증**: 학습 라우트 (`character.py` upload-photo) 가 이미 mime/size 검증 — v40-9 영향 0
+
+### Open Questions
+- **Q-v40-9-1 (open)** Gemini content policy 거부율 — Gemini 가 "exact same person from reference" 같은 prompt 를 일부 사진 (예: 미성년자 의심, 유명인 의심) 에 대해 content-policy 로 거부할 가능성. PuLID 는 이런 거부가 없었음. 첫 ship 후 거부율 데이터 수집 → 임계 초과 시 prompt 완화 또는 PuLID hybrid 검토
+- **Q-v40-9-2 (open)** mime 동적 전달 — v40-9 는 `photo_mime = "image/jpeg"` 하드코딩. 사용자가 png/webp 업로드 시 Gemini content-sniffing 으로 동작은 하지만, 향후 호출자(`lora_trainer.start_training`)가 실제 mime 을 인자로 넘기게 하는 게 깨끗 — v40-10+ 검토
+- **Q-v40-9-3 (open)** Semaphore(4) 적정성 — 첫 ship 후 응답 시간 / 실패율 데이터 수집. 8 동시까지 올릴 수 있으면 학습 데이터 생성 시간 1분대까지 단축 가능. 단 Gemini 분당 quota 도달 시 4 가 더 안전
+- **Q-v40-9-4 (open)** retry max=2 적정성 — 첫 ship 후 재시도 성공률 추적. 5xx 일시 장애 외에 4xx 거부도 retry 해서 비용 낭비 발생할 수 있음 — 4xx 는 retry 스킵하는 분기 추가 검토 (v40-10+)
+- **Q-v40-9-5 (open)** "Photorealistic, never illustrated, stylized, or 3D-cartoon" system instruction 효과성 — 시각 검증으로 v40-3 의 카툰 회귀 현상이 v40-9 에서 사라졌는지 확인. 만약 일부 슬롯에서 여전히 카툰 풍이면 system_text 강화 검토
+- **Q-v40-9-6 (open)** PuLID hybrid 가능성 — 18장 중 일부 (예: full-body 4장) 만 PuLID, 나머지 14장 만 Gemini 같은 hybrid 도 검토 가능. 단 v40-9 의 단일화 의도 (모델 통일) 와 충돌. 첫 ship Gemini-only 로 간 후 품질 모니터링 결과로 결정
+- **Q-v40-9-7 (open)** 4-batch burst 그리드 UX — 사용자 입장에서 "1번씩 채워지다 4번씩 점프" 가 약간 어색할 수 있음. 단 학습 시간 75% 단축의 가치가 더 크므로 첫 ship 그대로. 만약 UX 피드백 부정적이면 그리드에 "4-batch" 안내 한 줄 추가 검토 (LoraTrainingModal)
+- **Q-v40-9-8 (open)** 학습 데이터 19장 (원본 + 18) 그대로 유지 — Gemini 가 PuLID 보다 face fidelity 가 살짝 낮을 수 있어 원본 추가 가중을 위해 학습 입력에 원본 2~3장 넣는 것 검토 (lora_trainer 의 dataset_images 에 [photo, photo, photo] + variations) — v40-10+ 검토. 첫 ship 19장 (원본 1 + 변형 18) 유지
+
+### 체크리스트
+- [ ] backend_9004 `services/character_variations.py`: PuLID 헬퍼/상수 제거, Gemini 헬퍼 신규, generate_face_variations 본체 재작성, OUTFITS_18/VARIATION_PROMPTS_TEMPLATE/_NO_ACCESSORIES_GUARDRAIL byte-identical, docstring v40-9 노트 (B40)
+- [ ] backend_9004 `services/lora_trainer.py`: docstring "via PuLID-FLUX" → "via Nano Banana (Gemini) — v40-9 reverted"; 인사이드 주석 1줄 추가; 코드 변경 0 (B41)
+- [ ] 환경변수 검증 — `settings.google_api_key` 가용 (B42)
+- [ ] Tester TT80~TT86 PASS
+- [ ] REPORT.md v40-9 append
+
+## v41 — 2026-04-28 — FLUX-LoRA 시스템 전체 제거 + Nano Banana ref 방식으로 통일
+
+### 배경 / 결정
+- **현상 1 — PuLID-FLUX 1장 사진 → 18장 변형 정체성 손실**: v40-3~v40-9 를 거치며 1장 사진 만으로 18장 face variation 을 만들어 LoRA 학습시키는 파이프라인을 시험. var_13/var_14/var_17 같은 슬롯 (close-up / mid-stride / seated) 이 카툰 회귀 (v40-9 에서 Gemini 회귀로 일부 완화됐지만 1장 사진 학습의 근본적 한계 — face identity 가 dataset 변형 안에서 drift) 가 지속
+- **현상 2 — FLUX 1장 LoRA 의 본질적 한계**: FLUX-LoRA 커뮤니티 컨센서스 (2025-2026) — 1장 사진은 "그 사람 vibe / aesthetic" 만 학습되고 정확한 얼굴 정체성은 학습 불가. 정확한 face LoRA 는 8~15장 다양한 각도/조명/표정의 실사 사진이 필요. 우리가 PuLID 또는 Gemini 로 생성한 18장은 모두 "변형 사진" 이지 "원본 다각도 사진" 이 아니라 face identity drift 누적
+- **현상 3 — Nano Banana ref 방식의 안정성**: PANN 의 다른 모든 image-edit 흐름 (`cover_generator.generate_cover_image`, `character_generator.generate_character_sheet`, `mv_generator.generate_scene_image`, scene compositing) 이 이미 Nano Banana (Gemini `gemini-3-pro-image-preview`) 의 photo-ref 방식으로 동작하고, 매번 사용자 원본 사진을 inlineData 로 직접 보내서 face identity drift 가 가장 적음. 학습이 필요 없어서 사용자 대기 시간 0
+- **결정 — FLUX-LoRA 시스템 전체 제거 + Nano Banana 통일**:
+  1. 학습 단계 자체 (PuLID/Gemini variation 18장 + Replicate fast-flux-trainer + 학습 폴링 + .safetensors 다운로드 + flux-dev-lora 인퍼런스) 전체 제거
+  2. 인물이 들어가는 모든 합성 (마스터 시트, 커버, MV scene 첫 프레임) 은 사용자 원본 사진을 ref 로 매번 Nano Banana 호출하는 단일 경로로 통일
+  3. 사용자 데이터 (원본 사진, 마스터 시트, 캐릭터 메타) 는 보존 — LoRA 만 제거
+  4. POST `/upload-original-photo` 는 보존 — 원본 사진은 Nano Banana ref 용으로 여전히 유용 (마스터 시트 만들 때 ref 로 사용)
+- **목표**: v40-1 ~ v40-9 의 LoRA 코드 일괄 제거, Phase 2 / 마스터 시트 / 커버 모두 Nano Banana 단독 경로로 동작. v37/v38/v39 의 모든 기능 (커버/캐릭터 시트/MV/MV asset 등) 은 무회귀
+
+### Plan Verification Findings (실제 코드 확인 결과 — CRITICAL)
+
+#### 1. `character_variations.py` — 학습용 18장 생성기 전체 (line 1~307)
+- **확인**: 모듈 docstring + `OUTFITS_18` (18개) + `VARIATION_PROMPTS_TEMPLATE` (18개) + `_NO_ACCESSORIES_GUARDRAIL` + `GEMINI_VARIATION_API_URL`/`GEMINI_VARIATION_SYSTEM` + `_call_gemini_variation` + `_call_gemini_with_retry` + `generate_face_variations` 8 심볼만 존재
+- **외부 참조 검색 결과**: `from .character_variations import generate_face_variations` 1건 (`lora_trainer.py:436`) — public API 함수만 import
+- **결론**: 파일 자체 삭제. lora_trainer 도 삭제되므로 import 손상 0
+
+#### 2. `lora_trainer.py` — LoRA 트레이너 오케스트레이션 전체 (line 1~776)
+- **확인**: `start_training`, `poll_training`, `cancel_training`, `resume_pending_lora_jobs`, `_generate_lora_preview`, `_make_trigger_word`, `_build_dataset_zip`, `_upload_dataset_to_replicate`, `_get_trainer_version_id`, `_ensure_destination_model`, `_start_training_request`, `_get_training`, `_cancel_training`, `_download_artifact`, `_extract_artifact_url`, `_set_character_fields`, `_get_character`, `_lora_object_name`, `_require_token`, `_auth_headers` + 상수 `REPLICATE_API_BASE`, `TRAINER_MODEL_OWNER`, `TRAINER_MODEL_NAME`, `INFERENCE_MODEL_OWNER`, `INFERENCE_MODEL_NAME`
+- **외부 참조 검색 결과**:
+  - `main.py:64`: `from .services.lora_trainer import resume_pending_lora_jobs`
+  - `routes/character.py:703`: `from ..services import lora_trainer` + `lora_trainer.start_training`/`lora_trainer.poll_training` 호출
+- **결론**: 파일 자체 삭제. main.py 와 character.py 도 같이 정리하므로 import 손상 0
+
+#### 3. `cover_generator.generate_cover_image` Step 2 LoRA 분기 (line 213~313)
+- **확인 (전체 함수 line 24~314)**:
+  - line 24~33: 함수 시그니처 — `lora_url`, `lora_trigger_word` 가 키워드 인자로 존재
+  - line 34~45: docstring 의 LoRA 설명
+  - line 47~140: Step 1 — Claude prompt enhancement + Gemini 프롬프트 빌드 (LoRA 무관)
+  - line 142~211: Step 1 후반 — Gemini 호출 + 이미지 추출 (LoRA 무관)
+  - line 213~313: Step 2 — `if lora_url and lora_trigger_word and settings.replicate_api_token:` 으로 시작하는 LoRA refinement 블록 (≈100줄)
+  - line 314: `return image_bytes, lora_applied` — 튜플 반환
+- **반환 시그니처**: `tuple[bytes, bool]` — `(PNG bytes, lora_applied)`
+- **호출자 검색**: `grep -rn "generate_cover_image" backend_9004/` →
+  - `routes/upload.py` 또는 `routes/tracks.py` 또는 다른 라우트에서 호출 (검색 필요)
+- **결론**: Step 2 (line 213~312) 전체 삭제 + 반환을 `bytes` 단일로 변경 (또는 호환성 위해 `(bytes, False)` 유지). 호출자 코드 영향 매트릭스 필요 (B45 작업 시 grep)
+
+#### 3-1. `generate_cover_image` 호출자 추적 (보강)
+- **검증 — grep 필요**: `grep -rn "generate_cover_image" backend_9004/app/ | grep -v __pycache__`
+  - 호출자가 튜플을 unpack 하는지, 아니면 배포 직후 첫 element 만 쓰는지 확인 필요
+  - **핸드오프**: B45 작업자가 호출자 코드까지 같이 수정 (lora_url/lora_trigger_word 인자 제거 + 반환값 단일 bytes 처리)
+- **frontend 의존성**: `coverLoraApplied` state 가 `data?.lora_applied` 를 읽음 (UploadPage.jsx:284). 백엔드가 응답에 `lora_applied` 필드를 더 이상 보내지 않으면 false 로 fallback 됨 → 정적 라벨 회귀와 자연스럽게 연결
+
+#### 4. `character_generator.generate_character_sheet_with_lora` (line 732~910)
+- **확인**: 함수 본체 ≈180줄 — Step 1 (Nano Banana) + Step 2 (flux-dev-lora 정제). 함수 자체가 명시적으로 "with_lora" 접미사
+- **외부 참조 검색**: `grep -rn "generate_character_sheet_with_lora" backend_9004/`:
+  - `routes/character.py:256` — `from ..services.character_generator import generate_character_sheet_with_lora`
+  - `routes/character.py:262` — `await generate_character_sheet_with_lora(...)`
+- **결론**: 함수 line 732~910 전체 삭제. `routes/character.py:248~292` (use_lora_branch 분기 전체) 도 같이 단순화 — 항상 `generate_character_sheet` 호출
+
+#### 5. `mv_generator.generate_scene_image_with_lora` (line 2510~2675)
+- **확인**: 함수 본체 ≈165줄 — Step 3a (Nano Banana via `generate_scene_image`) + Step 3b (flux-dev-lora img2img). 모듈 상단 import (`from .character_variations import ...` 같은 것 없음 — 이 함수는 이미 character_variations 와 무관, Replicate API 직접 호출)
+- **외부 참조 검색**: `grep -rn "generate_scene_image_with_lora" backend_9004/`:
+  - `mv_pipeline.py:22` — `from .mv_generator import (..., generate_scene_image_with_lora, ...)`
+  - `mv_pipeline.py:1795` — `img_bytes = await generate_scene_image_with_lora(...)`
+- **결론**: 함수 line 2510~2675 전체 삭제. `mv_pipeline.py:22` import 도 같이 제거. line 1679~1709 의 LoRA artifact 로드 + line 1774~1814 의 use_lora 분기 모두 정리
+
+#### 6. `mv_pipeline.py` Phase 2 LoRA 분기 (line 1679~1814)
+- **확인**:
+  - line 1679~1709: Phase 2 시작 직후 `lora_url`, `lora_trigger_word` 를 MongoDB `characters.lora_artifact` 에서 읽는 블록 (≈30줄)
+  - line 1774~1814: 씬별 루프 안 use_lora 분기 — `if use_lora: img_bytes = await generate_scene_image_with_lora(...)` else `img_bytes = await generate_scene_image(...)` (≈40줄). `image_source = "flux-lora"` vs `"gemini"` 도 여기서 결정
+  - line 22: import 라인 `generate_scene_image_with_lora`
+- **결론**:
+  - line 1679~1709 의 LoRA artifact 로드 블록 전체 삭제
+  - line 1774~1814 의 use_lora 분기 제거 → 항상 `generate_scene_image(...)` 호출, `image_source = "gemini"` 고정
+  - line 22 import 에서 `generate_scene_image_with_lora` 제거
+- **DB 호환성**: `image_source` 필드는 MongoDB scenes 배열에 저장됨. 기존 데이터에 `"flux-lora"` 가 남아있을 수 있음 — 코드는 새로 생성하는 씬은 항상 `"gemini"` 로 기록. 기존 `"flux-lora"` 값을 가진 씬도 그냥 두면 됨 (UI 가 표시만 하고 분기 로직 없음 — 추가 검증 필요)
+
+#### 7. `routes/character.py` LoRA 엔드포인트 4개 + 보조 함수 (line 655~1012)
+- **확인 (line 단위)**:
+  - line 658~690: `_serialize_lora_state(char)` — LoRA 상태 응답 빌더
+  - line 693~713: `_run_lora_pipeline_bg` — BackgroundTasks 헬퍼
+  - line 716~824: `POST /train-lora` (109줄)
+  - line 827~833: `GET /lora-status` (7줄)
+  - line 836~917: `DELETE /lora` (82줄)
+  - line 920~1012: `DELETE /training-data` (93줄)
+- **응답에서 lora_* 필드 사용처** (전체 grep):
+  - line 815: `**_serialize_lora_state({...})` 가 `train-lora` 응답에 펼쳐짐
+  - line 833: `return _serialize_lora_state(char)` 가 `lora-status` 응답
+  - line 1009: `state = _serialize_lora_state({})` 가 `delete training-data` 응답
+  - **GET `/me` 응답** (line 587~613): `lora_status`, `lora_progress`, `lora_artifact`, `lora_trigger_word`, `lora_error`, `variation_thumbnails`, `lora_preview_url`, `costs` 모두 포함
+- **`COSTS` 상수** (line 51~58): 6개 cost 키 — 학습/시트/씬 비용 — `_serialize_lora_state` 와 `/me` 응답에서 사용
+- **결론**:
+  - line 658~690 (`_serialize_lora_state`) 삭제
+  - line 693~713 (`_run_lora_pipeline_bg`) 삭제
+  - line 716~1012 (4개 엔드포인트) 모두 삭제 (≈300줄)
+  - line 51~58 (`COSTS`) 도 삭제 — 더 이상 사용 안 함
+  - line 587~613 (`/me` 응답) 의 LoRA 필드 8개 전부 제거. `original_photo_object_name` 은 유지 (보존 정책)
+  - line 248~292 (`generate-sheet` 라우트의 use_lora_branch 분기) 단순화 → 항상 `generate_character_sheet` 호출
+  - line 38~58 의 cost 주석/상수도 함께 정리
+
+#### 8. `main.py` `resume_pending_lora_jobs` lifespan hook (line 60~67)
+- **확인**:
+  ```python
+  try:
+      from .database.mongodb import get_mongo as _get_mongo_for_lora
+      from .services.lora_trainer import resume_pending_lora_jobs
+      _asyncio.create_task(resume_pending_lora_jobs(_get_mongo_for_lora()))
+  except Exception as e:
+      print(f"LoRA training resume hook failed to schedule: {e}")
+  ```
+- **결론**: 8줄 블록 (line 60~67) 전체 삭제. lora_trainer 모듈 자체가 사라지므로 import 손상 회피 효과도 있음
+
+#### 9. `config.py` / `.env.example` `replicate_api_token` 필드
+- **확인 (config.py:81~82)**: `# Replicate (per-character LoRA training/inference — v40)` 주석 + `replicate_api_token: str = ""` 1줄
+- **확인 (.env.example:48~49)**: `# Replicate (per-character LoRA training/inference — v40)` + `REPLICATE_API_TOKEN=` 1줄
+- **다른 모듈에서 사용**: `grep -rn "replicate_api_token" backend_9004/`:
+  - `cover_generator.py:215` — Step 2 LoRA 가드 (B45 에서 함께 정리됨)
+  - `lora_trainer.py:98, 287, 307, 757` — 모듈 자체 삭제 (B44)
+  - `mv_generator.py:2553, 2611, 2644` — `generate_scene_image_with_lora` 안 (B47 함수 삭제 시 사라짐)
+  - `mv_pipeline.py:1697` — Phase 2 LoRA 가드 (B48)
+  - `routes/character.py:726` — `/train-lora` 가드 (B49 라우트 삭제 시 사라짐)
+- **결론**: 코드에서 모든 사용처가 사라지므로 `replicate_api_token` 자체는 비활성. 그러나 보존 결정 — config.py + .env.example 에 필드는 유지하고 주석을 `# Replicate (deprecated v41 — kept for future use; not currently consumed)` 으로 변경 (B52)
+
+#### 10. `LoraTrainingModal.jsx` + `LoraTrainingModal.css` 전체
+- **확인**: `LoraTrainingModal.jsx` 511 줄, `LoraTrainingModal.css` 401 줄
+- **외부 참조 검색**: `grep -rn "LoraTrainingModal" frontend/src/`:
+  - `pages/MyMusicPage.jsx:11` — `import LoraTrainingModal from '../components/LoraTrainingModal'`
+  - `pages/MyMusicPage.jsx:966~971` 그리고 `1068~1073` — 2군데에서 `<LoraTrainingModal ... />` 렌더
+- **결론**: 두 파일 자체 삭제. MyMusicPage.jsx 의 import + 2곳 사용처도 같이 제거 (F32 + F33)
+
+#### 11. `MyMusicPage.jsx` LoRA state / 핸들러 / UI 의존성 (전체 grep)
+- **확인** (frontend/src/pages/MyMusicPage.jsx 의 LoRA 관련 흔적):
+  - line 11: `import LoraTrainingModal from '../components/LoraTrainingModal'` (F32 삭제)
+  - line 185~188: `lora` state, `isLoraModalOpen` state, `loraPollRef` ref
+  - line 192~193: `originalPhotoObjectName`, `uploadingOriginal` — Step 1 photo upload (Nano Banana ref 용 보존)
+  - line 230~243: `getMyCharacter` 안 lora_* 시드 + `getLoraStatus` 호출
+  - line 253~272: useEffect 폴링
+  - line 373~398: `handleStartTraining` — Step 1 photo upload + 모달 오픈
+  - line 410~440: `handleDeleteTrainingData` — 학습 데이터 일괄 삭제
+  - line 691~698: cost 라벨 derive (`trainingCostUsd`, `sheetWithLoraCostUsd`, `sheetFallbackCostUsd`, `sheetCostLabel`)
+  - line 700~710: `renderTrainedAt` — 학습 시각 표시
+  - line 712~834: `renderStep1Card` — Step 1 (Identity) 카드 — LoRA 학습 트리거
+  - line 836~894: `renderStep2Card` — Step 2 (Outfit) 카드 — 마스터 시트 생성
+  - line 901~942: 저장된 캐릭터 sheet 위 LoRA 뱃지 (loraBadgeClass / loraBadgeLabel)
+  - line 966~971, 1068~1073: `<LoraTrainingModal />` 2곳
+  - line 1052~1067: 빈 캐릭터 상태에서 Step 1+Step 2 2-stage 레이아웃
+- **결론**:
+  - LoRA state/ref/effect 모두 제거 (F33)
+  - `handleStartTraining`/`handleDeleteTrainingData` 제거 (F33)
+  - `renderStep1Card` 자체 삭제 — Step 1 (사진 업로드만) 의 의미는 Step 2 안으로 통합 (이미 Step 2 의 `photoFile` 입력으로 사진 받고 있음 — Step 1 이 Step 2 와 중복인 부분이 컸음)
+  - `renderStep2Card` 단순화 → "캐릭터 만들기" 단일 카드로 회귀 (사진 업로드 + 의상 + 텍스트 + 마스터 시트 만들기 버튼 한 화면). 이는 v37/v38 시점의 단일 카드 구조와 동일
+  - 빈 상태 (line 1052~1067) 의 `mymusic-character__steps` 그룹 → 단일 카드로 회귀
+  - 저장된 캐릭터 view (line 901~942) 의 LoRA 뱃지 영역 (line 925~942) 제거. 단순화하면 sheet img + 다시 만들기/삭제 버튼만 남음
+  - cost 라벨 (line 691~698) 정적화 → `~$0.02` (마스터 시트 항상 Nano Banana — `sheet_fallback_usd` 와 동일)
+  - `renderTrainedAt` 함수 삭제
+- **보존 항목 (v40-3 photo upload 부분)**:
+  - `originalPhotoObjectName` state 와 `uploadOriginalPhoto` API 호출은 **Nano Banana ref 의 영구 사진 보관 용도**로 보존. 단, "AI 학습 시작" 버튼이 사라지므로 해당 호출은 `handleSave` (캐릭터 저장 직전) 안으로 이동하는 것을 권장 — 사진 업로드는 1회 자동 / 학습은 없음
+
+#### 12. `UploadPage.jsx` 비용 라벨 동적 (line 89, 284, 300, 946~957, 1046~1072, 1279)
+- **확인**:
+  - line 89: `const [coverLoraApplied, setCoverLoraApplied] = useState(false);`
+  - line 284: `setCoverLoraApplied(data?.lora_applied || false);`
+  - line 300: `setCoverLoraApplied(false);`
+  - line 946~957: "✓ LoRA 얼굴 잠금 적용됨" 뱃지 (응답에 lora_applied=true 일 때 표시)
+  - line 1046~1051: `willApplyLora` derivation — `myCharacter?.lora_status === 'done'` 체크 + `lora_artifact?.source_url` 체크 → cost 계산
+  - line 1052~1053: `coverCostLabel = willApplyLora ? "~$0.05 (LoRA 얼굴 잠금)" : "~$0.02"`
+  - line 1072: `<span style={{ color: willApplyLora ? '#7C3AED' : '#888' }}>` — 라벨 색상 분기
+  - line 1279: 씬당 비용 라벨 — `예상 비용: 씬당 ~$0.03 (LoRA 미사용) / ~$0.05 (LoRA 적용 시) · 영상 모델 비용 별도`
+- **결론**:
+  - line 89, 284, 300 의 `coverLoraApplied` state 삭제
+  - line 946~957 의 뱃지 마크업 삭제
+  - line 1046~1072 의 `willApplyLora` / `coverCostLabel` 정적화 → `~$0.02` 단일
+  - line 1279 의 씬 비용 라벨 단순화 → `예상 비용: 씬당 ~$0.03 · 영상 모델 비용 별도`
+
+#### 13. `api/index.js` LoRA 함수 4개 (line 287~291)
+- **확인**:
+  ```js
+  // Character LoRA training (v40)
+  export const getLoraStatus = () => API.get('/character/lora-status');
+  export const startLoraTraining = () => API.post('/character/train-lora');
+  export const deleteLora = () => API.delete('/character/lora');
+  export const deleteTrainingData = () => API.delete('/character/training-data');
+  ```
+- **외부 사용처**: `getLoraStatus`/`startLoraTraining`/`deleteLora`/`deleteTrainingData` 모두 `MyMusicPage.jsx` + `LoraTrainingModal.jsx` 안에서만 사용 (둘 다 정리 대상)
+- **`uploadOriginalPhoto`** (line 230~238): 보존 — Nano Banana ref 영구 사진 업로드용
+- **결론**: line 287~291 (5줄 + 주석 1줄) 삭제. `uploadOriginalPhoto` 보존
+
+#### 14. `MyMusicPage.css` LoRA 클래스
+- **확인** (`grep -n lora MyMusicPage.css`):
+  - line 598~673: `.mymusic-character__lora-bar`, `.mymusic-character__lora-badge` (idle/training/done/failed variants), `@keyframes lora-badge-pulse` — ≈75줄
+  - line 2674: `.mymusic-character__step-cost--lora` — 단일 클래스 (보라색 강조)
+  - line 2735~: `학습 데이터(LoRA + 원본 사진) 일괄 삭제 — danger style` 주석 블록
+- **결론**: 위 라인들 제거 (F34)
+
+#### 15. MongoDB `characters` 컬렉션의 LoRA 필드 — 보존 정책
+- **확인**: `lora_status`, `lora_progress`, `lora_artifact`, `lora_trigger_word`, `lora_error`, `lora_training_id`, `lora_variation_thumbnails`, `lora_preview_object_name`, `lora_preview_url` (응답 전용 derive — DB 미저장), `original_photo_object_name`
+- **결론**: DB 의 LoRA 필드는 **그대로 둠** (코드에서 안 읽으므로 무해). 향후 별도 마이그레이션 스크립트로 정리 검토 (v41-X). `original_photo_object_name`, `sheet_object_name`, `name`, `age`, `personality_tags`, `personality_text`, `used_items` 모두 보존
+
+#### 16. MinIO 잔존물
+- **확인 경로**: `characters/{user_id}/lora.safetensors`, `characters/{user_id}/lora_variations/var_NN.png` (18장), `characters/{user_id}/lora_preview.png`
+- **결론**: 본 v41 에서는 자동 삭제 안 함 (사용자가 학습한 데이터는 그냥 두면 무해). 향후 cleanup 스크립트 분리 (v41-X)
+
+#### 17. 의존성 그래프 (역순 — 호출자부터 정리)
+```
+[삭제 순서]
+  ↓ 1) Frontend UI (사용자가 호출 못함)
+       MyMusicPage.jsx (LoRA UI/state)  ← LoraTrainingModal 파일자체  ← MyMusicPage.css 클래스
+       UploadPage.jsx (cost 라벨)
+       api/index.js (LoRA 함수 4개)
+  ↓ 2) Backend 라우트 (외부 호출 안 옴)
+       routes/character.py (LoRA 엔드포인트 4개 + _serialize_lora_state + COSTS + /me 응답 lora_* + generate-sheet use_lora_branch)
+       main.py (lifespan hook)
+  ↓ 3) Backend 파이프라인 (라우트 호출 차단됐으므로 안전)
+       mv_pipeline.py (Phase 2 LoRA 분기 + import)
+  ↓ 4) Backend 서비스 (호출자 모두 제거됐으므로 안전)
+       cover_generator.generate_cover_image (Step 2 + lora_url/trigger_word 인자)
+       character_generator.generate_character_sheet_with_lora (함수 자체)
+       mv_generator.generate_scene_image_with_lora (함수 자체)
+       lora_trainer.py (파일 자체)
+       character_variations.py (파일 자체)
+  ↓ 5) Config (선택)
+       config.py / .env.example (replicate_api_token 보존, 주석만 변경)
+```
+
+### 핵심 결정 — 보존 vs 제거 매트릭스 (사용자 지시 그대로 반영)
+
+| 항목 | 처리 | 비고 |
+|---|---|---|
+| `character_variations.py` (파일) | **삭제** | 외부 참조 = lora_trainer 만 |
+| `lora_trainer.py` (파일) | **삭제** | 외부 참조 = main.py + character.py |
+| `cover_generator.generate_cover_image` Step 2 + lora_* 인자 | **삭제** | Step 1 결과 그대로 반환 |
+| `character_generator.generate_character_sheet_with_lora` | **삭제** | `generate_character_sheet` 만 사용 |
+| `mv_generator.generate_scene_image_with_lora` | **삭제** | `generate_scene_image` 만 사용 |
+| `mv_pipeline` Phase 2 LoRA 분기 | **삭제** | 항상 Nano Banana 경로 |
+| `routes/character.py` LoRA 엔드포인트 4개 | **삭제** | train-lora, lora-status, DELETE /lora, DELETE /training-data |
+| `routes/character.py` `_serialize_lora_state` + `COSTS` | **삭제** | |
+| `routes/character.py` `/me` 응답 `lora_*` 필드 | **삭제** | `original_photo_object_name` 보존 |
+| `routes/character.py` `generate-sheet` use_lora_branch 분기 | **삭제** | 항상 `generate_character_sheet` |
+| `POST /upload-original-photo` | **보존** | Nano Banana ref 영구 사진 보관 용도 |
+| `main.py` `resume_pending_lora_jobs` lifespan hook | **삭제** | line 60~67 8줄 |
+| `replicate_api_token` config / .env.example | **보존** | 주석만 deprecated 표시, 빈 값 유지 |
+| `LoraTrainingModal.jsx` + `.css` | **삭제** | 파일 자체 |
+| `MyMusicPage.jsx` Step 1 / Step 2 분리 | **단순화** | 단일 카드 (v37/v38 회귀) — 사진 업로드 + 의상 + 텍스트 + 마스터 시트 |
+| `MyMusicPage.jsx` LoRA state/effect/handler | **삭제** | lora, isLoraModalOpen, loraPollRef, handleStartTraining, handleDeleteTrainingData, renderTrainedAt |
+| `MyMusicPage.jsx` `originalPhotoObjectName` state | **보존** | Nano Banana ref 용도. `handleSave` 직전에 자동 업로드 |
+| `UploadPage.jsx` 비용 라벨 동적 | **정적화** | 항상 `~$0.02` |
+| `UploadPage.jsx` `coverLoraApplied` state + 뱃지 | **삭제** | line 89, 284, 300, 946~957 |
+| `api/index.js` LoRA 함수 4개 | **삭제** | line 287~291 |
+| `api/index.js` `uploadOriginalPhoto` | **보존** | line 230~238 |
+| `MyMusicPage.css` LoRA 뱃지/버튼 클래스 | **삭제** | line 598~673 + 2674 + 2735~ |
+| MongoDB `characters` LoRA 필드 | **보존** (코드에서 안 읽음) | DB 마이그레이션은 v41-X 별도 |
+| MinIO LoRA 파일 (lora.safetensors / variations / preview) | **보존** | cleanup 스크립트 v41-X 별도 |
+
+### 회귀 안전성 분석
+- **v37 (마스터 시트 생성)**: `generate_character_sheet` 함수는 변경 0. STEP1_ANSWERS 16개 / MASTER_PROMPT / `_call_gemini_text` / `_call_gemini_image` / `refine_character_sheet` 모두 변경 0. routes 의 `generate-sheet` 라우트도 LoRA 분기만 제거하고 Nano Banana 경로 유지 → 무회귀
+- **v38 (커버 생성)**: `generate_cover_image` 의 Step 1 (Claude prompt enhancement + Gemini 이미지 생성) 은 변경 0. 반환 시그니처는 `(bytes, lora_applied=False)` 또는 `bytes` 단일 — 호출자 호환성 결정 필요 (B45 에서 grep 으로 확인)
+- **v39 (MV asset 시스템)**: `mv_assets.py` (asset upload/load/cleanup) 변경 0. Phase 2 의 asset reference 처리 (line 1712~1719, 1764~1772) 도 변경 0
+- **MV 생성**: Phase 1 (씬 분할) 변경 0. Phase 2 는 LoRA 분기 제거 후 `generate_scene_image(...)` 만 사용 — 이는 v36 시점부터 안정적으로 동작 중인 함수. Phase 3 (영상) / Phase 4 (concat) 변경 0
+- **사용자 데이터 보호**:
+  - `characters.original_photo_object_name` 보존 (DB + MinIO)
+  - `characters.sheet_object_name` 보존 (DB + MinIO `characters/{user_id}/sheet.png`)
+  - `characters.{name, age, personality_tags, personality_text, used_items}` 보존
+  - 기존 LoRA 학습된 사용자 — 학습된 .safetensors 는 MinIO 에 남아있지만 코드가 안 읽음 → 결과적으로 LoRA 미적용 마스터 시트 / 커버 / MV 가 생성됨. 사용자 체감으로는 "그냥 사진 ref 기반 합성으로 회귀". 캐릭터 자체는 정상 사용 가능
+
+### 손볼 파일 (절대 경로 — 9004 only)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_variations.py` (B43 — 파일 삭제)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/lora_trainer.py` (B44 — 파일 삭제)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/cover_generator.py` (B45 — Step 2 제거 + 인자 제거)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/character_generator.py` (B46 — `generate_character_sheet_with_lora` 삭제)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_generator.py` (B47 — `generate_scene_image_with_lora` 삭제)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/services/mv_pipeline.py` (B48 — Phase 2 LoRA 블록 + import 정리)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/routes/character.py` (B49 + B50 — 엔드포인트 + 응답 정리)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/main.py` (B51 — lifespan hook 제거)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/app/config.py` (B52 — 주석만 변경)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9004/.env.example` (B52 — 주석만 변경)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.jsx` (F32 — 파일 삭제)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/components/LoraTrainingModal.css` (F32 — 파일 삭제)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.jsx` (F33 — Step 1+2 통합)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/MyMusicPage.css` (F34 — LoRA 클래스 제거)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/pages/UploadPage.jsx` (F35 — 비용 라벨 정적화)
+- `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend/src/api/index.js` (F36 — LoRA 함수 4개 삭제)
+
+### Hand-off task list (회귀 작업 — 의존성 역순으로 단계적 진행)
+
+#### 1단계 — 호출자부터 차단 (Frontend + 라우트)
+
+- **F32** `frontend/src/components/LoraTrainingModal.jsx` + `LoraTrainingModal.css` 두 파일 자체 삭제. 다른 파일에서 import 깨짐을 막기 위해 F33 과 같은 PR 에서 진행
+- **F33** `frontend/src/pages/MyMusicPage.jsx` Step 1+Step 2 통합 → 단일 카드:
+  1. line 11 `import LoraTrainingModal` 삭제
+  2. line 185~188 의 LoRA state (`lora`, `isLoraModalOpen`, `loraPollRef`) 삭제
+  3. line 230~243 의 `getMyCharacter` 안 LoRA 시드 + `getLoraStatus` 호출 삭제
+  4. line 253~272 의 LoRA 폴링 useEffect 삭제
+  5. line 373~398 의 `handleStartTraining` 삭제
+  6. line 410~440 의 `handleDeleteTrainingData` 삭제
+  7. line 691~698 의 cost derivation (`trainingCostUsd`, `sheetWithLoraCostUsd`, `sheetFallbackCostUsd`, `loraDone`, `sheetCostLabel`) 정적 회귀 → 단일 비용 `~$0.02`
+  8. line 700~710 의 `renderTrainedAt` 함수 삭제
+  9. line 712~834 의 `renderStep1Card` 함수 자체 삭제
+  10. line 836~894 의 `renderStep2Card` → "캐릭터 만들기" 단일 카드로 회귀 (제목 변경 "2단계: 의상 + 마스터 시트" → "캐릭터 만들기"; step-title-num 제거; cost 라벨 `~$0.02` 정적; 이외 본체 (사진 업로드 dropzone + 의상 + 텍스트 + 마스터 시트 만들기 버튼) 동작 그대로). **사진 업로드 dropzone 은 보존** — 사용자가 사진 업로드 → 자동으로 `originalPhotoObjectName` 으로도 영구 보관 (handleSave 직전 또는 onChange 직후 `uploadOriginalPhoto` 호출). 이는 v40-3 의 Step 1 photo upload 본질을 단일 카드 안으로 흡수
+  11. line 901~942 의 저장된 캐릭터 view 의 `loraBadgeClass`/`loraBadgeLabel` 계산 + `<div className="mymusic-character__lora-bar">...</div>` 마크업 (line 925~942) 삭제
+  12. line 966~971 의 `<LoraTrainingModal ...>` 렌더 삭제
+  13. line 1052~1067 의 빈 캐릭터 상태에서 "1단계에서 얼굴을 학습하면..." 안내 문구 → "사진을 업로드하면 AI 가 외모를 분석해 캐릭터 시트를 만들어요." 같은 단순한 문구로 회귀
+  14. line 1064~1067 의 `<div className="mymusic-character__steps">` + `{renderStep1Card()}{renderStep2Card()}` 패턴 → 단일 카드로 회귀
+  15. line 1068~1073 의 두 번째 `<LoraTrainingModal ...>` 렌더 삭제
+  16. **`originalPhotoObjectName` / `uploadingOriginal` state 는 보존** — handleSave 안에서 사진 업로드 자동 트리거 (Nano Banana ref 영구 보관)
+  17. **수용 기준**: `lora`, `isLoraModalOpen`, `loraPollRef`, `LoraTrainingModal`, `getLoraStatus`, `startLoraTraining`, `deleteLora`, `deleteTrainingData` 모두 grep 으로 부재 검증
+- **F34** `frontend/src/pages/MyMusicPage.css` LoRA 클래스 제거:
+  1. line 598~673: `.mymusic-character__lora-bar`, `.mymusic-character__lora-badge` (모든 variants), `@keyframes lora-badge-pulse` 모두 삭제
+  2. line 2674: `.mymusic-character__step-cost--lora` 삭제
+  3. line 2735~ (학습 데이터 일괄 삭제 danger style 블록) 삭제
+  4. **선택 정리**: `.mymusic-character__step-card`, `.mymusic-character__step-header`, `.mymusic-character__step-title-num`, `.mymusic-character__step-cost` 등 Step 1/2 분리에만 쓰이던 클래스도 사용처 사라지면 정리 (F33 의 단일 카드가 같은 클래스를 재사용한다면 유지)
+- **F35** `frontend/src/pages/UploadPage.jsx` 비용 라벨 정적화:
+  1. line 89: `coverLoraApplied` state 삭제
+  2. line 284: `setCoverLoraApplied(data?.lora_applied || false)` 삭제
+  3. line 300: `setCoverLoraApplied(false)` 삭제
+  4. line 946~957: "✓ LoRA 얼굴 잠금 적용됨" 뱃지 마크업 삭제
+  5. line 1046~1053: `willApplyLora` derivation + `coverCostLabel` 분기 삭제 → 정적 라벨 `~$0.02`
+  6. line 1072: `style={{ color: willApplyLora ? '#7C3AED' : '#888' }}` → 정적 색상 `#888`
+  7. line 1279: `예상 비용: 씬당 ~$0.03 (LoRA 미사용) / ~$0.05 (LoRA 적용 시) · 영상 모델 비용 별도` → `예상 비용: 씬당 ~$0.03 · 영상 모델 비용 별도`
+- **F36** `frontend/src/api/index.js` LoRA 함수 삭제:
+  1. line 287~291 (4개 함수 + 주석) 삭제: `getLoraStatus`, `startLoraTraining`, `deleteLora`, `deleteTrainingData`
+  2. line 230~238 의 `uploadOriginalPhoto` **보존**
+  3. **수용 기준**: `grep -n "Lora\|lora" frontend/src/api/index.js` 결과는 line 230~238 의 `uploadOriginalPhoto` 주석에서만 검색되도록 (선택: 주석에서 "for LoRA training" 문구 → "for Nano Banana ref preservation" 으로 정리)
+
+#### 2단계 — Backend 라우트 / lifespan / pipeline (Frontend 가 호출 안 함을 보장한 후)
+
+- **B49** `backend_9004/app/routes/character.py` LoRA 엔드포인트 4개 + 보조 함수 삭제:
+  1. line 51~58 의 `COSTS` 상수 삭제
+  2. line 38~50 의 cost 주석 정리 — 시트 생성 비용 ~$0.02 단일임을 명시하는 짧은 주석으로 회귀
+  3. line 658~690 의 `_serialize_lora_state` 함수 삭제
+  4. line 693~713 의 `_run_lora_pipeline_bg` 함수 삭제
+  5. line 716~824 의 `POST /train-lora` 엔드포인트 삭제
+  6. line 827~833 의 `GET /lora-status` 엔드포인트 삭제
+  7. line 836~917 의 `DELETE /lora` 엔드포인트 삭제
+  8. line 920~1012 의 `DELETE /training-data` 엔드포인트 삭제
+  9. line 13 의 `BackgroundTasks` import — 다른 곳 사용 0 이면 제거 (grep 으로 확인)
+  10. **수용 기준**: 4개 엔드포인트가 라우터에 부재 (`router.routes` 검사 또는 `/api/character/train-lora` 호출 시 404)
+- **B50** `backend_9004/app/routes/character.py` `/me` 응답 + `generate-sheet` 단순화:
+  1. line 587~613 (`GET /me` 응답 dict): `lora_status`, `lora_progress`, `lora_artifact`, `lora_trigger_word`, `lora_error`, `variation_thumbnails`, `lora_preview_url`, `costs` 8개 키 제거. `original_photo_object_name` 은 그대로 유지
+  2. line 575~585 (`/me` 라우트 안 LoRA preview URL 빌드 + variation thumbnails 빌드) 삭제
+  3. line 238~292 (`generate-sheet` 라우트의 use_lora_branch 분기) 단순화:
+     - line 241~252 의 `char_doc`/`lora_status`/`lora_artifact`/`use_lora_branch` 계산 제거
+     - line 254~292 의 `if use_lora_branch: generate_character_sheet_with_lora(...) else: generate_character_sheet(...)` 분기 → 단일 호출 `generate_character_sheet(photo_bytes=contents, mime_type=mime_type, top_bytes=..., user_text=user_text.strip())`
+     - import `generate_character_sheet_with_lora` 삭제
+  4. **수용 기준**: `grep -n "lora" backend_9004/app/routes/character.py` 결과 0건 (단 `original_photo_object_name` 라인은 OK — 이건 필드 이름의 일부)
+- **B48** `backend_9004/app/services/mv_pipeline.py` Phase 2 LoRA 분기 제거:
+  1. line 22 의 import 라인에서 `generate_scene_image_with_lora` 제거 (다른 import 는 유지)
+  2. line 1679~1709 (`# ── v40: Load per-character LoRA artifact (if any) ──` 블록 — `lora_url`/`lora_trigger_word` 추출) 전체 삭제
+  3. line 1774~1814 의 use_lora 분기 제거 → 단순화:
+     ```python
+     img_bytes = await generate_scene_image(
+         scene_desc,
+         cover_image_bytes=ref_image,
+         character_image_bytes=character_image_bytes,
+         scene_type=scene.get("scene_type", "drama"),
+         reference_images=scene_refs or None,
+     )
+     image_source = "gemini"
+     ```
+  4. `# v40: ...` / `# v40-2: ...` 주석 (line 1775~1786) 도 정리. 더 이상 의미 없음
+  5. **수용 기준**: `grep -n "lora\|LoRA" backend_9004/app/services/mv_pipeline.py` 결과 0건
+- **B51** `backend_9004/app/main.py` lifespan hook 제거:
+  1. line 60~67 의 `# v40: re-attach poll loops...` 블록 (try/except 8줄) 전체 삭제
+  2. **수용 기준**: `grep -n "lora\|LoRA" backend_9004/app/main.py` 결과 0건
+
+#### 3단계 — Backend 서비스 레이어 (호출자 모두 차단됨)
+
+- **B45** `backend_9004/app/services/cover_generator.py` Step 2 LoRA 정제 제거:
+  1. **호출자 grep 선행**: `grep -rn "generate_cover_image" backend_9004/app/ | grep -v __pycache__` — 호출자가 튜플 unpack 하는지 확인
+     - 만약 호출자가 `image_bytes, lora_applied = await generate_cover_image(...)` 라면 → 함수 시그니처는 `tuple[bytes, bool]` 유지하되 항상 `(image_bytes, False)` 반환 (호출자 변경 0)
+     - 만약 호출자가 첫 element 만 사용하면 → 시그니처 `bytes` 로 단순화 + 호출자도 정리
+     - **결정**: 보수적으로 **튜플 시그니처 유지**, 항상 `(image_bytes, False)` 반환 (호출자 코드 회귀 위험 최소화). 호출자에서 lora_applied 가 항상 False 가 되는 것은 정적 라벨 회귀와 일치
+  2. line 24~33 의 함수 시그니처 — `lora_url=None`, `lora_trigger_word=None` 두 인자 삭제
+  3. line 34~45 의 docstring LoRA 설명 삭제 — Step 1 단일 단계로 단순화 노트 추가
+  4. line 213~313 의 `# ── Step 2: FLUX-LoRA face-locking refinement ──` 블록 전체 삭제 (≈100줄)
+  5. line 214 의 `lora_applied = False` 정의는 line 314 직전 한 곳에 유지
+  6. line 314 의 `return image_bytes, lora_applied` → `return image_bytes, False` (튜플 호환)
+  7. **수용 기준**: 함수 본체에서 `replicate_api_token`/`hf_lora`/`flux-dev-lora` 문자열 부재. `(bytes, False)` 반환 확인
+  8. **호출자 동시 정리**: 호출 site 의 `lora_url=`, `lora_trigger_word=` 키워드 인자도 함께 제거. 응답 dict 의 `lora_applied` 필드도 제거 (라우트 응답 → frontend `data?.lora_applied || false` 가 자연스럽게 false 처리됨)
+- **B46** `backend_9004/app/services/character_generator.py` `generate_character_sheet_with_lora` 삭제:
+  1. line 732~910 의 함수 (≈180줄) 전체 삭제
+  2. `generate_character_sheet` (line 654~729), `_call_gemini_text`, `_call_gemini_image`, `refine_character_sheet`, `MASTER_PROMPT`, `STEP1_ANSWERS`, `_build_inline_images`, `_extract_code_block`, `CHARACTER_SYSTEM_INSTRUCTION` 모두 변경 0
+  3. **수용 기준**: `grep -n "with_lora\|lora_url\|trigger_word\|hf_lora\|flux-dev-lora" backend_9004/app/services/character_generator.py` 결과 0건
+- **B47** `backend_9004/app/services/mv_generator.py` `generate_scene_image_with_lora` 삭제:
+  1. line 2510~2675 의 함수 (≈165줄) 전체 삭제 (`# ── 2b. Generate Scene Image with per-character LoRA ──` 주석 헤더부터 함수 끝까지)
+  2. line 2369 부터의 `generate_scene_image` 함수는 변경 0
+  3. **수용 기준**: `grep -n "generate_scene_image_with_lora\|hf_lora\|flux-dev-lora" backend_9004/app/services/mv_generator.py` 결과 0건
+- **B44** `backend_9004/app/services/lora_trainer.py` 파일 자체 삭제:
+  1. 전체 파일 삭제 (776줄)
+  2. **수용 기준**: 파일 부재 (`ls backend_9004/app/services/lora_trainer.py` 실패), `from .services.lora_trainer` 또는 `from .lora_trainer` 등 import 사이트 부재 (B51, B49 에서 이미 정리됨)
+- **B43** `backend_9004/app/services/character_variations.py` 파일 자체 삭제:
+  1. 전체 파일 삭제 (307줄)
+  2. **수용 기준**: 파일 부재. `from .character_variations` 또는 `from .services.character_variations` 등 import 사이트 부재 (B44 에서 lora_trainer 삭제로 이미 0)
+
+#### 4단계 — 환경 / 설정 (선택 — 회귀 안전)
+
+- **B52** `backend_9004/app/config.py` + `.env.example` `replicate_api_token` 보존 (주석만 변경):
+  1. `config.py:81~82`:
+     ```python
+     # Replicate (deprecated v41 — kept for future use; not currently consumed)
+     replicate_api_token: str = ""
+     ```
+  2. `.env.example:48~49`:
+     ```
+     # Replicate (deprecated v41 — kept for future use; not currently consumed)
+     REPLICATE_API_TOKEN=
+     ```
+  3. **수용 기준**: 두 파일에서 `replicate_api_token` 필드/환경변수는 그대로, 주석만 deprecated 표시
+
+#### 5단계 — Tester (TT87 ~ TT94)
+
+- **TT87** Backend 라우트 부재 검증:
+  - `POST /api/character/train-lora` → 404
+  - `GET /api/character/lora-status` → 404
+  - `DELETE /api/character/lora` → 404
+  - `DELETE /api/character/training-data` → 404
+  - `POST /api/character/upload-original-photo` → 200 (보존됨, FormData(file) 정상)
+  - `POST /api/character/generate-sheet` → 200 (Nano Banana 단일 경로)
+  - `POST /api/character/refine` → 200 (변경 0)
+  - `GET /api/character/me` → 200, 응답에 `lora_*` 키 부재. `original_photo_object_name`, `sheet_object_name`, `name`, `age`, `personality_tags`, `personality_text`, `used_items` 모두 존재
+- **TT88** Backend 모듈 import 검증:
+  - `python -c "from app.main import app"` 정상 (lifespan hook 부재해도 OK)
+  - `python -c "from app.services.character_generator import generate_character_sheet, refine_character_sheet"` 정상 (with_lora 부재)
+  - `python -c "from app.services.mv_generator import generate_scene_image"` 정상 (with_lora 부재)
+  - `python -c "from app.services.cover_generator import generate_cover_image"` 정상 — 시그니처에 `lora_url`/`lora_trigger_word` 없음
+  - `python -c "from app.services import lora_trainer"` ImportError (모듈 사라짐)
+  - `python -c "from app.services import character_variations"` ImportError (모듈 사라짐)
+- **TT89** Frontend 빌드 / 런타임 검증:
+  - `npm run build` 통과 — `LoraTrainingModal` import 부재로 빌드 깨지지 않음
+  - MyMusicPage 로딩 — 단일 카드 (사진 업로드 + 의상 + 텍스트 + 마스터 시트 만들기). LoRA 뱃지/모달 부재
+  - UploadPage 로딩 — cover cost 라벨 `~$0.02` 정적, 씬 비용 라벨 단순화
+- **TT90** 회귀 — 마스터 시트 생성:
+  - 사진 업로드 → "마스터 시트 만들기" 클릭 → Nano Banana 호출 → 시트 생성 → 미리보기 → 저장 정상
+  - 의상 ref (top/bottom/shoes) 선택 시 STEP1_ANSWERS 분기 정상 (16가지 조합)
+  - 사용자 텍스트 입력 시 "1_xxx" 키 사용 정상
+- **TT91** 회귀 — 커버 생성:
+  - `generate_cover_image(title="...", ...)` 호출 → Nano Banana 만 호출 (Replicate 호출 0)
+  - 응답에 `lora_applied=False` 또는 `lora_applied` 키 부재
+  - 캐릭터 시트 ref 첨부 시 photorealistic 강제 분기 정상
+- **TT92** 회귀 — MV 생성 (Phase 2):
+  - 새 MV 잡 → Phase 2 (씬 이미지 생성) → 모든 씬이 `generate_scene_image` (Nano Banana) 호출
+  - MongoDB scenes 배열의 `image_source` 필드 — 새 씬은 모두 `"gemini"`. (기존 데이터의 `"flux-lora"` 는 무관)
+  - asset (@character1, @location1) 참조 정상 (mv_assets 변경 0)
+- **TT93** 회귀 — 사용자 데이터 보호:
+  - 기존 LoRA 학습한 사용자가 로그인 → MyMusicPage 진입 → 캐릭터 시트 정상 표시 (sheet_url)
+  - 캐릭터 정보 (name/age/personality_tags/personality_text/used_items) 정상 표시
+  - `original_photo_object_name` 보존 — `/upload-original-photo` 재호출 없이 그대로 사용
+  - 마스터 시트 다시 만들기 → 정상
+  - 새 MV 생성 → Phase 2 정상 (LoRA 무시되고 Nano Banana 만 사용)
+- **TT94** 9004 헬스 / v37/v38/v39 회귀:
+  - `/api/health` 200
+  - `/api/tracks/...`, `/api/albums/...`, `/api/charts/...`, `/api/playlists/...`, `/api/likes/...`, `/api/upload/...`, `/api/business/...`, `/api/wondera/...`, `/api/voice-persona/...`, `/api/voice-convert/...`, `/api/vocal-repair/...`, `/api/rewards/...`, `/api/follows/...`, `/api/generate/...`, `/api/mv/...` 모두 정상
+  - frontend 의 모든 페이지 (MainPage, ChartPage, AlbumDetailPage, ArtistDetailPage, PlaylistDetailPage, BusinessPage, MyMusicPage 의 다른 탭들) 정상
+
+### Hard rules (사용자 강조)
+- 9003 mirror NEVER (이번 작업은 9004 only)
+- 0단계 분석 매우 충실 (의존성 매핑 잘못하면 회귀 위험) — 위 #1~#17 으로 매핑 완료
+- 단계적 작업 (한꺼번에 다 지우지 말고 의존성 역순) — F32~F36 → B49/B50/B48/B51 → B45/B46/B47/B44/B43 → B52 (1단계 → 2단계 → 3단계 → 4단계)
+- 사용자 기존 데이터 보호 — `original_photo_object_name`, `sheet_object_name`, character meta 모두 보존
+- API tokens placeholder — `replicate_api_token` 빈 값 + 주석만 변경 (B52)
+- 절대 날짜 2026-04-28
+- 회귀: v37/v38/v39 모든 기능 무손상 (LoRA 만 제거)
+- POST /upload-original-photo 보존 (Nano Banana ref 영구 사진 보관)
+
+### 영향 범위
+- **DB schema 변경**: 0건 (LoRA 필드는 보존 — 코드에서 안 읽음)
+- **API endpoint 변경**:
+  - 제거 4: `POST /api/character/train-lora`, `GET /api/character/lora-status`, `DELETE /api/character/lora`, `DELETE /api/character/training-data`
+  - 응답 schema 변경: `GET /api/character/me` 가 `lora_*` 키 8개 제거 — 단 frontend 가 optional read 라 회귀 0
+  - 보존: `POST /api/character/upload-original-photo` 그대로
+- **외부 의존성 제거**:
+  - Replicate `bytedance/flux-pulid` (PuLID) — 사용 0 (v40-9 에서 이미 제거됨)
+  - Replicate `replicate/fast-flux-trainer` — 사용 0
+  - Replicate `black-forest-labs/flux-dev-lora` — 사용 0 (cover_generator + character_generator + mv_generator + lora_trainer 4곳 모두 제거)
+- **함수 시그니처 변경**:
+  - `generate_cover_image(...)` — `lora_url`, `lora_trigger_word` 인자 제거. 반환 `tuple[bytes, bool]` 유지 (항상 `(bytes, False)`) 또는 단순화 (B45 호출자 grep 후 결정)
+  - `generate_character_sheet`/`generate_scene_image`/`generate_character_sheet_with_lora`/`generate_scene_image_with_lora` — 후자 2개 함수 자체 삭제, 전자 2개는 변경 0
+- **모듈 삭제**:
+  - `backend_9004/app/services/character_variations.py` (파일)
+  - `backend_9004/app/services/lora_trainer.py` (파일)
+  - `frontend/src/components/LoraTrainingModal.jsx` (파일)
+  - `frontend/src/components/LoraTrainingModal.css` (파일)
+- **무영향**:
+  - `mv_assets.py`, `kits_service.py`, `lalal_service.py`, `demucs_service.py`, `whisper_service.py`, `sync_labs_service.py`, `kling_video_generator.py`, `seedance_video_generator.py`, `chart_recovery.py`, `playcount_sync.py`, `subtitle_generator.py`, `suno_generator.py`, `suno_timestamp_service.py`, `voice_persona_service.py`, `audio_utils.py`, `lyrics_generator.py`, `music_generator.py` — 17 서비스 모듈 변경 0
+  - 라우트: `auth, admin, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, voice_persona, voice_convert, vocal_repair, wondera, rewards, business, _logs, songs` 변경 0
+  - 모델, DB 헬퍼 (postgres/mongodb/redis/minio/elasticsearch) 변경 0
+  - frontend 의 다른 페이지/컴포넌트 모두 변경 0
+
+### 비용
+- **신규 비용 0**
+- **비용 절감**:
+  - LoRA 학습 1회 ~$2.50 (PuLID 18장 + fast-flux-trainer + 미리보기) → **0** (학습 자체 사라짐)
+  - 마스터 시트 with_lora $0.05 → 항상 $0.02 (-60%)
+  - 커버 with_lora $0.05 → 항상 $0.02 (-60%)
+  - MV scene with_lora $0.05/scene → 항상 $0.03/scene (-40%)
+- **시간 절감**:
+  - LoRA 학습 ~15분 (학습 데이터 1~7분 + 학습 자체 ~12분) → 0 (학습 자체 사라짐)
+  - 마스터 시트 / 커버 / MV scene 1장당 시간 — Nano Banana 만이라 LoRA 정제 단계 (~30~60s/장) 제거
+- **제거된 외부 비용**: Replicate 호출량 거의 0 (실험/cover-LoRA-refine/scene-LoRA-refine 모든 경로 사라짐)
+
+### 보안
+- **추가 보안 표면 0**
+- **제거된 표면**: Replicate API 호출 4개 경로 (cover Step 2, sheet with_lora Step 2, scene Step 3b, lora_trainer 학습+미리보기) 모두 사라짐 — Replicate 키 노출 risk 0 (단, 키 자체는 .env 에 보존)
+- **API 토큰 placeholder 정책**: `replicate_api_token` 보존 (빈 값 default + .env.example 빈 값) — placeholder 정책 준수
+
+### Open Questions
+- **Q-v41-1 (open)** `generate_cover_image` 반환 시그니처 — 튜플 `(bytes, False)` 유지 vs 단순화 `bytes`. **추천**: 호출자 grep 한 후 결정 (B45 작업자에게 권한 위임). 보수적으로 튜플 유지 권장 (호출자 회귀 0)
+- **Q-v41-2 (open)** MyMusicPage 의 `originalPhotoObjectName` 자동 업로드 트리거 시점 — `handleSave` 직전 vs 사진 dropzone onChange 직후 vs "마스터 시트 만들기" 버튼 클릭 직후. **추천**: 사진 dropzone onChange 직후 자동 업로드 (UX: 빠르게 영구 보관). 단, 실패 시 graceful (기존 동작 그대로 — 시트 생성은 진행)
+- **Q-v41-3 (open)** MongoDB cleanup 스크립트 — 기존 사용자의 `lora_status`/`lora_progress`/`lora_artifact`/`lora_trigger_word`/`lora_error`/`lora_training_id`/`lora_variation_thumbnails`/`lora_preview_object_name` 8개 필드를 `$unset` 으로 제거하는 일회성 스크립트. v41 본 작업에는 포함 X — v41-X 별도 분리. 데이터 무결성에는 무영향 (코드가 안 읽음)
+- **Q-v41-4 (open)** MinIO cleanup 스크립트 — 기존 사용자의 `characters/{user_id}/lora.safetensors` + `characters/{user_id}/lora_variations/var_NN.png` (18장) + `characters/{user_id}/lora_preview.png` 자동 정리. 본 작업에는 포함 X — v41-X 별도 분리. 디스크 무결성에는 무영향
+- **Q-v41-5 (open)** scenes 컬렉션 `image_source` 필드 마이그레이션 — 기존 데이터 중 `"flux-lora"` 값을 가진 씬은 그대로 둠. 코드는 신규 씬은 `"gemini"` 만 기록. UI 가 `image_source` 를 표시만 하고 분기 로직 없으면 OK — `grep -rn "image_source" frontend/src/` 로 사용처 확인 필요 (B48 작업자가 추가 검증)
+- **Q-v41-6 (open)** Step 1+Step 2 통합 후 단일 카드의 비용 라벨 — `~$0.02` 정적 vs 라벨 자체 제거. **추천**: `~$0.02` 정적 유지 (사용자가 비용 인지 가능)
+- **Q-v41-7 (open)** Nano Banana ref 방식의 face identity 일관성 — 사용자 원본 사진을 매번 ref 로 보내도 Gemini 가 일부 슬롯에서 카툰 회귀하거나 face drift 가 있을 수 있음. v37/v38 시점부터 안정적으로 동작 중인 함수이지만, MV 18~20개 씬 사이 일관성은 LoRA 만큼은 못함. 첫 ship 후 관측 데이터 수집 → 만약 drift 가 심하면 v41-X 에서 prompt 강화 또는 hybrid 검토
+- **Q-v41-8 (open)** 학습 진행 중인 사용자 — 만약 v41 배포 시점에 lora_status="training" 인 사용자가 있으면, lifespan hook 부재로 polling 끊김. Replicate 학습은 계속 진행되지만 결과를 받아오는 코드가 없음. **권고**: v41 배포 전에 모든 활성 학습이 종료될 때까지 대기 또는 일회성 스크립트로 강제 마킹 — 본 PLAN 에는 미포함 (배포 전 운영 결정)
+
+### 수용 기준 (Acceptance Criteria)
+1. `backend_9004/app/services/character_variations.py` 파일 부재 (B43)
+2. `backend_9004/app/services/lora_trainer.py` 파일 부재 (B44)
+3. `cover_generator.generate_cover_image` 시그니처에 `lora_url`/`lora_trigger_word` 부재. 본체에 `flux-dev-lora` 호출 부재 (B45)
+4. `character_generator.generate_character_sheet_with_lora` 함수 부재 (B46)
+5. `mv_generator.generate_scene_image_with_lora` 함수 부재 (B47)
+6. `mv_pipeline.py` 안 `lora_url`/`lora_trigger_word`/`use_lora`/`generate_scene_image_with_lora` 모두 부재 (B48)
+7. `routes/character.py` 의 4개 LoRA 엔드포인트 부재 (B49). `_serialize_lora_state`/`COSTS`/`_run_lora_pipeline_bg` 부재
+8. `routes/character.py` `/me` 응답 dict 에 `lora_*` 키 부재. `original_photo_object_name` 존재 (B50)
+9. `routes/character.py` `/generate-sheet` 라우트가 항상 `generate_character_sheet` (with_lora 분기 부재) (B50)
+10. `main.py` lifespan 에 `resume_pending_lora_jobs` 호출 부재 (B51)
+11. `config.py`/`.env.example` `replicate_api_token` 필드 존재 (보존) — 주석에 "deprecated v41" 명시 (B52)
+12. `frontend/src/components/LoraTrainingModal.jsx`+`.css` 파일 부재 (F32)
+13. `frontend/src/pages/MyMusicPage.jsx` 안 `LoraTrainingModal`/`getLoraStatus`/`startLoraTraining`/`deleteLora`/`deleteTrainingData`/`renderStep1Card`/`handleStartTraining`/`handleDeleteTrainingData`/`renderTrainedAt`/`isLoraModalOpen`/`loraPollRef` 모두 부재 (F33)
+14. `MyMusicPage.jsx` 의 빈 캐릭터 상태가 단일 카드 (사진 업로드 + 의상 + 텍스트 + 마스터 시트 만들기). 저장된 캐릭터 view 에 LoRA 뱃지 부재 (F33)
+15. `UploadPage.jsx` 의 cover cost 라벨 정적 `~$0.02`. 씬 비용 라벨 `씬당 ~$0.03 · 영상 모델 비용 별도` (F35)
+16. `frontend/src/api/index.js` 의 `getLoraStatus`/`startLoraTraining`/`deleteLora`/`deleteTrainingData` 부재. `uploadOriginalPhoto` 존재 (F36)
+17. 백엔드 헬스 `/api/health` 200, `python -c "from app.main import app"` 정상
+18. v37/v38/v39 회귀 0건 (TT94 PASS)
+19. 사용자 기존 데이터 보호 — `original_photo_object_name`/`sheet_object_name`/character meta 보존 (TT93 PASS)
+20. POST `/api/character/upload-original-photo` 200 (Nano Banana ref 보존)
+
+### 테스트 계획 (Tester)
+- **TT87 ~ TT94 PASS** (위 5단계 작업)
+- **수동 시나리오**:
+  - **A 신규 캐릭터 만들기**: 로그인 → MyMusic → 사진 업로드 → 의상 선택 (선택) → 텍스트 (선택) → "마스터 시트 만들기" 클릭 → 시트 미리보기 (Nano Banana 단일 호출, ~$0.02) → 저장 → 캐릭터 view 정상 (LoRA 뱃지 부재). `original_photo_object_name` 자동 영구 보관됨
+  - **B 기존 LoRA 학습한 사용자 로그인**: 캐릭터 시트 / 캐릭터 정보 정상 표시. LoRA 뱃지 / "AI 학습" 버튼 / "재학습" / "학습 데이터 삭제" 모두 부재
+  - **C 커버 생성**: UploadPage → 곡 업로드 → 커버 생성 → Nano Banana 만 호출. 응답에 `lora_applied` 부재 또는 false. 라벨 `~$0.02` 정적
+  - **D MV 생성**: 새 MV 잡 → Phase 1 → Phase 2 → 모든 씬이 `generate_scene_image` (Nano Banana) 사용. MongoDB scenes 의 `image_source = "gemini"`
+  - **E LoRA 엔드포인트 직접 호출**: `curl -X POST http://localhost:9004/api/character/train-lora -H "Authorization: Bearer ..."` → 404
+  - **F 사진 업로드 (Nano Banana ref)**: `POST /api/character/upload-original-photo` → 200 + `object_name` 반환. MinIO 의 `characters/{user_id}/original.{ext}` 에 저장 확인
+- **회귀**:
+  - 모든 v37/v38/v39 기능 (커버, 마스터 시트, MV, 음원 업로드, voice persona, voice convert, vocal repair, wondera, business, rewards, charts, playlists, likes, follows) 정상 동작
+  - frontend 빌드 통과
+  - 9004 서버 lifespan 정상 (LoRA hook 부재로도 startup OK)
+- **부정 시나리오**:
+  - 학습 진행 중인 사용자 데이터가 DB 에 남아있어도 라우트 호출 시 404 (Q-v41-8 운영 결정 필요)
+  - MinIO 의 LoRA 잔존물 (lora.safetensors, variations) 이 코드에서 read 안 됨 — 무해
+  - 기존 cover 응답에 `lora_applied: true` 가 캐싱돼있어도 frontend 가 false 로 fallback (UI 무회귀)
+
+### 체크리스트
+- [ ] frontend `components/LoraTrainingModal.jsx`+`.css` 파일 삭제 (F32)
+- [ ] frontend `pages/MyMusicPage.jsx` Step 1+2 통합, LoRA state/handler/UI 모두 제거, 사진 업로드 자동 영구 보관 유지 (F33)
+- [ ] frontend `pages/MyMusicPage.css` LoRA 뱃지/버튼 클래스 제거 (F34)
+- [ ] frontend `pages/UploadPage.jsx` 비용 라벨 정적화, `coverLoraApplied` state + 뱃지 제거 (F35)
+- [ ] frontend `api/index.js` `getLoraStatus`/`startLoraTraining`/`deleteLora`/`deleteTrainingData` 4개 함수 제거. `uploadOriginalPhoto` 보존 (F36)
+- [ ] backend_9004 `routes/character.py` 4개 LoRA 엔드포인트 + `_serialize_lora_state` + `_run_lora_pipeline_bg` + `COSTS` 제거 (B49)
+- [ ] backend_9004 `routes/character.py` `/me` 응답 lora_* 키 제거 + `/generate-sheet` 단순화 (B50)
+- [ ] backend_9004 `services/mv_pipeline.py` Phase 2 LoRA 분기 제거 + import 정리 (B48)
+- [ ] backend_9004 `app/main.py` `resume_pending_lora_jobs` lifespan hook 제거 (B51)
+- [ ] backend_9004 `services/cover_generator.py` Step 2 + `lora_url`/`lora_trigger_word` 인자 제거. 호출자 동시 정리 (B45)
+- [ ] backend_9004 `services/character_generator.py` `generate_character_sheet_with_lora` 삭제 (B46)
+- [ ] backend_9004 `services/mv_generator.py` `generate_scene_image_with_lora` 삭제 (B47)
+- [ ] backend_9004 `services/lora_trainer.py` 파일 삭제 (B44)
+- [ ] backend_9004 `services/character_variations.py` 파일 삭제 (B43)
+- [ ] backend_9004 `app/config.py` + `.env.example` `replicate_api_token` 주석을 deprecated 로 갱신, 필드 보존 (B52)
+- [ ] Tester TT87~TT94 PASS
+- [ ] REPORT.md v41 append
+
+---
+
+## v42 — 2026-04-28 — 사용자 장소(Location) 자산 등록 + Mode B 앵커 60/40 배분
+
+### 요청 작업
+- "내 캐릭터" 탭에 **장소 이미지 업로드/리스트/삭제/미리보기** 갤러리 추가.
+- 커버 이미지 생성 시 등록한 장소 중 하나 선택 가능 → ref 이미지로 동봉 + 프롬프트에 "주인공 캐릭터가 등장할 장소" 명시.
+- MV 씬 이미지 생성에서도 동일 장소를 ref 로 동봉. 단조로움 회피를 위해 **모드 B (앵커 60% + 보조 40%)** 적용:
+  - Phase 1 시나리오 LLM 의 `locations 규칙` 에 anchor 락 주입 → location1 = 사용자 지정 (≥60% 씬 사용)
+  - Phase 1 씬 분해 LLM 3종 템플릿(drama/lipsync/clip)에 ABSOLUTE RULE 주입 (`@location1` 60%+ 의무화)
+  - Phase 1.5 자산 사전생성에서 `@location1` 은 사용자 업로드 PNG 그대로 자산화(자동생성 SKIP), `@location2/3` 은 LLM 텍스트 기반 신규 생성하되 **사용자 이미지를 style_ref 로 첨부** → 톤/시간대/색감 통일
+  - Phase 2 씬 이미지 생성: 기존 `reference_images` 파이프라인 재활용 + anchor clause 안전망 1줄
+
+### Plan verification findings (사전 코드 분석, 0단계)
+
+#### 백엔드 — 검증된 사실
+
+1. `app/services/cover_generator.py:23-204` `generate_cover_image(title, genre, mood, style, character_image_bytes, user_prompt, prompt_model)` — Gemini Nano Banana 직접 호출(`GEMINI_API_URL` line 17). 프롬프트 분기 4곳:
+   - line 52~63: Claude enhance system (`character_image_bytes` 분기)
+   - line 91~113: programmatic [A] character有
+   - line 114~129: programmatic [B] character無
+   - line 145~161: systemInstruction (character_image_bytes 분기)
+   - line 134~143: request_parts 에 inlineData 첨부 — **여기에 user_location bytes 추가 필요**
+
+2. `app/services/mv_generator.py:765-805` 시나리오 LLM `system_prompt` 의 `## locations 규칙` 블록(line 787-789) — **여기에 user 지정 location1 가이드 주입 필요**
+
+3. `app/services/mv_generator.py:` Phase 1 씬 분해 템플릿 3종:
+   - line 1245~1294: `SCENE_GENERATE_FROM_LYRICS_TEMPLATE`
+   - line 1334~1359: `SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE`
+   - line 1432~ : 세 번째 템플릿 (clip-based)
+   - **각 템플릿에 ABSOLUTE RULE — USER LOCATION ANCHOR 블록 추가 필요**
+
+4. `app/services/mv_generator.py:2369-2478` `generate_scene_image(scene_description, style_prompt, cover_image_bytes, character_image_bytes, scene_type, reference_images)` — 이미 `reference_images: list` 슬롯이 `@locationN` 자산 ref 첨부에 사용 중(line 2418-2425, 2453-2463). **추가 변경 최소: anchor clause 1줄 + 로직 무변경**
+
+5. `app/services/mv_assets.py:95-106` `generate_location_sheet_asset(name, description)` — Gemini 단일 호출, `_gemini_generate_image(prompt, ref_images)` 헬퍼 보유. **`style_ref: Optional[bytes]` 인자 추가 필요**
+
+6. `app/services/mv_pipeline.py:1504-1627` `run_phase1_5_assets(job_id, mongo_db)`:
+   - line 1591-1607 `_make_loc(key, info)` — 모든 location 자동 생성. **`@location1` 분기로 사용자 업로드 PNG 직접 자산화 + `@location2/3` 생성 시 style_ref 전달 필요**
+
+7. `app/routes/character.py:24` router prefix `/api/character`. 기존 엔드포인트:
+   - GET /personality-tags
+   - POST /upload-original-photo
+   - POST /generate-sheet
+   - POST /refine
+   - POST /save
+   - GET /me, DELETE /me
+   - GET /preview/{object_name:path} — **장소 이미지 미리보기에도 재사용 가능**
+
+8. `app/routes/upload.py:26-33` `GenerateCoverRequest` — **`location_id: Optional[str] = None` 필드 추가 필요**. line 151~222 `generate_cover` 라우트에서 location 로드 후 cover_generator 에 전달.
+
+9. `app/routes/mv.py:42-60` `CreateMVRequest` — **`location_id: Optional[str] = None` 필드 추가 필요**. line 240-291 `create_mv` 에서 location_snapshot 빌드 + job_doc 에 저장.
+
+10. MinIO 버킷: `settings.minio_bucket_images`. 캐릭터 관련 prefix `characters/{user_id}/`.
+
+11. Mongo: `characters` 컬렉션 (user_id 키). 별도 컬렉션 `character_locations` 신규 사용 결정 — characters doc 에 array 로 박지 않음(쿼리·인덱스 명료).
+
+#### 프론트엔드 — 검증된 사실
+
+12. `frontend/src/api/index.js`:
+   - line 161 `generateCover(data)` — 기존 POST /upload/generate-cover
+   - line 204 `generateCharacterSheet(formData)` — multipart
+   - line 232 `uploadOriginalPhoto(file)` — multipart
+   - line 423 `characterPreviewUrl(previewPath)` — 절대 URL 헬퍼
+   - **신규 추가 필요: `listMyLocations`, `createLocation`, `deleteLocation`, `locationPreviewUrl`**
+
+13. `frontend/src/pages/UploadPage.jsx`:
+   - line 94 `coverUserPrompt`, line 104 `coverPromptModel` — 기존 상태 패턴
+   - line 271 `api.generateCover({ title, genre, mood, character_object_name, user_prompt, prompt_model })` — **`location_id` 추가 필요**
+   - line 417, 651, 700, 715 `createMV` 호출들 — **`location_id` 추가 필요**
+
+14. `frontend/src/pages/MyMusicPage.jsx`:
+   - 캐릭터 탭이 existing CharacterCreator 컴포넌트 — line 521 `renderOutfitSection` 패턴 참고
+   - **신규 섹션 `renderLocationSection` 추가**: 갤러리(카드 리스트) + 업로드 카드(파일 input + 이름 input) + 카드별 삭제 버튼
+   - sessionStorage 패턴으로 선택 location id 영속화 X — 등록 자체는 서버 영속이므로 단순 fetch + setState
+
+### 데이터 모델 결정
+
+#### Mongo 컬렉션 `character_locations` (신규)
+```
+{
+  _id: ObjectId,           # 자동 생성
+  user_id: str,            # PostgreSQL 유저 UUID 문자열 (auth 와 동일)
+  name: str,               # 사용자 지정 장소 이름 (e.g., "한강공원 노을")
+  object_name: str,        # MinIO 경로
+  created_at: datetime,
+}
+```
+인덱스: `{ user_id: 1, created_at: -1 }`
+
+#### MinIO 경로
+`characters/{user_id}/locations/{location_id}.{ext}`
+- `{location_id}` 는 ObjectId hex 또는 UUID(8자리) — ObjectId hex 사용 (Mongo 와 일관)
+
+#### 기존 doc 수정
+- `mv_jobs` 에 신규 필드: `user_location_snapshot: { id, name, object_name } | null`
+- `tracks` 에는 저장 안 함 (커버 생성 시점만 사용. MV 생성 시점에 다시 선택)
+
+### 신규 REST API
+
+#### POST /api/character/locations
+- multipart: `file: UploadFile`, `name: str` (Form)
+- validate: ext in ALLOWED_IMAGE_EXT, size <= 10MB, name 1~50자
+- 저장: MinIO `characters/{user_id}/locations/{loc_id}{ext}` + Mongo insert
+- 응답: `{ id, name, object_name, preview_url }`
+
+#### GET /api/character/locations
+- 응답: `{ locations: [ { id, name, object_name, preview_url, created_at } ] }`
+- 정렬: created_at desc
+
+#### DELETE /api/character/locations/{location_id}
+- ownership 검증 (user_id 일치)
+- MinIO + Mongo 양쪽 정리
+- 응답: `{ message }`
+
+#### 미리보기 — 기존 GET /api/character/preview/{object_name:path} 재사용
+- 인증 없이 경로로 조회 (이미지 응답)
+
+### 변경 매트릭스
+
+| # | 영역 | 파일 | 변경 내용 |
+|---|------|------|-----------|
+| B1 | 신규 헬퍼 | `app/services/location_prompt.py` | SSOT — `anchor_clause(kind, name)` (4 변종 문구) |
+| B2 | 라우트 | `app/routes/character.py` | location CRUD 3개 엔드포인트 추가 (list/create/delete) |
+| B3 | 라우트 | `app/routes/upload.py` | `GenerateCoverRequest.location_id`, location 로드 후 cover_generator 에 전달 |
+| B4 | 서비스 | `app/services/cover_generator.py` | `generate_cover_image(... user_location_image_bytes, user_location_name)` 추가 + 4분기 + inlineData 첨부 |
+| B5 | 라우트 | `app/routes/mv.py` | `CreateMVRequest.location_id`, `user_location_snapshot` 빌드 후 job_doc 저장 |
+| B6 | 서비스 | `app/services/mv_generator.py` | (a) 시나리오 LLM system_prompt locations 규칙에 anchor 주입; (b) 씬 분해 템플릿 3종에 ABSOLUTE RULE 주입; (c) `generate_scene_image` 에 anchor clause 안전망 |
+| B7 | 서비스 | `app/services/mv_pipeline.py` | `run_phase1_5_assets` 에서 user_location_snapshot 있으면 `@location1` 자동생성 SKIP + 사용자 PNG 자산화; `@location2/3` 생성 시 style_ref 전달 |
+| B8 | 서비스 | `app/services/mv_assets.py` | `generate_location_sheet_asset(... style_ref: Optional[bytes])` 인자 추가 + 프롬프트 한 줄 |
+| F1 | API 클라 | `frontend/src/api/index.js` | `listMyLocations`, `createLocation`, `deleteLocation`, `locationPreviewUrl` 4개 신규 |
+| F2 | 페이지 | `frontend/src/pages/MyMusicPage.jsx` | 캐릭터 탭에 "내 장소" 섹션 (갤러리 + 업로드 카드 + 삭제) |
+| F3 | 페이지 | `frontend/src/pages/UploadPage.jsx` | 커버 생성 폼에 장소 선택 라디오 + 미리보기 + `generateCover/createMV` 에 `location_id` 전달 |
+| F4 | 스타일 | `frontend/src/pages/MyMusicPage.css` | 장소 갤러리 카드 스타일 |
+| F5 | 스타일 | `frontend/src/pages/UploadPage.css` | 장소 선택 라디오 카드 스타일 |
+
+### Anchor Clause 문구 (SSOT)
+
+#### `phase1_scenario` (시나리오 LLM 의 `## locations 규칙` 블록 끝에 append)
+```
+- ⭐ location1 은 사용자가 미리 지정한 주인공 캐릭터 장소 "{name}" 입니다.
+  서사의 60% 이상이 이곳에서 일어나도록 설계하세요.
+- location2/location3 은 필요할 때만 추가하되, location1 의 시간대·라이팅·색감을 공유해야 합니다.
+- location1 의 description 은 "{name}" 의 분위기를 반영해서 1-2문장 한국어로 작성하되,
+  다른 장소로 대체하지 마세요.
+```
+
+#### `phase1_scenes` (씬 분해 템플릿 3종에 ABSOLUTE RULE 블록으로 추가)
+```
+## ABSOLUTE RULE — USER LOCATION ANCHOR
+
+`@location1` is the user-provided real location named "{name}" where the protagonist primarily appears.
+- AT LEAST 60% of scenes MUST use @location1 as their setting (write @location1 explicitly in image_prompt).
+- You MAY introduce @location2 and/or @location3 only if narratively essential (transitions, contrast).
+- Secondary locations MUST share @location1's time of day, lighting direction, and dominant color tone.
+- NEVER describe locations as plain text ("a cafe", "her room") — always use @locationN tokens.
+```
+
+#### `phase2_image` (generate_scene_image prompt 끝에 안전망)
+```
+USER LOCATION REFERENCE: among the attached references, the @location1 image shows the
+real-world location "{name}" where the protagonist appears in this song. Match its setting,
+architecture, lighting and color tone exactly. Do NOT invent a different place.
+```
+
+#### `cover` (커버 [A]/[B] 분기 끝에 append)
+```
+The {subject} appears at the location shown in the additional reference image ("{name}").
+The cover scene MUST be set there — match its architecture, lighting, time of day, and color tone.
+```
+(`subject` = "protagonist" if has_character else "subject of this image")
+
+### 테스트 계획 (Tester)
+
+#### 백엔드 단위
+- TT104: POST /api/character/locations 정상 — multipart upload, 200 + `{id, name, object_name, preview_url}` 반환. MinIO 저장 + Mongo insert 검증.
+- TT105: GET /api/character/locations — 빈 배열 / 1+ 항목 정렬 검증.
+- TT106: DELETE /api/character/locations/{id} — 본인 location 만 삭제. 다른 유저 ID 로 시도 → 404.
+- TT107: 잘못된 확장자 (.gif) → 400. 사이즈 초과 → 400. 빈 파일 → 400.
+
+#### 통합 — 커버 생성
+- TT108: location_id=null → 기존 동작 유지 (회귀 무).
+- TT109: location_id 지정 → 응답 200 + 생성된 커버에 사용자 장소 분위기 반영. MinIO 에서 cover_generator 호출 시 inlineData 가 2개(character + location) 또는 1개(character 없으면 location 만) 동봉됐는지 로그 확인.
+
+#### 통합 — MV 생성 (Mode B 검증)
+- TT110: location_id 지정 + 가사/제목 부여 → MV 잡 생성 → Phase 1 시나리오 LLM 응답에 `locations.location1.name` = 사용자 입력 이름 매치 확인.
+- TT111: Phase 1 씬 분해 응답 검증 — 60%+ 씬이 image_prompt 안에 `@location1` 토큰 포함하는지 카운트.
+- TT112: Phase 1.5 assets 검증 — `assets.@location1.object_name` 이 사용자 location MinIO 경로와 동일(또는 복사된 자산 경로)인지. `@location2/3` 자동생성된 PNG 가 사용자 이미지의 톤(라이팅·색감)을 따르는지 시각 확인.
+- TT113: Phase 2 씬 이미지 — 각 씬이 `@locationN` 토큰에 맞는 assets[key].object_name 의 bytes 를 ref 로 첨부했는지 로그 확인.
+
+#### 회귀
+- TT114: location_id 미지정 시 v36 outfit + v37 sanitizer + v38 personality + v39 비트/주인공샷 + v41 Nano Banana 단일 경로 모두 무회귀.
+- TT115: `/api/character/me`, `/api/character/personality-tags`, `/upload/generate-cover` (loc 없이), `/mv/create` (loc 없이), `/character/save`, `/character/upload-original-photo` 모두 200 회귀 검증.
+- TT116: 사용자가 특정 곡엔 location 선택, 다른 곡엔 미선택 → 곡별로 독립 동작.
+
+#### 프론트엔드 통합
+- TT117: 캐릭터 탭에서 장소 업로드 → 갤러리에 즉시 표시 + 미리보기 정상.
+- TT118: 갤러리에서 삭제 → MinIO + Mongo 양쪽 사라짐 + UI 갱신.
+- TT119: 업로드 페이지에서 장소 선택 → 큰 미리보기 표시 → 커버 생성 → location 적용된 커버 반환.
+- TT120: "사용 안함" 옵션 → location_id null 전송 → 기존 동작.
+
+### 체크리스트
+
+- [ ] B1 location_prompt.py 신규 + anchor_clause 4 변종 문구
+- [ ] B2 character.py 에 locations CRUD 3개
+- [ ] B3 upload.py GenerateCoverRequest.location_id + 로드 흐름
+- [ ] B4 cover_generator.py 4분기 + inlineData
+- [ ] B5 mv.py CreateMVRequest.location_id + snapshot
+- [ ] B6 mv_generator.py 시나리오 LLM + 씬 분해 3종 + generate_scene_image
+- [ ] B7 mv_pipeline.py run_phase1_5_assets `@location1` SKIP + style_ref 전달
+- [ ] B8 mv_assets.py generate_location_sheet_asset style_ref 인자
+- [ ] F1 api/index.js 4개 신규 함수
+- [ ] F2 MyMusicPage.jsx 장소 갤러리 섹션
+- [ ] F3 UploadPage.jsx 장소 선택 + 미리보기 + 전송
+- [ ] F4 MyMusicPage.css 장소 카드 스타일
+- [ ] F5 UploadPage.css 장소 선택 카드 스타일
+- [ ] Tester TT104~TT120 PASS
+- [ ] REPORT.md v42 append
+
+---
+
+## v43 — 2026-05-07 — Beat-aligned 씬 분할 (madmom downbeat 기반) + Whisper/Demucs 제거 + ffmpeg trim 후처리
+
+### 요청 작업
+- v39 "비트 정렬 컷" 미작동 문제 해결: 실제로는 Whisper 가사 줄 끝을 컷 후보로 사용 중이었음(`mv_pipeline.py:408 _split_long_section`). beats 인자는 max_clip 초과 시 fallback 으로만 쓰여 거의 트리거되지 않음. `audio_utils.py:152 downbeats = beats[::4]` 또한 단순 stride 로 다운비트가 아님.
+- **madmom 기반 진짜 다운비트 추출 + 다운비트 컷 우선 알고리즘** 으로 교체.
+- 자막용 보컬 분리(Demucs) + Whisper STT 제거 (Policy "Option B"): Suno 트랙은 Suno API 타임스탬프, 직접 업로드 트랙은 자막 미부여(MV 자체는 비트 분할로 정상 생성).
+- 모델별 정수 초 그리드(kling 5/10, seedance 4~15, veo 4/6/8) → ffmpeg trim 후처리로 실제 scene_duration 정확히 맞춤.
+
+### Plan verification findings (사전 코드 분석, 0단계, 2026-05-07 검증)
+
+#### 백엔드 — 검증된 사실
+
+1. `app/services/audio_utils.py` 총 161줄. `detect_beats(audio_bytes, downbeat_every=4)` 함수 line 86~161. librosa `beat_track` 호출 후 `beats[::4]` 단순 stride 로 downbeats 결정 (line 152) — **실제 다운비트 검출이 아님**.
+
+2. `app/services/mv_pipeline.py` 총 2977줄.
+   - line 400~405: `MAX_CLIP_SEC=15.0`, `TARGET_CLIP_SEC=10.0`, `MV_MODEL_MAX_CLIP={"veo":8.0,"kling":10.0,"seedance":10.0}`.
+   - line 408~553: `_split_long_section(sec, whisper_segments, lyrics_lines, beats=None, max_clip=15)` — Whisper segment end 를 1차 컷 후보로 사용. beats 는 line 547~551 의 max_clip cap 분기에서만 활용됨.
+   - line 556~598: `_apply_max_clip_cap(clips, beats, max_clip)` — `_split_long_segment` 호출하여 비트 정렬 재분할.
+   - line 601~674: `_split_long_segment(start_t, end_t, beats, max_clip)` — greedy beat 컷.
+   - line 677~684: `__main__` 자체 테스트 블록.
+   - line 1006~1226: Phase 1a — `whisper_segments=None` 초기화, Suno timestamps fetch (line 1069~1089), Demucs 보컬 분리 (line 1138~1164), Whisper 호출 (line 1167~1171).
+   - line 1212: `_save_data["whisper_segments"] = whisper_segments` 로 Mongo 저장.
+   - line 1254: `_ws_segments = whisper_segments if whisper_segments else job.get("whisper_segments", [])`.
+   - line 1288~1294: `clips = _split_long_section(sec, _ws_segments, lyrics_lines, beats=job.get("beats"), max_clip=_max_clip)` — **여기가 v43 의 분할 호출 사이트**.
+   - line 2167~2197: `start_scene_video_kling` / `start_scene_video_seedance` / `start_scene_video` (Veo) 호출.
+   - line 2410, 2460: Phase 3.5 lipsync 보컬 분리에 demucs 호출.
+   - line 2509, 2594, 2887: 자막 ASS 생성 시 `whisper_segments` 사용 — **변수 rename 필요**.
+
+3. `app/services/whisper_service.py` 존재. `get_lyrics_timestamps`, `get_full_audio_timestamps` 두 함수. **삭제 대상**.
+
+4. `app/services/demucs_service.py` 존재. `enhance_vocal_demucs(audio_bytes, file_name)`. **MV 파이프라인에서는 제거**, 단 `app/routes/vocal_repair.py:183` 가 별개 사용자 기능에서 호출 — 파일 자체 삭제하면 회귀 발생. **결정: `demucs_service.py` 파일은 유지하되 MV 경로(mv_pipeline.py + mv.py)에서만 import 제거**. `requirements.txt` 의 `demucs` 도 vocal_repair 가 사용하므로 유지.
+
+5. `app/services/mv_generator.py:2570` `start_scene_video(scene_description, image_bytes, video_prompt, lyrics_segment, scene_type)` — Veo. **duration 인자 없음** (referenceImages 사용 시 8초 고정, line 2604 주석). 호출 사이트는 duration 안 넘김.
+   - `app/services/kling_video_generator.py:63` `start_scene_video_kling(prompt, image_bytes, prev_scene_image_bytes, character_image_bytes, lyrics_segment, scene_type, duration=10.0, video_prompt)`.
+   - `app/services/seedance_video_generator.py:28` `start_scene_video_seedance(prompt, image_bytes, video_prompt, lyrics_segment, scene_type, duration=10.0, audio_bytes)`.
+
+6. `app/routes/mv.py` 총 1862줄. `whisper_segments` 참조 line 926, 1561. demucs 참조 line 1672~1673.
+
+7. `app/routes/vocal_repair.py:183` 별도 기능에서 demucs 사용 (MV 와 무관) — 영향권 외.
+
+8. `backend_9004/requirements.txt` 29줄. line 27 `demucs`, line 28 `librosa>=0.10`. **librosa 는 audio_utils 외 잠재 사용처 없으나 madmom fallback 으로 보존**.
+
+#### 환경 검증 (Python 3.11.15)
+
+9. `backend_9004/venv/bin/python` = Python 3.11.15. `librosa==0.11.0` 설치 확인. `madmom` 미설치.
+
+10. **madmom 설치 시도 결과 (사전 검증 완료):**
+    - `pip install 'madmom @ git+https://github.com/CPJKU/madmom.git@main'` — `Cython` 미설치로 metadata 생성 실패.
+    - `pip install Cython numpy` 선행 후 `--no-build-isolation` 으로 재시도 → `madmom-0.17.dev0` (commit `27f032e`) wheel 빌드 성공 (26MB). `mido-1.3.3` dep 자동 설치.
+    - `imageio-ffmpeg` 설치하여 ffmpeg 바이너리 확보(시스템 PATH 에 ffmpeg 없음).
+    - 검증: 120 BPM 16초 클릭트랙 in-memory 생성 → `madmom.audio.signal.Signal(y, sample_rate=44100, num_channels=1)` 로 wrap → `RNNDownBeatProcessor` + `DBNDownBeatTrackingProcessor(beats_per_bar=[3,4], fps=100)` → **추정 BPM 120.00, downbeats 매 2.0초 (4박자 × 0.5s)** — 정확.
+    - **결론: madmom 설치 가능. fallback(librosa onset+plp) 불필요**. requirements.txt 에 git URL 추가 + Cython 빌드 dep 추가.
+
+### 알고리즘 — `_split_by_downbeats`
+
+```
+def _split_by_downbeats(section, downbeats, beats, max_clip, lyric_timestamps, lyrics_lines):
+    sec_start, sec_end = section["start"], section["end"]
+    label = section["label"]
+    sec_dur = sec_end - sec_start
+
+    if sec_dur <= max_clip + 1e-6:
+        # 단일 클립
+        return [{section, sec_start, sec_end, lyrics_segment=join(lyrics_lines)}]
+
+    # 1. 섹션 범위 내 다운비트 후보
+    inner_db = sorted(b for b in downbeats if sec_start < b < sec_end)
+    inner_beats = sorted(b for b in beats if sec_start < b < sec_end)
+
+    chunks = []
+    cursor = sec_start
+    while sec_end - cursor > max_clip + 1e-6:
+        target = cursor + max_clip
+        # 1차 후보: 다운비트
+        cands = [b for b in inner_db if cursor < b <= target]
+        if not cands:
+            # 2차 후보: 일반 비트 (다운비트 간격 > max_clip 인 저BPM 곡 보정)
+            cands = [b for b in inner_beats if cursor < b <= target]
+        if not cands:
+            # 3차: 균등 분할 (남은 구간만)
+            remaining = sec_end - cursor
+            n = ceil(remaining / max_clip)
+            step = remaining / n
+            for j in range(n):
+                a = cursor + step*j
+                b = cursor + step*(j+1) if j < n-1 else sec_end
+                chunks.append((a, b))
+            cursor = sec_end
+            break
+        # 가장 늦은 후보를 컷 (= max_clip 한도 내 최장 클립)
+        cut = max(cands)
+        chunks.append((cursor, cut))
+        cursor = cut
+    if cursor < sec_end - 1e-6:
+        chunks.append((cursor, sec_end))
+
+    # 2. 가사 분배: lyric_timestamps 와 시간 겹치는 줄 텍스트 모음
+    out = []
+    for i, (a, b) in enumerate(chunks):
+        seg_texts = []
+        for ls in (lyric_timestamps or []):
+            if ls["end"] > a + 0.1 and ls["start"] < b - 0.1:
+                seg_texts.append(ls["text"])
+        # lyric_timestamps 비어있으면 lyrics_lines 균등 분배 fallback
+        if not seg_texts and lyrics_lines:
+            n = len(chunks); per = max(1, len(lyrics_lines)//n)
+            li = i * per
+            le = li + per if i < n - 1 else len(lyrics_lines)
+            seg_texts = lyrics_lines[li:le]
+        sec_name = label if len(chunks) == 1 else f"{label}-{i+1}"
+        out.append({"section": sec_name, "start": round(a,3), "end": round(b,3),
+                    "lyrics_segment": "\n".join(seg_texts)})
+    return out
+```
+
+### 변경 매트릭스
+
+| # | 파일 | 변경 |
+|---|------|------|
+| B1 | `backend_9004/requirements.txt` | `demucs` 라인 유지(vocal_repair 사용). `madmom @ git+https://github.com/CPJKU/madmom.git@main` 추가. `Cython` (build dep) + `imageio-ffmpeg` 추가. `librosa>=0.10` 보존. |
+| B2 | `backend_9004/app/services/audio_utils.py` | `detect_beats` (line 86~161) 전면 재작성. ffmpeg(또는 imageio_ffmpeg) 로 22050Hz mono PCM 변환 → `madmom.audio.signal.Signal` wrap → `RNNDownBeatProcessor` + `DBNDownBeatTrackingProcessor(beats_per_bar=[3,4], fps=100)`. 반환은 동일 shape `{tempo, beats, downbeats}` 유지. 예외 시 `{}` 반환. |
+| B3 | `backend_9004/app/services/mv_pipeline.py` | (a) line 408~684 `_split_long_section` / `_apply_max_clip_cap` / `_split_long_segment` / `__main__` 블록 전체 삭제. (b) `_split_by_downbeats(section, downbeats, beats, max_clip, lyric_timestamps, lyrics_lines) -> list[dict]` 신규 추가. (c) line 1288 호출 사이트를 `_split_by_downbeats(sec, job.get("downbeats") or [], job.get("beats") or [], _max_clip, _ws_segments, lyrics_lines)` 로 교체. |
+| B4 | `backend_9004/app/services/mv_pipeline.py` | `_build_sections_from_whisper` 반환 직후(Phase 1a, line 1102/1177 부근) `music_sections` 의 각 section.start/end 를 가장 가까운 downbeat 으로 snap. 규칙: start 는 `≤ original` 중 가장 큰 downbeat, end 는 `≥ original` 중 가장 작은 downbeat. 거리 > 1.5초면 미스냅. 새 헬퍼 `_snap_sections_to_downbeats(sections, downbeats)` 도입. |
+| B5a | `backend_9004/app/services/mv_pipeline.py` | 신규 헬퍼 `_request_video_duration(scene_dur: float, model: str) -> int`. kling: `5 if d<=5 else 10`. seedance: `min(15, max(4, ceil(d)))`. veo: `4 if d<=4 else (6 if d<=6 else 8)`. line 2167(kling) / 2187(seedance) 에 `duration=` 인자로 전달. veo(2197)는 referenceImages 사용 시 8초 고정이므로 호출부 변경 없음(주석으로 명시). |
+| B5b | `backend_9004/app/services/mv_pipeline.py` | 신규 헬퍼 `_trim_video_to_duration(video_bytes: bytes, target_dur: float) -> bytes` — `ffmpeg -y -i in -t {target_dur} -c:v libx264 -preset fast -crf 23 -an out.mp4`. 비디오 다운로드 직후 (`download_video_kling`/`download_video_seedance`/`download_video` 호출 결과) MinIO 저장 전에 적용. 실패 시 원본 bytes 반환 + WARN 로그. |
+| B6 | `backend_9004/app/services/mv_pipeline.py` | (a) Whisper fallback 분기(line 1131~1203) 삭제 — Suno timestamps 만 사용. (b) Demucs 보컬 분리 분기(line 1138~1164, line 2410/2460) 제거. (c) `from .whisper_service import ...` import 제거(line 1167). (d) `from .demucs_service import enhance_vocal_demucs` 제거(line 1139, 2410). (e) 변수 `whisper_segments` → `lyric_timestamps` 전체 rename (line 1009, 1099, 1102, 1125, 1129, 1168, 1173, 1177, 1211~1212, 1254, 2509, 2594, 2887, 그리고 helper 인자 `_get_scene_timestamps`, `_build_sections_from_whisper`). (f) Mongo 저장 키 `whisper_segments` → `lyric_timestamps` (write 만 새 키, read 는 두 키 모두 backward-shim). |
+| B7 | `backend_9004/app/services/mv_pipeline.py` | `lyric_timestamps` 비었을 때(직접 업로드 트랙) 자막 burn-in 분기 skip. `has_subtitles: bool` job-level 플래그 Phase 1a 끝에서 set. line 2509(synclabs 후 자막 재적용), 2596(scene 별 ASS), 2901(전체 카라오케 ASS) 모두 `if has_subtitles:` 가드. 자막 없을 때는 `-c:v copy` 로 빠르게 concat. |
+| B8 | `backend_9004/app/routes/mv.py` | line 926, 1561 `whisper_segments` → `lyric_timestamps` rename (read 시점에 backward-shim: `job.get("lyric_timestamps") or job.get("whisper_segments") or []`). line 1670~1673 demucs 분기 제거 (Phase 3.5 lipsync 보컬 분리는 raw audio 그대로 사용). |
+| B9 | `backend_9004/app/services/whisper_service.py` | **파일 삭제**. (`mv_pipeline.py` + `mv.py` 외 사용처 없음 확인.) |
+| B10 | `backend_9004/app/services/demucs_service.py` | **파일 유지** — `vocal_repair.py:183` 가 사용. MV 경로에서만 import 제거. |
+| F1 | `frontend/src/pages/UploadPage.jsx` | 직접 업로드 트랙(no Suno generation_id) 의 MV 생성 시 안내문 1줄: "외부 업로드 트랙은 가사 자막이 표시되지 않습니다." 서버 응답의 `has_subtitles` 플래그 기반 노출. 검출 어려우면 백엔드가 MV 생성 응답에 플래그 포함하도록 통신. (선택, low priority — 백엔드 작업 후 결정) |
+
+### 데이터 스키마 변화
+
+- **MongoDB `mv_jobs` 컬렉션**:
+  - 기존 키 `whisper_segments` → 신규 키 `lyric_timestamps` (write 시 신규 키, read 는 둘 다 호환).
+  - 신규 키 `has_subtitles: bool` — Phase 1a 종료 시 `bool(lyric_timestamps)` 로 결정.
+  - 기존 키 `tempo`, `beats`, `downbeats` 는 동일하지만 **downbeats 의 정확도 향상** (madmom).
+
+- **API 응답 (`POST /api/mv/create`)**:
+  - 신규 필드 `has_subtitles: bool` 추가 (프론트 안내문 분기용).
+
+### 테스트 계획 (Tester)
+
+#### T1 — madmom 비트 검출 sanity
+- **T1a**: 120 BPM 16초 클릭트랙(in-memory numpy 생성) → `detect_beats` 호출. 기대: tempo ≈ 120 ±2, downbeats 간격 ≈ 2.0s ±0.05.
+- **T1b**: 90 BPM 12초 → tempo ≈ 90 ±2, downbeats 간격 ≈ 60/90×4 ≈ 2.667s ±0.1.
+- **T1c**: 빈 / 1초 미만 buffer → `{}` 반환 (예외 안 남).
+
+#### T2 — `_split_by_downbeats` 단위
+- **T2a**: section [0, 30], downbeats [0,2,4,…,28], max_clip=10 → 컷 at 10, 20 → 클립 3개 [0,10],[10,20],[20,30].
+- **T2b**: section [0, 30], downbeats [0,12], beats [0,1,2,…,29], max_clip=10 → 1차 후보 12 가 cursor+10=10 초과 → fallback 일반 비트 → 컷 at 10. 다음 cursor=10, 후보 downbeat=12 ≤ 20 → 컷 at 12. 다음 cursor=12, 후보 없음(downbeat 끝) → 일반 비트로 컷 at 22 → 마지막 클립 [22,30].
+- **T2c**: downbeats=[], beats=[] → 균등 분할 → ceil(30/10)=3 클립 각 10s.
+- **T2d**: section [0, 8], downbeats=[4], max_clip=10 → 단일 클립(분할 불필요).
+
+#### T3 — E2E (Suno 트랙)
+- 기존 Mongo 의 Suno 생성 곡 1개 선택 (audio_generation_id + suno_task_id 보유). MV 생성 → Phase 1a 완료 후 `mv_jobs` 도큐먼트 검사:
+  - `tempo`, `beats`, `downbeats` 정상 저장 (downbeats len > 0).
+  - `lyric_timestamps` 채워짐, `has_subtitles=True`.
+  - `music_sections` 의 각 start/end 가 downbeats 중 하나의 ±0.05 내(또는 1.5s 안에 downbeat 없어 미스냅).
+- Phase 1 완료 후 `scenes[].section_start/end` 가 모두 downbeats 와 ±0.05 내(분할 후 첫/끝 제외).
+- Phase 3 video status 확인 시 모델 API 가 받은 duration 인자가 정수(kling/seedance) 인지 로그 검증.
+- Phase 4 concat 전 각 scene 의 trim 후 길이 == `section_end - section_start` ±0.05.
+
+#### T3' — E2E (직접 업로드 트랙)
+- 업로드 페이지에서 MP3 직접 업로드 → MV 생성 → Phase 1a:
+  - `lyric_timestamps == []`, `has_subtitles == False`.
+  - `music_sections` 가사 섹션 균등 분할 fallback 으로 채워짐.
+  - 비트 분할 정상 (downbeats 기반).
+- Phase 5 합치기에서 자막 burn-in 미적용 (`-c:v copy` 빠른 경로).
+
+#### T4 — 회귀
+- **T4a**: 백엔드 import test: `python -c "from app.services import mv_pipeline; from app.services import audio_utils; print('OK')"` — `whisper_service`/`demucs_service` MV import 제거 후 ImportError 없음.
+- **T4b**: `vocal_repair.py` import 무회귀 확인 (`demucs_service` 살아있음).
+- **T4c**: 프론트 `npm run build` PASS.
+- **T4d**: v37(`@characterN`), v38(personality), v39(beat-cut intent — 이제 진짜 동작), v40-9(Nano Banana), v41(LoRA removal), v42(location anchor) 핵심 엔드포인트 200 회귀.
+- **T4e**: 기존 `whisper_segments` 키만 가진 옛날 Mongo job → backward-shim 으로 자막 정상 burn-in.
+
+### 체크리스트
+
+- [ ] B1 requirements.txt madmom + Cython + imageio-ffmpeg 추가
+- [ ] B2 audio_utils.py detect_beats madmom 재작성
+- [ ] B3 mv_pipeline.py `_split_by_downbeats` 신규 + 호출 사이트 교체 + 옛 3 함수 + __main__ 삭제
+- [ ] B4 mv_pipeline.py 섹션 경계 downbeat snap (`_snap_sections_to_downbeats`)
+- [ ] B5a mv_pipeline.py `_request_video_duration` + kling/seedance 호출 시 정수 전달
+- [ ] B5b mv_pipeline.py `_trim_video_to_duration` + 비디오 저장 전 적용
+- [ ] B6 mv_pipeline.py whisper/demucs 분기 + import 제거 + `whisper_segments` → `lyric_timestamps` rename + Mongo backward-shim
+- [ ] B7 mv_pipeline.py 자막 분기 `has_subtitles` 가드
+- [ ] B8 routes/mv.py rename + demucs import 제거
+- [ ] B9 whisper_service.py 삭제
+- [ ] B10 demucs_service.py 보존 (vocal_repair 사용)
+- [ ] F1 UploadPage.jsx 직접 업로드 자막 미부여 안내 (옵션)
+- [ ] Tester T1~T4 PASS
+- [ ] REPORT.md v43 append
+
+---
+
+## v44 — 2026-05-07 — 곡 생성 시 백그라운드 비트 추출 + 업로드 페이지 비트 시각화
+
+### 요청 사항
+1. 곡 생성(Suno) 또는 직접 업로드가 끝나는 즉시 **백그라운드로 비트 추출**을 수행하고 결과를 트랙/생성 레코드에 영구 저장한다 (Option A).
+2. `/upload` 페이지의 음악 플레이어 아래에 **WaveSurfer 기반 파형 + 비트 마커**를 보여주어 사용자가 비트 트래커의 정확도를 시각/청각적으로 검증할 수 있게 한다.
+3. MV 생성 시에는 저장된 비트를 재사용하여 매번 madmom 을 다시 돌리지 않는다.
+
+### Plan verification findings (Step 0 — 코드 직접 확인 결과)
+
+대상 백엔드: `backend_9004` 만 사용 (9001/9002/9003/legacy 손대지 않음).
+
+#### F-1. Suno 생성 완료 지점 — `app/services/suno_generator.py:281-287`
+```python
+await _update_progress(mongo_db, generation_id, 100, "completed", {
+    "result_audio_url": object_name,
+    "output_files": output_files,
+    "completed_at": datetime.utcnow(),
+    "suno_task_id": task_id,
+    "suno_audio_id": suno_data.get("id", ""),
+})
+```
+- 이 한 번의 `_update_progress(..., status="completed", ...)` 호출이 끝나는 직후가 **유일한 완료 지점**이다 (폴링 루프 라인 201~228 안에서 SUCCESS 시 탈출 후 라인 281 까지 직선 진행).
+- 호출자: `app/routes/generate.py:_run_music_generation` (라인 93~138) — 신규 event loop 안에서 `generate_music_suno` 를 await. 백그라운드 트리거 추가는 `generate_music_suno` 내부(완료 update 직후) 또는 wrapper `_run_music_generation` 의 `loop.run_until_complete` 직후 둘 다 가능. **선택: `generate_music_suno` 내부에서 `asyncio.create_task` 로 fire-and-forget** — 이렇게 하면 별도 모델(예: 미래의 wondera 등)을 추가해도 동일 패턴 재사용 가능하고, _run_music_generation 의 `loop.close()` 가 백그라운드 태스크를 중단시키는 사고를 피할 수 있다 (아래 F-1' 참고).
+- F-1': `_run_music_generation` 은 라인 138 에서 `loop.close()` 하므로, **그 loop 안에서 `create_task` 로 띄운 비트 추출 태스크는 close 시점에 잘려나간다.** → 비트 추출은 같은 loop 안 `create_task` 로는 안 되고, **별도 동기 블로킹**(`loop.run_until_complete` 안에서 await) 또는 **글로벌 main loop 에 schedule** 하는 두 옵션이 있다. 가장 단순한 안전 경로는 **`generate_music_suno` 가 끝나기 전에 `await detect_beats_for_generation(...)` 를 동일 loop 에서 await** 하는 것 — 이는 사용자 응답(이미 `status=completed` 가 DB 에 쓰인 상태) 을 막지 않는다(폴링 클라이언트가 status 만 보고 audio_url 사용 가능). 다만 비트 status 는 별도 컬럼이라 별개로 polling 가능. **B1 결정: `_run_music_generation` 의 `loop.run_until_complete(generate_music_suno(...))` 직후 한 줄을 더 추가하여 같은 loop 에서 `loop.run_until_complete(detect_beats_for_generation(generation_id))` 호출** — 백그라운드 태스크 lifetime 문제 없음, BackgroundTasks 컨텍스트도 유지(이미 _run_music_generation 자체가 BackgroundTasks 안에서 실행).
+
+#### F-2. 트랙 직접 업로드 완료 지점 — `app/routes/tracks.py:455`
+```python
+mongo = get_mongo()
+await mongo.tracks.insert_one(doc)
+return _serialize_track(doc)
+```
+- `upload_track` (라인 364) — multipart 업로드 → MinIO put → mutagen duration 추출 → Mongo insert.
+- `upload_from_generation` (라인 473) — Suno 생성을 트랙으로 변환 (라인 582 insert).
+- 두 케이스 모두 **트랙은 MongoDB `tracks` 컬렉션** 에 저장된다 (Postgres 가 아님 — 사양서의 "Postgres tracks 테이블" 가정은 잘못됨). `bpm` 등 메타도 doc 안에 직접.
+- → **저장 결정**: `tracks` 컬렉션에 새 필드 `beats_status`, `tempo`, `beats[]`, `downbeats[]`, `beats_started_at`, `beats_completed_at`, `beats_error` 를 직접 추가. 별도 컬렉션 불필요. (generations 컬렉션과 동일 스키마.)
+- 트리거 위치: 두 엔드포인트 모두 insert 직후, response 반환 직전에 `BackgroundTasks` 활용. 단 `upload_from_generation` 의 경우 **이미 generations 에 비트가 있을 수 있으므로**, 그쪽 `tempo`/`beats`/`downbeats` 가 있으면 단순 복사하고 추출은 스킵.
+
+#### F-3. `detect_beats` 시그니처 — `app/services/audio_utils.py:86`
+```python
+async def detect_beats(audio_bytes: bytes, downbeat_every: int = 4) -> dict:
+    # 반환: {"tempo": float, "beats": list[float], "downbeats": list[float]} 또는 {}
+```
+- v43 madmom 기반 — 평균 8~25초 (3분 곡). 파일 시스템에 ffmpeg 호출하므로 GIL 풀림.
+- 실패 시 `{}` 반환 (예외 미발생). 빈 결과 시 `beats_status="failed"`, `beats_error="madmom returned no beats"` 로 기록 약속.
+
+#### F-4. MV 파이프라인 비트 호출 지점 — `app/services/mv_pipeline.py:1011-1033`
+- Phase 1a 안에서 **무조건** `detect_beats(audio_bytes)` 호출 후 mv_jobs 에 저장. 직후 라인 1099 `_snap_sections_to_downbeats` 에서 사용.
+- B4 변경: detect_beats 호출 직전에 `audio_generation_id` 또는 (트랙 기반 jobs 라면) `audio_track_id` 로 stored beats lookup → 있으면 그대로 _beat_update 에 채우고 detect_beats 스킵. 로그에 `"reused stored beats from generation/track {id}"` 출력.
+- mv_pipeline 은 audio source 식별을 위해 `_resolve_audio_object_name(job, mongo_db)` 를 사용 — job 에 `audio_generation_id` 가 있을 수 있다 (라인 1039). 트랙 기반 source 식별은 `job.get("audio_track_id")` 로 가능 (mv 라우트 검토 필요 — B4 sub-task).
+
+#### F-5. 프론트엔드 `/upload` 페이지 구조 — `frontend/src/pages/UploadPage.jsx`
+- 라인 67: `audioFile` (File 객체, 직접 업로드용), `fromGeneration` (generation_id, AI 생성 연결용).
+- 라인 823~903: 오디오 파일 입력 영역 (audio player at line 863~872). `<audio src={api.generationStreamUrl(fromGeneration)} />` 로 재생.
+- 라인 906~948: 제목/장르/AI 도구 메타 입력 필드.
+- 라인 949: "커버 이미지 (선택)" 시작 — **여기 위(라인 904 직후)에 `<BeatTrackView>` 를 삽입**.
+- 직접 업로드 케이스에서는 **트랙이 아직 없음** — File 객체뿐. 따라서 BeatTrackView 는:
+  - `fromGeneration` 가 있으면 → `generation_id` 로 폴링.
+  - 직접 업로드 (`audioFile`) 케이스 → **트랙 업로드 전이라 ID 가 없음**. 이 경우는 v44 범위에서 **"업로드 후 페이지에서 표시"** 가 아니라 **"이 화면에서는 표시 못함"** 으로 확정 (직접 업로드는 즉시 트랙 생성하지 않고 메타 입력 후 submit 시 생성되는 흐름이므로, 비트 시각화는 fromGeneration 케이스에 한정). → frontend-dev 는 `fromGeneration` 가 truthy 일 때만 BeatTrackView 렌더.
+  - 다만 **트랙 업로드 직후**(다른 페이지에서) 트랙 ID 로 BeatTrackView 를 보고 싶을 수 있으므로 `getTrackBeats(trackId)` 엔드포인트는 만들어 둔다 (향후 트랙 상세 페이지 활용 가능).
+
+#### F-6. API 클라이언트 — `frontend/src/api/index.js`
+- 라인 1~14: `axios.create` 인스턴스 `API`. 모든 호출은 이 인스턴스를 통해서. baseURL = `${proto}//${host}:9004/api`.
+- 신규 함수 추가 위치:
+  - `getGenerationBeats(genId)` → `API.get('/generate/${genId}/beats')`
+  - `getTrackBeats(trackId)` → `API.get('/tracks/${trackId}/beats')`
+  - `retryGenerationBeats(genId)` / `retryTrackBeats(trackId)` (재시도 버튼)
+- WaveSurfer 의 audio source 는 `api.generationStreamUrl(genId)` (이미 존재, 라인 417~420) 또는 `api.coverPreviewUrl` 패턴을 그대로 사용. 별도 함수 추가 불필요.
+
+#### F-7. 서버 재시작 복구 — `app/main.py:30-40`
+- 이미 v43 에서 `mv_jobs` 의 stuck 상태(`splitting/generating_images/...`)를 lifespan startup 에서 `paused` 로 reset 하는 패턴 존재.
+- B1/B2 후 동일 패턴으로 `generations` 와 `tracks` 컬렉션의 `beats_status="running"` 인 도큐먼트를 **`pending` 으로 reset 후 즉시 백그라운드 재추출 트리거** 하도록 lifespan 에 추가. (전부 fire-and-forget 으로 띄우면 startup 지연 없음.)
+
+### 아키텍처 결정
+
+#### 1. 저장 위치
+- **generations 컬렉션** (Mongo): 신규 필드 직접 추가.
+  - `beats_status`: `"pending"|"running"|"completed"|"failed"`
+  - `tempo`: float (BPM)
+  - `beats`: List[float] (초 단위)
+  - `downbeats`: List[float] (초 단위)
+  - `beats_started_at`, `beats_completed_at`: datetime
+  - `beats_error`: str (truncated 200 chars)
+- **tracks 컬렉션** (Mongo): 동일 스키마 추가.
+- 별도 `track_beats` 컬렉션 만들지 않음 (트랙당 ~수백 float 라 doc 크기 무시 가능).
+
+#### 2. 백그라운드 작업 전략
+- Option I (asyncio.create_task) 채택. RQ/Celery 도입 안 함.
+- 두 패턴 사용:
+  - **Suno wrapper** (`_run_music_generation`): `generate_music_suno` 가 끝나면 동일 loop 안에서 `loop.run_until_complete(detect_beats_for_generation(gen_id))` 추가 호출. 이미 BackgroundTasks 컨텍스트라 사용자 요청 응답은 막지 않음.
+  - **트랙 업로드 라우트**: `BackgroundTasks.add_task(...)` 로 FastAPI 기본 패턴 사용. `_run_track_beat_extraction(track_id)` wrapper 가 신규 event loop 띄우고 `detect_beats_for_track` 실행.
+
+#### 3. 서버 재시작 복구
+- `app/main.py` lifespan 안 mv_jobs 복구 블록 직후에 추가:
+  ```python
+  # Recover stuck beat extractions
+  await mongo.generations.update_many(
+      {"beats_status": "running"},
+      {"$set": {"beats_status": "pending"}},
+  )
+  await mongo.tracks.update_many(
+      {"beats_status": "running"},
+      {"$set": {"beats_status": "pending"}},
+  )
+  # 다시 트리거 (fire-and-forget, startup 막지 않음)
+  pending_gens = await mongo.generations.find(
+      {"beats_status": "pending", "status": "completed", "result_audio_url": {"$ne": None}},
+      {"_id": 1},
+  ).to_list(length=200)
+  for g in pending_gens:
+      asyncio.create_task(detect_beats_for_generation(str(g["_id"])))
+  # tracks 도 동일 — audio_url 있으면 재트리거
+  ```
+
+### API 스펙
+
+#### 신규 엔드포인트
+
+**`GET /api/generate/{gen_id}/beats`** — generations 컬렉션 비트 정보
+- 응답: `{ "status": "pending"|"running"|"completed"|"failed", "tempo": float|null, "beats": [...], "downbeats": [...], "started_at": iso8601|null, "completed_at": iso8601|null, "error": str|null }`
+- 인증: `get_current_user`, generation 소유자만 (`gen_doc.user_id == current_user.id`).
+
+**`GET /api/tracks/{track_id}/beats`** — tracks 컬렉션 비트 정보
+- 응답: 동일 스키마.
+- 인증: 트랙은 공개될 수 있으므로 인증 옵션이지만, 비트 데이터는 작가 외 비공개 — `is_public` true 면 모두에게 허용 (트랙 자체가 공개니까), false 면 owner only.
+
+**`POST /api/generate/{gen_id}/beats/retry`** — 재시도
+- 권한: owner only, `status=completed` (생성 자체) 일 때만.
+- 동작: `beats_status="pending"` 으로 reset → fire-and-forget 트리거.
+
+**`POST /api/tracks/{track_id}/beats/retry`** — 동일 패턴.
+
+### 컴포넌트 설계 (`BeatTrackView.jsx`)
+
+**Props**
+- `audioUrl` (string, required): WaveSurfer 가 로드할 오디오 URL
+- `sourceType` (`"generation"|"track"`): 폴링 엔드포인트 선택
+- `sourceId` (string): generation_id 또는 track_id
+- `pollIntervalMs` (number, default 3000): 폴링 주기
+
+**내부 state**
+- `status`, `tempo`, `beats`, `downbeats`, `error`
+- `wavesurferRef`, `playing`, `currentTime`, `duration`
+- `zoom` (1~4), `metronomeOn` (default true), `metronomeVolume` (0~1, default 0.3)
+
+**렌더 분기**
+- `pending`/`running` → 로딩 패널 (스피너 + "비트 추출 중… 약 15초" + 진행도 estimate)
+- `failed` → 에러 메시지 + "다시 시도" 버튼 (`retryGenerationBeats`/`retryTrackBeats` 호출 후 status reset)
+- `completed` → WaveSurfer 파형 + 비트 마커 오버레이 + 컨트롤 패널
+
+**폴링 종료**
+- `status === "completed" || status === "failed"` 시 `clearInterval`.
+- 컴포넌트 unmount 시도 cleanup.
+
+**비트 마커 오버레이**
+- WaveSurfer 컨테이너 div 위에 `position: absolute` 로 vertical line 들 그림 (CSS 또는 inline SVG).
+- regular beat: 1px gray line; downbeat: 2px primary-color line.
+- "1 2 3 4" 카운트 라벨: `zoom >= 2.0` 일 때만 표시 (collision 방지).
+
+**Metronome (`utils/metronome.js`)**
+- `class Metronome { schedule(beats, downbeats, currentTime); start(); stop(); setVolume(v); }`
+- Web Audio API `AudioContext` + `OscillatorNode` (downbeat: 800Hz, regular: 1200Hz, 50ms gain ramp).
+- WaveSurfer 의 `audioprocess` 이벤트 또는 `currentTime` 변화에 hook.
+
+### 작업 분해
+
+#### 백엔드 (B1~B4)
+- **B1**: `app/services/audio_utils.py` 또는 신규 `app/services/beat_extraction.py` 에 `detect_beats_for_generation(gen_id)` / `detect_beats_for_track(track_id)` 추가. MinIO 에서 audio bytes 가져와 `detect_beats` 호출 후 Mongo update. status 전이 (pending→running→completed/failed) 처리. `_update_beat_status` 헬퍼 사용.
+- **B2**: `app/services/suno_generator.py` 의 `generate_music_suno` 완료 update(라인 281) 직후에 `await detect_beats_for_generation(generation_id)` 추가. (같은 loop 안 await — 라이프타임 안전.)  
+  `app/routes/tracks.py` `upload_track` (라인 364) 와 `upload_from_generation` (라인 473) 에 BackgroundTasks 인자 추가 + insert 직후 `background_tasks.add_task(_run_track_beat_extraction, str(track_id))`.  
+  `_run_track_beat_extraction(track_id)` wrapper 는 `_run_music_generation` 패턴(라인 93)과 동일 — 신규 loop 띄우고 `detect_beats_for_track` 호출.  
+  `upload_from_generation` 은 generations 에 이미 비트 있으면 복사해서 즉시 completed 로 저장 후 추출 스킵 (`if gen_doc.get("beats"): copy and skip`).
+- **B3**: `app/routes/generate.py` 에 `GET /{gen_id}/beats`, `POST /{gen_id}/beats/retry` 추가.  
+  `app/routes/tracks.py` 에 `GET /{track_id}/beats`, `POST /{track_id}/beats/retry` 추가.  
+  `frontend/src/api/index.js` 에 4개 함수 추가.
+- **B4**: `app/services/mv_pipeline.py:1011~1033` 에 stored-beat reuse 로직 추가. lookup 우선순위: `audio_generation_id` → generations doc → `audio_track_id` (있다면) → tracks doc. 둘 다 비어 있으면 기존대로 detect_beats 인라인 실행.  
+  `app/main.py` lifespan 에 stuck `beats_status="running"` reset + 자동 retrigger 블록 추가.
+
+#### 프론트엔드 (F1~F4)
+- **F1**: `frontend/package.json` 에 `wavesurfer.js@^7` 추가. `npm install wavesurfer.js`.
+- **F2**: `frontend/src/components/BeatTrackView.jsx` + `.css` 신규.
+- **F3**: `frontend/src/utils/metronome.js` 신규.
+- **F4**: `frontend/src/pages/UploadPage.jsx` 라인 904 직후 (오디오 필드 종료 후, 제목 필드 시작 전) `{fromGeneration && <BeatTrackView sourceType="generation" sourceId={fromGeneration} audioUrl={api.generationStreamUrl(fromGeneration)} />}` 삽입.
+
+### 테스트 계획 (Tester)
+
+| ID | 항목 | 검증 |
+|---|---|---|
+| **T1** | Suno 완료 시 백그라운드 트리거 | 새 generation 만들어 Suno 끝까지 → DB 에 `beats_status` 가 running→completed 로 변하고 `tempo`, `beats`, `downbeats` 채워짐 |
+| **T2** | 폴링 엔드포인트 | `GET /generate/{id}/beats` 가 status 전이 정상 반환, 권한 없는 사용자는 403 |
+| **T3** | 재시작 복구 | 추출 중 서버 kill → 재시작 → `beats_status="running"` → `pending` 으로 reset 후 자동 재트리거 → 결국 completed |
+| **T4** | UploadPage 시각화 | fromGeneration 케이스에서 BeatTrackView 렌더, pending→completed 전이 후 파형+비트 마커 표시 |
+| **T5** | 메트로놈 | 재생 시 비트 시점에 click 사운드, downbeat 와 일반 비트 음높이 다름, 토글/볼륨 동작 |
+| **T6** | WaveSurfer 줌 | zoom 1→4 변경 시 비트 마커 위치 정확 유지, 줌아웃 시 카운트 라벨 자동 숨김 |
+| **T7** | MV 파이프라인 reuse | stored beats 있는 generation 으로 MV 생성 → 로그에 "reused stored beats" 출력, Phase 1a 시간 단축 |
+| **T8** | 직접 업로드 트랙 추출 | `/tracks/upload` 후 `GET /tracks/{id}/beats` 폴링 → completed 도달, 데이터 유효 |
+| **T9** | 실패 케이스 | 1초 미만/무음 오디오 → `beats_status="failed"`, `beats_error` 채워짐, 재시도 버튼 동작 |
+| **T10** | 회귀 (v37~v43 + Vite build) | 백엔드 import smoke + 기존 라우트 200 + `npm run build` PASS |
+
+### 체크리스트
+
+- [x] B1 beat_extraction 서비스 (`detect_beats_for_generation`, `detect_beats_for_track`)
+- [x] B2 Suno 완료 직후 트리거 (`suno_generator.py`) + tracks upload 트리거 (`tracks.py` 두 라우트)
+- [x] B3 4개 신규 엔드포인트 (status 조회 2 + retry 2) + api/index.js 함수
+- [x] B4 mv_pipeline reuse + main.py lifespan 복구
+- [x] F1 wavesurfer.js 설치 (`npm install wavesurfer.js`)
+- [x] F2 BeatTrackView 컴포넌트
+- [x] F3 metronome 유틸
+- [x] F4 UploadPage 통합 (라인 904 위치)
+- [x] Tester T1~T10 PASS
+- [x] REPORT.md v44 append
+
+## v45 — 2026-05-07 — 사건 풍부 시나리오 LLM 2단계 + video_prompt 6개 템플릿 통합 + scenario narrative 표시
+
+### 요청 사항
+
+사용자 관찰: 현재 시나리오 LLM 출력이 **평면적**이다 — 주인공 캐릭터가 단순히 걷고 앉고 커피를 마시는 정도의 묘사만 반복되고, 외부 사건(trigger), 능동적 행동(action), 동기(motivation), 감정 변화(emotion_shift), 다른 캐릭터와의 상호작용이 거의 없다. 이를 종합적으로 개편한다.
+
+1. 시나리오 LLM 을 **2단계 호출 (E → B)** 로 재설계: Stage 1 = Brainstorm (톤 다른 4 후보), Stage 2 = Beat Sheet 구조화 (narrative 산문 1500~2500자 + 분리 필드 + events).
+2. Stage 2 출력은 **chain-of-thought 강제 순서** (narrative 먼저 → 분리 필드 추출 → events 배열 → self-verify) 로 구조화. **Few-shot 예시** 3개(발라드/댄스/힙합) 시스템 프롬프트 인라인.
+3. **Event 스키마**에 신규 필드 `motivation` 추가. `relationship` 값에 따라 `other_characters` 빈도 강제 (연인 50%↑, 친구/동료/가족 30%↑, 단독 0%). 첫·마지막 event props **motif 회수** 강제.
+4. Phase 1 두 번째 LLM (Scene-split) 이 `narrative` + 분리 필드 + events 모두 입력으로 받아 씬에 매핑. 씬 dict 에 `event_index` 필드 추가.
+5. **video_prompt 6 템플릿**(VEO/KLING/SEEDANCE × CHARACTER/FREE) 모두에 두 신규 placeholder 삽입: `{scene_event_block}`, `{emotional_core}`. 호출자 (`generate_video_prompts_from_images`) 가 포맷팅 주입.
+6. Mongo `mv_jobs` 컬렉션에 신규 필드 영속화: `scenario_narrative`, `scenario_premise`, `scenario_character_states`, `scenario_central_conflict`, `scenario_emotional_core`, `scenario_narrative_arc`, `scenario_events`, `scenario_brainstorm`, `scenes[].event_index`.
+7. Frontend (F1): UploadPage 의 시나리오 패널을 narrative + 분리 필드 collapsible + events 카드 그리드로 확장.
+
+대상 백엔드: `backend_9004` 만 (9001/9002/9003/legacy 손대지 않음). 브랜치 `backend`. git push 금지.
+
+### Plan verification findings (Step 0 — 코드 직접 확인 결과)
+
+#### F-1. video_prompt 6 템플릿 위치 — `app/services/mv_generator.py`
+- `VIDEO_PROMPT_VEO_CHARACTER` 라인 64~88, `VIDEO_PROMPT_VEO_FREE` 라인 90~112
+- `VIDEO_PROMPT_KLING_CHARACTER` 라인 114~139, `VIDEO_PROMPT_KLING_FREE` 라인 141~163
+- `VIDEO_PROMPT_SEEDANCE_CHARACTER` 라인 166~188, `VIDEO_PROMPT_SEEDANCE_FREE` 라인 190~210
+- 현재 모든 6 템플릿은 `{duration:.1f}` placeholder 한 개만 가짐. 호출자 `generate_video_prompts_from_images` (라인 223~349) 라인 251 에서 `system_prompt.format(duration=float(duration))` 호출.
+- v45 변경: 6개 모두에 `{scene_event_block}` + `{emotional_core}` 두 placeholder 추가, format 호출에 두 인자 추가.
+
+#### F-2. 시나리오 빌더 — `app/services/mv_generator.py`
+- `_build_scenario_prompts` (라인 592, legacy non-drama path — 거의 미사용)
+- `_build_drama_scenario_prompts` (라인 625~843): 현재 `characters`/`locations`/`scenario` 3 필드 JSON 출력. `scenario` 본문 길이 500~1000자.
+- `_parse_drama_scenario_json` (라인 846~932): 최소 파싱 + characters age/personality 정규화. `scenario` 50자 미만 시 ValueError.
+- `_build_scenario_prompts_dispatch` (라인 935~973): style 분기 — non-drama 는 drama 로 fallback.
+- `_generate_scenario_openai` (라인 976~1018), `_generate_scenario_claude` (라인 1021~1057), `_generate_scenario_gemini` (라인 1060~1122): 각 모델 별 호출. response_format=json_object / responseMimeType="application/json" 강제.
+- `generate_mv_scenario` (라인 1125~1215): 메인 진입점. dual-model 시 `{"results": [...]}` 반환 → mv_pipeline 이 `scenario_review` 상태로 pause.
+- v45 변경: B1 brainstorm 함수 신설, B2 에서 drama 시스템 프롬프트 대폭 확장 (narrative + 분리 필드 + events + Few-shot), 파서가 신규 필드 검증.
+
+#### F-3. Scene-split LLM — `app/services/mv_generator.py`
+- `SCENE_PROMPT_ONLY_SYSTEM` (라인 ~1980 부근, `_build_scene_prompt_messages` 라인 2195 가 사용): scenario 본문(=narrative 자리) 만 컨텍스트로 받음.
+- `_build_scene_prompt_messages` (라인 2195~2239): scenario_context 변수에 `"MV SCENARIO (follow this narrative):\n{}\n\n..."` 삽입. v45 에서 events + emotional_core + premise 도 함께 삽입하도록 확장.
+- `generate_scene_prompts_only` (라인 2323~2394): mv_pipeline.py Phase 1b 가 호출. 신규 인자 `scenario_events`, `emotional_core`, `scenario_premise` 등 받도록 확장.
+- 씬 출력 JSON 에 `event_index` 필드 추가 (선택적, integer or null).
+
+#### F-4. Phase 0/1b 호출 — `app/services/mv_pipeline.py`
+- Phase 0 시나리오 호출 (라인 904~966): `generate_mv_scenario(...)` → `result["meta"]` (drama dict). Mongo 저장 라인 949~952: `{"scenario": scenario, "scenario_meta": scenario_meta, "progress": 1}`.
+- v45 변경: Stage 1 brainstorm 호출을 그 직전에 추가. Stage 2 호출 시 brainstorm 후보를 user prompt 에 포함. Mongo 저장에 신규 8 필드 추가.
+- Phase 1b 호출 (라인 1336~1347): `generate_scene_prompts_only(...)` 에 `scenario=scenario` (= 본문 텍스트) 만 전달. v45 에서 narrative + events + emotional_core + premise 인자 추가.
+- Phase 2.5 호출 (라인 1858~1868): `generate_video_prompts_from_images(...)` — v45 에서 `scene_event` (events[scene.event_index]) + `emotional_core` 인자 추가.
+
+#### F-5. GET /jobs/{job_id} — `app/routes/mv.py:391~449`
+- 현재 응답: scenario, scenario_meta, scenario_style, … 포함. 신규 필드 미포함.
+- v45 변경: 신규 8 필드 + scenes[].event_index 추가 (모두 `.get(..., default)` 로 backward-safe).
+
+#### F-6. Frontend — `frontend/src/pages/UploadPage.jsx`
+- 라인 1462~1481: 기존 "📖 MV 시나리오 보기" 토글 패널 — `mvJob.scenario` 본문만 `<pre>` 로 표시.
+- v45 변경: narrative 우선 표시 + 분리 필드 collapsible + events 카드 그리드. 다크 테마(#1a1a1a/#333/#e11d48) 유지. React 19 useState 만 사용.
+- `frontend/src/api/index.js:177` `getMVJobDetail` 그대로 사용 (B7 가 응답 확장).
+
+#### F-7. prompt_models / scenario_models 설정 — `app/services/mv_pipeline.py:876, 1305`
+- `job.get("scenario_models")` 와 `job.get("prompt_models")` 가 dual-model 리스트로 사용됨 (route 에서 frontend 가 createMVJob 시 전달).
+- v45 Stage 1 brainstorm 도 `scenario_models` 동일 리스트 존중. Stage 2 도 동일. (즉, 사용자가 "gpt-4o-mini" 선택 시 Stage 1 + Stage 2 모두 그 모델 사용.)
+
+⚠ 사양 ↔ 코드 미스매치 / 결정사항:
+1. 기존 drama scenario 출력은 본문 500~1000자. v45 narrative 는 1500~2500자 — 동일 LLM 호출 한 번에 narrative + 분리 필드 + events 까지 모두 출력해야 함. **출력 토큰이 크게 늘어나므로 max_tokens 를 2500 → 8000 으로 상향**.
+2. 하위호환: `scenario` 필드(본문)는 유지 → narrative 의 첫 800자 자동 추출하거나 narrative 그 자체를 동일 본문으로 사용. 이렇게 하면 기존 jobs 스키마 깨지지 않음.
+3. Stage 1 brainstorm 은 별도 호출로 추가되므로 LLM 호출이 1 회 더 늘어남 (latency +5~10s). 시나리오 dual-model 인 경우 Stage 1 도 dual 인지? → **Stage 1 은 단일 모델 (사용자가 선택한 첫 모델)** 로 단순화. 4 후보를 Stage 2 양 모델에게 그대로 전달.
+4. Few-shot 3 예시는 **시스템 프롬프트 안에 인라인** (별도 파일 분리하지 않음 — 파일 수 최소화).
+5. Stage 2 의 events 개수 강제 = `audio_duration_min × 3, min 6`. Phase 0 시점에서 audio_duration_sec 가 이미 mv_pipeline 안에 있을 수 있으나(Phase 1a), Phase 0 가 먼저 — 따라서 mv_pipeline 이 Phase 0 직전에 lazy fetch (job.audio_duration_sec / job.audio_generation_id 의 generations.duration_sec) 후 prompt 에 전달. 없으면 fallback "최소 6, 권장 8~12".
+
+### 변경 매트릭스 (B1~B8 + F1)
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| **B1** | `backend_9004/app/services/mv_generator.py` | `_build_brainstorm_prompts(...)`, `_generate_brainstorm_openai/_claude/_gemini`, `generate_mv_brainstorm(...)` 신규. 4 후보 JSON 출력 + 파서. |
+| **B2** | `backend_9004/app/services/mv_generator.py` | `_build_drama_scenario_prompts` 대폭 확장 — narrative/premise/character_states/central_conflict/emotional_core/narrative_arc/events 추가. chain-of-thought 강제 순서 + Few-shot 3 예시 + brainstorm 후보 user prompt 통합. `_parse_drama_scenario_json` 가 신규 필드 검증. |
+| **B3** | `backend_9004/app/services/mv_generator.py` | events 개수/relationship/props 규칙 enforcement: 시스템 프롬프트 명시 + 파서 후처리 검증 (`_validate_scenario_events`). |
+| **B4** | `backend_9004/app/services/mv_generator.py` | `_build_scene_prompt_messages` 가 narrative + events + emotional_core + premise 받도록 확장. `SCENE_PROMPT_ONLY_SYSTEM` 에 "EVENT-SCENE MAPPING" 섹션 추가. 씬 출력에 `event_index` 강제. |
+| | `backend_9004/app/services/mv_pipeline.py` | Phase 1b (라인 1336) `generate_scene_prompts_only` 호출 시 신규 인자 전달. 씬 dict 에 `event_index` 보존. |
+| **B5** | `backend_9004/app/services/mv_generator.py` | video_prompt 6 템플릿(라인 64/90/114/141/166/190) 모두 `{scene_event_block}` + `{emotional_core}` 추가. |
+| **B6** | `backend_9004/app/services/mv_generator.py` | `generate_video_prompts_from_images` (라인 223) 시그니처에 `scene_event`, `emotional_core` 추가. `_format_scene_event_block` 헬퍼. format 호출 확장. |
+| | `backend_9004/app/services/mv_pipeline.py` | Phase 2.5 (라인 1858) 호출 시 `scene.get("event_index")` 로 events lookup 후 `scene_event=` + `emotional_core=` 전달. |
+| **B7** | `backend_9004/app/services/mv_pipeline.py` | Phase 0 (라인 949) `_update_job` 에 신규 8 필드 추가. `scenario_review` 상태(dual-model)에서도 각 후보에 narrative 포함 (저장 시 + 조회 시). |
+| | `backend_9004/app/routes/mv.py` | GET /jobs/{job_id} 응답 (라인 391~449) 에 신규 8 필드 추가. `_scene_to_dict` 에 `event_index` 추가. |
+| **B8** | `backend_9004/app/services/mv_generator.py` | Self-verify 단계 시스템 프롬프트 작성. 파서가 motif 회수, other_characters 비율, events count, narrative 길이 검증. 실패 시 `RetryableScenarioError` raise. |
+| | `backend_9004/app/services/mv_pipeline.py` | Phase 0 catch 블록에서 `RetryableScenarioError` 받으면 temperature/seed 변경 1회 재시도 후 raise. |
+| **F1** | `frontend/src/pages/UploadPage.jsx` | 라인 1462~1481 시나리오 패널 확장 — narrative 우선 + 분리 필드 collapsible + events 카드 그리드. 한국어 라벨 + 다크 테마 유지. |
+
+### Stage 1 (Brainstorm — E) Prompt 구조
+
+**System prompt 핵심**:
+- "당신은 뮤직비디오 시나리오 브레인스토머. 가사/제목/장르/분위기/관계 입력 → 톤이 서로 다른 4개 후보 시나리오 스케치를 JSON 으로만 출력."
+- 각 후보 = `{tone: str, mood_arc: str, key_events: [str, str, str, …], setting_hint: str}`. tone 은 4개가 모두 달라야 함 (예: "차분한 회상", "격렬한 분노", "쓸쓸한 수용", "역동적 결심").
+- 가사가 있으면 가사의 내용과 직접 연결. 없으면 제목·장르·분위기 기반 추정.
+
+**User prompt**: 제목 / 장르 / 분위기 / vocal_gender / relationship / 가사(상위 3000자) / "위 입력으로 톤 다른 4개 후보 시나리오를 JSON 으로만 응답하세요."
+
+**Output schema**:
+```
+{
+  "candidates": [
+    {"tone": "...", "mood_arc": "...", "key_events": ["...", "..."], "setting_hint": "..."},
+    ... ×4
+  ]
+}
+```
+
+### Stage 2 (Beat Sheet — B) Prompt 구조
+
+**System prompt 핵심 — chain-of-thought 강제 순서**:
+
+```
+당신은 단편영화 시나리오 작가 + MV 감독. 4개 브레인스토밍 후보 중 가장 적합한 1개 또는 혼합한 것을
+바탕으로, 아래 강제 순서로 구조화된 시나리오를 한 번의 JSON 응답으로 작성하세요.
+
+## 작성 순서 (절대 준수)
+
+1단계 (narrative — 1500~2500자 한국어 산문):
+   - 단편소설처럼 자연스러운 문장으로 배경/인물/갈등/사건/감정 변화를 모두 포함해 작성.
+   - 카메라가 포착할 시각 요소 중심.
+   - 등장인물 이름과 장소 이름을 직접 사용 ("주인공"/"그녀" 같은 placeholder 금지).
+
+2단계 (분리 필드 — narrative 에서 추출):
+   premise: 배경 서사. "주인공은 두 달 전 헤어진 옛 연인을 잊지 못해..." 형태.
+   character_states: { character1: "내적 상태/동기", character2: "..." }
+   central_conflict: 핵심 갈등을 한 문장으로.
+   emotional_core: 감정 비율 표현. 예: "그리움 60% + 후회 25% + 결심 15%".
+   narrative_arc: { setup: "...", trigger: "...", climax: "...", resolution: "..." }
+
+3단계 (events 배열 — narrative 기반 사건 시퀀스):
+   - 개수 강제: 입력으로 주는 audio_duration_min × 3 (반올림). 최소 6, 최대 18.
+   - 각 event = { order, section, setting, trigger, protagonist_action, motivation,
+                  other_characters, emotion_shift, props }
+   - other_characters 빈도 강제 (relationship 값에 따라):
+     · ex_lover → 50%↑ events 에서 비어있지 않음
+     · friend/colleague/family → 30%↑
+     · 없음/단독 → 모두 빈 배열
+   - 첫 event 의 props 중 하나가 마지막 event 의 props 에 다시 등장(motif 회수).
+     의미는 변환 (예: "벚꽃잎=회상 트리거" → "벚꽃잎=작별 상징").
+
+4단계 (self-verify — 출력 직전 자체 검증):
+   - narrative ↔ premise/character_states/central_conflict/emotional_core/narrative_arc 일관성
+   - events 가 narrative 의 사건 시퀀스를 따라가는가
+   - other_characters 비율 충족
+   - motif 회수 충족
+   부족하면 출력 전에 보정.
+
+## Few-shot 예시 (참고만, 그대로 베끼지 말 것)
+
+[예시1 — 발라드, 옛 연인, 비 오는 도시 카페, key_events 6~8개 …]
+[예시2 — 댄스, 친구 밴드, 무대 데뷔 직전 백스테이지, key_events 8~10개 …]
+[예시3 — 힙합, 자수성가 결심, 옛 동네 골목 → 도심 옥상, key_events 8개 …]
+
+## 출력 JSON 스키마 (이 구조 그대로)
+
+{
+  "characters": { "character1": {...}, "character2": {...} (옵션) },
+  "locations": { "location1": {...}, "location2": {...} },
+  "narrative": "1500~2500자 산문",
+  "premise": "...",
+  "character_states": {...},
+  "central_conflict": "...",
+  "emotional_core": "...",
+  "narrative_arc": {...},
+  "events": [ {...}, ... ],
+  "scenario": "narrative 의 첫 800자 또는 narrative 그대로"   ← 하위호환 필드
+}
+```
+
+**User prompt**: 제목 / 장르 / 분위기 / vocal_gender / relationship / has_user_character / has_cover_person / 가사 / **brainstorm_candidates JSON** / **audio_duration_min** / "위 사양 + 브레인스토밍 후보를 참고해 강제 순서대로 JSON 만 응답."
+
+### Few-shot 예시 placeholder 목록
+
+각 예시는 **약 1500자 narrative + events 8개** 정도의 미니 시나리오. 가사 자체는 `[LYRICS_PLACEHOLDER]` 로만 표시 (실 가사 X). 시스템 프롬프트 안에 인라인.
+
+| 예시 | 장르/관계 | 주인공 캐릭터/장소 | 핵심 사건 |
+|---|---|---|---|
+| 발라드 | 발라드 / ex_lover | 주인공 캐릭터 = 28세 여성 / 비 오는 카페 + 옛 자취방 | 우산 잃은 우연한 재회 → 카페 침묵 → 옛 사진첩 발견 → 작별 결심 |
+| 댄스 | 댄스 / friend | 주인공 캐릭터 = 22세 남성 / 백스테이지 + 무대 + 옥상 | 첫 무대 직전 긴장 → 친구의 격려 → 무대 폭발 → 옥상 감격 |
+| 힙합 | 힙합 / 단독 | 주인공 캐릭터 = 25세 남성 / 옛 동네 골목 + 옥상 + 스튜디오 | 옛 동네 회상 → 거울 앞 자기 다짐 → 스튜디오 작업 → 옥상 결심 |
+
+### Event 스키마 (각 항목)
+
+```json
+{
+  "order": 1,
+  "section": "Verse1",
+  "setting": "@location1",
+  "trigger": "갑자기 내리는 비",
+  "protagonist_action": "우산 없이 카페 처마 밑으로 뛰어든다",
+  "motivation": "옛 연인과 마지막 만남을 가졌던 그 카페로 무의식적으로 향함 (premise 의 미해결 감정 반영)",
+  "other_characters": [],
+  "emotion_shift": "무덤덤 → 동요",
+  "props": ["우산", "젖은 코트"]
+}
+```
+
+### Event/Scene mapping strategy
+
+Scene-split LLM (`generate_scene_prompts_only`) 가 **narrative (primary)** + 모든 분리 필드 + events + scene time grid 를 입력 받음.
+
+- 시스템 프롬프트 신규 섹션 "EVENT-SCENE MAPPING":
+  > "narrative 를 정독해서 톤/인물 동기/감정 흐름을 이해한 뒤, 입력 events 배열을 입력 scene grid 에 매핑하세요. 각 씬에는 가장 적합한 event 를 선택하고, 그 motivation 과 emotion_shift 를 visual storytelling (구체적 행동·표정·소품·조명) 으로 표현하세요. 단순 동사 나열(walks/sits/drinks)은 금지. 출력 씬 객체에 `event_index` 필드(0-base int, 사용한 event 의 array index 또는 null) 를 반드시 포함하세요."
+- 씬 개수 ≠ event 개수일 수 있음 (씬이 더 많으면 1 event ↔ 여러 씬 가능 / 씬이 더 적으면 일부 event 스킵 허용).
+- 씬 dict 가 보존하는 신규 필드: `event_index: int | null`.
+
+### video_prompt 6 templates placeholder 매트릭스
+
+| 템플릿 | 라인 | placeholder 추가 위치 | 추가 내용 |
+|---|---|---|---|
+| VIDEO_PROMPT_VEO_CHARACTER | 64 | "Analyze the scene image …" 직후 | `## Story Context (event-driven)\n{scene_event_block}\n\n## Overall Emotional Core\n{emotional_core}\n\n` |
+| VIDEO_PROMPT_VEO_FREE | 90 | 동일 | 동일 |
+| VIDEO_PROMPT_KLING_CHARACTER | 114 | 동일 | 동일 |
+| VIDEO_PROMPT_KLING_FREE | 141 | 동일 | 동일 |
+| VIDEO_PROMPT_SEEDANCE_CHARACTER | 166 | 동일 | 동일 |
+| VIDEO_PROMPT_SEEDANCE_FREE | 190 | 동일 | 동일 |
+
+`{scene_event_block}` 형태(헬퍼 `_format_scene_event_block` 출력):
+```
+- Trigger: 갑자기 내리는 비
+- Protagonist action: 우산 없이 카페 처마 밑으로 뛰어든다
+- Motivation: 옛 연인과 마지막 만남을 가졌던 그 카페로 무의식적으로 향함
+- Other characters: (none) / [@character2]
+- Emotion shift: 무덤덤 → 동요
+- Props in scene: 우산, 젖은 코트
+```
+
+`{emotional_core}` = `"그리움 60% + 후회 25% + 결심 15%"`. None 일 때 빈 문자열 → 템플릿이 자연스럽게 비어 있어도 동작.
+
+호출 흐름: `generate_video_prompts_from_images(scene_event=events[scene.event_index], emotional_core=job.scenario_emotional_core, …)` → `_format_scene_event_block(scene_event)` → `system_prompt.format(duration=…, scene_event_block=…, emotional_core=…)`.
+
+### Mongo schema diff — `mv_jobs` 컬렉션
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `scenario_narrative` | str | 1500~2500자 산문 |
+| `scenario_premise` | str | 배경 서사 |
+| `scenario_character_states` | dict | { characterKey: str } |
+| `scenario_central_conflict` | str | 한 문장 |
+| `scenario_emotional_core` | str | "감정 비율 …" 표현 |
+| `scenario_narrative_arc` | dict | { setup, trigger, climax, resolution } |
+| `scenario_events` | list[dict] | Event 스키마 N 개 (audio_min×3, ≥6) |
+| `scenario_brainstorm` | dict | Stage 1 4 후보 (디버깅용) |
+| `scenes[].event_index` | int \| null | scene → event 매핑 |
+
+기존 `scenario` (본문 텍스트), `scenario_meta` (characters/locations/scenario) 는 **그대로 유지** (하위호환). `scenario_meta` 의 scenario 필드 = narrative 의 첫 800자.
+
+GET /jobs/{job_id} 응답: 위 9 필드 모두 포함. 기존 jobs (필드 없음) 는 `null`/`{}`/`[]` 로 응답되어 프론트가 안전하게 fallback.
+
+### 테스트 계획 (Tester T1~T8)
+
+| ID | 항목 | 검증 |
+|---|---|---|
+| **T1** | Stage 1 brainstorm | 4 후보, tone 4개 모두 달라야 함, key_events 가 가사와 일관 |
+| **T2** | Stage 2 beat sheet | narrative 1500~2500자, 분리 필드 6 모두 채워짐, events 개수 = audio_duration_min×3 (±1, ≥6), chain-of-thought 순서 준수(narrative 가 분리 필드보다 먼저 출력) |
+| **T3** | Motif 회수 | 첫 event props ∩ 마지막 event props ≥ 1, 의미 변환 OK (단순 반복 X) |
+| **T4** | Other character 빈도 | ex_lover→50%↑, friend→30%↑, 단독→0% |
+| **T5** | Scene-split LLM 이 narrative 사용 | 씬 description_ko 가 motivation/emotion 반영 (단순 동사 나열 X), event_index 채워짐 |
+| **T6** | video_prompt 6 템플릿 | 6개 모두 scene_event_block + emotional_core 수신, 모션 묘사가 baseline 보다 풍부 |
+| **T7** | 회귀 | v37/v38/v39/v40-9/v41/v42/v43/v44 정상 (백엔드 import smoke + uvicorn boot + Vite build PASS) |
+| **T8** | E2E | Suno 트랙 1개로 풀 MV 생성 (Phase 0~2.5 까지) → narrative 풍부 + events↔scenes 매핑 + 비디오 모션 다양성 검증 |
+
+E2E 는 `http://localhost:9004` (backend) / `http://localhost:4000` (frontend). 실 LLM 호출 가능 (env 키 있음). 단, T8 는 비용·시간 고려해 **Mock LLM 또는 Phase 0 만** 검증 가능 — tester 판단.
+
+### 체크리스트
+
+- [x] B1 Stage 1 Brainstorm LLM 함수 + 파서
+- [x] B2 Stage 2 Beat Sheet 시스템 프롬프트 확장 + Few-shot 3 예시 + 파서 신규 필드
+- [x] B3 events 개수/relationship/props 규칙 enforcement
+- [x] B8 Self-verify + 검증/재시도 로직 (strict/soft 이중 모드)
+- [x] B4 Scene-split LLM 입력 확장 + scenes[].event_index
+- [x] B5 video_prompt 6 템플릿 placeholder
+- [x] B6 video_prompt format helper + 호출자 갱신
+- [x] B7 Mongo 영속화 + GET /jobs/{id} 응답 확장
+- [x] F1 UploadPage 시나리오 패널 확장
+- [x] Tester T1~T8 PASS (8/8)
+- [x] REPORT.md v45 append
+
+---
+
+## v46 — [보류] fal.ai 게이트웨이로 Kling LipSync 통합 (+ 선택적 Kling video 전환)
+
+> **상태: 보류 (HOLD)**
+> 결정/구현 보류. Kling 직접 API 차단 이슈 해결 결과 또는 우선순위 재평가 시 재검토.
+> 작성일: 2026-05-07
+
+### 배경
+
+**문제 발생 (2026-04-26 이후):**
+- Kling 직접 API(`api-singapore.klingai.com`)가 우리 계정에 대해 모든 video 호출에서 `HTTP 401 / code 1003 / "Authorization is not active"` 반환.
+- 검증 결과:
+  - JWT Verification: ✅ 통과 (Access Key + Secret Key 정상)
+  - Active resource package: Trial-Video-1500Units-20Con-3Months — 743P 남음, 2026-07-01까지 유효
+  - 모든 모델(v1, v1-5, v1-6, v2, v2-1, v2-master, v3, v3-omni) 동일 1003
+  - 모든 endpoint(api-singapore / api / api.kling.ai / open-api) 동일 결과
+  - API Key 재발급(`ADrNrBRY...`)도 동일 거부 → 키 단위 아닌 **계정 단위 차단** 추정
+- 추정 원인: Kling 측 Trial promo 정책 변경 또는 계정 자동 플래깅. **Kling 측 정보 없이는 사용자가 알 방법 없음**.
+- 조치: Kling 고객지원(`klingai_api_platform@kuaishou.com`) 문의 발송 예정/완료. 답변 대기.
+
+**현재 우리 흐름의 외부 의존성:**
+- 영상 생성: Kling 직접 API (현재 차단)
+- 립싱크: Sync Labs (`api.sync.so/v2`) — 별도 결제, 422/cost 이슈 자주 발생
+
+### 제안 기능 (Kling LipSync API 발견)
+
+Kling이 자체 lip sync API를 제공하며, 다음 4가지 경로로 접근 가능:
+
+| 경로 | 우리 사용 가능성 |
+|---|---|
+| Kling 직접 (`app.klingai.com`) | ❌ 1003 차단 |
+| **fal.ai (`fal-ai/kling-video/lipsync/audio-to-video`)** | ✅ 기존 `FAL_API_KEY` 재사용 가능 (Seedance용으로 사용 중) |
+| Replicate (`kwaivgi/kling-lip-sync`) | ✅ 기존 `REPLICATE_API_TOKEN` 재사용 가능 |
+| PiAPI | ❌ 별도 가입 필요 |
+
+fal.ai 스펙: `video_url` (.mp4/.mov, ≤100MB, 2~10초) + `audio_url` (≤60초). 현재 Sync Labs 입력과 동등.
+
+### 전환 옵션
+
+**(a) lip sync만 fal.ai Kling으로 교체** (작업량 소, 효과 대)
+- `app/services/sync_labs_service.py` → `app/services/kling_lipsync_service.py` (신규)
+- mv_pipeline의 lipsync 호출부에서 sync_labs_service → kling_lipsync_service 교체
+- Sync Labs 의존 제거 가능
+- video 생성은 기존 경로 유지 (Kling 차단 풀린 후 또는 Seedance/Veo 우회)
+
+**(b) (a) + video 생성도 fal.ai Kling 게이트웨이 전환** (작업량 중)
+- `app/services/kling_video_generator.py` 의 endpoint를 fal.ai 게이트웨이로 전환
+- Kling 직접 API 차단 영구 우회 (계정 차단 풀려도 fal.ai 그대로 유지 가능)
+- fal.ai 마진 비용 (~10~30% ↑) 부담
+
+**(c) (a)만 즉시 진행, video는 Kling 차단 풀릴 때까지 Seedance/Veo 사용** (현실적)
+
+### 보류 사유
+
+- Kling 직접 API 차단 이슈가 해결되면(고객지원 답변) (b)의 가치가 줄어들 수 있음 — 답변 받고 결정.
+- (a)도 즉시 진행 가능하지만 v45 결과(사건 풍부 시나리오) 검증이 우선이라 사용자가 보류 결정.
+- 비용/품질/지연 trade-off 정밀 비교 데이터 없음 — fal.ai Kling 호출 1회 실측 후 결정 권장.
+
+### 재개 시 체크리스트
+
+- [ ] Kling 고객지원 답변 확인 (계정 차단 사유/해제 방법)
+- [ ] fal.ai Kling LipSync 1회 실측 (호출 성공, 입출력 검증, 비용)
+- [ ] 옵션 (a)/(b)/(c) 중 결정
+- [ ] (a) 채택 시:
+  - [ ] `kling_lipsync_service.py` 신규 (fal.ai 호출, 폴링, 다운로드, 에러 매핑)
+  - [ ] mv_pipeline 의 lipsync 분기를 sync_labs → kling_lipsync 로 교체 (feature flag로 점진 전환 권장)
+  - [ ] sync_labs_service.py 의존 코드 정리 (당장 삭제는 안 함, 폴백용 유지)
+  - [ ] 실패 시 폴백(예: Sync Labs로 재시도) 정책 결정
+- [ ] (b) 추가 채택 시:
+  - [ ] `kling_video_generator.py` endpoint 전환 (fal.ai)
+  - [ ] 모델명 매핑(`kling-v3-omni` → fal.ai 모델 ID)
+  - [ ] 직접 API 코드는 dead code 처리 또는 분기 유지
+- [ ] PLAN/REPORT v46 정식 진입 (현재 보류 섹션은 그대로 두고 새 v46 섹션 위에 작성)
+
+### 관련 파일 (재개 시 참고용)
+
+- `backend_9004/app/services/sync_labs_service.py` (현재 lipsync 구현)
+- `backend_9004/app/services/kling_video_generator.py` (현재 Kling 직접 호출)
+- `backend_9004/app/services/seedance_video_generator.py` (Seedance 우회 — 이미 통합됨)
+- `backend_9004/app/services/mv_pipeline.py` Phase 3/4 분기
+- `backend_9004/.env` 의 `FAL_API_KEY`, `REPLICATE_API_TOKEN`
+
+
+---
+
+## v46-pre — 2026-05-08 — 프론트엔드 콘솔 로그 원격 수집 인프라
+
+### 목표
+
+브라우저에서 발생하는 `console.error` / `console.warn` / `window.onerror` / `unhandledrejection` 이벤트를 자동 수집하여 백엔드 로그 파일(`backend_9004/logs/frontend.log`)에 영속 기록한다. 이로써 사용자가 F12 devtools 를 직접 보지 않아도 Claude(개발자) 가 파일 grep 으로 클라이언트 측 오류를 추적할 수 있다.
+
+본 v46-pre 는 v46 본 작업(보류 중 — fal.ai Kling lipsync) 에 들어가기 전, **앞으로의 모든 디버깅 워크플로의 기반이 될 인프라**를 구축하는 사전 단계다.
+
+### Plan verification findings (Step 0)
+
+코드를 직접 읽어 확인한 사실:
+
+| 파일 | 위치 | 현재 동작 |
+|---|---|---|
+| `backend_9004/app/routes/_logs.py` | 1-138 줄 | GET `/tail`, `/download`, `/info` 3종. `_check_token()` 헬퍼로 `LOG_ACCESS_TOKEN` 검증(`X-Log-Token` 헤더 또는 `?token=` 쿼리). `LOG_FILE_PATH = backend_9004/logs/server.log`. logger 인스턴스 없음. |
+| `backend_9004/app/auth.py` | 13-48 줄 | `get_current_user(request, authorization)` — JWT 검증(Bearer 또는 `?token=`), Redis 세션 확인, `{"id": ..., "role": ...}` 형태 dict 반환. 다수 라우트가 `Depends(get_current_user)` 패턴으로 사용. |
+| `backend_9004/app/main.py` | 149 줄 | `app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])` — 따라서 새 엔드포인트는 `POST /api/_logs/frontend` 로 노출됨. |
+| `backend_9004/logs/` | 존재 | `server.log` (~22KB) 이미 존재. 디렉토리 쓰기 가능. |
+| `frontend/src/api/index.js` | 1-26 줄 | axios 인스턴스, `baseURL = ${protocol}//${hostname}:9004/api`. 요청 인터셉터에서 `localStorage.token` 자동 첨부. 응답 인터셉터에서 401 시 토큰 제거. |
+| `frontend/src/main.jsx` | 14 줄 | React 19 + Vite 7 엔트리. `createRoot().render(<StrictMode><BrowserRouter><App/></BrowserRouter></StrictMode>)` — `initRemoteLogger()` 는 render 직전에 호출. |
+| 기존 logger 관행 | mv.py:6,30 등 | `import logging; logger = logging.getLogger(__name__)` 패턴 사용 중. |
+
+**갭(gap)**: 프론트엔드 콘솔 로그를 서버로 보내는 인프라가 전무. 본 v46-pre 가 이를 도입한다.
+
+**사양과 코드의 일치 여부**: 모두 일치. 인증 방식은 `get_current_user`(JWT) 사용 — 일반 로그인 사용자 브라우저가 별도 토큰 없이 자기 로그를 보낼 수 있음.
+
+### 아키텍처
+
+- **인증**: `Depends(get_current_user)` — 기존 JWT(localStorage token, axios 인터셉터 자동 첨부) 그대로 사용. 비로그인 익명 사용자는 401 거부.
+- **저장 경로**: `backend_9004/logs/frontend.log` (server.log 와 동일 디렉토리). 부재 시 자동 생성.
+- **포맷 (1 이벤트 = 1 라인)**:
+  `[YYYY-MM-DD HH:MM:SS] [user_id=<id>] [<level>] [page=<url>] <message> | <context_json>`
+  - stack 이 있으면 마지막에 `| stack=<truncated>` 부착(개행은 ` ⏎ ` 로 치환).
+- **배치 전송**: 5초 주기 OR 버퍼 20개 OR `pagehide`/`beforeunload` 시 `navigator.sendBeacon` 으로 즉시 flush.
+- **민감정보 차단**: 프론트는 `token=`, `key=`, `password=`, JWT-like(`eyJ` 시작 + 길이 100+) 패턴이 보이면 그 이벤트는 통째로 drop. 백엔드는 보수적으로 메시지/컨텍스트 길이만 제한하고 그대로 기록.
+- **추적자(traceability)**: 백엔드 로그 라인은 `user_id=` 키워드로 grep 가능. `frontend.log` 의 라인은 `[page=...]`, `[level]` 으로 분류 가능.
+
+### 엔드포인트 사양
+
+**POST `/api/_logs/frontend`**
+
+요청 헤더: `Authorization: Bearer <jwt>` (axios 인터셉터가 자동 첨부)
+
+요청 바디:
+```json
+{
+  "events": [
+    {
+      "level": "error" | "warn" | "info",
+      "message": "string (≤8KB)",
+      "context": { ... 임의 K/V (object) ... },
+      "ts": "ISO 8601 string",
+      "url": "page URL where it occurred",
+      "user_agent": "string (optional)",
+      "stack": "string (optional, error 시)"
+    }
+  ]
+}
+```
+
+검증/한도:
+- `events`: 1 ≤ 길이 ≤ 50. 초과 시 422.
+- 단일 메시지 길이 ≤ 8192 chars. 초과 시 잘라서 저장하고 `logger.warning`.
+- 단일 stack 길이 ≤ 16384 chars. 초과 시 truncate.
+- request body 는 FastAPI 의 기본 크기 제한 + 명시적으로 수동 길이 점검(전체 직렬화 길이 256KB 초과 시 422).
+- 1분 이내 동일 user_id 가 100 이벤트 초과 시 `logger.warning` (간이 abuse 신호; rate limit 거부 X — 실패 시에도 기록은 보존).
+
+응답:
+- 성공 200: `{"received": <int>}`
+- 인증 실패 401 (get_current_user 가 자체적으로 raise)
+- 검증 실패 422
+- 서버 에러 500 (`logger.exception` 으로 기록)
+
+### 백엔드 — 디버깅 로그 심기 (B1 자체에 적용)
+
+- 진입: `logger.info("[FrontendLog] received batch", extra=... or via f-string)` — `user_id`, `len(events)`, request IP(가능시) 기록
+- 검증 실패: `logger.warning("[FrontendLog] validation failed", ...)` — 사유, user_id, batch size
+- 파일쓰기 실패: `logger.error("[FrontendLog] file write failed", ...)` — 경로, exception 메시지
+- except 블록: `logger.exception("[FrontendLog] unexpected error")` — 컨텍스트(user_id, batch 크기) 포함
+- abuse 의심: `logger.warning("[FrontendLog] high frequency", user_id=..., count=...)`
+- prefix `[FrontendLog]` + `user_id=` 키워드로 server.log grep 추적성 확보.
+
+### 컴포넌트 사양
+
+**F1 — `frontend/src/utils/remoteLogger.js` 신규 (≤100줄 목표)**
+
+- 노출 함수: `initRemoteLogger()` 1개 (idempotent — 두 번 호출돼도 안전).
+- 후킹:
+  - `console.error`, `console.warn` (항상)
+  - `console.info` (개발모드 `import.meta.env.DEV` 일 때만)
+  - `window.addEventListener('error', ...)` → uncaught error 캡처
+  - `window.addEventListener('unhandledrejection', ...)` → promise rejection 캡처
+- 원본 console 함수는 그대로 호출(개발자 devtools 출력 유지) 후, 별도 in-memory 큐에 push.
+- flush 트리거:
+  - 5000ms 인터벌
+  - 큐 길이 ≥ 20
+  - `pagehide` / `beforeunload` 이벤트 → `navigator.sendBeacon('/api/_logs/frontend', blob)` 시도. sendBeacon 은 Authorization 헤더를 못 붙이므로 **JWT 가 있는 경우에만** body 에 `?token=` 형태로 못 박지 말고 — 다음과 같이: 일반 flush 는 axios 사용, sendBeacon 은 `Blob` JSON 으로 보내되 백엔드의 `get_current_user` 가 query `token` 도 받으므로 **`/api/_logs/frontend?token=<jwt>`** 형태로 호출. (auth.py:22 라인이 query token fallback 지원함을 step 0 에서 확인.)
+- 민감정보 필터: 메시지 또는 context 의 어떤 string 값이라도 다음 패턴 중 하나에 매치하면 그 이벤트 drop:
+  - `/token=/i`, `/api[_-]?key=/i`, `/password=/i`, `/secret=/i`, `/bearer\s+/i`
+  - JWT-like: `/\beyJ[A-Za-z0-9_-]{20,}\./`
+- 자동 컨텍스트: `url = window.location.href`, `user_agent`(init 시 1회 캡처), `ts = new Date().toISOString()`.
+- 실패 모드: 백엔드 비응답/5xx → 큐에 되돌려 보관(최대 200 이벤트 cap, 초과 시 가장 오래된 것 drop). 다음 인터벌에 재시도. 401 → 재시도 안 함(로그아웃 상태). 절대 throw 하지 않음.
+- 무한루프 방지: 자기 자신이 발생시킨 console.error(예: 백엔드 호출 실패 메시지) 는 큐에 다시 들어가지 않도록 sentinel flag 사용.
+
+**F2 — `frontend/src/api/index.js` 확장**
+
+- 신규 named export: `sendFrontendLogs(events)` → `API.post('/_logs/frontend', { events })`.
+- 인증 헤더는 기존 axios 인터셉터가 자동 첨부.
+- 호출자(remoteLogger) 가 axios 에러를 캐치하여 자체 폴백 처리.
+
+**F3 — `frontend/src/main.jsx` 활성화**
+
+- `import { initRemoteLogger } from './utils/remoteLogger'`
+- `createRoot(...).render(...)` **직전**에 `initRemoteLogger()` 호출.
+
+### 변경 매트릭스 (디버깅 로그 추적자 포함)
+
+| 파일 | 변경 | 추적자 / prefix |
+|---|---|---|
+| `backend_9004/app/routes/_logs.py` | POST `/frontend` 추가, logger 인스턴스 추가 | `[FrontendLog]` + `user_id=<id>`, `batch=<n>` |
+| `frontend/src/api/index.js` | `sendFrontendLogs(events)` 추가 | (네트워크 호출만, 컴포넌트 prefix 없음) |
+| `frontend/src/utils/remoteLogger.js` | 신규 | `[remoteLogger]` (자기 자신의 디버그 메시지에만; 일반 캡처 이벤트는 원본 prefix 유지) |
+| `frontend/src/main.jsx` | `initRemoteLogger()` 1회 호출 | n/a |
+
+### 테스트 계획 (Tester T1~T3)
+
+| ID | 항목 | 검증 |
+|---|---|---|
+| **T1** | 백엔드 엔드포인트 smoke | (a) 유효 JWT + 1 이벤트 POST → 200 + `{received:1}`, `frontend.log` 신규 라인 확인. (b) Authorization 헤더 없이 POST → 401. (c) 51개 이벤트 → 422. (d) 8KB 초과 message → truncated 저장 + `logger.warning` server.log 에 기록. |
+| **T2** | 프론트엔드 smoke | (a) 앱 실행 후 콘솔에서 `console.error('[Test] hello', {foo:'bar'})` → 5초 내 frontend.log 에 라인 등장. (b) 어떤 페이지에서 `throw new Error('uncaught')` 트리거 → error 이벤트가 frontend.log 도달. (c) `Promise.reject('p')` 트리거 → unhandledrejection 라인 도달. (d) 로그 enqueue 후 페이지 navigate(`pagehide`) → sendBeacon 으로 flush, 라인 도달. (e) `console.error('token=abc123')` → 민감정보 필터로 drop, 라인 등장 안 함. |
+| **T3** | 회귀 | v37~v45 기능 정상. (a) Vite build PASS. (b) 기존 GET `/api/_logs/tail` 정상 동작(`X-Log-Token` 으로 server.log 마지막 N줄 조회). (c) 기존 라우트(예: `/api/songs`) 응답 정상. (d) backend uvicorn boot 정상(import error 없음). |
+
+테스트 환경: 백엔드 9004(이미 실행 중), 프론트 4000(이미 실행 중). 새로 띄울 필요 없음. 9003 미러 작업 금지.
+
+### 체크리스트
+
+- [ ] B1 `_logs.py` POST `/frontend` 엔드포인트 추가 (인증·검증·파일 append)
+- [ ] B2 B1 자체에 디버깅 로그 심기(`[FrontendLog]` prefix + user_id 추적자)
+- [ ] F2 `api/index.js` 에 `sendFrontendLogs(events)` 추가
+- [ ] F1 `utils/remoteLogger.js` 신규 (후킹·배치·필터·sendBeacon)
+- [ ] F3 `main.jsx` 에 `initRemoteLogger()` 1회 호출
+- [ ] T1 백엔드 smoke (4 케이스)
+- [ ] T2 프론트엔드 smoke (5 케이스)
+- [ ] T3 회귀 (4 항목)
+- [ ] REPORT.md v46-pre append
+
+
+---
+
+## v46 — 2026-05-08 — Step 1: 사건 비율 60% 강제(A) + relationship 자율 추가(C)
+
+> **본 v46 = 4단계 롤아웃의 1단계.** Step 2~4 (= v47/v48/v49) 는 별도 진입.
+> v45 결과 분석에서 시나리오 LLM 이 "감정 일기"를 만들고 "사건"을 만들지 못하는 문제(예: `벚꽃 흩날리는 날 내뀨` 잡에서 trigger 가 모두 꽃잎/햇살/바람 같은 자연 현상이고 `other_characters` 가 항상 비어 있음) 를 해결하기 위한 시작점.
+> 작성일: 2026-05-08
+
+### Plan verification findings (Step 0 — 현재 코드 사실 확인)
+
+아래는 추정 아닌 **현 시점 파일 직접 읽음** 결과.
+
+| 영역 | 파일 / 위치 | 현재 동작 |
+|---|---|---|
+| Stage 1 brainstorm 시스템 프롬프트 | `backend_9004/app/services/mv_generator.py:714-740` (`BRAINSTORM_SYSTEM_PROMPT`) | 톤이 다른 4개 후보 — `tone/mood_arc/key_events/setting_hint`. 사건/자연 현상 구분 룰 없음. |
+| Stage 1 user 프롬프트 빌더 | `mv_generator.py:743-765` (`_build_brainstorm_prompts`) | relationship 값 그대로 전달. 자율 판단 룰 없음. |
+| Stage 1 생성기 | `mv_generator.py:838-957` (`_generate_brainstorm_*`, `generate_mv_brainstorm`) | OpenAI/Claude/Gemini 분기. JSON-only. |
+| Stage 2 drama 프롬프트 빌더 | `mv_generator.py:1084-1407` (`_build_drama_scenario_prompts`) | character2 규칙은 `rel == "ex_lover" / "friend" / "colleague" / "family" / else(=단독)` 분기. `else` 는 character2 생략 강제. trigger 정의: `"trigger(외부 사건 — 무엇이 주인공을 움직이게 하는가)"` (자연 현상 vs 사건성 구분 없음 — 라인 1298). |
+| Stage 2 검증 | `mv_generator.py:1420-1521` (`_validate_scenario_events`) | event count, other_characters 비율(rel 별), motif 회수. **사건성 비율 룰 없음.** |
+| Stage 2 파서 | `mv_generator.py:1524-1712` (`_parse_drama_scenario_json`) | v45 schema (narrative/premise/character_states/central_conflict/emotional_core/narrative_arc/events) 정상화. `inferred_relationship` 필드 미수용. |
+| Stage 2 생성기 | `mv_generator.py:1773-1950` (`_generate_scenario_openai/claude/gemini`) | dispatch → parse_drama_scenario → metrics 반환. |
+| Phase 0 영속화 | `backend_9004/app/services/mv_pipeline.py:1018-1057` | v45 키 (`scenario_narrative`, `scenario_premise`, `scenario_character_states`, `scenario_central_conflict`, `scenario_emotional_core`, `scenario_narrative_arc`, `scenario_events`, `scenario_brainstorm`) `scenario_<key>` prefix 로 mv_jobs 도큐먼트에 저장. **`inferred_relationship` 미저장.** |
+| MV 잡 생성 라우트 | `backend_9004/app/routes/mv.py:42-61, 219-228` | `CreateMVRequest.relationship` enum: `ex_lover/friend/colleague/family/None` (영어). 잘못된 값 → None 폴백 + warning. v45 의 한국어 별칭(연인/짝사랑 등) 매핑 없음. |
+| GET /api/mv/jobs/{id} | `backend_9004/app/routes/mv.py:392-463` | 응답에 `relationship`, `scenario_*` 필드 모두 포함. **`inferred_relationship` 미반환.** |
+| 프론트 createMVJob | `frontend/src/api/index.js:168-175` | `scenario_style/vocal_gender/relationship` 명시 전달. `relationship` 기본 null. |
+| UploadPage relationship state | `frontend/src/pages/UploadPage.jsx:118` | `useState(null)`. **UI 컨트롤 없음** — 항상 null 송신. 라인 117 코멘트도 "아직 별도 UI 없음" 인정. |
+| UploadPage 시나리오 패널 | `UploadPage.jsx:1465-1605` | scenario_narrative/premise/conflict/emotional_core/character_states/narrative_arc/events 표시. **inferred_relationship 표시 자리 없음.** |
+| 시나리오 스타일 셀렉터 위치 | `UploadPage.jsx:1272-1322` (line 1272 부근 "시나리오 스타일" 그리드) | 라디오 그리드. 새 "주인공 캐릭터와 등장인물 관계" 셀렉터를 그 직후(라인 1322 이후, 비용 안내 직전) 에 자연스럽게 배치 가능. |
+| 원격 로그 인프라 | `frontend/src/utils/remoteLogger.js` | v46-pre 로 도입 완료. `console.error/warn`(+DEV `info`) 자동 캡처 → `backend_9004/logs/frontend.log` 영속화. 컴포넌트 prefix(`[ComponentName]`) 만 심으면 자동 캡처. |
+
+**갭 / 사양 vs 코드 충돌점:**
+
+1. 사양의 한국어 옵션(`연인 / 짝사랑 / 친구 / 가족 / 없음`) 과 백엔드 enum(`ex_lover / friend / colleague / family`) 사이 매핑 정의가 없다. **결정**: B2 정규화 표(아래) 로 명시하고, 백엔드는 한국어/영어 둘 다 받아 영어 enum 으로 정규화. **사양의 `crush`(짝사랑)** 은 현재 enum 에 없음 → 새 값 `"crush"` 를 enum 에 추가하고 character2 규칙 분기에 신설(짝사랑 대상 — 곡 분위기에 맞는 인물).
+2. 사양의 `inferred_relationship` 영어 라벨(`stranger/friend/family/self`) 과 사용자 enum 라벨(`lover/crush/friend/family/none`) 가 다르다. **결정**: 두 라벨 영역 분리. 사용자 입력 enum = `{lover, crush, friend, family, none, null}`. LLM 자율 판단(`inferred_relationship`) = `{stranger, crush, friend, family, self}` (자율 라벨, 곡 분위기 기반). 둘은 다른 차원.
+3. v45 의 `_validate_scenario_events` 가 motif 회수·other_chars 비율은 검사하지만 사건성 trigger 비율은 검사 안 함. **결정**: 새 헬퍼 `_classify_trigger_kind(text)` + `_count_eventful_triggers(events)` 추가, 60% 미달 시 `RetryableScenarioError`. 기존 retry 루프(`mv_pipeline.py:1058~`) 가 그대로 사용 가능.
+4. `relationship` 한국어 별칭 처리 후 character2 분기(`mv_generator.py:1158-1192`) 가 그대로 동작하려면 입력단(라우트) 에서 정규화 후 내부에는 **항상 영어 enum** 만 흐르게 해야 한다. **결정**: 라우트 단에서 정규화. mv_generator 내부 분기는 그대로 유지하되 `crush` 분기 한 줄 추가.
+5. v45 의 brainstorm Stage 1 도 `relationship` 받지만 자율 룰이 없음. **결정**: B1 에서 Stage 1 시스템 프롬프트에도 동일 자율 판단 가이드 주입(곡 분위기 기반). Stage 2 가 최종 결정자.
+
+### v46 = Step 1 임 (Step 2~4 예고)
+
+- **v46 (이번)** = A(사건 비율 60%) + C(relationship 자율 추가)
+- v47 (예정) = B(brainstorm 단계에 플롯 후보 강화)
+- v48 (예정) = D(narrative ↔ events 일관성 자체 검증 강화)
+- v49 (예정) = E(few-shot 확장 + 장르별 톤)
+
+### 변경 매트릭스
+
+| ID | 영역 | 파일 | 변경 요지 | 추적자(traceability ID) |
+|---|---|---|---|---|
+| **B1** | 백엔드 — 시스템 프롬프트 강화 | `backend_9004/app/services/mv_generator.py` (`_build_brainstorm_prompts`, `_build_drama_scenario_prompts`) | Stage 1·2 모두 ① trigger 정의 강화 ② ABSOLUTE RULE 사건 비율 60% ③ relationship=None 시 자율 판단 가이드 + `inferred_relationship` 필드 출력 지시. | `mv_job_id` (logger.info `prompt_build job=<id> rel=<rel> stage=<stage>`) |
+| **B1.5** | 백엔드 — 사건성 휴리스틱 + 검증 | `mv_generator.py` 새 함수 `_classify_trigger_kind(text)`, `_count_eventful_triggers(events)`, `_validate_scenario_events` 확장 | 자연 현상 키워드 사전 + 사건성 키워드 사전 → 60% 검사. 미달 시 `RetryableScenarioError`. parser 에서 `inferred_relationship` 필드 파싱. | `mv_job_id`, `eventful_count`, `total_events`, `ratio` |
+| **B2** | 백엔드 — relationship 정규화 | `backend_9004/app/routes/mv.py` (`create_mv` 라인 225-228 부근) | 입력 한국어/영어 둘 다 받아 영어 enum 정규화. `crush` 추가. mv_generator 내부에 들어가는 값은 항상 정규화된 영어. | `mv_job_id`, 정규화 전후 값 둘 다 logger.info |
+| **B2.5** | 백엔드 — character2 분기에 `crush` 추가 | `mv_generator.py:1158-1192` | `rel == "crush"` 분기 신설(짝사랑 대상 — character1 과 동성/이성 자유, 아직 마음 받지 못한 관계). | `mv_job_id`, `relationship` |
+| **B3** | 백엔드 — Mongo 영속화 | `backend_9004/app/services/mv_pipeline.py:1018-1042` (Phase 0 update_fields) | `scenario_meta` 에 `inferred_relationship` 가 있으면 `update_fields["scenario_inferred_relationship"]` 로 저장. 옛 잡(없음) 호환. | `mv_job_id`, `inferred_relationship` |
+| **B4** | 백엔드 — GET 응답 확장 | `backend_9004/app/routes/mv.py:406-463` (`get_mv_job`) | 응답 dict 에 `"scenario_inferred_relationship": job.get("scenario_inferred_relationship")` 추가. 미존재 시 None. | `mv_job_id` |
+| **F1** | 프론트 — 관계 셀렉터 UI | `frontend/src/pages/UploadPage.jsx` (라인 1322 직후) | "주인공 캐릭터와 등장인물 관계" 셀렉터(라디오 또는 드롭다운). 옵션: `자동(LLM 판단)` / `연인(lover)` / `짝사랑(crush)` / `친구(friend)` / `가족(family)` / `없음(none)`. 기본 `자동`(=null). 선택 시 `setRelationship(value)` + `console.info("[UploadPage] relationship selected", {value})`. | 컴포넌트 prefix `[UploadPage]` |
+| **F2** | 프론트 — 시나리오 패널에 inferred 표시 | `UploadPage.jsx:1465-1605` 패널 안 | `mvJob.scenario_inferred_relationship` 가 있고 사용자가 `null` 보냈을 때 한 줄 표시: `관계 (자동 판단): {label}`. 라벨 한국어 매핑 적용. | 컴포넌트 prefix `[UploadPage]` |
+
+**비변경 (regression-safe):**
+- v45 의 motif 회수 / other_characters 비율 / event count 검증 룰은 그대로.
+- 기존 한국어 별칭(연인/친구/가족) 도 폐기 안 함 — 둘 다 받음.
+- 옛 mv_jobs 도큐먼트는 새 필드 없이도 정상 조회.
+
+### A의 ABSOLUTE RULE 문구 (SSOT — 코드와 동일 문장 유지)
+
+```
+## ABSOLUTE RULE — 사건 비율 60%
+
+전체 events 중 **최소 60%**는 "주인공 캐릭터의 인생·관계·결정에 변화를
+일으키는 사건"을 trigger 로 가져야 합니다.
+
+자연 현상(꽃잎·바람·햇살·하늘·노을·구름·별·태양·달·비·눈·계절·시간·공기·
+햇빛 등) 만 trigger 로 사용하는 events 는 **40% 이하**로 제한하세요.
+
+사건성 trigger 의 예:
+  - 새로운 인물의 등장 / 우연한 마주침
+  - 옛 인연의 신호(메시지·전화·소문)
+  - 잃어버린 물건의 발견
+  - 누군가의 부탁·거절·고백·이별 통보
+  - 결단을 요구하는 상황 / 마감·기한
+  - 주인공 캐릭터의 능동적 결정(짐을 싸고 떠남, 누군가에게 연락함 등)
+
+자연 현상은 secondary detail 로만 사용하세요. (예: trigger="옛 연인이
+편의점 앞에서 우연히 마주침" + props=["꽃잎"]) 자연 현상 단독으로 trigger
+를 채우지 마세요.
+```
+
+### A의 휴리스틱 (코드 시그너처)
+
+```python
+# v46 — 사건성 trigger 분류
+NATURAL_PHENOMENA_KEYWORDS = {
+    "꽃잎", "벚꽃", "바람", "햇살", "햇빛", "하늘", "노을", "구름",
+    "별", "별빛", "태양", "달", "달빛", "비", "빗방울", "눈",
+    "눈송이", "계절", "시간", "공기", "안개", "이슬", "그림자",
+}
+EVENTFUL_KEYWORDS = {
+    "만남", "만난다", "마주침", "마주친다", "재회", "헤어짐", "이별",
+    "전화", "메시지", "문자", "편지", "고백", "거절", "부탁", "결단",
+    "결심", "발견", "잃어버", "찾음", "도착", "떠남", "출발", "결정",
+    "초대", "초청", "방문", "선물", "약속", "다툼", "싸움", "포옹",
+    "키스", "악수", "이사", "여행", "공연", "오디션",
+}
+
+def _classify_trigger_kind(trigger_text: str, other_characters: list) -> str:
+    """Return 'eventful' or 'natural'.
+
+    Heuristic:
+      - other_characters 가 비어있지 않으면 → eventful (사람 등장 사건)
+      - EVENTFUL_KEYWORDS 중 하나라도 매치 → eventful
+      - NATURAL_PHENOMENA_KEYWORDS 만 매치 → natural
+      - 둘 다 매치 안 → eventful (보수적; LLM 신뢰)
+    """
+```
+
+`_validate_scenario_events` 가 새 metric `eventful_ratio` 추가, 0.6 미만이면 strict 모드에서 `RetryableScenarioError("eventful trigger ratio {:.2f} < required 0.60 ({} of {})")`.
+
+### C의 자율 판단 룰 (Stage 2 시스템 프롬프트에 주입할 텍스트)
+
+```
+## 사용자 미지정 시 character2 자율 판단 (relationship=None 일 때만 적용)
+
+사용자가 관계를 명시하지 않았습니다. 곡의 가사·장르·무드를 분석하여 다음
+중 하나로 자율 판단하세요:
+
+  - 곡 분위기가 사랑/외로움/그리움/설렘
+      → character2 를 "우연한 만남" 또는 "잠재적 짝사랑 대상"으로 추가
+      → inferred_relationship: "stranger" 또는 "crush"
+
+  - 곡 분위기가 우정/축제/응원
+      → character2 를 "친구"로 추가
+      → inferred_relationship: "friend"
+
+  - 곡 분위기가 가족/추억
+      → character2 를 "가족 구성원"으로 추가
+      → inferred_relationship: "family"
+
+  - 곡 분위기가 단독 자기 성찰/도전
+      → character2 미생성 (단독 주인공 캐릭터)
+      → inferred_relationship: "self"
+
+자율 판단한 결과는 출력 JSON 의 `inferred_relationship` 필드에
+영어 enum (`stranger | crush | friend | family | self`) 으로
+명시하세요. 사용자가 relationship 을 명시한 경우 이 필드는 생략하거나
+null 로 두세요.
+```
+
+### C의 UI 옵션 + 정규화 표
+
+| UI 표시 (사용자가 보는 한국어) | 한국어 alias (구버전 호환) | 영어 enum (백엔드 내부) | character2 동작 |
+|---|---|---|---|
+| 자동 (LLM 판단) | (없음) | `null` | LLM 이 곡 분위기로 자율 판단, `inferred_relationship` 필드 출력 |
+| 연인 | "연인" | `lover` | character2 = 현재 연인 (이성, 친밀) |
+| 짝사랑 | "짝사랑" | `crush` | character2 = 짝사랑 대상 (마음 미전달) |
+| 친구 | "친구" | `friend` | character2 = 오랜 친구 |
+| 가족 | "가족" | `family` | character2 = 부모/형제/자매 등 |
+| 없음 (단독) | "없음" | `none` | character2 미생성, 단독 주인공 캐릭터 |
+| (구버전 — 옛 연인) | "옛 연인" / "ex_lover" | `ex_lover` | character2 = 옛 연인 (헤어진 관계) — v45 호환 유지 |
+| (구버전 — 동료) | "동료" / "colleague" | `colleague` | character2 = 직장 동료 — v45 호환 유지 |
+
+라우트(`mv.py`) 정규화 로직: 입력값을 lower 후 위 표 어느 칸이든 매치되면 영어 enum 으로 변환. 매치 실패 시 None 폴백 + `logger.warning("Unknown relationship '%s' — using None")`.
+
+### `inferred_relationship` 라벨 → 한국어 표시 매핑 (F2 용)
+
+| enum | 프론트 표시 |
+|---|---|
+| `stranger` | 우연한 만남 |
+| `crush` | 잠재적 짝사랑 |
+| `friend` | 친구 |
+| `family` | 가족 |
+| `self` | 단독 주인공 캐릭터 |
+
+### Mongo schema diff (mv_jobs)
+
+| 필드 | 타입 | 추가/변경 | 비고 |
+|---|---|---|---|
+| `relationship` | str \| null | (변경 없음 — enum 확장만) | 기존 `ex_lover/friend/colleague/family/None` 에 `lover/crush/none` 신규 허용. `ex_lover/colleague` 는 호환 유지. |
+| `scenario_inferred_relationship` | str \| null | **신규** | LLM 자율 판단 결과(`stranger/crush/friend/family/self` 또는 None). 사용자 명시 시 None. |
+| 기존 `scenario_*` 필드 | (변경 없음) | — | v45 그대로. |
+
+### Test plan (T1~T6)
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | A — 사건 비율 60% | (a) 같은 곡(예: `벚꽃 흩날리는 날 내뀨` 잡 또는 새로 생성한 잡)으로 시나리오 재생성. (b) events 의 trigger 텍스트 → `_classify_trigger_kind` 실행 → eventful 비율 ≥ 60%. (c) natural-only 비율 ≤ 40%. (d) 첫 시도 60% 미달 시 `RetryableScenarioError` → retry 발동(server.log grep) → 재시도 후 통과. |
+| **T2** | A — trigger 정의 강화 효과 | v45 결과(꽃잎 떨어진다 / 바람이 분다 류) 와 v46 결과의 trigger 텍스트를 정성 비교. v46 의 trigger 텍스트가 인물·결정·만남 키워드를 포함하는지 확인 (5건 이상). |
+| **T3** | C — UI 컨트롤 | (a) /upload 페이지에서 "주인공 캐릭터와 등장인물 관계" 셀렉터 표시. (b) 각 옵션 선택 → DevTools network 탭에서 `POST /api/mv/create` 페이로드의 `relationship` 정확. (c) 기본값 = null (`자동` 선택 안 한 상태). (d) `console.info("[UploadPage] relationship selected", {value})` 가 frontend.log 에 기록(T6 와 통합). |
+| **T4** | C — relationship 자동 판단 | (a) 사용자 `null` (자동) 선택 시 응답 `scenario_inferred_relationship` 가 `stranger/crush/friend/family/self` 중 하나. (b) 사용자 명시값 선택 시 `scenario_inferred_relationship` 는 None 또는 무시. (c) 곡 분위기별 자율 판단 검증: 사랑/외로움 곡 → `stranger` or `crush`, 우정 곡 → `friend`, 단독 도전 곡 → `self`. (d) Mongo 도큐먼트에 `scenario_inferred_relationship` 영속됨 확인. |
+| **T5** | 회귀 | (a) Vite build PASS. (b) uvicorn 부팅 정상 (import error 없음). (c) v45 시나리오 schema 호환 — narrative/premise/events/character_states/narrative_arc/emotional_core/central_conflict 모두 응답에 존재. (d) 옛 mv_jobs 도큐먼트(없는 필드) 도 GET 응답 정상 (None / [] / {}). (e) `relationship="ex_lover"` (구 enum) 도 그대로 character2 옛 연인 동작. (f) v46-pre frontend.log 인프라 정상. (g) v44 비트 시각화, v43 lipsync 회귀 없음. |
+| **T6** | 인프라 활용 | (a) 새 백엔드 함수 `_classify_trigger_kind`, `_count_eventful_triggers`, B1.5 검증 retry 의 logger.info / warning 이 `backend_9004/logs/server.log` 에 mv_job_id 추적자와 함께 기록. (b) F1 의 `console.info("[UploadPage] relationship selected", ...)` 가 `backend_9004/logs/frontend.log` 에 기록. (c) F1 의 createMVJob 실패 시 `console.error("[UploadPage] createMVJob failed", {err, payload})` 가 frontend.log 에 기록 (실패 시뮬레이션). |
+
+테스트 환경: 백엔드 9004(이미 실행 중), 프론트 4000(이미 실행 중). E2E 의 LLM 호출은 실제 API 사용. 휴리스틱 단위 테스트는 mock 가능.
+
+### 추적자 식별자 표 (디버깅 로그 심기 SSOT)
+
+| 함수/컴포넌트 | 추적자 | 로그 prefix / 키워드 |
+|---|---|---|
+| `_classify_trigger_kind(trigger_text, other_chars)` | (없음 — 순수 함수) | `logger.debug("[TriggerKind] kind=%s text=%.40s", kind, text)` (DEBUG 만, 노이즈 회피) |
+| `_count_eventful_triggers(events)` | events 길이 | `logger.info("[EventfulCount] eventful=%d natural=%d total=%d ratio=%.2f", e, n, t, r)` |
+| `_validate_scenario_events` 확장 | `relationship`, expected count | 기존 prefix 유지 + `eventful_ratio` 메트릭 |
+| `_parse_drama_scenario_json` (inferred_relationship 파싱) | (없음 — caller 가 mv_job_id 알고 있음) | `logger.info("[ScenarioParse] inferred_relationship=%s", val)` |
+| `_build_drama_scenario_prompts` | `relationship`, `vocal_gender` | `logger.info("[PromptBuild] stage=2 rel=%s vg=%s has_brainstorm=%s", rel, vg, bool(brain))` |
+| `_build_brainstorm_prompts` | `relationship` | `logger.info("[PromptBuild] stage=1 rel=%s", rel)` |
+| Phase 0 영속화 | `mv_job_id` | 기존 `Phase0:` prefix 유지 + `infer_rel=<val>` 키워드 추가 |
+| `create_mv` route 정규화 | `user_id` | `logger.info("[CreateMV] relationship raw=%s normalized=%s user=%s", raw, norm, uid)` |
+| `get_mv_job` route | `mv_job_id` | (변경 없음 — 응답에만 새 필드 추가) |
+| `UploadPage` (F1) | (없음 — 컴포넌트 prefix 만) | `console.info("[UploadPage] relationship selected", {value})`, `console.error("[UploadPage] createMVJob failed", {err, payload_summary})` (payload 에서 lyrics 본문은 길이만 — 시크릿 방지) |
+| `UploadPage` 시나리오 패널 (F2) | (없음) | `console.info("[UploadPage] inferred_relationship displayed", {label})` (DEV 만) |
+
+### 체크리스트
+
+- [ ] B1 Stage 1·2 시스템 프롬프트에 ABSOLUTE RULE 60% + trigger 정의 강화 + 자율 판단 가이드 주입
+- [ ] B1.5 `_classify_trigger_kind`, `_count_eventful_triggers` 추가
+- [ ] B1.5 `_validate_scenario_events` 에 eventful 비율 검사 추가 (RetryableScenarioError 발동)
+- [ ] B1.5 `_parse_drama_scenario_json` 이 `inferred_relationship` 필드 파싱·반환
+- [ ] B2 라우트 `mv.py` 의 `relationship` 정규화 (한국어/영어/`crush`/`lover`/`none` 수용)
+- [ ] B2.5 `_build_drama_scenario_prompts` 에 `crush` 분기 추가
+- [ ] B3 `mv_pipeline.py` Phase 0 영속화에 `scenario_inferred_relationship` 저장
+- [ ] B4 GET `/api/mv/jobs/{id}` 응답에 `scenario_inferred_relationship` 추가
+- [ ] B 전체에 디버깅 로그 심기 (mv_job_id / 추적자 표 준수)
+- [ ] F1 UploadPage 에 관계 셀렉터 UI 추가 (자동 기본)
+- [ ] F1 `console.info("[UploadPage] relationship selected", {value})` + 에러 시 console.error
+- [ ] F2 시나리오 패널에 자동 판단 라벨 한 줄 표시 (선택)
+- [ ] T1 A 사건 비율 60% (4 케이스)
+- [ ] T2 A trigger 정의 강화 정성 비교
+- [ ] T3 C UI 컨트롤 (4 케이스)
+- [ ] T4 C 자동 판단 (4 케이스)
+- [ ] T5 회귀 (7 항목)
+- [ ] T6 인프라 활용 (3 케이스)
+- [ ] REPORT.md v46 append
+
+## v47 — 2026-05-08 — Step 2: Brainstorm 플롯 다양성 (4개 archetype 강제 + key_events 사건성 60%)
+
+> **본 v47 = 4단계 롤아웃의 2단계 (Step 2 = B).** v46(Step 1=A+C) 위에 점진적으로 쌓는다. v48/v49 는 별도 진입.
+> v45 에서 도입된 Brainstorm Stage 1 은 "톤 다양성" 에만 최적화돼 4개 후보가 잔잔/밝은/몽환/도시처럼 **톤만 다르고 플롯은 비슷** 한 결과를 낸다. v46 의 사건 비율 60% 강제와 어울리는 **다양한 플롯 후보가 부족** 한 상태. v47 의 핵심 = Brainstorm 4개 후보가 **서로 다른 plot archetype** 을 갖도록 재설계.
+> 작성일: 2026-05-08
+
+### Plan verification findings (Step 0 — 현재 코드 사실 확인)
+
+아래는 추정 아닌 **현 시점 파일 직접 읽음** 결과 (`mv_generator.py:714~993`, `mv_pipeline.py:935~1078`, `mv.py:474~485`, `UploadPage.jsx:1537~1689`).
+
+| 영역 | 파일 / 위치 | 현재 동작 |
+|---|---|---|
+| Stage 1 시스템 프롬프트 | `backend_9004/app/services/mv_generator.py:714-756` (`BRAINSTORM_SYSTEM_PROMPT`) | "톤이 서로 다른 4개" 강조. 출력 schema = `{tone, mood_arc, key_events[], setting_hint}`. v46 60% 룰은 이미 텍스트로 들어가 있음(라인 728-735) **그러나 plot archetype 다양성 룰은 없음.** 같은 archetype 4개 나올 가능성 큼. |
+| Stage 1 user 프롬프트 | `mv_generator.py:759-801` (`_build_brainstorm_prompts`) | `relationship=None` 자율 판단 안내 + trace log (`[PromptBuild] stage=1 ...`) v46 시점에 추가됨. archetype 관련 hint 없음. |
+| Stage 1 파서 | `mv_generator.py:804-871` (`_parse_brainstorm_json`) | 4개 후보 정상화. `tone/mood_arc/key_events/setting_hint` 만 추출. **archetype/premise_summary/central_conflict 미추출.** seen_tones 검사도 형식적(중복이어도 통과). |
+| Stage 1 모델 디스패처 | `mv_generator.py:874-993` (`_generate_brainstorm_*`, `generate_mv_brainstorm`) | OpenAI/Claude/Gemini 분기. 각 모델 호출 후 `_parse_brainstorm_json` → 후보 dict. retry 루프 없음(한 번만 호출). |
+| Stage 2 prompt 빌더 | `mv_generator.py:1120~1557` (`_build_drama_scenario_prompts`) | brainstorm_candidates 가 user 프롬프트에 통째로 JSON 으로 주입됨(라인 1525-1535: `## 브레인스토밍 후보 (Stage 1 결과 — 가장 적합한 1개를 선택하거나 혼합하세요)`). Stage 2 가 어느 후보를 선택했는지 출력 schema 에 없음. |
+| Stage 2 출력 schema | `mv_generator.py:1462-1486` (system_prompt JSON 형식) | `inferred_relationship` 필드는 있음(v46). **`selected_archetype` 필드는 없음.** |
+| v46 사건성 휴리스틱 | `mv_generator.py:1572-1682` (`_classify_trigger_kind`, `_count_eventful_triggers`) | events 의 `trigger` 필드를 받아 eventful/natural/unknown 분류. 키워드 사전(NATURAL 39개, EVENTFUL 60개+). **재사용 대상 — 이번에 brainstorm 의 key_events 에 적용.** `_classify_trigger_kind(text, other_chars=[])` 시그니처 — other_chars 는 옵셔널 list. brainstorm key_events 에는 other_characters 가 없으므로 빈 list 전달. |
+| Phase 0 brainstorm 호출 | `mv_pipeline.py:935-963` | `generate_mv_brainstorm(...)` 1회 호출, 실패 시 `brainstorm_result=None` 으로 폴백. retry 루프 없음. 결과는 `update_fields["scenario_brainstorm"]` 로 저장(라인 1000, 1047). |
+| GET 응답 | `backend_9004/app/routes/mv.py:474-484` | `scenario_brainstorm` 필드 이미 응답에 포함(v46). `scenario_inferred_relationship` 도 포함. **`scenario_selected_archetype` 미포함 (B5 적용 시 추가).** |
+| 프론트 시나리오 패널 | `frontend/src/pages/UploadPage.jsx:1537-1689` | `scenario_inferred_relationship`(v46) + `scenario_narrative` + `scenario_premise/conflict/emotional_core/character_states/narrative_arc` collapsible + `scenario_events` collapsible. **`scenario_brainstorm` 표시 자리 없음.** |
+| 라벨 SSOT | `frontend/src/pages/UploadPage.jsx:1553-1559` | `scenario_inferred_relationship` 매핑 인라인 객체로 존재(stranger→우연한 만남 등). archetype 매핑은 없음 — 새로 만들 필요. |
+| 프론트 API 클라이언트 | `frontend/src/api/index.js:169-200` | `getMVJobDetail(jobId)` 가 그대로 응답에 `scenario_brainstorm` 포함하므로 신규 API 함수 필요 없음. |
+| 원격 로그 인프라 | `frontend/src/utils/remoteLogger.js` (v46-pre) | `console.info/warn/error` 자동 캡처 → `backend_9004/logs/frontend.log`. DEV 모드만 info 캡처. 컴포넌트 prefix `[ComponentName]` 만 붙이면 끝. |
+
+**갭 / 사양 vs 코드 충돌점:**
+
+1. 사양에서 사건성 ≥ 60% 검증을 brainstorm 에 추가하라고 했음. 하지만 v46 도입 당시 의도적으로 stage 1 은 키워드 매칭을 안 했음(REPORT v46 의 follow-up: "brainstorm 의 key_events 는 30자 이내 짧은 문장이라 키워드 매칭이 노이즈 가능"). **결정**: brainstorm 에 적용하되 **임계치를 평균 ratio 기준 0.5** 로 완화(events 와 다르게 후보별 0.6 이 아니라 4개 후보의 평균이 0.5 이상). 4개 평균이 0.5 미만일 때만 retry. 후보 개별로 0.0 이어도 다른 후보가 보완하면 OK.
+2. archetype 다양성 검증 = 후보 4개의 plot_archetype 이 모두 다르면 OK. 한 archetype 이 두 번 등장하면 retry. 단 1회 retry 후에도 중복이면 warning 로그 + 그대로 진행(후보 통째로 폐기는 위험).
+3. Stage 2 가 brainstorm_candidates 를 user 프롬프트에 통째 주입하므로, B1 의 schema 확장은 **Stage 2 에 자연스럽게 호환** 된다(JSON 필드 추가만이라 무회귀). 다만 Stage 2 시스템 프롬프트가 후보 schema 를 명시하지 않으므로 추가 가이드는 불필요(Stage 2 는 candidates 의 흐름만 참고).
+4. B5(`selected_archetype` 필드) 는 Stage 2 system prompt + parser 변경이 필요. 우선순위 낮음 — 시간 남으면 추가, 아니면 v48 로.
+5. v45/v46 옛 mv_jobs 도큐먼트의 `scenario_brainstorm.candidates[]` 안에는 `plot_archetype` 키 없음. **결정**: GET 응답은 그대로 — 프론트가 `?? null` 체크로 호환. 새 필드는 v47 이후 신규 잡에만 채워짐.
+
+### v47 = Step 2 임 (Step 3~4 예고)
+
+- v46 (이전) = Step 1 = A(사건 비율 60%) + C(relationship 자율)
+- **v47 (이번) = Step 2 = B(brainstorm plot archetype 다양성)**
+- v48 (예정) = D(곡 톤·장르별 archetype 가중치 + narrative ↔ events 일관성 자체 검증 강화)
+- v49 (예정) = E(few-shot 확장 + 장르별 톤)
+
+### archetype enum SSOT (영어 라벨 — 백엔드 = 프론트 동일)
+
+| enum (영어) | 한국어 라벨 (UI) | 한 줄 정의 |
+|---|---|---|
+| `chance_encounter` | 우연한 만남 | 우연한 만남 → 첫눈에 반함 → 결단 (번호 주기/말 걸기 등) |
+| `reunion` | 재회 | 오랜만의 재회 → 흔들리는 마음 → 결정 (다가가기 vs 떠나보내기) |
+| `farewell` | 이별·작별 | 이별/작별 → 그리움 → 의미 새기기 |
+| `pursuit_of_dream` | 꿈을 향한 도전 | 자기 도전 / 성취 / 좌절과 회복 |
+| `subtle_growth` | 소소한 성장 | 소소한 일상 사건 → 깨달음 / 성장 |
+| `support_and_friendship` | 우정·유대 | 친구·가족과의 작은 사건 → 유대 강화 |
+| `inner_resolution` | 내적 결단 | 내적 갈등 → 결단 (관계가 아닌 자기 자신과의 대결) |
+
+이 표가 backend(`mv_generator.py` 시스템 프롬프트 + parser whitelist) 와 frontend(`UploadPage.jsx` 라벨 매핑) 의 SSOT. 백엔드 코드 상수 이름 = `PLOT_ARCHETYPES` (set or tuple). 프론트 상수 이름 = `ARCHETYPE_LABELS` (object).
+
+### 변경 매트릭스
+
+| ID | 영역 | 파일 | 변경 요지 | 추적자 (traceability ID) |
+|---|---|---|---|---|
+| **B1** | 백엔드 — Stage 1 시스템 프롬프트 재작성 | `backend_9004/app/services/mv_generator.py:714~756` (`BRAINSTORM_SYSTEM_PROMPT`) | "톤 다양성" → **"plot archetype 다양성"** 으로 핵심 메시지 전환. archetype 메뉴 7개 (영어 enum + 한국어 설명) 제공, LLM 이 4개 자율 선택 (중복 금지). 출력 schema 에 `plot_archetype`, `premise_summary`, `central_conflict` 필드 추가, `key_events` 는 4~6개 사건성 사건 (≤30자). v46 의 60% 룰은 brainstorm 평균 0.5 로 완화 명시. tone 은 그대로 유지 (선택적 색감 표현). | `mv_job_id`, `attempt`, prefix `[BrainstormPrompt]` |
+| **B2** | 백엔드 — 검증 + retry | `mv_generator.py` 신규 함수 `_validate_brainstorm_candidates(candidates)` + `generate_mv_brainstorm` 1회 retry 루프 추가 | 검증: ① 후보 수 == 4 (3~5 허용 + warning) ② plot_archetype 가 PLOT_ARCHETYPES whitelist 에 있음 ③ 4개 archetype 모두 다름 (중복 시 fail) ④ key_events 의 평균 사건성 ratio ≥ 0.5 (`_count_eventful_triggers` 를 list 로 변환해 재사용 — events.trigger 대신 key_events 를 trigger 로 쓰는 어댑터 필요). 실패 시 `BrainstormDiversityError` 1회 retry (temperature 0.95 → 1.0, seed 변경). 두 번째 실패 시 warning + 그대로 반환(통째 폐기 안 함). | `mv_job_id`, `attempt`, `archetypes_seen`, `eventful_avg`, prefix `[BrainstormValidate]` |
+| **B3** | 백엔드 — parser 확장 | `mv_generator.py:804~871` (`_parse_brainstorm_json`) | 추출 필드 추가: `plot_archetype` (whitelist 검증, 미매치 시 None + warning), `premise_summary` (≤200자), `central_conflict` (≤120자). `key_events` 는 그대로(이미 list). 미존재 필드는 None 또는 "" 로 정상화. 옛 도큐먼트 호환. | (parser — caller logger 사용), prefix `[BrainstormParse]` |
+| **B4** | 백엔드 — 영속화 (자동) | `mv_pipeline.py:935-963, 1000, 1047` (변경 없음 — 이미 `scenario_brainstorm` 통째 저장 중) | candidates 안 새 필드는 자연스럽게 함께 저장됨. 스키마 변경 없음. retry 결과 brainstorm 의 attempt 메트릭 (eventful_avg, archetypes_seen 등) 을 candidates dict 의 메타로 같이 저장 (`scenario_brainstorm.diagnostics`). | (변경 없음) |
+| **B5** | 백엔드 — Stage 2 selected_archetype | (선택, 우선순위 낮음) `mv_generator.py:1462-1486` (Stage 2 출력 JSON 스키마) + parser + 영속화 | Stage 2 출력 JSON 에 `selected_archetype: <enum or null>` 필드 추가 (어떤 brainstorm 후보를 골랐는지). parser 가 추출, `mv_pipeline.py` Phase 0 update_fields 에 `scenario_selected_archetype` 추가. GET 응답 라인 484 부근에 `"scenario_selected_archetype": job.get("scenario_selected_archetype")` 추가. 시간 부족 시 v48 로 미룸. | `mv_job_id`, `selected_archetype`, prefix `[Stage2Select]` |
+| **F1** | 프론트 — 시나리오 패널에 brainstorm 후보 표시 | `frontend/src/pages/UploadPage.jsx:1683~1689` 부근 (사건 목록 collapsible 다음 자리) | `scenario_brainstorm.candidates` 가 비어있지 않으면 collapsible "🧠 브레인스토밍 후보 ({n})" 섹션 추가. 4개 후보 카드: 각각 archetype 라벨(한국어) + tone + premise_summary + central_conflict + mood_arc + key_events 리스트. archetype 미존재 시 "-" 표시(옛 잡 호환). collapsible 토글 state 추가 (`showBrainstorm`). useEffect 또는 카드 첫 렌더 시 `console.info("[UploadPage] brainstorm candidates", {count, archetypes})` (DEV). | 컴포넌트 prefix `[UploadPage]` |
+| **F2** | 프론트 — archetype 라벨 매핑 SSOT | `UploadPage.jsx` 컴포넌트 외부 (파일 상단 import 직후) const | `const ARCHETYPE_LABELS = { chance_encounter: "우연한 만남", reunion: "재회", farewell: "이별·작별", pursuit_of_dream: "꿈을 향한 도전", subtle_growth: "소소한 성장", support_and_friendship: "우정·유대", inner_resolution: "내적 결단" }`. F1 카드 + (B5 적용 시) selected_archetype 강조에 사용. | (상수만 — 로그 없음) |
+
+**비변경 (regression-safe):**
+- v45/v46 의 narrative/premise/conflict/emotional_core/character_states/narrative_arc/events 검증 + 표시는 그대로.
+- 사건 비율 60% 룰 (Stage 2 events) 은 그대로.
+- `inferred_relationship` 표시 그대로.
+- 옛 mv_jobs 도큐먼트 (plot_archetype 없음) GET 응답 정상.
+- 프론트 API 클라이언트 변경 없음 — `getMVJobDetail` 응답 필드만 확장됨.
+
+### 한국어 라벨 매핑 표 (F1/F2 SSOT)
+
+```js
+// frontend/src/pages/UploadPage.jsx (컴포넌트 외부 상수)
+const ARCHETYPE_LABELS = {
+  chance_encounter: '우연한 만남',
+  reunion: '재회',
+  farewell: '이별·작별',
+  pursuit_of_dream: '꿈을 향한 도전',
+  subtle_growth: '소소한 성장',
+  support_and_friendship: '우정·유대',
+  inner_resolution: '내적 결단',
+};
+```
+
+### 시스템 프롬프트 — Stage 1 핵심 문장 (B1 SSOT)
+
+```
+당신은 뮤직비디오 시나리오 브레인스토머입니다. 입력으로 들어온 곡 정보(제목/
+장르/분위기/관계/가사) 를 바탕으로 **서로 다른 4개의 plot archetype 을 가진
+후보 시나리오 스케치** 를 JSON 으로만 출력하세요.
+
+## ABSOLUTE RULE — plot archetype 다양성 (절대 준수)
+4개 후보의 `plot_archetype` 은 **모두 달라야 합니다**. 같은 archetype 을 두 번
+사용하지 마세요.
+
+## archetype 메뉴 (LLM 자율 선택 — 4개 골라 사용)
+  - chance_encounter — 우연한 만남 → 첫눈에 반함 → 결단
+  - reunion — 오랜만의 재회 → 흔들리는 마음 → 결정
+  - farewell — 이별/작별 → 그리움 → 의미 새기기
+  - pursuit_of_dream — 자기 도전 / 성취 / 좌절과 회복
+  - subtle_growth — 소소한 일상 사건 → 깨달음 / 성장
+  - support_and_friendship — 친구·가족과의 작은 사건 → 유대 강화
+  - inner_resolution — 내적 갈등 → 결단 (관계가 아닌 자기 자신과의 대결)
+
+곡의 가사·장르·무드를 분석해서 어울리는 4개 archetype 을 골라 각각 다른 사건
+시퀀스로 작성하세요.
+
+## ABSOLUTE RULE — key_events 사건성
+각 후보의 `key_events` 는 **4~6개**, 각 ≤30자, "주인공 캐릭터의 인생·관계·결정에
+변화를 일으키는 사건" 중심. 자연 현상 단독은 배경 묘사로만 (꽃잎/바람/햇살/
+하늘 등) — 후보 평균 사건성 비율은 50% 이상이어야 합니다.
+
+## 출력 스키마
+{
+  "candidates": [
+    {
+      "tone": "톤 표현 (한국어, 선택)",
+      "plot_archetype": "<위 7개 enum 중 하나>",
+      "premise_summary": "이 후보의 핵심 전제 한 줄 (≤80자)",
+      "key_events": ["사건1", "사건2", "사건3", "사건4" /* 4~6개 */],
+      "central_conflict": "이 후보의 핵심 갈등 한 줄 (≤80자)",
+      "mood_arc": "감정 곡선 한 문장"
+    }
+    // ... 정확히 4개, 모두 다른 plot_archetype
+  ]
+}
+```
+
+### 검증 휴리스틱 (B2 시그니처)
+
+```python
+class BrainstormDiversityError(ValueError):
+    """v47 — raised when brainstorm candidates fail v47 archetype diversity
+    or key_events eventful ratio average. Caller retries once.
+    """
+
+PLOT_ARCHETYPES = (
+    "chance_encounter", "reunion", "farewell", "pursuit_of_dream",
+    "subtle_growth", "support_and_friendship", "inner_resolution",
+)
+
+def _validate_brainstorm_candidates(parsed: dict) -> dict:
+    """Validate brainstorm candidates for v47 archetype diversity + eventful avg.
+
+    Returns metrics dict {count, archetypes, archetype_unique, eventful_avg,
+    eventful_per_candidate, soft_failures}. Raises BrainstormDiversityError on
+    hard fail (caller retries once).
+    """
+    cands = parsed.get("candidates") or []
+    archetypes = []
+    eventful_per = []
+    for c in cands:
+        a = (c.get("plot_archetype") or "").strip()
+        if a and a not in PLOT_ARCHETYPES:
+            # parser drops invalid → here it would already be None.
+            pass
+        archetypes.append(a or None)
+        # adapter — convert key_events list into pseudo events for eventful counting
+        ev_list = [{"trigger": ke, "other_characters": []}
+                   for ke in (c.get("key_events") or [])]
+        m = _count_eventful_triggers(ev_list)
+        eventful_per.append(m["eventful_ratio"])
+
+    valid_archetypes = [a for a in archetypes if a]
+    archetype_unique = len(set(valid_archetypes)) == len(valid_archetypes) and len(valid_archetypes) >= 3
+    eventful_avg = sum(eventful_per) / len(eventful_per) if eventful_per else 0.0
+
+    if not archetype_unique:
+        raise BrainstormDiversityError(
+            "archetype duplication: {}".format(archetypes)
+        )
+    if eventful_avg + 1e-6 < 0.5:
+        raise BrainstormDiversityError(
+            "key_events eventful avg {:.2f} < 0.5".format(eventful_avg)
+        )
+
+    return {
+        "count": len(cands),
+        "archetypes": archetypes,
+        "archetype_unique": archetype_unique,
+        "eventful_avg": eventful_avg,
+        "eventful_per_candidate": eventful_per,
+    }
+```
+
+retry 루프는 `generate_mv_brainstorm()` 안에 1회만 (총 2회 시도). 첫 시도 temperature=0.95, retry temperature=1.0. 두 번째도 실패하면 warning + soft 통과 (candidates 그대로 반환, diagnostics 에 "soft" 표시).
+
+### Mongo schema diff (mv_jobs)
+
+| 필드 | 타입 | 추가/변경 | 비고 |
+|---|---|---|---|
+| `scenario_brainstorm.candidates[*].plot_archetype` | str \| null | **신규** | enum 1종. 옛 잡엔 없음 — 프론트가 `?? null` 처리. |
+| `scenario_brainstorm.candidates[*].premise_summary` | str \| null | **신규** | ≤200자. |
+| `scenario_brainstorm.candidates[*].central_conflict` | str \| null | **신규** | ≤120자. |
+| `scenario_brainstorm.diagnostics` | dict \| null | **신규** | `{eventful_avg, archetypes_seen, attempts, soft}` 검증 결과. |
+| `scenario_selected_archetype` | str \| null | (선택, B5) | Stage 2 가 어떤 archetype 을 골랐는지. |
+
+### Test plan (T1~T6)
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | B — archetype 다양성 (4개 후보) | (a) 한 곡 brainstorm 호출 → 4개 후보의 `plot_archetype` 이 모두 다름. (b) 같은 archetype 두 번 강제 시뮬레이션 → `BrainstormDiversityError` 발생 → retry 진입 → server.log 에 `[BrainstormValidate] archetype duplication ...` warning + retry attempt 라인 보임. (c) retry 후에도 중복이면 soft 통과 + warning. |
+| **T2** | B — key_events 사건성 (4개 후보 평균) | (a) 자연 현상 단독 key_events 만 가진 4개 후보 mock → eventful_avg < 0.5 → `BrainstormDiversityError` → retry. (b) 사건성 풍부 4개 후보 → eventful_avg ≥ 0.5 → 통과. (c) 평균 산출이 후보별 ratio 의 평균과 일치 (단위 테스트). |
+| **T3** | Stage 2 호환성 | (a) 새 필드 (`plot_archetype/premise_summary/central_conflict`) 가 user 프롬프트에 자연스럽게 주입됨 (Stage 2 system prompt 변경 없이 동작). (b) Stage 2 출력 JSON 의 narrative/events 가 정상 생성. (c) (B5 적용 시) `selected_archetype` 필드가 응답 schema 에 포함, parser 가 추출. |
+| **T4** | parser & validation | (a) whitelist 7개 archetype → 그대로 유지. (b) 알 수 없는 enum (예: "epic_battle") → None + `[BrainstormParse]` warning. (c) 필드 missing → None 또는 "" 로 정상화. (d) 옛 도큐먼트 (plot_archetype 키 없음) → 정상 조회. |
+| **T5** | Frontend 표시 | (a) /upload 페이지 시나리오 패널에 "🧠 브레인스토밍 후보" collapsible 표시 (mvJob.scenario_brainstorm.candidates 존재 시). (b) 4개 후보 카드 — archetype 한국어 라벨 정상 매핑(`chance_encounter` → "우연한 만남" 등). (c) tone/premise_summary/key_events/central_conflict/mood_arc 모두 표시. (d) 옛 잡 (archetype 없음) → "-" 표시 또는 카드 자체 숨김. |
+| **T6** | 회귀 + 인프라 | (a) Vite build PASS. (b) uvicorn 부팅 정상 (import error 없음). (c) v45/v46 schema 호환 — narrative/premise/conflict/inferred_relationship 모두 응답. (d) 옛 mv_jobs 도큐먼트 GET 정상. (e) v44 비트 시각화, v43 lipsync 회귀 없음. (f) `console.info("[UploadPage] brainstorm candidates", ...)` 가 frontend.log 에 캡처. (g) `[BrainstormValidate]/[BrainstormParse]` 추적자가 server.log 에 grep 가능. |
+
+테스트 환경: 백엔드 9004(이미 실행 중), 프론트 4000(이미 실행 중). 단위 테스트는 mock candidates 사용. E2E 1 케이스 (실 LLM 호출) — 사용자 검증 단계에서 진행.
+
+### 추적자 식별자 표 (디버깅 로그 심기 SSOT)
+
+| 함수/컴포넌트 | 추적자 | 로그 prefix / 키워드 |
+|---|---|---|
+| `_validate_brainstorm_candidates(parsed)` | `archetypes`, `eventful_avg` | `logger.info("[BrainstormValidate] archetypes=%s unique=%s eventful_avg=%.2f", a, u, r)`, fail 시 `logger.warning("[BrainstormValidate] %s — retrying", reason)` |
+| `_parse_brainstorm_json` 확장 | (caller mv_job_id) | `logger.info("[BrainstormParse] candidates=%d archetypes=%s missing_arche=%d", n, set(a), miss)`, invalid enum drop 시 `logger.warning("[BrainstormParse] dropping invalid archetype '%s'", val)` |
+| `_build_brainstorm_prompts` | `relationship`, `vocal_gender` | (이미 v46 에서 `[PromptBuild] stage=1 ...` 추가됨 — 그대로 유지) |
+| `generate_mv_brainstorm` (retry 루프) | `mv_job_id` (Phase 0 caller 가 prefix), `attempt` | `logger.info("[BrainstormGen] attempt=%d temp=%.2f", n, t)`, retry 시 `logger.warning("[BrainstormGen] attempt=%d failed (%s) — retrying", n, err)` |
+| Phase 0 영속화 | `mv_job_id` | 기존 `Phase0:` prefix 유지 + `archetypes=...` 키워드 |
+| `UploadPage` brainstorm 패널 (F1) | (없음 — 컴포넌트 prefix) | `console.info("[UploadPage] brainstorm candidates", {count, archetypes})` (DEV), `console.warn("[UploadPage] brainstorm missing archetype", {idx})` |
+
+민감정보 금지: 시스템·유저 프롬프트 본문, lyrics 본문, API 키 일체 로그 출력 안 함. brainstorm 응답 본문은 logger 에 안 찍고 메트릭(archetype 리스트, ratio) 만.
+
+### 체크리스트
+
+- [x] B1 Stage 1 시스템 프롬프트 archetype 다양성 SSOT 로 재작성 (PLOT_ARCHETYPES 7종, 출력 schema 확장)
+- [x] B2 `_validate_brainstorm_candidates` 신규 + `BrainstormDiversityError` + 1회 retry 루프
+- [x] B3 `_parse_brainstorm_json` 이 plot_archetype/premise_summary/central_conflict 추출 + whitelist 검증
+- [x] B4 영속화 — diagnostics 메타 추가 (자동) + selected_archetype 영속화
+- [x] B5 (선택) Stage 2 selected_archetype 출력 + parser + 영속화 + GET 응답 — 채택
+- [x] B 전체 추적자 로그 심기 (위 표 준수)
+- [x] F1 UploadPage 시나리오 패널에 "🧠 브레인스토밍 후보" collapsible 추가
+- [x] F2 ARCHETYPE_LABELS 상수 SSOT 정의
+- [x] F1 `console.info("[UploadPage] brainstorm candidates", ...)` 심기 (DEV)
+- [x] T1 B archetype 다양성 (4 케이스 — T1a/T1b/T1c-retry/T1c-soft 모두 PASS)
+- [x] T2 B key_events 사건성 평균 (2 케이스 — T2 raise / T2b mixed 통과)
+- [x] T3 Stage 2 호환성 (1 핵심 케이스 — T3a brainstorm 주입 + selected_archetype schema)
+- [x] T4 parser & validation (2 케이스 — invalid drop / 옛 도큐 호환)
+- [x] T5 Frontend 표시 (Vite build 통과 — UploadPage F1+F2 변경 포함)
+- [x] T6 회귀 + 인프라 (uvicorn auto-reload OK, 옛 jobs 호환 OK, Stage 2 selected_archetype OK)
+- [x] REPORT.md v47 append
+
+
+---
+
+## v48 — 2026-05-08 — Step 3: 곡 톤·장르 → archetype 가중치 자동 매칭
+
+### Plan verification findings (Step 0)
+
+- `app/services/mv_generator.py` (4703줄):
+  - L719~727: `PLOT_ARCHETYPES` 7종 enum (chance_encounter / reunion / farewell / pursuit_of_dream / subtle_growth / support_and_friendship / inner_resolution).
+  - L732~793: `BRAINSTORM_SYSTEM_PROMPT` — v47 ABSOLUTE RULE (4 distinct archetype) + 출력 schema 정의.
+  - L796~839: `_build_brainstorm_prompts(title, genre, mood, lyrics, vocal_gender, relationship)` — 시스템 프롬프트는 상수 그대로 반환, user 프롬프트만 동적 구성. v48 가중치 가이드는 **시스템 프롬프트 동적 변형** 지점에 주입.
+  - L1129~1149: `_dispatch_brainstorm_once` — claude/gemini/openai 분기.
+  - L1152~1260: `generate_mv_brainstorm` — 1회 retry 루프 (attempt 1 temp 0.95, attempt 2 temp 1.0), soft pass.
+- `app/services/mv_pipeline.py` (3129줄):
+  - L935~963: Phase 0 의 brainstorm 호출 (`generate_mv_brainstorm`) — title/genre/mood/lyrics/vocal_gender/relationship/model_name 인자.
+  - L998~1003: dual-model 영속화 (`scenario_brainstorm` 키).
+  - L1052~1053: 단일 모델 영속화 (`update_fields["scenario_brainstorm"] = brainstorm_result`).
+- `app/routes/mv.py` (1941줄):
+  - L434~507: GET `/api/mv/jobs/{job_id}` — `scenario_brainstorm` 키 (기본 `{}`) 와 `scenario_selected_archetype` 응답 포함. v48 신규 필드 `scenario_archetype_weights` 는 여기 추가.
+- `frontend/src/pages/UploadPage.jsx` (2360줄):
+  - L48~58: `ARCHETYPE_LABELS` SSOT (한국어 라벨 7개). v48 가중치 표시 박스도 이 SSOT 재사용.
+  - L1700~1789: brainstorm 후보 collapsible 패널 (v47 스타일). v48 의 "🎯 곡 톤 매칭" 박스는 이 패널 **상단** 또는 **위쪽 별도 박스** 로 배치.
+- v46-pre `remoteLogger` 인프라 — `frontend/src/main.jsx` 에서 `initRemoteLogger()` 호출. `console.*` 자동 캡처 → `backend_9004/logs/frontend.log`. 새 컴포넌트는 `[UploadPage]` prefix 만 붙이면 자동 추적.
+- 로그 경로: 백엔드 `backend_9004/logs/server.log`, 프론트엔드 `backend_9004/logs/frontend.log` (둘 다 동일 디렉토리).
+
+### v48 = Step 3 (점진적 작업; v49 예정)
+
+v47 에서 4개 brainstorm 후보의 archetype 다양성(ABSOLUTE RULE) 을 강제했지만, LLM 이 4개 archetype 을 **완전 자율로 선택** — 잔잔한 발라드인데 `pursuit_of_dream`(꿈 도전) 만 골라 곡 톤과 미스매치 가능. v48 의 핵심: 곡 메타(title / genre / mood / lyrics) 를 결정론적으로 분석해 archetype 별 가중치를 계산 → Stage 1 brainstorm system prompt 에 **가이드 hint 형태로 주입**. 가중치는 우선순위 가이드일 뿐, v47 의 ABSOLUTE RULE (4개 distinct) 는 그대로 유지.
+
+v49 예정: E (사용자 시드 입력) — 사용자가 직접 archetype 1~2개 고정 또는 hint 입력.
+
+### 가중치 사전 SSOT (genre / mood / lyrics keywords)
+
+```python
+# 모듈 상수 (mv_generator.py 안 PLOT_ARCHETYPES 다음에 정의)
+
+ARCHETYPE_GENRE_WEIGHTS = {
+    "ballad": {
+        "reunion": 0.9, "farewell": 0.9, "chance_encounter": 0.5,
+        "inner_resolution": 0.6, "pursuit_of_dream": 0.2,
+        "subtle_growth": 0.3, "support_and_friendship": 0.3,
+    },
+    "dance": {
+        "chance_encounter": 0.9, "support_and_friendship": 0.7,
+        "subtle_growth": 0.5, "reunion": 0.3, "farewell": 0.3,
+        "pursuit_of_dream": 0.4, "inner_resolution": 0.3,
+    },
+    "hiphop": {
+        "pursuit_of_dream": 0.9, "inner_resolution": 0.7,
+        "chance_encounter": 0.5, "reunion": 0.3, "farewell": 0.3,
+        "subtle_growth": 0.4, "support_and_friendship": 0.3,
+    },
+    "rnb": {
+        "reunion": 0.8, "chance_encounter": 0.7, "farewell": 0.6,
+        "inner_resolution": 0.5, "subtle_growth": 0.4,
+        "pursuit_of_dream": 0.4, "support_and_friendship": 0.4,
+    },
+    "rock": {
+        "pursuit_of_dream": 0.8, "inner_resolution": 0.7,
+        "chance_encounter": 0.4, "reunion": 0.4, "farewell": 0.4,
+        "subtle_growth": 0.4, "support_and_friendship": 0.4,
+    },
+    "acoustic": {
+        "subtle_growth": 0.8, "inner_resolution": 0.6, "reunion": 0.6,
+        "farewell": 0.5, "chance_encounter": 0.4,
+        "pursuit_of_dream": 0.4, "support_and_friendship": 0.4,
+    },
+    "city_pop": {
+        "chance_encounter": 0.7, "reunion": 0.6, "subtle_growth": 0.6,
+        "farewell": 0.4, "pursuit_of_dream": 0.4,
+        "inner_resolution": 0.4, "support_and_friendship": 0.4,
+    },
+    "k_pop": {
+        "chance_encounter": 0.7, "pursuit_of_dream": 0.6,
+        "support_and_friendship": 0.6, "reunion": 0.4, "farewell": 0.4,
+        "subtle_growth": 0.4, "inner_resolution": 0.4,
+    },
+}
+# fallback (알 수 없는 장르) — 모든 archetype 균등 0.4
+ARCHETYPE_GENRE_FALLBACK = {a: 0.4 for a in PLOT_ARCHETYPES}
+
+# 장르 별칭 정규화 — LLM/사용자 자유 입력 → 사전 키 매핑
+ARCHETYPE_GENRE_ALIASES = {
+    "발라드": "ballad", "ballad": "ballad",
+    "댄스": "dance", "edm": "dance", "dance": "dance",
+    "힙합": "hiphop", "hip-hop": "hiphop", "hiphop": "hiphop", "rap": "hiphop",
+    "알앤비": "rnb", "r&b": "rnb", "rnb": "rnb", "soul": "rnb",
+    "록": "rock", "rock": "rock", "metal": "rock", "punk": "rock",
+    "어쿠스틱": "acoustic", "acoustic": "acoustic", "folk": "acoustic",
+    "시티팝": "city_pop", "city pop": "city_pop", "city_pop": "city_pop",
+    "케이팝": "k_pop", "k-pop": "k_pop", "kpop": "k_pop", "k_pop": "k_pop", "pop": "k_pop",
+}
+
+ARCHETYPE_MOOD_BONUS = {
+    "romantic":    {"chance_encounter": 0.3, "reunion": 0.2},
+    "sad":         {"farewell": 0.3, "reunion": 0.2, "inner_resolution": 0.2},
+    "energetic":   {"pursuit_of_dream": 0.3, "support_and_friendship": 0.2},
+    "nostalgic":   {"reunion": 0.3, "farewell": 0.2, "subtle_growth": 0.2},
+    "hopeful":     {"pursuit_of_dream": 0.3, "subtle_growth": 0.2},
+    "melancholic": {"farewell": 0.3, "inner_resolution": 0.2},
+    "warm":        {"support_and_friendship": 0.3, "subtle_growth": 0.2},
+    "dreamy":      {"chance_encounter": 0.2, "subtle_growth": 0.2},
+}
+# 무드 별칭
+ARCHETYPE_MOOD_ALIASES = {
+    "로맨틱": "romantic", "사랑": "romantic", "설렘": "romantic",
+    "슬픈": "sad", "슬픔": "sad", "우울": "sad",
+    "신나는": "energetic", "활기": "energetic", "에너지": "energetic",
+    "그리운": "nostalgic", "추억": "nostalgic", "회상": "nostalgic",
+    "희망": "hopeful", "밝은": "hopeful",
+    "쓸쓸": "melancholic", "고독": "melancholic",
+    "따뜻": "warm", "포근": "warm",
+    "몽환": "dreamy", "환상": "dreamy",
+}
+
+# 가사 키워드 보너스 (부분 문자열 검사). archetype 별 +0.2 가산.
+ARCHETYPE_LYRICS_KEYWORDS = {
+    "farewell":               ["헤어졌", "이별", "안녕", "잘 가", "보내줘"],
+    "reunion":                ["다시 만나", "오랜만", "그때", "다시 봐", "또 만나"],
+    "chance_encounter":       ["처음 본", "낯선", "마주친", "스쳐", "우연"],
+    "pursuit_of_dream":       ["포기 안", "나아가", "꿈", "도전", "달려"],
+    "support_and_friendship": ["친구", "가족", "엄마", "아빠", "동료"],
+    "inner_resolution":       ["혼자", "나만의", "내 안", "스스로", "결심"],
+    # subtle_growth / 그 외는 키워드 가산 없음 (mood/genre 만으로)
+}
+```
+
+### 가중치 계산 알고리즘 (base + mood 가산 + lyrics 가산 + 정규화)
+
+함수 시그니처: `_compute_archetype_weights(title, genre, mood, lyrics) -> Dict[str, float]`
+
+1. **base = genre 매핑**:
+   - `genre_norm = ARCHETYPE_GENRE_ALIASES.get(genre.lower().strip(), None)` (없으면 fallback 사용)
+   - `weights = dict(ARCHETYPE_GENRE_WEIGHTS.get(genre_norm, ARCHETYPE_GENRE_FALLBACK))`
+   - 7개 archetype 모두 포함되도록 누락 키는 0.3 으로 채움 (안전).
+2. **mood 가산**:
+   - `mood_norm = ARCHETYPE_MOOD_ALIASES.get(mood.lower().strip(), None)`
+   - `for arche, bonus in ARCHETYPE_MOOD_BONUS.get(mood_norm, {}).items(): weights[arche] += bonus`
+3. **lyrics 가산** (가사가 비어있으면 skip):
+   - `lyrics_lower = lyrics.lower()` (한글 무시되지만 한국어 키워드는 이미 lower 영향 없음)
+   - 각 archetype 의 키워드 리스트 중 1개라도 부분 문자열 매칭이면 `weights[arche] += 0.2`. (한 archetype 당 최대 +0.2, 중복 가산 없음)
+4. **정규화**:
+   - `total = sum(weights.values())`
+   - `if total > 0: weights = {k: v / total for k, v in weights.items()}` (합=1.0)
+   - `else: weights = {a: 1/7 for a in PLOT_ARCHETYPES}` (균등 fallback — 비정상 입력 방어)
+5. **로그**:
+   - `top3 = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)[:3]`
+   - `logger.info("[ArchetypeWeights] computed title=%r genre=%s mood=%s lyrics_len=%d top3=%s", title[:30], genre_norm or "-", mood_norm or "-", len(lyrics or ""), [(k, round(v, 2)) for k, v in top3])`
+   - 빈 입력(`genre/mood/lyrics 모두 None`) → `logger.warning("[ArchetypeWeights] empty input — using uniform weights")`.
+
+빈 가사 / 빈 mood / 알 수 없는 장르 → fallback(균등 0.4) + 가산 없음 → 정규화로 균등 분포에 가까운 결과. 모든 케이스에서 함수가 raise 하지 않고 7개 archetype 가중치 dict 반환.
+
+### 시스템 프롬프트 가이드 형식 (B2)
+
+`_build_brainstorm_prompts` 안에서 weights 계산 후 시스템 프롬프트에 **append**:
+
+```text
+{기존 BRAINSTORM_SYSTEM_PROMPT}
+
+## v48 — 곡 톤·장르 분석 결과 (archetype 가이드 가중치)
+아래는 곡 정보 기반 archetype 추천 가중치(높은 순):
+- reunion: 0.85
+- farewell: 0.78
+- inner_resolution: 0.62
+- chance_encounter: 0.45
+- subtle_growth: 0.38
+- pursuit_of_dream: 0.21
+- support_and_friendship: 0.18
+
+가중치가 높은 archetype 을 **우선 고려**하되, archetype 다양성 ABSOLUTE RULE 은 그대로 유지하세요 (4개 모두 다른 archetype). 가중치 0.5 이상 archetype 중에서 최소 2개를 포함시키는 것을 권장합니다 (강제는 아님).
+```
+
+구현 디테일:
+- `_build_brainstorm_prompts` 가 `(system_prompt_with_guide, user_prompt)` 반환.
+- guide 텍스트는 함수 내부에서 weights dict 받아 동적 생성 (소수점 2자리, 7개 모두 표시).
+- 가중치 계산은 `_build_brainstorm_prompts` 진입 시 1회 수행 → 결과를 caller(`_dispatch_brainstorm_once`/`generate_mv_brainstorm`) 가 받아 영속화.
+- `_dispatch_brainstorm_once` 시그니처에 `weights: Optional[Dict[str, float]]` 추가하지 않고, **함수 내부에서 1회 계산**. 계산 결과는 `generate_mv_brainstorm` 의 반환 dict 에 `archetype_weights` 키로 같이 실어 caller(mv_pipeline) 가 영속화.
+
+대안 검토 (채택안):
+- (대안 A) `generate_mv_brainstorm` 내부에서 1회 계산 후 `_build_brainstorm_prompts(..., weights=weights)` 로 전달. → **채택**. 시그니처는 옵셔널 키워드 인자. retry 루프 안에서도 같은 weights 재사용 (재계산 X).
+- 반환 dict 형태: `{"candidates": [...], "diagnostics": {...}, "archetype_weights": {arche: float}}`.
+
+### Mongo schema diff (v48)
+
+| 필드 | 타입 | 추가/변경 | 비고 |
+|---|---|---|---|
+| `scenario_archetype_weights` | dict[str, float] \| None | **신규** | 7개 archetype → 정규화 가중치 (합=1.0). brainstorm 호출 시 1회 계산하여 영속화. 옛 잡엔 없음 → 프론트 `?? null`. |
+
+영속화 위치:
+- `mv_pipeline.py` Phase 0 brainstorm 성공 시: `update_fields["scenario_archetype_weights"] = brainstorm_result.get("archetype_weights")` (dual + single 두 분기 모두).
+- 실패(brainstorm_result=None) 시: 영속화 안 함 (옛 잡과 동일하게 None).
+
+GET 응답 (`mv.py` L434~507):
+- `"scenario_archetype_weights": job.get("scenario_archetype_weights")` 추가 (default None — 옛 잡 호환).
+
+### B4 — 외부화 가능 구조 분리
+
+이번 v48 에선 코드 SSOT 로 시작. 단, 향후 환경변수 또는 config 파일로 외부화 가능하게:
+- 모든 사전 (genre / genre_alias / mood / mood_alias / lyrics_keywords) 을 모듈 상수로 1곳(L727 PLOT_ARCHETYPES_SET 다음) 에 정의.
+- `_compute_archetype_weights` 가 위 상수를 직접 참조 — config 객체 주입 시 해당 라인만 교체하면 됨.
+- 향후 외부화 시 `app/config.py` 의 settings 객체에 `archetype_weights_overrides` 추가 → 환경변수 ARCHETYPE_WEIGHTS_PATH 가 가리키는 JSON 로드 → 기본 사전 deep-merge. (이번 v48 에선 미구현, 주석으로 명시만).
+
+### 변경 요건 (recap)
+
+**Backend (B1~B4)**
+- B1: `_compute_archetype_weights(title, genre, mood, lyrics) -> Dict[str, float]` 신규 (mv_generator.py).
+- B2: `_build_brainstorm_prompts` 가 weights 받아 BRAINSTORM_SYSTEM_PROMPT 에 가이드 append. `generate_mv_brainstorm` 진입 시 1회 계산 → 반환 dict 에 `archetype_weights` 포함.
+- B3: `mv_pipeline.py` Phase 0 영속화 (`scenario_archetype_weights`). `mv.py` GET 응답에 추가.
+- B4: 사전 SSOT 1곳 모듈 상수 + 외부화 주석.
+
+**Frontend (F1)**
+- F1: UploadPage.jsx 시나리오 패널 안 brainstorm collapsible **상단** 에 "🎯 곡 톤 매칭" 박스 추가:
+  - 가중치 상위 3개 archetype + 한국어 라벨 + bar chart 또는 % 표시.
+  - 전체 7개는 collapsible 안에 옵셔널 표시.
+  - `console.info("[UploadPage] archetype weights", {top3})` 로그.
+  - `mvJob.scenario_archetype_weights` 가 없으면 박스 자체 미렌더 (옛 잡 호환).
+
+### Test plan T1~T6
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | B1 가중치 계산 단위 | (a) 발라드 + nostalgic + 가사 "헤어진" → reunion / farewell 상위 (top2 안에). (b) 댄스 + romantic + 가사 "처음 본" → chance_encounter 상위 (top1). (c) 힙합 + energetic + 가사 "꿈" → pursuit_of_dream 상위 (top1). (d) 어쿠스틱 + warm + 가사 "친구" → support_and_friendship 상위 (top2 안에). (e) 정규화 합 = 1.0 ± 1e-6. (f) 빈 입력(모두 None) → 균등 1/7 ≈ 0.1428. |
+| **T2** | B2 시스템 프롬프트 주입 | (a) weights dict 가 BRAINSTORM_SYSTEM_PROMPT 에 텍스트로 정상 append (소수점 2자리). (b) 가이드 문구 "가중치 0.5 이상 archetype 중에서 최소 2개를 포함시키는 것을 권장" 정상 포함. (c) 7개 archetype 모두 가이드에 노출. (d) 가이드 없이도 system prompt 가 valid (옛 호출 호환). |
+| **T3** | Brainstorm 결과 정합성 (실 LLM 1~2케이스) | (a) 가중치 상위 archetype 이 실제 brainstorm 4개 후보에 등장하는 비율 ≥ 60% (LLM 자율도 허용). (b) v47 archetype 다양성 ABSOLUTE RULE 무회귀 (4개 distinct). (c) `[BrainstormGen] archetypes=[...]` 와 weights top3 비교 로그 매칭. |
+| **T4** | Mongo 영속화 + GET 응답 | (a) brainstorm 성공 잡의 mv_jobs 도큐먼트에 `scenario_archetype_weights` 키 정상 저장 (dict, 합=1.0). (b) GET /api/mv/jobs/{id} 응답에 `scenario_archetype_weights` 정상 노출. (c) 옛 잡(키 없음) → null 반환. (d) brainstorm 실패 잡 → 영속화 안 함. |
+| **T5** | 프론트 표시 | (a) /upload 시나리오 패널에 "🎯 곡 톤 매칭" 박스 정상 렌더 (mvJob.scenario_archetype_weights 존재 시). (b) 상위 3개 archetype 한국어 라벨 + % 표시 정상. (c) 옛 잡(weights 없음) → 박스 자체 미렌더. (d) frontend.log 에 `[UploadPage] archetype weights` 라인 캡처 확인. |
+| **T6** | 회귀 + fallback | (a) v37~v47 무회귀 (smoke + Vite build + uvicorn import). (b) 옛 mv_jobs 도큐먼트 (scenario_archetype_weights 없음) GET 정상. (c) 가사 빈 곡 / mood 빈 곡 / 알 수 없는 장르(예: "trap") → fallback 동작 (raise 없음, 균등 또는 fallback dict). (d) `[ArchetypeWeights]` 추적자 server.log grep 가능. |
+
+테스트 환경: 9004 + 4000 (실행 중). 단위 테스트는 mock 기반. 실 LLM 테스트(T3) 는 1~2 케이스만 (비용 절약).
+
+### 추적자 식별자 표 (디버깅 로그 심기 SSOT)
+
+| 함수/컴포넌트 | 추적자 | 로그 prefix / 키워드 |
+|---|---|---|
+| `_compute_archetype_weights` | (genre_norm, mood_norm, lyrics_len) | `logger.info("[ArchetypeWeights] computed title=%r genre=%s mood=%s lyrics_len=%d top3=%s", ...)`. 빈 입력 시 `logger.warning("[ArchetypeWeights] empty input — using uniform weights")`. 알 수 없는 장르 시 `logger.info("[ArchetypeWeights] unknown genre=%r — using fallback", genre)`. |
+| `_build_brainstorm_prompts` (확장) | (weights top3) | 기존 `[PromptBuild] stage=1 ...` 로그에 `weights_top3=%s` 추가. |
+| `generate_mv_brainstorm` (반환 확장) | (mv_job_id by caller) | `logger.info("[BrainstormGen] archetype_weights computed top3=%s", top3)` 진입 1회. |
+| Phase 0 영속화 (mv_pipeline) | mv_job_id | 기존 `Phase0:` prefix 유지 + `weights_top1=%s` 키워드 추가. |
+| UploadPage F1 (가중치 박스) | (없음) | `console.info("[UploadPage] archetype weights", {top3, all: weights})` (DEV 가드 — 박스 첫 렌더 또는 collapsible 펼칠 때). |
+
+민감정보 금지: weights 계산 시 lyrics 본문 logger 미출력 (lyrics_len 만). 시스템·유저 프롬프트 본문 미출력. API 키 일체 미출력.
+
+### 체크리스트
+
+- [ ] B1 `_compute_archetype_weights` 함수 + 사전 SSOT 4종(GENRE/GENRE_ALIASES/MOOD_BONUS/MOOD_ALIASES/LYRICS_KEYWORDS) 모듈 상수 정의 (mv_generator.py).
+- [ ] B2 `_build_brainstorm_prompts` 가 weights 인자 받아 가이드 텍스트 append. `generate_mv_brainstorm` 진입 시 1회 계산 + 반환 dict 에 `archetype_weights` 포함.
+- [ ] B3 mv_pipeline.py Phase 0 영속화 (`scenario_archetype_weights`) — dual + single 두 분기. mv.py GET 응답 추가.
+- [ ] B4 사전 외부화 가능 구조 (모듈 상수 1곳 + 주석).
+- [ ] B 추적자 로그 심기 (`[ArchetypeWeights]`, `[PromptBuild] weights_top3`).
+- [ ] F1 UploadPage.jsx "🎯 곡 톤 매칭" 박스 추가 (brainstorm collapsible 상단). ARCHETYPE_LABELS SSOT 재사용.
+- [ ] F1 `console.info("[UploadPage] archetype weights", ...)` 심기.
+- [ ] T1 가중치 계산 단위 (6 케이스 — 발라드/댄스/힙합/어쿠스틱/정규화/빈입력).
+- [ ] T2 시스템 프롬프트 주입 (4 케이스).
+- [ ] T3 실 LLM brainstorm 정합성 (1~2 케이스, 60%+ 등장 통계 + v47 ABSOLUTE RULE 무회귀).
+- [ ] T4 Mongo 영속화 + GET 응답 (4 케이스).
+- [ ] T5 프론트 표시 (4 케이스 — 렌더/라벨/옛 잡 호환/로그).
+- [ ] T6 회귀 + fallback (4 케이스).
+- [ ] REPORT.md v48 append.
+
+## v49 — 2026-05-08 — Step 4 (final): 사용자 사건 시드 입력 (E)
+
+작업 디렉터리: `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music` · 백엔드: **`backend_9004` 만** · 프론트: `frontend` (4000) · 브랜치: `backend` · 푸시 금지.
+
+### Plan verification findings (Step 0 — 코드 직접 분석)
+
+현재 코드 사실(v48 기준 SSOT — 추정 아님, 직접 읽음):
+
+| 영역 | 파일 | 위치 | 현재 동작 |
+|---|---|---|---|
+| Pydantic 모델 | `backend_9004/app/routes/mv.py` | L42~L61 (`CreateMVRequest`) | `title / genre / mood / lyrics / cover_object_name / scenario_style / vocal_gender / relationship / location_id / video_model / audio_generation_id / scenario_models / prompt_models / video_prompt_model / include_my_character` 등 보유. **`user_event_seed` 없음**. |
+| POST `/api/mv/create` | `backend_9004/app/routes/mv.py` | L169~L368 | `body.relationship` 정규화 → `job_doc` 에 영속화 → `mv_jobs.insert_one` → `BackgroundTasks(run_phase1_and_phase2)`. `[CreateMV] relationship raw='%s' normalized='%s' user=%s` 로그(L263). **시드 필드 미존재**. |
+| GET `/api/mv/jobs/{id}` | `backend_9004/app/routes/mv.py` | L434~L509 | v45/v46/v47/v48 시나리오 필드 노출(L470~L494). **`user_event_seed` 미노출**. |
+| Stage 1 시스템 프롬프트 | `backend_9004/app/services/mv_generator.py` | `BRAINSTORM_SYSTEM_PROMPT` L948~L1009 / `_build_brainstorm_prompts` L1012~L1073 | v47 ABSOLUTE RULE(4 distinct archetype) + v48 archetype 가중치 가이드 시스템 프롬프트 끝 append(L1052~L1058). 시드 주입 지점 = 가중치 가이드 직후. `[PromptBuild] stage=1 ...` 로그(L1064). |
+| Stage 1 model dispatch | 동 파일 | `_generate_brainstorm_openai` L1185 / `_claude` L1217 / `_gemini` L1247 / `_dispatch_brainstorm_once` L1369 / `generate_mv_brainstorm` L1397 | 모두 시그니처에 `archetype_weights` 보유 — v49 에서 `user_event_seed` 추가 시 같은 패턴(throughput) 사용. |
+| Stage 2 빌더 | 동 파일 | `_build_drama_scenario_prompts` L1652~L2093 | `brainstorm_candidates` 주입 위치 L2061~L2071 (user prompt). 시스템 프롬프트 끝(L2010~L2022) 에서 `inferred_relationship` / `selected_archetype` 출력 명시. **시드 블록 주입 지점 = `auto_infer_rule` 직후 또는 chain-of-thought 직전**. |
+| Stage 2 model dispatch | 동 파일 | `_generate_scenario_openai` L2659 / `_claude` L2714 / `_gemini` L2764 / `_build_scenario_prompts_dispatch` L2601 / `generate_mv_scenario` L2839 | 모두 시그니처에 `brainstorm_candidates` 보유 — 같은 패턴으로 `user_event_seed` throughput. |
+| Phase 0 파이프라인 | `backend_9004/app/services/mv_pipeline.py` | L868~L1105 (`run_phase1_and_phase2` 안 Phase 0 블록) | `relationship = job.get("relationship")` (L880), `generate_mv_brainstorm(... relationship=...)` (L946~L954), `generate_mv_scenario(... brainstorm_candidates=brainstorm_result, ...)` (L976~L994). **시드 read-from-job → throughput 두 곳 모두 추가 필요**. v48 `weights_top1` 로그 키워드(L1078)에 `seed_len` 추가. |
+| 프론트엔드 폼 | `frontend/src/pages/UploadPage.jsx` | relationship 라디오 L1349~L1406 / `scenarioStyle` 상태 L128 / `vocalGender` 상태 L130 / `relationship` 상태 L131 / `handleCreateScenes` L432~L486 / `handleSaveDraft` L681~L716 | `createMVJob` 호출 시 `scenario_style / vocal_gender / relationship / location_id` 전달. **시드 상태 + 입력 UI + payload 키 추가 필요**. |
+| API client | `frontend/src/api/index.js` | L168~L175 (`createMVJob`) | `...data` 스프레드 + `scenario_style / vocal_gender / relationship` 만 명시 default. **추가 변경 불필요** — `data.user_event_seed` 가 자동 throughput. |
+| 시나리오 패널 표시 | `frontend/src/pages/UploadPage.jsx` | L1549~L1584 (시나리오 패널 본문) + L1563~L1574 (자동 판단 결과 박스) | "관계 (자동 판단)" 박스 다음에 "📝 사용자 시드" 한 줄 표시 자연스러움. `mvJob.user_event_seed` 가 truthy 일 때만 렌더. |
+| 원격 로깅 인프라 | `frontend/src/utils/remoteLogger.js` (존재) + `backend_9004/logs/frontend.log` (존재) | v46-pre 인프라 | `console.*` 자동 캡처. 컴포넌트 prefix `[UploadPage]` 만 붙이면 됨. **시드 본문 미출력 — 길이만 로그**. |
+
+**갭 / 충돌 / 가정 검증**
+
+- **갭 1**: `CreateMVRequest` 에 `user_event_seed` 필드 없음 → `body.user_event_seed` 접근 시 AttributeError. → B1 에서 추가.
+- **갭 2**: Phase 0 가 `job.get("user_event_seed")` 를 읽어 두 호출(`generate_mv_brainstorm`, `generate_mv_scenario`) 에 throughput 해야 함 — 현재 호출 시그니처에 시드 인자 없음. → B3/B4/B5 에서 모든 dispatch 함수에 `user_event_seed: Optional[str] = None` 추가.
+- **갭 3**: GET 응답에 `user_event_seed` 미노출 → 프론트 패널 표시 불가능. → B2 에서 응답 추가.
+- **갭 4**: v48 archetype 가중치 가이드는 시스템 프롬프트 **끝** 에 append. v49 시드 블록도 **그 다음** append → 가중치 + 시드 동시 활성화 시 시드가 더 강한 hint 역할. 하지만 v47 ABSOLUTE RULE(4 distinct) 은 그대로 유지 → 시드 후보 + 다른 3개 archetype 다양성 → 자연스럽게 충족.
+- **갭 5**: `handleSaveDraft` 의 `createMVJob` 호출(L688~L698)도 시드 throughput 가능하게 페이로드 추가 (드래프트 저장 시 시드 보존).
+- **충돌 없음**: 시드 None / 빈 문자열 시 v48 까지의 흐름 byte-level 동일 (시드 블록 미주입).
+- **가정 검증**: 시드 본문은 사용자 입력 → PII 잠재. → 모든 logger 라인에서 `len` 만 출력, 본문 절대 출력 금지. 프론트도 동일.
+- **B6 (선택)**: 시드 → archetype 키워드 자동 추출 → v48 가중치 boost. 시간 여유 시 추가, 없으면 v50 으로 미룸. 현재 분석으론 v48 의 lyrics 가산 로직(`ARCHETYPE_LYRICS_KEYWORDS`)을 시드 텍스트에도 적용하는 형태로 5분 작업 가능 — 백엔드 dev 가 핵심 B1~B5 끝낸 뒤 여유 있을 때 진행.
+
+v49 = Step 4 = **5단계 시리즈 마지막**. v45(Stage 1+2 분리) → v46(A+C: 60% 사건 룰 + relationship 자율) → v47(B: 4 distinct archetype) → v48(D: 곡 톤 → archetype 가중치) → **v49(E: 사용자 사건 시드)**.
+
+### v49 변경 요건 (B1~B6 + F1~F2)
+
+#### Backend (`backend_9004` only)
+
+- **B1 — `CreateMVRequest` 에 `user_event_seed` 추가** (`app/routes/mv.py` L42~L61)
+  - `user_event_seed: Optional[str] = None` 한 줄 추가 (relationship 다음).
+  - POST `/api/mv/create` 안 정규화 로직(L218~L268 인근, relationship 정규화 다음):
+    ```python
+    raw_seed = (body.user_event_seed or "").strip()
+    if len(raw_seed) > 300:
+        raw_seed = raw_seed[:300]
+    user_event_seed = raw_seed or None  # 빈 문자열 → None 통일
+    ```
+  - `job_doc` 에 `"user_event_seed": user_event_seed` 영속화(L320~L356 dict).
+  - `[CreateMV] relationship raw=...` 로그 다음에 `[CreateMV] user_event_seed len=%d user=%s` (시드 길이만, 본문 미출력) 한 줄 추가.
+
+- **B2 — GET `/api/mv/jobs/{id}` 응답에 `user_event_seed` 노출** (`app/routes/mv.py` L470~L494 인근)
+  - `"user_event_seed": job.get("user_event_seed"),` 한 줄 추가 (옛 잡엔 None).
+
+- **B3 — Stage 1 brainstorm system prompt 에 시드 주입** (`app/services/mv_generator.py`)
+  - `_build_brainstorm_prompts` 시그니처에 `user_event_seed: Optional[str] = None` 추가 (L1012~L1020 끝).
+  - v48 `_format_archetype_weights_guide` append(L1052~L1058) **다음** 에 시드 블록 append (시드 truthy 일 때만):
+    ```text
+    
+    ## 사용자 시드 — 핵심 사건 명시
+    사용자가 시나리오에 포함되기를 원하는 핵심 사건/헤프닝:
+    > "{user_event_seed}"
+    
+    지침:
+    - 4개 brainstorm 후보 중 **최소 1개**는 위 시드를 핵심 inciting incident 또는 climax 로 삼아 구성하세요.
+    - 시드의 핵심 키워드(인물·장소·행동)를 그 후보의 `key_events` 와 `premise_summary` 에 명시적으로 반영하세요.
+    - 시드와 어울리는 archetype (예: 시드가 "우연한 만남" 이면 chance_encounter, "재회" 면 reunion 등) 을 그 후보에 사용하세요.
+    - 다른 3개 후보는 시드와 다른 방향으로 구성하여 archetype 다양성을 유지하세요.
+    ```
+  - `[PromptBuild] stage=1 ...` 로그(L1064)에 `seed_len=%d` 키워드 추가 (본문 미출력).
+  - `_generate_brainstorm_openai/_claude/_gemini` (L1185/L1217/L1247) 시그니처에 `user_event_seed` 추가 + throughput.
+  - `_dispatch_brainstorm_once`(L1369) + `generate_mv_brainstorm`(L1397) 시그니처에 `user_event_seed` 추가 + throughput. retry 루프 안에서도 같은 시드 사용.
+
+- **B4 — Stage 2 시나리오 system prompt 에 시드 주입** (`app/services/mv_generator.py`)
+  - `_build_drama_scenario_prompts` 시그니처에 `user_event_seed: Optional[str] = None` 추가 (L1652~L1665 끝).
+  - 시스템 프롬프트 안 `auto_infer_rule` 직후(L1933 `{auto_infer_rule}` 자리 다음) 또는 v45 chain-of-thought 직전에 시드 블록 추가 (시드 truthy 일 때만):
+    ```text
+    
+    ## 사용자 시드 — 시나리오 핵심 사건
+    사용자가 명시한 핵심 사건: "{user_event_seed}"
+    
+    지침:
+    - 위 시드를 narrative 의 핵심 plot 에 자연스럽게 통합하세요 (단순 나열 X, 인물 동기와 연결).
+    - events 배열에 시드의 사건이 1~2개 event 로 명시되어야 합니다 (trigger / protagonist_action / motivation 모두 시드 키워드 반영).
+    - 시드는 inciting incident 또는 climax 의 위치에 배치 (도입 또는 절정).
+    - 시드와 무관한 brainstorm 후보는 선택하지 마세요 (Stage 1 에서 시드 후보를 우선 채택).
+    ```
+  - 시드 truthy 시 `seed_block` 변수에 위 텍스트 담아 `.format(...)` 안에 `seed_block=seed_block` 으로 주입. 시드 없을 때 `seed_block = ""` (v48 byte-level 동일).
+  - `[PromptBuild] stage=2 ...` 로그(L2082)에 `seed_len=%d` 키워드 추가.
+  - `_build_scenario_prompts_dispatch`(L2601) / `_generate_scenario_openai/_claude/_gemini`(L2659/L2714/L2764) / `generate_mv_scenario`(L2839) 시그니처에 `user_event_seed` 추가 + throughput.
+
+- **B5 — Pipeline 통합** (`app/services/mv_pipeline.py` Phase 0 블록 L868~L1105)
+  - `relationship = job.get("relationship")` 다음에 `user_event_seed = job.get("user_event_seed")` 추가.
+  - `generate_mv_brainstorm(...)` 호출(L946~L954)에 `user_event_seed=user_event_seed` 추가.
+  - `generate_mv_scenario(...)` 호출(L976~L994)에 `user_event_seed=user_event_seed` 추가.
+  - Phase 0 진입 로그(L955 등)에 `seed_len=%d` 추가. `[Phase0]` 추적자 prefix 일관 사용.
+  - 본문 출력 절대 금지 — `len(user_event_seed or "")` 만.
+
+- **B6 — (선택, 시간 남으면) 시드 → archetype 자동 추출 + v48 가중치 boost**
+  - `_compute_archetype_weights` 직후에 `_extract_archetype_from_seed(seed: str) -> Optional[str]` 헬퍼 추가. 단순 키워드 매칭 (시드 안에 "만남"/"마주쳐"/"우연" → `chance_encounter`, "재회"/"다시 만나" → `reunion`, "헤어"/"이별" → `farewell`, "꿈"/"도전" → `pursuit_of_dream`, "친구" → `support_and_friendship`, "가족" → ... `support_and_friendship` 으로 묶거나 `subtle_growth`).
+  - `generate_mv_brainstorm` 진입 시 시드 archetype 추출 → 해당 archetype 의 weights 값에 +0.4 boost 후 정규화. 추출 실패 시 weights 변경 없음.
+  - `[ArchetypeWeights] seed_arche=%s boosted=%s` 로그.
+  - 시간 여유 없으면 **v50 으로 미룸** — 핵심 시리즈 완성에 필수 아님.
+
+#### Frontend (`frontend`)
+
+- **F1 — UploadPage 시드 입력 UI** (`src/pages/UploadPage.jsx`)
+  - 상태: relationship state(L131) 다음에 `const [userEventSeed, setUserEventSeed] = useState('');` 추가.
+  - UI 위치: relationship 라디오 그리드 바로 **아래** (L1406 `</div>` 다음, "예상 비용:" 박스 직전).
+  - 마크업 (코드 SSOT — backend dev 무관, frontend dev 가 그대로 사용):
+    ```jsx
+    <div style={{ marginTop: '20px', marginBottom: '16px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 600, color: '#aaa', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #333' }}>
+        원하는 사건·헤프닝 (선택)
+      </div>
+      <textarea
+        value={userEventSeed}
+        onChange={(e) => setUserEventSeed(e.target.value)}
+        rows={3}
+        maxLength={300}
+        placeholder='예) 벚꽃나무 아래에서 잘생긴 남자와 우연히 마주쳐 첫눈에 반함, 결국 번호를 건넴'
+        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #333', background: '#1a1a1a', color: '#ddd', fontSize: '13px', resize: 'vertical', fontFamily: 'inherit' }}
+      />
+      <div style={{ fontSize: '11px', color: '#888', marginTop: '6px', display: 'flex', justifyContent: 'space-between' }}>
+        <span>비워두면 LLM 이 가사·곡 분위기로 자율 판단합니다.</span>
+        <span style={{ color: userEventSeed.length > 280 ? '#cc8800' : '#666' }}>{userEventSeed.length}/300</span>
+      </div>
+    </div>
+    ```
+  - `handleCreateScenes`(L432~L486)의 `createMVJob` payload 에 `user_event_seed: userEventSeed.trim() || null` 추가.
+  - `handleSaveDraft`(L681~L716)의 `createMVJob` payload 에도 동일 추가 (드래프트 저장 시 보존).
+  - `console.error('[UploadPage] createMVJob failed', {...})` 컨텍스트(L472~L482)에 `user_event_seed_len: (userEventSeed || '').length` 추가 (본문 미출력).
+  - 텍스트 변경 시 DEV 가드 로그 (`onChange` 안 / 또는 별도 useEffect):
+    ```js
+    if (import.meta.env.DEV) {
+      console.info('[UploadPage] user event seed', { len: userEventSeed.length });
+    }
+    ```
+    - 매 keystroke 마다는 노이즈 — `useEffect(..., [userEventSeed])` + debounce 없이 단순 길이 변화만 출력. 또는 blur 시점 로그도 OK.
+
+- **F2 — 시나리오 패널에 시드 표시** (`src/pages/UploadPage.jsx`)
+  - 위치: L1563~L1574 의 "관계 (자동 판단)" 박스 **다음** (같은 padding 영역 안), narrative 본문 직전.
+  - `mvJob.user_event_seed` 가 truthy 일 때만 렌더:
+    ```jsx
+    {mvJob.user_event_seed && (
+      <div style={{ marginTop: '14px', padding: '8px 12px', background: '#2a1a05', border: '1px solid #cc880044', borderRadius: '6px', fontSize: '12px', color: '#e8c87a' }}>
+        <span style={{ fontWeight: 600 }}>📝 사용자 시드:</span>{' '}
+        "{mvJob.user_event_seed}"
+      </div>
+    )}
+    ```
+  - DEV 가드 1회 로그 (시나리오 패널 펼칠 때): 이미 `[UploadPage] archetype weights` 로그가 한 번 도는 useEffect 가 있다면 같은 useEffect 안에 `if (mvJob?.user_event_seed) console.info('[UploadPage] scenario panel has seed', { len: mvJob.user_event_seed.length });` 추가.
+
+### Stage 1 / Stage 2 시드 주입 텍스트 SSOT
+
+위 B3 / B4 의 시드 블록 그대로. 백엔드 dev 는 v48 의 `_format_archetype_weights_guide` 와 같은 패턴(시드 truthy 일 때만 append)으로 구현.
+
+### Mongo schema diff (v49)
+
+| 필드 | 타입 | 추가/변경 | 비고 |
+|---|---|---|---|
+| `user_event_seed` | str \| None | **신규** | ≤300자 trim. 빈 문자열/공백만 → None 정규화. mv_jobs.user_event_seed. 옛 잡엔 None. GET 응답 노출. |
+
+영속화 위치:
+- `mv.py` POST `/api/mv/create` 의 `job_doc` 에 추가.
+- 영구 보존 — 사용자 검증/재현용. 본문은 PII 가능성 → DB 안에만 머물고 logger 미출력.
+
+### Test plan T1~T7
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | API 통합 (B1/B2) | (a) POST `/mv/create` body 에 `user_event_seed: "벚꽃나무 아래 잘생긴 남자 만남"` → 200 응답 + Mongo 도큐먼트에 그대로 저장. (b) 시드 None / 빈 문자열 / 공백만 → 영속화 None 으로 정규화. (c) 길이 400자 입력 → 300자 trim 후 저장 (또는 422 — 구현 일관성). (d) GET `/api/mv/jobs/{id}` 응답에 `user_event_seed` 정상 노출. (e) 옛 잡(시드 없음) → GET 응답에 `user_event_seed: null`. (f) `[CreateMV] user_event_seed len=N user=...` 로그 server.log 캡처. |
+| **T2** | Brainstorm system prompt 주입 (B3) | (a) `_build_brainstorm_prompts(..., user_event_seed="벚꽃나무 ...")` 결과 system_prompt 에 시드 블록 텍스트 정상 append. (b) 시드 None → 시드 블록 미주입 (v48 byte-level 동일). (c) `[PromptBuild] stage=1 ... seed_len=N` 로그 정상. (d) v47 ABSOLUTE RULE(4 distinct archetype) 텍스트 무회귀. (e) v48 weights 가이드 + 시드 블록 동시 노출(시드 블록이 가중치 가이드 다음 위치). |
+| **T3** | Stage 2 system prompt 주입 (B4) | (a) `_build_drama_scenario_prompts(..., user_event_seed="...")` 결과 system_prompt 에 시드 블록 정상 포함. (b) 시드 None → 시드 블록 미주입. (c) `[PromptBuild] stage=2 ... seed_len=N` 로그 정상. (d) v45 chain-of-thought 4단계 / v46 사건 60% 룰 / few-shot 예시 무회귀. |
+| **T4** | GET 응답 + Mongo 영속화 (B2/B5) | (a) `GET /api/mv/jobs/{id}` 응답에 `user_event_seed` 키 (string 또는 None) 노출. (b) Phase 0 호출에 시드가 brainstorm/Stage 2 함수까지 throughput (mock 기반 단위). (c) `[Phase0] ... seed_len=N` 로그 캡처. |
+| **T5** | 프론트 F1+F2 | (a) /upload 폼에 "원하는 사건·헤프닝 (선택)" textarea 정상 렌더 (3줄, 300자 카운터). (b) 입력 후 `handleCreateScenes` → 백엔드 server.log 의 `[CreateMV] user_event_seed len=N` 가 입력 길이와 일치. (c) `frontend.log` 에 `[UploadPage] user event seed` 라인 캡처 (본문 X, len 만). (d) 시나리오 패널에 `📝 사용자 시드: "..."` 박스 정상 표시 (mvJob.user_event_seed 가 truthy 시). 옛 잡 → 박스 미렌더. (e) Vite build PASS. |
+| **T6** | E2E 정합성 (실 LLM 1회) | 곡 + 시드 입력 → (a) brainstorm 후보 4개 중 시드 반영 후보 1개 이상 등장 (`scenario_brainstorm.candidates` 안 `key_events` / `premise_summary` 에 시드 키워드 등장). (b) Stage 2 narrative 에 시드 키워드 (장소·인물·행동) 1개 이상 등장. (c) `scenario_events` 배열에 시드 사건이 1~2개 event 로 명시 (trigger/protagonist_action/motivation 중 1개 이상 매치). (d) 옛 mv_jobs (시드 없음) GET 정상. |
+| **T7** | 회귀 (v37~v48) | (a) AST/import 무회귀 (mv.py / mv_generator.py / mv_pipeline.py / main.py / UploadPage.jsx). (b) Vite build PASS. (c) uvicorn auto-reload 성공. (d) 시드 없을 때 v48 까지의 system prompt 와 byte-level 동일 (diff 0). (e) 옛 mv_jobs (시드 없음) GET 정상 + Phase 0 흐름 정상 (시드 None 패스). (f) v37 base smoke (auth / character / track upload) 무회귀. |
+
+테스트 환경: 9004 + 4000 (이미 실행 중). 단위 테스트 다수 + 실 LLM 1케이스 (T6).
+
+### 추적자 식별자 표 (디버깅 로그 심기 SSOT)
+
+| 함수/컴포넌트 | 추적자 | 로그 prefix / 키워드 |
+|---|---|---|
+| `POST /api/mv/create` (mv.py) | `user_id`, `seed_len` | `[CreateMV] user_event_seed len=%d user=%s` (본문 미출력 — PII 보호). |
+| `_build_brainstorm_prompts` (mv_generator.py) | `seed_len` | 기존 `[PromptBuild] stage=1 ...` 라인에 `seed_len=%d` 추가. |
+| `_build_drama_scenario_prompts` (mv_generator.py) | `seed_len` | 기존 `[PromptBuild] stage=2 ...` 라인에 `seed_len=%d` 추가. |
+| `generate_mv_brainstorm` (mv_generator.py) | `seed_len` | `[BrainstormGen] attempt=%d ... seed_len=%d` 추가 또는 진입 시 1회 `[BrainstormGen] seed_len=%d` 로그. |
+| `generate_mv_scenario` (mv_generator.py) | `seed_len` | 기존 `MV drama scenario generated ...` 로그에 영향 없음. 진입 시 `[Stage2Gen] seed_len=%d` 로그 추가. |
+| Phase 0 (mv_pipeline.py) | `mv_job_id`, `seed_len` | `[Phase0]` prefix 도입 또는 기존 `Phase0:` 라인에 `seed_len=%d` 키워드 추가. |
+| `UploadPage` F1 | (없음) | `console.info("[UploadPage] user event seed", {len})` (DEV 가드, 본문 미출력). `console.error('[UploadPage] createMVJob failed', {..., user_event_seed_len})` 추가. |
+| `UploadPage` F2 | (없음) | `console.info("[UploadPage] scenario panel has seed", {len})` (DEV 가드, 1회). |
+
+**민감정보 금지**: 시드 본문(`user_event_seed`) 은 어떤 logger / console 라인에도 출력 금지. 길이만 (`len=N`). DB 에는 저장 — GET 응답 → 프론트 표시. 이는 사용자 본인이 입력한 값을 본인이 다시 보는 흐름이므로 OK.
+
+### 체크리스트
+
+- [ ] B1 `CreateMVRequest.user_event_seed` 추가 + POST `/mv/create` 정규화·영속화 + `[CreateMV]` 로그.
+- [ ] B2 GET `/api/mv/jobs/{id}` 응답에 `user_event_seed` 노출.
+- [ ] B3 `_build_brainstorm_prompts` + `_generate_brainstorm_*` + `_dispatch_brainstorm_once` + `generate_mv_brainstorm` 시드 throughput + 시스템 프롬프트 주입.
+- [ ] B4 `_build_drama_scenario_prompts` + `_generate_scenario_*` + `_build_scenario_prompts_dispatch` + `generate_mv_scenario` 시드 throughput + 시스템 프롬프트 주입.
+- [ ] B5 `mv_pipeline.py` Phase 0 시드 read-from-job + 두 호출에 throughput + `[Phase0] seed_len` 로그.
+- [ ] B6 (선택) 시드 → archetype 자동 추출 + v48 가중치 boost. 시간 여유 없으면 v50.
+- [ ] F1 UploadPage 시드 textarea + payload 추가(create + draft 2곳) + `[UploadPage] user event seed` DEV 로그.
+- [ ] F2 시나리오 패널에 `📝 사용자 시드` 박스 + DEV 로그.
+- [ ] T1 API 통합 (POST/GET/길이 trim/None 정규화 — 6 케이스).
+- [ ] T2 Brainstorm system prompt 주입 (5 케이스).
+- [ ] T3 Stage 2 system prompt 주입 (4 케이스).
+- [ ] T4 Mongo + Phase 0 throughput (3 케이스).
+- [ ] T5 프론트 F1+F2 (5 케이스 — 입력/payload/로그/표시/Vite build).
+- [ ] T6 E2E 실 LLM 1케이스.
+- [ ] T7 회귀 (v37~v48 무회귀, 6 케이스).
+- [ ] REPORT.md v49 append + 5단계 시리즈 완성 명시.
+
+
+## v50 — 2026-05-09 — 시나리오 LLM 창의성 회복 (추상 슬롯 + 예시 압축 + 금지 단어 + temperature)
+
+작업 디렉터리: `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music` · 백엔드: **`backend_9004` 만** · 프론트: `frontend` (4000) · 브랜치: `backend` · 푸시 금지.
+
+**Note**: 본 v50 은 PLAN.md 안의 별도 v46 (보류 — Kling LipSync) 와 무관한 독립 작업이다. 5단계 시리즈(v45~v49) 마무리 직후 발견된 **시나리오 LLM 출력의 예시 모방 문제** 를 해소한다.
+
+### 배경 — 사용자 보고 사례
+
+곡 `벚꽃 흩날리는 날 내뀨` (벚꽃을 모티프로 한 발라드) 를 시나리오 생성에 입력했을 때, LLM 결과물이 사용자가 v49 에서 입력한 시드 예시 ("잘생긴 남자 만남, 번호 줌 류") 와 거의 1:1 으로 일치하는 단어·구조로 출력되었다. 코드 분석 결과 `mv_generator.py` 의 시스템 프롬프트 안에 **5개의 하드코딩된 영역** 이 LLM 에 구체 단어/이름/소품을 그대로 학습시키고 있었음을 확인.
+
+### Plan verification findings (Step 0 — 코드 직접 분석)
+
+현재 코드 사실 (v49 기준 SSOT — 추정 아님, 직접 읽음):
+
+| 영역 | 파일 | 위치 | 현재 단어/패턴 | 문제 |
+|---|---|---|---|---|
+| **A. archetype 정의** | `backend_9004/app/services/mv_generator.py` | L957 (`BRAINSTORM_SYSTEM_PROMPT` 안 archetype 메뉴) | `chance_encounter — 우연한 만남 → 첫눈에 반함 → 결단 (번호 주기/말 걸기 등)` | 사용자 시드 예시 ("번호 줌") 과 1:1 일치. LLM 이 "번호 주기" 를 그대로 출력. |
+| **B. 사건성 키워드 예시** | 동 파일 | L984~L986 | `옛 인연의 신호`, `잃어버린 물건의 발견`, `누군가의 부탁·거절·고백` | 구체 행동 단어가 LLM 에 단어 단위로 학습됨. |
+| **C. DRAMA_FEW_SHOT 발라드 풀 예시** | 동 파일 | L1623~L1684 (예시 1 — 발라드) | `이지훈`, `김수민`, `재즈 카페`, `머리핀`, `옛 LP`, `젖은 코트`, narrative 1500자 + events 8개 detail JSON | 이름·소품·공간이 그대로 LLM 출력에 mimic 됨. 예시 2(댄스)·3(힙합) 은 이미 줄거리 5~6줄 형태로 압축됨 — 예시 1만 비대칭. |
+| **D. trigger 작성 예시** | 동 파일 | L2011 (사건 60% ABSOLUTE RULE 안) | `trigger="옛 연인이 편의점 앞에서 우연히 마주침" + props=["꽃잎"]` | 구체 행동·소품이 그대로 LLM 출력으로 옮겨짐. |
+| **E. Motif 회수 예시** | 동 파일 | L2045 (chain-of-thought 3단계 안) | `벚꽃잎=회상의 트리거 → 벚꽃잎=작별의 상징` | 입력곡 제목이 "벚꽃" 일 때 100% 단어 일치 — 가장 강한 모방 트리거. |
+| **F. Stage 2 temperature** | 동 파일 | `_generate_scenario_openai/_claude/_gemini` 시그니처 default `0.8` (L2754/L2811/L2863), `generate_mv_scenario` default `0.8` (L2950) | 0.8 (기본), 0.95 (retry — `mv_pipeline.py` L983) | 너무 낮음 — 예시 단어를 그대로 mimic 하는 모드. |
+| **G. Stage 1 temperature** | 동 파일 | `generate_mv_brainstorm` 안 retry 루프 L1494 | 첫 시도 0.95, retry 1.0 (모델 무관) | OpenAI/Gemini 는 1.1+ 도 안전. Claude 만 1.0 캡 필요 — 현재는 모든 모델에 1.0 적용. |
+| **H. caller temperature** | `backend_9004/app/services/mv_pipeline.py` | L983 | `_temp = 0.95 if attempt > 0 else 0.8` | Stage 2 caller — 0.85/1.0 으로 상향. |
+
+**갭 / 충돌 / 가정 검증**
+
+- **갭 1**: PLAN 의 "line 411, 437" 은 Phase2.5 (씬 단위 video_prompt 생성 — Kling 전용) 의 temperature. **Stage 2 drama scenario 와 무관**. 진짜 Stage 2 temperature 는 위 표의 F/H — `_generate_scenario_*` 시그니처 default 와 `mv_pipeline.py:983` 의 caller. 이 불일치는 "0.7 → 0.85" 의도 그대로 — Stage 2 temperature 를 0.85 로 통일한다 (현재 0.8 → 0.85, retry 0.95 → 1.0).
+- **갭 2**: Anthropic Claude API 는 temperature 캡이 1.0. retry 가 1.1 인 경우 OpenAI/Gemini 만 적용, Claude 는 1.0 으로 캡. → `_claude_temp_cap(t: float) -> float = min(t, 1.0)` 헬퍼 추가, Claude 호출 직전에 적용.
+- **갭 3**: Few-shot 예시 1 (발라드) 만 압축되지 않은 비대칭 상태. 압축 시 "이지훈/김수민/재즈 카페/머리핀/옛 LP/젖은 코트" 는 모두 anti-example 블록으로 격리.
+- **갭 4**: anti-example 블록은 시스템 프롬프트의 **마지막** 에 추가. 이는 LLM 의 attention 이 가장 최근 instruction 에 강하게 걸리기 때문. Stage 1/2 둘 다 동일 텍스트 SSOT.
+- **갭 5**: 추상 슬롯 변환 시에도 "archetype 의 의도(intent)" 는 보존해야 함. 너무 추상화하면 LLM 이 archetype 차이를 인식 못함. 균형: "구체 단어 제거 + 추상 패턴 슬롯 + intent 한 줄 보존".
+- **충돌 없음**: v49 의 user_event_seed 블록과 직교 — 시드는 "사용자 입력 키워드 반영" 인 반면 본 v50 은 "시스템 예시 단어 모방 차단". 둘이 결합되면 사용자 시드 키워드는 반영되되 시스템 예시 단어("이지훈/머리핀/재즈 카페") 는 등장하지 않는 이상적 상태 달성.
+
+### v50 = Fix 1 + Fix 2 + Fix 3 + Fix 5 (4개 묶음)
+
+(원 명세의 Fix 4 는 본 v50 범위 외 — 사용자가 1+2+3+5 만 지정.)
+
+#### Fix 1 — 구체 단어 → 추상 슬롯 (가장 강력)
+
+A/B/D/E 영역의 구체 단어를 추상 슬롯 패턴으로 치환. 패턴 모양은 보존, 구체 단어만 제거.
+
+**A. archetype 7개 정의 (L957~L963)** — 모두 "구체 행동" 제거, "intent 한 줄" 만 유지:
+- `chance_encounter` — `우연한 만남 → 첫눈에 반함 → 결단 (번호 주기/말 걸기 등)` → `예상 못한 만남에서 시작되는 감정 변화와 능동적 결단`
+- `reunion` — `오랜만의 재회 → 흔들리는 마음 → 결정 (다가가기 vs 떠나보내기)` → `시간이 지난 뒤 다시 마주친 인연이 흔드는 마음과 새 결정`
+- `farewell` — `이별/작별 → 그리움 → 의미 새기기` → `관계의 끝과 그 뒤에 남는 흔적·의미의 재구성`
+- `pursuit_of_dream` — `자기 도전 / 성취 / 좌절과 회복` → `자기 자신을 향한 도전과 그 과정의 굴곡 (성취·좌절·회복)`
+- `subtle_growth` — `소소한 일상 사건 → 깨달음 / 성장` → `평범한 일상의 작은 사건을 통한 내면의 변화·깨달음`
+- `support_and_friendship` — `친구·가족과의 작은 사건 → 유대 강화` → `가까운 사람과의 사건을 통한 연결의 깊어짐`
+- `inner_resolution` — `내적 갈등 → 결단 (관계가 아닌 자기 자신과의 대결)` → `타인이 아닌 자기 자신과의 대결로 도달하는 결단`
+
+**B. 사건성 키워드 예시 (L984~L986)** — 추상 슬롯 패턴으로:
+- 현재: `새 인물의 등장, 우연한 마주침, 옛 인연의 신호, 잃어버린 물건의 발견, 누군가의 부탁·거절·고백, 결단을 요구하는 상황, 주인공 캐릭터의 능동적 결정`
+- 변경: `새 인물의 등장, [예측 못한 형태의] 마주침, [관계 인물의] 연결 신호, [의미 있는 물건의] 발견, [관계 인물의] 부탁·거절·고백, 결단을 요구하는 상황, 주인공 캐릭터의 능동적 결정`
+
+**D. trigger 예시 (L2011)** — 추상 슬롯 패턴:
+- 현재: `예: trigger="옛 연인이 편의점 앞에서 우연히 마주침" + props=["꽃잎"]`
+- 변경: `예: trigger=[관계 인물]이 [일상 공간]에서 [예측 못한 형태로 접촉] + props=[입력 곡과 어울리는 작은 소품]`
+
+**E. Motif 회수 예시 (L2045)** — 추상 슬롯 패턴 (입력곡 제목이 "벚꽃" 일 때 단어 일치 차단):
+- 현재: `예: 첫 씬 "벚꽃잎=회상의 트리거" → 마지막 씬 "벚꽃잎=작별의 상징"`
+- 변경: `예: 첫 씬 [입력 곡 정서에 맞는 작은 소품 = 감정 1] → 마지막 씬 같은 소품 = [감정 2 — 의미가 변환됨]`
+
+#### Fix 2 — DRAMA_FEW_SHOT_EXAMPLES 발라드 풀 예시 압축 (1500자 → 줄거리 5~6줄)
+
+L1623~L1684 의 예시 1 (발라드) 만 비대칭 상태 — 예시 2 (댄스) 와 예시 3 (힙합) 처럼 줄거리 + Motif 5~6줄 형태로 압축한다. 인물 이름·구체 소품·공간을 모두 anti-example 블록으로 격리.
+
+**압축 후 SSOT (예시 2/3 와 동일 톤·길이):**
+
+```
+### 예시 1 — 발라드 / 옛 인연의 우연한 재회 / 비 오는 실내 공간
+narrative 핵심 줄거리: 헤어진 옛 인연을 잊지 못한 주인공이 두 사람의 추억이 깃든
+실내 공간으로 무의식적으로 향하고, 그곳에서 비를 피해 들어온 상대와 우연히 재회한다.
+침묵 속에서 두 사람은 한때 서로의 것이었던 작은 소품을 마지막으로 주고받고,
+주인공은 그 소품을 손에 쥔 채 비 속으로 천천히 걸어 나간다.
+events 핵심: 1)비를 피해 추억의 공간으로 → 2)옛 곡이 흐름 → 3)상대 등장 → 4)침묵의
+대치 → 5)작은 소품을 테이블에 놓음 → 6)상대가 소품을 다시 쥐어 줌 → 7)공간을 나서며
+빗속으로 → 8)비가 멎고 정면을 응시.
+Motif: 첫 event "[작은 소품 = 미련의 상징]" → 마지막 event "같은 소품 = [작별의 흔적]"
+(자기 자조의 흔적 → 의미 새겨진 작별의 표식).
+```
+
+이 압축은 다음을 달성한다:
+- 인물 이름 0개 (이지훈/김수민 제거).
+- 구체 소품 0개 (머리핀/옛 LP/젖은 코트 제거).
+- 구체 공간 0개 (재즈 카페 제거).
+- 톤·구조 가이드(8개 event 시퀀스, motif 회수 패턴) 는 보존.
+
+#### Fix 3 — Anti-example 블록 (금지 단어 리스트)
+
+Stage 1 (`BRAINSTORM_SYSTEM_PROMPT` 끝) 와 Stage 2 (`_build_drama_scenario_prompts` 의 system_prompt 끝) 양쪽에 동일 텍스트 SSOT 추가. anti-example 블록 위치 = 시스템 프롬프트 **마지막** (LLM attention 강화).
+
+**Anti-example 블록 SSOT 텍스트:**
+
+```
+## ⚠ 예시 단어 사용 금지 (모방 방지)
+위 예시들은 패턴·톤 학습용입니다. 다음 단어/이름/소품/행동은
+예시에 등장하더라도 그대로 사용하지 마세요:
+
+- 인물 이름: 이지훈, 김수민, 박서준, 정민호, 한동훈
+- 소품: 머리핀, 옛 LP, 젖은 코트, 스니커즈, 운동화 끈
+- 공간: 재즈 카페, 백스테이지, 옛 동네 골목
+- 구체 행동: 머리핀 돌려주기, 어깨 두드림, 주먹 쥐기, 번호 주기
+
+대신 입력 곡의 가사·분위기·캐릭터·장소에 어울리는
+새 인물 이름·새 소품·새 공간·새 행동을 만들어 주세요.
+
+소설가가 매번 새 인물·새 무대를 창작하듯,
+이 시나리오에서도 예시와 다른 단어로 채워야 합니다.
+```
+
+이 블록은 모듈 레벨 상수 `ANTI_EXAMPLE_BLOCK` 로 정의해서 두 곳에서 import 사용 (DRY).
+
+#### Fix 5 — Temperature 상향
+
+Stage 2 (drama scenario):
+- `_generate_scenario_openai` (L2754) default `0.8 → 0.85`.
+- `_generate_scenario_claude` (L2811) default `0.8 → 0.85`.
+- `_generate_scenario_gemini` (L2863) default `0.8 → 0.85`.
+- `generate_mv_scenario` (L2950) default `0.8 → 0.85`.
+- `mv_pipeline.py:983` caller: `_temp = 0.95 if attempt > 0 else 0.8` → `_temp = 1.0 if attempt > 0 else 0.85`.
+
+Stage 1 (brainstorm):
+- `generate_mv_brainstorm` retry 루프 (L1494): `temperature = 0.95 if attempt == 0 else 1.0` → `temperature = 1.0 if attempt == 0 else 1.1`.
+- 단, Claude 모델은 `_claude_temp_cap` 헬퍼로 1.0 으로 캡. `_generate_brainstorm_claude` (L1278 인근) 와 `_generate_scenario_claude` (L2832 인근) 에서 호출 직전 `temperature = _claude_temp_cap(temperature)` 적용.
+
+**`_claude_temp_cap` 헬퍼 (모듈 상단 helpers 영역에 추가):**
+
+```python
+def _claude_temp_cap(t: float) -> float:
+    """Anthropic Claude API caps temperature at 1.0. Apply this before passing
+    temperature to Claude SDK calls (other providers can use higher values).
+    """
+    return min(float(t), 1.0)
+```
+
+로그: `_generate_brainstorm_claude` 와 `_generate_scenario_claude` 에서 캡 적용 후 `[ClaudeTempCap] requested=%.2f capped=%.2f` 한 줄 추가 (캡이 발동했을 때만 — `requested != capped`).
+
+### Temperature 변경 매트릭스
+
+| 단계 | 모델 | 변경 전 | 변경 후 (첫 시도) | 변경 후 (retry) | 비고 |
+|---|---|---|---|---|---|
+| Stage 1 | OpenAI | 0.95 / 1.0 | 1.0 | 1.1 | retry 가 1.1 |
+| Stage 1 | Gemini | 0.95 / 1.0 | 1.0 | 1.1 | retry 가 1.1 |
+| Stage 1 | Claude | 0.95 / 1.0 | 1.0 (캡) | 1.0 (캡) | `_claude_temp_cap` 적용 |
+| Stage 2 | OpenAI | 0.8 / 0.95 | 0.85 | 1.0 | mv_pipeline.py 983 변경 |
+| Stage 2 | Gemini | 0.8 / 0.95 | 0.85 | 1.0 | mv_pipeline.py 983 변경 |
+| Stage 2 | Claude | 0.8 / 0.95 | 0.85 | 1.0 (캡) | `_claude_temp_cap` 적용 |
+
+### 변경 매트릭스 (Fix × 파일/라인)
+
+| Fix | 파일 | 영역/라인 | 변경 종류 |
+|---|---|---|---|
+| Fix 1 (A) | `backend_9004/app/services/mv_generator.py` | L957~L963 (BRAINSTORM_SYSTEM_PROMPT archetype 7개) | 텍스트 치환 (구체 → 추상) |
+| Fix 1 (B) | 동 파일 | L984~L986 (사건성 키워드 예시) | 텍스트 치환 |
+| Fix 1 (D) | 동 파일 | L2011 (trigger 예시) | 텍스트 치환 |
+| Fix 1 (E) | 동 파일 | L2045 (Motif 회수 예시) | 텍스트 치환 |
+| Fix 2 | 동 파일 | L1623~L1684 (DRAMA_FEW_SHOT_EXAMPLES 예시 1) | 1500자 → 5~6줄 압축 |
+| Fix 3 | 동 파일 | 모듈 상단 / BRAINSTORM_SYSTEM_PROMPT 끝 / `_build_drama_scenario_prompts` system_prompt 끝 | `ANTI_EXAMPLE_BLOCK` 상수 정의 + 두 곳 append |
+| Fix 5 (Stage 2) | 동 파일 | L2754, L2811, L2863, L2950 | default `0.8 → 0.85` |
+| Fix 5 (Stage 2 caller) | `backend_9004/app/services/mv_pipeline.py` | L983 | `0.95/0.8 → 1.0/0.85` |
+| Fix 5 (Stage 1) | `backend_9004/app/services/mv_generator.py` | L1494 | `0.95/1.0 → 1.0/1.1` |
+| Fix 5 (Claude cap) | 동 파일 | 모듈 상단 helpers + `_generate_brainstorm_claude` (L1278 인근) + `_generate_scenario_claude` (L2832 인근) | `_claude_temp_cap` 헬퍼 추가 + 2곳 적용 |
+
+### Before/After 샘플 (5개)
+
+1. **archetype chance_encounter**
+   - Before: `우연한 만남 → 첫눈에 반함 → 결단 (번호 주기/말 걸기 등)`
+   - After:  `예상 못한 만남에서 시작되는 감정 변화와 능동적 결단`
+
+2. **archetype reunion**
+   - Before: `오랜만의 재회 → 흔들리는 마음 → 결정 (다가가기 vs 떠나보내기)`
+   - After:  `시간이 지난 뒤 다시 마주친 인연이 흔드는 마음과 새 결정`
+
+3. **trigger 예시**
+   - Before: `trigger="옛 연인이 편의점 앞에서 우연히 마주침" + props=["꽃잎"]`
+   - After:  `trigger=[관계 인물]이 [일상 공간]에서 [예측 못한 형태로 접촉] + props=[입력 곡과 어울리는 작은 소품]`
+
+4. **Motif 회수 예시**
+   - Before: `예: 첫 씬 "벚꽃잎=회상의 트리거" → 마지막 씬 "벚꽃잎=작별의 상징"`
+   - After:  `예: 첫 씬 [입력 곡 정서에 맞는 작은 소품 = 감정 1] → 마지막 씬 같은 소품 = [감정 2 — 의미가 변환됨]`
+
+5. **발라드 예시 1 narrative**
+   - Before: `이지훈은 두 달 전 헤어진 옛 연인 김수민이 자주 가던 시청 앞 재즈 카페로 들어선다. ... [1500자] ... 비는 점점 잦아들고 ... 우산이 필요 없다는 사실을 천천히 받아들인다.`
+   - After:  `narrative 핵심 줄거리: 헤어진 옛 인연을 잊지 못한 주인공이 두 사람의 추억이 깃든 실내 공간으로 무의식적으로 향하고, 그곳에서 비를 피해 들어온 상대와 우연히 재회한다. ...` (5~6줄)
+
+### Test plan T1~T6
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | Stage 2 system prompt (Fix 1+2+3) | (a) `_build_drama_scenario_prompts(...)` 결과 system_prompt 안에 추상 슬롯 패턴 (`[관계 인물]`, `[일상 공간]`, `[입력 곡 정서에 맞는 작은 소품 = 감정 1]`) 포함. (b) anti-example 블록 (`## ⚠ 예시 단어 사용 금지`) 포함. (c) 압축된 발라드 예시 텍스트 (예: `narrative 핵심 줄거리:`) 포함, 옛 1500자 narrative 전문 (예: `시청 앞 재즈 카페로 들어선다`) 미포함. (d) 옛 키워드 (`이지훈`, `수민`, `머리핀`, `재즈 카페`) 가 anti-example 블록 외 영역에 등장 금지 (단순 string contains 검증). |
+| **T2** | Stage 1 BRAINSTORM_SYSTEM_PROMPT (Fix 1+3) | (a) archetype 7개 한국어 설명에서 구체 행동 단어 (`번호 주기`, `말 걸기`, `다가가기`, `떠나보내기`) 미포함. (b) anti-example 블록 포함. (c) v47 ABSOLUTE RULE (`4개 후보의 plot_archetype 은 모두 달라야`) 무회귀. (d) v48 archetype 가중치 가이드 무회귀. (e) v49 user_event_seed 블록 동작 무회귀 (시드 truthy 시 정상 append). |
+| **T3** | Temperature 변경 (Fix 5) | (a) `mv_pipeline.py` Phase 0 호출에서 attempt=0 시 `_temp == 0.85`, attempt>0 시 `_temp == 1.0` (소스 string match 또는 mock 호출 인자 검증). (b) `generate_mv_brainstorm` retry 루프에서 attempt=0 시 `temperature == 1.0`, attempt=1 시 `temperature == 1.1`. (c) `_claude_temp_cap(0.85) == 0.85`, `_claude_temp_cap(1.0) == 1.0`, `_claude_temp_cap(1.1) == 1.0`. (d) `_generate_brainstorm_claude` mock 호출 시 OpenAI/Gemini 와 동일 temp 인자 받아도 Claude SDK 에는 캡된 값 전달. (e) `[BrainstormGen] attempt=N temp=X.XX model=...` 로그 라인이 새 값 (1.0, 1.1) 반영. |
+| **T4** | 회귀 (v37~v49 무회귀) | (a) v45 chain-of-thought 4단계 텍스트 무회귀. (b) v46 사건 비율 60% ABSOLUTE RULE 텍스트 무회귀. (c) v47 archetype 다양성 ABSOLUTE RULE 텍스트 무회귀. (d) v48 archetype 가중치 가이드 텍스트 무회귀. (e) v49 user_event_seed 블록 텍스트 + throughput 무회귀. (f) Vite build PASS. (g) uvicorn auto-reload 성공. (h) OpenAPI `/openapi.json` 200. |
+| **T5** | (선택) 정성적 비교 (실 LLM, 사용자 검증) | 같은 곡 (`벚꽃 흩날리는 날 내뀨` 또는 새 곡) 으로 v49 결과 vs v50 결과 비교. v50 결과에서 `이지훈/수민/머리핀/재즈 카페` 단어 등장 빈도 0 또는 매우 낮음 확인. 인물 이름·소품·공간이 다양화. **본 단계는 사용자 검증 영역 — 자동 테스트 외**. |
+| **T6** | v46-pre 인프라 활용 검증 | (a) 새/수정된 코드의 logger 라인 (`[BrainstormGen] temp=1.00`, `[ClaudeTempCap] requested=1.10 capped=1.00` 등) 이 `backend_9004/logs/server.log` 에 캡처. (b) 프론트엔드는 본 v50 변경 없음 — `frontend.log` 변화 없음 확인. |
+
+### 추적자 식별자 표 (디버깅 로그 심기 SSOT)
+
+| 함수/위치 | 추적자 | 로그 prefix / 키워드 | 변경 종류 |
+|---|---|---|---|
+| `_claude_temp_cap` (mv_generator.py 모듈 상단) | `requested`, `capped` | `[ClaudeTempCap] requested=%.2f capped=%.2f` (캡 발동 시만 — `requested != capped`) | 신규 |
+| `generate_mv_brainstorm` retry 루프 (mv_generator.py L1494) | `attempt`, `temp`, `model` | 기존 `[BrainstormGen] attempt=%d temp=%.2f model=%s seed_len=%d` 라인의 temp 값이 1.0/1.1 로 출력됨 | 값 변경 (라인 자체는 v49 그대로) |
+| `mv_pipeline.py` Phase 0 (L983 인근) | `attempt`, `temp`, `strict` | 기존 `[Phase0]` 또는 `Phase0:` 로그에 `temp=%.2f` 키워드 추가 (없으면) | 값 변경 + 로그 보강 |
+| `_generate_scenario_claude` (mv_generator.py L2832) | `requested`, `capped`, `model` | `[ClaudeTempCap] requested=... capped=... model=...` (캡 발동 시) | 신규 |
+
+### 비밀번호 / PII 정책
+
+- 본 v50 은 시스템 프롬프트 텍스트 + temperature 숫자 변경. 사용자 입력 데이터 처리 변경 없음. PII 신규 발생 0.
+- v49 의 PII 정책 (시드 본문 미출력, 길이만 로그) 유지.
+
+### 체크리스트
+
+- [ ] B1 — `mv_generator.py` Fix 1 (A): archetype 7개 구체 단어 → 추상 슬롯 (L957~L963).
+- [ ] B2 — `mv_generator.py` Fix 1 (B): 사건성 키워드 예시 추상 슬롯 (L984~L986).
+- [ ] B3 — `mv_generator.py` Fix 1 (D): trigger 예시 추상 슬롯 (L2011).
+- [ ] B4 — `mv_generator.py` Fix 1 (E): Motif 회수 예시 추상 슬롯 (L2045).
+- [ ] B5 — `mv_generator.py` Fix 2: 발라드 예시 1 압축 (L1623~L1684).
+- [ ] B6 — `mv_generator.py` Fix 3: `ANTI_EXAMPLE_BLOCK` 모듈 상수 정의.
+- [ ] B7 — `mv_generator.py` Fix 3: BRAINSTORM_SYSTEM_PROMPT 끝에 `ANTI_EXAMPLE_BLOCK` append.
+- [ ] B8 — `mv_generator.py` Fix 3: `_build_drama_scenario_prompts` system_prompt 끝에 `ANTI_EXAMPLE_BLOCK` append.
+- [ ] B9 — `mv_generator.py` Fix 5: `_claude_temp_cap` 헬퍼 정의 + 2곳 적용 (`_generate_brainstorm_claude`, `_generate_scenario_claude`).
+- [ ] B10 — `mv_generator.py` Fix 5: Stage 2 default 0.8 → 0.85 (L2754/L2811/L2863/L2950).
+- [ ] B11 — `mv_generator.py` Fix 5: Stage 1 retry 0.95/1.0 → 1.0/1.1 (L1494).
+- [ ] B12 — `mv_pipeline.py` Fix 5: caller `_temp = 1.0 if attempt > 0 else 0.85` (L983).
+- [ ] T1 Stage 2 system prompt (4 케이스).
+- [ ] T2 Stage 1 BRAINSTORM_SYSTEM_PROMPT (5 케이스).
+- [ ] T3 Temperature (5 케이스).
+- [ ] T4 회귀 v37~v49 (8 케이스).
+- [ ] T5 정성적 비교 (사용자 검증 — 자동 외).
+- [ ] T6 v46-pre 인프라 (2 케이스).
+- [ ] REPORT.md v50 append.
+
+### Frontend 변경 범위
+
+본 v50 은 **백엔드 전용**. 프론트엔드는 변경 사항 없음 (예외: 시간 여유 있을 때 시나리오 패널에 v50 효과 가시화 미니 노트 추가 — 우선순위 매우 낮음, 본 v50 에선 생략).
+
+
+## v50.1 — 2026-05-09 — Anti-example 블록 확장 (군중 클리셰 차단)
+
+### 배경 / 문제
+
+v50 배포 후에도 같은 곡(벚꽃 / 한국 봄 분위기) 재생성 시 시나리오 narrative 에 **"교복 입은 학생들"·"까르르 웃는 학생"·"단체 셀카 찍기"** 같은 K-pop / 한국 봄날 클리셰의 **군중 인물** 이 반복 등장. 사용자 제보로 확인.
+
+### Step 0 — 코드 베이스 검증 결과
+
+- 위 클리셰 단어들은 `mv_generator.py` 의 system prompt / few-shot example / archetype 정의 / trigger 예시 어디에도 **하드코딩되어 있지 않음** (grep 0건).
+- 즉 누출 경로는 **LLM 학습 데이터의 자생성 클리셰** (벚꽃 + 한국 봄 → 교복 단체 사진은 학습 데이터의 stock 연관).
+- 따라서 fix 는 **"system prompt 에 없는 단어를 모방하는 게 아니라, system prompt 에 명시적 금지 라인을 추가"** 가 정답. 추상 슬롯이나 압축으로는 안 막힘 (이미 v50 로 했음).
+- v50 에서 정의된 `ANTI_EXAMPLE_BLOCK` 모듈 상수 (`mv_generator.py` L963~L975) 가 이미 존재하고, Stage 1 (`_build_brainstorm_prompts`, L1136) + Stage 2 (`_build_drama_scenario_prompts`, L2121) 모두 시스템 프롬프트 끝에 append 함. 본 v50.1 은 **이 블록 안에 두 단락(B + A)을 추가** 만 하는 hot-patch.
+
+### v50.1 = v50 의 hot-patch 위상
+
+- **변경 범위**: `ANTI_EXAMPLE_BLOCK` 상수 텍스트 1군데 + 단위 테스트 1군데. 코드 흐름·함수 시그니처·로깅 라인·temperature 값 변경 0.
+- **prompt_len 영향**: 추가 분량 ≈ 280자 (B = 130자 + A = 150자). 토큰 < 200. Stage 1/2 양쪽 시스템 프롬프트 길이가 자동으로 증가 — 기존 `[PromptBuild]` 트레이스 로그 (`lyrics_len=...`) 는 system prompt 길이를 직접 출력하지 않으므로 새 로그 필요 없음.
+- **무회귀 부담**: 매우 낮음. v50 의 24개 단위 테스트는 anti-example 블록의 **존재** 와 **forbidden 단어가 anti-example 블록 외 영역에 0회** 만 검증. 새 단어들도 anti-example 블록 안에만 존재하므로 기존 테스트 PASS 그대로. 단, `FORBIDDEN_TERMS` 리스트는 새 단어 일부를 추가해 동기화.
+
+### 추가할 텍스트 SSOT
+
+#### Fix B — 일반 가드 (군중 임의 등장 금지)
+
+```
+- 입력 곡 가사·캐릭터·장소 메타에 명시되지 않은 인물 무리(학생 단체·
+  관광객 무리·길거리 행인 단체·웨딩 하객 등)을 임의로 등장시키지 마세요.
+- 다른 인물이 필요하면 relationship 또는 user_event_seed 에 명시된
+  캐릭터만 사용하세요. 분위기 채우기용 군중 묘사는 금지.
+```
+
+#### Fix A — 구체 클리셰 인물·행동 리스트
+
+```
+- 클리셰 인물·행동: 교복 입은 학생들, 까르르 웃는 학생, 단체 셀카,
+  까페 옆자리 손님 단체, 봄나들이 가족 무리, 벚꽃놀이 군중,
+  지나가다 박수 쳐주는 행인, 우산 쓰고 웃는 연인 무리.
+```
+
+### `ANTI_EXAMPLE_BLOCK` 의 최종 구조 (기존 + B + A)
+
+1. 헤더 (`## ⚠ 예시 단어 사용 금지 (모방 방지)`)
+2. 안내문 (`위 예시들은 패턴·톤 학습용입니다. 다음 단어/이름/소품/행동은\n예시에 등장하더라도 그대로 사용하지 마세요:`)
+3. 인물 이름 / 소품 / 공간 / 구체 행동 4개 리스트 (v50 그대로)
+4. **(NEW) 일반 군중 가드 — Fix B 단락 (추가)**
+5. **(NEW) 구체 클리셰 인물·행동 리스트 — Fix A 단락 (추가)**
+6. 마무리 안내 (`대신 입력 곡의 가사·분위기·캐릭터·장소에 어울리는 새 인물 이름·새 소품·새 공간·새 행동을 만들어 주세요.` + `소설가가 매번 새 인물·새 무대를 창작하듯, 이 시나리오에서도 예시와 다른 단어로 채워야 합니다.`) — **v50 그대로 보존**
+
+새 단락 B/A 는 4번 리스트와 6번 마무리 사이에 **빈 줄로 시각적 분리** 후 삽입. LLM attention 측면에서 마무리 안내 문장(소설가 비유)이 여전히 마지막 instruction 으로 유지됨.
+
+### Test plan
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | ANTI_EXAMPLE_BLOCK 정합성 | (a) 새 두 블록(B + A)의 핵심 문자열이 `ANTI_EXAMPLE_BLOCK` 상수 안에 모두 포함됨. (b) 기존 v50 forbidden-words 리스트 (`이지훈`, `김수민`, `머리핀`, `재즈 카페`) 보존. (c) 마무리 문장 (`소설가가 매번 새 인물·새 무대를 창작하듯`, `예시와 다른 단어로 채워야 합니다`) 보존. |
+| **T2** | Stage 1 + Stage 2 system prompt 정합성 | (a) `_build_brainstorm_prompts` 의 system_prompt 가 `ANTI_EXAMPLE_BLOCK` 으로 끝남 (v50 동작 무회귀). (b) `_build_drama_scenario_prompts` 의 system_prompt 가 `ANTI_EXAMPLE_BLOCK` 으로 끝남 (v50 동작 무회귀). (c) 새 cliché 문자열 (`교복 입은 학생들`, `까르르 웃는 학생`, `단체 셀카`, `학생 단체`, `관광객 무리`, `길거리 행인`, `웨딩 하객`, `지나가다 박수 쳐주는 행인`, `봄나들이 가족 무리`, `벚꽃놀이 군중`, `우산 쓰고 웃는 연인 무리`, `분위기 채우기용 군중 묘사는 금지`) 가 두 빌더의 system_prompt 안에 모두 등장. |
+| **T3** | v50/v45~v49 무회귀 | (a) 기존 v50 24개 단위 테스트 전부 PASS (`FORBIDDEN_TERMS` 에 새 클리셰 단어 추가 후에도 anti-example 블록 외 영역 0회 보장 그대로). (b) v45 chain-of-thought / v46 사건 60% / v47 archetype 다양성 / v48 가중치 가이드 / v49 user_event_seed 모두 보존. (c) Vite build / uvicorn / OpenAPI `/openapi.json` 200. |
+| **T4** | v46-pre 인프라 | 본 v50.1 은 새 logger 추가 없음 (텍스트 변경만). 기존 `[PromptBuild]` 로그 라인은 그대로 출력됨. server.log 에 stale 메시지 없는지 가벼운 확인만 수행. |
+| **T5** | (선택) 정성적 비교 (실 LLM, 사용자 검증) | 같은 봄/벚꽃 곡 재생성 시 narrative 에 `교복 입은 학생들` / `까르르 웃는 학생` / `단체 셀카` / `봄나들이 가족 무리` / `벚꽃놀이 군중` 등장 빈도 0 또는 매우 낮음. 다른 군중 클리셰 (관광객 무리·웨딩 하객 등) 동일. **자동 외 — 사용자 검증 영역**. |
+
+### 추적자 식별자 표
+
+| 함수/위치 | 추적자 | 로그 prefix / 키워드 | 변경 종류 |
+|---|---|---|---|
+| `ANTI_EXAMPLE_BLOCK` 상수 (mv_generator.py L963~) | (텍스트만) | (없음) | 텍스트 추가 |
+| `_build_brainstorm_prompts` Stage 1 (L1136) | (없음) | 기존 `[PromptBuild] stage=1 ... lyrics_len=...` 라인 그대로 | 변경 없음 (출력 prompt 길이만 자동 증가) |
+| `_build_drama_scenario_prompts` Stage 2 (L2121) | (없음) | 기존 Stage 2 로그 그대로 | 변경 없음 |
+
+### 비밀번호 / PII 정책
+
+본 v50.1 은 시스템 프롬프트 텍스트 추가만. 사용자 입력 데이터 처리 변경 없음. PII 신규 발생 0.
+
+### 체크리스트
+
+- [x] B1 — `mv_generator.py` `ANTI_EXAMPLE_BLOCK` 상수에 Fix B (일반 가드) 단락 추가.
+- [x] B2 — `mv_generator.py` `ANTI_EXAMPLE_BLOCK` 상수에 Fix A (구체 클리셰) 단락 추가.
+- [x] B3 — 두 단락은 기존 4리스트와 마무리 문장 사이에 빈 줄로 시각적 분리 (`### v50.1 — 군중 인물 임의 등장 금지` 헤더).
+- [x] T1 — 단위 테스트 추가 (`tests/test_v50_1.py` — 13 케이스 PASS).
+- [x] T2 — Stage 1/2 system prompt 안에 새 cliché 문자열 등장 검증 (T2 4 케이스 포함).
+- [x] T3 — 기존 v50 테스트 24개 + 새 v50.1 테스트 13개 = **37/37 PASS**.
+- [x] T4 — server.log 확인 — `Application startup complete` + `GET /openapi.json 200 OK`, 특이 사항 없음.
+- [x] REPORT.md v50.1 append.
+
+### Frontend 변경 범위
+
+본 v50.1 은 **백엔드 전용** hot-patch. 프론트엔드 변경 없음.
+
+## v51 — 2026-05-09 — Step 1: 씬 카드 편집 + 부분 cascade
+
+### 위상 — v51~v54 4단계 시리즈의 첫 단계
+
+사용자가 시나리오/씬 필드를 생성 후에 **수정**할 수 있게 하고, 의존 필드는 **자동 cascade** 로 재생성한다는 합의 사양을 4단계로 나눠 배포. v51 은 **씬 카드 단위** 의 가장 좁은 cascade 범위(scene-level partial cascade)부터 시작.
+
+| 단계 | 범위 | 비고 |
+|---|---|---|
+| **v51 (Step 1, 본 항목)** | 씬 카드 안의 description / image_prompt / video_prompt 편집 + 그 씬 한정 cascade | 본 PLAN |
+| v52 (Step 2) | 시나리오 narrative / events 단위 편집 + 모든 씬 재분할 cascade | 다음 단계 |
+| v53 (Step 3) | Stage 2 LLM 정책 — narrative 사용자 편집은 보존, events 만 재추출 | 다음 단계 |
+| v54 (Step 4) | UI/UX 통합 + 일관 hover 배지 + 백오프 + telemetry | 마무리 |
+
+### 사양 요약 (v51 결정 사항)
+
+- **Q1 (rollout)**: 단계적 v51 → v52 → v53 → v54.
+- **Q2 (UX)**: cascade 자동 진행 (확인 다이얼로그 X) + 진행률 표시 + 취소 버튼.
+- **Q3 (Stage 2 LLM 정책)**: narrative 보존 / events 만 재추출 — v53 에 적용 (v51 무관).
+- **Q4 (영상 폐기)**: 이미지 변경 시 그 씬의 영상은 **마킹만** 으로 폐기 (`video_status="invalidated_by_cascade"`). MinIO 파일은 즉시 삭제 X (롤백 가능성).
+
+### Cascade 정책 표 (씬 단위 부분 cascade)
+
+| 사용자 편집 필드 | 자동 cascade 대상 | 끝점 (= no further cascade) |
+|---|---|---|
+| `scene.description` | `image_prompt` → `image` (Phase 2) → `video_prompt` (Phase 2.5) | video |
+| `scene.image_prompt` | `image` (Phase 2) → `video_prompt` (Phase 2.5) | video |
+| `scene.video_prompt` | (cascade 없음 — 영상은 사용자가 별도 trigger) | — |
+
+**사용자 편집 보존 규칙**: cascade 가 진행될 때, `scene.user_edited_fields` 목록에 들어 있는 필드는 **자동 재계산 건너뛰기**. 예: 사용자가 image_prompt 를 직접 편집해 user_edited_fields 에 등록된 상태에서 description 을 새로 편집해 cascade 가 시작되면, image_prompt 는 LLM 으로 재생성하지 않고 사용자 값을 보존한 채 image 와 video_prompt 만 재계산.
+
+### Step 0 — 코드 베이스 검증 결과
+
+| 검증 항목 | 위치 / 결과 |
+|---|---|
+| 기존 단일 씬 재생성 라우트 패턴 | `backend_9004/app/routes/mv.py` L654 `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/regenerate-image` (image 만 재생성, image_prompt 는 사용자가 미리 편집해야 하는데 편집 UI 없음). v51 의 PATCH + cascade-regenerate 라우트는 이 패턴(`/scenes/{scene_number}/...`)을 그대로 따라간다. |
+| Phase 1b (description → image_prompt) 함수 | `mv_pipeline.py` L1455~ `from .mv_generator import generate_scene_prompts_only` 호출. **단일 씬용** wrapper 가 별도로 없으므로, cascade 헬퍼가 단일 씬을 list 로 감싸 호출. |
+| Phase 2 (Gemini 이미지) 함수 | `mv_pipeline.py` L1874 `run_phase2_images(job_id, mongo_db, scene_numbers=[N])` 이미 부분 호출 가능. cascade 헬퍼가 `scene_numbers=[scene_number]` 로 호출하면 됨. |
+| Phase 2.5 (video_prompt) 함수 | `mv_generator.py` L328 `generate_video_prompts_from_images(image_bytes, image_prompt, ...)` 단일 씬 호출 가능. cascade 헬퍼가 직접 호출 + Mongo 업데이트. |
+| GET `/api/mv/jobs/{id}` 응답 구성 | `mv.py` L128 `_scene_to_dict()` — 새 필드(`user_edited_fields`, `cascade_status`, `cascade_progress`, `cascade_started_at`, `cascade_completed_at`, `cancel_requested`) 를 응답에 포함하도록 확장. |
+| BackgroundTasks 패턴 | `mv.py` L13 import + L381/L559/L1151/L1205 등에서 `background_tasks.add_task(...)` 사용. v51 cascade-regenerate 도 동일 패턴. |
+| v44 폴링 인프라 | `frontend/src/pages/UploadPage.jsx` L344 `stopMvPolling` / L351 `startMvPolling(jobId, intervalMs=3000)` 이미 `getMVJobDetail` 매 3초 호출. v51 cascade 진행률은 같은 응답에 포함되므로 **별도 폴링 추가 X — 기존 polling 재사용**. |
+| frontend API client | `frontend/src/api/index.js` L184 `regenerateMVSceneImage(jobId, sceneNumber)` 패턴 그대로. v51 신규 함수 3개 (`patchMVScene`, `cascadeRegenerateMVScene`, `cancelCascadeMVScene`) 를 같은 파일에 추가. 직접 fetch 호출 금지 정책 준수. |
+| 씬 카드 UI 위치 | `UploadPage.jsx` L1916 `upload-mv-scenes-list__grid` 안의 `upload-mv-scene-card`. 카드 안에 description/source 만 표시되고 image_prompt / video_prompt 는 미표시. v51 에서 인라인 편집 textarea 추가 (펼치기/접기 토글). |
+| v50/v50.1 sentinel | `ANTI_EXAMPLE_BLOCK` 상수 / few-shot example / archetype 정의 — **system prompt 변경 X 확인** (cascade 헬퍼는 기존 함수 재사용만, 새 system prompt 작성 X). |
+| v44 / v37~v50.1 무회귀 | 단일 씬 재생성·시나리오 생성·이미지·영상·립싱크 전체 흐름은 v51 의 신규 라우트와 분리되어 있으므로 자연 보존. 단 GET `/jobs/{id}` 응답 스키마에 새 키가 추가되므로 프론트가 옛 키만 읽을 때 안전한지 확인 필요 (B6). |
+
+### v51 변경 매트릭스
+
+| ID | 분류 | 파일 | 변경 |
+|---|---|---|---|
+| **B1** | API | `mv.py` | `PATCH /api/mv/jobs/{job_id}/scenes/{scene_number}` (description / image_prompt / video_prompt 부분 업데이트 + user_edited_fields 자동 갱신) |
+| **B2** | API | `mv.py` | `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/cascade-regenerate` (trigger_field 명시 → 백그라운드 cascade 시작) |
+| **B3** | 서비스 | `mv_pipeline.py` | `_cascade_from_description(job_id, scene_number, mongo_db)` + `_cascade_from_image_prompt(job_id, scene_number, mongo_db)` 헬퍼 추가 (Phase 1b/2/2.5 부분 재사용, 단계별 cascade_progress 갱신) |
+| **B4** | 스키마 | `mv.py` `_scene_to_dict` + `mv_pipeline.py` 초기화 | `scene.user_edited_fields: list[str]` (기본 `[]`). PATCH 호출 시 자동 append (중복 제거). cascade 헬퍼가 자동 재계산하면 그 필드 제거. |
+| **B5** | 정책 | `mv_pipeline.py` cascade 헬퍼 | image 변경 시 `scene.video_object_name = None` + `scene.video_status = "invalidated_by_cascade"`. MinIO 파일 즉시 삭제 X (마킹만, 롤백 가능성). |
+| **B6** | 진행률 | `mv.py` `_scene_to_dict` + `mv_pipeline.py` cascade 헬퍼 | `scene.cascade_status` ("idle"|"running"|"completed"|"failed"|"cancelled"), `scene.cascade_progress` (0~100), `scene.cascade_started_at`, `scene.cascade_completed_at`. GET `/jobs/{id}` 응답 포함. |
+| **B7** | API | `mv.py` | `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/cancel-cascade` — `scene.cancel_requested = True`. cascade 헬퍼가 다음 phase 진입 시 체크 → `cascade_status="cancelled"` + 그 phase 결과 폐기. |
+| **F1** | UI | `UploadPage.jsx` | 씬 카드에 description / image_prompt / video_prompt 인라인 편집 toggle (펼침 textarea + [저장] [취소]). DEV 가드 `console.info("[UploadPage] scene field edited", {scene_number, field, len})`. |
+| **F2** | 흐름 | `UploadPage.jsx` | F1 의 [저장] 한 번 클릭이 PATCH + cascade-regenerate 두 호출을 묶어 실행. 응답 즉시 진행률 표시 시작. |
+| **F3** | UI | `UploadPage.jsx` | 씬 카드에 mini progress bar (`cascade_status === "running"` 일 때만 표시). 기존 v44 폴링(3초) 재사용. 진행 중에 [⛔ 취소] 버튼 노출 → cancel-cascade 호출. 완료 시 토스트 "재생성 완료". |
+| **F4** | UI | `UploadPage.jsx` | description / image_prompt / video_prompt 라벨 옆에 ✏ 배지 (`scene.user_edited_fields` 포함 필드만). hover tooltip "직접 편집됨 — cascade 시 보존됩니다". |
+| **API** | client | `api/index.js` | `patchMVScene(jobId, sceneNumber, payload)`, `cascadeRegenerateMVScene(jobId, sceneNumber, triggerField)`, `cancelCascadeMVScene(jobId, sceneNumber)` 헬퍼 3개 추가. |
+
+### API 엔드포인트 spec
+
+#### B1 — `PATCH /api/mv/jobs/{job_id}/scenes/{scene_number}`
+
+```
+Request body (≥ 1개 필드 필수):
+{
+  "description"?: str,
+  "image_prompt"?: str,
+  "video_prompt"?: str
+}
+
+Response 200:
+{
+  "scene_number": int,
+  "updated_fields": ["description", "image_prompt", ...],   # 실제 갱신된 키
+  "user_edited_fields": ["description", "image_prompt"],    # 누적 (중복 제거)
+  "scene": { ... }                                          # 업데이트 후 _scene_to_dict() 결과
+}
+
+Response 400: 빈 body (3 필드 모두 미지정)
+Response 401/403: 권한 없음 / 토큰 없음
+Response 404: 작업 또는 씬 없음
+```
+
+로그: `logger.info("[CascadePatch] job=%s scene=%d fields=%s", job_id, scene_number, sorted(updated_fields))`
+
+#### B2 — `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/cascade-regenerate`
+
+```
+Request body:
+{
+  "trigger_field": "description" | "image_prompt" | "video_prompt"
+}
+
+Response 202:
+{
+  "accepted": true,
+  "scene_number": int,
+  "cascade_id": str,                  # uuid4 (server-generated, Mongo 에 함께 저장)
+  "trigger_field": str,
+  "estimated_phases": ["phase1b", "phase2", "phase2.5"]   # 또는 ["phase2", "phase2.5"] / []
+}
+
+Response 409: 같은 씬에 이미 cascade_status="running" 인 작업 진행 중.
+```
+
+응답은 즉시 반환. 백그라운드에서 `_cascade_from_description` / `_cascade_from_image_prompt` 실행. 진행 상황은 GET `/api/mv/jobs/{id}` 의 `scenes[].cascade_progress` 폴링으로 추적.
+
+`trigger_field == "video_prompt"` 의 경우 cascade no-op + 응답 `estimated_phases: []`. (Q4 의 영상 폐기는 image 변경 시에만 트리거되므로, 단순 video_prompt 텍스트 갱신은 영상 폐기 X.)
+
+로그: `logger.info("[CascadeRegen] job=%s scene=%d trigger_field=%s cascade_id=%s", ...)`
+
+#### B7 — `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/cancel-cascade`
+
+```
+Response 200:
+{
+  "scene_number": int,
+  "cancel_requested": true,
+  "cascade_status": str          # 호출 직후 상태 (즉시 cancelled 일 수도 있음)
+}
+```
+
+`scene.cancel_requested = True` 만 설정. 백그라운드 헬퍼가 다음 phase 진입 시 체크 → 중단 + `cascade_status="cancelled"`. 이미 진행 중인 LLM/Gemini 호출은 완료 후 그 결과를 **폐기** (일관성 우선).
+
+로그: `logger.info("[CascadeCancel] job=%s scene=%d", ...)`
+
+### Mongo 스키마 diff (v51 신규 필드 — `mv_jobs.scenes[]`)
+
+| 필드 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `user_edited_fields` | `list[str]` | `[]` (옛 도큐먼트엔 없음 → 빈 배열로 처리) | 사용자가 PATCH 로 직접 편집한 필드명 누적. cascade 가 자동 재계산하면 그 필드를 제거. |
+| `cascade_status` | `str` | `"idle"` | `"idle" | "running" | "completed" | "failed" | "cancelled"` |
+| `cascade_progress` | `int` | `0` | 0~100 (단계별 점유율: description 시작 = 0/33/66/100, image_prompt 시작 = 0/50/100) |
+| `cascade_started_at` | `datetime` | `null` | cascade 시작 시각 |
+| `cascade_completed_at` | `datetime` | `null` | cascade 종료 시각 (성공·실패·취소 모두) |
+| `cascade_id` | `str` | `null` | 마지막 cascade 의 uuid4 (디버깅용) |
+| `cancel_requested` | `bool` | `False` | B7 가 True 로 설정 → 헬퍼가 다음 phase 진입 시 체크 |
+| `video_status` | `str` (기존) | (기존) | **신규 enum 값** `"invalidated_by_cascade"` 추가. 기존 `"pending"|"generating"|"completed"|"failed"` 보존. |
+
+기존 `video_object_name` / `video_with_audio_object` / `video_synclabs_object` 등 영상 관련 필드는 마킹 단계에서 `None` 으로 클리어 (B5). MinIO 파일 자체는 삭제하지 않음.
+
+### Cascade 헬퍼 의사코드 (B3)
+
+```python
+async def _cascade_from_description(job_id, scene_number, mongo_db):
+    cascade_id = str(uuid.uuid4())
+    await _set_scene_field(mongo_db, job_id, scene_number, {
+        "cascade_status": "running",
+        "cascade_progress": 0,
+        "cascade_started_at": datetime.utcnow(),
+        "cascade_id": cascade_id,
+        "cancel_requested": False,
+    })
+    logger.info("[CascadePhase] job=%s scene=%d phase=description_start", job_id, scene_number)
+
+    # phase1b — image_prompt 재생성 (단, user_edited_fields 에 있으면 skip)
+    if not await _is_user_edited(mongo_db, job_id, scene_number, "image_prompt"):
+        if await _check_cancel(mongo_db, job_id, scene_number): return
+        logger.info("[CascadePhase] job=%s scene=%d phase=phase1b_enter", ...)
+        # 단일 씬 입력으로 generate_scene_prompts_only 호출 + 결과를 scenes[idx].image_prompt 에 반영
+        # progress = 33
+    # phase2 — image 재생성 (run_phase2_images 부분 호출)
+    if await _check_cancel(mongo_db, job_id, scene_number): return
+    logger.info("[CascadePhase] job=%s scene=%d phase=phase2_enter", ...)
+    await run_phase2_images(job_id, mongo_db, scene_numbers=[scene_number])
+    # progress = 66
+
+    # B5 영상 폐기 (image 가 변경되었으므로)
+    await _invalidate_video(mongo_db, job_id, scene_number)
+    logger.warning("[CascadeVideoInvalidate] job=%s scene=%d", job_id, scene_number)
+
+    # phase2.5 — video_prompt 재생성 (단, user_edited_fields 에 있으면 skip)
+    if not await _is_user_edited(mongo_db, job_id, scene_number, "video_prompt"):
+        if await _check_cancel(mongo_db, job_id, scene_number): return
+        logger.info("[CascadePhase] job=%s scene=%d phase=phase2_5_enter", ...)
+        # 단일 씬 generate_video_prompts_from_images 호출
+        # progress = 100
+
+    await _set_scene_field(mongo_db, job_id, scene_number, {
+        "cascade_status": "completed",
+        "cascade_progress": 100,
+        "cascade_completed_at": datetime.utcnow(),
+    })
+```
+
+`_cascade_from_image_prompt` 는 phase1b 단계만 빠진 변형 (progress 0/50/100).
+
+### Test plan (T1~T7)
+
+| ID | 분류 | 항목 |
+|---|---|---|
+| **T1** | PATCH 단위 (B1) | (a) description 단독 PATCH → 200, scenes[idx].description 갱신, user_edited_fields = ["description"]. (b) image_prompt + video_prompt 동시 PATCH → 200, 두 필드 갱신, user_edited_fields 에 두 필드 append (중복 없음). (c) 빈 body → 400 "최소 1개 필드". (d) 잘못된 토큰 → 401, 다른 사용자 → 403. (e) 옛 mv_jobs 도큐먼트(user_edited_fields 키 없음) PATCH → 빈 배열에서 시작해 정상 추가. |
+| **T2** | Cascade 시작 단위 (B2) | (a) trigger_field="description" → cascade_status: idle→running, cascade_id 채워짐. mocked LLM/Gemini 호출 진행 시 progress 0→33→66→100 단계별 갱신. cascade_status 최종 "completed". (b) trigger_field="image_prompt" → progress 0→50→100. phase1b 호출 0회. (c) trigger_field="video_prompt" → estimated_phases=[], 백그라운드 작업 즉시 종료, video_status 변동 없음 (이미지 폐기 X). |
+| **T3** | 사용자 편집 필드 보존 (B3+B4) | description 편집 후 cascade_from_description 시작 → image_prompt 자동 갱신, **단 video_prompt 가 미리 user_edited_fields 에 있으면 phase2.5 skip + video_prompt 보존**. cascade 가 image_prompt 를 자동 재생성하면 user_edited_fields 에서 image_prompt 제거. |
+| **T4** | 영상 폐기 (B5) | cascade_from_description 또는 cascade_from_image_prompt 가 image 를 갱신할 때 → scenes[idx].video_status="invalidated_by_cascade", video_object_name=None, video_with_audio_object=None. **MinIO 파일은 그대로 존재** (삭제 X — 별도 mock 으로 검증). |
+| **T5** | 진행률·취소 (B6+B7) | (a) cascade 시작 후 진행 중에 cancel-cascade 호출 → cancel_requested=True, 다음 phase 진입 안 함, cascade_status="cancelled", cascade_completed_at 채워짐. (b) 이미 cascade 가 완료된 상태에서 cancel 호출 → idempotent (cancelled 로 변경 안 됨, 200 + 현재 status 반환). |
+| **T6** | 프론트 (F1~F4) | (a) 씬 카드의 [편집] 토글 → textarea 펼쳐짐 + [저장] [취소] 보임. (b) [저장] 클릭 → patchMVScene + cascadeRegenerateMVScene 두 번 호출, console.log 에 `[UploadPage] scene field edited` 라인 캡처(`frontend.log`). (c) cascade_status="running" 인 동안 progress bar 표시, 완료 시 사라짐. (d) [⛔ 취소] 버튼 클릭 → cancelCascadeMVScene 호출. (e) user_edited_fields 에 있는 필드만 ✏ 배지 표시. |
+| **T7** | 회귀 | (a) v37~v50.1 자동 테스트 PASS. (b) Vite build / uvicorn / OpenAPI `/openapi.json` 200. (c) 옛 mv_jobs (user_edited_fields / cascade_status 등 필드 없음) GET `/jobs/{id}` 정상 — `_scene_to_dict` 가 없는 키에 대해 기본값 부여. (d) v44 폴링 인프라가 새 cascade 필드를 정상 수신·UI 반영. (e) v50/v50.1 sentinel 단어 (ANTI_EXAMPLE_BLOCK) 무회귀. |
+
+### 추적자 식별자 표
+
+| 함수/위치 | 추적자 prefix | 로그 종류 |
+|---|---|---|
+| `mv.py` PATCH 라우트 | `[CascadePatch]` | `logger.info("[CascadePatch] job=%s scene=%d fields=%s", ...)` |
+| `mv.py` cascade-regenerate 라우트 | `[CascadeRegen]` | `logger.info("[CascadeRegen] job=%s scene=%d trigger_field=%s cascade_id=%s", ...)` |
+| `mv_pipeline.py` cascade 헬퍼 phase 진입 | `[CascadePhase]` | `logger.info("[CascadePhase] job=%s scene=%d phase=%s", ...)` (phase: description_start / phase1b_enter / phase2_enter / phase2_5_enter / completed / cancelled) |
+| `mv_pipeline.py` 영상 폐기 | `[CascadeVideoInvalidate]` | `logger.warning("[CascadeVideoInvalidate] job=%s scene=%d", ...)` |
+| `mv.py` cancel-cascade 라우트 | `[CascadeCancel]` | `logger.info("[CascadeCancel] job=%s scene=%d", ...)` |
+| `UploadPage.jsx` 인라인 편집 저장 | `[UploadPage]` (DEV 가드) | `console.info("[UploadPage] scene field edited", {scene_number, field, len})` |
+
+(LLM/Gemini 외부 호출의 응답 코드는 기존 `Phase1b: ...` / `Phase2: ...` / `Phase2.5: ...` 라인이 동일하게 출력되므로 별도 신규 로그 추가 불필요. 단, cascade 진입/이탈은 위 새 prefix 로 명시.)
+
+### 비밀번호 / PII 정책
+
+- 사용자 편집 텍스트(description / image_prompt / video_prompt) 본문은 server.log 에 절대 출력 X. 길이(`len`) 와 필드명만 로그.
+- `frontend.log` 도 동일 — `console.info("[UploadPage] scene field edited", {scene_number, field, len})` 처럼 텍스트 본문 미포함.
+- `cascade_id` 는 uuid4 라 PII 아님.
+
+### v50/v50.1 무회귀
+
+본 v51 은 **system prompt / few-shot example / archetype / temperature 모두 변경 X**. cascade 헬퍼는 기존 `generate_scene_prompts_only` / `run_phase2_images` / `generate_video_prompts_from_images` 함수만 부분 호출하므로 v50.1 anti-example 블록의 효과 자동 보존.
+
+### 체크리스트
+
+- [x] B4 — `mv.py` `_scene_to_dict` 에 v51 신규 필드 7개 포함 + 기본값 처리. (스키마 확장 — 가장 먼저)
+- [x] B1 — `mv.py` PATCH 라우트 + `[CascadePatch]` 로그 + user_edited_fields 자동 갱신.
+- [x] B5 — `mv_pipeline.py` `_v51_invalidate_video(...)` 헬퍼 + `[CascadeVideoInvalidate]` 로그 + MinIO 파일 미삭제 (마킹만).
+- [x] B3 — `mv_pipeline.py` `_v51_run_cascade` (description / image_prompt / video_prompt 모두 한 dispatch 함수가 처리) + 단계별 progress + `[CascadePhase]` 로그 + cancel 체크포인트.
+- [x] B2 — `mv.py` cascade-regenerate 라우트 + `[CascadeRegen]` 로그 + 백그라운드 launch + 409 체크.
+- [x] B6 — GET `/jobs/{id}` 응답에 cascade 필드 자동 포함 (B4 의 부수 효과로 충족).
+- [x] B7 — `mv.py` cancel-cascade 라우트 + `[CascadeCancel]` 로그.
+- [x] F2 — `api/index.js` 헬퍼 3개 추가 + UploadPage 의 [저장] 핸들러 (PATCH + cascade-regenerate 묶음 호출 + 폴링 시작).
+- [x] F1 — 씬 카드 안 인라인 편집 toggle UI + DEV 가드 console.info.
+- [x] F3 — mini progress bar + [⛔ 취소] 버튼. v44 polling 재사용.
+- [x] F4 — ✏ user_edited 배지 + tooltip.
+- [x] T1 — PATCH/helper 단위 테스트 (3 케이스).
+- [x] T2 — Cascade 시작 단위 테스트 3종 (mocked LLM/Gemini).
+- [x] T3 — 사용자 편집 필드 보존 테스트 3종.
+- [x] T4 — 영상 폐기 테스트 (MinIO 파일 미삭제 검증).
+- [x] T5 — 진행 중 cancel → cancelled 종료 테스트.
+- [x] T6 — 프론트 Vite build 정상 통과 (인라인 편집 UI + 토스트 + 진행률 컴파일 OK).
+- [x] T7 — 회귀: 50/50 PASS (v50 24개 + v50.1 13개 + v51 13개) / Vite build OK / live OpenAPI 200 / 옛 도큐먼트 _scene_to_dict 호환 검증 (T7a/b).
+- [x] REPORT.md v51 append.
+
+### Frontend / Backend 변경 범위 요약
+
+- **백엔드**: `backend_9004/app/routes/mv.py` (3 신규 라우트 + `_scene_to_dict` 확장) + `backend_9004/app/services/mv_pipeline.py` (cascade 헬퍼 2종 + `_invalidate_video` 보조). **다른 backend (백엔드, _9001, _9002, _9003) 변경 0**.
+- **프론트엔드**: `frontend/src/api/index.js` (헬퍼 3개) + `frontend/src/pages/UploadPage.jsx` (씬 카드 편집 UI / 진행률 / 배지). 다른 페이지·컴포넌트 변경 0.
+- **테스트**: `backend_9004/tests/test_v51.py` (신규).
+
+## v52 — 2026-05-09 — Step 2: events 편집 + 매핑 씬 cascade
+
+v51 (씬 카드 단위 편집 + 부분 cascade) 의 다음 단계. 한 단계 위인 **시나리오 패널의 events 배열** 의 단일 event 의 5개 필드(`trigger` / `protagonist_action` / `motivation` / `emotion_shift` / `props`) 를 편집할 수 있게 하고, 그 event 에 매핑된 **모든 씬의 description 부터** v51 의 `_v51_run_cascade(trigger_field="description")` 흐름을 자동 시작한다. event 추가/삭제는 v52 범위 밖 (v53 narrative cascade 와 함께 처리).
+
+### Step 0 — Plan verification findings
+
+| 항목 | 위치 | 비고 |
+|---|---|---|
+| v51 cascade 헬퍼 (재사용 핵심) | `backend_9004/app/services/mv_pipeline.py:3183~3518` | `_v51_run_cascade` (3374), `_v51_invalidate_video` (3238), `_v51_set_scene_fields` (3196), `_v51_get_scene_idx` (3186), `_v51_get_scene` (3204), `_v51_is_user_edited` (3214), `_v51_remove_user_edited_field` (3221), `_v51_check_cancel` (3231), `_v51_finalize_cancelled` (3510), `_v51_regen_image_prompt_single` (3254), `_v51_regen_video_prompt_single` (3325). 모두 그대로 호출 가능 — v52 신규 cascade 함수 X. |
+| Phase 1 씬 분할 LLM (description 출처) | `mv_pipeline.py:850 run_phase1_split` + `mv_generator.py: split_lyrics_into_scenes` | description 은 phase1 (씬 분할 단계) 에서 LLM 이 채움. v52 의 description 부분 재호출은 phase 1 wrapper 형태 → 같은 LLM 함수 call 1-element 입력 로 재구성 (B3). |
+| v45 `event_index` 영속화 | `mv_pipeline.py:1574~1639` | scene-split LLM 이 prompt response 의 `event_index` (None 가능) 를 그대로 `scene["event_index"]` 에 영속화. 옛 도큐먼트 (v44 이전) 는 키 자체 누락 가능 → cascade 진입 시 안전 skip + warning 로그. |
+| v51 PATCH/cascade-regenerate/cancel-cascade 라우트 패턴 | `routes/mv.py:806~991` | `PatchSceneRequest` (102), `patch_scene` (808), `cascade_regenerate_scene` (871), `cancel_scene_cascade` (955). v52 의 신규 3개 라우트 (`PATCH /scenario/events/{order}` / `POST /cascade-regenerate` / `POST /cancel-cascade`) 가 이 패턴을 그대로 따름. |
+| `_scene_to_dict` 응답 포맷 | `routes/mv.py:144~194` | scene 단위 cascade 필드 7종 노출 패턴. v52 의 `scenario_events[i].user_edited_fields` 는 GET 응답에서 events 배열을 한 번 더 매핑하면서 디폴트 `[]` 부여. |
+| events 카드 위치 (프론트) | `UploadPage.jsx:1777~1830` | 시나리오 패널 안 카드 그리드. 5개 필드 (trigger / protagonist_action / motivation / emotion_shift / props) 모두 표시 중. v52 는 각 필드 옆 [편집] 버튼 + textarea + [저장]/[취소] + ✏ 배지. |
+| 프론트 API client | `frontend/src/api/index.js:186~192` | v51 헬퍼 3개 (`patchMVScene` / `cascadeRegenerateMVScene` / `cancelCascadeMVScene`) 직후 v52 헬퍼 3개를 같은 스타일로 추가. |
+| v50/v50.1 sentinel 키워드 | `mv_generator.py: ANTI_EXAMPLE_BLOCK` (system prompt 변경 X) | v52 도 system prompt / archetype / few-shot 모두 무변경 — `_v51_regen_image_prompt_single` 가 `generate_scene_prompts_only` 만 호출하므로 자동 보존. |
+
+### v52 = Step 2 of v51~v54 시리즈
+
+| 단계 | 편집 단위 | Cascade 시작 phase | 상태 |
+|---|---|---|---|
+| **v51** (Step 1) | 씬 단위 (description / image_prompt / video_prompt) | phase1b → phase2 → phase2.5 | 완료 (50/50 PASS) |
+| **v52** (Step 2) | event 단위 단일 필드 부분 수정 (trigger / action / motivation / emotion_shift / props) — 추가·삭제 X | 매핑 씬의 phase1 partial(description 재생성) → v51 cascade 그대로 | **본 plan** |
+| v53 (Step 3) | events 배열 추가/삭제 + narrative 등 시나리오 상위 편집 | 모든 씬 phase0 (split) 부터 전체 cascade | 미정 |
+| v54 (Step 4) | scenario_meta (characters / locations) 편집 + 자산 사전생성 cascade | phase1.5 부터 cascade | 미정 |
+
+### v52 범위 제한 (중요한 단순화 결정)
+
+- v52 는 **event 1개의 5개 필드 부분 수정만** 지원: `trigger`, `protagonist_action`, `motivation`, `emotion_shift`, `props`.
+- event 추가/삭제 → 시퀀스 재정렬 + event_index 매핑 재계산이 복잡 → v53 에서 narrative cascade 와 함께 처리.
+- 결과적으로 v52 의 cascade 는 "1개 event → 1~N개 매핑된 씬" 으로 명확히 좁혀짐.
+
+### Cascade 정책 (v52)
+
+| 사용자 편집 단위 | 영향 식별 | Cascade 진입 | 진행률 단계 |
+|---|---|---|---|
+| `scenario_events[order-1]` 의 5개 필드 부분 수정 | `scene.event_index === order-1` 인 모든 씬 (1~N개) | 각 매핑 씬에 대해 v51 의 `_v51_run_cascade(scene_number, "description")` 순차 호출 | v51 의 `description` cascade 단계와 동일 (씬별 0/33/66/100). 프론트 종합 진행률은 N개 평균/완료 비율. |
+
+`_v51_run_cascade(trigger_field="description")` 안에서:
+- phase1b: `_v51_regen_image_prompt_single` (단, 그 씬의 user_edited_fields 에 "image_prompt" 있으면 skip)
+- phase2: `run_phase2_images(scene_numbers=[scene_number])`
+- B5: `_v51_invalidate_video` — 영상 자동 폐기 (Q4)
+- phase2.5: `_v51_regen_video_prompt_single` (그 씬의 user_edited_fields 에 "video_prompt" 있으면 skip)
+
+추가로 v52 는 **description 재생성 자체를 Phase 1 부분 호출** 로 한 단계 앞에 둠. 즉:
+
+```
+event[k] 5개 필드 수정 → 매핑된 씬 [s1, s2, ...] 식별
+   → 각 씬에 대해:
+       Phase 1 partial (B3 — _v52_resplit_event_to_description) → scenes[idx].description 갱신
+       (단, scene.user_edited_fields 에 "description" 있으면 skip — 사용자 description 보존)
+       그 후 _v51_run_cascade(scene_number, "description") 호출 → phase1b → phase2 → phase2.5
+```
+
+**"description 자체를 사용자가 편집했다면 cascade 발동 시 어떤 일?"** — `scene.user_edited_fields` 에 "description" 있으면 v52 의 B3 wrapper 가 description 재생성을 skip 한다. description 이 변경되지 않으면 후속 phase1b → phase2 → phase2.5 도 의미가 없으므로 v52 wrapper 가 cascade 자체를 skip + 그 씬은 cascaded_skipped 로 마킹. 다른 매핑 씬은 정상 진행.
+
+### v51 인프라 재사용 항목 표
+
+| 항목 | 재사용 / 신규 |
+|---|---|
+| `_v51_run_cascade` | **재사용** — v52 신규 cascade 함수 만들지 않음 |
+| `_v51_invalidate_video` | **재사용** — Q4 영상 폐기 |
+| `_v51_set_scene_fields` / `_v51_get_scene_idx` / `_v51_get_scene` | **재사용** |
+| `cascade_status` / `cascade_progress` / `cascade_id` / `cancel_requested` (씬 단위) | **재사용** — event 단위 별도 status X. 프론트가 매핑된 씬들의 진행률 합산. |
+| `[CascadePhase]` 로그 prefix | **재사용** — phase 출력 그대로 |
+| `_v51_regen_image_prompt_single` / `_v51_regen_video_prompt_single` | **재사용** — phase1b/2.5 |
+| `run_phase2_images(scene_numbers=[...])` | **재사용** — phase2 |
+| Phase 1 씬 분할 LLM (`split_lyrics_into_scenes`) | **신규 wrapper** `_v52_resplit_event_to_description` — 단일 씬 description 만 부분 재생성 (B3) |
+
+### v52 변경 매트릭스 (B1~B6, F1~F4, T1~T7)
+
+| 영역 | ID | 항목 |
+|---|---|---|
+| Backend | **B1** | `PATCH /api/mv/jobs/{job_id}/scenario/events/{order}` — 5개 필드 부분 업데이트 + `event.user_edited_fields` 누적. 빈 body → 400. order out of range → 404. `[EventPatch]` 로그. |
+| Backend | **B2** | `POST /api/mv/jobs/{job_id}/scenario/events/{order}/cascade-regenerate` — 매핑 씬 식별 → 각 씬에 대해 B3 wrapper + `_v51_run_cascade("description")` 순차. 매핑 씬 0개 → 200 + `affected_scenes=[]`. `[EventCascade]` 로그. |
+| Backend | **B3** | `_v52_resplit_event_to_description(job, event_order, scene_idx)` 헬퍼 — Phase 1 LLM (`split_lyrics_into_scenes`) 의 단일 씬 description 부분 재호출. scene.user_edited_fields 에 "description" 있으면 skip. `[CascadePhase] phase=phase1_partial` 로그 (v51 prefix 재사용). |
+| Backend | **B4** | Mongo schema 확장 — `mv_jobs.scenario_events[i].user_edited_fields: list[str]` (default []). 옛 도큐먼트 backward-compat: 없으면 빈 배열. `scene.event_index` 누락 옛 도큐먼트 cascade 진입 시 안전 skip + `[EventCascade] missing event_index` warning. |
+| Backend | **B5** | `POST /api/mv/jobs/{job_id}/scenario/events/{order}/cancel-cascade` — 영향 받는 모든 씬에 일괄 `cancel_requested=True`. `[EventCascadeCancel]` 로그. |
+| Backend | **B6** | `GET /api/mv/jobs/{id}` 응답에 `scenario_events[i].user_edited_fields` 노출 + 옛 도큐먼트 기본값 처리. cascade 진행률은 v51 의 scene 단위 그대로 (event 단위 별도 추적 X). |
+| Frontend | **F1** | events 카드 안 5개 필드별 [편집] 버튼 + textarea (props 는 줄바꿈 split) + [저장]/[취소] 버튼. [저장] 클릭 시 PATCH + cascade-regenerate 묶음 호출. DEV 가드 `console.info("[UploadPage] event field edited", {event_order, field, len})`. |
+| Frontend | **F2** | 카드 또는 [저장] 버튼 옆에 "이 변경이 영향받는 씬: 5, 6" 텍스트 표시. 매핑 0개 → "이 event 는 씬에 매핑되지 않았습니다 (cascade 없음)". `scene.event_index === order-1` 매핑 계산은 프론트 측에서 단순 filter. |
+| Frontend | **F3** | event cascade 시작 시 영향 씬들의 `cascade_status` 폴링 (v51 인프라 재사용). 진행률 = N개 씬의 평균 progress. running 동안 [⛔ 취소] 버튼 → cancelCascadeEventMV 호출. |
+| Frontend | **F4** | event 카드의 user_edited_fields 안에 있는 필드 옆 ✏ 배지 + tooltip. |
+| Test | **T1** | PATCH 단위 — (a) trigger 단독 PATCH → 200 + scenario_events[2].trigger 갱신 + user_edited_fields=["trigger"]. (b) 잘못된 order out-of-range → 404. (c) 빈 body → 400. (d) 옛 도큐먼트 (user_edited_fields 키 없음) PATCH → 빈 배열에서 시작해 정상 추가. |
+| Test | **T2** | Cascade 시작 — event[3] PATCH 후 cascade-regenerate → scene.event_index===2 인 씬들 cascade_status="running". 매핑 1개 → 1개만, 매핑 2개 → 2개 모두 순차 cascade. 매핑 0개 → 200 + `affected_scenes=[]` + cascade 호출 0회. |
+| Test | **T3** | 사용자 편집 보존 — event[3] cascade 가 매핑 씬의 description 자동 재생성하려 할 때, scene.user_edited_fields 에 "description" 있으면 description 갱신 + 후속 phase1b/2/2.5 모두 skip (description 변경 X → 재계산 의미 없음). image_prompt, video_prompt 가 user_edited 인 경우는 v51 정책 그대로. |
+| Test | **T4** | 영상 폐기 — v51 동일. 매핑된 씬의 image 변경 시 영상 자동 마킹 (`video_status="invalidated_by_cascade"`). MinIO 파일 삭제 X. |
+| Test | **T5** | 취소 — 매핑 씬 2개 cascade 진행 중 cancel-cascade → 두 씬 모두 cancel_requested=True 후 cancelled. 응답 `cancelled_scenes=[s1, s2]`. |
+| Test | **T6** | 프론트 — Vite build 정상 통과 (인라인 편집 UI / 영향 씬 안내 / 진행률 / 취소 / ✏ 배지 컴파일 OK). 본 e2e 는 build 회귀로 대체. |
+| Test | **T7** | 회귀 — v37~v51 자동 테스트 PASS. 옛 mv_jobs (event.user_edited_fields 없음, scene.event_index 없음) 정상 조회 + cascade 시 안전 skip + warning 로그 발생. live OpenAPI 200. v50/v50.1 sentinel 무회귀. |
+
+### 신규 API 엔드포인트 (v52)
+
+| Method | Path | Body | 응답 | 기능 |
+|---|---|---|---|---|
+| `PATCH` | `/api/mv/jobs/{job_id}/scenario/events/{order}` | `{trigger?, protagonist_action?, motivation?, emotion_shift?, props?}` | `{event_order, updated_fields, event}` | 5개 필드 부분 업데이트 + `event.user_edited_fields` 누적. 빈 body → 400. order out-of-range → 404. |
+| `POST` | `/api/mv/jobs/{job_id}/scenario/events/{order}/cascade-regenerate` | `{}` (body 없음) | 202 + `{accepted: true, event_order, affected_scenes: [scene_numbers]}` | 매핑 씬 식별 → 백그라운드 cascade 시작. 매핑 0개 → 200 + `affected_scenes=[]`. 매핑 씬 중 cascade 진행 중인 것이 있으면 그것만 skip + warning. |
+| `POST` | `/api/mv/jobs/{job_id}/scenario/events/{order}/cancel-cascade` | `{}` | 200 + `{event_order, cancelled_scenes: [scene_numbers]}` | 영향 받는 모든 씬에 일괄 `cancel_requested=True`. idempotent. |
+
+### Mongo 스키마 diff (v52 신규 — `mv_jobs.scenario_events[]`)
+
+| 필드 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `user_edited_fields` | `list[str]` | `[]` (옛 도큐먼트엔 없음 → 빈 배열) | 사용자가 PATCH 로 직접 편집한 event 필드명 누적. 중복 제거. |
+
+`scene.event_index` (v45 기존 필드) — 본 v52 에서 핵심. 누락된 옛 도큐먼트 cascade 시 그 씬은 안전 skip + warning. PATCH 자체는 영향 없음 (event 필드만 갱신).
+
+### B3 의사코드 (`_v52_resplit_event_to_description`)
+
+```python
+async def _v52_resplit_event_to_description(job, event_order, scene_idx, mongo_db, job_oid):
+    """Phase 1 의 단일 씬 description 부분 재호출.
+
+    - scene_idx 의 user_edited_fields 에 "description" 있으면 즉시 skip + 로그.
+    - 그렇지 않으면 split_lyrics_into_scenes 를 1-element scenes_input 으로 호출 →
+      결과의 description 만 scenes[scene_idx].description 에 반영.
+    - cascade 가 자동 갱신했으므로 user_edited_fields 에서 "description" 제거 X
+      (애초부터 없었으므로).
+    """
+    # user_edited 보존 체크
+    if await _v51_is_user_edited(mongo_db, job_oid, scene_idx, "description"):
+        logger.info("[CascadePhase] job=%s scene=%d phase=phase1_partial_skip_user_edited",
+                    str(job_oid), scenes[scene_idx]["scene_number"])
+        return False  # description 변경 X → caller 가 후속 cascade 도 skip 결정
+
+    logger.info("[CascadePhase] job=%s scene=%d phase=phase1_partial",
+                str(job_oid), scenes[scene_idx]["scene_number"])
+
+    from .mv_generator import split_lyrics_into_scenes
+    scenes = job.get("scenes", [])
+    s = scenes[scene_idx]
+    # 단일 씬 입력 — section/duration/lyrics_segment + 갱신된 events 컨텍스트
+    scene_input = [{
+        "scene_number": s.get("scene_number"),
+        "section": s.get("section", ""),
+        "duration": float(s.get("use_seconds") or 5.0),
+        "lyrics": s.get("lyrics_segment", ""),
+    }]
+    # 갱신된 scenario_events 를 컨텍스트로 전달 (이미 PATCH 로 Mongo 갱신되어 있음)
+    try:
+        result = await split_lyrics_into_scenes(
+            scenes_input=scene_input,
+            scenario_events=job.get("scenario_events"),
+            ...  # 기존 split_lyrics_into_scenes 시그니처 그대로
+        )
+        if result and isinstance(result, list) and result[0].get("description"):
+            await _v51_set_scene_fields(mongo_db, job_oid, scene_idx, {
+                "description": result[0]["description"],
+            })
+            return True  # description 갱신됨 → caller 가 후속 cascade 진행
+    except Exception as e:
+        logger.warning("[CascadePhase] phase1_partial failed: %s", str(e)[:200])
+    return False
+```
+
+(B3 의 정확한 시그니처는 backend-dev 가 `split_lyrics_into_scenes` 의 실제 인자 구조를 보고 결정. 위는 의사코드.)
+
+### B2 의사코드 (`event_cascade_dispatch`)
+
+```python
+async def _v52_event_cascade(job_oid, event_order, mongo_db):
+    """이벤트 단위 cascade 백그라운드 핸들러.
+
+    - 매핑된 씬 식별
+    - 각 씬에 대해 B3 wrapper → 성공 시 _v51_run_cascade("description") 순차 호출
+    """
+    job = await _get_job(mongo_db, job_oid)
+    scenes = job.get("scenes") or []
+    affected = [s["scene_number"] for s in scenes
+                if isinstance(s.get("event_index"), int) and s["event_index"] == event_order - 1]
+
+    if not affected:
+        logger.warning("[EventCascade] job=%s event_order=%d affected=0 (no mapped scenes)",
+                       str(job_oid), event_order)
+        return
+
+    logger.info("[EventCascade] job=%s event_order=%d affected_scenes=%s",
+                str(job_oid), event_order, affected)
+
+    for scene_number in affected:
+        scene_idx = await _v51_get_scene_idx(mongo_db, job_oid, scene_number)
+        if scene_idx is None:
+            logger.warning("[EventCascade] missing scene_idx — skipping cascade scene=%d", scene_number)
+            continue
+        # description 부분 재생성 — user_edited 면 False 반환
+        changed = await _v52_resplit_event_to_description(job, event_order, scene_idx, mongo_db, job_oid)
+        if not changed:
+            continue  # description 보존 → 후속 cascade 도 skip
+        # 그 후 v51 cascade — phase1b → phase2 → phase2.5
+        await _v51_run_cascade(job_oid, scene_number, mongo_db, "description")
+```
+
+### Test plan (T1~T7)
+
+| ID | 항목 |
+|---|---|
+| **T1** PATCH 단위 (B1) | (a) trigger 단독 PATCH → 200, scenario_events[2].trigger 갱신, user_edited_fields=["trigger"]. (b) trigger + motivation 동시 PATCH → 200, 두 필드 갱신, user_edited_fields 두 필드 append (중복 없음). (c) order=99 (out-of-range) → 404. (d) 빈 body → 400. (e) 잘못된 토큰 → 401, 다른 사용자 → 403. (f) 옛 mv_jobs (`scenario_events[i].user_edited_fields` 키 없음) PATCH → 빈 배열에서 정상 추가. |
+| **T2** Cascade 시작 (B2) | (a) event[3] PATCH 후 cascade-regenerate → scene.event_index===2 인 씬 1개만 매핑 → cascade_status="running" 그 씬만, 응답 `affected_scenes=[that_scene]`. (b) event[3] 매핑 씬 2개 → 두 씬 모두 cascade_status="running" 순차 (mocked LLM/Gemini), 응답 `affected_scenes=[s1, s2]`. (c) event[5] 매핑 씬 0개 → 200 + `affected_scenes=[]`, `_v51_run_cascade` 호출 0회. (d) 매핑 씬 중 cascade 진행 중인 것이 있으면 그것만 skip + warning, 나머지 정상. |
+| **T3** 사용자 편집 보존 (B3+B4) | (a) 매핑 씬의 user_edited_fields 에 "description" 있으면 → B3 wrapper False 반환 → 후속 cascade 전체 skip. (b) "image_prompt" 에 있으면 v51 정책으로 phase1b 만 skip, phase2/2.5 진행. (c) "video_prompt" 에 있으면 phase2.5 만 skip. (d) cascade 가 description/image_prompt/video_prompt 를 자동 갱신하면 user_edited_fields 에서 그 필드 제거. |
+| **T4** 영상 폐기 (Q4) | v51 동일. 매핑된 씬의 image 변경 시 `video_status="invalidated_by_cascade"`, `video_object_name=None`. MinIO 파일 삭제 X (mock 으로 검증). |
+| **T5** 취소 (B5) | event[3] cascade 진행 중 (매핑 씬 2개) cancel-cascade 호출 → 두 씬 모두 cancel_requested=True 후 다음 phase 진입 시 cascade_status="cancelled". 응답 `cancelled_scenes=[s1, s2]`. 이미 idle/completed 인 씬은 변경 없음 (idempotent). |
+| **T6** 프론트 (F1~F4) | (a) event 카드 안 5개 필드 옆 [편집] 토글 → textarea 펼쳐짐. (b) [저장] 클릭 → patchMVScenarioEvent + cascadeRegenerateMVEvent 묶음 호출, frontend.log 에 `[UploadPage] event field edited` 라인 캡처 (DEV 가드). (c) "영향 받는 씬" 안내 정확. 매핑 0개 시 안내 메시지. (d) 진행률 표시 — N개 씬 평균 progress. running 동안 [⛔ 취소] 버튼 → cancelCascadeMVEvent 호출. (e) user_edited_fields 의 필드 옆 ✏ 배지. |
+| **T7** 회귀 | (a) v37~v51 자동 테스트 PASS. (b) Vite build / uvicorn / OpenAPI `/openapi.json` 200. (c) 옛 mv_jobs (event.user_edited_fields 없음, scene.event_index 없음) GET 정상 + cascade 시 안전 skip + warning. (d) v44 폴링 인프라가 v52 신규 필드(`scenario_events[i].user_edited_fields`) 정상 수신·UI 반영. (e) v50/v50.1 sentinel (ANTI_EXAMPLE_BLOCK) 무회귀 — system prompt 변경 0. |
+
+### 추적자 식별자 표 (v52 신규 + v51 재사용)
+
+| 함수/위치 | 추적자 prefix | 종류 |
+|---|---|---|
+| `mv.py` 신규 PATCH 라우트 | `[EventPatch]` | `logger.info("[EventPatch] job=%s event_order=%d fields=%s", ...)` |
+| `mv.py` 신규 cascade-regenerate 라우트 | `[EventCascade]` | `logger.info("[EventCascade] job=%s event_order=%d affected_scenes=%s", ...)` 또는 `logger.warning("[EventCascade] missing event_index — skipping cascade scene=%d", ...)` |
+| `mv.py` 신규 cancel-cascade 라우트 | `[EventCascadeCancel]` | `logger.info("[EventCascadeCancel] job=%s event_order=%d cancelled_scenes=%s", ...)` |
+| `mv_pipeline.py` `_v52_resplit_event_to_description` | `[CascadePhase]` (v51 재사용) | `logger.info("[CascadePhase] job=%s scene=%d phase=phase1_partial", ...)` / `phase=phase1_partial_skip_user_edited` |
+| `_v51_run_cascade` 진입 (v51 재사용) | `[CascadePhase]` | description_start / phase1b_enter / phase2_enter / phase2_5_enter / completed / cancelled / failed |
+| `_v51_invalidate_video` (v51 재사용) | `[CascadeVideoInvalidate]` | `logger.warning("[CascadeVideoInvalidate] job=%s scene=%d", ...)` |
+| `UploadPage.jsx` 인라인 편집 저장 | `[UploadPage]` (DEV 가드) | `console.info("[UploadPage] event field edited", {event_order, field, len})` |
+
+### v50/v50.1 무회귀
+
+본 v52 는 **system prompt / few-shot example / archetype / temperature 모두 변경 X**. cascade 헬퍼는 기존 `split_lyrics_into_scenes` / `generate_scene_prompts_only` / `run_phase2_images` / `generate_video_prompts_from_images` 함수만 부분 호출하므로 v50.1 ANTI_EXAMPLE_BLOCK 효과 자동 보존.
+
+### PII / 비밀번호 정책
+
+- 사용자 편집 텍스트(trigger / protagonist_action / motivation / emotion_shift / props 본문) 는 server.log 에 절대 출력 X. PATCH 라우트는 `fields=%s` 에 키 이름만 (값 X), 정렬된 list 로 출력.
+- `frontend.log` 도 동일 — `console.info("[UploadPage] event field edited", {event_order, field, len})` 처럼 텍스트 본문 미포함, length 만 기록. DEV 가드 (`import.meta?.env?.DEV`).
+- `cascade_id` 는 uuid4 라 PII 아님.
+
+### 체크리스트
+
+- [x] B4 — `mv.py` GET `/jobs/{id}` 응답에 `scenario_events[i].user_edited_fields` 자동 포함 + 옛 도큐먼트 기본값 `[]` 처리. (스키마 확장 — 가장 먼저)
+- [x] B1 — `mv.py` 신규 PATCH 라우트 + `[EventPatch]` 로그 + event.user_edited_fields 자동 갱신.
+- [x] B3 — `_v52_resplit_event_to_description` wrapper 는 **불필요로 판명** — `_v51_run_cascade("description")` 의 phase1b 가 자동으로 갱신된 `scenario_events` 를 다시 읽으므로 별도 LLM 부분 호출 X. `_v52_event_cascade` 안에서 직접 v51 cascade 호출. user_edited_fields description 보존은 cascade 진입 전에 검사.
+- [x] B2 — `mv.py` 신규 cascade-regenerate 라우트 + `_v52_event_cascade` 백그라운드 헬퍼 + `[EventCascade]` 로그 + 매핑 씬 식별 + v51 cascade wrapping.
+- [x] B5 — `mv.py` 신규 cancel-cascade 라우트 + `[EventCascadeCancel]` 로그 + 영향 씬 일괄 cancel_requested=True.
+- [x] B6 — GET `/jobs/{id}` 응답 필드 검증 (B4 의 부수 효과로 충족).
+- [x] F1 — `api/index.js` 헬퍼 3개 추가 (`patchMVScenarioEvent` / `cascadeRegenerateMVEvent` / `cancelCascadeMVEvent`) + UploadPage 의 events 카드 [편집] 토글 + DEV 가드 console.info.
+- [x] F2 — "영향 받는 씬" 안내 (매핑 씬 번호 list, 0개 시 안내 메시지).
+- [x] F3 — N개 씬 평균 progress + [⛔ 취소] 버튼. v44 폴링 재사용.
+- [x] F4 — ✏ event_user_edited 배지 + tooltip.
+- [x] T1 — PATCH 단위 테스트 (3 케이스 — 단일/다중/옛 도큐먼트).
+- [x] T2 — Cascade 시작 단위 테스트 (mapping 1/2/0 + 매핑 검증 4 케이스).
+- [x] T3 — 사용자 편집 보존 2 케이스 (description skip / image_prompt 진입).
+- [x] T4 — 영상 폐기 마킹 (매핑 씬 2개 invalidated 확인).
+- [x] T5 — 매핑 씬 cascade cancel → cancelled (idempotent 포함, 2 케이스).
+- [x] T6 — 프론트 Vite build 정상 통과 (165 modules, 8.46초).
+- [x] T7 — 회귀: 65/65 PASS (v50 24 + v50.1 13 + v51 13 + v52 15) / Vite build OK / live OpenAPI 200 (139 paths, v52 신규 3개 노출) / 옛 도큐먼트 호환 검증 (3 케이스).
+- [x] REPORT.md v52 append.
+
+### Frontend / Backend 변경 범위 요약
+
+- **백엔드**: `backend_9004/app/routes/mv.py` (3 신규 라우트 + GET 응답 확장) + `backend_9004/app/services/mv_pipeline.py` (`_v52_resplit_event_to_description` wrapper + `_v52_event_cascade` 백그라운드 헬퍼). **다른 backend (백엔드, _9001, _9002, _9003) 변경 0**.
+- **프론트엔드**: `frontend/src/api/index.js` (헬퍼 3개) + `frontend/src/pages/UploadPage.jsx` (events 카드 편집 UI / 영향 씬 안내 / 진행률 / ✏ 배지). 다른 페이지·컴포넌트 변경 0.
+- **테스트**: `backend_9004/tests/test_v52.py` (신규).
+
+
+
+## v53 — 2026-05-09 — Step 3: 시나리오 상위 편집 + events 추가/삭제 + 전체 cascade
+
+### 배경 / Step 0 검증 결과
+
+**v51~v54 4-step 시리즈 중 Step 3** — 가장 큰 cascade. v51 (씬 단위 부분 cascade) + v52 (event 단위 부분 cascade) 의 인프라를 wrapping 하여, 시나리오 상위 필드 (narrative / premise / character_states / central_conflict / emotional_core / narrative_arc) + events 배열 (추가/삭제/대량 수정) 을 한 번에 저장하고 모든 씬을 처음부터 재생성한다.
+
+#### 검증 — v51/v52 인프라 위치
+
+| 자산 | 파일·위치 | v53 재사용 방식 |
+|---|---|---|
+| `_v51_run_cascade(job_oid, scene_number, mongo_db, trigger_field)` | `mv_pipeline.py:3374` | Phase 1b → Phase 2 → Phase 2.5 의 단일 씬 cascade. v53 는 새 씬 1개씩에 대해 호출하지 않고 — 새 씬 배열을 통째로 만든 뒤 `run_phase2_images(scene_numbers=...)` 로 일괄 처리. (내부 헬퍼는 그대로 유지) |
+| `_v51_set_scene_fields` / `_v51_get_scene` / `_v51_get_scene_idx` | `mv_pipeline.py:3186-3211` | 새 씬 생성 후 cascade_phase 단위 진행률 업데이트 시 활용 가능. |
+| `_v52_get_affected_scenes` | `mv_pipeline.py:3543` | v53 에서는 사용 X (모든 씬이 affected — 전체 cascade). |
+| `run_phase1_split` | `mv_pipeline.py:850` | Phase 1 재호출. 이미 Mongo `scenario_narrative` / `scenario_events` 를 읽기 때문에 사용자 편집 입력이 자동 반영됨. **Phase 0 (Stage 1 Brainstorm + Stage 2 Beat Sheet) 부분은 `if scenario already exists: skip` 로직이 있으므로 별도 우회 필요** — v53 은 `scenario` 도큐먼트가 이미 존재하지만 narrative/events 만 갱신된 상태로 진입. `run_phase1_split` 안의 Phase 0 skip 분기 (`if scenario and len > 50`) 가 자동으로 작동하여 LLM Stage 1/2 호출을 건너뛰고 Phase 1a/1b 만 실행. |
+| `run_phase2_images(job_id, mongo_db, scene_numbers=None)` | `mv_pipeline.py:1874` | 매개변수 None → 모든 씬 이미지 재생성. v53 Phase 2 에서 그대로 호출. |
+| `_v51_regen_video_prompt_single` | `mv_pipeline.py:3325` | 씬별 Phase 2.5 wrapper. 모든 씬 loop 으로 호출. |
+| `_v51_invalidate_video` | `mv_pipeline.py:3238` | 모든 씬 영상 폐기 (마킹만). |
+| `generate_mv_scenario` (기존 Stage 2 LLM) | `mv_generator.py:2958` | events 추출 wrapper 가 호출. system prompt 그대로, 입력 narrative/premise/character_states 만 사용자 편집본으로 교체. 출력 중 events 만 추출하여 Mongo 에 저장. |
+| `_validate_scenario_events` (v46) | `mv_generator.py:2324` | events 추출 후 검증 (개수, 사건 비율, 모티프 회수, archetype 다양성). |
+| `_scene_to_dict` 의 user_edited_fields backward-compat | `mv.py:200-211` | 패턴 그대로 차용 — `scenario_user_edited_fields` 도 동일하게 GET 시 기본값 `[]`. |
+
+#### 검증 — Frontend 위치
+
+| 위치 | 사용처 |
+|---|---|
+| `UploadPage.jsx:1759-` | 시나리오 패널 (mvStep ≥ 2). narrative / premise / character_states / central_conflict / emotional_core / narrative_arc / events 모두 표시 중. v53 이 인라인 편집 UI 추가. |
+| `UploadPage.jsx:600-` | `handleEventEditStart` / `handleEventEditSave` (v52 패턴). v53 신규 `handleScenarioFieldEditSave` / `handleEventsArrayEditSave` 가 동일 패턴 따라감. |
+| `api/index.js:194-199` | v52 의 `patchMVScenarioEvent` / `cascadeRegenerateMVEvent` / `cancelCascadeMVEvent` 헬퍼. v53 신규 4 헬퍼 (PATCH scenario / PATCH events / cascade-regenerate scenario / cancel-cascade scenario) 가 동일 위치에 추가. |
+| v44 폴링 인프라 | UploadPage `startMvPolling` — v53 의 cascade_phase / cascade_progress 폴링 재사용. |
+
+### Cascade 흐름 (v53)
+
+```
+사용자 편집 입력
+  ┌────────────────────────────────────────────────────┐
+  │ A. 시나리오 상위 (narrative / premise / states /    │
+  │    conflict / emotional_core / narrative_arc) 편집  │
+  │ B. events 배열 추가/삭제/대량 수정                   │
+  │  → A 만, B 만, A+B 모두 — 3 시나리오                │
+  └────────────────────────────────────────────────────┘
+                       ↓
+   PATCH /api/mv/jobs/{id}/scenario (B1)  ← A 케이스
+   PATCH /api/mv/jobs/{id}/scenario/events (B2)  ← B 케이스
+   (둘 다 user_edited_fields 누적)
+                       ↓
+   POST /api/mv/jobs/{id}/scenario/cascade-regenerate (B3)
+                       ↓
+   _v53_full_cascade(job, mongo_db) (B4)  background
+                       ↓
+   ┌───────────────────────────────────────────────────┐
+   │ Phase 0 — events 보강 (선택)                       │
+   │   if "events" not in scenario_user_edited_fields  │
+   │      and "narrative" in scenario_user_edited_fields│
+   │   → events 추출 LLM 1회 호출 (B7)                  │
+   │   else: skip                                       │
+   │   cascade_phase = "events_extract", progress ≈ 16  │
+   └───────────────────────────────────────────────────┘
+                       ↓
+   ┌───────────────────────────────────────────────────┐
+   │ Phase 1 — 씬 분할 + 1b (image_prompt 생성)         │
+   │   기존 run_phase1_split 재호출 (Phase 0 자동 skip) │
+   │   - 옛 scenes → scenes_archive 보관 (1회분만)       │
+   │   - 새 scenes 생성 + image_prompt 자동 생성         │
+   │   cascade_phase = "scene_split", progress ≈ 33     │
+   │   cascade_phase = "scene_image_prompt", progress≈50│
+   └───────────────────────────────────────────────────┘
+                       ↓
+   ┌───────────────────────────────────────────────────┐
+   │ Phase 2 — 모든 씬 image 재생성 (Gemini N)           │
+   │   run_phase2_images(job_id, scene_numbers=None)   │
+   │   cascade_phase = "scene_image", progress ≈ 75     │
+   └───────────────────────────────────────────────────┘
+                       ↓
+   ┌───────────────────────────────────────────────────┐
+   │ Phase 2.5 — 모든 씬 video_prompt 생성              │
+   │   loop _v51_regen_video_prompt_single             │
+   │   cascade_phase = "scene_video_prompt", progress=90│
+   └───────────────────────────────────────────────────┘
+                       ↓
+   ┌───────────────────────────────────────────────────┐
+   │ Phase Final — 모든 씬 영상 폐기 (마킹만)             │
+   │   loop _v51_invalidate_video                       │
+   │   cascade_phase = "video_invalidate", progress=100 │
+   │   cascade_status = "completed"                     │
+   └───────────────────────────────────────────────────┘
+```
+
+각 phase 진입 시 `cancel_requested` 체크. True 면 cascade_status="cancelled" 로 마감 + 다음 phase 진입 X.
+
+### Stage 2 LLM 재호출 정책 (Q3 핵심)
+
+| 사용자 편집 패턴 | scenario_user_edited_fields | events 추출 LLM 호출 | narrative 등 LLM 재호출 |
+|---|---|---|---|
+| narrative 만 편집 | ["narrative"] | **호출 1회** (Phase 0) — 사용자 narrative + 기존 메타 → events 만 추출 | **호출 X** (사용자 narrative 그대로 보존) |
+| events 만 편집 | ["events"] | **호출 X** (사용자 events 그대로) | 호출 X |
+| narrative + events 둘 다 편집 | ["narrative", "events"] | **호출 X** (사용자 events 우선) | 호출 X |
+| premise/conflict 등만 편집 | ["premise"] (예) | 호출 X (events 그대로) | 호출 X |
+| 아무것도 편집 X (취소) | [] | (cascade-regenerate 자체 호출 X — UI 가 막음) | — |
+
+핵심: **사용자가 직접 편집한 시나리오 상위 필드는 절대 LLM 재호출 X (보존)**. events 만 narrative 변경의 자연스러운 follow-on 으로 LLM 재추출 (Stage 2 wrapper, B7).
+
+### 변경 매트릭스
+
+#### Backend (B1~B9, `backend_9004` 만)
+
+| ID | 위치 | 작업 |
+|---|---|---|
+| B1 | `mv.py` 신규 라우트 | `PATCH /jobs/{id}/scenario` — narrative/premise/character_states/central_conflict/emotional_core/narrative_arc 부분 갱신 + scenario_user_edited_fields 누적. 로그 `[ScenarioPatch]`. |
+| B2 | `mv.py` 신규 라우트 | `PATCH /jobs/{id}/scenario/events` — events 배열 통째 교체 + order 재계산 + scenario_user_edited_fields 에 "events" 자동 추가. 로그 `[ScenarioEventsPatch]`. |
+| B3 | `mv.py` 신규 라우트 | `POST /jobs/{id}/scenario/cascade-regenerate` — 백그라운드 `_v53_full_cascade` 시작 + 즉시 202 반환. 로그 `[ScenarioCascade]`. |
+| B4 | `mv_pipeline.py` 신규 헬퍼 | `_v53_full_cascade(job_oid, mongo_db)` — Phase 0/1/1b/2/2.5/Final 순차 실행. 각 phase 진입 시 cascade_phase + cascade_progress 업데이트, cancel_requested 체크. |
+| B5 | `mv.py` 신규 라우트 | `POST /jobs/{id}/scenario/cancel-cascade` — cancel_requested=True 마킹. 로그 `[ScenarioCascadeCancel]`. |
+| B6 | Mongo 스키마 확장 | `mv_jobs.scenario_user_edited_fields: list[str]`, `cascade_phase: str|None`, `cascade_progress: int`, `cascade_started_at`, `cascade_completed_at`, `cancel_requested: bool` (job-level), `scenes_archive: list[list[dict]]` (1회분만). 옛 도큐먼트 backward-compat: 누락 시 GET 응답에서 기본값 부여. |
+| B7 | `mv_pipeline.py` 신규 헬퍼 | `_v53_extract_events_only(job, mongo_db)` — `generate_mv_scenario` 를 strict=False, temperature=0.85 로 1회 호출 → 결과 dict 의 `events` 만 채택, 다른 narrative/premise/character_states 등은 사용자 입력 그대로 유지. 검증 (`_validate_scenario_events`) 통과 시 Mongo `scenario_events` 갱신. 실패 시 cascade 실패 마킹. 로그 `[ScenarioCascade] events_extract attempt=N`. |
+| B8 | `_v53_full_cascade` 안 | Phase 1 진입 직전 — 옛 `scenes` 배열 통째 → `scenes_archive` 의 head 에 prepend (최대 1회분만 유지, 옛 archive 자동 폐기). 사용자가 직접 편집한 씬의 user_edited_fields 정보는 archive 안에 보존되므로 롤백 가능 (롤백 라우트는 v54 범위). 옛 도큐먼트 (scenes_archive 키 없음) → 자동 빈 list 초기화. |
+| B9 | `mv.py` GET 응답 확장 | `scenario_user_edited_fields`, `cascade_phase`, `cascade_progress`, `cascade_started_at`, `cascade_completed_at`, `cancel_requested` (job-level) 노출. `scenes_archive` 는 GET 응답엔 미노출 (별도 향후 라우트). 옛 도큐먼트엔 기본값 (`[]`, None, 0, None, None, False). |
+
+#### Frontend (F1~F5)
+
+| ID | 위치 | 작업 |
+|---|---|---|
+| F1 | `api/index.js` + `UploadPage.jsx` | 시나리오 상위 필드 인라인 편집. `patchMVScenario` 헬퍼 신규. 6개 필드 (narrative / premise / character_states / central_conflict / emotional_core / narrative_arc) 각각 [편집] 버튼 + textarea. character_states / narrative_arc 는 dict — 각 sub-key 별 textarea. narrative 는 큰 textarea + 글자 수 표시 (1500~2500). 저장 시 PATCH 호출 (cascade 자동 시작 X — 별도 [전체 저장 + 모든 씬 재생성] 버튼). 로그: `console.info("[UploadPage] scenario field edited", {field, len})` (DEV 가드). |
+| F2 | `UploadPage.jsx` events 영역 | 각 event 카드 옆 [삭제] 버튼 + 목록 끝에 [+ event 추가] 버튼. 추가/삭제 시 `patchMVScenarioEvents` (배열 PATCH) 호출 → user_edited_fields 자동 갱신 (백엔드가 "events" append). |
+| F3 | `UploadPage.jsx` 시나리오 패널 하단 | [전체 저장 + 모든 씬 재생성] 버튼. 클릭 시 충돌 다이얼로그 (직접 편집 씬 / 영상 완료 씬 N개 안내). 확인 시 `cascadeRegenerateMVScenario` 호출. 로그: `console.info("[UploadPage] scenario cascade start", {n_user_edited_scenes, n_completed_video_scenes})` (DEV). |
+| F4 | `UploadPage.jsx` 시나리오 패널 상단 | 전체 cascade 진행률. cascade_phase 별 라벨 표시 ("1/5: events 추출 중...", "2/5: 씬 분할 중...", ...). cascade_progress 0~100. [⛔ 전체 취소] 버튼. v44 폴링 재사용 (mvJob.cascade_phase 조회). |
+| F5 | `UploadPage.jsx` 시나리오 패널 | scenario_user_edited_fields 에 포함된 필드 옆에 ✏ 배지 (job-level top-level 편집 표시). |
+
+### API spec
+
+#### B1 — PATCH `/api/mv/jobs/{job_id}/scenario`
+
+**Body** (모두 optional):
+```json
+{
+  "narrative": "string",
+  "premise": "string",
+  "character_states": {"protagonist": "string", "antagonist": "string"},
+  "central_conflict": "string",
+  "emotional_core": "string",
+  "narrative_arc": {"setup": "...", "rising_action": "...", "climax": "...", "resolution": "..."}
+}
+```
+
+**Validation**:
+- 빈 body → 400 ("최소 1개 필드가 필요합니다.")
+- character_states / narrative_arc 가 dict 가 아니면 → 400.
+- narrative 가 너무 짧음 (예: 50자 미만) 시 warning 로그 + 저장은 허용 (사용자 의도 보존).
+
+**Response**: 갱신된 시나리오 객체 (narrative + premise + ... + scenario_user_edited_fields).
+
+**로그**: `[ScenarioPatch] job=%s fields=%s` (logger.info, fields 는 정렬된 키 list, 본문 X).
+
+#### B2 — PATCH `/api/mv/jobs/{job_id}/scenario/events`
+
+**Body**:
+```json
+{
+  "events": [
+    {"order": 1, "trigger": "...", "protagonist_action": "...", "motivation": "...", "emotion_shift": "...", "props": ["..."], "user_edited_fields": []},
+    ...
+  ]
+}
+```
+
+**Validation**:
+- events 가 list 아님 → 400.
+- 0 개 → 400 ("최소 1개 event 가 필요합니다.").
+- 각 event 의 trigger / protagonist_action / motivation / emotion_shift 는 string (None 허용 — 빈 string 으로 정규화), props 는 list[str].
+
+**처리**:
+- order 필드 자동 재계산 (1, 2, 3, ...).
+- scenario_user_edited_fields 에 "events" append (중복 제거).
+- 각 event 의 user_edited_fields 는 클라이언트 입력값 보존 (혹은 기본 `[]`).
+
+**Response**: `{events: [...], scenario_user_edited_fields: [...]}`.
+
+**로그**: `[ScenarioEventsPatch] job=%s events_count=%d` (logger.info).
+
+#### B3 — POST `/api/mv/jobs/{job_id}/scenario/cascade-regenerate`
+
+**Body**: 없음.
+
+**Validation**:
+- mv_jobs.cascade_phase 가 None / "completed" / "cancelled" / "failed" 가 아니면 → 409 ("이미 진행 중인 cascade 가 있습니다.").
+- 시나리오 도큐먼트 자체 없음 (scenario None) → 400.
+
+**처리**:
+- cascade_id (uuid4) 생성.
+- 즉시 cascade_phase="events_extract" or "scene_split" (events 보강 skip 시), cascade_progress=0, cascade_started_at=utcnow, cancel_requested=False 설정.
+- BackgroundTasks.add_task(`_v53_full_cascade`, oid, mongo_db).
+
+**Response (202)**:
+```json
+{"accepted": true, "cascade_id": "uuid", "estimated_phases": 5}
+```
+
+**로그**: `[ScenarioCascade] job=%s start cascade_id=%s` (logger.info).
+
+#### B5 — POST `/api/mv/jobs/{job_id}/scenario/cancel-cascade`
+
+**Body**: 없음.
+
+**처리**: cascade_phase 가 None/"completed"/"cancelled"/"failed" 면 idempotent (cancelled=False 반환). 그 외엔 cancel_requested=True.
+
+**Response**: `{cancelled: bool, cascade_phase: str|null}`.
+
+**로그**: `[ScenarioCascadeCancel] job=%s` (logger.info).
+
+### Mongo schema diff (v52 → v53)
+
+```diff
+mv_jobs document:
+  ...
++ scenario_user_edited_fields: list[str]   # ["narrative", "events", ...]
++ cascade_phase: str|None                   # "events_extract" | "scene_split" | "scene_image_prompt" | "scene_image" | "scene_video_prompt" | "video_invalidate" | None
++ cascade_progress: int                     # 0~100
++ cascade_started_at: datetime|None
++ cascade_completed_at: datetime|None
++ cancel_requested: bool                    # job-level (씬 단위 cancel_requested 와는 별개; v52까지는 mv_jobs 의 phase 진행 cancel 용으로만 존재했음 — v53 부터는 scenario cascade 도 같은 키 재사용)
++ scenes_archive: list[list[dict]]          # 직전 1회분만 (max length=1, 더 추가되면 옛 archive pop)
++ cascade_id: str|None                       # uuid4
+```
+
+씬 단위 (v51) `scene.cascade_status` / `scene.cascade_progress` / `scene.user_edited_fields` 는 그대로 유지.
+
+### 추적자 (server.log grep 키)
+
+| 위치 | 추적자 | 형식 |
+|---|---|---|
+| `mv.py` PATCH scenario | `[ScenarioPatch]` | `logger.info("[ScenarioPatch] job=%s fields=%s", oid, sorted_keys)` |
+| `mv.py` PATCH events | `[ScenarioEventsPatch]` | `logger.info("[ScenarioEventsPatch] job=%s events_count=%d", oid, count)` |
+| `mv.py` cascade-regenerate | `[ScenarioCascade]` | `logger.info("[ScenarioCascade] job=%s start cascade_id=%s", oid, cid)` |
+| `mv.py` cancel-cascade | `[ScenarioCascadeCancel]` | `logger.info("[ScenarioCascadeCancel] job=%s", oid)` |
+| `mv_pipeline.py:_v53_full_cascade` | `[ScenarioCascade]` | `logger.info("[ScenarioCascade] job=%s phase=%s progress=%d", ...)` |
+| `mv_pipeline.py:_v53_extract_events_only` | `[ScenarioCascade]` | `logger.info("[ScenarioCascade] events_extract attempt=%d strict=%s", ...)` |
+| 기존 v51 재사용 | `[CascadePhase]` / `[CascadeVideoInvalidate]` | (씬 단위 phase1b/phase2/phase2.5 진입 시) |
+| `UploadPage.jsx` (DEV 가드) | `[UploadPage]` | `console.info("[UploadPage] scenario field edited", {field, len})` |
+
+### Test plan (T1~T8)
+
+- **T1** PATCH 단위 (시나리오 상위) — narrative / premise / character_states 각각 단독 PATCH → 200 + scenario_user_edited_fields 갱신. 잘못된 dict 구조 → 400. 빈 body → 400. 옛 도큐먼트 (scenario_user_edited_fields 키 없음) → 첫 PATCH 시 자동 초기화.
+- **T2** PATCH events 배열 교체 — events 추가/삭제 → 200 + scenario_user_edited_fields 에 "events" 자동 추가 + order 재계산 (1, 2, 3, ...). list 가 아니면 400. 0개면 400.
+- **T3** Cascade 시작 — Phase 별 진행 — mock LLM 호출로 cascade_phase 이벤트 추적: events_extract → scene_split → scene_image_prompt → scene_image → scene_video_prompt → video_invalidate. cascade_progress 단계별 0/16/33/50/75/90/100 비례.
+- **T4** Stage 2 LLM 재호출 정책 (Q3) — "events" not in scenario_user_edited_fields → events 추출 LLM 호출 1회. "events" in scenario_user_edited_fields → events 추출 LLM 호출 X (사용자 events 그대로). narrative 만 편집 → events 자동 재추출. narrative + events 둘 다 편집 → events 그대로.
+- **T5** 영상 자동 폐기 (Q4) — cascade 완료 후 모든 씬 video_status="invalidated_by_cascade" + video_object_name=None.
+- **T6** 취소 — Phase 1 (scene_split) 진행 중 cancel-cascade → 다음 phase 진입 X + cascade_status="cancelled".
+- **T7** 사용자 직접 편집 씬 처리 — 사용자가 씬 5의 image_prompt 직접 편집 → cascade 시작 → 새 씬 5 생성 + 옛 씬 archive 보관 (scenes_archive[0] 에 옛 scenes 통째). 새 씬엔 user_edited_fields 없음.
+- **T8** 회귀 — v37~v52 모두 무회귀. Vite build / uvicorn / OpenAPI 정상. 옛 mv_jobs (scenario_user_edited_fields / cascade_phase 없음) GET 정상 + 모든 cascade 신규 키는 기본값으로 응답.
+
+### 체크리스트
+
+- [ ] B6 (스키마 확장) — GET `/jobs/{id}` 응답에 신규 6 키 backward-compat 기본값 추가.
+- [ ] B1 — PATCH scenario 신규 라우트 + `[ScenarioPatch]` 로그 + scenario_user_edited_fields 누적.
+- [ ] B2 — PATCH events 배열 신규 라우트 + `[ScenarioEventsPatch]` 로그 + order 재계산 + "events" 자동 추가.
+- [ ] B7 — `_v53_extract_events_only` 헬퍼 — 기존 `generate_mv_scenario` 호출 → events 만 추출.
+- [ ] B4 — `_v53_full_cascade` 헬퍼 — Phase 0/1/1b/2/2.5/Final 순차 실행 + cancel_requested 체크 + cascade_phase/progress 업데이트.
+- [ ] B3 — POST cascade-regenerate 신규 라우트 + 백그라운드 launch.
+- [ ] B5 — POST cancel-cascade 신규 라우트 + cancel_requested=True 마킹.
+- [ ] B8 — Phase 1 진입 직전 scenes_archive prepend (1회분만).
+- [ ] B9 — GET `/jobs/{id}` 응답 검증 (B6 의 부수 효과).
+- [ ] F1 — api/index.js 헬퍼 4개 (`patchMVScenario`, `patchMVScenarioEvents`, `cascadeRegenerateMVScenario`, `cancelCascadeMVScenario`) + UploadPage 시나리오 상위 필드 인라인 편집.
+- [ ] F2 — events 추가/삭제 UI + 배열 PATCH 호출.
+- [ ] F3 — [전체 저장 + 모든 씬 재생성] 버튼 + 충돌 다이얼로그.
+- [ ] F4 — 진행률 표시 + 취소 버튼.
+- [ ] F5 — ✏ 배지 (scenario_user_edited_fields 표시).
+- [ ] T1~T8 — 단위/회귀 테스트 (기존 v50/v50.1/v51/v52 패턴 따라).
+- [ ] REPORT.md v53 append.
+
+### v50/v50.1 무회귀
+
+본 v53 는 **system prompt / few-shot example / archetype 변경 X**. events 추출 LLM 재호출은 **기존** `generate_mv_scenario` 함수의 system prompt 그대로 사용 (다른 사용자 편집 필드 — narrative / premise 등 — 는 LLM 출력으로 덮어쓰지 않고 무시). v50.1 ANTI_EXAMPLE_BLOCK 효과 자동 보존.
+
+### PII / 비밀번호 정책
+
+- 사용자 편집 텍스트 (narrative / premise / character_states 본문 등) 는 server.log 에 절대 출력 X. PATCH 라우트는 `fields=%s` 에 키 이름만, 정렬된 list. events 의 trigger / protagonist_action / motivation 본문도 동일.
+- frontend.log — `console.info("[UploadPage] scenario field edited", {field, len})` 처럼 텍스트 본문 미포함, length 만 기록. DEV 가드 (`import.meta?.env?.DEV`).
+- `cascade_id` 는 uuid4 라 PII 아님.
+
+### Frontend / Backend 변경 범위 요약
+
+- **백엔드**: `backend_9004/app/routes/mv.py` (4 신규 라우트 — PATCH scenario / PATCH events / POST cascade-regenerate / POST cancel-cascade + GET 응답 확장) + `backend_9004/app/services/mv_pipeline.py` (`_v53_full_cascade` 헬퍼 + `_v53_extract_events_only` wrapper). **다른 backend (백엔드, _9001, _9002, _9003) 변경 0**.
+- **프론트엔드**: `frontend/src/api/index.js` (헬퍼 4개) + `frontend/src/pages/UploadPage.jsx` (상위 필드 편집 UI / events 추가-삭제 / [전체 재생성] 버튼 + 충돌 다이얼로그 / 진행률 / ✏ 배지). 다른 페이지·컴포넌트 변경 0.
+- **테스트**: `backend_9004/tests/test_v53.py` (신규).
+
+## v54 — 2026-05-09 — Step 4 (final): user_edited_fields 보존 정책 통합 마무리
+
+### Step 0 — Plan verification findings
+
+v51~v53 시리즈의 마지막 단계. **3개 레벨에 걸친 user_edited_fields 추적·보존 로직을 통합·일관 적용 + UI 일관성 + 보존 정책 reset/관리 기능**.
+
+#### 검증 — 3개 레벨의 user_edited_fields 현재 상태
+
+| 레벨 | 도입 | Mongo 키 | 가능한 값 |
+|---|---|---|---|
+| 1. 씬 레벨 | v51 | `scenes[i].user_edited_fields: list[str]` | `"description"` / `"image_prompt"` / `"video_prompt"` |
+| 2. event 레벨 | v52 | `scenario_events[i].user_edited_fields: list[str]` | `"trigger"` / `"protagonist_action"` / `"motivation"` / `"emotion_shift"` / `"props"` |
+| 3. 시나리오 top-level | v53 | `mv_jobs.scenario_user_edited_fields: list[str]` | `"narrative"` / `"premise"` / `"character_states"` / `"central_conflict"` / `"emotional_core"` / `"narrative_arc"` / `"events"` |
+
+#### 검증 — 백엔드 cascade 헬퍼별 user_edited_fields 참조 위치
+
+| 헬퍼 | 위치 | user_edited_fields 참조 |
+|---|---|---|
+| `_v51_is_user_edited` | `mv_pipeline.py:3214` | scene-level 직접 조회 (`scene.get("user_edited_fields")`). v51 내부에서만 호출. |
+| `_v51_remove_user_edited_field` | `mv_pipeline.py:3221` | scene-level 직접 갱신 (cascade 자동 재계산 후 해당 필드 제거). |
+| `_v51_run_cascade` Phase 1b | `mv_pipeline.py:3424` | `_v51_is_user_edited(..., "image_prompt")` 호출 후 skip. |
+| `_v51_run_cascade` Phase 2.5 | `mv_pipeline.py:3472` | `_v51_is_user_edited(..., "video_prompt")` 호출 후 skip. |
+| `_v52_event_cascade` | `mv_pipeline.py:3605` | `_v51_is_user_edited(..., "description")` 호출 → 씬 통째 skip. |
+| `_v53_full_cascade` | `mv_pipeline.py:3894` | `job.get("scenario_user_edited_fields")` 직접 조회 → "narrative" / "events" 분기. |
+| `_v53_extract_events_only` 결과 처리 | `mv_pipeline.py:3822` | 새 events 의 `user_edited_fields=[]` 강제 (LLM 산출물). |
+
+→ **현재 3 레벨 모두 동일한 패턴이지만 헬퍼가 분산되어 있음**. v54 가 통합 헬퍼로 일관 호출 + 누락 분기 점검.
+
+#### 검증 — Frontend ✏ 배지 현재 위치
+
+| 위치 | 적용된 레벨 | 비고 |
+|---|---|---|
+| `UploadPage.jsx:2019` | scenario top-level "narrative" | v53 도입 |
+| `UploadPage.jsx:2084, 2126` | scenario top-level (premise/states/conflict/emotional_core/narrative_arc) | v53 도입 |
+| `UploadPage.jsx:2315` | event 레벨 (5 필드) | v52 도입 |
+| `UploadPage.jsx:2676` | scene 레벨 (description/image_prompt/video_prompt) | v51 도입 |
+
+→ **이미 모든 레벨에 ✏ 배지 적용**. v54 가 tooltip 일관 통일 + 클릭 시 미니 메뉴 (현재 호버만) + reset 동작 추가.
+
+#### 검증 — Frontend API 헬퍼 패턴
+
+| 헬퍼 | 위치 | v54 신규 패턴 |
+|---|---|---|
+| `patchMVScene` / `cascadeRegenerateMVScene` / `cancelCascadeMVScene` | `api/index.js:187-191` | scene 단위 |
+| `patchMVScenarioEvent` / `cascadeRegenerateMVEvent` / `cancelCascadeMVEvent` | `api/index.js:194-199` | event 단위 |
+| `patchMVScenario` / `patchMVScenarioEvents` / `cascadeRegenerateMVScenario` / `cancelCascadeMVScenario` | `api/index.js:202-208` | scenario top-level |
+| `resetUserEdits(jobId, body)` / `getUserEditedSummary(jobId)` | (신규 v54) | 3 레벨 통합 |
+
+#### 검증 — Toast 인프라
+
+| 위치 | 패턴 |
+|---|---|
+| `UploadPage.jsx:160, 869, 1205` | `cascadeToast` state + `setCascadeToast` 토스트 (v51) — `{scene_number, type}` 객체. |
+| 진행률 인라인 | `cascade_progress` Mongo 폴링 (씬 단위 + scenario top-level). |
+
+→ v54 F3 의 "사용자 편집 X 필드 보존됨" 메시지는 기존 `cascadeToast` 객체를 확장 (or 새 키 `preservedFieldCount`).
+
+### v54 = Step 4 (마지막 — v51~v54 시리즈 완성)
+
+| Step | 버전 | 범위 |
+|---|---|---|
+| Step 1 | v51 | 씬 카드 인라인 편집 + 부분 cascade (description/image_prompt/video_prompt) |
+| Step 2 | v52 | event 카드 인라인 편집 + 매핑 씬 cascade (trigger/action/motivation/emotion/props) |
+| Step 3 | v53 | 시나리오 top-level 인라인 편집 + events 추가/삭제 + 전체 cascade |
+| Step 4 | **v54** | **3 레벨 user_edited_fields 추적·보존 통합 + reset/summary API + UI 일관성** |
+
+v54 의 핵심: **"보존 정책의 통합 마무리"** — 새 cascade 추가 X, 기존 cascade 동작 변경 X. 일관성 + 사용자가 보존 표시를 직접 관리할 수 있는 UI.
+
+### Decisions (v51~v54 모두 동일)
+
+- **Q1**: 단계적 cascade (description → image_prompt → image → video_prompt) ✓
+- **Q2**: 자동 + 진행률 + 취소 ✓
+- **Q3**: 사용자 편집 필드는 LLM 재호출 X (보존) ✓
+- **Q4**: image 변경 시 video 자동 폐기 (마킹만, MinIO 보존) ✓
+
+### 변경 매트릭스
+
+#### Backend (B1~B5, `backend_9004` 만)
+
+| ID | 위치 | 작업 |
+|---|---|---|
+| B1 | `mv_pipeline.py` 신규 헬퍼 | `_v54_is_field_user_edited(job, scope, target, field) -> bool` — 3 레벨 통합 체크 함수. scope = "scene"|"event"|"scenario", target = scene_idx|event_idx|None. 옛 도큐먼트 (필드 없음) → False. 로그: `[V54FieldCheck] scope=%s target=%s field=%s edited=%s` (logger.debug). |
+| B2 | `mv.py` 신규 라우트 | `POST /jobs/{id}/user-edited/reset` — 사용자 편집 표시 일괄 해제 (selective). Body: `{scope, target?, fields?}`. Response: `{cleared: int}`. 로그: `[UserEditedReset] job=%s scope=%s target=%s cleared=%d`. |
+| B3 | `mv.py` 신규 라우트 | `GET /jobs/{id}/user-edited/summary` — 모든 레벨의 user_edited_fields 요약. Response: `{scenario, events, scenes}`. 옛 도큐먼트 → 모든 카운트 0. 로그: `[UserEditedSummary] job=%s scenario=%d events=%d scenes=%d`. |
+| B4 | v51/v52/v53 cascade 헬퍼 일관성 점검 | `_v51_run_cascade` / `_v52_event_cascade` / `_v53_full_cascade` 각 헬퍼 안에서 user_edited_fields 참조 부분 — 직접 dict 조회 (`scene.get("user_edited_fields")`) 대신 `_v54_is_field_user_edited` 호출로 통일. 누락 분기 발견 시 추가. v51 의 `_v51_is_user_edited` 는 내부적으로 B1 의 통합 헬퍼에 위임. |
+| B5 | `mv.py` GET `/jobs/{id}` 응답 | (옵션) 응답에 `user_edited_summary` inline. **결정**: backend-dev 가 0단계에서 호출 빈도 보고 정함 — GET /jobs/{id} 폴링 빈도 (3-5초)가 높으면 inline 회피, 별도 GET endpoint (B3) 만 노출. 현재 폴링은 `mvStep ≥ 2` 시 ~3초마다 → inline X, B3 만으로 충분. |
+
+#### Frontend (F1~F5)
+
+| ID | 위치 | 작업 |
+|---|---|---|
+| F1 | `UploadPage.jsx` 모든 ✏ 배지 | 호버 tooltip 일관 통일: `"직접 편집된 필드 — cascade 시 보존됩니다"`. 클릭 시 미니 메뉴 (드롭다운/popover): `[편집 표시 해제]` (POST reset 호출, 해당 필드만) + `[그대로 유지]` (닫기). 모든 레벨 (씬/event/scenario top-level) 동일 적용. |
+| F2 | `UploadPage.jsx` 시나리오 패널 끝 | "📌 사용자 편집 현황" collapsible 패널 신규. GET summary 호출 → 3 레벨 요약 표시. 빈 상태 ("편집된 필드 없음") 명시. `[모두 해제]` 버튼 → 확인 다이얼로그 → POST reset (scope=all). |
+| F3 | `UploadPage.jsx` cascade 완료 토스트 | v51/v52/v53 의 cascade 완료 토스트에 "사용자 편집 X 필드 보존됨" 메시지 추가. 보존된 필드 수 = cascade 시작 시 user_edited_fields 카운트 - cascade 자동 재계산으로 제거된 필드 수 (= 그대로 남은 카운트). 기존 `cascadeToast` 객체 확장 (`preservedFieldCount` 키). |
+| F4 | `api/index.js` 신규 헬퍼 | `resetUserEdits(jobId, body)` → POST `/api/mv/jobs/{id}/user-edited/reset`. `getUserEditedSummary(jobId)` → GET `/api/mv/jobs/{id}/user-edited/summary`. |
+| F5 | `UploadPage.jsx` 디버깅 로그 | F1 미니 메뉴 클릭: `console.info("[UploadPage] reset user edit", {scope, target, field})`. F2 [모두 해제]: `console.info("[UploadPage] reset all user edits", {jobId})`. 모두 DEV 가드 (`import.meta?.env?.DEV`). |
+
+### API spec
+
+#### B2 — POST `/api/mv/jobs/{job_id}/user-edited/reset`
+
+**Body** (모두 optional, 조합):
+```json
+{
+  "scope": "all" | "scene" | "event" | "scenario",
+  "target": 5,                  // optional — scene_number (scope=scene) or event_order (scope=event)
+  "fields": ["description"]     // optional — 특정 필드만 해제. 미지정 시 해당 entity 전체 해제.
+}
+```
+
+**처리**:
+- scope="all" — 모든 레벨의 user_edited_fields 일괄 해제 (target / fields 무시).
+- scope="scene" + target=N + fields=[...] — 씬 N 의 user_edited_fields 에서 fields 만 제거. fields 미지정 → 씬 N 의 user_edited_fields 통째 해제.
+- scope="event" + target=N + fields=[...] — event order=N 동일 패턴.
+- scope="scenario" + fields=[...] — scenario_user_edited_fields 에서 fields 만 제거. fields 미지정 → scenario_user_edited_fields 통째 해제.
+- scope+target 매칭 안 됨 (씬/event 없음) → 404.
+- scope 누락 → 400 ("scope 가 필요합니다.").
+
+**Response (200)**:
+```json
+{"cleared": 3}
+```
+
+**로그**: `[UserEditedReset] job=%s scope=%s target=%s cleared=%d` (logger.info).
+
+#### B3 — GET `/api/mv/jobs/{job_id}/user-edited/summary`
+
+**Response (200)**:
+```json
+{
+  "scenario": ["narrative", "events"],
+  "events": {
+    "3": ["trigger", "motivation"],
+    "7": ["protagonist_action"]
+  },
+  "scenes": {
+    "5": ["image_prompt"],
+    "12": ["description"]
+  }
+}
+```
+
+- 키는 1-based event_order (str) 와 scene_number (str). 옛 도큐먼트 (필드 없음) → 빈 dict + 빈 list.
+- 응답은 항상 200 (empty 도 200 + 모든 키 = `[]` / `{}`).
+
+**로그**: `[UserEditedSummary] job=%s scenario=%d events=%d scenes=%d` (각 카운트만, logger.info).
+
+#### B1 — `_v54_is_field_user_edited(job, scope, target, field)` (헬퍼)
+
+**입력**:
+- `job: dict` — Mongo 도큐먼트 (이미 fetch 한 상태) 또는 `(mongo_db, job_oid)` tuple. **결정**: `job: dict` 단일 매개변수 패턴이 v51/v53 헬퍼와 호환성 더 좋음 (v52 도 `_get_job` 으로 한 번 fetch 후 활용 가능). 단, scene_idx 가 필요한 경우 `target` 은 scene_idx (0-based) 로 통일 (v51 `_v51_is_user_edited` 와 동일).
+- `scope: str` — "scene" / "event" / "scenario".
+- `target: Optional[int]` — scene_idx (0-based) for "scene", event_idx (0-based, = order-1) for "event", None for "scenario".
+- `field: str` — 필드명.
+
+**반환**: `bool`.
+
+**로직**:
+```python
+if scope == "scene":
+    scenes = job.get("scenes") or []
+    if target is None or target < 0 or target >= len(scenes): return False
+    edited = scenes[target].get("user_edited_fields") or []
+    result = field in edited
+elif scope == "event":
+    events = job.get("scenario_events") or []
+    if target is None or target < 0 or target >= len(events): return False
+    edited = events[target].get("user_edited_fields") or []
+    result = field in edited
+elif scope == "scenario":
+    edited = job.get("scenario_user_edited_fields") or []
+    result = field in edited
+else:
+    return False
+
+logger.debug("[V54FieldCheck] scope=%s target=%s field=%s edited=%s", scope, target, field, result)
+return result
+```
+
+### Mongo schema diff (v53 → v54)
+
+```diff
+mv_jobs document:
+  ...
+  (변경 없음 — v54 는 신규 키 추가 X. 옛 도큐먼트 backward-compat read-time 기본값만 일관 처리.)
+```
+
+→ **v54 마이그레이션 스크립트 X**. 옛 도큐먼트는 GET 시 자동 기본값 (빈 list / 빈 dict).
+
+### Test plan (T1~T7)
+
+- **T1** B1 통합 헬퍼 단위
+  - scope="scene", target=0, field="description" + scene 0 user_edited_fields=["description"] → True.
+  - scope="event", target=2, field="trigger" + event 2 user_edited_fields=["motivation"] → False.
+  - scope="scenario", target=None, field="narrative" + scenario_user_edited_fields=["narrative"] → True.
+  - 옛 도큐먼트 (필드 자체 없음) → False (모든 케이스).
+  - target 범위 초과 → False (없는 씬/event 안전 처리).
+- **T2** v51/v52/v53 cascade 헬퍼 일관성
+  - v51: scene 0 user_edited_fields=["image_prompt"] + cascade trigger="description" → Phase 1b skip 로그 + image_prompt 보존.
+  - v51: scene 0 user_edited_fields=["video_prompt"] + cascade trigger="description" → Phase 2.5 skip 로그.
+  - v52: scene 5 user_edited_fields=["description"] → cascade 통째 skip.
+  - v53: scenario_user_edited_fields=["narrative"] only → events 보강 LLM 호출 1회. scenario_user_edited_fields=["narrative", "events"] → events 보강 skip.
+  - 모든 케이스에서 `[V54FieldCheck]` 로그 라인 1개 이상 server.log 에 출력.
+- **T3** Reset API
+  - scope="scene" + target=5 + fields=["description"] + 씬 5 user_edited_fields=["description", "image_prompt"] → cleared=1, 남은 user_edited_fields=["image_prompt"].
+  - scope="all" + scenario + 3 events + 4 scenes 모두 편집됨 → cleared = (sum) + 3 레벨 모두 `[]`.
+  - 옛 도큐먼트 (모든 user_edited_fields 키 누락) → 200 + cleared=0.
+  - scope 누락 → 400.
+  - scope="scene" + target=999 (없는 씬) → 404.
+- **T4** Summary API
+  - 3 레벨 모두 일부 편집된 도큐먼트 → 정확한 dict 반환 (scenario list + events dict + scenes dict).
+  - 빈 도큐먼트 (모든 user_edited_fields = []) → 모든 카운트 0 + 빈 dict.
+  - 옛 도큐먼트 (필드 없음) → 모든 키 빈 list/dict + 200.
+- **T5** 프론트 ✏ 배지 일관성
+  - scene/event/scenario top-level 모든 ✏ 배지 호버 → 동일 tooltip 텍스트 ("직접 편집된 필드 — cascade 시 보존됩니다").
+  - 클릭 시 미니 메뉴 표시 + [편집 표시 해제] → POST reset 호출 + 배지 사라짐.
+  - frontend.log 에 `[UploadPage] reset user edit` 라인 캡처.
+- **T6** "📌 사용자 편집 현황" 패널
+  - GET summary 정확히 표시 (3 레벨 dict + list).
+  - [모두 해제] 다이얼로그 → 확인 → POST reset (scope=all) → 패널 새로고침 (모든 카운트 0).
+  - 빈 상태 ("편집된 필드 없음") 표시.
+- **T7** 회귀
+  - v37~v53 모두 무회귀.
+  - v51/v52/v53 cascade 동작 변경 X — 기존 테스트 모두 PASS.
+  - Vite build / uvicorn / OpenAPI 정상 (v54 신규 paths 2개 노출).
+
+### 체크리스트
+
+- [ ] B1 — `_v54_is_field_user_edited` 헬퍼 신규 + `[V54FieldCheck]` 로그.
+- [ ] B4 — v51/v52/v53 cascade 헬퍼 안 user_edited_fields 직접 조회 → B1 호출로 통일. 누락 분기 점검.
+- [ ] B2 — POST `/user-edited/reset` 신규 라우트 + `[UserEditedReset]` 로그 + Body validation + 부분/전체 해제.
+- [ ] B3 — GET `/user-edited/summary` 신규 라우트 + `[UserEditedSummary]` 로그.
+- [ ] B5 — GET `/jobs/{id}` 응답 inline 결정 (호출 빈도 ≥ 3초 → inline X, B3 만 사용).
+- [ ] F4 — `api/index.js` 헬퍼 2개 (`resetUserEdits`, `getUserEditedSummary`).
+- [ ] F1 — ✏ 배지 호버 tooltip 일관 통일 + 클릭 시 미니 메뉴 + reset 동작.
+- [ ] F2 — "📌 사용자 편집 현황" collapsible 패널 신규 + [모두 해제] 다이얼로그.
+- [ ] F3 — cascade 완료 토스트에 "사용자 편집 X 필드 보존됨" 추가.
+- [ ] F5 — DEV 가드 console.info 로그 (`[UploadPage] reset user edit`, `[UploadPage] reset all user edits`).
+- [ ] T1~T7 — 단위 / 통합 / 회귀.
+- [ ] REPORT.md v54 append + v51~v54 시리즈 완성 정리.
+
+### 추적자 (server.log / frontend.log grep 키)
+
+| 위치 | 추적자 | 형식 |
+|---|---|---|
+| `mv_pipeline.py:_v54_is_field_user_edited` | `[V54FieldCheck]` | `logger.debug("[V54FieldCheck] scope=%s target=%s field=%s edited=%s", ...)` |
+| `mv.py` POST reset | `[UserEditedReset]` | `logger.info("[UserEditedReset] job=%s scope=%s target=%s cleared=%d", ...)` |
+| `mv.py` GET summary | `[UserEditedSummary]` | `logger.info("[UserEditedSummary] job=%s scenario=%d events=%d scenes=%d", ...)` |
+| 기존 v51/v52/v53 재사용 | `[CascadePhase]` / `[EventCascade]` / `[ScenarioCascade]` | (cascade 진행 시 — B4 통일 후 동일 추적자) |
+| `UploadPage.jsx` (DEV 가드) | `[UploadPage]` | `console.info("[UploadPage] reset user edit", {scope, target, field})` 등 |
+
+### v51~v54 시리즈 완성 정리
+
+| 단계 | 버전 | 핵심 산출물 | 누적 테스트 |
+|---|---|---|---|
+| Step 1 | v51 | 씬 카드 인라인 편집 + 부분 cascade + scene.user_edited_fields 추적 + ✏ 배지 (씬 단위) | (v51 테스트 수 + v37~v50.1 회귀) |
+| Step 2 | v52 | event 카드 인라인 편집 + 매핑 씬 cascade + scenario_events[i].user_edited_fields 추적 + ✏ 배지 (event 단위) | (v52 누적) |
+| Step 3 | v53 | 시나리오 top-level 인라인 편집 + events 추가/삭제 + 전체 cascade + scenario_user_edited_fields 추적 + ✏ 배지 (시나리오 단위) | 85/85 PASS (v53 시점) |
+| Step 4 | v54 | 3 레벨 통합 헬퍼 + reset/summary API + ✏ 배지 일관 + 사용자 편집 현황 패널 | (v54 누적) |
+
+### v50/v50.1 무회귀
+
+본 v54 는 **system prompt / few-shot example / archetype 변경 X**. cascade 헬퍼들의 분기 로직만 통합 — 동작은 동일 (사용자 편집 보존). v50.1 ANTI_EXAMPLE_BLOCK 효과 자동 보존.
+
+### PII / 비밀번호 정책
+
+- 사용자 편집 텍스트 (narrative / event 본문 / scene description 등) 는 server.log 에 절대 출력 X. reset/summary 라우트 모두 카운트만 기록.
+- frontend.log — F5 의 console.info 도 `{scope, target, field}` 만 (텍스트 본문 미포함). 모두 DEV 가드.
+- `[V54FieldCheck]` 도 field 명만 (값 X).
+
+### Frontend / Backend 변경 범위 요약
+
+- **백엔드**: `backend_9004/app/routes/mv.py` (2 신규 라우트 — POST reset + GET summary) + `backend_9004/app/services/mv_pipeline.py` (`_v54_is_field_user_edited` 통합 헬퍼 + v51/v52/v53 cascade 헬퍼 안 직접 조회 부분 통일). **다른 backend (백엔드, _9001, _9002, _9003) 변경 0**.
+- **프론트엔드**: `frontend/src/api/index.js` (헬퍼 2개) + `frontend/src/pages/UploadPage.jsx` (✏ 배지 tooltip 일관 + 미니 메뉴 + 사용자 편집 현황 collapsible 패널 + [모두 해제] 다이얼로그 + cascade 완료 토스트 메시지 강화). 다른 페이지·컴포넌트 변경 0.
+- **테스트**: `backend_9004/tests/test_v54.py` (신규).
+
+
+## v55 — 2026-05-11 — 이미지 생성 모델 선택 (Nano Banana Pro / GPT Image 2)
+
+### 배경
+
+지금까지 모든 이미지 생성(주인공 캐릭터 시트, 커버, 씬, 자산 시트)은 **Nano Banana Pro** (`gemini-3-pro-image-preview`) 단일 모델로 고정돼 있었다. v55 에서 OpenAI 의 **GPT Image 2** (`gpt-image-2-2026-04-21` snapshot) 를 두 번째 옵션으로 추가해, 생성 영역별로 사용자가 모델을 선택할 수 있도록 한다. **기본값은 `nb_pro`** — 기존 동작은 100% 보존된다.
+
+### 0단계 — Plan verification 결과
+
+- `backend_9004/app/services/character_generator.py` (763 lines) — `GEMINI_IMAGE_API_URL`, `_call_gemini_image(prompt, image_parts)` 정의, `generate_character_sheet(...)` 마지막 Step B 에서 `await _call_gemini_image(step_b_prompt, image_parts)` 호출. `refine_character_sheet(...)` 도 같은 `_call_gemini_image` 사용.
+- `backend_9004/app/services/cover_generator.py` (247 lines) — `generate_cover_image(title, genre, mood, style, character_image_bytes, user_prompt, prompt_model, user_location_image_bytes, user_location_name)` 단일 함수. payload 직접 빌드 → Gemini REST 호출.
+- `backend_9004/app/services/mv_generator.py` Line 4331 — `generate_scene_image(scene_description, style_prompt, cover_image_bytes, character_image_bytes, scene_type, reference_images, user_location_image_bytes, user_location_name)`. payload 직접 빌드 → Gemini REST 호출 (line 4461~4477, 429 retry 1회 내장).
+- `backend_9004/app/services/mv_assets.py` (211 lines) — `_gemini_generate_image(prompt, ref_images)` 헬퍼 + `generate_character_sheet_asset(...)` + `generate_location_sheet_asset(...)`. 모든 자산 생성이 `_gemini_generate_image` 를 거친다.
+- `backend_9004/app/services/mv_pipeline.py` Line 1758 / 1804 — Phase 1.5 자산 생성 호출 위치. Line 1972 — Phase 2 씬 이미지 호출 위치.
+- `backend_9004/app/routes/character.py` Line 174 — `POST /api/character/generate-sheet` (multipart). Line 280 — `POST /api/character/refine`. Line 501 — `GET /api/character/me`.
+- `backend_9004/app/routes/upload.py` Line 26 — `GenerateCoverRequest` pydantic 모델. Line 152 — `POST /api/upload/generate-cover`.
+- `backend_9004/app/routes/mv.py` Line 49 — `CreateMVRequest` pydantic 모델 (14개 필드). Line 243 — `POST /api/mv/create`. Line 522 — `GET /api/mv/jobs/{job_id}`. Line 745 — `POST /api/mv/jobs/{job_id}/scenes/{scene_number}/regenerate-image`.
+- `backend_9004/app/config.py` Line 47 — `openai_api_key: str = ""` (이미 `.env` 에 존재, v45+ 시나리오 LLM 에서 사용 중) → **재사용**.
+- `frontend/src/api/index.js` — `generateCharacterSheet(formData)` (multipart), `generateCover(data)` (JSON), `createMVJob(data)` (JSON, 자동 `{...data, scenario_style, vocal_gender, relationship}` spread).
+- `frontend/src/pages/MyMusicPage.jsx` Line 311~365 — `handleGenerate` (캐릭터 시트 생성). FormData 빌드.
+- `frontend/src/pages/UploadPage.jsx` Line 331~361 — `handleGenerateCover`. Line 471~529 — `handleCreateScenes` (씬+자산 단일 호출).
+- v50/v50.1 sentinel (`ANTI_EXAMPLE_BLOCK`, archetype examples) — system prompt 영역 무변경 확인.
+
+### 4개 영역 × 2 모델 매트릭스
+
+| 영역 | 함수 / 호출자 | 모델 선택 위치 | 자동 연동 |
+|---|---|---|---|
+| 주인공 캐릭터 시트 | `character_generator.generate_character_sheet`, `refine_character_sheet` | `MyMusicPage.jsx` 라디오 (per generation) | — |
+| 커버 이미지 | `cover_generator.generate_cover_image` | `UploadPage.jsx` 커버 영역 라디오 | — |
+| 씬 이미지 | `mv_generator.generate_scene_image` | `UploadPage.jsx` 씬 영역 라디오 (MV 생성 시) | → 자산 시트 자동 동기화 |
+| Phase 1.5 자산 시트 | `mv_assets.generate_character_sheet_asset`, `generate_location_sheet_asset` (`_gemini_generate_image` 경유) | **자동 — 씬 모델과 동일** | (별도 UI 없음) |
+
+### Enum 명세
+
+```
+image_model ∈ {"nb_pro", "gpt_image_2"}
+default = "nb_pro"
+```
+
+- `nb_pro` — Nano Banana Pro (`gemini-3-pro-image-preview`, Gemini REST)
+- `gpt_image_2` — GPT Image 2 (`gpt-image-2-2026-04-21` snapshot, OpenAI REST)
+
+잘못된 값 → 백엔드 400 응답. 누락 → 기본 `"nb_pro"` 적용.
+
+### OpenAI Image API 명세
+
+- Endpoints:
+  - `POST https://api.openai.com/v1/images/generations` — text-to-image
+  - `POST https://api.openai.com/v1/images/edits` — text + reference images (multipart)
+- Auth: `Bearer ${OPENAI_API_KEY}` (config.py `openai_api_key` 재사용)
+- Snapshot 모델 ID: `gpt-image-2-2026-04-21` (alias rolling 방지 목적)
+- Multi-ref: 최대 10장. 10장 초과 → `logger.warning` + 앞 10장만 사용
+- 출력 포맷: PNG bytes (base64 → bytes 디코딩)
+- 가격: ~$0.15~0.25 / 2K 이미지 (참고용, REPORT 미기재)
+- 한계 (참고): 한국어 prompt 약함 → 우리 시스템 프롬프트는 대부분 영어/혼용이라 영향 작음
+
+### 변경 매트릭스 (Backend B1~B8 / Frontend F1~F4)
+
+#### Backend
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| B1 | `app/services/openai_image.py` (신규 ~150줄) | `generate_image(prompt, ref_images, size, quality)` — generations/edits 자동 분기. base64→bytes. 에러 1회 retry. `[OpenAIImage]` 로그. |
+| B2 | `app/services/character_generator.py` | `_call_gemini_image` 호출부 분기. `generate_character_sheet(...)` 와 `refine_character_sheet(...)` 시그니처에 `image_model: str = "nb_pro"` 추가. `[CharGen]` 로그. |
+| B3 | `app/services/cover_generator.py` | `generate_cover_image(...)` 시그니처에 `image_model: str = "nb_pro"` 추가. Gemini payload 빌드 후, `image_model == "gpt_image_2"` 면 OpenAI 호출로 분기. `[CoverGen]` 로그. |
+| B4 | `app/services/mv_generator.py` | `generate_scene_image(...)` 시그니처에 `image_model: str = "nb_pro"` 추가. Gemini payload 빌드 후 분기. 429 retry 로직은 nb_pro 경로에만 적용 (OpenAI 는 자체 retry). `[SceneImage]` 로그. |
+| B5 | `app/services/mv_assets.py` | `_gemini_generate_image` → `_generate_image(prompt, ref_images, image_model)` 으로 일반화. `generate_character_sheet_asset(..., image_model="nb_pro")` / `generate_location_sheet_asset(..., image_model="nb_pro")` 시그니처 확장. `[AssetGen]` 로그. |
+| B6 | `app/routes/character.py` + `app/routes/upload.py` + `app/routes/mv.py` | `POST /api/character/generate-sheet` (Form 필드 `image_model: str = "nb_pro"`), `POST /api/character/refine` (Form 필드), `POST /api/upload/generate-cover` (`GenerateCoverRequest.image_model: Optional[str] = "nb_pro"`), `POST /api/mv/create` (`CreateMVRequest.image_model: Optional[str] = "nb_pro"`). 유효값 검증 + 잘못된 값 → 400. |
+| B7 | Mongo schema | `characters` 컬렉션: `image_model: str` (마지막 사용 모델). `mv_jobs`: `cover_image_model: str` + `image_model: str` (씬+자산 공통). 옛 도큐먼트 호환 — 누락 시 `"nb_pro"` 반환. |
+| B8 | GET 응답 | `GET /api/character/me` 응답 `character.image_model` 포함. `GET /api/mv/jobs/{job_id}` 응답 `cover_image_model`, `image_model` 포함. |
+
+추가로 `mv_pipeline.py` Phase 1.5 / Phase 2 — `job.get("image_model", "nb_pro")` 를 읽어 자산/씬 모두에 동일 모델 인자 전파. `mv.py` regenerate-image 라우트도 동일하게 job 의 `image_model` 사용.
+
+#### Frontend
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| F1 | `frontend/src/pages/MyMusicPage.jsx` | 캐릭터 시트 생성 영역에 라디오 2개. label "이미지 생성 모델". `useState('nb_pro')`. `handleGenerate` 의 FormData 에 `formData.append('image_model', characterImageModel)`. `console.info('[MyMusic] character image_model selected', {value})`. |
+| F2 | `frontend/src/pages/UploadPage.jsx` 커버 영역 | 라디오 2개 + label "커버 이미지 생성 모델". `useState('nb_pro')`. `handleGenerateCover` payload 에 `image_model: coverImageModel`. `console.info('[UploadPage] cover image_model selected', {value})`. |
+| F3 | `frontend/src/pages/UploadPage.jsx` 씬 만들기 영역 | 라디오 2개 + label "씬 이미지 생성 모델 (자산도 동일 모델 적용)". `useState('nb_pro')`. `handleCreateScenes` 의 `createMVJob` payload 에 `image_model: sceneImageModel`. `console.info('[UploadPage] scene image_model selected', {value})`. |
+| F4 | `frontend/src/api/index.js` | 변경 0 — `generateCover` / `createMVJob` / `generateCharacterSheet` 모두 spread/FormData passthrough 이므로 호출자가 `image_model` 키만 넣으면 자동 전달. (0단계에서 확인 — 헬퍼 수정 불필요.) |
+
+### Mongo schema diff
+
+```
+characters/{user_id}.image_model        : str   (default "nb_pro")
+mv_jobs/{job_id}.cover_image_model      : str   (default "nb_pro" — POST /api/mv/create 시점 스냅샷)
+mv_jobs/{job_id}.image_model            : str   (default "nb_pro" — 씬+자산 공통)
+```
+
+옛 도큐먼트엔 위 필드들이 없다 → GET 응답 헬퍼에서 `doc.get("image_model") or "nb_pro"` 패턴으로 backward-compat 보장.
+
+### 추적자
+
+- `[OpenAIImage] mode=generations|edits refs=N prompt_len=M` — openai_image.py
+- `[OpenAIImage] failed: <msg>` — 에러 (API key 절대 출력 X)
+- `[CharGen] image_model=<value>` — character_generator.py 분기 시점
+- `[CoverGen] image_model=<value>` — cover_generator.py 분기 시점
+- `[SceneImage] image_model=<value> scene_number=<n>` — mv_generator.py 분기 시점
+- `[AssetGen] image_model=<value> asset_kind=character|location` — mv_assets.py 분기 시점
+- Frontend (`frontend.log` 수집): `[MyMusic]`, `[UploadPage]` image_model selected
+
+### Test plan T1~T8
+
+- T1 — `openai_image.generate_image` 단위: ref 없음→generations, ref 있음→edits, 10초과→truncate+warning, 응답 PNG bytes 정상.
+- T2 — 각 generator 분기 단위 (mocked): character/cover/scene/asset 모두 `image_model="nb_pro"` 면 Gemini, `"gpt_image_2"` 면 OpenAI 호출 검증.
+- T3 — 라우트 입력 검증: 정상 / 누락(default nb_pro) / 잘못된 값(400) 3 케이스.
+- T4 — Mongo 영속화: 시트 생성→`characters.image_model`, 커버→`mv_jobs.cover_image_model`, MV→`mv_jobs.image_model`. 옛 도큐먼트 호환.
+- T5 — 씬=자산 자동 연동: `mv_jobs.image_model="gpt_image_2"` 인 잡 Phase 1.5 → OpenAI 호출. `"nb_pro"` → Gemini.
+- T6 — Frontend UI: 3 화면 라디오 표시, 선택값 payload 전송 확인, `frontend.log` 에 `[MyMusic]`/`[UploadPage]` image_model 캡처.
+- T7 — v37~v54 회귀: Vite build, uvicorn, OpenAPI 정상. 옛 mv_jobs (image_model 필드 없음) 호출 시 default 적용 정상. v50/v50.1 system prompt 무변경. v51~v54 cascade 시에도 image_model 인자 전파.
+- T8 — Real OpenAI 호출 1회 (ref 3개 첨부 → PNG 응답): 비용 소액 OK.
+
+### 체크리스트
+
+- [ ] B1 openai_image.py 신규 (~150줄, generations/edits 분기, base64→bytes, retry 1회)
+- [ ] B2 character_generator.py 분기 + image_model 인자
+- [ ] B3 cover_generator.py 분기 + image_model 인자
+- [ ] B4 mv_generator.generate_scene_image 분기 + image_model 인자
+- [ ] B5 mv_assets.py 분기 + image_model 전파
+- [ ] B6 3개 라우트 입력 파라미터 확장 + 검증
+- [ ] B7 Mongo 영속화 (characters / mv_jobs)
+- [ ] B8 GET 응답 확장 (/api/character/me, /api/mv/jobs/{id})
+- [ ] mv_pipeline.py Phase 1.5/2 + mv.py regenerate-image — job.image_model 전파
+- [ ] F1 MyMusicPage 라디오 + image_model FormData
+- [ ] F2 UploadPage 커버 라디오 + payload
+- [ ] F3 UploadPage 씬 라디오 + payload
+- [ ] F4 api/index.js — 확인만 (변경 X)
+- [ ] T1~T8 테스트
+- [ ] REPORT.md v55 append
+
+### "디버깅 로그 심기" 규칙
+
+- 위 추적자 키워드를 사용해 `server.log` / `frontend.log` 에서 v55 흐름 추적 가능.
+- 본문 PII (시나리오 narrative, 사진 base64 등) 절대 출력 금지 — 길이만 기록.
+- OPENAI_API_KEY / GOOGLE_API_KEY 본문 절대 출력 금지.
+
+### v50/v50.1 / v51~v54 무회귀
+
+본 v55 는 **system prompt, scenario LLM, cascade 로직, user_edited_fields 정책 모두 무변경**. 이미지 생성 경로의 모델 분기만 추가. cascade 시에도 `job.image_model` 을 그대로 사용 — cascade 단계마다 모델이 바뀌지 않는다.
+
+---
+
+## v56 — 2026-05-11 — 씬 한국어/영어 병존 + Opus 4.7 자동 번역 cascade
+
+### 위상
+
+v55 (이미지 모델 선택 NB Pro vs GPT Image 2) 의 다음 단계. 씬 카드 단위 3개 텍스트 필드(`description` / `image_prompt` / `video_prompt`) 를 **한국어/영어 병존** 으로 확장하고, 사용자는 한국어만 편집하며, 백엔드는 Anthropic Claude **Opus 4.7** 모델을 사용해 한국어 ↔ 영어 자동 번역을 수행한다. 영어 prompt 는 그대로 이미지/영상 LLM 호출용으로 사용 (모델 품질 확보). 한국어 편집 시 v51 cascade 가 자동으로 발동되어 영어 자동 갱신 + 이미지 재생성 + video_prompt 재생성 + video_prompt 의 한국어 자동 채움까지 진행한다.
+
+### Step 0 — Plan verification findings (검증 완료)
+
+| 영역 | 위치 | 확인 |
+|---|---|---|
+| 씬 분할 system prompt | `backend_9004/app/services/mv_generator.py:3069` `SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE`, `3162` `SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE`, `3243` `SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE` — 3개 템플릿. 모두 현재 `description_ko` 1 필드만 보유. `image_prompt_ko` / `video_prompt_ko` 신규 필요. |
+| Scene split parser | `mv_generator.py:3438` `json.loads(raw)` (legacy path) + `3539` `json.loads(raw)` (section-aware path). flat_scenes 빌드 위치 `3596~3611` — description_ko 만 추출. 신규 ko 2 필드 동일 위치에 추가. |
+| Phase 1b 후 scene 필드 set | `mv_pipeline.py:1569~1573` (`run_phase1_split`) + `1632~1635` (retry path) — `image_prompt`/`description_ko` 만 세팅. ko 필드 2개 추가 필요. |
+| Anthropic 클라이언트 패턴 | `mv_generator.py:493` `_get_anthropic_client`, `1310` `_generate_brainstorm_claude`, `2822` `_generate_scenario_claude`, `4198` `_generate_prompts_claude`. 공통 패턴: `AsyncAnthropic(api_key=settings.anthropic_api_key)` + `messages.create(model=..., system=..., messages=[...], max_tokens=...)`. opus-4-7 는 temperature 인자 미전송. |
+| `_v51_run_cascade` 구조 | `mv_pipeline.py:3441` — trigger_field=`"description"`→phase1b→phase2→phase2.5, `"image_prompt"`→phase2→phase2.5, `"video_prompt"`→no-op. cascade_progress 0/33/66/100 (description) 또는 0/50/100 (image_prompt). v56 는 진입부에 신규 phase `translate_*_to_en` 추가, 이후 기존 흐름. cascade 끝부분에 새 영어 video_prompt 가 만들어지면 자동으로 video_prompt_ko 도 번역 (en→ko). |
+| PATCH `/api/mv/jobs/{id}/scenes/{n}` | `mv.py:128` `PatchSceneRequest` (3 필드) + `:938` `patch_scene` 라우트. `allowed = {"description","image_prompt","video_prompt"}` 가드. ko 3 필드 추가 필요. |
+| GET `/api/mv/jobs/{id}` | `mv.py:579` `get_mv_job` + `:211` `_scene_to_dict`. `description_ko` 이미 응답에 포함. `image_prompt_ko`/`video_prompt_ko` 추가 + lazy 번역 로직 신규 필요. |
+| 프론트 씬 카드 UI | `UploadPage.jsx:582` `handleSceneEditOpen/Save/Cancel` (v51 인라인 편집 도입). `sceneEdit` state — `{scene_number, field, value}`. 카드 렌더는 `:3019~` 부근. 한국어 textarea + 영어 collapsible 구조로 재배치. |
+| API client | `frontend/src/api/index.js:187` `patchMVScene(jobId, sceneNumber, payload)` — `API.patch(url, payload)` spread passthrough. ko 키 추가 변경 0. |
+| ANTHROPIC_API_KEY | `backend_9004/app/config.py:52` `anthropic_api_key: str = ""` — 이미 존재. `.env` 에 키 실재 (런타임에서 _generate_brainstorm_claude 동작 확인). |
+| v50/v50.1 sentinel | `mv_generator.py:959, 977` ANTI_EXAMPLE_BLOCK / 군중 인물 차단 — 변경 없음 (v56 는 system prompt 본문 보존, 출력 schema/규칙만 확장). |
+
+### 확정 사항 (Q1~Q6, 모델)
+
+| 결정 | 내용 |
+|---|---|
+| Q1 cascade 정책 | (B) 백엔드 자동 번역. 사용자 한국어 편집 → 백엔드 ko→en 번역 → 영어 prompt 가 다운스트림 LLM 호출에 사용. |
+| Q2 UI 구성 | (b) collapsible. 한국어 textarea = 메인 편집, 영어 read-only `<details>`. |
+| Q3 편집 가능 범위 | (a) 한국어만 편집. 영어는 자동 동기화 (사용자 직접 편집 X). |
+| Q4 옛 잡 호환 | (b) lazy 번역. GET 응답 시점에 빈 `_ko` 자동 채워서 응답 + Mongo 영구 저장. |
+| Q5 cascade 발동 | 즉시 자동. 한국어 편집 → [저장] → PATCH + 번역 + 영어 갱신 + 이미지 재생성 + video_prompt 재생성 한 번 클릭. |
+| Q6 다른 영역 | events / scenario_narrative / premise / character_states / central_conflict / emotional_core / narrative_arc — 변경 X (이미 한국어 생성). events[i] 의 trigger/action/motivation/emotion_shift/props 도 변경 X. |
+| 번역 LLM 모델 | **claude-opus-4-7** (Anthropic 직접 호출, `ANTHROPIC_API_KEY` 재사용). 한 잡당 ~$0.18 무시 수준. |
+
+### v56 적용 대상 (씬 단위 3 필드만)
+
+- `scene.description` ↔ `scene.description_ko`
+- `scene.image_prompt` ↔ `scene.image_prompt_ko`
+- `scene.video_prompt` ↔ `scene.video_prompt_ko`
+
+비대상 (Q6): scenario_* 6 필드 + events[i] 5 필드 — 변경 X.
+
+### 변경 매트릭스 (Backend B1~B7 / Frontend F1~F4)
+
+#### Backend
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| B1 | `app/services/mv_generator.py` SCENE_SPLIT/SCENE_GENERATE/SECTION_SCENE_PLAN 3개 system prompt | 출력 schema 에 신규 필드 강제: `image_prompt_ko`, `video_prompt_ko`. 기존 `description_ko` 유지. system prompt 본문 보존(v50/v50.1 sentinel 무손상) — JSON example 와 Rules 단락만 확장. 한 번의 LLM 호출에 6 필드 (3 영어 + 3 한국어) 모두 출력. 로그 `[SceneSplit] ko=Y en=Y` / `[SceneSplit] missing ko` (lazy 보충). |
+| B2 | 같은 파일 — flat_scenes 빌드 (3596~3611) + legacy `scenes = json.loads(raw)` 결과 객체 | 6 필드 모두 파싱. `_ko` 필드 누락 시 빈 문자열로 두고 GET lazy 번역에 위임. 로그 `[SceneSplitParse] fields=%d missing=%d`. |
+| B3 | 신규 `app/services/translation.py` (~120 lines) | 함수: `translate_ko_to_en(text, context_hint)`, `translate_en_to_ko(text, context_hint)`. 빈 입력 → 빈 출력 (LLM call X). 모델 `claude-opus-4-7`. 시스템 prompt: "다음 텍스트를 [ko→en / en→ko] 로 번역. 시각·영상 prompt 컨텍스트 (촬영 용어·캐릭터 동작·감정 뉘앙스 보존). 출력은 번역문 only." 1회 retry. 로그 `[TranslateKoEn] len=N elapsed_ms=M`, `[TranslateEnKo] len=N elapsed_ms=M`, 실패시 `[TranslateKoEn] failed: <msg>`. PII 본문 미출력 (길이만). |
+| B4 | `app/services/mv_pipeline.py` `_v51_run_cascade` 확장 | trigger_field 신규 지원: `description_ko` / `image_prompt_ko` / `video_prompt_ko`. 각 진입 시 신규 phase `translate_*_to_en` 실행 — `translation.translate_ko_to_en(scene[field_ko])` 호출 → 영어 필드 갱신 → 기존 trigger_field 로 dispatch (description_ko → description phase, image_prompt_ko → image_prompt phase, video_prompt_ko → video_prompt no-op). 영어 자동 재생성된 필드 (phase1b 의 새 image_prompt, phase2.5 의 새 video_prompt) 는 cascade 끝에서 자동 en→ko 번역하여 `_ko` 필드도 갱신 — user_edited_fields 에서 `_ko` 도 제거. 로그 `[CascadePhase] phase=translate_*_to_en`, `[TranslateEnKo] new <field>_ko`. |
+| B5 | `app/routes/mv.py` `PatchSceneRequest` + `patch_scene` | 신규 필드: `description_ko: Optional[str]`, `image_prompt_ko: Optional[str]`, `video_prompt_ko: Optional[str]`. `allowed` 세트 6개로 확장. `user_edited_fields` 누적에 `_ko` 도 포함. 응답에 6 필드 모두 포함 (`_scene_to_dict` 가 처리). 로그 `[CascadePatch] fields=%s`. |
+| B6 | `app/routes/mv.py` `get_mv_job` + `_scene_to_dict` + 신규 `_v56_lazy_translate_scenes` 헬퍼 | 응답 빌드 직전, 각 씬에 대해 6 필드 점검. `*_ko` 빈 값 + 영어 채워짐 → `translate_en_to_ko` (병렬 asyncio.gather) → Mongo `$set` 영구 저장 + 응답 포함. 반대 (영어 빈 값 + 한국어 채워짐) → `translate_ko_to_en`. 둘 다 빈 값 → 패스. `_scene_to_dict` 에 `image_prompt_ko`/`video_prompt_ko` 추가. 로그 `[GETJob] lazy_translate scene=%d fields=%s elapsed_ms=%d`. 한 번 채워지면 캐싱 (재번역 X). |
+| B7 | Mongo schema (`mv_jobs.scenes[i]`) | 신규 필드 3개 default 빈 문자열: `description_ko`, `image_prompt_ko`, `video_prompt_ko`. 옛 잡 호환 — 누락 시 GET 응답에서 빈 문자열, lazy 번역으로 채움. Phase 1b 결과 set 위치 (`mv_pipeline.py:1569~1573`, `1632~1635`, `_v51_regen_image_prompt_single` 의 set 위치) 모두 `image_prompt_ko: ""` 기본 세팅. |
+
+#### Frontend
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| F1 | `frontend/src/pages/UploadPage.jsx` 씬 카드 렌더 (3019~ 부근) | 각 씬의 3 영역(description / image_prompt / video_prompt) 구조: 한국어 textarea (편집 가능, [편집]/[저장]/[취소] 버튼) + `<details><summary>영어 보기</summary><div readonly>` collapsible. `_ko` 필드도 `user_edited_fields` 에 포함되면 ✏ 배지 표시 (v51 인프라). |
+| F2 | `UploadPage.jsx` `handleSceneEditOpen`/`handleSceneEditSave` (582~) | field 인자에 `description_ko` / `image_prompt_ko` / `video_prompt_ko` 도 허용. 저장 시 `patchMVScene` payload key 는 `*_ko` 만 전송 (영어 X). `cascadeRegenerateMVScene` trigger_field 도 `*_ko` 형태로 전송 — 백엔드 B4 가 받아서 처리. cascade 진행률 mini progress bar 그대로 재사용. |
+| F3 | `frontend/src/api/index.js` `patchMVScene` 확인 | spread `payload` passthrough 패턴 — `_ko` 키 추가 호출자 측면에서 그대로 전달 됨. 변경 0. |
+| F4 | `UploadPage.jsx` console.* | `console.info("[UploadPage] scene_ko field edited", {scene_number, field, len})`. DEV 가드. 본문 미출력 (길이만 — PII 보호). |
+
+### Cascade 흐름 다이어그램
+
+```
+[trigger_field=description_ko]
+  → phase=translate_description_to_en (ko→en, 영어 description 갱신)
+  → phase1b (단일 씬 image_prompt 재생성, 영어)
+  → translate phase1b 결과 image_prompt → image_prompt_ko 자동 (en→ko)
+  → phase2 (이미지 재생성, 영어 image_prompt 사용)
+  → invalidate_video
+  → phase2.5 (단일 씬 video_prompt 재생성, 영어)
+  → translate phase2.5 결과 video_prompt → video_prompt_ko 자동 (en→ko)
+  → completed
+
+[trigger_field=image_prompt_ko]
+  → phase=translate_image_prompt_to_en (ko→en, 영어 image_prompt 갱신)
+  → phase2 (이미지 재생성)
+  → invalidate_video
+  → phase2.5 (단일 씬 video_prompt 재생성)
+  → translate phase2.5 결과 video_prompt → video_prompt_ko 자동
+  → completed
+
+[trigger_field=video_prompt_ko]
+  → phase=translate_video_prompt_to_en (ko→en, 영어 video_prompt 갱신)
+  → completed (영상 단계는 사용자 trigger)
+```
+
+기존 v51 trigger_field (`description`/`image_prompt`/`video_prompt`) — 무변경, 백엔드는 이전과 동일하게 처리. (단 cascade 끝에서 신규 영어가 만들어진 경우 en→ko 번역하여 `_ko` 도 동기화하는 후처리 추가.)
+
+### Mongo schema diff
+
+```
+mv_jobs.scenes[i].description_ko    : str  (default "" — 신규 ko 필드 1)
+mv_jobs.scenes[i].image_prompt_ko   : str  (default "" — 신규 ko 필드 2)
+mv_jobs.scenes[i].video_prompt_ko   : str  (default "" — 신규 ko 필드 3)
+```
+
+옛 도큐먼트엔 image_prompt_ko / video_prompt_ko 없다 → `_scene_to_dict` 에서 `scene.get("image_prompt_ko", "")` + GET lazy 번역 헬퍼가 빈 값 감지 시 자동 채움 → Mongo `$set` 영구 저장.
+
+description_ko 는 이미 존재 (v45+) — 그대로 사용. image_prompt_ko / video_prompt_ko 만 v56 신규.
+
+### 옛 잡 lazy 번역 정책
+
+1. GET `/api/mv/jobs/{id}` 호출 → 각 씬 점검
+2. `_ko` 빈 값 + 영어 채워짐 → `translate_en_to_ko(영어, "visual/video prompt")` (asyncio.gather 다중 씬 병렬)
+3. 결과를 응답 JSON 에 포함 + Mongo `$set scenes.{i}.{field}_ko = 번역결과` 영구 저장
+4. 다음 GET 부터는 캐싱 (빈 값 아니므로 패스)
+5. 반대 (영어 빈 값 + 한국어 채워짐) → `translate_ko_to_en` 동일 흐름
+6. 둘 다 빈 값 → 둘 다 빈 채로 유지 (할 일 없음 — 사용자가 편집 시 cascade 가 채움)
+7. translation 실패 → 빈 값 유지 + warning 로그, 다음 GET 에서 재시도 가능
+
+### 추적자 (server.log / frontend.log)
+
+- `[SceneSplit] ko=Y en=Y` — mv_generator.py 검증 후 (씬 분할 LLM 6 필드 정상 시)
+- `[SceneSplit] missing ko` — mv_generator.py 검증 후 (LLM 이 ko 한쪽 누락 시, lazy 보충 예정)
+- `[SceneSplitParse] fields=N missing=M` — mv_generator.py 파서
+- `[TranslateKoEn] len=N model=opus-4-7 elapsed_ms=M` — translation.py 성공
+- `[TranslateEnKo] len=N model=opus-4-7 elapsed_ms=M` — translation.py 성공
+- `[TranslateKoEn] failed: <msg>` / `[TranslateEnKo] failed: <msg>` — 실패 (API key 본문 절대 미출력)
+- `[CascadePhase] phase=translate_description_to_en` / `translate_image_prompt_to_en` / `translate_video_prompt_to_en` — mv_pipeline.py cascade 진입
+- `[CascadePhase] phase=translate_en_to_ko_post` — cascade 끝 en→ko 자동 번역 phase
+- `[CascadePatch] fields=[image_prompt_ko, ...]` — mv.py PATCH 라우트
+- `[GETJob] lazy_translate scene=N fields=[image_prompt_ko, video_prompt_ko] elapsed_ms=M` — mv.py GET 응답
+- Frontend (`frontend.log`): `[UploadPage] scene_ko field edited` — F4
+
+### Test plan T1~T7
+
+- T1 — 씬 분할 LLM 출력 검증. mock Anthropic/OpenAI 응답으로 6 필드(3 영어 + 3 ko) 파싱 확인. 한쪽 누락 시 warning + 빈 문자열 저장. system prompt 본문에 v50.1 ANTI_EXAMPLE_BLOCK 보존 확인.
+- T2 — 파서 단위 (`_split_with_music_sections` flat_scenes / legacy `json.loads(raw)`). 6 필드 정상 / 4 필드만 (영어만) / 6 필드 모두 빈 값 / 잘못된 JSON 각 케이스.
+- T3 — translation.py 단위. mock Anthropic 호출로 `translate_ko_to_en`, `translate_en_to_ko` 검증. 빈 입력 → 빈 출력 (호출 X). 1회 retry 동작. 실 호출 1회 (실제 Opus 4.7 짧은 문장, 비용 ~$0.01).
+- T4 — cascade 흐름. `image_prompt_ko` 편집 → translate_ko_en phase → 영어 image_prompt 갱신 → mock phase2 (Gemini) → phase2.5 → video_prompt_ko 자동 번역. `description_ko` 편집 → 영어 description 갱신 → phase1b → 새 image_prompt + image_prompt_ko 자동 → 이후 동일. `video_prompt_ko` 편집 → 영어 video_prompt 만 갱신 (cascade 종료).
+- T5 — lazy 번역. 옛 잡 (image_prompt_ko/video_prompt_ko 없음) GET → 자동 ko 번역 채워서 응답 + Mongo 영구 저장. 다중 씬 병렬 호출. 두 번째 GET 에서 캐싱 (재번역 X).
+- T6 — 프론트. 한국어 textarea 표시 + 편집 동작. 영어 collapsible (`<details>`) 표시. ✏ 배지 적용. `frontend.log` 에 `[UploadPage] scene_ko field edited` 캡처.
+- T7 — 회귀. v37~v55 무회귀. v50/v50.1 ANTI_EXAMPLE_BLOCK 보존. v51~v54 cascade 한국어 무관 시 byte-level 동일. v55 image_model 분기 무관 (이미지 호출엔 영어 prompt). Vite build / uvicorn / OpenAPI 정상.
+
+### 체크리스트
+
+- [ ] B1 mv_generator.py 3개 system prompt — output schema 에 image_prompt_ko / video_prompt_ko 추가
+- [ ] B2 mv_generator.py flat_scenes 빌드 + parser — 6 필드 추출 + 누락 시 빈 문자열
+- [ ] B3 신규 app/services/translation.py — ko↔en, opus-4-7, retry 1회, 빈 입력 패스
+- [ ] B4 mv_pipeline.py _v51_run_cascade — translate_*_to_en phase 추가 + cascade 끝 en→ko 후처리
+- [ ] B5 mv.py PatchSceneRequest + patch_scene — 6 필드 + user_edited_fields ko 누적
+- [ ] B6 mv.py get_mv_job + _v56_lazy_translate_scenes 헬퍼 — GET 시점 lazy 번역 (병렬)
+- [ ] B7 Mongo schema — Phase 1b set 위치 + _v51_regen_image_prompt_single set 위치 모두 ko 필드 추가
+- [ ] F1 UploadPage.jsx 씬 카드 UI — 한국어 textarea + 영어 collapsible (3 영역 모두)
+- [ ] F2 UploadPage.jsx handleSceneEditSave — ko 필드 edit 지원
+- [ ] F3 api/index.js patchMVScene — 변경 0 (확인만)
+- [ ] F4 UploadPage.jsx console.info — DEV 가드, 길이만 출력
+- [ ] T1~T7 테스트
+- [ ] REPORT.md v56 append
+
+### "디버깅 로그 심기" 규칙
+
+- 위 추적자 키워드로 `server.log` / `frontend.log` 에서 v56 흐름 추적 가능.
+- 본문 PII (한국어/영어 prompt 본문, 사용자 시나리오 등) 절대 출력 금지 — 길이만 기록.
+- ANTHROPIC_API_KEY 본문 절대 출력 금지.
+
+### v50/v50.1 / v51~v55 무회귀
+
+- v50/v50.1 system prompt 본문(`ANTI_EXAMPLE_BLOCK` + 군중 차단) 변경 X — 출력 schema/Rules 단락 만 확장.
+- v51~v54 cascade trigger_field=description/image_prompt/video_prompt 동작 byte-level 동일 (cascade 끝 en→ko 후처리만 추가, 영어 필드 자체는 동일).
+- v55 image_model (nb_pro / gpt_image_2) 무관 — 이미지 호출엔 항상 **영어** image_prompt 사용 (한국어 직접 X).
+- 옛 잡 (description_ko 만, image_prompt_ko/video_prompt_ko 없음) → lazy 번역으로 자동 채움.
+
+### 비용 견적
+
+- 한 잡당 약 ~$0.18 (씬 ~20 × 3 필드 × 평균 100자 × $5/M input + $25/M output) — 무시 수준.
+- lazy 번역은 한 번 채워지면 캐싱 → 옛 잡 1회만 비용 발생.
+
+## v57 — 2026-05-12 — 커버 생성에 vocal_gender 주입 (주인공 성별 누락 버그 수정)
+
+### 배경
+
+v45 에서 시나리오/씬 분할 LLM 에 `vocal_gender` 가 주입되도록 추가됐고, v56 (한국어/영어 cascade) 까지 모든 씬 생성 경로에서 vocal_gender 가 정상 전파된다. 그러나 **커버 이미지 생성 경로(`cover_generator.py`) 만 누락**돼 있다.
+
+사용자가 UI 에서 보컬 성별을 명시해도 (UploadPage 의 `vocalGender` state, 기본 `'female'`), 커버 이미지 생성 시 그 정보가 백엔드 prompt 빌더에 도달하지 않는다. 결과로 Gemini / GPT Image 2 가 디폴트로 여성/모호한 주인공을 그리는 경향이 있어, 보컬이 남성인 곡에서도 여성 주인공이 커버에 등장하는 부조화가 발생한다.
+
+v57 은 이 단일 누락을 보강한다 — 다른 모든 영역(시나리오, 씬, 자산 시트) 은 무회귀.
+
+### Plan verification findings (Step 0 결과)
+
+| 항목 | 확인 결과 |
+|---|---|
+| `GenerateCoverRequest` 정의 | `backend_9004/app/routes/upload.py:46-56` — 8 필드 (title/genre/mood/style/character_object_name/user_prompt/prompt_model/location_id/image_model). **vocal_gender 필드 없음**. |
+| `generate_cover` 호출부 | `upload.py:174-261` — `generate_cover_image(...)` 10 kwargs (title~image_model). **vocal_gender 미전달**. |
+| `generate_cover_image` 시그니처 | `cover_generator.py:24-35` — 10 인자 (title~image_model). **vocal_gender 매개변수 없음**. |
+| prompt 4분기 | `cover_generator.py:60-79` Claude enhance system + `cover_generator.py:107-134` programmatic [A] character 有 + `cover_generator.py:135-155` programmatic [B] character 無 + `cover_generator.py:196-220` systemInstruction. **4분기 모두 성별 정보 누락**. |
+| 정규화 헬퍼 패턴 | `mv.py:357-360` — `(body.vocal_gender or "").strip().lower() or None` → `("female","male","neutral")` 검증 후 `None` fallback + warning. 동일 패턴을 upload.py 로 재현 (단, 사양상 잘못된 값 → 400). |
+| UploadPage `vocalGender` state | `UploadPage.jsx:130` — `useState('female')` 기본값. createMVJob payload 에는 이미 전달 중 (`UploadPage.jsx:512, 538, 1198`). **generateCover payload 에는 미전달**. |
+| `generateCover` 헬퍼 | `api/index.js:161` — `(data) => API.post('/upload/generate-cover', data)`. data 객체 통째 전달. **F2 변경 0** — vocal_gender 키 자동 통과. |
+| `handleGenerateCover` 호출 | `UploadPage.jsx:343-376` — 8 키 (title~image_model). **vocal_gender 키 추가만 필요**. |
+
+### 변경 매트릭스
+
+#### Backend (`backend_9004` 만)
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| B1 | `app/routes/upload.py` `GenerateCoverRequest` (46) | 신규 필드 `vocal_gender: Optional[str] = None`. |
+| B1 | `app/routes/upload.py` — `_normalize_vocal_gender` 신규 헬퍼 (모듈 레벨, `_normalize_image_model` 옆 30~) | 입력 `Optional[str]`. `(None,"","   ")` → `None` 통과. 정상 값 (영어 enum / 한국어 별칭) → `("female","male","neutral")`. 잘못된 값 → 별도 sentinel (예: `_INVALID = object()`) 반환 → 라우트에서 400. 패턴은 `mv.py:357-360` 의 정규화 + warning 모델 참고 (단, 잘못된 값 시 사양상 400 강제). |
+| B2 | `app/routes/upload.py` `generate_cover` (174~) | `body.vocal_gender` → `_normalize_vocal_gender` → `_INVALID` 시 400 + `{"error":"지원하지 않는 vocal_gender 입니다. (female, male, neutral)"}`. 정상 시 `norm_vocal_gender` 변수에 저장. `logger.info("generate_cover: image_model=%s vocal_gender=%s user=%s", ...)` 로 기존 로그 라인에 vocal_gender 추가. `generate_cover_image(..., vocal_gender=norm_vocal_gender)` 전달. |
+| B3 | `app/services/cover_generator.py` `generate_cover_image` (24~) | 시그니처 끝(image_model 다음)에 `vocal_gender: Optional[str] = None` 신규 인자. 4분기 prompt 빌더에 성별 문구 주입 (아래 SSOT 참고). `logger.info("[CoverGen] vocal_gender=%s", vocal_gender)` 신규 로그 1줄 (`[CoverGen] image_model=%s` 옆). |
+
+#### Frontend
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| F1 | `frontend/src/pages/UploadPage.jsx` `handleGenerateCover` (343~376) | `api.generateCover({...})` payload 에 `vocal_gender: vocalGender` 한 줄 추가. DEV 가드 `console.info('[UploadPage] generateCover vocal_gender=%s', vocalGender)` 추가 (값만 — PII 아님). |
+| F2 | `frontend/src/api/index.js` `generateCover` (161) | **변경 0**. `(data) => API.post('/upload/generate-cover', data)` — data spread passthrough 패턴이라 신규 키 자동 통과. 확인만. |
+
+### vocal_gender 정규화 매핑 SSOT
+
+| 입력 (사용자/UI) | 정규화 결과 | 비고 |
+|---|---|---|
+| `"female"` | `"female"` | passthrough |
+| `"male"` | `"male"` | passthrough |
+| `"neutral"` | `"neutral"` | passthrough |
+| `"Female"`, `"FEMALE"`, `"  female  "` | `"female"` | `.strip().lower()` |
+| `"여자"`, `"여성"` | `"female"` | 한국어 별칭 |
+| `"남자"`, `"남성"` | `"male"` | 한국어 별칭 |
+| `"중성"`, `"지정 없음"`, `"지정없음"` | `"neutral"` | 한국어 별칭 |
+| `None`, `""`, `"   "` | `None` | 빈/없음 |
+| 그 외 (`"unknown"`, `"queer"`, `"123"`) | `_INVALID` 센티넬 → 400 | 라우트에서 400 |
+
+### prompt 4분기별 성별 문구 SSOT (최종)
+
+성별 표기 (영어):
+- `"female"` → `"female"`
+- `"male"` → `"male"`
+- `"neutral"` → `"neutral / unspecified"`
+- `None` → **4분기 모두 미주입** (byte-level 무회귀 보장)
+
+| 분기 | 위치 (예상) | character 有 + female/male/neutral | character 有 + None | character 無 + female/male/neutral | character 無 + None |
+|---|---|---|---|---|---|
+| 1. Claude enhance system (`cover_generator.py:60-79`) | `enhance_system += " The protagonist is a {gender} subject."` ("must NOT contain any text" 직전 줄에 추가) | 주입 | 미주입 | 주입 (gender 가 `neutral` 이면 `"neutral / unspecified"`) | 미주입 |
+| 2. programmatic [A] character 有 (`cover_generator.py:107-134`) | `prompt_parts.append("Protagonist gender: {gender}.")` (IMPORTANT 캐릭터 단락 다음, 또는 user_prompt 직전) | 주입 (neutral 은 `"Protagonist gender: neutral / unspecified — defer to the reference sheet."`) | 미주입 | (분기 미해당) | (분기 미해당) |
+| 3. programmatic [B] character 無 (`cover_generator.py:135-155`) | `prompt_parts.append("Protagonist gender: {gender}.")` (1:1 aspect 라인 다음 또는 style/user_prompt 직전) | (분기 미해당) | (분기 미해당) | 주입 (neutral 은 `"Protagonist gender: neutral / unspecified."`) | 미주입 |
+| 4. systemInstruction (`cover_generator.py:196-220`) | character 有 분기: `system_text += " The protagonist is a {gender} subject — the reference sheet is canonical for face/hair/features."`. character 無 분기: `system_text += " The protagonist is a {gender} subject."`. (None 시 미주입) | 주입 (character 有 분기) | 미주입 | 주입 (character 無 분기) | 미주입 |
+
+**byte-level 무회귀 보장**: 기존 호출 (`vocal_gender` 미전달 → `None` 디폴트) 의 모든 분기에서 prompt/system 본문 변경 0 → byte 단위 동일. v57 호출 흐름 (프론트가 항상 `vocalGender` 전달, 기본 `'female'`) 에서만 신규 문구가 주입된다.
+
+### Test plan T1~T5
+
+- **T1 — Pydantic 모델 + 정규화 헬퍼 단위**
+  - `vocal_gender="female"` → 정규화 `"female"`
+  - `vocal_gender="여자"` → 정규화 `"female"`
+  - `vocal_gender="MALE"` → 정규화 `"male"`
+  - `vocal_gender="중성"` → 정규화 `"neutral"`
+  - `vocal_gender="invalid"` → `_INVALID` (라우트에서 400)
+  - `vocal_gender=None` → `None` (기존 동작)
+  - `vocal_gender=""` → `None`
+
+- **T2 — `generate_cover_image` 분기별 prompt 빌더 단위 (HTTP mock)**
+  - character 有 + `vocal_gender="male"` + Claude prompt_model → enhance_system 에 `"The protagonist is a male subject."` 포함
+  - character 有 + `vocal_gender="male"` + Claude X → programmatic [A] prompt 에 `"Protagonist gender: male."` 포함 + systemInstruction 에 `"The protagonist is a male subject — the reference sheet is canonical"` 포함
+  - character 無 + `vocal_gender="female"` → programmatic [B] prompt 에 `"Protagonist gender: female."` 포함 + systemInstruction 에 `"The protagonist is a female subject."` 포함
+  - character 有 + `vocal_gender=None` → 4분기 모두 성별 문구 미주입 (byte-level 무회귀)
+  - character 無 + `vocal_gender=None` → 4분기 모두 성별 문구 미주입 (byte-level 무회귀)
+  - `vocal_gender="neutral"` + character 無 → `"Protagonist gender: neutral / unspecified."` 포함
+
+- **T3 — 라우트 통합 (FastAPI TestClient)**
+  - POST `/api/upload/generate-cover` with `{"title":"Test","vocal_gender":"female"}` → 200 + 로그 `vocal_gender=female` + `generate_cover_image` 호출 인자에 `vocal_gender="female"` (monkeypatch 캡처)
+  - POST without `vocal_gender` key → 200 + 로그 `vocal_gender=None` + `generate_cover_image` 호출 인자에 `vocal_gender=None` (회귀)
+  - POST with `vocal_gender="invalid"` → 400 + 에러 메시지
+
+- **T4 — 프론트엔드 정적 검증**
+  - `UploadPage.jsx:343~376` `handleGenerateCover` payload 에 `vocal_gender: vocalGender` 키 존재
+  - DEV `console.info('[UploadPage] generateCover vocal_gender=%s', vocalGender)` 라인 존재
+  - `api/index.js` `generateCover` 헬퍼는 변경 0 (spread passthrough 확인)
+  - Vite build 정상 (회귀)
+
+- **T5 — 회귀**
+  - `generate_cover_image` 기존 호출 (`vocal_gender` 미전달) → prompt 본문 byte-level 동일 (T2 byte 비교 fixture)
+  - v37~v56 단위 테스트 무회귀
+  - v55 image_model 분기 (`nb_pro` / `gpt_image_2`) — vocal_gender 와 직교
+  - v56 씬 cascade — 무관 (씬 cascade 와 cover 는 분리)
+  - v51 cascade — 무관
+  - v50/v50.1 system prompt (씬 분할) — 무관 (cover 와 분리)
+  - Vite build / uvicorn / OpenAPI 정상 — `GenerateCoverRequest` schema 에 `vocal_gender` 노출 확인
+
+### 체크리스트
+
+- [ ] B1 `app/routes/upload.py` `GenerateCoverRequest.vocal_gender` 신규 필드 + `_normalize_vocal_gender` 헬퍼
+- [ ] B2 `app/routes/upload.py` `generate_cover` 라우트에서 정규화 + 400 처리 + 로그 + `generate_cover_image` 에 전달
+- [ ] B3 `app/services/cover_generator.py` `generate_cover_image` 시그니처 확장 + 4분기 prompt 빌더 성별 문구 + `[CoverGen] vocal_gender` 로그
+- [ ] F1 `frontend/src/pages/UploadPage.jsx` `handleGenerateCover` payload + console.info
+- [ ] F2 `frontend/src/api/index.js` 확인 (변경 0)
+- [ ] T1~T5 테스트
+- [ ] REPORT.md v57 append
+
+### 추적자 (server.log / frontend.log)
+
+- `generate_cover: image_model=%s vocal_gender=%s user=%s` — `upload.py:generate_cover` (기존 라인 확장)
+- `[CoverGen] vocal_gender=%s` — `cover_generator.py:generate_cover_image` 진입부
+- 프론트 (`frontend.log` v46-pre 캡처): `[UploadPage] generateCover vocal_gender=%s`
+
+### "디버깅 로그 심기" 규칙
+
+- 위 키워드 모두 server.log / frontend.log 에서 v57 흐름 추적 가능.
+- vocal_gender 는 enum 값(female/male/neutral/None) — PII 아님, 값 그대로 로깅 OK.
+- ANTHROPIC_API_KEY / GOOGLE_API_KEY 본문 절대 미출력 (기존 정책 유지).
+- prompt 본문 미출력 (기존 정책) — 4분기 prompt 도 별도 로깅 없음 (분기 진입은 image_model / vocal_gender 로그로 충분).
+
+### v50/v50.1 / v51~v56 무회귀
+
+- v50/v50.1 system prompt (씬 분할) — 변경 X. 커버 system prompt 만 확장.
+- v51~v54 cascade (씬 단위) — 무관. 커버는 cascade 비대상.
+- v55 image_model (`nb_pro`/`gpt_image_2`) — 직교. vocal_gender 가 prompt 본문에 들어가고, image_model 은 prompt 전달 경로만 결정.
+- v56 씬 한국어/영어 cascade — 무관. 커버는 영어 단일 prompt.
+- 기존 호출 (`vocal_gender` 미전달 → `None`) — 4분기 모두 문구 미주입 → prompt/system 본문 byte-level 동일 → 출력 이미지 모델 입력 byte 동일 → **byte-level 무회귀**.
+
+## v58 — 2026-05-12 — 커버 멀티턴 추가 수정 + 이력 + 되돌리기
+
+### 배경
+
+v57 까지의 커버 생성은 "백지에서 한 번에 한 장" 모드. 사용자가 결과를 보고 "주인공 머리만 단발로 바꾸고 나머지는 유지" 같은 부분 수정을 원해도, 기존 [다시 생성] 은 시드/프롬프트 부분 변화로도 얼굴·의상·배경 모두가 바뀐다.
+
+v58 은 신규 **[추가 수정]** 플로우를 도입한다 — 현재 커버 PNG 를 ref 이미지로 첨부하고 사용자 변경 요청만 적용하는 **image-to-image 멀티턴 편집**. 기존 [다시 생성] 은 그대로 유지(백지 재생성), 두 버튼이 공존.
+
+### Plan verification findings (Step 0 결과)
+
+| 항목 | 확인 결과 |
+|---|---|
+| v57 머지 상태 | **완료**. `routes/upload.py:46~83` `_normalize_vocal_gender` + `_INVALID_VOCAL_GENDER` 헬퍼 정의됨. `GenerateCoverRequest.vocal_gender` (line 98) 신규 필드 추가됨. `generate_cover` 라우트 230~313 라인에 정규화/400/로그/`generate_cover_image(..., vocal_gender=norm_vocal_gender)` 전달 완료. `cover_generator.py:35` 시그니처 끝에 `vocal_gender: str = None` 추가됨, 4분기 prompt 빌더 (60~263) 모두 성별 문구 주입 로직 머지. 프론트 `UploadPage.jsx:130` `vocalGender` state + `:353` console.info + `:364` `generateCover` payload 키 + `:512/538/1198` createMVJob payload 모두 머지. **v58 은 v57 위에 적층**. |
+| `generate_cover_image` 시그니처 | `cover_generator.py:24-35` — 11 인자. v58 은 이 함수에 손대지 않고 **신규 `refine_cover_image` 를 같은 모듈에 추가**한다 (시그니처 분리 — 무회귀 보장). |
+| `generate_cover` 라우트 응답 | `upload.py:330-335` — `{image_url, object_name, image_model, message}`. **현재 응답에 generation_id / session_id 없음**. 커버는 "잠시 화면에 띄우는 임시 산출물" 로만 다뤄지고 Mongo `generations` 컬렉션과는 분리됨. |
+| `generations` 컬렉션 | `routes/generate.py:356` 등 — 음원 생성 잡 전용. **커버 단독 도큐먼트 없음**. 사용자가 트랙 등록 시 `tracks.cover_image_url` 만 채워짐. |
+| **사양 ↔ 코드 갭 (중요)** | 사양은 `generation_id` 로 어느 곡의 커버인지 식별하라고 하나, **현재 커버는 generation 과 1:N 결합 전 단계에서 생성**된다. 해결안: 신규 **`cover_sessions`** Mongo 컬렉션을 도입. [다시 생성] 응답에 `cover_session_id` 추가 → 같은 세션 안에서 [추가 수정]/[되돌리기]/[이력 조회] 수행. 본 PLAN/REPORT 에서는 일관성·정확성을 위해 `cover_session_id` 로 명명한다 (사양의 `generation_id` 파라미터와 동일 의미). |
+| `openai_image.generate_image` | `openai_image.py:133-189` — `prompt + ref_images: Optional[list] = None`. ref_images 비어있으면 `/v1/images/generations`, 1개 이상이면 `/v1/images/edits`. v58 refine 호출 시 `ref_images=[current_cover_bytes]` 그대로 사용 → v55 인프라 재사용. 최대 10장. |
+| Gemini path | `cover_generator.py:206-225` — request_parts 에 `{"text": prompt}` + character/location PNG 의 `inlineData`. refine 시 동일 패턴으로 current_cover_bytes 을 `inlineData` 로 첨부. |
+| `generateCover` 헬퍼 | `frontend/src/api/index.js:161` — `(data) => API.post('/upload/generate-cover', data)` 스프레드 패스스루. F4 에서 3개 신규 헬퍼만 추가. |
+| UploadPage 커버 카드 | `UploadPage.jsx:343-379` `handleGenerateCover` — 기존 [다시 생성] 버튼 로직. v58 은 같은 영역에 [추가 수정] 버튼/모달 + 이력 패널 + 확인 다이얼로그를 신규 추가. |
+| v50/v50.1 sentinel | 씬 분할 system prompt 영역. 커버 영역과 분리 → 무관. |
+
+### 결정 사항 (Q1~Q4)
+
+| 질문 | 결정 |
+|---|---|
+| Q1 — 수정 이력 표시 | **(b) 누적 표시** — 모든 버전을 collapsible `<details>` 안에 펼쳐 보기. |
+| Q2 — 이전 버전 되돌리기 | **(b) 가능** — 클릭 시 그 버전이 현재 커버가 됨. **단순화 결정: history 자체는 변경하지 않음** (target 이후 버전 폐기 X, 그대로 보존 — 사용자가 다시 점프 가능). `current_version` 만 교체. |
+| Q3 — 이미지 모델 선택 | **(b) 처음 커버 생성 시 모델 그대로** — `cover_sessions.image_model` 에 박제. refine 시 사용자 변경 불가. |
+| Q4 — [다시 생성] 시 refine_history 처리 | **(a) 초기화** — 신규 cover_session_id 발급, 옛 history 폐기. 프론트는 폐기 전 확인 다이얼로그. |
+
+### 변경 매트릭스
+
+#### Backend (`backend_9004` 만)
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| B1 | `app/services/cover_generator.py` | 신규 async 함수 `refine_cover_image(current_cover_bytes, refine_prompt, image_model="nb_pro", title=None, genre=None, mood=None) -> bytes` (~100~120줄). prompt 빌더 + ABSOLUTE RULE + image_model 분기 + 1회 retry. 기존 `generate_cover_image` 무변경 (byte-level 무회귀). |
+| B2 | `app/routes/upload.py` | 기존 `generate_cover` 응답에 `cover_session_id` 추가 + Mongo `cover_sessions` 도큐먼트 신규 insert (v0 entry 1개 + `image_model` 박제 + `user_id` + `created_at`). 매 호출 시 신규 session insert (옛 session cleanup 별도). |
+| B3 | `app/routes/upload.py` | 신규 라우트 `POST /api/upload/refine-cover`. `RefineCoverRequest{cover_session_id: str, refine_prompt: str}`. 처리: session 로드 → 현재 cover_object_name 으로 MinIO PNG bytes 로드 → session.image_model 사용 → `refine_cover_image(...)` 호출 → MinIO 신규 PNG 저장 (`covers/refined/{user_id}/{session_id}/v{N}.png`) → session 도큐먼트 업데이트 (cover_object_name 교체 + refine_history append + current_version 증가). history cap 10. |
+| B4 | `app/routes/upload.py` | 신규 라우트 `POST /api/upload/revert-cover`. `RevertCoverRequest{cover_session_id: str, target_version: int}`. 처리: session 로드 → history 에서 target_version 찾음 → 못 찾으면 404 → 찾으면 session.cover_object_name + current_version 만 교체 (history 자체 보존). |
+| B5 | `app/routes/upload.py` | 신규 라우트 `GET /api/upload/cover-history/{cover_session_id}`. 권한: 본인 session 만. 응답 `{cover_session_id, current_version, image_model, cover_refine_history: [...]}`. session 없으면 404. |
+| B6 | Mongo schema (운영 작업) | 신규 컬렉션 `cover_sessions`. 인덱스 `{user_id: 1, created_at: -1}` (선택 — 사용량 적어 즉시 압박 없음, lazy 생성 가능). 도큐먼트 스키마 아래 참조. backward-compat: 옛 [다시 생성] 응답 (v57) 은 cover_session_id 없이도 200 (프론트가 신규 키만 옵션적으로 읽음). |
+
+#### Frontend
+
+| ID | 파일 | 변경 |
+|---|---|---|
+| F1 | `frontend/src/pages/UploadPage.jsx` | 커버 카드에 [추가 수정] 버튼 추가 (기존 [다시 생성] 옆). 클릭 시 인라인 펼침 영역 — `<textarea maxLength=500>` + [수정 실행] / [취소]. 신규 state: `coverSessionId`, `showRefinePanel`, `refinePrompt`, `refining`. 수정 실행 → `api.refineCover(coverSessionId, refinePrompt)` → 응답 새 cover로 교체. |
+| F2 | `frontend/src/pages/UploadPage.jsx` | 커버 카드 하단 수정 이력 collapsible `<details><summary>📜 수정 이력 (n개)</summary>...</details>`. 버전 리스트 — `v3 (현재)`, `v2 [되돌리기]`, `v0 (원본)`. 각 [되돌리기] → `api.revertCover(coverSessionId, version)`. 신규 state: `coverHistory` (배열). |
+| F3 | `frontend/src/pages/UploadPage.jsx` | 기존 [다시 생성] 버튼 클릭 시, history 가 있으면 확인 다이얼로그 — "다시 생성하면 현재 수정 이력 X개가 폐기됩니다." [폐기하고 다시 생성] / [취소]. 확인 후 `handleGenerateCover` 가 정상 실행 → 응답의 `cover_session_id` 로 state 교체, history 초기화. |
+| F4 | `frontend/src/api/index.js` | 신규 헬퍼 3개: `refineCover(cover_session_id, refine_prompt)` POST `/upload/refine-cover` ; `revertCover(cover_session_id, target_version)` POST `/upload/revert-cover` ; `getCoverHistory(cover_session_id)` GET `/upload/cover-history/{id}`. 기존 `generateCover` 변경 0. |
+| F5 | `frontend/src/pages/UploadPage.jsx` | 디버깅 로그 (DEV 가드, refine_prompt 본문 미출력): `console.info('[UploadPage] refine cover', {cover_session_id, len: refinePrompt.length})`, `console.info('[UploadPage] revert cover', {cover_session_id, version})`, `console.error('[UploadPage] refine cover failed', {err: err?.message})`. |
+
+### API spec (v58 신규 3 + 기존 1 확장)
+
+**POST `/api/upload/generate-cover` (기존 — 응답 확장)**
+
+요청: 변경 없음 (v57 그대로).
+응답 (v58 확장):
+```json
+{
+  "image_url": "/api/upload/cover-preview/covers/generated/{user_id}/{uuid}.png",
+  "object_name": "covers/generated/{user_id}/{uuid}.png",
+  "image_model": "nb_pro" | "gpt_image_2",
+  "cover_session_id": "ObjectId-str (v58 신규)",
+  "message": "커버 이미지가 생성되었습니다."
+}
+```
+backward-compat: 옛 클라이언트는 `cover_session_id` 무시.
+
+**POST `/api/upload/refine-cover` (신규)**
+
+```http
+POST /api/upload/refine-cover
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{
+  "cover_session_id": "ObjectId-str",
+  "refine_prompt": "머리 길이를 단발로 바꿔주세요"
+}
+```
+응답 200:
+```json
+{
+  "cover_object_name": "covers/refined/{user_id}/{session_id}/v{N}.png",
+  "current_version": 3,
+  "cover_refine_history": [
+    {"version":0,"object_name":"covers/generated/.../uuid.png","refine_prompt":null,"image_model":"nb_pro","created_at":"..."},
+    {"version":1,"object_name":"...","refine_prompt":"...","image_model":"nb_pro","created_at":"..."},
+    {"version":2,"object_name":"...","refine_prompt":"...","image_model":"nb_pro","created_at":"..."},
+    {"version":3,"object_name":"...","refine_prompt":"...","image_model":"nb_pro","created_at":"..."}
+  ]
+}
+```
+오류:
+- 400 — refine_prompt 길이 0 또는 >500
+- 404 — cover_session_id not found / 권한 없음 (보안상 동일 메시지)
+- 500 — image 생성 실패
+
+**POST `/api/upload/revert-cover` (신규)**
+
+```http
+POST /api/upload/revert-cover
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{
+  "cover_session_id": "ObjectId-str",
+  "target_version": 1
+}
+```
+응답 200:
+```json
+{
+  "cover_object_name": "covers/refined/.../v1.png",
+  "current_version": 1
+}
+```
+오류:
+- 400 — target_version < 0 또는 정수 아님
+- 404 — session 없음 / target_version 없음
+
+**GET `/api/upload/cover-history/{cover_session_id}` (신규)**
+
+응답 200:
+```json
+{
+  "cover_session_id": "ObjectId-str",
+  "current_version": 2,
+  "image_model": "nb_pro",
+  "cover_refine_history": [...]
+}
+```
+오류:
+- 404 — session 없음 / 권한 없음
+
+### Mongo schema (`cover_sessions` 신규 컬렉션)
+
+```
+{
+  _id: ObjectId,
+  user_id: str,
+  image_model: "nb_pro" | "gpt_image_2",
+  cover_object_name: str,
+  current_version: int,
+  cover_refine_history: [
+    {
+      version: int,
+      object_name: str,
+      refine_prompt: str | None,
+      image_model: str,
+      created_at: datetime
+    },
+    ...
+  ],
+  created_at: datetime,
+  updated_at: datetime
+}
+```
+- 인덱스 (선택): `{user_id: 1, created_at: -1}`.
+- history cap: 10 (refine 시 cap 초과 → 가장 옛 entry drop). version 번호는 cap 영향 받지 않고 단조 증가.
+
+### refine_cover_image prompt 설계 (B1)
+
+**ABSOLUTE RULE 한 줄** (4분기 공통):
+```
+ABSOLUTE RULE: Do NOT change anything other than what the user explicitly requests. Preserve face identity, outfit, background, color tone, and composition from the reference image as faithfully as possible.
+```
+
+**Prompt 본문 (영어, image_model 무관)**:
+```
+This is an image-to-image refinement task. Take the attached reference image as the canonical starting point and apply ONLY the following user-requested change:
+
+USER CHANGE REQUEST: "{refine_prompt}"
+
+CONTEXT (best-effort, do not introduce conflicting elements):
+- Song title: "{title}"
+- Genre: {genre}
+- Mood: {mood}
+
+ABSOLUTE RULE: Do NOT change anything other than what the user explicitly requests. Preserve face identity, outfit, background, color tone, and composition from the reference image as faithfully as possible.
+
+The image must NOT contain any text or letters.
+```
+
+**image_model 분기**:
+- `nb_pro` (Gemini): request_parts = `[{"text": prompt}, {"inlineData": {mimeType:"image/png", data: base64(current_cover_bytes)}}]`. systemInstruction 에도 동일 ABSOLUTE RULE 포함. 1회 retry.
+- `gpt_image_2` (OpenAI): `await openai_image.generate_image(prompt=prompt, ref_images=[current_cover_bytes], size="2048x2048", quality="high")`. retry 는 openai_image 내부 1회.
+
+**로그**:
+- `[CoverRefine] image_model=%s refine_prompt_len=%d` — 함수 진입부.
+- `[CoverRefine] gemini HTTP status=%d` — nb_pro 분기.
+- `[CoverRefine] success bytes=%d` — 성공.
+- `[CoverRefine] failed: <class>: <msg[:200]>` — 실패.
+
+### B2~B5 라우트 로그
+
+- `[CoverSession] new session=%s user=%s image_model=%s` — generate-cover 안 신규 session insert 시.
+- `[RefineCover] session=%s user=%s prompt_len=%d image_model=%s new_version=%d` — refine-cover 성공.
+- `[RefineCover] session=%s not_found user=%s` — 404.
+- `[RevertCover] session=%s target_version=%d prev_version=%d user=%s` — revert 성공.
+- `[CoverHistory] session=%s entries=%d user=%s` — GET cover-history.
+
+### Test plan T1~T7
+
+- **T1 — `refine_cover_image` 단위 (nb_pro)**: mock Gemini HTTP. request_parts 안에 ref inlineData + USER CHANGE REQUEST + ABSOLUTE RULE substring 포함 확인. 응답에서 PNG bytes 정상 추출.
+
+- **T2 — `refine_cover_image` 단위 (gpt_image_2)**: `openai_image.generate_image` 를 monkeypatch. 호출 인자 캡처해서 `ref_images=[current_cover_bytes]`, prompt 안에 USER CHANGE REQUEST + ABSOLUTE RULE 포함 확인. 반환 PNG bytes 패스스루.
+
+- **T3 — `POST /refine-cover` 통합**: 신규 cover_session 도큐먼트 생성 (테스트 전제) → POST 호출 → MinIO 신규 PNG 저장 path 가 `covers/refined/{user}/{session}/v1.png` 형식 → Mongo `cover_sessions` 업데이트 검증 (cover_object_name 교체, history append [version=1], current_version=1). 권한: 다른 사용자 호출 시 404.
+
+- **T4 — `POST /revert-cover`**: history 3개 (v0/v1/v2) 있는 session 에서 target_version=1 호출 → cover_object_name = v1 entry.object_name, current_version=1, history 그대로 유지 (3개). 잘못된 version (=99) → 404. 음수 → 400.
+
+- **T5 — [다시 생성] 시 신규 session (Q4 a)**: cover_session_id=X (history 5개) 보유한 클라이언트가 `POST /generate-cover` 호출 → 응답에 신규 cover_session_id=Y (X 와 다름). Mongo `cover_sessions` 에 Y 도큐먼트 신규 insert (v0 1개). X 는 그대로 (운영 cleanup 별도). 프론트는 X 무시, Y 만 사용.
+
+- **T6 — 프론트**: [추가 수정] 버튼 + textarea 모달. 수정 이력 collapsible 펼침/닫힘. 되돌리기 → revertCover mock 호출. [다시 생성] 시 history 가 있으면 다이얼로그, 없으면 즉시 호출. `frontend.log` 에 `[UploadPage] refine cover` / `[UploadPage] revert cover` 라인 출현.
+
+- **T7 — 회귀**: v37~v57 모두 무회귀. 특히:
+  - v55 image_model 분기 — refine 도 같은 분기 패턴, ref 이미지 활용만 다름.
+  - v57 vocal_gender — refine 에는 미주입 (사용자가 그 부분도 바꾸려면 refine_prompt 안에 명시). v57 [다시 생성] 흐름 byte-level 동일.
+  - 옛 [다시 생성] 클라이언트 — 응답 신규 키 무시해도 정상.
+  - Vite build / uvicorn / OpenAPI 정상.
+  - v50/v50.1 sentinel — 무관.
+
+### 체크리스트
+
+- [ ] B1 `app/services/cover_generator.py` — `refine_cover_image` async 함수 신규 (nb_pro/gpt_image_2 분기, ABSOLUTE RULE, 1회 retry, 로그)
+- [ ] B2 `app/routes/upload.py` — `generate_cover` 라우트 응답에 `cover_session_id` 추가 + `cover_sessions` v0 insert
+- [ ] B3 `app/routes/upload.py` — `POST /refine-cover` 라우트 + `RefineCoverRequest` 모델 + history cap 10
+- [ ] B4 `app/routes/upload.py` — `POST /revert-cover` 라우트 + `RevertCoverRequest`
+- [ ] B5 `app/routes/upload.py` — `GET /cover-history/{cover_session_id}` 라우트
+- [ ] B6 Mongo `cover_sessions` — 인덱스 권장 (선택)
+- [ ] F4 `frontend/src/api/index.js` — `refineCover` / `revertCover` / `getCoverHistory` 헬퍼 3개
+- [ ] F1 `frontend/src/pages/UploadPage.jsx` — [추가 수정] 버튼 + 펼침 영역(textarea + 실행/취소)
+- [ ] F2 `frontend/src/pages/UploadPage.jsx` — 수정 이력 `<details>` 패널 + 되돌리기 버튼
+- [ ] F3 `frontend/src/pages/UploadPage.jsx` — [다시 생성] 확인 다이얼로그 (history.length>0 일 때만)
+- [ ] F5 `frontend/src/pages/UploadPage.jsx` — DEV 가드 console.info 3종 (refine/revert/error)
+- [ ] T1~T7 테스트
+- [ ] REPORT.md v58 append
+
+### 추적자 (server.log / frontend.log)
+
+- `[CoverRefine] image_model=%s refine_prompt_len=%d` — `cover_generator.py:refine_cover_image` 진입부
+- `[CoverRefine] gemini HTTP status=%d` — Gemini 응답 코드 (nb_pro)
+- `[CoverRefine] success bytes=%d` / `[CoverRefine] failed: <class>: <msg[:200]>`
+- `[CoverSession] new session=%s user=%s image_model=%s` — generate-cover 안 신규 session insert
+- `[RefineCover] session=%s user=%s prompt_len=%d image_model=%s new_version=%d` — refine-cover 성공
+- `[RefineCover] session=%s not_found user=%s` — 404
+- `[RevertCover] session=%s target_version=%d prev_version=%d user=%s` — revert 성공
+- `[CoverHistory] session=%s entries=%d user=%s` — GET cover-history
+- 프론트 (`frontend.log` v46-pre 캡처): `[UploadPage] refine cover {cover_session_id, len}`, `[UploadPage] revert cover {cover_session_id, version}`, `[UploadPage] refine cover failed {err}`
+
+### "디버깅 로그 심기" 규칙
+
+- 위 추적자 키워드로 `server.log` / `frontend.log` 에서 v58 흐름 추적 가능.
+- **refine_prompt 본문 절대 미출력** — 길이만 (PII / 사용자 시나리오 가능성).
+- ANTHROPIC_API_KEY / GOOGLE_API_KEY / OPENAI_API_KEY 본문 절대 미출력.
+- cover_session_id / version 은 ID/숫자 — 로깅 OK.
+- PNG bytes 크기 로깅 OK.
+
+### v50/v50.1 / v51~v57 무회귀
+
+- v50/v50.1 system prompt (씬 분할) — 변경 X. 커버 영역 분리.
+- v51~v54 cascade (씬 단위) — 무관.
+- v55 image_model — 직교. refine 도 같은 image_model 박제값 사용.
+- v56 씬 한국어/영어 cascade — 무관.
+- v57 vocal_gender — `generate_cover_image` 시그니처/4분기 prompt 본문 변경 X. refine 은 신규 함수 `refine_cover_image` 로 완전 분리. v57 [다시 생성] 호출 흐름 byte-level 동일.
+- 옛 클라이언트 (cover_session_id 미사용) — 기존 [다시 생성] 응답에 신규 `cover_session_id` 키 추가만 됨 → 무시해도 정상.
+
+### 비용 견적
+
+- refine 1회 = Gemini gemini-3-pro-image-preview 호출 1회 (≈ $0.04) 또는 GPT Image 2 edits 1회 (≈ $0.07). 사용자 직접 트리거 → 자율 통제.
+- Mongo 도큐먼트 — session 당 ~1KB (history 10개 cap). 무시 수준.
+
+
+---
+
+## v59 — Phase 1.5 자산 hang 재진단 + 품질 우선 옵션 A 적용 (2026-05-13)
+
+### 요청
+
+사용자 인용: "내 입장에선 생성하는데 오래걸리더라도 품질이 높아야해."
+- 직전 v58.2 핫픽스로 `size="1024x1024"` 로 떨어뜨린 1K 패치를 되돌리고, 2K 그대로 유지하면서 timeout 을 늘려 해결한다.
+- 사용자가 실제 기다린 시간은 **약 5분**. "1시간 응답 없음" 알림은 내가 진단 도중 Mongo `update_one` 으로 강제 `failed` 마킹한 결과가 프론트로 흘러간 것이며, 실 hang 시간이 아니다.
+
+### Plan verification findings (코드 사실 — 2026-05-13 확인)
+
+| # | 파일 / 라인 | 현재 동작 | 비고 |
+| --- | --- | --- | --- |
+| F1 | `backend_9004/app/services/mv_assets.py:86-93` | GPT Image 2 분기에서 `size="1024x1024"` 로 호출 (v58.2 직전 핫픽스로 떨어진 상태) | 사용자 의도(품질 우선)와 정반대 — 되돌려야 함 |
+| F2 | `backend_9004/app/services/openai_image.py:78` | `_call_generations` httpx timeout = 600.0s | 2K + ref 첨부 시 1~5분 소요. 600s 도 정상 응답 직전 timeout 떨어질 수 있음 |
+| F3 | `backend_9004/app/services/openai_image.py:114` | `_call_edits` httpx timeout = 600.0s | 동일 우려 |
+| F4 | `backend_9004/app/services/mv_pipeline.py:1723` | Phase 1.5 진입 시 `{"status":"generating_assets","progress":5}` 단일 update | 자산 N개 끝날 때까지 `progress` 변화 없음 → 프론트 사용자 입장에선 "멈춤" 으로 보임 |
+| F5 | `backend_9004/app/services/mv_pipeline.py:1854-1858` | `asyncio.gather(*tasks, return_exceptions=True)` — 외부 wait_for 없음 | 한 호출이 영구 hang 시 전체 잡 무한 대기 가능 |
+| F6 | `backend_9004/app/services/mv_pipeline.py:1684-1685` | Phase 1.5 예외 발생 시 `logger.warning("Phase1.5 failed (continuing): %s", e)` 후 swallow | 자산 완전 실패도 진행 — 후속 Phase 2 가 ref 없이 진행되어 품질 저하. 사용자에게 명시적 실패 통지 누락 |
+| F7 | `frontend/src/pages/UploadPage.jsx:300` | `startMvPolling` 활성 상태 목록에 `'generating_assets'` 빠져있음 | Phase 1.5 동안 폴링이 시작되지 않을 수 있음 |
+| F8 | `frontend/src/pages/UploadPage.jsx:1443-1453` | `getStatusMessage` switch 에 `'generating_assets'` case 없음 → `default: '처리 중...'` | 사용자 입장에서 어느 단계인지·얼마나 걸릴지 안내 없음 |
+| F9 | `backend_9004/app/services/mv_assets.py:18` | `logger = logging.getLogger(__name__)` 정의됨. `_generate_asset_image` 에 [AssetGen] 진입 로그는 있으나 완료/elapsed 로그 없음 | 진단을 위한 종료 시각/소요 시간 누락 |
+| F10 | `backend_9004/app/routes/upload.py` (cover_image_model 처리) | `'gpt_image_2'` 정상 통과 (v55부터) | 이 작업과 무관 — 회귀 확인용 |
+| F11 | `frontend/src/utils/remoteLogger.js` | 존재 — console 로그 → 백엔드 frontend.log 전송 인프라 가동 중 | 신규 console.* 호출은 자동 전송됨 |
+
+### 진단 재정정 (사용자 정정 반영)
+
+**잘못된 가정 (v58.2 진단)**: "1시간 hang → GPT Image 2 + 2K 자산 호출이 영원히 멈춰있다 → 해상도를 1K 로 낮춰야 한다."
+
+**정정 (v59 진단)**:
+- 실제 사용자 대기 시간 = ~5분 (15:12:28 Phase 1.5 진입 → 15:17 부근 사용자가 보고)
+- "1시간 응답 없음" 알림은 진단자(=어시스턴트)가 Mongo 에 강제 마킹한 결과의 표시
+- 5분이면 GPT Image 2 + 2K + ref 자산 1~4개가 정상 처리 중이었을 가능성이 매우 높음
+- 사용자의 "멈춤" 인식은 ① 프론트 progress 가 5% 에서 정지, ② 단계 안내 텍스트 누락(`default: '처리 중...'`) 때문이며, 실제 백엔드 hang 이 아니었을 확률이 높음
+- 따라서 사용자 의도(품질 우선)는 합당하며, **timeout 확장 + 진행 표시 개선** 으로 충분히 해결 가능
+
+### 옵션 A — 변경 매트릭스
+
+| # | 파일 | 변경 | 추적자/로그 | 담당 |
+| --- | --- | --- | --- | --- |
+| C1 | `backend_9004/app/services/mv_assets.py:86-93` | `size="1024x1024"` → `size="2048x2048"`. v58.2 주석 제거 후 "v59: 품질 우선 — 2K 유지" 주석 | `[AssetGen]` (기존 prefix 유지) | backend-dev |
+| C2 | `backend_9004/app/services/mv_assets.py:_generate_asset_image` | 진입 + 완료(`elapsed_ms`) + 실패 시 elapsed 로그 추가 (try/except 감싸기) | `[AssetGen] job=? asset_kind=? elapsed_ms=?` | backend-dev |
+| C3 | `backend_9004/app/services/openai_image.py:78` | `httpx.AsyncClient(timeout=600.0)` → `1800.0` (30분) | `[OpenAIImage]` (기존) | backend-dev |
+| C4 | `backend_9004/app/services/openai_image.py:114` | 동일 | 동일 | backend-dev |
+| C5 | `backend_9004/app/services/mv_pipeline.py:run_phase1_5_assets` | progress 단계화: 진입=5 → 각 asset 완료 시 5 + floor((완료수 / 전체수) * 3) → 종료=8. 그리고 `asyncio.wait_for(asyncio.gather(...), timeout=2400)` 로 외부 가드 (40분). 자산 0개 성공 시 `status='failed'`, `error_message`. 부분 실패는 warning 만. | `[Phase1.5] job=? total_assets=? completed=? elapsed_ms=?` | backend-dev |
+| C6 | `backend_9004/app/services/mv_pipeline.py:1684` | `try/except` 의 swallow 자체는 유지하되 (Phase1.5 가 막혀도 후속 phase 가 ref 없이라도 진행되는 게 사용자 입장에선 더 나음), 단 **자산 0개 + total>0** 인 경우는 위 C5 에서 `failed` 로 명시 마킹하여 swallow 와 구분 | 동일 | backend-dev |
+| C7 | `frontend/src/pages/UploadPage.jsx:300` | `startMvPolling` 활성 목록에 `'generating_assets'` 추가 | `console.info("[UploadPage] polling start", ...)` 는 기존 패턴 따라감 | frontend-dev |
+| C8 | `frontend/src/pages/UploadPage.jsx:1443-1453` | `getStatusMessage` switch 에 `case 'generating_assets'` 추가 — `"주인공/장소 자산 생성 중... (최대 30분 소요 가능, ${progress}%)"` | — | frontend-dev |
+| C9 | `frontend/src/pages/UploadPage.jsx:312-335` | `mapStatusToStep` 에 `'generating_assets'` → 1 (또는 1.2) 매핑 추가하여 step 인디케이터 누락 방지 | — | frontend-dev |
+
+### 디버깅 로그 매트릭스 (재강조)
+
+- **backend-dev**: 모든 신규/수정 함수에 `job_id` 를 로그 prefix 또는 키워드로 포함. 외부 호출(httpx) 전후 진입/완료/elapsed_ms 명시. except 블록에서 `logger.exception` 사용하고 컨텍스트(job_id, asset_kind, image_model) 첨부. 민감 정보(API 키, b64 페이로드 전체) 금지.
+- **frontend-dev**: `[UploadPage]` prefix. 폴링 시작/단계 전환은 `console.info`, 예상외 분기 `console.warn`, API 실패 `console.error`. `remoteLogger` 자동 전송됨.
+
+### 테스트 계획 (tester)
+
+1. **회귀 — nb_pro 경로**: cover_image_model=`nb_pro` 로 신규 잡 생성. Phase 1.5 정상 진입·완료, assets 도큐먼트 populate 확인.
+2. **2K 경로 — gpt_image_2 (사용자 우선 케이스)**: cover_image_model=`gpt_image_2` 로 신규 잡 생성. Phase 1.5 에서 `[AssetGen]` 로그 진입/완료/elapsed_ms 출력 확인. 5분~20분 사이 응답 예상. 그동안 프론트에 "주인공/장소 자산 생성 중... (최대 30분 소요 가능, X%)" 표시 확인. progress 가 5→6→7→8 단계로 갱신되는지 확인.
+3. **타임아웃 가드**: 백엔드에서 `openai_image.py` timeout 값이 1800.0 인지 grep 으로 검증.
+4. **wait_for 가드 (failure injection 없이 정적 검사)**: `mv_pipeline.py:run_phase1_5_assets` 에 `asyncio.wait_for` 가 포함됐는지 grep.
+5. **자산 0개 실패 시나리오 (옵션, OPENAI_API_KEY 일시 무효화)**: total=>0 인데 assets 도큐먼트가 비면 status=`failed` + error_message 가 세팅되는지 확인. (회귀 위험 있으므로 staging 잡에서만 진행)
+6. **프론트 폴링**: jobId 존재 + status=`generating_assets` 진입 시 폴링이 시작되어 progress 가 실시간 갱신되는지 확인.
+7. **로그 동작 검증**: `tail -f backend_9004/logs/server.log | grep AssetGen` 으로 신규 로그 라인 한 케이스라도 잡힘 확인 — 로그 미동작도 버그.
+
+### 회귀 위험 지점
+
+- `mv_pipeline.run_phase1_5_assets` 의 `wait_for` 가드 잘못 설정 시 정상 길이의 자산 생성을 잘라먹을 수 있음 → 2400s(40분) 로 여유 있게.
+- progress 단계 update 가 자주 발생하면 mongo write 부하 증가. asset 개수는 보통 4 이하라서 무시 수준.
+- `_generate_asset_image` 의 try/except 감싸기에서 기존 raise 경로 보존 — 호출자가 None/예외로 받는 의미가 안 바뀌어야 함.
+
+
+
+---
+
+## v60 — description/시드/Phase 2.5 통합 패키지 (2026-05-13)
+
+### 요청 (3개 영역)
+
+1. **영어 description 활성화**: 사용자 설명 "이미지에는 안 보이는 행동의 미세 디테일·감정 톤·맥락" 을 영상 모델에 전달. 한글 description_ko 와 대칭으로 영어 description 도 LLM 이 별도 생성. image_prompt(시각)/video_prompt(카메라)와 역할 분리.
+2. **Phase 2.5 이미지 5MB 제한 우회 + fallback 폭주 제거** (옵션 B): Claude 첨부 직전 PIL thumbnail(1024) + JPEG q85 압축. "Smooth cinematic..." 강제 fallback 제거 → 실패 시 Phase 1b 의 video_prompt 그대로 유지.
+3. **시드 변주**: 시드 있으면 4개 후보 **모두** 시드 기반 + `magical_mechanism` / `character_dynamics` / `progression` 3차원 중 둘 이상 변주. 시드 없을 때만 기존 archetype 다양성.
+
+### Plan verification findings (코드 사실)
+
+| # | 파일 / 라인 | 현재 동작 |
+| --- | --- | --- |
+| F1 | `mv_generator.py:3069-3162` (SCENE_SPLIT_SYSTEM_PROMPT_TEMPLATE) | JSON 스키마에 영어 description 없음. image_prompt/video_prompt 만. |
+| F2 | `mv_generator.py:3164-3243` (SCENE_GENERATE_SYSTEM_PROMPT_TEMPLATE) | 동일. |
+| F3 | `mv_generator.py:3247-3350` (SECTION_SCENE_PLAN_SYSTEM_PROMPT_TEMPLATE) | 동일. clip 단위. |
+| F4 | `mv_generator.py:3632` | `"description": image_prompt` 미러링 — LLM 영어 description 무시. |
+| F5 | `mv_generator.py:1072-1084` (_format_user_event_seed_block_stage1) | "최소 1개만 시드 기반" 의도된 동작. |
+| F6 | `mv_generator.py:328-470` (generate_video_prompts_from_images) | Claude/Gemini 첨부 시 image_bytes PNG 그대로 base64 → 5MB 초과로 거부. |
+| F7 | `mv_generator.py:420/424/463/467` | 실패 시 `return "Smooth cinematic camera movement, slow dolly forward."` |
+| F8 | `mv_pipeline.py:2176` | Phase 2.5 except 블록에서 `scenes[i]["video_prompt"] = "Smooth..."` 강제 박기 — Phase 1b 의 좋은 video_prompt 까지 날아감. |
+| F9 | `kling_video_generator.py:63-110` + `seedance_video_generator.py:28-55` | start_scene_video_* 가 description 받지 않음. final_prompt 조합에 description 슬롯 없음. |
+| F10 | `mv_pipeline.py:2444-2496` | 영상 호출부에 description 인자 전달 안 함. |
+| F11 | `requirements.txt` | Pillow 없음 → venv 에 설치 완료 (Pillow 12.2.0). |
+
+### 변경 매트릭스
+
+| # | 파일 | 변경 | 추적자 |
+| --- | --- | --- | --- |
+| C1 | `mv_generator.py` 3개 시스템 프롬프트 (SCENE_SPLIT / SCENE_GENERATE / SECTION_SCENE_PLAN) | JSON 스키마에 영어 `description` 추가. 역할 분리 명시: description=행동/감정/맥락(시각 묘사 X, 카메라 X), image_prompt=시각만, video_prompt=카메라만. | `[Phase1b]` |
+| C2 | `mv_generator.py:1072-1084` _format_user_event_seed_block_stage1 | 시드 있으면 4개 후보 모두 시드 기반 + magical_mechanism / character_dynamics / progression 3차원 변주. archetype 다양성 룰은 보조. | `[BrainstormSeed]` |
+| C3 | `mv_generator.py:3632` + scene 파싱 함수 | `"description": clip.get("description", "") or image_prompt` (LLM 결과 우선, 빈 값일 때만 backward compat). description_ko 도 동일. | `[SceneFlat]` |
+| C4 | `mv_generator.py:328-470` generate_video_prompts_from_images | Claude/Gemini 첨부 직전 `_compress_for_vision(image_bytes)` 호출. PIL Image.open → thumbnail((1024,1024)) → JPEG q85 → bytes. media_type = "image/jpeg". | `[Phase2.5Img]` |
+| C5 | `mv_generator.py:420/424/463/467` | fallback "Smooth..." 제거 → 실패 시 빈 문자열 또는 sentinel 반환. 호출자가 이를 보고 1b 값 유지. | `[Phase2.5]` |
+| C6 | `mv_pipeline.py:2160-2180` Phase 2.5 호출부 | except 시 `scenes[i]["video_prompt"]` 덮어쓰지 않음. 기존 (1b) 값 그대로 유지. logger.warning 로 명시. | `[Phase2.5]` |
+| C7 | `kling_video_generator.py:start_scene_video_kling` | `description: Optional[str] = None` 파라미터 추가. drama 시 `final_prompt` 에 "Subject action and intent: {description}." 슬롯 삽입 (lipsync 는 가사가 우선이므로 description 미적용). | `[KlingProm]` |
+| C8 | `seedance_video_generator.py:start_scene_video_seedance` | 동일 패턴. | `[SeedProm]` |
+| C9 | `mv_pipeline.py:2444-2496` 영상 호출부 | `description=scene.get("description", "")` 전달. | `[Phase3Call]` |
+| C10 | `requirements.txt` | `Pillow` 추가. | — |
+| C11 | `UploadPage.jsx` | description 카드 라벨/툴팁 — "행동·감정·맥락" 명시 (이전엔 image_prompt 의 복사본이라 의미 모호). | `[UploadPage]` |
+
+### 회귀 위험 / 보호
+
+- **C1 (스키마 변경)**: 옛 잡 (영어 description 없음) 은 mv_generator.py:3632 의 backward compat fallback 으로 보존됨.
+- **C2 (시드 변주)**: v47 archetype 다양성 룰과 직교 (시드 = 사건/세계관 층, archetype = 서사 구조 층). 충돌 없음.
+- **C4 (이미지 압축)**: 원본 이미지는 디스크/Mongo 에 그대로 유지. Claude 첨부 직전에만 메모리에서 다운스케일.
+- **C5+C6 (fallback 제거)**: Phase 2.5 가 실패해도 Phase 1b 의 video_prompt 가 살아있으므로 영상 생성 가능.
+- **C7+C8 (영상 모델 prompt 슬롯)**: description=None/빈 문자열이면 슬롯 미삽입 → 옛 잡 byte-level 동일 동작 (회귀 없음).
+
+
+
+---
+
+## v61 — 자산 갤러리 + 커버 라이트박스 (2026-05-13)
+
+### 요청
+1. Phase 1.5 에서 생성되는 자산(주인공 캐릭터 시트 + 장소 시트) 들을 UI 에 표시 (현재 안 보임)
+2. 커버 이미지 클릭 시 큰 화면으로 보기 (씬 이미지 라이트박스 동일 패턴)
+
+### Plan verification findings
+| # | 파일 / 라인 | 현재 동작 |
+| --- | --- | --- |
+| F1 | `mv_assets.py:upload_asset_to_minio` | 자산 PNG 를 `mv_assets/{job_id}/{key}_{uid}.png` 로 MinIO 저장. Mongo `mv_jobs.assets[key]` = `{type, name, object_name, ...}`. |
+| F2 | `mv.py:GET /jobs/{id}` (677-786) | 응답 본문에 `assets` 필드 **없음**. 자산이 백엔드에는 있지만 프론트로 노출 안 됨. |
+| F3 | `mv.py:_presign` (202) | object_name → presigned URL 변환 헬퍼 존재. 동일 패턴 재사용 가능. |
+| F4 | `UploadPage.jsx` 씬 라이트박스 (3768-3817) | `selectedScene` state + `setSelectedScene(scene)` 클릭 + `.upload-mv-scene-modal-overlay` 모달. 잘 동작 중. |
+| F5 | `UploadPage.jsx` 커버 이미지 (1634-1638) | `aiCoverPreview` (base64 또는 URL). 클릭 핸들러 없음. |
+
+### 변경 매트릭스
+| # | 파일 | 변경 |
+| --- | --- | --- |
+| C1 | `mv.py:GET /jobs/{id}` | 응답에 `"assets": _serialize_assets(job.get("assets"))` 추가. 각 자산에 presigned `image_url` 포함. |
+| C2 | `mv.py` | `_serialize_assets` 헬퍼 신규 추가 — 위치는 `_presign` 다음. |
+| C3 | `UploadPage.jsx` | 씬 영역 위(시나리오 확정 후) 에 "주인공/장소 자산" 섹션 추가. 그리드 표시. 자산 카드 클릭 시 `selectedImage` 라이트박스. |
+| C4 | `UploadPage.jsx` | `selectedImage` state + 공통 이미지 라이트박스 컴포넌트. 씬/자산/커버 모두 사용. |
+| C5 | `UploadPage.jsx` | 커버 이미지 (`aiCoverPreview`) 클릭 핸들러 추가 → `setSelectedImage({url, title})`. |
+
+### 회귀 위험
+- `_serialize_assets` 가 None/dict 가 아닌 값에 대해 빈 dict 반환 → 옛 잡(assets 없음) byte-level 동일 응답.
+- 기존 `selectedScene` 라이트박스는 그대로 유지. 신규 `selectedImage` 는 별도 state — 충돌 없음.
+
+
+
+---
+
+## v64 — 영상 모델 안전 prompt 가이드 + 정적 후처리 + retry 한도 (2026-05-19)
+
+### 요청
+- Seedance partner_validation_failed 로 인한 무한 retry (씬 15 약 35분 낭비) 차단
+- 사후 retry/fallback 이 아닌 사전 prompt 안전화로 해결
+- 모델 fallback (Veo/Kling) 안 함 (사용자 결정 — 톤 일관성)
+
+### Plan verification findings
+| # | 파일 / 라인 | 현재 동작 |
+| --- | --- | --- |
+| F1 | `mv_generator.py:65~270` | 6개 video_prompt 시스템 프롬프트 (VEO_CHARACTER / VEO_FREE / KLING_CHARACTER / KLING_FREE / SEEDANCE_CHARACTER / SEEDANCE_FREE) 모두 안전 가이드 없음 |
+| F2 | `mv_generator.py:3069~3350` | Phase 1b 시스템 프롬프트 3개 (SCENE_SPLIT / SCENE_GENERATE / SECTION_SCENE_PLAN) image_prompt 룰에도 안전 가이드 없음 |
+| F3 | `mv_pipeline.py:2456~2500` | 영상 호출 직전에 prompt sanitize 패스 없음 |
+| F4 | `mv_pipeline.py:Phase 3 retry` | 모든 에러 동일 retry. content_policy_violation 도 무한 retry 가능 (씬 15 케이스에서 8번 반복 확인) |
+| F5 | `server.log` 14:11~15:37 | Seedance partner_validation_failed 다수 발생. 동일 prompt 7~8회 반복 거부 |
+
+### 안전 가이드 (6 공통 룰)
+1. 인물 = 외형으로 묘사 (이름·매력 강조 단어 회피)
+2. 카메라 워크 = 별도 문장
+3. 모션 표현 = 절제 (자극적 신체 모션 회피)
+4. 시각 컨텍스트 = 충분히 (조명/의상/배경 디테일)
+5. 직접적 신체 묘사 → 추상적 시네마틱 언어
+6. 트리거 단어 회피 — "alone facing camera directly" / "mouth open" / "sparkling" / "hair lifted by breeze" 등
+
+### 위험 표현 → 안전 변환 dict (초기 10개)
+| 위험 | 안전 |
+| --- | --- |
+| "alone faces camera directly" | "framed in a medium close-up" |
+| "singing the chorus with mouth open" | "softly mouthing the chorus lyrics" |
+| "mouth open" | "softly mouthing the lyrics" |
+| "hands lightly raised in a joyful gesture" | "hands resting naturally" |
+| "hair lifted by a gentle breeze" | "soft breeze drifts in the air" |
+| "sparkling eyes" | "soft warm expression" |
+| "bright smile" | "subtle smile" |
+| "slight head sway" | (제거) |
+| "joyful expression" | "warm expression" |
+| "joyful gesture" | "natural pose" |
+
+### 변경 매트릭스
+| # | 파일 | 변경 | 추적자 |
+| --- | --- | --- | --- |
+| C1 | `mv_generator.py` 신규 헬퍼 | `sanitize_video_prompt(text)` — regex case-insensitive 10개 치환. 로그 prefix `[PromptSanitize]` | [PromptSanitize] |
+| C2 | `mv_generator.py` 6 video_prompt 시스템 프롬프트 | 공통 안전 가이드 + 트리거 단어 회피 가이드 인라인 | — |
+| C3 | `mv_generator.py` 3 Phase 1b 시스템 프롬프트 | image_prompt/video_prompt 안전 가이드 1~2줄 추가 | — |
+| C4 | `mv_pipeline.py:2456~` 영상 호출 직전 | scene_desc_for_video / scene_video_prompt / scene_description_en 3 개에 sanitize 적용. Mongo 원본 유지 | [PromptSanitize] |
+| C5 | `mv_pipeline.py:Phase 3 retry` | max_retries=3. HTTP 422 + content_policy_violation 매칭 시 즉시 fail + error_message | [VideoRetry] |
+
+### 결정 사항 (사용자 확인됨)
+- max_retries = 3
+- Phase 1b 시스템 프롬프트에도 안전 가이드 추가
+- dict 초기 항목 10개
+
+### 회귀 위험
+- Mongo 의 image_prompt / video_prompt / description 원본은 변경 없음 → UI 표시 무영향
+- sanitize 는 영상 모델 prompt 슬롯에만 적용 → 이미지 생성 (Phase 2) 무영향
+- max_retries 한도는 일시 오류 (HTTP 5xx) 에는 영향 없음 (기존 retry 유지)
+
+
+---
+
+## v63 — 커버 인물 자산화 흐름 + 캐릭터 시트 디테일 보강 + 체크박스 (2026-05-19)
+
+### 요청
+- 커버 이미지 인물과 씬 주인공 외모가 다른 일관성 문제 해결
+- "씬 생성하기" 옆 체크박스 (기본값 on) 로 사용자 통제
+- 캐릭터 시트 디테일을 "내 캐릭터" 탭 수준으로 보강 (방향 2)
+- v64 (영상 모델 안전 prompt) 와 충돌 없이 구현
+
+### Plan verification findings
+| # | 파일 / 라인 | 현재 동작 |
+| --- | --- | --- |
+| F1 | `mv_pipeline.py:907~920` Phase 0 진입부 | `has_user_character = bool(character_object_name)`. `has_cover_person = False` placeholder. `character1_meta` 는 user_character_snapshot 기반만. |
+| F2 | `mv_generator.py:1869~1883` | `has_cover_person` 분기 코드 존재하나 호출자가 False 만 줌. 사용 안 됨. |
+| F3 | `mv_generator.py:2106~2140` character1_meta 처리 | name/age/personality_tags/personality_text 만 다룸. **description 키는 안 다룸**. |
+| F4 | `mv_pipeline.py:1755~1759` Phase 1.5 ref 결정부 | user_char_bytes 1순위 snapshot.sheet, 2순위 character_object_name. 3순위 (커버) 없음. |
+| F5 | `mv_assets.py:122~166` generate_character_sheet_asset | 단순 3각도 prompt — 디테일 부족 |
+| F6 | `mv_generator.py` 신규 함수 추가 위치 | `generate_video_prompts_from_images` (Gemini multimodal 호출 패턴) 재사용 가능 |
+| F7 | `routes/mv.py:57, 511` POST /api/mv/create | `character_object_name` Optional 받음. `use_cover_person_as_character1` 필드 없음 |
+| F8 | `UploadPage.jsx` [씬 생성하기] | character_object_name 전달. 신규 체크박스 위치 필요 |
+| F9 | `frontend/src/api/index.js` | API 클라이언트 모듈 — 신규 필드 추가 시 한 곳만 수정 |
+
+### v64 충돌 검토
+- v64 sanitize_video_prompt: 영상 호출 직전에만 적용 → v63 의 Phase 0/1.5 와 다른 단계. 충돌 없음
+- v64 안전 가이드 (image_prompt/video_prompt) : 영상 안전성. v63 의 character1.description 룰과 별개. 충돌 없음
+- v64 max_retries 3 + content_policy 분기: Phase 3 영상 호출 한정. 충돌 없음
+
+### 변경 매트릭스
+| # | 파일 | 변경 | 추적자 |
+| --- | --- | --- | --- |
+| C1 | `mv_generator.py` 신규 함수 | `extract_character_description_from_cover(cover_bytes) -> str` Gemini vision 호출. 인물 없음/실패 시 "" 반환. | `[CoverDescExtract]` |
+| C2 | `mv_generator.py:2106~2140` character1_meta 처리 | description 키 추가. 사용자 지정 description 있을 때 시나리오 LLM 에게 "변경 금지" 룰 강조 | `[Phase0Meta]` |
+| C3 | `mv_pipeline.py:907~920` Phase 0 진입부 | `use_cover_person = job.get("use_cover_person_as_character1") and not has_user_character`. True 시 vision 호출 → character1_meta.description 채움. has_cover_person 도 True (이미 mv_generator 에 분기 존재). | `[Phase0]` |
+| C4 | `mv_pipeline.py:1755~1759` Phase 1.5 ref 체인 | 3순위 신규: `use_cover_person_as_character1 + cover_object_name → 커버 bytes`. 4순위: 없음 → LLM. | `[AssetGen]` |
+| C5 | `mv_assets.py:122~166` generate_character_sheet_asset prompt | 4섹션 1x4 + Identity/Body/Pose/Face/Makeup/Hair/Outfit spec 인라인. ref 유무 조건부 문구. | `[AssetGen]` |
+| C6 | `routes/mv.py:CreateMVJobRequest` + `/create` | `use_cover_person_as_character1: bool = False` 추가. Mongo doc 에 저장. | — |
+| C7 | `UploadPage.jsx` | [씬 생성하기] 옆 체크박스 신설 (기본값 on). includeCharacter 켜진 경우 자동 무력화. POST /api/mv/create 에 전달. | `[UploadPage]` |
+| C8 | `api/index.js:createMVJob` | payload 에 use_cover_person_as_character1 필드 자동 spread (이미 패턴) | — |
+
+### 회귀 위험
+- C2 (description 키 추가): 옛 잡은 character1_meta.description 없으니 backward compat
+- C3 (Phase 0 vision 호출): use_cover_person_as_character1=False 옛 잡은 byte-level 동일
+- C4 (ref 체인): 3순위는 조건부 — 1/2순위 변화 없음
+- C5 (mv_assets prompt): 옛 호출자 시그니처 무변경 → 외부 영향 없음
+- C7 (체크박스): default on 이지만 빈 잡엔 includeCharacter / 커버 PNG 둘 다 없어서 효과 없음
+
+
+---
+
+## v65 — 안전 prompt 가이드 강화 (3 모델 통과율 ↑) (2026-05-22)
+
+### 요청
+- v64 적용 후에도 일부 씬 (6/15/20) 이 Seedance content_policy_violation 으로
+  거부됨. 새로 발견된 트리거 표현 9개를 sanitize dict 와 9개 시스템 프롬프트에
+  반영하여 3 모델 (Veo / Kling / Seedance) 모두 통과율 ↑
+
+### Plan verification findings (v64 코드 사실 그대로)
+| # | 위치 | 현재 |
+| --- | --- | --- |
+| F1 | `mv_generator.py:_VIDEO_PROMPT_UNSAFE_PATTERNS` (line 37~) | v64 의 10개 패턴 |
+| F2 | `mv_generator.py:119~325` 6개 영상 시스템 프롬프트 | v64 안전 가이드 블록 인라인됨 |
+| F3 | `mv_generator.py:3300~ / 3396~ / 3479~` Phase 1b 시스템 프롬프트 3개 | v64 동일 블록 |
+
+### 새 트리거 표현 (v64 이후 발견)
+- `alone faces camera` (without "directly") — v64 패턴은 directly 까지만
+- `expressive eyes` / `bright expressive eyes`
+- `shoulder sway` / `rhythmic shoulder movement`
+- `hair lifting` (in the wind / breeze 변형)
+- `singing the chorus joyfully`
+- `joyful expression`
+- `joyful gesture`
+- `eyes closed, breathing in the scent`
+- `drowning in a soft pink-petal storm`
+- `K-pop MV grade`
+
+### 변경 매트릭스
+| # | 파일 | 변경 |
+| --- | --- | --- |
+| C1 | `mv_generator.py:_VIDEO_PROMPT_UNSAFE_PATTERNS` | 위 9~10개 항목 추가. case-insensitive regex 변형까지 커버 (`hair lifting (in the (wind\|breeze))?` 등). |
+| C2 | `mv_generator.py` 6개 영상 시스템 프롬프트 | v64 "AVOID these trigger phrases" 리스트에 위 항목 모두 추가 + "PREFER neutral alternatives" 도 확장 |
+| C3 | `mv_generator.py` Phase 1b 3개 시스템 프롬프트 | 동일 패턴 적용 |
+
+### 회귀 위험
+- sanitize dict 확장 — 호출 시그니처 무변경, 외부 영향 없음
+- 시스템 프롬프트 텍스트만 확장 — placeholder / 구조 변경 없음
+- v64 의 안전 가이드 블록 위치/포맷 유지 (사이에 새 항목 삽입)
+
+
+
+---
+
+## v66 — Grok Imagine Video 영상생성 모델 통합 (경로 A — xAI 직접) (2026-05-22)
+
+### 요청
+- 영상 모델 4번째로 Grok Imagine Video 추가
+- 경로: xAI 직접 (fal.ai 경유 X — 상용화 / 비용 / 통제권)
+- API 키는 사용자가 구현 완료 후 .env 에 입력
+
+### Plan verification findings
+| # | 위치 | 사실 |
+| --- | --- | --- |
+| F1 | `config.py:47/55/62/76` | API 키 패턴 — openai/google/kling/fal 4개. xai_api_key 추가 위치 |
+| F2 | `routes/mv.py:58 + 373 + 458/460 + 517` | video_model "veo/kling/seedance" enum. validation + branching 위치 |
+| F3 | `mv_pipeline.py:2373~2376` | Phase 3 video_model 분기. use_kling/use_seedance bool 패턴. 추가: use_grok |
+| F4 | `mv_pipeline.py:2558/2573/2629/2631` | 호출/폴링 분기 4곳 (start/check 각각). grok 분기 추가 필요 |
+| F5 | `mv_generator.py:328~ _select_video_prompt_template` | "veo/seedance/kling" 3분기. "grok" 추가 |
+| F6 | `mv_generator.py` 6개 video_prompt 시스템 프롬프트 | VEO/KLING/SEEDANCE × CHARACTER/FREE. 신규 GROK_CHARACTER/_FREE 2개 추가 |
+| F7 | `seedance_video_generator.py` | Seedance 패턴 — start_scene_video_seedance / check_scene_video_status_seedance / download_video_seedance. fal queue 패턴. |
+| F8 | xAI Imagine Video API | POST /v1/videos/generations → request_id. GET /v1/videos/{request_id} polling. status: pending/done/failed/expired. progress 0~100. video.url 임시. |
+
+### xAI API 사양
+```
+Start:  POST https://api.x.ai/v1/videos/generations
+  Headers: Authorization: Bearer XAI_API_KEY
+  Body:    {model, prompt, image:{url}, duration}
+  Resp:    {request_id, status, progress}
+
+Poll:   GET https://api.x.ai/v1/videos/{request_id}
+  Resp:    {status, progress, video:{url,duration}, model}
+```
+
+### 변경 매트릭스
+| # | 파일 | 변경 | 추적자 |
+| --- | --- | --- | --- |
+| C1 | `config.py` | `xai_api_key: str = ""` 추가 | — |
+| C2 | `.env` / `.env.example` | `XAI_API_KEY=` 슬롯 추가 (값 비움) | — |
+| C3 | `grok_video_generator.py` 신규 | `start_scene_video_grok / check_scene_video_status_grok / download_video_grok` (~200줄). xAI 직접 POST/GET. 안전 prompt sanitize 호출자 책임 (v64 호환). | `[Grok]` |
+| C4 | `mv_generator.py` | `VIDEO_PROMPT_GROK_CHARACTER` + `VIDEO_PROMPT_GROK_FREE` 2 신규. v65 안전 가이드 블록 동일 패턴. `_select_video_prompt_template` 에 "grok" 분기. | — |
+| C5 | `mv_pipeline.py:2373~` | `use_grok = (video_model == "grok")`. 호출/폴링 4곳에 grok 분기. | `[Phase3]` |
+| C6 | `routes/mv.py:58, 373, 517` | video_model 주석 + validation enum 에 "grok" 추가 | — |
+| C7 | `UploadPage.jsx` 영상 모델 라디오 영역 | 4번째 라디오 옵션 "Grok Imagine Video" 추가 + dev 로그 | `[UploadPage]` |
+
+### 추적자
+- 백엔드 grok 모듈: `[Grok]` prefix + job_id / scene_number / request_id
+- mv_pipeline: 기존 `Phase3` prefix 유지 (모델 무관)
+
+### 회귀 위험
+- xai_api_key 비어있을 때 `start_scene_video_grok` 즉시 ValueError → 분명한 에러 메시지
+- 옛 잡 video_model in {veo/kling/seedance} → 영향 없음
+- 신규 video_prompt 템플릿은 grok 분기에서만 사용 — 기존 모델 영향 없음
+- xAI API 응답 임시 URL — 즉시 다운로드 패턴 (Veo/Seedance 와 동일)
+
+### 결정 사항 / 보류
+- xAI API 키는 사용자가 구현 후 .env 에 입력
+- Grok 의 audio 자체 생성 옵션 — 우리는 원곡 audio 별도 합성이므로 audio 끄거나 무시
+  (xAI API 의 audio off 파라미터 정확히 조사 안 됨 — 일단 응답 영상의 audio 트랙은 final concatenate 시 ffmpeg 가 덮어쓰므로 영향 없음)
+
+
+
+---
+
+## v67 — 4 영상 모델 권장 prompt 구조 정비 (2026-05-24)
+
+### 요청
+- 각 영상 모델 (Veo/Kling/Seedance/Grok) 공식 권장 prompt 구조에 맞게
+  generator 의 final_prompt 조합 + 시스템 프롬프트 재작성
+- v68 (병렬 다중모델 영상생성) 은 보류
+
+### Plan verification findings
+| # | 위치 | 현재 |
+| --- | --- | --- |
+| F1 | `mv_generator.py:start_scene_video` (5100~) | description 인자 없음 (v60 누락). prompt 합성: `mv_context + desc + .Camera/Motion: + video_prompt + lyrics` |
+| F2 | `kling_video_generator.py:107` | `mv_context + prompt + ref_text + action_intent + camera_motion` 한 줄 합성 |
+| F3 | `seedance_video_generator.py:52` | `mv_context + prompt + action_intent + Camera/Motion: video_prompt` 한 줄 합성 |
+| F4 | `grok_video_generator.py:77` | Seedance 와 동일 패턴. mv_context 가장 앞에 위치 (Grok 의 앞 20단어 우선 원칙과 어긋남) |
+| F5 | `mv_generator.py` 8개 video_prompt 시스템 프롬프트 | v64/65 안전 가이드 + 기본 스타일 가이드. 모델별 권장 구조 (Veo cinematography 리드 / Kling 6단계 / Seedance 6단계 / Grok 앞 20단어) 명시 부족 |
+
+### 모델별 권장 구조 (웹검색 검증)
+| 모델 | 구조 | 길이 | 특이점 |
+| --- | --- | --- | --- |
+| Veo 3.1 | [Cinematography] + [Subject] + [Action] + [Context] + [Style&Ambiance] | 3~6 문장 | 카메라 별도 sentence |
+| Kling 3.0 Omni | Subject → Detail → Movement → Scene → Camera → Lighting | 3~6 문장 | @image 태깅 |
+| Seedance 2.0 | Subject → Action → Environment → Camera → Style → Constraints | 30~100 단어 | 조명 강조, Constraints 슬롯 |
+| Grok Imagine | [Subject] + [Action/Motion] + [Camera] + [Style] + [Audio] | 6~10초 | 앞 20단어 우선, image-to-video 시 이미지 묘사 최소 |
+
+### 변경 매트릭스
+| # | 파일 | 변경 |
+| --- | --- | --- |
+| C1 | `mv_generator.py` 8개 video_prompt 시스템 프롬프트 | 각 모델 권장 구조 명시 + 단계 라벨 + 예시 |
+| C2 | `kling_video_generator.py:start_scene_video_kling` | final_prompt 6단계 슬롯 명시 (Subject/Detail/Movement/Scene/Camera/Lighting) |
+| C3 | `seedance_video_generator.py:start_scene_video_seedance` | 6단계 슬롯 + Constraints 라인 (no text/watermark/glamour) 추가 |
+| C4 | `grok_video_generator.py:start_scene_video_grok` | 모션·카메라 슬롯 앞쪽 배치, image_prompt 묘사 최소화, mv_context 짧게/뒤로 |
+| C5 | `mv_generator.py:start_scene_video` (Veo) | `description` 인자 추가 (v60 누락 보강) + cinematography 리드 + 카메라 별도 sentence + 별도 슬롯 분리 |
+| C6 | `mv_pipeline.py:Veo 호출부` | description=scene_description_en 인자 추가 |
+
+### 디버깅 로그 매트릭스
+- `[KlingProm] subject_len=… detail_len=… camera_len=… ...` (슬롯 길이 노출)
+- `[SeedProm] subject=… action=… env=… camera=… style=… constraints=…`
+- `[GrokProm] motion_first_20=… camera_len=… style_len=…`
+- `[VeoProm] cinematography=… subject=… action=… camera_separate=…`
+
+### 회귀 위험
+- 호출 시그니처 변경: Veo `start_scene_video` 에 description 옵션 추가 (default None) — 옛 호출자 byte-level 동일 동작
+- final_prompt 텍스트가 모델별로 달라짐 — 영상 결과 품질 향상 기대, 단 정량 검증 어려움 (실제 호출 결과 확인)
+- 사용자 잡 1건으로 검증
+
+---
+
+## v68 — 곡 디테일 페이지에 주인공 캐릭터 카드 노출 (2026-05-24)
+
+### 요청 작업
+공개된 곡의 디테일(플레이어) 페이지에서, 그 곡의 뮤직비디오가 "내캐릭터 포함하기" 옵션으로 만들어졌다면 → 그 곡의 주인공 캐릭터 시트 + 함께 사용된 아이템(썸네일+이름)을 카드 형태로 노출한다. "내캐릭터" 탭에 저장된 캐릭터+아이템 카드 레이아웃을 그대로 임베드. 주인공 캐릭터 미포함 곡은 섹션 미노출.
+
+### Plan verification findings
+- mv_jobs 생성 시 `user_character_snapshot` 스키마: `backend_9004/app/routes/mv.py:472-487` — 키: `name`, `age`, `personality_tags(list[str])`, `personality_text`, `sheet_object_name`, `used_items`. 트리거 조건은 `body.include_my_character=True` 일 때만, 그렇지 않으면 `None`.
+- `used_items` 요소 모양: `backend_9004/app/routes/character.py:61-66` UsedItemPayload — `id`, `name`, `image_object_name`, `product_url`, `category("상의"|"하의"|"신발")`. 영속 저장은 `model_dump()` 결과(line 510, 515)이므로 mv 스냅샷도 동일 dict 5-키 구조.
+- 캐릭터 도큐먼트 (`characters` 컬렉션) 의 `sheet_object_name` / `used_items`: `backend_9004/app/routes/character.py:514-515` (save), `:582` (GET /api/character/me) — 시트는 `characters/{user_id}/sheet.{ext}` 영속 경로.
+- mv_jobs → tracks publish 흐름: 직접 publish 라우트는 없음. 트랙은 `backend_9004/app/routes/tracks.py:560-710 /upload-from-generation` 에서 `generation_id` 기반으로 insert. 트랙 도큐먼트에는 현재 `generation_id` 만 저장(line 691), `mv_job_id` 도 `user_character_snapshot` 도 복사되지 않음.
+- mv_jobs ↔ tracks 연결: `backend_9004/app/routes/tracks.py:40-49 _find_completed_mv` 가 `mv_jobs.find_one({"audio_generation_id": generation_id, "status": "completed", "result_music_video_url": exists})` 로 매칭 — 즉 같은 generation_id 를 공유하는 완성된 mv_job 을 사후 조회.
+- 트랙 상세 API: `GET /api/tracks/{id}` — `backend_9004/app/routes/tracks.py:398-435`. 현재 응답: track 도큐먼트 전체 + `has_music_video`, `music_video_url`(presigned). Redis 캐시 키 `cache:track:{id}` TTL 600s. _serialize_track 은 `_id→id`, `cover_image_url→cover_image` alias 추가.
+- 프론트엔드 트랙 상세(플레이어) 페이지: `frontend/src/pages/PlayerPage.jsx:46` 가 `api.getTrackDetail(currentSong.id)` 호출 → `trackDetail` state. 우측 탭은 "프롬프트 정보"/"플레이리스트" 두 개.
+- 프론트엔드 '내캐릭터' 탭 캐릭터+아이템 카드 레이아웃: `frontend/src/pages/MyMusicPage.jsx:775-805` (saved character render — 시트 이미지 + `renderSavedOutfitSection`) 그리고 `:711-754 renderSavedOutfitSection` (상의/하의/신발 3슬롯, `it.image_object_name` → `api.adImageUrl(...)`, `product_url` 링크, `recordAdClick` 광고 클릭 기록). 클래스 prefix `mymusic-character__`. 재사용 / 디자인 참고 대상.
+- API 헬퍼: `frontend/src/api/index.js:149 getTrackDetail`, `:478 characterPreviewUrl(previewPath)` (host+previewPath 합성), `:558 adImageUrl(objectName)` (광고 이미지 — used_items 썸네일에 사용), `:466 coverPreviewUrl`, `:554 recordAdClick`.
+- MinIO presigned URL 헬퍼: `backend_9004/app/routes/tracks.py:52-64 _mv_presigned_url(object_name)` 는 `images` bucket 24h presigned. 캐릭터 시트는 별도 프록시 라우트 `GET /api/character/preview/{object_name:path}` (`character.py:639-661`) 가 존재 — 그러나 이 라우트는 `get_current_user` 같은 인증 가드 없이 동작(소유자 무관 공개 프록시). publish 된 곡 상세에서 다른 사용자에게 캐릭터 시트를 보여주려면 **별도 token 없는 공개 프록시** 가 필요하거나 presigned URL 을 백엔드에서 발급해 응답에 실어 보내야 한다.
+- 원격 로깅 인프라: 존재. 백엔드 `backend_9004/app/routes/_logs.py:253 POST /api/_logs/frontend` + 프론트 `frontend/src/utils/remoteLogger.js` (console.error/warn/info + window error/unhandledrejection 후킹 → `frontend.log` 파일). 본 작업의 디버그 로그는 백엔드는 표준 logger, 프론트는 `console.info/warn/error` 만 쓰면 자동 수집됨.
+
+### 갭/조정
+- 사용자 요청 표현은 "그 곡 커버가 '내캐릭터 포함하기' 옵션으로 만들어졌다면" 이지만, 실제 코드에서 `include_my_character` 플래그는 **커버 생성**이 아니라 **뮤직비디오 생성** 옵션이다 (mv.py 의 `MVCreateBody`). 커버 생성 (`cover_generator.py`) 에는 `include_my_character` 가 없다. → 본 v68 의 트리거는 "이 곡과 연결된 완성된 mv_job 의 `include_my_character=True` 이고 `user_character_snapshot` 이 존재" 로 해석한다.
+- 트랙 도큐먼트에는 현재 `user_character_snapshot` 이 복사되지 않는다. 두 가지 선택:
+  - **A안 (선택):** 트랙 상세 API 응답 직렬화 시점에 `_find_completed_mv` 와 동일 패턴으로 mv_job 을 조회해 거기서 `user_character_snapshot` 을 꺼내 응답에 실음. 트랙 모델 변경 불필요, 데이터 단일 소스(mv_jobs) 유지. 단점: 매 상세 호출 시 mv_jobs 1회 추가 조회 — 단, 같은 호출에서 이미 `_find_completed_mv` 가 돌고 있으므로 한 도큐먼트만 select 하면 끝.
+  - **B안:** mv_pipeline 완성 시점에 트랙 도큐먼트에 `user_character_snapshot` 복사. 트랙 모델 필드 추가 + publish 시점 추적 필요. 현재 mv_jobs↔tracks 는 generation_id 매칭 사후 lookup 이므로 명시적 publish 훅이 없어 구현이 더 침습적.
+  - → **A안 채택**. mv_jobs 가 진실의 원천.
+- `cover_image_url` (트랙 커버 — Suno/사용자 업로드)과 `user_character_snapshot.sheet_object_name` (뮤직비디오용 캐릭터 시트) 는 별개 자산이다. 본 작업은 후자(시트 + used_items)만 노출한다. "곡 커버" 자체에는 영향 없음.
+- 사용자 시트와 아이템 이미지는 다른 유저에게도 노출된다 (공개 곡 상세 페이지). 시트 이미지 자산은 이미 `/api/character/preview/{object_name}` 가 무인증 프록시이므로 그대로 활용해도 정책상 문제 없음(기존 동작과 정합). 아이템 이미지는 `business` 광고 이미지 라우트 `/api/business/items/image/{object_name}` 를 통한 공개 노출(이미 `MyMusicPage` 가 사용). → 새 인증 가드/엔드포인트 추가 불필요.
+- presigned URL 만료(24h) 와 Redis 캐시(10분)의 간섭: 캐시는 10분 TTL 이므로 24h 만료 한참 전이라 안전. mv_url 도 동일 패턴을 이미 사용 중.
+- 캐릭터/아이템 카드 UI 재사용: `MyMusicPage` 내부 클로저(state)에 강결합 → 컴포넌트 추출 가능하지만 시간 비용 큼. v68 에서는 **새 컴포넌트 `CharacterCoverCard.jsx` 를 PlayerPage 전용으로 신설** 하고, `MyMusicPage` 의 마크업/CSS 토큰을 시각 참고만 한다 (DRY 는 차후 리팩터). CSS 는 `PlayerPage.css` 에 prefix `player-page__character-*` 로 신규.
+
+### 변경 매트릭스
+| # | 파일 | 변경 내용 | 추적자 |
+|---|---|---|---|
+| B1 | `backend_9004/app/routes/tracks.py:_serialize_track` 또는 `get_track` (line 398-435) | `_find_completed_mv` 후 mv_job 의 `include_my_character` + `user_character_snapshot` 이 모두 truthy 면 `cover_character` 필드 직렬화. 시트는 `/api/character/preview/{sheet_object_name}` 경로(string)로, used_items 는 `image_object_name` 포함 그대로 응답에 포함. (presigned 가 아니므로 만료 무관, 캐시 안전) | `[TrackCoverChar]` prefix, `track_id`, `mv_job_id` |
+| B2 | `backend_9004/app/routes/tracks.py` Redis 캐시 키 | 응답 스키마 변경 → 옛 캐시 무효화 위해 캐시 키 버전 bump: `cache:track:{id}` → `cache:track:v2:{id}` | - |
+| B3 | (선택, A안 채택으로 생략) `backend_9004/app/models/track.py` | 모델 변경 없음 — Pydantic TrackResponse 는 응답에 strict 적용되지 않음(라우트가 dict 반환) | - |
+| F1 | `frontend/src/components/CharacterCoverCard.jsx` (신규) | props: `character` ({name, age, personality_tags, personality_text, sheet_preview_path, used_items}) — 시트 이미지 + 상의/하의/신발 3슬롯 + 프로필 요약. 광고 클릭 추적은 옵션(노출 페이지가 광고 채널이면 호출) | `[CharCoverCard]` prefix |
+| F2 | `frontend/src/components/CharacterCoverCard.css` (신규) | `.character-cover-card__*` 전용 클래스 | - |
+| F3 | `frontend/src/pages/PlayerPage.jsx` | `trackDetail.cover_character` 가 truthy 면 우측 탭 영역 아래(또는 좌측 미디어 아래)에 `<CharacterCoverCard>` 렌더. 미포함 곡은 섹션 미노출 | `[PlayerPage]` prefix |
+| F4 | `frontend/src/pages/PlayerPage.css` | 신규 섹션 컨테이너 스타일 (gap, divider) | - |
+| F5 | (선택) `frontend/src/api/index.js` | 추가 API 함수 불필요 — 기존 `getTrackDetail` 응답에 새 필드 포함 | - |
+| T1 | 테스트 (수동) | 1) include_my_character=True 로 만든 mv_job 완성된 트랙 → 카드 노출. 2) include_my_character=False mv_job → 미노출. 3) mv_job 없음 → 미노출. 4) used_items 비어있을 때 3슬롯 "미선택" placeholder. | - |
+
+### API 스키마 합의: GET /api/tracks/{id} 응답 (변경 부분만)
+기존 응답(전체 트랙 도큐먼트 + `has_music_video`, `music_video_url`) 에 **`cover_character`** 필드 추가:
+```
+"cover_character": null  // 또는 아래 object
+"cover_character": {
+  "name": "string",
+  "age": "string",
+  "personality_tags": ["string", ...],
+  "personality_text": "string",
+  "sheet_preview_path": "/api/character/preview/characters/{user_id}/sheet.{ext}",
+  "used_items": [
+    {
+      "id": "string|null",
+      "name": "string",
+      "image_object_name": "string",
+      "product_url": "string|null",
+      "category": "상의|하의|신발"
+    }, ...
+  ]
+}
+```
+- `cover_character === null` → 프론트 섹션 미노출 (조건: `mv_job` 없음 OR `include_my_character !== True` OR `user_character_snapshot` 비어있음)
+- 프론트는 `sheet_preview_path` 를 `${API.defaults.baseURL.replace('/api','')}${sheet_preview_path}` 로 합성하거나 기존 `characterPreviewUrl(sheet_preview_path)` 헬퍼 그대로 사용
+- used_items 의 이미지 URL 은 프론트가 `adImageUrl(image_object_name)` 으로 합성 (백엔드는 object_name 만 내려보냄)
+
+### 디버깅 로그 매트릭스
+- 백엔드 `tracks.py:get_track`: mv_job 조회 후 직렬화 직전 1라인
+  - `logger.info("[TrackCoverChar] track=%s mv_job=%s include_my_character=%s items=%d", track_id, mv_job_id, flag, len(items))`
+  - 시트 path 는 log 에 포함하지 말 것(사용자 user_id 노출). 길이만 또는 hash 만.
+- 프론트 `PlayerPage.jsx`: `trackDetail.cover_character` 도착 시 `console.info('[PlayerPage] cover_character', { track: trackDetail.id, has: !!trackDetail.cover_character, items: trackDetail.cover_character?.used_items?.length ?? 0 })` — 본문/이름은 출력 금지(개인정보).
+- 프론트 `CharacterCoverCard.jsx`: 이미지 onError 시 `console.warn('[CharCoverCard] image load failed', { kind, object_name })` — used_items 광고 클릭 시 `console.info('[CharCoverCard] adClick', { id })`.
+
+### 작업 분배
+- **backend-dev:** B1, B2 — `GET /api/tracks/{id}` 직렬화 변경 + 캐시 키 버전 bump + 로그. (mv.py 변경 없음 — 스냅샷은 이미 v38 부터 저장 중)
+- **frontend-dev:** F1~F4 — `CharacterCoverCard` 컴포넌트 신설, `PlayerPage` 조건부 임베드, CSS, 로그.
+- **tester (사용자/수동):** 위 T1 4 케이스. publish 된 본인 곡 1건 + 다른 사용자가 본인 곡 보는 시나리오.
+
+### 회귀 위험
+- Redis 캐시 키 bump → 모든 트랙 첫 호출이 cache miss → mongo+mv_jobs 1회씩 추가 조회. 즉시 정상화.
+- `_find_completed_mv` 가 mv_url 직렬화 + cover_character 직렬화에 두 번 불릴 위험 — 1회만 호출하도록 변수에 캐싱.
+- 다른 트랙 상세 API 소비자(MyMusicPage 등) 가 추가 필드를 모르고 무시 — 안전 (extra field 그대로 drop).
+- 캐릭터/아이템 이미지가 다른 유저 곡 페이지에 그대로 노출되는 정책 변경 없음 — 이미 `/character/preview/*` 와 `/business/items/image/*` 둘 다 무인증 공개 프록시였음. 차후 정책 강화 시 별도 작업.
+
+
+
+---
+
+## v69 — 앨범 기능 부활 (2026-05-24)
+
+### 요청 작업
+v2.0 에서 stub 처리된 앨범 기능을 부활. '내음악' 페이지에 '내앨범' 탭 신설 → 사용자가 본인 트랙을 골라 앨범 묶음 생성/수정/삭제. 앨범 커버는 (a) 자동 차용 / (b) 직접 업로드 / (c) AI 생성(트랙 커버 옵션 셋 재사용) 세 경로. 메인페이지·차트·ArtistDetailPage·AlbumDetailPage 의 앨범 노출을 정상 동작시킨다. 트랙 삭제 시 albums cascade 처리. 9004 only.
+
+### Plan verification findings
+a) 현재 albums.py stub: `backend_9004/app/routes/albums.py:1-29` — 3 핸들러 (`GET /`, `GET /latest`, `GET /{album_id}`). 모두 빈 응답 또는 404. `POST/PATCH/DELETE/{id}/tracks` 등 일절 없음. `main.py:29,145` 에서 그대로 include 됨.
+b) Mongo `albums` 컬렉션 코드 참조 — `backend_9004/app/` 트리에서 albums.py stub 외 사용처 0건(`__pycache__` 제외). `app/models/album.py` 없음 (`backend_9004/app/models/` = `__init__.py`, `playlist.py`, `track.py`, `user.py`). 즉 fresh 도큐먼트 스키마 도입 가능.
+c) Track 모델: `backend_9004/app/models/track.py:36-58` (`TrackResponse`). 핵심 키 — `id:str`, `uploader_id:str`, `genre:list`, `mood:list`, `created_at:datetime`, `cover_image_url:Optional[str]`. Mongo 도큐먼트 `_id` 는 `ObjectId` (`tracks.py:521 track_id = ObjectId()`), 직렬화 시 str. 트랙 삭제 라우트 `tracks.py:189-227 delete_track` — cascade hook 박을 위치 확정.
+d) Cover generator: `backend_9004/app/services/cover_generator.py:26-38 generate_cover_image(...)`. 입력: title, genre(str), mood(str), style, character_image_bytes, user_prompt, prompt_model, user_location_image_bytes, user_location_name, image_model("nb_pro"|"gpt_image_2"), vocal_gender("female"|"male"|"neutral"|None). vocal_gender 는 4개 분기(Claude system, 프로그램[A]/[B], systemInstruction)에 protagonist gender clause 로 주입. 캐릭터 시트(bytes) 첨부 → 포토리얼 photographic 모드, 미첨부 → free style. cover_generator entry 호출 위치 `backend_9004/app/routes/upload.py:308-396 generate_cover` (라우트). object_name 규칙 `covers/generated/{user_id}/{uuid_hex}.png` (upload.py:334).
+e) 트랙 cover 업로드: `backend_9004/app/routes/upload.py:142` 직접업로드 시 `covers/{user_id}/{id}{ext}`. AI 생성 시 `covers/generated/{user_id}/{uuid}.png`. 미리보기 URL `/api/upload/cover-preview/{object_name}` (upload.py:389).
+f) MyMusicPage 탭 구조 — `frontend/src/pages/MyMusicPage.jsx:2255 activeTab state`, `:2391-2428` 탭 버튼 6개 (`tracks`, `upload`, `studio`, `studio2`, `character`, `drafts`). `:2431-2569` 활성 분기. 신규 `myalbums` 탭은 `tracks` 직후 / `upload` 앞에 삽입 (사용자 명시 순서).
+g) AlbumDetailPage `frontend/src/pages/AlbumDetailPage.jsx:11-127` — 기대 응답: `{id, title, artist_id, artist_name, release_date, genre, songs:[{id,...}]}`. `api.getAlbum(id)` 호출. AlbumCard `frontend/src/components/AlbumCard.jsx:7-31` — 기대: `{id, title, artist_name, cover_image}` (cover_image 가 `/api/...` 절대이거나 object_name).
+h) MainPage `frontend/src/pages/MainPage.jsx:101-111` — 현재 "신규 AI 트랙" 으로 라벨 변경됨, `TrackCard` 사용. 앨범 영역 사실상 없어진 상태. v69 에서 "최신 앨범" 섹션을 추가 신설 (`getLatestAlbums` 사용). ChartPage 의 앨범 영역은 grep 결과 0건 — 현재 차트는 트랙 only. 사용자 요청 "차트의 앨범 영역(있다면) 살림" → **있다면** 단서에 따라 차트는 트랙 전용 유지, 별도 추가 X. ArtistDetailPage `frontend/src/pages/ArtistDetailPage.jsx:5,17,28,33,131-143` — `api.getArtistAlbums(id)` 호출 → 404 받아 빈 배열 → 섹션 미노출. v69 에서 백엔드 라우트 신설하면 자동 노출.
+i) API 클라이언트 `frontend/src/api/index.js:57-78` — 기존: `getAlbums`, `getLatestAlbums`, `getAlbum`, `getArtistAlbums` 4개. 신설 필요: `getMyAlbums`, `createAlbum`, `updateAlbum`, `deleteAlbum`, `addTracksToAlbum`, `removeTrackFromAlbum`, `reorderAlbumTracks`, `generateAlbumCover`, `uploadAlbumCover`, `albumCoverPreviewUrl`.
+j) DnD 라이브러리: `frontend/package.json:12-21` 에 react-dnd / dnd-kit / react-beautiful-dnd 일절 없음. → `@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/utilities` 신규 도입 권장 (가벼움, 모던, React 19 호환). 또는 라이브러리 없이 HTML5 native drag&drop 자체 구현도 가능 (트랙 수 적을 때 충분). planner 결정: **@dnd-kit/sortable 도입** — 향후 playlist 재정렬 UI 등에서도 재사용 가치.
+k) DELETE /api/tracks/{id} 위치 — `backend_9004/app/routes/tracks.py:189-227 delete_track`. 현재 MinIO 오디오 삭제 + Mongo doc 삭제 + Redis cache 무효화 3단계. v69 에서 그 뒤에 `await mongo.albums.update_many({"track_ids": track_id}, {"$pull": {"track_ids": track_id}})` + 빈 앨범 (`track_ids: []`) 일괄 삭제 step 추가.
+l) 원격 로깅: `frontend/src/utils/remoteLogger.js` (v46-pre) — `console.info/warn/error` 가 백엔드 `/api/_logs` 로 자동 전달. 그대로 사용. v69 에서 추가 import 불필요.
+
+### 결정 사항 (planner 결정)
+- **앨범 도큐먼트 스키마** (Mongo `albums` 컬렉션):
+  ```
+  {
+    _id: ObjectId,
+    owner_id: str,            # PostgreSQL users.id (UUID str)
+    owner_nickname: str,      # denormalized snapshot, 트랙과 동일 패턴
+    title: str,               # 필수
+    description: str,         # 가능 ""
+    cover_image_url: str|None,    # MinIO object_name (예: "albums/{owner_id}/{album_id}/cover.png" 또는 트랙 cover 참조)
+    cover_source: "auto"|"upload"|"ai"|"borrowed",  # 자동차용 여부 추적용
+    track_ids: [str],         # 순서 = 재생 순서. tracks._id 의 str 형태 (트랙 모델이 id:str 노출하므로 일관)
+    is_public: bool,
+    created_at: datetime,
+    updated_at: datetime,
+  }
+  ```
+- track_ids 는 `str` 로 저장 (트랙 모델/API 모두 str 노출, 직렬화 비용 최소).
+- 트랙 순서는 `track_ids` 배열 순서 그 자체 — 별도 order 필드 없음. 드래그&드롭 후 프론트가 전체 배열을 reorder API 로 전송.
+- 초기 정렬: 트랙 생성일 **내림차순(최신순)** — 사용자가 보통 최근에 만든 곡 먼저 떠올림. 드래그로 자유 재정렬 가능.
+- 한 곡이 여러 앨범에 들어갈 수 있음. tracks 도큐먼트엔 album_id 박지 않음 (역참조 안 함). `albums.track_ids` 단방향만 신뢰원. ArtistDetailPage 의 track_count 와 album_count 는 각자 다른 컬렉션에서 산출.
+- **AI 커버 prompt 컨텍스트**: title + description + (선택 트랙들의 genre/mood 태그 dedup union) → `cover_generator.generate_cover_image` 호출 시 `title=앨범제목`, `genre=", ".join(unique_genres)`, `mood=", ".join(unique_moods)`, `user_prompt=description` 으로 매핑.
+- **성별 라디오 → vocal_gender 의미 치환**: 앨범엔 보컬이 없으므로 사용자 답변대로 "보컬 아닌 주인공 캐릭터 성별" 가정. 라디오 값(`female|male|neutral`) 을 그대로 `vocal_gender` 파라미터에 전달 — cover_generator 가 protagonist gender clause 로 변환. 코드 변경 없이 의미만 치환.
+- **캐릭터 포함 옵션**: 트랙 커버와 동일. 포함 케이스는 user character sheet bytes 를 `character_image_bytes` 로, 미포함은 None. 미포함 시 cover_generator 가 [B] free-style 분기로 자동 라우팅.
+- **자동 차용 로직** (Auto cover): 사용자가 cover_image_url/cover_object_name 둘 다 미설정 + AI 생성도 안 했을 때 — 백엔드가 `track_ids[0]` 의 트랙 `cover_image_url` 을 그대로 **reference** (별도 copy 없이 같은 object_name 재사용, `cover_source: "borrowed"` 마킹). 디스크 절약 + 트랙 커버 변경 시 자동 반영. 트랙들의 첫 곡이 cover 없으면 fallback gradient (프론트 처리).
+- **앨범 커버 object_name 규칙**:
+  - 직접 업로드: `covers/{owner_id}/album_{album_id}{ext}`
+  - AI 생성: `covers/generated/{owner_id}/album_{uuid_hex}.png`
+  - 자동 차용: track 의 cover_image_url 그대로 (별도 신규 object 없음)
+- **Redis 캐시**: 트래픽 적음. v69 에서 albums 캐싱 미도입. (차후 필요 시 추가)
+- **artists/{id}/albums 응답 정책**: `is_public=True` 인 앨범만, `release_date` 즉 `created_at` 내림차순. 빈 배열도 200.
+- **AlbumDetailPage 공개 정책**: `is_public=True` 이거나 viewer == owner. 비공개 + 비소유자 → 404.
+- **MainPage 최신 앨범** 영역 신설: `is_public=True` 전체에서 `created_at` desc, limit 10. 응답에 cover_image, title, owner_nickname (=artist_name), id.
+- **트랙 삭제 cascade**: tracks.py:delete_track 의 마지막에 `update_many($pull)` + `delete_many({"track_ids": {"$size": 0}})`. 영향받는 album 수와 삭제된 album 수를 로그로 남김.
+- "deprecated stub" 주석 / 메시지 전부 제거.
+- v2.0 호환 처리는 별도 안 함 — 기존 사용자가 앨범 컬렉션 비어 있어 손실 없음.
+
+### 변경 매트릭스 (백엔드 — backend_9004 only)
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9004/app/routes/albums.py` | **전면 재작성** — list/latest/get/create/update/delete + tracks add/remove/reorder + cover upload/generate | album_id, owner_id, user_id |
+| `backend_9004/app/models/album.py` (신규) | `AlbumCreate`, `AlbumUpdate`, `AlbumResponse`, `AlbumInDB`, `AlbumTracksReorder` Pydantic 모델 | - |
+| `backend_9004/app/routes/artists.py` | `GET /api/artists/{id}/albums` 신설 (현재 없음 → 404 → 신설) | artist_id |
+| `backend_9004/app/routes/tracks.py` | `delete_track` 끝부분에 albums cascade ($pull + size:0 삭제) + 로그 | track_id, affected_albums, deleted_albums |
+| `backend_9004/app/services/album_cover_generator.py` (신규 또는 routes 내 inline) | trackcover_generator 의 입력 매핑 헬퍼 — title/desc + track genre/mood union 산출. cover_generator.generate_cover_image 는 그대로 재사용. | album_id |
+| `backend_9004/app/main.py` | 변경 없음 (albums.router 이미 include 됨) | - |
+
+### 변경 매트릭스 (프론트엔드)
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `frontend/src/api/index.js` | album CRUD/tracks/cover API 함수 11개 신설 + albumCoverPreviewUrl 헬퍼 | - |
+| `frontend/src/pages/MyMusicPage.jsx` | '내앨범' 탭 (`myalbums`) 을 `tracks` 다음 / `upload` 앞에 삽입. MyAlbumsSection 컴포넌트 추가 — 앨범 리스트 + 생성/수정/삭제 트리거 | [MyMusicPage] [MyAlbumsTab] |
+| `frontend/src/components/AlbumCreateModal.jsx` (신규) + CSS | 앨범 생성 모달 — 메타(제목/설명/공개) + 트랙 선택(체크박스 멀티) + 드래그&드롭 순서 + 커버 옵션(자동/업로드/AI 라디오 + AI 시 성별/이미지모델/캐릭터포함) | [AlbumCreateModal] |
+| `frontend/src/components/AlbumEditModal.jsx` (신규, 또는 Create 재사용 prop `mode`) | 수정 모달 — 트랙 add/remove/reorder + 메타/커버 수정 | [AlbumEditModal] |
+| `frontend/src/pages/AlbumDetailPage.jsx` | 응답 스키마 정합 (백엔드 응답 키 매핑) + owner 인지 시 [수정] [삭제] 버튼 노출. cover_image 렌더링 fix (현재는 gradient 만) | [AlbumDetailPage] |
+| `frontend/src/components/AlbumCard.jsx` | cover_image 직렬화/렌더 유지 — 백엔드가 `cover_image_url` 을 object_name 또는 `/api/...` 절대경로로 내려보내면 그대로 작동. 변경 거의 없음. | - |
+| `frontend/src/pages/MainPage.jsx` | "최신 앨범" 섹션 신설 (`getLatestAlbums` 호출) — TrackCard 위/아래 어느 쪽이든 자연스러운 위치 | [MainPage] |
+| `frontend/src/pages/ArtistDetailPage.jsx` | 코드 골격 이미 OK — 백엔드 응답만 정상이면 자동 동작 | - |
+| `frontend/package.json` | `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` 추가 | - |
+
+### API 스키마 (백/프론트 합의)
+- **POST /api/albums** (multipart form) — 생성
+  - form fields: `title`(필수), `description`, `is_public`(bool, 기본 true), `track_ids`(JSON array str), `cover_mode`("auto"|"upload"|"ai"), `cover_file`(File, mode=upload 시), `cover_object_name`(str, mode=ai 후 미리 생성된 경우), `ai_gender`(str), `ai_image_model`(str), `ai_include_character`(bool)
+  - 응답: `AlbumResponse`
+- **GET /api/albums?page=1&limit=20** — 공개 앨범 전체
+- **GET /api/albums/latest?limit=10** — 최신 공개 앨범
+- **GET /api/albums/my** — 본인 앨범 전체 (비공개 포함)
+- **GET /api/albums/{id}** — 단일 앨범 + tracks 펼침 (응답에 `tracks: [TrackResponse]`)
+- **PATCH /api/albums/{id}** (json) — 메타 수정 (title, description, is_public)
+- **PATCH /api/albums/{id}/cover** (multipart) — 커버만 교체 (cover_mode/file/options)
+- **DELETE /api/albums/{id}** — 앨범 삭제 (트랙은 보존, 다른 앨범 영향 X)
+- **POST /api/albums/{id}/tracks** (json `{track_ids:[str]}`) — 트랙 추가 (append, dedup)
+- **DELETE /api/albums/{id}/tracks/{track_id}** — 트랙 제거 (마지막 1곡 제거 시 빈 앨범 정책: 자동 삭제 X, 사용자가 의도적 제거 가능. 단, **트랙 자체 삭제** cascade 만 빈 앨범 자동 삭제 적용)
+- **PUT /api/albums/{id}/tracks/order** (json `{track_ids:[str]}`) — 전체 순서 재설정
+- **POST /api/albums/cover/generate** (json) — AI 커버 미리 생성 (모달에서 [생성] 누를 때 호출). 응답 `{cover_object_name, image_url}` → 그 후 POST/PATCH 에서 cover_object_name 전달
+- **GET /api/artists/{id}/albums** — 공개 앨범 list
+- **AlbumResponse 스키마**:
+  ```
+  {
+    id: str,
+    owner_id: str,
+    artist_id: str (= owner_id, frontend 호환),
+    artist_name: str,
+    title: str,
+    description: str,
+    cover_image: str|null (object_name 또는 절대 URL),
+    cover_source: str,
+    is_public: bool,
+    release_date: str (ISO, = created_at),
+    track_count: int,
+    tracks: [TrackResponse]  # /albums/{id} 만 포함, list 응답엔 생략
+    created_at: str,
+    updated_at: str,
+  }
+  ```
+
+### 디버깅 로그 매트릭스
+- 백엔드 `albums.py`:
+  - 모든 mutation 핸들러 진입 시 `logger.info("[Albums] action=<name> user=%s album=%s extra=%s", ...)`
+  - cover 자동 차용 시 `logger.info("[Albums] auto-borrow cover album=%s from_track=%s", ...)`
+  - AI cover gen 시 `logger.info("[AlbumCover] gen album=%s gender=%s model=%s incl_char=%s", ...)`
+- 백엔드 `tracks.py:delete_track` cascade:
+  - `logger.info("[TrackDelete] cascade track=%s affected_albums=%d deleted_albums=%d", ...)`
+- 프론트 `AlbumCreateModal`: 각 step 진입 / 제출 / 결과 시 `console.info('[AlbumCreateModal] step=<x> ...')`. 민감 정보(description 본문 등) 길이만.
+- 프론트 `MyAlbumsTab`: fetch / 생성 / 삭제 시 `console.info('[MyAlbumsTab] action=... album_id=...')`.
+- 프론트 `AlbumDetailPage`: fetch 실패 시 `console.warn('[AlbumDetailPage] fetch failed', { id, status })`.
+- 추적자: `album_id`, `owner_id`, `track_id`, `cover_source`, `affected_albums`. user 본문/이메일 출력 금지 — id만.
+
+### 작업 분배
+- **backend-dev**:
+  1. `app/models/album.py` 신규 — Pydantic 모델 5개.
+  2. `app/routes/albums.py` 전면 재작성 — 11개 라우트.
+  3. `app/routes/artists.py` 끝부분에 `GET /{artist_id}/albums` 추가.
+  4. `app/routes/tracks.py:delete_track` 끝부분에 cascade.
+  5. (옵션) `app/services/album_cover_generator.py` 헬퍼 — 또는 albums.py 안 inline.
+  6. 로그 매트릭스 그대로 박기. 9004 only.
+- **frontend-dev**:
+  1. `package.json` 에 dnd-kit 3종 추가 + `npm i`.
+  2. `src/api/index.js` 에 album 함수 11개 + 헬퍼 추가.
+  3. `src/components/AlbumCreateModal.jsx` + CSS 신규 (생성/수정 겸용, `mode` prop).
+  4. `src/pages/MyMusicPage.jsx` — `myalbums` 탭 신설 + `MyAlbumsSection` 컴포넌트 추가.
+  5. `src/pages/AlbumDetailPage.jsx` — 스키마 정합 + 소유자 액션.
+  6. `src/components/AlbumCard.jsx` — cover_image 렌더 검증.
+  7. `src/pages/MainPage.jsx` — "최신 앨범" 섹션 신설.
+  8. ArtistDetailPage 변경 없음 (백엔드만 정상이면).
+  9. 로그 매트릭스 그대로.
+- **tester (수동)**:
+  - T1: 트랙 3곡 보유 사용자가 앨범 생성 (자동 차용) → MyAlbums 에 노출 → AlbumDetailPage 진입 OK.
+  - T2: AI 커버 생성 모달 — 캐릭터 포함 토글 양쪽 + 성별 3종 + image_model 2종 (총 12조합 중 샘플 4).
+  - T3: 직접 업로드 커버.
+  - T4: 트랙 순서 드래그&드롭 → 새로고침 후 유지 확인.
+  - T5: 한 트랙을 2개 앨범에 동시 추가 → 양쪽 모두 노출 확인.
+  - T6: 트랙 삭제 → 그 트랙 포함된 앨범에서 자동 제거 확인 + 빈 앨범이 된 케이스는 앨범 자체 삭제 확인.
+  - T7: 비공개 토글 → 다른 사용자 화면에선 ArtistDetailPage/MainPage/getAlbums 에서 미노출.
+  - T8: MainPage "최신 앨범" 렌더링, ArtistDetailPage 앨범 섹션 렌더링.
+  - T9: AlbumDetailPage 의 [전체 재생] 정상 동작.
+
+### 회귀 위험
+- 트랙 삭제 cascade 가 본인 외 다른 사용자 앨범에 영향 X (`track_ids` 가 자기 트랙만 들어가는 구조 — 본인 앨범에만 들어 있음). 단, 정책상 빈 앨범 자동 삭제는 사용자 명시 요청이므로 그대로 진행.
+- 자동 차용 cover 가 트랙 cover 변경 시 자동 갱신되는 부수효과 — 의도된 동작이지만 사용자 안내 필요 (모달 hint 텍스트).
+- 옛 클라이언트가 `getAlbums` 호출 시 빈 배열 받던 동작 → 이제 실제 앨범 받음. 옛 빌드 호환에 문제 없음 (응답 스키마는 확장 only).
+- dnd-kit 추가로 번들 크기 약간 증가 (~20KB gz). 허용 범위.
+
+
+
+## v70 — '내 캐릭터' 탭 손실 UI 재구현 + dangling 잔재 정리 (2026-05-24)
+
+### 요청 작업
+`MyMusicPage` 의 `CharacterSection` 의 character 분기 (저장된 캐릭터 노출 분기) 에 v68/v69 작업 도중 사용자 미커밋 변경 손실로 인해 **시트 이미지 + 다시만들기/삭제 버튼만** 남고 used_items 그리드 + 프로필(이름/나이/태그/소개) UI 가 사라졌음. `PlayerPage` 의 `CharacterCoverCard` 마크업 패턴을 시각 참고로 사용해 옵션 A로 재구현. 작업 범위 밖 코드는 손대지 않음 (보수적).
+
+### Plan verification findings
+- a) **백엔드 응답 스키마 (변경 불필요)** — `backend_9004/app/routes/character.py:563-594` `GET /api/character/me` 가 이미 다음 필드 전부 반환: `sheet_object_name`, `sheet_url`(`/api/character/preview/{...}`), `used_items[]`, `name`, `age`, `personality_tags[]`, `personality_text`, `original_photo_object_name`, `image_model`, `created_at`, `updated_at`. `used_items` 요소는 `UsedItemPayload`(L61-66): `{ id, name, image_object_name, product_url, category }` — `category` 는 `"상의" | "하의" | "신발"`. 백엔드 변경 0.
+- b) **현재 character 분기** — `frontend/src/pages/MyMusicPage.jsx:228-254` (`if (character) { return ... }`). 마크업: 시트 `<img src={api.characterPreviewUrl(character.sheet_url)}>` + `mymusic-character__actions` 에 `다시 만들기`(`handleRegenerate`) / `삭제`(`handleDelete`) 두 버튼만. used_items / 프로필 마크업 **전무**.
+- c) **다른 분기** — loading (L224-226, `mymusic-loading`), preview (L257-293, `previewUrl` truthy 시 저장/다시 생성/취소), no-character (L295-355, 사진 업로드 dropzone + 생성 버튼). 이 세 분기는 변경 X.
+- d) **dangling 코드 식별** — `CharacterSection` 의 모든 state/함수 점검:
+  - `previewUrl`/`previewObjectName` → preview 분기에서 사용 (dangling 아님)
+  - `generating` → preview/no-character 분기에서 사용 (dangling 아님)
+  - `photoFile`/`photoInputRef` → no-character 분기에서 사용 (dangling 아님)
+  - `saving` → preview 분기에서 사용 (dangling 아님)
+  - `handleGenerate`/`handleSave`/`handleDelete`/`handleRegenerate` → 모두 호출됨
+  - **결과: 현재 CharacterSection 안에 진짜 dangling 코드는 발견 없음.** v69 손실은 "마크업 삭제" 였지 "state 추가 후 마크업 미연결" 이 아니었던 것으로 보임. 따라서 잔재 정리 작업은 **신규 마크업 작성 후 재점검 차원에서만** 수행하면 됨 (실제 제거 대상은 없을 가능성 높음).
+- e) **PlayerPage CharacterCoverCard 참고 마크업** — `frontend/src/components/CharacterCoverCard.jsx`:
+  - 시트: `<img src={api.characterPreviewUrl(character.sheet_preview_path)}>` (MyMusic 은 `sheet_url`)
+  - 프로필 행: `name`+`age`(세 suffix) → `chips`(`personality_tags.filter(Boolean).map`) → `personality_text`
+  - outfit: `byCategory` lookup 으로 3 슬롯 고정(`상의/하의/신발`). 각 슬롯 — 이미지 박스(클릭 시 `recordAdClick` + `window.open(product_url)`) + 이름 + "쇼핑몰에서 보기 ▶" 링크. `image_object_name` falsy 면 `미선택` placeholder.
+  - 헬퍼: `api.characterPreviewUrl`, `api.adImageUrl`, `api.recordAdClick` 모두 `frontend/src/api/index.js` 에 export 됨 (L409, L463, L467). MyMusic 에 그대로 사용 가능. `api.recordAdClick` 은 본 작업에서 사용해야 — 광고 클릭 추적은 시스템 일관성 차원 필수.
+- f) **CSS prefix 컨벤션** — `frontend/src/pages/MyMusicPage.css:527-` 전부 `.mymusic-character__` BEM. 신규 클래스도 동일 prefix 강제. 제안: `mymusic-character__profile-row`, `mymusic-character__profile-line`, `mymusic-character__profile-name`, `mymusic-character__profile-age`, `mymusic-character__chips`, `mymusic-character__chip`, `mymusic-character__profile-text`, `mymusic-character__outfit-hint`, `mymusic-character__outfit-row`, `mymusic-character__outfit-box`, `mymusic-character__outfit-image`, `mymusic-character__outfit-image--clickable`, `mymusic-character__outfit-preview`, `mymusic-character__outfit-empty`, `mymusic-character__outfit-name`, `mymusic-character__outfit-name--clickable`, `mymusic-character__outfit-link`. (`character-cover-card__*` 와 별개 namespace — 컴포넌트 공유 금지)
+- g) **백엔드 변경 필요 여부** — 없음. used_items, name, age, personality_tags, personality_text 전부 응답에 포함됨.
+- h) **회귀 위험** — 
+  - `CharacterCoverCard.jsx` 변경 X (시각 참고만)
+  - 다른 탭 (tracks/myalbums/upload/studio/drafts) 영향 0 (변경은 `CharacterSection` 내부 한 분기뿐)
+  - `AlbumCreateModal` 영향 0
+  - `CharacterSection` 은 모듈 내부 함수 (export 안 됨) — 외부 영향 0
+  - 다른 두 분기 (loading/preview/no-character) 변경 X — character 분기만 수정
+
+### 결정 사항
+- 백엔드: 변경 없음. 응답 이미 충분.
+- 프론트 변경 범위: `frontend/src/pages/MyMusicPage.jsx` 의 `CharacterSection` 의 `if (character)` 분기 (L228-254) 마크업만, 그리고 `frontend/src/pages/MyMusicPage.css` 에 신규 클래스 append.
+- 다른 분기(loading/preview/no-character) 일체 변경 X.
+- CSS prefix: `mymusic-character__` 유지 (별도 `mymusic-character__profile-*`, `mymusic-character__outfit-*` 서브 그룹).
+- 광고 클릭 추적: **사용** — `api.recordAdClick(item.id)` 호출 + `window.open(product_url, '_blank', 'noopener,noreferrer')`. `CharacterCoverCard` 와 시스템 일관성 확보.
+- 다시만들기/삭제 버튼: 유지 (위치는 시트 옆 그대로). 프로필/아이템 그리드가 그 아래로 들어감.
+- dangling 잔재 정리: 본 작업 진행 후 `CharacterSection` 내 사용되지 않는 import/state/함수 재점검. 현재로선 dangling 후보 없음. 작업 외 다른 컴포넌트/페이지의 dangling 은 손대지 않음.
+- 디버깅 로그: dev 환경에서 mount 시 1회 — `empty/items_count/has_sheet/has_name/has_age/tags_count/has_text` (PII 본문 X). 광고 클릭 시 `id` 만 로깅.
+- 이미지 onError: 시트 — `display:none` 처리. 아이템 이미지 — warn 만 (`object_name` 만 출력, name/url 등 PII 가능 필드 X).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `frontend/src/pages/MyMusicPage.jsx` | `CharacterSection` character 분기(L228-254) 마크업 확장: 시트+액션 유지 + 프로필 행(name/age/태그 chips/소개 text) + outfit 3 슬롯(상의/하의/신발 — 이미지/이름/쇼핑몰 링크, recordAdClick). 그 외 분기/함수 변경 금지 | [MyMusicPage][CharacterSection] |
+| `frontend/src/pages/MyMusicPage.css` | `mymusic-character__profile-*`, `mymusic-character__chips`, `mymusic-character__chip`, `mymusic-character__outfit-*` 클래스 append (파일 끝). 기존 클래스 수정 금지 | - |
+| `backend_9004/app/routes/character.py` | 변경 없음 | - |
+
+### 작업 분배
+- **backend-dev**: 변경 없음. 본 작업은 프론트 only.
+- **frontend-dev**: 
+  - `MyMusicPage.jsx` 의 `CharacterSection` 의 character 분기(L228-254) 마크업 확장. 현재의 시트+다시만들기+삭제 영역은 그대로 두고, 그 아래에 프로필 행 + outfit 그리드 append.
+  - `MyMusicPage.css` 에 신규 클래스 추가 (파일 끝).
+  - 시트 src 는 `api.characterPreviewUrl(character.sheet_url)` 유지 (`sheet_url` 은 이미 `/api/character/preview/{name}` 풀 path 라 helper 가 baseURL 합성).
+  - 광고 클릭 추적은 `api.recordAdClick(item.id)` 호출 + 새 탭 오픈.
+  - dev 로깅: mount 시 `empty/items_count/has_sheet/...` 카운트만 (PII 본문 X).
+- **tester**: 
+  - 케이스 1 — 캐릭터 저장돼 있고 used_items 비어있음: 시트 + 프로필 + outfit 3 슬롯(모두 미선택 placeholder) 노출. 다시만들기/삭제 작동.
+  - 케이스 2 — 캐릭터 + used_items 있음(MV 생성 후 저장된 상태): 각 슬롯에 이미지+이름+링크. 링크 클릭 시 `POST /business/ads/{id}/click` 호출 (네트워크 탭 확인) + 새 탭 오픈.
+  - 케이스 3 — 캐릭터 없음: dropzone 노출 (변경 안 됨 확인).
+  - 케이스 4 — 사진 업로드 → 시트 생성 → 미리보기 → 저장 → 저장된 분기로 전환되며 신규 UI 정상 노출.
+  - 회귀 — tracks/myalbums/upload/studio/drafts 탭 정상 / PlayerPage 의 CharacterCoverCard 정상 / 콘솔에 PII (이름/소개 본문) 출력 없음.
+
+## v72 — Seedance audio 동봉 해제 (partner 검열 회피 + redundancy 제거) (2026-05-24)
+
+### 요청 작업
+Seedance image-to-video 호출 시 audio_bytes 를 body 에 동봉하면 fal.ai partner (ByteDance) 가 audio safety scan 을 돌려 `partner_validation_failed` (HTTP 422 "Output audio has sensitive content") 를 빈번히 트리거. Phase 3.5 sync labs 후처리가 어차피 모든 lipsync 씬을 처리하므로 Seedance 자체 lipsync 효과는 redundant. → Seedance 호출에서 audio 동봉을 해제하고, 다른 모델(Veo/Kling/Grok)과 동일하게 prompt 안의 가사 텍스트만으로 영상 생성.
+
+### Plan verification findings
+- `backend_9004/app/services/seedance_video_generator.py:28-37` — `start_scene_video_seedance` 시그니처에 `audio_bytes: Optional[bytes] = None` 파라미터 존재.
+- `backend_9004/app/services/seedance_video_generator.py:91-93` — lipsync + audio_bytes 일 때 final_prompt 끝에 `" The character sings along to the provided audio with precise lip synchronization. @Audio1"` 를 append. `@Audio1` 토큰이 fal.ai Seedance 의 audio reference sentinel.
+- `backend_9004/app/services/seedance_video_generator.py:104-107` — `audio_bytes` 가 truthy 면 base64 인코딩 후 `body["audio_url"] = "data:audio/mpeg;base64,..."` 주입. 이 부분이 partner audio safety scan 의 입력.
+- `backend_9004/app/services/mv_pipeline.py:2583-2603` — Seedance 분기. L2585-2591 에서 `scene_audio_bytes` 를 `_slice_audio_segment(seedance_audio_bytes, section_start, section_end)` 로 추출 (lipsync + seedance_audio_bytes 보유 조건). L2601 에서 `audio_bytes=scene_audio_bytes` 로 전달.
+- `backend_9004/app/services/mv_pipeline.py:2889-2892` — `lipsync_scenes = [s for s in scenes if s.get("scene_type")=="lipsync" and video_status=="completed" and video_object_name and not video_synclabs_object]` 로 추출. Phase 3.5 가 video 모델 종류와 무관하게 모든 lipsync 씬을 sync labs 로 후처리.
+- `backend_9004/app/services/mv_pipeline.py:2902` — `from .sync_labs_service import generate_lipsync_from_video, cut_audio_segment` 후 라인 이하 루프에서 각 씬에 적용. 즉 Seedance 의 자체 lipsync 결과는 어차피 sync labs 산출물로 덮어쓰임 → audio 동봉이 redundant 임이 코드상 확인됨.
+- 다른 모델 비교: Veo/Kling/Grok 호출부에는 `audio_bytes`/`audio_url` 인자가 없음 (가사는 prompt 텍스트로만 전달). Seedance 만 audio 동봉 → 동일 패턴으로 통일.
+
+### 결정 사항
+- `backend_9004/app/services/mv_pipeline.py:2583-2603` 의 Seedance 분기에서 `audio_bytes=None` 으로 고정 호출. L2601 의 `audio_bytes=scene_audio_bytes` → `audio_bytes=None` 로 변경.
+- L2585-2591 의 `scene_audio_bytes` 추출 블록은 제거 (dead code 회피). `_slice_audio_segment` 호출 비용 절감.
+- `backend_9004/app/services/seedance_video_generator.py` 의 `audio_bytes` 파라미터 시그니처(L35)는 유지 (옛 호출자 호환). 다만 함수 docstring 또는 파라미터 위 주석에 "v72: deprecated — Phase 3.5 sync labs handles all lipsync. Always pass None from mv_pipeline." 1줄 추가. L91-93 (`@Audio1` append) 와 L104-107 (`audio_url` 주입) 은 코드 그대로 유지 — `audio_bytes=None` 가드를 이미 통과하므로 자동 비활성.
+- 다른 모델 (Veo/Kling/Grok) 흐름 변경 없음.
+- Phase 3.5 sync labs 후처리 (L2888 이하) 변경 없음 — lipsync 씬 품질은 sync labs 가 보장.
+- 9003 미러 변경 없음 (유저 정책상 9004 only).
+- frontend 변경 없음.
+- 디버깅 로그: Seedance 호출 직전에 `logger.info("[SeedAudioOff] job=%s scene=%d type=%s (audio not embedded; sync labs will handle)", job_id, sn, scene.get("scene_type"))` 1라인 추가. 회귀 시 grep 으로 즉시 식별.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9004/app/services/mv_pipeline.py | Seedance 분기 (L2583-2603): scene_audio_bytes 추출 블록 제거, `audio_bytes=None` 고정, `[SeedAudioOff]` 로그 1라인 추가 | job_id, scene_number, scene_type |
+| backend_9004/app/services/seedance_video_generator.py | `audio_bytes` 파라미터 위 주석 1줄 추가 (deprecated 표기). 본문 로직 변경 없음. | - |
+
+### 작업 분배
+- **backend-dev**:
+  - `backend_9004/app/services/mv_pipeline.py` 의 Seedance 분기(L2583-2603) 만 수정. L2585-2591 의 `scene_audio_bytes` 추출 블록 제거. L2601 의 `audio_bytes=scene_audio_bytes` → `audio_bytes=None`. 호출 직전에 `[SeedAudioOff]` 로그 1라인 추가 (job_id, scene_number, scene_type 포함).
+  - `backend_9004/app/services/seedance_video_generator.py` 의 L35 `audio_bytes` 파라미터 위에 주석 1줄 추가: `# v72: deprecated — Phase 3.5 sync labs handles all lipsync. Pass None from mv_pipeline.`. 본문 (L91-93, L104-107) 변경 금지.
+  - Veo/Kling/Grok 분기 (L2570-2582, L2606 이하) 변경 금지. Phase 3.5 sync labs 후처리 (L2888-2902 이하) 변경 금지. 9003 미러 변경 금지.
+- **frontend-dev**: 변경 없음.
+- **tester**:
+  - 케이스 1 — Seedance + lipsync 씬 포함 MV 생성 → fal.ai partner_validation_failed 422 미발생 확인. 영상 정상 수신.
+  - 케이스 2 — Phase 3.5 sync labs 가 해당 lipsync 씬을 정상 후처리 → `video_synclabs_object` 가 채워지고 최종 MV 에 sync labs 결과가 사용되는지 확인.
+  - 케이스 3 — Seedance + drama 씬 (lipsync 아님) 생성 → 변화 없음 확인.
+  - 케이스 4 — 다른 video 모델 (Veo/Kling/Grok) 흐름 회귀 없음 확인 (영상 생성 정상, 가사 텍스트는 기존대로 prompt 에 포함).
+  - 로그 검증 — `[SeedAudioOff]` 가 Seedance 호출마다 정확히 1회 출력 (job_id, scene_number, scene_type). `[SeedProm]` (기존) 도 정상 동작.
+
+## v72.1 + v72.2 — 단일 씬 재시도 핸들러 보강 (audio off + Grok 분기) (2026-05-24)
+
+### 요청 작업
+- v72.1: `backend_9004/app/routes/mv.py` 의 `_generate_single_scene_video` 의 seedance 분기에도 `audio_bytes=None` 적용. v72 에서 `mv_pipeline.py` Phase 3 전체생성 seedance 분기에만 audio 미동봉을 적용했고, 단일 씬 재시도 경로는 누락되어 lipsync 씬을 단일 재시도하면 fal.ai `partner_validation_failed (422)` 가 재발함.
+- v72.2: 같은 함수의 모델 분기 (호출/폴링/다운로드 3곳) 에 Grok 분기 신설. 현재 모델 분기는 `seedance / veo / else(kling)` 만 있어 `video_model == "grok"` 으로 시작한 작업의 단일 씬 재시도가 자동으로 Kling 으로 폴백됨 → 모델 일관성 위반 + 사용자 의도와 어긋남.
+
+### Plan verification findings
+- (a) `backend_9004/app/routes/mv.py:1936` — `_generate_single_scene_video(job_id, scene_number, mongo_db)` 정의.
+- (a) `backend_9004/app/routes/mv.py:2046` — `video_model = job.get("video_model", "veo")` 추출 (fallback 이 `veo` 임에 유의).
+- (a) `backend_9004/app/routes/mv.py:2049-2072` — seedance 분기. `scene_audio_bytes` 추출 (L2051-2062) 및 `audio_bytes=scene_audio_bytes` 전달 (L2071). ★ 이 추출/전달이 v72.1 의 제거 대상.
+- (a) `backend_9004/app/routes/mv.py:2073-2080` — veo 분기 (변경 없음).
+- (a) `backend_9004/app/routes/mv.py:2081-2091` — `else:  # kling` 분기. ★ Grok 분기 없음 → v72.2 의 신설 위치.
+- (a) `backend_9004/app/routes/mv.py:2093-2101` — 폴링 분기. `seedance / veo / else(kling)` 만. ★ Grok 분기 누락.
+- (a) `backend_9004/app/routes/mv.py:2107-2112` — 다운로드 분기. `seedance / veo / else(kling)` 만. ★ Grok 분기 누락.
+- (b) `backend_9004/app/services/grok_video_generator.py:43-51` — `start_scene_video_grok(prompt, image_url=None, video_prompt=None, lyrics_segment="", scene_type="drama", duration=10.0, description=None) -> request_id`. image_bytes 대신 **image_url** (MinIO presigned).
+- (b) `backend_9004/app/services/grok_video_generator.py:146` — `check_scene_video_status_grok(request_id) -> {done, video_url, error}`.
+- (b) `backend_9004/app/services/grok_video_generator.py:215` — `download_video_grok(video_url) -> bytes`.
+- (b) `backend_9004/app/services/mv_pipeline.py:2602-2626` — Phase 3 전체생성 시 Grok 호출 패턴: `minio_client.presigned_get_object(bucket=settings.minio_bucket_images, object_name=scene["image_object_name"], expires=timedelta(hours=1))` 으로 `image_url` 생성 후 `start_scene_video_grok(prompt=..., image_url=image_url, video_prompt=..., lyrics_segment=..., scene_type=..., duration=..., description=...)` 호출. 단일 씬 재시도에서 동일 패턴 복제.
+- (b) `backend_9004/app/services/mv_pipeline.py:2665-2666` — Grok 폴링: `check_scene_video_status_grok(task_or_op)`.
+- (b) `backend_9004/app/services/mv_pipeline.py:2716-2717` — Grok 다운로드: `download_video_grok(video_download_url)`.
+- (c) `mv_jobs.video_model` 후보 4개 확정: `"seedance" | "veo" | "kling" | "grok"`. routes/mv.py 의 현재 분기는 4개 중 3개만 처리하고 grok 을 `else (kling)` 로 떨어뜨리고 있음.
+- (d) `backend_9004/app/services/mv_pipeline.py:2583-2599` — v72 의 audio off 변경 위치 확인 (`audio_bytes=None`, `[SeedAudioOff]` 로그). 이 fix 가 routes/mv.py 의 단일 씬 재시도 경로에는 미적용 — 확정.
+
+### 결정 사항
+- `backend_9004/app/routes/mv.py` `_generate_single_scene_video` 의 seedance 분기 (L2049-2072) 에서:
+  - `scene_audio_bytes` 추출 블록 (L2050-2062) 전체 제거.
+  - `start_scene_video_seedance(...)` 호출의 `audio_bytes=scene_audio_bytes` 를 `audio_bytes=None` 으로 변경.
+  - 변경 직전 `[SeedAudioOff_single]` 로그 1줄 추가 — 필드 `job_id`, `scene_number`, `scene_type`.
+- 같은 함수의 호출 분기에 `elif video_model == "grok":` 신설 (현재 `else: # kling` 위에). `mv_pipeline.py:2602-2626` 패턴 복제 — `minio_client.presigned_get_object(...)` 로 `image_url` 발급 → `start_scene_video_grok(prompt=scene_desc, image_url=image_url, video_prompt=scene_video_prompt, lyrics_segment=scene.get("lyrics_segment",""), scene_type=scene.get("scene_type","drama"), duration=float(scene.get("use_seconds",10)), description=scene.get("description",""))`. 호출 직전 `[GrokSingle]` 로그 1줄 — 필드 `job_id`, `scene_number`, `video_model`.
+- 폴링 분기 (L2093-2101) 와 다운로드 분기 (L2107-2112) 에도 동일하게 `elif video_model == "grok":` 신설 — 각각 `check_scene_video_status_grok(task_id)` 및 `download_video_grok(video_url)` 사용.
+- Import 추가 — 함수 내 import 블록 (L2041-2043) 에 `from ..services.grok_video_generator import start_scene_video_grok, check_scene_video_status_grok, download_video_grok` 추가. `from datetime import timedelta` 가 함수 스코프에 없으면 추가 (presigned URL expires 용).
+- 변경 금지 — Veo / Kling 분기, `mv_pipeline.py`, `backend_9003` 미러, frontend.
+- 후처리 (Phase 3.5 sync labs, audio merge, MinIO put_object 등) 분기 영향 없음 — `video_object_name` 만 채워지면 동일하게 동작.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9004/app/routes/mv.py` | `_generate_single_scene_video` 의 (1) seedance 분기 audio off — `scene_audio_bytes` 제거 + `audio_bytes=None` + `[SeedAudioOff_single]` 로그, (2) Grok 분기 신설 — 호출/폴링/다운로드 3곳 + `[GrokSingle]` 로그, (3) Grok generator import + `timedelta` import | `job_id`, `scene_number`, `video_model` |
+
+### 작업 분배
+- **backend-dev**: 위 결정 사항 적용. routes/mv.py 만 수정. mv_pipeline.py 의 v72 패턴 (L2583-2599 audio off, L2602-2626 Grok 호출, L2665-2666 폴링, L2716-2717 다운로드) 을 정확히 복제. 로그 태그 `[SeedAudioOff_single]`, `[GrokSingle]` 신규 도입. Lint/syntax 자가 검증.
+- **frontend-dev**: 변경 없음.
+- **tester**:
+  - 케이스 1 — `video_model = "seedance"`, lipsync 씬, 단일 씬 재시도 트리거 → `partner_validation_failed (422)` 미발생, 영상 정상 수신. `[SeedAudioOff_single]` 로그 1회.
+  - 케이스 2 — `video_model = "grok"`, drama 씬, 단일 씬 재시도 트리거 → Grok API 호출 (Kling 폴백 발생 X), 영상 정상 수신. `[GrokSingle]` 로그 1회. presigned URL 만료 시간 ≥ 폴링 시간 (10분) 이내.
+  - 케이스 3 — `video_model = "grok"`, lipsync 씬, 단일 씬 재시도 → Grok 분기 진입, `lyrics_segment` 가 prompt 에 포함 (Grok generator 내부 처리).
+  - 케이스 4 — `video_model = "veo"` / `"kling"` 단일 씬 재시도 회귀 없음.
+  - 케이스 5 — Phase 3.5 sync labs / audio merge 후처리 정상 동작 (lipsync 씬의 `video_synclabs_object` 채워짐).
+
+
+## v73 — 실패 씬 일괄 재생성 (이미지 + 영상, 순차 처리) (2026-05-25)
+
+### 요청 작업
+MV 작업 화면에 두 개의 일괄 재생성 버튼 추가.
+1. **[실패 씬 이미지 일괄 재생성]** — `image_object_name` 없는 씬만 자동 선별 → ★ 순차 처리 ★.
+2. **[실패 씬 영상 일괄 재생성]** — `video_object_name` 없거나 `video_status='failed'` 인 씬만 자동 선별 → ★ 순차 처리 ★.
+핵심 제약 — 순차 처리 필수 (앞 씬 결과가 뒤 씬 reference 로 이어짐). 병렬 호출 금지.
+
+### Plan verification findings
+- (a) `backend_9004/app/routes/mv.py:835-865` — `POST /jobs/{job_id}/generate-images` 라우트. `body.scene_numbers` (optional) 받아 `background_tasks.add_task(run_phase2_images, oid, mongo, body.scene_numbers)` 호출. 인자 전달 패턴 확정.
+- (a) `backend_9004/app/services/mv_pipeline.py:2049` — `run_phase2_images(job_id, mongo_db, scene_numbers: Optional[List[int]] = None)` 시그니처.
+- (a) `backend_9004/app/services/mv_pipeline.py:2096-2106` — selector 확정. `scene_numbers is None` 일 때만 `if not scene.get("image_object_name"):` 로 자동 선별 (실패 씬 = 이미지 없는 씬). ★ 즉, scene_numbers 인자 없이 호출하면 정확히 "이미지 없는 씬만" 자동 선별됨 — Backend 추가 변경 0.
+- (a) `backend_9004/app/services/mv_pipeline.py:2118-2198` — main 루프 `for idx, (i, scene) in enumerate(target_scenes):` ★ 순차 ★. `prev_scene_image_bytes` 로 직전 씬 reference 체인 (L2133-2136). 씬 사이 `await asyncio.sleep(3)` (L2197-2198). gather/parallel 없음.
+- (b) `backend_9004/app/routes/mv.py:2336-2384` — `POST /jobs/{job_id}/generate-videos` 라우트. `GenerateVideosRequest` 의 body 필드는 `{scene_numbers?: List[int], video_model?: str}`. `background_tasks.add_task(run_phase3_videos, oid, mongo, body.scene_numbers, video_model)` 호출.
+- (b) `backend_9004/app/services/mv_pipeline.py:2366` — `run_phase3_videos(job_id, mongo_db, scene_numbers=None, video_model=None)` 시그니처.
+- (b) `backend_9004/app/services/mv_pipeline.py:2400-2411` — selector 확정. `scene_numbers is None` 이면 모든 씬을 보되, `scene.get("video_status") in ("pending", "failed")` 이고 `image_object_name` 이 존재하는 씬만 자동 선별. ★ 정확히 "video_object_name 없거나 video_status='failed'" 조건과 일치 (completed 씬 제외) — Backend 추가 변경 0.
+- (b) `backend_9004/app/services/mv_pipeline.py:2437` — main 루프 `for idx, (i, scene) in enumerate(target_scenes):` ★ 순차 ★. `prev_scene_image_for_video` 로 Kling 연속성 체인 (L2772). 씬 사이 `await asyncio.sleep(15)` (L2860-2861). `asyncio.gather` / `create_task` 호출 없음 (파일 내 유일한 gather L1981 은 phase3 와 무관한 별도 함수).
+- (b) 따라서 selector 와 순차성 둘 다 이미 확보됨 — `scene_numbers=None` 으로 호출하면 자동으로 실패 씬만 순차 처리.
+- (c) `frontend/src/api/index.js:210` — `generateMVImages(jobId, data) => POST /mv/jobs/${jobId}/generate-images` body 통째 전달.
+- (c) `frontend/src/api/index.js:217` — `generateMVVideos(jobId, videoModel) => POST /mv/jobs/${jobId}/generate-videos` 단 body 가 `videoModel ? { video_model: videoModel } : {}` 만 보내고 `scene_numbers` 는 전달 안 함. ★ 다행히 `scene_numbers=None` 이 정확히 "실패 씬만 자동 선별" 동작이므로 시그니처 변경 없이 그대로 호출 가능. 단, 의미를 명확히 하려면 옵션 인자 확장 가능 (선택).
+- (d) `frontend/src/pages/UploadPage.jsx:1241-1252` `handleGenerateVideos` — 이미 존재 (전체 영상 트리거). polling 자동 시작 (`startMvPolling`).
+- (d) `frontend/src/pages/UploadPage.jsx:306` — 폴링 활성 status 목록에 `generating_images`, `generating_videos` 둘 다 포함됨. 새 트리거 후 동일 폴링 재사용 가능.
+- (d) `frontend/src/pages/UploadPage.jsx:3415-3421` — "생성된 장면 (n/total)" 헤더. ★ 여기에 [실패 씬 이미지 일괄 재생성] 버튼 배치 적합.
+- (d) `frontend/src/pages/UploadPage.jsx:3700-3711` — 씬 카드 안 단일 [이미지 재생성] 버튼 (handleRegenerateSceneImage). 단일 [재생성]은 변경 X.
+- (d) `frontend/src/pages/UploadPage.jsx:3721-3747` — STEP 2 영상 생성 영역 (handleGenerateVideos). ★ 여기에 [실패 씬 영상 일괄 재생성] 버튼 추가 적합 — mvStep>=2 일 때 항상 노출 (현재는 mvStep==2 에서만 [영상 생성하기] 1개 노출).
+- (d) `frontend/src/pages/UploadPage.jsx:1480-1481` — 진행 텍스트 (`generating_images` / `generating_videos`) 이미 존재 → 재사용.
+- (e) `run_phase2_images` 호출처 — `routes/mv.py:859, 3066, 3131`, `mv_pipeline.py:2043, 3900, 4439`. 모두 기존 동작 유지 (시그니처 추가 변경 없음).
+- (e) `run_phase3_videos` 호출처 — `routes/mv.py:2378` 만. 시그니처/동작 변경 없음.
+- (e) 단일 [재생성] 라우트 — `POST /scenes/{sn}/regenerate-image`, `POST /scenes/{sn}/generate-video` 미변경.
+- (e) `backend_9003` 미러 — 변경 X (기본 backend 9004 전용 룰).
+
+### 결정 사항
+- **이미지 일괄 — Backend 변경 0**: `POST /mv/jobs/{job_id}/generate-images` + `run_phase2_images(scene_numbers=None)` 이 이미 "이미지 없는 씬만 자동 선별 + 순차" 완비.
+- **영상 일괄 — Backend 변경 0**: `POST /mv/jobs/{job_id}/generate-videos` + `run_phase3_videos(scene_numbers=None)` 가 이미 "video_status in ('pending','failed') + image_object_name 존재" 자동 선별 + 순차 완비. completed 씬은 자동 제외.
+- **프론트 API 변경 없음**: 기존 `generateMVImages(jobId)` (빈 body) / `generateMVVideos(jobId, videoModel)` 둘 다 `scene_numbers` 미전달 = 실패 씬만 자동 선별 호출과 정확히 일치.
+- **프론트 UI 변경 — UploadPage.jsx 2곳 추가**:
+  1. 씬 그리드 헤더 (L3415-3420 영역) 옆에 [실패 씬 이미지 일괄 재생성] 버튼 — 핸들러 `handleBatchRegenerateFailedImages`.
+  2. STEP 2 영상 생성 영역 (L3721+) 에 [실패 씬 영상 일괄 재생성] 버튼 — 핸들러 `handleBatchRegenerateFailedVideos`. mvStep>=2 이고 작업이 ACTIVE 가 아닐 때 노출.
+- **버튼 노출/disable 규칙**:
+  - 이미지 버튼: `failedImageScenes = scenes.filter(s => !s.image_object_name).length > 0` 일 때만 노출. 폴링 중 (`generating_images`/`generating_videos`/`splitting`/`generating_assets`/`synclabs_processing`/`concatenating`/`merging_audio`) 이면 disable.
+  - 영상 버튼: `failedVideoScenes = scenes.filter(s => !s.video_object_name || s.video_status === 'failed').length > 0` 일 때만 노출. 동일 disable 조건.
+- **순차 보장 명시**: Backend 변경 없음 = 기존 phase2/phase3 의 순차 루프를 그대로 활용. 프론트는 단 한 번의 POST 만 보내며 백엔드 background task 가 순차 처리.
+- **단일 [재생성] 버튼 미변경** (씬 카드 안의 단일 이미지/영상 재생성 버튼 그대로).
+- **추적자**: `job_id`, `scene_number`, `[BatchImage]` / `[BatchVideo]` 로그 태그 — (선택) 라우트에서 로그 한 줄만 보강.
+- **회귀 위험**: 매우 낮음 — 백엔드 시그니처/동작 미변경. 기존 [영상 생성하기] 버튼과 동일 라우트 재호출이므로 phase3 의 검증된 selector/순차 루프 그대로 사용.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9004/app/routes/mv.py` | (선택) `generate_images` / `generate_videos` 진입 로그에 `[BatchImage] job=... failed_count=...` / `[BatchVideo] job=... failed_count=...` 한 줄씩 추가 — body.scene_numbers 가 None 이고 미생성/실패 씬이 존재할 때만. 동작 변경 X. | `job_id`, `failed_count`, `[BatchImage]`/`[BatchVideo]` |
+| `backend_9004/app/services/mv_pipeline.py` | 변경 없음 (이미 selector + 순차 완비) | — |
+| `frontend/src/api/index.js` | 변경 없음 (기존 함수 시그니처 그대로 사용) | — |
+| `frontend/src/pages/UploadPage.jsx` | (1) `handleBatchRegenerateFailedImages` 핸들러 추가 — `api.generateMVImages(mvJobId)` 호출 후 `startMvPolling(mvJobId, 5000)`. (2) `handleBatchRegenerateFailedVideos` 핸들러 추가 — `api.generateMVVideos(mvJobId, videoModel)` 호출 후 `startMvPolling(mvJobId, 5000)`. (3) 씬 그리드 헤더 (L3415-3420) 옆에 이미지 일괄 버튼 추가 (failedImageScenes>0 조건). (4) STEP 2 영역 (L3721+) 에 영상 일괄 버튼 추가 (failedVideoScenes>0 조건). 진행 status 일 때 disable. | `mvJobId`, `failedImageScenes`, `failedVideoScenes` |
+| `backend_9003` | 변경 없음 (룰: 9004 전용) | — |
+
+### 작업 분배
+- **backend-dev** — (선택, 최소) `routes/mv.py:835-865` `generate_images` 와 `routes/mv.py:2336-2384` `generate_videos` 진입부에 한 줄 로그 보강만. selector/순차 로직 일체 변경 금지. `mv_pipeline.py` 변경 금지. `backend_9003` 미러 변경 금지. asyncio.gather 도입 절대 금지.
+- **frontend-dev** — `UploadPage.jsx` 한 파일만 수정. 위 매트릭스 (1)-(4) 항목 구현. 핸들러는 단일 POST 1회 + 폴링 시작 패턴 (handleGenerateVideos 모방). 단일 [재생성] 버튼 변경 금지. "hero" 용어 금지 — "주인공 캐릭터" / "주인공 장소" 표기.
+- **tester** —
+  - 케이스 1 (이미지 일괄): MV 작업에서 일부 씬 이미지 생성 실패 상태 (image_object_name 없음) 만들기 → [실패 씬 이미지 일괄 재생성] 클릭 → polling 진행 → 백엔드 로그에서 실패 씬만 순차 처리 (이전 씬 reference 가 다음 씬에 이어짐 — L2133-2136) 확인. completed 씬은 건드리지 않음.
+  - 케이스 2 (영상 일괄): 일부 씬 video_status='failed' 또는 video_object_name 없음 → [실패 씬 영상 일괄 재생성] 클릭 → 순차 진행 (씬 사이 15초 sleep 확인) → completed 씬 미변경.
+  - 케이스 3 (회귀): 단일 [재생성] 버튼 정상 작동.
+  - 케이스 4 (병렬 금지 검증): backend 로그에서 동일 시각에 두 씬 동시 호출 흔적 없음 — 한 씬 완료 후 다음 씬 시작.
+  - 케이스 5 (UI): failed 씬 0개일 때 일괄 버튼 노출 X. ACTIVE status (generating_images/generating_videos/...) 일 때 disable.

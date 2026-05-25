@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { FiMusic, FiList, FiX, FiFilm } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import * as api from '../api';
+import CharacterCoverCard from '../components/CharacterCoverCard';
 import './PlayerPage.css';
 
 export default function PlayerPage() {
@@ -45,6 +46,15 @@ export default function PlayerPage() {
       try {
         const { data: track } = await api.getTrackDetail(currentSong.id);
         setTrackDetail(track);
+
+        // v68 — cover_character 존재 여부 로깅 (PII 제외)
+        if (import.meta.env.DEV) {
+          console.info('[PlayerPage] cover_character', {
+            track: currentSong?.id ?? null,
+            has: !!track?.cover_character,
+            items: track?.cover_character?.used_items?.length ?? 0,
+          });
+        }
 
         // MV 정보도 트랙 상세에서 가져옴
         setMvData({
@@ -356,6 +366,12 @@ export default function PlayerPage() {
                     <div className="player-page__loading">프롬프트 정보가 없습니다</div>
                   )}
                 </div>
+              )}
+
+              {activeTab === 'prompt' && trackDetail && (
+                <section className="player-page__character-section">
+                  <CharacterCoverCard character={trackDetail?.cover_character ?? null} />
+                </section>
               )}
 
               {activeTab === 'playlist' && (

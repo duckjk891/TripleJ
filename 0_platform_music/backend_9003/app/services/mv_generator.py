@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime
@@ -1206,6 +1207,222 @@ async def _split_with_music_sections(
         len(section_plans), len(flat_scenes),
     )
     return flat_scenes
+
+
+# ── v37: Scene character-tag sanitizer ──────────────────────────────────────
+
+_HANGUL_INITIAL_TO_LATIN = {
+    "ㄱ": "g", "ㄲ": "kk", "ㄴ": "n", "ㄷ": "d", "ㄸ": "tt",
+    "ㄹ": "r", "ㅁ": "m", "ㅂ": "b", "ㅃ": "pp", "ㅅ": "s",
+    "ㅆ": "ss", "ㅇ": "", "ㅈ": "j", "ㅉ": "jj", "ㅊ": "ch",
+    "ㅋ": "k", "ㅌ": "t", "ㅍ": "p", "ㅎ": "h",
+}
+_HANGUL_VOWEL_TO_LATIN = {
+    "ㅏ": "a", "ㅐ": "ae", "ㅑ": "ya", "ㅒ": "yae", "ㅓ": "eo",
+    "ㅔ": "e", "ㅕ": "yeo", "ㅖ": "ye", "ㅗ": "o", "ㅘ": "wa",
+    "ㅙ": "wae", "ㅚ": "oe", "ㅛ": "yo", "ㅜ": "u", "ㅝ": "wo",
+    "ㅞ": "we", "ㅟ": "wi", "ㅠ": "yu", "ㅡ": "eu", "ㅢ": "ui", "ㅣ": "i",
+}
+_HANGUL_FINAL_TO_LATIN = {
+    "": "", "ㄱ": "k", "ㄲ": "k", "ㄳ": "k", "ㄴ": "n", "ㄵ": "n",
+    "ㄶ": "n", "ㄷ": "t", "ㄹ": "l", "ㄺ": "k", "ㄻ": "m", "ㄼ": "l",
+    "ㄽ": "l", "ㄾ": "l", "ㄿ": "p", "ㅀ": "l", "ㅁ": "m", "ㅂ": "p",
+    "ㅄ": "p", "ㅅ": "t", "ㅆ": "t", "ㅇ": "ng", "ㅈ": "t", "ㅊ": "t",
+    "ㅋ": "k", "ㅌ": "t", "ㅍ": "p", "ㅎ": "h",
+}
+_HANGUL_INITIALS = list(_HANGUL_INITIAL_TO_LATIN.keys())
+_HANGUL_VOWELS = list(_HANGUL_VOWEL_TO_LATIN.keys())
+_HANGUL_FINALS = [
+    "", "ㄱ", "ㄲ", "ㄳ", "ㄴ", "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ", "ㄻ", "ㄼ",
+    "ㄽ", "ㄾ", "ㄿ", "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ",
+    "ㅋ", "ㅌ", "ㅍ", "ㅎ",
+]
+
+
+def _romanize_hangul_syllable(ch: str) -> Optional[tuple]:
+    """Return (initial_latin, vowel_latin, final_latin) for a single Hangul syllable, else None."""
+    code = ord(ch)
+    if not (0xAC00 <= code <= 0xD7A3):
+        return None
+    base = code - 0xAC00
+    initial_idx = base // (21 * 28)
+    vowel_idx = (base % (21 * 28)) // 28
+    final_idx = base % 28
+    return (
+        _HANGUL_INITIAL_TO_LATIN[_HANGUL_INITIALS[initial_idx]],
+        _HANGUL_VOWEL_TO_LATIN[_HANGUL_VOWELS[vowel_idx]],
+        _HANGUL_FINAL_TO_LATIN[_HANGUL_FINALS[final_idx]],
+    )
+
+
+def _romanize_korean_name(name: str) -> List[str]:
+    """Generate plausible romanization variants for a Korean name.
+
+    For "한지유" returns variants like ["Han Jiyu", "Han Ji-yu", "Hanjiyu", "Jiyu"].
+    Heuristic only — covers the common revised-romanization patterns; not exhaustive.
+    """
+    syllables = []
+    for ch in name:
+        rom = _romanize_hangul_syllable(ch)
+        if rom is None:
+            continue
+        syllables.append(rom)
+
+    if not syllables:
+        return []
+
+    parts = ["{}{}{}".format(i, v, f).capitalize() for (i, v, f) in syllables]
+    if not parts:
+        return []
+
+    variants = set()
+    if len(parts) >= 2:
+        family = parts[0]
+        given_joined = "".join(p.lower() for p in parts[1:]).capitalize()
+        given_hyphen = "-".join(p.lower() for p in parts[1:])
+        given_hyphen_cap = parts[1] + (("-" + "-".join(p.lower() for p in parts[2:])) if len(parts) > 2 else "")
+        variants.add("{} {}".format(family, given_joined))
+        variants.add("{} {}".format(family, given_hyphen))
+        variants.add("{} {}".format(family, given_hyphen_cap))
+        variants.add("{}{}".format(family, given_joined))
+        variants.add(given_joined)
+    else:
+        variants.add(parts[0])
+
+    return [v for v in variants if v]
+
+
+_PROTECT_TOKEN_PREFIX = "\x00V37PROT"
+_PROTECT_TOKEN_SUFFIX = "\x00"
+
+_ROLE_PHRASES_SINGLE_CHAR = [
+    "the main character",
+    "the protagonist",
+    "the singer",
+    "the artist",
+]
+
+
+def _replace_whole_word(text: str, needle: str, replacement: str) -> tuple:
+    """Whole-word, case-insensitive replace. Returns (count, new_text).
+
+    The `(?<!@)` lookbehind protects already-tagged tokens like `@character1`; the
+    `(?<!\\w)` / `(?!\\w)` boundaries prevent partial substring matches so we never
+    rewrite the middle of an unrelated word.
+    """
+    if not needle:
+        return 0, text
+    pattern = re.compile(
+        r"(?<!@)(?<!\w)" + re.escape(needle) + r"(?!\w)",
+        re.IGNORECASE,
+    )
+    new_text, n = pattern.subn(replacement, text)
+    return n, new_text
+
+
+def _protect_existing_tags(text: str) -> tuple:
+    """Replace `@characterN` / `@locationN` tokens with sentinels so naive replacements
+    cannot corrupt them. Returns (protected_text, mapping)."""
+    mapping = {}
+    counter = [0]
+
+    def _sub(m):
+        token = m.group(0)
+        counter[0] += 1
+        key = "{}{}{}".format(_PROTECT_TOKEN_PREFIX, counter[0], _PROTECT_TOKEN_SUFFIX)
+        mapping[key] = token
+        return key
+
+    protected = re.sub(r"@(?:character|location)\d+", _sub, text)
+    return protected, mapping
+
+
+def _restore_protected_tags(text: str, mapping: dict) -> str:
+    for key, token in mapping.items():
+        text = text.replace(key, token)
+    return text
+
+
+def sanitize_scene_character_tags(scenes: list, characters_meta: dict) -> dict:
+    """Replace raw character names / role phrases with `@characterN` tokens in scene prompts.
+
+    Idempotent: re-running on already-sanitized scenes is a no-op.
+
+    Args:
+        scenes: list of scene dicts (will be mutated in-place); each dict may have
+                `image_prompt` and `video_image_prompt` string fields.
+        characters_meta: mapping like `{"character1": {"name": "한지유", ...}, ...}`.
+
+    Returns:
+        Metrics dict: `{"scenes_scanned", "scenes_modified", "replacements_by_name"}`.
+    """
+    metrics = {
+        "scenes_scanned": 0,
+        "scenes_modified": 0,
+        "replacements_by_name": {},
+    }
+
+    if not scenes:
+        return metrics
+
+    name_to_tag = []
+    for key, info in (characters_meta or {}).items():
+        if not isinstance(info, dict):
+            continue
+        if not isinstance(key, str) or not key.startswith("character"):
+            continue
+        tag = "@" + key
+        raw_name = (info.get("name") or "").strip()
+        variants = set()
+        if raw_name:
+            variants.add(raw_name)
+            variants.update(_romanize_korean_name(raw_name))
+        variants = sorted([v for v in variants if v], key=len, reverse=True)
+        if variants:
+            name_to_tag.append((tag, variants))
+
+    single_char = len(name_to_tag) == 1
+    role_phrase_tag = name_to_tag[0][0] if single_char else None
+
+    for scene in scenes:
+        metrics["scenes_scanned"] += 1
+        modified = False
+
+        for field in ("image_prompt", "video_image_prompt"):
+            original = scene.get(field) or ""
+            if not original:
+                continue
+
+            protected, prot_map = _protect_existing_tags(original)
+            text = protected
+
+            for tag, variants in name_to_tag:
+                for variant in variants:
+                    n, text = _replace_whole_word(text, variant, tag)
+                    if n:
+                        metrics["replacements_by_name"][variant] = (
+                            metrics["replacements_by_name"].get(variant, 0) + n
+                        )
+
+            if single_char and role_phrase_tag:
+                for phrase in _ROLE_PHRASES_SINGLE_CHAR:
+                    n, text = _replace_whole_word(text, phrase, role_phrase_tag)
+                    if n:
+                        metrics["replacements_by_name"][phrase] = (
+                            metrics["replacements_by_name"].get(phrase, 0) + n
+                        )
+
+            text = _restore_protected_tags(text, prot_map)
+
+            if text != original:
+                scene[field] = text
+                modified = True
+
+        if modified:
+            metrics["scenes_modified"] += 1
+
+    logger.info("v37 sanitizer applied: %s", metrics)
+    return metrics
 
 
 # ── 1b. Generate Scene Prompts Only (v10.0) ────────────────────────────────

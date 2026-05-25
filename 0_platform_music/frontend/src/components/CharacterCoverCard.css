@@ -1,0 +1,218 @@
+/* CharacterCoverCard — v68
+ * PlayerPage 우측 영역 아래 노출되는 "이 곡의 주인공 캐릭터" 카드.
+ * 클래스 prefix: character-cover-card__*
+ */
+
+.character-cover-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.character-cover-card__header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Empty state — MV 만들었지만 캐릭터 미포함 */
+.character-cover-card--empty {
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.character-cover-card__empty-msg {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted, #9aa0a6);
+}
+
+.character-cover-card__empty-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted, #9aa0a6);
+  opacity: 0.8;
+}
+
+/* Sheet image */
+.character-cover-card__sheet {
+  background: var(--color-bg);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.character-cover-card__sheet-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  max-height: 360px;
+}
+
+.character-cover-card__sheet-empty {
+  color: var(--color-text-sub);
+  font-size: 13px;
+  padding: 40px 0;
+}
+
+/* Profile summary */
+.character-cover-card__profile-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--color-bg);
+  border-radius: 8px;
+}
+
+.character-cover-card__profile-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.character-cover-card__profile-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.character-cover-card__profile-age {
+  font-size: 13px;
+  color: var(--color-text-sub);
+}
+
+.character-cover-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.character-cover-card__chip {
+  display: inline-block;
+  padding: 3px 9px;
+  background: var(--color-border);
+  color: var(--color-text-sub);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.character-cover-card__profile-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-sub);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Outfit */
+.character-cover-card__outfit-hint {
+  margin: 4px 0 -4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+}
+
+.character-cover-card__outfit-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.character-cover-card__outfit-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.character-cover-card__outfit-image {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.character-cover-card__outfit-image--clickable {
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.character-cover-card__outfit-image--clickable:hover {
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.character-cover-card__outfit-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.character-cover-card__outfit-empty {
+  color: var(--color-text-sub);
+  font-size: 12px;
+  text-align: center;
+  padding: 8px;
+}
+
+.character-cover-card__outfit-name {
+  font-size: 12px;
+  color: var(--color-text);
+  text-align: center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-cover-card__outfit-name--clickable {
+  cursor: pointer;
+}
+
+.character-cover-card__outfit-link {
+  font-size: 11px;
+  color: var(--color-primary);
+  text-decoration: none;
+  text-align: center;
+  width: 100%;
+}
+
+.character-cover-card__outfit-link:hover {
+  text-decoration: underline;
+}
+
+/* 모바일 반응형 */
+@media (max-width: 640px) {
+  .character-cover-card {
+    padding: 12px;
+  }
+
+  .character-cover-card__outfit-row {
+    gap: 6px;
+  }
+
+  .character-cover-card__outfit-name {
+    font-size: 11px;
+  }
+}

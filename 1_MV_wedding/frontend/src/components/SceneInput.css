@@ -1,0 +1,52 @@
+.scene-input {
+  margin-bottom: 18px;
+  padding: 12px 14px 8px 14px;
+  border-left: 3px solid #e8d5c4;
+  background-color: #fffdf9;
+  border-radius: 0 10px 10px 0;
+}
+
+.scene-input__label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2b2b2b;
+}
+
+.scene-input__label-text {
+  font-size: 14px;
+}
+
+.scene-input__hint {
+  font-size: 12px;
+  color: #888;
+  margin: 6px 0 0 2px;
+}
+
+.scene-input__textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 110px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  color: #2b2b2b;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.scene-input__textarea::placeholder {
+  color: #999;
+}
+
+.scene-input__textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}

@@ -1633,6 +1633,11 @@ async def select_prompts(
         scene["description_ko"] = p.get("description_ko", "")
         scene["description"] = scene["image_prompt"]
 
+    # ── v37: sanitize raw character names → @characterN tokens (no-op when no characters) ──
+    from ..services.mv_generator import sanitize_scene_character_tags
+    characters_meta = ((job.get("scenario_meta") or {}).get("characters") or {})
+    sanitize_scene_character_tags(scenes, characters_meta)
+
     await mongo.mv_jobs.update_one(
         {"_id": oid},
         {"$set": {

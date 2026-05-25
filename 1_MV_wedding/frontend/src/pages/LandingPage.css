@@ -1,0 +1,22 @@
+.landing {
+  text-align: center;
+  padding: 64px 16px;
+}
+
+.landing__title {
+  font-size: 32px;
+  margin: 0 0 12px;
+  letter-spacing: -0.5px;
+}
+
+.landing__subtitle {
+  font-size: 16px;
+  color: var(--muted);
+  margin: 0 0 32px;
+}
+
+.landing__cta {
+  display: inline-block;
+  padding: 14px 28px;
+  font-size: 15px;
+}

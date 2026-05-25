@@ -606,6 +606,36 @@ async def _call_gemini_text(prompt: str, image_parts: list) -> str:
     raise ValueError("No text in Gemini text response")
 
 
+async def _call_image_backend(
+    prompt: str, image_parts: list, image_model: str = "nb_pro"
+) -> bytes:
+    """v55: Dispatch Step B image generation across model backends.
+
+    image_model:
+      - "nb_pro" (default): Gemini Nano Banana Pro — preserves all prior
+        behavior bit-for-bit (delegates to `_call_gemini_image`).
+      - "gpt_image_2": OpenAI GPT Image 2 — converts `image_parts` (Gemini
+        inlineData dicts) back to raw bytes and calls `openai_image.generate_image`.
+    """
+    logger.info("[CharGen] image_model=%s parts=%d", image_model, len(image_parts))
+    if image_model == "gpt_image_2":
+        from .openai_image import generate_image
+
+        ref_bytes: list = []
+        for part in image_parts or []:
+            inline = part.get("inlineData") if isinstance(part, dict) else None
+            data_b64 = (inline or {}).get("data")
+            if data_b64:
+                try:
+                    ref_bytes.append(base64.b64decode(data_b64))
+                except Exception:
+                    continue
+        return await generate_image(prompt=prompt, ref_images=ref_bytes)
+
+    # default — nb_pro
+    return await _call_gemini_image(prompt, image_parts)
+
+
 async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
     """Step B: Call Gemini image model to generate character sheet image."""
     payload = {
@@ -660,6 +690,7 @@ async def generate_character_sheet(
     shoes_bytes: bytes = None,
     shoes_mime: str = None,
     user_text: str = "",
+    image_model: str = "nb_pro",
 ) -> bytes:
     """Generate photorealistic character sheet from reference photo.
 
@@ -721,8 +752,13 @@ async def generate_character_sheet(
         "{}"
     ).format(sheet_prompt_text)
 
-    logger.info("Step B: Generating character sheet image via Gemini image model...")
-    image_bytes = await _call_gemini_image(step_b_prompt, image_parts)
+    logger.info(
+        "Step B: Generating character sheet image via image_model=%s",
+        image_model,
+    )
+    image_bytes = await _call_image_backend(
+        step_b_prompt, image_parts, image_model=image_model
+    )
     logger.info("Step B complete. Generated image size: %d bytes", len(image_bytes))
 
     return image_bytes
@@ -733,6 +769,7 @@ async def refine_character_sheet(
     photo_bytes: bytes,
     photo_mime: str,
     refine_request: str,
+    image_model: str = "nb_pro",
 ) -> bytes:
     """Refine an existing character sheet based on user's modification request.
 
@@ -756,8 +793,14 @@ async def refine_character_sheet(
         "수정 요청: {}".format(refine_request)
     )
 
-    logger.info("Refining character sheet. Request: %s", refine_request[:100])
-    image_bytes = await _call_gemini_image(prompt, image_parts)
+    logger.info(
+        "Refining character sheet. Request: %s image_model=%s",
+        refine_request[:100],
+        image_model,
+    )
+    image_bytes = await _call_image_backend(
+        prompt, image_parts, image_model=image_model
+    )
     logger.info("Refinement complete. Image size: %d bytes", len(image_bytes))
 
     return image_bytes

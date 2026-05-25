@@ -32,7 +32,9 @@ async def start_scene_video_seedance(
     lyrics_segment: str = "",
     scene_type: str = "drama",
     duration: float = 10.0,
+    # v72: deprecated — Phase 3.5 sync labs handles all lipsync. Pass None from mv_pipeline.
     audio_bytes: Optional[bytes] = None,
+    description: Optional[str] = None,
 ) -> str:
     """Start image-to-video generation via fal.ai Seedance 2.0.
     Returns request_id for status polling.
@@ -40,19 +42,52 @@ async def start_scene_video_seedance(
     if not settings.fal_api_key:
         raise ValueError("fal.ai API 키가 설정되지 않았습니다.")
 
-    # Build prompt
-    mv_context = "A cinematic scene from a professional music video. "
+    # v67: Seedance 공식 6단계 권장 구조
+    # Subject → Action → Environment → Camera → Style → Constraints
+    # 각 단계를 sentence 로 분리해서 모델이 명확히 인식.
+    desc_clean = (description or "").strip()
+    subject_env = (prompt or "").strip()  # image_prompt — Subject + Environment 포함
 
-    if video_prompt:
-        final_prompt = "{}{}Camera/Motion: {}".format(mv_context, prompt + " ", video_prompt)
-    elif scene_type == "lipsync" and lyrics_segment:
-        final_prompt = "{}{} The character faces the camera and sings: \"{}\". Preserve composition and colors.".format(
-            mv_context, prompt, lyrics_segment
+    if scene_type == "lipsync" and lyrics_segment:
+        # Lipsync — 가사 우선 + 단일 인물. 안전 어휘 유지.
+        final_prompt = (
+            "A cinematic music video scene. "
+            "Subject and Scene: {subject} "
+            "Action: The main character softly mouths the chorus lyrics: \"{lyrics}\". "
+            "Camera: {camera} "
+            "Style: cinematic pastel grade, soft natural lighting, preserve composition and colors. "
+            "Constraints: no text, no watermark, no glamour portrait framing."
+        ).format(
+            subject=subject_env,
+            lyrics=lyrics_segment,
+            camera=(video_prompt.strip() if video_prompt and video_prompt.strip() else "gentle steady framing on the face"),
         )
     else:
-        final_prompt = "{}{} Smooth cinematic camera movement. Preserve composition and colors.".format(
-            mv_context, prompt
+        # Drama — 6단계 명시
+        action_line = ("Action: {}.".format(desc_clean) if desc_clean
+                       else "Action: natural cinematic motion in the scene.")
+        camera_line = ("Camera: {}.".format(video_prompt.strip()) if video_prompt and video_prompt.strip()
+                       else "Camera: smooth cinematic movement.")
+        final_prompt = (
+            "A cinematic music video scene. "
+            "Subject and Scene: {subject} "
+            "{action} "
+            "{camera} "
+            "Style: cinematic pastel grade, soft natural lighting, preserve composition and colors. "
+            "Constraints: no text, no watermark, no glamour portrait framing."
+        ).format(
+            subject=subject_env,
+            action=action_line,
+            camera=camera_line,
         )
+
+    import re as _re
+    final_prompt = _re.sub(r"\s{2,}", " ", final_prompt).strip()
+
+    logger.info(
+        "[SeedProm] subject_len=%d action_len=%d camera_len=%d type=%s",
+        len(subject_env), len(desc_clean), len(video_prompt or ""), scene_type,
+    )
 
     # For lipsync scenes with audio, append lip-sync instruction
     if audio_bytes and scene_type == "lipsync":

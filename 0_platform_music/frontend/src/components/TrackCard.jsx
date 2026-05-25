@@ -1,10 +1,13 @@
 import { FiPlay } from 'react-icons/fi';
+import { Link } from 'react-router-dom';
 import { usePlayer } from '../contexts/PlayerContext';
+import { useAuth } from '../contexts/AuthContext';
 import { getAlbumGradient } from '../utils';
 import './AlbumCard.css';
 
 export default function TrackCard({ track, tracks }) {
   const { play } = usePlayer();
+  const { user } = useAuth();
 
   const handleClick = () => {
     const song = {
@@ -38,7 +41,18 @@ export default function TrackCard({ track, tracks }) {
         </div>
       </div>
       <div className="album-card__title" title={track.title}>{track.title}</div>
-      <div className="album-card__artist" title={track.uploader_nickname}>{track.uploader_nickname || 'AI'}</div>
+      {track.uploader_id ? (
+        <Link
+          to={user && user.id === track.uploader_id ? '/my-music' : `/artist/${track.uploader_id}`}
+          className="album-card__artist"
+          title={track.uploader_nickname}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {track.uploader_nickname || 'AI'}
+        </Link>
+      ) : (
+        <div className="album-card__artist" title={track.uploader_nickname}>{track.uploader_nickname || 'AI'}</div>
+      )}
     </div>
   );
 }

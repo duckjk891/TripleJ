@@ -1,0 +1,254 @@
+.wizard {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.wizard__title {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+.wizard__card {
+  margin-top: 8px;
+}
+
+.wizard__error {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background-color: #fdecec;
+  color: #b3261e;
+  font-size: 13px;
+  border: 1px solid #f5c6c6;
+}
+
+.wizard__nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  gap: 12px;
+}
+
+.wizard__nav .btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wizard__nav .btn-primary:disabled {
+  opacity: 0.5;
+}
+
+.wiz-step__title {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.wiz-step__desc {
+  margin: 0 0 20px;
+  font-size: 13px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 480px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+}
+
+.req {
+  color: #b3261e;
+  margin-left: 2px;
+}
+
+.opt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #999;
+}
+
+.radio-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.radio-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.radio-card input {
+  margin: 0;
+}
+
+.radio-card:has(input:checked) {
+  border-color: var(--accent);
+  background-color: #fff8ec;
+}
+
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.duration-row .opt {
+  margin-left: 2px;
+}
+
+.hint {
+  margin: 6px 2px 0;
+  font-size: 12px;
+}
+
+.review-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background-color: #fffdf9;
+}
+
+.review-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.review-card__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.review-edit {
+  border: 1px solid var(--border);
+  background-color: #fff;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+.review-edit:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.review-dl {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.review-dl dt {
+  color: var(--muted);
+}
+
+.review-dl dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.review-dl dd.pre-wrap {
+  white-space: pre-wrap;
+}
+
+.review-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.review-list li + li {
+  margin-top: 2px;
+}
+
+.review-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-chip {
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background-color: var(--accent-soft);
+  font-size: 12px;
+}
+
+/* v4 — Character sheets block (Step 1) */
+.sheets-block {
+  margin-top: 24px;
+  border-top: 1px dashed var(--border);
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sheets-block__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sheets-block__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sheets-block__desc {
+  margin: 0;
+  font-size: 12px;
+}
+
+.sheets-block__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .sheets-block__grid {
+    grid-template-columns: 1fr;
+  }
+}

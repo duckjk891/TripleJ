@@ -10,6 +10,8 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [nickname, setNickname] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [displayTitle, setDisplayTitle] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -17,7 +19,13 @@ export default function RegisterPage() {
     e.preventDefault();
     setError('');
 
-    if (!email || !password || !nickname) {
+    // 공백만 입력한 경우도 금지
+    const trimmedEmail = email.trim();
+    const trimmedNickname = nickname.trim();
+    const trimmedCompany = companyName.trim();
+    const trimmedTitle = displayTitle.trim();
+
+    if (!trimmedEmail || !password || !trimmedNickname || !trimmedCompany || !trimmedTitle) {
       setError('모든 필드를 입력해주세요.');
       return;
     }
@@ -34,7 +42,7 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      await register(email, password, nickname);
+      await register(trimmedEmail, password, trimmedNickname, trimmedCompany, trimmedTitle);
       navigate('/');
     } catch (err) {
       setError(err.response?.data?.error || '회원가입에 실패했습니다.');
@@ -74,6 +82,30 @@ export default function RegisterPage() {
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
               placeholder="닉네임을 입력하세요"
+            />
+          </div>
+
+          <div className="register-card__field">
+            <label className="register-card__label">기획사명</label>
+            <input
+              className="register-card__input"
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="예: 이재규 엔터테인먼트"
+              maxLength={100}
+            />
+          </div>
+
+          <div className="register-card__field">
+            <label className="register-card__label">호칭</label>
+            <input
+              className="register-card__input"
+              type="text"
+              value={displayTitle}
+              onChange={(e) => setDisplayTitle(e.target.value)}
+              placeholder="예: 대표님"
+              maxLength={20}
             />
           </div>
 

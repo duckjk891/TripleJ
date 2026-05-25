@@ -75,8 +75,17 @@ class Settings(BaseSettings):
     # fal.ai (Seedance)
     fal_api_key: str = ""
 
+    # xAI (Grok Imagine Video — v66)
+    xai_api_key: str = ""
+
     # Sync Labs (Lip Sync)
     sync_api_key: str = ""
+
+    # Replicate (deprecated as of v41 — LoRA system removed; reserved for future use)
+    replicate_api_token: str = ""
+
+    # Log access (앱팀 디버깅용 /api/_logs 토큰. 빈 문자열이면 API 비활성)
+    log_access_token: str = ""
 
     @property
     def postgres_dsn(self) -> str:
@@ -106,7 +115,7 @@ class Settings(BaseSettings):
     def minio_password(self) -> str:
         return self.minio_secret_key
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

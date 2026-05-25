@@ -1,0 +1,86 @@
+.outfit-select {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px 0 40px;
+}
+
+.outfit-select__head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.outfit-select__title {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text);
+}
+
+.outfit-select__state {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 14px;
+}
+
+.outfit-select__error {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background-color: #fdecec;
+  color: #b3261e;
+  font-size: 13px;
+  border: 1px solid #f5c6c6;
+}
+
+.outfit-select__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.outfit-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: #fffdf9;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.outfit-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(200, 169, 126, 0.18);
+}
+
+.outfit-card__image-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background-color: #f5efe6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.outfit-card__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.outfit-card__name {
+  padding: 10px 12px 4px;
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+  min-height: 36px;
+}
+
+.outfit-card__btn {
+  margin: 8px 12px 12px;
+  padding: 8px 0;
+  font-size: 13px;
+}

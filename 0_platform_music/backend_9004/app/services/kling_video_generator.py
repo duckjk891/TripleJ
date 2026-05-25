@@ -69,6 +69,7 @@ async def start_scene_video_kling(
     scene_type: str = "drama",
     duration: float = 10.0,
     video_prompt: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> str:
     """Start image-to-video generation via Kling Omni Video API.
 
@@ -82,31 +83,67 @@ async def start_scene_video_kling(
     if not settings.kling_access_key or not settings.kling_secret_key:
         raise ValueError("Kling API 키가 설정되지 않았습니다.")
 
-    mv_context = "A cinematic scene from a professional music video. "
+    # v67: Kling 공식 권장 6단계 구조 — Subject → Detail → Movement → Scene → Camera → Lighting
+    # 각 슬롯을 sentence-level 로 분리해서 모델이 명확히 인식하도록.
 
-    # Build reference descriptions for prompt
-    # first_frame images are auto-applied and NOT counted in <<<image_N>>> indexing
-    # Only non-first_frame reference images get <<<image_N>>> references
+    # [Reference 슬롯] first_frame 은 자동 적용 — non-first_frame ref 만 <<<image_N>>> 색인.
     ref_parts = []
     if prev_scene_image_bytes:
         ref_parts.append("Maintain visual continuity with the previous scene shown in <<<image_1>>>.")
     if character_image_bytes:
         img_idx = 2 if prev_scene_image_bytes else 1
         ref_parts.append("The character in <<<image_{}>>> must appear prominently, maintaining exact appearance.".format(img_idx))
-
     ref_text = " ".join(ref_parts)
 
-    camera_motion = "Camera/Motion: {}. ".format(video_prompt) if video_prompt else ""
+    # 슬롯 텍스트
+    subject_detail = (prompt or "").strip()                # [Subject + Detail] — image_prompt
+    desc_clean = (description or "").strip()
+    movement = "Subject action: {}.".format(desc_clean) if desc_clean else ""
+    camera_line = "Camera: {}.".format(video_prompt.strip()) if video_prompt and video_prompt.strip() else "Camera: Smooth cinematic camera movement."
+    # Lighting — image_prompt 안의 light 어휘에 의존 (별도 슬롯 비움 가능). 명시 구문은 안전 정책상 안전 어휘만.
+
+    mv_context = "A cinematic music video scene."  # 짧게 + sentence 분리
 
     if scene_type == "lipsync" and lyrics_segment:
-        final_prompt = "{}{} {} {}ONLY the main character appears in this scene, no other people. The main character faces the camera ALONE and sings these lyrics with synchronized lip movements: \"{}\"".format(
-            mv_context, prompt, ref_text, camera_motion, lyrics_segment
-        )
+        # Lipsync — 가사 sync + 단일 인물 강조 (Kling 모델 특화). 안전 어휘 유지.
+        final_prompt = (
+            "{ctx} "
+            "Subject: {subject} "
+            "{ref} "
+            "Action: ONLY the main character appears in this scene; no other people. "
+            "The main character softly mouths these lyrics with synchronized lip movements: \"{lyrics}\". "
+            "{camera}"
+        ).format(
+            ctx=mv_context,
+            subject=subject_detail,
+            ref=ref_text,
+            lyrics=lyrics_segment,
+            camera=camera_line,
+        ).strip()
     else:
-        if video_prompt:
-            final_prompt = "{}{} {} {}".format(mv_context, prompt, ref_text, camera_motion)
-        else:
-            final_prompt = "{}{} {} Smooth cinematic camera movement.".format(mv_context, prompt, ref_text)
+        # Drama — 6 슬롯 명시 (Lighting 은 image_prompt 안에 포함된 어휘에 의존)
+        movement_line = movement if movement else ""
+        final_prompt = (
+            "{ctx} "
+            "Subject: {subject} "
+            "{ref} "
+            "{movement} "
+            "{camera}"
+        ).format(
+            ctx=mv_context,
+            subject=subject_detail,
+            ref=ref_text,
+            movement=movement_line,
+            camera=camera_line,
+        ).strip()
+        # 연속 공백 정리
+        import re as _re
+        final_prompt = _re.sub(r"\s{2,}", " ", final_prompt)
+
+    logger.info(
+        "[KlingProm] subject_len=%d movement_len=%d camera_len=%d ref_len=%d type=%s",
+        len(subject_detail), len(desc_clean), len(camera_line), len(ref_text), scene_type,
+    )
 
     # Build image_list (TOP LEVEL, no "input" wrapper)
     image_list = []

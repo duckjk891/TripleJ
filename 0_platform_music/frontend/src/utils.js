@@ -31,3 +31,9 @@ export function formatDate(dateStr) {
   const d = new Date(dateStr);
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
 }
+
+// 값이 비어있으면 "없음" 반환
+export const displayOrNone = (value) => {
+  if (value === null || value === undefined || value === '') return '없음';
+  return value;
+};

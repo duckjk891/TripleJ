@@ -362,6 +362,13 @@
   color: var(--color-text-sub);
 }
 
+/* v68 — 주인공 캐릭터 섹션 (우측 탭 컨텐츠 내부, 프롬프트 탭에서 노출) */
+.player-page__character-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .player-page__layout {

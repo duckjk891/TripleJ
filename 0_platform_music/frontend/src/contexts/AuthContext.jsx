@@ -29,8 +29,8 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const register = useCallback(async (email, password, nickname) => {
-    const { data } = await api.register(email, password, nickname);
+  const register = useCallback(async (email, password, nickname, companyName, displayTitle) => {
+    const { data } = await api.register(email, password, nickname, companyName, displayTitle);
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
@@ -43,8 +43,20 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // 서버에서 내려준 user 객체로 로컬 state + localStorage 동기화
+  const updateUser = useCallback((nextUser) => {
+    if (!nextUser) return;
+    setUser((prev) => {
+      const merged = { ...(prev || {}), ...nextUser };
+      try {
+        localStorage.setItem('user', JSON.stringify(merged));
+      } catch {}
+      return merged;
+    });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, isAdmin: user?.role === 'admin', isBusiness: user?.role === 'customer' || user?.role === 'admin' }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, setUser, updateUser, isAdmin: user?.role === 'admin', isBusiness: user?.role === 'customer' || user?.role === 'admin' }}>
       {children}
     </AuthContext.Provider>
   );

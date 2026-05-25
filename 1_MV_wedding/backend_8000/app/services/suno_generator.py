@@ -1,0 +1,230 @@
+"""Suno API 음악 생성 서비스 (Wedding MV용 슬림 버전).
+
+레퍼런스 0_platform_music/.../suno_generator.py 에서 wedding 시나리오에
+필요한 핵심만 발췌:
+- 텍스트 가사(custom mode) 기반 곡 생성
+- 듀엣 보컬 스타일 매핑 (SUNO_VOCAL_MAP)
+- 폴링 기반 완료 대기
+- 결과 mp3를 MinIO mv-wedding-audio 버킷에 저장
+
+제거된 기능: persona, reference audio, advanced 파라미터(weight/weirdness 등),
+LoRA, 후처리 — 모두 v3 범위 외.
+"""
+import asyncio
+import io
+import logging
+from datetime import datetime, timezone
+
+import httpx
+from bson import ObjectId
+
+from ..config import settings
+from ..database.minio import get_minio
+
+logger = logging.getLogger(__name__)
+
+
+SUNO_VOCAL_MAP = {
+    "male_warm": {"style": "soft male vocal, warm, smooth", "gender": "m"},
+    "male_powerful": {"style": "powerful male vocal, belted, strong", "gender": "m"},
+    "male_husky": {"style": "raspy male vocal, husky, gritty", "gender": "m"},
+    "male_soft": {"style": "gentle male vocal, soft, intimate", "gender": "m"},
+    "female_warm": {"style": "soft female vocal, breathy, warm", "gender": "f"},
+    "female_powerful": {"style": "powerful female vocal, belted, strong", "gender": "f"},
+    "female_husky": {"style": "raspy female vocal, husky, sultry", "gender": "f"},
+    "female_sweet": {"style": "sweet female vocal, melodic, warm", "gender": "f"},
+}
+
+
+def _ensure_lyrics_structure(lyrics: str) -> str:
+    """가사에 [Verse]/[Chorus] 같은 메타태그가 없으면 자동 추가.
+    레퍼런스 패턴 그대로 — 우리 lyrics_generator는 항상 메타태그를 박지만,
+    혹시 모를 누락 보호용."""
+    if not lyrics or not lyrics.strip():
+        return lyrics
+    tags = ['[verse', '[chorus', '[bridge', '[intro', '[outro', '[pre-chorus', '[hook']
+    if any(tag in lyrics.lower() for tag in tags):
+        return lyrics
+    lines = [l for l in lyrics.strip().split('\n') if l.strip()]
+    if len(lines) <= 4:
+        return f"[Verse]\n{lyrics.strip()}"
+    out, section = [], 0
+    for i, line in enumerate(lines):
+        if i % 4 == 0:
+            tag = "[Verse]" if section % 2 == 0 else "[Chorus]"
+            out.append(f"\n{tag}")
+            section += 1
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+async def _update_progress(mongo_db, job_id: str, progress: int, status: str = None, extra: dict = None):
+    """mv_jobs 문서의 progress / status 갱신."""
+    update = {"progress": progress, "updated_at": datetime.now(timezone.utc)}
+    if status is not None:
+        update["status"] = status
+    if extra:
+        update.update(extra)
+    await mongo_db.mv_jobs.update_one({"_id": ObjectId(job_id)}, {"$set": update})
+
+
+async def generate_music_for_job(
+    job_id: str,
+    lyrics_body: str,
+    lyrics_title: str | None,
+    music_spec: dict,
+    mongo_db,
+) -> dict:
+    """Suno API로 음악 생성 → MinIO 저장 → 결과 메타 반환.
+
+    반환: {
+      "audio_object_name": str,    # 첫 번째 트랙 (재생 기본)
+      "audio_variants": list[str], # 1~2개 (1번이 audio_object_name과 동일)
+      "suno_task_id": str,
+      "suno_audio_id": str,
+    }
+
+    실패 시 ValueError raise. 호출자(_run_music_generation)가 잡아서 status=music_failed로 기록.
+    """
+    if not settings.suno_api_key:
+        raise ValueError("SUNO_API_KEY가 설정되지 않았습니다.")
+
+    base_url = settings.suno_api_url.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {settings.suno_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    # ---- style 문자열 빌드 ----
+    style_parts: list[str] = []
+    if music_spec.get("genre"):
+        style_parts.append(music_spec["genre"])
+    moods = music_spec.get("moods") or []
+    style_parts.extend([m for m in moods if m])
+
+    vocal_form = music_spec.get("vocal_form") or "solo"
+    vocal_styles = music_spec.get("vocal_styles") or {}
+    main_vocal = vocal_styles.get("main") if isinstance(vocal_styles, dict) else None
+    sub_vocal = vocal_styles.get("sub") if isinstance(vocal_styles, dict) else None
+
+    main_info = SUNO_VOCAL_MAP.get(main_vocal) if main_vocal else None
+    if main_info:
+        style_parts.append(main_info["style"])
+    if vocal_form == "duet":
+        sub_info = SUNO_VOCAL_MAP.get(sub_vocal) if sub_vocal else None
+        if sub_info:
+            style_parts.append(sub_info["style"])
+        style_parts.append("duet, two voices alternating")
+
+    style_str = ", ".join(style_parts) if style_parts else "ballad, warm"
+    style_str = style_str[:1000]
+    logger.info("Suno style: %s", style_str)
+
+    # ---- 가사 보호 (메타태그 자동 추가) ----
+    prompt_text = _ensure_lyrics_structure((lyrics_body or "").strip())
+    if not prompt_text:
+        raise ValueError("가사 본문이 비어있습니다.")
+
+    body = {
+        "prompt": prompt_text,
+        "model": "V5",
+        "customMode": True,
+        "instrumental": False,
+        "style": style_str,
+        "callBackUrl": "https://localhost/callback",  # API 필수, 우리는 폴링이라 미사용
+    }
+    if lyrics_title:
+        body["title"] = lyrics_title[:80]
+    if main_info:
+        body["vocalGender"] = main_info["gender"]
+
+    # ---- Step 1: 생성 요청 ----
+    await _update_progress(mongo_db, job_id, 10)
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{base_url}/api/v1/generate", headers=headers, json=body)
+        resp.raise_for_status()
+        result = resp.json()
+    if result.get("code") != 200:
+        raise ValueError(f"Suno API 오류: {result.get('msg', 'Unknown error')}")
+    task_id = result["data"]["taskId"]
+    logger.info("Suno: job %s started, taskId=%s", job_id, task_id)
+
+    await _update_progress(mongo_db, job_id, 20, extra={"suno_task_id": task_id})
+
+    # ---- Step 2: 폴링 (최대 5분) ----
+    audio_url = None
+    suno_data = None
+    status_data = None
+    for poll_attempt in range(60):
+        await asyncio.sleep(5)
+        async with httpx.AsyncClient(timeout=30) as client:
+            sr = await client.get(
+                f"{base_url}/api/v1/generate/record-info",
+                headers=headers,
+                params={"taskId": task_id},
+            )
+            sr.raise_for_status()
+            status_data = sr.json()
+        st = status_data.get("data", {}).get("status", "")
+        if st == "FAILED":
+            raise ValueError("Suno 음악 생성에 실패했습니다.")
+        if st == "TEXT_SUCCESS":
+            await _update_progress(mongo_db, job_id, 40)
+        elif st == "FIRST_SUCCESS":
+            await _update_progress(mongo_db, job_id, 70)
+        elif st == "SUCCESS":
+            songs = status_data["data"]["response"]["sunoData"]
+            if songs:
+                suno_data = songs[0]
+                audio_url = suno_data.get("audioUrl")
+            break
+        else:
+            await _update_progress(mongo_db, job_id, min(20 + poll_attempt, 60))
+
+    if not audio_url:
+        raise ValueError("Suno 음악 생성 시간이 초과되었습니다.")
+
+    # ---- Step 3: 다운로드 + MinIO 업로드 ----
+    await _update_progress(mongo_db, job_id, 85)
+
+    audio_variants: list[str] = []
+    minio_client = get_minio()
+    bucket = settings.minio_bucket_audio
+
+    async def _download_and_store(url: str, dest_object_name: str) -> int:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+            data = r.content
+        minio_client.put_object(
+            bucket_name=bucket,
+            object_name=dest_object_name,
+            data=io.BytesIO(data),
+            length=len(data),
+            content_type="audio/mpeg",
+        )
+        return len(data)
+
+    primary_object = f"mv_jobs/{job_id}/track_1.mp3"
+    bytes1 = await _download_and_store(audio_url, primary_object)
+    audio_variants.append(primary_object)
+    logger.info("Suno: stored track_1 (%d bytes) -> %s", bytes1, primary_object)
+
+    all_songs = status_data["data"]["response"].get("sunoData", []) or []
+    if len(all_songs) > 1:
+        url2 = all_songs[1].get("audioUrl")
+        if url2:
+            try:
+                second_object = f"mv_jobs/{job_id}/track_2.mp3"
+                bytes2 = await _download_and_store(url2, second_object)
+                audio_variants.append(second_object)
+                logger.info("Suno: stored track_2 (%d bytes) -> %s", bytes2, second_object)
+            except Exception as e:
+                logger.warning("Suno: track_2 download failed: %s", e)
+
+    return {
+        "audio_object_name": primary_object,
+        "audio_variants": audio_variants,
+        "suno_task_id": task_id,
+        "suno_audio_id": (suno_data or {}).get("id", ""),
+    }

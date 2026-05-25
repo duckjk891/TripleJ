@@ -60,37 +60,215 @@ async def _gemini_generate_image(prompt: str, ref_images: list = None) -> bytes:
     raise ValueError("No image in Gemini response")
 
 
+async def _generate_asset_image(
+    prompt: str,
+    ref_images: list = None,
+    image_model: str = "nb_pro",
+    asset_kind: str = "character",
+) -> bytes:
+    """v55: 자산 시트 이미지 생성 디스패처.
+
+    image_model:
+      - "nb_pro" (default): Gemini Nano Banana Pro (`_gemini_generate_image`)
+      - "gpt_image_2": OpenAI GPT Image 2 (`openai_image.generate_image`)
+
+    asset_kind: "character" | "location" — 로그용 태그.
+    """
+    import time as _time
+
+    refs_count = len([b for b in (ref_images or []) if b])
+    logger.info(
+        "[AssetGen] start image_model=%s asset_kind=%s refs=%d prompt_len=%d",
+        image_model,
+        asset_kind,
+        refs_count,
+        len(prompt or ""),
+    )
+    t0 = _time.monotonic()
+    try:
+        if image_model == "gpt_image_2":
+            # v59: 품질 우선 — 2K 유지. timeout 은 openai_image.py 에서 1800s 로 확장.
+            from .openai_image import generate_image as _openai_generate_image
+
+            result = await _openai_generate_image(
+                prompt=prompt,
+                ref_images=ref_images or None,
+                size="2048x2048",
+                quality="high",
+            )
+        else:
+            result = await _gemini_generate_image(prompt, ref_images=ref_images)
+        elapsed_ms = int((_time.monotonic() - t0) * 1000)
+        logger.info(
+            "[AssetGen] done image_model=%s asset_kind=%s bytes=%d elapsed_ms=%d",
+            image_model,
+            asset_kind,
+            len(result) if result else 0,
+            elapsed_ms,
+        )
+        return result
+    except Exception as e:
+        elapsed_ms = int((_time.monotonic() - t0) * 1000)
+        logger.exception(
+            "[AssetGen] failed image_model=%s asset_kind=%s elapsed_ms=%d err=%s",
+            image_model,
+            asset_kind,
+            elapsed_ms,
+            "{}: {}".format(type(e).__name__, str(e)[:200] or "(no message)"),
+        )
+        raise
+
+
 async def generate_character_sheet_asset(
     name: str,
     gender: str,
     description: str,
     ref_image: Optional[bytes] = None,
+    age: Optional[str] = None,
+    personality_tags: Optional[list] = None,
+    personality_text: Optional[str] = None,
+    image_model: str = "nb_pro",
 ) -> bytes:
-    """캐릭터 시트 (정면+측면 등 다각도, 흰 배경 1024x1024) 생성."""
-    prompt = (
-        "Create a photorealistic character sheet of a single person for a music video. "
-        "Show 3 angles (front, 3/4 side, profile) on a clean white background. "
-        "Subject: {name}, gender: {gender}. {description} "
-        "Consistent face, hair, outfit across all angles. "
-        "No text, no watermark, no logo. Photorealistic style only."
-    ).format(name=name, gender=gender, description=description)
+    """v63 — 4섹션 1x4 풀바디 + 얼굴 3분할 디테일 캐릭터 시트 생성.
+
+    character_generator 의 마스터 prompt spec 을 인라인으로 가져온 1-step 변형.
+    ref_image 가 있으면 외형 baseline 으로 첨부 (커버 인물 / 사용자 PNG 케이스).
+    ref 없으면 description + spec 만으로 LLM 추론.
+    """
+    age_val = (age or "").strip()
+    tags_clean = [t.strip() for t in (personality_tags or []) if isinstance(t, str) and t.strip()]
+    text_clean = (personality_text or "").strip()
+    pers_frag = ""
+    if tags_clean or text_clean:
+        pers_frag = ", ".join(tags_clean)
+        if text_clean:
+            pers_frag = "{} — {}".format(pers_frag, text_clean) if pers_frag else text_clean
+
+    prompt_lines = [
+        "Generate a professional photorealistic character design sheet for a music video.",
+        "",
+        "## OVERALL COMPOSITION (FIXED LAYOUT — strict)",
+        "1:1 (square) canvas, 4K resolution, neutral grey studio background (#808080), "
+        "photorealistic style only. The canvas is divided into FOUR vertical sections "
+        "(1x4 layout), arranged from left to right:",
+        "",
+        "[SECTION 1 — RIGHT 45° FULL BODY]",
+        "- Full body view from a 45-degree angle facing right",
+        "- Character stands upright in a neutral A-pose (arms relaxed at sides)",
+        "",
+        "[SECTION 2 — LEFT 45° FULL BODY]",
+        "- Full body view from a 45-degree angle facing left",
+        "- Same posture / proportions / lighting as Section 1 (mirrored only)",
+        "",
+        "[SECTION 3 — BACK FULL BODY]",
+        "- Full body view from directly behind, upright neutral standing posture",
+        "- Clearly show hair back, outfit back, and silhouette",
+        "",
+        "[SECTION 4 — FACE DETAIL STACK (vertical 3-split)]",
+        "- Top    : face from a 45-degree angle facing right (head only, zoomed in)",
+        "- Middle : face from a 45-degree angle facing left  (head only, zoomed in)",
+        "- Bottom : face from directly behind                (head only, zoomed in)",
+        "- Equal vertical spacing, consistent scale and alignment",
+        "",
+        "## GLOBAL LAYOUT RULES",
+        "- Consistent character proportions across all four sections",
+        "- No perspective distortion between sections",
+        "- Strict alignment and equal spacing between sections",
+        "- Clean separation between sections",
+        "- No text, no watermark, no logo anywhere on the canvas",
+        "",
+        "## CHARACTER SPECIFICATION",
+        "[Identity]",
+        "- Name: {name}".format(name=name or "(unspecified)"),
+        "- Gender: {gender}".format(gender=gender or "neutral"),
+    ]
+    if age_val:
+        prompt_lines.append("- Age: {}".format(age_val))
+    prompt_lines.append("")
+    prompt_lines.append("[Body / Pose]")
+    prompt_lines.append(
+        "- Natural proportions consistent with age and gender; A-pose; arms relaxed at "
+        "sides; weight evenly distributed; head upright facing the canvas plane."
+    )
+    prompt_lines.append("")
+    prompt_lines.append("[Appearance — description]")
+    if description and description.strip():
+        prompt_lines.append("- {}".format(description.strip()))
+    else:
+        prompt_lines.append("- Design the face shape, jaw, eyes, brows, nose, lips, skin, "
+                            "hair (color/length/style), build, and outfit so they read as "
+                            "a cohesive single character. Keep all four sections identical "
+                            "in those traits.")
+    if pers_frag:
+        prompt_lines.append("")
+        prompt_lines.append("[Personality / Vibe]")
+        prompt_lines.append(
+            "- {pers}".format(pers=pers_frag)
+        )
+        prompt_lines.append(
+            "- Reflect subtly in expression, micro-pose, and styling — NOT in dramatic poses."
+        )
+    prompt_lines.append("")
     if ref_image:
-        prompt += " Match the appearance of the provided reference image (face, hair, build)."
-    return await _gemini_generate_image(prompt, ref_images=[ref_image] if ref_image else None)
+        prompt_lines.append("## REFERENCE IMAGE — TREAT AS GROUND TRUTH FOR APPEARANCE")
+        prompt_lines.append(
+            "- A reference image is attached. The character in all four sections MUST "
+            "preserve the SAME face shape, eyes, nose, mouth, hair (color/length/style), "
+            "skin tone, and body build as the reference. If the [Appearance — description] "
+            "above conflicts with the reference, FOLLOW THE REFERENCE."
+        )
+    else:
+        prompt_lines.append("## NOTE — no reference image")
+        prompt_lines.append(
+            "- Invent a single cohesive appearance from the [Appearance — description] "
+            "above and keep it identical across all four sections."
+        )
+    prompt_lines.append("")
+    prompt_lines.append(
+        "Output: a single photorealistic character sheet image following the layout above. "
+        "Photographic style only — no illustration, no anime, no stylized rendering."
+    )
+
+    prompt = "\n".join(prompt_lines)
+    return await _generate_asset_image(
+        prompt,
+        ref_images=[ref_image] if ref_image else None,
+        image_model=image_model,
+        asset_kind="character",
+    )
 
 
 async def generate_location_sheet_asset(
     name: str,
     description: str,
+    style_ref: Optional[bytes] = None,
+    image_model: str = "nb_pro",
 ) -> bytes:
-    """장소 시트 (와이드샷, 사람 없음, 1024x1024) 생성."""
+    """장소 시트 (와이드샷, 사람 없음, 1024x1024) 생성.
+
+    style_ref: 선택적 참조 이미지(예: 사용자 location1). 보조 location2/3 생성 시
+    location1 의 라이팅/시간대/색감을 따라가도록 첨부한다.
+    """
     prompt = (
         "Create a photorealistic establishing shot of a location for a music video. "
         "Wide cinematic shot, no people, atmospheric lighting. "
         "Location: {name}. {description} "
         "16:9 aspect ratio. No text, no watermark."
     ).format(name=name, description=description)
-    return await _gemini_generate_image(prompt)
+    if style_ref:
+        prompt += (
+            " Match the lighting direction, time of day, and dominant color palette "
+            "of the reference image (a different but related location in the same MV)."
+        )
+        return await _generate_asset_image(
+            prompt,
+            ref_images=[style_ref],
+            image_model=image_model,
+            asset_kind="location",
+        )
+    return await _generate_asset_image(
+        prompt, ref_images=None, image_model=image_model, asset_kind="location"
+    )
 
 
 def parse_asset_references(prompt: str) -> list:

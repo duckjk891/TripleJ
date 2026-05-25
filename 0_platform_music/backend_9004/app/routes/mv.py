@@ -24,6 +24,13 @@ from ..services.mv_pipeline import (
     run_phase3_videos,
     run_phase4_concatenate,
     run_phase5_merge_audio,
+    _v51_run_cascade,
+    _v51_get_scene_idx,
+    _v51_set_scene_fields,
+    _v51_get_scene,
+    _v52_event_cascade,
+    _v52_get_affected_scenes,
+    _v52_cancel_event_cascade,
 )
 from ..services.mv_generator import generate_scene_image
 
@@ -48,7 +55,7 @@ class CreateMVRequest(BaseModel):
     audio_duration_sec: Optional[float] = None
     scene_prompt: Optional[str] = None
     character_object_name: Optional[str] = None
-    video_model: Optional[str] = "veo"  # "veo", "kling", or "seedance"
+    video_model: Optional[str] = "veo"  # "veo", "kling", "seedance", or "grok" (v66)
     audio_generation_id: Optional[str] = None
     scenario_models: Optional[List[str]] = None  # for scenario generation (e.g. ["gpt-4o-mini", "claude-opus-4-6"])
     prompt_models: Optional[List[str]] = None    # for image prompt generation (e.g. ["gpt-4o-mini", "gpt-5.4"])
@@ -58,6 +65,40 @@ class CreateMVRequest(BaseModel):
     vocal_gender: Optional[str] = None       # ("female", "male", "neutral") — 시나리오 character1에 강제 사용
     relationship: Optional[str] = None       # ("ex_lover", "friend", "colleague", "family", None) — character2 관계
     include_my_character: Optional[bool] = False  # "내 캐릭터 포함" 체크 여부
+    location_id: Optional[str] = None        # v42: user-saved location anchor (Mode B)
+    # ── v49: 사용자 사건 시드 (PLAN.md v49) ─────────────────────────────────
+    # 사용자가 시나리오에 포함되기를 원하는 핵심 사건/헤프닝을 짧게 입력. ≤300자 trim.
+    # 빈 문자열 / 공백만 / None 모두 None 으로 정규화 (= 시드 없음, v48 까지의 흐름 유지).
+    # 본문은 PII 가능성 → server.log 에 길이(len)만 기록, 본문 절대 출력 금지.
+    user_event_seed: Optional[str] = None
+    # v55: 씬+자산 공통 이미지 생성 모델. "nb_pro" (default) | "gpt_image_2".
+    image_model: Optional[str] = "nb_pro"
+    # v55: 커버 생성 시 사용된 모델 — 프론트가 generate-cover 응답값을 그대로 전달.
+    cover_image_model: Optional[str] = None
+    # v63: 커버 이미지 인물을 character1 주인공 자산으로 사용할지 여부.
+    # True + 커버 PNG 있음 + "내 캐릭터 포함" off 일 때만 발동.
+    # 효과: Phase 0 에서 vision LLM 으로 외형 description 추출 → character1_meta 주입,
+    # Phase 1.5 에서 커버 PNG 를 character1 자산 시트의 ref 로 사용.
+    use_cover_person_as_character1: Optional[bool] = True
+
+
+# v55: image model enum + validator.
+ALLOWED_IMAGE_MODELS = {"nb_pro", "gpt_image_2"}
+
+
+def _normalize_image_model(raw: Optional[str], default: str = "nb_pro") -> Optional[str]:
+    """Return validated image_model string, or None if input is invalid (caller → 400).
+
+    Empty/whitespace/None → `default` ("nb_pro" by default).
+    """
+    if raw is None:
+        return default
+    v = raw.strip()
+    if not v:
+        return default
+    if v in ALLOWED_IMAGE_MODELS:
+        return v
+    return None
 
 
 class SelectModelRequest(BaseModel):
@@ -85,6 +126,65 @@ class SaveDraftRequest(BaseModel):
 
 class MergeAudioRequest(BaseModel):
     audio_object_name: str
+
+
+# ── v51: Scene edit + cascade request bodies ────────────────────────────────
+
+class PatchSceneRequest(BaseModel):
+    description: Optional[str] = None
+    image_prompt: Optional[str] = None
+    video_prompt: Optional[str] = None
+    # v56 — Korean sibling fields. 사용자는 한국어만 편집, 영어는 cascade 가 자동 번역.
+    description_ko: Optional[str] = None
+    image_prompt_ko: Optional[str] = None
+    video_prompt_ko: Optional[str] = None
+
+
+class CascadeRegenerateRequest(BaseModel):
+    # v51: "description" | "image_prompt" | "video_prompt"
+    # v56: + "description_ko" | "image_prompt_ko" | "video_prompt_ko"
+    trigger_field: str
+
+
+# ── v52: Scenario event edit + cascade request body ─────────────────────────
+
+class PatchScenarioEventRequest(BaseModel):
+    """v52 — scenario_events[order-1] 의 5개 필드 부분 수정.
+
+    모두 Optional — 사용자가 보낸 필드만 갱신한다. 빈 body → 400.
+    props 는 list[str]. 다른 필드는 string.
+    """
+    trigger: Optional[str] = None
+    protagonist_action: Optional[str] = None
+    motivation: Optional[str] = None
+    emotion_shift: Optional[str] = None
+    props: Optional[List[str]] = None
+
+
+# ── v53: Scenario top-level edit + events array replace + full cascade ──────
+
+class PatchScenarioRequest(BaseModel):
+    """v53 — 시나리오 상위 6개 필드 부분 수정.
+
+    모두 Optional — 사용자가 보낸 필드만 갱신한다. 빈 body → 400.
+    character_states / narrative_arc 는 dict (sub-key 자유).
+    narrative / premise / central_conflict / emotional_core 는 string.
+    """
+    narrative: Optional[str] = None
+    premise: Optional[str] = None
+    character_states: Optional[dict] = None
+    central_conflict: Optional[str] = None
+    emotional_core: Optional[str] = None
+    narrative_arc: Optional[dict] = None
+
+
+class PatchScenarioEventsArrayRequest(BaseModel):
+    """v53 — scenario_events 배열 통째 교체 (추가/삭제/대량 수정).
+
+    events: 빈 list 불가 (최소 1개). 각 event 는 5 필드 + (선택) user_edited_fields.
+    order 는 백엔드가 1, 2, 3, ... 자동 재계산.
+    """
+    events: List[dict]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -119,6 +219,38 @@ def _presign(object_name: Optional[str], bucket: Optional[str] = None) -> Option
         return None
 
 
+def _serialize_assets(assets_meta) -> dict:
+    """v61 — Mongo `mv_jobs.assets` 를 GET 응답용으로 직렬화.
+
+    각 자산에 presigned image_url 포함. None/non-dict 입력 시 빈 dict.
+    옛 잡(assets 없음) 은 빈 dict 반환 — byte-level backward compatible.
+    """
+    if not isinstance(assets_meta, dict):
+        return {}
+    out = {}
+    for key, asset in assets_meta.items():
+        if not isinstance(asset, dict):
+            continue
+        obj = asset.get("object_name")
+        created_at = asset.get("created_at")
+        out[key] = {
+            "type": asset.get("type"),
+            "name": asset.get("name"),
+            "description": asset.get("description", ""),
+            "gender": asset.get("gender"),
+            "age": asset.get("age", ""),
+            "personality_tags": asset.get("personality_tags") or [],
+            "personality_text": asset.get("personality_text", ""),
+            "source": asset.get("source"),
+            "object_name": obj,
+            "image_url": _presign(obj),
+            "created_at": (
+                created_at.isoformat() if hasattr(created_at, "isoformat") else None
+            ),
+        }
+    return out
+
+
 def _scene_to_dict(scene: dict) -> dict:
     """Convert scene doc to response dict with presigned URLs."""
     result = {
@@ -128,6 +260,10 @@ def _scene_to_dict(scene: dict) -> dict:
         "video_image_prompt": scene.get("video_image_prompt", ""),
         "video_prompt": scene.get("video_prompt", ""),
         "description_ko": scene.get("description_ko", ""),
+        # v56 — Korean siblings of image_prompt / video_prompt.
+        # Empty default for old docs; GET handler runs lazy translation when missing.
+        "image_prompt_ko": scene.get("image_prompt_ko", "") or "",
+        "video_prompt_ko": scene.get("video_prompt_ko", "") or "",
         "lyrics_segment": scene.get("lyrics_segment", ""),
         "image_object_name": scene.get("image_object_name"),
         "image_url": _presign(scene.get("image_object_name")),
@@ -157,6 +293,18 @@ def _scene_to_dict(scene: dict) -> dict:
         result["section_end"] = scene["section_end"]
     if scene.get("clip_mood"):
         result["clip_mood"] = scene["clip_mood"]
+    # v45: scene → event mapping (index into job.scenario_events). May be None.
+    if "event_index" in scene:
+        result["event_index"] = scene.get("event_index")
+    # v51: scene-level edit + cascade tracking. Backward-compat: old docs may
+    # not have these keys → default values returned so frontend can read safely.
+    result["user_edited_fields"] = scene.get("user_edited_fields") or []
+    result["cascade_status"] = scene.get("cascade_status") or "idle"
+    result["cascade_progress"] = scene.get("cascade_progress") or 0
+    result["cascade_started_at"] = scene.get("cascade_started_at")
+    result["cascade_completed_at"] = scene.get("cascade_completed_at")
+    result["cascade_id"] = scene.get("cascade_id")
+    result["cancel_requested"] = bool(scene.get("cancel_requested"))
     return result
 
 
@@ -169,11 +317,41 @@ async def create_mv(
     current_user=Depends(get_current_user),
 ):
     """Create MV draft + start scene splitting."""
-    if not settings.google_api_key:
+    # v55: image_model 검증 (씬+자산 공통). 잘못된 값 → 400.
+    norm_image_model = _normalize_image_model(body.image_model)
+    if norm_image_model is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+        )
+    # cover_image_model 은 옵셔널 (생성 시점 스냅샷). 명시되지 않으면 None 유지.
+    # 잘못된 값이면 None 으로 폴백 (400 아님 — 스냅샷용이라 관대 처리).
+    norm_cover_image_model: Optional[str] = None
+    if body.cover_image_model and body.cover_image_model.strip():
+        _cand = body.cover_image_model.strip()
+        if _cand in ALLOWED_IMAGE_MODELS:
+            norm_cover_image_model = _cand
+        else:
+            logger.warning(
+                "[CreateMV] invalid cover_image_model=%r — storing as None",
+                body.cover_image_model,
+            )
+    if norm_image_model == "nb_pro" and not settings.google_api_key:
         return JSONResponse(
             status_code=503,
             content={"error": "Google API 키가 설정되지 않았습니다."},
         )
+    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "OpenAI API 키가 설정되지 않았습니다."},
+        )
+    logger.info(
+        "[CreateMV] image_model=%s cover_image_model=%s user=%s",
+        norm_image_model,
+        norm_cover_image_model or "(none)",
+        current_user["id"],
+    )
 
     title = body.title.strip()
     if not title:
@@ -192,10 +370,10 @@ async def create_mv(
 
     # Validate video model (must come before scene count calculation)
     video_model = body.video_model or "veo"
-    if video_model not in ("veo", "kling", "seedance"):
+    if video_model not in ("veo", "kling", "seedance", "grok"):
         return JSONResponse(
             status_code=400,
-            content={"error": "지원하지 않는 영상 모델입니다. (veo, kling, seedance)"},
+            content={"error": "지원하지 않는 영상 모델입니다. (veo, kling, seedance, grok)"},
         )
 
     # Validate scenario_style — only "drama" is implemented; others fall back with warning
@@ -218,16 +396,70 @@ async def create_mv(
         logger.warning("Unknown vocal_gender '%s' — using None", vocal_gender)
         vocal_gender = None
 
-    relationship = (body.relationship or "").strip().lower() or None
-    if relationship and relationship not in ("ex_lover", "friend", "colleague", "family"):
-        logger.warning("Unknown relationship '%s' — using None", relationship)
+    # v46: relationship 정규화 — 한국어 별칭과 영어 enum 모두 받아 영어 enum 으로 정규화.
+    # 허용 영어 enum: lover / crush / ex_lover(레거시) / friend / colleague(레거시) / family / none / None
+    # 한국어 별칭: 연인 / 짝사랑 / 옛 연인 / 친구 / 동료 / 가족 / 없음
+    # 표 매치 실패 시 None 폴백 + warning.
+    _RELATIONSHIP_ALIAS = {
+        # 영어 (자기 자신 — passthrough)
+        "lover": "lover",
+        "crush": "crush",
+        "ex_lover": "ex_lover",
+        "friend": "friend",
+        "colleague": "colleague",
+        "family": "family",
+        "none": "none",
+        # 한국어 alias
+        "연인": "lover",
+        "짝사랑": "crush",
+        "옛 연인": "ex_lover",
+        "옛연인": "ex_lover",
+        "전 연인": "ex_lover",
+        "전연인": "ex_lover",
+        "친구": "friend",
+        "동료": "colleague",
+        "가족": "family",
+        "없음": "none",
+        "단독": "none",
+    }
+    _rel_raw = body.relationship
+    relationship_raw = (_rel_raw or "").strip()
+    relationship_key = relationship_raw.lower()
+    relationship = _RELATIONSHIP_ALIAS.get(relationship_key) or _RELATIONSHIP_ALIAS.get(relationship_raw)
+    if relationship_raw and relationship is None:
+        logger.warning(
+            "[CreateMV] Unknown relationship raw='%s' — using None (auto-judgment)",
+            relationship_raw,
+        )
         relationship = None
+    elif not relationship_raw:
+        relationship = None
+    logger.info(
+        "[CreateMV] relationship raw='%s' normalized='%s' user=%s",
+        relationship_raw or "(empty)",
+        relationship or "auto",
+        current_user["id"],
+    )
+
+    # v49: 사용자 사건 시드 정규화 (≤300자 trim, 빈 문자열/공백만 → None).
+    # 본문은 PII 가능성 → 로그에 길이만 출력. 절대 본문 미출력.
+    raw_seed = (body.user_event_seed or "").strip()
+    if len(raw_seed) > 300:
+        raw_seed = raw_seed[:300]
+    user_event_seed = raw_seed or None
+    logger.info(
+        "[CreateMV] user_event_seed len=%d user=%s",
+        len(user_event_seed or ""),
+        current_user["id"],
+    )
 
     # Compute dynamic scene count based on audio duration and video model
-    # Veo: 8-second clips, Kling: 10-second clips, Seedance: 10-second clips (up to 15s)
+    # Veo: 8s clips, Kling: 10s, Seedance: 10s (≤15s), Grok: 10s (≤10s, v66)
     if video_model == "kling":
         SCENE_CLIP_DURATION = 10
     elif video_model == "seedance":
+        SCENE_CLIP_DURATION = 10
+    elif video_model == "grok":
         SCENE_CLIP_DURATION = 10
     else:
         SCENE_CLIP_DURATION = 8  # veo default
@@ -236,6 +468,42 @@ async def create_mv(
         scene_count = max(5, min(scene_count, 60))
     else:
         scene_count = 20
+
+    user_character_snapshot = None
+    if bool(body.include_my_character):
+        char = await mongo.characters.find_one({"user_id": current_user["id"]})
+        if not char:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "저장된 내 캐릭터가 없습니다. 먼저 프로필을 설정해주세요."},
+            )
+        user_character_snapshot = {
+            "name": char.get("name") or "",
+            "age": char.get("age") or "",
+            "personality_tags": char.get("personality_tags") or [],
+            "personality_text": char.get("personality_text") or "",
+            "sheet_object_name": char.get("sheet_object_name"),
+            "used_items": char.get("used_items") or [],
+        }
+
+    # v42: snapshot user-saved location (anchor for Mode B). We persist only
+    # id/name/object_name on the job — bytes are loaded lazily in Phase 1.5.
+    user_location_snapshot = None
+    if body.location_id:
+        from .character import _load_user_location
+
+        loc = await _load_user_location(mongo, current_user["id"], body.location_id)
+        if loc:
+            user_location_snapshot = {
+                "id": body.location_id,
+                "name": loc.get("name") or "",
+                "object_name": loc.get("object_name"),
+            }
+        else:
+            logger.info(
+                "create_mv: location_id=%s not found for user=%s — proceeding without location anchor",
+                body.location_id, current_user["id"],
+            )
 
     job_doc = {
         "user_id": current_user["id"],
@@ -258,6 +526,18 @@ async def create_mv(
         "vocal_gender": vocal_gender,
         "relationship": relationship,
         "include_my_character": bool(body.include_my_character),
+        "user_character_snapshot": user_character_snapshot,
+        # v63: 커버 인물 자산화 흐름 — 기본 True. include_my_character=True 일 땐
+        # Phase 0/1.5 가 자동으로 무력화 (user_character 가 1/2순위 우선).
+        "use_cover_person_as_character1": bool(body.use_cover_person_as_character1),
+        # v42: persist the user-location snapshot so Phase 0/1/1.5 can read it
+        "user_location_snapshot": user_location_snapshot,
+        # v49: 사용자 사건 시드 (≤300자, None=시드 없음). Phase 0 가 brainstorm/Stage 2 호출에 throughput.
+        "user_event_seed": user_event_seed,
+        # v55: 씬+자산 공통 이미지 생성 모델 (default "nb_pro").
+        "image_model": norm_image_model,
+        # v55: 커버 생성 시 사용된 모델 (스냅샷, 미지정 시 None).
+        "cover_image_model": norm_cover_image_model,
         "scenario": None,
         "scenario_meta": None,
         "status": "draft",
@@ -346,6 +626,94 @@ async def list_mv_jobs(
     }
 
 
+# ── v56 — Lazy translation for ko/en sibling fields ─────────────────────────
+# 옛 잡 (image_prompt_ko / video_prompt_ko 없음) 또는 한 방향만 채워진 씬을
+# GET 응답 시점에 자동 번역하여 Mongo 영구 저장 + 응답 포함. 한 번 채워지면
+# 다음 GET 부터 캐싱 (재번역 X).
+
+_V56_KO_EN_PAIRS = [
+    # (ko_field, en_field, context_hint)
+    ("description_ko", "description", "MV scene description"),
+    ("image_prompt_ko", "image_prompt", "MV scene image prompt"),
+    ("video_prompt_ko", "video_prompt", "MV scene video prompt"),
+]
+
+
+async def _v56_lazy_translate_scenes(mongo_db, oid: ObjectId, scenes: list) -> None:
+    """씬 list 를 in-place 갱신. 빈 _ko / 빈 _en 을 자동 번역하고 Mongo $set 영구 저장.
+
+    다중 씬 다중 필드 모두 asyncio.gather 로 병렬 번역. translation.py 가 빈 입력
+    → 빈 출력으로 비용 0 보장하므로 안전. 한 번 채워지면 캐싱 (재번역 X).
+    """
+    import asyncio as _asyncio
+    import time as _time
+    from ..services.translation import translate_ko_to_en, translate_en_to_ko
+
+    tasks = []  # (scene_idx, field, target_field, coro)
+
+    for idx, scene in enumerate(scenes or []):
+        if not isinstance(scene, dict):
+            continue
+        for ko_field, en_field, hint in _V56_KO_EN_PAIRS:
+            ko_val = (scene.get(ko_field) or "").strip()
+            en_val = (scene.get(en_field) or "").strip()
+            if not ko_val and en_val:
+                # en → ko (fill ko)
+                tasks.append((idx, ko_field, en_field, translate_en_to_ko(en_val, hint)))
+            elif ko_val and not en_val:
+                # ko → en (fill en)
+                tasks.append((idx, en_field, ko_field, translate_ko_to_en(ko_val, hint)))
+            # else: both empty (nothing to translate) or both filled (cache hit, skip)
+
+    if not tasks:
+        return
+
+    t0 = _time.time()
+    coros = [t[3] for t in tasks]
+    results = await _asyncio.gather(*coros, return_exceptions=True)
+    elapsed_ms = int((_time.time() - t0) * 1000)
+
+    # Group by scene_idx for batched $set per scene.
+    set_by_idx: dict = {}
+    fields_by_idx: dict = {}
+    for (scene_idx, target_field, source_field, _coro), res in zip(tasks, results):
+        if isinstance(res, Exception):
+            logger.warning(
+                "[GETJob] lazy_translate failed scene_idx=%d target=%s err=%s",
+                scene_idx, target_field, str(res)[:200],
+            )
+            continue
+        translated = (res or "").strip()
+        if not translated:
+            # Translation returned empty (LLM failure or empty input safeguard) — skip persist.
+            continue
+        # Bounds check: scene_idx must be valid for the in-memory scenes list.
+        if not (0 <= scene_idx < len(scenes)):
+            continue
+        scenes[scene_idx][target_field] = translated
+        set_by_idx.setdefault(scene_idx, {})[target_field] = translated
+        fields_by_idx.setdefault(scene_idx, []).append(target_field)
+
+    # Persist per scene with positional $set.
+    for scene_idx, fields_set in set_by_idx.items():
+        update = {"updated_at": datetime.utcnow()}
+        for f, v in fields_set.items():
+            update["scenes.{}.{}".format(scene_idx, f)] = v
+        try:
+            await mongo_db.mv_jobs.update_one({"_id": oid}, {"$set": update})
+        except Exception as e:
+            logger.warning(
+                "[GETJob] lazy_translate persist failed scene_idx=%d err=%s",
+                scene_idx, str(e)[:200],
+            )
+
+    if fields_by_idx:
+        logger.info(
+            "[GETJob] lazy_translate scenes=%d fields_total=%d elapsed_ms=%d",
+            len(fields_by_idx), sum(len(v) for v in fields_by_idx.values()), elapsed_ms,
+        )
+
+
 # ── GET /api/mv/jobs/{job_id} ────────────────────────────────────────────────
 
 @router.get("/jobs/{job_id}")
@@ -358,6 +726,13 @@ async def get_mv_job(
     oid = _validate_object_id(job_id)
     job = await _get_job_with_ownership(mongo, oid, current_user["id"])
 
+    # v56 — Lazy ko/en translation. In-place mutates scenes list + persists to Mongo.
+    # Empty input → empty output (LLM call skipped), so no-op for fully-populated jobs.
+    try:
+        await _v56_lazy_translate_scenes(mongo, oid, job.get("scenes") or [])
+    except Exception as _lazy_err:
+        logger.warning("[GETJob] lazy_translate top-level error: %s", str(_lazy_err)[:200])
+
     scenes_response = [_scene_to_dict(s) for s in job.get("scenes", [])]
 
     return {
@@ -368,6 +743,8 @@ async def get_mv_job(
         "lyrics": job.get("lyrics"),
         "cover_object_name": job.get("cover_object_name"),
         "cover_url": _presign(job.get("cover_object_name")),
+        # v61: Phase 1.5 에서 생성된 주인공/장소 자산 — presigned image_url 포함.
+        "assets": _serialize_assets(job.get("assets")),
         "status": job.get("status", "draft"),
         "progress": job.get("progress", 0),
         "error_message": job.get("error_message", ""),
@@ -385,6 +762,50 @@ async def get_mv_job(
         "scenario": job.get("scenario"),
         "scenario_meta": job.get("scenario_meta"),
         "scenario_style": job.get("scenario_style", "drama"),
+        # v45: Stage 1 brainstorm + Stage 2 separated fields + events.
+        # All optional — older jobs (without these) return None/[]/{} so the frontend
+        # can fallback to legacy `scenario` body.
+        "scenario_narrative": job.get("scenario_narrative"),
+        "scenario_premise": job.get("scenario_premise"),
+        "scenario_character_states": job.get("scenario_character_states") or {},
+        "scenario_central_conflict": job.get("scenario_central_conflict"),
+        "scenario_emotional_core": job.get("scenario_emotional_core"),
+        "scenario_narrative_arc": job.get("scenario_narrative_arc") or {},
+        # v52: scenario_events 응답 시 각 event 의 user_edited_fields 기본값 처리.
+        # 옛 도큐먼트 (이 키 없음) → 빈 배열 부여로 backward-compat 보장.
+        "scenario_events": [
+            (lambda _ev: {**_ev, "user_edited_fields": _ev.get("user_edited_fields") or []})(_e)
+            for _e in (job.get("scenario_events") or [])
+        ],
+        "scenario_brainstorm": job.get("scenario_brainstorm") or {},
+        # v46: LLM 자율 판단한 등장인물 관계 (사용자 미명시 시). 명시 시 None.
+        "scenario_inferred_relationship": job.get("scenario_inferred_relationship"),
+        # v47: Stage 2 가 어떤 brainstorm plot_archetype 을 채택했는지. 옛 잡엔 None.
+        "scenario_selected_archetype": job.get("scenario_selected_archetype"),
+        # v48: 곡 톤·장르 분석 결과 archetype 가중치 dict (합=1.0). 옛 잡엔 None.
+        "scenario_archetype_weights": job.get("scenario_archetype_weights"),
+        # v49: 사용자 사건 시드 (≤300자, None=시드 없음). 옛 잡엔 None.
+        "user_event_seed": job.get("user_event_seed"),
+        # v55: 씬+자산 공통 이미지 생성 모델 (옛 잡엔 "nb_pro" 기본).
+        "image_model": job.get("image_model") or "nb_pro",
+        # v55: 커버 생성 모델 (옛 잡엔 None — 미스냅샷).
+        "cover_image_model": job.get("cover_image_model"),
+        # v53: 시나리오 상위 편집 추적 / 전체 cascade 진행 상태. 옛 잡엔 기본값.
+        "scenario_user_edited_fields": job.get("scenario_user_edited_fields") or [],
+        "cascade_phase": job.get("cascade_phase"),
+        "cascade_progress": int(job.get("cascade_progress") or 0),
+        "cascade_started_at": (
+            job.get("cascade_started_at").isoformat()
+            if job.get("cascade_started_at") else None
+        ),
+        "cascade_completed_at": (
+            job.get("cascade_completed_at").isoformat()
+            if job.get("cascade_completed_at") else None
+        ),
+        "cancel_requested": bool(job.get("cancel_requested")),
+        "cascade_id": job.get("cascade_id"),
+        # scenes_archive 는 GET 응답엔 미노출 (별도 향후 라우트). 길이만 노출.
+        "scenes_archive_count": len(job.get("scenes_archive") or []),
         "vocal_gender": job.get("vocal_gender"),
         "relationship": job.get("relationship"),
         "include_my_character": job.get("include_my_character", False),
@@ -392,6 +813,12 @@ async def get_mv_job(
         "character_object_name": job.get("character_object_name"),
         "video_model": job.get("video_model", "veo"),
         "music_sections": job.get("music_sections"),
+        # v43: 자막 가용 여부 (Suno 트랙=True, 직접 업로드 트랙=False)
+        "has_subtitles": bool(
+            job.get("has_subtitles")
+            if job.get("has_subtitles") is not None
+            else (job.get("lyric_timestamps") or job.get("whisper_segments"))
+        ),
         # Draft form fields (for restoring the upload page)
         "audio_generation_id": job.get("audio_generation_id"),
         "audio_file_name": job.get("audio_file_name"),
@@ -428,6 +855,13 @@ async def generate_images(
             status_code=400,
             content={"error": "장면 데이터가 없습니다. 먼저 장면 분할을 실행하세요."},
         )
+
+    if body.scene_numbers is None:
+        failed_count = sum(
+            1 for s in job.get("scenes", [])
+            if not s.get("image_object_name")
+        )
+        logger.info("[BatchImage] job=%s failed_count=%d", str(oid), failed_count)
 
     background_tasks.add_task(run_phase2_images, oid, mongo, body.scene_numbers)
 
@@ -595,7 +1029,9 @@ async def regenerate_scene_image_endpoint(
                 if _b:
                     scene_refs.append(_b)
 
-    # Generate image (synchronous — single Gemini call)
+    # Generate image (synchronous — single image-model call)
+    # v55: image_model 은 job 단위 (씬+자산 공통). 옛 도큐먼트는 nb_pro 기본.
+    _img_model_regen = (job.get("image_model") or "nb_pro").strip() or "nb_pro"
     try:
         scene_desc = scenes[scene_idx].get("image_prompt") or scenes[scene_idx].get("description", "")
         img_bytes = await generate_scene_image(
@@ -604,6 +1040,8 @@ async def regenerate_scene_image_endpoint(
             character_image_bytes=character_image_bytes,
             scene_type=scenes[scene_idx].get("scene_type", "drama"),
             reference_images=scene_refs or None,
+            image_model=_img_model_regen,
+            scene_number=scene_number,
         )
     except Exception as e:
         return JSONResponse(
@@ -648,6 +1086,855 @@ async def regenerate_scene_image_endpoint(
         "image_object_name": object_name,
         "image_url": _presign(object_name),
         "message": "이미지가 재생성되었습니다.",
+    }
+
+
+# ── v51: PATCH scene field (description / image_prompt / video_prompt) ──────
+
+@router.patch("/jobs/{job_id}/scenes/{scene_number}")
+async def patch_scene(
+    job_id: str,
+    scene_number: int,
+    body: PatchSceneRequest,
+    current_user=Depends(get_current_user),
+):
+    """v51 — 씬 카드 안의 description / image_prompt / video_prompt 부분 업데이트.
+
+    사용자가 보낸 필드만 갱신하고 user_edited_fields 에 누적(중복 제거).
+    Cascade 는 별도 호출 (POST /cascade-regenerate). 여기서는 텍스트 갱신만.
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    # 보내진 필드 추출 (None 이 아닌 것만)
+    payload = body.dict(exclude_none=True)
+    # v56 — accept both English (legacy v51) and Korean (`_ko`) sibling fields.
+    allowed = {
+        "description", "image_prompt", "video_prompt",
+        "description_ko", "image_prompt_ko", "video_prompt_ko",
+    }
+    payload = {k: v for k, v in payload.items() if k in allowed}
+    if not payload:
+        raise HTTPException(
+            status_code=400,
+            detail="최소 1개 필드(description / image_prompt / video_prompt 또는 *_ko)가 필요합니다.",
+        )
+
+    # 씬 위치 찾기
+    scenes = job.get("scenes") or []
+    scene_idx = None
+    for i, s in enumerate(scenes):
+        if s.get("scene_number") == scene_number:
+            scene_idx = i
+            break
+    if scene_idx is None:
+        raise HTTPException(status_code=404, detail="해당 장면을 찾을 수 없습니다.")
+
+    # user_edited_fields 누적 (중복 제거, 순서 유지)
+    cur_edited = list(scenes[scene_idx].get("user_edited_fields") or [])
+    for k in payload.keys():
+        if k not in cur_edited:
+            cur_edited.append(k)
+
+    # 필드 업데이트 (positional $set 으로 다른 씬 영향 없음)
+    set_fields = {}
+    for k, v in payload.items():
+        set_fields[k] = v
+    set_fields["user_edited_fields"] = cur_edited
+    await _v51_set_scene_fields(mongo, oid, scene_idx, set_fields)
+
+    logger.info(
+        "[CascadePatch] job=%s scene=%d fields=%s",
+        str(oid), scene_number, sorted(payload.keys()),
+    )
+
+    # 갱신된 씬 다시 읽어 응답
+    updated_scene = await _v51_get_scene(mongo, oid, scene_idx)
+    return {
+        "scene_number": scene_number,
+        "updated_fields": sorted(payload.keys()),
+        "user_edited_fields": cur_edited,
+        "scene": _scene_to_dict(updated_scene or scenes[scene_idx]),
+    }
+
+
+# ── v51: Cascade regenerate (start background cascade) ──────────────────────
+
+@router.post("/jobs/{job_id}/scenes/{scene_number}/cascade-regenerate")
+async def cascade_regenerate_scene(
+    job_id: str,
+    scene_number: int,
+    body: CascadeRegenerateRequest,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+    """v51 — 씬 단위 부분 cascade 시작 (백그라운드).
+
+    trigger_field:
+      - "description"  → phase1b → phase2 → phase2.5 (progress 0/33/66/100)
+      - "image_prompt" → phase2 → phase2.5 (progress 0/50/100)
+      - "video_prompt" → no-op (즉시 completed)
+
+    이미 진행 중인 cascade 가 있으면 409.
+    """
+    import uuid as _uuid_mv
+
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    trigger_field = (body.trigger_field or "").strip()
+    # v56 — accept _ko variants. Backend translates ko→en then runs the English cascade.
+    _ALLOWED_TRIGGERS = {
+        "description", "image_prompt", "video_prompt",
+        "description_ko", "image_prompt_ko", "video_prompt_ko",
+    }
+    if trigger_field not in _ALLOWED_TRIGGERS:
+        raise HTTPException(
+            status_code=400,
+            detail="trigger_field 는 description / image_prompt / video_prompt 또는 *_ko 변형이어야 합니다.",
+        )
+
+    # 씬 위치
+    scenes = job.get("scenes") or []
+    scene_idx = None
+    for i, s in enumerate(scenes):
+        if s.get("scene_number") == scene_number:
+            scene_idx = i
+            break
+    if scene_idx is None:
+        raise HTTPException(status_code=404, detail="해당 장면을 찾을 수 없습니다.")
+
+    # 이미 running 인지 체크
+    cur_status = (scenes[scene_idx].get("cascade_status") or "idle")
+    if cur_status == "running":
+        raise HTTPException(status_code=409, detail="이미 이 씬에 cascade 작업이 진행 중입니다.")
+
+    cascade_id = str(_uuid_mv.uuid4())
+    # v56 — estimated_phases for ko triggers (translate phase prefixed).
+    if trigger_field == "description":
+        estimated_phases = ["phase1b", "phase2", "phase2.5"]
+    elif trigger_field == "image_prompt":
+        estimated_phases = ["phase2", "phase2.5"]
+    elif trigger_field == "description_ko":
+        estimated_phases = ["translate_description_to_en", "phase1b", "phase2", "phase2.5"]
+    elif trigger_field == "image_prompt_ko":
+        estimated_phases = ["translate_image_prompt_to_en", "phase2", "phase2.5"]
+    elif trigger_field == "video_prompt_ko":
+        estimated_phases = ["translate_video_prompt_to_en"]
+    else:
+        # "video_prompt" (English) — no cascade
+        estimated_phases = []
+
+    # 시작 마킹 (running) — 백그라운드 작업 안에서 다시 set 하지만, 즉시
+    # 클라이언트가 폴링해도 running 으로 보이도록 여기서도 미리 세팅.
+    # v56 — video_prompt (en) only is the truly no-op case. video_prompt_ko triggers a
+    # translation phase so it is "running" briefly.
+    if trigger_field != "video_prompt":
+        await _v51_set_scene_fields(mongo, oid, scene_idx, {
+            "cascade_status": "running",
+            "cascade_progress": 0,
+            "cascade_started_at": datetime.utcnow(),
+            "cascade_completed_at": None,
+            "cascade_id": cascade_id,
+            "cancel_requested": False,
+        })
+
+    logger.info(
+        "[CascadeRegen] job=%s scene=%d trigger_field=%s cascade_id=%s",
+        str(oid), scene_number, trigger_field, cascade_id,
+    )
+
+    # 백그라운드 launch
+    background_tasks.add_task(_v51_run_cascade, oid, scene_number, mongo, trigger_field)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "accepted": True,
+            "scene_number": scene_number,
+            "cascade_id": cascade_id,
+            "trigger_field": trigger_field,
+            "estimated_phases": estimated_phases,
+        },
+    )
+
+
+# ── v51: Cancel cascade ─────────────────────────────────────────────────────
+
+@router.post("/jobs/{job_id}/scenes/{scene_number}/cancel-cascade")
+async def cancel_scene_cascade(
+    job_id: str,
+    scene_number: int,
+    current_user=Depends(get_current_user),
+):
+    """v51 — 진행 중인 cascade 에 취소 신호. 백그라운드 헬퍼가 다음 phase
+    진입 시 체크하여 cascade_status="cancelled" 로 마킹.
+
+    이미 completed/cancelled/idle 인 경우 idempotent (현재 상태만 반환).
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    scenes = job.get("scenes") or []
+    scene_idx = None
+    for i, s in enumerate(scenes):
+        if s.get("scene_number") == scene_number:
+            scene_idx = i
+            break
+    if scene_idx is None:
+        raise HTTPException(status_code=404, detail="해당 장면을 찾을 수 없습니다.")
+
+    cur_status = scenes[scene_idx].get("cascade_status") or "idle"
+    if cur_status == "running":
+        await _v51_set_scene_fields(mongo, oid, scene_idx, {"cancel_requested": True})
+
+    logger.info("[CascadeCancel] job=%s scene=%d", str(oid), scene_number)
+
+    # 갱신된 씬 다시 읽어 응답
+    updated_scene = await _v51_get_scene(mongo, oid, scene_idx)
+    return {
+        "scene_number": scene_number,
+        "cancel_requested": bool(updated_scene and updated_scene.get("cancel_requested")),
+        "cascade_status": (updated_scene or {}).get("cascade_status") or cur_status,
+    }
+
+
+# ── v52: PATCH scenario event field (5-field partial) ───────────────────────
+
+@router.patch("/jobs/{job_id}/scenario/events/{order}")
+async def patch_scenario_event(
+    job_id: str,
+    order: int,
+    body: PatchScenarioEventRequest,
+    current_user=Depends(get_current_user),
+):
+    """v52 — scenario_events[order-1] 의 5개 필드 (trigger / protagonist_action /
+    motivation / emotion_shift / props) 부분 업데이트.
+
+    사용자가 보낸 필드만 갱신하고 event.user_edited_fields 에 누적(중복 제거).
+    Cascade 는 별도 호출 (POST /cascade-regenerate). 여기서는 텍스트 갱신만.
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    # 보내진 필드 추출 (None 이 아닌 것만)
+    payload = body.dict(exclude_none=True)
+    allowed = {"trigger", "protagonist_action", "motivation", "emotion_shift", "props"}
+    payload = {k: v for k, v in payload.items() if k in allowed}
+    if not payload:
+        raise HTTPException(
+            status_code=400,
+            detail="최소 1개 필드(trigger / protagonist_action / motivation / emotion_shift / props)가 필요합니다.",
+        )
+
+    # order 유효성 + event 위치
+    events = job.get("scenario_events") or []
+    if order < 1 or order > len(events):
+        raise HTTPException(status_code=404, detail="해당 사건(event)을 찾을 수 없습니다.")
+    event_idx = order - 1
+
+    # event.user_edited_fields 누적 (중복 제거, 순서 유지)
+    cur_edited = list(events[event_idx].get("user_edited_fields") or [])
+    for k in payload.keys():
+        if k not in cur_edited:
+            cur_edited.append(k)
+
+    # 필드 업데이트 — positional $set 으로 다른 event 영향 없음
+    update = {"updated_at": datetime.utcnow()}
+    for k, v in payload.items():
+        update["scenario_events.{}.{}".format(event_idx, k)] = v
+    update["scenario_events.{}.user_edited_fields".format(event_idx)] = cur_edited
+    await mongo.mv_jobs.update_one({"_id": oid}, {"$set": update})
+
+    logger.info(
+        "[EventPatch] job=%s event_order=%d fields=%s",
+        str(oid), order, sorted(payload.keys()),
+    )
+
+    # 갱신된 event 다시 읽어 응답
+    updated_job = await mongo.mv_jobs.find_one(
+        {"_id": oid}, {"scenario_events": 1},
+    )
+    updated_events = (updated_job or {}).get("scenario_events") or []
+    updated_event = updated_events[event_idx] if 0 <= event_idx < len(updated_events) else events[event_idx]
+    # backward-compat 기본값 부여
+    updated_event_resp = {**updated_event, "user_edited_fields": updated_event.get("user_edited_fields") or []}
+
+    return {
+        "event_order": order,
+        "updated_fields": sorted(payload.keys()),
+        "user_edited_fields": cur_edited,
+        "event": updated_event_resp,
+    }
+
+
+# ── v52: Cascade regenerate — fan out to mapped scenes ──────────────────────
+
+@router.post("/jobs/{job_id}/scenario/events/{order}/cascade-regenerate")
+async def cascade_regenerate_scenario_event(
+    job_id: str,
+    order: int,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+    """v52 — event 단위 cascade 시작. event 에 매핑된 모든 씬 (scene.event_index ===
+    order-1) 에 대해 v51 의 cascade(trigger_field="description") 를 순차 실행.
+
+    응답은 즉시 반환 — 실제 cascade 는 백그라운드 task. 매핑된 씬 0개여도 200 +
+    affected_scenes=[] 반환 (에러 X — UX 단순화).
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    events = job.get("scenario_events") or []
+    if order < 1 or order > len(events):
+        raise HTTPException(status_code=404, detail="해당 사건(event)을 찾을 수 없습니다.")
+
+    # 매핑된 씬 식별 (응답에 즉시 포함)
+    affected = await _v52_get_affected_scenes(mongo, oid, order)
+
+    # 각 매핑 씬에 대해 미리 cascade_status="running" 으로 마킹 — 프론트가 즉시
+    # 폴링해도 running 으로 보이도록. user_edited_fields 에 "description" 있으면
+    # 미리 마킹하지 않고 백그라운드에서 즉시 completed 처리.
+    if affected:
+        for sn in affected:
+            sidx = await _v51_get_scene_idx(mongo, oid, sn)
+            if sidx is None:
+                continue
+            scene = await _v51_get_scene(mongo, oid, sidx)
+            if not scene:
+                continue
+            # 이미 description 사용자 편집 씬은 cascade skip — 미리 마킹 X
+            if "description" in (scene.get("user_edited_fields") or []):
+                continue
+            # 이미 running 인 씬은 skip
+            if (scene.get("cascade_status") or "idle") == "running":
+                continue
+            await _v51_set_scene_fields(mongo, oid, sidx, {
+                "cascade_status": "running",
+                "cascade_progress": 0,
+                "cascade_started_at": datetime.utcnow(),
+                "cascade_completed_at": None,
+                "cancel_requested": False,
+            })
+
+    logger.info(
+        "[EventCascade] job=%s event_order=%d affected_scenes=%s (accepted)",
+        str(oid), order, affected,
+    )
+
+    # 백그라운드 launch
+    background_tasks.add_task(_v52_event_cascade, oid, order, mongo)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "accepted": True,
+            "event_order": order,
+            "affected_scenes": affected,
+        },
+    )
+
+
+# ── v52: Cancel event cascade — fan out to mapped scenes ────────────────────
+
+@router.post("/jobs/{job_id}/scenario/events/{order}/cancel-cascade")
+async def cancel_scenario_event_cascade(
+    job_id: str,
+    order: int,
+    current_user=Depends(get_current_user),
+):
+    """v52 — event 의 매핑된 씬들에 일괄 취소 신호. running 인 씬만 cancel_requested=True
+    로 마킹 (idempotent).
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    events = job.get("scenario_events") or []
+    if order < 1 or order > len(events):
+        raise HTTPException(status_code=404, detail="해당 사건(event)을 찾을 수 없습니다.")
+
+    cancelled = await _v52_cancel_event_cascade(mongo, oid, order)
+    return {
+        "event_order": order,
+        "cancelled_scenes": cancelled,
+    }
+
+
+# ── v53: PATCH scenario top-level fields (B1) ───────────────────────────────
+
+# 시나리오 상위 6개 필드 (narrative / premise / character_states / central_conflict /
+# emotional_core / narrative_arc) 부분 수정. 사용자가 보낸 필드만 갱신하고
+# scenario_user_edited_fields 에 누적(중복 제거). Cascade 자동 시작 X — 별도
+# `/scenario/cascade-regenerate` 호출.
+
+_V53_SCENARIO_TOP_FIELDS = (
+    "narrative",
+    "premise",
+    "character_states",
+    "central_conflict",
+    "emotional_core",
+    "narrative_arc",
+)
+
+
+def _v53_normalize_scenario_payload(payload: dict) -> dict:
+    """B1 — 입력 dict 검증 + 정규화. dict 가 아닌 값은 400.
+
+    string 필드: trim 만 (빈 문자열도 허용 — 사용자 의도 보존).
+    dict 필드: 비-dict 시 400. dict 안의 키/값 검증은 가벼움 (자유 schema).
+    """
+    out = {}
+    for k in ("narrative", "premise", "central_conflict", "emotional_core"):
+        if k in payload and payload[k] is not None:
+            v = payload[k]
+            if not isinstance(v, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail="필드 '{}' 는 문자열이어야 합니다.".format(k),
+                )
+            out[k] = v
+    for k in ("character_states", "narrative_arc"):
+        if k in payload and payload[k] is not None:
+            v = payload[k]
+            if not isinstance(v, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="필드 '{}' 는 dict 이어야 합니다.".format(k),
+                )
+            out[k] = v
+    return out
+
+
+@router.patch("/jobs/{job_id}/scenario")
+async def patch_scenario(
+    job_id: str,
+    body: PatchScenarioRequest,
+    current_user=Depends(get_current_user),
+):
+    """v53 — 시나리오 상위 6개 필드 부분 갱신.
+
+    사용자가 보낸 필드만 Mongo `scenario_<field>` 키에 매핑하여 갱신하고
+    scenario_user_edited_fields 에 누적(중복 제거).
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    payload = body.dict(exclude_none=True)
+    normalized = _v53_normalize_scenario_payload(payload)
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="최소 1개 필드(narrative / premise / character_states / central_conflict / emotional_core / narrative_arc)가 필요합니다.",
+        )
+
+    cur_edited = list(job.get("scenario_user_edited_fields") or [])
+    for k in normalized.keys():
+        if k not in cur_edited:
+            cur_edited.append(k)
+
+    update = {
+        "scenario_user_edited_fields": cur_edited,
+        "updated_at": datetime.utcnow(),
+    }
+    for k, v in normalized.items():
+        update["scenario_" + k] = v
+
+    await mongo.mv_jobs.update_one({"_id": oid}, {"$set": update})
+
+    logger.info(
+        "[ScenarioPatch] job=%s fields=%s",
+        str(oid), sorted(normalized.keys()),
+    )
+
+    updated = await mongo.mv_jobs.find_one(
+        {"_id": oid},
+        {
+            "scenario_narrative": 1, "scenario_premise": 1,
+            "scenario_character_states": 1, "scenario_central_conflict": 1,
+            "scenario_emotional_core": 1, "scenario_narrative_arc": 1,
+            "scenario_user_edited_fields": 1,
+        },
+    ) or {}
+
+    return {
+        "updated_fields": sorted(normalized.keys()),
+        "scenario_user_edited_fields": cur_edited,
+        "scenario_narrative": updated.get("scenario_narrative"),
+        "scenario_premise": updated.get("scenario_premise"),
+        "scenario_character_states": updated.get("scenario_character_states") or {},
+        "scenario_central_conflict": updated.get("scenario_central_conflict"),
+        "scenario_emotional_core": updated.get("scenario_emotional_core"),
+        "scenario_narrative_arc": updated.get("scenario_narrative_arc") or {},
+    }
+
+
+# ── v53: PATCH scenario events array (B2) ───────────────────────────────────
+
+
+def _v53_normalize_events_array(events: list) -> list:
+    """B2 — events 배열 정규화. order 자동 재계산 + 빈 값 안전 처리.
+
+    각 event 의 trigger / protagonist_action / motivation / emotion_shift 가 None 이면
+    빈 string. props 가 None 이면 빈 list. 그 외 키 (user_edited_fields 등) 는 그대로 보존.
+    section / order 외 unknown 키도 그대로 통과 (forward-compat).
+    """
+    out = []
+    for i, ev in enumerate(events):
+        if not isinstance(ev, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="events[{}] 는 dict 이어야 합니다.".format(i),
+            )
+        norm = dict(ev)
+        norm["order"] = i + 1  # 자동 재계산
+        for k in ("trigger", "protagonist_action", "motivation", "emotion_shift"):
+            v = norm.get(k)
+            if v is None:
+                norm[k] = ""
+            elif not isinstance(v, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail="events[{}].{} 는 문자열이어야 합니다.".format(i, k),
+                )
+        props = norm.get("props")
+        if props is None:
+            norm["props"] = []
+        elif isinstance(props, list):
+            # 항목이 string 이 아닌 것은 str() 강제. 빈 문자열은 허용.
+            norm["props"] = [p if isinstance(p, str) else str(p) for p in props]
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="events[{}].props 는 list[str] 이어야 합니다.".format(i),
+            )
+        # user_edited_fields 보존 (없으면 빈 list)
+        uef = norm.get("user_edited_fields")
+        norm["user_edited_fields"] = uef if isinstance(uef, list) else []
+        out.append(norm)
+    return out
+
+
+@router.patch("/jobs/{job_id}/scenario/events")
+async def patch_scenario_events_array(
+    job_id: str,
+    body: PatchScenarioEventsArrayRequest,
+    current_user=Depends(get_current_user),
+):
+    """v53 — scenario_events 배열 통째 교체.
+
+    빈 list → 400 (최소 1개). order 필드는 백엔드가 1, 2, 3... 자동 재계산.
+    scenario_user_edited_fields 에 "events" 자동 추가 (사용자 명시 편집).
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    events = body.events
+    if not isinstance(events, list):
+        raise HTTPException(status_code=400, detail="events 는 list 이어야 합니다.")
+    if len(events) == 0:
+        raise HTTPException(status_code=400, detail="최소 1개 event 가 필요합니다.")
+
+    normalized_events = _v53_normalize_events_array(events)
+
+    cur_edited = list(job.get("scenario_user_edited_fields") or [])
+    if "events" not in cur_edited:
+        cur_edited.append("events")
+
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {"$set": {
+            "scenario_events": normalized_events,
+            "scenario_user_edited_fields": cur_edited,
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+
+    logger.info(
+        "[ScenarioEventsPatch] job=%s events_count=%d",
+        str(oid), len(normalized_events),
+    )
+
+    return {
+        "events": normalized_events,
+        "events_count": len(normalized_events),
+        "scenario_user_edited_fields": cur_edited,
+    }
+
+
+# ── v53: POST cascade-regenerate (B3) — full scenario cascade ───────────────
+
+
+_V53_CASCADE_TERMINAL_PHASES = {None, "completed", "cancelled", "failed"}
+
+
+@router.post("/jobs/{job_id}/scenario/cascade-regenerate")
+async def cascade_regenerate_scenario(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+):
+    """v53 — 전체 cascade (Phase 0/1/1b/2/2.5/Final) 백그라운드 시작.
+
+    409: 이미 진행 중인 cascade 가 있을 때.
+    400: 시나리오 도큐먼트 자체 없음 (scenario_narrative/scenario 둘 다 None).
+    """
+    import uuid as _uuid_mv
+
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    # 진행 중 체크
+    cur_phase = job.get("cascade_phase")
+    if cur_phase not in _V53_CASCADE_TERMINAL_PHASES:
+        raise HTTPException(
+            status_code=409,
+            detail="이미 진행 중인 cascade 가 있습니다. (cascade_phase=" + str(cur_phase) + ")",
+        )
+
+    # 시나리오 자체 없음
+    has_narrative = bool((job.get("scenario_narrative") or "").strip())
+    has_legacy_scenario = bool((job.get("scenario") or "").strip())
+    if not has_narrative and not has_legacy_scenario:
+        raise HTTPException(status_code=400, detail="시나리오가 없습니다. 먼저 시나리오를 생성해주세요.")
+
+    cascade_id = str(_uuid_mv.uuid4())
+
+    # 시작 마킹 (events_extract phase 부터). 사용자가 events 도 직접 편집했으면
+    # background helper 가 자동으로 phase 0 skip → "scene_split" 으로 진입.
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {"$set": {
+            "cascade_phase": "events_extract",
+            "cascade_progress": 0,
+            "cascade_started_at": datetime.utcnow(),
+            "cascade_completed_at": None,
+            "cascade_id": cascade_id,
+            "cancel_requested": False,
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+
+    logger.info(
+        "[ScenarioCascade] job=%s start cascade_id=%s",
+        str(oid), cascade_id,
+    )
+
+    # 백그라운드 launch — _v53_full_cascade 는 mv_pipeline 에 정의됨
+    from ..services.mv_pipeline import _v53_full_cascade
+    background_tasks.add_task(_v53_full_cascade, oid, mongo)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "accepted": True,
+            "cascade_id": cascade_id,
+            "estimated_phases": 5,  # events_extract / scene_split / scene_image / scene_video_prompt / video_invalidate
+        },
+    )
+
+
+# ── v53: POST cancel-cascade (B5) — full scenario cascade cancel ────────────
+
+@router.post("/jobs/{job_id}/scenario/cancel-cascade")
+async def cancel_scenario_cascade(
+    job_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v53 — 전체 cascade 진행 중 cancel_requested=True 마킹. 다음 phase 진입 시
+    background helper 가 cascade_status="cancelled" 로 마감. idempotent.
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    cur_phase = job.get("cascade_phase")
+    cancelled = False
+    if cur_phase not in _V53_CASCADE_TERMINAL_PHASES:
+        await mongo.mv_jobs.update_one(
+            {"_id": oid},
+            {"$set": {"cancel_requested": True, "updated_at": datetime.utcnow()}},
+        )
+        cancelled = True
+
+    logger.info("[ScenarioCascadeCancel] job=%s phase=%s", str(oid), cur_phase)
+
+    return {
+        "cancelled": cancelled,
+        "cascade_phase": cur_phase,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v54 — user_edited_fields 보존 정책 통합 (reset / summary)
+#
+# 3 레벨 (씬 / event / scenario top-level) 의 user_edited_fields 를 일괄 또는
+# 부분적으로 해제 + 모든 레벨 요약 조회.
+#
+# 추적자: [UserEditedReset] / [UserEditedSummary]
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class UserEditedResetRequest(BaseModel):
+    scope: str  # "all" | "scene" | "event" | "scenario"
+    target: Optional[int] = None  # scene_number (scope=scene) or event_order (scope=event); None for scenario
+    fields: Optional[List[str]] = None  # 특정 필드만 해제. 미지정 시 해당 entity 전체 해제.
+
+
+@router.post("/jobs/{job_id}/user-edited/reset")
+async def reset_user_edits(
+    job_id: str,
+    body: UserEditedResetRequest,
+    current_user=Depends(get_current_user),
+):
+    """v54 — 사용자 편집 표시 일괄 / 부분 해제.
+
+    Body:
+      - scope="all"          : 모든 레벨 일괄 해제 (target / fields 무시).
+      - scope="scene"+target : 씬 N (scene_number) 의 user_edited_fields 해제 (fields 부분 / 전체).
+      - scope="event"+target : event order=N 의 user_edited_fields 해제 (fields 부분 / 전체).
+      - scope="scenario"     : scenario_user_edited_fields 해제 (fields 부분 / 전체).
+
+    Response: {"cleared": int}
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    scope = (body.scope or "").strip()
+    if scope not in {"all", "scene", "event", "scenario"}:
+        return JSONResponse(status_code=400, content={"error": "scope 가 필요합니다. (all|scene|event|scenario)"})
+
+    cleared = 0
+    set_fields = {"updated_at": datetime.utcnow()}
+
+    if scope == "all":
+        # 모든 레벨 일괄 해제
+        scenario_uef = job.get("scenario_user_edited_fields") or []
+        cleared += len(scenario_uef)
+        set_fields["scenario_user_edited_fields"] = []
+
+        for i, ev in enumerate(job.get("scenario_events") or []):
+            uef = ev.get("user_edited_fields") or []
+            if uef:
+                cleared += len(uef)
+                set_fields["scenario_events.{}.user_edited_fields".format(i)] = []
+
+        for i, sc in enumerate(job.get("scenes") or []):
+            uef = sc.get("user_edited_fields") or []
+            if uef:
+                cleared += len(uef)
+                set_fields["scenes.{}.user_edited_fields".format(i)] = []
+
+    elif scope == "scenario":
+        cur = list(job.get("scenario_user_edited_fields") or [])
+        if body.fields:
+            new_list = [f for f in cur if f not in set(body.fields)]
+            cleared = len(cur) - len(new_list)
+            set_fields["scenario_user_edited_fields"] = new_list
+        else:
+            cleared = len(cur)
+            set_fields["scenario_user_edited_fields"] = []
+
+    elif scope == "scene":
+        if not isinstance(body.target, int):
+            return JSONResponse(status_code=400, content={"error": "scope=scene 은 target (scene_number) 이 필요합니다."})
+        scenes = job.get("scenes") or []
+        scene_idx = None
+        for i, s in enumerate(scenes):
+            if s.get("scene_number") == body.target:
+                scene_idx = i
+                break
+        if scene_idx is None:
+            return JSONResponse(status_code=404, content={"error": "씬을 찾을 수 없습니다."})
+        cur = list(scenes[scene_idx].get("user_edited_fields") or [])
+        if body.fields:
+            new_list = [f for f in cur if f not in set(body.fields)]
+            cleared = len(cur) - len(new_list)
+            set_fields["scenes.{}.user_edited_fields".format(scene_idx)] = new_list
+        else:
+            cleared = len(cur)
+            set_fields["scenes.{}.user_edited_fields".format(scene_idx)] = []
+
+    elif scope == "event":
+        if not isinstance(body.target, int):
+            return JSONResponse(status_code=400, content={"error": "scope=event 은 target (event_order) 이 필요합니다."})
+        events = job.get("scenario_events") or []
+        event_idx = body.target - 1  # order is 1-based
+        if event_idx < 0 or event_idx >= len(events):
+            return JSONResponse(status_code=404, content={"error": "event 를 찾을 수 없습니다."})
+        cur = list(events[event_idx].get("user_edited_fields") or [])
+        if body.fields:
+            new_list = [f for f in cur if f not in set(body.fields)]
+            cleared = len(cur) - len(new_list)
+            set_fields["scenario_events.{}.user_edited_fields".format(event_idx)] = new_list
+        else:
+            cleared = len(cur)
+            set_fields["scenario_events.{}.user_edited_fields".format(event_idx)] = []
+
+    if cleared > 0 or scope == "all":
+        await mongo.mv_jobs.update_one({"_id": oid}, {"$set": set_fields})
+
+    logger.info(
+        "[UserEditedReset] job=%s scope=%s target=%s cleared=%d",
+        str(oid), scope, body.target, cleared,
+    )
+
+    return {"cleared": cleared}
+
+
+@router.get("/jobs/{job_id}/user-edited/summary")
+async def get_user_edited_summary(
+    job_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v54 — 모든 레벨의 user_edited_fields 요약.
+
+    Response:
+      {
+        "scenario": ["narrative", "events"],
+        "events": {"3": ["trigger"], "7": ["motivation"]},
+        "scenes": {"5": ["image_prompt"], "12": ["description"]}
+      }
+    """
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    scenario_uef = list(job.get("scenario_user_edited_fields") or [])
+
+    events_dict = {}
+    for ev in (job.get("scenario_events") or []):
+        order = ev.get("order")
+        uef = ev.get("user_edited_fields") or []
+        if isinstance(order, int) and uef:
+            events_dict[str(order)] = list(uef)
+
+    scenes_dict = {}
+    for sc in (job.get("scenes") or []):
+        sn = sc.get("scene_number")
+        uef = sc.get("user_edited_fields") or []
+        if isinstance(sn, int) and uef:
+            scenes_dict[str(sn)] = list(uef)
+
+    logger.info(
+        "[UserEditedSummary] job=%s scenario=%d events=%d scenes=%d",
+        str(oid), len(scenario_uef), len(events_dict), len(scenes_dict),
+    )
+
+    return {
+        "scenario": scenario_uef,
+        "events": events_dict,
+        "scenes": scenes_dict,
     }
 
 
@@ -761,26 +2048,22 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
         from ..services.kling_video_generator import start_scene_video_kling, check_scene_video_status_kling, download_video_kling
         from ..services.seedance_video_generator import start_scene_video_seedance, check_scene_video_status_seedance, download_video_seedance
         from ..services.mv_generator import start_scene_video, check_scene_video_status, download_video
+        from ..services.grok_video_generator import (
+            start_scene_video_grok,
+            check_scene_video_status_grok,
+            download_video_grok,
+        )
+        from datetime import timedelta
         import asyncio
 
         video_model = job.get("video_model", "veo")
         scene_desc = scene.get("video_image_prompt") or scene.get("image_prompt") or scene.get("description", "")
 
         if video_model == "seedance":
-            # For Seedance lipsync, load and slice audio
-            scene_audio_bytes = None
-            if scene.get("scene_type") == "lipsync":
-                from ..services.mv_pipeline import _resolve_audio_object_name, _load_audio_from_minio, _slice_audio_segment
-                audio_obj = await _resolve_audio_object_name(job, mongo_db)
-                if audio_obj:
-                    full_audio = _load_audio_from_minio(audio_obj)
-                    if full_audio:
-                        scene_audio_bytes = _slice_audio_segment(
-                            full_audio,
-                            scene.get("section_start", 0),
-                            scene.get("section_end", 10),
-                        )
-
+            logger.info(
+                "[SeedAudioOff_single] job=%s scene=%d type=%s",
+                job_id, scene_number, scene.get("scene_type"),
+            )
             task_id = await start_scene_video_seedance(
                 prompt=scene_desc,
                 image_bytes=image_bytes,
@@ -788,7 +2071,7 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                 lyrics_segment=scene.get("lyrics_segment", ""),
                 scene_type=scene.get("scene_type", "drama"),
                 duration=float(scene.get("use_seconds", 10)),
-                audio_bytes=scene_audio_bytes,
+                audio_bytes=None,
             )
         elif video_model == "veo":
             task_id = await start_scene_video(
@@ -796,6 +2079,26 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                 video_prompt=scene_video_prompt,
                 lyrics_segment=scene.get("lyrics_segment", ""),
                 scene_type=scene.get("scene_type", "drama"),
+                description=scene.get("description", ""),  # v67
+            )
+        elif video_model == "grok":
+            image_url = minio_client.presigned_get_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=scene["image_object_name"],
+                expires=timedelta(hours=1),
+            )
+            logger.info(
+                "[GrokSingle] job=%s scene=%d video_model=%s",
+                job_id, scene_number, video_model,
+            )
+            task_id = await start_scene_video_grok(
+                prompt=scene_desc,
+                image_url=image_url,
+                video_prompt=scene_video_prompt,
+                lyrics_segment=scene.get("lyrics_segment", ""),
+                scene_type=scene.get("scene_type", "drama"),
+                duration=float(scene.get("use_seconds", 10)),
+                description=scene.get("description", ""),
             )
         else:  # kling
             task_id = await start_scene_video_kling(
@@ -816,6 +2119,8 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                 status_result = await check_scene_video_status_seedance(task_id)
             elif video_model == "veo":
                 status_result = await check_scene_video_status(task_id)
+            elif video_model == "grok":
+                status_result = await check_scene_video_status_grok(task_id)
             else:
                 status_result = await check_scene_video_status_kling(task_id)
 
@@ -827,6 +2132,8 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                         video_bytes = await download_video_seedance(video_url)
                     elif video_model == "veo":
                         video_bytes = await download_video(video_url)
+                    elif video_model == "grok":
+                        video_bytes = await download_video_grok(video_url)
                     else:
                         video_bytes = await download_video_kling(video_url)
                     video_object = "mv/{}/scenes/{:03d}_video.mp4".format(job_id, scene_number)
@@ -878,12 +2185,12 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                                 start = scene["section_start"]
                                 end = scene["section_end"]
 
-                                # 가사 자막 생성 (saved Whisper timestamps 재사용)
+                                # 가사 자막 생성 (v43: lyric_timestamps backward-shim, has_subtitles 가드)
                                 from ..services.subtitle_generator import generate_scene_lyrics_ass
-                                from ..services.mv_pipeline import _get_scene_timestamps
+                                from ..services.mv_pipeline import _get_scene_timestamps, _read_lyric_timestamps
                                 timestamps = None
-                                if scene.get("lyrics_segment"):
-                                    _ws = job.get("whisper_segments", [])
+                                if scene.get("lyrics_segment") and (job.get("has_subtitles") or _read_lyric_timestamps(job)):
+                                    _ws = _read_lyric_timestamps(job)
                                     timestamps = _get_scene_timestamps(_ws, float(start), float(end))
                                 ass_content = generate_scene_lyrics_ass(scene, timestamps=timestamps)
                                 if ass_content:
@@ -1074,6 +2381,13 @@ async def generate_videos(
             {"_id": oid},
             {"$set": {"video_model": video_model, "updated_at": datetime.utcnow()}},
         )
+
+    if body.scene_numbers is None:
+        failed_count = sum(
+            1 for s in job.get("scenes", [])
+            if (not s.get("video_object_name")) or s.get("video_status") == "failed"
+        )
+        logger.info("[BatchVideo] job=%s failed_count=%d", str(oid), failed_count)
 
     background_tasks.add_task(run_phase3_videos, oid, mongo, body.scene_numbers, video_model)
 
@@ -1516,11 +2830,12 @@ async def _retry_sync_for_scene(job_id, scene_number, mongo_db):
             else:
                 final_video = synced_video
 
-        # Sync Labs 후 자막 재적용
-        from ..services.mv_pipeline import _burn_subtitles_on_synced_video, _get_scene_timestamps
-        _ws = job.get("whisper_segments", [])
-        _scene_ts = _get_scene_timestamps(_ws, float(scene.get("section_start", 0)), float(scene.get("section_end", 0)))
-        final_video = _burn_subtitles_on_synced_video(final_video, scene, timestamps=_scene_ts)
+        # Sync Labs 후 자막 재적용 (v43: has_subtitles 가드, lyric_timestamps backward-shim)
+        from ..services.mv_pipeline import _burn_subtitles_on_synced_video, _get_scene_timestamps, _read_lyric_timestamps
+        if job.get("has_subtitles") or _read_lyric_timestamps(job):
+            _ws = _read_lyric_timestamps(job)
+            _scene_ts = _get_scene_timestamps(_ws, float(scene.get("section_start", 0)), float(scene.get("section_end", 0)))
+            final_video = _burn_subtitles_on_synced_video(final_video, scene, timestamps=_scene_ts)
 
         # Save Sync Labs result to SEPARATE file (원본 Kling 영상 유지)
         synclabs_object = "mv/{}/scenes/{:03d}_video_synclabs.mp4".format(job_id, scene_number)
@@ -1627,12 +2942,8 @@ async def separate_vocal(
     from ..services.sync_labs_service import cut_audio_segment
     segment_audio = cut_audio_segment(full_audio, start_sec, end_sec)
 
-    # demucs로 보컬 분리
-    try:
-        from ..services.demucs_service import enhance_vocal_demucs
-        vocal_bytes = await enhance_vocal_demucs(segment_audio, "segment.mp3")
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": "보컬 분리 실패: {}".format(str(e)[:200])})
+    # v43: Demucs 제거 — raw segment 를 그대로 사용 (Sync Labs 가 raw audio 를 직접 처리).
+    vocal_bytes = segment_audio
 
     # MinIO에 저장
     original_object = "mv/{}/scenes/{:03d}_original_segment.mp3".format(job_id, scene_number)
@@ -1714,17 +3025,35 @@ async def select_scenario(
             content={"error": f"모델 '{body.model}'의 시나리오 결과를 찾을 수 없습니다."},
         )
 
-    # Update job with the selected scenario (body + meta) and continue pipeline
-    await mongo.mv_jobs.update_one(
-        {"_id": oid},
-        {"$set": {
-            "scenario": selected_scenario,
-            "scenario_meta": selected_meta,
-            "selected_scenario_model": body.model,
-            "status": "splitting",
-            "updated_at": datetime.utcnow(),
-        }},
+    # v46: select 시점에 v45 scenario_* 필드와 inferred_relationship 도 함께 영속화 →
+    # 추후 GET 응답·UI 표시·이벤트 매핑이 모두 일관된 데이터를 보게 한다.
+    _set_fields = {
+        "scenario": selected_scenario,
+        "scenario_meta": selected_meta,
+        "selected_scenario_model": body.model,
+        "status": "splitting",
+        "updated_at": datetime.utcnow(),
+    }
+    if isinstance(selected_meta, dict):
+        _v45_keys = (
+            "narrative", "premise", "character_states", "central_conflict",
+            "emotional_core", "narrative_arc", "events",
+        )
+        for _k in _v45_keys:
+            if _k in selected_meta:
+                _set_fields["scenario_" + _k] = selected_meta.get(_k)
+        if "inferred_relationship" in selected_meta:
+            _set_fields["scenario_inferred_relationship"] = selected_meta.get("inferred_relationship")
+        # v47: selected_archetype 영속화 (Stage 2 의 archetype 채택 결과)
+        if "selected_archetype" in selected_meta:
+            _set_fields["scenario_selected_archetype"] = selected_meta.get("selected_archetype")
+    logger.info(
+        "[SelectScenario] job=%s model=%s infer_rel=%s archetype=%s",
+        job_id, body.model,
+        (selected_meta.get("inferred_relationship") if isinstance(selected_meta, dict) else None) or "null",
+        (selected_meta.get("selected_archetype") if isinstance(selected_meta, dict) else None) or "null",
     )
+    await mongo.mv_jobs.update_one({"_id": oid}, {"$set": _set_fields})
 
     # Continue the pipeline (phase 1 scene splitting will use the selected scenario)
     from ..services.mv_pipeline import run_phase1_split, run_phase2_images
@@ -1796,6 +3125,11 @@ async def select_prompts(
         scene["description_ko"] = p.get("description_ko", "")
         scene["description"] = scene["image_prompt"]
 
+    # ── v37: sanitize raw character names → @characterN tokens ──
+    from ..services.mv_generator import sanitize_scene_character_tags
+    characters_meta = ((job.get("scenario_meta") or {}).get("characters") or {})
+    sanitize_scene_character_tags(scenes, characters_meta)
+
     await mongo.mv_jobs.update_one(
         {"_id": oid},
         {"$set": {
@@ -1815,3 +3149,4 @@ async def select_prompts(
         "selected_model": body.model,
         "message": "프롬프트가 선택되었습니다. 이미지 생성이 시작됩니다.",
     }
+

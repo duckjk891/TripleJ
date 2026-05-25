@@ -76,7 +76,7 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
           {song.title}
         </div>
         <div className="song-item__artist">
-          <Link to={`/artist/${song.artist_id}`}>{song.artist_name}</Link>
+          <Link to={`/artist/${song.artist_id || song.uploader_id}`}>{song.artist_name || song.uploader_nickname || 'AI'}</Link>
         </div>
       </div>
 

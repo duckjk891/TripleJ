@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS users (
     nickname    VARCHAR(100) NOT NULL,
     profile_image VARCHAR(500) DEFAULT NULL,
     bio         TEXT DEFAULT NULL,
+    company_name  VARCHAR(100) DEFAULT NULL,
+    display_title VARCHAR(20) DEFAULT NULL,
     plan        VARCHAR(20) DEFAULT 'free' CHECK (plan IN ('free', 'premium')),
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     updated_at  TIMESTAMPTZ DEFAULT NOW()

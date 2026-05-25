@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     # Sync Labs (Lip Sync)
     sync_api_key: str = ""
 
+    # Log access (앱팀 디버깅용 /api/_logs 토큰. 빈 문자열이면 API 비활성)
+    log_access_token: str = ""
+
     @property
     def postgres_dsn(self) -> str:
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
@@ -103,7 +106,7 @@ class Settings(BaseSettings):
     def minio_password(self) -> str:
         return self.minio_secret_key
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

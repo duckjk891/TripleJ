@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { FiPlay, FiCalendar, FiMusic, FiDisc } from 'react-icons/fi';
+import { FiPlay, FiCalendar, FiMusic, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import SongItem from '../components/SongItem';
+import AlbumCreateModal from '../components/AlbumCreateModal';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getAlbumGradient, formatDate } from '../utils';
@@ -16,44 +17,88 @@ export default function AlbumDetailPage() {
   const [album, setAlbum] = useState(null);
   const [loading, setLoading] = useState(true);
   const [likedIds, setLikedIds] = useState(new Set());
+  const [showEdit, setShowEdit] = useState(false);
+  const [myTracks, setMyTracks] = useState([]);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    const fetchAlbum = async () => {
-      setLoading(true);
-      try {
-        const { data } = await api.getAlbum(id);
-        setAlbum(data);
+  const fetchAlbum = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.getAlbum(id);
+      setAlbum(data);
+      const tracks = data.tracks || [];
+      console.info(`[AlbumDetailPage] loaded album_id=${data.id} track_count=${tracks.length}`);
 
-        if (user && data.songs?.length > 0) {
-          const likesRes = await api.checkLikes(data.songs.map(s => s.id).join(','));
-          setLikedIds(new Set(likesRes.data.liked_ids));
-        }
-      } catch (err) {
-        console.error('Failed to load album:', err);
-      } finally {
-        setLoading(false);
+      if (user && tracks.length > 0) {
+        const likesRes = await api.checkLikes(tracks.map((s) => s.id).join(','));
+        setLikedIds(new Set(likesRes.data.liked_ids));
       }
-    };
-    fetchAlbum();
+    } catch (err) {
+      console.warn('[AlbumDetailPage] fetch failed', {
+        id,
+        status: err.response?.status,
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [id, user]);
 
+  useEffect(() => {
+    fetchAlbum();
+  }, [fetchAlbum]);
+
   const handlePlayAll = () => {
-    if (album?.songs?.length) {
-      play(album.songs[0], album.songs);
+    const tracks = album?.tracks || [];
+    if (tracks.length) {
+      play(tracks[0], tracks);
     }
   };
 
   const handleToggleLike = async (songId) => {
-    if (!user) { navigate('/login'); return; }
+    if (!user) {
+      navigate('/login');
+      return;
+    }
     try {
       if (likedIds.has(songId)) {
         await api.unlikeSong(songId);
-        setLikedIds(prev => { const s = new Set(prev); s.delete(songId); return s; });
+        setLikedIds((prev) => {
+          const s = new Set(prev);
+          s.delete(songId);
+          return s;
+        });
       } else {
         await api.likeSong(songId);
-        setLikedIds(prev => new Set([...prev, songId]));
+        setLikedIds((prev) => new Set([...prev, songId]));
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.warn('[AlbumDetailPage] like toggle failed', { song_id: songId, status: err.response?.status });
+    }
+  };
+
+  const openEdit = async () => {
+    try {
+      const { data } = await api.getMyTracks({ page: 1, limit: 200, sort: 'created_at' });
+      setMyTracks(data.tracks || data.items || []);
+    } catch (err) {
+      console.warn('[AlbumDetailPage] my_tracks fetch failed', { status: err.response?.status });
+    }
+    setShowEdit(true);
+  };
+
+  const handleDelete = async () => {
+    if (!album) return;
+    if (!window.confirm(`"${album.title}" 앨범을 삭제하시겠습니까?`)) return;
+    setDeleting(true);
+    try {
+      await api.deleteAlbum(album.id);
+      console.info(`[AlbumDetailPage] action=delete album_id=${album.id}`);
+      navigate('/mymusic');
+    } catch (err) {
+      console.warn('[AlbumDetailPage] delete failed', { album_id: album.id, status: err.response?.status });
+      alert(err.response?.data?.error || '삭제에 실패했습니다.');
+      setDeleting(false);
+    }
   };
 
   if (loading) {
@@ -76,42 +121,80 @@ export default function AlbumDetailPage() {
     );
   }
 
+  const tracks = album.tracks || [];
+  const isOwner = user && album.owner_id && user.id === album.owner_id;
+  const hasCoverImage = !!album.cover_image;
+
   return (
     <div className="page-content">
       <div className="container album-detail">
         <div className="album-detail__header">
           <div
             className="album-detail__cover"
-            style={{ background: getAlbumGradient(album.id) }}
+            style={!hasCoverImage ? { background: getAlbumGradient(album.id) } : {}}
           >
-            ♪
+            {hasCoverImage ? (
+              <img
+                src={album.cover_image}
+                alt=""
+                className="album-detail__cover-img"
+              />
+            ) : (
+              <span>♪</span>
+            )}
           </div>
           <div className="album-detail__info">
             <div className="album-detail__type">ALBUM</div>
             <h1 className="album-detail__title">{album.title}</h1>
             <div className="album-detail__artist">
-              <Link to={`/artist/${album.artist_id}`}>{album.artist_name}</Link>
+              {album.artist_id ? (
+                <Link to={`/artist/${album.artist_id}`}>{album.artist_name}</Link>
+              ) : (
+                <span>{album.artist_name}</span>
+              )}
             </div>
             <div className="album-detail__meta">
-              <span><FiCalendar /> {formatDate(album.release_date)}</span>
-              {album.genre && <span><FiDisc /> {album.genre}</span>}
-              <span><FiMusic /> {album.songs?.length || 0}곡</span>
+              <span><FiCalendar /> {formatDate(album.release_date || album.created_at)}</span>
+              <span><FiMusic /> {tracks.length}곡</span>
             </div>
-            <button className="album-detail__play-all" onClick={handlePlayAll}>
-              <FiPlay /> 전체 재생
-            </button>
+            <div className="album-detail__actions">
+              <button
+                className="album-detail__play-all"
+                onClick={handlePlayAll}
+                disabled={tracks.length === 0}
+              >
+                <FiPlay /> 전체 재생
+              </button>
+              {isOwner && (
+                <>
+                  <button
+                    className="album-detail__action-btn"
+                    onClick={openEdit}
+                  >
+                    <FiEdit2 /> 수정
+                  </button>
+                  <button
+                    className="album-detail__action-btn album-detail__action-btn--danger"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                  >
+                    <FiTrash2 /> {deleting ? '삭제 중...' : '삭제'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
         <h2 className="album-detail__songs-title">트랙 목록</h2>
         <div className="album-detail__songs">
-          {album.songs?.map((song, idx) => (
+          {tracks.map((song, idx) => (
             <SongItem
               key={song.id}
               song={{ ...song, album_id: album.id, album_title: album.title }}
               rank={idx + 1}
               showAlbum={false}
-              songs={album.songs.map((s) => ({
+              songs={tracks.map((s) => ({
                 ...s,
                 album_id: album.id,
                 album_title: album.title,
@@ -121,6 +204,19 @@ export default function AlbumDetailPage() {
             />
           ))}
         </div>
+
+        {showEdit && (
+          <AlbumCreateModal
+            mode="edit"
+            album={album}
+            myTracks={myTracks}
+            onClose={() => setShowEdit(false)}
+            onSaved={() => {
+              setShowEdit(false);
+              fetchAlbum();
+            }}
+          />
+        )}
       </div>
     </div>
   );

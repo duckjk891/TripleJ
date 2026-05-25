@@ -6,15 +6,32 @@ MongoDB tracks and PostgreSQL users.
 
 import math
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
+from ..config import settings
+from ..database.minio import get_minio
 from ..database.postgres import get_pg
 from ..database.mongodb import get_mongo
 
 router = APIRouter(prefix="/api/artists")
+
+
+def _presign_cover(object_name):
+    if not object_name:
+        return None
+    if object_name.startswith("http://") or object_name.startswith("https://"):
+        return object_name
+    try:
+        return get_minio().presigned_get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            expires=timedelta(hours=24),
+        )
+    except Exception:
+        return None
 
 
 def _serialize_track(doc: dict) -> dict:
@@ -24,6 +41,10 @@ def _serialize_track(doc: dict) -> dict:
     for key in ("created_at", "updated_at"):
         if key in doc and isinstance(doc[key], datetime):
             doc[key] = doc[key].isoformat()
+    # 프론트(SongItem 등) 호환 별칭
+    doc["artist_id"] = doc.get("uploader_id")
+    doc["artist_name"] = doc.get("uploader_nickname") or "AI"
+    doc["cover_image"] = doc.get("cover_image_url")
     return doc
 
 
@@ -133,3 +154,38 @@ async def get_artist_tracks(artist_id: str, limit: int = 20):
     cursor = mongo.tracks.find({"uploader_id": artist_id, "is_public": True}).sort("play_count", -1).limit(limit)
     tracks = await cursor.to_list(length=limit)
     return [_serialize_track(t) for t in tracks]
+
+
+@router.get("/{artist_id}/albums")
+async def get_artist_albums(artist_id: str, limit: int = Query(20, ge=1, le=100)):
+    """Public albums owned by a specific creator (newest first)."""
+    mongo = get_mongo()
+    cursor = (
+        mongo.albums.find({"owner_id": artist_id, "is_public": True})
+        .sort("created_at", -1)
+        .limit(limit)
+    )
+    docs = await cursor.to_list(length=limit)
+    out = []
+    for d in docs:
+        created = d.get("created_at")
+        updated = d.get("updated_at")
+        created_iso = created.isoformat() if isinstance(created, datetime) else None
+        updated_iso = updated.isoformat() if isinstance(updated, datetime) else None
+        out.append({
+            "id": str(d["_id"]),
+            "owner_id": d.get("owner_id"),
+            "artist_id": d.get("owner_id"),
+            "artist_name": d.get("owner_nickname") or "AI",
+            "title": d.get("title") or "",
+            "description": d.get("description"),
+            "cover_image": _presign_cover(d.get("cover_image_url")),
+            "cover_source": d.get("cover_source") or "auto",
+            "is_public": bool(d.get("is_public", True)),
+            "release_date": created_iso,
+            "track_count": len(d.get("track_ids") or []),
+            "tracks": None,
+            "created_at": created_iso,
+            "updated_at": updated_iso,
+        })
+    return out

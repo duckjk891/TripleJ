@@ -1084,6 +1084,11 @@ async def run_phase1_split(job_id, mongo_db) -> None:
         scene["description_ko"] = p.get("description_ko", "")
         scene["description"] = scene["image_prompt"]  # 하위호환용
 
+    # ── v37: sanitize raw character names → @characterN tokens (no-op when no characters) ──
+    from .mv_generator import sanitize_scene_character_tags
+    characters_meta = ((job.get("scenario_meta") or {}).get("characters") or {})
+    sanitize_scene_character_tags(scenes, characters_meta)
+
     await _update_job(mongo_db, job_id, {
         "status": "scenes_ready",
         "progress": 5,
