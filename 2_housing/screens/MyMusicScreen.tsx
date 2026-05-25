@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
@@ -61,6 +62,7 @@ export default function MyMusicScreen({ navigation }: any) {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
+  const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
 
   const fetchTracks = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -81,11 +83,43 @@ export default function MyMusicScreen({ navigation }: any) {
     }
   }, []);
 
+  const fetchMyCharacter = useCallback(async () => {
+    try {
+      const res = await api.get('/character/me');
+      const ch = res.data?.character;
+      console.log('[MyMusic] /character/me response:', JSON.stringify(res.data));
+      if (ch?.sheet_object_name) {
+        // presigned URL은 internal host를 가리킬 수 있어 모바일에서 안 열림 → 항상 백엔드 proxy 사용
+        // cache-buster: RN Image 캐시 우회 (옷 저장 후 옛 이미지 표시 방지)
+        const url = `${BACKEND_BASE_URL}/api/character/preview/${ch.sheet_object_name}?t=${Date.now()}`;
+        setMyCharacter({ preview_url: url, sheet_object_name: ch.sheet_object_name });
+      } else {
+        setMyCharacter(null);
+      }
+    } catch (err: any) {
+      console.warn('[MyMusic] fetchMyCharacter error:', err?.response?.status, err?.message);
+      setMyCharacter(null);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
-      if (user) fetchTracks();
+      if (user) {
+        fetchTracks();
+        fetchMyCharacter();
+      }
     }, [user])
   );
+
+  const handleOpenArtist = () => {
+    // 신선한 데이터로 hydrate되도록 store 초기화 후 Studio 탭 → ArtistResult 진입
+    useCharacterTaskStore.getState().clearResult();
+    navigation.navigate('Studio', { screen: 'ArtistResult' });
+  };
+
+  const handleCreateArtist = () => {
+    navigation.navigate('Studio', { screen: 'ArtistInput' });
+  };
 
   const handleDeleteTrack = (trackId: string, title: string) => {
     Alert.alert(
@@ -278,6 +312,33 @@ export default function MyMusicScreen({ navigation }: any) {
             </View>
           )}
         </LinearGradient>
+      </View>
+
+      {/* 내 아티스트 카드 */}
+      <View style={styles.artistSection}>
+        <Text style={styles.artistSectionLabel}>내 아티스트</Text>
+        {myCharacter ? (
+          <TouchableOpacity style={styles.artistCard} activeOpacity={0.85} onPress={handleOpenArtist}>
+            <Image
+              source={{ uri: myCharacter.preview_url }}
+              style={styles.artistCardImage}
+            />
+            <View style={styles.artistCardBody}>
+              <Text style={styles.artistCardTitle}>나의 아티스트</Text>
+              <Text style={styles.artistCardHint}>탭하여 자세히 보기 · 코디/미세조정</Text>
+            </View>
+            <Text style={styles.artistCardArrow}>{'›'}</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.artistEmpty} activeOpacity={0.85} onPress={handleCreateArtist}>
+            <Text style={styles.artistEmptyIcon}>🎤</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.artistEmptyTitle}>아직 만든 아티스트가 없어요</Text>
+              <Text style={styles.artistEmptyHint}>아티스트 디렉터에서 만들어보세요</Text>
+            </View>
+            <Text style={styles.artistEmptyButton}>만들러 가기</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* 탭 바 */}
@@ -532,6 +593,81 @@ const styles = StyleSheet.create({
   bestTrackPlay: {
     fontSize: 11,
     color: 'rgba(255,255,255,0.8)',
+  },
+  artistSection: {
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  artistSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text.secondary,
+    marginBottom: 8,
+    marginLeft: 2,
+  },
+  artistCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg.surface1,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+  },
+  artistCardImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: colors.bg.surface2,
+    marginRight: 12,
+  },
+  artistCardBody: {
+    flex: 1,
+  },
+  artistCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text.primary,
+    marginBottom: 2,
+  },
+  artistCardHint: {
+    fontSize: 11,
+    color: colors.text.muted,
+  },
+  artistCardArrow: {
+    fontSize: 28,
+    color: colors.text.muted,
+    marginLeft: 8,
+  },
+  artistEmpty: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg.surface1,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderStyle: 'dashed' as any,
+  },
+  artistEmptyIcon: {
+    fontSize: 28,
+    marginRight: 12,
+  },
+  artistEmptyTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text.primary,
+    marginBottom: 2,
+  },
+  artistEmptyHint: {
+    fontSize: 11,
+    color: colors.text.muted,
+  },
+  artistEmptyButton: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accent.primary,
+    marginLeft: 8,
   },
   emptyContainer: {
     flex: 1,

@@ -1,4 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   View,
@@ -14,8 +15,9 @@ import {
   Easing,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import Character, { DirectorType } from '../components/Character';
-import { useTimerStore, DIRECTOR_STAGES, TOTAL_STAGES } from '../stores/timerStore';
+import { useTimerStore, DIRECTOR_STAGES } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { useDirectorsStore } from '../stores/directorsStore';
 import { useArtistStore } from '../stores/artistStore';
@@ -26,6 +28,8 @@ import { DIRECTOR_CATALOG, getDirectorById } from '../data/directors';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
+import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import api from '../services/api';
 import { colors } from '../theme/colors';
 
 // AdMob Rewarded Ad
@@ -37,12 +41,15 @@ const AD_UNIT_ID = Platform.select({
   android: 'ca-app-pub-1425041551318467/1283416835',
 }) ?? '';
 
-try {
-  const admob = require('react-native-google-mobile-ads');
-  RewardedAd = admob.RewardedAd;
-  RewardedAdEventType = admob.RewardedAdEventType;
-} catch {
-  console.log('[AdMob] Not available - using mock ads');
+// web 플랫폼은 native-only 모듈이라 import 자체 스킵 (metro.config.js에서도 empty 처리)
+if (Platform.OS !== 'web') {
+  try {
+    const admob = require('react-native-google-mobile-ads');
+    RewardedAd = admob.RewardedAd;
+    RewardedAdEventType = admob.RewardedAdEventType;
+  } catch {
+    console.log('[AdMob] Not available - using mock ads');
+  }
 }
 
 const MAP_BG = require('../assets/map_bg.png');
@@ -99,6 +106,96 @@ const DIRECTORS = [
   { type: 'video' as DirectorType,    x: 208, y: 1620 },
 ];
 
+// 캐릭터 위에 뜨는 상태 티켓 — 외부 가로폭도 글자 길이에 따라 유동적
+// (onLayout으로 측정 → translateX -width/2로 캐릭터 정중앙 정렬)
+function DirectorTicket({
+  d, task, mapScale,
+}: {
+  d: { type: DirectorType; x: number; y: number };
+  task: any;
+  mapScale: number;
+}) {
+  const [w, setW] = useState(0);
+
+  const tStageKey = task.modelKey && DIRECTOR_STAGES[task.modelKey]
+    ? task.modelKey
+    : d.type;
+  const tStages = DIRECTOR_STAGES[tStageKey] || DIRECTOR_STAGES.lyricist;
+  const tProgress = task.initialQueue ? 1 - task.queueNumber / task.initialQueue : 0;
+  const tCurrentStageIdx = task.queueNumber <= 0
+    ? tStages.length - 1
+    : Math.min(tStages.length - 1, Math.max(0, Math.floor(tProgress * tStages.length)));
+  const tCurrentStageName = tStages[tCurrentStageIdx]?.name || task.taskName;
+
+  const isDone = task.queueNumber <= 0;
+  const gradColors: [string, string] = isDone
+    ? ['#10b981', '#059669']
+    : ['#7c3aed', '#4338ca'];
+  const borderColor = isDone ? '#34d399' : '#a78bfa';
+  const notchColor = isDone ? '#059669' : '#4338ca';
+
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        left: d.x * mapScale,
+        top: (d.y - 100) * mapScale,
+        zIndex: 20,
+        alignItems: 'center',
+        transform: [{ translateX: -w / 2 }],
+        opacity: w > 0 ? 1 : 0, // 측정 전엔 깜빡임 방지로 숨김
+      }}
+      onLayout={(e) => setW(e.nativeEvent.layout.width)}
+    >
+      <LinearGradient
+        colors={gradColors}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{
+          borderRadius: 14 * mapScale,
+          paddingHorizontal: 14 * mapScale,
+          paddingVertical: 8 * mapScale,
+          borderWidth: 1.5,
+          borderColor,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 3 },
+          shadowOpacity: 0.4,
+          shadowRadius: 6,
+          elevation: 6,
+          flexDirection: 'row',
+          alignItems: 'center',
+        }}
+      >
+        {isDone ? <Text style={{ fontSize: 13, marginRight: 4 }}>✓</Text> : null}
+        <Text
+          style={{
+            color: '#fff',
+            fontSize: 12.5,
+            fontWeight: '800',
+            letterSpacing: 0.2,
+          }}
+        >
+          {isDone
+            ? `${task.taskName} 완료!`
+            : `${tCurrentStageName} 중...`}
+        </Text>
+      </LinearGradient>
+      <View
+        style={{
+          width: 0,
+          height: 0,
+          borderLeftWidth: 8 * mapScale,
+          borderRightWidth: 8 * mapScale,
+          borderTopWidth: 8 * mapScale,
+          borderLeftColor: 'transparent',
+          borderRightColor: 'transparent',
+          borderTopColor: notchColor,
+        }}
+      />
+    </View>
+  );
+}
+
 type StudioStackParamList = {
   Map: undefined;
   Dialogue: {
@@ -131,6 +228,29 @@ export default function MapScreen({ navigation }: Props) {
 
   const [popupTask, setPopupTask] = useState<{ type: DirectorType; task: any } | null>(null);
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
+  const [hasArtistCharacter, setHasArtistCharacter] = useState(false);
+
+  // 화면 포커스 시 내 아티스트 존재 여부 확인 (관리/생성 분기용)
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) {
+        setHasArtistCharacter(false);
+        return;
+      }
+      let cancelled = false;
+      (async () => {
+        try {
+          const res = await api.get('/character/me');
+          if (!cancelled) {
+            setHasArtistCharacter(!!res.data?.character?.sheet_object_name);
+          }
+        } catch {
+          if (!cancelled) setHasArtistCharacter(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }, [user])
+  );
   const [rewardPopup, setRewardPopup] = useState<{ amount: number; remaining: number } | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showTutorialHint, setShowTutorialHint] = useState(true);
@@ -170,7 +290,10 @@ export default function MapScreen({ navigation }: Props) {
           {hintVisible && (
             <TouchableOpacity
               activeOpacity={0.85}
-              onPress={() => setShowTutorialHint(false)}
+              onPress={() => {
+                setShowTutorialHint(false);
+                setShowTutorial(true);
+              }}
               style={{ flexDirection: 'row', alignItems: 'center', marginRight: 6 }}
             >
               <View style={styles.headerHintBubble}>
@@ -180,20 +303,6 @@ export default function MapScreen({ navigation }: Props) {
               </View>
               <View style={styles.headerHintTail} />
             </TouchableOpacity>
-          )}
-          {user && (
-            <View style={styles.levelPill}>
-              <Text style={styles.levelPillText}>
-                {companyTier.emoji} Lv.{companyLevel}
-              </Text>
-            </View>
-          )}
-          {user && artistSongs > 0 && (
-            <View style={[styles.levelPill, { marginLeft: 4 }]}>
-              <Text style={styles.levelPillText}>
-                {artistRank.emoji} Lv.{artistLevel}
-              </Text>
-            </View>
           )}
           {user && (
             <TouchableOpacity
@@ -317,19 +426,7 @@ export default function MapScreen({ navigation }: Props) {
     const task = timerStore.getTask(type);
 
     if (task) {
-      if (task.queueNumber <= 0) {
-        timerStore.completeTask(type);
-        if (task.taskName.includes('작사')) {
-          navigation.navigate('LyricsLoading' as any);
-        } else if (task.taskName.includes('커버')) {
-          navigation.navigate('CoverGeneration' as any);
-        } else {
-          navigation.navigate('MusicLoading' as any);
-        }
-        return;
-      }
-
-      // Show custom popup modal
+      // 진행 중이든 완료든 popup 모달 표시 (popup 안에서 상태별 분기)
       setPopupTask({ type, task });
       return;
     }
@@ -369,8 +466,14 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // 아티스트 디렉터: 다른 디렉터처럼 Dialogue 화면을 거친 후 ArtistInput으로 이동
+    // 아티스트 디렉터: 이미 캐릭터가 있으면 관리 페이지(ArtistResult)로 직행, 없으면 Dialogue → ArtistInput
     if (type === 'artist') {
+      if (hasArtistCharacter) {
+        // 신선한 데이터로 hydrate되도록 store 초기화 후 ArtistResult 진입
+        useCharacterTaskStore.getState().clearResult();
+        navigation.navigate('ArtistResult' as any);
+        return;
+      }
       const director = DIRECTORS.find((d) => d.type === 'artist');
       navigation.navigate('Dialogue', {
         directorType: 'artist',
@@ -426,7 +529,8 @@ export default function MapScreen({ navigation }: Props) {
             const task = timerStore.getTask(d.type);
             const isNext = user && d.type === nextActionDirector && !task;
             return (
-              <View key={d.type}>
+              // wrapper에 zIndex 20 → 캐릭터 + 티켓이 전경 가구(zIndex 15) 위로 올라옴
+              <View key={d.type} style={{ zIndex: 20 }}>
                 {/* 디렉터 헤드 네임은 Character 컴포넌트 내부에서 이동과 함께 렌더 */}
                 {/* 다음 액션 스포트라이트 (캐릭터 뒤 레이어, 테두리 없는 발광) */}
                 {isNext && (
@@ -477,54 +581,8 @@ export default function MapScreen({ navigation }: Props) {
                   onPress={() => handleDirectorPress(d.type)}
                   name={user ? DIRECTOR_NAMES[d.type] : undefined}
                 />
-                {/* Queue status above director - ticket style */}
-                {task && (
-                  <View style={{
-                    position: 'absolute',
-                    left: (d.x - 50) * mapScale,
-                    top: (d.y - 100) * mapScale,
-                    width: 120 * mapScale,
-                    alignItems: 'center',
-                  }}>
-                    <View style={{
-                      backgroundColor: task.queueNumber <= 0 ? colors.status.success : colors.text.primary,
-                      borderRadius: 12 * mapScale,
-                      paddingHorizontal: 14 * mapScale,
-                      paddingVertical: 8 * mapScale,
-                      alignItems: 'center',
-                      shadowColor: colors.bg.deepest,
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.3,
-                      shadowRadius: 4,
-                      elevation: 5,
-                      minWidth: 80 * mapScale,
-                    }}>
-                      <Text
-                        style={{
-                          color: task.queueNumber <= 0 ? colors.text.primary : colors.bg.deepest,
-                          fontSize: 13,
-                          fontWeight: '800',
-                        }}
-                        numberOfLines={1}
-                      >
-                        {task.queueNumber <= 0
-                          ? `${task.taskName} 일을 완료했어요!`
-                          : `${task.taskName} 중`}
-                      </Text>
-                    </View>
-                    {/* Ticket notch */}
-                    <View style={{
-                      width: 0,
-                      height: 0,
-                      borderLeftWidth: 8 * mapScale,
-                      borderRightWidth: 8 * mapScale,
-                      borderTopWidth: 8 * mapScale,
-                      borderLeftColor: 'transparent',
-                      borderRightColor: 'transparent',
-                      borderTopColor: task.queueNumber <= 0 ? colors.status.success : colors.text.primary,
-                    }} />
-                  </View>
-                )}
+                {/* Queue status above director - 유동 너비 ticket */}
+                {task && <DirectorTicket d={d} task={task} mapScale={mapScale} />}
               </View>
             );
           })}
@@ -592,16 +650,26 @@ export default function MapScreen({ navigation }: Props) {
 
             {/* Header: 디렉터 초상 + 이름 + 상태 */}
             {popupTask && (() => {
-              const stages = DIRECTOR_STAGES[popupTask.type] || DIRECTOR_STAGES.lyricist;
-              const currentStage = timerStore.getCurrentStage(popupTask.type);
-              const stage = stages[currentStage];
+              // modelKey 기반으로 stage 세트 선택 (artist_refine/artist_outfit 등 모드별 분기)
+              const stageKey = popupTask.task.modelKey && DIRECTOR_STAGES[popupTask.task.modelKey]
+                ? popupTask.task.modelKey
+                : popupTask.type;
+              const stages = DIRECTOR_STAGES[stageKey] || DIRECTOR_STAGES.lyricist;
+              const totalStages = stages.length;
               const progress = popupTask.task.initialQueue
                 ? 1 - popupTask.task.queueNumber / popupTask.task.initialQueue
                 : 0;
+              // queue 진행률 → stage 매핑 (stage 개수에 맞게 계산)
+              const currentStage = popupTask.task.queueNumber <= 0
+                ? totalStages - 1
+                : Math.min(totalStages - 1, Math.max(0, Math.floor(progress * totalStages)));
+              const stage = stages[currentStage];
               return (
                 <>
                   <View style={styles.stageHeader}>
-                    <Image source={PORTRAITS[popupTask.type]} style={styles.stageHeaderPortrait} resizeMode="contain" />
+                    <View style={styles.stageHeaderPortrait}>
+                      <Image source={PORTRAITS[popupTask.type]} style={styles.stageHeaderPortraitImg} />
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.stageDirectorName}>{DIRECTOR_NAMES[popupTask.type]}</Text>
                       <Text style={styles.stageStatusBadge}>
@@ -653,27 +721,61 @@ export default function MapScreen({ navigation }: Props) {
                   {/* 현재 단계 상세 카드 */}
                   <View style={styles.currentStageBox}>
                     <Text style={styles.currentStageLabel}>
-                      {currentStage + 1}단계 / {TOTAL_STAGES}  ·  {stage?.icon} {stage?.name}
+                      {currentStage + 1}단계 / {totalStages}  ·  {stage?.icon} {stage?.name}
                     </Text>
                     <Text style={styles.currentStageDesc}>{stage?.description}</Text>
                   </View>
 
-                  {/* 광고 버튼 */}
-                  <TouchableOpacity
-                    style={styles.adButton}
-                    onPress={() => {
-                      if (popupTask) {
-                        showAdAndReduceQueue(popupTask.type);
-                        setPopupTask(null);
-                      }
-                    }}
-                  >
-                    <Text style={styles.adButtonIcon}>▶</Text>
-                    <Text style={styles.adButtonText}>광고 보고 이 단계 빠르게 끝내기</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.adHelperText}>
-                    광고 1회 시청 시 현재 단계의 작업 속도가 빨라져요
-                  </Text>
+                  {/* 액션 버튼 — 진행 중: 광고 / 완료: 결과 보기 */}
+                  {popupTask.task.queueNumber <= 0 ? (
+                    <>
+                      <TouchableOpacity
+                        style={styles.adButton}
+                        onPress={() => {
+                          if (!popupTask) return;
+                          const t = popupTask.type;
+                          const taskName = popupTask.task.taskName;
+                          timerStore.completeTask(t);
+                          setPopupTask(null);
+                          // 결과 화면 분기
+                          if (t === 'artist') {
+                            // 아티스트: ArtistLoading에서 API 호출 후 ArtistResult로 자동 이동
+                            navigation.navigate('ArtistLoading' as any);
+                          } else if (taskName.includes('작사')) {
+                            navigation.navigate('LyricsLoading' as any);
+                          } else if (taskName.includes('커버')) {
+                            navigation.navigate('CoverGeneration' as any);
+                          } else {
+                            navigation.navigate('MusicLoading' as any);
+                          }
+                        }}
+                      >
+                        <Text style={styles.adButtonIcon}>🎉</Text>
+                        <Text style={styles.adButtonText}>결과 보기</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.adHelperText}>
+                        작업이 완료됐어요!
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={styles.adButton}
+                        onPress={() => {
+                          if (popupTask) {
+                            showAdAndReduceQueue(popupTask.type);
+                            setPopupTask(null);
+                          }
+                        }}
+                      >
+                        <Text style={styles.adButtonIcon}>▶</Text>
+                        <Text style={styles.adButtonText}>광고 보고 이 단계 빠르게 끝내기</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.adHelperText}>
+                        광고 1회 시청 시 현재 단계의 작업 속도가 빨라져요
+                      </Text>
+                    </>
+                  )}
                 </>
               );
             })()}
@@ -981,6 +1083,15 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.accent.primary,
     backgroundColor: colors.bg.surface2,
+    overflow: 'hidden',
+  },
+  // 95x405 전신 → 얼굴 + 목+어깨 살짝: 1.1x zoom + top 약간 음수
+  stageHeaderPortraitImg: {
+    width: 54 * 1.1,
+    height: (54 * 1.1) * 405 / 95,
+    position: 'absolute',
+    top: -54 / 15,
+    left: -(54 * 1.1 - 54) / 2,
   },
   stageDirectorName: {
     fontSize: 16,

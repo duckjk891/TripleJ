@@ -19,16 +19,19 @@ let RewardedAdEventType: any = null;
 let TestIds: any = null;
 let adUnitId: string = '';
 
-try {
-  const admob = require('react-native-google-mobile-ads');
-  RewardedAd = admob.RewardedAd;
-  RewardedAdEventType = admob.RewardedAdEventType;
-  TestIds = admob.TestIds;
-  // 테스트 광고 ID (프로덕션에서는 실제 ID로 교체)
-  adUnitId = TestIds?.REWARDED ?? 'ca-app-pub-3940256099942544/5224354917';
-} catch {
-  // react-native-google-mobile-ads not available (Expo Go)
-  console.log('[AdMob] Not available - using mock ads');
+// web에서는 native-only 모듈이라 import 자체 스킵 (metro.config.js에서도 empty 처리)
+if (Platform.OS !== 'web') {
+  try {
+    const admob = require('react-native-google-mobile-ads');
+    RewardedAd = admob.RewardedAd;
+    RewardedAdEventType = admob.RewardedAdEventType;
+    TestIds = admob.TestIds;
+    // 테스트 광고 ID (프로덕션에서는 실제 ID로 교체)
+    adUnitId = TestIds?.REWARDED ?? 'ca-app-pub-3940256099942544/5224354917';
+  } catch {
+    // react-native-google-mobile-ads not available (Expo Go)
+    console.log('[AdMob] Not available - using mock ads');
+  }
 }
 
 const PORTRAITS: Record<string, any> = {

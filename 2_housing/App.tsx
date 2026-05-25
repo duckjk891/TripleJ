@@ -53,6 +53,10 @@ export type StudioStackParamList = {
   MusicLoading: undefined;
   MusicResult: undefined;
   CoverGeneration: undefined;
+  ArtistInput: undefined;
+  ArtistLoading: undefined;
+  ArtistResult: undefined;
+  ArtistCody: undefined;
 };
 
 export type RootStackParamList = {
@@ -60,10 +64,6 @@ export type RootStackParamList = {
   MainTabs: undefined;
   Settings: undefined;
   Player: { track: any };
-  ArtistInput: undefined;
-  ArtistLoading: { mode: 'sheet' | 'refine' | 'outfit'; userText?: string; refineRequest?: string; outfitDesc?: string };
-  ArtistResult: undefined;
-  ArtistCody: undefined;
   ArtistDetail: { artistId: string; artistName?: string };
   DirectorLineup: undefined;
   Royalty: undefined;
@@ -119,6 +119,14 @@ function StudioNavigator() {
       />
       <StudioStack.Screen name="MusicResult" component={MusicResultScreen} />
       <StudioStack.Screen name="CoverGeneration" component={CoverGenerationScreen} />
+      <StudioStack.Screen name="ArtistInput" component={ArtistInputScreen} />
+      <StudioStack.Screen
+        name="ArtistLoading"
+        component={ArtistLoadingScreen}
+        options={{ gestureEnabled: false }}
+      />
+      <StudioStack.Screen name="ArtistResult" component={ArtistResultScreen} />
+      <StudioStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
     </StudioStack.Navigator>
   );
 }
@@ -193,6 +201,12 @@ function MainTabs() {
       <Tab.Screen
         name="Studio"
         component={StudioNavigator}
+        listeners={({ navigation }) => ({
+          // Studio 탭 클릭 시 항상 Map으로 리셋 (Dialogue/ArtistInput 등에 갇혀있어도 Map 복귀)
+          tabPress: () => {
+            navigation.navigate('Studio', { screen: 'Map' });
+          },
+        })}
         options={({ navigation }) => ({
           tabBarLabel: '작업실',
           tabBarIcon: ({ color, size }) => (
@@ -258,14 +272,6 @@ export default function App() {
               component={SettingsScreen}
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
-            <RootStack.Screen name="ArtistInput" component={ArtistInputScreen} />
-            <RootStack.Screen
-              name="ArtistLoading"
-              component={ArtistLoadingScreen}
-              options={{ gestureEnabled: false }}
-            />
-            <RootStack.Screen name="ArtistResult" component={ArtistResultScreen} />
-            <RootStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             <RootStack.Screen name="Royalty" component={RoyaltyScreen} />

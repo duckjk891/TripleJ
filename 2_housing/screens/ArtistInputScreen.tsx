@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -17,13 +17,20 @@ import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import { useTimerStore } from '../stores/timerStore';
+import { useGemsStore } from '../stores/gemsStore';
+import { usePlayerStore } from '../stores/playerStore';
+import { useOutfitStore } from '../stores/outfitStore';
 import { colors } from '../theme/colors';
+
+// 추가 아티스트 1회 생성 비용 (다이아)
+const EXTRA_ARTIST_GEM_COST = 100;
+const MINIPLAYER_HEIGHT = 70;
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
 interface MyCharacter {
   sheet_object_name: string;
-  preview_url?: string;
 }
 
 interface ChatMessage {
@@ -130,6 +137,31 @@ export default function ArtistInputScreen({ navigation }: any) {
   const [myCharacter, setMyCharacter] = useState<MyCharacter | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
+  // Tab 헤더 좌측에 ← 버튼 주입 (web/모바일 공통 — Map으로 복귀)
+  useLayoutEffect(() => {
+    const parent = navigation.getParent();
+    if (!parent) return;
+    parent.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Map')}
+          style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</Text>
+        </TouchableOpacity>
+      ),
+    });
+    return () => {
+      parent.setOptions({ headerLeft: undefined });
+    };
+  }, [navigation]);
+  // 다이아로 추가 아티스트 생성 결제 완료 시 true → 잠금 해제하고 사진 올리기 가능
+  const [extraUnlocked, setExtraUnlocked] = useState(false);
+  const gemsBalance = useGemsStore((s) => s.balance);
+  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
+  const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
+
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   }, [chat, step]);
@@ -157,6 +189,40 @@ export default function ArtistInputScreen({ navigation }: any) {
     setChat((prev) => [...prev, { type: 'director' as const, text }]);
   const pushUser = (text: string) =>
     setChat((prev) => [...prev, { type: 'user' as const, text }]);
+
+  const handlePurchaseExtraSlot = () => {
+    if (gemsBalance < EXTRA_ARTIST_GEM_COST) {
+      Alert.alert(
+        '다이아 부족',
+        `추가 아티스트를 만들려면 다이아 ${EXTRA_ARTIST_GEM_COST}개가 필요해요. (보유: ${gemsBalance}개)`
+      );
+      return;
+    }
+    Alert.alert(
+      '추가 아티스트 만들기',
+      `다이아 ${EXTRA_ARTIST_GEM_COST}개를 사용해서 새로운 아티스트를 만들까요?\n(현재 아티스트는 그대로 유지돼요)`,
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: `${EXTRA_ARTIST_GEM_COST} 다이아 사용`,
+          onPress: () => {
+            const ok = useGemsStore.getState().spend(
+              EXTRA_ARTIST_GEM_COST,
+              'extra_artist_slot'
+            );
+            if (!ok) {
+              Alert.alert('오류', '다이아 차감에 실패했어요.');
+              return;
+            }
+            setExtraUnlocked(true);
+            pushDirector(
+              `다이아 ${EXTRA_ARTIST_GEM_COST}개로 슬롯을 열었어요! 새 아티스트의 사진을 올려주세요.`
+            );
+          },
+        },
+      ]
+    );
+  };
 
   // ── Photo pick → 6단계 질문 시작 ─────────────────────────────
   const handlePickPhoto = async () => {
@@ -208,28 +274,40 @@ export default function ArtistInputScreen({ navigation }: any) {
     }
   };
 
-  // ── 만들기 시작 → ArtistLoading으로 ──────────────────────────
+  // ── 만들기 시작 → 작사·작곡 패턴: 즉시 Map 복귀 (timerStore 큐 진행) ─────
   const handleStartGeneration = (answers: StyleAnswers) => {
     if (!photoUri) {
       Alert.alert('오류', '사진을 먼저 올려주세요.');
       return;
     }
     const userInput = buildFinalText(answers);
-    const baseAttire = '캐릭터 시트 형태. 기본 의상(흰색 민소매 탑과 검정 레깅스/쫄바지) 차림. 신발은 맨발.';
+    // 베이스 의상: 코디 변경이 잘 되도록 "fitted한 옷(레깅스/스판)" 절대 금지.
+    // 악세서리/장신구도 일체 착용 안 함 (나중에 코디로 추가 가능).
+    const baseAttire =
+      '캐릭터 시트 형태. 베이스 의상은 단순한 흰색 라운드넥 반팔 면 티셔츠와 무릎 살짝 위 길이의 회색 단순 면반바지(루즈핏, 스판/레깅스/타이츠/스키니 절대 금지). 신발은 맨발. ' +
+      '악세서리/장신구는 일체 착용하지 않음 — 모자, 안경, 선글라스, 헤어밴드, 헤어핀, 목걸이, 귀걸이, 피어싱, 팔찌, 반지, 시계, 가방, 스카프, 넥타이, 벨트 등 어떤 것도 그리지 마세요. 깔끔한 맨얼굴/맨손/맨목 상태.';
     const finalText = userInput ? `${baseAttire} 컨셉: ${userInput}` : baseAttire;
 
-    pushDirector('좋아요! 만들어볼게요. 작업하는 동안 잠깐 기다려주세요!');
+    pushDirector('좋아요! 만들어볼게요. 작업실에서 진행 상황을 확인하실 수 있어요!');
 
-    // characterTaskStore에 컨텍스트 저장 + sheet 모드 시작
-    taskStore.startTask('sheet', photoUri, photoName);
+    // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
+    useOutfitStore.getState().clear();
 
-    // ArtistLoading으로 이동 — API 호출은 거기서
+    // characterTaskStore에 컨텍스트 저장 (API는 큐 0 도달 후 ArtistLoading에서 호출)
+    taskStore.setInput({ photoUri, photoName, userText: finalText });
+    taskStore.startTask('sheet');
+    // timerStore에 작업 등록 → MapScreen 캐릭터 위 단계 시각화 시작
+    useTimerStore.getState().startTask('artist' as any, '아티스트', 'artist');
+
+    // 1.5초 후 작업실(Map)로 복귀 — 작사/작곡과 동일 패턴
     setTimeout(() => {
-      navigation.replace('ArtistLoading', {
-        mode: 'sheet',
-        userText: finalText,
-      });
-    }, 500);
+      // popToTop이 안 되는 경우(예: web에서 첫 화면) 안전하게 Map으로
+      if (navigation.canGoBack()) {
+        navigation.popToTop();
+      } else {
+        navigation.navigate('Map');
+      }
+    }, 1500);
   };
 
   if (!user) {
@@ -261,13 +339,37 @@ export default function ArtistInputScreen({ navigation }: any) {
   }
 
   // 기존 캐릭터 있으면 결과 화면으로 바로 이동 옵션 제공
-  const existingPreviewUrl =
-    myCharacter?.preview_url ? `${BACKEND_BASE_URL}${myCharacter.preview_url}` : null;
+  const existingPreviewUrl = myCharacter?.sheet_object_name
+    ? `${BACKEND_BASE_URL}/api/character/preview/${myCharacter.sheet_object_name}`
+    : null;
 
   const renderInputArea = () => {
     if (step === 'welcome') {
+      // 이미 아티스트가 있고 추가 슬롯 결제 안 했으면 차단
+      if (myCharacter && !extraUnlocked) {
+        return (
+          <View style={styles.inputArea}>
+            <View style={styles.lockNotice}>
+              <Text style={styles.lockNoticeIcon}>🔒</Text>
+              <Text style={styles.lockNoticeTitle}>아티스트는 한 명까지 무료로 만들 수 있어요</Text>
+              <Text style={styles.lockNoticeDesc}>
+                추가 아티스트를 만들려면 다이아 {EXTRA_ARTIST_GEM_COST}개가 필요해요.
+              </Text>
+              <Text style={styles.lockNoticeBalance}>보유 다이아 💎 {gemsBalance}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={handlePurchaseExtraSlot}
+            >
+              <Text style={styles.primaryBtnText}>
+                💎 {EXTRA_ARTIST_GEM_COST} 사용하고 추가 아티스트 만들기
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
       return (
-        <View style={[styles.inputArea, { paddingBottom: 24 + insets.bottom }]}>
+        <View style={styles.inputArea}>
           <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
             <Text style={styles.primaryBtnText}>📷 사진 올리기</Text>
           </TouchableOpacity>
@@ -279,7 +381,7 @@ export default function ArtistInputScreen({ navigation }: any) {
       const isLast = qIndex === QUESTIONS.length - 1;
       const tokens = currentInput.split(',').map((t) => t.trim()).filter(Boolean);
       return (
-        <View style={[styles.inputArea, { paddingBottom: 24 + insets.bottom }]}>
+        <View style={styles.inputArea}>
           <View style={styles.qProgress}>
             <Text style={styles.qProgressText}>
               {qIndex + 1} / {QUESTIONS.length} · {q.short}
@@ -325,12 +427,12 @@ export default function ArtistInputScreen({ navigation }: any) {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 80}
     >
       <ScrollView
         ref={scrollRef}
         style={{ flex: 1 }}
-        contentContainerStyle={[{ padding: 16 }, { paddingTop: insets.top + 16 }]}
+        contentContainerStyle={{ padding: 16 }}
       >
         {/* 기존 캐릭터 카드 */}
         {myCharacter && step === 'welcome' && (
@@ -341,10 +443,10 @@ export default function ArtistInputScreen({ navigation }: any) {
             ) : null}
             <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'stretch' }}>
               <TouchableOpacity
-                style={[styles.skipBtn, { flex: 1 }]}
+                style={[styles.applyBtn, { flex: 1 }]}
                 onPress={() => navigation.replace('ArtistResult')}
               >
-                <Text style={styles.skipBtnText}>옷 갈아입기 / 미세조정</Text>
+                <Text style={styles.applyBtnText}>✨ 아티스트 꾸미기</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -376,7 +478,9 @@ export default function ArtistInputScreen({ navigation }: any) {
         ))}
       </ScrollView>
 
-      {renderInputArea()}
+      <View style={{ marginBottom: bottomLift }}>
+        {renderInputArea()}
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -397,6 +501,25 @@ const styles = StyleSheet.create({
   myArtistLabel: { fontSize: 12, color: colors.accent.primary, fontWeight: '700', marginBottom: 10 },
   myArtistImg: { width: 160, height: 160, borderRadius: 12, marginBottom: 12 },
 
+  lockNotice: {
+    backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14,
+    marginBottom: 10, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  lockNoticeIcon: { fontSize: 28, marginBottom: 6 },
+  lockNoticeTitle: {
+    fontSize: 14, fontWeight: '700', color: colors.text.primary,
+    marginBottom: 4, textAlign: 'center',
+  },
+  lockNoticeDesc: {
+    fontSize: 12, color: colors.text.secondary,
+    textAlign: 'center', lineHeight: 18,
+  },
+  lockNoticeBalance: {
+    fontSize: 12, fontWeight: '700', color: colors.accent.primary,
+    marginTop: 8,
+  },
+
   msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12 },
   dirRow: { justifyContent: 'flex-start', paddingRight: 40 },
   userRow: { justifyContent: 'flex-end', paddingLeft: 40 },
@@ -405,9 +528,13 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: colors.accent.primary,
     marginRight: 8, backgroundColor: colors.bg.surface2,
   },
+  // 95x405 전신 → 얼굴 + 목+어깨 살짝: 1.1x zoom + top 약간 음수
   dirPortraitImg: {
-    width: 44, height: 44 * 405 / 95, resizeMode: 'cover',
-    position: 'absolute', top: 0, left: 0,
+    width: 44 * 1.1,
+    height: (44 * 1.1) * 405 / 95,
+    position: 'absolute',
+    top: -44 / 15,
+    left: -(44 * 1.1 - 44) / 2,
   },
   bubble: { borderRadius: 16, padding: 12, maxWidth: '80%' },
   dirBubble: { backgroundColor: colors.text.primary, borderBottomLeftRadius: 4 },

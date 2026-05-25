@@ -82,10 +82,24 @@ export default function SettingsScreen({ navigation }: any) {
   const [notifySongComplete, setNotifySongComplete] = useState(true);
   const [notifyChartUpdate, setNotifyChartUpdate] = useState(true);
 
+  // 닫기 버튼 + 제목 row (양쪽 분기 공통)
+  const TitleRow = (
+    <View style={styles.headerRow}>
+      <Text style={styles.title}>설정</Text>
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        style={styles.closeBtn}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        <Text style={styles.closeBtnText}>✕</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   if (user) {
     return (
       <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>설정</Text>
+        {TitleRow}
         <View style={styles.profileCard}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarText}>{user.nickname[0]}</Text>
@@ -256,7 +270,7 @@ export default function SettingsScreen({ navigation }: any) {
 
   return (
     <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent}>
-      <Text style={styles.title}>설정</Text>
+      {TitleRow}
       <View style={styles.formContainer}>
         <Text style={styles.formTitle}>
           {isRegister ? '회원가입' : '로그인'}
@@ -352,12 +366,30 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 40,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 30,
+  },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
     color: colors.text.primary,
-    paddingHorizontal: 20,
-    marginBottom: 30,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.bg.surface1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeBtnText: {
+    color: colors.text.primary,
+    fontSize: 18,
+    fontWeight: '600',
   },
   profileCard: {
     alignItems: 'center',

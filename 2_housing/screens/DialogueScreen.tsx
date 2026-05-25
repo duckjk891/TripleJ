@@ -206,7 +206,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
           return;
         }
         // RootStack 라우트는 parent navigator로 이동
-        const ROOT_TARGETS = ['ArtistInput', 'ArtistLoading', 'ArtistResult', 'ArtistCody', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+        const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
         if (ROOT_TARGETS.includes(target)) {
           navigation.getParent()?.navigate(target as any);
         } else {
@@ -239,7 +239,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
           navigation.goBack();
           return;
         }
-        const ROOT_TARGETS = ['ArtistInput', 'ArtistLoading', 'ArtistResult', 'ArtistCody', 'ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
+        const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
         if (ROOT_TARGETS.includes(target)) {
           navigation.getParent()?.navigate(target as any);
         } else {
