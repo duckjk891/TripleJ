@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Request
 
 from .database.redis import get_redis
+
+logger = logging.getLogger(__name__)
 
 JWT_SECRET = os.getenv("JWT_SECRET", "wedding-mv-secret-key-2026")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -42,4 +45,20 @@ async def get_current_user(request: Request, authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="세션이 만료되었습니다. 다시 로그인해주세요.")
 
     session = json.loads(session_data)
+    # Backward-compat: 세션이 role 키 없이 저장됐다면 user 로 fallback.
+    if "role" not in session:
+        session["role"] = "user"
     return session
+
+
+async def get_current_admin(request: Request, authorization: str = Header(None)):
+    """Admin-only dependency. 403 if role != 'admin'."""
+    user = await get_current_user(request, authorization)
+    if (user or {}).get("role") != "admin":
+        logger.warning(
+            "[AuthRoute] admin gate reject user_id=%s role=%s",
+            (user or {}).get("id"),
+            (user or {}).get("role"),
+        )
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+    return user

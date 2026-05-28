@@ -24,6 +24,12 @@ export default function Header() {
         <nav className="site-header__nav">
           {user ? (
             <>
+              {user?.role === 'admin' && (
+                <>
+                  <Link to="/admin/jobs" className="nav-link">요청작</Link>
+                  <Link to="/admin/users" className="nav-link">사용자관리</Link>
+                </>
+              )}
               <Link to="/my" className="nav-link">내 작품</Link>
               <Link to="/items" className="nav-link">아이템관리</Link>
               <button type="button" className="btn-ghost" onClick={handleLogout}>

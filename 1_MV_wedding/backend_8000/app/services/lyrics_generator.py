@@ -393,6 +393,27 @@ def _build_user_message_wedding(story: dict, music: dict, extra_user_note: str |
     vs_main = vocal_styles.get("main") if vocal_styles else None
     vs_sub = vocal_styles.get("sub") if vocal_styles else None
     language = music.get("language") or "ko"
+    # v14 — language 코드를 모델이 이해할 수 있는 자연어 지시로 변환.
+    _LANGUAGE_LABELS = {
+        "ko": "한국어 100% (모든 가사를 한국어로 작성)",
+        "ko_en_73": (
+            "한국어 70% + 영어 30% — 절은 한국어 위주로, 후렴(Chorus)이나 브릿지 "
+            "일부 라인을 영어로 자연스럽게 섞어 두 언어가 어우러지도록 작성. "
+            "영어 문장은 한국 결혼식 영상 톤에 어울리는 따뜻하고 단순한 표현을 사용."
+        ),
+        "ko_en_55": (
+            "한국어 50% + 영어 50% — 절(Verse)과 후렴(Chorus)을 교대로 혹은 라인 "
+            "단위로 두 언어를 균형 있게 섞기. 한 라인 안에서 코드 스위칭은 피하고, "
+            "라인 또는 섹션 단위로 분리해서 자연스럽게."
+        ),
+        "ko_en_37": (
+            "한국어 30% + 영어 70% — 영어 위주로 쓰되, 핵심 감정 라인이나 후렴의 "
+            "훅(hook) 일부를 한국어로 두어 한국 결혼식 정서를 유지. 영어 표현은 "
+            "결혼식 영상에 어울리는 따뜻하고 단순한 표현."
+        ),
+        "en": "English only (전체 가사를 영어로 작성)",
+    }
+    language_label = _LANGUAGE_LABELS.get(language, "한국어 100%")
 
     pa_name = pa.get("name") or "—"
     pa_age = pa.get("age")
@@ -469,7 +490,7 @@ def _build_user_message_wedding(story: dict, music: dict, extra_user_note: str |
 - 분위기: {moods_str}
 - 길이: 약 {duration_minutes}분 ({length_hint} 본문 권장)
 - 보컬 형태: {vocal_form}
-{duet_line}- 언어: {language}
+{duet_line}- 언어: {language_label}
 
 [요구]
 위 [이야기 사실] 항목 각각은 사용자가 자유롭게 쓴 통문장이다.

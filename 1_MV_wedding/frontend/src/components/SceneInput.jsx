@@ -1,9 +1,13 @@
+import MentionField from './MentionField';
+import PolishButton from './PolishButton';
 import './SceneInput.css';
 
 /**
  * v2.2 — 시점 칸은 단일 textarea로 통합.
- * 사용자가 그때의 상황·행동·심정을 한 덩어리로 자연스럽게 적고,
- * AI가 가사화 시 그 안에서 장면과 감정을 모두 추출한다.
+ * v8 — 내부 textarea 를 <MentionField> 로 교체.
+ *   - 새 props: refs, onChangeRefs, options, ariaLabel
+ *   - onChangeRefs 미전달이면 noop (기존 호출부 호환).
+ *   - options 가 빈 배열/undefined 면 mention 비활성, 평범 textarea처럼 동작.
  */
 export default function SceneInput({
   label,
@@ -11,8 +15,12 @@ export default function SceneInput({
   optional = false,
   value,
   onChange,
+  refs = [],
+  onChangeRefs,
+  options = [],
   placeholder,
   hint,
+  ariaLabel,
 }) {
   return (
     <div className="scene-input">
@@ -20,12 +28,24 @@ export default function SceneInput({
         <span className="scene-input__label-text">{label}</span>
         {required && <span className="req">*</span>}
         {optional && <span className="opt">(선택)</span>}
+        <PolishButton
+          value={value}
+          refs={refs}
+          onChange={onChange}
+          onChangeRefs={onChangeRefs}
+          label={label}
+        />
       </div>
-      <textarea
-        className="scene-input__textarea"
+      <MentionField
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        refs={refs}
+        onChange={onChange}
+        onChangeRefs={onChangeRefs || (() => {})}
+        options={options}
         placeholder={placeholder}
+        rows={4}
+        ariaLabel={ariaLabel || label}
+        className="scene-input__textarea"
       />
       {hint && <p className="scene-input__hint muted">{hint}</p>}
     </div>

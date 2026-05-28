@@ -222,9 +222,24 @@ async def generate_music_for_job(
             except Exception as e:
                 logger.warning("Suno: track_2 download failed: %s", e)
 
+    # v19 — 두 variant 의 audio_id 를 모두 수집 (truthy id 만).
+    # 회귀 호환을 위해 단수 suno_audio_id (= 1번 id) 는 그대로 유지한다.
+    suno_audio_ids: list[str] = []
+    for song in all_songs:
+        if not isinstance(song, dict):
+            continue
+        sid = (song.get("id") or "").strip()
+        if sid:
+            suno_audio_ids.append(sid)
+    logger.info(
+        "Suno: job %s suno_audio_ids count=%d (variants=%d)",
+        job_id, len(suno_audio_ids), len(audio_variants),
+    )
+
     return {
         "audio_object_name": primary_object,
         "audio_variants": audio_variants,
         "suno_task_id": task_id,
         "suno_audio_id": (suno_data or {}).get("id", ""),
+        "suno_audio_ids": suno_audio_ids,
     }

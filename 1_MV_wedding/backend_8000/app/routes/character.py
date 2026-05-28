@@ -23,10 +23,11 @@ import os
 import uuid as uuid_lib
 from datetime import datetime, timezone
 from typing import List, Optional
+from uuid import UUID
 
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import APIRouter, Body, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -34,6 +35,7 @@ from ..auth import get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from ..database.postgres import get_pg
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +192,7 @@ class SaveSheetRequest(BaseModel):
     used_items: Optional[List[UsedItemPayload]] = None
     image_model: Optional[str] = None
     user_text: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 # ── v6: async job helpers for sheet generate/refine ─────────────────────────
@@ -722,8 +725,9 @@ async def save_sheet(
     role_v = (body.role or "").strip().lower()
     style_v = (body.style or "").strip().lower()
     logger.info(
-        "[CharRoute] /sheets/save entry user_id=%s role=%s style=%s sheet=%s items=%d",
+        "[CharRoute] /sheets/save entry user_id=%s role=%s style=%s sheet=%s items=%d display_name_len=%d",
         user_id, role_v, style_v, body.sheet_object_name, len(body.used_items or []),
+        len((body.display_name or "").strip()),
     )
 
     if role_v not in ALLOWED_ROLES:
@@ -820,6 +824,7 @@ async def save_sheet(
         "used_items": used_items_data,
         "image_model": norm_image_model,
         "user_text": (body.user_text or "").strip(),
+        "display_name": (body.display_name or "").strip(),
         "updated_at": now,
     }
 
@@ -850,6 +855,42 @@ async def save_sheet(
             content={"error": "캐릭터 시트 메타 저장에 실패했습니다."},
         )
 
+    # wedding_assets upsert — type=character_sheet, keyed by (user_id, role, style).
+    try:
+        asset_filter = {
+            "user_id": user_id,
+            "type": "character_sheet",
+            "meta.role": role_v,
+            "meta.style": style_v,
+        }
+        asset_doc = {
+            "user_id": user_id,
+            "type": "character_sheet",
+            "display_name": slot_doc["display_name"],
+            "source": "generated",
+            "object_name": permanent_object,
+            "meta": {
+                "role": role_v,
+                "style": style_v,
+                "image_model": norm_image_model,
+            },
+            "updated_at": now,
+        }
+        await mongo.wedding_assets.update_one(
+            asset_filter,
+            {"$set": asset_doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        logger.info(
+            "[CharRoute] /sheets/save asset upsert ok user_id=%s slot=%s display_name_len=%d",
+            user_id, slot, len(slot_doc["display_name"]),
+        )
+    except Exception as e:
+        logger.warning(
+            "[CharRoute] /sheets/save asset upsert failed (non-fatal) user_id=%s slot=%s: %s: %s",
+            user_id, slot, type(e).__name__, str(e)[:200],
+        )
+
     return {
         "role": role_v,
         "style": style_v,
@@ -858,6 +899,7 @@ async def save_sheet(
         "used_items": used_items_data,
         "image_model": norm_image_model,
         "user_text": slot_doc["user_text"],
+        "display_name": slot_doc["display_name"],
         "updated_at": now.isoformat(),
         "message": "캐릭터 시트가 저장되었습니다.",
     }
@@ -1161,6 +1203,7 @@ async def get_sheets(current_user=Depends(get_current_user)):
                 "used_items": slot_data.get("used_items") or [],
                 "image_model": slot_data.get("image_model") or "gpt_image_2",
                 "user_text": slot_data.get("user_text") or "",
+                "display_name": slot_data.get("display_name") or "",
                 "updated_at": updated_at.isoformat() if isinstance(updated_at, datetime) else updated_at,
             }
 
@@ -1274,11 +1317,17 @@ async def list_outfits(
 # ── v5: user-added outfit catalog (CRUD scoped to current user) ──────────────
 
 
-def _serialize_outfit_doc(doc: dict) -> dict:
-    """Shape a wedding_outfit_items mongo doc for the v5 API responses."""
+def _serialize_outfit_doc(doc: dict, owner_info: dict | None = None) -> dict:
+    """Shape a wedding_outfit_items mongo doc for the v5 API responses.
+
+    v18: optional ``owner_info`` dict — when truthy, merges admin-only owner
+    fields into the payload (``owner_user_id`` / ``owner_email`` /
+    ``owner_nickname``). Caller is responsible for passing this **only** for
+    admin responses; regular users must not receive these keys.
+    """
     obj = doc.get("image_object_name") or ""
     created_at = doc.get("created_at")
-    return {
+    payload = {
         "id": str(doc.get("_id")) if doc.get("_id") is not None else None,
         "name": doc.get("name") or "",
         "role": doc.get("role"),
@@ -1290,6 +1339,73 @@ def _serialize_outfit_doc(doc: dict) -> dict:
         "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
         "created_by": doc.get("created_by"),
     }
+    if owner_info:
+        payload["owner_user_id"] = owner_info.get("id")
+        payload["owner_email"] = owner_info.get("email") or None
+        payload["owner_nickname"] = owner_info.get("nickname") or None
+    return payload
+
+
+async def _fetch_outfit_owner_map(
+    conn,
+    created_by_values,
+    *,
+    log_ctx: str,
+) -> dict[str, dict]:
+    """v18: batch-fetch (id, email, nickname) for a set of ``created_by`` UUID
+    strings from Postgres ``users``. Returns ``{user_id_str: {id,email,nickname}}``.
+
+    Failure modes are swallowed (warning logged, partial/empty map returned) so
+    callers can degrade gracefully to ``owner_*`` keys = null. Mirrors the
+    pattern in ``routes/admin.py:69~97``.
+
+    ``log_ctx`` is a short descriptor (e.g. ``"/outfits/mine"``) embedded in log
+    lines for traceability.
+    """
+    user_map: dict[str, dict] = {}
+    raw_ids = {v for v in created_by_values if v}
+    if not raw_ids:
+        return user_map
+
+    uuid_list = []
+    for uid in raw_ids:
+        try:
+            uuid_list.append(UUID(str(uid)))
+        except (ValueError, TypeError, AttributeError):
+            logger.warning(
+                "[CharRoute] %s owner-join invalid created_by skipped raw=%r",
+                log_ctx, uid,
+            )
+            continue
+    if not uuid_list:
+        return user_map
+
+    try:
+        logger.info(
+            "[CharRoute] %s owner-join pg fetch begin count=%d",
+            log_ctx, len(uuid_list),
+        )
+        rows = await conn.fetch(
+            "SELECT id, email, nickname FROM users WHERE id = ANY($1::uuid[])",
+            uuid_list,
+        )
+        for r in rows:
+            user_map[str(r["id"])] = {
+                "id": str(r["id"]),
+                "email": r["email"],
+                "nickname": r["nickname"],
+            }
+        logger.info(
+            "[CharRoute] %s owner-join pg fetch ok requested=%d resolved=%d",
+            log_ctx, len(uuid_list), len(user_map),
+        )
+    except Exception as e:
+        # 부분 실패 시 user_map 은 빈 dict 로 두고 200 + owner null 응답을 허용.
+        logger.warning(
+            "[CharRoute] %s owner-join pg fetch failed: %s: %s",
+            log_ctx, type(e).__name__, str(e)[:200],
+        )
+    return user_map
 
 
 @router.post("/outfits")
@@ -1461,39 +1577,48 @@ async def list_my_outfits(
     style: Optional[str] = None,
     category: Optional[str] = None,
     current_user=Depends(get_current_user),
+    conn=Depends(get_pg),
 ):
-    """List the current user's own outfit items, optionally filtered."""
+    """List outfit items.
+
+    - 일반 사용자: 본인 (``created_by == user_id``) 만, 기존 동작 그대로.
+    - 관리자 (``role == 'admin'``): 전체 사용자 아이템 + 응답 항목에
+      ``owner_user_id`` / ``owner_email`` / ``owner_nickname`` 키 추가
+      (Postgres ``users`` 조인). v18 도입.
+    """
     user_id = current_user["id"]
+    is_admin = current_user.get("role", "user") == "admin"
     role_v = (role or "").strip().lower() if role is not None else None
     style_v = (style or "").strip().lower() if style is not None else None
     cat_v = (category or "").strip().lower() if category is not None else None
     logger.info(
-        "[CharRoute] /outfits/mine entry user_id=%s role=%s style=%s category=%s",
-        user_id, role_v, style_v, cat_v,
+        "[CharRoute] /outfits/mine entry user_id=%s is_admin=%s role=%s style=%s category=%s",
+        user_id, is_admin, role_v, style_v, cat_v,
     )
 
-    query: dict = {"created_by": user_id}
+    # admin 은 created_by 필터 제거. 일반 사용자는 기존 그대로.
+    query: dict = {} if is_admin else {"created_by": user_id}
     if role_v is not None:
         if role_v not in ALLOWED_ROLES:
             logger.warning(
-                "[CharRoute] /outfits/mine invalid role user_id=%s role=%s",
-                user_id, role_v,
+                "[CharRoute] /outfits/mine invalid role user_id=%s is_admin=%s role=%s",
+                user_id, is_admin, role_v,
             )
             return JSONResponse(status_code=400, content={"error": "role은 groom/bride 중 하나여야 합니다."})
         query["role"] = role_v
     if style_v is not None:
         if style_v not in ALLOWED_STYLES:
             logger.warning(
-                "[CharRoute] /outfits/mine invalid style user_id=%s style=%s",
-                user_id, style_v,
+                "[CharRoute] /outfits/mine invalid style user_id=%s is_admin=%s style=%s",
+                user_id, is_admin, style_v,
             )
             return JSONResponse(status_code=400, content={"error": "style은 casual/wedding 중 하나여야 합니다."})
         query["style"] = style_v
     if cat_v is not None:
         if cat_v not in ALLOWED_OUTFIT_CATEGORIES:
             logger.warning(
-                "[CharRoute] /outfits/mine invalid category user_id=%s category=%s",
-                user_id, cat_v,
+                "[CharRoute] /outfits/mine invalid category user_id=%s is_admin=%s category=%s",
+                user_id, is_admin, cat_v,
             )
             return JSONResponse(
                 status_code=400,
@@ -1502,21 +1627,43 @@ async def list_my_outfits(
         query["category"] = cat_v
 
     mongo = get_mongo()
-    items = []
+    docs: list[dict] = []
     try:
         cursor = mongo.wedding_outfit_items.find(query).sort([("created_at", -1)])
         async for doc in cursor:
-            items.append(_serialize_outfit_doc(doc))
+            docs.append(doc)
     except Exception as e:
         logger.exception(
-            "[CharRoute] /outfits/mine mongo list failed user_id=%s role=%s style=%s category=%s: %s: %s",
-            user_id, role_v, style_v, cat_v, type(e).__name__, str(e)[:200],
+            "[CharRoute] /outfits/mine mongo list failed user_id=%s is_admin=%s role=%s style=%s category=%s: %s: %s",
+            user_id, is_admin, role_v, style_v, cat_v, type(e).__name__, str(e)[:200],
         )
         return JSONResponse(status_code=500, content={"error": "아이템 조회에 실패했습니다."})
 
+    # admin 분기: created_by UUID 들을 batch 로 Postgres 조인.
+    items: list[dict] = []
+    owner_resolved = 0
+    if is_admin:
+        user_map = await _fetch_outfit_owner_map(
+            conn,
+            (d.get("created_by") for d in docs),
+            log_ctx="/outfits/mine",
+        )
+        for doc in docs:
+            owner_info = user_map.get(str(doc.get("created_by"))) if doc.get("created_by") else None
+            if owner_info:
+                owner_resolved += 1
+            items.append(_serialize_outfit_doc(doc, owner_info=owner_info))
+        logger.info(
+            "[CharRoute] /outfits/mine admin scope returning total=%d owner_resolved=%d user_id=%s",
+            len(items), owner_resolved, user_id,
+        )
+    else:
+        for doc in docs:
+            items.append(_serialize_outfit_doc(doc))
+
     logger.info(
-        "[CharRoute] /outfits/mine ok user_id=%s role=%s style=%s category=%s items=%d",
-        user_id, role_v, style_v, cat_v, len(items),
+        "[CharRoute] /outfits/mine ok user_id=%s is_admin=%s role=%s style=%s category=%s items=%d owner_resolved=%d",
+        user_id, is_admin, role_v, style_v, cat_v, len(items), owner_resolved,
     )
     return {"items": items}
 
@@ -1531,12 +1678,21 @@ async def update_outfit(
     category: str = Form(None),
     product_url: str = Form(None),
     current_user=Depends(get_current_user),
+    conn=Depends(get_pg),
 ):
-    """Update a user-owned outfit item. Owner-only."""
+    """Update an outfit item.
+
+    - 일반 사용자: 본인 아이템만 수정 가능 (owner-only).
+    - 관리자 (``role == 'admin'``): owner 가드 우회. 타인 아이템 수정 시
+      감사 로그(`[CharRoute] /outfits PUT admin override ...`)를 남기고
+      응답에 owner 정보(`owner_user_id` / `owner_email` / `owner_nickname`)
+      를 포함한다. (v18)
+    """
     user_id = current_user["id"]
+    is_admin = current_user.get("role", "user") == "admin"
     logger.info(
-        "[CharRoute] /outfits PUT entry user_id=%s item_id=%s role=%s style=%s category=%s name_set=%s product_url_set=%s image_set=%s",
-        user_id, item_id,
+        "[CharRoute] /outfits PUT entry user_id=%s is_admin=%s item_id=%s role=%s style=%s category=%s name_set=%s product_url_set=%s image_set=%s",
+        user_id, is_admin, item_id,
         role, style, category,
         name is not None, product_url is not None,
         image is not None and (image.filename or "") != "",
@@ -1568,16 +1724,24 @@ async def update_outfit(
 
     if not doc:
         logger.warning(
-            "[CharRoute] /outfits PUT not found user_id=%s item_id=%s",
-            user_id, item_id,
+            "[CharRoute] /outfits PUT not found user_id=%s is_admin=%s item_id=%s",
+            user_id, is_admin, item_id,
         )
         return JSONResponse(status_code=404, content={"error": "아이템을 찾을 수 없습니다."})
-    if doc.get("created_by") != user_id:
+    owner_id = doc.get("created_by")
+    is_cross_owner = owner_id != user_id
+    if is_cross_owner and not is_admin:
         logger.warning(
-            "[CharRoute] /outfits PUT ownership reject user_id=%s item_id=%s owner=%s",
-            user_id, item_id, doc.get("created_by"),
+            "[CharRoute] /outfits PUT ownership reject user_id=%s is_admin=False item_id=%s owner=%s",
+            user_id, item_id, owner_id,
         )
         return JSONResponse(status_code=403, content={"detail": "본인 아이템만 수정할 수 있습니다."})
+    if is_cross_owner and is_admin:
+        # 감사 로그: 관리자가 타인 아이템을 수정한 모든 호출 기록.
+        logger.warning(
+            "[CharRoute] /outfits PUT admin override item_id=%s target_owner=%s admin_id=%s",
+            item_id, owner_id, user_id,
+        )
 
     # Build $set payload, validating each present field.
     set_payload: dict = {}
@@ -1720,12 +1884,26 @@ async def update_outfit(
         updated_doc = await mongo.wedding_outfit_items.find_one({"_id": oid})
     except Exception as e:
         logger.exception(
-            "[CharRoute] /outfits PUT post-update find_one failed user_id=%s item_id=%s: %s: %s",
-            user_id, item_id, type(e).__name__, str(e)[:200],
+            "[CharRoute] /outfits PUT post-update find_one failed user_id=%s is_admin=%s item_id=%s: %s: %s",
+            user_id, is_admin, item_id, type(e).__name__, str(e)[:200],
         )
         return JSONResponse(status_code=500, content={"error": "갱신된 아이템 조회에 실패했습니다."})
 
-    return _serialize_outfit_doc(updated_doc or {})
+    # v18: admin 이 타인 아이템 수정한 경우에만 owner 정보 머지.
+    owner_info: dict | None = None
+    if is_admin and is_cross_owner and updated_doc:
+        owner_map = await _fetch_outfit_owner_map(
+            conn,
+            [updated_doc.get("created_by")],
+            log_ctx="/outfits PUT",
+        )
+        owner_info = owner_map.get(str(updated_doc.get("created_by"))) if updated_doc.get("created_by") else None
+        logger.info(
+            "[CharRoute] /outfits PUT admin override response user_id=%s item_id=%s owner_resolved=%s",
+            user_id, item_id, owner_info is not None,
+        )
+
+    return _serialize_outfit_doc(updated_doc or {}, owner_info=owner_info)
 
 
 @router.delete("/outfits/{item_id}")
@@ -1733,11 +1911,18 @@ async def delete_outfit(
     item_id: str,
     current_user=Depends(get_current_user),
 ):
-    """Delete a user-owned outfit item. Owner-only."""
+    """Delete an outfit item.
+
+    - 일반 사용자: owner-only.
+    - 관리자 (``role == 'admin'``): owner 가드 우회. 타인 아이템 삭제 시
+      감사 로그(`[CharRoute] /outfits DELETE admin override ...`)를 남긴다.
+      (v18)
+    """
     user_id = current_user["id"]
+    is_admin = current_user.get("role", "user") == "admin"
     logger.info(
-        "[CharRoute] /outfits DELETE entry user_id=%s item_id=%s",
-        user_id, item_id,
+        "[CharRoute] /outfits DELETE entry user_id=%s is_admin=%s item_id=%s",
+        user_id, is_admin, item_id,
     )
 
     try:
@@ -1765,16 +1950,23 @@ async def delete_outfit(
 
     if not doc:
         logger.warning(
-            "[CharRoute] /outfits DELETE not found user_id=%s item_id=%s",
-            user_id, item_id,
+            "[CharRoute] /outfits DELETE not found user_id=%s is_admin=%s item_id=%s",
+            user_id, is_admin, item_id,
         )
         return JSONResponse(status_code=404, content={"error": "아이템을 찾을 수 없습니다."})
-    if doc.get("created_by") != user_id:
+    owner_id = doc.get("created_by")
+    is_cross_owner = owner_id != user_id
+    if is_cross_owner and not is_admin:
         logger.warning(
-            "[CharRoute] /outfits DELETE ownership reject user_id=%s item_id=%s owner=%s",
-            user_id, item_id, doc.get("created_by"),
+            "[CharRoute] /outfits DELETE ownership reject user_id=%s is_admin=False item_id=%s owner=%s",
+            user_id, item_id, owner_id,
         )
         return JSONResponse(status_code=403, content={"detail": "본인 아이템만 삭제할 수 있습니다."})
+    if is_cross_owner and is_admin:
+        logger.warning(
+            "[CharRoute] /outfits DELETE admin override item_id=%s target_owner=%s admin_id=%s",
+            item_id, owner_id, user_id,
+        )
 
     role_v = doc.get("role")
     style_v = doc.get("style")

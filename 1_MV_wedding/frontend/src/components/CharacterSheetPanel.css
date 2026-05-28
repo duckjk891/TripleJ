@@ -97,6 +97,23 @@
   color: #b3261e;
 }
 
+/* display_name input — 시트 이름 (살짝 강조, 살짝 작게) */
+.sheet-panel__name input {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--accent, #b78b3a);
+  background-color: #fffaf0;
+  font-weight: 500;
+}
+
+.sheet-panel__name input::placeholder {
+  color: #c9b48f;
+  font-weight: 400;
+}
+
 /* user_text input */
 .sheet-panel__text input {
   width: 100%;
@@ -285,4 +302,42 @@
 .sheet-panel__refine .btn-ghost {
   padding: 6px 12px;
   font-size: 12px;
+}
+
+/* asset hover-download overlay (shared visual pattern with PlaceAssetPanel) */
+.sheet-panel__result-img-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.asset-download-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.sheet-panel__result-img-wrap:hover .asset-download-btn,
+.asset-download-btn:focus-visible {
+  opacity: 1;
+}
+
+.asset-download-btn:hover {
+  background: rgba(0, 0, 0, 0.78);
 }

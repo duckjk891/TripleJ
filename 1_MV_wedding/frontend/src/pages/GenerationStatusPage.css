@@ -132,3 +132,43 @@
   gap: 10px;
   margin-top: 8px;
 }
+
+/* v17.1 — 작품 디테일 탭 (웨딩사진 / 식전영상) */
+.gen-status__tabs-area {
+  margin-top: 24px;
+}
+
+.gen-status__tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+.gen-status__tab {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.gen-status__tab:hover {
+  color: var(--text);
+  background-color: rgba(0, 0, 0, 0.03);
+}
+
+.gen-status__tab.is-active {
+  color: var(--text);
+  background-color: #fff;
+  border-color: var(--border);
+  border-bottom: 1px solid #fff;
+  position: relative;
+  top: 1px;
+}

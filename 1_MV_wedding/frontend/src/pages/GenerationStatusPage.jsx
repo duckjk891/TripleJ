@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import * as api from '../api';
+import WeddingPhotoPanel from '../components/WeddingPhotoPanel';
+import PreCeremonyMVPanel from '../components/PreCeremonyMVPanel';
 import './GenerationStatusPage.css';
+
+const TAB_PHOTO = 'photo';
+const TAB_PRE_MV = 'pre_mv';
 
 const POLL_INTERVAL_MS = 5000;
 const TERMINAL_STATUSES = new Set(['music_ready', 'music_failed', 'lyrics_failed']);
@@ -49,6 +54,7 @@ export default function GenerationStatusPage() {
   const [error, setError] = useState('');
   const [musicTriggering, setMusicTriggering] = useState(false);
   const [triggerError, setTriggerError] = useState('');
+  const [activeTab, setActiveTab] = useState(TAB_PHOTO);
   const timerRef = useRef(null);
   const cancelledRef = useRef(false);
   const fetchJobRef = useRef(null);
@@ -245,6 +251,61 @@ export default function GenerationStatusPage() {
               다시 위저드로 →
             </Link>
           </div>
+        </div>
+      )}
+
+      {/* v13/v17.1 — 작품 디테일 본문 탭.
+          음악이 완성된 뒤 [웨딩사진] / [식전영상] 탭을 노출. 그 이전 상태에서는
+          웨딩사진 패널만 노출(식전영상은 음악+timestamps 가 있어야 작업 가능).
+          권한(owner OR admin)은 각 패널 내부에서 가드된다. */}
+      {job && (
+        <div className="gen-status__tabs-area">
+          {isMusicReady ? (
+            <>
+              <div className="gen-status__tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === TAB_PHOTO}
+                  className={`gen-status__tab ${activeTab === TAB_PHOTO ? 'is-active' : ''}`}
+                  onClick={() => {
+                    if (import.meta.env.DEV) {
+                      console.info('[GenStatus] action=tab_change', { tab: TAB_PHOTO });
+                    }
+                    setActiveTab(TAB_PHOTO);
+                  }}
+                >
+                  웨딩사진
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === TAB_PRE_MV}
+                  className={`gen-status__tab ${activeTab === TAB_PRE_MV ? 'is-active' : ''}`}
+                  onClick={() => {
+                    if (import.meta.env.DEV) {
+                      console.info('[GenStatus] action=tab_change', { tab: TAB_PRE_MV });
+                    }
+                    setActiveTab(TAB_PRE_MV);
+                  }}
+                >
+                  식전영상
+                </button>
+              </div>
+              {activeTab === TAB_PHOTO && (
+                <WeddingPhotoPanel mvJobId={id} ownerUserId={job.user_id} />
+              )}
+              {activeTab === TAB_PRE_MV && (
+                <PreCeremonyMVPanel
+                  mvJobId={id}
+                  ownerUserId={job.user_id}
+                  mvJob={job}
+                />
+              )}
+            </>
+          ) : (
+            <WeddingPhotoPanel mvJobId={id} ownerUserId={job.user_id} />
+          )}
         </div>
       )}
     </section>

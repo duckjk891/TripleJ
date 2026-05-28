@@ -40,6 +40,39 @@ export default function MyWeddingMVPage() {
     };
   }, []);
 
+  const handleToggleAdminReview = async (job) => {
+    const jobId = job.job_id || job.id;
+    const nextState = !job.admin_requested;
+    // 낙관적 업데이트
+    setJobs((prev) => prev.map((j) =>
+      (j.job_id || j.id) === jobId
+        ? { ...j, admin_requested: nextState, admin_requested_at: nextState ? new Date().toISOString() : null }
+        : j
+    ));
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.info('[MyWeddingMV] toggle admin review', { job_id: jobId, next_state: nextState });
+    }
+    try {
+      const { data } = nextState
+        ? await api.requestAdminReview(jobId)
+        : await api.cancelAdminReview(jobId);
+      // 서버 응답으로 정확 동기화
+      setJobs((prev) => prev.map((j) => ((j.job_id || j.id) === jobId ? data : j)));
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || err?.message || '요청에 실패했습니다.';
+      console.error('[MyWeddingMV] toggle admin review failed', { err, status, detail, job_id: jobId });
+      // 롤백
+      setJobs((prev) => prev.map((j) =>
+        (j.job_id || j.id) === jobId
+          ? { ...j, admin_requested: !nextState }
+          : j
+      ));
+      alert('관리자 요청 상태 변경에 실패했습니다.');
+    }
+  };
+
   return (
     <section className="my-mv">
       <div className="my-mv__head">
@@ -69,6 +102,14 @@ export default function MyWeddingMVPage() {
                 {job.status === 'music_ready' && (
                   <Link to={`/projects/${jobId}`} className="btn-primary">재생</Link>
                 )}
+                <button
+                  type="button"
+                  className={`btn-ghost my-mv__admin-toggle${job.admin_requested ? ' my-mv__admin-toggle--on' : ''}`}
+                  onClick={() => handleToggleAdminReview(job)}
+                  title={job.admin_requested ? '관리자 요청을 취소합니다' : '관리자에게 검토를 요청합니다'}
+                >
+                  {job.admin_requested ? '✓ 요청됨 · 취소' : '🙋 관리자에게 요청'}
+                </button>
               </div>
             </li>
           );

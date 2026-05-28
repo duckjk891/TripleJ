@@ -285,6 +285,26 @@
   background-color: #fdecec;
 }
 
+/* v18: admin-only badges */
+.item-manage__owner-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f3edff;
+  color: #5b3aaa;
+  font-size: 12px;
+}
+
+.item-manage__admin-flag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fff2cc;
+  color: #7a5a00;
+  font-size: 12px;
+}
+
 /* Mobile tweaks */
 @media (max-width: 640px) {
   .item-manage__table thead {

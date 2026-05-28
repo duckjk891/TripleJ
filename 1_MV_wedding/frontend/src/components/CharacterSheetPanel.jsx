@@ -19,6 +19,7 @@ export default function CharacterSheetPanel({
   onChange,
   title,
   onNavigateOutfit,
+  onMentionablesChanged,
 }) {
   const fileInputRef = useRef(null);
   const prefix = `[CharSheetPanel:${role}_${style}]`;
@@ -242,6 +243,7 @@ export default function CharacterSheetPanel({
         console.info(`${prefix} calling saveCharacterSheet`, {
           object_name: value.generated.object_name,
           used_count: usedItems.length,
+          display_name_len: (value.display_name || '').length,
         });
       }
       await api.saveCharacterSheet({
@@ -250,8 +252,15 @@ export default function CharacterSheetPanel({
         style,
         used_items: usedItems,
         image_model: value.image_model || 'gpt_image_2',
+        display_name: value.display_name || '',
       });
       if (import.meta.env.DEV) console.info(`${prefix} saveCharacterSheet ok`);
+      // v9.1 — 시트 저장 시 display_name 이 mention 풀에 반영되도록 부모에게 알림.
+      try {
+        if (typeof onMentionablesChanged === 'function') onMentionablesChanged();
+      } catch (cbErr) {
+        console.error(`${prefix} onMentionablesChanged failed`, { err: cbErr });
+      }
     } catch (err) {
       const status = err?.response?.status;
       const detail =
@@ -377,9 +386,12 @@ export default function CharacterSheetPanel({
         }
         if (next === 'done') {
           const objectName = data?.sheet_object_name || '';
-          const previewUrl =
-            data?.preview_url ||
-            (objectName ? api.sheetPreviewUrl(objectName) : '');
+          // Always rebuild the preview URL on the client — the backend's
+          // `preview_url` is a path-only string (`/api/character/preview/...`),
+          // which the browser would resolve against the frontend origin and
+          // without the auth token. `sheetPreviewUrl` returns the full
+          // backend URL + ?token= so the <img> actually renders.
+          const previewUrl = objectName ? api.sheetPreviewUrl(objectName) : '';
           console.info(`${prefix} poll terminal`, {
             job_id: generateJobId,
             status: next,
@@ -449,9 +461,8 @@ export default function CharacterSheetPanel({
         }
         if (next === 'done') {
           const objectName = data?.sheet_object_name || '';
-          const previewUrl =
-            data?.preview_url ||
-            (objectName ? api.sheetPreviewUrl(objectName) : '');
+          // Same rebuild as generate path — backend preview_url is path-only.
+          const previewUrl = objectName ? api.sheetPreviewUrl(objectName) : '';
           console.info(`${prefix} poll terminal`, {
             job_id: refineJobId,
             status: next,
@@ -542,19 +553,28 @@ export default function CharacterSheetPanel({
             }
           }}
         >
-          {value.face_preview ? (
-            <img
-              src={value.face_preview}
-              alt="얼굴 사진 미리보기"
-              className="sheet-photo-zone__preview"
-            />
-          ) : (
-            <div className="sheet-photo-zone__placeholder">
-              <div className="sheet-photo-zone__icon">+</div>
-              <div className="sheet-photo-zone__text">얼굴 사진 업로드</div>
-              <div className="sheet-photo-zone__hint">JPG · PNG · WebP / 10MB 이하</div>
-            </div>
-          )}
+          {(() => {
+            // Prefer the durable network preview when we have an object_name —
+            // this protects against stale blob: URLs left in sessionStorage
+            // from a previous page lifetime (the blob registry is dead after
+            // a refresh, so the <img> would render broken otherwise).
+            const facePreviewSrc = value.face_object_name
+              ? api.sheetPreviewUrl(value.face_object_name)
+              : value.face_preview;
+            return facePreviewSrc ? (
+              <img
+                src={facePreviewSrc}
+                alt="얼굴 사진 미리보기"
+                className="sheet-photo-zone__preview"
+              />
+            ) : (
+              <div className="sheet-photo-zone__placeholder">
+                <div className="sheet-photo-zone__icon">+</div>
+                <div className="sheet-photo-zone__text">얼굴 사진 업로드</div>
+                <div className="sheet-photo-zone__hint">JPG · PNG · WebP / 10MB 이하</div>
+              </div>
+            );
+          })()}
         </div>
         <input
           ref={fileInputRef}
@@ -572,6 +592,17 @@ export default function CharacterSheetPanel({
             사진 제거
           </button>
         )}
+      </div>
+
+      {/* display_name */}
+      <div className="sheet-panel__name">
+        <input
+          type="text"
+          value={value.display_name || ''}
+          onChange={(e) => onChange({ display_name: e.target.value })}
+          placeholder="시트 이름 (예: 평상복 신랑)"
+          maxLength={80}
+        />
       </div>
 
       {/* user_text */}
@@ -693,11 +724,38 @@ export default function CharacterSheetPanel({
       {/* result */}
       {hasGenerated && (
         <div className="sheet-panel__result">
-          <img
-            className="sheet-panel__result-img"
-            src={value.generated.preview_url}
-            alt="생성된 캐릭터 시트"
-          />
+          <div className="sheet-panel__result-img-wrap">
+            <img
+              className="sheet-panel__result-img"
+              src={value.generated.preview_url}
+              alt="생성된 캐릭터 시트"
+            />
+            <button
+              type="button"
+              className="asset-download-btn"
+              title="이미지 다운로드"
+              onClick={async () => {
+                const objectName = value.generated?.object_name || '';
+                if (!objectName) return;
+                try {
+                  await api.downloadAssetByObjectName(
+                    objectName,
+                    `${role}_${style}.png`,
+                  );
+                  if (import.meta.env.DEV) {
+                    console.info(`${prefix} download ok`, { objectName });
+                  }
+                } catch (err) {
+                  console.error(`${prefix} download failed`, {
+                    objectName,
+                    err: err?.message,
+                  });
+                }
+              }}
+            >
+              ⬇
+            </button>
+          </div>
           <div className="sheet-panel__result-actions">
             <button
               type="button"

@@ -43,3 +43,14 @@
   gap: 8px;
   margin-top: 8px;
 }
+
+.my-mv__admin-toggle {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.my-mv__admin-toggle--on {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #86efac;
+}

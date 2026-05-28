@@ -12,6 +12,8 @@ import MVPlayerPage from './pages/MVPlayerPage';
 import MyWeddingMVPage from './pages/MyWeddingMVPage';
 import OutfitSelectPage from './pages/OutfitSelectPage';
 import ItemManagePage from './pages/ItemManagePage';
+import AdminJobsPage from './pages/AdminJobsPage';
+import AdminUsersPage from './pages/AdminUsersPage';
 import './App.css';
 
 export default function App() {
@@ -69,6 +71,22 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <ItemManagePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/jobs"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminJobsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AdminUsersPage />
                 </ProtectedRoute>
               }
             />

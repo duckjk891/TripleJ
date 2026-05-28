@@ -79,6 +79,16 @@
   margin-left: 4px;
 }
 
+/* v9 — PolishButton 이 있는 라벨은 flex 로 정렬 */
+.field label:has(.polish-btn) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.field label:has(.polish-btn) .polish-btn {
+  margin-left: auto;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: #999;

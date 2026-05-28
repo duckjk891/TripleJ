@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   profile_image TEXT,
   bio TEXT,
   is_banned BOOLEAN DEFAULT FALSE,
+  role TEXT NOT NULL DEFAULT 'user',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

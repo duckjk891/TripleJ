@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     kling_secret_key: str = ""
     fal_api_key: str = ""
     sync_api_key: str = ""
+    # v17.0 — Grok Imagine Video (xAI). 실제 토큰은 운영 .env 에서 사용자가 채움.
+    xai_api_key: str = ""
 
     @property
     def postgres_dsn(self) -> str:

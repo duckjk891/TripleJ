@@ -31,14 +31,14 @@ export default function LoginPage() {
         <h1 className="auth-title">로그인</h1>
         <form onSubmit={onSubmit}>
           <div className="field">
-            <label htmlFor="email">이메일</label>
+            <label htmlFor="email">이메일 (또는 ID)</label>
             <input
               id="email"
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              autoComplete="email"
+              autoComplete="username"
             />
           </div>
           <div className="field">

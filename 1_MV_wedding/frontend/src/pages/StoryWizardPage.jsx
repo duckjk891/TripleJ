@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import * as api from '../api';
 import StepIndicator from '../components/StepIndicator';
 import DynamicList from '../components/DynamicList';
 import TagInput from '../components/TagInput';
 import SceneInput from '../components/SceneInput';
+import MentionField from '../components/MentionField';
+import PolishButton from '../components/PolishButton';
 import CharacterSheetPanel from '../components/CharacterSheetPanel';
+import PlaceAssetPanel from '../components/PlaceAssetPanel';
 import './StoryWizardPage.css';
 
 const DRAFT_KEY = 'wedding-wizard-draft';
@@ -29,6 +32,8 @@ const emptySheetSlot = () => ({
   // The generate/refine endpoints accept this string directly.
   face_object_name: null,
   face_uploading: false,
+  // v7 — 사용자 지정 시트 이름 (예: "평상복 신랑")
+  display_name: '',
   user_text: '',
   image_model: 'gpt_image_2',
   items: { top: null, bottom: null, shoes: null },
@@ -62,6 +67,8 @@ const sanitizeSheetsForStorage = (sheets) => {
       // face_uploading is transient (in-flight indicator) — always reset.
       face_object_name: s.face_object_name ?? null,
       face_uploading: false,
+      // v7 — display_name 명시 보존 (spread 가 처리하지만 안전상 명시).
+      display_name: s.display_name ?? '',
       // v6 — preserve job ids + start timestamps so polling resumes after
       // refresh. CharacterSheetPanel detects "job_id present but !generating"
       // on mount and flips generating back to true to kick the poll effect.
@@ -72,6 +79,27 @@ const sanitizeSheetsForStorage = (sheets) => {
     };
   }
   return out;
+};
+
+// Cleanup stale generated-sheet draft on rehydrate:
+//   Older sessions persisted `generated.preview_url` as a path-only string
+//   (`/api/character/preview/...`) which the browser would resolve against the
+//   frontend origin and without the auth token. Rebuild it via sheetPreviewUrl
+//   so the <img> renders after refresh.
+const reconcileGeneratedFields = (slot) => {
+  const generated = slot?.generated;
+  if (!generated || !generated.object_name) return slot;
+  const url = generated.preview_url || '';
+  // A "good" URL is absolute (http(s)://...) AND carries the ?token= query.
+  const isGood = /^https?:\/\//i.test(url) && url.includes('token=');
+  if (isGood) return slot;
+  return {
+    ...slot,
+    generated: {
+      ...generated,
+      preview_url: api.sheetPreviewUrl(generated.object_name),
+    },
+  };
 };
 
 // Cleanup stale face draft on rehydrate:
@@ -104,7 +132,7 @@ const mergeSheets = (base) => {
   for (const key of SHEET_KEYS) {
     const merged = { ...emptySheetSlot(), ...(base?.[key] || {}) };
     merged.items = { top: null, bottom: null, shoes: null, ...(base?.[key]?.items || {}) };
-    out[key] = reconcileFaceFields(merged);
+    out[key] = reconcileGeneratedFields(reconcileFaceFields(merged));
   }
   return out;
 };
@@ -146,12 +174,19 @@ const initialData = () => ({
   },
   story: {
     // v2.2 — 각 시점은 단일 텍스트. 사용자가 통문장으로 적고 AI가 추출.
+    // v8 — @-멘션 refs 6개 필드 추가 (sheet/place 자산 태깅).
     meeting: '',
+    meeting_refs: [],
     first_date: '',
+    first_date_refs: [],
     memories: [''],
+    memories_refs: [[]],
     proposal: '',
+    proposal_refs: [],
     wedding_prep: '',
+    wedding_prep_refs: [],
     rituals: '',
+    rituals_refs: [],
   },
   vow: {
     keywords: [],
@@ -193,6 +228,30 @@ export default function StoryWizardPage() {
       const restoredData = parsed.data
         ? { ...base, ...parsed.data, sheets: mergeSheets(parsed.data.sheets) }
         : base;
+      // v8 — story 의 refs 키 보정 (구버전 draft 호환 + memories_refs 길이 정합).
+      if (restoredData && typeof restoredData === 'object') {
+        const story = { ...base.story, ...(restoredData.story || {}) };
+        if (!Array.isArray(story.memories) || story.memories.length === 0) {
+          story.memories = [''];
+        }
+        const memN = story.memories.length;
+        const memRefs = Array.isArray(story.memories_refs) ? story.memories_refs.slice() : [];
+        while (memRefs.length < memN) memRefs.push([]);
+        memRefs.length = memN;
+        story.memories_refs = memRefs.map((r) => (Array.isArray(r) ? r : []));
+        // 6개 단일 refs 필드 정합 (배열이 아니면 빈 배열로).
+        const singleKeys = [
+          'meeting_refs',
+          'first_date_refs',
+          'proposal_refs',
+          'wedding_prep_refs',
+          'rituals_refs',
+        ];
+        for (const k of singleKeys) {
+          if (!Array.isArray(story[k])) story[k] = [];
+        }
+        restoredData.story = story;
+      }
       const restoredStep =
         typeof parsed.step === 'number' && parsed.step >= 1 && parsed.step <= 6
           ? parsed.step
@@ -214,6 +273,51 @@ export default function StoryWizardPage() {
   const [data, setData] = useState(initialRef.current.data);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // v8 — @-멘션 후보 풀 (시트 4슬롯 + 장소 N개). 마운트 시 병렬 fetch.
+  // v9.1 — 자식 패널(시트/장소) 변경 시 reloadMentionOptions 콜백으로 자동 갱신.
+  const [mentionOptions, setMentionOptions] = useState([]);
+  const reloadMentionOptions = useCallback(async () => {
+    try {
+      const [sheetsRes, placesRes] = await Promise.all([
+        api.getCharacterSheets(),
+        api.listPlaces(),
+      ]);
+      const sheets = sheetsRes?.data?.sheets || {};
+      const places = placesRes?.data?.items || [];
+      const opts = [];
+      for (const [slotKey, slot] of Object.entries(sheets)) {
+        if (!slot) continue;
+        const displayName = (slot.display_name && slot.display_name.trim()) || slotKey;
+        opts.push({
+          type: 'sheet',
+          asset_id: slotKey,
+          display_name: displayName,
+          object_name: slot.sheet_object_name || null,
+          group_label: '🧑 캐릭터',
+        });
+      }
+      for (const p of places) {
+        opts.push({
+          type: 'place',
+          asset_id: p.place_id,
+          display_name: (p.display_name && p.display_name.trim()) || '(이름 없음)',
+          object_name: p.object_name || null,
+          group_label: '📍 장소',
+        });
+      }
+      setMentionOptions(opts);
+      if (import.meta.env.DEV) {
+        console.info('[StoryWizard] mention_options loaded', { count: opts.length });
+      }
+    } catch (err) {
+      console.error('[StoryWizard] mention options fetch failed', { err });
+      setMentionOptions([]);
+    }
+  }, []);
+  useEffect(() => {
+    reloadMentionOptions();
+  }, [reloadMentionOptions]);
 
   // Absorb selectedOutfit from OutfitSelectPage's navigate state.
   // Done in a ref-guarded effect so the same state object is consumed only once.
@@ -362,7 +466,18 @@ export default function StoryWizardPage() {
 
   // --- final submit ---
   const buildPayloads = () => {
-    const memories = data.story.memories.map((s) => s.trim()).filter(Boolean);
+    // v8 — memories 본문 trim 시 빈 항목 제거. 같은 인덱스의 refs 도 함께 제거.
+    const cleanedMemories = [];
+    const cleanedMemoriesRefs = [];
+    (data.story.memories || []).forEach((s, i) => {
+      const t = (s || '').trim();
+      if (t) {
+        cleanedMemories.push(t);
+        cleanedMemoriesRefs.push(
+          Array.isArray(data.story.memories_refs?.[i]) ? data.story.memories_refs[i] : []
+        );
+      }
+    });
 
     const parseAge = (raw) => {
       const v = String(raw).trim();
@@ -375,6 +490,8 @@ export default function StoryWizardPage() {
       const v = (s || '').trim();
       return v === '' ? null : v;
     };
+
+    const safeRefs = (arr) => (Array.isArray(arr) ? arr : []);
 
     const storyPayload = {
       couple: {
@@ -389,11 +506,17 @@ export default function StoryWizardPage() {
       },
       story: {
         meeting: data.story.meeting.trim(),
+        meeting_refs: safeRefs(data.story.meeting_refs),
         first_date: trimOrNull(data.story.first_date),
-        memories,
+        first_date_refs: safeRefs(data.story.first_date_refs),
+        memories: cleanedMemories,
+        memories_refs: cleanedMemoriesRefs,
         proposal: trimOrNull(data.story.proposal),
+        proposal_refs: safeRefs(data.story.proposal_refs),
         wedding_prep: trimOrNull(data.story.wedding_prep),
+        wedding_prep_refs: safeRefs(data.story.wedding_prep_refs),
         rituals: trimOrNull(data.story.rituals),
+        rituals_refs: safeRefs(data.story.rituals_refs),
       },
       vow: {
         keywords: data.vow.keywords,
@@ -404,6 +527,17 @@ export default function StoryWizardPage() {
         audience_line: trimOrNull(data.wedding_context.audience_line),
       },
     };
+
+    if (import.meta.env.DEV) {
+      const totalMentions =
+        storyPayload.story.meeting_refs.length +
+        storyPayload.story.first_date_refs.length +
+        storyPayload.story.memories_refs.reduce((acc, arr) => acc + arr.length, 0) +
+        storyPayload.story.proposal_refs.length +
+        storyPayload.story.wedding_prep_refs.length +
+        storyPayload.story.rituals_refs.length;
+      console.info('[StoryWizard] story payload built', { total_mentions: totalMentions });
+    }
 
     const isDuet = data.music_spec.vocal_form === 'duet';
     const musicSpec = {
@@ -529,10 +663,14 @@ export default function StoryWizardPage() {
               value={data.sheets[key]}
               onChange={(patch) => patchSheet(key, patch)}
               onNavigateOutfit={(cat) => goSelectOutfit(role, style, cat)}
+              onMentionablesChanged={reloadMentionOptions}
             />
           ))}
         </div>
       </div>
+
+      {/* v7 — 장소 이미지 자산 (캐릭터 시트 4슬롯 바로 아래 자매 섹션) */}
+      <PlaceAssetPanel onMentionablesChanged={reloadMentionOptions} />
     </div>
   );
 
@@ -548,8 +686,11 @@ export default function StoryWizardPage() {
         required
         value={data.story.meeting}
         onChange={(v) => updateStory({ meeting: v })}
+        refs={data.story.meeting_refs}
+        onChangeRefs={(r) => updateStory({ meeting_refs: r })}
+        options={mentionOptions}
         placeholder="예) 4월 비 오던 회식 끝난 야근, 회의실 옆자리에 앉아 있던 그 사람과 모니터 너머로 눈이 마주쳤어요. 그 순간 숨이 한 번 막혔고, 키보드 소리도 안 들릴 만큼 가슴이 뛰었어요."
-        hint="그때의 상황과 마음을 함께 줄줄 적어주세요. AI가 알아서 장면과 감정을 가사에 녹여냅니다."
+        hint="그때의 상황과 마음을 함께 줄줄 적어주세요. @를 입력하면 미리 만든 캐릭터·장소를 태그할 수 있어요."
       />
 
       <SceneInput
@@ -557,6 +698,9 @@ export default function StoryWizardPage() {
         optional
         value={data.story.first_date}
         onChange={(v) => updateStory({ first_date: v })}
+        refs={data.story.first_date_refs}
+        onChangeRefs={(r) => updateStory({ first_date_refs: r })}
+        options={mentionOptions}
         placeholder="예) 다음 주 토요일 한강 망원 벤치에서 만났어요. 그 사람이 캔커피 두 개를 들고 왔는데, 햇살이 세서 손으로 눈을 가렸어요. 그 손그늘이 어찌나 예뻐 보이던지, 자꾸 곁눈질하다 들킬까 고개 돌렸어요."
       />
 
@@ -566,7 +710,43 @@ export default function StoryWizardPage() {
         </label>
         <DynamicList
           items={data.story.memories}
-          onChange={(next) => updateStory({ memories: next.length === 0 ? [''] : next })}
+          refsList={data.story.memories_refs}
+          onChange={(next) => {
+            // 본문 길이 변화에 맞춰 refs 도 동기화.
+            setData((d) => {
+              const safeItems = next.length === 0 ? [''] : next;
+              const len = safeItems.length;
+              const prevRefs = Array.isArray(d.story.memories_refs)
+                ? d.story.memories_refs
+                : [];
+              const safeRefs = [];
+              for (let i = 0; i < len; i++) {
+                safeRefs.push(Array.isArray(prevRefs[i]) ? prevRefs[i] : []);
+              }
+              return {
+                ...d,
+                story: {
+                  ...d.story,
+                  memories: safeItems,
+                  memories_refs: safeRefs,
+                },
+              };
+            });
+          }}
+          onChangeRefs={(idx, refs) => {
+            setData((d) => {
+              const prev = Array.isArray(d.story.memories_refs)
+                ? d.story.memories_refs
+                : [];
+              const nextRefs = prev.slice();
+              nextRefs[idx] = refs;
+              return {
+                ...d,
+                story: { ...d.story, memories_refs: nextRefs },
+              };
+            });
+          }}
+          options={mentionOptions}
           placeholder="예) 매주 토요일 같은 벤치에서 노래 한 곡씩 같이 들었어요. 너의 어깨에 자연스럽게 기대게 됐고, 너 없는 토요일을 상상할 수 없게 됐어요."
           addButtonLabel="+ 추억 더 추가"
         />
@@ -577,6 +757,9 @@ export default function StoryWizardPage() {
         optional
         value={data.story.proposal}
         onChange={(v) => updateStory({ proposal: v })}
+        refs={data.story.proposal_refs}
+        onChangeRefs={(r) => updateStory({ proposal_refs: r })}
+        options={mentionOptions}
         placeholder="예) 부암동 그 카페 창가 자리에서, 두 잔의 커피 위에 그 사람의 손이 포개졌을 때 '같이 살자'고 자연스럽게 말이 나왔어요. 그 한 마디에 눈물이 핑 돌았는데, 떨리지 않을 만큼 이미 단단해져 있었구나 싶었어요."
       />
 
@@ -585,17 +768,32 @@ export default function StoryWizardPage() {
         optional
         value={data.story.wedding_prep}
         onChange={(v) => updateStory({ wedding_prep: v })}
+        refs={data.story.wedding_prep_refs}
+        onChangeRefs={(r) => updateStory({ wedding_prep_refs: r })}
+        options={mentionOptions}
         placeholder="예) 어느 토요일 드레스를 입어 봤어요. 거울 너머의 모습이 어색하면서도 '이게 우리구나' 실감이 났어요. 그 다음 주말엔 야외 웨딩 촬영을 했고, 카메라 셔터 앞에서 둘이 같이 웃었어요."
       />
 
       <div className="field">
         <label htmlFor="rituals">
           둘만의 단어 · 농담 · 장소 <span className="opt">(선택)</span>
+          <PolishButton
+            value={data.story.rituals}
+            refs={data.story.rituals_refs}
+            onChange={(v) => updateStory({ rituals: v })}
+            onChangeRefs={(r) => updateStory({ rituals_refs: r })}
+            label="둘만의 단어 · 농담 · 장소"
+          />
         </label>
-        <textarea
+        <MentionField
           id="rituals"
+          ariaLabel="둘만의 단어 농담 장소"
           value={data.story.rituals}
-          onChange={(e) => updateStory({ rituals: e.target.value })}
+          refs={data.story.rituals_refs}
+          onChange={(v) => updateStory({ rituals: v })}
+          onChangeRefs={(r) => updateStory({ rituals_refs: r })}
+          options={mentionOptions}
+          rows={3}
           placeholder='예) "오징어볶음"이 우리 사이의 사과 신호. 부암동 그 카페가 우리만의 비밀 장소.'
         />
       </div>
@@ -817,26 +1015,24 @@ export default function StoryWizardPage() {
         <div className="field">
           <label>언어</label>
           <div className="radio-row">
-            <label className="radio-card">
-              <input
-                type="radio"
-                name="language"
-                value="ko"
-                checked={data.music_spec.language === 'ko'}
-                onChange={() => updateMusic({ language: 'ko' })}
-              />
-              <span>한국어</span>
-            </label>
-            <label className="radio-card">
-              <input
-                type="radio"
-                name="language"
-                value="en"
-                checked={data.music_spec.language === 'en'}
-                onChange={() => updateMusic({ language: 'en' })}
-              />
-              <span>English</span>
-            </label>
+            {[
+              { value: 'ko', label: '한국어' },
+              { value: 'ko_en_73', label: '한 7 : 영 3' },
+              { value: 'ko_en_55', label: '한 5 : 영 5' },
+              { value: 'ko_en_37', label: '한 3 : 영 7' },
+              { value: 'en', label: 'English' },
+            ].map((opt) => (
+              <label key={opt.value} className="radio-card">
+                <input
+                  type="radio"
+                  name="language"
+                  value={opt.value}
+                  checked={data.music_spec.language === opt.value}
+                  onChange={() => updateMusic({ language: opt.value })}
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
           </div>
         </div>
 
@@ -1028,7 +1224,15 @@ export default function StoryWizardPage() {
               {m.vocal_form === 'duet' && ` · 메인 ${mainLabel} / 서브 ${subLabel}`}
             </dd>
             <dt>언어</dt>
-            <dd>{m.language === 'ko' ? '한국어' : 'English'}</dd>
+            <dd>
+              {{
+                ko: '한국어',
+                ko_en_73: '한 7 : 영 3',
+                ko_en_55: '한 5 : 영 5',
+                ko_en_37: '한 3 : 영 7',
+                en: 'English',
+              }[m.language] || m.language}
+            </dd>
             <dt>모델</dt>
             <dd>{modelLabel}</dd>
           </dl>

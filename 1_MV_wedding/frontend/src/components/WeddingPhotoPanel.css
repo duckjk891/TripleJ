@@ -1,0 +1,391 @@
+/* v13 — WeddingPhotoPanel
+   톤은 .place-asset-panel 와 유사하지만 다크-웜 살짝 어두운 카드. */
+
+.wedding-photo {
+  margin-top: 32px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background-color: #fffdf9;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wedding-photo__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wedding-photo__title {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.wedding-photo__desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.wedding-photo__admin-banner {
+  margin: 4px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background-color: #fff4d6;
+  color: #6b4f0c;
+  border: 1px solid #f0d68c;
+  font-size: 12px;
+  display: inline-block;
+  align-self: flex-start;
+}
+
+.wedding-photo__loading,
+.wedding-photo__empty {
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+  background-color: #fffaf0;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+}
+
+.wedding-photo__error-banner {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background-color: #fdecec;
+  color: #b3261e;
+  font-size: 12px;
+  border: 1px solid #f5c6c6;
+}
+
+.wedding-photo__error-text {
+  margin-top: 4px;
+  color: #b3261e;
+  font-size: 12px;
+}
+
+.wedding-photo__hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wedding-photo__form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 0;
+}
+
+.wedding-photo__row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wedding-photo__row-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ─── 시트/장소 카드 공통 ─── */
+.wedding-photo__sheet-grid,
+.wedding-photo__place-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.wedding-photo__sheet-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wedding-photo__place-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.wedding-photo__sheet-card,
+.wedding-photo__place-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background-color: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.wedding-photo__sheet-card:hover,
+.wedding-photo__place-card:hover {
+  border-color: var(--accent, #b78b3a);
+}
+
+.wedding-photo__sheet-card.is-selected,
+.wedding-photo__place-card.is-selected {
+  border-color: var(--accent, #b78b3a);
+  box-shadow: 0 0 0 2px rgba(183, 139, 58, 0.2);
+}
+
+.wedding-photo__sheet-card.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wedding-photo__sheet-card input[type='radio'],
+.wedding-photo__place-card input[type='radio'] {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+}
+
+.wedding-photo__sheet-thumb,
+.wedding-photo__place-thumb {
+  aspect-ratio: 1 / 1;
+  background-color: #f5efe6;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wedding-photo__sheet-thumb img,
+.wedding-photo__place-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wedding-photo__sheet-placeholder {
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 6px;
+}
+
+.wedding-photo__sheet-label,
+.wedding-photo__place-label {
+  font-size: 12px;
+  text-align: center;
+  color: var(--text);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+/* ─── 장소 모드 라디오 ─── */
+.wedding-photo__place-modes {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.wedding-photo__mode {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* ─── 직접 업로드 폼 ─── */
+.wedding-photo__upload {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background-color: #fffaf0;
+}
+
+.wedding-photo__upload-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wedding-photo__upload-row input[type='text'] {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.wedding-photo__upload-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wedding-photo__upload-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* ─── 모델 ─── */
+.wedding-photo__model-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wedding-photo__model {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wedding-photo__model.is-selected {
+  border-color: var(--accent, #b78b3a);
+  background-color: #fff8eb;
+}
+
+/* ─── 액션 ─── */
+.wedding-photo__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ─── 갤러리 ─── */
+.wedding-photo__gallery-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wedding-photo__gallery-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wedding-photo__gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.wedding-photo__photo-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: #fff;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.wedding-photo__photo-card:hover {
+  border-color: var(--accent, #b78b3a);
+  transform: translateY(-1px);
+}
+
+.wedding-photo__photo-thumb {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background-color: #f5efe6;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.wedding-photo__photo-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 3px 8px;
+  background-color: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 11px;
+  border-radius: 999px;
+}
+
+.wedding-photo__photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wedding-photo__photo-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  gap: 6px;
+}
+
+/* ─── 디버그 ─── */
+.wedding-photo__debug {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-family: monospace;
+}
+
+/* ─── v16 — 일괄 선택 ─── */
+.wedding-photo__bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  margin-bottom: 8px;
+}
+
+.wedding-photo__bulk-actions button.danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+.wedding-photo__card-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  padding: 2px;
+  z-index: 2;
+}
+
+.wedding-photo__photo-card.is-selected {
+  outline: 3px solid rgba(99, 102, 241, 0.8);
+  outline-offset: -3px;
+}
+
+.wedding-photo__select-toggle {
+  margin-left: auto;
+}
+
+/* ─── 반응형 ─── */
+@media (max-width: 640px) {
+  .wedding-photo__place-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .wedding-photo__gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

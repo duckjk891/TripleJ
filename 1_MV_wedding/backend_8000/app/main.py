@@ -19,11 +19,23 @@ load_dotenv()
 
 from .config import settings
 from .database.postgres import init_postgres, close_postgres
-from .database.mongodb import init_mongodb, close_mongodb
+from .database.mongodb import init_mongodb, close_mongodb, ensure_indexes
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio, get_minio
-from .routes import auth, story, mv, character, assets, share
+from .routes import (
+    admin,
+    assets,
+    auth,
+    character,
+    mv,
+    places,
+    pre_mv,
+    share,
+    story,
+    wedding_photos,
+)
 from .services.outfit_seeder import seed_outfits
+from .services.admin_seeder import seed_admin
 
 
 REQUIRED_BUCKETS = (
@@ -53,6 +65,18 @@ async def lifespan(app: FastAPI):
                 print(f"MinIO bucket exists: {bucket}")
     except Exception as e:
         print(f"MinIO bucket ensure failed: {e}")
+
+    # v17.0 — Mongo 인덱스 ensure (멱등). pre_mv_jobs 등 신규 컬렉션 대비.
+    try:
+        await ensure_indexes()
+    except Exception as e:
+        print(f"[Startup] ensure_indexes failed: {type(e).__name__}: {e}")
+
+    # v11 — seed admin account (idempotent — checked by email lookup).
+    try:
+        await seed_admin()
+    except Exception as e:
+        print(f"[Startup] seed_admin failed: {type(e).__name__}: {e}")
 
     # Seed wedding outfit catalog (idempotent — checked by collection count).
     try:
@@ -85,6 +109,10 @@ app.include_router(mv.router)
 app.include_router(character.router)
 app.include_router(assets.router)
 app.include_router(share.router)
+app.include_router(places.router)
+app.include_router(wedding_photos.router)
+app.include_router(pre_mv.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health")

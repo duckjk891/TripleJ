@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../api';
+import { useAuth } from '../contexts/AuthContext';
 import './ItemManagePage.css';
 
 const PREFIX = '[ItemManagePage]';
@@ -67,6 +68,8 @@ function extractErrorDetail(err, fallback) {
 }
 
 export default function ItemManagePage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState('');
@@ -75,10 +78,14 @@ export default function ItemManagePage() {
   const fileInputRef = useRef(null);
   const blobUrlRef = useRef(''); // tracks current blob URL for cleanup
 
+  if (import.meta.env.DEV) {
+    console.info(`${PREFIX} role check`, { isAdmin });
+  }
+
   // --- initial load ---
   useEffect(() => {
     let cancelled = false;
-    console.info(`${PREFIX} calling getMyOutfitItems`);
+    console.info(`${PREFIX} calling getMyOutfitItems`, { isAdmin });
     setLoading(true);
     setListError('');
     api
@@ -87,15 +94,15 @@ export default function ItemManagePage() {
         if (cancelled) return;
         const next = Array.isArray(data?.items) ? data.items : [];
         if (import.meta.env.DEV) {
-          console.info(`${PREFIX} items loaded`, { count: next.length });
+          console.info(`${PREFIX} items loaded`, { count: next.length, isAdmin });
         }
         setItems(next);
       })
-      .catch((err) => {
-        console.error(`${PREFIX} getMyOutfitItems failed`, { err });
+      .catch((e) => {
+        console.error(`${PREFIX} list failed`, { err: e?.message, isAdmin });
         if (!cancelled) {
           setListError(
-            extractErrorDetail(err, '아이템 목록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.'),
+            extractErrorDetail(e, '아이템 목록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.'),
           );
         }
       })
@@ -105,7 +112,7 @@ export default function ItemManagePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAdmin]);
 
   // --- cleanup blob URL on unmount ---
   useEffect(() => {
@@ -364,7 +371,12 @@ export default function ItemManagePage() {
   return (
     <section className="item-manage">
       <div className="item-manage__head">
-        <h1 className="item-manage__title">아이템관리</h1>
+        <h1 className="item-manage__title">
+          아이템관리
+          {isAdmin && (
+            <span className="item-manage__admin-flag">🛡 관리자 모드</span>
+          )}
+        </h1>
         <p className="item-manage__desc">
           위저드의 의상 그리드에 함께 노출될 사용자 아이템을 직접 등록·관리합니다.
         </p>
@@ -547,9 +559,15 @@ export default function ItemManagePage() {
       {/* Items table */}
       <div className="item-manage__list">
         <div className="item-manage__list-head">
-          <h2 className="item-manage__list-title">내 아이템</h2>
+          <h2 className="item-manage__list-title">
+            {isAdmin ? '전체 아이템' : '내 아이템'}
+          </h2>
           <span className="item-manage__list-count muted">
-            {loading ? '' : `${filteredItems.length} / ${items.length}`}
+            {loading
+              ? ''
+              : isAdmin
+              ? `전체 ${items.length}개 (필터 ${filteredItems.length})`
+              : `${filteredItems.length} / ${items.length}`}
           </span>
         </div>
 
@@ -567,7 +585,9 @@ export default function ItemManagePage() {
 
         {!loading && !listError && items.length === 0 && (
           <div className="muted item-manage__empty">
-            아직 등록한 아이템이 없습니다. 위 폼에서 첫 아이템을 추가해보세요.
+            {isAdmin
+              ? '등록된 아이템이 없습니다.'
+              : '아직 등록한 아이템이 없습니다. 위 폼에서 첫 아이템을 추가해보세요.'}
           </div>
         )}
 
@@ -584,6 +604,7 @@ export default function ItemManagePage() {
                 <tr>
                   <th>이미지</th>
                   <th>이름</th>
+                  {isAdmin && <th>소유자</th>}
                   <th>신랑/신부</th>
                   <th>스타일</th>
                   <th>카테고리</th>
@@ -614,6 +635,13 @@ export default function ItemManagePage() {
                         )}
                       </td>
                       <td>{it.name}</td>
+                      {isAdmin && (
+                        <td>
+                          <span className="item-manage__owner-badge">
+                            {it.owner_nickname || it.owner_email || '—'}
+                          </span>
+                        </td>
+                      )}
                       <td>{ROLE_LABEL[it.role] || it.role}</td>
                       <td>{STYLE_LABEL[it.style] || it.style}</td>
                       <td>{CATEGORY_LABEL[it.category] || it.category}</td>
