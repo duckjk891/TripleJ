@@ -266,7 +266,7 @@ async def generate_scene_image(
       PNG bytes.
 
     Raises:
-      ValueError: ref 가 단 한 장도 없거나 Step A 빈 응답.
+      ValueError: Step A Gemini 빈 응답일 때만. ref 0개여도 진행 (v33 — text-only).
       Exception: 외부 API 실패는 호출자 측에서 except 후 image_status=failed 처리.
     """
     started = time.time()
@@ -416,10 +416,15 @@ async def generate_scene_image(
         if x
     )
     if refs_count == 0:
-        raise ValueError(
-            "no reference images resolved (sheet_ids={}, place_ids={})".format(
-                ref_sheet_ids, ref_place_ids,
-            )
+        # v33 — ref 0개여도 진행 (text-only). 두 image_model 모두 ref 없이 text-to-image 가능:
+        # · openai_generate_image: ref_images 빈 리스트면 /v1/images/generations 호출
+        # · _call_gemini_image: image_parts 빈 리스트면 nano-banana text-only 모드
+        # Step A Gemini 합성도 image_parts 빈 채로 호출 가능 (text-only synthesis).
+        # 캐릭터·장소 일관성은 떨어질 수 있지만 ValueError 로 실패하는 것보다 나음.
+        logger.warning(
+            "[PreMVSceneImage] phase=phase2 no refs resolved — proceeding text-only "
+            "pre_mv_job_id=%s scene_number=%d sheet_ids=%s place_ids=%s",
+            pre_mv_job_id, scene_number, ref_sheet_ids, ref_place_ids,
         )
 
     # 최종 슬롯 채움 — 우선순위 1~4 까지는 무조건 채우고, 5는 한도 남으면 채움.
