@@ -50,10 +50,10 @@ export default function MiniPlayer() {
             usePlayerStore.getState().setPosition(status.positionMillis || 0);
             usePlayerStore.getState().setDuration(status.durationMillis || 0);
             if (status.didJustFinish) {
-              // 자동 다음곡 재생
+              // 자동 다음곡 재생 — 셔플/반복 모드 반영
               const store = usePlayerStore.getState();
-              if (store.queue.length > 0 && store.currentIndex < store.queue.length - 1) {
-                const nextIdx = store.currentIndex + 1;
+              const nextIdx = store.getNextIndex();
+              if (nextIdx >= 0 && store.queue[nextIdx]) {
                 store.playTrackAtIndex(nextIdx);
                 loadAndPlayTrack(store.queue[nextIdx]);
               } else {
@@ -71,18 +71,18 @@ export default function MiniPlayer() {
   };
 
   const handlePrev = async () => {
-    if (queue.length > 0 && currentIndex > 0) {
-      const newIndex = currentIndex - 1;
-      playTrackAtIndex(newIndex);
-      await loadAndPlayTrack(queue[newIndex]);
+    const idx = usePlayerStore.getState().getPrevIndex();
+    if (idx >= 0 && queue[idx]) {
+      playTrackAtIndex(idx);
+      await loadAndPlayTrack(queue[idx]);
     }
   };
 
   const handleNext = async () => {
-    if (queue.length > 0 && currentIndex < queue.length - 1) {
-      const newIndex = currentIndex + 1;
-      playTrackAtIndex(newIndex);
-      await loadAndPlayTrack(queue[newIndex]);
+    const idx = usePlayerStore.getState().getNextIndex();
+    if (idx >= 0 && queue[idx]) {
+      playTrackAtIndex(idx);
+      await loadAndPlayTrack(queue[idx]);
     }
   };
 
@@ -90,8 +90,10 @@ export default function MiniPlayer() {
     await cleanup();
   };
 
-  const hasPrev = queue.length > 0 && currentIndex > 0;
-  const hasNext = queue.length > 0 && currentIndex < queue.length - 1;
+  // 셔플/반복 모드면 항상 prev/next 가능 (큐만 있으면)
+  const store = usePlayerStore.getState();
+  const hasPrev = queue.length > 0 && (store.shuffle || store.repeat !== 'off' || currentIndex > 0);
+  const hasNext = queue.length > 0 && (store.shuffle || store.repeat !== 'off' || currentIndex < queue.length - 1);
   const coverImg = track.cover_image || track.cover_image_url;
   const progress = duration > 0 ? (position / duration) * 100 : 0;
 

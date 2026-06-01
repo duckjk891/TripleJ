@@ -3,6 +3,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoyaltyStore } from '../stores/royaltyStore';
 import { useFanSimulationStore } from '../stores/fanSimulationStore';
 import { useArtistStore } from '../stores/artistStore';
+import { usePlayerStore } from '../stores/playerStore';
 import {
   MIN_PAYOUT_KRW,
   PAYOUT_FEE_KRW,
@@ -15,6 +16,7 @@ import { colors } from '../theme/colors';
 
 export default function RoyaltyScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
+  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const { totalEarnedKrw, availableKrw, pendingPayoutKrw, downloadsCount } = useRoyaltyStore();
   const totalSimulatedPlays = useFanSimulationStore((s) => s.totalSimulatedPlays);
   const { totalPlays, songsReleased, level } = useArtistStore();
@@ -41,7 +43,7 @@ export default function RoyaltyScreen({ navigation }: any) {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 16 + insets.bottom }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom + (hasMiniPlayer ? 70 : 0) }}
       >
         {/* 매출 카드 */}
         <View style={styles.bigCard}>

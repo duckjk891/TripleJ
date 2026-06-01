@@ -1,5 +1,19 @@
 import { StatusBar } from 'expo-status-bar';
-import { Text, TouchableOpacity, View, Platform } from 'react-native';
+import { Text, TouchableOpacity, View, Platform, LogBox } from 'react-native';
+import * as NavigationBar from 'expo-navigation-bar';
+
+// 모바일 화면 하단에 뜨는 노란/빨간 LogBox 알림을 모두 숨김.
+// (개발 중에도 사용자 데모 시 보기 싫으니 끔. 콘솔 로그는 그대로 유지됨.)
+if (Platform.OS !== 'web') {
+  LogBox.ignoreAllLogs(true);
+}
+
+// Android 하단 시스템 네비게이션 바 색상을 앱 배경과 통일 (#0a0a1a)
+// edge-to-edge 모드에서도 동작.
+if (Platform.OS === 'android') {
+  NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
+  NavigationBar.setButtonStyleAsync('light').catch(() => {});
+}
 import { colors } from './theme/colors';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -33,6 +47,7 @@ import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
 import ArtistCodyScreen from './screens/ArtistCodyScreen';
 import ArtistDetailScreen from './screens/ArtistDetailScreen';
+import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
 
 export type StudioStackParamList = {
@@ -65,6 +80,7 @@ export type RootStackParamList = {
   Settings: undefined;
   Player: { track: any };
   ArtistDetail: { artistId: string; artistName?: string };
+  AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
   Royalty: undefined;
 };
@@ -273,6 +289,7 @@ export default function App() {
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
+            <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             <RootStack.Screen name="Royalty" component={RoyaltyScreen} />
           </RootStack.Navigator>

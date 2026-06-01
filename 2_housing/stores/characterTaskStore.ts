@@ -20,9 +20,11 @@ interface CharacterTaskState {
   userText: string | null;       // sheet 모드: 캐릭터 컨셉 텍스트
   refineRequest: string | null;  // refine 모드: 미세조정 요청
   outfitDesc: string | null;     // outfit 모드: 옷 설명
+  /** 9004: 백엔드 영구저장된 원본 사진의 MinIO object name. 옷 입히기 시 /preview로 fetch해서 generate-sheet에 첨부 */
+  originalPhotoObjectName: string | null;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -42,6 +44,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   userText: null,
   refineRequest: null,
   outfitDesc: null,
+  originalPhotoObjectName: null,
 
   startTask: (mode) =>
     set({
@@ -71,5 +74,6 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       userText: null,
       refineRequest: null,
       outfitDesc: null,
+      originalPhotoObjectName: null,
     }),
 }));

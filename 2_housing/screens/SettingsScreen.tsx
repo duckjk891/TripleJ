@@ -326,7 +326,7 @@ export default function SettingsScreen({ navigation }: any) {
               maxLength={20}
             />
             <Text style={styles.helperText}>
-              PANN에서는 기획사명과 호칭으로 불러드려요. 나중에 설정에서 변경할 수 있어요.
+              AIDOL에서는 기획사명과 호칭으로 불러드려요. 나중에 설정에서 변경할 수 있어요.
             </Text>
           </>
         )}

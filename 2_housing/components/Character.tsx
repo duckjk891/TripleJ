@@ -86,10 +86,11 @@ export default function Character({
         transform: [{ translateX: offsetX }, { translateY: offsetY }],
       }}
     >
-      {/* 캐릭터 아래 네임 라벨 (작은 둥근 테두리 박스) */}
+      {/* 캐릭터 아래 네임 라벨 — 클릭 가능 (디렉터명 탭해도 대화 트리거) */}
       {name && (
-        <View
-          pointerEvents="none"
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={onPress}
           style={{
             position: 'absolute',
             top: 64 * spriteScale + 2,
@@ -104,7 +105,7 @@ export default function Character({
               {name}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
       )}
       <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
         <SpriteAnimator

@@ -21,6 +21,7 @@ import { useGemsStore } from '../stores/gemsStore';
 import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
+import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
@@ -228,7 +229,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
   }, []);
 
   return (
-    <View style={styles.container}>
+    <AppScreenLayout scroll={false} insideTab avoidMiniPlayer={false}>
       <View style={styles.content}>
         <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
           <View style={styles.portraitContainer}>
@@ -290,7 +291,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           </Text>
         </View>
       </View>
-    </View>
+    </AppScreenLayout>
   );
 }
 

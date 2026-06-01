@@ -27,5 +27,22 @@ Gemini_Generated_Image_*
 스크린샷*
 image (1).png
 image (2).png
+image (3).png
+image (4).png
 Gemini_Generated_Image_*
 package-lock.json
+
+# 부모 디렉토리 자료 (EAS가 git root에서 자료를 끌어올 경우 대비)
+# `에셋/`(1GB)이 EAS upload에 포함되면 619MB+ 됨
+../에셋/
+../0_platform/
+../0_platform_music/
+../1_oneCompany/
+
+# 빌드 산출물 / 임시 캐시
+ios/build/
+android/build/
+android/.gradle/
+android/app/build/
+*.log
+*.tmp

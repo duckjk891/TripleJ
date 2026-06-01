@@ -63,6 +63,10 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   const [selectedTrack, setSelectedTrack] = useState<MyTrack | null>(null);
   const [styleInput, setStyleInput] = useState('');
   const [trackLoading, setTrackLoading] = useState(!hasPendingGeneration);
+  // 9004: 커버에 아티스트(캐릭터 시트) 포함 여부 + 백엔드가 받는 object_name
+  const [includeArtist, setIncludeArtist] = useState<boolean | null>(null);
+  const [characterObjectName, setCharacterObjectName] = useState<string | null>(null);
+  const [hasMyCharacter, setHasMyCharacter] = useState<boolean | null>(null);
 
   // 로딩/결과 관련
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
@@ -125,18 +129,32 @@ export default function CoverGenerationScreen({ navigation }: Props) {
         mood = trackRes.data?.mood?.[0] || '';
       } catch {}
 
-      const res = await api.post('/upload/generate-cover', {
+      const payload = {
         title: title || '새로운 곡',
         genre: genre || undefined,
         mood: mood || undefined,
         style: style || undefined,
         user_prompt: style || undefined,
-        // character_object_name 미전송 (캐릭터 시트 없음 디폴트)
+        // 9004: 아티스트 포함 선택 시에만 캐릭터 시트 object_name 전송
+        character_object_name: includeArtist && characterObjectName ? characterObjectName : undefined,
+        image_model: 'gpt_image_2',
+      };
+      console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
+      const t0 = Date.now();
+      const res = await api.post('/upload/generate-cover', payload, {
+        timeout: 600000, // GPT Image 2는 캐릭터 ref 포함 시 5분 이상 걸리기도 함 → 10분
       });
+      console.log('[Cover] generate-cover OK', Date.now() - t0, 'ms');
       setCoverImageUrl(`${BACKEND_BASE_URL}${res.data.image_url}`);
       setCoverObjectName(res.data.object_name);
       setMode('result');
     } catch (err: any) {
+      console.warn('[Cover] generate-cover FAIL', {
+        message: err?.message,
+        code: err?.code,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
       setErrorMsg(err?.response?.data?.error || err?.message || '커버 생성에 실패했습니다.');
       setMode('result');
     } finally {
@@ -146,15 +164,59 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     }
   };
 
-  // 대화: 곡 선택
-  const handleTrackSelect = (track: MyTrack) => {
+  // 대화: 곡 선택 → 캐릭터 시트 보유 여부 확인
+  const handleTrackSelect = async (track: MyTrack) => {
     setSelectedTrack(track);
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: `"${track.title}"` },
-      { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌을 설명해주세요.' },
     ]);
-    setStep(1);
+
+    // 9004: /character/me 조회. 캐릭터 시트 있으면 "아티스트 포함?" 질문, 없으면 바로 스타일로
+    try {
+      const res = await api.get('/character/me');
+      const ch = res.data?.character;
+      if (ch?.sheet_object_name) {
+        setCharacterObjectName(ch.sheet_object_name);
+        setHasMyCharacter(true);
+        setChatHistory((prev) => [
+          ...prev,
+          { type: 'director', text: '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?' },
+        ]);
+        setStep(1); // 아티스트 포함 여부 단계
+      } else {
+        setHasMyCharacter(false);
+        setChatHistory((prev) => [
+          ...prev,
+          { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌을 설명해주세요.' },
+        ]);
+        setStep(2); // 스타일로 바로
+      }
+    } catch (err) {
+      console.warn('[Cover] /character/me 조회 실패, 캐릭터 없이 진행:', err);
+      setHasMyCharacter(false);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌을 설명해주세요.' },
+      ]);
+      setStep(2);
+    }
+  };
+
+  // 대화: 아티스트 포함 여부 선택 → 스타일 단계로
+  const handleArtistChoice = (include: boolean) => {
+    setIncludeArtist(include);
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: include ? '아티스트 포함' : '아티스트 빼고' },
+      {
+        type: 'director',
+        text: include
+          ? '좋아요! 아티스트가 들어간 커버로 만들게요. 원하시는 느낌이나 스타일을 설명해주세요.'
+          : '알겠습니다. 원하시는 커버 이미지의 느낌을 설명해주세요.',
+      },
+    ]);
+    setStep(2);
   };
 
   // 대화: 스타일 확인 → 대기번호
@@ -201,7 +263,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     setErrorMsg(null);
     setStyleInput('');
     setMode('dialogue');
-    setStep(1); // 스타일 선택으로
+    setStep(2); // 스타일 선택으로 (아티스트 포함 여부는 이전 선택 유지)
     setChatHistory([
       { type: 'director', text: '원하시는 커버 이미지의 느낌을 다시 설명해주세요.' },
     ]);
@@ -349,6 +411,22 @@ export default function CoverGenerationScreen({ navigation }: Props) {
             </ScrollView>
           )
         ) : step === 1 ? (
+          // 9004: 아티스트 포함 여부 선택 (캐릭터 시트 있을 때만 보임)
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity
+              style={[styles.chip, styles.choiceChip]}
+              onPress={() => handleArtistChoice(true)}
+            >
+              <Text style={styles.choiceChipText}>네, 아티스트 포함</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.chip, styles.choiceChip, styles.choiceChipAlt]}
+              onPress={() => handleArtistChoice(false)}
+            >
+              <Text style={styles.choiceChipTextAlt}>아니요, 빼고</Text>
+            </TouchableOpacity>
+          </View>
+        ) : step === 2 ? (
           <>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
               {STYLE_OPTIONS.map((s) => (
@@ -422,6 +500,14 @@ const styles = StyleSheet.create({
   chip: { backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, marginRight: 8 },
   chipSelected: { backgroundColor: colors.accent.primary, borderColor: colors.accent.primary },
   chipText: { color: colors.text.secondary, fontSize: 14 },
+  choiceChip: {
+    flex: 1, paddingVertical: 12, paddingHorizontal: 12,
+    backgroundColor: colors.accent.primary, borderColor: colors.accent.primary,
+    alignItems: 'center', marginRight: 0,
+  },
+  choiceChipText: { color: colors.text.primary, fontSize: 14, fontWeight: '700' },
+  choiceChipAlt: { backgroundColor: colors.bg.surface2, borderColor: colors.border.subtle },
+  choiceChipTextAlt: { color: colors.text.secondary, fontSize: 14, fontWeight: '600' },
   chipTextSelected: { color: colors.text.primary, fontWeight: 'bold' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   textInput: { flex: 1, backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, color: colors.text.primary, fontSize: 14 },

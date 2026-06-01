@@ -17,7 +17,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
-import { useTimerStore } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
@@ -274,40 +273,28 @@ export default function ArtistInputScreen({ navigation }: any) {
     }
   };
 
-  // ── 만들기 시작 → 작사·작곡 패턴: 즉시 Map 복귀 (timerStore 큐 진행) ─────
+  // ── 컨셉 입력 완료 → 옷 선택 화면으로 ─────
+  // (기본 착장 프롬프트 제거. 옷은 ArtistCody에서 선택, 미선택 시 디폴트 fallback)
   const handleStartGeneration = (answers: StyleAnswers) => {
     if (!photoUri) {
       Alert.alert('오류', '사진을 먼저 올려주세요.');
       return;
     }
     const userInput = buildFinalText(answers);
-    // 베이스 의상: 코디 변경이 잘 되도록 "fitted한 옷(레깅스/스판)" 절대 금지.
-    // 악세서리/장신구도 일체 착용 안 함 (나중에 코디로 추가 가능).
-    const baseAttire =
-      '캐릭터 시트 형태. 베이스 의상은 단순한 흰색 라운드넥 반팔 면 티셔츠와 무릎 살짝 위 길이의 회색 단순 면반바지(루즈핏, 스판/레깅스/타이츠/스키니 절대 금지). 신발은 맨발. ' +
-      '악세서리/장신구는 일체 착용하지 않음 — 모자, 안경, 선글라스, 헤어밴드, 헤어핀, 목걸이, 귀걸이, 피어싱, 팔찌, 반지, 시계, 가방, 스카프, 넥타이, 벨트 등 어떤 것도 그리지 마세요. 깔끔한 맨얼굴/맨손/맨목 상태.';
-    const finalText = userInput ? `${baseAttire} 컨셉: ${userInput}` : baseAttire;
+    // 캐릭터 컨셉 텍스트만 저장. 의상은 다음 화면에서 결정.
+    const conceptText = userInput || '특별한 컨셉 없음 — 자연스러운 느낌으로';
 
-    pushDirector('좋아요! 만들어볼게요. 작업실에서 진행 상황을 확인하실 수 있어요!');
+    pushDirector('좋아요! 이제 어떤 옷을 입혀줄지 골라볼까요?');
 
     // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
     useOutfitStore.getState().clear();
+    // photoUri + 컨셉만 저장. API 호출은 옷 선택 후 ArtistLoading에서.
+    taskStore.setInput({ photoUri, photoName, userText: conceptText });
 
-    // characterTaskStore에 컨텍스트 저장 (API는 큐 0 도달 후 ArtistLoading에서 호출)
-    taskStore.setInput({ photoUri, photoName, userText: finalText });
-    taskStore.startTask('sheet');
-    // timerStore에 작업 등록 → MapScreen 캐릭터 위 단계 시각화 시작
-    useTimerStore.getState().startTask('artist' as any, '아티스트', 'artist');
-
-    // 1.5초 후 작업실(Map)로 복귀 — 작사/작곡과 동일 패턴
     setTimeout(() => {
-      // popToTop이 안 되는 경우(예: web에서 첫 화면) 안전하게 Map으로
-      if (navigation.canGoBack()) {
-        navigation.popToTop();
-      } else {
-        navigation.navigate('Map');
-      }
-    }, 1500);
+      // 옷 선택 화면으로. mode='sheet' 전달 → ArtistCody가 초기 생성 분기로 동작.
+      navigation.replace('ArtistCody', { mode: 'sheet' });
+    }, 1000);
   };
 
   if (!user) {
@@ -576,8 +563,11 @@ const styles = StyleSheet.create({
   },
   skipBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
   applyBtn: {
-    flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center',
+    flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
     backgroundColor: colors.accent.primary,
   },
-  applyBtnText: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
+  applyBtnText: {
+    color: colors.text.primary, fontSize: 13, fontWeight: '700',
+    lineHeight: 18,
+  },
 });

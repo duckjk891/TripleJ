@@ -130,16 +130,21 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
 
   // Step 0: Title confirm → step 1(가사 확인)
+  // 편집한 제목을 lyricsStore에 반영 (이걸 안 하면 MyMusic / LyricsResult에서 원본만 보임)
   const handleTitleConfirm = () => {
+    lyricsStore.setGeneratedTitle(editedTitle.trim());
     advanceStep(`제목: ${editedTitle || '(없음)'}`, 1);
   };
 
   // Step 1: Lyrics confirm → step 2(장르/분위기/스타일 안내, 자동)
+  // 편집한 가사를 lyricsStore와 musicStore 양쪽에 즉시 반영
   const handleLyricsConfirm = () => {
     if (!editedLyrics.trim()) {
       Alert.alert('알림', '가사를 입력해주세요.');
       return;
     }
+    lyricsStore.setGeneratedLyrics(editedLyrics.trim());
+    musicStore.setLyrics(editedLyrics.trim());
     const preview = editedLyrics.trim().split('\n').slice(0, 2).join(' ');
     const displayText = preview.length > 40 ? preview.substring(0, 40) + '...' : preview;
 

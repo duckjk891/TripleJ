@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "TripleJ Studio",
+    "name": "AIDOL",
     "slug": "triplej-studio",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,7 +16,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.triplej.studio",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
@@ -43,7 +46,18 @@
         {
           "ios": {
             "useFrameworks": "static"
+          },
+          "android": {
+            "usesCleartextTraffic": true
           }
+        }
+      ],
+      [
+        "expo-navigation-bar",
+        {
+          "backgroundColor": "#0a0a1a",
+          "borderColor": "#0a0a1a",
+          "buttonStyle": "light"
         }
       ]
     ],

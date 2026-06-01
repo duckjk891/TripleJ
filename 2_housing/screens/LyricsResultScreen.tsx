@@ -14,6 +14,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
@@ -23,6 +24,7 @@ type Props = NativeStackScreenProps<any, 'LyricsResult'>;
 export default function LyricsResultScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const store = useLyricsStore();
+  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const musicStore = useMusicStore();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isEditingLyrics, setIsEditingLyrics] = useState(false);
@@ -54,7 +56,10 @@ export default function LyricsResultScreen({ navigation }: Props) {
     >
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: insets.top + 16, paddingBottom: 32 + (hasMiniPlayer ? 70 : 0) + insets.bottom },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Director message */}

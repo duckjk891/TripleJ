@@ -10,8 +10,12 @@ import {
   Alert,
   Platform,
 } from 'react-native';
+// expo-file-system v19+ : 신 API에서는 cacheDirectory/downloadAsync가 빠짐 → legacy 사용
+import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/characterTaskStore';
+import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
+import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
@@ -39,6 +43,31 @@ async function appendFileToForm(form: FormData, field: string, uri: string, name
 function inferMimeType(filename: string): string {
   const ext = (filename.split('.').pop() || 'jpg').toLowerCase();
   return `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+}
+
+// 9004: 백엔드 MinIO에 영구 저장된 이미지(object_name)를 fetch해서 form에 첨부.
+// web은 Blob/File, RN은 expo-file-system으로 로컬 캐시에 다운로드 후 file:// uri 첨부.
+async function appendMinioImageToForm(
+  form: FormData,
+  field: string,
+  objectName: string,
+) {
+  const url = `${BACKEND_BASE_URL}/api/character/preview/${objectName}`;
+  const ext = (objectName.split('.').pop() || 'jpg').toLowerCase();
+  const name = `${field}.${ext}`;
+  const mime = inferMimeType(name);
+
+  if (Platform.OS === 'web') {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`fetch ${objectName} 실패: ${r.status}`);
+    const blob = await r.blob();
+    const file = new File([blob], name, { type: blob.type || mime });
+    form.append(field, file);
+  } else {
+    const localPath = `${FileSystem.cacheDirectory}${field}-${Date.now()}.${ext}`;
+    const dl = await FileSystem.downloadAsync(url, localPath);
+    form.append(field, { uri: dl.uri, name, type: mime } as any);
+  }
 }
 
 // API 처리 중 표시되는 로딩 단계 (맵 팝업의 컨셉 단계와 의도적으로 다름)
@@ -90,43 +119,167 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         const photoName = taskStore.photoName;
 
         if (mode === 'sheet') {
+          // ── 신규 캐릭터 시트 생성 (옷까지 함께 입혀서 한 번에) ──
           if (!photoUri) throw new Error('사진이 없습니다.');
           const form = new FormData();
           const nameFromUri = photoName || (photoUri.split('/').pop() ?? 'photo.jpg');
-          await appendFileToForm(form, 'file', photoUri, nameFromUri, inferMimeType(nameFromUri));
+          const mime = inferMimeType(nameFromUri);
+          await appendFileToForm(form, 'file', photoUri, nameFromUri, mime);
+
+          // 9004 신규 흐름: ArtistCody에서 선택한 옷을 photo와 함께 첨부 → 옷 정확도 ↑
+          const items: AppliedItem[] = useOutfitStore.getState().items;
+          const topItem = items.find((it) => it.cat === '상의' && it.imageObjectName);
+          const bottomItem = items.find((it) => it.cat === '하의' && it.imageObjectName);
+          const shoesItem = items.find((it) => it.cat === '신발' && it.imageObjectName);
+          if (topItem?.imageObjectName) {
+            await appendMinioImageToForm(form, 'top_image', topItem.imageObjectName);
+          }
+          if (bottomItem?.imageObjectName) {
+            await appendMinioImageToForm(form, 'bottom_image', bottomItem.imageObjectName);
+          }
+          if (shoesItem?.imageObjectName) {
+            await appendMinioImageToForm(form, 'shoes_image', shoesItem.imageObjectName);
+          }
+
           form.append('user_text', taskStore.userText || '');
-          // web에서는 Content-Type 헤더 빼야 boundary 자동 추가됨
+          form.append('image_model', 'gpt_image_2');
           const res = await api.post('/character/generate-sheet', form, {
-            headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
-            timeout: 180000,
+            // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
+            headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
+            timeout: 600000,
           });
           if (cancelled) return;
-          // 첫 시트는 자동 저장 (UX: "저장" 버튼 깜빡 잊고 나가도 캐릭터 영구 보존)
+
+          // 9004: 원본 사진을 영구 위치에 업로드 (이후 옷 갈아입기 시 재사용)
+          let originalObjectName: string | null = null;
           try {
-            await api.post('/character/save', { sheet_object_name: res.data.object_name });
+            const photoForm = new FormData();
+            await appendFileToForm(photoForm, 'file', photoUri, nameFromUri, mime);
+            const upRes = await api.post('/character/upload-original-photo', photoForm, {
+              // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
+              headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
+              timeout: 60000,
+            });
+            originalObjectName = upRes.data?.object_name || null;
+          } catch (uploadErr) {
+            console.warn('[Artist] upload-original-photo 실패:', uploadErr);
+          }
+          if (cancelled) return;
+
+          // 첫 시트 자동 저장 + used_items + original_photo_object_name 영속화
+          const usedItems = items
+            .filter((it) => it.imageObjectName)
+            .map((it) => ({
+              name: it.name,
+              image_object_name: it.imageObjectName,
+              product_url: it.productUrl,
+              category: it.cat,
+            }));
+          try {
+            const saveBody: any = {
+              sheet_object_name: res.data.object_name,
+              used_items: usedItems,
+            };
+            if (originalObjectName) saveBody.original_photo_object_name = originalObjectName;
+            await api.post('/character/save', saveBody);
           } catch (saveErr) {
             console.warn('[Artist] auto-save sheet failed:', saveErr);
           }
           if (cancelled) return;
+
           taskStore.completeApi({
             preview_url: characterPreviewUrl(res.data.preview_url),
             object_name: res.data.object_name,
           });
-          // 자동 저장됐으니 mode null → ArtistResult에서 "저장" 버튼 안 보이고 "꾸미기"만
+          if (originalObjectName) {
+            taskStore.setInput({ originalPhotoObjectName: originalObjectName });
+          }
+          taskStore.clearMode();
+          navigation.replace('ArtistResult');
+        } else if (mode === 'outfit') {
+          // ── 9004 옷 입히기 = refine 폐기, generate-sheet 재호출 ──
+          // photo는 백엔드 영구 저장본 + 옷 이미지는 코디 선택분(MinIO object_name)에서 fetch
+          //  → 텍스트로만 묘사하지 않고 실제 이미지를 모델에 첨부 → 옷 정확도 ↑
+
+          // 1) originalPhotoObjectName 확보 (store 캐시 우선, 없으면 /me)
+          let origObjectName = taskStore.originalPhotoObjectName;
+          if (!origObjectName) {
+            try {
+              const meRes = await api.get('/character/me');
+              origObjectName = meRes.data?.character?.original_photo_object_name || null;
+              if (origObjectName) {
+                taskStore.setInput({ originalPhotoObjectName: origObjectName });
+              }
+            } catch (meErr) {
+              console.warn('[Artist] /me 조회 실패:', meErr);
+            }
+          }
+          if (!origObjectName) {
+            throw new Error('원본 사진이 없어요. 캐릭터를 다시 만들어주세요.');
+          }
+
+          // 2) 코디에서 선택한 아이템 (cat별 첫 번째만 사용 — 백엔드는 카테고리당 1개)
+          const items: AppliedItem[] = useOutfitStore.getState().items;
+          const topItem = items.find((it) => it.cat === '상의' && it.imageObjectName);
+          const bottomItem = items.find((it) => it.cat === '하의' && it.imageObjectName);
+          const shoesItem = items.find((it) => it.cat === '신발' && it.imageObjectName);
+
+          // 3) FormData 구성: photo + cat별 옷 이미지
+          const form = new FormData();
+          await appendMinioImageToForm(form, 'file', origObjectName);
+          if (topItem?.imageObjectName) {
+            await appendMinioImageToForm(form, 'top_image', topItem.imageObjectName);
+          }
+          if (bottomItem?.imageObjectName) {
+            await appendMinioImageToForm(form, 'bottom_image', bottomItem.imageObjectName);
+          }
+          if (shoesItem?.imageObjectName) {
+            await appendMinioImageToForm(form, 'shoes_image', shoesItem.imageObjectName);
+          }
+          form.append('user_text', taskStore.outfitDesc || '');
+          form.append('image_model', 'gpt_image_2');
+
+          const res = await api.post('/character/generate-sheet', form, {
+            // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
+            headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
+            timeout: 600000,
+          });
+          if (cancelled) return;
+
+          // 4) used_items 영구 저장 (UsedItemPayload 형식)
+          const usedItems = items
+            .filter((it) => it.imageObjectName)
+            .map((it) => ({
+              name: it.name,
+              image_object_name: it.imageObjectName,
+              product_url: it.productUrl,
+              category: it.cat,
+            }));
+          try {
+            await api.post('/character/save', {
+              sheet_object_name: res.data.object_name,
+              used_items: usedItems,
+            });
+          } catch (saveErr) {
+            console.warn('[Artist] auto-save outfit failed:', saveErr);
+          }
+          if (cancelled) return;
+
+          taskStore.completeApi({
+            preview_url: characterPreviewUrl(res.data.preview_url),
+            object_name: res.data.object_name,
+          });
           taskStore.clearMode();
           navigation.replace('ArtistResult');
         } else {
-          // refine / outfit — /character/refine
+          // ── refine: 얼굴/체형 미세조정 (옷 입히기 아님). 기존 /character/refine 흐름 유지 ──
           const currentSheetUrl = taskStore.apiResult?.preview_url || null;
           if (!currentSheetUrl) {
             throw new Error('현재 캐릭터 시트를 찾을 수 없어요. 다시 시도해주세요.');
           }
-          const reqText = mode === 'refine'
-            ? (taskStore.refineRequest || '')
-            : (taskStore.outfitDesc || '');
+          const reqText = taskStore.refineRequest || '';
           if (!reqText) throw new Error('요청 내용이 비어있습니다.');
 
-          // photoUri 없으면 (마이뮤직 진입 후 outfit/refine) 시트 자체를 photo로 사용 — 시트에 얼굴이 포함됨
           const effectivePhotoUri = photoUri || currentSheetUrl;
           const effectivePhotoName = photoName || 'sheet.png';
 
@@ -135,10 +288,12 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           const photoNameOut = effectivePhotoName || (effectivePhotoUri.split('/').pop() ?? 'photo.jpg');
           await appendFileToForm(form, 'photo', effectivePhotoUri, photoNameOut, inferMimeType(photoNameOut));
           form.append('refine_request', reqText);
+          form.append('image_model', 'gpt_image_2');
 
           const res = await api.post('/character/refine', form, {
-            headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
-            timeout: 240000,
+            // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
+            headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
+            timeout: 600000,
           });
           if (cancelled) return;
           taskStore.completeApi({
@@ -151,11 +306,16 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         if (cancelled) return;
         // 백엔드 상세 에러 출력 (422의 경우 detail에 어떤 field가 missing인지 들어있음)
         console.warn('[ArtistLoading] API error:', {
+          mode,
           status: err?.response?.status,
           data: err?.response?.data,
           message: err?.message,
         });
         const detail = err.response?.data?.detail;
+        // 422 detail은 보통 [{loc, msg, type}] 배열. 펼쳐서 명시적으로 stringify.
+        if (Array.isArray(detail)) {
+          console.warn('[ArtistLoading] 422 detail (펼침):', JSON.stringify(detail, null, 2));
+        }
         const detailStr = Array.isArray(detail)
           ? detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join('; ')
           : typeof detail === 'string' ? detail : null;
@@ -195,7 +355,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
   const currentStage = stages[messageIndex] || stages[0];
 
   return (
-    <View style={styles.container}>
+    <AppScreenLayout scroll={false} insideTab avoidMiniPlayer={false}>
       <View style={styles.content}>
         <Animated.View style={[styles.portraitContainer, { transform: [{ scale: pulseAnim }] }]}>
           <Image source={ARTIST_PORTRAIT} style={styles.portraitImage} />
@@ -243,7 +403,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           </Text>
         </View>
       </View>
-    </View>
+    </AppScreenLayout>
   );
 }
 

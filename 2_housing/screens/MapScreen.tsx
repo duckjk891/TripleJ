@@ -109,11 +109,12 @@ const DIRECTORS = [
 // 캐릭터 위에 뜨는 상태 티켓 — 외부 가로폭도 글자 길이에 따라 유동적
 // (onLayout으로 측정 → translateX -width/2로 캐릭터 정중앙 정렬)
 function DirectorTicket({
-  d, task, mapScale,
+  d, task, mapScale, onPress,
 }: {
   d: { type: DirectorType; x: number; y: number };
   task: any;
   mapScale: number;
+  onPress?: () => void;
 }) {
   const [w, setW] = useState(0);
 
@@ -135,7 +136,10 @@ function DirectorTicket({
   const notchColor = isDone ? '#059669' : '#4338ca';
 
   return (
-    <View
+    <TouchableOpacity
+      activeOpacity={onPress ? 0.7 : 1}
+      onPress={onPress}
+      disabled={!onPress}
       style={{
         position: 'absolute',
         left: d.x * mapScale,
@@ -143,7 +147,7 @@ function DirectorTicket({
         zIndex: 20,
         alignItems: 'center',
         transform: [{ translateX: -w / 2 }],
-        opacity: w > 0 ? 1 : 0, // 측정 전엔 깜빡임 방지로 숨김
+        opacity: w > 0 ? 1 : 0,
       }}
       onLayout={(e) => setW(e.nativeEvent.layout.width)}
     >
@@ -192,7 +196,7 @@ function DirectorTicket({
           borderTopColor: notchColor,
         }}
       />
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -553,14 +557,15 @@ export default function MapScreen({ navigation }: Props) {
                     }}
                   />
                 )}
-                {/* "클릭해서 작업 시작!" 배지 — 펄스 위쪽 */}
+                {/* "클릭해서 작업 시작!" 배지 — 펄스 위쪽 (클릭 가능) */}
                 {isNext && (
-                  <View
-                    pointerEvents="none"
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => handleDirectorPress(d.type)}
                     style={{
                       position: 'absolute',
                       left: d.x * mapScale - 140,
-                      top: (d.y - 70) * mapScale - 40, // 펄스 상단(d.y-70)보다 40px 위
+                      top: (d.y - 70) * mapScale - 40,
                       width: 280,
                       alignItems: 'center',
                       zIndex: 26,
@@ -571,7 +576,7 @@ export default function MapScreen({ navigation }: Props) {
                         ▸ 클릭해서 작업 시작!
                       </Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 )}
                 <Character
                   type={d.type}
@@ -581,8 +586,15 @@ export default function MapScreen({ navigation }: Props) {
                   onPress={() => handleDirectorPress(d.type)}
                   name={user ? DIRECTOR_NAMES[d.type] : undefined}
                 />
-                {/* Queue status above director - 유동 너비 ticket */}
-                {task && <DirectorTicket d={d} task={task} mapScale={mapScale} />}
+                {/* Queue status above director - 유동 너비 ticket (탭하면 디렉터 클릭과 동일) */}
+                {task && (
+                  <DirectorTicket
+                    d={d}
+                    task={task}
+                    mapScale={mapScale}
+                    onPress={() => handleDirectorPress(d.type)}
+                  />
+                )}
               </View>
             );
           })}

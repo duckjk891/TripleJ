@@ -14,6 +14,7 @@ import { useDirectorsStore } from '../stores/directorsStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { useAuthStore } from '../stores/authStore';
+import { usePlayerStore } from '../stores/playerStore';
 import type { DirectorType } from '../components/Character';
 import { colors } from '../theme/colors';
 
@@ -37,6 +38,7 @@ const CATEGORY_LABEL: Record<DirectorType, string> = {
 
 export default function DirectorLineupScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
+  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const { user } = useAuthStore();
   const { balance } = useGemsStore();
   const { hiredIds, hire, isHired, selectForCategory, selectedByCategory, initIfEmpty } =
@@ -118,7 +120,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 + insets.bottom + (hasMiniPlayer ? 70 : 0) }}>
         <Text style={styles.subTitle}>
           영입한 {hiredIds.length}명 / 전체 {DIRECTOR_CATALOG.length}명
         </Text>

@@ -28,7 +28,7 @@ done
 echo "[1/3] 기존 expo / metro 프로세스 종료 중..."
 pkill -f "expo start" 2>/dev/null || true
 pkill -f "metro" 2>/dev/null || true
-pkill -f "caffeinate -i env REACT_NATIVE_PACKAGER_HOSTNAME" 2>/dev/null || true
+pkill -f "caffeinate -dimsu env REACT_NATIVE_PACKAGER_HOSTNAME" 2>/dev/null || true
 # 포트 점유 정리 (8081, 19000~19002)
 for port in 8081 19000 19001 19002; do
   lsof -ti tcp:$port 2>/dev/null | xargs kill -9 2>/dev/null || true
@@ -61,7 +61,7 @@ if [ "$USE_WEB" = "1" ]; then
   echo "      (종료: Ctrl+C)"
   echo ""
   # Metro가 모든 인터페이스(0.0.0.0)에서 listen하도록 EXPO_PACKAGER_HOSTNAME 함께 지정
-  exec caffeinate -i env \
+  exec caffeinate -dimsu env \
     REACT_NATIVE_PACKAGER_HOSTNAME="$PACKAGER_HOST" \
     EXPO_PACKAGER_HOSTNAME="$PACKAGER_HOST" \
     npx expo start --web --host lan $CLEAN
@@ -69,5 +69,5 @@ else
   echo "[3/3] expo start 실행..."
   echo "      (종료: Ctrl+C)"
   echo ""
-  exec caffeinate -i env REACT_NATIVE_PACKAGER_HOSTNAME="$PACKAGER_HOST" npx expo start $CLEAN
+  exec caffeinate -dimsu env REACT_NATIVE_PACKAGER_HOSTNAME="$PACKAGER_HOST" npx expo start $CLEAN
 fi

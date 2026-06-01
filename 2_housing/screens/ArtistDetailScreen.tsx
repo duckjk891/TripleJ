@@ -131,7 +131,11 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.container}>
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 32 + insets.bottom + (playerStore.track ? 70 : 0) }}
+      >
         {/* 헤더: 그라데이션 + 프로필 */}
         <LinearGradient
           colors={['#4c1d95', '#2a1758', colors.bg.deepest]}

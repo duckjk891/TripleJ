@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Character, { DirectorType } from '../components/Character';
+import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
 // AdMob Rewarded Ad
@@ -56,6 +57,10 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
   const [remainingSeconds, setRemainingSeconds] = useState(INITIAL_SECONDS);
   const [isWatchingAd, setIsWatchingAd] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  // 광고 pre-load — 화면 mount 시 미리 받아두면 사용자 클릭 시 즉시 show
+  const preloadedAdRef = useRef<any>(null);
+  const preloadedAdReadyRef = useRef(false);
+  const adUnsubsRef = useRef<Array<() => void>>([]);
 
   // Countdown timer
   useEffect(() => {
@@ -74,6 +79,31 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
       });
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // 광고 pre-load — 화면 진입 시 백그라운드로 load
+  useEffect(() => {
+    if (!RewardedAd) return;
+    try {
+      const rewarded = RewardedAd.createForAdRequest(adUnitId);
+      preloadedAdRef.current = rewarded;
+      const unsubLoaded = rewarded.addAdEventListener(
+        RewardedAdEventType.LOADED,
+        () => {
+          preloadedAdReadyRef.current = true;
+        }
+      );
+      adUnsubsRef.current.push(unsubLoaded);
+      rewarded.load();
+    } catch (e) {
+      console.warn('[Ad] preload 실패:', e);
+    }
+    return () => {
+      adUnsubsRef.current.forEach((un) => { try { un(); } catch {} });
+      adUnsubsRef.current = [];
+      preloadedAdRef.current = null;
+      preloadedAdReadyRef.current = false;
+    };
   }, []);
 
   // Pulse animation for the ad button
@@ -124,60 +154,85 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
   const handleWatchAd = async () => {
     setIsWatchingAd(true);
 
-    // 실제 AdMob 사용 가능한 경우
     if (RewardedAd) {
       try {
-        const rewarded = RewardedAd.createForAdRequest(adUnitId);
+        // pre-load된 광고가 ready면 즉시 show, 아니면 fallback으로 새 load
+        const rewarded = preloadedAdReadyRef.current && preloadedAdRef.current
+          ? preloadedAdRef.current
+          : RewardedAd.createForAdRequest(adUnitId);
 
-        const unsubLoaded = rewarded.addAdEventListener(
-          RewardedAdEventType.LOADED,
-          () => {
-            rewarded.show();
-          }
-        );
-
+        let earned = false;
         const unsubEarned = rewarded.addAdEventListener(
           RewardedAdEventType.EARNED_REWARD,
           () => {
+            earned = true;
             applyReward();
-            unsubLoaded();
-            unsubEarned();
+          }
+        );
+        const unsubClosed = rewarded.addAdEventListener(
+          'closed',
+          () => {
+            try { unsubEarned(); } catch {}
+            try { unsubClosed(); } catch {}
             setIsWatchingAd(false);
+            preloadedAdReadyRef.current = false;
+            preloadedAdRef.current = null;
+            // 다음 광고 pre-load 시작
+            try {
+              const next = RewardedAd.createForAdRequest(adUnitId);
+              preloadedAdRef.current = next;
+              const unsubNext = next.addAdEventListener(
+                RewardedAdEventType.LOADED,
+                () => { preloadedAdReadyRef.current = true; }
+              );
+              adUnsubsRef.current.push(unsubNext);
+              next.load();
+            } catch {}
           }
         );
 
-        rewarded.load();
-
-        // 타임아웃 (10초 내 로드 안되면 실패)
-        setTimeout(() => {
-          if (isWatchingAd) {
-            unsubLoaded();
-            unsubEarned();
-            setIsWatchingAd(false);
-            Alert.alert('오류', '광고를 불러올 수 없습니다. 다시 시도해주세요.');
-          }
-        }, 10000);
+        if (preloadedAdReadyRef.current) {
+          // 이미 로드 완료 → 즉시 show
+          rewarded.show();
+        } else {
+          // 로드 안 됐으면 load 후 자동 show
+          const unsubLoaded = rewarded.addAdEventListener(
+            RewardedAdEventType.LOADED,
+            () => {
+              rewarded.show();
+              try { unsubLoaded(); } catch {}
+            }
+          );
+          rewarded.load();
+          // 10초 내 로드 안되면 실패
+          setTimeout(() => {
+            if (!earned && isWatchingAd) {
+              try { unsubLoaded(); } catch {}
+              setIsWatchingAd(false);
+              Alert.alert('오류', '광고를 불러올 수 없습니다. 다시 시도해주세요.');
+            }
+          }, 10000);
+        }
       } catch {
         setIsWatchingAd(false);
         Alert.alert('오류', '광고를 불러올 수 없습니다.');
       }
     } else {
-      // Mock: Expo Go에서는 3초 대기 후 보상 지급
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        applyReward();
-      } catch {
-        Alert.alert('오류', '광고를 불러올 수 없습니다.');
-      } finally {
-        setIsWatchingAd(false);
-      }
+      // Mock (Expo Go) — 3초 대기 제거, 즉시 보상
+      applyReward();
+      setIsWatchingAd(false);
     }
   };
 
   const portrait = PORTRAITS[directorType];
 
   return (
-    <View style={styles.container}>
+    <AppScreenLayout
+      scroll={false}
+      insideTab
+      avoidMiniPlayer={false}
+      contentStyle={styles.container}
+    >
       {/* Director character (2D sprite) */}
       <View style={styles.spriteContainer}>
         <Character type={directorType} x={0} y={0} mapScale={2} />
@@ -225,7 +280,7 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
       >
         <Text style={styles.skipButtonText}>건너뛰기 (테스트용)</Text>
       </TouchableOpacity>
-    </View>
+    </AppScreenLayout>
   );
 }
 

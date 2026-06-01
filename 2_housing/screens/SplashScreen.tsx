@@ -58,7 +58,7 @@ export default function SplashScreen({ navigation }: Props) {
           },
         ]}
       >
-        <Text style={styles.title}>PANN</Text>
+        <Text style={styles.title}>AIDOL</Text>
         <Text style={styles.subtitle}>당신의 1인 기획사</Text>
       </Animated.View>
     </LinearGradient>

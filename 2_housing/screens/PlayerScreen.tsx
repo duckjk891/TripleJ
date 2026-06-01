@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Audio } from 'expo-av';
 import Slider from '@react-native-community/slider';
+import Svg, { Path } from 'react-native-svg';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
@@ -41,6 +42,23 @@ const AD_CATEGORY_ICON: Record<string, string> = {
   '상의': '👕', '하의': '👖', '신발': '👟', '장소': '📍',
 };
 
+interface UsedItem {
+  id?: string;
+  name?: string;
+  image_object_name?: string;
+  product_url?: string;
+  category?: string;
+}
+
+interface CoverCharacter {
+  name?: string;
+  age?: string;
+  personality_tags?: string[];
+  personality_text?: string;
+  sheet_preview_path?: string;
+  used_items?: UsedItem[];
+}
+
 interface TrackData {
   id: string;
   title: string;
@@ -62,6 +80,8 @@ interface TrackData {
   prompt?: string;
   ai_model?: string;
   created_at?: string;
+  // 9004: 곡 만들 때 아티스트가 착용한 의상 스냅샷
+  cover_character?: CoverCharacter | null;
 }
 
 function formatTime(millis: number): string {
@@ -69,6 +89,45 @@ function formatTime(millis: number): string {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${min}:${sec.toString().padStart(2, '0')}`;
+}
+
+// 셔플 아이콘 (Material Design 표준 path)
+function ShuffleIcon({ active }: { active: boolean }) {
+  const color = active ? colors.accent.primary : colors.text.muted;
+  return (
+    <Svg width={24} height={24} viewBox="0 0 24 24">
+      <Path
+        d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+// 반복 아이콘 (Material Design 표준 path)
+//  off  → repeat (회색)
+//  all  → repeat (보라)
+//  one  → repeat_one (보라 + 가운데 "1")
+function RepeatIcon({ mode }: { mode: 'off' | 'all' | 'one' }) {
+  const color = mode !== 'off' ? colors.accent.primary : colors.text.muted;
+  if (mode === 'one') {
+    return (
+      <Svg width={24} height={24} viewBox="0 0 24 24">
+        <Path
+          d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"
+          fill={color}
+        />
+      </Svg>
+    );
+  }
+  return (
+    <Svg width={24} height={24} viewBox="0 0 24 24">
+      <Path
+        d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
+        fill={color}
+      />
+    </Svg>
+  );
 }
 
 export default function PlayerScreen({ route, navigation }: any) {
@@ -83,7 +142,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [isLiked, setIsLiked] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'info'>('lyrics');
+  const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit' | 'info'>('lyrics');
   const [fullTrack, setFullTrack] = useState<TrackData | null>(null);
   const [ads, setAds] = useState<AdItem[]>([]);
   const impressionLoggedRef = useRef<Set<string>>(new Set());
@@ -91,7 +150,9 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   // route 전달 track은 차트/리스트의 축약 객체라 prompt/lyrics/bpm 등이 비어있을 수 있음
   // → full track을 따로 가져와 상세 화면에서 사용
-  const track: TrackData = fullTrack || routeTrack;
+  // store.track 구독 → prev/next로 곡 바뀌면 화면도 즉시 갱신 (navigation.replace 없이)
+  const storeTrack = usePlayerStore((s) => s.track);
+  const track: TrackData = fullTrack || storeTrack || routeTrack;
 
   const getCoverUri = (): string | null => {
     const img = track?.cover_image || track?.cover_image_url;
@@ -112,14 +173,37 @@ export default function PlayerScreen({ route, navigation }: any) {
       if (status.didJustFinish) {
         // 재생 완료 EXP — 내 아티스트 +1
         useArtistStore.getState().addExp(1, 'play');
-        // 자동 다음곡: queue에 다음이 있으면 새 곡으로 전환
+        // 셔플/반복 모드 반영한 다음 인덱스
         const store = usePlayerStore.getState();
-        if (store.queue.length > 0 && store.currentIndex >= 0 && store.currentIndex < store.queue.length - 1) {
-          const nextIdx = store.currentIndex + 1;
+        const nextIdx = store.getNextIndex();
+        if (nextIdx >= 0 && store.queue[nextIdx]) {
           const nextTrack = store.queue[nextIdx];
           store.playTrackAtIndex(nextIdx);
-          // PlayerScreen을 다음 곡으로 교체 (unmount→mount 사이클로 sound 새로 로드)
-          navigation.replace('Player', { track: nextTrack });
+          // 큰 화면이든 미니든 sound 직접 교체 → 슬라이드 애니메이션 없이 곡만 전환
+          (async () => {
+            try {
+              if (soundRef.current) {
+                await soundRef.current.unloadAsync().catch(() => {});
+              }
+              const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nextTrack.id}`;
+              const { sound: newSound } = await Audio.Sound.createAsync(
+                { uri: audioUrl },
+                { shouldPlay: true },
+                onPlaybackStatusUpdate,
+              );
+              soundRef.current = newSound;
+              store.setSound(newSound);
+              store.setTrack(nextTrack);
+              store.setIsPlaying(true);
+              if (store.isPlayerScreenOpen) {
+                setSound(newSound);
+                setIsPlaying(true);
+                setPosition(0);
+              }
+            } catch (err) {
+              console.warn('[Player] 자동재생 실패:', err);
+            }
+          })();
         } else {
           setIsPlaying(false);
           setPosition(0);
@@ -163,19 +247,23 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   // 풀 트랙 정보 조회 (prompt/lyrics/bpm 등 상세 필드 포함)
+  // currentId 우선: 곡 전환 시 storeTrack.id로 fetch
+  const currentId = storeTrack?.id || routeTrack?.id;
   useEffect(() => {
-    if (!routeTrack?.id) return;
+    if (!currentId) return;
     let cancelled = false;
+    // 이전 곡의 fullTrack은 일단 비우고 다시 fetch
+    setFullTrack(null);
     (async () => {
       try {
-        const res = await api.get(`/tracks/${routeTrack.id}`);
+        const res = await api.get(`/tracks/${currentId}`);
         if (!cancelled && res.data) setFullTrack(res.data);
       } catch (err) {
-        console.warn('[Player] 풀 트랙 조회 실패, route track 사용:', err);
+        console.warn('[Player] 풀 트랙 조회 실패:', err);
       }
     })();
     return () => { cancelled = true; };
-  }, [routeTrack?.id]);
+  }, [currentId]);
 
   // 아티스트 광고 아이템 로드 + impression 기록
   useEffect(() => {
@@ -240,6 +328,39 @@ export default function PlayerScreen({ route, navigation }: any) {
     return () => { playerStore.setPlayerScreenOpen(false); };
   }, []);
 
+  // 🔑 PlayerScreen이 이미 mount 상태에서 다른 곡으로 navigate된 경우 (차트→Player 재진입)
+  // routeTrack.id가 바뀌면 새 곡으로 sound 교체
+  useEffect(() => {
+    if (!routeTrack?.id) return;
+    // 첫 mount는 위 useEffect가 처리. routeTrack.id가 store.track.id와 다를 때만 교체
+    const storeTrackId = usePlayerStore.getState().track?.id;
+    if (routeTrack.id === storeTrackId) return;
+    (async () => {
+      try {
+        if (soundRef.current) {
+          await soundRef.current.unloadAsync().catch(() => {});
+          soundRef.current = null;
+        }
+        const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${routeTrack.id}`;
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          { uri: audioUrl },
+          { shouldPlay: true },
+          onPlaybackStatusUpdate,
+        );
+        soundRef.current = newSound;
+        setSound(newSound);
+        const store = usePlayerStore.getState();
+        store.setSound(newSound);
+        store.setTrack(routeTrack);
+        store.setIsPlaying(true);
+        setIsPlaying(true);
+        setPosition(0);
+      } catch (err) {
+        console.warn('[Player] routeTrack 변경 시 재로드 실패:', err);
+      }
+    })();
+  }, [routeTrack?.id]);
+
   // PlayerScreen 언마운트 시에도 콜백이 계속 store.position/isPlaying을 업데이트하도록
   // setOnPlaybackStatusUpdate는 위에서 설정된 상태를 유지 (MiniPlayer가 store 구독하므로 OK)
 
@@ -250,6 +371,46 @@ export default function PlayerScreen({ route, navigation }: any) {
     } else {
       await soundRef.current.playAsync();
     }
+  };
+
+  // 이전/다음 — 셔플/반복 모드 고려
+  // navigation.replace 대신 sound만 직접 교체 → 슬라이드 애니메이션 없이 곡만 전환
+  const switchToTrack = async (idx: number) => {
+    const store = usePlayerStore.getState();
+    const target = store.queue[idx];
+    if (!target?.id) return;
+    store.playTrackAtIndex(idx);
+    try {
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
+      }
+      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${target.id}`;
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: audioUrl },
+        { shouldPlay: true },
+        onPlaybackStatusUpdate,
+      );
+      soundRef.current = newSound;
+      setSound(newSound);
+      store.setSound(newSound);
+      store.setTrack(target);
+      store.setIsPlaying(true);
+      setIsPlaying(true);
+      setPosition(0);
+    } catch (err) {
+      console.warn('[Player] switchToTrack 실패:', err);
+    }
+  };
+
+  const handlePrev = async () => {
+    const idx = usePlayerStore.getState().getPrevIndex();
+    if (idx >= 0) await switchToTrack(idx);
+  };
+
+  const handleNext = async () => {
+    const idx = usePlayerStore.getState().getNextIndex();
+    if (idx >= 0) await switchToTrack(idx);
   };
 
   const handleSeek = async (value: number) => {
@@ -298,9 +459,22 @@ export default function PlayerScreen({ route, navigation }: any) {
         <Text style={styles.trackTitle} numberOfLines={1}>
           {track?.title || '알 수 없는 곡'}
         </Text>
-        <Text style={styles.trackArtist} numberOfLines={1}>
-          {track?.artist_name || '알 수 없는 아티스트'}
-        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            const nickname = track?.uploader_nickname || track?.artist_name;
+            const uploaderId = track?.uploader_id;
+            if (!nickname) return;
+            navigation.navigate('AgencyProfile', {
+              uploaderNickname: nickname,
+              uploaderId,
+            });
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.trackArtist} numberOfLines={1}>
+            {track?.artist_name || '알 수 없는 아티스트'} <Text style={styles.trackArtistArrow}>›</Text>
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Progress Bar */}
@@ -322,9 +496,13 @@ export default function PlayerScreen({ route, navigation }: any) {
         </View>
       </View>
 
-      {/* Controls */}
+      {/* Controls — 유튜브 뮤직 패턴: 셔플 | 이전 | 재생 | 다음 | 반복 */}
       <View style={styles.controlsRow}>
-        <TouchableOpacity style={styles.controlButton}>
+        <TouchableOpacity style={styles.controlButtonSmall} onPress={() => playerStore.toggleShuffle()}>
+          <ShuffleIcon active={playerStore.shuffle} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.controlButton} onPress={handlePrev}>
           <View style={styles.prevNextIcon}>
             <View style={styles.triangleLeft} />
             <View style={styles.triangleLeft} />
@@ -342,11 +520,15 @@ export default function PlayerScreen({ route, navigation }: any) {
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlButton}>
+        <TouchableOpacity style={styles.controlButton} onPress={handleNext}>
           <View style={styles.prevNextIcon}>
             <View style={styles.triangleRight} />
             <View style={styles.triangleRight} />
           </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.controlButtonSmall} onPress={() => playerStore.cycleRepeat()}>
+          <RepeatIcon mode={playerStore.repeat} />
         </TouchableOpacity>
       </View>
 
@@ -379,8 +561,8 @@ export default function PlayerScreen({ route, navigation }: any) {
             setShowPurchase(true);
           }}
         >
-          <Text style={styles.actionIcon}>💿</Text>
-          <Text style={styles.actionLabel}>{formatKrw(TRACK_PRICE_KRW)}</Text>
+          <Text style={styles.actionIcon}>↓</Text>
+          <Text style={styles.actionLabel}>다운로드</Text>
         </TouchableOpacity>
       </View>
 
@@ -392,37 +574,6 @@ export default function PlayerScreen({ route, navigation }: any) {
         onPurchase={() => setShowPurchase(false)}
       />
 
-      {/* 아티스트 착용/협찬 아이템 (있을 때만) */}
-      {ads.length > 0 && (
-        <View style={styles.adsSection}>
-          <Text style={styles.adsSectionTitle}>💼 이 아티스트의 아이템</Text>
-          <FlatList
-            horizontal
-            data={ads}
-            keyExtractor={(item) => item.id}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 12 }}
-            renderItem={({ item }) => {
-              const img = getAdImage(item);
-              const icon = AD_CATEGORY_ICON[item.category || ''] || '🛍';
-              return (
-                <TouchableOpacity style={styles.adChip} onPress={() => handleAdClick(item)}>
-                  {img ? (
-                    <Image source={{ uri: img }} style={styles.adChipImg} />
-                  ) : (
-                    <View style={[styles.adChipImg, styles.adChipImgPlaceholder]}>
-                      <Text style={{ fontSize: 22 }}>{icon}</Text>
-                    </View>
-                  )}
-                  <Text style={styles.adChipText} numberOfLines={1}>
-                    {icon} {item.title || '아이템'}
-                  </Text>
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </View>
-      )}
 
       {/* Bottom swipe-up indicator */}
       <TouchableOpacity
@@ -457,8 +608,8 @@ export default function PlayerScreen({ route, navigation }: any) {
 
             {/* Tab bar */}
             <View style={styles.sheetTabBar}>
-              {(['lyrics', 'prompt', 'info'] as const).map((tab) => {
-                const labels = { lyrics: '가사', prompt: '프롬프트', info: '상세 정보' };
+              {(['lyrics', 'prompt', 'outfit', 'info'] as const).map((tab) => {
+                const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장', info: '상세 정보' };
                 return (
                   <TouchableOpacity
                     key={tab}
@@ -488,7 +639,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                 track?.prompt ? (
                   <View>
                     <Text style={styles.detailSectionTitle}>작곡 프롬프트</Text>
-                    <Text style={styles.detailHelperText}>AI 작곡 시 전달된 스타일·분위기·악곡 정보입니다.</Text>
+                    <Text style={styles.detailHelperText}>작곡 디렉터와 대화하며 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</Text>
                     <Text style={styles.sheetText}>{track.prompt}</Text>
 
                     {/* 프롬프트에 묶여 있는 주요 파라미터를 분해해서 한 번 더 정리 */}
@@ -545,6 +696,54 @@ export default function PlayerScreen({ route, navigation }: any) {
                       AI가 자동으로 생성했거나, 외부 업로드 곡일 수 있어요.
                     </Text>
                   </View>
+                )
+              )}
+              {detailTab === 'outfit' && (
+                track?.cover_character?.used_items && track.cover_character.used_items.length > 0 ? (
+                  <View>
+                    <Text style={styles.detailSectionTitle}>이 곡 아티스트의 착장</Text>
+                    <Text style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다.</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+                      {track.cover_character.used_items.map((item, i) => {
+                        const img = item.image_object_name
+                          ? `${BACKEND_BASE_URL}/api/character/preview/${item.image_object_name}`
+                          : null;
+                        const hasUrl = !!item.product_url;
+                        return (
+                          <View key={item.id || i} style={styles.outfitItem}>
+                            {img ? (
+                              <Image source={{ uri: img }} style={styles.outfitItemImg} />
+                            ) : (
+                              <View style={[styles.outfitItemImg, styles.outfitItemImgPh]} />
+                            )}
+                            <Text style={styles.outfitItemCat}>{item.category || '아이템'}</Text>
+                            <Text style={styles.outfitItemName} numberOfLines={2}>{item.name || ''}</Text>
+                            {hasUrl ? (
+                              <TouchableOpacity
+                                style={styles.outfitDetailBtn}
+                                onPress={() => {
+                                  const url = item.product_url!.startsWith('http')
+                                    ? item.product_url!
+                                    : `https://${item.product_url}`;
+                                  Linking.openURL(url).catch(() => Alert.alert('알림', '링크를 열 수 없어요'));
+                                }}
+                              >
+                                <Text style={styles.outfitDetailBtnText}>자세히 보기</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={[styles.outfitDetailBtn, styles.outfitDetailBtnDisabled]}>
+                                <Text style={styles.outfitDetailBtnTextDisabled}>링크 없음</Text>
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ) : fullTrack === null ? (
+                  <Text style={styles.sheetEmptyText}>불러오는 중...</Text>
+                ) : (
+                  <Text style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</Text>
                 )
               )}
               {detailTab === 'info' && (
@@ -658,6 +857,9 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     textAlign: 'center',
   },
+  trackArtistArrow: {
+    color: colors.accent.primary, fontSize: 16, fontWeight: '700',
+  },
   progressContainer: {
     width: '100%',
     paddingHorizontal: 24,
@@ -682,13 +884,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 16,
-    gap: 32,
+    gap: 18,
   },
   controlButton: {
     width: 48,
     height: 48,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  controlButtonSmall: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modeIcon: {
+    fontSize: 20,
+    color: colors.text.muted,
+  },
+  modeIconActive: {
+    color: colors.accent.primary,
   },
   prevNextIcon: {
     flexDirection: 'row',
@@ -753,18 +968,26 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 60,
   },
   actionIcon: {
     fontSize: 24,
+    lineHeight: 28,
     color: colors.text.muted,
-    marginBottom: 4,
+    marginBottom: 6,
+    textAlign: 'center',
+    width: 32,
+    includeFontPadding: false as any,
   },
   actionIconActive: {
     color: colors.accent.primary,
   },
   actionLabel: {
     fontSize: 12,
+    lineHeight: 16,
     color: colors.text.muted,
+    textAlign: 'center',
   },
   swipeUpButton: {
     width: '100%',
@@ -868,6 +1091,29 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 18,
   },
+  outfitItem: {
+    width: 108, alignItems: 'center',
+    padding: 8, borderRadius: 10,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  outfitItemImg: { width: 88, height: 88, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  outfitItemImgPh: { justifyContent: 'center', alignItems: 'center' },
+  outfitItemCat: { fontSize: 10, color: colors.accent.primary, fontWeight: '700', marginTop: 6, letterSpacing: 0.3 },
+  outfitItemName: { fontSize: 11, color: colors.text.primary, textAlign: 'center', marginTop: 2, marginBottom: 8 },
+  outfitDetailBtn: {
+    alignSelf: 'stretch',
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: colors.accent.primary,
+    alignItems: 'center',
+  },
+  outfitDetailBtnText: { color: colors.text.primary, fontSize: 11, fontWeight: '700' },
+  outfitDetailBtnDisabled: {
+    backgroundColor: 'transparent',
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  outfitDetailBtnTextDisabled: { color: colors.text.muted, fontSize: 11, fontWeight: '600' },
   promptChipsBox: {
     marginTop: 16,
     padding: 12,

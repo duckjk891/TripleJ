@@ -1,19 +1,21 @@
 import axios from 'axios';
 
 // 백엔드 서버 (Tailscale 내부망 — MAC 100.106.9.84, 서버 100.127.225.55)
-// 이전: cloudflared 터널 'https://acoustic-texas-coral-chorus.trycloudflare.com'
-// Tailscale 전환: 같은 tailnet 내 어디서든 100.127.225.55:9003 로 접근 가능
-export const BACKEND_BASE_URL = 'http://100.127.225.55:9003';
+// 포트 9004: image_model 선택 + upload-original-photo + used_items 영속화 지원
+export const BACKEND_BASE_URL = 'http://100.127.225.55:9004';
 
 const baseURL = `${BACKEND_BASE_URL}/api`;
 console.log('[API] Base URL:', baseURL);
 
+// Content-Type을 default에 박지 않음 — axios가 body 타입에 맞춰 자동 설정:
+//   plain object → application/json
+//   FormData     → multipart/form-data; boundary=... (web에선 브라우저, RN은 native)
+// default에 'application/json'을 박으면 web에서 multipart 요청이 JSON.stringify되어 file이 누락됨.
+// default timeout 10분 — AI 생성(이미지/캐릭터/음원)이 최대 10분까지 걸릴 수 있어 안전 마진.
+// 짧은 API는 자체적으로 빠르게 응답하므로 10분 default가 사용성에 영향 없음.
 const api = axios.create({
   baseURL,
-  timeout: 60000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  timeout: 600000,
 });
 
 // Auth token - managed directly to avoid circular dependency

@@ -22,6 +22,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { colors } from '../theme/colors';
 
 const MINIPLAYER_HEIGHT = 70;
@@ -41,6 +42,12 @@ export default function ArtistResultScreen({ navigation }: any) {
   const [saving, setSaving] = useState(false);
   const [hydrating, setHydrating] = useState(!apiResult); // apiResult가 비어 있으면 /character/me로 가져옴
   const [zoomVisible, setZoomVisible] = useState(false);
+  // 9004: /me 응답의 original_photo_object_name → 미리보기 URL 캐싱
+  const [originalPhotoUrl, setOriginalPhotoUrl] = useState<string | null>(null);
+  const [meeName, setMeName] = useState<string>('');
+  // 앱 내부 디자인 다이얼로그 (시스템 Alert 대신)
+  const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
+  const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
 
   // Tab 헤더 좌측에 ← 버튼 주입
   useLayoutEffect(() => {
@@ -62,36 +69,72 @@ export default function ArtistResultScreen({ navigation }: any) {
     };
   }, [navigation]);
 
-  // 화면 포커스마다 apiResult 비어있으면 /character/me로 hydrate
-  // (마이뮤직에서 카드 탭 시 ArtistResult가 캐시 마운트라 useEffect는 재실행 안 됨)
+  // 화면 포커스마다 /character/me로 최신화
+  // 9004: 시트 + 원본 사진 + used_items 모두 백엔드 응답에서 가져옴
+  // (apiResult가 이미 있어도 used_items/원본 사진은 stale일 수 있으니 매번 fetch)
   useFocusEffect(
     useCallback(() => {
       if (!user) {
         setHydrating(false);
         return;
       }
-      // 이미 채워져있으면 그대로 사용
-      if (useCharacterTaskStore.getState().apiResult) {
-        setHydrating(false);
-        return;
-      }
-      setHydrating(true);
+      const hasCachedSheet = !!useCharacterTaskStore.getState().apiResult;
+      setHydrating(!hasCachedSheet);
       let cancelled = false;
       (async () => {
         try {
           const res = await api.get('/character/me');
           if (cancelled) return;
           const ch = res.data?.character;
-          if (ch?.sheet_object_name) {
-            // cache-buster: RN Image가 같은 URL이면 재페치 안 해서 옛 이미지 보임
+          // 진단 로그: 어떤 필드가 비어있는지 한눈에
+          console.log('[ArtistResult] /me 응답:', {
+            sheet: !!ch?.sheet_object_name,
+            name: ch?.name || '(없음)',
+            original_photo: ch?.original_photo_object_name || '(없음)',
+            used_items_count: Array.isArray(ch?.used_items) ? ch.used_items.length : 0,
+            raw: JSON.stringify(ch),
+          });
+          if (!ch?.sheet_object_name) {
+            // 백엔드에 저장된 캐릭터가 없음 (자동저장 실패 또는 v46 이전 캐릭터)
+            // mode === null이고 cached apiResult가 있으면 일시적 오류일 수 있어 store는 건드리지 않음
+            if (!hasCachedSheet) {
+              console.log('[ArtistResult] /me: 저장된 캐릭터 없음');
+            }
+            return;
+          }
+          // 시트 URL (cache-buster: RN Image가 같은 URL이면 옛 이미지 보임)
+          if (!hasCachedSheet) {
             const url = `${BACKEND_BASE_URL}/api/character/preview/${ch.sheet_object_name}?t=${Date.now()}`;
             useCharacterTaskStore.getState().completeApi({
               preview_url: url,
               object_name: ch.sheet_object_name,
             });
           }
-        } catch {
-          // 무시
+          // 원본 사진 URL (있으면)
+          if (ch.original_photo_object_name) {
+            const photoUrl = `${BACKEND_BASE_URL}/api/character/preview/${ch.original_photo_object_name}?t=${Date.now()}`;
+            setOriginalPhotoUrl(photoUrl);
+            useCharacterTaskStore.getState().setInput({
+              originalPhotoObjectName: ch.original_photo_object_name,
+            });
+          } else {
+            setOriginalPhotoUrl(null);
+          }
+          // 이름 (있으면)
+          if (ch.name) setMeName(ch.name);
+          // 백엔드 used_items로 outfit store 동기화 (백엔드 = 진실의 원천)
+          if (Array.isArray(ch.used_items) && ch.used_items.length > 0) {
+            const mapped = ch.used_items.map((it: any) => ({
+              cat: it.category || '',
+              name: it.name || '',
+              productUrl: it.product_url || undefined,
+              imageObjectName: it.image_object_name || undefined,
+              appliedAt: Date.now(),
+            }));
+            useOutfitStore.getState().setItems(mapped);
+          }
+        } catch (err: any) {
+          console.warn('[ArtistResult] /me 조회 실패:', err?.response?.status, err?.message);
         } finally {
           if (!cancelled) setHydrating(false);
         }
@@ -133,27 +176,23 @@ export default function ArtistResultScreen({ navigation }: any) {
   };
 
   const handleResetCharacter = () => {
-    Alert.alert(
-      '캐릭터 다시 만들기',
-      '현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요. 진행할까요?',
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '삭제하고 다시 만들기',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete('/character/me');
-              taskStore.reset();
-              useOutfitStore.getState().clear();
-              navigation.replace('ArtistInput');
-            } catch (err: any) {
-              Alert.alert('오류', err.response?.data?.error || '삭제에 실패했어요.');
-            }
-          },
-        },
-      ]
-    );
+    setResetConfirmVisible(true);
+  };
+
+  const performResetCharacter = async () => {
+    setResetConfirmVisible(false);
+    console.log('[ArtistResult] 캐릭터 삭제 요청 시작');
+    try {
+      const res = await api.delete('/character/me');
+      console.log('[ArtistResult] 캐릭터 삭제 성공:', res.status);
+      taskStore.reset();
+      useOutfitStore.getState().clear();
+      navigation.replace('ArtistInput');
+    } catch (err: any) {
+      console.error('[ArtistResult] 캐릭터 삭제 실패:', err?.response?.status, err?.response?.data, err?.message);
+      const msg = err.response?.data?.error || err.message || '삭제에 실패했어요.';
+      setErrorDialog({ title: '삭제 실패', message: msg });
+    }
   };
 
   if (hydrating) {
@@ -186,13 +225,26 @@ export default function ArtistResultScreen({ navigation }: any) {
     <View style={styles.container}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
         <Text style={styles.title}>
-          {isUnsaved ? '완성된 아티스트 시트' : '내 아티스트'}
+          {isUnsaved ? '완성된 아티스트 시트' : meeName ? `내 아티스트 · ${meeName}` : '내 아티스트'}
         </Text>
         <Text style={styles.subtitle}>
           {isUnsaved
             ? '마음에 드시면 저장하세요. 꾸미기로 옷·악세서리·헤어를 바꿀 수 있어요.'
             : '꾸미기로 옷·악세서리·헤어스타일·염색까지 모두 바꿀 수 있어요.'}
         </Text>
+
+        {/* 9004: 캐릭터 생성 시 업로드한 원본 사진 표시 */}
+        {originalPhotoUrl && (
+          <View style={styles.originalPhotoBox}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.originalPhotoLabel}>📸 내가 올린 사진</Text>
+              <Text style={styles.originalPhotoSub}>
+                이 사진을 바탕으로 캐릭터가 생성됐어요. 꾸미기 시에도 이 사진이 다시 사용돼요.
+              </Text>
+            </View>
+            <Image source={{ uri: originalPhotoUrl }} style={styles.originalPhotoImg} />
+          </View>
+        )}
 
         <TouchableOpacity
           style={styles.previewBox}
@@ -215,6 +267,16 @@ export default function ArtistResultScreen({ navigation }: any) {
                 : null;
               return (
                 <View key={`${it.cat}-${i}`} style={styles.outfitRow}>
+                  {it.imageObjectName ? (
+                    <Image
+                      source={{ uri: `${BACKEND_BASE_URL}/api/character/preview/${it.imageObjectName}` }}
+                      style={styles.outfitThumb}
+                    />
+                  ) : (
+                    <View style={[styles.outfitThumb, styles.outfitThumbPh]}>
+                      <Text style={{ fontSize: 18 }}>👕</Text>
+                    </View>
+                  )}
                   <View style={{ flex: 1 }}>
                     <Text style={styles.outfitRowCat}>{it.cat}</Text>
                     <Text style={styles.outfitRowName} numberOfLines={2}>
@@ -266,10 +328,20 @@ export default function ArtistResultScreen({ navigation }: any) {
           </View>
         ) : (
           <TouchableOpacity
-            style={[styles.applyBtn, { flex: 0, alignSelf: 'stretch' }]}
+            style={[
+              styles.applyBtn,
+              { flex: 0, alignSelf: 'stretch', justifyContent: 'center', minHeight: 44 },
+            ]}
             onPress={handleGoCody}
           >
-            <Text style={styles.applyBtnText}>✨ 아티스트 꾸미기</Text>
+            <Text
+              style={[
+                styles.applyBtnText,
+                { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
+              ]}
+            >
+              ✨ 아티스트 꾸미기
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -280,12 +352,33 @@ export default function ArtistResultScreen({ navigation }: any) {
         uri={apiResult.preview_url}
         onClose={() => setZoomVisible(false)}
       />
+
+      {/* 캐릭터 삭제 confirm */}
+      <ConfirmDialog
+        visible={resetConfirmVisible}
+        title="캐릭터 다시 만들기"
+        message="현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요. 진행할까요?"
+        confirmText="삭제하고 다시 만들기"
+        destructive
+        onConfirm={performResetCharacter}
+        onCancel={() => setResetConfirmVisible(false)}
+      />
+
+      {/* 에러 알림 (단일 확인 버튼) */}
+      <ConfirmDialog
+        visible={!!errorDialog}
+        title={errorDialog?.title || ''}
+        message={errorDialog?.message || ''}
+        confirmText="확인"
+        cancelText={null}
+        onConfirm={() => setErrorDialog(null)}
+      />
     </View>
   );
 }
 
-// ── 풀스크린 시트 뷰어 (pinch zoom + pan) ──────────────────────────────
-// PanResponder 기반 자체 구현. native dependency 없이 expo go에서도 작동.
+// ── 풀스크린 시트 뷰어 (+/- 버튼 + 탭으로 위치 잡기 + 드래그 이동) ──────────────
+// web/native 모두 자연스럽게 작동하도록 단순화: gesture pinch 대신 버튼 기반.
 function ZoomModal({
   visible,
   uri,
@@ -301,102 +394,77 @@ function ZoomModal({
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
 
-  // 누적 값 (gesture release 시 저장)
+  // 누적 값 (animation/gesture release 시 저장)
   const lastScale = useRef(1);
   const lastTx = useRef(0);
   const lastTy = useRef(0);
 
-  // pinch 시작 시점 손가락 거리 / 두 손가락 중심점
-  const initialDistance = useRef<number | null>(null);
-  const initialFocalX = useRef(0);
-  const initialFocalY = useRef(0);
+  // 단계별 scale (+/- 버튼)
+  const SCALE_STEPS = [1, 1.5, 2, 3, 4, 5];
 
-  const MIN_SCALE = 1;
-  const MAX_SCALE = 5;
-
-  const reset = () => {
+  const animateTo = (s: number, tx: number, ty: number) => {
     Animated.parallel([
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 7 }),
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, friction: 7 }),
-      Animated.spring(translateY, { toValue: 0, useNativeDriver: true, friction: 7 }),
+      Animated.spring(scale, { toValue: s, useNativeDriver: true, friction: 8 }),
+      Animated.spring(translateX, { toValue: tx, useNativeDriver: true, friction: 8 }),
+      Animated.spring(translateY, { toValue: ty, useNativeDriver: true, friction: 8 }),
     ]).start();
-    lastScale.current = 1;
-    lastTx.current = 0;
-    lastTy.current = 0;
+    lastScale.current = s;
+    lastTx.current = tx;
+    lastTy.current = ty;
   };
 
+  const reset = () => animateTo(1, 0, 0);
+
+  const zoomIn = () => {
+    const next = SCALE_STEPS.find((s) => s > lastScale.current + 0.001) ?? SCALE_STEPS[SCALE_STEPS.length - 1];
+    animateTo(next, lastTx.current, lastTy.current);
+  };
+  const zoomOut = () => {
+    const prev = [...SCALE_STEPS].reverse().find((s) => s < lastScale.current - 0.001) ?? 1;
+    // scale 1로 가면 위치도 초기화
+    if (prev === 1) {
+      animateTo(1, 0, 0);
+    } else {
+      animateTo(prev, lastTx.current, lastTy.current);
+    }
+  };
+
+  // 이미지 탭 → 그 위치를 화면 중앙으로 이동 (현재 scale 유지, 1배일 때는 2.5배로 확대)
+  const handleImageTap = (evt: any) => {
+    const { locationX, locationY } = evt.nativeEvent;
+    // locationX/Y는 이미지 컨테이너 기준 (이미 transform 적용된 좌표)
+    // 화면 중앙으로 이동시키려면 컨테이너 중심 기준 offset만큼 반대로 이동
+    const cx = screenW / 2;
+    const cy = screenH / 2;
+    // 현재 transform 상태에서의 탭 위치를 "원본 좌표"로 역변환
+    const origX = (locationX - lastTx.current) / lastScale.current;
+    const origY = (locationY - lastTy.current) / lastScale.current;
+    // 1배 상태면 2.5배로 확대하면서, 아니면 현재 scale 유지하면서 위치만 이동
+    const newScale = lastScale.current < 1.1 ? 2.5 : lastScale.current;
+    // 탭한 원본 좌표가 화면 중심에 오도록: tx = cx - origX * newScale
+    const newTx = cx - origX * newScale;
+    const newTy = cy - origY * newScale;
+    animateTo(newScale, newTx, newTy);
+  };
+
+  // 드래그 이동 (확대 상태에서만 활성)
   const panResponder = useRef(
     PanResponder.create({
-      // 단일 탭은 자식(닫기 버튼 등)에 양보, 멀티터치 또는 드래그만 캡처
-      onStartShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length >= 2,
-      onMoveShouldSetPanResponder: (evt, gestureState) =>
-        evt.nativeEvent.touches.length >= 2 ||
-        Math.abs(gestureState.dx) > 5 ||
-        Math.abs(gestureState.dy) > 5,
-      onPanResponderGrant: (evt) => {
-        const touches = evt.nativeEvent.touches;
-        if (touches.length === 2) {
-          const dx = touches[0].pageX - touches[1].pageX;
-          const dy = touches[0].pageY - touches[1].pageY;
-          initialDistance.current = Math.sqrt(dx * dx + dy * dy);
-          initialFocalX.current = (touches[0].pageX + touches[1].pageX) / 2;
-          initialFocalY.current = (touches[0].pageY + touches[1].pageY) / 2;
-        } else {
-          initialDistance.current = null;
-        }
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_evt, gs) =>
+        lastScale.current > 1 && (Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5),
+      onPanResponderMove: (_evt, gs) => {
+        translateX.setValue(lastTx.current + gs.dx);
+        translateY.setValue(lastTy.current + gs.dy);
       },
-      onPanResponderMove: (evt, gestureState) => {
-        const touches = evt.nativeEvent.touches;
-        if (touches.length === 2) {
-          // pinch zoom
-          const dx = touches[0].pageX - touches[1].pageX;
-          const dy = touches[0].pageY - touches[1].pageY;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (initialDistance.current == null) {
-            initialDistance.current = dist;
-            initialFocalX.current = (touches[0].pageX + touches[1].pageX) / 2;
-            initialFocalY.current = (touches[0].pageY + touches[1].pageY) / 2;
-            return;
-          }
-          const ratio = dist / initialDistance.current;
-          const newScale = Math.min(
-            MAX_SCALE,
-            Math.max(MIN_SCALE, lastScale.current * ratio)
-          );
-          scale.setValue(newScale);
-        } else if (touches.length === 1 && lastScale.current > 1) {
-          // pan (확대 상태에서만)
-          translateX.setValue(lastTx.current + gestureState.dx);
-          translateY.setValue(lastTy.current + gestureState.dy);
-        }
-      },
-      onPanResponderRelease: (evt) => {
-        // 현재 scale 값 누적 저장
-        scale.stopAnimation((v) => {
-          lastScale.current = v;
-        });
-        translateX.stopAnimation((v) => {
-          lastTx.current = v;
-        });
-        translateY.stopAnimation((v) => {
-          lastTy.current = v;
-        });
-        // scale가 1에 가까우면 자동 reset
-        setTimeout(() => {
-          if (lastScale.current <= 1.05) {
-            reset();
-          }
-        }, 50);
-      },
-      onPanResponderTerminate: () => {
-        scale.stopAnimation((v) => { lastScale.current = v; });
+      onPanResponderRelease: () => {
         translateX.stopAnimation((v) => { lastTx.current = v; });
         translateY.stopAnimation((v) => { lastTy.current = v; });
       },
     })
   ).current;
 
-  // 모달이 닫힐 때마다 초기화
+  // 모달 닫힐 때 초기화
   useEffect(() => {
     if (!visible) {
       scale.setValue(1);
@@ -405,7 +473,6 @@ function ZoomModal({
       lastScale.current = 1;
       lastTx.current = 0;
       lastTy.current = 0;
-      initialDistance.current = null;
     }
   }, [visible]);
 
@@ -413,31 +480,52 @@ function ZoomModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <StatusBar hidden />
       <View style={styles.zoomOverlay}>
-        {/* PanResponder가 붙은 이미지 레이어 (버튼들과 분리) */}
+        {/* 이미지 레이어: 탭 → 위치 잡기 + 확대 / 드래그 → 이동 */}
         <View style={StyleSheet.absoluteFill} {...panResponder.panHandlers}>
-          <Animated.Image
-            source={{ uri }}
-            style={{
-              width: screenW,
-              height: screenH,
-              resizeMode: 'contain',
-              transform: [
-                { translateX },
-                { translateY },
-                { scale },
-              ],
-            }}
-          />
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={handleImageTap}
+          >
+            <Animated.Image
+              source={{ uri }}
+              style={{
+                width: screenW,
+                height: screenH,
+                resizeMode: 'contain',
+                transform: [
+                  { translateX },
+                  { translateY },
+                  { scale },
+                ],
+              }}
+            />
+          </TouchableOpacity>
         </View>
-        {/* 버튼 레이어 — PanResponder 영역 위에 zIndex로 올림 */}
+
+        {/* 상단 좌측: +/- 버튼 */}
+        <View style={styles.zoomCtrlGroup}>
+          <TouchableOpacity style={styles.zoomCtrlBtn} onPress={zoomIn} activeOpacity={0.7}>
+            <Text style={styles.zoomCtrlText}>＋</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.zoomCtrlBtn} onPress={zoomOut} activeOpacity={0.7}>
+            <Text style={styles.zoomCtrlText}>－</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.zoomCtrlBtn, styles.zoomCtrlBtnWide]} onPress={reset} activeOpacity={0.7}>
+            <Text style={styles.zoomCtrlTextSmall}>↺</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* 상단 우측: 닫기 */}
         <TouchableOpacity style={styles.zoomCloseBtn} onPress={onClose} activeOpacity={0.7}>
           <Text style={styles.zoomCloseText}>✕</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.zoomResetBtn} onPress={reset} activeOpacity={0.7}>
-          <Text style={styles.zoomResetText}>↺ 원래 크기</Text>
-        </TouchableOpacity>
+
+        {/* 하단 힌트 */}
         <View style={styles.zoomBottomHint}>
-          <Text style={styles.zoomBottomHintText}>두 손가락으로 확대 · 한 손가락으로 이동</Text>
+          <Text style={styles.zoomBottomHintText}>
+            +/− 확대·축소  ·  이미지 탭 → 그 위치 자세히 보기  ·  드래그로 이동
+          </Text>
         </View>
       </View>
     </Modal>
@@ -474,13 +562,20 @@ const styles = StyleSheet.create({
     zIndex: 10, elevation: 10,
   },
   zoomCloseText: { color: '#fff', fontSize: 22, fontWeight: '600' },
-  zoomResetBtn: {
-    position: 'absolute', top: 56, left: 20,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+  // +/- 컨트롤 그룹 (상단 좌측)
+  zoomCtrlGroup: {
+    position: 'absolute', top: 50, left: 20,
+    flexDirection: 'row', gap: 8,
     zIndex: 10, elevation: 10,
   },
-  zoomResetText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  zoomCtrlBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  zoomCtrlBtnWide: { width: 44 },
+  zoomCtrlText: { color: '#fff', fontSize: 22, fontWeight: '600', lineHeight: 24 },
+  zoomCtrlTextSmall: { color: '#fff', fontSize: 18, fontWeight: '600' },
   zoomBottomHint: {
     position: 'absolute', bottom: 40, left: 0, right: 0,
     alignItems: 'center',
@@ -515,10 +610,13 @@ const styles = StyleSheet.create({
   },
   skipBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
   applyBtn: {
-    flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center',
+    flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
     backgroundColor: colors.accent.primary,
   },
-  applyBtnText: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
+  applyBtnText: {
+    color: colors.text.primary, fontSize: 13, fontWeight: '700',
+    lineHeight: 18,
+  },
 
   primaryBtn: {
     backgroundColor: colors.accent.primary, borderRadius: 14,
@@ -526,10 +624,37 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { color: colors.text.primary, fontWeight: '700', fontSize: 15 },
 
+  originalPhotoBox: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: 12, marginBottom: 12, borderRadius: 12,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+    gap: 12,
+  },
+  originalPhotoLabel: {
+    fontSize: 12, fontWeight: '700', color: colors.accent.primary,
+    marginBottom: 4, letterSpacing: 0.3,
+  },
+  originalPhotoSub: {
+    fontSize: 11, color: colors.text.muted, lineHeight: 15,
+  },
+  originalPhotoImg: {
+    width: 72, height: 96, borderRadius: 8,
+    backgroundColor: colors.bg.surface2,
+  },
+
   outfitListBox: {
     marginTop: 4, padding: 12, borderRadius: 12,
     backgroundColor: colors.bg.surface1,
     borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  outfitThumb: {
+    width: 48, height: 48, borderRadius: 8,
+    backgroundColor: colors.bg.surface2,
+    marginRight: 10,
+  },
+  outfitThumbPh: {
+    justifyContent: 'center', alignItems: 'center',
   },
   outfitListTitle: {
     color: colors.text.secondary, fontSize: 12, fontWeight: '700',

@@ -120,12 +120,14 @@ function adImageUrl(objectName?: string): string | null {
   return `${BACKEND_BASE_URL}/api/business/items/image/${objectName}`;
 }
 
-export default function ArtistCodyScreen({ navigation }: any) {
+export default function ArtistCodyScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
+  // 'sheet' = 초기 캐릭터 생성 흐름 (시트 없음, 옷 함께 만들기) / 'outfit' = 기존 캐릭터 꾸미기
+  const isSheetMode = route?.params?.mode === 'sheet';
 
   // 카테고리별 선택된 아이템 (단일 선택)
   const [selected, setSelected] = useState<Partial<Record<Cat, AdItem>>>({});
@@ -182,11 +184,12 @@ export default function ArtistCodyScreen({ navigation }: any) {
     .filter(([, item]) => !!item);
 
   const handleApply = () => {
-    if (!apiResult) {
+    // sheet 모드: 시트 없어도 진행 (옷+사진으로 처음부터 만듦). 옷 미선택은 디폴트 fallback.
+    if (!isSheetMode && !apiResult) {
       Alert.alert('오류', '먼저 캐릭터 시트가 필요해요.');
       return;
     }
-    if (selectedEntries.length === 0) {
+    if (!isSheetMode && selectedEntries.length === 0) {
       Alert.alert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
       return;
     }
@@ -223,7 +226,11 @@ export default function ArtistCodyScreen({ navigation }: any) {
     const bottomName = bottomItem ? `${bottomItem.advertiser_nickname || ''} ${bottomItem.name}`.trim() : '';
 
     const parts: string[] = [];
-    parts.push('【1단계 — 의상 완전 제거】 캐릭터가 현재 입고 있는 모든 의상(상의/하의/신발/모자/안경/악세서리)을 완전히 벗긴 깨끗한 빈 캔버스 상태로 리셋하세요. 특히 시트에 그려진 다리 옷(검정 레깅스/타이츠/스판/스키니/쫄바지 등 fitted한 다리 옷)을 모두 지워야 합니다. 절대 기존 옷을 그대로 두고 그 위에 새 옷을 겹쳐 그리지 마세요.');
+    if (isSheetMode) {
+      parts.push('【1단계 — 신규 캐릭터 시트 생성】 첨부된 사용자 사진을 기반으로 새 캐릭터 시트를 처음부터 생성합니다. 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
+    } else {
+      parts.push('【1단계 — 의상 완전 제거】 캐릭터가 현재 입고 있는 모든 의상(상의/하의/신발/모자/안경/악세서리)을 완전히 벗긴 깨끗한 빈 캔버스 상태로 리셋하세요. 특히 시트에 그려진 다리 옷(검정 레깅스/타이츠/스판/스키니/쫄바지 등 fitted한 다리 옷)을 모두 지워야 합니다. 절대 기존 옷을 그대로 두고 그 위에 새 옷을 겹쳐 그리지 마세요.');
+    }
 
     if (clothingItems) {
       parts.push(`【2단계 — 새 의상 적용 (최우선 명령)】 아래 의상만 정확히 입히세요:\n${clothingItems}`);
@@ -250,13 +257,21 @@ export default function ArtistCodyScreen({ navigation }: any) {
     }
 
     if (styleItems) {
-      parts.push(`【4단계 — 헤어/문신】 ${styleItems}. 명시 안 된 카테고리는 현재 시트 그대로 유지.`);
-    } else {
+      parts.push(
+        isSheetMode
+          ? `【4단계 — 헤어/문신】 ${styleItems}.`
+          : `【4단계 — 헤어/문신】 ${styleItems}. 명시 안 된 카테고리는 현재 시트 그대로 유지.`,
+      );
+    } else if (!isSheetMode) {
       parts.push('【4단계 — 헤어/문신】 현재 시트 그대로 유지.');
     }
 
-    parts.push('【필수 유지】 캐릭터의 얼굴 인상·체형·standing pose는 반드시 유지.');
-    parts.push('【최종 점검】 결과물 다시 검토 — 사용자가 선택한 의상 종류가 정확히 그려졌는지, 특히 하의가 시트의 fitted 옷이 아닌 사용자 선택 의상으로 교체되었는지 확인하세요.');
+    if (isSheetMode) {
+      parts.push('【필수 유지】 얼굴 인상·체형은 첨부된 사용자 사진을 따라 그리세요. standing pose 자세 유지.');
+    } else {
+      parts.push('【필수 유지】 캐릭터의 얼굴 인상·체형·standing pose는 반드시 유지.');
+    }
+    parts.push('【최종 점검】 결과물 다시 검토 — 사용자가 선택한 의상 종류가 정확히 그려졌는지, 특히 하의가 fitted 옷(레깅스/스판)이 아닌 사용자 선택 의상으로 그려졌는지 확인하세요.');
     const desc = parts.join('\n\n');
 
     // 적용된 아이템 영구 보관 — ArtistResult에서 시트 하단에 표시 + 외부 링크 노출
@@ -269,24 +284,38 @@ export default function ArtistCodyScreen({ navigation }: any) {
       options: itemOptions[cat as Cat],
       appliedAt: Date.now(),
     }));
+    // 9004 옷 입히기는 image_object_name이 있는 상의/하의/신발만 이미지 첨부 → 정확도 ↑.
+    // 누락 항목은 텍스트(desc)로만 묘사돼서 결과가 흔들릴 수 있으니 경고.
+    const missingImage = appliedItems.filter(
+      (it) => ['상의', '하의', '신발'].includes(it.cat) && !it.imageObjectName,
+    );
+    if (missingImage.length > 0) {
+      console.warn(
+        '[ArtistCody] image_object_name 없는 의상 (텍스트로만 묘사됨):',
+        missingImage.map((it) => `${it.cat}/${it.name}`).join(', '),
+      );
+    }
     useOutfitStore.getState().setItems(appliedItems);
 
     // 작사·작곡 패턴: 큐 등록 후 Map 복귀. 큐 0 도달 후 캐릭터 클릭하면 ArtistLoading에서 API 호출
-    taskStore.setInput({ outfitDesc: desc });
-    taskStore.startTask('outfit');
-    useTimerStore.getState().startTask('artist' as any, '코디', 'artist_outfit');
-    Alert.alert('코디 시작', '작업실에서 진행 상황을 확인하실 수 있어요!', [
-      {
-        text: '확인',
-        onPress: () => {
-          if (navigation.canGoBack()) {
-            navigation.popToTop();
-          } else {
-            navigation.navigate('Map');
-          }
-        },
-      },
-    ]);
+    if (isSheetMode) {
+      // 신규 시트 생성: ArtistInput에서 받은 컨셉 + 옷 desc를 합쳐 user_text로
+      const conceptText = taskStore.userText || '';
+      const finalText = conceptText
+        ? `캐릭터 컨셉: ${conceptText}\n\n${desc}`
+        : desc;
+      taskStore.setInput({ userText: finalText, outfitDesc: desc });
+      taskStore.startTask('sheet');
+      useTimerStore.getState().startTask('artist' as any, '아티스트', 'artist');
+    } else {
+      taskStore.setInput({ outfitDesc: desc });
+      taskStore.startTask('outfit');
+      useTimerStore.getState().startTask('artist' as any, '코디', 'artist_outfit');
+    }
+    // web에서 Alert.alert의 onPress 콜백이 호출 안 되므로 바로 navigate
+    // reset으로 Studio Stack을 Map만 남기는 상태로 초기화 → 작업실 탭 다시 눌러도 Map이 보임
+    // (navigate('Map')은 ArtistCody가 stack에 남아서 작업실 재진입 시 Cody가 다시 표시되는 버그)
+    navigation.reset({ index: 0, routes: [{ name: 'Map' }] });
   };
 
   // Tab 헤더 좌측에 ← 버튼 주입
@@ -311,8 +340,14 @@ export default function ArtistCodyScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.title, { paddingTop: 12 }]}>옷 입히기</Text>
-      <Text style={styles.subtitle}>원하는 카테고리를 골라보세요. 여러 개 동시에 선택할 수 있어요.</Text>
+      <Text style={[styles.title, { paddingTop: 12 }]}>
+        {isSheetMode ? '아티스트 의상 선택' : '옷 입히기'}
+      </Text>
+      <Text style={styles.subtitle}>
+        {isSheetMode
+          ? '옷·헤어를 골라주세요. 사진과 함께 한 번에 아티스트로 만들어요. (미선택 카테고리는 기본형 적용)'
+          : '원하는 카테고리를 골라보세요. 여러 개 동시에 선택할 수 있어요.'}
+      </Text>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
         <View style={styles.grid}>
@@ -403,15 +438,30 @@ export default function ArtistCodyScreen({ navigation }: any) {
 
       <View style={[styles.bottomArea, { marginBottom: bottomLift }]}>
         <View style={styles.btnRow}>
-          <TouchableOpacity style={styles.skipBtn} onPress={() => navigation.replace('ArtistResult')}>
+          <TouchableOpacity
+            style={styles.skipBtn}
+            onPress={() => {
+              if (isSheetMode) {
+                // sheet 모드 취소 → 컨셉 입력 화면으로 복귀
+                navigation.replace('ArtistInput');
+              } else {
+                navigation.replace('ArtistResult');
+              }
+            }}
+          >
             <Text style={styles.skipBtnText}>취소</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.applyBtn, selectedEntries.length === 0 && { opacity: 0.4 }]}
+            style={[
+              styles.applyBtn,
+              !isSheetMode && selectedEntries.length === 0 && { opacity: 0.4 },
+            ]}
             onPress={handleApply}
-            disabled={selectedEntries.length === 0}
+            disabled={!isSheetMode && selectedEntries.length === 0}
           >
-            <Text style={styles.applyBtnText}>이 옷으로 입히기 (대기 필요)</Text>
+            <Text style={styles.applyBtnText}>
+              {isSheetMode ? '이 옷으로 만들기 (대기 필요)' : '이 옷으로 입히기 (대기 필요)'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>

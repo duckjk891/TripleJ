@@ -14,12 +14,39 @@ import { Audio } from 'expo-av';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { usePlayerStore } from '../stores/playerStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { colors } from '../theme/colors';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
+
+// 작곡 디렉터에서 받은 풍부한 파라미터를 한 줄 한 줄 요약 텍스트로 변환.
+// PlayerScreen의 prompt 탭에 그대로 표시되도록 한국어 라벨 + 줄바꿈 구분.
+function buildPromptSummary(music: any, lyrics: any): string | undefined {
+  const lines: string[] = [];
+  const add = (label: string, val: any) => {
+    if (val === null || val === undefined) return;
+    const s = String(val).trim();
+    if (!s) return;
+    lines.push(`${label}: ${s}`);
+  };
+  add('장르', music.genre || lyrics.genre);
+  add('분위기', music.mood || lyrics.mood);
+  add('템포', music.tempo);
+  add('스타일', music.style || lyrics.style);
+  add('보컬', music.vocal);
+  add('보컬 스타일', music.vocalStyle);
+  add('서브 보컬', music.subVocal);
+  add('서브 보컬 스타일', music.subVocalStyle);
+  add('BPM', music.bpm);
+  add('키', music.musicalKey);
+  add('레퍼런스 스타일', music.referenceStyle);
+  add('네거티브 태그', music.negativeTags);
+  add('Persona Model', music.personaModel);
+  return lines.length > 0 ? lines.join('\n') : undefined;
+}
 
 type Props = NativeStackScreenProps<any, 'MusicResult'>;
 
@@ -28,6 +55,7 @@ export default function MusicResultScreen({ navigation }: Props) {
   const store = useMusicStore();
   const { token } = useAuthStore();
   const lyricsStore = useLyricsStore();
+  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -165,7 +193,9 @@ export default function MusicResultScreen({ navigation }: Props) {
         || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
       genre: store.genre || undefined,
       mood: store.mood || undefined,
-      prompt: store.lyrics || undefined,
+      // prompt: 작곡 디렉터가 받은 풍부한 파라미터를 요약 텍스트로 합쳐서 저장.
+      // 가사는 별도 lyrics 필드에 들어가니 여기선 제외.
+      prompt: buildPromptSummary(store, lyricsStore),
       lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
       ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
     };
@@ -242,7 +272,10 @@ export default function MusicResultScreen({ navigation }: Props) {
     <View style={styles.container}>
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: insets.top + 16, paddingBottom: 32 + (hasMiniPlayer ? 70 : 0) + insets.bottom },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Director message */}
