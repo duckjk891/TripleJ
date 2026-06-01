@@ -279,6 +279,39 @@ export default function GenerationStatusPage() {
     navigate('/wizard', { state: { resume_job_id: id } });
   };
 
+  // v27 — [음악 재생성] : 가사 그대로 두고 Suno 호출만 다시.
+  // 백엔드가 audio_variants/timestamps 초기화 후 generating_music 으로 전환.
+  const [regeneratingMusic, setRegeneratingMusic] = useState(false);
+  const canRegenerateMusic = isMusicReady || isMusicFailed;
+  const onRegenerateMusic = async () => {
+    if (!canRegenerateMusic || regeneratingMusic) return;
+    const ok = window.confirm(
+      '음악을 다시 만들까요?\n현재 음악과 타임스탬프는 사라지고 새로 만들어요.\n(가사는 그대로 유지)'
+    );
+    if (!ok) return;
+    setRegeneratingMusic(true);
+    setTriggerError('');
+    try {
+      await api.regenerateMVJobMusic(id);
+      setJob((prev) => ({
+        ...(prev || {}),
+        status: 'generating_music',
+        progress: 0,
+        audio_variants: [],
+        lyric_timestamps_variants: {},
+        error_message: null,
+      }));
+      if (!timerRef.current && fetchJobRef.current) {
+        timerRef.current = setInterval(fetchJobRef.current, POLL_INTERVAL_MS);
+      }
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setTriggerError(typeof detail === 'string' ? detail : '음악 재생성에 실패했어요.');
+    } finally {
+      setRegeneratingMusic(false);
+    }
+  };
+
   // v38 — [가사 재생성] : wizard 안 가고 현재 화면에서 즉시 regenerate.
   // job 에 이미 박혀 있는 story_id + music_spec 그대로 재사용.
   const [regenerating, setRegenerating] = useState(false);
@@ -435,10 +468,20 @@ export default function GenerationStatusPage() {
             >
               다운로드
             </a>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={onRegenerateMusic}
+              disabled={regeneratingMusic}
+              title="가사는 그대로 두고 같은 가사로 음악만 다시 만들어요"
+            >
+              {regeneratingMusic ? '재생성 중...' : '↻ 음악 재생성'}
+            </button>
             <Link to="/my" className="btn-ghost">
               내 작품으로 →
             </Link>
           </div>
+          {triggerError && <p className="error-text">{triggerError}</p>}
         </div>
       )}
 
@@ -451,10 +494,10 @@ export default function GenerationStatusPage() {
             <button
               type="button"
               className="btn-primary"
-              onClick={onStartMusic}
-              disabled={musicTriggering}
+              onClick={onRegenerateMusic}
+              disabled={regeneratingMusic}
             >
-              {musicTriggering ? '재시도 중...' : '다시 시도'}
+              {regeneratingMusic ? '재시도 중...' : '↻ 다시 시도'}
             </button>
             <Link to="/my" className="btn-ghost">
               내 작품으로 →

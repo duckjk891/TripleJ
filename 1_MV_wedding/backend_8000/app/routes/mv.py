@@ -766,6 +766,77 @@ async def start_music_generation(job_id: str, current_user=Depends(get_current_u
     return {"job_id": job_id, "status": "generating_music"}
 
 
+# v27 — 음악만 재생성. 가사는 그대로 두고 Suno 호출만 다시 실행.
+# 기존 audio_variants / suno_audio_ids / lyric_timestamps_variants 모두 초기화.
+@router.post("/jobs/{job_id}/music/regenerate")
+async def regenerate_music(job_id: str, current_user=Depends(get_current_user)):
+    user_id = current_user.get("id")
+    logger.info(
+        "[MVRoute] /music-regenerate entry user_id=%s job_id=%s",
+        user_id,
+        job_id,
+    )
+
+    mongo = get_mongo()
+    try:
+        oid = ObjectId(job_id)
+    except (InvalidId, TypeError):
+        raise HTTPException(status_code=400, detail="유효하지 않은 job_id 입니다.")
+
+    doc = await mongo.mv_jobs.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="잡을 찾을 수 없습니다.")
+    if doc.get("user_id") != user_id:
+        logger.warning(
+            "[MVRoute] /music-regenerate forbidden user_id=%s job_id=%s",
+            user_id,
+            job_id,
+        )
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
+
+    status = doc.get("status")
+    if status not in ("music_ready", "music_failed"):
+        logger.info(
+            "[MVRoute] /music-regenerate busy job_id=%s status=%s",
+            job_id,
+            status,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="음악이 준비된 후에만 재생성할 수 있습니다.",
+        )
+
+    if not (doc.get("lyrics") or {}).get("body"):
+        raise HTTPException(
+            status_code=409,
+            detail="가사가 없어 음악을 재생성할 수 없습니다.",
+        )
+
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "status": "generating_music",
+                "progress": 0,
+                "error_message": None,
+                "audio_object_name": None,
+                "audio_variants": [],
+                "suno_task_id": None,
+                "suno_audio_id": "",
+                "suno_audio_ids": [],
+                "lyric_timestamps_variants": {},
+                "lyric_timestamps_status": "stale",
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+    asyncio.create_task(_run_music_generation(job_id))
+
+    logger.info("[MVRoute] /music-regenerate ok job_id=%s", job_id)
+    return {"job_id": job_id, "status": "generating_music"}
+
+
 @router.get("/jobs/{job_id}/audio")
 async def get_job_audio(
     job_id: str,

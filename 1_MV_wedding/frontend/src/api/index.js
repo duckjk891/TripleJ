@@ -100,6 +100,12 @@ export const getCharacterSheets = () => API.get('/character/sheets');
 export const regenerateMVJob = (jobId, { story_id, music_spec }) =>
   API.post(`/mv/jobs/${jobId}/regenerate`, { story_id, music_spec });
 
+// v27 — 음악만 재생성. 가사 그대로 두고 Suno 호출만 다시 실행.
+// status 가 music_ready / music_failed 일 때만 200, 그 외 409.
+// 백엔드가 audio_variants / lyric_timestamps_variants 초기화 후 generating_music 으로 전환.
+export const regenerateMVJobMusic = (jobId) =>
+  API.post(`/mv/jobs/${jobId}/music/regenerate`);
+
 // v39 — 생성된 가사 제목/본문 수동 수정.
 // payload: { title?: string(1~200), body?: string(1~5000) } — 둘 다 strip, 최소 하나 필수.
 // 가드: 401 → 400(ObjectId) → 404 → 403(non-owner) → 409(queued/generating) → 422(validation).
