@@ -61,13 +61,36 @@ SUNO_VOCAL_MAP = {
 
 def _ensure_lyrics_structure(lyrics: str) -> str:
     """가사에 [Verse]/[Chorus] 같은 메타태그가 없으면 자동 추가.
-    레퍼런스 패턴 그대로 — 우리 lyrics_generator는 항상 메타태그를 박지만,
-    혹시 모를 누락 보호용."""
+
+    v29 변경:
+    - LLM 출력에 라벨이 거의 없으면 (≤1) 경고 로깅 — prompt 가 제대로 동작 안 한 경우
+    - 부분 라벨(2개 이상)은 그대로 통과 — 강제 보완은 오히려 구조를 망침
+    - 라벨 0개 (긴급)는 기존의 Verse/Chorus 4줄 교차 폴백 유지 (단조하지만 Suno 가
+      파싱하려면 라벨이 필요함)
+    """
     if not lyrics or not lyrics.strip():
         return lyrics
-    tags = ['[verse', '[chorus', '[bridge', '[intro', '[outro', '[pre-chorus', '[hook']
-    if any(tag in lyrics.lower() for tag in tags):
+
+    full_tags = ['[verse', '[chorus', '[bridge', '[intro', '[outro', '[pre-chorus', '[hook']
+    found = [tag for tag in full_tags if tag in lyrics.lower()]
+
+    if len(found) >= 2:
+        # 라벨이 충분히 있으면 LLM 출력 신뢰. 부분 누락(예: Bridge 없음) 은
+        # prompt 강화로 해결할 문제이지 여기서 강제 끼워넣을 일이 아님.
         return lyrics
+
+    if len(found) == 1:
+        logger.warning(
+            "Lyrics structure thin (only %s). LLM prompt may need strengthening.",
+            found,
+        )
+        return lyrics
+
+    # 라벨 0개 — emergency 폴백. Suno 가 라벨 없는 가사를 단일 verse 로 처리
+    # 하지 않도록 최소한 [Verse]/[Chorus] 교차를 박는다. 단조롭지만 라벨 없음보다 낫다.
+    logger.warning(
+        "Lyrics has no structure tags at all. Falling back to mechanical Verse/Chorus split."
+    )
     lines = [l for l in lyrics.strip().split('\n') if l.strip()]
     if len(lines) <= 4:
         return f"[Verse]\n{lyrics.strip()}"
