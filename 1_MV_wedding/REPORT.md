@@ -3101,3 +3101,68 @@ v29 PASS — 사용자 지적 (음악 결과물 단조로움) 의 진짜 원인�
 ### 결론
 
 v30 PASS — 사용자 질문 "음악 재생성 이후 가사 재생성은 안되나?" 에 대해 백엔드 status guard 조사 결과 이미 허용되어 있었고, 프론트엔드 `canRegenerateLyrics` UI 조건만 막고 있음을 확인. `GenerationStatusPage.jsx` 하나만 수정해서 (1) 조건 확장 `isMusicReady || isMusicFailed` 추가, (2) 음악 상태에서 호출 시 "음악도 사라져요" 경고 confirm, (3) audio-card / failed-card 에 가사 재생성 버튼 노출, (4) regenerating ↔ regeneratingMusic 상호 disabled 처리. 커밋 6bcd96f 푸시, 백엔드 무수정이라 reload 불필요, Vite HMR 자동 반영. v29 의 새 prompt 도 기존 작품에 흡수 가능해진 부수 효과.
+
+## v31 - 2026-06-01 - 듀엣 라벨 포맷 전환 (섹션 헤더 역할) + 섹션 최대 5줄
+
+### 사용자 요청 (원문 — 2 가지)
+1. "가사가 한 [] 지문에 4줄 정도면 적당한것 같은데 지금 너무 길어. 가사 프롬프트를 수정해야할것 같아." (이후 보충: "최대 5줄로하자")
+2. "형태를 `[Intro]\n[Both] ...` 이런식으로 하는게 아니라 `[Intro - 듀엣]\n오늘 이 노래에 우리를 담아\n...\n[Verse 1 - 메인 보컬]\n그렇게 우리는 처음 서로를 봤어\n...` 이런식으로 표현하고 싶은데."
+
+### 중요한 트레이드오프 (사전 공지)
+- v30 리서치 (모든 Suno 듀엣 가이드 종합) 결과: **per-line `[Female]/[Male]/[Both]` 가 사실상 표준**. 400+ generation 테스트(HookGenius) 에서 Tier 2 (50~80% 신뢰도). `[Section - Role]` 형식은 카탈로그에 없는 비표준
+- 사용자 요청대로 변경하면 **듀엣 보컬 배분이 Suno V5 에서 의도대로 안 갈 위험 있음** (단일 보컬 fallback / 랜덤 할당 가능성)
+- 그럼에도 사용자 미적·가독성 선호가 명확 → 진행. 1~2 작품 테스트로 만족도 평가 권장. 불만족 시 v28 형식으로 롤백 옵션 열어둠
+
+### 구현 (v31)
+
+**파일**: `1_MV_wedding/backend_8000/app/services/lyrics_generator.py` (단일 파일, 6개 블록 수정)
+
+1. **`_measure_body_length` docstring** — per-line 라벨 제거 명시 (`_META_TAG_RE` 가 모든 `[...]` 스트립하므로 동작 무변경)
+2. **SOLO STRUCTURAL RULES** — "각 섹션 2~6줄" → "최대 5줄 (Intro/Outro 2~3, 나머지 3~5)"
+3. **SOLO + DUET 룰 16 (가사 길이 가이드)** — 양쪽 동일 블록 replace_all:
+   - 2-min 본문: 600~800자 → 300~500자
+   - 3-min 본문: 700~1100자 → 400~650자
+   - 최소 줄수 → 최대 줄수로 전환 (Intro 2~3, Verse 3~5, Pre-Chorus 3~4, Chorus 3~5, Bridge 3~5, Outro 2~3)
+   - 합계: 48줄+ → 25~38줄
+4. **SOLO Few-shot** — 7줄 예시 → 4줄 예시 + "최대 5줄" 안내
+5. **DUET `CRITICAL: LINE-BY-LINE VOCAL LABELS`** — 완전 재작성 → `★ CRITICAL: 섹션 헤더에 보컬 역할 명시`:
+   - `[<섹션이름> - <역할>]` 형식 강제
+   - 역할 3가지: 듀엣 / 메인 보컬 / 서브 보컬
+   - 줄별 라벨 절대 금지
+   - 사용자 원문 예시 그대로 포함 (`[Intro - 듀엣]` ... `[Verse 1 - 메인 보컬]` ...)
+6. **DUET 가사 구조** — 각 섹션에 권장 역할 박음:
+   - `[Intro - 듀엣]` / `[Verse 1 - 메인 보컬]` / `[Verse 2 - 서브 보컬]` / `[Pre-Chorus - 듀엣]` / `[Chorus 1 - 듀엣]` / `[Verse 3 - 메인 또는 서브 보컬]` / `[Bridge - 메인 또는 서브 보컬]` / `[Chorus 2 - 듀엣]` / `[Outro - 듀엣]`
+7. **DUET STRUCTURE RULES** — 줄별 라벨 룰 모두 제거. 섹션 단위 역할 룰로 대체.
+8. **DUET 룰 12 시점 마커** — `[Both]` 헤딩 → plain 자연어 한 줄
+9. **DUET 룰 13 회상 섹션 구성** — `[Female]/[Male]` 라벨 제거 → plain 텍스트 (헤더 역할이 결정)
+10. **DUET 룰 17 에너지 아크** — 새 포맷 (`[Intro - 듀엣]` 등) + 듀엣 배분 힌트도 섹션 헤더 역할 기반
+11. **DUET 룰 18 Few-shot** — 전체 섹션 흐름 예시 (Intro → Outro 까지) 새 포맷 + 모든 섹션 5줄 이내
+12. **`_build_user_message_wedding` 의 duet_line (v28 매핑)** — `[Female]/[Male]/[Both]` 매핑 안내 제거. 메인/서브 gender 는 참고 컨텍스트로만 전달 + "섹션 헤더는 `[<섹션> - 듀엣/메인 보컬/서브 보컬]` 형식" 명시
+
+**`_ensure_lyrics_structure` 폴백** — 무수정. `[intro` lowercase prefix 매칭이라 `[Intro - 듀엣]` 도 정상 검출 ✅ (smoke 로 확인)
+
+### 배포
+- 커밋 `d7a3082` "Switch duet lyrics to section-header role + cap sections at 5 lines" (+180 / -140)
+- 푸시: `5e3889b..d7a3082` → origin/frontend
+- 백엔드 PC selective sync + `touch` reload
+- worker PID 12358 → 12790 ✅
+- venv smoke (실제 모듈 import 검증):
+  - `[<섹션> - 듀엣]` 형식 안내 in DUET ✅
+  - per-line label 안내 제거 ✅
+  - Few-shot `[Intro - 듀엣]` 포함 ✅
+  - SOLO "최대 5줄" 포함 ✅
+  - duet_line context: 섹션 헤더 안내 + 메인/서브 gender 컨텍스트 ✅
+
+### 영향
+- 다음 가사 재생성부터 새 포맷 + 5줄 이내 적용
+- 듀엣 표시가 깔끔해짐 (사용자 미적 선호 충족)
+- ⚠️ Suno V5 가 비표준 포맷을 어떻게 해석할지 미검증 — 실제 음원 들어보고 평가 필요
+
+### 특이사항 / 후속
+- v28 의 `[Female] = 메인` 매핑 룰은 더 이상 무의미 (per-line 라벨 자체 제거) → 의미적으로 obsolete. 코드는 새 포맷 안내로 교체했지만 v28 메시지 핵심은 살아있음 (메인/서브 ↔ gender 매핑 컨텍스트)
+- 5줄 제한으로 가사 정보량이 줄어드는 trade-off: 사용자 입력 사실 60% 반영 룰을 유지하기 어려울 수 있음. 다음 가사가 너무 압축적이면 60% 룰 완화 검토
+- 만약 듀엣 음원이 단일 보컬로 들리면 즉시 v28 per-line 라벨로 롤백 가능 — 백엔드 commit 한 개만 revert 하면 됨
+
+### 결론
+
+v31 PASS — 사용자 요청 2가지 (섹션당 최대 5줄, `[Section - Role]` 헤더 포맷) 를 `lyrics_generator.py` 단일 파일 12개 블록 수정으로 반영. SOLO/DUET 룰 16 길이 가이드 축소, DUET CRITICAL 블록 완전 재작성 (per-line 라벨 → 섹션 헤더 역할), Few-shot 새 포맷으로 교체, `_build_user_message_wedding` duet 컨텍스트 매핑 안내 갱신. 커밋 d7a3082 푸시, 백엔드 selective sync + `touch` reload 로 worker PID 12358 → 12790 교체 확인, venv smoke 5종 통과. `_ensure_lyrics_structure` 폴백은 lowercase prefix 매칭이라 새 헤더와 호환. 트레이드오프: `[Section - Role]` 은 Suno V5 비표준 포맷이라 듀엣 보컬 배분이 의도대로 안 갈 위험 있음 — 1~2 작품 테스트 후 불만족 시 v28 per-line 라벨로 백엔드 커밋 1개 revert 로 즉시 롤백 가능.

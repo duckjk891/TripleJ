@@ -5285,3 +5285,74 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - music_failed 의 에러 메시지에 따라 자동 추천 ("Suno timeout → 음악만 재시도 권장")
 
 ### 작업 끝(append).
+
+## v31 - 2026-06-01 - 듀엣 라벨 포맷 전환 (섹션 헤더 역할) + 섹션 최대 5줄
+
+### 사용자 요청 (원문 — 2 가지)
+1. "가사가 한 [] 지문에 4줄 정도면 적당한것 같은데 지금 너무 길어. 가사 프롬프트를 수정해야할것 같아." (이후 보충: "최대 5줄로하자")
+2. "형태를 `[Intro]\n[Both] ...` 이런식으로 하는게 아니라 `[Intro - 듀엣]\n오늘 이 노래에 우리를 담아\n...\n[Verse 1 - 메인 보컬]\n그렇게 우리는 처음 서로를 봤어\n...` 이런식으로 표현하고 싶은데."
+
+### 중요한 트레이드오프 (사전 공지)
+- v30 리서치 (모든 Suno 듀엣 가이드 종합) 결과: **per-line `[Female]/[Male]/[Both]` 가 사실상 표준**. 400+ generation 테스트(HookGenius) 에서 Tier 2 (50~80% 신뢰도). `[Section - Role]` 형식은 카탈로그에 없는 비표준
+- 사용자 요청대로 변경하면 **듀엣 보컬 배분이 Suno V5 에서 의도대로 안 갈 위험 있음** (단일 보컬 fallback / 랜덤 할당 가능성)
+- 그럼에도 사용자 미적·가독성 선호가 명확 → 진행. 1~2 작품 테스트로 만족도 평가 권장. 불만족 시 v28 형식으로 롤백 옵션 열어둠
+
+### 구현 (v31)
+
+**파일**: `1_MV_wedding/backend_8000/app/services/lyrics_generator.py` (단일 파일, 6개 블록 수정)
+
+1. **`_measure_body_length` docstring** — per-line 라벨 제거 명시 (`_META_TAG_RE` 가 모든 `[...]` 스트립하므로 동작 무변경)
+
+2. **SOLO STRUCTURAL RULES** — "각 섹션 2~6줄" → "최대 5줄 (Intro/Outro 2~3, 나머지 3~5)"
+
+3. **SOLO + DUET 룰 16 (가사 길이 가이드)** — 양쪽 동일 블록 replace_all:
+   - 2-min 본문: 600~800자 → 300~500자
+   - 3-min 본문: 700~1100자 → 400~650자
+   - 최소 줄수 → 최대 줄수로 전환 (Intro 2~3, Verse 3~5, Pre-Chorus 3~4, Chorus 3~5, Bridge 3~5, Outro 2~3)
+   - 합계: 48줄+ → 25~38줄
+
+4. **SOLO Few-shot** — 7줄 예시 → 4줄 예시 + "최대 5줄" 안내
+
+5. **DUET `CRITICAL: LINE-BY-LINE VOCAL LABELS`** — 완전 재작성 → `★ CRITICAL: 섹션 헤더에 보컬 역할 명시`:
+   - `[<섹션이름> - <역할>]` 형식 강제
+   - 역할 3가지: 듀엣 / 메인 보컬 / 서브 보컬
+   - 줄별 라벨 절대 금지
+   - 사용자 원문 예시 그대로 포함 (`[Intro - 듀엣]` ... `[Verse 1 - 메인 보컬]` ...)
+
+6. **DUET 가사 구조** — 각 섹션에 권장 역할 박음:
+   - `[Intro - 듀엣]` / `[Verse 1 - 메인 보컬]` / `[Verse 2 - 서브 보컬]` / `[Pre-Chorus - 듀엣]` / `[Chorus 1 - 듀엣]` / `[Verse 3 - 메인 또는 서브 보컬]` / `[Bridge - 메인 또는 서브 보컬]` / `[Chorus 2 - 듀엣]` / `[Outro - 듀엣]`
+
+7. **DUET STRUCTURE RULES** — 줄별 라벨 룰 모두 제거. 섹션 단위 역할 룰로 대체.
+
+8. **DUET 룰 12 시점 마커** — `[Both]` 헤딩 → plain 자연어 한 줄
+
+9. **DUET 룰 13 회상 섹션 구성** — `[Female]/[Male]` 라벨 제거 → plain 텍스트 (헤더 역할이 결정)
+
+10. **DUET 룰 17 에너지 아크** — 새 포맷 (`[Intro - 듀엣]` 등) + 듀엣 배분 힌트도 섹션 헤더 역할 기반
+
+11. **DUET 룰 18 Few-shot** — 전체 섹션 흐름 예시 (Intro → Outro 까지) 새 포맷 + 모든 섹션 5줄 이내
+
+12. **`_build_user_message_wedding` 의 duet_line (v28 매핑)** — `[Female]/[Male]/[Both]` 매핑 안내 제거. 메인/서브 gender 는 참고 컨텍스트로만 전달 + "섹션 헤더는 `[<섹션> - 듀엣/메인 보컬/서브 보컬]` 형식" 명시
+
+**`_ensure_lyrics_structure` 폴백** — 무수정. `[intro` lowercase prefix 매칭이라 `[Intro - 듀엣]` 도 정상 검출
+
+### 배포 계획
+- 백엔드 단일 파일 변경 → SSH selective sync + `touch` reload 로 uvicorn 워커 재시작
+- frontend 무수정
+
+### 기대 효과
+- 가사 한 섹션당 최대 5줄로 제한되어 가독성·집중도 개선
+- 듀엣 라벨이 섹션 헤더 단위로 깔끔하게 표시 (사용자 미적 선호 충족)
+
+### 회귀 위험
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | Suno V5 가 `[Section - Role]` 비표준 포맷 해석 못해 단일 보컬 fallback | 실제 음원으로 검증 후 불만족 시 v28 per-line 라벨로 즉시 롤백 (백엔드 커밋 1개 revert) |
+| R2 | 5줄 제한으로 사용자 입력 60% 반영 룰 위반 | 다음 가사가 너무 압축적이면 60% 룰 완화 검토 |
+| R3 | `_ensure_lyrics_structure` 폴백이 새 헤더 미인식 | `[intro` lowercase prefix 매칭 → `[Intro - 듀엣]` 도 정상 매칭 (smoke 로 확인됨) |
+
+### 후속 (필요 시)
+- 1~2 작품 테스트 후 Suno V5 듀엣 보컬 배분 품질 평가
+- 불만족 시 v28 per-line `[Female]/[Male]/[Both]` 라벨로 롤백
+
+### 작업 끝(append).
