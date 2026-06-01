@@ -13,6 +13,7 @@ LoRA, 후처리 — 모두 v3 범위 외.
 import asyncio
 import io
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -20,8 +21,30 @@ from bson import ObjectId
 
 from ..config import settings
 from ..database.minio import get_minio
+from .translation import translate_ko_to_en
 
 logger = logging.getLogger(__name__)
+
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _has_hangul(text: str) -> bool:
+    return bool(text) and bool(_HANGUL_RE.search(text))
+
+
+async def _to_english_style_tag(text: str) -> str:
+    """v26 — Suno style 태그가 한국어를 포함하면 영어로 자동 변환.
+
+    Suno V5 는 영문 style 태그 처리가 안정적이라, 한국어 입력(예: '발라드')은
+    LLM 으로 번역 후 전달한다. 한글이 없으면 LLM 호출 없이 원문 반환.
+    번역 실패(빈 문자열) 시 원문 그대로 사용 (호출 누락보다 원문 전달이 안전).
+    """
+    if not text or not text.strip():
+        return ""
+    if not _has_hangul(text):
+        return text.strip()
+    translated = await translate_ko_to_en(text, context_hint="music style tag")
+    return translated.strip() if translated else text.strip()
 
 
 SUNO_VOCAL_MAP = {
@@ -96,11 +119,25 @@ async def generate_music_for_job(
     }
 
     # ---- style 문자열 빌드 ----
-    style_parts: list[str] = []
+    # v26 — Suno 는 영문 style 태그가 안정적. 한국어가 섞이면 LLM 번역 후 전달.
+    raw_style_inputs: list[str] = []
     if music_spec.get("genre"):
-        style_parts.append(music_spec["genre"])
+        raw_style_inputs.append(str(music_spec["genre"]))
     moods = music_spec.get("moods") or []
-    style_parts.extend([m for m in moods if m])
+    raw_style_inputs.extend([str(m) for m in moods if m])
+
+    if raw_style_inputs:
+        translated_inputs = await asyncio.gather(
+            *[_to_english_style_tag(s) for s in raw_style_inputs]
+        )
+        style_parts: list[str] = [s for s in translated_inputs if s]
+        logger.info(
+            "Suno style translate: raw=%s -> en=%s",
+            raw_style_inputs,
+            style_parts,
+        )
+    else:
+        style_parts = []
 
     vocal_form = music_spec.get("vocal_form") or "solo"
     vocal_styles = music_spec.get("vocal_styles") or {}

@@ -4897,3 +4897,111 @@ curl -s -X OPTIONS "http://100.127.225.55:8000/api/mv/jobs/000000000000000000000
 
 ### 7) 작업 끝(append).
 
+
+## v26 - 2026-06-01 - Suno 한→영 자동 번역 통합
+
+### 1) 배경 / 사용자 요청
+
+> "9004 백엔드에 번역해서 suno로 보내는 로직이 있을꺼야. 그거 확인해서 1_MV_wedding 도 동일하게 수정해줘"
+
+### 2) 조사 결과 (사실 정리)
+
+| # | 파일 / 경로 | 내용 |
+|---|------------|------|
+| F1 | `0_platform_music/backend_9004/app/services/translation.py` | Claude Opus 4.7 기반 한↔영 번역기. 씬 prompt 자동 동기화 용도. |
+| F2 | `0_platform_music/backend_9004/app/routes/generate.py:218` | `/translate-tags` 엔드포인트 (GPT-4o-mini 기반). 프론트가 명시적으로 호출하는 선택 경로. |
+| F3 | `0_platform_music/backend_9004/.../suno_generator.py` | **자체 번역 없음.** 프론트가 미리 영어로 변환한 값을 그대로 받아 Suno 에 전달. |
+
+→ 즉 9004 는 "프론트 사전 번역 + 백엔드 미번역" 구조. 만약 프론트 번역이 누락되면 한국어 태그(예: "발라드", "신나는")가 Suno API 에 그대로 들어가 결과 품질 하락.
+
+### 3) 사용자 의도 해석
+
+"동일하게" 의 효과적 해석을 단순 모듈 이식이 아닌 **"Suno API 호출 시 영문 style 태그가 반드시 들어가도록"** 으로 잡는다. 따라서 9004 의 translation.py 모듈을 이식하면서, 추가로 `suno_generator.py` 호출 경로 안에 자동 번역 훅을 끼워 넣는다. (프론트 사전 번역 의존성 제거 → 백엔드 단일 진입점에서 보장.)
+
+### 4) 작업 계획
+
+#### 4-A) backend-dev
+
+**B1. 새 파일: `1_MV_wedding/backend_8000/app/services/translation.py`**
+- 9004 의 동일 모듈을 그대로 이식
+- 의존성: `settings.anthropic_api_key` + `anthropic` 패키지 — 기존 backend_8000 에 두 가지 모두 이미 존재 확인 완료
+- 공개 함수: `async def translate_ko_to_en(text: str) -> str`
+- 실패 시 빈 문자열 반환 (9004 동일 시그니처 유지)
+
+**B2. 수정: `1_MV_wedding/backend_8000/app/services/suno_generator.py`**
+- import 추가:
+  ```python
+  import asyncio
+  from .translation import translate_ko_to_en
+  ```
+- 내부 헬퍼 추가:
+  ```python
+  _HANGUL = re.compile(r"[가-힣]")
+
+  async def _to_english_style_tag(text: str) -> str:
+      if not text:
+          return ""
+      if not _HANGUL.search(text):
+          return text  # 이미 영문 → LLM 호출 스킵
+      en = await translate_ko_to_en(text)
+      return en or text  # 번역 실패 시 원문 fallback (호출 누락보다 안전)
+  ```
+- `style_parts` 빌드 부분 교체:
+  - 기존: `genre`, `moods[...]` 를 그대로 join
+  - 신규: `asyncio.gather(*[_to_english_style_tag(t) for t in [genre, *moods]])` 로 병렬 번역
+- `SUNO_VOCAL_MAP` 값들은 이미 영문이므로 번역 대상에서 제외
+- 로깅 추가: `logger.info(f"Suno style translate: raw={raw_tags} -> en={en_tags}")` (tester 가 검증 키로 사용)
+
+#### 4-B) deploy
+
+```bash
+# 1) 로컬 commit (1_MV_wedding 경로만 명시)
+cd /Users/pearl/TripleJ/1_MV_wedding
+git add backend_8000/app/services/translation.py \
+        backend_8000/app/services/suno_generator.py
+git commit -m "v26: Suno 한→영 자동 번역 통합 (translation 모듈 이식)"
+git push origin frontend
+
+# 2) 백엔드 PC reload
+ssh -p 2222 duckjk89@100.127.225.55 \
+  'cd /mnt/d/1_projects/0_myProjects/1_tripleJ/1_MV_wedding && \
+   git fetch origin frontend && \
+   git checkout origin/frontend -- backend_8000/app/services/translation.py \
+                                   backend_8000/app/services/suno_generator.py'
+# uvicorn --reload 가 watch 중이므로 자동 재기동
+```
+
+#### 4-C) tester
+
+- **import smoke**: uvicorn 로그에서 `Application startup complete.` 재확인. translation 모듈 import 실패 시 즉시 ImportError 로 죽으므로 살아있으면 통과.
+- **Suno 실호출 검증은 비용 큼** → 우회 검증:
+  1. PATCH `/api/mv/jobs/{id}/lyrics` (v25) 호출하여 reload 정상 확인
+  2. 다음 자연스러운 음악 생성 시 로그에서 `Suno style translate: raw=[...] -> en=[...]` 라인 확인
+  3. 한국어 태그 입력(`"발라드"`, `"신나는"`) → 영문(`"ballad"`, `"upbeat"`) 변환 여부 확인
+- **fallback 동작**: anthropic API 키 무효화 상태에서 음악 생성 → 원문 그대로 Suno 에 전달되는지(에러 없이) 확인 (선택)
+
+### 5) 비기능적 고려
+
+| 항목 | 평가 |
+|------|------|
+| 캐시 | 없음 (9004 와 동일). 동일 입력 재번역 비용 발생하지만 음악 생성 자체가 분 단위라 영향 미미. |
+| Latency | 입력 N개에 대해 `asyncio.gather` 병렬 호출 → 단일 호출 시간(~1-2s) 정도만 추가 |
+| Cost | Claude Opus 4.7 호출 N회 × 짧은 텍스트 → 음악 생성 1건당 cents 단위 |
+| 안전성 | 번역 실패 시 원문 fallback → Suno 호출 자체는 무조건 진행 |
+
+### 6) 회귀 위험
+
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | translation.py import 실패로 suno_generator 모듈 자체가 못 올라옴 | 로컬 `python -c "from app.services import suno_generator"` 사전 확인 후 push |
+| R2 | anthropic API 키 만료 → 매 음악 생성 시 1-2s 지연 (실패 후 fallback) | 로그 모니터 + fallback 으로 기능은 유지 |
+| R3 | 영문/한글 혼합 태그(예: "k-pop 발라드")에서 한글 감지되어 통째로 LLM 통과 → 영문 부분이 번역 과정에서 변형 | translation prompt 가 "translate Korean to English" 명시이므로 영문은 그대로 두는 게 정상이나, 모니터링 필요 |
+| R4 | 0_platform_music/backend 코드 실수 수정 (메모리 규칙 위반) | git add 시 `backend_8000/` 경로만 명시. 9004 는 손대지 않음 |
+
+### 7) 후속 작업 (이번 턴 범위 외)
+
+- 동일 패턴을 `0_platform_music/backend_9004` 의 suno_generator.py 에도 적용하려면 별도 작업 (메모리 규칙: 0_platform 백엔드 수정 금지이므로 사용자 명시 요청 필요)
+- `/translate-tags` 엔드포인트(GPT-4o-mini 기반) 를 1_MV_wedding 에 추가할지는 옵션 — 프론트가 미리 번역 결과를 UI 에 노출하고 싶을 때만
+- 캐시 도입 (Redis / in-memory LRU) 은 호출량 증가 시 재검토
+
+### 8) 작업 끝(append).
