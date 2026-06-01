@@ -2714,3 +2714,89 @@ v21.5 PASS — LLM 의 결정론 라벨(story_slot/memory_index/refs) 의존을 
 
 ### 결론
 v25 PASS — `PATCH /api/mv/jobs/{job_id}/lyrics` 엔드포인트가 백엔드(mv.py)에 추가되어 로컬 커밋·푸시되고, 백엔드 PC(`backend` 브랜치)에 선택적 fetch + checkout 패턴으로 해당 파일만 동기화 완료. uvicorn `--reload` 가 변경을 감지해 worker PID 자동 교체. smoke test (인증 토큰 없이 PATCH) 응답이 401 인증 오류로 떨어져 라우트 등록·미들웨어 순서 정상 확인. 실제 가사 편집 동작 검증은 프론트 편집 UI 추가 후 다음 라운드에서 진행.
+
+---
+
+## v26 - 2026-06-01 - Suno 한→영 자동 번역 통합
+
+### 사용자 요청
+> "9004 백엔드에 번역해서 suno로 보내는 로직이 있을꺼야. 그거 확인해서 1_MV_wedding 도 동일하게 수정해줘"
+
+### 조사 결과 (9004 reference)
+- **`translation.py`**: Claude Opus 4.7 기반 한↔영 번역 모듈 존재. but `suno_generator` 가 직접 호출하지는 않음.
+- **`/translate-tags` 엔드포인트** (GPT-4o-mini): 프론트가 선택적으로 호출하는 보조 API.
+- **결론**: 9004 도 자동 번역은 안 하고 있음. 사용자의 효과적 의도 = **"Suno 가 영어 style 태그를 받도록"** 으로 해석 → 백엔드 단에서 자동 번역하도록 적극 구현.
+
+### 구현
+
+#### 1. 새 파일: `1_MV_wedding/backend_8000/app/services/translation.py`
+- 9004 의 동일 모듈을 **verbatim 이식** (Claude Opus 4.7)
+- 공개 함수:
+  - `translate_ko_to_en(text, context_hint)` — 한국어 → 영문
+  - `translate_en_to_ko(text, context_hint)` — 영문 → 한국어
+- 안전망:
+  - 빈 입력 short-circuit
+  - 1회 retry
+  - 코드펜스 / 따옴표 제거 후처리
+
+#### 2. 수정: `1_MV_wedding/backend_8000/app/services/suno_generator.py`
+- `import re`, `from .translation import translate_ko_to_en` 추가
+- `_HANGUL_RE = re.compile(r"[가-힣]")` 컴파일된 정규식
+- `_has_hangul(text)` 헬퍼 — 한글 포함 여부 빠른 판정
+- `_to_english_style_tag(text)`:
+  - 한글 없으면 **원문 그대로 반환** (LLM 호출 0)
+  - 한글 있으면 LLM 번역 호출
+- `style_parts` 빌드 부분:
+  - genre + moods 를 `asyncio.gather` 로 **병렬 번역**
+  - vocal style (SUNO_VOCAL_MAP) 은 이미 영문이라 그대로 둠
+- 번역 실패 시 **원문 fallback** (logger.info 로 `raw=[...] -> en=[...]` 비교 로그)
+
+### 배포
+
+#### 1. 로컬 (frontend 브랜치)
+- 커밋: **`a6962a2`** "Auto-translate Korean Suno style tags to English before generation"
+- 푸시: `22aaeec..a6962a2` → origin/frontend
+
+#### 2. 백엔드 PC (backend 브랜치) — 선택적 sync
+```bash
+git fetch origin frontend
+git checkout origin/frontend -- \
+  1_MV_wedding/backend_8000/app/services/translation.py \
+  1_MV_wedding/backend_8000/app/services/suno_generator.py
+```
+
+#### 3. uvicorn auto-reload
+- worker PID: **9556 → 11474** ✅
+- ⚠️ **WatchFiles 가 git checkout mtime 변경을 즉시 못 잡는 경우 있음** → `touch` 로 mtime 강제 갱신 1회 필요했음
+
+### 검증 (smoke test)
+
+| 항목 | 결과 |
+|---|---|
+| `GET /api/health` | **200** ✅ |
+| `PATCH /api/mv/jobs/{dummy_id}/lyrics` | **401** (라우트 살아있음) ✅ |
+| Live 번역 호출 (백엔드 PC venv 직접 실행) | ✅ |
+
+```python
+await translate_ko_to_en("발라드", context_hint="music style tag")
+# → 'Ballad'
+```
+Anthropic 호출 → 응답 정상.
+
+### 영향
+
+1. **다음 음악 생성부터** 한국어 genre / moods 가 자동으로 영문 style 태그로 변환되어 Suno V5 에 전달됨
+2. 로그에서 `[Suno style translate: raw=[...] -> en=[...]]` 형태로 확인 가능
+3. **vocal style** 은 이미 영문이라 영향 없음
+4. **영문 입력** 은 `_has_hangul` 체크로 LLM 호출 없이 그대로 전달 — **cost 0, latency 0**
+
+### 특이사항
+
+1. **캐시 없음** (9004 와 동일). 동일 입력 재번역 비용 발생하지만 음악 생성이 분 단위라 영향 미미
+2. **WatchFiles 가 git checkout mtime 변경을 즉시 잡지 못하는 경우** 있어 `touch` 로 보완. 다음 배포 시에도 같은 패턴 적용 권장
+3. **`0_platform_music/backend_9004` 는 메모리 규칙에 따라 수정 안 함** (사용자가 명시 요청 시 별도 진행)
+4. **`/translate-tags` 엔드포인트는 1_MV_wedding 에 추가 안 함** — 프론트가 미리 번역 UI 필요할 때 별도 작업
+
+### 결론
+v26 PASS — 9004 의 `translation.py` 를 1_MV_wedding/backend_8000 에 verbatim 이식하고, `suno_generator.py` 가 genre / moods 한글 입력을 `asyncio.gather` 로 병렬 번역해 Suno V5 에 영문 style 태그로 전달하도록 통합 완료. 영문 입력은 `_has_hangul` 체크로 LLM 호출 우회 (cost 0). 백엔드 PC 에 선택적 fetch + checkout 패턴으로 두 파일만 동기화, uvicorn worker auto-reload (9556 → 11474) 확인. Live 번역 호출 ("발라드" → "Ballad") 정상 응답. 다음 음악 생성 작업부터 자동 적용됨.
+
