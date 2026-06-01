@@ -50,6 +50,142 @@ function LyricsBody({ body }) {
   );
 }
 
+// v39 — 가사 제목/본문 수동 편집. canEdit=false 면 읽기 전용 (예: generating_music 중 백엔드 409).
+function LyricsCardBody({ lyrics, jobId, canEdit, onLyricsUpdated, lockReason }) {
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editBody, setEditBody] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  const startEdit = () => {
+    setEditTitle(lyrics?.title || '');
+    setEditBody(lyrics?.body || '');
+    setSaveError('');
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setSaveError('');
+  };
+
+  const onSave = async () => {
+    const trimmedTitle = editTitle.trim();
+    const trimmedBody = editBody.trim();
+    const originalTitle = (lyrics?.title || '').trim();
+    const originalBody = (lyrics?.body || '').trim();
+    const titleChanged = trimmedTitle !== originalTitle;
+    const bodyChanged = trimmedBody !== originalBody;
+
+    if (!titleChanged && !bodyChanged) {
+      setEditing(false);
+      return;
+    }
+    if (titleChanged && !trimmedTitle) {
+      setSaveError('제목을 입력해주세요.');
+      return;
+    }
+    if (bodyChanged && !trimmedBody) {
+      setSaveError('가사를 입력해주세요.');
+      return;
+    }
+
+    const payload = {};
+    if (titleChanged) payload.title = trimmedTitle;
+    if (bodyChanged) payload.body = trimmedBody;
+
+    setSaving(true);
+    setSaveError('');
+    try {
+      const { data } = await api.patchMVJobLyrics(jobId, payload);
+      onLyricsUpdated?.(data);
+      setEditing(false);
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setSaveError(typeof detail === 'string' ? detail : '저장에 실패했어요.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className="lyrics-card__edit" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <input
+          type="text"
+          value={editTitle}
+          onChange={(e) => setEditTitle(e.target.value)}
+          maxLength={200}
+          placeholder="제목"
+          disabled={saving}
+          style={{
+            width: '100%',
+            padding: '8px 10px',
+            fontSize: 18,
+            fontWeight: 600,
+            border: '1px solid #bbb',
+            borderRadius: 6,
+          }}
+        />
+        <textarea
+          value={editBody}
+          onChange={(e) => setEditBody(e.target.value)}
+          maxLength={5000}
+          rows={Math.max(10, (editBody.match(/\n/g) || []).length + 2)}
+          placeholder="가사 본문 — [verse 1] / [chorus] 같은 메타 표기는 그대로 두면 자동으로 강조돼요."
+          disabled={saving}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            fontSize: 15,
+            lineHeight: 1.6,
+            fontFamily: 'inherit',
+            border: '1px solid #bbb',
+            borderRadius: 6,
+            resize: 'vertical',
+          }}
+        />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn-primary" onClick={onSave} disabled={saving}>
+            {saving ? '저장 중...' : '저장'}
+          </button>
+          <button type="button" className="btn-ghost" onClick={cancelEdit} disabled={saving}>
+            취소
+          </button>
+          <span className="muted" style={{ alignSelf: 'center', fontSize: 12 }}>
+            ※ 본문을 바꾸면 음악과의 타임스탬프가 어긋날 수 있어요.
+          </span>
+        </div>
+        {saveError && <p className="error-text">{saveError}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <h2 className="lyrics-card__title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span>{lyrics?.title || '제목 없음'}</span>
+        {canEdit ? (
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={startEdit}
+            title="제목/가사를 직접 수정해요"
+            style={{ fontSize: 13, padding: '4px 10px' }}
+          >
+            ✎ 제목/가사 수정
+          </button>
+        ) : lockReason ? (
+          <span className="muted" style={{ fontSize: 12 }}>{lockReason}</span>
+        ) : null}
+      </h2>
+      <LyricsBody body={lyrics?.body || ''} />
+      {lyrics?.model && <p className="lyrics-card__credit muted">by {lyrics.model}</p>}
+    </>
+  );
+}
+
 export default function GenerationStatusPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -143,6 +279,39 @@ export default function GenerationStatusPage() {
     navigate('/wizard', { state: { resume_job_id: id } });
   };
 
+  // v38 — [가사 재생성] : wizard 안 가고 현재 화면에서 즉시 regenerate.
+  // job 에 이미 박혀 있는 story_id + music_spec 그대로 재사용.
+  const [regenerating, setRegenerating] = useState(false);
+  const canRegenerateLyrics = isLyricsReady || isLyricsFailed; // 가사 준비된 후 또는 실패 후
+  const onRegenerateLyrics = async () => {
+    if (!canRegenerateLyrics || regenerating) return;
+    if (!job?.story_id || !job?.music_spec) {
+      setTriggerError('잡 정보가 부족해서 가사를 다시 만들 수 없어요. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    const ok = window.confirm('가사를 다시 생성할까요?\n현재 가사는 사라지고 새로 만들어요.');
+    if (!ok) return;
+    setRegenerating(true);
+    setTriggerError('');
+    try {
+      await api.regenerateMVJob(id, {
+        story_id: job.story_id,
+        music_spec: job.music_spec,
+      });
+      // 즉시 UI를 generating_lyrics 로 바꿔 폴링이 새 가사 픽업
+      setJob((prev) => ({ ...(prev || {}), status: 'generating_lyrics', progress: 0, lyrics: null }));
+      // 폴링 보장
+      if (!timerRef.current && fetchJobRef.current) {
+        timerRef.current = setInterval(fetchJobRef.current, POLL_INTERVAL_MS);
+      }
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setTriggerError(typeof detail === 'string' ? detail : '가사 재생성에 실패했어요.');
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   return (
     <section className="gen-status">
       <h1 className="gen-status__title">제작 진행 상황</h1>
@@ -184,19 +353,29 @@ export default function GenerationStatusPage() {
 
       {isLyricsReady && lyrics && (
         <div className="card lyrics-card">
-          <h2 className="lyrics-card__title">{lyrics.title || '제목 없음'}</h2>
-          <LyricsBody body={lyrics.body || ''} />
-          {lyrics.model && (
-            <p className="lyrics-card__credit muted">by {lyrics.model}</p>
-          )}
+          <LyricsCardBody
+            lyrics={lyrics}
+            jobId={id}
+            canEdit={!regenerating && !musicTriggering}
+            onLyricsUpdated={(updated) => setJob(updated)}
+          />
           <div className="lyrics-card__actions">
             <button
               type="button"
               className="btn-primary"
               onClick={onStartMusic}
-              disabled={musicTriggering}
+              disabled={musicTriggering || regenerating}
             >
               {musicTriggering ? '시작하는 중...' : '이 가사로 음악 만들기'}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={onRegenerateLyrics}
+              disabled={regenerating || musicTriggering}
+              title="현재 가사를 버리고 같은 이야기로 가사만 다시 만들어요"
+            >
+              {regenerating ? '재생성 중...' : '↻ 가사 재생성'}
             </button>
             <Link to="/my" className="btn-ghost">
               내 작품으로 →
@@ -208,11 +387,13 @@ export default function GenerationStatusPage() {
 
       {(isGeneratingMusic || isMusicReady || isMusicFailed) && lyrics && (
         <div className="card lyrics-card">
-          <h2 className="lyrics-card__title">{lyrics.title || '제목 없음'}</h2>
-          <LyricsBody body={lyrics.body || ''} />
-          {lyrics.model && (
-            <p className="lyrics-card__credit muted">by {lyrics.model}</p>
-          )}
+          <LyricsCardBody
+            lyrics={lyrics}
+            jobId={id}
+            canEdit={!isGeneratingMusic}
+            lockReason={isGeneratingMusic ? '음악 생성 중에는 수정할 수 없어요.' : undefined}
+            onLyricsUpdated={(updated) => setJob(updated)}
+          />
         </div>
       )}
 
@@ -289,10 +470,20 @@ export default function GenerationStatusPage() {
             {job?.error_message || '알 수 없는 오류가 발생했습니다.'}
           </p>
           <div className="lyrics-card__actions">
-            <Link to="/wizard" className="btn-primary">
-              다시 위저드로 →
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={onRegenerateLyrics}
+              disabled={regenerating}
+              title="같은 이야기로 다시 시도"
+            >
+              {regenerating ? '재시도 중...' : '↻ 다시 시도'}
+            </button>
+            <Link to="/wizard" className="btn-ghost">
+              위저드로 이동
             </Link>
           </div>
+          {triggerError && <p className="error-text">{triggerError}</p>}
         </div>
       )}
 

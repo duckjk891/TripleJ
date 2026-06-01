@@ -1,7 +1,13 @@
 import axios from 'axios';
 
+// 백엔드는 Tailscale 머신(100.127.225.55:8000) 에서 항상 호스팅 중.
+// frontend 를 어느 PC 에서 dev 하든 동일 백엔드를 호출하도록 명시.
+// (이전엔 window.location.hostname 기반 → 다른 PC 에서 띄우면 자기 자신의 :8000 호출하려다 REFUSED)
+// .env 로 override 가능 (VITE_BACKEND_BASE_URL).
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL || 'http://100.127.225.55:8000';
+
 const API = axios.create({
-  baseURL: `${window.location.protocol}//${window.location.hostname}:8000/api`,
+  baseURL: `${BACKEND_BASE_URL}/api`,
 });
 
 API.interceptors.request.use((config) => {
@@ -93,6 +99,18 @@ export const getCharacterSheets = () => API.get('/character/sheets');
 // v35 — 같은 job 안 lyrics/music 갈아엎기 (같은 job, 새 story_id + music_spec).
 export const regenerateMVJob = (jobId, { story_id, music_spec }) =>
   API.post(`/mv/jobs/${jobId}/regenerate`, { story_id, music_spec });
+
+// v39 — 생성된 가사 제목/본문 수동 수정.
+// payload: { title?: string(1~200), body?: string(1~5000) } — 둘 다 strip, 최소 하나 필수.
+// 가드: 401 → 400(ObjectId) → 404 → 403(non-owner) → 409(queued/generating) → 422(validation).
+// body 변경 시 백엔드가 lyric_timestamps_status='stale' 로 마킹.
+// 응답: 기존 GET /mv/jobs/{id} 와 동일 shape (updated_doc).
+export const patchMVJobLyrics = (jobId, { title, body }) => {
+  const payload = {};
+  if (typeof title === 'string') payload.title = title;
+  if (typeof body === 'string') payload.body = body;
+  return API.patch(`/mv/jobs/${jobId}/lyrics`, payload);
+};
 
 // v33 — Wizard 작성중 draft 영속화 (user 당 1개)
 export const getMyDraft = () => API.get('/mv/drafts/mine');
