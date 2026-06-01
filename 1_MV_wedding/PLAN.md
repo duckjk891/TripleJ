@@ -5356,3 +5356,67 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - 불만족 시 v28 per-line `[Female]/[Male]/[Both]` 라벨로 롤백
 
 ### 작업 끝(append).
+
+## v32-v33 - 2026-06-02 - Phase 2 씬 이미지 reliability (sheet fallback + text-only 허용)
+
+### 배경 / 사용자 흐름
+- 2026-06-01: 사용자 "ValueError: no reference images resolved (sheet_ids=[], plac…" 에러 보고 → v32 fix (default sheet fallback)
+- 2026-06-02: 사용자 "레퍼런스 없이도 영상 생성 할 수 있게 해놓으면 안되?" → v33 fix (refs 0개 시 text-only 진행)
+- 두 작업 모두 **Phase 2 씬 이미지 생성 신뢰성** 이 주제 → 한 entry 로 통합 기록
+
+### 에러 origin / 원인 chain
+- 발화 지점: `pre_mv_phase2_image_generator.py:381` — `refs_count == 0` 시 `raise ValueError`
+- 원인 chain:
+  1. Phase 0 (시나리오 매핑) — 사용자 스토리에 `@캐릭터`/`@장소` 멘션 없으면 `scenario_events[].refs` 비움
+  2. Phase 1 (씬 분할) — 그 slot 의 event 들 refs 비어있으면 scene 의 `ref_sheet_ids=[]`, `ref_place_ids=[]` 저장
+  3. Phase 2 — 빈 ref 보고 ValueError, 재시도해도 DB 상태 동일 → 동일 fail
+- 모델 capability 확인: `ALLOWED_IMAGE_MODELS = (gpt_image_2, nb_pro)` 둘 다 text-to-image 가능
+  - `openai_image.generate_image`: ref_images 빈 리스트 → `/v1/images/generations` 자동 라우팅
+  - `_call_gemini_image` (nano-banana): image_parts 빈 리스트 → text-only 모드
+
+### 변경 파일
+- 백엔드: `pre_mv_phase2_image_generator.py` (단일 파일, v32+v33 누적 +47/-5)
+- 프런트엔드: 무수정
+
+### v32 — Default sheet fallback (commit `812d2e5`, +37줄)
+`place/wedding_photo` 분배 직후, ref count 검증 직전에 **캐릭터 시트 기본값 fallback** 삽입:
+- `groom_bytes` 비고 `ref_sheet_ids` 에 `groom_*` 없으면 → `groom_wedding` → `groom_casual` 순서로 시도
+- `bride_bytes` 비고 `ref_sheet_ids` 에 `bride_*` 없으면 → `bride_wedding` → `bride_casual` 순서로 시도
+- 캐릭터 시트가 있는 사용자는 retry 시 자동 복구 → 일관성 유지
+
+### v33 — Text-only 허용 (commit `d899a8a`, +10/-5)
+`refs_count == 0` 분기를 `raise ValueError` → `logger.warning` 으로 downgrade:
+- v32 fallback 까지 모두 실패 (캐릭터 시트 미생성 사용자) 해도 text-only 모드로 진행
+- 캐릭터·장소 일관성은 떨어지나 ValueError 로 막히는 것보다 나음
+- docstring 동기화: "ref 가 단 한 장도 없거나" → "Step A Gemini 빈 응답일 때만. ref 0개여도 진행"
+
+### 우선순위 (실행 순서, Phase 2 ref 결정 로직)
+1. 명시된 `ref_sheet_ids`/`ref_place_ids` (사용자 @멘션 기반)
+2. wedding_prep slot 의 wedding_photo fallback (기존)
+3. **v32**: `groom_wedding/casual` + `bride_wedding/casual` 시트 fallback
+4. **v33**: 여전히 0 이면 text-only 진행 (warning 로깅)
+
+### 배포 (v33)
+- 푸시: `812d2e5..d899a8a` → `origin/frontend`
+- 백엔드 PC selective sync + `touch` reload
+- uvicorn worker PID 14033 → **15656** ✅
+- venv smoke: `raise on refs==0: False`, `warning on refs==0: True` ✅
+
+### 기대 효과
+- 캐릭터 시트 있는 사용자: 자동 ref 채워 일관성 유지 (v32)
+- 캐릭터 시트 없는 사용자: text-only 로 진행 (v33). 일관성 ↓ 이지만 결과물 나옴
+- 어떤 경우든 ValueError 로 fail 안 함
+
+### 회귀 위험
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | v33 text-only 결과물 일관성 낮아 사용자 불만 | warning 로그 모니터링 + 캐릭터 시트 생성 유도 UI |
+| R2 | v32 fallback 시트가 너무 generic 한 컨텍스트에 맞지 않음 | wedding > casual 순서로 결혼식 톤 우선, 그래도 문제 시 후속 작업에서 컨텍스트 기반 시트 선택 |
+| R3 | Phase 1 DB 상태는 여전히 빈 ref → 매번 Phase 2 fallback 거침 | 후속: Phase 1 측 동일 fallback 적용해 DB 에 정상 ref 박아두기 |
+
+### 후속 (별도 작업 시)
+- Phase 1 측 동일 fallback 적용 — DB 에 정상 ref 박아두기 (현재 Phase 2 fallback 으로 동일 효과)
+- 씬 편집 UI 에서 사용자가 ref 직접 추가/변경
+- Phase 0 시 사용자 캐릭터 시트가 있으면 자동 멘션 (UI 도움)
+
+### 작업 끝(append).
