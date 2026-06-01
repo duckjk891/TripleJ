@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import * as api from '../api';
 import WeddingPhotoPanel from '../components/WeddingPhotoPanel';
 import PreCeremonyMVPanel from '../components/PreCeremonyMVPanel';
+import ExtraVideoStudioPanel from '../components/ExtraVideoStudioPanel';
 import './GenerationStatusPage.css';
 
 const TAB_PHOTO = 'photo';
 const TAB_PRE_MV = 'pre_mv';
+const TAB_EXTRA = 'extra';
 
 const POLL_INTERVAL_MS = 5000;
 const TERMINAL_STATUSES = new Set(['music_ready', 'music_failed', 'lyrics_failed']);
@@ -50,6 +52,7 @@ function LyricsBody({ body }) {
 
 export default function GenerationStatusPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [musicTriggering, setMusicTriggering] = useState(false);
@@ -129,6 +132,17 @@ export default function GenerationStatusPage() {
   const downloadName = `${(lyrics?.title || 'wedding-mv').replace(/[^\w가-힣 -]/g, '')}.mp3`;
   const variantsCount = job?.audio_variants?.length || 0;
 
+  // v35 — [← 이전 (수정)] : 생성 중에는 비활성, 완료/실패 후 활성.
+  // 클릭 시 wizard 로 돌아가 같은 job_id 를 들고 가서 [생성] 다시 누르면 regenerate.
+  const canGoBackToWizard = !isWorking;
+  const onGoBackToWizard = () => {
+    if (!canGoBackToWizard) return;
+    if (import.meta.env.DEV) {
+      console.info('[GenStatus] back-to-wizard', { job_id: id, status });
+    }
+    navigate('/wizard', { state: { resume_job_id: id } });
+  };
+
   return (
     <section className="gen-status">
       <h1 className="gen-status__title">제작 진행 상황</h1>
@@ -136,6 +150,22 @@ export default function GenerationStatusPage() {
       <div className="card gen-status__card">
         <p className="muted gen-status__job-id">잡 ID: {id}</p>
         <p className="gen-status__message">{message}</p>
+
+        <div className="gen-status__nav" style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={onGoBackToWizard}
+            disabled={!canGoBackToWizard}
+            title={
+              canGoBackToWizard
+                ? '이전 단계로 돌아가 수정 후 다시 생성 (이전 결과는 갈아엎혀요)'
+                : '생성이 끝난 뒤에 활성화돼요'
+            }
+          >
+            ← 이전 (수정)
+          </button>
+        </div>
 
         {isWorking && (
           <>
@@ -188,19 +218,31 @@ export default function GenerationStatusPage() {
 
       {isMusicReady && (
         <div className="card audio-card">
-          <h2 className="audio-card__title">음악</h2>
+          <h2 className="audio-card__title">
+            음악 <span className="audio-card__variant-tag">🎵 트랙 1번</span>
+          </h2>
           <audio
             controls
             src={api.audioStreamUrl(id, 1)}
             className="audio-card__player"
           />
+          <LyricsTimestampToggle
+            variant={1}
+            segments={job?.lyric_timestamps_variants?.['1'] || []}
+          />
           {variantsCount > 1 && (
             <div className="audio-card__variant">
-              <p className="muted">다른 버전</p>
+              <p className="muted">
+                다른 버전 <span className="audio-card__variant-tag">🎵 트랙 2번</span>
+              </p>
               <audio
                 controls
                 src={api.audioStreamUrl(id, 2)}
                 className="audio-card__player"
+              />
+              <LyricsTimestampToggle
+                variant={2}
+                segments={job?.lyric_timestamps_variants?.['2'] || []}
               />
             </div>
           )}
@@ -254,9 +296,9 @@ export default function GenerationStatusPage() {
         </div>
       )}
 
-      {/* v13/v17.1 — 작품 디테일 본문 탭.
-          음악이 완성된 뒤 [웨딩사진] / [식전영상] 탭을 노출. 그 이전 상태에서는
-          웨딩사진 패널만 노출(식전영상은 음악+timestamps 가 있어야 작업 가능).
+      {/* v13/v17.1/v23.0 — 작품 디테일 본문 탭.
+          음악이 완성된 뒤 [웨딩사진] / [식전영상] / [추가영상생성] 3개 탭을 노출.
+          그 이전 상태에서는 웨딩사진 패널만 노출(나머지는 음악 + timestamps 가 있어야 작업 가능).
           권한(owner OR admin)은 각 패널 내부에서 가드된다. */}
       {job && (
         <div className="gen-status__tabs-area">
@@ -291,6 +333,20 @@ export default function GenerationStatusPage() {
                 >
                   식전영상
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === TAB_EXTRA}
+                  className={`gen-status__tab ${activeTab === TAB_EXTRA ? 'is-active' : ''}`}
+                  onClick={() => {
+                    if (import.meta.env.DEV) {
+                      console.info('[GenStatus] action=tab_change', { tab: TAB_EXTRA });
+                    }
+                    setActiveTab(TAB_EXTRA);
+                  }}
+                >
+                  추가영상생성
+                </button>
               </div>
               {activeTab === TAB_PHOTO && (
                 <WeddingPhotoPanel mvJobId={id} ownerUserId={job.user_id} />
@@ -302,6 +358,13 @@ export default function GenerationStatusPage() {
                   mvJob={job}
                 />
               )}
+              {activeTab === TAB_EXTRA && (
+                <ExtraVideoStudioPanel
+                  mvJobId={id}
+                  mvJob={job}
+                  ownerUserId={job.user_id}
+                />
+              )}
             </>
           ) : (
             <WeddingPhotoPanel mvJobId={id} ownerUserId={job.user_id} />
@@ -309,5 +372,42 @@ export default function GenerationStatusPage() {
         </div>
       )}
     </section>
+  );
+}
+
+// v22 — 음악 플레이어 아래 토글 패널.
+// segments 형식: [{text, start, end}, ...]
+function formatTimestamp(sec) {
+  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec < 0) return '--:--.--';
+  const total = Math.max(0, sec);
+  const m = Math.floor(total / 60);
+  const s = Math.floor(total % 60);
+  const cs = Math.floor((total - Math.floor(total)) * 100);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+}
+
+function LyricsTimestampToggle({ variant, segments }) {
+  const count = Array.isArray(segments) ? segments.length : 0;
+  if (import.meta.env.DEV) {
+    console.info('[LyricsTimestampToggle] render', { variant, count });
+  }
+  return (
+    <details className="audio-card__lyrics-toggle">
+      <summary className="audio-card__lyrics-summary">
+        가사 타임스탬프 보기 <span className="audio-card__lyrics-count">({count}줄)</span>
+      </summary>
+      {count > 0 ? (
+        <ol className="audio-card__lyrics-list">
+          {segments.map((seg, i) => (
+            <li key={i} className="audio-card__lyrics-line">
+              <span className="audio-card__lyrics-ts">{formatTimestamp(seg?.start)}</span>
+              <span className="audio-card__lyrics-text">{seg?.text || ''}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="audio-card__lyrics-empty">가사 타임스탬프가 없어요.</p>
+      )}
+    </details>
   );
 }

@@ -1,3 +1,4 @@
+import { ZoomableImage } from '../components/ImageLightbox';
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as api from '../api';
@@ -121,7 +122,7 @@ export default function OutfitSelectPage() {
           {items.map((item) => (
             <div key={item.id} className="outfit-card">
               <div className="outfit-card__image-wrap">
-                <img
+                <ZoomableImage
                   className="outfit-card__image"
                   src={api.sheetPreviewUrl(item.image_object_name)}
                   alt={item.name}

@@ -33,10 +33,19 @@ MAX_REF_IMAGES = 10
 
 
 def _png_size(size: str) -> str:
-    """Normalize size to one of the supported strings; fall back to 2048x2048."""
-    if size in ("1024x1024", "1024x1792", "1792x1024", "2048x2048", "auto"):
+    """Normalize size to one of the supported strings; fall back to 2048x1152.
+
+    v29 — 16:9 사이즈 추가 (`1536x864`, `2048x1152`). default 도 16:9 와이드로
+    변경. 캐릭터 시트 등 1:1 호출자는 그대로 `1024x1024` 또는 `2048x2048` 박는다.
+    GPT Image 2 사양 (width/height 16의 배수, 비율 1:3~3:1) 충족.
+    """
+    if size in (
+        "1024x1024", "1024x1792", "1792x1024", "2048x2048",
+        "1536x864", "2048x1152",  # v29 — 16:9
+        "auto",
+    ):
         return size
-    return "2048x2048"
+    return "2048x1152"
 
 
 async def _decode_first_image(data: dict) -> bytes:
@@ -144,7 +153,7 @@ async def _call_edits(
 async def generate_image(
     prompt: str,
     ref_images: Optional[list] = None,
-    size: str = "2048x2048",
+    size: str = "2048x1152",
     quality: str = "high",
 ) -> bytes:
     """Generate a single image via OpenAI GPT Image 2 and return PNG bytes.

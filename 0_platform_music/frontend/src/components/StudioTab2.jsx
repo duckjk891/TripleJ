@@ -7,6 +7,7 @@ import {
   FiUploadCloud, FiRepeat,
 } from 'react-icons/fi';
 import * as api from '../api';
+import LyricsTimestampToggle from './LyricsTimestampToggle';
 import './StudioTab2.css';
 
 const LYRICS_MODELS = [
@@ -1592,14 +1593,23 @@ export default function StudioTab2({ onSendToUpload }) {
   };
 
   // ─── Build stream URL (proxied through backend) ───
-  const getStreamUrl = (genId) => {
-    return api.generationStreamUrl(genId);
+  // v74 — variantIndex (0 = first clip, BC; >=1 = second clip)
+  const getStreamUrl = (genId, variantIndex = 0) => {
+    return api.generationStreamUrl(genId, variantIndex);
   };
 
+  // v74 — composite key so each variant tracks playback independently
+  const playKey = (genId, variantIndex = 0) => `${genId}__${variantIndex}`;
+
   // ─── Play generated audio ───
-  const handlePlayGeneration = (genId) => {
+  const handlePlayGeneration = (genId, variantIndex = 0) => {
+    const key = playKey(genId, variantIndex);
+    if (import.meta.env.DEV) {
+      console.info('[StudioTab2] play', { genId, variantIndex, key, currentlyPlaying: playingId });
+    }
+
     // If already playing this one, pause it
-    if (playingId === genId && genAudioRef.current) {
+    if (playingId === key && genAudioRef.current) {
       genAudioRef.current.pause();
       setPlayingId(null);
       return;
@@ -1610,18 +1620,30 @@ export default function StudioTab2({ onSendToUpload }) {
       genAudioRef.current.pause();
     }
 
-    const audio = new Audio(getStreamUrl(genId));
+    const audio = new Audio(getStreamUrl(genId, variantIndex));
     audio.onended = () => setPlayingId(null);
-    audio.onerror = () => { setPlayingId(null); alert('오디오 재생에 실패했습니다.'); };
+    audio.onerror = (e) => {
+      console.error('[StudioTab2] audio play failed', { genId, variantIndex, err: e });
+      setPlayingId(null);
+      alert('오디오 재생에 실패했습니다.');
+    };
     genAudioRef.current = audio;
-    setPlayingId(genId);
+    setPlayingId(key);
     audio.play();
   };
 
   // ─── Download generated audio ───
-  const handleDownloadGeneration = (genId) => {
-    // Direct browser navigation - backend streams the file with Content-Disposition: attachment
-    window.location.href = getStreamUrl(genId);
+  const handleDownloadGeneration = (genId, _titleOrVariant, variantIndex = 0) => {
+    // v74 — accept either (genId, title, variantIndex) or (genId, variantIndex)
+    // Old callers passed (genId, title). New callers add variantIndex.
+    let vi = variantIndex;
+    if (typeof _titleOrVariant === 'number' && variantIndex === 0) {
+      vi = _titleOrVariant;
+    }
+    if (import.meta.env.DEV) {
+      console.info('[StudioTab2] download', { genId, variantIndex: vi });
+    }
+    window.location.href = getStreamUrl(genId, vi);
   };
 
   // Cleanup audio on unmount
@@ -3046,49 +3068,86 @@ export default function StudioTab2({ onSendToUpload }) {
                   </div>
                 )}
 
-                {/* Play/Download for completed generations */}
-                {gen.status === 'completed' && (
-                  <div className="s2__gen-player">
-                    <button
-                      className={`s2__gen-play ${playingId === gen.id ? 's2__gen-play--active' : ''}`}
-                      onClick={() => handlePlayGeneration(gen.id)}
-                    >
-                      {playingId === gen.id ? <FiPause /> : <FiPlay />}
-                      {playingId === gen.id ? '일시정지' : '재생'}
-                    </button>
-                    <button
-                      className="s2__gen-download"
-                      onClick={() => handleDownloadGeneration(gen.id, gen.title)}
-                    >
-                      <FiDownload /> 다운로드
-                    </button>
-                    {onSendToUpload && (
-                      <button
-                        className="s2__gen-upload"
-                        onClick={() => onSendToUpload({
-                          generationId: gen.id,
-                          title: gen.title,
-                          genre: gen.genre,
-                          mood: gen.mood,
-                          prompt: gen.prompt,
-                          lyrics: gen.lyrics,
-                          hasVoiceConverted: gen.voice_conversion_status === 'completed',
-                        })}
-                      >
-                        <FiUploadCloud /> 업로드하기
-                      </button>
-                    )}
-                    {/* Voice Conversion Button */}
-                    {!gen.voice_conversion_status && (
-                      <button
-                        className="s2__gen-vc"
-                        onClick={() => openVcModal(gen.id)}
-                      >
-                        <FiRepeat /> 내 목소리로 변환
-                      </button>
-                    )}
-                  </div>
-                )}
+                {/* Play/Download for completed generations — v74: 2 variants side-by-side */}
+                {gen.status === 'completed' && (() => {
+                  // v74 — variants 배열이 없으면 (옛 데이터) 1개 가상 variant 로 fallback
+                  const variants = Array.isArray(gen.variants) && gen.variants.length > 0
+                    ? gen.variants
+                    : [{
+                        index: 0,
+                        audio_url: gen.result_audio_url,
+                        suno_audio_id: gen.suno_audio_id || '',
+                        timestamps: [],
+                      }];
+                  const isMulti = variants.length > 1;
+                  return (
+                    <div className={`s2__gen-variants ${isMulti ? 's2__gen-variants--multi' : ''}`}>
+                      {variants.map((v, vi) => {
+                        const vIndex = typeof v.index === 'number' ? v.index : vi;
+                        const key = playKey(gen.id, vIndex);
+                        const isPlaying = playingId === key;
+                        return (
+                          <div key={vIndex} className="s2__gen-variant">
+                            {isMulti && (
+                              <div className="s2__gen-variant-header">클립 {vIndex + 1}</div>
+                            )}
+                            <div className="s2__gen-player">
+                              <button
+                                className={`s2__gen-play ${isPlaying ? 's2__gen-play--active' : ''}`}
+                                onClick={() => handlePlayGeneration(gen.id, vIndex)}
+                              >
+                                {isPlaying ? <FiPause /> : <FiPlay />}
+                                {isPlaying ? '일시정지' : '재생'}
+                              </button>
+                              <button
+                                className="s2__gen-download"
+                                onClick={() => handleDownloadGeneration(gen.id, gen.title, vIndex)}
+                              >
+                                <FiDownload /> 다운로드
+                              </button>
+                              {onSendToUpload && (
+                                <button
+                                  className="s2__gen-upload"
+                                  onClick={() => {
+                                    if (import.meta.env.DEV) {
+                                      console.info('[StudioTab2] sendToUpload', { genId: gen.id, variantIndex: vIndex });
+                                    }
+                                    onSendToUpload({
+                                      generationId: gen.id,
+                                      variantIndex: vIndex,
+                                      title: gen.title,
+                                      genre: gen.genre,
+                                      mood: gen.mood,
+                                      prompt: gen.prompt,
+                                      lyrics: gen.lyrics,
+                                      hasVoiceConverted: vIndex === 0 && gen.voice_conversion_status === 'completed',
+                                    });
+                                  }}
+                                >
+                                  <FiUploadCloud /> 업로드하기
+                                </button>
+                              )}
+                              {/* Voice Conversion Button — variant 0 한정 (BC) */}
+                              {vIndex === 0 && !gen.voice_conversion_status && (
+                                <button
+                                  className="s2__gen-vc"
+                                  onClick={() => openVcModal(gen.id)}
+                                >
+                                  <FiRepeat /> 내 목소리로 변환
+                                </button>
+                              )}
+                            </div>
+                            <LyricsTimestampToggle
+                              segments={v.timestamps || []}
+                              generationId={gen.id}
+                              variantIndex={vIndex}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
 
                 {/* Voice Conversion Status */}
                 {gen.voice_conversion_status === 'awaiting_merge' && (

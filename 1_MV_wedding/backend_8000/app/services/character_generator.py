@@ -692,7 +692,12 @@ async def _call_image_backend(
                     ref_bytes.append(base64.b64decode(data_b64))
                 except Exception:
                     continue
-        return await generate_image(prompt=prompt, ref_images=ref_bytes)
+        # v29 — 캐릭터 시트는 인물 portrait 표준에 맞춰 1:1 유지.
+        # openai_image.generate_image 의 default 가 16:9(2048x1152) 로 바뀌었으므로
+        # 시트 호출 시 명시적으로 1:1 박는다.
+        return await generate_image(
+            prompt=prompt, ref_images=ref_bytes, size="2048x2048",
+        )
 
     # default fall-through branch — nb_pro
     return await _call_gemini_image(
@@ -706,8 +711,17 @@ async def _call_gemini_image(
     role: Optional[str] = None,
     style: Optional[str] = None,
     user_id: Optional[str] = None,
+    *,
+    aspect_ratio: str = "1:1",
+    image_size: str = "2K",
 ) -> bytes:
-    """Step B: Call Gemini image model to generate character sheet image."""
+    """Step B: Call Gemini image model to generate the requested image.
+
+    v29 — `aspect_ratio` / `image_size` 옵션 추가. 캐릭터 시트는 default "1:1"
+    유지, 씬/장소/웨딩사진 등 호출자는 명시적으로 "16:9" 박는다.
+    payload.generationConfig.imageConfig 위치 (Gemini 3 native).
+    """
+    from .llm_thinking_config import apply_thinking_to_gemini_image_payload
     payload = {
         "systemInstruction": {
             "parts": [{"text": CHARACTER_SYSTEM_INSTRUCTION}]
@@ -720,13 +734,21 @@ async def _call_gemini_image(
         }],
         "generationConfig": {
             "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": aspect_ratio,
+                "imageSize": image_size,
+            },
         },
     }
+    # v28 — Nano Banana Pro adaptive thinking (high). Image preview 모델이
+    # thinkingConfig 받지 않는 경우 fallback 으로 제거 후 1회 재시도.
+    apply_thinking_to_gemini_image_payload(payload)
 
     trailer = _trace_kv(role, style, user_id)
     logger.info(
-        "[CharGen] Step B: calling Gemini image (parts=%d) %s",
+        "[CharGen] Step B: calling Gemini image (parts=%d) thinking=%s %s",
         len(image_parts),
+        bool((payload.get("generationConfig") or {}).get("thinkingConfig")),
         trailer,
     )
     # Nano Banana Pro is typically 30~60s per call — 180s timeout already
@@ -743,6 +765,30 @@ async def _call_gemini_image(
         "[CharGen] Step B: Gemini image http=%d elapsed_s=%.1f %s",
         resp.status_code, elapsed_s, trailer,
     )
+
+    # v28 — thinkingConfig 거부 fallback. 400 + 응답 본문에 "thinking" 키 언급 시
+    # thinkingConfig 제거 후 1회 재시도.
+    if (
+        resp.status_code == 400
+        and "thinking" in (resp.text or "").lower()
+        and (payload.get("generationConfig") or {}).get("thinkingConfig")
+    ):
+        logger.warning(
+            "[CharGen] Step B: Gemini image rejected thinkingConfig — "
+            "falling back to no-thinking retry %s",
+            trailer,
+        )
+        payload.get("generationConfig", {}).pop("thinkingConfig", None)
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(
+                GEMINI_IMAGE_API_URL,
+                params={"key": settings.google_api_key},
+                json=payload,
+            )
+        logger.info(
+            "[CharGen] Step B: Gemini image (no-thinking retry) http=%d %s",
+            resp.status_code, trailer,
+        )
 
     if resp.status_code != 200:
         detail = resp.text[:300]

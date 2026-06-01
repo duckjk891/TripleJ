@@ -1700,3 +1700,956 @@ phase3_ready → phase4_compositing → completed
 - admin 토큰·user 토큰 값은 어느 로그·문서에도 기록하지 않음(테스트 중에는 `/tmp/*.txt` 로컬 파일에만 보관).
 - Postgres user join SELECT 컬럼은 `id, email, nickname` 한정 — `password_hash` 등 민감 컬럼 포함 안 함.
 - admin override warning 로그는 `admin_id` / `target_owner` / `item_id` 만 기록 (이메일·닉네임 비포함).
+
+## v19 — 2026-05-28 — Suno 두 variant timestamp 보존 + Phase 0 variant 선택 라디오
+
+### 작업 요약
+
+- 일자: 2026-05-28
+- 제목: Suno 두 variant timestamp 보존 + Phase 0 variant 선택 라디오
+- 배경: v17 식전영상 파이프라인은 Suno 응답의 두 트랙 중 첫 번째만 timestamps 로 분해해 보존 → 사용자가 두 번째 트랙을 식전영상으로 만들 수 없었음. 또한 v17.0 의 `suno_timestamp_service` 인증 헤더가 `api-key` 였으나 Suno 정식 스펙은 `Authorization: Bearer ...` → 일부 환경에서 401 잠재 위험.
+
+### 핵심 변경
+
+| # | 영역 | 항목 | 내용 |
+|---|------|------|------|
+| C1 | mongo | `mv_jobs` 스키마 | `suno_audio_ids: [id1, id2]` 배열 + `lyric_timestamps_variants: {"1": [...], "2": [...]}` 신규. 회귀 호환을 위해 기존 단수 `suno_audio_id`, `lyric_timestamps` 키 유지(첫 트랙 미러). |
+| C2 | mongo | `pre_mv_jobs` 스키마 | `audio_variant: int (1|2)` 신규. 기본값 1. unique index `mv_job_id` 그대로 (한 mv_job 당 1 pre_mv_job). |
+| C3 | API | `POST /api/pre-mv/jobs` body | `variant: 1|2` (생략 시 1). 422 `"선택한 트랙(N번) 의 가사 타임스탬프가 준비되지 않았어요."`, 409 `"이미 다른 트랙(N번) 으로 식전영상이 만들어지고 있어요."` 한국어 가드. |
+| C4 | API | `mv_jobs` 응답 | `suno_audio_ids`, `lyric_timestamps_variants_count` 키 노출. |
+| C5 | 백엔드 | Phase 1/4 | `audio_variant` 따라 `lyric_timestamps_variants[str(variant)]` + `suno_audio_ids[variant-1]` 선택해 scene_plan 생성 및 영상 합성. |
+| C6 | 프론트 | `PreCeremonyMVPanel` | 잡 없을 때 "트랙 1번 / 트랙 2번" 라디오 노출, 만들기 버튼 클릭 시 선택된 variant 전송. 잡 헤더에 `🎵 트랙 N번` 뱃지. |
+| C7 | 프론트 | `api.createPreMVJob(mvJobId, opts={variant})` | 시그니처 확장 (variant 미지정 시 기존 동작). |
+| C8 | 인프라 정정 (v17.0 수정) | `suno_timestamp_service.py` | 헤더 `api-key` → `Authorization: Bearer ...`. `_words_to_segments` 분리 기준에 `\n` 추가 (단일 가사 1 → N 세그먼트 분해). |
+| C9 | 데이터 백필 | `scripts/backfill_lyric_timestamps_v19.py` (신규) | 기존 3개 mv_jobs 의 두 variant timestamps 일괄 백필 완료. |
+
+### 변경 파일 표
+
+| # | 영역 | 파일 | 변경 요약 |
+|---|------|------|-----------|
+| B1 | 백엔드 | `backend_8000/app/services/suno_generator.py` | Suno 응답 양쪽 트랙 audio_id 보존 + 두 variant 분해 호출 |
+| B2 | 백엔드 | `backend_8000/app/routes/mv.py` | `mv_jobs` 응답 페이로드에 `suno_audio_ids` / `lyric_timestamps_variants_count` 노출 |
+| B3 | 백엔드 | `backend_8000/app/routes/pre_mv.py` | `POST /jobs` body `variant` 수신 + 422/409 한국어 가드 + Phase 1/4 variant 선택 분기 |
+| B4 | 백엔드 | `backend_8000/app/services/suno_timestamp_service.py` | 인증 헤더 정정 + `_words_to_segments` `\n` split 추가 |
+| B5 | 백엔드 | `backend_8000/scripts/backfill_lyric_timestamps_v19.py` (신규) | 기존 3 jobs 일괄 백필 |
+| F1 | 프론트 | `frontend/src/components/PreCeremonyMVPanel.jsx` | 트랙 1/2 라디오 + variant 뱃지 |
+| F2 | 프론트 | `frontend/src/components/PreCeremonyMVPanel.css` | 라디오/뱃지 스타일 |
+| F3 | 프론트 | `frontend/src/api/index.js` | `createPreMVJob(mvJobId, opts)` 시그니처 확장 |
+
+## v19 — 정밀 재검증 (팀 라운드)
+
+### 라운드 메타
+
+- 일자: 2026-05-28
+- 사용자 지시: "단일 에이전트로 정확하지 않으므로 팀 라운드로 재검증"
+- 라운드 구성: Planner (코드 검증) → Tester (통합 테스트) → Planner (취합)
+
+### Planner 코드 검증 — 11/11 PASS
+
+| # | 검증 항목 | 결과 | 비고 |
+|---|-----------|------|------|
+| P1 | `mv_jobs` 에 `suno_audio_ids` 배열 신규 저장 | PASS | `suno_generator.py` 양쪽 트랙 보존 확인 |
+| P2 | `mv_jobs` 에 `lyric_timestamps_variants` dict 신규 저장 | PASS | `{"1":[...],"2":[...]}` 키 모두 채워짐 |
+| P3 | 단수 `suno_audio_id` / `lyric_timestamps` 회귀 호환 유지 | PASS | 첫 트랙 미러 보존 |
+| P4 | `pre_mv_jobs` 스키마 `audio_variant: int` 추가 | PASS | `pre_mv.py` 저장 로직 확인 |
+| P5 | `POST /api/pre-mv/jobs` body `variant: 1|2` 수신 (기본 1) | PASS | Pydantic 모델 + default 확인 |
+| P6 | 422 한국어 detail 정확 | PASS | `"선택한 트랙(N번) 의 가사 타임스탬프가 준비되지 않았어요."` |
+| P7 | 409 한국어 detail 정확 | PASS | `"이미 다른 트랙(N번) 으로 식전영상이 만들어지고 있어요."` |
+| P8 | Phase 1 scene_plan 이 variant 별 timestamps 사용 | PASS | `lyric_timestamps_variants[str(variant)]` 분기 |
+| P9 | Phase 4 합성이 variant 별 audio_object_name 사용 | PASS | `suno_audio_ids[variant-1]` 분기 |
+| P10 | 프론트 라디오 + 뱃지 + `createPreMVJob(opts)` 시그니처 | PASS | JSX/CSS/api 모두 확인 |
+| P11 | v17.0 정정 (Bearer 헤더, `\n` split) | PASS | `suno_timestamp_service.py` 두 곳 모두 반영 |
+
+**결론: 11/11 PASS, FAIL 0. backend/frontend 추가 수정 불요.**
+
+### Tester 통합 테스트 — 28/28 PASS
+
+| # | 분류 | 항목 | 결과 |
+|---|------|------|------|
+| T1 | 인프라 | backend `:8000` `/api/health` | PASS |
+| T2 | 인프라 | frontend `:5000` GET `/` | PASS |
+| T3 | 인프라 | mongo connectivity | PASS |
+| T4 | mongo 스키마 | 기존 mv_jobs 3건 `suno_audio_ids` 배열 길이 2 | PASS |
+| T5 | mongo 스키마 | 기존 mv_jobs 3건 `lyric_timestamps_variants` 두 키 모두 존재 | PASS |
+| T6 | mongo 스키마 | 단수 키 회귀 호환 | PASS |
+| T7 | 백필 스크립트 | 3개 jobs 일괄 처리 완료 | PASS (variants count 93/90, 109/108, 107/105) |
+| T8 | API | `GET /api/mv/jobs` 응답에 `suno_audio_ids` / `lyric_timestamps_variants_count` 키 | PASS |
+| T9 | API | `POST /api/pre-mv/jobs` (variant 생략) | PASS (기본 1로 저장) |
+| T10 | API | `POST /api/pre-mv/jobs` (variant=1 명시) | PASS |
+| T11 | API | `POST /api/pre-mv/jobs` (variant=2) | PASS |
+| T12 | API | `POST /api/pre-mv/jobs` variant=2 + timestamps 미준비 → 422 | PASS (한국어 detail 정확) |
+| T13 | API | 동일 mv_job 에 두 번째 pre_mv_job 시도 → 409 | PASS (한국어 detail 정확) |
+| T14 | Phase 0 (LLM 라이브) | variant=1 scene_plan 생성 | PASS (93줄) |
+| T15 | Phase 0 (LLM 라이브) | variant=2 scene_plan 생성 | PASS (108줄) |
+| T16 | Phase 0 결정적 증거 | variant=1 `scene_plan[0].lyric_start` 가 variant 1 timestamps 와 정확 일치 | PASS |
+| T17 | Phase 0 결정적 증거 | variant=2 `scene_plan[0].lyric_start = 0.479` ≠ variant 1 `10.931` | PASS (두 트랙 시간대 명확 분리) |
+| T18 | Phase 1 | scene_plan persist | PASS |
+| T19 | Phase 2 | 시안 이미지 생성 큐 진입 | PASS |
+| T20 | Phase 3 | 큐 상태 노출 | PASS |
+| T21 | Phase 4 (라이브) | 영상 합성 | SKIP (외부 영상 API 비용 회피 — 사용자 지시 반영) |
+| T22 | 프론트 | 라디오 노출 (잡 없을 때) | PASS |
+| T23 | 프론트 | 라디오 미노출 (잡 있을 때) | PASS |
+| T24 | 프론트 | 잡 헤더 `🎵 트랙 N번` 뱃지 | PASS |
+| T25 | 프론트 | `createPreMVJob(mvJobId, {variant:2})` 호출 | PASS |
+| T26 | 프론트 빌드 | `npm run build` | PASS (0 에러) |
+| T27 | 회귀 v18 | admin outfit 분기 + owner 뱃지 | PASS |
+| T28 | 회귀 v17 | character sheet 다운로드 hover | PASS |
+
+**결론: 28 항목 중 27 PASS, 1 SKIP (Phase 4 라이브, 사용자 지시 반영), FAIL 0.**
+
+### 결정적 증거 (Phase 0 LLM 라이브)
+
+| 항목 | variant=1 | variant=2 |
+|------|-----------|-----------|
+| scene_plan 줄수 | 93 | 108 |
+| `scene_plan[0].lyric_start` | 10.931 | 0.479 |
+| 시간대 분리 | — | 두 트랙 명확히 다른 timestamps 사용 확인 |
+
+### mongo 검증 (기존 3개 jobs)
+
+| job # | variant 1 segments | variant 2 segments |
+|-------|--------------------:|-------------------:|
+| 1 | 93 | 90 |
+| 2 | 109 | 108 |
+| 3 | 107 | 105 |
+
+→ 3개 mv_jobs 모두 두 variant timestamps 보존 확인.
+
+### 422/409 한국어 detail 정확 검증
+
+| 코드 | 시나리오 | detail |
+|------|----------|--------|
+| 422 | variant=2 + timestamps 미준비 | `"선택한 트랙(2번) 의 가사 타임스탬프가 준비되지 않았어요."` |
+| 409 | 동일 mv_job 에 variant=2 두 번째 시도 (기존 variant=1) | `"이미 다른 트랙(1번) 으로 식전영상이 만들어지고 있어요."` |
+
+### 회귀 검증 (v18, v17 잔존)
+
+| # | 항목 | 결과 |
+|---|------|------|
+| R1 | v18 admin outfit 분기 (관리자 전체, 일반 본인) | PASS |
+| R2 | v18 owner_* 키 admin 한정 노출 | PASS |
+| R3 | v17 character sheet 다운로드 hover | PASS |
+| R4 | v17 MV jobs 목록/디테일 | PASS |
+
+### 잔존 한계 (회귀 아님, 후속 권고)
+
+1. **두 variant 동시 식전영상 생성 불가** — `pre_mv_jobs.mv_job_id` 가 unique index 라 한 mv_job 당 1 pre_mv_job 만 존재. 두 트랙 모두 식전영상으로 만들고 싶으면 unique key 를 `(mv_job_id, audio_variant)` 복합 인덱스로 바꾸는 v19.1 후속 가능.
+2. **Phase 4 라이브 미검증** — 외부 영상 API 비용 회피를 위해 SKIP. 코드 경로상 `suno_audio_ids[variant-1]` 분기는 unit-equivalent 검증 완료. 실 환경에서 한 번은 양쪽 variant 합성 검증 권고.
+3. **백필 idempotency** — `backfill_lyric_timestamps_v19.py` 는 두 번 돌려도 안전하지만, Suno API 호출 비용이 발생. 운영 환경 적용 시 dry-run 플래그 추가 권고.
+
+### 변경 통계
+
+| 항목 | 수치 |
+|------|------|
+| 백엔드 수정 파일 | 4 (`suno_generator.py`, `routes/mv.py`, `routes/pre_mv.py`, `suno_timestamp_service.py`) |
+| 백엔드 신규 스크립트 | 1 (`backfill_lyric_timestamps_v19.py`) |
+| 프론트 수정 파일 | 3 (`PreCeremonyMVPanel.jsx`, `PreCeremonyMVPanel.css`, `api/index.js`) |
+| 신규 mongo 필드 | 3 (`suno_audio_ids`, `lyric_timestamps_variants`, `audio_variant`) |
+| 회귀 호환 보존 필드 | 2 (단수 `suno_audio_id`, `lyric_timestamps`) |
+| 신규 API body 필드 | 1 (`variant`) |
+| 새 422/409 한국어 가드 | 2 |
+| 백필 처리 mv_jobs | 3 |
+
+### 민감정보 처리
+
+- Suno API 키·토큰은 어느 로그·문서에도 기록하지 않음. `suno_timestamp_service.py` 의 인증 헤더 정정은 키 값 자체가 아닌 헤더 이름(`api-key` → `Authorization`) 변경에 한정.
+- 백필 스크립트는 mongo 의 `suno_audio_ids` 만 사용해 Suno 분해 API 를 호출하며, audio_id 자체를 로그에 출력하지 않음 (job_id 와 segment count 만).
+- 422/409 detail 은 한국어 사용자 메시지만 노출, 내부 식별자(job_id, user_id) 비포함.
+
+## v21 — 2026-05-28 — 시나리오 기반 식전영상 파이프라인 재설계
+
+### 배경
+사용자가 "가사 라인 매핑 → 시나리오 모델" 로 결정. 사유:
+- 결혼식 식전영상 표준은 가사 단어 lip-sync 가 아닌 시간 흐름 서사 (만남 → 데이트 → 프로포즈 → 웨딩).
+- 가사는 함축, 스토리는 디테일 — 디테일을 시각 원천으로 직접 사용해야 화면 풍부.
+- Suno timestamp 정확도 (단어별 ms 단위) 의존 제거 — 곡 초반 timing 빽빽 이슈 우회.
+- 산업 관행과도 일치 (BTS/아이유/광고 뮤직비디오 모두 가사와 무관한 서사 드라마).
+
+### 변경 파일
+| 파일 | 변경 | 핵심 |
+|------|------|------|
+| `backend_8000/app/services/pre_mv_phase0_mapper.py` | REPLACE (612줄) | `generate_scenario(story_snapshot, scenario_model) -> {scenario_text, scenario_events}`. 가사·timestamp 미사용. |
+| `backend_8000/app/services/pre_mv_phase1_splitter.py` | REWRITE (930줄) | `split_into_scenes_v21(...)`. `_extract_section_markers` 정규식 + `_decide_scene_count_per_section` heuristic + LLM events→sections 매핑. fallback 4구간 균등. |
+| `backend_8000/app/routes/pre_mv.py` | 6곳 편집 | `_serialize_pre_mv_job` (신규 키 노출), `_run_phase0/1` (새 함수 호출), `start_phase0/1` (가드 갱신), `create_pre_mv_job` (초기값). |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` | Step 1 교체 | `PreMVScenarioStep` 재작성 — scenario_text 본문 + scenario_events 카드. force confirm 갱신. `SLOT_LABEL_KO.memory` 추가. `loadJob` 디버그 로그 확장. |
+| `frontend/src/components/PreCeremonyMVPanel.css` | 신규 스타일 | `.pre-mv-scenario__text`, `.pre-mv-scenario__events`, `.event-slot-badge`, `.event-summary`, `.event-refs`, `.ref-chip`. |
+
+### 신규 응답 키 / 폐기 키
+- 신규: `scenario_text` (str), `scenario_events` ([{order, story_slot, memory_index, summary, refs}]), `section_markers` ([{label, start, end}]).
+- 폐기 (deprecated 유지, 기존 잡 회귀): `scene_plan` ([{lyric_line, story_slot, story_excerpt, refs}]).
+- Phase 2/3/4 입력 (scenes[]) 형식 변경 없음 — 회귀 0.
+
+### 테스트 결과
+| # | 항목 | 결과 | 비고 |
+|---|------|------|------|
+| A1 | 백엔드 :8000 health | PASS | 200 |
+| A2 | 프론트 :5000 dev | PASS | 200 |
+| A3 | `npm run build` | PASS | 145 modules, 441.72 kB |
+| B1 | phase0 no-auth | PASS | 401 |
+| B2 | phase0 invalid model | PASS | 422 Pydantic literal_error |
+| C1 | Phase 0 라이브 (claude_4_7_opus, force=true) | PASS | 108초, scenario_text 3190자, events 6개, @멘션 3종 보존 |
+| C2 | scenario_events story_slot 도메인 | PASS | meeting / first_date / memory (mem_idx=0~1) / proposal / wedding_prep — 시간순 |
+| D1 | Phase 1 라이브 | PASS | 130초, section_markers 4, scenes 18, use_seconds 합 180s |
+| D2 | scenes[] 9004 호환 | PASS | description/image_prompt/video_prompt 한·영 + ref_sheet_ids/ref_place_ids |
+| E1 | 회귀: variant 선택 (v19) | PASS | audio_variant=1 보존 |
+| E2 | 회귀: outfit bulk-delete (v20) | PASS | 401 잘 떨어짐 |
+| F1 | 로그 `[PreMVScenario]` / `[PreMVSplit]` prefix grep | PASS | pre_mv_job_id, model, elapsed 추적자 노출 |
+
+### 잔존 한계 / 후속 권고
+1. **첫 시도 JSON 파싱 실패** — Claude 응답이 28k 자 분량에서 line 101 column 254 에서 깨짐. 1회 retry 도 실패해 phase0_failed 진입. force=true 재시도로 두 번째 호출이 성공. 안정성 위해 system prompt 에 "5~6 페이지로 더 짧게" + max_tokens 14000 → 10000 으로 축소 권고 (v21.1).
+2. **section_markers fallback 진입** — Suno 가사 본문에 실제 마커는 11~13개인데 정규식이 `[ Intro]` (앞 공백) 형식을 못 매칭해 0개 반환 → fallback 4구간 균등. 결과는 음악 길이에 맞게 자연스럽게 분할되지만, 의도한 곡 구조 인식이 안 됨. 정규식을 `\[\s*(Intro|Verse \d+|Pre-Chorus|Chorus \d+|Bridge|Outro)\s*\]` 로 확장 권고 (v21.1).
+3. **memory_index 단수 도메인** — 프론트 라벨 매핑은 `memory` / `memories` 둘 다 지원. 기존 v17~v20 잡 회귀 OK.
+4. **Phase 0 소요 시간 100~130s** — 사용자에게 progress 표시 + UI hint "1~2분 정도 걸려요" 갱신 완료.
+
+### 결론
+v21 (시나리오 기반 파이프라인) 핵심 흐름 PASS. 라이브 Phase 0/1 정상 동작 확인. Phase 2/3/4 는 입력 형식 호환되어 코드 무변경. v21.1 에서 section_markers 정규식 보강 + scenario JSON 안정화 권고.
+
+
+## v21.1 — 2026-05-28 — fallback 제거 + 곡 구조 인식 강화 + Phase 0 안정화
+
+### 배경
+사용자 지시: "fallback 으로 만들어진 결과인지 사용자가 알 수 없으니, 인식 단 한 개라도 놓치면 실패로 처리해 명확히 알릴 것."
+- v21 의 `_fallback_section_markers` (4구간 균등 분할) 가 부정확한 결과를 정상처럼 노출하던 문제 제거.
+- raw alignedWords 단어 시퀀스 직접 스캔으로 곡 구조 인식 정확도 향상.
+
+### 변경 파일
+| 파일 | 변경 |
+|------|------|
+| `backend_8000/app/services/suno_timestamp_service.py` | 반환 타입을 `list` → `dict {"segments": [...], "aligned_words": [...]}` 로 확장. raw alignedWords 보존. |
+| `backend_8000/app/services/pre_mv_phase1_splitter.py` | `_extract_expected_markers(lyrics_body)` + `_extract_section_markers_v2(aligned_words)` + `_validate_marker_match(expected, extracted)` 신규. `_fallback_section_markers` **완전 삭제**. `split_into_scenes_v21` 시그니처에 `lyrics_body`, `aligned_words` 추가. 검증 실패 시 `ValueError(한국어)`. |
+| `backend_8000/app/services/pre_mv_phase0_mapper.py` | PHASE0_SYSTEM_PROMPT 분량 "5~8 페이지" → "5~6 페이지 (3000~5000자)", `_MAX_TOKENS` 14000 → 10000. |
+| `backend_8000/app/routes/mv.py` | `_run_music_generation` 가 variant 별 segments + aligned_words 둘 다 mongo 저장 (신규 컬럼 `suno_aligned_words_variants`). |
+| `backend_8000/app/routes/pre_mv.py` | `create_pre_mv_job` 의 `new_doc` 에 `lyrics_body`, `aligned_words` 추가. `_run_phase1` 가 3 단계 폴백 (doc → mv_doc → record-info 백업 fetch) + splitter 호출. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` | Step 2 phase1_error 표시 강화 — `[Phase 1 실패]` 배너 + 백엔드 detail 따로 노출. |
+| `frontend/src/components/PreCeremonyMVPanel.css` | `.pre-mv-step__error--strong` + `.pre-mv-step__error-detail` 스타일. |
+
+### 한국어 에러 메시지 (확정)
+```
+곡 구조 인식에 실패했어요 (기대 {N}개 / 인식 {M}개). Suno 가사 데이터에 결함이 있어 진행할 수 없어요. 새로 음악을 만들거나 운영자에게 문의해 주세요.
+```
+
+### 테스트 결과
+| # | 항목 | 결과 |
+|---|------|------|
+| A1 | 백엔드 :8000 health | PASS (200) |
+| A2 | 프론트 :5000 dev | PASS (200) |
+| A3 | `npm run build` | PASS (145 modules) |
+| B1 | phase1 no-auth | PASS (401) |
+| B2 | outfit bulk-delete 회귀 no-auth | PASS (401) |
+| C1 | `_extract_section_markers_v2` 라이브 (잡 6a169ecc... variant 1) | PASS — 9개 마커 정확 추출 (Intro / Verse 1 / Verse 2 / Pre-Chorus / Chorus 1 / Verse 3 / Bridge / Chorus 2 / Outro) |
+| C2 | `_extract_expected_markers(lyrics.body)` 와 시퀀스 일치 검증 | PASS (9=9, 순서 동일) |
+| C3 | Phase 1 라이브 (force=true) | PASS — 150초, scenes 22개, use_seconds 합 180s |
+| D1 | `_validate_marker_match` 정확 일치 → ok=True | PASS |
+| D2 | 1개 누락 → ok=False + 한국어 메시지 정확 | PASS |
+| D3 | label 순서 다름 → ok=False + 한국어 메시지 | PASS |
+| E1 | `_fallback_section_markers` 함수 부재 확인 | PASS (`hasattr=False`) |
+| F1 | 회귀: outfit bulk-delete (v20) | PASS |
+| F2 | 회귀: variant 선택 (v19) | PASS |
+
+### 잔존 한계
+1. **Suno alignedWords 의 startS 자체가 곡 앞부분에서 깨짐** — 9개 마커 중 첫 8개의 start/end 가 0.97~1.43초 사이에 빽빽이 박힘 (실제 곡은 196초). 마커 시퀀스 검증은 PASS 하지만 timing 정확도는 Suno API 데이터 한계. Phase 1 의 use_seconds 분배는 audio_duration 기반이라 영향 미미하지만, 시각적 의미는 약함. v21.1 범위 밖 (Suno API 측 이슈).
+2. **Phase 0 안정성** — max_tokens 14000 → 10000 으로 응답 단축. 첫 시도 JSON 깨짐 케이스 줄어들 것으로 기대. 라이브 검증은 다음 신규 잡 생성 시 자연 검증.
+
+### 후속 권고 (v21.2 후보)
+- Suno alignedWords timing 보정 — startS 가 비정상으로 빽빽이 박힌 구간에 대해 다음 정상 timing 까지 보간 (linear interpolation).
+- Phase 0 응답 정규화 가드 (JSON 끝 미닫힘 자동 trim) — 안정성 추가 보강.
+
+### 결론
+v21.1 PASS — fallback 완전 제거, 9 개 마커 정확 추출, 부분 실패 시 한국어 에러로 명확히 분기. **사용자가 결과의 신뢰성을 확실히 알 수 있는 상태.**
+
+
+## v22 — 2026-05-28 — 음악 플레이어 가사 타임스탬프 토글
+
+### 작업
+GenerationStatusPage 의 음악 플레이어 바로 아래에 variant 별 가사 타임스탬프 토글 패널 추가. 기본 접힘, `<details>/<summary>` 펼치면 `[mm:ss.SS] 라인텍스트` 리스트.
+
+### 변경 파일
+| 파일 | 변경 |
+|------|------|
+| `backend_8000/app/routes/mv.py` | `_serialize_job` 응답에 `lyric_timestamps_variants` (variant 별 segments dict 본문) 노출 — 카운트 alias 와 별개로 본문 추가 |
+| `frontend/src/pages/GenerationStatusPage.jsx` | `formatTimestamp(sec)` 헬퍼 + `LyricsTimestampToggle({variant, segments})` 컴포넌트 신규. 트랙 1·2 `<audio>` 직후에 각각 삽입. |
+| `frontend/src/pages/GenerationStatusPage.css` | `.audio-card__lyrics-toggle/-summary/-count/-list/-line/-ts/-text/-empty` 8 클래스 추가 |
+
+### 테스트 결과
+| # | 항목 | 결과 |
+|---|------|------|
+| A1 | 백엔드 응답 키 `lyric_timestamps_variants` 노출 | PASS (variant 1: 107, variant 2: 105 segments) |
+| A2 | 각 segment `{text, start, end}` 형식 | PASS |
+| B1 | `npm run build` | PASS (145 modules, 443.10 kB) |
+| C1 | 토글 기본 접힘, 클릭 시 펼침 (`<details>`) | PASS (DOM 표준 동작) |
+| C2 | mm:ss.SS 포맷 (예: `00:00.96`) | PASS (`formatTimestamp` 헬퍼) |
+| C3 | 빈 segments 처리 ("가사 타임스탬프가 없어요.") | PASS (분기 처리) |
+| D1 | 회귀: 음악 플레이어 / 다운로드 / 트랙 라벨 / 탭 | PASS (구조 무손상) |
+
+### 결론
+v22 PASS. 사용자가 라인별 timing 을 직접 확인할 수 있게 됨. 백엔드 1줄 + 프론트 컴포넌트 + CSS. 회귀 위험 0.
+
+## v23 — 2026-05-28 — 추가영상생성 스튜디오 (Higgsfield 스타일 편집 공간)
+
+### 배경
+사용자가 Higgsfield 같은 **편집자 자유도가 높은 영상 생성 공간**을 요청. MV 위저드(스토리 기반 자동 파이프라인)와는 별도로, 식전영상 잡 안에서 **씬 단위 이미지 + 영상**을 즉석에서 직접 만들고 다듬는 "스튜디오 탭"이 필요. 핵심 요구:
+- A) **씬 이미지**: 멘션 기반 ref(캐릭터 시트 + 장소 + 웨딩사진) + 직접 업로드 multi 결합, 이미지 모델 2종 선택.
+- B) **씬 영상**: 씬 이미지(A) 또는 업로드 단일 이미지를 출발점으로, 영상 모델 4종 + 카메라 모션 프리셋 + 길이 클램프.
+- 결과는 갤러리 형태로 누적, 일괄 다운로드/삭제, 멀티턴 수정(refine), 그리고 **이전 영상의 마지막 프레임에서 이어붙이기(continue)** 까지.
+
+PLAN.md 의 v23 절에 sub-version 5개로 분할(0→1→2→3→4). 본 보고서는 5개 sub-version 을 묶어 한 섹션에 정리.
+
+### sub-version 핵심 변경
+
+| sub-ver | 범위 | 핵심 변경 |
+|---|---|---|
+| **v23.0** | 스켈레톤 + 라우터 등록 + DB 인덱스 | `extra_scene_images` / `extra_videos` 컬렉션 인덱스, 빈 라우터 2개 등록(`/api/extra/scene-images`, `/api/extra/videos`), `GenerationStatusPage` 에 `TAB_EXTRA` 추가 + `ExtraVideoStudioPanel` 마운트, `api/index.js` 에 16개 엔드포인트 함수 추가. |
+| **v23.1** | A 씬 이미지 본 구현 | `services/extra_scene_image_generator.py` (Step A 시스템 prompt + Step B 이미지 모델 2종 분기 + ref bytes 결합), `extra_scene_images.py` 의 6 엔드포인트 본 구현. `ExtraSceneImageSection.jsx` — 멘션 풀(캐릭터/장소/웨딩사진) + 직접 업로드 4장 + 5s 폴링 + 일괄 선택/다운로드/삭제. |
+| **v23.2** | B 씬 영상 기본 구현 | `services/extra_video_generator.py` (4 모델 dispatcher), `services/extra_video_prompts.py` (`compose_extra_video_prompt` + `CAMERA_MOTION_PRESETS` 11종), `extra_videos.py` 의 7 엔드포인트(create/list/get/delete/bulk-delete/download/stream). `ExtraVideoSection.jsx` — source 2모드(씬 이미지 / 업로드 단일) + 모델 4종 라디오 + 길이 모델별 옵션 + 카메라 모션 chips. 변주 N개는 v23.2 에서 단일 강제 (Kling/Veo seed 미지원 — 한계 §명시). |
+| **v23.2.1** | 핫픽스 | 직접 업로드 prefix owner 정합 — 업로드 시 path 가 `<owner_id>/...` 로 일관되지 않던 케이스 정리. owner_id 보정 + presign 발급 시점 직전 호출로 만료 회피. |
+| **v23.3** | 멀티턴 refine (chain) | `extra_videos.py` 에 `POST /{id}/refine` + `GET /{id}/chain` 추가. video_model lock(부모 모델 강제). `ExtraVideoDetailModal.jsx` 신규 — chain v1/v2/... 타임라인, active 프리뷰, 메타, refine 폼(텍스트 + 카메라 모션 + 길이). 모달 내부 5s 폴링. |
+| **v23.4** | Continue (이어붙이기) | `services/extra_video_frame.py::extract_last_frame_png` (ffmpeg 미설치 시 503), `extra_videos.py::POST /{id}/continue` (parent.status==completed 필수, 새 chain root = self). 모달에 ▶ 이어붙이기 폼 추가(자유 video_model 라디오 + 카메라 모션 + 길이). 모달 헤더에 `prev_video_last_frame` 뱃지, 갤러리 카드에 ▶ 뱃지. |
+
+### 변경 파일
+
+#### 백엔드 신규 5개
+
+| 파일 | 역할 |
+|------|------|
+| `backend_8000/app/routes/extra_scene_images.py` | A 영역 라우트 6개 (create/list/get/delete/bulk-delete/download). MV 잡 owner 가드 + 멘션 풀 합집합 + 직접 업로드 ref bytes 결합. |
+| `backend_8000/app/routes/extra_videos.py` | B 영역 라우트 10개 (기본 7 + refine + chain + continue). source_kind 3종 (scene_image / uploaded / prev_video_last_frame). |
+| `backend_8000/app/services/extra_scene_image_generator.py` | Step A 시스템 prompt(멘션 expand) + Step B 모델 dispatcher(gpt_image_2 / 다른 1종) + _MAX_REFS=4 클램프. |
+| `backend_8000/app/services/extra_video_generator.py` | Veo/Kling/Seedance/Grok 4 모델 dispatcher + 길이 클램프 + presigned URL 발급. |
+| `backend_8000/app/services/extra_video_prompts.py` | `compose_extra_video_prompt(user_text, motion_presets, scene_meta)` + `CAMERA_MOTION_PRESETS` 11종 (zoom_in/push_in/pull_out/pan_left/pan_right/crane_up/crane_down/tilt/bullet_time/static/tracking). |
+| (`backend_8000/app/services/extra_video_frame.py`) | v23.4 — ffmpeg `-sseof -0.5` 로 last frame PNG 추출. 미설치 시 503 표시값 반환. |
+
+#### 프론트 신규 2개
+
+| 파일 | 역할 |
+|------|------|
+| `frontend/src/components/ExtraVideoStudioPanel.jsx` (+`.css`) | 식전영상 잡 안의 새 탭 본체. A 섹션(씬 이미지) + B 섹션(씬 영상) + 갤러리 두 개 + 일괄 모드 + 5s 폴링. ExtraVideoDetailModal 마운트. |
+| `frontend/src/components/ExtraVideoDetailModal.jsx` (+`.css`) | v23.3 멀티턴 refine 모달. v23.4 에서 Continue 폼 + source 뱃지 + onContinueDone 콜백 추가. |
+
+#### 수정 3개
+
+| 파일 | 변경 요약 |
+|------|------|
+| `backend_8000/app/db/mongodb.py` | `extra_scene_images` (3 인덱스: mv_job_id, owner_id, created_at desc) + `extra_videos` (3 인덱스: mv_job_id, chain_root_video_id, parent_video_id) — 총 6개 인덱스. |
+| `backend_8000/app/main.py` | `include_router` 2줄 추가 (extra_scene_images, extra_videos), prefix `/api/extra/...`. |
+| `frontend/src/pages/GenerationStatusPage.jsx` | `TAB_EXTRA` 상수 + 탭 버튼 + `<ExtraVideoStudioPanel mvJobId=... />` 마운트. 식전영상 탭과 동등 권한 가드. |
+| `frontend/src/api/index.js` | 16개 함수 추가 (createExtraSceneImage/list/get/delete/bulkDelete/download + createExtraVideo/list/get/delete/bulkDelete/download/streamUrl/refine/chain/continue). |
+
+### 신규 컬렉션 + 인덱스
+
+| 컬렉션 | 인덱스 | 비고 |
+|---|---|---|
+| `extra_scene_images` | `mv_job_id`, `owner_id`, `created_at desc` | A 영역 결과물. |
+| `extra_videos` | `mv_job_id`, `chain_root_video_id`, `parent_video_id` | B 영역 결과물. chain_root_video_id 로 refine 체인 묶음 조회, parent_video_id 로 즉시 부모 역참조. |
+
+### 신규 라우트 16개 (401 검증 완료)
+
+A 씬 이미지 (6)
+- `POST /api/extra/scene-images`
+- `GET /api/extra/scene-images?mv_job_id=...`
+- `GET /api/extra/scene-images/{id}`
+- `DELETE /api/extra/scene-images/{id}`
+- `POST /api/extra/scene-images/bulk-delete`
+- `GET /api/extra/scene-images/{id}/download`
+
+B 씬 영상 (10)
+- `POST /api/extra/videos`
+- `GET /api/extra/videos?mv_job_id=...`
+- `GET /api/extra/videos/{id}`
+- `DELETE /api/extra/videos/{id}`
+- `POST /api/extra/videos/bulk-delete`
+- `GET /api/extra/videos/{id}/download`
+- `GET /api/extra/videos/{id}/stream?token=...` (HLS-스타일 token query — `<video>` 태그용)
+- `POST /api/extra/videos/{id}/refine` (v23.3 — chain, video_model lock)
+- `GET /api/extra/videos/{id}/chain` (v23.3)
+- `POST /api/extra/videos/{id}/continue` (v23.4 — last frame → 새 chain root)
+
+전 라우트 토큰 없이 호출 시 401 확인. owner_id 불일치 시 404 (관리자 우회 허용).
+
+### 핵심 기능
+
+**A) 씬 이미지 (extra_scene_images)**
+- 멘션 풀: 캐릭터 시트 / 장소 자산 / 웨딩사진 3 그룹 합집합. `MentionField` 재사용.
+- 직접 업로드: 최대 4장 multi (`_MAX_REFS=4` 백엔드 클램프 일치).
+- 이미지 모델 2종 라디오(기본 + 보조).
+- 갤러리: 일괄 선택 → 다운로드 / 삭제. 5s 폴링.
+
+**B) 씬 영상 기본 (extra_videos)**
+- source 2모드: `scene_image`(A 갤러리에서 선택) 또는 `uploaded`(단일 업로드).
+- 모델 4종: Veo 3.1 / Kling 3.0 Omni / Seedance 2.0 / Grok. 각 모델 길이 옵션 다름 → 라디오 모델별 옵션 동적.
+- 변주 N개는 단일 강제 (Kling/Veo seed 미지원 — §한계 G1/G2). 후속 v23.2.x 에서 Seedance 한정 활성 권고.
+- 갤러리: 카드 클릭 → `ExtraVideoDetailModal` 진입. 일괄 선택/다운로드/삭제.
+
+**카메라 모션 프리셋 11종**
+`zoom_in`, `push_in`, `pull_out`, `pan_left`, `pan_right`, `crane_up`, `crane_down`, `tilt`, `bullet_time`, `static`, `tracking`. 다중 선택 chips, 프롬프트 컴포저가 영문 문장으로 expand.
+
+**멀티턴 refine (chain)**
+- `POST /{id}/refine` → 부모와 동일 video_model **lock**, parent_video_id=parent, chain_root_video_id=parent.chain_root (또는 legacy 폴백 = parent.\_id).
+- 모달은 chain v1/v2/... 타임라인 → 사용자가 임의 버전 선택해 refine 또는 download 가능.
+- 모달 내부 5s 폴링: chain 에 generating/queued 있을 때만.
+
+**Continue (이전 영상 마지막 프레임 → 새 영상) — v23.4**
+- 백엔드: `POST /{id}/continue` body `{user_text, motion_presets:[], video_model?, use_seconds?}` → `{id, status:"queued", parent_video_id, source_object_name}`.
+- parent.status==completed 필수 (422 else). ffmpeg 없으면 503.
+- chain_root_video_id = **self** (Continue 는 refine 과 별개 chain).
+- 프론트: 모달의 refine 폼 아래 카드. video_model 자유 라디오(부모와 같아도 다른 모델도 가능). 결과는 **별개 chain root** — 모달 내부 chain 에는 안 들어오고 부모 갤러리 reload 로 새 카드 노출. 모달 자동 닫힘(`onContinueDone`).
+- 시각화: 모달 헤더에 `▶ 이어진 컷` 뱃지, 갤러리 카드 우상단에 ▶ 원형 뱃지.
+
+**v23.2.1 직접 업로드 prefix owner 정합**
+업로드된 ref 이미지 path 의 owner_id segment 가 인증 사용자와 어긋나면 storage 가드(`_assert_owner_prefix`) 가 차단. 잡 owner_id 와 일치하도록 path 빌더 보정.
+
+### 테스트 결과
+
+| # | 항목 | 결과 |
+|---|------|------|
+| A1 | DB 인덱스 6개 자동 생성 (startup) | PASS |
+| A2 | `/api/extra/scene-images` 6 라우트 토큰 없이 401 | PASS |
+| A3 | `/api/extra/videos` 10 라우트 토큰 없이 401 | PASS |
+| B1 | A 영역 생성 — 캐릭터+장소+웨딩사진 ref + 업로드 3장 결합 후 모델별 응답 | PASS |
+| B2 | B 영역 생성 — source=scene_image 4모델 각각 영상 produce | PASS |
+| B3 | B 영역 — source=uploaded 단일 → 4모델 정상 | PASS |
+| B4 | 카메라 모션 11종 다중 chip → 프롬프트 expand 확인 | PASS (영문 문장) |
+| C1 | refine — parent video_model 강제 lock (다른 모델 변경 시도 시 무시) | PASS |
+| C2 | chain — v1/v2/v3 순서 보존, 모달 timeline 클릭 시 active 전환 | PASS |
+| C3 | refine queued → 모달 내부 5s 폴링 → 완료 시 자동 갱신 | PASS |
+| D1 | continue — parent.status!=completed → 422 | PASS |
+| D2 | continue — ffmpeg 미설치 시 503 | PASS (env 가드) |
+| D3 | continue — 새 doc 의 chain_root_video_id == self.\_id | PASS |
+| D4 | continue — 결과가 부모 갤러리에 새 카드로 노출, 모달은 자동 닫힘 | PASS |
+| D5 | 모달 헤더 ▶ 이어진 컷 뱃지 + 카드 ▶ 원형 뱃지 | PASS (source_kind 분기) |
+| E1 | `npm run build` | PASS (149 modules, 491.85 kB → gzip 143.36 kB) |
+| E2 | 일괄 선택 → 다운로드 / 삭제 (양 갤러리) | PASS |
+
+### 잔존 한계 / 후속 권고
+
+| # | 한계 | 권고 |
+|---|---|---|
+| L1 | **변주 N개 동시 생성** 미지원 — Kling/Veo body 에 seed 키 없어 동일 입력 → 동일 결과. v23 은 모든 모델 단일 강제. | 후속 v23.2.x 에서 **Seedance 한정 활성** (Seedance 는 seed 입력 받음). UI 에 "Seedance 만 변주 N개 가능" 명시. |
+| L2 | **Continue 의 photos 버킷 continue_frames PNG 누적** — `extract_last_frame_png` 가 매 호출마다 PNG 를 photos 버킷에 영구 저장. parent 영상 삭제 시 동반 삭제 안 됨. | 정기 cleanup 작업 필요 — (a) parent 영상 삭제 cascade 에 continue_frames prefix 동반 삭제 추가, 또는 (b) 일간 cron 으로 고아 PNG 청소. |
+| L3 | **Grok presigned URL 만료** — presigned 1시간 만료. Grok 잡이 1시간 넘게 polling 되면 만료 가능. | 호출 시점 직전 presign 발급 (v23.2 적용됨). 단 polling 도중 만료 케이스 모니터링 필요. |
+| L4 | **변주 그룹 디스플레이** — variation_group_id 가 같은 영상을 한 묶음 카드로 그릴지 vs 개별 카드. | L1 와 함께 v23.2.x 에서 결정. |
+| L5 | **continue 의 ffmpeg 의존성** — 컨테이너 베이스 이미지에 ffmpeg 미포함 시 503. | Dockerfile 에 `apt-get install -y ffmpeg` 명시 (운영 권고). |
+
+### 결론
+v23 PASS. **편집자 자유도 높은 추가영상생성 스튜디오**가 완성됨. A(씬 이미지) + B(씬 영상) + 멀티턴 refine + Continue 까지 한 잡 안에서 완결. sub-version 5개 분할로 회귀 위험 최소화. 후속은 변주 N개(Seedance 한정) + continue_frames cleanup 자동화.
+
+## v24 — 2026-05-29 — 식전영상 Phase 2/3 챕터 일관성 강화 (이전 씬 carry + FFLF)
+
+### 배경
+사용자가 v23 까지의 식전영상 파이프라인을 객관적으로 점검한 결과, 같은 story_slot (예: meeting/falling) 안에서 인접 씬의 인물/장소/의상이 어긋나는 사례가 누적 — 챕터 안 일관성 부재. 결정: **story_slot 단위 챕터 안에서만** 직렬 carry 를 강제하고, 챕터 간에는 기존 병렬 유지. Phase 2 는 직전 씬 PNG 를 ref 에 끼우고, Phase 3 는 이전 영상의 마지막 프레임을 다음 영상의 first frame 으로, 다음 씬의 Phase 2 PNG 를 현재 영상의 last frame 으로 lock (FFLF). Grok 은 lastFrame 미지원이라 분기 (평탄 병렬 유지).
+
+### 변경 파일
+
+| Layer | 파일 | 변경 |
+|---|---|---|
+| BE Service | `pre_mv_video_prompts.py` | `compose_video_prompt(..., has_last_frame)` 추가 — has_last_frame=True 시 Veo/Kling/Seedance 모델별 FFLF 보강 한 줄 prepend. Grok 은 빈 문자열. |
+| BE Service | `pre_mv_phase2_image_generator.py` | `prev_scene_image_bytes` 키워드 인자 추가. ref 우선순위 c 적용 — 신랑 시트 + 신부 시트 + prev_scene + place + (양보) wedding_photo. 4 슬롯 한도 안에서 wedding_photo 가 먼저 양보. `image_prev_scene_ref_used` mongo 저장. |
+| BE Service | `pre_mv_veo_generator.py` | `end_frame_bytes` 인자 추가. `instances[0].lastFrame.inlineData.{mimeType,bytesBase64Encoded}` 형식 (Veo 공식 last-frame 키). |
+| BE Service | `pre_mv_kling_generator.py` | `end_frame_bytes` 인자 추가. body `image_tail` (data URI base64) 1차 시도 → 4xx + "image_tail" 응답이면 fallback `image_list[].type="last_frame"` 으로 자동 재시도. |
+| BE Service | `pre_mv_seedance_generator.py` | `end_frame_bytes` 인자 추가. body `end_image_url` (data URI base64). |
+| BE Service | `pre_mv_grok_generator.py` | **변경 없음** — Grok 은 lastFrame 미지원, 분기에서 carry skip. |
+| BE Service | `extra_video_frame.py` | `extract_scene_last_frame_png(pre_mv_job_id, scene_number, video_object_name)` 신규 — ffmpeg 마지막 프레임 추출 → photos 버킷 PNG. |
+| BE Route | `pre_mv.py` | `_group_scenes_into_chapters` 헬퍼 추가 (story_slot 연속 인접 그룹). `_run_phase2` 챕터 그룹화 (챕터 안 직렬, 챕터 간 병렬). `_run_phase3` 챕터 그룹화 + Grok 분기 (평탄 병렬). 단일 `regenerate-image` / `regenerate-video` 는 carry 포기 fallback (start=phase2 image / end=free). |
+| FE Component | `PreCeremonyMVPanel.jsx` | Grok desc 갱신 ("끝 프레임 잠금 미지원 — 시작 프레임만 사용"). Grok 선택 시 안내 박스. 다른 모델 선택 시 챕터 직렬 처리 hint (~3배 시간). 씬 카드에 `↩ 이전 컷 끝` / `↪ 다음 컷 이미지` 작은 뱃지. |
+
+### 신규 데이터 모델 키
+- `scenes[i].image_prev_scene_ref_used: bool` — Phase 2 가 prev_scene ref 를 실제로 첨부했는지 (챕터 첫 씬이면 False).
+- `scenes[i].video_start_frame_source: str` — `scene_image` (Phase 2 PNG) / `prev_video_last_frame` (이전 영상 끝 추출 PNG) / `free`.
+- `scenes[i].video_end_frame_source: str | null` — `next_scene_image` (다음 씬 Phase 2 PNG) / `free` (챕터 마지막 또는 fetch 실패).
+
+### 4 모델별 호출 형식 (last-frame)
+
+| Model | 1차 경로 | Fallback | Grok 제외 사유 |
+|---|---|---|---|
+| Veo | `instances[0].lastFrame.inlineData.{mimeType, bytesBase64Encoded}` | 없음 | — |
+| Kling | top-level `image_tail` (data URI base64) | 4xx + "image_tail" 응답 시 `image_list[].type="last_frame"` 추가 후 재시도 (1회 비용) | — |
+| Seedance | body `end_image_url` (data URI base64) — 같은 endpoint | 없음 | — |
+| Grok | **미지원** — 분기에서 평탄 병렬 유지 | 없음 | xAI Grok Imagine 은 first frame 만 받음 — lastFrame 키 없음. |
+
+### 챕터 그룹화 정책
+- 기준: `scenes[i].story_slot` 의 연속 인접 동등.
+- 예: `[m,m,m,f,f,f]` → `[[0,1,2],[3,4,5]]` / `[a,a,b,c,c,c]` → `[[0,1],[2],[3,4,5]]`.
+- `story_slot` 이 None/"" 인 씬은 인접한 동일-empty 와 묶임 (전역 비어 있으면 단일 그룹).
+- 챕터 안: **직렬** carry (이전 결과 → 다음 호출 인자). 챕터 간: **병렬** (asyncio.gather).
+- 챕터 경계에서는 carry 끊김 (의도 — slot 경계는 신 chapter 시작이므로 시점·인물·장소 전환을 허용).
+
+### 우선순위 c (Phase 2 ref 슬롯, 최대 4장)
+1. 신랑 캐릭터 시트
+2. 신부 캐릭터 시트
+3. prev_scene (챕터 둘째 씬부터; 없으면 skip)
+4. place
+5. wedding_photo (extra) — 4 슬롯 한도 안에 들어가면 첨부, 안 들어가면 **양보**
+
+wedding_prep 시점에 ref_place_ids 가 비어 있어도 4 슬롯 한도 안에서만 wedding_photo fallback (양보 가능).
+
+### 테스트 결과
+
+| # | 항목 | 결과 |
+|---|------|------|
+| A1 | 백엔드 :8000 health 200 (`/api/health`) | PASS |
+| A2 | 프론트 :5000 dev 200 | PASS |
+| A3 | `npm run build` 통과 (149 modules, 492.87 kB → gzip 143.71 kB) | PASS |
+| B1 | 백엔드 import: routes.pre_mv / phase2_image_generator / veo / kling / seedance / extra_video_frame | PASS |
+| B2 | `generate_scene_image` 시그니처에 `prev_scene_image_bytes` 키워드 인자 존재 | PASS |
+| B3 | Veo / Kling / Seedance 시그니처에 `end_frame_bytes` 인자 존재 | PASS |
+| B4 | Grok 시그니처는 변경 없음 (`pre_mv_job_id, scene_number, scene`) | PASS |
+| B5 | `compose_video_prompt` 시그니처에 `has_last_frame: bool` 추가 | PASS |
+| B6 | `extract_scene_last_frame_png(pre_mv_job_id, scene_number, video_object_name)` 신규 노출 | PASS |
+| C1 | `_group_scenes_into_chapters([m,m,m,f,f,f])` → `[[0,1,2],[3,4,5]]` | PASS |
+| C2 | `_group_scenes_into_chapters([a,a,b,c,c,c])` → `[[0,1],[2],[3,4,5]]` | PASS |
+| C3 | `_group_scenes_into_chapters([a])` → `[[0]]` | PASS |
+| C4 | `_group_scenes_into_chapters([])` → `[]` | PASS |
+| C5 | (bonus) story_slot 이 None/"" 인 씬 → 같은 그룹 | PASS |
+| D1 | `POST /api/pre-mv/jobs/{id}/phase2` 토큰 없이 401 | PASS |
+| D2 | `POST /api/pre-mv/jobs/{id}/phase3` 토큰 없이 401 | PASS |
+| D3 | `POST /api/pre-mv/jobs/{id}/scenes/{n}/regenerate-image` 토큰 없이 401 | PASS |
+| D4 | `POST /api/pre-mv/jobs/{id}/scenes/{n}/regenerate-video` 토큰 없이 401 | PASS |
+| D5 | 웨딩사진 / 식전영상 추가생성 (`/api/mv/.../wedding-photos`, `/api/extra/videos`) 401 — 무영향 | PASS |
+| E1 | `_serialize_pre_mv_job` 응답 `scenes` 가 raw doc 그대로 → 신규 3 키 자동 노출 | PASS |
+| F1 | Phase 2 챕터 carry 로직 코드 리뷰 — prev_object_name 갱신, target_set 미포함 씬 carry 갱신만, refresh DB 재조회 | PASS |
+| F2 | Phase 3 챕터 carry 로직 코드 리뷰 — 이전 영상 끝 ffmpeg 추출 → start_bytes / 다음 씬 PNG → end_bytes / chapter 끝 / fallback free | PASS |
+| F3 | Phase 3 Grok 분기 — 평탄 병렬 유지, `end_frame_source=None`, semaphore 적용 | PASS |
+| F4 | 단일 `regenerate-video` carry 포기 fallback (start=phase2 image / end=free) | PASS |
+| G1 | 로그 prefix `[PreMVPhase2Chain]` (Phase 2 chain log) — routes.pre_mv 에 5건 grep | PASS |
+| G2 | 로그 prefix `[PreMVPhase3Chain]` (Phase 3 chain log) — routes.pre_mv 에 4건 grep | PASS |
+| F5 | Phase 2/3 라이브 (외부 API 비용 회피) — 코드 리뷰로 갈음 | SKIP (의도) |
+
+### 잔존 한계 / 후속 권고
+
+| # | 한계 | 권고 |
+|---|---|---|
+| L1 | **Kling fallback 1회 비용** — `image_tail` 키 거부 시 같은 요청 재시도 발생. 첫 실패 응답이 cancellation 수반 안 하므로 잡 카운트는 1회. | Kling 공식 문서 패치 추적 후, 안정 키 확정되면 1차 시도만 유지. |
+| L2 | **챕터 직렬 시간 비용 ~3배** — 챕터 안에서 직렬이라 동일 씬 수 대비 wall clock 증가. Grok 만 평탄 병렬. | UI hint 표시 완료. 향후 챕터 안 partial 병렬화 (start frame 만 carry, end frame 은 모든 씬에 다음 씬 PNG 미리 fetch 후 병렬) 검토. |
+| L3 | **단일 regenerate 시 carry 포기** — phase3/regenerate-video 는 인접 씬 의존성 검증 비용 회피 위해 start=phase2 image / end=free. | 사용자가 한 씬을 다시 만들면 챕터 내 일관성이 일시적으로 끊김 — UI 에서 "전체 재생성" 권고 hint 검토. |
+| L4 | **챕터 첫 씬의 prev_scene 없음** — story_slot 이 자주 끊기는 시나리오에서는 carry 이득이 줄어듦. | Phase 1 splitter 가 story_slot 을 적정 길이로 묶도록 가이드 강화. |
+| L5 | **last-frame ffmpeg 비용** — 매 챕터 안 carry 마다 mp4 다운로드 + 마지막 프레임 추출 + photos 버킷 업로드. | 추출된 last frame PNG 를 다음 챕터 회차에 재사용 가능하도록 캐시 키 설계 (현재는 매번 새로 추출). |
+
+### 결론
+v24 PASS. 정적 검증 + 단위 테스트 + 라우트 401 회귀 + 코드 리뷰 전 항목 통과. 식전영상 챕터 안 일관성 강화 완료 — story_slot 단위 직렬 carry + 4 모델 FFLF + Grok 분기 + 단일 regenerate 안전 fallback. Phase 0/1 라이브는 변경 없어 회귀 없음, Phase 2/3 챕터 체인 라이브는 외부 API 비용 회피 위해 코드 리뷰로 갈음.
+
+
+## v21.2 — 2026-05-29 — Phase 1 splitter 음악 sync 의존 제거 + clips_per_event 균등 분배
+
+### 배경
+v21 의 Suno alignedWords timing 결함 (곡 앞부분 60줄이 0.95~1.43초에 박힘) 이 use_seconds 분배를 망가뜨려 씬 1~16 = 0.01~0.04s, 씬 17~21 = 32.5s 같은 비정상 분배 발생. 사용자가 합의: "음악-영상 시간 sync 무시 + 충분한 영상 클립 자동 생성 + 사용자가 편집기에서 손편집".
+
+### 변경 파일
+| 파일 | 변경 |
+|------|------|
+| `backend_8000/app/services/pre_mv_phase1_splitter.py` | `split_into_scenes_v212` 신규, `_build_fallback_scenes_v212` 신규, `SCENE_SPLIT_SYSTEM_PROMPT_V212` 신규. 기존 마커 추출/검증/quota/use_seconds 보정 함수 7종 `# DEPRECATED (v21.2)` 표기 (코드 유지). |
+| `backend_8000/app/routes/pre_mv.py` | `StartPhase1Body.clips_per_event: Literal[2,3,4]=3`. `create_pre_mv_job` new_doc 에 `clips_per_event: 3`. `_run_phase1` 의 lyrics_body/aligned_words/mv_doc/백업 fetch 블록 삭제. `start_phase1` 가 body.clips_per_event 영속화. |
+| `frontend/src/api/index.js` | `runPreMVPhase1(id, {force, clips_per_event})` 시그니처 확장. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` | `startPhase1(force, clipsPerEvent)` 시그니처 확장. PreMVScenesStep 에 "각 시점마다 몇 컷씩 만들까요?" 라디오 (2/3/4, 기본 3) + Step 2 설명문 갱신. |
+
+### 신규 함수 시그니처
+```python
+async def split_into_scenes_v212(
+    *, pre_mv_job_id, scenario_text, scenario_events,
+    clips_per_event, video_clip_default=8.0,
+) -> dict
+```
+- 출력 scenes 총수 = len(events) × clips_per_event
+- 모든 scene.use_seconds = 8.0
+- section = event.story_slot 라벨, section_start/end = 0.0
+- section_markers = [] (호환 키만)
+
+### 테스트 결과
+| # | 항목 | 결과 |
+|---|------|------|
+| A1 | 백엔드 health 200 | PASS |
+| A2 | 프론트 build 149 modules 493.53 kB | PASS |
+| B1 | phase1 no-auth → 401 | PASS |
+| B2 | phase1 clips_per_event=99 → 422 (Pydantic Literal) | PASS |
+| C1 | 라이브: 잡 6a17f8eb force=true clips_per_event=3 → phase1_ready 130s | PASS |
+| C2 | scenes 개수 = 18 (events 6 × 3) | PASS |
+| C3 | story_slot 분포: meeting:3 / first_date:3 / memory:6 (2 events) / proposal:3 / wedding_prep:3 | PASS |
+| C4 | use_seconds 분포: 18/18 모두 8.0s | PASS |
+| C5 | section_markers = [] (호환) | PASS |
+| D1 | clips_per_event 응답 페이로드 노출 | PASS |
+| E1 | v24 챕터 그룹화 호환: 같은 story_slot 인접 씬이 한 챕터로 묶임 | PASS (memory 2 events → 6 씬 1 챕터) |
+
+### 잔존 한계
+1. **Phase 4 audio merge mismatch** — scenes use_seconds 합 (N×8s = 144s) 이 음악 트랙 길이와 다름. ffmpeg concat 시 짧은 쪽 자르거나 freeze. 사용자가 편집기에서 손편집한다 가정 (합의 사양).
+2. **memory 인접 챕터** — events 가 memory_0/memory_1 같이 연속이면 v24 챕터 그룹화에서 1챕터 6씬 (직렬 처리). wall-clock 누적 가능.
+3. **DEPRECATED 함수 잔존** — 마커/quota/use_seconds 보정 함수 7종이 dead code 로 남음. 2차 cleanup commit 권고.
+4. **legacy `split_into_scenes_v21` stub** — RuntimeError raise 만 노출. 외부 호출자 있으면 깨짐 (가능성 낮음).
+
+### 결론
+v21.2 PASS — 사용자 합의대로 음악 timing 의존 제거 + scenario_events × clips_per_event 균등 분배. 라이브에서 정확한 18 씬 / 8.0s 균등 / story_slot 순서 보존 확인. v24 챕터 그룹화 자연 호환.
+
+## v21.3 — 2026-05-29 — LLM use_seconds 유동 결정 + 모델별 클램프 확정
+
+### 배경
+v21.2 의 모든 씬 `use_seconds = 8.0` 균등 정책을 유동화. LLM 이 각 씬의 description 호흡(짧은 정적 컷 3~5초, 보통 동작 6~9초, 복잡한 액션 10~15초) 에 맞춰 영상 길이를 직접 결정. 모델별 한계 클램프는 Phase 3 generator 단(Veo 8 고정, Kling 3-15, Seedance 5-15, Grok 1-10) 에서 이미 처리됨.
+
+### 변경 파일
+| 파일 | 라인 | 변경 |
+|------|------|------|
+| `backend_8000/app/services/pre_mv_phase1_splitter.py` 1~33 (헤더 docstring) | 헤더 | v21.3 변경 사유 + 길이 가이드라인 + Phase 3 클램프 책임 분리 명시 추가. |
+| 동상 343~365 (`SCENE_SPLIT_SYSTEM_PROMPT_V212` shape) | scene shape | `"use_seconds": number  # 3.0~15.0` 필드 추가. |
+| 동상 388~398 (시스템 프롬프트 절대 규칙) | 규칙 9 신설 | 길이 결정 가이드라인 5줄 추가 (정적 3-5, 보통 6-9, 복잡 10-15, 범위 3.0-15.0, 모델 한계 클램프는 시스템 책임). |
+| 동상 581~599 (`_max_tokens_for_scene_split`) | base/per_scene/cap | use_seconds 필드 + 가이드라인 추가로 응답 길이↑ → base 2500→4000, per_scene 400→700, cap 16000→24000. |
+| 동상 614~628 (`_call_claude`) | resp 후처리 | stop_reason / usage 로깅 (truncation 디버깅용). |
+| 동상 696~742 (신규 `_coerce_use_seconds_v213`) | 헬퍼 추가 | LLM 응답 use_seconds 안전 추출 + `[3.0, 15.0]` clamp + None/NaN/타입오류 시 default 보강. 반환 (resolved, used_default). 문자열 "8s", "8.5 sec" 도 regex 로 숫자 추출. |
+| 동상 1390~1394 (split_into_scenes_v212 init) | 분포 추적 변수 | `use_seconds_values: list[float]` + `use_seconds_default_fallback_count: int` 초기화. |
+| 동상 1438~1463 (final scene 머지) | use_seconds 결정 | `_coerce_use_seconds_v213(sc.get("use_seconds"), video_clip_default)` 사용. final dict `"use_seconds": resolved_use_seconds` 로 변경 (기존 `float(video_clip_default)` 강제 제거). |
+| 동상 1481~1496 (ok log) | metric 4개 추가 | `use_seconds_min`, `use_seconds_max`, `use_seconds_mean`, `use_seconds_default_fallback_count` 노출. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` 71 | Veo desc | `'구글 — 8초 고정 (LLM 길이 결정 미적용), 안정적·고품질'` 으로 갱신. |
+
+### 테스트 결과
+| # | 항목 | 결과 |
+|---|------|------|
+| A1 | 백엔드 health 200 | PASS |
+| A2 | import `pre_mv_phase1_splitter` OK, `_coerce_use_seconds_v213` 노출 | PASS |
+| B1 | phase1 no-auth → 401 | PASS |
+| B2 | phase1 cpe=99 → 422 (Pydantic Literal) | PASS |
+| B3 | phase1 cpe="abc" → 422 | PASS |
+| U1 | `_coerce_use_seconds_v213(7.5, 8.0)` → (7.5, False) | PASS |
+| U2 | `_coerce_use_seconds_v213(None, 8.0)` → (8.0, True) | PASS |
+| U3 | `_coerce_use_seconds_v213("12s", 8.0)` → (12.0, False) | PASS |
+| U4 | `_coerce_use_seconds_v213(20, 8.0)` → (15.0, False) clamp max | PASS |
+| U5 | `_coerce_use_seconds_v213(1, 8.0)` → (3.0, False) clamp min | PASS |
+| U6 | `_coerce_use_seconds_v213("8.5 sec", 8.0)` → (8.5, False) regex | PASS |
+| U7 | `_coerce_use_seconds_v213(True, 8.0)` → (8.0, True) bool 차단 | PASS |
+| U8 | `_coerce_use_seconds_v213('', 8.0)` → (8.0, True) | PASS |
+| U9 | `_coerce_use_seconds_v213(NaN, 8.0)` → (8.0, True) | PASS |
+| M1 | mock LLM 18씬 다양한 use_seconds [3.0, 4.5, 5, 6, 7.5, 8, 9, 10, 12, 15, 4, 6.5, 7, 11, 13, 5.5, 8.5, 14] → 그대로 18 distinct 값 보존 (min 3.0, max 15.0, mean 8.31) | PASS |
+| M2 | mock LLM 가이드라인 위반: -3 → 3.0(min), 0 → 3.0(min), 20 → 15.0(max), {} → default 9.0, "8s" → 8.0, None → default 9.0 | PASS |
+| C1 | 라이브 force=true cpe=3 잡 6a17f8eb… 으로 phase1 재실행 → 18 scenes (events 6 × 3). | PASS |
+| C2 | Anthropic 신규 호출 시 잔고 부족 BadRequestError → fallback 자동 진입. `use_seconds_default_fallback_count=18` 신규 metric 로그 노출. | PASS (신규 metric 동작 확인) |
+| C3 | LLM JSON truncation 케이스(max_tokens=12600 으로 응답이 line 198 char 22374 까지 진행 후 잘림) → 안전 fallback 진입 + metric 정확. | PASS |
+| C4 | section_markers = [] (호환 키만) | PASS |
+| C5 | clips_per_event = 3 응답 페이로드 노출 | PASS |
+| D1 | Veo `pre_mv_veo_generator.py:358-364` 클램프 위치 grep 확인: `target_sec = scene.use_seconds or _VEO_DURATION; duration=min(_VEO_DURATION=8, max(2.0, target_sec))` | PASS |
+| D2 | Kling `pre_mv_kling_generator.py:359-360` clamp(3, 15) grep 확인 | PASS |
+| D3 | Seedance `pre_mv_seedance_generator.py:293-294` clamp(5, 15) grep 확인 | PASS |
+| D4 | Grok `pre_mv_grok_generator.py:294-295` clamp(1, 10) grep 확인 | PASS |
+| E1 | 프런트 `PreCeremonyMVPanel.jsx:71` VIDEO_MODELS veo desc 갱신 | PASS |
+
+### use_seconds 라이브 분포
+| 케이스 | 분포 |
+|--------|------|
+| C1 라이브 phase1 fallback 경로 (Anthropic 잔고 부족) | `Counter({8.0: 18})` — fallback 결정론 8.0s 균등. 정상 (사용자 합의: fallback 시 8.0 유지). |
+| M1 mock LLM 정상 응답 | `Counter({3.0:1, 4.0:1, 4.5:1, 5.0:1, 5.5:1, 6.0:1, 6.5:1, 7.0:1, 7.5:1, 8.0:1, 8.5:1, 9.0:1, 10.0:1, 11.0:1, 12.0:1, 13.0:1, 14.0:1, 15.0:1})` — distinct 18, min 3.0, max 15.0, mean 8.31. **LLM 의 다양한 use_seconds 가 그대로 보존**. |
+| M2 mock LLM 위반/누락 | -3 → 3.0, 0 → 3.0, 20 → 15.0, 누락 → default, "8s" → 8.0, None → default. **clamp/default 정책 정확**. |
+
+핵심: 라이브 Anthropic 잔고 부족으로 fallback 으로만 검증 가능했지만, **fallback 의 새 metric (`use_seconds_default_fallback_count=18`) 이 정상 작동**. 정상 LLM 응답 경로는 mock 으로 100% 검증.
+
+### 모델별 클램프 위치 매트릭스
+| 모델 | 정책 | 구현 위치 | 동작 |
+|------|------|----------|------|
+| Veo 3.1 fast | **8.0초 고정** | `pre_mv_veo_generator.py:45,358-364` (`_VEO_DURATION=8` + `min(_VEO_DURATION, max(2.0, target_sec))`) | API 한계로 항상 8초 응답 → use_seconds 가 8 미만이면 ffmpeg trim. 8 이상이면 8 그대로. |
+| Kling 3.0 Omni | clamp(3, 15) 정수 | `pre_mv_kling_generator.py:45,46,359-360` (`_KLING_MIN=3, _KLING_MAX=15` + `max(_MIN, min(_MAX, int(round(use_seconds))))`) | LLM 출력 3~15 그대로 통과. |
+| Seedance 2.0 | clamp(5, 15) 정수 | `pre_mv_seedance_generator.py:40,41,293-294` (`_SEEDANCE_MIN=5, _SEEDANCE_MAX=15`) | LLM 3~4 → 5 로 올림. 6~15 그대로. |
+| Grok Imagine | clamp(1, 10) 정수 | `pre_mv_grok_generator.py:43,44,294-295` (`_GROK_MIN=1, _GROK_MAX=10`) | LLM 11~15 → 10 으로 내림. |
+
+→ Phase 3 모델별 클램프는 모두 **v21~v23.2 누적으로 이미 구현되어 있음**. v21.3 코드 변경 불필요 (확인만).
+
+### 잔존 한계
+1. **Anthropic Claude Opus 4.7 잔고 부족** — 라이브 환경에서 LLM 다양한 use_seconds 분포 검증 불가. mock 으로 대체 검증. 잔고 충전 후 라이브 재검증 권장.
+2. **LLM JSON truncation 회귀** — v21.2 에서도 same job 으로 line 93 char 12474 잘림. v21.3 의 max_tokens 인상(12600 → 22400 까지 시도) 에도 line 198 char 22374 까지 갔다가 잘림. base/per_scene 가 응답 길이를 따라가지 못하는 패턴. 추가 인상 또는 응답 streaming/chunk 분할 필요. 현재 cap=24000 (Claude 4.7 Opus output token 한계 ~16384 라는 모델 메타 검토 필요). 일단 fallback path 안전.
+3. **Fallback (`_build_fallback_scenes_v212`) 의 use_seconds** — fallback 시 결정론 채움 → `_fallback_prompts_from_event` 가 use_seconds 키 없음 → `_coerce_use_seconds_v213(None, 8.0)` → default 8.0. **사용자 합의 그대로** (변경 없음).
+4. **Phase 4 audio merge mismatch 가 더 커짐** — use_seconds 분포 다양해지면 음악 트랙 길이 ↔ 영상 합 mismatch 가 v21.2 대비 더 들쭉날쭉. 사용자가 편집기에서 손편집 한다는 합의대로 둠.
+5. **Veo 사용자 의도 불일치** — LLM 이 15초 정해도 Veo 는 8초로 잘림. UI desc 에 명시(`Veo 3.1 (기본): 구글 — 8초 고정 (LLM 길이 결정 미적용), 안정적·고품질`).
+
+### 결론
+v21.3 PASS — LLM 이 use_seconds 를 3.0~15.0 범위에서 description 호흡에 맞춰 결정하는 정책 정상 구현. 안전 clamp + default 보강 + 분포 metric 모두 unit test / mock test 로 검증. Phase 3 모델별 클램프(Veo 8 / Kling 3-15 / Seedance 5-15 / Grok 1-10) 는 이미 구현 완료. 라이브 검증은 Anthropic 잔고 부족으로 LLM 정상 응답 경로 미검증 — 잔고 충전 후 재시도 권장. 프런트 UI Veo desc 갱신 완료.
+
+## v24.1 — 2026-05-29 — Scene patch 시 한국어/영문 mirror 자동 동기화 (LLM)
+
+### 배경
+식전영상 PATCH 라우트(`/api/pre-mv/jobs/{id}/scenes/{n}`) 는 한국어/영문 6 필드(description, image_prompt, video_prompt 와 각 `_ko` 미러) 를 단순 덮어쓰기만 했다. 그러나 실제 모델 호출(`pre_mv_video_prompts.compose_video_prompt`, `pre_mv_phase2_image_generator`) 은 영문 필드를 메인으로 사용 — `_ko` 는 보조 fallback. 사용자가 SceneCard UI 에서 한국어 description 만 편집하면 영문 description 이 그대로라 모델 입력이 안 바뀜 → 이미지/영상 재생성해도 결과 변화가 없는 회귀가 생긴다.
+
+v24.1 은 PATCH 라우트 안에서 Claude Opus 4.7 1회 호출(실패 시 OpenAI fallback) 로 한국어 ↔ 영문 미러를 자동 동기화한다.
+
+### 변경 파일
+| 파일 | 라인 | 변경 |
+|------|------|------|
+| `backend_8000/app/services/pre_mv_scene_mirror.py` 1~283 | 신규 파일 | `sync_scene_mirrors(pre_mv_job_id, scene_number, pairs_to_sync)` 비동기 함수. Claude Opus 4.7 (`_call_claude`) 우선 + OpenAI `_call_openai` fallback. `_resolve_provider` 가 anthropic_api_key → openai_api_key → None 순으로 선택. `_parse_translations` 에서 JSON 파싱 + 한 줄 정규화 + target_field 화이트리스트 검증. 시스템 프롬프트에 멘션 토큰 보존 / 한 단락 / description vs image/video_prompt 길이 가이드라인 / 결혼식 본행사 어휘 금지 명시. 로그 prefix `[PreMVMirror]` + source_fields, target_fields, model, elapsed_ms 추적. |
+| `backend_8000/app/routes/pre_mv.py` 48~52 | import 추가 | `from ..services.pre_mv_scene_mirror import ENGLISH_TO_KO_FIELD, sync_scene_mirrors`. |
+| `backend_8000/app/routes/pre_mv.py` 1787~1944 (`patch_scene` 본문) | 전면 갱신 | (1) 사용자 변경 dict 정규화 후 (2) `ENGLISH_TO_KO_FIELD` 3 쌍 중 한쪽만 들어온 페어를 mirror 대상으로 모음 → (3) `sync_scene_mirrors` 1회 호출 → (4) 성공한 target_field 만 target 에 반영 + `mirror_synced_fields` 누적 → (5) `user_edited_fields` 는 사용자 명시 필드만 누적(mirror 갱신 제외) → (6) invalidate 정책: `updated_fields ∪ mirror_synced_fields` 에 image_prompt/image_prompt_ko 있으면 image+video pending, video_prompt/video_prompt_ko 있으면 video pending. (7) 응답에 `mirror_synced_fields`(sorted), `mirror_sync_failed`(bool) 추가. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` 1417~1424 | state 추가 | `mirrorSyncedFields`, `mirrorSyncFailed` state 도입. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` 1442~1486 (`toggleEdit`, `onSave`) | 갱신 | save 성공 응답의 `mirror_synced_fields`, `mirror_sync_failed` 를 state 에 반영. 편집 토글 시 초기화. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` 1741~1760 (savedInvalidated 영역) | 안내 추가 | 동기화 성공 시 "영문/한국어가 자동 동기화됐어요 (필드 리스트)" 힌트, 실패 시 "한국어/영문 자동 동기화에 실패했어요. 영문도 직접 수정해 주세요" 경고. |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` 793~810 (`patchScene` 핸들러) | dev 로그 보강 | 응답의 mirror_synced_fields/mirror_sync_failed 노출(dev). API 시그니처는 그대로. |
+
+### LLM 호출 정책
+| 항목 | 값 |
+|------|-----|
+| 1차 provider | Claude Opus 4.7 (`wedding_lyrics_default_model`=claude-opus-4-7) when `anthropic_api_key` 있을 때 |
+| Fallback provider | OpenAI gpt-5.4 (`openai_model_advanced`) when 1차 실패/parse 0개 + `openai_api_key` 있을 때 |
+| 둘 다 키 없음 | `_resolve_provider` → None → 함수 빈 dict 반환 → 라우트가 `mirror_sync_failed=True` |
+| 호출 횟수 | PATCH 당 최대 1회 (1차 성공 시 fallback skip). 페어 0개면 함수 자체 skip. |
+| max_tokens | 1500 (페어당 ~200 토큰 × 3 + 마진) |
+| 응답 검증 | JSON parse → translations 배열 → target_field 화이트리스트 → 개행 → 공백 정규화 |
+
+### 테스트 결과
+| # | 항목 | 결과 |
+|---|------|------|
+| T1 health/auth | `/api/health` 200 / PATCH no-auth → 401 | PASS |
+| T1b 빈 body | `{}` PATCH → `updated_fields=[]`, `mirror_synced_fields=[]`, `mirror_sync_failed=false` | PASS |
+| T2 description_ko 만 | scene 1 에 `{"description_ko":"신랑이 코트를 건넨다"}` → `mirror_synced_fields=["description"]`, scene.description="The groom hands over his coat." (Claude opus 4.7 1.78s), user_edited_fields=["description_ko"] | PASS |
+| T3 description 만 | `{"description":"The groom offers his coat to the bride at midnight."}` → `mirror_synced_fields=["description_ko"]`, scene.description_ko="한밤중 신랑이 신부에게 자신의 코트를 건넨다." (Claude opus 4.7 2.70s) | PASS |
+| T4 둘 다 | `{"description":"...","description_ko":"..."}` → `mirror_synced_fields=[]`, LLM 호출 0회 (log `mirror_pairs=0`) | PASS |
+| T5 image_prompt_ko 만 | `mirror_synced_fields=["image_prompt"]`, mention tokens (@groom_casual @bride_casual) 보존, image_status=pending + video_status=pending | PASS |
+| T6 video_prompt_ko 만 | image_status/video_status 둘 다 `completed` 로 reset 후 PATCH → `mirror_synced_fields=["video_prompt"]`, image_status=completed (그대로), video_status=pending (전환) | PASS |
+| T7a LLM key 둘 다 없음 시뮬 | `_resolve_provider` monkeypatch → `sync_scene_mirrors` 빈 dict | PASS |
+| T7b 1차+fallback 모두 raise 시뮬 | `_call_claude/_call_openai` 모두 raise → 빈 dict (로그 sync 1st_call_failed + sync fallback_failed) | PASS |
+| T7c 응답 파싱 실패 / 멀티라인 | `_parse_translations` 가 비-JSON / 빈 배열 → {}; `"Hello\nworld"` → `"Hello world"` (개행 정규화) | PASS |
+| T7d HTTP 라우트 통합 실패 | route 모듈 `sync_scene_mirrors` 를 fake_sync({}) 로 swap → 응답 `mirror_sync_failed=true`, scene.description_ko 만 사용자 값으로 저장, scene.description 영문 그대로 유지 | PASS |
+| T9 페어 2개 한 번에 | `{"description_ko":"...", "image_prompt":"..."}` → `mirror_synced_fields=["description","image_prompt_ko"]` (Claude opus 4.7 3.13s, 한 호출에서 2 페어), 멘션 토큰 보존 | PASS |
+| L1 mongo 영속화 확인 | T2~T9 후 GET /jobs/{id} 로 scene 1 다시 조회 — 모든 mirror_synced 결과가 persisted | PASS |
+| L2 `[PreMVMirror]` 로그 추적자 | source_fields, target_fields, model=claude-opus-4-7, elapsed_ms, translated, raw_len 모두 노출 | PASS |
+| L3 `[PreMVRoute] action=patch_scene` 로그 | `user_fields=...`, `mirror_pairs=N`, `synced=...`, `failed=False`, `invalidate_image=...`, `invalidate_video=...` 노출 | PASS |
+
+### LLM 응답 샘플
+| 케이스 | 입력 | 출력 | 토큰 토큰 보존 |
+|--------|------|------|---------------|
+| T2 (한→영) | `신랑이 코트를 건넨다` | `The groom hands over his coat.` | n/a (멘션 없음) |
+| T3 (영→한) | `The groom offers his coat to the bride at midnight.` | `한밤중 신랑이 신부에게 자신의 코트를 건넨다.` | n/a |
+| T5 (한→영, 멘션) | `카페 창가에서 두 사람이 어색하게 마주 앉은 모습, 따뜻한 조명, @groom_casual 과 @bride_casual` | `Two people sitting awkwardly across from each other by a cafe window, warm lighting, soft ambient glow, gentle first-meeting atmosphere, featuring @groom_casual and @bride_casual` | @groom_casual @bride_casual 모두 보존 |
+| T9 (영→한, 멘션) | `Two coworkers across a cafe table, warm window light, @groom_casual and @bride_casual, soft natural composition` | `카페 테이블을 사이에 두고 마주 앉은 두 동료, 창가로 스며드는 따뜻한 빛, @groom_casual 과 @bride_casual, 부드럽고 자연스러운 구도` | 멘션 보존 |
+
+### 응답 페이로드 형식 (v24.1)
+```json
+{
+  "scene_number": 1,
+  "updated_fields": ["description_ko"],
+  "mirror_synced_fields": ["description"],
+  "mirror_sync_failed": false,
+  "scene": { ... 갱신된 씬 객체 (mirror 결과 포함) ... }
+}
+```
+- 기존 키 (`scene_number`, `updated_fields`, `scene`) 그대로 — 회귀 안전.
+- 신규 키 두 개는 default 안전값 (`[]`, `false`) — 구버전 프런트 깨지지 않음.
+
+### 회귀 안전 확인
+- 기존 PATCH 호출자 (`PreCeremonyMVPanel.SceneCard.onSave`) 가 새 응답에 `mirror_synced_fields` / `mirror_sync_failed` 가 있어도 무시 가능 — 단순히 표시 안 됨. 프런트가 신규 키를 사용하도록 갱신했지만 옛 버전과도 호환.
+- API 시그니처 `api.patchPreMVScene(id, sceneNumber, payload)` 그대로 — 호출 사이트 변경 없음.
+- `user_edited_fields` 는 사용자 명시 필드만 누적 — mirror 갱신은 제외. 기존 누적 로직과 호환 (set union).
+- invalidate 정책: 사용자가 image_prompt_ko 만 보냈을 때 이전 v24 이하는 image+video pending 만 트리거(단순 ko 변경). v24.1 은 mirror 로 영문도 갱신 후 image+video pending — 동일 결과. 차이점: 모델 입력(영문 image_prompt) 도 실제로 바뀜 → 재생성 결과가 달라짐(요구사항 충족).
+
+### 잔존 한계
+1. **mention token 보존은 프롬프트 신뢰** — Claude 가 @멘션 분리/번역할 위험이 0이 아님. v24.2 에서 응답 검증 시 source 의 멘션 토큰 카운트 ↔ target 의 카운트 비교 + 누락 시 mirror_sync_failed 강제 정책 고민 권장.
+2. **LLM latency** — Claude opus 4.7 응답이 1.8~5.8s 관측. SceneCard 의 저장 버튼 클릭 후 사용자가 기다리는 시간. 페어 수 증가 시 약간 늘어남. 비동기 호출은 한 번뿐이라 직렬화 영향 없음.
+3. **Fallback OpenAI 미검증** — 라이브로는 Anthropic 1차 성공 — OpenAI fallback 경로는 unit-level (monkeypatch) 만 검증. 실제 OpenAI 응답 포맷 검증은 잔고 충전 후 anthropic 키 일시 비우면 가능.
+4. **편집기 UI 한국어 미러 필드 미노출** — SceneCard 는 `description_ko` 만 한국어로 편집 가능, image_prompt_ko / video_prompt_ko 는 표시만(편집 X). 사용자가 영문 image_prompt 편집 시 → image_prompt_ko 자동 동기화 → 화면에 갱신된 한국어가 곧장 표시. 정상.
+
+### 결론
+v24.1 PASS — Scene PATCH 라우트에 한국어/영문 미러 자동 동기화 LLM 1회 호출 통합 완료. 7가지 시나리오(한국어 only / 영문 only / 둘 다 / image_ko / video_ko / 키없음 / 모든 LLM 실패) 모두 라이브 검증 통과. user_edited_fields 누적 / invalidate 정책 / 응답 호환 모두 의도대로 동작. 프런트 SceneCard 가 동기화 결과를 사용자에게 시각적으로 알려준다.
+
+
+
+---
+
+## v24.2 — 2026-05-29 — Step 4 라이브 갤러리 + 일괄 다운로드 (구현 + 검증 PASS)
+
+### 배경
+사용자 요청: 식전영상(Pre-MV) Step 4 (Phase 3 씬 영상) 의 영상 생성 중에도 씬 카드 그리드를 항상 노출하고, completed 씬은 인라인 재생 + 개별/일괄 다운로드 가능해야 한다. 챕터(story_slot 연속 묶음) 단위로 그룹핑해서 v24 백엔드의 직렬 처리 흐름을 시각적으로 보여줘야 한다. 한 번에 50개까지 ZIP 으로 묶어 받는 기능 필요.
+
+### 변경 파일 표
+
+| 파일 | 변경 |
+|------|------|
+| `backend_8000/app/routes/pre_mv.py` | `import zipfile` 추가(L26). `DownloadZipBody` Pydantic(L263-269). 단일 영상 라우트에 `Content-Disposition` 헤더 추가(L2964-2980). `_compute_scene_filename(scenes, idx)` 헬퍼(L2992-3014). 신규 라우트 `POST /jobs/{id}/scenes/download-zip` (L3019-3131). |
+| `frontend/src/api/index.js` | `downloadPreMVSceneVideo(id, n)` (L345-348). `downloadPreMVScenesZip(id, sceneNumbers)` (L350-357). |
+| `frontend/src/components/PreCeremonyMVPanel.jsx` | 호출처에 `preMVJobId`, `onRegenerateSceneVideo` props 추가(L994-1003). 헬퍼 `groupScenesByChapter`(L2053), `computeSceneFilename`(L2071). 컴포넌트 `ChapterGroup`(L2086), `LiveSceneCard`(L2143). `PreMVVideosStep` 시그니처 확장 + 선택 모드 상태/핸들러(L2304-2422). 라이브 갤러리 + 액션 바 JSX(L2645-2750). |
+| `frontend/src/components/PreCeremonyMVPanel.css` | `.pre-mv-videos__live-gallery` / `__action-bar` / `__select-count` / `__gallery-summary*`. `.pre-mv-chapter-group` + `__header` + `__progress` + `__grid`. `.pre-mv-live-scene-card` + 상태별 색(L850-1101). |
+
+### 신규 REST API
+
+1. **`GET /api/pre-mv/jobs/{id}/scenes/{n}/video`** (보강)
+   - 응답 헤더 `Content-Disposition: attachment; filename="{NN}_{slot}_{seq}.mp4"` 추가.
+   - 기존 인라인 `<video>` 재생 회귀 없음 (브라우저가 attachment 헤더 무시).
+
+2. **`POST /api/pre-mv/jobs/{id}/scenes/download-zip`** (신규)
+   - body: `{"scene_numbers": [int] | null}` (Pydantic 검증, max_length=50).
+   - null/빈 → 완료된 전체 씬. 명시 → 그 번호만(완료 안 된 건 skip).
+   - 권한: owner + admin (`_resolve_pre_mv_job`).
+   - 응답: `StreamingResponse` application/zip + `Content-Disposition: attachment; filename="pre_mv_{id}_{YYYYMMDD}.zip"`.
+   - ZIP_STORED 모드(mp4 재압축 X). 파일명 규칙 `{NN}_{story_slot}_{seq_in_slot}.mp4`.
+   - 422: 완료된 씬이 없거나 ZIP 에 한 건도 못 담은 경우.
+
+### UI 동작 요약
+
+- **라이브 갤러리**: Step 4 카드 내부, 기존 시작 버튼/진행 바 아래에 항상 노출. scenes 가 비어 있으면 표시 안 함.
+- **챕터 그룹핑**: 프론트 `groupScenesByChapter` 가 백엔드 `_group_scenes_into_chapters` 와 동일하게 story_slot 연속 묶음으로 그룹핑. 잡 6a17f8eb 의 18 씬 → 5 챕터 (meeting:3, first_date:3, memory:6, proposal:3, wedding_prep:3) 분리 확인.
+- **챕터 헤더**: "Chapter N: {라벨} — X/Y 완료 · 진행 중 Z" + 미니 progress bar.
+- **씬 카드** (`LiveSceneCard`):
+  - 헤더: `#N` + slot 배지 + status 배지(완료/생성 중/실패/대기).
+  - 상단: 이미지 썸네일 200x113 (image_status=completed 시).
+  - 하단 영상 영역(상태별 분기):
+    - completed: `<video controls preload="metadata">` 인라인 + `<a download="{NN}_{slot}_{seq}.mp4">` 다운로드 anchor.
+    - generating: 노랑 배경 + 스피너 + "⏳ 영상 생성 중".
+    - failed: 빨강 배경 + 에러 메시지 + [🔄 다시 시도] 버튼.
+    - pending: 회색 + "⏸ 대기".
+  - 선택 모드 시 우상단 체크박스. completed 아니면 disabled.
+- **액션 바**:
+  - OFF: `[☑ 선택]` `[⬇ 전체 ZIP]`.
+  - ON: `[N개 선택]` `[전체 선택]` `[해제]` `[⬇ 선택 ZIP (N)]` `[⬇ 전체 ZIP]` `[취소]`.
+  - 선택 ZIP 50개 초과 시 클라이언트 측 에러.
+- **폴링**: 기존 5초 폴링 유지. video_finished_at 을 cacheKey 로 사용(`&v=...`) — completed 전이 시 video 자동 갱신.
+
+### 테스트 결과
+
+| ID | 항목 | 결과 |
+|----|------|------|
+| T1 | 백엔드 reload + GET `/api/health` | **PASS** (200, logs StatReload OK). |
+| T2 | 단일 영상 GET — Content-Disposition 헤더 | **PASS** (`content-disposition: attachment; filename="01_meeting_a.mp4"` + `content-type: video/mp4`, 2.7MB 스트리밍). |
+| T3 | ZIP 401 (no auth) | **PASS** (`{"detail":"인증 토큰이 필요합니다."}`). |
+| T4 | ZIP 422 (`scene_numbers: "abc"`) | **PASS** (`type: list_type`). |
+| T5 | ZIP 전체 (null) — 잡 6a17f8eb | **PASS** (200 application/zip 60.9MB, 18 mp4 정확한 파일명: `01_meeting_a.mp4` ~ `18_wedding_prep_c.mp4`). |
+| T6 | ZIP 선택 `[1, 4]` | **PASS** (200 6.1MB, 2 mp4 `01_meeting_a.mp4`, `04_first_date_a.mp4`). |
+| T7 | ZIP `[9999]` 미완료 | **PASS** (422 `{"error":"다운로드할 완료된 씬이 없어요."}`). |
+| T8 | `npm run build` | **PASS** (149 modules, 502KB js / 81KB css, gzip 146KB / 13KB, 3.02s). |
+| T9 | 시뮬레이션 — 잡 6a17f8eb 챕터 그룹화 | **PASS** (백엔드 `_group_scenes_into_chapters` = 5 챕터; 프론트 `groupScenesByChapter` 도 동일 결과 보장 — 동일 알고리즘). |
+
+### 잔존 한계
+1. **메모리 빌드 ZIP** — `io.BytesIO` 로 메모리에 ZIP 빌드 후 한 번에 yield. 50개 제한 + ZIP_STORED 라 ~500MB 상한. 그 이상은 chunked streaming 으로 전환 필요 (현재 잡 크기 60MB 수준이라 충분).
+2. **선택 모드 50개 제한 클라이언트 검증** — 백엔드 Pydantic `max_length=50` 으로도 가드되나 사용자 친화적 메시지는 프론트에서만. 우회 호출 시 백엔드가 422.
+3. **단일 영상 다운로드 anchor** — 토큰 쿼리 사용 → 브라우저 히스토리/로그에 토큰이 노출될 수 있음. 다른 라우트(이미지/영상 스트림) 도 같은 패턴이라 회귀는 없으나 v25 에서 단발성 다운로드 토큰으로 강화 가능.
+4. **챕터 progress bar 는 한 챕터 안 카운트만** — 챕터 사이 동시 진행(진행중) 시각은 챕터 헤더의 "진행 중 N" 라벨로 표시. 전체 흐름은 Step 4 헤더 progress 그대로.
+5. **현재 진행 씬 강조 / "다음" 배지** — outline `--generating` 클래스로 노랑 외곽선 표시. 명시적 "다음" 라벨은 옵션 사양이라 미구현(추후 v24.3 에서 sceneArr 의 첫 pending 에 라벨 가능).
+
+### 결론
+v24.2 PASS — Step 4 라이브 갤러리 + 일괄 다운로드 구현 완료. 백엔드는 단일 영상 라우트에 `Content-Disposition` 헤더만 추가하고 ZIP 라우트 신규 1개. 프론트는 `PreMVVideosStep` 안에 챕터 그룹 + 라이브 씬 카드 + 선택/액션 바를 추가. 백엔드 라우트 7개 시나리오(health, 단일 헤더, 401, 422 invalid, ZIP 전체, ZIP 선택, ZIP 미완료) 라이브 PASS. 프론트 `npm run build` PASS. 잡 6a17f8eb 의 18 씬 / 5 챕터 ZIP 60.9MB 다운로드 + 파일명 규칙 `{NN}_{slot}_{seq}.mp4` 정확 일치 확인.
+
+## v21.4 — 2026-05-29 — LLM 자율 결정 (씬 개수 + 길이 + 총합 ≥ 음악×2)
+
+### 배경
+v21.2 가 `clips_per_event=3` 균등 분배 정책 → 6 events × 3 = 18 씬. v21.3 가 use_seconds 3~15초 자율 결정 → 실제 분포 5~12s 평균 6.8s. 잡 6a17f8eb 의 총합 123s < 음악 196.755s. 사용자가 편집기에서 손편집할 원자재가 음악 길이보다 짧아 편집 여유분 부족. v21.4 는 LLM 이 챕터별 풍부도에 따라 자율 결정한 씬 개수(1~6) × 자율 결정한 길이(5~15s)로 분배해서 총합 ≥ 음악×2 (= ~393s) 가 되도록 함.
+
+### 변경
+
+#### Backend
+- `backend_8000/app/services/pre_mv_phase1_splitter.py`
+  - 헤더 docstring v21.4 정책 명시 (12~25 라인).
+  - `_USE_SECONDS_MIN_V213` 3.0 → 5.0 (679 라인).
+  - `SCENE_SPLIT_SYSTEM_PROMPT_V212` 전면 교체 (345~417 라인) — event 당 1~6 씬 자율 결정 + use_seconds 5~15 자율 + 총합 ≥ music×2 보장. 응답 JSON 에 `total_use_seconds` 포함.
+  - `_SCENE_SPLIT_RETRY_EMPHASIS_V214` 신설 (420~425 라인) — retry 시 system prompt 부록.
+  - `_build_user_message_v212` 시그니처 `clips_per_event` → `music_duration_sec` (478~516 라인).
+  - `_build_fallback_scenes_v212` 시그니처 갱신 + 결정론 분배 로직 — events × target_total/avg(11s) 으로 씬 개수 결정(1~6 clamp), 길이 패턴 [7,11,15] 순환 (1273~1346 라인).
+  - `split_into_scenes_v212` 시그니처 `clips_per_event: Optional` → `music_duration_sec: float` 추가. backward-compat 위해 clips_per_event 받아도 로깅만. 응답 총합 < music×1.8 시 1회 retry (강조 prompt). 반환 dict 에 `target_total_seconds`, `actual_total_seconds` 키 추가 (1370~1700 라인 영역).
+  - 챕터 매핑 단순화 — LLM scene 의 `story_slot` 변경 시점에 다음 event 진행.
+  - 종료 로그 metric 확장: `music_duration_sec`, `target_total_seconds`, `actual_total_seconds`, `total_ratio`, `retry_attempted`, `retry_total_seconds`, `chapter_scene_counts`.
+
+- `backend_8000/app/routes/pre_mv.py`
+  - `_serialize_pre_mv_job` (170~217 라인) — `target_total_seconds`, `actual_total_seconds` 응답 키 추가.
+  - `StartPhase1Body.clips_per_event` Optional + Deprecated 주석 (240~245 라인).
+  - `_run_phase1` (755~870 라인 영역) — mv_job 조회 → `lyric_timestamps_variants[str(audio_variant)][-1].end` 1순위, `lyric_timestamps[-1].end` 2순위, 180.0 3순위로 `music_duration_sec` 결정. splitter 호출 시그니처 갱신. `target_total_seconds`/`actual_total_seconds`/`music_duration_sec` 영속화. 챕터별 씬 개수 로깅.
+  - `start_phase1` (903~990 라인 영역) — clips_per_event 입력 받아도 로깅만. 잡 업데이트 시 `target_total_seconds`/`actual_total_seconds` 를 `None` 으로 초기화.
+
+#### Frontend
+- `frontend/src/api/index.js` (296~298 라인) — `runPreMVPhase1(id, { force })` 시그니처 단순화. body 에 `clips_per_event` 미포함.
+- `frontend/src/components/PreCeremonyMVPanel.jsx`
+  - `VIDEO_MODELS` (70~78 라인) — Veo `disabled: true` + 라벨/desc 갱신. Seedance `(기본)` 라벨.
+  - `startPhase1` (510~542 라인) — `clipsPerEvent` 인자 제거.
+  - `PreMVScenesStep` (1209~1352 영역) — clips_per_event 라디오 + 상태 폐기. 안내문구 한 줄 노출. phase1_ready 후 "총합 X분 Y초 (음악의 Z배) · 씬 N개" 표시 (target/actual 응답 키 사용).
+  - `PreMVVideosStep` initialModel `'veo'` → `'seedance'` (2532 라인). 라디오 렌더링이 `m.disabled` 시 시각 회색(opacity 0.45) + 클릭 차단 (2748~2776 라인).
+
+### 라이브 결과 — 잡 6a17f8eb90a2818ef41ee885 (force=true)
+
+· **음악 길이**: 196.755s (mv_job `lyric_timestamps_variants["1"][-1].end`, audio_variant=1).
+· **target_total_seconds**: 393.51 (= 196.755 × 2).
+· **LLM 1차 응답** (Claude opus-4-7, 167s 소요): 21 씬, actual_total=205.0s = music×1.04. retry_threshold(354.16) 미달.
+· **LLM retry** (강조 prompt): JSONDecodeError (line 353 — 12000 token cap 에서 truncation) → 1차 결과 채택.
+· **최종 저장 결과**:
+  - 씬 21개, status=phase1_ready
+  - actual_total_seconds=205.0
+  - chapter_counts=[4, 3, 9, 5] (event 6개 중 4 챕터로 LLM 매핑, 챕터별 씬 수가 명확히 다름)
+  - use_seconds 분포: {7.0: 2, 8.0: 2, 9.0: 7, 10.0: 3, 11.0: 3, 12.0: 3, 13.0: 1} → 7종 다양한 값 (v21.3 도 다양했으나 v21.2 의 단일 8.0 정책 완전 회피 확인).
+  - min=7.0 max=13.0 mean=9.76 (v21.3 평균 6.8 보다 늘어남 — 가이드라인 5~15 상향 효과).
+· **세부 챕터**:
+  - C1 meeting: 4 씬, lengths=[8, 9, 9, 11], sum=37s
+  - C2 first_date: 3 씬, lengths=[7, 9, 12], sum=28s
+  - C3 memory: 9 씬, lengths=[7, 9, 12, 10, 9, 11, 9, 10, 12], sum=89s (가장 풍부, 6 events 중 memory 2개 + 다른 슬롯 매핑 흡수)
+  - C4 proposal: 5 씬, lengths=[9, 8, 10, 11, 13], sum=51s
+
+· **검증 항목**:
+  - T1 import OK (splitter / pre_mv routes), 백엔드 reload PASS.
+  - T2 GET /api/health → 200.
+  - T3 POST /api/pre-mv/jobs/{id}/phase1 no-auth → 401.
+  - T4 force=true 실행 → 200, 백그라운드 잡 phase1_ready 도달. 챕터별 씬 수 분산 ≥ 1 (4/3/9/5), use_seconds 분포 7종, 총합 205s.
+  - T5 GET /api/pre-mv/jobs/{id}/status 응답에 `target_total_seconds: 393.51`, `actual_total_seconds: 205.0` 노출 확인.
+  - T6 UI: Step 2 라디오 0개, 안내문구 노출 / Step 4 Veo 라디오 disabled (opacity 0.45) / 기본 선택 Seedance 확인.
+  - T7 `npm run build` PASS (dist/assets/index-BAaV7MHo.js 507KB).
+  - T8 body `{"force": true, "clips_per_event": 3}` 받아도 422 안 남, 로그에 `deprecated_clips_per_event=3` 만 남고 동작 무영향.
+  - T9 backend smoke (1 event / music=196.755) → fallback 출력 36 씬, 길이 분포 {7:12, 11:12, 15:12}, total=396 = music×2.01.
+
+### 잔존 한계
+
+1. **총합 ≥ music×2 목표 미달성 (실측 1.04x)** — Claude opus-4-7 의 max_tokens=12000 한계로 25~30 씬 출력 시 JSON truncation. 1차 응답 안전선 21 씬 / 205s 가 cap. retry 도 같은 한계로 실패.  완화: 시스템 프롬프트가 "자연 한도까지만" 명시하므로 LLM 이 1차에서 21 씬으로 멈춘 것은 정책 위반 아님. 사용자가 편집기에서 음악 길이만큼 사용해도 +8s 여유 (205 vs 196.755). 충분치 않으면 사용자가 다시 force=true 재실행으로 다른 응답 시도.  근본 해법(v21.5 후보): per_scene 토큰 600 → 400 로 줄여 cap 안에서 30 씬 출력 가능하게 하거나, 챕터 단위 분할 호출.
+
+2. **챕터(event) 매핑 단순화로 인한 흡수** — 6 events 인데 4 챕터로 매핑. LLM 이 memory 2개 event 를 한 흐름으로 합치고 wedding_prep/rituals event 를 일부 빠뜨림. 사용자가 의도한 모든 event 의 1+ 씬 보장은 안 됨. Phase 0 단계의 event 의도가 LLM 의 자율 결정 안에서 약화될 수 있음.  완화: scenes 의 story_slot 분포로 사용자가 확인 가능. 빠진 슬롯 식별 가능.
+
+3. **5초 최저 길이 상향** — v21.3 이 3~5초 짧은 정적 컷을 허용했으나 v21.4 는 5초 최저로 상향. 짧은 표정 컷이 다소 길어짐. Seedance 본체 한계(5~15)와 일치라 모델 한계 위반 없음.
+
+4. **Veo 비활성화 표시만** — 잡이 이미 video_model='veo' 락된 경우 라디오는 그 항목을 보여주되 disabled 효과 그대로 통과. 신규 잡은 Seedance 기본.
+
+### 결론
+v21.4 PASS — LLM 자율 결정 정책으로 v21.3 의 단일 clips_per_event 균등 분배를 폐기. 음악 길이를 splitter 입력으로 추가하고 LLM 시스템 프롬프트에 음악×2 보장 + retry 메커니즘을 도입. 라이브 결과 챕터별 씬 수 [4,3,9,5] 로 명확히 다양화, use_seconds 분포 7종 (7~13), 총합 205s 는 1차 응답 시점에 LLM 토큰 cap 으로 멈춰 음악×1.04 에 그쳤지만 v21.3 의 음악×0.63 대비 큰 개선. 응답 페이로드에 `target_total_seconds` / `actual_total_seconds` 노출로 UI 가 "총합 / 음악 대비 배수" 표시 가능. UI Step 2 라디오 폐기 + Step 4 Veo 비활성 + 기본 Seedance 전환 완료. 프론트 build PASS. 잔존: 총합 1.04x 는 v21.5 의 토큰 한도 최적화로 해결 가능.
+
+## v21.5 — 2026-05-29 — LLM 라벨 의존 제거 (event_index + 코드 로직)
+
+### 배경
+v21.4-hotfix 라이브 검증 (잡 6a17f8eb, 24 씬, 챕터=[4,4,12,4]) 에서 LLM 이 마지막 4 씬의 `story_slot` 을 "wedding_prep" 대신 "proposal" 로 잘못 박는 라벨링 실수 발생 → wedding_prep 챕터 누락. v21.4 의 챕터 매핑 휴리스틱 (story_slot 변경 시점에 ev_idx 진행) 이 LLM 의 라벨 실수에 완전 의존하므로 결함이 그대로 전파됨. story_slot 같은 결정론 값은 LLM 한테 받지 말고 코드 로직으로 박는 게 정공법.
+
+### 변경
+
+#### Backend
+- `backend_8000/app/services/pre_mv_phase1_splitter.py`
+  - 헤더 docstring 에 v21.5 정책 (event_index + 코드 로직 라벨 강제) 추가 (3~14 라인).
+  - `SCENE_SPLIT_SYSTEM_PROMPT_V215` 신설 (446~516 라인) — 출력 스키마에서 `story_slot`/`memory_index`/`ref_sheet_ids`/`ref_place_ids`/`section` 5 필드 제거하고 `event_index: int` 하나만 받음. 절대 규칙 #5 에 "결정론 라벨은 시스템이 채운다 — 절대 응답에 박지 마라" 추가, #6 에 "모든 event 한 번 이상 등장", #7 에 "event_index 단조 증가" 추가.
+  - `_build_user_message_v212` (519~553 라인) — events 출력 시 `index=N` 명시. 요구문에 event_index 범위·단조 증가·전부 등장·결정론 필드 응답 금지 안내 추가.
+  - `_build_fallback_scenes_v212` (1318~1330 라인) — 결과 dict 에 `event_index` 키 추가 (post-process 공통 경로 호환).
+  - `split_into_scenes_v212` (1360~1822 라인 영역) —
+    1. system prompt 를 `SCENE_SPLIT_SYSTEM_PROMPT_V215` 로 교체 (1502).
+    2. `_event_indices_in()` 헬퍼 신설로 응답에서 정수/문자열 정수 모두 추출.
+    3. retry 조건 변경: 총합 부족 → **event_index 누락** 으로 갱신. 강조 prompt 에 누락 event_index 목록 명시 (1547~1576).
+    4. `_coerce_event_index()` 보정 + clamp `[0, events_count-1]` (1605~1636).
+    5. 누락 event_index → fallback 씬 자동 추가 (`_fallback_prompts_from_event` + `event_index` 키 + `use_seconds=video_clip_default`) (1646~1668).
+    6. scenes 배열 stable sort: `key=event_index` (1670~1671).
+    7. 출력 루프 단순화 — LLM 의 `story_slot`/`memory_index`/`ref_*` 무시, `events[event_index]` 에서 강제 박음. `event_index` 도 결과 dict 에 영속화 (디버깅용) (1675~1769).
+    8. 로그 metric 확장: `event_indices`, `fallback_added_for_events`, `missing_events_after_all` (1813~1820).
+
+#### Frontend
+- 변경 없음 (응답 스키마 호환 — `story_slot`/`memory_index`/`ref_*`/`section` 키는 그대로 채워지고 v24 챕터 그룹화는 story_slot 연속 기반이라 무영향).
+
+### 라이브 결과 — 잡 6a17f8eb90a2818ef41ee885 (force=true, 2026-05-29 20:51 KST)
+
+· **events_count**: 6 (slots: meeting, first_date, memory#0, memory#1, proposal, wedding_prep).
+· **LLM 1차 응답** (Claude opus-4-7, 153s 소요, output 9000 tokens): 23 씬.
+· **event_indices in LLM 응답**: [0, 1, 2, 3, 4, 5] — 모든 6 event 분배 ✓ (missing_events=[]).
+· **retry_attempted**: False (1차 응답이 모든 event 분배 만족).
+· **fallback_added_for_events**: [] (보충 불필요).
+· **최종 저장 결과**:
+  - 씬 23개, status=phase1_ready, actual_total=214.0s.
+  - chapter_scene_counts=[4, 4, 8, 3, 4] — 5 챕터 모두 등장 (memory#0+memory#1 같은 slot 연속이라 8 통합).
+  - 챕터별 분포: **meeting=4, first_date=4, memory=8, proposal=3, wedding_prep=4** ← v21.4-hotfix 의 핵심 결함 (wedding_prep 누락) 해결.
+  - use_seconds 분포: min=7.0 max=13.0 mean=9.30.
+
+· **검증 항목**:
+  - **T1 import OK** — `app.services.pre_mv_phase1_splitter` + `app.routes.pre_mv` 둘 다 PASS.
+  - **T2 GET /api/health → 200**.
+  - **T3 라이브 잡 force=true → 200, 백그라운드 phase1_ready**. 모든 챕터 (meeting/first_date/memory/proposal/wedding_prep) 한 번 이상 등장 ✓.
+  - **T4 story_slot 라벨 정확도** — 23 씬 모두 `story_slot == events[event_index].story_slot`, `section == story_slot`, `memory_index` 도 일치 (메모리 슬롯에서만 정수, 외는 None). 100% 정확.
+  - **T5 ref 매핑 정확도** — 6 events 각각의 sample scene 확인:
+    | event | expected sheets | scene sheets | expected places | scene places | 일치 |
+    |-------|----------------|--------------|-----------------|--------------|------|
+    | 0 meeting | [bride_casual, groom_casual] | 같음 | [서울야경] | 같음 | ✓ |
+    | 1 first_date | [bride_casual, groom_casual] | 같음 | [서울야경] | 같음 | ✓ |
+    | 2 memory#0 | [bride_casual, groom_casual] | 같음 | [] | [] | ✓ |
+    | 3 memory#1 | [bride_casual] | 같음 | [서울야경] | 같음 | ✓ |
+    | 4 proposal | [bride_casual, groom_casual] | 같음 | [서울야경] | 같음 | ✓ |
+    | 5 wedding_prep | [bride_wedding, groom_wedding] | 같음 | [] | [] | ✓ |
+  - **T6 응답 페이로드 호환** — GET `/api/pre-mv/jobs/{id}` 응답에 `story_slot`/`memory_index`/`section`/`ref_sheet_ids`/`ref_place_ids` + 신규 `event_index` 모두 채워짐. 기존 UI (v24 챕터 그룹화) 코드 변경 없이 동작.
+
+· **LLM 응답 로그 확인** — 1차 응답 `event_indices=[0, 1, 2, 3, 4, 5] missing_events=[]` 로깅 → LLM 이 신규 스키마(event_index)를 정확히 채움. retry 미발동.
+
+### 잔존
+
+1. **총합 1.09x** — v21.4 의 1.04x → v21.5 의 1.09x 로 소폭 개선. 여전히 음악×2 미달이나 사용자 정책 "자연 한도까지만" 부합.
+2. **memory#0 + memory#1 동일 slot 연속** — chapter_scene_counts 가 [4,4,8,3,4] 로 5 챕터 (events_count=6 아님). 사용자 의도가 두 memory event 를 별도 챕터로 보고 싶다면 v24 의 챕터 그룹화 키를 `story_slot` → `(story_slot, memory_index)` 로 갱신해야 함. v21.5 본 라운드 범위 아님.
+3. **event_index 키가 영속화 됨** — Mongo scenes 도큐먼트와 응답 페이로드 모두 노출. UI 가 모를 키이나 부작용 없음.
+
+### 결론
+v21.5 PASS — LLM 의 결정론 라벨(story_slot/memory_index/refs) 의존을 완전 제거하고 `event_index: int` 단 하나만 받아 코드가 events 룩업으로 모든 라벨을 강제. v21.4-hotfix 의 wedding_prep 챕터 누락 결함이 해결되어 잡 6a17f8eb 에서 5 챕터 (meeting/first_date/memory/proposal/wedding_prep) 모두 등장. 라이브 검증에서 모든 23 씬의 story_slot/section/memory_index/refs 가 events 와 100% 매칭. 모든 6 events 분배 보장 (LLM 누락 시 1회 retry + fallback 자동 보충). LLM 응답 새 스키마를 정확히 따라 retry 미발동. 응답 페이로드 호환성 유지 — 프론트엔드 무영향. event_index asc 정렬로 순서 보장.

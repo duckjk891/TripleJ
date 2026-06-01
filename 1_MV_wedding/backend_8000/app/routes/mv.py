@@ -65,6 +65,8 @@ def _serialize_job(doc: dict) -> dict:
         ),
         # v19 — variant 별 segments 카운트 (실 본문은 무거우므로 카운트만 노출).
         "lyric_timestamps_variants_count": variants_count,
+        # v22 — 가사 타임스탬프 토글 UI 용 본문 노출 (variant 별 segments dict).
+        "lyric_timestamps_variants": lyric_timestamps_variants,
         "error_message": doc.get("error_message"),
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
         "updated_at": doc["updated_at"].isoformat() if doc.get("updated_at") else None,
@@ -148,6 +150,31 @@ async def create_job(body: MVJobCreate, current_user=Depends(get_current_user)):
     result = await mongo.mv_jobs.insert_one(doc)
     job_id = str(result.inserted_id)
 
+    # v36 — 작성중 draft 의 장소들을 이 잡으로 transfer (meta.mv_job_id 박음).
+    # wizard 의 [새로 만들기] 가 draft 장소를 cleanup 하므로 이 시점의 user 의
+    # mv_job_id 없는 장소들은 모두 "이 잡 만들기 위해 만든 장소" 로 간주.
+    try:
+        upd = await mongo.wedding_assets.update_many(
+            {
+                "user_id": current_user["id"],
+                "type": "place",
+                "$or": [
+                    {"meta.mv_job_id": None},
+                    {"meta.mv_job_id": {"$exists": False}},
+                ],
+            },
+            {"$set": {"meta.mv_job_id": job_id, "updated_at": now}},
+        )
+        logger.info(
+            "[MVRoute] /jobs transferred draft places user_id=%s job_id=%s matched=%d modified=%d",
+            current_user["id"], job_id, upd.matched_count, upd.modified_count,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[MVRoute] /jobs place transfer failed user_id=%s job_id=%s err=%s",
+            current_user["id"], job_id, str(e)[:200],
+        )
+
     # background lyrics generation (fire-and-forget; FastAPI 요청 종료 후에도 살아남는다)
     asyncio.create_task(_run_lyrics_generation(job_id))
 
@@ -160,6 +187,75 @@ async def list_jobs(current_user=Depends(get_current_user)):
     cursor = mongo.mv_jobs.find({"user_id": current_user["id"]}).sort("created_at", -1)
     jobs = [_serialize_job(d) async for d in cursor]
     return {"jobs": jobs}
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, current_user=Depends(get_current_user)):
+    """v36 — 작품 삭제. 잡 도큐먼트 + 그 잡에 묶인 wedding_assets 도 cleanup.
+
+    가드: owner. (admin 도 본인 잡만 삭제 가능 — 다른 사용자 잡 삭제 별도 API 필요 시 추후)
+    """
+    user_id = current_user["id"]
+    mongo = get_mongo()
+    try:
+        oid = ObjectId(job_id)
+    except (InvalidId, TypeError):
+        logger.warning(
+            "[MVRoute] /jobs/delete invalid job_id user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=400, detail="유효하지 않은 job_id 입니다.")
+    doc = await mongo.mv_jobs.find_one({"_id": oid})
+    if not doc:
+        logger.warning(
+            "[MVRoute] /jobs/delete not found user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=404, detail="작품을 찾을 수 없습니다.")
+    if doc.get("user_id") != user_id:
+        logger.warning(
+            "[MVRoute] /jobs/delete forbidden user_id=%s job_id=%s owner=%s",
+            user_id, job_id, doc.get("user_id"),
+        )
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
+    cur_status = doc.get("status") or ""
+    if cur_status in ("queued", "generating_lyrics", "generating_music"):
+        logger.warning(
+            "[MVRoute] /jobs/delete busy user_id=%s job_id=%s status=%s",
+            user_id, job_id, cur_status,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="진행 중인 작품은 삭제할 수 없어요. 잠시 후 다시 시도해주세요.",
+        )
+    # 1) 그 잡에 묶인 wedding_assets (place 등) cleanup
+    try:
+        place_del = await mongo.wedding_assets.delete_many(
+            {"user_id": user_id, "meta.mv_job_id": job_id},
+        )
+        logger.info(
+            "[MVRoute] /jobs/delete assets cleanup user_id=%s job_id=%s assets_deleted=%d",
+            user_id, job_id, place_del.deleted_count,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[MVRoute] /jobs/delete assets cleanup failed user_id=%s job_id=%s err=%s",
+            user_id, job_id, str(e)[:200],
+        )
+    # 2) 잡 도큐먼트 삭제
+    try:
+        await mongo.mv_jobs.delete_one({"_id": oid})
+        logger.info(
+            "[MVRoute] /jobs/delete ok user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception(
+            "[MVRoute] /jobs/delete mongo delete failed user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=500, detail="작품 삭제에 실패했습니다.")
+    return {"ok": True, "job_id": job_id}
 
 
 @router.get("/jobs/{job_id}")
@@ -270,17 +366,60 @@ async def get_job_context(job_id: str, current_user=Depends(get_current_user)):
     }).sort("created_at", -1):
         photos.append(_serialize_wedding_photo_asset(d))
 
+    # v26 — 식전영상 씬 이미지를 추가영상생성 탭의 @멘션 풀에 노출.
+    # pre_mv_jobs (mv_job_id 로 1:1 연결) 의 scenes 중 image_object_name 이 채워진
+    # 씬들만 토큰화. 토큰 = `{story_slot}_{seq_in_slot}` (seq_in_slot = 같은 slot
+    # 안 scene_number 오름차순 1-base 순번).
+    pre_mv_scenes: list[dict] = []
+    try:
+        pre_doc = await mongo.pre_mv_jobs.find_one({"mv_job_id": job_id})
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[MVRoute] /context pre_mv_jobs lookup failed job_id=%s err=%s",
+            job_id, str(e)[:200],
+        )
+        pre_doc = None
+    if pre_doc:
+        scenes_raw = pre_doc.get("scenes") or []
+        # story_slot 별로 묶어 scene_number 오름차순 정렬.
+        per_slot: dict[str, list[dict]] = {}
+        for s in scenes_raw:
+            if not isinstance(s, dict):
+                continue
+            obj = (s.get("image_object_name") or "").strip()
+            if not obj:
+                continue
+            slot = (s.get("story_slot") or "").strip()
+            if not slot:
+                continue
+            per_slot.setdefault(slot, []).append(s)
+        for slot, lst in per_slot.items():
+            lst.sort(key=lambda x: int(x.get("scene_number") or 0))
+            for seq_in_slot, s in enumerate(lst, start=1):
+                token = "{}_{}".format(slot, seq_in_slot)
+                pre_mv_scenes.append({
+                    "token": token,
+                    "label": token,
+                    "story_slot": slot,
+                    "seq_in_slot": seq_in_slot,
+                    "scene_number": int(s.get("scene_number") or 0),
+                    "object_name": s.get("image_object_name") or "",
+                })
+        # 보기 좋게 story_slot 순서 → seq_in_slot 순서로 정렬.
+        pre_mv_scenes.sort(key=lambda r: (r["story_slot"], r["seq_in_slot"]))
+
     logger.info(
         "[MVRoute] /context ok user_id=%s is_admin=%s job_id=%s owner_user_id=%s "
-        "sheets=%d places=%d photos=%d",
+        "sheets=%d places=%d photos=%d pre_mv_scenes=%d",
         user_id, is_admin, job_id, owner_user_id,
-        len(owner_sheets), len(owner_places), len(photos),
+        len(owner_sheets), len(owner_places), len(photos), len(pre_mv_scenes),
     )
     return {
         "owner_user_id": owner_user_id,
         "owner_sheets": owner_sheets,
         "owner_places": owner_places,
         "wedding_photos": photos,
+        "pre_mv_scenes": pre_mv_scenes,
     }
 
 
@@ -318,7 +457,11 @@ async def _run_music_generation(job_id: str) -> None:
         if not suno_audio_ids and suno_audio_id:
             suno_audio_ids = [suno_audio_id]
 
-        ts_by_variant: dict[str, list[dict]] = {}
+        # v21.1 — get_suno_timestamps 가 dict 반환 ({"segments": [...], "aligned_words": [...]}).
+        # segments 는 기존대로 lyric_timestamps_variants 에, raw aligned_words 는
+        # suno_aligned_words_variants 에 저장한다.
+        ts_by_variant_segments: dict[str, list[dict]] = {}
+        ts_by_variant_words: dict[str, list[dict]] = {}
         for idx, aid in enumerate(suno_audio_ids, start=1):
             if not aid:
                 continue
@@ -329,21 +472,28 @@ async def _run_music_generation(job_id: str) -> None:
                     job_id, idx, suno_task_id, aid,
                 )
                 ts = await get_suno_timestamps(suno_task_id, aid)
-                if ts:
-                    ts_by_variant[str(idx)] = ts
+                # 안전망: 구버전 호환 — 만약 dict 가 아니면 빈 dict 처리.
+                if not isinstance(ts, dict):
+                    ts = {"segments": [], "aligned_words": []}
+                seg_list = ts.get("segments") or []
+                words_list = ts.get("aligned_words") or []
+                if seg_list:
+                    ts_by_variant_segments[str(idx)] = seg_list
+                if words_list:
+                    ts_by_variant_words[str(idx)] = words_list
                 logger.info(
-                    "[MVRoute] timestamps backfill mv_job=%s variant=%d segments=%d",
-                    job_id, idx, len(ts or []),
+                    "[MVRoute] timestamps backfill mv_job=%s variant=%d segments=%d aligned_words=%d",
+                    job_id, idx, len(seg_list), len(words_list),
                 )
             except Exception as ts_err:
-                # get_suno_timestamps 는 자체적으로 빈 리스트를 반환하지만, 만일의 경우 보호.
+                # get_suno_timestamps 는 자체적으로 빈 dict 를 반환하지만, 만일의 경우 보호.
                 logger.exception(
                     "[MVRoute] action=fetch_timestamps failed job_id=%s variant=%d "
                     "err=%s: %s",
                     job_id, idx, type(ts_err).__name__, str(ts_err)[:200],
                 )
 
-        timestamps_status = "ready" if ts_by_variant else "missing"
+        timestamps_status = "ready" if ts_by_variant_segments else "missing"
 
         update_doc: dict = {
             "status": "music_ready",
@@ -353,13 +503,14 @@ async def _run_music_generation(job_id: str) -> None:
             "suno_task_id": result["suno_task_id"],
             "suno_audio_id": result["suno_audio_id"],
             "suno_audio_ids": suno_audio_ids,
-            "lyric_timestamps_variants": ts_by_variant,
+            "lyric_timestamps_variants": ts_by_variant_segments,
+            "suno_aligned_words_variants": ts_by_variant_words,  # v21.1 신규
             "lyric_timestamps_status": timestamps_status,
             "updated_at": datetime.now(timezone.utc),
         }
-        # 회귀 호환: 기존 lyric_timestamps 단수 필드 = variant 1 (있으면).
-        if ts_by_variant.get("1"):
-            update_doc["lyric_timestamps"] = ts_by_variant["1"]
+        # 회귀 호환: 기존 lyric_timestamps 단수 필드 = variant 1 segments (있으면).
+        if ts_by_variant_segments.get("1"):
+            update_doc["lyric_timestamps"] = ts_by_variant_segments["1"]
         else:
             update_doc["lyric_timestamps"] = []
 
@@ -378,6 +529,82 @@ async def _run_music_generation(job_id: str) -> None:
                 }
             },
         )
+
+
+@router.post("/jobs/{job_id}/regenerate")
+async def regenerate_job(
+    job_id: str,
+    body: MVJobCreate,
+    current_user=Depends(get_current_user),
+):
+    """v35 — 같은 job 안에서 lyrics/music 갈아엎기 (사용자가 wizard 에서 수정 후
+    다시 생성하는 흐름).
+
+    Body: `{story_id, music_spec}` — 새로 만든 story_id 와 갱신된 music_spec.
+    동작: 기존 lyrics / audio_variants / progress / error_message 를 초기화하고
+    `status="generating_lyrics"` 로 갱신 + 백그라운드 가사 재생성 시작.
+    가드: owner 검증. 진행 중(`generating_*`) 일 땐 409.
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    try:
+        oid = ObjectId(job_id)
+    except (InvalidId, TypeError):
+        logger.warning(
+            "[MVRoute] /regenerate invalid job_id user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=400, detail="유효하지 않은 job_id 입니다.")
+    doc = await mongo.mv_jobs.find_one({"_id": oid})
+    if not doc:
+        logger.warning(
+            "[MVRoute] /regenerate not found user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=404, detail="잡을 찾을 수 없습니다.")
+    if doc.get("user_id") != user_id:
+        logger.warning(
+            "[MVRoute] /regenerate forbidden user_id=%s job_id=%s owner=%s",
+            user_id, job_id, doc.get("user_id"),
+        )
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
+    cur_status = doc.get("status") or ""
+    if cur_status in ("queued", "generating_lyrics", "generating_music"):
+        logger.warning(
+            "[MVRoute] /regenerate busy user_id=%s job_id=%s status=%s",
+            user_id, job_id, cur_status,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="진행 중인 잡은 다시 생성할 수 없어요. 잠시 후 시도해주세요.",
+        )
+
+    now = datetime.now(timezone.utc)
+    logger.info(
+        "[MVRoute] /regenerate entry user_id=%s job_id=%s new_story_id=%s prev_status=%s",
+        user_id, job_id, body.story_id, cur_status,
+    )
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {
+            "$set": {
+                "story_id": body.story_id,
+                "music_spec": body.music_spec.model_dump(),
+                "status": "generating_lyrics",
+                "progress": 0,
+                "lyrics": None,
+                "audio_variants": [],
+                "error_message": None,
+                "updated_at": now,
+            }
+        },
+    )
+    asyncio.create_task(_run_lyrics_generation(job_id))
+    logger.info(
+        "[MVRoute] /regenerate ok user_id=%s job_id=%s status=generating_lyrics",
+        user_id, job_id,
+    )
+    return {"job_id": job_id, "status": "generating_lyrics"}
 
 
 @router.post("/jobs/{job_id}/music")

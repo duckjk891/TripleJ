@@ -29,7 +29,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..config import settings
@@ -2009,3 +2009,137 @@ async def delete_outfit(
         return JSONResponse(status_code=500, content={"error": "아이템 삭제에 실패했습니다."})
 
     return {"message": "아이템이 삭제되었습니다."}
+
+
+# ── POST /outfits/bulk-delete ───────────────────────────────────────────────
+
+
+class BulkOutfitDelete(BaseModel):
+    item_ids: list[str] = Field(..., min_length=1, max_length=50)
+
+
+@router.post("/outfits/bulk-delete")
+async def bulk_delete_outfits(
+    body: BulkOutfitDelete,
+    current_user=Depends(get_current_user),
+):
+    """v20 — outfit items 일괄 삭제. 각 item 별 owner/admin 검증.
+
+    - 일반 사용자: owner-only (`created_by == user_id`).
+    - 관리자 (``role == 'admin'``): owner 가드 우회. 타인 아이템 삭제 시
+      감사 로그(`[CharRoute] /outfits bulk-delete admin override ...`)를 남긴다.
+    - MinIO 이미지 삭제는 best-effort (예외 격리). mongo doc 은 항상 삭제.
+
+    응답: `{deleted_count, failed: [{item_id, reason}], total_requested}`.
+    일부 실패해도 200. ``reason`` ∈ {invalid_id, not_found, forbidden, exception}.
+    """
+    user_id = current_user["id"]
+    is_admin = current_user.get("role", "user") == "admin"
+    total_requested = len(body.item_ids)
+    logger.info(
+        "[CharRoute] /outfits bulk-delete entry user_id=%s is_admin=%s count=%d",
+        user_id, is_admin, total_requested,
+    )
+
+    mongo = get_mongo()
+    minio_client = get_minio()
+
+    deleted_count = 0
+    failed: list[dict] = []
+    for item_id in body.item_ids:
+        try:
+            try:
+                oid = ObjectId(item_id)
+            except Exception as e:
+                failed.append({"item_id": item_id, "reason": "invalid_id"})
+                logger.warning(
+                    "[CharRoute] /outfits bulk-delete skip invalid_id user_id=%s item_id=%s: %s: %s",
+                    user_id, item_id, type(e).__name__, str(e)[:200],
+                )
+                continue
+
+            try:
+                doc = await mongo.wedding_outfit_items.find_one({"_id": oid})
+            except Exception as e:
+                failed.append({"item_id": item_id, "reason": "exception"})
+                logger.exception(
+                    "[CharRoute] /outfits bulk-delete mongo find_one failed user_id=%s item_id=%s: %s: %s",
+                    user_id, item_id, type(e).__name__, str(e)[:200],
+                )
+                continue
+
+            if not doc:
+                failed.append({"item_id": item_id, "reason": "not_found"})
+                logger.warning(
+                    "[CharRoute] /outfits bulk-delete skip not_found user_id=%s is_admin=%s item_id=%s",
+                    user_id, is_admin, item_id,
+                )
+                continue
+
+            owner_id = doc.get("created_by")
+            is_cross_owner = owner_id != user_id
+            if is_cross_owner and not is_admin:
+                failed.append({"item_id": item_id, "reason": "forbidden"})
+                logger.warning(
+                    "[CharRoute] /outfits bulk-delete skip forbidden user_id=%s item_id=%s owner=%s",
+                    user_id, item_id, owner_id,
+                )
+                continue
+            if is_cross_owner and is_admin:
+                logger.warning(
+                    "[CharRoute] /outfits bulk-delete admin override item_id=%s target_owner=%s admin_id=%s",
+                    item_id, owner_id, user_id,
+                )
+
+            role_v = doc.get("role")
+            style_v = doc.get("style")
+            cat_v = doc.get("category")
+            obj = doc.get("image_object_name") or ""
+
+            # Best-effort MinIO remove — 예외 격리, mongo doc 삭제는 계속 진행.
+            if obj:
+                try:
+                    minio_client.remove_object(
+                        bucket_name=settings.minio_bucket_photos,
+                        object_name=obj,
+                    )
+                    logger.info(
+                        "[CharRoute] /outfits bulk-delete minio remove ok user_id=%s item_id=%s object=%s role=%s style=%s category=%s",
+                        user_id, item_id, obj, role_v, style_v, cat_v,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[CharRoute] /outfits bulk-delete minio remove failed user_id=%s item_id=%s object=%s role=%s style=%s category=%s: %s: %s",
+                        user_id, item_id, obj, role_v, style_v, cat_v, type(e).__name__, str(e)[:200],
+                    )
+
+            try:
+                await mongo.wedding_outfit_items.delete_one({"_id": oid})
+                deleted_count += 1
+                logger.info(
+                    "[CharRoute] /outfits bulk-delete mongo delete_one ok user_id=%s item_id=%s role=%s style=%s category=%s",
+                    user_id, item_id, role_v, style_v, cat_v,
+                )
+            except Exception as e:
+                failed.append({"item_id": item_id, "reason": "exception"})
+                logger.exception(
+                    "[CharRoute] /outfits bulk-delete mongo delete_one failed user_id=%s item_id=%s: %s: %s",
+                    user_id, item_id, type(e).__name__, str(e)[:200],
+                )
+                continue
+        except Exception as e:  # noqa: BLE001
+            failed.append({"item_id": item_id, "reason": "exception"})
+            logger.exception(
+                "[CharRoute] /outfits bulk-delete one failed user_id=%s item_id=%s: %s: %s",
+                user_id, item_id, type(e).__name__, str(e)[:200],
+            )
+
+    logger.info(
+        "[CharRoute] /outfits bulk-delete ok user_id=%s deleted=%d failed=%d",
+        user_id, deleted_count, len(failed),
+    )
+    return {
+        "deleted_count": deleted_count,
+        "failed": failed,
+        "total_requested": total_requested,
+    }

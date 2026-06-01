@@ -30,7 +30,7 @@ import httpx
 
 from ..config import settings
 from ..database.minio import get_minio
-from .pre_mv_video_prompts import compose_video_prompt
+from .pre_mv_video_prompts import compose_video_prompt, sanitize_video_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,7 @@ async def _start_grok(
         "prompt": prompt,
         "image": {"url": image_url},
         "duration": grok_duration,
+        "aspect_ratio": "16:9",  # v29 — 명시적 16:9 (xAI default 도 16:9, 안전 마진)
     }
     logger.info(
         "[PreMVGrok] phase=phase3 start request pre_mv_job_id=%s scene_number=%d "
@@ -294,19 +295,22 @@ async def generate_scene_video_grok(
     target_sec = float(scene.get("use_seconds") or 5.0)
     grok_duration = max(_GROK_MIN, min(_GROK_MAX, int(round(target_sec))))
 
-    final_prompt = compose_video_prompt(
+    raw_prompt = compose_video_prompt(
         video_model="grok",
         scene=scene,
         duration=float(grok_duration),
     )
+    # v25 — Layer 2 안전망: 출력 모더레이션 트리거 표현 사전 치환.
+    final_prompt = sanitize_video_prompt(raw_prompt)
 
     image_url = _presign_scene_image(image_object_name)
 
     logger.info(
         "[PreMVGrok] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d use_seconds=%.2f grok_dur=%d image_object=%s presign_url_len=%d",
-        pre_mv_job_id, scene_number, len(final_prompt), target_sec,
-        grok_duration, image_object_name, len(image_url),
+        "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f grok_dur=%d "
+        "image_object=%s presign_url_len=%d",
+        pre_mv_job_id, scene_number, len(raw_prompt), len(final_prompt),
+        target_sec, grok_duration, image_object_name, len(image_url),
     )
 
     request_id = await _start_grok(

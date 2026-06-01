@@ -1,5 +1,7 @@
+import { ZoomableImage } from './ImageLightbox';
 import { useEffect, useRef, useState } from 'react';
 import * as api from '../api';
+import PlaceOverwriteModal from './PlaceOverwriteModal';
 import './PlaceAssetPanel.css';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -25,6 +27,11 @@ const emptyPlace = () => ({
   uploading: false,
   generating: false,
   error: '',
+  // v34 — 기존 자산이 있는 상태에서 [이미지 생성] 다시 누른 경우 새 후보 자산을
+  // 여기 별도로 보관한다. polling 이 done 되면 모달이 자동으로 뜬다. 슬롯의
+  // place_id / object_name 은 기존 자산을 그대로 가리킨다.
+  pending_candidate: null,
+  // shape: { place_id, job_id, object_name, preview_url, started_at, generating }
 });
 
 export default function PlaceAssetPanel({ onMentionablesChanged }) {
@@ -117,21 +124,43 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
   }, [places]);
   void tick;
 
+  // v34 — 덮어쓰기 모달 상태. 한 번에 1개 슬롯만 모달 표시.
+  const [overwrite, setOverwrite] = useState(null);
+  // shape: { slot_id, display_name, old_place_id, old_preview_url,
+  //          new_place_id, new_preview_url, busy }
+
   // --- polling effect: 모든 활성 job 을 5초마다 한꺼번에 ---
   useEffect(() => {
-    const activeJobs = places
+    // v34 — pending_candidate.job_id 도 활성 잡 풀에 포함.
+    const slotJobs = places
       .filter((p) => p.job_id)
-      .map((p) => ({ place_id: p.place_id, job_id: p.job_id }));
+      .map((p) => ({ place_id: p.place_id, job_id: p.job_id, mode: 'slot' }));
+    const candJobs = places
+      .filter((p) => p.pending_candidate && p.pending_candidate.job_id)
+      .map((p) => ({
+        place_id: p.place_id,
+        job_id: p.pending_candidate.job_id,
+        mode: 'candidate',
+      }));
+    const activeJobs = [...slotJobs, ...candJobs];
     if (activeJobs.length === 0) return undefined;
 
     let cancelled = false;
     const tickPoll = async () => {
       // 매번 최신 placesRef 기준으로 활성 잡만 폴링.
-      const current = placesRef.current
+      const slotJ = placesRef.current
         .filter((p) => p.job_id)
-        .map((p) => ({ place_id: p.place_id, job_id: p.job_id }));
+        .map((p) => ({ place_id: p.place_id, job_id: p.job_id, mode: 'slot' }));
+      const candJ = placesRef.current
+        .filter((p) => p.pending_candidate && p.pending_candidate.job_id)
+        .map((p) => ({
+          place_id: p.place_id,
+          job_id: p.pending_candidate.job_id,
+          mode: 'candidate',
+        }));
+      const current = [...slotJ, ...candJ];
       await Promise.all(
-        current.map(async ({ place_id, job_id }) => {
+        current.map(async ({ place_id, job_id, mode }) => {
           try {
             const { data } = await api.getPlaceJob(job_id);
             if (cancelled) return;
@@ -143,7 +172,38 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
                 console.info(`${PREFIX}:${place_id} poll terminal`, {
                   job_id,
                   status,
+                  mode,
                 });
+              }
+              if (mode === 'candidate') {
+                // v34 — 후보 자산 잡 완료. pending_candidate 갱신 + 모달 자동 open.
+                const slot = placesRef.current.find((p) => p.place_id === place_id);
+                if (slot && slot.pending_candidate) {
+                  patchPlace(place_id, {
+                    pending_candidate: {
+                      ...slot.pending_candidate,
+                      object_name: objectName || null,
+                      preview_url: previewUrl,
+                      generating: false,
+                    },
+                  });
+                  setOverwrite({
+                    slot_id: place_id,
+                    display_name: slot.display_name || '',
+                    old_place_id: place_id,           // 슬롯의 현재 자산 ID
+                    old_preview_url: slot.preview_url || null,
+                    new_place_id: slot.pending_candidate.place_id,
+                    new_preview_url: previewUrl,
+                    busy: false,
+                  });
+                  if (import.meta.env.DEV) {
+                    console.info(`${PREFIX}:${place_id} overwrite candidate generated`, {
+                      old_place_id: place_id,
+                      new_place_id: slot.pending_candidate.place_id,
+                    });
+                  }
+                }
+                return;
               }
               patchPlace(place_id, {
                 job_id: null,
@@ -161,7 +221,16 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
                 console.info(`${PREFIX}:${place_id} poll terminal`, {
                   job_id,
                   status,
+                  mode,
                 });
+              }
+              if (mode === 'candidate') {
+                // v34 — 후보 잡 실패: pending_candidate 자체를 정리 + 슬롯에 에러 표시.
+                patchPlace(place_id, {
+                  pending_candidate: null,
+                  error: data?.error_message || '새 후보 이미지 생성에 실패했습니다.',
+                });
+                return;
               }
               patchPlace(place_id, {
                 job_id: null,
@@ -194,7 +263,10 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
     };
     // 활성 잡 id 의 set 이 바뀔 때만 effect 재시작.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [places.map((p) => p.job_id || '').join(',')]);
+  }, [
+    places.map((p) => p.job_id || '').join(','),
+    places.map((p) => (p.pending_candidate?.job_id) || '').join(','),
+  ]);
 
   // --- handlers ---
   const handleAdd = () => {
@@ -339,6 +411,61 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
   const handleGenerate = async (place) => {
     if (!validateForCreate(place)) return;
 
+    // v34 — 이미 저장된 자산 (is_draft=false + object_name 존재) 에서 재생성하는
+    // 경우엔 기존 자산은 그대로 두고 새 자산을 pending_candidate 로 별도 보관.
+    // 잡 done 시점에 자동 모달이 떠서 사용자가 덮어쓰기/취소 결정.
+    const isOverwriteMode = !place.is_draft && !!place.object_name;
+    if (isOverwriteMode) {
+      // 기존 슬롯의 generating 은 켜지 않고, candidate.generating 만.
+      patchPlace(place.place_id, { error: '' });
+      try {
+        if (import.meta.env.DEV) {
+          console.info(`${PREFIX}:${place.place_id} candidate generatePlace start`, {
+            image_model: place.image_model || 'gpt_image_2',
+            memo_len: (place.memo || '').length,
+          });
+        }
+        const { data } = await api.generatePlace({
+          display_name: place.display_name || '',
+          memo: place.memo || '',
+          image_model: place.image_model || 'gpt_image_2',
+        });
+        const newPlaceId = data?.place_id;
+        const jobId = data?.job_id;
+        if (!newPlaceId || !jobId) {
+          throw new Error('서버가 place_id 또는 job_id 를 반환하지 않았습니다.');
+        }
+        patchPlace(place.place_id, {
+          pending_candidate: {
+            place_id: newPlaceId,
+            job_id: jobId,
+            object_name: null,
+            preview_url: null,
+            started_at: Date.now(),
+            generating: true,
+          },
+        });
+        if (import.meta.env.DEV) {
+          console.info(`${PREFIX}:${place.place_id} candidate job started`, {
+            new_place_id: newPlaceId, job_id: jobId,
+          });
+        }
+      } catch (err) {
+        const status = err?.response?.status;
+        const detail =
+          err?.response?.data?.detail || err?.message || '장소 이미지 생성에 실패했습니다.';
+        console.error(`${PREFIX}:${place.place_id} candidate generatePlace failed`, {
+          status,
+          detail,
+        });
+        patchPlace(place.place_id, {
+          error: typeof detail === 'string' ? detail : '새 후보 이미지 생성에 실패했습니다.',
+        });
+      }
+      return;
+    }
+
+    // 첫 생성 (빈 슬롯) — 기존 흐름.
     patchPlace(place.place_id, { generating: true, error: '' });
     try {
       if (import.meta.env.DEV) {
@@ -393,6 +520,62 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
     }
   };
 
+  // v34 — 모달 [덮어쓰기 확정]: 기존 자산 DELETE, 슬롯을 새 자산으로 promote.
+  const handleOverwriteConfirm = async () => {
+    if (!overwrite || overwrite.busy) return;
+    const { slot_id, old_place_id, new_place_id, new_preview_url } = overwrite;
+    setOverwrite((o) => (o ? { ...o, busy: true } : o));
+    try {
+      if (import.meta.env.DEV) {
+        console.info(`${PREFIX}:${slot_id} overwrite confirmed`, {
+          old: old_place_id, new: new_place_id,
+        });
+      }
+      await api.deletePlace(old_place_id);
+      patchPlace(slot_id, {
+        place_id: new_place_id,
+        object_name: overwrite?.new_object_name || null,
+        preview_url: new_preview_url || null,
+        source: 'generated',
+        pending_candidate: null,
+        error: '',
+      });
+      setOverwrite(null);
+      notifyChanged();
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || err?.message || '덮어쓰기에 실패했습니다.';
+      console.error(`${PREFIX}:${slot_id} overwrite confirm failed`, { status, detail });
+      setOverwrite((o) => (o ? { ...o, busy: false } : o));
+      patchPlace(slot_id, { error: typeof detail === 'string' ? detail : '덮어쓰기에 실패했습니다.' });
+    }
+  };
+
+  // v34 — 모달 [취소]: 새 후보 자산 DELETE, 슬롯 그대로 유지.
+  const handleOverwriteCancel = async () => {
+    if (!overwrite || overwrite.busy) return;
+    const { slot_id, new_place_id } = overwrite;
+    setOverwrite((o) => (o ? { ...o, busy: true } : o));
+    try {
+      if (import.meta.env.DEV) {
+        console.info(`${PREFIX}:${slot_id} overwrite cancelled — deleting candidate`, {
+          new: new_place_id,
+        });
+      }
+      await api.deletePlace(new_place_id);
+      patchPlace(slot_id, { pending_candidate: null });
+      setOverwrite(null);
+      notifyChanged();
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || err?.message || '취소 처리에 실패했습니다.';
+      console.error(`${PREFIX}:${slot_id} overwrite cancel delete failed`, { status, detail });
+      // 새 자산 삭제 실패해도 UI 의 candidate state 는 비워 사용자 흐름 막지 않음.
+      patchPlace(slot_id, { pending_candidate: null });
+      setOverwrite(null);
+    }
+  };
+
   const handleDelete = async (place) => {
     // draft 슬롯은 즉시 로컬 제거.
     if (place.is_draft) {
@@ -432,14 +615,22 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
     const elapsedSec = place.job_started_at
       ? Math.max(0, Math.floor((Date.now() - place.job_started_at) / 1000))
       : 0;
-    const isBusy = !!(place.uploading || place.generating || place.job_id);
+    // v34 — pending_candidate.generating 도 isBusy 에 포함 (덮어쓰기 후보 진행 중).
+    const isBusy = !!(
+      place.uploading
+      || place.generating
+      || place.job_id
+      || place.pending_candidate?.generating
+      || place.pending_candidate?.job_id
+    );
+    const candidateInProgress = !!(place.pending_candidate?.job_id);
 
     return (
       <div className="place-card" key={place.place_id}>
         <div className="place-card__preview">
           {place.preview_url ? (
             <>
-              <img
+              <ZoomableImage
                 src={place.preview_url}
                 alt={place.display_name || '장소 이미지'}
                 className="place-card__img"
@@ -558,7 +749,9 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
               onClick={() => handleGenerate(place)}
               disabled={isBusy}
             >
-              {place.generating || place.job_id ? '생성 중...' : '이미지 생성'}
+              {place.generating || place.job_id || candidateInProgress
+                ? '생성 중...'
+                : (place.object_name ? '새로 생성 (덮어쓰기)' : '이미지 생성')}
             </button>
             <button
               type="button"
@@ -620,6 +813,17 @@ export default function PlaceAssetPanel({ onMentionablesChanged }) {
       ) : (
         <div className="place-asset-panel__list">{places.map(renderCard)}</div>
       )}
+
+      {/* v34 — 덮어쓰기 확정 모달 */}
+      <PlaceOverwriteModal
+        open={!!overwrite}
+        displayName={overwrite?.display_name || ''}
+        oldPreviewUrl={overwrite?.old_preview_url || ''}
+        newPreviewUrl={overwrite?.new_preview_url || ''}
+        busy={!!overwrite?.busy}
+        onConfirm={handleOverwriteConfirm}
+        onCancel={handleOverwriteCancel}
+      />
     </div>
   );
 }

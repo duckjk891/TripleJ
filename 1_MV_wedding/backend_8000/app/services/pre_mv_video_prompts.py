@@ -310,6 +310,29 @@ PLURAL_REINFORCEMENT_GROOM_ONLY = (
 )
 
 
+# v24 — Phase 3 FFLF (first-frame / last-frame) 연쇄용 모델별 보강 문장.
+# generator 가 end_frame_bytes 를 첨부한 경우에만 prompt 앞쪽에 prepend 한다.
+# Grok 은 last frame 미지원 — 본 모듈에서도 비워둠.
+
+FFLF_REINFORCEMENT_VEO = (
+    "The first frame must exactly match the provided first reference image. "
+    "The last frame must exactly match the provided last reference image. "
+    "The motion smoothly bridges the two."
+)
+
+FFLF_REINFORCEMENT_KLING = (
+    "<<<image_head>>> is the start frame. <<<image_tail>>> is the end frame. "
+    "The motion smoothly bridges from start to end."
+)
+
+FFLF_REINFORCEMENT_SEEDANCE = (
+    "Start frame and end frame are provided. Generate smooth, natural motion between "
+    "them with character/object consistency."
+)
+
+FFLF_REINFORCEMENT_GROK = ""  # Grok 미지원 — 영향 없음.
+
+
 def _reinforcement_for_scene(scene: dict) -> str:
     """ref_sheet_ids 로 신랑/신부 동시/한 명 여부를 파악해 보강 문장 선택."""
     refs = list((scene or {}).get("ref_sheet_ids") or [])
@@ -346,6 +369,7 @@ def compose_video_prompt(
     video_model: str,
     scene: dict,
     duration: float,
+    has_last_frame: bool = False,
 ) -> str:
     """모델별 영상 API 에 들어갈 최종 prompt 문자열.
 
@@ -355,6 +379,8 @@ def compose_video_prompt(
                     필수: image_prompt(영문), description(영문), video_prompt(영문),
                           use_seconds, ref_sheet_ids.
       duration:     실제 영상 모델에 요청할 길이(초) — 모델별 클램프 후 값.
+      has_last_frame: True 면 chapter 내 last-frame carry 가 첨부된 호출 — 모델별
+                      FFLF 보강 영문 한 줄을 prompt 앞에 prepend 한다. Grok 은 미지원.
 
     Returns:
       모델 호출용 prompt 문자열. 1단락 영문.
@@ -369,6 +395,17 @@ def compose_video_prompt(
         "A cinematic wedding pre-roll music-video scene. {plural}"
     ).format(plural=reinforcement)
 
+    # v24 — FFLF 보강 (last frame 첨부 시) — 모델별 한 줄.
+    fflf_prefix = ""
+    if has_last_frame:
+        if video_model == "veo":
+            fflf_prefix = FFLF_REINFORCEMENT_VEO + " "
+        elif video_model == "kling":
+            fflf_prefix = FFLF_REINFORCEMENT_KLING + " "
+        elif video_model == "seedance":
+            fflf_prefix = FFLF_REINFORCEMENT_SEEDANCE + " "
+        # grok 은 미지원 — 빈 문자열.
+
     if video_model == "veo":
         # Veo — natural director language.
         action_line = ("Action: " + description) if description else (
@@ -382,13 +419,14 @@ def compose_video_prompt(
         if not camera_line.endswith("."):
             camera_line += "."
         body = (
-            "{prefix} "
+            "{fflf}{prefix} "
             "Subject and Context: {image} "
             "{action} "
             "{camera} "
             "Style: cinematic wedding film, soft natural lighting, "
             "warm pastel color grade, preserve composition and colors."
         ).format(
+            fflf=fflf_prefix,
             prefix=prefix,
             image=image_prompt or "(see reference image)",
             action=action_line,
@@ -403,13 +441,14 @@ def compose_video_prompt(
             "Camera: smooth cinematic movement."
         )
         body = (
-            "{prefix} "
+            "{fflf}{prefix} "
             "Subject: {image} "
             "{movement} "
             "{camera} "
             "Lighting: soft natural light with warm pastel grade. "
             "Preserve composition and colors of the reference image."
         ).format(
+            fflf=fflf_prefix,
             prefix=prefix,
             image=image_prompt or "(see reference image)",
             movement=movement_line,
@@ -426,7 +465,7 @@ def compose_video_prompt(
             "Camera: smooth cinematic movement."
         )
         body = (
-            "{prefix} "
+            "{fflf}{prefix} "
             "Subject and Scene: {image} "
             "{action} "
             "{camera} "
@@ -434,6 +473,7 @@ def compose_video_prompt(
             "preserve composition and colors. "
             "Constraints: no text, no watermark, no glamour portrait framing."
         ).format(
+            fflf=fflf_prefix,
             prefix=prefix,
             image=image_prompt or "(see reference image)",
             action=action_line,
@@ -461,7 +501,9 @@ def compose_video_prompt(
     raise ValueError("unsupported video_model: {}".format(video_model))
 
 
-# 호출자가 video_prompt 의 안전 어휘 점검에 쓸 수 있는 트리거 문구 셋 (참고용).
+# v25 — Video output content safety
+# 9004 v64 의 _VIDEO_PROMPT_UNSAFE_PATTERNS 24개 regex 포팅. 순서 중요(긴 매칭 우선).
+# 적용 대상: Seedance / Kling / Grok / Extra Video 호출 직전 prompt 본문.
 SAFETY_TRIGGER_PHRASES = (
     "alone faces camera directly",
     "alone faces camera",
@@ -488,40 +530,64 @@ SAFETY_TRIGGER_PHRASES = (
     "K-pop MV",
 )
 
+_VIDEO_PROMPT_UNSAFE_PATTERNS = [
+    (r"singing the chorus with mouth open",      "softly mouthing the chorus lyrics"),
+    (r"singing the chorus joyfully",             "softly mouthing the chorus"),
+    (r"eyes closed,?\s*breathing in the scent",  "with a gentle expression"),
+    (r"alone faces? camera directly",            "framed in a medium close-up"),
+    (r"alone,?\s*facing camera",                 "framed in a medium close-up"),
+    (r"alone faces? camera",                     "framed in a medium close-up"),
+    (r"hands lightly raised in a joyful gesture", "hands resting naturally"),
+    (r"hair lifted by a gentle breeze",          "soft breeze drifts in the air"),
+    (r"hair lifting in the (wind|breeze)",       "soft breeze in the air"),
+    (r"hair lifting",                            "soft breeze in the air"),
+    (r"drowning in a soft pink-?petal storm",    "surrounded by gently drifting petals"),
+    (r"drowning in (a )?(soft )?pink-?petal storm", "surrounded by gently drifting petals"),
+    (r"slight head sway",                        ""),
+    (r"rhythmic shoulder (movement|sway)",       ""),
+    (r"shoulder sway",                           ""),
+    (r"mouth open",                              "softly mouthing the lyrics"),
+    (r"bright expressive eyes",                  "soft warm expression"),
+    (r"expressive eyes",                         "soft warm expression"),
+    (r"sparkling eyes",                          "soft warm expression"),
+    (r"bright smile",                            "subtle smile"),
+    (r"joyful expression",                       "warm expression"),
+    (r"joyful gesture",                          "natural pose"),
+    (r"K-?pop MV grade",                         "cinematic pastel grade"),
+    (r"K-?pop MV",                               "cinematic music video"),
+]
 
-def sanitize_for_seedance(prompt: str) -> str:
-    """Seedance filter 가 가장 엄격 — 알려진 트리거 문구를 안전 어휘로 치환.
 
-    출력 길이 변화는 미미 (각 트리거 → 신중한 대체어). 9004 의 sanitize 패턴 단순화.
+def sanitize_video_prompt(prompt: Optional[str]) -> str:
+    """v25 — 영상 모델 호출 직전 prompt 의 위험 표현을 안전 표현으로 정적 치환.
+
+    Seedance / Kling / Grok / Extra Video 모두 동일하게 통과시킨다.
+    Mongo 원본(scene.image_prompt / video_prompt) 은 건드리지 않는다.
+
+    Args:
+        prompt: 영상 모델에 보낼 prompt 텍스트. None/빈 문자열이면 그대로.
+
+    Returns:
+        case-insensitive regex 치환 후 연속 공백 정리한 문자열.
     """
     if not prompt:
-        return ""
+        return prompt or ""
     out = prompt
-    replacements = {
-        "alone faces camera directly": "framed in a medium close-up",
-        "alone faces camera": "framed in a medium close-up",
-        "alone facing camera": "framed in a medium close-up",
-        "singing with mouth open": "softly mouthing the lyrics",
-        "singing the chorus joyfully": "softly mouthing the lyrics",
-        "mouth open": "softly mouthing",
-        "sparkling eyes": "soft warm expression",
-        "bright expressive eyes": "soft warm expression",
-        "expressive eyes": "soft warm expression",
-        "bright smile": "subtle smile",
-        "joyful expression": "warm expression",
-        "joyful gesture": "natural gesture",
-        "hair lifted by a gentle breeze": "soft breeze drifts in the air",
-        "hair lifting in the wind": "soft breeze drifts in the air",
-        "hair lifting": "soft breeze drifts in the air",
-        "slight head sway": "natural pose",
-        "rhythmic shoulder movement": "natural pose",
-        "shoulder sway": "natural pose",
-        "hands lightly raised in a joyful gesture": "hands resting naturally",
-        "eyes closed, breathing in the scent": "with a gentle expression",
-        "drowning in a soft pink-petal storm": "surrounded by gently drifting petals",
-        "K-pop MV grade": "cinematic pastel grade",
-        "K-pop MV": "cinematic music video",
-    }
-    for needle, repl in replacements.items():
-        out = _re.sub(_re.escape(needle), repl, out, flags=_re.IGNORECASE)
-    return _collapse_ws(out)
+    hits: list[str] = []
+    for pat, repl in _VIDEO_PROMPT_UNSAFE_PATTERNS:
+        new = _re.sub(pat, repl, out, flags=_re.IGNORECASE)
+        if new != out:
+            hits.append(pat)
+            out = new
+    out = _re.sub(r"\s{2,}", " ", out).strip()
+    if hits:
+        import logging
+        logging.getLogger(__name__).info(
+            "[PromptSanitize] replaced=%d patterns=%s in_len=%d out_len=%d",
+            len(hits), hits, len(prompt), len(out),
+        )
+    return out
+
+
+# 하위 호환 alias — 기존 호출자(pre_mv_seedance_generator) 가 그대로 동작.
+sanitize_for_seedance = sanitize_video_prompt

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: `${window.location.protocol}//${window.location.hostname}:9004/api`,
+  baseURL: `${window.location.protocol}//${window.location.hostname}:9005/api`,
 });
 
 // JWT 토큰 자동 첨부
@@ -400,9 +400,12 @@ export const coverPreviewUrl = (objectName) => {
 };
 
 // Generation stream URL helper
-export const generationStreamUrl = (genId) => {
+// v74 — supports variantIndex (0 = first clip, BC; >=1 = second clip)
+export const generationStreamUrl = (genId, variantIndex = 0) => {
   const token = localStorage.getItem('token');
-  return `${API.defaults.baseURL}/generate/${genId}/stream/?token=${encodeURIComponent(token || '')}`;
+  const v = Math.max(0, parseInt(variantIndex, 10) || 0);
+  const variantQ = v > 0 ? `&variant=${v}` : '';
+  return `${API.defaults.baseURL}/generate/${genId}/stream/?token=${encodeURIComponent(token || '')}${variantQ}`;
 };
 
 // Character sheet preview URL helper
@@ -465,7 +468,7 @@ export const recordAdClick = (itemId) =>
 export const getActiveAds = (category) =>
   API.get('/business/ads/active', { params: category ? { category } : {} });
 export const adImageUrl = (objectName) =>
-  `${window.location.protocol}//${window.location.hostname}:9004/api/business/items/image/${objectName}`;
+  `${window.location.protocol}//${window.location.hostname}:9005/api/business/items/image/${objectName}`;
 
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');
@@ -498,7 +501,7 @@ export const listMyLocations = () =>
 export const locationPreviewUrl = (objectName) => {
   if (!objectName) return '';
   if (objectName.startsWith('http') || objectName.startsWith('/api/')) return objectName;
-  return `${window.location.protocol}//${window.location.hostname}:9004/api/character/preview/${objectName}`;
+  return `${window.location.protocol}//${window.location.hostname}:9005/api/character/preview/${objectName}`;
 };
 
 // MV scene patch / cascade
@@ -536,6 +539,6 @@ export const getUserEditedSummary = (jobId) =>
 // Frontend remote logging
 export const sendFrontendLogs = (batch) =>
   API.post('/_logs/frontend', batch);
-export const frontendLogsBeaconUrl = `${window.location.protocol}//${window.location.hostname}:9004/api/_logs/frontend`;
+export const frontendLogsBeaconUrl = `${window.location.protocol}//${window.location.hostname}:9005/api/_logs/frontend`;
 
 export default API;

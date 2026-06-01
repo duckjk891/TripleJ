@@ -217,9 +217,19 @@ export default function StoryWizardPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // v33 — URL `?new=1` 이면 sessionStorage 초기화 + backend draft 도 삭제 후
+  // 빈 상태로 시작 (마운트 useEffect 에서 backend delete 호출).
+  const isNewMode = new URLSearchParams(location.search).get('new') === '1';
+
   // Try to rehydrate wizard draft from sessionStorage (survives outfit-page round-trip).
   const loadInitial = () => {
     const base = initialData();
+    if (isNewMode) {
+      // 백지 새 작품. sessionStorage 도 비움.
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* noop */ }
+      if (import.meta.env.DEV) console.info('[StoryWizard] new=1 — fresh start');
+      return { data: base, step: 1 };
+    }
     try {
       const raw = sessionStorage.getItem(DRAFT_KEY);
       if (!raw) return { data: base, step: 1 };
@@ -277,6 +287,9 @@ export default function StoryWizardPage() {
   // v8 — @-멘션 후보 풀 (시트 4슬롯 + 장소 N개). 마운트 시 병렬 fetch.
   // v9.1 — 자식 패널(시트/장소) 변경 시 reloadMentionOptions 콜백으로 자동 갱신.
   const [mentionOptions, setMentionOptions] = useState([]);
+  // v31 — 기존에 저장된 시트 slot 집합 (CharacterSheetPanel 에 prop 으로 전달
+  // 해서 "기존 시트 덮어쓰기 다이얼로그" 분기에 사용).
+  const [savedSheetSlots, setSavedSheetSlots] = useState(() => new Set());
   const reloadMentionOptions = useCallback(async () => {
     try {
       const [sheetsRes, placesRes] = await Promise.all([
@@ -286,8 +299,10 @@ export default function StoryWizardPage() {
       const sheets = sheetsRes?.data?.sheets || {};
       const places = placesRes?.data?.items || [];
       const opts = [];
+      const nextSavedSlots = new Set();
       for (const [slotKey, slot] of Object.entries(sheets)) {
         if (!slot) continue;
+        if (slot.sheet_object_name) nextSavedSlots.add(slotKey);
         const displayName = (slot.display_name && slot.display_name.trim()) || slotKey;
         opts.push({
           type: 'sheet',
@@ -297,6 +312,7 @@ export default function StoryWizardPage() {
           group_label: '🧑 캐릭터',
         });
       }
+      setSavedSheetSlots(nextSavedSlots);
       for (const p of places) {
         opts.push({
           type: 'place',
@@ -378,6 +394,123 @@ export default function StoryWizardPage() {
         console.warn('[StoryWizard] draft persist failed', { err });
       }
     }
+  }, [data, step]);
+
+  // v35 — GenerationStatus 의 [← 이전 (수정)] 에서 넘긴 resume_job_id 가 있으면
+  // wizard state 에 박아 다음 [생성] 클릭이 regenerate 가 되게.
+  useEffect(() => {
+    const resumeJobId = location.state?.resume_job_id;
+    if (resumeJobId && !data.current_job_id) {
+      if (import.meta.env.DEV) {
+        console.info('[StoryWizard] resume_job_id received', { job_id: resumeJobId });
+      }
+      setData((d) => ({ ...d, current_job_id: resumeJobId }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.resume_job_id]);
+
+  // v33 — 마운트 시 1회: ?new=1 이면 backend draft 도 삭제. 그 외엔
+  // sessionStorage 비어있을 때만 backend draft fetch → 복원.
+  const backendDraftLoadedRef = useRef(false);
+  useEffect(() => {
+    if (backendDraftLoadedRef.current) return;
+    backendDraftLoadedRef.current = true;
+    (async () => {
+      if (isNewMode) {
+        try {
+          if (import.meta.env.DEV) console.info('[StoryWizard] new=1 — deleting backend draft');
+          await api.deleteMyDraft();
+        } catch (err) {
+          // 없으면 200 이므로 사실상 실패할 일 적음. 로그만.
+          console.error('[StoryWizard] deleteMyDraft failed', { err });
+        }
+        return;
+      }
+      // sessionStorage 가 비어있을 때만 backend draft 시도 (outfit round-trip 보호)
+      let hasSession = false;
+      try { hasSession = !!sessionStorage.getItem(DRAFT_KEY); } catch { /* noop */ }
+      if (hasSession) return;
+      try {
+        if (import.meta.env.DEV) console.info('[StoryWizard] calling getMyDraft');
+        const { data: res } = await api.getMyDraft();
+        const draft = res?.draft;
+        if (draft && draft.payload && typeof draft.payload === 'object') {
+          const base = initialData();
+          const p = draft.payload;
+          const merged = {
+            ...base, ...p,
+            sheets: mergeSheets(p.sheets),
+          };
+          const validatedDraftStep =
+            typeof draft.step === 'number' && draft.step >= 1 && draft.step <= 6
+              ? draft.step : 1;
+          // v37 — race condition 가드: 응답이 늦게 도착했을 때 사용자가 이미
+          // 진행/입력했으면 덮어쓰지 않음. step > 1 또는 data 에 의미있는 입력
+          // 있으면 stale draft 응답을 무시.
+          setStep((cur) => {
+            if (cur > 1) {
+              if (import.meta.env.DEV) {
+                console.info('[StoryWizard] backend draft skipped (user advanced step)', {
+                  cur_step: cur, draft_step: validatedDraftStep,
+                });
+              }
+              return cur;
+            }
+            return validatedDraftStep;
+          });
+          setData((cur) => {
+            const hasUserInput = (() => {
+              const sheets = cur?.sheets || {};
+              if (Object.values(sheets).some((s) => s && s.face_object_name)) return true;
+              const couple = cur?.couple || {};
+              if ((couple.partner_a?.name || '').trim()) return true;
+              if ((couple.partner_b?.name || '').trim()) return true;
+              if ((cur?.story?.meeting || '').trim()) return true;
+              if (cur?.current_job_id) return true;
+              return false;
+            })();
+            if (hasUserInput) {
+              if (import.meta.env.DEV) {
+                console.info('[StoryWizard] backend draft skipped (user input present)');
+              }
+              return cur;
+            }
+            return merged;
+          });
+          if (import.meta.env.DEV) {
+            console.info('[StoryWizard] backend draft loaded (or guarded)', {
+              draft_step: draft.step,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[StoryWizard] getMyDraft failed', { err });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // v33 — debounced backend save (1.5s). data/step 변경 시 백엔드에 upsert.
+  const backendSaveTimerRef = useRef(null);
+  useEffect(() => {
+    if (backendSaveTimerRef.current) clearTimeout(backendSaveTimerRef.current);
+    backendSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const payload = { ...data, sheets: sanitizeSheetsForStorage(data.sheets) };
+        const title =
+          (data.couple?.groom_name || data.couple?.bride_name)
+            ? `${data.couple?.groom_name || ''} & ${data.couple?.bride_name || ''}`.trim().replace(/^&\s*|\s*&$/g, '')
+            : null;
+        await api.saveMyDraft({ payload, step, title });
+        if (import.meta.env.DEV) console.info('[StoryWizard] backend draft saved', { step });
+      } catch (err) {
+        console.error('[StoryWizard] saveMyDraft failed', { err });
+      }
+    }, 1500);
+    return () => {
+      if (backendSaveTimerRef.current) clearTimeout(backendSaveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, step]);
 
   // Navigate to outfit selection page, preserving wizard state in sessionStorage.
@@ -560,16 +693,39 @@ export default function StoryWizardPage() {
       const { storyPayload, musicSpec } = buildPayloads();
       const { data: storyRes } = await api.createStory(storyPayload);
       const storyId = storyRes.story_id;
-      const { data: jobRes } = await api.createMVJob({
-        story_id: storyId,
-        music_spec: musicSpec,
-      });
+      // v35 — 작품 1건 정책: 진행 중 job_id 있으면 같은 job 에 regenerate (lyrics/music 갈아엎기),
+      // 없으면 새 job 생성. 둘 다 응답에 {job_id, status} 포함.
+      let resolvedJobId = data.current_job_id || null;
+      if (resolvedJobId) {
+        if (import.meta.env.DEV) {
+          console.info('[StoryWizard] regenerateMVJob', { job_id: resolvedJobId });
+        }
+        await api.regenerateMVJob(resolvedJobId, {
+          story_id: storyId,
+          music_spec: musicSpec,
+        });
+      } else {
+        if (import.meta.env.DEV) {
+          console.info('[StoryWizard] createMVJob (first)');
+        }
+        const { data: jobRes } = await api.createMVJob({
+          story_id: storyId,
+          music_spec: musicSpec,
+        });
+        resolvedJobId = jobRes.job_id;
+        // wizard state 에도 저장 (draft 영속화로 같이 박힘)
+        setData((d) => ({ ...d, current_job_id: resolvedJobId }));
+      }
       try {
         sessionStorage.removeItem(DRAFT_KEY);
       } catch {
         /* noop */
       }
-      navigate(`/projects/${jobRes.job_id}`);
+      // v33 — 잡 생성 완료 → backend draft 도 삭제 (best-effort)
+      try { await api.deleteMyDraft(); } catch (err) {
+        console.error('[StoryWizard] deleteMyDraft after job create failed', { err });
+      }
+      navigate(`/projects/${resolvedJobId}`);
     } catch (err) {
       const detail = err?.response?.data?.detail;
       setError(
@@ -664,6 +820,7 @@ export default function StoryWizardPage() {
               onChange={(patch) => patchSheet(key, patch)}
               onNavigateOutfit={(cat) => goSelectOutfit(role, style, cat)}
               onMentionablesChanged={reloadMentionOptions}
+              hasExistingSaved={savedSheetSlots.has(key)}
             />
           ))}
         </div>

@@ -485,7 +485,11 @@ export default function MentionField({
                       style={{ display: opt.object_name ? 'none' : 'flex' }}
                       aria-hidden="true"
                     >
-                      {opt.type === 'sheet' ? '🧑' : '📍'}
+                      {opt.type === 'sheet' ? '🧑'
+                        : opt.type === 'place' ? '📍'
+                        : opt.type === 'wedding_photo' ? '💞'
+                        : opt.type === 'scene_image' ? '🎬'
+                        : '📎'}
                     </div>
                     <span className="mention-popup__name">{opt.display_name}</span>
                   </div>

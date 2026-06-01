@@ -1,0 +1,138 @@
+/* LyricsTimestampToggle — v74 */
+
+.lyrics-ts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.lyrics-ts__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #ddd;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  width: fit-content;
+}
+
+.lyrics-ts__header:hover {
+  background: #242424;
+  border-color: #444;
+}
+
+.lyrics-ts__header:focus-visible {
+  outline: 2px solid #6c8cff;
+  outline-offset: 2px;
+}
+
+.lyrics-ts__header--open {
+  background: #2a2540;
+  border-color: #6c8cff;
+  color: #e8e8ff;
+}
+
+.lyrics-ts__caret {
+  display: inline-flex;
+  align-items: center;
+}
+
+.lyrics-ts__icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.lyrics-ts__label {
+  flex: 1;
+}
+
+.lyrics-ts__count {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #333;
+  color: #aaa;
+}
+
+.lyrics-ts__header--open .lyrics-ts__count {
+  background: #6c8cff33;
+  color: #cfd6ff;
+}
+
+.lyrics-ts__panel {
+  padding: 10px 12px;
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.lyrics-ts__empty {
+  color: #888;
+  font-size: 12px;
+  padding: 6px 4px;
+}
+
+.lyrics-ts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lyrics-ts__row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #ddd;
+}
+
+.lyrics-ts__row:hover {
+  background: #1f1f1f;
+}
+
+.lyrics-ts__time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8aa1ff;
+  font-family: ui-monospace, "SF Mono", Consolas, Menlo, monospace;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.lyrics-ts__time-sep {
+  color: #555;
+  margin: 0 2px;
+}
+
+.lyrics-ts__text {
+  color: #e0e0e0;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .lyrics-ts__row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .lyrics-ts__time {
+    font-size: 11px;
+  }
+}

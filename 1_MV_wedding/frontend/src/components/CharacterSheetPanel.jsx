@@ -1,3 +1,4 @@
+import { ZoomableImage } from './ImageLightbox';
 import { useEffect, useRef, useState } from 'react';
 import * as api from '../api';
 import './CharacterSheetPanel.css';
@@ -20,6 +21,9 @@ export default function CharacterSheetPanel({
   title,
   onNavigateOutfit,
   onMentionablesChanged,
+  // v31 — 같은 slot 에 이미 저장된 시트가 있는지. true 면 재생성 후 자동 저장
+  // 직전에 confirm 다이얼로그 띄움. false 면 즉시 자동 저장.
+  hasExistingSaved = false,
 }) {
   const fileInputRef = useRef(null);
   const prefix = `[CharSheetPanel:${role}_${style}]`;
@@ -32,6 +36,14 @@ export default function CharacterSheetPanel({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  // v31 — polling done 분기에서 항상 최신 hasExistingSaved 와 handleSave 를
+  // 참조하기 위해 ref 보관 (effect 재기동 회피).
+  const hasExistingSavedRef = useRef(hasExistingSaved);
+  useEffect(() => {
+    hasExistingSavedRef.current = hasExistingSaved;
+  }, [hasExistingSaved]);
+  const handleSaveRef = useRef(null);
 
   // Track last-seen status per job so we only patch state when it changes
   // (avoids per-tick re-renders).
@@ -225,8 +237,14 @@ export default function CharacterSheetPanel({
     }
   };
 
-  const handleSave = async () => {
-    if (!value.generated?.object_name) return;
+  // v31 — polling done 분기에서 호출되므로 ref 최신화.
+  useEffect(() => {
+    handleSaveRef.current = (objArg) => handleSave(objArg);
+  });
+
+  const handleSave = async (objectNameArg) => {
+    const objectName = objectNameArg || value.generated?.object_name;
+    if (!objectName) return;
     onChange({ error: '' });
     const usedItems = CATEGORY_ORDER.map((cat) => {
       const it = value.items?.[cat];
@@ -241,13 +259,14 @@ export default function CharacterSheetPanel({
     try {
       if (import.meta.env.DEV) {
         console.info(`${prefix} calling saveCharacterSheet`, {
-          object_name: value.generated.object_name,
+          object_name: objectName,
           used_count: usedItems.length,
           display_name_len: (value.display_name || '').length,
+          auto_save: !objectNameArg ? false : true,
         });
       }
       await api.saveCharacterSheet({
-        sheet_object_name: value.generated.object_name,
+        sheet_object_name: objectName,
         role,
         style,
         used_items: usedItems,
@@ -403,6 +422,37 @@ export default function CharacterSheetPanel({
             generated: { object_name: objectName, preview_url: previewUrl },
             error: '',
           });
+          // v31 — 폴링 done 후 자동 저장 / 덮어쓰기 확인.
+          //   • hasExistingSaved === false → 즉시 자동 저장 (첫 시트)
+          //   • hasExistingSaved === true  → window.confirm 으로 덮어쓰기 확인.
+          //     취소 시 새 PNG state(generated) 만 비워 폐기하고 기존 시트 유지.
+          if (objectName) {
+            if (!hasExistingSavedRef.current) {
+              console.info(`${prefix} auto-save (first sheet)`, {
+                object_name: objectName,
+              });
+              handleSaveRef.current(objectName).catch((e) => {
+                console.error(`${prefix} auto-save failed`, { err: e });
+              });
+            } else {
+              const ok = window.confirm(
+                '새 시트로 덮어쓰시겠습니까?\n취소하면 새로 생성한 시트는 폐기되고 기존 시트가 그대로 유지됩니다.',
+              );
+              if (ok) {
+                console.info(`${prefix} overwrite confirmed — saving`, {
+                  object_name: objectName,
+                });
+                handleSaveRef.current(objectName).catch((e) => {
+                  console.error(`${prefix} overwrite save failed`, { err: e });
+                });
+              } else {
+                console.info(`${prefix} overwrite cancelled — discarding new PNG`, {
+                  object_name: objectName,
+                });
+                onChangeRef.current({ generated: null });
+              }
+            }
+          }
         } else if (next === 'failed') {
           console.info(`${prefix} poll terminal`, {
             job_id: generateJobId,
@@ -562,7 +612,7 @@ export default function CharacterSheetPanel({
               ? api.sheetPreviewUrl(value.face_object_name)
               : value.face_preview;
             return facePreviewSrc ? (
-              <img
+              <ZoomableImage
                 src={facePreviewSrc}
                 alt="얼굴 사진 미리보기"
                 className="sheet-photo-zone__preview"
@@ -650,7 +700,7 @@ export default function CharacterSheetPanel({
               <div className="outfit-slot__label">{CATEGORY_LABEL[cat]}</div>
               {it ? (
                 <div className="outfit-slot__filled">
-                  <img
+                  <ZoomableImage
                     className="outfit-thumb"
                     src={api.sheetPreviewUrl(it.image_object_name)}
                     alt={it.name || CATEGORY_LABEL[cat]}
@@ -725,7 +775,7 @@ export default function CharacterSheetPanel({
       {hasGenerated && (
         <div className="sheet-panel__result">
           <div className="sheet-panel__result-img-wrap">
-            <img
+            <ZoomableImage
               className="sheet-panel__result-img"
               src={value.generated.preview_url}
               alt="생성된 캐릭터 시트"
@@ -765,14 +815,7 @@ export default function CharacterSheetPanel({
             >
               {generating ? '생성 중...' : '다시 생성'}
             </button>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleSave}
-              disabled={generating || refining}
-            >
-              저장
-            </button>
+            {/* v31 — [저장] 버튼 제거. 생성 직후 자동 저장 (또는 덮어쓰기 확인). */}
           </div>
           <div className="sheet-panel__refine">
             <input

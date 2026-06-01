@@ -27,7 +27,10 @@ from .routes import (
     assets,
     auth,
     character,
+    extra_scene_images,
+    extra_videos,
     mv,
+    mv_drafts,
     places,
     pre_mv,
     share,
@@ -113,6 +116,11 @@ app.include_router(places.router)
 app.include_router(wedding_photos.router)
 app.include_router(pre_mv.router)
 app.include_router(admin.router)
+# v23.0 — Extra Video Studio (Higgsfield 스타일 편집자 공간)
+app.include_router(extra_scene_images.router)
+app.include_router(extra_videos.router)
+# v33 — Wizard 작성중 draft 영속화
+app.include_router(mv_drafts.router)
 
 
 @app.get("/api/health")

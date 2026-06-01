@@ -1,3 +1,4 @@
+import { ZoomableImage } from './ImageLightbox';
 import { useEffect, useMemo, useState } from 'react';
 import * as api from '../api';
 import MentionField from './MentionField';
@@ -396,7 +397,7 @@ export default function WeddingPhotoDetailModal({
                       title={v.meta?.refine_request || (idx === 0 ? '원본' : '')}
                     >
                       {v.object_name ? (
-                        <img src={api.sheetPreviewUrl(v.object_name)} alt="" />
+                        <ZoomableImage src={api.sheetPreviewUrl(v.object_name)} alt="" />
                       ) : (
                         <div className="wp-modal__chain-empty">···</div>
                       )}
@@ -408,7 +409,7 @@ export default function WeddingPhotoDetailModal({
 
               <div className="wp-modal__main">
                 {activeVersion?.object_name ? (
-                  <img
+                  <ZoomableImage
                     src={api.sheetPreviewUrl(activeVersion.object_name)}
                     alt="웨딩사진"
                   />
@@ -532,7 +533,7 @@ function AssetRow({ asset, fallback }) {
     <div className="wp-modal__asset">
       <div className="wp-modal__asset-thumb">
         {asset.object_name ? (
-          <img src={api.sheetPreviewUrl(asset.object_name)} alt="" />
+          <ZoomableImage src={api.sheetPreviewUrl(asset.object_name)} alt="" />
         ) : (
           <span aria-hidden="true">?</span>
         )}

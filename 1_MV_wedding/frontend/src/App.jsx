@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { ImageLightboxProvider } from './components/ImageLightbox';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -19,6 +20,7 @@ import './App.css';
 export default function App() {
   return (
     <AuthProvider>
+      <ImageLightboxProvider>
       <div className="app-shell">
         <Header />
         <main className="app-main">
@@ -94,6 +96,7 @@ export default function App() {
         </main>
         <Footer />
       </div>
+      </ImageLightboxProvider>
     </AuthProvider>
   );
 }

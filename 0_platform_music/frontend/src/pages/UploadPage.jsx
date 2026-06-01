@@ -4,6 +4,7 @@ import { FiUploadCloud, FiMusic, FiX, FiImage, FiZap, FiRefreshCw, FiAlertTriang
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import BeatTrackView from '../components/BeatTrackView';
+import LyricsTimestampToggle from '../components/LyricsTimestampToggle';
 import './UploadPage.css';
 
 const GENRES = ['발라드', '댄스', '힙합', 'R&B', '인디', '록', 'Electronic', 'Ambient', 'Lo-fi', 'Cinematic', '기타'];
@@ -95,6 +96,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [fromGeneration, setFromGeneration] = useState(null);
   const [hasVoiceConverted, setHasVoiceConverted] = useState(false);
   const [useVoiceConverted, setUseVoiceConverted] = useState(false);
+  // v74 — variant 선택 + 도큐먼트 캐시 (가사 타임스탬프 노출용)
+  const [variantIndex, setVariantIndex] = useState(0);
+  const [generationDoc, setGenerationDoc] = useState(null);
 
   const [generatingCover, setGeneratingCover] = useState(false);
   const [aiCoverPreview, setAiCoverPreview] = useState(null);
@@ -213,12 +217,49 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       setPrompt(generationPrefill.prompt || '');
       setLyrics(generationPrefill.lyrics || '');
       setFromGeneration(generationPrefill.generationId);
+      setVariantIndex(Number.isFinite(generationPrefill.variantIndex) ? generationPrefill.variantIndex : 0); // v74
       setHasVoiceConverted(!!generationPrefill.hasVoiceConverted);
       setUseVoiceConverted(false);
       setAiTool('Suno');
+      if (import.meta.env.DEV) {
+        console.info('[UploadPage] prefill from generation', {
+          genId: generationPrefill.generationId,
+          variantIndex: generationPrefill.variantIndex,
+        });
+      }
       if (onClearPrefill) onClearPrefill();
     }
   }, [generationPrefill]);
+
+  // v74 — Fetch generation doc to surface variants[variantIndex].timestamps
+  // in the detail area. Empty timestamps render as "가사 타임스탬프 없음".
+  useEffect(() => {
+    if (!fromGeneration) {
+      setGenerationDoc(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.getGeneration(fromGeneration);
+        if (!cancelled) {
+          setGenerationDoc(data);
+          if (import.meta.env.DEV) {
+            console.info('[UploadPage] generation doc loaded', {
+              genId: fromGeneration,
+              variantsCount: Array.isArray(data?.variants) ? data.variants.length : 0,
+            });
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[UploadPage] getGeneration failed', { genId: fromGeneration, err });
+          setGenerationDoc(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fromGeneration]);
 
   // Load user's character — prefer parent-provided, fallback to own fetch
   useEffect(() => {
@@ -1405,8 +1446,16 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       let track;
 
       if (fromGeneration) {
+        if (import.meta.env.DEV) {
+          console.info('[UploadPage] uploadFromGeneration', {
+            genId: fromGeneration,
+            variantIndex,
+            useVoiceConverted,
+          });
+        }
         const { data } = await api.uploadFromGeneration({
           generation_id: fromGeneration,
+          variant_index: variantIndex, // v74
           title: title.trim(),
           genre: genre || undefined,
           mood: mood || undefined,
@@ -1460,8 +1509,11 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
 
       setSuccess('업로드가 완료되었습니다!');
       setFromGeneration(null);
+      setVariantIndex(0);
+      setGenerationDoc(null);
       setTimeout(() => navigate('/'), 1500);
     } catch (err) {
+      console.error('[UploadPage] uploadFromGeneration failed', { genId: fromGeneration, variantIndex, err });
       setError(err.response?.data?.error || '업로드에 실패했습니다.');
     } finally {
       setUploading(false);
@@ -1574,7 +1626,13 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                   <button
                     type="button"
                     className="upload-card__gen-badge-cancel"
-                    onClick={() => { setFromGeneration(null); setHasVoiceConverted(false); setUseVoiceConverted(false); }}
+                    onClick={() => {
+                      setFromGeneration(null);
+                      setHasVoiceConverted(false);
+                      setUseVoiceConverted(false);
+                      setVariantIndex(0);
+                      setGenerationDoc(null);
+                    }}
                   >
                     <FiX /> 취소
                   </button>
@@ -1604,15 +1662,30 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                 )}
 
                 <audio
-                  key={useVoiceConverted ? 'vc' : 'original'}
+                  key={useVoiceConverted ? 'vc' : `original-v${variantIndex}`}
                   controls
                   className="upload-card__gen-player"
                   src={
                     useVoiceConverted
                       ? api.voiceConvertStreamUrl(fromGeneration)
-                      : api.generationStreamUrl(fromGeneration)
+                      : api.generationStreamUrl(fromGeneration, variantIndex)
                   }
                 />
+
+                {/* v74 — 가사 타임스탬프 토글 (디폴트 접힘) */}
+                {!useVoiceConverted && generationDoc && (() => {
+                  const variants = Array.isArray(generationDoc.variants) ? generationDoc.variants : [];
+                  const v = variants[variantIndex];
+                  const segs = v?.timestamps || [];
+                  return (
+                    <LyricsTimestampToggle
+                      segments={segs}
+                      generationId={fromGeneration}
+                      variantIndex={variantIndex}
+                      label={`가사 타임스탬프 (클립 ${variantIndex + 1})`}
+                    />
+                  );
+                })()}
               </div>
             ) : (
               <>
@@ -1646,14 +1719,15 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           </div>
 
           {/* v44 — Beat visualization (only for AI-generated tracks where we have an ID to poll) */}
-          {fromGeneration && (
+          {/* v74 — variantIndex !== 0 인 경우 BeatTrackView 숨김 (비트는 첫 클립 한정 추출) */}
+          {fromGeneration && variantIndex === 0 && (
             <BeatTrackView
               sourceType="generation"
               sourceId={fromGeneration}
               audioUrl={
                 useVoiceConverted
                   ? api.voiceConvertStreamUrl(fromGeneration)
-                  : api.generationStreamUrl(fromGeneration)
+                  : api.generationStreamUrl(fromGeneration, 0)
               }
             />
           )}

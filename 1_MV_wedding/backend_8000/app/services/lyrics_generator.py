@@ -6,12 +6,17 @@ Wedding-domain lyrics generation service.
 직접/은유로 박아넣는 것을 절대 규칙으로 강제한다. OpenAI / Anthropic 모두 지원.
 """
 
+from .llm_thinking_config import extract_text_from_anthropic_response as _xtxt
+import logging
 import re
 
 import anthropic
 from openai import AsyncOpenAI
 
 from ..config import settings
+
+# v34-hotfix — logger 정의 누락 (v27 작업 시 누락). NameError 방지.
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -538,26 +543,38 @@ def _max_tokens_for_duration(duration_minutes: int) -> int:
     duration_minutes 별 가사 생성 max_tokens 분기.
     한국어 1.5~2 tokens/char 기준, 1400자 × 2 ≈ 2800 토큰까지 갈 수 있어
     3분은 안전 마진 2000 으로 잡는다.
+
+    v30 — thinking/reasoning ON 시 thinking/reasoning 200~400 토큰이 동일
+    한도 안에서 소비됨. 모든 분기 ×2 로 상향.
     """
-    return {2: 1200, 3: 2000}.get(duration_minutes, 1500)
+    return {2: 2400, 3: 4000}.get(duration_minutes, 3000)
 
 
 async def _generate_via_openai(system_prompt: str, user_message: str, model: str, duration_minutes: int) -> tuple[str, str]:
+    from .llm_thinking_config import apply_reasoning_to_openai
     client = _get_openai_client()
-    lyrics_response = await client.chat.completions.create(
-        model=model,
-        messages=[
+
+    lyrics_kwargs: dict = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        temperature=0.8,
-        max_tokens=_max_tokens_for_duration(duration_minutes),
+        "temperature": 0.8,
+        "max_tokens": _max_tokens_for_duration(duration_minutes),
+    }
+    # v27 — reasoning_effort + strip unsupported sampling (GPT-5+).
+    apply_reasoning_to_openai(lyrics_kwargs, model)
+    logger.info(
+        "[LyricsGen] openai lyrics call model=%s reasoning=%s",
+        model, bool(lyrics_kwargs.get("reasoning_effort")),
     )
+    lyrics_response = await client.chat.completions.create(**lyrics_kwargs)
     lyrics = lyrics_response.choices[0].message.content.strip()
 
-    title_response = await client.chat.completions.create(
-        model=model,
-        messages=[
+    title_kwargs: dict = {
+        "model": model,
+        "messages": [
             {
                 "role": "system",
                 "content": (
@@ -567,14 +584,20 @@ async def _generate_via_openai(system_prompt: str, user_message: str, model: str
             },
             {"role": "user", "content": lyrics},
         ],
-        temperature=0.7,
-        max_tokens=50,
-    )
+        "temperature": 0.7,
+        # v30 — 50 → 400. reasoning_effort=high 시 reasoning_tokens 가 50을 다 차지
+        # 해 finish=length + 빈 응답 발생하던 케이스 해소. 실제 title 출력은 5~30
+        # 토큰이라 reasoning(~320) + 출력(~80) 마진 잡음.
+        "max_tokens": 400,
+    }
+    apply_reasoning_to_openai(title_kwargs, model)
+    title_response = await client.chat.completions.create(**title_kwargs)
     title = title_response.choices[0].message.content.strip().strip('"\'')
     return title, lyrics
 
 
 async def _generate_via_anthropic(system_prompt: str, user_message: str, model: str, duration_minutes: int) -> tuple[str, str]:
+    from .llm_thinking_config import apply_thinking_to_anthropic
     client = _get_anthropic_client()
 
     lyrics_kwargs = {
@@ -582,11 +605,16 @@ async def _generate_via_anthropic(system_prompt: str, user_message: str, model: 
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
         "max_tokens": _max_tokens_for_duration(duration_minutes),
+        "temperature": 0.8,
     }
-    if "opus-4-7" not in model:
-        lyrics_kwargs["temperature"] = 0.8
+    # v27 — adaptive thinking + strip unsupported sampling (Opus 4.7+).
+    apply_thinking_to_anthropic(lyrics_kwargs, model)
+    logger.info(
+        "[LyricsGen] anthropic lyrics call model=%s thinking=%s",
+        model, bool(lyrics_kwargs.get("thinking")),
+    )
     lyrics_response = await client.messages.create(**lyrics_kwargs)
-    lyrics = lyrics_response.content[0].text.strip()
+    lyrics = _xtxt(lyrics_response)
 
     title_kwargs = {
         "model": model,
@@ -595,12 +623,14 @@ async def _generate_via_anthropic(system_prompt: str, user_message: str, model: 
             "Output ONLY the title, nothing else. Match the language of the lyrics."
         ),
         "messages": [{"role": "user", "content": lyrics}],
-        "max_tokens": 50,
+        # v30 — 50 → 400. adaptive thinking 시 thinking_tokens 가 동일 한도 안에서
+        # 소비됨. 동일 안전 마진 적용 (OpenAI 와 통일).
+        "max_tokens": 400,
+        "temperature": 0.7,
     }
-    if "opus-4-7" not in model:
-        title_kwargs["temperature"] = 0.7
+    apply_thinking_to_anthropic(title_kwargs, model)
     title_response = await client.messages.create(**title_kwargs)
-    title = title_response.content[0].text.strip().strip('"\'')
+    title = _xtxt(title_response).strip('"\'')
 
     return title, lyrics
 

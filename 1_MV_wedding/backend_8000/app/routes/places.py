@@ -295,6 +295,8 @@ async def upload_place(
         "meta": {
             "memo": memo_v,
             "image_model": None,
+            # v36 — draft 단계에서 INSERT. 잡 생성 시 update_many 로 mv_job_id 박힘.
+            "mv_job_id": None,
         },
         "created_at": now,
         "updated_at": now,
@@ -399,6 +401,8 @@ async def generate_place(
         "meta": {
             "memo": memo_v,
             "image_model": image_model_v,
+            # v36 — draft 단계에서 INSERT. 잡 생성 시 update_many 로 mv_job_id 박힘.
+            "mv_job_id": None,
         },
         "created_at": now,
         "updated_at": now,
@@ -519,8 +523,17 @@ async def list_places(current_user=Depends(get_current_user)):
     logger.info("[PlaceRoute] /list entry user_id=%s", user_id)
     mongo = get_mongo()
     try:
+        # v36 — wizard(작성중 draft) 컨텍스트만 반환. 잡에 transfer 된 장소
+        # (meta.mv_job_id != None) 는 그 잡의 자산이므로 wizard 목록엔 노출하지 않음.
         cursor = mongo.wedding_assets.find(
-            {"user_id": user_id, "type": "place"}
+            {
+                "user_id": user_id,
+                "type": "place",
+                "$or": [
+                    {"meta.mv_job_id": None},
+                    {"meta.mv_job_id": {"$exists": False}},
+                ],
+            }
         ).sort([("created_at", -1)])
         items = []
         async for doc in cursor:

@@ -84,7 +84,7 @@ async def generate_place_image(
             data = await generate_image(
                 prompt=prompt,
                 ref_images=None,
-                size="1024x1024",
+                size="2048x1152",  # v29 — 16:9 통일 (장소)
                 quality="high",
             )
         except Exception as e:
@@ -119,6 +119,7 @@ async def generate_place_image(
             role=None,
             style=None,
             user_id=user_id,
+            aspect_ratio="16:9",  # v29 — 16:9 통일 (장소)
         )
     except Exception as e:
         logger.exception(

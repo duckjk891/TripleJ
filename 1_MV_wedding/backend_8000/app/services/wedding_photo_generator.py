@@ -232,7 +232,7 @@ async def generate_wedding_photo(
         image_bytes = await openai_generate_image(
             prompt=step_a_text,
             ref_images=step_b_ref_images,
-            size="1024x1024",
+            size="2048x1152",  # v29 — 16:9 통일 (웨딩사진)
             quality="high",
         )
     elif image_model == "nb_pro":

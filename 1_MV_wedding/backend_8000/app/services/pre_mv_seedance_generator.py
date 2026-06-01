@@ -28,7 +28,7 @@ from typing import Optional
 import httpx
 
 from ..config import settings
-from .pre_mv_video_prompts import compose_video_prompt, sanitize_for_seedance
+from .pre_mv_video_prompts import compose_video_prompt, sanitize_video_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -115,19 +115,25 @@ async def _start_seedance(
     prompt: str,
     image_bytes: bytes,
     seedance_duration: int,
+    end_frame_bytes: Optional[bytes] = None,
 ) -> str:
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    body = {
+    body: dict = {
         "prompt": prompt,
         "image_url": "data:image/png;base64,{}".format(image_b64),
         "duration": seedance_duration,
+        "aspect_ratio": "16:9",  # v29 — 화면 비율 16:9 통일 (default=auto 의존 회피)
     }
+    # v24 — end_image_url (data URI) — chapter FFLF 연쇄. 같은 endpoint, body 에만 추가.
+    if end_frame_bytes:
+        end_b64 = base64.b64encode(end_frame_bytes).decode("utf-8")
+        body["end_image_url"] = "data:image/png;base64,{}".format(end_b64)
 
     logger.info(
         "[PreMVSeed] phase=phase3 start request pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d duration=%d image_bytes=%d",
+        "prompt_len=%d duration=%d image_bytes=%d end_image_attached=%s",
         pre_mv_job_id, scene_number, len(prompt or ""), seedance_duration,
-        len(image_bytes or b""),
+        len(image_bytes or b""), bool(end_frame_bytes),
     )
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -270,8 +276,15 @@ async def generate_scene_video_seedance(
     scene_number: int,
     scene: dict,
     image_bytes: bytes,
+    end_frame_bytes: Optional[bytes] = None,
 ) -> bytes:
-    """Phase 3 단일 씬 영상 (Seedance) — mp4 bytes."""
+    """Phase 3 단일 씬 영상 (Seedance) — mp4 bytes.
+
+    Args:
+      end_frame_bytes:
+        v24 — chapter FFLF 연쇄. 같은 endpoint, body 에 `end_image_url` (data URI)
+        로 첨부. None 이면 종래와 동일.
+    """
     if not settings.fal_api_key:
         raise ValueError("fal.ai API 키가 설정되지 않았습니다.")
     if not image_bytes:
@@ -280,19 +293,23 @@ async def generate_scene_video_seedance(
     started = time.time()
     target_sec = float(scene.get("use_seconds") or 5.0)
     seedance_duration = max(_SEEDANCE_MIN, min(_SEEDANCE_MAX, int(round(target_sec))))
+    has_last_frame = bool(end_frame_bytes)
 
     raw_prompt = compose_video_prompt(
         video_model="seedance",
         scene=scene,
         duration=float(seedance_duration),
+        has_last_frame=has_last_frame,
     )
-    final_prompt = sanitize_for_seedance(raw_prompt)
+    final_prompt = sanitize_video_prompt(raw_prompt)
 
     logger.info(
         "[PreMVSeed] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
-        "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f seed_dur=%d image_bytes=%d",
+        "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f seed_dur=%d "
+        "image_bytes=%d end_frame_bytes=%d",
         pre_mv_job_id, scene_number, len(raw_prompt), len(final_prompt),
         target_sec, seedance_duration, len(image_bytes or b""),
+        len(end_frame_bytes or b""),
     )
 
     request_id = await _start_seedance(
@@ -301,6 +318,7 @@ async def generate_scene_video_seedance(
         prompt=final_prompt,
         image_bytes=image_bytes,
         seedance_duration=seedance_duration,
+        end_frame_bytes=end_frame_bytes,
     )
     video_url = await _poll_until_done(
         pre_mv_job_id=pre_mv_job_id,

@@ -172,3 +172,81 @@
   position: relative;
   top: 1px;
 }
+
+/* v20.1 — 트랙 번호 배지 (식전영상 탭의 라디오 라벨과 일관) */
+.audio-card__variant-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2b5fad;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+/* v22 — 가사 타임스탬프 토글 */
+.audio-card__lyrics-toggle {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fafaf7;
+  padding: 8px 12px;
+}
+
+.audio-card__lyrics-summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2b5fad;
+  user-select: none;
+  outline: none;
+}
+
+.audio-card__lyrics-summary:hover {
+  color: #1e4584;
+}
+
+.audio-card__lyrics-count {
+  color: #777;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.audio-card__lyrics-list {
+  margin: 10px 0 4px;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.audio-card__lyrics-line {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.audio-card__lyrics-ts {
+  color: #888;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.audio-card__lyrics-text {
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.audio-card__lyrics-empty {
+  margin: 10px 0 4px;
+  color: #888;
+  font-size: 13px;
+}

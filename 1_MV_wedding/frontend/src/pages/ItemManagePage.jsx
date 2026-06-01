@@ -1,3 +1,4 @@
+import { ZoomableImage } from '../components/ImageLightbox';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -77,6 +78,18 @@ export default function ItemManagePage() {
   const [form, setForm] = useState(INITIAL_FORM);
   const fileInputRef = useRef(null);
   const blobUrlRef = useRef(''); // tracks current blob URL for cleanup
+
+  // v20 — 일괄 선택/삭제 상태
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const BULK_LIMIT = 50;
+  const REASON_LABEL = {
+    invalid_id: '잘못된 ID',
+    not_found: '찾을 수 없음',
+    forbidden: '권한 없음',
+    exception: '서버 오류',
+  };
 
   if (import.meta.env.DEV) {
     console.info(`${PREFIX} role check`, { isAdmin });
@@ -251,6 +264,146 @@ export default function ItemManagePage() {
     // scroll the form into view for convenience
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // v20 — 리스트 강제 새로고침. 일괄 삭제 후 서버 단일진실 동기화에 사용.
+  const reloadItems = async () => {
+    if (import.meta.env.DEV) {
+      console.info(`${PREFIX} reloadItems begin`, { isAdmin });
+    }
+    try {
+      const { data } = await api.getMyOutfitItems();
+      const next = Array.isArray(data?.items) ? data.items : [];
+      if (import.meta.env.DEV) {
+        console.info(`${PREFIX} reloadItems ok`, { count: next.length });
+      }
+      setItems(next);
+    } catch (e) {
+      console.error(`${PREFIX} reloadItems failed`, { err: e?.message });
+      setListError(
+        extractErrorDetail(e, '아이템 목록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.'),
+      );
+    }
+  };
+
+  // v20 — 선택모드 토글 / 단일 행 체크박스 / 전체 토글 / 일괄 삭제
+  const enterSelectMode = () => {
+    if (import.meta.env.DEV) {
+      console.info(`${PREFIX} selectMode on`);
+    }
+    setSelectMode(true);
+    setSelectedIds(new Set());
+  };
+
+  const exitSelectMode = () => {
+    if (import.meta.env.DEV) {
+      console.info(`${PREFIX} selectMode off`);
+    }
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleRowSelected = (itemId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    const ids = filteredItems.map((it) => it.id);
+    if (import.meta.env.DEV) {
+      console.info(`${PREFIX} select all visible`, { count: ids.length });
+    }
+    setSelectedIds(new Set(ids));
+  };
+
+  const clearSelected = () => {
+    if (import.meta.env.DEV) {
+      console.info(`${PREFIX} clear selected`);
+    }
+    setSelectedIds(new Set());
+  };
+
+  // thead 의 마스터 체크박스 — 전체 토글
+  const handleHeaderToggle = () => {
+    if (selectedIds.size === filteredItems.length && filteredItems.length > 0) {
+      clearSelected();
+    } else {
+      selectAllVisible();
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (ids.length > BULK_LIMIT) {
+      console.warn(`${PREFIX} bulk delete over limit`, { count: ids.length });
+      window.alert(`한 번에 최대 ${BULK_LIMIT}개까지 삭제할 수 있어요.`);
+      return;
+    }
+    if (!window.confirm(`선택한 ${ids.length}개 아이템을 삭제할까요? 되돌릴 수 없어요.`)) {
+      return;
+    }
+    console.info(`${PREFIX} calling bulkDeleteOutfitItems`, { count: ids.length });
+    setBulkBusy(true);
+    try {
+      const { data } = await api.bulkDeleteOutfitItems(ids);
+      const deletedCount = Number(data?.deleted_count || 0);
+      const failed = Array.isArray(data?.failed) ? data.failed : [];
+      if (import.meta.env.DEV) {
+        console.info(`${PREFIX} bulkDeleteOutfitItems ok`, {
+          deleted_count: deletedCount,
+          failed_count: failed.length,
+          total_requested: data?.total_requested,
+        });
+      }
+      // reason 별 카운트 집계
+      let failMsg = '';
+      if (failed.length > 0) {
+        const reasonCounts = failed.reduce((acc, f) => {
+          const r = f?.reason || 'exception';
+          acc[r] = (acc[r] || 0) + 1;
+          return acc;
+        }, {});
+        const parts = Object.entries(reasonCounts).map(
+          ([r, n]) => `${REASON_LABEL[r] || r}: ${n}`,
+        );
+        failMsg = `실패 ${failed.length}개 (${parts.join(', ')})`;
+        console.warn(`${PREFIX} bulkDelete partial failures`, { reasonCounts });
+      }
+      // 서버 단일진실로 리스트 새로고침
+      await reloadItems();
+      // 편집 중인 아이템이 삭제됐으면 폼 초기화
+      if (form.mode === 'edit' && form.editingId && selectedIds.has(form.editingId)) {
+        resetForm();
+      }
+      // 알림
+      if (deletedCount > 0 && failMsg) {
+        window.alert(`${deletedCount}개 삭제됨. ${failMsg}`);
+      } else if (deletedCount > 0) {
+        window.alert(`${deletedCount}개 삭제됨`);
+      } else if (failMsg) {
+        window.alert(failMsg);
+      }
+      // 사용자 편의 — selectMode 자동 종료
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch (err) {
+      console.error(`${PREFIX} bulk delete failed`, { err, count: ids.length });
+      const msg = extractErrorDetail(
+        err,
+        '일괄 삭제에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      );
+      window.alert(msg);
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -485,7 +638,7 @@ export default function ItemManagePage() {
             }}
           >
             {form.image_preview ? (
-              <img
+              <ZoomableImage
                 src={form.image_preview}
                 alt="아이템 미리보기"
                 className="item-manage__dropzone-preview"
@@ -571,6 +724,59 @@ export default function ItemManagePage() {
           </span>
         </div>
 
+        {/* v20 — 일괄 삭제 액션 바 */}
+        {!loading && !listError && items.length > 0 && (
+          <div className="item-manage__action-bar">
+            {!selectMode ? (
+              <button
+                type="button"
+                className="btn-ghost item-manage__btn-sm"
+                onClick={enterSelectMode}
+              >
+                ☑ 선택
+              </button>
+            ) : (
+              <>
+                <span className="item-manage__select-count">
+                  선택 {selectedIds.size}개
+                </span>
+                <button
+                  type="button"
+                  className="btn-ghost item-manage__btn-sm"
+                  onClick={selectAllVisible}
+                  disabled={bulkBusy || filteredItems.length === 0}
+                >
+                  전체 선택
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost item-manage__btn-sm"
+                  onClick={clearSelected}
+                  disabled={bulkBusy || selectedIds.size === 0}
+                >
+                  전체 해제
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost item-manage__btn-sm item-manage__btn-danger"
+                  onClick={handleBulkDelete}
+                  disabled={selectedIds.size === 0 || bulkBusy}
+                >
+                  {bulkBusy ? '삭제 중…' : `🗑 선택 삭제 (${selectedIds.size})`}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost item-manage__btn-sm"
+                  onClick={exitSelectMode}
+                  disabled={bulkBusy}
+                >
+                  취소
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {loading && (
           <div className="muted" style={{ padding: '16px 0' }}>
             아이템을 불러오는 중…
@@ -602,6 +808,20 @@ export default function ItemManagePage() {
             <table className="item-manage__table">
               <thead>
                 <tr>
+                  {selectMode && (
+                    <th className="item-manage__check-cell">
+                      <input
+                        type="checkbox"
+                        aria-label="현재 결과 전체 선택/해제"
+                        checked={
+                          filteredItems.length > 0 &&
+                          selectedIds.size === filteredItems.length
+                        }
+                        onChange={handleHeaderToggle}
+                        disabled={bulkBusy}
+                      />
+                    </th>
+                  )}
                   <th>이미지</th>
                   <th>이름</th>
                   {isAdmin && <th>소유자</th>}
@@ -616,6 +836,7 @@ export default function ItemManagePage() {
                 {filteredItems.map((it) => {
                   const editingThis =
                     form.mode === 'edit' && form.editingId === it.id;
+                  const isChecked = selectedIds.has(it.id);
                   return (
                     <tr
                       key={it.id}
@@ -623,9 +844,20 @@ export default function ItemManagePage() {
                         editingThis ? 'item-manage__row--editing' : undefined
                       }
                     >
+                      {selectMode && (
+                        <td className="item-manage__check-cell">
+                          <input
+                            type="checkbox"
+                            aria-label={`${it.name} 선택`}
+                            checked={isChecked}
+                            onChange={() => toggleRowSelected(it.id)}
+                            disabled={bulkBusy}
+                          />
+                        </td>
+                      )}
                       <td className="item-manage__cell-image">
                         {it.image_object_name ? (
-                          <img
+                          <ZoomableImage
                             src={api.sheetPreviewUrl(it.image_object_name)}
                             alt={it.name}
                             loading="lazy"

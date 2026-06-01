@@ -1,0 +1,36 @@
+# 기존 유지
+fastapi
+uvicorn
+pyjwt
+bcrypt
+python-multipart
+mutagen
+
+# 신규 추가
+pydantic-settings
+asyncpg
+sqlalchemy[asyncio]
+motor
+redis[hiredis]
+minio
+python-dotenv
+apscheduler
+pymongo
+elasticsearch[async]
+openai
+anthropic
+httpx
+cryptography
+# google-genai is used via REST API (httpx) since system Python 3.8 doesn't support the SDK
+pyloudnorm
+soundfile
+demucs
+librosa>=0.10
+# v43: madmom for true downbeat detection (Python 3.11 compat — install from git main).
+# Build deps (Cython, numpy) must precede madmom; pip auto-resolves but --no-build-isolation may be needed.
+Cython
+imageio-ffmpeg
+madmom @ git+https://github.com/CPJKU/madmom.git@main
+# v60: Phase 2.5 multimodal 첨부 이미지 압축용 (Claude 5MB base64 제한 우회)
+Pillow
+

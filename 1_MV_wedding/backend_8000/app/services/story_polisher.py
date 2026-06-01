@@ -5,6 +5,7 @@ v9 — 사용자 입력 텍스트 다듬기.
 모델: Claude 4.7 Opus 또는 OpenAI 최신 GPT(설정: openai_model_advanced).
 """
 
+from .llm_thinking_config import extract_text_from_anthropic_response as _xtxt
 import logging
 import time
 from collections import Counter
@@ -106,7 +107,8 @@ def _validate_mention_preservation(original: str, polished: str, refs: list[dict
 
 
 def _max_tokens_for_text(text: str) -> int:
-    return min(2048, max(256, len(text) * 4))
+    # v30 — thinking/reasoning ON 시 reasoning 200~400 토큰 소비 → 하한/상한 ×2.
+    return min(4096, max(768, len(text) * 4))
 
 
 async def polish_story_text(
@@ -130,6 +132,10 @@ async def polish_story_text(
     user_message = _build_user_message(text, refs or [], label or "")
     max_tokens = _max_tokens_for_text(text)
 
+    from .llm_thinking_config import (
+        apply_thinking_to_anthropic, apply_reasoning_to_openai,
+    )
+
     started = time.time()
     if model_id.startswith("claude-"):
         client = _get_anthropic_client()
@@ -138,16 +144,16 @@ async def polish_story_text(
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_message}],
             "max_tokens": max_tokens,
+            "temperature": 0.4,
         }
-        # Opus는 temperature 미지정 (lyrics_generator 패턴)
-        if "opus-4-7" not in model_id:
-            kwargs["temperature"] = 0.4
+        # v27 — adaptive thinking + strip unsupported sampling (Opus 4.7+).
+        apply_thinking_to_anthropic(kwargs, model_id)
         logger.info(
-            "[Polisher] anthropic call begin user_id=%s model=%s max_tokens=%d",
-            user_id, model_id, max_tokens,
+            "[Polisher] anthropic call begin user_id=%s model=%s max_tokens=%d thinking=%s",
+            user_id, model_id, max_tokens, bool(kwargs.get("thinking")),
         )
         resp = await client.messages.create(**kwargs)
-        polished = (resp.content[0].text or "").strip()
+        polished = _xtxt(resp)
     else:
         client = _get_openai_client()
         # 모델별 토큰 파라미터 키 결정 — gpt-5 계열은 max_completion_tokens, 그 외는 max_tokens
@@ -161,16 +167,16 @@ async def polish_story_text(
         }
         if model_id.startswith("gpt-5"):
             openai_kwargs["max_completion_tokens"] = max_tokens
-            # gpt-5 계열은 temperature 기본값만 허용할 수 있음 — 미지정.
-            openai_kwargs.pop("temperature", None)
         else:
             openai_kwargs["max_tokens"] = max_tokens
+        # v27 — reasoning_effort + strip unsupported sampling (GPT-5+).
+        apply_reasoning_to_openai(openai_kwargs, model_id)
 
         logger.info(
-            "[Polisher] openai call begin user_id=%s model=%s max_tokens_param=%s value=%d",
+            "[Polisher] openai call begin user_id=%s model=%s max_tokens_param=%s value=%d reasoning=%s",
             user_id, model_id,
             "max_completion_tokens" if model_id.startswith("gpt-5") else "max_tokens",
-            max_tokens,
+            max_tokens, bool(openai_kwargs.get("reasoning_effort")),
         )
         resp = await client.chat.completions.create(**openai_kwargs)
         polished = (resp.choices[0].message.content or "").strip()

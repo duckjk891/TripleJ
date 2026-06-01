@@ -285,6 +285,39 @@
   background-color: #fdecec;
 }
 
+/* v20: bulk select action bar */
+.item-manage__action-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: #faf3e7;
+}
+
+.item-manage__select-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-right: 4px;
+}
+
+.item-manage__check-cell {
+  width: 36px;
+  text-align: center;
+  padding: 6px 8px !important;
+}
+
+.item-manage__check-cell input[type='checkbox'] {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
 /* v18: admin-only badges */
 .item-manage__owner-badge {
   display: inline-block;

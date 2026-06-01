@@ -1,3 +1,4 @@
+import { ZoomableImage } from './ImageLightbox';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -616,7 +617,7 @@ function WeddingPhotoPanelInner({ mvJobId, ownerUserId, isAdmin, currentUserId }
                     />
                     <div className="wedding-photo__sheet-thumb">
                       {sheet?.sheet_object_name ? (
-                        <img
+                        <ZoomableImage
                           src={api.sheetPreviewUrl(sheet.sheet_object_name)}
                           alt={s.label}
                         />
@@ -658,7 +659,7 @@ function WeddingPhotoPanelInner({ mvJobId, ownerUserId, isAdmin, currentUserId }
                     />
                     <div className="wedding-photo__sheet-thumb">
                       {sheet?.sheet_object_name ? (
-                        <img
+                        <ZoomableImage
                           src={api.sheetPreviewUrl(sheet.sheet_object_name)}
                           alt={s.label}
                         />
@@ -726,7 +727,7 @@ function WeddingPhotoPanelInner({ mvJobId, ownerUserId, isAdmin, currentUserId }
                       />
                       <div className="wedding-photo__place-thumb">
                         {p.object_name ? (
-                          <img src={api.sheetPreviewUrl(p.object_name)} alt={p.display_name || ''} />
+                          <ZoomableImage src={api.sheetPreviewUrl(p.object_name)} alt={p.display_name || ''} />
                         ) : (
                           <div className="wedding-photo__sheet-placeholder">미리보기 없음</div>
                         )}
@@ -931,7 +932,7 @@ function WeddingPhotoPanelInner({ mvJobId, ownerUserId, isAdmin, currentUserId }
                 )}
                 <div className="wedding-photo__photo-thumb">
                   {ph.object_name ? (
-                    <img
+                    <ZoomableImage
                       src={api.sheetPreviewUrl(ph.object_name)}
                       alt="웨딩사진"
                       loading="lazy"

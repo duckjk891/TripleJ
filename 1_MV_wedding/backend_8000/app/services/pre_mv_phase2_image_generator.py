@@ -51,8 +51,17 @@ ALLOWED_IMAGE_MODELS = ("gpt_image_2", "nb_pro")
 STYLE_LABEL = {"casual": "평상복", "wedding": "웨딩 촬영복"}
 
 # Step B 호출에 동시 첨부할 ref 이미지 최대 개수 (gpt_image_2 / nb_pro 양쪽 공통).
-# 신랑·신부 시트 2장 + 장소 1장 + 보조 wedding_photo 1장 = 최대 4장.
+# v24 챕터 체인: 신랑·신부 시트 2장 + 이전 씬 1장 + 장소 1장 = 최대 4장. wedding_photo 는
+# 양보(4장 한도 안에 들어갈 때만).
 _MAX_REFS = 4
+
+
+# v24 — 이전 씬 이미지 가이드 (chapter 내 연쇄 carry).
+PREV_SCENE_BLOCK_PRESENT = (
+    "If a previous-scene reference image is provided, treat it as the same "
+    "world/lighting/props/camera-style context. Maintain the EXACT same coffee cup, "
+    "chair, umbrella, etc. across scenes."
+)
 
 
 SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 photorealistic 한 장면 사진으로 그리기 위한
@@ -63,6 +72,7 @@ SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 p
 - 씬 한국어 보조 설명: {scene_prompt_ko}
 - 신랑 캐릭터 시트 (이미지 참조): {groom_block}
 - 신부 캐릭터 시트 (이미지 참조): {bride_block}
+- 이전 씬 (이미지 참조, 챕터 내 연쇄): {prev_scene_block}
 - 장소 (이미지 참조): {place_block}
 - 보조 참조 (이미지 참조): {extra_block}
 
@@ -75,6 +85,7 @@ SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 p
 ⑤ 출력은 이미지 모델용 prompt 영문 1단락. 따옴표/머리말/번호매김/해설 없음.
 ⑥ image_prompt 가 짧거나 비어 있어도 자연스럽고 따뜻한 컷으로 보강.
 ⑦ 음란/노출/위험 표현 금지. "glamorous" 같은 자극적 단어는 사용하지 않는다.
+⑧ {prev_scene_guidance}
 """
 
 
@@ -231,6 +242,7 @@ async def generate_scene_image(
     image_model: str,
     scene: dict,
     owner_user_id: str,
+    prev_scene_image_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Generate one scene PNG.
 
@@ -244,6 +256,11 @@ async def generate_scene_image(
         - ref_place_ids (list[str])  — wedding_assets _id (place|wedding_photo)
         - story_slot (str, 옵션)     — wedding_prep fallback 판단용
       owner_user_id: 자산 owner. 자산 owner 가 다른 사용자면 제외.
+      prev_scene_image_bytes:
+        v24 — 챕터 안 직렬 carry. 같은 챕터의 이전 씬 image_object_name 을
+        MinIO 에서 fetch 한 PNG bytes. 첫 씬이거나 carry 불가 fallback 일 때는 None.
+        존재 시 ref 우선순위 — 신랑 시트, 신부 시트, prev_scene, place, (양보) wedding_photo
+        순으로 4 슬롯 안에 배치된다.
 
     Returns:
       PNG bytes.
@@ -263,15 +280,16 @@ async def generate_scene_image(
     ref_place_ids: list[str] = list(scene.get("ref_place_ids") or [])
     story_slot = scene.get("story_slot") or ""
 
+    has_prev_scene = bool(prev_scene_image_bytes)
     logger.info(
         "[PreMVSceneImage] phase=phase2 entry pre_mv_job_id=%s scene_number=%d "
         "image_model=%s prompt_len=%d prompt_ko_len=%d "
-        "ref_sheet_ids=%s ref_place_ids=%s story_slot=%s",
+        "ref_sheet_ids=%s ref_place_ids=%s story_slot=%s prev_scene=%s",
         pre_mv_job_id, scene_number, image_model,
         len(image_prompt), len(image_prompt_ko),
         ",".join(ref_sheet_ids) or "(none)",
         ",".join(ref_place_ids) or "(none)",
-        story_slot,
+        story_slot, has_prev_scene,
     )
 
     # ── ref 로드 ─────────────────────────────────────────────────────────────
@@ -344,14 +362,21 @@ async def generate_scene_image(
                     pre_mv_job_id, scene_number, str(fb_oid),
                 )
 
-    # place 슬롯과 extra 슬롯 분배 — 첫 ref 를 place, 두 번째를 extra.
+    # place 슬롯과 extra(wedding_photo) 슬롯 분배 — 첫 ref 를 place, 두 번째를 extra.
     if resolved_assets:
         place_bytes, place_mime, place_display, place_memo, _ = resolved_assets[0]
     if len(resolved_assets) >= 2:
         extra_bytes, extra_mime, extra_display, extra_memo, _ = resolved_assets[1]
 
+    # v24 — ref 우선순위 재배치 (c안):
+    #   1) 캐릭터 시트 groom
+    #   2) 캐릭터 시트 bride
+    #   3) prev_scene_image_bytes (있을 때만)
+    #   4) place
+    #   5) wedding_photo (extra) — 4 슬롯 한도 안에 들어가면 첨부, 아니면 양보.
     refs_count = sum(
-        1 for x in (groom_bytes, bride_bytes, place_bytes, extra_bytes) if x
+        1 for x in (groom_bytes, bride_bytes, prev_scene_image_bytes, place_bytes, extra_bytes)
+        if x
     )
     if refs_count == 0:
         raise ValueError(
@@ -359,6 +384,31 @@ async def generate_scene_image(
                 ref_sheet_ids, ref_place_ids,
             )
         )
+
+    # 최종 슬롯 채움 — 우선순위 1~4 까지는 무조건 채우고, 5는 한도 남으면 채움.
+    prioritized_slots: list[tuple[bytes, str, str]] = []  # (bytes, mime, slot_label)
+    if groom_bytes:
+        prioritized_slots.append((groom_bytes, groom_mime or "image/png", "groom_sheet"))
+    if bride_bytes:
+        prioritized_slots.append((bride_bytes, bride_mime or "image/png", "bride_sheet"))
+    if prev_scene_image_bytes:
+        prioritized_slots.append((prev_scene_image_bytes, "image/png", "prev_scene"))
+    if place_bytes:
+        prioritized_slots.append((place_bytes, place_mime or "image/png", "place"))
+    if extra_bytes and len(prioritized_slots) < _MAX_REFS:
+        prioritized_slots.append((extra_bytes, extra_mime or "image/png", "wedding_photo"))
+    # 한도 초과 시 우선순위 낮은 슬롯부터 잘라낸다.
+    prioritized_slots = prioritized_slots[:_MAX_REFS]
+    image_prev_scene_ref_used = any(
+        slot == "prev_scene" for _, _, slot in prioritized_slots
+    )
+    logger.info(
+        "[PreMVSceneImage] phase=phase2 ref_priority pre_mv_job_id=%s scene_number=%d "
+        "slots=%s prev_scene_used=%s",
+        pre_mv_job_id, scene_number,
+        ",".join(s for _, _, s in prioritized_slots) or "(none)",
+        image_prev_scene_ref_used,
+    )
 
     # ── Step A — Gemini text 합성 ─────────────────────────────────────────────
     def _block(display: str, style_label: str = "", memo: str = "") -> str:
@@ -385,28 +435,33 @@ async def generate_scene_image(
     extra_block = _block(
         extra_display, "", extra_memo,
     ) if extra_bytes else "(없음)"
+    prev_scene_block = (
+        "이전 씬의 PNG 가 참조 이미지로 첨부되어 있습니다. 같은 챕터의 직전 컷이며, "
+        "world/lighting/props/camera-style 의 동일한 컨텍스트로 다뤄야 합니다."
+        if image_prev_scene_ref_used
+        else "(이전 씬 참조 없음 — 챕터의 첫 씬이거나 carry 가 적용되지 않음)"
+    )
+    prev_scene_guidance = (
+        PREV_SCENE_BLOCK_PRESENT
+        if image_prev_scene_ref_used
+        else "이전 씬 참조가 없으므로 본 규칙은 적용하지 않습니다."
+    )
 
     step_a_prompt = SCENE_IMAGE_SYSTEM_PROMPT.format(
         scene_prompt=image_prompt or "(영문 prompt 비어 있음 — 한국어 보조 설명을 따른다)",
         scene_prompt_ko=image_prompt_ko or "(한국어 보조 설명 없음)",
         groom_block=groom_block,
         bride_block=bride_block,
+        prev_scene_block=prev_scene_block,
         place_block=place_block,
         extra_block=extra_block,
+        prev_scene_guidance=prev_scene_guidance,
     )
 
-    # Gemini inlineData parts — 가용한 ref 만 순서대로.
-    image_parts: list[dict] = []
-    if groom_bytes:
-        image_parts.append(_inline_part(groom_bytes, groom_mime or "image/png"))
-    if bride_bytes:
-        image_parts.append(_inline_part(bride_bytes, bride_mime or "image/png"))
-    if place_bytes:
-        image_parts.append(_inline_part(place_bytes, place_mime or "image/png"))
-    if extra_bytes:
-        image_parts.append(_inline_part(extra_bytes, extra_mime or "image/png"))
-    if len(image_parts) > _MAX_REFS:
-        image_parts = image_parts[:_MAX_REFS]
+    # Gemini inlineData parts — 우선순위 슬롯 순으로 (최대 _MAX_REFS).
+    image_parts: list[dict] = [
+        _inline_part(b, mime) for b, mime, _ in prioritized_slots
+    ]
 
     logger.info(
         "[PreMVSceneImage] phase=phase2 step_a calling gemini text pre_mv_job_id=%s "
@@ -431,11 +486,8 @@ async def generate_scene_image(
     # ── Step B — 이미지 모델 호출 ────────────────────────────────────────────
     if image_model == "gpt_image_2":
         # openai_image.generate_image 는 raw bytes list 를 받는다.
-        ref_bytes_list: list[bytes] = []
-        for b in (groom_bytes, bride_bytes, place_bytes, extra_bytes):
-            if b:
-                ref_bytes_list.append(b)
-        ref_bytes_list = ref_bytes_list[:_MAX_REFS]
+        # v24 — Gemini Step A 와 동일한 우선순위 슬롯 순서 사용.
+        ref_bytes_list: list[bytes] = [b for b, _, _ in prioritized_slots]
         logger.info(
             "[PreMVSceneImage] phase=phase2 step_b calling openai_image "
             "pre_mv_job_id=%s scene_number=%d ref_count=%d",
@@ -444,7 +496,7 @@ async def generate_scene_image(
         image_bytes = await openai_generate_image(
             prompt=step_a_text,
             ref_images=ref_bytes_list,
-            size="1024x1024",
+            size="2048x1152",  # v29 — 16:9 통일 (씬 이미지)
             quality="high",
         )
     elif image_model == "nb_pro":
@@ -456,6 +508,7 @@ async def generate_scene_image(
         image_bytes = await _call_gemini_image(
             step_a_text, image_parts,
             role=None, style=None, user_id=owner_user_id,
+            aspect_ratio="16:9",  # v29 — 16:9 통일 (씬 이미지)
         )
     else:
         # ALLOWED_IMAGE_MODELS 게이팅으로 도달 불가.
@@ -464,8 +517,8 @@ async def generate_scene_image(
     elapsed_ms = int((time.time() - started) * 1000)
     logger.info(
         "[PreMVSceneImage] phase=phase2 ok pre_mv_job_id=%s scene_number=%d "
-        "image_model=%s refs_count=%d elapsed_ms=%d bytes=%d",
+        "image_model=%s refs_count=%d prev_scene_used=%s elapsed_ms=%d bytes=%d",
         pre_mv_job_id, scene_number, image_model, refs_count,
-        elapsed_ms, len(image_bytes or b""),
+        image_prev_scene_ref_used, elapsed_ms, len(image_bytes or b""),
     )
     return image_bytes

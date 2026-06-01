@@ -139,33 +139,54 @@ async def _start_veo(
     scene_number: int,
     prompt: str,
     image_bytes: Optional[bytes],
+    end_frame_bytes: Optional[bytes] = None,
 ) -> str:
-    """predictLongRunning 호출 → operation name 반환."""
+    """predictLongRunning 호출 → operation name 반환.
+
+    v24 — end_frame_bytes 가 있으면 instances[0].lastFrame.inlineData 에 base64 PNG 첨부.
+    """
     image_b64 = base64.b64encode(image_bytes).decode("utf-8") if image_bytes else None
+    last_b64 = (
+        base64.b64encode(end_frame_bytes).decode("utf-8") if end_frame_bytes else None
+    )
     if image_b64:
-        payload = {
-            "instances": [
+        instance: dict = {
+            "prompt": prompt,
+            "referenceImages": [
                 {
-                    "prompt": prompt,
-                    "referenceImages": [
-                        {
-                            "image": {
-                                "bytesBase64Encoded": image_b64,
-                                "mimeType": "image/png",
-                            },
-                            "referenceType": "asset",
-                        }
-                    ],
+                    "image": {
+                        "bytesBase64Encoded": image_b64,
+                        "mimeType": "image/png",
+                    },
+                    "referenceType": "asset",
                 }
             ],
+        }
+        if last_b64:
+            instance["lastFrame"] = {
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": last_b64,
+                }
+            }
+        payload = {
+            "instances": [instance],
             "parameters": {
                 "aspectRatio": _VEO_ASPECT,
                 "durationSeconds": _VEO_DURATION,
             },
         }
     else:
+        instance = {"prompt": prompt}
+        if last_b64:
+            instance["lastFrame"] = {
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": last_b64,
+                }
+            }
         payload = {
-            "instances": [{"prompt": prompt}],
+            "instances": [instance],
             "parameters": {
                 "aspectRatio": _VEO_ASPECT,
                 "durationSeconds": _VEO_DURATION,
@@ -174,8 +195,8 @@ async def _start_veo(
 
     logger.info(
         "[PreMVVeo] phase=phase3 start request pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d image_attached=%s",
-        pre_mv_job_id, scene_number, len(prompt or ""), bool(image_b64),
+        "prompt_len=%d image_attached=%s last_frame_attached=%s",
+        pre_mv_job_id, scene_number, len(prompt or ""), bool(image_b64), bool(last_b64),
     )
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -311,6 +332,7 @@ async def generate_scene_video_veo(
     scene_number: int,
     scene: dict,
     image_bytes: Optional[bytes],
+    end_frame_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Phase 3 단일 씬 영상 (Veo) — mp4 bytes 반환.
 
@@ -318,6 +340,9 @@ async def generate_scene_video_veo(
       pre_mv_job_id, scene_number: tracing.
       scene:        pre_mv_jobs.scenes[N-1]. image_prompt/description/video_prompt/use_seconds 사용.
       image_bytes:  씬 PNG (MinIO 에서 미리 fetch). None 이어도 동작은 하지만 권장X.
+      end_frame_bytes:
+        v24 — chapter 안 FFLF 연쇄. next_scene 의 Phase 2 PNG 를
+        instances[0].lastFrame.inlineData 로 첨부. 챕터 마지막 씬은 None (free end).
 
     Returns:
       mp4 bytes (use_seconds 길이로 trim 완료).
@@ -331,18 +356,20 @@ async def generate_scene_video_veo(
 
     started = time.time()
     target_sec = float(scene.get("use_seconds") or _VEO_DURATION)
+    has_last_frame = bool(end_frame_bytes)
 
     final_prompt = compose_video_prompt(
         video_model="veo",
         scene=scene,
         duration=min(float(_VEO_DURATION), max(2.0, target_sec)),
+        has_last_frame=has_last_frame,
     )
 
     logger.info(
         "[PreMVVeo] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d use_seconds=%.2f image_bytes=%d",
+        "prompt_len=%d use_seconds=%.2f image_bytes=%d last_frame_bytes=%d",
         pre_mv_job_id, scene_number, len(final_prompt), target_sec,
-        len(image_bytes or b""),
+        len(image_bytes or b""), len(end_frame_bytes or b""),
     )
 
     op_name = await _start_veo(
@@ -350,6 +377,7 @@ async def generate_scene_video_veo(
         scene_number=scene_number,
         prompt=final_prompt,
         image_bytes=image_bytes,
+        end_frame_bytes=end_frame_bytes,
     )
     video_uri = await _poll_until_done(
         pre_mv_job_id=pre_mv_job_id,

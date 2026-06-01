@@ -33,7 +33,7 @@ import httpx
 import jwt
 
 from ..config import settings
-from .pre_mv_video_prompts import compose_video_prompt
+from .pre_mv_video_prompts import compose_video_prompt, sanitize_video_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,11 @@ async def _start_kling(
     scene_image_bytes: Optional[bytes],
     char_ref_bytes_list: list[bytes],
     kling_duration: int,
+    end_frame_bytes: Optional[bytes] = None,
 ) -> str:
+    """v24 — top-level image_tail (data URI base64) 시도 → 4xx with "image_tail"
+    이면 fallback `image_list[].type="last_frame"` 으로 재시도.
+    """
     image_list: list[dict] = []
 
     # 1) 씬 이미지 → first_frame (auto-applied)
@@ -155,7 +159,7 @@ async def _start_kling(
         b64 = base64.b64encode(ref).decode("utf-8")
         image_list.append({"image_url": b64})
 
-    body = {
+    body: dict = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
         "mode": "pro",
@@ -164,7 +168,13 @@ async def _start_kling(
         "sound": "off",
     }
     if image_list:
-        body["image_list"] = image_list
+        body["image_list"] = list(image_list)
+
+    # v24 — top-level image_tail (data URI). dry-run 4xx 시 fallback.
+    tail_b64: Optional[str] = None
+    if end_frame_bytes:
+        tail_b64 = base64.b64encode(end_frame_bytes).decode("utf-8")
+        body["image_tail"] = "data:image/png;base64,{}".format(tail_b64)
 
     headers = _auth_header()
     headers["Content-Type"] = "application/json"
@@ -172,13 +182,43 @@ async def _start_kling(
 
     logger.info(
         "[PreMVKling] phase=phase3 start request pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d duration=%d images=%d jwt_len=%d",
+        "prompt_len=%d duration=%d images=%d jwt_len=%d image_tail_attached=%s",
         pre_mv_job_id, scene_number, len(prompt or ""), kling_duration,
-        len(image_list), token_len,
+        len(image_list), token_len, bool(tail_b64),
     )
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(KLING_OMNI_VIDEO_URL, headers=headers, json=body)
+
+    # v24 — image_tail 키가 거부되면(4xx + 응답에 "image_tail" 언급) fallback:
+    # image_list 에 type="last_frame" 으로 추가하고 재시도.
+    if (
+        tail_b64 is not None
+        and 400 <= resp.status_code < 500
+        and "image_tail" in (resp.text or "")
+    ):
+        logger.warning(
+            "[PreMVKling] phase=phase3 image_tail key path REJECTED — falling back to "
+            "image_list[type=last_frame] pre_mv_job_id=%s scene_number=%d status=%d",
+            pre_mv_job_id, scene_number, resp.status_code,
+        )
+        body.pop("image_tail", None)
+        fallback_list = list(image_list)
+        fallback_list.append({"image_url": tail_b64, "type": "last_frame"})
+        body["image_list"] = fallback_list
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(KLING_OMNI_VIDEO_URL, headers=headers, json=body)
+        logger.info(
+            "[PreMVKling] phase=phase3 image_tail fallback path used pre_mv_job_id=%s "
+            "scene_number=%d status=%d images=%d",
+            pre_mv_job_id, scene_number, resp.status_code, len(fallback_list),
+        )
+    elif tail_b64 is not None and resp.status_code == 200:
+        logger.info(
+            "[PreMVKling] phase=phase3 image_tail key path used pre_mv_job_id=%s "
+            "scene_number=%d",
+            pre_mv_job_id, scene_number,
+        )
 
     if resp.status_code == 429:
         raise ValueError("Kling API 429: 할당량 초과")
@@ -298,6 +338,7 @@ async def generate_scene_video_kling(
     scene: dict,
     image_bytes: Optional[bytes],
     char_ref_bytes_list: Optional[list[bytes]] = None,
+    end_frame_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Phase 3 단일 씬 영상 (Kling) — mp4 bytes 반환.
 
@@ -306,6 +347,10 @@ async def generate_scene_video_kling(
       scene:        pre_mv_jobs.scenes[N-1].
       image_bytes:  씬 PNG bytes (first_frame).
       char_ref_bytes_list: 캐릭터 시트 1~2장. None 또는 빈 리스트 가능.
+      end_frame_bytes:
+        v24 — chapter FFLF 연쇄. 다음 씬의 Phase 2 PNG. body 의 top-level
+        `image_tail` (base64 data URI) 로 전달. dry-run 실패 시 fallback 으로
+        `image_list[].type="last_frame"` 으로 자동 전환.
     """
     if not settings.kling_access_key or not settings.kling_secret_key:
         raise ValueError("Kling API 키가 설정되지 않았습니다.")
@@ -313,19 +358,25 @@ async def generate_scene_video_kling(
     started = time.time()
     target_sec = float(scene.get("use_seconds") or 5.0)
     kling_duration = max(_KLING_MIN, min(_KLING_MAX, int(round(target_sec))))
+    has_last_frame = bool(end_frame_bytes)
 
-    final_prompt = compose_video_prompt(
+    raw_prompt = compose_video_prompt(
         video_model="kling",
         scene=scene,
         duration=float(kling_duration),
+        has_last_frame=has_last_frame,
     )
+    # v25 — Layer 2 안전망: 출력 모더레이션 트리거 표현 사전 치환.
+    final_prompt = sanitize_video_prompt(raw_prompt)
 
     refs = list(char_ref_bytes_list or [])
     logger.info(
         "[PreMVKling] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d use_seconds=%.2f kling_dur=%d image_bytes=%d char_refs=%d",
-        pre_mv_job_id, scene_number, len(final_prompt), target_sec,
-        kling_duration, len(image_bytes or b""), len(refs),
+        "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f kling_dur=%d "
+        "image_bytes=%d char_refs=%d last_frame_bytes=%d",
+        pre_mv_job_id, scene_number, len(raw_prompt), len(final_prompt),
+        target_sec, kling_duration, len(image_bytes or b""), len(refs),
+        len(end_frame_bytes or b""),
     )
 
     task_id = await _start_kling(
@@ -335,6 +386,7 @@ async def generate_scene_video_kling(
         scene_image_bytes=image_bytes,
         char_ref_bytes_list=refs,
         kling_duration=kling_duration,
+        end_frame_bytes=end_frame_bytes,
     )
     video_url = await _poll_until_done(
         pre_mv_job_id=pre_mv_job_id,

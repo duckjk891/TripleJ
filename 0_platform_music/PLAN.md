@@ -21229,3 +21229,295 @@ MV 작업 화면에 두 개의 일괄 재생성 버튼 추가.
   - 케이스 3 (회귀): 단일 [재생성] 버튼 정상 작동.
   - 케이스 4 (병렬 금지 검증): backend 로그에서 동일 시각에 두 씬 동시 호출 흔적 없음 — 한 씬 완료 후 다음 씬 시작.
   - 케이스 5 (UI): failed 씬 0개일 때 일괄 버튼 노출 X. ACTIVE status (generating_images/generating_videos/...) 일 때 disable.
+
+
+## v74 — Suno 두 클립 모두 노출 + 가사 타임스탬프 토글 (2026-05-29)
+
+### 요청 작업
+Suno API 음악 생성 결과는 한 요청당 2개의 variant 클립을 돌려준다. 현재는 첫 클립만 사용자에게 노출하고, 가사 타임스탬프(suno_timestamp_service)는 mv_pipeline 내부에서만 호출돼 generation 도큐먼트에 저장되지 않는다. 이번 v 에서는 (1) 백엔드가 두 variant 의 audio_url + 가사 타임스탬프를 함께 보존하고 응답 스키마로 노출하며, (2) 프론트엔드 작업실2 의 "생성 기록" 카드 안에 variant 2개를 나란히 보여주고 각 variant 에 [클릭으로 펼치는 가사 타임스탬프 토글] + [업로드하기] 를 추가하고, (3) 업로드 디테일 영역에서도 선택된 variant 에 동일한 가사 타임스탬프 토글을 노출한다.
+
+### Plan verification findings
+- (a) `backend_9005/app/services/suno_generator.py:201-235` — Suno polling 루프. `status == "SUCCESS"` 분기에서 `suno_songs = status_data["data"]["response"]["sunoData"]` 후 **`suno_data = suno_songs[0]`** 로 첫 클립만 잡고 break. `suno_data.get("id", "")` 가 곧 `suno_audio_id` (Suno timestamp API 의 audioId).
+- (a) `backend_9005/app/services/suno_generator.py:257-278` — 2번째 클립 다운로드/MinIO 업로드는 이미 구현됨 (`output_files = [object_name]` 에 `second_object` append). 단 2번째 클립의 `id` (audioId) 가 어디에도 저장 안 됨 — `all_suno_songs[1].get("id")` 가 누락.
+- (a) `backend_9005/app/services/suno_generator.py:281-307` — `_update_progress(..., extra)` 로 도큐먼트에 박는 필드: `result_audio_url`(첫 클립), `output_files`(둘 다), `suno_task_id`, `suno_audio_id`(첫 클립). **variant 별 audioId + variant 별 timestamps 보존 X**. 함수 반환도 첫 클립 url + output_files 만.
+- (a) `backend_9005/app/services/suno_generator.py:297-305` — 함수 종료 직전에 `detect_beats_for_generation_with_db(generation_id, mongo_db)` 호출 — 첫 클립 한정 비트 추출. 두 번째 클립은 비트 추출 안 함 (현재 기능 범위 유지, v74 에서도 첫 클립만 비트 추출 유지).
+- (b) `backend_9005/app/services/suno_timestamp_service.py:16-63` — `get_suno_timestamps(task_id, audio_id) -> list[{text, start, end}]`. 실패 시 빈 리스트 반환 (throw 안 함). v74 에서는 두 variant 각각 `task_id` + `audioId` 로 호출 (parallel `asyncio.gather`).
+- (b) 현재 `get_suno_timestamps` 호출처는 `backend_9005/app/services/mv_pipeline.py:1334-1337` 한 곳만 — MV pipeline 내부에서 generation 도큐의 `suno_task_id`/`suno_audio_id` 를 다시 읽어 첫 클립 한정으로 호출. 본 v74 에서 timestamps 를 generation 도큐에 미리 저장하면 mv_pipeline 의 재호출이 redundant 가 되지만 **mv_pipeline 변경은 본 v74 범위 밖** — generation 도큐에 캐시되는 만큼만 추가하고 mv_pipeline 은 그대로 둔다 (회귀 0).
+- (c) `backend_9005/app/routes/generate.py:80-88` `_serialize(doc)` — `_id → id` 변환 + ISO 변환만. variants 같은 새 필드는 별도 가공 없이 그대로 노출됨 (Mongo doc 의 nested list/dict 도 그대로 직렬화).
+- (c) `backend_9005/app/routes/generate.py:459-488` `GET /api/generate/` (목록) — `_serialize` 통해 `generations[]` 반환. variants 필드도 자동 포함.
+- (c) `backend_9005/app/routes/generate.py:491-506` `GET /api/generate/{id}` (단건) — 동일.
+- (c) `backend_9005/app/routes/generate.py:601-643` `GET /api/generate/{id}/stream/` — `doc["result_audio_url"]` 만 MinIO 에서 read 해서 stream. **variant_index 쿼리 파라미터 없음**. 두 번째 클립을 재생하려면 이 라우트를 확장 필요.
+- (d) `backend_9005/app/routes/tracks.py:626-641` `UploadFromGenerationBody` — `use_voice_converted` 만 있고 variant 선택 필드 없음. L668-674 분기에서 `gen_doc["result_audio_url"]` (첫 클립) 만 source 로 사용. 두 번째 variant 를 업로드하려면 `variant_index` 필드 추가 + `output_files[variant_index]` 선택 분기 필요.
+- (d) `backend_9005/app/routes/tracks.py:752-780` — 트랙 도큐먼트에 `generation_id` 박지만 `variant_index` 는 없음. 새 필드 추가.
+- (e) `frontend/src/api/index.js:376-405` — `getGenerations`, `getGeneration`, `streamGeneration`, `uploadFromGeneration`, `generationStreamUrl(genId)` 모두 variant 개념 없음. `generationStreamUrl(genId, variantIndex)` 시그니처 확장 + `streamGeneration` 라우트도 `?variant=` 쿼리 추가. `uploadFromGeneration` body 에 `variant_index` 키 추가.
+- (f) `frontend/src/components/StudioTab2.jsx:3011-3091` — 생성기록 카드. `gen.status === 'completed'` 일 때 단일 [재생]/[다운로드]/[업로드하기]/[내 목소리로 변환] 버튼 노출. 가사 타임스탬프 UI 없음. variant 1 개 가정.
+- (f) `frontend/src/components/StudioTab2.jsx:1594-1625` — `getStreamUrl(genId)`, `handlePlayGeneration(genId)`, `handleDownloadGeneration(genId)` 모두 변경 필요 — `(genId, variantIndex)` 시그니처. `genAudioRef`, `playingId` state 도 `{genId, variantIndex}` 쌍으로 식별 변경.
+- (f) `frontend/src/components/StudioTab2.jsx:3068-3079` — [업로드하기] 버튼 onClick 에서 `onSendToUpload({generationId, title, ...})` 호출. `variantIndex` 도 같이 넘겨야 UploadPage 가 해당 variant 를 디테일에 띄울 수 있음.
+- (g) `frontend/src/pages/UploadPage.jsx:77` `UploadPage({ generationPrefill, ... })` — `generationPrefill.generationId` 만 받고 `variantIndex` 미수신. L209-216 effect 에서 `setFromGeneration(generationPrefill.generationId)` 만 설정. variantIndex state 추가 필요.
+- (g) `frontend/src/pages/UploadPage.jsx:1606-1615` — 디테일 영역의 `<audio>` 플레이어가 `api.generationStreamUrl(fromGeneration)` 호출 — variantIndex 적용 필요.
+- (g) `frontend/src/pages/UploadPage.jsx:1648-1659` `<BeatTrackView>` — `fromGeneration` 만 받음. 본 v74 범위에선 BeatTrackView 변경 안 함 — 첫 클립 한정 비트 추출 정책 유지. variant_index !== 0 일 때 BeatTrackView 숨김.
+- (g) `frontend/src/pages/UploadPage.jsx:1407-1411` `handleSubmit` 의 `uploadFromGeneration({generation_id, ...})` 호출에 `variant_index` 추가.
+- (h) `frontend/src/pages/MyMusicPage.jsx:676-679` `handleSendToUpload(genData)` — 그대로 setState 후 탭 전환. 시그니처 변경 X (genData 안에 variantIndex 들어가면 됨).
+- (i) `frontend/src/utils/remoteLogger.js:166-217` — `console.error/warn` 자동 후킹 + DEV 일 때 `console.info` 도 후킹. 새 코드는 `console.info('[LyricsTimestamp] ...')` 처럼 prefix 만 붙이면 됨. prod 에러는 `console.error` 자동 송신.
+- (j) Suno API 동작 — `status_data["data"]["response"]["sunoData"]` 는 일반적으로 길이 2이지만 1 일 수도 있음 (보수적으로 처리). variants 가 1개면 UI 도 1개만 노출. fallback 보장.
+
+### 결정 사항
+- **백엔드 (variant 보존)**: `suno_generator.py` 의 SUCCESS 분기 + 종료 시 update 블록에서 `all_suno_songs` 전체를 순회하면서 각 variant 의 (audio_url, audio_id) 를 모은 뒤, **`asyncio.gather` 로 두 variant 의 `get_suno_timestamps` 를 병렬 호출** 해서 각자의 timestamps 를 채운다. 도큐먼트 신규 필드:
+  - `variants: list[{index:int, audio_url:str, suno_audio_id:str, timestamps:list[{text,start,end}]}]`
+  - `result_audio_url`, `suno_audio_id`, `output_files` 는 **하위호환** 유지 — 첫 variant 값을 그대로 박음.
+  - 두 번째 variant 다운로드 실패 시 그 variant 는 `variants` 에서 제외 (현재 코드 동작과 동일).
+  - 로그 추가 `[SunoVariants] gen_id=... count=... saved=... timestamps_lens=[..,..]`.
+- **백엔드 (응답 스키마)**: `_serialize` 는 변경 없이도 nested list 가 직렬화됨. 명시적 검증을 위해 `_serialize` 에 `variants` 키가 있으면 `[{index, audio_url, suno_audio_id, timestamps}]` 그대로 통과시키는 주석만 추가.
+- **백엔드 (stream)**: `GET /api/generate/{id}/stream/?variant={i}` 추가. `variant` 미지정/`0` 이면 `result_audio_url`, `>=1` 이면 `variants[i].audio_url` (또는 `output_files[i]` fallback) 사용. 범위 초과면 400.
+- **백엔드 (upload-from-generation)**: `UploadFromGenerationBody` 에 `variant_index: Optional[int] = 0` 추가. `variant_index > 0` 이고 `use_voice_converted` 이면 400 (voice convert 는 첫 variant 한정). source_object_name 선택 분기에 `variants[variant_index].audio_url` 우선 사용. 트랙 도큐먼트에 `variant_index` 박음. 로그 `[UploadVariant] gen=... variant=...`.
+- **프론트 (api/index.js)**: `generationStreamUrl(genId, variantIndex=0)`, `uploadFromGeneration(data)` (body 에 variant_index 들어감) 시그니처 확장. 추가 함수 없음.
+- **프론트 (StudioTab2)**:
+  - 한 generation 카드 안에 `gen.variants?.length || 1` 만큼 variant 컬럼을 나란히 렌더. variants 가 없거나 1개면 기존 모양 유지 (하위호환).
+  - 각 variant 마다: 오디오 플레이어 (`<audio controls>` 또는 기존 [재생] 버튼) + [다운로드] + [업로드하기] (`onSendToUpload({generationId, variantIndex, ...})`) + 가사 타임스탬프 토글.
+  - playingId state 는 `${genId}__${variantIndex}` 문자열 키로 식별.
+- **프론트 (UploadPage)**:
+  - `generationPrefill.variantIndex` 수신 → `variantIndex` state (default 0) 설정.
+  - L1606-1615 의 `<audio>` src 에 `api.generationStreamUrl(fromGeneration, variantIndex)` 적용.
+  - 디테일 영역에 (UploadPage 안에서도) 가사 타임스탬프 토글 — `generations` API 로 도큐 fetch 해서 `variants[variantIndex].timestamps` 사용. (`getGeneration(fromGeneration)` 한 번 호출). 결과를 컴포넌트 로컬 캐시.
+  - BeatTrackView 는 `variantIndex === 0` 일 때만 노출.
+  - L1407-1411 `uploadFromGeneration({...})` body 에 `variant_index: variantIndex` 추가.
+- **공통 가사 타임스탬프 컴포넌트**: `frontend/src/components/LyricsTimestampToggle.jsx` 신설 — props `{ segments:[{text,start,end}], variantIndex, generationId, audioRef?:RefObject }`. 디폴트 접힘. 버튼 클릭/Enter/Space 로 펼침. ARIA `aria-expanded`, `aria-controls`, role="button", tabIndex=0. 펼침 시 줄 단위 `mm:ss.s | 가사 텍스트` 리스트. 비어있으면 "가사 타임스탬프 없음" 안내. 함께 사용하는 CSS 는 동일 디렉토리 `LyricsTimestampToggle.css`.
+- **로그 추적자**:
+  - 백엔드: `[SunoVariants]`, `[UploadVariant]`, `[GenerationStream]` 필드는 `generation_id`, `variant_index`, `track_id` (해당 시).
+  - 프론트: `[StudioTab2]`, `[UploadPage]`, `[LyricsTimestamp]` prefix. console.info (DEV 에선 remoteLogger 가 후킹), console.warn/error 는 prod 도 남김.
+- **민감 정보**: Suno API key/timestamp service URL token 평문 PLAN/REPORT 금지 — 코드에는 이미 settings.suno_api_key 우회.
+- **회귀 위험**:
+  - `result_audio_url` / `output_files` / `suno_audio_id` 하위호환 유지 → MV pipeline, /generate/{id}/stream 의 variant 미지정 호출, upload-from-generation 의 variant_index 미지정 호출 모두 기존 동작.
+  - timestamps fetch 실패는 빈 리스트 → 토글이 "가사 타임스탬프 없음" 노출, 다른 흐름 영향 X.
+  - voice conversion 흐름은 variant_index !== 0 차단으로 변동 없음.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/services/suno_generator.py` | (1) SUCCESS 분기에서 `all_suno_songs` 전체 순회 → `variants` 배열 구성 (audio_url, suno_audio_id 포함). (2) 두 variant 의 `get_suno_timestamps` 를 `asyncio.gather` 로 병렬 호출. (3) MinIO put 한 variants 만 최종 `variants` 에 포함. (4) `_update_progress` extra 에 `variants` 추가 (기존 result_audio_url/output_files/suno_audio_id 하위호환 유지). (5) `[SunoVariants]` 로그 1줄. | `generation_id`, `variant_count`, `timestamps_lens` |
+| `backend_9005/app/routes/generate.py` | (1) `GET /{gen_id}/stream/` 에 `variant: int = 0` 쿼리 추가 — `variants[variant].audio_url` 또는 `result_audio_url` (variant=0 fallback). 범위 초과 400. (2) `[GenerationStream]` 로그 1줄. | `generation_id`, `variant_index` |
+| `backend_9005/app/routes/tracks.py` | (1) `UploadFromGenerationBody.variant_index: Optional[int] = 0` 추가. (2) `upload_from_generation` 에 분기 — variant_index>0 + use_voice_converted 동시면 400, variant_index>0 이면 `gen_doc["variants"][variant_index]["audio_url"]` source 사용. (3) 트랙 도큐 `variant_index` 박음. (4) `[UploadVariant]` 로그. | `generation_id`, `variant_index`, `track_id` |
+| `frontend/src/api/index.js` | (1) `generationStreamUrl(genId, variantIndex=0)` 시그니처 확장 — variantIndex>0 이면 `?variant=...&token=...`. (2) `uploadFromGeneration(data)` 는 시그니처 그대로 (data 안에 variant_index 키 들어감). (3) 다른 함수 변경 X. | `genId`, `variantIndex` |
+| `frontend/src/components/LyricsTimestampToggle.jsx` (신규) | 접힘 토글 컴포넌트. props `{segments, generationId, variantIndex, audioRef?}`. ARIA 적용. `console.info('[LyricsTimestamp] toggle', {genId, variantIndex, expanded})` 로그. | `generationId`, `variantIndex` |
+| `frontend/src/components/LyricsTimestampToggle.css` (신규) | 접힘/펼침 스타일, scrollable inner list, timestamp 숫자 monospace. | — |
+| `frontend/src/components/StudioTab2.jsx` | (1) `playingId`/`vcPlayingId` state 키를 `${genId}__${variantIndex}` 로 변경. (2) `getStreamUrl(genId, variantIndex)` / `handlePlayGeneration(genId, variantIndex)` / `handleDownloadGeneration(genId, variantIndex)` 시그니처 확장. (3) 카드 안의 [재생/다운로드/업로드하기] 영역을 `variants.map((v, i) => ...)` 로 감싸 2 컬럼 렌더 — variants 없으면 기존 단일 컬럼 fallback. (4) 각 컬럼에 `<LyricsTimestampToggle segments={v.timestamps} ... />` 마운트. (5) [업로드하기] 의 `onSendToUpload` payload 에 `variantIndex` 포함. (6) `console.info('[StudioTab2] play|download|sendToUpload', {genId, variantIndex})` 로그. | `genId`, `variantIndex` |
+| `frontend/src/components/StudioTab2.css` | variant 2 컬럼 그리드 (`.s2__gen-variants`, `.s2__gen-variant`) — 모바일 폭에서 세로 stack. | — |
+| `frontend/src/pages/UploadPage.jsx` | (1) `variantIndex` state (default 0). (2) `generationPrefill.variantIndex` 수신해 `setVariantIndex(...)`. (3) L1606-1615 `<audio src>` 에 `api.generationStreamUrl(fromGeneration, variantIndex)`. (4) `<BeatTrackView>` 는 `variantIndex === 0` 일 때만 렌더. (5) 디테일 영역에 `<LyricsTimestampToggle>` 마운트 — 도큐 `variants[variantIndex].timestamps` 사용 (도큐는 `useEffect` 로 `api.getGeneration(fromGeneration)` 호출해 캐시). (6) L1407-1411 `uploadFromGeneration` body 에 `variant_index: variantIndex` 추가. (7) `console.info('[UploadPage] variant', {genId, variantIndex})` 로그. | `fromGeneration`, `variantIndex` |
+| `backend_9005/app/services/mv_pipeline.py` | 변경 없음 (timestamps 도큐 캐시는 mv_pipeline 의 재호출과 무관 — 회귀 0). | — |
+| `backend_9004/*` / `backend_9003/*` | 변경 없음 (룰: 9005 전용). | — |
+
+### 작업 분배
+- **backend-dev**: 위 매트릭스의 `suno_generator.py`, `routes/generate.py`, `routes/tracks.py` 만 수정. 시그니처/로그 규칙 정확히 준수. Suno API 응답이 `sunoData` 길이 1일 때 fallback 보장 (variants 1개만 저장). `asyncio.gather` 로 timestamps 병렬 호출, 개별 실패는 빈 리스트로 처리 (전체 실패 X). 진입/외부호출 전후/분기/경고 모두 log. 민감 정보 금지.
+- **frontend-dev**: `api/index.js`, 신규 `LyricsTimestampToggle.jsx/.css`, `StudioTab2.jsx/.css`, `UploadPage.jsx` 만 수정. 직접 fetch 금지, 반드시 `api.*` 통해. 토글은 디폴트 접힘 + 클릭/Enter/Space + ARIA + 로그. variants 없을 때 (백엔드 마이그레이션 안 된 옛날 데이터) 기존 1개 컬럼 fallback. "hero" 용어 금지.
+- **tester**: 
+  - 케이스 1 — 신규 generation 생성 → MongoDB `generations` 도큐의 `variants` 배열 길이 2 + 각 variant 의 `timestamps` 비어있지 않음 (Suno API 정상 응답 시).
+  - 케이스 2 — 작업실2 생성기록 카드에 variant 2개 나란히 노출 + 각 토글 디폴트 접힘 + 클릭 시 가사+시간 펼침.
+  - 케이스 3 — variant 2 의 [재생] / [다운로드] / [업로드하기] 정상 동작 — 업로드 후 트랙 도큐의 `variant_index === 1` 확인.
+  - 케이스 4 — UploadPage 디테일 영역 토글 노출 + variantIndex !== 0 일 때 BeatTrackView 숨김.
+  - 케이스 5 (회귀) — 옛 generations (variants 필드 없음) 의 카드도 1 컬럼으로 정상 노출. 옛 stream URL (variant 쿼리 없음) 정상.
+  - 케이스 6 (회귀) — voice conversion 흐름 (variantIndex=0 한정) 정상.
+  - 케이스 7 (로그) — backend `logs/server.log` 의 `[SunoVariants]`/`[UploadVariant]`/`[GenerationStream]` 노출. frontend `logs/frontend.log` 의 `[LyricsTimestamp] toggle` info 1건 (DEV) 또는 console.warn/error 발생 시 노출.
+  - 프론트는 멈춰있으므로 `cd frontend && npm run dev` 로 직접 띄움.
+
+
+## v75 — Claude thinking + GPT reasoning 전면 활성화 (2026-05-31)
+
+### 요청 작업
+AIDO 의 모든 AI 호출에 Claude `thinking` (adaptive) + GPT `reasoning_effort=high` 를 일관 적용한다. Anthropic 호출은 Opus 4.7 / 4.6 / Sonnet 4.6 모두 `thinking={"type":"adaptive"}` + `output_config={"effort":"high"}` 로 통일하고, OpenAI 호출은 디폴트 모델을 reasoning 미지원 `gpt-4o-mini` 에서 **flagship `gpt-5.5`** 로 통일 교체 + `reasoning_effort="high"` 활성화. thinking block 추가로 깨질 응답 텍스트 추출 라인을 안전 패턴으로 일괄 교체. 본 v 의 변경 범위는 `backend_9005` 전용 — 9001~9004 / 프론트엔드 일체 무변경.
+
+### Plan verification findings
+- (a) **Anthropic SDK 시그니처 (v0.105.2 확인)** — `inspect.signature(AsyncAnthropic().messages.create)` 결과 `thinking: ThinkingConfigParam | Omit` + `output_config: OutputConfigParam | Omit` 두 키워드 모두 top-level 지원. `OutputConfigParam = TypedDict{effort: Literal["low","medium","high","xhigh","max"], format: ...}`. `ThinkingConfigParam = Union[Enabled, Disabled, Adaptive]` — `{"type":"adaptive"}` 는 Adaptive 분기. 공식 가이드 `platform.claude.com/docs/.../extended-thinking` — Opus 4.7 은 **manual (`enabled` + `budget_tokens`) 모드 400 에러**, adaptive 만 허용. Opus 4.6 / Sonnet 4.6 도 adaptive 권장 (manual 은 deprecated). 결정: 모든 Claude 호출에 `thinking={"type":"adaptive"}` + `output_config={"effort":"high"}` 일관 적용.
+- (a) **temperature 제약** — 공식 문서는 thinking 일 때 temperature 명시 제약 없음. 단 Opus 4.7 은 이미 코드에서 `if "opus-4-7" not in model: kwargs["temperature"] = ...` 분기로 회피 중 (`mv_generator.py:874/1816/3347/4846`, `lyrics_generator.py:270/285`, `translation.py:92`, `cover_generator.py:119`). thinking adaptive + effort high 면 더 안전하게 **모든 Claude 호출에서 temperature 제거** — 분기 단순화. 그 결과 `_claude_temp_cap` 함수는 호출처 없어지지만 시그니처는 보존 (회귀 0). `top_p`/`top_k` 는 현재 어디서도 안 보냄 → 추가 작업 X.
+- (a) **응답 추출 회귀 위험** — adaptive thinking 응답은 `content == [ThinkingBlock(type="thinking"), TextBlock(type="text")]` 순서. 현재 코드 7개 라인 모두 `resp.content[0].text` 직접 인덱스 접근 → **thinking block 의 `.text` 속성 없음 → AttributeError 즉시 발생**. 깨지는 라인:
+  - `backend_9005/app/services/mv_generator.py:878` (Phase2.5 video prompt)
+  - `backend_9005/app/services/mv_generator.py:1820` (brainstorm Claude)
+  - `backend_9005/app/services/mv_generator.py:3351` (scenario Claude)
+  - `backend_9005/app/services/mv_generator.py:4850-4853` (scene prompts Claude — `messages.stream` 사용, `text_stream` 이라 thinking 텍스트는 제외되어 safe — 하지만 effort 옵션은 `stream(**kwargs)` 에도 동일 적용)
+  - `backend_9005/app/services/lyrics_generator.py:274` (가사)
+  - `backend_9005/app/services/lyrics_generator.py:289` (타이틀)
+  - `backend_9005/app/services/translation.py:99` (번역)
+  - `backend_9005/app/services/cover_generator.py:122` (커버 enhance)
+  → **모두 `_first_text_block(resp)` 헬퍼로 통일 추출** (각 파일 로컬 헬퍼 또는 공용 util). 반환은 첫 `type=="text"` 블록의 `text`, 없으면 빈 문자열.
+- (b) **OpenAI SDK 시그니처 (v2.38.0 확인)** — `inspect.signature(AsyncOpenAI(...).chat.completions.create)` 결과 `reasoning_effort` 정식 파라미터 존재 + `verbosity` 존재. **chat.completions API 가 reasoning_effort 를 그대로 받음** — Responses API 마이그레이션 불필요 (회귀 위험 최소화). 값: `"minimal"|"low"|"medium"|"high"` (사용자 결정 = `"high"`).
+- (b) **GPT-5 모델 ID 결정** — 코드 주석에 `gpt-5.4` 흔적 있음. OpenAI 공식 모델 카탈로그 (`developers.openai.com/api/docs/models`) — 현재 GA: `gpt-5.5` (flagship) / `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.4-nano`. 사용자 결정 = "모든 OpenAI 호출 gpt-5 시리즈 통일" → **flagship `gpt-5.5` 로 일관 통일**. `.env` 의 `OPENAI_MODEL` 디폴트 + `routes/generate.py:241` 의 하드코딩 `"gpt-4o-mini"` + `mv_generator.py:3983/4114` 의 `settings.openai_model` 참조 (env 가 갱신되면 자동 반영) + `routes/mv.py` 의 `prompt_models` 디폴트 (None → settings 자동 사용) 모두 점검.
+- (b) **temperature 제거 여부** — gpt-5 시리즈 reasoning 모델은 `temperature` 받지만 reasoning_effort 와 함께 보내도 호환됨 (OpenAI 공식 가이드는 명시 제약 X). 보수적으로 temperature 그대로 유지 (회귀 위험 최소화). `response_format: json_object` 도 유지.
+- (c) **stream 회귀** — `mv_generator.py:4850` `_generate_scene_prompts_claude` 는 이미 `messages.stream` 사용 (max_tokens 16k~64k 라 SDK 가 강제 streaming). adaptive thinking + effort high 추가 시에도 `messages.stream(**kwargs)` 에 동일 kwargs 전달 가능 — SDK 내부에서 처리. `text_stream` 은 ThinkingBlock 제외하고 text 만 흘러나오므로 추출 회귀 없음.
+- (c) **여러 곳에서 16000 토큰 비-stream 호출** — `mv_generator.py:4113` (`_split_with_music_sections`, OpenAI 16000) 가장 큼. OpenAI 는 stream 없이도 16000 까지 정상 처리됨 (SDK 자체 retry). thinking/reasoning 활성화로 응답 지연 증가 가능 — **본 v75 에서는 stream 전환 미적용, 후속 v76 으로 분리** (PLAN 명시).
+- (d) **로그 prefix** — `[ThinkingOn]` (Anthropic 호출 직전) + `[ReasoningOn]` (OpenAI 호출 직전) 신설. 각 AI 진입점에 한 줄. except 블록은 기존 logger.error/warning 보강.
+- (e) **민감 정보** — `.env` 에 평문 API 키 있음 (이미 git 추적). PLAN/REPORT 본문에는 키 평문 노출 금지. 모델 ID 만 명시.
+
+### 결정 사항
+- **Claude (Anthropic) 일괄 적용**:
+  - 모든 `messages.create` / `messages.stream` 호출에 `thinking={"type":"adaptive"}` + `output_config={"effort":"high"}` 추가.
+  - 모든 호출에서 `temperature` 제거 (Opus 4.7 분기뿐 아니라 모든 Claude 모델). `_claude_temp_cap` 함수는 호출 없는 dead-code 가 되지만 시그니처 유지 (다른 import 회귀 회피).
+  - 응답 추출은 새 헬퍼 `_first_text_block(resp) -> str` 로 통일 — `for b in resp.content: if getattr(b, "type", None) == "text": return b.text or ""` 패턴. 빈 결과 시 `""`.
+- **OpenAI 일괄 적용**:
+  - 모든 `chat.completions.create` 호출에 `reasoning_effort="high"` 추가.
+  - 모델 ID: 디폴트 = **`gpt-5.5`**. `.env` 의 `OPENAI_MODEL=gpt-4o-mini` → `gpt-5.5` 로 갱신. `routes/generate.py:241` 의 하드코딩 `"gpt-4o-mini"` → `settings.openai_model` 또는 `"gpt-5.5"` 로 교체.
+  - temperature / max_tokens / response_format 기존 유지 (회귀 위험 최소화).
+- **로그**:
+  - Anthropic 호출 직전 `logger.info("[ThinkingOn] stage=%s model=%s effort=high", stage, model)` (stage = "video_prompt"|"brainstorm"|"scenario"|"scene_prompts"|"lyrics"|"title"|"translation"|"cover_enhance").
+  - OpenAI 호출 직전 `logger.info("[ReasoningOn] stage=%s model=%s reasoning_effort=high", stage, model)`.
+  - except 블록의 logger.warning/error 는 기존 패턴 유지.
+- **stream 전환**: 본 v75 미적용. `_split_with_music_sections` (OpenAI 16k) / `_generate_scene_prompts_openai` (OpenAI 8~16k) 의 stream 전환은 후속 v76 으로 분리.
+- **변경 범위**:
+  - `backend_9005/.env` (OPENAI_MODEL 만 갱신).
+  - `backend_9005/app/services/mv_generator.py` (Claude 3 곳 + OpenAI 4 곳 + 헬퍼 1개 추가).
+  - `backend_9005/app/services/lyrics_generator.py` (Claude 2 곳 + OpenAI 2 곳).
+  - `backend_9005/app/services/translation.py` (Claude 1 곳).
+  - `backend_9005/app/services/cover_generator.py` (Claude 1 곳).
+  - `backend_9005/app/routes/generate.py` (OpenAI 1 곳 — translate-tags 라우트).
+  - 9004 / 9003 / 9002 / 9001 / 프론트엔드 전부 무변경.
+- **회귀 안전성**:
+  - 응답 추출 헬퍼는 thinking 없는 응답 (구 호환) 에서도 동작 — 첫 `type=="text"` 블록 픽 → 기존과 동일.
+  - temperature 제거는 brainstorm 의 다양성 저하 가능성 있으나 reasoning/thinking 으로 다양성 보상.
+  - OpenAI 모델 교체는 reasoning_effort 호환 모델만 사용 — 4o-mini 가 reasoning_effort 보내면 400 가능성 회피.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/.env` | `OPENAI_MODEL=gpt-4o-mini` → `OPENAI_MODEL=gpt-5.5`. | `OPENAI_MODEL` |
+| `backend_9005/app/services/mv_generator.py` | (1) 모듈 상단 헬퍼 `_first_text_block(resp) -> str` 신설. (2) `claude_kwargs` (L868), `kwargs` (L1810), `scenario_kwargs` (L3341), `scene_kwargs` (L4840) 4 곳에 `thinking={"type":"adaptive"}` + `output_config={"effort":"high"}` 추가 + `temperature` 분기 제거 (Opus 4.7 외 모델도 제거). (3) `response.content[0].text` (L878), `resp.content[0].text` (L1820/3351) → `_first_text_block(resp)` 교체. (4) L4850 stream 분기는 텍스트 추출 자체가 `text_stream` 이라 무변경. (5) `_generate_brainstorm_openai` (L1780), `_generate_scenario_openai` (L3291), `_split_legacy` (L3982), `_split_with_music_sections` (L4113), `_generate_scene_prompts_openai` (L4801) 5 곳 `create_kwargs` 에 `reasoning_effort="high"` 추가. (6) 각 호출 직전 `[ThinkingOn]` / `[ReasoningOn]` info 로그 1줄. | stage, model |
+| `backend_9005/app/services/lyrics_generator.py` | (1) `_first_text_block` 헬퍼 신설 (모듈 로컬). (2) `lyrics_kwargs` (L264) + `title_kwargs` (L276) 에 thinking + output_config 추가, temperature 분기 제거. (3) L274/L289 응답 추출 → `_first_text_block` 으로 교체. (4) `_generate_lyrics_openai` 의 `lyrics_response` (L212) + `title_response` (L224) 에 `reasoning_effort="high"` 추가. (5) `[ThinkingOn] stage=lyrics`/`stage=title`, `[ReasoningOn] stage=lyrics`/`stage=title` 로그. | stage, model |
+| `backend_9005/app/services/translation.py` | (1) `_first_text_block` 헬퍼 신설 (모듈 로컬). (2) `kwargs` (L86) 에 thinking + output_config 추가, temperature 분기 제거. (3) L99 추출 → `_first_text_block` 교체 (강제 strip + 기존 안전망 유지). (4) `[ThinkingOn] stage=translation direction=...` 로그. | stage, direction, model |
+| `backend_9005/app/services/cover_generator.py` | (1) `cover_kwargs` (L113) 에 thinking + output_config 추가, temperature 분기 제거. (2) L122 응답 추출 → 안전 패턴 inline 교체 (단일 호출이라 헬퍼 import 대신 inline). (3) `[ThinkingOn] stage=cover_enhance` 로그. | stage, model |
+| `backend_9005/app/routes/generate.py` | (1) L240-251 `client.chat.completions.create(model="gpt-4o-mini", ...)` → `model="gpt-5.5"` + `reasoning_effort="high"` 추가. (2) `[ReasoningOn] stage=translate_tags` 로그. | stage, tag_count |
+| `backend_9005/app/routes/mv.py` | 변경 없음 (`prompt_models` 디폴트 None → settings.openai_model 자동 사용. 정상 작동). | — |
+| `backend_9005/app/routes/upload.py` | 변경 없음 (`prompt_model` Optional — 빈 값이면 settings 자동 사용). | — |
+| `backend_9001~9004/*` | 변경 없음 (룰: 9005 전용). | — |
+| 프론트엔드 | 변경 없음 (이번 작업은 백엔드 only). | — |
+
+### 작업 분배
+- **planner (본 에이전트)**: 본 v 의 모든 단계 직접 수행 — sub-agent spawn 없음.
+- **backend-dev (planner 본인)**: 위 매트릭스 6 파일 정확히 수정. SDK 시그니처 sanity check 결과 (`thinking`/`output_config`/`reasoning_effort` 모두 정식 지원) 그대로 적용. 각 호출 직전 `[ThinkingOn]`/`[ReasoningOn]` 1줄 + except 블록은 기존 logger.error/warning 그대로 유지.
+- **tester (planner 본인)**:
+  - 케이스 1 (정적): `python -m py_compile` 6 파일 모두 PASS.
+  - 케이스 2 (서버 reload): `tail logs/server.log` 에서 StatReload + Application startup complete + ERROR 0 확인.
+  - 케이스 3 (헬스): `curl /api/health` → 200 OK.
+  - 케이스 4 (실호출): 가벼운 가사 1회 생성 호출 — `curl POST /api/generate/lyrics ...` (모델 디폴트 → gpt-5.5). 응답 정상 + `tail logs/server.log` 에 `[ReasoningOn] stage=lyrics model=gpt-5.5 reasoning_effort=high` 1줄 확인. 실패 시 응답 본문 + 로그 확인 → PLAN/REPORT 정정 + fallback 적용 후 재시도.
+  - 케이스 5 (회귀): 응답 추출 헬퍼가 thinking-free 응답에서도 동작하는지 단위 mock 테스트 (Python REPL — 가짜 객체로 검증).
+- **로그 추적자 규칙**:
+  - `[ThinkingOn]` — Anthropic 호출 직전 1줄. stage / model / effort 포함.
+  - `[ReasoningOn]` — OpenAI 호출 직전 1줄. stage / model / reasoning_effort 포함.
+  - 기존 `[ClaudeTempCap]` 로그는 호출 없으므로 자동 사라짐 (회귀 X).
+
+
+### v75 정정 (실호출 검증 후 즉시 패치)
+- **회귀 발견 1**: `gpt-5.5` 가 `max_tokens` 파라미터 거부 — `400 Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.` → 모든 OpenAI 호출 6 곳의 `max_tokens=N` → `max_completion_tokens=N` 일괄 교체.
+- **회귀 발견 2**: `gpt-5.5` 가 `temperature` 비-default(1) 값 거부 — `400 Unsupported value: 'temperature' does not support 0.8 with this model. Only the default (1) value is supported.` → 모든 OpenAI 호출에서 `temperature` 인자 일괄 제거. (PLAN 초안의 "temperature 그대로 유지" 결정을 본 패치에서 뒤집음.)
+- **회귀 발견 3 (회피)**: gpt-5 reasoning 모델은 reasoning 토큰을 `max_completion_tokens` 에서 차감 → title 호출 (원 50 토큰) / translate_tags (원 100 토큰) 가 빈 응답 위험 → 각각 `max_completion_tokens=512` (title), `1024` (translate_tags) 로 상향. 다른 호출 (가사 1500 / 시나리오 8000 / 씬 16000) 은 이미 충분히 큼.
+- 실호출 검증 (live):
+  - Anthropic `_call_anthropic_translation('ko_to_en', ...)` → 200 OK + `[ThinkingOn] stage=translation direction=ko_to_en model=claude-opus-4-7 effort=high` 로그 + 정상 번역 결과 1줄 반환. 응답 추출 헬퍼가 `[ThinkingBlock, TextBlock]` 순서 정상 처리.
+  - Anthropic `_generate_lyrics_claude(..., model_name='claude-opus-4-7')` → 200 OK + 가사/타이틀 정상 생성 ("조용히, 조용히" 타이틀). adaptive thinking + high effort 동작 확인.
+  - OpenAI `_generate_lyrics_openai(...)` → gpt-5.5 + reasoning_effort=high 정상 호출 + 가사 ("봄날의 산책길" 타이틀) + lyrics 본문 정상 수신.
+
+
+## v75.1 — 모델별 API 호출 방식 웹검색 재검증 + 라이브 호출 확인 (2026-05-31)
+
+### 재검토 사유
+- 사용자 요청: "v75 작업을 재검토하고, 모델별 thinking/reasoning API 호출 방식을 웹검색으로 검증한 뒤, 발견된 오류를 정정하고, 테스터 역할까지 직접 수행" — 가장 의심받은 항목은 (a) `gpt-5.5` 모델 ID 실재 여부, (b) `reasoning_effort` 가 chat.completions 에서 top-level kwarg 인지 nested 인지, (c) `max_completion_tokens` 전환 필요성, (d) Anthropic `output_config={"effort":"high"}` 의 정확한 nesting.
+
+### Plan verification findings (공식 문서 / 공식 SDK 출처 기준)
+
+#### A) Anthropic (claude-opus-4-7 / 4-6 / claude-sonnet-4-6)
+- 출처: <https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking>, <https://platform.claude.com/docs/en/build-with-claude/effort>.
+- `thinking={"type":"adaptive"}` — **정확**. opus 4.8 / 4.7 / 4.6, sonnet 4.6 모두 지원. opus 4.7/4.8 에서는 adaptive 가 **유일** 지원 모드이며 `thinking:{type:"enabled", budget_tokens:N}` 은 400 에러.
+- `output_config={"effort":"high"}` — **정확**. 공식 cURL/Python 예제가 `output_config: {effort: "..."}` (top-level 별도 객체 — `effort` 단일 top-level kwarg 아님). 허용값: `max | xhigh | high | medium | low`. opus 4.7 default = `high`. opus 4.7 만 `xhigh` 권장(코딩/에이전트 워크). `max` 는 모든 4.6+ 에서 사용 가능.
+- `display` 필드 — opus 4.7 default = `"omitted"`. 즉 ThinkingBlock 의 `thinking` 필드가 비어 있고 `signature` 만 옴. 우리 코드의 `_first_text_block` 추출 헬퍼는 type=="text" 블록만 골라내므로 영향 없음.
+- `max_tokens` — 유지. effort=high/xhigh/max 사용 시 `max_tokens` 큰 값 권장(공식 문서는 64k 시작 권장).
+- temperature / top_p / top_k — adaptive 모드와 호환 가능하나 권장 X. 우리는 제거.
+
+#### B) OpenAI (gpt-5.5 / chat.completions)
+- 출처: <https://openai.com/index/introducing-gpt-5-5/>, <https://developers.openai.com/api/docs/models/gpt-5.5>, <https://developers.openai.com/api/docs/guides/latest-model>, OpenAI Python SDK 공식 `completion_create_params.py` <https://github.com/openai/openai-python/blob/main/src/openai/types/chat/completion_create_params.py>.
+- **gpt-5.5 모델 ID 실재 — 확정**. 2026-04-23 출시, 2026-04-24 API 공개. snapshot `gpt-5.5-2026-04-23`. chat.completions + Responses 양쪽 지원. context window 1M, $5/$30 per 1M token.
+- **`reasoning_effort` 는 chat.completions 의 top-level kwarg — 확정**. SDK type 파일에서 `CompletionCreateParamsBase` 클래스 안에 `reasoning_effort: Optional[ReasoningEffort]` 가 별도 필드로 존재. docstring: "Constrains effort on reasoning for reasoning models. Currently supported values are none, minimal, low, medium, high, and xhigh." Responses API 만 nested `reasoning={"effort":"..."}` 사용.
+- **허용값**: `none | minimal | low | medium | high | xhigh`. `high` 정확. gpt-5.5 default = `medium`.
+- **`max_completion_tokens` 가 정확**. SDK docstring: "max_tokens is now deprecated in favor of max_completion_tokens, and is not compatible with o-series models." gpt-5 reasoning 도 동일 정책 → `max_tokens` 전송 시 400.
+- **temperature 정책**: gpt-5 + reasoning 활성 시 default(1) 만 허용. 다른 값 전송 시 `400 Unsupported value: 'temperature' does not support X with this model. Only the default (1) value is supported.` v75 의 temperature 인자 제거는 정확.
+- **응답 구조**: chat.completions 응답은 `choices[0].message.content` 에 가시 텍스트 그대로. 별도 `reasoning_content` 필드 노출되지 않음(Responses API 만 노출). v75 의 `response.choices[0].message.content.strip()` 사용 정확.
+
+### 발견된 불일치 (API 사양)
+- **없음** — v75 가 적용한 6개 파일의 호출 시그니처(Anthropic adaptive thinking + output_config effort, OpenAI top-level reasoning_effort + max_completion_tokens + temperature 제거)는 위 공식 문서/SDK 사양과 완전히 일치한다.
+
+### 라이브 호출에서 발견된 새 회귀 (드라마 시나리오 truncation)
+- 라이브 검증 6개 중 4개 OK, **2개 FAIL** (둘 다 HTTP 200 OK 였으나 응답 본문 없음 → `_parse_drama_scenario_json` 의 `if not text: raise ValueError("Empty scenario response")` 에서 실패).
+  - `anthropic/scenario` (claude-opus-4-6, max_tokens=8000, thinking adaptive + effort=high) elapsed 167s.
+  - `openai/scenario` (gpt-5.5, max_completion_tokens=8000, reasoning_effort=high, response_format=json_object) elapsed 134s.
+- **원인 가설**: 두 사양 모두 thinking/reasoning 토큰이 출력 한도(`max_tokens` / `max_completion_tokens`)에서 차감된다. effort=high 에 시나리오 prompt 분량(narrative 1500~2500자 + events 4~5개 + JSON 전반)을 강제하면 8000 토큰이 모자라 본문 텍스트가 0 토큰 잘려나간다. Anthropic 공식 문서: *"At `high` and `max` effort levels, Claude may think more extensively and can be more likely to exhaust the `max_tokens` budget."* OpenAI 공식 SDK docstring: *"max_completion_tokens ... including visible output tokens and reasoning tokens."*
+
+### 정정 사항
+- **v75.1 코드 정정**: `backend_9005/app/services/mv_generator.py`
+  - `_generate_scenario_openai`: `max_completion_tokens` 8000 → **32000** (drama JSON ~3000자 + reasoning headroom 충분).
+  - `_generate_scenario_claude`: `max_tokens` 8000 → **32000** (drama JSON ~3000자 + thinking headroom 충분).
+  - 변경 사유 주석에 v75.1 태그 + 회귀 출처 기록.
+- 다른 호출(가사 1500 / brainstorm 1500 / scene_split 4000~16000 / scene_prompts 16000~64000) 은 라이브에서 정상 동작 확인 → 변경 없음.
+- 신규 파일: `backend_9005/scripts/v75_1_live_verify.py`, `backend_9005/scripts/v75_1_scenario_diag.py` (운영 코드 영향 없음).
+
+### 정정 사항
+- 코드 변경: **없음**.
+- 신규 파일: `backend_9005/scripts/v75_1_live_verify.py` — 라이브 호출 검증용 스크립트 (Anthropic 3종 / OpenAI 3종 직접 호출 + 결과 요약). 운영 코드 영향 없음.
+
+### 테스트 계획
+- 컴파일 — `python -m py_compile` (6개 파일) 통과.
+- 서버 상태 — uvicorn `--reload` 가 v75 코드 이후 startup complete, `/api/health` 200 OK 확인 (재기동 불필요).
+- 라이브 호출 (스크립트):
+  1. Anthropic `translate_ko_to_en` (claude-opus-4-7) — `[ThinkingOn] stage=translation` 로그 + 영어 텍스트 수신.
+  2. Anthropic `_generate_lyrics_claude` (claude-opus-4-6) — `[ThinkingOn] stage=lyrics` + `[ThinkingOn] stage=title` + 가사/타이틀 수신.
+  3. Anthropic `_generate_scenario_claude` (claude-opus-4-6) — `[ThinkingOn] stage=scenario` + 시나리오 JSON 수신.
+  4. OpenAI `_generate_lyrics_openai` (gpt-5.5) — `[ReasoningOn] stage=lyrics` + `[ReasoningOn] stage=title` + 가사/타이틀 수신.
+  5. OpenAI `_generate_scenario_openai` (gpt-5.5) — `[ReasoningOn] stage=scenario` + 시나리오 수신.
+  6. OpenAI `_generate_brainstorm_openai` (gpt-5.5) — `[ReasoningOn] stage=brainstorm` + brainstorm 후보 수신.
+- 각 호출별 status / elapsed_ms / 응답 head 80자 로 요약.
+- 회귀 — 응답 텍스트 추출 (`_first_text_block` / `choices[0].message.content`) 가 비어 있지 않음 확인.
+- 9001~9004 / 프론트엔드 변경 0건.
+- 호출/로그/응답 본문에 API 키·토큰 평문 없음.
+
+## v75.2 — 모든 AI 호출의 max_tokens / max_completion_tokens 일괄 상향 (2026-05-31)
+
+### 요청 작업
+v75.1 에서 시나리오 두 곳만 32k 로 올렸지만, **thinking/reasoning 토큰이 출력 한도에서 차감되는 사양은 모든 AI 호출에 동일**하다는 사용자 지적. 작은 한도(500/512/800/1024/1500/4000) 호출은 입력이 길어지면 동일 truncate 위험. 모든 위치를 일괄 점검하고 안전 한도로 상향.
+
+### 결정 사항 (한도 정책)
+- **짧은 응답 호출** (cover prompt, translation, title, route translate) → **8000**
+- **본문 응답 호출** (lyrics, brainstorm, video_prompt, scene_split legacy) → **16000**
+- **동적 한도 (scene_split section_aware OpenAI)** → cap **16000 → 32000**
+- **동적 한도 (scene_prompts OpenAI)** → cap **16000 → 64000** (Anthropic 은 이미 64000)
+- **시나리오 (이미 v75.1 에서 32000)** → 유지
+
+### 변경 매트릭스
+| 파일 | 위치 | 함수/stage | 이전 | 변경 |
+|---|---|---|---|---|
+| `services/translation.py` | L38 | Anthropic translation | 800 | **8000** |
+| `services/cover_generator.py` | L115 | Anthropic cover prompt | 500 | **8000** |
+| `services/lyrics_generator.py` | L241 | OpenAI lyrics | 1500 | **16000** |
+| `services/lyrics_generator.py` | L263 | OpenAI title | 512 | **8000** |
+| `services/lyrics_generator.py` | L297 | Anthropic lyrics | 1500 | **16000** |
+| `services/lyrics_generator.py` | L317 | Anthropic title | 50 | **8000** |
+| `services/mv_generator.py` | L870 | Anthropic video_prompt | 1024 | **16000** |
+| `services/mv_generator.py` | L1806 | OpenAI brainstorm | 1500 | **16000** |
+| `services/mv_generator.py` | L1847 | Anthropic brainstorm | 1500 | **16000** |
+| `services/mv_generator.py` | L4054 | OpenAI scene_split_legacy | 4000 | **16000** |
+| `services/mv_generator.py` | L4177 | OpenAI scene_split section_aware cap | 16000 | **32000** |
+| `services/mv_generator.py` | L4870 | OpenAI scene_prompts cap | 16000 | **64000** |
+| `routes/generate.py` | L260 | OpenAI route translate | 1024 | **8000** |
+
+### 비용 영향
+- `max_tokens` 는 천장이지 강제 사용량 아님. 실사용분만 과금. 한도 상향 = 잠재 한도걸림 회피, 평균 비용 변화 미미.
+
+### 테스트 결과
+- 컴파일 OK. 9005 reload 정상, `/api/health` 200.
+- **라이브 6종 재검증: 6/6 OK** (직전 라이브에서 brainstorm 1건 FAIL → 16k 상향 후 통과).
+  | stage | model | status | elapsed | 비고 |
+  |---|---|---|---|---|
+  | anthropic/translation | claude-opus-4-7 | OK | 2.1s | "Two people walk..." |
+  | anthropic/lyrics | claude-opus-4-6 | OK | 8.3s | title/lyrics |
+  | anthropic/scenario | claude-opus-4-6 | OK | 359s | scenario dict |
+  | openai/lyrics | gpt-5.5 | OK | 19.9s | title/lyrics |
+  | openai/scenario | gpt-5.5 | OK | 159s | scenario dict |
+  | openai/brainstorm | gpt-5.5 | OK | 42.6s | candidates=4 |
+
+### 특이사항
+- 9001~9004 / 프론트엔드 변경 0건.
+- v75 / v75.1 본문 무수정. v75.2 로 누적.
+- 라이브 검증에서 brainstorm 만 첫 시도 FAIL — 모든 호출의 max_tokens 점검이 정말로 필요했음을 입증.
+

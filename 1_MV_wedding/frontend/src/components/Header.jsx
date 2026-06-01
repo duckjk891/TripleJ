@@ -20,7 +20,9 @@ export default function Header() {
   return (
     <header className="site-header">
       <div className="site-header__inner">
-        <Link to="/" className="site-header__logo">Wedding MV</Link>
+        <Link to="/" className="site-header__logo" aria-label="AIDO Studio — 메인으로">
+          <img src="/aido_logo.png" alt="AIDO Studio" className="site-header__logo-img" />
+        </Link>
         <nav className="site-header__nav">
           {user ? (
             <>

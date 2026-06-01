@@ -46,6 +46,9 @@ export const polishStoryText = (payload) =>
 // MV jobs
 export const createMVJob = (data) => API.post('/mv/jobs', data);
 export const getMVJobs = () => API.get('/mv/jobs');
+
+// v36 — 작품(job) 삭제 (그 잡에 묶인 wedding_assets 도 backend 가 cleanup).
+export const deleteMVJob = (jobId) => API.delete(`/mv/jobs/${jobId}`);
 export const getMVJob = (id) => API.get(`/mv/jobs/${id}`);
 
 // v12 — Admin review request toggle (소유자만 호출 가능)
@@ -87,6 +90,16 @@ export const refineCharacterSheet = (formData) =>
 
 export const getCharacterSheets = () => API.get('/character/sheets');
 
+// v35 — 같은 job 안 lyrics/music 갈아엎기 (같은 job, 새 story_id + music_spec).
+export const regenerateMVJob = (jobId, { story_id, music_spec }) =>
+  API.post(`/mv/jobs/${jobId}/regenerate`, { story_id, music_spec });
+
+// v33 — Wizard 작성중 draft 영속화 (user 당 1개)
+export const getMyDraft = () => API.get('/mv/drafts/mine');
+export const saveMyDraft = ({ payload, step, title }) =>
+  API.put('/mv/drafts/mine', { payload, step, title });
+export const deleteMyDraft = () => API.delete('/mv/drafts/mine');
+
 // v6 — async sheet job polling. Returns {job_id, type, status, role, style,
 // image_model, sheet_object_name, preview_url, error_message, created_at, updated_at}.
 export const getSheetJob = (jobId) =>
@@ -119,6 +132,11 @@ export const updateOutfitItem = (itemId, formData) =>
 
 export const deleteOutfitItem = (itemId) =>
   API.delete(`/character/outfits/${itemId}`);
+
+// v20 — outfit items 일괄 삭제. body: { item_ids: [str] } (1~50).
+// 응답: { deleted_count, failed:[{item_id, reason}], total_requested }.
+export const bulkDeleteOutfitItems = (itemIds) =>
+  API.post('/character/outfits/bulk-delete', { item_ids: itemIds });
 
 // Preview URL for character sheets and outfit images (both under mv-wedding-photos).
 // Mirrors audioStreamUrl pattern — appends token query so preview route can
@@ -287,6 +305,8 @@ export const getPreMVJobStatus = (id) =>
 export const runPreMVPhase0 = (id, { scenario_model = 'claude_4_7_opus', force = false } = {}) =>
   API.post(`/pre-mv/jobs/${id}/phase0`, { scenario_model, force });
 
+// v21.4 — LLM 자율 결정 정책으로 clips_per_event 입력 폐기. backward compat 위해 받아도
+// body 전송 안 함 (백엔드도 받아도 무시).
 export const runPreMVPhase1 = (id, { force = false } = {}) =>
   API.post(`/pre-mv/jobs/${id}/phase1`, { force });
 
@@ -333,6 +353,21 @@ export const preMVSceneVideoUrl = (id, sceneNumber) => {
   return `${API.defaults.baseURL}/pre-mv/jobs/${id}/scenes/${sceneNumber}/video?token=${encodeURIComponent(token)}`;
 };
 
+// v24.2 — <a download href={url}> 용. preMVSceneVideoUrl 과 같은 URL.
+// 백엔드가 Content-Disposition: attachment; filename="{NN}_{slot}_{seq}.mp4" 헤더로
+// 다운로드 파일명을 부여한다.
+export const downloadPreMVSceneVideo = (id, sceneNumber) =>
+  preMVSceneVideoUrl(id, sceneNumber);
+
+// v24.2 — 일괄 ZIP 다운로드. sceneNumbers=null/[] → 완료된 전체.
+// response.data 는 Blob — 호출처에서 createObjectURL + anchor click 으로 트리거.
+export const downloadPreMVScenesZip = (id, sceneNumbers = null) =>
+  API.post(
+    `/pre-mv/jobs/${id}/scenes/download-zip`,
+    { scene_numbers: sceneNumbers },
+    { responseType: 'blob' },
+  );
+
 // v17.3 — Phase 4 (concat + audio merge).
 // force=true 면 status=completed 인 잡도 다시 합성. 응답: { pre_mv_job_id, status, scene_count }.
 export const runPreMVPhase4 = (id, { force = false } = {}) =>
@@ -346,5 +381,41 @@ export const preMVResultVideoUrl = (id) => {
 
 // Share (public)
 export const getSharedMV = (token) => API.get(`/share/${token}`);
+
+// v23 — Extra video studio (Higgsfield-style 편집자 공간)
+
+// Scene Images (A)
+export const createExtraSceneImage = (mvJobId, payload) =>
+  API.post('/extra/scene-images', { mv_job_id: mvJobId, ...payload });
+export const listExtraSceneImages = (mvJobId) =>
+  API.get('/extra/scene-images', { params: { mv_job_id: mvJobId } });
+export const getExtraSceneImage = (id) => API.get(`/extra/scene-images/${id}`);
+export const deleteExtraSceneImage = (id) => API.delete(`/extra/scene-images/${id}`);
+export const bulkDeleteExtraSceneImages = (ids) =>
+  API.post('/extra/scene-images/bulk-delete', { ids });
+export const downloadExtraSceneImage = (id) =>
+  API.get(`/extra/scene-images/${id}/download`, { responseType: 'blob' });
+export const extraSceneImagePreviewUrl = (objectName) => sheetPreviewUrl(objectName);
+
+// Extra Videos (B)
+export const createExtraVideo = (mvJobId, payload) =>
+  API.post('/extra/videos', { mv_job_id: mvJobId, ...payload });
+export const listExtraVideos = (mvJobId) =>
+  API.get('/extra/videos', { params: { mv_job_id: mvJobId } });
+export const getExtraVideo = (id) => API.get(`/extra/videos/${id}`);
+export const deleteExtraVideo = (id) => API.delete(`/extra/videos/${id}`);
+export const bulkDeleteExtraVideos = (ids) =>
+  API.post('/extra/videos/bulk-delete', { ids });
+export const downloadExtraVideo = (id) =>
+  API.get(`/extra/videos/${id}/download`, { responseType: 'blob' });
+export const extraVideoStreamUrl = (id) => {
+  const token = localStorage.getItem('token') || '';
+  return `${API.defaults.baseURL}/extra/videos/${id}/stream?token=${encodeURIComponent(token)}`;
+};
+export const refineExtraVideo = (id, payload) =>
+  API.post(`/extra/videos/${id}/refine`, payload);
+export const getExtraVideoChain = (id) => API.get(`/extra/videos/${id}/chain`);
+export const continueExtraVideo = (id, payload = {}) =>
+  API.post(`/extra/videos/${id}/continue`, payload);
 
 export default API;
