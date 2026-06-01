@@ -368,6 +368,43 @@ async def generate_scene_image(
     if len(resolved_assets) >= 2:
         extra_bytes, extra_mime, extra_display, extra_memo, _ = resolved_assets[1]
 
+    # v32 — 최종 fallback: 캐릭터 시트 기본값 (groom_wedding / bride_wedding).
+    # scenario_events 의 refs 가 비어있어서 Phase 1 이 ref_ids 를 못 채운 케이스
+    # (사용자가 @멘션을 안 한 회상 등). 이 시점까지 groom_bytes/bride_bytes 가 비어있고
+    # ref_sheet_ids 에 명시도 없었으면 default 시트로 시도한다. 실패 씬 retry 시에도
+    # 자동 복구되도록 Phase 2 안에서 처리.
+    has_groom_in_refs = any(s.startswith("groom_") for s in ref_sheet_ids)
+    if not groom_bytes and not has_groom_in_refs:
+        for fb_slot in ("groom_wedding", "groom_casual"):
+            data, mime, display, style = await _resolve_sheet_ref(
+                owner_user_id=owner_user_id, slot=fb_slot,
+            )
+            if data:
+                groom_bytes, groom_mime = data, mime
+                groom_display, groom_style = display, style
+                logger.info(
+                    "[PreMVSceneImage] phase=phase2 default sheet fallback "
+                    "pre_mv_job_id=%s scene_number=%d slot=%s",
+                    pre_mv_job_id, scene_number, fb_slot,
+                )
+                break
+
+    has_bride_in_refs = any(s.startswith("bride_") for s in ref_sheet_ids)
+    if not bride_bytes and not has_bride_in_refs:
+        for fb_slot in ("bride_wedding", "bride_casual"):
+            data, mime, display, style = await _resolve_sheet_ref(
+                owner_user_id=owner_user_id, slot=fb_slot,
+            )
+            if data:
+                bride_bytes, bride_mime = data, mime
+                bride_display, bride_style = display, style
+                logger.info(
+                    "[PreMVSceneImage] phase=phase2 default sheet fallback "
+                    "pre_mv_job_id=%s scene_number=%d slot=%s",
+                    pre_mv_job_id, scene_number, fb_slot,
+                )
+                break
+
     # v24 — ref 우선순위 재배치 (c안):
     #   1) 캐릭터 시트 groom
     #   2) 캐릭터 시트 bride
