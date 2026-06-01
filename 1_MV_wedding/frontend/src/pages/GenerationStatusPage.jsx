@@ -314,15 +314,23 @@ export default function GenerationStatusPage() {
 
   // v38 — [가사 재생성] : wizard 안 가고 현재 화면에서 즉시 regenerate.
   // job 에 이미 박혀 있는 story_id + music_spec 그대로 재사용.
+  // v30 — 음악이 준비된 후(music_ready/music_failed)에도 노출. 백엔드는
+  //       원래 status in ('queued','generating_*') 만 차단하므로 무리 없음.
+  //       단 이 경우 음악도 같이 폐기됨을 confirm 으로 알림.
   const [regenerating, setRegenerating] = useState(false);
-  const canRegenerateLyrics = isLyricsReady || isLyricsFailed; // 가사 준비된 후 또는 실패 후
+  const canRegenerateLyrics =
+    isLyricsReady || isLyricsFailed || isMusicReady || isMusicFailed;
   const onRegenerateLyrics = async () => {
     if (!canRegenerateLyrics || regenerating) return;
     if (!job?.story_id || !job?.music_spec) {
       setTriggerError('잡 정보가 부족해서 가사를 다시 만들 수 없어요. 잠시 후 다시 시도해주세요.');
       return;
     }
-    const ok = window.confirm('가사를 다시 생성할까요?\n현재 가사는 사라지고 새로 만들어요.');
+    const willLoseMusic = isMusicReady || isMusicFailed;
+    const message = willLoseMusic
+      ? '가사를 다시 만들면 현재 음악도 사라져요.\n새 가사 준비 후 [이 가사로 음악 만들기]를 다시 눌러야 해요.\n계속할까요?'
+      : '가사를 다시 생성할까요?\n현재 가사는 사라지고 새로 만들어요.';
+    const ok = window.confirm(message);
     if (!ok) return;
     setRegenerating(true);
     setTriggerError('');
@@ -472,10 +480,19 @@ export default function GenerationStatusPage() {
               type="button"
               className="btn-ghost"
               onClick={onRegenerateMusic}
-              disabled={regeneratingMusic}
+              disabled={regeneratingMusic || regenerating}
               title="가사는 그대로 두고 같은 가사로 음악만 다시 만들어요"
             >
               {regeneratingMusic ? '재생성 중...' : '↻ 음악 재생성'}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={onRegenerateLyrics}
+              disabled={regenerating || regeneratingMusic}
+              title="가사부터 다시 만들어요. 현재 음악은 사라지니 새 가사 준비 후 음악을 다시 만들어야 해요."
+            >
+              {regenerating ? '재생성 중...' : '↻ 가사 재생성'}
             </button>
             <Link to="/my" className="btn-ghost">
               내 작품으로 →
@@ -495,9 +512,18 @@ export default function GenerationStatusPage() {
               type="button"
               className="btn-primary"
               onClick={onRegenerateMusic}
-              disabled={regeneratingMusic}
+              disabled={regeneratingMusic || regenerating}
             >
-              {regeneratingMusic ? '재시도 중...' : '↻ 다시 시도'}
+              {regeneratingMusic ? '재시도 중...' : '↻ 음악만 다시 시도'}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={onRegenerateLyrics}
+              disabled={regenerating || regeneratingMusic}
+              title="가사부터 새로 만들기 (음악도 다시 만들어야 해요)"
+            >
+              {regenerating ? '재생성 중...' : '↻ 가사부터 다시'}
             </button>
             <Link to="/my" className="btn-ghost">
               내 작품으로 →
