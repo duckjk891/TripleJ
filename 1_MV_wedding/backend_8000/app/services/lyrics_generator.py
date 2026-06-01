@@ -360,6 +360,22 @@ def _is_filled(value) -> bool:
     return bool(value)
 
 
+def _vocal_key_gender(vocal_key) -> str:
+    """vocal_styles 키(예: 'female_warm', 'male_powerful') → 'female' / 'male' / ''.
+
+    suno_generator.SUNO_VOCAL_MAP 의 키 컨벤션을 prefix 로 매칭.
+    의존 cycle 회피 위해 import 안 하고 자체 추론. 키 컨벤션이 바뀌면 동기화 필요.
+    """
+    if not vocal_key or not isinstance(vocal_key, str):
+        return ""
+    k = vocal_key.strip().lower()
+    if k.startswith("female_"):
+        return "female"
+    if k.startswith("male_"):
+        return "male"
+    return ""
+
+
 def _build_user_message_wedding(story: dict, music: dict, extra_user_note: str | None = None) -> str:
     """
     v2.2 매핑.
@@ -467,9 +483,30 @@ def _build_user_message_wedding(story: dict, music: dict, extra_user_note: str |
 
     facts_block = "\n".join(facts_lines)
 
+    # v28 — duet 라벨 명시 매핑.
+    # 기존: 프롬프트에 "main=female_warm, sub=male_powerful" 키 이름만 전달 →
+    #       LLM 이 문자열 내 "female"/"male" 을 파싱해서 [Female]/[Male] 라벨 결정.
+    #       main=male/sub=female 같은 역순 케이스에서 라벨이 메인/서브와 어긋날 위험.
+    # 신규: vocal_styles 키 prefix 로 gender 추론 후, [Female]/[Male] 가 어느 역할(메인/서브)인지
+    #       프롬프트에 명시. 동성 듀엣은 라벨 모호하므로 기존 키 이름 그대로 전달 + warning.
     duet_line = ""
     if vocal_form == "duet":
-        duet_line = f"- 듀엣 보컬 톤: main={vs_main or '—'}, sub={vs_sub or '—'}\n"
+        main_gender = _vocal_key_gender(vs_main)
+        sub_gender = _vocal_key_gender(vs_sub)
+        if main_gender and sub_gender and main_gender != sub_gender:
+            female_role = "메인" if main_gender == "female" else "서브"
+            male_role = "메인" if main_gender == "male" else "서브"
+            duet_line = (
+                f"- 듀엣 (혼성): 메인 보컬={main_gender} ({vs_main}), "
+                f"서브 보컬={sub_gender} ({vs_sub})\n"
+                f"- 가사 라벨 매핑 (반드시 준수): [Female] = {female_role} 보컬, "
+                f"[Male] = {male_role} 보컬, [Both] = 둘이 같이.\n"
+            )
+        else:
+            # 동성 듀엣 or 정보 부족 — 기존 동작 유지하되 메인/서브 역할 강조
+            duet_line = (
+                f"- 듀엣 보컬 톤: main={vs_main or '—'}, sub={vs_sub or '—'}\n"
+            )
 
     if duration_minutes == 3:
         length_hint = "약 700~1100자"
