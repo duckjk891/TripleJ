@@ -2800,3 +2800,94 @@ Anthropic 호출 → 응답 정상.
 ### 결론
 v26 PASS — 9004 의 `translation.py` 를 1_MV_wedding/backend_8000 에 verbatim 이식하고, `suno_generator.py` 가 genre / moods 한글 입력을 `asyncio.gather` 로 병렬 번역해 Suno V5 에 영문 style 태그로 전달하도록 통합 완료. 영문 입력은 `_has_hangul` 체크로 LLM 호출 우회 (cost 0). 백엔드 PC 에 선택적 fetch + checkout 패턴으로 두 파일만 동기화, uvicorn worker auto-reload (9556 → 11474) 확인. Live 번역 호출 ("발라드" → "Ballad") 정상 응답. 다음 음악 생성 작업부터 자동 적용됨.
 
+## v27 - 2026-06-01 - 음악 재생성 endpoint + UI + 가사 프롬프트 비교
+
+### 사용자 요청 (3가지)
+1. "음악도 재생성 버튼 만들어줘"
+2. "지금 재생성 시키면 번역되서 들어가는건가?"
+3. "가사 생성 프롬프트가 메인/서브 보컬 vs 남/녀인지? 9004와 비교"
+
+### Q&A 답변 (조사 결과)
+
+#### Q2 — 번역 적용 여부: **YES**
+- `regenerate` (가사 재생성) 후 음악 / 직접 `POST /music` / 신규 `POST /music/regenerate` **모두** `_run_music_generation` → `generate_music_for_job` → `_to_english_style_tag` (v26 추가) 경로 통과
+- 한글 입력 → 자동 영문 변환 (cost 0 fast-path 포함)
+
+#### Q3 — 가사 프롬프트: 둘 다 "메인/서브" 컨셉, "남/녀" 명시 없음
+
+| 항목 | 1_MV_wedding | 9004 |
+|---|---|---|
+| 보컬 입력 구조 | `VocalStyles.main` / `.sub` (Pydantic) | `duet_main_vocal_style` / `duet_sub_vocal_style` (free string) |
+| 가사 prompt 라벨 | "듀엣 보컬 톤: main=..., sub=..." | "주 보컬 느낌: ..., 상대 보컬 느낌: ..." |
+| System prompt | 웨딩 전용 (회상 마커, 구조화) | 일반 송라이팅 |
+| 듀엣 마커 | `[Female]/[Male]/[Both]` | `[Female]/[Male]/[Both]` |
+| 가사 프롬프트 내 "남/녀" 명시 | ❌ 없음 | ❌ 없음 |
+| 성별 실제 주입 위치 | Suno API `vocalGender` (SUNO_VOCAL_MAP m/f) | Suno API `vocalGender` (동일) |
+
+→ **결론: 두 시스템 모두 가사 프롬프트엔 "남/녀" 명시 없이 `[Female]/[Male]/[Both]` 마커를 모델이 자체 결정. 성별은 오직 Suno API `vocalGender` 필드에만 전달됨.**
+
+### 구현 (Q1)
+
+#### 1. Backend — 신규 라우트
+**파일**: `1_MV_wedding/backend_8000/app/routes/mv.py`
+
+`POST /api/mv/jobs/{job_id}/music/regenerate` (~80 줄 추가)
+
+- **가드**: 400(ObjectId) → 404 → 403 → 409(status not in music_ready/music_failed) → 409(가사 없음)
+- **동작**:
+  - 음악 필드 초기화: `audio_object_name`, `audio_variants`, `suno_task_id`, `suno_audio_id`, `suno_audio_ids`, `lyric_timestamps_variants`
+  - `lyric_timestamps_status='stale'`
+  - `status='generating_music'`
+  - BackgroundTasks `_run_music_generation` 시작 (v26 번역 경로 자동 통과)
+- 기존 `POST /music` (lyrics_ready 전용) 시맨틱은 그대로 유지
+
+#### 2. Frontend
+**파일**: `frontend/api/index.js`
+- `regenerateMVJobMusic(jobId)` API 함수 추가
+
+**파일**: `frontend/pages/GenerationStatusPage.jsx`
+- `regeneratingMusic` state + `onRegenerateMusic` 핸들러
+  - confirm dialog: "음악을 다시 만들까요?\n현재 음악과 타임스탬프는 사라지고 새로 만들어요.\n(가사는 그대로 유지)"
+  - 낙관적 업데이트: status → `generating_music`, audio_variants / lyric_timestamps_variants 비우기
+  - 폴링 재시작
+- `isMusicReady` 카드: `↻ 음악 재생성` 버튼 신규 추가
+- `isMusicFailed` 카드: 기존 "다시 시도" (`onStartMusic` → `/music` → 409 깨진 버튼) → `↻ 다시 시도` (`onRegenerateMusic`) 로 교체 → **우연히 같이 fix**
+
+### 배포
+
+#### 1. 로컬 (frontend 브랜치)
+- 커밋: **`50219d5`** "Add POST /jobs/{id}/music/regenerate + UI buttons"
+- 푸시: `d2ec922..50219d5` → origin/frontend
+
+#### 2. 백엔드 PC selective sync
+```bash
+git fetch origin frontend
+git checkout origin/frontend -- 1_MV_wedding/backend_8000/app/routes/mv.py
+touch 1_MV_wedding/backend_8000/app/routes/mv.py  # WatchFiles 강제
+```
+
+#### 3. uvicorn auto-reload
+- worker PID: **11474 → 11558** ✅
+
+### 검증 (smoke test)
+
+| 항목 | 결과 |
+|---|---|
+| 첫 curl (reload 전) | **404** ⚠️ (4초 sleep 부족) |
+| `touch` + 6초 후 재시도 | ✅ |
+| `GET /openapi.json` 에 `/api/mv/jobs/{job_id}/music/regenerate ['post']` 노출 | ✅ |
+| `POST .../music/regenerate` (no auth) | **401** (라우트 살아있음) ✅ |
+
+### 특이사항
+
+1. **첫 curl 이 reload 직전 → 404 발생.** v26 의 4초 sleep 으로 부족. **다음 배포부터 6~8초 권장.**
+2. **`music_failed` 의 기존 "다시 시도" 버튼이 실제로 깨져있었음** (`/music` 은 lyrics_ready 만 받음 → 409). 이번에 우연히 같이 fix.
+3. v26 의 한→영 자동 번역은 `_run_music_generation` 한 경로에서 보장되므로 이번 신규 endpoint 도 별도 작업 없이 자동 적용됨.
+
+### 후속 (별도 작업)
+- 1_MV_wedding 가사 프롬프트에 "남/녀" 명시 라벨 추가 여부 — 사용자 결정 필요
+- 9004 처럼 vocal_style 자유 문자열 입력 허용 — UX 결정 필요
+
+### 결론
+v27 PASS — `POST /api/mv/jobs/{job_id}/music/regenerate` 엔드포인트 신규 추가 (가드 5단계 + 음악 필드 초기화 + BackgroundTasks 재생성). 프론트 `↻ 음악 재생성` 버튼을 `music_ready` 카드에 신규 추가하고, `music_failed` 의 기존 깨진 "다시 시도" 버튼도 동일 endpoint 로 교체 (의도치 않은 보너스 fix). 백엔드 PC selective sync + `touch` 패턴으로 worker PID 11474 → 11558 reload. OpenAPI 등록 + 401 auth gate 통과로 라우트 alive 확인. Q2 (번역) / Q3 (가사 프롬프트 메인/서브 vs 남/녀) 분석 결과 사용자에게 회신 — 모든 음악 생성 경로가 v26 번역 통과 / 가사 프롬프트엔 "남/녀" 명시 없이 `[Female]/[Male]/[Both]` 마커만 사용, 성별은 Suno API `vocalGender` 필드에만 주입됨.
+

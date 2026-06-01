@@ -5005,3 +5005,110 @@ ssh -p 2222 duckjk89@100.127.225.55 \
 - 캐시 도입 (Redis / in-memory LRU) 은 호출량 증가 시 재검토
 
 ### 8) 작업 끝(append).
+
+## v27 - 2026-06-01 - 음악 재생성 endpoint + UI + 가사 프롬프트 비교
+
+### 1) 배경 / 사용자 요청 (3가지)
+
+> Q1. "음악도 재생성 버튼 만들어줘"
+> Q2. "지금 재생성 시키면 번역되서 들어가는건가?"
+> Q3. "가사 생성 프롬프트가 메인/서브 보컬 vs 남/녀인지? 9004와 비교"
+
+### 2) 조사 / 분석
+
+#### Q2 — 번역 적용 경로 확인
+
+| 경로 | 번역 적용 여부 |
+|---|---|
+| `regenerate` (가사 재생성) 후 자동 음악 생성 | ✅ `_run_music_generation` → `generate_music_for_job` → `_to_english_style_tag` (v26) |
+| `POST /music` (lyrics_ready 전용) | ✅ 동일 경로 |
+| 신규 `POST /music/regenerate` (이번 추가) | ✅ 동일 경로 |
+
+→ **결론: 모든 음악 생성 진입점이 v26 의 `_to_english_style_tag` 를 통과.** 한국어 입력은 자동 영문 변환. (사용자에게 YES 회신)
+
+#### Q3 — 가사 프롬프트 메인/서브 vs 남/녀 비교
+
+| 항목 | 1_MV_wedding | 9004 |
+|---|---|---|
+| 보컬 입력 구조 | `VocalStyles.main` / `.sub` (Pydantic 모델) | `duet_main_vocal_style` / `duet_sub_vocal_style` (free string) |
+| 가사 prompt 라벨 | "듀엣 보컬 톤: main=..., sub=..." | "주 보컬 느낌: ..., 상대 보컬 느낌: ..." |
+| System prompt | 웨딩 전용 (회상 마커, 구조화 지시) | 일반 송라이팅 |
+| 듀엣 마커 in lyric | `[Female] / [Male] / [Both]` | `[Female] / [Male] / [Both]` |
+| 가사 프롬프트 내 명시적 "남/녀" 표기 | ❌ 없음 (모델이 [Female]/[Male] 마커를 자체 결정) | ❌ 없음 (동일) |
+| 성별 정보 실제 주입 위치 | Suno API `vocalGender` 필드 (`SUNO_VOCAL_MAP` m/f) | Suno API `vocalGender` 필드 (동일) |
+
+→ **결론: 둘 다 "메인/서브" 컨셉이고 "남/녀" 라벨은 가사 프롬프트엔 없음.** 성별은 오직 Suno API `vocalGender` 필드에만 전달.
+
+### 3) 작업 계획 (Q1 구현)
+
+#### 3-A) backend-dev — 신규 `POST /api/mv/jobs/{job_id}/music/regenerate`
+
+**파일**: `1_MV_wedding/backend_8000/app/routes/mv.py`
+
+**가드 순서**:
+1. `400` — `ObjectId` 검증 실패
+2. `404` — job 없음
+3. `403` — 본인 소유 아님
+4. `409` — `status not in ('music_ready', 'music_failed')`
+5. `409` — 가사 누락 (regenerate 는 기존 가사 재사용 전제)
+
+**동작**:
+- 음악 관련 필드 초기화:
+  - `audio_object_name`, `audio_variants`, `suno_task_id`, `suno_audio_id`, `suno_audio_ids`, `lyric_timestamps_variants`
+- `lyric_timestamps_status = 'stale'`
+- `status = 'generating_music'`
+- BackgroundTasks 로 `_run_music_generation` 시작 (v26 번역 경로 자동 통과)
+
+**기존 `POST /music` 는 그대로 유지**: `lyrics_ready` 만 받는 좁은 시맨틱. 의미 분리.
+
+#### 3-B) frontend-dev — UI 버튼 + 핸들러
+
+**파일**: `frontend/api/index.js`
+- `regenerateMVJobMusic(jobId)` API 함수 추가 (POST `/jobs/{id}/music/regenerate`)
+
+**파일**: `frontend/pages/GenerationStatusPage.jsx`
+- state: `regeneratingMusic`
+- 핸들러 `onRegenerateMusic`:
+  - confirm dialog: "음악을 다시 만들까요?\\n현재 음악과 타임스탬프는 사라지고 새로 만들어요.\\n(가사는 그대로 유지)"
+  - 낙관적 업데이트: status → `generating_music`, audio_variants / lyric_timestamps_variants 비우기
+  - 폴링 재시작
+- `isMusicReady` 카드: `↻ 음악 재생성` 버튼 신규
+- `isMusicFailed` 카드: 기존 "다시 시도" (`onStartMusic` → `/music` 호출, 사실상 409 깨진 버튼) → `↻ 다시 시도` (`onRegenerateMusic`) 로 교체
+
+#### 3-C) deploy
+
+```bash
+# 1) 로컬 commit (1_MV_wedding 경로만)
+git add 1_MV_wedding/backend_8000/app/routes/mv.py \
+        1_MV_wedding/frontend/api/index.js \
+        1_MV_wedding/frontend/pages/GenerationStatusPage.jsx
+git commit -m "v27: POST /jobs/{id}/music/regenerate + UI 버튼"
+git push origin frontend
+
+# 2) 백엔드 PC selective sync
+git fetch origin frontend
+git checkout origin/frontend -- 1_MV_wedding/backend_8000/app/routes/mv.py
+touch 1_MV_wedding/backend_8000/app/routes/mv.py  # WatchFiles 강제 트리거 (v26 learning)
+```
+
+#### 3-D) tester
+
+- `GET /openapi.json` → 신규 라우트 등록 확인
+- `POST /api/mv/jobs/{dummy}/music/regenerate` → 401 (auth gate 통과 = 라우트 살아있음)
+- UI smoke: `music_ready` 카드에 `↻ 음악 재생성` 버튼 노출 확인
+
+### 4) 회귀 위험
+
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | 사용자가 실수로 재생성 → 기존 음악 손실 | confirm dialog 필수 통과 |
+| R2 | `music_failed` 의 기존 깨진 "다시 시도" 가 onRegenerateMusic 으로 교체되며 lyrics 없는 경우 신규 가드(409)에 막힘 | 의도된 동작 (가사 먼저 만들도록 유도) |
+| R3 | reload 시점 race (v26 에서 4초 sleep 부족 경험) | 6~8초 sleep 권장 |
+| R4 | 0_platform_music/backend 수정 (메모리 규칙 위반) | `1_MV_wedding/backend_8000` 경로만 add |
+
+### 5) 후속 (별도 작업)
+
+- 1_MV_wedding 가사 프롬프트에 "남/녀" 명시 라벨 추가 여부 — UX 결정 필요
+- 9004 처럼 vocal_style 자유 문자열 입력 허용 (현재 enum 매핑) — UX 결정 필요
+
+### 6) 작업 끝(append).
