@@ -5204,3 +5204,40 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - 2_housing 에는 듀엣 가사 생성 기능 자체가 없음 (lyricsService 가 단순 prompt/genre/mood 만 받음) — 1_MV_wedding 의 wedding 전용 시점 마커 + 듀엣 라벨 규칙은 더 정교한 시스템
 
 ### 8) 작업 끝(append).
+
+## v29 - 2026-06-01 - 가사 prompt 에너지 아크 + Bridge 필수화 + 폴백 보강
+
+### 사용자 요청
+"추가로 지금 가사 생성할때 [] 안에 음악생성할때 기승전결을 의미하는 지시문이 들어가잖아. 그것도 프롬프트에 절 - 후렴 이런식으로 명시가 되어있는거야? 지금 음악생성된 결과물이 너무 단조로워서"
+
+### 조사 결과
+- 현재 상태: [Intro]/[Verse]/[Pre-Chorus]/[Chorus]/[Bridge]/[Outro] 등 섹션 라벨은 SOLO/DUET 두 prompt 모두에 **이미 명시**. 권장 구조 + 최소 줄수도 있음.
+- **단조로움의 진짜 원인 3가지**:
+  1. **2-min 작품**에서 Bridge / Verse 3 "생략 가능" 으로 명시 → LLM 이 Bridge 빼버림 → 구조 빈약
+  2. **두 prompt 모두 "섹션별 음악 에너지/다이나믹스" 지시가 없음** → LLM 이 라벨만 박고 어휘 강도는 평탄 → Suno 가 평탄한 음악으로 해석
+  3. `_ensure_lyrics_structure` 폴백이 라벨 없을 때 4줄마다 [Verse]/[Chorus] 기계 교차 → Pre-Chorus/Bridge/Intro/Outro 다양성 제외
+
+### 구현 계획
+
+**파일 1**: `1_MV_wedding/backend_8000/app/services/lyrics_generator.py`
+1. SOLO prompt 룰 16 (가사 길이 가이드) 수정 — 2-min 도 Bridge 필수 (짧아도 OK), Verse 3 만 생략 가능
+2. SOLO prompt 룰 17 "섹션별 에너지 아크" 신설 — 1~10 척도 + 어휘 강도 차이 예시 (낮음=구체 디테일 → 최고=단순·반복·합창), 기존 Few-shot 은 룰 18 로 이동
+3. DUET prompt 룰 16 동일 수정 (Bridge 생략 금지)
+4. DUET prompt 룰 17 "섹션별 에너지 아크 + 듀엣 배분 힌트" 신설 — 에너지 척도 + 단성/콜앤리스폰스/합창 배분 매핑 + [Female]/[Male]/[Both] 예시
+
+**파일 2**: `1_MV_wedding/backend_8000/app/services/suno_generator.py`
+5. `_ensure_lyrics_structure` 폴백 로직 보강 — 라벨 ≥2개: 통과 / 라벨 1개: 경고 + 통과 / 라벨 0개: emergency 폴백 (기존 4줄 교차). 부분 라벨 케이스에서 강제 보완 안 함
+
+### 배포 계획
+- 백엔드 PC selective sync + worker reload
+- venv smoke test (prompt 문자열 검증 + `_ensure_lyrics_structure` 동작 검증)
+
+### 기대 효과
+- 2-min 작품도 Bridge 포함 → 구조 다양성 확보
+- 섹션별 어휘 강도 차이 → Suno V5 다이나믹스 인식 → 음악 기복 생김
+- LLM 이 prompt 의 에너지 아크 표를 보고 Pre-Chorus 단순화, Chorus 호명/추임, Bridge 톤 비틈
+
+### 후속 (효과 미흡 시)
+- 재시도 로직에 구조 완성도 검증 (필수 섹션 체크 → 없으면 재생성)
+- GENRE/MOOD 별 더 강한 dynamics 차별화 지시
+- Suno style 파라미터에 "dynamic range, build-up, climax" 음악적 다이나믹 키워드 추가
