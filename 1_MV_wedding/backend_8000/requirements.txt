@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pyjwt
+bcrypt
+python-multipart
+pydantic-settings
+asyncpg
+motor
+redis[hiredis]
+minio
+python-dotenv
+httpx
+openai
+anthropic
+Pillow

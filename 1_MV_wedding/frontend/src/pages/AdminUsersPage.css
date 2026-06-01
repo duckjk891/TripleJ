@@ -1,0 +1,95 @@
+.admin-users__head {
+  margin-bottom: 20px;
+}
+
+.admin-users__title {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.admin-users__desc {
+  margin: 0;
+  font-size: 13px;
+}
+
+.admin-users__toast {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background-color: #1f2937;
+  color: #fff;
+  font-size: 13px;
+}
+
+.admin-users__empty {
+  text-align: center;
+}
+
+.admin-users__table-wrap {
+  overflow-x: auto;
+  background-color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.admin-users__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.admin-users__table th,
+.admin-users__table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-users__table th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.admin-users__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-users__table tbody tr:hover {
+  background-color: var(--accent-soft, #f4f1ec);
+}
+
+.admin-users__role {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background-color: #e5e7eb;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-users__role--admin {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background-color: #fde68a;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-users__action {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.admin-users__action:hover:not(:disabled) {
+  background-color: var(--accent-soft, #f4f1ec);
+}
+
+.admin-users__action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

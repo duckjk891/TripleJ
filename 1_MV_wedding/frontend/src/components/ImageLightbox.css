@@ -1,0 +1,51 @@
+/* v32 — Lightbox overlay */
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.86);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  padding: 32px;
+  animation: img-lightbox-fade 0.16s ease-out;
+}
+
+@keyframes img-lightbox-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.img-lightbox__img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  cursor: default;
+  user-select: none;
+  border-radius: 4px;
+}
+
+.img-lightbox__close {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 0;
+  font-size: 28px;
+  line-height: 1;
+  padding: 4px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+}
+.img-lightbox__close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* drop-in img 에 자동 적용되는 cursor */
+.img-zoomable {
+  cursor: zoom-in;
+}

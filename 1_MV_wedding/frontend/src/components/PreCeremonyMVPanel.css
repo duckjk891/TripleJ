@@ -1,0 +1,1217 @@
+/* v17.1 — PreCeremonyMVPanel
+   웨딩사진 패널과 비슷한 톤이지만 식전영상은 단계형 진행이라
+   step card 가 위→아래로 쌓이는 구조. */
+
+.pre-mv {
+  margin-top: 32px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background-color: #f9fbff;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pre-mv__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pre-mv__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pre-mv__desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.pre-mv__admin-banner {
+  margin: 4px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background-color: #fff4d6;
+  color: #6b4f0c;
+  border: 1px solid #f0d68c;
+  font-size: 12px;
+  display: inline-block;
+  align-self: flex-start;
+}
+
+.pre-mv__loading,
+.pre-mv__empty {
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+  background-color: #f5f8fd;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+}
+
+.pre-mv__error-banner {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background-color: #fdecec;
+  color: #b3261e;
+  font-size: 12px;
+  border: 1px solid #f5c6c6;
+}
+
+.pre-mv__cta {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  background-color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.pre-mv__cta-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.pre-mv__job-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.pre-mv__job-meta strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ─── v19 — variant 선택 (식전영상 시작 전) ─── */
+.pre-mv__variant-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background-color: #fafcff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.pre-mv__variant-pick > span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pre-mv__variant-pick .radio-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.pre-mv__variant-pick .radio-card input[type='radio'] {
+  margin: 0;
+}
+
+.pre-mv__variant-pick .radio-card small {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pre-mv__variant-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.pre-mv__variant-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background-color: #eef4ff;
+  color: #2b5fad;
+  border: 1px solid #c7dcff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ─── Step Card ─── */
+.pre-mv-step {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: #fff;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pre-mv-step.is-disabled {
+  opacity: 0.55;
+}
+
+.pre-mv-step.is-placeholder {
+  background-color: #fafbfd;
+}
+
+.pre-mv-step__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pre-mv-step__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pre-mv-step__badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background-color: #eef2f7;
+  color: #4b5563;
+}
+
+.pre-mv-step__badge.is-running {
+  background-color: #fff7e6;
+  color: #8a5a00;
+}
+
+.pre-mv-step__badge.is-ready {
+  background-color: #e7f6ec;
+  color: #1f7a3a;
+}
+
+.pre-mv-step__badge.is-failed {
+  background-color: #fdecec;
+  color: #b3261e;
+}
+
+.pre-mv-step__desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.pre-mv-step__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pre-mv-step__row-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pre-mv-step__radio {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.pre-mv-step__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.pre-mv-step__error {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background-color: #fdecec;
+  color: #b3261e;
+  font-size: 12px;
+  border: 1px solid #f5c6c6;
+  white-space: pre-wrap;
+}
+
+.pre-mv-step__hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ─── Phase 0 결과 — scene_plan 표 ─── */
+.pre-mv-plan {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fafcff;
+  padding: 8px 10px;
+}
+
+.pre-mv-plan__line {
+  display: grid;
+  grid-template-columns: 36px 100px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 4px;
+  border-bottom: 1px dashed #e6ebf2;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.pre-mv-plan__line:last-child {
+  border-bottom: none;
+}
+
+.pre-mv-plan__idx {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+
+.pre-mv-plan__slot {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background-color: #eef4ff;
+  color: #2b5fad;
+  text-align: center;
+  white-space: nowrap;
+  align-self: start;
+  margin-top: 1px;
+}
+
+.pre-mv-plan__lyric {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pre-mv-plan__excerpt {
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.pre-mv-plan__refs {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pre-mv-plan__refchip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background-color: #eef2f7;
+  color: #4b5563;
+}
+
+/* ─── Phase 1 결과 — scenes 그리드 ─── */
+.pre-mv-scenes {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.pre-mv-scenes__warn {
+  font-size: 12px;
+  color: #8a5a00;
+  background-color: #fff7e6;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #f0d68c;
+}
+
+.pre-mv-scene-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: #fff;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pre-mv-scene-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pre-mv-scene-card__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pre-mv-scene-card__meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pre-mv-scene-card__use {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pre-mv-scene-card__desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.pre-mv-scene-card__lyric {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.pre-mv-scene-card__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.pre-mv-scene-card__edit label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pre-mv-scene-card__edit textarea {
+  width: 100%;
+  min-height: 56px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.pre-mv-scene-card__edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.pre-mv-scene-card__edit-hint {
+  font-size: 11px;
+  color: #8a5a00;
+  background-color: #fff7e6;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #f0d68c;
+}
+
+.pre-mv-step__btn {
+  font-size: 12.5px;
+  padding: 6px 12px;
+}
+
+.pre-mv-step__placeholder-text {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  background-color: #f4f6fa;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+/* ─── v17.2 — Phase 2 (씬 이미지) ─── */
+.pre-mv-images__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.pre-mv-images__status-text {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pre-mv-images__status-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pre-mv-images__progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background-color: #eef2f7;
+  overflow: hidden;
+}
+
+.pre-mv-images__progress-bar {
+  height: 100%;
+  background-color: #2b5fad;
+  transition: width 0.4s ease;
+}
+
+/* 씬 카드 — 이미지 영역 */
+.pre-mv-scene-card__image {
+  width: 200px;
+  height: 113px;
+  border-radius: 8px;
+  background-color: #f4f6fa;
+  border: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.pre-mv-scene-card__image.is-completed {
+  border-style: solid;
+  background-color: #000;
+}
+
+.pre-mv-scene-card__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pre-mv-scene-card__image-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.pre-mv-scene-card__image-status.is-generating {
+  color: #8a5a00;
+  background-color: #fff7e6;
+}
+
+.pre-mv-scene-card__image-status.is-failed {
+  color: #b3261e;
+  background-color: #fdecec;
+}
+
+.pre-mv-scene-card__image-status.is-pending {
+  color: var(--muted);
+}
+
+.pre-mv-scene-card__image-error {
+  font-size: 11px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.pre-mv-scene-card__warn-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* 스피너 (회전) */
+.pre-mv-scene-card__spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #f0d68c;
+  border-top-color: #8a5a00;
+  animation: pre-mv-spin 0.8s linear infinite;
+}
+
+@keyframes pre-mv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── v17.3 — Phase 3 (씬 영상) 모델 선택 ─── */
+.pre-mv-step__row--column {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.pre-mv-videos__models {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.pre-mv-videos__radio {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: auto auto;
+  align-items: start;
+  gap: 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fafcff;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pre-mv-videos__radio input[type='radio'] {
+  grid-row: 1 / span 2;
+  margin-top: 3px;
+}
+
+.pre-mv-videos__radio-label {
+  font-weight: 600;
+  color: var(--text);
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.pre-mv-videos__radio-desc {
+  font-size: 11px;
+  color: var(--muted);
+  grid-column: 2;
+  grid-row: 2;
+  line-height: 1.4;
+}
+
+/* v24 — Grok 끝 프레임 잠금 미지원 안내 박스 */
+.pre-mv-videos__grok-notice {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background-color: #fff7e6;
+  border: 1px solid #f4d58a;
+  color: #6b4f0c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* v24 — 씬 카드 챕터 체인 메타 뱃지 */
+.pre-mv-scene-card__chain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background-color: #eef4ff;
+  color: #2b5fad;
+  border: 1px solid #c7dcff;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 씬 카드 — 영상 영역 (200x113 16:9, 컨트롤 표시) */
+.pre-mv-scene-card__video {
+  width: 200px;
+  min-height: 113px;
+  border-radius: 8px;
+  background-color: #f4f6fa;
+  border: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-top: 4px;
+  position: relative;
+}
+
+.pre-mv-scene-card__video.is-completed {
+  border-style: solid;
+  background-color: #000;
+}
+
+.pre-mv-scene-card__video-player {
+  width: 200px;
+  height: 113px;
+  display: block;
+  background-color: #000;
+}
+
+.pre-mv-scene-card__video-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 113px;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.pre-mv-scene-card__video-status.is-generating {
+  color: #8a5a00;
+  background-color: #fff7e6;
+}
+
+.pre-mv-scene-card__video-status.is-failed {
+  color: #b3261e;
+  background-color: #fdecec;
+}
+
+.pre-mv-scene-card__video-status.is-pending {
+  color: var(--muted);
+}
+
+.pre-mv-scene-card__video-error {
+  font-size: 11px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.pre-mv-scene-card__video-actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 6px;
+  background-color: #fafcff;
+}
+
+/* ─── v17.3 — Phase 4 (최종 합치기) ─── */
+.pre-mv-final__result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.pre-mv-final__player {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 540px;
+  background-color: #000;
+  border-radius: 10px;
+  display: block;
+}
+
+/* 페이지네이션 */
+.pre-mv-scenes__pager {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pre-mv-scenes__pager-label {
+  font-size: 12.5px;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pre-mv-scenes__pager-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* v21 — 시나리오 본문 + 시점별 키 사건 카드 */
+.pre-mv-scenario__text {
+  margin-top: 12px;
+  padding: 16px 18px;
+  background: #f7f4ee;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  line-height: 1.7;
+  color: var(--text);
+  font-size: 14px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.pre-mv-scenario__events {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pre-mv-scenario__events li {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.event-slot-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #fff2cc;
+  color: #7a5a00;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.event-summary {
+  margin: 4px 0 6px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.event-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ref-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2b5fad;
+  font-size: 12px;
+}
+
+/* v21.1 — Phase 1 실패 배너 강화 */
+.pre-mv-step__error--strong {
+  border-width: 2px;
+  background: #fff0f0;
+  color: #8a1f1f;
+}
+
+.pre-mv-step__error--strong strong {
+  color: #8a1f1f;
+  margin-right: 4px;
+}
+
+.pre-mv-step__error-detail {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(138, 31, 31, 0.3);
+  font-size: 12px;
+  color: #6e2222;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/* v24.2 — Step 4 라이브 갤러리 + 일괄 다운로드                              */
+/* ──────────────────────────────────────────────────────────────────────── */
+
+.pre-mv-videos__live-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(138, 31, 31, 0.18);
+}
+
+.pre-mv-videos__gallery-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #6e2222;
+}
+
+.pre-mv-videos__gallery-summary-text {
+  font-weight: 600;
+}
+
+.pre-mv-videos__action-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 248, 240, 0.7);
+  border: 1px solid rgba(138, 31, 31, 0.12);
+  border-radius: 8px;
+}
+
+.pre-mv-videos__select-count {
+  font-size: 13px;
+  color: #6e2222;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.pre-mv-chapter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #fffaf5;
+  border: 1px solid rgba(138, 31, 31, 0.1);
+  border-radius: 10px;
+}
+
+.pre-mv-chapter-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: #4a1818;
+}
+
+.pre-mv-chapter-group__title {
+  font-weight: 700;
+}
+
+.pre-mv-chapter-group__count {
+  font-size: 12px;
+  color: #6e2222;
+}
+
+.pre-mv-chapter-group__progress {
+  width: 100%;
+  height: 4px;
+  background: rgba(138, 31, 31, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.pre-mv-chapter-group__progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #c8a96a, #a0822f);
+  transition: width 0.4s ease;
+}
+
+.pre-mv-chapter-group__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.pre-mv-live-scene-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(138, 31, 31, 0.15);
+  border-radius: 8px;
+  transition: outline 0.18s ease, box-shadow 0.18s ease;
+}
+
+.pre-mv-live-scene-card.is-selected {
+  outline: 2px solid #c8a96a;
+  box-shadow: 0 0 0 2px rgba(200, 169, 106, 0.18);
+}
+
+.pre-mv-live-scene-card--generating {
+  outline: 2px solid #f0b429;
+}
+
+.pre-mv-live-scene-card--failed {
+  border-color: #d64545;
+}
+
+.pre-mv-live-scene-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4a1818;
+}
+
+.pre-mv-live-scene-card__num {
+  font-weight: 700;
+}
+
+.pre-mv-live-scene-card__slot {
+  padding: 2px 6px;
+  background: rgba(138, 31, 31, 0.08);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.pre-mv-live-scene-card__status {
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pre-mv-live-scene-card__status.is-completed {
+  background: #d6f5d6;
+  color: #1e5a1e;
+}
+
+.pre-mv-live-scene-card__status.is-generating {
+  background: #fff2cc;
+  color: #7a5a00;
+}
+
+.pre-mv-live-scene-card__status.is-failed {
+  background: #ffd6d6;
+  color: #8a1f1f;
+}
+
+.pre-mv-live-scene-card__status.is-pending {
+  background: #e5e5e5;
+  color: #555;
+}
+
+.pre-mv-live-scene-card__check {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+
+.pre-mv-live-scene-card__image {
+  width: 100%;
+  height: 113px;
+  background: #f3eee4;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pre-mv-live-scene-card__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pre-mv-live-scene-card__image-placeholder {
+  font-size: 12px;
+  color: #999;
+}
+
+.pre-mv-live-scene-card__video-area {
+  width: 100%;
+  min-height: 113px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+}
+
+.pre-mv-live-scene-card__video-area.is-pending {
+  background: #f0f0f0;
+}
+
+.pre-mv-live-scene-card__video-area.is-generating {
+  background: #fff8e0;
+}
+
+.pre-mv-live-scene-card__video-area.is-completed {
+  background: #f7fff7;
+}
+
+.pre-mv-live-scene-card__video-area.is-failed {
+  background: #fff1f1;
+}
+
+.pre-mv-live-scene-card__video {
+  width: 100%;
+  max-width: 200px;
+  height: 113px;
+  background: #000;
+  border-radius: 4px;
+}
+
+.pre-mv-live-scene-card__dl {
+  font-size: 12px;
+}
+
+.pre-mv-live-scene-card__msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #555;
+  text-align: center;
+}
+
+.pre-mv-live-scene-card__msg.is-generating {
+  color: #7a5a00;
+}
+
+.pre-mv-live-scene-card__msg.is-failed {
+  color: #8a1f1f;
+}
+
+.pre-mv-live-scene-card__err {
+  word-break: break-word;
+}
+
+/* v24.3 — LiveSceneCard 프롬프트 텍스트 */
+.pre-mv-live-scene-card__desc {
+  margin: 6px 0 0;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
+  word-break: keep-all;
+}
+
+.pre-mv-live-scene-card__prompts {
+  margin-top: 6px;
+  padding: 6px 8px 8px;
+  background: #fafaf7;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pre-mv-live-scene-card__prompts-summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: #2b5fad;
+  user-select: none;
+  outline: none;
+}
+
+.pre-mv-live-scene-card__prompts-summary:hover {
+  color: #1e4584;
+}
+
+.pre-mv-live-scene-card__prompt-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 6px;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pre-mv-live-scene-card__prompt-label {
+  color: #777;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pre-mv-live-scene-card__prompt-text {
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.pre-mv-live-scene-card__prompt-en {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.pre-mv-live-scene-card__prompt-en .pre-mv-live-scene-card__prompt-text {
+  color: #555;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+/* v24.4 — LiveSceneCard ref 이미지 그리드 */
+.pre-mv-live-scene-card__refs {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.pre-mv-live-scene-card__refs-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 6px;
+}
+
+.pre-mv-live-scene-card__refs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 6px;
+}
+
+.pre-mv-live-scene-card__ref-item {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.pre-mv-live-scene-card__ref-item img {
+  width: 80px;
+  height: 45px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #eee;
+}
+
+.pre-mv-live-scene-card__ref-item figcaption {
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  line-height: 1.2;
+  word-break: keep-all;
+  max-width: 96px;
+}
+
+.pre-mv-live-scene-card__ref-item.is-sheet img { border-color: #d4a; }
+.pre-mv-live-scene-card__ref-item.is-place img { border-color: #2b5fad; }
+.pre-mv-live-scene-card__ref-item.is-wedding_photo img { border-color: #d97706; }
+.pre-mv-live-scene-card__ref-item.is-prev_image img { border-color: #16a34a; }
+.pre-mv-live-scene-card__ref-item.is-start_frame img { border-color: #0891b2; border-style: dashed; }
+.pre-mv-live-scene-card__ref-item.is-end_frame img { border-color: #be185d; border-style: dashed; }

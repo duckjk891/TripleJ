@@ -1,0 +1,39 @@
+.scene-input {
+  margin-bottom: 18px;
+  padding: 12px 14px 8px 14px;
+  border-left: 3px solid #e8d5c4;
+  background-color: #fffdf9;
+  border-radius: 0 10px 10px 0;
+}
+
+.scene-input__label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2b2b2b;
+}
+
+/* v9 — PolishButton 우측 정렬 */
+.scene-input__label .polish-btn {
+  margin-left: auto;
+}
+
+.scene-input__label-text {
+  font-size: 14px;
+}
+
+.scene-input__hint {
+  font-size: 12px;
+  color: #888;
+  margin: 6px 0 0 2px;
+}
+
+/* v8 — 본문 글자/패딩은 MentionField.__textarea 가 그대로 그린다.
+   여기서는 추가적인 size/색 오버라이드만(필요 시). 배경은 투명 유지(미러 노출). */
+.scene-input__textarea {
+  /* MentionField.css 의 .mention-field__textarea 기본값을 사용.
+     SceneInput 고유 톤이 필요하면 이 자리에서 덮어쓰면 됨. */
+}

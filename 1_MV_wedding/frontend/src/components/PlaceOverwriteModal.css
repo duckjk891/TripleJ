@@ -1,0 +1,115 @@
+/* v34 — Place overwrite confirm modal */
+.place-overwrite-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 9000;       /* v32 lightbox(9999) 보다 낮게 — 모달 안 이미지를 클릭하면 lightbox 가 위로 뜸 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: place-overwrite-fade 0.16s ease-out;
+}
+
+@keyframes place-overwrite-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.place-overwrite-modal__card {
+  background: #fff;
+  color: #111;
+  border-radius: 12px;
+  padding: 20px 24px;
+  max-width: 96vw;
+  max-height: 92vh;
+  overflow: auto;
+  box-shadow: 0 20px 64px rgba(0, 0, 0, 0.45);
+}
+
+.place-overwrite-modal__head h3 {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.place-overwrite-modal__title-prefix {
+  font-weight: 700;
+}
+
+.place-overwrite-modal__name {
+  color: #555;
+  font-size: 15px;
+}
+
+.place-overwrite-modal__desc {
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: #555;
+  line-height: 1.5;
+}
+
+.place-overwrite-modal__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 720px) {
+  .place-overwrite-modal__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.place-overwrite-modal__col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.place-overwrite-modal__col-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+}
+
+.place-overwrite-modal__img {
+  width: 100%;
+  max-width: 42vw;
+  max-height: 60vh;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #f4f4f4;
+  display: block;
+}
+
+@media (max-width: 720px) {
+  .place-overwrite-modal__img {
+    max-width: 84vw;
+    max-height: 40vh;
+  }
+}
+
+.place-overwrite-modal__img-placeholder {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #f4f4f4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+.place-overwrite-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}

@@ -1,0 +1,70 @@
+.dyn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dyn-list__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* v8 — MentionField 컨테이너가 flex item 이 되도록 wrap. */
+.dyn-list__input-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+/* v9 — PolishButton 을 우측 상단에 띄움 */
+.dyn-list__input-wrap .polish-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 2;
+}
+
+/* multiline=false (input) 케이스 한정 룰.
+   MentionField 의 textarea 에는 SceneInput 처럼 추가 오버라이드 불필요 — 기본 .mention-field__textarea 가 적용됨. */
+input.dyn-list__input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.dyn-list__remove {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.dyn-list__remove:hover {
+  color: #b3261e;
+  border-color: #b3261e;
+}
+
+.dyn-list__add {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background-color: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dyn-list__add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
