@@ -4724,3 +4724,176 @@ llm_scenes.sort(key=lambda sc: (sc.get("event_index", 0)))
 | W7 | LLM 응답에서 옛 story_slot 박혔는데 post-process 가 덮어쓰는 동안 로깅이 잘못된 챕터 표시. | logger metric 은 final_scenes 후 chapter_counts 계산 — 정확. |
 
 ### 9) 작업 끝(append).
+
+## v25 — 2026-06-01 — 가사 제목/내용 수정 API (PATCH /api/mv/jobs/{job_id}/lyrics)
+
+### 1) 요청 작업 요약
+
+· 사용자 원문: "가사 제목, 가사 내용을 수정하는 API 엔드포인트가 있는 백엔드 코드를 수정한 다음에 백엔드 서버를 재실행하는거야."
+· 현재 `backend_8000/app/routes/mv.py` 에 가사 제목(`lyrics.title`) / 내용(`lyrics.body`) 만 부분 수정하는 엔드포인트 없음 — `POST /jobs/{job_id}/regenerate` 는 story_id + music_spec 기반 전체 재생성 흐름이라 "사용자가 직접 가사 텍스트만 손보고 저장" 시나리오를 못 푼다.
+· 이번 턴은 **백엔드 PATCH 엔드포인트 신설 + 서버 자동 재시작 (uvicorn --reload 가 git pull 후 감지)** 까지. 프론트는 다음 턴.
+
+### 2) 백엔드 작업 항목 (backend agent)
+
+대상 파일: `/Users/pearl/TripleJ/1_MV_wedding/backend_8000/app/routes/mv.py`
+
+#### 2-A) 엔드포인트 스펙
+
+| 항목 | 값 |
+|------|------|
+| Method | `PATCH` |
+| Path | `/api/mv/jobs/{job_id}/lyrics` |
+| Auth | `Depends(get_current_user)` — owner 검증 |
+| 가드 | 진행 중(`generating_lyrics`, `generating_music`, `queued`) 일 땐 409 — 사용자 수정이 백그라운드 결과로 덮어쓰여지는 race 방지 |
+
+#### 2-B) 요청 바디 (Pydantic)
+
+```python
+class MVJobLyricsPatch(BaseModel):
+    title: str | None = None   # None 이면 미수정. 공백만 트림 후 검사.
+    body: str | None = None    # None 이면 미수정. 공백만 트림 후 검사.
+```
+
+검증 규칙:
+- `title` / `body` 둘 다 `None` 이면 **422** (수정할 항목이 없음).
+- `title` 길이 1~200 글자 (strip 후). 벗어나면 **422**.
+- `body` 길이 1~5000 글자 (strip 후). 벗어나면 **422**.
+
+#### 2-C) 동작 (의사 코드)
+
+```python
+@router.patch("/jobs/{job_id}/lyrics")
+async def patch_job_lyrics(
+    job_id: str,
+    body: MVJobLyricsPatch,
+    current_user=Depends(get_current_user),
+):
+    # 1) ObjectId 파싱 — 실패 시 400.
+    # 2) doc 조회 — 없으면 404.
+    # 3) owner 검증 — 실패 시 403.
+    # 4) status race 가드 — generating_* / queued 면 409.
+    # 5) body.title is None and body.body is None → 422.
+    # 6) 새 lyrics dict 구성:
+    #    cur = doc.get("lyrics") or {}
+    #    new_lyrics = dict(cur)
+    #    if body.title is not None: new_lyrics["title"] = body.title.strip()
+    #    if body.body is not None:  new_lyrics["body"]  = body.body.strip()
+    # 7) update_one $set lyrics, updated_at; status 는 그대로(또는 lyrics_ready 유지).
+    # 8) 로깅: [MVRoute] /lyrics-patch ok user_id=%s job_id=%s title_changed=%s body_changed=%s
+    # 9) 응답: _serialize_job(updated_doc)
+```
+
+추가 메모:
+- 가사 본문이 바뀌면 기존 `lyric_timestamps_variants` 는 의미가 어긋날 수 있음 — v25 에서는 **수동 가사 편집은 음악 재생성 트리거 안 함** (사용자가 별도로 `POST /jobs/{id}/music` 다시 부르거나 `regenerate` 호출하는 흐름). 단, body 가 바뀐 경우 `lyric_timestamps`, `lyric_timestamps_variants`, `lyric_timestamps_variants_count`, `lyric_timestamps_status` 는 **stale 표시** 위해 `lyric_timestamps_status="stale"` 으로 마킹 (timestamps 자체는 보존, UI 가 경고만 띄움).
+- title 만 바뀐 경우는 timestamps 영향 없음 → stale 마킹 안 함.
+
+#### 2-D) 로깅 추적자
+
+- `[MVRoute] /lyrics-patch entry user_id=%s job_id=%s has_title=%s has_body=%s`
+- `[MVRoute] /lyrics-patch invalid job_id ...`
+- `[MVRoute] /lyrics-patch not found ...`
+- `[MVRoute] /lyrics-patch forbidden ...`
+- `[MVRoute] /lyrics-patch busy status=%s`
+- `[MVRoute] /lyrics-patch noop` (둘 다 None)
+- `[MVRoute] /lyrics-patch ok user_id=%s job_id=%s title_changed=%s body_changed=%s body_marked_stale=%s`
+
+### 3) 프론트엔드 작업 항목 (frontend agent — 다음 턴)
+
+· 이번 턴 **NO-OP**. 프론트는 v26 에서 다룸.
+· 예고: `frontend/src/api/mv.ts` (또는 동등 위치) 에 `patchMvJobLyrics(jobId, {title?, body?})` 추가 + 가사 카드 편집 모드 UI (제목/본문 textarea + 저장 버튼 → PATCH 호출 → 응답으로 job 캐시 교체).
+
+### 4) 테스터 작업 항목 (tester agent)
+
+도구: curl (백엔드 PC `100.127.225.55:8000` 대상). JWT 는 사용자 로그인으로 받은 토큰 사용.
+
+#### T1 — 정상 PATCH (title + body 동시)
+```bash
+curl -i -X PATCH "http://100.127.225.55:8000/api/mv/jobs/$JOB_ID/lyrics" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"우리 결혼해요 (수정본)","body":"1절...\n2절..."}'
+```
+기대: `200 OK`, 응답 JSON 의 `lyrics.title` / `lyrics.body` 가 보낸 값. `lyric_timestamps_status="stale"`.
+
+#### T2 — title 만
+```bash
+curl -i -X PATCH ... -d '{"title":"새 제목만"}'
+```
+기대: `200 OK`. `lyrics.title` 갱신. `lyrics.body` 보존. `lyric_timestamps_status` 미변경.
+
+#### T3 — body 만
+```bash
+curl -i -X PATCH ... -d '{"body":"본문만 갈아끼움"}'
+```
+기대: `200 OK`. `lyric_timestamps_status="stale"`.
+
+#### T4 — DB 직접 확인
+```bash
+ssh -p 2222 duckjk89@100.127.225.55 \
+  'mongosh "$MONGO_URI" --quiet --eval "db.mv_jobs.findOne({_id: ObjectId(\"'$JOB_ID'\")}, {lyrics:1, lyric_timestamps_status:1, updated_at:1})"'
+```
+기대: `lyrics.title` / `lyrics.body` 가 PATCH 로 보낸 값과 동일. `updated_at` 갱신.
+
+#### T5 — 잘못된 입력 검증
+| 케이스 | 요청 바디 | 기대 응답 |
+|------|---------|----------|
+| 둘 다 누락 | `{}` | 422 (또는 400) — "수정할 항목이 없습니다" |
+| title 빈 문자열 | `{"title":"   "}` | 422 — strip 후 길이 1 미만 |
+| title 너무 김 | `{"title":"x".repeat(201)}` | 422 |
+| body 너무 김 | `{"body":"x".repeat(5001)}` | 422 |
+
+#### T6 — 권한/상태 가드
+- 다른 유저 토큰으로 PATCH → 403.
+- 잘못된 job_id (`"abc"`) → 400.
+- 존재하지 않는 ObjectId → 404.
+- `status="generating_lyrics"` 상태 잡에 PATCH → 409.
+
+#### T7 — 회귀
+- `GET /api/mv/jobs/{id}` 응답 스키마 변화 없음 (필드 추가/제거 X).
+- `POST /jobs/{id}/regenerate` 여전히 정상 동작.
+
+### 5) 백엔드 재시작 절차 (운영)
+
+`uvicorn --reload` 가 백엔드 PC 에서 항상 가동 중 → **파일 변경 감지로 자동 재시작**.
+
+#### 5-A) 맥(개발자) 측 — 코드 push
+```bash
+cd /Users/pearl/TripleJ
+git add 1_MV_wedding/backend_8000/app/routes/mv.py 1_MV_wedding/PLAN.md
+git commit -m "feat(mv): add PATCH /api/mv/jobs/{job_id}/lyrics (v25)"
+git push origin <current-branch>
+```
+주의: 메모리 규칙 (`2_housing/` / `0_platform*` / `에셋/` 건드리지 말 것) — `1_MV_wedding/` 만 스테이징.
+
+#### 5-B) 백엔드 PC 측 — pull → reload 확인
+```bash
+ssh -p 2222 duckjk89@100.127.225.55 \
+  'cd /mnt/d/1_projects/0_myProjects/1_tripleJ/1_MV_wedding && git pull --ff-only'
+```
+이어서 uvicorn 로그에서 reload 메시지 확인:
+```bash
+ssh -p 2222 duckjk89@100.127.225.55 \
+  'tail -n 30 /mnt/d/1_projects/0_myProjects/1_tripleJ/1_MV_wedding/backend_8000/logs/uvicorn.out 2>/dev/null || \
+   journalctl --user -u mv-backend -n 30 --no-pager 2>/dev/null || \
+   pgrep -af "uvicorn.*backend_8000"'
+```
+기대 로그 패턴: `WARNING: WatchFiles detected changes in 'app/routes/mv.py'. Reloading...` → `Application startup complete.`
+
+#### 5-C) Smoke
+```bash
+curl -s "http://100.127.225.55:8000/api/health" | head
+curl -s -X OPTIONS "http://100.127.225.55:8000/api/mv/jobs/000000000000000000000000/lyrics" -i | head
+```
+기대: health 200, OPTIONS preflight 도 라우터 등록되어 있음 (404 가 아니라 405 / 200).
+
+### 6) 회귀 위험
+
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | body 만 바뀌었는데 timestamps 가 stale 표시 안 돼서 UI 가 잘못된 줄에 노래 진행. | `lyric_timestamps_status="stale"` 마킹 + 프론트(v26)가 stale 일 때 토글 비활성화. |
+| R2 | `status="lyrics_ready"` 가 아닌 잡(예: `music_ready`) 에 가사 수정 시 음악 본문/가사 mismatch. | v25 는 "lyrics 가 한 번 생성된 모든 잡" 에 수정 허용(`status not in busy_set`). mismatch 는 사용자가 의도적으로 만든 상태 → UI 에서 "수동 편집됨" 배지. |
+| R3 | 두 클라이언트 동시 PATCH → race. | mongo `update_one` 원자성 + 마지막 쓰기 승. 충돌 감지 불필요 (단일 사용자 owner). |
+| R4 | uvicorn --reload 가 syntax error 로 죽음 → 서비스 다운. | `python -c "import app.routes.mv"` 로컬 (맥) 에서 임포트 확인 후 push. 백엔드 PC 도 reload 실패 시 직전 워커 유지. |
+| R5 | PLAN.md 가 의도치 않게 `2_housing/` 또는 루트 파일에 변경 포함된 채 commit. | `git add` 시 `1_MV_wedding/` 경로만 명시 — `git add -A` / `git add .` 금지. |
+
+### 7) 작업 끝(append).
+

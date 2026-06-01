@@ -15,7 +15,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..auth import get_current_user
 from ..config import settings
@@ -34,6 +34,47 @@ router = APIRouter(prefix="/api/mv")
 class MVJobCreate(BaseModel):
     story_id: str
     music_spec: MusicSpec
+
+
+class MVJobLyricsPatch(BaseModel):
+    """v25 — 작성된 가사 (title / body) 부분 편집용 요청 모델.
+
+    둘 다 Optional 이지만 둘 중 하나는 반드시 와야 한다 (model_validator 로 보증).
+    문자열은 strip 후 길이 가드 (title 1~200, body 1~5000).
+    """
+
+    title: str | None = Field(default=None)
+    body: str | None = Field(default=None)
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if len(s) > 200:
+            raise ValueError("title은 1~200자여야 합니다.")
+        return s
+
+    @field_validator("body")
+    @classmethod
+    def _validate_body(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            return None
+        if len(s) > 5000:
+            raise ValueError("body는 1~5000자여야 합니다.")
+        return s
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "MVJobLyricsPatch":
+        if self.title is None and self.body is None:
+            raise ValueError("title 또는 body 중 최소 하나는 입력해야 합니다.")
+        return self
 
 
 def _serialize_job(doc: dict) -> dict:
@@ -605,6 +646,88 @@ async def regenerate_job(
         user_id, job_id,
     )
     return {"job_id": job_id, "status": "generating_lyrics"}
+
+
+@router.patch("/jobs/{job_id}/lyrics")
+async def patch_job_lyrics(
+    job_id: str,
+    body: MVJobLyricsPatch,
+    current_user=Depends(get_current_user),
+):
+    """v25 — 생성된 가사 (title / body) 를 사용자가 직접 편집.
+
+    title 만 / body 만 / 둘 다 부분 업데이트 지원. body 가 바뀐 경우
+    `lyric_timestamps_status='stale'` 로 마킹하여 Phase 0 재매핑이 필요함을 표시.
+    가드: ObjectId 형식 / 잡 존재 / owner / 진행 중 아님.
+    """
+    user_id = current_user["id"]
+    has_title = body.title is not None
+    has_body = body.body is not None
+    logger.info(
+        "[MVRoute] /lyrics-patch entry job_id=%s has_title=%s has_body=%s",
+        job_id, has_title, has_body,
+    )
+
+    mongo = get_mongo()
+    try:
+        oid = ObjectId(job_id)
+    except (InvalidId, TypeError):
+        logger.warning(
+            "[MVRoute] /lyrics-patch invalid job_id user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=400, detail="잘못된 job_id 형식")
+
+    doc = await mongo.mv_jobs.find_one({"_id": oid})
+    if not doc:
+        logger.warning(
+            "[MVRoute] /lyrics-patch not found user_id=%s job_id=%s",
+            user_id, job_id,
+        )
+        raise HTTPException(status_code=404, detail="작품을 찾을 수 없습니다")
+
+    if doc.get("user_id") != user_id:
+        logger.warning(
+            "[MVRoute] /lyrics-patch forbidden job_id=%s user_id=%s",
+            job_id, user_id,
+        )
+        raise HTTPException(status_code=403, detail="권한이 없습니다")
+
+    cur_status = doc.get("status") or ""
+    if cur_status in ("queued", "generating_lyrics", "generating_music"):
+        logger.warning(
+            "[MVRoute] /lyrics-patch busy job_id=%s status=%s",
+            job_id, cur_status,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="진행 중인 작품은 수정할 수 없습니다",
+        )
+
+    # 기존 lyrics dict 부분 업데이트.
+    prev_lyrics = doc.get("lyrics") or {}
+    if not isinstance(prev_lyrics, dict):
+        prev_lyrics = {}
+    new_lyrics = dict(prev_lyrics)
+    if has_title:
+        new_lyrics["title"] = body.title
+    if has_body:
+        new_lyrics["body"] = body.body
+
+    now = datetime.now(timezone.utc)
+    set_doc: dict = {
+        "lyrics": new_lyrics,
+        "updated_at": now,
+    }
+    # body 가 실제로 바뀐 경우 timestamps stale 마킹.
+    prev_body = prev_lyrics.get("body") if isinstance(prev_lyrics, dict) else None
+    if has_body and body.body != prev_body:
+        set_doc["lyric_timestamps_status"] = "stale"
+
+    await mongo.mv_jobs.update_one({"_id": oid}, {"$set": set_doc})
+    updated = await mongo.mv_jobs.find_one({"_id": oid})
+    logger.info("[MVRoute] /lyrics-patch ok job_id=%s", job_id)
+    return _serialize_job(updated)
 
 
 @router.post("/jobs/{job_id}/music")
