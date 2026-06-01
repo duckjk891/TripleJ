@@ -2653,3 +2653,64 @@ v21.4-hotfix 라이브 검증 (잡 6a17f8eb, 24 씬, 챕터=[4,4,12,4]) 에서 L
 
 ### 결론
 v21.5 PASS — LLM 의 결정론 라벨(story_slot/memory_index/refs) 의존을 완전 제거하고 `event_index: int` 단 하나만 받아 코드가 events 룩업으로 모든 라벨을 강제. v21.4-hotfix 의 wedding_prep 챕터 누락 결함이 해결되어 잡 6a17f8eb 에서 5 챕터 (meeting/first_date/memory/proposal/wedding_prep) 모두 등장. 라이브 검증에서 모든 23 씬의 story_slot/section/memory_index/refs 가 events 와 100% 매칭. 모든 6 events 분배 보장 (LLM 누락 시 1회 retry + fallback 자동 보충). LLM 응답 새 스키마를 정확히 따라 retry 미발동. 응답 페이로드 호환성 유지 — 프론트엔드 무영향. event_index asc 정렬로 순서 보장.
+
+---
+
+## v25 - 2026-06-01 - 가사 제목/내용 수정 API 추가
+
+### 요청 작업
+가사 제목/내용 수정 API 엔드포인트 추가 → 백엔드 서버 재실행
+
+### 수행 결과
+
+#### 1. 백엔드 코드 변경 (backend-dev)
+- **파일**: `1_MV_wedding/backend_8000/app/routes/mv.py`
+- **추가 항목**:
+  - `MVJobLyricsPatch` Pydantic 모델
+  - `patch_job_lyrics` 핸들러
+- **라인 변경**: +124 / -1 (831 → 953 lines)
+- **라우트**: `@router.patch("/jobs/{job_id}/lyrics")`
+- **가드 순서**: 400(ObjectId) → 404 → 403 → 409 → 422(validation)
+- **동작**:
+  - title/body 부분 업데이트
+  - body 변경 시 `lyric_timestamps_status='stale'`
+  - `updated_at` 갱신
+
+#### 2. git 커밋 + 푸시
+- **브랜치**: `frontend`
+- **커밋 해시**: `034fcfc`
+- **메시지**: "Add PATCH /api/mv/jobs/{job_id}/lyrics for editing lyrics title/body"
+- **푸시**: `29c06b0..034fcfc` → origin/frontend
+- **주의사항**: 직전 큰 커밋(`7e4b22e`, 56k 라인) 때문에 `http.postBuffer=524288000` 일회성 옵션 사용
+
+#### 3. 백엔드 PC 배포
+- **SSH**: `duckjk89@100.127.225.55:2222` (키 인증)
+- **백엔드 PC 브랜치**: `backend` (로컬과 다름 — 선택적 sync 필요)
+- **명령**:
+  ```
+  git fetch origin frontend
+  git checkout origin/frontend -- 1_MV_wedding/backend_8000/app/routes/mv.py
+  ```
+- **파일 적용 확인**: 953 라인
+
+#### 4. uvicorn auto-reload 확인
+- 메인 PID **89420 유지**
+- worker PID **89455 → 9556 변경**
+- `--reload` 옵션이 mv.py 변경 감지 후 자동 재시작 완료
+
+#### 5. 엔드포인트 가용성 검증 (smoke test)
+- **요청**: `curl -X PATCH http://127.0.0.1:8000/api/mv/jobs/{dummy_id}/lyrics`
+- **응답**: HTTP `401` `{"detail":"인증 토큰이 필요합니다."}`
+- **해석**: 라우트가 정상 등록됨 (없었으면 405). 인증 미들웨어가 가드보다 먼저 동작함이 확인됨.
+
+### 특이사항
+1. 백엔드 PC 는 `backend` 브랜치 체크아웃 상태이고 로컬은 `frontend` 브랜치. 향후 다른 백엔드 변경이 있을 때도 같은 **선택적 fetch 패턴** 사용 필요.
+2. 백엔드 PC `git status` 에 `1_MV_wedding/frontend/src/pages/StoryWizardPage.jsx` 가 modified 로 남아있음 (백엔드 PC 사용자의 WIP일 가능성). 이번 작업은 건드리지 않음.
+3. 풀 통합 테스트(PLAN.md 의 T1~T7)는 실제 인증 토큰이 필요. 다음 작업으로 프론트 가사 편집 UI 추가 시 브라우저에서 검증 예정.
+
+### 다음 작업 (예고 - 별개 커밋)
+- **프론트엔드**: `GenerationStatusPage` 가사 카드에 편집 모드 추가 → `patchMvJobLyrics(jobId, {title, body})` 호출
+- **로컬 다른 modified 파일 4개** (`api/index.js`, `GenerationStatusPage.jsx`, `MyWeddingMVPage.jsx`, `StoryWizardPage.jsx`) 는 별도 커밋
+
+### 결론
+v25 PASS — `PATCH /api/mv/jobs/{job_id}/lyrics` 엔드포인트가 백엔드(mv.py)에 추가되어 로컬 커밋·푸시되고, 백엔드 PC(`backend` 브랜치)에 선택적 fetch + checkout 패턴으로 해당 파일만 동기화 완료. uvicorn `--reload` 가 변경을 감지해 worker PID 자동 교체. smoke test (인증 토큰 없이 PATCH) 응답이 401 인증 오류로 떨어져 라우트 등록·미들웨어 순서 정상 확인. 실제 가사 편집 동작 검증은 프론트 편집 UI 추가 후 다음 라운드에서 진행.
