@@ -5241,3 +5241,47 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - 재시도 로직에 구조 완성도 검증 (필수 섹션 체크 → 없으면 재생성)
 - GENRE/MOOD 별 더 강한 dynamics 차별화 지시
 - Suno style 파라미터에 "dynamic range, build-up, climax" 음악적 다이나믹 키워드 추가
+
+## v30 - 2026-06-01 - 음악 상태에서도 가사 재생성 노출
+
+### 사용자 질문 (원문)
+"음악 재생성 이후에는 가사 재생성은 안되는건가?"
+
+### 조사 결과
+- 백엔드는 **이미 허용**. `POST /api/mv/jobs/{id}/regenerate` 의 status guard 는 `queued / generating_lyrics / generating_music` 만 차단 (line 612-621 in mv.py). `music_ready` / `music_failed` 에서도 호출 가능했음.
+- 차단은 **프론트엔드 UI 의 `canRegenerateLyrics` 조건**: `isLyricsReady || isLyricsFailed` 만 허용 → music 상태 카드엔 가사 재생성 버튼이 아예 안 나옴
+
+### 구현 계획 (v30)
+
+**파일**: `1_MV_wedding/frontend/src/pages/GenerationStatusPage.jsx` (frontend-only, 백엔드 무수정)
+
+1. `canRegenerateLyrics` 조건 확장 → `isLyricsReady || isLyricsFailed || isMusicReady || isMusicFailed`
+2. `onRegenerateLyrics` confirm 메시지 분기:
+   - 가사 상태에서 호출 시: 기존 "가사를 다시 생성할까요?"
+   - 음악 상태에서 호출 시: "가사를 다시 만들면 현재 음악도 사라져요. 새 가사 준비 후 [이 가사로 음악 만들기]를 다시 눌러야 해요. 계속할까요?"
+3. UI 버튼 추가:
+   - **music_ready audio-card actions**: `[다운로드] [↻ 음악 재생성] [↻ 가사 재생성] [내 작품으로]`
+   - **music_failed actions**: 기존 "↻ 다시 시도" → `[↻ 음악만 다시 시도] [↻ 가사부터 다시] [내 작품으로]` (두 옵션 분리)
+4. disabled 조건 상호 보호: `regenerating` 동안 `regeneratingMusic` 버튼도 disabled, 반대도 마찬가지
+
+### 배포 계획
+- frontend-only → 백엔드 수정/SSH/uvicorn reload 불필요
+- 커밋 + push → 사용자 맥에서 Vite HMR 자동 반영
+
+### 기대 효과
+- 사용자가 음악 들어보고 가사가 마음에 안 들면 → audio-card 의 `↻ 가사 재생성` → 음악 폐기 + 가사부터 다시 → 새 가사 ready → [이 가사로 음악 만들기] → 새 음악
+- music_failed 시 두 선택지: Suno 일시적 이슈면 `↻ 음악만 다시 시도`, 가사 자체가 문제면 `↻ 가사부터 다시`
+- v29 의 새 prompt(에너지 아크 + Bridge 필수) 가 기존 작품에도 가사 재생성 경로로 흡수 가능해짐
+
+### 회귀 위험
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | 사용자가 새 음악 만족 상태에서 실수로 가사 재생성 클릭 | confirm 메시지에 "현재 음악도 사라져요" 명시 |
+| R2 | regenerating + regeneratingMusic 동시 진행 가능성 | 두 버튼 상호 disabled |
+| R3 | 백엔드 status guard 변경 | 없음 (백엔드 무수정) |
+
+### 후속 (필요 시)
+- "가사+음악 한 번에 재생성" 단일 버튼 추가 (반복 워크플로우 부담스러우면)
+- music_failed 의 에러 메시지에 따라 자동 추천 ("Suno timeout → 음악만 재시도 권장")
+
+### 작업 끝(append).

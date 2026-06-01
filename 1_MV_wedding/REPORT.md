@@ -3047,3 +3047,57 @@ v28 PASS — 사용자 주장 (`vocalGender=메인, style=서브`) 검증 후 su
 ### 결론
 
 v29 PASS — 사용자 지적 (음악 결과물 단조로움) 의 진짜 원인은 "섹션 라벨은 있되 라벨에 대응하는 어휘/에너지 강도 차이 지시가 없음" + "2-min 에서 Bridge 생략 허용" 임을 조사로 확인. SOLO/DUET 두 prompt 모두에 "섹션별 에너지 아크" 룰을 신설 (1~10 척도 + 어휘 강도 예시 + 듀엣 배분 매핑) + Bridge 필수화 + 폴백 로직 보강 (부분 라벨 강제 보완 제거). 커밋 ae7d02c 푸시 + worker reload 완료, venv smoke test 3건 PASS. 효과는 다음 가사 재생성 시점부터 적용.
+
+## v30 - 2026-06-01 - 음악 상태에서도 가사 재생성 노출
+
+### 사용자 질문 (원문)
+"음악 재생성 이후에는 가사 재생성은 안되는건가?"
+
+### 조사 결과
+- 백엔드는 **이미 허용**. `POST /api/mv/jobs/{id}/regenerate` 의 status guard 는 `queued / generating_lyrics / generating_music` 만 차단 (line 612-621 in mv.py). `music_ready` / `music_failed` 에서도 호출 가능했음.
+- 차단은 **프론트엔드 UI 의 `canRegenerateLyrics` 조건**: `isLyricsReady || isLyricsFailed` 만 허용 → music 상태 카드엔 가사 재생성 버튼이 아예 안 나옴
+
+### 구현
+
+**파일**: `1_MV_wedding/frontend/src/pages/GenerationStatusPage.jsx` (frontend-only, 백엔드 무수정)
+
+1. **`canRegenerateLyrics` 확장**
+   ```js
+   const canRegenerateLyrics =
+     isLyricsReady || isLyricsFailed || isMusicReady || isMusicFailed;
+   ```
+
+2. **`onRegenerateLyrics` confirm 메시지 분기**
+   - 가사 상태에서 호출 시: 기존 "가사를 다시 생성할까요?"
+   - 음악 상태에서 호출 시: "가사를 다시 만들면 현재 음악도 사라져요. 새 가사 준비 후 [이 가사로 음악 만들기]를 다시 눌러야 해요. 계속할까요?"
+
+3. **UI 버튼 추가**
+   - **music_ready audio-card actions**: `[다운로드] [↻ 음악 재생성] [↻ 가사 재생성] [내 작품으로]`
+   - **music_failed actions**: 기존 "↻ 다시 시도" → `[↻ 음악만 다시 시도] [↻ 가사부터 다시] [내 작품으로]` (두 옵션 분리)
+
+4. **disabled 조건 상호 보호**: `regenerating` 동안 `regeneratingMusic` 버튼도 disabled, 반대도 마찬가지
+
+### 배포
+- 커밋 `6bcd96f` "Allow lyrics regenerate from music_ready / music_failed cards"
+- 푸시: `2527a8d..6bcd96f` → origin/frontend
+- **backend 무수정** → SSH/uvicorn reload 불필요
+- frontend 변경은 Vite HMR 로 사용자 맥에서 자동 반영
+
+### 영향
+- 다음 사용자 경험:
+  - 음악 들어보고 가사가 마음에 안 들면 → audio-card 의 `↻ 가사 재생성` → 음악도 같이 폐기되고 가사부터 다시 → 새 가사 ready → 사용자가 [이 가사로 음악 만들기] → 새 음악
+  - 음악 실패 시 두 선택지: Suno 일시적 이슈면 `↻ 음악만 다시 시도`, 가사 자체가 문제면 `↻ 가사부터 다시`
+- v29 의 새 prompt(에너지 아크 + Bridge 필수) 가 기존 작품에도 적용 가능해짐 — 음악 들어본 후 가사 재생성으로 v29 prompt 흡수 가능
+
+### 특이사항
+- frontend-only 변경 — 백엔드 라우트는 이미 v35(이전 작업) 부터 status 허용했음. 단순히 UI 가게 못 가도록 막아둔 것
+- 다른 옵션 검토: "가사 재생성 + 자동으로 음악도 재생성" 한 번 클릭 흐름 → 미채택. 사용자가 새 가사 보고 만족 후 음악 트리거하는 게 명확
+- 음악 재생성 (`/music/regenerate`) 은 v27 에서 별도 endpoint 추가했으나 가사 재생성은 기존 `/regenerate` (v35) 재사용
+
+### 후속 (필요 시)
+- "가사+음악 한 번에 재생성" 단일 버튼 추가 — 사용자가 반복 워크플로우 부담스러우면
+- music_failed 의 에러 메시지에 따라 자동 추천 ("Suno timeout → 음악만 재시도 권장" 같은 메시지)
+
+### 결론
+
+v30 PASS — 사용자 질문 "음악 재생성 이후 가사 재생성은 안되나?" 에 대해 백엔드 status guard 조사 결과 이미 허용되어 있었고, 프론트엔드 `canRegenerateLyrics` UI 조건만 막고 있음을 확인. `GenerationStatusPage.jsx` 하나만 수정해서 (1) 조건 확장 `isMusicReady || isMusicFailed` 추가, (2) 음악 상태에서 호출 시 "음악도 사라져요" 경고 confirm, (3) audio-card / failed-card 에 가사 재생성 버튼 노출, (4) regenerating ↔ regeneratingMusic 상호 disabled 처리. 커밋 6bcd96f 푸시, 백엔드 무수정이라 reload 불필요, Vite HMR 자동 반영. v29 의 새 prompt 도 기존 작품에 흡수 가능해진 부수 효과.
