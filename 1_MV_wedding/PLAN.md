@@ -5112,3 +5112,95 @@ touch 1_MV_wedding/backend_8000/app/routes/mv.py  # WatchFiles 강제 트리거 
 - 9004 처럼 vocal_style 자유 문자열 입력 허용 (현재 enum 매핑) — UX 결정 필요
 
 ### 6) 작업 끝(append).
+
+---
+
+## v28 - 2026-06-01 - 가사 프롬프트 gender-aware (메인/서브 ↔ [Female]/[Male])
+
+### 0) 배경 / 사용자 요청
+
+> "suno API vocalGender에는 내가 알기로는 메인 보컬에 대한 설정을 하고 서브 보컬은 style 파라미터로 보내는걸로 알고있어. 내가 2_housing 에서는 그렇게 적용해놧잖아. 그치. 그러면 가사 생성 프롬프트를 수정해야할 것 같은데"
+
+### 1) 사용자 주장 검증 (Q&A)
+
+**Q**: vocalGender = 메인, style = 서브 — 2_housing 에서 그렇게 했지?
+
+**A**: 네, 맞아요.
+- 2_housing `services/musicService.ts`:
+  - `vocal` ← 메인 보컬 키만 (`'male_warm'` 등)
+  - `style` ← 메인 + 서브 보컬 영문 태그 모두 (`"acoustic, soft male vocal, warm, soft female duet vocal, breathy, duet harmonized"`)
+- 1_MV_wedding `services/suno_generator.py` 도 **이미 동일하게 구현되어 있음** (line 142-176):
+  - `body["vocalGender"]` ← `main_info["gender"]` (메인만)
+  - `style_parts` 에 main_info["style"] + sub_info["style"] + "duet, two voices alternating" 모두 추가
+
+### 2) 진짜 갭 — 가사 프롬프트
+
+**1_MV_wedding lyrics_generator.py (이전 코드, line 470-472)**:
+```python
+duet_line = ""
+if vocal_form == "duet":
+    duet_line = f"- 듀엣 보컬 톤: main={vs_main or '—'}, sub={vs_sub or '—'}\n"
+```
+
+문제:
+- LLM 에게 단순히 "main=female_warm, sub=male_powerful" 같은 키 이름만 전달
+- LLM 이 문자열 안의 "female"/"male" 글자를 보고 [Female]/[Male] 라벨 결정
+- 키 이름과 의도가 일치하면 동작하지만, **main=male_warm, sub=female_powerful 같은 역순 케이스에서 [Female] 라벨이 서브가 아닌 메인에 가는 위험** (또는 그 반대)
+
+### 3) 구현 계획
+
+**파일**: `1_MV_wedding/backend_8000/app/services/lyrics_generator.py`
+
+1. **`_vocal_key_gender(vocal_key)` 헬퍼 추가** (line 363 부근):
+   - vocal_styles 키 prefix 로 gender 추론
+   - `female_*` → "female", `male_*` → "male", 기타 → ""
+   - suno_generator.SUNO_VOCAL_MAP 와 컨벤션 공유 (의존 cycle 회피 위해 import 안 함 — 주석에 동기화 필요 명시)
+
+2. **`_build_user_message_wedding` 의 duet_line 빌드 교체** (line ~470 부근):
+   - main_gender + sub_gender 추출
+   - **혼성 듀엣** (gender 다름): 프롬프트에 명시적 매핑 추가
+     ```
+     - 듀엣 (혼성): 메인 보컬=female (female_warm), 서브 보컬=male (male_powerful)
+     - 가사 라벨 매핑 (반드시 준수): [Female] = 메인 보컬, [Male] = 서브 보컬, [Both] = 둘이 같이.
+     ```
+   - **동성 듀엣 or 정보 부족**: 기존 동작 (raw key 전달) 유지
+
+3. **suno_generator.py 무수정** — 이미 2_housing 패턴과 동일
+
+### 4) 배포 절차
+
+```bash
+# 1) 개발 PC
+git add 1_MV_wedding/backend_8000/app/services/lyrics_generator.py
+git commit -m "Lock Female/Male lyrics labels to actual main/sub vocal genders"
+git push origin frontend
+
+# 2) 백엔드 PC selective sync
+git fetch origin frontend
+git checkout origin/frontend -- 1_MV_wedding/backend_8000/app/services/lyrics_generator.py
+touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles 강제 트리거
+```
+
+### 5) 검증
+
+- venv 직접 import 로 smoke test:
+  - `_vocal_key_gender("female_warm")` → `'female'`
+  - `_vocal_key_gender("male_powerful")` → `'male'`
+  - `_vocal_key_gender(None)` → `''`
+- worker PID 변경으로 reload 확인
+
+### 6) 회귀 위험
+
+| # | 위험 | 완화 |
+|---|------|------|
+| R1 | SUNO_VOCAL_MAP 키 컨벤션 변경 시 헬퍼 미동기화 | 주석으로 동기화 의무 명시 |
+| R2 | 동성 듀엣 (male+male, female+female) 케이스에서 라벨 모호 | fallback (raw key 전달) — system prompt 일반 규칙으로 처리. 정식 지원은 별도 작업 |
+| R3 | 이미 생성된 가사에 영향 | 없음 (다음 가사 생성부터 적용) |
+| R4 | 2_housing 백엔드 (0_platform_music/backend) 수정 | 미수정 — `1_MV_wedding/backend_8000` 만 add |
+
+### 7) 후속 (별도 작업)
+
+- 동성 듀엣 지원 → `WEDDING_SYSTEM_PROMPT_DUET` 에 [Vocal A]/[Vocal B] 같은 중립 라벨 도입 필요
+- 2_housing 에는 듀엣 가사 생성 기능 자체가 없음 (lyricsService 가 단순 prompt/genre/mood 만 받음) — 1_MV_wedding 의 wedding 전용 시점 마커 + 듀엣 라벨 규칙은 더 정교한 시스템
+
+### 8) 작업 끝(append).
