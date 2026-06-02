@@ -77,8 +77,14 @@ SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 p
 - 보조 참조 (이미지 참조): {extra_block}
 
 [규칙]
-① ref_image 들은 인물·장소 일관성 강제용. 캐릭터 시트가 둘 다 있으면 두 인물이 모두 등장해야 한다
-   (the bride AND the groom — both must visually match their reference sheets).
+① ref_image 들은 인물·장소 일관성 강제용. 각 인물 블록 끝의 [full-match] / [face-only]
+   태그를 반드시 준수:
+     · [full-match]  — 시트의 얼굴·체형·머리·옷·액세서리를 **모두** 정확히 매칭
+                       (사용자가 명시적으로 이 시트를 ref 로 선택했음)
+     · [face-only]   — 시트의 **얼굴·체형·머리만** 매칭. 옷·액세서리·계절감은
+                       scene_prompt 묘사에 맞춰 자유 변주 (예: 시트가 정장이어도
+                       여름 비치 씬이면 가벼운 셔츠로 갈아입은 동일 인물).
+   캐릭터 시트가 둘 다 있으면 두 인물이 모두 등장해야 한다.
 ② 인물 시트가 한쪽만 있는 씬이면 그 한 명만 그린다. 절대 자동으로 다른 인물을 추가하지 않는다.
 ③ 장소 ref 가 있으면 배경 톤/구조를 그대로 따른다. 없으면 image_prompt 의 묘사를 우선.
 ④ Photorealistic, cinematic wedding film tone. natural lighting. 4K still.
@@ -297,10 +303,13 @@ async def generate_scene_image(
     groom_mime: Optional[str] = None
     groom_display = ""
     groom_style = ""
+    # v34 — explicit ref_sheet_ids 에서 왔는지(full-match) vs v32 fallback(face-only) 구분.
+    groom_is_explicit = False
     bride_bytes: Optional[bytes] = None
     bride_mime: Optional[str] = None
     bride_display = ""
     bride_style = ""
+    bride_is_explicit = False
     place_bytes: Optional[bytes] = None
     place_mime: Optional[str] = None
     place_display = ""
@@ -333,9 +342,11 @@ async def generate_scene_image(
         if slot.startswith("groom_") and groom_bytes is None:
             groom_bytes, groom_mime = data, mime
             groom_display, groom_style = display, style
+            groom_is_explicit = True
         elif slot.startswith("bride_") and bride_bytes is None:
             bride_bytes, bride_mime = data, mime
             bride_display, bride_style = display, style
+            bride_is_explicit = True
 
     # 2) place / wedding_photo — 첫 ref 를 place 슬롯, 그 외 첫 번째를 extra 슬롯에.
     resolved_assets: list[tuple[bytes, str, str, str, str]] = []
@@ -453,7 +464,7 @@ async def generate_scene_image(
     )
 
     # ── Step A — Gemini text 합성 ─────────────────────────────────────────────
-    def _block(display: str, style_label: str = "", memo: str = "") -> str:
+    def _block(display: str, style_label: str = "", memo: str = "", face_only: bool = False) -> str:
         if not display and not style_label and not memo:
             return "(없음 — 이 슬롯의 참조 이미지는 사용하지 않음)"
         parts = []
@@ -463,13 +474,22 @@ async def generate_scene_image(
             parts.append("스타일: {}".format(style_label))
         if memo:
             parts.append("메모: {}".format(memo))
-        return " / ".join(parts) or "(설명 없음)"
+        base = " / ".join(parts) or "(설명 없음)"
+        # v34 — 인물 시트 전용 매칭 모드 마커.
+        if face_only:
+            base += " [face-only]"
+        elif display and style_label:
+            # 캐릭터 시트 (display+style 양쪽 다 있음) 인 케이스만 full-match 마커.
+            base += " [full-match]"
+        return base
 
     groom_block = _block(
         groom_display, STYLE_LABEL.get(groom_style, groom_style),
+        face_only=(not groom_is_explicit),
     ) if groom_bytes else "(이 씬에는 신랑이 등장하지 않습니다 — 신랑 ref 추가 금지)"
     bride_block = _block(
         bride_display, STYLE_LABEL.get(bride_style, bride_style),
+        face_only=(not bride_is_explicit),
     ) if bride_bytes else "(이 씬에는 신부가 등장하지 않습니다 — 신부 ref 추가 금지)"
     place_block = _block(
         place_display, "", place_memo,
