@@ -802,6 +802,48 @@ function PreCeremonyMVPanelInner({ mvJobId, ownerUserId, mvJob, isAdmin, isOwner
     }
   }, [preMVJobId]);
 
+  // v35 — 챕터(연속 같은 story_slot) 단위 씬 이미지 재생성. prev_scene carry 로 챕터 일관성 보장.
+  const regenerateChapterImages = useCallback(async (sceneNumber) => {
+    if (!preMVJobId) return { ok: false, error: '잡 식별자 없음' };
+    if (import.meta.env.DEV) {
+      console.info(`${STEP_IMAGES_PREFIX} regenerateChapterImages`, {
+        pre_mv_job_id: preMVJobId,
+        scene_number: sceneNumber,
+      });
+    }
+    try {
+      const { data } = await api.regeneratePreMVChapterImages(preMVJobId, sceneNumber);
+      if (cancelledRef.current) return { ok: true, data };
+      const queued = new Set(data?.queued_scene_numbers || []);
+      // 옵티미스틱: 챕터에 속한 씬들을 generating 으로 마크, image_object_name 도 비워 새로 시작.
+      setPreMVJob((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        next.status = 'phase2_images';
+        next.scenes = Array.isArray(prev.scenes)
+          ? prev.scenes.map((s) =>
+              queued.has(s.scene_number)
+                ? { ...s, image_status: 'generating', image_error: null, image_object_name: null }
+                : s,
+            )
+          : prev.scenes;
+        return next;
+      });
+      return { ok: true, data };
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data;
+      console.error(`${STEP_IMAGES_PREFIX} regenerateChapterImages failed`, {
+        pre_mv_job_id: preMVJobId,
+        scene_number: sceneNumber,
+        status,
+        detail,
+      });
+      const msg = detail?.error || detail?.detail || '챕터 재생성에 실패했어요.';
+      return { ok: false, error: msg };
+    }
+  }, [preMVJobId]);
+
   // ──────────────────────────────────────────────────────────────────────
   // 씬 patch 핸들러 (낙관적 적용 → 실패 시 새로고침)
   // ──────────────────────────────────────────────────────────────────────
@@ -1004,6 +1046,7 @@ function PreCeremonyMVPanelInner({ mvJobId, ownerUserId, mvJob, isAdmin, isOwner
             onStart={startPhase1}
             onPatchScene={patchScene}
             onRegenerateSceneImage={regenerateSceneImage}
+            onRegenerateChapterImages={regenerateChapterImages}
             onRegenerateSceneVideo={regenerateSceneVideo}
             preMVJobId={preMVJobId}
           />
@@ -1216,6 +1259,7 @@ function PreMVScenesStep({
   onStart,
   onPatchScene,
   onRegenerateSceneImage,
+  onRegenerateChapterImages,
   onRegenerateSceneVideo,
   preMVJobId,
 }) {
@@ -1352,6 +1396,7 @@ function PreMVScenesStep({
           scenes={scenes}
           onPatchScene={onPatchScene}
           onRegenerateSceneImage={onRegenerateSceneImage}
+          onRegenerateChapterImages={onRegenerateChapterImages}
           onRegenerateSceneVideo={onRegenerateSceneVideo}
           preMVJobId={preMVJobId}
         />
@@ -1369,10 +1414,12 @@ function SceneList({
   scenes,
   onPatchScene,
   onRegenerateSceneImage,
+  onRegenerateChapterImages,
   onRegenerateSceneVideo,
   preMVJobId,
 }) {
   const [page, setPage] = useState(1);
+  const [busyChapterKey, setBusyChapterKey] = useState(null);
   const paginated = scenes.length > PAGINATION_THRESHOLD;
   const totalPages = paginated ? Math.ceil(scenes.length / SCENES_PER_PAGE) : 1;
 
@@ -1404,19 +1451,107 @@ function SceneList({
     setPage((p) => Math.min(totalPages, p + 1));
   };
 
+  // v35 — 현재 페이지 씬을 챕터(연속 같은 story_slot)로 그룹핑.
+  // 챕터가 페이지 경계를 넘으면 양쪽 페이지에 같은 슬롯 헤더가 두 번 보일 수 있음 — acceptable.
+  const chaptersInPage = (() => {
+    const out = [];
+    let cur = null;
+    let prevSlot = null;
+    pageScenes.forEach((s) => {
+      const slot = s?.story_slot || '';
+      if (!cur || slot !== prevSlot) {
+        cur = { slot, scenes: [] };
+        out.push(cur);
+        prevSlot = slot;
+      }
+      cur.scenes.push(s);
+    });
+    return out;
+  })();
+
+  const onClickChapterRegen = async (chapter) => {
+    if (!onRegenerateChapterImages || !chapter?.scenes?.length) return;
+    const firstScene = chapter.scenes[0];
+    const key = `${chapter.slot}-${firstScene.scene_number}`;
+    if (busyChapterKey) return;
+    const slotLabel = SLOT_LABEL_KO[chapter.slot] || chapter.slot || '(미지정)';
+    const n = chapter.scenes.length;
+    const ok = window.confirm(
+      `[${slotLabel}] 챕터의 ${n}개 씬을 모두 다시 만듭니다.\n` +
+      `약 ${Math.max(1, n)}~${n * 2}분 소요. 기존 이미지는 사라져요.\n계속할까요?`
+    );
+    if (!ok) return;
+    setBusyChapterKey(key);
+    try {
+      const result = await onRegenerateChapterImages(firstScene.scene_number);
+      if (!result?.ok) {
+        window.alert(result?.error || '챕터 재생성에 실패했어요.');
+      }
+    } finally {
+      setBusyChapterKey(null);
+    }
+  };
+
   return (
     <>
       <div className="pre-mv-scenes">
-        {pageScenes.map((scene) => (
-          <SceneCard
-            key={scene.scene_number}
-            scene={scene}
-            onPatchScene={onPatchScene}
-            onRegenerateSceneImage={onRegenerateSceneImage}
-            onRegenerateSceneVideo={onRegenerateSceneVideo}
-            preMVJobId={preMVJobId}
-          />
-        ))}
+        {chaptersInPage.map((chapter, chIdx) => {
+          const firstScene = chapter.scenes[0];
+          const key = `${chapter.slot}-${firstScene?.scene_number}-${chIdx}`;
+          const slotLabel = SLOT_LABEL_KO[chapter.slot] || chapter.slot || '(미지정)';
+          const isBusy = busyChapterKey === `${chapter.slot}-${firstScene?.scene_number}`;
+          return (
+            <div
+              key={key}
+              className="pre-mv-chapter-block"
+              style={{ gridColumn: '1 / -1' }}
+            >
+              <div
+                className="pre-mv-chapter-header"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 12px',
+                  margin: '12px 0 8px',
+                  background: '#f5f7fa',
+                  borderRadius: 6,
+                  borderLeft: '3px solid #4a90e2',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>
+                  📍 {slotLabel}
+                  <span className="muted" style={{ marginLeft: 8, fontWeight: 400, fontSize: 13 }}>
+                    ({chapter.scenes.length}개 씬)
+                  </span>
+                </span>
+                {onRegenerateChapterImages && (
+                  <button
+                    type="button"
+                    className="btn-ghost pre-mv-step__btn"
+                    onClick={() => onClickChapterRegen(chapter)}
+                    disabled={isBusy || !!busyChapterKey}
+                    title="이 챕터의 모든 씬 이미지를 직렬로 다시 만들어요 (챕터 일관성 보장)"
+                  >
+                    {isBusy ? '재생성 중...' : '↻ 이 챕터 전체 재생성'}
+                  </button>
+                )}
+              </div>
+              <div className="pre-mv-scenes" style={{ gridColumn: '1 / -1' }}>
+                {chapter.scenes.map((scene) => (
+                  <SceneCard
+                    key={scene.scene_number}
+                    scene={scene}
+                    onPatchScene={onPatchScene}
+                    onRegenerateSceneImage={onRegenerateSceneImage}
+                    onRegenerateSceneVideo={onRegenerateSceneVideo}
+                    preMVJobId={preMVJobId}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
       {paginated && (
         <div className="pre-mv-scenes__pager">
@@ -1634,17 +1769,10 @@ function SceneCard({
               ↪ 다음 컷 이미지
             </span>
           )}
-          {imageReady && onRegenerateSceneImage && (
-            <button
-              type="button"
-              className="btn-ghost pre-mv-step__btn"
-              onClick={() => onRegenerate({ confirmFirst: true })}
-              disabled={regenBusy}
-              title="이 씬 이미지를 다시 만듭니다"
-            >
-              {regenBusy ? '재생성 중...' : '이미지 재생성'}
-            </button>
-          )}
+          {/* v35 — per-scene "이미지 재생성" 버튼 제거.
+              챕터 단위로 prev_scene carry 하여 일관성 유지하는 아키텍처이므로
+              단일 씬 재생성은 챕터 톤·소품·캐릭터 불일치를 야기. 챕터 헤더의
+              "↻ 이 챕터 전체 재생성" 버튼으로 대체. */}
           <button
             type="button"
             className="btn-ghost pre-mv-step__btn"

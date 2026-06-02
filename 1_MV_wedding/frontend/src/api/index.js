@@ -347,10 +347,16 @@ export const patchPreMVScene = (id, sceneNumber, payload) =>
 export const runPreMVPhase2 = (id, { image_model = 'gpt_image_2', force = false } = {}) =>
   API.post(`/pre-mv/jobs/${id}/phase2`, { image_model, force });
 
-// 단일 씬 이미지 재생성. 잡에 박혀있는 image_model 을 그대로 사용한다.
-// 응답: { pre_mv_job_id, scene_number, image_status:"generating", image_model }
+// 단일 씬 이미지 재생성. ⚠️ v35 이후 deprecated — 챕터 일관성을 깸.
+// 신규 호출은 regeneratePreMVChapterImages 로.
 export const regeneratePreMVSceneImage = (id, sceneNumber) =>
   API.post(`/pre-mv/jobs/${id}/scenes/${sceneNumber}/regenerate-image`);
+
+// v35 — 챕터(연속 같은 story_slot) 단위 씬 이미지 재생성.
+// sceneNumber 는 그 챕터의 어떤 씬이든 OK — 백엔드가 같은 챕터 모든 씬을 찾아 직렬 재생성.
+// 응답: { pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers:[...], status, image_model }
+export const regeneratePreMVChapterImages = (id, sceneNumber) =>
+  API.post(`/pre-mv/jobs/${id}/chapters/regenerate-images`, { scene_number: sceneNumber });
 
 // <img src> 용 URL — Bearer 헤더 대신 ?token= 쿼리 인증을 사용한다.
 // sheetPreviewUrl 패턴과 동일.
