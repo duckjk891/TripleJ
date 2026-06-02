@@ -1451,18 +1451,20 @@ function SceneList({
     setPage((p) => Math.min(totalPages, p + 1));
   };
 
-  // v35 — 현재 페이지 씬을 챕터(연속 같은 story_slot)로 그룹핑.
-  // 챕터가 페이지 경계를 넘으면 양쪽 페이지에 같은 슬롯 헤더가 두 번 보일 수 있음 — acceptable.
+  // v35/v36 — 현재 페이지 씬을 챕터로 그룹핑. backend `_group_scenes_into_chapters` 와 동일.
+  // v36: memory slot 은 memory_index 까지 다르면 다른 챕터로 분리 (prev_scene chain 도 끊김).
   const chaptersInPage = (() => {
     const out = [];
     let cur = null;
-    let prevSlot = null;
+    let prevKey = null;
     pageScenes.forEach((s) => {
       const slot = s?.story_slot || '';
-      if (!cur || slot !== prevSlot) {
-        cur = { slot, scenes: [] };
+      const memIdx = slot === 'memory' ? (s?.memory_index ?? null) : null;
+      const key = `${slot}:${memIdx ?? 'none'}`;
+      if (!cur || key !== prevKey) {
+        cur = { slot, memory_index: memIdx, scenes: [] };
         out.push(cur);
-        prevSlot = slot;
+        prevKey = key;
       }
       cur.scenes.push(s);
     });
@@ -1498,7 +1500,12 @@ function SceneList({
         {chaptersInPage.map((chapter, chIdx) => {
           const firstScene = chapter.scenes[0];
           const key = `${chapter.slot}-${firstScene?.scene_number}-${chIdx}`;
-          const slotLabel = SLOT_LABEL_KO[chapter.slot] || chapter.slot || '(미지정)';
+          const baseSlotLabel = SLOT_LABEL_KO[chapter.slot] || chapter.slot || '(미지정)';
+          // v36 — memory slot 만 memory_index 표시 (#1, #2 ...). 1-based for UX.
+          const slotLabel =
+            chapter.slot === 'memory' && chapter.memory_index !== null && chapter.memory_index !== undefined
+              ? `${baseSlotLabel} #${(chapter.memory_index ?? 0) + 1}`
+              : baseSlotLabel;
           const isBusy = busyChapterKey === `${chapter.slot}-${firstScene?.scene_number}`;
           return (
             <div
@@ -2213,18 +2220,30 @@ function PreMVImagesStep({ preMVJob, status, scenes, phase1Done, onStart }) {
 // Step 4 — Phase 3 (씬 영상) — v17.3 활성
 // ──────────────────────────────────────────────────────────────────────────
 
-// v24.2 — 챕터(story_slot 연속 묶음) 그룹핑. 백엔드 `_group_scenes_into_chapters` 와 동일.
+// v24.2 / v36 — 챕터 그룹핑. 백엔드 `_group_scenes_into_chapters` 와 동일.
+// v36: memory slot 은 memory_index 까지 같아야 같은 챕터. 다른 추억은 분리.
+function _chapterKey(s) {
+  const slot = s?.story_slot || '';
+  if (slot === 'memory') return `memory:${s?.memory_index ?? 'none'}`;
+  return `${slot}:none`;
+}
+
 function groupScenesByChapter(scenes) {
   const out = [];
   if (!Array.isArray(scenes) || scenes.length === 0) return out;
   let cur = null;
-  let prevSlot = null;
+  let prevKey = null;
   scenes.forEach((s, idx) => {
-    const slot = s?.story_slot || '';
-    if (!cur || slot !== prevSlot) {
-      cur = { slot, scenes: [], startIdx: idx };
+    const k = _chapterKey(s);
+    if (!cur || k !== prevKey) {
+      cur = {
+        slot: s?.story_slot || '',
+        memory_index: s?.story_slot === 'memory' ? s?.memory_index : null,
+        scenes: [],
+        startIdx: idx,
+      };
       out.push(cur);
-      prevSlot = slot;
+      prevKey = k;
     }
     cur.scenes.push({ ...s, _origIdx: idx });
   });
@@ -2259,7 +2278,12 @@ function ChapterGroup({
   mvContext,
   allScenes,
 }) {
-  const slotLabel = SLOT_LABEL_KO[chapter.slot] || chapter.slot || '(미지정)';
+  const baseSlotLabel = SLOT_LABEL_KO[chapter.slot] || chapter.slot || '(미지정)';
+  // v36 — memory slot 만 memory_index 표시 (#1, #2 ...).
+  const slotLabel =
+    chapter.slot === 'memory' && chapter.memory_index !== null && chapter.memory_index !== undefined
+      ? `${baseSlotLabel} #${(chapter.memory_index ?? 0) + 1}`
+      : baseSlotLabel;
   const total = chapter.scenes.length;
   const completed = chapter.scenes.filter((s) => s.video_status === 'completed').length;
   const generating = chapter.scenes.filter((s) => s.video_status === 'generating').length;

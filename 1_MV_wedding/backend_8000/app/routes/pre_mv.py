@@ -1008,29 +1008,39 @@ _PHASE2_RUNNING_STATUSES = {"phase2_images"}
 
 
 # v24 — 챕터 그룹핑 헬퍼.
+# v36 — memory slot 은 memory_index 까지 묶음 키로. 다른 추억은 다른 챕터.
+#       prev_scene chain 이 추억1 → 추억2 사이로 흐르지 않도록.
 def _group_scenes_into_chapters(scenes: list[dict]) -> list[list[int]]:
-    """scenes 의 0-based index 리스트를, story_slot 이 연속되는 단위(=챕터)로 그룹핑.
+    """scenes 의 0-based index 리스트를 챕터 단위로 그룹핑.
 
-    예: scene_number=[1,2,3,4,5,6], story_slot=[m,m,m,f,f,f] → [[0,1,2],[3,4,5]].
-    story_slot 이 비어 있어도(None/"") 동일 그룹으로 묶는다.
+    챕터 키: (story_slot, memory_index if story_slot=='memory' else None).
+    예: story_slot=[m,m(idx0),m(idx0),m(idx1),f,f] → [[0],[1,2],[3],[4,5]]
+        (단, slot 자체가 비어있어도 동일 그룹).
     """
     if not scenes:
         return []
+
+    def _chapter_key(s):
+        slot = (s or {}).get("story_slot") or ""
+        if slot == "memory":
+            return (slot, (s or {}).get("memory_index"))
+        return (slot, None)
+
     groups: list[list[int]] = []
     current: list[int] = []
-    prev_slot: Optional[str] = None
+    prev_key = None
     for i, s in enumerate(scenes):
-        slot = (s or {}).get("story_slot") or ""
+        k = _chapter_key(s)
         if not current:
             current = [i]
-            prev_slot = slot
+            prev_key = k
             continue
-        if slot == prev_slot:
+        if k == prev_key:
             current.append(i)
         else:
             groups.append(current)
             current = [i]
-            prev_slot = slot
+            prev_key = k
     if current:
         groups.append(current)
     return groups
