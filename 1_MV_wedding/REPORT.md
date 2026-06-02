@@ -3228,3 +3228,74 @@ v31 PASS — 사용자 요청 2가지 (섹션당 최대 5줄, `[Section - Role]`
 ### 결론
 
 v32-v33 PASS — Phase 2 씬 이미지 생성에서 `refs_count == 0` 으로 인한 ValueError 영구 fail 문제를 2단계로 해결. v32 (커밋 812d2e5, +37줄) 는 `pre_mv_phase2_image_generator.py` 의 ref count 검증 직전에 `groom_wedding/casual` + `bride_wedding/casual` 캐릭터 시트 기본값 fallback 을 삽입해 시트가 있는 사용자는 자동 복구하도록 함. v33 (커밋 d899a8a, +10/-5) 는 그래도 0 이면 `raise ValueError` → `logger.warning` 으로 downgrade 하여 시트 미생성 사용자도 text-only 모드로 진행 가능하게 함. ALLOWED_IMAGE_MODELS (gpt_image_2, nb_pro) 양쪽 모두 빈 ref 입력 시 text-to-image 경로로 자동 라우팅됨을 확인. `812d2e5..d899a8a` push, 백엔드 selective sync + touch reload 로 worker PID 14033 → 15656 교체, venv smoke (raise=False, warning=True) 통과. 프런트엔드 무수정. Trade-off: v33 text-only 결과물은 캐릭터/장소 일관성이 떨어짐 — 향후 Phase 1 동일 fallback / 씬 편집 UI / Phase 0 자동 멘션 등 근본 해결 옵션 있음.
+
+## v34 - 2026-06-02 - explicit vs fallback ref 구분 (full-match / face-only)
+
+### 사용자 보고
+- v32 default sheet fallback 부작용: 사용자가 캐릭터 시트(예: `groom_wedding` 정장) 만 만들어 두고 ref 명시 안 했을 때, 모든 씬이 시트 옷 그대로 (정장) 으로 생성됨
+- 사용자 제안 (원문): "캐릭터 시트가 인용되지 않은 slot 은 현재 캐릭터 시트의 얼굴만 사용하게 하고(옷은 상황에 맞게 변주), 캐릭터 시트가 인용된 slot 은 캐릭터시트의 옷·얼굴 모두 사용. 시트가 없다! 하면 첫 이미지 생성부터 캐릭터시트를 디폴트로 끌어와서 작업"
+- 의도 해석: **명시적 @멘션 = 의도 존중 (full-match)**, **fallback = 얼굴/체형/머리만 유지 + 옷은 scene_prompt 자유 변주 (face-only)**
+
+### 조사 결과 (룰 정의)
+| ref 출처 | 시트 존재 | 모드 |
+|---|---|---|
+| 사용자 @멘션 (`scene.ref_sheet_ids` 명시) | 있음 | full-match (얼굴·체형·머리·옷·액세서리 매칭) |
+| v32 fallback (groom/bride_wedding/casual 자동 끌어옴) | 있음 | face-only (얼굴·체형·머리만 매칭, 옷은 scene_prompt 자유 변주) |
+| 둘 다 fail (시트 미생성) | 없음 | text-only (v33, 변동 없음) |
+
+### 변경 파일
+- `1_MV_wedding/backend_8000/app/services/pre_mv_phase2_image_generator.py` (백엔드 단일 파일, +24/-4)
+- 프런트엔드 무수정
+
+### 구현 (커밋 `fbb327f`)
+1. 추적 플래그 추가: `groom_is_explicit`, `bride_is_explicit` (default False)
+2. explicit 로드 루프: scene.ref_sheet_ids 에서 로드 성공 시 `_is_explicit = True` 마킹
+3. v32 fallback 루프: 무수정 (`_is_explicit` False 유지)
+4. `_block` 헬퍼 시그니처 확장: `face_only: bool = False` → 인물 블록 끝에 `[face-only]` or `[full-match]` 마커 자동 append
+5. groom_block / bride_block 호출: `face_only=(not groom_is_explicit)` / `face_only=(not bride_is_explicit)`
+6. SCENE_IMAGE_SYSTEM_PROMPT 룰 ① 수정:
+   - 이전: "ref_image 의 인물·장소 일관성 강제. must visually match their reference sheets."
+   - 신규: 두 마커별 동작 명시
+     - `[full-match]`: 얼굴·체형·머리·옷·액세서리 모두 매칭
+     - `[face-only]`: 얼굴·체형·머리만 매칭. 옷·액세서리·계절감은 scene_prompt 자유 변주
+     - 예시 포함: "시트가 정장이어도 여름 비치 씬이면 가벼운 셔츠로 갈아입은 동일 인물"
+
+### 우선순위 검증 (실행 순서, v34 누적)
+1. 명시된 `ref_sheet_ids`/`ref_place_ids` (사용자 @멘션) → `_is_explicit = True`, `[full-match]` ✅
+2. wedding_prep slot 의 wedding_photo fallback (기존) ✅
+3. v32 캐릭터 시트 fallback → `_is_explicit = False`, `[face-only]` ✅
+4. v33: 여전히 0 이면 text-only 진행 (warning 로깅) ✅
+
+### 케이스별 동작 매트릭스
+| 시나리오 | ref_sheet_ids | 시트 존재 | 동작 |
+|---|---|---|---|
+| 사용자 @멘션 함 | 명시 | 있음 | full-match (시트 옷 + 얼굴) |
+| 사용자 @멘션 안 함 | 빈 채 | 있음 | face-only (시트 얼굴 + scene_prompt 옷) ⭐ 핵심 변화 |
+| 사용자 @멘션 안 함 | 빈 채 | 없음 | text-only (캐릭터 무작위, v33) |
+| wedding_prep slot, places 빈 채 | 빈 채 | 있음/없음 | wedding_photo fallback (기존) + face-only sheet |
+
+### 배포
+- 커밋 `fbb327f` "Differentiate explicit @-mention refs from v32 fallback (face-only)" (+24/-4)
+- 푸시: `81dd449..fbb327f` → `origin/frontend`
+- 백엔드 PC selective sync + `touch` reload
+- uvicorn worker PID 15656 → **41330** ✅
+- venv smoke (모듈 import 후 SCENE_IMAGE_SYSTEM_PROMPT 검사):
+  - `[full-match]` in SCENE_IMAGE_SYSTEM_PROMPT ✅
+  - `[face-only]` in SCENE_IMAGE_SYSTEM_PROMPT ✅
+  - "옷·액세서리·계절감" 변주 안내 포함 ✅
+
+### 영향
+- 같은 캐릭터 시트만 만들어 두고 ref 명시 안 한 사용자: 씬마다 계절·장소에 맞는 옷으로 변주됨 (face-only fallback)
+- 사용자가 의도적으로 @멘션한 경우: 시트 옷 그대로 (의도 존중)
+- 기존 작품 영향 없음. 다음 씬 이미지 생성/재시도부터 효과
+- v32 (시트 자동 끌어오기) + v33 (text-only 허용) + v34 (face-only 변주) 3단계로 Phase 2 씬 이미지 신뢰성·표현력 모두 확보
+
+### 특이사항 / 후속
+- LLM (Gemini Step A + 이미지 모델, gpt_image_2 / nb_pro) 이 `[face-only]` 마커를 얼마나 잘 따르는지 실측 필요. 첫 1~2 씬 비교 권장
+- face-only 인데도 시트 옷을 그대로 가져오면 → image_prompt 에 옷 묘사를 더 명시적으로 박는 보강 가능 (Phase 1 측 작업)
+- prev_scene 카운트가 챕터 내 character 일관성에도 도움이 되도록 PREV_SCENE_BLOCK_PRESENT 강화 — 별도 작업
+- 마커 변경은 system_prompt 영역이라 작품별 prompt 캐싱/로그 분석에는 영향 없음
+
+### 결론
+
+v34 PASS — v32 default sheet fallback 의 부작용 (사용자가 @멘션 안 해도 시트 옷이 모든 씬에 그대로 박힘) 을 explicit 추적 플래그 + system prompt 마커로 해결. `pre_mv_phase2_image_generator.py` 단일 파일에서 (1) `groom_is_explicit` / `bride_is_explicit` 플래그를 explicit 로드 루프에서만 True 로 마킹하고 v32 fallback 루프는 False 유지, (2) `_block` 헬퍼에 `face_only: bool` 인자 추가해 인물 블록 끝에 `[face-only]` / `[full-match]` 마커 자동 append, (3) SCENE_IMAGE_SYSTEM_PROMPT 룰 ① 을 두 마커별 동작 (full-match 는 옷·액세서리 모두 매칭, face-only 는 얼굴·체형·머리만 매칭 + 옷·액세서리·계절감 자유 변주 + 예시 포함) 으로 재작성. 결과: 명시적 @멘션 = 의도 존중 (full-match), v32 fallback = 얼굴만 살리고 옷은 씬 컨텍스트에 맞춰 변주 (face-only), 시트 미생성 = v33 text-only (변동 없음) 의 3단계 매트릭스 완성. 커밋 `fbb327f` (+24/-4) → `81dd449..fbb327f` push, 백엔드 selective sync + touch reload 로 uvicorn worker PID 15656 → 41330 교체, venv smoke 로 `[full-match]` / `[face-only]` / "옷·액세서리·계절감" 안내 SCENE_IMAGE_SYSTEM_PROMPT 포함 확인. 프런트엔드 무수정. 한계: LLM (Gemini Step A + gpt_image_2/nb_pro) 이 `[face-only]` 마커를 실제로 얼마나 잘 따르는지 첫 1~2 씬 실측 필요 — 효과 미진 시 image_prompt 의 옷 묘사 명시화 보강 (Phase 1 측) 옵션 있음.
