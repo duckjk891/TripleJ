@@ -3299,3 +3299,65 @@ v32-v33 PASS — Phase 2 씬 이미지 생성에서 `refs_count == 0` 으로 인
 ### 결론
 
 v34 PASS — v32 default sheet fallback 의 부작용 (사용자가 @멘션 안 해도 시트 옷이 모든 씬에 그대로 박힘) 을 explicit 추적 플래그 + system prompt 마커로 해결. `pre_mv_phase2_image_generator.py` 단일 파일에서 (1) `groom_is_explicit` / `bride_is_explicit` 플래그를 explicit 로드 루프에서만 True 로 마킹하고 v32 fallback 루프는 False 유지, (2) `_block` 헬퍼에 `face_only: bool` 인자 추가해 인물 블록 끝에 `[face-only]` / `[full-match]` 마커 자동 append, (3) SCENE_IMAGE_SYSTEM_PROMPT 룰 ① 을 두 마커별 동작 (full-match 는 옷·액세서리 모두 매칭, face-only 는 얼굴·체형·머리만 매칭 + 옷·액세서리·계절감 자유 변주 + 예시 포함) 으로 재작성. 결과: 명시적 @멘션 = 의도 존중 (full-match), v32 fallback = 얼굴만 살리고 옷은 씬 컨텍스트에 맞춰 변주 (face-only), 시트 미생성 = v33 text-only (변동 없음) 의 3단계 매트릭스 완성. 커밋 `fbb327f` (+24/-4) → `81dd449..fbb327f` push, 백엔드 selective sync + touch reload 로 uvicorn worker PID 15656 → 41330 교체, venv smoke 로 `[full-match]` / `[face-only]` / "옷·액세서리·계절감" 안내 SCENE_IMAGE_SYSTEM_PROMPT 포함 확인. 프런트엔드 무수정. 한계: LLM (Gemini Step A + gpt_image_2/nb_pro) 이 `[face-only]` 마커를 실제로 얼마나 잘 따르는지 첫 1~2 씬 실측 필요 — 효과 미진 시 image_prompt 의 옷 묘사 명시화 보강 (Phase 1 측) 옵션 있음.
+
+## v35 - 2026-06-02 - 챕터 단위 씬 이미지 재생성 + per-scene 버튼 제거
+
+### 배경 (이전 Q&A 에서 발견한 아키텍처 모순)
+Phase 2 씬 이미지는 챕터 단위로 직렬 실행되며 `prev_scene_image_bytes` 를 다음 씬으로 carry 해 톤/소품/캐릭터 일관성을 만든다. 그런데 per-scene 재생성 (`POST /jobs/{id}/scenes/{n}/regenerate-image`) 은 챕터 컨텍스트를 무시하고 단일 씬만 새로 만들어 carry chain 을 끊는다 → 사용자가 "한 씬만 마음에 안 들어서 재생성" 하면 그 씬만 일관성 깨지는 함정. 사용자가 직접 모순을 짚어내고 Option A 선택: "A로 진행해줘. 어차피 다 재생성할꺼면 챕터별로 재생성이 맞지" → per-scene 제거, 챕터 단위로 일원화.
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+
+1. **`ChapterRegenerateImagesBody` Pydantic 모델 신설** — `{scene_number: int}` (그 챕터의 아무 씬 번호)
+2. **`_run_chapter_serial` 모듈 레벨로 추출** — 기존 `_run_phase2` 의 nested `_run_chapter` 로직 그대로. 인자: pre_mv_job_id, image_model, owner_user_id, chapter_seq, chapter_indices, scenes, target_set, mongo, oid. `_run_phase2` 와 신규 endpoint 두 곳에서 공유.
+3. **`_run_phase2` inline `_run_chapter` 제거** → `_run_chapter_serial` 호출로 교체 (코드 라인 감소).
+4. **신규 endpoint `POST /api/pre-mv/jobs/{id}/chapters/regenerate-images`**:
+   - 가드: 400 (ObjectId/scene_number 범위) / 404 / 403 (owner) / 409 (image_model 없음 / status 진행불가) / 401 (auth)
+   - 동작: `_group_scenes_into_chapters(scenes)` 로 챕터 찾음 (scene_number 가 속한) → 챕터 모든 씬 `image_status=pending`, `image_error=None`, `image_object_name=None` 마킹 → 잡 status = `phase2_images` → `asyncio.create_task(_run_chapter_serial(...))` 백그라운드 → finally 에서 `_refresh_phase2_status`
+   - 응답: `{pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers:[...], status, image_model}`
+5. **per-scene endpoint deprecated 표시** — 기존 `POST /jobs/{id}/scenes/{n}/regenerate-image` 헤더 주석에 deprecated + 마이그레이션 가이드. 코드는 백워드 호환 위해 유지.
+
+### Frontend
+
+- **`api/index.js`**: 신규 `regeneratePreMVChapterImages(jobId, sceneNumber)` + 기존 `regeneratePreMVSceneImage` deprecated 주석
+- **`components/PreCeremonyMVPanel.jsx`** (3 변경):
+  - 신규 `regenerateChapterImages` 핸들러 (옵티미스틱 업데이트: 큐된 씬들을 `generating` + `image_object_name=null` 로 마킹)
+  - prop chain: PreMVScenesStep → SceneList 까지 `onRegenerateChapterImages` 전달
+  - `SceneList` 리팩토링:
+    - `chaptersInPage` — 현재 페이지 씬을 연속 같은 story_slot 으로 그룹핑 (inline, useMemo 없이)
+    - `busyChapterKey` state — 한 번에 한 챕터만 재생성 가능
+    - 챕터마다 헤더 박스 (📍 슬롯 라벨 + 씬 수 + `↻ 이 챕터 전체 재생성` 버튼)
+    - Confirm 다이얼로그: "[슬롯명] 챕터의 N개 씬을 모두 다시 만듭니다. 약 N~2N분 소요. 기존 이미지는 사라져요. 계속할까요?"
+  - `SceneCard` per-scene `이미지 재생성` 버튼 제거 (v35 마이그레이션 주석)
+
+### 배포
+
+- 커밋 `1c780a8` "Chapter-level scene image regenerate (replaces per-scene button)" (+383 / -74, 3 파일)
+- 푸시: `33e48b5..1c780a8` → origin/frontend
+- 백엔드 PC selective sync + 두 번째 `touch` (첫 번째 reload 안 됨 — WatchFiles 가 git checkout mtime 안 잡는 케이스 재발)
+- worker PID 41330 → **42141**
+- Smoke 결과:
+  - 첫 시도 (reload 전): `POST /chapters/regenerate-images` → 404 (옛 워커, 라우트 없음)
+  - 두 번째 시도 (reload 후): `POST /chapters/regenerate-images` → 401 (라우트 alive + auth gate 정상)
+  - openapi.json 에 `/api/pre-mv/jobs/{id}/chapters/regenerate-images` 등록 확인
+
+### 효과
+
+- 챕터 안 모든 씬이 직렬로 `prev_scene_image_bytes` carry 받으며 재생성 → 톤·소품·캐릭터 일관성 유지
+- per-scene 재생성 버튼 제거 → 사용자 혼동 방지 (잘못된 재생성 시 일관성 깨지는 함정 제거)
+- 챕터 단위 비용/시간 명시 (confirm 에 약 N~2N 분 표시)
+
+### 특이사항
+
+- per-scene endpoint 백워드 호환 유지 — 다른 클라이언트 호출 가능성. 단 deprecated 표시되어 신규 사용 금지.
+- 챕터가 페이지 경계 (12 씬/page) 를 넘으면 양쪽 페이지에 같은 슬롯 헤더가 두 번 보일 수 있음 — acceptable (드문 케이스 + UX 손상 적음)
+- WatchFiles reload 가 git checkout 직후 mtime 안 잡는 케이스가 반복 발생 — 다음 배포부터 sync 후 즉시 `touch` + 더 긴 sleep (10초) 권장
+
+### 후속 (필요 시)
+
+- per-scene endpoint 완전 제거 (백워드 호환 불필요 결정 시)
+- chapter regenerate progress bar (현재는 폴링 기반 status 만)
+- 챕터 헤더에 "이 챕터 전체 재생성" 외 "여기서부터 끝까지 재생성" (chapter middle 부터 재시작) 옵션
+
+### 결론
+
+v35 PASS — 사용자가 직접 지적한 아키텍처 모순 (챕터 단위 prev_scene carry 설계 vs per-scene 재생성의 carry chain 단절) 을 Option A 로 해결. 백엔드는 `_run_chapter_serial` 을 모듈 레벨로 추출해 `_run_phase2` 와 신규 `POST /chapters/regenerate-images` 가 같은 직렬 carry 로직을 공유하도록 일원화, 신규 endpoint 에 400/404/403/409/401 가드 + `_group_scenes_into_chapters` 로 챕터 찾기 + 챕터 모든 씬 pending 마킹 + 백그라운드 task + `_refresh_phase2_status` finally 까지 한 트랜잭션으로 묶음. 프런트엔드는 SceneList 를 챕터 그룹핑 기반으로 리팩토링해 챕터 헤더 박스에 `↻ 이 챕터 전체 재생성` 버튼 1개만 노출하고 SceneCard 의 per-scene 버튼은 제거, `busyChapterKey` 로 한 번에 한 챕터만 재생성하도록 가드, confirm 다이얼로그에 비용/시간 (약 N~2N분) 과 기존 이미지 손실 경고 명시. 커밋 `1c780a8` (+383/-74, 3 파일) → `33e48b5..1c780a8` push, 백엔드 selective sync 후 WatchFiles 가 git checkout mtime 을 못 잡는 케이스로 첫 reload 실패 (POST → 404) → 두 번째 touch 로 worker PID 41330 → 42141 교체 후 POST → 401 (라우트 alive + auth gate 정상) + openapi.json 에 신규 경로 등록 확인. per-scene endpoint 는 백워드 호환 위해 deprecated 주석만 달고 코드 유지. 한계: 챕터가 페이지 경계 (12 씬/page) 를 넘으면 양쪽 페이지에 같은 슬롯 헤더가 두 번 보일 수 있음 (드문 케이스, acceptable), WatchFiles reload 누락 반복 발생 → 다음부터 즉시 touch + sleep 10초 권장.

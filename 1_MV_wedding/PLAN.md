@@ -5494,3 +5494,49 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - prev_scene 카운트가 챕터 내 character 일관성에 도움이 되도록 PREV_SCENE_BLOCK_PRESENT 강화 (별도 작업)
 
 ### 작업 끝(append).
+
+## v35 - 2026-06-02 - 챕터 단위 씬 이미지 재생성 + per-scene 버튼 제거
+
+### 배경 (아키텍처 모순 발견)
+- Phase 2 씬 이미지 생성은 **챕터 단위 직렬** 로 돌면서 `prev_scene_image_bytes` 를 carry 해 톤/소품/캐릭터 일관성 유지하는 설계
+- 그런데 기존 `POST /jobs/{id}/scenes/{n}/regenerate-image` (per-scene) 는 챕터 컨텍스트 무시하고 단일 씬만 재생성 → carry chain 깨짐 → 사용자가 "한 씬만 마음에 안 들어서 재생성" 하면 그 씬만 일관성 깨지는 함정
+- 사용자 결정: **Option A** = per-scene 제거, 챕터 단위 재생성으로 일원화 ("어차피 다 재생성할꺼면 챕터별로 재생성이 맞지")
+
+### 목표
+- 챕터 헤더에 "이 챕터 전체 재생성" 버튼 1개만 노출 → 클릭 시 챕터 내 모든 씬을 pending 으로 마크하고 `_run_chapter_serial` 로 직렬 재생성 (prev_scene carry 보존)
+- per-scene 재생성 버튼/UI 완전 제거 (백엔드 endpoint 는 백워드 호환 위해 deprecated 표시만)
+
+### Backend 작업 (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+1. `ChapterRegenerateImagesBody` Pydantic 모델 — `{scene_number: int}` (그 챕터의 아무 씬 번호)
+2. `_run_chapter_serial` 모듈 레벨로 추출 — 기존 `_run_phase2` nested `_run_chapter` 로직 (챕터 안 직렬 + prev_scene carry + DB refresh)
+3. `_run_phase2` 내부 `_run_chapter` 제거 → `_run_chapter_serial` 호출로 교체 (코드 재사용)
+4. 신규 endpoint `POST /api/pre-mv/jobs/{id}/chapters/regenerate-images`:
+   - 가드: 400/404/403/409/401
+   - `_group_scenes_into_chapters(scenes)` 로 챕터 찾고 모든 씬 pending 마킹
+   - `asyncio.create_task(_run_chapter_serial(...))` + finally `_refresh_phase2_status`
+   - 응답: `{pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers, status, image_model}`
+5. 기존 per-scene endpoint 헤더 주석에 deprecated + 마이그레이션 가이드 (코드 유지)
+
+### Frontend 작업
+- `api/index.js`: 신규 `regeneratePreMVChapterImages(jobId, sceneNumber)` + 기존 `regeneratePreMVSceneImage` deprecated 주석
+- `components/PreCeremonyMVPanel.jsx`:
+  - 신규 `regenerateChapterImages` 핸들러 (옵티미스틱: 큐된 씬들 `generating` + `image_object_name=null`)
+  - prop chain: PreMVScenesStep → SceneList 까지 `onRegenerateChapterImages`
+  - `SceneList` 리팩토링:
+    - `chaptersInPage` (현재 페이지 씬 → 연속 같은 story_slot 으로 그룹핑)
+    - `busyChapterKey` state (한 번에 한 챕터만)
+    - 챕터마다 헤더 박스 (📍 슬롯 라벨 + 씬 수 + `↻ 이 챕터 전체 재생성`)
+    - Confirm 다이얼로그: "[슬롯명] 챕터의 N개 씬을 모두 다시 만듭니다. 약 N~2N분 소요. 기존 이미지는 사라져요. 계속할까요?"
+  - `SceneCard` per-scene `이미지 재생성` 버튼 제거 (v35 마이그레이션 주석)
+
+### 효과
+- 챕터 안 모든 씬 직렬 + prev_scene carry → 톤·소품·캐릭터 일관성 유지
+- per-scene 버튼 제거 → 사용자 혼동/일관성 함정 제거
+- 챕터 단위 비용·시간 명시 (confirm 의 약 N~2N분)
+
+### 후속 (필요 시)
+- per-scene endpoint 완전 제거 (백워드 호환 불필요 결정 시)
+- chapter regenerate progress bar (현재 폴링 status 만)
+- 챕터 헤더에 "여기서부터 끝까지 재생성" (chapter middle 부터 재시작) 옵션
+
+### 작업 끝(append).
