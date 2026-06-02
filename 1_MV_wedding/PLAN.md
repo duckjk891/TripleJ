@@ -5597,3 +5597,37 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - WatchFiles reload 첫 touch 누락 케이스 대응 정착 (sync 후 즉시 touch + sleep 10초)
 
 ### 작업 끝(append).
+
+
+## v37 - 2026-06-03 - Phase 3 (영상) 에 v32 fallback 패턴 적용 (Kling)
+
+### 배경
+- 사용자 발견: "이미지 생성할때는 캐릭터 시트가 없을걸 대비해서 예외처리를 했잖아. 영상 생성할때도 예외처리를 해줘야지. 지금은 그게 없는거지? 나는 클링을 사용할꺼야"
+- 진단:
+  - Phase 2 (이미지) — v32 에서 `_resolve_sheet_ref` 에 default fallback 추가됨 (ref 없으면 `groom_wedding/casual + bride_wedding/casual` 시도)
+  - Phase 3 (영상) — `_load_char_sheet_bytes_for_scene` 는 `scene.ref_sheet_ids` 만 보고 비어있으면 그냥 `[]` 반환. fallback 없음
+  - → Kling 이라도 ref 없으면 캐릭터 시트 0장으로 호출. Phase 2 와 일관성 깨짐
+
+### 목표
+- Kling 분기에서 `ref_sheet_ids` 미명시 씬에도 신랑/신부 default 시트가 자동 첨부되도록 Phase 2 v32 패턴 mirror
+- Kling `image_list` 의 [1, 2] 한도 (max 2 ref) 준수
+- explicit + fallback 중복 방지
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+1. `_load_char_sheet_bytes_for_scene` 에 v32 동일 패턴 fallback 추가:
+   - explicit `ref_sheet_ids` 에 `groom_*` 없으면 `groom_wedding → groom_casual` append
+   - `bride_*` 없으면 `bride_wedding → bride_casual` append
+   - `fallback_added` 리스트로 추적 → 실제 로드 성공 시 logging
+   - `seen_slots` set 으로 중복 제거 (explicit + fallback 같은 슬롯 안 중복)
+   - max_refs=2 까지만 출력 (Kling `image_list[1,2]` 한도)
+
+### 영향 범위
+- Kling 분기 (사용자 사용 모델) — 직접 수혜
+- Veo / Seedance / Grok — 캐릭터 시트 로드 호출 자체가 Kling 분기에만 있어 영향 없음 (별도 작업 필요)
+
+### 후속 (v38 후보)
+- Kling video_prompt 의 `<<<image_N>>>` 명시 참조 — system prompt 는 LLM 에게 권장했지만 Phase 1 가 video_prompt 작성 시 실제로 박았는지 케이스마다 다름. 이미 생성된 작품들은 image_N 토큰 없을 수 있음 → 시트 첨부해도 Kling 이 무시할 가능성
+  - 해결: `pre_mv_video_prompts.py:compose_video_prompt` Kling 분기에 "Identity: match <<<image_1>>>..." 한 줄 자동 inject
+- Veo / Seedance / Grok 의 캐릭터 시트 통합 — Veo 는 `referenceImages` 배열 지원, Seedance/Grok 은 API spec 확인 필요. Kling 검증 후 진행
+
+### 작업 끝(append).

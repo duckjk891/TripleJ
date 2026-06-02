@@ -3435,3 +3435,56 @@ v35 챕터 단위 직렬 재생성을 도입하고 사용자가 실제 작품을
 ### 결론
 
 v36 PASS — v35 챕터 단위 재생성 도입 후 사용자가 발견한 추억 carry 문제 (memory slot 안의 다른 memory_index 들이 한 챕터로 묶여 prev_scene chain 이 추억 경계를 넘나들며 lighting/atmosphere/place_ref 가 섞이던 문제) 를 `_group_scenes_into_chapters` 의 챕터 키를 `(story_slot, memory_index if slot=='memory' else None)` 튜플로 확장해 해결. 백엔드 `_chapter_key` 헬퍼 + `prev_slot` → `prev_key` rename, 단위 테스트 4 케이스 (meeting+first_date / memory 0,0,1,1 / memory 0,1,0 / mixed) 모두 통과. 프런트엔드는 3 위치 (`groupScenesByChapter` line 2089, SceneList `chaptersInPage`, 챕터 헤더 라벨 두 곳) 에 같은 키 로직 적용 + memory 면 헤더에 1-based 인덱스 (`#1`, `#2`) 표시. 커밋 `c66050b` (+56/-22, 2 파일) → `cf2e6c1..c66050b` push, 백엔드 selective sync 후 WatchFiles 첫 touch 누락 (v35 재발) → 두 번째 touch 로 worker PID 42141 → 48028 교체 + GET /api/health 200 + venv 직접 호출로 memory 0,0,1,1 → `[[0,1],[2,3]]` / mixed → `[[0],[1,2],[3],[4]]` live 확인. Phase 1 ref 수집은 이전부터 memory_index 분리되어 있어 데이터는 정확했고 챕터 그룹핑 로직만 align 한 변경이라 영향 범위는 **2 이상의 다른 memory_index 가 있는 memory slot 뿐** (meeting/first_date/proposal/wedding_prep/rituals 및 memory_index None 케이스는 기존과 동일). 이후 챕터 단위 재생성도 추억별로 가능해져 사용자가 추억1 만 재생성하고 추억2 는 보존하는 워크플로 가능. 한계: 기존에 잘못 carry 된 결과물은 자동 수정 안 됨 (재생성 필요), WatchFiles reload 누락이 반복 발생해 다음 배포부터 sync 후 즉시 touch + sleep 10초 정착 권장.
+
+
+## v37 - 2026-06-03 - Phase 3 (영상) 에 v32 fallback 패턴 적용 (Kling)
+
+### 배경
+
+- 사용자 발견: "이미지 생성할때는 캐릭터 시트가 없을걸 대비해서 예외처리를 했잖아. 영상 생성할때도 예외처리를 해줘야지. 지금은 그게 없는거지? 나는 클링을 사용할꺼야"
+- 진단:
+  - Phase 2 (이미지) — v32 에서 `_resolve_sheet_ref` 안에 default fallback 추가됨 (ref 없으면 `groom_wedding/casual + bride_wedding/casual` 시도)
+  - Phase 3 (영상) — `_load_char_sheet_bytes_for_scene` 는 `scene.ref_sheet_ids` 만 보고 비어있으면 그냥 `[]` 반환. fallback 없음
+  - → Kling 이라도 ref 없으면 캐릭터 시트 0장으로 호출. Phase 2 와 일관성 깨짐
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+
+`_load_char_sheet_bytes_for_scene` 에 v32 동일 패턴 fallback 추가:
+
+1. explicit `ref_sheet_ids` 에 `groom_*` 없으면 `groom_wedding → groom_casual` append
+2. `bride_*` 없으면 `bride_wedding → bride_casual` append
+3. `fallback_added` 리스트로 추적 → 실제 로드 성공 시 logging
+4. `seen_slots` set 으로 중복 제거 (explicit + fallback 같은 슬롯 안 중복)
+5. max_refs=2 까지만 출력 (Kling `image_list[1,2]` 한도 준수)
+
+### 배포
+
+- 커밋 `e7f591a` "Phase 3 default sheet fallback for Kling (mirror of v32 image-side fix)" (+34 / -1, 1 파일)
+- 푸시: `8c8546e..e7f591a` → origin/frontend
+- 백엔드 PC selective sync + `touch` + 12초 sleep
+- worker PID 48028 → **67791** ✅
+- 모듈 smoke (venv): 함수 소스에 `fallback_added`, `groom_wedding`, `bride_wedding`, `has_groom/bride` 키워드 모두 포함 확인 ✅
+
+### 효과
+
+- 사용자가 **Kling** 사용 시 (v37 의 직접 수혜자):
+  - `ref_sheet_ids` 명시 안 한 씬도 자동으로 신랑 + 신부 시트가 `image_list[1,2]` 에 첨부됨
+  - Kling system prompt 의 character_rules ("Reference <<<image_N>>>") + 시트 첨부 조합으로 일관성 보장
+- Veo / Seedance / Grok 은 영향 없음 (캐릭터 시트 로드 호출 자체가 Kling 분기에만 있음 — v37 는 Phase 3 의 fallback 강화일 뿐, 다른 모델 캐릭터 시트 통합은 별도 작업 필요)
+
+### 한계 / 후속 (v38 후보)
+
+- **Kling video_prompt 의 `<<<image_N>>>` 명시 참조** — system prompt 는 LLM 에게 권장했지만 Phase 1 가 video_prompt 작성 시 실제로 박았는지는 케이스마다 다름
+  - 이미 생성된 작품들은 image_N 토큰 없을 수 있음 → 시트 첨부해도 Kling 이 무시할 가능성
+  - 해결: video_prompt builder (`pre_mv_video_prompts.py:compose_video_prompt` Kling 분기) 에 "Identity: match <<<image_1>>>..." 한 줄 자동 inject — v38 후보
+- **Veo / Seedance / Grok 의 캐릭터 시트 통합** — Veo 는 `referenceImages` 배열 지원, Seedance/Grok 은 API spec 확인 필요. Kling 검증 후 진행
+
+### 권장 확인
+
+1. 사용자가 캐릭터 시트 만들어둔 작품에서 영상 재생성 시도
+2. 결과 영상에서 캐릭터 얼굴이 시트와 일관성 있는지 시각 평가
+3. 만약 여전히 일관성 약하면 → Kling video_prompt 보강 (v38)
+
+### 결론
+
+v37 PASS — 사용자가 발견한 Phase 2/Phase 3 비대칭 문제 (이미지 쪽은 v32 에서 `_resolve_sheet_ref` 의 default 시트 fallback 으로 `ref_sheet_ids` 없는 씬도 `groom_wedding/casual + bride_wedding/casual` 자동 시도되도록 처리되었으나, 영상 쪽 `_load_char_sheet_bytes_for_scene` 는 `scene.ref_sheet_ids` 가 비어있으면 그냥 `[]` 를 반환해 Kling 사용 시 캐릭터 시트 0장으로 호출되던 일관성 깨짐) 를 Phase 3 에 v32 동일 패턴 mirror 로 해결. `_load_char_sheet_bytes_for_scene` 에 explicit `ref_sheet_ids` 의 `groom_*`/`bride_*` 존재 여부 체크 후 누락 측 `wedding → casual` 순서로 fallback append + `seen_slots` set 으로 explicit/fallback 중복 제거 + `fallback_added` 리스트 logging + max_refs=2 (Kling `image_list[1,2]` 한도) 준수 로직 추가. 커밋 `e7f591a` (+34/-1, 1 파일) → `8c8546e..e7f591a` push, 백엔드 PC selective sync + touch + 12초 sleep 으로 worker PID 48028 → 67791 교체 확인, venv smoke 에서 함수 소스에 `fallback_added`/`groom_wedding`/`bride_wedding`/`has_groom`/`has_bride` 키워드 모두 포함 검증. 사용자(Kling) 가 직접 수혜자로 `ref_sheet_ids` 명시 안 한 씬에도 신랑+신부 시트가 자동 `image_list[1,2]` 에 첨부되어 Kling system prompt 의 character_rules (`Reference <<<image_N>>>`) 와 결합해 캐릭터 일관성 보장. Veo/Seedance/Grok 은 캐릭터 시트 로드 호출 자체가 Kling 분기에만 있어 영향 없음 (다른 모델 캐릭터 시트 통합은 별도 작업 필요). 한계: 이미 생성된 작품의 video_prompt 는 `<<<image_N>>>` 토큰 없을 수 있어 시트 첨부해도 Kling 이 무시할 가능성 — v38 에서 `compose_video_prompt` Kling 분기에 "Identity: match <<<image_1>>>..." 자동 inject 후보. 권장 확인: 사용자가 캐릭터 시트 만들어둔 작품에서 영상 재생성 → 결과 영상 시각 평가 → 일관성 약하면 v38 진행.
