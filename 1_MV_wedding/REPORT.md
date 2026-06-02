@@ -3361,3 +3361,77 @@ Phase 2 씬 이미지는 챕터 단위로 직렬 실행되며 `prev_scene_image_
 ### 결론
 
 v35 PASS — 사용자가 직접 지적한 아키텍처 모순 (챕터 단위 prev_scene carry 설계 vs per-scene 재생성의 carry chain 단절) 을 Option A 로 해결. 백엔드는 `_run_chapter_serial` 을 모듈 레벨로 추출해 `_run_phase2` 와 신규 `POST /chapters/regenerate-images` 가 같은 직렬 carry 로직을 공유하도록 일원화, 신규 endpoint 에 400/404/403/409/401 가드 + `_group_scenes_into_chapters` 로 챕터 찾기 + 챕터 모든 씬 pending 마킹 + 백그라운드 task + `_refresh_phase2_status` finally 까지 한 트랜잭션으로 묶음. 프런트엔드는 SceneList 를 챕터 그룹핑 기반으로 리팩토링해 챕터 헤더 박스에 `↻ 이 챕터 전체 재생성` 버튼 1개만 노출하고 SceneCard 의 per-scene 버튼은 제거, `busyChapterKey` 로 한 번에 한 챕터만 재생성하도록 가드, confirm 다이얼로그에 비용/시간 (약 N~2N분) 과 기존 이미지 손실 경고 명시. 커밋 `1c780a8` (+383/-74, 3 파일) → `33e48b5..1c780a8` push, 백엔드 selective sync 후 WatchFiles 가 git checkout mtime 을 못 잡는 케이스로 첫 reload 실패 (POST → 404) → 두 번째 touch 로 worker PID 41330 → 42141 교체 후 POST → 401 (라우트 alive + auth gate 정상) + openapi.json 에 신규 경로 등록 확인. per-scene endpoint 는 백워드 호환 위해 deprecated 주석만 달고 코드 유지. 한계: 챕터가 페이지 경계 (12 씬/page) 를 넘으면 양쪽 페이지에 같은 슬롯 헤더가 두 번 보일 수 있음 (드문 케이스, acceptable), WatchFiles reload 누락 반복 발생 → 다음부터 즉시 touch + sleep 10초 권장.
+
+## v36 - 2026-06-02 - 추억(memory) 챕터를 memory_index 별로 분리
+
+### 배경 (이전 Q&A 에서 발견한 carry-chain 잔여 문제)
+v35 챕터 단위 직렬 재생성을 도입하고 사용자가 실제 작품을 보다 추가 발견: memory slot 의 **다른 memory_index** 들이 같은 챕터로 묶여 `_run_chapter_serial` 의 prev_scene chain 이 추억1 → 추억2 사이로 carry → 다른 추억의 lighting/atmosphere 가 섞이고 place_ref/character_ref 도 혼란 (예: 추억1 씬1,2,3 ref=[바다] + 추억2 씬4,5,6 ref=[놀이공원] 가 한 챕터 → 씬 4 의 prev_scene=씬 3 (바다) 인데 place_ref=놀이공원 → Gemini 혼란). 진단 결과 Phase 1 `_collect_refs_from_events_for_slot` 은 memory_index 별로 ref 분리되어 있어 데이터는 이미 정확했고, Phase 2 `_group_scenes_into_chapters` 가 memory_index 를 무시한 채 story_slot 만 비교하던 게 원인. 사용자 결정: "추억도 분리해보자 그러면" → 챕터 그룹핑 로직만 align.
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+
+1. **`_group_scenes_into_chapters` 챕터 키 변경** — `(story_slot,)` 단일 비교 → `(story_slot, memory_index if slot=='memory' else None)` 튜플 비교.
+2. **헬퍼 `_chapter_key(s)` 추가**:
+   ```python
+   def _chapter_key(s):
+       slot = (s or {}).get("story_slot") or ""
+       if slot == "memory":
+           return (slot, (s or {}).get("memory_index"))
+       return (slot, None)
+   ```
+3. **변수 rename + 비교식 align** — `prev_slot` → `prev_key`, 그룹 시작 조건도 `k == prev_key` 로 변경.
+4. **단위 테스트 (배포 전)** — 4 케이스 모두 통과:
+   - case1 (meeting x3 + first_date x2): `[[0,1,2], [3,4]]`
+   - case2 (memory 0,0,1,1): `[[0,1], [2,3]]` ✅
+   - case3 (memory 0,1,0 비연속): `[[0], [1], [2]]` ✅
+   - case4 (mixed): `[[0], [1,2], [3], [4]]` ✅
+
+### Frontend (`components/PreCeremonyMVPanel.jsx`, 3 위치)
+
+1. **`groupScenesByChapter`** (line 2089, ChapterGroup Step 4 영상용):
+   - `_chapterKey(s)` 헬퍼 추가 (memory 면 `memory:idx`, 아니면 `slot:none`)
+   - 반환 객체에 `memory_index` 필드 추가
+2. **SceneList 의 `chaptersInPage`** (v35 추가분, Step 3 이미지용):
+   - 같은 키 로직 inline (헬퍼 안 import — 함수 안 클로저로 유지)
+   - 챕터 객체에 `memory_index` 필드 추가
+3. **챕터 헤더 라벨 (두 곳)**:
+   - SceneList (Step 3): `chapter.slot === 'memory'` 면 `${baseSlotLabel} #${memory_index + 1}` (1-based)
+   - ChapterGroup (Step 4): 동일 로직 → UI 에 "📍 추억 #1", "📍 추억 #2" 분리되어 보임
+
+### 배포
+
+- 커밋 `c66050b` "Group memory chapters by memory_index (no more cross-memory carry)" (+56 / -22, 2 파일)
+- 푸시: `cf2e6c1..c66050b` → origin/frontend
+- 백엔드 PC selective sync + `touch` (WatchFiles 가 첫 번째 mtime 안 잡음 — v35 와 동일 케이스 재발 → 두 번째 `touch` 후 reload)
+- worker PID 42141 → **48028** ✅
+- GET /api/health → 200 ✅
+- **Live 검증 (배포 후 venv 직접 호출)**:
+  - memory 0,0,1,1: `[[0, 1], [2, 3]]` ✅
+  - mixed: `[[0], [1, 2], [3], [4]]` ✅
+
+### 효과
+
+- memory slot 의 다른 memory_index 들이 별도 챕터로 분리 → `_run_chapter_serial` 의 prev_scene chain 이 추억 경계에서 끊김 → 다른 추억끼리 lighting/atmosphere 안 섞임
+- 각 추억이 자기 ref (장소/캐릭터) 만 사용
+- v35 의 챕터 단위 재생성도 추억별로 가능 (사용자가 추억1 만 재생성, 추억2 는 보존 가능)
+- UI 챕터 헤더에 "📍 추억 #1", "📍 추억 #2" 명시 → 사용자가 챕터 구분 가능
+
+### 영향 받지 않는 케이스
+
+- meeting / first_date / proposal / wedding_prep / rituals: memory_index 가 None 또는 0 으로 단일 → 기존과 동일 동작
+- memory slot 이라도 memory_index 가 None 인 케이스: chapter key `(memory, None)` 으로 묶임 — 이전과 같음
+- 영향 받는 건 **2 이상의 다른 memory_index 가 있는 memory slot 뿐**
+
+### 특이사항
+
+- Phase 1 의 ref 수집 로직 (`_collect_refs_from_events_for_slot`) 은 이전부터 memory_index 별로 분리되어 있어 데이터 측은 이미 정확. 챕터 그룹핑 로직만 align 한 변경.
+- WatchFiles reload 가 첫 `touch` 에 반응 안 함 → 두 번째 `touch` 필요 (v35 에 이어 재발). 다음 배포부터는 sync 후 즉시 `touch` + 10초 sleep 보장 권장.
+
+### 후속 (필요 시)
+
+- 이미 생성된 작품에서 추억 챕터가 잘못 carry 된 결과물 — 재생성 트리거 필요 (자동 수정 안 됨)
+- chapter regenerate 시 추억별로 재생성 가능해진 점 documentation
+- WatchFiles reload 누락 케이스 자동화 (sync 후 즉시 touch + sleep 10초 정착)
+
+### 결론
+
+v36 PASS — v35 챕터 단위 재생성 도입 후 사용자가 발견한 추억 carry 문제 (memory slot 안의 다른 memory_index 들이 한 챕터로 묶여 prev_scene chain 이 추억 경계를 넘나들며 lighting/atmosphere/place_ref 가 섞이던 문제) 를 `_group_scenes_into_chapters` 의 챕터 키를 `(story_slot, memory_index if slot=='memory' else None)` 튜플로 확장해 해결. 백엔드 `_chapter_key` 헬퍼 + `prev_slot` → `prev_key` rename, 단위 테스트 4 케이스 (meeting+first_date / memory 0,0,1,1 / memory 0,1,0 / mixed) 모두 통과. 프런트엔드는 3 위치 (`groupScenesByChapter` line 2089, SceneList `chaptersInPage`, 챕터 헤더 라벨 두 곳) 에 같은 키 로직 적용 + memory 면 헤더에 1-based 인덱스 (`#1`, `#2`) 표시. 커밋 `c66050b` (+56/-22, 2 파일) → `cf2e6c1..c66050b` push, 백엔드 selective sync 후 WatchFiles 첫 touch 누락 (v35 재발) → 두 번째 touch 로 worker PID 42141 → 48028 교체 + GET /api/health 200 + venv 직접 호출로 memory 0,0,1,1 → `[[0,1],[2,3]]` / mixed → `[[0],[1,2],[3],[4]]` live 확인. Phase 1 ref 수집은 이전부터 memory_index 분리되어 있어 데이터는 정확했고 챕터 그룹핑 로직만 align 한 변경이라 영향 범위는 **2 이상의 다른 memory_index 가 있는 memory slot 뿐** (meeting/first_date/proposal/wedding_prep/rituals 및 memory_index None 케이스는 기존과 동일). 이후 챕터 단위 재생성도 추억별로 가능해져 사용자가 추억1 만 재생성하고 추억2 는 보존하는 워크플로 가능. 한계: 기존에 잘못 carry 된 결과물은 자동 수정 안 됨 (재생성 필요), WatchFiles reload 누락이 반복 발생해 다음 배포부터 sync 후 즉시 touch + sleep 10초 정착 권장.

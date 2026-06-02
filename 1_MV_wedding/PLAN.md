@@ -5540,3 +5540,60 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - 챕터 헤더에 "여기서부터 끝까지 재생성" (chapter middle 부터 재시작) 옵션
 
 ### 작업 끝(append).
+
+## v36 - 2026-06-02 - 추억(memory) 챕터를 memory_index 별로 분리
+
+### 배경 (이전 Q&A 진단)
+- v35 챕터 단위 직렬 재생성을 도입하면서 사용자가 추가 발견: memory slot 의 **다른 memory_index** 들이 같은 챕터로 묶여 `_run_chapter_serial` 의 prev_scene chain 이 추억1 → 추억2 사이로 carry → 다른 추억의 lighting/atmosphere 가 섞이고 place_ref/character_ref 도 혼란
+- 진단:
+  - Phase 1 `_collect_refs_from_events_for_slot`: memory_index 별로 ref 분리 ✅ (데이터 측은 이미 정확)
+  - Phase 2 `_group_scenes_into_chapters`: memory_index 무시, story_slot 만 비교 ❌ → 추억1(씬1,2,3 ref=[바다]) + 추억2(씬4,5,6 ref=[놀이공원]) 가 한 챕터 → 씬 4 의 prev_scene=씬 3 (바다) 인데 place_ref=놀이공원 → Gemini 혼란
+- 사용자 결정: "추억도 분리해보자 그러면"
+
+### 목표
+- 추억(memory) slot 은 memory_index 별로 별도 챕터로 분리
+- 다른 slot (meeting / first_date / proposal / wedding_prep / rituals 등) 은 기존 동작 유지 (memory_index 가 None 또는 단일)
+- UI 챕터 헤더에 "추억 #1", "추억 #2" 명시되어 사용자가 구분 가능
+- 챕터 단위 재생성 (v35) 도 추억별로 가능해짐
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+1. `_group_scenes_into_chapters` 의 챕터 키를 `(story_slot, memory_index if slot=='memory' else None)` 튜플로 변경
+2. 헬퍼 `_chapter_key(s)` 추가:
+   ```python
+   def _chapter_key(s):
+       slot = (s or {}).get("story_slot") or ""
+       if slot == "memory":
+           return (slot, (s or {}).get("memory_index"))
+       return (slot, None)
+   ```
+3. 기존 `prev_slot` 변수 → `prev_key` 로 rename, 그룹핑 조건도 `k == prev_key` 로 비교
+4. 단위 테스트 4 케이스 통과 (case1 meeting x3 + first_date x2, case2 memory 0,0,1,1, case3 memory 0,1,0 비연속, case4 mixed)
+
+### Frontend (`PreCeremonyMVPanel.jsx`, 3 위치)
+1. **`groupScenesByChapter`** (line 2089, ChapterGroup Step 4 영상용):
+   - `_chapterKey(s)` 헬퍼 추가 (memory 면 `memory:idx`, 아니면 `slot:none`)
+   - 반환 객체에 `memory_index` 필드 추가
+2. **SceneList 의 `chaptersInPage`** (v35 추가분, Step 3 이미지용):
+   - 같은 키 로직 inline (헬퍼 안 import — 함수 안 클로저)
+   - 챕터 객체에 `memory_index` 필드 추가
+3. **챕터 헤더 라벨 (두 곳)**:
+   - SceneList (Step 3): `chapter.slot === 'memory'` 면 `${baseSlotLabel} #${memory_index + 1}` (1-based)
+   - ChapterGroup (Step 4): 동일 로직
+
+### 효과
+- memory slot 의 다른 memory_index 들이 별도 챕터로 분리 → prev_scene chain 끊김 → 다른 추억끼리 lighting/atmosphere 안 섞임
+- 각 추억이 자기 ref (장소/캐릭터) 만 사용
+- 챕터 단위 재생성 (v35) 도 추억별로 가능
+- UI 에 "📍 추억 #1", "📍 추억 #2" 명시 → 사용자가 챕터 구분 가능
+
+### 영향 받지 않는 케이스
+- meeting / first_date / proposal / wedding_prep / rituals: memory_index 가 None 또는 0 으로 단일 → 기존과 동일 동작
+- memory slot 이라도 memory_index 가 None 인 케이스: chapter key (memory, None) 으로 묶임 — 이전 동작과 같음
+- 영향 받는 건 **2 이상의 다른 memory_index 가 있는 memory slot 뿐**
+
+### 후속 (필요 시)
+- 이미 생성된 작품에서 추억 챕터가 잘못 carry 된 결과물 — 재생성 트리거 필요 (자동 수정 안 됨)
+- chapter regenerate 시 추억별로 재생성 가능해진 점 documentation
+- WatchFiles reload 첫 touch 누락 케이스 대응 정착 (sync 후 즉시 touch + sleep 10초)
+
+### 작업 끝(append).
