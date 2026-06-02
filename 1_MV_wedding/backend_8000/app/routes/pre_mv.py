@@ -2288,14 +2288,35 @@ async def _load_scene_image_bytes(object_name: Optional[str]) -> Optional[bytes]
 async def _load_char_sheet_bytes_for_scene(
     *, owner_user_id: str, scene: dict, max_refs: int = 2,
 ) -> list[bytes]:
-    """씬의 ref_sheet_ids 가 가리키는 캐릭터 시트 bytes 들 (최대 2장).
+    """씬의 ref_sheet_ids 가 가리키는 캐릭터 시트 bytes 들 (최대 max_refs 장).
 
     Kling 호출 시 prompt 의 <<<image_N>>> 참조에 쓰인다.
     실패한 slot 은 조용히 skip — 다른 씬 영향 X.
+
+    v37 — explicit ref 가 groom/bride 한 쪽이라도 비어있으면 default 시트
+    (groom_wedding/casual, bride_wedding/casual) 로 face-only fallback 보강.
+    Phase 2 의 v32 패턴을 영상 생성에도 적용. 캐릭터 일관성 보장.
     """
     refs = list((scene or {}).get("ref_sheet_ids") or [])
+    has_groom = any((r or "").startswith("groom_") for r in refs)
+    has_bride = any((r or "").startswith("bride_") for r in refs)
+
+    # v37 — 부족한 쪽 default 시트 후보 append (실제 존재 여부는 아래 sheets dict 에서 검증).
+    fallback_added: list[str] = []
+    if not has_groom:
+        for fb in ("groom_wedding", "groom_casual"):
+            if fb not in refs:
+                refs.append(fb)
+                fallback_added.append(fb)
+    if not has_bride:
+        for fb in ("bride_wedding", "bride_casual"):
+            if fb not in refs:
+                refs.append(fb)
+                fallback_added.append(fb)
+
     if not refs:
         return []
+
     mongo = get_mongo()
     try:
         cs_doc = await mongo.wedding_character_sheets.find_one(
@@ -2310,7 +2331,11 @@ async def _load_char_sheet_bytes_for_scene(
     sheets = ((cs_doc or {}).get("sheets") or {})
     minio_client = get_minio()
     out: list[bytes] = []
+    seen_slots: set = set()
     for slot in refs:
+        if slot in seen_slots:
+            continue
+        seen_slots.add(slot)
         sd = sheets.get(slot) or {}
         obj = sd.get("sheet_object_name") or ""
         if not obj:
@@ -2325,6 +2350,14 @@ async def _load_char_sheet_bytes_for_scene(
             resp.release_conn()
             if data:
                 out.append(data)
+                if slot in fallback_added:
+                    logger.info(
+                        "[PreMVRoute] phase=phase3 sheet fallback applied "
+                        "scene_number=%s slot=%s (explicit refs lacked %s)",
+                        (scene or {}).get("scene_number"),
+                        slot,
+                        "groom" if slot.startswith("groom_") and not has_groom else "bride",
+                    )
                 if len(out) >= max_refs:
                     break
         except Exception as e:  # noqa: BLE001
