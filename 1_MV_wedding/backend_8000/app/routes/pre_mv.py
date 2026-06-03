@@ -2830,40 +2830,29 @@ async def _run_phase3(
             async def _run_chapter_video(
                 chapter_seq: int, chapter_indices: list[int],
             ) -> None:
-                """챕터 안 직렬: 이전 씬 영상 완성 후 ffmpeg 추출 → 다음 씬 start."""
-                in_chapter_total = len(chapter_indices)
-                # carry 변수: 직전에 완성된 씬의 mp4 object_name.
-                prev_video_object: Optional[str] = None
-                # 챕터 내 각 씬의 Phase 2 PNG (end_frame 용) — 미리 로드 캐시.
-                for pos, scene_idx in enumerate(chapter_indices):
-                    # 다음 씬 결정 (챕터 안 다음 인덱스). 없으면 None.
-                    is_last_in_chapter = (pos == in_chapter_total - 1)
-                    is_first_in_chapter = (pos == 0)
+                """챕터 안 직렬: 각 씬은 자기 Phase 2 이미지로 start.
 
-                    # 1) start_frame 결정
+                v38 — 이전 씬 영상의 last frame carry 제거.
+                  · 이유: 씬 N 의 사용자가 만든 Phase 2 이미지 구도가 무시되어
+                    "이미지대로 영상이 안 만들어진다"는 일관성 문제가 있었음.
+                  · start_bytes 는 항상 None → _run_single_scene_video 가
+                    scene.image_object_name 으로 fetch (각 씬의 Phase 2 이미지).
+                  · end_frame_bytes 는 여전히 다음 씬 Phase 2 이미지로 유지
+                    (v39 단계에서 제거 검토 — 사용자 테스트 후).
+                  · prev_video_object carry 자체는 유지 (다른 logging 용 변수에만 쓰임).
+                  · ffmpeg extract_scene_last_frame_png 호출 제거.
+                """
+                in_chapter_total = len(chapter_indices)
+                # v38 — prev_video_object 는 더 이상 start carry 에 안 쓰임.
+                # 다만 video_start_frame_source 로깅 정합성 위해 형식만 유지.
+                prev_video_object: Optional[str] = None
+                for pos, scene_idx in enumerate(chapter_indices):
+                    is_last_in_chapter = (pos == in_chapter_total - 1)
+                    # is_first_in_chapter 는 v38 이후 의미 없음 (모든 씬이 동일하게 Phase 2 이미지 사용)
+
+                    # 1) start_frame — v38: 항상 None → 씬 자기 Phase 2 이미지 사용
                     start_bytes: Optional[bytes] = None
                     start_src = "scene_image"
-                    if not is_first_in_chapter and prev_video_object:
-                        # 이전 씬 mp4 → ffmpeg → png. 실패 시 fallback: Phase 2 이미지.
-                        try:
-                            last_obj = await extract_scene_last_frame_png(
-                                pre_mv_job_id=pre_mv_job_id,
-                                scene_number=scene_idx + 1,
-                                video_object_name=prev_video_object,
-                            )
-                            start_bytes = await _load_photos_bytes(last_obj)
-                            if start_bytes:
-                                start_src = "prev_video_last_frame"
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning(
-                                "[PreMVPhase3Chain] 이전 씬 영상의 마지막 프레임 추출에 "
-                                "실패했어요. Phase 2 이미지로 free fallback 합니다. "
-                                "pre_mv_job_id=%s chapter_seq=%d scene_index=%d err=%s",
-                                pre_mv_job_id, chapter_seq, scene_idx,
-                                type(e).__name__,
-                            )
-                            start_bytes = None
-                            start_src = "scene_image"
 
                     # 2) end_frame 결정 — 챕터 마지막이 아니면 next_scene 의 Phase 2 PNG.
                     end_bytes: Optional[bytes] = None
