@@ -26,6 +26,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -33,6 +34,102 @@ from typing import Optional
 
 from ..config import settings
 from ..database.minio import get_minio
+
+
+# v42 — section label entry (e.g., "[Intro]", "[Verse 1 - 메인 보컬]") 매칭.
+_SECTION_LABEL_RE = re.compile(r"^\s*\[[^\]]+\]\s*$")
+
+
+def _to_srt_time(sec: float) -> str:
+    """초 → SRT timecode (HH:MM:SS,mmm)."""
+    if sec is None or sec < 0:
+        sec = 0.0
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms == 1000:
+        ms = 0
+        s += 1
+    return "{:02d}:{:02d}:{:02d},{:03d}".format(h, m, s, ms)
+
+
+def generate_srt_from_segments(
+    segments: list[dict],
+    video_start_offset_sec: float = 0.0,
+) -> str:
+    """v42 — lyric_timestamps_variants[N] segments 를 SRT 텍스트로 변환.
+
+    · section label entry ([Intro], [Verse 1] 등) 는 skip — 자막에 표시 안 함.
+    · 본문 빈 entry 도 skip.
+    · video_start_offset_sec > 0 면 모든 cue 의 start/end 에서 그 값을 빼서 영상 timeline 에 맞춤
+      (영상은 0초부터 시작, 음악 timeline 의 start - offset 이 영상 timeline 의 cue 시간).
+    · offset 빼고 음수면 그 cue 는 skip (영상 시작 전에 끝난 라인).
+    """
+    out_lines: list[str] = []
+    cue_idx = 1
+    pad = max(0.0, float(video_start_offset_sec or 0.0))
+    for seg in segments or []:
+        text = (str(seg.get("text") or "")).strip()
+        if not text or _SECTION_LABEL_RE.match(text):
+            continue
+        start_raw = float(seg.get("start") or 0.0)
+        end_raw = float(seg.get("end") or 0.0)
+        start = start_raw - pad
+        end = end_raw - pad
+        if end <= 0 or end <= start:
+            continue
+        if start < 0:
+            start = 0.0
+        out_lines.append("{}\n{} --> {}\n{}\n".format(
+            cue_idx, _to_srt_time(start), _to_srt_time(end), text,
+        ))
+        cue_idx += 1
+    return "\n".join(out_lines)
+
+
+def calculate_video_start_offset(
+    *,
+    aligned_words: list[dict],
+    segments_fallback: list[dict],
+) -> float:
+    """v42 — [Intro] 다음 첫 비-Intro section label 의 startS 추출.
+
+    aligned_words 에 [Intro], [Verse 1] 같은 라벨이 단어 entry 로 포함되어 있음.
+    · 첫 [intro] 등장 후 첫 비-intro 라벨이 나오면 그 시점이 영상 시작 시점.
+    · 못 찾으면 fallback: segments_fallback 두 번째 entry 의 start
+      (segments[0]=Intro 가사, segments[1]=Verse 1 첫 줄 가정).
+    · 그것도 없으면 0.0.
+    """
+    label_starts: list[tuple[str, float]] = []
+    for w in aligned_words or []:
+        raw = str((w or {}).get("word") or "")
+        m = re.match(r"^\s*\[([^\]]+)\]\s*$", raw)
+        if not m:
+            continue
+        label = m.group(1).strip().lower()
+        start_s = float((w or {}).get("startS") or 0.0)
+        label_starts.append((label, start_s))
+
+    found_intro = False
+    for label, start in label_starts:
+        if not found_intro:
+            if label.startswith("intro"):
+                found_intro = True
+            continue
+        # [Intro] 이후 첫 다른 라벨 (보통 [Verse 1])
+        if not label.startswith("intro"):
+            return start
+
+    # fallback — segments[1].start
+    try:
+        if isinstance(segments_fallback, list) and len(segments_fallback) >= 2:
+            return float((segments_fallback[1] or {}).get("start") or 0.0)
+        if isinstance(segments_fallback, list) and segments_fallback:
+            return float((segments_fallback[0] or {}).get("end") or 0.0)
+    except (TypeError, ValueError):
+        pass
+    return 0.0
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +264,7 @@ async def _merge_audio(
     audio_path: str,
     out_path: str,
     video_start_offset_sec: float = 0.0,
+    srt_path: Optional[str] = None,
 ) -> None:
     """영상 + 오디오 머지. video copy + audio aac. `-shortest` 로 종료시점 일치.
 
@@ -183,12 +281,13 @@ async def _merge_audio(
             pre_mv_job_id, pad,
         )
 
-    # v41.1 — itsoffset + copy 조합은 mp4 moov atom timestamps 가 어긋나
-    # 클라이언트에서 ERR_INCOMPLETE_CHUNKED_ENCODING / 재생 중단 발생.
-    # pad>0 일 때는 copy 모드 건너뛰고 바로 reencode 분기로 fallthrough.
-    if pad > 0:
+    # v42 — 자막 burn-in 시 reencode 강제 (subtitles filter 는 copy 모드와 호환 X).
+    need_reencode = pad > 0 or bool(srt_path)
+    if need_reencode:
         rc = 1  # copy 모드 강제 skip → reencode 분기 진입
-        stderr_text = "v41.1: skipped copy mode because pad>0"
+        stderr_text = (
+            "v42: skipped copy mode (pad>0 or srt subtitles requested)"
+        )
     else:
         rc, stderr_text = await _run_ffmpeg(
             args=[
@@ -204,17 +303,37 @@ async def _merge_audio(
             pre_mv_job_id=pre_mv_job_id,
         )
     if rc != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 1024:
-        # video copy 가 잘 안 되는 경우 (codec 이상) — 영상도 재인코딩.
+        # video copy 가 잘 안 되는 경우 (codec 이상) 또는 pad/srt 가 있어서 강제 reencode.
         logger.info(
             "[PreMVPhase4] merge copy_failed pre_mv_job_id=%s — falling back to re-encode",
             pre_mv_job_id,
         )
+        # v42 — srt_path 있으면 subtitles filter 추가. 폰트는 시스템 default.
+        # subtitles filter 는 path 안 쪽 : 와 \ 를 escape 해야 함.
+        filter_args: list[str] = []
+        if srt_path:
+            escaped_srt = (
+                srt_path.replace("\\", "\\\\")
+                        .replace(":", "\\:")
+                        .replace("'", "\\'")
+            )
+            filter_args = [
+                "-vf",
+                "subtitles='{}':force_style='Alignment=2,MarginV=60,"
+                "Fontsize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,"
+                "Outline=2,Shadow=0,BorderStyle=1'".format(escaped_srt),
+            ]
+            logger.info(
+                "[PreMVPhase4] subtitles filter applied pre_mv_job_id=%s srt=%s",
+                pre_mv_job_id, srt_path,
+            )
         rc2, stderr_text2 = await _run_ffmpeg(
             args=[
                 "-y",
                 *pad_args,
                 "-i", video_path,
                 "-i", audio_path,
+                *filter_args,
                 "-c:v", "libx264", "-preset", "fast",
                 "-c:a", "aac",
                 "-movflags", "+faststart",
@@ -238,6 +357,7 @@ async def compose_pre_mv_result(
     scenes: list[dict],
     audio_object_name: Optional[str],
     video_start_offset_sec: float = 0.0,
+    srt_text: Optional[str] = None,
 ) -> dict:
     """씬 영상들을 concat → (오디오 있으면) 머지 → MinIO 업로드.
 
@@ -343,12 +463,19 @@ async def compose_pre_mv_result(
                 if not os.path.exists(audio_local) or os.path.getsize(audio_local) < 1024:
                     raise RuntimeError("오디오 파일이 비어 있습니다.")
                 merged_path = os.path.join(tmpdir, "merged.mp4")
+                # v42 — SRT 파일 임시 디스크에 쓰고 path 전달.
+                srt_path: Optional[str] = None
+                if srt_text and srt_text.strip():
+                    srt_path = os.path.join(tmpdir, "subs.srt")
+                    with open(srt_path, "w", encoding="utf-8") as sf:
+                        sf.write(srt_text)
                 await _merge_audio(
                     pre_mv_job_id=pre_mv_job_id,
                     video_path=concat_out,
                     audio_path=audio_local,
                     out_path=merged_path,
                     video_start_offset_sec=video_start_offset_sec,
+                    srt_path=srt_path,
                 )
                 final_local_path = merged_path
                 had_audio = True
