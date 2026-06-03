@@ -39,6 +39,10 @@ from ..database.minio import get_minio
 # v42 — section label entry (e.g., "[Intro]", "[Verse 1 - 메인 보컬]") 매칭.
 _SECTION_LABEL_RE = re.compile(r"^\s*\[[^\]]+\]\s*$")
 
+# v42.3 — segments.text 의 앞쪽 `[...]` prefix 추출용 (label + 가사 혼합 케이스).
+# 예: "[Intro - 듀엣] 오늘" → group(1)="Intro - 듀엣", group(2)=" 오늘"
+_LEADING_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\](.*)$", re.DOTALL)
+
 
 def _to_srt_time(sec: float) -> str:
     """초 → SRT timecode (HH:MM:SS,mmm)."""
@@ -58,13 +62,15 @@ def generate_srt_from_segments(
     segments: list[dict],
     video_start_offset_sec: float = 0.0,
 ) -> str:
-    """v42 — lyric_timestamps_variants[N] segments 를 SRT 텍스트로 변환.
+    """lyric_timestamps_variants[N] segments 를 SRT 텍스트로 변환.
 
-    · section label entry ([Intro], [Verse 1] 등) 는 skip — 자막에 표시 안 함.
+    · section label-only entry ([Intro] 단독) 는 skip.
     · 본문 빈 entry 도 skip.
-    · video_start_offset_sec > 0 면 모든 cue 의 start/end 에서 그 값을 빼서 영상 timeline 에 맞춤
-      (영상은 0초부터 시작, 음악 timeline 의 start - offset 이 영상 timeline 의 cue 시간).
-    · offset 빼고 음수면 그 cue 는 skip (영상 시작 전에 끝난 라인).
+    · v42.3 — text 가 "[Intro - 듀엣] 오늘" 같이 label+가사 혼합이면 label prefix 만 제거.
+    · video_start_offset_sec > 0 면 모든 cue 의 start/end 에서 그 값을 빼서 영상 timeline 에 맞춤.
+    · offset 빼고 end<=0 (영상 시작 전에 끝난 라인) → skip.
+    · "[This song is a duet ...]" 같은 Suno duet 헤더 entry 도 skip (대괄호 안에 "duet" 같은
+      메타 단어만 가득 → 가사 아님). LEADING_SECTION 매치 + 나머지 text 비어있으면 skip.
     """
     out_lines: list[str] = []
     cue_idx = 1
@@ -73,6 +79,13 @@ def generate_srt_from_segments(
         text = (str(seg.get("text") or "")).strip()
         if not text or _SECTION_LABEL_RE.match(text):
             continue
+        # v42.3 — leading [...] prefix 제거
+        m = _LEADING_SECTION_RE.match(text)
+        if m:
+            rest = (m.group(2) or "").strip()
+            if not rest:
+                continue  # label 만 있는 entry — skip
+            text = rest
         start_raw = float(seg.get("start") or 0.0)
         end_raw = float(seg.get("end") or 0.0)
         start = start_raw - pad
@@ -93,42 +106,42 @@ def calculate_video_start_offset(
     aligned_words: list[dict],
     segments_fallback: list[dict],
 ) -> float:
-    """v42 — [Intro] 다음 첫 비-Intro section label 의 startS 추출.
+    """v42 — [Intro] 다음 첫 비-Intro section label 의 start 추출.
 
-    aligned_words 에 [Intro], [Verse 1] 같은 라벨이 단어 entry 로 포함되어 있음.
-    · 첫 [intro] 등장 후 첫 비-intro 라벨이 나오면 그 시점이 영상 시작 시점.
-    · 못 찾으면 fallback: segments_fallback 두 번째 entry 의 start
-      (segments[0]=Intro 가사, segments[1]=Verse 1 첫 줄 가정).
-    · 그것도 없으면 0.0.
+    v42.3 — Suno 의 aligned_words 는 section label 도 단어 분할로 들어옴
+    (예: '[This ', 'song ', 'is ', 'a ', 'duet '). 정규식 매칭 안 됨.
+    따라서 segments 의 text leading `[...]` prefix 로 section 결정으로 전환.
+    segments 가 더 안정적인 source (라인 단위 + label prefix 보존).
+
+    aligned_words 인자는 backward-compat 위해 시그니처에만 유지 (실제 사용 X).
+
+    동작:
+    · segments 순회하며 text 의 leading `[label]` 추출
+    · label.lower() 가 'intro' 로 시작하거나 'song is a duet' 같은 메타 헤더면 건너뜀
+    · 첫 비-intro 비-meta label 발견 시 그 segment.start 반환 (= [Verse 1] 등 시작)
+    · 못 찾으면 0.0 (fallback)
     """
-    label_starts: list[tuple[str, float]] = []
-    for w in aligned_words or []:
-        raw = str((w or {}).get("word") or "")
-        m = re.match(r"^\s*\[([^\]]+)\]\s*$", raw)
+    found_intro_or_meta = False
+    for seg in segments_fallback or []:
+        text = (str((seg or {}).get("text") or "")).strip()
+        if not text:
+            continue
+        m = _LEADING_SECTION_RE.match(text)
         if not m:
             continue
         label = m.group(1).strip().lower()
-        start_s = float((w or {}).get("startS") or 0.0)
-        label_starts.append((label, start_s))
-
-    found_intro = False
-    for label, start in label_starts:
-        if not found_intro:
-            if label.startswith("intro"):
-                found_intro = True
+        is_meta = (
+            label.startswith("intro")
+            or "duet" in label  # "[This song is a duet featuring ...]"
+            or "song is a" in label
+        )
+        if is_meta:
+            found_intro_or_meta = True
             continue
-        # [Intro] 이후 첫 다른 라벨 (보통 [Verse 1])
-        if not label.startswith("intro"):
-            return start
+        if found_intro_or_meta:
+            return float((seg or {}).get("start") or 0.0)
 
-    # fallback — segments[1].start
-    try:
-        if isinstance(segments_fallback, list) and len(segments_fallback) >= 2:
-            return float((segments_fallback[1] or {}).get("start") or 0.0)
-        if isinstance(segments_fallback, list) and segments_fallback:
-            return float((segments_fallback[0] or {}).get("end") or 0.0)
-    except (TypeError, ValueError):
-        pass
+    # 못 찾으면 0 — intro 가 없는 곡 또는 라벨 없는 곡.
     return 0.0
 
 logger = logging.getLogger(__name__)
