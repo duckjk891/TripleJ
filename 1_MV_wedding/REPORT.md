@@ -3678,3 +3678,67 @@ Kling 분기 (line 2565+):
 ### 결론
 
 v39 PASS — 사용자 가설 ("모든 씬에 캐릭터 시트가 태깅되어있는게 아니라서 일관성 안됨") 는 약간 다르며 (v37 fallback 으로 모든 씬에 시트 bytes 는 들어감 — 시트가 DB 에 존재 시), 단 v37 만으로는 explicit vs fallback 구분 없이 동일 모드라 fallback 시트의 옷까지 따라갈 위험이 있어 v39 에서 차별 추가 + "챕터별로 씬 생성하는 게 일관성 위해서" 가설은 맞음 (챕터 단위 직렬 실행은 v38 후에도 유지, chain carry 만 제거됨 — 같은 챕터 안 같은 ref/시트 공유 효과 살아있음) 으로 답변. Phase 2 image-side 의 v34 `[face-only]` / `[full-match]` 차별을 Phase 3 영상 생성에도 도입하여 `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 의 `_load_char_sheet_bytes_for_scene` 반환 형식을 `list[bytes]` → `list[tuple[bytes, bool]]` (`(bytes, is_explicit)`) 로 변경 (explicit_refs = scene.ref_sheet_ids 슬롯은 `(slot, True)`, v37 fallback 추가 슬롯은 `(slot, False)`, explicit 가 먼저 fallback 이 뒤, 같은 slot 중복 시 explicit 우선 dedup, fallback 발동 시 `[PreMVRoute] phase=phase3 sheet face-only fallback applied` 로깅) + Kling 분기 (line 2565+) 에서 `char_refs_meta` 받아 `char_ref_bytes_list = [b for b, _ in char_refs_meta]` 와 `char_ref_modes = ["explicit" if exp else "face_only" for _, exp in char_refs_meta]` 두 리스트로 분리하여 `generate_scene_video_kling(..., char_ref_modes=char_ref_modes, ...)` 호출 + `1_MV_wedding/backend_8000/app/services/pre_mv_kling_generator.py` 의 `generate_scene_video_kling` 시그니처에 `char_ref_modes: Optional[list[str]] = None` 인자 추가 (각 ref 의 mode ∈ {"explicit", "face_only"}, char_ref_bytes_list 와 같은 순서/길이) 후 함수 본문에서 `identity_lines: list[str]` 자동 생성하여 explicit 은 `<<<image_N>>> is a FULL-MATCH reference: match face, hair, body, AND wardrobe/accessories exactly as in the reference image.` / face_only 는 `<<<image_N>>> is a FACE-ONLY identity reference: match the face, head shape, hair, and body proportions exactly, but the OUTFIT, accessories, and styling must follow the scene description rather than the reference's wardrobe.` 로 작성하고 identity_lines 가 있으면 raw_prompt 끝에 `Character identity guidance: ...` 한 블록 자동 append → sanitize_video_prompt → final_prompt 로 전달. 커밋 `a0788e0` "Phase 3 face-only vs full-match identity guidance (v34 parity for video)" (+62/-30, 순 +32 라인 두 파일 합) → `33e1cd1..a0788e0` push, 백엔드 PC selective sync + touch + 12초 sleep 으로 worker PID 99577 → 936 교체 확인, venv smoke 에서 실제 모듈 import 로 load 반환 형식 `list[tuple[bytes, bool]]` + explicit/fallback 구분 로직 (`is_explicit`, `slots_with_meta`) + Kling 시그니처에 `char_ref_modes` 인자 + Kling 본문에 `identity_block`, `FACE-ONLY`, `FULL-MATCH` 모두 포함 검증. 효과: 사용자가 `groom_wedding` 시트만 만들어두고 @ 안 했을 때 영상의 캐릭터 얼굴 = 시트 그대로 (일관성) + 영상의 옷 = scene_prompt 따라 매 씬 변주 (계절/장소 적응), 사용자가 `@groom_wedding` 명시한 씬은 영상의 얼굴 + 옷 모두 시트 그대로 (의도 존중). 동작 매트릭스 (v32~v39 종합): Explicit @ ref 는 이미지 v34 [full-match] / 영상 v39 [full-match] (face+옷 모두 match), @ 없을 때 default fallback 은 이미지 v32 (bytes load) / 영상 v37 (bytes load), Fallback 일 때 face-only 차별은 이미지 v34 `[face-only]` 마커 / 영상 v39 `<<<image_N>>>` FACE-ONLY guidance, 각 씬 자기 image 로 시작은 영상 v38 (prev video carry 제거), 챕터 단위 직렬 실행은 Phase 2 chain (이미지 carry 유지) / 영상은 유지 (end_frame 만 carry). 한계: Kling V3 Omni 가 prompt 내 `<<<image_N>>>` 토큰 + face-only 안내를 얼마나 잘 따르는지 실측 필요 + 만약 face-only 인데도 시트 옷이 그대로 나오면 identity guidance 표현 강화 (별도 v40 후보) + v38 의 prev video carry 제거 효과와 함께 평가 (사용자 테스트 후 종합 판단). 사용자 테스트 가이드: 캐릭터 시트 1~2개 만들어둔 사용자가 (시트 없으면 fallback 자체 미발동) 챕터 영상 재생성 (Step 4 챕터 헤더 버튼) → 챕터 안 캐릭터 얼굴이 시트와 일관성 + 시트 옷이 scene 분위기에 맞게 변주되는지 + 각 씬 영상이 그 씬 Phase 2 이미지로 시작 (v38 효과) 모두 확인.
+
+## v40 - 2026-06-03 - 챕터 단위 씬 영상 재생성 + per-scene 영상 버튼 제거
+
+### 사용자 요청 (원문)
+"영상 재생성 버튼이 있으면 좋겠는데. 전체 재생성도 필요하겠지만 챕터벌 재생성도 있어야하지 않을까?"
+
+### 해석
+- 작품 전체 영상 재생성: 이미 `POST /jobs/{id}/phase3?force=true` 로 가능 (확인됨)
+- 단일 씬 영상 재생성: 이미 있음 (`regenerate-video`)
+- 빠진 것: 챕터 단위 영상 재생성 — v35 의 이미지 챕터 재생성 패턴을 영상에도 적용
+
+### 결과 (Backend `1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+1. `ChapterRegenerateVideosBody` 신규 Pydantic 모델 — `{scene_number: int}` (그 챕터의 아무 씬 번호. v35 패턴 동일)
+2. `_run_chapter_video_serial` 모듈 레벨로 추출 — 기존 `_run_phase3` 의 nested `_run_chapter_video` 였던 로직. 인자: pre_mv_job_id, video_model, owner_user_id, chapter_seq, chapter_indices, scenes, target_set, mongo, oid. v38 동작 유지 (start_bytes=None, end_bytes=다음 씬 Phase 2 image). prev_video_object carry 도 유지 (target 아닌 씬도 carry 갱신). `_run_phase3` 와 신규 endpoint 두 곳에서 공유.
+3. `_run_phase3` inline `_run_chapter_video` 제거 → `_run_chapter_video_serial` 호출로 교체 (라인 수 감소).
+4. 신규 endpoint `POST /api/pre-mv/jobs/{id}/chapters/regenerate-videos`:
+   - 가드: 400(ObjectId/scene_number 범위), 404, 403(owner), 409(video_model 없음 / status 진행 불가), 422(챕터 안 image_status != completed 인 씬 존재), 401(auth)
+   - 동작: `_group_scenes_into_chapters` (v36 — memory slot 의 memory_index 까지 구분) 로 챕터 찾음 → 챕터 모든 씬 `video_status=pending`, `video_error=None`, `video_object_name=None` 마크 → 잡 status = phase3_videos → `asyncio.create_task(_run_chapter_video_serial(...))` 백그라운드 → finally `_refresh_phase3_status` 호출
+   - 응답: `{pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers:[...], status, video_model}`
+5. per-scene endpoint `POST /jobs/{id}/scenes/{n}/regenerate-video` 헤더 주석에 deprecated 명시. 코드는 백워드 호환 유지.
+
+### 결과 (Frontend)
+- `1_MV_wedding/frontend/api/index.js`: 신규 `regeneratePreMVChapterVideos(jobId, sceneNumber)` 함수 추가, 기존 `regeneratePreMVSceneVideo` 에 deprecated 주석.
+- `1_MV_wedding/frontend/components/PreCeremonyMVPanel.jsx` (5 변경):
+  - 신규 `regenerateChapterVideos` 핸들러 (기존 `regenerateSceneVideo` 다음). 옵티미스틱 업데이트: 큐된 씬을 `generating` + `video_object_name=null` 로 마크.
+  - prop chain 추가: PreCeremonyMVPanel → PreMVVideosStep → ChapterGroup 까지 `onRegenerateChapterVideos` 전달.
+  - `ChapterGroup` 보강: `chapterRegenBusy` state + `onClickChapterRegen` handler + Confirm 다이얼로그 ("[슬롯명] 챕터의 N개 씬 영상을 모두 다시 만듭니다. 약 N*2~N*5분 소요. 기존 영상은 사라져요.") + 헤더에 `↻ 이 챕터 영상 전체 재생성` 버튼 (생성 중인 씬이 있으면 disabled).
+  - `SceneCard` 의 per-scene `영상 재생성` 버튼 제거 (v40 마이그레이션 주석).
+
+### 변경 통계
+- diff: +354 / -92, 3 파일
+
+### 배포 / 검증
+- 커밋 `2a3e5e7` "Chapter-level scene video regenerate (Phase 3 analog of v35)"
+- 푸시: `6439ab7..2a3e5e7` → origin/frontend
+- 백엔드 PC selective sync + `touch` + 12초 sleep
+- worker PID 936 → 1615 교체 확인 (OK)
+- Smoke:
+  - `POST .../chapters/regenerate-videos` → 401 (route alive + auth gate 정상) OK
+  - `/openapi.json` 에 새 경로 등록 확인: `/api/pre-mv/jobs/{id}/chapters/regenerate-images` (v35) + `/api/pre-mv/jobs/{id}/chapters/regenerate-videos` (v40) OK
+
+### 효과
+- 챕터 안 모든 씬의 영상이 직렬로 재생성 → end_frame transition 일관성 유지
+- per-scene 영상 재생성 버튼 제거 → 사용자 혼동 방지 (잘못된 재생성 시 transition 깨지는 함정 제거)
+- v36 의 memory_index 분리도 자동 반영 (다른 추억은 별도 챕터)
+
+### 종합 매트릭스 (v35 + v40)
+| 단계 | 챕터 재생성 endpoint | 챕터 헤더 버튼 | per-scene 재생성 |
+|---|---|---|---|
+| Phase 2 (이미지) | v35 `POST .../chapters/regenerate-images` | v35 `↻ 이 챕터 전체 재생성` | 제거됨 (v35) |
+| Phase 3 (영상) | v40 `POST .../chapters/regenerate-videos` | v40 `↻ 이 챕터 영상 전체 재생성` | 제거됨 (v40) |
+
+### 특이사항
+- per-scene endpoint 백워드 호환 유지 — 다른 클라이언트에서 호출 가능성. deprecated 표시되어 있어 신규 사용 금지.
+- 챕터 안 image_status != completed 인 씬이 있으면 422 + 어느 씬인지 알림 (UX 안전망).
+- 작품 전체 영상 재생성은 기존 `POST /jobs/{id}/phase3` (force=true) 그대로 활용.
+
+### 후속 (필요 시)
+- per-scene endpoint 완전 제거 — 백워드 호환 불필요 결정 시
+- chapter video 진행률 표시 (현재는 폴링 status 만)
+- "여기서부터 끝까지" 부분 재생성 옵션
+
+### 결론
+v40 PASS — 사용자 요청 ("영상 재생성 버튼이 있으면 좋겠는데. 전체 재생성도 필요하겠지만 챕터벌 재생성도 있어야하지 않을까?") 에 대해 작품 전체 재생성은 기존 `POST /jobs/{id}/phase3?force=true` 로 이미 가능, 단일 씬 재생성도 기존 `regenerate-video` 존재 확인, 빠진 챕터 단위 영상 재생성을 v35 의 이미지 챕터 재생성 패턴을 그대로 영상에도 이식하여 추가. Backend `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 에 `ChapterRegenerateVideosBody` Pydantic 모델 신규 + `_run_chapter_video_serial` 을 모듈 레벨로 추출 (기존 `_run_phase3` 의 nested `_run_chapter_video` 로직, 인자: pre_mv_job_id, video_model, owner_user_id, chapter_seq, chapter_indices, scenes, target_set, mongo, oid, v38 동작 유지 = start_bytes=None / end_bytes=다음 씬 Phase 2 image, prev_video_object carry 도 유지) + `_run_phase3` inline `_run_chapter_video` 를 `_run_chapter_video_serial` 호출로 교체 + 신규 endpoint `POST /api/pre-mv/jobs/{id}/chapters/regenerate-videos` (가드: 400 ObjectId/scene_number 범위, 404, 403 owner, 409 video_model 없음 / status 진행 불가, 422 챕터 안 image_status != completed 인 씬 존재, 401 auth, 동작: `_group_scenes_into_chapters` v36 으로 챕터 찾음 → 챕터 모든 씬 `video_status=pending`, `video_error=None`, `video_object_name=None` 마크 → 잡 status = phase3_videos → `asyncio.create_task(_run_chapter_video_serial(...))` 백그라운드 → finally `_refresh_phase3_status`, 응답: `{pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers, status, video_model}`) + per-scene endpoint `POST /jobs/{id}/scenes/{n}/regenerate-video` 헤더 주석에 deprecated 명시 (백워드 호환 유지) 작업, Frontend `1_MV_wedding/frontend/api/index.js` 에 `regeneratePreMVChapterVideos(jobId, sceneNumber)` 신규 함수 + 기존 `regeneratePreMVSceneVideo` 에 deprecated 주석 + `1_MV_wedding/frontend/components/PreCeremonyMVPanel.jsx` 에 `regenerateChapterVideos` 핸들러 (옵티미스틱 업데이트: 큐된 씬을 `generating` + `video_object_name=null` 로 마크) + prop chain (PreCeremonyMVPanel → PreMVVideosStep → ChapterGroup 까지 `onRegenerateChapterVideos` 전달) + `ChapterGroup` 보강 (`chapterRegenBusy` state, `onClickChapterRegen` handler, Confirm 다이얼로그 "[슬롯명] 챕터의 N개 씬 영상을 모두 다시 만듭니다. 약 N*2~N*5분 소요. 기존 영상은 사라져요.", 헤더에 `↻ 이 챕터 영상 전체 재생성` 버튼 — 생성 중인 씬이 있으면 disabled) + `SceneCard` 의 per-scene `영상 재생성` 버튼 제거 (v40 마이그레이션 주석) 적용. diff +354/-92 3파일, 커밋 `2a3e5e7` "Chapter-level scene video regenerate (Phase 3 analog of v35)" → `6439ab7..2a3e5e7` push, 백엔드 PC selective sync + `touch` + 12초 sleep 으로 worker PID 936 → 1615 교체 확인, smoke `POST .../chapters/regenerate-videos` → 401 (route alive + auth gate 정상) + `/openapi.json` 에 `/api/pre-mv/jobs/{id}/chapters/regenerate-images` (v35) 와 `/api/pre-mv/jobs/{id}/chapters/regenerate-videos` (v40) 두 경로 모두 등록 확인. 효과: 챕터 안 모든 씬의 영상이 직렬로 재생성 → end_frame transition 일관성 유지 + per-scene 영상 재생성 버튼 제거 → 사용자 혼동 방지 (잘못된 재생성 시 transition 깨지는 함정 제거) + v36 의 memory_index 분리도 자동 반영 (다른 추억은 별도 챕터). 종합 매트릭스 (v35 + v40): Phase 2 이미지는 v35 `POST .../chapters/regenerate-images` 엔드포인트 + 챕터 헤더 `↻ 이 챕터 전체 재생성` 버튼 + per-scene 재생성 제거됨, Phase 3 영상은 v40 `POST .../chapters/regenerate-videos` 엔드포인트 + 챕터 헤더 `↻ 이 챕터 영상 전체 재생성` 버튼 + per-scene 재생성 제거됨. 특이사항: per-scene endpoint 백워드 호환 유지 (다른 클라이언트에서 호출 가능성, deprecated 표시되어 있어 신규 사용 금지) + 챕터 안 image_status != completed 인 씬이 있으면 422 + 어느 씬인지 알림 (UX 안전망) + 작품 전체 영상 재생성은 기존 `POST /jobs/{id}/phase3` (force=true) 그대로 활용. 후속 (필요 시): per-scene endpoint 완전 제거 (백워드 호환 불필요 결정 시) + chapter video 진행률 표시 (현재는 폴링 status 만) + "여기서부터 끝까지" 부분 재생성 옵션.

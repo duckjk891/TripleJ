@@ -5744,3 +5744,51 @@ v38 만으로 충분한지, end_frame 도 제거할지 사용자 평가 후 결�
 - v38 의 prev video carry 제거 효과와 함께 평가 — 사용자 테스트 후 종합 판단
 
 ### 작업 끝(append).
+
+## v40 - 2026-06-03 - 챕터 단위 씬 영상 재생성 + per-scene 영상 버튼 제거
+
+### 사용자 요청 (원문)
+"영상 재생성 버튼이 있으면 좋겠는데. 전체 재생성도 필요하겠지만 챕터벌 재생성도 있어야하지 않을까?"
+
+### 해석
+- 작품 전체 영상 재생성: 이미 `POST /jobs/{id}/phase3?force=true` 로 가능 (확인됨)
+- 단일 씬 영상 재생성: 이미 있음 (`regenerate-video`)
+- 빠진 것: 챕터 단위 영상 재생성 — v35 의 이미지 챕터 재생성 패턴을 영상에도 적용
+
+### 계획 (Backend)
+1. `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 에 `ChapterRegenerateVideosBody` Pydantic 모델 신규 — `{scene_number: int}` (그 챕터의 아무 씬 번호. v35 패턴 동일)
+2. 기존 `_run_phase3` 의 nested `_run_chapter_video` 를 모듈 레벨 `_run_chapter_video_serial` 로 추출 — 인자: pre_mv_job_id, video_model, owner_user_id, chapter_seq, chapter_indices, scenes, target_set, mongo, oid. v38 동작 유지 (start_bytes=None, end_bytes=다음 씬 Phase 2 image). prev_video_object carry 도 유지 (target 아닌 씬도 carry 갱신). `_run_phase3` 와 신규 endpoint 두 곳에서 공유.
+3. `_run_phase3` inline `_run_chapter_video` 제거 → `_run_chapter_video_serial` 호출로 교체 (라인 수 감소).
+4. 신규 endpoint `POST /api/pre-mv/jobs/{id}/chapters/regenerate-videos`:
+   - 가드: 400(ObjectId/scene_number 범위), 404, 403(owner), 409(video_model 없음 / status 진행 불가), 422(챕터 안 image_status != completed 인 씬 존재), 401(auth)
+   - 동작: `_group_scenes_into_chapters` (v36) 로 챕터 찾음 → 챕터 모든 씬 `video_status=pending`, `video_error=None`, `video_object_name=None` 마크 → 잡 status = phase3_videos → `asyncio.create_task(_run_chapter_video_serial(...))` 백그라운드 → finally `_refresh_phase3_status` 호출
+   - 응답: `{pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers:[...], status, video_model}`
+5. per-scene endpoint `POST /jobs/{id}/scenes/{n}/regenerate-video` 헤더 주석에 deprecated 명시. 코드는 백워드 호환 유지.
+
+### 계획 (Frontend)
+1. `1_MV_wedding/frontend/api/index.js`:
+   - 신규 `regeneratePreMVChapterVideos(jobId, sceneNumber)` 함수
+   - 기존 `regeneratePreMVSceneVideo` 에 deprecated 주석
+2. `1_MV_wedding/frontend/components/PreCeremonyMVPanel.jsx`:
+   - 신규 `regenerateChapterVideos` 핸들러 (기존 `regenerateSceneVideo` 다음). 옵티미스틱 업데이트: 큐된 씬을 `generating` + `video_object_name=null` 로 마크.
+   - prop chain 추가: PreCeremonyMVPanel → PreMVVideosStep → ChapterGroup 까지 `onRegenerateChapterVideos` 전달.
+   - `ChapterGroup` 보강: `chapterRegenBusy` state + `onClickChapterRegen` handler + Confirm 다이얼로그 ("[슬롯명] 챕터의 N개 씬 영상을 모두 다시 만듭니다. 약 N*2~N*5분 소요. 기존 영상은 사라져요.") + 헤더에 `↻ 이 챕터 영상 전체 재생성` 버튼 (생성 중인 씬이 있으면 disabled).
+   - `SceneCard` 의 per-scene `영상 재생성` 버튼 제거 (v40 마이그레이션 주석).
+
+### 검증 계획
+- 커밋 + push + 백엔드 selective sync + worker restart 확인
+- smoke: 신규 endpoint 호출 → 401 (auth gate alive)
+- `/openapi.json` 에 새 경로 등록 확인
+
+### 종합 매트릭스 (v35 + v40)
+| 단계 | 챕터 재생성 endpoint | 챕터 헤더 버튼 | per-scene 재생성 |
+|---|---|---|---|
+| Phase 2 (이미지) | v35 `POST .../chapters/regenerate-images` | v35 `↻ 이 챕터 전체 재생성` | 제거됨 (v35) |
+| Phase 3 (영상) | v40 `POST .../chapters/regenerate-videos` | v40 `↻ 이 챕터 영상 전체 재생성` | 제거됨 (v40) |
+
+### 후속 후보
+- per-scene endpoint 완전 제거 — 백워드 호환 불필요 결정 시
+- chapter video 진행률 표시 (현재는 폴링 status 만)
+- "여기서부터 끝까지" 부분 재생성 옵션
+
+### 작업 끝(append).
