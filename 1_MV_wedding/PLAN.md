@@ -5631,3 +5631,47 @@ touch 1_MV_wedding/backend_8000/app/services/lyrics_generator.py  # WatchFiles �
 - Veo / Seedance / Grok 의 캐릭터 시트 통합 — Veo 는 `referenceImages` 배열 지원, Seedance/Grok 은 API spec 확인 필요. Kling 검증 후 진행
 
 ### 작업 끝(append).
+
+## v38 - 2026-06-03 - Phase 3 이전 영상 last frame carry 제거 (각 씬 = 자기 Phase 2 image)
+
+### 사용자 요청 (원문)
+"이것보다는 우선 캐릭터 시트가 챕터마다 영상생성할때 제대로 반영될수 있도록 되어있는지 확인을 해주고(이미지 생성할때 캐릭터 시트는 반영하는 방식으로 수정했잖아?) 그리고 챕터별 영상을 생성할때 이전 씬 이미지는 제외하고 생성하게 해볼 수 있나? 단계적으로 끝 프레임을 다음씬 이미지로 설정한것도 제외하고 생성해보고 테스트가 필요할 것 같아"
+
+### 확인 결과 (캐릭터 시트 반영 흐름)
+v37 의 `_load_char_sheet_bytes_for_scene` 가 매 씬에서 호출되고 char_ref_bytes_list 가 Kling 까지 도달함이 확인됨:
+- `_run_chapter_video` (챕터 직렬) → `_run_single_scene_video` (매 씬) → Kling 분기에서 `_load_char_sheet_bytes_for_scene(scene, max_refs=2)` 호출 (line 2566-2567)
+- v37 fallback 으로 ref 없어도 default 시트 자동 로드
+- `char_refs` 가 `generate_scene_video_kling` 의 `char_ref_bytes_list` 로 전달 (line 2574)
+- Kling generator 가 image_list[1, 2] 로 base64 인코딩 첨부
+
+→ **챕터마다 반영되는 구조는 정상**. 만약 영상에 캐릭터 일관성이 약하면 다른 원인 (예: Kling video_prompt 의 `<<<image_N>>>` 토큰 누락, 또는 사용자 작품에 캐릭터 시트 자체가 없음).
+
+### 목표
+- 챕터 안 두 번째 씬 이후 "이전 영상의 last frame" 을 다음 씬 start 로 carry 하는 v24 메커니즘 제거
+- 각 씬 영상은 자기 자신의 Phase 2 image 로 시작 (사용자 의도와 정확히 매치)
+- end_frame (다음 씬 Phase 2 image) 은 v38 단계에서 **유지** → v39 단계에서 사용자 테스트 후 별도 결정
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py:_run_chapter_video`)
+1. `start_bytes: Optional[bytes] = None` 으로 고정 (carry 미적용)
+2. `if not is_first_in_chapter and prev_video_object:` 블록 통째 제거
+3. `extract_scene_last_frame_png` (ffmpeg `-sseof -0.5`) 호출 제거 (ffmpeg 작업도 자연 제거)
+4. `start_src = "scene_image"` (모든 씬 동일)
+5. `prev_video_object` 변수는 유지 (다른 로깅 용도 보존 — 사실상 미사용)
+6. `is_first_in_chapter` 변수 제거 (의미 없어짐)
+7. `end_frame_bytes` (다음 씬 Phase 2 image) 는 변경 없이 유지
+
+### 동작 변화
+| 시나리오 (챕터 안 씬 1, 2, 3) | v37 (이전) | v38 (이후) |
+|---|---|---|
+| 씬 1 first_frame | 씬 1 Phase 2 image | 씬 1 Phase 2 image (동일) |
+| 씬 2 first_frame | ❌ 씬 1 영상의 last frame (ffmpeg 추출) | ✅ 씬 2 Phase 2 image |
+| 씬 3 first_frame | ❌ 씬 2 영상의 last frame | ✅ 씬 3 Phase 2 image |
+| 씬 N end_frame (last 이외) | 씬 N+1 Phase 2 image | 씬 N+1 Phase 2 image (동일) |
+
+### 후속 (v39 후보 — 사용자 테스트 후)
+v38 만으로 충분한지, end_frame 도 제거할지 사용자 평가 후 결정:
+- v38 만 충분: 그대로 종료
+- v38 + 시각 점프 부담 가능: v39 진행 (end_frame 도 제거 → 완전 독립 씬 영상)
+- v38 후 transition 어색: end_frame 유지가 정답이었다는 신호
+
+### 작업 끝(append).

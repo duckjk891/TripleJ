@@ -3488,3 +3488,91 @@ v36 PASS — v35 챕터 단위 재생성 도입 후 사용자가 발견한 추�
 ### 결론
 
 v37 PASS — 사용자가 발견한 Phase 2/Phase 3 비대칭 문제 (이미지 쪽은 v32 에서 `_resolve_sheet_ref` 의 default 시트 fallback 으로 `ref_sheet_ids` 없는 씬도 `groom_wedding/casual + bride_wedding/casual` 자동 시도되도록 처리되었으나, 영상 쪽 `_load_char_sheet_bytes_for_scene` 는 `scene.ref_sheet_ids` 가 비어있으면 그냥 `[]` 를 반환해 Kling 사용 시 캐릭터 시트 0장으로 호출되던 일관성 깨짐) 를 Phase 3 에 v32 동일 패턴 mirror 로 해결. `_load_char_sheet_bytes_for_scene` 에 explicit `ref_sheet_ids` 의 `groom_*`/`bride_*` 존재 여부 체크 후 누락 측 `wedding → casual` 순서로 fallback append + `seen_slots` set 으로 explicit/fallback 중복 제거 + `fallback_added` 리스트 logging + max_refs=2 (Kling `image_list[1,2]` 한도) 준수 로직 추가. 커밋 `e7f591a` (+34/-1, 1 파일) → `8c8546e..e7f591a` push, 백엔드 PC selective sync + touch + 12초 sleep 으로 worker PID 48028 → 67791 교체 확인, venv smoke 에서 함수 소스에 `fallback_added`/`groom_wedding`/`bride_wedding`/`has_groom`/`has_bride` 키워드 모두 포함 검증. 사용자(Kling) 가 직접 수혜자로 `ref_sheet_ids` 명시 안 한 씬에도 신랑+신부 시트가 자동 `image_list[1,2]` 에 첨부되어 Kling system prompt 의 character_rules (`Reference <<<image_N>>>`) 와 결합해 캐릭터 일관성 보장. Veo/Seedance/Grok 은 캐릭터 시트 로드 호출 자체가 Kling 분기에만 있어 영향 없음 (다른 모델 캐릭터 시트 통합은 별도 작업 필요). 한계: 이미 생성된 작품의 video_prompt 는 `<<<image_N>>>` 토큰 없을 수 있어 시트 첨부해도 Kling 이 무시할 가능성 — v38 에서 `compose_video_prompt` Kling 분기에 "Identity: match <<<image_1>>>..." 자동 inject 후보. 권장 확인: 사용자가 캐릭터 시트 만들어둔 작품에서 영상 재생성 → 결과 영상 시각 평가 → 일관성 약하면 v38 진행.
+
+## v38 - 2026-06-03 - Phase 3 이전 영상 last frame carry 제거 (각 씬 = 자기 Phase 2 image)
+
+### 사용자 요청 (원문)
+
+"이것보다는 우선 캐릭터 시트가 챕터마다 영상생성할때 제대로 반영될수 있도록 되어있는지 확인을 해주고(이미지 생성할때 캐릭터 시트는 반영하는 방식으로 수정했잖아?) 그리고 챕터별 영상을 생성할때 이전 씬 이미지는 제외하고 생성하게 해볼 수 있나? 단계적으로 끝 프레임을 다음씬 이미지로 설정한것도 제외하고 생성해보고 테스트가 필요할 것 같아"
+
+### 확인 결과 (캐릭터 시트 반영 흐름)
+
+v37 의 `_load_char_sheet_bytes_for_scene` 가 매 씬에서 호출되고 char_ref_bytes_list 가 Kling 까지 도달함이 확인됨:
+
+- `_run_chapter_video` (챕터 직렬) → `_run_single_scene_video` (매 씬) → Kling 분기에서 `_load_char_sheet_bytes_for_scene(scene, max_refs=2)` 호출 (line 2566-2567)
+- v37 fallback 으로 ref 없어도 default 시트 자동 로드
+- `char_refs` 가 `generate_scene_video_kling` 의 `char_ref_bytes_list` 로 전달 (line 2574)
+- Kling generator 가 image_list[1, 2] 로 base64 인코딩 첨부
+
+→ **챕터마다 반영되는 구조는 정상**. 만약 영상에 캐릭터 일관성이 약하면 다른 원인 (예: Kling video_prompt 의 `<<<image_N>>>` 토큰 누락, 또는 사용자 작품에 캐릭터 시트 자체가 없음).
+
+### Backend (`1_MV_wedding/backend_8000/app/routes/pre_mv.py:_run_chapter_video`)
+
+**제거된 로직** (이전 v24 carry 메커니즘):
+
+- 챕터 두 번째 씬 이후 `prev_video_object` (이전 완성된 영상의 object_name) 에서 `extract_scene_last_frame_png` (ffmpeg `-sseof -0.5`) 호출
+- 추출된 last frame PNG 을 `start_bytes` 로 사용
+- `_run_single_scene_video(start_frame_bytes_override=start_bytes)` 로 전달
+- `_run_single_scene_video` 의 line 2519-2523 에서 override 가 있으면 씬의 image_object_name 무시
+
+**v38 변경**:
+
+1. `start_bytes: Optional[bytes] = None` 으로 고정 (carry 미적용)
+2. `if not is_first_in_chapter and prev_video_object:` 블록 통째 제거
+3. `extract_scene_last_frame_png` 호출 제거 (ffmpeg 작업도 자연 제거)
+4. `start_src = "scene_image"` (모든 씬 동일)
+5. `prev_video_object` 변수는 유지 (다른 로깅 용도 보존 — 사실상 미사용)
+6. `is_first_in_chapter` 변수 제거 (의미 없어짐)
+7. `end_frame_bytes` (다음 씬 Phase 2 image) 는 변경 없이 유지 — v39 단계에서 사용자 테스트 후 별도 결정
+
+### 변경 통계
+
+- diff: +16 / -27 (순 -11 라인) — 코드 간소화
+
+### 동작 변화
+
+| 시나리오 (챕터 안 씬 1, 2, 3) | v37 (이전) | v38 (이후) |
+|---|---|---|
+| 씬 1 first_frame | 씬 1 Phase 2 image | 씬 1 Phase 2 image (동일) |
+| 씬 2 first_frame | ❌ 씬 1 영상의 last frame (ffmpeg 추출) | ✅ 씬 2 Phase 2 image |
+| 씬 3 first_frame | ❌ 씬 2 영상의 last frame | ✅ 씬 3 Phase 2 image |
+| 씬 N end_frame (last 이외) | 씬 N+1 Phase 2 image | 씬 N+1 Phase 2 image (동일) |
+
+### 배포
+
+- 커밋 `6016b5d` "Phase 3: stop carrying prev video last frame as next scene start" (+16 / -27)
+- 푸시: `f624201..6016b5d` → origin/frontend
+- 백엔드 PC selective sync + `touch` + 12초 sleep
+- worker PID 67791 → **99577** ✅
+- 모듈 smoke (venv):
+  - `start_bytes: Optional[bytes] = None` 형식 확인 ✅
+  - `last_obj = await extract_scene_last_frame_png` 제거 확인 ✅
+  - `v38` 주석 포함 확인 ✅
+
+### 영향
+
+- **각 씬 영상이 정확히 그 씬 Phase 2 이미지로 시작** (사용자 의도와 정확히 매치)
+- 영상 첫 프레임 ↔ 사용자가 만든 씬 이미지 일치 보장
+- ffmpeg last-frame 추출 작업 제거 → 약간의 속도 향상 + photos 버킷에 `pre_mv/.../last_frames/` 안 쌓임
+- 챕터 안 시각 연속성은 약화 — 씬 N 영상 끝 ≠ 씬 N+1 영상 시작 (다른 Phase 2 image 면 시각 점프)
+- end_frame (다음 씬 Phase 2 image) 은 유지되므로 일부 transition 효과는 남아있음
+
+### 사용자 테스트 가이드 (v38 검증)
+
+1. 챕터에 씬이 2개 이상인 작품 찾음
+2. 챕터 단위 영상 재생성 (Step 4 챕터 헤더 버튼)
+3. 결과 영상 확인:
+   - 씬 N 영상의 첫 프레임이 그 씬의 Phase 2 이미지와 일치하는지
+   - 챕터 안 씬들이 같은 캐릭터 / 같은 장소 유지하는지 (v37 효과)
+
+### 후속 (v39 후보 — 사용자 테스트 후)
+
+v38 만으로 충분한지, end_frame 도 제거할지 사용자 평가 후 결정:
+
+- v38 만 충분: 그대로 종료
+- v38 + 시각 점프 부담 가능: v39 진행 (end_frame 도 제거 → 완전 독립 씬 영상)
+- v38 후 transition 어색: end_frame 유지가 정답이었다는 신호
+
+### 결론
+
+v38 PASS — 사용자 요청 1단계 (캐릭터 시트가 챕터마다 영상생성에 제대로 반영되는지 확인) 는 v37 의 `_load_char_sheet_bytes_for_scene` 가 `_run_chapter_video` → `_run_single_scene_video` 매 씬 호출 시 Kling 분기에서 호출되고 `char_refs` 가 `generate_scene_video_kling` 의 `char_ref_bytes_list` 로 전달되어 image_list[1, 2] 로 base64 인코딩 첨부되는 흐름으로 정상 구조 확인 + v37 fallback 으로 ref 없어도 default 시트 자동 로드. 사용자 요청 2단계 (챕터별 영상 생성 시 이전 씬 영상 last frame 을 다음 씬 start 로 carry 하는 v24 메커니즘 제거 — 단, end_frame 은 v38 에서 유지하고 v39 사용자 테스트 후 결정) 를 `_run_chapter_video` 에서 `start_bytes: Optional[bytes] = None` 고정 + `if not is_first_in_chapter and prev_video_object:` 블록 통째 제거 + `extract_scene_last_frame_png` (ffmpeg `-sseof -0.5`) 호출 제거 + `start_src = "scene_image"` 모든 씬 통일 + `is_first_in_chapter` 변수 제거 + `prev_video_object` 변수만 다른 로깅 용도로 보존 + `end_frame_bytes` 는 변경 없이 유지 로 구현. 커밋 `6016b5d` (+16/-27, 순 -11 라인 코드 간소화) → `f624201..6016b5d` push, 백엔드 PC selective sync + touch + 12초 sleep 으로 worker PID 67791 → 99577 교체 확인, venv smoke 에서 `start_bytes: Optional[bytes] = None` 형식 + `last_obj = await extract_scene_last_frame_png` 제거 + `v38` 주석 포함 모두 검증. 효과: 각 씬 영상이 정확히 자기 Phase 2 이미지로 시작 (사용자 의도와 정확히 매치) + 영상 첫 프레임 ↔ 사용자가 만든 씬 이미지 일치 보장 + ffmpeg last-frame 추출 작업 제거로 약간의 속도 향상 + photos 버킷에 `pre_mv/.../last_frames/` 안 쌓임. 한계: 챕터 안 시각 연속성 약화 (씬 N 영상 끝 ≠ 씬 N+1 영상 시작 — 다른 Phase 2 image 면 시각 점프) — 단 end_frame (다음 씬 Phase 2 image) 은 유지되므로 일부 transition 효과는 남아있음. 사용자 테스트 가이드: 챕터에 씬 2개 이상인 작품에서 챕터 단위 영상 재생성 (Step 4 챕터 헤더 버튼) → 씬 N 영상 첫 프레임이 그 씬 Phase 2 이미지와 일치 + 챕터 안 씬들이 같은 캐릭터/장소 유지하는지 확인. v39 후보: v38 만 충분하면 종료 / 시각 점프 부담이면 end_frame 도 제거 (완전 독립 씬 영상) / transition 어색이면 end_frame 유지가 정답.
