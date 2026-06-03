@@ -3653,10 +3653,30 @@ async def _run_phase4(pre_mv_job_id: str) -> None:
             pre_mv_job_id, audio_variant, audio_object_name,
         )
 
+        # v41 — instrumental intro 끝나는 시점(= lyric_timestamps 첫 entry start)을
+        # 영상 시작 offset 으로 사용. 음악은 0초부터, 영상은 N초부터.
+        intro_pad_sec = 0.0
+        if mv_doc_local:
+            ts_variants_local = mv_doc_local.get("lyric_timestamps_variants") or {}
+            selected_ts_local = ts_variants_local.get(str(audio_variant)) or []
+            if not selected_ts_local:
+                selected_ts_local = mv_doc_local.get("lyric_timestamps") or []
+            if isinstance(selected_ts_local, list) and selected_ts_local:
+                first_entry = selected_ts_local[0] or {}
+                first_start = float(first_entry.get("start") or 0.0)
+                if first_start > 0:
+                    intro_pad_sec = first_start
+                    logger.info(
+                        "[PreMVRoute] phase=phase4 intro_pad pre_mv_job_id=%s "
+                        "audio_variant=%d intro_pad_sec=%.3f",
+                        pre_mv_job_id, audio_variant, intro_pad_sec,
+                    )
+
         result = await compose_pre_mv_result(
             pre_mv_job_id=pre_mv_job_id,
             scenes=scenes,
             audio_object_name=audio_object_name,
+            video_start_offset_sec=intro_pad_sec,
         )
 
         now = datetime.now(timezone.utc)

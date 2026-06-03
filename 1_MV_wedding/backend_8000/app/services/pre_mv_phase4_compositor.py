@@ -166,11 +166,26 @@ async def _merge_audio(
     video_path: str,
     audio_path: str,
     out_path: str,
+    video_start_offset_sec: float = 0.0,
 ) -> None:
-    """영상 + 오디오 머지. video copy + audio aac. `-shortest` 로 종료시점 일치."""
+    """영상 + 오디오 머지. video copy + audio aac. `-shortest` 로 종료시점 일치.
+
+    v41 — video_start_offset_sec > 0 면 영상 stream 을 N초 지연 (instrumental intro 동안 검정).
+    음악은 0초부터 재생, 영상은 N초부터 시작 → 첫 가사 시점과 영상 시작 sync.
+    """
+    pad = max(0.0, float(video_start_offset_sec or 0.0))
+    pad_args: list[str] = []
+    if pad > 0:
+        # -itsoffset 은 다음 입력 (-i) 에만 적용. 영상 stream 의 시작 시간을 +pad 초로 이동.
+        pad_args = ["-itsoffset", "{:.3f}".format(pad)]
+        logger.info(
+            "[PreMVPhase4] merge video delayed pre_mv_job_id=%s offset_sec=%.3f",
+            pre_mv_job_id, pad,
+        )
     rc, stderr_text = await _run_ffmpeg(
         args=[
             "-y",
+            *pad_args,
             "-i", video_path,
             "-i", audio_path,
             "-c:v", "copy",
@@ -190,6 +205,7 @@ async def _merge_audio(
         rc2, stderr_text2 = await _run_ffmpeg(
             args=[
                 "-y",
+                *pad_args,
                 "-i", video_path,
                 "-i", audio_path,
                 "-c:v", "libx264", "-preset", "fast",
@@ -214,6 +230,7 @@ async def compose_pre_mv_result(
     pre_mv_job_id: str,
     scenes: list[dict],
     audio_object_name: Optional[str],
+    video_start_offset_sec: float = 0.0,
 ) -> dict:
     """씬 영상들을 concat → (오디오 있으면) 머지 → MinIO 업로드.
 
@@ -324,6 +341,7 @@ async def compose_pre_mv_result(
                     video_path=concat_out,
                     audio_path=audio_local,
                     out_path=merged_path,
+                    video_start_offset_sec=video_start_offset_sec,
                 )
                 final_local_path = merged_path
                 had_audio = True
