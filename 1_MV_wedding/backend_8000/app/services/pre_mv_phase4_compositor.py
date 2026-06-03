@@ -320,9 +320,10 @@ async def _merge_audio(
             # v42.1 — 뮤비 스타일 (옵션 B): 반투명 검정 박스 배경.
             # BorderStyle=3 = box background, Outline=8 은 박스 두께 (글자 padding 효과).
             # BackColour 의 alpha = &H80 (50% 투명).
+            # v42.2 — MarginV=30 (값이 작을수록 화면 하단에 더 가까움).
             filter_args = [
                 "-vf",
-                "subtitles='{}':force_style='Alignment=2,MarginV=80,"
+                "subtitles='{}':force_style='Alignment=2,MarginV=30,"
                 "Fontsize=18,PrimaryColour=&HFFFFFF&,"
                 "OutlineColour=&H80000000&,BackColour=&H80000000&,"
                 "Outline=8,Shadow=0,BorderStyle=3'".format(escaped_srt),
