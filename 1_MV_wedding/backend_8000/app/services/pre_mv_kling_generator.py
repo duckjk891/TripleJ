@@ -338,6 +338,7 @@ async def generate_scene_video_kling(
     scene: dict,
     image_bytes: Optional[bytes],
     char_ref_bytes_list: Optional[list[bytes]] = None,
+    char_ref_modes: Optional[list[str]] = None,
     end_frame_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Phase 3 단일 씬 영상 (Kling) — mp4 bytes 반환.
@@ -347,6 +348,11 @@ async def generate_scene_video_kling(
       scene:        pre_mv_jobs.scenes[N-1].
       image_bytes:  씬 PNG bytes (first_frame).
       char_ref_bytes_list: 캐릭터 시트 1~2장. None 또는 빈 리스트 가능.
+      char_ref_modes:
+        v39 — char_ref_bytes_list 와 같은 순서로 각 시트의 매칭 모드 지정.
+        · "explicit" — 사용자가 명시한 ref. full-match (얼굴+옷 모두 따름).
+        · "face_only" — fallback default 시트. face-only (옷은 scene 자유 변주).
+        prompt 의 identity guidance 안내문 자동 생성에 쓰인다.
       end_frame_bytes:
         v24 — chapter FFLF 연쇄. 다음 씬의 Phase 2 PNG. body 의 top-level
         `image_tail` (base64 data URI) 로 전달. dry-run 실패 시 fallback 으로
@@ -366,10 +372,34 @@ async def generate_scene_video_kling(
         duration=float(kling_duration),
         has_last_frame=has_last_frame,
     )
+
+    # v39 — identity guidance 자동 inject (image_N 별 face-only/full-match 명시).
+    refs = list(char_ref_bytes_list or [])
+    modes = list(char_ref_modes or [])
+    identity_lines: list[str] = []
+    for i in range(min(len(refs), 2)):
+        if not refs[i]:
+            continue
+        n = i + 1  # <<<image_N>>> 은 1-based (image_list[0]=first_frame, [1]=ref1, [2]=ref2)
+        mode = modes[i] if i < len(modes) else "explicit"
+        if mode == "face_only":
+            identity_lines.append(
+                "<<<image_{n}>>> is a FACE-ONLY identity reference: match the face, "
+                "head shape, hair, and body proportions exactly, but the OUTFIT, "
+                "accessories, and styling must follow the scene description rather "
+                "than the reference's wardrobe.".format(n=n)
+            )
+        else:
+            identity_lines.append(
+                "<<<image_{n}>>> is a FULL-MATCH reference: match face, hair, body, "
+                "AND wardrobe/accessories exactly as in the reference image.".format(n=n)
+            )
+    if identity_lines:
+        identity_block = "Character identity guidance: " + " ".join(identity_lines)
+        raw_prompt = raw_prompt + " " + identity_block
+
     # v25 — Layer 2 안전망: 출력 모더레이션 트리거 표현 사전 치환.
     final_prompt = sanitize_video_prompt(raw_prompt)
-
-    refs = list(char_ref_bytes_list or [])
     logger.info(
         "[PreMVKling] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
         "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f kling_dur=%d "

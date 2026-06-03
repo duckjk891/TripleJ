@@ -2287,34 +2287,32 @@ async def _load_scene_image_bytes(object_name: Optional[str]) -> Optional[bytes]
 
 async def _load_char_sheet_bytes_for_scene(
     *, owner_user_id: str, scene: dict, max_refs: int = 2,
-) -> list[bytes]:
+) -> list[tuple[bytes, bool]]:
     """씬의 ref_sheet_ids 가 가리키는 캐릭터 시트 bytes 들 (최대 max_refs 장).
 
-    Kling 호출 시 prompt 의 <<<image_N>>> 참조에 쓰인다.
+    v39 — 반환 형식 변경: list[(bytes, is_explicit)].
+      · is_explicit=True : 사용자가 ref_sheet_ids 에 명시한 시트 (full-match — 얼굴+옷 모두 따름)
+      · is_explicit=False: v37 default fallback 으로 추가된 시트 (face-only — 얼굴만 매칭, 옷은 scene 자유)
+
+    Phase 2 image-side 의 v34 [face-only]/[full-match] 차별을 영상에도 적용.
+    Kling 호출 시 prompt 안내문 + image_list 첨부 둘 다에 사용된다.
     실패한 slot 은 조용히 skip — 다른 씬 영향 X.
 
     v37 — explicit ref 가 groom/bride 한 쪽이라도 비어있으면 default 시트
     (groom_wedding/casual, bride_wedding/casual) 로 face-only fallback 보강.
-    Phase 2 의 v32 패턴을 영상 생성에도 적용. 캐릭터 일관성 보장.
     """
-    refs = list((scene or {}).get("ref_sheet_ids") or [])
-    has_groom = any((r or "").startswith("groom_") for r in refs)
-    has_bride = any((r or "").startswith("bride_") for r in refs)
+    explicit_refs = list((scene or {}).get("ref_sheet_ids") or [])
+    has_groom = any((r or "").startswith("groom_") for r in explicit_refs)
+    has_bride = any((r or "").startswith("bride_") for r in explicit_refs)
 
-    # v37 — 부족한 쪽 default 시트 후보 append (실제 존재 여부는 아래 sheets dict 에서 검증).
-    fallback_added: list[str] = []
+    # slot 별 (slot, is_explicit) 순서 유지. explicit 가 앞, fallback 이 뒤.
+    slots_with_meta: list[tuple[str, bool]] = [(s, True) for s in explicit_refs]
     if not has_groom:
-        for fb in ("groom_wedding", "groom_casual"):
-            if fb not in refs:
-                refs.append(fb)
-                fallback_added.append(fb)
+        slots_with_meta.extend([("groom_wedding", False), ("groom_casual", False)])
     if not has_bride:
-        for fb in ("bride_wedding", "bride_casual"):
-            if fb not in refs:
-                refs.append(fb)
-                fallback_added.append(fb)
+        slots_with_meta.extend([("bride_wedding", False), ("bride_casual", False)])
 
-    if not refs:
+    if not slots_with_meta:
         return []
 
     mongo = get_mongo()
@@ -2330,9 +2328,9 @@ async def _load_char_sheet_bytes_for_scene(
         return []
     sheets = ((cs_doc or {}).get("sheets") or {})
     minio_client = get_minio()
-    out: list[bytes] = []
+    out: list[tuple[bytes, bool]] = []
     seen_slots: set = set()
-    for slot in refs:
+    for slot, is_explicit in slots_with_meta:
         if slot in seen_slots:
             continue
         seen_slots.add(slot)
@@ -2349,14 +2347,12 @@ async def _load_char_sheet_bytes_for_scene(
             resp.close()
             resp.release_conn()
             if data:
-                out.append(data)
-                if slot in fallback_added:
+                out.append((data, is_explicit))
+                if not is_explicit:
                     logger.info(
-                        "[PreMVRoute] phase=phase3 sheet fallback applied "
-                        "scene_number=%s slot=%s (explicit refs lacked %s)",
-                        (scene or {}).get("scene_number"),
-                        slot,
-                        "groom" if slot.startswith("groom_") and not has_groom else "bride",
+                        "[PreMVRoute] phase=phase3 sheet face-only fallback applied "
+                        "scene_number=%s slot=%s",
+                        (scene or {}).get("scene_number"), slot,
                     )
                 if len(out) >= max_refs:
                     break
@@ -2563,15 +2559,21 @@ async def _run_single_scene_video(
                     end_frame_bytes=eff_end_frame,
                 )
             elif video_model == "kling":
-                char_refs = await _load_char_sheet_bytes_for_scene(
+                # v39 — _load_char_sheet_bytes_for_scene 반환은 [(bytes, is_explicit), ...]
+                char_refs_meta = await _load_char_sheet_bytes_for_scene(
                     owner_user_id=owner_user_id, scene=scene, max_refs=2,
                 )
+                char_ref_bytes_list = [b for b, _ in char_refs_meta]
+                char_ref_modes = [
+                    "explicit" if exp else "face_only" for _, exp in char_refs_meta
+                ]
                 video_bytes = await generate_scene_video_kling(
                     pre_mv_job_id=pre_mv_job_id,
                     scene_number=scene_number,
                     scene=scene,
                     image_bytes=image_bytes,
-                    char_ref_bytes_list=char_refs,
+                    char_ref_bytes_list=char_ref_bytes_list,
+                    char_ref_modes=char_ref_modes,
                     end_frame_bytes=eff_end_frame,
                 )
             elif video_model == "seedance":
