@@ -5880,3 +5880,105 @@ ffmpeg -y -itsoffset {N} -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest 
 - Phase 4 재실행 endpoint 가 이미 있어 사용자가 force=true 로 재합치기 가능
 
 ### 작업 끝(append).
+
+## v41.1-v42 - 2026-06-03 - Phase 4 자막 + 영상 시작 = [Verse 1] 시점 (+ itsoffset copy fix)
+
+### v41.1 — 사용자 보고
+"다시 합치기 하니까 이런 에러 GET .../result?token=... net::ERR_INCOMPLETE_CHUNKED_ENCODING 200 (OK)"
+
+### v41.1 — 진단
+v41 의 `-itsoffset` + `-c:v copy` 조합이 mp4 의 moov atom 에 edit list 만 박고 stream timestamps 는 0 부터 → 일부 플레이어/streaming 환경에서 chunked encoding 도중 끊김. result.mp4 자체는 만들어졌지만 (385MB) clean 재생 안 됨.
+
+### v41.1 — fix
+`_merge_audio` 에서 `pad > 0` 일 때 copy 모드 강제 skip → 바로 reencode (libx264) 분기.
+- 커밋 `5300eb8`, push origin/frontend
+- venv smoke: v41.1 skip copy + libx264 reencode 키워드 확인
+
+---
+
+### v42 — 사용자 요청 (원문)
+"문제가 두가지가 있는데 자막이 안달리는 거랑, 영상 시작이 intro 다음 [] 지문 부터 시작되어야해 intro 가사 부터가 아니라."
+
+### v42 — 사용자 의도 명확화
+- **자막**: Phase 4 가 lyric_timestamps_variants 기반 burn-in 자막 만들기 (현재 미구현)
+- **영상 시작**: v41 의 lyric_timestamps[0].start (= 첫 가사 시점) 가 아니라 **`[Intro]` section label 다음 첫 다른 section label** (= `[Verse 1]` 등) 시작 시점
+
+### v42 — 조사 결과
+- `mv_jobs.lyric_timestamps_variants[N]` = [{text, start, end}, ...] (라인 단위)
+- `mv_jobs.suno_aligned_words_variants[N]` = [{word, startS, endS}, ...] (단어 단위)
+- **section label ([Intro], [Verse 1] 등) 은 aligned_words 의 word 필드에 entry 로 포함** — 정규식으로 추출 가능
+- 동시에 lyrics.body 에도 section label 들이 markdown 으로 박혀있음 (v29 prompt 강화)
+
+### v42 — 구현
+
+#### Backend 변경
+
+**파일 1**: `1_MV_wedding/backend_8000/app/services/pre_mv_phase4_compositor.py`
+
+신규 헬퍼:
+1. `_to_srt_time(sec)` — 초 → SRT timecode (`HH:MM:SS,mmm`)
+2. `_SECTION_LABEL_RE` 정규식 — `[Intro]`, `[Verse 1 - 메인 보컬]` 등 매칭
+3. `generate_srt_from_segments(segments, video_start_offset_sec)`:
+   - segments 의 text 가 빈 / section label entry → skip
+   - 각 cue 의 start/end 에서 offset 차감 (영상 timeline 으로 변환)
+   - adjusted end<=0 또는 빈 텍스트 skip
+   - SRT 텍스트 반환
+4. `calculate_video_start_offset(aligned_words, segments_fallback)`:
+   - aligned_words 스캔하여 단어 entry 가 `[...]` 패턴 매치하면 label start 수집
+   - 첫 `intro` 만난 후 첫 비-intro 라벨 startS 반환 ([Verse 1] 등)
+   - fallback: segments[1].start, 그것도 없으면 0.0
+
+`_merge_audio` 시그니처 확장:
+- 신규 인자 `srt_path: Optional[str] = None`
+- `pad > 0` 또는 `srt_path` 있으면 copy 모드 강제 skip
+- reencode 분기에서 srt_path 있으면 `-vf subtitles='{escaped}':force_style='Alignment=2,MarginV=60,Fontsize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,Outline=2,Shadow=0,BorderStyle=1'` 추가
+- subtitles filter escape (`\` `:` `'`)
+- `[PreMVPhase4] subtitles filter applied` 로깅
+
+`compose_pre_mv_result` 시그니처 확장:
+- 신규 인자 `srt_text: Optional[str] = None`
+- 내부에서 srt_text → 임시파일 `subs.srt` 생성 (utf-8) → _merge_audio 전달
+
+**파일 2**: `1_MV_wedding/backend_8000/app/routes/pre_mv.py` (`_run_phase4`)
+
+신규 import: `calculate_video_start_offset`, `generate_srt_from_segments`
+
+흐름:
+- `aligned_local = mv_doc.suno_aligned_words_variants[audio_variant]` 추출
+- `intro_pad_sec = calculate_video_start_offset(aligned_words=aligned_local, segments_fallback=selected_ts_local)`
+- `srt_text = generate_srt_from_segments(selected_ts_local, video_start_offset_sec=intro_pad_sec)`
+- `compose_pre_mv_result(video_start_offset_sec=intro_pad_sec, srt_text=srt_text)`
+- 로깅: `cue_count=...`
+
+### v42 — 단위 테스트 (배포 후 venv 직접)
+```
+_to_srt_time(14.5) → '00:00:14,500' ✅
+_to_srt_time(0)    → '00:00:00,000' ✅
+generate_srt_from_segments(pad=10):
+  - [Intro] entry skip ✅
+  - "first lyric line" start=5, end=8 → end-pad=-2 → skip ✅
+  - [Verse 1] entry skip ✅
+  - "verse line one" start=12, end=15 → 2~5 cue ✅
+calculate_video_start_offset:
+  - [Intro] startS=0, [Verse 1] startS=10 → return 10.0 ✅
+```
+
+### v42 — 배포
+- 커밋 `90bbadf` "Phase 4 SRT subtitles + start video after [Intro] section ends" (+168/-17)
+- 푸시: `5300eb8..90bbadf` → origin/frontend
+- 백엔드 PC selective sync + touch
+- **이슈**: uvicorn `--reload` 가 reload 중 stuck — 이전 result.mp4 streaming 요청들이 `urllib3.exceptions.ProtocolError: Connection broken: IncompleteRead` 로 끊겼지만 close 안 되어 "Waiting for connections to close" 에서 멈춤
+- 사용자 동의 후 SIGKILL → nohup 으로 재시작
+- 새 uvicorn: PID 14094 (main) + 14096 (worker), health=200 ✅
+
+### v42 — 영향
+- 다음 Phase 4 재실행부터:
+  - 영상 시작 시점 = `[Intro]` 다음 `[Verse 1]` (또는 첫 비-intro section)
+  - 자막 burn-in (흰 글자 + 검정 외곽선, 하단 정렬, MarginV=60)
+- 이미 만들어진 result.mp4 는 영향 X (재합치기 필요)
+
+### v42 — 한계 / 후속
+- 자막 폰트: 시스템 default 사용 — 한국어 폰트 (NanumGothic 등) 없으면 깨질 수 있음. 사용자가 결과 보고 폰트 이슈 보고하면 폰트 설치 안내 또는 fontfile 명시
+- 시작 시점 fallback: aligned_words 가 빈 경우 (Suno 가 alignedWords 없이 보낸 경우) segments[1].start 로 fallback. 둘 다 없으면 0.0
+- subtitles filter escape: 현재 path 의 `\`, `:`, `'` escape 만 처리. 다른 특수문자 (예: `,`, `[`, `]`) 가 들어가면 ffmpeg parse 깨질 수 있음 (현재 path 는 mkdtemp 라 안전 가정)
+
