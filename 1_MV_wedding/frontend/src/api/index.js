@@ -372,10 +372,16 @@ export const preMVSceneImageUrl = (id, sceneNumber) => {
 export const runPreMVPhase3 = (id, { video_model = 'veo', force = false } = {}) =>
   API.post(`/pre-mv/jobs/${id}/phase3`, { video_model, force });
 
-// 단일 씬 영상 재생성. 잡에 박혀있는 video_model 을 그대로 사용한다.
-// 응답: { pre_mv_job_id, scene_number, video_status:"generating", video_model }
+// 단일 씬 영상 재생성. ⚠️ v40 이후 deprecated — 챕터 일관성 (end_frame transition) 깸.
+// 신규 호출은 regeneratePreMVChapterVideos 로.
 export const regeneratePreMVSceneVideo = (id, sceneNumber) =>
   API.post(`/pre-mv/jobs/${id}/scenes/${sceneNumber}/regenerate-video`);
+
+// v40 — 챕터(연속 같은 story_slot + memory_index) 단위 씬 영상 재생성.
+// sceneNumber 는 그 챕터의 어떤 씬이든 OK — 백엔드가 챕터 모든 씬을 찾아 직렬 재생성.
+// 응답: { pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers:[...], status, video_model }
+export const regeneratePreMVChapterVideos = (id, sceneNumber) =>
+  API.post(`/pre-mv/jobs/${id}/chapters/regenerate-videos`, { scene_number: sceneNumber });
 
 // <video src> 용 URL — Bearer 대신 ?token=. StreamingResponse video/mp4.
 export const preMVSceneVideoUrl = (id, sceneNumber) => {

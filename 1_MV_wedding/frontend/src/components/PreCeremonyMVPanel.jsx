@@ -718,6 +718,51 @@ function PreCeremonyMVPanelInner({ mvJobId, ownerUserId, mvJob, isAdmin, isOwner
     }
   }, [preMVJobId]);
 
+  // v40 — 챕터(연속 같은 story_slot + memory_index) 단위 씬 영상 재생성.
+  // 챕터 안 모든 씬을 직렬로 다시 만들어 end_frame transition 일관성 유지.
+  const regenerateChapterVideos = useCallback(async (sceneNumber) => {
+    if (!preMVJobId) return { ok: false, error: '잡 식별자 없음' };
+    if (import.meta.env.DEV) {
+      console.info(`${STEP_VIDEOS_PREFIX} regenerateChapterVideos`, {
+        pre_mv_job_id: preMVJobId,
+        scene_number: sceneNumber,
+      });
+    }
+    try {
+      const { data } = await api.regeneratePreMVChapterVideos(preMVJobId, sceneNumber);
+      if (cancelledRef.current) return { ok: true, data };
+      const queued = new Set(data?.queued_scene_numbers || []);
+      setPreMVJob((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        next.status = 'phase3_videos';
+        next.scenes = Array.isArray(prev.scenes)
+          ? prev.scenes.map((s) =>
+              queued.has(s.scene_number)
+                ? { ...s, video_status: 'generating', video_error: null, video_object_name: null }
+                : s,
+            )
+          : prev.scenes;
+        return next;
+      });
+      return { ok: true, data };
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data;
+      console.error(`${STEP_VIDEOS_PREFIX} regenerateChapterVideos failed`, {
+        pre_mv_job_id: preMVJobId,
+        scene_number: sceneNumber,
+        status,
+        detail,
+      });
+      let msg = detail?.error || detail?.detail || '챕터 영상 재생성에 실패했어요.';
+      if (status === 503) {
+        msg = detail?.error || '영상 모델 API 키가 준비되지 않았어요.';
+      }
+      return { ok: false, error: msg };
+    }
+  }, [preMVJobId]);
+
   // ──────────────────────────────────────────────────────────────────────
   // Phase 4 시작 (최종 합치기)
   // ──────────────────────────────────────────────────────────────────────
@@ -1048,6 +1093,7 @@ function PreCeremonyMVPanelInner({ mvJobId, ownerUserId, mvJob, isAdmin, isOwner
             onRegenerateSceneImage={regenerateSceneImage}
             onRegenerateChapterImages={regenerateChapterImages}
             onRegenerateSceneVideo={regenerateSceneVideo}
+            onRegenerateChapterVideos={regenerateChapterVideos}
             preMVJobId={preMVJobId}
           />
 
@@ -1068,6 +1114,7 @@ function PreCeremonyMVPanelInner({ mvJobId, ownerUserId, mvJob, isAdmin, isOwner
             onStart={startPhase3}
             preMVJobId={preMVJobId}
             onRegenerateSceneVideo={regenerateSceneVideo}
+            onRegenerateChapterVideos={regenerateChapterVideos}
             mvContext={mvContext}
           />
 
@@ -1901,19 +1948,10 @@ function SceneCard({
               <span>대기 중</span>
             </div>
           )}
-          {videoReady && onRegenerateSceneVideo && (
-            <div className="pre-mv-scene-card__video-actions">
-              <button
-                type="button"
-                className="btn-ghost pre-mv-step__btn"
-                onClick={() => onRegenerateVideo({ confirmFirst: true })}
-                disabled={videoRegenBusy}
-                title="이 씬 영상을 다시 만듭니다 (비용·시간 발생)"
-              >
-                {videoRegenBusy ? '재생성 중...' : '영상 재생성'}
-              </button>
-            </div>
-          )}
+          {/* v40 — per-scene "영상 재생성" 버튼 제거.
+              챕터 단위 직렬 실행으로 end_frame transition 일관성 유지하는 아키텍처이므로
+              단일 씬 영상 재생성은 챕터 transition 깨짐. 챕터 헤더의
+              "↻ 이 챕터 영상 전체 재생성" 버튼으로 대체. */}
         </div>
       )}
 
@@ -2273,6 +2311,7 @@ function ChapterGroup({
   selectedSet,
   onToggleSelect,
   onRegenerateSceneVideo,
+  onRegenerateChapterVideos,
   computeFilename,
   chapterIndex,
   mvContext,
@@ -2288,6 +2327,29 @@ function ChapterGroup({
   const completed = chapter.scenes.filter((s) => s.video_status === 'completed').length;
   const generating = chapter.scenes.filter((s) => s.video_status === 'generating').length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+  // v40 — 챕터 영상 재생성
+  const [chapterRegenBusy, setChapterRegenBusy] = useState(false);
+  const onClickChapterRegen = async () => {
+    if (!onRegenerateChapterVideos || !chapter?.scenes?.length || chapterRegenBusy) return;
+    const firstScene = chapter.scenes[0];
+    const n = chapter.scenes.length;
+    const ok = window.confirm(
+      `[${slotLabel}] 챕터의 ${n}개 씬 영상을 모두 다시 만듭니다.\n` +
+      `약 ${n * 2}~${n * 5}분 소요. 기존 영상은 사라져요.\n계속할까요?`
+    );
+    if (!ok) return;
+    setChapterRegenBusy(true);
+    try {
+      const result = await onRegenerateChapterVideos(firstScene.scene_number);
+      if (!result?.ok) {
+        window.alert(result?.error || '챕터 영상 재생성에 실패했어요.');
+      }
+    } finally {
+      setChapterRegenBusy(false);
+    }
+  };
+
   return (
     <div className="pre-mv-chapter-group">
       <div className="pre-mv-chapter-group__header">
@@ -2298,6 +2360,18 @@ function ChapterGroup({
           {completed}/{total} 완료
           {generating > 0 ? ` · 진행 중 ${generating}` : ''}
         </span>
+        {onRegenerateChapterVideos && (
+          <button
+            type="button"
+            className="btn-ghost pre-mv-step__btn"
+            onClick={onClickChapterRegen}
+            disabled={chapterRegenBusy || generating > 0}
+            title="이 챕터의 모든 씬 영상을 직렬로 다시 만들어요 (챕터 transition 일관성 보장)"
+            style={{ marginLeft: 'auto' }}
+          >
+            {chapterRegenBusy ? '재생성 중...' : '↻ 이 챕터 영상 전체 재생성'}
+          </button>
+        )}
       </div>
       <div
         className="pre-mv-chapter-group__progress"
@@ -2676,6 +2750,7 @@ function PreMVVideosStep({
   onStart,
   preMVJobId,
   onRegenerateSceneVideo,
+  onRegenerateChapterVideos,
   mvContext,
 }) {
   // 잡 단위 video_model lock.
@@ -3118,6 +3193,7 @@ function PreMVVideosStep({
               selectedSet={selectedSet}
               onToggleSelect={onToggleSelect}
               onRegenerateSceneVideo={onRegenerateSceneVideo}
+              onRegenerateChapterVideos={onRegenerateChapterVideos}
               computeFilename={computeFilenameForScene}
               mvContext={mvContext}
               allScenes={sceneArr}

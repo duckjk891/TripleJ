@@ -299,6 +299,16 @@ class ChapterRegenerateImagesBody(BaseModel):
     scene_number: int = Field(ge=1, le=200)
 
 
+class ChapterRegenerateVideosBody(BaseModel):
+    """v40 — 챕터 단위 씬 영상 재생성 body. ChapterRegenerateImagesBody 와 동일 구조.
+
+    scene_number = 그 챕터의 어떤 씬 번호든 OK. 백엔드가 같은 챕터의 모든 씬을
+    찾아 직렬 영상 재생성.
+    """
+
+    scene_number: int = Field(ge=1, le=200)
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # POST /jobs — pre_mv_job 생성 (멱등)
 # ──────────────────────────────────────────────────────────────────────────
@@ -2714,6 +2724,80 @@ async def _run_single_scene_video(
             await _do()
 
 
+async def _run_chapter_video_serial(
+    *,
+    pre_mv_job_id: str,
+    video_model: str,
+    owner_user_id: str,
+    chapter_seq: int,
+    chapter_indices: list[int],
+    scenes: list[dict],
+    target_set: set[int],
+    mongo,
+    oid,
+) -> None:
+    """v40 — 챕터 안 직렬 영상 실행. _run_phase3 와 regenerate_chapter_videos 가 공유.
+
+    v38 기준 동작:
+      · start_frame_bytes_override 는 항상 None — 각 씬이 자기 Phase 2 이미지로 start.
+      · end_frame_bytes 는 챕터 마지막이 아니면 다음 씬 Phase 2 이미지 (Kling image_tail).
+      · target_set 에 없는 씬은 건너뛰되 prev_video_object 로 carry 만 갱신.
+    """
+    in_chapter_total = len(chapter_indices)
+    prev_video_object: Optional[str] = None
+    for pos, scene_idx in enumerate(chapter_indices):
+        is_last_in_chapter = (pos == in_chapter_total - 1)
+
+        # v38 — start_frame 은 항상 자기 Phase 2 image.
+        start_bytes: Optional[bytes] = None
+        start_src = "scene_image"
+
+        # end_frame — 챕터 마지막이 아니면 다음 씬 Phase 2 PNG.
+        end_bytes: Optional[bytes] = None
+        end_src: Optional[str] = None
+        if not is_last_in_chapter:
+            next_idx = chapter_indices[pos + 1]
+            next_scene = scenes[next_idx] or {}
+            next_obj = next_scene.get("image_object_name")
+            if next_obj:
+                end_bytes = await _load_photos_bytes(next_obj)
+                end_src = "next_scene_image" if end_bytes else "free"
+            else:
+                end_src = "free"
+        else:
+            end_src = "free"
+
+        if scene_idx not in target_set:
+            existing_video = (scenes[scene_idx] or {}).get("video_object_name")
+            if existing_video:
+                prev_video_object = existing_video
+            continue
+
+        await _run_single_scene_video(
+            pre_mv_job_id=pre_mv_job_id,
+            scene_index=scene_idx,
+            video_model=video_model,
+            owner_user_id=owner_user_id,
+            semaphore=None,
+            start_frame_bytes_override=start_bytes,
+            end_frame_bytes=end_bytes,
+            chapter_seq=chapter_seq,
+            scene_in_chapter=(pos + 1, in_chapter_total),
+            start_frame_source=start_src,
+            end_frame_source=end_src,
+        )
+        refreshed = await mongo.pre_mv_jobs.find_one(
+            {"_id": oid}, {"scenes": 1},
+        )
+        if refreshed:
+            refreshed_scenes = refreshed.get("scenes") or []
+            if scene_idx < len(refreshed_scenes):
+                prev_video_object = (
+                    (refreshed_scenes[scene_idx] or {}).get("video_object_name")
+                    or prev_video_object
+                )
+
+
 async def _run_phase3(
     *,
     pre_mv_job_id: str,
@@ -2829,84 +2913,19 @@ async def _run_phase3(
                          for c in all_chapters),
             )
 
-            async def _run_chapter_video(
-                chapter_seq: int, chapter_indices: list[int],
-            ) -> None:
-                """챕터 안 직렬: 각 씬은 자기 Phase 2 이미지로 start.
-
-                v38 — 이전 씬 영상의 last frame carry 제거.
-                  · 이유: 씬 N 의 사용자가 만든 Phase 2 이미지 구도가 무시되어
-                    "이미지대로 영상이 안 만들어진다"는 일관성 문제가 있었음.
-                  · start_bytes 는 항상 None → _run_single_scene_video 가
-                    scene.image_object_name 으로 fetch (각 씬의 Phase 2 이미지).
-                  · end_frame_bytes 는 여전히 다음 씬 Phase 2 이미지로 유지
-                    (v39 단계에서 제거 검토 — 사용자 테스트 후).
-                  · prev_video_object carry 자체는 유지 (다른 logging 용 변수에만 쓰임).
-                  · ffmpeg extract_scene_last_frame_png 호출 제거.
-                """
-                in_chapter_total = len(chapter_indices)
-                # v38 — prev_video_object 는 더 이상 start carry 에 안 쓰임.
-                # 다만 video_start_frame_source 로깅 정합성 위해 형식만 유지.
-                prev_video_object: Optional[str] = None
-                for pos, scene_idx in enumerate(chapter_indices):
-                    is_last_in_chapter = (pos == in_chapter_total - 1)
-                    # is_first_in_chapter 는 v38 이후 의미 없음 (모든 씬이 동일하게 Phase 2 이미지 사용)
-
-                    # 1) start_frame — v38: 항상 None → 씬 자기 Phase 2 이미지 사용
-                    start_bytes: Optional[bytes] = None
-                    start_src = "scene_image"
-
-                    # 2) end_frame 결정 — 챕터 마지막이 아니면 next_scene 의 Phase 2 PNG.
-                    end_bytes: Optional[bytes] = None
-                    end_src: Optional[str] = None
-                    if not is_last_in_chapter:
-                        next_idx = chapter_indices[pos + 1]
-                        next_scene = scenes[next_idx] or {}
-                        next_obj = next_scene.get("image_object_name")
-                        if next_obj:
-                            end_bytes = await _load_photos_bytes(next_obj)
-                            end_src = "next_scene_image" if end_bytes else "free"
-                            if not end_bytes:
-                                end_src = "free"
-                        else:
-                            end_src = "free"
-                    else:
-                        end_src = "free"
-
-                    # 이 회차의 target 가 아닐 경우 — carry 만 갱신하고 다음 씬으로.
-                    if scene_idx not in target_set:
-                        existing_video = (scenes[scene_idx] or {}).get("video_object_name")
-                        if existing_video:
-                            prev_video_object = existing_video
-                        continue
-
-                    await _run_single_scene_video(
-                        pre_mv_job_id=pre_mv_job_id,
-                        scene_index=scene_idx,
-                        video_model=video_model,
-                        owner_user_id=owner_user_id,
-                        semaphore=None,
-                        start_frame_bytes_override=start_bytes,
-                        end_frame_bytes=end_bytes,
-                        chapter_seq=chapter_seq,
-                        scene_in_chapter=(pos + 1, in_chapter_total),
-                        start_frame_source=start_src,
-                        end_frame_source=end_src,
-                    )
-                    # 완료된 씬 video_object_name 을 다음 회차로 carry.
-                    refreshed = await mongo.pre_mv_jobs.find_one(
-                        {"_id": oid}, {"scenes": 1},
-                    )
-                    if refreshed:
-                        refreshed_scenes = refreshed.get("scenes") or []
-                        if scene_idx < len(refreshed_scenes):
-                            prev_video_object = (
-                                (refreshed_scenes[scene_idx] or {}).get("video_object_name")
-                                or prev_video_object
-                            )
-
+            # v40 — _run_chapter_video_serial 로 추출 (v35 패턴 영상 버전). 새 endpoint 공유.
             chapter_tasks = [
-                asyncio.create_task(_run_chapter_video(c_seq + 1, c_indices))
+                asyncio.create_task(_run_chapter_video_serial(
+                    pre_mv_job_id=pre_mv_job_id,
+                    video_model=video_model,
+                    owner_user_id=owner_user_id,
+                    chapter_seq=c_seq + 1,
+                    chapter_indices=c_indices,
+                    scenes=scenes,
+                    target_set=target_set,
+                    mongo=mongo,
+                    oid=oid,
+                ))
                 for c_seq, c_indices in enumerate(all_chapters)
             ]
             await asyncio.gather(*chapter_tasks, return_exceptions=True)
@@ -3087,6 +3106,12 @@ async def start_phase3(
 
 # ──────────────────────────────────────────────────────────────────────────
 # POST /jobs/{id}/scenes/{n}/regenerate-video
+#
+# ⚠️ v40 이후 deprecated — 챕터 일관성을 깨는 단일 씬 재생성.
+# start_frame_bytes_override=None, end_frame_bytes=None 로 호출되어
+# 챕터 안 end_frame transition 효과가 무시됨.
+# 신규 호출은 POST /jobs/{id}/chapters/regenerate-videos 로 마이그레이션.
+# 백워드 호환을 위해 endpoint 자체는 유지.
 # ──────────────────────────────────────────────────────────────────────────
 
 @router.post("/jobs/{pre_mv_job_id}/scenes/{scene_number}/regenerate-video")
@@ -3199,6 +3224,161 @@ async def regenerate_scene_video(
         "pre_mv_job_id": pre_mv_job_id,
         "scene_number": scene_number,
         "video_status": "generating",
+        "video_model": video_model,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /jobs/{id}/chapters/regenerate-videos  (v40)
+#
+# 챕터 (연속 같은 story_slot + memory_index) 단위 씬 영상 재생성.
+# body.scene_number 가 속한 챕터의 모든 씬을 직렬로 다시 생성.
+# v38 이후 start=자기 Phase 2 이미지, end=다음 씬 Phase 2 이미지로 transition.
+# 이미지 측 v35 챕터 재생성과 동일 패턴.
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.post("/jobs/{pre_mv_job_id}/chapters/regenerate-videos")
+async def regenerate_chapter_videos(
+    pre_mv_job_id: str,
+    body: ChapterRegenerateVideosBody,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["id"]
+    is_admin = current_user.get("role") == "admin"
+    logger.info(
+        "[PreMVRoute] phase=phase3 action=regenerate_chapter_videos entry "
+        "user_id=%s is_admin=%s pre_mv_job_id=%s scene_number=%d",
+        user_id, is_admin, pre_mv_job_id, body.scene_number,
+    )
+
+    resolved = await _resolve_pre_mv_job(pre_mv_job_id, current_user)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    pre_doc, _mv_doc, owner_user_id, _ = resolved
+
+    scenes = pre_doc.get("scenes") or []
+    if body.scene_number < 1 or body.scene_number > len(scenes):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "해당 씬을 찾을 수 없습니다."},
+        )
+
+    video_model = pre_doc.get("video_model")
+    if not video_model:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "이 잡의 video_model 이 아직 결정되지 않았어요. 먼저 Phase 3 를 시작해주세요."},
+        )
+
+    cur_status = pre_doc.get("status") or ""
+    allowed = {"phase3_videos", "phase3_failed", "phase3_partial", "phase3_ready"}
+    if cur_status not in allowed:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "현재 상태({})에서는 챕터 영상을 재생성할 수 없어요.".format(cur_status)},
+        )
+
+    gate = await _gate_video_model_key(video_model)
+    if gate is not None:
+        return gate
+
+    # 챕터 찾기 (v36 — memory slot 은 memory_index 까지 구분).
+    target_scene_idx = body.scene_number - 1
+    all_chapters = _group_scenes_into_chapters(scenes)
+    target_chapter: Optional[list[int]] = None
+    target_chapter_seq = 0
+    for c_seq, c_indices in enumerate(all_chapters):
+        if target_scene_idx in c_indices:
+            target_chapter = c_indices
+            target_chapter_seq = c_seq + 1
+            break
+    if not target_chapter:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "챕터 그룹핑에서 해당 씬을 찾지 못했습니다."},
+        )
+
+    # 챕터 안 씬들이 image_status=completed 인지 확인 (영상 생성 전제).
+    not_ready = [
+        i + 1 for i in target_chapter
+        if (scenes[i] or {}).get("image_status") != "completed"
+    ]
+    if not_ready:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "이 챕터에 이미지가 완성되지 않은 씬이 있어요: {}. "
+                         "먼저 씬 이미지를 만들어 주세요.".format(not_ready)
+            },
+        )
+
+    target_slot = (scenes[target_chapter[0]] or {}).get("story_slot") or ""
+    logger.info(
+        "[PreMVRoute] phase=phase3 chapter resolved pre_mv_job_id=%s "
+        "chapter_seq=%d slot=%s scene_count=%d scene_indices=%s",
+        pre_mv_job_id, target_chapter_seq, target_slot,
+        len(target_chapter), target_chapter,
+    )
+
+    mongo = get_mongo()
+    oid = _to_oid(pre_mv_job_id)
+    now = datetime.now(timezone.utc)
+
+    # 챕터 모든 씬을 pending 으로 마크 + video_object_name 리셋.
+    pending_set: dict[str, Any] = {
+        "status": "phase3_videos",
+        "updated_at": now,
+    }
+    for i in target_chapter:
+        pending_set["scenes.{}.video_status".format(i)] = "pending"
+        pending_set["scenes.{}.video_error".format(i)] = None
+        pending_set["scenes.{}.video_object_name".format(i)] = None
+    try:
+        await mongo.pre_mv_jobs.update_one({"_id": oid}, {"$set": pending_set})
+    except Exception:
+        logger.exception(
+            "[PreMVRoute] phase=phase3 chapter regenerate pending-mark failed "
+            "pre_mv_job_id=%s chapter_seq=%d",
+            pre_mv_job_id, target_chapter_seq,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "챕터 영상 재생성 시작에 실패했습니다."},
+        )
+
+    target_set = set(target_chapter)
+    queued_scene_numbers = [i + 1 for i in target_chapter]
+
+    async def _run_then_refresh() -> None:
+        try:
+            await _run_chapter_video_serial(
+                pre_mv_job_id=pre_mv_job_id,
+                video_model=video_model,
+                owner_user_id=owner_user_id,
+                chapter_seq=target_chapter_seq,
+                chapter_indices=target_chapter,
+                scenes=scenes,
+                target_set=target_set,
+                mongo=mongo,
+                oid=oid,
+            )
+        finally:
+            await _refresh_phase3_status(pre_mv_job_id)
+
+    asyncio.create_task(_run_then_refresh())
+
+    logger.info(
+        "[PreMVRoute] phase=phase3 chapter regenerate queued user_id=%s "
+        "pre_mv_job_id=%s chapter_seq=%d slot=%s queued_scene_numbers=%s",
+        user_id, pre_mv_job_id, target_chapter_seq, target_slot,
+        queued_scene_numbers,
+    )
+    return {
+        "pre_mv_job_id": pre_mv_job_id,
+        "chapter_seq": target_chapter_seq,
+        "story_slot": target_slot,
+        "queued_scene_numbers": queued_scene_numbers,
+        "status": "phase3_videos",
         "video_model": video_model,
     }
 
