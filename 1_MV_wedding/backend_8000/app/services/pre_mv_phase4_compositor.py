@@ -182,20 +182,27 @@ async def _merge_audio(
             "[PreMVPhase4] merge video delayed pre_mv_job_id=%s offset_sec=%.3f",
             pre_mv_job_id, pad,
         )
-    rc, stderr_text = await _run_ffmpeg(
-        args=[
-            "-y",
-            *pad_args,
-            "-i", video_path,
-            "-i", audio_path,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            out_path,
-        ],
-        label="merge_audio",
-        pre_mv_job_id=pre_mv_job_id,
-    )
+
+    # v41.1 — itsoffset + copy 조합은 mp4 moov atom timestamps 가 어긋나
+    # 클라이언트에서 ERR_INCOMPLETE_CHUNKED_ENCODING / 재생 중단 발생.
+    # pad>0 일 때는 copy 모드 건너뛰고 바로 reencode 분기로 fallthrough.
+    if pad > 0:
+        rc = 1  # copy 모드 강제 skip → reencode 분기 진입
+        stderr_text = "v41.1: skipped copy mode because pad>0"
+    else:
+        rc, stderr_text = await _run_ffmpeg(
+            args=[
+                "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                out_path,
+            ],
+            label="merge_audio",
+            pre_mv_job_id=pre_mv_job_id,
+        )
     if rc != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 1024:
         # video copy 가 잘 안 되는 경우 (codec 이상) — 영상도 재인코딩.
         logger.info(
