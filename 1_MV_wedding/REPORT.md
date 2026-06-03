@@ -3576,3 +3576,105 @@ v38 만으로 충분한지, end_frame 도 제거할지 사용자 평가 후 결�
 ### 결론
 
 v38 PASS — 사용자 요청 1단계 (캐릭터 시트가 챕터마다 영상생성에 제대로 반영되는지 확인) 는 v37 의 `_load_char_sheet_bytes_for_scene` 가 `_run_chapter_video` → `_run_single_scene_video` 매 씬 호출 시 Kling 분기에서 호출되고 `char_refs` 가 `generate_scene_video_kling` 의 `char_ref_bytes_list` 로 전달되어 image_list[1, 2] 로 base64 인코딩 첨부되는 흐름으로 정상 구조 확인 + v37 fallback 으로 ref 없어도 default 시트 자동 로드. 사용자 요청 2단계 (챕터별 영상 생성 시 이전 씬 영상 last frame 을 다음 씬 start 로 carry 하는 v24 메커니즘 제거 — 단, end_frame 은 v38 에서 유지하고 v39 사용자 테스트 후 결정) 를 `_run_chapter_video` 에서 `start_bytes: Optional[bytes] = None` 고정 + `if not is_first_in_chapter and prev_video_object:` 블록 통째 제거 + `extract_scene_last_frame_png` (ffmpeg `-sseof -0.5`) 호출 제거 + `start_src = "scene_image"` 모든 씬 통일 + `is_first_in_chapter` 변수 제거 + `prev_video_object` 변수만 다른 로깅 용도로 보존 + `end_frame_bytes` 는 변경 없이 유지 로 구현. 커밋 `6016b5d` (+16/-27, 순 -11 라인 코드 간소화) → `f624201..6016b5d` push, 백엔드 PC selective sync + touch + 12초 sleep 으로 worker PID 67791 → 99577 교체 확인, venv smoke 에서 `start_bytes: Optional[bytes] = None` 형식 + `last_obj = await extract_scene_last_frame_png` 제거 + `v38` 주석 포함 모두 검증. 효과: 각 씬 영상이 정확히 자기 Phase 2 이미지로 시작 (사용자 의도와 정확히 매치) + 영상 첫 프레임 ↔ 사용자가 만든 씬 이미지 일치 보장 + ffmpeg last-frame 추출 작업 제거로 약간의 속도 향상 + photos 버킷에 `pre_mv/.../last_frames/` 안 쌓임. 한계: 챕터 안 시각 연속성 약화 (씬 N 영상 끝 ≠ 씬 N+1 영상 시작 — 다른 Phase 2 image 면 시각 점프) — 단 end_frame (다음 씬 Phase 2 image) 은 유지되므로 일부 transition 효과는 남아있음. 사용자 테스트 가이드: 챕터에 씬 2개 이상인 작품에서 챕터 단위 영상 재생성 (Step 4 챕터 헤더 버튼) → 씬 N 영상 첫 프레임이 그 씬 Phase 2 이미지와 일치 + 챕터 안 씬들이 같은 캐릭터/장소 유지하는지 확인. v39 후보: v38 만 충분하면 종료 / 시각 점프 부담이면 end_frame 도 제거 (완전 독립 씬 영상) / transition 어색이면 end_frame 유지가 정답.
+
+## v39 - 2026-06-03 - Phase 3 face-only/full-match 차별 (image-side v34 parity)
+
+### 사용자 요청 (원문)
+
+"v39 (Option A) 로 진행해야되. 안그러면 모든 씬에 캐릭터 시트가 태깅되어있는게 아니기 때문에 캐릭터 일관성이 유지가 안되겠지? 그리고 일관성 유지를 위해서 챕터별로 씬을 생성하도록 되어있는거잖아 맞지"
+
+→ Phase 2 image-side 의 v34 `[face-only]` / `[full-match]` 차별을 Phase 3 영상 생성에도 도입.
+
+### 사용자 가설 답변
+
+- "모든 씬에 캐릭터 시트가 태깅되어 있는 게 아니라서 일관성 안 됨" — 약간 다름. v37 fallback 으로 모든 씬에 시트 bytes 가 들어감 (시트가 DB 에 존재 시). 단 v37 만으로는 explicit vs fallback 구분 없이 동일 모드 → fallback 시트의 옷까지 따라갈 위험. v39 가 이 차별 추가.
+- "챕터별로 씬 생성하는 게 일관성 위해서" — 맞음. 챕터 단위 직렬 실행은 v38 후에도 유지 (chain carry 만 제거). 같은 챕터 안 같은 ref/시트 공유 효과는 살아있음.
+
+### Backend Part 1 (`1_MV_wedding/backend_8000/app/routes/pre_mv.py`)
+
+`_load_char_sheet_bytes_for_scene` 반환 형식 변경:
+
+- 이전: `list[bytes]`
+- 신규: `list[tuple[bytes, bool]]` — `(bytes, is_explicit)`
+- 내부 로직:
+  - `explicit_refs = scene.ref_sheet_ids` 의 slot 들은 `(slot, True)` 로 마킹
+  - v37 fallback 추가 slot 들은 `(slot, False)` 로 마킹
+  - explicit 가 먼저, fallback 이 뒤 (순서 유지)
+  - 같은 slot 중복 시 explicit 우선 (`seen_slots` 로 dedup)
+  - fallback 발동 시 `[PreMVRoute] phase=phase3 sheet face-only fallback applied` 로깅
+
+Kling 분기 (line 2565+):
+
+- `char_refs_meta = await _load_char_sheet_bytes_for_scene(...)`
+- `char_ref_bytes_list = [b for b, _ in char_refs_meta]`
+- `char_ref_modes = ["explicit" if exp else "face_only" for _, exp in char_refs_meta]`
+- `generate_scene_video_kling(..., char_ref_modes=char_ref_modes, ...)`
+
+### Backend Part 2 (`1_MV_wedding/backend_8000/app/services/pre_mv_kling_generator.py`)
+
+`generate_scene_video_kling` 시그니처 확장:
+
+- 신규 인자: `char_ref_modes: Optional[list[str]] = None`
+- 각 ref 의 mode ∈ {"explicit", "face_only"}
+- `char_ref_bytes_list` 와 같은 순서/길이
+
+함수 본문:
+
+- `identity_lines: list[str]` 자동 생성 (각 ref 의 image_N 별)
+- "explicit" → `<<<image_N>>> is a FULL-MATCH reference: match face, hair, body, AND wardrobe/accessories exactly as in the reference image.`
+- "face_only" → `<<<image_N>>> is a FACE-ONLY identity reference: match the face, head shape, hair, and body proportions exactly, but the OUTFIT, accessories, and styling must follow the scene description rather than the reference's wardrobe.`
+- identity_lines 가 있으면 raw_prompt 끝에 `Character identity guidance: ...` 한 블록 자동 append
+- sanitize_video_prompt → final_prompt 로 전달
+
+### 변경 통계
+
+- diff: +62 / -30 (순 +32 라인) — 두 파일 합
+
+### 동작 매트릭스 (v32 ~ v39 종합)
+
+| 시나리오 | 이미지 (Phase 2) | 영상 (Phase 3) |
+|---|---|---|
+| Explicit @ ref | v34 [full-match] | **v39 [full-match]** (face+옷 모두 match) |
+| @ 없을 때 default fallback | v32 (bytes load) | v37 (bytes load) |
+| Fallback 일 때 face-only 차별 | v34 `[face-only]` 마커 | **v39 `<<<image_N>>>` FACE-ONLY guidance** |
+| 각 씬 자기 image 로 시작 | (단일 단계) | v38 (prev video carry 제거) |
+| 챕터 단위 직렬 실행 | Phase 2 chain (이미지 carry 유지) | 유지 (end_frame 만 carry) |
+
+### 배포
+
+- 커밋 `a0788e0` "Phase 3 face-only vs full-match identity guidance (v34 parity for video)" (+62/-30)
+- 푸시: `33e1cd1..a0788e0` → origin/frontend
+- 백엔드 PC selective sync + `touch` + 12초 sleep
+- worker PID 99577 → **936** ✅
+- venv smoke (실제 모듈 import):
+  - load 반환 형식 `list[tuple[bytes, bool]]` ✅
+  - explicit/fallback 구분 로직 (`is_explicit`, `slots_with_meta`) ✅
+  - Kling 시그니처에 `char_ref_modes` 인자 ✅
+  - Kling 본문에 `identity_block`, `FACE-ONLY`, `FULL-MATCH` 모두 포함 ✅
+
+### 영향
+
+- 사용자가 `groom_wedding` 시트만 만들어두고 @ 안 했을 때:
+  - 영상의 캐릭터 얼굴 = 시트 그대로 (일관성)
+  - 영상의 옷 = scene_prompt 따라 매 씬 변주 (계절/장소 적응)
+- 사용자가 `@groom_wedding` 명시한 씬:
+  - 영상의 얼굴 + 옷 모두 시트 그대로 (의도 존중)
+
+### 한계 / 모니터링
+
+- Kling V3 Omni 가 prompt 내 `<<<image_N>>>` 토큰 + face-only 안내를 얼마나 잘 따르는지 실측 필요
+- 만약 face-only 인데도 시트 옷이 그대로 나오면 → identity guidance 표현 강화 (별도 v40 후보)
+- v38 의 prev video carry 제거 효과와 함께 평가 — 사용자 테스트 후 종합 판단
+
+### 사용자 테스트 가이드 (v39 검증)
+
+1. 캐릭터 시트 1~2개 만들어둔 사용자가 (시트 없으면 fallback 자체 미발동)
+2. 챕터 영상 재생성 (Step 4 챕터 헤더 버튼)
+3. 결과 평가:
+   - 챕터 안 캐릭터 얼굴이 시트와 일관성 ✓
+   - 시트 옷이 scene 분위기에 맞게 변주되는지 ✓
+   - 각 씬 영상이 그 씬 Phase 2 이미지로 시작 (v38 효과) ✓
+
+### 결론
+
+v39 PASS — 사용자 가설 ("모든 씬에 캐릭터 시트가 태깅되어있는게 아니라서 일관성 안됨") 는 약간 다르며 (v37 fallback 으로 모든 씬에 시트 bytes 는 들어감 — 시트가 DB 에 존재 시), 단 v37 만으로는 explicit vs fallback 구분 없이 동일 모드라 fallback 시트의 옷까지 따라갈 위험이 있어 v39 에서 차별 추가 + "챕터별로 씬 생성하는 게 일관성 위해서" 가설은 맞음 (챕터 단위 직렬 실행은 v38 후에도 유지, chain carry 만 제거됨 — 같은 챕터 안 같은 ref/시트 공유 효과 살아있음) 으로 답변. Phase 2 image-side 의 v34 `[face-only]` / `[full-match]` 차별을 Phase 3 영상 생성에도 도입하여 `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 의 `_load_char_sheet_bytes_for_scene` 반환 형식을 `list[bytes]` → `list[tuple[bytes, bool]]` (`(bytes, is_explicit)`) 로 변경 (explicit_refs = scene.ref_sheet_ids 슬롯은 `(slot, True)`, v37 fallback 추가 슬롯은 `(slot, False)`, explicit 가 먼저 fallback 이 뒤, 같은 slot 중복 시 explicit 우선 dedup, fallback 발동 시 `[PreMVRoute] phase=phase3 sheet face-only fallback applied` 로깅) + Kling 분기 (line 2565+) 에서 `char_refs_meta` 받아 `char_ref_bytes_list = [b for b, _ in char_refs_meta]` 와 `char_ref_modes = ["explicit" if exp else "face_only" for _, exp in char_refs_meta]` 두 리스트로 분리하여 `generate_scene_video_kling(..., char_ref_modes=char_ref_modes, ...)` 호출 + `1_MV_wedding/backend_8000/app/services/pre_mv_kling_generator.py` 의 `generate_scene_video_kling` 시그니처에 `char_ref_modes: Optional[list[str]] = None` 인자 추가 (각 ref 의 mode ∈ {"explicit", "face_only"}, char_ref_bytes_list 와 같은 순서/길이) 후 함수 본문에서 `identity_lines: list[str]` 자동 생성하여 explicit 은 `<<<image_N>>> is a FULL-MATCH reference: match face, hair, body, AND wardrobe/accessories exactly as in the reference image.` / face_only 는 `<<<image_N>>> is a FACE-ONLY identity reference: match the face, head shape, hair, and body proportions exactly, but the OUTFIT, accessories, and styling must follow the scene description rather than the reference's wardrobe.` 로 작성하고 identity_lines 가 있으면 raw_prompt 끝에 `Character identity guidance: ...` 한 블록 자동 append → sanitize_video_prompt → final_prompt 로 전달. 커밋 `a0788e0` "Phase 3 face-only vs full-match identity guidance (v34 parity for video)" (+62/-30, 순 +32 라인 두 파일 합) → `33e1cd1..a0788e0` push, 백엔드 PC selective sync + touch + 12초 sleep 으로 worker PID 99577 → 936 교체 확인, venv smoke 에서 실제 모듈 import 로 load 반환 형식 `list[tuple[bytes, bool]]` + explicit/fallback 구분 로직 (`is_explicit`, `slots_with_meta`) + Kling 시그니처에 `char_ref_modes` 인자 + Kling 본문에 `identity_block`, `FACE-ONLY`, `FULL-MATCH` 모두 포함 검증. 효과: 사용자가 `groom_wedding` 시트만 만들어두고 @ 안 했을 때 영상의 캐릭터 얼굴 = 시트 그대로 (일관성) + 영상의 옷 = scene_prompt 따라 매 씬 변주 (계절/장소 적응), 사용자가 `@groom_wedding` 명시한 씬은 영상의 얼굴 + 옷 모두 시트 그대로 (의도 존중). 동작 매트릭스 (v32~v39 종합): Explicit @ ref 는 이미지 v34 [full-match] / 영상 v39 [full-match] (face+옷 모두 match), @ 없을 때 default fallback 은 이미지 v32 (bytes load) / 영상 v37 (bytes load), Fallback 일 때 face-only 차별은 이미지 v34 `[face-only]` 마커 / 영상 v39 `<<<image_N>>>` FACE-ONLY guidance, 각 씬 자기 image 로 시작은 영상 v38 (prev video carry 제거), 챕터 단위 직렬 실행은 Phase 2 chain (이미지 carry 유지) / 영상은 유지 (end_frame 만 carry). 한계: Kling V3 Omni 가 prompt 내 `<<<image_N>>>` 토큰 + face-only 안내를 얼마나 잘 따르는지 실측 필요 + 만약 face-only 인데도 시트 옷이 그대로 나오면 identity guidance 표현 강화 (별도 v40 후보) + v38 의 prev video carry 제거 효과와 함께 평가 (사용자 테스트 후 종합 판단). 사용자 테스트 가이드: 캐릭터 시트 1~2개 만들어둔 사용자가 (시트 없으면 fallback 자체 미발동) 챕터 영상 재생성 (Step 4 챕터 헤더 버튼) → 챕터 안 캐릭터 얼굴이 시트와 일관성 + 시트 옷이 scene 분위기에 맞게 변주되는지 + 각 씬 영상이 그 씬 Phase 2 이미지로 시작 (v38 효과) 모두 확인.
