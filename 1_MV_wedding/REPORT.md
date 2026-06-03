@@ -3742,3 +3742,92 @@ v39 PASS — 사용자 가설 ("모든 씬에 캐릭터 시트가 태깅되어�
 
 ### 결론
 v40 PASS — 사용자 요청 ("영상 재생성 버튼이 있으면 좋겠는데. 전체 재생성도 필요하겠지만 챕터벌 재생성도 있어야하지 않을까?") 에 대해 작품 전체 재생성은 기존 `POST /jobs/{id}/phase3?force=true` 로 이미 가능, 단일 씬 재생성도 기존 `regenerate-video` 존재 확인, 빠진 챕터 단위 영상 재생성을 v35 의 이미지 챕터 재생성 패턴을 그대로 영상에도 이식하여 추가. Backend `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 에 `ChapterRegenerateVideosBody` Pydantic 모델 신규 + `_run_chapter_video_serial` 을 모듈 레벨로 추출 (기존 `_run_phase3` 의 nested `_run_chapter_video` 로직, 인자: pre_mv_job_id, video_model, owner_user_id, chapter_seq, chapter_indices, scenes, target_set, mongo, oid, v38 동작 유지 = start_bytes=None / end_bytes=다음 씬 Phase 2 image, prev_video_object carry 도 유지) + `_run_phase3` inline `_run_chapter_video` 를 `_run_chapter_video_serial` 호출로 교체 + 신규 endpoint `POST /api/pre-mv/jobs/{id}/chapters/regenerate-videos` (가드: 400 ObjectId/scene_number 범위, 404, 403 owner, 409 video_model 없음 / status 진행 불가, 422 챕터 안 image_status != completed 인 씬 존재, 401 auth, 동작: `_group_scenes_into_chapters` v36 으로 챕터 찾음 → 챕터 모든 씬 `video_status=pending`, `video_error=None`, `video_object_name=None` 마크 → 잡 status = phase3_videos → `asyncio.create_task(_run_chapter_video_serial(...))` 백그라운드 → finally `_refresh_phase3_status`, 응답: `{pre_mv_job_id, chapter_seq, story_slot, queued_scene_numbers, status, video_model}`) + per-scene endpoint `POST /jobs/{id}/scenes/{n}/regenerate-video` 헤더 주석에 deprecated 명시 (백워드 호환 유지) 작업, Frontend `1_MV_wedding/frontend/api/index.js` 에 `regeneratePreMVChapterVideos(jobId, sceneNumber)` 신규 함수 + 기존 `regeneratePreMVSceneVideo` 에 deprecated 주석 + `1_MV_wedding/frontend/components/PreCeremonyMVPanel.jsx` 에 `regenerateChapterVideos` 핸들러 (옵티미스틱 업데이트: 큐된 씬을 `generating` + `video_object_name=null` 로 마크) + prop chain (PreCeremonyMVPanel → PreMVVideosStep → ChapterGroup 까지 `onRegenerateChapterVideos` 전달) + `ChapterGroup` 보강 (`chapterRegenBusy` state, `onClickChapterRegen` handler, Confirm 다이얼로그 "[슬롯명] 챕터의 N개 씬 영상을 모두 다시 만듭니다. 약 N*2~N*5분 소요. 기존 영상은 사라져요.", 헤더에 `↻ 이 챕터 영상 전체 재생성` 버튼 — 생성 중인 씬이 있으면 disabled) + `SceneCard` 의 per-scene `영상 재생성` 버튼 제거 (v40 마이그레이션 주석) 적용. diff +354/-92 3파일, 커밋 `2a3e5e7` "Chapter-level scene video regenerate (Phase 3 analog of v35)" → `6439ab7..2a3e5e7` push, 백엔드 PC selective sync + `touch` + 12초 sleep 으로 worker PID 936 → 1615 교체 확인, smoke `POST .../chapters/regenerate-videos` → 401 (route alive + auth gate 정상) + `/openapi.json` 에 `/api/pre-mv/jobs/{id}/chapters/regenerate-images` (v35) 와 `/api/pre-mv/jobs/{id}/chapters/regenerate-videos` (v40) 두 경로 모두 등록 확인. 효과: 챕터 안 모든 씬의 영상이 직렬로 재생성 → end_frame transition 일관성 유지 + per-scene 영상 재생성 버튼 제거 → 사용자 혼동 방지 (잘못된 재생성 시 transition 깨지는 함정 제거) + v36 의 memory_index 분리도 자동 반영 (다른 추억은 별도 챕터). 종합 매트릭스 (v35 + v40): Phase 2 이미지는 v35 `POST .../chapters/regenerate-images` 엔드포인트 + 챕터 헤더 `↻ 이 챕터 전체 재생성` 버튼 + per-scene 재생성 제거됨, Phase 3 영상은 v40 `POST .../chapters/regenerate-videos` 엔드포인트 + 챕터 헤더 `↻ 이 챕터 영상 전체 재생성` 버튼 + per-scene 재생성 제거됨. 특이사항: per-scene endpoint 백워드 호환 유지 (다른 클라이언트에서 호출 가능성, deprecated 표시되어 있어 신규 사용 금지) + 챕터 안 image_status != completed 인 씬이 있으면 422 + 어느 씬인지 알림 (UX 안전망) + 작품 전체 영상 재생성은 기존 `POST /jobs/{id}/phase3` (force=true) 그대로 활용. 후속 (필요 시): per-scene endpoint 완전 제거 (백워드 호환 불필요 결정 시) + chapter video 진행률 표시 (현재는 폴링 status 만) + "여기서부터 끝까지" 부분 재생성 옵션.
+
+## v41 - 2026-06-03 - Phase 4 영상 시작을 첫 가사 시점으로 sync (intro 간주 검정)
+
+### 사용자 요청 (원문)
+"우선 자동 출력되는 영상의 느낌을 보려고 하는거니까 영상이 처음 시작되는건 intro 다음에 나오는 첫 가사부터로 수정해줄래?"
+
+### 사용자 가설 답변 (질문 부분)
+"영상 길이가 10초씩이잖아. 그럼 10초씩 이어붙이다가 노래가 끝나면 영상이 끝나는 형태인거야?? 아니면 영상을 줄여서 전체 영상을 다 이어붙이는거야?"
+
+→ 현재 `_merge_audio` 가 `ffmpeg -shortest` 사용:
+- 영상이 더 길다 → 음악 끝나는 지점에서 영상 cut, 뒷부분 영상 손실
+- 영상이 더 짧다 → 영상 끝나는 지점에서 음악 cut, 뒷부분 음악 손실
+- **영상을 줄여서 fit 시키는 게 아니라 단순 cut**
+
+### 구현 (v41)
+
+#### Backend 변경
+
+**파일 1**: `1_MV_wedding/backend_8000/app/services/pre_mv_phase4_compositor.py`
+
+`_merge_audio` 시그니처 + ffmpeg args 확장:
+- 신규 인자: `video_start_offset_sec: float = 0.0`
+- `pad > 0` 일 때만 `-itsoffset {N:.3f}` args 추가
+- copy 모드 + reencode fallback 양쪽 동일 적용
+- pad > 0 시 `[PreMVPhase4] merge video delayed pre_mv_job_id=... offset_sec=...` 로깅
+- pad = 0 일 때 기존 동작과 100% 동일 (no-op)
+
+`compose_pre_mv_result` 시그니처 + 호출:
+- 신규 인자: `video_start_offset_sec: float = 0.0`
+- 내부 `_merge_audio` 호출 시 그대로 전달
+
+**파일 2**: `1_MV_wedding/backend_8000/app/routes/pre_mv.py` (`_run_phase4`)
+
+intro_pad_sec 추출:
+- `mv_doc_local.get("lyric_timestamps_variants") or {}` → `ts_variants_local`
+- `ts_variants_local.get(str(audio_variant)) or []` → variant 별 timestamps
+- 비어있으면 fallback: `mv_doc_local.get("lyric_timestamps") or []`
+- 리스트 비어있지 않으면 `selected_ts_local[0].get("start")` 추출
+- `first_start > 0` 일 때만 `intro_pad_sec = first_start` 적용
+- `[PreMVRoute] phase=phase4 intro_pad pre_mv_job_id=... audio_variant=... intro_pad_sec=...` 로깅
+
+`compose_pre_mv_result(video_start_offset_sec=intro_pad_sec)` 호출.
+
+### ffmpeg 동작
+**before (v40 까지)**:
+```bash
+ffmpeg -y -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest merged.mp4
+```
+
+**after (v41, pad > 0 일 때)**:
+```bash
+ffmpeg -y -itsoffset {N} -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest merged.mp4
+```
+- 영상 stream 만 N초 지연 (음악 stream 은 0초부터)
+- 결과: 0~N초 = 영상 없음 (검정), 음악 instrumental intro 재생
+- N초부터 영상 시작 = 첫 가사 시점 sync
+- `-shortest` 는 (video + N초) 와 audio 중 짧은 쪽에 맞춰 종료
+
+### 변경 통계
+- diff: +39 / -1, 2 파일
+
+### 배포
+- 커밋 `b51b790` "Delay video stream so it starts at first lyric (instrumental intro)"
+- 푸시: `ccd9316..b51b790` → origin/frontend
+- 백엔드 PC selective sync + `touch` + 12초 sleep
+- worker reload (PID 변경)
+- venv smoke 통과:
+  - compose_pre_mv_result 시그니처에 `video_start_offset_sec` 포함
+  - _merge_audio 시그니처에 `video_start_offset_sec` 포함
+  - _merge_audio 본문에 `-itsoffset` 적용 확인
+
+### 영향
+- 다음 Phase 4 (concat) 부터 자동 적용
+- 음악 instrumental intro 동안 검정 화면 → 첫 가사 시점에 영상 시작
+- 이미 만들어진 result.mp4 는 영향 없음 (Phase 4 재실행 시 적용)
+
+### Edge cases
+- `lyric_timestamps` 비어있음 → intro_pad_sec = 0 → 기존 동작 (no-op)
+- `lyric_timestamps[0].start = 0` (간주 없음) → intro_pad_sec = 0 → no-op
+- audio_object_name 없음 → _merge_audio 호출 안 됨 → 무관
+
+### 한계 / 후속
+- `-shortest` 정책 유지 — 음악 끝나면 영상 cut, 영상 끝나면 음악 cut
+- 사용자가 영상 길이 = 음악 길이 정확히 맞추려면 별도 작업 필요 (씬 길이 자동 조정, 또는 사용자 편집)
+- 가사 섹션별 (Verse 1 / Chorus 등) 영상 sync 는 미적용 — 별도 작업
+- Phase 4 재실행 endpoint 가 이미 있어 사용자가 force=true 로 재합치기 가능
+
+### 결론
+v41 PASS — 사용자 요청 ("우선 자동 출력되는 영상의 느낌을 보려고 하는거니까 영상이 처음 시작되는건 intro 다음에 나오는 첫 가사부터로 수정해줄래?") 에 대해 Phase 4 ffmpeg 합치기 단계에서 영상 stream 만 첫 가사 시점만큼 지연시켜 instrumental intro 동안 검정 화면 표시 + 첫 가사 등장 시점부터 영상 시작 sync 적용. 사용자 가설 질문 ("영상이 10초씩 이어붙이다가 노래가 끝나면 영상이 끝나는 형태인거야?? 아니면 영상을 줄여서 전체 영상을 다 이어붙이는거야?") 에 대해 현재 `_merge_audio` 가 `ffmpeg -shortest` 정책이므로 단순 cut (영상이 더 길면 음악 끝 지점에서 영상 cut / 영상이 더 짧으면 영상 끝 지점에서 음악 cut) — 영상을 줄여서 fit 시키는 게 아니라는 사실 확인. Backend `1_MV_wedding/backend_8000/app/services/pre_mv_phase4_compositor.py` 의 `_merge_audio` 에 신규 인자 `video_start_offset_sec: float = 0.0` 추가 + `pad > 0` 일 때만 `-itsoffset {N:.3f}` args 를 ffmpeg 호출 앞에 prepend (copy 모드 + reencode fallback 양쪽 동일 적용) + pad > 0 시 `[PreMVPhase4] merge video delayed pre_mv_job_id=... offset_sec=...` 로깅 + pad = 0 일 때 기존 동작과 100% 동일 (no-op) 보장 + `compose_pre_mv_result` 시그니처에도 `video_start_offset_sec: float = 0.0` 추가 → 내부 `_merge_audio` 호출 시 그대로 전달, Backend `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 의 `_run_phase4` 에서 `mv_doc_local.get("lyric_timestamps_variants") or {}` → `ts_variants_local` → `ts_variants_local.get(str(audio_variant)) or []` → variant 별 timestamps 추출 (비어있으면 fallback: `mv_doc_local.get("lyric_timestamps") or []`) → 리스트 비어있지 않으면 `selected_ts_local[0].get("start")` 추출 → `first_start > 0` 일 때만 `intro_pad_sec = first_start` 적용 → `[PreMVRoute] phase=phase4 intro_pad pre_mv_job_id=... audio_variant=... intro_pad_sec=...` 로깅 → `compose_pre_mv_result(video_start_offset_sec=intro_pad_sec)` 호출 추가 작업. diff +39/-1 2파일, 커밋 `b51b790` "Delay video stream so it starts at first lyric (instrumental intro)" → `ccd9316..b51b790` → origin/frontend push, 백엔드 PC selective sync + `touch` + 12초 sleep 으로 worker PID 교체 확인, venv smoke 통과 (compose_pre_mv_result 시그니처에 `video_start_offset_sec` 포함 + _merge_audio 시그니처에 `video_start_offset_sec` 포함 + _merge_audio 본문에 `-itsoffset` 적용 확인). ffmpeg 동작: before (v40 까지) `ffmpeg -y -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest merged.mp4`, after (v41, pad > 0 일 때) `ffmpeg -y -itsoffset {N} -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest merged.mp4` — 영상 stream 만 N초 지연 (음악 stream 은 0초부터) → 결과: 0~N초 = 영상 없음 (검정), 음악 instrumental intro 재생 / N초부터 영상 시작 = 첫 가사 시점 sync / `-shortest` 는 (video + N초) 와 audio 중 짧은 쪽에 맞춰 종료. 영향: 다음 Phase 4 (concat) 부터 자동 적용 + 음악 instrumental intro 동안 검정 화면 → 첫 가사 시점에 영상 시작 + 이미 만들어진 result.mp4 는 영향 없음 (Phase 4 재실행 시 적용). Edge cases: `lyric_timestamps` 비어있음 → intro_pad_sec = 0 → 기존 동작 (no-op) + `lyric_timestamps[0].start = 0` (간주 없음) → intro_pad_sec = 0 → no-op + audio_object_name 없음 → _merge_audio 호출 안 됨 → 무관. 한계 / 후속: `-shortest` 정책 유지 (음악 끝나면 영상 cut, 영상 끝나면 음악 cut) + 사용자가 영상 길이 = 음악 길이 정확히 맞추려면 별도 작업 필요 (씬 길이 자동 조정, 또는 사용자 편집) + 가사 섹션별 (Verse 1 / Chorus 등) 영상 sync 는 미적용 (별도 작업) + Phase 4 재실행 endpoint 가 이미 있어 사용자가 force=true 로 재합치기 가능.

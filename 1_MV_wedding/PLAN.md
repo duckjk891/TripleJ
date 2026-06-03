@@ -5792,3 +5792,91 @@ v38 만으로 충분한지, end_frame 도 제거할지 사용자 평가 후 결�
 - "여기서부터 끝까지" 부분 재생성 옵션
 
 ### 작업 끝(append).
+
+## v41 - 2026-06-03 - Phase 4 영상 시작을 첫 가사 시점으로 sync (intro 간주 검정)
+
+### 사용자 요청 (원문)
+"우선 자동 출력되는 영상의 느낌을 보려고 하는거니까 영상이 처음 시작되는건 intro 다음에 나오는 첫 가사부터로 수정해줄래?"
+
+### 사용자 가설 답변 (질문 부분)
+"영상 길이가 10초씩이잖아. 그럼 10초씩 이어붙이다가 노래가 끝나면 영상이 끝나는 형태인거야?? 아니면 영상을 줄여서 전체 영상을 다 이어붙이는거야?"
+
+→ 현재 `_merge_audio` 가 `ffmpeg -shortest` 사용:
+- 영상이 더 길다 → 음악 끝나는 지점에서 영상 cut, 뒷부분 영상 손실
+- 영상이 더 짧다 → 영상 끝나는 지점에서 음악 cut, 뒷부분 음악 손실
+- **영상을 줄여서 fit 시키는 게 아니라 단순 cut**
+
+### 구현 (v41)
+
+#### Backend 변경
+
+**파일 1**: `1_MV_wedding/backend_8000/app/services/pre_mv_phase4_compositor.py`
+
+`_merge_audio` 시그니처 + ffmpeg args 확장:
+- 신규 인자: `video_start_offset_sec: float = 0.0`
+- `pad > 0` 일 때만 `-itsoffset {N:.3f}` args 추가
+- copy 모드 + reencode fallback 양쪽 동일 적용
+- pad > 0 시 `[PreMVPhase4] merge video delayed pre_mv_job_id=... offset_sec=...` 로깅
+- pad = 0 일 때 기존 동작과 100% 동일 (no-op)
+
+`compose_pre_mv_result` 시그니처 + 호출:
+- 신규 인자: `video_start_offset_sec: float = 0.0`
+- 내부 `_merge_audio` 호출 시 그대로 전달
+
+**파일 2**: `1_MV_wedding/backend_8000/app/routes/pre_mv.py` (`_run_phase4`)
+
+intro_pad_sec 추출:
+- `mv_doc_local.get("lyric_timestamps_variants") or {}` → `ts_variants_local`
+- `ts_variants_local.get(str(audio_variant)) or []` → variant 별 timestamps
+- 비어있으면 fallback: `mv_doc_local.get("lyric_timestamps") or []`
+- 리스트 비어있지 않으면 `selected_ts_local[0].get("start")` 추출
+- `first_start > 0` 일 때만 `intro_pad_sec = first_start` 적용
+- `[PreMVRoute] phase=phase4 intro_pad pre_mv_job_id=... audio_variant=... intro_pad_sec=...` 로깅
+
+`compose_pre_mv_result(video_start_offset_sec=intro_pad_sec)` 호출.
+
+### ffmpeg 동작
+**before (v40 까지)**:
+```bash
+ffmpeg -y -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest merged.mp4
+```
+
+**after (v41, pad > 0 일 때)**:
+```bash
+ffmpeg -y -itsoffset {N} -i video.mp4 -i audio.mp3 -c:v copy -c:a aac -shortest merged.mp4
+```
+- 영상 stream 만 N초 지연 (음악 stream 은 0초부터)
+- 결과: 0~N초 = 영상 없음 (검정), 음악 instrumental intro 재생
+- N초부터 영상 시작 = 첫 가사 시점 sync
+- `-shortest` 는 (video + N초) 와 audio 중 짧은 쪽에 맞춰 종료
+
+### 변경 통계
+- diff: +39 / -1, 2 파일
+
+### 배포
+- 커밋 `b51b790` "Delay video stream so it starts at first lyric (instrumental intro)"
+- 푸시: `ccd9316..b51b790` → origin/frontend
+- 백엔드 PC selective sync + `touch` + 12초 sleep
+- worker reload (PID 변경)
+- venv smoke 통과:
+  - compose_pre_mv_result 시그니처에 `video_start_offset_sec` 포함
+  - _merge_audio 시그니처에 `video_start_offset_sec` 포함
+  - _merge_audio 본문에 `-itsoffset` 적용 확인
+
+### 영향
+- 다음 Phase 4 (concat) 부터 자동 적용
+- 음악 instrumental intro 동안 검정 화면 → 첫 가사 시점에 영상 시작
+- 이미 만들어진 result.mp4 는 영향 없음 (Phase 4 재실행 시 적용)
+
+### Edge cases
+- `lyric_timestamps` 비어있음 → intro_pad_sec = 0 → 기존 동작 (no-op)
+- `lyric_timestamps[0].start = 0` (간주 없음) → intro_pad_sec = 0 → no-op
+- audio_object_name 없음 → _merge_audio 호출 안 됨 → 무관
+
+### 한계 / 후속
+- `-shortest` 정책 유지 — 음악 끝나면 영상 cut, 영상 끝나면 음악 cut
+- 사용자가 영상 길이 = 음악 길이 정확히 맞추려면 별도 작업 필요 (씬 길이 자동 조정, 또는 사용자 편집)
+- 가사 섹션별 (Verse 1 / Chorus 등) 영상 sync 는 미적용 — 별도 작업
+- Phase 4 재실행 endpoint 가 이미 있어 사용자가 force=true 로 재합치기 가능
+
+### 작업 끝(append).
