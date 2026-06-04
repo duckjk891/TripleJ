@@ -9,6 +9,7 @@ v3: 가사 ready 잡에 음악 생성 트리거(POST /jobs/{id}/music)와
 import asyncio
 import io
 import logging
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -841,6 +842,7 @@ async def regenerate_music(job_id: str, current_user=Depends(get_current_user)):
 async def get_job_audio(
     job_id: str,
     variant: int = 1,
+    download: int = 0,
     current_user=Depends(get_current_user),
 ):
     mongo = get_mongo()
@@ -875,7 +877,19 @@ async def get_job_audio(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"오디오 로드 실패: {e}")
 
-    return StreamingResponse(io.BytesIO(data), media_type="audio/mpeg")
+    # v43 — download=1 일 때 attachment 헤더로 강제 다운로드 (cross-origin 도 동작).
+    headers: dict[str, str] = {}
+    if int(download or 0):
+        lyrics_title = ((doc.get("lyrics") or {}).get("title") or "").strip()
+        # ASCII-only safe filename (RFC 6266 의 filename= 단순 형태).
+        ascii_safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", lyrics_title)[:60].strip("_")
+        base = ascii_safe or "wedding_mv_audio"
+        safe_name = f"{base}_v{variant}.mp3"
+        headers["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+
+    return StreamingResponse(
+        io.BytesIO(data), media_type="audio/mpeg", headers=headers,
+    )
 
 
 @router.post("/jobs/{job_id}/request-admin")

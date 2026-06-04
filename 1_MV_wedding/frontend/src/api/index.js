@@ -71,6 +71,13 @@ export const audioStreamUrl = (jobId, variant = 1) => {
   return `${API.defaults.baseURL}/mv/jobs/${jobId}/audio?token=${encodeURIComponent(token)}&variant=${variant}`;
 };
 
+// v43 — 다운로드용 URL. 백엔드가 ?download=1 일 때 Content-Disposition: attachment 헤더 추가.
+// cross-origin 환경에서 <a download> 속성이 무시되는 문제 회피.
+export const audioDownloadUrl = (jobId, variant = 1) => {
+  const token = localStorage.getItem('token') || '';
+  return `${API.defaults.baseURL}/mv/jobs/${jobId}/audio?token=${encodeURIComponent(token)}&variant=${variant}&download=1`;
+};
+
 // Couple character
 export const saveCoupleCharacter = (data) => API.post('/character/couple', data);
 export const getCoupleCharacter = () => API.get('/character/couple');

@@ -470,7 +470,7 @@ export default function GenerationStatusPage() {
           )}
           <div className="audio-card__actions">
             <a
-              href={api.audioStreamUrl(id, 1)}
+              href={api.audioDownloadUrl(id, 1)}
               download={downloadName}
               className="btn-ghost"
             >
