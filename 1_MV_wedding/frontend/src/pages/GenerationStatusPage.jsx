@@ -473,9 +473,20 @@ export default function GenerationStatusPage() {
               href={api.audioDownloadUrl(id, 1)}
               download={downloadName}
               className="btn-ghost"
+              title="첫 번째 트랙 다운로드"
             >
-              다운로드
+              🎵1 다운로드
             </a>
+            {variantsCount > 1 && (
+              <a
+                href={api.audioDownloadUrl(id, 2)}
+                download={downloadName.replace(/\.mp3$/, '_v2.mp3')}
+                className="btn-ghost"
+                title="두 번째 트랙 다운로드"
+              >
+                🎵2 다운로드
+              </a>
+            )}
             <button
               type="button"
               className="btn-ghost"
