@@ -159,10 +159,13 @@ async def _start_kling(
         b64 = base64.b64encode(ref).decode("utf-8")
         image_list.append({"image_url": b64})
 
+    # v45 — mode "pro" (1080p) → "4K" (3840×2160). image_list + image_tail +
+    # 16:9 + duration 5/10 + sound=off 모두 4K 모드와 호환.
+    # cost 2.5×, 생성 시간 1.5~2× — wedding MV 최종 quality 우선.
     body: dict = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
-        "mode": "pro",
+        "mode": "4K",
         "duration": str(kling_duration),
         "aspect_ratio": "16:9",
         "sound": "off",
