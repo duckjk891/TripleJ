@@ -1873,7 +1873,13 @@ async def regenerate_chapter_images(
         )
 
     cur_status = pre_doc.get("status") or ""
-    allowed = {"phase2_images", "phase2_failed", "phase2_partial", "phase2_ready"}
+    # v46 — phase3/phase4 이후에도 챕터 이미지 재생성 허용. 재생성 endpoint 가
+    # status 를 phase2_images 로 강제 전환하므로 가드만 풀면 됨.
+    allowed = {
+        "phase2_images", "phase2_failed", "phase2_partial", "phase2_ready",
+        "phase3_videos", "phase3_failed", "phase3_partial", "phase3_ready",
+        "phase4_failed", "phase4_compositing", "completed",
+    }
     if cur_status not in allowed:
         return JSONResponse(
             status_code=409,
@@ -3271,7 +3277,13 @@ async def regenerate_chapter_videos(
         )
 
     cur_status = pre_doc.get("status") or ""
-    allowed = {"phase3_videos", "phase3_failed", "phase3_partial", "phase3_ready"}
+    # v46 — phase4 이후 (completed / phase4_*) 에도 챕터 영상 재생성 허용.
+    # 사용자가 4K 등 quality 옵션 변경 후 phase4 끝난 작품에서 챕터만 다시 만들 케이스.
+    # 재생성 endpoint 가 status 를 phase3_videos 로 강제 update 하므로 가드만 풀면 됨.
+    allowed = {
+        "phase3_videos", "phase3_failed", "phase3_partial", "phase3_ready",
+        "phase4_failed", "phase4_compositing", "completed",
+    }
     if cur_status not in allowed:
         return JSONResponse(
             status_code=409,
