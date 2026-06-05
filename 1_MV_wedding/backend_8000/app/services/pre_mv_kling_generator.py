@@ -159,13 +159,13 @@ async def _start_kling(
         b64 = base64.b64encode(ref).decode("utf-8")
         image_list.append({"image_url": b64})
 
-    # v45 — mode "pro" (1080p) → "4K" (3840×2160). image_list + image_tail +
-    # 16:9 + duration 5/10 + sound=off 모두 4K 모드와 호환.
-    # cost 2.5×, 생성 시간 1.5~2× — wedding MV 최종 quality 우선.
+    # v45 → v45.1 롤백: omni-video endpoint 는 mode "4K" 거부 (code 1201
+    # "mode value '4K' is invalid"). 3rd-party 문서가 부정확. 공식 omni endpoint 는
+    # std/pro 만. 1080p (pro) 로 복귀. 4K 별도 endpoint/model 가능한지 재조사 필요.
     body: dict = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
-        "mode": "4K",
+        "mode": "pro",
         "duration": str(kling_duration),
         "aspect_ratio": "16:9",
         "sound": "off",
