@@ -248,12 +248,15 @@ async def _concat_scenes(
         "[PreMVPhase4] concat_copy failed pre_mv_job_id=%s — falling back to re-encode",
         pre_mv_job_id,
     )
+    # v44 — concat reencode 시 quality 우선 (-crf 18 ≈ visually lossless,
+    # -preset medium 으로 encode 시간/quality 균형).
     rc2, stderr_text2 = await _run_ffmpeg(
         args=[
             "-y", "-f", "concat", "-safe", "0",
             "-i", concat_list_path,
-            "-c:v", "libx264", "-preset", "fast",
-            "-c:a", "aac",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             out_path,
         ],
@@ -345,6 +348,7 @@ async def _merge_audio(
                 "[PreMVPhase4] subtitles filter applied pre_mv_job_id=%s srt=%s",
                 pre_mv_job_id, srt_path,
             )
+        # v44 — quality 우선 reencode (-crf 18 ≈ visually lossless, preset medium).
         rc2, stderr_text2 = await _run_ffmpeg(
             args=[
                 "-y",
@@ -352,8 +356,9 @@ async def _merge_audio(
                 "-i", video_path,
                 "-i", audio_path,
                 *filter_args,
-                "-c:v", "libx264", "-preset", "fast",
-                "-c:a", "aac",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 "-shortest",
                 out_path,
