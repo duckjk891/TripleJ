@@ -159,13 +159,13 @@ async def _start_kling(
         b64 = base64.b64encode(ref).decode("utf-8")
         image_list.append({"image_url": b64})
 
-    # v45 → v45.1 롤백: omni-video endpoint 는 mode "4K" 거부 (code 1201
-    # "mode value '4K' is invalid"). 3rd-party 문서가 부정확. 공식 omni endpoint 는
-    # std/pro 만. 1080p (pro) 로 복귀. 4K 별도 endpoint/model 가능한지 재조사 필요.
+    # v47: Kling-V3-Omni 공식 가격표에 "4k x 1s x no audio" / "4k x 1s x with audio"
+    # 행이 존재 → Omni 도 4K 지원. v45 에서 "4K" (대문자) 가 1201 거부됐던 이유는
+    # enum 값 case mismatch. 가격표 표기 그대로 소문자 "4k" 사용.
     body: dict = {
         "model_name": "kling-v3-omni",
         "prompt": prompt,
-        "mode": "pro",
+        "mode": "4k",
         "duration": str(kling_duration),
         "aspect_ratio": "16:9",
         "sound": "off",

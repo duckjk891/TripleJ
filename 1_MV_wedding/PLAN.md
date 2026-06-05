@@ -5982,3 +5982,30 @@ calculate_video_start_offset:
 - 시작 시점 fallback: aligned_words 가 빈 경우 (Suno 가 alignedWords 없이 보낸 경우) segments[1].start 로 fallback. 둘 다 없으면 0.0
 - subtitles filter escape: 현재 path 의 `\`, `:`, `'` escape 만 처리. 다른 특수문자 (예: `,`, `[`, `]`) 가 들어가면 ffmpeg parse 깨질 수 있음 (현재 path 는 mkdtemp 라 안전 가정)
 
+
+
+---
+
+### v47 — 2026-06-05 — 사용자 요청 (원문)
+"[Kling-V3-Omni 가격표 스크린샷] 이 이미지처럼 omni 모델에 여러가지 버젼이 있잖아. 4k도 있고 나는 이걸 쓰고 싶은거야"
+
+### v47 — 결정적 근거
+- 사용자가 직접 보여준 공식 Kling-V3-Omni 가격표에 **"4k x 1s x with audio"** / **"4k x 1s x no audio"** 행이 존재 → Omni 도 4K 지원.
+- 이전 v45 시도 (`mode: "4K"` 대문자) 가 `code 1201 "mode value '4K' is invalid"` 로 실패한 이유는 **enum 값 case mismatch** 일 가능성이 압도적으로 큼. 가격표 표기는 **소문자 `4k`**.
+- 이전 재리서치 (v45 직후) 가 인용한 공식 user guide "1080p/720p only" 는 outdated/오독으로 판단 — 사용자가 보여준 공식 가격표가 권위적.
+
+### v47 — 계획
+1. `backend_8000/app/services/pre_mv_kling_generator.py` body dict 의 `"mode": "pro"` → `"mode": "4k"` 로 변경.
+2. 위 변경 옆 주석 (v45.1 롤백 코멘트) 를 v47 컨텍스트로 갱신.
+3. commit + push.
+4. 백엔드 PC sync + uvicorn reload.
+5. tester 검증:
+   - 단일 씬 generate 트리거 또는 Phase 3 재실행 → Kling 응답 (status_code, code, message) 확인
+   - 성공 시 결과 영상 해상도 (ffprobe) 가 3840×2160 인지
+   - 실패 시 에러 메시지 보고 → 다음 시도 enum 값 결정 ("4K" / "ultra" / "2160p" / 별도 `resolution` 필드)
+
+### v47 — 위험
+- mode "4k" 도 거부되면 → v45 롤백처럼 즉시 "pro" 로 되돌릴 수 있도록 단순 변경 유지.
+- 4K 가 audio 옵션과 결합 제약 (가격표는 "with audio" / "no audio" 만 있음. **"with video" 컬럼이 없음** → 4K 모드는 video input 불가 가능성). 우리는 image-only 입력 + `sound: "off"` → 호환 가정.
+- 4K 호출 시 credit 비용 약 **3× pro** (`0.84` vs `pro 1.0` resource units per sec) → 비용 증가 사용자 인지 필요. UI 노출은 별도 작업.
+- Phase 4 ffmpeg reencode 해상도는 그대로 (4K input → 4K output, v44 적용된 -crf 18 / preset medium 로 더 큰 파일 크기 + 느린 인코딩 예상).
