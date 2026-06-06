@@ -3935,3 +3935,408 @@ calculate_video_start_offset:
 
 ### 결론
 v41.1 PASS — 사용자 보고 ("다시 합치기 하니까 이런 에러 GET .../result?token=... net::ERR_INCOMPLETE_CHUNKED_ENCODING 200 (OK)") 에 대해 v41 의 `-itsoffset` + `-c:v copy` 조합이 mp4 moov atom 에 edit list 만 박고 stream timestamps 는 0 부터 시작하는 issue 로 일부 플레이어/streaming 환경에서 chunked encoding 도중 끊김 (result.mp4 자체는 385MB 만들어졌지만 clean 재생 안 됨) 진단 → `_merge_audio` 에서 `pad > 0` 일 때 copy 모드 강제 skip 후 reencode (libx264) 분기로 바로 진입하도록 fix → 커밋 `5300eb8` push origin/frontend + venv smoke 로 skip copy + libx264 reencode 키워드 확인 통과. v42 PASS — 사용자 요청 ("문제가 두가지가 있는데 자막이 안달리는 거랑, 영상 시작이 intro 다음 [] 지문 부터 시작되어야해 intro 가사 부터가 아니라.") 에 대해 두 가지 문제 해결: (1) Phase 4 burn-in 자막 미구현 → lyric_timestamps_variants 기반 SRT 생성 + ffmpeg `-vf subtitles` filter 로 burn-in (흰 글자 + 검정 외곽선, Alignment=2 하단, MarginV=60, Fontsize=24, Outline=2, Shadow=0, BorderStyle=1), (2) 영상 시작 시점이 v41 의 lyric_timestamps[0].start (첫 가사) 가 아니라 `[Intro]` section label 다음 첫 비-intro section label (`[Verse 1]` 등) 시작 시점이 되어야 함 → suno_aligned_words_variants 의 word 필드에서 `[...]` 패턴 정규식 매치로 section label 추출 → `[Intro]` 만난 후 첫 비-intro 라벨 startS 반환. 조사: `mv_jobs.lyric_timestamps_variants[N]` 라인 단위 + `mv_jobs.suno_aligned_words_variants[N]` 단어 단위 + section label 은 aligned_words 의 word 필드에 entry 로 포함되며 동시에 lyrics.body 에도 markdown 으로 박혀있음 (v29 prompt 강화 결과) 확인. 구현 — Backend `1_MV_wedding/backend_8000/app/services/pre_mv_phase4_compositor.py` 에 신규 헬퍼 4종 추가: `_to_srt_time(sec)` (초 → `HH:MM:SS,mmm` SRT timecode), `_SECTION_LABEL_RE` 정규식 (`[Intro]`/`[Verse 1 - 메인 보컬]` 등 매칭), `generate_srt_from_segments(segments, video_start_offset_sec)` (segments 의 text 빈 / section label entry skip + 각 cue start/end 에서 offset 차감하여 영상 timeline 변환 + adjusted end<=0 또는 빈 텍스트 skip + SRT 텍스트 반환), `calculate_video_start_offset(aligned_words, segments_fallback)` (aligned_words 스캔하여 단어 entry 가 `[...]` 패턴 매치하면 label start 수집 + 첫 `intro` 만난 후 첫 비-intro 라벨 startS 반환 + fallback: segments[1].start → 0.0). `_merge_audio` 시그니처에 신규 인자 `srt_path: Optional[str] = None` 추가 + `pad > 0` 또는 `srt_path` 있으면 copy 모드 강제 skip + reencode 분기에서 srt_path 있으면 `-vf subtitles='{escaped}':force_style='Alignment=2,MarginV=60,Fontsize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,Outline=2,Shadow=0,BorderStyle=1'` 추가 + subtitles filter escape (`\` `:` `'`) + `[PreMVPhase4] subtitles filter applied` 로깅. `compose_pre_mv_result` 시그니처에 신규 인자 `srt_text: Optional[str] = None` 추가 + 내부에서 srt_text → 임시파일 `subs.srt` (utf-8) 생성 → `_merge_audio` 전달. Backend `1_MV_wedding/backend_8000/app/routes/pre_mv.py` 의 `_run_phase4` 에 `calculate_video_start_offset`, `generate_srt_from_segments` import 추가 + `aligned_local = mv_doc.suno_aligned_words_variants[audio_variant]` 추출 → `intro_pad_sec = calculate_video_start_offset(aligned_words=aligned_local, segments_fallback=selected_ts_local)` → `srt_text = generate_srt_from_segments(selected_ts_local, video_start_offset_sec=intro_pad_sec)` → `compose_pre_mv_result(video_start_offset_sec=intro_pad_sec, srt_text=srt_text)` 호출 + `cue_count=...` 로깅. 단위 테스트 (배포 후 venv 직접): `_to_srt_time(14.5)` → `'00:00:14,500'`, `_to_srt_time(0)` → `'00:00:00,000'`, `generate_srt_from_segments(pad=10)` 에서 `[Intro]` entry skip + "first lyric line" start=5 end=8 → end-pad=-2 → skip + `[Verse 1]` entry skip + "verse line one" start=12 end=15 → 2~5 cue 생성, `calculate_video_start_offset` 에서 `[Intro]` startS=0 + `[Verse 1]` startS=10 → return 10.0 모두 통과. 배포: 커밋 `90bbadf` "Phase 4 SRT subtitles + start video after [Intro] section ends" (+168/-17) → `5300eb8..90bbadf` → origin/frontend push, 백엔드 PC selective sync + touch. 이슈: uvicorn `--reload` 가 reload 중 stuck — 이전 result.mp4 streaming 요청들이 `urllib3.exceptions.ProtocolError: Connection broken: IncompleteRead` 로 끊겼지만 close 안 되어 "Waiting for connections to close" 에서 멈춤 → 사용자 동의 후 SIGKILL → nohup 으로 재시작 → 새 uvicorn PID 14094 (main) + 14096 (worker), health=200 정상화. 영향: 다음 Phase 4 재실행부터 영상 시작 시점 = `[Intro]` 다음 `[Verse 1]` (또는 첫 비-intro section) + 자막 burn-in (흰 글자 + 검정 외곽선, 하단 정렬, MarginV=60) 자동 적용 + 이미 만들어진 result.mp4 는 영향 X (재합치기 필요). 한계 / 후속: 자막 폰트는 시스템 default 사용 — 한국어 폰트 (NanumGothic 등) 없으면 깨질 수 있어 사용자 결과 보고 후 폰트 설치 안내 또는 fontfile 명시 필요 + 시작 시점 fallback 으로 aligned_words 가 빈 경우 (Suno 가 alignedWords 없이 보낸 경우) segments[1].start 로 fallback 하고 둘 다 없으면 0.0 사용 + subtitles filter escape 는 현재 path 의 `\`/`:`/`'` 만 처리하여 다른 특수문자 (`,`/`[`/`]`) 가 들어가면 ffmpeg parse 깨질 수 있음 (현재 path 는 mkdtemp 라 안전 가정).
+
+
+---
+
+### v47 — 2026-06-05 — 요청
+Kling V3 Omni 가격표 (사용자 첨부 스크린샷) 에 4k 행이 명시되어 있으므로, Omni 모델로 4K 영상 생성을 적용.
+
+### v47 — 변경
+**파일**: `1_MV_wedding/backend_8000/app/services/pre_mv_kling_generator.py` (line 162~172)
+
+```diff
+- # v45 → v45.1 롤백: omni-video endpoint 는 mode "4K" 거부 (code 1201 ...
++ # v47: Kling-V3-Omni 공식 가격표에 "4k x 1s x no audio" / "4k x 1s x with audio"
++ # 행이 존재 → Omni 도 4K 지원. v45 에서 "4K" (대문자) 가 1201 거부됐던 이유는
++ # enum 값 case mismatch. 가격표 표기 그대로 소문자 "4k" 사용.
+  body: dict = {
+      "model_name": "kling-v3-omni",
+      "prompt": prompt,
+-     "mode": "pro",
++     "mode": "4k",
+      "duration": str(kling_duration),
+      "aspect_ratio": "16:9",
+      "sound": "off",
+  }
+```
+
+### v47 — 결정 근거
+- 사용자가 첨부한 공식 Kling-V3-Omni 가격표가 `4k x 1s x no audio` / `4k x 1s x with audio` 행을 포함 → Omni 도 4K 출력 지원함.
+- v45 의 `"4K"` (대문자) 가 `code 1201 "mode value '4K' is invalid"` 로 거부된 원인은 **enum case mismatch**. 가격표 표기 그대로 소문자 `"4k"` 가 정답일 가능성이 압도적.
+- v45 직후 재리서치에서 인용한 공식 user guide "1080p/720p only" 는 outdated/오독 — 사용자가 보여준 공식 가격표가 권위적.
+
+### v47 — 배포
+- 커밋 `e23cbe1` "v47: Switch Kling Omni mode pro -> 4k (lowercase per official price table)" (+31/-4)
+- 푸시: `bc9afb3..e23cbe1` → origin/frontend ✅
+- 백엔드 PC sync + uvicorn reload: **사용자 직접 수행 필요** (로컬 Mac 에 backend 안 띄워져 있음 + SSH config 비어있음)
+
+### v47 — 검증 절차 (tester 가이드)
+1. 백엔드 PC (WSL Ubuntu) 에서:
+   ```bash
+   cd ~/TripleJ && git fetch origin frontend && git reset --hard origin/frontend
+   # uvicorn reload (--reload 모드 켜져 있다면 자동, 아니면 worker restart)
+   ```
+2. 한 씬 generate 트리거 (Phase 3 재실행 또는 새 작업의 첫 영상 씬):
+   - 단일 씬을 빠르게 테스트하려면 chapter regenerate 버튼 사용 (v46 가드 완화로 phase4 이후도 가능)
+3. backend log 에서 `[PreMVKling] phase=phase3 start request` 라인 + 그 다음 응답 status code 확인.
+   - **HTTP 200** + Kling task_id 발급 = 4k mode 수락 (성공)
+   - **HTTP 400 + code 1201** = 다음 enum 값 시도 필요 (`"4K"` / `"ultra"` / `"2160p"` / 별도 `resolution` 필드)
+4. 완료된 영상 다운로드 후 ffprobe 로 해상도 확인:
+   ```bash
+   ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 <video>.mp4
+   # 기대값: 3840x2160
+   ```
+
+### v47 — 위험 / 후속
+- **4K 거부 시 fallback 계획**: 즉시 mode 를 `"pro"` 로 되돌리거나 (한 줄 revert), `"4K"`/`"ultra"`/`"2160p"` 순으로 enum 변종 시도. 이전 v45 롤백 (`bc9afb3`) 패턴 활용.
+- **비용 증가 사용자 인지**: 4K resource pack unit deduction = 3.0/sec (pro 의 1.0~1.2/sec 대비 약 **3배**). 한 씬 5초 = 15 units = $0.42. UI 안내 별도 작업.
+- **호환성 가정**: 가격표가 "4k x with audio" / "4k x no audio" 만 표시 (video input 컬럼 없음) → 4K 는 image-only 입력만 가능 가능성. 우리는 image_list + image_tail (image-only) 호출이므로 호환 가정. 만약 image_tail 이 4K 모드에서 거부되면 기존 `image_list[type=last_frame]` fallback 자동 작동.
+- **Phase 4 ffmpeg**: input 이 4K (3840x2160) 가 되면 reencode (v44 의 -crf 18 + preset medium) 가 1080p 대비 **약 4배 데이터 + 더 느린 인코딩**. 합치기 시간 증가 예상.
+
+### v47 — 백엔드 reload (직접 수행)
+- SSH 접근 정보: `duckjk89@100.127.225.55:2222` (Tailscale, ed25519 키 등록 완료)
+- backend repo path: `/mnt/d/1_projects/0_myProjects/1_tripleJ/`
+- 주의: backend repo 는 별도 `backend` 브랜치 (origin/frontend 와 65 commits 분기). `git pull` 위험 — 단일 파일 sed 패치 방식 채택.
+- 적용 명령:
+  ```bash
+  cd /mnt/d/1_projects/0_myProjects/1_tripleJ/1_MV_wedding/backend_8000/app/services
+  cp pre_mv_kling_generator.py pre_mv_kling_generator.py.bak.v47
+  sed -i 's/"mode": "pro",/"mode": "4k",  # v47/' pre_mv_kling_generator.py
+  ```
+- reload 확인 (logs/server.log):
+  ```
+  22:48:26  파일 수정
+  22:49:01  StatReload detected changes in 'app/services/pre_mv_kling_generator.py'. Reloading...
+            Started server process [...] ; Application startup complete.
+  ```
+- WSL2 `/mnt/d` 의 inotify 불안정 → uvicorn `--reload` 의 StatReload (polling) fallback 으로 ~35초 후 감지. 정상.
+- 롤백: `cp pre_mv_kling_generator.py.bak.v47 pre_mv_kling_generator.py` → 자동 재 reload.
+
+### v47 — 검증 대기
+- 사용자 UI 에서 한 씬 generate 트리거 → backend log 에서 Kling 응답 (HTTP status + code/message) 모니터 예정.
+- 성공 기준: HTTP 200 + task_id 발급 + 완성 영상 ffprobe 결과 3840×2160.
+- 실패 시 후속 enum 시도 우선순위: `"4K"` → `"ultra"` → `"2160p"` → 별도 `resolution` 필드.
+
+### v47 — 검증 ✅ 성공 (실측)
+**테스트 케이스**: pre_mv_job `6a1d9623c14c6ed92f0be8a2` 의 chapter 3 (memory, scenes 10~13) regenerate.
+
+**Kling 응답 (scene 10, log 발췌)**
+```
+22:51:19,032  start request  prompt_len=1264 duration=8 images=3 image_tail=True
+22:51:19~     task_id=891872585343565836  (1201 거부 없음, 즉 mode "4k" 수락)
+22:53:31~     polling start (5초 간격)
+22:55:46,989  v16-kling-fdl.klingai.com 에서 mp4 다운로드
+22:55:50,668  downloaded bytes=39_083_810
+22:55:51,080  ok raw_bytes=39_083_810 final_bytes=39_083_618 use_seconds=8 elapsed_ms=272_100
+22:55:51,410  scene 11 자동 dispatch (다음 씬도 4k 진행)
+```
+
+**ffprobe 실측 (scene 010.mp4)**
+```
+Stream #0:0  Video: h264 (Main) yuv420p(progressive)  3840x2160  38879 kb/s  24 fps
+Duration: 00:00:08.04  bitrate: 38881 kb/s
+size: 39_083_618 bytes (37.3 MB)
+```
+
+**검증 결론**:
+- ✅ `mode: "4k"` 수락 — `kling-v3-omni` endpoint 에서 정상
+- ✅ 출력 해상도 = **3840×2160 (4K UHD)** — 사용자 가격표 그대로
+- ✅ 비트레이트 ~39 Mbps — 4K 적정 품질
+- ✅ Phase 3 → Phase 4 자동 chaining 정상 (scene 11 dispatch)
+
+**비용/시간 실측**:
+- 8초 영상 elapsed = ~272s (4분 32초) — pro 보다 큰 폭 길어짐
+- 8초 × 3.0 units/s = **24 units** ≈ $0.336 (pro 대비 약 3배 ↑)
+- 파일 크기 ~4배 → Phase 4 ffmpeg reencode 시간/저장 ~4배 예상
+
+**v47 종료** — Omni 4K 모드 production 적용 완료.
+
+
+---
+
+### v48 — 2026-06-06 — 요청
+2_housing 의 음악 생성 옵션 (장르 / 사운드 스타일 / 분위기) 을 1_MV_wedding StoryWizard 에 union 으로 반영. 사용자 컨펌: 사운드 스타일은 장르 list 에 포함, 중복 제거, 모두 한국어 (K-Pop 만 표기 유지), wedding 맥락 부적합 분위기 (몽환적/어두운/슬픈) 제외.
+
+### v48 — 변경
+**파일**: `1_MV_wedding/frontend/src/pages/StoryWizardPage.jsx` (149~157, +17/-3)
+
+```diff
+- const GENRE_OPTIONS = ['발라드', '팝', 'R&B', '포크', '어쿠스틱', '일렉트로닉'];
+- const MOOD_OPTIONS = ['따뜻한', '잔잔한', '벅찬', '희망찬', '그리운', '경쾌한'];
++ // v48 — 2_housing 의 음악 옵션 union (장르에 사운드 스타일 포함, 중복 제거).
++ const GENRE_OPTIONS = [
++   '발라드', '팝', 'R&B', '포크', '어쿠스틱', '일렉트로닉',
++   'K-Pop', '힙합', 'EDM', '록', '재즈', '클래식', '인디', '시티팝', '인디팝', '댄스', '트로트', 'BGM',
++   '피아노 발라드', '밴드 사운드', '오케스트라', '로파이', '레트로', '트로피컬',
++ ];
++ // v48 — 2_housing 분위기 union (몽환적/어두운/슬픈 제외 — wedding 맥락 부적합).
++ const MOOD_OPTIONS = [
++   '따뜻한', '잔잔한', '벅찬', '희망찬', '그리운', '경쾌한',
++   '로맨틱', '감성적', '밝은', '에너지틱', '흥겨운',
++ ];
+```
+
+### v48 — Backend 변경 없음
+- `1_MV_wedding/backend_8000/app/services/suno_generator.py:46` 의 `translate_ko_to_en(text, context_hint="music style tag")` (Claude Opus 4.7) 가 신규 한국어 옵션 ("밴드 사운드", "피아노 발라드", "에너지틱" 등) 도 자동으로 영문 Suno 태그로 변환.
+- 별도 매핑 테이블 추가 작업 X. backend reload 도 불필요.
+
+### v48 — 배포
+- 커밋 `3cea1dc` "v48: Expand StoryWizard genre/mood options (sync from 2_housing)" (+53/-3)
+- 푸시: `e23cbe1..3cea1dc` → origin/frontend ✅
+- frontend dev server (Vite) 가 hot-reload 자동 감지 → 브라우저 새로고침만으로 즉시 반영.
+
+### v48 — 검증 (수동 권장)
+- StoryWizard 의 "음악" 스텝에서 GENRE_OPTIONS chip 그리드가 24개, MOOD_OPTIONS 가 11개 노출되는지 시각 확인.
+- 사용자가 "밴드 사운드" / "트로피컬" / "에너지틱" 같은 신규 옵션 선택 → Suno 생성 시 자연스러운 영문 태그로 번역되는지 backend log `[Suno] style translate: raw=... -> en=...` 라인 확인 (1회 샘플로 충분).
+
+### v48 — 후속 (필요 시)
+- Claude 자동 번역 결과가 일부 어색하면 (예: "BGM" → "Background Music" 같은 단조로움), backend 에 explicit override 테이블 추가 가능 (v49).
+- 사용자 피드백 받아 wedding-부적합 옵션 (트로트/트로피컬/BGM 등) 제거 가능.
+
+
+### v48.1 — 2026-06-06 — 장르 3개 제외
+- 제외: `BGM`, `피아노 발라드`, `인디`
+- `frontend/src/pages/StoryWizardPage.jsx:150~154` 의 GENRE_OPTIONS 24 → 21
+- backend / mood 영향 X
+
+
+### v48.2 — 2026-06-06 — 장르 통합/제외
+- 포크/일렉트로닉 통합 → 어쿠스틱/EDM 으로 흡수
+- 클래식 제외
+- `frontend/src/pages/StoryWizardPage.jsx:150~155` GENRE_OPTIONS 21 → 18
+
+
+### v48.2 — 2026-06-06 — 장르 통합/제외
+- 포크/일렉트로닉 통합 → 어쿠스틱/EDM 으로 흡수
+- 클래식 제외
+- `frontend/src/pages/StoryWizardPage.jsx:150~155` GENRE_OPTIONS 21 → 18
+
+
+---
+
+### v49 — 2026-06-06 — 요청
+가사 section header `[...]` 안 한국어 → 영문 통일, 모든 단락 4줄 고정.
+
+### v49 — 변경
+**파일**: `1_MV_wedding/backend_8000/app/services/lyrics_generator.py` (+127/-81)
+
+#### 1) 한국어 → 영문 라벨 매핑 (12종, DUET prompt)
+| 한국어 | 영문 |
+|---|---|
+| `[Intro - 듀엣]` | `[Intro - Duet]` |
+| `[Verse 1 - 메인 보컬]` | `[Verse 1 - Main Vocal]` |
+| `[Verse 2 - 서브 보컬]` | `[Verse 2 - Sub Vocal]` |
+| `[Pre-Chorus - 듀엣]` | `[Pre-Chorus - Duet]` |
+| `[Chorus 1 - 듀엣]` | `[Chorus 1 - Duet]` |
+| `[Verse 3 - 메인 또는 서브 보컬]` | `[Verse 3 - Main or Sub Vocal]` |
+| `[Verse 3 - 메인 또는 서브]` | `[Verse 3 - Main or Sub]` |
+| `[Bridge - 메인 또는 서브 보컬]` | `[Bridge - Main or Sub Vocal]` |
+| `[Bridge - 메인 또는 서브]` | `[Bridge - Main or Sub]` |
+| `[Bridge - 메인 보컬]` | `[Bridge - Main Vocal]` |
+| `[Chorus 2 - 듀엣]` | `[Chorus 2 - Duet]` |
+| `[Outro - 듀엣]` | `[Outro - Duet]` |
+
+본문 한국어 설명 (예: "이번 곡은 듀엣이다") 은 `[]` 밖이라 유지. f-string placeholder 도 `[<Section> - Duet/Main Vocal/Sub Vocal]` 로 영문화.
+
+#### 2) 줄수 룰 ranged → 무조건 4줄 고정
+- SOLO line 110, 164~173, 209, 217 (Few-shot 헤더 + 끝 코멘트), 룰 13 구성
+- DUET line 297 (룰 5), 322~327 (룰 13), 348~360 (줄수 표), 391 (Few-shot 헤더), 430 (끝 코멘트)
+- 모든 "최대 5줄 / Intro 2~3 / 3~5" → "모든 섹션 ★무조건 4줄★"
+
+### v49 — Phase 4 영향 분석 (확인됨 — 영향 없음)
+- `pre_mv_phase4_compositor.py:40` 의 `_SECTION_LABEL_RE = r"^\s*\[[^\]]+\]\s*$"` 정규식이 `[...]` generic 매칭이라 영문/한국어 무관 동작.
+- `_LEADING_SECTION_RE = r"^\s*\[([^\]]+)\](.*)$"` 도 마찬가지.
+- `calculate_video_start_offset` 의 `label.lower().startswith('intro')` 매칭은 영문 'Intro' 와 정상 작동.
+
+### v49 — 배포
+- 커밋 `279b607` "v49: English-only section labels + all sections fixed at 4 lines" (+127/-81)
+- 푸시: `46cdb91..279b607` → origin/frontend ✅
+- backend 적용: SCP 로 `/mnt/d/.../backend_8000/app/services/lyrics_generator.py` 갱신
+- uvicorn `StatReload detected changes in 'app/services/lyrics_generator.py'. Reloading...` 자동 감지 → reload 완료
+- 백업: backend 에 `lyrics_generator.py.bak.v49` 별도 보존, Mac 에 동일 backup
+- health check `GET /api/health` 200 OK ✅
+
+### v49 — 검증 (수동 권장)
+- 가사 재생성 (UI: lyrics regenerate 버튼) → 결과 가사 inspect:
+  - 모든 `[...]` 헤더 영문 (한국어 듀엣/메인/서브 없음)
+  - 각 섹션 4줄 (Intro/Outro 포함)
+- 듀엣 곡으로 테스트 (vocal_form="duet") → `[Intro - Duet]`, `[Verse 1 - Main Vocal]` 등 노출 확인
+- Phase 4 재합치기 → 자막 SRT 가 영문 라벨도 정상 처리하는지 (영향 X 예상)
+
+### v49 — 후속 (필요 시)
+- Intro/Outro 4줄이 음악적으로 길게 느껴지면 v49.1 에서 Intro/Outro 만 2줄 으로 분기.
+- Few-shot 예시 (DUET 룰 18) 의 일부 섹션이 4줄 미만 (Verse 2 3줄, Pre-Chorus 2줄 등) — 명시적 룰이 우선이라 작동 OK 이나, 결과 어색하면 few-shot 도 4줄로 보강.
+
+
+---
+
+### v50 — 2026-06-06 — 요청
+캐릭터 시트 생성 prompt 의 미화 (AI 디폴트 idealization) 를 빼고 현실적인 외모로 만드는 테스트 variant 신설. 기존 prompt 는 백업으로 그대로 유지.
+
+### v50 — 변경 (백업-safe)
+**파일 1**: `backend_8000/app/services/character_generator.py`
+- `MASTER_PROMPT` (line 41~381), `STEP1_ANSWERS` (line 392~) **건드리지 않음** = 백업.
+- 신규 `REALISTIC_OVERRIDE_BLOCK` 상수 (line 387) — MASTER_PROMPT 끝에 append 되는 미화 거부 지시:
+  - AI 디폴트 idealization (대칭 미화, 매끄러운 피부, 모델 비율) 거부
+  - 사진 속 비대칭/잡티/모공/일반인 비율 그대로
+  - documentary candid photo 톤. 스튜디오 광택/연예인 인상 = 실패.
+- 신규 `_REALISTIC_STEP1_SUFFIX` 상수 — STEP 1 answer 끝에 붙는 사진 분석 강화 안내.
+- `generate_character_sheet` 시그니처에 `prompt_variant: str = "default"` 인자 추가.
+- 분기: `prompt_variant == "realistic"` → `_REALISTIC_STEP1_SUFFIX` + `REALISTIC_OVERRIDE_BLOCK` 적용. 그 외엔 기존 동작.
+- 로그에 `prompt_variant=...` 추가.
+
+**파일 2**: `backend_8000/app/routes/character.py`
+- `POST /api/character/sheets/generate` 에 `prompt_variant: str = Form("default")` 추가.
+- 값 검증 후 (`"realistic"` 만 유효, 그 외엔 `"default"`) `wedding_sheet_jobs` document 에 박음.
+- `_run_sheet_generation` 이 job 에서 읽어 `generate_character_sheet(prompt_variant=...)` 로 전달.
+
+### v50 — 사용법 (테스트)
+**기본 (백업):**
+```
+POST /api/character/sheets/generate
+  file=...
+  role=groom|bride
+  style=casual|wedding
+```
+→ `prompt_variant` 안 보내면 기본 `"default"` → 기존 prompt 그대로 동작.
+
+**Realistic (테스트):**
+```
+POST /api/character/sheets/generate
+  file=...
+  role=groom|bride
+  style=casual|wedding
+  prompt_variant=realistic    ← 추가
+```
+→ `REALISTIC_OVERRIDE_BLOCK` 적용. 동일 사진/조건으로 비교 테스트 가능.
+
+빠른 테스트 방법:
+- 브라우저 devtools (Network 탭 → 캐릭터 시트 생성 호출 → form-data 에 `prompt_variant=realistic` 추가)
+- 또는 curl 로 직접 호출
+
+frontend UI 토글은 추가 안 함 (사용자가 결과 보고 만족하면 v50.1 에서 토글 추가).
+
+### v50 — 배포
+- 커밋 `0392b68` "v50: Add realistic prompt variant for character sheet (backup-safe)" (+109/-2)
+- 푸시: `279b607..0392b68` → origin/frontend ✅
+- backend 적용: scp 로 양 파일 갱신
+- uvicorn `StatReload detected changes in 'app/routes/character.py'. Reloading...` 자동 감지 → `Application startup complete` ✅
+- health check 200 OK ✅
+
+### v50 — 사전 안전 점검 (v49 reload 사고 재발 방지)
+- 배포 직전 mongo 의 `mv_jobs` / `pre_mv_jobs` / `wedding_sheet_jobs` 의 active status (queued/running/music_generating/phase*_generating/phase4_compositing) 조회:
+  - mv_jobs: 2개 queued (둘 다 `updated_at=None`, stale dead job — background task 없음)
+  - pre_mv_jobs: 0
+  - wedding_sheet_jobs: 0
+- 추가로 최근 sunoapi polling 활동 확인 (마지막 18:07:35 이후 23분간 0건) → 활성 polling 없음.
+- **scp 안전 판정 → 실행.**
+
+### v50 — 위험 / 후속
+- REALISTIC_OVERRIDE_BLOCK 이 Step A (Gemini text) 에만 적용. Step B (이미지 생성 모델 — GPT Image 2 / NanoBanana Pro) 의 instruction-following 강도에 따라 미화가 살아남을 수 있음. 결과 어색하면 Step B 의 image prompt 도 강화 (v50.1).
+- 두 variant 결과를 동일 사진으로 비교해 만족도 보고 받으면 다음 단계: frontend UI 토글 (체크박스 1개) 추가 + 기본값 결정.
+
+
+---
+
+### v51 — 2026-06-06 — 요청
+각 씬별로 [이미지 다운] + [영상 다운] 두 버튼 노출 (이전엔 영상 다운만).
+
+### v51 — 변경
+**Backend** `backend_8000/app/routes/pre_mv.py` `get_scene_image`:
+- `download: bool = False` query param 추가.
+- `True` 면 `Content-Disposition: attachment; filename="NN_slot_seq.png"` 헤더 (영상의 `_compute_scene_filename` 재사용, `.mp4` → `.png` swap).
+- 로그에 `download=True/False` 마커 추가.
+
+**Frontend** `frontend/src/api/index.js`:
+- 신규 helper `downloadPreMVSceneImage(id, n)` = `preMVSceneImageUrl(id, n) + "&download=1"`.
+
+**Frontend** `frontend/src/components/PreCeremonyMVPanel.jsx`:
+- `imageDownloadHref` 변수 추가 (이미지 준비됐을 때 활성).
+- 영상 영역 안에 `pre-mv-live-scene-card__dl-row` flex container 신설 → `[⬇ 이미지][⬇ 영상]` 가로 정렬.
+- 사용자 피드백 반영: 처음엔 이미지 영역에 별도 배치했다가 → 영상 왼편(영상 영역 내부, 영상 버튼 왼쪽)으로 재배치.
+- 영상 버튼 라벨 `⬇ 다운로드` → `⬇ 영상` (대칭 명확화).
+
+**Frontend** `frontend/src/components/PreCeremonyMVPanel.css`:
+- 신규 `.pre-mv-live-scene-card__dl-row { display:flex; flex-direction:row; gap:6px; }`.
+
+### v51 — 사전 안전 점검
+- 배포 직전 `mv_jobs` / `pre_mv_jobs` 의 active status (music_generating/lyrics_generating/phase*_generating/phase4_compositing) = **0**.
+- 최근 sunoapi / kling polling 활동 없음.
+- → scp 안전 판정 → 실행.
+
+### v51 — 배포
+- 커밋 `02c5394` "v51: Per-scene image download button next to video button" (+89/-12)
+- 푸시: `0392b68..02c5394` → origin/frontend ✅
+- backend scp 후 uvicorn StatReload 자동 감지 → `Application startup complete`, health 200 OK ✅
+- frontend Vite hot-reload 자동 (브라우저 새로고침으로 즉시 반영).
+
+### v51 — 검증 (수동)
+- 씬 카드 영상 완료 상태에서 `[⬇ 이미지][⬇ 영상]` 두 버튼이 영상 아래 가로로 보이는지.
+- `⬇ 이미지` 클릭 시 `NN_slot_seq.png` 파일명으로 다운로드되는지.
+- `⬇ 영상` 클릭 시 기존처럼 `NN_slot_seq.mp4` 다운로드되는지.
+
+### v51 — 후속 (필요 시)
+- 이미지만 완료된 단계(영상 generating)에서도 이미지 다운로드 보이게 하려면 이미지 영역으로 buttom 옮기는 옵션 가능. 현재는 영상 영역 안에 묶여 있어 영상 완료 후에만 두 버튼 노출.
+
+
+---
+
+### v52 — 2026-06-06 — 요청
+Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 GPT 사용자도 막던 문제 근본 해결).
+
+### v52 — 변경
+
+**파일 1**: `backend_8000/app/services/character_generator.py`
+- `import anthropic` 추가.
+- 신규 상수: `_CLAUDE_TEXT_MODEL = "claude-opus-4-7"`.
+- 신규 헬퍼:
+  - `_get_claude_text_client()` — 모듈 싱글톤 (settings.anthropic_api_key).
+  - `_gemini_parts_to_claude_content(prompt, image_parts)` — Gemini `inlineData.mimeType/data` → Claude `type=image, source.{type=base64, media_type, data}` 변환 (image 먼저, text 뒤).
+  - `_call_claude_text(prompt, image_parts, role, style, user_id)` — Claude Opus 4.7 호출. 시그니처/반환 `_call_gemini_text` 와 100% 호환.
+- 기존 `_call_gemini_text` **백업 유지** (다음 줄 주석에 "v52: 백업으로 유지" 명시).
+- `generate_character_sheet` 의 Step A 호출 `_call_gemini_text` → `_call_claude_text` swap.
+
+**파일 2~4**: 동일 패턴 swap.
+- `extra_scene_image_generator.py`: import + Step A 호출 swap.
+- `wedding_photo_generator.py`: import + Step A 호출 swap.
+- `pre_mv_phase2_image_generator.py`: import + Step A 호출 swap.
+
+### v52 — Step A 호출 모델 매트릭스 (배포 후)
+| 흐름 | Step A (prompt 생성) | Step B (이미지 생성) |
+|---|---|---|
+| 캐릭터 시트 | **Claude Opus 4.7** ✅ | GPT Image 2 / Nano Banana Pro (user 선택) |
+| Phase 2 씬 이미지 | **Claude Opus 4.7** ✅ | 동일 |
+| 웨딩 사진 | **Claude Opus 4.7** ✅ | 동일 |
+| 추가 씬 이미지 | **Claude Opus 4.7** ✅ | 동일 |
+
+→ GPT 사용자는 Gemini credit 의존 0. Gemini 429 가 image-gen 흐름을 막지 않음.
+
+### v52 — 배포
+- 커밋 `9b6bb97` "v52: Step A swap Gemini text -> Claude Opus 4.7" (+154/-8).
+- 푸시: `02c5394..9b6bb97` → origin/frontend ✅.
+- backend scp 4 파일 → uvicorn StatReload 자동 감지 → `Application startup complete`, health 200 OK ✅.
+- 사전 안전 점검: active mv/pre_mv/sheet jobs = 0 → 안전 확인 후 적용.
+
+### v52 — 검증 (사용자 액션)
+- 캐릭터 시트 생성 시도 → Gemini 429 가 사라져야 함. log 에 `[CharGen] Step A: calling Claude text model=claude-opus-4-7` 라인 등장.
+- 결과 캐릭터 시트 prompt 의 톤이 Gemini 시절과 미세 다를 수 있음. 결과 어색하면 보고.
+- Phase 2 / 웨딩 사진 / 추가 씬도 동일 — log 의 `step_a calling gemini text` 가 `Claude text model=claude-opus-4-7` 로 바뀌어야.
+
+### v52 — 비용 변화
+- Gemini 2.5 Flash (싸다) → Claude Opus 4.7 (좀 더 비쌈).
+- 한 캐릭터 시트당 Step A 호출 1회 (multimodal). 캐릭터 시트 1장 ≈ 토큰 입력 4~10K + 출력 1~3K → 비용 약간 증가.
+- Image-gen 단계 (Step B) 비용은 그대로 (GPT Image 2 등 그대로).
+
+### v52 — 위험 / 후속
+- Claude Opus 4.7 multimodal 응답이 비어있거나 형식이 다르면 `ValueError("No text in Claude response")` 발생. 그 시 logs/server.log 에서 raw 응답 확인 → max_tokens 조정 가능.
+- 롤백: 4 caller 의 `_call_claude_text` → `_call_gemini_text` revert. backup 함수 그대로 살아있음.
+- 후속 옵션: image_model 따라 Step A 도 분기 (예: nb_pro 사용자는 Gemini 유지, GPT 사용자만 Claude) — 현재는 일괄 Claude. 사용자 결정 따라 분기 가능.
+
+
+### v52.1 — 2026-06-06 — image media_type sniffing 추가
+- Claude 가 media_type ↔ 실제 데이터 mismatch 에 400 반환. Gemini 는 통과시키던 케이스.
+- `_sniff_image_media_type(data_b64)` 신설 — magic bytes (PNG header `\x89PNG`, JPEG `\xff\xd8\xff`, GIF, WEBP) 로 자동 보정.
+- `_gemini_parts_to_claude_content` 가 declared mime 대신 sniffed mime 사용.
+- 적용: `character_generator.py` scp → uvicorn reload 자동 → health 200 OK.
+- 이제 캐릭터 시트 다시 시도 가능.

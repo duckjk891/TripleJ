@@ -661,6 +661,27 @@ def _get_claude_text_client() -> anthropic.AsyncAnthropic:
     return _claude_text_client
 
 
+def _sniff_image_media_type(data_b64: str, fallback: str = "image/jpeg") -> str:
+    """v52.1 — base64 첫 32바이트 디코드해서 magic bytes 로 실제 media_type 추론.
+
+    Claude API 는 media_type ↔ 실제 데이터 mismatch 시 400 거부. Gemini 는
+    관대해서 caller 가 잘못된 mime 을 박아도 통과했지만, Claude 호환을 위해 보정.
+    """
+    try:
+        head = base64.b64decode(data_b64[:64] + "===", validate=False)[:16]
+    except Exception:  # noqa: BLE001
+        return fallback
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return fallback
+
+
 def _gemini_parts_to_claude_content(prompt: str, image_parts: list) -> list:
     """Gemini inlineData parts → Claude messages content block. 이미지를 앞에 배치."""
     content: list = []
@@ -668,10 +689,17 @@ def _gemini_parts_to_claude_content(prompt: str, image_parts: list) -> list:
         inline = part.get("inlineData") if isinstance(part, dict) else None
         if not inline:
             continue
-        media_type = inline.get("mimeType") or "image/jpeg"
+        declared = inline.get("mimeType") or "image/jpeg"
         data_b64 = inline.get("data") or ""
         if not data_b64:
             continue
+        # v52.1 — 실제 bytes 의 magic 으로 media_type 보정 (Claude 엄격 검증 대응).
+        media_type = _sniff_image_media_type(data_b64, fallback=declared)
+        if media_type != declared:
+            logger.info(
+                "[CharGen] image media_type corrected declared=%s actual=%s",
+                declared, media_type,
+            )
         content.append({
             "type": "image",
             "source": {

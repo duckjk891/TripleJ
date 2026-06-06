@@ -6248,3 +6248,11 @@ async def _call_claude_text(
 ### v52 — 위험
 - Claude Opus 4.7 의 multimodal 응답이 Gemini 와 다른 표현/길이 → 결과 미세 다름.
 - 실패하면 `_call_gemini_text` 백업으로 즉시 롤백 가능 (import 1줄 + 호출 4곳 revert).
+
+
+### v52.1 — 2026-06-06 — Claude image media_type mismatch 수정
+- 사용자 보고: `Claude text API error (HTTP 400)` — declared `image/jpeg` 인데 실제 PNG.
+- 원인: Gemini 는 mime/실제 데이터 불일치 관대, Claude 는 엄격.
+- 수정: `_sniff_image_media_type(data_b64)` 헬퍼 신설 — base64 첫 16바이트 디코드해 magic bytes 로 실제 mime 추론 (PNG / JPEG / GIF / WEBP).
+- `_gemini_parts_to_claude_content` 가 declared mime 무시하고 sniffed mime 으로 Claude content 빌드. 불일치 시 log info.
+- 적용: `character_generator.py` 한 파일 scp.
