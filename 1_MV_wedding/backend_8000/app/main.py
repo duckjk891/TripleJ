@@ -104,6 +104,9 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # v53.2 — preflight 응답 캐시 시간. 디폴트 600s 였는데 stale 캐시로 PATCH 가
+    # 거부되는 케이스 신고됨 (브라우저 일반 모드). 60초로 단축해 회복 시간 ↓.
+    max_age=60,
 )
 
 app.include_router(auth.router)

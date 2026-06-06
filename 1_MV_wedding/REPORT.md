@@ -4361,3 +4361,9 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - 빈 본문 시 즉시 `ValueError("가사 본문이 비어 있습니다…")` (양 백엔드).
 - max_tokens 상향: 2분 4000 / 3분 6000 / 기본 5000.
 - scp → reload → health 200.
+
+### v53.2 — 2026-06-06 — CORS preflight max_age 단축
+- 원인: backend `allow_methods=["*"]` 정상이나 일반 모드 브라우저가 10분짜리 stale preflight 캐시 보유.
+- 수정: `main.py` CORSMiddleware 에 `max_age=60` 추가.
+- 즉시 unblock 안내: devtools Network 탭 "Disable cache" + reload.
+- scp → reload → preflight 응답에 `max-age: 60` 확인.
