@@ -6256,3 +6256,5 @@ async def _call_claude_text(
 - 수정: `_sniff_image_media_type(data_b64)` 헬퍼 신설 — base64 첫 16바이트 디코드해 magic bytes 로 실제 mime 추론 (PNG / JPEG / GIF / WEBP).
 - `_gemini_parts_to_claude_content` 가 declared mime 무시하고 sniffed mime 으로 Claude content 빌드. 불일치 시 log info.
 - 적용: `character_generator.py` 한 파일 scp.
+
+### v52.2 — Claude Opus 4.7 `temperature` deprecated → 제거

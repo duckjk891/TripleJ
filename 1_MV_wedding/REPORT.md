@@ -4340,3 +4340,9 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - `_gemini_parts_to_claude_content` 가 declared mime 대신 sniffed mime 사용.
 - 적용: `character_generator.py` scp → uvicorn reload 자동 → health 200 OK.
 - 이제 캐릭터 시트 다시 시도 가능.
+
+### v52.2 — 2026-06-06 — temperature kwarg 제거
+- 사용자 보고: `Claude text API error (HTTP 400) — "temperature is deprecated for this model."`
+- 수정: `client.messages.create` 의 `temperature=0.7` 인자 제거. 다른 옵션 그대로.
+- `_call_gemini_text` 의 generationConfig 안 `temperature: 0.7` 은 별개 (Gemini 백업 함수).
+- 적용: `character_generator.py` scp → reload → health 200. 커밋 `a7879d3`.
