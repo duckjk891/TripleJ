@@ -146,9 +146,18 @@ const TONE_OPTIONS = [
   '엄숙 · 격식 + 진중',
 ];
 
-const GENRE_OPTIONS = ['발라드', '팝', 'R&B', '포크', '어쿠스틱', '일렉트로닉'];
+// v48 — 2_housing 의 음악 옵션 union (장르에 사운드 스타일 포함, 중복 제거).
+const GENRE_OPTIONS = [
+  '발라드', '팝', 'R&B', '포크', '어쿠스틱', '일렉트로닉',
+  'K-Pop', '힙합', 'EDM', '록', '재즈', '클래식', '인디', '시티팝', '인디팝', '댄스', '트로트', 'BGM',
+  '피아노 발라드', '밴드 사운드', '오케스트라', '로파이', '레트로', '트로피컬',
+];
 
-const MOOD_OPTIONS = ['따뜻한', '잔잔한', '벅찬', '희망찬', '그리운', '경쾌한'];
+// v48 — 2_housing 분위기 union (몽환적/어두운/슬픈 제외 — wedding 맥락 부적합).
+const MOOD_OPTIONS = [
+  '따뜻한', '잔잔한', '벅찬', '희망찬', '그리운', '경쾌한',
+  '로맨틱', '감성적', '밝은', '에너지틱', '흥겨운',
+];
 
 const VOCAL_STYLE_OPTIONS = [
   { value: 'female_warm', label: '여성 · 따뜻한' },
@@ -400,13 +409,15 @@ export default function StoryWizardPage() {
 
   // v35 — GenerationStatus 의 [← 이전 (수정)] 에서 넘긴 resume_job_id 가 있으면
   // wizard state 에 박아 다음 [생성] 클릭이 regenerate 가 되게.
+  // v38 — 또한 마지막 단계(=음악, step 5)로 점프해서 사용자가 처음부터 다시 클릭할 필요 없게.
   useEffect(() => {
     const resumeJobId = location.state?.resume_job_id;
     if (resumeJobId && !data.current_job_id) {
       if (import.meta.env.DEV) {
-        console.info('[StoryWizard] resume_job_id received', { job_id: resumeJobId });
+        console.info('[StoryWizard] resume_job_id received → jump to last step', { job_id: resumeJobId });
       }
       setData((d) => ({ ...d, current_job_id: resumeJobId }));
+      setStep(STEPS.length); // 마지막 단계로 점프
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state?.resume_job_id]);

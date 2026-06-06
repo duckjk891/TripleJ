@@ -6009,3 +6009,42 @@ calculate_video_start_offset:
 - 4K 가 audio 옵션과 결합 제약 (가격표는 "with audio" / "no audio" 만 있음. **"with video" 컬럼이 없음** → 4K 모드는 video input 불가 가능성). 우리는 image-only 입력 + `sound: "off"` → 호환 가정.
 - 4K 호출 시 credit 비용 약 **3× pro** (`0.84` vs `pro 1.0` resource units per sec) → 비용 증가 사용자 인지 필요. UI 노출은 별도 작업.
 - Phase 4 ffmpeg reencode 해상도는 그대로 (4K input → 4K output, v44 적용된 -crf 18 / preset medium 로 더 큰 파일 크기 + 느린 인코딩 예상).
+
+
+---
+
+### v48 — 2026-06-06 — 사용자 요청 (원문)
+"음악생성하는 장르나 분위기를 2_housing 에 있는 음악생성 장르, 분위기 모두 반영해줄 수 있어?" → 후속: "장르에 사운드 스타일을 포함해주면 좋겠는데. 중복되는거 제거하고" + "모두 한국어로" + "웨딩이니까 몽환적, 어두운, 슬픈은 빼자. 가요 → K-Pop 으로 표현"
+
+### v48 — 소스 분석
+- **2_housing/screens/ComposerInputScreen.tsx:35,39,43** — 채팅형 5-step 입력 (장르 10 / 분위기 8 / 보컬 5 / free text 2)
+- **2_housing/screens/LyricsInputScreen.tsx:46** — "사운드 스타일" 8개 (밴드 사운드 포함)
+- **2_housing/services/musicService.ts** — 한→영 hard-coded 매핑 (GENRE_EN 17, MOOD_EN 8, STYLE_EN 8, VOCAL_KEY_MAP)
+- **1_MV_wedding/frontend/src/pages/StoryWizardPage.jsx:149,151** — 현재 GENRE_OPTIONS 6 / MOOD_OPTIONS 6
+- **1_MV_wedding/backend_8000/app/services/suno_generator.py:46** — `translate_ko_to_en` 으로 Claude Opus 자동 번역 (hard-coded 매핑 X) → **backend 변경 불필요**
+
+### v48 — 결정 (사용자 컨펌)
+Sync 방향: 2_housing 의 풀 옵션을 source 로, 1_MV_wedding 으로 union + 중복 제거 + 한국어 통일 (단 K-Pop 은 표기 유지) + wedding 맥락에 안 맞는 분위기 (몽환적/어두운/슬픈) 제외.
+
+**GENRE_OPTIONS 최종 (24개)**:
+```
+발라드, 팝, R&B, 포크, 어쿠스틱, 일렉트로닉,                              ← wedding 기존 6
+K-Pop, 힙합, EDM, 록, 재즈, 클래식, 인디, 시티팝, 인디팝, 댄스, 트로트, BGM,  ← 일반 장르 12
+피아노 발라드, 밴드 사운드, 오케스트라, 로파이, 레트로, 트로피컬               ← 사운드 스타일 6
+```
+
+**MOOD_OPTIONS 최종 (11개)**:
+```
+따뜻한, 잔잔한, 벅찬, 희망찬, 그리운, 경쾌한,        ← wedding 기존 6
+로맨틱, 감성적, 밝은, 에너지틱, 흥겨운               ← 추가 5
+```
+(2_housing 의 몽환적/어두운/슬픈 제외 — wedding 맥락 부적합)
+
+### v48 — 적용
+- 변경 위치: `1_MV_wedding/frontend/src/pages/StoryWizardPage.jsx:149,151` (3줄)
+- backend: 변경 없음 (`suno_generator.py` 의 Claude 자동 번역이 신규 한국어 옵션도 자동 처리)
+- 배포: frontend commit + push만. backend reload 불필요.
+
+### v48 — 위험
+- 신규 옵션 중 일부 (트로트, 트로피컬, BGM 등) 가 wedding 사용자에게 어색할 수 있으나 사용자 명시 요청대로 "모두 반영" 유지. 추후 사용자가 빼고 싶은 게 보이면 그 때 제거.
+- Suno V5 가 "BGM" / "밴드 사운드" 같은 새 태그를 받았을 때 영문 번역 ("Ambient BGM" / "Band Sound") 이 자연스러운지는 Claude Opus 가 처리. 만약 어색하면 backend 에 explicit 매핑 추가 (v49) 후속 검토.
