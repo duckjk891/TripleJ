@@ -1078,6 +1078,15 @@
   font-size: 12px;
 }
 
+/* v51 — 씬 카드 영상 영역 내 다운로드 버튼 row (이미지/영상 가로 정렬). */
+.pre-mv-live-scene-card__dl-row {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .pre-mv-live-scene-card__msg {
   display: flex;
   flex-direction: column;

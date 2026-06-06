@@ -402,6 +402,12 @@ export const preMVSceneVideoUrl = (id, sceneNumber) => {
 export const downloadPreMVSceneVideo = (id, sceneNumber) =>
   preMVSceneVideoUrl(id, sceneNumber);
 
+// v51 — 씬 이미지 다운로드 URL. preMVSceneImageUrl + &download=1.
+// 백엔드가 download=true 일 때 Content-Disposition: attachment; filename="{NN}_{slot}_{seq}.png"
+// 헤더 부여 (확장자만 mp4 → png).
+export const downloadPreMVSceneImage = (id, sceneNumber) =>
+  `${preMVSceneImageUrl(id, sceneNumber)}&download=1`;
+
 // v24.2 — 일괄 ZIP 다운로드. sceneNumbers=null/[] → 완료된 전체.
 // response.data 는 Blob — 호출처에서 createObjectURL + anchor click 으로 트리거.
 export const downloadPreMVScenesZip = (id, sceneNumbers = null) =>

@@ -6165,3 +6165,38 @@ K-Pop, 힙합, EDM, 록, 재즈, 클래식, 인디, 시티팝, 인디팝, 댄스
 ### v50 — 위험
 - realistic prompt 결과가 너무 거칠거나 정체성이 안 맞으면 추가 튜닝 필요 (예: skin 항목만 변경).
 - AI 모델 (Gemini text + GPT Image 2 / NanoBanana Pro) 마다 instruction following 강도 다름 → realistic override 가 무시될 가능성 있음. 그러면 Step B 의 image prompt 자체도 강화 필요 (v50.1).
+
+
+---
+
+### v51 — 2026-06-06 — 사용자 요청 (원문)
+"생성된 영상에서 이미지를 바탕으로 생성하기 때문에 각 씬별로 영상만 다운받게 하는게 아니라 이미지 다운, 영상 다운버튼으로 버튼 2개가 있었으면 좋겠어."
+
+### v51 — 진단
+- 현재 비디오는 backend `GET /jobs/{id}/scenes/{n}/video` 가 항상 `Content-Disposition: attachment` 응답 → frontend `<a href download>` 자동 다운 작동 (line 3460).
+- 이미지는 backend `GET /jobs/{id}/scenes/{n}/image` 가 inline stream → `<a download>` 가 cross-origin attribute 무시되어 다운로드 안 됨.
+- frontend (`PreCeremonyMVPanel.jsx:2540~`) 에 영상 다운로드 버튼만 있고 이미지 다운로드 버튼 없음.
+
+### v51 — 결정
+1. **Backend** `get_scene_image` 에 `download: bool = False` query param 추가:
+   - True 면 `Content-Disposition: attachment; filename="NN_slot_x.png"` (영상과 동일 `_compute_scene_filename` 사용, 확장자만 `.mp4` → `.png` swap).
+2. **Frontend** `api/index.js` 에 신규 helper `downloadPreMVSceneImage(id, n)`:
+   - `preMVSceneImageUrl(id, n)` + `&download=1` 형태.
+3. **Frontend** `PreCeremonyMVPanel.jsx`:
+   - `imageReady` 조건일 때 `imageDownloadHref` 변수 추가.
+   - 이미지 영역 아래에 `⬇ 이미지` 버튼 추가 (비디오의 `⬇ 다운로드` 버튼과 동일 CSS class 사용).
+   - 비디오 다운로드 버튼은 그대로. 버튼 텍스트는 `⬇ 영상` 으로 명확화.
+
+### v51 — 사용자 가시성
+- **씬 이미지가 준비되면**: 이미지 영역 아래 `⬇ 이미지` 버튼.
+- **씬 영상 완료되면**: 영상 영역 아래 `⬇ 영상` 버튼.
+- 영상 완료 단계엔 자연스럽게 두 버튼 모두 보임 (씬 카드 2영역 각자 자신의 다운 버튼).
+
+### v51 — 변경 파일
+- `backend_8000/app/routes/pre_mv.py` (한 함수 + Content-Disposition)
+- `frontend/src/api/index.js` (helper 한 줄)
+- `frontend/src/components/PreCeremonyMVPanel.jsx` (이미지 영역 download 버튼 + 비디오 버튼 라벨 명확화)
+
+### v51 — 배포
+- backend SSH scp + StatReload (active task 0, sunoapi polling 없음 사전 확인 완료)
+- frontend commit + push → Vite hot-reload 자동

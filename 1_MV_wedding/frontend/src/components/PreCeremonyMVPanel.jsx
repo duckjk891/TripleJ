@@ -2544,6 +2544,10 @@ function LiveSceneCard({
   const downloadHref = preMVJobId && isCompleted
     ? api.downloadPreMVSceneVideo(preMVJobId, scene.scene_number)
     : null;
+  // v51 — 씬 이미지 다운로드 (이미지가 준비되면 비디오 완료 전이라도 가능).
+  const imageDownloadHref = preMVJobId && imageReady
+    ? api.downloadPreMVSceneImage(preMVJobId, scene.scene_number)
+    : null;
 
   const onRetry = async () => {
     if (retryBusy || !onRegenerate) return;
@@ -2613,15 +2617,28 @@ function LiveSceneCard({
               width={200}
               height={113}
             />
-            {downloadHref && (
-              <a
-                className="btn-ghost pre-mv-live-scene-card__dl"
-                href={downloadHref}
-                download={filename}
-                title={`${filename} 다운로드`}
-              >
-                ⬇ 다운로드
-              </a>
+            {(imageDownloadHref || downloadHref) && (
+              <div className="pre-mv-live-scene-card__dl-row">
+                {imageDownloadHref && (
+                  <a
+                    className="btn-ghost pre-mv-live-scene-card__dl"
+                    href={imageDownloadHref}
+                    title={`씬 ${scene.scene_number} 이미지 다운로드`}
+                  >
+                    ⬇ 이미지
+                  </a>
+                )}
+                {downloadHref && (
+                  <a
+                    className="btn-ghost pre-mv-live-scene-card__dl"
+                    href={downloadHref}
+                    download={filename}
+                    title={`${filename} 다운로드`}
+                  >
+                    ⬇ 영상
+                  </a>
+                )}
+              </div>
             )}
           </>
         )}

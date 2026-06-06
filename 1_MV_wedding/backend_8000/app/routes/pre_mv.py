@@ -1988,6 +1988,7 @@ async def regenerate_chapter_images(
 async def get_scene_image(
     pre_mv_job_id: str,
     scene_number: int,
+    download: bool = False,  # v51 — True 면 attachment 로 응답 (다운로드 버튼용)
     current_user=Depends(get_current_user),
 ):
     user_id = current_user.get("id") if isinstance(current_user, dict) else None
@@ -2032,12 +2033,21 @@ async def get_scene_image(
         )
 
     media_type = mimetypes.guess_type(object_name)[0] or "image/png"
+    headers: dict[str, str] = {}
+    if download:
+        # v51 — 영상 파일명과 동일 패턴 + .png 확장자.
+        video_name = _compute_scene_filename(scenes, scene_number - 1)
+        if video_name.lower().endswith(".mp4"):
+            image_name = video_name[:-4] + ".png"
+        else:
+            image_name = video_name + ".png"
+        headers["Content-Disposition"] = 'attachment; filename="{}"'.format(image_name)
     logger.info(
         "[PreMVRoute] phase=phase2 image ok user_id=%s pre_mv_job_id=%s "
-        "scene_number=%d bytes=%d",
-        user_id, pre_mv_job_id, scene_number, len(data or b""),
+        "scene_number=%d bytes=%d download=%s",
+        user_id, pre_mv_job_id, scene_number, len(data or b""), download,
     )
-    return Response(content=data, media_type=media_type)
+    return Response(content=data, media_type=media_type, headers=headers)
 
 
 # ──────────────────────────────────────────────────────────────────────────
