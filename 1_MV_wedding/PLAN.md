@@ -6333,3 +6333,8 @@ async def _call_claude_text(
 ### v54.2 — 편집 모드 UI 버그 2개 fix
 1) 편집 모드 진입 후에도 외부 read-only event cards list 가 안 사라짐 → `!editing && ...` 가드 추가.
 2) 저장 후 부모 폴링이 다음 tick 까지 stale data 보여줘 사용자가 "저장 안 됨" 으로 인식 → PATCH 응답 데이터를 `localScenario` state 에 즉시 캐시 + props 가 따라잡으면 자동 해제.
+
+### v54.3 — Phase 1 splitter max_tokens cap 12000 → 16000
+- 사용자 보고: 챕터 안 씬 description 이 모두 동일 (event.summary 복붙).
+- log 확인: Claude opus 4.7 응답이 max_tokens=12000 에 막혀 JSONDecodeError → fallback (event.summary 복붙) 진입.
+- 수정: `_max_tokens_for_scene_split` base 7000 / per_scene 700 / cap 16000 으로 상향.

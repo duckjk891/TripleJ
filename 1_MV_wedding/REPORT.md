@@ -4406,3 +4406,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - 외부 cards `ol` 에 `!editing` 가드 추가 → 편집 시 깔끔히 전환.
 - `localScenario` state 도입. 저장 응답을 캐시해 즉시 반영. 부모 props 가 추후 같은 값으로 갱신되면 useEffect 가 local 을 해제.
 - frontend only. Vite hot-reload.
+
+### v54.3 — 2026-06-06 — Phase 1 splitter max_tokens 상향
+- 12000 → 16000 cap. 21 씬 출력에 마진 확보.
+- 사용자가 다음 "씬 다시 분할" 누르면 fallback 안 떨어지고 정상 splitter 결과 (씬별 다양한 description/prompt) 반영 예상.
+- 사전 안전 점검: pre_mv active = 0. scp → reload → health 200.
