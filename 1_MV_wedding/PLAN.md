@@ -6363,3 +6363,8 @@ async def _call_claude_text(
 - v54.6 의 face-only 프롬프트 강화가 오히려 모델 혼란 → 옷도 너무 매칭하는 부작용.
 - 사용자 요청대로 face-only 안내문을 v54.5 이전 (= 짧고 명확한 원형) 으로 되돌림.
 - v54.6 의 fallback 단순화 (`_resolve_first_sheet_for_role`) 는 유지.
+
+### v54.8 — prev_scene 가이드에 `outfit` 한 단어 추가
+- 같은 챕터 내에서 옷이 씬마다 달라지는 버그.
+- 원인: PREV_SCENE_BLOCK_PRESENT 가 props (coffee cup/chair/umbrella) 만 명시하고 outfit 빠짐.
+- 수정: "Maintain the EXACT same **character outfit**, coffee cup, chair, ..." 로 outfit 추가. 다른 룰은 손대지 않음.

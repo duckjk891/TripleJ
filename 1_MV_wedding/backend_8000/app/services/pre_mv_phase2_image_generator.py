@@ -57,10 +57,12 @@ _MAX_REFS = 4
 
 
 # v24 — 이전 씬 이미지 가이드 (chapter 내 연쇄 carry).
+# v54.8 — `outfit` 한 단어 추가. 같은 챕터 안에서 캐릭터 옷이 씬마다 달라지는
+# 케이스 신고됨 (default 시트 face-only fallback 시점).
 PREV_SCENE_BLOCK_PRESENT = (
     "If a previous-scene reference image is provided, treat it as the same "
-    "world/lighting/props/camera-style context. Maintain the EXACT same coffee cup, "
-    "chair, umbrella, etc. across scenes."
+    "world/lighting/props/camera-style context. Maintain the EXACT same character "
+    "outfit, coffee cup, chair, umbrella, etc. across scenes."
 )
 
 

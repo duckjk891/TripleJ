@@ -4435,3 +4435,7 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - SCENE_IMAGE_SYSTEM_PROMPT 의 [face-only] 안내를 v54.5 이전으로 환원. 짧고 명확.
 - fallback 단순화는 그대로 유지.
 - scp → reload → health 200.
+
+### v54.8 — 2026-06-06 — chapter 내 outfit carry
+- PREV_SCENE_BLOCK_PRESENT 에 `character outfit` 한 단어 추가. 그 외 텍스트 그대로.
+- scp → reload → health 200.
