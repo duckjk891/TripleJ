@@ -6329,3 +6329,7 @@ async def _call_claude_text(
 - 사용자가 화면에서 본 것은 scenario_text 본문이 아니라 scenario_events 의 카드별 summary. 그것을 직접 편집할 수 있게 함.
 - 편집 모드 진입 시 본문 textarea + 각 event card 의 summary textarea 동시 노출. 저장 시 둘 다 PATCH 로 보냄.
 - backend phase 0 status 가드 완화: phase1~4 / completed 도 force=true 면 재실행 허용.
+
+### v54.2 — 편집 모드 UI 버그 2개 fix
+1) 편집 모드 진입 후에도 외부 read-only event cards list 가 안 사라짐 → `!editing && ...` 가드 추가.
+2) 저장 후 부모 폴링이 다음 tick 까지 stale data 보여줘 사용자가 "저장 안 됨" 으로 인식 → PATCH 응답 데이터를 `localScenario` state 에 즉시 캐시 + props 가 따라잡으면 자동 해제.

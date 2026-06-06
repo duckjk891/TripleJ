@@ -4401,3 +4401,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - `PreMVScenarioStep` 편집 모드에 각 event summary textarea 추가, 저장 시 `patchPreMVScenario` 가 scenario_text + scenario_events 같이 보냄. backend 는 이미 둘 다 받음 (v54 PatchScenarioBody).
 - backend phase 0 endpoint 의 status allowed set 에 phase1_* / phase2_* / phase3_* / phase4_* / completed 추가. force=true 가드는 그대로.
 - backend scp → reload → health 200. frontend Vite hot-reload.
+
+### v54.2 — 2026-06-06 — 편집 모드 표시 + 저장 즉시 반영
+- 외부 cards `ol` 에 `!editing` 가드 추가 → 편집 시 깔끔히 전환.
+- `localScenario` state 도입. 저장 응답을 캐시해 즉시 반영. 부모 props 가 추후 같은 값으로 갱신되면 useEffect 가 local 을 해제.
+- frontend only. Vite hot-reload.

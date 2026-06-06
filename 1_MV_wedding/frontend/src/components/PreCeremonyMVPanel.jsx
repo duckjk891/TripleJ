@@ -1198,10 +1198,24 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
   const canStart = (status === 'draft' || status === 'phase0_failed') && !isRunning && !disabled;
   const canRerun = isReady && !isRunning && !disabled;
 
-  const scenarioText = preMVJob?.scenario_text || '';
-  const scenarioEvents = Array.isArray(preMVJob?.scenario_events)
+  const rawScenarioText = preMVJob?.scenario_text || '';
+  const rawScenarioEvents = Array.isArray(preMVJob?.scenario_events)
     ? preMVJob.scenario_events
     : [];
+  // v54.2 — 저장 직후 부모 폴링이 잡기 전까지 stale 데이터가 보이는 문제 fix.
+  // PATCH 응답을 local state 에 캐시해 우선 표시. 부모 props 가 그 값과
+  // 같아지면 (폴링이 따라잡으면) local override 를 자동 해제.
+  const [localScenario, setLocalScenario] = useState(null);
+  useEffect(() => {
+    if (!localScenario) return;
+    const sameText = (rawScenarioText || '') === (localScenario.text || '');
+    const sameEventsLen = rawScenarioEvents.length === (localScenario.events?.length || 0);
+    if (sameText && sameEventsLen) {
+      setLocalScenario(null);
+    }
+  }, [rawScenarioText, rawScenarioEvents, localScenario]);
+  const scenarioText = localScenario?.text ?? rawScenarioText;
+  const scenarioEvents = localScenario?.events ?? rawScenarioEvents;
 
   return (
     <div className={`pre-mv-step ${disabled ? 'is-disabled' : ''}`}>
@@ -1392,9 +1406,14 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
                     setSaveErr('');
                     setSaving(true);
                     try {
-                      await api.patchPreMVScenario(preMVJobId, {
+                      const { data: resp } = await api.patchPreMVScenario(preMVJobId, {
                         scenario_text: trimmed,
                         scenario_events: eventsPayload,
+                      });
+                      // v54.2 — 폴링 따라잡기 전까지 응답 데이터를 즉시 반영.
+                      setLocalScenario({
+                        text: resp?.scenario_text ?? trimmed,
+                        events: Array.isArray(resp?.scenario_events) ? resp.scenario_events : eventsPayload,
                       });
                       setEditing(false);
                     } catch (err) {
@@ -1428,7 +1447,8 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
             </div>
           )}
 
-          {scenarioEvents.length > 0 && (
+          {/* v54.2 — 편집 모드에서는 외부 read-only 카드 list 숨김 (편집 모드 안 카드 textarea 와 중복). */}
+          {!editing && scenarioEvents.length > 0 && (
             <ol className="pre-mv-scenario__events" aria-label="시점별 키 사건">
               {scenarioEvents.map((ev, idx) => {
                 const slotLabel = SLOT_LABEL_KO[ev?.story_slot] || ev?.story_slot || '?';
