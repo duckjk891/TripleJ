@@ -733,11 +733,11 @@ async def _call_claude_text(
     start = time.monotonic()
     try:
         client = _get_claude_text_client()
+        # v52.2 — Claude Opus 4.7 는 `temperature` deprecated. 인자에서 제거.
         msg = await client.messages.create(
             model=_CLAUDE_TEXT_MODEL,
             max_tokens=8192,
             system=CHARACTER_SYSTEM_INSTRUCTION,
-            temperature=0.7,
             messages=[{"role": "user", "content": content}],
         )
     except anthropic.APIStatusError as e:
