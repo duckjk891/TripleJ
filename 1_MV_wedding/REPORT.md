@@ -4372,3 +4372,15 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - `CharacterSheetPanel.jsx` refine 폴링 done 분기에 `handleSaveRef.current(objectName)` 한 번 호출 추가 (confirm 없이 즉시 덮어쓰기).
 - Vite hot-reload 로 즉시 반영. backend 변경 없음.
 - 다음 refine 부터 wedding_character_sheets 의 permanent slot + wedding_assets (display_name 포함) 모두 자동 갱신.
+
+---
+
+### v53.4 — 2026-06-06 — 빈 draft wipe 가드 + bride_wedding refine
+- `StoryWizardPage.jsx` 의 debounce save 흐름에 두 가드:
+  - `backendDraftReadyRef` — backend fetch / newMode delete 완료 전 save 차단.
+  - emptiness check — 모든 의미 있는 필드 비어있으면 save skip (기존 draft 보존).
+- 이번 mv_job 6a23faa7 (bride_wedding) 처리:
+  - display_name → `예복 신부` (mongo 양쪽).
+  - 캐릭터 시트 `신부 머리스타일` refine 완료, permanent sheet 덮어쓰기 (5.3MB → 5.1MB).
+  - Phase 2 fetch path = mongo wedding_character_sheets 직접 → 캐싱 없음 → 자동 반영.
+- backend 변경 없음 (refine 완료 후 reload 위험 피함).

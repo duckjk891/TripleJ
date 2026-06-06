@@ -427,6 +427,9 @@ export default function StoryWizardPage() {
   // v33 — 마운트 시 1회: ?new=1 이면 backend draft 도 삭제. 그 외엔
   // sessionStorage 비어있을 때만 backend draft fetch → 복원.
   const backendDraftLoadedRef = useRef(false);
+  // v53.4 — backend draft fetch (또는 newMode delete) 가 완료될 때까지는
+  // debounce save 가 빈 form 으로 backend draft 를 덮어쓰지 않도록 막는다.
+  const backendDraftReadyRef = useRef(false);
   useEffect(() => {
     if (backendDraftLoadedRef.current) return;
     backendDraftLoadedRef.current = true;
@@ -441,6 +444,7 @@ export default function StoryWizardPage() {
           // 없으면 200 이므로 사실상 실패할 일 적음. 로그만.
           console.error('[StoryWizard] deleteMyDraft failed', { err });
         }
+        backendDraftReadyRef.current = true; // v53.4 — newMode 처리 완료 → save 허용.
         return;
       }
       // sessionStorage 가 비어있을 때만 backend draft 시도 (outfit round-trip 보호)
@@ -502,18 +506,64 @@ export default function StoryWizardPage() {
         }
       } catch (err) {
         console.error('[StoryWizard] getMyDraft failed', { err });
+      } finally {
+        // v53.4 — fetch 결과와 상관없이 끝났음 → debounce save 허용.
+        backendDraftReadyRef.current = true;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // v33 — debounced backend save (1.5s). data/step 변경 시 백엔드에 upsert.
+  // v53.4 — 두 가드: (1) backend draft fetch 끝나기 전엔 save 안 함
+  //              (race condition 으로 빈 form 이 backend 의 가득찬 draft 덮어쓰는 사고 방지).
+  //         (2) payload 가 사실상 빈 form 이면 save 안 함
+  //              (= 사용자가 아무것도 안 적은 상태인데 굳이 PUT 으로 기존 draft 덮을 이유 없음).
   const backendSaveTimerRef = useRef(null);
   useEffect(() => {
     if (backendSaveTimerRef.current) clearTimeout(backendSaveTimerRef.current);
     backendSaveTimerRef.current = setTimeout(async () => {
+      if (!backendDraftReadyRef.current) {
+        if (import.meta.env.DEV) {
+          console.info('[StoryWizard] saveMyDraft skipped — backend draft not loaded yet');
+        }
+        return;
+      }
       try {
         const payload = { ...data, sheets: sanitizeSheetsForStorage(data.sheets) };
+        // v53.4 — emptiness check. 모든 의미 있는 필드가 비어있고 jobId 도 없으면
+        // 사용자가 아무것도 안 적은 상태. backend draft 가 가득 차있을 수 있으니
+        // 그것을 빈 값으로 덮어쓰지 않는다.
+        const story = payload.story || {};
+        const couple = payload.couple || {};
+        const vow = payload.vow || {};
+        const wc = payload.wedding_context || {};
+        const music = payload.music_spec || {};
+        const sheets = payload.sheets || {};
+        const hasSheet = Object.values(sheets).some((s) => s && s.face_object_name);
+        const hasMemories = Array.isArray(story.memories) && story.memories.some((m) => (m || '').trim());
+        const hasVowKw = Array.isArray(vow.keywords) && vow.keywords.length > 0;
+        const isEmpty =
+          !(couple.partner_a?.name || '').trim() &&
+          !(couple.partner_b?.name || '').trim() &&
+          !(story.meeting || '').trim() &&
+          !(story.first_date || '').trim() &&
+          !hasMemories &&
+          !(story.proposal || '').trim() &&
+          !(story.wedding_prep || '').trim() &&
+          !(story.rituals || '').trim() &&
+          !(vow.line || '').trim() &&
+          !hasVowKw &&
+          !(wc.tone || '').trim() &&
+          !(music.genre || '').trim() &&
+          !hasSheet &&
+          !payload.current_job_id;
+        if (isEmpty) {
+          if (import.meta.env.DEV) {
+            console.warn('[StoryWizard] saveMyDraft skipped — payload is empty', { step });
+          }
+          return;
+        }
         const title =
           (data.couple?.groom_name || data.couple?.bride_name)
             ? `${data.couple?.groom_name || ''} & ${data.couple?.bride_name || ''}`.trim().replace(/^&\s*|\s*&$/g, '')

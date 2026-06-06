@@ -6291,3 +6291,23 @@ async def _call_claude_text(
 - 사용자 보고: refine 결과가 permanent slot (`wedding_character_sheets`) 에 반영 안 됨 → 가사 생성 화면 등에서 이전 시트만 보임. 시트명 이상.
 - 원인: `CharacterSheetPanel.jsx` 의 refine 폴링 done 분기에 generate 처럼 `handleSaveRef.current(objectName)` 자동 호출이 빠져있었음. refine 결과는 wedding_sheet_jobs.sheet_object_name (temp) 에만 박힘.
 - 수정: refine done 시 — confirm 없이 즉시 auto-save (refine 은 이미 사용자가 명시적으로 요청한 흐름이라 generate 의 hasExistingSaved confirm 분기 불필요).
+
+---
+
+### v53.4 — 2026-06-06 — 데이터 보존 가드 (이전 이동 시 wipe 방지)
+사용자 보고: wizard 의 "이전" 으로 돌아가니 mv_drafts + mv_job 의 story / vow 가 빈 값으로 덮어써짐.
+
+원인: `StoryWizardPage.jsx` 의 debounce save (`useEffect [data, step]` → `PUT /mv/drafts/mine`) 가 두 가지 race condition 노출 —
+1. 마운트 후 backend draft fetch 가 완료되기 전에 어떤 state 변화로 PUT 발동 → 빈 form 이 backend 의 가득찬 draft 덮어씀.
+2. 사용자가 마지막 step 에서 이전 누르면 단계만 변경되는데, 그 사이 data 가 reset 시점에 있으면 빈 payload 가 그대로 PUT.
+
+수정 (frontend, backend 안 건드림):
+1. `backendDraftReadyRef` 추가. backend fetch (또는 newMode delete) 완료 전엔 save 자체 차단.
+2. 매 save 직전 emptiness check — 모든 의미 있는 필드 (couple 이름/story/memories/vow/wedding_context/music_spec/sheets/current_job_id) 가 모두 비어있으면 PUT skip.
+
+영향: 다음부터 같은 wipe 케이스 0. backend 변경은 다른 작업과 묶어서 별도 (PUT → 빈 string 으로 기존 값 안 덮어쓰는 merge 안전망).
+
+### v53.4 + 이번에 처리한 사용자 요청 (mv_job 6a23faa7)
+- bride_wedding display_name `''` → `예복 신부` (wedding_character_sheets + wedding_assets 둘 다)
+- bride_wedding 캐릭터 시트 "신부 머리스타일" 로 refine → permanent sheet (`characters/.../bride_wedding/sheet.png`) 덮어쓰기
+- Phase 2 가 mongo `wedding_character_sheets` 직접 fetch + 캐싱 X → 다음 Phase 2 호출 시 자동 반영
