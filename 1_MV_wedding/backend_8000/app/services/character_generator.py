@@ -18,6 +18,7 @@ import re
 import time
 from typing import Optional
 
+import anthropic
 import httpx
 
 from ..config import settings
@@ -643,6 +644,99 @@ def _trace_kv(
     return " ".join(parts)
 
 
+# v52 — Step A 용 Claude Opus 4.7 호출. Gemini 의존 제거 (Gemini quota 이슈 회피).
+# Gemini parts 형식 (`inlineData.mimeType/data`) 그대로 받아 내부에서
+# Claude content 형식 (`type=image, source.type=base64, media_type, data`) 으로 변환.
+# 기존 caller 는 import + 함수명만 바꾸면 동작.
+_CLAUDE_TEXT_MODEL = "claude-opus-4-7"
+_claude_text_client: Optional[anthropic.AsyncAnthropic] = None
+
+
+def _get_claude_text_client() -> anthropic.AsyncAnthropic:
+    global _claude_text_client
+    if _claude_text_client is None:
+        _claude_text_client = anthropic.AsyncAnthropic(
+            api_key=settings.anthropic_api_key
+        )
+    return _claude_text_client
+
+
+def _gemini_parts_to_claude_content(prompt: str, image_parts: list) -> list:
+    """Gemini inlineData parts → Claude messages content block. 이미지를 앞에 배치."""
+    content: list = []
+    for part in image_parts or []:
+        inline = part.get("inlineData") if isinstance(part, dict) else None
+        if not inline:
+            continue
+        media_type = inline.get("mimeType") or "image/jpeg"
+        data_b64 = inline.get("data") or ""
+        if not data_b64:
+            continue
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data_b64,
+            },
+        })
+    content.append({"type": "text", "text": prompt})
+    return content
+
+
+async def _call_claude_text(
+    prompt: str,
+    image_parts: list,
+    role: Optional[str] = None,
+    style: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Step A (v52): Claude Opus 4.7 로 캐릭터 시트 prompt 생성.
+
+    `_call_gemini_text` 와 시그니처 / 반환 형식 호환. 기존 caller 가
+    import 와 함수명만 바꾸면 그대로 동작한다.
+    """
+    trailer = _trace_kv(role, style, user_id)
+    content = _gemini_parts_to_claude_content(prompt, image_parts)
+    logger.info(
+        "[CharGen] Step A: calling Claude text model=%s (parts=%d) %s",
+        _CLAUDE_TEXT_MODEL, len(image_parts or []), trailer,
+    )
+    start = time.monotonic()
+    try:
+        client = _get_claude_text_client()
+        msg = await client.messages.create(
+            model=_CLAUDE_TEXT_MODEL,
+            max_tokens=8192,
+            system=CHARACTER_SYSTEM_INSTRUCTION,
+            temperature=0.7,
+            messages=[{"role": "user", "content": content}],
+        )
+    except anthropic.APIStatusError as e:
+        elapsed_s = time.monotonic() - start
+        logger.warning(
+            "[CharGen] Step A: Claude error status=%s elapsed_s=%.1f %s",
+            getattr(e, "status_code", "?"), elapsed_s, trailer,
+        )
+        raise ValueError(
+            "Claude text API error (HTTP {}): {}".format(
+                getattr(e, "status_code", "?"), str(e)[:300]
+            )
+        )
+    elapsed_s = time.monotonic() - start
+    logger.info(
+        "[CharGen] Step A: Claude text ok elapsed_s=%.1f %s", elapsed_s, trailer,
+    )
+
+    text_chunks = [
+        block.text for block in (msg.content or [])
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    ]
+    if not text_chunks:
+        raise ValueError("No text in Claude response")
+    return "".join(text_chunks)
+
+
 async def _call_gemini_text(
     prompt: str,
     image_parts: list,
@@ -650,7 +744,10 @@ async def _call_gemini_text(
     style: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Step A: Call Gemini text model to generate a character sheet prompt."""
+    """Step A: Call Gemini text model to generate a character sheet prompt.
+
+    v52: 백업으로 유지. 신규 호출은 `_call_claude_text` 사용.
+    """
     payload = {
         "systemInstruction": {
             "parts": [{"text": CHARACTER_SYSTEM_INSTRUCTION}]
@@ -936,7 +1033,8 @@ async def generate_character_sheet(
         + master
     )
 
-    sheet_prompt_text = await _call_gemini_text(
+    # v52 — Step A: Claude Opus 4.7 (Gemini quota 이슈 회피).
+    sheet_prompt_text = await _call_claude_text(
         step_a_prompt, image_parts, role=role, style=style, user_id=user_id
     )
     sheet_prompt_text = _extract_code_block(sheet_prompt_text)

@@ -6200,3 +6200,51 @@ K-Pop, 힙합, EDM, 록, 재즈, 클래식, 인디, 시티팝, 인디팝, 댄스
 ### v51 — 배포
 - backend SSH scp + StatReload (active task 0, sunoapi polling 없음 사전 확인 완료)
 - frontend commit + push → Vite hot-reload 자동
+
+
+---
+
+### v52 — 2026-06-06 — 사용자 요청 (원문)
+"스텝 A를 재미나이 말고 클로드로 사용하게 바꾸고 싶은데"
+
+### v52 — 진단
+- `character_generator.py:646` 의 `_call_gemini_text` (Gemini 2.5 Flash text) 가 Step A — 사진/텍스트 분석해서 캐릭터 시트 prompt 생성.
+- 호출처 (4곳):
+  1. `character_generator.py:939` (캐릭터 시트)
+  2. `pre_mv_phase2_image_generator.py:534` (Phase 2 씬 이미지)
+  3. `wedding_photo_generator.py:207` (웨딩 사진)
+  4. `extra_scene_image_generator.py:467` (추가 씬 이미지)
+- 사용자 GPT 모드여도 Step A 가 항상 Gemini → Gemini credit 소진되면 모든 image-gen 흐름 막힘 (`429 RESOURCE_EXHAUSTED`).
+
+### v52 — 결정
+- 신규 `_call_claude_text` 헬퍼 (Claude Opus 4.7) 도입. Anthropic SDK 사용 (이미 settings.anthropic_api_key + translation.py 에서 사용 중).
+- 기존 `_call_gemini_text` **백업 유지** (롤백 가능). 단 4개 caller 모두 `_call_claude_text` 로 swap.
+- multimodal: Gemini parts 형식 (`inlineData.mimeType/data`) 을 함수 내부에서 Claude content 형식 (`type=image, source.type=base64, media_type, data`) 으로 변환 → caller 변경 최소화 (import + 함수명만).
+
+### v52 — 신규 헬퍼 시그니처 (호환)
+```python
+async def _call_claude_text(
+    prompt: str,
+    image_parts: list,           # Gemini inlineData 형식 그대로 받음
+    role: Optional[str] = None,
+    style: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    # 내부에서 Claude content 로 변환 + claude-opus-4-7 호출
+```
+
+### v52 — 변경 파일
+- `backend_8000/app/services/character_generator.py` (신규 `_call_claude_text` + caller 1곳 swap)
+- `backend_8000/app/services/pre_mv_phase2_image_generator.py` (import + 호출 swap)
+- `backend_8000/app/services/wedding_photo_generator.py` (import + 호출 swap)
+- `backend_8000/app/services/extra_scene_image_generator.py` (import + 호출 swap)
+
+### v52 — 영향
+- 다음 호출부터 Gemini text 의존 0 (image_model 무관). `429 RESOURCE_EXHAUSTED` 같은 Gemini quota 이슈가 image-gen 흐름을 막지 않음.
+- Step B (이미지 생성) 는 그대로 — GPT Image 2 / NanoBanana Pro 선택은 영향 X.
+- 비용: Gemini Flash (싸다) → Claude Opus 4.7 (좀 더 비쌈). 사용자 인지 필요.
+- prompt 톤이 변할 수 있음. 캐릭터 시트 / Phase 2 이미지 결과 비교 검증 권장.
+
+### v52 — 위험
+- Claude Opus 4.7 의 multimodal 응답이 Gemini 와 다른 표현/길이 → 결과 미세 다름.
+- 실패하면 `_call_gemini_text` 백업으로 즉시 롤백 가능 (import 1줄 + 호출 4곳 revert).

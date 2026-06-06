@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Optional
 
-from .character_generator import _call_gemini_image, _call_gemini_text
+from .character_generator import _call_claude_text, _call_gemini_image  # v52 — Step A → Claude
 from .openai_image import generate_image as openai_generate_image
 
 logger = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ async def generate_wedding_photo(
         mv_job_id, photo_id, mode, len(step_a_prompt), len(step_a_image_parts),
     )
 
-    step_a_text = await _call_gemini_text(
+    step_a_text = await _call_claude_text(  # v52 — Step A → Claude
         step_a_prompt, step_a_image_parts,
         role=None, style=None, user_id=user_id,
     )
