@@ -381,6 +381,56 @@ Bracelet:
 -"""
 
 
+# ── v50 — REALISTIC variant (백업: 기본은 MASTER_PROMPT 그대로) ─────────────
+# prompt_variant="realistic" 일 때 MASTER_PROMPT 끝에 append 되는 override block.
+# AI 의 디폴트 idealization (대칭 미화, 매끄러운 피부, 모델급 비율) 거부.
+REALISTIC_OVERRIDE_BLOCK = r"""
+
+==================================================
+★★★ [v50 REALISTIC OVERRIDE — 우선순위 최고] ★★★
+==================================================
+
+이 시트는 미화·이상화 없이 사진 속 실제 사람의 외모를 그대로 표현해야 한다.
+다음 규칙은 위의 모든 STEP 보다 우선 적용한다:
+
+1. AI 의 디폴트 idealization 거부:
+   - 대칭 보정 금지, 매끄러운 피부 미화 금지, 큰 눈·작은 얼굴 보정 금지
+   - 어깨/허리/다리 비율 미화 금지 (모래시계 체형 강제 금지)
+   - 모델급 sharp jawline / V-line / 8등신 보정 금지
+
+2. 사진 속 실제 특징 그대로 살림:
+   - 비대칭 (눈/입꼬리/귀 높이 등) 그대로 반영
+   - 피부 결: 자연스러운 모공·미세 트러블·홍조 가능, 매끈한 retouch 금지
+   - 일반인 비율 (어깨 폭, 허리/엉덩이 비율, 다리 길이) 사진 그대로
+   - 얼굴 형태(이마/광대/턱) 사진 그대로 — 표준화·세련화 금지
+
+3. 항목별 강조:
+   - [Face > Skin]: 자연스러운 피부결 (모공 보임, 균일하지 않은 톤 OK)
+   - [Face > Eyes/Nose/Lips]: 사진 속 실제 형태 정확 반영
+   - [Face > Shape/Jaw/Chin]: 광대/턱 라인 사진 그대로 — 깎거나 다듬지 X
+   - [Body > Build/Proportion/Shoulder/Waist/Hip]: 사진 비율 그대로
+   - [Makeup]: 사진 속 메이크업 그대로. 추가 미화 메이크업 금지.
+
+4. 출력 톤:
+   - 결과 이미지는 documentary candid photo 느낌이어야 함
+   - 잡지 화보·스튜디오 광택 느낌 = 실패
+   - 모델·연예인 같은 인상 = 실패
+   - 길에서 마주칠 만한 일반인의 신뢰감 있는 정직한 사진 = 성공
+
+5. [Final Constraint] 갱신:
+   - 이상화·연예인화·모델화 → 실패
+   - 사진 인물과 다른 "더 예쁜·잘생긴" 결과 → 실패
+   - 사진 인물 그대로 (혹은 사진보다 살짝 평범한 인상) → 성공
+"""
+
+# v50 — STEP 1 answer 끝에 붙는 사진 분석 강화 안내 (realistic variant only).
+_REALISTIC_STEP1_SUFFIX = (
+    " ★★ v50 realistic: 사진 분석 시 미화·이상화 없이 인물의 실제 외모를 그대로 반영하라. "
+    "비대칭, 잡티, 모공, 일반인 비율 등 사진의 정직한 정보를 모두 살려라. "
+    "사진 인물보다 \"더 예쁜/잘생긴\" 결과를 만들지 말 것."
+)
+
+
 # ── STEP 1 answers: 16 variations by user_text + outfit image attachment ───
 
 _USER_TEXT_SUFFIX = (
@@ -824,6 +874,7 @@ async def generate_character_sheet(
     role: Optional[str] = None,
     style: Optional[str] = None,
     user_id: Optional[str] = None,
+    prompt_variant: str = "default",  # v50 — "default" | "realistic"
 ) -> bytes:
     """Generate photorealistic character sheet from reference photo.
 
@@ -851,12 +902,16 @@ async def generate_character_sheet(
     # Replace {user_text} placeholder with actual user input
     if user_text:
         step1_answer = step1_answer.format(user_text=user_text)
+    # v50 — realistic variant: STEP 1 안내에 미화 거부 suffix 추가.
+    if prompt_variant == "realistic":
+        step1_answer = step1_answer + _REALISTIC_STEP1_SUFFIX
     logger.info(
-        "[CharGen] generate_character_sheet entry key=%s user_text=%s image_model=%s photo_bytes=%d %s",
+        "[CharGen] generate_character_sheet entry key=%s user_text=%s image_model=%s photo_bytes=%d prompt_variant=%s %s",
         key,
         bool(user_text),
         image_model,
         len(photo_bytes or b""),
+        prompt_variant,
         trailer,
     )
 
@@ -869,12 +924,16 @@ async def generate_character_sheet(
     )
 
     # ── Step A: Generate character sheet prompt via text model ──────────────
+    # v50 — realistic variant: MASTER_PROMPT 끝에 REALISTIC_OVERRIDE_BLOCK 붙임.
+    master = MASTER_PROMPT.format(step1_answer=step1_answer)
+    if prompt_variant == "realistic":
+        master = master + REALISTIC_OVERRIDE_BLOCK
     step_a_prompt = (
         "아래 마스터 프롬프트의 절차를 따라 캐릭터 시트 프롬프트를 생성하라.\n"
         "STEP 1, STEP 2에는 이미 사용자 답변이 포함되어 있으므로 "
         "질문 단계를 건너뛰고 바로 STEP 4부터 진행하여 "
         "최종 캐릭터 시트 프롬프트를 코드블록으로 출력하라.\n\n"
-        + MASTER_PROMPT.format(step1_answer=step1_answer)
+        + master
     )
 
     sheet_prompt_text = await _call_gemini_text(

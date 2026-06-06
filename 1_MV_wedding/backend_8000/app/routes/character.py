@@ -333,6 +333,7 @@ async def _run_sheet_generation(job_id: str) -> None:
             role=role_v,
             style=style_v,
             user_id=user_id,
+            prompt_variant=job.get("prompt_variant") or "default",  # v50
         )
         logger.info(
             "[SheetJob] generate done bytes=%d job_id=%s user_id=%s role=%s style=%s image_model=%s",
@@ -508,6 +509,7 @@ async def generate_sheet(
     image_model: str = Form("gpt_image_2"),
     role: str = Form(...),
     style: str = Form(...),
+    prompt_variant: str = Form("default"),  # v50 — "default" | "realistic"
     current_user=Depends(get_current_user),
 ):
     """Queue an async job to generate a character sheet PNG.
@@ -669,6 +671,8 @@ async def generate_sheet(
 
     mongo = get_mongo()
     now = datetime.now(timezone.utc)
+    # v50 — prompt_variant: "default" 면 기존 prompt 그대로 (백업), "realistic" 이면 미화 거부.
+    prompt_variant_v = "realistic" if (prompt_variant or "").strip().lower() == "realistic" else "default"
     job_doc = {
         "user_id": user_id,
         "type": "generate",
@@ -680,6 +684,7 @@ async def generate_sheet(
         "top_image_object_name": (top_image_object_name or "").strip(),
         "bottom_image_object_name": (bottom_image_object_name or "").strip(),
         "shoes_image_object_name": (shoes_image_object_name or "").strip(),
+        "prompt_variant": prompt_variant_v,  # v50
         "status": "queued",
         "progress": 0,
         "sheet_object_name": None,

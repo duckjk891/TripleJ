@@ -6122,3 +6122,46 @@ K-Pop, 힙합, EDM, 록, 재즈, 클래식, 인디, 시티팝, 인디팝, 댄스
 - "모든 섹션 4줄 고정" 은 Intro/Outro 가 음악적으로 길어질 수 있음 (기존 2~3줄 권장). 사용자 명시이므로 적용. 어색하면 v49.1 에서 조정.
 - 한국어 라벨 → 영문 변경이 phase4 자막/SRT 의 `_LEADING_SECTION_RE` 패턴 (`[Intro - 듀엣] 가사` 형태 추출) 에 영향. 정규식이 `[...]` generic 매칭이라 영문이든 한국어든 동작. `calculate_video_start_offset` 의 `label.lower() startswith 'intro'` 매칭도 영문 'Intro' 와 동일 작동 — 영향 없음.
 - backend repo 의 lyrics_generator.py staged 변경과 영역이 겹치는지 사전 확인 후 진행.
+
+
+---
+
+### v50 — 2026-06-06 — 사용자 요청 (원문)
+"지금 캐릭터 시트만드는 프롬프트가 미화가 많이 생겨서 최대한 현실적인 얼굴과 몸으로 캐릭터 시트를 만들고 싶은데 기존꺼는 백업용으로 그대로 남겨놓고 테스트 용으로 만들어볼래?"
+
+### v50 — 진단
+- `backend_8000/app/services/character_generator.py:41~381` 의 `MASTER_PROMPT` 가 Step 1~8 + CHARACTER SHEET TEMPLATE.
+- Step 2 의 Art Style 이 "Photorealistic" 으로 고정 + [Face/Body/Skin] 등 항목이 비어있어 AI 가 디폴트로 "모델급 이상화된 인물" 로 채움 → 미화 발생 원인.
+- 직접 문자열 ("beautiful" 등) 없음. 미화는 AI 의 **디폴트 idealization bias**.
+
+### v50 — 결정 (백업 + 토글 방식)
+1. 기존 `MASTER_PROMPT` / `STEP1_ANSWERS` 그대로 유지 (= 백업).
+2. 신규 `REALISTIC_OVERRIDE_BLOCK` 상수 추가 — AI 의 디폴트 미화 명시 거부.
+3. 신규 `_REALISTIC_STEP1_SUFFIX` 상수 — Step1 answer 끝에 붙이는 사진 분석 강화 안내.
+4. `generate_character_sheet` 에 `prompt_variant: str = "default"` 인자 추가:
+   - `"default"` → 기존과 동일 (백업)
+   - `"realistic"` → `MASTER_PROMPT` + `REALISTIC_OVERRIDE_BLOCK`, `STEP1_ANSWERS[k]` + `_REALISTIC_STEP1_SUFFIX`
+5. `routes/character.py:/sheets/generate` 에 `prompt_variant: str = Form("default")` 추가 → background job 에 박아서 service 호출 시 전달.
+6. **frontend UI 변경 일단 없음** — 사용자가 결과 비교 후 만족하면 토글 추가.
+
+### v50 — REALISTIC_OVERRIDE_BLOCK 핵심 지시 (계획)
+```
+[v50 REALISTIC OVERRIDE — 우선순위 최고]
+- 미화/이상화 절대 금지. AI 디폴트 idealization 거부.
+- 사진 속 인물의 비대칭, 잡티, 모공, 일반인 비율 그대로 살림.
+- [Face > Skin]: 자연스러운 결 (모공/미세 트러블 가능)
+- [Body > Build/Proportion]: 사진 비율 그대로 — 어깨/허리 미화 금지
+- [Face > Eyes/Nose/Lips]: 사진 속 실제 형태 정확 반영
+- 결과는 documentary candid photo 느낌. 스튜디오 광택 = 실패.
+- [Final Constraint]: 이상화·연예인화·모델화 = 실패.
+```
+
+### v50 — 적용
+- backend file: `app/services/character_generator.py` (Mac → scp → backend)
+- backend file: `app/routes/character.py` (한 줄: prompt_variant Form 추가 + job/_run_sheet_generation 전달)
+- backend reload: active task 0 확인됨 → scp 후 StatReload 자동
+- 사용자 테스트 방법: 캐릭터 시트 생성 호출 시 multipart form 에 `prompt_variant=realistic` 추가 (curl 또는 frontend devtools)
+
+### v50 — 위험
+- realistic prompt 결과가 너무 거칠거나 정체성이 안 맞으면 추가 튜닝 필요 (예: skin 항목만 변경).
+- AI 모델 (Gemini text + GPT Image 2 / NanoBanana Pro) 마다 instruction following 강도 다름 → realistic override 가 무시될 가능성 있음. 그러면 Step B 의 image prompt 자체도 강화 필요 (v50.1).
