@@ -4388,3 +4388,11 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 ### v53.5 — 2026-06-06 — PATCH cache-buster
 - `patchMVJobLyrics(jobId, ...)` URL 에 `?_t=Date.now()` 추가.
 - backend 변경 없음. Vite hot-reload 로 즉시 반영.
+
+---
+
+### v54 — 2026-06-06 — Phase 0 시나리오 본문 편집 + 씬 재분할
+- backend `routes/pre_mv.py` 에 `PatchScenarioBody` + `PATCH /jobs/{id}/scenario` endpoint 신설 (text/events 선택적, 빈 string 가드, 상태 가드).
+- frontend `api.patchPreMVScenario(id, {scenario_text})` helper + `PreMVScenarioStep` 컴포넌트에 편집 모드 토글 / textarea / 저장 / 취소 / 재분할 confirm 흐름 + CSS.
+- backend scp → reload, health 200. frontend Vite hot-reload.
+- 사전 안전 점검: mv/pre_mv active = 0.

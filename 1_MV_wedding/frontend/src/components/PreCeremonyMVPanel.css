@@ -775,6 +775,39 @@
   overflow-y: auto;
 }
 
+/* v54 — 시나리오 본문 편집 모드. */
+.pre-mv-scenario__text-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.pre-mv-scenario__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.pre-mv-scenario__edit {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pre-mv-scenario__textarea {
+  width: 100%;
+  min-height: 320px;
+  padding: 16px 18px;
+  background: #fffdf8;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  resize: vertical;
+  white-space: pre-wrap;
+  box-sizing: border-box;
+}
+
 .pre-mv-scenario__events {
   list-style: none;
   margin: 14px 0 0;

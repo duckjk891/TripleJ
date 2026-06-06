@@ -1138,10 +1138,18 @@ function PreCeremonyMVPanelInner({ mvJobId, ownerUserId, mvJob, isAdmin, isOwner
 // ──────────────────────────────────────────────────────────────────────────
 
 function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
+  const preMVJobId = preMVJob?._id || preMVJob?.pre_mv_job_id || null;
   const [selectedModel, setSelectedModel] = useState(
     preMVJob?.scenario_model || 'claude_4_7_opus'
   );
   const [busy, setBusy] = useState(false);
+  // v54 — 시나리오 본문 편집 모드.
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState(preMVJob?.scenario_text || '');
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
+  const [resplitting, setResplitting] = useState(false);
+  const [resplitErr, setResplitErr] = useState('');
 
   // preMVJob.scenario_model 이 외부에서 바뀌면 동기화
   useEffect(() => {
@@ -1258,9 +1266,116 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
 
       {isReady && scenarioText && (
         <>
-          <div className="pre-mv-scenario__text" aria-label="시나리오 본문">
-            {scenarioText}
-          </div>
+          {/* v54 — 시나리오 본문 편집 모드. */}
+          {!editing && (
+            <div className="pre-mv-scenario__text-wrap">
+              <div className="pre-mv-scenario__text" aria-label="시나리오 본문">
+                {scenarioText}
+              </div>
+              <div className="pre-mv-scenario__actions">
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy || resplitting || disabled}
+                  onClick={() => {
+                    setDraftText(scenarioText);
+                    setSaveErr('');
+                    setEditing(true);
+                  }}
+                  title="시나리오 본문 편집"
+                >
+                  ✏ 편집
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={busy || resplitting || disabled || !preMVJobId}
+                  onClick={async () => {
+                    if (!preMVJobId) return;
+                    const ok = window.confirm(
+                      '현재 시나리오를 기반으로 씬을 다시 분할합니다.\n기존 씬, 이미지, 영상은 모두 폐기됩니다. 계속할까요?'
+                    );
+                    if (!ok) return;
+                    setResplitErr('');
+                    setResplitting(true);
+                    try {
+                      await api.runPreMVPhase1(preMVJobId, { force: true });
+                    } catch (err) {
+                      const msg = err?.response?.data?.error || err?.message || '재분할 시작 실패';
+                      setResplitErr(msg);
+                    } finally {
+                      setResplitting(false);
+                    }
+                  }}
+                  title="이 시나리오로 씬을 다시 분할"
+                >
+                  {resplitting ? '시작하는 중...' : '⟳ 이 시나리오로 씬 다시 분할'}
+                </button>
+              </div>
+              {resplitErr && (
+                <div className="pre-mv-step__error" role="alert">{resplitErr}</div>
+              )}
+            </div>
+          )}
+          {editing && (
+            <div className="pre-mv-scenario__edit">
+              <textarea
+                className="pre-mv-scenario__textarea"
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                rows={18}
+                disabled={saving}
+                aria-label="시나리오 본문 편집"
+              />
+              <div className="pre-mv-scenario__actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={saving || !draftText.trim() || !preMVJobId}
+                  onClick={async () => {
+                    if (!preMVJobId) return;
+                    const trimmed = draftText.trim();
+                    if (!trimmed) {
+                      setSaveErr('내용이 비어 있어요.');
+                      return;
+                    }
+                    setSaveErr('');
+                    setSaving(true);
+                    try {
+                      await api.patchPreMVScenario(preMVJobId, {
+                        scenario_text: trimmed,
+                      });
+                      setEditing(false);
+                    } catch (err) {
+                      const msg = err?.response?.data?.error || err?.message || '저장 실패';
+                      setSaveErr(msg);
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                >
+                  {saving ? '저장 중...' : '저장'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(false);
+                    setSaveErr('');
+                  }}
+                >
+                  취소
+                </button>
+              </div>
+              {saveErr && (
+                <div className="pre-mv-step__error" role="alert">{saveErr}</div>
+              )}
+              <div className="pre-mv-step__hint">
+                저장 후 [⟳ 이 시나리오로 씬 다시 분할] 버튼이 보여요. 누르면 기존 씬·이미지·영상이 폐기되고 새 시나리오 기반으로 분할이 다시 됩니다.
+              </div>
+            </div>
+          )}
 
           {scenarioEvents.length > 0 && (
             <ol className="pre-mv-scenario__events" aria-label="시점별 키 사건">

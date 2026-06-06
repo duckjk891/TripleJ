@@ -6315,3 +6315,12 @@ async def _call_claude_text(
 ### v53.5 — 가사 PATCH cache-buster 로 stale CORS preflight 우회
 - 증상: max_age=60 설정 후에도 사용자 브라우저가 1시간 넘게 stale preflight 보유, PATCH 가 backend 에 아예 도달 못함 (log 에 OPTIONS 도 없음).
 - 수정: `patchMVJobLyrics` 가 매번 `?_t=<timestamp>` 쿼리 붙여 호출 → preflight 캐시 매칭 안 됨 → 새 OPTIONS 강제. backend 는 FastAPI 라 query 무시하고 path 매칭만.
+
+---
+
+### v54 — 2026-06-06 — 시나리오 본문 편집 + 씬 재분할
+사용자 요청: 스토리 → 시나리오 풀어쓰기 결과 (Phase 0 의 scenario_text) 를 직접 편집 후 그 기반으로 씬을 다시 분할하고 싶음. 단일 씬 PATCH (한/영 prompt 양쪽) 는 비효율적이라 시나리오 편집 → Phase 1 재분할 흐름이 더 직관적.
+
+- backend: `PATCH /api/pre-mv/jobs/{id}/scenario` 신설. body `{scenario_text?, scenario_events?}`. 상태 `draft/phase0_mapping/phase0_failed` 에선 거부.
+- frontend: `PreMVScenarioStep` 안에 [✏ 편집] 버튼 + textarea + [저장/취소] + [⟳ 이 시나리오로 씬 다시 분할] (confirm 후 `runPreMVPhase1(force=true)`).
+- scenario_events 는 JSON 구조라 일단 표시만, 편집 미지원.

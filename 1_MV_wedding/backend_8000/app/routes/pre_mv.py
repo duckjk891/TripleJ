@@ -289,6 +289,12 @@ class PatchSceneBody(BaseModel):
     video_prompt_ko: Optional[str] = Field(default=None, max_length=4000)
 
 
+# v54 — Phase 0 결과 (시나리오 본문) 편집.
+class PatchScenarioBody(BaseModel):
+    scenario_text: Optional[str] = Field(default=None, max_length=20000)
+    scenario_events: Optional[list[dict]] = Field(default=None, max_length=50)
+
+
 class ChapterRegenerateImagesBody(BaseModel):
     """v35 — 챕터(연속 같은 story_slot) 단위 씬 이미지 재생성 body.
 
@@ -764,6 +770,77 @@ async def start_phase0(
         "pre_mv_job_id": pre_mv_job_id,
         "status": "phase0_mapping",
         "scenario_model": body.scenario_model,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# v54 — PATCH /jobs/{id}/scenario  (Phase 0 결과 편집)
+#
+# 사용자가 LLM 이 만든 시나리오 본문 (scenario_text) 을 직접 다듬을 수 있게
+# 한다. 편집 후 Phase 1 을 force=true 로 재실행하면 새 시나리오 기반으로
+# 씬이 다시 분할된다 (기존 씬/이미지/영상은 frontend confirm 후 wipe).
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.patch("/jobs/{pre_mv_job_id}/scenario")
+async def patch_scenario(
+    pre_mv_job_id: str,
+    body: PatchScenarioBody,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    has_text = body.scenario_text is not None
+    has_events = body.scenario_events is not None
+    if not (has_text or has_events):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "scenario_text 또는 scenario_events 중 하나는 보내야 합니다."},
+        )
+    if has_text and not (body.scenario_text or "").strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "scenario_text 는 비워둘 수 없습니다."},
+        )
+
+    resolved = await _resolve_pre_mv_job(pre_mv_job_id, current_user)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    pre_doc, _mv_doc, _, _ = resolved
+
+    # Phase 0 결과가 있어야 편집 의미가 있다.
+    cur_status = pre_doc.get("status") or "draft"
+    if cur_status in ("draft", "phase0_mapping", "phase0_failed"):
+        return JSONResponse(
+            status_code=409,
+            content={"error": f"현재 상태({cur_status})에서는 시나리오 편집을 할 수 없어요."},
+        )
+
+    update_doc: dict = {"updated_at": datetime.now(timezone.utc)}
+    if has_text:
+        update_doc["scenario_text"] = body.scenario_text
+    if has_events:
+        update_doc["scenario_events"] = body.scenario_events
+
+    mongo = get_mongo()
+    oid = _to_oid(pre_mv_job_id)
+    if oid is None:
+        return JSONResponse(status_code=400, content={"error": "잘못된 pre_mv_job_id."})
+
+    await mongo.pre_mv_jobs.update_one({"_id": oid}, {"$set": update_doc})
+    logger.info(
+        "[PreMVRoute] action=patch_scenario ok user_id=%s pre_mv_job_id=%s "
+        "text_len=%s events_count=%s",
+        user_id, pre_mv_job_id,
+        len(body.scenario_text or "") if has_text else "-",
+        len(body.scenario_events or []) if has_events else "-",
+    )
+
+    updated = await mongo.pre_mv_jobs.find_one({"_id": oid})
+    return {
+        "pre_mv_job_id": pre_mv_job_id,
+        "scenario_text": (updated or {}).get("scenario_text", ""),
+        "scenario_events": (updated or {}).get("scenario_events", []),
+        "status": (updated or {}).get("status"),
+        "updated_at": (updated or {}).get("updated_at"),
     }
 
 

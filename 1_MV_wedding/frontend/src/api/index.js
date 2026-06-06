@@ -342,6 +342,16 @@ export const runPreMVPhase0 = (id, { scenario_model = 'claude_4_7_opus', force =
 
 // v21.4 — LLM 자율 결정 정책으로 clips_per_event 입력 폐기. backward compat 위해 받아도
 // body 전송 안 함 (백엔드도 받아도 무시).
+// v54 — Phase 0 결과 (시나리오 본문) 편집.
+// payload: { scenario_text?: string, scenario_events?: list }
+// 응답: { pre_mv_job_id, scenario_text, scenario_events, status, updated_at }
+export const patchPreMVScenario = (id, { scenario_text, scenario_events } = {}) => {
+  const payload = {};
+  if (typeof scenario_text === 'string') payload.scenario_text = scenario_text;
+  if (Array.isArray(scenario_events)) payload.scenario_events = scenario_events;
+  return API.patch(`/pre-mv/jobs/${id}/scenario?_t=${Date.now()}`, payload);
+};
+
 export const runPreMVPhase1 = (id, { force = false } = {}) =>
   API.post(`/pre-mv/jobs/${id}/phase1`, { force });
 
