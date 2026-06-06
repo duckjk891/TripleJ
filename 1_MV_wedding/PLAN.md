@@ -6074,3 +6074,51 @@ K-Pop, 힙합, EDM, 록, 재즈, 클래식, 인디, 시티팝, 인디팝, 댄스
 - 일렉트로닉 제거 (EDM 흡수)
 - 클래식 제거
 - GENRE_OPTIONS 21개 → 18개
+
+
+---
+
+### v49 — 2026-06-06 — 사용자 요청 (원문)
+"가사 생성할때 [] 안에는 다 영문으로 작성되게 해줘. 예를 들면 듀엣 => Duet 이런식으로. 그리고 가사 생성할때 한 단락에 최대 5줄이 아니라 무조건 4줄로 작성되도록 해줘"
+
+### v49 — 결정
+1. **section header label `[...]` 안 한국어 → 영문** (Duet prompt 전용, Solo prompt 는 이미 영문)
+2. **모든 단락 줄수 4줄 고정** (이전 "최대 5줄" / "Intro 2~3줄" / "3~5줄" 등 ranged 표기 모두 4줄로 통일)
+
+### v49 — 라벨 매핑 표 (Duet prompt 적용)
+| 한국어 | 영문 |
+|---|---|
+| `[Intro - 듀엣]` | `[Intro - Duet]` |
+| `[Verse 1 - 메인 보컬]` | `[Verse 1 - Main Vocal]` |
+| `[Verse 2 - 서브 보컬]` | `[Verse 2 - Sub Vocal]` |
+| `[Pre-Chorus - 듀엣]` | `[Pre-Chorus - Duet]` |
+| `[Chorus 1 - 듀엣]` | `[Chorus 1 - Duet]` |
+| `[Verse 3 - 메인 또는 서브 보컬]` | `[Verse 3 - Main or Sub Vocal]` |
+| `[Verse 3 - 메인 또는 서브]` | `[Verse 3 - Main or Sub]` |
+| `[Bridge - 메인 또는 서브 보컬]` | `[Bridge - Main or Sub Vocal]` |
+| `[Bridge - 메인 또는 서브]` | `[Bridge - Main or Sub]` |
+| `[Bridge - 메인 보컬]` | `[Bridge - Main Vocal]` |
+| `[Chorus 2 - 듀엣]` | `[Chorus 2 - Duet]` |
+| `[Outro - 듀엣]` | `[Outro - Duet]` |
+
+본문 한국어 설명 (예: "이번 곡은 듀엣이다") 은 `[]` 밖이므로 유지.
+
+### v49 — 줄수 룰
+- SOLO prompt line 110, 164~173, 209, 217: "최대 5줄" / Intro/Outro 2~3 / 나머지 3~5 → **모든 섹션 4줄 고정**
+- DUET prompt line 298, 323, 349~358, 393, 432: 동일 규칙 → **모든 섹션 4줄 고정**
+- Few-shot 예시 줄수도 4줄로 정렬 (4줄 미만이면 한 줄 추가, 5줄 이상이면 줄임)
+
+### v49 — 변경 파일
+- `1_MV_wedding/backend_8000/app/services/lyrics_generator.py` 한 파일.
+- backend repo 가 별도 `backend` 브랜치 + staged 변경 보유 → working tree 만 SSH+scp 로 갱신. `--reload` 가 자동 감지.
+
+### v49 — 영향
+- 다음 가사 재생성부터:
+  - duet 곡 section header 가 영문 라벨 (Suno 가 영문 라벨도 동일 처리)
+  - 단락 길이가 균일하게 4줄 → 곡 길이 영향 (기존 합계 25~38줄 → 새 합계 ~32~36줄)
+- 기존 가사 파일은 영향 X (재생성해야 적용).
+
+### v49 — 위험
+- "모든 섹션 4줄 고정" 은 Intro/Outro 가 음악적으로 길어질 수 있음 (기존 2~3줄 권장). 사용자 명시이므로 적용. 어색하면 v49.1 에서 조정.
+- 한국어 라벨 → 영문 변경이 phase4 자막/SRT 의 `_LEADING_SECTION_RE` 패턴 (`[Intro - 듀엣] 가사` 형태 추출) 에 영향. 정규식이 `[...]` generic 매칭이라 영문이든 한국어든 동작. `calculate_video_start_offset` 의 `label.lower() startswith 'intro'` 매칭도 영문 'Intro' 와 동일 작동 — 영향 없음.
+- backend repo 의 lyrics_generator.py staged 변경과 영역이 겹치는지 사전 확인 후 진행.
