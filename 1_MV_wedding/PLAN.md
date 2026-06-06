@@ -6338,3 +6338,9 @@ async def _call_claude_text(
 - 사용자 보고: 챕터 안 씬 description 이 모두 동일 (event.summary 복붙).
 - log 확인: Claude opus 4.7 응답이 max_tokens=12000 에 막혀 JSONDecodeError → fallback (event.summary 복붙) 진입.
 - 수정: `_max_tokens_for_scene_split` base 7000 / per_scene 700 / cap 16000 으로 상향.
+
+### v54.4 — Step 1 의 잘못된 재분할 버튼 제거 (책임 분리)
+- 사용자 지적: 씬 분할은 Step 2 의 책임. Step 1 에 재분할 버튼 두는 건 흐름 혼란.
+- 제거: Step 1 의 `⟳ 이 시나리오로 씬 다시 분할` 버튼 + 핸들러 + state (`resplitting`, `resplitErr`).
+- 유지: 시나리오 본문 + events 편집 흐름.
+- Step 2 의 기존 [다시 씬 분할] 버튼이 `runPreMVPhase1(force=true)` 로 호출 → mongo 의 최신 (편집된) scenario_text + scenario_events 자동 사용. 추가 작업 불필요.

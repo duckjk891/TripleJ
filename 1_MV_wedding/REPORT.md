@@ -4411,3 +4411,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - 12000 → 16000 cap. 21 씬 출력에 마진 확보.
 - 사용자가 다음 "씬 다시 분할" 누르면 fallback 안 떨어지고 정상 splitter 결과 (씬별 다양한 description/prompt) 반영 예상.
 - 사전 안전 점검: pre_mv active = 0. scp → reload → health 200.
+
+### v54.4 — 2026-06-06 — 재분할 버튼 책임 정리
+- Step 1 의 잘못 추가된 [⟳ 이 시나리오로 씬 다시 분할] 버튼 제거. Step 2 의 기존 [다시 씬 분할] 만 사용.
+- 편집 hint 도 "Step 2 의 [다시 씬 분할] 누르면 새 시나리오로 분할" 로 수정.
+- frontend only. Vite hot-reload.
