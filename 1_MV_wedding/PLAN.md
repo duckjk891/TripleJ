@@ -6286,3 +6286,8 @@ async def _call_claude_text(
 
 ### v53.2 — CORS preflight max_age 600s → 60s
 일반 모드 브라우저가 stale preflight (PATCH 거부) 캐시 보유 → CORS 차단. backend 응답은 정상이나 회복까지 10분. max_age=60 으로 단축해 향후 재발 시 1분 안에 회복.
+
+### v53.3 — Character sheet refine: 자동 save 추가
+- 사용자 보고: refine 결과가 permanent slot (`wedding_character_sheets`) 에 반영 안 됨 → 가사 생성 화면 등에서 이전 시트만 보임. 시트명 이상.
+- 원인: `CharacterSheetPanel.jsx` 의 refine 폴링 done 분기에 generate 처럼 `handleSaveRef.current(objectName)` 자동 호출이 빠져있었음. refine 결과는 wedding_sheet_jobs.sheet_object_name (temp) 에만 박힘.
+- 수정: refine done 시 — confirm 없이 즉시 auto-save (refine 은 이미 사용자가 명시적으로 요청한 흐름이라 generate 의 hasExistingSaved confirm 분기 불필요).

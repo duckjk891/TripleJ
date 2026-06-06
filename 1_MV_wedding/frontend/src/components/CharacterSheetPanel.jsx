@@ -525,6 +525,19 @@ export default function CharacterSheetPanel({
             refine_request: '',
             error: '',
           });
+          // v53.3 — refine done 시 자동 save. generate 와 달리 refine 은
+          // 이미 슬롯에 시트가 있는 상태에서 사용자가 "보정" 을 명시적으로 요청한
+          // 흐름이라 confirm 없이 즉시 덮어쓴다. 예전엔 save 자체가 빠져
+          // permanent slot (wedding_character_sheets) 이 갱신 안 됨 → 가사
+          // 생성 화면 등에서 이전 시트가 그대로 보이던 버그.
+          if (objectName) {
+            console.info(`${prefix} refine auto-save (overwrite)`, {
+              object_name: objectName,
+            });
+            handleSaveRef.current(objectName).catch((e) => {
+              console.error(`${prefix} refine auto-save failed`, { err: e });
+            });
+          }
         } else if (next === 'failed') {
           console.info(`${prefix} poll terminal`, {
             job_id: refineJobId,

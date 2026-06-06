@@ -4367,3 +4367,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - 수정: `main.py` CORSMiddleware 에 `max_age=60` 추가.
 - 즉시 unblock 안내: devtools Network 탭 "Disable cache" + reload.
 - scp → reload → preflight 응답에 `max-age: 60` 확인.
+
+### v53.3 — 2026-06-06 — Refine done 자동 save
+- `CharacterSheetPanel.jsx` refine 폴링 done 분기에 `handleSaveRef.current(objectName)` 한 번 호출 추가 (confirm 없이 즉시 덮어쓰기).
+- Vite hot-reload 로 즉시 반영. backend 변경 없음.
+- 다음 refine 부터 wedding_character_sheets 의 permanent slot + wedding_assets (display_name 포함) 모두 자동 갱신.
