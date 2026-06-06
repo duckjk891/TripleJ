@@ -6278,3 +6278,8 @@ async def _call_claude_text(
 
 ### v53 — 후속 안내 (사용자 측)
 - 인물 사진에서 안 보이는 체격/키/하체 비율은 user_text 에 명시할 것 권장 (다음 답변에 자세히).
+
+### v53.1 — 가사 본문 빈 응답 → 400 에러 fix
+- 원인: v49 strict 4줄 룰 + thinking 토큰 소비로 Claude max_tokens 한도 도달 → 본문 비어 옴.
+  비어있는 lyrics 가 title 호출의 user content 로 → Anthropic 400 (`user messages must have non-empty content`).
+- 수정: (1) empty lyrics 가드 (양 백엔드 OpenAI/Anthropic), (2) `_max_tokens_for_duration` 2400→4000 / 4000→6000 / 기본 3000→5000.

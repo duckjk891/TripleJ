@@ -4356,3 +4356,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - backend scp → reload → health 200 OK.
 - 사전 안전 점검: mv/pre_mv/sheet active = 0.
 - frontend UI 변경 없음. 기존 호출 흐름 그대로 realistic 적용.
+
+### v53.1 — 2026-06-06 — empty lyrics → 400 fix
+- 빈 본문 시 즉시 `ValueError("가사 본문이 비어 있습니다…")` (양 백엔드).
+- max_tokens 상향: 2분 4000 / 3분 6000 / 기본 5000.
+- scp → reload → health 200.

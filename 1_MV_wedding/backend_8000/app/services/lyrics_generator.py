@@ -676,7 +676,9 @@ def _max_tokens_for_duration(duration_minutes: int) -> int:
     v30 — thinking/reasoning ON 시 thinking/reasoning 200~400 토큰이 동일
     한도 안에서 소비됨. 모든 분기 ×2 로 상향.
     """
-    return {2: 2400, 3: 4000}.get(duration_minutes, 3000)
+    # v53.1 — v49 strict 4줄 룰 + 영문 라벨 prompt 가 길어지고 thinking 토큰
+    # 소비가 더 커져 종전 한도에 막혀 빈 응답이 오는 케이스 발견. ×~1.5 상향.
+    return {2: 4000, 3: 6000}.get(duration_minutes, 5000)
 
 
 async def _generate_via_openai(system_prompt: str, user_message: str, model: str, duration_minutes: int) -> tuple[str, str]:
@@ -699,7 +701,18 @@ async def _generate_via_openai(system_prompt: str, user_message: str, model: str
         model, bool(lyrics_kwargs.get("reasoning_effort")),
     )
     lyrics_response = await client.chat.completions.create(**lyrics_kwargs)
-    lyrics = lyrics_response.choices[0].message.content.strip()
+    lyrics = (lyrics_response.choices[0].message.content or "").strip()
+    # v53.1 — 같은 가드 (OpenAI 측). 빈 본문이면 title 호출이 400 으로 떨어지기 전에 차단.
+    if not lyrics:
+        finish_reason = lyrics_response.choices[0].finish_reason if lyrics_response.choices else "?"
+        logger.warning(
+            "[LyricsGen] openai empty lyrics finish_reason=%s",
+            finish_reason,
+        )
+        raise ValueError(
+            "가사 본문이 비어 있습니다 (OpenAI finish_reason={}). "
+            "한 번 더 재시도하거나 prompt 길이를 줄여주세요.".format(finish_reason)
+        )
 
     title_kwargs: dict = {
         "model": model,
@@ -744,6 +757,19 @@ async def _generate_via_anthropic(system_prompt: str, user_message: str, model: 
     )
     lyrics_response = await client.messages.create(**lyrics_kwargs)
     lyrics = _xtxt(lyrics_response)
+    # v53.1 — Claude 가 빈 본문을 반환하면 title 호출이 empty user content → 400.
+    # 즉시 명확한 에러로 변환. (보통 stop_reason="max_tokens" 또는 thinking 토큰 소진.)
+    if not lyrics:
+        stop_reason = getattr(lyrics_response, "stop_reason", "?")
+        usage = getattr(lyrics_response, "usage", None)
+        logger.warning(
+            "[LyricsGen] anthropic empty lyrics stop_reason=%s usage=%s",
+            stop_reason, usage,
+        )
+        raise ValueError(
+            "가사 본문이 비어 있습니다 (Claude stop_reason={}). "
+            "한 번 더 재시도하거나 prompt 길이를 줄여주세요.".format(stop_reason)
+        )
 
     title_kwargs = {
         "model": model,
