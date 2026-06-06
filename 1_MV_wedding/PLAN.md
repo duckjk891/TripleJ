@@ -6258,3 +6258,23 @@ async def _call_claude_text(
 - 적용: `character_generator.py` 한 파일 scp.
 
 ### v52.2 — Claude Opus 4.7 `temperature` deprecated → 제거
+
+
+---
+
+### v53 — 2026-06-06 — 사용자 요청
+"디폴트를 미화가 아닌 버젼으로 생성하도록 설정해주면 되지 않을까?"
+
+### v53 — 변경
+- `backend_8000/app/routes/character.py:/sheets/generate` 의 Form 디폴트 `prompt_variant: str = Form("default")` → `Form("realistic")`.
+- 정규화 로직 보정: 명시적 `"default"` 만 백업 모드, 그 외 (값 없음 포함) realistic.
+- frontend UI 변경 없음 — 사용자가 기존 흐름으로 생성하면 자동으로 realistic 모드.
+- 백업 (default) 으로 가려면 form-data 에 `prompt_variant=default` 명시.
+
+### v53 — 영향
+- 다음 캐릭터 시트 생성부터 모든 결과가 realistic 모드 (미화 거부 + 사진 인물 그대로).
+- v50 의 `REALISTIC_OVERRIDE_BLOCK` + `_REALISTIC_STEP1_SUFFIX` 가 매번 적용됨.
+- 기존 캐릭터 시트는 영향 X (재생성해야 적용).
+
+### v53 — 후속 안내 (사용자 측)
+- 인물 사진에서 안 보이는 체격/키/하체 비율은 user_text 에 명시할 것 권장 (다음 답변에 자세히).

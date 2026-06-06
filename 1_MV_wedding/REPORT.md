@@ -4346,3 +4346,13 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - 수정: `client.messages.create` 의 `temperature=0.7` 인자 제거. 다른 옵션 그대로.
 - `_call_gemini_text` 의 generationConfig 안 `temperature: 0.7` 은 별개 (Gemini 백업 함수).
 - 적용: `character_generator.py` scp → reload → health 200. 커밋 `a7879d3`.
+
+
+---
+
+### v53 — 2026-06-06 — Default = realistic
+- `routes/character.py:/sheets/generate` Form 디폴트 `"default"` → `"realistic"`.
+- 정규화: 명시적 `"default"` 만 백업, 나머지 realistic.
+- backend scp → reload → health 200 OK.
+- 사전 안전 점검: mv/pre_mv/sheet active = 0.
+- frontend UI 변경 없음. 기존 호출 흐름 그대로 realistic 적용.
