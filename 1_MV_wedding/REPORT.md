@@ -4396,3 +4396,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - frontend `api.patchPreMVScenario(id, {scenario_text})` helper + `PreMVScenarioStep` 컴포넌트에 편집 모드 토글 / textarea / 저장 / 취소 / 재분할 confirm 흐름 + CSS.
 - backend scp → reload, health 200. frontend Vite hot-reload.
 - 사전 안전 점검: mv/pre_mv active = 0.
+
+### v54.1 — 2026-06-06 — event summary 편집 + phase0 가드 완화
+- `PreMVScenarioStep` 편집 모드에 각 event summary textarea 추가, 저장 시 `patchPreMVScenario` 가 scenario_text + scenario_events 같이 보냄. backend 는 이미 둘 다 받음 (v54 PatchScenarioBody).
+- backend phase 0 endpoint 의 status allowed set 에 phase1_* / phase2_* / phase3_* / phase4_* / completed 추가. force=true 가드는 그대로.
+- backend scp → reload → health 200. frontend Vite hot-reload.

@@ -687,7 +687,15 @@ async def start_phase0(
     pre_doc, _mv_doc, _, _ = resolved
 
     cur_status = pre_doc.get("status") or "draft"
-    allowed = {"draft", "phase0_failed", "phase0_ready", "phase0_mapping"}
+    # v54.1 — 이후 단계 (phase1/2/3/4) 에서도 force=true 면 Phase 0 재실행 허용.
+    # force 가드 자체는 아래 has_scenes 분기에서 별도로 확인한다.
+    allowed = {
+        "draft", "phase0_failed", "phase0_ready", "phase0_mapping",
+        "phase1_splitting", "phase1_ready", "phase1_failed",
+        "phase2_generating", "phase2_ready", "phase2_partial", "phase2_failed",
+        "phase3_generating", "phase3_ready", "phase3_partial", "phase3_failed",
+        "phase4_compositing", "phase4_failed", "completed",
+    }
     if cur_status not in allowed:
         logger.warning(
             "[PreMVRoute] phase=phase0 status reject pre_mv_job_id=%s status=%s",

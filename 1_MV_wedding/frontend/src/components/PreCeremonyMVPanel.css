@@ -807,6 +807,30 @@
   white-space: pre-wrap;
   box-sizing: border-box;
 }
+/* v54.1 */
+.pre-mv-scenario__label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 4px;
+  opacity: 0.78;
+}
+.pre-mv-scenario__event-textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  background: #fffdf8;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  resize: vertical;
+  box-sizing: border-box;
+}
 
 .pre-mv-scenario__events {
   list-style: none;

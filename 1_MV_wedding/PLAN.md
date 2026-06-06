@@ -6324,3 +6324,8 @@ async def _call_claude_text(
 - backend: `PATCH /api/pre-mv/jobs/{id}/scenario` 신설. body `{scenario_text?, scenario_events?}`. 상태 `draft/phase0_mapping/phase0_failed` 에선 거부.
 - frontend: `PreMVScenarioStep` 안에 [✏ 편집] 버튼 + textarea + [저장/취소] + [⟳ 이 시나리오로 씬 다시 분할] (confirm 후 `runPreMVPhase1(force=true)`).
 - scenario_events 는 JSON 구조라 일단 표시만, 편집 미지원.
+
+### v54.1 — scenario_events.summary 편집 + phase0 가드 완화
+- 사용자가 화면에서 본 것은 scenario_text 본문이 아니라 scenario_events 의 카드별 summary. 그것을 직접 편집할 수 있게 함.
+- 편집 모드 진입 시 본문 textarea + 각 event card 의 summary textarea 동시 노출. 저장 시 둘 다 PATCH 로 보냄.
+- backend phase 0 status 가드 완화: phase1~4 / completed 도 force=true 면 재실행 허용.

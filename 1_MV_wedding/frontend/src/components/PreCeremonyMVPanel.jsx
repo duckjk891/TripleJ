@@ -1146,6 +1146,8 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
   // v54 — 시나리오 본문 편집 모드.
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(preMVJob?.scenario_text || '');
+  // v54.1 — scenario_events 의 summary 도 같이 편집 가능.
+  const [draftEventSummaries, setDraftEventSummaries] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
   const [resplitting, setResplitting] = useState(false);
@@ -1279,10 +1281,11 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
                   disabled={busy || resplitting || disabled}
                   onClick={() => {
                     setDraftText(scenarioText);
+                    setDraftEventSummaries(scenarioEvents.map((ev) => ev?.summary || ''));
                     setSaveErr('');
                     setEditing(true);
                   }}
-                  title="시나리오 본문 편집"
+                  title="시나리오 본문 + 사건 카드 편집"
                 >
                   ✏ 편집
                 </button>
@@ -1319,14 +1322,57 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
           )}
           {editing && (
             <div className="pre-mv-scenario__edit">
+              <label className="pre-mv-scenario__label">시나리오 본문</label>
               <textarea
                 className="pre-mv-scenario__textarea"
                 value={draftText}
                 onChange={(e) => setDraftText(e.target.value)}
-                rows={18}
+                rows={14}
                 disabled={saving}
                 aria-label="시나리오 본문 편집"
               />
+              {scenarioEvents.length > 0 && (
+                <>
+                  <label className="pre-mv-scenario__label" style={{ marginTop: 12 }}>
+                    시점별 키 사건 (각 카드 내용)
+                  </label>
+                  <ol className="pre-mv-scenario__events" aria-label="시점별 키 사건 편집">
+                    {scenarioEvents.map((ev, idx) => {
+                      const slotLabel = SLOT_LABEL_KO[ev?.story_slot] || ev?.story_slot || '?';
+                      const memSuffix =
+                        ev?.story_slot === 'memory' && typeof ev?.memory_index === 'number'
+                          ? ` ${ev.memory_index + 1}`
+                          : '';
+                      return (
+                        <li key={idx}>
+                          <span className="event-slot-badge">{slotLabel}{memSuffix}</span>
+                          <textarea
+                            className="pre-mv-scenario__event-textarea"
+                            value={draftEventSummaries[idx] ?? ''}
+                            onChange={(e) => {
+                              const next = [...draftEventSummaries];
+                              next[idx] = e.target.value;
+                              setDraftEventSummaries(next);
+                            }}
+                            rows={3}
+                            disabled={saving}
+                            aria-label={`${slotLabel}${memSuffix} 카드 편집`}
+                          />
+                          {Array.isArray(ev?.refs) && ev.refs.length > 0 && (
+                            <div className="event-refs">
+                              {ev.refs.map((r, i) => (
+                                <span key={i} className="ref-chip">
+                                  @{r?.display_name || r?.asset_id || '?'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </>
+              )}
               <div className="pre-mv-scenario__actions">
                 <button
                   type="button"
@@ -1336,14 +1382,19 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
                     if (!preMVJobId) return;
                     const trimmed = draftText.trim();
                     if (!trimmed) {
-                      setSaveErr('내용이 비어 있어요.');
+                      setSaveErr('시나리오 본문이 비어 있어요.');
                       return;
                     }
+                    const eventsPayload = scenarioEvents.map((ev, idx) => ({
+                      ...ev,
+                      summary: (draftEventSummaries[idx] ?? ev?.summary ?? '').trim(),
+                    }));
                     setSaveErr('');
                     setSaving(true);
                     try {
                       await api.patchPreMVScenario(preMVJobId, {
                         scenario_text: trimmed,
+                        scenario_events: eventsPayload,
                       });
                       setEditing(false);
                     } catch (err) {
@@ -1372,7 +1423,7 @@ function PreMVScenarioStep({ preMVJob, status, onStart, disabled }) {
                 <div className="pre-mv-step__error" role="alert">{saveErr}</div>
               )}
               <div className="pre-mv-step__hint">
-                저장 후 [⟳ 이 시나리오로 씬 다시 분할] 버튼이 보여요. 누르면 기존 씬·이미지·영상이 폐기되고 새 시나리오 기반으로 분할이 다시 됩니다.
+                저장 후 [⟳ 이 시나리오로 씬 다시 분할] 버튼이 보여요. 누르면 기존 씬·이미지·영상이 폐기되고 새 시나리오 기반으로 분할이 다시 됩니다. 본문이나 카드 내용 한 줄만 바꿔도 OK.
               </div>
             </div>
           )}
