@@ -4430,3 +4430,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - face-only 안내 강화 (얼굴/체형/머리 정확 매칭 강조).
 - 사전 안전 점검: pre_mv active = 0. scp → reload → health 200.
 - 다음 챕터 이미지 재생성 후 사용자 결과 보고 대기.
+
+### v54.7 — 2026-06-06 — face-only 프롬프트 revert
+- SCENE_IMAGE_SYSTEM_PROMPT 의 [face-only] 안내를 v54.5 이전으로 환원. 짧고 명확.
+- fallback 단순화는 그대로 유지.
+- scp → reload → health 200.

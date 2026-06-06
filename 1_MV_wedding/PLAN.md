@@ -6358,3 +6358,8 @@ async def _call_claude_text(
 - 변경: fallback 시 wedding_character_sheets 의 해당 role 슬롯 중 `updated_at` 가장 오래된 (= 처음 만든) 시트를 그대로 꺼냄. v54.5 의 chapter 분기 제거.
 - 신규 헬퍼: `_resolve_first_sheet_for_role(owner_user_id, role)`.
 - SCENE_IMAGE_SYSTEM_PROMPT 의 [face-only] 안내 강화: 얼굴/체형/머리 정확 매칭, ref 와 다른 사람으로 보이면 실패라고 명시.
+
+### v54.7 — face-only 안내 강화 revert
+- v54.6 의 face-only 프롬프트 강화가 오히려 모델 혼란 → 옷도 너무 매칭하는 부작용.
+- 사용자 요청대로 face-only 안내문을 v54.5 이전 (= 짧고 명확한 원형) 으로 되돌림.
+- v54.6 의 fallback 단순화 (`_resolve_first_sheet_for_role`) 는 유지.
