@@ -81,9 +81,13 @@ SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 p
    태그를 반드시 준수:
      · [full-match]  — 시트의 얼굴·체형·머리·옷·액세서리를 **모두** 정확히 매칭
                        (사용자가 명시적으로 이 시트를 ref 로 선택했음)
-     · [face-only]   — 시트의 **얼굴·체형·머리만** 매칭. 옷·액세서리·계절감은
-                       scene_prompt 묘사에 맞춰 자유 변주 (예: 시트가 정장이어도
-                       여름 비치 씬이면 가벼운 셔츠로 갈아입은 동일 인물).
+     · [face-only]   — ★★ 매우 중요 ★★ ref_image 속 인물의 **얼굴 (이목구비·얼굴형·
+                       눈/코/입 비율·피부톤)**, **체형**, **헤어스타일/색** 을
+                       결과 이미지에 **정확히 동일하게** 옮겨라. 결과 이미지의 인물이
+                       ref 의 인물과 **다른 사람으로 보이면 실패다.** 옷·액세서리·
+                       계절감만 scene_prompt 묘사에 맞춰 자유롭게 변주 (예: 시트가
+                       정장이어도 여름 비치 씬이면 가벼운 셔츠로 갈아입은 동일 인물).
+                       절대 ref 의 얼굴을 무시하거나 generic 한 얼굴로 대체하지 마라.
    캐릭터 시트가 둘 다 있으면 두 인물이 모두 등장해야 한다.
 ② 인물 시트가 한쪽만 있는 씬이면 그 한 명만 그린다. 절대 자동으로 다른 인물을 추가하지 않는다.
 ③ 장소 ref 가 있으면 배경 톤/구조를 그대로 따른다. 없으면 image_prompt 의 묘사를 우선.
@@ -140,6 +144,56 @@ def _to_oid(value: str) -> Optional[ObjectId]:
         return ObjectId(value)
     except (InvalidId, TypeError):
         return None
+
+
+# v54.6 — fallback 용 헬퍼: wedding_character_sheets 의 해당 role 슬롯 중
+# updated_at 가장 오래된 (= 사용자가 처음 만든) 시트를 그대로 꺼내옴.
+# slot 이름 hardcode 대신 DB 에 실제 존재하는 시트 중 첫번째를 default 로 사용.
+async def _resolve_first_sheet_for_role(
+    *,
+    owner_user_id: str,
+    role: str,  # "groom" | "bride"
+) -> tuple[Optional[bytes], Optional[str], str, str, str]:
+    """role 의 슬롯 (groom_* 또는 bride_*) 중 updated_at 가장 오래된 시트를 반환.
+
+    Returns (bytes, mime, display, style, slot). 없으면 (None, None, "", "", "").
+    """
+    mongo = get_mongo()
+    try:
+        cs_doc = await mongo.wedding_character_sheets.find_one(
+            {"user_id": owner_user_id}
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[PreMVSceneImage] phase=phase2 first-sheet lookup failed user_id=%s role=%s: %s: %s",
+            owner_user_id, role, type(e).__name__, str(e)[:200],
+        )
+        return None, None, "", "", ""
+    sheets = (cs_doc or {}).get("sheets") or {}
+    candidates: list = []  # (updated_at, slot, info)
+    for slot, info in sheets.items():
+        if not isinstance(info, dict):
+            continue
+        if not slot.startswith(role + "_"):
+            continue
+        if not info.get("sheet_object_name"):
+            continue
+        candidates.append((info.get("updated_at"), slot, info))
+    if not candidates:
+        return None, None, "", "", ""
+    # updated_at 가장 오래된 (사용자가 처음 만든) 시트.
+    # None 인 항목은 가장 뒤로 미룸.
+    candidates.sort(key=lambda x: (x[0] is None, x[0]))
+    _ts, slot, info = candidates[0]
+    obj = info.get("sheet_object_name") or ""
+    if not obj:
+        return None, None, "", "", ""
+    data, mime = await _load_image_from_photos(obj)
+    if not data:
+        return None, None, "", "", ""
+    display = (info.get("display_name") or "").strip() or slot
+    style = slot.split("_", 1)[1] if "_" in slot else ""
+    return data, mime, display, style, slot
 
 
 async def _resolve_sheet_ref(
@@ -379,55 +433,38 @@ async def generate_scene_image(
     if len(resolved_assets) >= 2:
         extra_bytes, extra_mime, extra_display, extra_memo, _ = resolved_assets[1]
 
-    # v32 — 최종 fallback: 캐릭터 시트 기본값.
-    # scenario_events 의 refs 가 비어있어서 Phase 1 이 ref_ids 를 못 채운 케이스
-    # (사용자가 @멘션을 안 한 회상 등). 이 시점까지 groom_bytes/bride_bytes 가 비어있고
-    # ref_sheet_ids 에 명시도 없었으면 default 시트로 시도한다.
-    # v54.5 — chapter (story_slot) 에 따라 fallback 순서 분기:
-    #   · wedding_prep → wedding 시트 우선 (예복 차림 어울림)
-    #   · 그 외 → casual 시트 우선 (= 사용자가 처음 만든 것, 일상 컨텍스트에 맞음)
-    #   이전엔 무조건 wedding 먼저라 첫 데이트/회상 씬에 예복 차림이 들어가던 버그.
-    is_wedding_chapter = _is_wedding_prep_slot(story_slot)
-    groom_fb_order = (
-        ("groom_wedding", "groom_casual") if is_wedding_chapter
-        else ("groom_casual", "groom_wedding")
-    )
-    bride_fb_order = (
-        ("bride_wedding", "bride_casual") if is_wedding_chapter
-        else ("bride_casual", "bride_wedding")
-    )
-
+    # v54.6 — default sheet fallback 을 가장 단순하게 변경:
+    # ref_sheet_ids 에 groom/bride 명시 없으면 DB (wedding_character_sheets) 의
+    # 해당 role 슬롯 중 updated_at 가장 오래된 (= 사용자가 처음 만든) 시트를 사용.
+    # 이전엔 slot 이름 hardcode + chapter 분기였는데, 사용자 요청대로 "DB 에 저장된
+    # 캐릭터 시트를 순서대로 그냥 꺼내오는" 단순 흐름으로 통일.
     has_groom_in_refs = any(s.startswith("groom_") for s in ref_sheet_ids)
     if not groom_bytes and not has_groom_in_refs:
-        for fb_slot in groom_fb_order:
-            data, mime, display, style = await _resolve_sheet_ref(
-                owner_user_id=owner_user_id, slot=fb_slot,
+        data, mime, display, style, used_slot = await _resolve_first_sheet_for_role(
+            owner_user_id=owner_user_id, role="groom",
+        )
+        if data:
+            groom_bytes, groom_mime = data, mime
+            groom_display, groom_style = display, style
+            logger.info(
+                "[PreMVSceneImage] phase=phase2 default sheet fallback "
+                "pre_mv_job_id=%s scene_number=%d slot=%s (first by updated_at)",
+                pre_mv_job_id, scene_number, used_slot,
             )
-            if data:
-                groom_bytes, groom_mime = data, mime
-                groom_display, groom_style = display, style
-                logger.info(
-                    "[PreMVSceneImage] phase=phase2 default sheet fallback "
-                    "pre_mv_job_id=%s scene_number=%d slot=%s",
-                    pre_mv_job_id, scene_number, fb_slot,
-                )
-                break
 
     has_bride_in_refs = any(s.startswith("bride_") for s in ref_sheet_ids)
     if not bride_bytes and not has_bride_in_refs:
-        for fb_slot in bride_fb_order:
-            data, mime, display, style = await _resolve_sheet_ref(
-                owner_user_id=owner_user_id, slot=fb_slot,
+        data, mime, display, style, used_slot = await _resolve_first_sheet_for_role(
+            owner_user_id=owner_user_id, role="bride",
+        )
+        if data:
+            bride_bytes, bride_mime = data, mime
+            bride_display, bride_style = display, style
+            logger.info(
+                "[PreMVSceneImage] phase=phase2 default sheet fallback "
+                "pre_mv_job_id=%s scene_number=%d slot=%s (first by updated_at)",
+                pre_mv_job_id, scene_number, used_slot,
             )
-            if data:
-                bride_bytes, bride_mime = data, mime
-                bride_display, bride_style = display, style
-                logger.info(
-                    "[PreMVSceneImage] phase=phase2 default sheet fallback "
-                    "pre_mv_job_id=%s scene_number=%d slot=%s",
-                    pre_mv_job_id, scene_number, fb_slot,
-                )
-                break
 
     # v24 — ref 우선순위 재배치 (c안):
     #   1) 캐릭터 시트 groom

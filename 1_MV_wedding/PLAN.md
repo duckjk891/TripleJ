@@ -6352,3 +6352,9 @@ async def _call_claude_text(
 - 수정: chapter 따라 fallback slot 순서 분기.
   - `wedding_prep` → wedding 우선 (그대로)
   - 그 외 → **casual 우선** (사용자가 처음 만든 시트 = casual 이라는 가정 + 일상 컨텍스트 적합)
+
+### v54.6 — Default 시트 fallback 단순화 + face-only 안내 강화
+- 사용자 지적: 얼굴이 아예 반영 안 됨. slot 이름 hardcode 흐름이 복잡.
+- 변경: fallback 시 wedding_character_sheets 의 해당 role 슬롯 중 `updated_at` 가장 오래된 (= 처음 만든) 시트를 그대로 꺼냄. v54.5 의 chapter 분기 제거.
+- 신규 헬퍼: `_resolve_first_sheet_for_role(owner_user_id, role)`.
+- SCENE_IMAGE_SYSTEM_PROMPT 의 [face-only] 안내 강화: 얼굴/체형/머리 정확 매칭, ref 와 다른 사람으로 보이면 실패라고 명시.

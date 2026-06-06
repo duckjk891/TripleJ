@@ -4423,3 +4423,10 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - wedding_prep 챕터 → wedding 시트 그대로.
 - 사용자가 챕터별 이미지 재생성 누르면 새 흐름 반영.
 - 사전 안전 점검: pre_mv active = 0. scp → reload → health 200.
+
+### v54.6 — 2026-06-06 — Default 시트 단순화 + face guidance 강화
+- `_resolve_first_sheet_for_role` 신설. fallback 시 DB 의 role 슬롯 중 updated_at 가장 오래된 시트 사용.
+- v54.5 의 chapter 분기 제거. 단순.
+- face-only 안내 강화 (얼굴/체형/머리 정확 매칭 강조).
+- 사전 안전 점검: pre_mv active = 0. scp → reload → health 200.
+- 다음 챕터 이미지 재생성 후 사용자 결과 보고 대기.
