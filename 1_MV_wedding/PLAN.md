@@ -6311,3 +6311,7 @@ async def _call_claude_text(
 - bride_wedding display_name `''` → `예복 신부` (wedding_character_sheets + wedding_assets 둘 다)
 - bride_wedding 캐릭터 시트 "신부 머리스타일" 로 refine → permanent sheet (`characters/.../bride_wedding/sheet.png`) 덮어쓰기
 - Phase 2 가 mongo `wedding_character_sheets` 직접 fetch + 캐싱 X → 다음 Phase 2 호출 시 자동 반영
+
+### v53.5 — 가사 PATCH cache-buster 로 stale CORS preflight 우회
+- 증상: max_age=60 설정 후에도 사용자 브라우저가 1시간 넘게 stale preflight 보유, PATCH 가 backend 에 아예 도달 못함 (log 에 OPTIONS 도 없음).
+- 수정: `patchMVJobLyrics` 가 매번 `?_t=<timestamp>` 쿼리 붙여 호출 → preflight 캐시 매칭 안 됨 → 새 OPTIONS 강제. backend 는 FastAPI 라 query 무시하고 path 매칭만.

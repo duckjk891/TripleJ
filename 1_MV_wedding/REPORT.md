@@ -4384,3 +4384,7 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
   - 캐릭터 시트 `신부 머리스타일` refine 완료, permanent sheet 덮어쓰기 (5.3MB → 5.1MB).
   - Phase 2 fetch path = mongo wedding_character_sheets 직접 → 캐싱 없음 → 자동 반영.
 - backend 변경 없음 (refine 완료 후 reload 위험 피함).
+
+### v53.5 — 2026-06-06 — PATCH cache-buster
+- `patchMVJobLyrics(jobId, ...)` URL 에 `?_t=Date.now()` 추가.
+- backend 변경 없음. Vite hot-reload 로 즉시 반영.

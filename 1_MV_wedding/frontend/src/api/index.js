@@ -118,11 +118,15 @@ export const regenerateMVJobMusic = (jobId) =>
 // 가드: 401 → 400(ObjectId) → 404 → 403(non-owner) → 409(queued/generating) → 422(validation).
 // body 변경 시 백엔드가 lyric_timestamps_status='stale' 로 마킹.
 // 응답: 기존 GET /mv/jobs/{id} 와 동일 shape (updated_doc).
+// v53.5 — `?_t=<timestamp>` cache-buster 로 stale CORS preflight 캐시 우회.
+// 일부 사용자 브라우저가 max-age=60 을 무시하고 오래된 preflight 응답을
+// 들고 있어 PATCH 가 자체 차단된 사례 발견. URL path 가 매번 다르면
+// 새 preflight 가 강제되므로 stale 캐시와 무관.
 export const patchMVJobLyrics = (jobId, { title, body }) => {
   const payload = {};
   if (typeof title === 'string') payload.title = title;
   if (typeof body === 'string') payload.body = body;
-  return API.patch(`/mv/jobs/${jobId}/lyrics`, payload);
+  return API.patch(`/mv/jobs/${jobId}/lyrics?_t=${Date.now()}`, payload);
 };
 
 // v33 — Wizard 작성중 draft 영속화 (user 당 1개)
