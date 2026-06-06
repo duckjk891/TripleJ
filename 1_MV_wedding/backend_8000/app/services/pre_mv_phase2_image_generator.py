@@ -379,14 +379,27 @@ async def generate_scene_image(
     if len(resolved_assets) >= 2:
         extra_bytes, extra_mime, extra_display, extra_memo, _ = resolved_assets[1]
 
-    # v32 — 최종 fallback: 캐릭터 시트 기본값 (groom_wedding / bride_wedding).
+    # v32 — 최종 fallback: 캐릭터 시트 기본값.
     # scenario_events 의 refs 가 비어있어서 Phase 1 이 ref_ids 를 못 채운 케이스
     # (사용자가 @멘션을 안 한 회상 등). 이 시점까지 groom_bytes/bride_bytes 가 비어있고
-    # ref_sheet_ids 에 명시도 없었으면 default 시트로 시도한다. 실패 씬 retry 시에도
-    # 자동 복구되도록 Phase 2 안에서 처리.
+    # ref_sheet_ids 에 명시도 없었으면 default 시트로 시도한다.
+    # v54.5 — chapter (story_slot) 에 따라 fallback 순서 분기:
+    #   · wedding_prep → wedding 시트 우선 (예복 차림 어울림)
+    #   · 그 외 → casual 시트 우선 (= 사용자가 처음 만든 것, 일상 컨텍스트에 맞음)
+    #   이전엔 무조건 wedding 먼저라 첫 데이트/회상 씬에 예복 차림이 들어가던 버그.
+    is_wedding_chapter = _is_wedding_prep_slot(story_slot)
+    groom_fb_order = (
+        ("groom_wedding", "groom_casual") if is_wedding_chapter
+        else ("groom_casual", "groom_wedding")
+    )
+    bride_fb_order = (
+        ("bride_wedding", "bride_casual") if is_wedding_chapter
+        else ("bride_casual", "bride_wedding")
+    )
+
     has_groom_in_refs = any(s.startswith("groom_") for s in ref_sheet_ids)
     if not groom_bytes and not has_groom_in_refs:
-        for fb_slot in ("groom_wedding", "groom_casual"):
+        for fb_slot in groom_fb_order:
             data, mime, display, style = await _resolve_sheet_ref(
                 owner_user_id=owner_user_id, slot=fb_slot,
             )
@@ -402,7 +415,7 @@ async def generate_scene_image(
 
     has_bride_in_refs = any(s.startswith("bride_") for s in ref_sheet_ids)
     if not bride_bytes and not has_bride_in_refs:
-        for fb_slot in ("bride_wedding", "bride_casual"):
+        for fb_slot in bride_fb_order:
             data, mime, display, style = await _resolve_sheet_ref(
                 owner_user_id=owner_user_id, slot=fb_slot,
             )

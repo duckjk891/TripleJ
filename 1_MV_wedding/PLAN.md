@@ -6344,3 +6344,11 @@ async def _call_claude_text(
 - 제거: Step 1 의 `⟳ 이 시나리오로 씬 다시 분할` 버튼 + 핸들러 + state (`resplitting`, `resplitErr`).
 - 유지: 시나리오 본문 + events 편집 흐름.
 - Step 2 의 기존 [다시 씬 분할] 버튼이 `runPreMVPhase1(force=true)` 로 호출 → mongo 의 최신 (편집된) scenario_text + scenario_events 자동 사용. 추가 작업 불필요.
+
+### v54.5 — Phase 2 default sheet fallback 의 slot 순서 chapter 분기
+- 사용자 보고: 첫 데이트/해수욕장 씬에 캐릭터 시트가 반영 안 됨. ref_sheet_ids 빈 챕터.
+- log 확인: face-only fallback 자체는 실행됨 (`default sheet fallback slot=groom_wedding/bride_wedding`).
+- 문제: fallback 이 무조건 wedding 시트 먼저 시도 → 일상 챕터에 예복 차림이 들어가 결과 어색.
+- 수정: chapter 따라 fallback slot 순서 분기.
+  - `wedding_prep` → wedding 우선 (그대로)
+  - 그 외 → **casual 우선** (사용자가 처음 만든 시트 = casual 이라는 가정 + 일상 컨텍스트 적합)

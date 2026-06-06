@@ -4416,3 +4416,10 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - Step 1 의 잘못 추가된 [⟳ 이 시나리오로 씬 다시 분할] 버튼 제거. Step 2 의 기존 [다시 씬 분할] 만 사용.
 - 편집 hint 도 "Step 2 의 [다시 씬 분할] 누르면 새 시나리오로 분할" 로 수정.
 - frontend only. Vite hot-reload.
+
+### v54.5 — 2026-06-06 — Default sheet fallback chapter 분기
+- `pre_mv_phase2_image_generator.py` 의 default sheet fallback 순서를 chapter 별로 다르게.
+- 일상 챕터(meeting/first_date/memory/proposal) → casual 시트 먼저 시도. 결과 이미지에 일상 차림 캐릭터.
+- wedding_prep 챕터 → wedding 시트 그대로.
+- 사용자가 챕터별 이미지 재생성 누르면 새 흐름 반영.
+- 사전 안전 점검: pre_mv active = 0. scp → reload → health 200.
