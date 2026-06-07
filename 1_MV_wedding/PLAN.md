@@ -6368,3 +6368,9 @@ async def _call_claude_text(
 - 같은 챕터 내에서 옷이 씬마다 달라지는 버그.
 - 원인: PREV_SCENE_BLOCK_PRESENT 가 props (coffee cup/chair/umbrella) 만 명시하고 outfit 빠짐.
 - 수정: "Maintain the EXACT same **character outfit**, coffee cup, chair, ..." 로 outfit 추가. 다른 룰은 손대지 않음.
+
+### v54.9 — face-only 시 챕터 첫 씬에서 시트 옷 anchor 해제
+- 사용자 보고: 챕터 사이/씬 사이 옷이 안 바뀌고 모두 유지됨.
+- 원인: face-only 안내가 "옷 자유 변주" 명시했지만 약해서 모델이 시트의 옷을 따라감. 챕터 첫 씬에 시트 옷이 들어가면 v54.8 의 prev_scene carry 가 챕터 전체로 그 옷 전파.
+- 수정: [face-only] 안내 끝에 한 문장 명시 — "시트 ref 의 옷은 절대 그대로 가져오지 마라. scene_prompt 의 묘사대로 새로 입혀라."
+- prev_scene outfit carry (v54.8) 는 유지 — 챕터 내 인접 씬 옷 통일.
