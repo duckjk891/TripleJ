@@ -4444,3 +4444,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - SCENE_IMAGE_SYSTEM_PROMPT 의 [face-only] 안내에 한 문장 추가: "시트 ref 속 옷은 그대로 가져오지 마라. scene_prompt 의 묘사대로 새 옷."
 - prev_scene 의 outfit 가이드 그대로.
 - scp → reload → health 200.
+
+### v54.10 — 2026-06-07 — default sheet = wedding 우선
+- 정렬 키 `(style_priority, updated_at)`.
+- wedding 슬롯 없으면 자동 casual fallback (사용자가 wedding 안 만들었을 때 안전).
+- scp → reload → health 200.

@@ -170,7 +170,10 @@ async def _resolve_first_sheet_for_role(
         )
         return None, None, "", "", ""
     sheets = (cs_doc or {}).get("sheets") or {}
-    candidates: list = []  # (updated_at, slot, info)
+    # v54.10 — default = wedding (예복) 우선. wedding 슬롯이 있으면 그것을 사용,
+    # 없으면 casual fallback. 같은 style 안에선 updated_at 가장 오래된 시트.
+    # (이전 v54.6 은 무조건 가장 오래된 → casual 이 default 였음.)
+    candidates: list = []  # (style_priority, updated_at, slot, info)
     for slot, info in sheets.items():
         if not isinstance(info, dict):
             continue
@@ -178,13 +181,15 @@ async def _resolve_first_sheet_for_role(
             continue
         if not info.get("sheet_object_name"):
             continue
-        candidates.append((info.get("updated_at"), slot, info))
+        # wedding 이 우선 → priority 0, 그 외 (casual 등) → priority 1.
+        style_priority = 0 if slot.endswith("_wedding") else 1
+        candidates.append((style_priority, info.get("updated_at"), slot, info))
     if not candidates:
         return None, None, "", "", ""
-    # updated_at 가장 오래된 (사용자가 처음 만든) 시트.
-    # None 인 항목은 가장 뒤로 미룸.
-    candidates.sort(key=lambda x: (x[0] is None, x[0]))
-    _ts, slot, info = candidates[0]
+    # (style_priority, updated_at) 정렬 — wedding 먼저, 같은 style 안에선 오래된 것.
+    # updated_at None 인 항목은 가장 뒤로.
+    candidates.sort(key=lambda x: (x[0], x[1] is None, x[1]))
+    _sp, _ts, slot, info = candidates[0]
     obj = info.get("sheet_object_name") or ""
     if not obj:
         return None, None, "", "", ""
