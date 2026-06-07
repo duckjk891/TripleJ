@@ -6381,3 +6381,7 @@ async def _call_claude_text(
   - `*_wedding` → priority 0 (먼저 시도)
   - 그 외 (`*_casual` 등) → priority 1
 - 같은 style 안에선 기존대로 `updated_at` 오래된 시트.
+
+### v54.11 — Phase 2 prompt 에 anti-idealization 한 줄 추가
+- 캐릭터 시트는 realistic mode (v50) 로 사실적이지만, 씬 이미지 생성 시 모델이 다시 미화하는 케이스 신고.
+- SCENE_IMAGE_SYSTEM_PROMPT 의 ④ 규칙에 한 줄 추가: "Keep ordinary-person facial features and proportions from the reference; do not smooth, symmetrize, or idealize the face/body."

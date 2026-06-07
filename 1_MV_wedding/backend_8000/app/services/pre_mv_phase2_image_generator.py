@@ -92,6 +92,8 @@ SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 p
 ② 인물 시트가 한쪽만 있는 씬이면 그 한 명만 그린다. 절대 자동으로 다른 인물을 추가하지 않는다.
 ③ 장소 ref 가 있으면 배경 톤/구조를 그대로 따른다. 없으면 image_prompt 의 묘사를 우선.
 ④ Photorealistic, cinematic wedding film tone. natural lighting. 4K still.
+   Keep ordinary-person facial features and proportions from the reference;
+   do not smooth, symmetrize, or idealize the face/body.
 ⑤ 출력은 이미지 모델용 prompt 영문 1단락. 따옴표/머리말/번호매김/해설 없음.
 ⑥ image_prompt 가 짧거나 비어 있어도 자연스럽고 따뜻한 컷으로 보강.
 ⑦ 음란/노출/위험 표현 금지. "glamorous" 같은 자극적 단어는 사용하지 않는다.

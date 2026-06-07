@@ -4449,3 +4449,7 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 - 정렬 키 `(style_priority, updated_at)`.
 - wedding 슬롯 없으면 자동 casual fallback (사용자가 wedding 안 만들었을 때 안전).
 - scp → reload → health 200.
+
+### v54.11 — 2026-06-07 — Phase 2 anti-idealization 한 줄
+- ④ 규칙 끝에 두 줄 추가. 시트의 얼굴/체형 미화·대칭화 금지.
+- scp → reload → health 200.
