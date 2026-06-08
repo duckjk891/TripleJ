@@ -224,7 +224,13 @@ async def _start_kling(
         )
 
     if resp.status_code == 429:
-        raise ValueError("Kling API 429: 할당량 초과")
+        # v54.12 — 429 응답 본문까지 로깅. credit 부족 vs rate limit 구분.
+        body_preview = (resp.text or "")[:300]
+        logger.warning(
+            "[PreMVKling] phase=phase3 HTTP 429 pre_mv_job_id=%s scene_number=%d body=%s",
+            pre_mv_job_id, scene_number, body_preview,
+        )
+        raise ValueError("Kling API 429: {}".format(body_preview or "할당량 초과"))
     if resp.status_code != 200:
         raise ValueError(
             "Kling API 오류 (HTTP {}): {}".format(resp.status_code, resp.text[:300])

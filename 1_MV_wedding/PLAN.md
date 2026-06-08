@@ -6385,3 +6385,9 @@ async def _call_claude_text(
 ### v54.11 — Phase 2 prompt 에 anti-idealization 한 줄 추가
 - 캐릭터 시트는 realistic mode (v50) 로 사실적이지만, 씬 이미지 생성 시 모델이 다시 미화하는 케이스 신고.
 - SCENE_IMAGE_SYSTEM_PROMPT 의 ④ 규칙에 한 줄 추가: "Keep ordinary-person facial features and proportions from the reference; do not smooth, symmetrize, or idealize the face/body."
+
+### v54.12 — Kling 429 응답 본문까지 로깅
+- 사용자 보고: Kling API 429 "할당량 초과" 가 계속 발생.
+- 원인 구분 안 됨 (credit 부족 vs concurrent rate limit). 응답 본문 log 안 찍힘.
+- 수정: 429 시 `resp.text` 의 처음 300자를 log + ValueError 메시지에 포함.
+- backend log 의 `body=...` 라인으로 정확한 메시지 확인 가능.

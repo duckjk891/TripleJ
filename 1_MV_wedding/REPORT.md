@@ -4453,3 +4453,8 @@ Step A 를 Gemini text → Claude 로 변경 (Gemini 429 RESOURCE_EXHAUSTED 가 
 ### v54.11 — 2026-06-07 — Phase 2 anti-idealization 한 줄
 - ④ 규칙 끝에 두 줄 추가. 시트의 얼굴/체형 미화·대칭화 금지.
 - scp → reload → health 200.
+
+### v54.12 — 2026-06-08 — Kling 429 body 로깅
+- 429 응답 시 `[PreMVKling] HTTP 429 body=...` 라인으로 본문 노출.
+- 사용자가 다음 429 발생 시 본문 확인 → credit 부족 / rate limit 구분.
+- scp → reload → health 200.
