@@ -47,6 +47,9 @@ export default function MyWeddingMVPage() {
     setSelectedIds(new Set());
   };
 
+  // v37 — draft 도 선택 삭제 대상. sentinel ID 사용 (잡은 ObjectId라 충돌 X)
+  const DRAFT_SENTINEL = '__draft__';
+
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     const list = Array.from(selectedIds);
@@ -61,21 +64,24 @@ export default function MyWeddingMVPage() {
     }
     setDeletingBulk(true);
     let failures = 0;
-    for (const jobId of list) {
+    let draftDeleted = false;
+    for (const id of list) {
       try {
-        await api.deleteMVJob(jobId);
+        if (id === DRAFT_SENTINEL) {
+          await api.deleteMyDraft();
+          draftDeleted = true;
+        } else {
+          await api.deleteMVJob(id);
+        }
       } catch (err) {
         failures += 1;
-        console.error('[MyWeddingMV] deleteMVJob failed', { err, job_id: jobId });
+        console.error('[MyWeddingMV] delete failed', { err, id });
       }
     }
     // 성공한 것 state 에서 제거 (실패한 건 그대로 유지)
-    setJobs((prev) => prev.filter((j) => {
-      const jid = j.job_id || j.id;
-      return !list.includes(jid) || failures > 0; // 실패한 게 있으면 다 유지하고 사용자가 다시 시도
-    }));
     if (failures === 0) {
       setJobs((prev) => prev.filter((j) => !list.includes(j.job_id || j.id)));
+      if (draftDeleted) setDraft(null);
       exitSelectMode();
     } else {
       alert(`${list.length - failures}개 삭제 성공, ${failures}개 실패. 잠시 후 다시 시도해주세요.`);
@@ -180,8 +186,8 @@ export default function MyWeddingMVPage() {
                 type="button"
                 className="btn-ghost"
                 onClick={() => setSelectMode(true)}
-                disabled={jobs.length === 0}
-                title={jobs.length === 0 ? '삭제할 작품이 없어요' : '여러 작품을 선택해서 삭제'}
+                disabled={jobs.length === 0 && !draft}
+                title={(jobs.length === 0 && !draft) ? '삭제할 작품이 없어요' : '여러 작품을 선택해서 삭제'}
               >
                 ☐ 선택 삭제
               </button>
@@ -230,26 +236,43 @@ export default function MyWeddingMVPage() {
       )}
 
       <ul className="my-mv__grid">
-        {draft && (
-          <li className="card my-mv__card my-mv__card--draft">
-            <h2 className="my-mv__card-title">
-              {draft.title || '제목 미정'}
-              <span className="my-mv__badge my-mv__badge--draft" style={{
-                marginLeft: 8, fontSize: 12, padding: '2px 8px',
-                background: '#f5c542', color: '#000', borderRadius: 10,
-              }}>
-                🟡 작성중
-              </span>
-            </h2>
-            <p className="muted">
-              단계: {STEP_LABEL[draft.step] || `Step ${draft.step}`}
-              {draft.updated_at && ` · 마지막 편집 ${new Date(draft.updated_at).toLocaleString()}`}
-            </p>
-            <div className="my-mv__card-actions">
-              <Link to="/wizard" className="btn-primary">✎ 이어서 작성</Link>
-            </div>
-          </li>
-        )}
+        {draft && (() => {
+          const draftChecked = selectedIds.has(DRAFT_SENTINEL);
+          return (
+            <li
+              className={`card my-mv__card my-mv__card--draft${draftChecked ? ' my-mv__card--selected' : ''}`}
+              style={draftChecked ? { outline: '2px solid #4a90e2' } : undefined}
+            >
+              {selectMode && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={draftChecked}
+                    onChange={() => toggleSelected(DRAFT_SENTINEL)}
+                    disabled={deletingBulk}
+                  />
+                  <span className="muted">선택</span>
+                </label>
+              )}
+              <h2 className="my-mv__card-title">
+                {draft.title || '제목 미정'}
+                <span className="my-mv__badge my-mv__badge--draft" style={{
+                  marginLeft: 8, fontSize: 12, padding: '2px 8px',
+                  background: '#f5c542', color: '#000', borderRadius: 10,
+                }}>
+                  🟡 작성중
+                </span>
+              </h2>
+              <p className="muted">
+                단계: {STEP_LABEL[draft.step] || `Step ${draft.step}`}
+                {draft.updated_at && ` · 마지막 편집 ${new Date(draft.updated_at).toLocaleString()}`}
+              </p>
+              <div className="my-mv__card-actions">
+                <Link to="/wizard" className="btn-primary">✎ 이어서 작성</Link>
+              </div>
+            </li>
+          );
+        })()}
         {jobs.map((job) => {
           const jobId = job.job_id || job.id;
           const checked = selectedIds.has(jobId);
