@@ -8,6 +8,7 @@ import UploadPage from './UploadPage';
 import StudioTab from '../components/StudioTab';
 import StudioTab2 from '../components/StudioTab2';
 import AlbumCreateModal from '../components/AlbumCreateModal';
+import MyVoiceCloneSection from '../components/MyVoiceCloneSection';
 import './MyMusicPage.css';
 
 const SORT_OPTIONS = [
@@ -975,7 +976,10 @@ export default function MyMusicPage() {
 
         {/* Tab 6: Character */}
         {activeTab === 'character' && (
-          <CharacterSection />
+          <>
+            <CharacterSection />
+            <MyVoiceCloneSection />
+          </>
         )}
 
         {/* Tab 7: Drafts */}

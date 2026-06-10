@@ -18,7 +18,6 @@ import re
 import time
 from typing import Optional
 
-import anthropic
 import httpx
 
 from ..config import settings
@@ -644,127 +643,6 @@ def _trace_kv(
     return " ".join(parts)
 
 
-# v52 — Step A 용 Claude Opus 4.7 호출. Gemini 의존 제거 (Gemini quota 이슈 회피).
-# Gemini parts 형식 (`inlineData.mimeType/data`) 그대로 받아 내부에서
-# Claude content 형식 (`type=image, source.type=base64, media_type, data`) 으로 변환.
-# 기존 caller 는 import + 함수명만 바꾸면 동작.
-_CLAUDE_TEXT_MODEL = "claude-opus-4-7"
-_claude_text_client: Optional[anthropic.AsyncAnthropic] = None
-
-
-def _get_claude_text_client() -> anthropic.AsyncAnthropic:
-    global _claude_text_client
-    if _claude_text_client is None:
-        _claude_text_client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key
-        )
-    return _claude_text_client
-
-
-def _sniff_image_media_type(data_b64: str, fallback: str = "image/jpeg") -> str:
-    """v52.1 — base64 첫 32바이트 디코드해서 magic bytes 로 실제 media_type 추론.
-
-    Claude API 는 media_type ↔ 실제 데이터 mismatch 시 400 거부. Gemini 는
-    관대해서 caller 가 잘못된 mime 을 박아도 통과했지만, Claude 호환을 위해 보정.
-    """
-    try:
-        head = base64.b64decode(data_b64[:64] + "===", validate=False)[:16]
-    except Exception:  # noqa: BLE001
-        return fallback
-    if head.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if head[:3] == b"\xff\xd8\xff":
-        return "image/jpeg"
-    if head[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return "image/webp"
-    return fallback
-
-
-def _gemini_parts_to_claude_content(prompt: str, image_parts: list) -> list:
-    """Gemini inlineData parts → Claude messages content block. 이미지를 앞에 배치."""
-    content: list = []
-    for part in image_parts or []:
-        inline = part.get("inlineData") if isinstance(part, dict) else None
-        if not inline:
-            continue
-        declared = inline.get("mimeType") or "image/jpeg"
-        data_b64 = inline.get("data") or ""
-        if not data_b64:
-            continue
-        # v52.1 — 실제 bytes 의 magic 으로 media_type 보정 (Claude 엄격 검증 대응).
-        media_type = _sniff_image_media_type(data_b64, fallback=declared)
-        if media_type != declared:
-            logger.info(
-                "[CharGen] image media_type corrected declared=%s actual=%s",
-                declared, media_type,
-            )
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": media_type,
-                "data": data_b64,
-            },
-        })
-    content.append({"type": "text", "text": prompt})
-    return content
-
-
-async def _call_claude_text(
-    prompt: str,
-    image_parts: list,
-    role: Optional[str] = None,
-    style: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> str:
-    """Step A (v52): Claude Opus 4.7 로 캐릭터 시트 prompt 생성.
-
-    `_call_gemini_text` 와 시그니처 / 반환 형식 호환. 기존 caller 가
-    import 와 함수명만 바꾸면 그대로 동작한다.
-    """
-    trailer = _trace_kv(role, style, user_id)
-    content = _gemini_parts_to_claude_content(prompt, image_parts)
-    logger.info(
-        "[CharGen] Step A: calling Claude text model=%s (parts=%d) %s",
-        _CLAUDE_TEXT_MODEL, len(image_parts or []), trailer,
-    )
-    start = time.monotonic()
-    try:
-        client = _get_claude_text_client()
-        # v52.2 — Claude Opus 4.7 는 `temperature` deprecated. 인자에서 제거.
-        msg = await client.messages.create(
-            model=_CLAUDE_TEXT_MODEL,
-            max_tokens=8192,
-            system=CHARACTER_SYSTEM_INSTRUCTION,
-            messages=[{"role": "user", "content": content}],
-        )
-    except anthropic.APIStatusError as e:
-        elapsed_s = time.monotonic() - start
-        logger.warning(
-            "[CharGen] Step A: Claude error status=%s elapsed_s=%.1f %s",
-            getattr(e, "status_code", "?"), elapsed_s, trailer,
-        )
-        raise ValueError(
-            "Claude text API error (HTTP {}): {}".format(
-                getattr(e, "status_code", "?"), str(e)[:300]
-            )
-        )
-    elapsed_s = time.monotonic() - start
-    logger.info(
-        "[CharGen] Step A: Claude text ok elapsed_s=%.1f %s", elapsed_s, trailer,
-    )
-
-    text_chunks = [
-        block.text for block in (msg.content or [])
-        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
-    ]
-    if not text_chunks:
-        raise ValueError("No text in Claude response")
-    return "".join(text_chunks)
-
-
 async def _call_gemini_text(
     prompt: str,
     image_parts: list,
@@ -772,10 +650,7 @@ async def _call_gemini_text(
     style: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Step A: Call Gemini text model to generate a character sheet prompt.
-
-    v52: 백업으로 유지. 신규 호출은 `_call_claude_text` 사용.
-    """
+    """Step A: Call Gemini text model to generate a character sheet prompt."""
     payload = {
         "systemInstruction": {
             "parts": [{"text": CHARACTER_SYSTEM_INSTRUCTION}]
@@ -1061,8 +936,7 @@ async def generate_character_sheet(
         + master
     )
 
-    # v52 — Step A: Claude Opus 4.7 (Gemini quota 이슈 회피).
-    sheet_prompt_text = await _call_claude_text(
+    sheet_prompt_text = await _call_gemini_text(
         step_a_prompt, image_parts, role=role, style=style, user_id=user_id
     )
     sheet_prompt_text = _extract_code_block(sheet_prompt_text)

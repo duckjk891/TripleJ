@@ -13,13 +13,41 @@ API.interceptors.request.use((config) => {
   return config;
 });
 
-// 응답 인터셉터 - 401 시 토큰 제거
+// 응답 인터셉터 - 401 또는 토큰 만료/무효(403) 시 토큰 제거 + /login 리다이렉트
+// 백엔드(app/auth.py) 정책: 누락=401, 만료/Invalid=403("토큰이 만료"/"유효하지 않은 토큰"),
+// 권한부족=403("관리자 권한이 필요합니다." 등) — 권한 부족은 토큰 유지.
 API.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const detail =
+      error.response?.data?.detail ||
+      error.response?.data?.error ||
+      error.response?.data?.message ||
+      '';
+    const isTokenInvalid =
+      status === 401 ||
+      (status === 403 && /토큰|token|만료|expired|invalid|세션/i.test(String(detail)));
+    if (isTokenInvalid) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+      try {
+        sessionStorage.removeItem('cachedCharacter');
+        sessionStorage.removeItem('cachedCharacterAt');
+      } catch (_) { /* ignore */ }
+      const path = window.location.pathname || '';
+      if (!path.startsWith('/login') && !path.startsWith('/register')) {
+        try {
+          sessionStorage.setItem(
+            'postLoginRedirect',
+            (window.location.pathname || '/') + (window.location.search || '')
+          );
+        } catch (_) { /* ignore */ }
+        if (import.meta.env.DEV) {
+          console.warn('[API] token invalid, redirecting to /login', { status, detail });
+        }
+        window.location.assign('/login');
+      }
     }
     return Promise.reject(error);
   }
@@ -283,6 +311,14 @@ export const streamVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-pe
 export const streamVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/stream`;
 export const downloadVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-persona/${id}/vocal/download`;
 export const downloadVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/download`;
+
+// Voice Clone (v76 — Suno V5_5 Voice Cloning)
+export const createVoiceClone = (formData) => API.post('/voice-clone/create', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+export const submitVoiceCloneVerify = (cloneId, formData) => API.post('/voice-clone/' + cloneId + '/verify', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+export const getVoiceClones = () => API.get('/voice-clone/list');
+export const getVoiceClone = (id) => API.get('/voice-clone/' + id);
+export const deleteVoiceClone = (id) => API.delete('/voice-clone/' + id);
+export const regenerateVoiceClonePhrase = (id) => API.post('/voice-clone/' + id + '/regenerate-phrase');
 
 // Vocal Repair (Dolby.io)
 export const uploadVoiceForRepair = (formData) =>

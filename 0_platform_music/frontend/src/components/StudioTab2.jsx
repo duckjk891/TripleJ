@@ -819,6 +819,10 @@ export default function StudioTab2({ onSendToUpload }) {
   const [myPersonas, setMyPersonas] = useState([]);
   const [selectedPersonaId, setSelectedPersonaId] = useState(null);
 
+  // ─── Voice Clone state (v76 — Suno V5_5 voice cloning) ───
+  const [myClones, setMyClones] = useState([]);
+  const [selectedVoiceCloneId, setSelectedVoiceCloneId] = useState(null);
+
   // ─── Step state: 1=prompt, 2=lyrics confirm, 3=params, 4=prompt preview ───
   const [step, setStep] = useState(1);
 
@@ -943,6 +947,22 @@ export default function StudioTab2({ onSendToUpload }) {
         setMyPersonas(completed);
       })
       .catch(() => {});
+  }, []);
+
+  // v76 — Fetch voice clones (ready only) for Suno V5_5 cloning
+  useEffect(() => {
+    if (import.meta.env.DEV) console.info('[StudioTab2] fetching voice clones');
+    api.getVoiceClones()
+      .then(({ data }) => {
+        const ready = (data?.clones || data?.items || []).filter(
+          (c) => c?.status === 'ready' && c?.voice_id
+        );
+        setMyClones(ready);
+        if (import.meta.env.DEV) console.info('[StudioTab2] voice clones loaded', { count: ready.length });
+      })
+      .catch((err) => {
+        console.error('[StudioTab2] getVoiceClones failed', { status: err?.response?.status, message: err?.message });
+      });
   }, []);
 
   useEffect(() => {
@@ -1417,6 +1437,18 @@ export default function StudioTab2({ onSendToUpload }) {
           duet_main_vocal_style: isDuet ? duetMainStyle.trim() || null : null,
           duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
         };
+        // v76 — voice clone override (Suno V5_5)
+        if (selectedVoiceCloneId) {
+          const clone = myClones.find((c) => c.id === selectedVoiceCloneId);
+          if (clone?.voice_id) {
+            body.persona_id = clone.voice_id;
+            body.persona_model = 'voice_persona';
+            body.model = 'V5_5';
+            if (import.meta.env.DEV) {
+              console.info('[StudioTab2] applying voice_clone override (draft path)', { clone_id: clone.id });
+            }
+          }
+        }
         await api.createGeneration(body);
         setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
       } else {
@@ -1447,6 +1479,19 @@ export default function StudioTab2({ onSendToUpload }) {
           duet_main_vocal_style: isDuet ? duetMainStyle.trim() || null : null,
           duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
         };
+
+        // v76 — voice clone override (Suno V5_5)
+        if (selectedVoiceCloneId) {
+          const clone = myClones.find((c) => c.id === selectedVoiceCloneId);
+          if (clone?.voice_id) {
+            body.persona_id = clone.voice_id;
+            body.persona_model = 'voice_persona';
+            body.model = 'V5_5';
+            if (import.meta.env.DEV) {
+              console.info('[StudioTab2] applying voice_clone override (suno path)', { clone_id: clone.id });
+            }
+          }
+        }
 
         await api.createGeneration(body);
         setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
@@ -2306,8 +2351,8 @@ export default function StudioTab2({ onSendToUpload }) {
                   <button
                     key={v.value}
                     type="button"
-                    className={`s2__vocal-btn ${vocal === v.value && !selectedPersonaId ? 's2__vocal-btn--active' : ''}`}
-                    onClick={() => { setVocal(v.value); setSelectedPersonaId(null); }}
+                    className={`s2__vocal-btn ${vocal === v.value && !selectedPersonaId && !selectedVoiceCloneId ? 's2__vocal-btn--active' : ''}`}
+                    onClick={() => { setVocal(v.value); setSelectedPersonaId(null); setSelectedVoiceCloneId(null); }}
                   >
                     {v.label}
                   </button>
@@ -2327,7 +2372,7 @@ export default function StudioTab2({ onSendToUpload }) {
                         key={p.id}
                         type="button"
                         className={`s2__vocal-btn s2__vocal-btn--persona ${selectedPersonaId === p.persona_id ? 's2__vocal-btn--active' : ''}`}
-                        onClick={() => { setSelectedPersonaId(p.persona_id); setVocal(''); }}
+                        onClick={() => { setSelectedPersonaId(p.persona_id); setVocal(''); setSelectedVoiceCloneId(null); }}
                       >
                         <FiMic style={{ marginRight: 4 }} />
                         {p.name}
@@ -2337,6 +2382,40 @@ export default function StudioTab2({ onSendToUpload }) {
                   {selectedPersonaId && (
                     <div className="s2__persona-note">
                       내 Voice Persona가 선택되었습니다. Suno가 이 목소리 톤으로 노래를 생성합니다.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* v76 — My Voice (Voice Clone, Suno V5_5) */}
+              {selectedModel === 'suno' && myClones.length > 0 && (
+                <div className="s2__persona-section">
+                  <label className="s2__label s2__label--persona">
+                    <FiMic className="s2__label-icon--inline" />
+                    내 목소리 (보이스 클론 · V5_5)
+                  </label>
+                  <div className="s2__vocal-grid">
+                    {myClones.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`s2__vocal-btn s2__vocal-btn--persona ${selectedVoiceCloneId === c.id ? 's2__vocal-btn--active' : ''}`}
+                        onClick={() => {
+                          if (import.meta.env.DEV) console.info('[StudioTab2] voice clone selected', { clone_id: c.id });
+                          setSelectedVoiceCloneId(c.id);
+                          setSelectedPersonaId(null);
+                          setVocal('');
+                        }}
+                        title={c.description || ''}
+                      >
+                        <FiMic style={{ marginRight: 4 }} />
+                        {c.voice_name || c.name || '이름 없음'}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedVoiceCloneId && (
+                    <div className="s2__persona-note">
+                      내 보이스 클론이 선택되었습니다. Suno V5_5 가 이 목소리로 노래합니다.
                     </div>
                   )}
                 </div>

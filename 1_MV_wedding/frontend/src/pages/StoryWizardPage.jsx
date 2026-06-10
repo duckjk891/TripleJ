@@ -700,13 +700,24 @@ export default function StoryWizardPage() {
         if (import.meta.env.DEV) {
           console.info('[StoryWizard] regenerateMVJob', { job_id: resolvedJobId });
         }
-        await api.regenerateMVJob(resolvedJobId, {
-          story_id: storyId,
-          music_spec: musicSpec,
-        });
-      } else {
+        try {
+          await api.regenerateMVJob(resolvedJobId, {
+            story_id: storyId,
+            music_spec: musicSpec,
+          });
+        } catch (regenErr) {
+          if (regenErr?.response?.status === 404) {
+            console.warn('[StoryWizard] regenerate target gone, falling back to createMVJob', { stale_job_id: resolvedJobId });
+            resolvedJobId = null;
+            setData((d) => ({ ...d, current_job_id: null }));
+          } else {
+            throw regenErr;
+          }
+        }
+      }
+      if (!resolvedJobId) {
         if (import.meta.env.DEV) {
-          console.info('[StoryWizard] createMVJob (first)');
+          console.info('[StoryWizard] createMVJob (first or 404-fallback)');
         }
         const { data: jobRes } = await api.createMVJob({
           story_id: storyId,

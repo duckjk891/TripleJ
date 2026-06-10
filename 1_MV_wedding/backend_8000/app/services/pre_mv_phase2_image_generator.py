@@ -40,7 +40,7 @@ from bson.errors import InvalidId
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
-from .character_generator import _call_gemini_image, _call_gemini_text
+from .character_generator import _call_claude_text, _call_gemini_image  # v52 — Step A → Claude
 from .openai_image import generate_image as openai_generate_image
 
 logger = logging.getLogger(__name__)
@@ -57,10 +57,12 @@ _MAX_REFS = 4
 
 
 # v24 — 이전 씬 이미지 가이드 (chapter 내 연쇄 carry).
+# v54.8 — `outfit` 한 단어 추가. 같은 챕터 안에서 캐릭터 옷이 씬마다 달라지는
+# 케이스 신고됨 (default 시트 face-only fallback 시점).
 PREV_SCENE_BLOCK_PRESENT = (
     "If a previous-scene reference image is provided, treat it as the same "
-    "world/lighting/props/camera-style context. Maintain the EXACT same coffee cup, "
-    "chair, umbrella, etc. across scenes."
+    "world/lighting/props/camera-style context. Maintain the EXACT same character "
+    "outfit, coffee cup, chair, umbrella, etc. across scenes."
 )
 
 
@@ -77,11 +79,21 @@ SCENE_IMAGE_SYSTEM_PROMPT = """역할: 결혼식 식전영상의 단일 씬을 p
 - 보조 참조 (이미지 참조): {extra_block}
 
 [규칙]
-① ref_image 들은 인물·장소 일관성 강제용. 캐릭터 시트가 둘 다 있으면 두 인물이 모두 등장해야 한다
-   (the bride AND the groom — both must visually match their reference sheets).
+① ref_image 들은 인물·장소 일관성 강제용. 각 인물 블록 끝의 [full-match] / [face-only]
+   태그를 반드시 준수:
+     · [full-match]  — 시트의 얼굴·체형·머리·옷·액세서리를 **모두** 정확히 매칭
+                       (사용자가 명시적으로 이 시트를 ref 로 선택했음)
+     · [face-only]   — 시트의 **얼굴·체형·머리만** 매칭. 옷·액세서리·계절감은
+                       scene_prompt 묘사에 맞춰 자유 변주 (예: 시트가 정장이어도
+                       여름 비치 씬이면 가벼운 셔츠로 갈아입은 동일 인물).
+                       ★ 시트 ref 속 옷은 절대 그대로 가져오지 마라. 결과 인물의
+                       옷·소품·계절감은 scene_prompt 의 묘사대로 새로 입혀라.
+   캐릭터 시트가 둘 다 있으면 두 인물이 모두 등장해야 한다.
 ② 인물 시트가 한쪽만 있는 씬이면 그 한 명만 그린다. 절대 자동으로 다른 인물을 추가하지 않는다.
 ③ 장소 ref 가 있으면 배경 톤/구조를 그대로 따른다. 없으면 image_prompt 의 묘사를 우선.
 ④ Photorealistic, cinematic wedding film tone. natural lighting. 4K still.
+   Keep ordinary-person facial features and proportions from the reference;
+   do not smooth, symmetrize, or idealize the face/body.
 ⑤ 출력은 이미지 모델용 prompt 영문 1단락. 따옴표/머리말/번호매김/해설 없음.
 ⑥ image_prompt 가 짧거나 비어 있어도 자연스럽고 따뜻한 컷으로 보강.
 ⑦ 음란/노출/위험 표현 금지. "glamorous" 같은 자극적 단어는 사용하지 않는다.
@@ -134,6 +146,61 @@ def _to_oid(value: str) -> Optional[ObjectId]:
         return ObjectId(value)
     except (InvalidId, TypeError):
         return None
+
+
+# v54.6 — fallback 용 헬퍼: wedding_character_sheets 의 해당 role 슬롯 중
+# updated_at 가장 오래된 (= 사용자가 처음 만든) 시트를 그대로 꺼내옴.
+# slot 이름 hardcode 대신 DB 에 실제 존재하는 시트 중 첫번째를 default 로 사용.
+async def _resolve_first_sheet_for_role(
+    *,
+    owner_user_id: str,
+    role: str,  # "groom" | "bride"
+) -> tuple[Optional[bytes], Optional[str], str, str, str]:
+    """role 의 슬롯 (groom_* 또는 bride_*) 중 updated_at 가장 오래된 시트를 반환.
+
+    Returns (bytes, mime, display, style, slot). 없으면 (None, None, "", "", "").
+    """
+    mongo = get_mongo()
+    try:
+        cs_doc = await mongo.wedding_character_sheets.find_one(
+            {"user_id": owner_user_id}
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[PreMVSceneImage] phase=phase2 first-sheet lookup failed user_id=%s role=%s: %s: %s",
+            owner_user_id, role, type(e).__name__, str(e)[:200],
+        )
+        return None, None, "", "", ""
+    sheets = (cs_doc or {}).get("sheets") or {}
+    # v54.10 — default = wedding (예복) 우선. wedding 슬롯이 있으면 그것을 사용,
+    # 없으면 casual fallback. 같은 style 안에선 updated_at 가장 오래된 시트.
+    # (이전 v54.6 은 무조건 가장 오래된 → casual 이 default 였음.)
+    candidates: list = []  # (style_priority, updated_at, slot, info)
+    for slot, info in sheets.items():
+        if not isinstance(info, dict):
+            continue
+        if not slot.startswith(role + "_"):
+            continue
+        if not info.get("sheet_object_name"):
+            continue
+        # wedding 이 우선 → priority 0, 그 외 (casual 등) → priority 1.
+        style_priority = 0 if slot.endswith("_wedding") else 1
+        candidates.append((style_priority, info.get("updated_at"), slot, info))
+    if not candidates:
+        return None, None, "", "", ""
+    # (style_priority, updated_at) 정렬 — wedding 먼저, 같은 style 안에선 오래된 것.
+    # updated_at None 인 항목은 가장 뒤로.
+    candidates.sort(key=lambda x: (x[0], x[1] is None, x[1]))
+    _sp, _ts, slot, info = candidates[0]
+    obj = info.get("sheet_object_name") or ""
+    if not obj:
+        return None, None, "", "", ""
+    data, mime = await _load_image_from_photos(obj)
+    if not data:
+        return None, None, "", "", ""
+    display = (info.get("display_name") or "").strip() or slot
+    style = slot.split("_", 1)[1] if "_" in slot else ""
+    return data, mime, display, style, slot
 
 
 async def _resolve_sheet_ref(
@@ -266,7 +333,7 @@ async def generate_scene_image(
       PNG bytes.
 
     Raises:
-      ValueError: ref 가 단 한 장도 없거나 Step A 빈 응답.
+      ValueError: Step A Gemini 빈 응답일 때만. ref 0개여도 진행 (v33 — text-only).
       Exception: 외부 API 실패는 호출자 측에서 except 후 image_status=failed 처리.
     """
     started = time.time()
@@ -297,10 +364,13 @@ async def generate_scene_image(
     groom_mime: Optional[str] = None
     groom_display = ""
     groom_style = ""
+    # v34 — explicit ref_sheet_ids 에서 왔는지(full-match) vs v32 fallback(face-only) 구분.
+    groom_is_explicit = False
     bride_bytes: Optional[bytes] = None
     bride_mime: Optional[str] = None
     bride_display = ""
     bride_style = ""
+    bride_is_explicit = False
     place_bytes: Optional[bytes] = None
     place_mime: Optional[str] = None
     place_display = ""
@@ -333,9 +403,11 @@ async def generate_scene_image(
         if slot.startswith("groom_") and groom_bytes is None:
             groom_bytes, groom_mime = data, mime
             groom_display, groom_style = display, style
+            groom_is_explicit = True
         elif slot.startswith("bride_") and bride_bytes is None:
             bride_bytes, bride_mime = data, mime
             bride_display, bride_style = display, style
+            bride_is_explicit = True
 
     # 2) place / wedding_photo — 첫 ref 를 place 슬롯, 그 외 첫 번째를 extra 슬롯에.
     resolved_assets: list[tuple[bytes, str, str, str, str]] = []
@@ -368,6 +440,39 @@ async def generate_scene_image(
     if len(resolved_assets) >= 2:
         extra_bytes, extra_mime, extra_display, extra_memo, _ = resolved_assets[1]
 
+    # v54.6 — default sheet fallback 을 가장 단순하게 변경:
+    # ref_sheet_ids 에 groom/bride 명시 없으면 DB (wedding_character_sheets) 의
+    # 해당 role 슬롯 중 updated_at 가장 오래된 (= 사용자가 처음 만든) 시트를 사용.
+    # 이전엔 slot 이름 hardcode + chapter 분기였는데, 사용자 요청대로 "DB 에 저장된
+    # 캐릭터 시트를 순서대로 그냥 꺼내오는" 단순 흐름으로 통일.
+    has_groom_in_refs = any(s.startswith("groom_") for s in ref_sheet_ids)
+    if not groom_bytes and not has_groom_in_refs:
+        data, mime, display, style, used_slot = await _resolve_first_sheet_for_role(
+            owner_user_id=owner_user_id, role="groom",
+        )
+        if data:
+            groom_bytes, groom_mime = data, mime
+            groom_display, groom_style = display, style
+            logger.info(
+                "[PreMVSceneImage] phase=phase2 default sheet fallback "
+                "pre_mv_job_id=%s scene_number=%d slot=%s (first by updated_at)",
+                pre_mv_job_id, scene_number, used_slot,
+            )
+
+    has_bride_in_refs = any(s.startswith("bride_") for s in ref_sheet_ids)
+    if not bride_bytes and not has_bride_in_refs:
+        data, mime, display, style, used_slot = await _resolve_first_sheet_for_role(
+            owner_user_id=owner_user_id, role="bride",
+        )
+        if data:
+            bride_bytes, bride_mime = data, mime
+            bride_display, bride_style = display, style
+            logger.info(
+                "[PreMVSceneImage] phase=phase2 default sheet fallback "
+                "pre_mv_job_id=%s scene_number=%d slot=%s (first by updated_at)",
+                pre_mv_job_id, scene_number, used_slot,
+            )
+
     # v24 — ref 우선순위 재배치 (c안):
     #   1) 캐릭터 시트 groom
     #   2) 캐릭터 시트 bride
@@ -379,10 +484,15 @@ async def generate_scene_image(
         if x
     )
     if refs_count == 0:
-        raise ValueError(
-            "no reference images resolved (sheet_ids={}, place_ids={})".format(
-                ref_sheet_ids, ref_place_ids,
-            )
+        # v33 — ref 0개여도 진행 (text-only). 두 image_model 모두 ref 없이 text-to-image 가능:
+        # · openai_generate_image: ref_images 빈 리스트면 /v1/images/generations 호출
+        # · _call_gemini_image: image_parts 빈 리스트면 nano-banana text-only 모드
+        # Step A Gemini 합성도 image_parts 빈 채로 호출 가능 (text-only synthesis).
+        # 캐릭터·장소 일관성은 떨어질 수 있지만 ValueError 로 실패하는 것보다 나음.
+        logger.warning(
+            "[PreMVSceneImage] phase=phase2 no refs resolved — proceeding text-only "
+            "pre_mv_job_id=%s scene_number=%d sheet_ids=%s place_ids=%s",
+            pre_mv_job_id, scene_number, ref_sheet_ids, ref_place_ids,
         )
 
     # 최종 슬롯 채움 — 우선순위 1~4 까지는 무조건 채우고, 5는 한도 남으면 채움.
@@ -411,7 +521,7 @@ async def generate_scene_image(
     )
 
     # ── Step A — Gemini text 합성 ─────────────────────────────────────────────
-    def _block(display: str, style_label: str = "", memo: str = "") -> str:
+    def _block(display: str, style_label: str = "", memo: str = "", face_only: bool = False) -> str:
         if not display and not style_label and not memo:
             return "(없음 — 이 슬롯의 참조 이미지는 사용하지 않음)"
         parts = []
@@ -421,13 +531,22 @@ async def generate_scene_image(
             parts.append("스타일: {}".format(style_label))
         if memo:
             parts.append("메모: {}".format(memo))
-        return " / ".join(parts) or "(설명 없음)"
+        base = " / ".join(parts) or "(설명 없음)"
+        # v34 — 인물 시트 전용 매칭 모드 마커.
+        if face_only:
+            base += " [face-only]"
+        elif display and style_label:
+            # 캐릭터 시트 (display+style 양쪽 다 있음) 인 케이스만 full-match 마커.
+            base += " [full-match]"
+        return base
 
     groom_block = _block(
         groom_display, STYLE_LABEL.get(groom_style, groom_style),
+        face_only=(not groom_is_explicit),
     ) if groom_bytes else "(이 씬에는 신랑이 등장하지 않습니다 — 신랑 ref 추가 금지)"
     bride_block = _block(
         bride_display, STYLE_LABEL.get(bride_style, bride_style),
+        face_only=(not bride_is_explicit),
     ) if bride_bytes else "(이 씬에는 신부가 등장하지 않습니다 — 신부 ref 추가 금지)"
     place_block = _block(
         place_display, "", place_memo,
@@ -469,7 +588,7 @@ async def generate_scene_image(
         pre_mv_job_id, scene_number, image_model,
         len(step_a_prompt), len(image_parts), refs_count,
     )
-    step_a_text = await _call_gemini_text(
+    step_a_text = await _call_claude_text(  # v52 — Step A → Claude
         step_a_prompt, image_parts,
         role=None, style=None, user_id=owner_user_id,
     )

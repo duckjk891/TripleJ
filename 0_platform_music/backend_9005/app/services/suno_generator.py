@@ -399,3 +399,12 @@ async def _update_progress(mongo_db, generation_id: str, progress: int, status: 
         {"_id": ObjectId(generation_id)},
         {"$set": update},
     )
+
+
+# v76: Suno V5_5 voice cloning endpoints (separate from old voice_persona flow)
+SUNO_VOICE_VALIDATE_URL = "{base}/api/v1/voice/validate"
+SUNO_VOICE_VALIDATE_INFO_URL = "{base}/api/v1/voice/validate-info"  # v76.2: validate phrase 폴링용
+SUNO_VOICE_REGENERATE_URL = "{base}/api/v1/voice/regenerate"
+SUNO_VOICE_GENERATE_URL = "{base}/api/v1/voice/generate"
+SUNO_VOICE_RECORD_INFO_URL = "{base}/api/v1/voice/record-info"
+SUNO_VOICE_CHECK_URL = "{base}/api/v1/voice/check-voice"

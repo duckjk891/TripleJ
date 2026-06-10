@@ -289,6 +289,32 @@ class PatchSceneBody(BaseModel):
     video_prompt_ko: Optional[str] = Field(default=None, max_length=4000)
 
 
+# v54 — Phase 0 결과 (시나리오 본문) 편집.
+class PatchScenarioBody(BaseModel):
+    scenario_text: Optional[str] = Field(default=None, max_length=20000)
+    scenario_events: Optional[list[dict]] = Field(default=None, max_length=50)
+
+
+class ChapterRegenerateImagesBody(BaseModel):
+    """v35 — 챕터(연속 같은 story_slot) 단위 씬 이미지 재생성 body.
+
+    scene_number = 그 챕터에 속하는 어떤 씬의 번호. 백엔드가 _group_scenes_into_chapters
+    로 같은 챕터의 모든 씬을 찾아 직렬 재생성한다.
+    """
+
+    scene_number: int = Field(ge=1, le=200)
+
+
+class ChapterRegenerateVideosBody(BaseModel):
+    """v40 — 챕터 단위 씬 영상 재생성 body. ChapterRegenerateImagesBody 와 동일 구조.
+
+    scene_number = 그 챕터의 어떤 씬 번호든 OK. 백엔드가 같은 챕터의 모든 씬을
+    찾아 직렬 영상 재생성.
+    """
+
+    scene_number: int = Field(ge=1, le=200)
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # POST /jobs — pre_mv_job 생성 (멱등)
 # ──────────────────────────────────────────────────────────────────────────
@@ -661,7 +687,15 @@ async def start_phase0(
     pre_doc, _mv_doc, _, _ = resolved
 
     cur_status = pre_doc.get("status") or "draft"
-    allowed = {"draft", "phase0_failed", "phase0_ready", "phase0_mapping"}
+    # v54.1 — 이후 단계 (phase1/2/3/4) 에서도 force=true 면 Phase 0 재실행 허용.
+    # force 가드 자체는 아래 has_scenes 분기에서 별도로 확인한다.
+    allowed = {
+        "draft", "phase0_failed", "phase0_ready", "phase0_mapping",
+        "phase1_splitting", "phase1_ready", "phase1_failed",
+        "phase2_generating", "phase2_ready", "phase2_partial", "phase2_failed",
+        "phase3_generating", "phase3_ready", "phase3_partial", "phase3_failed",
+        "phase4_compositing", "phase4_failed", "completed",
+    }
     if cur_status not in allowed:
         logger.warning(
             "[PreMVRoute] phase=phase0 status reject pre_mv_job_id=%s status=%s",
@@ -744,6 +778,77 @@ async def start_phase0(
         "pre_mv_job_id": pre_mv_job_id,
         "status": "phase0_mapping",
         "scenario_model": body.scenario_model,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# v54 — PATCH /jobs/{id}/scenario  (Phase 0 결과 편집)
+#
+# 사용자가 LLM 이 만든 시나리오 본문 (scenario_text) 을 직접 다듬을 수 있게
+# 한다. 편집 후 Phase 1 을 force=true 로 재실행하면 새 시나리오 기반으로
+# 씬이 다시 분할된다 (기존 씬/이미지/영상은 frontend confirm 후 wipe).
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.patch("/jobs/{pre_mv_job_id}/scenario")
+async def patch_scenario(
+    pre_mv_job_id: str,
+    body: PatchScenarioBody,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user.get("id") if isinstance(current_user, dict) else None
+    has_text = body.scenario_text is not None
+    has_events = body.scenario_events is not None
+    if not (has_text or has_events):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "scenario_text 또는 scenario_events 중 하나는 보내야 합니다."},
+        )
+    if has_text and not (body.scenario_text or "").strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "scenario_text 는 비워둘 수 없습니다."},
+        )
+
+    resolved = await _resolve_pre_mv_job(pre_mv_job_id, current_user)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    pre_doc, _mv_doc, _, _ = resolved
+
+    # Phase 0 결과가 있어야 편집 의미가 있다.
+    cur_status = pre_doc.get("status") or "draft"
+    if cur_status in ("draft", "phase0_mapping", "phase0_failed"):
+        return JSONResponse(
+            status_code=409,
+            content={"error": f"현재 상태({cur_status})에서는 시나리오 편집을 할 수 없어요."},
+        )
+
+    update_doc: dict = {"updated_at": datetime.now(timezone.utc)}
+    if has_text:
+        update_doc["scenario_text"] = body.scenario_text
+    if has_events:
+        update_doc["scenario_events"] = body.scenario_events
+
+    mongo = get_mongo()
+    oid = _to_oid(pre_mv_job_id)
+    if oid is None:
+        return JSONResponse(status_code=400, content={"error": "잘못된 pre_mv_job_id."})
+
+    await mongo.pre_mv_jobs.update_one({"_id": oid}, {"$set": update_doc})
+    logger.info(
+        "[PreMVRoute] action=patch_scenario ok user_id=%s pre_mv_job_id=%s "
+        "text_len=%s events_count=%s",
+        user_id, pre_mv_job_id,
+        len(body.scenario_text or "") if has_text else "-",
+        len(body.scenario_events or []) if has_events else "-",
+    )
+
+    updated = await mongo.pre_mv_jobs.find_one({"_id": oid})
+    return {
+        "pre_mv_job_id": pre_mv_job_id,
+        "scenario_text": (updated or {}).get("scenario_text", ""),
+        "scenario_events": (updated or {}).get("scenario_events", []),
+        "status": (updated or {}).get("status"),
+        "updated_at": (updated or {}).get("updated_at"),
     }
 
 
@@ -998,29 +1103,39 @@ _PHASE2_RUNNING_STATUSES = {"phase2_images"}
 
 
 # v24 — 챕터 그룹핑 헬퍼.
+# v36 — memory slot 은 memory_index 까지 묶음 키로. 다른 추억은 다른 챕터.
+#       prev_scene chain 이 추억1 → 추억2 사이로 흐르지 않도록.
 def _group_scenes_into_chapters(scenes: list[dict]) -> list[list[int]]:
-    """scenes 의 0-based index 리스트를, story_slot 이 연속되는 단위(=챕터)로 그룹핑.
+    """scenes 의 0-based index 리스트를 챕터 단위로 그룹핑.
 
-    예: scene_number=[1,2,3,4,5,6], story_slot=[m,m,m,f,f,f] → [[0,1,2],[3,4,5]].
-    story_slot 이 비어 있어도(None/"") 동일 그룹으로 묶는다.
+    챕터 키: (story_slot, memory_index if story_slot=='memory' else None).
+    예: story_slot=[m,m(idx0),m(idx0),m(idx1),f,f] → [[0],[1,2],[3],[4,5]]
+        (단, slot 자체가 비어있어도 동일 그룹).
     """
     if not scenes:
         return []
+
+    def _chapter_key(s):
+        slot = (s or {}).get("story_slot") or ""
+        if slot == "memory":
+            return (slot, (s or {}).get("memory_index"))
+        return (slot, None)
+
     groups: list[list[int]] = []
     current: list[int] = []
-    prev_slot: Optional[str] = None
+    prev_key = None
     for i, s in enumerate(scenes):
-        slot = (s or {}).get("story_slot") or ""
+        k = _chapter_key(s)
         if not current:
             current = [i]
-            prev_slot = slot
+            prev_key = k
             continue
-        if slot == prev_slot:
+        if k == prev_key:
             current.append(i)
         else:
             groups.append(current)
             current = [i]
-            prev_slot = slot
+            prev_key = k
     if current:
         groups.append(current)
     return groups
@@ -1350,6 +1465,64 @@ async def _run_single_scene_image(
             await _do()
 
 
+async def _run_chapter_serial(
+    *,
+    pre_mv_job_id: str,
+    image_model: str,
+    owner_user_id: str,
+    chapter_seq: int,
+    chapter_indices: list[int],
+    scenes: list[dict],
+    target_set: set[int],
+    mongo,
+    oid,
+) -> None:
+    """v35 — 챕터 안 직렬 실행 (이전 씬 완료 후 다음 씬 시작). prev_scene carry.
+
+    `_run_phase2` 와 `regenerate_chapter_images` endpoint 두 곳에서 공유.
+    챕터 첫 씬: prev_scene_image_bytes=None.
+    챕터 둘째 씬부터: 이전 씬의 image_object_name → MinIO fetch → bytes.
+    이전 씬이 target_set 에 없으면(이미 완료된 씬) DB 의 기존 object_name 사용.
+    """
+    in_chapter_total = len(chapter_indices)
+    prev_object_name: Optional[str] = None
+    for pos, scene_idx in enumerate(chapter_indices):
+        if scene_idx not in target_set:
+            existing_obj = (scenes[scene_idx] or {}).get("image_object_name")
+            if existing_obj:
+                prev_object_name = existing_obj
+            continue
+        prev_bytes: Optional[bytes] = None
+        if prev_object_name:
+            prev_bytes = await _load_photos_bytes(prev_object_name)
+            if not prev_bytes:
+                logger.warning(
+                    "[PreMVPhase2Chain] prev_scene fetch failed — fallback no_carry "
+                    "pre_mv_job_id=%s chapter_seq=%d scene_index=%d prev_obj=%s",
+                    pre_mv_job_id, chapter_seq, scene_idx, prev_object_name,
+                )
+        await _run_single_scene_image(
+            pre_mv_job_id=pre_mv_job_id,
+            scene_index=scene_idx,
+            image_model=image_model,
+            owner_user_id=owner_user_id,
+            semaphore=None,
+            prev_scene_image_bytes=prev_bytes,
+            chapter_seq=chapter_seq,
+            scene_in_chapter=(pos + 1, in_chapter_total),
+        )
+        refreshed = await mongo.pre_mv_jobs.find_one(
+            {"_id": oid}, {"scenes": 1},
+        )
+        if refreshed:
+            refreshed_scenes = refreshed.get("scenes") or []
+            if scene_idx < len(refreshed_scenes):
+                prev_object_name = (
+                    (refreshed_scenes[scene_idx] or {}).get("image_object_name")
+                    or prev_object_name
+                )
+
+
 async def _run_phase2(
     *,
     pre_mv_job_id: str,
@@ -1437,58 +1610,19 @@ async def _run_phase2(
                      for c in all_chapters),
         )
 
-        async def _run_chapter(chapter_seq: int, chapter_indices: list[int]) -> None:
-            """챕터 안 직렬: 이전 씬 완료 후 다음 씬 시작.
-
-            챕터 첫 씬: prev_scene_image_bytes=None.
-            챕터 둘째 씬부터: 이전 씬의 image_object_name → MinIO fetch → bytes.
-            이전 씬이 target_set 에 없으면(이미 완료된 씬) DB 의 기존 object_name 사용.
-            """
-            in_chapter_total = len(chapter_indices)
-            prev_object_name: Optional[str] = None
-            for pos, scene_idx in enumerate(chapter_indices):
-                # 이 챕터에서 이번 회차 대상이 아니면 건너뛴다 (force=False 의 경우 일부만 대상).
-                # 다만 다음 씬에 prev_object_name 으로 넘기기 위해 기존 object_name 은 갱신.
-                if scene_idx not in target_set:
-                    existing_obj = (scenes[scene_idx] or {}).get("image_object_name")
-                    if existing_obj:
-                        prev_object_name = existing_obj
-                    continue
-                prev_bytes: Optional[bytes] = None
-                if prev_object_name:
-                    prev_bytes = await _load_photos_bytes(prev_object_name)
-                    if not prev_bytes:
-                        logger.warning(
-                            "[PreMVPhase2Chain] prev_scene fetch failed — fallback no_carry "
-                            "pre_mv_job_id=%s chapter_seq=%d scene_index=%d prev_obj=%s",
-                            pre_mv_job_id, chapter_seq, scene_idx, prev_object_name,
-                        )
-                await _run_single_scene_image(
-                    pre_mv_job_id=pre_mv_job_id,
-                    scene_index=scene_idx,
-                    image_model=image_model,
-                    owner_user_id=owner_user_id,
-                    semaphore=None,
-                    prev_scene_image_bytes=prev_bytes,
-                    chapter_seq=chapter_seq,
-                    scene_in_chapter=(pos + 1, in_chapter_total),
-                )
-                # 완료된 씬의 새 object_name 을 다음 씬으로 carry.
-                # DB 재조회 — _run_single_scene_image 가 성공/실패 어느 쪽이든
-                # scenes[scene_idx] 를 갱신했으므로 신뢰 가능.
-                refreshed = await mongo.pre_mv_jobs.find_one(
-                    {"_id": oid}, {"scenes": 1},
-                )
-                if refreshed:
-                    refreshed_scenes = refreshed.get("scenes") or []
-                    if scene_idx < len(refreshed_scenes):
-                        prev_object_name = (
-                            (refreshed_scenes[scene_idx] or {}).get("image_object_name")
-                            or prev_object_name
-                        )
-
+        # v35 — 챕터 직렬 로직은 _run_chapter_serial 로 추출. 챕터 regenerate endpoint 도 공유.
         chapter_tasks = [
-            asyncio.create_task(_run_chapter(c_seq + 1, c_indices))
+            asyncio.create_task(_run_chapter_serial(
+                pre_mv_job_id=pre_mv_job_id,
+                image_model=image_model,
+                owner_user_id=owner_user_id,
+                chapter_seq=c_seq + 1,
+                chapter_indices=c_indices,
+                scenes=scenes,
+                target_set=target_set,
+                mongo=mongo,
+                oid=oid,
+            ))
             for c_seq, c_indices in enumerate(all_chapters)
         ]
         await asyncio.gather(*chapter_tasks, return_exceptions=True)
@@ -1669,6 +1803,11 @@ async def start_phase2(
 
 # ──────────────────────────────────────────────────────────────────────────
 # POST /jobs/{id}/scenes/{n}/regenerate-image  (v17.2)
+#
+# ⚠️ v35 이후 deprecated — 챕터 일관성을 깨는 단일 씬 재생성.
+# prev_scene_image_bytes 가 carry 안 되어 챕터 내 톤·소품·캐릭터 불일치 발생.
+# 신규 호출은 POST /jobs/{id}/chapters/regenerate-images 로 마이그레이션.
+# 백워드 호환을 위해 endpoint 자체는 유지.
 # ──────────────────────────────────────────────────────────────────────────
 
 @router.post("/jobs/{pre_mv_job_id}/scenes/{scene_number}/regenerate-image")
@@ -1778,6 +1917,153 @@ async def regenerate_scene_image(
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# POST /jobs/{id}/chapters/regenerate-images  (v35)
+#
+# 챕터 (연속 같은 story_slot) 단위 씬 이미지 재생성. body.scene_number 가
+# 속한 챕터의 모든 씬을 직렬로 다시 생성. prev_scene_image_bytes carry 로
+# 챕터 내 톤·소품·캐릭터 일관성 보장.
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.post("/jobs/{pre_mv_job_id}/chapters/regenerate-images")
+async def regenerate_chapter_images(
+    pre_mv_job_id: str,
+    body: ChapterRegenerateImagesBody,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["id"]
+    is_admin = current_user.get("role") == "admin"
+    logger.info(
+        "[PreMVRoute] phase=phase2 action=regenerate_chapter entry "
+        "user_id=%s is_admin=%s pre_mv_job_id=%s scene_number=%d",
+        user_id, is_admin, pre_mv_job_id, body.scene_number,
+    )
+
+    resolved = await _resolve_pre_mv_job(pre_mv_job_id, current_user)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    pre_doc, _mv_doc, owner_user_id, _ = resolved
+
+    scenes = pre_doc.get("scenes") or []
+    if body.scene_number < 1 or body.scene_number > len(scenes):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "해당 씬을 찾을 수 없습니다."},
+        )
+
+    image_model = pre_doc.get("image_model")
+    if not image_model:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "이 잡의 image_model 이 아직 결정되지 않았어요. 먼저 Phase 2 를 시작해주세요."},
+        )
+
+    cur_status = pre_doc.get("status") or ""
+    # v46 — phase3/phase4 이후에도 챕터 이미지 재생성 허용. 재생성 endpoint 가
+    # status 를 phase2_images 로 강제 전환하므로 가드만 풀면 됨.
+    allowed = {
+        "phase2_images", "phase2_failed", "phase2_partial", "phase2_ready",
+        "phase3_videos", "phase3_failed", "phase3_partial", "phase3_ready",
+        "phase4_failed", "phase4_compositing", "completed",
+    }
+    if cur_status not in allowed:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "현재 상태({})에서는 챕터 이미지를 재생성할 수 없어요.".format(cur_status)},
+        )
+
+    gate = await _gate_image_model_key(image_model)
+    if gate is not None:
+        return gate
+
+    # 챕터 찾기 — scene_number(1-based) → scene_index(0-based) → 그 인덱스를 포함한 챕터
+    target_scene_idx = body.scene_number - 1
+    all_chapters = _group_scenes_into_chapters(scenes)
+    target_chapter: Optional[list[int]] = None
+    target_chapter_seq = 0
+    for c_seq, c_indices in enumerate(all_chapters):
+        if target_scene_idx in c_indices:
+            target_chapter = c_indices
+            target_chapter_seq = c_seq + 1
+            break
+    if not target_chapter:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "챕터 그룹핑에서 해당 씬을 찾지 못했습니다."},
+        )
+
+    target_slot = (scenes[target_chapter[0]] or {}).get("story_slot") or ""
+    logger.info(
+        "[PreMVRoute] phase=phase2 chapter resolved pre_mv_job_id=%s "
+        "chapter_seq=%d slot=%s scene_count=%d scene_indices=%s",
+        pre_mv_job_id, target_chapter_seq, target_slot,
+        len(target_chapter), target_chapter,
+    )
+
+    mongo = get_mongo()
+    oid = _to_oid(pre_mv_job_id)
+    now = datetime.now(timezone.utc)
+
+    # 챕터의 모든 씬을 pending 으로 마크 (완료된 것도 강등 — force 와 같은 효과).
+    # image_object_name 도 None 으로 리셋해 chain carry 가 깔끔하게 새로 시작되게 한다.
+    pending_set: dict[str, Any] = {
+        "status": "phase2_images",
+        "updated_at": now,
+    }
+    for i in target_chapter:
+        pending_set["scenes.{}.image_status".format(i)] = "pending"
+        pending_set["scenes.{}.image_error".format(i)] = None
+        pending_set["scenes.{}.image_object_name".format(i)] = None
+    try:
+        await mongo.pre_mv_jobs.update_one({"_id": oid}, {"$set": pending_set})
+    except Exception:
+        logger.exception(
+            "[PreMVRoute] phase=phase2 chapter regenerate pending-mark failed "
+            "pre_mv_job_id=%s chapter_seq=%d",
+            pre_mv_job_id, target_chapter_seq,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "챕터 재생성 시작에 실패했습니다."},
+        )
+
+    target_set = set(target_chapter)
+    queued_scene_numbers = [i + 1 for i in target_chapter]
+
+    async def _run_then_refresh() -> None:
+        try:
+            await _run_chapter_serial(
+                pre_mv_job_id=pre_mv_job_id,
+                image_model=image_model,
+                owner_user_id=owner_user_id,
+                chapter_seq=target_chapter_seq,
+                chapter_indices=target_chapter,
+                scenes=scenes,
+                target_set=target_set,
+                mongo=mongo,
+                oid=oid,
+            )
+        finally:
+            await _refresh_phase2_status(pre_mv_job_id)
+
+    asyncio.create_task(_run_then_refresh())
+
+    logger.info(
+        "[PreMVRoute] phase=phase2 chapter regenerate queued user_id=%s "
+        "pre_mv_job_id=%s chapter_seq=%d slot=%s queued_scene_numbers=%s",
+        user_id, pre_mv_job_id, target_chapter_seq, target_slot,
+        queued_scene_numbers,
+    )
+    return {
+        "pre_mv_job_id": pre_mv_job_id,
+        "chapter_seq": target_chapter_seq,
+        "story_slot": target_slot,
+        "queued_scene_numbers": queued_scene_numbers,
+        "status": "phase2_images",
+        "image_model": image_model,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # GET /jobs/{id}/scenes/{n}/image  (v17.2)
 #
 # Bearer 헤더 OR ?token= 쿼리 인증(get_current_user 동작). <img src> 호환.
@@ -1787,6 +2073,7 @@ async def regenerate_scene_image(
 async def get_scene_image(
     pre_mv_job_id: str,
     scene_number: int,
+    download: bool = False,  # v51 — True 면 attachment 로 응답 (다운로드 버튼용)
     current_user=Depends(get_current_user),
 ):
     user_id = current_user.get("id") if isinstance(current_user, dict) else None
@@ -1831,12 +2118,21 @@ async def get_scene_image(
         )
 
     media_type = mimetypes.guess_type(object_name)[0] or "image/png"
+    headers: dict[str, str] = {}
+    if download:
+        # v51 — 영상 파일명과 동일 패턴 + .png 확장자.
+        video_name = _compute_scene_filename(scenes, scene_number - 1)
+        if video_name.lower().endswith(".mp4"):
+            image_name = video_name[:-4] + ".png"
+        else:
+            image_name = video_name + ".png"
+        headers["Content-Disposition"] = 'attachment; filename="{}"'.format(image_name)
     logger.info(
         "[PreMVRoute] phase=phase2 image ok user_id=%s pre_mv_job_id=%s "
-        "scene_number=%d bytes=%d",
-        user_id, pre_mv_job_id, scene_number, len(data or b""),
+        "scene_number=%d bytes=%d download=%s",
+        user_id, pre_mv_job_id, scene_number, len(data or b""), download,
     )
-    return Response(content=data, media_type=media_type)
+    return Response(content=data, media_type=media_type, headers=headers)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -2102,15 +2398,34 @@ async def _load_scene_image_bytes(object_name: Optional[str]) -> Optional[bytes]
 
 async def _load_char_sheet_bytes_for_scene(
     *, owner_user_id: str, scene: dict, max_refs: int = 2,
-) -> list[bytes]:
-    """씬의 ref_sheet_ids 가 가리키는 캐릭터 시트 bytes 들 (최대 2장).
+) -> list[tuple[bytes, bool]]:
+    """씬의 ref_sheet_ids 가 가리키는 캐릭터 시트 bytes 들 (최대 max_refs 장).
 
-    Kling 호출 시 prompt 의 <<<image_N>>> 참조에 쓰인다.
+    v39 — 반환 형식 변경: list[(bytes, is_explicit)].
+      · is_explicit=True : 사용자가 ref_sheet_ids 에 명시한 시트 (full-match — 얼굴+옷 모두 따름)
+      · is_explicit=False: v37 default fallback 으로 추가된 시트 (face-only — 얼굴만 매칭, 옷은 scene 자유)
+
+    Phase 2 image-side 의 v34 [face-only]/[full-match] 차별을 영상에도 적용.
+    Kling 호출 시 prompt 안내문 + image_list 첨부 둘 다에 사용된다.
     실패한 slot 은 조용히 skip — 다른 씬 영향 X.
+
+    v37 — explicit ref 가 groom/bride 한 쪽이라도 비어있으면 default 시트
+    (groom_wedding/casual, bride_wedding/casual) 로 face-only fallback 보강.
     """
-    refs = list((scene or {}).get("ref_sheet_ids") or [])
-    if not refs:
+    explicit_refs = list((scene or {}).get("ref_sheet_ids") or [])
+    has_groom = any((r or "").startswith("groom_") for r in explicit_refs)
+    has_bride = any((r or "").startswith("bride_") for r in explicit_refs)
+
+    # slot 별 (slot, is_explicit) 순서 유지. explicit 가 앞, fallback 이 뒤.
+    slots_with_meta: list[tuple[str, bool]] = [(s, True) for s in explicit_refs]
+    if not has_groom:
+        slots_with_meta.extend([("groom_wedding", False), ("groom_casual", False)])
+    if not has_bride:
+        slots_with_meta.extend([("bride_wedding", False), ("bride_casual", False)])
+
+    if not slots_with_meta:
         return []
+
     mongo = get_mongo()
     try:
         cs_doc = await mongo.wedding_character_sheets.find_one(
@@ -2124,8 +2439,12 @@ async def _load_char_sheet_bytes_for_scene(
         return []
     sheets = ((cs_doc or {}).get("sheets") or {})
     minio_client = get_minio()
-    out: list[bytes] = []
-    for slot in refs:
+    out: list[tuple[bytes, bool]] = []
+    seen_slots: set = set()
+    for slot, is_explicit in slots_with_meta:
+        if slot in seen_slots:
+            continue
+        seen_slots.add(slot)
         sd = sheets.get(slot) or {}
         obj = sd.get("sheet_object_name") or ""
         if not obj:
@@ -2139,7 +2458,13 @@ async def _load_char_sheet_bytes_for_scene(
             resp.close()
             resp.release_conn()
             if data:
-                out.append(data)
+                out.append((data, is_explicit))
+                if not is_explicit:
+                    logger.info(
+                        "[PreMVRoute] phase=phase3 sheet face-only fallback applied "
+                        "scene_number=%s slot=%s",
+                        (scene or {}).get("scene_number"), slot,
+                    )
                 if len(out) >= max_refs:
                     break
         except Exception as e:  # noqa: BLE001
@@ -2345,15 +2670,21 @@ async def _run_single_scene_video(
                     end_frame_bytes=eff_end_frame,
                 )
             elif video_model == "kling":
-                char_refs = await _load_char_sheet_bytes_for_scene(
+                # v39 — _load_char_sheet_bytes_for_scene 반환은 [(bytes, is_explicit), ...]
+                char_refs_meta = await _load_char_sheet_bytes_for_scene(
                     owner_user_id=owner_user_id, scene=scene, max_refs=2,
                 )
+                char_ref_bytes_list = [b for b, _ in char_refs_meta]
+                char_ref_modes = [
+                    "explicit" if exp else "face_only" for _, exp in char_refs_meta
+                ]
                 video_bytes = await generate_scene_video_kling(
                     pre_mv_job_id=pre_mv_job_id,
                     scene_number=scene_number,
                     scene=scene,
                     image_bytes=image_bytes,
-                    char_ref_bytes_list=char_refs,
+                    char_ref_bytes_list=char_ref_bytes_list,
+                    char_ref_modes=char_ref_modes,
                     end_frame_bytes=eff_end_frame,
                 )
             elif video_model == "seedance":
@@ -2494,6 +2825,80 @@ async def _run_single_scene_video(
             await _do()
 
 
+async def _run_chapter_video_serial(
+    *,
+    pre_mv_job_id: str,
+    video_model: str,
+    owner_user_id: str,
+    chapter_seq: int,
+    chapter_indices: list[int],
+    scenes: list[dict],
+    target_set: set[int],
+    mongo,
+    oid,
+) -> None:
+    """v40 — 챕터 안 직렬 영상 실행. _run_phase3 와 regenerate_chapter_videos 가 공유.
+
+    v38 기준 동작:
+      · start_frame_bytes_override 는 항상 None — 각 씬이 자기 Phase 2 이미지로 start.
+      · end_frame_bytes 는 챕터 마지막이 아니면 다음 씬 Phase 2 이미지 (Kling image_tail).
+      · target_set 에 없는 씬은 건너뛰되 prev_video_object 로 carry 만 갱신.
+    """
+    in_chapter_total = len(chapter_indices)
+    prev_video_object: Optional[str] = None
+    for pos, scene_idx in enumerate(chapter_indices):
+        is_last_in_chapter = (pos == in_chapter_total - 1)
+
+        # v38 — start_frame 은 항상 자기 Phase 2 image.
+        start_bytes: Optional[bytes] = None
+        start_src = "scene_image"
+
+        # end_frame — 챕터 마지막이 아니면 다음 씬 Phase 2 PNG.
+        end_bytes: Optional[bytes] = None
+        end_src: Optional[str] = None
+        if not is_last_in_chapter:
+            next_idx = chapter_indices[pos + 1]
+            next_scene = scenes[next_idx] or {}
+            next_obj = next_scene.get("image_object_name")
+            if next_obj:
+                end_bytes = await _load_photos_bytes(next_obj)
+                end_src = "next_scene_image" if end_bytes else "free"
+            else:
+                end_src = "free"
+        else:
+            end_src = "free"
+
+        if scene_idx not in target_set:
+            existing_video = (scenes[scene_idx] or {}).get("video_object_name")
+            if existing_video:
+                prev_video_object = existing_video
+            continue
+
+        await _run_single_scene_video(
+            pre_mv_job_id=pre_mv_job_id,
+            scene_index=scene_idx,
+            video_model=video_model,
+            owner_user_id=owner_user_id,
+            semaphore=None,
+            start_frame_bytes_override=start_bytes,
+            end_frame_bytes=end_bytes,
+            chapter_seq=chapter_seq,
+            scene_in_chapter=(pos + 1, in_chapter_total),
+            start_frame_source=start_src,
+            end_frame_source=end_src,
+        )
+        refreshed = await mongo.pre_mv_jobs.find_one(
+            {"_id": oid}, {"scenes": 1},
+        )
+        if refreshed:
+            refreshed_scenes = refreshed.get("scenes") or []
+            if scene_idx < len(refreshed_scenes):
+                prev_video_object = (
+                    (refreshed_scenes[scene_idx] or {}).get("video_object_name")
+                    or prev_video_object
+                )
+
+
 async def _run_phase3(
     *,
     pre_mv_job_id: str,
@@ -2609,95 +3014,19 @@ async def _run_phase3(
                          for c in all_chapters),
             )
 
-            async def _run_chapter_video(
-                chapter_seq: int, chapter_indices: list[int],
-            ) -> None:
-                """챕터 안 직렬: 이전 씬 영상 완성 후 ffmpeg 추출 → 다음 씬 start."""
-                in_chapter_total = len(chapter_indices)
-                # carry 변수: 직전에 완성된 씬의 mp4 object_name.
-                prev_video_object: Optional[str] = None
-                # 챕터 내 각 씬의 Phase 2 PNG (end_frame 용) — 미리 로드 캐시.
-                for pos, scene_idx in enumerate(chapter_indices):
-                    # 다음 씬 결정 (챕터 안 다음 인덱스). 없으면 None.
-                    is_last_in_chapter = (pos == in_chapter_total - 1)
-                    is_first_in_chapter = (pos == 0)
-
-                    # 1) start_frame 결정
-                    start_bytes: Optional[bytes] = None
-                    start_src = "scene_image"
-                    if not is_first_in_chapter and prev_video_object:
-                        # 이전 씬 mp4 → ffmpeg → png. 실패 시 fallback: Phase 2 이미지.
-                        try:
-                            last_obj = await extract_scene_last_frame_png(
-                                pre_mv_job_id=pre_mv_job_id,
-                                scene_number=scene_idx + 1,
-                                video_object_name=prev_video_object,
-                            )
-                            start_bytes = await _load_photos_bytes(last_obj)
-                            if start_bytes:
-                                start_src = "prev_video_last_frame"
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning(
-                                "[PreMVPhase3Chain] 이전 씬 영상의 마지막 프레임 추출에 "
-                                "실패했어요. Phase 2 이미지로 free fallback 합니다. "
-                                "pre_mv_job_id=%s chapter_seq=%d scene_index=%d err=%s",
-                                pre_mv_job_id, chapter_seq, scene_idx,
-                                type(e).__name__,
-                            )
-                            start_bytes = None
-                            start_src = "scene_image"
-
-                    # 2) end_frame 결정 — 챕터 마지막이 아니면 next_scene 의 Phase 2 PNG.
-                    end_bytes: Optional[bytes] = None
-                    end_src: Optional[str] = None
-                    if not is_last_in_chapter:
-                        next_idx = chapter_indices[pos + 1]
-                        next_scene = scenes[next_idx] or {}
-                        next_obj = next_scene.get("image_object_name")
-                        if next_obj:
-                            end_bytes = await _load_photos_bytes(next_obj)
-                            end_src = "next_scene_image" if end_bytes else "free"
-                            if not end_bytes:
-                                end_src = "free"
-                        else:
-                            end_src = "free"
-                    else:
-                        end_src = "free"
-
-                    # 이 회차의 target 가 아닐 경우 — carry 만 갱신하고 다음 씬으로.
-                    if scene_idx not in target_set:
-                        existing_video = (scenes[scene_idx] or {}).get("video_object_name")
-                        if existing_video:
-                            prev_video_object = existing_video
-                        continue
-
-                    await _run_single_scene_video(
-                        pre_mv_job_id=pre_mv_job_id,
-                        scene_index=scene_idx,
-                        video_model=video_model,
-                        owner_user_id=owner_user_id,
-                        semaphore=None,
-                        start_frame_bytes_override=start_bytes,
-                        end_frame_bytes=end_bytes,
-                        chapter_seq=chapter_seq,
-                        scene_in_chapter=(pos + 1, in_chapter_total),
-                        start_frame_source=start_src,
-                        end_frame_source=end_src,
-                    )
-                    # 완료된 씬 video_object_name 을 다음 회차로 carry.
-                    refreshed = await mongo.pre_mv_jobs.find_one(
-                        {"_id": oid}, {"scenes": 1},
-                    )
-                    if refreshed:
-                        refreshed_scenes = refreshed.get("scenes") or []
-                        if scene_idx < len(refreshed_scenes):
-                            prev_video_object = (
-                                (refreshed_scenes[scene_idx] or {}).get("video_object_name")
-                                or prev_video_object
-                            )
-
+            # v40 — _run_chapter_video_serial 로 추출 (v35 패턴 영상 버전). 새 endpoint 공유.
             chapter_tasks = [
-                asyncio.create_task(_run_chapter_video(c_seq + 1, c_indices))
+                asyncio.create_task(_run_chapter_video_serial(
+                    pre_mv_job_id=pre_mv_job_id,
+                    video_model=video_model,
+                    owner_user_id=owner_user_id,
+                    chapter_seq=c_seq + 1,
+                    chapter_indices=c_indices,
+                    scenes=scenes,
+                    target_set=target_set,
+                    mongo=mongo,
+                    oid=oid,
+                ))
                 for c_seq, c_indices in enumerate(all_chapters)
             ]
             await asyncio.gather(*chapter_tasks, return_exceptions=True)
@@ -2878,6 +3207,12 @@ async def start_phase3(
 
 # ──────────────────────────────────────────────────────────────────────────
 # POST /jobs/{id}/scenes/{n}/regenerate-video
+#
+# ⚠️ v40 이후 deprecated — 챕터 일관성을 깨는 단일 씬 재생성.
+# start_frame_bytes_override=None, end_frame_bytes=None 로 호출되어
+# 챕터 안 end_frame transition 효과가 무시됨.
+# 신규 호출은 POST /jobs/{id}/chapters/regenerate-videos 로 마이그레이션.
+# 백워드 호환을 위해 endpoint 자체는 유지.
 # ──────────────────────────────────────────────────────────────────────────
 
 @router.post("/jobs/{pre_mv_job_id}/scenes/{scene_number}/regenerate-video")
@@ -2990,6 +3325,167 @@ async def regenerate_scene_video(
         "pre_mv_job_id": pre_mv_job_id,
         "scene_number": scene_number,
         "video_status": "generating",
+        "video_model": video_model,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /jobs/{id}/chapters/regenerate-videos  (v40)
+#
+# 챕터 (연속 같은 story_slot + memory_index) 단위 씬 영상 재생성.
+# body.scene_number 가 속한 챕터의 모든 씬을 직렬로 다시 생성.
+# v38 이후 start=자기 Phase 2 이미지, end=다음 씬 Phase 2 이미지로 transition.
+# 이미지 측 v35 챕터 재생성과 동일 패턴.
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.post("/jobs/{pre_mv_job_id}/chapters/regenerate-videos")
+async def regenerate_chapter_videos(
+    pre_mv_job_id: str,
+    body: ChapterRegenerateVideosBody,
+    current_user=Depends(get_current_user),
+):
+    user_id = current_user["id"]
+    is_admin = current_user.get("role") == "admin"
+    logger.info(
+        "[PreMVRoute] phase=phase3 action=regenerate_chapter_videos entry "
+        "user_id=%s is_admin=%s pre_mv_job_id=%s scene_number=%d",
+        user_id, is_admin, pre_mv_job_id, body.scene_number,
+    )
+
+    resolved = await _resolve_pre_mv_job(pre_mv_job_id, current_user)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    pre_doc, _mv_doc, owner_user_id, _ = resolved
+
+    scenes = pre_doc.get("scenes") or []
+    if body.scene_number < 1 or body.scene_number > len(scenes):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "해당 씬을 찾을 수 없습니다."},
+        )
+
+    video_model = pre_doc.get("video_model")
+    if not video_model:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "이 잡의 video_model 이 아직 결정되지 않았어요. 먼저 Phase 3 를 시작해주세요."},
+        )
+
+    cur_status = pre_doc.get("status") or ""
+    # v46 — phase4 이후 (completed / phase4_*) 에도 챕터 영상 재생성 허용.
+    # 사용자가 4K 등 quality 옵션 변경 후 phase4 끝난 작품에서 챕터만 다시 만들 케이스.
+    # 재생성 endpoint 가 status 를 phase3_videos 로 강제 update 하므로 가드만 풀면 됨.
+    allowed = {
+        "phase3_videos", "phase3_failed", "phase3_partial", "phase3_ready",
+        "phase4_failed", "phase4_compositing", "completed",
+    }
+    if cur_status not in allowed:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "현재 상태({})에서는 챕터 영상을 재생성할 수 없어요.".format(cur_status)},
+        )
+
+    gate = await _gate_video_model_key(video_model)
+    if gate is not None:
+        return gate
+
+    # 챕터 찾기 (v36 — memory slot 은 memory_index 까지 구분).
+    target_scene_idx = body.scene_number - 1
+    all_chapters = _group_scenes_into_chapters(scenes)
+    target_chapter: Optional[list[int]] = None
+    target_chapter_seq = 0
+    for c_seq, c_indices in enumerate(all_chapters):
+        if target_scene_idx in c_indices:
+            target_chapter = c_indices
+            target_chapter_seq = c_seq + 1
+            break
+    if not target_chapter:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "챕터 그룹핑에서 해당 씬을 찾지 못했습니다."},
+        )
+
+    # 챕터 안 씬들이 image_status=completed 인지 확인 (영상 생성 전제).
+    not_ready = [
+        i + 1 for i in target_chapter
+        if (scenes[i] or {}).get("image_status") != "completed"
+    ]
+    if not_ready:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "이 챕터에 이미지가 완성되지 않은 씬이 있어요: {}. "
+                         "먼저 씬 이미지를 만들어 주세요.".format(not_ready)
+            },
+        )
+
+    target_slot = (scenes[target_chapter[0]] or {}).get("story_slot") or ""
+    logger.info(
+        "[PreMVRoute] phase=phase3 chapter resolved pre_mv_job_id=%s "
+        "chapter_seq=%d slot=%s scene_count=%d scene_indices=%s",
+        pre_mv_job_id, target_chapter_seq, target_slot,
+        len(target_chapter), target_chapter,
+    )
+
+    mongo = get_mongo()
+    oid = _to_oid(pre_mv_job_id)
+    now = datetime.now(timezone.utc)
+
+    # 챕터 모든 씬을 pending 으로 마크 + video_object_name 리셋.
+    pending_set: dict[str, Any] = {
+        "status": "phase3_videos",
+        "updated_at": now,
+    }
+    for i in target_chapter:
+        pending_set["scenes.{}.video_status".format(i)] = "pending"
+        pending_set["scenes.{}.video_error".format(i)] = None
+        pending_set["scenes.{}.video_object_name".format(i)] = None
+    try:
+        await mongo.pre_mv_jobs.update_one({"_id": oid}, {"$set": pending_set})
+    except Exception:
+        logger.exception(
+            "[PreMVRoute] phase=phase3 chapter regenerate pending-mark failed "
+            "pre_mv_job_id=%s chapter_seq=%d",
+            pre_mv_job_id, target_chapter_seq,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "챕터 영상 재생성 시작에 실패했습니다."},
+        )
+
+    target_set = set(target_chapter)
+    queued_scene_numbers = [i + 1 for i in target_chapter]
+
+    async def _run_then_refresh() -> None:
+        try:
+            await _run_chapter_video_serial(
+                pre_mv_job_id=pre_mv_job_id,
+                video_model=video_model,
+                owner_user_id=owner_user_id,
+                chapter_seq=target_chapter_seq,
+                chapter_indices=target_chapter,
+                scenes=scenes,
+                target_set=target_set,
+                mongo=mongo,
+                oid=oid,
+            )
+        finally:
+            await _refresh_phase3_status(pre_mv_job_id)
+
+    asyncio.create_task(_run_then_refresh())
+
+    logger.info(
+        "[PreMVRoute] phase=phase3 chapter regenerate queued user_id=%s "
+        "pre_mv_job_id=%s chapter_seq=%d slot=%s queued_scene_numbers=%s",
+        user_id, pre_mv_job_id, target_chapter_seq, target_slot,
+        queued_scene_numbers,
+    )
+    return {
+        "pre_mv_job_id": pre_mv_job_id,
+        "chapter_seq": target_chapter_seq,
+        "story_slot": target_slot,
+        "queued_scene_numbers": queued_scene_numbers,
+        "status": "phase3_videos",
         "video_model": video_model,
     }
 
@@ -3264,10 +3760,54 @@ async def _run_phase4(pre_mv_job_id: str) -> None:
             pre_mv_job_id, audio_variant, audio_object_name,
         )
 
+        # v42 — [Intro] 다음 첫 다른 section label ([Verse 1] 등) 시작 시점을 offset 으로.
+        # v41 은 "첫 가사 시점" 이었으나 사용자가 "[Intro] 다음 [] 지문 부터" 원함.
+        # 추가로 lyric_timestamps_variants[audio_variant] 로 SRT 자막도 생성.
+        from ..services.pre_mv_phase4_compositor import (
+            calculate_video_start_offset,
+            generate_srt_from_segments,
+        )
+
+        intro_pad_sec = 0.0
+        srt_text: Optional[str] = None
+        if mv_doc_local:
+            ts_variants_local = mv_doc_local.get("lyric_timestamps_variants") or {}
+            selected_ts_local = ts_variants_local.get(str(audio_variant)) or []
+            if not selected_ts_local:
+                selected_ts_local = mv_doc_local.get("lyric_timestamps") or []
+
+            aligned_variants_local = mv_doc_local.get("suno_aligned_words_variants") or {}
+            aligned_local = aligned_variants_local.get(str(audio_variant)) or []
+
+            intro_pad_sec = calculate_video_start_offset(
+                aligned_words=aligned_local,
+                segments_fallback=selected_ts_local if isinstance(selected_ts_local, list) else [],
+            )
+            if intro_pad_sec > 0:
+                logger.info(
+                    "[PreMVRoute] phase=phase4 intro_pad pre_mv_job_id=%s "
+                    "audio_variant=%d intro_pad_sec=%.3f (after [Intro] section)",
+                    pre_mv_job_id, audio_variant, intro_pad_sec,
+                )
+
+            if isinstance(selected_ts_local, list) and selected_ts_local:
+                srt_text = generate_srt_from_segments(
+                    selected_ts_local,
+                    video_start_offset_sec=intro_pad_sec,
+                )
+                cue_count = (srt_text or "").count("-->")
+                logger.info(
+                    "[PreMVRoute] phase=phase4 subtitle gen pre_mv_job_id=%s "
+                    "audio_variant=%d cue_count=%d",
+                    pre_mv_job_id, audio_variant, cue_count,
+                )
+
         result = await compose_pre_mv_result(
             pre_mv_job_id=pre_mv_job_id,
             scenes=scenes,
             audio_object_name=audio_object_name,
+            video_start_offset_sec=intro_pad_sec,
+            srt_text=srt_text,
         )
 
         now = datetime.now(timezone.utc)

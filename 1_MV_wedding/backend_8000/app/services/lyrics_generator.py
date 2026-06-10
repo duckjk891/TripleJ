@@ -27,7 +27,10 @@ _META_TAG_RE = re.compile(r"\[[^\]]+\]")
 
 
 def _measure_body_length(lyrics: str) -> int:
-    """가사 본문 길이 측정 — 메타태그 / 듀엣 헤더 / [Female]·[Male]·[Both] 라벨 / `===` 모두 제거 후 정규화."""
+    """가사 본문 길이 측정 — 모든 `[...]` 메타태그 / `===` 모두 제거 후 정규화.
+
+    v31 이후: per-line [Female]/[Male]/[Both] 라벨은 제거됨. 섹션 헤더만 남음.
+    """
     if not lyrics:
         return 0
     text = _META_TAG_RE.sub("", lyrics)
@@ -104,7 +107,7 @@ WEDDING_SYSTEM_PROMPT_SOLO = """당신은 결혼식에서 신랑·신부의 실�
 (whisper) (harmonize) (ad-lib) (spoken)
 
 # STRUCTURAL RULES
-1. 각 섹션은 2~6줄.
+1. ★ 각 섹션은 ★무조건 4줄★. Intro/Outro/Verse/Chorus/Bridge 모두 동일하게 4줄로 작성. 더 적거나 더 많으면 실패.
 2. 최소 구성: [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus] + [Chorus 1] + [Chorus 2] + [Outro]
 3. 한국어 가사 한 줄은 25자 이내, 영어는 50자 이내를 권장.
 4. 전체 가사는 3000자 이내 (Suno 한도).
@@ -132,12 +135,11 @@ Intro / Chorus 1 / Chorus 2 / Outro 에는 시점 마커를 두지 않는다.
   결혼 결심:      "그게 우리가 함께 살기로 한 그 [계절]이었어" / "거기서 우리는 평생을 약속했지"
   웨딩 준비:      "그렇게 우리는 우리의 새 시작을 준비했어" / "그 [계절]에 우리는 결혼을 그리고 있었지"
 
-# 룰 13 — 각 회상 섹션 권장 구성 (위 → 아래 순서)
-[시점 마커 라인 1] (START — 헤딩)
-[상황 라인 1~2]   시간·장소·소품 명시 (카메라가 찍을 수 있는 미시 장면)
-[행동 라인 1~2]   화자 / 대상의 미시 동작
-[심정 라인 1~2]   사용자 통문장 안에 섞여 있는 속마음 표현을 추출해 인용
-                  (마지막 줄로 자연스럽게 종결감을 만든다 — 어미 "~었지/었어"로 마감)
+# 룰 13 — 각 회상 섹션 권장 구성 (★무조건 4줄★, 위 → 아래 순서)
+1줄: 시점 마커 (START — 헤딩)
+2줄: 상황 — 시간·장소·소품 명시 (카메라가 찍을 수 있는 미시 장면)
+3줄: 행동 — 화자 / 대상의 미시 동작
+4줄: 심정 / 종결 — 속마음 + 자연스러운 종결감 (어미 "~었지/었어"로 마감)
 
 # 룰 14 — ★ 결혼식 본행사 언급 절대 금지
 다음 어휘 사용 금지: "결혼식에서", "이 자리에서 모두 앞에", "예식장",
@@ -151,27 +153,50 @@ Outro 는 "이제 곧 시작될 새 페이지" 정도의 여운으로 마무리�
 
 # 룰 16 — 가사 길이 가이드 (★ 엄격히 준수)
 
-duration_minutes=2 → 본문 약 600~800자 (메타태그 제외).
-  필수 섹션: [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus] + [Chorus 1] + [Chorus 2] + [Outro]
-  각 Verse 4~6줄, 각 Chorus 4줄, Pre-Chorus 3~4줄, Intro/Outro 2~3줄.
-  Verse 3 / Bridge 는 생략하거나 짧게 통합.
+duration_minutes=2 → 본문 약 300~500자 (메타태그 제외).
+  필수 섹션 (절대 생략 금지): [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus]
+   + [Chorus 1] + [Bridge] + [Chorus 2] + [Outro]
+  Verse 3 만 생략 가능. Bridge 는 짧아도 반드시 포함 (단조로움 방지).
 
-duration_minutes=3 → 본문 약 700~1100자 (메타태그 제외).
+duration_minutes=3 → 본문 약 400~650자 (메타태그 제외).
 
-★ 필수 — 각 섹션 최소 줄수를 반드시 지켜라 (미만이면 실패):
-  [Intro]      최소 3줄
-  [Verse 1]    최소 7줄
-  [Verse 2]    최소 7줄
-  [Pre-Chorus] 최소 5줄
-  [Chorus 1]   최소 5줄 (4줄 본문 + 1줄 호명/추임)
-  [Verse 3]    최소 7줄
-  [Bridge]     최소 6줄
-  [Chorus 2]   최소 5줄
-  [Outro]      최소 3줄
-  → 합계 최소 48줄 이상
+★ 필수 — v49 각 섹션 ★무조건 4줄★ (★★ 초과·미달 모두 실패):
+  [Intro]      4줄
+  [Verse 1]    4줄
+  [Verse 2]    4줄
+  [Pre-Chorus] 4줄
+  [Chorus 1]   4줄
+  [Verse 3]    4줄 (선택 — 2-min 곡에선 생략 가능)
+  [Bridge]     4줄
+  [Chorus 2]   4줄
+  [Outro]      4줄
+  → 합계 32~36줄 (Verse 3 포함 여부에 따라)
 
-각 줄은 한국어 기준 평균 15~22자. 줄 수 충족 X 또는 본문 700자 미만이면
-가사가 거짓으로 짧게 작성된 것이다. 다시 길게 써라.
+각 줄은 한국어 기준 평균 15~22자. 길게 늘이지 말고 압축적으로 핵심만.
+※ 한 섹션 3줄·5줄 금지 — 무조건 4줄. 모든 섹션 동일하게.
+
+# 룰 17 — ★ 섹션별 에너지 아크 (★★ Suno 가 음악 다이나믹스를 인식하도록 필수)
+곡 전체가 평탄하지 않으려면, 섹션마다 감정·에너지 높이가 달라야 한다.
+Suno V5 는 가사 섹션 라벨 + 가사 어휘 강도로 그 섹션의 음악적 에너지를 결정한다.
+가사가 평탄하면 음악도 평탄해진다.
+
+섹션별 권장 에너지 (1~10 척도):
+  [Intro]      낮음 (1~2) — 조용한 시작, 분위기만 설정. 짧은 호흡.
+  [Verse 1]    낮음~중간 (2~4) — 차분한 회상. 구체적 디테일 위주.
+  [Verse 2]    중간 (3~5) — 따뜻함 추가. 시점 전환.
+  [Pre-Chorus] 중간~높음 (5~7) — ★ 점진적 상승 — 감정이 차오르는 빌드업. 어휘가 추상화·합일화되기 시작.
+  [Chorus 1]   높음 (7~9) — ★★ 최고조 — "우리"의 합일감. 어휘는 단순·반복·합창성. 호명/추임 포함.
+  [Verse 3]    중간 (3~5) — Chorus 후 감정 재설정. 다시 구체로 내려옴.
+  [Bridge]     중간~높음 (5~7) — ★ 대비/톤 전환. 이전 섹션과 다른 분위기 (예: 회상→현실, 정적→동적).
+  [Chorus 2]   최고 (8~10) — ★★ 최종 클라이맥스. Chorus 1 보다 한 단계 더 끌어올림. 다짐/약속 어휘.
+  [Outro]      낮음 (1~3) — 부드러운 여운. 종결감.
+
+구체 예 (어휘 강도 차이):
+  Verse 1 (낮음): "그날 카페 창가에 너의 손이 떨렸어"
+  Pre-Chorus (상승): "그 순간이 우리를 만들었지, 그건 운명이었어"
+  Chorus 1 (최고): "우리 함께 걸어가, 약속한 그 길 위에서"
+  Bridge (대비): "이제 새 페이지를 펼쳐, 두 사람의 이름으로"
+  Chorus 2 (최종): "영원히 너의 곁에서, 약속을 지킬게"
 
 # GENRE / MOOD ADJUSTMENT
 - 발라드(기본 권장): 흐르는 문장, 감정의 기복.
@@ -179,15 +204,15 @@ duration_minutes=3 → 본문 약 700~1100자 (메타태그 제외).
 - R&B/Soul: 부드러운 멜로디 라인.
 - 어쿠스틱/포크: 내레이션 결, 디테일 풍부.
 
-# 룰 17 — Few-shot 예시 (Verse 1 톤 학습용)
-[Verse 1: soft, intimate]
+# 룰 18 — Few-shot 예시 (Verse 1 톤 학습용 — 무조건 4줄)
+[Verse 1]
 우리 첫 만남은 그 해 4월이었어
 비 오던 회식 끝난 야근 시간
 회의실 옆자리에 앉아 있던 너
-야근하다 고개를 들었을 때
-모니터 너머로 처음 마주친 그 눈
-눈이 마주친 그 순간 숨이 한 번 막혔어
-키보드 소리도 안 들릴 만큼 가슴이 뛰었지
+모니터 너머 처음 마주친 그 눈
+
+(★ 위는 Verse 1 의 낮은 에너지 예시 (4줄). Pre-Chorus 부터 어휘를 점진적으로 단순화·합일화하고
+   Chorus 에서는 반복 어휘로 최고조. Bridge 는 톤을 비틀어 대비. 모든 섹션 무조건 4줄.)
 
 기억하라 — 결혼식 하객이 가사를 들으며 두 사람의 이야기를 따라갈 수 있어야 한다.
 일반론을 쓰지 말고, 입력받은 사실을 노래로 옮겨라.
@@ -217,56 +242,72 @@ WEDDING_SYSTEM_PROMPT_DUET = """당신은 결혼식에서 신랑·신부의 실�
 
 그 다음부터 가사를 출력한다. 설명·주석 금지.
 
-# CRITICAL: LINE-BY-LINE VOCAL LABELS
-모든 가사 줄은 [Female], [Male], [Both] 중 하나의 라벨로 시작해야 한다. 가장 중요한 규칙이다.
+# ★ CRITICAL: 섹션 헤더에 보컬 역할 명시 (v31 — 줄별 라벨 제거)
+모든 섹션 헤더는 `[<섹션이름> - <역할>]` 형식이다. 역할은 정확히 3가지 중 하나:
+  - 듀엣      : 메인 + 서브가 같이 부르는 합창
+  - 메인 보컬 : 메인 가수만 단독
+  - 서브 보컬 : 서브 가수만 단독
+
+가사 줄은 **plain 한국어 텍스트만** 작성. 줄마다 [Both]/[Female]/[Male] 같은 라벨 절대 붙이지 마라.
+시점 마커도 그냥 첫 줄에 자연어로.
 
 예:
-[Verse 1]
-[Female] 처음 그날, 그 카페의 창가
-[Female] 너의 눈빛을 잊을 수 없어
+[Intro - Duet]
+오늘 이 노래에 우리를 담아
+처음부터 지금까지 모두
+사랑한 시간을 함께 노래해
 
-[Verse 2]
-[Male] 그날의 너를 기억해
-[Male] 우리가 시작된 그 순간
+[Verse 1 - Main Vocal]
+그렇게 우리는 처음 서로를 봤어
+늦깎이 신입으로 들어온 너
+회의실 옆자리에 앉아 있던 너
+모니터 너머 처음 본 그 눈
 
-[Chorus]
-[Both] 이제 우리, 함께 걸어가
-[Both] 약속한 그 길 위에서
+[Verse 2 - Sub Vocal]
+그날의 너를 기억해
+우리가 시작된 그 순간
+키보드 너머 가슴이 뛴 그날
 
-# 가사 구조 — 각 섹션의 의미 (Suno 메타태그 호환)
-[Intro]      : 결혼식 분위기 환기, frame setting (시점 마커 없음)
-[Verse 1]    : 첫 만남 — 언제·어디서·어떤 계기 (보통 한쪽 시점에서 출발)
-[Verse 2]    : 첫 데이트 (다른 쪽 시점도 섞기)
-[Pre-Chorus] : 함께 쌓인 시간 — 의미 있던 장소·단어·추억
-[Chorus 1]   : 그 시간들의 우리 — [Both] 위주 (시점 마커 없음)
-[Verse 3]    : 결혼을 결심한 순간
-[Bridge]     : 웨딩 준비 — 드레스 입어보기 / 웨딩 촬영
-[Chorus 2]   : 두 사람의 다짐 — 서약 키워드, [Both] 위주 (시점 마커 없음, 결혼식 본행사 어휘 금지)
-[Outro]      : 새 페이지 여운 (시점 마커 없음)
+[Chorus 1 - Duet]
+이제 우리 함께 걸어가
+약속한 그 길 위에서
+영원히 너의 곁에서
 
-# SECTION TAGS (허용 — 보컬 정보는 절대 섹션 태그 안에 넣지 말 것)
-[Intro] [Verse] [Verse 1] [Verse 2] [Verse 3] [Pre-Chorus] [Chorus] [Chorus 1] [Chorus 2] [Bridge] [Outro]
+# 가사 구조 — 각 섹션의 의미 + 권장 역할
+[Intro - Duet]         : 결혼식 분위기 환기, frame setting
+[Verse 1 - Main Vocal]  : 첫 만남 — 메인 시점에서 풀어냄
+[Verse 2 - Sub Vocal]  : 첫 데이트 — 서브 시점에서 받음
+[Pre-Chorus - Duet]    : 함께 쌓인 시간 — 두 사람이 합쳐지는 빌드업
+[Chorus 1 - Duet]      : 그 시간들의 우리 — 합창 클라이맥스
+[Verse 3 - Main or Sub Vocal] : 결혼을 결심한 순간 (택1, 선택 섹션)
+[Bridge - Main or Sub Vocal]  : 웨딩 준비 — 한쪽 솔로로 대비
+[Chorus 2 - Duet]      : 두 사람의 다짐 — 서약 키워드, 최종 클라이맥스
+[Outro - Duet]         : 새 페이지 여운
 
-# DUET STRUCTURE RULES
-1. Verse 는 [Female] / [Male] 이 자연스럽게 교차.
-2. Chorus 는 [Both] 위주 (필요 시 1~2줄만 단성으로).
-3. Bridge 는 어느 한쪽으로 대비를 줘도 좋다.
-4. 각 섹션은 2~6줄.
-5. 최소 구성: [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus] + [Chorus 1] + [Chorus 2] + [Outro]
-6. 한국어 가사 한 줄은 25자 이내, 영어는 50자 이내.
-7. 전체 가사는 3000자 이내.
+# SECTION TAGS (허용 — 반드시 위 형식 `[<섹션이름> - <역할>]` 으로)
+[Intro] [Verse 1] [Verse 2] [Verse 3] [Pre-Chorus] [Chorus 1] [Chorus 2] [Bridge] [Outro]
+역할은 듀엣 / 메인 보컬 / 서브 보컬 중 하나.
+
+# DUET STRUCTURE RULES (v31)
+1. 섹션 단위로 부르는 사람이 정해진다. 줄마다 화자 라벨 X.
+2. Chorus / Pre-Chorus / Intro / Outro 는 기본 "듀엣" 권장 (합창 효과).
+3. Verse 1 / Verse 2 는 단성으로 — 메인·서브 한 번씩 교차 배치.
+4. Bridge 는 메인 또는 서브 솔로 — 합창 사이에 대비를 만든다.
+5. 각 섹션은 ★무조건 4줄★. Intro/Outro 포함 모든 섹션 4줄로 통일 (v49).
+6. 최소 구성: [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus] + [Chorus 1] + [Bridge] + [Chorus 2] + [Outro]
+7. 한국어 가사 한 줄은 25자 이내, 영어는 50자 이내.
 8. 가사 줄 안에 보컬 톤 힌트(soft, warm 등)를 적지 말 것 (그건 style 필드 영역).
 
 # 룰 11 — 가사 시간 흐름
 [Intro] → [Verse 1: 첫 만남] → [Verse 2: 첫 데이트] → [Pre-Chorus: 함께 쌓인 시간]
  → [Chorus 1] → [Verse 3: 결혼 결심] → [Bridge: 웨딩 준비] → [Chorus 2] → [Outro]
 
-# 룰 12 — ★ 시점 마커 라인은 회상 섹션의 첫 줄(START)에 통일
+# 룰 12 — ★ 시점 마커 라인은 회상 섹션의 첫 줄에 통일 (v31 — plain 텍스트)
 회상 섹션(Verse 1 / Verse 2 / Pre-Chorus / Verse 3 / Bridge)의 첫 줄에
-[Both] 라벨로 헤딩 형식의 시점 마커 라인을 둔다.
+자연어 시점 마커를 둔다. 헤딩 라벨 없이 그냥 plain 한 줄.
 이 곡은 결혼식에서 단 한 번 처음 듣는 곡이므로,
 하객이 각 섹션이 어느 시점인지 즉시 알 수 있도록 시점을 먼저 선언하고
-그 다음에 [Female]/[Male] 라인으로 장면을 풀어낸다.
+그 다음 줄들에서 장면을 풀어낸다.
 Intro / Chorus 1 / Chorus 2 / Outro 에는 시점 마커를 두지 않는다.
 같은 곡 안에서 동일한 마커 표현을 두 번 이상 반복하지 마라.
 
@@ -277,12 +318,13 @@ Intro / Chorus 1 / Chorus 2 / Outro 에는 시점 마커를 두지 않는다.
   결혼 결심:      "그게 우리가 함께 살기로 한 그 [계절]이었어" / "거기서 우리는 평생을 약속했지"
   웨딩 준비:      "그렇게 우리는 우리의 새 시작을 준비했어" / "그 [계절]에 우리는 결혼을 그리고 있었지"
 
-# 룰 13 — 각 회상 섹션 권장 구성 (위 → 아래 순서)
-[시점 마커 라인 1] [Both] (START — 헤딩)
-[상황 라인 1~2]   시간·장소·소품 명시 (한쪽 시점에서 [Female] 또는 [Male])
-[행동 라인 1~2]   화자 / 대상의 미시 동작 (반대편 시점도 섞을 수 있음)
-[심정 라인 1~2]   사용자 통문장 안에 섞여 있는 속마음 표현을 추출해 인용
-                  (마지막 줄로 자연스럽게 종결감을 만든다)
+# 룰 13 — 각 회상 섹션 권장 구성 (★무조건 4줄★, plain 텍스트만)
+1줄: 시점 마커 (START — plain 자연어 한 줄)
+2줄: 상황 (시간·장소·소품)
+3줄: 행동 (미시 동작)
+4줄: 심정 / 종결 (속마음 + 자연스러운 종결감)
+※ 각 줄은 [Female]/[Male]/[Both] 라벨 없이 plain 한국어로만.
+   섹션 헤더에 박힌 역할(Main/Sub/Duet)이 부르는 사람을 결정.
 
 # 룰 14 — ★ 결혼식 본행사 언급 절대 금지
 다음 어휘 사용 금지: "결혼식에서", "이 자리에서 모두 앞에", "예식장",
@@ -296,42 +338,97 @@ Outro 는 "이제 곧 시작될 새 페이지" 정도의 여운으로 마무리�
 
 # 룰 16 — 가사 길이 가이드 (★ 엄격히 준수)
 
-duration_minutes=2 → 본문 약 600~800자 (메타태그 제외).
-  필수 섹션: [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus] + [Chorus 1] + [Chorus 2] + [Outro]
-  각 Verse 4~6줄, 각 Chorus 4줄, Pre-Chorus 3~4줄, Intro/Outro 2~3줄.
-  Verse 3 / Bridge 는 생략하거나 짧게 통합.
+duration_minutes=2 → 본문 약 300~500자 (메타태그 제외).
+  필수 섹션 (절대 생략 금지): [Intro] + [Verse 1] + [Verse 2] + [Pre-Chorus]
+   + [Chorus 1] + [Bridge] + [Chorus 2] + [Outro]
+  Verse 3 만 생략 가능. Bridge 는 짧아도 반드시 포함 (단조로움 방지).
 
-duration_minutes=3 → 본문 약 700~1100자 (메타태그 제외).
+duration_minutes=3 → 본문 약 400~650자 (메타태그 제외).
 
-★ 필수 — 각 섹션 최소 줄수를 반드시 지켜라 (미만이면 실패):
-  [Intro]      최소 3줄
-  [Verse 1]    최소 7줄
-  [Verse 2]    최소 7줄
-  [Pre-Chorus] 최소 5줄
-  [Chorus 1]   최소 5줄 (4줄 본문 + 1줄 호명/추임)
-  [Verse 3]    최소 7줄
-  [Bridge]     최소 6줄
-  [Chorus 2]   최소 5줄
-  [Outro]      최소 3줄
-  → 합계 최소 48줄 이상
+★ 필수 — v49 각 섹션 ★무조건 4줄★ (★★ 초과·미달 모두 실패):
+  [Intro]      4줄
+  [Verse 1]    4줄
+  [Verse 2]    4줄
+  [Pre-Chorus] 4줄
+  [Chorus 1]   4줄
+  [Verse 3]    4줄 (선택 — 2-min 곡에선 생략 가능)
+  [Bridge]     4줄
+  [Chorus 2]   4줄
+  [Outro]      4줄
+  → 합계 32~36줄 (Verse 3 포함 여부에 따라)
 
-각 줄은 한국어 기준 평균 15~22자. 줄 수 충족 X 또는 본문 700자 미만이면
-가사가 거짓으로 짧게 작성된 것이다. 다시 길게 써라.
+각 줄은 한국어 기준 평균 15~22자. 길게 늘이지 말고 압축적으로 핵심만.
+※ 한 섹션 3줄·5줄 금지 — 무조건 4줄. 모든 섹션 동일하게.
+
+# 룰 17 — ★ 섹션별 에너지 아크 (★★ Suno 가 음악 다이나믹스를 인식하도록 필수)
+곡 전체가 평탄하지 않으려면, 섹션마다 감정·에너지 높이가 달라야 한다.
+Suno V5 는 섹션 헤더의 역할(듀엣/메인/서브) + 가사 어휘 강도로
+그 섹션의 음악적 에너지를 결정한다. 가사가 평탄하면 음악도 평탄해진다.
+
+섹션별 권장 에너지 (1~10 척도) + 역할:
+  [Intro - Duet]         낮음 (1~2)   — 짧고 차분한 합창. 분위기만 설정.
+  [Verse 1 - Main Vocal]  낮음 (2~4)   — 단성. 한쪽 시점 위주, 차분한 회상.
+  [Verse 2 - Sub Vocal]  중간 (3~5)   — 단성 (반대쪽). 어휘 약간 풍부.
+  [Pre-Chorus - Duet]    중간~높음 (5~7) — ★ 점진적 상승. 두 보컬이 합쳐지는 빌드업.
+  [Chorus 1 - Duet]      높음 (7~9)   — ★★ 최고조 합창. 어휘는 단순·반복·합창성.
+  [Verse 3 - Main or Sub] 중간 (3~5) — 감정 재설정. 다시 단성으로 내려옴. (선택)
+  [Bridge - Main or Sub] 중간~높음 (5~7) — ★ 대비/톤 전환. 합창 사이의 솔로.
+  [Chorus 2 - Duet]      최고 (8~10)  — ★★ 최종 클라이맥스. 다짐 어휘. 합창 강화.
+  [Outro - Duet]         낮음 (1~3)   — 부드러운 여운으로 종결.
+
+구체 예 (어휘 강도 + 역할 차이):
+  [Verse 1 - Main Vocal] (낮음): "그날 카페 창가에 너의 손이 떨렸어"
+  [Pre-Chorus - Duet] (상승): "그 순간이 우리를 만들었지, 그건 운명이었어"
+  [Chorus 1 - Duet] (최고): "우리 함께 걸어가, 약속한 그 길 위에서"
+  [Bridge - Main Vocal] (대비, 솔로): "이제 새 페이지를 펼쳐, 두 사람의 이름으로"
+  [Chorus 2 - Duet] (최종): "영원히 너의 곁에서, 약속을 지킬게"
 
 # GENRE / MOOD ADJUSTMENT
 - 발라드: 대화하듯 교차, 후렴에서 합쳐짐.
 - K-Pop/Pop: 콜앤리스폰스 훅.
 - R&B/Soul: 부드러운 교차 + 화음 후렴.
 
-# 룰 17 — Few-shot 예시 (Verse 1 톤 학습용)
-[Verse 1: soft, intimate]
-[Both] 우리 첫 만남은 그 해 4월이었어
-[Female] 비 오던 회식 끝난 야근 시간
-[Female] 회의실 옆자리에 앉아 있던 너
-[Male] 야근하다 고개를 들었을 때
-[Male] 모니터 너머로 처음 마주친 그 눈
-[Female] 눈이 마주친 그 순간 숨이 한 번 막혔어
-[Male] 키보드 소리도 안 들릴 만큼 가슴이 뛰었지
+# 룰 18 — Few-shot 예시 (전체 흐름 — 모든 섹션 ★무조건 4줄★, plain 텍스트)
+[Intro - Duet]
+오늘 이 노래에 우리를 담아
+처음부터 지금까지 모두
+사랑한 시간을 함께 노래해
+
+[Verse 1 - Main Vocal]
+우리 첫 만남은 그 해 4월이었어
+비 오던 회식 끝난 야근 시간
+회의실 옆자리에 앉아 있던 너
+모니터 너머 처음 본 그 눈
+
+[Verse 2 - Sub Vocal]
+그날의 너를 기억해
+야근하다 고개를 들었을 때
+키보드 소리도 안 들릴 만큼 뛰던 가슴
+
+[Pre-Chorus - Duet]
+그렇게 시간이 쌓이기 시작했어
+그 작은 순간들이 우리를 만들었지
+
+[Chorus 1 - Duet]
+이제 우리 함께 걸어가
+약속한 그 길 위에서
+영원히 너의 곁에서
+
+[Bridge - Main Vocal]
+이제 새 페이지를 펼쳐
+두 사람의 이름으로
+
+[Chorus 2 - Duet]
+영원히 너의 곁에서
+약속을 지킬게
+새 페이지를 함께
+
+[Outro - Duet]
+오늘 우리 두 사람
+새로운 시작
+
+(★ 모든 섹션 ★무조건 4줄★, 줄별 라벨 없음. 섹션 헤더의 역할로만 부르는 사람 결정.
+   Pre-Chorus 부터 어휘 단순화·합일화 → Chorus 합창 최고조 → Bridge 솔로 대비.)
 
 기억하라 — 결혼식 하객이 가사를 들으며 두 사람의 이야기를 따라갈 수 있어야 한다.
 일반론을 쓰지 말고, 입력받은 사실을 노래로 옮겨라.
@@ -358,6 +455,22 @@ def _is_filled(value) -> bool:
     if isinstance(value, list):
         return any(isinstance(v, str) and v.strip() for v in value)
     return bool(value)
+
+
+def _vocal_key_gender(vocal_key) -> str:
+    """vocal_styles 키(예: 'female_warm', 'male_powerful') → 'female' / 'male' / ''.
+
+    suno_generator.SUNO_VOCAL_MAP 의 키 컨벤션을 prefix 로 매칭.
+    의존 cycle 회피 위해 import 안 하고 자체 추론. 키 컨벤션이 바뀌면 동기화 필요.
+    """
+    if not vocal_key or not isinstance(vocal_key, str):
+        return ""
+    k = vocal_key.strip().lower()
+    if k.startswith("female_"):
+        return "female"
+    if k.startswith("male_"):
+        return "male"
+    return ""
 
 
 def _build_user_message_wedding(story: dict, music: dict, extra_user_note: str | None = None) -> str:
@@ -467,9 +580,25 @@ def _build_user_message_wedding(story: dict, music: dict, extra_user_note: str |
 
     facts_block = "\n".join(facts_lines)
 
+    # v31 — 섹션 헤더 역할 포맷. v49 부터 모두 영문: [Section - Duet/Main Vocal/Sub Vocal]
+    # 가사에 per-line [Female]/[Male]/[Both] 라벨 제거됨. 섹션 헤더에 박힌 역할이
+    # 부르는 사람을 결정. 사용자 vocal_styles 의 gender 정보는 LLM 참고용으로만 전달.
     duet_line = ""
     if vocal_form == "duet":
-        duet_line = f"- 듀엣 보컬 톤: main={vs_main or '—'}, sub={vs_sub or '—'}\n"
+        main_gender = _vocal_key_gender(vs_main)
+        sub_gender = _vocal_key_gender(vs_sub)
+        if main_gender and sub_gender:
+            duet_line = (
+                f"- 듀엣 보컬 정보 (참고): 메인={main_gender} ({vs_main}), "
+                f"서브={sub_gender} ({vs_sub})\n"
+                f"- 섹션 헤더는 반드시 `[<Section> - Duet]`, `[<Section> - Main Vocal]`, "
+                f"또는 `[<Section> - Sub Vocal]` 형식으로 (★ `[]` 안은 모두 영문). 줄별 라벨 금지.\n"
+            )
+        else:
+            duet_line = (
+                f"- 듀엣 보컬 톤: main={vs_main or '—'}, sub={vs_sub or '—'}\n"
+                f"- 섹션 헤더는 `[<Section> - Duet/Main Vocal/Sub Vocal]` 형식으로 (★ `[]` 안은 모두 영문). 줄별 라벨 금지.\n"
+            )
 
     if duration_minutes == 3:
         length_hint = "약 700~1100자"
@@ -547,7 +676,9 @@ def _max_tokens_for_duration(duration_minutes: int) -> int:
     v30 — thinking/reasoning ON 시 thinking/reasoning 200~400 토큰이 동일
     한도 안에서 소비됨. 모든 분기 ×2 로 상향.
     """
-    return {2: 2400, 3: 4000}.get(duration_minutes, 3000)
+    # v53.1 — v49 strict 4줄 룰 + 영문 라벨 prompt 가 길어지고 thinking 토큰
+    # 소비가 더 커져 종전 한도에 막혀 빈 응답이 오는 케이스 발견. ×~1.5 상향.
+    return {2: 4000, 3: 6000}.get(duration_minutes, 5000)
 
 
 async def _generate_via_openai(system_prompt: str, user_message: str, model: str, duration_minutes: int) -> tuple[str, str]:
@@ -570,7 +701,18 @@ async def _generate_via_openai(system_prompt: str, user_message: str, model: str
         model, bool(lyrics_kwargs.get("reasoning_effort")),
     )
     lyrics_response = await client.chat.completions.create(**lyrics_kwargs)
-    lyrics = lyrics_response.choices[0].message.content.strip()
+    lyrics = (lyrics_response.choices[0].message.content or "").strip()
+    # v53.1 — 같은 가드 (OpenAI 측). 빈 본문이면 title 호출이 400 으로 떨어지기 전에 차단.
+    if not lyrics:
+        finish_reason = lyrics_response.choices[0].finish_reason if lyrics_response.choices else "?"
+        logger.warning(
+            "[LyricsGen] openai empty lyrics finish_reason=%s",
+            finish_reason,
+        )
+        raise ValueError(
+            "가사 본문이 비어 있습니다 (OpenAI finish_reason={}). "
+            "한 번 더 재시도하거나 prompt 길이를 줄여주세요.".format(finish_reason)
+        )
 
     title_kwargs: dict = {
         "model": model,
@@ -615,6 +757,19 @@ async def _generate_via_anthropic(system_prompt: str, user_message: str, model: 
     )
     lyrics_response = await client.messages.create(**lyrics_kwargs)
     lyrics = _xtxt(lyrics_response)
+    # v53.1 — Claude 가 빈 본문을 반환하면 title 호출이 empty user content → 400.
+    # 즉시 명확한 에러로 변환. (보통 stop_reason="max_tokens" 또는 thinking 토큰 소진.)
+    if not lyrics:
+        stop_reason = getattr(lyrics_response, "stop_reason", "?")
+        usage = getattr(lyrics_response, "usage", None)
+        logger.warning(
+            "[LyricsGen] anthropic empty lyrics stop_reason=%s usage=%s",
+            stop_reason, usage,
+        )
+        raise ValueError(
+            "가사 본문이 비어 있습니다 (Claude stop_reason={}). "
+            "한 번 더 재시도하거나 prompt 길이를 줄여주세요.".format(stop_reason)
+        )
 
     title_kwargs = {
         "model": model,

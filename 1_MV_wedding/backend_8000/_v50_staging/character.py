@@ -509,7 +509,7 @@ async def generate_sheet(
     image_model: str = Form("gpt_image_2"),
     role: str = Form(...),
     style: str = Form(...),
-    prompt_variant: str = Form("realistic"),  # v53 — 디폴트 realistic. 명시적으로 "default" 보내면 백업 prompt.
+    prompt_variant: str = Form("default"),  # v50 — "default" | "realistic"
     current_user=Depends(get_current_user),
 ):
     """Queue an async job to generate a character sheet PNG.
@@ -671,9 +671,8 @@ async def generate_sheet(
 
     mongo = get_mongo()
     now = datetime.now(timezone.utc)
-    # v50 — prompt_variant: "realistic" 면 미화 거부, "default" 면 백업 prompt 그대로.
-    # v53 — 디폴트가 "realistic". 명시적으로 "default" 보내야 백업 모드.
-    prompt_variant_v = "default" if (prompt_variant or "").strip().lower() == "default" else "realistic"
+    # v50 — prompt_variant: "default" 면 기존 prompt 그대로 (백업), "realistic" 이면 미화 거부.
+    prompt_variant_v = "realistic" if (prompt_variant or "").strip().lower() == "realistic" else "default"
     job_doc = {
         "user_id": user_id,
         "type": "generate",

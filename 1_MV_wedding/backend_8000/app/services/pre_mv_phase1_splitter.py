@@ -717,13 +717,12 @@ def _resolve_prompt_model() -> tuple[str, str]:
 
 
 def _max_tokens_for_scene_split(scene_count: int) -> int:
-    # v21.3-hotfix — Claude 가 18 씬 × 7 텍스트 필드 출력 시 12600 한도에서 잘림 (stop_reason=max_tokens).
-    # per_scene 1500 + cap 32000 으로 확장. Claude opus 4.7 출력 한계 안.
-    # 한국어 image_prompt_ko + video_prompt_ko 가 토큰 비용 큼.
-    # Anthropic SDK 가 비-스트리밍에서 ~16000 이상 거부 ("streaming required"). 안전선 12000.
-    base = 6000
-    per_scene = 600
-    cap = 12000
+    # v54.3 — cap 12000 에서 21 씬 응답이 max_tokens 로 잘려 JSON 파싱 실패 → fallback
+    # (event.summary 복붙) 케이스 신고됨. 비-스트리밍 한도 안에서 cap 16000 으로
+    # 상향 + per_scene 700 으로 한 씬당 출력 마진 확보.
+    base = 7000
+    per_scene = 700
+    cap = 16000
     return min(cap, max(base, scene_count * per_scene))
 
 

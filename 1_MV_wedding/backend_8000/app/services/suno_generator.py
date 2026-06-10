@@ -13,6 +13,7 @@ LoRA, 후처리 — 모두 v3 범위 외.
 import asyncio
 import io
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -20,8 +21,30 @@ from bson import ObjectId
 
 from ..config import settings
 from ..database.minio import get_minio
+from .translation import translate_ko_to_en
 
 logger = logging.getLogger(__name__)
+
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _has_hangul(text: str) -> bool:
+    return bool(text) and bool(_HANGUL_RE.search(text))
+
+
+async def _to_english_style_tag(text: str) -> str:
+    """v26 — Suno style 태그가 한국어를 포함하면 영어로 자동 변환.
+
+    Suno V5 는 영문 style 태그 처리가 안정적이라, 한국어 입력(예: '발라드')은
+    LLM 으로 번역 후 전달한다. 한글이 없으면 LLM 호출 없이 원문 반환.
+    번역 실패(빈 문자열) 시 원문 그대로 사용 (호출 누락보다 원문 전달이 안전).
+    """
+    if not text or not text.strip():
+        return ""
+    if not _has_hangul(text):
+        return text.strip()
+    translated = await translate_ko_to_en(text, context_hint="music style tag")
+    return translated.strip() if translated else text.strip()
 
 
 SUNO_VOCAL_MAP = {
@@ -38,13 +61,36 @@ SUNO_VOCAL_MAP = {
 
 def _ensure_lyrics_structure(lyrics: str) -> str:
     """가사에 [Verse]/[Chorus] 같은 메타태그가 없으면 자동 추가.
-    레퍼런스 패턴 그대로 — 우리 lyrics_generator는 항상 메타태그를 박지만,
-    혹시 모를 누락 보호용."""
+
+    v29 변경:
+    - LLM 출력에 라벨이 거의 없으면 (≤1) 경고 로깅 — prompt 가 제대로 동작 안 한 경우
+    - 부분 라벨(2개 이상)은 그대로 통과 — 강제 보완은 오히려 구조를 망침
+    - 라벨 0개 (긴급)는 기존의 Verse/Chorus 4줄 교차 폴백 유지 (단조하지만 Suno 가
+      파싱하려면 라벨이 필요함)
+    """
     if not lyrics or not lyrics.strip():
         return lyrics
-    tags = ['[verse', '[chorus', '[bridge', '[intro', '[outro', '[pre-chorus', '[hook']
-    if any(tag in lyrics.lower() for tag in tags):
+
+    full_tags = ['[verse', '[chorus', '[bridge', '[intro', '[outro', '[pre-chorus', '[hook']
+    found = [tag for tag in full_tags if tag in lyrics.lower()]
+
+    if len(found) >= 2:
+        # 라벨이 충분히 있으면 LLM 출력 신뢰. 부분 누락(예: Bridge 없음) 은
+        # prompt 강화로 해결할 문제이지 여기서 강제 끼워넣을 일이 아님.
         return lyrics
+
+    if len(found) == 1:
+        logger.warning(
+            "Lyrics structure thin (only %s). LLM prompt may need strengthening.",
+            found,
+        )
+        return lyrics
+
+    # 라벨 0개 — emergency 폴백. Suno 가 라벨 없는 가사를 단일 verse 로 처리
+    # 하지 않도록 최소한 [Verse]/[Chorus] 교차를 박는다. 단조롭지만 라벨 없음보다 낫다.
+    logger.warning(
+        "Lyrics has no structure tags at all. Falling back to mechanical Verse/Chorus split."
+    )
     lines = [l for l in lyrics.strip().split('\n') if l.strip()]
     if len(lines) <= 4:
         return f"[Verse]\n{lyrics.strip()}"
@@ -96,11 +142,25 @@ async def generate_music_for_job(
     }
 
     # ---- style 문자열 빌드 ----
-    style_parts: list[str] = []
+    # v26 — Suno 는 영문 style 태그가 안정적. 한국어가 섞이면 LLM 번역 후 전달.
+    raw_style_inputs: list[str] = []
     if music_spec.get("genre"):
-        style_parts.append(music_spec["genre"])
+        raw_style_inputs.append(str(music_spec["genre"]))
     moods = music_spec.get("moods") or []
-    style_parts.extend([m for m in moods if m])
+    raw_style_inputs.extend([str(m) for m in moods if m])
+
+    if raw_style_inputs:
+        translated_inputs = await asyncio.gather(
+            *[_to_english_style_tag(s) for s in raw_style_inputs]
+        )
+        style_parts: list[str] = [s for s in translated_inputs if s]
+        logger.info(
+            "Suno style translate: raw=%s -> en=%s",
+            raw_style_inputs,
+            style_parts,
+        )
+    else:
+        style_parts = []
 
     vocal_form = music_spec.get("vocal_form") or "solo"
     vocal_styles = music_spec.get("vocal_styles") or {}

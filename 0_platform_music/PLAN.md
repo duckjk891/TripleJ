@@ -21521,3 +21521,227 @@ v75.1 에서 시나리오 두 곳만 32k 로 올렸지만, **thinking/reasoning 
 - v75 / v75.1 본문 무수정. v75.2 로 누적.
 - 라이브 검증에서 brainstorm 만 첫 시도 FAIL — 모든 호출의 max_tokens 점검이 정말로 필요했음을 입증.
 
+
+---
+
+## v76 — Suno V5_5 Voice Cloning (내 목소리 학습 & 음악 생성 사용)
+- **요청일**: 2026-06-08
+- **요청 작업**: 사용자 본인 목소리를 Suno V5_5 voice persona 로 학습시켜 저장하고, 음악 생성 시 보컬 선택에서 그 목소리로 노래를 만들 수 있게 한다.
+- **팀**: VoxClone Squad (planner / backend-dev / frontend-dev / tester)
+- **대상**: backend_9005 + frontend (port 4000). 9001~9004 무변경.
+
+### 외부 API 사양 (sunoapi.org 공식 문서 재확인 결과)
+- 신규 워크플로 = **기존 voice_persona (구버전, 옛 4단계) 와 별개의 새 엔드포인트군**
+- 호출 순서:
+  1. `POST {base}/api/v1/voice/validate` — `{voiceUrl, vocalStartS, vocalEndS, language:"ko", callBackUrl}` → `{taskId}` + 콜백으로 `validateInfo`(검증 문구)
+  2. (옵션) `POST {base}/api/v1/voice/regenerate` — 문구 재생성
+  3. `POST {base}/api/v1/voice/generate` — `{taskId, verifyUrl, voiceName, description, style?, singerSkillLevel, callBackUrl}` → `{taskId}`(별개)
+  4. `GET {base}/api/v1/voice/record-info?taskId=` → `{voiceId, status, errorCode?, errorMessage?}`
+  5. `POST {base}/api/v1/voice/check-voice` — `{task_id}` → `{isAvailable}`
+- 음악 생성 시 사용:
+  - 기존 `POST {base}/api/v1/generate` 호출에 `personaId=<voiceId>`, `personaModel:"voice_persona"`, `model:"V5_5"` 추가
+- 데이터 요건:
+  - 원본 샘플: 15s~4min (best 2min), mp3/wav/m4a, BGM 섞여도 자동 분리, **노래 권장**
+  - 검증 녹음: **원본이 노래면 노래로, 말이면 말로** 일치해야 함
+
+### Plan verification findings (0단계 코드 분석 결과)
+1. **기존 voice_persona 와 신규 voice_clone 분리** — 기존 `routes/voice_persona.py` + `services/voice_persona_service.py` 는 옛 워크플로(upload-cover → vocal-removal → generate-persona) 를 그대로 보존. v76 은 **신규 라우트** `/api/voice-clone/*` + **신규 서비스** `services/voice_clone_service.py` + **신규 MongoDB 컬렉션** `voice_clones`.
+2. **Suno 호출 헬퍼**: `services/suno_generator.py` L14~L16 의 상수 패턴 따라 신규 상수 추가:
+   - `SUNO_VOICE_VALIDATE_URL`, `SUNO_VOICE_GENERATE_URL`, `SUNO_VOICE_RECORD_INFO_URL`, `SUNO_VOICE_CHECK_URL`
+   - 인증: 기존 `settings.suno_api_key` + `settings.suno_api_url` 그대로 사용.
+3. **`generate_music_suno` 시그니처**: L52~73 에 이미 `persona_id`, `persona_model` 파라미터 존재. **이미 호환됨**. `model` 파라미터만 추가 검토 필요 (현재 모델 파라미터 없으면 V5_5 신설 분기 필요).
+4. **MinIO 업로드 헬퍼**: `routes/upload.py` L143~L149 (`put_object`) + L207~L211 (`presigned_get_object`, 24h). 신규 voice_clone 도 동일 패턴: bucket=`aimu-music` (기존), object_name=`voice-clones/{user_id}/{voice_clone_id}/source.mp3` + `verify.mp3`.
+5. **콜백 수신**: 기존 코드는 polling-based (suno_generator.py L134 `callBackUrl="https://localhost/callback"` 더미). v76 도 **polling-based** 로 통일(별도 콜백 노출 X — 외부에서 접근 가능한 URL 보장 어려움). `voice/record-info` 와 `voice/check-voice` 폴링.
+6. **MongoDB 컬렉션 신설**: `voice_clones`
+   ```
+   {
+     _id: ObjectId,
+     user_id: str (UUID),
+     voice_name: str,
+     description: str,
+     source_object_name: str,     # MinIO 원본 녹음
+     verify_object_name: str,     # MinIO 검증 녹음
+     vocal_start_s: int,
+     vocal_end_s: int,
+     style_mode: "sing" | "speak",
+     singer_skill_level: "beginner" | "intermediate" | "advanced" | "professional",
+     validate_task_id: str,        # voice/validate 응답 taskId
+     validate_info: str,           # 콜백으로 받은 검증 문구
+     generate_task_id: str,        # voice/generate 응답 taskId
+     voice_id: str | None,         # 최종 personaId
+     status: "validating" | "awaiting_verify" | "generating" | "ready" | "failed",
+     error_code: int | None,
+     error_message: str | None,
+     created_at: datetime,
+     updated_at: datetime,
+   }
+   ```
+7. **프론트엔드 통합 지점 (검증된 위치)**:
+   - **내캐릭터 탭**: `frontend/src/pages/MyMusicPage.jsx` L976~L978 의 `<CharacterSection />` 내부, L412 직후 ("의상 슬롯" 영역 종료 지점) 에 새 `<MyVoiceCloneSection />` 컴포넌트 삽입.
+   - **보컬 선택**: `frontend/src/components/StudioTab2.jsx` L2317~L2343 에 이미 "내 목소리(Voice Persona)" 구버전 섹션 존재. **그 섹션 하단에 v76 voice_clone 카드들 추가**. 기존 voice_persona 와 voice_clone 을 같은 영역에 보여주되 라벨 다르게(예: "내 목소리(보이스 클론)").
+8. **API 클라이언트**: `frontend/src/api/index.js` (L4 baseURL `:9005/api`). 신규 함수 추가:
+   - `createVoiceClone(formData)` POST `/voice-clone/create`
+   - `submitVoiceCloneVerify(cloneId, formData)` POST `/voice-clone/{id}/verify`
+   - `getVoiceClones()` GET `/voice-clone/list`
+   - `getVoiceClone(id)` GET `/voice-clone/{id}`
+   - `deleteVoiceClone(id)` DELETE `/voice-clone/{id}`
+   - `regenerateVoiceClonePhrase(id)` POST `/voice-clone/{id}/regenerate-phrase`
+9. **녹음 UI**: 현재 프론트에 `MediaRecorder`/`getUserMedia` 미사용. 신규 모듈 `frontend/src/utils/audioRecorder.js` 추가하여 녹음 책임을 분리.
+10. **wavesurfer.js 활용**: 기존 `BeatTrackView.jsx` 패턴 차용해서 구간 선택(vocalStartS/EndS) 시각화.
+11. **원격 로깅 인프라**: `frontend/src/utils/remoteLogger.js` 이미 존재. console.error/warn 자동 백엔드 전송 — 신규 컴포넌트에서도 `console.error("[VoiceClone] ...", err)` 그대로 사용 OK.
+12. **로그 추적자**: `voice_clone_id` (MongoDB _id) 를 모든 백엔드 로그에 prefix 로 포함. prefix 예: `[voice_clone:{id}]`.
+
+### 백엔드 변경 매트릭스 (Task #12)
+| 작업 | 파일 | 내용 | 추적자 |
+|---|---|---|---|
+| 신규 상수 | `services/suno_generator.py` L17 후 | SUNO_VOICE_* 4종 URL 상수 추가 | — |
+| 신규 서비스 | `services/voice_clone_service.py` (신규) | 4단계 워크플로 함수 + 폴링 + MongoDB CRUD | `[voice_clone:{id}]` |
+| 신규 라우트 | `routes/voice_clone.py` (신규) | 6개 엔드포인트 (create/verify/list/get/delete/regenerate-phrase) | `[voice_clone:{id}]` |
+| main.py | `app/main.py` L142~L161 | `from .routes import voice_clone` + `app.include_router(voice_clone.router)` | — |
+| generate.py 통합 | `services/suno_generator.py` L52~L73 | 기존 `persona_id` + `persona_model` 분기 보존, voice_clone 선택 시 `model:"V5_5"` 강제 | — |
+| MongoDB | `voice_clones` 컬렉션 | 위 7번 스키마 | — |
+| MinIO | bucket=aimu-music, key=`voice-clones/{user_id}/{clone_id}/{source\|verify}.mp3` | put_object + presigned 24h | — |
+
+### 프론트엔드 변경 매트릭스 (Task #13)
+| 작업 | 파일 | 내용 |
+|---|---|---|
+| api 클라이언트 | `src/api/index.js` L286 부근 (voice_persona 인접) | 신규 6 함수 추가 |
+| 녹음 유틸 | `src/utils/audioRecorder.js` (신규) | MediaRecorder wrapper + getUserMedia 권한 + blob 반환 |
+| 내캐릭터 영역 | `src/pages/MyMusicPage.jsx` L412 후 | `<MyVoiceCloneSection />` 삽입 |
+| 신규 컴포넌트 | `src/components/MyVoiceCloneSection.jsx` (신규) | 카드 리스트 + "+ 새 목소리" 버튼 |
+| 신규 컴포넌트 | `src/components/VoiceCloneWizard.jsx` (신규) | 4단계 마법사 모달 (Step1 샘플/구간, Step2 문구, Step3 검증녹음, Step4 이름·진행) |
+| 보컬 선택 | `src/components/StudioTab2.jsx` L2343 직후 | v76 voice_clone 카드들 추가 섹션 |
+| 음악 생성 호출 | `src/components/StudioTab2.jsx` 음악 생성 핸들러 | voice_clone 선택 시 generate body 에 `persona_id`, `persona_model:"voice_persona"`, `model:"V5_5"` 강제 추가 |
+| 스타일 | `src/components/MyVoiceCloneSection.css` / `VoiceCloneWizard.css` (신규) | 일관 디자인 |
+| 로그 prefix | 모든 신규 컴포넌트 | `[VoiceCloneWizard]`, `[MyVoiceCloneSection]` |
+
+### 테스트 시나리오 (Task #14, tester)
+| # | 시나리오 | 확인 포인트 |
+|---|---|---|
+| T1 | 백엔드 헬스체크 | `/api/health` 200, 9005 살아있음 |
+| T2 | 라우트 등록 확인 | `/openapi.json` 에 `/voice-clone/*` 6 엔드포인트 포함 |
+| T3 | 학습 마법사 Step1 (녹음) | 마이크 권한 → 30~60초 녹음 → 업로드 → `/voice-clone/create` 200 + `clone_id` + `validateInfo` |
+| T4 | 학습 마법사 Step1 (파일 업로드) | mp3 파일 선택 → 동일 결과 |
+| T5 | 학습 마법사 Step2 | validateInfo 한국어로 표시 |
+| T6 | 학습 마법사 Step3 | 검증 녹음 업로드 → `/voice-clone/{id}/verify` 200 + status=`generating` |
+| T7 | 학습 진행 폴링 | `/voice-clone/{id}` 폴링 → status `ready` + `voice_id` 채워짐 |
+| T8 | 내캐릭터 카드 표시 | "내캐릭터" 탭 진입 시 학습된 voice 카드 렌더링 |
+| T9 | 보컬 선택 통합 | StudioTab2 보컬 선택 화면에 새 voice 카드 노출 |
+| T10 | persona 음악 생성 | voice_clone 선택 → 생성 → Suno 호출 body 에 `personaId/personaModel/model=V5_5` 포함 → 곡 정상 생성 |
+| T11 (회귀) | 기본 보컬 4개 선택 | 기존 vocalGender 흐름 무회귀 |
+| T12 (회귀) | 기존 voice_persona | 구버전 voice_persona 도 그대로 작동(혼동 X) |
+| T13 (회귀) | 가사/시나리오 생성 | v75.2 라이브 6/6 OK 회귀 — `/api/health` 외 lyrics 1건 |
+| T14 (로그) | 추적자 검증 | `backend_9005/logs/server.log` 에 `[voice_clone:{id}]` prefix grep 가능 + 프론트 `console.info("[VoiceCloneWizard] ...")` 가 백엔드 `/api/_logs/frontend` 로 도착 |
+
+### 보안/민감정보
+- API 키 / 토큰 / 사용자 음성 원본 — 모두 마스킹·플레이스홀더로만 문서에 기록.
+- 로그에 음성 파일 본문은 남기지 않음 (object_name 길이/해시만).
+
+### 비용/주의
+- sunoapi.org voice 엔드포인트 크레딧 단가 미공개 — 1회 라이브 테스트로 측정 후 v76.1 에 기재.
+- presigned URL 24h 유효 — voice/validate · voice/generate 가 외부에서 fetch 완료까지 충분.
+
+
+---
+
+## v76.1 — 옵션 A 적용: MinIO presigned URL 의 호스트를 외부 공인 IP 로 (Suno fetch 가능)
+- **요청일**: 2026-06-09
+- **요청 작업**: v76 에서 Suno 가 voiceUrl(MinIO presigned) 을 fetch 못해서 `code=500 Server exception` 으로 거부됨. 사용자 제안한 "MinIO 멀티 IP 활용" 안(옵션 A) 으로 외부 노출 IP 호스트만 swap 해서 학습 흐름 정상화.
+- **팀**: VoxClone Squad (planner / backend-dev / tester) — frontend 무변경 → frontend-dev 미투입.
+
+### Plan verification findings (사전 진단 결과)
+1. **외부 노출 인프라 검증 완료** (check-host.net 3국 노드):
+   - `211.217.175.222:9100` (MinIO) — TCP 연결 + HTTP 403 정상 응답
+   - `211.217.175.222:4000` (frontend) — TCP 연결 OK
+   - `211.217.175.222:9005` (backend) — Connection timed out (콜백 노출 불필요 → 폴링 폴백 이미 구현됨)
+2. **CGNAT 아님**: 211.x 는 100.64.0.0/10 대역 외, AS4766 Korea Telecom 직접 공인 IP.
+3. **sunoapi 가 http voiceUrl 받아주는 것 확정** — 라이브 호출 결과:
+   - HTTPS voiceUrl → `code:200, taskId:5deb18ca...`
+   - HTTP voiceUrl  → `code:200, taskId:4e776444...`
+4. **MinIO 가 이미 `0.0.0.0:9100` 으로 listen 중** (모든 인터페이스). 추가 바인딩 설정 불필요.
+5. **현재 코드**:
+   - `backend_9005/app/services/voice_clone_service.py:77-84` 의 `_presign()` 가 `minio_client.presigned_get_object(...)` 결과(호스트 = `100.127.225.55:9100` Tailscale 사설 IP)를 그대로 sunoapi 에 전달 → sunoapi 가 fetch 실패.
+   - `backend_9005/app/config.py:92` 에 v76 에서 추가한 `public_base_url: str = ""` 가 있음 (콜백 URL 용도). MinIO 용은 따로 신설 필요.
+6. **기존 음원 streaming/cover 등은 _presign() 미사용** → 호스트 swap 영향 없음 (회귀 위험 0).
+
+### 백엔드 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/config.py` | `minio_public_host: str = ""` 신규 (.env 에서 `MINIO_PUBLIC_HOST` 로 오버라이드) | — |
+| `backend_9005/.env` | `MINIO_PUBLIC_HOST=<공인호스트:포트>` 신규 (값은 운영자가 설정; 본 환경에서는 YOUR_PUBLIC_MINIO_HOST 자리표시자) | — |
+| `backend_9005/app/services/voice_clone_service.py` | `_presign()` 결과의 netloc 만 `minio_public_host` 로 swap. swap 했으면 log 에 `voice_host=<swapped>` 표기 (기존 진단 로그와 호환) | `[voice_clone:{id}]` |
+
+### 동작 보장 사항
+- `MINIO_PUBLIC_HOST` 가 비어있으면 swap 없음 → v76 동작 그대로 유지 (회귀 0). 신환경 가동 시에만 활성화.
+- swap 은 voice_clone_service 의 `_presign()` 안에서만 적용 → 다른 서비스(음원 stream, 커버 이미지, MV 등)의 MinIO URL 은 무영향.
+
+### 테스트 시나리오 (Task #18, tester)
+| # | 시나리오 | 확인 포인트 |
+|---|---|---|
+| T1 | 백엔드 컴파일/health | `/api/health` 200 |
+| T2 | settings 로드 확인 | `python -c "from app.config import settings; print(bool(settings.minio_public_host))"` → True |
+| T3 | `_presign()` 단위 동작 확인 | 임시 호출 → 결과 URL 의 netloc 이 `MINIO_PUBLIC_HOST` 값과 일치 |
+| T4 | 라이브: `/api/voice-clone/create` 호출 | response 200 + clone_id + validate_task_id, backend log 에 `[voice_clone:{id}] suno voice/validate request voice_host=http://<공인IP>:9100 ... POST elapsed=...s status=200` + `body_len>0` |
+| T5 | sunoapi 응답 검증 | `result.code == 200` (이전엔 500). `_set_status` 가 `STATUS_FAILED` 로 떨어지지 않음 |
+| T6 | 회귀: 음원 streaming/cover 등 다른 곳 URL | netloc 이 Tailscale (또는 기존 MINIO_HOST) 유지. swap 안 적용 |
+| T7 | 회귀: v75.2 / v76 일반 흐름 | `/api/health` 정상, 가사 1건 생성 정상 (생략 가능) |
+| T8 | 로그 추적자 검증 | `[voice_clone:{id}]` prefix 와 `voice_host=` 키워드 모두 나오는지 |
+
+### 보안/주의
+- `.env` 의 `MINIO_PUBLIC_HOST` 값 자체는 비밀이 아니지만, 본 PLAN/REPORT 문서에는 공인 IP 노출 대신 `YOUR_PUBLIC_MINIO_HOST` placeholder 로만 기록.
+- presigned URL 은 토큰 서명 포함이라 외부 노출이 곧 객체 공개를 의미하지 않음.
+- 동적 IP 변동에 대비한 DDNS 도입은 v76.2 등 후속 작업으로 분리.
+
+
+---
+
+## v76.3 — Suno voice clone fail 근본 진단 및 자동 정규화 (2026-06-09)
+- **요청 작업**: 사용자 음원으로 보이스 클론 학습 시 `processing_validate_fail err=Internal Error` 반복. 원인 진단 + 재발 방지 자동화.
+- **팀**: VoxClone Squad (planner / backend-dev / tester)
+
+### Plan verification findings
+1. **외부 public 보컬 mp3 로 sunoapi `/voice/validate` 직접 호출 → 정상 통과**:
+   - 음원: 38s / stereo / 44100Hz / 192kbps mp3
+   - 결과: t+15s 에 `wait_validating` + 44자 phrase 정상 발급
+2. **사용자 음원 (sine tone 30s, mono, 64kbps)**:
+   - `processing_validate_fail err=Internal Error, Please try again later.`
+3. **결론**: 우리 백엔드 + sunoapi 통합 정상. fail 원인 = 음원 quality (mono / 저비트레이트 / 보컬 콘텐츠 부족).
+4. **sunoapi 의 errorMessage `"Internal Error, Please try again later."`** = 음원 거부 generic 신호 (구체 detail 미제공).
+5. **regenerate 엔드포인트 sunoapi 스펙**: body = `{taskId, callBackUrl(optional)}`. voiceUrl 등 받지 않음. (이전 v76 코드는 voiceUrl 도 보내서 `code=400 taskId cannot be empty` 발생 — v76.2/3 에서 수정 완료.)
+6. **ffmpeg 시스템 설치 확인**: `ffmpeg version 8.0` at `/home/duckjk89/.local/bin/ffmpeg` — 정규화 가능.
+7. **현재 코드 상태**:
+   - `app/routes/voice_clone.py:174-189` — 업로드받은 raw bytes 를 그대로 MinIO put_object
+   - `app/services/voice_clone_service.py:_presign` — public client 사용, SigV4 호환 OK
+   - `_serialize` 거쳐 응답 반환 OK
+   - `poll_validate_info` / `poll_generate_voice` 자동 폴링 OK
+   - regenerate body 수정 완료
+
+### 변경 매트릭스 (backend-dev)
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `app/services/audio_normalize.py` (신규) | ffmpeg subprocess 헬퍼: 입력 bytes/path → stereo 44.1kHz 192kbps mp3 bytes. duration / channels / bitrate 메타 반환 | `[audio_norm]` |
+| `app/routes/voice_clone.py` POST `/create` | (a) raw bytes → audio_normalize 적용 (b) normalize 결과 메타가 너무 짧거나(<5s) sample_rate=0 면 422 거부 (c) 정규화된 bytes 를 MinIO 에 put | `[voice_clone:{tmp_id}]` |
+| `app/services/voice_clone_service.py` `create_voice_clone` | sunoapi `/voice/validate` 응답 `code != 200` 또는 폴링이 `processing_validate_fail` 인 경우 **자동 1회 재시도** (백오프 3초) | `[voice_clone:{id}] retry_validate ...` |
+| `app/services/voice_clone_service.py` `poll_validate_info` | `processing_validate_fail` 첫 발견 시 자동 재시도 옵션 (max 1회) — sunoapi 일시 장애 흡수 | 동일 |
+| (기존) `regenerate_phrase` | body=`{taskId, callBackUrl?}` 로 이미 수정됨 (v76.3 사전 단계). 검증만 회귀 테스트. | — |
+
+### 프론트 변경
+없음 (이미 v76.2 에서 에러 메시지·상태 처리 강화 완료)
+
+### 테스트 시나리오 (tester)
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | health | 200 |
+| T2 | audio_normalize 단위: mono 64kbps → stereo 192kbps mp3 | duration 보존, channels=2, bitrate≥128k |
+| T3 | audio_normalize 단위: stereo 44.1kHz 192kbps (외부 mp3) → 정규화 후도 정상 | 무손실 |
+| T4 | /voice-clone/create 라이브 (외부 public 보컬 mp3 다운→재업로드) | 200 + clone_id. 폴링 60s 안에 status=`awaiting_verify` + validate_info phrase 도착 |
+| T5 | /voice-clone/create 라이브 (sine tone 30s — 비보컬) | sunoapi fail → 자동 1회 재시도 후도 fail → status=failed + error_message clear 표시 |
+| T6 | regenerate-phrase 회귀 | 200 + new task_id (이전 task_id 와 다름) |
+| T7 | list / persona 회귀 | 200 |
+| T8 | 로그 추적자 | `[voice_clone:{id}] retry_validate ...`, `[audio_norm] in=mp3/mono/64k duration=30s -> out=mp3/stereo/192k` 등 |
+
+### 보안/주의
+- ffmpeg subprocess 호출은 우리가 만든 입력 bytes 만 사용 (사용자 입력 파일명/메타 X). command injection 우려 없음.
+- 정규화 임시 파일은 `/tmp` 사용 후 즉시 삭제.
+- 로그에 음원 bytes 본문 X (메타데이터만).
+

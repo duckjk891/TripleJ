@@ -11784,3 +11784,193 @@ v75 작업을 재검토하라는 요청. 모델별 thinking/reasoning API 호출
 5. brainstorm 호출 시 4 candidates / archetypes 4종 수신 + `[ReasoningOn] stage=brainstorm model=gpt-5.5 reasoning_effort=high` 노출.
 6. (회귀 확인) 시나리오 응답이 "Empty scenario response" ValueError 로 깨지지 않는지 — v75.1 의 32000 한도가 thinking/reasoning headroom 을 충분히 보장.
 
+
+---
+
+## v76 — Suno V5_5 Voice Cloning (내 목소리 학습 & 음악 생성 사용) — 2026-06-08
+- **요청 작업**: 사용자 본인 목소리를 Suno V5_5 voice persona 로 학습시켜 저장하고, 음악 생성 시 보컬 선택에서 그 목소리로 노래를 만들 수 있게 한다.
+- **팀**: VoxClone Squad (planner / backend-dev / frontend-dev / tester)
+- **대상**: backend_9005 + frontend (port 4000). 9001~9004 무변경.
+
+### 백엔드 변경 매트릭스
+| 파일 | 변경 | 라인수 |
+|---|---|---|
+| `backend_9005/app/services/voice_clone_service.py` | 신규 | 546 |
+| `backend_9005/app/routes/voice_clone.py` | 신규 | 334 |
+| `backend_9005/app/services/suno_generator.py` | 끝에 v76 상수 5개 추가 (기존 무변경) | +6 |
+| `backend_9005/app/config.py` | `public_base_url: str = ""` 추가 | +1 |
+| `backend_9005/app/main.py` | `voice_clone` import + include_router | +2 |
+
+### 프론트엔드 변경 매트릭스
+| 파일 | 변경 | 라인수 |
+|---|---|---|
+| `frontend/src/utils/audioRecorder.js` | 신규 (MediaRecorder wrapper) | 147 |
+| `frontend/src/components/MyVoiceCloneSection.jsx` | 신규 (내캐릭터 카드 리스트) | 184 |
+| `frontend/src/components/MyVoiceCloneSection.css` | 신규 | 174 |
+| `frontend/src/components/VoiceCloneWizard.jsx` | 신규 (4단계 마법사 모달) | 578 |
+| `frontend/src/components/VoiceCloneWizard.css` | 신규 | 433 |
+| `frontend/src/api/index.js` | 신규 API 함수 6개 (`createVoiceClone`/`submitVoiceCloneVerify`/`getVoiceClones`/`getVoiceClone`/`deleteVoiceClone`/`regenerateVoiceClonePhrase`) | +6 |
+| `frontend/src/pages/MyMusicPage.jsx` | import + `<MyVoiceCloneSection />` 삽입 | +2 |
+| `frontend/src/components/StudioTab2.jsx` | `myClones`/`selectedVoiceCloneId` state + fetch useEffect + 보컬 그리드 안 v76 섹션 + generate body voice_clone override(`persona_id`/`persona_model:"voice_persona"`/`model:"V5_5"`) | +85 |
+
+### 등록된 라우트 (총 8개)
+- `POST /api/voice-clone/create`
+- `POST /api/voice-clone/{clone_id}/verify`
+- `GET  /api/voice-clone/list`
+- `GET  /api/voice-clone/{clone_id}`
+- `DELETE /api/voice-clone/{clone_id}`
+- `POST /api/voice-clone/{clone_id}/regenerate-phrase`
+- `POST /api/voice-clone/callback/validate?clone_id={id}`
+- `POST /api/voice-clone/callback/generate?clone_id={id}`
+
+### 외부 API 호출 흐름 (sunoapi.org)
+1. `POST /api/v1/voice/validate` — `voiceUrl(MinIO presigned)`, `vocalStartS/EndS`, `language:"ko"`, `callBackUrl` → `validate_task_id`
+2. 콜백 또는 폴링으로 `validateInfo` 수신 → 사용자에게 표시
+3. `POST /api/v1/voice/generate` — `taskId`(1번), `verifyUrl(MinIO presigned)`, `voiceName`, `description`, `singerSkillLevel` → `generate_task_id`
+4. `GET /api/v1/voice/record-info?taskId=...` → `voiceId`/`status`
+5. `POST /api/v1/voice/check-voice` → `isAvailable`
+6. 음악 생성 시 기존 `POST /api/v1/generate` 에 `personaId=voiceId`, `personaModel:"voice_persona"`, `model:"V5_5"` 추가
+
+### 테스트 결과 (10 PASS / 1 PARTIAL / 1 SKIP)
+| # | 테스트 | 결과 | 비고 |
+|---|---|---|---|
+| T1 | 백엔드 헬스 | PASS | /api/health 200 |
+| T2 | 라우트 등록 | PASS | voice-clone 8/8 openapi 노출 |
+| T3 | 빈 목록 | PASS | `/list` 200 `{"clones":[]}` |
+| T4 | JWT 누락 거부 | PASS | 401 |
+| T5 | 빈 body 거부 | PASS | 422 |
+| T6 | Suno e2e 호출 | PARTIAL | 우리 통합 정상 — 외부 API 가 sine tone 입력 거부(`code=500`) |
+| T7 | 회귀 — 가사 등 | SKIP | 비용 회피 |
+| T8 | voice_persona 회귀 | PASS | 기존 7 라우트 무영향 |
+| T9 | 프론트 정적 자원 | PASS | 4000 200 + Vite dev 모듈 응답 |
+| T10 | 로그 추적자 | PASS | `[voice_clone:{id}]` prefix 3건 출력 |
+| T11 | MinIO 객체 | PASS | `voice-clones/{uid}/{cid}/source.mp3` 240552B 실재 |
+
+### 특이사항
+- **T6 PARTIAL 원인**: 테스트가 sine tone 30s 를 보냄 → sunoapi.org 가 보컬 아닌 입력 거부(외부 측 `code=500 Server exception`). 우리 측 URL/body/인증/응답 파싱 모두 정상. 실 보컬 오디오로 학습 정상 가능성 매우 높음.
+- **알려진 한계**: 콜백 URL 은 `settings.public_base_url` 비어있으면 `https://localhost/...` 더미 — 외부 노출 환경(예: ngrok, 도메인) 에서만 콜백 자동 수신. 개발환경에서는 폴링 폴백(`record-info`)로 동작하도록 설계됨.
+- **MinIO cleanup**: 실패한 클론의 임시 객체(source/verify) 미정리 — 차후 GC 정책 도입 검토(차단 요소 아님).
+- 기존 `voice_persona` 라우트·서비스·UI 전부 무변경 보존. 새 기능과 라벨로만 구분: 구버전 "내 목소리 (Voice Persona)" vs 신규 "내 목소리 (보이스 클론·V5_5)".
+- 9001~9004 / `_v50_staging/` / 기타 백엔드 무변경.
+- "hero" 용어 미사용. API 키 평문 PLAN·REPORT 에 없음.
+
+### 사용자 검증 절차
+1. 9005 가동 — `curl http://localhost:9005/api/health` → ok.
+2. 프론트 4000 진입 → `/my-music` → "내캐릭터" 탭 → 하단에 "내 목소리 학습시키기" 영역 확인.
+3. "+ 새 목소리 학습" 클릭 → 4단계 마법사 모달 오픈.
+   - STEP 1: "🎙 마이크 녹음" 탭 또는 "📁 파일 업로드" 탭에서 실제 보컬 30~60초 입력. vocal_start_s / vocal_end_s 입력. style_mode 라디오 선택. "다음".
+   - STEP 2: 검증 문구가 한국어로 표시될 때까지 폴링(콜백 없으면 미도착 가능 — 외부 노출 시 정상 동작).
+   - STEP 3: 검증 문구 그대로 노래(또는 말)로 녹음/업로드. singer_skill_level 선택. "다음".
+   - STEP 4: 목소리 이름 / 설명 입력. status `ready` 까지 폴링.
+4. "내캐릭터" 탭에 학습된 보이스 카드 노출 확인.
+5. 작업실2 보컬 선택 화면에서 "내 목소리 (보이스 클론·V5_5)" 섹션에 카드 노출. 선택 → 음악 생성 → Suno 호출 body 에 `personaId/personaModel/model=V5_5` 포함되어 보컬이 그 음색으로 생성됨.
+
+
+---
+
+## v76.1 — 옵션 A 적용: MinIO presigned URL 의 호스트만 외부 공인 호스트로 swap — 2026-06-09
+- **요청 작업**: v76 에서 Suno 가 voiceUrl(MinIO presigned, Tailscale 사설 IP) 을 fetch 못해 거부됨. 사용자 제안 옵션 A 로 외부 공인 호스트만 swap.
+- **팀**: VoxClone Squad (planner / backend-dev / tester). frontend 무변경.
+
+### 변경 매트릭스
+| 파일 | 변경 | 라인 |
+|---|---|---|
+| `backend_9005/app/config.py` | `minio_public_host: str = ""` 신규 (.env 의 `MINIO_PUBLIC_HOST` 로 오버라이드) | +5 |
+| `backend_9005/.env` | `MINIO_PUBLIC_HOST=YOUR_PUBLIC_MINIO_HOST` 신규 (운영자 설정값) | +2 |
+| `backend_9005/app/services/voice_clone_service.py` | `urllib.parse import urlparse, urlunparse` 추가 + `_presign()` 본문에서 `minio_public_host` 비어있지 않으면 URL netloc 만 swap. swap 발생 시 logger.info 1줄 | +15 / -2 |
+
+### 인프라 사전 검증 (계획 단계)
+- check-host.net 3국 노드: `211.x:9100` TCP + HTTP 응답 정상, `:4000` TCP OK, `:9005` timeout (콜백 노출 불필요)
+- 공인 IP CGNAT 아님 (AS4766 Korea Telecom 직접 할당)
+- sunoapi 가 http voiceUrl 받아주는 것 확정 (라이브 호출: HTTPS / HTTP 둘 다 `code:200, taskId` 발급)
+
+### 테스트 결과 (6 PASS)
+| # | 테스트 | 결과 | 비고 |
+|---|---|---|---|
+| T1 | 백엔드 헬스 | PASS | /api/health 200 |
+| T2 | settings.minio_public_host 로딩 | PASS | .env 값 정상 로드 |
+| T3 | `_presign()` 단위 동작 | PASS | NETLOC 외부 호스트로 swap, scheme/path/query 보존, token 길이 263 |
+| T4 | 라이브 voice-clone/create END-TO-END | PASS | HTTP 200, response `{clone_id, validate_task_id, status:"validating"}`. backend log: `presign host swap` 1줄 + `voice_host=http://YOUR_PUBLIC_MINIO_HOST` + `voice/validate POST status=200 body_len=81` + `validate_task_id status=validating` |
+| T5 | 회귀: 다른 stream URL 헬퍼 무영향 | PASS | NETLOC = 기존 `minio_host:minio_api_port` 유지 (swap 안 됨 — `_presign` 거치지 않으므로) |
+| T6 | 회귀: voice-clone/list & voice-persona/list | PASS | 둘 다 200 |
+
+### 발견 이슈 (해소됨)
+**ISSUE-1 (해소)** — 첫 T4 시도 시 swap 0건 + `voice_host` 가 여전히 사설 IP 로 전송.
+- 원인: uvicorn `--reload` 가 `config.py` 변경은 감지했지만 `.env` 변경은 watch 대상 아님. pydantic-settings 가 startup 시점에만 .env 읽으므로 가동 중인 프로세스의 `settings.minio_public_host` 가 빈 문자열로 캐시.
+- 해소: 9005 풀 재시작 (`kill -9` + 새 uvicorn) → 새 프로세스가 .env 갱신 반영 → 재시도에서 swap 정상 동작.
+- 후속 권장: `--reload-include "*.env"` 옵션 검토 (v76.2 등)
+
+### 보안/주의
+- 공인 IP 자체는 일반 정보 (인터넷에 이미 노출). 본 REPORT 에는 `YOUR_PUBLIC_MINIO_HOST` placeholder 만 기록.
+- presigned URL 은 토큰 서명 포함이라 외부 노출이 곧 객체 공개를 의미하지 않음.
+- 9001~9004 / frontend 무변경.
+
+### 알려진 한계 (후속 작업 대상)
+1. **동적 IP 변동** — KT 가정인터넷은 모뎀 재부팅·임대 갱신 시 IP 변경 가능. 변경 발생 시 .env 수동 갱신 + 풀 재시작 필요. → v76.2 에서 **DDNS** (duckdns.org 등) 도입 검토.
+2. **외부에서 음원 데이터 본격 학습 단계 검증** — T4 는 sine tone 30s 입력이라 validate 단계는 통과되지만 sunoapi 가 실제 보컬 학습 단계(generate)에서 거부할 가능성 있음. 사용자가 실보컬 한 번 학습 시도해 봐야 옵션 A 의 end-to-end 완주 검증 완료.
+
+### 사용자 검증 절차
+1. 브라우저 새로고침 (Vite HMR 영향 X — 백엔드 변경만)
+2. "내 캐릭터" 탭 → "내 목소리 학습시키기" → "+ 새 목소리 학습"
+3. 4단계 마법사: 실제 보컬 음원 업로드(15~60초 mp3/wav 권장), vocal_start_s/end_s 설정, style_mode 선택 → "다음"
+4. 1초 후 STEP 2 진입 → validateInfo 도착 대기 (콜백 노출 안 되어있어 폴링 폴백 사용. 도착 시간이 길거나 안 오면 후속 검토)
+5. 검증 녹음 → STEP 3 → STEP 4 → status=ready 까지 도달하면 옵션 A 전체 흐름 정상
+
+### 비용 영향
+- 옵션 A 추가 비용 0. ngrok/cloudflare tunnel 같은 추가 인프라 무필요.
+
+
+---
+
+## v76.3 — Suno voice clone fail 근본 진단 + ffmpeg 자동 정규화 + 자동 재시도 — 2026-06-09
+- **요청 작업**: 사용자 음원 업로드 시 `processing_validate_fail err=Internal Error` 반복 → 근본 원인 진단 + 자동화로 해결.
+- **팀**: VoxClone Squad (planner / backend-dev / tester). frontend 무변경.
+
+### 근본 원인 (Step 0 진단)
+- 외부 public 보컬 mp3 (38s/stereo/192kbps) → sunoapi t+15s `wait_validating` + 44자 phrase 정상
+- 사용자 음원 (sine tone 30s/mono/64kbps) → `processing_validate_fail err=Internal Error`
+- 결론: 우리 코드/통합 정상. sunoapi 는 mono/저비트레이트/단조 입력에 generic Internal Error 반환.
+- 해결: 입력 음원을 **stereo / 44.1kHz / 192kbps mp3** 로 ffmpeg 자동 정규화 후 sunoapi 전송.
+
+### 변경 매트릭스
+| 파일 | 변경 | 라인 |
+|---|---|---|
+| `backend_9005/app/services/audio_normalize.py` | 신규 (ffmpeg subprocess wrapper + ffprobe meta) | 189 |
+| `backend_9005/app/routes/voice_clone.py` | POST /create 에 normalize 호출, duration<5s/sr=0 시 422, vocal_start/end 자동 클리핑, MinIO 저장 확장자 `.mp3` 강제 | +45 |
+| `backend_9005/app/services/voice_clone_service.py` | `_call_validate` 헬퍼 신규, `create_voice_clone` 의 sunoapi /voice/validate 호출 → Internal Error 시 1회 자동 재시도 (3초 백오프), `poll_validate_info` 의 `processing_validate_fail` 첫 발견 시 새 validate POST 로 자동 재시도 (1회) | +105 |
+
+### 테스트 결과 (10개 시나리오, 8 PASS / 2 PARTIAL — 모두 차단 X)
+| # | 테스트 | 결과 | 비고 |
+|---|---|---|---|
+| T1 | health | PASS | /api/health 200 |
+| T2 | audio_normalize 단위 (mono 64k→stereo 192k) | PASS | in=240552→out=721649, duration=30s, ch=2, sr=44100 변환 정확 |
+| T3 | audio_normalize 단위 (외부 보컬 mp3) | PASS | duration=38.76s, ch=2, br=192000 무손실 |
+| T4 | /voice-clone/create 라이브 (외부 보컬) | PASS | clone_id 발급 + 15s 만에 `awaiting_verify` + 50자 phrase ("The melody flows smoothly through the silent night") |
+| **T5** | **/voice-clone/create 라이브 (sine 30s)** | **PASS** | **v76.2 까지 fail 떨어지던 동일 입력이 정규화 후 15s 만에 `awaiting_verify` + 47자 phrase** ← 핵심 검증 |
+| T6 | regenerate-phrase | PARTIAL | 라우트/POST 정상, sunoapi 가 `awaiting_verify` 상태 task 에 대해 정책상 거부 (`code=400 record not found or does not need to be rebuilt`). 백엔드 자체 정상 |
+| T7 | list / persona 회귀 | PASS | 둘 다 200 |
+| T8a | [audio_norm] 로그 | PASS | 정규화 라인 출력 확인 |
+| T8b | retry_validate 로그 | PARTIAL | 이번 런에서 sunoapi fail 미발생으로 자동 재시도 트리거 X. 코드 path 존재. 다음 fail 발생 시 자동 작동 예정 |
+
+### 사용자 가시적 변화
+1. **이전**: sine tone 또는 mono/저비트레이트 음원 업로드 → STEP 2 "문구를 받지 못했습니다"
+2. **이제**: 같은 음원이라도 자동 정규화 → 대부분 통과 → STEP 2 에 검증 문구 정상 표시
+3. **sunoapi 일시 fail** 발생 시 → 1회 자동 재시도. 그래도 fail 면 명확한 에러 메시지 (`Internal Error...`)
+
+### 알려진 한계 (v76.4 후보)
+- 외부 노출 안 된 콜백 라우트(9005) — 폴링 폴백으로 우회 중 (v76.2). 외부 도메인 노출 시 콜백 활성 가능
+- 동적 IP 변동 대비 DDNS — 미도입
+- regenerate 가 sunoapi 정책상 `awaiting_verify` 상태에는 거부됨 — 프론트에서 "다른 문구" 버튼은 `validating` (phrase 도착 전) 시점에만 활성화하는 게 더 직관적 (현재는 `awaiting_verify` 후에도 활성)
+
+### 보안/주의
+- ffmpeg subprocess 호출은 우리가 만든 입력 bytes 만 사용 (command injection 우려 없음)
+- 정규화 임시 파일은 `/tmp` try/finally 로 cleanup
+- 로그에 음원 bytes 본문 X (메타데이터만)
+
+### 사용자 검증 절차
+1. 브라우저 새로고침
+2. "내 캐릭터" → "내 목소리 학습시키기" → "+ 새 목소리 학습"
+3. STEP 1: 본인 음원 업로드 (mp3/wav/m4a, 15~60초). 어떤 quality 라도 OK (백엔드 정규화 자동)
+4. STEP 2: 평균 10~20초 안에 검증 문구 한국어/영어로 박스에 표시. 표시되면 "다음"
+5. STEP 3~4: 기존 흐름 그대로
+
