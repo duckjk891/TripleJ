@@ -61,7 +61,8 @@ class GenerateRequest(BaseModel):
     reference_style: Optional[str] = None
     lyrics: Optional[str] = None
     start_music_gen: Optional[bool] = False  # True to start music generation
-    model: Optional[str] = "suno"  # AI 모델 ID
+    model: Optional[str] = "suno"  # AI 모델 ID (provider 식별자: 'suno' 등)
+    suno_model: Optional[str] = None  # v76.10: Suno API 내부 모델 변형 ('V5', 'V5_5'). voice clone 은 V5_5 필요
     persona_id: Optional[str] = None  # Suno Voice Persona ID
     negative_tags: Optional[str] = None      # Styles to exclude
     style_weight: Optional[float] = None     # 0.0-1.0, style adherence
@@ -90,7 +91,7 @@ def _serialize(doc: dict) -> dict:
 
 # ─── Background task for music generation ────────────────────
 
-def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int, model: str = "suno", title: str = None, prompt: str = None, persona_id: str = None, negative_tags: str = None, style_weight: float = None, weirdness: float = None, audio_weight: float = None, persona_model: str = None, bpm: int = None, key: str = None, reference_audio_url: str = None, duet_main_vocal_style: str = None, duet_sub_vocal_style: str = None):
+def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int, model: str = "suno", title: str = None, prompt: str = None, persona_id: str = None, negative_tags: str = None, style_weight: float = None, weirdness: float = None, audio_weight: float = None, persona_model: str = None, bpm: int = None, key: str = None, reference_audio_url: str = None, duet_main_vocal_style: str = None, duet_sub_vocal_style: str = None, suno_model: str = None):
     """Wrapper to run async music generation in background."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -128,12 +129,30 @@ def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str
                 reference_audio_url=reference_audio_url,
                 duet_main_vocal_style=duet_main_vocal_style,
                 duet_sub_vocal_style=duet_sub_vocal_style,
+                suno_model=suno_model,
             )
         )
     except Exception as e:
-        print(f"Music generation error for {generation_id}: {e}")
+        err_msg = str(e)[:500]
+        print(f"Music generation error for {generation_id}: {err_msg}")
         import traceback
         traceback.print_exc()
+        # v76.11: doc.status='failed' + error_message 마킹 — frontend 가 "처리중 60%" 무한 표시 방지.
+        try:
+            from datetime import datetime, timezone as _tz
+            loop.run_until_complete(
+                mongo_db.generations.update_one(
+                    {"_id": __import__("bson").ObjectId(generation_id)},
+                    {"$set": {
+                        "status": "failed",
+                        "error_message": err_msg,
+                        "updated_at": datetime.now(_tz.utc),
+                    }},
+                )
+            )
+            print(f"Music generation marked failed for {generation_id}")
+        except Exception as _mark_exc:
+            print(f"Music generation failed-mark error for {generation_id}: {_mark_exc}")
     finally:
         loop.close()
 
@@ -331,6 +350,7 @@ async def create_generation(
         "reference_style": body.reference_style,
         "lyrics": body.lyrics,
         "model": body.model or "suno",
+        "suno_model": body.suno_model,
         "persona_id": body.persona_id,
         "negative_tags": body.negative_tags,
         "style_weight": body.style_weight,
@@ -382,6 +402,7 @@ async def create_generation(
             reference_audio_url=body.reference_audio_url,
             duet_main_vocal_style=body.duet_main_vocal_style,
             duet_sub_vocal_style=body.duet_sub_vocal_style,
+            suno_model=body.suno_model,
         )
 
     return _serialize(doc)
@@ -435,6 +456,7 @@ async def start_music_generation(
         reference_audio_url=doc.get("reference_audio_url"),
         duet_main_vocal_style=doc.get("duet_main_vocal_style"),
         duet_sub_vocal_style=doc.get("duet_sub_vocal_style"),
+        suno_model=doc.get("suno_model"),
     )
 
     return {"message": "음악 생성이 시작되었습니다.", "id": gen_id}

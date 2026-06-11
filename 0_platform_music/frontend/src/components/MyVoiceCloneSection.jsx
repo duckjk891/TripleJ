@@ -65,17 +65,22 @@ export default function MyVoiceCloneSection() {
   }, [clones, fetchClones]);
 
   const handleDelete = async (clone) => {
-    if (!clone?.id) return;
+    // v76.9: 백엔드 _serialize 가 _id → clone_id 로 변환. id 가 undefined 라서 confirm 도 안 떴음.
+    const id = clone?.clone_id || clone?.id;
+    if (!id) {
+      console.warn('[MyVoiceCloneSection] delete: id missing', { clone });
+      return;
+    }
     if (!window.confirm(`"${clone.voice_name || clone.name || '이 목소리'}" 를 삭제하시겠습니까?`)) {
       return;
     }
-    setDeletingId(clone.id);
+    setDeletingId(id);
     try {
-      await api.deleteVoiceClone(clone.id);
-      if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] deleted', { id: clone.id });
+      await api.deleteVoiceClone(id);
+      if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] deleted', { id });
       await fetchClones();
     } catch (err) {
-      console.error('[MyVoiceCloneSection] delete failed', { id: clone.id, status: err?.response?.status, message: err?.message });
+      console.error('[MyVoiceCloneSection] delete failed', { id, status: err?.response?.status, message: err?.message });
       alert('삭제에 실패했습니다. 잠시 후 다시 시도해주세요.');
     } finally {
       setDeletingId(null);
@@ -83,7 +88,8 @@ export default function MyVoiceCloneSection() {
   };
 
   const handleResumeVerify = (clone) => {
-    if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] resume verify', { id: clone?.id });
+    const id = clone?.clone_id || clone?.id;
+    if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] resume verify', { id });
     setResumeClone(clone);
     setWizardOpen(true);
   };
@@ -128,10 +134,11 @@ export default function MyVoiceCloneSection() {
       ) : (
         <div className="myvc__grid">
           {clones.map((c) => {
+            const id = c?.clone_id || c?.id;
             const badge = STATUS_BADGE[c?.status] || { label: c?.status || '알 수 없음', color: '#94A3B8' };
             const isAwaitingVerify = c?.status === 'awaiting_verify';
             return (
-              <div key={c.id} className="myvc__card">
+              <div key={id} className="myvc__card">
                 <div className="myvc__card-head">
                   <div className="myvc__card-name" title={c.voice_name || c.name || ''}>
                     {c.voice_name || c.name || '(이름 없음)'}
@@ -159,7 +166,7 @@ export default function MyVoiceCloneSection() {
                   <button
                     type="button"
                     className="myvc__btn myvc__btn--danger"
-                    disabled={deletingId === c.id}
+                    disabled={deletingId === id}
                     onClick={() => handleDelete(c)}
                   >
                     <FiTrash2 /> 삭제

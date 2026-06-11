@@ -1439,13 +1439,13 @@ export default function StudioTab2({ onSendToUpload }) {
         };
         // v76 — voice clone override (Suno V5_5)
         if (selectedVoiceCloneId) {
-          const clone = myClones.find((c) => c.id === selectedVoiceCloneId);
+          const clone = myClones.find((c) => (c?.clone_id || c?.id) === selectedVoiceCloneId);
           if (clone?.voice_id) {
             body.persona_id = clone.voice_id;
             body.persona_model = 'voice_persona';
-            body.model = 'V5_5';
+            body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
             if (import.meta.env.DEV) {
-              console.info('[StudioTab2] applying voice_clone override (draft path)', { clone_id: clone.id });
+              console.info('[StudioTab2] applying voice_clone override (draft path)', { clone_id: clone.clone_id || clone.id });
             }
           }
         }
@@ -1482,13 +1482,13 @@ export default function StudioTab2({ onSendToUpload }) {
 
         // v76 — voice clone override (Suno V5_5)
         if (selectedVoiceCloneId) {
-          const clone = myClones.find((c) => c.id === selectedVoiceCloneId);
+          const clone = myClones.find((c) => (c?.clone_id || c?.id) === selectedVoiceCloneId);
           if (clone?.voice_id) {
             body.persona_id = clone.voice_id;
             body.persona_model = 'voice_persona';
-            body.model = 'V5_5';
+            body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
             if (import.meta.env.DEV) {
-              console.info('[StudioTab2] applying voice_clone override (suno path)', { clone_id: clone.id });
+              console.info('[StudioTab2] applying voice_clone override (suno path)', { clone_id: clone.clone_id || clone.id });
             }
           }
         }
@@ -2395,23 +2395,26 @@ export default function StudioTab2({ onSendToUpload }) {
                     내 목소리 (보이스 클론 · V5_5)
                   </label>
                   <div className="s2__vocal-grid">
-                    {myClones.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className={`s2__vocal-btn s2__vocal-btn--persona ${selectedVoiceCloneId === c.id ? 's2__vocal-btn--active' : ''}`}
-                        onClick={() => {
-                          if (import.meta.env.DEV) console.info('[StudioTab2] voice clone selected', { clone_id: c.id });
-                          setSelectedVoiceCloneId(c.id);
-                          setSelectedPersonaId(null);
-                          setVocal('');
-                        }}
-                        title={c.description || ''}
-                      >
-                        <FiMic style={{ marginRight: 4 }} />
-                        {c.voice_name || c.name || '이름 없음'}
-                      </button>
-                    ))}
+                    {myClones.map((c) => {
+                      const cid = c?.clone_id || c?.id;
+                      return (
+                        <button
+                          key={cid}
+                          type="button"
+                          className={`s2__vocal-btn s2__vocal-btn--persona ${selectedVoiceCloneId === cid ? 's2__vocal-btn--active' : ''}`}
+                          onClick={() => {
+                            if (import.meta.env.DEV) console.info('[StudioTab2] voice clone selected', { clone_id: cid });
+                            setSelectedVoiceCloneId(cid);
+                            setSelectedPersonaId(null);
+                            setVocal('');
+                          }}
+                          title={c.description || ''}
+                        >
+                          <FiMic style={{ marginRight: 4 }} />
+                          {c.voice_name || c.name || '이름 없음'}
+                        </button>
+                      );
+                    })}
                   </div>
                   {selectedVoiceCloneId && (
                     <div className="s2__persona-note">

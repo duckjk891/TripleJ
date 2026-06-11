@@ -9,7 +9,12 @@ const PREFERRED_MIME = 'audio/webm;codecs=opus';
  */
 export async function requestMic() {
   if (!navigator?.mediaDevices?.getUserMedia) {
-    const err = new Error('이 브라우저는 마이크 녹음을 지원하지 않습니다.');
+    const insecure = typeof window !== 'undefined' && window.isSecureContext === false;
+    const err = new Error(
+      insecure
+        ? 'mediaDevices unavailable: page is not in a secure context (use https or localhost)'
+        : '이 브라우저는 마이크 녹음을 지원하지 않습니다.'
+    );
     err.code = 'UNSUPPORTED';
     throw err;
   }

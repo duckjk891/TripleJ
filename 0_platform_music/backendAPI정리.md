@@ -3784,3 +3784,232 @@ function parseError(res) {
 - **presigned URL 만료** (부록 23 참고): 24h / 1h. 만료되면 해당 리소스의 GET 엔드포인트 재호출로 새 URL 발급.
 - **Rate limit / 동시성 제한 없음**: 현재 별도 limiter 미구성. 그러나 외부 API (Suno/Seedance/Sync Labs 등) 호출 단계는 사용자/잡 단위로 1회 보장됨 (`status` 필드로 중복 방지). idempotent 처리에는 본문 각 엔드포인트의 `already_processed` / `status` 응답을 신뢰.
 - **JWT_SECRET**: 운영 .env 에 30자 커스텀 값 설정됨 (디폴트 `change-me-in-production` 아님).
+
+---
+
+## 27. 보이스 클로닝 API (`/api/voice-clone`) — v76 (Suno V5_5)
+
+사용자가 본인 음성을 업로드 → Suno V5_5 의 **voice persona** 로 학습 → 음악 생성 시 "내 목소리"로 노래 부르게 한다.
+
+기존 `15. 보이스 페르소나 API` (구버전 워크플로) 와는 **별개** 라우트 / 컬렉션. 둘 다 살아있음.
+
+### 27.0 4단계 워크플로 한눈에
+
+```
+1. POST /create                 — source 음성 업로드 → Suno voice/validate POST
+2. (백엔드 폴링) validate-info  → status=awaiting_verify + validate_info(검증 문구) 도착
+3. POST /{id}/verify            — 사용자가 위 문구 따라 부른 verify 음성 업로드 → Suno voice/generate POST
+4. (백엔드 폴링) record-info    → status=ready + voice_id 도착 → 음악 생성에 사용 가능
+```
+
+- 음원은 자동으로 ffmpeg 정규화 (stereo/44.1kHz/192kbps mp3) → mono/저비트레이트/webm/ogg 어떤 입력이든 OK.
+- 콜백 노출 안 된 환경에서도 `GET /{id}` 호출이 자동으로 Suno 측 폴링 동시 수행 → frontend 는 doc 만 보면 됨.
+- 상태 진행: `validating → awaiting_verify → generating → ready` (또는 중간에 `failed`).
+
+---
+
+### Voice clone 생성 (source 음성 업로드)
+
+```
+POST /api/voice-clone/create
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | multipart/form-data |
+
+**폼:**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| source_file | File | O | 음원 (`.mp3/.wav/.m4a/.webm/.ogg`, ≤50MB). 자동 정규화 |
+| voice_name | str | O | 비공백, ≤40자 권장 (사용자가 카드에서 보는 이름) |
+| description | str | - | 메모 |
+| vocal_start_s | int | O | 사용할 구간 시작 초 (정규화 후 duration 초과 시 0 으로 자동 클립) |
+| vocal_end_s | int | O | 사용할 구간 끝 초 (정규화 후 duration 초과 시 자동 클립) |
+| language | str | - | `ko` (기본) 또는 `en/zh/es/fr/pt/de/ja/hi/ru` |
+| style_mode | str | O | `sing` / `speak` / `rap` |
+
+정규화 후 duration < 5초이면 422 ("오디오가 너무 짧거나..."). voice_name 빈값/공백은 422 (Pydantic).
+
+**응답 (200):** `{"clone_id": "...", "validate_task_id": "...", "status": "validating"}`
+
+---
+
+### Voice clone 단건 조회 (자동 폴링 포함)
+
+```
+GET /api/voice-clone/{clone_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+
+**동작:** doc.status 가 `validating` (그리고 validate_info 비어있음) 이면 자동으로 `/voice/validate-info` 1회 폴링. `generating` (voice_id 없음) 이면 `/voice/record-info` 1회 폴링. 결과를 doc 에 반영해 반환.
+
+**응답 (200):** 다음 필드 포함.
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| clone_id | str | objectid |
+| user_id | str | uuid |
+| voice_name | str | |
+| description | str | |
+| source_object_name | str | MinIO key |
+| verify_object_name | str / null | verify 후 채워짐 |
+| vocal_start_s / vocal_end_s | float | |
+| language | str | |
+| style_mode | str | |
+| singer_skill_level | str / null | `beginner/intermediate/advanced/professional` |
+| status | str | `validating/awaiting_verify/generating/ready/failed` |
+| validate_task_id | str / null | Suno 측 |
+| generate_task_id | str / null | Suno 측 |
+| validate_info | str / null | 검증 문구 (status=awaiting_verify 일 때 채워짐) |
+| voice_id | str / null | Suno persona id — 음악 생성 시 `persona_id` 로 사용 |
+| validate_retry_count | int | 자동 재시도 횟수 |
+| error_message | str / null | |
+| created_at / updated_at | ISO8601 str | |
+
+---
+
+### Voice clone 목록
+
+```
+GET /api/voice-clone/list
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+
+**응답 (200):** `{"clones": [ {위 단건 조회와 동일 스키마} ]}` (created_at desc).
+
+---
+
+### Voice clone 삭제
+
+```
+DELETE /api/voice-clone/{clone_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+
+MongoDB doc 삭제 + MinIO source/verify 객체 자동 정리.
+
+**응답 (200):** `{"deleted": true}` (없으면 404)
+
+---
+
+### 검증 녹음 업로드 (verify)
+
+```
+POST /api/voice-clone/{clone_id}/verify
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+| Content-Type | multipart/form-data |
+
+**폼:**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| verify_file | File | O | 사용자가 `validate_info` 문구 따라 부른 음원 (`.mp3/.wav/.m4a/.webm/.ogg`, ≤50MB). 자동 정규화 |
+| singer_skill_level | str | O | `beginner/intermediate/advanced/professional` (string enum, 대소문자 무관) |
+
+doc.status 가 `awaiting_verify` 가 아니면 그래도 진행하되 Suno 측에서 거부 가능.
+
+**응답 (200):** `{"clone_id": "...", "generate_task_id": "...", "status": "generating"}`. 422 면 schema (필드 누락 등), 400 이면 skill enum 또는 음원 형식.
+
+---
+
+### 검증 문구 재생성 (다른 문구)
+
+```
+POST /api/voice-clone/{clone_id}/regenerate-phrase
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+
+**동작:** Suno `/voice/regenerate` 호출. 이미 `wait_validating` 상태(phrase 발급 성공) 이라 Suno 가 거부하면 **백엔드가 자동 폴백** 으로 `/voice/validate` 새 호출 → 새 task 발급. 결과만 다른 문구가 나오면 됨.
+
+**응답 (200):** `{"validate_task_id": "<new>"}`. doc.status 는 `validating` 으로 되돌리고, validate_info / error_message 클리어.
+
+---
+
+### Suno → 우리 콜백 (외부 노출 시 활성)
+
+```
+POST /api/voice-clone/callback/validate?clone_id={id}
+POST /api/voice-clone/callback/generate?clone_id={id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 (body 검증으로만 처리) |
+| Content-Type | application/json |
+
+Suno 가 외부에서 우리 9005/9004 에 접근 가능한 환경에서만 동작. 개발환경(외부 노출 X)에서는 위 폴링 폴백으로 동일 결과 도달.
+
+**응답 (200):** `{"ok": true}` (예외 시에도 200 — Suno 재시도 회피).
+
+---
+
+### 27.1 음악 생성과 연동 — `/api/generate/` 에 추가된 두 필드
+
+v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| **suno_model** | str / null | `'V5'` 또는 `'V5_5'`. **voice clone 사용 시 반드시 `'V5_5'`**. 미지정 시 백엔드가 자동 결정 (upload-cover면 V5_5, 아니면 V5) |
+| persona_id | str / null | 위 voice clone 의 `voice_id` (status=ready 도달한 항목) |
+| persona_model | str / null | voice clone 사용 시 **`'voice_persona'`** (구버전 voice_persona 와 동일 키 — 구분은 voice_id 출처로) |
+
+기존 `model` 필드는 **provider 식별자** (`'suno'` 등) 로 그대로 유지. `'V5_5'` 같은 값을 `model` 에 박으면 400 거부 (provider 미지원).
+
+**호출 예시 (voice clone 보컬로 생성)**:
+```json
+{
+  "prompt": "happy upbeat song",
+  "title": "내 목소리 노래",
+  "lyrics": "[Verse]\nHello world\n[Chorus]\nLa la la",
+  "genre": "pop",
+  "mood": "happy",
+  "style": "uplifting",
+  "duration": 30,
+  "start_music_gen": true,
+  "model": "suno",
+  "suno_model": "V5_5",
+  "persona_id": "<voice_clone.voice_id>",
+  "persona_model": "voice_persona"
+}
+```
+
+**Polling timeout (v76.11)**: `persona_model=voice_persona` 일 때 Suno 폴링 한도 = 20분 (240회×5초). 일반 = 5분. timeout 시 `doc.status = "failed"` 마킹 + `error_message` 에 마지막 본 status 와 폴 횟수 기록.
+
+---
+
+### 27.2 상태값 정리
+
+| status | 의미 |
+|---|---|
+| validating | Suno 가 voice/validate task 처리 중. validate_info(문구) 도착 대기 |
+| awaiting_verify | validate_info 도착. 사용자가 verify 녹음 올려야 함 |
+| generating | verify 업로드 완료. Suno 가 voice/generate 진행 중 |
+| ready | voice_id 도착. 음악 생성에 사용 가능 |
+| failed | 외부 측 fail 또는 timeout. `error_message` 확인 |
+
+### 27.3 운영 특이사항 (앱팀 참고)
+
+- 음원은 백엔드가 ffmpeg 으로 stereo/44.1kHz/192kbps mp3 정규화. 클라가 형식 변환 X 해도 됨.
+- 마이크 녹음은 webm/opus 가 일반적 — backend 가 받아서 mp3 로 변환.
+- voice clone 학습은 일반 음악 생성보다 오래 걸림 (보통 1~3분, 부하 시 5~10분). 클라이언트는 `GET /{id}` 폴링을 5~10초 간격으로 권장.
+- voice_id 가 채워진 voice clone 은 영구. 사용자 삭제(DELETE) 전까지 계속 음악 생성에 사용 가능.
+

@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# v76.6 mkcert dev TLS — never commit private keys
+certs/key.pem
+certs/rootCA-key.pem

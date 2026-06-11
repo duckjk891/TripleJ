@@ -1,7 +1,8 @@
 import axios from 'axios';
 
+// vite proxy 가 /api → backend (9005) 로 forward
 const API = axios.create({
-  baseURL: `${window.location.protocol}//${window.location.hostname}:9005/api`,
+  baseURL: '/api',
 });
 
 // JWT 토큰 자동 첨부
@@ -444,9 +445,14 @@ export const generationStreamUrl = (genId, variantIndex = 0) => {
   return `${API.defaults.baseURL}/generate/${genId}/stream/?token=${encodeURIComponent(token || '')}${variantQ}`;
 };
 
-// Character sheet preview URL helper
-export const characterPreviewUrl = (previewPath) =>
-  `${API.defaults.baseURL.replace('/api', '')}${previewPath}`;
+// Character sheet preview URL helper — vite proxy 통해 same-origin 상대경로 반환
+export const characterPreviewUrl = (previewPath) => {
+  if (!previewPath) return '';
+  if (previewPath.startsWith('http')) return previewPath;
+  if (previewPath.startsWith('/api/')) return previewPath;
+  if (previewPath.startsWith('/')) return previewPath;
+  return `/api/character/preview/${encodeURIComponent(previewPath)}`;
+};
 
 // Fetch audio as arraybuffer (for Web Audio API usage)
 export const fetchAudioBuffer = (url) =>
@@ -504,7 +510,7 @@ export const recordAdClick = (itemId) =>
 export const getActiveAds = (category) =>
   API.get('/business/ads/active', { params: category ? { category } : {} });
 export const adImageUrl = (objectName) =>
-  `${window.location.protocol}//${window.location.hostname}:9005/api/business/items/image/${objectName}`;
+  `/api/business/items/image/${encodeURIComponent(objectName)}`;
 
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');
@@ -537,7 +543,7 @@ export const listMyLocations = () =>
 export const locationPreviewUrl = (objectName) => {
   if (!objectName) return '';
   if (objectName.startsWith('http') || objectName.startsWith('/api/')) return objectName;
-  return `${window.location.protocol}//${window.location.hostname}:9005/api/character/preview/${objectName}`;
+  return `/api/character/preview/${encodeURIComponent(objectName)}`;
 };
 
 // MV scene patch / cascade
@@ -575,6 +581,7 @@ export const getUserEditedSummary = (jobId) =>
 // Frontend remote logging
 export const sendFrontendLogs = (batch) =>
   API.post('/_logs/frontend', batch);
-export const frontendLogsBeaconUrl = `${window.location.protocol}//${window.location.hostname}:9005/api/_logs/frontend`;
+// sendBeacon 은 절대 URL 필수. same-origin (포트 포함) 으로 vite proxy 경유.
+export const frontendLogsBeaconUrl = `${window.location.protocol}//${window.location.host}/api/_logs/frontend`;
 
 export default API;

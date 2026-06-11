@@ -192,8 +192,7 @@ function CharacterSection() {
       const formData = new FormData();
       formData.append('file', photoFile);
       const { data } = await api.generateCharacterSheet(formData);
-      const base = `${window.location.protocol}//${window.location.hostname}:9000`;
-      setPreviewUrl(`${base}${data.preview_url}`);
+      setPreviewUrl(api.characterPreviewUrl(data.preview_url));
       setPreviewObjectName(data.object_name);
     } catch (err) {
       alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');

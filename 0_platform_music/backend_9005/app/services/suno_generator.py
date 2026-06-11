@@ -70,6 +70,7 @@ async def generate_music_suno(
     reference_audio_url: str = None,
     duet_main_vocal_style: str = None,
     duet_sub_vocal_style: str = None,
+    suno_model: str = None,
 ) -> dict:
     """Generate music using Suno API."""
 
@@ -124,10 +125,15 @@ async def generate_music_suno(
     # Determine whether to use upload-cover endpoint (reference audio)
     use_upload_cover = bool(reference_audio_url)
 
+    # v76.10: 호출자 명시 suno_model 우선 (voice clone 은 V5_5 필요).
+    # 미명시 시 기존 로직 — upload-cover 면 V5_5, 아니면 V5
+    resolved_model = (suno_model or "").strip() or ("V5_5" if use_upload_cover else "V5")
+    logger.info("[suno] generation_id=%s resolved_model=%s (suno_model_in=%s use_upload_cover=%s)", generation_id, resolved_model, suno_model, use_upload_cover)
+
     # Request body
     body = {
         "prompt": prompt_text,
-        "model": "V5_5" if use_upload_cover else "V5",
+        "model": resolved_model,
         "customMode": use_custom,
         "instrumental": is_instrumental,
         "style": style_str[:1000],  # V5 limit
@@ -193,12 +199,20 @@ async def generate_music_suno(
     # Update progress: submitted
     await _update_progress(mongo_db, generation_id, 20, "processing")
 
-    # Step 2: Poll for completion (max ~5 min)
+    # Step 2: Poll for completion
+    # v76.11: voice clone (persona_model=voice_persona) 는 일반보다 학습/생성 오래 걸림 → timeout 12분.
+    # 일반은 기존 5분 유지. 매 poll 마다 status 로그 추가 (이전엔 status 안 찍혀서 진단 불가).
+    is_voice_clone = (persona_model or "").strip().lower() == "voice_persona"
+    max_polls = 240 if is_voice_clone else 60  # 240*5s=20min, 60*5s=5min — voice clone 은 보수적 마진
+    logger.info(
+        "[suno] gen_id=%s poll loop start max_polls=%d (~%dmin) is_voice_clone=%s",
+        generation_id, max_polls, max_polls * 5 // 60, is_voice_clone,
+    )
     audio_url = None
     suno_data = None
     status_data = None
 
-    for poll_attempt in range(60):  # 60 * 5s = 5 min
+    for poll_attempt in range(max_polls):
         await asyncio.sleep(5)
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -210,10 +224,19 @@ async def generate_music_suno(
             status_resp.raise_for_status()
             status_data = status_resp.json()
 
-        status = status_data.get("data", {}).get("status", "")
+        data_obj = status_data.get("data") or {}
+        status = data_obj.get("status", "")
+        err_code = data_obj.get("errorCode")
+        err_msg = data_obj.get("errorMessage") or ""
+        if poll_attempt % 6 == 0 or status not in ("PENDING", ""):  # 매 30초 또는 status 변화 시
+            logger.info(
+                "[suno] gen_id=%s poll attempt=%d/%d status=%s err_code=%s err_msg=%s",
+                generation_id, poll_attempt, max_polls, status or "?", err_code, (err_msg or "")[:120],
+            )
 
         if status == "FAILED":
-            raise ValueError("Suno 음악 생성에 실패했습니다.")
+            detail = f": {err_msg}" if err_msg else ""
+            raise ValueError(f"Suno 음악 생성에 실패했습니다{detail}")
 
         # Update progress based on status
         if status == "TEXT_SUCCESS":
@@ -236,7 +259,9 @@ async def generate_music_suno(
             await _update_progress(mongo_db, generation_id, progress, "processing")
 
     if not audio_url:
-        raise ValueError("Suno 음악 생성 시간이 초과되었습니다.")
+        # 마지막 본 status 도 같이 표시
+        last_status = (status_data or {}).get("data", {}).get("status", "?") if status_data else "?"
+        raise ValueError(f"Suno 음악 생성 시간이 초과되었습니다 (last_status={last_status}, polls={max_polls}, ~{max_polls*5//60}min).")
 
     # Step 3: Download audio and upload to MinIO
     await _update_progress(mongo_db, generation_id, 85, "processing")

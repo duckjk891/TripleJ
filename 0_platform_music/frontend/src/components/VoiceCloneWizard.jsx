@@ -70,8 +70,23 @@ function RecordPanel({ onChange, value, label }) {
       setElapsedMs(0);
       tickRef.current = setInterval(() => setElapsedMs(rec.getDurationMs()), 200);
     } catch (err) {
-      console.error('[VoiceCloneWizard] startRec failed', { name: err?.name, message: err?.message });
-      setError('마이크 접근에 실패했습니다. 권한을 확인해주세요.');
+      const name = err?.name || '';
+      const code = err?.code || '';
+      console.error('[VoiceCloneWizard] startRec failed', { name, code, message: err?.message });
+      let msg;
+      const isSecure = typeof window !== 'undefined' && window.isSecureContext === true;
+      if (code === 'UNSUPPORTED' || !isSecure) {
+        msg = '브라우저 보안 정책상 마이크는 HTTPS 또는 localhost 에서만 사용할 수 있습니다. "파일 업로드" 탭으로 미리 녹음한 음원을 올려주세요.';
+      } else if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        msg = '마이크 권한이 거부되었습니다. 브라우저 주소창의 자물쇠 아이콘에서 마이크를 허용해주세요.';
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        msg = '마이크 장치를 찾을 수 없습니다. 마이크 연결을 확인해주세요.';
+      } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+        msg = '마이크가 다른 앱에서 사용 중입니다. 다른 앱을 종료한 뒤 다시 시도해주세요.';
+      } else {
+        msg = `마이크 시작에 실패했습니다. (${name || err?.message || 'unknown'})`;
+      }
+      setError(msg);
     }
   };
 
@@ -288,6 +303,8 @@ export default function VoiceCloneWizard({ open, onClose, onComplete, resumeClon
 
   const handleStep1Next = async () => {
     setErr('');
+    const trimmedName = (voiceName || '').trim();
+    if (!trimmedName) { setErr('목소리 이름을 입력해주세요.'); return; }
     if (!sampleSrc?.file) { setErr('샘플 오디오를 입력해주세요.'); return; }
     if (vocalStartS < 0 || vocalEndS <= vocalStartS) {
       setErr('구간을 올바르게 입력해주세요. (끝 시각이 시작보다 커야 합니다.)');
@@ -297,7 +314,7 @@ export default function VoiceCloneWizard({ open, onClose, onComplete, resumeClon
     try {
       const fd = new FormData();
       fd.append('source_file', sampleSrc.file);
-      fd.append('voice_name', voiceName || `voice_${Date.now()}`);
+      fd.append('voice_name', trimmedName);
       fd.append('description', description || '');
       fd.append('vocal_start_s', String(vocalStartS));
       fd.append('vocal_end_s', String(vocalEndS));
@@ -414,6 +431,17 @@ export default function VoiceCloneWizard({ open, onClose, onComplete, resumeClon
                 10초~2분 사이의 깨끗한 오디오를 권장합니다. 잡음이 적을수록 결과가 좋아져요.
               </p>
 
+              <div className="vcw-name-field">
+                <label>목소리 이름 *</label>
+                <input
+                  type="text"
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  placeholder="예: 내목소리, 아빠목소리, 친구A"
+                  maxLength={40}
+                />
+              </div>
+
               <RecordPanel value={sampleSrc} onChange={setSampleSrc} label="샘플 오디오" />
 
               <div className="vcw-range">
@@ -515,6 +543,18 @@ export default function VoiceCloneWizard({ open, onClose, onComplete, resumeClon
               <p className="vcw-step__hint">
                 위 문구를 {styleMode === 'sing' ? '노래로 불러' : '말로 읽어'} 녹음해주세요.
               </p>
+
+              <div className="vcw-phrase-box vcw-phrase-box--readonly">
+                {(() => {
+                  const phrase =
+                    typeof validateInfo === 'string'
+                      ? validateInfo
+                      : validateInfo?.phrase || validateInfo?.text || validateInfo?.validateInfo || '';
+                  return phrase
+                    ? <div className="vcw-phrase-text">{phrase}</div>
+                    : <div className="vcw-phrase-loading">(이전 단계에서 받은 문구가 없습니다)</div>;
+                })()}
+              </div>
 
               <RecordPanel value={verifySrc} onChange={setVerifySrc} label="검증 녹음" />
 

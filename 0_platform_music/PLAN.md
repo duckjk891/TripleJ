@@ -21745,3 +21745,266 @@ v75.1 에서 시나리오 두 곳만 32k 로 올렸지만, **thinking/reasoning 
 - 정규화 임시 파일은 `/tmp` 사용 후 즉시 삭제.
 - 로그에 음원 bytes 본문 X (메타데이터만).
 
+
+---
+
+## v76.4 — Regenerate phrase 자동 폴백 (2026-06-09)
+- **요청 작업**: 사용자가 STEP 2 에서 검증 문구 받은 후 "다른 문구" 클릭 시 `Suno regenerate 오류: The record is not found or does not need to be rebuilt or does not require a retry` 발생. UX 차원에서 자동 폴백.
+- **팀**: VoxClone Squad. backend-dev / tester. frontend 무변경.
+
+### Plan verification findings
+1. **sunoapi 정책**: `/voice/regenerate` 는 **phrase 가 아직 발급 안 됐거나 fail 한 task** 에만 동작. 이미 `wait_validating` (= phrase 발급 성공) task 에는 거부.
+   - 거부 msg: "The record is not found or does not need to be rebuilt or does not require a retry"
+2. **사용자 의도**: "다른 문구" = "이 phrase 말고 다른 거 받고 싶다"
+3. **자연스러운 폴백**: 같은 음원(source_object_name) 으로 새 `/voice/validate` POST 호출 → 새 task_id 발급 → 새 phrase 폴링
+4. **현재 코드 위치**:
+   - `app/services/voice_clone_service.py:regenerate_phrase` L708~ — sunoapi /voice/regenerate 호출. `code != 200` 시 ValueError 던짐
+   - `_call_validate` 헬퍼 (L134~) 이미 존재 — 재사용 가능
+5. **회귀 위험**: 폴백이 정상 phrase 도 새로 발급해버리면 안 됨. 폴백 진입 조건은 **msg 패턴 매칭 ("not found"/"not need"/"not require"/"does not")** 으로만 제한.
+
+### 변경 매트릭스 (backend-dev — 이미 적용됨)
+| 파일 | 변경 | 라인 | 추적자 |
+|---|---|---|---|
+| `app/services/voice_clone_service.py:regenerate_phrase` | sunoapi `code != 200` 분기에서 msg 패턴 매칭 시 자동 폴백 — `_presign(source_obj)` → `_call_validate(new_body)` → 새 task_id 로 doc update | +35 | `[voice_clone:{id}]` |
+
+### 테스트 시나리오 (tester)
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | health | 200 |
+| T2 | create + phrase 도착 (외부 보컬 mp3) | clone_id 발급, `awaiting_verify` + validate_info |
+| T3 | 동일 clone 에 regenerate 호출 (= 사용자가 "다른 문구" 누른 상황) | HTTP 200 + 새 validate_task_id (T2 와 다름). backend log: `regenerate rejected by sunoapi, falling back to new /voice/validate` + `regenerate fallback OK new_task=...` |
+| T4 | T3 이후 doc 상태 | status=`validating`, validate_info=`None`, error_message=`None` |
+| T5 | T3 이후 폴링 (10~30초) | 새 phrase 도착 → status=`awaiting_verify` + 새 validate_info |
+| T6 | 회귀: list/persona | 200 |
+| T7 | 로그 추적자 | `[voice_clone:{id}] regenerate fallback OK new_task=...`, `[voice_clone:{id}] _call_validate ...` 같이 |
+
+### 보안/주의
+- 폴백 진입 조건은 msg 패턴 매칭으로만 — 다른 종류의 비-200 응답(예: code=429 rate limit, code=401 auth)에는 폴백 안 됨
+- presigned URL 토큰 마스킹 유지
+- 9001~9004 / 프론트 무수정
+
+
+---
+
+## v76.5 — STEP 3 phrase 박스 + 마이크 secure context 처리 (2026-06-09)
+- **요청 작업**: (a) STEP 3 안내문 "위 문구를..." 인데 검증 phrase 가 화면에 없어 사용자가 못 봄 (b) "녹음 시작" 버튼 → "마이크 접근에 실패했습니다. 권한을 확인해주세요." 일괄 표시 — 실제 원인은 비-secure context.
+- **팀**: VoxClone Squad. frontend-dev / tester. backend 무변경.
+
+### Plan verification findings
+1. **STEP 3 phrase 누락**: `VoiceCloneWizard.jsx:512~` `step === 3` 분기에 `.vcw-phrase-box` (STEP 2 의 phrase 표시) 없음. STEP 3 안내문 "위 문구를 노래로/말로..." 만 있고 실제 텍스트가 없음
+2. **마이크 권한 일괄 에러**: `RecordPanel.startRec` (L60~76) 의 catch 가 모든 예외를 `'마이크 접근에 실패했습니다. 권한을 확인해주세요.'` 로 통일 — secure context 미충족 (브라우저 정책: HTTPS 또는 `localhost` 에서만 `navigator.mediaDevices` 노출), 권한 거부, 디바이스 없음 등 구분 안 됨
+3. **사용자 접근 패턴**: 4000 포트로 Tailscale IP `100.127.225.55:4000` 또는 LAN IP `211.x:4000` 로 접근 추정 (직전 시도 기준). 둘 다 localhost 아니라 brave/Chrome 은 secure context 거부 → `navigator.mediaDevices` undefined
+4. **audioRecorder.js:10~15** 의 `requestMic` 은 `mediaDevices.getUserMedia` 없으면 `Error("이 브라우저는 마이크 녹음을 지원하지 않습니다.").code='UNSUPPORTED'` 던짐 — RecordPanel 이 이 code 를 보지 않고 일괄 메시지
+5. **회피책**: 이미 RecordPanel 에 파일 업로드 탭(L132~) 존재 — 마이크 못 쓰면 파일 업로드로 대체 가능. 단 사용자가 그 사실을 모르고 막힘
+
+### 변경 매트릭스 (frontend-dev)
+| 파일 | 변경 | 라인 | 추적자 |
+|---|---|---|---|
+| `frontend/src/components/VoiceCloneWizard.jsx` STEP 3 | `step === 3` 분기 안 안내문 직후에 phrase 박스 추가 (STEP 2 의 동일 박스, validateInfo string 표시) | +8 | `[VoiceCloneWizard]` |
+| `frontend/src/components/VoiceCloneWizard.jsx` RecordPanel.startRec catch | 에러 분기: (a) `err.code === 'UNSUPPORTED'` 또는 `window.isSecureContext === false` 면 "보안 컨텍스트(HTTPS/localhost) 가 아니라 마이크 사용 불가. **'파일 업로드' 탭 사용 권유**" (b) `NotAllowedError` → "마이크 권한 거부됨" (c) `NotFoundError` → "마이크 장치를 찾을 수 없습니다" (d) 기타 → 일반 메시지 | +15 | 동일 |
+| (선택) `audioRecorder.js:requestMic` | 진입 직후 `window.isSecureContext === false` 시 `UNSUPPORTED` 메시지를 더 정확하게 — "secure context (HTTPS 또는 localhost) 가 아닙니다" 명시 | +3 | `[audioRecorder]` |
+
+### 테스트 시나리오 (tester — 일부는 브라우저 GUI 영역이라 정적 검증 위주)
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | Vite 컴파일/4000 응답 | 200 |
+| T2 | VoiceCloneWizard.jsx 응답 모듈 안 `step === 3` 블록 grep | phrase 박스 표시 코드 (typeof validateInfo === 'string') 포함 |
+| T3 | audioRecorder/RecordPanel 에러 분기 코드 grep | UNSUPPORTED/isSecureContext/NotAllowedError/NotFoundError 분기 분리 |
+| T4 | (선택) 브라우저 실제 검증 | STEP 3 에 phrase 박스 표시. 마이크 시도 시 정확한 원인별 메시지 |
+| T5 | 회귀: list / persona | 200 |
+
+### 보안
+- 토큰/세션 로그 X. 마이크 권한 거부 메시지는 PII 없음.
+
+
+---
+
+## v76.6 — mkcert + Vite HTTPS + Vite Proxy 도입 (HTTP→HTTPS 전환 회귀 점검 포함) — 2026-06-09
+- **요청 작업**: 본인 개발 환경에 HTTPS 도입(마이크 사용 위해). 외부 사용자 노출 없음, 도메인 없음. HTTP 동작하던 모든 기능이 HTTPS 로 바뀌면서 깨질 가능성 일제 점검.
+- **팀**: VoxClone Squad. backend-dev / frontend-dev / tester.
+
+### Plan verification findings (Step 0 분석)
+1. **frontend hard-coded `:9005` 5건**:
+   - `src/api/index.js:4` axios baseURL `${proto}//${host}:9005/api` — 메인. Vite Proxy 통과시키려면 상대경로 `/api` 로 변경.
+   - `src/api/index.js:507` `adImageUrl(objectName)` — `${proto}//${host}:9005/api/business/items/image/...`. 동일 패턴. 상대경로화.
+   - `src/api/index.js:540` `characterPreviewUrl(previewPath)` — `${proto}//${host}:9005/api/character/preview/...`. 동일.
+   - `src/api/index.js:578` `frontendLogsBeaconUrl` — `${proto}//${host}:9005/api/_logs/frontend`. **sendBeacon 은 절대 URL 필수** (페이지 unload 시 발사) → `${proto}//${host}/api/_logs/frontend` (포트 제외, same-origin) 로 변경.
+   - `src/pages/MyMusicPage.jsx:195` `:9000` (MinIO 직접) — 현재 MinIO 가 `:9100` 이라 잘못된 하드코딩. `api.characterPreviewUrl` 헬퍼 사용으로 정정. (HTTPS 이슈와 별개의 기존 버그 발견)
+2. **raw fetch / XMLHttpRequest / WebSocket / SSE / EventSource**: **0건** — api 클라이언트 모듈만 사용. mixed content 위험 없음.
+3. **MinIO presigned URL 외부 노출 (frontend 직접 다운로드)**:
+   - 음원 stream 은 backend `/api/...` 경로 (예: `streamGeneration`, `streamConvertedVocal`, `streamVoicePersonaVocal`) 가 backend 가 proxy 해서 응답 — frontend 가 MinIO URL 직접 안 봄.
+   - voice_clone 의 voiceUrl 은 sunoapi 가 fetch — frontend 무관.
+   - → mixed content 위험 0건.
+4. **backend CORS**: `app/main.py:136` `allow_origins=["*"]` — HTTPS origin 도 자동 허용. 무변경.
+5. **backend callback URL**: `_callback_base` 기본값 `https://localhost` — 외부 노출 안된 환경이라 sunoapi 가 못 옴. 폴링 폴백 사용 중. mkcert 도입과 무관.
+6. **vite.config.js 현재**: 단순 — HTTPS, proxy 둘 다 없음. 신규 추가 필요.
+7. **frontend remote logger**: `src/utils/remoteLogger.js` 에서 `sendFrontendLogs(batch)` (axios 경유) + `frontendLogsBeaconUrl` (sendBeacon) 두 경로 사용 — Vite proxy 적용 후 axios 는 `/api/_logs/frontend` 상대경로 통과 OK, sendBeacon 은 절대 URL 그대로 same-origin 호출 OK.
+
+### 변경 매트릭스
+
+#### Step 2a — mkcert 설치 + Vite HTTPS + Proxy (인프라)
+| 작업 | 위치 | 내용 |
+|---|---|---|
+| mkcert 설치 | 서버 데스크탑 | `apt install mkcert` 또는 `wget` 바이너리 |
+| Root CA 생성 | 서버 | `mkcert -install` (서버 측 신뢰 store 등록 + root CA 키 생성) |
+| 인증서 발급 | `frontend/certs/cert.pem` + `key.pem` (신규 디렉토리) | `mkcert -cert-file ./certs/cert.pem -key-file ./certs/key.pem localhost 127.0.0.1 100.127.225.55 211.217.175.222 aimu.local` (예: Tailscale + 공인 IP + localhost + 가짜 도메인 모두 한 인증서에) |
+| Root CA 공유 | `frontend/certs/rootCA.pem` (복사) | 사용자가 본인 노트북에 설치할 파일 |
+| `.gitignore` | `frontend/certs/key.pem` + `rootCA-key.pem` 추가 | private key 절대 git 추적 안 됨 |
+| `vite.config.js` | `frontend/vite.config.js` | `server.https = {key, cert}` (cert 존재 시 자동 활성화) + `server.proxy = { '/api': { target: 'http://localhost:9005', changeOrigin: true, secure: false } }` |
+| 시작 스크립트 / `package.json` | 변경 없음 (기존 `npm run dev` 그대로) | — |
+
+#### Step 2b — HTTP→HTTPS 회귀 영향 적용
+| 파일 | 변경 | 비고 |
+|---|---|---|
+| `frontend/src/api/index.js:4` | `baseURL: '/api'` (상대경로) | Vite proxy 가 9005 로 forward |
+| `frontend/src/api/index.js:448` (`characterPreviewUrl`) | `/api/character/preview/${previewPath}` 상대경로 | 동일 |
+| `frontend/src/api/index.js:506` (`adImageUrl`) | `/api/business/items/image/${objectName}` 상대경로 | 동일 |
+| `frontend/src/api/index.js:578` (`frontendLogsBeaconUrl`) | `${proto}//${host}/api/_logs/frontend` (포트 제외, 동일 origin) | sendBeacon 은 절대 URL 필수 |
+| `frontend/src/pages/MyMusicPage.jsx:195` | `api.characterPreviewUrl(data.preview_url)` 사용 + 기존 `:9000` hard-code 제거 | **별도 버그 동시 정정** |
+| `backend` 측 | 무변경 | CORS `*`, 콜백 외부노출 무관 |
+
+### 사용자 액션 (1회)
+1. 서버에서 만든 `frontend/certs/rootCA.pem` 파일을 본인 노트북으로 복사 (scp / OneDrive / 메일 등)
+2. Windows: 파일 더블클릭 → "인증서 설치" → "현재 사용자" → "다음" → "모든 인증서를 다음 저장소에 저장" → "신뢰할 수 있는 루트 인증 기관" → 완료. 보안 경고 "예" 클릭. (Mac: `사용자 키체인` → `시스템 루트` → 항목 더블클릭 → "이 인증서 사용 시" → "항상 신뢰")
+3. 브라우저 재시작
+4. `https://100.127.225.55:4000` 또는 `https://aimu.local:4000` (hosts 파일에 `100.127.225.55 aimu.local` 매핑한 경우) 접속 → 자물쇠 ✓ + 마이크 사용 가능
+
+### 테스트 시나리오 (tester)
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | 9005 health | 200 |
+| T2 | mkcert 설치 + 인증서 발급 단위 | `cert.pem` `key.pem` `rootCA.pem` 생성, `cert.pem` 의 SAN 에 100.127.225.55 / localhost / 127.0.0.1 포함 |
+| T3 | Vite HTTPS 응답 | `curl -k https://localhost:4000` 200 (인증서 무시) + `curl --cacert frontend/certs/rootCA.pem https://localhost:4000` 200 (검증 통과) |
+| T4 | Vite Proxy 동작 | `curl -k https://localhost:4000/api/health` → backend health 응답 (proxy forwarding OK) |
+| T5 | 상대경로 baseURL 회귀 | `curl https://localhost:4000/src/api/index.js?t=...` 응답에 `baseURL: "/api"` 또는 동등 |
+| T6 | sendBeacon URL 회귀 | `frontendLogsBeaconUrl` 가 포트 없는 same-origin URL |
+| T7 | 음원 stream 회귀 (별도 헬퍼가 baseURL 기반인지 확인) | `streamVoicePersonaVocal(id)` 등이 `/api/voice-persona/.../stream` 상대경로 OK (audio 태그 src 에 상대경로 박혀도 same-origin 으로 동작) |
+| T8 | voice-clone 흐름 회귀 | `/api/voice-clone/list` 200 — 인증 필요 |
+| T9 | 백엔드 무영향 | 9005 server.log 정상, MinIO presign 무변경 |
+
+### 보안/주의
+- mkcert root CA private key (`rootCA-key.pem`) 절대 git 또는 외부 공유 금지
+- `.gitignore` 에 `frontend/certs/key.pem`, `frontend/certs/rootCA-key.pem` 추가 필수
+- 공인 인증서 / 도메인 / Let's Encrypt 는 v77 이후 운영 단계로 분리
+- 9001~9004 무수정. backend 무수정. "hero" 용어 금지
+
+
+---
+
+## v76.7 — STEP 3 verify 422 원인 수정 (singer_skill_level 타입 통일) — 2026-06-10
+- **요청 작업**: 검증 녹음 후 "다음" → "검증 제출에 실패했습니다" + backend log `POST /verify 422 Unprocessable Entity`.
+- **팀**: VoxClone Squad. backend-dev / tester. frontend 무변경.
+
+### Plan verification findings
+1. **Backend `routes/voice_clone.py:270`**: `singer_skill_level: int = Form(...)` + L277 `< 1 or > 5` 검증
+2. **Frontend `VoiceCloneWizard.jsx:213`**: `skill` state = `'beginner'`/`'intermediate'`/`'advanced'`/`'professional'` (string)
+3. **Sunoapi 스펙 (v76 PLAN 기록)**: `singerSkillLevel` enum: `beginner | intermediate | advanced | professional` — **string**
+4. **Backend `service.submit_verify:362`**: `"singerSkillLevel": int(singer_skill_level)` — sunoapi 에 int 로 보내고 있음 (잘못된 추정)
+5. → 두 갈래 버그: form 파싱(string→int 실패 422) + sunoapi body 형식(int 보내면 sunoapi 거부 가능성)
+
+### 변경 매트릭스 (backend-dev)
+| 파일 | 변경 |
+|---|---|
+| `app/routes/voice_clone.py:270` | `singer_skill_level: str = Form(...)` (int → str). L277 검증을 enum membership 으로 변경 (`{'beginner','intermediate','advanced','professional'}`) |
+| `app/services/voice_clone_service.py:331` `submit_verify` 시그니처 | `singer_skill_level: str` |
+| `app/services/voice_clone_service.py:362` body | `"singerSkillLevel": singer_skill_level` (int 캐스팅 제거) |
+| `app/services/voice_clone_service.py:403` DB 갱신 | 같은 string 그대로 |
+
+### 테스트 시나리오 (tester)
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | health | 200 |
+| T2 | verify 라이브 (외부 mp3 + skill='intermediate' string) | HTTP 200 + generate_task_id |
+| T3 | 잘못된 skill 값 ('xxx') | 400 |
+| T4 | 회귀: voice-clone/create/list/persona | 200 |
+| T5 | 로그 추적자 | `submit_verify start ... skill=intermediate`, `suno voice/generate POST status=200` |
+
+### 보안/주의
+- 9001~9004 / 프론트엔드 무수정
+- "hero" 미사용
+
+
+---
+
+## v76.8 — verify webm/ogg 정규화 적용 (마이크 녹음 webm 거부 fix) — 2026-06-10
+- **요청 작업**: STEP 3 "다음" 에서 `400 Bad Request` — 마이크 녹음 webm 파일이 ALLOWED_AUDIO_EXT 에 없어서 거부.
+- **팀**: VoxClone Squad.
+
+### Plan verification findings
+1. **마이크 녹음 산출물**: `src/utils/audioRecorder.js` MediaRecorder mime = `audio/webm;codecs=opus` → `.webm` 확장자
+2. **routes/voice_clone.py:37**: `ALLOWED_AUDIO_EXT = {".mp3", ".wav", ".m4a"}` — webm 거부
+3. **STEP 1 의 `/create` 는 audio_normalize 적용** → webm 도 mp3 로 변환 → 통과
+4. **STEP 3 의 `/verify` 는 `_save_audio_to_minio` 직접 호출** → 정규화 없음 + 확장자 검증으로 400
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| `routes/voice_clone.py:37` | ALLOWED_AUDIO_EXT 에 `.webm`, `.ogg` 추가 |
+| `routes/voice_clone.py:288~` verify 라우트 | `_save_audio_to_minio` 호출 제거. `normalize_audio_bytes` 직접 호출 → 정규화 결과 mp3 bytes 를 `voice-clones/{uid}/{cid}/verify.mp3` 로 MinIO put. 같은 검증/로그 패턴 |
+| frontend | 무변경 |
+
+
+---
+
+## v76.9 — voice_name 입력 STEP1 으로 이동 + 삭제 버튼 fix (clone_id 키 불일치) — 2026-06-10
+- **요청 작업**: (a) 학습 시 voice_name 입력란 없음 — 자동 이름 (b) 삭제 버튼 무반응
+- **팀**: VoxClone Squad. frontend-dev / tester.
+
+### 원인
+1. voice_name input 이 STEP 4 (L588) 에 있었으나, STEP 1 의 `handleStep1Next` (L315) 가 이미 `voiceName || 'voice_${Date.now()}'` 로 backend 에 전송 — STEP 4 입력은 의미 없음. 학습 빠르면 STEP 4 빨리 지나가서 사용자가 못 보기도 함.
+2. 백엔드 `_serialize` (L122) 가 mongo `_id` → `clone_id` 키로 변환. frontend 의 `c.id` 접근 → undefined → 모든 핸들러가 `if (!clone?.id) return` 에서 막힘 → confirm 도 안 떠서 "무반응".
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| `VoiceCloneWizard.jsx` STEP 1 | hint 아래에 `목소리 이름 *` input 추가. handleStep1Next 가 trimmedName 검증 (빈값/공백 거부) |
+| `MyVoiceCloneSection.jsx` | handleDelete, handleResumeVerify, clones.map(key/disabled) 모두 `c.clone_id || c.id` fallback |
+| `StudioTab2.jsx` (voice clone 카드 영역 L2398~, draft/suno path override L1442/L1485) | 동일 fallback. find/key/onClick 일관 |
+| backend | 무변경 |
+
+
+---
+
+## v76.10 — voice clone 음악생성 진행 중단 fix (model 키 이름 충돌) — 2026-06-10
+- **요청 작업**: voice clone 보컬 선택 + 가사 확인 후 생성 → "임시저장(가사)" 만 남고 진행 없음
+- **팀**: VoxClone Squad. backend-dev + frontend-dev / tester.
+
+### Plan verification findings
+1. **결정적 에러 로그**:
+   ```
+   ValueError: Unsupported model: V5_5. Only 'suno' is supported.
+   Music generation error for 6a291356639318280f78571b: Unsupported model: V5_5. Only 'suno' is supported.
+   ```
+2. **원인 — `model` 키 의미 충돌**:
+   - `routes/generate.py:67` `model: Optional[str] = "suno"` — **provider 식별자** ('suno' / 'anthropic' 등)
+   - `routes/generate.py:107` `if model != "suno": raise ValueError(...)` — 'suno' 만 허용
+   - `services/suno_generator.py:130` `"model": "V5_5" if use_upload_cover else "V5"` — **Suno API 의 내부 모델 변형** (별개)
+   - frontend (`StudioTab2.jsx:1446, 1489`) 가 voice clone override 시 `body.model = 'V5_5'` 보냄 → provider 자리에 V5_5 들어가 거부 → background_task 가 ValueError → generation doc 은 status="pending" 으로 만들어졌지만 background 가 die → frontend 폴링은 "임시저장(가사)" 같은 draft-like 표시.
+3. **올바른 분리**: provider model('suno') 와 suno 내부 model 변형('V5_5') 을 별개 키로.
+
+### 변경 매트릭스
+| 파일 | 변경 |
+|---|---|
+| `backend_9005/app/routes/generate.py` GenerateRequest L53~ | 신규 필드 `suno_model: Optional[str] = None` (V5_5 / V5 등) |
+| `backend_9005/app/routes/generate.py` L344 mongo doc | `"suno_model": body.suno_model` 추가 |
+| `backend_9005/app/routes/generate.py` L373~ `_run_music_generation` 호출 | `suno_model=body.suno_model` 추가 |
+| `backend_9005/app/routes/generate.py` L96 `_run_music_generation` 시그니처 | `suno_model: str = None` 파라미터 추가 |
+| `backend_9005/app/routes/generate.py` L110 `generate_music_suno` 호출 | `suno_model=suno_model` 전달 |
+| `backend_9005/app/routes/generate.py` L420~ 다른 `_run_music_generation` 호출 ( start_music_gen 별도 라우트 ) | 동일하게 doc.get("suno_model") 전달 |
+| `backend_9005/app/services/suno_generator.py` `generate_music_suno` 시그니처 | `suno_model: str = None` 추가 |
+| `backend_9005/app/services/suno_generator.py:130` body["model"] | `suno_model or ("V5_5" if use_upload_cover else "V5")` |
+| `frontend/src/components/StudioTab2.jsx` voice clone override (draft L1446, suno L1489) | `body.model = 'V5_5'` 제거. `body.suno_model = 'V5_5'` 로 변경. provider model 은 그대로 'suno' 유지 |
+
+### 영향 보장
+- 기존 일반 흐름(voice clone 없음) → `suno_model` 미전달 → backend 가 None 받아 기존 로직(V5/V5_5 자동 결정) 사용 → 회귀 없음
+- voice clone 흐름 → `suno_model='V5_5'` 전달 → Suno API 가 V5_5 + personaId + personaModel=voice_persona 받음 → 정상
+
+### 테스트 시나리오
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | health | 200 |
+| T2 | 컴파일 OK | 무경고 |
+| T3 | voice clone 선택 + 생성 라이브 | HTTP 201 + background task 가 ValueError 없이 진행. backend log 에 `Suno style string`, `voice_persona` 흔적, status pending → processing → completed (sunoapi 시간 소요) |
+| T4 | 일반 보컬 (voice clone 없음) 회귀 | 기존과 동일 동작 |
+| T5 | startMusicGeneration (이어서 작업) 경로 회귀 | doc.get("suno_model") 가 None 이거나 'V5_5' 둘 다 OK |
+
