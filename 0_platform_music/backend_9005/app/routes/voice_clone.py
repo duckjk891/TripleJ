@@ -394,6 +394,42 @@ async def regenerate_phrase(clone_id: str, current_user=Depends(get_current_user
     return RegenerateResponse(validate_task_id=result["validate_task_id"])
 
 
+@router.post("/check-availability")
+async def check_availability(current_user=Depends(get_current_user)):
+    """ready 보이스 전체의 Suno 사용 가능 여부 확인 → 만료 보이스 자동 삭제.
+
+    body 없음. 반환: {checked, available:[clone_id], expired:[{clone_id,voice_name}], errors}.
+    일시 오류(네트워크/API)는 errors 카운트로만 집계하고 삭제하지 않음.
+    """
+    user_id = str(current_user["id"])
+    logger.info("[voice_clone] check-availability user=%s", user_id)
+    try:
+        return await svc.check_all_availability(user_id)
+    except Exception:
+        logger.exception("[voice_clone] check-availability user=%s failed", user_id)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "만료 확인 중 오류가 발생했습니다."},
+        )
+
+
+@router.post("/cleanup-expired")
+async def cleanup_expired(current_user=Depends(get_current_user)):
+    """status='expired' 인 내 클론만 일괄 영구삭제. body 없음.
+
+    반환: {deleted:int, deleted_ids:[], deleted_names:[]}.
+    """
+    logger.info("[voice_clone] cleanup-expired user=%s", current_user["id"])
+    try:
+        return await svc.cleanup_expired(str(current_user["id"]))
+    except Exception:
+        logger.exception("[voice_clone] cleanup-expired user=%s failed", current_user["id"])
+        return JSONResponse(
+            status_code=500,
+            content={"error": "삭제된 목소리 정리 중 오류가 발생했습니다."},
+        )
+
+
 # ── Callback receivers (no auth — Suno calls these) ─────────────────────────
 
 

@@ -30,6 +30,11 @@ from typing import Optional
 
 from ..config import settings
 from ..database.minio import get_minio
+from .extra_scene_image_generator import (
+    _resolve_asset_ref,
+    _resolve_scene_image_ref,
+    _resolve_sheet_ref,
+)
 from .extra_video_prompts import compose_extra_video_prompt
 from .pre_mv_grok_generator import generate_scene_video_grok
 from .pre_mv_kling_generator import generate_scene_video_kling
@@ -113,11 +118,17 @@ def _build_scene_dict_for_generator(
     motion_block: str,
     use_seconds: float,
     image_object_name: Optional[str] = None,
+    prebuilt_prompt: Optional[str] = None,
 ) -> dict:
     """4 개 generator 가 받는 scene dict 어댑터.
 
-    각 generator 가 내부적으로 `compose_video_prompt(scene=...)` 를 다시 부르므로,
-    pre_mv_video_prompts 의 합성 슬롯들이 채워지도록 우리 user_text 를 그대로 매핑한다.
+    v24.3 (옵션 B) — `prebuilt_prompt` 가 주어지면 generator 들이 자체적으로
+    `compose_video_prompt(scene=...)` 합성을 건너뛰고 prebuilt 를 그대로 사용한다.
+    pre_mv 흐름은 prebuilt 키를 채워 보내지 않으므로 기존 동작 유지.
+
+    description/image_prompt 슬롯에는 원본(한글) user_text 가 잔존할 수 있으나,
+    prebuilt 분기에서 generator 가 더 이상 그 슬롯을 참조하지 않으므로 모델
+    prompt 에는 영향 없다 (로그 보존용).
     """
     scene: dict = {
         "description": (user_text or "").strip(),
@@ -128,6 +139,8 @@ def _build_scene_dict_for_generator(
     }
     if image_object_name:
         scene["image_object_name"] = image_object_name
+    if prebuilt_prompt:
+        scene["prebuilt_prompt"] = prebuilt_prompt
     return scene
 
 
@@ -144,6 +157,55 @@ def _motion_block_for_scene(motion_presets: Optional[list[str]]) -> str:
     return " ".join(out)
 
 
+async def _load_refs_bytes(
+    *, mv_job_id: str, owner_user_id: str, refs: list[dict],
+) -> tuple[list[bytes], int]:
+    """refs 리스트 → MinIO bytes 로 변환. (bytes_list, skipped_count) 반환. 최대 4."""
+    out: list[bytes] = []
+    skipped = 0
+    for ref in (refs or []):
+        if len(out) >= 4:
+            logger.warning("[ExtraVideoGen] refs clamp at 4 — dropping rest")
+            break
+        if not isinstance(ref, dict):
+            skipped += 1
+            continue
+        t = (ref.get("type") or "").strip()
+        asset_id = (ref.get("asset_id") or "").strip()
+        if not asset_id:
+            skipped += 1
+            continue
+        data = None
+        try:
+            if t == "sheet":
+                data, _mime, _disp, _style = await _resolve_sheet_ref(
+                    owner_user_id=owner_user_id, slot=asset_id,
+                )
+            elif t in ("place", "wedding_photo"):
+                data, _mime, _disp, _memo, _ty = await _resolve_asset_ref(
+                    owner_user_id=owner_user_id, asset_id=asset_id,
+                )
+            elif t == "scene_image":
+                data, _mime, _disp = await _resolve_scene_image_ref(
+                    mv_job_id=mv_job_id, token=asset_id,
+                )
+            else:
+                skipped += 1
+                continue
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[ExtraVideoGen] ref load raised type=%s asset_id=%s: %s",
+                t, asset_id, str(e)[:200],
+            )
+            skipped += 1
+            continue
+        if not data:
+            skipped += 1
+            continue
+        out.append(data)
+    return out, skipped
+
+
 async def generate_extra_video(
     *,
     extra_video_id: str,
@@ -155,6 +217,7 @@ async def generate_extra_video(
     motion_presets: list[str],
     video_model: str,
     use_seconds: float,
+    refs: Optional[list[dict]] = None,
 ) -> dict:
     """편집자 공간 — 단일 B 영상 생성.
 
@@ -178,27 +241,40 @@ async def generate_extra_video(
     started = time.time()
     clamped = _clamp_use_seconds(video_model, use_seconds)
 
+    refs_count = len(refs or [])
     logger.info(
         "[ExtraVideo] entry extra_video_id=%s mv_job_id=%s user_id=%s "
         "video_model=%s source_kind=%s use_seconds_req=%.2f use_seconds=%.2f "
-        "motion_count=%d user_text_len=%d source_object=%s",
+        "motion_count=%d user_text_len=%d source_object=%s refs_count=%d",
         extra_video_id, mv_job_id, user_id, video_model, source_kind,
         float(use_seconds), clamped, len(motion_presets or []),
-        len(user_text or ""), source_object_name,
+        len(user_text or ""), source_object_name, refs_count,
     )
 
-    # 1) prompt 합성 (로그용 — 실제 generator 들이 자기 합성을 다시 하므로 길이만 본다).
-    composed_prompt = compose_extra_video_prompt(
+    # 1) prompt 합성 (v24.3 옵션 B + v24.4 @멘션 보존 / refs 메타).
+    composed_prompt = await compose_extra_video_prompt(
         video_model=video_model,
         user_text=user_text,
         motion_presets=motion_presets,
         use_seconds=clamped,
         image_object_name=source_object_name if video_model == "grok" else None,
+        refs=refs,
     )
     logger.info(
         "[ExtraVideo] prompt composed extra_video_id=%s video_model=%s prompt_len=%d",
         extra_video_id, video_model, len(composed_prompt),
     )
+
+    # v24.4 — refs → MinIO bytes 로드 (Kling 만 사용. 최대 4 → 클램프 후 2).
+    ref_bytes_list: list[bytes] = []
+    if refs:
+        ref_bytes_list, skipped = await _load_refs_bytes(
+            mv_job_id=mv_job_id, owner_user_id=user_id, refs=refs,
+        )
+        logger.info(
+            "[ExtraVideoGen] refs_loaded extra_video_id=%s bytes_count=%d skipped=%d",
+            extra_video_id, len(ref_bytes_list), skipped,
+        )
 
     motion_block = _motion_block_for_scene(motion_presets)
     scene_dict = _build_scene_dict_for_generator(
@@ -206,6 +282,7 @@ async def generate_extra_video(
         motion_block=motion_block,
         use_seconds=clamped,
         image_object_name=source_object_name,
+        prebuilt_prompt=composed_prompt,
     )
 
     # 2) 모델 분기 호출 (use scene_number=0 — extra 라 phase3 가 아니므로).
@@ -224,12 +301,17 @@ async def generate_extra_video(
         if not settings.kling_access_key or not settings.kling_secret_key:
             raise ValueError("Kling API 키가 설정되지 않았어요.")
         image_bytes = await _load_source_png(source_object_name)
+        kling_char_refs = ref_bytes_list[:2] if ref_bytes_list else None
+        logger.info(
+            "[ExtraVideoGen] kling_char_refs=%d extra_video_id=%s",
+            len(kling_char_refs or []), extra_video_id,
+        )
         video_bytes = await generate_scene_video_kling(
             pre_mv_job_id="extra:{}".format(mv_job_id),
             scene_number=0,
             scene=scene_dict,
             image_bytes=image_bytes,
-            char_ref_bytes_list=None,
+            char_ref_bytes_list=kling_char_refs,
         )
 
     elif video_model == "seedance":

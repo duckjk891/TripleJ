@@ -167,14 +167,22 @@ async def generate_music_for_job(
     main_vocal = vocal_styles.get("main") if isinstance(vocal_styles, dict) else None
     sub_vocal = vocal_styles.get("sub") if isinstance(vocal_styles, dict) else None
 
+    # 보이스 클론 사용 시엔 프리셋 보컬 스타일/성별 힌트를 넣지 않는다 (persona 가 음색을 정의).
+    _vc = music_spec.get("voice_clone") or {}
+    clone_voice_id = _vc.get("voice_id") if isinstance(_vc, dict) else None
+    is_voice_clone = bool(clone_voice_id)
+
     main_info = SUNO_VOCAL_MAP.get(main_vocal) if main_vocal else None
-    if main_info:
+    if main_info and not is_voice_clone:
         style_parts.append(main_info["style"])
-    if vocal_form == "duet":
+    if vocal_form == "duet" and not is_voice_clone:
         sub_info = SUNO_VOCAL_MAP.get(sub_vocal) if sub_vocal else None
         if sub_info:
             style_parts.append(sub_info["style"])
         style_parts.append("duet, two voices alternating")
+
+    if vocal_form != "duet":
+        style_parts.append("solo performance, single lead vocalist")
 
     style_str = ", ".join(style_parts) if style_parts else "ballad, warm"
     style_str = style_str[:1000]
@@ -195,8 +203,24 @@ async def generate_music_for_job(
     }
     if lyrics_title:
         body["title"] = lyrics_title[:80]
-    if main_info:
+    if main_info and not is_voice_clone:
         body["vocalGender"] = main_info["gender"]
+
+    # 솔로면 듀엣/백보컬 억제 (Suno 가 기본적으로 화음/2인을 넣는 경향).
+    if vocal_form != "duet":
+        body["negativeTags"] = "duet, two vocalists, call and response, backing choir"
+
+    # ---- 보이스 클론(내 목소리) 적용 ----
+    # music_spec.voice_clone.voice_id 가 있으면 Suno 에 personaId + personaModel="voice_persona"
+    # 로 전달해 그 음색으로 노래. voice clone 은 V5_5 필요 + 생성이 느려 폴링 연장.
+    if is_voice_clone:
+        body["personaId"] = clone_voice_id
+        body["personaModel"] = "voice_persona"
+        body["model"] = "V5_5"
+        logger.info(
+            "Suno: job %s using voice clone persona voice_id=%s personaModel=voice_persona (V5_5)",
+            job_id, clone_voice_id,
+        )
 
     # ---- Step 1: 생성 요청 ----
     await _update_progress(mongo_db, job_id, 10)
@@ -215,7 +239,7 @@ async def generate_music_for_job(
     audio_url = None
     suno_data = None
     status_data = None
-    for poll_attempt in range(60):
+    for poll_attempt in range(150 if is_voice_clone else 60):
         await asyncio.sleep(5)
         async with httpx.AsyncClient(timeout=30) as client:
             sr = await client.get(
@@ -303,3 +327,12 @@ async def generate_music_for_job(
         "suno_audio_id": (suno_data or {}).get("id", ""),
         "suno_audio_ids": suno_audio_ids,
     }
+
+
+# voice-clone(v76): Suno V5_5 voice cloning endpoints
+SUNO_VOICE_VALIDATE_URL = "{base}/api/v1/voice/validate"
+SUNO_VOICE_VALIDATE_INFO_URL = "{base}/api/v1/voice/validate-info"
+SUNO_VOICE_REGENERATE_URL = "{base}/api/v1/voice/regenerate"
+SUNO_VOICE_GENERATE_URL = "{base}/api/v1/voice/generate"
+SUNO_VOICE_RECORD_INFO_URL = "{base}/api/v1/voice/record-info"
+SUNO_VOICE_CHECK_URL = "{base}/api/v1/voice/check-voice"

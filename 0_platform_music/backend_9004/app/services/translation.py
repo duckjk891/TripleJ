@@ -34,8 +34,9 @@ _translation_anthropic_client: Optional[anthropic.AsyncAnthropic] = None
 # v56 — 번역 모델 ID 고정. 변경 시 단일 상수만 갱신.
 TRANSLATION_MODEL_ID = "claude-opus-4-7"
 
-# v56 — 최대 출력 토큰. 시각·영상 prompt 는 보통 1~3 문장 (≤500자) 이므로 충분.
-_TRANSLATION_MAX_TOKENS = 800
+# v56 — 최대 출력 토큰. 시각·영상 prompt 는 보통 1~3 문장 (≤500자).
+# v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 8000 으로 상향 (실사용분만 과금).
+_TRANSLATION_MAX_TOKENS = 8000
 
 
 def _get_anthropic_client_for_translation() -> anthropic.AsyncAnthropic:
@@ -46,6 +47,17 @@ def _get_anthropic_client_for_translation() -> anthropic.AsyncAnthropic:
             api_key=settings.anthropic_api_key,
         )
     return _translation_anthropic_client
+
+
+def _first_text_block(resp) -> str:
+    """v75 — adaptive-thinking 응답의 첫 text 블록 안전 추출. thinking-free 응답에도 호환."""
+    try:
+        for block in getattr(resp, "content", []) or []:
+            if getattr(block, "type", None) == "text":
+                return (getattr(block, "text", None) or "")
+    except Exception:
+        return ""
+    return ""
 
 
 def _build_translation_system_prompt(direction: str, context_hint: str) -> str:
@@ -81,22 +93,25 @@ async def _call_anthropic_translation(
     client = _get_anthropic_client_for_translation()
     system_prompt = _build_translation_system_prompt(direction, context_hint)
 
-    # v56 — opus-4-7 는 temperature 인자를 받지 않음 (mv_generator 의 _generate_brainstorm_claude
-    # 패턴과 동일). 다른 모델 폴백 시 temperature 0.2 적용 (번역은 일관성 중요).
+    # v75 — adaptive thinking + high effort. temperature 제거 (모든 Claude 호출 통일).
     kwargs = {
         "model": TRANSLATION_MODEL_ID,
         "system": system_prompt,
         "messages": [{"role": "user", "content": text}],
         "max_tokens": _TRANSLATION_MAX_TOKENS,
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
     }
-    if "opus-4-7" not in TRANSLATION_MODEL_ID:
-        kwargs["temperature"] = 0.2
+    logger.info(
+        "[ThinkingOn] stage=translation direction=%s model=%s effort=high",
+        direction, TRANSLATION_MODEL_ID,
+    )
 
     resp = await client.messages.create(**kwargs)
-    # Anthropic response: resp.content == [TextBlock(text=...), ...]
-    if not resp.content:
+    # v75 — adaptive thinking 응답은 [ThinkingBlock, TextBlock] 순서. 안전 추출 헬퍼 사용.
+    raw = _first_text_block(resp)
+    if not raw:
         return ""
-    raw = resp.content[0].text or ""
     raw = raw.strip()
     # 안전망 — 마크다운 코드펜스가 섞여 들어오면 제거
     if raw.startswith("```"):

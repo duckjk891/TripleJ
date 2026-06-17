@@ -74,6 +74,93 @@ export default function ExtraVideoStudioPanel({ mvJobId, mvJob, ownerUserId }) {
     setPickedSceneImage(null);
   };
 
+  // v24.4 — panel-level 멘션 컨텍스트 (A/B 양쪽 공유). 1회 fetch.
+  const [context, setContext] = useState(null);
+  const [loadingContext, setLoadingContext] = useState(true);
+  const [contextError, setContextError] = useState('');
+
+  const reloadContext = async () => {
+    try {
+      if (import.meta.env.DEV) {
+        console.info(`${PREFIX} getJobContext`, { mv_job_id: mvJobId });
+      }
+      const { data } = await api.getJobContext(mvJobId);
+      setContext(data);
+      setContextError('');
+    } catch (err) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || err?.message || 'context error';
+      console.error(`${PREFIX} getJobContext failed`, {
+        status,
+        detail,
+        mv_job_id: mvJobId,
+      });
+      setContextError('컨텍스트를 불러오지 못했습니다.');
+    } finally {
+      setLoadingContext(false);
+    }
+  };
+
+  useEffect(() => {
+    reloadContext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mvJobId]);
+
+  // 멘션 옵션 풀 빌드 — A/B 공유.
+  const mentionOptions = useMemo(() => {
+    const opts = [];
+    for (const s of context?.owner_sheets || []) {
+      if (!s || !s.slot) continue;
+      opts.push({
+        type: 'sheet',
+        asset_id: s.slot,
+        display_name: s.display_name || s.slot,
+        object_name: s.sheet_object_name || null,
+        group_label: '🧑 시트',
+      });
+    }
+    for (const p of context?.owner_places || []) {
+      if (!p || !p.place_id) continue;
+      opts.push({
+        type: 'place',
+        asset_id: p.place_id,
+        display_name: p.display_name || '(이름 없음)',
+        object_name: p.object_name || null,
+        group_label: '📍 장소',
+      });
+    }
+    for (const ph of context?.wedding_photos || []) {
+      if (!ph || !ph.photo_id) continue;
+      const shortId = String(ph.photo_id).slice(0, 6);
+      opts.push({
+        type: 'wedding_photo',
+        asset_id: ph.photo_id,
+        display_name: `웨딩사진-${shortId}`,
+        object_name: ph.object_name || null,
+        group_label: '💞 웨딩사진',
+      });
+    }
+    for (const sc of context?.pre_mv_scenes || []) {
+      if (!sc || !sc.token) continue;
+      opts.push({
+        type: 'scene_image',
+        asset_id: sc.token,
+        display_name: sc.token,
+        object_name: sc.object_name || null,
+        group_label: '🎬 식전영상 씬',
+      });
+    }
+    if (import.meta.env.DEV) {
+      console.info(`${PREFIX} mentionOptions built`, {
+        sheets: (context?.owner_sheets || []).length,
+        places: (context?.owner_places || []).length,
+        wedding_photos: (context?.wedding_photos || []).length,
+        pre_mv_scenes: (context?.pre_mv_scenes || []).length,
+      });
+    }
+    return opts;
+  }, [context]);
+
   return (
     <section className="extra-video-studio" aria-label="추가영상생성 스튜디오">
       <header className="extra-video-studio__head">
@@ -98,6 +185,9 @@ export default function ExtraVideoStudioPanel({ mvJobId, mvJob, ownerUserId }) {
           isAdmin={isAdmin}
           currentUserId={user.id}
           onSelectImageForVideo={handleSelectImageForVideo}
+          mentionOptions={mentionOptions}
+          loadingContext={loadingContext}
+          contextError={contextError}
         />
       </article>
 
@@ -114,6 +204,9 @@ export default function ExtraVideoStudioPanel({ mvJobId, mvJob, ownerUserId }) {
           currentUserId={user.id}
           pickedSceneImage={pickedSceneImage}
           onConsumePickedImage={handleConsumePickedImage}
+          mentionOptions={mentionOptions}
+          loadingContext={loadingContext}
+          contextError={contextError}
         />
       </article>
     </section>
@@ -149,12 +242,10 @@ function ExtraSceneImageSection({
   isAdmin,
   currentUserId,
   onSelectImageForVideo,
+  mentionOptions,
+  loadingContext,
+  contextError,
 }) {
-  // 멘션 풀.
-  const [context, setContext] = useState(null);
-  const [loadingContext, setLoadingContext] = useState(true);
-  const [contextError, setContextError] = useState('');
-
   // 입력 폼.
   const [userText, setUserText] = useState('');
   const [selectedRefs, setSelectedRefs] = useState([]);    // 멘션 refs
@@ -178,29 +269,6 @@ function ExtraSceneImageSection({
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
-
-  // ── 컨텍스트 로드 ─────────────────────────────────────────────────────────
-  const reloadContext = async () => {
-    try {
-      if (import.meta.env.DEV) {
-        console.info(`${SEC} getJobContext`, { mv_job_id: mvJobId });
-      }
-      const { data } = await api.getJobContext(mvJobId);
-      setContext(data);
-      setContextError('');
-    } catch (err) {
-      const status = err?.response?.status;
-      const detail = err?.response?.data?.detail || err?.message || 'context error';
-      console.error(`${SEC} getJobContext failed`, {
-        status,
-        detail,
-        mv_job_id: mvJobId,
-      });
-      setContextError('컨텍스트를 불러오지 못했습니다.');
-    } finally {
-      setLoadingContext(false);
-    }
-  };
 
   // ── 갤러리 reload ─────────────────────────────────────────────────────────
   const reloadItems = async () => {
@@ -227,67 +295,9 @@ function ExtraSceneImageSection({
   };
 
   useEffect(() => {
-    reloadContext();
     reloadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mvJobId]);
-
-  // ── 멘션 옵션 풀 빌드 ─────────────────────────────────────────────────────
-  const mentionOptions = useMemo(() => {
-    const opts = [];
-    for (const s of context?.owner_sheets || []) {
-      if (!s || !s.slot) continue;
-      opts.push({
-        type: 'sheet',
-        asset_id: s.slot,
-        display_name: s.display_name || s.slot,
-        object_name: s.sheet_object_name || null,
-        group_label: '🧑 시트',
-      });
-    }
-    for (const p of context?.owner_places || []) {
-      if (!p || !p.place_id) continue;
-      opts.push({
-        type: 'place',
-        asset_id: p.place_id,
-        display_name: p.display_name || '(이름 없음)',
-        object_name: p.object_name || null,
-        group_label: '📍 장소',
-      });
-    }
-    for (const ph of context?.wedding_photos || []) {
-      if (!ph || !ph.photo_id) continue;
-      // wedding_photo 자산은 display_name 이 별도 없음 — 짧은 id 로 라벨.
-      const shortId = String(ph.photo_id).slice(0, 6);
-      opts.push({
-        type: 'wedding_photo',
-        asset_id: ph.photo_id,
-        display_name: `웨딩사진-${shortId}`,
-        object_name: ph.object_name || null,
-        group_label: '💞 웨딩사진',
-      });
-    }
-    // v26 — 식전영상에서 만들어진 씬 이미지들도 @멘션 풀에 노출.
-    for (const sc of context?.pre_mv_scenes || []) {
-      if (!sc || !sc.token) continue;
-      opts.push({
-        type: 'scene_image',
-        asset_id: sc.token,
-        display_name: sc.token,
-        object_name: sc.object_name || null,
-        group_label: '🎬 식전영상 씬',
-      });
-    }
-    if (import.meta.env.DEV) {
-      console.info(`${SEC} mentionOptions built`, {
-        sheets: (context?.owner_sheets || []).length,
-        places: (context?.owner_places || []).length,
-        wedding_photos: (context?.wedding_photos || []).length,
-        pre_mv_scenes: (context?.pre_mv_scenes || []).length,
-      });
-    }
-    return opts;
-  }, [context]);
 
   // ── 폴링 — queued/generating 가 있을 때만 5초 ──────────────────────────────
   const hasActive = useMemo(
@@ -927,6 +937,9 @@ function ExtraVideoSection({
   currentUserId,
   pickedSceneImage,
   onConsumePickedImage,
+  mentionOptions,
+  loadingContext,
+  contextError,
 }) {
   // 소스 모드.
   const [sourceMode, setSourceMode] = useState('scene_image'); // 'scene_image' | 'uploaded'
@@ -943,6 +956,7 @@ function ExtraVideoSection({
   const [videoModel, setVideoModel] = useState('veo');
   const [useSeconds, setUseSeconds] = useState(8);
   const [userText, setUserText] = useState('');
+  const [selectedVideoRefs, setSelectedVideoRefs] = useState([]); // v24.4 — @멘션 refs.
   const variantCount = 1; // v23.2: disabled, 항상 1.
 
   // 업로드.
@@ -1179,6 +1193,7 @@ function ExtraVideoSection({
       video_model: videoModel,
       use_seconds: useSeconds,
       variant_count: variantCount,
+      refs: selectedVideoRefs, // v24.4 — @멘션 refs.
     };
     try {
       setSubmitting(true);
@@ -1191,6 +1206,7 @@ function ExtraVideoSection({
           motion_count: payload.motion_presets.length,
           text_len: (payload.user_text || '').length,
           variant_count: payload.variant_count,
+          refs_count: selectedVideoRefs.length,
         });
       }
       const { data } = await api.createExtraVideo(mvJobId, payload);
@@ -1204,6 +1220,9 @@ function ExtraVideoSection({
           status: data?.status,
         });
       }
+      // v24.4 — 성공 후 텍스트 + refs 리셋.
+      setUserText('');
+      setSelectedVideoRefs([]);
       await reloadItems();
     } catch (err) {
       const status = err?.response?.status;
@@ -1529,15 +1548,19 @@ function ExtraVideoSection({
         {/* 연출 프롬프트 */}
         <div className="extra-video-section__row">
           <label className="extra-video-section__row-label">② 연출 프롬프트</label>
-          <textarea
-            className="extra-video-section__textarea"
+          <MentionField
+            id={`extra-video-text-${mvJobId}`}
+            ariaLabel="씬 영상 연출 프롬프트"
             value={userText}
-            onChange={(e) => setUserText(e.target.value)}
+            refs={selectedVideoRefs}
+            onChange={setUserText}
+            onChangeRefs={setSelectedVideoRefs}
+            options={mentionOptions || []}
             rows={4}
-            placeholder="예: 카메라가 천천히 줌인하며 신부가 미소짓는다, 따뜻한 노을 색조..."
+            placeholder="예: @bride_wedding 이 카메라를 보며 웃는다, 따뜻한 노을 톤..."
           />
           <div className="extra-video-section__hint">
-            자유 텍스트로 영상 연출 의도를 알려주세요. 자산 멘션은 A 영역에서 끝났어요.
+            `@` 입력 → 시트 / 장소 / 웨딩사진 / 식전영상 씬 자산 추천. 본문에 박힌 자산은 모델에 binary ref (Kling) 또는 prompt 토큰 (Veo/Seedance/Grok) 으로 전달됩니다.
           </div>
         </div>
 

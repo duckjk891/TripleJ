@@ -639,6 +639,9 @@ class UploadFromGenerationBody(BaseModel):
     # publish 시점의 사용자 캐릭터 snapshot 을 트랙 도큐먼트에 박음.
     # 구조는 mv_jobs.user_character_snapshot 와 동일.
     user_character_snapshot: Optional[dict] = None
+    # v74: 두 클립 variant 중 어느 것을 트랙으로 업로드할지 선택
+    # 0 = result_audio_url (BC), >=1 = variants[variant_index].audio_url
+    variant_index: Optional[int] = 0
 
 
 @router.post("/upload-from-generation", status_code=201)
@@ -664,14 +667,51 @@ async def upload_from_generation(
     if not gen_doc.get("result_audio_url"):
         return JSONResponse(status_code=400, content={"error": "생성된 오디오 파일이 없습니다."})
 
-    # Determine audio source: voice converted or original
+    # v74 — Determine audio source: voice converted or specific variant
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    variant_index = body.variant_index or 0
+    if variant_index < 0:
+        return JSONResponse(status_code=400, content={"error": "variant_index는 0 이상이어야 합니다."})
+    if variant_index > 0 and body.use_voice_converted:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "보이스 변환은 첫 번째 클립(variant 0)에만 사용할 수 있습니다."},
+        )
+
     if body.use_voice_converted:
         vc_url = gen_doc.get("voice_converted_url")
         if not vc_url:
             return JSONResponse(status_code=400, content={"error": "보이스 변환된 오디오 파일이 없습니다."})
         source_object_name = vc_url
     else:
-        source_object_name = gen_doc["result_audio_url"]
+        gen_variants = gen_doc.get("variants") or []
+        if variant_index == 0:
+            if gen_variants and len(gen_variants) > 0:
+                source_object_name = gen_variants[0].get("audio_url") or gen_doc["result_audio_url"]
+            else:
+                source_object_name = gen_doc["result_audio_url"]
+        else:
+            if not gen_variants or variant_index >= len(gen_variants):
+                _log.warning(
+                    "[UploadVariant] gen=%s variant=%d out of range (have=%d)",
+                    body.generation_id, variant_index, len(gen_variants),
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"variant {variant_index} 범위를 벗어났습니다."},
+                )
+            source_object_name = gen_variants[variant_index].get("audio_url")
+            if not source_object_name:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "선택한 variant에 오디오가 없습니다."},
+                )
+
+    _log.info(
+        "[UploadVariant] gen=%s variant=%d source=%s use_vc=%s",
+        body.generation_id, variant_index, source_object_name, bool(body.use_voice_converted),
+    )
 
     track_id = ObjectId()
     uploader_id = current_user["id"]
@@ -726,8 +766,14 @@ async def upload_from_generation(
 
     # v44 — Inherit beats from the generation if already extracted, otherwise
     # mark pending and fire background extraction.
+    # v74 — beats are extracted only from variant 0 (first clip). For variant>0
+    # do not inherit; trigger fresh extraction in background.
     gen_beats_status = gen_doc.get("beats_status")
-    inherit_beats = gen_beats_status == "completed" and gen_doc.get("beats")
+    inherit_beats = (
+        variant_index == 0
+        and gen_beats_status == "completed"
+        and gen_doc.get("beats")
+    )
     if inherit_beats:
         beats_fields = {
             "beats_status": "completed",
@@ -773,6 +819,7 @@ async def upload_from_generation(
         "comment_count": 0,
         "is_public": True,
         "generation_id": str(gen_doc["_id"]),
+        "variant_index": variant_index,  # v74
         "user_character_snapshot": body.user_character_snapshot,
         "created_at": now,
         "updated_at": now,
@@ -780,6 +827,10 @@ async def upload_from_generation(
     }
 
     await mongo.tracks.insert_one(doc)
+    _log.info(
+        "[UploadVariant] gen=%s variant=%d track_id=%s inserted",
+        body.generation_id, variant_index, str(track_id),
+    )
 
     # Update generation with result_track_id
     await mongo.generations.update_one(

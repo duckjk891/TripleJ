@@ -43,10 +43,17 @@ def _get_anthropic_client_for_translation() -> anthropic.AsyncAnthropic:
     return _translation_anthropic_client
 
 
-def _build_translation_system_prompt(direction: str, context_hint: str) -> str:
-    """direction: 'ko_to_en' or 'en_to_ko'. context_hint: 번역 도메인 힌트."""
+def _build_translation_system_prompt(
+    direction: str, context_hint: str, preserve_mentions: bool = False,
+) -> str:
+    """direction: 'ko_to_en' or 'en_to_ko'. context_hint: 번역 도메인 힌트.
+
+    v24.4 — `preserve_mentions=True` 면 ko_to_en 분기에서 `@xxx` 자산 토큰
+    보존 규칙 + few-shot 예시 1줄을 system prompt 끝에 부착한다. en_to_ko 는
+    호환 위해 인자만 수용하고 본문에는 영향 없음.
+    """
     if direction == "ko_to_en":
-        return (
+        base = (
             "다음 한국어 텍스트를 자연스럽고 정확한 영어로 번역하세요.\n"
             "컨텍스트: {context}.\n"
             "- 촬영 용어 (shot type / camera angle / lighting / camera motion 등) 는 "
@@ -55,6 +62,15 @@ def _build_translation_system_prompt(direction: str, context_hint: str) -> str:
             "- 추가 설명이나 머리말·꼬리말 없이 번역문만 출력하세요.\n"
             "- 마크다운 코드펜스(```)나 따옴표로 감싸지 마세요."
         ).format(context=context_hint)
+        if preserve_mentions:
+            base += (
+                "\n- \"@\" 으로 시작하는 토큰 (영문/숫자/언더스코어/하이픈/한글 조합) 은 "
+                "자산 식별자입니다. 번역하지 말고 본문에 원형 그대로 보존하세요. "
+                "위치만 자연스러운 영문 어순에 맞게 옮기세요."
+                "\n- 예시: \"@신랑_캐주얼 이 웃으면서 @웨딩홀 안으로 들어간다\" "
+                "→ \"@신랑_캐주얼 smiles while entering @웨딩홀\"."
+            )
+        return base
     elif direction == "en_to_ko":
         return (
             "Translate the following English text into natural and accurate Korean.\n"
@@ -71,10 +87,13 @@ def _build_translation_system_prompt(direction: str, context_hint: str) -> str:
 
 async def _call_anthropic_translation(
     direction: str, text: str, context_hint: str,
+    preserve_mentions: bool = False,
 ) -> str:
     """단일 Anthropic 호출. 응답 텍스트 strip 처리."""
     client = _get_anthropic_client_for_translation()
-    system_prompt = _build_translation_system_prompt(direction, context_hint)
+    system_prompt = _build_translation_system_prompt(
+        direction, context_hint, preserve_mentions=preserve_mentions,
+    )
 
     kwargs = {
         "model": TRANSLATION_MODEL_ID,
@@ -106,6 +125,7 @@ async def _call_anthropic_translation(
 
 async def _translate_with_retry(
     direction: str, text: str, context_hint: str,
+    preserve_mentions: bool = False,
 ) -> str:
     """1회 retry 포함 호출. 모든 시도 실패 → 빈 문자열 반환 + warning 로그."""
     log_key = "TranslateKoEn" if direction == "ko_to_en" else "TranslateEnKo"
@@ -115,15 +135,19 @@ async def _translate_with_retry(
     for attempt in range(2):
         t0 = time.time()
         try:
-            out = await _call_anthropic_translation(direction, text, context_hint)
+            out = await _call_anthropic_translation(
+                direction, text, context_hint,
+                preserve_mentions=preserve_mentions,
+            )
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.info(
-                "[%s] len=%d model=%s elapsed_ms=%d attempt=%d",
+                "[%s] len=%d model=%s elapsed_ms=%d attempt=%d preserve_mentions=%d",
                 log_key,
                 in_len,
                 TRANSLATION_MODEL_ID,
                 elapsed_ms,
                 attempt + 1,
+                1 if preserve_mentions else 0,
             )
             return out
         except Exception as e:  # noqa: BLE001
@@ -148,15 +172,23 @@ async def _translate_with_retry(
 
 async def translate_ko_to_en(
     text: str, context_hint: str = "visual/video prompt",
+    preserve_mentions: bool = False,
 ) -> str:
     """한국어 → 영어 번역.
 
     빈 입력 (None / 빈 문자열 / 공백만) → 빈 출력 (LLM 호출 X).
     1회 retry. 실패 시 빈 문자열 반환.
+
+    v24.4 — `preserve_mentions=True` 면 `@xxx` 자산 토큰을 보존하라는
+    시스템 규칙 + few-shot 1줄이 system prompt 에 추가된다. 기본 False 라
+    suno_generator 등 기존 호출자는 무영향.
     """
     if not text or not text.strip():
         return ""
-    return await _translate_with_retry("ko_to_en", text.strip(), context_hint)
+    return await _translate_with_retry(
+        "ko_to_en", text.strip(), context_hint,
+        preserve_mentions=preserve_mentions,
+    )
 
 
 async def translate_en_to_ko(

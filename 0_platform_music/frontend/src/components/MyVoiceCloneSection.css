@@ -88,12 +88,28 @@
   font-size: 14px;
 }
 
+.myvc__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .myvc__error {
   margin-bottom: 12px;
   padding: 10px 14px;
   border-radius: 8px;
   background: rgba(239, 68, 68, 0.1);
   color: #fca5a5;
+  font-size: 13px;
+}
+
+.myvc__notice {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(30, 215, 96, 0.1);
+  color: #86efac;
   font-size: 13px;
 }
 

@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -537,6 +537,108 @@ async def get_generation(
         return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
 
     return _serialize(doc)
+
+
+@router.post("/{gen_id}/timestamps/refetch")
+async def refetch_generation_timestamps(
+    gen_id: str,
+    force: bool = Query(False),
+    current_user=Depends(get_current_user),
+):
+    """On-demand refetch of per-variant lyric timestamps from Suno.
+
+    When ``force`` is False (default), only fills variants that currently have
+    empty timestamps; variants that already have timestamps are left untouched.
+
+    When ``force`` is True, re-fetches every variant (even ones with existing
+    timestamps) to re-segment them. The merge is safe: a non-empty new fetch
+    overwrites the old value, but an empty fetch (transient failure / no data)
+    keeps the existing timestamps so good data is never clobbered.
+
+    Returns the serialized doc (same shape as GET /api/generate/{gen_id}).
+    """
+    if not ObjectId.is_valid(gen_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "생성 요청을 찾을 수 없습니다."})
+    if doc.get("user_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+
+    if doc.get("status") != "completed":
+        return JSONResponse(
+            status_code=400,
+            content={"error": "완료된 생성물만 타임스탬프를 불러올 수 있습니다."},
+        )
+
+    variants = doc.get("variants") or []
+    if not variants:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "이 생성물에는 클립 정보가 없어 타임스탬프를 불러올 수 없습니다."},
+        )
+
+    logger.info(
+        "[TimestampsRefetch] gen_id=%s force=%s start variants=%d",
+        gen_id, force, len(variants),
+    )
+
+    try:
+        from ..services.suno_timestamp_service import get_suno_timestamps
+
+        task_id = doc.get("suno_task_id")
+
+        async def _fetch_one(v: dict) -> list[dict]:
+            audio_id = v.get("suno_audio_id")
+            existing = v.get("timestamps") or []
+            # Without force: skip if no audio_id or already has timestamps.
+            if not audio_id:
+                return existing
+            if not force and existing:
+                return existing
+            try:
+                fresh = await get_suno_timestamps(task_id, audio_id) or []
+            except Exception as _ts_exc:
+                logger.warning(
+                    "[TimestampsRefetch] gen_id=%s audio_id_len=%d fetch failed: %s",
+                    gen_id, len(audio_id), _ts_exc,
+                )
+                return existing
+            # SAFE MERGE: a non-empty fetch overwrites; an empty fetch
+            # (transient failure / no data) keeps existing good data.
+            if fresh:
+                return fresh
+            return existing
+
+        ts_results = await asyncio.gather(
+            *[_fetch_one(v) for v in variants],
+            return_exceptions=False,
+        )
+        for v, segs in zip(variants, ts_results):
+            v["timestamps"] = segs or []
+
+        logger.info(
+            "[TimestampsRefetch] gen_id=%s force=%s filled=%s",
+            gen_id, force, [len(v.get("timestamps") or []) for v in variants],
+        )
+
+        now = datetime.utcnow()
+        await mongo.generations.update_one(
+            {"_id": ObjectId(gen_id)},
+            {"$set": {"variants": variants, "updated_at": now}},
+        )
+
+        updated_doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+        return _serialize(updated_doc)
+
+    except Exception as e:
+        logger.exception("[TimestampsRefetch] gen_id=%s failed: %s", gen_id, e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "타임스탬프를 불러오는 중 오류가 발생했습니다."},
+        )
 
 
 @router.delete("/{gen_id}")

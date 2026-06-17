@@ -295,11 +295,17 @@ async def generate_scene_video_grok(
     target_sec = float(scene.get("use_seconds") or 5.0)
     grok_duration = max(_GROK_MIN, min(_GROK_MAX, int(round(target_sec))))
 
-    raw_prompt = compose_video_prompt(
-        video_model="grok",
-        scene=scene,
-        duration=float(grok_duration),
-    )
+    # v24.3 — extra 흐름 prebuilt_prompt 가 있으면 cinematic 합성 건너뛰고
+    # 그대로 sanitize 만 한다.
+    prebuilt = (scene or {}).get("prebuilt_prompt") or ""
+    if prebuilt:
+        raw_prompt = prebuilt
+    else:
+        raw_prompt = compose_video_prompt(
+            video_model="grok",
+            scene=scene,
+            duration=float(grok_duration),
+        )
     # v25 — Layer 2 안전망: 출력 모더레이션 트리거 표현 사전 치환.
     final_prompt = sanitize_video_prompt(raw_prompt)
 
@@ -308,9 +314,10 @@ async def generate_scene_video_grok(
     logger.info(
         "[PreMVGrok] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
         "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f grok_dur=%d "
-        "image_object=%s presign_url_len=%d",
+        "image_object=%s presign_url_len=%d prebuilt=%d",
         pre_mv_job_id, scene_number, len(raw_prompt), len(final_prompt),
         target_sec, grok_duration, image_object_name, len(image_url),
+        1 if prebuilt else 0,
     )
 
     request_id = await _start_grok(

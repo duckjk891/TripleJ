@@ -51,6 +51,7 @@ STATUS_AWAITING_VERIFY = "awaiting_verify"  # validateInfo 수신, 사용자 ver
 STATUS_GENERATING = "generating"          # generate 콜백 대기
 STATUS_READY = "ready"                    # voice_id 확보, 사용 가능
 STATUS_FAILED = "failed"
+STATUS_EXPIRED = "expired"                # 음악 생성 시 Suno 가 만료 보고 → 자동 플래그
 
 
 def _suno_headers() -> dict:
@@ -705,6 +706,70 @@ async def check_voice_available(generate_task_id: str) -> bool:
     return is_available
 
 
+async def check_all_availability(user_id: str) -> dict:
+    """사용자의 ready 보이스 전체에 대해 Suno check-voice 호출 → 만료된 보이스 삭제.
+
+    - status==ready & voice_id & generate_task_id 가 모두 있는 클론만 검사.
+    - check_voice_available 를 asyncio.gather(return_exceptions=True) 로 동시 호출.
+    - True  → 사용 가능, 유지.
+    - False → 만료(EXPIRED) → 영구 삭제 (delete_voice_clone 과 동일 경로).
+    - Exception(네트워크/API 일시 오류) → 절대 삭제하지 않음. 유지 + warning 로그.
+
+    Returns: {checked, available:[clone_id], expired:[{clone_id,voice_name}], errors}
+    """
+    logger.info("[voice_clone:check_all] user=%s start", user_id)
+
+    mongo = get_mongo()
+    cursor = mongo[VOICE_CLONES_COLLECTION].find({
+        "user_id": user_id,
+        "status": STATUS_READY,
+        "voice_id": {"$nin": [None, ""]},
+        "generate_task_id": {"$nin": [None, ""]},
+    })
+    docs = await cursor.to_list(length=500)
+
+    available: list[str] = []
+    expired: list[dict] = []
+    errors = 0
+
+    if docs:
+        results = await asyncio.gather(
+            *[check_voice_available(d.get("generate_task_id")) for d in docs],
+            return_exceptions=True,
+        )
+        for doc, res in zip(docs, results):
+            clone_id = str(doc.get("_id"))
+            voice_name = doc.get("voice_name") or ""
+            if isinstance(res, Exception):
+                errors += 1
+                logger.warning(
+                    "[voice_clone:check_all] user=%s clone=%s transient check error, keeping: %s",
+                    user_id, clone_id, str(res)[:200],
+                )
+                continue
+            if res:
+                available.append(clone_id)
+                continue
+            # res is definitively False → expired → 영구 삭제.
+            await delete_voice_clone(user_id, clone_id)
+            expired.append({"clone_id": clone_id, "voice_name": voice_name})
+            logger.info(
+                "[voice_clone:check_all] user=%s clone=%s expired -> deleted",
+                user_id, clone_id,
+            )
+
+    logger.info(
+        "[voice_clone:check_all] user=%s checked=%d available=%d expired=%d errors=%d",
+        user_id, len(docs), len(available), len(expired), errors,
+    )
+    return {
+        "checked": len(docs),
+        "available": available,
+        "expired": expired,
+        "errors": errors,
+    }
+
+
 async def regenerate_phrase(clone_id: str) -> dict:
     """검증 문구 재생성.
 
@@ -863,6 +928,35 @@ async def delete_voice_clone(user_id: str, clone_id: str) -> bool:
             logger.warning("[voice_clone:%s] minio remove failed object=%s err=%s", clone_id, obj, e)
     logger.info("[voice_clone:%s] deleted user=%s", clone_id, user_id)
     return True
+
+
+async def cleanup_expired(user_id: str) -> dict:
+    """이 사용자의 status=='expired' 클론만 일괄 영구삭제.
+
+    ready/진행중 클론은 절대 건드리지 않음.
+    Returns: {deleted:int, deleted_ids:[clone_id...], deleted_names:[voice_name...]}.
+    """
+    logger.info("[voice_clone:cleanup] user=%s start", user_id)
+    deleted_ids: list[str] = []
+    deleted_names: list[str] = []
+    try:
+        mongo = get_mongo()
+        cursor = mongo[VOICE_CLONES_COLLECTION].find(
+            {"user_id": user_id, "status": STATUS_EXPIRED}
+        )
+        docs = await cursor.to_list(length=500)
+        for d in docs:
+            deleted_ids.append(str(d.get("_id")))
+            deleted_names.append(d.get("voice_name") or "")
+        res = await mongo[VOICE_CLONES_COLLECTION].delete_many(
+            {"user_id": user_id, "status": STATUS_EXPIRED}
+        )
+        deleted = int(res.deleted_count)
+        logger.info("[voice_clone:cleanup] user=%s deleted=%d", user_id, deleted)
+        return {"deleted": deleted, "deleted_ids": deleted_ids, "deleted_names": deleted_names}
+    except Exception:
+        logger.exception("[voice_clone:cleanup] user=%s failed", user_id)
+        raise
 
 
 # ── internal ────────────────────────────────────────────────────────────────

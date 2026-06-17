@@ -2,7 +2,7 @@
 import asyncio
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 SUNO_GENERATE_URL = "{base}/api/v1/generate"
 SUNO_UPLOAD_COVER_URL = "{base}/api/v1/generate/upload-cover"
 SUNO_STATUS_URL = "{base}/api/v1/generate/record-info"
+
+# Suno 폴링 종료(실패) 상태 집합. "FAILED" 외에 *_FAILED/*_ERROR/*_EXCEPTION 류가 실제 terminal 에러로 도착한다.
+SUNO_TERMINAL_ERROR_STATUSES = {
+    "FAILED",
+    "CREATE_TASK_FAILED",
+    "GENERATE_AUDIO_FAILED",
+    "CALLBACK_EXCEPTION",
+    "SENSITIVE_WORD_ERROR",
+}
 
 SUNO_VOCAL_MAP = {
     "male_warm": {"style": "soft male vocal, warm, smooth", "gender": "m"},
@@ -200,8 +209,8 @@ async def generate_music_suno(
     await _update_progress(mongo_db, generation_id, 20, "processing")
 
     # Step 2: Poll for completion
-    # v76.11: voice clone (persona_model=voice_persona) 는 일반보다 학습/생성 오래 걸림 → timeout 20분.
-    # 일반은 기존 5분 유지. 매 30초 status 로그 추가.
+    # v76.11: voice clone (persona_model=voice_persona) 는 일반보다 학습/생성 오래 걸림 → timeout 12분.
+    # 일반은 기존 5분 유지. 매 poll 마다 status 로그 추가 (이전엔 status 안 찍혀서 진단 불가).
     is_voice_clone = (persona_model or "").strip().lower() == "voice_persona"
     max_polls = 240 if is_voice_clone else 60  # 240*5s=20min, 60*5s=5min — voice clone 은 보수적 마진
     logger.info(
@@ -234,9 +243,27 @@ async def generate_music_suno(
                 generation_id, poll_attempt, max_polls, status or "?", err_code, (err_msg or "")[:120],
             )
 
-        if status == "FAILED":
-            detail = f": {err_msg}" if err_msg else ""
-            raise ValueError(f"Suno 음악 생성에 실패했습니다{detail}")
+        if status in SUNO_TERMINAL_ERROR_STATUSES or status.endswith(("_FAILED", "_ERROR", "_EXCEPTION")):
+            logger.warning(
+                "[suno] gen_id=%s terminal error status=%s err_code=%s err_msg=%s -> fail",
+                generation_id, status, err_code, (err_msg or "")[:200],
+            )
+            _msg_lower = (err_msg or "").lower()
+            if "expired" in _msg_lower or (status == "SENSITIVE_WORD_ERROR" and "voice" in _msg_lower):
+                user_msg = "선택한 보이스가 만료되었습니다. 목소리를 다시 학습시키거나 다른 보컬을 선택해 주세요."
+                # 만료된 클론을 자동으로 status='expired' 로 플래그 (이 루프의 motor client 사용).
+                if persona_id:
+                    try:
+                        res = await mongo_db.voice_clones.update_many(
+                            {"$or": [{"voice_id": persona_id}, {"generate_task_id": persona_id}], "status": {"$ne": "expired"}},
+                            {"$set": {"status": "expired", "expired_at": datetime.now(timezone.utc), "expired_reason": (err_msg or "")[:200]}},
+                        )
+                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d", generation_id, persona_id, res.modified_count)
+                    except Exception as _flag_exc:
+                        logger.warning("[suno] gen_id=%s voice-clone expire-flag failed: %s", generation_id, _flag_exc)
+            else:
+                user_msg = f"Suno 음악 생성에 실패했습니다{': ' + err_msg if err_msg else ''}"
+            raise ValueError(user_msg)
 
         # Update progress based on status
         if status == "TEXT_SUCCESS":
@@ -246,8 +273,12 @@ async def generate_music_suno(
         elif status == "SUCCESS":
             suno_songs = status_data["data"]["response"]["sunoData"]
             if suno_songs:
-                suno_data = suno_songs[0]  # Use first of 2 generated songs
+                suno_data = suno_songs[0]  # Use first of 2 generated songs (BC)
                 audio_url = suno_data.get("audioUrl")
+            logger.info(
+                "[SunoVariants] gen_id=%s polled SUCCESS suno_songs_count=%d",
+                generation_id, len(suno_songs) if suno_songs else 0,
+            )
             break
         else:
             # PENDING or other - gradually increase progress
@@ -255,7 +286,7 @@ async def generate_music_suno(
             await _update_progress(mongo_db, generation_id, progress, "processing")
 
     if not audio_url:
-        # v76.11: 마지막 본 status / 폴 횟수 / 시간 포함 — 진단 보강
+        # 마지막 본 status 도 같이 표시
         last_status = (status_data or {}).get("data", {}).get("status", "?") if status_data else "?"
         raise ValueError(f"Suno 음악 생성 시간이 초과되었습니다 (last_status={last_status}, polls={max_polls}, ~{max_polls*5//60}min).")
 
@@ -279,12 +310,22 @@ async def generate_music_suno(
         content_type="audio/mpeg",
     )
 
-    # Collect all output files (both songs if available)
+    # v74 — Collect all variants (both songs if available) and persist each
+    # variant's audio_url + suno_audio_id + lyrics timestamps.
+    # Hierarchy: variants[0] mirrors result_audio_url / suno_audio_id for BC.
     output_files = [object_name]
+    variants: list[dict] = [{
+        "index": 0,
+        "audio_url": object_name,
+        "suno_audio_id": suno_data.get("id", ""),
+        "timestamps": [],
+    }]
+
     all_suno_songs = status_data["data"]["response"].get("sunoData", [])
     if len(all_suno_songs) > 1:
         second = all_suno_songs[1]
         second_url = second.get("audioUrl")
+        second_audio_id = second.get("id", "")
         if second_url:
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
@@ -299,13 +340,73 @@ async def generate_music_suno(
                     content_type="audio/mpeg",
                 )
                 output_files.append(second_object)
+                variants.append({
+                    "index": 1,
+                    "audio_url": second_object,
+                    "suno_audio_id": second_audio_id,
+                    "timestamps": [],
+                })
+                logger.info(
+                    "[SunoVariants] gen_id=%s variant=1 stored object=%s audio_id_len=%d",
+                    generation_id, second_object, len(second_audio_id),
+                )
             except Exception as e:
-                logger.warning("Suno: failed to download second track: %s", e)
+                logger.warning(
+                    "[SunoVariants] gen_id=%s variant=1 download/store failed: %s",
+                    generation_id, e,
+                )
+        else:
+            logger.warning(
+                "[SunoVariants] gen_id=%s variant=1 missing audioUrl in suno response",
+                generation_id,
+            )
+    else:
+        logger.info(
+            "[SunoVariants] gen_id=%s only 1 variant returned by Suno",
+            generation_id,
+        )
 
-    # Update MongoDB
+    # v74 — Fetch lyrics timestamps for each variant in parallel.
+    # Individual failures yield empty list (do not block completion).
+    try:
+        from .suno_timestamp_service import get_suno_timestamps
+
+        async def _fetch_one(v_audio_id: str) -> list[dict]:
+            if not v_audio_id:
+                return []
+            try:
+                return await get_suno_timestamps(task_id, v_audio_id) or []
+            except Exception as _ts_exc:
+                logger.warning(
+                    "[SunoVariants] gen_id=%s timestamps fetch failed for audio_id_len=%d: %s",
+                    generation_id, len(v_audio_id), _ts_exc,
+                )
+                return []
+
+        ts_results = await asyncio.gather(
+            *[_fetch_one(v["suno_audio_id"]) for v in variants],
+            return_exceptions=False,
+        )
+        for v, segs in zip(variants, ts_results):
+            v["timestamps"] = segs or []
+
+        logger.info(
+            "[SunoVariants] gen_id=%s variant_count=%d timestamps_lens=%s",
+            generation_id,
+            len(variants),
+            [len(v["timestamps"]) for v in variants],
+        )
+    except Exception as _gather_exc:
+        logger.warning(
+            "[SunoVariants] gen_id=%s timestamps gather failed: %s",
+            generation_id, _gather_exc,
+        )
+
+    # Update MongoDB (variants is new; result_audio_url/output_files/suno_audio_id remain BC)
     await _update_progress(mongo_db, generation_id, 100, "completed", {
         "result_audio_url": object_name,
         "output_files": output_files,
+        "variants": variants,
         "completed_at": datetime.utcnow(),
         "suno_task_id": task_id,
         "suno_audio_id": suno_data.get("id", ""),
@@ -329,7 +430,11 @@ async def generate_music_suno(
             generation_id, _be,
         )
 
-    return {"result_audio_url": object_name, "output_files": output_files}
+    return {
+        "result_audio_url": object_name,
+        "output_files": output_files,
+        "variants": variants,
+    }
 
 
 async def _update_progress(mongo_db, generation_id: str, progress: int, status: str, extra: dict = None):

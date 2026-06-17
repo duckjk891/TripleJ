@@ -2,7 +2,7 @@
 import asyncio
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 SUNO_GENERATE_URL = "{base}/api/v1/generate"
 SUNO_UPLOAD_COVER_URL = "{base}/api/v1/generate/upload-cover"
 SUNO_STATUS_URL = "{base}/api/v1/generate/record-info"
+
+# Suno 폴링 종료(실패) 상태 집합. "FAILED" 외에 *_FAILED/*_ERROR/*_EXCEPTION 류가 실제 terminal 에러로 도착한다.
+SUNO_TERMINAL_ERROR_STATUSES = {
+    "FAILED",
+    "CREATE_TASK_FAILED",
+    "GENERATE_AUDIO_FAILED",
+    "CALLBACK_EXCEPTION",
+    "SENSITIVE_WORD_ERROR",
+}
 
 SUNO_VOCAL_MAP = {
     "male_warm": {"style": "soft male vocal, warm, smooth", "gender": "m"},
@@ -234,9 +243,27 @@ async def generate_music_suno(
                 generation_id, poll_attempt, max_polls, status or "?", err_code, (err_msg or "")[:120],
             )
 
-        if status == "FAILED":
-            detail = f": {err_msg}" if err_msg else ""
-            raise ValueError(f"Suno 음악 생성에 실패했습니다{detail}")
+        if status in SUNO_TERMINAL_ERROR_STATUSES or status.endswith(("_FAILED", "_ERROR", "_EXCEPTION")):
+            logger.warning(
+                "[suno] gen_id=%s terminal error status=%s err_code=%s err_msg=%s -> fail",
+                generation_id, status, err_code, (err_msg or "")[:200],
+            )
+            _msg_lower = (err_msg or "").lower()
+            if "expired" in _msg_lower or (status == "SENSITIVE_WORD_ERROR" and "voice" in _msg_lower):
+                user_msg = "선택한 보이스가 만료되었습니다. 목소리를 다시 학습시키거나 다른 보컬을 선택해 주세요."
+                # 만료된 클론을 자동으로 status='expired' 로 플래그 (이 루프의 motor client 사용).
+                if persona_id:
+                    try:
+                        res = await mongo_db.voice_clones.update_many(
+                            {"$or": [{"voice_id": persona_id}, {"generate_task_id": persona_id}], "status": {"$ne": "expired"}},
+                            {"$set": {"status": "expired", "expired_at": datetime.now(timezone.utc), "expired_reason": (err_msg or "")[:200]}},
+                        )
+                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d", generation_id, persona_id, res.modified_count)
+                    except Exception as _flag_exc:
+                        logger.warning("[suno] gen_id=%s voice-clone expire-flag failed: %s", generation_id, _flag_exc)
+            else:
+                user_msg = f"Suno 음악 생성에 실패했습니다{': ' + err_msg if err_msg else ''}"
+            raise ValueError(user_msg)
 
         # Update progress based on status
         if status == "TEXT_SUCCESS":

@@ -112,14 +112,27 @@ async def generate_cover_image(
         try:
             cover_kwargs = {
                 "model": prompt_model,
-                "max_tokens": 500,
+                "max_tokens": 8000,  # v75.2 — adaptive thinking 토큰 차감 대비 상향
                 "system": enhance_system,
                 "messages": [{"role": "user", "content": basic_info}],
+                # v75 — adaptive thinking + high effort. temperature 제거.
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "high"},
             }
-            if "opus-4-7" not in prompt_model:
-                cover_kwargs["temperature"] = 0.8
+            logger.info(
+                "[ThinkingOn] stage=cover_enhance model=%s effort=high",
+                prompt_model,
+            )
             response = await anthropic_client.messages.create(**cover_kwargs)
-            enhanced_prompt = response.content[0].text.strip() or None
+            # v75 — adaptive thinking 응답 안전 추출 ([ThinkingBlock, TextBlock] 순서).
+            enhanced_prompt = None
+            try:
+                for _b in getattr(response, "content", []) or []:
+                    if getattr(_b, "type", None) == "text":
+                        enhanced_prompt = (getattr(_b, "text", "") or "").strip() or None
+                        break
+            except Exception:
+                enhanced_prompt = None
         except Exception:
             enhanced_prompt = None  # Fall through to standard prompt building
 

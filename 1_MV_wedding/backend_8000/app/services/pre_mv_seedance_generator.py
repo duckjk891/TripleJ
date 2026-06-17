@@ -295,21 +295,27 @@ async def generate_scene_video_seedance(
     seedance_duration = max(_SEEDANCE_MIN, min(_SEEDANCE_MAX, int(round(target_sec))))
     has_last_frame = bool(end_frame_bytes)
 
-    raw_prompt = compose_video_prompt(
-        video_model="seedance",
-        scene=scene,
-        duration=float(seedance_duration),
-        has_last_frame=has_last_frame,
-    )
+    # v24.3 — extra 흐름 prebuilt_prompt 가 있으면 cinematic 합성 건너뛰고
+    # 그대로 sanitize 만 한다.
+    prebuilt = (scene or {}).get("prebuilt_prompt") or ""
+    if prebuilt:
+        raw_prompt = prebuilt
+    else:
+        raw_prompt = compose_video_prompt(
+            video_model="seedance",
+            scene=scene,
+            duration=float(seedance_duration),
+            has_last_frame=has_last_frame,
+        )
     final_prompt = sanitize_video_prompt(raw_prompt)
 
     logger.info(
         "[PreMVSeed] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
         "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f seed_dur=%d "
-        "image_bytes=%d end_frame_bytes=%d",
+        "image_bytes=%d end_frame_bytes=%d prebuilt=%d",
         pre_mv_job_id, scene_number, len(raw_prompt), len(final_prompt),
         target_sec, seedance_duration, len(image_bytes or b""),
-        len(end_frame_bytes or b""),
+        len(end_frame_bytes or b""), 1 if prebuilt else 0,
     )
 
     request_id = await _start_seedance(

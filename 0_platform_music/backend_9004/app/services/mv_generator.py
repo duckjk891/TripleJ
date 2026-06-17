@@ -867,15 +867,21 @@ async def generate_video_prompts_from_images(
 
             claude_kwargs = {
                 "model": model,
-                "max_tokens": 1024,
+                # v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 16000 으로 상향.
+                "max_tokens": 16000,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_content}],
+                # v75 — adaptive thinking + high effort, no temperature for all Claude paths.
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "high"},
             }
-            if "opus-4-7" not in model:
-                claude_kwargs["temperature"] = 0.7
+            logger.info(
+                "[ThinkingOn] stage=video_prompt model=%s effort=high scene=%d",
+                model, scene_number,
+            )
             response = await anthropic_client.messages.create(**claude_kwargs)
 
-            video_prompt = response.content[0].text.strip()
+            video_prompt = _first_text_block(response).strip()
             if video_prompt:
                 logger.info("Phase2.5: scene %d video_prompt generated via %s (%d chars)", scene_number, model, len(video_prompt))
                 return video_prompt
@@ -947,8 +953,30 @@ def _claude_temp_cap(t: float) -> float:
 
     Caller logs `[ClaudeTempCap] requested=%.2f capped=%.2f` only when the
     cap actually fires (requested != capped) — i.e. when the input was >1.0.
+
+    v75 — Function preserved for signature compatibility but no longer called
+    by any Claude path (temperature is no longer sent with adaptive thinking).
     """
     return min(float(t), 1.0)
+
+
+def _first_text_block(resp) -> str:
+    """v75 — Anthropic adaptive thinking 응답 안전 추출.
+
+    `messages.create(..., thinking={"type":"adaptive"}, ...)` 응답의
+    `content` 는 `[ThinkingBlock(type="thinking"), TextBlock(type="text")]`
+    순서로 옴. 첫 인덱스가 항상 text 가 아니므로 `resp.content[0].text`
+    패턴은 AttributeError. 본 헬퍼는 첫 `type=="text"` 블록의 `text`를 반환
+    하며, 없으면 빈 문자열을 돌려준다. thinking 비활성 응답에서도 동일하게
+    동작 (BC 보장).
+    """
+    try:
+        for block in getattr(resp, "content", []) or []:
+            if getattr(block, "type", None) == "text":
+                return (getattr(block, "text", None) or "")
+    except Exception:
+        return ""
+    return ""
 
 
 _mv_anthropic_client = None
@@ -1773,10 +1801,17 @@ async def _generate_brainstorm_openai(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": temperature,  # high — we want diverse candidates (v47: retry bumps to 1.0)
-        "max_tokens": 1500,
+        # v75 — gpt-5 series: temperature 강제 default(1) → 인자 제거.
+        # v75 — gpt-5 series: max_tokens → max_completion_tokens.
+        # v75.2 — reasoning 토큰까지 한도에서 차감되므로 16000 으로 상향.
+        "max_completion_tokens": 16000,
         "response_format": {"type": "json_object"},
+        "reasoning_effort": "high",
     }
+    logger.info(
+        "[ReasoningOn] stage=brainstorm model=%s reasoning_effort=high (temp=%.2f dropped) max_completion_tokens=16000",
+        model, temperature,
+    )
     resp = await client.chat.completions.create(**create_kwargs)
     raw = resp.choices[0].message.content.strip()
     parsed = _parse_brainstorm_json(raw)
@@ -1811,13 +1846,18 @@ async def _generate_brainstorm_claude(
         "model": model_name,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_prompt}],
-        "max_tokens": 1500,
+        # v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 16000 으로 상향.
+        "max_tokens": 16000,
+        # v75 — adaptive thinking + high effort; temperature dropped for all Claude.
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
     }
-    if "opus-4-7" not in model_name:
-        # Some Anthropic models reject temperature; opus-4-7 ignores. Others accept.
-        kwargs["temperature"] = capped_temp
+    logger.info(
+        "[ThinkingOn] stage=brainstorm model=%s effort=high (capped_temp=%.2f dropped)",
+        model_name, capped_temp,
+    )
     resp = await client.messages.create(**kwargs)
-    raw = resp.content[0].text.strip()
+    raw = _first_text_block(resp).strip()
     parsed = _parse_brainstorm_json(raw)
     logger.info(
         "MV brainstorm generated (Claude %s, temp=%.2f capped=%.2f): %d candidates",
@@ -3281,13 +3321,22 @@ async def _generate_scenario_openai(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": float(temperature),
-        # v45: enlarged from 2500 → 8000 (narrative 1500~2500자 + events + Few-shot context)
-        "max_tokens": 8000,
+        # v75 — gpt-5 series: temperature default(1) 만 허용 → 인자 제거.
+        # v75 — gpt-5 series: max_tokens → max_completion_tokens.
+        # v75.1 — reasoning_effort=high 시 reasoning 토큰이 max_completion_tokens 에서
+        # 차감되므로 8000 으로는 drama JSON 본문이 0 토큰 잘려나가 빈 응답이 됨
+        # (라이브 검증에서 finish_reason=length 확인). 32000 으로 확대해 reasoning
+        # headroom 충분 확보 (drama JSON 본문 자체는 ~3000자 ≤ 1.5k 토큰).
+        "max_completion_tokens": 32000,
+        "reasoning_effort": "high",
     }
     if is_drama:
         create_kwargs["response_format"] = {"type": "json_object"}
 
+    logger.info(
+        "[ReasoningOn] stage=scenario model=%s reasoning_effort=high drama=%s (temp=%.2f dropped) max_completion_tokens=32000",
+        model, is_drama, float(temperature),
+    )
     resp = await client.chat.completions.create(**create_kwargs)
     raw = resp.choices[0].message.content.strip()
 
@@ -3342,13 +3391,28 @@ async def _generate_scenario_claude(
         "model": model_name,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_prompt}],
-        "max_tokens": 8000,  # v45 enlarged
+        # v75.1 — adaptive thinking + effort=high 시 thinking 토큰이 max_tokens 에서
+        # 차감되어 8000 으로는 본 응답 텍스트가 0 토큰 잘려나가 빈 응답이 됨
+        # (라이브 검증: stop_reason=max_tokens, content=[]). Anthropic 공식 권장
+        # 65535+ 시작값 가이드 참고하여 32000 으로 확대 (JSON 본문 ≤ 1.5k 토큰 + thinking headroom).
+        # v75.1 — Anthropic SDK 가 max_tokens 큰 경우 non-streaming 호출을 ValueError 로 차단
+        # ("Streaming is required for operations that may take longer than 10 minutes") →
+        # `_generate_scene_prompts_claude` (v58.1) 와 동일한 stream + text_stream 패턴으로 전환.
+        "max_tokens": 32000,
+        # v75 — adaptive thinking + high effort.
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
     }
-    if "opus-4-7" not in model_name:
-        scenario_kwargs["temperature"] = capped_temp
-    resp = await client.messages.create(**scenario_kwargs)
-
-    raw = resp.content[0].text.strip()
+    logger.info(
+        "[ThinkingOn] stage=scenario model=%s effort=high (capped_temp=%.2f dropped) max_tokens=32000 stream=on",
+        model_name, capped_temp,
+    )
+    # v75.1 — streaming 모드. text_stream 은 TextBlock chunk 만 yield 하므로 thinking 블록 무시.
+    _raw_parts: List[str] = []
+    async with client.messages.stream(**scenario_kwargs) as _stream:
+        async for _chunk in _stream.text_stream:
+            _raw_parts.append(_chunk)
+    raw = "".join(_raw_parts).strip()
 
     if is_drama:
         parsed = _parse_drama_scenario_json(
@@ -3979,14 +4043,20 @@ async def split_lyrics_into_scenes(
             "Incorporate this direction into each scene's visual description."
         ).format(user_scene_prompt.strip())
 
+    logger.info(
+        "[ReasoningOn] stage=scene_split_legacy model=%s reasoning_effort=high",
+        settings.openai_model,
+    )
     response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        temperature=0.7,
-        max_tokens=4000,
+        # v75 — gpt-5: temperature default(1) 만 허용 → 인자 제거. max_tokens → max_completion_tokens.
+        # v75.2 — reasoning 토큰까지 한도에서 차감되므로 16000 으로 상향.
+        max_completion_tokens=16000,
+        reasoning_effort="high",
     )
 
     raw = response.choices[0].message.content.strip()
@@ -4106,18 +4176,23 @@ async def _split_with_music_sections(
         dur = sec["end"] - sec["start"]
         total_clips += math.ceil(dur / 10)
 
-    # v56: 영어+한국어 6필드 동시 출력으로 토큰 ~2배 — 씬당 500→1200, max 8000→16000
-    # OpenAI 모델별 출력 한계 16384 — cap 으로 안전 처리
-    max_tokens = min(max(total_clips * 1200, 8000), 16000)
+    # v56: 영어+한국어 6필드 동시 출력으로 토큰 ~2배 — 씬당 500→1200.
+    # v75.2 — gpt-5 는 출력 한계 ≥128k. reasoning 토큰 차감 대비 cap 32000 으로 상향.
+    max_tokens = min(max(total_clips * 1200, 16000), 32000)
 
+    logger.info(
+        "[ReasoningOn] stage=scene_split_section_aware model=%s reasoning_effort=high max_completion_tokens=%d",
+        settings.openai_model, max_tokens,
+    )
     response = await client.chat.completions.create(
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        temperature=0.7,
-        max_tokens=max_tokens,
+        # v75 — gpt-5: temperature default(1) 만 허용 → 제거. max_tokens → max_completion_tokens.
+        max_completion_tokens=max_tokens,
+        reasoning_effort="high",
     )
 
     raw = response.choices[0].message.content.strip()
@@ -4794,18 +4869,23 @@ async def _generate_scene_prompts_openai(
         character_states=character_states,
     )
 
-    # v56: 영어+한국어 6필드 동시 출력으로 토큰 ~2배 — 씬당 500→1200, max 8000→16000
-    # OpenAI 모델별 출력 한계 16384 — cap 으로 안전 처리
-    max_tokens = min(max(len(scenes_input) * 1200, 8000), 16000)
+    # v56: 영어+한국어 6필드 동시 출력으로 토큰 ~2배 — 씬당 500→1200.
+    # v75.2 — gpt-5 는 출력 한계 ≥128k. reasoning 토큰 차감 대비 cap 64000 으로 상향.
+    max_tokens = min(max(len(scenes_input) * 1200, 16000), 64000)
 
+    logger.info(
+        "[ReasoningOn] stage=scene_prompts model=%s reasoning_effort=high max_completion_tokens=%d scenes=%d",
+        model, max_tokens, len(scenes_input),
+    )
     response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        temperature=0.7,
-        max_tokens=max_tokens,
+        # v75 — gpt-5: temperature default(1) 만 허용 → 제거. max_tokens → max_completion_tokens.
+        max_completion_tokens=max_tokens,
+        reasoning_effort="high",
     )
 
     raw = response.choices[0].message.content.strip()
@@ -4842,9 +4922,14 @@ async def _generate_scene_prompts_claude(
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
         "max_tokens": max_tokens,
+        # v75 — adaptive thinking + high effort (stream mode; text_stream yields only text blocks).
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
     }
-    if "opus-4-7" not in model_name:
-        scene_kwargs["temperature"] = 0.7
+    logger.info(
+        "[ThinkingOn] stage=scene_prompts model=%s effort=high max_tokens=%d",
+        model_name, max_tokens,
+    )
     # v58.1: streaming 모드 — chunk 누적해서 최종 텍스트 조립
     raw_parts = []
     async with client.messages.stream(**scene_kwargs) as stream:

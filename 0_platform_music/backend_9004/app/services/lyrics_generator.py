@@ -5,11 +5,14 @@ Supports model selection: single model or dual-model comparison.
 """
 
 import asyncio
+import logging
 
 import anthropic
 from openai import AsyncOpenAI
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 _client = None
 _anthropic_client = None
@@ -27,6 +30,21 @@ def _get_anthropic_client():
     if _anthropic_client is None:
         _anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     return _anthropic_client
+
+
+def _first_text_block(resp) -> str:
+    """v75 — Anthropic adaptive-thinking 응답의 첫 text 블록을 안전 추출.
+
+    `content` 가 `[ThinkingBlock, TextBlock]` 순서일 때 `content[0].text` 가
+    깨지는 회귀를 막는다. thinking 비활성 응답에서도 동일 동작.
+    """
+    try:
+        for block in getattr(resp, "content", []) or []:
+            if getattr(block, "type", None) == "text":
+                return (getattr(block, "text", None) or "")
+    except Exception:
+        return ""
+    return ""
 
 
 SYSTEM_PROMPT_SOLO = """You are a professional songwriter specializing in writing lyrics optimized for Suno AI music generation.
@@ -209,18 +227,28 @@ async def _generate_lyrics_openai(
         duet_main_vocal_style, duet_sub_vocal_style, language,
     )
 
+    logger.info(
+        "[ReasoningOn] stage=lyrics model=%s reasoning_effort=high",
+        model,
+    )
     lyrics_response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-        temperature=0.8,
-        max_tokens=1500,
+        # v75 — gpt-5: temperature default(1) 만 허용 → 제거. max_tokens → max_completion_tokens.
+        # v75.2 — reasoning 토큰까지 한도에서 차감되므로 16000 으로 상향.
+        max_completion_tokens=16000,
+        reasoning_effort="high",
     )
 
     lyrics = lyrics_response.choices[0].message.content.strip()
 
+    logger.info(
+        "[ReasoningOn] stage=title model=%s reasoning_effort=high",
+        model,
+    )
     title_response = await client.chat.completions.create(
         model=model,
         messages=[
@@ -231,8 +259,10 @@ async def _generate_lyrics_openai(
             },
             {"role": "user", "content": lyrics},
         ],
-        temperature=0.7,
-        max_tokens=50,
+        # v75 — gpt-5: temperature default(1) 만 허용 → 제거. max_tokens → max_completion_tokens.
+        # v75.2 — 짧은 응답이지만 reasoning 토큰까지 차감되므로 8000 으로 상향.
+        max_completion_tokens=8000,
+        reasoning_effort="high",
     )
 
     title = title_response.choices[0].message.content.strip().strip('"\'')
@@ -265,13 +295,19 @@ async def _generate_lyrics_claude(
         "model": model,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
-        "max_tokens": 1500,
+        # v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 16000 으로 상향.
+        "max_tokens": 16000,
+        # v75 — adaptive thinking + high effort.
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
     }
-    if "opus-4-7" not in model:
-        lyrics_kwargs["temperature"] = 0.8
+    logger.info(
+        "[ThinkingOn] stage=lyrics model=%s effort=high",
+        model,
+    )
     lyrics_response = await client.messages.create(**lyrics_kwargs)
 
-    lyrics = lyrics_response.content[0].text.strip()
+    lyrics = _first_text_block(lyrics_response).strip()
 
     title_kwargs = {
         "model": model,
@@ -280,13 +316,19 @@ async def _generate_lyrics_claude(
             "Output ONLY the title, nothing else. Match the language of the lyrics."
         ),
         "messages": [{"role": "user", "content": lyrics}],
-        "max_tokens": 50,
+        # v75.2 — 짧은 응답이지만 adaptive thinking 토큰까지 차감되므로 8000 으로 상향.
+        "max_tokens": 8000,
+        # v75 — adaptive thinking + high effort.
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
     }
-    if "opus-4-7" not in model:
-        title_kwargs["temperature"] = 0.7
+    logger.info(
+        "[ThinkingOn] stage=title model=%s effort=high",
+        model,
+    )
     title_response = await client.messages.create(**title_kwargs)
 
-    title = title_response.content[0].text.strip().strip('"\'')
+    title = _first_text_block(title_response).strip().strip('"\'')
 
     return {
         "title": title,

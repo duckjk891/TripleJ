@@ -3944,6 +3944,23 @@ POST /api/voice-clone/{clone_id}/regenerate-phrase
 
 ---
 
+### 만료 클론 정리 (v79)
+
+```
+POST /api/voice-clone/cleanup-expired
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Body | 없음 |
+
+**동작:** 내 클론 중 `status='expired'` 인 항목만 일괄 영구삭제. ready/진행중 클론은 절대 건드리지 않음.
+
+**응답 (200):** `{"deleted": <int>, "deleted_ids": ["<clone_id>"...], "deleted_names": ["<voice_name>"...]}`.
+
+---
+
 ### Suno → 우리 콜백 (외부 노출 시 활성)
 
 ```
@@ -3962,7 +3979,7 @@ Suno 가 외부에서 우리 9005/9004 에 접근 가능한 환경에서만 동�
 
 ---
 
-### 27.1 음악 생성과 연동 — `/api/generate/` 에 추가된 두 필드
+### 27.1 음악 생성과 연동 — `/api/generate/` 관련 필드 (suno_model 신규 + persona 2종)
 
 v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
 
@@ -4005,6 +4022,7 @@ v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
 | generating | verify 업로드 완료. Suno 가 voice/generate 진행 중 |
 | ready | voice_id 도착. 음악 생성에 사용 가능 |
 | failed | 외부 측 fail 또는 timeout. `error_message` 확인 |
+| expired | 만료됨. 음악 생성 시 Suno 가 "voice has expired" 로 실패하면 해당 클론이 자동으로 이 상태로 플래그됨 (작곡 선택목록에서 자동 제외). `POST /cleanup-expired` 로 일괄 삭제 가능. **check-voice/record-info 로는 만료 감지 불가** — 오직 음악 생성 시점에만 감지됨 |
 
 ### 27.3 운영 특이사항 (앱팀 참고)
 

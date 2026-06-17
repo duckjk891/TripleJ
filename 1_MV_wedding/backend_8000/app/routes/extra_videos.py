@@ -205,6 +205,7 @@ class ExtraVideoCreate(BaseModel):
     video_model: Literal["veo", "kling", "seedance", "grok"] = "veo"
     use_seconds: int = Field(default=5, ge=1, le=20)
     variant_count: int = Field(default=1, ge=1, le=4)
+    refs: list[dict] = Field(default_factory=list, max_length=8)
 
 
 class BulkIds(BaseModel):
@@ -220,6 +221,7 @@ class ExtraVideoRefine(BaseModel):
     user_text: str = Field(..., min_length=1, max_length=4000)
     motion_presets: list[str] = Field(default_factory=list, max_length=11)
     use_seconds: Optional[float] = Field(default=None, ge=1, le=20)
+    refs: list[dict] = Field(default_factory=list, max_length=8)
 
 
 class ExtraVideoContinue(BaseModel):
@@ -233,6 +235,7 @@ class ExtraVideoContinue(BaseModel):
     motion_presets: list[str] = Field(default_factory=list, max_length=11)
     video_model: Optional[Literal["veo", "kling", "seedance", "grok"]] = None
     use_seconds: Optional[float] = Field(default=None, ge=1, le=20)
+    refs: list[dict] = Field(default_factory=list, max_length=8)
 
 
 # ── POST / ──────────────────────────────────────────────────────────────────
@@ -256,10 +259,10 @@ async def create_extra_video(
     logger.info(
         "[ExtraVideosRoute] POST / entry user_id=%s is_admin=%s mv_job_id=%s "
         "source_kind=%s video_model=%s use_seconds=%d variant_count=%d "
-        "motion_count=%d text_len=%d",
+        "motion_count=%d text_len=%d refs_count=%d",
         user_id, is_admin, body.mv_job_id, body.source_kind, body.video_model,
         body.use_seconds, body.variant_count, len(body.motion_presets or []),
-        len(body.user_text or ""),
+        len(body.user_text or ""), len(body.refs or []),
     )
 
     # ── mv_job + owner 가드 ──────────────────────────────────────────────
@@ -436,6 +439,7 @@ async def create_extra_video(
         "source_object_name": source_object_name,
         "user_text": (body.user_text or ""),
         "motion_presets": known_motions,
+        "refs": list(body.refs or []),
         # v23.3 멀티턴 refine 그룹핑. v1 은 본인 _id 가 root.
         "parent_video_id": None,
         "chain_root_video_id": new_id,
@@ -457,9 +461,10 @@ async def create_extra_video(
 
     logger.info(
         "[ExtraVideosRoute] POST queued user_id=%s mv_job_id=%s "
-        "extra_video_id=%s video_model=%s use_seconds=%d motion_count=%d",
+        "extra_video_id=%s video_model=%s use_seconds=%d motion_count=%d "
+        "refs_count=%d",
         user_id, body.mv_job_id, new_id, vm, clamped_use_seconds,
-        len(known_motions),
+        len(known_motions), len(body.refs or []),
     )
 
     # ── 백그라운드 잡 시작 ──────────────────────────────────────────────
@@ -474,6 +479,7 @@ async def create_extra_video(
             motion_presets=known_motions,
             video_model=vm,
             use_seconds=float(clamped_use_seconds),
+            refs=list(body.refs or []),
         )
     )
 
@@ -497,6 +503,7 @@ async def _run_extra_video_generation(
     motion_presets: list[str],
     video_model: str,
     use_seconds: float,
+    refs: Optional[list[dict]] = None,
 ) -> None:
     """Drive an extra_videos doc from queued → video_generating → completed/failed."""
     mongo = get_mongo()
@@ -511,9 +518,10 @@ async def _run_extra_video_generation(
     logger.info(
         "[ExtraVideosRoute][bg] start extra_video_id=%s mv_job_id=%s user_id=%s "
         "video_model=%s source_kind=%s use_seconds=%.2f motion_count=%d "
-        "user_text_len=%d",
+        "user_text_len=%d refs_count=%d",
         extra_video_id, mv_job_id, owner_user_id, video_model, source_kind,
         use_seconds, len(motion_presets or []), len(user_text or ""),
+        len(refs or []),
     )
 
     now = datetime.now(timezone.utc)
@@ -540,6 +548,7 @@ async def _run_extra_video_generation(
             motion_presets=list(motion_presets or []),
             video_model=video_model,
             use_seconds=float(use_seconds),
+            refs=list(refs or []),
         )
     except Exception as e:  # noqa: BLE001
         err_text = "{}: {}".format(type(e).__name__, str(e)[:200] or "(no message)")
@@ -921,10 +930,12 @@ async def refine_extra_video(
     is_admin = current_user.get("role") == "admin"
     logger.info(
         "[ExtraVideosRoute] refine entry user_id=%s is_admin=%s "
-        "extra_video_id=%s motion_count=%d text_len=%d use_seconds=%s",
+        "extra_video_id=%s motion_count=%d text_len=%d use_seconds=%s "
+        "refs_count=%d",
         user_id, is_admin, extra_video_id,
         len(body.motion_presets or []), len(body.user_text or ""),
         ("none" if body.use_seconds is None else str(body.use_seconds)),
+        len(body.refs or []),
     )
 
     # 1) owner + parent 로드 ────────────────────────────────────────────────
@@ -1061,6 +1072,7 @@ async def refine_extra_video(
         "source_object_name": source_object_name,
         "user_text": (body.user_text or ""),
         "motion_presets": known_motions,
+        "refs": list(body.refs or []),
         # v23.3 멀티턴 refine 그룹핑.
         "parent_video_id": parent_id_str,
         "chain_root_video_id": chain_root_id,
@@ -1084,9 +1096,10 @@ async def refine_extra_video(
     logger.info(
         "[ExtraVideosRoute] refine queued user_id=%s mv_job_id=%s "
         "extra_video_id=%s parent_video_id=%s chain_root_video_id=%s "
-        "video_model=%s use_seconds=%.2f motion_count=%d",
+        "video_model=%s use_seconds=%.2f motion_count=%d refs_count=%d",
         user_id, parent_mv_job_id, new_id, parent_id_str, chain_root_id,
         locked_model, clamped_use_seconds, len(known_motions),
+        len(body.refs or []),
     )
 
     # 10) 백그라운드 잡 시작 (v23.2 함수 재사용) ─────────────────────────────
@@ -1101,6 +1114,7 @@ async def refine_extra_video(
             motion_presets=known_motions,
             video_model=locked_model,
             use_seconds=float(clamped_use_seconds),
+            refs=list(body.refs or []),
         )
     )
 
@@ -1205,11 +1219,12 @@ async def continue_extra_video(
     logger.info(
         "[ExtraVideosRoute] continue entry user_id=%s is_admin=%s "
         "extra_video_id=%s body_video_model=%s use_seconds=%s "
-        "motion_count=%d text_len=%d",
+        "motion_count=%d text_len=%d refs_count=%d",
         user_id, is_admin, extra_video_id,
         (body.video_model or "(parent-lock)"),
         ("none" if body.use_seconds is None else str(body.use_seconds)),
         len(body.motion_presets or []), len(body.user_text or ""),
+        len(body.refs or []),
     )
 
     # 1) owner + parent 로드 ────────────────────────────────────────────────
@@ -1379,6 +1394,7 @@ async def continue_extra_video(
         "source_object_name": png_object_name,
         "user_text": (body.user_text or ""),
         "motion_presets": known_motions,
+        "refs": list(body.refs or []),
         # Continue: parent 관계는 표시하되 chain_root 는 self (refine 과 분리).
         "parent_video_id": parent_id_str,
         "chain_root_video_id": chain_root_id,
@@ -1403,10 +1419,10 @@ async def continue_extra_video(
         "[ExtraVideosRoute] continue queued user_id=%s mv_job_id=%s "
         "extra_video_id=%s parent_video_id=%s chain_root_video_id=%s "
         "video_model=%s use_seconds=%.2f motion_count=%d source_kind=%s "
-        "source_object=%s",
+        "source_object=%s refs_count=%d",
         user_id, parent_mv_job_id, new_id, parent_id_str, chain_root_id,
         chosen_model, clamped_use_seconds, len(known_motions),
-        new_source_kind, png_object_name,
+        new_source_kind, png_object_name, len(body.refs or []),
     )
 
     # 12) 백그라운드 잡 시작 (기존 함수 재사용) ─────────────────────────────
@@ -1421,6 +1437,7 @@ async def continue_extra_video(
             motion_presets=known_motions,
             video_model=chosen_model,
             use_seconds=float(clamped_use_seconds),
+            refs=list(body.refs or []),
         )
     )
 

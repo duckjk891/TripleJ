@@ -358,18 +358,25 @@ async def generate_scene_video_veo(
     target_sec = float(scene.get("use_seconds") or _VEO_DURATION)
     has_last_frame = bool(end_frame_bytes)
 
-    final_prompt = compose_video_prompt(
-        video_model="veo",
-        scene=scene,
-        duration=min(float(_VEO_DURATION), max(2.0, target_sec)),
-        has_last_frame=has_last_frame,
-    )
+    # v24.3 — extra 흐름 prebuilt_prompt 가 있으면 cinematic 합성 건너뛰고 그대로 사용.
+    prebuilt = (scene or {}).get("prebuilt_prompt") or ""
+    if prebuilt:
+        final_prompt = prebuilt
+    else:
+        final_prompt = compose_video_prompt(
+            video_model="veo",
+            scene=scene,
+            duration=min(float(_VEO_DURATION), max(2.0, target_sec)),
+            has_last_frame=has_last_frame,
+        )
 
     logger.info(
         "[PreMVVeo] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
-        "prompt_len=%d use_seconds=%.2f image_bytes=%d last_frame_bytes=%d",
+        "prompt_len=%d use_seconds=%.2f image_bytes=%d last_frame_bytes=%d "
+        "prebuilt=%d",
         pre_mv_job_id, scene_number, len(final_prompt), target_sec,
         len(image_bytes or b""), len(end_frame_bytes or b""),
+        1 if prebuilt else 0,
     )
 
     op_name = await _start_veo(

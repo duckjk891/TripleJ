@@ -12,6 +12,7 @@ const STATUS_BADGE = {
   generating: { label: '학습 중', color: '#7C3AED' },
   ready: { label: '사용 가능', color: '#1ed760' },
   failed: { label: '실패', color: '#EF4444' },
+  expired: { label: '만료됨', color: '#b91c1c' },
 };
 
 function formatDate(iso) {
@@ -31,6 +32,10 @@ export default function MyVoiceCloneSection() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [resumeClone, setResumeClone] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [cleaningExpired, setCleaningExpired] = useState(false);
+  const [cleanupNotice, setCleanupNotice] = useState('');
+
+  const expiredCount = clones.filter((c) => c?.status === 'expired').length;
 
   const fetchClones = useCallback(async () => {
     if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] fetching clones');
@@ -87,6 +92,27 @@ export default function MyVoiceCloneSection() {
     }
   };
 
+  const handleCleanupExpired = async () => {
+    if (expiredCount === 0) return;
+    if (!window.confirm(`만료된 목소리 ${expiredCount}개를 영구 삭제하시겠습니까?`)) {
+      return;
+    }
+    setCleaningExpired(true);
+    setCleanupNotice('');
+    if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] cleanupExpired calling', { expiredCount });
+    try {
+      const { data } = await api.cleanupExpiredVoiceClones();
+      if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] cleanupExpired ok', { deleted: data?.deleted });
+      await fetchClones();
+      setCleanupNotice(`${data?.deleted ?? 0}개의 만료된 목소리를 삭제했습니다.`);
+    } catch (err) {
+      console.error('[MyVoiceCloneSection] cleanupExpired failed', { err });
+      alert('삭제된 목소리 정리에 실패했습니다.');
+    } finally {
+      setCleaningExpired(false);
+    }
+  };
+
   const handleResumeVerify = (clone) => {
     const id = clone?.clone_id || clone?.id;
     if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] resume verify', { id });
@@ -118,12 +144,25 @@ export default function MyVoiceCloneSection() {
           <FiMic className="myvc__title-icon" />
           내 목소리 (보이스 클론)
         </h3>
-        <button type="button" className="myvc__btn myvc__btn--primary" onClick={handleNew}>
-          <FiPlus /> 새 목소리 학습
-        </button>
+        <div className="myvc__header-actions">
+          {expiredCount > 0 && (
+            <button
+              type="button"
+              className="myvc__btn myvc__btn--danger"
+              disabled={cleaningExpired}
+              onClick={handleCleanupExpired}
+            >
+              <FiTrash2 /> {cleaningExpired ? '정리 중...' : `삭제된 목소리 정리 (${expiredCount})`}
+            </button>
+          )}
+          <button type="button" className="myvc__btn myvc__btn--primary" onClick={handleNew}>
+            <FiPlus /> 새 목소리 학습
+          </button>
+        </div>
       </div>
 
       {error && <div className="myvc__error">{error}</div>}
+      {cleanupNotice && <div className="myvc__notice">{cleanupNotice}</div>}
 
       {loading && clones.length === 0 ? (
         <div className="myvc__empty">목소리 목록 불러오는 중...</div>

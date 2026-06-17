@@ -320,6 +320,8 @@ export const getVoiceClones = () => API.get('/voice-clone/list');
 export const getVoiceClone = (id) => API.get('/voice-clone/' + id);
 export const deleteVoiceClone = (id) => API.delete('/voice-clone/' + id);
 export const regenerateVoiceClonePhrase = (id) => API.post('/voice-clone/' + id + '/regenerate-phrase');
+export const checkVoiceCloneAvailability = () => API.post('/voice-clone/check-availability');
+export const cleanupExpiredVoiceClones = () => API.post('/voice-clone/cleanup-expired');
 
 // Vocal Repair (Dolby.io)
 export const uploadVoiceForRepair = (formData) =>
@@ -414,6 +416,8 @@ export const createGeneration = (data) => API.post('/generate/', data);
 export const startMusicGeneration = (id) => API.post(`/generate/${id}/start/`);
 export const getGenerations = (params) => API.get('/generate/', { params });
 export const getGeneration = (id) => API.get(`/generate/${id}`);
+export const refetchGenerationTimestamps = (genId, force = false) =>
+  API.post(`/generate/${genId}/timestamps/refetch`, null, { params: { force } });
 export const deleteGeneration = (id) => API.delete(`/generate/${id}`);
 export const streamGeneration = (id) => API.get(`/generate/${id}/stream/`);
 export const uploadFromGeneration = (data) => API.post('/tracks/upload-from-generation', data);

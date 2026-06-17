@@ -22008,3 +22008,244 @@ v75.1 에서 시나리오 두 곳만 32k 로 올렸지만, **thinking/reasoning 
 | T4 | 일반 보컬 (voice clone 없음) 회귀 | 기존과 동일 동작 |
 | T5 | startMusicGeneration (이어서 작업) 경로 회귀 | doc.get("suno_model") 가 None 이거나 'V5_5' 둘 다 OK |
 
+
+---
+
+## v76.14 — 9004 ↔ 9005 완전 동일시 (옵션 B: v74 SunoVariants + v75 thinking backport) — 2026-06-11
+- **요청 작업**: 앱팀이 9004 를 9005 와 똑같이 쓸 수 있게 완전 동일시. 품질 우선.
+- **팀**: VoxClone Squad. backend-dev / tester.
+- **정책 변경**: 이번부터 "9004 frozen" → "9004 = 9005 미러 (동일시 유지)" 로 전환.
+
+### Plan verification findings
+1. **라우트 표면**: 양쪽 182 라우트 완전 일치 (v76.13 감사). 차이는 내부 동작뿐.
+2. **코드 diff 8파일** 중 7개 sync 대상, 1개 제외:
+   - sync: `routes/generate.py`, `routes/tracks.py`, `services/suno_generator.py`, `services/mv_generator.py`, `services/lyrics_generator.py`, `services/translation.py`, `services/cover_generator.py`
+   - 제외: `routes/_logs.py` (로그 파일명 인스턴스 식별용 — 의도된 차이)
+3. **9004-only 라인 검사**: 7파일의 9004-only 비주석 라인은 모두 v75 가 대체한 옛 코드 패턴 (temperature / 옛 max_tokens / content[0].text) — 고유 기능 0건 → 전체 파일 복사 안전.
+4. **.env 차이**: `OPENAI_MODEL` 만 다름 (9004=gpt-4o-mini → gpt-5.5 로 변경). 그 외 키 목록 완전 동일.
+5. **의존 서비스**: `suno_timestamp_service.py` 는 양쪽 이미 동일 (diff 없음) — v74 variants 의 의존성 충족.
+6. **콜백/9001~9003**: 무관. frontend 도 무변경 (9005 만 바라봄).
+
+### 변경 매트릭스
+| 대상 | 작업 |
+|---|---|
+| 9004 코드 7파일 | 9005 에서 그대로 복사 |
+| 9004 `.env` | `OPENAI_MODEL=gpt-4o-mini` → `gpt-5.5` |
+| 9004 `routes/_logs.py` | 무변경 (제외) |
+| 9004 서버 | 재시작 (.env 반영) |
+
+### 테스트 시나리오 (tester)
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T1 | 9004 컴파일 + 기동 | health 200 |
+| T2 | diff 재검사 | _logs.py 외 7파일 byte-동일 |
+| T3 | 라이브: 가사 생성 (thinking) | `[ReasoningOn] stage=lyrics model=gpt-5.5` 로그 + 정상 응답 |
+| T4 | 라이브: 음악 생성 1건 — variants 확인 | 응답 doc 에 `variants[]` ≥1 + status completed |
+| T5 | 회귀: voice-clone/list, persona/list, tracks | 200 |
+| T6 | 9005 무영향 | 9005 health/lyrics 정상 |
+
+### 비용/주의
+- 9004 의 AI 호출 단가가 9005 와 동일 수준으로 상승 (thinking/reasoning 토큰 과금) — 품질 우선 정책에 따른 의도된 변화.
+- API 키 등 시크릿은 본 문서에 미기재.
+
+
+---
+
+## v77 — 가사 타임스탬프 미표시 근본 수정 (Suno 인증 헤더 오류) — 2026-06-17
+
+**팀:** LyricSync Squad (planner / backend-dev / frontend-dev / tester)
+**요청:** '내음악' 탭 생성기록의 각 클립(클립1/클립2) '가사 타임스탬프' 토글을 펼치면, 해당 클립 가사가 `[mm:ss.s → mm:ss.s  가사텍스트]` 줄 단위로 실제 표시되게 한다. (현재 항상 "없음")
+
+### Plan verification findings (Step 0 — 현재 코드 직접 확인)
+
+1. **근본 원인 (라이브 검증 완료):** `backend_9005/app/services/suno_timestamp_service.py:32-33` 가 인증 헤더로 `{"api-key": settings.suno_api_key}` 를 사용. Suno(sunoapi.org) `/api/v1/generate/get-timestamped-lyrics` 는 `Authorization: Bearer <key>` 를 요구.
+   - 동일 task_id/audio_id 로 직접 호출 검증:
+     - `api-key` 헤더 → `{"code":401,"msg":"Unauthorized – Authentication failed"}`
+     - `Authorization: Bearer` 헤더 → `{"code":200,"data":{"alignedWords":[...]}}` ✓ (타임스탬프 정상 수신)
+   - sunoapi 는 인증 실패에도 **HTTP 200** + 본문 `code:401` 형태로 응답 → `resp.raise_for_status()` 가 못 잡음 → 코드가 `data.get("code") != 200` 분기에서 `logger.warning` 후 `return []` (silent fail). 그래서 `variants[].timestamps=[]` 로 저장됨.
+   - 대조 근거: 같은 패키지의 음악 생성 호출 `suno_generator.py:82` 은 이미 `Authorization: Bearer` 사용 → 정상. 타임스탬프 서비스만 헤더가 틀림 (단순 실수).
+
+2. **타임스탬프 fetch/저장 흐름 (정상 동작, 헤더만 문제):** `suno_generator.py:342-374` — 완료 시 variant 별 `get_suno_timestamps(task_id, suno_audio_id)` 병렬 호출 → `variants[].timestamps` 에 저장. `_words_to_segments()` 가 word-level `alignedWords` → 0.5s 쉼 기준 segment `{text,start,end}` 변환.
+
+3. **API 노출 (이미 됨):** `GET /api/generate/{gen_id}` (`generate.py:539`) 및 `GET /api/generate/` (`generate.py:514`) 모두 `_serialize(doc)` 로 doc 전체 패스스루 → `variants[].timestamps` 가 이미 응답에 포함. **신규 엔드포인트 불필요(신규 생성분 한정).**
+
+4. **프론트 배선 (이미 완성):** `StudioTab2.jsx:3222-3226` 가 `<LyricsTimestampToggle segments={v.timestamps||[]} />` 렌더. `LyricsTimestampToggle.jsx` 가 펼침 시 `formatTime(start)→formatTime(end)  text` 줄 단위 렌더. 비면 "가사 타임스탬프 없음" 표시. **신규 생성분은 헤더 수정만으로 프론트 변경 없이 동작.**
+   - 생성기록 fetch: `StudioTab2.jsx:987 fetchHistory()` → `api.getGenerations({limit:50})` (`api/index.js:415`). 처리 중에만 10초 폴링, 완료 시 중단.
+
+5. **갭 — 기존 레코드:** 이미 완료된 생성물은 `variants[].timestamps=[]` 로 저장돼 있어 헤더 수정만으로는 채워지지 않음. (DB 확인: 최근 완료건 전부 `ts_lens=[0,0]`, 단 `suno_audio_id`(36자)·`suno_task_id` 는 정상 보유 → 재요청 가능.)
+
+6. **미러 정책:** 9004 도 동일 버그 (`backend_9004/.../suno_timestamp_service.py:33` = `api-key`). [[default-backend-target-is-9005-only]] 정책상 9005 수정분을 9004 에 동일 sync.
+
+### 변경 매트릭스
+
+| # | 파일 | 변경 | 추적자/로그 |
+|---|---|---|---|
+| 1 | `backend_9005/app/services/suno_timestamp_service.py` | 헤더 `api-key` → `Authorization: Bearer`. silent-fail 시 `code`/`msg` 를 명확히 logger.warning (task_id 포함). 진입/응답 로그에 `task_id`, `audio_id_len`, `code`, `segments_len` 기록. | `[SunoTimestamps] task_id=... audio_id_len=... code=... segs=...` |
+| 2 | `backend_9005/app/routes/generate.py` | 신규 `POST /api/generate/{gen_id}/timestamps/refetch` — 완료 + variant 에 suno_audio_id/task_id 있고 timestamps 비었을 때 재호출·persist 후 갱신 doc 반환. 소유자 검증. 진입/외부호출/결과 로그. | `[TimestampsRefetch] gen_id=... variants=... filled=...` |
+| 3 | `frontend/src/api/index.js` | `refetchGenerationTimestamps(genId)` = `API.post('/generate/${genId}/timestamps/refetch')` 추가. | — |
+| 4 | `frontend/src/components/LyricsTimestampToggle.jsx` | segments 비었고 generationId 있을 때 "타임스탬프 불러오기" 버튼 노출 → refetch 호출 → 성공 시 부모에 갱신 통지(onRefetched) 또는 자체 state 로 segments 갱신. DEV 가드 로그 + catch error 로그. | `[LyricsTimestamp] refetch genId=... vi=...` |
+| 5 | `frontend/src/components/StudioTab2.jsx` | LyricsTimestampToggle 에 `onRefetched` 전달 → 해당 gen 의 variant.timestamps 를 응답으로 교체(또는 `fetchHistory()` 재호출). | `[StudioTab2] ts refetched genId=...` |
+| 6 | `backend_9004/...` (미러) | 위 1·2 동일 적용. `_logs.py` 는 sync 제외. | 동일 |
+
+### 역할 할당
+- **backend-dev:** 매트릭스 #1, #2, #6. 신규 엔드포인트는 REST API + api/index.js 대응 함수(#3 은 frontend-dev 와 협의, 백엔드가 스펙 확정). 로그 추적자 필수.
+- **frontend-dev:** 매트릭스 #3, #4, #5. API 클라이언트 모듈 경유 호출만. DEV 가드 + console.error catch. 기존 배선은 변경 최소화(신규 생성분은 이미 동작하므로 회귀 주의).
+- **tester:** 아래 테스트 항목.
+
+### 테스트 항목 (tester)
+1. **신규 생성 happy-path:** 실제 음악 1곡 생성 → 완료 후 `GET /api/generate/{id}` 의 `variants[].timestamps` 길이 > 0. 백엔드 로그에 `[SunoTimestamps] ... code=200 segs=N`.
+2. **프론트 표시:** 생성기록에서 클립1/클립2 '가사 타임스탬프' 펼침 → `mm:ss.s → mm:ss.s  가사` 줄 표시.
+3. **기존 레코드 백필:** 기존 `ts_lens=[0,0]` 생성물에 refetch 엔드포인트 호출 → 200 + timestamps 채워짐 → 재조회 시 표시. (DB persist 확인)
+4. **회귀:** 음악 생성(variants 2개), 가사 생성, /generate/ 목록·단건 조회, tracks 업로드(variant) 정상 — 헤더 변경이 다른 Suno 호출에 영향 없음 확인.
+5. **실패 시나리오:** suno_audio_id 없는 옛 데이터(variants=0)에서 refetch → 명확한 4xx + 에러메시지(무한루프/500 아님).
+6. **9004 미러:** 9004 에서도 1·3 동일 동작.
+7. **로그 동작 확인:** 신규 심은 로그가 server.log / frontend.log 에 최소 1건 출력되는지.
+
+### 민감정보
+- API 키·토큰은 본 문서·로그에 미기재. 헤더 값은 길이/prefix 만 (`key_len=32`).
+
+---
+
+## v78 — 보이스 클론 만료 확인 버튼 + 폴링 에러 status 즉시 실패 처리 — 2026-06-17
+
+**팀:** VoiceGuard Squad (planner / backend-dev / frontend-dev / tester)
+**요청:** ① 작곡 단계 '내 목소리(보이스 클론 V5_5)' 영역에 "목소리 만료 확인" 버튼 추가 — 누르면 내 클론 전부 Suno 에 만료 확인, 만료된 건 **영구 삭제**(목록에서 사라짐). ② (함께) 음악 생성 폴링이 Suno 에러 status 를 못 알아채 60%에서 20분 멈추는 결함 수정.
+
+### Plan verification findings (Step 0 — 현재 코드 직접 확인)
+
+**기능 ① 만료 확인**
+1. **이미 있는 자산:** `backend_9005/app/services/voice_clone_service.py:684 check_voice_available(generate_task_id) -> bool` — Suno `POST /voice/check-voice` `{task_id}` 호출 → `data.isAvailable` 반환. **함수는 있으나 노출 라우트 없음.**
+2. voice_clone doc 필드: `user_id`, `status`(`ready`/`failed`/`validating`/...), `voice_id`(Suno voice id), `generate_task_id`(만료확인 키). 컬렉션 `voice_clones`.
+3. 라우트: `backend_9005/app/routes/voice_clone.py` — `/list`, `/{clone_id}`, DELETE `/{clone_id}` 등. prefix `/api/voice-clone`.
+4. 프론트 선택 UI: `StudioTab2.jsx:2390-2425` (`selectedModel==='suno' && myClones.length>0`). 클론 버튼들. 선택 시 `setSelectedVoiceCloneId(cid)`. 클론 로드: `:953-966` useEffect([]) → `api.getVoiceClones()` → `status==='ready' && voice_id` 필터 → `setMyClones`. **현재 1회성 fetch — 재호출 함수로 추출 필요.**
+5. 생성 시 매핑: `StudioTab2.jsx:1441-1491` voice clone 선택 시 `body.persona_id=clone.voice_id`, `body.persona_model='voice_persona'`, `body.suno_model='V5_5'`. (즉 멈춘 건의 `persona_model=voice_persona` 는 V5_5 클론이 맞음.)
+6. API 클라이언트: `frontend/src/api/index.js` — `getVoiceClones=()=>API.get('/voice-clone/list')` (319), `deleteVoiceClone` (321) 등.
+
+**기능 ② 폴링 결함**
+7. **근본 위치:** `suno_generator.py:237` — `if status == "FAILED":` 일 때만 실패 raise. Suno 실제 에러 status(`SENSITIVE_WORD_ERROR`, `CREATE_TASK_FAILED`, `GENERATE_AUDIO_FAILED`, `CALLBACK_EXCEPTION`)는 `FAILED` 가 아니라 → `:256 else` 로 빠져 `progress=min(20+attempt,60)` 60% 고정 + 240폴(20분) 헛폴링 후 타임아웃. 라이브 로그로 확인됨 (`status=SENSITIVE_WORD_ERROR err_code=400 err_msg="The voice has expired..."`, attempt 121/240).
+8. **실패 마킹은 이미 정상:** `generate.py:138-157` except 블록이 `status='failed'+error_message` 마킹 → 폴링이 raise 하면 즉시 failed 로 표시됨. 즉 **에러 status 를 raise 로 전환만 하면** 60% 멈춤 해소.
+9. **미러:** 9004 동일 구조 (DB 공유, suno_generator/voice_clone_service/routes 동일). `_logs.py` 제외.
+
+### 변경 매트릭스
+
+| # | 파일 | 변경 | 추적자/로그 |
+|---|---|---|---|
+| 1 | `backend_9005/app/services/voice_clone_service.py` | 신규 `check_all_availability(user_id) -> dict` — ready+voice_id+generate_task_id 인 클론 순회, `check_voice_available()` 병렬 호출. `isAvailable=False` **확정 시에만** doc 삭제(영구). 일시적 에러(예외/타임아웃)는 **삭제 안 함**(보존, warning 로그). 반환 `{checked, available:[clone_id], expired:[{clone_id,voice_name}]}`. | `[voice_clone:check_all] user=.. checked=.. expired=..` |
+| 2 | `backend_9005/app/routes/voice_clone.py` | 신규 `POST /api/voice-clone/check-availability` (authed) → `check_all_availability(current_user.id)` 반환. 진입/결과 로그. | `[voice_clone] check-availability user=..` |
+| 3 | `backend_9005/app/services/suno_generator.py` | `:237` 수정 — 터미널 에러 status 집합 `{FAILED, CREATE_TASK_FAILED, GENERATE_AUDIO_FAILED, CALLBACK_EXCEPTION, SENSITIVE_WORD_ERROR}` 또는 `_FAILED/_ERROR/_EXCEPTION` 접미사 → 즉시 raise. 보이스 만료(err_msg 에 "expired"/SENSITIVE_WORD_ERROR) 는 친절 메시지 "선택한 보이스가 만료되었습니다. 목소리를 다시 학습시키거나 다른 보컬을 선택해 주세요." else 일반 메시지. 에러 status 로그(`logger.warning`). | `[suno] gen_id=.. terminal error status=.. -> fail` |
+| 4 | `frontend/src/api/index.js` | `checkVoiceCloneAvailability=()=>API.post('/voice-clone/check-availability')` 추가. | — |
+| 5 | `frontend/src/components/StudioTab2.jsx` | (a) 클론 fetch useEffect 를 `fetchVoiceClones()` 함수로 추출, mount 시 호출. (b) 보이스 클론 영역(2390~) 라벨 옆 "🔄 목소리 만료 확인" 버튼 추가. 클릭 → `api.checkVoiceCloneAvailability()` → 응답 후 `fetchVoiceClones()` 재호출(목록 갱신, 만료분 사라짐). (c) 만료 목록에 `selectedVoiceCloneId` 포함 시 `setSelectedVoiceCloneId(null)` + 안내. (d) 결과 안내(예: "N개 만료되어 삭제됨" / "모두 정상"). 로딩 상태. DEV 가드 로그 + catch error. | `[StudioTab2] checkVoiceCloneAvailability ..` |
+| 6 | `backend_9004/...` (미러) | #1·#2·#3 동일 적용. `_logs.py` 제외. | 동일 |
+
+### 역할 할당
+- **backend-dev:** #1·#2·#3·#6. 신규 엔드포인트 REST + api/index.js 함수(#4 와 스펙 합의). **삭제는 isAvailable=False 확정 시에만** — 일시적 에러로 사용자 목소리 삭제 금지(중요). 로그 추적자 필수, 시크릿 미기재.
+- **frontend-dev:** #4·#5. API 클라이언트 경유만. DEV 가드 + console.error. 기존 선택/생성 흐름 회귀 주의.
+- **tester:** 아래 항목.
+
+### 테스트 항목 (tester)
+1. **만료확인 happy:** ready 클론 보유 사용자로 `POST /api/voice-clone/check-availability` → 200, `{checked,available,expired}` 스키마. 정상 클론은 보존.
+2. **만료 삭제:** isAvailable=false 인 클론(또는 만료된 generate_task_id) → doc 삭제 확인(DB 재조회) + 응답 expired 에 포함. 정상 클론은 안 지워짐.
+3. **일시적 에러 보존:** check_voice_available 가 예외/네트워크 오류일 때 해당 클론 **삭제 안 됨** 확인(가능하면 모킹/관찰), warning 로그.
+4. **폴링 즉시 실패:** 에러 status(가능하면 만료 보이스로 실제 생성, 또는 status 주입 관찰) → 생성 doc 이 **60% 멈춤 없이** 빠르게 `status=failed` + 친절한 error_message. 로그 `[suno] ... terminal error`.
+5. **회귀:** 일반 음악 생성(에러 없는 경로) 정상 완료(variants 2, timestamps), 가사 생성, voice-clone list/create 흐름, 작곡 화면 클론 선택/생성 정상.
+6. **프론트:** 버튼 클릭 → 목록 갱신, 만료분 사라짐, 선택중이던 게 만료면 선택 해제 + 안내. 정상만 남음.
+7. **9004 미러:** 9004 에 엔드포인트 존재 + 폴링 수정 반영.
+8. **로그 동작:** 신규 로그 server.log 출력 확인.
+
+### 민감정보
+- API 키·토큰·voice_id 전체값 미기재. 길이/prefix 만.
+
+---
+
+## v79 — 만료 목소리 자동 플래그 + '삭제된 목소리 정리' 일괄삭제 (만료확인 버튼 제거) — 2026-06-17
+
+**팀:** ExpiryReaper Squad (planner / backend-dev / frontend-dev / tester)
+**요청:** ① 작곡 단계 "목소리 만료 확인" 버튼 제거(check-voice 무용). ② 음악 생성이 "voice has expired" 로 실패하면 해당 클론을 DB `status='expired'` 로 **자동 플래그**(영구삭제 X) → 작곡 목록에서 자동 사라짐. ③ '내캐릭터' 탭 목소리 리스트에 `🔴 만료됨` 표시 + **'삭제된 목소리 정리'** 버튼 → `status='expired'` 인 것만 일괄 영구삭제.
+
+### Plan verification findings (Step 0 — 현재 코드 직접 확인 + 라이브 진단)
+
+1. **만료 신호 (라이브 확정):** 만료 보이스로 생성 시 Suno record-info 가 `status=SENSITIVE_WORD_ERROR err_code=400 err_msg="The voice has expired. Please recreate the voice or switch to a new voice"` 를 attempt 0 에 반환. **check-voice / voice/record-info 는 만료를 못 잡음**(둘 다 available/success 응답) — sunoapi 한계. 유일한 정확 신호 = 생성 실패.
+2. **폴링 핸들러 (v78 이미 적용):** `backend_9005/app/services/suno_generator.py:246` — `SUNO_TERMINAL_ERROR_STATUSES`(SENSITIVE_WORD_ERROR 포함) + `_FAILED/_ERROR/_EXCEPTION` → 즉시 raise. `:251-253` err_msg 에 "expired" 포함/`SENSITIVE_WORD_ERROR`+voice → `user_msg="선택한 보이스가 만료되었습니다..."`. 이 블록에 `persona_id`, `persona_model`, `mongo_db` 모두 in-scope → **여기서 voice_clone 플래그가 가장 정확.**
+3. **생성→클론 매핑:** 작곡 시 `StudioTab2.jsx` 가 `body.persona_id = clone.voice_id`, `persona_model='voice_persona'` 로 전송. 클론 doc 은 `voice_id == generate_task_id == validate_task_id`(동일 값). → 플래그 매칭: voice_clones 에서 `voice_id == persona_id` (또는 generate_task_id) 인 doc.
+4. **except 블록:** `generate.py:138-158` 가 이미 status='failed'+error_message 마킹. (플래그는 suno_generator 에서 raise 전에 수행 — except 의 문자열 매칭보다 정확.)
+5. **클론 status 머신:** `voice_clone_service.py:49-53` — validating/awaiting_verify/generating/ready/failed. **신규 `STATUS_EXPIRED='expired'` 추가.**
+6. **작곡 목록 필터 (자동 배제 확인):** `StudioTab2.jsx:957` `status==='ready' && voice_id` → expired 플래그 시 자동으로 작곡 선택목록에서 사라짐. **프론트 추가작업 불필요(자동).**
+7. **내캐릭터 리스트:** `MyVoiceCloneSection.jsx` — 전체 클론 fetch(필터 없음, 라인 41), `STATUS_BADGE` 맵(9-15), 개별삭제(67), 신규학습 버튼(97). expired 클론은 자동으로 리스트에 뜸 → 배지만 추가.
+8. **v78 잔재:** 작곡 단계 "🔄 목소리 만료 확인" 버튼/핸들러(StudioTab2) + `checkVoiceCloneAvailability` api func + 백엔드 `POST /check-availability`. → 프론트 버튼/핸들러 **제거**. 백엔드 `/check-availability` 엔드포인트는 무해하므로 유지(삭제된 목소리 감지엔 유효). api func 는 미사용으로 남겨두거나 제거(frontend-dev 판단).
+9. **미러:** 9004 동일 구조(DB 공유). `_logs.py` 제외. `backendAPI정리.md` 갱신.
+
+### 변경 매트릭스
+
+| # | 파일 | 변경 | 추적자/로그 |
+|---|---|---|---|
+| 1 | `backend_9005/app/services/suno_generator.py` | terminal-error 블록(`:246~256`)에서 **voice-expiry 판정 시** `persona_id` 로 voice_clones 를 `mongo_db` 통해 `status='expired'`(+`expired_at`,`expired_reason`) update_many. raise 는 그대로. | `[suno] gen_id=.. voice expired -> flag clone persona_id=.. matched=..` |
+| 2 | `backend_9005/app/services/voice_clone_service.py` | `STATUS_EXPIRED='expired'` 상수. `cleanup_expired(user_id) -> dict` — 해당 유저 `status='expired'` doc 전부 삭제, `{deleted, deleted_ids}` 반환. | `[voice_clone:cleanup] user=.. deleted=..` |
+| 3 | `backend_9005/app/routes/voice_clone.py` | `POST /api/voice-clone/cleanup-expired` (authed) → `cleanup_expired`. 진입/결과 로그. | `[voice_clone] cleanup-expired user=..` |
+| 4 | `frontend/src/api/index.js` | `cleanupExpiredVoiceClones=()=>API.post('/voice-clone/cleanup-expired')` 추가. (v78 `checkVoiceCloneAvailability` 미사용 처리) | — |
+| 5 | `frontend/src/components/StudioTab2.jsx` | v78 "목소리 만료 확인" 버튼/핸들러/notice/관련 state **제거**. 클론 선택 목록은 그대로(ready 필터가 expired 자동 배제). | — |
+| 6 | `frontend/src/components/MyVoiceCloneSection.jsx` | `STATUS_BADGE` 에 `expired:{label:'만료됨',color:'#EF4444'}` 추가. 헤더에 **"🗑 삭제된 목소리 정리"** 버튼 — expired 클론 수>0 일 때 활성, 클릭→`api.cleanupExpiredVoiceClones()`→`fetchClones()` 재호출+결과 안내. confirm 후 실행. DEV 로그+catch error. | `[MyVoiceCloneSection] cleanupExpired ..` |
+| 7 | `backend_9004/...` (미러) | #1·#2·#3 동일. `_logs.py` 제외 | 동일 |
+| 8 | `backendAPI정리.md` | 27장에 `POST /api/voice-clone/cleanup-expired` + `status='expired'` 값 + 만료 자동플래그 동작 append | — |
+
+### 역할 할당
+- **backend-dev:** #1·#2·#3·#7·#8. 플래그 매칭은 `voice_id==persona_id` OR `generate_task_id==persona_id`. cleanup 은 **`status='expired'` 만** 삭제(ready/진행중 절대 금지). 추적자 로그, 시크릿 미기재.
+- **frontend-dev:** #4·#5·#6. API 클라이언트 경유. 버튼 제거 시 관련 state/import 깔끔히. cleanup 은 confirm 후. expired 배지.
+- **tester:** 아래.
+
+### 테스트 항목 (tester)
+1. **자동 플래그:** 만료 보이스(`이재규목소리`/`6dbde6c1...`)로 실제 생성 → 즉시 failed + 친절 메시지. 그 직후 voice_clones 의 해당 doc `status=='expired'` 로 바뀜(DB 확인). 로그 `[suno] ... voice expired -> flag clone`.
+2. **작곡 목록 자동 배제:** expired 플래그 후 `getVoiceClones`→ready 필터로 작곡 선택목록에서 사라짐.
+3. **cleanup happy:** `POST /api/voice-clone/cleanup-expired` → expired 만 삭제, `{deleted,deleted_ids}`. ready/진행중 클론은 **안 지워짐**(DB 재확인).
+4. **빈 케이스:** expired 0개일 때 cleanup → deleted=0, 정상 200.
+5. **내캐릭터 배지:** expired 클론이 리스트에 `만료됨` 으로 표시.
+6. **회귀:** 정상 보이스 생성 happy-path(완료), 일반 AI 보컬 생성, 개별삭제, 학습 마법사, getVoiceClones, 작곡 화면 정상. v78 버튼 제거가 다른 UI 안 깸.
+7. **9004 미러 + 로그 출력.**
+
+### 민감정보
+- API 키·토큰·voice_id 전체값 미기재. 길이/prefix 만.
+
+---
+
+## v80 — 가사 타임스탬프 가라오케 줄 단위 분할 (Suno \n 줄바꿈 기준) — 2026-06-17
+
+**팀:** KaraokeLine Squad (planner / backend-dev / frontend-dev / tester)
+**요청:** 가사 타임스탬프가 `00:00.6→02:35.6` 한 줄에 전체 가사 통째로 나옴. **줄 단위(가라오케)** 로 `시간→시간 가사한줄` 표시되게 수정.
+
+### Plan verification findings (Step 0 — 현재 코드 + 라이브 원시응답 확인)
+
+1. **Suno 응답은 정상 (라이브 확인):** `get-timestamped-lyrics` 가 단어별 `alignedWords` 224개를 정확히 반환. 각 단어 `{word, startS, endS, success}`. **Suno 가 줄바꿈을 단어 텍스트 안에 `\n` 으로 인코딩** (예: `'느려\n'`, `'흘러가\n\n'`, `'[Verse 1: rap flow, gritty]\n알람 '`). 즉 줄/섹션 경계 정보가 응답에 포함돼 있음.
+2. **근본 결함:** `backend_9005/app/services/suno_timestamp_service.py:83 _words_to_segments()` —
+   - 라인 100 `word_data.get("word","").strip()` 가 **`\n` 을 먼저 제거** → 줄바꿈 정보 소실.
+   - 분할 기준이 **"단어 간격 >0.5초" 뿐** (라인 117). Suno 타임스탬프는 단어가 거의 연속(간격 0.05~0.16초)이라 0.5초 초과가 거의 없음 → **224 단어 전부 1 segment 로 합쳐짐**. text 는 `" ".join` 으로 통째.
+   - 결과: `timestamps=[{text:"가사전체", start:0.6, end:155.6}]` (segs=1).
+3. **호출부:** `_words_to_segments` 는 `get_suno_timestamps()` 에서만 사용. 출력은 `variants[].timestamps` 에 저장. 프론트 `LyricsTimestampToggle.jsx` 가 segment 별로 `mm:ss.s→mm:ss.s text` 렌더 → **세그먼트만 제대로 나오면 프론트 표시는 자동으로 줄 단위가 됨** (프론트 렌더 로직 변경 불필요).
+4. **기존 곡 재정리 갭:** refetch 엔드포인트(`generate.py:542`)의 `_fetch_one` 이 **`timestamps` 가 이미 있으면 skip**(586행). 기존 1-segment 곡은 재호출 안 됨 → 재정리 불가. 프론트 "불러오기" 버튼도 **segments 비었을 때만** 노출 → 기존 곡엔 버튼 자체가 안 뜸.
+5. **영향 범위:** 신규 생성은 `_words_to_segments` 수정만으로 자동 해결. 기존 곡(사용자가 방금 만든 것 포함)은 강제 재정리 경로 필요.
+6. **미러:** 9004 동일 구조. `_logs.py` 제외.
+
+### 변경 매트릭스
+
+| # | 파일 | 변경 | 추적자/로그 |
+|---|---|---|---|
+| 1 | `backend_9005/app/services/suno_timestamp_service.py` | `_words_to_segments()` 재작성: **Suno `\n` 줄바꿈 기준으로 줄 분할**. 각 단어 raw 텍스트를 `\n` 으로 split → `\n` 만나면 현재 줄 flush(새 segment). text 는 공백 정규화 후 trim, 빈 줄 제외. start=줄 첫 단어 startS, end=줄 마지막 단어 endS. **폴백:** 응답에 `\n` 이 전혀 없으면(또는 결과가 1 segment 이고 단어 多) 기존 0.5초 간격 + 단어수 상한(예 ~10단어)으로 보조 분할 → 절대 통짜 1줄 안 나오게. | `[SunoTimestamps] task_id=.. segmented lines=N (mode=newline|fallback)` |
+| 2 | `backend_9005/app/routes/generate.py` | refetch 에 `force: bool = Query(False)` 추가. force 시 `_fetch_one` 이 **timestamps 있어도 재호출**. **안전 머지:** 새 fetch 결과가 **비어있으면(transient 실패) 기존 값 유지**(덮어쓰기 X), 비어있지 않을 때만 교체. force=False 는 기존(빈 것만) 동작 유지. | `[TimestampsRefetch] gen_id=.. force=.. resegmented=..` |
+| 3 | `frontend/src/api/index.js` | `refetchGenerationTimestamps(genId, force=false)` → `API.post('/generate/${genId}/timestamps/refetch', null, {params:{force}})` (또는 쿼리). | — |
+| 4 | `frontend/src/components/LyricsTimestampToggle.jsx` | 펼친 패널에 segments 가 **1개 이하일 때(또는 항상 완료곡)** "타임스탬프 다시 정리" 버튼 노출 → `refetchGenerationTimestamps(genId, true)` 호출 → 응답으로 segments 교체. 기존 "불러오기"(빈 경우) 버튼은 유지. DEV 로그 + catch error. | `[LyricsTimestamp] reorganize genId=..` |
+| 5 | `backend_9004/...` (미러) | #1·#2 동일. `_logs.py` 제외 | 동일 |
+
+### 역할 할당
+- **backend-dev:** #1·#2·#5. `_words_to_segments` 재작성이 핵심. 섹션 태그(`[Verse]` 등)는 자체 줄로 유지(가사 충실). 폴백 반드시 포함(통짜 1줄 금지). refetch force 안전 머지(빈 결과로 기존 덮어쓰기 금지). 로그 추적자.
+- **frontend-dev:** #3·#4. API 클라이언트 경유. "다시 정리" 버튼 + 성공 시 즉시 재렌더. DEV 가드 + console.error.
+- **tester:** 아래.
+
+### 테스트 항목 (tester)
+1. **단위 — `_words_to_segments`:** 라이브 원시 `alignedWords`(224단어, `\n` 포함)를 함수에 넣어 **여러 줄(N>5) segment** 산출. 각 줄 text 에 `\n` 없음, 시간 단조 증가. (실제 task/audio_id 로 get_suno_timestamps 호출)
+2. **신규 생성:** 실제 음악 생성 → `variants[].timestamps` 길이 > 1 (여러 줄). 프론트 펼침 시 줄 단위 표시.
+3. **기존 곡 재정리:** 기존 1-segment 곡에 `refetch?force=true` → 여러 줄로 재분할 + DB persist. force=false 는 기존 동작(빈 것만).
+4. **안전 머지:** refetch 시 새 fetch 가 빈 결과면 기존 timestamps 유지(덮어쓰기 안 됨) — 코드/관찰 확인.
+5. **폴백:** `\n` 없는 가상 입력에서도 통짜 1줄 안 나오고 분할됨(단위테스트).
+6. **회귀:** 정상 음악 생성 happy-path 완료(v79.1 datetime 회귀 재확인), 가사 생성, refetch(빈 경우) 동작, 프론트 기존 표시.
+7. **9004 미러 + 로그 출력.**
+
+### 민감정보
+- API 키·토큰·voice_id 전체값 미기재.

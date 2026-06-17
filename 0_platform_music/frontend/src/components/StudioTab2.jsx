@@ -950,20 +950,25 @@ export default function StudioTab2({ onSendToUpload }) {
   }, []);
 
   // v76 — Fetch voice clones (ready only) for Suno V5_5 cloning
-  useEffect(() => {
+  const fetchVoiceClones = useCallback(async () => {
     if (import.meta.env.DEV) console.info('[StudioTab2] fetching voice clones');
-    api.getVoiceClones()
-      .then(({ data }) => {
-        const ready = (data?.clones || data?.items || []).filter(
-          (c) => c?.status === 'ready' && c?.voice_id
-        );
-        setMyClones(ready);
-        if (import.meta.env.DEV) console.info('[StudioTab2] voice clones loaded', { count: ready.length });
-      })
-      .catch((err) => {
-        console.error('[StudioTab2] getVoiceClones failed', { status: err?.response?.status, message: err?.message });
-      });
+    try {
+      const { data } = await api.getVoiceClones();
+      const ready = (data?.clones || data?.items || []).filter(
+        (c) => c?.status === 'ready' && c?.voice_id
+      );
+      setMyClones(ready);
+      if (import.meta.env.DEV) console.info('[StudioTab2] voice clones loaded', { count: ready.length });
+      return ready;
+    } catch (err) {
+      console.error('[StudioTab2] getVoiceClones failed', { status: err?.response?.status, message: err?.message });
+      return [];
+    }
   }, []);
+
+  useEffect(() => {
+    fetchVoiceClones();
+  }, [fetchVoiceClones]);
 
   useEffect(() => {
     fetchHistory();
@@ -3223,6 +3228,17 @@ export default function StudioTab2({ onSendToUpload }) {
                               segments={v.timestamps || []}
                               generationId={gen.id}
                               variantIndex={vIndex}
+                              onRefetched={(updatedDoc) => {
+                                if (import.meta.env.DEV) {
+                                  console.info('[StudioTab2] ts refetched', { genId: updatedDoc?.id });
+                                }
+                                if (!updatedDoc?.id) return;
+                                setGenerations((prev) =>
+                                  prev.map((g) =>
+                                    g.id === updatedDoc.id ? { ...g, ...updatedDoc } : g
+                                  )
+                                );
+                              }}
                             />
                           </div>
                         );

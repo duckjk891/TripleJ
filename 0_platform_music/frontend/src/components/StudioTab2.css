@@ -1067,6 +1067,47 @@
   border-radius: 6px;
 }
 
+.s2__persona-note--warning {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.s2__persona-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.s2__persona-header .s2__label--persona {
+  margin-bottom: 0;
+}
+
+.s2__expiry-check-btn {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary, #888);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.s2__expiry-check-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.s2__expiry-check-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ── Voice Conversion (Kits.AI) ── */
 .s2__gen-vc {
   display: flex;

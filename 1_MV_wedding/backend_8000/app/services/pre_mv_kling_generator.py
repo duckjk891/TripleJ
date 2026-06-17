@@ -48,6 +48,9 @@ _KLING_MAX = 15
 _POLL_INTERVAL_SEC = 5.0
 _POLL_TIMEOUT_SEC = 900.0
 
+# 과금 손실 방지(v55): 폴링 중 일시적 401(인증 블립)/429(동시성)은 제한 횟수 백오프 재시도.
+_MAX_TRANSIENT_POLL_RETRIES = 3
+
 
 def _get_ffmpeg_path() -> Optional[str]:
     path = shutil.which("ffmpeg")
@@ -79,6 +82,53 @@ def _auth_header() -> dict:
         settings.kling_secret_key,
     )
     return {"Authorization": "Bearer {}".format(token)}
+
+
+async def _preflight_auth_check(*, pre_mv_job_id: str, scene_number: int) -> None:
+    """과금되는 생성요청(POST) 전 Kling 인증 점검. 존재하지 않는 task 를 GET 하여
+    인증 정상이면 비-401, 비활성(패키지 권한 만료 등)이면 401. 401 이면 과금 없이 중단.
+    네트워크 일시 오류는 막지 않는다(불확실 시 생성 진행)."""
+    url = '{}/0'.format(KLING_OMNI_VIDEO_URL)
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, headers=_auth_header())
+        except httpx.HTTPError as e:
+            logger.warning(
+                '[PreMVKling] phase=phase3 preflight http_error pre_mv_job_id=%s '
+                'scene_number=%d err=%s — 생성 진행(불확실)',
+                pre_mv_job_id, scene_number, str(e)[:160],
+            )
+            return
+        if resp.status_code != 401:
+            return
+        if attempt == 0:
+            await asyncio.sleep(1.0)
+            continue
+        raise ValueError(
+            'Kling 인증 비활성 — 생성요청(과금) 사전 차단: HTTP 401 {}'.format(
+                resp.text[:200]
+            )
+        )
+
+
+async def _persist_task_id(pre_mv_job_id: str, scene_number: int, task_id: str) -> None:
+    """생성요청 성공 즉시 task_id 를 씬 doc 에 저장 (폴링 실패 시 재과금 없이 회수용).
+    실패해도 생성 흐름을 막지 않는다(best-effort)."""
+    try:
+        from bson import ObjectId
+        from ..database.mongodb import get_mongo
+        db = get_mongo()
+        await db.pre_mv_jobs.update_one(
+            {'_id': ObjectId(pre_mv_job_id), 'scenes.scene_number': scene_number},
+            {'$set': {'scenes.$.video_task_id': task_id}},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            '[PreMVKling] phase=phase3 task_id 저장 실패(무시) pre_mv_job_id=%s '
+            'scene_number=%d err=%s',
+            pre_mv_job_id, scene_number, str(e)[:160],
+        )
 
 
 async def _trim_to_duration(
@@ -259,6 +309,7 @@ async def _poll_until_done(
     url = "{}/v1/videos/omni-video/{}".format(KLING_BASE_URL, task_id)
     deadline = time.time() + _POLL_TIMEOUT_SEC
     last_log = 0.0
+    transient = 0
     while True:
         if time.time() > deadline:
             raise TimeoutError("Kling 폴링 타임아웃 (task_id={})".format(task_id))
@@ -278,6 +329,17 @@ async def _poll_until_done(
         if resp.status_code != 200:
             if 500 <= resp.status_code < 600:
                 await asyncio.sleep(_POLL_INTERVAL_SEC)
+                continue
+            if resp.status_code in (401, 429) and transient < _MAX_TRANSIENT_POLL_RETRIES:
+                # 일시적 인증 블립(401)/동시성(429) — 제한 횟수 백오프 재시도.
+                transient += 1
+                logger.warning(
+                    "[PreMVKling] phase=phase3 poll transient HTTP %d pre_mv_job_id=%s "
+                    "scene_number=%d retry %d/%d",
+                    resp.status_code, pre_mv_job_id, scene_number,
+                    transient, _MAX_TRANSIENT_POLL_RETRIES,
+                )
+                await asyncio.sleep(_POLL_INTERVAL_SEC * (transient + 1))
                 continue
             raise ValueError(
                 "Kling 폴링 실패 (HTTP {}): {}".format(resp.status_code, resp.text[:200])
@@ -375,12 +437,18 @@ async def generate_scene_video_kling(
     kling_duration = max(_KLING_MIN, min(_KLING_MAX, int(round(target_sec))))
     has_last_frame = bool(end_frame_bytes)
 
-    raw_prompt = compose_video_prompt(
-        video_model="kling",
-        scene=scene,
-        duration=float(kling_duration),
-        has_last_frame=has_last_frame,
-    )
+    # v24.3 — extra 흐름은 prebuilt_prompt 가 채워져 들어오면 cinematic 합성/
+    # identity guidance 보강을 건너뛰고 그대로 sanitize 만 한다.
+    prebuilt = (scene or {}).get("prebuilt_prompt") or ""
+    if prebuilt:
+        raw_prompt = prebuilt
+    else:
+        raw_prompt = compose_video_prompt(
+            video_model="kling",
+            scene=scene,
+            duration=float(kling_duration),
+            has_last_frame=has_last_frame,
+        )
 
     # v39 — identity guidance 자동 inject (image_N 별 face-only/full-match 명시).
     refs = list(char_ref_bytes_list or [])
@@ -403,7 +471,7 @@ async def generate_scene_video_kling(
                 "<<<image_{n}>>> is a FULL-MATCH reference: match face, hair, body, "
                 "AND wardrobe/accessories exactly as in the reference image.".format(n=n)
             )
-    if identity_lines:
+    if not prebuilt and identity_lines:
         identity_block = "Character identity guidance: " + " ".join(identity_lines)
         raw_prompt = raw_prompt + " " + identity_block
 
@@ -412,10 +480,15 @@ async def generate_scene_video_kling(
     logger.info(
         "[PreMVKling] phase=phase3 entry pre_mv_job_id=%s scene_number=%d "
         "raw_prompt_len=%d safe_prompt_len=%d use_seconds=%.2f kling_dur=%d "
-        "image_bytes=%d char_refs=%d last_frame_bytes=%d",
+        "image_bytes=%d char_refs=%d last_frame_bytes=%d prebuilt=%d",
         pre_mv_job_id, scene_number, len(raw_prompt), len(final_prompt),
         target_sec, kling_duration, len(image_bytes or b""), len(refs),
-        len(end_frame_bytes or b""),
+        len(end_frame_bytes or b""), 1 if prebuilt else 0,
+    )
+
+    # 과금 손실 방지: POST(=과금) 전 인증 사전 점검 (인증 비활성이면 여기서 중단).
+    await _preflight_auth_check(
+        pre_mv_job_id=pre_mv_job_id, scene_number=scene_number
     )
 
     task_id = await _start_kling(
@@ -427,6 +500,9 @@ async def generate_scene_video_kling(
         kling_duration=kling_duration,
         end_frame_bytes=end_frame_bytes,
     )
+    # 생성요청 성공 → task_id 즉시 저장 (폴링 실패해도 회수 가능).
+    await _persist_task_id(pre_mv_job_id, scene_number, task_id)
+
     video_url = await _poll_until_done(
         pre_mv_job_id=pre_mv_job_id,
         scene_number=scene_number,

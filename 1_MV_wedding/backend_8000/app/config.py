@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     suno_api_key: str = ""
     suno_api_url: str = "https://api.sunoapi.org"
+    public_base_url: str = ""
+    minio_public_host: str = ""
     kling_access_key: str = ""
     kling_secret_key: str = ""
     fal_api_key: str = ""

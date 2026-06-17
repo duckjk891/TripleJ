@@ -8,6 +8,7 @@ AI Music Generation API
 """
 import asyncio
 import io
+import logging
 import math
 import mimetypes
 import os
@@ -16,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -24,6 +25,8 @@ from ..auth import get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/generate")
 
@@ -255,9 +258,15 @@ async def translate_tags(
         client = AsyncOpenAI(api_key=settings.openai_api_key)
 
         translated = []
+        # v75 — flagship gpt-5 with reasoning enabled (replaces gpt-4o-mini).
+        _tag_model = settings.openai_model or "gpt-5.5"
+        logger.info(
+            "[ReasoningOn] stage=translate_tags model=%s reasoning_effort=high tag_count=%d",
+            _tag_model, len(body.tags),
+        )
         for tag in body.tags:
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=_tag_model,
                 messages=[
                     {
                         "role": "system",
@@ -265,8 +274,10 @@ async def translate_tags(
                     },
                     {"role": "user", "content": tag},
                 ],
-                temperature=0.3,
-                max_tokens=100,
+                # v75 — gpt-5: temperature default(1) 만 허용 → 제거. max_tokens → max_completion_tokens.
+                # v75.2 — reasoning 토큰까지 한도에서 차감되므로 8000 으로 상향.
+                max_completion_tokens=8000,
+                reasoning_effort="high",
             )
             result = response.choices[0].message.content.strip()
             parts = [p.strip() for p in result.split(",") if p.strip()]
@@ -528,6 +539,108 @@ async def get_generation(
     return _serialize(doc)
 
 
+@router.post("/{gen_id}/timestamps/refetch")
+async def refetch_generation_timestamps(
+    gen_id: str,
+    force: bool = Query(False),
+    current_user=Depends(get_current_user),
+):
+    """On-demand refetch of per-variant lyric timestamps from Suno.
+
+    When ``force`` is False (default), only fills variants that currently have
+    empty timestamps; variants that already have timestamps are left untouched.
+
+    When ``force`` is True, re-fetches every variant (even ones with existing
+    timestamps) to re-segment them. The merge is safe: a non-empty new fetch
+    overwrites the old value, but an empty fetch (transient failure / no data)
+    keeps the existing timestamps so good data is never clobbered.
+
+    Returns the serialized doc (same shape as GET /api/generate/{gen_id}).
+    """
+    if not ObjectId.is_valid(gen_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "생성 요청을 찾을 수 없습니다."})
+    if doc.get("user_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+
+    if doc.get("status") != "completed":
+        return JSONResponse(
+            status_code=400,
+            content={"error": "완료된 생성물만 타임스탬프를 불러올 수 있습니다."},
+        )
+
+    variants = doc.get("variants") or []
+    if not variants:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "이 생성물에는 클립 정보가 없어 타임스탬프를 불러올 수 없습니다."},
+        )
+
+    logger.info(
+        "[TimestampsRefetch] gen_id=%s force=%s start variants=%d",
+        gen_id, force, len(variants),
+    )
+
+    try:
+        from ..services.suno_timestamp_service import get_suno_timestamps
+
+        task_id = doc.get("suno_task_id")
+
+        async def _fetch_one(v: dict) -> list[dict]:
+            audio_id = v.get("suno_audio_id")
+            existing = v.get("timestamps") or []
+            # Without force: skip if no audio_id or already has timestamps.
+            if not audio_id:
+                return existing
+            if not force and existing:
+                return existing
+            try:
+                fresh = await get_suno_timestamps(task_id, audio_id) or []
+            except Exception as _ts_exc:
+                logger.warning(
+                    "[TimestampsRefetch] gen_id=%s audio_id_len=%d fetch failed: %s",
+                    gen_id, len(audio_id), _ts_exc,
+                )
+                return existing
+            # SAFE MERGE: a non-empty fetch overwrites; an empty fetch
+            # (transient failure / no data) keeps existing good data.
+            if fresh:
+                return fresh
+            return existing
+
+        ts_results = await asyncio.gather(
+            *[_fetch_one(v) for v in variants],
+            return_exceptions=False,
+        )
+        for v, segs in zip(variants, ts_results):
+            v["timestamps"] = segs or []
+
+        logger.info(
+            "[TimestampsRefetch] gen_id=%s force=%s filled=%s",
+            gen_id, force, [len(v.get("timestamps") or []) for v in variants],
+        )
+
+        now = datetime.utcnow()
+        await mongo.generations.update_one(
+            {"_id": ObjectId(gen_id)},
+            {"$set": {"variants": variants, "updated_at": now}},
+        )
+
+        updated_doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+        return _serialize(updated_doc)
+
+    except Exception as e:
+        logger.exception("[TimestampsRefetch] gen_id=%s failed: %s", gen_id, e)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "타임스탬프를 불러오는 중 오류가 발생했습니다."},
+        )
+
+
 @router.delete("/{gen_id}")
 async def delete_generation(
     gen_id: str,
@@ -623,9 +736,18 @@ async def retry_generation_beats(
 @router.get("/{gen_id}/stream/")
 async def stream_generation(
     gen_id: str,
+    variant: int = 0,
     current_user=Depends(get_current_user),
 ):
-    """Proxy the generated audio file from MinIO so external clients can access it."""
+    """Proxy the generated audio file from MinIO so external clients can access it.
+
+    v74 — accepts ?variant=<i> to stream a specific variant. variant=0 (default)
+    falls back to result_audio_url for backward compatibility with older docs
+    that have no `variants` array.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
     if not ObjectId.is_valid(gen_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
 
@@ -638,13 +760,47 @@ async def stream_generation(
     if doc.get("status") != "completed" or not doc.get("result_audio_url"):
         return JSONResponse(status_code=404, content={"error": "완료된 오디오 파일이 없습니다."})
 
+    # v74 — variant selection
+    if variant < 0:
+        return JSONResponse(status_code=400, content={"error": "variant는 0 이상이어야 합니다."})
+
+    variants_field = doc.get("variants") or []
+    if variant == 0:
+        # BC path: prefer variants[0] if exists, else fallback to result_audio_url
+        if variants_field and len(variants_field) > 0:
+            object_name = variants_field[0].get("audio_url") or doc["result_audio_url"]
+        else:
+            object_name = doc["result_audio_url"]
+    else:
+        if not variants_field or variant >= len(variants_field):
+            _log.warning(
+                "[GenerationStream] gen_id=%s variant=%d out of range (have=%d)",
+                gen_id, variant, len(variants_field),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"variant {variant} 범위를 벗어났습니다."},
+            )
+        object_name = variants_field[variant].get("audio_url")
+        if not object_name:
+            return JSONResponse(status_code=404, content={"error": "해당 variant 오디오가 없습니다."})
+
+    _log.info(
+        "[GenerationStream] gen_id=%s variant=%d object=%s",
+        gen_id, variant, object_name,
+    )
+
     minio_client = get_minio()
     try:
         response = minio_client.get_object(
             bucket_name=settings.minio_bucket_music,
-            object_name=doc["result_audio_url"],
+            object_name=object_name,
         )
-    except Exception:
+    except Exception as _exc:
+        _log.error(
+            "[GenerationStream] gen_id=%s variant=%d minio get failed: %s",
+            gen_id, variant, _exc,
+        )
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     title_raw = doc.get("title", "generated") or "generated"
@@ -652,14 +808,16 @@ async def stream_generation(
     from urllib.parse import quote
     # ASCII-only fallback filename
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', title_raw.replace(' ', '_')) or "generated"
-    ext = ".wav" if doc["result_audio_url"].endswith(".wav") else ".mp3"
+    ext = ".wav" if object_name.endswith(".wav") else ".mp3"
     content_type = "audio/wav" if ext == ".wav" else "audio/mpeg"
-    encoded_name = quote(f"{title_raw}{ext}")
+    # v74 — append variant suffix to filename when > 0
+    suffix = f"_v{variant + 1}" if variant > 0 else ""
+    encoded_name = quote(f"{title_raw}{suffix}{ext}")
 
     return StreamingResponse(
         response,
         media_type=content_type,
         headers={
-            "Content-Disposition": f"attachment; filename=\"{safe_name}{ext}\"; filename*=UTF-8''{encoded_name}",
+            "Content-Disposition": f"attachment; filename=\"{safe_name}{suffix}{ext}\"; filename*=UTF-8''{encoded_name}",
         },
     )

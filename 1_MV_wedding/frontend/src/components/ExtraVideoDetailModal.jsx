@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as api from '../api';
+import MentionField from './MentionField';
 import './ExtraVideoDetailModal.css';
 
 /**
@@ -85,6 +86,8 @@ export default function ExtraVideoDetailModal({
   const [refineUseSeconds, setRefineUseSeconds] = useState(null);
   const [refineSubmitting, setRefineSubmitting] = useState(false);
   const [refineError, setRefineError] = useState('');
+  // v24.4 — @멘션 refs for refine.
+  const [refineRefs, setRefineRefs] = useState([]);
 
   // v23.4 — continue form (이어붙이기)
   const [contText, setContText] = useState('');
@@ -94,6 +97,11 @@ export default function ExtraVideoDetailModal({
   const [contUseSeconds, setContUseSeconds] = useState(null);
   const [contSubmitting, setContSubmitting] = useState(false);
   const [contError, setContError] = useState('');
+  // v24.4 — @멘션 refs for continue.
+  const [contRefs, setContRefs] = useState([]);
+
+  // v24.4 — 멘션 컨텍스트 (modal 내부에서 1회 로드).
+  const [mentionContext, setMentionContext] = useState(null);
 
   // action state
   const [busy, setBusy] = useState(false);
@@ -158,6 +166,77 @@ export default function ExtraVideoDetailModal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // v24.4 — modal 진입 시 1회 mentionContext 로드.
+  useEffect(() => {
+    if (!mvJobId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (import.meta.env.DEV) {
+          console.info(`${PREFIX} getJobContext`, { mv_job_id: mvJobId });
+        }
+        const { data } = await api.getJobContext(mvJobId);
+        if (!cancelled) setMentionContext(data);
+      } catch (err) {
+        console.error(`${PREFIX} getJobContext failed`, {
+          status: err?.response?.status,
+          detail: err?.response?.data?.detail || err?.message,
+          mv_job_id: mvJobId,
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mvJobId]);
+
+  // v24.4 — 멘션 옵션 풀 빌드 (sheet/place/wedding_photo/scene_image).
+  const mentionOptions = useMemo(() => {
+    const opts = [];
+    for (const s of mentionContext?.owner_sheets || []) {
+      if (!s || !s.slot) continue;
+      opts.push({
+        type: 'sheet',
+        asset_id: s.slot,
+        display_name: s.display_name || s.slot,
+        object_name: s.sheet_object_name || null,
+        group_label: '🧑 시트',
+      });
+    }
+    for (const p of mentionContext?.owner_places || []) {
+      if (!p || !p.place_id) continue;
+      opts.push({
+        type: 'place',
+        asset_id: p.place_id,
+        display_name: p.display_name || '(이름 없음)',
+        object_name: p.object_name || null,
+        group_label: '📍 장소',
+      });
+    }
+    for (const ph of mentionContext?.wedding_photos || []) {
+      if (!ph || !ph.photo_id) continue;
+      const shortId = String(ph.photo_id).slice(0, 6);
+      opts.push({
+        type: 'wedding_photo',
+        asset_id: ph.photo_id,
+        display_name: `웨딩사진-${shortId}`,
+        object_name: ph.object_name || null,
+        group_label: '💞 웨딩사진',
+      });
+    }
+    for (const sc of mentionContext?.pre_mv_scenes || []) {
+      if (!sc || !sc.token) continue;
+      opts.push({
+        type: 'scene_image',
+        asset_id: sc.token,
+        display_name: sc.token,
+        object_name: sc.object_name || null,
+        group_label: '🎬 식전영상 씬',
+      });
+    }
+    return opts;
+  }, [mentionContext]);
 
   // ── derived ─────────────────────────────────────────────────────
   const active = (activeIdx >= 0 && chain[activeIdx]) ? chain[activeIdx] : null;
@@ -284,6 +363,7 @@ export default function ExtraVideoDetailModal({
     const payload = {
       user_text: refineText || '',
       motion_presets: refineMotions.slice(),
+      refs: refineRefs.slice(), // v24.4 — @멘션 refs.
     };
     if (refineUseSeconds != null) {
       payload.use_seconds = refineUseSeconds;
@@ -296,6 +376,7 @@ export default function ExtraVideoDetailModal({
           text_len: text.length,
           motions: refineMotions,
           use_seconds: refineUseSeconds,
+          refs_count: refineRefs.length,
         });
       }
       const { data } = await api.refineExtraVideo(active.extra_video_id, payload);
@@ -314,6 +395,7 @@ export default function ExtraVideoDetailModal({
       }
       setRefineText('');
       setRefineMotions([]);
+      setRefineRefs([]); // v24.4
       if (typeof onChanged === 'function') onChanged();
     } catch (err) {
       const status = err?.response?.status;
@@ -356,6 +438,7 @@ export default function ExtraVideoDetailModal({
       user_text: contText || '',
       motion_presets: contMotions.slice(),
       video_model: contModel,
+      refs: contRefs.slice(), // v24.4 — @멘션 refs.
     };
     if (contUseSeconds != null) {
       payload.use_seconds = contUseSeconds;
@@ -369,6 +452,7 @@ export default function ExtraVideoDetailModal({
           text_len: text.length,
           motions: contMotions,
           use_seconds: contUseSeconds,
+          refs_count: contRefs.length,
         });
       }
       const { data } = await api.continueExtraVideo(active.extra_video_id, payload);
@@ -384,6 +468,7 @@ export default function ExtraVideoDetailModal({
       // 부모 갤러리만 reload 시키고, 폼 일부 리셋.
       setContText('');
       setContMotions([]);
+      setContRefs([]); // v24.4
       if (typeof onContinueDone === 'function') {
         onContinueDone();
       } else if (typeof onChanged === 'function') {
@@ -645,12 +730,16 @@ export default function ExtraVideoDetailModal({
               <label className="extra-video-detail-modal__label">
                 연출 지시문
               </label>
-              <textarea
-                className="extra-video-detail-modal__textarea"
+              <MentionField
+                id={`extra-video-refine-${initialId}`}
+                ariaLabel="추가 수정 연출 지시문"
                 value={refineText}
-                onChange={(e) => setRefineText(e.target.value)}
+                refs={refineRefs}
+                onChange={setRefineText}
+                onChangeRefs={setRefineRefs}
+                options={mentionOptions}
                 rows={3}
-                placeholder="예: 더 따뜻한 노을 톤으로, 신부 표정 좀 더 환하게..."
+                placeholder="예: @bride_wedding 표정 좀 더 환하게, 따뜻한 노을 톤..."
                 disabled={!canRefine || refineSubmitting}
               />
 
@@ -776,12 +865,16 @@ export default function ExtraVideoDetailModal({
               <label className="extra-video-detail-modal__label">
                 연출 지시문
               </label>
-              <textarea
-                className="extra-video-detail-modal__textarea"
+              <MentionField
+                id={`extra-video-continue-${initialId}`}
+                ariaLabel="이어붙이기 연출 지시문"
                 value={contText}
-                onChange={(e) => setContText(e.target.value)}
+                refs={contRefs}
+                onChange={setContText}
+                onChangeRefs={setContRefs}
+                options={mentionOptions}
                 rows={3}
-                placeholder="예: 카메라가 천천히 뒤로 빠지며 두 사람이 손을 잡고 걸어 나간다..."
+                placeholder="예: 카메라가 천천히 뒤로 빠지며 @bride_wedding 과 @groom_wedding 이 손을 잡고 걸어 나간다..."
                 disabled={!canContinue || contSubmitting}
               />
 

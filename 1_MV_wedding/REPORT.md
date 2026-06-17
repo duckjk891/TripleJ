@@ -2653,3 +2653,109 @@ v21.4-hotfix 라이브 검증 (잡 6a17f8eb, 24 씬, 챕터=[4,4,12,4]) 에서 L
 
 ### 결론
 v21.5 PASS — LLM 의 결정론 라벨(story_slot/memory_index/refs) 의존을 완전 제거하고 `event_index: int` 단 하나만 받아 코드가 events 룩업으로 모든 라벨을 강제. v21.4-hotfix 의 wedding_prep 챕터 누락 결함이 해결되어 잡 6a17f8eb 에서 5 챕터 (meeting/first_date/memory/proposal/wedding_prep) 모두 등장. 라이브 검증에서 모든 23 씬의 story_slot/section/memory_index/refs 가 events 와 100% 매칭. 모든 6 events 분배 보장 (LLM 누락 시 1회 retry + fallback 자동 보충). LLM 응답 새 스키마를 정확히 따라 retry 미발동. 응답 페이로드 호환성 유지 — 프론트엔드 무영향. event_index asc 정렬로 순서 보장.
+
+
+## v24.3 (2026-06-14) — Extra Video 한→영 자동 번역 (옵션 B)
+
+### 변경 파일 (backend_8000 만, 6개)
+- `backend_8000/app/services/extra_video_prompts.py` — `compose_extra_video_prompt()` async 전환. `from .translation import translate_ko_to_en` import. 한글 detect fast-path → 번역 호출 (또는 영문은 LLM skip). `compose_video_prompt()` 호출/scene_adapter 어댑터 완전 제거. 최종 prompt = `영문 user_text` + (`Camera: <motion_block>` 있으면). 둘 다 비면 `"Natural cinematic motion."` 폴백. `sanitize_video_prompt()` 통과. 진입/번역/최종 합성 3 단계 로그.
+- `backend_8000/app/services/extra_video_generator.py` — `await compose_extra_video_prompt(...)` 변경. `_build_scene_dict_for_generator()` 시그니처에 `prebuilt_prompt: Optional[str] = None` 추가하고, 빈 값 아니면 `scene["prebuilt_prompt"]` 슬롯에 주입.
+- `backend_8000/app/services/pre_mv_kling_generator.py` — `prebuilt = (scene or {}).get("prebuilt_prompt") or ""` 분기. prebuilt 있으면 `raw_prompt = prebuilt`, identity guidance 도 `if not prebuilt and identity_lines:` 가드로 스킵. 로그에 `prebuilt=%d` 추가.
+- `backend_8000/app/services/pre_mv_seedance_generator.py` — 동일 prebuilt 분기 + 로그.
+- `backend_8000/app/services/pre_mv_grok_generator.py` — 동일 prebuilt 분기 + 로그.
+- `backend_8000/app/services/pre_mv_veo_generator.py` — 동일 prebuilt 분기 (Veo 는 원래 sanitize 미사용 구조라 final_prompt 에 직접 대입) + 로그.
+
+### 동작 검증 (prompt 합성 단계까지, 실 영상 모델 미호출)
+| # | 케이스 | 결과 | PASS |
+|---|---|---|---|
+| 1 | 한글 user_text + Veo | `The bride smiles and looks at the camera. Camera: Slow zoom in.` (한글 0) | PASS |
+| 2 | 한글 user_text + Kling | 동일 합성 결과 (한글 0) | PASS |
+| 3 | 한글 user_text + Seedance | 동일 합성 결과 (한글 0) | PASS |
+| 4 | 한글 user_text + Grok | 동일 합성 결과 (한글 0) | PASS |
+| 5 | 영문 user_text + Kling | LLM skip (`elapsed_ms=0`) → `bride smiles softly at the camera. Camera: Tracking shot following the subject.` | PASS |
+| 6 | 빈 user_text + Kling | `Camera: Camera pans left.` (한글 0) | PASS |
+| 7 | 빈 user_text + 빈 모션 + Kling | 폴백 `Natural cinematic motion.` | PASS |
+| 8 | 한글 + 복수 모션 (Veo) | `Walks energetically. Camera: Slow zoom in. Tracking shot following the subject.` | PASS |
+
+### 회귀 검증 — 식전영상 흐름
+- 4 개 generator 의 `prebuilt` 분기에서 falsy 시 기존 `compose_video_prompt(scene=...)` 호출 라인이 그대로 보존 (kling:443/446, veo:363/366, seedance:301/304, grok:301/304).
+- pre_mv_phase3 호출자는 scene dict 에 `prebuilt_prompt` 키를 채우지 않음 → 식전영상 generator 흐름은 시네마틱 wedding 보강 포함 기존 합성 그대로 → 무영향.
+
+### 기타 검증
+- `python -m py_compile` 6 개 파일 PASS.
+- `curl http://localhost:8000/docs` → HTTP 200 (uvicorn --reload 자동 반영).
+- `server.log` startup 정상, 에러 없음.
+- 로그 prefix `[ExtraVideoPrompt] entry / translated / composed` 신규 라인 정상 출력.
+
+### 특이사항
+- `ANTHROPIC_API_KEY` 가 `.env` 에 설정되어 있어 실 번역 호출 통과 (`claude-opus-4-7`, 1.0~1.7s).
+- 한글 fast-path: `re.search(r"[가-힣]", text)` 미감지 시 LLM 호출 자체를 스킵하여 영문 입력 비용 0.
+- 번역 실패(빈 응답) 시 원본 user_text 폴백 + warning 로그 — 한글이 모델로 갈 가능성이 있으나 사양상 의도 보존 우선.
+- 실 영상 모델 호출(veo/kling/seedance/grok) 은 비용·시간 부담으로 본 검증에서는 미수행. 운영 환경에서 1 건씩 실제 호출하여 영상 결과를 확인할 것을 권장.
+- 백엔드 재시작은 uvicorn --reload 자동 반영으로 추가 작업 불필요.
+- frontend / 식전영상 / 라우터 스키마 변경 없음.
+
+### 작업 끝(append).
+
+
+## v24.4 (2026-06-14) — Extra Video ② 연출 프롬프트 @멘션 도입 (옵션 A)
+
+### 변경 파일 (6 개)
+
+**Backend (4)**
+- `backend_8000/app/services/translation.py` — `_build_translation_system_prompt(direction, context_hint, preserve_mentions=False)` 시그니처 확장. `direction=='ko_to_en'` + `preserve_mentions=True` 분기에서 `@` 토큰 보존 규칙 2 줄 + few-shot 1 줄 추가. `_call_anthropic_translation` / `_translate_with_retry` / `translate_ko_to_en` 시그니처에 `preserve_mentions` 전달. `[TranslateKoEn]` 로그에 `preserve_mentions=%d` 키 추가. 기본 False — `translate_en_to_ko` / `suno_generator` 무영향.
+- `backend_8000/app/services/extra_video_prompts.py` — `_MENTION_RE = re.compile(r"@[A-Za-z0-9_\-가-힣]+")` 추가. `compose_extra_video_prompt(..., refs: Optional[list[dict]] = None)` 시그니처. `translate_ko_to_en(..., preserve_mentions=True)` 호출. **post-validation 3 중**: ① src/dst 멘션 set 비교 → ② missing 시 1회 재시도 (`context_hint` 에 누락 토큰 목록 hint 끼움) → ③ 그래도 누락이면 prompt 끝에 ` (assets: @x @y)` 부착 + warning. refs 가 채워져 있으면 prompt 끝에 ` Refs: @name (type), ...` 메타 라인 부착 (Veo/Seedance/Grok 텍스트 인지용). 로그 `[ExtraVideoPrompt] mentions src=%d dst=%d missing=%d retried=%d fallback=%d refs_count=%d`.
+- `backend_8000/app/services/extra_video_generator.py` — `from .extra_scene_image_generator import _resolve_sheet_ref, _resolve_asset_ref, _resolve_scene_image_ref` 도입 (코드 중복 회피). 새 helper `_load_refs_bytes(mv_job_id, owner_user_id, refs)` 추가 — refs 4 종 (sheet/place/wedding_photo/scene_image) → MinIO bytes 로드, 최대 4 클램프. `generate_extra_video(..., refs: Optional[list[dict]] = None)` 시그니처. `compose_extra_video_prompt(..., refs=refs)` 전달. **Kling 분기에만 `char_ref_bytes_list=ref_bytes_list[:2]` 전달**, Veo/Seedance/Grok 분기 무변경 (시그니처에 ref 채널 없음 — ref 정보는 prompt 토큰 + Refs 메타 라인으로 인지). 로그 `[ExtraVideoGen] refs_loaded ... bytes_count=%d skipped=%d`, Kling 분기에 `kling_char_refs=%d`.
+- `backend_8000/app/routes/extra_videos.py` — 3 스키마 (`ExtraVideoCreate`/`ExtraVideoRefine`/`ExtraVideoContinue`) 에 `refs: list[dict] = Field(default_factory=list, max_length=8)` 추가. doc insert 3 곳 (POST `/`, `/refine`, `/continue`) 모두 `"refs": list(body.refs or [])` 저장. `_run_extra_video_generation(..., refs)` 시그니처 + 3 개 호출 사이트 모두 `refs=list(body.refs or [])` 전달. 내부 `generate_extra_video(..., refs=refs)` 전달. 진입 로그 4 곳에 `refs_count=%d`.
+
+**Frontend (2)**
+- `frontend/src/components/ExtraVideoStudioPanel.jsx` — panel 본체 (`ExtraVideoStudioPanel`) 로 `context` / `loadingContext` / `contextError` / `reloadContext` / `mentionOptions` lift up. A 섹션(`ExtraSceneImageSection`) 의 자체 fetch 제거, props 로 받기 (loadingContext/mentionOptions). B 섹션(`ExtraVideoSection`) 에 `mentionOptions` prop + `selectedVideoRefs` state 추가. **B 섹션 ② textarea (라인 1532-1542) → `<MentionField>` 교체** + placeholder/hint 갱신. payload 에 `refs: selectedVideoRefs` 추가. generate 성공 후 `setUserText('')` + `setSelectedVideoRefs([])` 리셋.
+- `frontend/src/components/ExtraVideoDetailModal.jsx` — `MentionField` import + `mentionContext` state + 진입 시 1회 `getJobContext(mvJobId)` useEffect + `mentionOptions` useMemo (A 섹션 동일 빌드 로직). `refineRefs` / `contRefs` state 추가. **Refine 폼 textarea (라인 648-655) + Continue 폼 textarea (라인 779-786) → `<MentionField>` 교체**. refine/continue payload 에 `refs` 추가. 성공 후 reset.
+
+### 정적 검증 결과 (18/18 PASS)
+
+| 항목 | 결과 | 핵심 출력 |
+|---|---|---|
+| A1 py_compile 4 파일 | PASS | `PASS_A1` |
+| A2 backend import | PASS | `IMPORT_OK` |
+| A3 health/docs | PASS | health=200, docs=200 |
+| A4 vite build | PASS | `built in 3.20s`, 522.56 kB |
+| B1 3 스키마 refs 필드 | PASS | line 208/224/238 `refs: list[dict] = Field(...max_length=8)` |
+| B2 _run_ refs 전달 | PASS | 호출 3곳 (472, 1107, 1430) 모두 `refs=list(body.refs or [])` |
+| B3 preserve_mentions 분기 | PASS | prompts.py 113/147=True, suno_generator 미전달 (기본 False) |
+| B4 Kling char_ref | PASS | extra_video_generator line 314 `char_ref_bytes_list=kling_char_refs` |
+| B5 Veo/Seedance/Grok 무변경 | PASS | grep 출력 없음 (3 모델 시그니처에 ref 채널 없음) |
+| B6 post-validation 로그 | PASS | prompts.py 192 `mentions src=%d dst=%d missing=%d retried=%d` |
+| B7 Studio B 섹션 MentionField | PASS | import + 631/1551 사용 + state 959 |
+| B8 Studio payload refs | PASS | line 1196 `refs: selectedVideoRefs` |
+| B9 Modal Refine/Continue refs | PASS | refineRefs/contRefs + MentionField 733/868 + payload 366/441 |
+| B10 A 섹션 lift up | PASS | reloadContext 부모 panel 정의, loadingContext prop 전달 (189/208/246) |
+| C1 suno_generator 호환 | PASS | `translate_ko_to_en(text, context_hint=...)` v24.3 동일 시그니처 |
+| C2 식전영상 회귀 | PASS | pre_mv_kling/veo 호출자 무관, prebuilt_prompt 키 미전달 → 기존 경로 |
+| D1 server.log | PASS | error/exception 없음 |
+| D2 PLAN.md v24.4 헤더 | PASS | line 4843 `## v24.4 (2026-06-14) — Extra Video ②...` |
+
+### 회귀 검증 — 핵심 격리 확인
+- **suno_generator**: `translate_ko_to_en(text, context_hint="music style tag")` 호출 시 `preserve_mentions` 미전달 → 기본 False → system prompt 무변화 → 무영향.
+- **식전영상 Pre-MV Phase 3**: `extra_video_generator` 우회. Pre-MV 호출자가 `prebuilt_prompt` 키 + `refs` 키를 채우지 않음 → 4 모델 generator 의 cinematic 합성 경로 그대로 → 무영향.
+- **A 섹션 (씬 이미지)**: `context` lift up 후 props 로 받는 동일 이름 변수 사용 → 내부 로직 무변경 → 무영향.
+- **빈 refs 리스트**: `refs: list[dict] = Field(default_factory=list)` — 미전송 시 빈 리스트, generator 가 `_load_refs_bytes` skip → v24.3 동작 동일.
+
+### 특이사항
+
+- **Veo / Seedance / Grok 의 ref binary 채널 미지원**: 사전 분석에서는 4 모델 모두에 binary ref 전달을 가정했으나, 실제 코드 확인 결과 **Kling 만 `char_ref_bytes_list` 시그니처 보유** (최대 2장). 나머지 3 모델은 source image 1장만 받는 구조. 본 작업에서는:
+  - Kling: `char_ref_bytes_list=ref_bytes_list[:2]` 로 binary 전달 (`char_ref_modes` 자동 "explicit").
+  - Veo/Seedance/Grok: ref 정보는 **prompt 내 `@xxx` 토큰** (멘션 보존 번역 + Refs 메타 라인) 으로 전달. 모델은 텍스트로만 인지하며 이미지 일관성은 source PNG + 텍스트 hint 에 의존.
+- **post-validation 3중 방어책**: 시스템 지시 + few-shot 예시 + 번역 후 src/dst set 비교 → 누락 시 재시도 → fallback 부착. 절대 멘션 토큰이 모델에 도달 못 하는 일은 없음.
+- **한글 fast-path 유지**: v24.3 의 `_HANGUL_RE.search(user_block)` 없을 때 LLM skip 동작 유지. 영문 입력은 멘션 보존 번역 호출 자체가 발생하지 않음 (비용 0). 영문 멘션은 그대로 통과.
+- **MentionField 의 reconcileRefs 자동 정합**: 사용자가 본문에서 `@xxx` 토큰을 직접 타이핑/삭제해도 options 풀 안의 display_name 매칭으로 refs 자동 push/pop. payload 의 refs 는 본문 토큰과 정합 유지.
+- **getJobContext 중복 호출 회피**: panel 본체에서 1회만 호출 후 A/B 섹션에 prop drilling. 모달은 자체 1회 호출 (modal 진입 빈도 낮음).
+- **실 영상 모델 호출 미수행**: 비용 부담으로 prompt 합성 단계까지만 검증. 운영자가 4 모델 1 건씩 실제 호출하여 ref 일관성 + 멘션 보존률 + post-validation 발동 빈도 확인 권장.
+- **사양 외 추가**: frontend B 섹션 generate 성공 후 `setUserText('')` 도 함께 호출 (refs reset 과 짝). refs 메타 라인은 `display_name` 비어있는 ref 만 있을 경우 부착 skip.
+
+### 운영자 후속 검증 권장
+- 실 영상 1 건 생성 (4 모델 각각, refs 1 개 포함) → ref 일관성 및 prompt 내 멘션 보존 확인.
+- 멘션 보존률 모니터링 — `[ExtraVideoPrompt] mentions ... missing=N` 로그에서 missing>0 빈도 추적. 빈도 높으면 system 규칙/few-shot 강화 검토.
+- backend uvicorn --reload 자동 반영 + frontend vite HMR 자동 반영으로 추가 재시작 불필요.
+
+### 작업 끝(append).
