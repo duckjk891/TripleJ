@@ -116,6 +116,23 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   // Character & Scene Prompt
   const [myCharacter, setMyCharacter] = useState(null);
   const [includeCharacter, setIncludeCharacter] = useState(false);
+  // v75: 커버/MV/발행 스냅샷에 쓸 캐릭터 variant — 'real'(실사화) | 'virtual'(가상화). 기본 실사.
+  const [characterVariant, setCharacterVariant] = useState('real');
+  const hasReal = !!myCharacter?.sheet_object_name;
+  const hasVirtual = !!myCharacter?.virtual_sheet_object_name;
+  // 선택된 variant 의 시트 object_name (없으면 null → 기존과 동일하게 null 전송)
+  const selectedCharSheet = () => {
+    if (!myCharacter) return null;
+    return characterVariant === 'virtual'
+      ? (myCharacter.virtual_sheet_object_name || null)
+      : (myCharacter.sheet_object_name || null);
+  };
+  const selectedCharItems = () => {
+    if (!myCharacter) return [];
+    return characterVariant === 'virtual'
+      ? (myCharacter.virtual_used_items || [])
+      : (myCharacter.used_items || []);
+  };
   // v63: 커버 이미지 인물을 character1 주인공 자산으로 사용할지. 기본값 true.
   // includeCharacter (사용자 PNG) 가 켜져있으면 자동 무력화 — 백엔드도 동일 정책.
   const [useCoverPersonAsCharacter1, setUseCoverPersonAsCharacter1] = useState(true);
@@ -274,6 +291,15 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       .catch(() => {});
   }, [myCharacterFromParent]);
 
+  // v75: variant 자동 보정 — 한쪽 시트만 있으면 그쪽으로 강제. 둘 다 있으면 현재 선택 유지(기본 'real').
+  useEffect(() => {
+    if (hasReal && !hasVirtual) {
+      setCharacterVariant('real');
+    } else if (!hasReal && hasVirtual) {
+      setCharacterVariant('virtual');
+    }
+  }, [hasReal, hasVirtual]);
+
   // v42: load locations (best-effort, [] fallback)
   useEffect(() => {
     api.listMyLocations()
@@ -416,15 +442,17 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         image_model: coverImageModel,
         includeCharacter,
         has_myCharacter: !!myCharacter,
-        myCharacter_sheet_object_name: myCharacter?.sheet_object_name || null,
-        will_send_character_object_name: (includeCharacter && myCharacter) ? myCharacter.sheet_object_name : null,
+        character_variant: characterVariant,
+        has_real_sheet: hasReal,
+        has_virtual_sheet: hasVirtual,
+        will_send_character_object_name: includeCharacter ? selectedCharSheet() : null,
       });
       const { data } = await api.generateCover({
         title: title.trim(),
         genre: genre || null,
         mood: mood || null,
         style: null,
-        character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
+        character_object_name: includeCharacter ? selectedCharSheet() : null,
         user_prompt: coverUserPrompt.trim() || null,
         prompt_model: coverPromptModel || null,
         location_id: selectedLocationId || null,
@@ -680,7 +708,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         cover_object_name: aiCoverObjectName || null,
         audio_duration_sec: audioDuration || null,
         scene_prompt: scenePrompt.trim() || null,
-        character_object_name: includeCharacter && myCharacter ? myCharacter.sheet_object_name : null,
+        character_object_name: includeCharacter ? selectedCharSheet() : null,
+        // v75: 실사('real')/가상('virtual') 캐릭터 선택 — 백엔드 MV 파이프라인에 전달.
+        character_variant: includeCharacter ? characterVariant : null,
         video_model: videoModel,
         audio_generation_id: fromGeneration || null,
         scenario_models: scenarioModels,
@@ -1462,19 +1492,24 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           tags: tags.trim() || undefined,
           prompt: prompt.trim() || undefined,
           lyrics: lyrics.trim() || undefined,
+          // 느낌 카테고리: generation 에 저장된 값을 트랙에 관통 (없으면 백엔드가 generation fallback)
+          categories: Array.isArray(generationDoc?.categories) && generationDoc.categories.length > 0
+            ? generationDoc.categories
+            : undefined,
           ai_model: aiTool || undefined,
           cover_object_name: aiCoverObjectName || undefined,
           mv_object_name: mvMusicVideoObjectName || mvObjectName || undefined,
           use_voice_converted: useVoiceConverted || undefined,
           // v71: cover 에 '내 캐릭터 포함' 켰으면 그 시점의 캐릭터 snapshot 박음.
           // MV 안 만든 곡도 트랙 디테일에서 cover_character 노출 가능하게.
+          // v75: 스냅샷은 "커버에 실제 쓴 캐릭터" 기준 — 선택 variant(실사/가상)의 시트/아이템 사용.
           user_character_snapshot: includeCharacter && myCharacter ? {
             name: myCharacter.name || '',
             age: myCharacter.age || '',
             personality_tags: myCharacter.personality_tags || [],
             personality_text: myCharacter.personality_text || '',
-            sheet_object_name: myCharacter.sheet_object_name || null,
-            used_items: myCharacter.used_items || [],
+            sheet_object_name: selectedCharSheet(),
+            used_items: selectedCharItems(),
           } : null,
         });
         track = data;
@@ -1823,25 +1858,89 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
               </>
             )}
 
-            {/* Always visible - character toggle (disabled when no character) */}
+            {/* Always visible - character toggle (disabled when no character sheet) */}
+            {/* v75: 실사/가상 중 하나라도 시트가 있으면 사용 가능 */}
             <label
               className="upload-character-toggle"
-              style={!myCharacter ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
-              title={!myCharacter ? '먼저 마이뮤직 → 내 캐릭터 탭에서 캐릭터를 등록하세요.' : undefined}
+              style={!(hasReal || hasVirtual) ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+              title={!(hasReal || hasVirtual) ? '먼저 마이뮤직 → 내 캐릭터 탭에서 캐릭터를 등록하세요.' : undefined}
             >
               <input
                 type="checkbox"
-                checked={includeCharacter && !!myCharacter}
-                disabled={!myCharacter}
+                checked={includeCharacter && (hasReal || hasVirtual)}
+                disabled={!(hasReal || hasVirtual)}
                 onChange={(e) => setIncludeCharacter(e.target.checked)}
               />
               내 캐릭터 포함하기
-              {!myCharacter && (
+              {!(hasReal || hasVirtual) && (
                 <span style={{ marginLeft: '8px', fontSize: '12px', color: '#888' }}>
                   (캐릭터 미등록)
                 </span>
               )}
             </label>
+
+            {/* v75: 캐릭터 variant 선택 카드 — 실사화/가상화 중 택1 (있는 것만 표시) */}
+            {includeCharacter && (hasReal || hasVirtual) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '8px', marginBottom: '4px' }}>
+                {[
+                  hasReal && {
+                    id: 'real',
+                    label: '실사화',
+                    subLabel: null,
+                    objectName: myCharacter.sheet_object_name,
+                    color: '#4a9eff',
+                  },
+                  hasVirtual && {
+                    id: 'virtual',
+                    label: '가상화',
+                    subLabel: myCharacter.virtual_art_style || null,
+                    objectName: myCharacter.virtual_sheet_object_name,
+                    color: '#b070ff',
+                  },
+                ].filter(Boolean).map((card) => {
+                  const selected = characterVariant === card.id;
+                  return (
+                    <label
+                      key={card.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        cursor: 'pointer',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        border: selected ? `2px solid ${card.color}` : '2px solid #333',
+                        background: selected ? `${card.color}15` : '#1a1a1a',
+                        fontSize: '12px',
+                        color: '#ddd',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="characterVariant"
+                        checked={selected}
+                        onChange={() => {
+                          setCharacterVariant(card.id);
+                          if (import.meta.env.DEV) console.info('[UploadPage] char variant', { variant: card.id });
+                        }}
+                        style={{ accentColor: card.color }}
+                      />
+                      <img
+                        src={api.characterPreviewUrl(card.objectName)}
+                        alt={card.label}
+                        style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', background: '#111' }}
+                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontWeight: 600 }}>{card.label}</span>
+                        {card.subLabel && (
+                          <span style={{ color: '#666', fontSize: '11px' }}>{card.subLabel}</span>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
 
             <div style={{ marginTop: '10px', marginBottom: '10px' }}>
               <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>커버 프롬프트 AI</label>

@@ -253,6 +253,17 @@ async def generate_cover(
             content={"error": "곡 제목을 입력해주세요."},
         )
 
+    # Points — 커버 AI 생성은 2포인트 선차감 (부족 시 402 차단, 실패 시 환불).
+    # ref 는 시도당 유니크 uuid (point_events 유니크 인덱스 재시도 충돌 회피).
+    from ..services.points_service import refund_points, spend_points
+    cover_point_cost = 2
+    point_ref = uuid_lib.uuid4().hex
+    if not await spend_points(current_user["id"], "cover", cover_point_cost, point_ref):
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(cover_point_cost)},
+        )
+
     # Load character sheet if requested
     # v67-pre: 디버그 로그 강화 — character_object_name 수신 여부 + MinIO 로드 결과
     logger.info(
@@ -395,6 +406,8 @@ async def generate_cover(
             response_body["cover_session_id"] = cover_session_id
         return response_body
     except Exception as e:
+        # Points — 생성 실패 시 선차감분 환불.
+        await refund_points(current_user["id"], "cover", cover_point_cost, point_ref)
         return JSONResponse(
             status_code=500,
             content={"error": "커버 생성 실패: {}".format(str(e)[:200])},

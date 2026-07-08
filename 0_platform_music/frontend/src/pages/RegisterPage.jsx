@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import SocialLoginButtons from '../components/SocialLoginButtons';
 import './RegisterPage.css';
 
 export default function RegisterPage() {
@@ -134,6 +135,8 @@ export default function RegisterPage() {
           <button className="register-card__submit" type="submit" disabled={loading}>
             {loading ? '가입 중...' : '회원가입'}
           </button>
+
+          <SocialLoginButtons logPrefix="RegisterPage" />
 
           <div className="register-card__footer">
             이미 계정이 있으신가요?

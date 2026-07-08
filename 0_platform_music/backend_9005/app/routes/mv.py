@@ -55,6 +55,9 @@ class CreateMVRequest(BaseModel):
     audio_duration_sec: Optional[float] = None
     scene_prompt: Optional[str] = None
     character_object_name: Optional[str] = None
+    # v99+: 커버에 쓴 캐릭터 기준 통일 — "real"(실사, 기존) | "virtual"(가상화).
+    # 미전송/그 외 값은 "real" 로 정규화 (하위호환: 기존 동작 100% 동일).
+    character_variant: Optional[str] = "real"
     video_model: Optional[str] = "veo"  # "veo", "kling", "seedance", or "grok" (v66)
     audio_generation_id: Optional[str] = None
     scenario_models: Optional[List[str]] = None  # for scenario generation (e.g. ["gpt-4o-mini", "claude-opus-4-6"])
@@ -469,6 +472,10 @@ async def create_mv(
     else:
         scene_count = 20
 
+    # 커버에 쓴 캐릭터 기준 통일: "virtual" 이면 가상 시트+가상 아이템으로 스냅샷.
+    # 미전송/그 외 값은 "real" 로 정규화 (하위호환).
+    character_variant = body.character_variant if body.character_variant in ("real", "virtual") else "real"
+
     user_character_snapshot = None
     if bool(body.include_my_character):
         char = await mongo.characters.find_one({"user_id": current_user["id"]})
@@ -477,14 +484,40 @@ async def create_mv(
                 status_code=400,
                 content={"error": "저장된 내 캐릭터가 없습니다. 먼저 프로필을 설정해주세요."},
             )
+        if character_variant == "virtual":
+            snapshot_sheet = char.get("virtual_sheet_object_name")
+            snapshot_items = char.get("virtual_used_items") or []
+            if not snapshot_sheet:
+                logger.warning(
+                    "[MVJob] variant=virtual but no virtual_sheet_object_name for user=%s — snapshot sheet will be None",
+                    current_user["id"],
+                )
+        else:
+            snapshot_sheet = char.get("sheet_object_name")
+            snapshot_items = char.get("used_items") or []
+        # SnapFix — 시트를 불변 경로(character_snapshots/)로 복사해 이후
+        # 캐릭터 재생성/삭제로부터 격리 (best-effort, MV 생성은 절대 실패 X).
+        _snapfix_copied = None
+        if snapshot_sheet:
+            from ..services.snapshot_service import snapshot_sheet_copy
+
+            _snapfix_copied = snapshot_sheet_copy(get_minio(), current_user["id"], snapshot_sheet)
         user_character_snapshot = {
             "name": char.get("name") or "",
             "age": char.get("age") or "",
             "personality_tags": char.get("personality_tags") or [],
             "personality_text": char.get("personality_text") or "",
-            "sheet_object_name": char.get("sheet_object_name"),
-            "used_items": char.get("used_items") or [],
+            "sheet_object_name": _snapfix_copied or snapshot_sheet,
+            "used_items": snapshot_items,
         }
+        if _snapfix_copied:
+            user_character_snapshot["sheet_object_name_origin"] = snapshot_sheet
+        logger.info(
+            "[MVJob] snapshot variant=%s has_sheet=%s items=%d",
+            character_variant,
+            bool(snapshot_sheet),
+            len(snapshot_items),
+        )
 
     # v42: snapshot user-saved location (anchor for Mode B). We persist only
     # id/name/object_name on the job — bytes are loaded lazily in Phase 1.5.
@@ -526,6 +559,8 @@ async def create_mv(
         "vocal_gender": vocal_gender,
         "relationship": relationship,
         "include_my_character": bool(body.include_my_character),
+        # 커버에 쓴 캐릭터 기준 통일: "real" | "virtual" (추적용, 미전송=real).
+        "character_variant": character_variant,
         "user_character_snapshot": user_character_snapshot,
         # v63: 커버 인물 자산화 흐름 — 기본 True. include_my_character=True 일 땐
         # Phase 0/1.5 가 자동으로 무력화 (user_character 가 1/2순위 우선).
@@ -554,6 +589,14 @@ async def create_mv(
 
     result = await mongo.mv_jobs.insert_one(job_doc)
     job_id = result.inserted_id
+
+    # SnapFix — 스냅샷 시트 불변 사본 결과 추적 로그 (job id 확정 후).
+    if user_character_snapshot is not None and user_character_snapshot.get("sheet_object_name"):
+        logger.info(
+            "[SnapFix] mv job=%s user=%s copied=%s",
+            str(job_id), current_user["id"],
+            bool(user_character_snapshot.get("sheet_object_name_origin")),
+        )
 
     # Launch phase 1 + phase 2 combined in background
     background_tasks.add_task(run_phase1_and_phase2, job_id, mongo)

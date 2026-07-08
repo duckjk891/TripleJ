@@ -845,6 +845,10 @@ export default function StudioTab2({ onSendToUpload }) {
   const [title, setTitle] = useState('');
   const [lyrics, setLyrics] = useState('');
   const [generatingLyrics, setGeneratingLyrics] = useState(false);
+  // 느낌 카테고리 (가사 생성 결과로 받은 깨끗한 문자열 배열 — 생성/발행 시 관통)
+  const [categories, setCategories] = useState([]);
+  // 고정 10종 느낌 카테고리 (백엔드 GET /charts/categories 로드, 편집 토글 UI 용)
+  const [allCategories, setAllCategories] = useState([]);
 
   // Step 3: Music settings
   const [styleText, setStyleText] = useState('');
@@ -947,6 +951,31 @@ export default function StudioTab2({ onSendToUpload }) {
         setMyPersonas(completed);
       })
       .catch(() => {});
+  }, []);
+
+  // 느낌 카테고리 고정 10종 로드 (편집 토글 UI 용). 하드코딩 금지, 실패 시 빈 배열 폴백.
+  useEffect(() => {
+    if (import.meta.env.DEV) console.info('[LyricsCategoryEdit] loading fixed categories');
+    api.getCategories()
+      .then(({ data }) => {
+        const list = Array.isArray(data?.categories) ? data.categories : [];
+        setAllCategories(list);
+        if (import.meta.env.DEV) console.info('[LyricsCategoryEdit] categories loaded', { count: list.length });
+      })
+      .catch((err) => {
+        setAllCategories([]);
+        console.warn('[LyricsCategoryEdit] getCategories failed, fallback to empty', { status: err?.response?.status, message: err?.message });
+      });
+  }, []);
+
+  // 칩 클릭 → 선택 카테고리(categories state) 추가/삭제 토글
+  const toggleCategory = useCallback((cat) => {
+    setCategories((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      const selected = list.includes(cat);
+      if (import.meta.env.DEV) console.info('[LyricsCategoryEdit] toggle', { cat, selected: !selected });
+      return selected ? list.filter((c) => c !== cat) : [...list, cat];
+    });
   }, []);
 
   // v76 — Fetch voice clones (ready only) for Suno V5_5 cloning
@@ -1103,12 +1132,16 @@ export default function StudioTab2({ onSendToUpload }) {
         models: lyricsModels,
       });
       if (data.results && Array.isArray(data.results)) {
-        // 듀얼 모델 결과 → 비교 UI 표시
+        // 듀얼 모델 결과 → 비교 UI 표시 (categories 는 각 result 에 포함, 선택 시 반영)
         setLyricsResults(data.results);
         setShowLyricsCompare(true);
       } else {
         setTitle(data.title || '');
         setLyrics(data.lyrics || '');
+        setCategories(Array.isArray(data.categories) ? data.categories : []);
+        if (import.meta.env.DEV) {
+          console.info('[LyricsResult] lyrics generated', { categories: data.categories || [] });
+        }
         setShowLyricsCompare(false);
         setLyricsResults(null);
         setStep(2);
@@ -1145,6 +1178,7 @@ export default function StudioTab2({ onSendToUpload }) {
           model: selectedModel,
           start_music_gen: false,
           duet: isDuet,
+          categories: Array.isArray(categories) ? categories : [],
         };
         const { data } = await api.createGeneration(body);
         if (data?.id) {
@@ -1441,6 +1475,7 @@ export default function StudioTab2({ onSendToUpload }) {
           reference_audio_duration: referenceData?.duration_sec || null,
           duet_main_vocal_style: isDuet ? duetMainStyle.trim() || null : null,
           duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
+          categories: Array.isArray(categories) ? categories : [],
         };
         // v76 — voice clone override (Suno V5_5)
         if (selectedVoiceCloneId) {
@@ -1483,6 +1518,7 @@ export default function StudioTab2({ onSendToUpload }) {
           reference_audio_duration: referenceData?.duration_sec || null,
           duet_main_vocal_style: isDuet ? duetMainStyle.trim() || null : null,
           duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
+          categories: Array.isArray(categories) ? categories : [],
         };
 
         // v76 — voice clone override (Suno V5_5)
@@ -1508,6 +1544,7 @@ export default function StudioTab2({ onSendToUpload }) {
       setDescription('');
       setTitle('');
       setLyrics('');
+      setCategories([]);
       setSelectedGenres([]);
       setSelectedMoods([]);
       setSelectedStyles([]);
@@ -1590,6 +1627,7 @@ export default function StudioTab2({ onSendToUpload }) {
     setStyleText(gen.style || '');
     setVocal(gen.vocal || '');
     setSelectedModel(gen.model || 'suno');
+    setCategories(Array.isArray(gen.categories) ? gen.categories : []);
     setDraftId(gen.id);
     setError('');
     setSuccessMsg('');
@@ -1622,7 +1660,7 @@ export default function StudioTab2({ onSendToUpload }) {
         language: 'ko',
       });
 
-      // Step 2: Submit music generation with lyrics
+      // Step 2: Submit music generation with lyrics (느낌 카테고리 관통)
       await api.createGeneration({
         prompt: simplePrompt.trim(),
         title: lyricsData.title || null,
@@ -1630,6 +1668,7 @@ export default function StudioTab2({ onSendToUpload }) {
         start_music_gen: true,
         duration: 30,
         model: selectedModel,
+        categories: Array.isArray(lyricsData.categories) ? lyricsData.categories : [],
       });
 
       setSuccessMsg('가사가 자동 생성되었고, 음악 생성이 시작되었습니다!');
@@ -2190,10 +2229,23 @@ export default function StudioTab2({ onSendToUpload }) {
                       </span>
                     </div>
                     <h4 style={{ color: '#fff', marginBottom: '8px' }}>{result.title}</h4>
+                    {Array.isArray(result.categories) && result.categories.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                        {result.categories.map((cat) => (
+                          <span key={cat} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '999px', background: `${modelInfo.color}22`, color: modelInfo.color, border: `1px solid ${modelInfo.color}55` }}>
+                            #{cat}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <pre style={{ color: '#ccc', fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: '300px', overflow: 'auto', lineHeight: 1.6 }}>{result.lyrics}</pre>
                     <button onClick={() => {
                       setTitle(result.title);
                       setLyrics(result.lyrics);
+                      setCategories(Array.isArray(result.categories) ? result.categories : []);
+                      if (import.meta.env.DEV) {
+                        console.info('[LyricsResult] compare result selected', { model: result.model, categories: result.categories || [] });
+                      }
                       setShowLyricsCompare(false);
                       setLyricsResults(null);
                       setStep(2);
@@ -2229,6 +2281,41 @@ export default function StudioTab2({ onSendToUpload }) {
               placeholder="곡 제목"
               maxLength={100}
             />
+          </div>
+
+          {/* 느낌 카테고리 (고정 10종 토글 편집 — 항상 노출) */}
+          <div className="s2__section">
+            <label className="s2__label">느낌 카테고리</label>
+            <p className="s2__hint">칩을 눌러 직접 추가/삭제할 수 있어요</p>
+            <div className="s2__chips">
+              {(Array.isArray(allCategories) ? allCategories : []).map((cat) => {
+                const active = Array.isArray(categories) && categories.includes(cat);
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`s2__chip ${active ? 's2__chip--active' : ''}`}
+                    onClick={() => toggleCategory(cat)}
+                    aria-pressed={active}
+                  >
+                    #{cat}
+                  </button>
+                );
+              })}
+              {/* 폴백: 로드 실패로 10종이 비었는데 LLM 선택값이 있으면 그 값만이라도 보여주고 해제 가능 */}
+              {Array.isArray(allCategories) && allCategories.length === 0 &&
+                (Array.isArray(categories) ? categories : []).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className="s2__chip s2__chip--active"
+                    onClick={() => toggleCategory(cat)}
+                    aria-pressed={true}
+                  >
+                    #{cat}
+                  </button>
+                ))}
+            </div>
           </div>
 
           <div className="s2__section">

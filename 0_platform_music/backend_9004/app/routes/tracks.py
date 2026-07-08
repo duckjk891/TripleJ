@@ -17,6 +17,7 @@ from ..config import settings
 from ..database.mongodb import get_mongo
 from ..database.redis import get_redis
 from ..database.minio import get_minio
+from ..database.postgres import get_pg
 
 router = APIRouter(prefix="/api/tracks")
 
@@ -109,15 +110,47 @@ async def list_tracks(
     }
 
 
-@router.get("/search")
-async def search_tracks(q: str = Query(None), page: int = 1, limit: int = 20):
+# VectorSearch — number of semantic candidates pulled from pgvector before
+# the public-filter + pagination is applied. Generous so paging works.
+_SEMANTIC_TOP_K = 100
+
+# HybridSearch (B3) — obvious music-search filler phrases stripped from the
+# *embedding* query only (the ES side handles fillers via the ko_search analyzer).
+# Keeps the semantic vector focused on the mood/topic ("설레일때 듣는 노래" →
+# "설레일때") instead of being pulled toward energetic/"노래" neighbours. Order
+# matters: longer phrases first so "듣고싶어" is removed before "듣". Conservative —
+# if stripping empties the query we fall back to the original text.
+_VEC_FILLER_PHRASES = [
+    "듣고싶은", "듣고싶어", "들을때", "들을래", "들으면", "들으며",
+    "듣는", "들을", "들어", "듣기", "노래", "음악", "곡", "트랙", "사운드",
+    "추천곡", "추천", "플레이리스트", "플리", "리스트", "모음", "좋은", "최고",
+]
+
+
+def _strip_vec_fillers(q: str) -> str:
+    """Lightweight filler strip for the embedding query (B3).
+
+    Removes obvious music-search plumbing words/phrases so the semantic vector
+    centers on the mood/topic. Never raises; returns the original query if the
+    result would be empty (meaning the query was *all* filler). The raw query is
+    still passed unchanged to ES, whose ko_search analyzer does the real work.
+    """
     if not q:
-        return JSONResponse(status_code=400, content={"error": "검색어를 입력해주세요."})
+        return q
+    stripped = q
+    for ph in _VEC_FILLER_PHRASES:
+        stripped = stripped.replace(ph, " ")
+    stripped = " ".join(stripped.split()).strip()
+    if not stripped:
+        logger.info("[tracks.search] vec filler strip emptied q_len=%d, using original", len(q))
+        return q
+    if stripped != q:
+        logger.info("[tracks.search] vec filler strip q_len=%d -> q_len=%d", len(q), len(stripped))
+    return stripped
 
-    mongo = get_mongo()
 
-    # MongoDB text search (requires text index on title, prompt, tags, etc.)
-    # Fallback to regex if text index not available
+async def _regex_search_tracks(mongo, q: str, page: int, limit: int) -> dict:
+    """Original MongoDB regex search. Used as the semantic-search fallback."""
     query = {
         "is_public": True,
         "$or": [
@@ -127,11 +160,9 @@ async def search_tracks(q: str = Query(None), page: int = 1, limit: int = 20):
             {"uploader_nickname": {"$regex": q, "$options": "i"}},
         ],
     }
-
     total = await mongo.tracks.count_documents(query)
     cursor = mongo.tracks.find(query).sort("play_count", -1).skip((page - 1) * limit).limit(limit)
     tracks = await cursor.to_list(length=limit)
-
     return {
         "tracks": _serialize_tracks(tracks),
         "pagination": {
@@ -141,6 +172,129 @@ async def search_tracks(q: str = Query(None), page: int = 1, limit: int = 20):
             "totalPages": math.ceil(total / limit) if limit else 0,
         },
     }
+
+
+@router.get("/search")
+async def search_tracks(
+    q: str = Query(None),
+    page: int = 1,
+    limit: int = 20,
+    pg=Depends(get_pg),
+):
+    """Hybrid track search: pgvector (semantic) + Elasticsearch BM25 (nori +
+    fuzzy), fused with Reciprocal Rank Fusion (RRF).
+
+    Response shape is unchanged: {tracks, pagination}. Both backends return up to
+    _SEMANTIC_TOP_K ranked track_ids; rrf_fuse merges them, matching public
+    tracks are fetched from MongoDB, re-ordered to the fused rank, then paginated.
+
+    Graceful degrade:
+      - both vector + ES available  -> mode=hybrid
+      - only vector available       -> mode=vec
+      - only ES available           -> mode=es
+      - neither yields results/works -> mode=regex (original MongoDB regex)
+    Empty q -> 400 (unchanged).
+    """
+    if not q:
+        return JSONResponse(status_code=400, content={"error": "검색어를 입력해주세요."})
+
+    mongo = get_mongo()
+    q_len = len(q)
+
+    from ..services.embedding_service import search_similar
+    from ..services.search_service import es_search, rrf_fuse
+
+    # --- pgvector (semantic) candidates, with cosine cutoff ---
+    # search_similar returns [(track_id, score)] where score = cosine similarity
+    # (0~1, higher = closer). We keep only candidates above settings.search_min_cosine
+    # so irrelevant queries (whose nearest neighbours are still far) get dropped.
+    floor = settings.search_min_cosine
+    vec_ids: list = []
+    vec_ok = False
+    vec_top1: float = 0.0
+    try:
+        vec_q = _strip_vec_fillers(q)
+        matches = await search_similar(pg, vec_q, _SEMANTIC_TOP_K)
+        if matches:
+            vec_top1 = matches[0][1]
+        vec_ids = [tid for tid, score in matches if score >= floor]
+        vec_ok = True
+    except Exception as e:
+        logger.warning("[tracks.search] vec backend failed q_len=%d: %s", q_len, e)
+
+    # --- Elasticsearch BM25 candidates (best-effort, never raises) ---
+    es_ids: list = []
+    es_ok = False
+    try:
+        es_ids = await es_search(q, _SEMANTIC_TOP_K)
+        es_ok = True
+    except Exception as e:
+        logger.warning("[tracks.search] es backend failed q_len=%d: %s", q_len, e)
+
+    # --- determine mode from what produced usable signal ---
+    if vec_ids and es_ids:
+        mode = "hybrid"
+    elif vec_ids:
+        mode = "vec"
+    elif es_ids:
+        mode = "es"
+    elif vec_ok:
+        # The vector backend ran but every candidate fell below the cosine floor,
+        # and ES (lexical) found nothing either -> the query is plainly unrelated
+        # to the catalog. Return an explicit empty result; do NOT regex-fall back.
+        logger.info(
+            "[tracks.search] mode=cutoff floor=%.3f vec_kept=0 es=0 vec_top1=%.4f n=0 total=0 (no match)",
+            floor, vec_top1,
+        )
+        return {
+            "tracks": [],
+            "pagination": {"page": page, "limit": limit, "total": 0, "totalPages": 0},
+        }
+    else:
+        # Vector backend itself failed AND ES yielded nothing -> we cannot judge
+        # relevance, so degrade to the original regex fallback.
+        logger.info(
+            "[tracks.search] mode=regex q_len=%d reason=no_candidates vec_ok=%s es_ok=%s",
+            q_len, vec_ok, es_ok,
+        )
+        return await _regex_search_tracks(mongo, q, page, limit)
+
+    try:
+        fused_ids = rrf_fuse(
+            vec_ids,
+            es_ids,
+            vec_weight=settings.rrf_vec_weight,
+            es_weight=settings.rrf_es_weight,
+        )
+        rank_by_id = {tid: i for i, tid in enumerate(fused_ids)}
+        object_ids = [ObjectId(tid) for tid in fused_ids if ObjectId.is_valid(tid)]
+
+        cursor = mongo.tracks.find({"_id": {"$in": object_ids}, "is_public": True})
+        docs = await cursor.to_list(length=len(object_ids))
+
+        # Preserve fused RRF order.
+        docs.sort(key=lambda d: rank_by_id.get(str(d["_id"]), len(rank_by_id)))
+
+        total = len(docs)
+        start = (page - 1) * limit
+        page_docs = docs[start:start + limit]
+
+        logger.info(
+            "[tracks.search] mode=%s floor=%.3f vec_kept=%d es=%d n=%d total=%d",
+            mode, floor, len(vec_ids), len(es_ids), len(page_docs), total,
+        )
+        return {
+            "tracks": _serialize_tracks(page_docs),
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": math.ceil(total / limit) if limit else 0,
+            },
+        }
+    except Exception as e:
+        logger.warning("[tracks.search] mode=regex q_len=%d reason=fuse_error: %s", q_len, e)
+        return await _regex_search_tracks(mongo, q, page, limit)
 
 
 class TrackUpdateBody(BaseModel):
@@ -522,6 +676,7 @@ async def upload_track(
     genre: str = Form(None),
     mood: str = Form(None),
     tags: str = Form(None),
+    categories: str = Form(None),  # v77: comma-separated 고정 카테고리
     ai_model: str = Form(None),
     prompt: str = Form(None),
     bpm: int = Form(None),
@@ -577,6 +732,10 @@ async def upload_track(
     genre_list = [g.strip() for g in genre.split(",") if g.strip()] if genre else []
     mood_list = [m.strip() for m in mood.split(",") if m.strip()] if mood else []
     tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    # v77 — categories: comma-separated 받아 화이트리스트 필터.
+    from ..constants.categories import filter_categories
+    cats_raw = [c.strip() for c in categories.split(",") if c.strip()] if categories else []
+    categories_list = filter_categories(cats_raw)
 
     now = datetime.now(timezone.utc)
     doc = {
@@ -590,6 +749,7 @@ async def upload_track(
         "genre": genre_list,
         "mood": mood_list,
         "tags": tags_list,
+        "categories": categories_list,
         "bpm": bpm,
         "key": key,
         "duration_sec": duration_sec,
@@ -615,10 +775,23 @@ async def upload_track(
 
     mongo = get_mongo()
     await mongo.tracks.insert_one(doc)
+    logger.info("[tracks] publish track_id=%s cats=%s", str(track_id), categories_list)
+
+    # Points — best-effort +1 for publishing a track (never affects the upload).
+    try:
+        from ..services.points_service import award_point
+        await award_point(uploader_id, "upload", str(track_id))
+    except Exception as e:
+        logger.warning("[points] upload hook failed: %s", e)
 
     # v44 — fire-and-forget beat extraction in a fresh event loop
     from ..services.beat_extraction import run_track_beat_extraction_in_background
     background_tasks.add_task(run_track_beat_extraction_in_background, str(track_id))
+
+    # HybridSearch — unified enrich+index hook (best-effort, ordered):
+    # concept keywords → Mongo search_keywords → pgvector re-embed → ES mirror.
+    from ..services.embedding_service import enrich_and_index_track_in_background
+    background_tasks.add_task(enrich_and_index_track_in_background, str(track_id))
 
     return _serialize_track(doc)
 
@@ -629,6 +802,7 @@ class UploadFromGenerationBody(BaseModel):
     genre: Optional[str] = None
     mood: Optional[str] = None
     tags: Optional[str] = None
+    categories: Optional[List[str]] = None  # v77: 고정 카테고리 (list 또는 comma-string)
     prompt: Optional[str] = None
     lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None
@@ -762,7 +936,36 @@ async def upload_from_generation(
     mood_list = [m.strip() for m in body.mood.split(",") if m.strip()] if body.mood else []
     tags_list = [t.strip() for t in body.tags.split(",") if t.strip()] if body.tags else []
 
+    # v77 — categories: body 우선(없으면 generation doc fallback), 항상 화이트리스트 필터.
+    # body.categories 는 list 또는 comma-separated string 모두 허용.
+    from ..constants.categories import filter_categories
+    if isinstance(body.categories, str):
+        cats_source = [c.strip() for c in body.categories.split(",") if c.strip()]
+    elif isinstance(body.categories, list):
+        cats_source = body.categories
+    else:
+        cats_source = gen_doc.get("categories")
+    categories_list = filter_categories(cats_source)
+
     now = datetime.now(timezone.utc)
+
+    # SnapFix — 발행 시점의 캐릭터 시트를 불변 경로(character_snapshots/)로
+    # 복사해 이후 캐릭터 재생성/삭제로부터 곡 표시를 격리한다.
+    # best-effort: 복사 실패 시 원본 경로 그대로 저장 — 발행은 절대 실패하지 않는다.
+    user_character_snapshot = body.user_character_snapshot
+    if user_character_snapshot and user_character_snapshot.get("sheet_object_name"):
+        from ..services.snapshot_service import snapshot_sheet_copy
+
+        _origin_sheet = user_character_snapshot.get("sheet_object_name")
+        _copied_sheet = snapshot_sheet_copy(minio_client, uploader_id, _origin_sheet)
+        if _copied_sheet:
+            user_character_snapshot = dict(user_character_snapshot)
+            user_character_snapshot["sheet_object_name"] = _copied_sheet
+            user_character_snapshot["sheet_object_name_origin"] = _origin_sheet
+        logger.info(
+            "[SnapFix] track publish user=%s track_id=%s copied=%s",
+            uploader_id, str(track_id), bool(_copied_sheet),
+        )
 
     # v44 — Inherit beats from the generation if already extracted, otherwise
     # mark pending and fire background extraction.
@@ -806,6 +1009,7 @@ async def upload_from_generation(
         "genre": genre_list,
         "mood": mood_list,
         "tags": tags_list,
+        "categories": categories_list,
         "bpm": gen_doc.get("bpm"),
         "key": gen_doc.get("key"),
         "duration_sec": duration_sec,
@@ -820,7 +1024,7 @@ async def upload_from_generation(
         "is_public": True,
         "generation_id": str(gen_doc["_id"]),
         "variant_index": variant_index,  # v74
-        "user_character_snapshot": body.user_character_snapshot,
+        "user_character_snapshot": user_character_snapshot,
         "created_at": now,
         "updated_at": now,
         **beats_fields,
@@ -831,6 +1035,14 @@ async def upload_from_generation(
         "[UploadVariant] gen=%s variant=%d track_id=%s inserted",
         body.generation_id, variant_index, str(track_id),
     )
+    logger.info("[tracks] publish track_id=%s cats=%s", str(track_id), categories_list)
+
+    # Points — best-effort +1 for publishing a track (never affects the upload).
+    try:
+        from ..services.points_service import award_point
+        await award_point(uploader_id, "upload", str(track_id))
+    except Exception as e:
+        logger.warning("[points] upload hook failed: %s", e)
 
     # Update generation with result_track_id
     await mongo.generations.update_one(
@@ -842,6 +1054,11 @@ async def upload_from_generation(
     if not inherit_beats:
         from ..services.beat_extraction import run_track_beat_extraction_in_background
         background_tasks.add_task(run_track_beat_extraction_in_background, str(track_id))
+
+    # HybridSearch — unified enrich+index hook (best-effort, ordered):
+    # concept keywords → Mongo search_keywords → pgvector re-embed → ES mirror.
+    from ..services.embedding_service import enrich_and_index_track_in_background
+    background_tasks.add_task(enrich_and_index_track_in_background, str(track_id))
 
     return _serialize_track(doc)
 
@@ -919,6 +1136,8 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
         pipe.expire(key, ttl)
 
     await pipe.execute()
+
+    # v111: 다운로드 포인트 적립 제거 (사용자 정책 — 적립은 play/generate/upload 만).
 
     # Save to MongoDB for persistence
     await mongo.download_logs.insert_one({

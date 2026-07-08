@@ -1,0 +1,20 @@
+{
+  "job_id": "6a2d6897a332d0b2766cf86a",
+  "video_model": "kling",
+  "saved_at": "2026-06-14T02:05:47.298998+00:00",
+  "note": "POST create succeeded(charged) but poll 401. Re-poll once Kling auth restored.",
+  "tasks": [
+    {
+      "scene_number": 1,
+      "task_id": "894955334027706433"
+    },
+    {
+      "scene_number": 2,
+      "task_id": "894955479451963427"
+    },
+    {
+      "scene_number": 3,
+      "task_id": "894955591603458114"
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import PlaylistPage from './pages/PlaylistPage';
 import PlaylistDetailPage from './pages/PlaylistDetailPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import OAuthCallbackPage from './pages/OAuthCallbackPage';
 import UploadPage from './pages/UploadPage';
 import MyMusicPage from './pages/MyMusicPage';
 import PlayerPage from './pages/PlayerPage';
@@ -63,6 +64,7 @@ function AppContent() {
         <Route path="/player" element={<PlayerPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
         <Route path="/business" element={<BusinessRoute><BusinessPage /></BusinessRoute>} />
         <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />

@@ -37,6 +37,22 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  // OAuth 콜백 등에서 받은 JWT 로 로그인 완료 — 토큰 저장 후 /auth/me 로 user 동기화.
+  // /auth/me 는 user 객체를 최상위로 반환(login 의 data.user 와 달리 래핑 없음).
+  const loginWithToken = useCallback(async (token) => {
+    localStorage.setItem('token', token);
+    try {
+      const { data } = await api.getMe();
+      localStorage.setItem('user', JSON.stringify(data));
+      setUser(data);
+      return data;
+    } catch (err) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      throw err;
+    }
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -56,7 +72,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, setUser, updateUser, isAdmin: user?.role === 'admin', isBusiness: user?.role === 'customer' || user?.role === 'admin' }}>
+    <AuthContext.Provider value={{ user, loading, login, register, loginWithToken, logout, setUser, updateUser, isAdmin: user?.role === 'admin', isBusiness: user?.role === 'customer' || user?.role === 'admin' }}>
       {children}
     </AuthContext.Provider>
   );

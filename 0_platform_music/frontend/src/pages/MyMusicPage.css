@@ -524,6 +524,119 @@
   margin-top: 8px;
 }
 
+/* 실사/가상 모드 탭 */
+.mymusic-character__mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.mymusic-character__mode-tab {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mymusic-character__mode-tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.mymusic-character__mode-tab--active {
+  background: linear-gradient(135deg, var(--color-primary), #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+}
+
+.mymusic-character__variant {
+  margin-top: 4px;
+}
+
+/* 화풍 선택 갤러리 */
+.mymusic-character__style-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 20px 0 10px;
+}
+
+.mymusic-character__style-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.mymusic-character__style-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--color-card);
+  border: 2px solid var(--color-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mymusic-character__style-card:hover {
+  border-color: var(--color-primary);
+}
+
+.mymusic-character__style-card--active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.35);
+}
+
+.mymusic-character__style-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--color-bg);
+}
+
+.mymusic-character__style-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+}
+
+.mymusic-character__style-custom {
+  margin-bottom: 14px;
+}
+
+.mymusic-character__model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mymusic-character__model-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+.mymusic-character__model-select {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .mymusic-character__sheet {
   text-align: center;
   padding: 24px;
@@ -1052,6 +1165,41 @@
 
 .mymusic-character__outfit-link:hover {
   text-decoration: underline;
+}
+
+/* CharItem — 생성 폼 내 착용 아이템 선택 슬롯 */
+.mymusic-character__items {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.mymusic-character__outfit-box {
+  position: relative;
+}
+
+/* 미선택 슬롯: "OO 선택" 버튼 (outfit-image 박스 형태 재사용) */
+button.mymusic-character__outfit-select {
+  width: 100%;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--color-text-sub);
+  font-size: 12px;
+  transition: border-color 0.15s, color 0.15s, transform 0.15s;
+}
+
+button.mymusic-character__outfit-select:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+/* 선택됨: 썸네일 우상단 제거(X) 버튼 */
+.mymusic-character__outfit-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
 }
 
 @media (max-width: 640px) {

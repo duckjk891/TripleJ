@@ -1,15 +1,18 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiDownload, FiBookmark } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import { getAlbumGradient } from '../utils';
+import AddToPlaylistModal from './AddToPlaylistModal';
 import './SongItem.css';
 
 export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike }) {
   const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const handlePlay = () => {
     play(song, songs);
@@ -31,6 +34,12 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
       return;
     }
     addToPlaylist(song);
+  };
+
+  const handleSaveToPlaylist = () => {
+    if (!user) { navigate('/login'); return; }
+    if (import.meta.env.DEV) console.info('[SongItem] openAddToPlaylist', { track: song?.id });
+    setShowAddModal(true);
   };
 
   const handleDownload = async () => {
@@ -97,14 +106,20 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         >
           <FiHeart style={isLiked ? { color: '#e74c3c', fill: '#e74c3c' } : {}} />
         </button>
-        <button className="song-item__action-btn" onClick={handleAddToPlaylist} title="플레이리스트 추가">
+        <button className="song-item__action-btn" onClick={handleAddToPlaylist} title="재생목록 추가">
           <FiPlus />
+        </button>
+        <button className="song-item__action-btn" onClick={handleSaveToPlaylist} title="플레이리스트에 추가">
+          <FiBookmark />
         </button>
         <button className="song-item__action-btn" onClick={handleDownload} title="다운로드">
           <FiDownload />
         </button>
       </div>
 
+      {showAddModal && (
+        <AddToPlaylistModal songId={song.id} onClose={() => setShowAddModal(false)} />
+      )}
     </div>
   );
 }

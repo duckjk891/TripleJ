@@ -1,14 +1,19 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import SocialLoginButtons from '../components/SocialLoginButtons';
 import './LoginPage.css';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  // OAuth 콜백 실패 시 /login?social_error=1 로 돌아옴 — 일반 메시지 표시
+  const [error, setError] = useState(
+    searchParams.get('social_error') ? '소셜 로그인에 실패했습니다. 다시 시도해주세요.' : ''
+  );
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -66,6 +71,8 @@ export default function LoginPage() {
           <button className="login-card__submit" type="submit" disabled={loading}>
             {loading ? '로그인 중...' : '로그인'}
           </button>
+
+          <SocialLoginButtons logPrefix="LoginPage" />
 
           <div className="login-card__footer">
             아직 계정이 없으신가요?

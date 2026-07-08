@@ -415,6 +415,23 @@ async def generate_music_suno(
 
     logger.info("Suno: generation %s completed, object=%s", generation_id, object_name)
 
+    # Points — best-effort +1 for a completed generation (never affects the
+    # generation flow). Owner is looked up from the generations doc.
+    try:
+        from bson import ObjectId as _OID
+        from .points_service import award_point
+
+        _gen_doc = await mongo_db.generations.find_one(
+            {"_id": _OID(generation_id)}, {"user_id": 1}
+        )
+        _gen_user_id = (_gen_doc or {}).get("user_id")
+        if _gen_user_id:
+            await award_point(_gen_user_id, "generate", generation_id)
+    except Exception as _pts_exc:
+        logger.warning(
+            "[points] generate hook failed gen_id=%s: %s", generation_id, _pts_exc
+        )
+
     # v44 — Background beat extraction (same loop, await to keep wrapper-loop
     # alive until completion). The user-facing generation status is already
     # "completed" so a polling client can use the audio URL immediately;

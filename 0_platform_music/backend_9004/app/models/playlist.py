@@ -5,11 +5,13 @@ from pydantic import BaseModel
 
 class PlaylistCreate(BaseModel):
     title: str
+    description: Optional[str] = None
     is_public: bool = True
 
 
 class PlaylistUpdate(BaseModel):
     title: Optional[str] = None
+    description: Optional[str] = None
     is_public: Optional[bool] = None
 
 
@@ -17,6 +19,7 @@ class PlaylistResponse(BaseModel):
     id: str
     user_id: str
     title: str
+    description: Optional[str] = None
     is_public: bool = True
     created_at: Optional[datetime] = None
     track_count: int = 0

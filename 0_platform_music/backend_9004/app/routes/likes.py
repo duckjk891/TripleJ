@@ -112,6 +112,8 @@ async def like_track(track_id: str, current_user=Depends(get_current_user), conn
         {"$inc": {"like_count": 1}},
     )
 
+    # v111: 좋아요 포인트 적립 제거 (사용자 정책 — 적립은 play/generate/upload 만).
+
     return {"message": "좋아요가 추가되었습니다."}
 
 

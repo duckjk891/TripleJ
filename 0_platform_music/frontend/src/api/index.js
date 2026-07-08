@@ -64,19 +64,13 @@ export const register = (email, password, nickname) =>
 export const getMe = () =>
   API.get('/auth/me');
 
-// Songs
-export const getSongs = (params) =>
-  API.get('/songs', { params });
-
-export const searchSongs = (q, params) =>
-  API.get('/songs/search', { params: { q, ...params } });
-
-export const getSong = (id) =>
-  API.get(`/songs/${id}`);
+// 소셜(OAuth) 로그인 시작 경로 — 상대경로 반환(컴포넌트가 window.location.assign 에 사용).
+// provider = google | kakao | naver. 직접 URL 조립/호스트 박기 금지.
+export const oauthLoginPath = (provider) => `/api/auth/oauth/${provider}/login`;
 
 // Albums
 export const getAlbums = (params) =>
-  API.get('/albums', { params });
+  API.get('/albums/', { params });
 
 export const getLatestAlbums = (limit = 10) =>
   API.get('/albums/latest', { params: { limit } });
@@ -89,7 +83,7 @@ export const getMyAlbums = (params) =>
   API.get('/albums/my', { params });
 
 export const createAlbum = (formData) =>
-  API.post('/albums', formData, {
+  API.post('/albums/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 
@@ -126,7 +120,7 @@ export const albumCoverPreviewUrl = (objectName) => {
 
 // Artists
 export const getArtists = (params) =>
-  API.get('/artists', { params });
+  API.get('/artists/', { params });
 
 export const getArtist = (id) =>
   API.get(`/artists/${id}`);
@@ -144,6 +138,13 @@ export const getTop100 = () =>
 export const getGenreChart = (genre, limit = 50) =>
   API.get(`/charts/genre/${genre}`, { params: { limit } });
 
+// 느낌 카테고리 (고정 10종 — 백엔드 GET /charts/categories 가 목록 제공)
+export const getCategories = () =>
+  API.get('/charts/categories');
+
+export const getCategoryChart = (category, limit = 50) =>
+  API.get(`/charts/category/${encodeURIComponent(category)}`, { params: { limit } });
+
 // Charts (v2 - Melon-style)
 export const getChart = (chartType) =>
   API.get(`/charts/${chartType}`);
@@ -153,10 +154,10 @@ export const recordPlay = (trackId) =>
 
 // Playlists
 export const getPlaylists = () =>
-  API.get('/playlists');
+  API.get('/playlists/');
 
 export const createPlaylist = (title, description, is_public = true) =>
-  API.post('/playlists', { title, description, is_public });
+  API.post('/playlists/', { title, description, is_public });
 
 export const getPlaylist = (id) =>
   API.get(`/playlists/${id}`);
@@ -167,15 +168,15 @@ export const updatePlaylist = (id, data) =>
 export const deletePlaylist = (id) =>
   API.delete(`/playlists/${id}`);
 
-export const addSongToPlaylist = (playlistId, songId) =>
-  API.post(`/playlists/${playlistId}/songs`, { song_id: songId });
+export const addSongToPlaylist = (playlistId, trackId) =>
+  API.post(`/playlists/${playlistId}/tracks`, { track_id: trackId });
 
-export const removeSongFromPlaylist = (playlistId, songId) =>
-  API.delete(`/playlists/${playlistId}/songs/${songId}`);
+export const removeSongFromPlaylist = (playlistId, trackId) =>
+  API.delete(`/playlists/${playlistId}/tracks/${trackId}`);
 
 // Likes
 export const getLikes = (params) =>
-  API.get('/likes', { params });
+  API.get('/likes/', { params });
 
 export const checkLikes = (songIds) =>
   API.get('/likes/check', { params: { song_ids: songIds } });
@@ -188,7 +189,7 @@ export const unlikeSong = (songId) =>
 
 // Tracks (v2.0)
 export const getLatestTracks = (limit = 10) =>
-  API.get('/tracks', { params: { limit, sort: 'created_at' } });
+  API.get('/tracks/', { params: { limit, sort: 'created_at' } });
 
 export const searchTracks = (q, params) =>
   API.get('/tracks/search', { params: { q, ...params } });
@@ -263,10 +264,43 @@ export const selectPrompts = (jobId, model) => API.post(`/mv/jobs/${jobId}/selec
 export const generateCharacterSheet = (formData) =>
   API.post('/character/generate-sheet', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000,
+    // 참조 이미지 다수(사진+상의/하의/신발) + 2단계(텍스트→이미지) 생성은 3~4분 소요 가능 → 6분.
+    timeout: 600000,
   });
+
+// 가상화(그림/만화) 캐릭터 — 화풍 샘플 목록 / 샘플 이미지 / 생성
+export const getStyleSamples = () =>
+  API.get('/character/style-samples');
+// 화풍 샘플 이미지 — vite proxy 통해 same-origin 상대경로 반환(직접 호스트/포트 금지)
+export const styleSamplePreviewUrl = (key) =>
+  `/api/character/style-sample/${encodeURIComponent(key)}`;
+export const generateCharacterSheetCartoon = (formData) =>
+  API.post('/character/generate-sheet-cartoon', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    // 사진+아이템(상/하/신)+화풍 참조 다수 + 2단계 생성은 3~4분 소요 가능 → 6분.
+    timeout: 600000,
+  });
+
+// 비동기 접수판 — 접수만 하고 job_id 반환(수초 내 응답) → GET /character/job/{id} 폴링.
+// 폼필드는 동기판(generate-sheet / generate-sheet-cartoon)과 완전히 동일.
+export const generateCharacterSheetAsync = (formData) =>
+  API.post('/character/generate-sheet-async', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000, // 접수만이라 30초
+  });
+export const generateCharacterSheetCartoonAsync = (formData) =>
+  API.post('/character/generate-sheet-cartoon-async', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000, // 접수만이라 30초
+  });
+// job 상태 조회 — {job_id, mode, status:'processing'|'done'|'failed', object_name?, preview_url?, error?, ...}
+export const getCharacterJob = (jobId) =>
+  API.get(`/character/job/${jobId}`);
+
+// variant: 'real'(기본, 실사 슬롯) | 'virtual'(가상 슬롯). 호출부에서 'virtual' 지정 가능.
 export const saveCharacter = async (data) => {
-  const resp = await API.post('/character/save', data);
+  const payload = { ...data, variant: data?.variant || 'real' };
+  const resp = await API.post('/character/save', payload);
   try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
   return resp;
 };
@@ -520,6 +554,10 @@ export const adImageUrl = (objectName) =>
 export const getRewardHistory = () => API.get('/rewards/history');
 export const getRewardBalance = () => API.get('/rewards/balance');
 
+// Points
+export const getPointsBalance = () => API.get('/points/balance');
+export const getPointsHistory = (limit = 50) => API.get('/points/history', { params: { limit } });
+
 // ─────────────────────────────────────────────────────────────
 // v69-restore: 유저 미커밋 변경에서 손실된 21개 함수 재구현
 // (호출처 시그니처 + 백엔드 라우트 path/method 역추출 기반)
@@ -584,7 +622,9 @@ export const getUserEditedSummary = (jobId) =>
 
 // Frontend remote logging
 export const sendFrontendLogs = (batch) =>
-  API.post('/_logs/frontend', batch);
+  // 백엔드 FrontendLogBatch 스키마는 { events: [...] } 객체를 기대한다.
+  // (sendBeacon 경로와 동일 형태로 래핑 — 배열을 그대로 보내면 422 거부됨)
+  API.post('/_logs/frontend', { events: batch });
 // sendBeacon 은 절대 URL 필수. same-origin (포트 포함) 으로 vite proxy 경유.
 export const frontendLogsBeaconUrl = `${window.location.protocol}//${window.location.host}/api/_logs/frontend`;
 

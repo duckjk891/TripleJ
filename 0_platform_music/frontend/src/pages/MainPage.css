@@ -105,6 +105,40 @@
   gap: 16px;
 }
 
+/* 느낌 카테고리 바 */
+.category-bar {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.category-chip {
+  flex: 0 0 auto;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  color: var(--color-text-sub);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.category-chip:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+.category-chip--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.category-view {
+  margin-top: 16px;
+}
+
 /* Loading */
 .main-loading {
   text-align: center;

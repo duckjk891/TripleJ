@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { FiUploadCloud, FiTrash2, FiMusic, FiPlay, FiPause, FiFolder, FiImage, FiFilm, FiAlertCircle, FiUser, FiRefreshCw, FiPlus, FiEdit2, FiDisc } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlayer } from '../contexts/PlayerContext';
@@ -8,6 +8,7 @@ import UploadPage from './UploadPage';
 import StudioTab from '../components/StudioTab';
 import StudioTab2 from '../components/StudioTab2';
 import AlbumCreateModal from '../components/AlbumCreateModal';
+import ItemSelectModal from '../components/ItemSelectModal';
 import MyVoiceCloneSection from '../components/MyVoiceCloneSection';
 import './MyMusicPage.css';
 
@@ -154,12 +155,43 @@ function DraftsSection({ onLoadDraft }) {
 function CharacterSection() {
   const [character, setCharacter] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState('real'); // 'real' | 'virtual'
+
+  // 착용 아이템 슬롯(실사·가상 공통) — 광고상품 {id,name,image_object_name,product_url,category}|null
+  const [selectedTop, setSelectedTop] = useState(null);
+  const [selectedBottom, setSelectedBottom] = useState(null);
+  const [selectedShoes, setSelectedShoes] = useState(null);
+  // 아이템 선택 모달 오픈 카테고리('상의'|'하의'|'신발'|null) — 페이지 이동 없이 모달로 띄워 state 보존
+  const [itemModalCategory, setItemModalCategory] = useState(null);
+
+  // 실사(real) 흐름 상태
   const [generating, setGenerating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewObjectName, setPreviewObjectName] = useState(null);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
+  const [realFormOpen, setRealFormOpen] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0); // 실사 생성 경과시간(초)
   const photoInputRef = useRef(null);
+  // 비동기 job 폴링 인터벌 id — 언마운트/새 생성 시작 시 반드시 정리(누수 금지)
+  const charPollRef = useRef(null);
+
+  // 가상화(virtual / 그림·만화) 흐름 상태
+  const [vGenerating, setVGenerating] = useState(false);
+  const [vPreviewUrl, setVPreviewUrl] = useState(null);
+  const [vPreviewObjectName, setVPreviewObjectName] = useState(null);
+  const [vArtStyle, setVArtStyle] = useState(null);
+  const [vSaving, setVSaving] = useState(false);
+  const [vPhotoFile, setVPhotoFile] = useState(null);
+  const [vFormOpen, setVFormOpen] = useState(false);
+  const [vElapsedSec, setVElapsedSec] = useState(0); // 가상화 생성 경과시간(초)
+  const [imageModel, setImageModel] = useState('gpt_image_2');
+  const [styleSamples, setStyleSamples] = useState([]);
+  const [stylesLoading, setStylesLoading] = useState(false);
+  const [selectedStyleKey, setSelectedStyleKey] = useState(null);
+  const [customStyleFile, setCustomStyleFile] = useState(null);
+  const vPhotoInputRef = useRef(null);
+  const styleInputRef = useRef(null);
 
   useEffect(() => {
     api.getMyCharacter()
@@ -167,6 +199,25 @@ function CharacterSection() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  // 가상화 모드 진입 시 화풍 샘플 1회 로드
+  useEffect(() => {
+    if (mode !== 'virtual' || styleSamples.length > 0 || stylesLoading) return;
+    setStylesLoading(true);
+    api.getStyleSamples()
+      .then(({ data }) => {
+        const list = Array.isArray(data) ? data : (data?.samples || []);
+        setStyleSamples(list);
+        if (import.meta.env.DEV) {
+          console.info('[MyMusicPage] style samples loaded', { count: list.length });
+        }
+      })
+      .catch((err) => {
+        console.error('[MyMusicPage] style samples load failed', err);
+        setStyleSamples([]);
+      })
+      .finally(() => setStylesLoading(false));
+  }, [mode, styleSamples.length, stylesLoading]);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -182,22 +233,155 @@ function CharacterSection() {
     }
   }, [character]);
 
+  // ── 비동기 캐릭터 job 폴링 (접수 → 5초 폴링 → 완료 미리보기) ──────────
+  const clearCharPoll = useCallback(() => {
+    if (charPollRef.current) {
+      clearInterval(charPollRef.current);
+      charPollRef.current = null;
+    }
+  }, []);
+
+  // 언마운트 시 인터벌 정리(누수 방지)
+  useEffect(() => clearCharPoll, [clearCharPoll]);
+
+  // 공용 폴링 헬퍼 — 5초 간격, 최대 15분(180 tick), 일시 네트워크 오류 3회 연속까지 허용.
+  // 새 폴링 시작 시 기존 인터벌은 정리한다(실사/가상 동시 1개만 유지).
+  const pollCharacterJob = useCallback((jobId, { onTick, onDone, onFailed }) => {
+    clearCharPoll();
+    const POLL_MS = 5000;
+    const MAX_TICKS = 180; // 15분
+    const MAX_CONSECUTIVE_ERRORS = 3;
+    const startedAt = Date.now();
+    let ticks = 0;
+    let consecutiveErrors = 0;
+    let lastStatus = 'processing';
+    const intervalId = setInterval(async () => {
+      // 정리된(교체된) 인터벌의 잔여 tick 은 무시
+      if (charPollRef.current !== intervalId) return;
+      ticks += 1;
+      if (onTick) onTick(Math.floor((Date.now() - startedAt) / 1000));
+      if (ticks > MAX_TICKS) {
+        clearCharPoll();
+        onFailed('시간 초과');
+        return;
+      }
+      try {
+        const { data: job } = await api.getCharacterJob(jobId);
+        if (charPollRef.current !== intervalId) return; // await 중 정리됐으면 무시
+        consecutiveErrors = 0;
+        if (import.meta.env.DEV && job.status !== lastStatus) {
+          console.info(`[MyMusicPage] char job ${jobId} status=${job.status}`);
+          lastStatus = job.status;
+        }
+        if (job.status === 'done') {
+          clearCharPoll();
+          onDone(job);
+        } else if (job.status === 'failed') {
+          clearCharPoll();
+          onFailed(job.error || '생성 실패');
+        }
+        // 'processing' → 계속 폴링
+      } catch (err) {
+        if (charPollRef.current !== intervalId) return;
+        consecutiveErrors += 1;
+        console.error('[MyMusicPage] char job poll error', {
+          jobId,
+          consecutiveErrors,
+          status: err.response?.status,
+        });
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          clearCharPoll();
+          onFailed('상태 조회에 반복 실패했습니다.');
+        }
+      }
+    }, POLL_MS);
+    charPollRef.current = intervalId;
+  }, [clearCharPoll]);
+
+  // 경과시간 표시 — "N분 M초"
+  const formatElapsed = (sec) => `${Math.floor(sec / 60)}분 ${sec % 60}초`;
+
+  // 모달에서 아이템 선택 → 현재 열린 카테고리(itemModalCategory) 기준으로 해당 슬롯에 저장.
+  // 페이지 언마운트가 없으므로 업로드 사진/다른 선택/화풍 state 가 그대로 보존된다.
+  const handleItemPicked = (item) => {
+    const category = itemModalCategory;
+    if (!category) return;
+    const slot = {
+      id: item.id,
+      name: item.name,
+      image_object_name: item.image_object_name,
+      product_url: item.product_url,
+      category,
+    };
+    if (category === '상의') setSelectedTop(slot);
+    else if (category === '하의') setSelectedBottom(slot);
+    else if (category === '신발') setSelectedShoes(slot);
+    if (import.meta.env.DEV) {
+      console.info('[MyMusicPage] item picked', { category });
+    }
+  };
+
+  // 선택분만 생성 formData 에 부착(백엔드 generate-sheet / -cartoon 의 *_object_name 필드)
+  const appendItemObjectNames = (formData) => {
+    if (selectedTop) formData.append('top_object_name', selectedTop.image_object_name);
+    if (selectedBottom) formData.append('bottom_object_name', selectedBottom.image_object_name);
+    if (selectedShoes) formData.append('shoes_object_name', selectedShoes.image_object_name);
+    if (import.meta.env.DEV) {
+      console.info('[MyMusicPage] gen items', {
+        top: !!selectedTop,
+        bottom: !!selectedBottom,
+        shoes: !!selectedShoes,
+      });
+    }
+  };
+
+  // 선택 슬롯 → save 페이로드의 used_items 배열(저장카드 "착용 아이템" 표시용)
+  const buildUsedItems = () =>
+    [selectedTop, selectedBottom, selectedShoes].filter(Boolean).map((it) => ({
+      id: it.id,
+      name: it.name,
+      image_object_name: it.image_object_name,
+      product_url: it.product_url,
+      category: it.category,
+    }));
+
   const handleGenerate = async () => {
     if (!photoFile) {
       alert('사진을 먼저 선택해주세요.');
       return;
     }
     setGenerating(true);
+    setElapsedSec(0);
     try {
       const formData = new FormData();
       formData.append('file', photoFile);
-      const { data } = await api.generateCharacterSheet(formData);
-      setPreviewUrl(api.characterPreviewUrl(data.preview_url));
-      setPreviewObjectName(data.object_name);
+      formData.append('image_model', imageModel);
+      appendItemObjectNames(formData);
+      if (import.meta.env.DEV) {
+        console.info('[MyMusicPage] real gen', { image_model: imageModel });
+      }
+      // 접수(job_id 즉시 반환) → 5초 폴링 → 완료 시 미리보기
+      const { data } = await api.generateCharacterSheetAsync(formData);
+      if (import.meta.env.DEV) {
+        console.info('[MyMusicPage] char job started', { job_id: data.job_id, mode: 'real' });
+      }
+      pollCharacterJob(data.job_id, {
+        onTick: setElapsedSec,
+        onDone: (job) => {
+          setPreviewUrl(api.characterPreviewUrl(job.preview_url));
+          setPreviewObjectName(job.object_name);
+          setGenerating(false);
+        },
+        onFailed: (err) => {
+          console.error('[MyMusicPage] char job failed', { err });
+          setGenerating(false);
+          alert('캐릭터 시트 생성에 실패했습니다.');
+        },
+      });
     } catch (err) {
-      alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
-    } finally {
+      console.error('[MyMusicPage] char job submit failed', err);
       setGenerating(false);
+      alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
     }
   };
 
@@ -205,12 +389,16 @@ function CharacterSection() {
     if (!previewObjectName) return;
     setSaving(true);
     try {
-      await api.saveCharacter({ sheet_object_name: previewObjectName });
+      await api.saveCharacter({
+        sheet_object_name: previewObjectName,
+        used_items: buildUsedItems(),
+      });
       const { data } = await api.getMyCharacter();
       setCharacter(data.character);
       setPreviewUrl(null);
       setPreviewObjectName(null);
       setPhotoFile(null);
+      setRealFormOpen(false);
     } catch (err) {
       alert(err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
@@ -229,18 +417,179 @@ function CharacterSection() {
   };
 
   const handleRegenerate = () => {
-    setCharacter(null);
     setPreviewUrl(null);
     setPreviewObjectName(null);
     setPhotoFile(null);
+    setRealFormOpen(true);
+  };
+
+  // ── 가상화(virtual) 핸들러 ──────────────────────────────
+  const handleSelectStyle = (key) => {
+    setSelectedStyleKey(key);
+    setCustomStyleFile(null); // 샘플 선택 시 업로드 화풍 해제
+  };
+
+  const handleCustomStyleChange = (file) => {
+    setCustomStyleFile(file || null);
+    if (file) setSelectedStyleKey(null); // 업로드 화풍 선택 시 샘플 해제
+  };
+
+  const handleGenerateCartoon = async () => {
+    if (!vPhotoFile) {
+      alert('사진을 먼저 선택해주세요.');
+      return;
+    }
+    if (!selectedStyleKey && !customStyleFile) {
+      alert('화풍(샘플 택1 또는 직접 업로드)을 선택해주세요.');
+      return;
+    }
+    setVGenerating(true);
+    setVElapsedSec(0);
+    try {
+      const formData = new FormData();
+      formData.append('file', vPhotoFile);
+      formData.append('image_model', imageModel);
+      if (customStyleFile) {
+        formData.append('style_image', customStyleFile);
+      } else {
+        formData.append('style_preset', selectedStyleKey);
+      }
+      appendItemObjectNames(formData);
+      const fallbackStyle = customStyleFile ? 'custom' : selectedStyleKey;
+      if (import.meta.env.DEV) {
+        console.info('[MyMusicPage] cartoon gen', {
+          style: fallbackStyle,
+          image_model: imageModel,
+        });
+      }
+      // 접수(job_id 즉시 반환) → 5초 폴링 → 완료 시 미리보기
+      const { data } = await api.generateCharacterSheetCartoonAsync(formData);
+      if (import.meta.env.DEV) {
+        console.info('[MyMusicPage] char job started', { job_id: data.job_id, mode: 'cartoon' });
+      }
+      pollCharacterJob(data.job_id, {
+        onTick: setVElapsedSec,
+        onDone: (job) => {
+          setVPreviewUrl(api.characterPreviewUrl(job.preview_url));
+          setVPreviewObjectName(job.object_name);
+          setVArtStyle(job.art_style || fallbackStyle);
+          setVGenerating(false);
+        },
+        onFailed: (err) => {
+          console.error('[MyMusicPage] char job failed', { err });
+          setVGenerating(false);
+          alert('가상화 캐릭터 시트 생성에 실패했습니다.');
+        },
+      });
+    } catch (err) {
+      console.error('[MyMusicPage] cartoon gen submit failed', err);
+      setVGenerating(false);
+      alert(err.response?.data?.error || '가상화 캐릭터 시트 생성에 실패했습니다.');
+    }
+  };
+
+  const handleSaveVirtual = async () => {
+    if (!vPreviewObjectName) return;
+    setVSaving(true);
+    try {
+      await api.saveCharacter({
+        sheet_object_name: vPreviewObjectName,
+        variant: 'virtual',
+        art_style: vArtStyle,
+        used_items: buildUsedItems(),
+      });
+      const { data } = await api.getMyCharacter();
+      setCharacter(data.character);
+      setVPreviewUrl(null);
+      setVPreviewObjectName(null);
+      setVPhotoFile(null);
+      setSelectedStyleKey(null);
+      setCustomStyleFile(null);
+      setVFormOpen(false);
+    } catch (err) {
+      console.error('[MyMusicPage] virtual save failed', err);
+      alert(err.response?.data?.error || '가상화 캐릭터 저장에 실패했습니다.');
+    } finally {
+      setVSaving(false);
+    }
+  };
+
+  const handleRegenerateVirtual = () => {
+    setVPreviewUrl(null);
+    setVPreviewObjectName(null);
+    setVPhotoFile(null);
+    setVArtStyle(null);
+    setSelectedStyleKey(null);
+    setCustomStyleFile(null);
+    setVFormOpen(true);
   };
 
   if (loading) {
     return <div className="mymusic-loading">로딩 중...</div>;
   }
 
-  // Saved character exists
-  if (character) {
+  const hasReal = !!character?.sheet_url;
+  const hasVirtual = !!character?.virtual_sheet_object_name;
+
+  // ── 착용 아이템 선택 슬롯(실사·가상 공통) ───────────────
+  const renderItemSlots = () => {
+    const slots = [
+      { label: '상의', category: '상의', data: selectedTop, clear: () => setSelectedTop(null) },
+      { label: '하의', category: '하의', data: selectedBottom, clear: () => setSelectedBottom(null) },
+      { label: '신발', category: '신발', data: selectedShoes, clear: () => setSelectedShoes(null) },
+    ];
+    return (
+      <div className="mymusic-character__items">
+        <p className="mymusic-character__style-title">착용 아이템 (선택)</p>
+        <p className="mymusic-character__empty-hint">
+          선택한 광고상품을 캐릭터가 실제로 착용한 모습으로 생성됩니다.
+        </p>
+        <div className="mymusic-character__outfit-row">
+          {slots.map((slot) => (
+            <div key={slot.category} className="mymusic-character__outfit-box">
+              {slot.data ? (
+                <>
+                  <div className="mymusic-character__outfit-image">
+                    <img
+                      src={api.adImageUrl(slot.data.image_object_name)}
+                      alt={slot.data.name || slot.label}
+                      className="mymusic-character__outfit-preview"
+                      onError={(e) => {
+                        if (e?.currentTarget) e.currentTarget.style.visibility = 'hidden';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="mymusic-character__file-remove mymusic-character__outfit-remove"
+                      title={`${slot.label} 제거`}
+                      onClick={slot.clear}
+                    >
+                      <FiTrash2 />
+                    </button>
+                  </div>
+                  <div className="mymusic-character__outfit-name" title={slot.data.name}>
+                    {slot.data.name}
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="mymusic-character__outfit-image mymusic-character__outfit-select"
+                  onClick={() => setItemModalCategory(slot.category)}
+                >
+                  <FiPlus />
+                  <span>{slot.label} 선택</span>
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // ── 실사(real) 저장본 표시 ──────────────────────────────
+  const renderRealSaved = () => {
     const tags = Array.isArray(character?.personality_tags)
       ? character.personality_tags.filter(Boolean)
       : [];
@@ -287,7 +636,7 @@ function CharacterSection() {
       !!character?.personality_text;
 
     return (
-      <div className="mymusic-character">
+      <div className="mymusic-character__variant">
         <div className="mymusic-character__sheet">
           <img
             src={api.characterPreviewUrl(character.sheet_url)}
@@ -412,53 +761,51 @@ function CharacterSection() {
         </div>
       </div>
     );
-  }
+  };
 
-  // Preview exists (generated but not saved)
-  if (previewUrl) {
-    return (
-      <div className="mymusic-character">
-        <div className="mymusic-character__sheet">
-          <div className="mymusic-character__sheet-label">생성된 캐릭터 시트 미리보기</div>
-          <img
-            src={previewUrl}
-            alt="캐릭터 시트 미리보기"
-            className="mymusic-character__sheet-img"
-          />
-          <div className="mymusic-character__actions">
-            <button
-              className="mymusic-character__btn mymusic-character__btn--primary"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? '저장 중...' : '저장하기'}
-            </button>
-            <button
-              className="mymusic-character__btn"
-              onClick={handleGenerate}
-              disabled={generating}
-            >
-              {generating ? '생성 중...' : '다시 생성'}
-            </button>
-            <button
-              className="mymusic-character__btn"
-              onClick={() => { setPreviewUrl(null); setPreviewObjectName(null); }}
-            >
-              취소
-            </button>
-          </div>
+  // ── 실사(real) 미리보기(생성됨·미저장) 표시 ──────────────
+  const renderRealPreview = () => (
+    <div className="mymusic-character__variant">
+      <div className="mymusic-character__sheet">
+        <div className="mymusic-character__sheet-label">생성된 캐릭터 시트 미리보기</div>
+        <img
+          src={previewUrl}
+          alt="캐릭터 시트 미리보기"
+          className="mymusic-character__sheet-img"
+        />
+        <div className="mymusic-character__actions">
+          <button
+            className="mymusic-character__btn mymusic-character__btn--primary"
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? '저장 중...' : '저장하기'}
+          </button>
+          <button
+            className="mymusic-character__btn"
+            onClick={handleGenerate}
+            disabled={generating}
+          >
+            {generating ? `생성 중... (${formatElapsed(elapsedSec)})` : '다시 생성'}
+          </button>
+          <button
+            className="mymusic-character__btn"
+            onClick={() => { setPreviewUrl(null); setPreviewObjectName(null); }}
+          >
+            취소
+          </button>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 
-  // No character — show upload form
-  return (
-    <div className="mymusic-character">
+  // ── 실사(real) 업로드 폼 ────────────────────────────────
+  const renderRealForm = () => (
+    <div className="mymusic-character__variant">
       <div className="mymusic-character__empty">
         <div className="mymusic-character__empty-icon"><FiUser /></div>
         <p className="mymusic-character__empty-text">
-          아직 캐릭터가 없습니다. 사진을 업로드하여 AI 캐릭터 시트를 만들어보세요.
+          사진을 업로드하여 실사(photorealistic) AI 캐릭터 시트를 만들어보세요.
         </p>
         <p className="mymusic-character__empty-hint">
           실사(photorealistic) 스타일로 정면, 측면, 전신, 표정 변화 등 다양한 앵글의 캐릭터 시트가 생성됩니다.
@@ -496,6 +843,21 @@ function CharacterSection() {
           )}
         </div>
 
+        {renderItemSlots()}
+
+        {/* 이미지 모델 선택 (가상화 탭과 동일, 기본 gpt_image_2) */}
+        <div className="mymusic-character__model-row">
+          <label className="mymusic-character__model-label">이미지 모델</label>
+          <select
+            className="mymusic-character__model-select"
+            value={imageModel}
+            onChange={(e) => setImageModel(e.target.value)}
+          >
+            <option value="gpt_image_2">gpt_image_2 (기본)</option>
+            <option value="nb_pro">nb_pro</option>
+          </select>
+        </div>
+
         <button
           className="mymusic-character__generate-btn"
           onClick={handleGenerate}
@@ -504,13 +866,269 @@ function CharacterSection() {
           {generating ? (
             <>
               <span className="mymusic-character__spinner" />
-              캐릭터 시트 생성 중...
+              캐릭터 시트 생성 중... ({formatElapsed(elapsedSec)})
             </>
           ) : (
             '캐릭터 시트 생성하기'
           )}
         </button>
       </div>
+    </div>
+  );
+
+  // ── 가상화(virtual) 저장본 표시 ─────────────────────────
+  const renderVirtualSaved = () => {
+    const handleSheetError = (e) => {
+      if (e?.currentTarget) e.currentTarget.style.display = 'none';
+    };
+    const styleLabel =
+      styleSamples.find((s) => s.key === character?.virtual_art_style)?.label ||
+      (character?.virtual_art_style === 'custom' ? '직접 업로드' : character?.virtual_art_style);
+    return (
+      <div className="mymusic-character__variant">
+        <div className="mymusic-character__sheet">
+          {styleLabel && (
+            <div className="mymusic-character__sheet-label">화풍: {styleLabel}</div>
+          )}
+          <img
+            src={api.characterPreviewUrl(character.virtual_sheet_object_name)}
+            alt="내 가상화 캐릭터 시트"
+            className="mymusic-character__sheet-img"
+            onError={handleSheetError}
+          />
+          <div className="mymusic-character__actions">
+            <button
+              className="mymusic-character__btn mymusic-character__btn--primary"
+              onClick={handleRegenerateVirtual}
+            >
+              <FiRefreshCw /> 다시 만들기
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── 가상화(virtual) 미리보기(생성됨·미저장) 표시 ─────────
+  const renderVirtualPreview = () => (
+    <div className="mymusic-character__variant">
+      <div className="mymusic-character__sheet">
+        <div className="mymusic-character__sheet-label">생성된 가상화 캐릭터 시트 미리보기</div>
+        <img
+          src={vPreviewUrl}
+          alt="가상화 캐릭터 시트 미리보기"
+          className="mymusic-character__sheet-img"
+        />
+        <div className="mymusic-character__actions">
+          <button
+            className="mymusic-character__btn mymusic-character__btn--primary"
+            onClick={handleSaveVirtual}
+            disabled={vSaving}
+          >
+            {vSaving ? '저장 중...' : '저장하기'}
+          </button>
+          <button
+            className="mymusic-character__btn"
+            onClick={handleGenerateCartoon}
+            disabled={vGenerating}
+          >
+            {vGenerating ? `생성 중... (${formatElapsed(vElapsedSec)})` : '다시 생성'}
+          </button>
+          <button
+            className="mymusic-character__btn"
+            onClick={() => { setVPreviewUrl(null); setVPreviewObjectName(null); }}
+          >
+            취소
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── 가상화(virtual) 업로드 + 화풍 선택 폼 ────────────────
+  const renderVirtualForm = () => (
+    <div className="mymusic-character__variant">
+      <div className="mymusic-character__empty">
+        <div className="mymusic-character__empty-icon"><FiUser /></div>
+        <p className="mymusic-character__empty-text">
+          사진과 화풍을 선택해 그림/만화 스타일의 가상화 캐릭터 시트를 만들어보세요.
+        </p>
+        <p className="mymusic-character__empty-hint">
+          실사 캐릭터와는 별도 슬롯에 저장됩니다. (실사 캐릭터는 그대로 유지)
+        </p>
+
+        {/* 1) 사진 업로드 */}
+        <div className="mymusic-character__upload-area">
+          <div
+            className="mymusic-character__dropzone"
+            onClick={() => vPhotoInputRef.current?.click()}
+          >
+            <div className="mymusic-character__dropzone-icon"><FiImage /></div>
+            <div className="mymusic-character__dropzone-text">
+              <strong>클릭</strong>하여 얼굴 사진을 선택하세요
+            </div>
+            <div className="mymusic-character__dropzone-hint">JPG, PNG, WebP (10MB 이하)</div>
+          </div>
+          <input
+            ref={vPhotoInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp"
+            style={{ display: 'none' }}
+            onChange={(e) => setVPhotoFile(e.target.files[0] || null)}
+          />
+          {vPhotoFile && (
+            <div className="mymusic-character__file-info">
+              <FiImage />
+              <span className="mymusic-character__file-name">{vPhotoFile.name}</span>
+              <button
+                className="mymusic-character__file-remove"
+                onClick={() => setVPhotoFile(null)}
+              >
+                <FiTrash2 />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 2) 화풍 선택 (샘플 갤러리) */}
+        <p className="mymusic-character__style-title">화풍 선택</p>
+        {stylesLoading ? (
+          <div className="mymusic-loading">화풍 샘플 로딩 중...</div>
+        ) : (
+          <div className="mymusic-character__style-gallery">
+            {styleSamples.map((sample) => (
+              <button
+                key={sample.key}
+                type="button"
+                className={
+                  'mymusic-character__style-card' +
+                  (selectedStyleKey === sample.key ? ' mymusic-character__style-card--active' : '')
+                }
+                onClick={() => handleSelectStyle(sample.key)}
+              >
+                <img
+                  src={api.styleSamplePreviewUrl(sample.key)}
+                  alt={sample.label || sample.key}
+                  className="mymusic-character__style-thumb"
+                  onError={(e) => { if (e?.currentTarget) e.currentTarget.style.visibility = 'hidden'; }}
+                />
+                <span className="mymusic-character__style-label">{sample.label || sample.key}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 3) 직접 화풍 업로드 */}
+        <div className="mymusic-character__style-custom">
+          <button
+            type="button"
+            className={
+              'mymusic-character__btn' +
+              (customStyleFile ? ' mymusic-character__btn--primary' : '')
+            }
+            onClick={() => styleInputRef.current?.click()}
+          >
+            <FiImage /> 원하는 화풍이 없어요 → 직접 업로드
+          </button>
+          <input
+            ref={styleInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp"
+            style={{ display: 'none' }}
+            onChange={(e) => handleCustomStyleChange(e.target.files[0] || null)}
+          />
+          {customStyleFile && (
+            <div className="mymusic-character__file-info">
+              <FiImage />
+              <span className="mymusic-character__file-name">{customStyleFile.name}</span>
+              <button
+                className="mymusic-character__file-remove"
+                onClick={() => handleCustomStyleChange(null)}
+              >
+                <FiTrash2 />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 4) 이미지 모델 선택 */}
+        <div className="mymusic-character__model-row">
+          <label className="mymusic-character__model-label">이미지 모델</label>
+          <select
+            className="mymusic-character__model-select"
+            value={imageModel}
+            onChange={(e) => setImageModel(e.target.value)}
+          >
+            <option value="gpt_image_2">gpt_image_2 (기본)</option>
+            <option value="nb_pro">nb_pro</option>
+          </select>
+        </div>
+
+        {renderItemSlots()}
+
+        <button
+          className="mymusic-character__generate-btn"
+          onClick={handleGenerateCartoon}
+          disabled={!vPhotoFile || (!selectedStyleKey && !customStyleFile) || vGenerating}
+        >
+          {vGenerating ? (
+            <>
+              <span className="mymusic-character__spinner" />
+              가상화 캐릭터 시트 생성 중... ({formatElapsed(vElapsedSec)})
+            </>
+          ) : (
+            '가상화 캐릭터 시트 생성하기'
+          )}
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderReal = () => {
+    if (previewUrl) return renderRealPreview();
+    if (hasReal && !realFormOpen) return renderRealSaved();
+    return renderRealForm();
+  };
+
+  const renderVirtual = () => {
+    if (vPreviewUrl) return renderVirtualPreview();
+    if (hasVirtual && !vFormOpen) return renderVirtualSaved();
+    return renderVirtualForm();
+  };
+
+  return (
+    <div className="mymusic-character">
+      <div className="mymusic-character__mode-tabs">
+        <button
+          type="button"
+          className={
+            'mymusic-character__mode-tab' +
+            (mode === 'real' ? ' mymusic-character__mode-tab--active' : '')
+          }
+          onClick={() => setMode('real')}
+        >
+          실사화 캐릭터
+        </button>
+        <button
+          type="button"
+          className={
+            'mymusic-character__mode-tab' +
+            (mode === 'virtual' ? ' mymusic-character__mode-tab--active' : '')
+          }
+          onClick={() => setMode('virtual')}
+        >
+          가상화(그림) 캐릭터
+        </button>
+      </div>
+      {mode === 'real' ? renderReal() : renderVirtual()}
+
+      {itemModalCategory && (
+        <ItemSelectModal
+          category={itemModalCategory}
+          onSelect={handleItemPicked}
+          onClose={() => setItemModalCategory(null)}
+        />
+      )}
     </div>
   );
 }
@@ -669,9 +1287,19 @@ function MyAlbumsSection() {
 export default function MyMusicPage() {
   const { user } = useAuth();
   const { play, currentSong, isPlaying, togglePlay } = usePlayer();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('tracks');
   const [generationPrefill, setGenerationPrefill] = useState(null);
   const [draftData, setDraftData] = useState(null);
+
+  // location.state 수신 → 탭 전환 후 history state clear (중복 소비 방지)
+  useEffect(() => {
+    const st = location.state;
+    if (!st) return;
+    if (st.tab) setActiveTab(st.tab);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate]);
 
   const handleSendToUpload = (genData) => {
     setGenerationPrefill(genData);

@@ -8,6 +8,7 @@ class TrackCreate(BaseModel):
     genre: List[str] = []
     mood: List[str] = []
     tags: List[str] = []
+    categories: List[str] = []  # v77: 고정 10종 화이트리스트 카테고리
     ai_model: Optional[str] = None
     prompt: Optional[str] = None
     ai_model_version: Optional[str] = None
@@ -24,6 +25,7 @@ class TrackUploadForm(BaseModel):
     genre: Optional[str] = None       # comma-separated
     mood: Optional[str] = None        # comma-separated
     tags: Optional[str] = None        # comma-separated
+    categories: Optional[str] = None  # comma-separated (v77)
     ai_model: Optional[str] = None
     prompt: Optional[str] = None
     bpm: Optional[int] = None
@@ -41,6 +43,7 @@ class TrackResponse(BaseModel):
     genre: List[str] = []
     mood: List[str] = []
     tags: List[str] = []
+    categories: List[str] = []  # v77: 고정 10종 화이트리스트 카테고리
     ai_model: Optional[str] = None
     prompt: Optional[str] = None
     duration_sec: int = 0

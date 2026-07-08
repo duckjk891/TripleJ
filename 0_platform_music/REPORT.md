@@ -12507,3 +12507,862 @@ Suno 응답은 정상(단어별 224개 + `\n` 줄바꿈 인코딩). `_words_to_s
 - 섹션태그(`[Verse]` 등)는 자체 줄로 유지(가사 충실).
 - 폴백 합성테스트가 15 one-word 줄을 낸 건 입력이 단어마다 0.5s 간격인 합성 케이스 탓 — 실제 연속 데이터는 newline 모드로 처리.
 - API 529 로 backend tester 에이전트 다운 → planner 직접 검증.
+
+---
+
+## v81 — 사용자 포인트 시스템 (차트 영향 행위 시 +1) — 2026-06-18
+
+**팀:** PointForge Squad (planner / backend-dev / frontend-dev / tester)
+**요청:** 계정마다 포인트 누적(생성 시 0). 차트에 영향 줄 행위(재생·다운로드)를 한 **행위자**에게 +1. 내 곡/타인 곡 무관. 하루 1회/곡/행위별. 비로그인은 적립 안 함(에러도 안 남).
+
+### 수행 결과
+| # | 파일 | 변경 |
+|---|---|---|
+| 1 | `backend_9005/app/services/points_service.py` (신규) | `award_point`(KST day 기준 멱등, `point_events` unique idx `(user_id,action,track_id,day)`, 성공 시 `point_balances` +1, 중복/예외 시 skip — 절대 raise 안 함), `get_balance`(없으면 0), `get_history`, lazy `ensure_indexes` |
+| 2 | `backend_9005/app/routes/points.py` (신규) | `GET /api/points/balance`, `GET /api/points/history?limit=` (authed) |
+| 3 | `backend_9005/app/main.py` | points 라우터 등록 |
+| 4 | `backend_9005/app/routes/charts.py` | `record_play` 인증 분기에 best-effort `award_point(user,"play",track)` 훅 (+모듈 logger 추가). 비로그인 early-return 경로 무변경 |
+| 5 | `backend_9005/app/routes/tracks.py` | `download_track` 에 best-effort `award_point(user,"download",track)` 훅 |
+| 6 | `frontend/src/api/index.js` | `getPointsBalance()`, `getPointsHistory(limit)` |
+| 7 | `frontend/src/pages/MyMusicPage.jsx` | 헤더에 "⭐ 내 포인트 N" 표시 (로그인 시) |
+| 8 | `backend_9004/...` (미러) | #1~#5 동일. `_logs.py` 제외 |
+| 9 | `backendAPI정리.md` | 포인트 API + 적립 규칙 append |
+
+### 테스트 (tester 10/10 PASS)
+- **T2 신규 0:** 새 계정 balance=0.
+- **T3 적립:** 재생 → +1, `point_events` 기록, 로그 `-> +1`.
+- **T4 어뷰징 방지:** 같은 곡 재생 재호출 → 증가 없음(`dup`), 다른 곡 → +1.
+- **T5 다운로드 별개:** 같은 곡 다운로드 → 별도 +1, 재다운 → 증가 없음.
+- **T6 비로그인 안전(핵심):** 토큰 없이 재생 → 200, 포인트 없음, **traceback/500 없음** (early-return 으로 훅 미도달).
+- **T7 balance/history:** 내역에 action/track/day/created_at, balance 일치.
+- **T8 회귀:** play_count 증가·다운로드 응답·차트(top100/daily/weekly/monthly) 200 정상 — 훅이 기존 흐름 안 깸.
+- **T9 9004 미러:** 같은 토큰 balance 동일(DB 공유), 훅·서비스 존재.
+- **T10 로그:** `[points]` +1/dup/조회 출력.
+
+### 특이사항
+- dedup `day` = KST(`20260618`), `created_at` = UTC — KST 일 경계 기준 의도된 설계.
+- 멱등 = MongoDB unique index (재시작에도 유지, Redis 비의존).
+- 포인트 적립은 best-effort — 실패/중복이 재생·다운로드·차트에 절대 영향 없음.
+- 기존 `rewards`(광고보상) 와 완전 별개.
+- 시크릿/토큰 로그 미기재.
+
+---
+
+## v82 — 내 포인트 전역 헤더 이전 (검색창↔사용자명 사이) — 2026-06-18
+
+**팀:** PointForge Squad (planner / frontend-dev / tester) — 프론트 전용
+**요청:** '내 포인트' 를 마이페이지 → 전역 헤더(검색창과 사용자명 사이)로 이전, 항상 노출, 페이지 이동 시 갱신, 마이페이지 배지 제거.
+
+### 수행 결과
+| # | 파일 | 변경 |
+|---|---|---|
+| 1 | `frontend/src/components/Header.jsx` | `useEffect`+`useLocation`+api import. `[user, location.pathname]` 의존 effect 로 `getPointsBalance` 호출(로그인 시, 이동 시 재호출). `header__user` 안 닉네임 앞에 `⭐ {points}` pill(`header__points`) — 로그인 시에만. DEV 로그 + catch console.error |
+| 2 | `frontend/src/components/Header.css` | `.header__points` pill 스타일 + 모바일 override |
+| 3 | `frontend/src/pages/MyMusicPage.jsx` | v81 points state/effect/배지 제거, 헤더 원복 |
+| 4 | `frontend/src/pages/MyMusicPage.css` | `.mymusic-page__points`/`__header` 정리, title margin 복원 |
+
+백엔드 무변경 (v81 포인트 API 그대로 사용).
+
+### 테스트 (tester PASS)
+- 헤더 effect 의존 `[user, location.pathname]` → 이동 시 재호출 확인. pill 은 `{user ?}` 분기 내, 검색폼↔닉네임 사이 위치.
+- 마이페이지 배지/상태 완전 제거(grep 0), title 정상.
+- 라이브: `GET /api/points/balance` 200, record-play 3회 → balance 0→3 (헤더가 읽는 값 증가 입증), no-auth 401.
+- 헤더 회귀(검색/네비/메뉴/로그아웃/로그인) 정상. 9004 공유 DB 동일.
+
+### 특이사항
+- eslint `react-hooks/set-state-in-effect` 1건(Header `setPoints(null)`) — 기존 repo 패턴(AuthContext 등 4곳)과 동일, 런타임/정확성 무관한 린트 권고. 기능 정상이라 보류.
+- 비로그인은 미표시(에러 없음). 브라우저 실제 렌더는 소스/데이터경로로 검증(헤드리스 한계).
+
+---
+
+## v83 — 트레일링 슬래시 불일치 전수 수정 (307→401→자동 로그아웃) — 2026-06-18
+
+**팀:** SlashGuard Squad (planner / frontend-dev / tester) — 프론트 전용
+**요청:** 플레이리스트 탭 진입 시 로그아웃 버그의 근본(슬래시 불일치)을 전수 audit 후 일괄 수정.
+
+### 근본 원인
+프론트가 컬렉션 루트를 슬래시 없이 호출(`/playlists`) → 백엔드 `@router.get("/")`(`/api/playlists/`) 와 불일치 → FastAPI 307 → Location 이 백엔드 절대 origin(프론트와 다름) → 브라우저가 cross-origin 리다이렉트에서 Authorization 헤더 drop → 401 → 인터셉터가 토큰 제거 + /login → "유령 로그아웃".
+
+### 수행 결과
+- `frontend/src/api/index.js` 8건에 trailing slash 추가: `/songs/`, `/albums/`(GET·POST), `/artists/`, `/playlists/`(GET·POST), `/likes/`, `/tracks/`. (경로만 수정, params/body 불변)
+- src 전체 audit: api 모듈 밖 직접호출 잔여 **0건**.
+- 아이템 경로(`/playlists/${id}` 등)는 미변경(정상).
+
+### 테스트 (tester PASS)
+- **T2 핵심:** 슬래시 버전 200 / 무슬래시 307 대조 — playlists·likes·tracks·albums·artists 5종 확인.
+- **T4 유령로그아웃:** `GET /api/playlists/`·`/api/likes/` (Bearer) → 200 + 실제 JSON, 401 없음.
+- **T3 프록시:** 4000 경유 슬래시 200 / 무슬래시 307.
+- **T5 POST:** `POST /api/playlists/` 201, 무슬래시 307. (생성건 정리 완료)
+- **T7 회귀:** generate(이미 슬래시) 200, 아이템경로 200/400, 차트 200.
+- **T8 9004 미러:** 동일.
+
+### 특이사항 / 별개 발견 (범위 외, backend-dev 후속 필요)
+- **`/api/songs` 라우터 미등록:** `backend_9005/app/main.py` 가 `songs` 를 import·include 안 함 → `/api/songs/` 는 슬래시와 무관하게 **404**. 프론트 `getSongs('/songs/')` 수정 자체는 라우트 정의(`@router.get("/")`)와 일치해 옳지만, 현재 서버엔 마운트가 안 돼 있어 호출 시 404. (이번 슬래시 버그와 무관한 기존 배선 누락 — 사용자 판단 필요.)
+- 토큰 등 민감정보 로그 미기재.
+
+---
+
+## v84 — 죽은 /songs 코드 제거 — 2026-06-18
+
+**팀:** DeadCodeReaper Squad (planner / dev / tester)
+**요청:** 안 쓰는 getSongs 등 죽은 코드 제거(영향 검토 → 제거 → 회귀 테스트 → 9004 적용).
+
+### 수행 결과
+- **FE:** `frontend/src/api/index.js` 에서 `getSongs`/`searchSongs`/`getSong` 3함수 제거 (사용처 0).
+- **BE:** `backend_9005/app/routes/songs.py` + `backend_9004/app/routes/songs.py` 삭제 (애초에 main.py 에 미등록·미import 라우터, 레거시 `get_db` 인터페이스).
+- **유지:** `addSongToPlaylist`/`removeSongFromPlaylist`(playlists 서브라우트), `app/database.py`(레거시, 범위 밖) — 무변경.
+
+### 테스트 (tester PASS, 회귀 0)
+- 9005·9004 `import app.main` OK, health 200, openapi `/api/songs` 0개(원래 미등록이라 변화 없음).
+- 마운트 라우트 전부 200: tracks/playlists/albums/artists/likes/charts/generate/points.
+- FE `getSongs/searchSongs/getSong` 잔여 참조 0, eslint 신규 에러 0, 프론트 200.
+- 로그 ImportError/traceback 없음. 9004 미러 동일.
+
+### 별개 발견 (기존 버그, 이번 변경과 무관 — 후속 필요)
+- **플레이리스트 곡 추가 기능 깨짐:** FE `addSongToPlaylist`/`removeSongFromPlaylist`(api/index.js) 가 `/playlists/{id}/songs` + `{song_id}` 로 호출하는데, 백엔드는 `/playlists/{id}/tracks` + `{track_id}` 만 제공 → **404**. `AddToPlaylistModal` 에서 곡 추가 시 실패. v84 제거와 무관한 선행 버그(경로/필드명 불일치). 백엔드는 `/tracks` + `track_id` 가 정답(라이브 201 확인).
+
+---
+
+## v85 — 플레이리스트 곡 추가 404 버그 수정 — 2026-06-18
+
+**팀:** PlaylistMend Squad (planner / dev / tester)
+**요청:** '플레이리스트에 곡 추가' 404 수정 + 9004 미러.
+
+### 원인 & 수정
+- **원인:** 프론트 `addSongToPlaylist`/`removeSongFromPlaylist` 가 `/playlists/{id}/songs` + `{song_id}` 호출 → 백엔드는 `/playlists/{id}/tracks` + `{track_id}` 만 제공 → 404.
+- **수정:** `frontend/src/api/index.js` 2함수 경로 `/songs`→`/tracks`, 필드 `song_id`→`track_id`, 파라미터명 `songId`→`trackId`. (호출부 `AddToPlaylistModal` 무변경 — 넘기는 값이 이미 트랙 id.)
+- **백엔드 무변경:** 9005·9004 모두 `/tracks` 라우트 원래 정상 → 9004 백엔드 미러 변경 불필요(검증으로 확인).
+
+### 테스트 (tester PASS)
+- 프록시 경유 `POST /playlists/{id}/tracks {track_id}` → **201**, 중복 → 409, 제거 → 200.
+- 옛 경로 `/songs` → 404 (근본원인 재확인).
+- 추가한 곡이 플레이리스트 상세에 실제 표시됨(persist 확인).
+- 회귀: 목록/상세 조회 200, 로그아웃 없음(v83 유지), tracks 200.
+- 9004: `/tracks` 동일 201/200 (백엔드 패리티, 미러 무변경).
+
+### 특이사항 / 별개 발견 (범위 외)
+- `api/index.js` `/likes/check` 가 `song_ids` 쿼리파라미터 사용(171행) — 플레이리스트와 무관한 다른 엔드포인트. 동일 클래스(필드명 불일치) 가능성 있어 추후 점검 후보(이번 미수정).
+
+---
+
+## v86 — 북마크 버튼(저장형 플레이리스트 추가) 신설 + '+' 툴팁 정정 — 2026-06-18
+
+**팀:** BookmarkBridge Squad (planner / frontend-dev / tester) — 프론트 전용
+**요청:** `+`=재생목록(큐) 추가로 툴팁 정정, 곡마다 북마크(FiBookmark) 버튼 신설 → AddToPlaylistModal 띄워 저장형 플레이리스트 선택 추가. 9005 구현 후 9004 미러.
+
+### 수행 결과
+| 파일 | 변경 |
+|---|---|
+| `frontend/src/components/SongItem.jsx` | `+` title "플레이리스트 추가"→"재생목록 추가"(큐 동작 불변). `FiBookmark` 버튼 신설(title "플레이리스트에 추가") → 인증가드 후 `showAddModal`=true → per-item `<AddToPlaylistModal songId={song.id}/>` |
+| `frontend/src/pages/ChartPage.jsx` | 동일 툴팁 정정. 북마크 버튼 → `modalTrackId` 설정 → 페이지 레벨 단일 모달 |
+| 백엔드 9005/9004, AddToPlaylistModal | 무변경(v85 정상, 모달 기존) |
+
+`SongItem` 은 Main·Search·Album·Artist·PlaylistDetail 5개 페이지 공용이라 한 번에 적용됨.
+
+### 테스트 (tester PASS)
+- 소스: `FiBookmark`/모달/state import·정의 정확, 툴팁 grep(옛 0 / "재생목록 추가" 2 / "플레이리스트에 추가" 2), eslint 0 에러.
+- 라이브 플로우: 북마크→모달 선택→`POST /playlists/{id}/tracks` 201, 상세에 곡 표시, 중복 409, "새 플레이리스트 만들기" 생성+추가 201.
+- `+`(큐) 동작 불변(PlayerContext.addToPlaylist), 비로그인 가드.
+- 회귀: 목록/트랙 200, 로그아웃 없음(v83), 곡추가(v85) 정상. 9004 패리티 201/200.
+
+### 특이사항 / 별개 발견 (범위 외)
+- **모달의 곡 수 표시가 항상 "0곡":** `AddToPlaylistModal` 이 `pl.song_count` 를 읽는데 `GET /playlists/` 응답에 `song_count` 필드가 없음(백엔드 미제공). 표시만 0 으로 고정 — 기능 무해, 이번 변경과 무관한 선행 사항. (원하면 백엔드에 곡수 집계 추가 가능.)
+- 토큰 콘솔 미출력.
+
+---
+
+## v87 — 플레이리스트 상세 추가곡 미표시 수정 (songs→tracks 필드) — 2026-06-18
+
+**팀:** PlaylistView Squad — 프론트 전용
+**원인:** 곡 추가/저장/조회는 정상(`GET /api/playlists/{id}` 가 `tracks[]` 로 반환). 그러나 `PlaylistDetailPage.jsx` 가 `playlist.songs` 를 읽어 항상 빈값 → "트랙이 없습니다". (songs vs tracks 필드명 불일치.)
+**수정:** `PlaylistDetailPage.jsx` `.songs`→`.tracks` 6곳(곡목록 map, 전체재생, 곡수, checkLikes, SongItem `songs` prop 값). SongItem prop 이름 유지. 백엔드/9004 무변경.
+
+### 테스트 (tester PASS)
+- 소스: `.songs` 잔여 0, `.tracks` 변환 8곳, eslint 0 에러, 리스트 map `playlist.tracks`.
+- 라이브: 곡 추가 후 `GET /api/playlists/{id}` 응답 top-level `tracks`(len 1, id/title/position) 포함, `songs` 키 부재(근본원인 재확인).
+- 회귀: 목록 200, 빈 플레이리스트 `tracks:[]` 정상, 트랙 제거 200.
+- **9004 패리티:** 9004 도 동일 `tracks` 키 반환(백엔드 변경 불필요 확인).
+
+---
+
+## v88 — API 명명 정합성 전수 audit + 불일치 수정 — 2026-06-18
+
+**팀:** SchemaSync Squad (planner / auditor / frontend-dev / tester) — 프론트 전용
+**요청:** ① 곡수 0곡 수정 ② api/index.js 전수 audit 후 불일치 일괄 수정 ③ 9004 미러.
+
+### Audit 결과
+- **Class A 슬래시: 0건**(v83 유지) / **Class B 경로·마운트: 0건**(23라우터 전 경로 매칭, 미마운트 0) / **Class C 필드명: 4건**.
+
+### 수정 (Class C, 프론트 전용)
+| # | 위치 | 수정 |
+|---|---|---|
+| 1 | `PlaylistCard.jsx:24` | `song_count`→`track_count` (플레이리스트 탭 곡수) |
+| 2 | `AddToPlaylistModal.jsx:87` | `song_count`→`track_count` (북마크 모달 곡수) |
+| 3 | `ArtistDetailPage.jsx:103` | `song_count`→`track_count` (폴백 유지) |
+| 4 | `createPlaylist` `description` | **미수정/보류** — BE 미저장(컬럼 없음), DB 마이그레이션 필요한 별도 결정 |
+
+백엔드는 `track_count` 정확 제공 중 → **백엔드/9004 무변경**, 패리티만 검증.
+
+### 테스트 (tester 6/6 PASS)
+- FE `song_count` 잔여 0.
+- 라이브: 곡 추가 시 `GET /api/playlists/` 의 `track_count` 1→2 정확 증가, ArtistDetail `track_count`=8 제공 확인 → 모달/카드/아티스트 곡수 실제값 표시.
+- 회귀: 목록/상세(tracks, v87)/차트 정상, 로그아웃 없음.
+- 9004 패리티: `track_count` 동일 반환.
+
+### 특이사항
+- 최근 버그 5건이 전부 FE↔BE 명명 불일치(슬래시·songs↔tracks·song_id↔track_id·song_count↔track_count)였고, 이번 audit 으로 **남은 동류 불일치는 0건** 확정(description 결정건 제외).
+- **결정 대기:** 플레이리스트 description — FE는 표시 UI 보유하나 BE 미저장. 살리려면 BE playlists 테이블 컬럼+모델+INSERT (DB 마이그레이션, 9004 미러) 필요.
+
+---
+
+## v89 — 플레이리스트 description 기능 활성화 — 2026-06-18
+
+**팀:** DescRevive Squad (planner / backend-dev / tester)
+**요청:** description 기능 살리고 9004 미러.
+
+### 원인/배경
+라이브 postgres `playlists` 에 description 컬럼 부재 → 프론트는 보내는데 백엔드가 저장·반환 안 함(조용한 누락). 프론트(생성폼·카드·상세)는 이미 description 지원.
+
+### 수행 결과 (순수 백엔드 + 마이그레이션)
+| 파일 | 변경 |
+|---|---|
+| `backend_9005/app/main.py` lifespan | 멱등 마이그레이션 `ALTER TABLE playlists ADD COLUMN IF NOT EXISTS description TEXT` (풀 통해 실행, 실패해도 startup 안 깨짐, `[migration] ... ensured` 로그) |
+| `models/playlist.py` | PlaylistCreate/Update/Response 에 `description: Optional[str]=None` |
+| `routes/playlists.py` | create INSERT+응답, get 응답, update 코얼레스+SET+응답, list SELECT+응답 전부 description 반영 + 로그 |
+| `backend_9004/...` | 동일 미러 (DB 공유, ALTER 멱등) |
+| `backendAPI정리.md` | description 필드 반영 |
+| 프론트 | 무변경(이미 전송·렌더) |
+
+### 테스트 (tester 8/8 PASS)
+- 컬럼 생성 확인 + 마이그레이션 로그(양쪽). 
+- 생성 시 description persist→응답, 목록·상세 반환, PUT 수정(title 코얼레스 유지), description 없이 생성도 정상(null).
+- 회귀: 곡추가+description 공존, track_count 정확, 로그아웃 없음.
+- 9004 패리티: description 저장·반환 동일.
+
+### 특이사항
+- 9004·9005 동일 postgres 공유 → ALTER 1회로 양쪽 적용, IF NOT EXISTS 로 매 startup 멱등.
+- 시크릿/설명 내용 로그 미기재(길이만).
+
+---
+
+## v90 — 가사 생성 JSON화 + 느낌 카테고리 자동분류 — 2026-06-19
+
+**팀:** AIDOL CategoryGen Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 백엔드 9005 단독 (9004 frozen — 미변경) + 프론트
+**요청:** 가사 생성 시 LLM 이 `title+lyrics+categories` 를 JSON 한 번으로 산출 → 코드가 방어적 파싱 후 깨끗한 값 재조립 → categories 는 고정 10종 화이트리스트. 생성→generations→track 발행→메인 카테고리 필터 관통. Suno 전달은 lyrics/title 값만 가도록 검증.
+
+**고정 카테고리 10종:** 운동 · 에너지 충전 · 휴식 · 출퇴근길 · 행복한 기분 · 집중 · 로맨스 · 파티 · 슬픔 · 잠자기
+
+### 수행 결과
+**백엔드(9005):**
+- (신규) `app/constants/categories.py` — `CATEGORIES`/`CATEGORY_SET`/`filter_categories()` 단일 출처.
+- `app/services/lyrics_generator.py` — 시스템프롬프트 JSON 스키마+10종 주입, **제목 별도 LLM 호출 제거(단일 호출 JSON 산출)**, OpenAI `response_format=json_object`(+폴백), Claude 프롬프트 강제. 신규 `_parse_lyrics_json()` 방어적 파서(코드펜스 제거·`{..}`슬라이스·끝쉼표 보정·실패 시 폴백·categories 화이트리스트·예외 무사). 반환 `{title,lyrics,categories,model}`(2모델 비교 각 result 도 보유).
+- `app/routes/generate.py` — `GenerateRequest.categories`, generations doc 저장.
+- `app/routes/tracks.py` — 업로드/upload-from-generation 에 categories(body 우선, gen fallback, 화이트리스트), track doc 저장.
+- `app/models/track.py` — `categories: List[str]=[]`.
+- `app/routes/charts.py` — 신규 `GET /charts/categories`(고정목록), `GET /charts/category/{category}`(배열 멤버십 필터, `/{chart_type}` 보다 먼저 등록해 shadowing 회피).
+- `backendAPI정리.md` 갱신.
+- **Suno 경로(`suno_generator.py`) 무변경** — lyrics→prompt, title→title 만 전달, categories/JSON 누출 0건 검증.
+
+**프론트:**
+- `src/api/index.js` — `getCategories()`, `getCategoryChart(category, limit)`.
+- `StudioTab2.jsx` — 가사 결과 categories 칩 표시, createGeneration 4경로 + draft 복원에 categories carry.
+- `UploadPage.jsx` — uploadFromGeneration 에 generationDoc.categories 전달.
+- `MainPage.jsx`(+css) — 홈 인라인 카테고리 바(getCategories) + 칩 터치 시 getCategoryChart 필터 뷰(SongItem 재사용, 토글).
+
+### 테스트 결과 (tester — 라이브 부팅/DB/LLM 포함, 7/7 PASS, 버그 0)
+1. 방어적 파서 단위 24체크 PASS(정상/코드펜스/끝쉼표/사족/깨짐폴백/화이트리스트밖/None/중복). 2. 부팅 193라우트, `/charts/categories`→10종, `/charts/category/슬픔`→200`[]`, 라우트 순서 OK. 3. 트랙 응답 categories 포함. 4. 관통 경로 정합 + 라이브 가사호출(gpt-5.5) `categories=['휴식','슬픔','잠자기']` 분리 반환·lyrics 누출 없음. 5. Suno 안전(categories 미전달) 확인. 6. 프론트 빌드 EXIT 0. 7. 기존 라우트/컴파일 회귀 무손상.
+- 새 로그 라이브 캡처: `[lyrics] parse_ok=True cats=...`, `[charts] category=슬픔 count=0`, `[charts] ... (not in whitelist)` 등.
+
+### 특이사항
+- 프론트 `[CategoryBar]/[CategoryView]` 로그는 `import.meta.env.DEV` 가드(프로덕션 미출력, 의도된 관례). `[LyricsResult]` info 는 가드 없음.
+- 라이브 LLM 1회만 호출(비용), 트랙 발행 라이브는 인증 필요로 코드레벨 검증.
+- 민감정보: 로그/문서에 키·토큰·전체 가사 미기재(길이/일부만).
+
+---
+
+## v91 — 가사 편집 화면 카테고리 직접 편집(추가/삭제/수정) — 2026-06-20
+
+**팀:** AIDOL CategoryGen Squad (planner / frontend-dev / tester, backend-dev: 검증)
+**요청:** 가사 확인·수정 화면에서 LLM이 정한 느낌 카테고리를 사용자가 직접 추가/삭제/수정.
+
+### 수행 결과
+**프론트(단일 파일 `src/components/StudioTab2.jsx`):**
+- 신규 state `allCategories`(고정 10종), 마운트 시 `api.getCategories()` 1회 로드(실패 시 빈배열 폴백 + `console.warn`).
+- `toggleCategory` 핸들러: 칩 클릭 시 `categories` state 추가/삭제 토글.
+- 읽기전용 칩블록 → **토글칩 그룹**으로 교체: 10종 전부 렌더(선택분 active, 나머지 dim), `categories.length` 무관하게 항상 노출(LLM 0개 분류여도 직접 추가 가능). 안내문 + `aria-pressed` 동기화. `allCategories` 로드 실패 시 LLM 선택분만이라도 해제 가능한 폴백 렌더.
+- 편집된 `categories` state 는 기존 createGeneration(L1181/1478/1521)·draft 복원(L1630)·2모델 비교선택(L2245) 경로로 **자동 관통** → generations→track 저장.
+- 심플모드(원클릭, Step2 미경유)는 `lyricsData.categories` 그대로 사용(편집 UI 노출 안 됨 — 의도).
+**백엔드 9005: 코드 변경 없음** — `filter_categories()`(v90)가 사용자 제출값을 고정 10종 화이트리스트로 필터.
+
+### 테스트 결과 (tester — 6/6 PASS, 버그 0)
+1. `npm run build` EXIT 0. 2. 편집 UI 렌더(10종 토글칩, active 동기화, 항상 노출) 코드 확정. 3. categories 관통(createGeneration 3경로+draft+비교선택) 확정. 4. 백엔드 화이트리스트 회귀: venv 직접 호출 `filter_categories(['슬픔','존재하지않는카테고리'])→['슬픔']`, dedup/순서/None/trim 정상, `GET /charts/categories`→10종. 5. `[LyricsCategoryEdit]` 로그(load/loaded/toggle DEV가드, warn 항상) 확인. 6. 심플모드/2모델/장르차트 회귀 무손상.
+
+### 특이사항
+- 9005 HTTP 풀기동은 미수행(런타임 의존성), 대상 두 경로(목록·필터)는 DB 비의존이라 venv 함수 직접 호출로 라이브 동등 검증.
+- 민감정보: 토큰·전체가사 미기재.
+
+---
+
+## v92 — 음악 의미검색(Semantic Search): OpenAI 임베딩 + pgvector — 2026-06-23
+
+**팀:** AIDOL VectorSearch Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 백엔드 9005 단독 + 인프라(도커 postgres). 9004 frozen.
+**요청:** MongoDB(원천) → OpenAI 임베딩 → pgvector 저장 → 검색어 임베딩 코사인 최근접 → track_id → MongoDB 본문 조회 → 반환. 프론트는 REST만.
+
+### 수행 결과
+**인프라(I1):** `docker-compose.yml` postgres `postgres:16-alpine` → `pgvector/pgvector:pg16`. compose 프로젝트명이 `backend`(볼륨 `backend_postgres_data`)라 `docker compose -p backend up -d postgres`로 원본 볼륨에 재연결 재생성 → **데이터 보존 확인**(users=14, playlists=3, playlist_tracks=9, admin_logs=2 동일). vector 확장 0.8.3 설치됨.
+**백엔드(9005):**
+- `app/config.py`: `embedding_model="text-embedding-3-small"`, `embedding_dim=1536`.
+- `app/main.py`: lifespan 멱등 마이그레이션 — `CREATE EXTENSION IF NOT EXISTS vector` + `track_embeddings(track_id PK, embedding vector(1536), content_hash, model, updated_at)` + HNSW(`vector_cosine_ops`) 인덱스.
+- (신규) `app/services/embedding_service.py`: `build_track_text`, `embed_text`(OpenAI, 8000자 truncate), `_vec_literal`(`$N::vector` 캐스팅, 신규 패키지 無), `upsert_track_embedding`(sha256 content_hash 게이트), `search_similar`(`1-(embedding <=> $1::vector)` score), `index_track_in_background`(never-raise 발행 훅).
+- `app/routes/tracks.py`: `GET /tracks/search` 의미검색 우선 + regex 폴백(shape `{tracks,pagination}` 불변), 발행 두 경로 insert 후 background 색인 훅.
+- (신규) `scripts/backfill_embeddings.py` 실행 → public 19곡 색인(ok=19/skip=0/err=0).
+- `backendAPI정리.md` 갱신.
+**프론트:** `SearchPage.jsx` 응답 shape 호환 확인(기능 변경 불필요), `[SearchPage]` 로그 규칙 반영 + 자연어 검색 안내문구 추가. 빌드 성공.
+
+### 테스트 결과 (E2E, planner 직접 — 전 항목 PASS)
+1. 인프라 데이터 보존 ✅, vector 0.8.3 ✅, track_embeddings 19행 ✅, HNSW 인덱스 ✅.
+2. 의미검색 HTTP: "슬픈 이별 발라드"→[But Free,잊고 싶어 너를,...], "신나는 파티 댄스"→파티계열, "비 오는 날 잔잔한"→발라드계열. `mode=semantic` 로그 ✅.
+3. 빈 q→400 ✅. 4. top100 200, category/로맨스 16곡 ✅(회귀 무손상). 5. `[tracks.search]` 로그 출력 ✅.
+
+### 특이사항
+- **운영 주의:** 9005 postgres 재기동 시 compose 프로젝트명 `-p backend` 필요(볼륨 분리 방지).
+- **튜닝 후보:** 현재 의미검색은 전체 색인곡을 유사도순 정렬(소규모 카탈로그라 total=항상 19). 최소 유사도 임계값(threshold)으로 무관곡 컷오프는 곡 수 늘면 추가 권장.
+- 발행 훅은 best-effort(실패해도 발행 성공). 신규 곡은 background 색인.
+- 7월 AWS 이전 시 프로덕션 pgvector 확장 설치 + 전체 백필(로드맵 v1.9 그대로).
+- 민감정보: 키·토큰·전체 쿼리/가사 미기재(길이만).
+
+---
+
+## v93 — 하이브리드 검색: pgvector(의미) + Elasticsearch BM25(nori+fuzzy) RRF 융합 — 2026-06-23
+
+**팀:** AIDOL HybridSearch Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 백엔드 9005 단독 + 인프라(도커 ES). 9004 frozen.
+**요청:** v92 순수 벡터를 하이브리드(의미+키워드)로 승급해 "기계/로봇" 같은 내용 검색이 1위로 잡히게.
+
+### 수행 결과
+**인프라(I1):** `infra/elasticsearch.Dockerfile`(FROM elasticsearch:8.12.0 + `analysis-nori` 설치) 신규, `docker-compose.yml` elasticsearch 를 `build:` 로 전환(이미지에 nori 영구 baked). `docker compose -p backend build/up -d elasticsearch` 재생성, es_data 보존. `_analyze?analyzer=nori` → 토큰화 정상.
+**백엔드(9005):**
+- (신규) `app/services/search_service.py`: `es_index_track`, `es_search`(multi_match nori + fuzziness AUTO + is_public), `rrf_fuse`(1/(60+rank)), `index_track_es_in_background`.
+- `app/main.py`: lifespan `init_elasticsearch` + 멱등 `tracks` 인덱스(nori mapping) 보장(ES 다운에도 startup 안 깨짐), shutdown close.
+- `app/config.py`: `es_url` 프로퍼티.
+- `app/routes/tracks.py`: `GET /tracks/search` 하이브리드(pgvector+ES RRF 융합)→Mongo 본문, graceful degrade(ES다운→벡터, 벡터다운→ES, 둘다→regex). 발행 두 경로에 ES 색인 훅(pgvector 훅과 병행, best-effort).
+- (신규) `scripts/backfill_es.py` 실행 → ES tracks 19문서 색인.
+- `requirements.txt`: `elasticsearch[async]>=8.12,<9` 핀. `backendAPI정리.md` 갱신.
+**프론트:** 응답 shape 불변 → 변경 없음.
+
+### 중요 버그 수정
+venv 의 `elasticsearch` 가 9.4.1(unpinned)이라 서버 8.12 에 `compatible-with=9` 헤더로 전부 400 → ES 검색이 조용히 벡터-only 로 degrade 됐을 것. **8.19.3 으로 핀/설치**해 해결.
+
+### 테스트 결과 (E2E, planner 직접 — PASS)
+- 하이브리드 정확도: **"기계"→감정 로봇 1위**(이전 3위), **"로봇"→1위**(이전 2위), "robot"→1위, "로보트"→3위(ES는 별토큰이라 0히트, 벡터가 상위권 유지 — 하이브리드 상호보완), "근육"→심장을 깨워, "김장"→사랑의 김장, "이별 슬픈 노래"→잊고 싶어 너를.
+- 로그 `mode=hybrid`, `[search.rrf] vec=.. es=.. fused=..` 출력 확인.
+- 회귀: empty q→400, category/로맨스 16곡, 차트/장르 정상. degrade(ES 중지 시 벡터-only 200) 검증.
+- ES 색인 19문서, 마이그레이션 `es tracks index ensured` 부팅 확인.
+
+### 특이사항 / 보안
+- **보안 경고:** ES(9200)가 인증 없이(`xpack.security.enabled=false`) 0.0.0.0 노출 → 인터넷 스캐너가 남긴 `read_me` 랜섬 인덱스 발견·삭제됨. **로컬 개발은 괜찮으나, 7월 AWS 이전 시 ES 포트 비공개(보안그룹/내부망) + 인증 필수.** 로드맵 §5 보안 항목에 반영 권장.
+- 운영 주의: ES/postgres 재기동은 `docker compose -p backend ...` 사용. ES 색인은 best-effort(실패해도 발행 성공).
+- "로보트" 같은 변형은 nori 단일토큰이라 BM25 fuzzy가 안 이어주지만 벡터가 커버 — 곡 수 늘면 동의어 사전/색인 개선 여지.
+- 민감정보: 키·토큰·전체쿼리/가사 미기재(길이만).
+
+---
+
+## v94 — 하이브리드 검색 보강: ES 색인 자동복구 + RRF 키워드 가중 — 2026-06-25
+
+**팀:** AIDOL HybridSearch Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독. 검색 응답 shape 불변 → 프론트 무변경.
+**요청:** (1) ES 인덱스 재기동 사이 비워져 검색이 벡터-only 로 degrade 되던 문제 자동복구, (2) 희귀 키워드('어머니'→'사랑의 김장')가 RRF 에서 희석되던 문제 가중 보강.
+
+### 수행 결과
+- `app/config.py`: `rrf_vec_weight=1.0`, `rrf_es_weight=2.0`.
+- `app/services/search_service.py`: `TRACKS_INDEX_BODY` 상수 단일화, `ensure_tracks_index(es)` + `backfill_es_if_needed(es, mongo_db, force=False)`(ES<Mongo공개곡수면 전수 재색인) 신설, `es_search` 필드 부스트(`title^3/lyrics^2/...`), `rrf_fuse` 가중화(vec_weight/es_weight, 로그 wv/we).
+- `app/main.py`: lifespan 인덱스 보장 직후 `asyncio.create_task(backfill_es_if_needed(...))` 비차단 자가복구(ES 다운에도 startup 보호).
+- `app/routes/tracks.py`: `rrf_fuse` 에 config 가중치 전달.
+- `scripts/backfill_es.py`: 추출 함수 재사용(force=True), 중복 mapping 제거.
+- `backendAPI정리.md` 갱신.
+
+### 테스트 결과 (planner 직접 — PASS)
+- **자가복구**: `DELETE /tracks`(인덱스 삭제) → 9005 재기동 → startup 로그 `[search.es.heal] es=0 mongo=19 reindexed=19 errors=0` → `GET /tracks/_count`=19 자동 회복. 이후 `mode=hybrid`.
+- **희귀 키워드 개선**: "어머니 생각나는 노래" → '사랑의 김장' **2위(top3 진입)** (이전 미진입). es_weight=2.0 채택(1.0/1.5 에선 #3, 2.0 에서 #2, 정확쿼리 무손상).
+- **회귀(정확도 유지)**: 기계→감정 로봇, 운동→심장을 깨워, 겨울 김장→사랑의 김장, 벚꽃→벚꽃피는 날, 이별 슬픔→잊고 싶어 너를, 여름밤→여름끝자락/여름의기억, 카페→행복한 이 순간, 도시 야경 시티팝→감정로봇/여름의기억, 방황 힙합→But Free, 신나는 트로트→사랑의 김장 — **전부 1위 유지**.
+- empty q→400, degrade 로직 불변. 로그 `wv=1.00 we=2.00`, `mode=hybrid` 확인.
+
+### 특이사항
+- run.sh 가 `--reload` 라 lifespan(자가복구 포함)이 reloader 자식 프로세스에서 실행 — 동작 정상.
+- 민감정보: 키·토큰·전체쿼리/가사 미기재(길이만).
+
+---
+
+## v95 — 검색 색인 의미보강: LLM 개념 키워드 (ES + 벡터 공유) — 2026-06-25
+
+**팀:** AIDOL HybridSearch Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독. 검색 응답 shape 불변 → 프론트 무변경.
+**요청:** "음식"→'사랑의 김장' 같은 추상 개념→구체 사례 검색 약점 보강. 색인 시 gpt-4o-mini 로 개념 키워드 추출→Mongo `search_keywords` 저장→ES 색인+벡터 임베딩 텍스트 공유.
+
+### 수행 결과 (9005만)
+- `app/config.py`: `keyword_model="gpt-4o-mini"`.
+- (신규) `app/services/keyword_service.py`: `generate_search_keywords(doc,track_id)` — gpt-4o-mini, `response_format=json_object`(실패 시 재시도), 입력 title+prompt+genre/mood+가사 일부(1200자), 방어적 파싱·dedupe·최대 12개, never-raise. 상위 카테고리어 우선 포함 규칙(김치→음식/요리).
+- `app/services/embedding_service.py`: `build_track_text` 에 `search_keywords` 합성(content_hash 변동→재임베딩) + 통합 `enrich_and_index_track_in_background`.
+- `app/services/search_service.py`: `_track_to_doc` 에 `keywords`, `TRACKS_INDEX_BODY` 에 `keywords:{text,nori}`, `es_search` fields 에 `keywords^2`.
+- `app/routes/tracks.py`: 발행 두 경로의 색인 훅을 단일 `enrich_and_index_track_in_background`(키워드→Mongo 저장→pgvector 재임베딩→ES 재색인, best-effort)로 교체.
+- (신규) `scripts/backfill_search_keywords.py`(--force) 실행 → 공개 19곡 키워드 생성·저장·재색인.
+- `app/main.py` 자가복구는 `TRACKS_INDEX_BODY` 재사용으로 keywords 매핑 자동 동기화. `backendAPI정리.md` 갱신.
+
+### 테스트 결과 (planner 직접 — PASS)
+- **추상검색 개선**: "음식"→**사랑의 김장 1위**(이전 10위), "요리"→사랑의 김장 1위.
+- **회귀(정확도 유지)**: 기계→감정 로봇, 겨울 김장→사랑의 김장, 벚꽃 봄 노래→벚꽃피는 날, 이별 슬픔→잊고 싶어 너를, 어머니 생각나는 노래→사랑의 김장 top3(3위), 운동→심장을 깨워, 방황 힙합→But Free, 신나는 트로트→사랑의 김장 — 전부 유지.
+- 저장된 키워드 예시 '사랑의 김장' = [음식, 요리, 겨울, 가족, 전통, 사랑, 김장, 따뜻함, 그리움].
+- **자가복구**: ES 인덱스 삭제→재기동→Mongo `search_keywords` 읽어 LLM 0회로 재색인, keywords 매핑 포함 확인, "음식"→사랑의 김장 1위 유지.
+- content_hash 변동으로 track_embeddings 19행 전수 재임베딩. py_compile 통과.
+
+### 특이사항
+- 키워드 1차 프롬프트가 상위어(음식/요리) 누락 → 프롬프트에 "핵심 소재의 상위 카테고리어 우선 포함" 강화 후 --force 재생성으로 해결.
+- LLM 호출은 색인 시점만(곡당 1회), 검색 시 추가 호출 없음. 키·전체가사 미기재(길이만).
+
+---
+
+## v96 — 검색 보강: 한/영+추상 무드 키워드 + 코사인 컷오프 — 2026-06-25
+
+**팀:** AIDOL HybridSearch Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독. 응답 shape 불변 → 프론트 무변경.
+**요청:** (1·2) 색인 키워드 한/영+추상 무드 확장, (4) 코사인 유사도 컷오프(RRF점수 아님). 결정: 컷오프 강도 **(A) 느슨(0.15) 유지**.
+
+### 수행 결과 (9005만)
+- `app/services/keyword_service.py`: 프롬프트를 ko 구체 + en 구체 + 추상 무드 3개로 확장(`{"ko","en","mood"}`→단일 `search_keywords` 병합, 레거시 호환). `_MAX_KEYWORDS` 12→15. 방어적 파싱 유지.
+- `app/config.py`: `search_min_cosine: float = 0.15`(env override 가능).
+- `app/routes/tracks.py`: `search_similar` 결과를 score≥floor 로 필터 → vec_ids. ES 히트 유지. vec_kept·es 둘 다 0이면 빈 결과(`mode=cutoff`, regex 폴백 안 함). degrade/empty-q 400/shape 유지. 로그 `floor/vec_kept/es`.
+- `scripts/backfill_search_keywords.py --force` 재실행: 공개 19곡 한/영/무드 키워드 재생성·재임베딩·ES 재색인(ok=19).
+- `backendAPI정리.md` 갱신.
+
+### 캘리브레이션
+관련 쿼리 top1 코사인 0.21~0.55, 무관 0.18~0.32(일부 ES 매칭). 깔끔한 분리선 없음(소규모 19곡). "관련 쿼리 절대 안 죽음" 원칙 우선 → **0.15 채택(느슨)**.
+
+### 테스트 결과 (planner 직접)
+- **영어 개선 ✅**: sad breakup→잊고 싶어 너를 1위, workout→심장을 깨워 1위, robot love song→감정 로봇 1위.
+- **코사인 컷 동작 ✅**: workout total=4, 기계=5, 음식=10(필터링 활성), 순수 무관 외국어→total=0.
+- **회귀 유지 ✅**: 음식→사랑의 김장, 기계→감정 로봇, 이별 슬픔→잊고 싶어 너를, 벚꽃→벚꽃피는 날, 어머니→사랑의 김장 top3.
+- **한계(문서화)**: 무관 한국어(크리스마스 캐롤 total=15, 비트코인 부자되는 노래 total=19) 완전 컷 안 됨 — 느슨한 바닥값(다이어트 자극 0.171 보호) + ES가 '노래' 등 흔한 단어 fuzzy 매칭. 추상 약쿼리(다이어트 자극)도 1위 부정확하나 비어있진 않음.
+
+### 결론/후속
+- (A) 채택: 멀쩡한 쿼리 안 죽음 우선. 무관 한국어 일부 통과는 베타 허용.
+- 후속(곡 증가 시): (C) ES BM25 최소점수 바닥값 추가 → '노래' 류 어휘 매칭 무관 쿼리 컷. + cross-encoder 리랭커(정밀도). 로드맵 9월~ 고도화.
+- 민감정보: 키·토큰·전체가사 미기재(길이만).
+
+---
+
+## v97 — 검색 정확도: 불용어(필러) 제거 + 형태소/동의어 정규화 — 2026-06-25
+
+**팀:** AIDOL HybridSearch Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독. 응답 shape 불변 → 프론트 무변경.
+**요청:** 자연어 쿼리("~할때 듣는 노래") 정확도 보강 — (1) 음악검색 필러 불용어 제거, (2) 활용형/동의어 정규화.
+
+### 수행 결과 (9005만)
+- `app/services/search_service.py`: `TRACKS_INDEX_BODY` 에 custom analyzer **`ko_search`** = `nori_tokenizer` + `ko_pos`(nori_part_of_speech, 어미E/조사J/접사XS 제거·형용사동사 어간 VA/VV 보존) + `lowercase` + `music_stop`(필러: 노래/음악/곡/듣/때/좋/추천/song/music/listen + 누수 stem **싶·하** 추가) + `mood_syn`(synonym_graph: 설레임/설레는/설레이/설레일/설렘→설레, 신나는/신남→신남, 잔잔한→잔잔, 위로되는→위로, 슬픈/슬픔→슬픔, 행복한→행복, 그리운→그리움 등). text 필드(title/lyrics/prompt/genre/mood/tags/keywords) analyzer = ko_search. es_search multi_match analyzer = ko_search.
+- `app/routes/tracks.py`: `_strip_vec_fillers()` — 임베딩 쿼리에만 경량 필러 제거(빈 결과면 원문). ES 엔 원문(분석기 처리).
+- 인덱스 재생성(DELETE→자가복구/backfill) 19곡 재색인.
+- `backendAPI정리.md` 갱신.
+
+### 핵심 버그 & 수정 (테스터 회귀)
+- 1차: `설레일때 듣는 노래`→잊고 싶어 너를(이별곡) 1위. 원인 = nori 가 '노래/때/듣'을 필러로 매칭(특히 '듣는'의 잔여 '는' 토큰이 가사 매칭). → ko_pos + music_stop 로 해결.
+- 2차(회귀): `신나는 노래 듣고싶어`→잊고 싶어 너를 1위. 원인 = "듣고싶어"의 **'싶' stem 누수**가 제목 "잊고 **싶**어 너를"에 어휘 매칭. → 불용어에 `싶`·`하` 추가로 해결.
+
+### 테스트 결과 (planner 직접 재검증 — PASS)
+- 설레일때 듣는 노래 → 벚꽃피는 날(잊고싶어 사라짐), 형태변형(설레임/설레는/설레일때) 일관.
+- 신나는 노래 듣고싶어 → 심장을 깨워(에너지곡), 잊고싶어 사라짐.
+- 보너스: 어머니 생각나는 노래 → 사랑의 김장 1위(필러 제거 효과).
+- 회귀 유지: 음식→사랑의 김장, 기계→감정로봇, 이별 슬픔→잊고싶어, 벚꽃→벚꽃피는 날, 운동/workout→심장을 깨워, sad breakup→잊고싶어, empty q→400.
+
+### 특이사항/한계
+- `위로되는/잔잔한` 류는 토큰 정규화는 정상이나 코퍼스에 해당 무드 키워드 보유곡이 적어 ES 기여 약함(콘텐츠 한계, 분석기 문제 아님). 곡·키워드 늘면 자연 해소.
+- 정밀 정서 구분/추상 추론의 잔여 한계는 cross-encoder 리랭커 영역(로드맵 9월~ 고도화).
+- `_analyze` 를 curl -d 로 한글 직접 전송 시 셸 인코딩 깨져 빈 토큰처럼 보이는 프로브 아티팩트 있음 — 실제 검색(API URL 인코딩)은 정상.
+- 민감정보: 키·토큰·전체쿼리/가사 미기재(길이만).
+
+---
+
+## v98 — 소셜 로그인/회원가입: 구글·카카오·네이버 OAuth 2.0 — 2026-06-25
+
+**팀:** AIDOL SocialAuth Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 백엔드 9005 + 프론트. 9004 frozen.
+**요청:** 구글/카카오/네이버 OAuth 소셜 로그인·회원가입(가입수단=로그인수단). 키는 .env 플레이스홀더로 구현(실값은 사용자 추후).
+
+### 수행 결과
+**백엔드(9005):**
+- `app/main.py`: 멱등 마이그레이션 — users 에 `provider TEXT DEFAULT 'local'`, `provider_user_id TEXT`, `password_hash` NULLABLE 전환, 부분 유니크 인덱스 `users_provider_uid`.
+- `app/config.py`: google/kakao/naver client_id·secret, `oauth_callback_base`(http://localhost:9005), `frontend_url`(https://localhost:4000) — 전부 플레이스홀더.
+- (신규) `app/services/oauth_service.py`: provider 메타(authorize/token/userinfo/scope), build_authorize_url/exchange_code/fetch_userinfo/normalize_profile(google/kakao/naver 응답차 흡수, 이메일 미동의 대비), OAuthError/OAuthNotConfigured.
+- (신규) `app/routes/oauth.py`(prefix `/api/auth/oauth`): `/{provider}/login`(state→Redis TTL300→authorize 302, 키미설정 503/미지원 400), `/{provider}/callback`(state검증→exchange→userinfo→정규화→DB find/link/create→`_create_token`+`_save_session`→`{frontend_url}/oauth/callback#token=` 302, 에러시 `#error=`).
+- 계정정책: ①(provider,uid) ②email 연동 ③신규생성(password_hash NULL, 이메일없으면 합성). 시크릿/code/token 미로깅.
+- `.env`/`.env.example` 플레이스홀더, `backendAPI정리.md` 갱신.
+**프론트:**
+- `api/index.js`: `oauthLoginPath(provider)` 헬퍼.
+- (신규) `components/SocialLoginButtons.jsx`(+css): 구글/카카오/네이버 버튼(브랜드색), `window.location.assign(api.oauthLoginPath(p))`.
+- `LoginPage`/`RegisterPage`: 소셜버튼 삽입(이메일 폼 유지), `social_error` 메시지.
+- (신규) `pages/OAuthCallbackPage.jsx` + `App.jsx` 라우트 `/oauth/callback`: 해시 token 파싱→`loginWithToken`→홈, 실패→/login. StrictMode 가드.
+- `AuthContext.jsx`: `loginWithToken(token)` 추가(token 저장→getMe→user 저장). **계약 발견**: `/auth/me`는 user 를 최상위 반환 → data 그대로 저장.
+
+### 테스트 결과 (planner 직접 — 키 없어 구조검증)
+- 마이그레이션: provider/provider_user_id(text,nullable), password_hash nullable, users_provider_uid 인덱스 — 전부 확인. `[migration] users.provider ensured` 로그.
+- OAuth 엔드포인트: google/kakao/naver login → **503(친절, 키미설정)**, foo → 400. 라우트 정상 등록.
+- normalize_profile mock 단위검증(3사 정규화·이메일 None 처리).
+- **회귀**: 기존 이메일 register 201, login OK(token+user) — password_hash nullable 후 무손상.
+- 프론트 빌드 성공, 소셜버튼·`/oauth/callback` 라우트·loginWithToken 구현.
+
+### 다음 단계 (사용자 작업 필요)
+실제 로그인 동작하려면 각 콘솔에서 키 발급 후 .env 입력 필요. Redirect URI(각 콘솔 등록): `http://localhost:9005/api/auth/oauth/{google|kakao|naver}/callback`. 발급은 단계별 안내 예정.
+
+### 특이사항
+- 토큰은 콜백 URL **해시(#)** 로 전달(서버로그 노출 방지). state(CSRF) Redis 검증.
+- 같은 이메일 다른 provider 는 **검증된 이메일로 연동**(별개계정 아님) — 정책 선택.
+- 민감정보: 키·시크릿·code·token 미기재(플레이스홀더/길이/상태만).
+
+---
+
+## v99 — 내캐릭터(가상화): 그림/만화 캐릭터시트 (화풍 reference + 아이템 착용) — 2026-06-26
+
+**팀:** AIDOL VirtualChar Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 백엔드 9005 + 프론트. 9004 frozen.
+**요청:** 실사화와 동일 절차로 그림/만화 화풍 캐릭터시트 생성. 실사 프롬프트 재사용 금지→별도 프롬프트. 화풍=샘플3종/업로드 reference. 선택 아이템 착용(화풍 변환).
+
+### 수행 결과
+**백엔드(9005):**
+- `character_generator.py`: **`MASTER_PROMPT_CARTOON` 신설**(실사 복제, STEP2 Art Style 하드코딩 "Photorealistic(실사)" 제거→`{art_style}` + [화풍 변환 규칙]: 마지막 첨부=화풍 reference·스타일만 차용·아이템 화풍 변환 착용). **`generate_character_sheet_cartoon(...)`**: image_parts=photo+아이템+styleRef(항상 마지막, STEP1 아이템 순번 보존), 2-step 동일. 실사 `MASTER_PROMPT` 무손상.
+- `character.py`: 신규 `POST /generate-sheet-cartoon`(file+아이템+user_text+image_model + style_preset|style_image, 둘다없으면 400, 키미설정 503), `GET /style-samples`(3종), `GET /style-sample/{key}`. `POST /save` 에 `variant`(real|virtual) — virtual 은 `characters/{uid}/sheet_virtual.png` + `virtual_*` 필드만 갱신(실사 슬롯 불변). `GET /me` 에 virtual_* 추가.
+- `infra/style_samples/`(webtoon/anime/manga90 플레이스홀더 PNG + README 교체 안내).
+- `backendAPI정리.md` 갱신.
+**프론트:**
+- `api/index.js`: `getStyleSamples`, `styleSamplePreviewUrl`, `generateCharacterSheetCartoon`, `saveCharacter` variant 전달.
+- `MyMusicPage.jsx`(+css): CharacterSection 에 **모드 탭(실사화/가상화)**. 가상화=사진+아이템+화풍 갤러리(3종)/직접 업로드+모델선택→cartoon 생성→virtual 저장. 실사 흐름 헬퍼 분리만(로직 동일, 무손상). 실사·가상 공존 표시.
+
+### 테스트 결과 (planner 직접 — 구조/계약, 라이브 이미지생성 제외)
+- `GET /style-samples` → webtoon/anime/manga90 3종 ✅. `GET /style-sample/webtoon` 200 image/png, nope 404 ✅.
+- `POST /generate-sheet-cartoon` 무인증 401(인증 의존성), 실사 `/generate-sheet` 401 — **회귀 무손상** ✅.
+- `MASTER_PROMPT_CARTOON` 존재(3참조)+`generate_character_sheet_cartoon` 존재, 실사 MASTER_PROMPT 의 Photorealistic 유지, CARTOON 엔 실사답변 없음+`{art_style}` placeholder ✅.
+- virtual 저장 분리: variant 분기→sheet_virtual.png + virtual_* 만 갱신(실사 필드 미포함, 코드 확인) ✅.
+- 프론트 빌드 성공, 신규 eslint 에러 없음(기존 api/index.js 패턴만).
+
+### 특이사항/후속
+- 화풍 샘플은 **플레이스홀더 더미 PNG** — 사용자가 저작권 안전 실제 샘플로 교체 필요(infra/style_samples/README).
+- 라이브 이미지 생성(사진+아이템+화풍→그림시트) E2E 는 키/비용/실사진 업로드 필요 → 브라우저에서 사용자 검증 권장(OPENAI/GOOGLE 키는 설정돼 있음).
+- UploadPage 의 MV/커버는 실사 시트 사용 유지(가상 시트 활용은 별도 범위).
+- 민감정보: 키·이미지원본·시크릿 미기재(길이/모델/카운트만).
+
+---
+
+## v100 — 캐릭터 아이템 착용 복원 + 16종 프롬프트→동적조립 리팩터링(실사/가상 통일) — 2026-06-26
+
+**팀:** AIDOL CharItem Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 백엔드 9005 + 프론트. 9004 frozen.
+**요청:** 광고상품 선택 아이템을 실제 착용 생성되게 배선 복원(실사+가상), 16종 딕셔너리→동적조립+역할라벨 리팩터링, 실사/가상 통일. 아이템 출처=광고상품.
+
+### 배경(원인 추적, PLAN/REPORT 이력 기반)
+- v9~v11: 사용자가 상의/하의/신발 이미지 업로드→16종 STEP1_ANSWERS(8조합×텍스트)로 착용 생성. v12 마스터프롬프트 inline.
+- v36(4/22) 전후: 아이템이 "광고상품 선택(used_items)"으로 전환되며 **생성에 아이템 이미지 전달 배선이 끊김**(프론트가 file만 전송) + 폼 업로드 슬롯 소실. 백엔드 16종 기능은 고아로 잔존. → 본 작업으로 복원.
+
+### 수행 결과
+**백엔드(9005):**
+- `character_generator.py`: **`STEP1_ANSWERS`(16) 제거** → **`_build_step1_answer(has_top,has_bottom,has_shoes,user_text)`** 동적 조립(베이스+아이템 조각, 미선택은 사진/자유, user_text 최우선). `_build_inline_images`가 이미지마다 **역할 라벨 텍스트 파트**([인물 사진]/[상의 참조]/[하의 참조]/[신발 참조]/[화풍 참조]) 선삽입 → **순번("두번째 이미지") 표현 완전 제거**. 실사·가상 동일 경로 공유. MASTER_PROMPT(_CARTOON) 순번 문구→라벨 정합.
+- `character.py`: `_load_item_image(object_name)`(MinIO 로딩, never-raise) + `_resolve_item_image`(우선순위 object_name→upload→None). `generate-sheet`·`generate-sheet-cartoon`에 `top_object_name`/`bottom_object_name`/`shoes_object_name`(Form) 추가→광고상품 이미지 로딩→생성기 전달.
+- `backendAPI정리.md` 갱신.
+**프론트:**
+- `MyMusicPage.jsx`(+css): 공유 `renderItemSlots()`(상의/하의/신발) — 실사·가상 폼 둘 다 삽입. ItemSelect(`/items/:category`) 연동(`location.state.selectedItem` 수신→슬롯, mode/tab 복귀, history clear). `appendItemObjectNames()`로 생성 호출에 `*_object_name` 전송. `buildUsedItems()`로 저장 시 used_items 유지(저장카드 표시 정상).
+
+### 테스트 결과 (planner 직접 — 구조/단위)
+- 동적조립 8조합 출력: **순번 표현 0건**, 선택분만 `[X 참조]` 라벨 참조, 미선택은 사진/자유, user_text 반영. (101=상의·신발 참조/하의 미참조 정확.) 기존 16종과 의미 동등.
+- STEP1_ANSWERS 코드참조 0, `_build_step1_answer` 1, 라우트 `*_object_name` 12개.
+- 회귀: `/generate-sheet`·`/generate-sheet-cartoon` 무인증 401, `/style-samples` 200. py_compile OK. 프론트 빌드 성공.
+
+### 특이사항/후속
+- 라이브 이미지 생성(사진+광고상품 선택→착용 생성)은 키/비용/실사진 필요 → 브라우저에서 사용자 검증 권장(키 설정됨).
+- UploadFile(top_image 등) 파라미터는 호환 위해 유지(object_name 우선).
+- 민감정보: 키·이미지원본 미기재(불리언/카운트/object_name 일부만).
+
+---
+
+## v101 — 캐릭터 아이템 선택 모달화(Option A): 폼 상태 보존 버그 수정 — 2026-06-26
+
+**팀:** AIDOL CharModal Squad (planner / frontend-dev / tester, backend-dev: 무변경)
+**대상:** 프론트 단독. 백엔드 9005 무변경.
+**버그:** 아이템 선택 시 업로드 사진·기존 선택·화풍이 초기화. **원인** = `goSelectItem`→`navigate('/items/:category)` 페이지 이동 → MyMusicPage 언마운트 → 컴포넌트 state(photoFile/selectedTop·Bottom·Shoes/화풍) 파괴 → 복귀 시 1개만 복원.
+
+### 수행 결과
+- (신규) `src/components/ItemSelectModal.jsx`(+css): ItemSelectPage 의 조회(`getActiveAds`)/광고주 그룹/카드 렌더를 모달로 이식. props `category/onSelect/onClose`. 선택 시 `recordAdImpression` 후 `onSelect(item)`+`onClose` — **navigate 없음**. 오버레이/닫기.
+- `src/pages/MyMusicPage.jsx`: `goSelectItem`(navigate) 제거 → `itemModalCategory` state + 모달 마운트. 슬롯 "선택"→모달 오픈. `handleItemPicked(item)`→현재 카테고리 슬롯 직접 set. 복귀 수신 useEffect(incomingSelection)·부모 selection 전달 로직 제거(탭 복귀는 타 진입 위해 유지). `appendItemObjectNames`(생성 *_object_name)·`buildUsedItems`(저장 used_items) 유지.
+- `ItemSelectPage.jsx`/`/items/:category` 라우트는 유지(타 사용처 안전).
+
+### 보존 원리
+아이템 선택이 페이지 이동을 안 하므로 **언마운트 없음** → photoFile/vPhotoFile, selectedTop/Bottom/Shoes, 화풍, mode 등 state 가 모달 오픈·선택·닫기 내내 보존. 사진 후 상의→하의→신발 연속 선택해도 누적 유지.
+
+### 테스트 결과 (planner 직접 — 정합성)
+- ItemSelectModal 파일 OK, MyMusicPage 모달 사용 2건, `goSelectItem`/`incomingSelection`/캐릭터 `navigate('/items` 잔존 0, `handleItemPicked` 정의, 생성 배선 유지. `npm run build` 성공(187 modules).
+- 4000 서빙 200.
+
+### 특이사항
+- 실제 "사진+아이템 연속 선택 유지" 체감 검증은 브라우저에서 사용자 확인 권장(상태 보존은 구조상 보장).
+- 백엔드/생성·저장 배선(v100) 무변경·무손상.
+
+---
+
+## v102 — [작업리스트1] 원격 로깅 복구: 프론트 콘솔→백엔드 로그 스키마 불일치 수정 — 2026-06-26
+
+**팀:** AIDOL LogFix Squad (planner 직접 수술 + 라이브 검증)
+**대상:** 프론트(주) + 백엔드 9005(방어적). 9004 frozen.
+**버그:** `[FrontendLog] schema validation failed — argument after ** must be a mapping, not list` 가 ~5~10초마다 반복 → 프론트 콘솔이 백엔드로 적재 안 됨(frontend.log 5월에 멈춤).
+
+### 원인 (Step 0)
+- 백엔드 `_logs.py receive_frontend_logs` 가 `FrontendLogBatch(**payload)` 호출 → `{events:[...]}` dict 기대.
+- 프론트 `remoteLogger.js` 주기 flush → `api.sendFrontendLogs(batch)` → `src/api/index.js` 가 **배열을 그대로 POST**(래핑 누락). (sendBeacon 경로만 `{events:batch}` 로 올바름.)
+- → 주기/임계 flush(대부분) 전부 422 거부.
+
+### 수행 결과
+- `frontend/src/api/index.js`: `sendFrontendLogs` 가 `API.post('/_logs/frontend', { events: batch })` 로 래핑(베이컨/백엔드 스키마 정합).
+- `backend_9005/app/routes/_logs.py`: 방어적 — payload 가 list 면 `{"events": payload}` 로 래핑 후 검증(형태 흔들려도 견고). 기존 검증/레이트리밋/새니타이즈/파일기록 유지.
+
+### 테스트 결과 (planner 직접 — 라이브 PASS)
+- 방어 로직 단위: list 입력·dict 입력 둘 다 정상 파싱.
+- 라이브(9005 재기동 후): server.log 에 `[FrontendLog] received batch ... batch stored written=N` 성공 연속, `schema validation failed` **0건**. frontend.log 에 06-27 신규 콘솔 라인 적재 재개.
+- py_compile OK. 백엔드 방어 덕분에 사용자 새로고침 전에도(구 프론트 배열 전송) 즉시 성공 처리.
+
+### 특이사항
+- 프론트 새로고침하면 프론트도 `{events:...}` 정식 형태로 전송(이중 안전). 민감정보(토큰/시크릿) 미기록 — 기존 새니타이즈 유지.
+- 이제 향후 버그 발생 시 frontend.log/server.log 로 프론트 콘솔 추적 가능.
+
+---
+
+## v103 — 캐릭터 생성 "실패" 오인 수정: 프론트 타임아웃 상향 (2분→6분) — 2026-06-26
+
+**대상:** 프론트 단독.
+**증상:** 가상 캐릭터 생성 시 "생성 실패" 알림. 실제로는 백엔드 성공.
+**원인:** `generateCharacterSheetCartoon`/`generateCharacterSheet` 의 axios `timeout: 120000`(2분) < 실제 생성시간. 로그상 cartoon 생성이 3분26초(17:45:40→17:49:06, parts=10) 걸려 200 OK 완성됐는데, 프론트는 2분에 ECONNABORTED 로 끊고 catch→실패 알림. (참조 이미지 다수 + Step A 텍스트(9493자)→Step B 이미지 2단계라 3~4분 정상.)
+**수정:** 두 호출 timeout 을 360000(6분)으로 상향(MV 보컬분리 300000 선례 참고). 빌드 성공.
+**후속:** 동기 HTTP 장시간 생성의 근본 개선(비동기 job+폴링)은 별도 범위. 현재는 타임아웃 상향으로 베타 충분.
+
+---
+
+## v104 — 캐릭터 Step A(사진→텍스트 분석) 모델 업그레이드: gemini-2.5-flash → gemini-3.1-pro-preview — 2026-06-28
+
+**대상:** 백엔드 9005 단독.
+**배경:** 가상화 캐릭터가 인물 사진을 잘 안 닮는 문제. Step A(사진을 분석해 외모를 텍스트화) 모델이 경량·구세대 `gemini-2.5-flash` 였음. 비전 1위 계열은 Gemini 가 맞으나 그 안 최하위 축. 정체성 추출 정밀도 개선 위해 상위 비전 Pro 로 교체(강화2+3 전 단계 분리 진행).
+**조사:** 웹검색 — 현행 상위 비전 모델 `gemini-3.1-pro-preview`(구 `gemini-3-pro-preview` 가 여기로 리다이렉트, gemini-3-pro-preview 자체는 404 폐기). 라이브 키 접근 테스트: `gemini-3.1-pro-preview` HTTP 200 ✅, `gemini-3-pro-preview` 404.
+**수정:** `character_generator.py` `GEMINI_TEXT_API_URL` 모델 `gemini-2.5-flash` → `gemini-3.1-pro-preview`. Step B 이미지 모델(`gemini-3-pro-image-preview`)은 유지.
+**검증:** py_compile OK, 9005 재기동 정상. 실제 생성 품질(닮음 개선)은 브라우저 생성으로 사용자 확인.
+**후속:** 다음 단계 = 프롬프트 강화(2번 정체성/스타일 분리 + 3번 특징 텍스트 lock). 단계 분리로 오류 출처 추적 용이.
+
+---
+
+## v105 — 가상화 캐릭터 정체성 보존 프롬프트 강화(2+3) — 2026-06-28
+
+**팀:** AIDOL CharIdentity Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독(프롬프트 텍스트만). 프론트/모델/시그니처 무변경.
+**요청:** 가상화가 인물 사진을 더 닮도록 — (2)정체성=[인물 사진]만·[화풍 참조] 인물 복제 금지(스타일만), (3)사진 식별 특징 텍스트 명시·고정 + 과도 스타일화 억제.
+
+### 수행 결과 (character_generator.py 프롬프트 강화만)
+- `MASTER_PROMPT_CARTOON` [화풍 변환 규칙]: [화풍 참조]에 사람 있어도 얼굴/정체성 복제 금지·그리는 방식만 차용 / 정체성은 [인물 사진]만 / 굵직한 특징(얼굴형·머리·안경·피부톤·특이점) [고정 요소] 명시·보존 / 과도 스타일화로 정체성 덮지 말 것(알아볼 수준 유지).
+- `_build_step1_answer` 베이스: 식별 특징을 [고정 요소]로 고정·화풍 변환에도 보존 명시 추가.
+- `step_b_prompt`(이미지 모델): 정체성=사진만·[화풍 참조] 인물 복제 금지·식별 특징 유지·과도 스타일화 억제 추가.
+- `backendAPI정리.md` 갱신.
+
+### 테스트 결과 (planner 직접)
+- `MASTER_PROMPT_CARTOON.format(step1_answer,art_style)` 에러 없이 포맷(len 6905), 강화 문구(복제 금지/고정 요소/알아볼 수준) 포함. `step_b_prompt` 플레이스홀더 3개 정상.
+- 실사 `MASTER_PROMPT` Photorealistic 유지(회귀 안전). `_build_step1_answer` 8조합 정상(순번 0). py_compile OK.
+- 9005 재기동, `generate-sheet-cartoon`·`generate-sheet` 무인증 401(회귀 유지).
+
+### 특이사항
+- medium 한계상 1:1 닮음 불가 — "알아볼 수 있는 스타일화"가 천장. 본 강화 + v104 모델 업그레이드로 그 천장까지 끌어올림. 실제 개선폭은 사용자 정성 확인.
+- 모델/흐름/프론트 무변경, 프롬프트 텍스트만.
+
+---
+
+## v106 — 가상화 캐릭터 Step A 묘사 정석화: 주관 형용사 제거 + 객관 범주값 + 사진 앵커 위임 — 2026-06-28
+
+**팀:** AIDOL CharDesc Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독, `MASTER_PROMPT_CARTOON`(가상화) 프롬프트 텍스트만. 실사 MASTER_PROMPT·모델·시그니처·프론트 무변경.
+**배경:** Step A가 얼굴을 "refined/delicate/두꺼운/natural thickness" 등 주관 형용사로 단정 → Step B에 노이즈/충돌. 정석(검색): 이미지=정체성 앵커 / 텍스트=객관 범주값+구조 지시 / 주관 형용사 배제.
+
+### 수행 결과 (CARTOON 텍스트만)
+- **[Face]**: 주관 항목(Shape/Jaw/Chin/Eyes/Eye size/Brows/Nose/Lips/Expression) 제거 → "얼굴 이목구비 미세 생김새는 [인물 사진] 직접 따름·주관 형용사 금지" + 객관 범주값만(Eye color/Glasses/Skin tone/Facial hair/Distinctive marks).
+- **[Hair]**: 객관값 유지(Length/Part/Style/Color/Volume/Flow/State), 주관(Strand thickness 등) 제거 + "세부 질감은 사진 따름".
+- **STEP 6 carve-out**: 상세 규격(Position/Size/Shape/Material/State) 규칙은 의상·소품·배경·레이아웃에만 적용, 얼굴·머리(사진서 가져오는 정체성)는 제외.
+- `_build_step1_answer` 베이스 + `step_b_prompt` 정합(얼굴=사진 따름·주관 금지, 텍스트=객관 범주값+구조). `backendAPI정리.md` 갱신.
+
+### 테스트 결과 (backend-dev 라이브 + planner 재검증)
+- 라이브 Step A(gemini-3.1-pro-preview): after 출력에 주관 형용사(refined/delicate/두꺼운/얇은/natural thickness/strand thickness) **0건**, Face=객관값(Eye color/Glasses/Skin tone/Facial hair/Distinctive marks)+"사진 따름", Hair=객관값+사진 따름.
+- 구조 유지: 4분할 레이아웃·FACE DETAIL STACK·화풍 변환·아이템 착용(worn by the character).
+- 회귀: 실사 MASTER_PROMPT의 Jaw/Strand thickness·Photorealistic **보존**, `MASTER_PROMPT_CARTOON.format` 정상(len~7248), `_build_step1_answer` 8조합 정상, generate-sheet(-cartoon) 401. py_compile OK. 9005 재기동 정상.
+
+### 특이사항
+- medium 한계상 1:1 닮음은 여전히 불가("알아볼 수 있는 스타일화"가 천장). 본 작업(v104 모델↑ + v105 정체성 분리 + v106 주관묘사 제거)으로 현재 백엔드 최대치까지 정합.
+- 실사 캐릭터 묘사 방식은 그대로(가상화만 정석화).
+
+---
+
+## v107 — 커버/MV/발행의 "내 캐릭터" 실사·가상 선택 지원 (커버에 쓴 캐릭터 기준 통일) — 2026-07-06
+
+**팀:** AIDOL CoverChar Squad (planner / frontend-dev / backend-dev / tester)
+**대상:** 프론트(주) + 백엔드 9005(mv.py 소폭). 9004 frozen.
+**요청:** 커버 생성 "내 캐릭터 포함하기"가 실사 시트 하드코딩 → 실사·가상 둘 다 있으면 카드로 보여주고 택1, 하나면 자동 선택. 발행/MV 스냅샷도 커버에 실제 쓴 캐릭터 기준(가상 선택 시 virtual 시트+virtual 아이템)으로 통일.
+
+### 수행 결과
+**프론트(`UploadPage.jsx` 단일 파일):**
+- `characterVariant` state(기본 'real') + `hasReal/hasVirtual` + `selectedCharSheet()/selectedCharItems()` 헬퍼 + 자동 보정 useEffect(실사만→real, 가상만→virtual 강제).
+- 체크박스 활성 조건 `!(hasReal||hasVirtual)` 로 완화(가상만 있어도 사용 가능). 체크 시 하단에 **라디오 카드**(실사화=파랑/가상화=보라+화풍 소라벨, 48px 썸네일=characterPreviewUrl) — 있는 것만 표시, 1개면 자동선택, 둘 다면 택1.
+- 3지점 배선: generateCover·createMVJob 에 `character_object_name=selectedCharSheet()`, createMVJob 에 `character_variant` 추가 전송, 발행 스냅샷 `sheet_object_name/used_items` 를 선택 variant 기준으로(name/age/personality 공용 유지).
+**백엔드(`mv.py`):**
+- `CreateMVRequest.character_variant: Optional[str]='real'`(junk/미전송→real 정규화, 하위호환).
+- 서버측 user_character_snapshot: variant=='virtual' 이면 `virtual_sheet_object_name`/`virtual_used_items` 로 복사(가상 시트 없으면 warning+None, 500 없음). job doc 에 variant 기록. 로그 `[MVJob] snapshot variant=..`.
+- `backendAPI정리.md` 갱신.
+
+### 테스트 결과 (planner 통합 검증)
+- 프론트 배선: characterVariant 7참조, 3지점(L455 cover/L711·713 MV/L1511~ 발행) 전부 헬퍼 경유 확인. 빌드 성공, 신규 eslint 에러 0(기존 6개 baseline 동일).
+- 백엔드: 모델 필드(L60)/정규화(L477)/virtual 분기(L487)/job 기록(L554) 확인. py_compile OK, mock 3케이스(real/virtual/virtual-시트없음) 통과.
+- 회귀: 9005/9004/4000 정상, `POST /api/mv/create` 401, `POST /api/upload/generate-cover` 401(인증 유지). cover 백엔드 무변경(object_name 무엇이든 처리). 하위호환: variant 미전송=real=기존 동작.
+
+### 특이사항
+- PlayerPage CharacterCoverCard 는 스냅샷을 그대로 렌더 → 가상 선택 발행 시 가상 시트+가상 아이템이 자연 표시(코드 변경 불필요).
+- 라이브 커버 생성(가상 선택→실제 그림체 커버) E2E 는 키/비용 → 브라우저에서 사용자 확인 권장.
+
+---
+
+## v108 — 캐릭터 시트 생성 (A)타임아웃 10분 + (B)비동기 job+폴링 전환 — 2026-07-06
+
+**팀:** AIDOL CharAsync Squad (planner / backend-dev / frontend-dev / tester)
+**대상:** 프론트 + 백엔드 9005. 9004 frozen.
+**배경:** cartoon 생성 6분4초(백엔드 200 성공) > 프론트 타임아웃 6분 → 또 "실패" 오인(frontend.log `timeout of 360000ms exceeded` 확증). 생성시간 변동(3분26초~6분4초) → 고정 타임아웃 구조 한계.
+
+### 수행 결과
+**(A)** `api/index.js` 동기 생성 2곳 timeout 360000→**600000(10분)** (planner 직접, 즉시 적용).
+**(B) 백엔드(9005 character.py/main.py):**
+- 신규 `POST /generate-sheet-async`·`/generate-sheet-cartoon-async`(폼필드=동기판 동일, 검증 동일, bytes/아이템/화풍 해석 전부 핸들러 선확보) → mongo `character_jobs` insert → async BackgroundTasks 러너 → 즉시 `{job_id}`.
+- `_run_character_job`: 생성→`_store_temp_sheet`(동기판과 동일 경로 로직 헬퍼 추출·공유)→done(object_name/preview_url/completed_at) 또는 failed(error≤200자), never-raise.
+- `GET /job/{job_id}`: 소유자 검증(타인/없음/invalid=404).
+- main.py stale 복구: processing 30분↑ → failed(재기동 좀비 방지).
+**(B) 프론트(MyMusicPage.jsx/api):**
+- `generateCharacterSheet(Cartoon)Async`(접수 30초)·`getCharacterJob` 추가(동기 함수는 하위호환 유지).
+- 실사·가상 handleGenerate 전환: 접수→**5초 폴링**(최대 15분, 네트워크 에러 연속 3회 허용, useRef 인터벌+언마운트 cleanup, 늦은 응답 상태오염 방지)→done 시 기존 preview state, failed 시 alert+console.error.
+- 생성 버튼에 **경과시간 표시**("생성 중... (2분 35초)") 4곳.
+
+### 테스트 결과
+- 백엔드 라이브: 무인증 401(async 2종+job+동기판), 검증 400(bad model/확장자/화풍 미지정, job 미생성), **failed 실증**(랜덤바이트→1초 내 failed 마킹, 서버 무사), **성공 실증**(접수<1초→폴링→done 63초→preview 200, 595KB 이미지 실존). py_compile OK.
+- 프론트: 빌드 성공(187 modules), MyMusicPage lint 0 에러(신규 0).
+- planner 통합: 계약 정합(프론트 3함수↔백엔드 라우트), (A) 600000×2, 세 서버 정상.
+
+### 특이사항
+- 이제 생성이 몇 분 걸려도 타임아웃 없음 + 서버 재시작에도 폴링 무한대기 없음(stale 복구). 동기 엔드포인트는 하위호환 유지.
+- 라이브 브라우저 E2E(실사·가상 생성 → 경과시간 표시 → 완료)는 사용자 확인 권장.
+
+---
+
+## v109 — 포인트 적립 확대 + 차감(캐릭터·커버 −2, 부족 차단, 실패 환불) — 2026-07-07
+
+**팀:** AIDOL Points Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 단독(프론트 무변경 — 402 메시지 기존 alert 로 노출). 9004 frozen.
+**정책(사용자 확정):** 잔액 부족 402 차단 / 요청 시 −2 즉시 차감+실패 자동 환불 / 곡 생성 completed +1, 발행 시 +1 추가.
+
+### 수행 결과
+- **points_service.py**: `spend_points`(원자적 조건부 차감 `$gte`+`$inc`, 부족 False·이벤트 미기록, spend:X/−2 이벤트) + `refund_points`(+N, refund:X 이벤트, never-raise) 신설. spend/refund 이벤트 ref=시도별 uuid(유니크 인덱스 충돌 회피).
+- **적립 훅 4곳**(기존 play 훅 패턴, best-effort): 좋아요(likes.py)·플리추가(playlists.py)·곡생성완료(suno_generator.py completed 직후, generations doc user_id)·발행 2경로(tracks.py). 기존 play/download 유지 → 총 6종 +1, 일일·대상당 1회.
+- **차감 −2**: 캐릭터 4경로(동기 2+async 2, async 는 job doc 에 point_ref/refunded 저장)+커버 generate-cover — 검증 통과 직후 차감, 부족 시 **402 `{"error":"포인트가 부족합니다 (필요: 2)"}`** 생성 미시작.
+- **환불 3곳**: 동기 생성 예외(MinIO 실패 포함) / async 러너 failed / main.py stale 복구(per-job find_one_and_update 선점) — 공용 `refund_character_job_points` 헬퍼의 refunded 플래그 원자 선점으로 **이중 환불 방지**.
+- `backendAPI정리.md` §28 규칙 표 갱신.
+
+### 테스트 결과 (backend-dev 라이브 E2E + planner 스팟체크 — 전부 PASS)
+- 단위 13 assert: 차감/부족/환불/무계정/같은날 재시도 무충돌.
+- 라이브: 좋아요 +1(재좋아요 같은 날 미적립), 플리추가 +1(중복 409 미적립), 잔액 0~1 에서 캐릭터 4경로+커버 전부 402+job 미생성, **stale 환불 e2e**(45분 가짜 job→재시작→failed+refunded+잔액+2, 재재시작 이중환불 없음).
+- 회귀: 전 관련 엔드포인트 401 유지, 응답 shape 402 신설 외 불변, py_compile 8파일 OK. 테스트 데이터 정리(운영 잔액 2명/15이벤트 원상).
+- (곡 생성 completed 훅은 Suno 비용 → 코드 경로 확인, 다음 실제 생성 시 자연 검증됨.)
+
+### 특이사항 / 후속 후보
+- 프론트: 402 메시지는 기존 alert 로 자동 노출. 포인트 부족 전용 UI(적립 유도 안내)나 Header 잔액 즉시 갱신은 원하면 별도 작업.
+- history 의 spend/refund 이벤트는 track_id 자리에 uuid ref 가 들어감(문서화됨).
+
+---
+
+## v110 — 9005 → 9004 전체 미러링 (v90~v109 동기화) — 2026-07-08
+
+**팀:** AIDOL Mirror Squad (planner 직접 수행 + 검증)
+**대상:** backend_9004. 사용자 지시로 "9004 frozen" 정책 해제, (A) 전체 미러.
+
+### 수행 결과
+- **코드**: `app/` 전체 rsync(routes/services/models/constants/main/config, __pycache__ 제외) — 9005 전용 6파일(oauth·embedding·keyword·oauth_service·search_service·constants) 신규 유입 + 공통 16파일 동기화(v90 카테고리~v109 포인트까지 전부).
+- **부속**: `scripts/`(백필 3종), `infra/elasticsearch.Dockerfile`+`style_samples/`(사용자 교체 이미지 포함), `requirements.txt`(ES <9 핀), `docker-compose.yml`(pgvector/ES-nori).
+- **.env**: OAuth 키 6종+FRONTEND_URL 복사, `OAUTH_CALLBACK_BASE=http://localhost:9004`(포트 조정).
+- **의도적 차이 1건**: `_logs.py` 다운로드 파일명 server_9004.log.
+- **venv**: elasticsearch 9.3.0 → **8.19.3** 재설치(서버 8.12 호환 — 방치 시 ES 호출 전부 400 나던 지점).
+- DB 는 양 백엔드 공유라 마이그레이션 추가 작업 불필요(멱등이라 9004 기동 시 재실행 무해).
+
+### 테스트 결과 (planner 직접 — 전부 PASS)
+- py_compile 전체 OK. 9004 재기동 정상(멱등 마이그레이션 통과).
+- 스모크: 카테고리 10종 ✅ / 하이브리드 검색 "음식"→사랑의 김장 1위 ✅(ES 8.x 클라이언트 정상) / oauth 503 ✅ / character async 401 ✅ / style-samples 3종 ✅ / points 401 ✅.
+- 9005 무영향(200). 잔여 diff = _logs.py 파일명(의도적)뿐.
+
+### 특이사항
+- 앱팀 공유 필요 2건: ① 캐릭터/커버 생성 시 포인트 −2 차단(402 신설) ② 검색이 의미(하이브리드) 검색으로 변경(응답 shape 은 동일).
+- OAuth 실키는 9004 도 발급 후 .env 교체 필요(현재 플레이스홀더). 이후 회차부터 9004 미러 여부는 작업별 지시에 따름.
+
+---
+
+## v111 — 포인트 적립 축소: 좋아요·플레이리스트 추가·다운로드 적립 제거 — 2026-07-08
+
+**팀:** AIDOL Points Squad (planner 직접 수행 + 검증)
+**대상:** 백엔드 9005 + 9004 미러.
+**요청:** 좋아요/플레이리스트 추가/다운로드 시 포인트 적립 제거.
+
+### 수행 결과
+- 적립 훅 3곳 제거(v111 주석으로 대체): `likes.py`(like) / `playlists.py`(playlist_add) / `tracks.py`(download).
+- **잔존 적립 확인**: play(charts.py L207) / upload ×2(tracks.py L783·L1025) / generate(suno_generator.py L429) — 정확히 3종만 남음. 차감(캐릭터·커버 −2)/환불 로직 무변경.
+- 9004 동일 3파일 미러 + 양쪽 py_compile OK.
+- `backendAPI정리.md` §28.2 적립 표 갱신(like/playlist_add/download 삭제 + v111 변경 공지). 기존 적립분은 소급 변경 없음(히스토리에 과거 이벤트 잔존 가능 명기).
+
+### 테스트 결과
+- 잔존 award_point 호출 grep — like/playlist_add/download 0건, play/upload/generate만 존재.
+- 양 서버(--reload) 200, likes/playlists 엔드포인트 401 회귀 정상(기능 로직 무손상 — 훅은 응답과 분리된 best-effort 블록이었음).
+
+### 최종 포인트 정책 (현행)
+- **적립 +1**: 듣기(play) · 곡 생성 완료(generate) · 곡 발행(upload) — 하루·대상당 1회.
+- **차감 −2**: 캐릭터 생성(실사/가상) · 커버 AI 생성 — 부족 시 402 차단, 실패 시 자동 환불.
+
+---
+
+## v112 — "이 곡의 주인공 캐릭터" 스냅샷 이미지 불변화 — 2026-07-08
+
+**팀:** AIDOL SnapFix Squad (planner / backend-dev / tester)
+**대상:** 백엔드 9005 + 9004 미러. 프론트 무변경.
+**버그:** 곡 상세 "이 곡의 주인공 캐릭터"가 발행 당시가 아닌 현재 캐릭터로 표시.
+
+### 원인 (Step 0)
+표시 경로(상세 API 스냅샷 우선·CharacterCoverCard 순수 렌더)는 정상. 근본 원인 = 캐릭터 영구 시트가 **고정 MinIO 경로**(`characters/{uid}/sheet(.virtual).png`)에 **덮어쓰기**되는데, 스냅샷은 그 **경로 문자열만** 저장 → 캐릭터 재생성 시 파일 내용이 바뀌어 옛 곡 표시가 따라 바뀜("경로 박제, 파일 미박제").
+
+### 수행 결과
+- (신규) `services/snapshot_service.py` — `snapshot_sheet_copy`: 시트를 `character_snapshots/{uid}/{uuid}.png` 불변 경로로 서버측 copy(CopySource, 폴백 get+put, never-raise). `characters/` prefix 밖이라 캐릭터 삭제(재귀 삭제)에도 곡 표시 유지.
+- 배선 2지점: tracks.py 발행(body 스냅샷 sheet 교체+origin 보존) / mv.py 서버 스냅샷(variant 반영분). copy 실패 시 원본 경로 유지(발행/MV 절대 실패 X).
+- preview 라우트: prefix 제한 없음 확인 → 무변경으로 신경로 서빙(200 실측).
+- 백필 실행: tracks 1건+mv_jobs 1건 → ok=2, 캐시 무효화, 상세 응답이 `character_snapshots/` 경로 반환 확인.
+- 9004 미러 3파일(diff 동일) + 양쪽 py_compile OK. `backendAPI정리.md` 명기.
+
+### 테스트 결과 (라이브 E2E — PASS)
+- **핵심**: 이미지 A 로 발행→상세 preview=A → `characters/{uid}/sheet.png` 를 B 로 덮어써 재생성 모사→캐시 삭제 후 재조회→**preview 여전히 A(불변)**. 테스트 데이터 전부 정리.
+- planner 스팟체크: 헬퍼/배선/미러 diff 동일, 기존 곡 스냅샷이 불변 경로로 치환됨, 상세 API 200.
+
+### 불가역 사항 (정직 문서화)
+백필 이전에 이미 캐릭터를 재생성했던 곡은 발행 당시 원본 이미지가 물리적으로 덮어써져 **복원 불가** — 백필은 현재 파일 기준 박제이며, 이후 변경으로부터의 격리가 목적. **이번 수정 이후 발행분부터는 완전 박제.**
+
+---
+
+## v113 — backendAPI정리.md 전수 감사·보완 — 2026-07-08
+
+**요청:** 9005 API 문서(backendAPI정리.md) 틀리거나 빠진 것 검토·보완.
+
+### 감사 방법
+코드(라우트 23파일 + main.py app 라우트, 총 ~200 엔드포인트) ↔ 문서 표기(4가지 표기 형식 파싱, ~197건) 양방향 전수 대조 + 최근 변경(v107~v112) 의미 정합 스팟체크.
+
+### 결과
+- **문서에 있는데 코드에 없는 것(틀림): 0건** — `/api/health` 등 의심 건은 전부 실존 확인(main.py @app 라우트, voice_convert 의 전체경로 직기입 스타일 등 파서 측 원인).
+- **코드에 있는데 문서에 없던 것(누락): 2건 → 추가 완료**
+  1. `POST /api/generate/{gen_id}/timestamps/refetch` — 가사 타임스탬프 온디맨드 재수집(force 시맨틱·안전 병합·403/404/400 포함) → §12 생성 API 절에 삽입.
+  2. `POST /api/voice-clone/check-availability` — ready 보이스 일괄 가용성 확인+만료 자동삭제(응답 스키마 포함) → 보이스 클론 절에 삽입.
+- 의미 정합: 포인트 v111(적립 3종 제거)·비동기 캐릭터(v108)·402 차감(v109)·SnapFix(v112)·character_variant(v107) 전부 문서 반영돼 있음 확인.
+
+### 결론
+문서는 엔드포인트 단위로 **코드와 완전 정합**(누락 2건 보완 후). 형식은 기존 장(章) 체계 유지.

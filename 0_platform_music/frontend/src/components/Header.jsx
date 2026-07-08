@@ -1,14 +1,27 @@
-import { useState } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { FiSearch, FiMenu, FiX } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
+import * as api from '../api';
 import './Header.css';
 
 export default function Header() {
   const { user, logout, isAdmin, isBusiness } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [points, setPoints] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (!user) { setPoints(null); return; }
+    let alive = true;
+    if (import.meta.env.DEV) console.info('[Header] fetching points balance', { path: location.pathname });
+    api.getPointsBalance()
+      .then(({ data }) => { if (alive) setPoints(data?.balance ?? 0); })
+      .catch((err) => { console.error('[Header] getPointsBalance failed', { status: err?.response?.status, message: err?.message }); });
+    return () => { alive = false; };
+  }, [user, location.pathname]);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -60,6 +73,9 @@ export default function Header() {
           </button>
           {user ? (
             <div className="header__user">
+              <span className="header__points" title="내 포인트">
+                ⭐ {points ?? '—'}
+              </span>
               <span className="header__nickname">{user.nickname}</span>
               <button className="header__logout-btn" onClick={logout}>
                 로그아웃

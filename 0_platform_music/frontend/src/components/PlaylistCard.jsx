@@ -21,7 +21,7 @@ export default function PlaylistCard({ playlist }) {
         <div className="playlist-card__desc">{playlist.description}</div>
       )}
       <div className="playlist-card__count">
-        {playlist.song_count || 0}곡
+        {playlist.track_count || 0}곡
       </div>
     </div>
   );

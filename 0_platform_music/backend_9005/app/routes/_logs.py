@@ -287,6 +287,11 @@ async def receive_frontend_logs(
         )
         raise HTTPException(status_code=422, detail="JSON 파싱 실패")
 
+    # 방어적 수용: payload 가 events 배열만(list) 오면 {"events": [...]} 로 래핑.
+    # (프론트 일반 flush 와 sendBeacon 경로 형태가 흔들려도 견고하게 처리)
+    if isinstance(payload, list):
+        payload = {"events": payload}
+
     try:
         batch = FrontendLogBatch(**payload)
     except Exception as exc:  # pydantic ValidationError 등

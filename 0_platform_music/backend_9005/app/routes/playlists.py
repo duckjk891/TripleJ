@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 
@@ -9,6 +10,8 @@ from ..auth import get_current_user
 from ..database.postgres import get_pg
 from ..database.mongodb import get_mongo
 from ..models.playlist import PlaylistCreate, PlaylistUpdate, AddTrack
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/playlists")
 
@@ -27,7 +30,7 @@ def _serialize_track(doc: dict) -> dict:
 async def list_playlists(current_user=Depends(get_current_user), conn=Depends(get_pg)):
     user_id = uuid.UUID(current_user["id"])
     rows = await conn.fetch("""
-        SELECT p.id, p.user_id, p.title, p.is_public, p.created_at,
+        SELECT p.id, p.user_id, p.title, p.description, p.is_public, p.created_at,
                (SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = p.id) as track_count
         FROM playlists p WHERE p.user_id = $1 ORDER BY p.created_at DESC
     """, user_id)
@@ -37,6 +40,7 @@ async def list_playlists(current_user=Depends(get_current_user), conn=Depends(ge
             "id": str(r["id"]),
             "user_id": str(r["user_id"]),
             "title": r["title"],
+            "description": r["description"],
             "is_public": r["is_public"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
             "track_count": r["track_count"],
@@ -51,15 +55,20 @@ async def create_playlist(body: PlaylistCreate, current_user=Depends(get_current
         return JSONResponse(status_code=400, content={"error": "플레이리스트 제목은 필수입니다."})
 
     user_id = uuid.UUID(current_user["id"])
+    logger.info(
+        "[playlists] create user=%s title_len=%d desc_len=%d",
+        current_user["id"], len(body.title or ""), len(body.description or ""),
+    )
     row = await conn.fetchrow(
-        "INSERT INTO playlists (user_id, title, is_public) VALUES ($1, $2, $3) RETURNING id, user_id, title, is_public, created_at",
-        user_id, body.title, body.is_public,
+        "INSERT INTO playlists (user_id, title, description, is_public) VALUES ($1, $2, $3, $4) RETURNING id, user_id, title, description, is_public, created_at",
+        user_id, body.title, body.description, body.is_public,
     )
 
     return {
         "id": str(row["id"]),
         "user_id": str(row["user_id"]),
         "title": row["title"],
+        "description": row["description"],
         "is_public": row["is_public"],
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
     }
@@ -105,6 +114,7 @@ async def get_playlist(playlist_id: str, current_user=Depends(get_current_user),
         "id": str(row["id"]),
         "user_id": str(row["user_id"]),
         "title": row["title"],
+        "description": row["description"],
         "is_public": row["is_public"],
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         "tracks": tracks,
@@ -125,16 +135,23 @@ async def update_playlist(playlist_id: str, body: PlaylistUpdate, current_user=D
 
     title = body.title if body.title is not None else row["title"]
     is_public = body.is_public if body.is_public is not None else row["is_public"]
+    description = body.description if body.description is not None else row["description"]
+
+    logger.info(
+        "[playlists] update id=%s user=%s title_len=%d desc_len=%d",
+        playlist_id, current_user["id"], len(title or ""), len(description or ""),
+    )
 
     updated = await conn.fetchrow(
-        "UPDATE playlists SET title = $1, is_public = $2 WHERE id = $3 RETURNING id, user_id, title, is_public, created_at",
-        title, is_public, pl_uuid,
+        "UPDATE playlists SET title = $1, is_public = $2, description = $3 WHERE id = $4 RETURNING id, user_id, title, description, is_public, created_at",
+        title, is_public, description, pl_uuid,
     )
 
     return {
         "id": str(updated["id"]),
         "user_id": str(updated["user_id"]),
         "title": updated["title"],
+        "description": updated["description"],
         "is_public": updated["is_public"],
         "created_at": updated["created_at"].isoformat() if updated["created_at"] else None,
     }
@@ -193,6 +210,8 @@ async def add_track(playlist_id: str, body: AddTrack, current_user=Depends(get_c
         "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES ($1, $2, $3)",
         pl_uuid, body.track_id, position,
     )
+
+    # v111: 플레이리스트 추가 포인트 적립 제거 (사용자 정책 — 적립은 play/generate/upload 만).
 
     return {"message": "트랙이 추가되었습니다."}
 

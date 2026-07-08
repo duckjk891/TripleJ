@@ -77,6 +77,7 @@ class GenerateRequest(BaseModel):
     reference_audio_duration: Optional[float] = None  # duration in seconds
     duet_main_vocal_style: Optional[str] = None     # 듀엣 주 보컬 느낌
     duet_sub_vocal_style: Optional[str] = None      # 듀엣 상대 보컬 느낌
+    categories: Optional[List[str]] = None          # v77: 고정 10종 화이트리스트 카테고리
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -345,6 +346,10 @@ async def create_generation(
     mongo = get_mongo()
     now = datetime.now(timezone.utc)
 
+    # v77 — categories 화이트리스트 필터(고정 10종만 통과, 중복 제거/순서 보존).
+    from ..constants.categories import filter_categories
+    categories = filter_categories(body.categories)
+
     doc = {
         "user_id": current_user["id"],
         "user_nickname": current_user.get("nickname", ""),
@@ -353,6 +358,7 @@ async def create_generation(
         "genre": body.genre,
         "mood": body.mood,
         "style": body.style,
+        "categories": categories,
         "vocal": body.vocal,
         "duration": body.duration or 30,
         "bpm": body.bpm,
@@ -387,6 +393,8 @@ async def create_generation(
     result = await mongo.generations.insert_one(doc)
     doc["_id"] = result.inserted_id
     gen_id = str(result.inserted_id)
+
+    logger.info("[generate] gen_id=%s cats=%s", gen_id, categories)
 
     # Start music generation if requested
     if body.start_music_gen and body.lyrics:

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus, FiDownload } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiDownload, FiBookmark } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
+import AddToPlaylistModal from '../components/AddToPlaylistModal';
 import './ChartPage.css';
 
 const CHART_TABS = [
@@ -36,6 +37,7 @@ export default function ChartPage() {
   const [loading, setLoading] = useState(true);
   const [likedIds, setLikedIds] = useState(new Set());
   const [updateTime, setUpdateTime] = useState('');
+  const [modalTrackId, setModalTrackId] = useState(null);
 
   useEffect(() => {
     const fetchChart = async () => {
@@ -87,6 +89,12 @@ export default function ChartPage() {
   const handleAddToPlaylist = (track) => {
     if (!user) { navigate('/login'); return; }
     addToPlaylist(track);
+  };
+
+  const handleSaveToPlaylist = (track) => {
+    if (!user) { navigate('/login'); return; }
+    if (import.meta.env.DEV) console.info('[ChartPage] openAddToPlaylist', { track: track?.id });
+    setModalTrackId(track.id);
   };
 
   const handleDownload = async (trackId) => {
@@ -218,8 +226,11 @@ export default function ChartPage() {
                     >
                       <FiHeart style={likedIds.has(track.id) ? { color: '#e74c3c', fill: '#e74c3c' } : {}} />
                     </button>
-                    <button className="chart-item__btn" onClick={() => handleAddToPlaylist(track)} title="플레이리스트 추가">
+                    <button className="chart-item__btn" onClick={() => handleAddToPlaylist(track)} title="재생목록 추가">
                       <FiPlus />
+                    </button>
+                    <button className="chart-item__btn" onClick={() => handleSaveToPlaylist(track)} title="플레이리스트에 추가">
+                      <FiBookmark />
                     </button>
                     <button className="chart-item__btn" onClick={() => handleDownload(track.id)} title="다운로드">
                       <FiDownload />
@@ -236,6 +247,9 @@ export default function ChartPage() {
         )}
       </div>
 
+      {modalTrackId && (
+        <AddToPlaylistModal songId={modalTrackId} onClose={() => setModalTrackId(null)} />
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: aimu-postgres
     restart: unless-stopped
     environment:
@@ -55,7 +55,13 @@ services:
       retries: 5
 
   elasticsearch:
-    image: elasticsearch:8.12.0
+    # Custom image: 8.12.0 + analysis-nori (Korean morphology). See
+    # infra/elasticsearch.Dockerfile. Rebuild after changes:
+    #   docker compose -p backend build elasticsearch
+    build:
+      context: .
+      dockerfile: infra/elasticsearch.Dockerfile
+    image: aimu-elasticsearch-nori:8.12.0
     container_name: aimu-elasticsearch
     restart: unless-stopped
     environment:

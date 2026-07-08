@@ -14,6 +14,7 @@ Chart types:
 """
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -27,6 +28,8 @@ from ..database.redis import get_redis
 from ..database.mongodb import get_mongo
 
 router = APIRouter(prefix="/api/charts")
+
+logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 
@@ -197,6 +200,14 @@ async def record_play(
 
     await pipe.execute()
 
+    # Best-effort point award (idempotent / daily-deduped inside the service).
+    # MUST NOT affect the play response or chart logic on failure.
+    try:
+        from ..services.points_service import award_point
+        await award_point(user_id, "play", track_id)
+    except Exception as _pt_exc:
+        logger.warning("[points] play hook failed user=%s track=%s: %s", user_id, track_id, _pt_exc)
+
     # Save to MongoDB for persistence (fire-and-forget style)
     await mongo.play_logs.insert_one({
         "user_id": user_id,
@@ -218,6 +229,40 @@ async def genre_chart(genre: str, limit: int = 50):
         {"is_public": True, "genre": genre}
     ).sort("play_count", -1).limit(limit)
     tracks = await cursor.to_list(length=limit)
+    return [_serialize_track(t) for t in tracks]
+
+
+# ---------------------------------------------------------------------------
+# Category chart (v77) — fixed 10-item whitelist
+# (declared before /{chart_type} to avoid route shadowing)
+# ---------------------------------------------------------------------------
+
+@router.get("/categories")
+async def list_categories():
+    """Return the fixed 10-item category whitelist."""
+    from ..constants.categories import CATEGORIES
+    return {"categories": CATEGORIES}
+
+
+@router.get("/category/{category}")
+async def category_chart(category: str, limit: int = 50):
+    """Tracks whose ``categories`` array contains the given category.
+
+    Mirrors the genre-chart pattern (array membership on the `categories`
+    field). A category outside the fixed whitelist returns an empty list.
+    """
+    from ..constants.categories import CATEGORY_SET
+
+    if category not in CATEGORY_SET:
+        logger.info("[charts] category=%s count=%s (not in whitelist)", category, 0)
+        return []
+
+    mongo = get_mongo()
+    cursor = mongo.tracks.find(
+        {"is_public": True, "categories": category}
+    ).sort("play_count", -1).limit(limit)
+    tracks = await cursor.to_list(length=limit)
+    logger.info("[charts] category=%s count=%s", category, len(tracks))
     return [_serialize_track(t) for t in tracks]
 
 

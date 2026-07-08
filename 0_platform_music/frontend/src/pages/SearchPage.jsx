@@ -24,6 +24,7 @@ export default function SearchPage() {
 
     const fetchResults = async () => {
       setLoading(true);
+      if (import.meta.env.DEV) console.info('[SearchPage] calling searchTracks', { q: query });
       try {
         const res = await api.searchTracks(query, { limit: 50 });
         const fetchedTracks = (res.data.tracks || []).map(t => ({
@@ -32,13 +33,14 @@ export default function SearchPage() {
           cover_image: t.cover_image || t.cover_image_url,
         }));
         setTracks(fetchedTracks);
+        if (import.meta.env.DEV) console.info('[SearchPage] searchTracks ok', { q: query, count: fetchedTracks.length });
 
         if (user && fetchedTracks.length > 0) {
           const { data } = await api.checkLikes(fetchedTracks.map(s => s.id).join(','));
           setLikedIds(new Set(data.liked_ids));
         }
       } catch (err) {
-        console.error('Search failed:', err);
+        console.error('[SearchPage] search failed', { err, q: query });
       } finally {
         setLoading(false);
       }
@@ -70,6 +72,7 @@ export default function SearchPage() {
             </div>
             <div className="search-intro__text">
               AI 음악을 검색해보세요
+              <div className="search-intro__hint">예: "비 오는 날 잔잔한 노래", "신나는 파티 음악"</div>
             </div>
           </div>
         </div>

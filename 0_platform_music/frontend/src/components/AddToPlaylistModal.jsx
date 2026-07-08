@@ -84,7 +84,7 @@ export default function AddToPlaylistModal({ songId, onClose }) {
                 </div>
                 <div className="add-playlist-modal__item-info">
                   <div className="add-playlist-modal__item-title">{pl.title}</div>
-                  <div className="add-playlist-modal__item-count">{pl.song_count || 0}곡</div>
+                  <div className="add-playlist-modal__item-count">{pl.track_count || 0}곡</div>
                 </div>
               </div>
             ))}

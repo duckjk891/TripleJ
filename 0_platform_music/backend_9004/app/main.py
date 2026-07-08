@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -26,7 +26,8 @@ from .database.postgres import init_postgres, close_postgres
 from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
-from .routes import admin, auth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, _logs
+from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
+from .routes import admin, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, _logs
 
 
 @asynccontextmanager
@@ -37,6 +38,72 @@ async def lifespan(app: FastAPI):
     await init_redis(settings.computed_redis_url)
     init_minio(settings.minio_endpoint, settings.minio_user, settings.minio_password)
     print("All database connections established.")
+
+    # v89 — ensure playlists.description column exists (idempotent, safe across shared DB backends)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE playlists ADD COLUMN IF NOT EXISTS description TEXT")
+        print("[migration] playlists.description ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).warning("[migration] playlists.description ensure failed: %s", _e)
+
+    # Social OAuth — ensure users.provider columns + uniqueness, allow NULL password_hash
+    # (소셜 가입 계정은 비밀번호가 없음). 멱등, 공유 DB 안전.
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'local'")
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS provider_user_id TEXT")
+            await _conn.execute("ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL")
+            await _conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS users_provider_uid "
+                "ON users(provider, provider_user_id) WHERE provider_user_id IS NOT NULL"
+            )
+        print("[migration] users.provider ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] users.provider ensure failed: %s", _e)
+
+    # VectorSearch — ensure pgvector extension + track_embeddings table/index (idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS track_embeddings ("
+                "track_id TEXT PRIMARY KEY, "
+                "embedding vector(1536), "
+                "content_hash TEXT, "
+                "model TEXT, "
+                "updated_at TIMESTAMPTZ DEFAULT now())"
+            )
+            await _conn.execute(
+                "CREATE INDEX IF NOT EXISTS track_embeddings_hnsw "
+                "ON track_embeddings USING hnsw (embedding vector_cosine_ops)"
+            )
+        print("[migration] track_embeddings ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] track_embeddings ensure failed: %s", _e)
+
+    # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
+    # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
+    # if the ES index emptied/drifted across a restart, re-index public tracks from
+    # Mongo so search never silently degrades to vector-only. Never break startup if
+    # ES is down: log + continue.
+    try:
+        await init_elasticsearch(settings.es_url)
+        es = get_es()
+        from .services.search_service import ensure_tracks_index, backfill_es_if_needed
+        await ensure_tracks_index(es)
+        print("[migration] es tracks index ensured")
+
+        import asyncio as _es_asyncio
+        from .database.mongodb import get_mongo as _get_mongo
+        _mongo_db = _get_mongo()
+        _es_asyncio.create_task(backfill_es_if_needed(es, _mongo_db, force=False))
+        print("[migration] es backfill check scheduled")
+    except Exception as _e:
+        logging.getLogger(__name__).warning("[migration] es tracks index/backfill ensure failed: %s", _e)
 
     # Recover stuck MV jobs (active status but no running task after server restart)
     try:
@@ -50,6 +117,39 @@ async def lifespan(app: FastAPI):
             print(f"Recovered {stuck_result.modified_count} stuck MV jobs → paused")
     except Exception as e:
         print(f"MV job recovery failed: {e}")
+
+    # Recover stale character sheet jobs — a `processing` job older than 30min
+    # has lost its background task (e.g. server restart) and will never finish.
+    # Points: each recovered job also refunds its pre-deducted points (once —
+    # guarded by the atomic `refunded` flag shared with the async runner).
+    try:
+        from .database.mongodb import get_mongo
+        from .routes.character import refund_character_job_points
+        mongo = get_mongo()
+        _stale_filter = {
+            "status": "processing",
+            "created_at": {"$lt": datetime.utcnow() - timedelta(minutes=30)},
+        }
+        _n_failed = 0
+        _n_refunded = 0
+        async for _job in mongo.character_jobs.find(_stale_filter, {"_id": 1}):
+            _claimed = await mongo.character_jobs.find_one_and_update(
+                {"_id": _job["_id"], "status": "processing"},
+                {"$set": {
+                    "status": "failed",
+                    "error": "서버 재시작으로 중단됨",
+                    "updated_at": datetime.utcnow(),
+                }},
+            )
+            if not _claimed:
+                continue  # 러너/타 워커가 그 사이 상태를 바꿈 — 건드리지 않음
+            _n_failed += 1
+            if await refund_character_job_points(mongo, _job["_id"]):
+                _n_refunded += 1
+        if _n_failed > 0:
+            print(f"[migration] character_jobs stale recovered n={_n_failed} refunded={_n_refunded}")
+    except Exception as e:
+        print(f"[migration] character_jobs stale recovery failed: {e}")
 
     # v44 — Recover stuck beat extractions (running → pending) and re-trigger
     try:
@@ -126,6 +226,10 @@ async def lifespan(app: FastAPI):
     await close_postgres()
     await close_mongodb()
     await close_redis()
+    try:
+        await close_elasticsearch()
+    except Exception as _e:
+        logging.getLogger(__name__).warning("[shutdown] es close failed: %s", _e)
     print("All database connections closed.")
 
 
@@ -140,6 +244,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(oauth.router)
 app.include_router(admin.router)
 app.include_router(tracks.router)
 app.include_router(albums.router)
@@ -159,6 +264,7 @@ app.include_router(vocal_repair.router)
 app.include_router(wondera.router)
 app.include_router(rewards.router)
 app.include_router(business.router)
+app.include_router(points.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 

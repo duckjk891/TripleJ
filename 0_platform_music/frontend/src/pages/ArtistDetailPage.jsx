@@ -100,7 +100,7 @@ export default function ArtistDetailPage() {
                 <div className="artist-detail__stat-label">앨범</div>
               </div>
               <div className="artist-detail__stat">
-                <div className="artist-detail__stat-value">{artist.song_count || songs.length}</div>
+                <div className="artist-detail__stat-value">{artist.track_count || songs.length}</div>
                 <div className="artist-detail__stat-label">트랙</div>
               </div>
             </div>

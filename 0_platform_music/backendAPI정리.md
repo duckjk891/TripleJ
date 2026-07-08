@@ -233,6 +233,67 @@ Redis 세션을 삭제합니다. JWT 자체는 만료 전까지 유효하므로 
 
 ---
 
+### 소셜 로그인 (OAuth 2.0 Authorization Code) — `/api/auth/oauth`
+
+구글 / 카카오 / 네이버 소셜 로그인·회원가입. 기존 이메일 로그인과 동일한 JWT(7일) + Redis 세션을 발급하므로,
+발급된 토큰은 다른 인증 API(`/api/auth/me` 등)에서 그대로 사용됩니다.
+
+지원 `provider`: `google`, `kakao`, `naver`.
+
+#### 1) 로그인 시작
+
+```
+GET /api/auth/oauth/{provider}/login
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 불필요 |
+
+- 정상: CSRF 방지용 `state`(난수, Redis 에 300초 TTL 저장) 를 만들고 provider 인가 페이지로 **302 Redirect**.
+- provider 키 미설정: **503** `{"error": "...아직 설정되지 않았습니다.", "detail": "..."}`.
+- 미지원 provider: **400**.
+
+> 프론트는 이 경로로 사용자를 이동시키기만 하면 됩니다(`<baseURL>/api/auth/oauth/google/login` 등).
+
+#### 2) 콜백 (provider → 백엔드)
+
+```
+GET /api/auth/oauth/{provider}/callback?code=&state=&error=
+```
+
+provider 가 호출하는 경로(프론트가 직접 호출하지 않음). 백엔드가 처리 후 **프론트로 302 Redirect**:
+
+- 성공: `{FRONTEND_URL}/oauth/callback#token={JWT}`
+- 실패(동의 거부/state 오류/교환 실패 등): `{FRONTEND_URL}/oauth/callback#error={메시지}`
+
+> 프론트는 `/oauth/callback` 라우트에서 URL fragment(`#token=` / `#error=`)를 파싱해
+> 토큰을 저장하거나 에러를 표시하면 됩니다. (`state` Redis 검증 실패는 400 JSON)
+
+**계정 처리 정책 (find / link / create):**
+
+1. `(provider, provider_user_id)` 일치하는 계정이 있으면 → 그 계정으로 **로그인**.
+2. 없고 provider 이메일과 일치하는 기존 계정이 있으면 → 그 계정에 `provider`/`provider_user_id` 를 연동(UPDATE)하고 **로그인**.
+3. 둘 다 없으면 → **신규 가입**(`password_hash` = NULL). 이메일 미제공 시 `{provider}_{uid}@social.aidol.local`, 닉네임 미제공 시 `{provider}_{uid앞8자}` 로 대체.
+
+#### .env 키 (플레이스홀더 — 키 없으면 503, 앱은 정상 기동)
+
+```
+GOOGLE_CLIENT_ID=        GOOGLE_CLIENT_SECRET=
+KAKAO_CLIENT_ID=         KAKAO_CLIENT_SECRET=    # KAKAO_CLIENT_ID 는 REST API 키
+NAVER_CLIENT_ID=         NAVER_CLIENT_SECRET=
+OAUTH_CALLBACK_BASE=http://localhost:9005        # provider 가 돌아올 우리 콜백 베이스
+FRONTEND_URL=https://localhost:4000              # 최종 토큰 전달 대상
+```
+
+**각 콘솔에 등록할 Redirect URI** (`{OAUTH_CALLBACK_BASE}/api/auth/oauth/{provider}/callback`):
+
+- Google Cloud Console: `http://localhost:9005/api/auth/oauth/google/callback`
+- Kakao Developers:      `http://localhost:9005/api/auth/oauth/kakao/callback`
+- Naver Developers:      `http://localhost:9005/api/auth/oauth/naver/callback`
+
+---
+
 ## 4. 트랙 API (`/api/tracks`)
 
 트랙은 MongoDB `tracks` 컬렉션에 저장되며, ID 는 ObjectId 문자열입니다. 응답에는 프론트 호환을 위해 `artist_id`, `artist_name`, `cover_image` 별칭이 함께 내려갑니다.
@@ -271,14 +332,32 @@ GET /api/tracks/
 ### 트랙 검색
 
 ```
-GET /api/tracks/search?q={검색어}
+GET /api/tracks/search?q={검색어}&page={page}&limit={limit}
 ```
 
 | 항목 | 값 |
 |------|---|
 | 인증 | 없음 |
 
-`q` 필수. `title / tags / prompt / uploader_nickname` 에 대한 case-insensitive 정규식 매칭.
+**쿼리:** `q` (필수, 빈 값이면 400), `page`(기본 1), `limit`(기본 20)
+
+**하이브리드 검색(pgvector 의미 + Elasticsearch BM25) + 정규식 폴백.** 두 백엔드를 동시에 질의해 RRF(Reciprocal Rank Fusion)로 융합한다.
+- **의미(벡터):** `q` 를 OpenAI 임베딩(`text-embedding-3-small`, 1536차원)으로 변환해 PostgreSQL `pgvector` 의 `track_embeddings` 와 코사인 유사도 최근접 매칭(top-K=100).
+- **키워드(BM25):** Elasticsearch `tracks` 인덱스에 `multi_match`(필드 부스트 `title^3/lyrics^2/keywords^2/prompt/tags/genre/mood`, 커스텀 한국어 분석기 `ko_search`, `fuzziness:AUTO`) + `is_public=true` 필터(top-K=100). "기계/로봇" 같은 내용·변형어 검색, 그리고 "어머니"처럼 가사에만 등장하는 희귀 키워드를 해당 곡으로 끌어올린다.
+- **자연어 쿼리 정규화(`ko_search` 분석기, index+search 동일 적용):** `nori_tokenizer` → `nori_part_of_speech`(조사·어미·관형사·접사 등 문법형태소 POS 제거: `J/E/MM/MAG/MAJ/X*/S*` 등 — "듣**는**"의 잔여 `는` 같은 어휘 노이즈 제거) → `lowercase` → **필러 불용어(`music_stop`)** → **무드 동의어/활용형 정규화(`mood_syn`, synonym_graph)** 순으로 적용한다. ① **필러 불용어**: 음악검색 plumbing 어만 큐레이션 제거(노래/음악/곡/듣다(듣·들)/때/추천/플레이리스트/song/music/listen/playlist 등) — 감정·소재 등 **의미어는 절대 제거하지 않음**. ② **무드 동의어**: 활용형·동의어를 단일 대표 토큰으로 합침(`설레임/설레는/설레이/설레일/설렘 → 설렘`, `신나는/신남 → 신남`, `잔잔한/차분한 → 잔잔`, `위로되는/위안 → 위로`, `슬픈/슬픔 → 슬픔`, `행복한 → 행복`, `그리운 → 그리움`, 사랑/이별/에너지 등 음악무드 중심). 이로써 `"설레일때 듣는 노래"`가 nori 단독에서 `[설레이,때,들,노래]` 로 쪼개져 '노래/때/들' 필러가 가사("노래해")에 매칭돼 오답(잊고 싶어 너를)이 상위로 오던 증상이, `ko_search` 에선 설레임/설레는/설렘/설레일때/원문이 **모두 단일 토큰 `[설레]`** 로 정규화돼 벚꽃 곡이 상위 1~6위로 일관되게 나온다. 분석기 변경은 **인덱스 재생성**이 필요하다(`scripts/backfill_es.py` 또는 startup 자가복구가 새 설정으로 생성+재색인).
+- **벡터 쿼리 경량 필러 strip(검색시, 벡터 한정):** 임베딩에 넣는 쿼리에 한해 명백한 음악검색 필러(노래/음악/곡/듣는·듣고싶어/들을때/추천/플레이리스트 등)를 경량 제거해 의미 벡터가 무드·소재에 집중하도록 한다(`"설레일때 듣는 노래" → "설레일때"`). strip 결과가 빈 문자열이면 원문을 사용한다. ES 측은 `ko_search` 분석기가 필러를 처리하므로 **원문을 그대로** 전달한다. 응답 shape·degrade 불변.
+- **개념 키워드 의미보강(index-time):** 색인 시점에 LLM(`gpt-4o-mini`, `KEYWORD_MODEL`)으로 곡당 키워드를 세 종류로 1회 추출해 Mongo 트랙 문서의 `search_keywords` 필드(단일 문자열 리스트, 최대 15개)에 합쳐 저장한다 — ① **한국어 구체 키워드**(소재·상황·관계·감정·계절 + 가사에 없는 상위개념 음식/요리/계절/감정 등), ② **영어 구체 키워드**(제목/가사/개념의 영어 표현: 이별→breakup, 운동→workout/gym, 로봇→robot, 김장→kimchi/food/cooking, 벚꽃→cherry blossom 등 — 영어 쿼리 보강), ③ **추상 무드/느낌 키워드 3개**(한+영 혼용: 잔잔한/calm, 신나는/energetic, 위로되는/comforting 등 — 추상 무드 쿼리 보강). 이 단일 필드를 ES 색인(`keywords` 필드, nori)과 pgvector 임베딩 텍스트가 **공유**하므로 LLM 중복 호출이 없고, 검색 시점엔 LLM 을 호출하지 않는다. 이로써 "음식"→'사랑의 김장', "sad breakup"→'잊고 싶어 너를', "workout"→'심장을 깨워' 같은 **추상/영어 → 구체 사례** 검색이 양쪽(BM25+벡터)에서 강화된다.
+- **무관 쿼리 코사인 컷오프(index-free, 검색시):** 벡터 후보는 쿼리와의 **코사인 유사도**(1−cosine_distance, 0~1, 높을수록 유사)가 `SEARCH_MIN_COSINE`(기본 `0.15`, 19곡 캘리브레이션으로 결정 — 관련 쿼리 최저치 아래로 느슨하게) 이상인 것만 채택한다(RRF 점수가 아니라 순수 코사인 바닥값). 컷 통과한 벡터 후보와 ES(어휘) 히트가 **둘 다 비면** 명백 무관으로 보고 **빈 결과**(`total:0`)를 반환하며 이 경우 정규식 폴백도 하지 않는다(예: 무관 외국어/노이즈 쿼리). 어휘(ES) 매칭이 있거나 코사인 통과 후보가 있으면 기존대로 RRF 융합. 멀쩡한 쿼리(음식/기계/이별/벚꽃/운동/어머니 등)는 절대 빈 결과가 되지 않도록 바닥값을 보수적으로 낮게 둔다.
+- **융합(가중 RRF):** 각 순위 리스트를 가중 RRF(`score = Σ weight/(60+rank)`, 기본 `벡터 weight=1.0 / ES weight=2.0`, `RRF_VEC_WEIGHT/RRF_ES_WEIGHT` 환경변수로 조정)로 합산·내림차순 정렬 → 공개 트랙을 MongoDB 에서 조회 → 융합 순서로 정렬 후 페이지네이션. ES 가중을 높여 희귀 키워드 BM25 매칭이 일반 의미 유사곡에 희석되지 않게 한다. 트랙 본체는 MongoDB, 벡터는 PostgreSQL, 키워드 색인은 Elasticsearch.
+- **색인 자가복구(self-heal):** 서버 startup 에서 ES `tracks` 문서수 < Mongo 공개곡수면(재기동 사이 인덱스가 비워진 경우 등) 공개곡을 비차단 백그라운드로 자동 재색인한다(멱등, best-effort, ES 다운이어도 startup 무영향). 자가복구는 Mongo 의 `search_keywords` 를 그대로 읽어 `keywords` 필드에 색인하므로 LLM 호출이 필요 없다. 검색이 조용히 벡터-only 로 degrade 되는 것을 방지.
+
+**graceful degrade:** 두 백엔드 모두 결과 → `mode=hybrid`. ES 다운/무결과 → 벡터만(코사인 컷 적용, `mode=vec`). 벡터 실패 → ES만(`mode=es`). 벡터는 정상 동작했으나 코사인 컷 통과 후보·ES 히트가 모두 0 → 무관 쿼리로 판정해 빈 결과(`mode=cutoff`, 정규식 폴백 안 함). 벡터 자체가 실패 + ES 무결과(관련성 판단 불가) → 기존 정규식 매칭(`title / tags / prompt / uploader_nickname`, case-insensitive, `mode=regex`)으로 자동 폴백. 빈 `q` 는 400 유지.
+
+**응답 shape 불변:** `{ tracks: [...], pagination: { page, limit, total, totalPages } }` — 프론트 계약 변경 없음.
+
+> 색인: 트랙 발행(직접 업로드 / 생성물 업로드) 시 단일 백그라운드 훅이 **순서 보장**으로 ①개념 키워드 추출→Mongo `search_keywords` 저장 ②pgvector 임베딩 upsert ③Elasticsearch 색인을 수행한다(발행 성공 여부와 무관, best-effort — 키워드 실패해도 색인/발행 진행). 발행 시 입력하는 `title / lyrics / prompt / genre / mood / tags / categories` + LLM 개념 키워드(`search_keywords`)가 색인 텍스트로 쓰인다. 전수 재색인은 `scripts/backfill_search_keywords.py`(키워드+벡터+ES 통합) / `scripts/backfill_embeddings.py`(벡터) / `scripts/backfill_es.py`(ES).
+> nori 플러그인은 ES 커스텀 이미지(`infra/elasticsearch.Dockerfile`)에 내장되어 영구 적용된다.
+> 분석기 보강(`ko_search`: nori + POS필터 + 필러 불용어 + 무드 동의어): `TRACKS_INDEX_BODY.settings.analysis` 단일 출처에 정의되어 startup 자가복구·`ensure_tracks_index`·`scripts/backfill_es.py` 가 공유한다. 불용어/동의어 목록은 `app/services/search_service.py` 의 `_MUSIC_STOPWORDS` / `_MOOD_SYNONYMS` 에서 큐레이션한다. 기존 인덱스에는 매핑·분석기 변경이 반영되지 않으므로 적용 시 인덱스 재생성(삭제 후 재색인)이 필요하다.
 
 ---
 
@@ -311,6 +390,8 @@ GET /api/tracks/{track_id}
 Redis 캐시(`cache:track:v2:{id}`, TTL 10분) 사용. 조회 시 `playcount:buffer:{id}` 카운터가 증가합니다(배치로 MongoDB 에 반영).
 
 연동된 완료 MV 가 있으면 `has_music_video`, `music_video_url` 가 포함되고, MV 가 "내 캐릭터 포함" 으로 만들어졌거나 트랙에 `user_character_snapshot` 이 있으면 `cover_character` 가 포함됩니다.
+
+**SnapFix — cover_character 시트 불변 사본:** `cover_character.sheet_preview_path` 가 가리키는 스냅샷 시트는 발행/MV 생성 시점에 MinIO 불변 경로 `character_snapshots/{user_id}/{uuid}.png` 로 서버측 복사된 사본입니다(원본 경로는 스냅샷의 `sheet_object_name_origin` 에 보존). 캐릭터 영구 시트(`characters/{uid}/sheet.png`·`sheet_virtual.png`)는 재생성 시 덮어써지지만, 사본은 `characters/` prefix 밖에 있어 캐릭터 재생성·삭제(`DELETE /character/me` 의 prefix 재귀 삭제) 후에도 발행 당시 모습이 유지됩니다. 기존 데이터도 백필 스크립트(`backend_9005/scripts/backfill_snapshot_sheets.py`)로 불변 사본으로 전환됨 — 단, **백필 시점 이전에 이미 캐릭터 재생성으로 덮어써진 곡의 원래 이미지는 복원 불가**(현재 파일 기준 사본이며, 이후 변경으로부터의 격리가 목적).
 
 **응답 (200) 주요 필드:**
 ```json
@@ -418,6 +499,7 @@ POST /api/tracks/upload
 | genre | str | - | 콤마 구분 |
 | mood | str | - | 콤마 구분 |
 | tags | str | - | 콤마 구분 |
+| categories | str | - | 콤마 구분 (v77, 9005). 고정 10종 화이트리스트로 필터 |
 | ai_model | str | - | |
 | prompt | str | - | |
 | bpm | int | - | |
@@ -428,7 +510,7 @@ POST /api/tracks/upload
 
 업로드 후 백그라운드로 비트 추출이 실행됩니다.
 
-**응답 (201):** 트랙 객체.
+**응답 (201):** 트랙 객체 (`categories: string[]` 포함).
 
 ---
 
@@ -453,6 +535,7 @@ POST /api/tracks/upload-from-generation
   "genre": "콤마구분 문자열",
   "mood": "콤마구분 문자열",
   "tags": "콤마구분 문자열",
+  "categories": ["휴식", "잠자기"],
   "prompt": "string",
   "lyrics": "string",
   "cover_object_name": "covers/...",
@@ -472,8 +555,10 @@ POST /api/tracks/upload-from-generation
 
 - `use_voice_converted=true` 면 보이스 변환된 오디오를 소스로 사용.
 - `user_character_snapshot` 은 MV 안 만들었어도 트랙 상세에 `cover_character` 가 나오도록 박제합니다.
+- **SnapFix**: 서버가 `sheet_object_name` 의 시트를 불변 경로 `character_snapshots/{user_id}/{uuid}.png` 로 복사해 저장하고 원본 경로는 `sheet_object_name_origin` 에 보존합니다(캐릭터 재생성/삭제로부터 곡 표시 격리). 복사는 best-effort — 실패해도 발행은 성공하며 원본 경로가 그대로 저장됩니다. MV 생성(`POST /api/mv/create`)의 서버측 스냅샷도 동일하게 처리됩니다.
+- `categories` (v77, 9005): 고정 10종 화이트리스트. list 또는 콤마구분 문자열 허용. body 우선, 없으면 generation doc 의 `categories` fallback. 저장 전 항상 화이트리스트 필터. 트랙 응답에 `categories: string[]` 포함.
 
-**응답 (201):** 트랙 객체.
+**응답 (201):** 트랙 객체 (`categories: string[]` 포함).
 
 ---
 
@@ -889,9 +974,45 @@ GET /api/charts/genre/{genre}?limit=50
 
 ---
 
+### 카테고리 목록 (v77, 9005)
+
+```
+GET /api/charts/categories
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+고정 10종 카테고리 화이트리스트를 반환.
+
+```json
+{ "categories": ["운동", "에너지 충전", "휴식", "출퇴근길", "행복한 기분", "집중", "로맨스", "파티", "슬픔", "잠자기"] }
+```
+
+---
+
+### 카테고리별 차트 (v77, 9005)
+
+```
+GET /api/charts/category/{category}?limit=50
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+`tracks.categories` 배열 멤버십으로 필터(`is_public:true`), `play_count` 내림차순. 응답은 genre 차트와 동일한 트랙 직렬화 배열. 화이트리스트 밖의 `{category}` 는 빈 배열 `[]` 반환.
+
+각 트랙 응답에는 `categories: string[]` 필드가 포함된다.
+
+---
+
 ## 7. 플레이리스트 API (`/api/playlists`)
 
 플레이리스트는 PostgreSQL `playlists`/`playlist_tracks`, 트랙 본문은 MongoDB.
+
+> v89 — `description`(선택, 텍스트) 필드 지원. `POST /api/playlists/` 및 `PUT /api/playlists/{playlist_id}` 가 선택 항목 `description` 을 받고, `GET /api/playlists/` 및 `GET /api/playlists/{playlist_id}` 응답에 `description` 이 포함된다. 시작 시 idempotent 마이그레이션으로 `playlists.description` 컬럼을 보장.
 
 ### 내 플레이리스트 목록
 
@@ -916,9 +1037,9 @@ POST /api/playlists/
 | 인증 | 필수 |
 | Content-Type | application/json |
 
-**요청 본문:** `{"title": "필수", "is_public": true}`
+**요청 본문:** `{"title": "필수", "description": "선택", "is_public": true}`
 
-**응답 (201):** 플레이리스트 객체.
+**응답 (201):** 플레이리스트 객체 (`description` 포함).
 
 ---
 
@@ -947,7 +1068,7 @@ PUT /api/playlists/{playlist_id}
 | 인증 | 필수 (소유자만) |
 | Content-Type | application/json |
 
-**요청 본문:** `{"title": "...", "is_public": true/false}` (모두 선택)
+**요청 본문:** `{"title": "...", "description": "...", "is_public": true/false}` (모두 선택)
 
 ---
 
@@ -1471,6 +1592,22 @@ POST /api/generate/lyrics/
 
 `models` 가 여러 개면 모델별 비교 결과를 함께 반환.
 
+**응답 (200) — v77, 9005:** LLM 이 `title`/`lyrics`/`categories` 를 JSON 한 번에 산출하고 백엔드가 방어적으로 파싱해 재조립한다. `categories` 는 항상 고정 10종 화이트리스트로 필터된 문자열 배열(0개~다수).
+
+단일 모델:
+```json
+{ "title": "...", "lyrics": "...(섹션 태그 [Verse] 포함)...", "categories": ["휴식", "잠자기"], "model": "gpt-4o-mini" }
+```
+2모델 비교:
+```json
+{ "results": [
+  { "title": "...", "lyrics": "...", "categories": ["운동"], "model": "gpt-4o-mini" },
+  { "title": "...", "lyrics": "...", "categories": [], "model": "claude-opus-4-6" }
+] }
+```
+
+> 프론트는 생성 폼에서 받은 `categories` 를 그대로 `POST /api/generate/` 와 `POST /api/tracks/upload-from-generation` 의 `categories` 로 전달하면 된다.
+
 ---
 
 ### 스타일 태그 영어 번역
@@ -1547,8 +1684,9 @@ POST /api/generate/
 | reference_audio_name | str | |
 | reference_audio_duration | float | |
 | duet_main_vocal_style / duet_sub_vocal_style | str | |
+| categories | string[] | v77, 9005. 고정 10종 화이트리스트. 저장 전 필터되어 generations doc 의 `categories` 로 저장 |
 
-**응답 (201):** generation 객체 (`id`, `status="pending"`, `progress`, ...).
+**응답 (201):** generation 객체 (`id`, `status="pending"`, `progress`, `categories`, ...).
 
 ---
 
@@ -1632,6 +1770,28 @@ POST /api/generate/{gen_id}/beats/retry
 
 ---
 
+### 가사 타임스탬프 재수집 (v113 문서화 — 기존 엔드포인트)
+
+```
+POST /api/generate/{gen_id}/timestamps/refetch?force=false
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+| Query | `force` (bool, 기본 false) |
+| Body | 없음 |
+
+**동작:** Suno 에서 variant 별 가사 타임스탬프를 온디맨드 재수집.
+- `force=false`(기본): 타임스탬프가 **비어있는 variant 만** 채움 (이미 있는 것은 유지).
+- `force=true`: 모든 variant 재수집. 단 병합은 안전 — 새 수집이 비어있으면(일시 실패 등) 기존 값을 유지해 좋은 데이터가 덮어써지지 않음.
+
+**제약:** `status='completed'` 생성물만 가능(아니면 400). variants 없으면 400. 타인 403, 없는 ID 404.
+
+**응답 (200):** 갱신된 generation 문서 전체 — `GET /api/generate/{gen_id}` 와 동일 shape.
+
+---
+
 ### 결과 오디오 스트림 (다운로드)
 
 ```
@@ -1687,6 +1847,7 @@ POST /api/mv/create
 | audio_duration_sec | float | | 씬 수 자동 계산 (5~60) |
 | scene_prompt | str | | |
 | character_object_name | str | | 캐릭터 시트 객체명 |
+| character_variant | str | 기본 `real` | `real`/`virtual` — 커버에 쓴 캐릭터 기준으로 `user_character_snapshot` 을 실사(real: sheet_object_name/used_items) 또는 가상(virtual: virtual_sheet_object_name/virtual_used_items)으로 생성. 미전송/그 외 값은 `real` 정규화 |
 | video_model | str | 기본 `veo` | `veo`/`kling`/`seedance`/`grok` |
 | audio_generation_id | str | | 연동할 generation ID |
 | scenario_models | str[] | | 시나리오 생성 모델 (예: `["gpt-4o-mini","claude-opus-4-6"]`) |
@@ -2450,11 +2611,21 @@ POST /api/character/generate-sheet
 | 필드 | 타입 | 필수 | 설명 |
 |------|------|------|------|
 | file | File | O | 얼굴 사진 (jpg/jpeg/png/webp, ≤10MB) |
-| top_image | File | - | 상의 이미지 (선택) |
-| bottom_image | File | - | 하의 이미지 (선택) |
-| shoes_image | File | - | 신발 이미지 (선택) |
+| top_image | File | - | 상의 이미지 직접 업로드 (선택) |
+| bottom_image | File | - | 하의 이미지 직접 업로드 (선택) |
+| shoes_image | File | - | 신발 이미지 직접 업로드 (선택) |
+| top_object_name | str | - | 광고상품 상의 아이템 MinIO `image_object_name` (선택) |
+| bottom_object_name | str | - | 광고상품 하의 아이템 MinIO `image_object_name` (선택) |
+| shoes_object_name | str | - | 광고상품 신발 아이템 MinIO `image_object_name` (선택) |
 | user_text | str | - | 추가 설명 |
 | image_model | str | - | `nb_pro` (기본) / `gpt_image_2` |
+
+> **아이템 해석 우선순위**: 각 부위별로 `*_object_name` 이 있으면 images 버킷에서
+> 로딩해 우선 사용, 없으면 `*_image` 업로드 사용, 둘 다 없으면 미참조(사진 기반/자유 생성).
+> 로딩 실패(없는 키 등)는 앱을 죽이지 않고 해당 아이템만 미참조 처리.
+> 프롬프트 조립은 **동적**(`_build_step1_answer`) — 선택분만 `[X 참조]` 이미지 분석,
+> 미선택은 사진 기반/자유 생성. 이미지 식별은 첨부 순번이 아니라 **역할 라벨**
+> (`[인물 사진]`/`[상의 참조]`/`[하의 참조]`/`[신발 참조]`)로 한다.
 
 **응답 (200):**
 ```json
@@ -2466,6 +2637,161 @@ POST /api/character/generate-sheet
   "message": "캐릭터 시트가 생성되었습니다."
 }
 ```
+
+---
+
+### 가상화(그림/만화 화풍) 캐릭터 시트 생성
+
+실사 시트와 **동일 절차**(2-step Gemini text→image)이되 별도 프롬프트
+`MASTER_PROMPT_CARTOON` 사용. 선택 아이템(상의/하의/신발)은 **선택 화풍으로 변환되어**
+캐릭터에게 착용된 상태로 그려진다. 실사 기능과 완전 분리(무손상).
+**정체성 보존 강화(2+3):** 정체성(얼굴형/이목구비/머리/체형/피부톤)은 **오직 [인물 사진]**
+에서만 추출하고 [화풍 참조] 인물은 절대 복제 금지(스타일만 차용). 사진에서 추출한 굵직한 식별
+특징(얼굴형·머리·안경·피부톤·특이점)을 **[고정 요소]로 명시·고정**하고, 과도한 스타일화로
+정체성을 덮지 않도록 억제하여 원본 인물을 알아볼 수 있게 그린다.
+**Step A 인물 묘사 정석화:** Step A(사진→텍스트)에서 얼굴 이목구비의 미세 기하(얼굴형/턱/광대/
+눈매/코/입술/눈썹 두께·표정)와 머리카락 세부 질감은 **주관적 형용사(refined/delicate/두꺼운/
+얇은/natural thickness 등)로 단정하지 않고 [인물 사진]을 직접 따른다**(이미지=정체성 앵커).
+텍스트 시트에는 **식별용 객관·범주값만** 남긴다 — 얼굴: `Eye color`/`Glasses`/`Skin tone`/
+`Facial hair`/`Distinctive marks`, 머리: `Length`/`Part`/`Style`/`Color`/`Volume`/`Flow`/`State`.
+STEP 6 의 Position/Size/Shape/Material/State 상세 규격·모호 표현 금지 규칙은 **의상·소품·배경·
+레이아웃 등 새로 정의하는 시각 요소에만** 적용하고, 사진에서 가져오는 얼굴·머리 정체성 요소는
+이 규격 대상에서 제외한다(실사 `MASTER_PROMPT` 는 불변).
+
+```
+POST /api/character/generate-sheet-cartoon
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | multipart/form-data |
+
+**폼 필드:**
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| file | File | O | 얼굴(인물) 사진 (jpg/jpeg/png/webp, ≤10MB) |
+| top_image | File | - | 상의 이미지 직접 업로드 (선택, 화풍으로 변환되어 착용) |
+| bottom_image | File | - | 하의 이미지 직접 업로드 (선택) |
+| shoes_image | File | - | 신발 이미지 직접 업로드 (선택) |
+| top_object_name | str | - | 광고상품 상의 아이템 MinIO `image_object_name` (선택) |
+| bottom_object_name | str | - | 광고상품 하의 아이템 MinIO `image_object_name` (선택) |
+| shoes_object_name | str | - | 광고상품 신발 아이템 MinIO `image_object_name` (선택) |
+| user_text | str | - | 추가 설명 |
+| image_model | str | - | `nb_pro` (기본) / `gpt_image_2` |
+| style_preset | str | △ | `webtoon` / `anime` / `manga90` 중 1 (번들 샘플 화풍) |
+| style_image | File | △ | 사용자 업로드 화풍 reference 이미지 |
+
+> 아이템 해석 우선순위는 실사 `/generate-sheet` 와 동일(`*_object_name` 우선 → `*_image`).
+> 동적 조립(`_build_step1_answer`)·역할 라벨 식별 경로를 실사와 **공유**한다.
+> `style_image` 가 있으면 우선 사용(art_style="the art style of the attached style
+> reference image"). 없으면 `style_preset` 의 번들 샘플 사용. 둘 다 없으면 **400**.
+> style reference 는 `[화풍 참조]` 라벨 파트와 함께 inline 이미지 뒤에 추가되어
+> 역할 라벨로 식별된다(순번 비의존).
+
+**응답 (200):**
+```json
+{
+  "object_name": "characters/temp/{uid}/{hex}.png",
+  "original_object_name": "characters/temp/{uid}/original_{hex}.jpg",
+  "preview_url": "/api/character/preview/...",
+  "image_model": "nb_pro",
+  "art_style": "Korean webtoon style",
+  "art_style_key": "webtoon",
+  "message": "가상화 캐릭터 시트가 생성되었습니다."
+}
+```
+
+키 미설정 시 503(nb_pro→Google, gpt_image_2→OpenAI), 잘못된 image_model 400.
+
+---
+
+### 캐릭터 시트 생성 — 비동기 접수 + 폴링 (권장)
+
+시트 생성은 3~6분+ 걸릴 수 있어 동기 호출은 클라이언트 타임아웃에 걸리기 쉽다.
+아래 비동기 패턴을 권장한다 (동기 `/generate-sheet(-cartoon)` 은 하위호환으로 유지).
+
+```
+POST /api/character/generate-sheet-async
+POST /api/character/generate-sheet-cartoon-async
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | multipart/form-data |
+
+**폼 필드:** 각각 동기판 `/generate-sheet`, `/generate-sheet-cartoon` 과 **완전히 동일**.
+검증(image_model 400, 키 미설정 503, 파일 형식/크기 400, cartoon 화풍 미지정 400)도
+동일하게 **접수 시점에 즉시** 수행 — 검증 실패면 job 이 생성되지 않는다.
+
+**응답 (200, 즉시):**
+```json
+{"job_id": "665f0c...24hex", "status": "processing"}
+```
+
+접수 후 생성은 백그라운드에서 진행되고 MongoDB `character_jobs` 에 기록된다.
+
+```
+GET /api/character/job/{job_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (본인 job 만 — 남의 job / 없는 id / 잘못된 id 모두 404) |
+
+**응답 (200):**
+```json
+{
+  "job_id": "665f0c...",
+  "mode": "real | cartoon",
+  "status": "processing | done | failed",
+  "created_at": "2026-07-06T04:00:00.000000",
+  "updated_at": "2026-07-06T04:05:12.000000",
+
+  // status=done 일 때 추가 (동기판 응답과 동일 의미):
+  "object_name": "characters/temp/{uid}/{hex}.png",
+  "original_object_name": "characters/temp/{uid}/original_{hex}.jpg",
+  "preview_url": "/api/character/preview/...",
+  "image_model": "nb_pro",
+  "completed_at": "2026-07-06T04:05:12.000000",
+  // cartoon job 이면 추가:
+  "art_style": "Korean webtoon style",
+  "art_style_key": "webtoon",
+
+  // status=failed 일 때 추가:
+  "error": "실패 사유 (200자 이내)"
+}
+```
+
+**폴링 권장 간격: 5초.** `status` 가 `done` 이면 `object_name`/`preview_url` 을
+동기판 응답과 똑같이 사용하면 된다 (이후 `/api/character/save` 로 저장).
+`failed` 면 `error` 표시 후 재시도 유도.
+
+서버 재시작 시 30분 이상 `processing` 에 머문 job 은 lifespan 에서
+`failed`(error="서버 재시작으로 중단됨") 로 일괄 마킹된다 — 폴링이 영원히
+`processing` 에 갇히지 않는다.
+
+---
+
+### 화풍 샘플 목록 / 이미지
+
+```
+GET /api/character/style-samples
+GET /api/character/style-sample/{key}
+```
+
+인증 불필요. `style-samples` 는 3종 프리셋 메타 반환:
+```json
+{"samples": [
+  {"key": "webtoon", "label": "웹툰", "art_style": "Korean webtoon style", "preview_url": "/api/character/style-sample/webtoon"},
+  {"key": "anime", "label": "애니", "art_style": "Japanese anime style", "preview_url": "/api/character/style-sample/anime"},
+  {"key": "manga90", "label": "90년대 만화", "art_style": "1990s retro manga style", "preview_url": "/api/character/style-sample/manga90"}
+]}
+```
+`style-sample/{key}` 는 번들 PNG(image/png) 반환, 없는 key 는 404.
+번들 이미지는 `infra/style_samples/` 의 더미 플레이스홀더 — 저작권 안전 이미지로 교체 가능.
 
 ---
 
@@ -2516,15 +2842,22 @@ POST /api/character/save
   "personality_tags": ["≤20자, 최대 20개"],
   "personality_text": "≤500자",
   "original_photo_object_name": "characters/{uid}/original.jpg",
-  "image_model": "nb_pro|gpt_image_2"
+  "image_model": "nb_pro|gpt_image_2",
+  "variant": "real|virtual (기본 real)",
+  "art_style": "Korean webtoon style (variant=virtual 일 때만 사용)"
 }
 ```
 
-temp 시트를 `characters/{uid}/sheet.png` 로 복사. MongoDB `characters` upsert.
+- `variant="real"` (기본): temp 시트를 `characters/{uid}/sheet.png` 로 복사,
+  실사 필드(sheet_object_name/used_items/name/age/personality/image_model) 갱신.
+- `variant="virtual"`: temp 시트를 **`characters/{uid}/sheet_virtual.png`** 로 복사,
+  `virtual_sheet_object_name` / `virtual_art_style` / `virtual_used_items` 만 갱신.
+  **실사 슬롯(sheet_object_name 등)은 절대 건드리지 않음.**
 
-**응답 (200):**
+**응답 (200, real):**
 ```json
 {
+  "variant": "real",
   "sheet_object_name": "characters/{uid}/sheet.png",
   "name": "...",
   "age": "...",
@@ -2532,6 +2865,17 @@ temp 시트를 `characters/{uid}/sheet.png` 로 복사. MongoDB `characters` ups
   "personality_text": "...",
   "original_photo_object_name": "...",
   "message": "캐릭터가 저장되었습니다."
+}
+```
+
+**응답 (200, virtual):**
+```json
+{
+  "variant": "virtual",
+  "virtual_sheet_object_name": "characters/{uid}/sheet_virtual.png",
+  "virtual_art_style": "Korean webtoon style",
+  "sheet_object_name": "characters/{uid}/sheet.png (기존 실사값, 불변)",
+  "message": "가상화 캐릭터가 저장되었습니다."
 }
 ```
 
@@ -2562,11 +2906,17 @@ GET /api/character/me
     "personality_text": "",
     "original_photo_object_name": "",
     "image_model": "nb_pro",
+    "virtual_sheet_object_name": "",
+    "virtual_sheet_url": null,
+    "virtual_art_style": "",
+    "virtual_used_items": [],
     "created_at": "...",
     "updated_at": "..."
   }
 }
 ```
+
+> `virtual_*` 필드는 가상화 시트 저장 전이면 빈값/null. 실사 슬롯과 독립.
 
 ---
 
@@ -3961,6 +4311,25 @@ POST /api/voice-clone/cleanup-expired
 
 ---
 
+### 보이스 사용 가능 여부 일괄 확인 (v113 문서화 — 기존 엔드포인트)
+
+```
+POST /api/voice-clone/check-availability
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Body | 없음 |
+
+**동작:** 내 `ready` 보이스 전체의 Suno 실사용 가능 여부를 확인하고, **만료로 확인된 보이스는 자동 삭제**. 일시 오류(네트워크/API)는 `errors` 카운트로만 집계하고 삭제하지 않음(오탐 방지).
+
+**응답 (200):** `{"checked": <int>, "available": ["<clone_id>"...], "expired": [{"clone_id", "voice_name"}...], "errors": <int>}`.
+
+> 참고: 부록의 "expired 상태" 설명과 함께 사용 — 이 엔드포인트는 음악 생성 전에 능동적으로 만료를 감지·정리하는 용도.
+
+---
+
 ### Suno → 우리 콜백 (외부 노출 시 활성)
 
 ```
@@ -4030,4 +4399,48 @@ v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
 - 마이크 녹음은 webm/opus 가 일반적 — backend 가 받아서 mp3 로 변환.
 - voice clone 학습은 일반 음악 생성보다 오래 걸림 (보통 1~3분, 부하 시 5~10분). 클라이언트는 `GET /{id}` 폴링을 5~10초 간격으로 권장.
 - voice_id 가 채워진 voice clone 은 영구. 사용자 삭제(DELETE) 전까지 계속 음악 생성에 사용 가능.
+
+---
+
+## 28. 포인트 API (`/api/points`) — v81 (적립 확대 + 차감 도입: 2026-07)
+
+사용자 활동 포인트. 기존 rewards(AdMob) 시스템과는 **완전히 별개**.
+
+### 28.1 엔드포인트
+
+| Method | Path | 인증 | 응답 |
+|---|---|---|---|
+| GET | `/api/points/balance` | 필요 | `{ "balance": int }` — 계정 생성 시 0 |
+| GET | `/api/points/history?limit=50` | 필요 | `{ "history": [ { "action", "track_id", "day", "amount", "created_at" } ] } ` |
+
+- `GET /balance` : 로그인 사용자의 현재 누적 포인트. 적립 이력이 없으면 `0`.
+- `GET /history` : 최근 포인트 이벤트(최신순). `limit` 기본 50, 최대 200 (초과 시 거부). 각 항목은 `action`, `track_id`(적립은 곡/생성 ID, 차감·환불은 시도별 유니크 ref), `day`(KST `YYYYMMDD`), `amount`(+1 / −2 / +2), `created_at`(ISO8601 UTC).
+
+### 28.2 포인트 규칙
+
+**적립 (+1, 하루 1회 / 대상당 / 행위별 — KST 자정 기준):**
+
+| action | 시점 | ref (track_id 필드) |
+|---|---|---|
+| `play` | 로그인 재생 듣기 | track_id |
+| `generate` | 곡 생성 completed 마킹 시 (생성 요청자) | generation_id |
+| `upload` | 곡 발행 시 (`POST /api/tracks/upload`, `/upload-from-generation`) | track_id |
+
+> **v111 (2026-07-08)**: `like` / `playlist_add` / `download` 적립 **제거** — 좋아요·플레이리스트 추가·다운로드는 더 이상 포인트가 쌓이지 않음. 기존에 적립된 이벤트/잔액은 소급 변경 없음. history 에 과거 like/playlist_add/download 이벤트는 그대로 보일 수 있음.
+
+- **비로그인은 적립 없음.** 적립 대상은 **행위자**.
+- **멱등**: 같은 (사용자·행위·대상·날짜) 중복은 무시 (point_events 유니크 인덱스).
+- 적립은 best-effort 훅 — 실패/중복이 본 기능 응답에 절대 영향 없음.
+
+**차감 (−2, 요청 시 즉시 차감 · 실패 시 자동 환불):**
+
+| action | 대상 엔드포인트 |
+|---|---|
+| `spend:character` | `POST /api/character/generate-sheet`, `/generate-sheet-cartoon`, `/generate-sheet-async`, `/generate-sheet-cartoon-async` |
+| `spend:cover` | `POST /api/upload/generate-cover` |
+
+- **잔액 부족 시 402** `{ "error": "포인트가 부족합니다 (필요: 2)" }` — 생성/작업 미시작 (async 는 job 미생성).
+- 차감은 원자적 조건부 갱신(`balance >= 2` 일 때만 `-2`) — 음수 잔액 불가.
+- **실패 시 자동 환불** (`refund:character` / `refund:cover`, +2): 동기 생성 예외, async job 실패, 서버 재시작 stale job 복구(30분↑ processing → failed) 모두 환불. job 의 `refunded` 플래그로 **이중 환불 방지**.
+- history 의 차감/환불 `track_id` 는 시도별 유니크 ref (uuid) — 곡 ID 아님.
 

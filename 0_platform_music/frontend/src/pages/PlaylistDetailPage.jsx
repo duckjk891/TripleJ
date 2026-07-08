@@ -24,8 +24,8 @@ export default function PlaylistDetailPage() {
         const { data } = await api.getPlaylist(id);
         setPlaylist(data);
 
-        if (user && data.songs?.length > 0) {
-          const likesRes = await api.checkLikes(data.songs.map(s => s.id).join(','));
+        if (user && data.tracks?.length > 0) {
+          const likesRes = await api.checkLikes(data.tracks.map(s => s.id).join(','));
           setLikedIds(new Set(likesRes.data.liked_ids));
         }
       } catch (err) {
@@ -38,8 +38,8 @@ export default function PlaylistDetailPage() {
   }, [id, user]);
 
   const handlePlayAll = () => {
-    if (playlist?.songs?.length) {
-      play(playlist.songs[0], playlist.songs);
+    if (playlist?.tracks?.length) {
+      play(playlist.tracks[0], playlist.tracks);
     }
   };
 
@@ -103,7 +103,7 @@ export default function PlaylistDetailPage() {
               <p className="playlist-detail__desc">{playlist.description}</p>
             )}
             <div className="playlist-detail__meta">
-              {playlist.songs?.length || 0}곡 &middot; {formatDate(playlist.created_at)}
+              {playlist.tracks?.length || 0}곡 &middot; {formatDate(playlist.created_at)}
             </div>
             <div className="playlist-detail__actions">
               <button className="playlist-detail__play-btn" onClick={handlePlayAll}>
@@ -117,13 +117,13 @@ export default function PlaylistDetailPage() {
         </div>
 
         <div className="playlist-detail__songs">
-          {playlist.songs?.length > 0 ? (
-            playlist.songs.map((song, idx) => (
+          {playlist.tracks?.length > 0 ? (
+            playlist.tracks.map((song, idx) => (
               <SongItem
                 key={song.id}
                 song={song}
                 rank={idx + 1}
-                songs={playlist.songs}
+                songs={playlist.tracks}
                 isLiked={likedIds.has(song.id)}
                 onToggleLike={handleToggleLike}
               />
