@@ -203,6 +203,71 @@ async def refund_points(user_id: str, action: str, amount: int, ref: str) -> Non
         )
 
 
+async def credit_points(user_id: str, action: str, amount: int, ref: str, day: str = None) -> bool:
+    """Idempotently credit a variable `amount` of points.
+
+    Unlike `award_point` (+1 fixed), this credits an arbitrary positive amount
+    and is used for rewards like daily attendance. Idempotency gate = the
+    unique (user_id, action, track_id, day) index on `point_events`: the event
+    is inserted FIRST; a DuplicateKeyError means it was already credited (or a
+    concurrent race), so the balance is NOT touched and False is returned.
+
+    `ref` is stored in the `track_id` field. For a once-per-day reward, pass the
+    KST day string as both `ref` and `day` so (user, action, day, day) allows
+    exactly one credit per day. Returns True when a new credit was applied.
+    """
+    logger.info("[points] credit user=%s action=%s amount=%d ref=%s", user_id, action, amount, ref)
+    if not user_id or amount <= 0:
+        return False
+    try:
+        await ensure_indexes()
+        day = day or _kst_day()
+        mongo = get_mongo()
+        try:
+            await mongo.point_events.insert_one({
+                "user_id": user_id,
+                "action": action,
+                "track_id": ref,
+                "day": day,
+                "amount": amount,
+                "created_at": datetime.now(timezone.utc),
+            })
+        except DuplicateKeyError:
+            logger.info(
+                "[points] credit dup user=%s action=%s ref=%s (already credited)",
+                user_id, action, ref,
+            )
+            return False
+        try:
+            await mongo.point_balances.update_one(
+                {"user_id": user_id},
+                {
+                    "$inc": {"balance": amount},
+                    "$setOnInsert": {
+                        "user_id": user_id,
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                },
+                upsert=True,
+            )
+        except Exception as bal_exc:  # noqa: BLE001 - event already inserted (dup blocks re-credit)
+            logger.warning(
+                "[points] credit balance update failed user=%s action=%s ref=%s: %s",
+                user_id, action, ref, bal_exc,
+            )
+        logger.info(
+            "[points] credit user=%s action=%s amount=%d ref=%s -> +%d",
+            user_id, action, amount, ref, amount,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[points] credit failed user=%s action=%s amount=%d ref=%s: %s",
+            user_id, action, amount, ref, exc,
+        )
+        return False
+
+
 async def get_balance(user_id: str) -> int:
     """Return the user's current point balance (0 if none)."""
     await ensure_indexes()

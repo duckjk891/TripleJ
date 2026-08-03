@@ -182,10 +182,47 @@ def _s(val) -> Optional[str]:
     return s or None
 
 
+def _compose_birth_date(birthyear: Optional[str], birthday: Optional[str]) -> Optional[str]:
+    """birthyear("YYYY") + birthday("MM-DD" 또는 "MMDD") → "YYYY-MM-DD".
+
+    형식 불일치/누락/실존하지 않는 날짜면 None. 값 자체는 로깅하지 않는다.
+    """
+    year = _s(birthyear)
+    day = _s(birthday)
+    if not year or not day:
+        return None
+    if not (len(year) == 4 and year.isdigit()):
+        return None
+    day = day.replace("-", "")
+    if not (len(day) == 4 and day.isdigit()):
+        return None
+    candidate = f"{year}-{day[:2]}-{day[2:]}"
+    try:
+        from datetime import date
+        date.fromisoformat(candidate)  # 실존 날짜 검증 (예: 02-30 거부)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _norm_gender(val, provider: str) -> Optional[str]:
+    """provider 별 성별 표기를 "male"/"female" 로 정규화, 그 외 None."""
+    s = _s(val)
+    if not s:
+        return None
+    if provider == "naver":
+        return {"M": "male", "F": "female"}.get(s)
+    if provider == "kakao":
+        return s if s in ("male", "female") else None
+    return None
+
+
 def normalize_profile(provider: str, raw: dict) -> dict:
     """provider 별 응답차를 흡수해 공통 프로필로 정규화.
 
     반환: {provider_user_id, email, nickname, profile_image}
+    naver/kakao 는 본인인증 트랙용 {birth_date("YYYY-MM-DD"), gender("male"/"female"), real_name}
+    을 추가로 포함(동의/스코프 미승인 시 None). google 은 추가 필드 없음.
     provider_user_id 는 필수(없으면 예외), 나머지는 None 가능.
     """
     raw = raw or {}
@@ -207,6 +244,10 @@ def normalize_profile(provider: str, raw: dict) -> dict:
                 props.get("profile_image")
                 or (account.get("profile") or {}).get("profile_image_url")
             ),
+            # 본인인증 트랙 — 스코프 미승인 시 필드가 없으므로 None 처리
+            "birth_date": _compose_birth_date(account.get("birthyear"), account.get("birthday")),
+            "gender": _norm_gender(account.get("gender"), "kakao"),
+            "real_name": _s(account.get("name")),
         }
     elif provider == "naver":
         response = raw.get("response") or {}
@@ -215,6 +256,10 @@ def normalize_profile(provider: str, raw: dict) -> dict:
             "email": _s(response.get("email")),
             "nickname": _s(response.get("nickname") or response.get("name")),
             "profile_image": _s(response.get("profile_image")),
+            # 본인인증 트랙 — 동의 안 하면 필드가 없으므로 None 처리
+            "birth_date": _compose_birth_date(response.get("birthyear"), response.get("birthday")),
+            "gender": _norm_gender(response.get("gender"), "naver"),
+            "real_name": _s(response.get("name")),
         }
     else:
         raise OAuthError(f"지원하지 않는 소셜 로그인 제공자입니다: {provider}")
@@ -223,10 +268,12 @@ def normalize_profile(provider: str, raw: dict) -> dict:
         logger.warning("[oauth] provider=%s step=normalize result=no_uid", provider)
         raise OAuthError(f"{provider} 사용자 식별자를 받지 못했습니다.")
     logger.info(
-        "[oauth] provider=%s step=normalize result=ok has_email=%s has_nick=%s has_img=%s",
+        "[oauth] provider=%s step=normalize result=ok has_email=%s has_nick=%s has_img=%s has_birth=%s has_gender=%s",
         provider,
         bool(result.get("email")),
         bool(result.get("nickname")),
         bool(result.get("profile_image")),
+        bool(result.get("birth_date")),
+        bool(result.get("gender")),
     )
     return result

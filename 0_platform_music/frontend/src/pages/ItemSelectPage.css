@@ -190,6 +190,107 @@
   transition: opacity 0.2s;
 }
 
+/* v147 — 5단계 드릴다운 (플랫폼 › 브랜드 › 성별 › 제품 › 색상) */
+.item-select-page__drill {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.item-select-page__breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.item-select-page__crumb {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-sub);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.item-select-page__crumb:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+
+.item-select-page__crumb:disabled {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+  cursor: default;
+}
+
+.item-select-page__crumb-sep {
+  color: var(--color-text-sub);
+  font-size: 13px;
+}
+
+.item-select-page__drill-back {
+  margin-left: auto;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.item-select-page__drill-back:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.item-select-page__tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.item-select-page__tile {
+  padding: 8px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.item-select-page__tile:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.item-select-page__unisex-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  z-index: 1;
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .item-select-page {
@@ -208,4 +309,34 @@
   .item-select-page__group {
     padding: 14px;
   }
+
+  .item-select-page__tiles {
+    gap: 6px;
+  }
+
+  .item-select-page__tile { padding: 7px 13px; font-size: 13px; }
+}
+
+/* v147.1 — 패싯 필터 (사진 항상 노출, 상단 필터로 좁힘) */
+.item-select-page__facet {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  flex-wrap: nowrap;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.item-select-page__facet-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+.item-select-page__card-color {
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+  margin-top: 0.15rem;
 }

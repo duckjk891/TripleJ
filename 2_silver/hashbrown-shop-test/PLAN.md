@@ -159,3 +159,151 @@
 - **스트리밍 중 부분 content**: TTS 추출은 반드시 응답 완료 전이 후 수행(§1.4). 도중 추출 시 잘린 텍스트 발화 위험.
 - **gpt-4o-transcribe 가용성**: 계정/리전에 따라 미제공 가능 → whisper-1 폴백 필수.
 - **비용**: STT/TTS 호출당 과금 발생 — 테스트 시 짧은 문장 사용 권장.
+
+---
+
+# PLAN v2 — TTS 목소리·말투 개선
+
+- **버전**: v2
+- **수정일자**: 2026-07-13
+- **요청 작업**: 음성 응답이 기계같이 들린다는 피드백 반영
+  1. TTS 기본 voice `nova` → 더 자연스러운 최신 목소리로 교체 (1순위 `marin`, 폴백 `cedar` → `coral`/`sage`). marin/cedar의 gpt-4o-mini-tts 지원 여부는 실제 API 호출로 검증.
+  2. `TTS_INSTRUCTIONS`를 "상냥하고 또박또박하면서 나긋나긋하게" 톤으로 재작성 — 어르신 대상 안내 앱임을 반영.
+
+## Plan verification findings (v2)
+
+1. **현재 코드 상태** (직접 확인, v1 이후 무변경 — `git diff` 결과 해당 파일 변경 없음):
+   - `server.mjs:17` — `const TTS_VOICE = process.env.TTS_VOICE || 'nova';`
+   - `server.mjs:18-19` — `TTS_INSTRUCTIONS = '한국어로 어르신께 말하듯 따뜻하고 또박또박, 너무 빠르지 않게 읽어주세요.'`
+   - `/api/tts` 라우트(98행~)는 요청 body의 `voice`가 있으면 그것을, 없으면 `TTS_VOICE`를 사용. 로그 `[tts:<requestId>] incoming textLength=.. voice=..`에 **voice가 이미 출력되고 있음** → 로그 규칙 추가 변경 불필요.
+   - `.env.example:8` — `# TTS_VOICE=nova` 주석.
+2. **voice 지원 사전 검증 (실제 OpenAI API 호출, 2026-07-13)**: `POST /v1/audio/speech` + `model: gpt-4o-mini-tts`로 4종 모두 호출 →
+   - `marin` **200 OK** (48,000 bytes, `file` 판정: MPEG ADTS layer III, 24 kHz mono — 유효 mp3)
+   - `cedar` 200 OK / `coral` 200 OK / `sage` 200 OK
+   - → **1순위 `marin` 확정.** 400 폴백 시나리오는 발생하지 않음(단, tester 절차에는 만일의 400 대비 폴백 경로 유지).
+3. **프론트엔드 변경 불필요 (frontend-dev 할당 생략 사유)**: `src/api/index.ts`의 `synthesizeSpeech(text, voice?)`는 voice 미전달 시 요청 body에 voice 필드를 아예 포함하지 않음(`JSON.stringify(voice ? { text, voice } : { text })`) → 서버 기본값(`TTS_VOICE`)이 그대로 적용됨. `ChatPanel.tsx`의 `speakText`도 `synthesizeSpeech(text)`로 voice 미전달 호출. 따라서 백엔드 상수 교체만으로 전 구간 반영.
+4. 사양-코드 충돌 없음.
+
+## 변경 매트릭스 (v2)
+
+### backend-dev
+| 파일 | 작업 |
+|---|---|
+| `server.mjs` | (1) `TTS_VOICE` 기본값 `'nova'` → `'marin'`. (2) `TTS_INSTRUCTIONS` 재작성: "상냥하고 또박또박하면서 나긋나긋하게" 톤 + 어르신 안내 목적 명시. (3) 그 외 로직·로그 무변경 (voice는 기존 `[tts:<id>]` 로그에 이미 출력됨). |
+| `.env.example` | `# TTS_VOICE=nova` → `# TTS_VOICE=marin` 주석 갱신. |
+
+확정 instructions 문안:
+> 당신은 어르신을 모시는 쇼핑 안내 도우미입니다. 상냥하고 나긋나긋한 말투로, 서두르지 않고 한 마디 한 마디 또박또박, 어르신께 차분히 안내해 드리듯 부드럽고 자연스럽게 한국어로 읽어주세요.
+
+### frontend-dev
+- **할당 없음** — findings 3항 참조 (voice 미전달 시 서버 기본값 사용 구조라 무변경).
+
+### 공통
+- API 키 값 로그/문서 기록 금지 유지. 백엔드 재시작은 반드시 프로젝트 디렉토리에서 실행.
+
+## 테스트 항목 (v2 — tester)
+1. 백엔드 재시작(프로젝트 디렉토리에서, 기존 3100 프로세스 kill 포함) 후 `POST /api/tts` → 200 + `Content-Type: audio/mpeg` + 바이트 수 확인, `file`로 mp3 유효성.
+2. 서버 로그에 `voice=marin` 출력 확인.
+3. (조건부) marin이 400(`OPENAI_TTS_FAILED` 502로 표면화) 시 → backend-dev에 폴백 voice(cedar → coral/sage) 수정 요청. ※ 사전 검증에서 marin 200 확인되어 발생 가능성 낮음.
+4. 회귀: `POST /api/stt`(TTS 산출 mp3 왕복) 정상, `POST /api/chat` 스트리밍 정상.
+5. 로그에 API 키 문자열 미출력 재확인.
+
+---
+
+# PLAN v3 — 어르신 친화 UI 리디자인 (Figma 승인 시안 반영)
+
+- **버전**: v3
+- **수정일자**: 2026-07-13
+- **요청 작업**: 승인된 Figma 홈 화면 시안의 디자인 언어(크림 배경 + 진초록/주황 팔레트 + 대형 타이포)를 앱 전체에 적용. 채팅 화면은 시안 없이 동일 디자인 언어로 구현. **순수 프론트 스타일/마크업/문구 작업 — 기능 로직 변경 금지.**
+
+## Plan verification findings (v3)
+
+1. **`src/styles.css` (593줄, 전체 정독)**: 현재 주 색상은 파랑 `#3b74d8`, 배경 `#f5f6f8`. 데스크톱 상품 그리드 `repeat(auto-fill, minmax(210px, 1fr))`, 모바일(≤768px) `repeat(2, 1fr)`. 채팅 본문 14px(모바일 15px). `.chat-fab`은 데스크톱 `display:none`, 모바일에서 우하단 58px 원형.
+   - **핵심 제약**: `.chat-side-open ~ .chat-fab` **형제 선택자**로 "채팅 열림 시 ✕를 우상단 소형으로 이동"을 처리 → App.tsx의 DOM 순서(`aside.chat-side` 다음에 `button.chat-fab`)를 반드시 유지해야 함. FAB→전폭 바 교체는 이 구조를 보존한 채 CSS와 버튼 내용만 변경하면 됨.
+2. **`src/App.tsx`**: `chatOpen` state + `.chat-fab` 버튼(`{chatOpen ? '✕' : '💬'}`), `chat-side-open` 클래스 토글. 로직은 setState 토글뿐 — 버튼 문구/클래스/DEV 로그만 변경하면 됨.
+3. **`src/components/ChatPanel.tsx`**: 렌더 구조 확인 — 변경 대상은 문구 2곳(헤더 h2/p, 토글 라벨)뿐. 툴 5종·useUiChat·useVoiceRecorder·TTS 재생 로직(51~425행)은 접근 금지 영역으로 지정.
+4. **`ProductGrid.tsx` / `CartPanel.tsx` / `chat/*.tsx` 카드 3종**: 전부 클래스 기반 렌더 → **TSX 무변경, CSS만으로 리스타일 가능** 확인.
+5. **카테고리 필터: 현재 미구현 확인 → 스코프 아웃** (시안에 있었더라도 이번 작업에서 추가하지 않음 — 코디네이터 지시).
+6. **백엔드 무변경 (backend-dev 할당 생략 사유)**: 요청이 스타일/마크업/문구에 한정되고, API 계약·server.mjs에 영향 주는 변경이 전혀 없음. 확인만 수행(회귀 테스트 항목에 포함).
+
+## 변경 매트릭스 (v3 — frontend-dev)
+
+| 파일 | 작업 |
+|---|---|
+| `src/styles.css` | 전면 리스타일(클래스명 유지). 팔레트: 배경 `#FFF9F2`, 카드 `#FFF`+테두리 `#E6DBCC` 1.5px+radius 20px+그림자 `0 4px 12px rgba(77,64,38,0.08)`, 주색 `#1C784D`, 강조 `#D96B21`(가격 텍스트 `#BF5414`), 본문 `#212121`/보조 `#6B6357`. 타이포: 페이지 제목 30px/부제 18px, 섹션 23px, 상품명 22px/설명 16px/가격 24px, 버튼 20px bold, 채팅 본문 18px. 모바일: 상품 그리드 1열, `.chat-fab`을 전폭 주황 바(높이 64px+, radius 18px, 하단 고정)로, 열림 시 우상단 소형 ✕는 기존 형제 선택자 유지. 채팅: 말풍선 radius 16px/18px 본문, 어시스턴트 흰 카드·사용자 진초록, 토글 pill(켜짐 진초록/꺼짐 회색), 🎤 58px 이상 + 주황, 채팅 내 카드 4종 동일 카드 스타일+큰 글씨. |
+| `src/App.tsx` | `.chat-fab` 버튼 내용 `💬` → `🎤 말로 주문하기` (열림 시 `✕` 유지), aria-label 갱신, 클릭 핸들러에 DEV 가드 `[App]` console.info 추가. DOM 순서(형제 선택자 의존) 불변. |
+| `src/components/ChatPanel.tsx` | 문구만: 헤더 `🤖 AI 도우미`(24px는 CSS) + 부제 `말씀만 하세요, 다 찾아드려요`, 토글 라벨 `🔊 켜짐`/`🔇 꺼짐`. **로직·클래스 구조 무변경.** |
+
+### backend-dev — 할당 없음 (findings 6항)
+### 금지: zustand store / useUiChat / useVoiceRecorder / TTS 재생 로직 / api 모듈 변경.
+
+## 테스트 항목 (v3 — tester)
+1. `npx tsc --noEmit` / `npm run build` 통과.
+2. vite(5180) 응답: HTML 200, styles.css에 새 팔레트 토큰(`#FFF9F2`, `#1C784D`, `#D96B21`)과 `@media (max-width: 768px)` 내 1열 그리드·전폭 바 규칙 존재 확인 (usePolling 자동 반영 — 재시작 불필요).
+3. 코드 레벨 회귀: (a) App.tsx의 `chat-side` → `chat-fab` 형제 DOM 순서 유지 + `chat-side-open ~ .chat-fab` 선택자 생존, (b) ChatPanel의 `mic-btn`/`voice-toggle`/`chat-input-row` 등 기능 연결 클래스가 CSS에 모두 존재, (c) 카드/장바구니 컴포넌트 TSX 무변경(git diff), (d) store·훅·api 모듈 무변경(git diff).
+4. API 무영향: `/api/tts`·`/api/stt`·`/api/chat` 정상 응답 (server.mjs 무변경 git diff 확인 포함).
+
+---
+
+# PLAN v4 — 이용 로깅 보강 (누가·언제·어떻게)
+
+- **버전**: v4
+- **수정일자**: 2026-07-14
+- **요청 작업**: ① 모든 백엔드 로그에 시각 ② 접속자 IP+User-Agent(터널/프록시 경유 실 IP 해석) ③ 대화 내용 로깅(사용자 입력+AI 응답, 프론트 원격 로깅 방식) ④ 장바구니/주문 이벤트 ⑤ 세션 ID(X-Session-Id) ⑥ 영속 로그 파일(logs/, gitignore).
+
+## Plan verification findings (v4)
+
+1. **백엔드 로그 현황**: `server.mjs`의 모든 로그는 `console.log/error` 직접 호출 — 시각 없음, 파일 기록 없음. `[stt:<id>]`/`[tts:<id>]` requestId 체계는 v1부터 존재 → 시각·파일 기록을 헬퍼로 일원화하면 형식 유지 가능. `/api/chat`은 requestId 없음(에러 로그만) → 진입 로그+requestId 추가 여지.
+2. **IP 경로**: 요청이 cloudflared → vite(5180) http-proxy → 3100 이므로 `req.socket.remoteAddress`는 127.0.0.1. vite 프록시는 현재 문자열 축약형(`'/api': 'http://localhost:3100'`) — `xfwd` 옵션을 주려면 객체형으로 전환 필요. cloudflared가 붙이는 `cf-connecting-ip` 헤더는 vite http-proxy가 그대로 전달하므로 백엔드에서 `cf-connecting-ip` → `x-forwarded-for`(첫 항목) → `socket.remoteAddress` 순 해석이 성립.
+3. **대화 로깅 위치 (프론트)**: `/api/chat` 응답은 hashbrown 바이너리 프레임 스트림 — 서버 파싱 대신 코디네이터 권장안(프론트 원격 로깅) 채택.
+   - 사용자 입력: `ChatPanel.onSubmit`(키보드)과 `onMicClick` STT 성공 경로(음성) 두 곳 모두 `sendMessage` 직전 텍스트 확보 가능 → `source: 'keyboard'|'voice'` 구분 로깅.
+   - AI 응답: 기존 `isWorking` true→false 전환 감지 useEffect + `collectMarkdownText`/`stripMarkdownSyntax` 재사용. **현재 effect는 `!voiceEnabled`면 조기 return** → 텍스트 추출을 voice 게이트 앞으로 이동하고, 발화 dedup(`lastSpokenIndexRef`)과 별도의 로깅 dedup(`lastLoggedIndexRef`)을 추가. 발화 로직 자체(순서·조건·speakSeqRef)는 불변.
+4. **장바구니/주문 로깅 위치 판단**: 변경 경로 3종 — AI 툴(`useShopStore.getState().addToCart/removeFromCart/checkout`), 상품 목록·채팅 카드 담기 버튼(`addToCart`), 장바구니 +/− 버튼(**`setQuantity`**) — 이 **전부가 zustand store 액션을 경유함을 확인** → `src/store.ts` 액션 내부가 단일 로깅 지점 (양쪽 핸들러 중복 삽입 불필요). +/− 수량 조절은 `setQuantity`이므로 `cart_set_quantity` 이벤트도 포함해야 누락이 없음. 순환 import 없음(`api/index.ts`는 store 미참조).
+5. **세션 ID**: 프론트 localStorage 8자리 생성 → `logEvent`/`transcribeAudio`/`synthesizeSpeech`에 `X-Session-Id` 헤더. `/api/chat`은 Hashbrown 내부 transport라 헤더 주입이 어려움 → 대화 내용은 어차피 `/api/log`(세션 포함)로 남으므로 chat 진입 로그는 IP/UA만 (한계로 기록). cors()는 요청 헤더를 반사(reflect)하므로 커스텀 헤더 추가에 서버 CORS 변경 불필요.
+6. **.gitignore**: 현재 `node_modules/ dist/ .env` — `logs/` 추가 필요.
+
+## 확정 스펙
+
+### 로그 라인 포맷 (백엔드 공통)
+```
+[YYYY-MM-DD HH:mm:ss] [태그:requestId] [sess:세션ID] [ip:주소] 내용 ua="User-Agent"
+```
+- 시각: KST(Asia/Seoul), 모든 라인 접두. stdout + `logs/access.log` 동시 기록(비동기 append).
+- ip/sess/ua는 요청 진입 라인에 기록(이후 라인은 requestId로 연결).
+
+### `POST /api/log` (신규)
+- 요청: JSON `{ "event": "이벤트명(≤64자)", "data": { 임의 } }`, 헤더 `X-Session-Id`.
+- 응답 204 (본문 없음). 에러: 400 `EMPTY_EVENT` (공통 에러 형식+X-Request-Id).
+- data는 JSON.stringify 후 2000자 절단해 로그.
+- 프론트 이벤트 어휘: `user_message`(source,text), `assistant_response`(text), `cart_add`/`cart_remove`/`cart_set_quantity`(productId,name,quantity), `order_checkout`(orderId,total,items).
+
+## 변경 매트릭스 (v4)
+
+### backend-dev — `server.mjs`
+1. `fs`/`path` 도입, 기동 시 `logs/` 생성, `log()/logError()` 헬퍼(시각 접두 + stdout + access.log append) — 기존 console.* 호출 전부 이 헬퍼로 치환(태그 형식 유지).
+2. `clientInfo(req)` 헬퍼: `cf-connecting-ip` → `x-forwarded-for` 첫 항목 → `socket.remoteAddress`, ua, `x-session-id`.
+3. `/api/stt`·`/api/tts` 진입 라인에 `[sess:][ip:] ... ua=""` 추가. TTS 진입 라인에 `preview="80자"` 추가(이중 안전망).
+4. `/api/chat`: requestId 부여 + 진입 로그(ip/ua) + 스트림 완료 바이트 로그 + 에러 로그 시각화. **스트리밍 로직 자체 무변경.**
+5. `POST /api/log` 신설 (위 스펙).
+- `.gitignore`에 `logs/` 추가.
+
+### frontend-dev
+| 파일 | 작업 |
+|---|---|
+| `vite.config.ts` | `/api` 프록시 객체형 전환 + `xfwd: true` |
+| `src/api/index.ts` | `getSessionId()`(localStorage 8자리) 신설, `logEvent(event, data)` 신설(fire-and-forget, 실패 무해화, keepalive), `transcribeAudio`/`synthesizeSpeech`에 `X-Session-Id` 헤더 추가 |
+| `src/components/ChatPanel.tsx` | 로깅 훅만: `onSubmit`에 `user_message`(keyboard), `onMicClick` STT 성공 경로에 `user_message`(voice), 전환 감지 effect에 `assistant_response` 로깅(별도 `lastLoggedIndexRef` dedup, 음성 OFF여도 수행). **음성 로직(useVoiceRecorder/TTS 재생/speakSeqRef) 불변.** |
+| `src/store.ts` | 액션 내 `logEvent`: `addToCart` 성공→`cart_add`, `removeFromCart`→`cart_remove`, `setQuantity`→`cart_set_quantity`, `checkout` 성공→`order_checkout`(주문번호·총액·품목 요약) |
+
+### 재기동
+- 백엔드: 프로젝트 디렉토리에서 kill & 재시작. vite: config 변경(xfwd)이라 재시작 필수(usePolling은 config 미반영). 터널은 5180 고정이므로 유지.
+
+## 테스트 항목 (v4 — tester)
+1. `tsc --noEmit` / `vite build` 통과.
+2. `/api/log` 직접+프록시: 204 + 로그 라인에 `[시각][sess][ip] event=... ua=` 실출력, `EMPTY_EVENT` 400.
+3. `/api/stt`·`/api/tts` 회귀 + `X-Session-Id` 전달 시 로그 포함 확인, TTS preview 80자 확인.
+4. `/api/chat` 회귀(스트림 정상) + 진입/완료 로그.
+5. **터널 경유** `/api/*` 1회 이상: 로그의 ip가 127.0.0.1이 아닌 실 IP(`cf-connecting-ip`)로 찍히는지.
+6. `logs/access.log` 생성·append 확인 + `git status`에 logs/ 미노출(gitignore).
+7. 대화/장바구니 이벤트: `user_message`/`assistant_response`/`cart_*`/`order_checkout` 라인 확인 (curl 시뮬레이션 + 코드 레벨 배선 검증, 실브라우저 E2E는 사용자 확인).
+8. 로그 전체에 API 키 미출력.

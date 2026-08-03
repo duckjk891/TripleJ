@@ -985,7 +985,10 @@ async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
     for part in parts:
         inline_data = part.get("inlineData")
         if inline_data and inline_data.get("data"):
-            return base64.b64decode(inline_data["data"])
+            # v137 [watermark]: 비가시 AI 마커 삽입 (캐릭터 시트 저장 전 공통).
+            from .watermark import embed_image_metadata
+
+            return embed_image_metadata(base64.b64decode(inline_data["data"]))
 
     raise ValueError("No image generated from Gemini image response")
 

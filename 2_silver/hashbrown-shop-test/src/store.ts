@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { logEvent } from './api';
 import { PRODUCTS, Product } from './data/products';
 
 export interface CartItem {
@@ -57,6 +58,8 @@ export const useShopStore = create<ShopState>((set, get) => ({
       }
       return { cart: [...state.cart, { productId, quantity }] };
     });
+    // (v4) AI 툴/담기 버튼 모두 이 액션을 경유하므로 여기서 한 번만 로깅
+    logEvent('cart_add', { productId, name: product.name, quantity });
     return { ok: true, message: `${product.name} ${quantity}개를 장바구니에 담았습니다.` };
   },
 
@@ -64,6 +67,7 @@ export const useShopStore = create<ShopState>((set, get) => ({
     set((state) => ({
       cart: state.cart.filter((item) => item.productId !== productId),
     }));
+    logEvent('cart_remove', { productId, name: findProduct(productId)?.name ?? '?' });
   },
 
   setQuantity: (productId, quantity) => {
@@ -75,6 +79,11 @@ export const useShopStore = create<ShopState>((set, get) => ({
               item.productId === productId ? { ...item, quantity } : item,
             ),
     }));
+    logEvent('cart_set_quantity', {
+      productId,
+      name: findProduct(productId)?.name ?? '?',
+      quantity,
+    });
   },
 
   clearCart: () => set({ cart: [] }),
@@ -94,6 +103,11 @@ export const useShopStore = create<ShopState>((set, get) => ({
       orderedAt: new Date().toLocaleString('ko-KR'),
     };
     set((state) => ({ orders: [...state.orders, order], cart: [] }));
+    logEvent('order_checkout', {
+      orderId: order.id,
+      total: order.total,
+      items: order.items.map((i) => `${i.product.name} x${i.quantity}`).join(', '),
+    });
     return { ok: true, message: `주문이 완료되었습니다. 주문번호: ${order.id}`, order };
   },
 }));

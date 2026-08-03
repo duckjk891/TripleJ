@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { FiMic, FiPlus, FiTrash2, FiPlay } from 'react-icons/fi';
 import * as api from '../api';
 import VoiceCloneWizard from './VoiceCloneWizard';
+import ConsentGateModal from './ConsentGateModal';
+import { hasConsentCached, checkConsent } from '../utils/consent';
 import './MyVoiceCloneSection.css';
 
 const STATUS_BADGE = {
@@ -31,6 +33,8 @@ export default function MyVoiceCloneSection() {
   const [error, setError] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [resumeClone, setResumeClone] = useState(null);
+  // v125 — 보이스 클론 시작 전 음성 데이터 AI 처리(voice_ai) 동의 게이트 모달
+  const [voiceGateOpen, setVoiceGateOpen] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [cleaningExpired, setCleaningExpired] = useState(false);
   const [cleanupNotice, setCleanupNotice] = useState('');
@@ -120,10 +124,32 @@ export default function MyVoiceCloneSection() {
     setWizardOpen(true);
   };
 
-  const handleNew = () => {
+  const openNewWizard = () => {
     if (import.meta.env.DEV) console.info('[MyVoiceCloneSection] open new wizard');
     setResumeClone(null);
     setWizardOpen(true);
+  };
+
+  // v125 — [새 목소리 학습] 진입 앞 voice_ai 동의 게이트.
+  // 세션 캐시 히트 시 즉시 진행, 미동의/확인 실패 시 모달 표시.
+  const handleNew = async () => {
+    if (hasConsentCached('voice_ai')) {
+      openNewWizard();
+      return;
+    }
+    try {
+      const agreed = await checkConsent('voice_ai');
+      if (agreed) {
+        openNewWizard();
+        return;
+      }
+    } catch (err) {
+      console.error('[ConsentGate] check failed', {
+        key: 'voice_ai',
+        status: err?.response?.status,
+      });
+    }
+    setVoiceGateOpen(true);
   };
 
   const handleWizardClose = () => {
@@ -223,6 +249,18 @@ export default function MyVoiceCloneSection() {
           onClose={handleWizardClose}
           onComplete={handleWizardComplete}
           resumeClone={resumeClone}
+        />
+      )}
+
+      {/* v125 — voice_ai 동의 게이트: 동의 시 학습 마법사 진행, 취소 시 중단 */}
+      {voiceGateOpen && (
+        <ConsentGateModal
+          consentKey="voice_ai"
+          onAgree={() => {
+            setVoiceGateOpen(false);
+            openNewWizard();
+          }}
+          onClose={() => setVoiceGateOpen(false)}
         />
       )}
     </div>

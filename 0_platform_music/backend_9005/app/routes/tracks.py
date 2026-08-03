@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -12,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import get_current_user
+from ..auth import get_current_user, get_current_user_optional
 from ..config import settings
 from ..database.mongodb import get_mongo
 from ..database.redis import get_redis
@@ -39,7 +40,30 @@ def _serialize_track(doc: dict) -> dict:
     doc["artist_id"] = doc.get("uploader_id")
     doc["artist_name"] = doc.get("uploader_nickname", "AI")
     doc["cover_image"] = doc.get("cover_image_url")
+    # v137 — 신고 블라인드 플래그 (소유자 사유 표시용, 기본 false)
+    doc["report_blinded"] = bool(doc.get("report_blinded", False))
     return doc
+
+
+def _is_hidden_track(t: dict) -> bool:
+    """v138 직링크 가드 — 명시적 비공개(is_public=False) 또는 신고 블라인드.
+
+    is_public 필드가 없는 레거시 도큐먼트는 공개로 취급(회귀 방지 —
+    기존 공개 곡 비로그인 200 불변이 최우선)."""
+    return (t.get("is_public") is False) or bool(t.get("report_blinded"))
+
+
+def _can_view_hidden_track(t: dict, current_user) -> bool:
+    """숨김 트랙 열람 허용 — 소유자 본인 또는 admin."""
+    if not current_user:
+        return False
+    return (
+        current_user.get("id") == t.get("uploader_id")
+        or current_user.get("role") == "admin"
+    )
+
+
+_TRACK_NOT_FOUND = {"error": "트랙을 찾을 수 없습니다."}
 
 
 async def _find_completed_mv(mongo, generation_id: str) -> Optional[dict]:
@@ -73,6 +97,45 @@ def _serialize_tracks(docs: list) -> list:
     return [_serialize_track(d) for d in docs]
 
 
+def _parse_sns_links_jsonb(value) -> list:
+    """asyncpg JSONB 는 str 로 올 수 있음 — list 로 정규화 (실패 시 [])."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return []
+    return value if isinstance(value, list) else []
+
+
+async def _attach_uploader_profiles(tracks: list, conn) -> None:
+    """각 트랙에 uploader_profile_image / uploader_sns_links 첨부
+    (PG users 1쿼리 join, best-effort).
+
+    실패해도 응답은 깨지 않고 None/[] 으로 채운다. list_tracks/상세 전용 —
+    다른 콜러(search 등)는 범위 밖. 캐시 밖에서 항상 fresh 하게 첨부.
+    """
+    ids = sorted({t.get("uploader_id") for t in tracks if t and t.get("uploader_id")})
+    profiles = {}
+    if ids:
+        try:
+            rows = await conn.fetch(
+                "SELECT id::text, profile_image, sns_links FROM users WHERE id::text = ANY($1)", ids
+            )
+            profiles = {
+                r["id"]: (r["profile_image"], _parse_sns_links_jsonb(r["sns_links"]))
+                for r in rows
+            }
+        except Exception:
+            logger.warning("[tracks] uploader profile join failed ids=%d", len(ids))
+    for t in tracks:
+        if t is not None:
+            image, sns = profiles.get(t.get("uploader_id"), (None, []))
+            t["uploader_profile_image"] = image
+            t["uploader_sns_links"] = sns
+
+
 @router.get("/")
 async def list_tracks(
     page: int = 1,
@@ -81,6 +144,7 @@ async def list_tracks(
     mood: str = None,
     tag: str = None,
     sort: str = "play_count",
+    pg=Depends(get_pg),
 ):
     mongo = get_mongo()
     query = {"is_public": True}
@@ -99,8 +163,11 @@ async def list_tracks(
     cursor = mongo.tracks.find(query).sort(sort_field, sort_dir).skip((page - 1) * limit).limit(limit)
     tracks = await cursor.to_list(length=limit)
 
+    serialized = _serialize_tracks(tracks)
+    await _attach_uploader_profiles(serialized, pg)
+
     return {
-        "tracks": _serialize_tracks(tracks),
+        "tracks": serialized,
         "pagination": {
             "page": page,
             "limit": limit,
@@ -341,12 +408,137 @@ async def get_my_tracks(
     }
 
 
+async def purge_track_document(doc: dict, conn) -> dict:
+    """v138 — 트랙 완전 파기(재사용 함수). 소유자 DELETE 라우트와
+    admin confirm_delete(신고 확정 삭제)가 공용으로 호출한다.
+
+    파기 대상(각 단계 best-effort — 실패해도 다음 단계 진행):
+      MinIO: 오디오(music 버킷) + 커버(images 버킷, object name 저장분만)
+             + 공유영상 캐시 share/v3 3종(music 버킷)
+      Mongo: tracks 도큐먼트
+      Redis: cache:track(v1/v2) + playcount 버퍼 + 차트 캐시(cache:chart:*)
+      ES:    tracks 색인 문서
+      PG:    track_embeddings, likes
+      기타:  소유자 앨범 카스케이드(v69 — track id pull 후 빈 앨범 삭제)
+
+    Args:
+        doc: Mongo tracks 도큐먼트 (find_one 결과 원본, `_id` 포함).
+        conn: asyncpg connection (embeddings/likes 삭제용).
+    Returns:
+        {"track_id", "owner_id", "removed": [단계 태그]} — 감사 로그용.
+    """
+    mongo = get_mongo()
+    track_id = str(doc["_id"])
+    owner_id = doc.get("uploader_id")
+    removed = []
+
+    minio_client = get_minio()
+
+    # MinIO — 오디오
+    audio_url = doc.get("audio_url")
+    if audio_url:
+        try:
+            minio_client.remove_object(
+                bucket_name=settings.minio_bucket_music, object_name=audio_url
+            )
+            removed.append("audio")
+        except Exception:
+            pass  # Continue even if MinIO deletion fails
+
+    # MinIO — 커버 (object name 저장분만 — http(s) 외부 URL 은 스킵)
+    cover = doc.get("cover_image_url")
+    if cover and not str(cover).startswith("http"):
+        try:
+            minio_client.remove_object(
+                bucket_name=settings.minio_bucket_images, object_name=cover
+            )
+            removed.append("cover")
+        except Exception:
+            pass
+
+    # MinIO — 공유영상 캐시 (v126/v129 — share/v3/{id}[ _wide|_kakao ].mp4)
+    try:
+        from ..services.share_video import FORMATS, share_object_name
+        for fmt in FORMATS:
+            try:
+                minio_client.remove_object(
+                    bucket_name=settings.minio_bucket_music,
+                    object_name=share_object_name(track_id, fmt),
+                )
+            except Exception:
+                pass
+        removed.append("share_video")
+    except Exception:
+        pass
+
+    # Mongo 도큐먼트
+    await mongo.tracks.delete_one({"_id": doc["_id"]})
+    removed.append("mongo")
+
+    # Redis 캐시 (legacy v1 + current v2) + playcount 버퍼
+    redis = get_redis()
+    await redis.delete(f"cache:track:{track_id}")
+    await redis.delete(f"cache:track:v2:{track_id}")
+    await redis.delete(f"playcount:buffer:{track_id}")
+
+    # 차트 캐시(TTL 300s) 즉시 무효화 — 삭제 곡 차트 잔존 방지
+    try:
+        chart_keys = [k async for k in redis.scan_iter(match="cache:chart:*")]
+        if chart_keys:
+            await redis.delete(*chart_keys)
+    except Exception:
+        logger.warning("[TrackDelete] chart cache invalidate failed track=%s", track_id)
+
+    # ES 문서 제거
+    try:
+        from ..services.search_service import es_delete_track
+        if await es_delete_track(track_id):
+            removed.append("es")
+    except Exception:
+        logger.warning("[TrackDelete] es delete failed track=%s", track_id)
+
+    # PG — 임베딩 + 좋아요
+    try:
+        await conn.execute("DELETE FROM track_embeddings WHERE track_id = $1", track_id)
+        removed.append("embedding")
+    except Exception:
+        logger.warning("[TrackDelete] embedding delete failed track=%s", track_id)
+    try:
+        await conn.execute("DELETE FROM likes WHERE track_id = $1", track_id)
+        removed.append("likes")
+    except Exception:
+        logger.warning("[TrackDelete] likes delete failed track=%s", track_id)
+
+    # v69 — cascade: pull this track id from owner's albums, then delete
+    # any albums that ended up empty.
+    if owner_id:
+        affected = await mongo.albums.update_many(
+            {"track_ids": track_id, "owner_id": owner_id},
+            {"$pull": {"track_ids": track_id}},
+        )
+        deleted = await mongo.albums.delete_many({
+            "owner_id": owner_id,
+            "track_ids": {"$size": 0},
+        })
+        logger.info(
+            "[TrackDelete] cascade track=%s affected_albums=%d deleted_albums=%d",
+            track_id, affected.modified_count, deleted.deleted_count,
+        )
+
+    logger.info(
+        "[TrackDelete] purge ok track=%s owner=%s removed=%s",
+        track_id, str(owner_id)[:8] if owner_id else "?", ",".join(removed),
+    )
+    return {"track_id": track_id, "owner_id": owner_id, "removed": removed}
+
+
 @router.delete("/{track_id}")
 async def delete_track(
     track_id: str,
     current_user=Depends(get_current_user),
+    conn=Depends(get_pg),
 ):
-    """Delete own track, its audio file from MinIO, and clear Redis cache."""
+    """Delete own track — 파기 로직은 purge_track_document (v138 공용 함수)."""
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
@@ -358,41 +550,7 @@ async def delete_track(
     if doc.get("uploader_id") != current_user["id"]:
         return JSONResponse(status_code=403, content={"error": "자신의 트랙만 삭제할 수 있습니다."})
 
-    # Delete audio file from MinIO
-    audio_url = doc.get("audio_url")
-    if audio_url:
-        try:
-            minio_client = get_minio()
-            minio_client.remove_object(
-                bucket_name=settings.minio_bucket_music,
-                object_name=audio_url,
-            )
-        except Exception:
-            pass  # Continue even if MinIO deletion fails
-
-    # Delete from MongoDB
-    await mongo.tracks.delete_one({"_id": ObjectId(track_id)})
-
-    # Clear Redis cache (both legacy v1 and current v2 keys)
-    redis = get_redis()
-    await redis.delete(f"cache:track:{track_id}")
-    await redis.delete(f"cache:track:v2:{track_id}")
-    await redis.delete(f"playcount:buffer:{track_id}")
-
-    # v69 — cascade: pull this track id from owner's albums, then delete
-    # any albums that ended up empty.
-    affected = await mongo.albums.update_many(
-        {"track_ids": track_id, "owner_id": current_user["id"]},
-        {"$pull": {"track_ids": track_id}},
-    )
-    deleted = await mongo.albums.delete_many({
-        "owner_id": current_user["id"],
-        "track_ids": {"$size": 0},
-    })
-    logger.info(
-        "[TrackDelete] cascade track=%s affected_albums=%d deleted_albums=%d",
-        track_id, affected.modified_count, deleted.deleted_count,
-    )
+    await purge_track_document(doc, conn)
 
     return {"message": "트랙이 삭제되었습니다."}
 
@@ -414,6 +572,11 @@ async def update_track(
 
     if doc.get("uploader_id") != current_user["id"]:
         return JSONResponse(status_code=403, content={"error": "자신의 트랙만 수정할 수 있습니다."})
+
+    # v137 — 신고 블라인드 트랙은 소유자가 재공개(공개 전환) 불가
+    if body.is_public is True and doc.get("report_blinded"):
+        logger.info("[report] track republish_blocked track=%s owner=%s", track_id[:8], current_user["id"][:8])
+        return JSONResponse(status_code=400, content={"error": "신고 처리로 제한된 콘텐츠입니다."})
 
     # Build update dict from non-None fields
     update_data = {k: v for k, v in body.dict().items() if v is not None}
@@ -458,6 +621,42 @@ async def get_track_music_video(track_id: str):
         return JSONResponse(status_code=404, content={"error": "뮤직비디오 파일을 찾을 수 없습니다."})
 
     return {"has_music_video": True, "music_video_url": mv_url}
+
+
+# v149 — Line-level lyric timeline for live cover+lyrics "가사싱크 영상".
+# Reuses share_video._fetch_lyric_segments (single source of truth) so the
+# playback timing matches the SNS/download burn-in video exactly.
+@router.get("/{track_id}/lyrics-timeline")
+async def get_track_lyrics_timeline(track_id: str):
+    """Return line-level lyric segments for a track (unauthenticated, public playback).
+
+    Response: {"has_timestamps": bool, "segments": [{"text","start","end"}], "source": str}
+    """
+    logger.info("[lyrics-timeline] track=%s", track_id[:8] if track_id else "?")
+    try:
+        if not ObjectId.is_valid(track_id):
+            return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+        mongo = get_mongo()
+        doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+        if not doc:
+            return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+        from ..services.share_video import _fetch_lyric_segments
+
+        segments = await _fetch_lyric_segments(mongo, doc)
+        has_timestamps = len(segments) > 0
+        source = "timestamps" if has_timestamps else "none"
+        logger.info(
+            "[lyrics-timeline] track=%s has=%s count=%d",
+            track_id[:8] if track_id else "?", has_timestamps, len(segments),
+        )
+        return {"has_timestamps": has_timestamps, "segments": segments, "source": source}
+    except Exception:
+        logger.exception(
+            "[lyrics-timeline] failed track=%s", track_id[:8] if track_id else "?"
+        )
+        return {"has_timestamps": False, "segments": [], "source": "none"}
 
 
 # v44 — Beat extraction status & retry for tracks
@@ -535,15 +734,40 @@ async def retry_track_beats(
 
 
 @router.get("/stream-proxy/{track_id}")
-async def stream_track_proxy(track_id: str):
-    """모바일 클라이언트용: MinIO 오디오를 직접 프록시 스트리밍"""
+async def stream_track_proxy(
+    track_id: str,
+    token: Optional[str] = Query(None),
+    current_user=Depends(get_current_user_optional),
+):
+    """모바일 클라이언트용: MinIO 오디오를 직접 프록시 스트리밍.
+
+    v138 직링크 가드 — 비공개·블라인드 트랙은 소유자(또는 admin) 외 404.
+    앱 클라이언트는 <audio src> 에 헤더를 못 실으므로 ?token= 쿼리도 허용.
+    """
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"audio_url": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"audio_url": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+    )
     if not doc or not doc.get("audio_url"):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    if _is_hidden_track(doc):
+        viewer = current_user
+        if viewer is None and token:
+            try:
+                import jwt as _jwt
+                from ..auth import JWT_SECRET, JWT_ALGORITHM
+                payload = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": True})
+                viewer = {"id": payload.get("id"), "role": payload.get("role")}
+            except Exception:
+                viewer = None
+        if not _can_view_hidden_track(doc, viewer):
+            logger.info("[report] track stream_proxy_denied track=%s", track_id[:8])
+            return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     minio_client = get_minio()
     try:
@@ -570,8 +794,164 @@ async def stream_track_proxy(track_id: str):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
 
+# RelatedTracks — vector NN over-fetch headroom beyond limit+exclude count.
+_RELATED_EXTRA_K = 10
+
+
+@router.get("/{track_id}/related")
+async def get_related_tracks(
+    track_id: str,
+    exclude: str = Query(None),
+    limit: int = 1,
+    pg=Depends(get_pg),
+):
+    """관련곡 추천 (무인증).
+
+    1차: pgvector NN (기존 track_embeddings 의 seed 임베딩 직조회 — 신규 임베딩 API 호출 없음)
+    2차: 같은 genre 공개 트랙 play_count DESC
+    3차: 전체 공개 트랙 play_count DESC
+    Seed 가 Mongo 에 없으면(비ObjectId 포함) 404, 그 외 내부 실패는 폴백으로 흡수해 항상 200.
+    응답: {"tracks": [...], "source": "vector"|"genre"|"popular"|"mixed"}
+    """
+    # limit clamp: default 1, max 5
+    limit = max(1, min(limit, 5))
+
+    # exclude: comma-separated track ids
+    exclude_ids = set()
+    if exclude:
+        exclude_ids = {tid.strip() for tid in exclude.split(",") if tid.strip()}
+    exclude_ids.discard(track_id)
+
+    logger.info("[related] enter track=%s exclude=%d limit=%d", track_id, len(exclude_ids), limit)
+
+    mongo = get_mongo()
+
+    # Seed track must exist (non-ObjectId -> same 404)
+    if not ObjectId.is_valid(track_id):
+        logger.info("[related] track=%s invalid object id -> 404", track_id)
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+    try:
+        seed_doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+    except Exception:
+        logger.exception("[related] track=%s seed lookup failed", track_id)
+        return {"tracks": [], "source": "popular"}
+    if not seed_doc:
+        logger.info("[related] track=%s not found -> 404", track_id)
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+    picked: list = []          # serialized track dicts, in final order
+    picked_ids: set = set()    # str ids already picked (dedupe across stages)
+    sources_used: list = []    # stage names in the order they contributed
+
+    def _skip_ids() -> set:
+        return exclude_ids | picked_ids | {track_id}
+
+    # ── 1차: pgvector NN from the stored seed embedding ──────────────────────
+    try:
+        row = await pg.fetchrow(
+            "SELECT embedding FROM track_embeddings WHERE track_id = $1", track_id
+        )
+        if row is None or row["embedding"] is None:
+            logger.warning("[related] track=%s no stored embedding, fallback to genre", track_id)
+        else:
+            k = limit + len(exclude_ids) + _RELATED_EXTRA_K
+            rows = await pg.fetch(
+                """
+                SELECT track_id, 1 - (embedding <=> $1::vector) AS score
+                FROM track_embeddings
+                WHERE track_id != $2
+                ORDER BY embedding <=> $1::vector
+                LIMIT $3
+                """,
+                row["embedding"],
+                track_id,
+                k,
+            )
+            cand_ids = [
+                r["track_id"] for r in rows
+                if r["track_id"] not in _skip_ids() and ObjectId.is_valid(r["track_id"])
+            ]
+            logger.info(
+                "[related] track=%s vector hits=%d candidates=%d k=%d",
+                track_id, len(rows), len(cand_ids), k,
+            )
+            if cand_ids:
+                rank_by_id = {tid: i for i, tid in enumerate(cand_ids)}
+                cursor = mongo.tracks.find({
+                    "_id": {"$in": [ObjectId(tid) for tid in cand_ids]},
+                    "is_public": True,
+                })
+                docs = await cursor.to_list(length=len(cand_ids))
+                docs.sort(key=lambda d: rank_by_id.get(str(d["_id"]), len(rank_by_id)))
+                for d in docs[:limit]:
+                    picked_ids.add(str(d["_id"]))
+                    picked.append(_serialize_track(d))
+                if picked:
+                    sources_used.append("vector")
+    except Exception:
+        logger.exception("[related] track=%s vector stage failed, fallback", track_id)
+
+    # ── 2차: same-genre public tracks by play_count DESC ─────────────────────
+    if len(picked) < limit:
+        try:
+            seed_genre = seed_doc.get("genre")
+            if seed_genre:
+                logger.info(
+                    "[related] track=%s genre fallback enter have=%d need=%d",
+                    track_id, len(picked), limit - len(picked),
+                )
+                genre_cond = {"$in": list(seed_genre)} if isinstance(seed_genre, (list, tuple)) else seed_genre
+                skip_oids = [ObjectId(tid) for tid in _skip_ids() if ObjectId.is_valid(tid)]
+                need = limit - len(picked)
+                cursor = mongo.tracks.find({
+                    "is_public": True,
+                    "genre": genre_cond,
+                    "_id": {"$nin": skip_oids},
+                }).sort("play_count", -1).limit(need)
+                docs = await cursor.to_list(length=need)
+                for d in docs:
+                    picked_ids.add(str(d["_id"]))
+                    picked.append(_serialize_track(d))
+                if docs:
+                    sources_used.append("genre")
+            else:
+                logger.info("[related] track=%s seed has no genre, skip genre fallback", track_id)
+        except Exception:
+            logger.exception("[related] track=%s genre stage failed, fallback", track_id)
+
+    # ── 3차: overall popular public tracks by play_count DESC ────────────────
+    if len(picked) < limit:
+        try:
+            logger.info(
+                "[related] track=%s popular fallback enter have=%d need=%d",
+                track_id, len(picked), limit - len(picked),
+            )
+            skip_oids = [ObjectId(tid) for tid in _skip_ids() if ObjectId.is_valid(tid)]
+            need = limit - len(picked)
+            cursor = mongo.tracks.find({
+                "is_public": True,
+                "_id": {"$nin": skip_oids},
+            }).sort("play_count", -1).limit(need)
+            docs = await cursor.to_list(length=need)
+            for d in docs:
+                picked_ids.add(str(d["_id"]))
+                picked.append(_serialize_track(d))
+            if docs:
+                sources_used.append("popular")
+        except Exception:
+            logger.exception("[related] track=%s popular stage failed", track_id)
+
+    source = sources_used[0] if len(sources_used) == 1 else ("mixed" if sources_used else "popular")
+    logger.info("[related] track=%s done n=%d source=%s", track_id, len(picked), source)
+    return {"tracks": picked, "source": source}
+
+
 @router.get("/{track_id}")
-async def get_track(track_id: str):
+async def get_track(
+    track_id: str,
+    pg=Depends(get_pg),
+    current_user=Depends(get_current_user_optional),
+):
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
@@ -582,13 +962,25 @@ async def get_track(track_id: str):
     cached = await redis.get(f"cache:track:v2:{track_id}")
     if cached:
         track = json.loads(cached)
+        # v138 직링크 가드 — 캐시 히트 경로에도 동일 적용 (캐시 데이터는 전체
+        # 도큐먼트 직렬화라 is_public/report_blinded 포함 — 스키마 승격 불필요)
+        if _is_hidden_track(track) and not _can_view_hidden_track(track, current_user):
+            logger.info("[report] track direct_link_denied track=%s cached=1", track_id[:8])
+            return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
         # Increment playcount buffer
         await redis.incr(f"playcount:buffer:{track_id}")
+        # uploader_profile_image 는 캐시 밖에서 항상 fresh 하게 첨부
+        await _attach_uploader_profiles([track], pg)
         return track
 
     doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
     if not doc:
-        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
+
+    # v138 직링크 가드 — 비공개·블라인드 트랙은 소유자(또는 admin) 외 404
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
+        logger.info("[report] track direct_link_denied track=%s cached=0", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     track = _serialize_track(doc)
 
@@ -664,6 +1056,9 @@ async def get_track(track_id: str):
 
     # Cache for 10 minutes (v2 key)
     await redis.setex(f"cache:track:v2:{track_id}", 600, json.dumps(track, default=str))
+
+    # uploader_profile_image 는 캐시에 넣지 않고 매 요청 fresh 첨부
+    await _attach_uploader_profiles([track], pg)
 
     return track
 
@@ -1064,15 +1459,26 @@ async def upload_from_generation(
 
 
 @router.get("/stream/{track_id}")
-async def stream_track(track_id: str):
+async def stream_track(
+    track_id: str,
+    current_user=Depends(get_current_user_optional),
+):
     """Return a presigned URL for streaming the track from MinIO."""
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"audio_url": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"audio_url": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+    )
     if not doc or not doc.get("audio_url"):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    # v138 직링크 가드 — 비공개·블라인드 트랙 스트림은 소유자(또는 admin) 외 404
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
+        logger.info("[report] track stream_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     minio_client = get_minio()
     try:
@@ -1167,3 +1573,161 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
     ext = doc["audio_url"].rsplit(".", 1)[-1] if "." in doc["audio_url"] else "mp3"
 
     return {"download_url": url, "filename": f"{title}.{ext}"}
+
+
+# ── v126: SNS 공유영상 (커버+음원 9:16 스틸 mp4) ──────────────────────────────
+
+@router.post("/{track_id}/share-video")
+async def create_share_video(track_id: str, format: str = Query("sns")):
+    """공유영상 생성 (무인증 — 공개 트랙만). 캐시 있으면 즉시 반환.
+
+    format(v129): sns(9:16 전체) / wide(16:9 블러배경) / kakao(1080x2340 15s).
+    """
+    from ..services.share_video import (
+        FORMATS,
+        ShareVideoError,
+        _fetch_lyric_segments,
+        generate_share_video,
+        share_video_exists,
+    )
+
+    if format not in FORMATS:
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 형식입니다."})
+
+    logger.info("[share-video] enter track=%s format=%s", track_id, format)
+
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"cover_image_url": 1, "audio_url": 1, "is_public": 1,
+         "generation_id": 1, "variant_index": 1, "recognized_timestamps": 1},
+    )
+    if not doc or not doc.get("is_public", True):
+        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    if not doc.get("cover_image_url"):
+        return JSONResponse(status_code=400, content={"error": "커버 이미지가 없는 곡입니다."})
+    if not doc.get("audio_url"):
+        return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    video_url = f"/api/tracks/{track_id}/share-video/file"
+    if format != "sns":
+        video_url += f"?format={format}"
+
+    # v128: 가사 타임스탬프 조회 (없으면 자막 없이 진행)
+    segments = await _fetch_lyric_segments(mongo, doc)
+    subtitles = bool(segments)
+    logger.info(
+        "[share-video] segments=%d subtitled=%s track=%s format=%s",
+        len(segments), subtitles, track_id, format,
+    )
+
+    if await asyncio.to_thread(share_video_exists, track_id, format):
+        logger.info("[share-video] cache hit track=%s format=%s", track_id, format)
+        return {"video_url": video_url, "cached": True, "subtitles": subtitles,
+                "format": format}
+
+    logger.info("[share-video] cache miss track=%s format=%s — generating", track_id, format)
+    try:
+        await asyncio.to_thread(
+            generate_share_video, track_id, doc["cover_image_url"],
+            doc["audio_url"], segments, format,
+        )
+    except ShareVideoError:
+        return JSONResponse(status_code=502, content={"error": "영상 생성에 실패했습니다."})
+    except Exception:
+        logger.exception("[share-video] unexpected failure track=%s format=%s", track_id, format)
+        return JSONResponse(status_code=502, content={"error": "영상 생성에 실패했습니다."})
+
+    return {"video_url": video_url, "cached": False, "subtitles": subtitles,
+            "format": format}
+
+
+@router.get("/{track_id}/share-video/file")
+async def get_share_video_file(track_id: str, format: str = Query("sns")):
+    """공유영상 파일 프록시 (무인증). MinIO share/v2/{track_id}[_{format}].mp4 스트리밍."""
+    from ..services.share_video import FORMATS, share_object_name
+
+    if format not in FORMATS:
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 형식입니다."})
+
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=share_object_name(track_id, format),
+        )
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": "공유 영상을 찾을 수 없습니다."})
+
+    logger.info("[share-video] proxy served track=%s format=%s", track_id, format)
+
+    def _iter():
+        try:
+            for chunk in response.stream(64 * 1024):
+                yield chunk
+        finally:
+            response.close()
+            response.release_conn()
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="maidol_{track_id}_{format}.mp4"',
+    }
+    content_length = response.headers.get("Content-Length")
+    if content_length:
+        headers["Content-Length"] = content_length
+
+    return StreamingResponse(_iter(), media_type="video/mp4", headers=headers)
+
+
+# ── v130: Wondera recognize 가사 타임스탬프 (골격 — 차단 해제 후 실검증) ──────
+
+@router.post("/{track_id}/recognize-timestamps")
+async def recognize_track_timestamps_route(
+    track_id: str,
+    current_user=Depends(get_current_user),
+):
+    """트랙 오디오 → Wondera recognize → recognized_timestamps 저장 (소유자 전용).
+
+    유료 추정 API — 자동 호출 없음, 본인 곡 명시 요청만. 성공 {cached, segments}.
+    Wondera 실패(현재 Cloudflare 차단 포함) → 502 + 정리된 메시지.
+    """
+    from ..services.lyric_recognize_service import (
+        LyricRecognizeError,
+        recognize_track_timestamps,
+    )
+
+    short = track_id[:8]
+    logger.info("[lyric-recognize] route enter track=%s", short)
+
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"uploader_id": 1})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    if doc.get("uploader_id") != current_user["id"]:
+        return JSONResponse(status_code=403, content={"error": "본인 곡만 요청할 수 있습니다."})
+
+    try:
+        result = await recognize_track_timestamps(track_id)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    except LyricRecognizeError as e:
+        logger.warning("[lyric-recognize] route failed track=%s msg=%s", short, e)
+        return JSONResponse(status_code=502, content={"error": str(e)})
+    except Exception:
+        logger.exception("[lyric-recognize] route unexpected failure track=%s", short)
+        return JSONResponse(status_code=502, content={"error": "가사 타임스탬프 인식에 실패했습니다."})
+
+    logger.info(
+        "[lyric-recognize] route done track=%s cached=%s segments=%d",
+        short, result.get("cached"), result.get("segments", 0),
+    )
+    return result

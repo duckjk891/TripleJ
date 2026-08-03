@@ -48,6 +48,41 @@ async def get_current_user(request: Request, authorization: str = Header(None)):
     return session
 
 
+async def get_current_user_optional(request: Request, authorization: str = Header(None)):
+    """Optional authentication: return the session dict when a valid token +
+    session exists, otherwise None. Never raises for auth failures."""
+    raw_token = None
+    if authorization and authorization.startswith("Bearer "):
+        raw_token = authorization.split(" ")[1]
+    else:
+        raw_token = request.query_params.get("token")
+
+    if not raw_token:
+        return None
+
+    try:
+        payload = jwt.decode(raw_token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": True})
+    except jwt.InvalidTokenError:
+        return None
+
+    user_id = payload.get("id")
+    if not user_id:
+        return None
+
+    try:
+        redis = get_redis()
+        session_data = await redis.get(f"session:{user_id}")
+    except Exception:
+        return None
+    if not session_data:
+        return None
+
+    session = json.loads(session_data)
+    if "role" not in session:
+        session["role"] = "user"
+    return session
+
+
 async def get_admin_user(current_user=Depends(get_current_user)):
     """Validate that the current user is an admin."""
     if current_user.get("role") != "admin":

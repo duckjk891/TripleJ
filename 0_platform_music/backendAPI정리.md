@@ -1,11 +1,11 @@
 # AIMU 백엔드 API 문서
 
-> 백엔드 서버: `http://localhost:9004`
+> 백엔드 서버: `http://localhost:9005` (메인 작업 라인) — `http://localhost:9004` 는 9005 와 동일한 미러 (앱팀은 9004 사용 가능)
 > 모든 API 경로 접두사: `/api`
-> 작성일: 2026-05-25
-> 기준 버전: **9004 백엔드 (backend_9004)**
+> 작성일: 2026-05-25 / **최종 검증일: 2026-08-03**
+> 기준 버전: **9005 백엔드 (backend_9005)** — 9004 는 byte-identical 미러(`_logs` 파일명만 상이)
 
-본 문서는 9004 백엔드의 모든 REST API 를 앱팀이 바로 연동할 수 있도록 정리한 레퍼런스입니다. 모든 항목은 `backend_9004/app/routes/` 의 실제 코드를 기준으로 작성되었습니다.
+본 문서는 백엔드의 모든 REST API 를 앱팀이 바로 연동할 수 있도록 정리한 레퍼런스입니다. 모든 항목은 `backend_9005/app/routes/` 의 실제 코드를 기준으로 작성되었습니다.
 
 ---
 
@@ -36,6 +36,19 @@
 23. [헬스체크](#23-헬스체크-apihealth)
 24. [부록: ID/상태값/공통 객체](#24-부록-id상태값공통-객체)
 25. [변경 이력](#25-변경-이력)
+26. [앱팀 통합 가이드 (Day-1 빠른 참조)](#26-앱팀-통합-가이드-day-1-빠른-참조)
+27. [보이스 클로닝 API](#27-보이스-클로닝-api-apivoice-clone--v76-suno-v5_5)
+28. [포인트(별) API](#28-포인트-api-apipoints--v81-적립-확대--차감-도입-2026-07)
+29. [피드 API](#29-피드-api-apifeeds)
+30. [위시리스트 API](#30-위시리스트-api-apiwishlist)
+31. [신고 API — 사용자측](#31-신고-api--사용자측-apireports)
+32. [출석체크 API](#32-출석체크-api-apiattendance)
+33. [리퍼럴(앱 추천) API](#33-리퍼럴앱-추천-api-apireferral)
+34. [DM API — REST + WebSocket](#34-dm-api--rest--websocket-apidm)
+35. [얼굴인증 API](#35-얼굴인증-api-apiface-verify)
+
+> 소셜 로그인(OAuth — google/kakao/naver)은 §3 인증 API 의 하위 섹션
+> "[소셜 로그인](#소셜-로그인-oauth-20-authorization-code--apiauthoauth)" 참고.
 
 ---
 
@@ -55,7 +68,7 @@ Authorization: Bearer {token}
 
 | 표기 | 의미 |
 |------|------|
-| **필수** | 토큰 없거나 만료 시 401 |
+| **필수** | 토큰 없음/Redis 세션 만료 → 401, 토큰 만료·무효 → 403 |
 | **선택** | 토큰 있으면 사용자 정보 활용, 없어도 동작 |
 | **없음** | 인증 불필요 (공개) |
 | **관리자** | `role=admin` 필수 |
@@ -105,15 +118,28 @@ POST /api/auth/register
   "email": "user@example.com",
   "password": "password123",
   "nickname": "닉네임",
+  "gender": "필수. male | female | other",
+  "consents": {"terms": true, "privacy": true, "overseas": true, "age14": true, "marketing": false, "version": "2026-07-23.v1"},
+  "birth_date": "선택. YYYY-MM-DD (1900-01-01 ~ 오늘)",
+  "region": "선택. 17개 시·도 이름 또는 \"해외\"",
+  "nationality": "선택. domestic | foreign",
+  "referral_code": "선택. 추천코드 4자리 (무효 코드면 400, 가입 자체 거부)",
   "company_name": "선택. 회사명 (≤100자)",
   "display_title": "선택. 직함, 기본 \"대표\" (≤20자)"
 }
 ```
 
+- 비밀번호 규칙: **8자 이상 + 영문·숫자 각 1개 이상** (위반 시 400).
+- `consents`: 필수 4종(`terms`/`privacy`/`overseas`/`age14`) 모두 `true` + `version`(≤20자) 필수. `marketing` 은 선택(false 도 거부 이력으로 기록).
+- `gender` 는 v125 부터 **필수** (없거나 무효 → 400 `성별을 선택해주세요.`).
+- **만 14세 미만**(birth_date 기준 만나이) → 400 `{"error": "guardian_consent_required", "message": "..."}` — 보호자 동의 플로우(아래) 사용.
+- 이미 등록된 이메일 → 409.
+
 **응답 (201):**
 ```json
 {
   "message": "회원가입이 완료되었습니다.",
+  "referral": {"applied": false},
   "token": "jwt_token_string",
   "user": {
     "id": "uuid",
@@ -121,10 +147,31 @@ POST /api/auth/register
     "nickname": "닉네임",
     "company_name": null,
     "display_title": "대표",
+    "birth_date": "2000-01-01",
+    "gender": "male",
+    "region": null,
+    "nationality": null,
+    "account_status": "active",
     "role": "user"
   }
 }
 ```
+
+`referral.applied` — 추천코드 보상(가입자·추천인 각 ⭐50) 적립 성공 여부.
+
+---
+
+### 가입 설정 조회
+
+```
+GET /api/auth/signup-config
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+**응답 (200):** `{"guardian_consent_enabled": true}` — FE 가 만 14세 미만 분기 UI 를 결정.
 
 ---
 
@@ -161,7 +208,9 @@ POST /api/auth/login
 }
 ```
 
-차단된 계정은 403 (`계정이 정지되었습니다.`).
+- 차단된 계정 → 403 (`계정이 정지되었습니다.`).
+- 탈퇴 계정(`account_status=withdrawn`) → 401 (일반 실패와 동일 메시지 — 계정 존재 노출 방지).
+- 보호자 동의 대기(`account_status=pending_consent`) → 403 (`보호자 동의 대기 중입니다.`).
 
 ---
 
@@ -178,18 +227,29 @@ GET /api/auth/me
 **응답 (200):**
 ```json
 {
+  "strikes": {"count": 0, "restricted_until": null, "is_banned": false},
   "id": "uuid",
   "email": "user@example.com",
   "nickname": "닉네임",
-  "profile_image": null,
+  "profile_image": "profiles/{user_id}/xxx.jpg 또는 null",
   "bio": null,
   "plan": null,
   "role": "user",
   "company_name": null,
   "display_title": "대표",
+  "birth_date": "2000-01-01",
+  "gender": "male",
+  "region": null,
+  "nationality": null,
+  "account_status": "active",
+  "sns_links": [],
+  "is_verified": false,
+  "verify_provider": null,
   "created_at": "2026-05-01T00:00:00"
 }
 ```
+
+`strikes` — 신고 제재 현황(v139): 위반 횟수 / 제한 만료 시각 / 밴 여부.
 
 ---
 
@@ -209,11 +269,206 @@ PATCH /api/auth/me/profile
 {
   "company_name": "선택. ≤100자",
   "display_title": "선택. ≤20자",
-  "bio": "선택. ≤500자"
+  "bio": "선택. ≤500자",
+  "birth_date": "선택. YYYY-MM-DD (null 로 지우기 가능)",
+  "gender": "선택. male | female | other",
+  "region": "선택. 17개 시·도 또는 \"해외\"",
+  "nationality": "선택. domestic | foreign",
+  "sns_links": ["선택. http/https URL 배열, 최대 5개, 각 ≤300자 (빈 배열 = 전량 삭제)"]
 }
 ```
 
-빈 본문은 400. 응답은 `/api/auth/me` 와 동일한 사용자 객체.
+- 빈 본문은 400.
+- **본인인증 완료(`is_verified=true`) 계정은 `birth_date`/`gender` 수정 불가** → 400 (`본인인증으로 확인된 정보는 수정할 수 없습니다.`).
+- 응답은 `/api/auth/me` 와 유사한 사용자 객체 (단, `strikes`/`is_verified`/`verify_provider` 없음).
+
+---
+
+### 프로필 이미지 업로드
+
+```
+POST /api/auth/me/profile-image
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | multipart/form-data |
+
+**폼 필드:** `image` — jpeg/png/webp, ≤5MB.
+
+서버가 EXIF 회전 보정 → 중앙 정사각 크롭 → 512×512 JPEG 로 변환해 MinIO 에 저장하고 기존 이미지는 삭제.
+
+**응답 (200):** `{"profile_image": "profiles/{user_id}/{hex}.jpg"}`
+
+---
+
+### 프로필 이미지 삭제
+
+```
+DELETE /api/auth/me/profile-image
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**응답 (200):** `{"profile_image": null}`
+
+---
+
+### 프로필 이미지 프록시
+
+```
+GET /api/auth/profile-image/{object_name:path}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+`profiles/` 로 시작하는 object_name 만 서빙 (이외 404). 응답은 이미지 바이너리.
+
+---
+
+### 회원탈퇴 (소프트 삭제, v124)
+
+```
+DELETE /api/auth/me
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | application/json |
+
+**요청 본문:** `{"confirm_text": "회원탈퇴"}` — 정확히 `회원탈퇴` 가 아니면 400.
+
+개인정보 즉시 파기(이메일/닉네임/프로필 등 익명화, `account_status=withdrawn`), 트랙 등 콘텐츠는 "탈퇴한 사용자" 명의로 유지. 팔로우/위시리스트/피드/댓글/좋아요 정리 + Redis 세션 삭제(토큰 즉시 무효화).
+
+**응답 (200):** `{"message": "탈퇴가 완료되었습니다."}`
+
+---
+
+### 동의 이력 조회
+
+```
+GET /api/auth/me/consents
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+key 별 **최신** 동의 상태 반환.
+
+**응답 (200):**
+```json
+{
+  "consents": {
+    "terms": {"agreed": true, "version": "2026-07-23.v1", "at": "2026-07-23T00:00:00"},
+    "marketing": {"agreed": false, "version": "2026-07-23.v1", "at": "2026-07-23T00:00:00"}
+  }
+}
+```
+
+---
+
+### 동의 기록 (append)
+
+```
+POST /api/auth/me/consents
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+| Content-Type | application/json |
+
+소셜 온보딩·기능 시점(photo_ai/voice_ai)·마케팅 변경 시 동의/거부 이력을 추가 기록.
+
+**요청 본문:**
+```json
+{"consents": [{"key": "marketing", "agreed": true}], "version": "2026-07-23.v1"}
+```
+
+허용 key 8종: `terms`, `privacy`, `overseas`, `age14`, `marketing`, `photo_ai`, `voice_ai`, `face_biometric` (이외 400). `agreed` 는 boolean 필수.
+
+**응답 (200):** `{"recorded": 1}`
+
+---
+
+### 보호자 동의 — 만 14세 미만 가입 요청
+
+```
+POST /api/auth/guardian-consent/request
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+| Content-Type | application/json |
+
+**요청 본문:** 회원가입 본문과 동일 + `guardian_name`(필수, ≤60자), `guardian_phone`(필수, 숫자/+/-/공백 8~20자). `birth_date` 필수(만 14세 미만이어야 함 — 이상이면 400).
+
+기능 플래그 `GUARDIAN_CONSENT_ENABLED` OFF 면 503. 성공 시 `pending_consent` 계정 생성(로그인 불가) + 보호자 동의 링크 발송(현재 mock — 응답에 URL 직접 포함).
+
+**응답 (201):**
+```json
+{
+  "status": "pending",
+  "message": "보호자 동의 요청이 접수되었습니다. 보호자 동의 완료 후 계정이 활성화됩니다.",
+  "consent_url": "https://.../guardian-consent/{token}"
+}
+```
+
+---
+
+### 보호자 동의 — 고지 데이터 조회
+
+```
+GET /api/auth/guardian-consent/{token}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 (보호자 링크) |
+
+토큰 유효기간 72시간. 무효/만료 404, 이미 처리됨 409 (`{"error": "...", "status": "agreed|rejected"}`).
+
+**응답 (200):**
+```json
+{
+  "status": "pending",
+  "consent_type": "signup | face_biometric",
+  "child_nickname": "김*",
+  "requested_at": "2026-08-01T00:00:00+00:00",
+  "expires_at": "2026-08-04T00:00:00+00:00",
+  "notice": "고지 문구",
+  "collection_items": ["보호자 이름", "보호자 연락처", "동의 여부", "동의 일시"]
+}
+```
+
+---
+
+### 보호자 동의 — 동의/거부 결정
+
+```
+POST /api/auth/guardian-consent/{token}/decide
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 (보호자 링크) |
+| Content-Type | application/json |
+
+**요청 본문:** `{"agree": true}`
+
+- `consent_type=signup`: 동의 시 아동 계정 `active` 전환, 거부 시 `pending_consent` 유지(로그인 403).
+- `consent_type=face_biometric`: 계정 상태는 유지, 아동 계정 `user_consents` 에 `face_biometric` 동의/거부만 기록.
+- 무효/만료 404, 이미 처리됨 409, 보호자 본인인증 실패 403 (현재 인증 어댑터는 mock — 즉시 통과).
+
+**응답 (200):** `{"status": "agreed | rejected", "message": "..."}`
 
 ---
 
@@ -229,7 +484,7 @@ POST /api/auth/logout
 
 **응답 (200):** `{"message": "로그아웃 되었습니다."}`
 
-Redis 세션을 삭제합니다. JWT 자체는 만료 전까지 유효하므로 클라이언트에서도 토큰을 폐기해야 합니다.
+Redis 세션을 삭제합니다 — 이후 같은 토큰의 보호 API 호출은 401 (세션 검증 실패). 클라이언트에서도 토큰을 폐기하세요.
 
 ---
 
@@ -276,6 +531,22 @@ provider 가 호출하는 경로(프론트가 직접 호출하지 않음). 백�
 2. 없고 provider 이메일과 일치하는 기존 계정이 있으면 → 그 계정에 `provider`/`provider_user_id` 를 연동(UPDATE)하고 **로그인**.
 3. 둘 다 없으면 → **신규 가입**(`password_hash` = NULL). 이메일 미제공 시 `{provider}_{uid}@social.aidol.local`, 닉네임 미제공 시 `{provider}_{uid앞8자}` 로 대체.
 
+**본인인증 트랙 (naver / kakao):**
+
+`naver`·`kakao` 는 실명 기반 가입으로 취급되어 **본인인증(is_verified) 트랙**을 겸합니다 (`google` 은 해당 없음):
+
+- 신규 가입: `is_verified=TRUE` + `verified_at`/`verify_provider` 기록, provider 가 내려준 `birth_date`/`gender` 저장.
+- 기존 계정 재로그인/연동: 미인증 계정이면 인증 승격(`is_verified=TRUE`) + `birth_date`/`gender` 는 **NULL 인 필드만** 보충(기존 값 유지). 이미 인증된 계정이면 변화 없음.
+- `is_verified` 는 DM(§34)·얼굴인증(§35) 등의 본인인증 게이트에 사용됩니다.
+
+#### 소셜 로그인 후 온보딩 (추가정보 / 동의) — 클라이언트 주도
+
+소셜 가입은 일반 회원가입(§3 회원가입)과 달리 필수 동의·인구통계 입력 없이 계정이 생성되므로, **토큰 수신 직후 클라이언트가 온보딩을 진행**해야 합니다 (전용 백엔드 엔드포인트 없음 — 기존 API 조합):
+
+1. `#token=` 수신 → 토큰 저장 → `GET /api/auth/me` 로 유저 정보 로드.
+2. `GET /api/auth/me/consents` 로 필수 동의 4종(age14/tos/privacy/portrait — §3 동의 이력 참고) 상태 확인 → 하나라도 미기록/미동의면 **동의 화면 선행(스킵 불가)** → `POST /api/auth/me/consents` 로 5종 일괄 기록(marketing 은 미체크=false 도 거부 이력으로 기록).
+3. 추가정보(생년월일/성별 등) 미보유 시 입력 화면 → `PATCH /api/auth/me/profile` 부분 업데이트 (스킵 가능 — 값 있는 필드만 전송).
+
 #### .env 키 (플레이스홀더 — 키 없으면 503, 앱은 정상 기동)
 
 ```
@@ -291,6 +562,12 @@ FRONTEND_URL=https://localhost:4000              # 최종 토큰 전달 대상
 - Google Cloud Console: `http://localhost:9005/api/auth/oauth/google/callback`
 - Kakao Developers:      `http://localhost:9005/api/auth/oauth/kakao/callback`
 - Naver Developers:      `http://localhost:9005/api/auth/oauth/naver/callback`
+
+#### 앱팀 참고사항
+
+- **현재 실키 미주입 상태**: `.env` 의 CLIENT_ID/SECRET 이 모두 비어 있어 3사 모두 `/login` 호출 시 503 이 반환됩니다. 각 provider 콘솔에서 실키 발급·동의항목 설정 후 키를 주입하면 코드 수정 없이 즉시 동작합니다 (사업자 등록 등 외부 절차 대기 중).
+- state 는 Redis 300초 TTL — 인가 페이지에서 5분 초과 체류 후 돌아오면 400(state 무효), 재시도 필요.
+- 앱(네이티브)에서는 provider 인가 페이지를 시스템 브라우저/커스텀 탭으로 열고, `{FRONTEND_URL}/oauth/callback` 을 앱 딥링크로 대체하는 방안을 백엔드와 협의 필요 (`FRONTEND_URL` 교체 또는 스킴 리다이렉트 추가).
 
 ---
 
@@ -385,7 +662,7 @@ GET /api/tracks/{track_id}
 
 | 항목 | 값 |
 |------|---|
-| 인증 | 없음 |
+| 인증 | 선택 — 비공개(`is_public=false`)·신고 블라인드 트랙은 소유자/관리자 외 404 (v138 직링크 가드) |
 
 Redis 캐시(`cache:track:v2:{id}`, TTL 10분) 사용. 조회 시 `playcount:buffer:{id}` 카운터가 증가합니다(배치로 MongoDB 에 반영).
 
@@ -414,6 +691,7 @@ Redis 캐시(`cache:track:v2:{id}`, TTL 10분) 사용. 조회 시 `playcount:buf
   "play_count": 0,
   "like_count": 0,
   "is_public": true,
+  "report_blinded": false,
   "has_music_video": true,
   "music_video_url": "https://presigned...",
   "cover_character": {
@@ -660,6 +938,110 @@ POST /api/tracks/{track_id}/beats/retry
 | 인증 | 필수 (소유자만) |
 
 상태를 `pending` 으로 리셋하고 백그라운드로 재추출.
+
+**응답 (200):** `{"message": "비트 재추출이 시작되었습니다.", "status": "pending"}`
+
+---
+
+### 가사 타임라인 조회 (v149)
+
+```
+GET /api/tracks/{track_id}/lyrics-timeline
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+라인 단위 가사 세그먼트 (공유영상 자막과 동일 소스). 타임스탬프 없으면 빈 배열로 200.
+
+**응답 (200):**
+```json
+{
+  "has_timestamps": true,
+  "segments": [{"text": "가사 한 줄", "start": 1.2, "end": 4.5}],
+  "source": "timestamps"
+}
+```
+
+---
+
+### 관련곡 추천
+
+```
+GET /api/tracks/{track_id}/related?exclude=id1,id2&limit=1
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+| 파라미터 | 설명 |
+|----------|------|
+| `exclude` | 선택. 제외할 트랙 ID (콤마 구분) |
+| `limit` | 기본 1, 최대 5 |
+
+1차 벡터 유사도(pgvector) → 2차 같은 장르 인기순 → 3차 전체 인기순 폴백. 시드 트랙 없으면 404, 그 외 실패는 폴백으로 항상 200.
+
+**응답 (200):** `{"tracks": [트랙 객체 배열], "source": "vector | genre | popular | mixed"}`
+
+---
+
+### 공유영상 생성
+
+```
+POST /api/tracks/{track_id}/share-video?format=sns
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 (공개 트랙만) |
+
+| 파라미터 | 설명 |
+|----------|------|
+| `format` | `sns`(9:16 전체, 기본) / `wide`(16:9 블러배경) / `kakao`(1080×2340, 15초) |
+
+커버+오디오(+가사 자막)로 공유용 mp4 를 생성. 캐시 있으면 즉시 반환. 커버 없는 곡 400, 비공개/없는 곡 404, 생성 실패 502.
+
+**응답 (200):**
+```json
+{
+  "video_url": "/api/tracks/{track_id}/share-video/file?format=wide",
+  "cached": false,
+  "subtitles": true,
+  "format": "wide"
+}
+```
+
+---
+
+### 공유영상 파일 다운로드
+
+```
+GET /api/tracks/{track_id}/share-video/file?format=sns
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+
+생성된 mp4 스트리밍 (`Content-Disposition: attachment`). 아직 생성 안 됐으면 404 — 먼저 POST 로 생성.
+
+---
+
+### 가사 타임스탬프 인식 (Wondera recognize, v130)
+
+```
+POST /api/tracks/{track_id}/recognize-timestamps
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (소유자만) |
+
+트랙 오디오를 Wondera recognize 로 분석해 `recognized_timestamps` 저장. 유료 추정 API — 자동 호출 없음. Wondera 실패 시 502.
+
+**응답 (200):** `{"cached": false, "segments": 42}`
 
 ---
 
@@ -930,7 +1312,7 @@ POST /api/charts/record-play
 
 **요청 본문:** `{"track_id": "objectid"}`
 
-비로그인 호출도 200 으로 처리되지만 차트 점수에는 반영되지 않습니다(레거시 `play_count` 만 증가).
+비로그인 호출도 200 으로 처리되지만 차트 점수에는 반영되지 않습니다(레거시 `play_count` 만 증가). 로그인 재생은 포인트 적립 훅(`play` 액션, 서비스 내부 일별 멱등)이 best-effort 로 동작합니다 — 실패해도 응답 불변.
 
 **응답 (200):** `{"ok": true}`
 
@@ -1177,6 +1559,20 @@ DELETE /api/likes/{track_id}
 
 ## 9. 팔로우 API (`/api/follows`)
 
+### 팔로우 요약 (공개)
+
+```
+GET /api/follows/summary/{user_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 선택 — `is_following` 은 토큰 있을 때만 판정 (없으면 false) |
+
+**응답 (200):** `{"follower_count": 12, "is_following": false}` — 대상 사용자 없으면 404.
+
+---
+
 ### 팔로우 하기
 
 ```
@@ -1355,6 +1751,7 @@ POST /api/upload/generate-cover
 
 - `image_model=nb_pro` → Google API 키 필요, `gpt_image_2` → OpenAI API 키 필요.
 - 잘못된 `image_model` / `vocal_gender` 는 400.
+- v139 생성 제한 중이면 403. **포인트 2 선차감** (부족 시 402, 생성 실패 시 자동 환불 — §28 참고).
 
 **응답 (200):**
 ```json
@@ -1487,7 +1884,7 @@ POST /api/upload/generate-mv
 }
 ```
 
-> 참고: 정식 MV 워크플로우는 `/api/mv/*` 를 사용하세요. 본 엔드포인트는 단일 단계로 작업을 시작하고 `job_id` 만 반환합니다.
+> 참고: 정식 MV 워크플로우는 `/api/mv/*` 를 사용하세요. 본 엔드포인트는 단일 단계로 작업을 시작하고 `job_id` 만 반환합니다. v139 생성 제한 중이면 403.
 
 **응답 (200):** `{"job_id": "objectid", "message": "뮤직비디오 생성이 시작되었습니다. (20장면 파이프라인)"}`
 
@@ -1688,6 +2085,8 @@ POST /api/generate/
 
 **응답 (201):** generation 객체 (`id`, `status="pending"`, `progress`, `categories`, ...).
 
+> v139 — 신고 제재로 생성 제한 중(`restricted_until` 미래)이면 **403** (생성 요청 자체 거부). `/start/`, 커버·MV·캐릭터 생성 계열도 동일 게이트.
+
 ---
 
 ### 음악 생성 시작 (별도 호출)
@@ -1700,7 +2099,7 @@ POST /api/generate/{gen_id}/start/
 |------|---|
 | 인증 | 필수 (소유자만) |
 
-이미 `processing` 이면 409.
+이미 `processing` 이면 409. 생성 제한 중이면 403 (v139).
 
 ---
 
@@ -2620,6 +3019,8 @@ POST /api/character/generate-sheet
 | user_text | str | - | 추가 설명 |
 | image_model | str | - | `nb_pro` (기본) / `gpt_image_2` |
 
+> 공통(시트 생성 4종 — sheet/cartoon/async 포함): v139 생성 제한 중 403, **포인트 2 선차감** (부족 시 402 — async 는 job 미생성, 실패 시 자동 환불 — §28 참고).
+
 > **아이템 해석 우선순위**: 각 부위별로 `*_object_name` 이 있으면 images 버킷에서
 > 로딩해 우선 사용, 없으면 `*_image` 업로드 사용, 둘 다 없으면 미참조(사진 기반/자유 생성).
 > 로딩 실패(없는 키 등)는 앱을 죽이지 않고 해당 아이템만 미참조 처리.
@@ -3461,7 +3862,7 @@ GET /api/admin/users?page=1&limit=20&search=&role=user&banned=false
 |------|---|
 | 인증 | 관리자 |
 
-`search` 는 email/nickname ILIKE. `role`/`banned` 선택.
+`search` 는 email/nickname ILIKE. `role`/`banned` 선택. 각 사용자에 `ban_reason` / `restricted_until` / `violation_count` (v145 제재 상태) 포함.
 
 ---
 
@@ -3474,6 +3875,8 @@ GET /api/admin/users/{user_id}
 | 항목 | 값 |
 |------|---|
 | 인증 | 관리자 |
+
+기본 프로필 + `is_banned`/`banned_at`/`ban_reason`/`restricted_until`/`violation_count` + `track_count`/`total_plays`.
 
 ---
 
@@ -3506,6 +3909,72 @@ PUT /api/admin/users/{user_id}/ban
 **요청 본문:** `{"is_banned": true, "reason": "사유 (선택)"}`
 
 정지 시 Redis 세션 즉시 삭제. 자기 자신 400.
+
+---
+
+### 사용자 생성 제한 해제 (v139)
+
+```
+POST /api/admin/users/{user_id}/restriction/lift
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+
+스트라이크 자동 제재로 걸린 `restricted_until` 을 해제.
+
+**응답 (200):** `{"message": "생성 제한이 해제되었습니다.", "user_id": "...", "restricted_until": null}`
+
+---
+
+### 사용자 스트라이크 초기화 (v145)
+
+```
+POST /api/admin/users/{user_id}/strikes/reset
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+
+위반 기록 전체 삭제 + 생성 제한 해제 + **자동밴만** 해제(수동 밴은 유지).
+
+**응답 (200):**
+```json
+{"message": "위반 기록이 초기화되었습니다.", "user_id": "...", "violation_count": 0, "restricted_until": null, "is_banned": false}
+```
+
+---
+
+### 사용자 최근 콘텐츠 조회 (신고 양면 뷰, v138)
+
+```
+GET /api/admin/users/{user_id}/recent-content
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+
+대상 사용자의 최근 트랙 20건 + 현재 캐릭터 상태. 캐릭터 이미지는 어드민 프록시 경로(`/api/admin/media/...`)로 반환.
+
+**응답 (200):**
+```json
+{
+  "user_id": "uuid",
+  "tracks": [{"id": "...", "title": "...", "cover_image_url": "...", "created_at": "...", "is_public": true, "report_blinded": false}],
+  "character": {
+    "name": "...",
+    "has_original_photo": true,
+    "has_sheet": true,
+    "has_virtual_sheet": false,
+    "original_photo_path": "/api/admin/media/...",
+    "sheet_path": "/api/admin/media/...",
+    "virtual_sheet_path": null
+  }
+}
+```
 
 ---
 
@@ -3547,6 +4016,146 @@ PUT /api/admin/tracks/{track_id}/visibility
 | Content-Type | application/json |
 
 **요청 본문:** `{"is_public": true}`
+
+---
+
+### 신고 큐 조회 (v137~)
+
+```
+GET /api/admin/reports?status=pending&page=1&limit=20
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+
+`status` ∈ `pending / actioned / dismissed / all` (기본 pending). 성적(sexual) 사유는 긴급으로 최상단 정렬. 각 신고에 대상 스냅샷(`target`)·증거(`evidence`)·소명(`appeal`) 동봉 — 대상이 삭제됐으면 접수 시점 스냅샷(`from_snapshot: true`) 또는 `{"deleted": true}`.
+
+**응답 (200):**
+```json
+{
+  "reports": [
+    {
+      "id": "uuid",
+      "reporter_id": "uuid",
+      "reporter_nickname": "...",
+      "target_type": "track | feed | comment",
+      "target_id": "objectid",
+      "reason_code": "...",
+      "reason_text": "...",
+      "urgent": false,
+      "status": "pending",
+      "action": null,
+      "resolution": null,
+      "evidence": {},
+      "created_at": "...",
+      "handled_at": null,
+      "handled_by": null,
+      "handled_by_nickname": null,
+      "appeal": null,
+      "target": {"title": "...", "is_public": false, "report_blinded": true}
+    }
+  ],
+  "pagination": {"page": 1, "limit": 20, "total": 1, "totalPages": 1}
+}
+```
+
+---
+
+### 신고 처리 (v138)
+
+```
+POST /api/admin/reports/{report_id}/action
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+| Content-Type | application/json |
+
+**요청 본문:** `{"action": "blind | delete | dismiss | confirm_delete | restore"}`
+
+- `blind`: 트랙/피드 블라인드(재공개 잠금, 원 상태 `prev_state` 저장). 댓글 불가.
+- `delete`: 댓글만 (트랙·피드는 `confirm_delete` 사용 — 400).
+- `confirm_delete`: 트랙·피드 완전 파기 (이미 자진 삭제면 `resolution=removed_by_user` 로 종결). 위반 기록 + 원본 사진 sha256 블랙리스트 등록.
+- `restore`: blind 처리 완료 신고만 — 원 상태 복원 + 블라인드 해제 (`status=dismissed`, `resolution=restored`).
+- 이미 처리된 신고 재처리 409.
+
+**응답 (200):** `{"message": "...", "report_id": "...", "status": "actioned", "action": "blind", "resolution": null}`
+
+---
+
+### 신고 증거 파일 서빙
+
+```
+GET /api/admin/reports/{report_id}/evidence/{idx}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+
+`evidence.items[idx]` 의 파일(이미지/JSON) 바이너리. `evidence/` 버킷 경로는 공개 프록시·presign 전부 차단 — 이 엔드포인트가 유일한 출구.
+
+---
+
+### 어드민 이미지 프록시
+
+```
+GET /api/admin/media/{object_name:path}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+
+images 버킷 어드민 전용 프록시 (recent-content 의 캐릭터 시트·원본 열람용). `faces/`(암호화 얼굴 데이터)는 어드민에게도 404.
+
+---
+
+### 인물 기반 수색 (moderation, v138)
+
+```
+POST /api/admin/moderation/face-search
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+| Content-Type | application/json |
+
+**요청 본문:** `{"report_id": "uuid"}`
+
+신고 증거의 기준 얼굴로 피신고 사용자 콘텐츠를 동기 수색. 기준 얼굴 자료 없음 400, 신고 미존재 404.
+
+**응답 (200):** `{"matches": [{..., "thumbnail_url": "/api/admin/media/..."}], "scanned": 0, "skipped": 0, "compare_calls": 0}`
+
+---
+
+### 일괄 몰수 (moderation, v138)
+
+```
+POST /api/admin/moderation/purge
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 관리자 |
+| Content-Type | application/json |
+
+**요청 본문:** `{"report_id": "uuid", "targets": [{"type": "track | character", "id": "objectid"}]}`
+
+트랙은 완전 파기(MinIO·Mongo·Redis·ES·PG), 캐릭터는 문서+MinIO 원본·시트 삭제. 신고 증거의 피신고자 소유 콘텐츠만 몰수 가능(불일치 → `failed`). 몰수 발생 시 위반 기록(`face_purge`) + 원본 사진 sha256 블랙리스트 등록.
+
+**응답 (200):**
+```json
+{
+  "purged": {"tracks": 1, "characters": 0},
+  "blacklisted": 1,
+  "violation_recorded": true,
+  "failed": []
+}
+```
 
 ---
 
@@ -3778,6 +4387,74 @@ GET /api/business/dashboard?period=daily&category=상의
 
 ---
 
+### 아이템별 스타 성과 집계
+
+```
+GET /api/business/ads/{item_id}/stars?period=daily&verified_only=false
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 고객사 (본인 아이템만 — 아니면 404) |
+
+`period` ∈ `daily / weekly / monthly`. `verified_only=true` 면 위시/클릭을 본인인증 유저 행적만으로 집계(착장 `worn_count` 는 무필터).
+
+**응답 (200):**
+```json
+{
+  "stars": [
+    {
+      "user_id": "uuid",
+      "nickname": "스타 닉네임",
+      "worn_count": 0,
+      "wish_count": 0,
+      "click_count": 0,
+      "follower_count": 0,
+      "total_plays": 0,
+      "engagement_rate": 0.01
+    }
+  ],
+  "untracked_clicks": 0,
+  "verified_only": false
+}
+```
+
+---
+
+### 아이템별 인사이트 집계
+
+```
+GET /api/business/ads/{item_id}/insights?period=daily&verified_only=false
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 고객사 (본인 아이템만 — 아니면 404) |
+
+전환/장르·무드/시간대/인구통계 집계 (개별 user_id 미포함, 만 14세 미만 행적 전면 제외, 소수 버킷은 "기타(소수)" 합산).
+
+**응답 (200):**
+```json
+{
+  "period": "daily",
+  "verified_only": false,
+  "wish_to_click": {"wishes": 0, "clicks": 0, "rate": null},
+  "by_genre": [{"key": "pop", "wishes": 0, "clicks": 0}],
+  "by_mood": [{"key": "dreamy", "wishes": 0, "clicks": 0}],
+  "by_hour": [{"hour": 0, "count": 0}],
+  "by_weekday": [{"weekday": 0, "count": 0}],
+  "demographics": {
+    "age_bands": [{"band": "20대", "count": 0}],
+    "genders": [{"key": "male", "count": 0}],
+    "regions": [{"key": "서울", "count": 0}],
+    "nationalities": [{"key": "domestic", "count": 0}],
+    "min_bucket": 5
+  }
+}
+```
+
+---
+
 ## 21. 보상(Rewards) API (`/api/rewards`)
 
 Google AdMob 보상형 광고 SSV(서버 사이드 검증) + 사용자 잔여량.
@@ -3844,7 +4521,7 @@ GET /api/rewards/balance
 
 ## 22. 로그 조회 / 프론트엔드 로그 수집 API (`/api/_logs`)
 
-서버 로그(`backend_9004/logs/server.log`) 조회와 브라우저 콘솔 로그(`frontend.log`) 수집용. GET 3종은 운영용 토큰 보호.
+서버 로그(`backend_9005/logs/server.log` — 9004 미러는 `backend_9004/logs/server.log`) 조회와 브라우저 콘솔 로그(`frontend.log`) 수집용. GET 3종은 운영용 토큰 보호.
 
 ### 서버 로그 tail
 
@@ -3870,7 +4547,7 @@ GET /api/_logs/download
 | 항목 | 값 |
 |------|---|
 | 인증 | 로그 토큰 |
-| 응답 | `text/plain` (`Content-Disposition: attachment; filename="server_9004.log"`) |
+| 응답 | `text/plain` (`Content-Disposition: attachment; filename="server_9005.log"` — 9004 미러는 `server_9004.log`) |
 
 ---
 
@@ -3907,7 +4584,7 @@ POST /api/_logs/frontend
 | 인증 | 필수 (axios 인터셉터 또는 `?token={jwt}`) |
 | Content-Type | application/json |
 
-브라우저에서 발생한 `console.error / window.onerror / unhandledrejection` 등을 배치로 받아 `backend_9004/logs/frontend.log` 에 1 이벤트 1 라인으로 기록.
+브라우저에서 발생한 `console.error / window.onerror / unhandledrejection` 등을 배치로 받아 `backend_9005/logs/frontend.log`(미러는 `backend_9004/logs/frontend.log`) 에 1 이벤트 1 라인으로 기록.
 
 **요청 본문:**
 ```json
@@ -3998,6 +4675,27 @@ GET /api/health
 
 ## 25. 변경 이력
 
+### 신규 도메인 9종 추가 (2026-08-03)
+
+- **소셜 로그인(OAuth) 하위 섹션 확장** (§3): 본인인증 트랙(naver/kakao → `is_verified`), 클라이언트 주도 온보딩(동의→추가정보) 절차, 앱팀 참고(실키 미주입 상태·딥링크 협의) 추가.
+- **신규 섹션 8종**: §29 피드(11), §30 위시리스트(3), §31 신고—사용자측(4), §32 출석체크(2), §33 리퍼럴(2), §34 DM(REST 13 + WS 1), §35 얼굴인증(6).
+- **§28 포인트 보강**: 출석(`attendance` +10/30/100)·리퍼럴(`referral_inviter`/`referral_joiner` 각 +50) 적립 액션 추가.
+- **목차 갱신**: §26~§35 반영.
+- **시간 표기(v156.1)**: DM 의 `created_at`/`last_at` 은 **UTC ISO8601 (+00:00 오프셋 포함)** — 클라이언트는 반드시 로컬 타임존으로 변환해 표시할 것. (타 도메인 일부는 오프셋 없는 UTC 문자열이 내려올 수 있으니 "오프셋 없으면 UTC" 로 파싱 권장.)
+
+### 9005 기준 전면 검증 (2026-08-03)
+
+기존 전 섹션을 `backend_9005/app/routes/` 현재 코드와 대조해 정정. 대표 변경:
+
+- **문서 기준 서버를 9005 로 전환** (9004 는 byte-identical 미러 — 앱팀은 어느 쪽이든 사용 가능).
+- **인증 API 대폭 갱신**: 회원가입 필수 동의(`consents`)·성별 필수·비밀번호 규칙·추천코드, `GET /signup-config`, 동의 이력 `GET/POST /me/consents`, 보호자 동의 3종(`/guardian-consent/*`), 프로필 이미지 3종(`/me/profile-image`, 프록시), 회원탈퇴 `DELETE /me`, `/me` 응답 확장(`strikes`/`sns_links`/`is_verified` 등), 프로필 수정 확장(인구통계/`sns_links`/인증잠금).
+- **트랙 API 5종 추가**: `lyrics-timeline`(v149), `related`, `share-video` POST/GET(v129), `recognize-timestamps`(v130). 트랙 상세에 v138 직링크 가드(비공개·블라인드 404)·`report_blinded` 반영.
+- **팔로우**: 공개 `GET /follows/summary/{user_id}` 추가.
+- **관리자 API 9종 추가**: 제재(`restriction/lift`, `strikes/reset`), 신고 큐(`GET /reports`, `POST /reports/{id}/action`, 증거 서빙), 양면 뷰(`recent-content`, `media` 프록시), moderation(`face-search`, `purge`). 사용자 목록/상세에 제재 필드 반영.
+- **고객사 API 2종 추가**: `ads/{id}/stars`, `ads/{id}/insights`.
+- **생성 계열 공통 게이트 반영**: v139 스트라이크 생성 제한 403, 커버·캐릭터 생성 포인트 2 선차감(402/환불).
+- 신규 도메인(attendance / dm / referral / reports / feeds / wishlist / face-verify / points 상세)은 같은 날 후속 갱신("신규 도메인 9종 추가")으로 반영 완료 — §29~§35 참고.
+
 ### 9004 기준 본 갱신 (2026-05-25)
 
 #### 추가된 섹션 / 엔드포인트
@@ -4053,7 +4751,7 @@ GET /api/health
 
 | 환경 | URL | 비고 |
 |------|-----|------|
-| 로컬 (백엔드 동일 머신) | `http://localhost:9004` | WSL/Mac/Linux 직접 |
+| 로컬 (백엔드 동일 머신) | `http://localhost:9005` 또는 `http://localhost:9004` | 9005 가 메인 작업 라인, 9004 는 동일 미러 — 어느 쪽이든 API 동일 |
 | **사내 (Tailscale)** | **`http://100.127.225.55:9004`** | 앱팀이 tailnet 가입돼 있으면 이걸로 호출. 현재 운영 중인 dev 서버 |
 | Staging | _미구성_ | 추후 별도 공지 |
 | Production | _미구성_ | 추후 별도 공지 |
@@ -4070,14 +4768,16 @@ GET /api/health
 ### 26.3 인증 플로우 한눈에
 
 ```
-1. POST /api/auth/register   →  user 생성
-2. POST /api/auth/login      →  { access_token, token_type: "bearer", user: {...} }
+1. POST /api/auth/register   →  user 생성 + { token, user } 즉시 발급
+2. POST /api/auth/login      →  { message, token, user: {...} }   ← 키 이름은 "token" (access_token 아님)
 3. 이후 모든 보호된 호출:
-     Header:  Authorization: Bearer <access_token>
-4. 토큰 만료 (기본 7일 = JWT_ACCESS_TOKEN_EXPIRE_MINUTES=10080)
-     → 401 응답
-     → 앱이 로그인 화면으로 라우팅 + 재로그인 요구
-5. 로그아웃: 클라이언트 측에서 토큰 폐기만 (서버 invalidate 없음)
+     Header:  Authorization: Bearer <token>   (또는 ?token= 쿼리 파라미터)
+4. 만료/무효 처리 (토큰 7일 + Redis 세션 7일):
+     토큰 없음 / Redis 세션 만료·삭제  → 401
+     JWT 만료·무효                     → 403 ("토큰이 만료되었습니다.")
+     → 앱은 401/403 모두 로그인 화면으로 라우팅 + 재로그인 요구
+5. 로그아웃: POST /api/auth/logout — 서버가 Redis 세션 삭제(이후 그 토큰은 401).
+   클라이언트도 토큰 폐기 필요.
 ```
 
 **⚠️ Refresh token 미구현**: `.env` 에 `JWT_REFRESH_TOKEN_EXPIRE_DAYS` 변수는 있으나, 실제 refresh 엔드포인트는 **현재 백엔드에 없음**. 만료 = 재로그인이 유일 동작. 앱팀이 refresh 흐름을 가정하고 짜지 말 것. (필요해지면 백엔드에서 별도 공지)
@@ -4130,7 +4830,7 @@ function parseError(res) {
 
 ### 26.5 알아둘 운영 특성
 
-- **실시간 채널 없음**: WebSocket / SSE 미제공. MV 생성·음악 생성·보컬 변환 등 장시간 작업은 **모두 폴링** (status 필드 — 22.5장 상태값 표 참고). 권장 폴링 간격 2~5초.
+- **장시간 작업은 폴링**: MV 생성·음악 생성·보컬 변환 등은 SSE 미제공 — **모두 폴링** (status 필드 — 부록 상태값 표 참고). 권장 폴링 간격 2~5초. (예외: DM 은 `WS /api/dm/ws` WebSocket 제공 — §34.3 WebSocket 스펙 참고.)
 - **presigned URL 만료** (부록 23 참고): 24h / 1h. 만료되면 해당 리소스의 GET 엔드포인트 재호출로 새 URL 발급.
 - **Rate limit / 동시성 제한 없음**: 현재 별도 limiter 미구성. 그러나 외부 API (Suno/Seedance/Sync Labs 등) 호출 단계는 사용자/잡 단위로 1회 보장됨 (`status` 필드로 중복 방지). idempotent 처리에는 본문 각 엔드포인트의 `already_processed` / `status` 응답을 신뢰.
 - **JWT_SECRET**: 운영 .env 에 30자 커스텀 값 설정됨 (디폴트 `change-me-in-production` 아님).
@@ -4428,6 +5128,16 @@ v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
 
 > **v111 (2026-07-08)**: `like` / `playlist_add` / `download` 적립 **제거** — 좋아요·플레이리스트 추가·다운로드는 더 이상 포인트가 쌓이지 않음. 기존에 적립된 이벤트/잔액은 소급 변경 없음. history 에 과거 like/playlist_add/download 이벤트는 그대로 보일 수 있음.
 
+**추가 적립 액션 — 출석·리퍼럴 (2026-08 신규, history 에 함께 노출):**
+
+| action | amount | 시점 / 규칙 | ref (track_id 필드) |
+|---|---|---|---|
+| `attendance` | +10 / +30 / +100 | 출석체크 `POST /api/attendance/check-in` (§32) — 하루 1회 KST 멱등, 5일차 +30 / 10일차 +100 / 그 외 +10 | KST `YYYYMMDD` (day 와 동일) |
+| `referral_inviter` | +50 | 회원가입 시 유효한 추천코드 입력 → **추천인**에게 적립 (§33) | 신규 가입자 user_id (`day`="-") |
+| `referral_joiner` | +50 | 같은 시점 **가입자 본인**에게 적립 | 추천인 user_id (`day`="-") |
+
+- 리퍼럴 적립은 가입 1회성 (자기추천 차단). 적립 성공 여부는 register 응답의 `referral.applied` 로 확인.
+
 - **비로그인은 적립 없음.** 적립 대상은 **행위자**.
 - **멱등**: 같은 (사용자·행위·대상·날짜) 중복은 무시 (point_events 유니크 인덱스).
 - 적립은 best-effort 훅 — 실패/중복이 본 기능 응답에 절대 영향 없음.
@@ -4443,4 +5153,846 @@ v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
 - 차감은 원자적 조건부 갱신(`balance >= 2` 일 때만 `-2`) — 음수 잔액 불가.
 - **실패 시 자동 환불** (`refund:character` / `refund:cover`, +2): 동기 생성 예외, async job 실패, 서버 재시작 stale job 복구(30분↑ processing → failed) 모두 환불. job 의 `refunded` 플래그로 **이중 환불 방지**.
 - history 의 차감/환불 `track_id` 는 시도별 유니크 ref (uuid) — 곡 ID 아님.
+
+---
+
+## 29. 피드 API (`/api/feeds`)
+
+FeedSquad(v131~) — 스타 채널 음악 피드. 글 본문은 **블록 배열**(텍스트 / 곡 카드 혼합) 구조이며, 글 종류(`kind`)는 2가지:
+
+| kind | 용도 | 제약 |
+|------|------|------|
+| `feed` | 일반 피드 글 (기본) | 텍스트+곡 블록 혼합, BGM 설정 가능 |
+| `community` | 채널 공지 글 (v133) | **텍스트 블록만** (곡 블록 400), BGM 불가, 제목 무시(null 저장) |
+
+### 공통: 피드 객체
+
+```json
+{
+  "id": "688f...(ObjectId)",
+  "kind": "feed",
+  "author_id": "uuid",
+  "author_nickname": "스타닉네임",
+  "author_profile_image": "profiles/....png | null",
+  "title": "제목 | null",
+  "blocks": [
+    {"type": "text", "text": "오늘 신곡 올렸어요"},
+    {"type": "track", "track_id": "ObjectId",
+     "track": {"id": "...", "title": "...", "artist_id": "...", "artist_name": "...",
+               "cover_image": "...", "duration_sec": 180, "is_public": true}}
+  ],
+  "bgm_track_id": "ObjectId | null",
+  "bgm_track": {"...track 축약 뷰..."},
+  "like_count": 0,
+  "comment_count": 0,
+  "is_public": true,
+  "report_blinded": false,
+  "is_liked": false,
+  "created_at": "2026-08-03T04:12:33.123456",
+  "updated_at": "2026-08-03T04:12:33.123456"
+}
+```
+
+- `track`/`bgm_track` 하이드레이션 시 삭제된 곡은 `{"id": "...", "deleted": true}`.
+- `author_nickname`/`author_profile_image` 는 항상 **현재값**(PG 라이브 조회).
+- `is_liked` 는 로그인 요청에서만 의미 있음 (비로그인 false).
+- `report_blinded` — 신고 블라인드 여부 (v137, 소유자 화면 사유 표시용).
+
+### 피드 작성
+
+```
+POST /api/feeds/
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**요청 본문:**
+
+```json
+{
+  "title": "선택 (100자 이하, community 는 무시)",
+  "blocks": [{"type": "text", "text": "..."}, {"type": "track", "track_id": "..."}],
+  "bgm_track_id": "선택 (트랙 ObjectId)",
+  "is_public": true,
+  "kind": "feed"
+}
+```
+
+**검증 규칙:** 블록 1~50개(빈 텍스트 블록은 자동 제거 — 전부 비면 400), 텍스트 합계 10,000자 이하, `track`/`bgm` 은 실존 트랙만 + **타인 곡은 is_public 필수** (비공개 타인 곡 400).
+
+**응답 (201):** `{"feed": {피드 객체}}`
+
+| 에러 | 조건 |
+|------|------|
+| 400 | kind 무효 / 블록 0·50초과·형식 오류 / 제목·텍스트 길이 초과 / 트랙 미존재 / 타인 비공개 곡 / community 에 곡·BGM |
+
+### 타임라인 (v134)
+
+```
+GET /api/feeds/timeline?page=1&limit=10
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 선택 |
+| limit | 최대 30 |
+
+인스타형 혼합 타임라인 — 공개 글 최신 **200건 후보**를 점수 랭킹해 페이징 반환 (`total` 은 후보 풀 크기 ≤200).
+점수 = recency×2 + engagement(log 좋아요+0.5×log 댓글) + 작성자 팔로워 log + 삽입곡 인기×0.5. **로그인 시 팔로잉 작성자 글 +1000** (팔로잉 최우선 블록). 동률은 최신순.
+
+**응답 (200):** `{"feeds": [...], "pagination": {"page", "limit", "total", "totalPages"}}`
+
+### 사용자별 피드 목록
+
+```
+GET /api/feeds/user/{user_id}?page=1&limit=10&kind=feed
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 선택 |
+| limit | 최대 50 |
+| kind | `feed`(기본) 또는 `community` — 그 외 400 |
+
+최신순. **비공개(신고 블라인드 포함) 글은 소유자 본인 조회 시에만 포함.** 응답 형식은 타임라인과 동일.
+
+### 피드 상세
+
+```
+GET /api/feeds/{feed_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 선택 |
+
+**응답 (200):** `{"feed": {피드 객체}}` — 비공개 글은 소유자 외 **404**.
+
+### 피드 수정
+
+```
+PUT /api/feeds/{feed_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (작성자만 — 아니면 403) |
+
+본문은 작성과 동일 (단 `kind` 는 변경 불가 — body 값 무시, 저장된 kind 기준 검증). **신고 블라인드(report_blinded) 글은 수정 불가 400** `{"error": "신고 처리로 제한된 콘텐츠입니다."}` (is_public 강제 복구 방지).
+
+**응답 (200):** `{"feed": {수정된 피드 객체}}`
+
+### 피드 삭제
+
+```
+DELETE /api/feeds/{feed_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (작성자만 — 아니면 403) |
+
+피드 + 하위 댓글 전체 + 좋아요(PG) 연쇄 완전 파기. **응답 (200):** `{"message": "피드가 삭제되었습니다."}`
+
+### 피드 좋아요 / 취소 (멱등)
+
+```
+POST   /api/feeds/{feed_id}/like
+DELETE /api/feeds/{feed_id}/like
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+중복 호출 안전 (이미 좋아요/이미 취소 상태면 카운트 변화 없이 200). **응답 (200):**
+
+```json
+{"message": "좋아요가 추가되었습니다.", "is_liked": true, "like_count": 5}
+```
+
+### 댓글 목록
+
+```
+GET /api/feeds/{feed_id}/comments?page=1&limit=20
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 |
+| limit | 최대 100, 정렬 `created_at` asc (오래된 것부터) |
+
+**응답 (200):** `{"comments": [{"id", "feed_id", "author_id", "author_nickname", "text", "created_at"}], "pagination": {...}}`
+
+### 댓글 작성
+
+```
+POST /api/feeds/{feed_id}/comments
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+**요청 본문:** `{"text": "1~1,000자"}` (빈값/초과 400)
+
+**응답 (201):** `{"comment": {댓글 객체}}`
+
+### 댓글 삭제
+
+```
+DELETE /api/feeds/comments/{comment_id}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 (**댓글 작성자 또는 해당 피드 소유자** — 그 외 403) |
+
+**응답 (200):** `{"message": "댓글이 삭제되었습니다."}`
+
+---
+
+## 30. 위시리스트 API (`/api/wishlist`)
+
+광고상품(§20 고객사/광고 API 의 `ad_items`) 위시리스트. 모두 **인증 필수**.
+
+### 위시 토글
+
+```
+POST /api/wishlist/{item_id}/toggle
+```
+
+**요청 본문 (선택):** `{"track_id": "위시한 시점의 곡 ObjectId"}` — 어떤 곡(스타) 화면에서 위시했는지 성과 집계용 컨텍스트 (§20 아이템별 스타 성과와 연결). body 없이 호출해도 동작.
+
+**응답 (200):** `{"wishlisted": true}` (추가) / `{"wishlisted": false}` (해제)
+
+| 에러 | 조건 |
+|------|------|
+| 404 | 아이템 없음 (ObjectId 형식 오류 포함) |
+
+### 위시 여부 일괄 확인
+
+```
+GET /api/wishlist/check?item_ids=id1,id2,id3
+```
+
+**응답 (200):** `{"wishlisted_ids": ["id1", "id3"]}` — `item_ids` 비면 빈 배열.
+
+### 내 위시 목록
+
+```
+GET /api/wishlist/?category=상의
+```
+
+`category` 는 선택 — 허용값 `상의` / `하의` / `신발` / `장소` (그 외 400). 위시 최신순.
+
+**응답 (200):**
+
+```json
+{
+  "items": [
+    {
+      "id": "ObjectId", "name": "상품명",
+      "image_object_name": "ads/....png",
+      "product_url": "https://...", "category": "상의",
+      "advertiser_nickname": "광고주닉", "is_active": true,
+      "wishlisted_at": "2026-08-03T04:12:33+00:00"
+    }
+  ]
+}
+```
+
+이미지는 `GET /api/business/items/image/{image_object_name}` 프록시로 표시 (§20). Mongo 에서 삭제된 상품은 목록에서 자동 제외.
+
+---
+
+## 31. 신고 API — 사용자측 (`/api/reports`)
+
+TrustSquad(v137~) — 콘텐츠 신고 접수 / 내 신고 내역 / 블라인드 소명. 모두 **인증 필수**.
+**관리자측 처리**(신고 큐 조회 `GET /api/admin/reports`, 처리 `POST /api/admin/reports/{id}/action`, 증거 열람)는 **§19 관리자 API** 참고.
+
+### 신고 접수
+
+```
+POST /api/reports/
+```
+
+**요청 본문:**
+
+```json
+{
+  "target_type": "track",
+  "target_id": "대상 ObjectId",
+  "reason_code": "portrait",
+  "reason_text": "선택 (500자 이하)"
+}
+```
+
+| 필드 | 허용값 |
+|------|--------|
+| `target_type` | `track`(곡) / `feed`(피드 글) / `comment`(피드 댓글) / `dm_message`(DM 메시지, v152) |
+| `reason_code` | `portrait`(초상권) / `copyright`(저작권) / `sexual`(성적) / `abuse`(욕설·괴롭힘) / `other`(기타) |
+
+접수 시 **증거 스냅샷 자동 생성** (비동기 best-effort) — 대상 본문/이미지 사본을 격리 저장하므로, 이후 원본이 삭제되거나 DM 요청이 거절·삭제돼도 관리자 검토 증거는 보존됩니다.
+
+**응답 (201):** `{"report_id": "uuid"}`
+
+| 에러 | 조건 |
+|------|------|
+| 400 | target_type/reason_code 무효, reason_text 500자 초과, **본인 콘텐츠 신고** |
+| 404 | 대상 없음 (ObjectId 형식 오류 포함) |
+| 409 | 동일 대상에 대한 내 pending 신고 이미 존재 |
+
+### 내 신고 내역 (신고자)
+
+```
+GET /api/reports/my?page=1&limit=20
+```
+
+limit 최대 50, 최신순. 통지 인프라 없는 현 단계의 신고 처리 결과 확인 수단.
+
+**응답 (200):**
+
+```json
+{
+  "reports": [
+    {
+      "report_id": "uuid", "target_type": "track", "target_id": "...",
+      "reason_code": "portrait", "reason_text": "...",
+      "status": "pending", "action": null, "resolution": null,
+      "created_at": "ISO8601", "handled_at": null,
+      "target": {"title": "...", "cover_image_url": "..."}
+    }
+  ],
+  "pagination": {"page", "limit", "total", "totalPages"}
+}
+```
+
+- `status`: `pending`(대기) → 관리자 처리 후 `actioned`(조치) / `dismissed`(기각). 조치 내용은 `action`(`blind`/`delete`/`confirm_delete`)·`resolution` 참고 (§19).
+- `target` 요약: track=`{title, cover_image_url}` / feed=`{kind, text_excerpt}` / comment=`{text_excerpt}` — 삭제된 대상은 `{"deleted": true}`. **dm_message 는 라이브 요약 미제공** — `{"deleted": true}` 로 표시될 수 있음 (증거는 어드민측 스냅샷에 보존).
+
+### 내 피해(블라인드) 신고 조회 — 소명 진입점
+
+```
+GET /api/reports/my-affected
+```
+
+**내 콘텐츠가 블라인드 처리된** 신고 목록 (status=actioned·action=blind, 소유자=본인). 신고자 정보는 미노출.
+
+**응답 (200):**
+
+```json
+{
+  "reports": [
+    {
+      "report_id": "uuid", "target_type": "feed", "target_id": "...",
+      "reason_code": "portrait", "action": "blind", "resolution": "...",
+      "handled_at": "ISO8601",
+      "has_appeal": false, "appeal": null,
+      "target": {"kind": "feed", "text_excerpt": "..."}
+    }
+  ]
+}
+```
+
+소명 제출 후에는 `has_appeal: true` + `appeal: {"text", "created_at"}`.
+
+### 소명 제출
+
+```
+POST /api/reports/{report_id}/appeal
+```
+
+**요청 본문:** `{"text": "1~2000자"}`
+
+**응답 (201):** `{"appeal_id": "uuid"}`
+
+| 에러 | 조건 |
+|------|------|
+| 400 | 텍스트 길이 무효 / 블라인드 처리된 신고가 아님 |
+| 403 | 본인 콘텐츠에 대한 신고가 아님 |
+| 404 | 신고 없음 |
+| 409 | 이미 소명 제출 (신고당 1회) |
+
+---
+
+## 32. 출석체크 API (`/api/attendance`)
+
+데일리 체크인 — **10일 1사이클 누적 스탬프**. 모두 **인증 필수**. 보상은 §28 포인트(별)로 적립됩니다 (`action=attendance`).
+
+**규칙 (누적 스탬프 — 연속 강제 없음):**
+
+- **KST 자정 기준 하루 1회** 체크인 (멱등 — 중복 호출해도 추가 적립 없음).
+- 하루 빠져도 **초기화되지 않음** — 체크인한 날짜 수가 그대로 누적되어 다음 칸으로 진행.
+- 보상: 사이클 **5일차 ⭐30, 10일차 ⭐100, 그 외(1~4·6~9일차) ⭐10**.
+- 10일차 수령 후 다음 체크인은 1일차부터 새 사이클 반복 (`cycle_day` = 누적일수%10 + 1).
+
+### 출석 현황
+
+```
+GET /api/attendance/status
+```
+
+**응답 (200):**
+
+```json
+{
+  "checked_today": false,
+  "cycle_day": 3,
+  "cumulative_count": 12,
+  "today_reward": 10,
+  "calendar": [
+    {"day": 1, "reward": 10, "claimed": true},
+    {"day": 2, "reward": 10, "claimed": true},
+    {"day": 3, "reward": 10, "claimed": false},
+    {"day": 4, "reward": 10, "claimed": false},
+    {"day": 5, "reward": 30, "claimed": false},
+    {"day": 6, "reward": 10, "claimed": false},
+    {"day": 7, "reward": 10, "claimed": false},
+    {"day": 8, "reward": 10, "claimed": false},
+    {"day": 9, "reward": 10, "claimed": false},
+    {"day": 10, "reward": 100, "claimed": false}
+  ],
+  "balance": 123
+}
+```
+
+- `cycle_day` — 오늘 받을(이미 받았으면 받은) 칸 번호(1~10). `checked_today` 와 함께 스탬프판 렌더링에 사용.
+- `calendar` — 항상 10칸. `claimed` 는 현재 사이클 기준.
+- `balance` — 현재 별 잔액 (§28 과 동일 값).
+
+실패 시 500 `{"error": "출석 현황 조회에 실패했습니다."}`
+
+### 체크인
+
+```
+POST /api/attendance/check-in
+```
+
+**응답 (200) — 적립 성공:**
+
+```json
+{"success": true, "awarded": 10, "cycle_day": 3, "cumulative_count": 13, "balance": 133, "already": false}
+```
+
+**응답 (200) — 오늘 이미 받음 (멱등, 에러 아님):** `{"success": true, "awarded": 0, ..., "already": true}`
+
+`awarded` 는 이번 호출로 적립된 별 (10/30/100 또는 0). 실패 시 500 `{"error": "출석체크에 실패했습니다."}`
+
+---
+
+## 33. 리퍼럴(앱 추천) API (`/api/referral`)
+
+앱 추천(초대) 코드 (v154~).
+
+**추천코드(`referral_code`) 규격 — 배틀태그 겸용:**
+
+- **4자리**, 혼동문자(0/O/1/I/L) 제외 31종 대문자·숫자 charset. 입력 시 소문자/공백 허용(서버가 trim+대문자 정규화).
+- 유저당 1개, **발급 후 불변·전역 유일**. 비밀값 아님.
+- **v156부터 DM 사용자 검색의 배틀태그(#태그)와 겸용** — `GET /api/dm/users/search?q=닉#A2B3` 정확 검색, DM 응답의 peer `code` 필드로도 노출 (§34).
+- 전 유저 커버 3중 보장: 서버 기동 시 백필 + 회원가입 시 발급 + `GET /my-code` lazy 발급.
+
+**가입 보상 흐름:** `POST /api/auth/register` body 의 `referral_code` 로 입력 (§3 회원가입) → 유효하면 **추천인·가입자 각각 ⭐50** 적립 (§28 `referral_inviter`/`referral_joiner`, 자기추천 차단). 무효 코드는 **가입 자체가 400 거부**. 적립 성공 여부는 register 응답 `referral.applied`.
+
+### 내 추천코드 조회
+
+```
+GET /api/referral/my-code
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필수 |
+
+코드가 없으면 **즉시 발급(lazy)** — 소셜 가입 등 코드 미보유 계정 커버.
+
+**응답 (200):**
+
+```json
+{
+  "referral_code": "A2B3",
+  "invite_url": "/invite/A2B3",
+  "play_store_url": "https://play.google.com/store/apps/details?id=com.maidol.app"
+}
+```
+
+- `invite_url` — 프론트 조립용 **상대경로** (공유 링크는 클라이언트가 도메인 결합).
+- `play_store_url` — `.env` 의 `PLAY_STORE_URL`. **현재 값은 플레이스홀더** — 앱 플레이스토어 출시 후 실제 URL 로 교체 예정 (앱팀은 하드코딩하지 말고 이 필드를 사용).
+
+### 초대 착지 페이지 데이터
+
+```
+GET /api/referral/invite/{code}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 없음 (비로그인 착지 페이지용) |
+
+**응답 (200):** `{"referral_code": "A2B3", "inviter_nickname": "추천인닉", "play_store_url": "..."}`
+
+**404** `{"error": "유효하지 않은 초대코드입니다."}` — 형식 무효 / 미존재 / 탈퇴·보호자동의 대기·정지 유저의 코드.
+
+---
+
+## 34. DM API — REST + WebSocket (`/api/dm`)
+
+DmSquad(v152~v156) — 실시간 1:1 DM. **REST 13개 + WebSocket 1개.** REST 전 엔드포인트 **인증 필수**. 인스타(메타) DM 정책 벤치마킹.
+
+### 34.0 정책 요약 (앱 구현 전 필독)
+
+> - **본인인증 필수**: 발신자가 `is_verified` 아니면 대화 시작·전송·사용자 검색 모두 **403** `"본인인증 후 이용 가능합니다."` — 진입 전 `GET /eligibility` 로 봉투 아이콘/버튼 활성 판단.
+> - **미성년 보호**: 수신자가 **만 14세 미만**이면 "상대가 나를 팔로우" 관계 필수 — 아니면 403 (사유 비노출: 아래 일반 문구).
+> - **메시지 요청함(pending)**: 상대가 나를 팔로우하지 않으면 신규 대화가 `pending`(요청)으로 생성. 수신자는 **수락 전 답장 불가**(403), **읽음 처리도 no-op** — 발신자에게 열람 사실 비노출. 수락 → `accepted` / 거절 → 대화·메시지 **무통지 hard delete** (발신자에게 어떤 이벤트·표시도 없음).
+> - **차단·정지**: `dm_blocks` 양방향 차단, 정지(banned) 계정, 자기 자신 전송 불가. 정지/차단/미성년 거부는 모두 동일한 일반 문구 **403** `"메시지를 보낼 수 없습니다."` (사실 비노출).
+> - **시간값**: `created_at`/`last_at` 은 **UTC ISO8601, `+00:00` 오프셋 포함** (v156.1) — 클라이언트에서 반드시 로컬 타임존 변환.
+> - **메시지 신고**: `target_type=dm_message` 로 `POST /api/reports/` (§31) — 요청 거절로 대화가 삭제돼도 접수 시점 증거는 보존됨.
+> - **쓰기는 전부 REST** — WS 는 서버→클라 push 전용.
+
+### 34.1 공통 객체
+
+**conversation:**
+
+```json
+{
+  "conversation_id": "ObjectId",
+  "peer": {"id": "uuid", "nickname": "상대닉", "profile_image": "... | null", "code": "A2B3"},
+  "last_message_text": "마지막 메시지 (200자 절단) | null",
+  "last_sender_id": "uuid | null",
+  "last_at": "2026-08-03T04:12:33.123456+00:00",
+  "unread": 2,
+  "status": "accepted",
+  "requester_id": "uuid | null"
+}
+```
+
+- `peer.code` — 배틀태그(=추천코드 4자리, §33). `status`: `accepted` | `pending`. `unread` 는 **내 기준** 안 읽은 수.
+
+**message:**
+
+```json
+{
+  "id": "ObjectId",
+  "conversation_id": "ObjectId",
+  "sender_id": "uuid",
+  "text": "본문 (1~2000자)",
+  "created_at": "2026-08-03T04:12:33.123456+00:00",
+  "read": false
+}
+```
+
+### 34.2 REST 엔드포인트
+
+#### DM 이용 가능 여부
+
+```
+GET /api/dm/eligibility
+```
+
+**응답 (200):** `{"is_verified": true, "is_banned": false}` — 본인인증 게이트 UI 분기용 (미인증이면 DM 진입 대신 본인인증 유도).
+
+#### 사용자 검색 (새 메시지 대상)
+
+```
+GET /api/dm/users/search?q=검색어
+```
+
+닉네임 부분일치(대소문자 무시) 검색, 최대 20명. **호출자 미인증(is_verified 아님) 시 403** (미인증 유저의 전체 닉네임 열람 방지). active·비정지 유저만, 자기 자신·차단(양방향) 관계 제외. `q` 빈값이면 `{"users": []}`.
+
+**#태그(배틀태그) 검색 규칙 (v156):** `q` 에 `#` 가 포함되면 **마지막 `#` 기준으로 분리** → 뒷부분을 trim+대문자 정규화 후 4자리 charset 형식이면 **태그 정확 매칭 모드** (`code` 일치, 닉네임부는 무시 — 태그는 전역 유일이라 결과 최대 1명). 형식이 무효하면 전체 문자열 그대로 닉네임 부분일치로 폴백 (닉네임에 `#` 포함 유저 검색도 유지).
+
+**응답 (200):** `{"users": [{"id", "nickname", "profile_image", "code"}]}`
+
+#### 대화 시작 / 기존 대화 반환
+
+```
+POST /api/dm/conversations
+```
+
+**요청 본문:** `{"peer_id": "상대 uuid"}`
+
+기존 대화가 있으면 그대로 반환, 없으면 생성. **신규 생성 시 상대가 나를 팔로우 중이면 `status=accepted`, 아니면 `pending`(메시지 요청).** 기존 대화는 상대가 언팔로우해도 유지.
+
+**응답 (200):** conversation 객체.
+
+| 에러 | 조건 |
+|------|------|
+| 400 | 자기 자신 (`"자기 자신에게는 메시지를 보낼 수 없습니다."`) |
+| 403 | 미인증(`"본인인증 후 이용 가능합니다."`) / 정지·미성년 비팔로우·차단(`"메시지를 보낼 수 없습니다."` — 사유 비노출) |
+| 404 | 상대 없음 |
+
+#### 내 대화 목록
+
+```
+GET /api/dm/conversations
+```
+
+`last_at` desc, 최대 200건. **남이 보낸 pending(요청)은 제외** — 요청함(`GET /requests`)에서만 노출. **내가 보낸 pending 은 내 목록에 포함** (`status: "pending"`·`requester_id`=나 로 "요청 전송됨" UI 표시).
+
+**응답 (200):** `{"conversations": [conversation...]}`
+
+#### 메시지 조회 (페이지네이션)
+
+```
+GET /api/dm/conversations/{cid}/messages?before={message_id}&limit=30
+```
+
+limit 기본 30·최대 100. **최신순(desc) 반환 — 화면 표시는 클라이언트에서 reverse.** 무한 스크롤: 현재 화면 가장 오래된 메시지 `id` 를 `before` 로 전달. 참여자 아님 403, 대화 없음 404.
+
+**응답 (200):** `{"messages": [message...]}`
+
+#### 메시지 전송
+
+```
+POST /api/dm/conversations/{cid}/messages
+```
+
+**요청 본문:** `{"text": "1~2000자"}` (trim 후 빈값/초과 400)
+
+저장 + 대화 `last_*` 갱신 + 상대 unread+1 + **상대에게 WS `message` 이벤트 push** (본인 화면은 REST 응답으로 echo — 자기 자신에겐 WS 미발행).
+
+**응답 (200):** `{"message": {message 객체}}`
+
+| 에러 | 조건 |
+|------|------|
+| 400 | 텍스트 길이 무효 |
+| 403 | 참여자 아님 / **pending 대화의 수신자 답장** (`"메시지 요청을 수락한 후에 답장할 수 있습니다."`) / 게이트 재검사 실패(인증·정지·차단 등) |
+| 404 | 대화 없음 |
+
+#### 읽음 처리
+
+```
+POST /api/dm/conversations/{cid}/read
+```
+
+내 unread=0 + 상대 발신 미읽음 메시지 `read=true` 일괄 + **상대에게 WS `read` 이벤트 발행**.
+
+**응답 (200):** `{"conversation_id": "...", "read": true, "marked": 3}`
+
+**pending 요청의 수신자 열람은 no-op** — `{"conversation_id": "...", "read": false, "marked": 0}` 반환, read 이벤트 미발행(요청 열람 사실을 발신자에게 비노출), unread 는 수락 시점까지 보존.
+
+#### 미읽음 카운트 (배지)
+
+```
+GET /api/dm/unread-count
+```
+
+**응답 (200):** `{"count": 5, "requests": 2}`
+
+- `count` — **accepted 대화만** 집계한 총 unread 합 (헤더 봉투 배지, 30초 폴링 권장).
+- `requests` — 내가 받은 pending 메시지 요청 수 (DM 페이지 요청함 탭 배지).
+
+#### 메시지 요청함
+
+```
+GET /api/dm/requests
+```
+
+내가 **받은** pending 요청 목록 (`last_at` desc). **응답 (200):** `{"requests": [conversation...], "count": 2}`
+
+#### 요청 수락
+
+```
+POST /api/dm/conversations/{cid}/accept
+```
+
+**수신자만** 가능. `status` → `accepted` + **요청자에게 WS `accepted` 이벤트 발행**.
+
+**응답 (200):** `{"ok": true, "conversation": {conversation 객체}}`
+
+| 에러 | 조건 |
+|------|------|
+| 400 | pending 상태 아님 (`"이미 처리된 요청입니다."`) |
+| 403 | 참여자 아님 / 요청자 본인이 수락 시도 |
+| 404 | 대화 없음 |
+
+#### 요청 거절
+
+```
+DELETE /api/dm/conversations/{cid}
+```
+
+**수신자만** 가능. 대화 + 메시지 전체 **hard delete — 발신자에게 무통지** (WS 이벤트 없음, 인스타식). 에러 케이스는 수락과 동일.
+
+**응답 (200):** `{"ok": true}`
+
+#### 차단 / 차단 해제
+
+```
+POST   /api/dm/blocks/{uid}
+DELETE /api/dm/blocks/{uid}
+```
+
+**응답 (200):** `{"blocked": true}` / `{"blocked": false}` (멱등). 자기 자신 차단 400. 차단은 양방향으로 대화 시작·전송을 막고 사용자 검색에서도 상호 제외 (상대에게 차단 사실 비노출).
+
+### 34.3 WebSocket 스펙 (네이티브 소켓 구현 가이드)
+
+```
+WS /api/dm/ws?token={JWT}
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | **쿼리 파라미터 `token`** (또는 `Authorization: Bearer` 헤더 — 네이티브 소켓 라이브러리에서는 쿼리 방식 권장) |
+| 인증 실패 | **close code 4401** (accept 없이 즉시 종료) — 토큰 누락/무효/만료/Redis 세션 없음 모두 동일 |
+| 방향 | **서버→클라 push 전용** — 클라 발신 텍스트는 keepalive 용도 외 서버가 무시. 전송/읽음 등 쓰기는 전부 REST |
+| 프레임 | JSON text frame |
+
+**서버→클라 이벤트 3종:**
+
+1. `message` — 상대가 나에게 메시지 전송:
+
+```json
+{
+  "type": "message",
+  "conversation_id": "ObjectId",
+  "message": {
+    "id": "ObjectId", "conversation_id": "ObjectId", "sender_id": "uuid",
+    "text": "...", "created_at": "2026-08-03T04:12:33.123456+00:00", "read": false
+  },
+  "conversation_status": "accepted"
+}
+```
+
+`conversation_status` 로 수신측 UI 분기: `"pending"` 이면 요청함 목록/배지 갱신, `"accepted"` 면 메인 대화 목록 갱신.
+
+2. `read` — 상대가 내 메시지들을 읽음 (해당 대화의 내 발신 메시지 읽음표시 갱신):
+
+```json
+{"type": "read", "conversation_id": "ObjectId"}
+```
+
+3. `accepted` — 내가 보낸 메시지 요청을 상대가 수락 (대화 상태 pending→accepted 갱신):
+
+```json
+{"type": "accepted", "conversation_id": "ObjectId"}
+```
+
+**재연결 권장 정책:**
+
+- **REST 가 항상 진실의 원천** — WS 이벤트는 증분 갱신용. 재연결 성공 시 `GET /conversations` + `GET /unread-count` (열린 대화방은 `GET /messages`) 재조회로 유실분 동기화.
+- 끊김 시 **지수 백오프 재연결** (1s → 2s → 4s … 최대 30s, jitter 권장). 단 **close 4401 은 재연결 금지** — 토큰 갱신/재로그인 플로우로 전환.
+- 앱 백그라운드 전환 시 소켓 종료 허용 — 포그라운드 복귀 시 재연결 + 재조회. WS 미연결 중에도 `GET /unread-count` 30초 폴링으로 배지 유지 가능.
+- keepalive: 30~60초 간격으로 임의 텍스트(예: `"ping"`) 전송 가능 — 서버는 무시하지만 중간 프록시/LB 의 idle timeout 차단에 유효.
+
+---
+
+## 35. 얼굴인증 API (`/api/face-verify`)
+
+FaceGuardSquad(v135~v136) — 업로드 사진 속 인물이 **본인**인지 확인 (캐릭터 생성용 사진 도용 방지). 모두 **인증 필수**.
+
+- **feature flag**: `.env FACE_VERIFY_ENABLED` — 비활성 시 status 조회를 제외한 대부분 엔드포인트가 **503** `{"error": "face_verify_disabled"}`.
+- **동작 모드**: `mock`(개발 — 실제 AWS 미호출) / `aws`(Rekognition + Face Liveness, 도쿄 리전).
+- **게이트 순서(verify)**: flag → 본인인증(`is_verified` 아니면 403 `identity_verification_required`) → 생체정보 동의(성인=본인 동의 / **만 19세 미만**=보호자 동의) → 얼굴 대조.
+
+### 인증 상태 조회
+
+```
+GET /api/face-verify/status
+```
+
+FE/앱이 플로우(본인인증 → 동의 → 촬영) 분기를 결정하는 진입점.
+
+**응답 (200):**
+
+```json
+{
+  "enabled": true,
+  "mode": "aws",
+  "is_verified": true,
+  "minor": false,
+  "consent_needed": true,
+  "guardian_needed": false,
+  "guardian_status": null,
+  "registered": false
+}
+```
+
+- `minor` — 만 19세 미만 여부 (birth_date 미입력이면 성인 취급). `guardian_status` — 최근 보호자 동의 요청 상태(`pending`/`approved`/`denied`/null). `registered` — 서버에 대조용 얼굴 등록 여부.
+
+### 생체정보 동의 (성인 본인)
+
+```
+POST /api/face-verify/consent
+```
+
+**요청 본문:** `{"version": "v1.0"}` (선택 — 기본 v1.0)
+
+**응답 (200):** `{"consented": true, "message": "얼굴 인증(생체정보 처리) 동의가 기록되었습니다."}`
+
+| 에러 | 조건 |
+|------|------|
+| 403 | `identity_verification_required`(본인인증 미완) / `guardian_consent_required`(미성년 — 보호자 절차로) |
+| 503 | 기능 비활성 |
+
+### 보호자 동의 요청 (미성년)
+
+```
+POST /api/face-verify/guardian/request
+```
+
+**요청 본문:** `{"guardian_name": "선택", "guardian_phone": "선택"}` — 미입력 시 가입 시 보호자 동의 이력의 보호자 정보 재사용. 성인은 400 (본인 동의로 안내). 문자 발송은 현재 mock — "1회 동의=계속 이용" 문구 포함.
+
+**응답 (201):** `{"status": "pending", "message": "...", "consent_url": "mock 동의 링크 (테스트모드 표시용)"}`
+
+### 라이브니스 세션 생성
+
+```
+POST /api/face-verify/session
+```
+
+AWS Face Liveness 세션 생성 (aws 모드 실호출 / mock 모드 mock 세션 id).
+
+**응답 (200):** `{"session_id": "uuid | null", "mode": "aws"}` — 생성 실패 시 `session_id: null` + `error` 필드 (200).
+
+### 얼굴 대조 (verify)
+
+```
+POST /api/face-verify/verify
+```
+
+**multipart/form-data:** `photo`(필수, ≤10MB — 검증 대상 사진) + `selfie`(선택 — 실시간 촬영본) + `session_id`(선택 form 필드 — Face Liveness 세션).
+
+**플로우:**
+
+1. (aws 모드 + `session_id` 제공 시) 라이브니스 결과 조회 — confidence 통과 시 AWS 참조 이미지가 `selfie` 를 대체 (앱이 셀피 파일을 따로 올릴 필요 없음). mock 모드는 `session_id` 무시(셀피 파일 경로 하위호환).
+2. 저장 얼굴이 있으면 `photo` 와 즉시 대조 → 일치 시 통과. 불일치 + 셀피 없음 → `need_recapture` (재촬영 유도).
+3. 셀피 제공 시(최초 등록·재촬영) `selfie` vs `photo` 대조 → 일치 시 얼굴 저장(갱신) + 통과 / 불일치 → 이용 불가.
+
+촬영 원본은 처리 후 즉시 폐기 (암호화 저장분 제외).
+
+**응답 (200) 케이스:**
+
+```json
+{"verified": true, "method": "stored", "similarity": 99.1}
+{"verified": true, "method": "live", "similarity": 98.4}
+{"verified": false, "reason": "stored_mismatch", "need_recapture": true, "message": "..."}
+{"verified": false, "reason": "live_mismatch", "message": "..."}
+{"verified": false, "reason": "liveness_failed", "confidence": 43.2, "message": "..."}
+```
+
+| 에러 | 조건 |
+|------|------|
+| 400 | 이미지 10MB 초과/빈 파일, `liveness_not_completed`(검사 미완 세션), 세션 무효/만료, `selfie_required`(최초 등록에 셀피 없음), 얼굴 비교 실패 |
+| 403 | 본인인증/동의 게이트 (`identity_verification_required` / `face_consent_required` / `guardian_consent_required`) |
+| 503 | 기능 비활성 / `face_key_missing`(암호화 키 미설정) / `face_store_failed` |
+
+### 동의 철회 + 데이터 파기
+
+```
+DELETE /api/face-verify
+```
+
+동의 철회 이력 append + 저장된 얼굴 데이터(PG·MinIO) **전체 파기**. 재이용하려면 동의부터 다시 (미성년은 보호자 동의부터).
+
+**응답 (200):** `{"withdrawn": true, "purged": {...파기 내역...}, "message": "..."}`
+
+### 앱팀 참고 — AWS Face Liveness 네이티브 SDK 연동 필요 (협의 항목)
+
+- 실물 검사(라이브니스) 촬영 UI 는 **AWS Amplify FaceLivenessDetector 네이티브 SDK**(Android/iOS)를 앱에서 직접 렌더링해야 합니다 — 백엔드는 세션 생성(`POST /session`)과 결과 판정(`POST /verify` 의 `session_id`)만 담당.
+- 앱 흐름: `POST /session` → `session_id` 로 SDK 검사 실행 → 완료 후 `POST /verify` 에 `session_id` + `photo` 전달.
+- SDK 초기화에 필요한 **Cognito 자격증명 풀 ID·리전(도쿄 ap-northeast-1) 등 세션 연동 상세는 앱팀과 협의 후 별도 공유 예정**.
+- 현재 mock 모드 운용 중에는 `session_id` 가 무시되고 `selfie` 파일 업로드 경로로 동작합니다 (하위호환).
 

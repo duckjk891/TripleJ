@@ -1,0 +1,433 @@
+/* v137 — 어드민 신고 큐 */
+.admin-reports {
+  max-width: 1100px;
+}
+
+.admin-reports__filters {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 20px;
+}
+
+/* 행 클릭 펼침 */
+.admin-reports__row {
+  cursor: pointer;
+}
+
+.admin-reports__row--open {
+  background: var(--color-hover);
+}
+
+.admin-reports__detail-row td {
+  background: var(--color-bg);
+}
+
+.admin-reports__detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.admin-reports__reason-text {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-reports__handled {
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+/* 대상 미리보기 */
+.admin-reports__target-cell {
+  max-width: 320px;
+}
+
+.admin-reports__target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.admin-reports__target-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-bg);
+}
+
+.admin-reports__target-thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub);
+  border: 1px solid var(--color-border);
+}
+
+.admin-reports__target-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.admin-reports__target-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.admin-reports__target-sub {
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__target-deleted {
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  font-style: italic;
+}
+
+.admin-badge--yellow {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+/* ── v138 — 신고 집행 패키지 ─────────────────────────────── */
+
+/* 긴급(성적 사유) 표시 */
+.admin-reports__urgent-badge {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  margin-right: 6px;
+}
+
+.admin-reports__row--urgent td:first-child {
+  box-shadow: inset 3px 0 0 #ef4444;
+}
+
+/* resolution 표기 ("게시자 삭제로 종결" 등) */
+.admin-reports__resolution {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--color-text-sub);
+}
+
+/* 양면 뷰 */
+.admin-reports__panes {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .admin-reports__panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-reports__pane {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--color-bg-secondary);
+  min-width: 0;
+}
+
+.admin-reports__pane-title {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  font-weight: 600;
+}
+
+.admin-reports__pane-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+}
+
+/* 좌측 — 증거 스냅샷 */
+.admin-reports__evidence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.admin-reports__evidence-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-reports__evidence-kind {
+  font-size: 0.75rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__evidence-img {
+  width: 140px;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.admin-reports__evidence-text {
+  margin: 0;
+  max-width: 100%;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.admin-reports__evidence-failed {
+  font-size: 0.8rem;
+  color: #ef4444;
+}
+
+/* 우측 — 최근 생성물 */
+.admin-reports__recent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-reports__recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.admin-reports__recent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-reports__recent-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.admin-reports__recent-thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__recent-title {
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-reports__recent-visibility {
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__recent-visibility--private {
+  color: #f59e0b;
+}
+
+.admin-reports__recent-character {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-reports__recent-character-imgs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-reports__recent-figure {
+  margin: 0;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-reports__recent-figure figcaption {
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+  text-align: center;
+}
+
+/* 인물 수색 모달 */
+.admin-reports__modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.admin-reports__modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-reports__modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.admin-reports__modal-loading {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__modal-summary {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__match-selectall {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.admin-reports__match-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-reports__match-item {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.admin-reports__match-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.admin-reports__match-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-bg-secondary);
+}
+
+.admin-reports__match-thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub);
+  border: 1px solid var(--color-border);
+}
+
+.admin-reports__match-type {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__match-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.admin-reports__match-similarity {
+  flex-shrink: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #ef4444;
+}
+
+.admin-reports__modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* v139 — 소유자 소명 박스 (신고 상세) */
+.admin-reports__appeal {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.admin-reports__appeal-text {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-reports__appeal-date {
+  font-size: 11px;
+  color: var(--color-text-sub, #999);
+}

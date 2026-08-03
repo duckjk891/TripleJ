@@ -330,7 +330,11 @@ async def generate_cover_image(
     if image_bytes is None:
         raise ValueError("No image generated from Gemini response")
 
-    return image_bytes
+    # v137 [watermark]: 비가시 AI 마커 삽입 (커버 저장 전 공통 —
+    # gpt_image_2 분기는 openai_image.generate_image 내부에서 동일 적용됨).
+    from .watermark import embed_image_metadata
+
+    return embed_image_metadata(image_bytes)
 
 
 # ─── v58: refine_cover_image — image-to-image multi-turn refinement ───
@@ -429,7 +433,10 @@ async def _refine_with_gemini(
             for part in parts:
                 inline_data = part.get("inlineData")
                 if inline_data and inline_data.get("data"):
-                    return base64.b64decode(inline_data["data"])
+                    # v137 [watermark]: 비가시 AI 마커 삽입 (refine 결과 공통).
+                    from .watermark import embed_image_metadata
+
+                    return embed_image_metadata(base64.b64decode(inline_data["data"]))
             raise ValueError("No image generated from Gemini response")
         except Exception as e:  # noqa: BLE001
             last_err = e

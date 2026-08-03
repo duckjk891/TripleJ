@@ -1,13 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FiMusic, FiList, FiX, FiFilm } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
+import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import CharacterCoverCard from '../components/CharacterCoverCard';
+import LyricSyncVideo from '../components/LyricSyncVideo';
+import Avatar from '../components/Avatar';
+import TrackShareButton from '../components/TrackShareButton';
+import ReportModal from '../components/ReportModal';
+import useTrackShare from '../hooks/useTrackShare';
+import { detectPlatform, shortenSnsUrl } from '../utils/snsPlatform';
 import './PlayerPage.css';
 
 export default function PlayerPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const {
     currentSong, playlist, currentIndex, play, isPlaying,
     removeFromPlaylist, audioRef, videoRef, videoMode, setVideoMode,
@@ -21,7 +29,42 @@ export default function PlayerPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [mvData, setMvData] = useState(null); // { has_music_video, music_video_url }
   const [mvLoading, setMvLoading] = useState(false);
+  // v149 — 가사 타임라인 (커버+가사 싱크). null=미로드, {has_timestamps, segments}
+  const [lyricsTimeline, setLyricsTimeline] = useState(null);
   const localVideoRef = useRef(null);
+  // v126 — SNS 공유 (v127: useTrackShare 훅으로 로직 이관)
+  const [searchParams] = useSearchParams();
+  const { shareTo, copyLink, sharingSns, message: shareNotice } = useTrackShare();
+  const trackParamHandledRef = useRef(false);
+  // v137 — 곡 신고 모달
+  const [reportOpen, setReportOpen] = useState(false);
+
+  // v126 — `?track={id}` 공유 링크 수신자 지원: 마운트 시 파라미터 트랙 로드·재생
+  useEffect(() => {
+    const trackId = searchParams.get('track');
+    if (!trackId || trackParamHandledRef.current) return;
+    trackParamHandledRef.current = true;
+    if (currentSong?.id === trackId) return;
+    (async () => {
+      try {
+        const { data: track } = await api.getTrackDetail(trackId);
+        // TrackCard 매핑과 동일한 song 형태로 play() 호출 (단곡 큐잉)
+        play({
+          id: track.id,
+          title: track.title,
+          artist_name: track.uploader_nickname || track.artist_name || 'AI',
+          cover_image: track.cover_image_url || track.cover_image || null,
+          album_id: track.id,
+        });
+        if (import.meta.env.DEV) {
+          console.info('[PlayerPage] loaded shared ?track param', { track: track.id });
+        }
+      } catch (err) {
+        // 공유 링크 트랙 로드 실패는 조용히 무시 (비공개/삭제 등)
+        console.warn('[PlayerPage] ?track load failed', err?.response?.status || err?.message);
+      }
+    })();
+  }, [searchParams, currentSong?.id, play]);
 
   // Sync local videoRef with context videoRef
   useEffect(() => {
@@ -63,7 +106,8 @@ export default function PlayerPage() {
         });
 
         // generation_id가 있으면 세밀한 생성 파라미터도 가져오기
-        if (track.generation_id) {
+        // (비로그인 시 skip — /generate/{id} 는 인증 필수라 anon 401 발생)
+        if (track.generation_id && user) {
           try {
             const { data: gen } = await api.getGeneration(track.generation_id);
             setGenDetail(gen);
@@ -71,6 +115,9 @@ export default function PlayerPage() {
             setGenDetail(null);
           }
         } else {
+          if (import.meta.env.DEV && track.generation_id && !user) {
+            console.info('[PlayerPage] anon user, skip getGeneration');
+          }
           setGenDetail(null);
         }
       } catch (err) {
@@ -83,33 +130,93 @@ export default function PlayerPage() {
       }
     };
     fetchDetail();
-  }, [currentSong?.id]);
+  }, [currentSong?.id, user]);
 
-  // 곡이 바뀌면 미디어 탭을 "노래"로 초기화
+  // 업로더 SNS 링크 렌더 로깅 — 개수만 (URL 값 콘솔 출력 금지)
+  useEffect(() => {
+    const count = trackDetail?.uploader_sns_links?.length ?? 0;
+    if (import.meta.env.DEV && count > 0) {
+      console.info('[PlayerPage] uploader sns links', { track: trackDetail?.id ?? null, count });
+    }
+  }, [trackDetail]);
+
+  // 곡이 바뀌면 미디어 탭을 "노래"로 초기화 (+ v149 가사 타임라인 재로드 대비 리셋)
   useEffect(() => {
     setMediaTab('song');
     setVideoMode(false);
+    setLyricsTimeline(null);
   }, [currentSong?.id, setVideoMode]);
 
-  // 미디어 탭 전환 핸들러
-  const handleMediaTabChange = useCallback((tab) => {
-    if (tab === mediaTab) return;
+  // 노래 탭으로 복귀
+  // - 실제 MV 재생 중이던 경우(videoMode)만 <video>→오디오 핸드오프
+  // - 가사 싱크/none 모드에선 오디오를 애초에 건드리지 않았으므로 뷰만 전환
+  //   (v149 음악 무중단: setVideoMode/오디오 조작 없음)
+  const handleSongTabClick = useCallback(() => {
+    if (mediaTab === 'song') return;
 
-    if (tab === 'video') {
-      // 노래 -> 동영상 전환
+    if (videoMode && localVideoRef.current) {
+      // 동영상(실 MV) -> 노래: 재생 위치를 오디오로 넘기고 오디오 재생
+      const video = localVideoRef.current;
+      const time = video.currentTime;
+      video.pause();
+      setMediaTab('song');
+      setVideoMode(false);
+      audioRef.current.currentTime = time;
+      audioRef.current.play().catch((err) => {
+        console.error('[PlayerPage] audio play failed', { err });
+      });
+    } else {
+      // 가사 싱크/none: 오디오는 무중단 재생 중 — 뷰만 전환
+      setMediaTab('song');
+    }
+  }, [mediaTab, videoMode, audioRef, setVideoMode]);
+
+  // 동영상 탭 클릭: MV/가사 타임라인을 lazy load 한 뒤 모드를 결정
+  // (v149) 모드 = 실 MV | 가사 싱크 | none. 실 MV 만 오디오 pause + videoMode(true).
+  const handleVideoTabClick = useCallback(async () => {
+    if (mediaTab === 'video') return;
+    if (!currentSong) return;
+
+    // 미로드 항목만 병렬 fetch (mvData 는 트랙 상세에서 이미 채워져 있을 수 있음)
+    let mv = mvData;
+    let timeline = lyricsTimeline;
+    if (mv == null || timeline == null) {
+      setMvLoading(true);
+      try {
+        const [mvRes, tlRes] = await Promise.all([
+          mv == null ? api.getTrackMusicVideo(currentSong.id) : Promise.resolve({ data: mv }),
+          timeline == null ? api.getTrackLyricsTimeline(currentSong.id) : Promise.resolve({ data: timeline }),
+        ]);
+        mv = mvRes.data;
+        timeline = tlRes.data;
+        setMvData(mv);
+        setLyricsTimeline(timeline);
+      } catch (err) {
+        console.error('[PlayerPage] lyrics-timeline failed', { err, trackId: currentSong.id });
+        if (mv == null) { mv = { has_music_video: false, music_video_url: null }; setMvData(mv); }
+        if (timeline == null) { timeline = { has_timestamps: false, segments: [] }; setLyricsTimeline(timeline); }
+      } finally {
+        setMvLoading(false);
+      }
+    }
+
+    const hasRealMv = mv?.has_music_video && mv?.music_video_url;
+    const mode = hasRealMv ? 'mv' : (timeline?.has_timestamps ? 'lyric-sync' : 'none');
+    if (import.meta.env.DEV) console.info('[PlayerPage] video tab mode', { mode });
+
+    if (hasRealMv) {
+      // 실 MV: 오디오 pause 후 <video> 로 재생 핸드오프
       const time = audioRef.current.currentTime;
       audioRef.current.pause();
       setMediaTab('video');
       setVideoMode(true);
-
-      // video가 렌더링된 후 시간 동기화 (requestAnimationFrame으로 대기)
       requestAnimationFrame(() => {
         const video = localVideoRef.current;
         if (video) {
           const doSync = () => {
             video.currentTime = time;
             video.play().catch((err) => {
-              console.error('Video play failed:', err);
+              console.error('[PlayerPage] video play failed', { err });
             });
           };
           if (video.readyState >= 1) {
@@ -120,36 +227,21 @@ export default function PlayerPage() {
         }
       });
     } else {
-      // 동영상 -> 노래 전환
-      const video = localVideoRef.current;
-      const time = video ? video.currentTime : 0;
-      if (video) video.pause();
-
-      setMediaTab('song');
-      setVideoMode(false);
-      audioRef.current.currentTime = time;
-      audioRef.current.play().catch((err) => {
-        console.error('Audio play failed:', err);
-      });
+      // 가사 싱크/none: 순수 시각 오버레이 — 오디오/videoMode 를 절대 건드리지 않음
+      setMediaTab('video');
     }
-  }, [mediaTab, audioRef, setVideoMode]);
+  }, [mediaTab, currentSong, mvData, lyricsTimeline, audioRef, setVideoMode]);
 
-  // MV 데이터를 lazy load (동영상 탭 클릭 시 mvData가 없으면 fetch)
-  const handleVideoTabClick = useCallback(async () => {
-    if (!mvData && currentSong) {
-      setMvLoading(true);
-      try {
-        const { data } = await api.getTrackMusicVideo(currentSong.id);
-        setMvData(data);
-      } catch (err) {
-        console.error('Failed to load MV data:', err);
-        setMvData({ has_music_video: false, music_video_url: null });
-      } finally {
-        setMvLoading(false);
-      }
-    }
-    handleMediaTabChange('video');
-  }, [mvData, currentSong, handleMediaTabChange]);
+  // v126 — SNS 공유 / 링크 복사 (v127: useTrackShare 훅 재사용 — 동작 불변)
+  const handleSnsShare = useCallback((sns) => {
+    if (!currentSong) return;
+    shareTo(sns, { id: currentSong.id, title: currentSong.title });
+  }, [currentSong, shareTo]);
+
+  const handleCopyLink = useCallback(() => {
+    if (!currentSong) return;
+    copyLink({ id: currentSong.id, title: currentSong.title });
+  }, [currentSong, copyLink]);
 
   // Video 이벤트로 PlayerContext의 currentTime/duration/isPlaying 동기화
   useEffect(() => {
@@ -208,7 +300,7 @@ export default function PlayerPage() {
             <div className="player-page__media-tabs">
               <button
                 className={`player-page__media-tab ${mediaTab === 'song' ? 'player-page__media-tab--active' : ''}`}
-                onClick={() => handleMediaTabChange('song')}
+                onClick={handleSongTabClick}
               >
                 <FiMusic /> 노래
               </button>
@@ -223,34 +315,55 @@ export default function PlayerPage() {
             {/* 미디어 영역 */}
             <div className="player-page__cover">
               {mediaTab === 'song' ? (
-                // 노래 탭: 기존 커버이미지
-                coverSrc ? (
-                  <img src={coverSrc} alt="" className="player-page__cover-img" />
-                ) : (
-                  <div className="player-page__cover-placeholder">♪</div>
-                )
+                // 노래 탭: 기존 커버이미지 (+ v137 — AI 생성 뱃지: 플랫폼 특성 고지, 전 곡 공통)
+                <>
+                  {coverSrc ? (
+                    <img src={coverSrc} alt="" className="player-page__cover-img" />
+                  ) : (
+                    <div className="player-page__cover-placeholder">♪</div>
+                  )}
+                  <span className="player-page__ai-badge">AI 생성</span>
+                </>
               ) : (
                 // 동영상 탭
                 mvLoading ? (
                   <div className="player-page__mv-loading">뮤직비디오 정보를 불러오는 중...</div>
                 ) : mvData?.has_music_video && mvData?.music_video_url ? (
-                  <video
-                    ref={localVideoRef}
-                    className="player-page__video"
-                    src={mvData.music_video_url}
-                    playsInline
-                  />
+                  // v151 — 동영상(MV) 화면에도 노래 탭과 동일한 AI 생성 뱃지 노출
+                  <>
+                    <video
+                      ref={localVideoRef}
+                      className="player-page__video"
+                      src={mvData.music_video_url}
+                      playsInline
+                    />
+                    <span className="player-page__ai-badge">AI 생성</span>
+                  </>
+                ) : lyricsTimeline?.has_timestamps ? (
+                  // v149 — 실 MV 없음 + 가사 타임스탬프 존재: 커버+가사 싱크 오버레이
+                  // v151 — 가사싱크 화면에도 AI 생성 뱃지 노출
+                  <>
+                    <LyricSyncVideo coverSrc={coverSrc} segments={lyricsTimeline.segments} />
+                    <span className="player-page__ai-badge">AI 생성</span>
+                  </>
                 ) : (
                   <div className="player-page__mv-empty">
                     <FiFilm size={48} />
-                    <p>뮤직비디오가 없는 음악입니다</p>
+                    <p>MV나 가사 싱크가 준비되면 영상이 제공됩니다</p>
                   </div>
                 )
               )}
             </div>
 
             <h1 className="player-page__title">{currentSong.title}</h1>
-            <p className="player-page__artist">{currentSong.artist_name}</p>
+            <p className="player-page__artist">
+              <Avatar
+                src={trackDetail?.uploader_profile_image}
+                name={currentSong.artist_name}
+                size={20}
+              />
+              {currentSong.artist_name}
+            </p>
           </div>
 
           {/* Right: Tabs */}
@@ -273,6 +386,59 @@ export default function PlayerPage() {
             <div className="player-page__tab-content">
               {activeTab === 'prompt' && (
                 <div className="player-page__prompt-info">
+                  {/* v126 — SNS 공유 버튼 행 (프롬프트 탭 최상단) */}
+                  <div className="player-page__share-section">
+                    <h3 className="player-page__share-title">SNS 공유</h3>
+                    <div className="player-page__share-row">
+                      <button
+                        className="player-page__share-btn"
+                        disabled={!!sharingSns}
+                        onClick={() => handleSnsShare('youtube')}
+                      >
+                        ▶ YouTube 쇼츠
+                      </button>
+                      <button
+                        className="player-page__share-btn"
+                        disabled={!!sharingSns}
+                        onClick={() => handleSnsShare('reels')}
+                      >
+                        📷 릴스
+                      </button>
+                      <button
+                        className="player-page__share-btn"
+                        disabled={!!sharingSns}
+                        onClick={() => handleSnsShare('tiktok')}
+                      >
+                        🎵 틱톡
+                      </button>
+                      <button
+                        className="player-page__share-btn"
+                        disabled={!!sharingSns}
+                        onClick={handleCopyLink}
+                      >
+                        🔗 링크
+                      </button>
+                      {/* v137 — 곡 신고 (본인 곡에는 미표시) */}
+                      {!(user && trackDetail && trackDetail.uploader_id === user.id) && (
+                        <button
+                          className="player-page__share-btn player-page__report-btn"
+                          onClick={() => setReportOpen(true)}
+                        >
+                          🚩 신고
+                        </button>
+                      )}
+                    </div>
+                    {sharingSns && (
+                      <div className="player-page__share-loading">
+                        <span className="player-page__share-spinner" />
+                        공유 영상 생성 중...
+                      </div>
+                    )}
+                    {!sharingSns && shareNotice && (
+                      <div className="player-page__share-notice">{shareNotice}</div>
+                    )}
+                  </div>
+
                   {loadingDetail ? (
                     <div className="player-page__loading">정보를 불러오는 중...</div>
                   ) : trackDetail ? (
@@ -370,7 +536,35 @@ export default function PlayerPage() {
 
               {activeTab === 'prompt' && trackDetail && (
                 <section className="player-page__character-section">
-                  <CharacterCoverCard character={trackDetail?.cover_character ?? null} />
+                  <CharacterCoverCard
+                    character={trackDetail?.cover_character ?? null}
+                    trackId={trackDetail?.id ?? null}
+                  />
+                </section>
+              )}
+
+              {/* 업로더 SNS 채널 — uploader_sns_links 가 1개 이상일 때만 (구응답엔 필드 없음 → 미표시) */}
+              {activeTab === 'prompt' && (trackDetail?.uploader_sns_links?.length ?? 0) > 0 && (
+                <section className="player-page__sns-section">
+                  <h3 className="player-page__sns-title">스타의 SNS 채널</h3>
+                  <div className="player-page__sns-list">
+                    {trackDetail.uploader_sns_links.map((url, idx) => {
+                      const platform = detectPlatform(url);
+                      return (
+                        <a
+                          key={idx}
+                          className="player-page__sns-link"
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <span className="player-page__sns-icon">{platform.icon}</span>
+                          <span className="player-page__sns-label">{platform.label}</span>
+                          <span className="player-page__sns-url">{shortenSnsUrl(url)}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
                 </section>
               )}
 
@@ -383,7 +577,7 @@ export default function PlayerPage() {
                       <div
                         key={song.id + '-' + idx}
                         className={`player-page__queue-item ${idx === currentIndex ? 'player-page__queue-item--active' : ''}`}
-                        onClick={() => play(song, playlist)}
+                        onClick={() => play(song)}
                       >
                         <span className="player-page__queue-num">{idx + 1}</span>
                         <div className="player-page__queue-cover">
@@ -400,6 +594,7 @@ export default function PlayerPage() {
                         {idx === currentIndex && isPlaying && (
                           <span className="player-page__queue-playing">재생중</span>
                         )}
+                        <TrackShareButton track={{ id: song.id, title: song.title }} size={14} />
                         <button
                           className="player-page__queue-remove"
                           onClick={(e) => { e.stopPropagation(); removeFromPlaylist(song.id); }}
@@ -416,6 +611,15 @@ export default function PlayerPage() {
           </div>
         </div>
       </div>
+
+      {/* v137 — 곡 신고 모달 */}
+      {reportOpen && (
+        <ReportModal
+          targetType="track"
+          targetId={currentSong.id}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
     </div>
   );
 }

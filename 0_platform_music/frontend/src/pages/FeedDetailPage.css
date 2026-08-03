@@ -1,0 +1,16 @@
+.feed-detail {
+  max-width: 640px;
+  padding: 24px 0;
+}
+
+.feed-detail__status {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--color-text-sub);
+}
+
+@media (max-width: 768px) {
+  .feed-detail {
+    padding: 16px 0;
+  }
+}

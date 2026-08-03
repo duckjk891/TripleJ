@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,29 @@ logging.basicConfig(
     force=True,
 )
 
+
+# GuardSquad — uvicorn access 로그의 요청 라인에 보호자 동의 토큰(URL 경로)이
+# 그대로 남지 않도록 마스킹. 앱 로거는 토큰 앞 8자만 쓰지만 access 로그는
+# 경로 전체를 기록하므로 여기서 걸러야 함.
+class _GuardianTokenMaskFilter(logging.Filter):
+    _pattern = re.compile(r"(/api/auth/guardian-consent/)[^/\s\"?]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.args:
+                record.args = tuple(
+                    self._pattern.sub(r"\1<masked>", a) if isinstance(a, str) else a
+                    for a in record.args
+                )
+            if isinstance(record.msg, str):
+                record.msg = self._pattern.sub(r"\1<masked>", record.msg)
+        except Exception:
+            pass
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_GuardianTokenMaskFilter())
+
 load_dotenv()
 
 from .config import settings
@@ -27,7 +51,7 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, _logs
+from .routes import admin, admin_moderation, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, _logs
 
 
 @asynccontextmanager
@@ -84,6 +108,277 @@ async def lifespan(app: FastAPI):
         print("[migration] track_embeddings ensured")
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] track_embeddings ensure failed: %s", _e)
+
+    # WishlistSquad — ensure ad_wishlist table (광고상품 위시리스트, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS ad_wishlist ("
+                "user_id UUID NOT NULL, "
+                "item_id TEXT NOT NULL, "
+                "created_at TIMESTAMPTZ DEFAULT now(), "
+                "PRIMARY KEY(user_id, item_id))"
+            )
+        print("[migration] ad_wishlist ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] ad_wishlist ensure failed: %s", _e)
+
+    # ProfileSquad — ensure users demographics columns (출생연도/성별/지역, 전부 선택, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_year INT")
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(16)")
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS region VARCHAR(40)")
+            # birth_year(INT) → birth_date(DATE) 전환: 컬럼 추가 + 1월 1일 기준 backfill (idempotent)
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date DATE")
+            await _conn.execute(
+                "UPDATE users SET birth_date = make_date(birth_year, 1, 1) "
+                "WHERE birth_date IS NULL AND birth_year IS NOT NULL"
+            )
+        print("[migration] users.demographics ensured")
+        print("[migration] users.birth_date ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] users.demographics ensure failed: %s", _e)
+
+    # TrustSquad — ensure users verification columns (소셜 본인인증 트랙, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE")
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ")
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_provider VARCHAR(20)")
+        print("[migration] users.verification ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] users.verification ensure failed: %s", _e)
+
+    # SnsLinkSquad — ensure users.sns_links JSONB column (SNS 채널 URL 목록, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS sns_links JSONB DEFAULT '[]'::jsonb"
+            )
+        print("[migration] users.sns_links ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] users.sns_links ensure failed: %s", _e)
+
+    # GuardSquad — ensure users.nationality/account_status (내·외국인 구분 + 만14세 동의 상태, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nationality VARCHAR(16)")
+            await _conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'active'"
+            )
+        print("[migration] users.nationality/account_status ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] users.nationality/account_status ensure failed: %s", _e)
+
+    # ReferralSquad(v154) — ensure users.referral_code/referred_by + 부분 유니크 인덱스
+    # + NULL 유저 백필 (멱등 — 재기동마다 referral_code IS NULL 인 유저만 발급)
+    try:
+        from .database import postgres as _pg
+        from .services.referral_service import backfill_referral_codes
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(8)")
+            await _conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID")
+            await _conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code "
+                "ON users(referral_code) WHERE referral_code IS NOT NULL"
+            )
+            _n_backfilled = await backfill_referral_codes(_conn)
+        print(f"[migration] users.referral_code ensured (backfilled={_n_backfilled})")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] users.referral_code ensure failed: %s", _e)
+
+    # GuardSquad — ensure guardian_consents table (법정대리인 동의 기록 — 법정 증빙, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS guardian_consents ("
+                "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+                "child_user_id UUID NOT NULL, "
+                "guardian_name VARCHAR(60), "
+                "guardian_phone VARCHAR(20), "
+                "consent_token TEXT UNIQUE NOT NULL, "
+                "status VARCHAR(16) DEFAULT 'pending', "
+                "method VARCHAR(20) DEFAULT 'mock', "
+                "requested_at TIMESTAMPTZ DEFAULT now(), "
+                "decided_at TIMESTAMPTZ)"
+            )
+        print("[migration] guardian_consents ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] guardian_consents ensure failed: %s", _e)
+
+    # FaceGuardSquad(v135) — guardian_consents.consent_type + face_biometrics/face_photo_verifications
+    # (얼굴 인증: 저장 얼굴 메타 + 사진별 검증 통과 기록, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "ALTER TABLE guardian_consents ADD COLUMN IF NOT EXISTS consent_type VARCHAR(30) DEFAULT 'signup'"
+            )
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS face_biometrics ("
+                "user_id UUID PRIMARY KEY, "
+                "object_name TEXT NOT NULL, "
+                "created_at TIMESTAMPTZ DEFAULT now(), "
+                "updated_at TIMESTAMPTZ DEFAULT now())"
+            )
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS face_photo_verifications ("
+                "user_id UUID NOT NULL, "
+                "photo_sha256 VARCHAR(64) NOT NULL, "
+                "verified_at TIMESTAMPTZ DEFAULT now(), "
+                "PRIMARY KEY(user_id, photo_sha256))"
+            )
+        print("[migration] face_verify tables ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] face_verify tables ensure failed: %s", _e)
+
+    # FaceGuardSquad — 기동 점검 로그 (FACE_DATA_KEY 미설정 경고 등)
+    try:
+        from .services.face_verify_service import startup_check as _face_startup_check
+        _face_startup_check()
+    except Exception as _e:
+        logging.getLogger(__name__).warning("[face-verify] startup check failed: %s", _e)
+
+    # ConsentSquad — ensure user_consents table (가입/기능 동의 이력 — append 형, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS user_consents ("
+                "id BIGSERIAL PRIMARY KEY, "
+                "user_id UUID NOT NULL, "
+                "consent_key VARCHAR(30) NOT NULL, "
+                "agreed BOOLEAN NOT NULL, "
+                "version VARCHAR(20) NOT NULL, "
+                "created_at TIMESTAMPTZ DEFAULT now())"
+            )
+            await _conn.execute(
+                "CREATE INDEX IF NOT EXISTS user_consents_lookup "
+                "ON user_consents(user_id, consent_key, created_at DESC)"
+            )
+        print("[migration] user_consents ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] user_consents ensure failed: %s", _e)
+
+    # TrustSquad(v137) — ensure reports table (신고 시스템, idempotent)
+    # 부분 유니크: 동일 reporter+target 의 pending 신고 1건만 허용.
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS reports ("
+                "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+                "reporter_id UUID NOT NULL, "
+                "target_type VARCHAR(10) NOT NULL, "
+                "target_id VARCHAR(40) NOT NULL, "
+                "reason_code VARCHAR(20) NOT NULL, "
+                "reason_text TEXT, "
+                "status VARCHAR(12) NOT NULL DEFAULT 'pending', "
+                "action VARCHAR(10), "
+                "created_at TIMESTAMPTZ DEFAULT now(), "
+                "handled_at TIMESTAMPTZ, "
+                "handled_by UUID)"
+            )
+            await _conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS reports_pending_unique "
+                "ON reports(reporter_id, target_type, target_id) WHERE status = 'pending'"
+            )
+            await _conn.execute(
+                "CREATE INDEX IF NOT EXISTS reports_status_created "
+                "ON reports(status, created_at DESC)"
+            )
+        print("[migration] reports ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] reports ensure failed: %s", _e)
+
+    # TrustSquad(v138) — 신고 집행 기반: reports 증거/판정 컬럼 + user_violations
+    # (위반 이력 — 차후 스트라이크 데이터) + face_source_blacklist (확정 삭제된
+    # 도용 원본 사진 sha256 — 소비는 BE-2 생성 입력 차단). idempotent.
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS evidence JSONB")
+            await _conn.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS resolution VARCHAR(30)")
+            await _conn.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS prev_state JSONB")
+            # confirm_delete(14자) 등 확장 액션 수용
+            await _conn.execute("ALTER TABLE reports ALTER COLUMN action TYPE VARCHAR(20)")
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS user_violations ("
+                "id BIGSERIAL PRIMARY KEY, "
+                "user_id UUID NOT NULL, "
+                "report_id UUID, "
+                "kind VARCHAR(20) NOT NULL, "
+                "created_at TIMESTAMPTZ DEFAULT now())"
+            )
+            await _conn.execute(
+                "CREATE INDEX IF NOT EXISTS user_violations_user "
+                "ON user_violations(user_id, created_at DESC)"
+            )
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS face_source_blacklist ("
+                "sha256 VARCHAR(64) PRIMARY KEY, "
+                "report_id UUID, "
+                "created_at TIMESTAMPTZ DEFAULT now())"
+            )
+        print("[migration] reports v138 evidence/user_violations/face_source_blacklist ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] reports v138 ensure failed: %s", _e)
+
+    # TrustSquad(v139) — 소명(report_appeals, report_id 당 1건) + 스트라이크
+    # 생성 제한(users.restricted_until). idempotent.
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS report_appeals ("
+                "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+                "report_id UUID NOT NULL UNIQUE, "
+                "user_id UUID NOT NULL, "
+                "text VARCHAR(2000) NOT NULL, "
+                "created_at TIMESTAMPTZ DEFAULT now())"
+            )
+            await _conn.execute(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS restricted_until TIMESTAMPTZ"
+            )
+        print("[migration] report_appeals/users.restricted_until v139 ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] v139 appeals/restricted ensure failed: %s", _e)
+
+    # FeedSquad — ensure PG feed_likes table + Mongo feeds/feed_comments indexes
+    # (스타 채널 음악 피드 v131, idempotent)
+    try:
+        from .database import postgres as _pg
+        async with _pg._pool.acquire() as _conn:
+            await _conn.execute(
+                "CREATE TABLE IF NOT EXISTS feed_likes ("
+                "user_id UUID NOT NULL, "
+                "feed_id VARCHAR(40) NOT NULL, "
+                "created_at TIMESTAMPTZ DEFAULT now(), "
+                "PRIMARY KEY(user_id, feed_id))"
+            )
+            await _conn.execute(
+                "CREATE INDEX IF NOT EXISTS feed_likes_feed ON feed_likes(feed_id)"
+            )
+        print("[migration] feed_likes ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] feed_likes ensure failed: %s", _e)
+    try:
+        from .database.mongodb import get_mongo as _feed_get_mongo
+        _feed_mongo = _feed_get_mongo()
+        await _feed_mongo.feeds.create_index([("author_id", 1), ("created_at", -1)])
+        # 향후 글로벌(팔로잉/추천) 피드용 선반영 인덱스
+        await _feed_mongo.feeds.create_index([("is_public", 1), ("created_at", -1)])
+        await _feed_mongo.feed_comments.create_index([("feed_id", 1), ("created_at", 1)])
+        print("[migration] feed indexes ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] feed indexes ensure failed: %s", _e)
 
     # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
     # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
@@ -218,11 +513,16 @@ async def lifespan(app: FastAPI):
     from .services.mv_assets import cleanup_loop as _mv_asset_cleanup_loop
     asset_cleanup_task = _asyncio.create_task(_mv_asset_cleanup_loop(3600))
 
+    # v152 DmSquad — Redis pub/sub 리스너(실시간 DM 팬아웃). Redis init(위) 이후 기동.
+    from .routes.dm import dm_pubsub_listener
+    dm_listener_task = _asyncio.create_task(dm_pubsub_listener())
+
     yield
 
     # Shutdown
     sync_task.cancel()
     asset_cleanup_task.cancel()
+    dm_listener_task.cancel()
     await close_postgres()
     await close_mongodb()
     await close_redis()
@@ -233,7 +533,7 @@ async def lifespan(app: FastAPI):
     print("All database connections closed.")
 
 
-app = FastAPI(title="AIMU Platform API v2", lifespan=lifespan)
+app = FastAPI(title="MAIDOL Platform API v2", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -264,7 +564,15 @@ app.include_router(vocal_repair.router)
 app.include_router(wondera.router)
 app.include_router(rewards.router)
 app.include_router(business.router)
+app.include_router(wishlist.router)
 app.include_router(points.router)
+app.include_router(attendance.router)
+app.include_router(feeds.router)
+app.include_router(face_verify.router)
+app.include_router(reports.router)
+app.include_router(dm.router)
+app.include_router(referral.router)
+app.include_router(admin_moderation.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 

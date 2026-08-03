@@ -1,0 +1,116 @@
+.profile-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.profile-extra__notice {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin: 0;
+}
+
+.profile-extra__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.profile-extra__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+}
+
+.profile-extra__birth-row {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-extra__birth-row .profile-extra__select {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-extra__select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.profile-extra__select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.profile-extra__radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.profile-extra__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.profile-extra__radio input {
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.profile-extra__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.profile-extra__submit-btn {
+  padding: 10px 20px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.profile-extra__submit-btn:hover {
+  background: var(--color-primary-dark);
+}
+
+.profile-extra__submit-btn:disabled {
+  background: #3D3D5C;
+  cursor: not-allowed;
+}
+
+.profile-extra__skip-btn {
+  padding: 10px 20px;
+  background: transparent;
+  color: var(--color-text-sub);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.profile-extra__skip-btn:hover {
+  background: var(--color-hover);
+}
+
+.profile-extra__skip-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

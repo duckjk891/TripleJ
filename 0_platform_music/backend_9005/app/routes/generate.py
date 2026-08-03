@@ -340,6 +340,12 @@ async def create_generation(
     Create a generation record.
     If start_music_gen=True, also starts background music generation.
     """
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (제한 중이면 403)
+    from ..services.strike_service import check_generation_allowed
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     if not body.prompt.strip():
         return JSONResponse(status_code=400, content={"error": "프롬프트를 입력해주세요."})
 
@@ -434,6 +440,12 @@ async def start_music_generation(
     current_user=Depends(get_current_user),
 ):
     """Start music generation for an existing generation record."""
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (제한 중이면 403)
+    from ..services.strike_service import check_generation_allowed
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     if not ObjectId.is_valid(gen_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
 

@@ -10,19 +10,27 @@ import ChartPage from './pages/ChartPage';
 import SearchPage from './pages/SearchPage';
 import AlbumDetailPage from './pages/AlbumDetailPage';
 import ArtistDetailPage from './pages/ArtistDetailPage';
+import FeedDetailPage from './pages/FeedDetailPage';
+import TimelinePage from './pages/TimelinePage';
 import PlaylistPage from './pages/PlaylistPage';
 import PlaylistDetailPage from './pages/PlaylistDetailPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import OAuthCallbackPage from './pages/OAuthCallbackPage';
+import GuardianConsentPage from './pages/GuardianConsentPage';
+import InvitePage from './pages/InvitePage';
 import UploadPage from './pages/UploadPage';
 import MyMusicPage from './pages/MyMusicPage';
 import PlayerPage from './pages/PlayerPage';
+import DmInboxPage from './pages/DmInboxPage';
 import BusinessPage from './pages/BusinessPage';
 import ItemSelectPage from './pages/ItemSelectPage';
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminTracksPage from './pages/admin/AdminTracksPage';
+import AdminReportsPage from './pages/admin/AdminReportsPage';
 import './App.css';
 
 function BusinessRoute({ children }) {
@@ -56,19 +64,35 @@ function AppContent() {
         <Route path="/search" element={<SearchPage />} />
         <Route path="/album/:id" element={<AlbumDetailPage />} />
         <Route path="/artist/:id" element={<ArtistDetailPage />} />
+        {/* v131 — 피드 단건(공유 링크 착지, 비로그인 열람) */}
+        <Route path="/feed/:feedId" element={<FeedDetailPage />} />
+        {/* v134 — 타임라인 (혼합 랭킹 노출, 비로그인 열람) */}
+        <Route path="/timeline" element={<TimelinePage />} />
         <Route path="/playlist" element={<PlaylistPage />} />
         <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/my-music" element={<MyMusicPage />} />
         <Route path="/items/:category" element={<ItemSelectPage />} />
         <Route path="/player" element={<PlayerPage />} />
+        {/* v152 — 실시간 1:1 DM함 (본인인증 게이트, 로그인 필요) */}
+        <Route path="/dm" element={<DmInboxPage />} />
+        <Route path="/dm/:cid" element={<DmInboxPage />} />
+        {/* v146 — 법적 고지 문서 (비로그인 상시 열람) */}
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
+        {/* v123 — 보호자(법정대리인) 동의 페이지: 무로그인 접근(토큰 링크 경유) */}
+        <Route path="/guardian-consent/:token" element={<GuardianConsentPage />} />
+        {/* v154 — 앱 추천(리퍼럴) 초대 착지 페이지 (비로그인 열람) */}
+        <Route path="/invite/:code" element={<InvitePage />} />
         <Route path="/business" element={<BusinessRoute><BusinessPage /></BusinessRoute>} />
         <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
         <Route path="/admin/tracks" element={<AdminRoute><AdminTracksPage /></AdminRoute>} />
+        {/* v137 — 신고 큐 */}
+        <Route path="/admin/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
       </Routes>
       {!isAdminPage && <Footer />}
       {!isAdminPage && <MusicPlayer />}

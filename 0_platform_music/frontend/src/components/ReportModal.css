@@ -1,0 +1,133 @@
+/* v137 — 공용 신고 모달 (트랙/피드/댓글) */
+.report-modal__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 16px;
+}
+
+.report-modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: left;
+}
+
+.report-modal__title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.report-modal__desc {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--color-text-sub);
+}
+
+.report-modal__reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.report-modal__reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.report-modal__reason input {
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.report-modal__text {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.report-modal__text::placeholder {
+  color: var(--color-text-sub);
+}
+
+.report-modal__error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--color-danger, #e05a5a);
+}
+
+.report-modal__done-text,
+.report-modal__login-text {
+  margin: 4px 0 6px;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.report-modal__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.report-modal__cancel-btn {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.report-modal__submit-btn {
+  flex: 2;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.report-modal__cancel-btn:disabled,
+.report-modal__submit-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* v139 — 접수 완료 하단 안내(처리 결과 확인 경로) */
+.report-modal__done-sub {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  line-height: 1.5;
+}

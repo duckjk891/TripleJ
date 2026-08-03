@@ -10,6 +10,11 @@ import StudioTab2 from '../components/StudioTab2';
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import ItemSelectModal from '../components/ItemSelectModal';
 import MyVoiceCloneSection from '../components/MyVoiceCloneSection';
+import ConsentGateModal from '../components/ConsentGateModal';
+import FaceVerifyFlow from '../components/FaceVerifyFlow';
+import TrackShareButton from '../components/TrackShareButton';
+import AppealModal from '../components/AppealModal';
+import { hasConsentCached, checkConsent } from '../utils/consent';
 import './MyMusicPage.css';
 
 const SORT_OPTIONS = [
@@ -173,6 +178,14 @@ function CharacterSection() {
   const [realFormOpen, setRealFormOpen] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0); // 실사 생성 경과시간(초)
   const photoInputRef = useRef(null);
+  // v125 — 실사 사진 업로드 전 얼굴 사진 AI 처리(photo_ai) 동의 게이트 모달
+  const [photoGateOpen, setPhotoGateOpen] = useState(false);
+  // v137 — 사진 확약 체크(실사·가상 공통): 미체크 시 생성 버튼 비활성.
+  // 체크 상태는 생성 form 에 portrait_confirmed=true 로 전달(BE 는 로그만 — 필드 없어도 동작).
+  const [portraitConfirmed, setPortraitConfirmed] = useState(false);
+  // v135 — 얼굴 인증(생체 대조) 플로우 모달. FACE_VERIFY_ENABLED(flag) ON 일 때만 열린다.
+  // flag OFF 면 이 state 는 항상 false — 기존 실사 생성 흐름 렌더/동작 불변.
+  const [faceFlowOpen, setFaceFlowOpen] = useState(false);
   // 비동기 job 폴링 인터벌 id — 언마운트/새 생성 시작 시 반드시 정리(누수 금지)
   const charPollRef = useRef(null);
 
@@ -345,7 +358,59 @@ function CharacterSection() {
       category: it.category,
     }));
 
+  // v125 — 실사 캐릭터 사진 업로드 트리거 앞 photo_ai 동의 게이트.
+  // 세션 캐시 히트 시 동기 진행(파일 선택 제스처 유지), 미동의/확인 실패 시 모달 표시.
+  const handleRealPhotoTrigger = async () => {
+    if (hasConsentCached('photo_ai')) {
+      photoInputRef.current?.click();
+      return;
+    }
+    try {
+      const agreed = await checkConsent('photo_ai');
+      if (agreed) {
+        photoInputRef.current?.click();
+        return;
+      }
+    } catch (err) {
+      console.error('[ConsentGate] check failed', {
+        key: 'photo_ai',
+        status: err?.response?.status,
+      });
+    }
+    setPhotoGateOpen(true);
+  };
+
+  // v135 — 실사화 생성 게이트: flag ON 이면 얼굴 인증 플로우를 먼저 통과해야 한다.
+  // flag OFF(현재 기본)면 status 확인 후 기존 흐름 그대로 진행 — 렌더/동작 불변.
   const handleGenerate = async () => {
+    if (!photoFile) {
+      alert('사진을 먼저 선택해주세요.');
+      return;
+    }
+    // v137 — 사진 확약 미체크 시 생성 중단
+    if (!portraitConfirmed) {
+      alert('사진 확약(본인 또는 인물 동의 확인)에 체크해야 생성할 수 있습니다.');
+      return;
+    }
+    try {
+      const { data: fv } = await api.getFaceVerifyStatus();
+      if (fv?.enabled) {
+        if (import.meta.env.DEV) console.info('[FaceVerifyFlow] gate on — opening flow before real gen');
+        setFaceFlowOpen(true);
+        return; // onVerified 콜백에서 submitRealGeneration 재개
+      }
+    } catch (err) {
+      // 상태 확인 실패 시 기존 흐름 진행 — 최종 방어는 BE 403(face_verification_required)
+      console.error('[FaceVerifyFlow] status check failed', {
+        status: err?.response?.status,
+        message: err?.message,
+      });
+    }
+    await submitRealGeneration();
+  };
+
+  // 실사화 생성 본체 (v135 이전의 handleGenerate 본문 — 얼굴 인증 통과 후에도 여기로 재개)
+  const submitRealGeneration = async () => {
     if (!photoFile) {
       alert('사진을 먼저 선택해주세요.');
       return;
@@ -356,6 +421,8 @@ function CharacterSection() {
       const formData = new FormData();
       formData.append('file', photoFile);
       formData.append('image_model', imageModel);
+      // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만)
+      if (portraitConfirmed) formData.append('portrait_confirmed', 'true');
       appendItemObjectNames(formData);
       if (import.meta.env.DEV) {
         console.info('[MyMusicPage] real gen', { image_model: imageModel });
@@ -381,6 +448,17 @@ function CharacterSection() {
     } catch (err) {
       console.error('[MyMusicPage] char job submit failed', err);
       setGenerating(false);
+      // v135 — BE 게이트 403 폴백: 얼굴 인증 플로우 모달을 띄우고 통과 시 재시도
+      if (err.response?.status === 403 && err.response?.data?.error === 'face_verification_required') {
+        if (import.meta.env.DEV) console.info('[FaceVerifyFlow] 403 fallback — opening flow');
+        setFaceFlowOpen(true);
+        return;
+      }
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) {
+        api.alertGenerationRestricted(err);
+        return;
+      }
       alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
     }
   };
@@ -443,12 +521,19 @@ function CharacterSection() {
       alert('화풍(샘플 택1 또는 직접 업로드)을 선택해주세요.');
       return;
     }
+    // v137 — 사진 확약 미체크 시 생성 중단
+    if (!portraitConfirmed) {
+      alert('사진 확약(본인 또는 인물 동의 확인)에 체크해야 생성할 수 있습니다.');
+      return;
+    }
     setVGenerating(true);
     setVElapsedSec(0);
     try {
       const formData = new FormData();
       formData.append('file', vPhotoFile);
       formData.append('image_model', imageModel);
+      // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만)
+      if (portraitConfirmed) formData.append('portrait_confirmed', 'true');
       if (customStyleFile) {
         formData.append('style_image', customStyleFile);
       } else {
@@ -484,6 +569,11 @@ function CharacterSection() {
     } catch (err) {
       console.error('[MyMusicPage] cartoon gen submit failed', err);
       setVGenerating(false);
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) {
+        api.alertGenerationRestricted(err);
+        return;
+      }
       alert(err.response?.data?.error || '가상화 캐릭터 시트 생성에 실패했습니다.');
     }
   };
@@ -799,6 +889,24 @@ function CharacterSection() {
     </div>
   );
 
+  // ── v137 — 사진 확약 체크 + 보관·비학습 고지 (실사·가상 공통) ──
+  const renderPortraitConfirm = () => (
+    <div className="mymusic-character__portrait-confirm">
+      <label className="mymusic-character__confirm-label">
+        <input
+          type="checkbox"
+          checked={portraitConfirmed}
+          onChange={(e) => setPortraitConfirmed(e.target.checked)}
+        />
+        <span>위 사진은 본인이거나, 사진 속 인물의 동의를 받았음을 확인합니다</span>
+      </label>
+      <p className="mymusic-character__photo-notice">
+        업로드한 사진은 캐릭터 생성·재생성 용도로만 보관되며 AI 학습에 사용되지 않습니다.
+        캐릭터 삭제 시 함께 삭제됩니다.
+      </p>
+    </div>
+  );
+
   // ── 실사(real) 업로드 폼 ────────────────────────────────
   const renderRealForm = () => (
     <div className="mymusic-character__variant">
@@ -814,7 +922,7 @@ function CharacterSection() {
         <div className="mymusic-character__upload-area">
           <div
             className="mymusic-character__dropzone"
-            onClick={() => photoInputRef.current?.click()}
+            onClick={handleRealPhotoTrigger}
           >
             <div className="mymusic-character__dropzone-icon"><FiImage /></div>
             <div className="mymusic-character__dropzone-text">
@@ -843,6 +951,8 @@ function CharacterSection() {
           )}
         </div>
 
+        {renderPortraitConfirm()}
+
         {renderItemSlots()}
 
         {/* 이미지 모델 선택 (가상화 탭과 동일, 기본 gpt_image_2) */}
@@ -861,7 +971,8 @@ function CharacterSection() {
         <button
           className="mymusic-character__generate-btn"
           onClick={handleGenerate}
-          disabled={!photoFile || generating}
+          disabled={!photoFile || !portraitConfirmed || generating}
+          title={!portraitConfirmed ? '사진 확약에 체크해야 생성할 수 있습니다' : undefined}
         >
           {generating ? (
             <>
@@ -990,6 +1101,8 @@ function CharacterSection() {
           )}
         </div>
 
+        {renderPortraitConfirm()}
+
         {/* 2) 화풍 선택 (샘플 갤러리) */}
         <p className="mymusic-character__style-title">화풍 선택</p>
         {stylesLoading ? (
@@ -1069,7 +1182,8 @@ function CharacterSection() {
         <button
           className="mymusic-character__generate-btn"
           onClick={handleGenerateCartoon}
-          disabled={!vPhotoFile || (!selectedStyleKey && !customStyleFile) || vGenerating}
+          disabled={!vPhotoFile || (!selectedStyleKey && !customStyleFile) || !portraitConfirmed || vGenerating}
+          title={!portraitConfirmed ? '사진 확약에 체크해야 생성할 수 있습니다' : undefined}
         >
           {vGenerating ? (
             <>
@@ -1127,6 +1241,32 @@ function CharacterSection() {
           category={itemModalCategory}
           onSelect={handleItemPicked}
           onClose={() => setItemModalCategory(null)}
+        />
+      )}
+
+      {/* v125 — photo_ai 동의 게이트: 동의 시 파일 선택 진행, 취소 시 중단 */}
+      {photoGateOpen && (
+        <ConsentGateModal
+          consentKey="photo_ai"
+          onAgree={() => {
+            setPhotoGateOpen(false);
+            photoInputRef.current?.click();
+          }}
+          onClose={() => setPhotoGateOpen(false)}
+        />
+      )}
+
+      {/* v135 — 얼굴 인증(생체 대조) 플로우: flag ON + 실사화 생성 시에만 열림.
+          검증 통과 시 원래 생성(submitRealGeneration) 재개, 닫기 시 생성 중단.
+          cartoon(가상) 경로는 게이트 대상 아님. */}
+      {faceFlowOpen && (
+        <FaceVerifyFlow
+          photoFile={photoFile}
+          onVerified={() => {
+            setFaceFlowOpen(false);
+            submitRealGeneration();
+          }}
+          onClose={() => setFaceFlowOpen(false)}
         />
       )}
     </div>
@@ -1332,6 +1472,37 @@ export default function MyMusicPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [deleting, setDeleting] = useState(null);
+  // v139 — 소명: blinded 트랙 ↔ my-affected 매칭 맵({ [trackId]: item }) + 소명 모달 대상 트랙
+  const [affectedMap, setAffectedMap] = useState({});
+  const [appealTrackId, setAppealTrackId] = useState(null);
+
+  // v139 — blinded 트랙이 있을 때만 my-affected 조회 (has_appeal 로 버튼 상태 결정)
+  useEffect(() => {
+    if (!tracks.some((t) => t.report_blinded)) return undefined;
+    let alive = true;
+    api.getMyAffectedReports()
+      .then(({ data }) => {
+        if (!alive) return;
+        const map = {};
+        (Array.isArray(data?.reports) ? data.reports : (Array.isArray(data?.items) ? data.items : [])).forEach((it) => {
+          if (it.target_type === 'track' && it.target_id != null) {
+            map[String(it.target_id)] = it;
+          }
+        });
+        setAffectedMap(map);
+        if (import.meta.env.DEV) {
+          console.info('[AppealModal] my-affected track map loaded', {
+            count: Object.keys(map).length,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('[AppealModal] my-affected load failed', {
+          status: err?.response?.status,
+        });
+      });
+    return () => { alive = false; };
+  }, [tracks]);
 
   const fetchTracks = useCallback(async () => {
     if (!user) return;
@@ -1395,13 +1566,7 @@ export default function MyMusicPage() {
       artist_name: track.uploader_nickname || user?.nickname || '',
       cover_image: track.cover_image_url || '',
     };
-    const songList = tracks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      artist_name: t.uploader_nickname || user?.nickname || '',
-      cover_image: t.cover_image_url || '',
-    }));
-    play(song, songList);
+    play(song);
   };
 
   if (!user) {
@@ -1534,6 +1699,28 @@ export default function MyMusicPage() {
                         <span className={`mymusic-track-card__badge ${track.is_public === false ? 'mymusic-track-card__badge--private' : ''}`}>
                           {track.is_public === false ? '비공개' : '공개'}
                         </span>
+                        {/* v137 — 신고 처리 블라인드 표시 (report_blinded 필드 없으면 미표시) */}
+                        {track.report_blinded && (
+                          <span className="mymusic-track-card__blinded">
+                            🚫 신고 처리로 비공개되었습니다
+                          </span>
+                        )}
+                        {/* v139 — 소명하기 (제출됨이면 비활성) */}
+                        {track.report_blinded && (
+                          affectedMap[String(track.id)]?.has_appeal ? (
+                            <button className="mymusic-track-card__appeal-btn" disabled>
+                              소명 제출됨
+                            </button>
+                          ) : (
+                            <button
+                              className="mymusic-track-card__appeal-btn"
+                              onClick={() => setAppealTrackId(track.id)}
+                            >
+                              소명하기
+                            </button>
+                          )
+                        )}
+                        <TrackShareButton track={{ id: track.id, title: track.title }} size={14} />
                         <button
                           className="mymusic-track-card__delete"
                           onClick={() => handleDelete(track.id, track.title)}
@@ -1612,6 +1799,22 @@ export default function MyMusicPage() {
         {/* Tab 7: Drafts */}
         {activeTab === 'drafts' && (
           <DraftsSection onLoadDraft={handleLoadDraft} />
+        )}
+
+        {/* v139 — 소명 제출 모달 (blinded 트랙) */}
+        {appealTrackId && (
+          <AppealModal
+            targetType="track"
+            targetId={appealTrackId}
+            onClose={() => setAppealTrackId(null)}
+            onSubmitted={() => {
+              const key = String(appealTrackId);
+              setAffectedMap((m) => ({
+                ...m,
+                [key]: { ...(m[key] || {}), has_appeal: true },
+              }));
+            }}
+          />
         )}
       </div>
     </div>

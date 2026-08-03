@@ -1,0 +1,168 @@
+/* v135 — 얼굴 인증(생체 대조) 플로우 모달 (ConsentGateModal 톤 준수) */
+.face-verify__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 16px;
+}
+
+.face-verify__modal {
+  width: 100%;
+  max-width: 480px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: left;
+  overflow-y: auto;
+}
+
+.face-verify__title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.face-verify__message {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.face-verify__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-sub);
+}
+
+/* 동의 전문 제목 + pre-wrap 스크롤 박스 */
+.face-verify__consent-label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.face-verify__consent-body {
+  flex: 1;
+  min-height: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-sub);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.face-verify__agree-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.face-verify__agree-label input {
+  margin-top: 2px;
+}
+
+/* 미성년 보호자 안내 문구 */
+.face-verify__guardian-notice {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-sub);
+}
+
+/* 셀피 미리보기 — 거울 모드(전면 카메라 UX) */
+.face-verify__video {
+  width: 100%;
+  margin-top: 12px;
+  border-radius: 8px;
+  background: #000;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.face-verify__spinner {
+  display: block;
+  width: 24px;
+  height: 24px;
+  margin: 8px auto 12px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: face-verify-spin 0.9s linear infinite;
+}
+
+@keyframes face-verify-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.face-verify__error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--color-danger, #e05a5a);
+}
+
+.face-verify__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.face-verify__btn {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.face-verify__btn--primary {
+  flex: 2;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+}
+
+.face-verify__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* v136 — AWS Face Liveness(FaceLivenessDetector) 컨테이너 */
+.face-verify__liveness {
+  width: 100%;
+  margin-top: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+}

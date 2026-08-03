@@ -76,3 +76,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* 업로더 미니 아바타 포함 변형 (TrackCard) — 텍스트는 내부 span 이 말줄임 담당 */
+.album-card__artist--with-avatar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.album-card__artist-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* v127 — TrackCard 하단 메타 행 (아티스트 좌 + 공유 버튼 우) */
+.album-card__meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.album-card__meta-row .album-card__artist {
+  min-width: 0;
+  flex: 1;
+}

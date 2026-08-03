@@ -19,7 +19,12 @@ from ..auth import get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from ..services.face_search_service import (
+    BLOCKED_SOURCE_PHOTO_RESPONSE,
+    is_blocked_source_photo,
+)
 from ..services.points_service import refund_points, spend_points
+from ..services.strike_service import check_generation_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +358,7 @@ async def generate_sheet(
     shoes_object_name: Optional[str] = Form(None),
     user_text: str = Form(""),
     image_model: str = Form("nb_pro"),
+    portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
     current_user=Depends(get_current_user),
 ):
     """Upload a reference photo and generate a photorealistic character sheet.
@@ -363,6 +369,8 @@ async def generate_sheet(
       - `*_image`: a direct UploadFile.
     Each resolved item overrides the corresponding outfit section in the prompt.
     """
+    # v137 — 확약 체크 수신 기록 (값 강제 없음 — 앱팀 9004 하위호환)
+    logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
     # v55: image_model 검증 (잘못된 값 → 400, 누락/공백 → "nb_pro").
     norm_image_model = _normalize_image_model(image_model)
     if norm_image_model is None:
@@ -397,6 +405,15 @@ async def generate_sheet(
             content={"error": "이미지 크기는 10MB 이하여야 합니다."},
         )
 
+    # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
+    if await is_blocked_source_photo(contents, current_user["id"]):
+        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve outfit items: ad-product object_name takes priority over upload.
@@ -406,6 +423,17 @@ async def generate_sheet(
 
     # v41: LoRA system removed — sheet generation is Nano Banana only.
     user_id = current_user["id"]
+
+    # FaceGuardSquad(v135) — 실사화 경로 얼굴 인증 게이트 (flag ON + 사진 첨부 시,
+    # photo SHA256 가 face_photo_verifications 에 없으면 403). cartoon·flag OFF 불변.
+    if settings.face_verify_enabled:
+        from ..services.face_verify_service import is_photo_verified
+
+        if not await is_photo_verified(user_id, contents):
+            return JSONResponse(
+                status_code=403,
+                content={"error": "face_verification_required", "message": "얼굴 인증이 필요합니다."},
+            )
 
     # Points — 검증 통과 후 생성 시작 전 2포인트 선차감 (부족 시 402 차단).
     point_ref = uuid_lib.uuid4().hex
@@ -505,6 +533,7 @@ async def generate_sheet_cartoon(
     shoes_object_name: Optional[str] = Form(None),
     user_text: str = Form(""),
     image_model: str = Form("nb_pro"),
+    portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
     style_preset: str = Form(""),
     style_image: Optional[UploadFile] = File(None),
     current_user=Depends(get_current_user),
@@ -518,6 +547,7 @@ async def generate_sheet_cartoon(
     Outfit items resolve like /generate-sheet (`*_object_name` ad-product image
     takes priority over `*_image` upload) and are converted into the chosen style.
     """
+    logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
     user_id = current_user["id"]
 
     # image_model 검증 (실사와 동일 규칙).
@@ -551,6 +581,16 @@ async def generate_sheet_cartoon(
             status_code=400,
             content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
         )
+
+    # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
+    if await is_blocked_source_photo(contents, current_user["id"]):
+        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve outfit items: ad-product object_name takes priority over upload.
@@ -804,10 +844,12 @@ async def generate_sheet_async(
     shoes_object_name: Optional[str] = Form(None),
     user_text: str = Form(""),
     image_model: str = Form("nb_pro"),
+    portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
     current_user=Depends(get_current_user),
 ):
     """Async variant of /generate-sheet — same form fields, returns a job_id
     immediately; generation runs in the background. Poll GET /job/{job_id}."""
+    logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
     # Validation — identical to the sync handler.
     norm_image_model = _normalize_image_model(image_model)
     if norm_image_model is None:
@@ -838,6 +880,16 @@ async def generate_sheet_async(
             status_code=400,
             content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
         )
+
+    # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
+    if await is_blocked_source_photo(contents, current_user["id"]):
+        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve ALL bytes inside the handler — UploadFile objects are closed
@@ -847,6 +899,16 @@ async def generate_sheet_async(
     shoes_bytes, shoes_mime, shoes_src = await _resolve_item_image(shoes_object_name, shoes_image)
 
     user_id = current_user["id"]
+
+    # FaceGuardSquad(v135) — 실사화 경로 얼굴 인증 게이트 (sync 핸들러와 동일).
+    if settings.face_verify_enabled:
+        from ..services.face_verify_service import is_photo_verified
+
+        if not await is_photo_verified(user_id, contents):
+            return JSONResponse(
+                status_code=403,
+                content={"error": "face_verification_required", "message": "얼굴 인증이 필요합니다."},
+            )
 
     # Points — 검증 통과 후 job 접수 전 2포인트 선차감 (부족 시 402, job 미생성).
     # ref 는 시도당 유니크 (point_events 유니크 인덱스와의 재시도 충돌 회피),
@@ -908,12 +970,14 @@ async def generate_sheet_cartoon_async(
     shoes_object_name: Optional[str] = Form(None),
     user_text: str = Form(""),
     image_model: str = Form("nb_pro"),
+    portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
     style_preset: str = Form(""),
     style_image: Optional[UploadFile] = File(None),
     current_user=Depends(get_current_user),
 ):
     """Async variant of /generate-sheet-cartoon — same form fields, returns a
     job_id immediately; generation runs in the background. Poll GET /job/{job_id}."""
+    logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
     user_id = current_user["id"]
 
     # Validation — identical to the sync cartoon handler.
@@ -946,6 +1010,16 @@ async def generate_sheet_cartoon_async(
             status_code=400,
             content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
         )
+
+    # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
+    if await is_blocked_source_photo(contents, current_user["id"]):
+        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve ALL bytes inside the handler (UploadFile closes after response).
@@ -1413,10 +1487,22 @@ async def get_my_character(
 async def delete_my_character(
     current_user=Depends(get_current_user),
 ):
-    """Delete current user's character."""
+    """Delete current user's character.
+
+    v137 ②: 원본 사진(original_photo_object_name)도 반드시 동반 삭제.
+    `characters/{user_id}/` prefix 일괄 삭제가 기본 커버하지만,
+    v40-3 경로로 temp 경로(`characters/temp/{user_id}/original_*`)가 박제된
+    도큐먼트는 prefix 밖이라 명시 삭제로 보완한다.
+    """
     user_id = current_user["id"]
     mongo = get_mongo()
     minio_client = get_minio()
+
+    # v137 ②: 삭제 전 원본 사진 object name 확보 (doc 삭제 후엔 조회 불가).
+    char = await mongo.characters.find_one(
+        {"user_id": user_id}, {"original_photo_object_name": 1}
+    )
+    original_photo = (char or {}).get("original_photo_object_name") or ""
 
     # Delete from MongoDB
     result = await mongo.characters.delete_one({"user_id": user_id})
@@ -1439,8 +1525,30 @@ async def delete_my_character(
             )
             for err in errors:
                 logger.warning("Failed to delete MinIO object: %s", err)
+        if original_photo.startswith(prefix):
+            logger.info(
+                "[character] original_photo_deleted user=%s object=%s (prefix sweep)",
+                user_id, original_photo,
+            )
     except Exception as e:
         logger.warning("Failed to clean up MinIO objects for character: %s", e)
+
+    # v137 ②: prefix 밖(temp 경로 등)에 저장된 원본 사진 명시 삭제.
+    if original_photo and not original_photo.startswith(prefix):
+        try:
+            minio_client.remove_object(
+                bucket_name=settings.minio_bucket_images,
+                object_name=original_photo,
+            )
+            logger.info(
+                "[character] original_photo_deleted user=%s object=%s (explicit)",
+                user_id, original_photo,
+            )
+        except Exception as e:
+            logger.warning(
+                "[character] original photo delete failed user=%s object=%s: %s",
+                user_id, original_photo, e,
+            )
 
     return {"message": "캐릭터가 삭제되었습니다."}
 
@@ -1451,6 +1559,10 @@ async def delete_my_character(
 @router.get("/preview/{object_name:path}")
 async def character_preview(object_name: str):
     """Proxy character sheet image from MinIO for external access."""
+    # FaceGuardSquad(v135) — faces/ 는 암호화 얼굴 데이터(백엔드 전용) 경로. 프록시 노출 금지.
+    # TrustSquad(v138) — evidence/ 는 신고 증거 격리 보존 경로(어드민 전용). 동일 차단.
+    if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
     minio_client = get_minio()
     try:
         response = minio_client.get_object(

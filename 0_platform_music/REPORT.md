@@ -13366,3 +13366,1149 @@ venv 의 `elasticsearch` 가 9.4.1(unpinned)이라 서버 8.12 에 `compatible-w
 
 ### 결론
 문서는 엔드포인트 단위로 **코드와 완전 정합**(누락 2건 보완 후). 형식은 기존 장(章) 체계 유지.
+
+## v114 — 스타 착장 아이템 위시리스트(♥) + 아이템 선택 모달 위시 필터 탭 (PLAN v113) — 2026-07-20
+
+### 요청 작업
+- 곡 재생 페이지 "이 곡의 주인공 캐릭터" 카드의 스타 착장 아이템에 ♥ 위시리스트 토글 추가.
+- 내캐릭터 탭 아이템 선택 모달에 [전체 | ♥ 내 위시리스트] 필터 탭 추가 (현재 카테고리의 위시 아이템만, 판매종료 뱃지·선택불가 처리).
+
+### 수행 결과
+**백엔드 (9005 선구현 → 9004 미러 완료)**
+- PG 신규 테이블 `ad_wishlist(user_id UUID, item_id TEXT, created_at, PK(user_id,item_id))` — main.py idempotent 마이그레이션 블록, 양 포트 로그 `[migration] ad_wishlist ensured` 확인.
+- 신규 `app/routes/wishlist.py` (prefix=/api/wishlist, 전부 인증):
+  - `POST /{item_id}/toggle` → `{wishlisted}` (Mongo ad_items 존재검증, 미존재/비ObjectId 404)
+  - `GET /check?item_ids=...` → `{wishlisted_ids}`
+  - `GET /?category=` → `{items:[{id,name,image_object_name,product_url,category,advertiser_nickname,is_active,wishlisted_at}]}` (Mongo join, 고아 item 제외+warning, 잘못된 category 400)
+- `[wishlist]` prefix + user 앞8자/item_id 추적자 로그 전 구간 삽입.
+
+**프론트엔드**
+- api/index.js: `toggleWishlist` / `checkWishlist` / `getWishlist` 추가 (컴포넌트 직접 fetch 없음).
+- CharacterCoverCard: 착장 슬롯별 `♡ 위시`/`♥ 담김` 토글(낙관적 업데이트+롤백, 401 시 로그인 안내, stopPropagation 으로 기존 구매 클릭 동작 불변). 비로그인 시 API 미호출(useAuth 게이트 — axios 401 인터셉터의 /login 리다이렉트 회피).
+- ItemSelectModal: [전체 | ♥ 내 위시리스트 (n)] 탭. 전체 탭 기존 동작 불변, 위시 탭 lazy 로드·판매종료 뱃지/dim/선택불가·♥ 해제 버튼.
+- `[CharCoverCard]`/`[ItemSelectModal]` prefix 로그 (DEV info, catch 는 항상 console.error).
+
+### 테스트 (tester, 9005)
+7/7 PASS — 무인증 401 / toggle↔PG 행 생성·삭제 실검증 / check 필터 / category 필터·400 / 미존재 404 / 회귀(광고 active·impression·click 200, 프론트 3개 모듈 vite transform 200) / `[wishlist]` 로그 실동작. 9004 미러 후 스모크(health 200, wishlist 401, 마이그레이션 로그) 통과.
+
+### 특이사항
+- WSL drvfs 특성상 uvicorn --reload 자동감지가 안 되어 touch 로 리로드 트리거함 (양 포트 공통, 운영 절차 참고).
+- wishlist list 는 PG 전체 행 조회 후 앱단 category 필터 — 위시 규모 커지면 최적화 여지 (현재 정확성 문제 없음).
+- REPORT 버전은 v114 로 기록 (REPORT.md 의 v113 이 이미 사용됨 — PLAN.md 의 본 작업 항목은 v113).
+- 테스트 잔여 데이터: 테스트 계정 1개 + ad_wishlist 행 1개, impression/click 각 1건 (무해).
+
+## v115 — 재생큐 옵션3: 단곡 큐잉 + 곡 종료 시 관련곡 1곡 자동 추가 (PLAN v114) — 2026-07-20
+
+### 요청 작업
+- 목록에서 곡 하나 클릭 시 화면 전체 리스트가 재생큐에 통째로 담기던 동작을 옵션3(유튜브뮤직식)으로 변경.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- `GET /api/tracks/{track_id}/related?exclude=&limit=` 신규 (무인증, limit 1~5 클램프).
+- 추천 3단 폴백: ①pgvector `track_embeddings` seed 임베딩 직조회→NN(신규 임베딩 호출 없음) ②같은 장르 공개곡 play_count 상위 ③전체 인기곡. 내부 실패는 폴백 흡수(500 없음), 404 는 seed 미존재/비ObjectId 만. 응답 `{tracks, source}`.
+- `[related]` 로그(enter/vector hits/폴백/done + track_id) 실동작 확인.
+
+**프론트엔드**
+- PlayerContext.play(song, songs, opts): `opts.queueAll` 일 때만 전체 큐 교체, 기본은 클릭곡 단곡 큐잉(큐에 이미 있으면 인덱스 이동). ended 핸들러: 마지막 곡 종료 시 getRelatedTracks(현재곡, 큐 id 전체, 1) → append + 자동 이어재생 (빈 결과/실패 시 정지). stale closure 방지 ref 미러 + 중복 fetch 가드.
+- 페이지별: 메인/차트/검색/아티스트/내음악 = 단곡, 플레이리스트·앨범 상세 = queueAll(컬렉션 이어듣기 유지), 재생큐 내부 클릭 = 인덱스 이동.
+- api/index.js `getRelatedTracks` 추가. `[PlayerContext]` 로그 삽입. ESLint 신규 에러 0 (기존 에러와 동일 baseline 확인).
+
+### 테스트 (tester, 9005)
+7/7 PASS — 기본 동작(seed 미포함·source)/limit 클램프·exclude/404 2종/폴백 체인(genre→popular, source=mixed 로그 검증)/vite transform 6모듈+변환본 grep/트랙 목록·상세·검색·MV 라우팅 회귀/`[related]` 로그. 9004 미러 후 related 200 스모크 통과.
+
+### 특이사항
+- `/api/tracks/search/related` 는 related 핸들러에 매칭되나 비ObjectId 404 로 무해 (search 자체는 정상 라우팅).
+- 현재 시드 데이터상 "공개+임베딩없음" 트랙이 없어 폴백은 비공개 트랙으로 검증 (결과 스펙 부합).
+- 운영 참고: /mnt/d(drvfs) 특성상 inotify 미지원 — uvicorn StatReload 는 touch 후 1~2분, vite 는 HMR 미동작(재시작 필요, vite.config.js 에 server.watch.usePolling 도입 검토 권장).
+
+## v116 — 광고주 대시보드 스타별 성과(착장/위시/클릭) (PLAN v115) — 2026-07-21
+
+### 요청 작업
+- 회사관리 대시보드에서 아이템별 스타(착장 이용자) 단위 성과 노출: 착장 수·위시 담김·쇼핑몰 클릭 → 광고주의 협찬 컨택 대상 파악 지원.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- 클릭 귀속: `POST /business/ads/{id}/click` 옵션 body `{track_id}` → ad_clicks 에 track_id·star_user_id(트랙 업로더) 저장. 무바디 호출 100% 호환, 6h 중복가드 불변.
+- 위시 이벤트: wishlist toggle 옵션 body `{track_id}` → Mongo `ad_wish_events` add/remove 기록 (실패해도 토글 정상 — 부가기능 격리).
+- 신규 `GET /business/ads/{item_id}/stars?period=` (require_business, 비소유 404): 착장은 공개 트랙+연결 mv_job 스냅샷 소급 집계(표시 로직과 동일 우선순위), 위시/클릭은 귀속 이벤트 기간 집계. `{stars:[...], untracked_clicks}`.
+- dashboard 확장: 아이템별 wish_count(PG 현재 담김)·worn_count + 루트 total_wishes·total_worn. 기존 필드 불변.
+
+**프론트엔드**
+- PlayerPage→CharacterCoverCard 에 trackId 전달, 클릭/위시 API 에 태깅 포함.
+- BusinessPage 대시보드: 요약 카드 '위시 담김'·'착장' 추가, 아이템 행에 위시/착장 컬럼 + "스타별 성과 ▼" 펼침(lazy, 순위/스타/착장/위시/쇼핑몰클릭), 빈 상태 안내("위시·클릭 스타 귀속은 오늘부터 수집"), 미귀속 클릭 n건 안내. api/index.js `getAdItemStars` 추가, recordAdClick/toggleWishlist 시그니처 확장(기존 콜러 무수정 호환).
+
+### 테스트 (tester, 9005) — 7/7 PASS
+- 클릭 태깅(정상/무효 track 3케이스 + 중복가드 유지), 위시 이벤트(add/remove·PG 토글 회귀·무바디 null 기록), stars(worn_count 를 mongosh 독립 재현으로 교차검증 일치, 404/403/401), dashboard 확장(수치 교차검증 + 기존 필드 회귀), FE transform, v113/v114 회귀, `[adstars]`/`[adclick]`/`[wishlist]` 로그 실동작. 9004 미러 후 health 200 + stars 라우트 401 스모크 통과.
+
+### 특이사항
+- 과거 클릭/위시는 스타 귀속 불가(태깅 시점부터 수집), 착장 수만 소급. stars 의 worn_count 는 기간 무관(의도).
+- tester 발견 기존 잠재버그(이번 범위 밖): business.py update_profile auto-create 분기가 미정의 변수 참조(company_name 등) — 해당 분기 진입 시 NameError 소지. 후속 수정 권장.
+- 테스트 잔여: smt_* 계정 3개 + 비활성 테스트 아이템 1개 유지(무해), Mongo 픽스처는 삭제 완료.
+
+## v117 — [1/2] 회원정보 확장: 출생연도·성별·지역 선택 수집 (PLAN v116) — 2026-07-21
+
+### 요청 작업
+- 광고 대시보드 인구통계 분석 기반 마련: 기본가입·소셜가입·기존회원 3경로 모두에서 출생연도/성별/지역을 선택 입력으로 수집.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- users 에 birth_year INT / gender VARCHAR(16) / region VARCHAR(40) (NULL 허용) idempotent 마이그레이션.
+- register·PATCH /auth/me/profile 에 옵션 3종 (gender male/female/other, birth_year 1900~올해, region 17개 시도+해외 화이트리스트, 무효 400). 부분 업데이트·null 지우기 지원. GET /me 에 3종 노출.
+- 개인정보 보호: 로그에 값 미출력 — `demo_fields=N` 개수 형식만, 이메일 마스킹 유지.
+
+**프론트엔드**
+- ProfileExtraForm 공용 컴포넌트 신규 (연도 select·성별 라디오·지역 select, 선택안함 지원, 임베드/버튼 이중 모드).
+- 3경로: ①기본가입 폼 "추가 정보(선택)" 섹션(미입력 시 기존 페이로드와 동일) ②소셜가입 착지 시 3종 모두 null 이면 온보딩 카드(저장/건너뛰기, 세션 스킵 플래그) ③헤더 "내 정보 설정" 모달(현재값 수정·지우기).
+- api/index.js `updateMyProfile` 추가. `[RegisterPage]`/`[OAuthCallback]`/`[ProfileExtra]`/`[Header]` 로깅 (값 미출력).
+
+### 테스트 (tester, 9005) — 7/7 PASS
+미포함 가입 회귀(NULL 저장), PATCH 부분수정·null 지우기·bio 회귀·무효 400, 경계값(1900/2026 성공, 1899/2027 400, 해외 성공), **개인정보 값 로그 0건 grep 검증**, FE transform 5파일+스킵 플래그, 기존 기능 회귀, demo_fields 로그 실동작. 9004 미러 후 마이그레이션 로그+무효값 400 스모크 통과.
+
+### 특이사항
+- 이벤트(위시/클릭)에 user_id 가 이미 저장돼 있어, 이용자가 나중에 프로필을 채워도 과거 이벤트까지 인구통계 결합 가능한 구조.
+- 소셜가입 실키 미발급 상태라 온보딩 화면은 코드 레벨 검증(transform+로직 grep)까지 수행 — 실키 발급 후 실브라우저 확인 권장.
+- 다음 단계(승인됨): [2/2] 대시보드 강화 묶음 — 팔로우 FE 연결, 재생수 대비 반응률, 장르/느낌 탭, 시간대 차트, 위시→클릭 전환율, 인구통계 분포.
+- 테스트 잔여 계정 tester_v116_* 1건(무해).
+
+## v118 — [2/2] 대시보드 강화: 팔로우 연결·반응률·장르/느낌·시간대·전환율·인구통계 (PLAN v117) — 2026-07-21
+
+### 요청 작업
+- 승인된 ②단계: 팔로우 기능 프론트 연결(+팔로워 수), 스타별 재생수 대비 반응률, [장르별|느낌별] 분석, 요일·시간대 차트, 위시→클릭 전환율, 인구통계 분포를 광고주 대시보드에 추가.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- auth.py `get_current_user_optional` 신설(실패 시 None, 기존 인증 불변).
+- follows.py 신규 `GET /api/follows/summary/{user_id}` (무인증): {follower_count, is_following}. 무효/미존재 404.
+- stars 행 확장: follower_count·total_plays(공개 트랙 재생 합)·engagement_rate((위시+클릭)/재생, 0재생=null).
+- 신규 `GET /api/business/ads/{id}/insights?period=`: 위시→클릭 전환율, 장르/무드별(미귀속·기타 버킷), 시간대×24·요일×7(월=0, **UTC→KST 변환**), 인구통계(연령대 10년/성별/지역, 미입력 버킷, 고유 actor 기준·개별 id 미노출).
+**프론트엔드**
+- ArtistDetailPage: 팔로워 수 스탯 + 팔로우/팔로잉 토글(본인 미표시, 낙관적 업데이트, 비로그인 안내).
+- BusinessPage: 스타 테이블에 팔로워/재생수/반응률 컬럼, 아이템 펼침에 "인사이트" 섹션(전환율 카드, 장르/느낌 토글 듀얼 바차트, 요일·시간대 차트, 인구통계 3종 분포) — 기존 인라인 차트 방식.
+- api/index.js: followUser/unfollowUser/getFollowSummary/getAdItemInsights.
+
+### 테스트 (tester, 9005) — 7/7 PASS
+팔로우 왕복+PG 교차검증(자기팔로우 400·중복 409 확인), stars 수치 3종 독립 재계산 일치(0재생 null 포함), insights 실이벤트 발생시켜 KST +9h 버킷·요일 매핑·장르/무드·인구통계 버킷(입력/미입력) 전부 교차검증, 개별 uuid 미노출 grep, 에러 5종(401/403/404/400), FE transform, 기존 기능 광범위 회귀(v113~v117), 로그 실동작(값 미출력). 9004 미러 후 summary 200·insights 401 스모크 통과.
+
+### 특이사항
+- **운영 중요**: tester 가 확인 — 9005 uvicorn --reload 가 drvfs 파일 변경을 장시간 감지 못해 v117 코드 미반영 상태였음(재시작으로 해결, vite 도 동일). **코드 반영 시 서버 수동 재시작 필수** 절차 재확인.
+- 테스트 잔여물: v117_* 계정 4건(1건 role=customer), 테스트 아이템 1건+이미지, 이벤트 doc 소량 — 무해, 필요 시 정리 가능.
+- 이로써 승인 로드맵 ①(v117 회원정보)·②(본 건) 완료. ③(구매전환 UTM/제휴)은 보류 지시 상태.
+
+## v119 — 인구통계 분포 소수 버킷 마스킹(k-익명성) — 2026-07-21
+
+### 요청 작업
+- insights 인구통계 분포에서 버킷 인원이 기준치 미만이면 개인 식별 위험 → 마스킹/합산 처리 (사용자 지적).
+
+### 수행 결과 (9005 → 9004 미러 완료)
+- business.py `MIN_DEMO_BUCKET = 5` 상수 신설. demographics 의 age_bands/genders/regions 각 차원에서 **인원 1~4명 버킷은 "기타(소수)" 단일 버킷으로 합산** ("미입력" 포함 전 버킷 동일 적용). 응답에 `min_bucket: 5` 명시(FE 안내용).
+- 실검증: 기존 소수 버킷(30대:1, female:1, 서울:1, 미입력:1)이 전부 "기타(소수)"로 합산되는 것 확인. FE 는 버킷 키를 그대로 렌더하므로 수정 불필요.
+
+### 특이사항
+- 검증용으로 v117 테스트 아이템(6a5f1a77…)의 소유자를 신규 테스트 계정 maskchk_*(role=customer)로 이전함 — 테스트 픽스처라 무해. 테스트 계정 비밀번호 변경 방식은 권한 정책상 차단되어 신규 계정 방식으로 대체.
+
+## v120 — E2E 피드백 수정: 비로그인 자세히보기 허용 + 생년월일 수집 전환 (PLAN v118) — 2026-07-22
+
+### 요청 작업
+- E2E 결과 오더: 1) 비로그인 시 곡 자세히보기(재생 페이지)가 로그인으로 튕기는 문제 수정 2) birth_year → 생년월일(birth_date) 수집 전환. 3) 플리/앨범 전체 큐잉은 현행 유지(무수정).
+
+### 수행 결과
+**(1) 비로그인 자세히보기 (프론트만)**
+- 원인: PlayerPage 의 생성 파라미터 조회(인증 필수) 401 → axios 인터셉터가 토큰 없는 401까지 /login 리다이렉트.
+- 수정: 인터셉터 — 요청에 토큰이 붙어있었을 때만 정리+리다이렉트, 무토큰 401 은 조용히 reject. PlayerPage — 비로그인 시 getGeneration 호출 skip. 백엔드 무수정(인증 유지 의도). 권한부족 403 은 토큰 유지 확인.
+**(2) 생년월일 (9005 → 9004 미러 완료)**
+- users.birth_date DATE 신설 + 기존 birth_year → 1월1일 backfill(5계정 검증). register/PATCH profile/GET me 가 birth_date("YYYY-MM-DD", 1900-01-01~오늘, 무효일 400). insights 연령대 birth_date 기준(마스킹 유지). birth_year 컬럼은 보존(코드 미사용).
+- FE ProfileExtraForm 연/월/일 select 3개(말일 자동 계산, 부분선택=미입력), 전 사용부 birth_date 교체(잔존 grep 0).
+
+### 테스트 (tester, 9005) — 7/8 PASS + 환경이슈 1
+비로그인 트랙상세(cover_character 포함) 200·generate 401 유지, birth_date 검증 6케이스·경계 2케이스, backfill psql 검증, insights 연령대 버킷(30대 6명 정상 노출 + 50대 2명 "기타(소수)" 마스킹) 실이벤트 검증, birth_year 잔존 0, 회귀(v113~115, 로그인, 광고 CRUD) 전부 PASS, 값 로그 미출력 grep. 유일 FAIL 은 vite 스테일 캐시(환경) → 프론트 재시작으로 해소, 신선 코드 서빙 확인.
+
+### 특이사항
+- business.py 에 별도 라인의 광고 아이템 성별 필드(남성용/여성용/공용, create/update 필수 Form) 반영돼 있음 — 회귀 테스트에서 정상 동작 확인했고 9004 미러에 함께 포함됨.
+- 9004 미러 후 스모크: health 200, birth_date 마이그레이션 로그, 무효 birth_date 400.
+- 잔여 테스트 데이터: v118_* 계정 13건 + 테스트 아이템 1건 + 이벤트 doc (무해).
+
+## v121 — 인증 트랙 분리 + 익명 행적 추적 + 대시보드 인증 토글 + '착장 선택' 표기 (PLAN v119) — 2026-07-22
+
+### 요청 작업
+- 네이버/카카오 연동 가입=✅인증(이름·생년월일·성별 자동 수신·수정 잠금), 구글/기본 가입=❌미인증(추후 본인인증 승격 — 실연동 전 준비중 처리). 비로그인 행적(제품 클릭) 익명 추적. 대시보드 [인증 회원만|전체] 토글. 대시보드 지표 표기 "착장 선택"으로 정정.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- users.is_verified/verified_at/verify_provider 마이그레이션.
+- OAuth 프로필 정규화 확장: naver/kakao 의 생년월일(연+월일 조합, 실존 날짜 검증)·성별(M/F→male/female) 추출(스코프 미승인 시 None — 실키 발급 후 자동 활성). 신규 가입 시 인증 저장, 기존 계정 재로그인 시 승격+NULL 필드만 보충. google 무동작.
+- GET /me 에 인증 상태 노출. PATCH profile: 인증 유저의 birth_date/gender 수정 400 차단(region/bio 허용).
+- 클릭 기록 익명 전환: 무토큰+UUID anon_id 저장(6h 가드 anon_id 기준, track/star 귀속 태깅 동일), anon_id 무효/누락 시 기록 skip. 재생은 기존 익명 지원 확인. 착장선택(impression)은 로그인 유지.
+- dashboard/stars/insights 에 verified_only 파라미터 — 인증 actor 만 필터(익명 자동 제외), demographics 포함. worn_count 는 무필터(행적 아님).
+**프론트엔드**
+- anonId 유틸(localStorage UUID) + 비로그인 클릭에 자동 첨부.
+- 내 정보 설정: 인증 유저는 생년월일·성별 🔒잠금+"본인인증 완료(네이버/카카오 인증)" 뱃지·region만 수정, 미인증 유저는 기존 폼+[본인인증 하기](준비중 안내).
+- 대시보드: [✅ 인증 회원만 | 전체] 토글(3개 API 연동, 캐시 초기화), impressions 표기 전면 "착장 선택"(CTR="클릭율(클릭/착장 선택)").
+
+### 테스트 (tester, 9005) — 8/8 PASS
+마이그레이션·기본값(기존 42명 false), normalize_profile mock 11케이스, 인증 잠금 400/미인증 200, 익명 클릭 5케이스(Mongo doc 검증·중복가드·skip), **verified_only 3계층(인증/미인증/익명) 실이벤트 교차검증 — dashboard·stars·insights 전 지표 false/true 수치 일치**, FE grep("착장 선택" 5·"노출" 0), 회귀(v113~116·재생 익명·impression 401 유지), 로그 위생(anon/생년월일/성별 값 0건). 9004 미러 후 스모크(마이그레이션 로그·익명 클릭 200·verified_only 401) 통과.
+
+### 특이사항
+- vite 파일워처가 drvfs 에서 변경 감지 실패 → stale transform 서빙 재발. tester 가 dev 서버 재기동으로 해소. **FE 수정 후 vite 재시작 필수** 절차 재확인.
+- 네이버/카카오 실키 발급 시 이름·생년월일·성별 동의 항목 신청 필요(전제조건). 휴대폰 본인인증 실연동은 별도 작업(현재 준비중 버튼).
+- 잔여 테스트 데이터: v119 계정 3건·아이템 1건·이벤트 doc 소량 (무해).
+
+## v122 — 프로필 사진 업로드 + 원형 아바타 (PLAN v120) — 2026-07-22
+
+### 요청 작업
+- SNS/유튜브식 원형 프로필 사진. 내 정보 설정에서 업로드/기본화, 자동 중앙 크롭(크롭 UI 없음 — 사용자 확정). 노출: 헤더 우상단·스타 공간·트랙 카드·재생 페이지. 사진 없으면 닉네임 이니셜 아바타.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- POST/DELETE /api/auth/me/profile-image: jpeg/png/webp ≤5MB → Pillow EXIF 보정+중앙 정사각 크롭+512×512 JPEG → MinIO profiles/{uid}/, 재업로드 시 이전 객체 삭제, PG+Redis 세션 동시 갱신.
+- GET /api/auth/profile-image/{obj} 무인증 프록시 — profiles/ prefix 강제·경로 탈출 차단.
+- 트랙 목록/상세 응답에 uploader_profile_image (PG 1쿼리 join, 상세는 캐시 밖 fresh 첨부).
+**프론트엔드**
+- 공용 Avatar 컴포넌트: 외부 URL(소셜 프로필)/MinIO 프록시/이니셜 폴백(이름 해시 8색) 3분기, 로드실패 자동 폴백.
+- 내 정보 설정 모달: 96px 미리보기 + [📷 사진 변경](즉시 업로드) + [기본으로], 클라이언트 사전검증·로딩·에러 분리. 헤더 우상단 28px, 스타 공간 대형, 트랙 카드·재생 페이지 20px 미니 아바타.
+
+### 테스트 (tester, 9005) — 8/8 PASS
+3형식 업로드(비정사각 포함)→512×512 Pillow 실검증, 재업로드 시 이전 객체 404·DELETE 원복·MinIO 잔여 0, 거부 4종(400/401), 프록시 보안 5케이스(500 없음), 트랙 join+캐시 우회 검증, FE 6모듈 transform, 회귀(v119 인증잠금·verified_only·광고 프록시), 로그 위생. 9004 미러 스모크(401/404/키 존재) 통과.
+
+### 특이사항
+- (tester 관찰, 범위 외) 광고 이미지 프록시 /api/business/items/image/ 는 prefix 제한이 없어 버킷 내 임의 객체 서빙 가능 — 기존 동작이나 후속 하드닝 후보.
+- 프론트 dev 서버 재시작으로 브라우저 반영 완료. 잔여 테스트 계정 v120tester 1건(무해).
+
+## v123 — 광고 이미지 프록시 하드닝 (PLAN v121) — 2026-07-23
+
+### 수행 결과 (9005 → 9004 미러 완료)
+- /api/business/items/image/ 프록시에 ads/ prefix 강제 + 경로탈출(`..`) 차단 — 프로필 등 버킷 내 다른 객체를 광고 문으로 꺼내가는 경로 봉쇄 (v120 프로필 프록시와 대칭 구조).
+- 사전 영향 조사: 프론트 adImageUrl 사용처 9곳 전수 — 전부 ads/ 객체만 사용, 무영향 확인.
+- 검증(양 포트): 실제 광고 이미지 200 / profiles/ 404 / ads/../ 우회 404 / 기타 prefix 404.
+
+## v124 — SNS 채널 URL 등록 + 곡 자세히보기 노출 (PLAN v122) — 2026-07-23
+
+### 요청 작업
+- 내 정보 설정에서 SNS URL 최대 5개 등록([+ 추가]/행별 삭제), 곡 자세히보기의 캐릭터 착장 아래 "스타의 SNS 채널" 표시(플랫폼 자동감지 아이콘), URL 변경 시 과거 곡에도 최신 반영(라이브 참조).
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- users.sns_links JSONB 마이그레이션. PATCH /me/profile 검증: 최대 5·http/https 만(javascript:/ftp: 차단)·≤300자·순서유지 dedupe·빈 배열=삭제. 인증잠금과 독립. GET /me 반영.
+- 곡 목록/상세에 uploader_sns_links — _attach_uploader_profiles 확장(캐시 밖 라이브 첨부). 로그는 count 만(URL 값 미출력).
+**프론트엔드**
+- utils/snsPlatform.js: 유튜브/인스타/X/틱톡/페북/사운드클라우드/스포티파이 자동감지(+서브도메인 처리), 미지원 🔗+호스트명 폴백, 표시용 URL 축약.
+- 내 정보 설정 "SNS 채널" 섹션: 실시간 아이콘·5개 제한·인라인 검증·기존 저장 흐름에 병합(1회 PATCH).
+- 곡 자세히보기: 캐릭터 착장 아래 "스타의 SNS 채널"(1개 이상일 때만, 새창 noopener).
+
+### 테스트 (tester, 9005) — 전 항목 PASS
+검증 9케이스(400 메시지 일치·dedupe·경계 5개), 인증잠금 독립(sns 200 + birth_date 병행 시 요청 전체 400), **라이브 참조 핵심 검증 — 캐시 워밍 후 psql 로 URL 변경 → 캐시 삭제 없이 즉시 신값 + 캐시 payload 에 URL 미포함 직접 증명**, 목록 21건 키 존재, FE transform 3모듈(플랫폼 감지·조건부 렌더), 회귀(v113/119/121·me 필드·상세 기존 필드), 로그 위생(URL 값 0건). 9004 미러 스모크(마이그레이션 로그·목록 키) 통과.
+
+### 특이사항
+- 잔여: 테스트 계정 sns-test-v122 1건(무해). 업로더 sns_links 원복 완료.
+
+## v125 — 내/외국인 구분 + 만14세 게이트·법정대리인 동의 골격 (PLAN v123) — 2026-07-23
+
+### 요청 작업
+- (A) 가입 첫 단계 내국인/외국인 선택(절차 동일, 기록·표시·대시보드 반영). (B) 만14세 미만 가입 게이트 + 보호자 동의 플로우 전체 골격 — SMS 발송·보호자 본인인증은 모의 어댑터(기능 플래그 기본 OFF, 계약 후 교체), 아동 행적 광고 분석 제외 포함.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- users.nationality/account_status + guardian_consents 테이블(동의 기록: 상태·방법·요청/결정 시각).
+- register: nationality 검증·저장, birth_date 만나이 14세 미만 → 400 guardian_consent_required. pending_consent 계정 로그인 403.
+- 보호자 플로우: request(플래그 OFF 503 / ON pending 계정+동의링크) → 고지 GET(닉네임 마스킹, 72h 만료) → decide(agree=활성화/reject=대기 유지, 재사용 409·무효 404). notify/verify 는 services/guardian_*.py 모의 어댑터 — 계약 후 실구현 교체 지점.
+- insights: demographics 에 내/외국인 축(마스킹 공용) + **만14세 미만 actor 이벤트 전 집계 제외**(minors_excluded 로그).
+- 접근 로그 하드닝: uvicorn access 로그의 동의 URL 토큰 자동 마스킹 필터(tester 발견 건 즉시 수정·검증).
+**프론트엔드**
+- 가입 STEP 0 게이트(생년월일 필수+내/외국인, 만나이 계산, 서버 400 이중 방어), 14세 미만 3경로(OFF=준비중 카드/ON=보호자 정보→동의 대기→테스트 링크), /guardian-consent/:token 동의 페이지(고지·동의/거부·만료/재사용 에러 처리), 내 정보·온보딩 nationality select, 대시보드 내/외국인 분포.
+
+### 테스트 (tester, 9005) — 8항목 중 7 PASS + 로그위생 1건 발견→수정
+A(저장/무효 400/수정/DDL), B-OFF(400·503), B-ON 풀사이클(pending→403→고지 마스킹→agree 활성화·로그인/reject 유지/409/404/73h 만료), insights 미성년 제외 실검증(wishes 2→1 clicks 2→1)+nationalities 마스킹, FE transform 5종, 회귀(v119 잠금·v122 sns·v124 아바타·기존 가입), 보호자 정보 값 로그 0건. **발견된 uvicorn access 로그 토큰 노출은 planner 가 마스킹 필터로 즉시 수정, 양 포트 `<masked>` 기록 검증.** .env 플래그 OFF 원복 확인(md5 대조). 9004 미러 스모크(마이그레이션 로그·14세 400·config false·마스킹) 통과.
+
+### 특이사항
+- 실가동 전환 조건: 사업자등록증 → 본인인증·문자발송 계약 → guardian_notify/verify 어댑터 실구현 + GUARDIAN_CONSENT_ENABLED=true (메모리 기록됨).
+- 실서비스 오픈 전 아동용 쉬운 개인정보 처리방침 문구 법률 검토 권장.
+- 잔여 테스트 데이터: gsq_* 계정 12건(일부 pending/customer/verified 상태 조작 잔존)·테스트 아이템 1건·이벤트 doc — 무해하나 규모가 커지면 정리 권장.
+
+## v126 — 회원탈퇴: 소프트 삭제 + "회원탈퇴" 텍스트 이중 확인 (PLAN v124) — 2026-07-23
+
+### 요청 작업
+- 내 정보 설정에 회원탈퇴 — 경고 확인 + "회원탈퇴" 정확 입력 시에만 진행. 옵션1(소프트 삭제): 개인정보 즉시 파기·로그인 불가, 발행 곡은 "탈퇴한 사용자" 명의 유지.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- DELETE /api/auth/me {confirm_text} — strip 후 "회원탈퇴" 불일치 400. 6단계: users 익명화(email withdrawn_* 치환·개인정보 13필드 NULL — tester 관찰 반영해 nationality 도 파기 추가·sns_links []·is_verified false·status withdrawn) → MinIO 프로필 삭제 → follows 양방향 삭제 → ad_wishlist 삭제 → Mongo 트랙 닉네임 "탈퇴한 사용자" 일괄 → Redis 세션 삭제. 익명화만 실패 시 500, 나머지 best-effort.
+- 탈퇴 계정 로그인: 일반 실패와 동일 401 메시지(존재 노출 방지) + password_hash NULL 크래시 가드. 같은 이메일 재가입 허용. 소셜 재로그인은 provider_user_id NULL 화로 신규가입 자연 처리.
+**프론트엔드**
+- 모달 하단 저채도 "회원탈퇴" → 경고 화면("발행한 곡은 '탈퇴한 사용자' 명의로 유지" 고지) → 입력값 trim 정확 일치 시에만 [탈퇴하기] 활성 → 성공 시 로그아웃·메인 이동. 400/실패 인라인 분리, 진행 중 비활성, 모달 닫기 시 상태 리셋.
+
+### 테스트 (tester, 9005) — 9/9 PASS
+풍부한 픽스처(프로필 완성+SNS+사진+상호 팔로우+위시+트랙+타인 플리 수록)로 전수 검증: 확인 문구 4케이스(strip 200 포함), 파기 실측(psql 전 컬럼·MinIO 404·follows/위시 0행·세션 401), 생태계 보존(트랙 "탈퇴한 사용자" 재생·타인 플리 유지·이벤트 잔존·라이브 join 소멸), 재로그인 401 문자열 완전 일치·재가입 201, FE transform, 회귀, `[withdraw]` 단계 카운트가 픽스처 수치와 정확 일치(2/1/1/True)·개인정보 값 로그 0건.
+- tester 관찰 1건(nationality 잔존) → planner 가 즉시 파기 대상에 추가·실탈퇴로 NULL 검증 후 9004 미러. 관찰 2(플리 상세 artist_name alias 부재)는 기존 응답 형태로 무관.
+
+### 특이사항
+- 잔여: 탈퇴 익명화 행(의도된 산출물)·테스트 계정 F/W2·dangling 플리 항목 1건(조회 정상) — 무해.
+
+## v127 — 가입 동의 체계: 필수4+선택1+고지 + 기능 시점 동의 + 동의 이력 (PLAN v125) — 2026-07-23
+
+### 요청 작업
+- 확정 구조 구현: 필수 4(약관/개인정보/국외이전/만14세)+선택 1(마케팅) 체크, 행태정보·선택입력 고지문, 성별 게이트 필수 승격, 사진/음성 AI 기능 시점 동의, 동의 이력 저장. **문구는 법정 기재사항 검색 확인 후 작성** (지시 사항).
+
+### 수행 결과
+**동의 문구 (planner 직접 작성·검증)**
+- frontend/src/constants/consentTexts.js — 7종(약관/개인정보/국외이전/만14세/마케팅/사진AI/음성AI)+고지문 2종, CONSENT_VERSION '2026-07-23.v1'. 법정 요소: 수집·이용 4요소(개보법 15조), 국외이전 5요소(28조의8), 마케팅 철회+2년 재확인(망법 50조) 전부 반영 — tester 요소별 검수 전항목 확인.
+- tester 가 국외이전 명시 업체를 실코드 API 사용처와 교차 검증 → **누락 3사 발견(Sync Labs·LALAL.AI·Kits AI — 립싱크/보컬복원/음성변환)** → planner 가 운영사·소재지 재검색 확인 후 즉시 보완(Synchronicity Labs(미국)/OmniSale GmbH(스위스)/Arpeggi Labs(미국) + 국가에 스위스·싱가포르 리전 추가). [회사명] 플레이스홀더는 사업자 확정 후 교체(의도적 잔존).
+**백엔드 (9005 → 9004 미러 완료)**
+- user_consents 이력 테이블(append 형)+인덱스. register/보호자가입: 필수 4종 미동의 400·성별 필수화·성공 시 5행 기록(마케팅 거부도 이력). POST/GET /api/auth/me/consents (화이트리스트 7종, 최신 상태 조회). `[consent]` 로그.
+**프론트엔드**
+- ConsentList(전체 동의+보기 펼침+행태 고지)·ConsentGateModal 공용, 게이트 성별 필수, 가입 폼 동의 섹션(필수4 미체크 시 버튼 비활성), 소셜 온보딩 동의 선행(스킵 불가·실패 시 안전 폴백), 실사 사진/보이스클론 진입 전 동의 게이트(세션 캐시), 헤더 마케팅 토글+선택입력 고지문.
+
+### 테스트 (tester, 9005) — 검증 매트릭스 전항목 PASS + 문구 결함 1건 발견·수정
+register 7케이스(400 메시지·5행·version 일치), me/consents(append·무효 key·401), guardian 경로 코드 일관성, 문구 법정 요소 표 검수, FE 9모듈 transform+로직 확인, 회귀(14세 게이트 우회 불가·기존 계정 무영향·탈퇴 401), `[consent]` 로그·개인정보 값 0건. 9004 미러 스모크(마이그레이션 로그·consents 없는 가입 400) 통과. 프론트 재시작으로 보완 문구 서빙 확인.
+
+### 특이사항
+- 기존 계정(동의 이력 없음)은 로그인 무영향 — 소셜 계정은 다음 로그인 시 동의 화면 선행으로 자연 수집, 이메일 기존 계정 소급 수집은 필요 시 후속 결정.
+- [회사명]·연락처 교체와 문구 전문 법률 검토는 오픈전 리스트 C 섹션 유지.
+
+## v127 추기 — 국외이전 문구에서 미사용 3사 제외 (사용자 확인) — 2026-07-23
+- 사용자 확인: Sync Labs/LALAL.AI/Kits AI 는 과거 테스트용, 현재 미사용 → 국외이전 동의 문구에서 제외(원복).
+- 단 해당 라우트·FE 연결 코드(mv 립싱크/vocal_repair/voice_convert+StudioTab2)는 잔존 — 오픈 전 비활성/제거 필요 항목으로 오픈전에확인할것리스트.md B 섹션에 등재 (미정리 시 문구-코드 불일치).
+- 프론트 재시작으로 제외 반영 확인.
+
+## v128 — 가입 비밀번호 규칙 강화 (8자 이상 + 영문·숫자 필수) — 2026-07-23
+- 기존: BE 규칙 없음·FE 6자 이상만 → 변경: 8자 이상 + 영문 1개·숫자 1개 이상 (register·보호자 가입 경로 공통, models/user.py validate_password + FE RegisterPage 검증·메시지 동일화).
+- 검증(9005): "abc123"(6자)/"abcdefgh"(영문만)/"12345678"(숫자만) → 400, "abcd1234" → 201. 9004 미러·프론트 재시작 후 양쪽 반영 확인. 기존 계정 로그인은 무영향(가입 시에만 적용).
+
+## v129 — SNS 공유 1단계: 커버+음원 9:16 공유영상 + 공유 시트/링크 (PLAN v126) — 2026-07-23
+
+### 요청 작업
+- 곡 자세히보기 프롬프트 섹션 맨 위 [YouTube 쇼츠][릴스][틱톡][링크] 버튼. 영상=커버이미지 고정+곡 전체 음원, 쇼츠 확정으로 3사 모두 9:16 → 트랙당 1개 생성·캐싱 공용. 서비스 본체는 앱(모바일) — 공유 시트 우선, 2단계(API 자동게시)·PC 대응은 리스트 등재.
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- services/share_video.py 신규: 커버(9:16 중앙 크롭 풀화면)+음원 → ffmpeg h264/aac 1080×1920, 음원 길이 실측 -t 적용(-shortest 만으로는 +13s 길어지는 문제 발견·수정), MinIO share/{track_id}.mp4 캐싱, 동시 요청 업로드 가드.
+- POST /api/tracks/{id}/share-video (무인증·공개만, 커버없음 400·비공개/미존재 404) + GET .../file 프록시(attachment).
+**프론트엔드**
+- 프롬프트 탭 최상단 4버튼: SNS 3종 → 영상 생성(로딩) → 모바일 공유 시트(navigator.share 파일 첨부 — SNS 앱 작성화면에 영상 실린 상태) / 미지원 폴백(다운로드+SNS 업로드 페이지 새창) / 링크 복사(/player?track={id}). 공유 링크 수신 시 PlayerPage 가 해당 곡 자동 로드·재생.
+**리스트 등재**: A-6 SNS 자동게시 2단계(유튜브/틱톡 임시저장/인스타 제약 명시), E PC 공유 UX 보강.
+
+### 테스트 (tester, 9005) — 전 항목 PASS
+독립 트랙 재검증(ffprobe 1080×1920·h264/aac·duration 원본과 0.00002s 차·faststart moov 선두), 캐시 히트, 에러 6케이스(400/404), 동시 요청 2건→객체 1개(정합성 확인), FE transform+마커 전수, 회귀(상세/스트림/related/MV/v127 동의/v128 비밀번호), `[share-video]` 로그, ERROR 0건. 9004 미러 스모크(캐시 응답) + 프론트 재시작으로 canonical 서빙 확인.
+
+### 특이사항
+- 공유 시트 실동작(SNS 앱 작성화면 첨부)은 https 실기기 모바일에서만 최종 확인 가능 — 앱팀 실기기 테스트 항목.
+- 동시 요청 시 인코딩 중복(결과 무결, CPU 만 중복) — 트래픽 커지면 in-flight 락 도입 여지.
+- share/ 캐시 산출물 3건 유지(무해).
+
+## v130 — 트랙 리스트 전역 공유 버튼 (팝업 4옵션, 공용화) (PLAN v127) — 2026-07-23
+
+### 요청 작업
+- 곡이 나오는 모든 리스트의 액션 버튼에 [📤 공유] 추가 → 팝업(쇼츠/릴스/틱톡/링크). 적용: 차트·SongItem 사용처(메인/검색/아티스트/앨범/플리 상세)·메인 트랙카드·재생큐·내음악 '내 트랙' 탭.
+
+### 수행 결과 (FE 전용 — 백엔드 무변경·9004 미러 불필요)
+- useTrackShare 훅: v126 공유 로직 공용 추출(생성→공유 시트/폴백/링크복사, 404="공개된 곡만 공유할 수 있습니다."/400=커버 없음/취소 무시).
+- TrackShareButton 컴포넌트: 아이콘+드롭다운 팝업(외부클릭·ESC 닫힘, 하단 잘림 시 위로, 전 클릭 stopPropagation — 행 재생과 충돌 없음).
+- 5개 파일 적용(SongItem 경유로 총 8개 화면 커버) + 자세히보기 4버튼 훅 리팩토링(인라인 ~90줄 제거, 동작 불변).
+
+### 테스트 (tester) — 6/6 PASS
+canonical transform 전수(스테일 발견→vite 재시작 후 8파일 재검), 팝업·충돌 로직 코드 검증(stopPropagation 4곳·리스너·상향 펼침), 훅 분기(404/400/Abort), v126 API 회귀(캐시 히트 16ms·file·차트·related), eslint 신규 0, 로그 DEV 가드·값 미출력. 관찰: 훅의 share failed warn 은 상시(에러 추적 의도) — 무해.
+
+### 특이사항
+- vite 스테일 재발(재시작으로 해소) — drvfs 운영 절차 재확인.
+
+## v131 — SNS 공유영상 가사 자막 burn-in (타임라인 동기) (PLAN v128) — 2026-07-23
+
+### 요청 작업
+- 공유영상에 Suno 타임스탬프 기반 가사 자막을 영상에 직접 굽기(릴스/틱톡/쇼츠는 burn-in 이 유일·정석 — 사전 조사). 타임스탬프 없는 곡은 자막 없이 폴백. FE 무변경.
+
+### 수행 결과 (9005 → 9004 미러 완료, 폰트 포함)
+- 나눔고딕 번들(app/assets/fonts, OFL 고지 동봉) — 시스템 폰트 설치 불필요.
+- share_video.py: generations.variants[variant_index||0].timestamps → ASS 자막 변환(섹션 태그 [..] 줄 자동 스킵, end<=start 보정, 하단 중앙 흰글자+검정외곽 MarginV 380 — 틱톡/릴스 UI 회피), ffmpeg ass 필터+fontsdir, 자막 시 10fps(타이밍 정밀)·무자막 시 기존 2fps. 캐시 share/v2/ 버전업(구 캐시 자연 재생성), 응답에 subtitles bool.
+
+### 테스트 (tester, 9005) — 전 항목 PASS + 결함 1건 발견·수정
+- 독립 트랙 재검증: 84 타임스탬프 중 섹션태그 11 스킵=73 세그먼트 수치 일치, ffprobe 규격·길이 0.000s 차, 프레임 3곳 픽셀 검증(무자막 대비 white px 4천~6천), 태그 구간에 가사만 렌더.
+- **타이밍 동기 실검증**: 첫 가사 start−0.3s 프레임 무자막(white 0) ↔ start+0.3s 자막 렌더 — 타임라인 정합 증명.
+- 폴백(subtitles:false, 2fps, 하단 픽셀 diff 0.000), 캐시 v2(값 유지·프록시 v1 미참조), v126 회귀, 가사 텍스트 로그 미출력.
+- **발견 결함**: ASS Events Format 에 Effect 필드 누락(9필드) vs Dialogue 10필드 → 모든 자막 앞 여분 쉼표 렌더 → planner 가 Format 에 Effect 추가 수정, 오염된 v2 캐시 2건 삭제·재생성 후 **프레임 시각 확인으로 쉼표 제거 검증**("Let's go, 숨 참지 마" 정상). 9004 미러 스모크(cached+subtitles:true) 통과.
+
+### 특이사항
+- 자막판 생성 시간: 158s 곡 55s → 프레임레이트 상향 영향 소폭(캐시로 곡당 1회). 스타일(크기/색/위치) 조정은 상수화되어 있어 요청 시 즉시 변경 가능.
+
+## v131 추기 — 공유 팝업이 하단 재생 바에 가려지는 버그 수정 — 2026-07-23
+- 증상(사용자 폰 테스트): 화면 하단 근처 곡의 공유 팝업에서 틱톡·링크 복사가 안 보임/터치 불가 (곡 종류 무관 — 위치 문제).
+- 원인: 팝업 z-index 300 < 고정 플레이어 바 1001 + 위로 펼침 판정이 바 높이(80px) 미반영.
+- 수정: 팝업 z-index 1100, 잘림 판정에 BOTTOM_BAR_HEIGHT 90px 반영. eslint 클린, vite 재시작·canonical 반영 확인. FE 전용(9004 무관).
+
+## v131 추기2 — 공유 팝업 잘림 근본 수정 (포털 방식 전환) — 2026-07-23
+- 사용자 폰 추가 제보로 진범 확정: 메인 느낌별 필터 목록 컨테이너(.main-chart)의 overflow:hidden 이 팝업을 박스 경계에서 절단 — 곡 순위(행 위치)에 따라 잘리는 구간이 달라져 "특정 곡만 2개 보임" 증상. (앞선 z-index/재생 바 수정은 부차 원인.)
+- 수정: 팝업을 body 포털 + position:fixed 로 전환(버튼 좌표 계산, 아래 공간 부족 시 위로, 좌우 화면 밖 보정, 스크롤/리사이즈 시 닫힘) — 어떤 목록 컨테이너/overflow 환경에서도 잘리지 않음. eslint 클린, vite 재시작·반영 확인.
+
+## v132 — 다운로드를 자막영상 4옵션으로 (일반/SNS/카톡배경/음원) (PLAN v129) — 2026-07-23
+
+### 요청 작업
+- 다운로드 버튼 → 팝업 4옵션: 일반 16:9(블러 배경+중앙 커버) / SNS 9:16(공유영상 재사용) / 카톡 프로필 배경(1080×2340·15초·A안=첫 가사−0.5s부터·자막 상단 1/3 — 카톡 UI 가림 조사 반영) / 음원 mp3(기존 유지).
+
+### 수행 결과
+**백엔드 (9005 → 9004 미러 완료)**
+- share_video.py FORMATS 3종 파라미터화: sns(기존 캐시·값 불변), wide(1920×1080 split→블러 crop-fill 배경+중앙 overlay·자막 하단 MarginV 80), kakao(1080×2340·-ss t0(첫 세그먼트−0.5s)·-t 15·ASS 시각 offset 보정·Alignment 8 상단 MarginV 600). 캐시 {id}.mp4/_wide/_kakao 분리.
+- 라우트 ?format= (기본 sns·무효 400), 응답 format echo, 파일명 aidol_{id}_{format}.mp4.
+**프론트엔드**
+- TrackDownloadButton 신규(포털 팝업, 공유 버튼 패턴 복제): 4옵션+생성 중 안내, mp3 는 기존 downloadTrackFile 흐름 흡수(로그인 가드 포함). SongItem·ChartPage 의 기존 다운로드 버튼 교체(트랙 다운로드 위치 전수 grep 확인 — 2곳뿐).
+
+### 테스트 (tester, 9005) — 8/8 PASS
+독립 트랙 재검증: wide(1920×1080·길이 0.00s 차·자막 y 947~994 하단·블러 구조 픽셀 검증 — 중앙 선명도 12.9배)·kakao(정확히 15.000s·t0=첫 세그먼트−0.5 정합·자막 y 604~653 = 상단 1/3·등장 타이밍 프레임 검증)·무타임스탬프 kakao(t0=0·자막 0픽셀)·캐시 3종 분리+기존 sns 불변(MinIO 타임스탬프 확인)·에러 4종·FE transform(포털/4옵션/mp3 이관/공유 버튼 회귀)·mp3 실다운로드 200·로그 format 표기+가사 미출력. planner 도 프레임 시각 확인(wide 블러+하단 자막 / kakao 상단 자막). 9004 미러 스모크(kakao cached·bogus 400) 통과.
+
+### 특이사항
+- 카톡 배경은 카카오 정책상 배경 동영상 15초 제한 반영(조사 근거 REPORT 이전 항목). 잔여: v129tester 계정 1건(무해).
+
+## v132 추기 — 자막 리드(0.3s 선행) 적용 — 2026-07-23
+- 사용자 체감(자막이 보컬보다 0.3~0.5s 늦음) 조사: 파이프라인 실측 결과 3포맷 모두 타임스탬프 대비 +0.05~0.15s 이내로 정상(포맷 간 차이 없음, kakao 오디오 seek 오차 0.0ms 교차상관 실측) — 원인은 Suno 타임스탬프가 체감 보컬 시작보다 늦게 잡히는 특성.
+- 조치: share_video.py SUBTITLE_LEAD=0.3 신설 — 전 세그먼트 시작·끝을 0.3s 앞당김(노래방 방식, 겹침 없음, 상수로 조정 가능). share/v2 캐시 전체 삭제(MinIO 공유라 양 포트 공통) → 재생성. 프레임 재측정으로 선행 반영 확인(3.72→3.55s, ASS 는 정확히 −0.3). 9004 미러 완료. FE 무변경.
+
+## v133 — Wondera 에러 메시지 정리 + 생성 필수값 표시·강제 — 2026-07-27
+
+### 배경
+- 사용자 Wondera 테스트 생성 시 Cloudflare 차단 HTML("Just a moment...")이 에러 메시지로 그대로 노출됨. Wondera 도메인 전체가 서버 접근을 차단 중인 상태(오픈전 리스트 A-5b 등재됨)로, 재시도해도 동일.
+
+### 수행 결과 (9005 → 9004 미러 완료)
+**백엔드 (routes/wondera.py)**
+- `_clean_wondera_error`: Cloudflare/HTML 응답 감지 시 "Wondera 서비스에 연결할 수 없습니다 (외부 접속 차단). 관리자 확인이 필요합니다." 로 치환 — 업로드/생성/파일업로드/조회 4개 에러 경로 전부 적용(원문은 로그에만).
+- 생성 필수값 강제: 가사 공백/누락 → 400 "가사는 필수 입력입니다.", number 1~3 범위 검증. (기존 조합 제한 4종은 유지)
+- 참고: _wondera_headers 에 브라우저형 UA/Origin/Referer 추가돼 있음(별도 라인 변경 — 유지).
+**프론트엔드 (StudioTab2 Wondera 패널)**
+- 가사 라벨 "*필수" + 미입력 안내문 + placeholder, 스타일 프롬프트 "(선택)"/모델 "(선택·기본 auto)"/보컬 업로드 "선택 — 내 목소리 생성에만 필수" 표시.
+- 생성 버튼: 가사 trim 기준 비활성 + 툴팁, 내 목소리 버튼은 보컬 미업로드 시 비활성+안내 툴팁.
+- 검증: BE py_compile 양 포트, FE eslint 신규 0(잔여는 기존 no-empty), 서버 3종 재기동·필수 표시 서빙 확인.
+
+### 유의
+- Wondera 접속 차단 자체는 미해결(외부 요인) — 사용자 대시보드 확인 대기. 차단 해제 후 이 폼으로 타임스탬프 실물 확인(2번 실험) 재개 예정.
+
+## v133 추기 — Wondera 인증을 공식 문서 표준(Bearer)으로 전환 — 2026-07-27
+- 사용자 제공 공식 문서로 확인: 인증 = Authorization: Bearer, base URL 은 기존과 일치. 키는 대시보드 활성 키와 .env 일치(wk_14c4...) 확인.
+- x-api-key → Authorization Bearer 전환, 생성 응답 파싱 이중 대응({data:{task_id}} | 문서형 {id}) — BE·FE 양쪽. 9004 미러·서버 3종 재기동.
+- 단 Bearer 로도 Cloudflare 챌린지 403 지속(문서 cURL 그대로도 재현) → Wondera 인프라측 문제로 최종 진단, 지원팀 문의 문안 사용자에게 전달. 차단 해제 즉시 동작하도록 코드는 표준화 완료.
+
+## v134 — Wondera recognize 가사 타임스탬프 파이프라인 (골격, PLAN v130) — 2026-07-27
+
+### 요청 작업
+- "가사 타임스탬프 받아오는거 먼저 구현해두자. 차단해제되면 그때 테스트해보는거로" — Wondera `POST /v1/song/recognize`(공식 문서 wondera_source/ 확인: 오디오 → {duration(ms), lyrics_sections:[{start,end,text}(ms)]}) 연동을 미리 구축. 실호출은 현재 Cloudflare 한국발 차단으로 불가 → mock/주입 검증으로 완성해 두고 차단 해제 시 즉시 실테스트 가능 상태로.
+
+### 수행 결과 (9005 → 9004 미러 완료)
+**백엔드**
+- `services/lyric_recognize_service.py` 신규: `_call_wondera_upload`(files/upload purpose:"audio")/`_call_wondera_recognize`(song/recognize) 모듈 레벨 분리(mock 주입 가능), wondera.py 의 Bearer 헤더·에러 정리 재사용. `recognize_track_timestamps(track_id)`: 캐시(track.recognized_timestamps) → MinIO 오디오 다운로드 → 업로드 → recognize → ms→초 변환·보정(`_convert_sections`: 빈 text·start<0 스킵, end<=start→+0.5) → tracks 에 recognized_timestamps+recognized_at 저장. 실패 시 LyricRecognizeError(403 챌린지 → "현재 Wondera 서비스 접속이 차단되어 있습니다..." 정리 메시지).
+- `share_video.py`: 필터 로직 `_filter_segments` 공용 추출, `_fetch_lyric_segments` 폴백 — generation 타임스탬프 없으면 recognized_timestamps 사용, 로그 `source=generation|recognized|none`. 기존 generation 경로 로직 불변.
+- `routes/tracks.py`: `POST /api/tracks/{id}/recognize-timestamps` — 인증+트랙 소유자만(비용 통제, 자동 호출 없음), 성공 {cached, segments}, Wondera 실패 502. 로그 [lyric-recognize] 단계별(track 앞8자, 가사 값 미출력). share-video 조회 projection 에 recognized_timestamps 추가.
+**프론트엔드**
+- api/index.js 에 `recognizeTrackTimestamps(trackId)` 등록만 (UI 미연결 — 차단 해제 후 연결 예정).
+
+### 테스트 (tester, 9005) — 5/5 PASS
+- 단위: 문서 예시 payload ms→s 정확 변환, end<=start +0.5 보정, 음수/빈줄/비정상 타입 안전 스킵.
+- 라우트: 무인증 401 / 타인 트랙 403 / 미존재 404 / 본인 트랙 실호출 → 502 + 한글 정리 메시지(Cloudflare HTML 응답 미노출, 다운로드→업로드 단계 로그 정상, API 키·가사 로그 미출력 grep 0건).
+- 캐시: recognized 주입 트랙 재호출 → {cached:true} 즉시 반환, 외부 호출 0건.
+- 자막 폴백: generation 없는 트랙 + recognized 주입 → share-video subtitles:true, source=recognized, 프레임 추출로 자막 렌더 확인.
+- 회귀: 기존 generation 트랙 source=generation(캐시 히트 포함), 타임스탬프 전무 트랙 무자막 정상 생성, 트랙 목록 200. 테스트 흔적(주입 데이터·생성 캐시) 전량 정리.
+- 9004 미러 후 py_compile·health 200 확인.
+
+### 유의
+- 실 Wondera 호출 검증은 차단 해제 후: 본인 곡으로 recognize 1회 → 자막 영상 확인이 남은 전부 (오픈전 리스트 A-5b 연계).
+- recognize 는 유료 추정 → 자동 호출 없음 설계 유지. UI 버튼 연결은 실검증 후 별도 오더로.
+
+## v135 — 스타 채널 음악 피드 1단계 (SNS형: 시/일기 + 곡 삽입 + BGM) (PLAN v131) — 2026-07-27
+
+### 요청 작업
+- 사용자 채널에 SNS 형 음악 피드: 시/일기 글에 곡 카드 삽입(내 트랙 탭=내 것만 / 전체 곡 검색 탭=모든 공개곡+검색) 또는 BGM 지정. 모든 곡 카드에 곡명+아티스트명 표기(내 곡 포함 — 사용자 오더). 재생 규칙: BGM 자동재생(끄기 가능)→삽입곡 재생 시 BGM 일시정지→끝나면 복귀. ♥/💬/📤. 인스타형 홈 노출은 다음 단계 — 데이터 구조만 대비(피드=작성자 종속 독립 문서+is_public 슬롯+글로벌용 인덱스 선반영).
+
+### 수행 결과 (9005 → 9004 미러 완료)
+**백엔드**
+- routes/feeds.py 신규(/api/feeds): 생성/작성자별 목록/단건(비로그인 열람)/수정/삭제(댓글·좋아요 동반 정리)/좋아요(멱등, PG feed_likes+like_count $inc)/댓글(전면 신규 — 플랫폼 최초 댓글 시스템, 작성자 또는 피드 소유자 삭제). 검증: blocks 1~50·빈 텍스트 제거·title≤100·텍스트 합계≤10,000·트랙 실존·타인 곡 is_public 필수(내 비공개 곡 허용). 하이드레이션: 트랙 블록·BGM 을 라이브 조회(artist_name/cover_image/duration_sec, 삭제 곡 {deleted:true}), author 닉네임·프로필은 PG 현재값 우선(라이브 참조 관행).
+- main.py: PG feed_likes 테이블+Mongo feeds/feed_comments 인덱스 마이그레이션(글로벌 피드용 (is_public,created_at) 선반영).
+**프론트엔드**
+- ArtistDetailPage 탭 신설([곡·앨범] 기본/[피드] — 기존 섹션 조건부 wrap 만, 로직 무변형), /feed/:feedId 공유 착지 페이지.
+- components/feed/ 5종: FeedList(페이징+isSelf 작성 버튼), FeedPostCard(BGM 배너·텍스트/곡 블록·♥ 낙관적·💬 펼침 댓글·📤 링크 복사·소유자 수정/삭제), FeedTrackCard(전 카드 곡명+아티스트명·아티스트 터치 이동·삭제 곡/비공개 뱃지), FeedComposer(블록 편집기 ↑↓/삭제, +텍스트/+곡/BGM), TrackPickerModal(내 트랙/전체 곡 검색 2탭, 300ms 디바운스, BGM 겸용).
+- useFeedAudio 훅: 피드 전용 Audio 1개 — 전역 플레이어의 곡 종료 자동 연장과 충돌을 피하려 분리 설계. BGM 자동재생 시도(브라우저 차단 시 "재생 대기" 폴백)→삽입곡 재생 시 BGM 위치 저장·복귀, 전역 플레이어와 상호 배타(어느 쪽이 재생되면 다른 쪽 정지), recordPlay 연동.
+- api/index.js 피드 함수 10개+getTracks.
+
+### 진행 특이사항
+- 병렬 개발(BE/FE 동시 투입) 후 planner 통합 검수에서 응답 래퍼 불일치 6곳 발견·정정({feed}/{comment} 언랩, pagination.total).
+
+### 테스트 (tester) — 10/10 PASS, 버그 0건
+- BE 재검증: 하이드레이션 실값·검증 에러 5종·권한(401/403)·좋아요 멱등·댓글 소유자 삭제·비로그인 열람·인덱스 실존·[feed] 로그(원문 미기록, id 앞8자+길이만).
+- FE 정합: api 10개 함수 경로 1:1 대조·언랩 전수 확인·useFeedAudio 규칙(전역 pause/감지 정지/언마운트 해제/ended 복귀·api 모듈 경유)·vite transform 클린·eslint 신규 0.
+- 회귀: ArtistDetailPage 기존 섹션 무변형(diff 확인), 트랙 목록/검색/팔로우/아티스트 API 200.
+- 9004 미러 후 health 200+피드 목록 200+[migration] feed 라인 확인.
+
+### 유의 / 후속
+- **다음 단계(사용자 예고)**: 인스타형 홈 노출(팔로잉/추천 피드) — 데이터 구조·인덱스는 이번에 선반영됨.
+- 리스트 B 등재 필요: 회원탈퇴 익명화에 feeds/feed_comments 미포함(탈퇴자 피드 처리 정책 결정 필요).
+- BGM 자동재생은 모바일 브라우저 정책상 첫 진입 시 차단될 수 있음 — 차단 시 "▶ 재생 대기" 상태로 표시(정책이지 버그 아님).
+- 잔여 테스트 계정: fd_a/fd_b/fdt_a/fdt_b_178512* (정리 목록 패턴 포함).
+
+## v136 — 회원탈퇴 시 피드 인스타그램 방식 처리 (전부 삭제) (PLAN v132) — 2026-07-27
+
+### 요청 작업
+- 탈퇴자 피드 처리 방식을 사용자와 논의(인스타형=전부 삭제 vs 레딧형=익명화 존치) 후 **인스타그램 방식 확정**: 본인 피드 글 삭제(그 글의 댓글·좋아요 동반), 남의 피드에 단 내 댓글 삭제, 내가 누른 좋아요 철회. 곡은 현행 유지("탈퇴한 사용자" 명의, v124 결정 불변 — 탈퇴자 곡을 삽입한 남의 피드도 계속 정상).
+
+### 수행 결과 (9005 → 9004 미러 완료)
+- routes/auth.py withdraw_account 에 best-effort 3단계 삽입(⑤b 본인 피드 일괄 삭제 → ⑤c 내 댓글 삭제+comment_count 감소 → ⑤d 내 좋아요 철회+like_count 감소, 순서 엄수로 이중 감소 방지, 음수 카운터 후처리 가드). 로그 [withdraw] feeds_deleted/my_comments_deleted/my_likes_deleted 등.
+
+### 테스트 — backend-dev 자체검증 + tester 독립 5/5 PASS, 버그 0건
+- 기본: A 피드 2(B 댓글·좋아요)+B 피드 1(A 댓글·좋아요) → A 탈퇴 → A 흔적 전소거(Mongo/PG 직접 확인), B 피드 카운터 정확 감소·B 데이터 무손상.
+- 엣지: 피드 활동 전무 탈퇴 0건 정상 통과 / 자기 글 자기 댓글·좋아요 이중 감소 없음(⑤b 선소거 검증) / 탈퇴자 토큰 401·옛 피드 404 / 일반 피드 사이클 회귀 정상 / 확인 문구 불일치 400·계정 무손상.
+- 참고 관찰(비버그): ⑤b 로그 %s 포맷 코스메틱, tester 지시서의 가입 consents 에 version 필드 누락(실제 필수 — "v1.0") — 이후 지시서에 반영.
+
+### 특이사항
+- 오픈전 리스트 B 의 "회원탈퇴 익명화에 피드 미포함" 항목 완료 처리. 잔여 테스트 계정 wft_/wfd_ (정리 목록 패턴 등재 대상).
+
+## v136 추기 — 채널 명칭 통일 ("채널"/"내 채널") — 2026-07-27
+- 사용자와 명칭 논의(인스타=프로필/유튜브=채널) 후 **"채널" 확정** — AIDOL 은 스타(캐릭터) 중심이라 유튜브식이 적합.
+- 반영(FE 전용, 9004 무관): ①채널 페이지(ArtistDetailPage) 이름 위에 "채널"/"내 채널" 캡션 라벨 신설 ②헤더 내비에 **[내 채널]** 메뉴 신설(로그인 시, /artist/{내 id} — 기존엔 자기 채널 진입 경로가 없었음) ③아티스트명 링크 6곳(SongItem/FeedTrackCard/FeedPostCard 작성자/AlbumDetail/TrackCard/ChartPage)에 "채널 보기" 툴팁(자기 곡→내 음악 분기 기존 동작 유지) ④"스타의 SNS 채널"(곡 상세) 등 기존 문구는 의미 충돌 없어 유지.
+- eslint 신규 0, vite 재기동·서빙 확인.
+
+## v136 추기2 — 채널 통일·[내 채널] 메뉴 tester 검증 — 2026-07-27
+- 사용자 지시로 사후 통합 검증 수행: 전 항목 PASS, 코드 무수정.
+- 핵심 확인: **곡 0개 신규 계정도 내 채널 200 정상**(artists.py get_artist 가 곡 집계 없어도 PG 사용자 존재 시 200 — 우려했던 404 없음), 신규 계정 피드 탭 빈 목록→작성→반영 정상, 헤더 NavLink 경로·비로그인 미노출·캡션 분기·툴팁 6곳·eslint 0·기존 로직 diff 무변형.
+- 참고 관찰: 자기 곡 이름 클릭이 TrackCard/ChartPage 는 '내 음악'으로, SongItem 은 항상 채널로 이동(기존부터 상이) — 통일 여부는 오더 대기.
+
+## v137 — 채널 커뮤니티 탭 (공지 게시판, 유튜브 게시물식) (PLAN v133) — 2026-07-27
+
+### 요청 작업
+- 채널 탭에 [커뮤니티] 추가 — 채널 주인이 공지 작성("내일 곡 만들 예정" 등). 사용자 확정: ①팔로워 수 조건 없음 ②텍스트만 ③좋아요/댓글 있음. 향후 인스타형 홈에서 피드 글+공지 혼합 노출 전제.
+
+### 수행 결과 (9005 → 9004 미러 완료)
+**설계**: 공지 = feeds 문서 + kind:"community" (컬렉션 분리 안 함) — 좋아요/댓글/공유 링크(/feed/{id})/탈퇴 시 정리 전부 재사용, 인스타형 홈 혼합 노출도 한 컬렉션 시간순 조회로 대비.
+**백엔드(feeds.py 단일 파일)**: FeedBody.kind("feed" 기본), community 검증(곡 블록·BGM 400, title 무시·null), 목록 ?kind= 필터(feed=$ne 로 레거시 호환/community), kind 변경 불가(PUT 시 저장 kind 기준 검증), 전 직렬화에 kind 포함.
+**프론트엔드**: ArtistDetailPage 탭 3개([곡·앨범|피드|커뮤니티] — 커뮤니티=FeedList kind prop 재사용), FeedComposer 커뮤니티 모드(제목/곡/BGM 숨김, 텍스트 블록만), FeedPostCard 📢 공지 뱃지, FeedList 라벨·빈문구 분기+BGM 자동재생 feed 전용 가드, api getUserFeeds kind 파라미터.
+
+### 테스트 (tester) — 전 항목 PASS, 버그 0건
+- BE: 생성/400 3종/목록 상호 배타(기본값 feed)/PUT kind 변경 무시(+community 검증 유지)/좋아요 멱등·댓글·비로그인 열람.
+- FE 정합: payload↔BE 검증 충돌 없음, 탭 전환 재조회 deps, BGM 가드, 뱃지, vite transform·eslint 0. frontend-dev 의 api/index.js 기존 lint 6건 정리(빈 catch 표기)도 동작 불변 확인.
+- 회귀: kind 미지정 구형 payload 정상(곡+BGM 피드 201), 레거시 문서(kind 없음) feed 목록 호환(직접 삽입 검증), 공유 착지 200, 트랙 API 200.
+- 9004 미러 후 health·community 목록 200.
+
+### 특이사항
+- 탈퇴 정리(v136)는 feeds 컬렉션 전체 대상이라 공지 글에도 자동 적용(추가 작업 불요).
+- 잔여 테스트 계정 cmt_/cmti_ — 클린업 목록 패턴(fd_* 등)과 별개 prefix 라 목록에 추가 필요 → 아래에서 등재.
+
+## v138 — 타임라인 (인스타형 혼합 랭킹 노출 페이지) (PLAN v134) — 2026-07-27
+
+### 요청 작업
+- 상단 메뉴 AI차트 옆 [타임라인] — 모든 스타의 피드+공지가 인스타처럼 한 줄기로 노출. 사용자 확정: 토글 없는 단일 흐름, 로그인=팔로잉 최우선+인기 보충(취향 추천은 2단계 — 곡 임베딩 활용 예정), 비로그인=인기(팔로워·글 반응·차트곡)+최신성.
+
+### 수행 결과 (9005 → 9004 미러 완료)
+**백엔드**: GET /api/feeds/timeline (feeds.py, /{feed_id} 앞 배치로 경로 오매칭 방지, auth optional) — 공개 글 최신 200 후보에 점수식(recency×2 + engagement(log1p like+0.5·comment) + author_pop(log1p 팔로워) + track_power(삽입곡·BGM 차트력)×0.5), 로그인 시 팔로잉 작성자 +1000 으로 팔로잉 블록 최상위. PG 팔로워/팔로잉 각 1쿼리+Mongo 곡 인기 1쿼리+기존 _hydrate_feeds 재사용. limit 캡 30, tz 혼재 안전 처리, [timeline] 로그(top3 점수 포함, 본문 미로그).
+**프론트엔드**: Header [타임라인](AI차트 옆, 비로그인 노출)+/timeline 라우트+TimelinePage 신규 — FeedPostCard(showAuthor) 재사용, IntersectionObserver 무한 스크롤(중복 3중 가드+미지원 폴백 버튼), BGM 자동재생 없음(탭 재생만), 비로그인 열람.
+
+### 테스트 — backend-dev 자체검증(점수 수기 계산 일치) + tester 독립 전 항목 PASS, 버그 0건
+- 랭킹: 인기 작성자 상위/팔로잉 +1000 역전/차트곡 가중/피드·공지 혼합/비공개 피드 미노출/페이징 무중복/limit 경계(99→30 캡, 0·음수 안전, 문자 422)/삭제 곡 플레이스홀더/비공개 곡 삽입 글 is_public:false 전달.
+- FE: 응답 파싱·무한 스크롤 가드·IO 폴백·비로그인 렌더·eslint 0. 회귀: 채널 탭 kind 필터·단건 /{feed_id} 200/404(라우트 순서 무영향)·기존 헤더 메뉴 불변.
+- 9004 미러 후 health·timeline 200.
+
+### 특이사항 / 후속
+- 2단계 고도화 등재: ①취향 추천 항(pgvector 곡 임베딩 기반) ②후보 200건 창 — 글 많아지면 사전 집계/ES 전환 검토 ③비공개 곡의 track_power 점수 포함(tester 관찰, 노출 아님·가중치만) — 고도화 시 함께 정리.
+- 잔여 테스트 계정 tl_/tli_ → 클린업 목록 패턴 추가 대상.
+
+## v138 추기 — 상단 메뉴 Discover 탭 제거 — 2026-07-27
+- 사용자 지시: 검색창이 이미 있으므로 Discover(→/search) 메뉴 삭제. Header.jsx NavLink 1줄 제거 — /search 페이지 자체와 검색창 동작은 유지(직접 URL·검색창 경로 불변). eslint 클린, vite 재기동·서빙 번들에서 Discover 0건 확인. FE 전용(9004 무관).
+
+## v139 — 얼굴 인증(생체 대조) A안 골격: AWS Rekognition+Face Liveness, mock 우선 (PLAN v135) — 2026-07-27
+
+### 요청 작업
+- 캐릭터시트 얼굴 사진 본인 확인: 최초 실시간 촬영으로 얼굴정보 등록(암호화 저장) → 이후 저장 얼굴 vs 업로드 사진 즉시 매칭 → 불일치 시 알럿+재촬영(일치 시 갱신/불일치 시 이용불가). 본인인증 사용자만, 미성년자는 보호자 문자 동의(1회=영구 안내)+철회 버튼. A안(AWS CompareFaces 서울+Face Liveness 도쿄) 채택 — 키 발급 전이라 **어댑터+mock 모드로 전체 플로우 구축, FACE_VERIFY_ENABLED 기본 OFF**.
+
+### 수행 결과 (9005 → 9004 미러 완료, boto3 양쪽 설치)
+**백엔드**: services/face_verify_service.py(aws/mock 어댑터 — boto3 실호출 코드 완비, mock=SHA256 판정+FACE_MOCK_FORCE, Fernet 암호화 MinIO faces/ 저장, 촬영 원본 즉시 폐기)+routes/face_verify.py(status/consent/guardian/request/verify/session/DELETE 철회-전체 파기)+마이그레이션(face_biometrics·face_photo_verifications·guardian_consents.consent_type)+캐릭터 실사화 생성 게이트(사진 SHA256, 미검증 403)+faces/ 프록시·presign 차단+CONSENT_KEYS face_biometric. 보호자 플로우는 v125 골격 재사용(consent_type 분기, "한 번 동의하시면 계속 적용" 문구).
+**프론트엔드**: 민감정보 동의 전문(법정 5요소+국외이전(AWS 도쿄)+철회 안내 — planner 작성)+FaceVerifyFlow 모달(본인인증 안내→동의/보호자 분기(문자 발송·폴링·1회=영구 안내)→getUserMedia 촬영(Amplify FaceLivenessDetector 교체 지점 주석)→매칭·재촬영·차단)+MyMusicPage 실사화 게이트(403 폴백)+Header 내 정보 설정 "얼굴 인증" 행(철회 confirm)+api 5종.
+
+### 테스트 — backend-dev 34건 + tester 통합(성인 13·미성년 17·철회·게이트·로그·FE 정합·OFF 회귀)
+- 버그 4건 발견(전부 FE↔BE 정합) → planner 정정: ①[HIGH] 동의/보호자 요청 body 누락 422 → version/빈 객체 전송 ②DELETE trailing slash 307 → 경로 정합 ③mock 보호자 링크 응답 키(link→consent_url) ④guardian expired 시 폴링 무한대기 → 재발송 안내 처리. 정정 후 eslint 클린·vite 반영.
+- 나머지 전 항목 PASS: 등록→저장 매칭→불일치 재촬영 갱신(구 사진 mismatch 전환)·미성년 보호자(거절 rejected 처리 일치)·철회 시 PG/MinIO 완전 파기+재이용 시 동의부터·게이트(검증 후 402 포인트 단계 도달, cartoon 무영향)·faces/ 접근 차단·로그 민감정보 0건·**flag OFF 원복 후 기존 캐릭터 3종 흐름 불변**·.env 원복 diff 일치 확인.
+- 9004 미러 후 health 200·face-verify 라우트 401(정상 게이트)·[migration] face 라인 확인.
+
+### 유의 / 후속 (오픈전 리스트 A-7 로 등재)
+- 현재 mock 모드·기능 OFF — **AWS 키 발급 후**: .env 에 FACE_* 키 주입 → FE Amplify FaceLivenessDetector 통합(교체 지점 주석 완비) → 실 라이브니스 E2E → FACE_VERIFY_ENABLED=true. 본인인증 실연동(A-1)도 선행 의존.
+- FACE_DATA_KEY(Fernet)는 운영 전 생성·보관 정책 필요(시크릿 관리 항목과 연계). 철회는 flag OFF 에서도 동작(파기권 보장 — 의도된 동작으로 확정).
+
+## v139 추기 — AWS 얼굴인식 키 발급·실연동 확인 — 2026-07-28
+- 사용자가 단계별 안내로 직접 수행: 루트 MFA(구글 OTP) → 관리자 IAM(jaekyu-admin, AdministratorAccess) → 서버용 IAM(aidol-face-verify, AmazonRekognitionFullAccess) → 액세스 키 발급 → .env 주입(9005/9004, 변수명 공백 정규화만 보정).
+- 실호출 검증(값 미출력): 서비스 mode=aws 전환 확인, CompareFaces(서울) 인증 통과(무얼굴 이미지 정상 거절 = 키 유효), Face Liveness 세션 생성(도쿄) 성공. 양 서버 재기동 — 기동 로그 mode=aws, 기능 스위치는 여전히 OFF.
+- **기능 ON 보류 사유**: 게이트가 "본인인증 사용자만"이라 본인인증 실연동(A-1) 전에 켜면 전체 사용자의 실사화 캐릭터 생성이 차단됨. ON 은 A-1 이후 Amplify 라이브니스 통합과 함께(A-5c).
+- 후속 안내: AWS 이전 시 액세스 키 → EC2 IAM 역할 전환 예정(키 폐기).
+
+## v139 추기2 — 얼굴 인증 실물 E2E 테스트 (AWS 실호출) — 2026-07-28
+- 사용자 실기기 테스트(musinsa@aimu.com 수동 승격, 9005 스위치 임시 ON): **본인 사진 → 실시간 촬영 대조 통과 → 캐릭터 생성 진행 / 타인 사진 → 차단+재인증 유도** — AWS CompareFaces 실연동 정상 확인.
+- FACE_DATA_KEY(Fernet) 생성·양 서버 .env 적용(공유 저장소라 동일 키 필수). 테스트 후 스위치 OFF 원복(enabled=False mode=aws 기동 확인). musinsa 계정 승격은 유지(향후 테스트용, verify_provider='manual_test').
+- 잔여: FE 라이브니스(Amplify FaceLivenessDetector — "고개 돌리기" UI) 통합 + Cognito 설정 → A-5c. 사용자가 라이브니스 부재를 실물서 확인("정면 촬영만 하네") — 예정된 다음 단계임을 안내.
+
+## v140 — 얼굴 인증 라이브니스 통합 (AWS Face Liveness + Amplify + Cognito) (PLAN v136) — 2026-07-28
+
+### 요청 작업
+- "고개 돌리기" 실물 검사 연결. 사용자가 AWS 콘솔 수행(단계별 안내): Cognito 자격 증명 풀(도쿄, 게스트 전용) 생성 + 게스트 역할에 rekognition:StartFaceLivenessSession 만 허용(liveness-only). 앱팀(네이티브)은 동일 세션 API+풀 ID 로 별도 SDK 통합 예정(리스트 등재).
+
+### 수행 결과 (9005 → 9004 미러 완료)
+**백엔드**: POST /verify 에 session_id 경로 — GetFaceLivenessSessionResults(도쿄) 실측 기반 처리(CREATED/미존재/형식오류 3형태), confidence<80 → liveness_failed(재시도 유도), 통과 시 참조 이미지(실물 보증 얼굴)로 기존 대조 흐름. 무얼굴 이미지 500→400 정리 개선 동반. mock 모드 selfie 경로 하위호환 유지.
+**프론트엔드**: aws-amplify 6.19/@aws-amplify/ui-react-liveness 3.6.7(React 19 호환), src/config/awsLiveness.js(풀 ID·리전 — 공개 값, 게스트 초기화), FaceVerifyFlow capture 를 mode 분기(aws=FaceLivenessDetector 한국어 문구+세션 1회용 재시작 UX / mock=기존 촬영 폴백). dynamic import 로 1.13MB 청크 분리 — 메인 번들 무오염.
+
+### 테스트 — backend-dev 자체검증 + tester 5/5 PASS
+- FE↔BE 필드명·reason 값 전수 일치(422 류 어긋남 없음), 실 세션 미완료/무효/형식오류 400 정리 메시지, 로그 세션 앞8자만, 번들 분리 재확증, flag OFF 회귀(캐릭터 3종·스모크) 무영향, npm build 성공, .env 원복 diff 확인.
+- 관찰(저심각, 개선 여지): ①POST /session 실패 시 200+error 형태(관례상 5xx 권장) ②photo 쪽 무얼굴일 때 라이브니스 재시도로 유도되는 UX(메시지는 표시됨).
+- 실기기 "고개 돌리기" E2E 는 사용자 최종 확인 대기.
+
+## v141 — 콘텐츠 신뢰 6종 세트 (PLAN v137) — 2026-07-28
+
+### 요청 작업 (그림체 초상권 조사 후속, 사용자 확정)
+①사진 확약 체크 ②보관·비학습 고지 ③신고→어드민 처리 시스템 ④성적 필터 확인 ⑤비가시 워터마크+AI 뱃지 ⑥가시 워터마크 "MAIDOL · AI 생성"(브랜드 MAIDOL — AIDOL 상표 선점으로 변경).
+
+### 수행 결과 (9005 → 9004 미러 12파일 완료)
+**신고 시스템(BE-1+FE)**: PG reports 테이블(+pending 부분 유니크), POST /api/reports(3종 대상·중복 409·본인 400), 어드민 신고 큐(대상 스냅샷 하이드레이션)+블라인드/삭제/기각(감사 로그, ES 재색인, 재공개 400 차단), FE 신고 모달(사유 5종)+진입 3곳(곡/피드/댓글)+AdminReportsPage(썸네일 미리보기·처리 버튼)+블라인드 소유자 안내 라벨.
+**워터마크(BE-2)**: services/watermark.py 공용 헬퍼 — 가시: 공유영상 3포맷(캐시 v2→v3 승격·v2 퍼지)+MV 최종본에 "MAIDOL · AI 생성"(NanumGothic, 반투명, 포맷별 자막/카톡 UI 회피 좌표), 비가시: 생성 이미지 PNG tEXt/JPEG EXIF(픽셀 무손실 청크 조작)+영상 metadata comment. 캐릭터 삭제 시 원본 사진 미삭제 갭 발견·수정(temp 경로 명시 삭제).
+**확약·고지·뱃지(FE)**: 실사·가상 캐릭터 생성에 확약 체크(미체크 시 생성 불가)+보관·비학습 고지, portrait_confirmed BE 수신 로그(4 엔드포인트 — 강제 없음, 앱팀 호환), PlayerPage "AI 생성" 뱃지.
+**④ 성적 필터**: 코드 확인 — OpenAI/Google 기본 안전 필터 활성(완화 설정 없음), 추가 개발 불요.
+
+### 테스트 — 3 dev 자체검증 + tester 통합, 버그 4+갭 1 발견 → planner 전량 수정·재검증
+- BUG-1(중) 어드민 미리보기 키 불일치(target_snapshot→target) / BUG-2(중) **블라인드 피드가 채널 목록·단건에 잔존** → 비공개 피드 소유자 외 숨김·404(익명 0건/소유자 blinded 플래그/404·200 실측 재검증) / BUG-3(하) 차트 캐시 300s 잔존 → 블라인드 시 chart 캐시 즉시 무효화 / BUG-4(하) 신고 경로 trailing slash 307 / GAP-5 portrait_confirmed 로그 부재 → 4 엔드포인트 로그 추가.
+- 통과 항목: 신고 E2E(접수→큐→블라인드 시 목록·검색·아티스트 제외→댓글 카운트→기각→감사 로그·권한), 워터마크 3포맷 프레임 픽셀 확인+ffprobe metadata+v2 잔존 0+다운로드 4옵션 회귀, 이미지 메타 11/11(픽셀 무변경), 캐릭터 삭제 연계, FE 정적(확약 disabled·뱃지·라우트)·eslint 0, 회귀(차트/타임라인/피드 CRUD/포인트·likes 무간섭).
+
+### 유의 / 후속
+- 블라인드 곡 직링크(GET /tracks/{id}) 접근은 기존 설계(비공개도 상세 200) — 정책 재검토 시 오픈전 리스트에서 다룸.
+- 대상자 통보는 현재 "소유자 화면 내 라벨" 방식 — 알림 인프라 도입 시 푸시/알림으로 승격(후속).
+- FACE_VERIFY_ENABLED=true 유지 중(사용자 라이브니스 실기기 테스트 대기 — v140).
+
+## v142 — 신고 집행 패키지: 증거 스냅샷·확정 삭제·복원·인물 수색 몰수·직링크 404 (PLAN v138) — 2026-07-28
+
+### 요청 작업 (2차 법조사·업계 정석 조사 반영, 사용자 확정)
+분쟁 중=활동 무차단(신고 무기화 방지)+자동 증거 스냅샷+어드민 양면 뷰+자진 삭제 시 절차 계속(위반 기록 계정 존속) / 확정 후=완전 삭제(몰수)+도용 원본 사진 재사용 차단+**인물 기반 일괄 수색·몰수**(같은 인물이면 다른 사진 파일도 얼굴 대조로 검출) / 공통=비공개·블라인드 곡 직링크 404, 성적 사유 긴급 표시.
+
+### 수행 결과 (9005 → 9004 미러 10파일 완료)
+**BE-1**: reports.evidence(owner_id+items[kind/object/sha256], MinIO evidence/ 격리+프록시 차단), confirm_delete(파기 함수 추출 재사용: 오디오·커버·공유영상·ES·임베딩·likes·앨범 카스케이드)/restore(prev_state 복원)/removed_by_user 판정, user_violations·face_source_blacklist 테이블, urgent 정렬, recent-content·증거·media 어드민 프록시, 직링크 404(상세·스트림, 캐시 경로 포함).
+**BE-2**: face_search_service(증거 기준 얼굴 → 캐릭터 3종+전 트랙 커버(상한 200) AWS CompareFaces 순차, 무얼굴 스킵, ≥90 매치), admin_moderation(face-search/purge — owner_mismatch 오폭 가드, 몰수 시 위반 기록+블랙리스트+감사 로그), 캐릭터 생성 4종 진입부 블랙리스트 403(포인트 차감 전).
+**FE**: 어드민 양면 뷰(증거 스냅샷 ↔ 최근 생성물)·긴급 뱃지·확정 삭제("확정삭제" 입력식 2중 확인)·복원·인물 수색 모달(유사도·체크박스·일괄 몰수)·api 5종.
+
+### 테스트 — 3 dev 자체검증(BE-2 는 실 AWS 얼굴 대조 시나리오) + tester 통합 → 버그 4건 발견·planner 전량 수정
+- BE 라이프사이클 E2E 전 구간 PASS(접수→스냅샷 sha 일치→자진 삭제 후 잔존→removed_by_user 판정→수색: 같은 인물 검출·무관 제외→몰수→차단 403, blind→restore 원상복구, urgent, AWS 3콜≈6원).
+- 수정 버그: ①[High] FE 증거 컨테이너 형태 불일치(dict.items↔배열) ②[Med] recent-content 캐릭터 필드명 ③[Med] 수색 썸네일 img 토큰 미부착 ④**[High] stream-proxy 직링크 가드 누락(비공개 곡 오디오 우회 수신)** → 가드+쿼리 토큰 추가, 공개 200/비공개 404/원복 200 실측 재검증. +removed_by_user 시 양면 뷰 owner_id 폴백.
+- 회귀: 공개 곡 재생·차트·검색·타임라인·피드·신고 기존 규칙 전부 정상. eslint 0·build 성공.
+
+### 유의 / 다음 단계 (예약 — 사용자 확정)
+- **곧바로 이어서 진행할 것**: ①소유자 소명 제출 화면 ②스트라이크 자동 제재(user_violations 데이터 기반: 경고→기능 제한→정지) ③신고자 처리 결과 통지 ④약관 조항("게시자 삭제에도 위반 기록·증거 보전 존속" — 망법 44조의2 ④ 약관 명시 의무).
+- 한계(설계 명시): 그림체 커버는 얼굴 미검출 시 수색 스킵, 트랙 200건 초과 시 최신순 상한. purge 응답 blacklisted 카운트 표기 정리(Low)는 다음 단계에서 함께.
+
+## v143 — 신고 후속: 소명 제출·스트라이크 자동 제재·신고자 통지·약관 조항 (PLAN v139) — 2026-07-29
+
+### 요청 작업 (v142 예약분, 사용자 "구현진행해")
+①블라인드 콘텐츠 소유자 소명 제출 ②스트라이크 자동 제재(위반 1건 경고/2건 생성 7일 제한/3건 계정 정지) ③신고자 처리 결과 확인("내 신고 내역") ④약관 신고·제재 조항. +v142 Low(purge blacklisted 카운트 정리).
+
+### 수행 결과 (9005 → 9004 미러 9파일 완료)
+**백엔드**: services/strike_service.py(apply_strike 3단계·check_generation_allowed), 생성 게이트 8곳(곡 generate/start·캐릭터 4종·커버·MV — 포인트 차감 전), user_violations 기록을 apply_strike 로 통합(confirm_delete·purge, report당 1위반 멱등), users.restricted_until·report_appeals 테이블, GET /me strikes 첨부, reports.py my-affected/appeal/my API, 어드민 큐 appeal 첨부. 3건째 정지는 기존 is_banned 로그인 차단 재사용.
+**프론트엔드**: 약관 제8조(권리침해 신고 및 제재 — 신고·블라인드·소명·파생물 삭제·증거 보전·단계적 제재·허위신고 제재 6항)+CONSENT_VERSION '2026-07-29.v1', AppealModal(공용 소명), 내 트랙·내 채널 피드 [소명하기], Header 내 신고 내역+스트라이크 경고 배너, 생성 제한 403 알럿 헬퍼(곡/캐릭터/커버/MV 진입점), ReportModal 안내 문구.
+
+### 테스트 — backend 34/34 + tester 통합, 버그 1건 발견·수정
+- BUG-1(High): FE 4곳이 소명/신고내역 응답을 items[]로 읽었으나 BE 실제 reports[] → 소명·신고내역 UI 전면 무동작 → planner 가 4곳+api 주석 reports 우선(items 폴백)으로 정정, lint 클린·vite 반영.
+- 통과: 스트라이크 3연속(count 1/2/3, 2건째 생성 4계열 403 generation_restricted, 만료 후 게이트 통과, 3건째 is_banned+로그인 403, 멱등), 소명(제출 201·중복 409·비소유자 403·blind 아님 400·어드민 큐 노출), 신고자 my(상태 반영·비로그인 401), 약관 제8조/버전, 회귀(v142 신고·블라인드·수색·몰수·직링크 404, 정상 생성 402, /me 기존 필드 불변).
+- 9004 미러 후 health 200+[migration] v139. 잔재 테스트 계정(stk_offender) 정지 해제·위반 정리.
+
+### 유의 / 후속(리스트 등재 대상)
+- 약관 제8조는 CONSENT_VERSION 갱신으로 **신규 가입자부터** 적용 — 기존 이용자 재동의 팝업은 미구현(강제 재동의 로직 부재). 정식 오픈 전 재동의 UX 결정 필요.
+- 신고자 통지는 "내 신고 내역" 조회(pull) 방식 — 알림 인프라 도입 시 push 통지로 승격.
+- 잔여 테스트 계정: rpt_/enf_/fsr_/tste_/stv_/stk_/tsv_ (오픈전 클린업 목록 patterns 추가 대상).
+
+---
+
+## v144 — 2026-07-30 — 생체정보 이후 개발분(v141~v143) E2E 검증 + 밴 세션 무효화 수정
+
+요청: 사용자와 함께 E2E 체크리스트 #1~#7 하나씩 확인, 발견 버그 실시간 수정.
+
+### E2E 결과 (#1~#7 전 항목 통과)
+- #1 확약 체크+비학습 고지 / #2 AI 뱃지+워터마크 / #3 신고하기 / #4 내 신고 내역 / #5 어드민 신고 처리 / #6 소명 / #7 스트라이크 — 전부 정상 동작 확인.
+
+### 이번 세션 발견·수정 버그
+- BUG-A(High, 신규 발견·수정): **밴(is_banned) 즉시 세션 무효화 부재**. `get_current_user`(auth.py)는 매 요청에서 JWT+Redis 세션만 검사하고 `is_banned` 재확인을 안 함 → 밴을 걸어도 기존 로그인 세션이 로그아웃/만료 전까지 계속 활동 가능(조회·재생·댓글·좋아요 등). 로그인 게이트(auth.py:238)는 신규 로그인만 차단. → **수정**: `strike_service.apply_strike`의 `tier=="ban"` 분기에서 Redis `session:{user_id}` 삭제(best-effort try/except). 결과: 밴 순간 다음 요청 401 → 로그인 화면 축출 → 재로그인은 밴으로 차단. 9004 미러+9005 재시작. E2E로 실 경로(apply_strike) 태워 세션 EXISTS→DELETED 검증, 브라우저에서 페이지 이동 시 즉시 튕김 확인.
+- BUG-B(Med): 스트라이크 경고 배너가 고정 높이 flex 헤더의 자식이라 우상단 nav 버튼 위로 겹쳐 잘림 → `header__strike-banner`를 `position:absolute; top:100%`로 헤더 하단 전체폭 띠 배치, 불투명 배경 처리(Header.css).
+- (참고) "내 트랙에 소명 버튼 없음"은 버그 아님 — 신고 pending은 미제재라 소명 대상 아님(정석). 블라인드 후 정상 노출. 동명 트랙 2개(라이브 vs 확정삭제된 옛 문서) 혼동이 원인.
+
+### 정책 확인 (코드 변경 없음)
+- 신고 집행 순서 = 업계 정석(판단 후 조치 → 소명으로 교정, act-first/appeal-after) 그대로임을 재확인. 현 구조 유지. 후속: 허위신고자 제재 강화(오픈전 리스트).
+
+### 검증 계정 정리
+- 무신사(c3202520) 위반 0건·is_banned=False·restricted_until=NULL 로 완전 원상복구(E2E 주입분 및 잔여 face_purge 기록 삭제).
+
+---
+
+## v145 — 2026-07-30 — 어드민 제재 컨트롤 (생성 제한 해제 + 위반 기록 초기화) [AIDOL-SanctionSquad]
+
+요청: "2회경고받은것 뿐만아니라 한번이라도 경고받은것도 없애줄수있도록 어드민이 컨트롤할수있어야한다." (2회 생성 제한만이 아니라 1회 경고까지 어드민이 해제 가능해야 함)
+
+### 배경 (v144 후속 — 비대칭 구멍)
+- 밴(is_banned) 해제만 가능하고, 2회 누적 생성 제한(restricted_until)·1회 경고(user_violations)를 어드민이 풀 방법이 없었음(7일 자동 만료만). 어드민 화면에 제한/위반 상태 표시도 없었음.
+
+### 구현
+**백엔드 (admin.py, 9005 선구현 → 9004 파일 미러)**
+- `GET /users` 목록, `GET /users/{id}` 상세에 `violation_count`(user_violations COUNT, /me strikes 와 동일 정의)·`restricted_until` 추가. 목록은 스칼라 서브쿼리로 N+1 회피.
+- 신규 `POST /users/{id}/restriction/lift` — restricted_until=NULL (활성 제재만 해제, 위반 이력 감사 보존). admin_logs "lift_restriction".
+- 신규 `POST /users/{id}/strikes/reset` — user_violations 전체 삭제 + restricted_until=NULL + **자동밴(ban_reason=BAN_REASON_AUTO)만** 함께 해제(수동 밴은 보존). admin_logs "reset_strikes". 배너/스트라이크 0 초기화.
+- 로그: `[admin.sanction] lift/reset admin=.. user=.. ...`(마스킹 8자).
+
+**프론트엔드 (AdminUsersPage.jsx, api/index.js)**
+- api: `liftUserRestriction(id)`, `resetUserStrikes(id)` (POST). 컴포넌트 직접 fetch 금지 규칙 준수.
+- 상태 열: `위반 N회`·`생성제한 ~만료일` 배지 추가(admin-status-cell flex-wrap).
+- 액션: 제한 중이면 [제한 해제], 위반>0이면 [위반 초기화] 버튼(각각 confirm 다이얼로그). [AdminUsersPage] 콘솔 로그(DEV 가드)+catch console.error.
+
+### 테스트 — tester HTTP 통합 5/5 PASS
+- [GET /users] violation_count=1·restricted_until 노출 PASS.
+- [A restriction/lift] count=1 유지, restricted 해제 (HTTP200) PASS.
+- [B strikes/reset+자동밴] count 3→0, restricted·is_banned 해제 (HTTP200) PASS.
+- [C strikes/reset+수동밴] count 2→0, restricted 해제, **is_banned=True 보존** (HTTP200) PASS.
+- [D 알 수 없는 user] HTTP404 PASS.
+- 어드민 토큰 발급→127.0.0.1:9005 실제 호출(테스터 셸 setsid 종료로 서버 SIGTERM 전파 이슈 → nohup+disown 로 분리 기동해 해결). 스크래치 대상 tsv_clean 원상복구, 테스트 admin 세션 정리. eslint exit 0.
+
+### 특이사항 / 후속
+- reset 는 자동밴만 해제(수동밴 보존) — 오심 방지. 수동밴은 기존 [밴 해제] 버튼으로.
+- restriction/lift 는 위반 이력 보존(감사) / strikes/reset 은 완전 초기화 — 두 단계 제공으로 요청("1회 경고까지 없애기") 충족.
+
+---
+
+## v146 — 2026-07-30 — 이용약관·개인정보처리방침 독립 페이지 + 정식 처리방침 작성 [MAIDOL-LegalDocsSquad]
+
+요청: 이용약관·개인정보처리방침 페이지 작성. 웹검색으로 정확히 조사하며, 법률검토 없이도 될 만큼 꼼꼼히.
+
+### 리서치 (웹검색 병렬 4건, 정부 공식 소스 교차확인)
+- 처리방침 법정 필수항목(법 제30조/시행령 제31조)·개인정보위 표준 목차·파기·쿠키·만14세 특칙.
+- 위탁(제26조)·국외이전(제28조의8) 기재요건: 국외 수탁=국외이전 중복적용, 국외이전 5개 항목 표, AWS 도쿄=생체정보 국외이전.
+- 정보주체 권리(제35~37조)·권익침해 구제기관 최신 연락처(분쟁조정위 1833-6972〔구 02-2100-2499 폐기〕/침해신고 118/대검 1301/경찰 182 ecrm.cyber.go.kr)·안전성 조치·CPO 양식.
+- 이용약관 표준조항(공정위 디지털콘텐츠 표준약관)·전자상거래법 제17조 청약철회·AI생성물은 저작권 아닌 계약상 라이선스 구조·미성년자.
+
+### Phase0 데이터흐름 반영 (정확성 핵심)
+- 국외이전 실제 7곳만 기재: Google·OpenAI·SunoAPI·fal.ai·xAI(미국)·Kuaishou(중국)·AWS(일본, 생체정보).
+- 결제 PG 없음(포인트=AdMob 광고보상) → 유료/청약철회는 "현재 무료, 도입 시 전자상거래법 준수"로 정확 기재(허위 수탁사·결제사 미기재).
+- 국내 위탁 없음(SMS mock·스토리지 자체 MinIO) 명시. 생체정보=민감정보(제23조) 별도 처리+국외이전.
+
+### 구현 (프론트 전용, 백엔드 변경 없음)
+- 신규 `constants/legalTexts.js`: TERMS(20개조+부칙)·PRIVACY(16개조, 국외이전표·구제기관표) 구조화 전문 + COMPANY 상수.
+- 신규 `components/LegalDocument.jsx`(공용 렌더: 조문·표·주석), `pages/TermsPage.jsx`·`PrivacyPage.jsx`, `pages/LegalPage.css`(테마·반응형, 표 overflow-x).
+- `App.jsx`: /terms·/privacy 라우트(비로그인 상시 열람). `Footer.jsx`: 링크 `#`→react-router Link.
+
+### 법 제30조 필수항목 커버 체크 (처리방침)
+목적·항목·보유기간·제3자제공·위탁·국외이전·민감정보 공개가능성/비공개선택·파기·정보주체권리·만14세·안전성조치·쿠키·보호책임자·권익침해구제·변경 = 15/15 ✓.
+
+### 테스트
+- eslint 6파일 exit 0. FE /terms·/privacy 200, Vite 모듈 트랜스폼 200(컴파일 성공). 데이터 무결성(표 행/열 일치, TERMS 20·PRIVACY 16 섹션) 통과. 회귀: 기존 라우트·푸터 mailto 고객센터 불변.
+
+### 특이사항 / 후속
+- 정식 시행 전 **법률 전문가 검토 권장**(초상권 전용 표준문구·KOMCA 신탁·AI API 위탁vs제3자제공 구분은 사업자 정책 확인 필요 — 리서치에서 확정불가로 명시).
+- 유료 결제 도입 시 청약철회·환불(제13조)·유료서비스(제12조) 실동작 반영 및 배제조치(미리듣기·체험) UI 필요.
+
+---
+
+## v146.1 — 2026-07-30 — 국외이전 사업자별 데이터정책 실조사 (위탁 vs 제3자제공 분류)
+
+요청: 실제 사용 AI API를 사업자별 웹검색으로 조사해 위탁/제3자제공을 근거 있게 확정.
+
+### 실제 사용 사업자(코드 확인) 7곳 + AWS 분류 결과
+| 사업자 | 엔드포인트 | 기본 데이터정책 | 위탁 성립 조건 | 국가 |
+|---|---|---|---|---|
+| OpenAI | api.openai.com | 기본 비학습·30일·processor DPA | 기본 OK (학습 옵트인 금지) | 미국 |
+| xAI(Grok) | api.x.ai | 기본 비학습·30일 자동삭제·DPA·ZDR | 기본 OK | 미국(리전 미명시) |
+| Google Gemini | generativelanguage.googleapis.com | **무료=학습+사람검토 / 유료=비학습+DPA** | **유료(결제 활성화) tier 필수** | 미국(리전 미보장) |
+| AWS Rekognition | boto3 | **기본 opt-in=개선 사용+리전외 저장** | **AI opt-out 정책+도쿄 리전+고객 S3** | 도쿄(Liveness)/서울(Compare=국내) |
+| fal.ai(Seedance) | fal.ai | 엔터=비학습 / 표준=Usage Data 재사용권 | **엔터프라이즈/DPA 체결** | 미국(+ByteDance 흐름 불명) |
+| Kling(Kuaishou) | api-singapore.klingai.com | **입력 학습 사용+광범위 라이선스** | **학습 옵트아웃(support@klingai.com)+위탁계약** | 싱가포르·중국 |
+| SunoAPI.org | api.sunoapi.org | **비공식 프록시·운영자 은폐·정책 없음** | **적법 구성 불가 → 교체 권장** | 불명(홍콩/Alibaba 정황) |
+| Wondera | api.wondera.ai | **정책 불투명·공식 처리방침 인증서 만료** | 계약으로 목적제한 확보 필요 | 미국(Wonder AI Inc.) |
+
+### 처리방침(legalTexts.js) 보정
+- 국외이전 근거: 제28조의8 3호(처리방침 공개) → **정보주체 별도 동의(가입 시 overseas 동의 실수집)** 로 정정.
+- Kling 국가 '중국(싱가포르 리전 포함)' → '싱가포르, 중국'. SunoAPI 국가 '미국'(오류) → '해외'. **Wonder AI Inc.(미국) 신규 추가**(누락이었음). AWS CompareFaces=국내(서울)·Liveness만 국외(도쿄) 명확화.
+
+### 오픈전 실무 액션(콘솔 설정 — 문구가 아닌 실제 조치)
+1. Gemini: **유료(결제) tier 확인** — 무료면 입력 학습 대상.
+2. AWS: **AI services opt-out policy + 도쿄 리전 고정 + 고객 소유 S3**.
+3. Kling: **학습 옵트아웃(support@klingai.com) + 위탁계약**(안 하면 제3자제공).
+4. fal.ai: **엔터프라이즈/DPA 체결**(표준약관 Usage Data 재사용권 배제), ByteDance 서브프로세서 흐름 서면 확인.
+5. SunoAPI.org: (정정 — 공식 Suno 셀프서비스 API 없음, 2026.7 파트너 API 탐색 단계) → **당분간 서드파티 유지**, Suno 파트너 신청(장기), 정식 출시 시 Wondera 위주 전환 검토(단 Wondera 데이터정책 불투명 → 서면 검증 필수). 대안: Stable Audio·ElevenLabs Music·Google Lyria 등 공식 API.
+6. Wondera: 데이터 정책·소재 서면 확인 또는 대체.
+7. OpenAI/xAI: 기본 OK — 학습 옵트인만 켜지 말 것.
+
+⚠ 위 분류는 공식 문서 기반 해석. DPA 원문(일부 봇차단)·서브프로세서 목록은 계약 실무에서 브라우저 직접 확인 권장.
+
+## v147 — 2026-07-30 — 아이템 스토어 5단계 계층 드릴다운 (플랫폼→브랜드→성별→제품→색상) [MAIDOL-ItemStoreSquad]
+
+### 요청
+아이템 스토어를 평면(광고주 1단계) → **플랫폼 › 브랜드 › 성별 › 제품 › 색상** 5단계 드릴다운으로 재구성. 공용은 남/여 양쪽 노출("공용" 뱃지), 장소 카테고리 제외, 기존 6개 아이템은 실제 제품페이지 조사해 백필.
+
+### 수행 결과
+**백엔드** (backend_9005 + 9004, byte-identical 미러 확인)
+- `business.py` `create_ad_item`: `brand/product_name/color` Form 필드(기본 "") + 입력 로그 추가, 저장 doc 에 3필드. name 은 create 시 required 유지.
+- `update_ad_item`: 3필드 옵셔널 Form + `is not None` 갱신 블록 + 로그.
+- `_serialize_doc`/`get_active_ads`/대시보드/인사이트 무변경 → doc 통째 반환이라 신규필드 자동 노출.
+
+**데이터 백필** (1회성 Mongo 갱신, 6건 modified=1 검증)
+- 무신사: 애드호크(ADHOC)/베이직 쮸리 후드집업/오프화이트, 리복(Reebok)/클럽 C 85 빈티지/크림, 포르테나(PORTERNA)/립드 디스트레스드 울 니트 팬츠/블랙
+- 구찌: 구찌(GUCCI)/비토리아 T-스트랩/베이지, /자수 울 트위드 라메 쇼츠/블랙, /프린트 실크 트윌 셔츠/블랙 (셔츠 색상은 사용자 최종 확인 "블랙")
+- 조사 경로: 무신사 3건 WebFetch 직접, 구찌 3건 브랜드=GUCCI 자명+색상 제3자 SKU 조회(셔츠는 사용자 확정).
+
+**프론트엔드**
+- `BusinessPage.jsx`: 등록폼에 브랜드/제품명/색상 입력(required) 추가(카테고리 앞), 아이템명은 선택(비우면 `{제품명} - {색상}` 자동합성). 제출 시 FormData 에 4필드 append. 목록 테이블에 브랜드/색상 열 추가.
+- `ItemSelectModal.jsx`: '전체' 탭을 5단계 드릴다운으로 교체(위시 탭·handleSelect·impression/click 불변). `drill` state + 브레드크럼(전체+단계 crumb 클릭 점프)+뒤로가기, 단계별 타일, 색상 리프 카드(label=color||'기본', 공용 뱃지, 쇼핑몰 링크, 선택).
+- `ItemSelectPage.jsx`: 동일 드릴다운(navigate 유지).
+- CSS: 두 파일에 `__drill/__breadcrumb/__crumb/__drill-back/__tiles/__tile/__unisex-badge` + 모바일 오버라이드, 기존 테마 변수 사용.
+
+### 테스트 결과 (통합)
+- ✅ 백엔드 9005 재시작 후 `/api/business/ads/active?category={상의,하의,신발}` — 3개 카테고리 각 2건(무신사+gucci), brand/product_name/color/gender 전부 정상 반환.
+- ✅ 9005/9004 business.py **byte-identical** (diff 무결).
+- ✅ 프론트 `vite build` 성공(3074 모듈, 신규 컴파일 에러 0). Vite dev(4000) HMR 반영.
+- ✅ 드릴다운 로직 코드리뷰: 공용→남/여 양쪽 매칭, jumpTo/goBack 하위 레벨 초기화, currentLevel 게이팅 정상.
+- ✅ eslint: 신규 에러 0 (기존 `react-hooks/set-state-in-effect` 2건은 원본 setError 라인, 이번 작업 무관).
+- ⚠ create/update 라이브 등록 테스트는 고객사 로그인 자격 필요 → 코드검증+파싱으로 대체(브라우저에서 사장님 육안 등록 테스트 권장).
+
+### 특이사항
+- 구찌 계정 닉네임이 `gucci`(소문자) → 플랫폼 라벨 그대로 노출. 계정명 변경은 범위 밖(관측만). 필요 시 별도 오더.
+- 기존 아이템 `name` 필드는 백필에서 손대지 않음(대시보드/위시/스타 참조 보존). 드릴다운은 product_name/color 사용.
+
+## v147.1 — 2026-07-30 — 아이템 스토어 UX 전환: 드릴다운 → 패싯 필터 (사진 항상 노출)
+- 사용자 피드백: "넓은 범위일 때 그 범위 모든 아이템 사진이 다 보이고, 다음 범위 선택하면 좁혀지며 필터되는 형태."
+- 변경: `ItemSelectModal.jsx`·`ItemSelectPage.jsx` — 단계별 '글자 타일만' 렌더 → **상단 패싯 칩(플랫폼→브랜드→성별→제품) + 하단 아이템 사진 그리드 항상 노출**. 그리드는 현재 선택된 패싯으로 필터된 `byProduct` 집합(미선택 시 카테고리 전체). 카드는 어느 단계에서도 직접 선택 가능(선택 버튼·쇼핑몰 링크·공용 뱃지 유지), 카드명=제품명 + 색상 서브라벨.
+- CSS: 두 파일에 `__facet/__facet-label/__card-color` 추가(테마 변수 --color-border/text-sub).
+- 검증: `vite build` 성공(신규 컴파일 에러 0), eslint 신규 에러 0(기존 setState-in-effect 2건만). 서버 9005 + Vite 4000 UP, HMR 반영.
+
+## v148 — 2026-07-30 — 아이템 스토어 실데이터 대량 등록 (6플랫폼 449건 + 고객사 계정 5개) [MAIDOL-ItemSeedSquad]
+
+### 요청
+`item_images/` 크롤링 데이터를 아이템 스토어에 등록. 플랫폼별 고객사 계정 생성 후 등록. 이미지 캐스케이드, 기존 6개 공존, 에이블리 제품명 (a) 대체명.
+
+### 수행 결과
+- **계정 5개 생성** (role=customer, account_status=active, pw=bcrypt, company_name=플랫폼명): 29cm/w컨셉/에이블리/지그재그/크림. 무신사는 기존 계정 재사용. 로그인 검증 OK(에이블리 계정 → 200, role customer, 토큰 발급).
+- **아이템 449건 등록** (스킵 0): 무신사164·크림120·w컨셉58·지그재그53·29cm47·에이블리7. seed_source="item_images_csv" 태깅(멱등).
+- **이미지 전량 확보**: 로컬 292 + 원격 다운로드 157 (크림120·에이블리7·29cm30) 전부 성공. MinIO `ads/{user_id}/` 업로드. 이미지 프록시 200(다운로드 png 검증).
+- **에이블리 7건 제품명**: WebSearch 특정 실패 확인 → (a) `"{브랜드} 여성 상의 (인기 N위)"` 폴백 적용.
+- **매핑**: 구분→플랫폼계정, 브랜드→brand, 아이템명→product_name, 색상→color(빈값→기본), 부위→category, 성별|부위접두→gender(남성용/여성용).
+- **시드 스크립트**: backend_9005/seed_item_store.py (1회성, 백필 방식. Mongo/MinIO 직접).
+
+### 추가 수정 (등록 기능 실사용 위해 필수)
+- `get_active_ads` **$sample 상한 100→500** 상향 (9005+9004 동일). 카탈로그 455건 중 카테고리당 100건만 노출되던 문제 해결 → 상의157/하의145/신발153 전량 노출 확인. 9005/9004 diff 무결.
+
+### 테스트 결과
+- ✅ active ads 3개 카테고리 전량(157/145/153), 플랫폼·brand·gender·color·이미지 정상.
+- ✅ 이미지 프록시 200(원격 다운로드 크림 png 367KB).
+- ✅ 신규 계정 로그인 200(customer).
+- ✅ 9005/9004 business.py byte-identical.
+- ✅ 전체 ad_items 455 = 신규 449 + 기존 6(공존 확인).
+- ✅ 백엔드 9005 재시작·정상.
+
+### 특이사항
+- active ads 는 여전히 랜덤 순(＄sample). 향후 500 초과 시 재상향 or 페이지네이션 필요.
+- 크림/에이블리 원격 이미지는 각 플랫폼 CDN(pstatic/cloudfront) 직접 다운로드본을 MinIO에 저장 → 자체 호스팅.
+
+---
+
+## v149
+**수정일자**: 2026-07-30
+**요청 작업**: 동영상 탭에서 진짜 MV가 없어도 커버(정지 배경)+가사(타임스탬프 싱크)를 브라우저 실시간으로 재생((가)안). 탭을 오가도 음악 재시작/중단 없이 이어짐.
+
+### 수행 결과
+- **백엔드**: `GET /api/tracks/{id}/lyrics-timeline` 신규 (`tracks.py`). `share_video._fetch_lyric_segments`(SNS·다운로드 burn-in과 동일 단일 진실원) 재사용 → `{has_timestamps, segments:[{text,start,end}], source}`. 무인증(음악 재생과 동일 정책). 9005→9004 **바이트 동일 미러**(full-file diff 무차이).
+- **프론트엔드**:
+  - `api/index.js` `getTrackLyricsTimeline` 추가.
+  - `components/LyricSyncVideo.jsx`(+css) 신규 — 커버 배경 + 3줄 스크롤(지난 흐림/현재 강조/다음 흐림). `usePlayer()`의 `currentTime` 구독(새 오디오 리스너 없음), 현재 줄 = `start <= currentTime` 마지막 세그먼트(이진탐색).
+  - `PlayerPage.jsx` — `handleMediaTabChange` 폐기 → `handleSongTabClick`/`handleVideoTabClick` 분리. 동영상 탭 클릭 시 MV+timeline 병렬 lazy fetch 후 mode 결정: `mv`/`lyric-sync`/`none`.
+- **음악 무중단(핵심) 구현 방식**: `lyric-sync`·`none` 모드에서는 `audioRef.pause()`/`setVideoMode(true)`/seek을 **일절 호출하지 않음** → videoMode=false 유지되어 단일 `<Audio>`가 그대로 재생 소스. 실제 MV일 때만 기존 pause+`<video>` 스왑. 오버레이는 순수 시각 요소라 currentTime만 읽어 자동 싱크.
+- **렌더 3분기**: 실 MV→`<video>`, 타임스탬프 O→`<LyricSyncVideo>`, 없음→"MV나 가사 싱크가 준비되면 영상이 제공됩니다".
+
+### 테스트 결과 (tester: 전 항목 PASS, 버그 0)
+- 엔드포인트: positive(쉬었음 청년 73세그·심장을 깨워 51세그, start 정렬·text 비어있지 않음·end>start), fallback(벚꽃피는 날→has=false), 400/404, 로그 출력 확인.
+- 9005/9004 full-file diff 무차이.
+- 코드리뷰: lyric-sync/none 경로에서 오디오 미접촉(음악 무중단 성립), currentTime 컨텍스트 구독, 엣지(시작 전/종료 후/빈 세그먼트) 무크래시, 곡 변경 시 lyricsTimeline 리셋, raw fetch 미사용, 디버그 로그(DEV 가드+catch error) 존재.
+- eslint 신규 에러 0(기존 exhaustive-deps 경고 1만), `vite build` 성공.
+- 회귀: 기존 MV 재생 경로/`getTrackMusicVideo`/videoMode sync effect 불변.
+
+### 특이사항
+- 현재 DB 21트랙 중 타임스탬프 보유 generation은 5개(연결 트랙 예: 쉬었음 청년·심장을 깨워). 옛 곡 다수는 timestamps 미보유 → 자동으로 "준비되면 제공" 안내 노출(정상).
+- `source`는 `timestamps`/`none`만 반환(generation vs recognized 재분해는 중복 로직 회피, 정확 소스는 `[share-video]` 로그에 기록).
+
+---
+
+## v150
+**수정일자**: 2026-07-30
+**요청 작업**: 동영상 탭 가사싱크에서 줄이 스냅(점프컷)으로 바뀌던 것을 자연스럽게 미끄러져 올라가게 (A안 = Apple Music/멜론식 줄 글라이드). 백엔드 변경 없음.
+
+### 수행 결과 (프론트 전용, 2파일)
+- `components/LyricSyncVideo.jsx`: 고정 3칸 텍스트 스왑 폐기 → **전체 세그먼트를 세로 트랙(`.lyric-sync__track`)에 렌더**. 활성 줄 ref + `useLayoutEffect`로 `translateY = container.clientHeight/2 - (active.offsetTop + active.offsetHeight/2)` 계산해 현재 줄을 중앙 정렬. 재계산 의존성 `[activeIdx, segs.length]`(currentTime 제외 → timeupdate 스래싱 없음). `ResizeObserver`로 리사이즈 재정렬. idx 이진탐색·usePlayer currentTime 구독·DEV 로그·빈 배열 null 반환 모두 유지.
+- `components/LyricSyncVideo.css`: 중앙고정 flex 폐기 → 트랙에 `transition: transform 0.45s cubic-bezier(0.4,0,0.2,1)` + `will-change:transform`(글라이드 핵심). `.lyric-sync__lines` `overflow:hidden` + 상하 `mask-image` 페이드. 거리별 클래스 `--active`(흰·볼드·22px)/`--near`/`--far`로 멀수록 흐림.
+
+### 테스트 결과 (tester: 전 항목 PASS, 블로킹 버그 0)
+- 글라이드 메커니즘: 전체줄 단일 트랙, translateY 중앙정렬 공식, transform transition 존재, 의존성 idx기반(currentTime 제외) 확인.
+- 엣지: idx=-1(첫 줄 전)→0번 줄 중앙, 곡 종료 후 마지막 줄 고정, 단일 줄, 빈 배열 null(훅 순서 정상), coverSrc null 플레이스홀더, ref null 가드 확인.
+- 회귀: v149 음악 무중단(PlayerPage 미변경)·props·3분기·백엔드 엔드포인트(has=true count=73)·DEV 로그 불변.
+- eslint 0에러/0경고, `vite build` 성공.
+
+### 특이사항
+- 코스메틱(비블로킹): 재생 시작 전(currentTime<첫 세그먼트 start, idx=-1)엔 활성 강조가 없어 첫 줄이 `--far`로 흐리게 대기. "시작 전 활성 줄 없음"이 자연스러워 그대로 유지. 실제 사용(재생 중 진입)에선 idx≥0라 무관.
+- 트리거는 여전히 줄 단위(이진탐색), 움직임만 애니메이션화 → B(완전연속) 아님, 요청대로 A.
+
+---
+
+## v151
+**수정일자**: 2026-07-30 / **요청**: 동영상 탭에도 "AI 생성" 뱃지. **결과**: `PlayerPage.jsx` 동영상 탭 MV·가사싱크 분기에 `player-page__ai-badge` 추가(로딩/안내 제외). 프론트 단독, eslint 신규에러 0.
+
+## v152
+**수정일자**: 2026-07-30
+**요청 작업**: SNS 공유·다운로드 영상(ffmpeg burn-in)의 가사를 한 줄 교체 → 브라우저판(v150)처럼 현재 줄 중앙·강조 + 스택 글라이드 스크롤 (루트 A = ASS 자막 애니메이션, 신규 의존성 0).
+
+### 수행 결과 (백엔드 전용, share_video.py, 9005+9004 미러)
+- **`_build_ass_scroll(segments, fmt)` 신규**: `\an5` 중앙 앵커, 포맷별 중심 Y·행높이(sns Cy1380/RH110, wide Cy720/RH90, kakao Cy820/RH105), 가시창 ±2(최대 5줄). 활성 구간마다 보이는 창을 절대좌표 Dialogue로 방출, 각 줄 `\move(이전슬롯→새슬롯, 0~D)`로 글라이드(D=min(0.45s,구간/2)), `\t`로 강조(현재=흰색·확대110·불투명, 인접=α55, 원경=α90·축소92) 크로스페이드. 구간0은 `\pos` 초기 배치. 이벤트수 ≈ N×5.
+- **`generate_share_video` 배선**: 자막 시 `_build_ass_scroll` 사용, 예외 시 `logger.exception` 후 `_build_ass`(한 줄) 폴백 → 영상 생성 자체는 안 실패. 자막 fps `-r 10 → 20`(글라이드 매끄러움).
+- **캐시 무효화**: `share_object_name` `share/v3/ → share/v4/` 승격(옛 한 줄 캐시 미노출). docstring 갱신.
+- API 라우트/프론트/워터마크/무자막 경로 불변.
+
+### 테스트 결과 (tester: 전 항목 PASS, 버그 0 — 프레임 육안 검증)
+- **sns 실렌더**(쉬었음 청년 73세그→359이벤트, 22.6MB): 프레임 추출 결과 4~5줄 세로 스택, 현재 줄 중앙·최대·최명, 인접 흐림, 후속 프레임에서 동일 줄이 위로 이동(스크롤 확인). 오케스트레이터도 프레임 직접 확인 완료.
+- **wide/kakao**: 정상 렌더·스크롤·화면 내(클립 안 잘림), 워터마크 비침범. kakao 정확히 15.0s 클립.
+- **폴백/엣지**: 무타임스탬프 트랙 → 무자막+워터마크 정상(크래시 없음), `_build_ass_scroll([])` → Dialogue 0.
+- **캐시/미러**: `share/v4/` 기록, 9005/9004 diff 무차이, py_compile OK.
+- **로그**: `[share-video] ass-scroll ... segments=73 events=359 fps=20` 출력.
+- **회귀**: `generate_share_video` 호출 시그니처·라우트 계약·무자막 -r 2 불변.
+
+### 특이사항
+- 긴 가사 줄바꿈(WrapStyle 0) 시 현재 줄 2행이 인접 줄과 간격이 좁아질 수 있음(하드 겹침 아님, 한 줄 폴백도 동일하던 거라 회귀 아님).
+- 세그먼트 소스는 브라우저판과 동일(`_fetch_lyric_segments`)이라 타이밍 일치.
+
+---
+
+## v153 — 출석체크(데일리 체크인): 별(⭐) 보상 10일 1사이클+누적 (PLAN v151) — 2026-08-01
+**수정일자**: 2026-08-01
+**요청 작업**: 모바일게임식 데일리 출석체크 신규 구현. 보상 = 우리 포인트 "별(⭐)". **스트릭형 10일 1사이클 + 누적**(연속 강제 없음, 하루 빠져도 초기화 안 됨). 하루 1회(KST) 적립. 보상: 5일차=⭐30, 10일차=⭐100, 그 외=⭐10. 10일차 수령 후 다음 체크인은 1일차부터 새 사이클. 별은 기존 포인트 잔액에 즉시 반영. **9005 선구현 → 9004 byte-identical 미러 필수.**
+
+### 수행 결과 — 백엔드 (9005 선작업 → 9004 미러)
+- **`app/services/points_service.py`**: 신규 `credit_points(user_id, action, amount, ref, day=None) -> bool` 추가(가변 금액 멱등 적립). `point_events` 삽입을 **멱등 게이트**로 먼저 시도 → `DuplicateKeyError` 시 잔액 미증가로 `False`, 성공 시 `point_balances` `$inc balance` 후 `True`. 기존 `award_point`/`spend_points`/`refund_points`/`get_balance`/`get_history` **무수정**.
+- **`app/services/attendance_service.py` (신규)**: `_reward_for(cycle_day)`(5→30, 10→100, else 10), `_next_cycle_day(cumulative)`=`(count % 10) + 1`, `ensure_attendance_indexes()`, `get_status(user_id)`, `check_in(user_id)`. 레이스 dup(credit False)은 이미 처리로 간주해 `already=True` 반환.
+- **`app/routes/attendance.py` (신규)**: `APIRouter(prefix="/api/attendance")`, `GET /status`, `POST /check-in`, `get_current_user` 인증 필수.
+- **`app/main.py`**: attendance 라우터 import 목록·`include_router`(points 근처, `:547`)에 추가.
+- **컬렉션**: `point_events`(action="attendance", track_id=day, day=day 유니크 → 하루 1회 멱등·동시성 게이트), `point_balances`(별 잔액 재사용), `attendance_progress`(user_id 유니크: cumulative_count, last_cycle_day, last_checkin_day).
+- **API 스키마**: `GET /status` → `{checked_today, cycle_day, cumulative_count, today_reward, calendar:[{day,reward,claimed}]×10, balance}`. `POST /check-in` → `{success, awarded, cycle_day, cumulative_count, balance, already}`.
+
+### 수행 결과 — 프론트엔드
+- **`src/api/index.js`**: `getAttendanceStatus`(`/attendance/status`), `postAttendanceCheckIn`(`/attendance/check-in`) 추가.
+- **`src/components/AttendanceCard.jsx`+`.css` (신규)**: 10칸 카드 모달, 5·10일 보너스 강조, "오늘 출석하고 별 받기" 버튼, already/지급 토스트, `onBalanceChange`로 헤더 잔액 갱신.
+- **`src/components/Header.jsx`+`.css`**: 별 배지 클릭 → AttendanceCard 모달 오픈, 체크인 성공 시 points state 즉시 갱신.
+
+### 테스트 결과 (tester: 전 항목 PASS, 버그 0)
+1. 미인증 401/403. 2. 최초 체크인 awarded=10, cumulative=1. 3. 중복 차단 already=true, awarded=0, 잔액 불변. 4. status 정확성. 5. 사이클 경계(count4→day5=30, count9→day10=100, count10→리셋 cycle_day=1) + credit 멱등. 6. 잔액 회귀(`/points/balance` 동일값). 7. history 회귀 정상. 8. 로그 `[attendance]`·`[points] credit` 출력 확인. 9. 9004 미러 diff 동일·import OK.
+- **유닛**: `_reward_for(1..10)=[10,10,10,10,30,10,10,10,10,100]`, `_next_cycle_day(0..10)=[1,2,3,4,5,6,7,8,9,10,1]`.
+- **미러 검증(재확인)**: `attendance_service.py`/`attendance.py` 9005↔9004 diff 무차이, `credit_points`·main include 양측 동일.
+
+### 특이사항
+- tester 임시계정 `attend_test_...@test.invalid` DB 잔존(정리 선택 사항).
+- `business.py` `regex deprecated` 경고는 본 작업과 무관한 기존 사항.
+- **버전 표기**: 본 기능은 PLAN.md 상 v151이나, REPORT.md의 v151·v152는 이미 별개 기능(동영상 AI 뱃지·SNS ASS 스크롤)에 사용되어 REPORT 자체 번호는 **v153**으로 append하고 헤더에 `(PLAN v151)` 교차참조 표기(기존 `(PLAN vXXX)` 관례 준수).
+
+---
+
+## v154 — 실시간 1:1 DM (다이렉트 메시지) MVP: WebSocket+Redis pub/sub (PLAN v152) — 2026-08-01
+**수정일자**: 2026-08-01
+**요청 작업**: 인스타(메타) 정책 벤치마크 경량 실시간 1:1 DM MVP. **본인인증 완료자만** 사용. 실시간=WebSocket+Redis pub/sub. UI=헤더 봉투 아이콘(✉️)→전용 DM함. 텍스트만(MVP). 관계 게이트·미성년 보호·정지/차단/신고 동시 출시. **9005 선구현 → 9004 byte-identical 미러 필수.**
+
+### 수행 결과 — 백엔드 (9005 선작업 → 9004 미러)
+- **`app/services/dm_service.py` (신규)**: Mongo 접근/게이트/인덱스 계층.
+  - `ensure_dm_indexes()`: lazy 1회 인덱스(`points_service` 패턴). dm_conversations(`pair_key` unique), dm_messages((conversation_id, created_at)), dm_blocks((blocker_id, blocked_id) unique).
+  - `assert_can_dm(conn, mongo, me, peer, existing_conv=None)`: **6단계 게이트** — ①본인인증(me.is_verified) ②상대 존재 & 자기자신 아님 ③둘 다 not is_banned ④미성년 보호(peer 미성년이면 팔로우 필수) ⑤관계(기존 대화 없으면 "상대가 나를 팔로우" 필수, 있으면 skip; `DM_REQUIRE_MUTUAL=False`) ⑥개별 차단(dm_blocks). is_verified/is_banned/birth_date 는 매번 fresh Postgres 조회(세션 dict 불신), 실패 시 HTTPException.
+  - `get_or_create_conversation`, `list_conversations`, `get_messages`, `send_message`(저장+unread+1+Redis publish `dm:user:{peer}`), `mark_read`, `unread_total`, `block`/`unblock`.
+- **`app/routes/dm.py` (신규)**: `APIRouter(prefix="/api/dm")`.
+  - REST: `GET /eligibility`, `POST/GET /conversations`, `GET/POST /conversations/{cid}/messages`, `POST /conversations/{cid}/read`, `GET /unread-count`, `POST/DELETE /blocks/{uid}`.
+  - WebSocket: `WS /api/dm/ws?token=<jwt>` — `authenticate_ws`(Depends 대신 수동 검증, 실패 시 `close(4401)`), `ConnectionManager`(user_id→sockets 전역 싱글턴), `dm_pubsub_listener`(`psubscribe("dm:user:*")` → 로컬 매니저 push, 멀티워커 대응).
+  - 로그 prefix: REST `[dm]`, WS `[dm-ws]`, pubsub `[dm-pubsub]`. 본문 텍스트 원문 로그 금지(길이만).
+- **`app/main.py`**: dm 라우터 import·`include_router(dm.router)`(`:556`), lifespan 에 `dm_pubsub_listener` 태스크 기동(`:501`)/shutdown 취소(`:508`) — `sync_task` 패턴 준용.
+- **`app/routes/reports.py`**: `TARGET_TYPES` 에 `"dm_message"` 확장(→ dm_messages/sender_id 매핑, 증거 스냅샷 처리).
+- **`requirements.txt`**: `websockets>=12,<18` 추가(uvicorn WS 구동 필수, 실측 17.0.1).
+- **인프라**: Mongo 컬렉션 3종 + Redis 채널 `dm:user:{uid}`. WS 인증은 auth.py 의 `?token=` 지원 재사용(`get_current_user` 미수정).
+
+### 수행 결과 — 프론트엔드
+- **`src/utils/dmSocket.js` (신규)**: WS 싱글턴 — 지수 백오프 재연결, keepalive, location 기반 URL, `code 4401` 시 재연결 중단.
+- **`src/pages/DmInboxPage.jsx`+`.css` (신규)**: 2패널 DM함(대화 목록/대화창).
+- **`src/components/DmChatView.jsx`+`.css` (신규)**: 대화 버블 + 입력.
+- **`src/api/index.js`**: DM 9함수(getDmEligibility/createDmConversation/getDmConversations/getDmMessages/sendDmMessage/markDmRead/getDmUnreadCount/blockDmUser/unblockDmUser).
+- **`src/App.jsx`**: `/dm`, `/dm/:cid` 라우트.
+- **`src/components/Header.jsx`+`.css`**: FiMail 봉투 + unread 배지, `getDmEligibility` 로 미인증 비활성+툴팁, unread 30s 폴링 + WS 재동기화.
+
+### API 스키마
+- `GET /eligibility` → `{is_verified, is_banned}`
+- `GET /conversations` 항목 → `{conversation_id, peer:{id,nickname,profile_image}, last_message_text, last_sender_id, last_at, unread}`
+- messages → `{messages:[{id,conversation_id,sender_id,text,created_at,read}]}`
+- WS 이벤트 → `{type:"message",conversation_id,message:{...}}` / `{type:"read",conversation_id}`
+
+### 테스트 결과 (tester: 자동 검증 23/23 PASS)
+- 미인증 게이트 / 관계 게이트 / 중복 방지 / REST 송수신 / **WebSocket 실시간 2클라 6/6 수신 ✅** / WS 인증실패 close(4401) / 차단 / 미성년 보호 / 정지 계정 / 신고(dm_message) / 비로그인 401 / 로그 추적자(`[dm]` `[dm-ws]` `[dm-pubsub]`) / 회귀(follows·points·attendance·feeds 정상) / **9004 미러 byte-identical**. websockets 17.0.1 설치 확인.
+
+### 발견 버그 → 픽스 완료 (1건)
+- **`dm_pubsub_listener` 유휴 크래시루프**: Redis read `TimeoutError` 를 크래시로 오판 → 5초마다 재구독 스팸 + 유휴 후 첫 메시지 드롭 위험.
+  - **수정**: `pubsub.listen()` → `get_message(timeout=1.0)` 폴링. `TimeoutError`/`None`(유휴)은 `continue`(재구독 X), `ConnectionError` 만 재구독+backoff, `CancelledError` 는 정상 종료.
+  - **재검증**: 유휴 25초간 crash 0 / timeout 0 확인. 9004 미러 반영.
+
+### 변경 파일
+- 신규 BE: `backend_9005/app/services/dm_service.py`, `backend_9005/app/routes/dm.py` (+ 9004 byte-identical 미러)
+- 수정 BE: `backend_9005/app/main.py`, `backend_9005/app/routes/reports.py`, `backend_9005/requirements.txt` (+ 9004 동일 편집)
+- 신규 FE: `frontend/src/utils/dmSocket.js`, `frontend/src/pages/DmInboxPage.jsx`(+css), `frontend/src/components/DmChatView.jsx`(+css)
+- 수정 FE: `frontend/src/api/index.js`, `frontend/src/App.jsx`, `frontend/src/components/Header.jsx`(+css)
+
+### 특이사항
+- **운영 nginx `/api/dm/ws` WebSocket 업그레이드 헤더 설정은 배포 인프라 TODO**(개발은 vite `ws:true` 로 검증).
+- 단일 워커는 in-memory 로 동작, `--workers>1` 에서 Redis pub/sub 필수(설계에 반영됨).
+- tester 생성 유저(dmtest A/B/C/U)·대화·메시지·신고 데이터 DB 잔존(정리 선택 사항).
+- 서버 최종 상태 9004/9005/4000 전부 200.
+- **버전 표기**: 본 기능은 PLAN.md 상 v152 이나, REPORT.md 의 v152 는 이미 별개 기능(SNS ASS 스크롤 자막)에 사용되어 REPORT 자체 번호는 **v154** 로 append 하고 헤더에 `(PLAN v152)` 교차참조(기존 관례 준수).
+
+---
+
+## v155 — DM함(/dm) 풀와이드 2패널 레이아웃 수정 (PLAN v153) — 2026-08-01
+**수정일자**: 2026-08-01
+**요청 작업**: DM함(`/dm`)이 넓은 모니터에서 가운데 좁은 박스로 갇혀 좌우 여백이 크던 문제를 **A안 = 풀와이드 2패널**로 수정. 프론트 CSS 단일 파일·단일 셀렉터 국소 변경, 백엔드 무변경.
+
+### 원인
+- `frontend/src/pages/DmInboxPage.css` 의 `.dminbox` 에 `max-width: var(--max-width,1100px)`(전역 `--max-width=1400px`) + `margin:0 auto` → 가운데 정렬로 좌우 여백 발생.
+- 상위 래퍼(`.app`/`#root`) 폭 무제약 확인(전역 `max-width` 는 `.container` 에만 적용, DM 페이지는 `.container` 미사용).
+
+### 수행 결과
+- `.dminbox` 에서 `max-width`·`margin:0 auto` 제거 → `width:100%`(내부 padding 16px 유지).
+- 그리드 `grid-template-columns:320px 1fr`(왼쪽 대화목록 고정 + 오른쪽 대화창 flex) 유지, 반응형 `@media(max-width:720px)` 단일 컬럼 유지.
+- **DmInboxPage.css 단일 파일, `.dminbox` 셀렉터 1곳만 변경.** 백엔드 무변경.
+
+### 변경 파일
+- 수정 FE: `frontend/src/pages/DmInboxPage.css` (`.dminbox` 1곳)
+
+### 검증 (tester)
+- 빌드 성공.
+- CSS grep 확인: `.dminbox` 에서 `max-width`/`margin:0 auto` 제거, `width:100%`·그리드(`320px 1fr`) 유지.
+- 상위 래퍼 무제약 코드 확증(전역 CSS 오염 없음 — `.dminbox` 셀렉터는 DmInboxPage.css 에만 존재).
+- 회귀: DM API 401 보호 정상, 전역 스타일 영향 없음.
+- 최종 판정 **PASS**(풀와이드 성립).
+
+### 특이사항
+- 실제 렌더 스크린샷은 playwright/puppeteer 미설치로 미생성 — 시각 실측 필요 시 후속으로 헤드리스 설치 후 보완 가능. (검증은 코드/빌드/grep 로 대체.)
+- 서버 최종 상태 9004/9005/4000 전부 200 유지.
+- **버전 표기**: 본 수정은 PLAN.md 상 v153, REPORT.md 는 다음 순번 **v155** 로 append 하고 헤더에 `(PLAN v153)` 교차참조(기존 관례 준수).
+
+---
+
+## v156 — 앱 추천(리퍼럴) 공유 + 추천코드 보상 시스템 (PLAN v154) — 2026-08-03
+**수정일자**: 2026-08-03
+**요청 작업**: MAIDOL 앱 자체를 홍보/추천하는 공유 기능 + 추천인 보상 시스템. ①헤더 📢 앱 추천 버튼 → 공유 모달(내 추천코드 표시+복사, 카톡/인스타/페북/링크복사) ②`users.referral_code` 4자리(혼동문자 제외 31종 charset) 가입 시 생성·불변·UNIQUE·기존 유저 전원 백필 ③초대 착지 페이지 `/invite/:code`(비로그인) — 초대 문구+코드+복사+[MAIDOL 시작하기](플레이스토어) ④웹 가입 폼 추천코드 입력칸(선택, `?ref=` 프리필) ⑤보상: 가입 성공 시 추천인 ⭐+50 / 신규가입자 ⭐+50 ⑥어뷰징 방지(무효 코드 400·영구 1회 멱등·자기추천 불가). 9005 선구현 → 9004 미러.
+
+### 수행 결과 (백엔드 — 9005 선구현 → 9004 미러)
+- **신규** `app/services/referral_service.py`: charset 31종(`23456789ABCDEFGHJKMNPQRSTUVWXYZ`) 4자리 `generate_code`(secrets 기반)/`normalize_code`(trim+대문자, 빈값=미입력)/`ensure_referral_code`(`UPDATE ... WHERE referral_code IS NULL` 조건으로 불변성 보장 + UniqueViolation 충돌 재시도 max 20)/`resolve_referrer`(형식 검증 + active·비밴 유저만 유효 — 탈퇴/정지 코드 무효)/`backfill_referral_codes`(NULL 유저 루프 발급).
+- **신규** `app/routes/referral.py`: `GET /api/referral/my-code`(인증, 코드 없으면 lazy 생성 → `{referral_code, invite_url, play_store_url}` — 소셜 가입 유저 커버) / `GET /api/referral/invite/{code}`(무인증, 무효·미존재·탈퇴 코드 404).
+- **편집**: `models/user.py` `UserCreate.referral_code` 추가; `routes/auth.py` register — **INSERT 전 무효 코드 400 선검증(계정 미생성 보장)**, INSERT 에 `referred_by` 저장, 가입 후 `credit_points` 양쪽 ⭐+50(`referral_inviter`/`referral_joiner`, **`day="-"` 명시 → 영구 1회 멱등**), referrer==joiner 자기추천 방어, 보상 블록 전체 try/except(Mongo 다운 시에도 가입 201 유지), 응답에 `referral:{applied}` 추가; `config.py` `play_store_url` 플레이스홀더 + `.env.example` `PLAY_STORE_URL=`; `main.py` startup 멱등 마이그레이션(referral_code/referred_by 컬럼 + 부분 유니크 인덱스 + 백필) + 라우터 등록.
+
+### 수행 결과 (프론트)
+- **신규** `AppShareModal.jsx`(+css): 내 추천코드 표시+📋복사, 카톡/인스타=Web Share API+링크복사 폴백(데스크톱 대응), 페북=sharer 새 창, 링크복사 — Kakao SDK 미사용.
+- **신규** `InvitePage.jsx`(+css): `/invite/:code` 비로그인 착지 — "○○님이 MAIDOL에 초대했어요!" + 코드 복사 + 플레이스토어 CTA + "웹에서 바로 가입" 보조 링크(`/register?ref=`), 무효 코드 404 안내.
+- **편집**: `api/index.js` `getMyReferralCode`/`getInviteInfo`; `App.jsx` `/invite/:code` 공개 라우트; `Header.jsx`(+css) 📢 버튼(로그인 시만 노출)+모달 state; `RegisterPage.jsx`(+css) 추천코드 칸(maxLength 4, 대문자 자동 변환, `?ref=` 프리필, 클라 형식 검증, 백엔드 400 에러 표시). eslint 6파일 통과.
+
+### 변경 파일
+- 신규 BE: `backend_9005/app/services/referral_service.py`, `backend_9005/app/routes/referral.py` (+ 9004 byte-identical 미러)
+- 수정 BE: `backend_9005/app/models/user.py`, `backend_9005/app/routes/auth.py`, `backend_9005/app/config.py`, `backend_9005/.env.example`, `backend_9005/app/main.py` (+ 9004 동일 편집)
+- 신규 FE: `frontend/src/components/AppShareModal.jsx`(+css), `frontend/src/pages/InvitePage.jsx`(+css)
+- 수정 FE: `frontend/src/api/index.js`, `frontend/src/App.jsx`, `frontend/src/components/Header.jsx`(+css), `frontend/src/pages/RegisterPage.jsx`(+css)
+
+### 테스트 결과 (tester: 전 10항목 PASS, 버그 0건)
+- **백필**: 기존 유저 124명 전원 발급, 중복 0건, 형식 전건 통과, 재기동 멱등(코드 불변).
+- **API**: my-code 200/비로그인 401, invite 유효 200/무효 형식·미존재·탈퇴 404 전 케이스.
+- **가입+보상**: 유효 코드 가입 201 + `applied=true`, `referred_by` 저장, Mongo `point_events` 2건(day="-"), 추천인/신규가입자 양쪽 +50.
+- **어뷰징**: 무효 코드 400+계정 미생성 확인, 미입력 201 `applied=false` 보상 0, 멱등 재적립 시도 False+잔액 불변.
+- **회귀**: 일반 가입/로그인/출석체크/포인트 조회 모두 정상. `[referral]` 로그 추적자 전 시나리오 확인. Vite JSX 서빙/SPA 라우팅/api 레이어 OK.
+- **9004 미러**: 7개 파일 diff 전건 SAME, import OK, 재기동 후 health 200, backfill targets=0(같은 DB 공유 — 멱등 정상), invite 404 체크 정상.
+
+### 특이사항
+- **플레이스토어 URL 은 플레이스홀더** — 앱 출시 후 `.env` 의 `PLAY_STORE_URL` 실제 URL 로 교체 필요.
+- **Kakao SDK 미통합**(실키 대기 — 프로젝트 방침) — 카톡/인스타 공유는 Web Share API + 링크 복사 폴백으로 동작.
+- tester 생성 테스트 계정 2건 DB 유지 중: `reftest_joiner1@test.invalid`(50P), `reftest_plain@test.invalid`(0P) — 정리 선택 사항.
+- 테스트 부수효과: 기존 dmtest_A 계정 잔액 0→50P(추천인 보상 시나리오 사용).
+- 구현 경미 편차(무해, 동작 동일): referral_code 컬럼 폭 VARCHAR(8)(계획 4 — 여유 폭, 코드는 4자리 고정), 무효 코드 400 문구 어미 상이("확인 후 다시 시도해주세요"), 인덱스명 `idx_users_referral_code`(계획 `users_referral_code_key`).
+- 서버 최종 상태 9004/9005/4000 전부 200.
+- **버전 표기**: 본 기능은 PLAN.md 상 v154 이나 REPORT.md 의 v154 는 이미 DM MVP 에 사용됨 — REPORT 자체 번호는 **v156** 으로 append 하고 헤더에 `(PLAN v154)` 교차참조(기존 관례 준수).
+
+## v157 — DM 인스타 완전체(C안): 전체 사용자 검색 + 메시지 요청함 (PLAN v155) — 2026-08-03
+**수정일자**: 2026-08-03
+**요청 작업**: DM 을 인스타그램 방식 완전체로 확장(C안). ①새 메시지 대상이 팔로워 한정 → **전체 사용자 닉네임 검색**으로 확대 ②비팔로우 상대에게 보낸 첫 대화는 **pending(메시지 요청)** 으로 생성 — 수신자 메인 목록 대신 요청함 격리, 수락 전 답장 불가·읽음 미노출 ③"메시지 | 요청 N" 탭 + 수락(accepted 전환+WS 통지)/거절(대화+메시지 hard delete, 발신자 무통지) ④안전장치 유지: 미성년 비팔로우 403, 차단 양방향 검색 제외, 거절 confirm 에 신고 선행 안내. 9005 선구현 → 9004 미러.
+
+### 수행 결과 (백엔드 — 9005 선구현 → 9004 미러)
+- **`app/services/dm_service.py`**: `assert_can_dm` 게이트⑤(관계) deny 제거 → `{"peer_follows_me": bool|None}` 판정값 반환(게이트①②③④⑥ 불변, **미성년 비팔로우 403 유지**). `get_or_create_conversation` 신규 대화에 `status(accepted|pending)/requester_id/accepted_at` — 상대가 나를 팔로우 중이면 즉시 accepted. `list_conversations` `$or` 필터로 수신 pending 제외(내가 보낸 pending 은 표시, **legacy 문서 `$ne:"pending"` 으로 자동 accepted 취급 — 마이그레이션 불필요**). `send_message` pending 수신자 403(`pending_reply`), WS payload 에 `conversation_status`. `mark_read` pending 수신자 no-op(열람 사실 비노출). `unread_total` pending 제외. 신규 함수: `requests_count`/`list_requests`/`accept_request`(status→accepted + 요청자에게 WS `accepted` 발행)/`decline_request`(대화+메시지 hard delete, WS 미발행=무통지)/`search_users`(ILIKE 메타문자 `\` `%` `_` 이스케이프, is_verified 게이트 준용, active·비밴만, dm_blocks 양방향 후필터, **검색어 원문 미로그 — 길이만**).
+- **`app/routes/dm.py`**: 신규 4 라우트 — `GET /users/search`, `GET /requests`, `POST /conversations/{cid}/accept`, `DELETE /conversations/{cid}`. `GET /unread-count` → `{count, requests}` 확장(count 는 accepted 만 — 헤더 하위호환). WS/pubsub·`main.py` 무수정.
+
+### 수행 결과 (프론트)
+- **`api/index.js`**: `searchDmUsers`/`getDmRequests`/`acceptDmRequest`/`declineDmRequest` 4함수 추가(기존 9개 무수정). **`utils/dmSocket.js`**: `onAccepted` 구독 추가.
+- **`DmInboxPage.jsx`**: 새 메시지 모달 — 300ms 디바운스 전체 사용자 서버 검색(빈 검색어 = 기존 팔로워 목록 "추천" 섹션). 목록 헤더 "메시지 | 요청 N" 탭(`unread-count.requests` 뱃지). 요청 수락(→메시지 탭 이동+입력 활성+이때 읽음 처리)/거절(confirm 에 "신고가 필요하면 거절 전에" 안내)/차단(요청함 항목은 차단 후 decline 병행 — 재요청 차단). 발신자측 pending "요청 대기 중" 라벨. 수신 pending 열람 시 `markDmRead` skip(프론트+백엔드 이중 방어). WS pending(요청함 갱신)/accepted(라벨 제거) 분기.
+- **`DmChatView.jsx`**: `requestMode` prop — 수신 pending 요청이면 입력바 대신 수락/거절/차단 액션 바 + "수락하기 전까지 상대에게 읽음이 표시되지 않아요" 안내. 발신자측 pending 은 입력 가능 + 안내 문구만. `Header.jsx` 무수정(unread count 하위호환). eslint 통과(+v152 기존 set-state-in-effect 린트 에러 1건 패턴 개선 — 동작 동일).
+
+### 변경 파일
+- BE: `backend_9005/app/services/dm_service.py`, `backend_9005/app/routes/dm.py` (+ 9004 diff SAME 미러)
+- FE: `frontend/src/api/index.js`, `frontend/src/utils/dmSocket.js`, `frontend/src/pages/DmInboxPage.jsx`(+css), `frontend/src/components/DmChatView.jsx`(+css)
+
+### 테스트 결과 (tester: 63개 검증 중 62 PASS, 기능 버그 0건)
+- **검색**: 부분일치/이스케이프(`%`,`_`,`\`)/자기 자신·차단 양방향 제외/미인증 403 전 케이스.
+- **요청 흐름**: pending 생성·메인 목록 격리·unread 배지 제외, 수신자 답장 403·read no-op, 수락 → accepted 전환 + WS accepted(요청자에게만), 거절 → hard delete + 무통지 + 재요청 가능.
+- **안전/권한**: 권한 방어 8케이스(타인 대화 accept/decline 403 등), 미성년 비팔로우 403 유지, 팔로우 상대 즉시 accepted, legacy 대화 자동 accepted 정규화, 차단/신고 evidence, 헤더 배지, 프론트 서빙, `[dm]` 로그 추적자 전 시나리오 확인.
+- **9004 미러**: dm_service.py/dm.py diff SAME, import OK, 재기동 health 200, dm 라우트 응답 확인. 서버 9005/9004/4000 정상.
+
+### 특이사항
+- **200 vs 201 스펙 정정**: 유일한 발견 — `POST /conversations` 가 201 아닌 200 반환. v152(DM MVP)부터의 기존 동작이며 get-or-create 특성상(기존 대화 반환 겸용) 200 유지가 타당 — 코드 수정 대신 **스펙 문서 정정으로 처리**(오케스트레이터 판단).
+- **거절 = hard delete 와 신고 evidence**: 거절 시 대화+메시지가 즉시 삭제되지만, 신고는 접수 시점에 reports 가 evidence 스냅샷(PG jsonb)을 저장하므로 증거 유실 없음. 프론트 거절 confirm 에 "신고가 필요하면 거절 전에" 안내 포함.
+- **legacy 무마이그레이션**: v152 에 생성된 status 필드 없는 기존 대화는 쿼리 레벨(`$ne:"pending"`)에서 자동 accepted 취급 — DB 마이그레이션 불필요.
+- **거절 후 재요청 가능**(인스타 동일 동작) — 반복 요청 차단이 필요하면 차단 기능 사용(요청함 차단 시 decline 병행으로 완화).
+- 테스트 잔존 데이터: 신규 계정 3건(`dmreqtest_D/E/F_1785727611@test.invalid`), 대화 2건(A↔D, A↔E), dm_blocks A→F 1건, follows E→A 1건, dm_message 신고 1건 — 정리 선택 사항.
+- 스팟체크(planner): dm_service.py pending 게이트·decline hard delete·search 이스케이프, dm.py 신규 4 라우트, DmInboxPage 탭/300ms 디바운스, DmChatView requestMode — PLAN v155 대비 **불일치 없음**.
+- **버전 표기**: PLAN.md v155 ↔ REPORT v157 교차참조(기존 관례 준수).
+
+## v158 — 배틀태그(닉네임#태그) 동명이인 구분: referral_code 태그 재사용 (PLAN v156) — 2026-08-03
+**수정일자**: 2026-08-03
+**요청 작업**: 닉네임 중복 허용이라 DM 에서 동명이인 구분 불가 — 블리자드 배틀태그 방식 도입. **태그 = 기존 `users.referral_code`**(v156/PLAN v154 — 4자리 대문자+숫자, 불변·유일, 전 유저 백필 완료) 재사용, 새 컬럼/마이그레이션/신규 API 없음. ①DM 사용자 검색 결과에 `닉네임 #TX6Y` 태그 표시 ②`#TX6Y`/`닉네임#TX6Y` 형식 검색어는 태그 정확 매칭 ③내 태그 확인 UI ④DM 대화 목록/요청함/채팅 헤더 peer 에 태그 병기 ⑤리퍼럴 기능(값/발급 로직) 완전 무변경. 9005 선구현 → 9004 미러.
+
+### 수행 결과 (백엔드 — 9005 선구현 → 9004 미러, **편집 1파일**)
+- **`app/services/dm_service.py`**: `hydrate_users` SELECT 에 `referral_code` 추가 → peer dict `"code"` 키 노출(대화 목록·요청함·채팅 헤더 peer 에 자동 전파 — `_serialize_conversation`/`_hydrate_conversation_list` 공용 소비, 폴백 dict 2곳 `code: None` 병기). `search_users` 태그 파싱 — q 에 `#` 포함 시 **마지막 `#` 기준 `rpartition`** → `normalize_code`(trim+upper — 소문자 허용) → `REFERRAL_CODE_RE` 풀매치 시 **태그 정확 매칭 모드**(`WHERE referral_code = $1`, 닉네임부 무시 — 태그 전역 유일이라 결과 최대 1명), 무효 태그면 전체 문자열 기존 ILIKE 닉네임 검색 폴백(닉네임에 `#` 든 유저 검색 유지). 두 모드 **공용 게이트**: is_verified 403, `account_status='active' AND NOT is_banned`, 자기 자신 제외, dm_blocks 양방향 후필터(차단 관계면 태그 정확 검색이라도 미노출). 로그 `[dm] user_search ... mode=tag|name`(tag 모드는 코드값 병기 — 비밀 아님, name 모드는 기존대로 qlen 만). import 는 `from .referral_service import REFERRAL_CODE_RE, normalize_code` 1줄(순환 없음).
+- **불변 확인**: `routes/dm.py`, `referral_service.py`, `referral.py`, `auth.py`, `follows.py`, `main.py` 전부 무수정 — REST 엔드포인트 신규/변경 0(응답 additive 확장뿐).
+
+### 수행 결과 (프론트)
+- **`DmInboxPage.jsx`(+css)**: 태그 조건부 렌더(`{u.code && <span className="dminbox__tag">#{u.code}</span>}`) 3곳 — 대화/요청 목록 공용 `renderConvItem`, compose 검색 결과 행, 팔로워 추천 행(getMyFollowers 응답에 code 부재 → 자연 미표시, 추후 확장 시 프론트 무수정). compose placeholder `"닉네임 또는 #태그 검색"` + 힌트 "닉네임#태그 또는 #태그로 정확히 찾을 수 있어요." + 하단 "내 태그: #XXXX"(`getMyReferralCode` 비차단 로드, 실패 시 숨김).
+- **`DmChatView.jsx`(+css)**: 채팅 헤더 닉네임 옆 `peer.code` 태그 병기, props 주석 peer 스키마 갱신.
+- **`Header.jsx`(+css)**: 프로필 모달(사실상의 내정보설정) 아바타 블록 아래 "내 태그 #XXXX" 행 + 복사 버튼(`#XXXX` 형식 복사 — DM 검색창 그대로 붙여넣기 가능) + 보조문구 "친구 추가·추천코드와 동일해요". 실패/로딩 중 행 숨김.
+- `api/index.js`/`AppShareModal`/`dmSocket` 무수정. eslint 경고/에러 0.
+
+### 변경 파일
+- BE: `backend_9005/app/services/dm_service.py` (+ `backend_9004` byte-identical 미러 — diff 0, 유일 미러 대상)
+- FE: `frontend/src/pages/DmInboxPage.jsx`(+css), `frontend/src/components/DmChatView.jsx`(+css), `frontend/src/components/Header.jsx`(+css)
+
+### 테스트 결과 (tester: 유효 29 케이스 전 PASS, 버그 0건)
+- **태그 정확 검색**: `#TX6Y`/`닉네임#TX6Y`/소문자/공백 변형/닉네임부 오타 전부 해당 유저 1명 매칭, `#` 2개 포함 검색어도 마지막 `#` 기준 정상, 미존재 코드 빈 결과.
+- **폴백**: 무효 태그(3자/제외문자 등) → ILIKE 닉네임 검색 폴백(500 없음), `%`/`_` 이스케이프 회귀 불변.
+- **게이트**: 내 태그 검색 빈 결과(self 제외), 차단 관계 태그 검색 미노출, 미인증 403.
+- **응답 스키마**: `/dm/users/search`·`/dm/conversations`·`/dm/requests`·대화 생성 응답 peer 전부 `code` 4자리 포함, legacy 대화 정상.
+- **회귀**: v155 메시지 요청함 1사이클(pending 생성→격리→수락/거절) PASS. 리퍼럴 무영향 — `my-code`/`invite` 200, auth.py diff 0, 코드값 불변.
+- **9004 미러**: dm_service.py diff 0, 기동 후 태그 검색 스모크(`mode=tag` 로그 확인). 프론트 서빙/CSS 확인, 로그 `mode=tag` 17건·`mode=name` 14건 수집.
+
+### 특이사항
+- **태그 = 리퍼럴 코드 동일값 재사용** — 신규 컬럼/마이그레이션/신규 API 0. DM 도메인 응답 키만 `code` 로 분리(리퍼럴 API 는 기존 `referral_code` 키 유지), dm_service 가 referral_service 의 상수/함수를 import 만 할 뿐 리퍼럴 값·발급 로직 완전 무변경.
+- **후속 검토 항목(관찰, 버그 아님)**: uvicorn 액세스 로그에 쿼리스트링 원문이 남음 — 이번 변경과 무관한 전 엔드포인트 공통·사전 존재 동작이나, 검색어 원문 미로그 원칙(앱 로그)과 별개로 액세스 로그 레벨 마스킹 여부 후속 검토.
+- **Vite drvfs 캐시 스테일 재발**: 태그 마크업 3곳이 구버전 transform 으로 서빙되는 현상 → 오케스트레이터가 Vite 재기동으로 해결(캐시버스팅 없이 신버전 서빙 확인). 기존 알려진 운영 이슈(drvfs 파일워처 미감지 — FE 수정 후 vite 재시작 필수 절차)의 재확인 사례.
+- 대화 생성 200/201 표기는 v157 때 스펙 문서 정정으로 확정된 사항 — 변동 없음.
+- 테스트 잔존 데이터: 신규 계정 1건(`dmv156G33350`, id b62c54a5, 태그 73BA), 대화 A↔G 1건 — 정리 선택 사항.
+- 스팟체크(planner): dm_service.py 태그 파싱(rpartition→normalize→풀매치)/태그 모드 SQL 게이트/hydrate `code` 키/폴백 `code: None` 2곳, DmInboxPage 태그 렌더 3곳+placeholder+힌트+compose 내 태그, DmChatView 헤더 병기, Header 프로필 모달 태그 행+복사+보조문구, 9004 diff 0 — PLAN v156 대비 **불일치 없음**.
+- 서버 최종 상태 9005/9004/4000 전부 200.
+- **버전 표기**: PLAN.md v156 ↔ REPORT v158 교차참조(기존 관례 준수).
+
+## v159 — 로그인 시 출석체크 모달 자동 팝업 (로그인 세션당 1회) (PLAN v157) — 2026-08-03
+**수정일자**: 2026-08-03
+**요청 작업**: "로그인해도 출석체크 화면이 안 뜬다" — ①로그인 성공 시 오늘 미출석이면 AttendanceCard 모달 자동 오픈(이미 출석했으면 안 뜸) ②미출석 상태로 닫아도(X) 같은 로그인 세션 동안 재팝업 없음 — 단 헤더 ⭐ 별배지 수동 오픈은 기존대로 언제든 가능 ③로그아웃→재로그인 시 여전히 미출석이면 다시 자동 오픈. 기준은 **"하루 1회"가 아니라 "로그인 세션당 1회"** — 새로고침(로그인 유지)은 재로그인이 아니므로 재팝업 없음. **백엔드 무변경(0단계 확정) → backend-dev 미배정, 9004 미러 불필요.**
+
+### 수행 결과 (프론트 전용 — 편집 2파일)
+- **`AuthContext.jsx`**: `ATTENDANCE_PROMPT_KEY = 'aimu:attendancePromptPending'` export + 세팅/제거 헬퍼(`setAttendancePromptFlag`/`clearAttendancePromptFlag` — 항상 try/catch, sessionStorage 불가 환경에서는 자동 팝업만 생략하고 ⭐ 배지 수동 경로 유지, DEV 로그 병기). 로그인 성공 3경로 — `login`/`register`/`loginWithToken`(getMe 성공 시) — 에서만 플래그 세팅, `logout` 에서 제거. **초기 마운트 restore(새로고침) 경로는 미세팅** — "새로고침 재팝업 없음"의 핵심.
+- **`Header.jsx`**: `[user, location.pathname]` 의존 effect 추가 — ①비로그인 return ②게이트 라우트(`/oauth/callback`·`/login`·`/register`)에서는 플래그를 **소비하지 않고 보류**(홈 등 이동 후 재실행 시 판정 — OAuth 동의/추가정보 화면 위 덮임 방지) ③fetch 전에 `getItem`+`removeItem` **동기 소비**(StrictMode 이중 마운트에서도 1회성 보장) ④`api.getAttendanceStatus()` 응답의 `balance` 로 헤더 포인트 갱신 + `checked_today === false` **엄격 비교** 시에만 `setAttendanceOpen(true)` ⑤`setAttendanceOpen` 에 alive/cleanup 가드 의도적 미적용(가드 시 StrictMode 에서 팝업 0회 — PLAN v157 설계 결정 4) ⑥API 실패 시 조용히 무팝업 + `console.error`(⭐ 배지 수동 폴백).
+- **불변 확인**: ⭐ 배지 onClick/모달 렌더부/`AttendanceCard.jsx`/`api/index.js` 무수정 — 오픈 경로가 자동이든 수동이든 동작 동일. eslint 신규 에러 0(AuthContext 기존 3건은 pre-existing 확정).
+
+### 변경 파일
+- FE: `frontend/src/contexts/AuthContext.jsx`, `frontend/src/components/Header.jsx`
+- BE: 없음 (9004/9005 diff 0)
+
+### 테스트 결과 (tester: 전 항목 PASS, 버그 0건)
+- **API 계약**: `GET /api/attendance/status` → `checked_today`/`balance` 확인, `POST check-in` +10 보상(50→60), 재체크인 멱등 `already: true`.
+- **정적 검증**: 12기준 전부 충족(플래그 3+1곳·게이트·동기 소비·엄격 비교·가드 미적용·DEV 로그 등).
+- **로직 시뮬레이션(node) 10/10**: StrictMode 이중 마운트 1회 오픈, 이미 출석 시 무팝업, API 실패 무팝업, 게이트 라우트 보류 후 홈 이동 시 판정, 새로고침 무팝업, 재로그인 재팝업 등.
+- **회귀**: 백엔드 무변경·9004 미러 diff 0·AttendanceCard/api 무변경 확인.
+
+### 특이사항
+- **프론트 전용 작업** — 백엔드/9004 수정 0건(status API 가 `checked_today`/`balance` 를 이미 반환, v151 기존재).
+- **sessionStorage "pending 소비형" 설계**: 로그인 성공 시 플래그 세팅 → Header 가 소비 후 status 판정. 탭 단위 세션(sessionStorage) 특성상 새 탭은 새 세션으로 간주되나 새로고침에는 유지 — 요구사항 "새로고침 무팝업 + 재로그인 재팝업" 충족.
+- **OAuth 게이트**: OAuth 콜백은 `/oauth/callback` pathname 을 유지한 채 동의/온보딩 화면을 표시하므로 게이트 라우트에서 플래그 보류가 필수 — 최종 `navigate('/')` 후 판정.
+- **Vite drvfs 캐시 스테일 재발**: 구버전 transform 서빙 → 오케스트레이터가 Vite 재기동으로 해결, 무버스팅 URL 에서 v157 마커 서빙 확인 완료(기존 알려진 운영 이슈의 재확인 사례 — FE 수정 후 vite 재시작 필수 절차).
+- 테스트 부수효과: `dmtest_A` 계정이 오늘자 출석 완료 상태가 됨(잔여 영향 없음).
+- 스팟체크(planner): AuthContext 플래그 세팅 3곳(login :47/register :58/loginWithToken :70)+logout 제거(:83)+restore 미세팅, Header effect 게이트 3라우트/fetch 전 동기 소비/`checked_today === false` 엄격 비교/balance 갱신/무가드 주석 — PLAN v157 대비 **불일치 없음**.
+- 서버 최종 상태 9005/9004/4000 전부 200.
+- **버전 표기**: PLAN.md v157 ↔ REPORT v159 교차참조(기존 관례 준수).

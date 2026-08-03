@@ -115,7 +115,9 @@ export default function StudioTab() {
       setLyrics('');
       fetchHistory();
     } catch (err) {
-      setError(err.response?.data?.error || '요청에 실패했습니다.');
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
+      else setError(err.response?.data?.error || '요청에 실패했습니다.');
     } finally {
       setSubmitting(false);
     }

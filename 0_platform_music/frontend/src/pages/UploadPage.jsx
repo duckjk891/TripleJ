@@ -487,7 +487,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         setScenesInvalidated(true);
       }
     } catch (err) {
-      alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
+      else alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
     } finally {
       setGeneratingCover(false);
     }
@@ -753,7 +755,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         // v49: 시드 본문 미출력 — 길이만(PII 보호).
         user_event_seed_len: (userEventSeed || '').length,
       });
-      alert(err.response?.data?.error || '씬 생성에 실패했습니다.');
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
+      else alert(err.response?.data?.error || '씬 생성에 실패했습니다.');
       setMvStep(0);
     }
   };

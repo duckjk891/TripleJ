@@ -18,6 +18,7 @@ Social OAuth 2.0 (Authorization Code) 로그인/회원가입 라우트.
 import hashlib
 import logging
 import secrets
+from datetime import date
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
@@ -35,6 +36,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth/oauth")
 
 OAUTH_STATE_TTL = 300  # 5분
+
+# 본인인증으로 취급하는 provider (실명 기반 가입 — 인증 트랙 분리)
+VERIFIED_PROVIDERS = {"naver", "kakao"}
+
+SELECT_COLS = "id, email, nickname, profile_image, role, is_verified, verify_provider"
 
 
 def _mask_uid(uid: str) -> str:
@@ -149,9 +155,19 @@ async def oauth_callback(
     nickname = profile.get("nickname")
     profile_image = profile.get("profile_image")
 
+    # 본인인증 트랙(naver/kakao) 추출값 — 값 자체는 로깅 금지
+    birth_date = None
+    if profile.get("birth_date"):
+        try:
+            birth_date = date.fromisoformat(profile["birth_date"])
+        except ValueError:
+            birth_date = None
+    gender = profile.get("gender")
+
     try:
         action, row = await _resolve_account(
-            conn, provider, provider_uid, email, nickname, profile_image
+            conn, provider, provider_uid, email, nickname, profile_image,
+            birth_date=birth_date, gender=gender,
         )
     except Exception as e:
         logger.exception("[oauth.callback] provider=%s action=db_error %s", provider, e)
@@ -180,21 +196,50 @@ async def oauth_callback(
     )
 
 
-async def _resolve_account(conn, provider, provider_uid, email, nickname, profile_image):
+async def _promote_verification(conn, provider, row, birth_date, gender):
+    """기존 계정 재로그인/연동 시 인증 승격.
+
+    provider 가 인증 트랙(naver/kakao)이고 계정이 미인증이면:
+      is_verified=TRUE + verified_at/verify_provider 기록,
+      birth_date/gender 는 NULL 인 필드만 추출값으로 보충(기존 값 유지).
+    이미 인증됐거나 google 이면 아무 것도 하지 않는다.
+    """
+    if provider not in VERIFIED_PROVIDERS or row["is_verified"]:
+        return row
+    updated = await conn.fetchrow(
+        f"""UPDATE users
+            SET is_verified = TRUE, verified_at = now(), verify_provider = $1,
+                birth_date = COALESCE(birth_date, $2),
+                gender = COALESCE(gender, $3)
+            WHERE id = $4
+            RETURNING {SELECT_COLS}""",
+        provider, birth_date, gender, row["id"],
+    )
+    logger.info(
+        "[oauth] provider=%s action=verify_promote user=%s has_birth=%s has_gender=%s",
+        provider, str(row["id"])[:8], bool(birth_date), bool(gender),
+    )
+    return updated
+
+
+async def _resolve_account(conn, provider, provider_uid, email, nickname, profile_image,
+                           birth_date=None, gender=None):
     """계정 find / link / create 정책.
 
     ① (provider, provider_user_id) 존재 → 그대로 로그인 (action=login)
+       — naver/kakao 재로그인이고 미인증이면 인증 승격 + 인구통계 NULL 보충
     ② 없고 email 일치하는 기존 user → provider 연동 UPDATE 후 로그인 (action=link)
+       — 연동 후 동일 승격 규칙 적용
     ③ 없으면 신규 INSERT (action=signup), password_hash=NULL
+       — naver/kakao 는 is_verified=TRUE + verified_at/verify_provider/birth_date/gender 저장
     """
-    SELECT_COLS = "id, email, nickname, profile_image, role"
-
     # ① provider + provider_user_id 로 조회
     row = await conn.fetchrow(
         f"SELECT {SELECT_COLS} FROM users WHERE provider = $1 AND provider_user_id = $2",
         provider, provider_uid,
     )
     if row:
+        row = await _promote_verification(conn, provider, row, birth_date, gender)
         return "login", row
 
     # ② email 로 기존 계정 조회 → 연동
@@ -211,15 +256,28 @@ async def _resolve_account(conn, provider, provider_uid, email, nickname, profil
                     RETURNING {SELECT_COLS}""",
                 provider, provider_uid, profile_image, row["id"],
             )
+            updated = await _promote_verification(conn, provider, updated, birth_date, gender)
             return "link", updated
 
     # ③ 신규 가입 — 이메일/닉네임 fallback, password_hash 는 NULL
     safe_email = email or f"{provider}_{provider_uid}@social.aidol.local"
     safe_nickname = nickname or f"{provider}_{provider_uid[:8]}"
+    verified = provider in VERIFIED_PROVIDERS
     created = await conn.fetchrow(
-        f"""INSERT INTO users (email, password_hash, nickname, profile_image, provider, provider_user_id)
-            VALUES ($1, NULL, $2, $3, $4, $5)
+        f"""INSERT INTO users (email, password_hash, nickname, profile_image, provider, provider_user_id,
+                               is_verified, verified_at, verify_provider, birth_date, gender)
+            VALUES ($1, NULL, $2, $3, $4, $5,
+                    $6, CASE WHEN $6 THEN now() END, $7, $8, $9)
             RETURNING {SELECT_COLS}""",
         safe_email, safe_nickname, profile_image, provider, provider_uid,
+        verified,
+        provider if verified else None,
+        birth_date if verified else None,
+        gender if verified else None,
     )
+    if verified:
+        logger.info(
+            "[oauth] provider=%s action=signup_verified user=%s has_birth=%s has_gender=%s",
+            provider, str(created["id"])[:8], bool(birth_date), bool(gender),
+        )
     return "signup", created

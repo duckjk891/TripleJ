@@ -139,12 +139,89 @@
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.header__points:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-secondary);
+}
+
+/* v154 — 앱 추천(리퍼럴) 📢 버튼 — ⭐배지와 동일 톤 */
+.header__share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.header__share:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-secondary);
+}
+
+/* v152 — DM 봉투 아이콘 + 미읽음 배지 */
+.header__dm {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.header__dm:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-secondary);
+}
+.header__dm--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.header__dm--disabled:hover {
+  border-color: var(--color-border);
+  background: var(--color-bg);
+}
+.header__dm-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #ff4757;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 .header__nickname {
   font-size: 13px;
   font-weight: 500;
   color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .header__logout-btn {
@@ -159,6 +236,325 @@
 .header__logout-btn:hover {
   color: var(--color-text);
   border-color: var(--color-text-sub);
+}
+
+.header__profile-btn {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.header__profile-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-sub);
+}
+
+.header__profile-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.header__profile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.header__profile-modal {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 380px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.header__profile-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.header__profile-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.header__profile-modal-close {
+  display: flex;
+  align-items: center;
+  font-size: 18px;
+  color: var(--color-text-sub);
+}
+
+.header__profile-modal-close:hover {
+  color: var(--color-text);
+}
+
+/* 본인인증 완료 뱃지 — 생년월일/성별 잠금 안내 */
+/* 내 정보 설정 모달 — 프로필 사진 영역 */
+.header__profile-avatar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.header__profile-avatar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.header__profile-avatar-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.header__profile-avatar-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.header__profile-avatar-btn--reset {
+  color: var(--color-text-sub);
+}
+
+.header__profile-avatar-input {
+  display: none;
+}
+
+.header__profile-avatar-error {
+  margin: 0;
+  font-size: 12px;
+  color: #e05a5a;
+}
+
+/* v156 — 내 태그(배틀태그) 행 */
+.header__profile-tag {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.header__profile-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header__profile-tag-label {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  flex-shrink: 0;
+}
+
+.header__profile-tag-code {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--color-text);
+  flex: 1;
+}
+
+.header__profile-tag-copy {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.header__profile-tag-sub {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--color-text-sub);
+}
+
+.header__profile-verified-badge {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(120, 200, 120, 0.08);
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+/* 미인증 — [본인인증 하기] CTA + 준비 중 안내 */
+.header__profile-verify {
+  margin-top: 12px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.header__profile-verify-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.header__profile-verify-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.header__profile-verify-notice {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  text-align: center;
+}
+
+/* 회원탈퇴 진입 버튼 — 저장 영역 아래 구분선 + 소형·저채도, hover 시 붉은톤 */
+.header__profile-withdraw {
+  margin-top: 12px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+  text-align: center;
+}
+
+.header__profile-withdraw-btn {
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  opacity: 0.75;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.header__profile-withdraw-btn:hover:not(:disabled) {
+  color: #e05a5a;
+  opacity: 1;
+}
+
+.header__profile-withdraw-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 탈퇴 확인 화면 — 경고 박스 + 확인 문구 입력 + 취소/탈퇴 버튼 */
+.header__withdraw {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header__withdraw-warning {
+  padding: 12px;
+  border: 1px solid rgba(224, 90, 90, 0.4);
+  border-radius: 8px;
+  background: rgba(224, 90, 90, 0.08);
+}
+
+.header__withdraw-warning-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #e05a5a;
+}
+
+.header__withdraw-warning-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-sub);
+}
+
+.header__withdraw-guide {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.header__withdraw-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.header__withdraw-input:focus {
+  outline: none;
+  border-color: #e05a5a;
+}
+
+.header__withdraw-error {
+  margin: 0;
+  font-size: 12px;
+  color: #e05a5a;
+}
+
+.header__withdraw-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.header__withdraw-cancel-btn,
+.header__withdraw-confirm-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.header__withdraw-cancel-btn {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+}
+
+.header__withdraw-cancel-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.header__withdraw-confirm-btn {
+  border: 1px solid #e05a5a;
+  background: #e05a5a;
+  color: #fff;
+  font-weight: 700;
+}
+
+.header__withdraw-confirm-btn:hover:not(:disabled) {
+  background: #c94a4a;
+}
+
+.header__withdraw-cancel-btn:disabled,
+.header__withdraw-confirm-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .header__menu-btn {
@@ -202,4 +598,328 @@
   .header__nickname { font-size: 12px; }
   .header__points { font-size: 11px; padding: 3px 8px; }
   .header__logout-btn { font-size: 11px; padding: 3px 8px; }
+  .header__profile-btn { font-size: 11px; padding: 3px 8px; }
+}
+
+/* 내 정보 설정 모달 — SNS 채널 섹션 */
+.header__profile-sns {
+  margin-top: 12px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.header__profile-sns-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.header__profile-sns-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.header__profile-sns-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.header__profile-sns-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.header__profile-sns-input:disabled {
+  opacity: 0.6;
+}
+
+.header__profile-sns-remove {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: var(--color-text-sub);
+}
+
+.header__profile-sns-remove:hover {
+  color: #e05a5a;
+}
+
+.header__profile-sns-add {
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.header__profile-sns-add:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-text-sub);
+}
+
+.header__profile-sns-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.header__profile-sns-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  text-align: center;
+}
+
+.header__profile-sns-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #e05a5a;
+}
+
+/* v125 — 선택 입력(지역·SNS) 입력=동의 고지문 (소형) */
+.header__profile-optional-notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-sub);
+}
+
+/* v125 — 마케팅 수신 동의 토글 */
+.header__profile-marketing {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.header__profile-marketing-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+/* v135 — 얼굴 인증(생체정보) 상태 행 + 동의 철회 */
+.header__profile-face {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.header__profile-face-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.header__profile-face-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.header__profile-face-status {
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.header__profile-face-withdraw-btn {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.header__profile-face-withdraw-btn:hover {
+  color: var(--color-danger, #e05a5a);
+  border-color: var(--color-danger, #e05a5a);
+}
+
+.header__profile-face-withdraw-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* v139 — 스트라이크 경고 배너 */
+.header__strike-banner {
+  /* v144 — 헤더(고정 높이 flex row) 밖 하단에 전체 폭 띠로 배치.
+     이전: header 안 flex 아이템이 되어 우상단 nav 버튼 위로 겹쳐 잘림. */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 14px;
+  padding: 8px 16px;
+  /* 아래 페이지 콘텐츠 위에 얹히므로 불투명 배경으로 가독성 확보 */
+  background: linear-gradient(rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.12)),
+    var(--color-bg-secondary);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--color-danger, #ef4444);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.header__strike-restricted {
+  font-weight: 700;
+}
+
+/* v139 — 내 신고 내역 (프로필 모달 내 펼침 행) */
+.header__profile-myreports {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.header__profile-myreports-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.header__profile-myreports-arrow {
+  font-size: 10px;
+  color: var(--color-text-sub);
+}
+
+.header__profile-myreports-body {
+  margin-top: 8px;
+}
+
+.header__profile-myreports-empty {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.header__profile-myreports-error {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--color-danger, #e05a5a);
+}
+
+.header__profile-myreports-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.header__profile-myreports-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.header__profile-myreports-toprow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header__profile-myreports-reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-sub);
+  font-size: 11px;
+}
+
+.header__profile-myreports-type {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: var(--color-text-sub);
+}
+
+.header__profile-myreports-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.header__profile-myreports-badge {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.header__profile-myreports-badge--yellow {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.header__profile-myreports-badge--orange {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+.header__profile-myreports-badge--red {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.header__profile-myreports-badge--green {
+  background: rgba(30, 215, 96, 0.15);
+  color: #1ed760;
+}
+
+.header__profile-myreports-badge--gray {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.header__profile-myreports-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-sub);
 }

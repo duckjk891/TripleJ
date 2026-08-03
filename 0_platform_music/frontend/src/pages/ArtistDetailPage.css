@@ -13,17 +13,19 @@
   border: 1px solid var(--color-border);
 }
 
+/* 크기는 공용 Avatar 컴포넌트의 --avatar-size 변수로 제어 (원형/폴백 스타일은 Avatar.css) */
 .artist-detail__avatar {
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 56px;
-  color: #fff;
-  font-weight: 700;
+  --avatar-size: 160px;
   flex-shrink: 0;
+}
+
+/* v132 — 페이지 명칭 "채널" 라벨 (이름 위 작은 캡션) */
+.artist-detail__page-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--color-primary);
+  margin-bottom: 4px;
 }
 
 .artist-detail__info h1 {
@@ -68,6 +70,66 @@
   margin-top: 2px;
 }
 
+/* Follow */
+.artist-detail__follow {
+  margin-top: 16px;
+}
+
+.artist-detail__follow-btn {
+  padding: 8px 24px;
+  border-radius: 20px;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.artist-detail__follow-btn:hover {
+  opacity: 0.85;
+}
+
+.artist-detail__follow-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.artist-detail__follow-btn--following {
+  background: var(--color-card);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+/* v131 — Tabs (곡·앨범 / 피드) */
+.artist-detail__tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 24px;
+}
+
+.artist-detail__tab {
+  padding: 10px 18px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text-sub);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s;
+}
+
+.artist-detail__tab:hover {
+  color: var(--color-text);
+}
+
+.artist-detail__tab--active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 700;
+}
+
 /* Sections */
 .artist-detail__section {
   margin-bottom: 32px;
@@ -100,9 +162,10 @@
 
 @media (max-width: 768px) {
   .artist-detail__header { flex-direction: column; align-items: center; text-align: center; padding: 20px; gap: 16px; }
-  .artist-detail__avatar { width: 100px; height: 100px; font-size: 36px; }
+  .artist-detail__avatar { --avatar-size: 100px; }
   .artist-detail__info h1 { font-size: 22px; }
   .artist-detail__meta { justify-content: center; flex-wrap: wrap; }
   .artist-detail__stats { justify-content: center; }
+  .artist-detail__follow { display: flex; justify-content: center; }
   .artist-detail__albums { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }

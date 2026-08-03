@@ -27,10 +27,16 @@ export function App() {
         </aside>
         <button
           className="chat-fab"
-          onClick={() => setChatOpen((open) => !open)}
-          aria-label="AI 채팅 열기/닫기"
+          onClick={() => {
+            const next = !chatOpen;
+            if (import.meta.env.DEV) {
+              console.info('[App] 채팅 시트:', next ? '열기' : '닫기');
+            }
+            setChatOpen(next);
+          }}
+          aria-label={chatOpen ? 'AI 채팅 닫기' : '말로 주문하기 — AI 채팅 열기'}
         >
-          {chatOpen ? '✕' : '💬'}
+          {chatOpen ? '✕' : '🎤 말로 주문하기'}
         </button>
       </div>
     </HashbrownProvider>

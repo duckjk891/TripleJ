@@ -52,6 +52,7 @@
 }
 
 .player-page__cover {
+  position: relative; /* v137 — AI 생성 뱃지 앵커 */
   width: 100%;
   max-width: 400px;
   aspect-ratio: 1;
@@ -59,6 +60,21 @@
   overflow: hidden;
   background: var(--color-border);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* v137 — 커버 모서리 소형 "AI 생성" 뱃지 (반투명) */
+.player-page__ai-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
 }
 
 .player-page__cover-img {
@@ -127,6 +143,10 @@
   color: var(--color-text-sub);
   margin-top: 6px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 /* Right side tabs */
@@ -391,4 +411,136 @@
   .player-page__info-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* 업로더 SNS 채널 섹션 — 프롬프트 탭, 주인공 캐릭터 섹션 아래 */
+.player-page__sns-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.player-page__sns-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.player-page__sns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.player-page__sns-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  text-decoration: none;
+  transition: all 0.2s;
+  min-width: 0;
+}
+
+.player-page__sns-link:hover {
+  border-color: var(--color-text-sub);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.player-page__sns-icon {
+  flex: 0 0 auto;
+  font-size: 15px;
+}
+
+.player-page__sns-label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.player-page__sns-url {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* v126 — SNS 공유 버튼 행 (프롬프트 탭 최상단) */
+.player-page__share-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.player-page__share-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.player-page__share-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.player-page__share-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.player-page__share-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.player-page__share-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.player-page__share-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--color-text-sub);
+}
+
+.player-page__share-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: player-page-share-spin 0.8s linear infinite;
+}
+
+@keyframes player-page-share-spin {
+  to { transform: rotate(360deg); }
+}
+
+.player-page__share-notice {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--color-text-sub);
 }

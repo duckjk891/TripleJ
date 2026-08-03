@@ -91,6 +91,32 @@
   cursor: not-allowed;
 }
 
+.register-card__extra-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.register-card__extra-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 12px;
+}
+
+/* v125 — 선택 입력(지역·SNS) 입력=동의 고지문 */
+.register-card__optional-notice {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-sub);
+  text-align: left;
+}
+
 .register-card__footer {
   text-align: center;
   margin-top: 20px;
@@ -108,8 +134,140 @@
   text-decoration: underline;
 }
 
+/* v123 — STEP 0 게이트 / 보호자 동의 플로우 */
+.register-card__gate-desc {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  text-align: center;
+  margin: -16px 0 20px;
+}
+
+.register-card__required {
+  color: var(--color-danger);
+}
+
+.register-card__birth-row {
+  display: flex;
+  gap: 8px;
+}
+
+.register-card__birth-row .register-card__select {
+  flex: 1;
+  min-width: 0;
+}
+
+.register-card__select {
+  width: 100%;
+  padding: 12px 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.register-card__select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.register-card__radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 4px 0;
+}
+
+.register-card__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.register-card__radio input {
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.register-card__gate-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.register-card__gate-edit {
+  background: transparent;
+  border: none;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.register-card__gate-edit:hover {
+  text-decoration: underline;
+}
+
+.register-card__notice-box {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 16px 14px;
+  margin-bottom: 16px;
+}
+
+.register-card__notice-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 8px;
+}
+
+.register-card__notice-sub {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  line-height: 1.6;
+  margin: 6px 0 0;
+}
+
+.register-card__consent-url {
+  margin-bottom: 16px;
+}
+
+.register-card__consent-link {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-primary);
+  word-break: break-all;
+}
+
+.register-card__consent-link:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 768px) {
   .register-page { padding: 24px 16px; }
   .register-card { padding: 24px 20px; }
   .register-card__title { font-size: 18px; margin-bottom: 20px; }
+}
+
+/* v154 — 추천코드(선택) 인라인 에러 */
+.register-card__field-error {
+  font-size: 12px;
+  color: var(--color-danger);
+  margin: 6px 0 0;
+  text-align: left;
 }

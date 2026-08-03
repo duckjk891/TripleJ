@@ -1,0 +1,446 @@
+.feed-post {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.feed-post--deleting {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Header */
+.feed-post__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.feed-post__author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.feed-post__author-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-post__date {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* v133 — 커뮤니티(공지) 글 뱃지 */
+.feed-post__kind-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.feed-post__menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.feed-post__menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--color-text-sub);
+  transition: background 0.15s;
+}
+
+.feed-post__menu-btn:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.feed-post__menu {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  min-width: 120px;
+  overflow: hidden;
+}
+
+.feed-post__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-text);
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.feed-post__menu-item:hover {
+  background: var(--color-hover);
+}
+
+.feed-post__menu-item--danger {
+  color: var(--color-danger, #ef4444);
+}
+
+/* Title */
+.feed-post__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+/* BGM banner */
+.feed-post__bgm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: var(--color-primary-light, rgba(99, 102, 241, 0.1));
+  border: 1px solid transparent;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.feed-post__bgm--active {
+  border-color: var(--color-primary);
+}
+
+.feed-post__bgm--deleted {
+  color: var(--color-text-sub);
+  background: var(--color-hover);
+}
+
+.feed-post__bgm-icon {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.feed-post__bgm-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.feed-post__bgm-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.feed-post__bgm-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-post__bgm-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--color-text-sub);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.feed-post__bgm-wait {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-primary);
+}
+
+.feed-post__bgm-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.feed-post__bgm-btn:hover {
+  opacity: 0.85;
+}
+
+.feed-post__bgm-btn:disabled {
+  opacity: 0.6;
+}
+
+.feed-post__bgm-btn--off {
+  background: transparent;
+  color: var(--color-text-sub);
+  border: 1px solid var(--color-border);
+}
+
+/* Body */
+.feed-post__text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 8px 0;
+}
+
+/* Actions */
+.feed-post__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.feed-post__action {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--color-text-sub);
+  transition: color 0.15s;
+}
+
+.feed-post__action:hover {
+  color: var(--color-text);
+}
+
+.feed-post__action--liked {
+  color: #e74c3c;
+}
+
+.feed-post__share-msg {
+  font-size: 12px;
+  color: var(--color-primary);
+}
+
+/* Comments */
+.feed-post__comments {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.feed-post__comments-empty {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  padding: 8px 0;
+  text-align: center;
+}
+
+.feed-post__comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.feed-post__comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.feed-post__comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.feed-post__comment-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.feed-post__comment-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.feed-post__comment-author:hover {
+  color: var(--color-primary);
+}
+
+.feed-post__comment-date {
+  font-size: 11px;
+  color: var(--color-text-sub);
+}
+
+.feed-post__comment-text {
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.feed-post__comment-del {
+  flex-shrink: 0;
+  color: var(--color-text-sub);
+  padding: 2px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.feed-post__comment-del:hover {
+  color: var(--color-danger, #ef4444);
+}
+
+.feed-post__comments-more {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-primary);
+  padding: 6px 0;
+}
+
+.feed-post__comment-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.feed-post__comment-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--color-bg, transparent);
+  color: var(--color-text);
+}
+
+.feed-post__comment-input:focus {
+  border-color: var(--color-primary);
+  outline: none;
+}
+
+.feed-post__comment-submit {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.feed-post__comment-submit:disabled {
+  opacity: 0.5;
+}
+
+.feed-post__comments-login {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  padding: 8px 0;
+  text-align: center;
+}
+
+.feed-post__comments-login a {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .feed-post {
+    padding: 12px;
+  }
+  .feed-post__title {
+    font-size: 16px;
+  }
+}
+
+/* v137 — 신고 처리 블라인드 라벨 (소유자 조회 시) */
+.feed-post__blinded {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: var(--color-danger, #ef4444);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* v137 — 댓글 소형 신고 버튼 (비소유자) */
+.feed-post__comment-report {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-sub);
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.feed-post__comment-report:hover {
+  color: var(--color-danger, #ef4444);
+}
+
+/* v139 — 소명하기 버튼 (blinded 라벨 안, 소유자) */
+.feed-post__appeal-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: transparent;
+  color: var(--color-danger, #ef4444);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.feed-post__appeal-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.feed-post__appeal-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

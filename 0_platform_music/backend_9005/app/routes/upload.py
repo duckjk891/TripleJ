@@ -197,6 +197,10 @@ async def get_presigned_url(
     """Get a presigned URL for an object in MinIO."""
     if not object_name:
         return JSONResponse(status_code=400, content={"error": "object_name은 필수입니다."})
+    # FaceGuardSquad(v135) — faces/ 는 암호화 얼굴 데이터(백엔드 전용) 경로. presign 노출 금지.
+    # TrustSquad(v138) — evidence/ 는 신고 증거 격리 보존 경로(어드민 전용). 동일 차단.
+    if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
 
     minio_client = get_minio()
     bucket_name = settings.minio_bucket_images if bucket == "images" else settings.minio_bucket_music
@@ -252,6 +256,12 @@ async def generate_cover(
             status_code=400,
             content={"error": "곡 제목을 입력해주세요."},
         )
+
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    from ..services.strike_service import check_generation_allowed
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
 
     # Points — 커버 AI 생성은 2포인트 선차감 (부족 시 402 차단, 실패 시 환불).
     # ref 는 시도당 유니크 uuid (point_events 유니크 인덱스 재시도 충돌 회피).
@@ -417,6 +427,9 @@ async def generate_cover(
 @router.get("/cover-preview/{object_name:path}")
 async def cover_preview(object_name: str):
     """Proxy cover image from MinIO for external access."""
+    # v135 faces/ + v138 evidence/ — 백엔드 전용 경로 프록시 노출 금지.
+    if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
     minio_client = get_minio()
     try:
         response = minio_client.get_object(
@@ -771,6 +784,12 @@ async def generate_mv(
             content={"error": "곡 제목을 입력해주세요."},
         )
 
+    # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (제한 중이면 403)
+    from ..services.strike_service import check_generation_allowed
+    denied = await check_generation_allowed(None, current_user["id"])
+    if denied:
+        return denied
+
     mongo = get_mongo()
 
     # Optionally load cover image from MinIO
@@ -892,6 +911,9 @@ async def mv_status(
 @router.get("/mv-preview/{object_name:path}")
 async def mv_preview(object_name: str):
     """Proxy music video or scene thumbnail from MinIO for playback."""
+    # v135 faces/ + v138 evidence/ — 백엔드 전용 경로 프록시 노출 금지.
+    if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
     minio_client = get_minio()
     try:
         response = minio_client.get_object(

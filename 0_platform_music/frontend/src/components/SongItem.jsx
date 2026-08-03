@@ -1,21 +1,23 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus, FiDownload, FiBookmark } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiBookmark } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import { getAlbumGradient } from '../utils';
 import AddToPlaylistModal from './AddToPlaylistModal';
+import TrackShareButton from './TrackShareButton';
+import TrackDownloadButton from './TrackDownloadButton';
 import './SongItem.css';
 
-export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike }) {
+export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false }) {
   const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [showAddModal, setShowAddModal] = useState(false);
 
   const handlePlay = () => {
-    play(song, songs);
+    play(song, songs, { queueAll });
   };
 
   const handleLike = () => {
@@ -40,21 +42,6 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
     if (!user) { navigate('/login'); return; }
     if (import.meta.env.DEV) console.info('[SongItem] openAddToPlaylist', { track: song?.id });
     setShowAddModal(true);
-  };
-
-  const handleDownload = async () => {
-    if (!user) { navigate('/login'); return; }
-    try {
-      const { data } = await api.downloadTrackFile(song.id);
-      const a = document.createElement('a');
-      a.href = data.download_url;
-      a.download = data.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error('Download failed:', err);
-    }
   };
 
   return (
@@ -85,7 +72,7 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
           {song.title}
         </div>
         <div className="song-item__artist">
-          <Link to={`/artist/${song.artist_id || song.uploader_id}`}>{song.artist_name || song.uploader_nickname || 'AI'}</Link>
+          <Link to={`/artist/${song.artist_id || song.uploader_id}`} title="채널 보기">{song.artist_name || song.uploader_nickname || 'AI'}</Link>
         </div>
       </div>
 
@@ -112,9 +99,9 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         <button className="song-item__action-btn" onClick={handleSaveToPlaylist} title="플레이리스트에 추가">
           <FiBookmark />
         </button>
-        <button className="song-item__action-btn" onClick={handleDownload} title="다운로드">
-          <FiDownload />
-        </button>
+        {/* v129 — 다운로드: 자막 영상 4옵션 팝업 */}
+        <TrackDownloadButton track={{ id: song.id, title: song.title }} />
+        <TrackShareButton track={{ id: song.id, title: song.title }} />
       </div>
 
       {showAddModal && (

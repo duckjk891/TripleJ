@@ -115,7 +115,7 @@ def generate_lyrics_ass(scenes: list, all_timestamps: dict | None = None) -> str
     # Build full ASS content
     header = """\
 [Script Info]
-Title: AIMU Lyrics
+Title: MAIDOL Lyrics
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -221,7 +221,7 @@ def generate_scene_lyrics_ass(scene: dict, timestamps: list[dict] | None = None)
 
     header = """\
 [Script Info]
-Title: AIMU Lyrics
+Title: MAIDOL Lyrics
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080

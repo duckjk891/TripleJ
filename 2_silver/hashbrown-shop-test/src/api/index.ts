@@ -15,6 +15,53 @@ interface ApiErrorBody {
   };
 }
 
+/**
+ * 세션 ID (8자리, localStorage 영속) — "같은 사람의 한 세션" 추적용.
+ * 백엔드 로그의 [sess:xxxxxxxx]와 매칭된다.
+ */
+const SESSION_KEY = 'silvercare-session-id';
+
+export function getSessionId(): string {
+  try {
+    let id = localStorage.getItem(SESSION_KEY);
+    if (!id) {
+      id = Math.random().toString(36).slice(2, 10).padEnd(8, '0');
+      localStorage.setItem(SESSION_KEY, id);
+    }
+    return id;
+  } catch {
+    // localStorage 불가(프라이빗 모드 등) — 추적 없이 동작
+    return 'no-store';
+  }
+}
+
+/**
+ * 이용 이벤트 원격 로깅. POST /api/log (fire-and-forget — 실패해도 앱 동작에 영향 없음)
+ * 이벤트 어휘: user_message / assistant_response / cart_add / cart_remove /
+ *             cart_set_quantity / order_checkout
+ */
+export function logEvent(event: string, data?: Record<string, unknown>): void {
+  try {
+    void fetch('/api/log', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Id': getSessionId(),
+      },
+      body: JSON.stringify(data === undefined ? { event } : { event, data }),
+      keepalive: true,
+    }).catch((cause) => {
+      if (import.meta.env.DEV) {
+        console.error('[api] logEvent 전송 실패:', event, cause);
+      }
+    });
+  } catch (cause) {
+    if (import.meta.env.DEV) {
+      console.error('[api] logEvent 실패:', event, cause);
+    }
+  }
+}
+
 /** 백엔드 공통 에러 JSON의 code/message/requestId를 담은 Error */
 export class ApiError extends Error {
   readonly code: string;
@@ -70,7 +117,7 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
   try {
     res = await fetch('/api/stt', {
       method: 'POST',
-      headers: { 'Content-Type': contentType },
+      headers: { 'Content-Type': contentType, 'X-Session-Id': getSessionId() },
       body: blob,
     });
   } catch (cause) {
@@ -113,7 +160,7 @@ export async function synthesizeSpeech(text: string, voice?: string): Promise<Bl
   try {
     res = await fetch('/api/tts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
       body: JSON.stringify(voice ? { text, voice } : { text }),
     });
   } catch (cause) {

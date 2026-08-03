@@ -148,7 +148,7 @@ export default function AlbumDetailPage() {
             <h1 className="album-detail__title">{album.title}</h1>
             <div className="album-detail__artist">
               {album.artist_id ? (
-                <Link to={`/artist/${album.artist_id}`}>{album.artist_name}</Link>
+                <Link to={`/artist/${album.artist_id}`} title="채널 보기">{album.artist_name}</Link>
               ) : (
                 <span>{album.artist_name}</span>
               )}
@@ -199,6 +199,7 @@ export default function AlbumDetailPage() {
                 album_id: album.id,
                 album_title: album.title,
               }))}
+              queueAll
               isLiked={likedIds.has(song.id)}
               onToggleLike={handleToggleLike}
             />

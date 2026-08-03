@@ -16,9 +16,19 @@ router = APIRouter(prefix="/api/wondera", tags=["Wondera"])
 WONDERA_API_BASE = "https://api.wondera.ai/v1"
 
 
+def _clean_wondera_error(text: str) -> str:
+    """Wondera 에러 응답 정리 — Cloudflare 차단 등 HTML 응답이면 사람이 읽을
+    메시지로 치환 (원문은 로그에만 남김)."""
+    stripped = (text or "").lstrip()
+    if stripped.startswith("<!DOCTYPE") or stripped.startswith("<html") or "Just a moment" in stripped:
+        return "Wondera 서비스에 연결할 수 없습니다 (외부 접속 차단). 관리자 확인이 필요합니다."
+    return stripped[:300]
+
+
 def _wondera_headers():
+    # 공식 문서(2026-07 확인) 기준 인증: Authorization: Bearer <API_KEY>
     return {
-        "x-api-key": settings.wondera_api_key,
+        "Authorization": "Bearer {}".format(settings.wondera_api_key),
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -48,7 +58,7 @@ async def upload_vocal(
 
     if resp.status_code != 200:
         logger.error("Wondera upload failed: %s", resp.text[:500])
-        return JSONResponse(status_code=resp.status_code, content={"error": "Wondera 업로드 실패: {}".format(resp.text[:300])})
+        return JSONResponse(status_code=resp.status_code, content={"error": "Wondera 업로드 실패: {}".format(_clean_wondera_error(resp.text))})
 
     result = resp.json()
     logger.info("Wondera: vocal uploaded, id=%s", result.get("data", {}).get("id"))
@@ -74,6 +84,12 @@ async def generate_song(
     """Generate song via Wondera API."""
     if not settings.wondera_api_key:
         return JSONResponse(status_code=503, content={"error": "Wondera API 키가 설정되지 않았습니다."})
+
+    # 필수값 검증 — 가사 (공백만 입력도 거부)
+    if not body.lyrics or not body.lyrics.strip():
+        return JSONResponse(status_code=400, content={"error": "가사는 필수 입력입니다."})
+    if body.number is not None and not (1 <= body.number <= 3):
+        return JSONResponse(status_code=400, content={"error": "생성 곡 수(number)는 1~3 사이여야 합니다."})
 
     # 파라미터 조합 검증
     if body.prompt and body.reference_id:
@@ -111,10 +127,13 @@ async def generate_song(
 
     if resp.status_code != 200:
         logger.error("Wondera generate failed: %s", resp.text[:500])
-        return JSONResponse(status_code=resp.status_code, content={"error": "Wondera 생성 실패: {}".format(resp.text[:300])})
+        return JSONResponse(status_code=resp.status_code, content={"error": "Wondera 생성 실패: {}".format(_clean_wondera_error(resp.text))})
 
     result = resp.json()
-    logger.info("Wondera: song generate started, task_id=%s", result.get("data", {}).get("task_id"))
+    # 응답 형식 이중 대응: 구형 {data:{task_id}} / 공식 문서형 {id, status, ...}
+    task_id = result.get("data", {}).get("task_id") if isinstance(result.get("data"), dict) else None
+    task_id = task_id or result.get("id")
+    logger.info("Wondera: song generate started, task_id=%s", task_id)
     return result
 
 
@@ -151,7 +170,7 @@ async def upload_wondera_file(
         logger.error("Wondera file upload failed: %s", resp.text[:500])
         return JSONResponse(
             status_code=resp.status_code,
-            content={"error": "Wondera 파일 업로드 실패: {}".format(resp.text[:300])},
+            content={"error": "Wondera 파일 업로드 실패: {}".format(_clean_wondera_error(resp.text))},
         )
 
     result = resp.json()
@@ -177,6 +196,6 @@ async def query_song(
 
     if resp.status_code != 200:
         logger.error("Wondera query failed: %s", resp.text[:500])
-        return JSONResponse(status_code=resp.status_code, content={"error": "Wondera 조회 실패: {}".format(resp.text[:300])})
+        return JSONResponse(status_code=resp.status_code, content={"error": "Wondera 조회 실패: {}".format(_clean_wondera_error(resp.text))})
 
     return resp.json()

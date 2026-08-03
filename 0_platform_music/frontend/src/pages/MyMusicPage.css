@@ -1210,3 +1210,65 @@ button.mymusic-character__outfit-select:hover {
     font-size: 11px;
   }
 }
+
+/* v137 — 신고 처리 블라인드 라벨 (내 트랙 목록, 소유자 통보) */
+.mymusic-track-card__blinded {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+/* v137 — 캐릭터 생성 사진 확약 체크 + 보관·비학습 고지 (실사·가상 공통) */
+.mymusic-character__portrait-confirm {
+  margin: 12px 0 4px;
+  text-align: left;
+}
+
+.mymusic-character__confirm-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.mymusic-character__confirm-label input {
+  margin-top: 2px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mymusic-character__photo-notice {
+  margin: 6px 0 0 24px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-text-sub);
+}
+
+/* v139 — 소명하기 버튼 (blinded 트랙 라벨 옆) */
+.mymusic-track-card__appeal-btn {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: transparent;
+  color: var(--color-danger);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mymusic-track-card__appeal-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.mymusic-track-card__appeal-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

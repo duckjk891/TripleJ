@@ -23440,3 +23440,1939 @@ provider 로그인+동의 → provider 가 브라우저를 백엔드 콜백으�
 1. **핵심**: 발행(스냅샷 포함) 후 캐릭터 재생성/저장 → 곡 상세 cover_character 시트가 **발행 당시 사본 그대로**(불변 경로) 확인. 캐릭터 삭제 후에도 preview 200.
 2. 백필: 기존 스냅샷 경로가 불변 사본으로 치환, 캐시 무효화, 상세 응답 정상.
 3. 회귀: 발행/MV 생성/상세/preview/캐릭터 저장·삭제 기존 동작 무손상. copy 실패 시 발행 자체는 성공(best-effort). py_compile, 9004 미러 동일.
+
+## v113 — 스타 착장 아이템 위시리스트(♥) + 아이템 선택 모달 위시 필터 탭 — 2026-07-20
+
+### 요청 작업
+1. 다른 이용자가 곡 재생 페이지의 "이 곡의 주인공 캐릭터" 카드에서 스타 착용 아이템에 ♥(위시리스트) 토글 가능.
+2. 내캐릭터 탭 → 아이템 슬롯 클릭 → 아이템 선택 모달에 [전체 | ♥ 내 위시리스트] 필터 탭 추가. 위시 탭은 현재 카테고리의 내 위시 아이템만 노출, 판매종료(비활성) 아이템은 뱃지 표시+선택 불가.
+3. 아스키아트 시안 사용자 승인 완료.
+
+### Plan verification findings (0단계 코드 분석 — 2026-07-20 실측)
+- 광고상품 저장소: **MongoDB `ad_items` 컬렉션** (backend_9005/app/routes/business.py). item_id = ObjectId 문자열. `is_active` bool, `category` ∈ ALLOWED_AD_CATEGORIES(상의/하의/신발/장소).
+- 공개 조회: `GET /api/business/ads/active` (business.py:360, 무인증, category 필터, advertiser_nickname 을 PG users 에서 join).
+- 노출/클릭 집계: `POST /api/business/ads/{item_id}/impression|click` (business.py:408,437).
+- 인증 패턴: `from ..auth import get_current_user`, `current_user["id"]` = UUID 문자열 (routes/likes.py:27 참조).
+- PG 접근: raw asyncpg `from ..database.postgres import get_pg` (likes.py 패턴).
+- 테이블 생성 관행: main.py startup 의 idempotent `CREATE TABLE IF NOT EXISTS` 마이그레이션 블록 (main.py:55~ users.provider, track_embeddings 예시).
+- 라우터 등록: main.py:246-268 `app.include_router(...)`.
+- 프론트 API 클라이언트: frontend/src/api/index.js (recordAdImpression/Click:544-546, getActiveAds:548, adImageUrl:550).
+- 스타 착장 노출 지점: frontend/src/components/CharacterCoverCard.jsx (PlayerPage 우측 "이 곡의 주인공 캐릭터" 카드). outfitSlots(상의/하의/신발) 렌더, 이미지 클릭 = recordAdClick + product_url 새창(handleItemClick:66). used_items 항목에 `id` 포함.
+- 아이템 선택 모달: frontend/src/components/ItemSelectModal.jsx — `api.getActiveAds(category)` 로드, advertiser 별 그룹 렌더, 선택 시 recordAdImpression + onSelect. MyMusicPage.jsx 의 setItemModalCategory 로 오픈.
+- 원격 로깅 인프라: frontend/src/utils/remoteLogger.js **존재** — console 로그가 백엔드 파일로 전송됨. 추가 인프라 작업 불필요.
+- 충돌/제약: used_items 스냅샷에는 item `id` 가 있으므로 위시 토글 가능. 단 광고주가 아이템 삭제 시 위시 항목이 고아가 될 수 있음 → GET /api/wishlist 응답에서 Mongo 조회 실패 항목은 제외(로그만 남김), is_active=false 는 `is_active:false` 로 내려 프론트에서 "판매종료" 처리.
+
+### 설계
+- **PG 신규 테이블** `ad_wishlist(user_id UUID NOT NULL, item_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY(user_id, item_id))` — main.py 마이그레이션 블록에 idempotent 추가.
+- **신규 라우트** backend_9005/app/routes/wishlist.py (prefix="/api/wishlist", 전부 인증 필요):
+  - `POST /api/wishlist/{item_id}/toggle` → `{wishlisted: bool}` (존재하면 삭제, 없으면 삽입. item_id 는 Mongo ad_items 존재 검증)
+  - `GET /api/wishlist/check?item_ids=a,b,c` → `{wishlisted_ids: [...]}` (CharacterCoverCard 초기 하트 상태)
+  - `GET /api/wishlist?category=상의` → `{items: [{id,name,image_object_name,product_url,category,advertiser_nickname,is_active,wishlisted_at}]}` (Mongo join, 고아 제외)
+- **api/index.js**: `toggleWishlist(itemId)`, `checkWishlist(itemIds)`, `getWishlist(category)` 추가.
+- **CharacterCoverCard.jsx**: 각 착장 슬롯 하단에 ♡/♥ 버튼. 마운트 시 checkWishlist 로 초기 상태, 클릭 시 toggleWishlist(낙관적 업데이트+실패 롤백). 401 시 "로그인 후 이용해주세요" 안내. 기존 이미지 클릭(광고 클릭/새창) 동작 불변.
+- **ItemSelectModal.jsx**: 상단 [전체 | ♥ 내 위시리스트 (n)] 탭. 위시 탭 = getWishlist(category) 로드, is_active=false 는 "판매종료" 뱃지+선택 불가, ♥ 클릭으로 위시 해제(목록에서 제거). 전체 탭 = 기존 동작 불변.
+- **9004 미러**: 9005 완료·테스트 후 동일 반영 (routes/_logs.py 파일명 예외 규칙 준수).
+
+### 변경 매트릭스 (담당·추적자 로그)
+| 파일 | 담당 | 추적자/로그 prefix |
+|---|---|---|
+| backend_9005/app/routes/wishlist.py (신규) | backend-dev | logger `[wishlist]` + user_id 축약, item_id |
+| backend_9005/app/main.py (테이블 마이그레이션 + include_router) | backend-dev | `[migration] ad_wishlist ensured` |
+| frontend/src/api/index.js | frontend-dev | — |
+| frontend/src/components/CharacterCoverCard.jsx(+css) | frontend-dev | `[CharCoverCard]` |
+| frontend/src/components/ItemSelectModal.jsx(+css) | frontend-dev | `[ItemSelectModal]` |
+| backend_9004 동일 파일 (미러) | backend-dev | 동일 |
+
+### 테스트 항목 (tester)
+1. 비로그인: GET /api/wishlist* → 401, 곡 페이지 하트 클릭 시 로그인 안내.
+2. 로그인: 하트 토글 → PG ad_wishlist 삽입/삭제 확인, 재토글 idempotent.
+3. GET /api/wishlist?category=상의 → 해당 카테고리만, advertiser_nickname 포함.
+4. 비활성 아이템: toggle 은 가능하되 목록에서 is_active:false + 프론트 "판매종료" 뱃지·선택불가.
+5. 존재하지 않는 item_id toggle → 404.
+6. 회귀: 아이템 선택 모달 [전체] 탭 기존 동작(로드/그룹/선택→슬롯 장착), CharacterCoverCard 이미지 클릭→product_url 새창+클릭 집계, 캐릭터 생성 저장 플로우.
+7. 새 로그 실동작 확인: [wishlist] 백엔드 로그, [ItemSelectModal]/[CharCoverCard] 프론트 로그 각 1건 이상.
+8. 9004 미러 후 동일 스모크 (health + wishlist toggle/list).
+
+## v114 — 재생큐 옵션3: 클릭곡만 큐잉 + 곡 종료 시 관련곡 1곡 자동 추가 (유튜브뮤직식) — 2026-07-20
+
+### 요청 작업
+- 현행: 목록에서 곡 클릭 시 화면 전체 곡 리스트가 재생큐로 통째 교체됨 → 사용자 혼란.
+- 옵션3 채택: **클릭한 곡만 큐에 담고**, 곡이 끝나면 **관련곡을 1곡씩 자동 추가**해 이어재생.
+
+### Plan verification findings (0단계 — 2026-07-20 실측)
+- 큐 교체 지점: frontend/src/contexts/PlayerContext.jsx `play(song, songs)` (94-114) — songs 전달 시 `setPlaylist(songs)` 통째 교체.
+- 곡 종료 처리: PlayerContext.jsx 36행 부근 ended 핸들러 — `idx < playlist.length-1` 이면 다음곡, 마지막이면 정지.
+- 전체 리스트를 넘기는 콜러: ChartPage.jsx:86, MyMusicPage.jsx:1404, SongItem.jsx:18, TrackCard.jsx:27 (MainPage/Search/ArtistDetail/AlbumDetail/PlaylistDetail 이 이 두 컴포넌트 사용), PlayerPage.jsx:386(큐 내부 클릭 — 이건 큐 유지가 맞음).
+- 관련곡 자원: backend_9005 pgvector `track_embeddings` (1536차원, HNSW cosine) + `embedding_service.search_similar(conn, query, k)` (150행). 트랙 자체 임베딩은 `SELECT embedding FROM track_embeddings WHERE track_id=$1` 로 직접 조회 가능 → **신규 임베딩 API 호출 없이** NN 검색 가능.
+- 트랙 직렬화: routes/tracks.py `_serialize_track/_serialize_tracks` (30,72행). 공개 트랙 필터 `is_public: True` 관행 (list_tracks:86).
+- 원격 로깅 인프라 존재 (remoteLogger.js) — 추가 인프라 불필요.
+- 충돌 검토: 플레이리스트 상세/앨범 상세에서 "전체 재생" 성격의 클릭은 컬렉션 큐잉이 자연스러움 → **PlaylistDetailPage·AlbumDetailPage 만 기존 동작 유지(opt-in)**, 나머지 전부 옵션3.
+
+### 설계
+- **백엔드 신규**: `GET /api/tracks/{track_id}/related?exclude=id1,id2&limit=1` (무인증)
+  1) seed 트랙 임베딩 PG 직조회 → NN 검색(seed+exclude 제외, 여유분 k) → Mongo 에서 is_public 확인 후 직렬화
+  2) 임베딩 없으면 폴백: 같은 genre 의 공개 트랙 중 play_count 상위(제외목록 빼고)
+  3) 그래도 없으면 전체 인기곡 폴백. 항상 200 + `{tracks: []}` 허용 (500 금지)
+- **api/index.js**: `getRelatedTracks(trackId, excludeIds, limit)` 추가.
+- **PlayerContext.jsx**:
+  - `play(song, songs, opts)` — `opts.queueAll === true` 일 때만 songs 로 큐 교체(기존 로직). 그 외 song 만 큐에 세팅 `[song]`.
+  - ended 핸들러: 마지막 곡이면 `getRelatedTracks(현재곡 id, 큐 전체 id, 1)` → 결과를 player song 형태(id,title,artist_name,cover_image,album_id)로 매핑해 append + 자동 재생. 빈 결과·실패 시 기존처럼 정지(콘솔 warn). 중복 호출 가드(로딩 플래그).
+- **콜러 수정**: SongItem/TrackCard 에 `queueAll` prop 추가(기본 false). PlaylistDetailPage·AlbumDetailPage 에서만 true 전달. ChartPage:86, MyMusicPage:1404 는 목록 전달 제거(단곡). PlayerPage:386 은 `play(song)` 으로 (큐 내 곡 클릭 = 인덱스 이동, 기존 동작 유지됨).
+- **9004 미러**: 테스트 통과 후 tracks.py 변경 동일 반영.
+
+### 변경 매트릭스
+| 파일 | 담당 | 추적자/로그 |
+|---|---|---|
+| backend_9005/app/routes/tracks.py (related 엔드포인트) | backend-dev | `[related]` + track_id |
+| frontend/src/api/index.js (getRelatedTracks) | frontend-dev | — |
+| frontend/src/contexts/PlayerContext.jsx | frontend-dev | `[PlayerContext]` |
+| frontend/src/components/SongItem.jsx, TrackCard.jsx | frontend-dev | 기존 prefix |
+| frontend/src/pages/ChartPage,MyMusicPage,PlayerPage,PlaylistDetailPage,AlbumDetailPage | frontend-dev | 기존 prefix |
+| backend_9004/app/routes/tracks.py (미러) | backend-dev | 동일 |
+
+### 테스트 항목 (tester)
+1. `GET /api/tracks/{실존id}/related?limit=1` → 200, seed 본인 미포함, 공개곡만.
+2. exclude 동작: exclude 에 넣은 id 미반환. limit 존중.
+3. 임베딩 없는 트랙(track_embeddings 미존재 id) → 장르 폴백 200 (500 금지).
+4. 미존재 track_id → 200 빈배열 또는 404 (구현 스펙 확인 후 일관성).
+5. 프론트: vite transform 200 (PlayerContext/SongItem/TrackCard/수정 페이지들), `[PlayerContext]`·`[related]` 로그 실동작.
+6. 회귀: 기존 `GET /api/tracks/` 목록, `/api/tracks/{id}`, 검색(`/api/tracks/search`) 정상. 큐 내부 클릭(PlayerPage) 인덱스 이동 동작 유지.
+7. 9004 미러 후 스모크.
+
+## v115 — 광고주 대시보드 스타별 성과(착장/위시/클릭) — 2026-07-21
+
+### 요청 작업
+- 회사관리 탭 대시보드에서 아이템별로 "어떤 스타가 착장했고, 그 스타 경유로 위시/쇼핑몰 클릭이 얼마나 발생했는지" 스타별 성과를 노출 → 광고주의 협찬 컨택 대상 선정 지원. 아스키 시안 승인 완료.
+
+### Plan verification findings (0단계 — 2026-07-21 실측)
+- 클릭/노출 기록: business.py record_impression(408)/record_click(436) — Mongo `ad_impressions`/`ad_clicks` `{item_id, user_id(누른사람), timestamp}` 저장, 6시간 중복 가드. **track/스타 컨텍스트 없음** → 스타별 클릭은 신규 데이터부터.
+- 위시: PG `ad_wishlist(user_id,item_id,created_at)` (v113) — 스타 컨텍스트 없음. routes/wishlist.py toggle 이 truthy 반환 `{wishlisted}`.
+- 착장 소스(소급 가능): 트랙 상세(tracks.py:763-808)가 cover_character 를 (1) mv_jobs.user_character_snapshot (include_my_character=True) 우선 (2) tracks.user_character_snapshot 폴백으로 구성. used_items[].id = 광고 아이템 id. 스타 = tracks.uploader_id/uploader_nickname. 현재 트랙 22개 규모 — Python 인메모리 집계로 충분.
+- 대시보드: business.py business_dashboard(527) — 아이템별 impressions/clicks/ctr + 기간필터(_period_start). FE: BusinessPage.jsx DashboardTab(402) + api.getBusinessDashboard(546).
+- 곡페이지 카드: PlayerPage.jsx:373 `<CharacterCoverCard character={...}/>` — **trackId 미전달** → prop 추가 필요. 카드 내 recordAdClick(item.id)/toggleWishlist(item.id) 호출 중.
+- 제약(시안에서 사용자 고지 완료): 과거 클릭/위시는 스타 귀속 불가, 구현 시점부터 track_id 태깅 수집. 착장 수만 소급 집계.
+
+### 설계
+**백엔드 (9005 선구현 → 9004 미러)**
+1. 귀속 태깅: record_click body 에 옵션 `{track_id}` — 유효하면 tracks 에서 uploader_id 조회해 `ad_clicks` doc 에 `track_id, star_user_id` 추가 저장 (기존 필드/중복가드 불변). wishlist toggle 도 옵션 body `{track_id}` — add/remove 시 Mongo 신규 컬렉션 `ad_wish_events` `{item_id, track_id, star_user_id, actor_user_id, action:"add"|"remove", timestamp}` 기록 (PG ad_wishlist 로직 불변).
+2. 신규 `GET /api/business/ads/{item_id}/stars?period=` (require_business + 본인 아이템 검증 404):
+   - 착장: 공개 트랙 전수(작은 규모) + 연결 mv_jobs 로 트랙별 유효 snapshot 산출(표시 로직과 동일 우선순위) → used_items 에 item_id 포함 트랙을 uploader 별 카운트 (기간 무관 소급).
+   - 위시: ad_wish_events 기간 내 action=add 를 star_user_id 별 카운트.
+   - 클릭: ad_clicks 기간 내 track_id 있는 docs 를 star_user_id 별 카운트.
+   - 응답 `{stars:[{user_id,nickname,worn_count,wish_count,click_count}], untracked_clicks}` (클릭 desc, 위시 desc 정렬. nickname 은 PG users join).
+3. business_dashboard 확장: 아이템별 `wish_count`(PG ad_wishlist 현재 총 담김수), `worn_count`(착장 소급 집계) + 요약 `total_wishes`, `total_worn` 추가 (기존 필드 불변 — FE 회귀 방지).
+
+**프론트엔드**
+4. api/index.js: `recordAdClick(itemId, trackId)`, `toggleWishlist(itemId, trackId)` 시그니처 확장(옵션, 기존 호출 호환), `getAdItemStars(itemId, period)` 신규.
+5. PlayerPage:373 → `trackId={trackDetail?.id}` 전달, CharacterCoverCard 가 클릭/위시 호출에 trackId 포함.
+6. BusinessPage DashboardTab: 요약에 '위시 담김·착장' 추가, 아이템 행에 위시/착장 표시 + "스타별 성과 ▼" 펼치기(lazy getAdItemStars, 순위/닉네임/착장/위시/클릭 테이블, 빈 데이터 안내 문구).
+
+### 변경 매트릭스
+| 파일 | 담당 | 추적자/로그 |
+|---|---|---|
+| backend_9005 routes/business.py (click 태깅·stars·dashboard 확장) | backend-dev | `[adstars]`,`[adclick]` + item_id/track_id |
+| backend_9005 routes/wishlist.py (toggle 이벤트 기록) | backend-dev | `[wishlist]` 기존 prefix |
+| frontend api/index.js | frontend-dev | — |
+| frontend CharacterCoverCard.jsx / PlayerPage.jsx | frontend-dev | `[CharCoverCard]` |
+| frontend BusinessPage.jsx(+css) | frontend-dev | `[BusinessPage]` |
+| backend_9004 미러 | backend-dev | 동일 |
+
+### 테스트 항목 (tester)
+1. record_click body {track_id} → ad_clicks doc 에 track_id/star_user_id 저장 (Mongo 확인). body 없이도 기존 동작(회귀).
+2. wishlist toggle {track_id} → ad_wish_events add/remove 기록 + PG 토글 정상(회귀).
+3. GET /ads/{item_id}/stars: 광고주 본인 아이템 200 (worn_count 소급 반영), 타인 아이템 404, 비광고주 403.
+4. dashboard 응답에 wish_count/worn_count/total_wishes/total_worn 추가 + 기존 필드 그대로(회귀).
+5. FE vite transform + BusinessPage/CharCoverCard 로그 실동작.
+6. 회귀: 기존 대시보드 렌더, 위시 v113 플로우, related v114 무영향.
+7. 9004 미러 스모크.
+
+## v116 — [1/2] 회원정보 확장: 출생연도·성별·지역 수집 (선택입력) — 2026-07-21
+
+### 요청 작업
+- 광고 대시보드 인구통계 분석의 기반으로, 기본가입·소셜가입 모두에서 출생연도/성별/지역을 **선택 입력**으로 수집. 기존 회원은 프로필에서 추후 입력. (승인된 로드맵 ①단계. ②단계=대시보드 강화 묶음은 본 건 통과 후 별도 버전으로.)
+
+### Plan verification findings (0단계 — 2026-07-21 실측)
+- users 테이블(infra/init_postgres.sql:15-27): birth_year/gender/region **없음**. 마이그레이션 관행 = main.py startup idempotent ALTER/CREATE 블록.
+- 기본가입: POST /api/auth/register (auth.py:44) ← UserCreate(models/user.py:6, email/password/nickname/company_name/display_title). INSERT 컬럼 명시적 나열.
+- 소셜가입: oauth.py:217-225 INSERT (정보입력 단계 없음) → FE는 /oauth/callback → OAuthCallbackPage.jsx 착지.
+- 프로필 수정 API **이미 존재**: PATCH /api/auth/me/profile (auth.py:142) ← ProfileUpdate(models/user.py:35, company_name/display_title/bio). GET /api/auth/me (auth.py:119).
+- FE: RegisterPage.jsx(기본가입 폼), LoginPage.jsx(소셜 버튼), OAuthCallbackPage.jsx. **일반 프로필 수정 UI 는 현재 없음** (business 프로필만 존재). api/index.js 에 updateMyProfile 계열 함수 없음.
+- 인구통계 소급성: ad_clicks.user_id / ad_wish_events.actor_user_id / ad_wishlist.user_id 가 이미 저장되므로, **이용자가 나중에 프로필을 채워도 과거 이벤트까지 인구통계 조인 가능** (수집이 늦어도 이벤트 손실 없음 — 조인 시점 결합 설계).
+
+### 설계
+**백엔드 (9005 → 9004 미러)**
+1. 마이그레이션: `ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_year INT / gender VARCHAR(16) / region VARCHAR(40)` (전부 NULL 허용) — main.py 블록, `[migration] users.demographics ensured`.
+2. UserCreate 에 옵션 필드 3종 추가 + register INSERT 반영. 검증: birth_year 1900~현재연도, gender ∈ {male,female,other}, region ∈ 17개 시·도 화이트리스트(별도 상수). 무효값은 400.
+3. ProfileUpdate 에 동일 3종 추가 + PATCH /me/profile 반영(부분 업데이트, null 로 지우기 허용). GET /me 응답에 3종 포함.
+**프론트엔드**
+4. RegisterPage: 선택입력 섹션(출생연도 select 또는 number, 성별 라디오+선택안함, 지역 select) — "선택사항, 미입력 가입 가능" 명시.
+5. ProfileExtraForm 공용 컴포넌트 신규: OAuthCallbackPage 가 로그인 처리 후 /auth/me 확인 → 3종 모두 null 이고 **이번 세션에서 아직 안 물어봤으면** 추가정보 입력 화면(건너뛰기 버튼 필수) 표시 → PATCH. 기존 회원용 진입점: Header 사용자 메뉴에 "내 정보 설정" 추가(동일 폼 재사용).
+6. api/index.js: `updateMyProfile(data)` (PATCH /auth/me/profile) 추가.
+**주의(회귀 지점)**: register INSERT 컬럼 나열 수정 시 기존 필드 순서, PATCH /me/profile 의 기존 company_name/bio 수정 동작, OAuthCallbackPage 의 기존 로그인 성공/실패 리다이렉트 흐름.
+
+### 변경 매트릭스
+| 파일 | 담당 | 추적자/로그 |
+|---|---|---|
+| backend_9005 main.py(마이그레이션)·models/user.py·routes/auth.py | backend-dev | `[auth]`/`[profile]` + user 앞8자 (생년·성별 값 자체는 로그 금지 — 존재여부만) |
+| frontend RegisterPage.jsx(+css)·OAuthCallbackPage.jsx·Header(진입점)·components/ProfileExtraForm.jsx(신규) | frontend-dev | `[RegisterPage]`/`[OAuthCallback]`/`[ProfileExtra]` |
+| api/index.js | frontend-dev | — |
+| backend_9004 미러 | backend-dev | 동일 |
+
+### 테스트 항목 (tester)
+1. 마이그레이션 적용(컬럼 3종 존재), 기존 행 NULL 무해.
+2. register: 3종 포함 가입 → users 행 값 저장 / 미포함 가입 → 정상(기존 회귀) / 무효값(gender=xx, birth_year=1800, region=서울특별시아님) → 400.
+3. PATCH /me/profile: 3종 수정·부분수정·null 지우기, 기존 bio/company_name 수정 회귀. GET /me 에 3종 노출.
+4. 소셜가입 흐름은 코드 레벨 확인(OAuth 실키 없음): OAuthCallbackPage transform + ProfileExtraForm 조건 로직 grep.
+5. 개인정보 로그 금지 검증: server.log 에 birth_year/gender/region **값**이 안 찍히는지 grep.
+6. 회귀: 로그인/로그아웃/me, 대시보드(v116)·위시(v113) 정상.
+7. 9004 미러 스모크.
+
+## v117 — [2/2] 대시보드 강화 묶음: 팔로우 연결·반응률·장르/느낌·시간대·전환율·인구통계 — 2026-07-21
+
+### 요청 작업 (승인된 ②단계)
+- 팔로우 기능 프론트 연결(+팔로워 수), 스타별 재생수 대비 반응률, [장르별|느낌별] 분석 탭, 요일·시간대 차트, 위시→클릭 전환율, (v116 수집분) 인구통계 분포를 광고주 대시보드에 추가.
+
+### Plan verification findings (0단계 — 2026-07-21 실측)
+- follows.py: POST/DELETE /{user_id}, GET followers/following(본인 것만, 인증 필수) — **임의 유저의 팔로워 수/팔로우 여부 조회 엔드포인트 없음** → 신규 필요.
+- 스타 공간 = ArtistDetailPage `/artist/{uploader_id}`, artist_id 가 곧 users.id (artists.py:106 get_artist 가 user+track 집계 반환). TrackCard:46 이 본인이면 /my-music 으로 보냄.
+- BusinessPage 차트: 외부 라이브러리 없이 chart_data 를 인라인 렌더(594행) — 신규 차트도 동일 방식.
+- 이벤트 소스: ad_wish_events(item_id,track_id,star_user_id,actor_user_id,action,timestamp), ad_clicks(+track_id,star_user_id,user_id,timestamp) — track_id 로 tracks.genre/mood 조인, actor/user_id 로 users 인구통계 조인 가능. 시간대 집계는 **KST 변환 필수**(저장은 UTC).
+- 스타 재생수: tracks.play_count 를 uploader 별 합산(artists.py 집계 패턴 재사용 가능).
+- v115 stars 엔드포인트/BusinessPage 펼침 패널이 이미 있어 확장 지점 명확.
+
+### 설계
+**백엔드 (9005 선구현 → 테스트 후 9004 미러)**
+1. follows.py 신규 `GET /api/follows/summary/{user_id}` (무인증 접근 가능): `{follower_count, is_following}` — is_following 은 토큰 있으면 판정, 없으면 false (auth.py 에 optional 인증 헬퍼 있는지 확인 후 재사용/신설).
+2. business.py stars 응답 행 확장: `follower_count`(PG follows), `total_plays`(그 스타 공개 트랙 play_count 합), `engagement_rate`(=(wish+click)/plays, plays=0 이면 null) 추가. 기존 필드 유지.
+3. business.py 신규 `GET /api/business/ads/{item_id}/insights?period=` (require_business, 비소유 404): `{wish_to_click:{wishes,clicks,rate}, by_genre:[{key,wishes,clicks}], by_mood:[...], by_hour:[24개 {hour,count}], by_weekday:[7개], demographics:{age_bands,genders,regions}}` — 이벤트(위시 add+클릭, 기간 내) 기반, track_id→genre/mood 조인, actor→users 인구통계 조인(미입력은 "미입력" 버킷), 시간대·요일 KST.
+**프론트엔드**
+4. api/index.js: followUser/unfollowUser/getFollowSummary/getAdItemInsights.
+5. ArtistDetailPage: 팔로워 수 표시 + 팔로우/팔로잉 토글 버튼(본인 페이지면 미표시, 비로그인 클릭 시 로그인 안내).
+6. BusinessPage: 스타별 성과 테이블에 팔로워/재생수/반응률 컬럼 추가. 아이템 펼침 패널에 "인사이트" 영역 신설 — 위시→클릭 전환율 카드, [장르별|느낌별] 토글 바차트, 요일·시간대 차트, 인구통계(연령대 10년 단위/성별/지역) 분포. 기존 인라인 차트 방식 준수.
+
+### 변경 매트릭스
+| 파일 | 담당 | 추적자/로그 |
+|---|---|---|
+| backend_9005 routes/follows.py (summary) | backend-dev | `[follows]` + user 앞8자 |
+| backend_9005 routes/business.py (stars 확장 + insights) | backend-dev | `[adstars]`/`[adinsights]` + item_id |
+| frontend api/index.js, ArtistDetailPage.jsx(+css), BusinessPage.jsx(+css) | frontend-dev | `[ArtistDetail]`/`[BusinessPage]` |
+| backend_9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. follows summary: 무인증 200(count, is_following false), 로그인 후 팔로우→summary is_following true+count 증가→언팔로우 원복. 자기 자신 팔로우 시도(기존 API 동작 확인).
+2. stars 확장: follower_count/total_plays/engagement_rate 값 교차검증(PG follows count, tracks play_count 합), 기존 필드 회귀.
+3. insights: 본인 아이템 200 — 기간 내 이벤트로 by_genre/by_mood/by_hour(KST 검증: UTC doc 와 9시간 차)/demographics(미입력 버킷) 교차검증. 비소유 404, 무인증 401, 잘못된 period 400 또는 기본값 처리 일관성.
+4. wish_to_click rate 계산 검증 (wishes=0 케이스 null/0 처리).
+5. FE transform + ArtistDetailPage/BusinessPage 신규 코드 grep.
+6. 회귀: v115 stars·dashboard, v113 위시, 팔로우 기존 4엔드포인트, artists 상세.
+7. 개인정보: insights 응답이 집계값만 노출(개별 user_id 미노출) 확인, 로그에 인구통계 값 미출력.
+
+## v118 — E2E 피드백 수정: (1) 비로그인 곡 자세히보기 허용 (2) 출생연도→생년월일 — 2026-07-22
+
+### 요청 작업
+- E2E 결과 반영 오더: 1) 비로그인 시 재생 페이지(자세히보기) 진입이 로그인으로 튕기는 문제 수정 2) birth_year 단독 수집을 생년월일(YYYY-MM-DD) 수집으로 변경. 3) 플리/앨범 전체 큐잉은 현행 유지(무수정).
+
+### Plan verification findings (0단계 — 2026-07-22 실측)
+- **(1) 원인 확정**: PlayerPage(/player 라우트 — 가드 없음)가 마운트 시 api.getTrackDetail(공개) 후 track.generation_id 있으면 **api.getGeneration 호출 → generate.py get_generation 이 get_current_user 필수 → 비로그인 401** → api/index.js 응답 인터셉터가 401 을 "토큰 무효"로 간주하고 **무조건 window.location.assign('/login')** (PlayerPage.jsx:66-70, api/index.js 인터셉터). PlayerPage 의 try/catch 는 state 만 처리 — 리다이렉트는 인터셉터에서 이미 발생.
+- 인터셉터는 "토큰 만료" 복구용으로는 유효 — 문제는 **토큰이 아예 없는(비로그인) 401 까지 리다이렉트**하는 것.
+- CharacterCoverCard 는 v113 에서 useAuth 게이트 처리돼 비로그인 시 위시 API 미호출(문제없음).
+- **(2) birth_year 사용처 전수**: BE main.py(마이그레이션)·models/user.py(UserCreate/ProfileUpdate/UserResponse)·auth.py(register/me/profile)·business.py(insights 연령대). FE api/index.js·Header·ProfileExtraForm·AuthContext·OAuthCallbackPage·RegisterPage. 실데이터는 테스트 계정뿐 → 이관 부담 없음.
+
+### 설계
+**(1) 비로그인 자세히보기 (frontend 중심)**
+- api/index.js 인터셉터: 리다이렉트 조건에 **"요청 시점에 저장된 토큰이 있었을 때만"** 추가 — 비로그인(토큰 없음) 401 은 조용히 reject 만 (컴포넌트 catch 가 처리). 토큰 만료 리다이렉트는 기존 유지.
+- PlayerPage: 비로그인(useAuth user 없음)이면 getGeneration 호출 자체를 skip (불필요 401 노이즈 제거, genDetail null 처리 기존 로직 재사용).
+- 백엔드 무수정 (get_generation 은 생성 파라미터라 인증 유지가 맞음).
+**(2) 생년월일 (BE+FE)**
+- 마이그레이션: `ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date DATE` + 기존 birth_year 값 있으면 `UPDATE users SET birth_date = make_date(birth_year,1,1) WHERE birth_date IS NULL AND birth_year IS NOT NULL` (1회성 backfill, idempotent). birth_year 컬럼은 유지하되 코드에서 미사용 처리(후속 정리 가능).
+- models/auth: birth_year → birth_date(str "YYYY-MM-DD", 검증 1900-01-01~오늘, date 파싱 실패 400). register/PATCH profile/GET me 전부 교체.
+- business.py insights 연령대: birth_date 기준 (연 나이 = 올해-출생연도+1 동일 산식, birth_date 에서 연도 추출) — birth_year 폴백 불필요(backfill 로 통합됨).
+- FE ProfileExtraForm: 연도 select → **생년월일 입력(연/월/일 select 3개 또는 date input — 모바일 호환 고려해 select 3개 권장)**, 선택안함 유지. RegisterPage/Header/OAuthCallback/AuthContext 페이로드 키 birth_date 로 교체.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| frontend api/index.js(인터셉터)·PlayerPage.jsx | frontend-dev | `[API]`/`[PlayerPage]` |
+| frontend ProfileExtraForm·RegisterPage·Header·OAuthCallbackPage·AuthContext | frontend-dev | 기존 prefix (값 미출력) |
+| backend_9005 main.py·models/user.py·routes/auth.py·routes/business.py | backend-dev | 기존 prefix (값 미출력) |
+| backend_9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. (1) 비로그인: getGeneration 401 이 리다이렉트 유발 안 함(인터셉터 로직 검증 — 토큰 없는 401 조용히 실패), 토큰 만료 시나리오(무효 토큰 저장 후 인증 API 호출)는 여전히 /login 리다이렉트 코드 경로 유지. PlayerPage transform 에 user 게이트 존재.
+2. (1) 공개 API 만으로 track detail(cover_character 포함) 조회 가능 확인 (비로그인 curl).
+3. (2) birth_date 마이그레이션(컬럼+backfill: 기존 birth_year 값 계정이 birth_date 1월1일로 채워짐), register/PATCH/me 왕복, 검증(1899-12-31→400, 미래날짜→400, 2000-02-30 같은 무효 날짜→400, 경계 1900-01-01/오늘→200), null 지우기.
+4. (2) insights 연령대가 birth_date 기준으로 정상 버킷(마스킹 v119 유지 확인).
+5. 회귀: 로그인 리다이렉트(만료 케이스), 기존 프로필 bio 수정, v113/115/118 대시보드 정상.
+6. 개인정보: birth_date 값 로그 미출력 grep.
+
+## v119 — 인증 트랙 분리(네이버/카카오=인증) + 익명 행적 추적 + 대시보드 인증 토글 + '노출'→'착장 선택' — 2026-07-22
+
+### 요청 작업 (아스키 시안 승인 완료)
+1. 네이버/카카오 연동 가입 = ✅인증 회원 (이름·생년월일·성별 자동 수신·잠금). 구글/기본 가입 = ❌미인증 (자기입력, 추후 [본인인증 하기]로 승격 — 실연동 전이라 준비중 처리).
+2. 비로그인 행적(곡 페이지 제품 클릭) 익명 추적. 위시는 제외(로그인 기능). 재생은 기존 익명 지원 확인됨.
+3. 광고주 대시보드 [✅인증 회원만 | 전체] 토글 — 전 지표 재계산.
+4. 대시보드 표기 "노출" → "착장 선택" (명칭만, 수집 방식 불변).
+
+### Plan verification findings (0단계 — 2026-07-22 실측)
+- OAuth: routes/oauth.py 는 provider 범용, services/oauth_service.py 에 google/kakao/naver 3사 정의 완비. `_extract`(195-232행)가 현재 email/nickname/profile_image 만 추출 — **naver 는 response.birthday(MM-DD)/birthyear/gender(M/F)/name/mobile, kakao 는 kakao_account.birthday/birthyear/gender 필드가 스코프 승인 시 내려옴** → 추출 확장 지점. `_resolve_account`(oauth.py:183)가 신규/기존 판정 후 INSERT.
+- users: birth_date/gender/region 있음(v118). 인증 상태 컬럼 없음 → is_verified/verified_at/verify_provider 신설 필요.
+- PATCH /me/profile: 현재 인증 여부 무관하게 수정 허용 → 잠금 분기 필요.
+- 클릭 기록: business.py record_click 이 get_current_user 필수 → 익명 허용 전환 필요. record_impression 은 로그인 후 플로우(캐릭터 생성)에서만 발생하므로 익명 전환 불필요.
+- 재생: charts.py record-play(141)가 이미 optional user — 익명 재생 추적 기존 지원. 변경 불필요.
+- 6h 중복가드: ad_clicks 에서 user_id 기준 → 익명은 anon_id 기준으로 동일 가드.
+- 대시보드 소비 지표: business_dashboard / stars / insights 3개 — verified 필터 파라미터 추가 지점. 이벤트 actor(user_id/actor_user_id)를 users.is_verified 로 조인 필터. 착장(worn)은 스타 측 지표라 토글 미적용(행적 아님).
+- FE: CharacterCoverCard handleItemClick 은 로그인 여부 무관 호출 중(비로그인은 현재 401 무시됨) → anon_id 만 붙이면 됨. BusinessPage "노출" 표기 다수.
+
+### 설계
+**백엔드 (9005 선구현 → 테스트 후 9004 미러)**
+1. 마이그레이션: users ADD is_verified BOOLEAN DEFAULT FALSE / verified_at TIMESTAMPTZ / verify_provider VARCHAR(20). `[migration] users.verification ensured`.
+2. oauth_service._extract 확장: naver/kakao 의 name/birthyear+birthday→birth_date/gender(M/F→male/female) 정규화 추출(없으면 None — 스코프 미승인 대비). oauth.py _resolve_account: provider ∈ {naver,kakao} 면 신규가입 시 is_verified=true, verified_at=now, verify_provider=provider + 받은 birth_date/gender/이름 저장. **기존 계정 재로그인 시에도 미인증→인증 승격 + 빈 필드 보충(이미 인증값 있으면 덮어쓰지 않음)**. google 은 미인증 유지.
+3. PATCH /me/profile: is_verified 계정이 birth_date/gender 수정 시도 → 400 "본인인증으로 확인된 정보는 수정할 수 없습니다." (region/bio 등은 허용). GET /me 에 is_verified/verify_provider 포함.
+4. 익명 클릭: record_click 을 optional 인증으로 전환 + body 에 anon_id(옵션, 프론트 생성 UUID). 로그인=기존 user_id 저장, 비로그인=anon_id 저장(user_id 없음). 중복가드: user_id 또는 anon_id 기준 6h. anon_id 형식 검증(UUID, 아니면 400 대신 기록 skip+warning). track_id 귀속 태깅 동일 적용.
+5. verified 토글: dashboard/stars/insights 에 `verified_only: bool = Query(False)` 추가. true 면 위시/클릭/착장선택(impressions) 집계를 is_verified actor 로 필터(비로그인·미인증 제외), demographics 도 동일. false(전체)=현행+익명 포함. 응답에 `verified_only` echo.
+**프론트엔드**
+6. anon util: src/utils/anonId.js — localStorage 'aimu:anonId' UUID 생성/재사용. recordAdClick(itemId, trackId, {anonId}) — 비로그인일 때만 anon_id 전송. CharacterCoverCard 적용.
+7. 인증 상태 UI: Header "내 정보 설정" 모달 — is_verified 면 생년월일/성별 select 비활성+🔒"본인인증 완료(네이버/카카오)" 뱃지, region 만 수정 가능. 미인증이면 기존 폼 + [본인인증 하기] 버튼(클릭 시 "본인인증 서비스 준비 중입니다" 안내 — 실연동 시 교체).
+8. 대시보드: 기간 선택 옆 [✅ 인증 회원만 | 전체] 토글 — dashboard/stars/insights 호출에 verified_only 전달, 변경 시 전체 리프레시(펼침 캐시 초기화 기존 패턴). "노출" 표기 전부 "착장 선택"으로 (CTR 라벨은 "클릭율(클릭/착장 선택)" 등 명확화).
+9. api/index.js: 시그니처 확장(recordAdClick anonId, getBusinessDashboard/getAdItemStars/getAdItemInsights 에 verifiedOnly).
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE main.py·services/oauth_service.py·routes/oauth.py·routes/auth.py·routes/business.py | backend-dev | `[oauth]`/`[auth]`/`[adclick]`/`[adstars]`/`[adinsights]` — 인증여부·anon 여부는 bool 로만, 값 로그 금지 |
+| FE utils/anonId.js(신규)·api/index.js·CharacterCoverCard·Header·BusinessPage | frontend-dev | `[CharCoverCard]`/`[Header]`/`[BusinessPage]` |
+| backend_9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. 마이그레이션 3컬럼. 신규 이메일 가입 → is_verified=false.
+2. oauth 정규화 단위 검증: _extract 에 naver/kakao 모의 payload 넣어 birth_date/gender 정규화 확인(실키 없으니 서비스 함수 직접 호출 테스트). _resolve_account 인증 승격 로직은 코드 리뷰+가능하면 함수 수준 검증.
+3. 인증 계정 잠금: is_verified=true 로 만든 계정(psql)이 PATCH birth_date/gender → 400, region/bio → 200. GET /me 에 is_verified 노출.
+4. 익명 클릭: 무토큰 + anon_id 로 click → 200 + doc 에 anon_id 저장·user_id 없음, 같은 anon_id 재클릭 6h 가드, anon_id 없는 무토큰 → 기록 skip 동작 확인. track_id 태깅 동작. 로그인 클릭 회귀.
+5. verified_only 토글: 인증/미인증/익명 이벤트 섞어 만들고 true/false 별 수치 교차검증 (dashboard·stars·insights 3종), demographics 도 필터 반영.
+6. FE: transform + "착장 선택" 표기 grep("노출" 잔존 0 — 단 진짜 노출 의미로 쓰인 다른 페이지 문구는 제외), anonId util, 토글 UI 코드.
+7. 회귀: 기존 로그인 클릭/위시/재생, v113~v118 스모크, oauth google 흐름 코드 불변.
+8. 값 로그 금지 grep (birth_date/gender/anon_id 값).
+
+## v120 — 프로필 사진 업로드(원형 아바타, 자동 중앙 크롭) — 2026-07-22
+
+### 요청 작업 (아스키 시안 승인)
+- 내 정보 설정 모달에서 프로필 사진 업로드/기본화. 원형 아바타 노출: ①헤더 우상단 ②스타 공간(/artist) ③닉네임 노출부(TrackCard·PlayerPage·팔로워 목록 등 가능 범위). 사진 없으면 닉네임 첫 글자 이니셜 아바타. 자동 중앙 정사각 크롭 512×512 (크롭 UI 없음 — 사용자 확정).
+
+### Plan verification findings (0단계 — 2026-07-22 실측)
+- users.profile_image 컬럼·세션 반영 이미 존재(auth.py _save_session, /me). 업로드 API 없음.
+- Pillow 12.2.0 설치돼 있음(9005 venv) → 서버측 리사이즈/크롭 가능.
+- MinIO 패턴: business.py _upload_ad_image(131) + ad_image_proxy(`/items/image/{object:path}`, 349) — 동일 방식 재사용. 버킷 aimu-images.
+- OAuth 가입자는 profile_image 에 외부 URL(http…) 저장됨 → 표시 로직은 "http 시작=그대로, 아니면 프록시 URL" 분기 필요.
+- 아바타 노출 후보 실측: Header(현재 텍스트 메뉴), ArtistDetailPage `artist-detail__avatar`(154, getArtist 의 image=users.profile_image), TrackCard 닉네임(48), followers/following API 는 profile_image 포함하나 FE 목록 UI 미구현 → ③은 TrackCard·PlayerPage 범위로 한정(팔로워 목록 UI 는 미래 작업).
+- 트랙 doc 에는 uploader 프로필 이미지가 비정규화돼 있지 않음 → TrackCard 미니 아바타는 트랙 응답에 uploader_profile_image 추가 필요(직렬화 시 PG join) — 규모 작아 부담 없음. (PlayerPage 는 trackDetail 재사용)
+
+### 설계
+**백엔드 (9005 → 테스트 후 9004 미러)**
+1. `POST /api/auth/me/profile-image` (multipart, 인증): jpg/png/webp, ≤5MB 검증 → Pillow 로 EXIF 회전 보정+중앙 정사각 크롭+512×512 리사이즈+JPEG(q88) 변환 → MinIO `profiles/{user_id}/{uuid}.jpg` 업로드 → users.profile_image 갱신(이전 MinIO 객체는 best-effort 삭제, 외부 URL 이면 무시) → 세션 갱신 → `{profile_image}` 반환.
+2. `DELETE /api/auth/me/profile-image`: users.profile_image NULL + MinIO 삭제(best-effort) → 이니셜 아바타 복귀.
+3. `GET /api/auth/profile-image/{object_name:path}` (무인증, ad_image_proxy 패턴): profiles/ prefix 만 허용(경로 검증).
+4. tracks 직렬화(_serialize_tracks/상세)에 `uploader_profile_image` 추가(PG users join — list 는 uploader_id 묶음 1쿼리).
+**프론트엔드**
+5. `components/Avatar.jsx` 공용 신규: props {src, name, size} — src 있으면 원형 이미지(http=직접, 아니면 api.profileImageUrl), 없으면 이니셜 원형(닉네임 첫 글자, 배경색은 이름 해시 고정 팔레트). css 포함.
+6. api/index.js: uploadProfileImage(file: FormData), deleteProfileImage(), profileImageUrl(objectName).
+7. Header "내 정보 설정" 모달 상단: Avatar 미리보기 + [📷 사진 변경](파일선택→업로드→즉시 반영) + [기본으로](삭제). 업로드 성공 시 AuthContext user 갱신. 헤더 우상단 사용자 메뉴 트리거를 Avatar(소형)로 교체.
+8. ArtistDetailPage avatar → Avatar 컴포넌트로 교체(getArtist.image). TrackCard 닉네임 옆 미니 Avatar(uploader_profile_image), PlayerPage 업로더 표기부 동일.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE routes/auth.py(업로드/삭제/프록시)·routes/tracks.py(직렬화) | backend-dev | `[profile-img]` + user 앞8자 (파일명·바이트 수만, 이미지 내용 로그 없음) |
+| FE components/Avatar.jsx(+css) 신규·api/index.js·Header·ArtistDetailPage·TrackCard·PlayerPage | frontend-dev | `[Avatar]`/`[Header]` 기존 prefix |
+| backend_9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. 업로드: 정상 jpg/png/webp → 200 + MinIO profiles/ 객체 생성 + users.profile_image 갱신 + 재업로드 시 이전 객체 삭제. 6MB/gif/텍스트파일 → 400. 무인증 401.
+2. 크롭 검증: 비정사각(예: 1000×400) 업로드 → 저장본 512×512 JPEG 확인(다운로드해 Pillow 로 사이즈 검사).
+3. 프록시: GET /api/auth/profile-image/{obj} 200+image/jpeg, `profiles/` 외 경로(ads/... 등) → 404/거부. DELETE 후 profile_image NULL.
+4. tracks 응답에 uploader_profile_image 존재(목록+상세), 값 정확(psql 교차).
+5. FE transform: Avatar/api/Header/ArtistDetailPage/TrackCard/PlayerPage 200 + grep. 이니셜 폴백 로직 존재.
+6. 회귀: /me·프로필 PATCH(인증 잠금 포함)·OAuth 외부 URL 계정 표시 분기(코드 확인)·광고 이미지 프록시·v119 토글.
+7. 로그: `[profile-img]` 실동작, 파일 내용/URL 값 미출력.
+
+## v121 — 광고 이미지 프록시 하드닝 (ads/ prefix 제한) — 2026-07-23
+
+### 요청/배경
+- v120 tester 관찰 후속: /api/business/items/image/{object:path} 가 prefix 제한 없이 aimu-images 버킷 임의 객체 서빙 가능 → 사용자 오더로 수정.
+### Findings
+- 프론트 adImageUrl 사용처 전수(9곳) 확인 — 전부 ad_items.image_object_name(= ads/{uid}/{uuid}) 만 사용. 제한해도 무영향.
+### 조치
+- business.py ad_image_proxy: `ads/` 미시작 또는 `..` 포함 시 404 + `[ad-img]` warning(경로 길이만 로그). 9005 적용·검증 후 9004 미러.
+
+## v122 — SNS 채널 URL 등록(최대 5개) + 곡 자세히보기 노출(플랫폼 자동감지, 라이브 참조) — 2026-07-23
+
+### 요청 작업 (아스키 시안 승인)
+- 내 정보 설정에 SNS URL 등록칸([+ 추가], 최대 5개, 행별 삭제). 곡 자세히보기의 캐릭터 착장 섹션 아래 "스타의 SNS 채널" 표시(유튜브/인스타/X/틱톡 등 자동 아이콘·라벨, 미지원은 🔗). URL 변경 시 과거 곡에도 최신 반영(라이브 참조 — 스냅샷 금지).
+
+### Plan verification findings (0단계)
+- 저장: users 에 JSONB `sns_links`(문자열 배열) 신설이 최단 — 계정 귀속·라이브 참조 요건에 부합. PATCH /me/profile(auth.py:142, v118 부분업데이트·v119 인증잠금 분기 존재 — sns 는 잠금 대상 아님)에 필드 추가.
+- 곡 상세: tracks.py `_attach_uploader_profiles`(v120, PG join·캐시 밖 fresh 첨부 패턴 검증됨) — 동일 방식으로 상세에 `uploader_sns_links` 첨부(목록은 불필요 — 자세히보기 전용).
+- FE: PlayerPage.jsx:373 CharacterCoverCard 아래가 삽입 지점. Header 모달(ProfileExtraForm 영역)에 SNS 섹션 추가. 원격 로깅 인프라 존재.
+
+### 설계
+**BE (9005 → 테스트 후 9004 미러)**: ①마이그레이션 `ALTER TABLE users ADD COLUMN IF NOT EXISTS sns_links JSONB DEFAULT '[]'::jsonb` ②ProfileUpdate.sns_links: Optional[list[str]] — 검증: 최대 5개, 각각 http/https 시작·전체 URL 형식·길이≤300, 중복 제거, 위반 400. javascript: 등 스킴 차단(http/https 만). ③GET /me 에 포함 ④곡 상세에 uploader_sns_links(라이브 PG join, 캐시 밖).
+**FE**: ①utils/snsPlatform.js — URL 호스트로 youtube/instagram/x(twitter)/tiktok/facebook/soundcloud/spotify 감지 → {label, icon}, 미지원 🔗+호스트명 ②Header 모달 "SNS 채널" 섹션: 행 목록+[삭제]+[+ URL 추가](5개 도달 시 비활성), 클라 검증(http 시작), 저장 시 sns_links 로 전송 ③PlayerPage: CharacterCoverCard 아래 "스타의 SNS 채널" 섹션 — uploader_sns_links 렌더, 새창(noopener), 빈 배열이면 섹션 미표시.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE main.py·models/user.py·routes/auth.py·routes/tracks.py | backend-dev | `[profile]`/`[TrackDetail]` — URL 값 로그 금지(개수만) |
+| FE utils/snsPlatform.js(신규)·Header.jsx·PlayerPage.jsx(+css)·api 필요시 | frontend-dev | `[Header]`/`[PlayerPage]` |
+| 9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. PATCH sns_links: 정상 3개 저장→me 반영, 6개 400, 비URL("abc")/javascript: 400, 300자 초과 400, 중복 입력 시 dedupe, 빈 배열로 전량 삭제, 인증 유저(is_verified)도 sns 수정 가능(잠금 무관).
+2. 라이브 참조: 곡 상세 uploader_sns_links = 업로더 현재값. psql 로 업로더 sns_links 변경 → 캐시 워밍 후에도 상세 재조회 시 즉시 최신값(캐시 밖 첨부 검증) → 원복.
+3. FE transform + snsPlatform 감지 로직 grep(주요 7플랫폼+폴백), Header 5개 제한/추가/삭제 UI, PlayerPage 섹션·빈 배열 미표시.
+4. 회귀: PATCH 기존 필드(bio·region·인증잠금 400), me, 곡 상세 기존 필드(cover_character·uploader_profile_image), v113~121 스모크.
+5. 로그: URL 값 미출력(개수만) grep.
+
+## v123 — [A] 내/외국인 구분 + [B] 만14세 게이트·법정대리인 동의 골격(테스트모드) — 2026-07-23
+
+### 요청 작업 (승인 완료)
+- A: 가입 첫 단계에서 내국인/외국인 선택(절차는 동일, 기록만). 회원정보·/me·대시보드 인구통계에 반영. 소셜 가입자는 온보딩에서 선택.
+- B: 가입 시 생년월일 게이트 → 만14세 미만이면 보호자 동의 플로우 **전체 골격**(보호자 정보 입력→동의 링크→동의 페이지→계정 활성화→동의 기록). SMS 발송·보호자 본인인증은 **어댑터로 분리, 현재 모의(mock)** — 기능 플래그 기본 OFF(실서비스는 "준비 중" 안내), 테스트 모드에서만 전체 플로우 동작. 아동 행적 광고 분석 제외 포함.
+
+### Plan verification findings (0단계)
+- users: nationality/account_status 없음. register(auth.py:44)는 즉시 활성 계정 생성+토큰 발급 — pending 상태 개념 없음 → account_status 도입 및 로그인 차단 분기 필요.
+- config.py Settings 에 기능 플래그 관행 존재(env 주입) → `guardian_consent_enabled: bool = False` 추가 지점.
+- 소셜 온보딩(ProfileExtraForm/OAuthCallbackPage)·Header 모달 v118~ 존재 — nationality 선택 추가 지점. insights demographics(v119 마스킹) — nationalities 축 추가 지점.
+- 동의 기록은 법정 증빙 → PG 신규 테이블(보호자 연락처 포함 — 로그 금지 대상).
+
+### 설계
+**BE (9005 → 테스트 후 9004 미러)**
+1. 마이그레이션: users ADD `nationality VARCHAR(16)`(domestic/foreign, NULL 허용), `account_status VARCHAR(20) DEFAULT 'active'`(active/pending_consent). 신규 테이블 `guardian_consents(id UUID PK default gen_random_uuid(), child_user_id UUID NOT NULL, guardian_name VARCHAR(60), guardian_phone VARCHAR(20), consent_token TEXT UNIQUE NOT NULL, status VARCHAR(16) DEFAULT 'pending'(pending/agreed/rejected/expired), method VARCHAR(20) DEFAULT 'mock', requested_at TIMESTAMPTZ DEFAULT now(), decided_at TIMESTAMPTZ)`.
+2. config: `guardian_consent_enabled: bool = False`. `GET /api/auth/signup-config` (무인증) → {guardian_consent_enabled}.
+3. register: `nationality` 옵션 수용(domestic/foreign 외 400). birth_date 로 만14세 미만 판정 시 — 플래그 OFF: 400 `{"error":"guardian_consent_required","message":"만 14세 미만 가입은 보호자 동의 절차 준비 중입니다."}` / ON: 계정 pending_consent 생성(토큰 미발급) + 이후 보호자 플로우.
+4. 보호자 플로우(신규 routes 또는 auth.py 내): `POST /api/auth/guardian-consent/request` {가입정보(이메일/비번/닉네임/birth_date/nationality...), guardian_name, guardian_phone} → pending 계정+consent 레코드 생성 → **notify 어댑터**(services/guardian_notify.py — mock: SMS 대신 consent_url 반환+로그) → {consent_url(테스트모드), status}. `GET /api/auth/guardian-consent/{token}` → 동의 고지 데이터(아동 닉네임 마스킹, 수집 항목 안내). `POST /api/auth/guardian-consent/{token}/decide` {agree: bool} → **verify 어댑터**(services/guardian_verify.py — mock 통과) → agreed: 계정 active 전환+decided_at / rejected: 계정 비활성 유지(또는 삭제 예약). 토큰 만료 72h. 로그인 시 pending_consent → 403 "보호자 동의 대기 중입니다."
+5. /me·register 응답에 nationality/account_status. PATCH profile 에 nationality 수정 허용(자기신고, 잠금 무관).
+6. insights demographics 에 `nationalities: [{key: domestic|foreign|"미입력", count}]` (기존 마스킹 적용). **아동 제외**: birth_date 기준 만14세 미만 actor 는 insights 의 위시/클릭 집계·demographics 에서 제외(카운트 로그만).
+**FE**
+7. RegisterPage STEP 0 게이트: 생년월일(필수) + 내국인/외국인 선택 → 14세 이상: 기존 폼(생년월일 선택입력란은 게이트 값으로 대체) / 미만: signup-config 조회 — OFF: 준비 중 안내 카드, ON: 보호자 정보 입력 → request → 테스트모드 consent_url 표시.
+8. 보호자 동의 페이지 라우트 `/guardian-consent/:token`: 고지 + (모의)인증 + [동의]/[거부] → 결과 안내.
+9. ProfileExtraForm/Header 모달·소셜 온보딩에 내국인/외국인 select 추가. BusinessPage insights 에 내/외국인 분포 추가.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE main.py·config.py·routes/auth.py(+guardian)·services/guardian_notify.py·guardian_verify.py(신규)·routes/business.py·models/user.py | backend-dev | `[guardian]`(token 앞8자, 전화번호·이름 값 로그 금지)·기존 prefix |
+| FE RegisterPage(+css)·GuardianConsentPage(신규)·App.jsx(라우트)·ProfileExtraForm·Header·OAuthCallbackPage·BusinessPage·api/index.js | frontend-dev | `[RegisterPage]`/`[GuardianConsent]` 등 |
+| 9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. A: register nationality 저장(무효값 400)/me 반영/PATCH 수정, 소셜 온보딩·모달 select transform, insights nationalities 분포+마스킹.
+2. B-OFF(기본): 14세 미만 birth_date register → 400 guardian_consent_required, FE 준비중 카드 transform. 14세 이상 정상 가입 회귀.
+3. B-ON(테스트모드, env 켜고 재시작): 미만 가입 → pending 계정+consent 레코드 → consent_url GET 고지 데이터 → decide agree → 계정 active+로그인 가능 / 별도 케이스 reject → 로그인 403 유지. 토큰 재사용/만료/무효 404·409. pending 상태 로그인 403. **테스트 후 플래그 원복(OFF)+재시작 필수.**
+4. 회귀: 기존 가입/로그인/OAuth 코드 경로, v113~124 스모크.
+5. 로그 위생: 보호자 이름·전화번호 값 미출력(길이만), consent_token 전체 미출력(앞8자).
+
+## v124 — 회원탈퇴 (소프트 삭제 + "회원탈퇴" 텍스트 이중 확인) — 2026-07-23
+
+### 요청 작업 (아스키 시안·옵션1 승인)
+- 내 정보 설정 하단 회원탈퇴 버튼 → 경고+텍스트 "회원탈퇴" 정확 입력 시에만 진행. 소프트 삭제: 개인정보 즉시 파기·로그인 불가, 발행 콘텐츠는 "탈퇴한 사용자" 명의로 유지(플리·좋아요·광고 통계 보존).
+
+### Plan verification findings (0단계 — 2026-07-23 실측)
+- users 전체 컬럼 실측 (26개): 개인정보 성격 = email/password_hash/nickname/profile_image/bio/company_name/display_title/provider/provider_user_id/birth_year/birth_date/gender/region/sns_links/verify_provider. 유지 = id(통계·FK 무결성)/plan/role/created_at/is_banned 계열/is_verified(false 로)/account_status.
+- 세션: Redis `session:{user_id}` (setex, auth.py:86). logout 엔드포인트가 세션 삭제 관행 보유 → 탈퇴 시 동일하게 삭제.
+- 프로필 이미지: MinIO profiles/ — `_delete_profile_object` 헬퍼(auth.py:563) 재사용 가능.
+- 트랙: Mongo tracks 에 uploader_nickname 비정규화(검색·표시에 사용) → 탈퇴 시 그 유저의 트랙들 uploader_nickname 을 "탈퇴한 사용자" 로 일괄 UPDATE 필요. uploader_profile_image/sns_links 는 라이브 join(v120/122)이라 users 파기만으로 자동 소멸.
+- 관계 데이터: follows(양방향)·ad_wishlist(개인 취향) = 삭제. ad_clicks/ad_wish_events = 유지(광고 통계 — id 만 남고 users 파기로 인구통계 join 자동 무효화 = 사실상 익명화). guardian_consents = 유지(법정 기록).
+- email UNIQUE 제약 → 파기 시 `withdrawn_{uuid}@removed.invalid` 형태 치환(재가입 허용 효과).
+
+### 설계
+**BE (9005 → 테스트 후 9004 미러)**
+1. `DELETE /api/auth/me` body `{confirm_text}` (인증): confirm_text != "회원탈퇴" → 400 "확인 문구가 일치하지 않습니다." 처리 순서: ①users 익명화 UPDATE(email 치환·password_hash NULL·nickname '탈퇴한사용자'·개인정보 필드 전부 NULL·sns_links '[]'·is_verified false·verify_provider/provider/provider_user_id NULL·account_status 'withdrawn') ②MinIO 프로필 이미지 삭제(best-effort) ③follows 양방향 DELETE ④ad_wishlist DELETE ⑤Mongo tracks uploader_nickname → '탈퇴한 사용자' 일괄 ⑥Redis 세션 삭제 → `{message}`. 각 단계 실패는 warning+계속(익명화 UPDATE 실패만 500).
+2. 로그인: account_status='withdrawn' → 401 처리(존재 노출 방지 — 일반 실패와 동일 메시지). oauth _resolve_account 도 withdrawn 계정 매칭 시 재가입으로 취급하지 않도록: provider_user_id NULL 화로 자연 신규가입 처리됨(확인만).
+**FE**
+3. Header 내 정보 설정 모달 하단 "회원탈퇴" 텍스트 버튼(소형·저채도) → 모달 내 화면 전환: 경고문+input(placeholder "회원탈퇴")+[취소]/[탈퇴하기](정확 일치 시만 활성) → api.withdrawAccount(confirmText) → 성공 시 AuthContext logout+localStorage 정리+"탈퇴가 완료되었습니다" 안내+메인 이동.
+4. api/index.js: withdrawAccount(confirmText) = DELETE /auth/me (axios delete with data).
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE routes/auth.py | backend-dev | `[withdraw]` user 앞8자 + 단계별 카운트 (개인정보 값 로그 금지) |
+| FE Header.jsx(+css)·api/index.js | frontend-dev | `[Header]` |
+| 9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. confirm_text 불일치/공백/"회원 탈퇴" → 400, 무인증 401.
+2. 정상 탈퇴: users 익명화 실측(psql 전 컬럼 — email 치환·개인정보 NULL·status withdrawn), MinIO 프로필 삭제, follows/ad_wishlist 삭제, Mongo 트랙 닉네임 "탈퇴한 사용자", Redis 세션 삭제(기존 토큰으로 me → 401).
+3. 탈퇴 계정 재로그인 → 401(일반 실패 메시지와 동일), 같은 이메일 신규 재가입 → 201 성공.
+4. 유지 확인: 탈퇴자 트랙이 목록/상세에 "탈퇴한 사용자" 명의로 정상 노출·재생, 타 유저 플리 안 깨짐, ad_clicks/ad_wish_events 잔존, 탈퇴 후 stars/insights 호출 정상(닉네임 폴백·인구통계 미입력 처리).
+5. FE transform: 탈퇴 버튼·확인 화면·활성화 조건 grep.
+6. 회귀: 일반 로그인/me/프로필 수정, v123 게이트, v125 보호자 플로우 OFF 상태.
+7. 로그: `[withdraw]` 단계 로그 실동작, 이메일·개인정보 값 미출력.
+
+## v125 — 가입 동의 체계: 필수4+선택1 체크 + 고지 + 기능 시점 동의 + 동의 이력 — 2026-07-23
+
+### 요청 작업 (구조 확정·승인)
+- 가입 체크 화면: 필수 4(약관/개인정보[생년월일·성별·내외국인 포함]/국외이전/만14세) + 선택 1(마케팅) + 행태정보 고지문. 성별은 게이트 필수로 승격. 지역·SNS 는 입력=동의(고지문). 사진/음성 AI 처리는 기능 첫 사용 시점 동의. 동의 이력 저장. **문구는 법정 기재사항 웹 조사 후 planner 가 확정 작성** (완료 — frontend/src/constants/consentTexts.js, 개보법 15조·28조의8·망법 50조 기재요건 반영, [회사명] 플레이스홀더).
+
+### Plan verification findings (0단계)
+- 동의 문구 원본: frontend/src/constants/consentTexts.js 신규 작성 완료 (CONSENT_VERSION '2026-07-23.v1', CONSENTS 7종: terms/privacy/overseas/age14/marketing/photo_ai/voice_ai + OPTIONAL_INPUT_NOTICE/BEHAVIOR_NOTICE + REQUIRED_CONSENT_KEYS).
+- 가입: RegisterPage STEP 0 게이트(생년월일+내외국인 필수, v123) — 성별 추가 지점. register(auth.py)는 gender 옵션 → 신규 가입 필수화 필요(단 guardian request 경로도 동일). 소셜 가입은 OAuthCallbackPage 온보딩 — 동의 화면 없음 → 신규 필요.
+- 동의 이력 테이블 없음 → 신규. 사진 업로드(character.py 실사)·음성 업로드(voice_clone.py) 진입 UI 는 MyMusicPage — 기능 시점 동의 팝업 연결 지점.
+
+### 설계
+**BE (9005 → 테스트 후 9004 미러)**
+1. 테이블 `user_consents(id BIGSERIAL PK, user_id UUID NOT NULL, consent_key VARCHAR(30) NOT NULL, agreed BOOLEAN NOT NULL, version VARCHAR(20) NOT NULL, created_at TIMESTAMPTZ DEFAULT now())` — 이력형(업데이트 없이 append). 인덱스 (user_id, consent_key, created_at DESC).
+2. register: body `consents: {terms,privacy,overseas,age14: true 필수, marketing: bool 옵션, version}` — 필수 4개 중 하나라도 true 아니면 400 "필수 동의 항목에 모두 동의해야 가입할 수 있습니다.". gender 필수화(없으면 400 "성별을 선택해주세요." — 단 guardian-consent/request 경로 아동 가입도 동일 적용). 가입 성공 시 user_consents 5행 기록(marketing 은 false 도 기록 — 거부 이력).
+3. `POST /api/auth/me/consents` (인증): body {consents: [{key, agreed}], version} — 소셜 가입 온보딩·기능 시점 동의(photo_ai/voice_ai)·마케팅 변경 기록용. 허용 key 화이트리스트(7종) 외 400.
+4. `GET /api/auth/me/consents` (인증): key 별 최신 상태 {key: {agreed, version, at}} 반환 — FE 가 온보딩 필요 여부·기능 동의 여부 판단.
+5. 로그 `[consent]` user 앞8자+key+agreed bool (문구·버전만, 값 로그 이슈 없음).
+**FE**
+6. RegisterPage: 게이트에 성별 필수 추가(14세 이상만 진행 가능하므로 게이트 통과=age14 사실 확인과 정합). 가입 폼 마지막에 "약관 동의" 섹션 — 전체 동의 체크 + 개별 5개(필수4/선택1, 각 [보기] 펼침으로 consentTexts body 표시) + BEHAVIOR_NOTICE 고지문. 필수 4개 미체크 시 가입 버튼 비활성. register 페이로드에 consents 포함.
+7. 선택 입력(지역·SNS — 성별은 게이트로 이동) 섹션에 OPTIONAL_INPUT_NOTICE 고지문 부착 (RegisterPage + Header 모달).
+8. OAuthCallbackPage: 온보딩에 동의 화면 선행 — GET me/consents 로 필수 4종 미기록이면 동의 화면(같은 컴포넌트 재사용) → POST me/consents → 기존 추가정보 화면. 스킵 불가(필수 동의).
+9. ConsentGateModal 공용 컴포넌트: photo_ai — MyMusicPage 실사 캐릭터 사진 업로드 진입 시 미동의면 팝업(동의해야 진행, 거부 시 기능 안내). voice_ai — 보이스 클론 진입 시 동일. 동의 후 POST me/consents, GET 캐시로 재팝업 방지.
+10. 동의 UI 공용 컴포넌트 ConsentList(체크+보기 펼침) — Register/온보딩 공용.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE main.py(테이블)·models/user.py·routes/auth.py | backend-dev | `[consent]` |
+| FE constants/consentTexts.js(완료·planner)·components/ConsentList.jsx·ConsentGateModal.jsx(신규)·RegisterPage·OAuthCallbackPage·Header·MyMusicPage·api/index.js | frontend-dev | `[Consent*]`/기존 prefix |
+| 9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. register: 필수 4 전부 true → 201+user_consents 5행(marketing false 포함, version 일치). 하나라도 누락/false → 400. consents 자체 누락 → 400. gender 누락 → 400(기존 gender 옵션 가입 회귀 깨짐 확인 — 의도된 변경).
+2. me/consents GET/POST: 최신 상태 반영, 이력 append(같은 key 재기록 시 행 증가), 무효 key 400, 무인증 401.
+3. 소셜 온보딩·기능 시점: FE transform + 로직 grep (photo_ai 게이트가 실사 업로드 앞에 있는지, voice_ai 가 보이스클론 앞인지).
+4. FE: 동의 섹션 5항목+보기 펼침+전체동의+비활성 로직, 게이트 성별 필수, OPTIONAL_INPUT_NOTICE/BEHAVIOR_NOTICE 문구 존재, consentTexts 의 법정 요소(목적/항목/기간/거부권리, 국외이전 5요소, 마케팅 철회·2년) 포함 여부 검수.
+5. 회귀: v123 14세 게이트/보호자 플로우 OFF, 로그인/me, 기존 기능 스모크. guardian request 경로 동의 처리 일관성.
+6. 로그 `[consent]` 실동작.
+
+## v126 — SNS 공유 1단계: 커버+음원 9:16 공유영상 생성 + 공유 시트/링크 — 2026-07-23
+
+### 요청 작업 (승인)
+- 곡 자세히보기 프롬프트 섹션 맨 위에 [YouTube 쇼츠][릴스][틱톡][링크] 버튼. 영상 = 커버이미지 고정 + 곡 전체 음원, 쇼츠/릴스/틱톡 모두 9:16(1080×1920) → **트랙당 1개 생성·캐싱 공용**. 모바일(서비스 본체는 앱/모바일웹)=공유 시트(Web Share, 파일 첨부)로 SNS 앱 작성화면 연결, 미지원 환경=다운로드+SNS 업로드 페이지 새창, 링크=곡 URL 복사. 2단계(플랫폼 API 자동게시)와 PC 버전 대응은 리스트 등재만.
+
+### Plan verification findings (0단계)
+- ffmpeg 8.0 시스템 존재 + mv_generator._get_ffmpeg_path()(993) 재사용 가능. 음원=MinIO minio_bucket_music(트랙 doc 의 audio object), 커버=tracks.cover_image_url. 트랙 상세 직렬화에 두 필드 존재.
+- PlayerPage 프롬프트 정보 탭(286 부근 "프롬프트 정보" 헤더)이 삽입 지점. PlayerPage 는 PlayerContext currentSong 기반 — 트랙 지정 URL 파라미터는 없음 → 링크 복사는 `origin + /player?track={id}` 로 하고 PlayerPage 마운트 시 해당 파라미터로 트랙 로드 지원 추가(공유 링크 수신자용).
+- Web Share Level 2(파일)는 https 필수 — 4000 이 mkcert https 라 개발 확인 가능(단 실기기 모바일에서만 시트 동작. 데스크톱은 폴백 경로 검증).
+
+### 설계
+**BE (9005 → 테스트 후 9004 미러)**
+1. `POST /api/tracks/{track_id}/share-video` (무인증 — 공개 트랙만, 비공개/미존재 404): MinIO `share/{track_id}.mp4` 존재 시 즉시 반환(캐시). 없으면 ffmpeg 생성 — 커버 다운로드(없으면 검정 배경+타이틀 텍스트 폴백 불필요, 커버 없으면 400 "커버 이미지가 없는 곡입니다."), scale=1080:1920 pad(커버를 중앙 배치, 상하 블러 배경 or 단색 — 단순하게 `scale=1080:-2` 후 crop/pad 중앙), `-loop 1 -i cover -i audio -c:v libx264 -tune stillimage -r 2 -c:a aac -b:a 192k -shortest -movflags +faststart`. 곡 전체 길이. 동기 처리(트랙 3-4분도 스틸이미지라 수십 초 내) — 타임아웃 300s. 응답 `{video_url: "/api/tracks/{id}/share-video/file", cached: bool}`.
+2. `GET /api/tracks/{track_id}/share-video/file` (무인증): MinIO share/ 프록시, video/mp4, Content-Disposition attachment 파일명 `{트랙제목}_shorts.mp4`(ASCII 안전 처리). share/ prefix 강제.
+3. 트랙 삭제 시 share/ 객체 정리는 범위 외(고아 무해).
+**FE**
+4. api/index.js: `createShareVideo(trackId)`, `shareVideoFileUrl(trackId)`.
+5. PlayerPage 프롬프트 탭 상단 "SNS 공유" 버튼 행 4개: SNS 3종 클릭 → createShareVideo(로딩 표시 "영상 생성 중...") → fetch blob → `navigator.canShare({files})` 지원 시 navigator.share({files:[File], title, text}) → 공유 시트. 미지원(데스크톱) → blob 다운로드 트리거 + 해당 SNS 업로드 페이지 새창(youtube.com/upload / instagram.com / tiktok.com/upload) + "다운로드된 영상을 업로드해주세요" 안내. 링크 버튼 → `origin/player?track={id}` 클립보드 복사 + "링크가 복사되었습니다".
+6. PlayerPage: `?track={id}` 쿼리 지원 — 마운트 시 currentSong 없고 파라미터 있으면 해당 트랙 로드·재생(play(song) 재사용).
+**리스트**
+7. 오픈전에확인할것리스트.md A 섹션에 "SNS 자동게시 2단계(유튜브/틱톡/인스타 API 앱 심사+OAuth, 틱톡 임시저장 모드)" / E 섹션에 "PC 버전 공유 UX(공유 시트 미지원 폴백 개선)" 등재 — planner 가 직접.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE routes/tracks.py(+share 생성·프록시)·(필요시 services/share_video.py 신규) | backend-dev | `[share-video]` + track_id, ffmpeg rc·소요시간 |
+| FE api/index.js·PlayerPage.jsx(+css) | frontend-dev | `[PlayerPage]` share 단계 |
+| 9004 미러 (통과 후) | planner | 동일 |
+
+### 테스트 항목 (tester)
+1. share-video 생성: 실존 공개 트랙 → 200 + MinIO share/ 객체, ffprobe 로 1080×1920·h264/aac·길이=음원 길이(±1s) 검증. 2회차 호출 cached true(재생성 없음 — 로그로 확인). file 프록시 200 video/mp4 + Content-Disposition.
+2. 비공개 트랙/미존재/비ObjectId → 404. 커버 없는 트랙 → 400. share/ 외 경로 프록시 시도 → 404.
+3. FE transform: 버튼 4종·Web Share 분기(canShare)·폴백(다운로드+새창)·링크 복사·?track 로드 로직 grep.
+4. 회귀: 트랙 상세/스트림/related, MV 재생, v127 동의 가입.
+5. 로그 `[share-video]` enter/ffmpeg done(초)/cached 실동작.
+
+## v127 — 트랙 리스트 전역 공유 버튼(팝업 4옵션, 공용 컴포넌트화) — 2026-07-23
+
+### 요청 작업 (승인)
+- 곡이 줄/카드로 나오는 모든 곳의 액션 버튼 끝에 [📤 공유] 1개 추가 → 클릭 시 팝업(쇼츠/릴스/틱톡/링크 4옵션, v126 로직 100% 재사용). 적용: 차트, SongItem 사용처 전부(메인/검색/아티스트/앨범/플리 상세), 메인 TrackCard, 재생큐, **내음악 '내 트랙' 탭**. 자세히보기 4버튼은 유지.
+
+### Plan verification findings (0단계)
+- 공유 로직: PlayerPage.jsx 에 handleSnsShare(223)/handleCopyLink(287)/SNS_UPLOAD_URLS(13) 로 인라인 — 공용 훅/컴포넌트로 추출 필요.
+- SongItem.jsx: 액션 버튼 열(99~ 재생/좋아요/FiPlus/FiDownload/FiBookmark) — 끝에 추가. ChartPage 는 자체 행 렌더(143~ 동일 아이콘 세트). TrackCard 카드형. PlayerPage 재생큐 목록(384 부근). MyMusicPage 내 트랙 탭(1313 myTracks — 하위 컴포넌트 구조 에이전트가 확인).
+- **비공개 곡 주의**: share-video 는 공개 트랙만(404) — 내 트랙 탭에는 비공개 곡 존재 가능 → 404 시 "공개된 곡만 공유할 수 있습니다." 안내(버튼은 노출 유지, 단순화).
+- 백엔드 변경 없음.
+
+### 설계 (FE 전용)
+1. `hooks/useTrackShare.js` 신규: PlayerPage 의 생성→blob→canShare 시트/폴백/링크복사 로직 추출 — `{share(sns, track), copyLink(track), sharing, message}` 반환. track = {id, title}. 404 → "공개된 곡만 공유할 수 있습니다."
+2. `components/TrackShareButton.jsx(+css)` 신규: 📤 아이콘 버튼 + 클릭 시 작은 팝업(포털/absolute, 외부 클릭·ESC 닫힘) — [▶ YouTube 쇼츠][📷 릴스][🎵 틱톡][🔗 링크 복사] + 생성 중 스피너/안내. stopPropagation(행 클릭 재생과 충돌 방지).
+3. 적용: SongItem(액션 끝), ChartPage 행, TrackCard(카드 하단/호버 영역 — 카드 스타일에 맞게), PlayerPage 재생큐 행, MyMusicPage 내 트랙 탭 행. PlayerPage 자세히보기 기존 4버튼도 훅 재사용으로 리팩토링(동작 불변).
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| FE hooks/useTrackShare.js·components/TrackShareButton.jsx(신규)·SongItem·ChartPage·TrackCard·PlayerPage·MyMusicPage(+css) | frontend-dev | `[TrackShare]` sns·cached·분기 (DEV) |
+| 9004 | 변경 없음(BE 무변경) | — |
+
+### 테스트 항목 (tester)
+1. transform: 신규 2파일+수정 5파일 200, 각 리스트에 TrackShareButton grep, PlayerPage 기존 4버튼이 훅 경유로 동작 유지.
+2. 팝업 로직: 외부클릭/ESC 닫힘, stopPropagation(공유 클릭이 재생 유발 안 함 — 코드 확인).
+3. 비공개 곡 404 → 안내 메시지 분기 존재.
+4. 회귀: 각 리스트의 기존 버튼(재생/좋아요/플리추가) 핸들러 불변, v126 자세히보기 공유·API 정상.
+5. eslint 신규 0.
+
+## v128 — SNS 공유영상 가사 자막 굽기 (타임라인 동기) — 2026-07-23
+
+### 요청 작업 (승인 — 가능성 검토 보고 완료)
+- 공유영상(커버+음원)에 Suno 타임스탬프 기반 가사 자막을 burn-in. 릴스/틱톡/쇼츠는 자막 파일 미지원이라 burn-in 이 정석(조사 완료). 타임스탬프 없는 곡(Wondera 등)은 자막 없이 폴백. 기존 캐시는 버전업으로 자연 재생성. FE 무변경.
+
+### Plan verification findings (0단계)
+- 타임스탬프: generations.variants[].timestamps = [{text,start,end}] 줄 단위(실데이터 확인 — 자막 즉시 변환 가능). 트랙 → generation_id + variant_index(v74, 3/22 트랙 보유 — 없으면 0 기본). generate.py 에 refetch 엔드포인트 존재.
+- ffmpeg 8.0: libass 빌드(`ass`/`subtitles` 필터 확인). 서버 한글 폰트 없음(fc-list 0) → 번들 필요.
+- 기존 파이프라인: services/share_video.py(v126) — scale/crop 필터 후 h264, -r 2. 자막 넣으면 -r 2(0.5s 단위)가 자막 타이밍 해상도를 제한 → -r 10 으로 상향(자막 있을 때만).
+- 캐시: share/{track_id}.mp4 → 버전 프리픽스 도입 필요.
+
+### 설계 (BE 전용, 9005 → 테스트 후 9004 미러)
+1. **폰트 번들**: backend_9005/app/assets/fonts/NanumGothic-Regular.ttf (Google Fonts GitHub 등 신뢰 소스에서 1회 다운로드, git 포함). ffmpeg `ass=...:fontsdir=` 로 참조 — 시스템 설치 불필요.
+2. **share_video.py 확장**:
+   - `_fetch_lyric_segments(mongo, track)`: generation_id → generations doc → variants[variant_index or 0].timestamps. 비어 있으면 [] (자막 없이 진행 — 로그).
+   - `_build_ass(segments)`: ASS 헤더(PlayResX 1080/PlayResY 1920, Style: NanumGothic, Fontsize ~64, PrimaryColour 흰색, Outline 3 검정, Alignment 2(하단 중앙), MarginV 380 — 틱톡/릴스 하단 UI 침범 회피) + Dialogue 줄들(start~end, `{}` 이스케이프, \N 줄바꿈 처리, [Verse] 같은 섹션 태그 줄은 제외 여부 — **제외**: `^\[.*\]$` 패턴 줄은 자막에서 스킵(가사 아님)).
+   - ffmpeg: 세그먼트 있으면 filter chain 끝에 `ass='subs.ass':fontsdir='fonts대경로'` 추가 + `-r 10`, 없으면 기존 그대로(-r 2).
+   - 캐시 경로 `share/v2/{track_id}.mp4` 로 변경(프록시도 동일). 응답에 `subtitles: bool` 추가. 구 v1 객체 3건은 방치(무해).
+3. 로그 `[share-video]` 확장: segments=N, subtitled=bool, ass build.
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE services/share_video.py·routes/tracks.py(프록시 경로/응답)·app/assets/fonts/(신규) | backend-dev | `[share-video]` |
+| FE | 무변경 (기존 훅이 응답 필드 추가에 무관) | — |
+| 9004 미러(폰트 포함) | planner (통과 후) | — |
+
+### 테스트 항목 (tester)
+1. 타임스탬프 보유 Suno 트랙 → POST 200 {subtitles:true} → ffprobe 규격(1080×1920/h264/aac/길이±1s) + **자막 실검증**: ffmpeg 로 가사 구간 프레임 2장 이상 추출(예: 첫 세그먼트 중간, 중반 세그먼트) → 이미지에 한글 텍스트가 실제 렌더됐는지(픽셀 유무 — 자막 없는 v1 영상 동일 시점 프레임과 diff 또는 OCR 없이 파일 크기/픽셀 분산 비교 + 수동 확인용 프레임 저장 경로 보고). 섹션 태그([Verse..]) 미노출 확인(해당 시간대 프레임).
+2. 타임스탬프 없는 트랙 → 200 {subtitles:false} + 영상 정상(자막 없음).
+3. 캐시: v2 경로 생성·재호출 cached true, 구 v1 캐시 트랙도 v2 로 재생성됨(6a50a721… 재호출 시 cached:false 최초 1회).
+4. 한글 렌더: 추출 프레임에서 □ 깨짐 없는지(폰트 번들 동작) — 프레임 파일 저장해 경로 보고.
+5. 회귀: file 프록시 404 케이스, v126 에러 케이스(404/400), 트랙 상세/related.
+6. 로그 segments/subtitled 실동작.
+
+## v129 — 다운로드를 자막 영상 4옵션으로 (일반16:9/SNS9:16/카톡배경15s/음원) — 2026-07-23
+
+### 요청 작업 (승인 — 조사 완료)
+- 다운로드 버튼 → 팝업 4옵션: 🖥일반 16:9(1920×1080, 커버 중앙+블러 배경 채움, 자막 하단) / 📱SNS 9:16(기존 공유영상 재사용) / 💬카톡 프로필 배경(1080×2340, **15초 클립 — A안: 첫 가사 시작점부터**(타임스탬프 없으면 곡 시작부터), **자막 상단 1/3**(하단 40% 카톡 UI 회피)) / 🎵음원 mp3(기존 다운로드 유지).
+
+### Plan verification findings (0단계)
+- 현 다운로드: SongItem.handleDownload(46) → api.downloadTrackFile(520) — SongItem·ChartPage 에 FiDownload 버튼(PlayerPage 자세히보기에는 별도 확인 필요, MyMusicPage 내 트랙도 확인). share_video.py 는 단일 9:16 포맷 전제 → 포맷 파라미터화 필요.
+- 카톡 15초: ASS 시각을 클립 시작 기준으로 offset 보정 필요. 자막 상단 배치 = Alignment 8(top center)+MarginV(위에서부터, 2340 기준 ~600).
+
+### 설계
+**BE (9005 → 테스트 후 9004 미러)**
+1. share_video.py 포맷화: `FORMATS = {"sns": 1080×1920·전체·자막하단(기존), "wide": 1920×1080·전체·자막하단(MarginV 80)·배경=커버 블러 확대+중앙 원본(filter: split→blur scale crop + overlay), "kakao": 1080×2340·**15s 클립**·자막 상단(Alignment 8, MarginV 600)}`. 캐시: sns=share/v2/{id}.mp4(불변), wide=share/v2/{id}_wide.mp4, kakao=share/v2/{id}_kakao.mp4.
+2. kakao 클립: 시작점 = 첫 가사 세그먼트 start−0.5s(음수면 0, 타임스탬프 없으면 0) → ffmpeg -ss {t0} -t 15, ASS 는 (start−t0) offset 보정 후 0~15s 범위 세그먼트만 포함.
+3. 라우트: POST /share-video 에 `format: str = Query("sns")` (sns/wide/kakao 외 400), file GET 도 동일 파라미터 + Content-Disposition 파일명에 포맷 표기. 기존 콜러(공유)는 파라미터 없이 sns — 완전 호환.
+**FE**
+4. TrackDownloadButton.jsx 신규(TrackShareButton 포털 패턴 재사용): FiDownload 클릭 → 팝업 [🖥 일반(가로)] [📱 SNS(세로)] [💬 카톡 프로필 배경(15초)] [🎵 음원(mp3)]. 영상 3종=createShareVideo(trackId, format)→file fetch→a[download](생성 중 스피너 — wide/kakao 최초 1~2분 안내), mp3=기존 downloadTrackFile 로직 이관. 기존 FiDownload 위치(SongItem·ChartPage, 그 외 다운로드 버튼 있는 곳 전부 — MyMusicPage/PlayerPage 확인 후) 교체.
+5. api/index.js: createShareVideo(trackId, format)·shareVideoFileUrl(trackId, format) 확장(기본 sns — 기존 콜러 호환).
+
+### 변경 매트릭스
+| 파일 | 담당 | 로그 |
+|---|---|---|
+| BE services/share_video.py·routes/tracks.py | backend-dev | `[share-video]` + format |
+| FE components/TrackDownloadButton.jsx(+css 신규)·SongItem·ChartPage(+기타 다운로드 위치)·api/index.js | frontend-dev | `[TrackDownload]` |
+| 9004 미러(통과 후) | planner | — |
+
+### 테스트 항목 (tester)
+1. wide: ffprobe 1920×1080, 블러 배경+중앙 원본 커버 프레임 시각 확인, 자막 하단 렌더.
+2. kakao: ffprobe 1080×2340·길이 15.0s(±0.2), 클립 시작=첫 가사−0.5s 검증(첫 프레임 직후 자막 등장), **자막이 상단 1/3 에 렌더**(프레임 y 좌표 픽셀 검증), 타임스탬프 없는 곡 → 곡 시작부터 15s·자막 없음.
+3. sns 기존 캐시 불변(재생성 없이 cached true), format 무효값 400.
+4. FE transform: 팝업 4옵션·포털·mp3 이관, 기존 공유 버튼 회귀.
+5. 캐시 파일명 3종 분리 확인, 로그 format 표기.
+
+## v130 — Wondera recognize 기반 가사 타임스탬프 파이프라인 (골격, 차단 해제 후 실검증) — 2026-07-27
+
+### 요청 작업 (승인)
+- 문서 확정 스펙(`POST /v1/song/recognize`: 오디오 업로드 ID → {duration(ms), lyrics_sections:[{start,end,text}(ms)]})로 타임스탬프 획득 파이프라인 구현. 지금은 모의(mock)로 변환·저장·자막 연동까지 검증, Wondera 403 차단 해제 후 실호출 테스트 (사용자 지시).
+
+### Plan verification findings (0단계)
+- 자막 소비처: share_video._fetch_lyric_segments — generations.variants[idx].timestamps 만 읽음. Wondera 곡·타임스탬프 없는 구 Suno 곡은 여기서 [] → 자막 없음.
+- Wondera 연동: routes/wondera.py 에 Bearer 인증·_clean_wondera_error(v133) 존재. 업로드는 /v1/files/upload (recognize 는 purpose: "audio" — 문서 명시).
+- 트랙 오디오: MinIO minio_bucket_music 의 track.audio_url. 비용: recognize 는 유료 추정 → 자동 호출 금지, 명시 요청만.
+
+### 설계 (BE 전용 + api 함수 등록만, UI 미연결)
+1. **services/lyric_recognize_service.py 신규**:
+   - `_call_wondera_upload(audio_bytes, filename)` / `_call_wondera_recognize(upload_id)` — httpx, Bearer 헤더(wondera.py 관행), _clean_wondera_error 재사용. **함수 분리로 mock 주입 가능 구조**.
+   - `recognize_track_timestamps(track_id)` (async): 트랙 조회(공개 무관, 존재만) → 이미 track.recognized_timestamps 있으면 {cached:true} → 오디오 다운로드 → 업로드 → recognize → lyrics_sections **ms→초 변환**({text,start,end}) → 정합 보정(end<=start → +0.5, start<0 스킵, 빈 text 스킵) → Mongo tracks.update_one `recognized_timestamps` + `recognized_at` 저장 → {cached:false, segments:N}.
+   - Wondera 403/오류 → ShareVideoError 류 커스텀 예외 → 라우트에서 502 + 정리된 메시지("현재 Wondera 접속 차단 상태…").
+2. **share_video._fetch_lyric_segments 폴백 확장**: generation 타임스탬프 없으면 → `track.recognized_timestamps` 사용 (기존 섹션 태그 스킵·보정 필터를 공용 함수로 빼서 양쪽 적용). 로그에 source=generation|recognized|none.
+3. **라우트** `POST /api/tracks/{track_id}/recognize-timestamps` (인증, **트랙 소유자만** 403 — 비용 발생 작업): 서비스 호출 → {cached, segments, source} 반환. 자동 호출 없음(자막 생성 시 저장된 것만 소비 — 비용 통제).
+4. **api/index.js**: `recognizeTrackTimestamps(trackId)` 등록만 (UI 연결은 차단 해제 후 결정).
+5. 로그 `[lyric-recognize]` track 앞8자·단계·segments 수 (가사 텍스트 값 미출력).
+
+### 테스트 항목 (tester — mock 중심)
+1. 서비스 단위: 문서 예시 payload({duration:180000, lyrics_sections:[{start:0,end:10000,text:...}]})를 _call_wondera_recognize mock 으로 주입 → ms→s 변환·보정·Mongo 저장 검증 (venv python 직접 실행).
+2. 자막 연동: 트랙에 recognized_timestamps 수동 주입 → 공유영상 생성 → subtitles:true + 자막 프레임 실검증(기존 방법) + 로그 source=recognized. generation 타임스탬프 있는 트랙은 여전히 generation 우선.
+3. 라우트: 무인증 401, 타인 트랙 403, 실호출은 Wondera 차단으로 502 + 정리된 메시지(HTML 미노출) — 이 자체가 에러 경로 검증.
+4. 회귀: 기존 Suno 자막(generation 경로), share-video 3포맷, v133 wondera 폼.
+5. 저장 데이터 원복(주입한 recognized_timestamps 제거 여부는 캐시 산출물로 보고 유지 가능 — 보고만).
+
+## v131 — 스타 채널 음악 피드 (SNS형: 시/일기 + 곡 삽입 + BGM) 1단계 — 2026-07-27
+
+### 요청 (사용자 원문 요지)
+- 사용자마다 자기 채널(팔로우 가능)에 SNS 처럼 음악 피드를 작성. 시/일기 글 중간에 곡 카드를 끼워넣거나 피드의 BGM 으로 지정.
+- 곡 삽입: 내 트랙(내 것만 목록) / 전체 곡 검색(모든 공개곡+검색) 탭 2개. 인용곡은 원작 스타 표기, **내 곡도 곡명 옆에 내 이름 표기(전 카드 동일 표기)**.
+- 재생 규칙: 피드 열람 시 BGM 자동재생(끄기 가능) → 삽입곡 ▶ 시 BGM 일시정지·삽입곡 재생 → 끝나면 BGM 복귀.
+- 반응: ♥/💬(댓글)/📤(공유). **다음 단계 예고: 인스타형 노출(홈에서 팔로잉/추천 피드) — 이번엔 미구현이되 데이터 구조는 피드 글을 독립 단위로 설계해 대비.**
+
+### Plan verification findings (0단계 실사)
+- 채널 페이지 = `frontend/src/pages/ArtistDetailPage.jsx` (라우트 /artist/:id, id=user_id, App.jsx:59). **탭 구조 없음**(인기 트랙+앨범 단일 스크롤), isSelf 판정 존재(:25), 팔로우 버튼 :181-192.
+- 팔로우 = PG follows 테이블 + routes/follows.py 완비 — 이번 작업에서 변경 불필요.
+- tracks(Mongo) 필드: uploader_id/uploader_nickname/audio_url/cover_image_url/is_public/duration_sec..., `_serialize_track`(tracks.py:31) 이 artist_name/cover_image 별칭 생성. `GET /api/tracks/my`(내 트랙, 비공개 포함), `GET /api/tracks/search`(하이브리드 검색), `GET /api/tracks/`(공개 목록) 재사용.
+- **댓글 시스템 부재** — comment_count 필드는 껍데기(항상 0). 피드 댓글은 전면 신규.
+- FE 플레이어 = PlayerContext 단일 Audio+단일 큐, 곡 종료 시 관련곡 자동 연장(onEnded) — "삽입곡 끝→BGM 복귀"를 전역 플레이어로 하면 자동 연장과 충돌. → **피드 전용 Audio 1개(useFeedAudio 훅)로 BGM·삽입곡 모두 재생**하는 설계 채택(아래).
+- 좋아요 패턴 = PG likes 테이블 + Mongo like_count $inc (likes.py) — 피드 좋아요도 동일 패턴 복제.
+- 원격 로깅(remoteLogger) 존재 — console.info/error 만 쓰면 자동 수집.
+- 모바일 브라우저는 사용자 제스처 없는 오디오 자동재생 차단 → BGM "자동재생" 은 시도 후 차단되면 "▶ BGM 재생" 대기 상태로 폴백 (버그 아님, 정책).
+
+### 설계
+
+**데이터 (인스타형 확장 대비 — 피드 글 = 작성자 종속 독립 문서)**
+- Mongo `feeds`: `{_id, author_id(PG users.id str), author_nickname(스냅샷), title(선택), blocks:[{type:"text",text}|{type:"track",track_id}], bgm_track_id|null, like_count, comment_count, is_public(기본 true — 향후 공개범위 확장 슬롯), created_at, updated_at}`. 인덱스 (author_id, created_at desc) + (is_public, created_at desc — 향후 글로벌 피드용 선반영).
+- Mongo `feed_comments`: `{_id, feed_id, author_id, author_nickname, text, created_at}` 평면(대댓글 없음). 인덱스 (feed_id, created_at).
+- PG `feed_likes(user_id UUID, feed_id varchar, created_at, PK(user_id,feed_id))` — main.py lifespan 마이그레이션.
+
+**백엔드 `routes/feeds.py` (prefix /api/feeds)** — 로그 prefix `[feed]`, 추적자 feed_id 앞8자/author 앞8자. 본문 텍스트 원문 로그 금지(길이만).
+- POST `/` (auth): 생성. 검증 — blocks 1개 이상, text 블록 trim 후 비면 제거, 전체 비면 400; track 블록·bgm 은 실존 트랙만, 타인 곡이면 is_public 필수(내 곡은 비공개 허용하되 응답에 is_public 포함 — FE 가 "비공개 곡은 다른 사람에게 재생 안 됨" 안내), blocks ≤ 50, title ≤ 100자, text 블록 합계 ≤ 10,000자.
+- GET `/user/{user_id}` (auth optional): 작성자별 최신순 page/limit, 각 피드에 트랙 블록·bgm 하이드레이션(tracks 조회 → {id,title,artist_id,artist_name,cover_image,duration_sec,is_public} — 삭제된 곡은 {deleted:true} 플레이스홀더), 로그인 시 is_liked 첨부(PG feed_likes 일괄).
+- GET `/{feed_id}` (auth optional): 단건 동일 하이드레이션 (공유 링크용, 비로그인 열람 허용 — v120 트랙 상세와 동일 정책).
+- PUT `/{feed_id}` / DELETE `/{feed_id}` (소유자만): 수정(생성과 동일 검증)/삭제(feed_comments·feed_likes 동반 삭제).
+- POST·DELETE `/{feed_id}/like` (auth): PG upsert/delete + feeds.like_count $inc (중복 409 아님 — 멱등 처리).
+- GET `/{feed_id}/comments` (public, page/limit 오름차순) / POST (auth, text 1~1,000자) / DELETE `/comments/{comment_id}` (댓글 작성자 또는 피드 소유자) — comment_count $inc 동기화.
+- 탈퇴 익명화 연계: 이번엔 auth.py 탈퇴 로직에 feeds/feed_comments 익명화 추가하지 않고 **리스트 B 에 후속 등재** (탈퇴자 피드 처리 정책 확인 필요 — 스코프 밖).
+
+**프론트엔드**
+- api/index.js: createFeed/updateFeed/deleteFeed/getUserFeeds/getFeed/likeFeed/unlikeFeed/getFeedComments/addFeedComment/deleteFeedComment.
+- ArtistDetailPage 에 탭 바 신설: [곡·앨범](기존 콘텐츠 그대로 이동, 기본 탭) / [피드]. 기존 렌더 트리 변형 최소화(섹션 wrap 만).
+- 신규 컴포넌트 (src/components/feed/):
+  - FeedList: 작성자 피드 목록 + 페이징(더 보기), isSelf 면 상단 [✏️ 새 피드 작성].
+  - FeedPostCard: 제목·날짜, blocks 렌더(텍스트 문단/FeedTrackCard), BGM 배너(재생/일시정지/끄기), ♥(낙관적)·💬(펼침 댓글: 목록+입력+삭제)·📤(링크 복사 = origin+/feed/{id}), 소유자 메뉴(수정/삭제 — 삭제는 confirm).
+  - FeedTrackCard: 커버+곡명+**아티스트명(모든 카드 동일 표기, 내 곡 포함)**+▶, 원작 스타명 터치 → /artist/{artist_id} 이동, 삭제된 곡 플레이스홀더.
+  - FeedComposer: 제목(선택) + 블록 편집기(텍스트 블록 textarea / 곡 카드 블록, 블록별 ↑↓·삭제, [+텍스트][+곡 삽입][BGM 설정/해제]) — 커서 위치 삽입 대신 블록 단위 편집(1단계 단순화). 수정 모드 겸용.
+  - TrackPickerModal: 탭 2개 — [내 트랙](getMyTracks, 비공개 곡 "비공개" 뱃지+안내) / [전체 곡 검색](검색어 없으면 getTracks 인기순, 입력 시 searchTracks). 모든 행에 곡명+아티스트명. BGM 선택에도 재사용(단일 선택).
+- useFeedAudio 훅 (피드 전용 Audio 1개): BGM 자동재생 시도(차단 시 대기 상태), 삽입곡 ▶ → BGM pause·삽입곡 src 교체 재생(스트림 URL은 기존 api 패턴, recordPlay fire-and-forget)·끝나면 BGM 복귀. 시작 시 usePlayer().pause() 로 전역 플레이어 정지, 전역 플레이어 재생 감지 시(usePlayer().isPlaying) 피드 오디오 정지. 탭 이탈/언마운트 시 정지·해제.
+- 신규 라우트 /feed/:feedId (App.jsx): FeedPostCard 단건 페이지(공유 링크 착지, 비로그인 열람).
+
+### 변경 매트릭스 (로그 추적자)
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9005/app/routes/feeds.py | 신규 | [feed] feed_id/author 앞8자 |
+| backend_9005/app/main.py | import+include_router+feed_likes 마이그레이션+인덱스 ensure | [migration] |
+| frontend/src/api/index.js | 피드 함수 10개 | — |
+| frontend/src/pages/ArtistDetailPage.jsx | 탭 바+피드 탭 | [ArtistDetailPage] |
+| frontend/src/components/feed/* (5개)+useFeedAudio | 신규 | [FeedList]/[FeedPostCard]/[FeedComposer]/[TrackPickerModal]/[useFeedAudio] |
+| frontend/src/App.jsx | /feed/:feedId 라우트 | — |
+
+### 테스트 계획 (tester 전달용 골자)
+- BE: CRUD 전체(검증 4종: 빈 blocks/存在しない트랙/타인 비공개 곡 400/한도 초과), 권한(무인증 401·타인 수정/삭제 403), 하이드레이션(트랙 삭제 후 조회 플레이스홀더), 좋아요 멱등·카운트 동기, 댓글 CRUD+comment_count, 비로그인 열람(GET 계열 200).
+- FE: 작성→채널 피드 탭 표시→삽입곡 재생/BGM 규칙(수동 확인 항목으로 표기)→수정/삭제→댓글→공유 링크 착지(/feed/:id). eslint 신규 0.
+- 회귀: ArtistDetailPage 기존 섹션(인기 트랙/앨범/팔로우) 동작 불변, 전역 플레이어 기존 재생 흐름 불변, 트랙 목록/검색 API 무변경 확인.
+
+## v132 — 회원탈퇴 시 피드 인스타그램 방식 처리 (전부 삭제) — 2026-07-27
+
+### 요청 (사용자 확정)
+- 탈퇴자 피드 처리를 인스타그램 방식으로: **본인 피드 글 삭제(댓글·좋아요 동반), 남의 피드에 단 내 댓글 삭제, 내가 누른 좋아요 철회**. 곡은 현행 유지("탈퇴한 사용자" 명의 — v124 결정 불변).
+
+### Plan verification findings (0단계)
+- routes/auth.py:801-893 withdraw_account — ①users 익명화(실패만 500) ②MinIO 프로필 ③follows ④ad_wishlist ⑤tracks 닉네임 치환 ⑥Redis 세션, ②~⑥은 best-effort(warning+계속) 패턴.
+- feeds(Mongo): author_id 로 본인 글 식별. feed_comments(Mongo): author_id 로 내 댓글, feed_id 로 글 종속 댓글. feed_likes(PG): user_id/feed_id. 카운터는 feeds.comment_count/like_count.
+- 피드 삭제 시 동반 정리 로직은 feeds.py DELETE 라우트에 이미 존재하나 단건용 — 탈퇴는 일괄이므로 auth.py 에 별도 구현(라우트 재사용 불가).
+
+### 설계 (withdraw_account ⑤ 뒤에 best-effort 3단계 삽입, 순서 중요)
+- ⑤b **본인 피드 일괄 삭제**: feeds.find(author_id)→feed_ids → feed_comments.delete_many(feed_id $in) → PG feed_likes 삭제(feed_id ANY) → feeds.delete_many. 로그 feeds_deleted/feed_comments_deleted/feed_likes_deleted.
+- ⑤c **남의 피드의 내 댓글 삭제**: feed_comments(author_id) 를 feed_id 별 집계 → delete_many → 각 feed comment_count $inc(-n) (음수 방지 후처리 $lt 0 → 0). ⑤b 이후 실행이라 본인 피드 몫은 이미 소거.
+- ⑤d **내 좋아요 철회**: PG feed_likes(user_id) 의 feed_id 수집 → DELETE → 각 feed like_count $inc(-1) (음수 방지 동일).
+- docstring 처리 순서 주석 갱신. 로그 prefix [withdraw] 유지, user 앞8자.
+
+### 테스트 계획
+- 시나리오: A(탈퇴 대상)·B 계정 — A 피드 2개(B 가 댓글+좋아요), B 피드 1개(A 가 댓글+좋아요) 구성 → A 탈퇴 → A 피드 전부 404·잔여 댓글/좋아요 0, B 피드의 A 댓글 소거+comment_count/like_count 정확 감소(음수 없음), B 피드 자체·B 계정 무손상. 로그 [withdraw] 신규 라인 확인. 회귀: 기존 탈퇴 단계(①~⑥) 정상, 곡 명의 치환 불변.
+
+## v133 — 채널 커뮤니티 탭 (공지 게시판, 유튜브 게시물식) — 2026-07-27
+
+### 요청 (사용자 확정)
+- 채널 탭 [곡·앨범|피드] 오른쪽에 **[커뮤니티]** 추가 — 채널 주인이 공지("내일 곡 만들 예정" 등)를 올리는 공간. ①팔로워 수 조건 없이 누구나 ②텍스트만(곡 삽입/BGM 없음) ③좋아요/댓글 있음. 향후 인스타형 홈에서 피드 글과 공지가 함께 노출될 예정 — 이를 전제로 설계.
+
+### Plan verification findings (0단계)
+- routes/feeds.py 구조 확인: FeedBody 검증 _validate_and_normalize(:86), 목록 list_user_feeds(:276, author_id 쿼리), 하이드레이션 _hydrate_feeds(:163), 좋아요/댓글 라우트 완비. feeds 문서에 kind 필드 없음(전부 피드 글).
+- FE FeedList/FeedComposer/FeedPostCard 는 피드 전용 — 재사용 가능 구조(props 확장).
+- 탈퇴 정리(auth.py ⑤b~⑤d)는 feeds 컬렉션 전체 대상이라 kind 무관 자동 적용.
+
+### 설계 — **커뮤니티 글 = feeds 문서 + kind:"community"** (컬렉션 분리 안 함)
+근거: 좋아요/댓글/공유 링크(/feed/{id})/탈퇴 정리 전부 재사용, 향후 인스타형 홈에서 피드+공지 혼합 노출 시 한 컬렉션 시간순 조회로 끝남.
+**백엔드 (feeds.py)**
+- FeedBody 에 kind 필드("feed" 기본 | "community"). community 검증: blocks 는 text 타입만(track 블록 400 "커뮤니티 글에는 곡을 넣을 수 없습니다."), bgm_track_id 400, title 은 받지 않음(무시·null 저장). 나머지 한도 동일.
+- 저장 시 kind 저장. 기존 문서(kind 없음)=feed 취급.
+- GET /user/{user_id}?kind=feed|community (기본 feed): feed 쿼리는 {"kind":{"$ne":"community"}} (기존 문서 호환), community 는 {"kind":"community"}. 단건/수정(kind 변경 불가 — body kind 무시하고 기존 유지)/삭제/좋아요/댓글 로직 무변경(kind 무관 동작). 응답에 kind 포함.
+- PUT 검증은 저장된 kind 기준으로 적용(community 글 수정 시에도 텍스트만).
+**프론트엔드**
+- ArtistDetailPage 탭 3개: [곡·앨범|피드|커뮤니티]. 커뮤니티 탭 = FeedList 에 kind="community" prop 재사용.
+- FeedList: kind prop → getUserFeeds(kind) 전달, 작성 버튼 라벨("새 피드 작성"/"새 공지 작성"), BGM 자동재생은 feed 전용(community 목록에선 스킵).
+- FeedComposer: kind prop — community 면 제목 입력·[+곡 삽입]·[BGM] 숨김(텍스트 블록만), payload 에 kind 포함.
+- FeedPostCard: community 글이면 📢 뱃지 표시, 제목/BGM 배너/곡 카드는 데이터가 없으니 자연 미표시(방어 렌더 유지). 좋아요/댓글/공유 그대로.
+- api/index.js: getUserFeeds(userId, page, limit, kind) 파라미터 확장(기본 'feed'), createFeed/updateFeed payload 는 그대로(kind 포함 가능).
+- FeedDetailPage: kind 무관 렌더(공유 링크 착지 동일).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9005/app/routes/feeds.py | kind 필드+검증+목록 필터 | [feed] kind= 로그 추가 |
+| frontend/src/api/index.js | getUserFeeds kind 파라미터 | — |
+| frontend/src/pages/ArtistDetailPage.jsx | 커뮤니티 탭 | [ArtistDetailPage] |
+| frontend/src/components/feed/{FeedList,FeedComposer,FeedPostCard}.jsx | kind prop | 기존 prefix |
+
+### 테스트 계획
+- BE: community 생성(텍스트만) 201·kind 저장, track 블록/bgm 400, 목록 kind 필터 상호 배타(피드 목록에 공지 미포함·역도 성립, 기존 kind 없는 문서는 feed 목록에), PUT 으로 kind 변경 시도 무시 확인, community 글 좋아요/댓글/삭제 정상, 비로그인 열람.
+- FE: 탭 3개 렌더·컴포저 분기(곡/BGM 버튼 숨김)·📢 뱃지, eslint 0.
+- 회귀: 기존 피드 탭 목록/작성 불변(kind 기본값 경로), /feed/{id} 착지, 탈퇴 정리 kind 무관(코드 확인).
+
+## v134 — 타임라인 (인스타형 혼합 랭킹 노출 페이지) — 2026-07-27
+
+### 요청 (사용자 확정)
+- 상단 메뉴 AI차트 옆 [타임라인] — 모든 스타의 피드+공지가 인스타처럼 한 줄기로 쭉쭉. **토글 없는 단일 흐름**: 로그인=①팔로잉 최우선+③인기 보충(②취향 추천은 2단계 — 곡 임베딩 활용 예정), 비로그인=인기(작성자 팔로워 수·글 반응·차트 상위곡 가중)+최신성 감쇠.
+
+### Plan verification findings (0단계 — v131~v133 실사 누적 + 추가 확인)
+- feeds 컬렉션: kind/like_count/comment_count/created_at/author_id/is_public, 인덱스 (is_public, created_at desc) 선반영됨(v131). 하이드레이션 _hydrate_feeds(feeds.py:163) 재사용 가능.
+- 팔로워 수: PG follows GROUP BY followee_id 1쿼리. 내 팔로잉: follower_id=me. 곡 인기: tracks.play_count/like_count(Mongo).
+- **라우트 순서 함정**: feeds.py 에 GET /{feed_id}(:316) 존재 — GET /timeline 을 **파일상 그보다 앞에** 정의해야 "timeline" 이 feed_id 로 매칭되는 것을 방지.
+- FE: FeedPostCard 에 showAuthor prop 이미 존재(채널 목록에선 false) — 타임라인은 true 로 작성자 헤더(아바타+닉네임→채널 이동) 표시. useFeedAudio 재사용.
+
+### 설계
+**백엔드 (feeds.py 에 GET /api/feeds/timeline — /{feed_id} 앞에 정의)**
+- auth optional. 후보: is_public 피드 최신 200건(created_at desc, 전 kind).
+- 점수(파이썬 계산, 현 규모 충분 — ES/사전집계 고도화는 후속):
+  - recency = 1/(1+age_hours/24)
+  - engagement = log1p(like_count) + 0.5*log1p(comment_count)
+  - author_pop = log1p(팔로워 수) (PG 1쿼리 일괄)
+  - track_power = max(log1p(play_count)+log1p(like_count)) over 삽입곡+BGM (tracks 1쿼리 일괄, 0.5 가중)
+  - base = recency*2 + engagement + author_pop + track_power*0.5
+  - 로그인: 팔로잉 작성자 글이면 +1000 (팔로잉 글 최우선 블록 — 내부 정렬은 base 로 최신·인기순)
+- 정렬 후 page/limit 슬라이스(기본 10, ≤30), _hydrate_feeds 재사용(is_liked 포함), 응답 {feeds, pagination}. 본인 글 제외하지 않음(자기 글도 흐름에 보임 — 인스타 동일). 로그 [timeline] user(옵션)/후보수/팔로잉수/페이지.
+**프론트엔드**
+- Header: AI차트 옆 [타임라인] NavLink(/timeline, 비로그인도 노출). App.jsx 라우트.
+- TimelinePage 신규: FeedPostCard(showAuthor=true) 목록, **무한 스크롤**(IntersectionObserver 센티널+실패 시 더 보기 버튼 폴백), useFeedAudio 공유(**자동재생 없음** — 타임라인은 다수 글이라 탭 시 재생만), 비로그인 열람 가능(좋아요/댓글 시 기존 로그인 유도 동작). 빈 상태 문구.
+- api/index.js: getTimeline(page, limit).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9005/app/routes/feeds.py | GET /timeline (+ /{feed_id} 앞 배치) | [timeline] |
+| frontend/src/api/index.js | getTimeline | — |
+| frontend/src/components/Header.jsx | 타임라인 메뉴 | — |
+| frontend/src/App.jsx | /timeline 라우트 | — |
+| frontend/src/pages/TimelinePage.jsx/.css | 신규 | [TimelinePage] |
+
+### 테스트 계획
+- BE: 비로그인 정렬(인기·최신 반영 — 팔로워/좋아요/차트곡 가중 시나리오 구성해 순위 검증), 로그인 팔로잉 최우선(팔로잉 글이 인기 글보다 위), 페이징 중복 없음, kind 혼합 노출(피드+공지), 라우트 순서(GET /api/feeds/timeline 200 — feed_id 매칭 오류 없음), 비공개 피드 미노출.
+- FE: 무한 스크롤/작성자 헤더→채널 이동/비로그인 렌더, eslint 0.
+- 회귀: 채널 피드/커뮤니티 탭·단건 /{feed_id} 정상(라우트 순서 변경 영향), 기존 헤더 메뉴 동작.
+
+## v135 — 얼굴 인증(생체 대조) A안: AWS Rekognition + Face Liveness (mock 우선) — 2026-07-27
+
+### 요청 (사용자 확정)
+- 캐릭터시트 얼굴 사진이 본인인지 실시간 촬영과 대조. 쓸 때마다 매칭하되: 최초 실시간 촬영으로 얼굴정보 저장 → 이후엔 저장 얼굴 vs 업로드 사진 즉시 매칭 → 불일치 시 알럿+재촬영(재촬영 일치 시 저장 갱신, 불일치 시 이용불가). 본인인증 사용자만. 미성년자는 보호자 문자 동의(1회=영구, 안내 명시)+철회 버튼. A안(전부 AWS: CompareFaces 서울 + Face Liveness 도쿄) 채택. 키는 구현 후 사용자 발급 — **어댑터+mock 모드로 전체 플로우 우선 구축, FACE_VERIFY_ENABLED 기본 OFF**.
+
+### Plan verification findings (0단계)
+- 대조 대상: 캐릭터 생성 FE 는 사진을 generate-sheet(-async/-cartoon) formData 로 직접 첨부(api/index.js:366-393) — upload-original-photo(routes/character.py:149)는 FE 미사용. → **게이트는 generate-sheet(실사화 경로, 사진 첨부 시)에서 사진 SHA256 기준**.
+- 동의 체계: CONSENT_KEYS 7종(models/user.py:88, photo_ai 기능시점 동의 존재) — 생체는 민감정보라 **별도 키 face_biometric 신설**. user_consents append 테이블 존재.
+- 보호자 골격: guardian_consents 테이블(main.py:184, consent_type 컬럼 없음 → ALTER ADD consent_type DEFAULT 'signup' 필요), guardian_notify/verify mock 어댑터(v125) 재사용.
+- users.is_verified(v121) — 본인인증 게이트 재료. 실연동은 A-1 대기 → 테스트는 mock 승격.
+- **boto3 미설치** — venv 설치 필요(9005·9004 각각).
+- AWS Face Liveness 는 FE Amplify SDK 필수 — **키 발급 후 통합 단계로 분리**(리스트 A 등재). mock 모드 FE 는 getUserMedia 카메라 촬영으로 대체(교체 지점 주석).
+
+### 설계
+**설정(config.py/.env)**: FACE_VERIFY_ENABLED(false), AWS_FACE_ACCESS_KEY_ID/SECRET(빈값=mock), FACE_COMPARE_REGION=ap-northeast-2, FACE_LIVENESS_REGION=ap-northeast-1, FACE_MATCH_THRESHOLD=90, FACE_DATA_KEY(Fernet, 빈값 시 서버 기동 로그 경고+mock 전용), FACE_MOCK_FORCE(off|match|mismatch — 테스트용).
+**데이터**: PG face_biometrics(user_id UUID PK, object_name TEXT, created_at, updated_at) — 저장 얼굴(암호화 bin, MinIO faces/{user_id}.bin, Fernet). PG face_photo_verifications(user_id, photo_sha256 varchar(64), verified_at, PK(user_id, photo_sha256)) — 사진별 검증 통과 기록(영구, 사진 바뀌면 재검증). guardian_consents ADD COLUMN consent_type. user_consents 에 face_biometric 기록(철회는 agreed=false append).
+**services/face_verify_service.py** (어댑터, [face-verify] 로그): mode=aws(키 有)/mock. create_liveness_session()/get_liveness_result(session_id)→{ok, reference_image_bytes}(mock: FE 첨부 셀피 사용), compare_faces(a,b)→{match, similarity}(aws: boto3 rekognition CompareFaces threshold / mock: SHA256 동일=match, FACE_MOCK_FORCE 오버라이드). 저장/로드 시 Fernet 암복호화. **촬영 원본은 대조·저장 후 즉시 메모리 폐기, 디스크 저장 금지(암호화 저장분 제외)**. 로그에 이미지 바이트·해시 전체 미출력(앞 8자만).
+**routes/face_verify.py** (/api/face-verify): GET /status → {enabled, is_verified, consent_needed, guardian_needed, guardian_status, registered}; POST /consent(성인 본인, user_consents 기록); POST /guardian/request(미성년 — v125 어댑터로 문자 링크, consent_type='face_biometric', 안내문에 "1회 동의로 계속 이용" 명시)+보호자 동의 페이지 라우트 재사용(별도 consent_type 처리); POST /verify(multipart: photo 파일 + selfie 파일(mock, 최초/재촬영 시)) → 게이트 검사(enabled/is_verified/동의) 후: ①저장 얼굴 有 → compare(저장, photo): match → verifications 기록+{verified:true, method:'stored'} / mismatch → {verified:false, reason:'stored_mismatch', need_recapture:true} ②selfie 제공(최초·재촬영) → compare(selfie, photo): match → 저장 얼굴 갱신+기록+{verified:true, method:'live'} / mismatch → {verified:false, reason:'live_mismatch'}(이용불가); DELETE /(철회) → user_consents 철회 append+face_biometrics·MinIO·verifications 파기+{withdrawn:true}. 실 liveness 세션 API(POST /session)는 골격만(aws 모드 시 boto3 호출 코드 포함, FE Amplify 통합 전 미사용).
+**게이트(routes/character.py)**: generate-sheet/generate-sheet-async(실사화, 사진 첨부 시)에서 flag ON 이면 photo SHA256 → face_photo_verifications 없으면 403 {"error":"face_verification_required"}. cartoon 경로·flag OFF 는 불변.
+**FE**: constants/consentTexts.js 에 FACE_BIOMETRIC 동의 문구(planner 작성본 — 민감정보 5요소+국외이전(AWS 도쿄)+철회 안내, 아래 backend/FE 프롬프트에 전문 전달), FaceVerifyFlow 컴포넌트(동의→성인/미성년 분기(보호자 문자 발송+대기 폴링+"1회=영구" 안내)→카메라 촬영(getUserMedia, Amplify 교체 지점 주석)→verify→불일치 알럿·재촬영), 캐릭터 생성 진입부(실사화 탭) 게이트 연동(status 조회→필요 시 플로우 모달), Header 내 정보 설정에 "얼굴 인증" 행(상태+[동의 철회] confirm+파기 안내). api/index.js 함수 5종.
+**테스트(mock, flag ON)**: 성인 플로우(동의→셀피=사진 동일 해시 match→저장→2회차 stored 매칭→다른 사진 mismatch→재촬영 match 갱신/mismatch 차단), FACE_MOCK_FORCE 경로, 미성년 보호자 플로우(문자 mock 링크→동의→진행), 철회(파기 확인+재이용 시 동의부터), 게이트(flag OFF 불변/ON 시 미검증 403), 로그 민감정보 grep, 회귀(캐릭터 cartoon·기존 generate 흐름).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9005: services/face_verify_service.py·routes/face_verify.py 신규, config.py, main.py(마이그레이션+include), routes/character.py(게이트), requirements(boto3·cryptography) | BE | [face-verify] user 앞8자·photo_sha 앞8자 |
+| frontend: constants/consentTexts.js, components/FaceVerifyFlow.jsx, 캐릭터 생성 진입부, Header.jsx, api/index.js | FE | [FaceVerifyFlow] |
+
+## v136 — 얼굴 인증 라이브니스 통합 (AWS Face Liveness + Amplify + Cognito) — 2026-07-28
+
+### 요청 (사용자)
+- "고개 돌리기" 실물 검사(라이브니스)를 실제로 연결. 사용자가 AWS 콘솔 작업 완료: Cognito 자격 증명 풀 생성(도쿄, 게스트 전용, ID ap-northeast-1:3495607e-1914-4e2e-9c14-ebf396557002 — 공개 가능 값), 게스트 역할 aidol-liveness-guest 에 rekognition:StartFaceLivenessSession 만 허용(liveness-only 인라인 정책). 앱팀은 네이티브 — 웹 통합 후 세션 API+풀 ID 전달(리스트 등재됨).
+
+### Plan verification findings (0단계)
+- BE: services/face_verify_service.py 에 create_liveness_session/get_liveness_result(도쿄 boto3) 구현 완료·실검증됨(세션 생성 OK). routes/face_verify.py POST /session 존재. **verify 는 selfie 파일 경로만 있고 session_id 경로 없음** — 확장 필요.
+- FE: FaceVerifyFlow.jsx capture 단계가 getUserMedia — Amplify 교체 지점 주석 완비. status 응답에 mode 필드 있음(aws|mock) → 분기 재료.
+- Amplify: aws-amplify v6 + @aws-amplify/ui-react-liveness 필요(미설치). FaceLivenessDetector 는 sessionId+region+Cognito 게스트 자격으로 동작, onAnalysisComplete 에서 서버가 결과 조회(GetFaceLivenessSessionResults — 참조 이미지 포함) 하는 구조가 AWS 표준 패턴.
+- HTTPS(mkcert) 라 카메라 권한 OK.
+
+### 설계
+**BE (routes/face_verify.py + service, config)**
+- config: face_liveness_confidence_threshold(기본 80).
+- POST /verify 확장: form 에 session_id 추가(선택). session_id 제공 시(aws 모드): get_liveness_result(session_id) → confidence < threshold → {verified:false, reason:'liveness_failed'}(재시도 유도) / 통과 → reference_image_bytes 를 selfie 로 사용해 기존 대조 흐름 그대로. mock 모드는 기존 selfie 파일 경로 유지(개발 폴백). 로그 [face-verify] liveness confidence(값)·session 앞8자.
+**FE**
+- 패키지: aws-amplify, @aws-amplify/ui-react, @aws-amplify/ui-react-liveness 설치.
+- src/config/awsLiveness.js: {identityPoolId, region:'ap-northeast-1'} (공개 값 — 시크릿 아님) + Amplify.configure 게스트 설정(1회 초기화 모듈).
+- FaceVerifyFlow capture 단계 분기: status.mode==='aws' → ①createFaceSession(BE POST /session)→session_id ②FaceLivenessDetector(sessionId, region, 한국어 displayText, onAnalysisComplete→verifyFace(photo, {sessionId}), onError→재시도 안내) / mode==='mock' → 기존 getUserMedia 유지. reason 처리 추가: liveness_failed → "실물 확인 실패, 다시 시도" 재검사.
+- api/index.js: verifyFace 확장(sessionId 파라미터), createFaceSession 함수.
+
+### 테스트 계획
+- BE: mock 모드 기존 selfie 경로 회귀(전체 사이클), aws 모드 session_id 경로 — 실 라이브니스는 사람 필요 → 코드 검증+가짜 session_id 로 에러 경로(존재하지 않는 세션 → 정리된 에러), threshold 분기 단위 검증(get_liveness_result monkeypatch). 게이트·철회 회귀.
+- FE: 번들에 Amplify 통합 transform 확인, mode 분기 코드, eslint. 실 "고개 돌리기" E2E 는 사용자 실기기 최종 확인(스위치 임시 ON 세팅 후 안내).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9005: routes/face_verify.py·services/face_verify_service.py·config.py | session_id 검증 경로+threshold | [face-verify] session 앞8자 |
+| frontend: package.json, src/config/awsLiveness.js(신규), FaceVerifyFlow.jsx, api/index.js | Amplify 통합 | [FaceVerifyFlow] |
+
+## v137 — 콘텐츠 신뢰 6종 세트 (확약·고지·신고/어드민·필터·워터마크·MAIDOL 브랜딩) — 2026-07-28
+
+### 요청 (사용자 확정 — 그림체 초상권 조사 후속)
+①사진 업로드 확약 체크 ②원본 사진 처리 고지(비학습) ③신고→어드민 삭제 시스템(사용자관리 확장) ④성적 필터(제공사 기본 필터 확보 확인 — 추가 개발 없음, 신고로 보완) ⑤비가시 워터마크+플랫폼 내 "AI 생성" 뱃지 ⑥외부로 나가는 영상에 가시 워터마크 **"MAIDOL · AI 생성"** (브랜드=MAIDOL — AIDOL 상표 선점).
+
+### Plan verification findings (0단계)
+- 어드민 인프라 존재: routes/admin.py(get_admin_user, _log_admin_action 감사 로그, users ban/role, tracks 목록), FE pages/admin/{AdminDashboardPage,AdminUsersPage,AdminTracksPage}. 신고 큐는 신규 추가.
+- 원본 얼굴 사진: character.py 가 MinIO 영구 보관(재생성·MV 자산 용도) — "즉시 삭제" 불가(기능 파괴). → **정직 고지("생성·재생성 용도로만 보관, AI 학습 미사용, 캐릭터 삭제 시 함께 삭제") + 캐릭터 삭제 시 원본 동반 삭제 보장**으로 설계 조정.
+- 성적 필터: 이미지 서비스 3종에 safety 완화 설정 없음 — OpenAI/Google 기본 차단 작동(코드 확인 완료). 추가 작업 없음.
+- 공유영상 캐시 share/v2/{id}[suffix].mp4 — 워터마크 추가 시 캐시 버전 v3 승격 필요. 자막 폰트 NanumGothic 번들(app/assets/fonts) — 워터마크 drawtext 재사용. MV 는 최종 concat 산출물에 워터마크 pass.
+
+### 설계
+**③ 신고 시스템 (BE-1)**
+- PG reports: id/reporter_id/target_type(track|feed|comment)/target_id/reason_code(portrait|copyright|sexual|abuse|other)/reason_text(≤500)/status(pending|actioned|dismissed)/action(blind|delete|null)/created_at/handled_at/handled_by + (reporter,target,pending) 중복 방지.
+- POST /api/reports(auth): 대상 실존 검증, 중복 409, 응답 {report_id}. 로그 [report].
+- 어드민: GET /api/admin/reports?status=&page= (대상 스냅샷 하이드레이션 — 트랙: 제목·커버 URL·업로더 / 피드: 텍스트 발췌·작성자 / 댓글: 텍스트·작성자), POST /api/admin/reports/{id}/action {action: blind|delete|dismiss}: track blind→is_public=false+report_blinded=true(ES 색인 제거 포함), feed blind→is_public=false+report_blinded, comment delete→삭제+comment_count 감소, dismiss→기각. _log_admin_action 기록. **대상자 통보**: 소유자가 자기 블라인드 콘텐츠 조회 시 "신고 처리로 비공개되었습니다" 사유 노출(내 트랙/내 피드) — 별도 알림 인프라는 후속 등재.
+- report_blinded 콘텐츠는 소유자가 재공개 불가(공개 전환 시 400 "신고 처리로 제한된 콘텐츠").
+**⑥⑤② 워터마크·고지 (BE-2)**
+- 가시: share_video.py 3포맷 ffmpeg drawtext "MAIDOL · AI 생성"(NanumGothic, 흰색 반투명 0.6+그림자, 우하단 — kakao 포함, 자막과 영역 충돌 없게 마진), **캐시 share/v2→share/v3** (share_object_name 변경, 기존 v2 객체 삭제). MV: 최종 concat 후 동일 drawtext 1pass.
+- 비가시: 생성 이미지 저장 시(캐릭터/커버 공용 헬퍼) PNG/JPEG 메타데이터 "AI-Generated|MAIDOL" 삽입(PIL), 영상 ffmpeg -metadata comment 동일.
+- ②: 캐릭터 삭제 시 original photo MinIO 동반 삭제 확인·미비 시 보완.
+**①⑤③ FE**
+- MyMusicPage 캐릭터 생성(실사화·가상화 공통) 사진 영역: 확약 체크박스("위 사진은 본인이거나 사진 속 인물의 동의를 받았음을 확인합니다") 미체크 시 생성 비활성 + 보관·비학습 고지문 소형 표기. BE 강제는 하지 않음(앱팀 9004 호환) — form 에 portrait_confirmed 전달·BE 로그만.
+- 신고 UI: 공용 ReportModal(사유 선택+텍스트) — PlayerPage(곡)·FeedPostCard ⋯메뉴(피드)·댓글 행(신고) 3곳. api reportContent.
+- AdminReportsPage 신규(+App 라우트+어드민 내비): 미처리 큐, 대상 미리보기(커버 이미지/텍스트 발췌), [블라인드][삭제(댓글)][기각], 처리 이력 필터.
+- "AI 생성" 뱃지: PlayerPage 곡 상세 커버 영역 소형 뱃지(전 곡 공통 — 플랫폼 특성 고지).
+- 내 트랙/내 피드에서 report_blinded 항목에 "신고 처리로 비공개됨" 표시.
+
+### 변경 매트릭스
+| 담당 | 파일 | 추적자 |
+|---|---|---|
+| BE-1 | routes/reports.py(신규)/admin.py/main.py(테이블+include)/tracks.py·feeds.py(blind 반영 최소) | [report]/[admin-report] |
+| BE-2 | services/share_video.py(v3+drawtext)/mv_generator.py(최종 pass)/이미지 저장 헬퍼/character.py 삭제 연계 | [share-video]/[mv]/[watermark] |
+| FE | api/index.js/components/ReportModal/pages/admin/AdminReportsPage/PlayerPage/FeedPostCard/MyMusicPage/App.jsx | [ReportModal]/[AdminReports] |
+
+### 테스트 계획 (tester)
+- 신고: 접수(3종 대상)→중복 409→어드민 큐 하이드레이션→블라인드(공개 목록·타임라인·검색 제외, 소유자에겐 사유 표시, 재공개 400)→댓글 삭제 카운트→기각→감사 로그. 권한(일반 유저 admin API 403).
+- 워터마크: share v3 3포맷 프레임 추출로 "MAIDOL · AI 생성" 픽셀 확인+자막 충돌 없음, 기존 v2 캐시 삭제 확인, MV 최종본(기존 MV 재인코딩 1건으로 갈음 가능), 이미지 메타데이터 삽입 확인(PIL 재독). 다운로드 4옵션 회귀.
+- FE: 확약 체크 미체크 시 비활성, 신고 모달 3곳, 어드민 페이지, 뱃지, eslint 0.
+- 회귀: 공유/다운로드(v3 재생성 정상), 캐릭터 생성·삭제(원본 동반 삭제), 피드/타임라인/차트 기존 흐름.
+
+## v138 — 신고 집행 패키지: 증거 스냅샷·확정 삭제·복원·인물 수색 몰수·직링크 404 — 2026-07-28
+
+### 요청 (사용자 확정 — 2차 조사 반영)
+A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + 어드민 양면 뷰(신고 자료 vs 최근 생성물) + 자진 삭제 시 절차 계속("게시자 삭제로 종결"+계정 위반 기록 존속). B(확정 후): [확정 삭제](파생물 파기, 증거만 격리 보존) + 도용 원본 사진 해시 블랙리스트(생성 입력 차단 — 확정 후에만 발동) + [복원] + **인물 기반 일괄 수색·몰수**(같은 인물이면 다른 사진 파일도 얼굴 대조로 검출 → 족보 묶음 → 선택 일괄 삭제). C: 비공개·블라인드 곡 직링크 404, 성적 사유 긴급 표시. **다음 단계(예약됨)**: 소명 제출 화면·스트라이크 자동 제재·신고자 통지·약관 조항.
+
+### Plan verification findings (0단계)
+- characters 컬렉션: **user_id 당 1문서 upsert**(character.py:206,1351) — 과거 시트는 DB 미보존(MinIO 파일은 잔존 가능). original_photo_object_name 보관.
+- 커버↔캐릭터 계보: cover 생성 시 character_object_name 을 받지만 트랙에 저장되는 연결은 mv_job 스냅샷 경유(tracks.py:800-865 cover_character) — 전 곡 커버가 아님. → **수색은 계보 의존 대신 "사용자의 전 트랙 커버 이미지 + 캐릭터 원본/시트에 직접 얼굴 대조"** (Rekognition CompareFaces 재사용, 그림체 커버는 얼굴 미검출 스킵 — 한계 명시).
+- v141 신고 시스템: reports 테이블(status/action), admin blind/dismiss(+댓글 delete), report_blinded. 트랙 삭제 로직은 tracks.py DELETE 라우트에 존재(재사용).
+- 직링크 갭: get_track(:777)·stream(:1274) — is_public/report_blinded 검사 없음, 인증 의존성도 없음(auth optional 추가 필요).
+- 얼굴 대조: face_verify_service.compare_faces(aws mode 유효 — 키 연동됨).
+
+### 설계 (담당 분리 — admin.py 는 BE-1 전유, BE-2 는 신규 admin_moderation.py)
+**BE-1 (선행): 절차·증거·집행 기반**
+- reports 확장 컬럼: evidence JSONB(스냅샷 항목 [{kind, object_name, sha256}]), resolution VARCHAR(30)(removed_by_user 등), prev_state JSONB(블라인드 전 is_public — 복원용). PG user_violations(id, user_id, report_id, kind, created_at) — 위반 기록(다음 단계 스트라이크 데이터). PG face_source_blacklist(sha256 PK, report_id, created_at) — 테이블만 생성(소비는 BE-2).
+- **증거 스냅샷**: 신고 접수(POST /reports) 시 자동 — track: 커버 이미지 사본+업로더 characters 의 원본 사진·시트 사본 / feed·comment: 텍스트 JSON 사본 → MinIO evidence/{report_id}/ (+sha256), reports.evidence 기록. evidence/ 프록시·presign 차단(faces/ 패턴 동일). 실패해도 신고 접수는 성공(warning).
+- admin 액션 확장: blind(기존+prev_state 저장) / **confirm_delete**(트랙: 기존 삭제 로직 재사용 전체 파기+ES+캐시, 피드: 삭제. user_violations 기록 + 대상 원본 사진 sha256 을 face_source_blacklist 등록) / **restore**(블라인드 해제 — prev_state 복원, ES 재색인) / dismiss. 대상이 이미 자진 삭제된 경우: confirm_delete·dismiss 판정 가능(스냅샷 근거) → resolution='removed_by_user'+위반 기록(기존 "이미 삭제 → 404" 동작 대체).
+- GET /api/admin/reports 큐: sexual 사유 urgent:true+상단 정렬. GET /api/admin/users/{id}/recent-content(양면 뷰 우측 — 최근 트랙 커버·현재 캐릭터, 20건). GET /api/admin/reports/{id}/evidence/{idx}(어드민 전용 증거 이미지 프록시).
+- **직링크 404**: get_track·stream 에 auth optional 추가 — is_public false 또는 report_blinded 면 소유자 외 404(공개 곡·비로그인 열람은 불변). 캐시 경로 포함 양쪽 가드.
+**BE-2 (BE-1 후): 인물 수색·몰수·입력 차단**
+- services/face_search_service.py: search_user_by_face(report_id) — 기준 얼굴=evidence 의 원본 사진(없으면 커버) → 대상 수집: 해당 사용자 characters(원본·시트)+전 트랙 커버(공개+비공개) → compare_faces 순차(간격 조절, 얼굴 미검출 스킵) → [{type: track|character, id, similarity, thumbnail}] threshold 90. 비용 로그(호출 수).
+- routes/admin_moderation.py(/api/admin/moderation): POST /face-search {report_id} → 결과(동기, 대상 많으면 상한 200+로그) / POST /purge {report_id, targets:[{type,id}]} → 일괄 몰수(트랙 파기 로직 재사용, 캐릭터 삭제(원본 포함), user_violations·감사 로그, 원본 사진들 sha256 블랙리스트 등록). main.py include.
+- **생성 입력 차단**: character generate-sheet 4종 진입 시 업로드 사진 sha256 → face_source_blacklist 대조 → 403 {"error":"blocked_source_photo","message":"이 사진은 신고 처리에 따라 사용할 수 없습니다."} (확정 등록분만이므로 무기화 불가).
+**FE**
+- AdminReportsPage 확장: 긴급(성적) 뱃지·상단 정렬, 상세 펼침 양면 뷰(左 증거 스냅샷 이미지/텍스트 — 어드민 증거 프록시, 右 recent-content 그리드), 액션 버튼 [블라인드][복원][확정 삭제(2중 confirm)][기각], **[인물 수색]** 버튼 → 결과 모달(유사도·썸네일·체크박스·전체선택) → [선택 몰수(2중 confirm)]. api 함수 5종 추가.
+
+### 변경 매트릭스
+| 담당 | 파일 | 추적자 |
+|---|---|---|
+| BE-1 | reports.py/admin.py/main.py/tracks.py(직링크·삭제로직 함수화)/feeds.py 최소 | [report]/[admin-report]/[evidence] |
+| BE-2 | services/face_search_service.py·routes/admin_moderation.py 신규, character.py(차단 훅), main.py(include) | [face-search]/[moderation] |
+| FE | AdminReportsPage/api/index.js | [AdminReports] |
+
+### 테스트 계획
+- 스냅샷: 신고 접수 → evidence 객체·해시 생성 → 가해자 자진 삭제 → 스냅샷 잔존 → confirm 판정 가능(resolution=removed_by_user, user_violations 기록). evidence/ 프록시 차단.
+- 액션: blind→restore 원상복구(공개 재노출·ES), confirm_delete 전체 파기(트랙 doc·MinIO·ES·임베딩·share 캐시)+블랙리스트 등록, 등록된 sha256 으로 캐릭터 생성 시도 403, urgent 정렬.
+- 수색: 시나리오 — 같은 인물 사진 2장(별도 파일)으로 캐릭터→커버→곡 2세트+무관 인물 1세트 구성(실 이미지 필요 — AI 생성 얼굴 2인 사용) → face-search 가 2세트만 검출(무관 제외) → purge 일괄 삭제 확인. aws 호출 수·로그.
+- 직링크: 공개 곡 비로그인 200(회귀 핵심)/비공개 곡 소유자 200·타인 404/블라인드 동일/스트림 동일/플레이어 재생 회귀.
+- FE: 양면 뷰·수색 모달·2중 confirm, eslint 0. 회귀: 차트/타임라인/피드/공유영상.
+
+## v139 — 신고 후속: 소명 제출·스트라이크 자동 제재·신고자 통지·약관 조항 — 2026-07-29
+
+### 요청 (v138 예약분, 사용자 확정 "구현진행해")
+①블라인드된 콘텐츠 소유자의 소명 제출 화면 ②스트라이크 자동 제재(user_violations 기반: 1건 경고→2건 생성 기능 7일 제한→3건 계정 정지) ③신고자 처리 결과 확인(통지 — 알림 인프라 없으므로 "내 신고 내역" 조회 방식) ④약관에 신고·제재 조항 추가. +v142 Low(purge blacklisted 카운트 표기).
+
+### Plan verification findings (0단계)
+- is_banned: 로그인 차단 작동(auth.py:238) — 3스트라이크 정지에 재사용. 어드민 ban API 존재.
+- 재동의 강제 로직 없음 — 약관 조항 추가+CONSENT_VERSION 갱신은 신규 가입자부터 적용(기존 유저 재동의 팝업은 후속 검토 — 리스트 등재).
+- user_violations(v138): user_id/report_id/kind — 스트라이크 카운트 원천. 위반 기록 지점: admin confirm_delete·moderation purge 2곳.
+- 생성 계열 진입점: routes/generate.py(곡), character.py 4종, upload.py generate-cover·generate-mv 계열.
+- 소유자용 신고 노출: 내 트랙/피드에 report_blinded 라벨(v141) — 여기에 [소명하기] 연결. 단 소유자는 report_id 를 모름 → 내 피해 신고 조회 API 필요.
+
+### 설계
+**BE**
+- PG: report_appeals(id, report_id UUID UNIQUE, user_id, text VARCHAR(2000), created_at) + users ADD restricted_until TIMESTAMPTZ.
+- 스트라이크 헬퍼 services/strike_service.py `apply_strike(conn, user_id, report_id)` — user_violations INSERT 후 count 조회 → 1: 기록만 / 2: restricted_until=now+7일 / ≥3: is_banned=true·ban_reason='커뮤니티 가이드 위반 누적(자동)' + banned_at. 호출 지점: admin confirm_delete·moderation purge(기존 INSERT 대체). [strike] 로그.
+- 생성 제한 게이트: 공용 의존성/헬퍼 `check_generation_allowed(conn, user_id)` — restricted_until 미래면 403 {"error":"generation_restricted","until":iso,"message":"위반 누적으로 생성 기능이 제한되었습니다 (해제: ...)"}: 곡 생성(generate.py)·캐릭터 4종·커버·MV 진입부 적용.
+- GET /api/auth/me 확장: strikes {count, restricted_until, is_banned} 첨부(별칭 필드 — 기존 응답 불변 유지).
+- 소명: GET /api/reports/my-affected(내 콘텐츠 대상 actioned·blind 신고: report_id, target_type, 대상 요약, action, resolution, appeal 유무, handled_at) / POST /api/reports/{id}/appeal {text 1~2000}(소유자만·blind 상태만·1회 — 중복 409) / 어드민 큐 응답에 appeal {text, created_at} 포함(있으면).
+- 신고자: GET /api/reports/my(내가 접수한 신고: 대상 요약·status·action·resolution·handled_at — reason_text 포함, 타인 정보 최소화).
+- v142 Low: purge 응답 blacklisted 를 실제 신규 등록 수로, 몰수 0건이면 블랙리스트 등록 스킵.
+**FE**
+- 소명: MyMusicPage 내 트랙·FeedPostCard(내 채널) blinded 라벨 옆 [소명하기] → AppealModal(공용: my-affected 에서 해당 대상 신고 찾아 표시+소명 텍스트 제출, 제출됨 상태 표시). 
+- 내 신고 내역: Header 내 정보 설정 모달에 "내 신고 내역" 행 → 펼침 목록(대상 요약·상태 뱃지: 처리 중/블라인드/삭제됨/기각/복원). 신고 모달 성공 문구에 "처리 결과는 [내 정보 설정 > 내 신고 내역]에서 확인" 추가.
+- 스트라이크 표시: Header — me.strikes 기반: count≥1 배너("커뮤니티 가이드 위반 1회 — 반복 시 이용 제한"), restricted_until 미래면 배너+생성 버튼들의 403 generation_restricted 처리(알럿 "생성 기능 제한 중, 해제일 표시"). AdminReportsPage: appeal 있으면 상세에 "소유자 소명" 박스 표시.
+- **약관 조항(planner 작성 — consentTexts.js terms 에 신설 조 추가, CONSENT_VERSION '2026-07-29.v1' 로 갱신)**: 아래 전문을 FE 프롬프트로 전달.
+### 테스트 계획
+- 스트라이크 3연속(위반 3건 계정): 1건 후 me.strikes=1/제한 없음 → 2건 후 restricted_until+생성 4계열 403(곡·캐릭터·커버·MV)+제한 만료 시뮬(SQL 과거로) 후 통과 → 3건 후 로그인 차단(is_banned). 위반 없는 계정 무영향.
+- 소명: blinded 소유자 my-affected 조회→제출→중복 409→어드민 큐 appeal 표시→restore 후 상태. 비소유자 403.
+- 신고자: my 목록 상태 변화(pending→actioned/기각), 비로그인 401.
+- 회귀: 정상 계정 생성 흐름(402 포인트 도달), 로그인, 신고·블라인드·수색·몰수 v142 흐름 불변, eslint 0.
+
+---
+
+## v144 — 2026-07-30 — E2E 검증 세션 + 밴 세션 무효화
+
+### Plan verification findings
+- `app/auth.py:13 get_current_user` — JWT(서명·만료) + Redis `session:{user_id}` 존재만 검증, `is_banned` 재확인 없음. 밴은 `routes/auth.py:238` 로그인 시점에만 검사 → 활성 세션 축출 부재 확인.
+- `app/services/strike_service.py apply_strike` — count>=3 시 users.is_banned=TRUE 설정하나 세션 무효화 없음. count==2 시 restricted_until=+7d. 위반은 (user_id, report_id) 멱등.
+- 세션 삭제 선례: `routes/admin.py:317`, 로그아웃 `routes/auth.py:838/999` 모두 `redis.delete(f"session:{id}")`.
+
+### 변경
+- strike_service.apply_strike: ban 분기에 `get_redis().delete(f"session:{user_id}")` 추가(best-effort). 9005 선구현 → 9004 파일 미러.
+- Header.css: header__strike-banner 위치 수정(absolute/top:100%, 헤더 하단 전체폭).
+
+### 후속(리스트 등재)
+- 허위·악의적 신고자 제재 강화(신고자 스트라이크) — 트래픽/악용 관측 시 도입.
+- get_current_user 밴 재확인(방어 두께) — 세션 삭제로 정석 요건은 충족, 선택적.
+
+---
+
+## v145 — 2026-07-30 — 어드민 제재 컨트롤 (생성 제한 해제 + 위반 기록 초기화) [AIDOL-SanctionSquad]
+
+### 원본 사용자 요청
+"2회경고받은것 뿐만아니라 한번이라도 경고받은것도 없애줄수있도록 어드민이 컨트롤할수있어야한다고 생각해. 그부분까지 고려해서 구현진행해줘."
+
+### Plan verification findings (Phase 0, 현재 코드 기준)
+- `admin.py:285 PUT /users/{id}/ban` — is_banned 토글만. 해제 시 is_banned/banned_at/ban_reason만 NULL, **restricted_until 미해제**(비대칭 구멍). ban 시 Redis 세션 삭제(v144).
+- `admin.py:133 GET /users` 목록 / `admin.py:202 GET /users/{id}` 상세 — is_banned·ban_reason만 노출, **violation_count·restricted_until 미노출** → 어드민이 제한/경고 상태를 볼 수 없음.
+- 생성 제한(`restricted_until`)·위반 기록(`user_violations`)을 해제/삭제하는 어드민 엔드포인트 **부재**. 유일 세팅처는 `strike_service.apply_strike`(count==2→+7d, ≥3→ban). 2회 제한자·1회 경고자는 어드민 구제 수단 전무(7일 자동 만료만).
+- `auth.py:276 GET /me` strikes.count = `SELECT COUNT(*) FROM user_violations WHERE user_id=$1`. 어드민 표시도 이 정의와 일치시켜야 헤더 배너와 동기화.
+- `BAN_REASON_AUTO = "커뮤니티 가이드 위반 누적(자동)"` (strike_service) — 자동밴 식별자.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적 로그 |
+|---|---|---|
+| backend/app/routes/admin.py | GET /users·/users/{id}에 violation_count·restricted_until 추가; 신규 POST /users/{id}/restriction/lift(제한만 해제, 이력 보존); 신규 POST /users/{id}/strikes/reset(위반 전체 삭제+제한 해제+자동밴만 해제) | logger.info "[admin.sanction] lift/reset user=.. count=.." |
+| backend_9004 미러 | admin.py 파일 복사 | — |
+| frontend/src/api/index.js | liftUserRestriction(id), resetUserStrikes(id) | — |
+| frontend/src/pages/admin/AdminUsersPage.jsx | 상태열 위반N/생성제한 배지 + [제한 해제]·[위반 초기화] 버튼·핸들러 | console [AdminUsersPage] |
+
+### 정책
+- restriction/lift = 활성 제재만 해제, 위반 이력은 감사 목적 보존(업계 정석).
+- strikes/reset = 전체 초기화(배너 0). 자동밴(ban_reason=BAN_REASON_AUTO)만 함께 해제, 수동 밴은 유지(오심 방지).
+
+### 테스트 항목
+- 제한자(count=2, restricted_until 미래)에 restriction/lift → 즉시 생성 가능, 배너 "위반 2회" 유지.
+- 경고자(count=1)에 strikes/reset → 배너 사라짐, /me strikes.count=0.
+- 자동밴(count=3)에 strikes/reset → 밴·제한·위반 전부 해제. 수동밴은 reset 후에도 is_banned 유지.
+- 회귀: 기존 ban/unban·role 변경·목록 검색/페이징 불변, GET /me 기존 키 불변.
+
+---
+
+## v146 — 2026-07-30 — 이용약관·개인정보처리방침 독립 페이지 + 정식 처리방침 작성 [MAIDOL-LegalDocsSquad]
+
+### 원본 사용자 요청
+"이용약관·개인정보처리방침 페이지 작성 진행. 웹검색으로 명확히 조사해가며 최대한 정확하게. 법률검토 안 받고 진행해도 될 만큼 꼼꼼히."
+
+### Plan verification findings (Phase 0 — 실제 코드 데이터 흐름, 처리방침 정확성의 근거)
+- 현재 상태: standalone /terms·/privacy 페이지/라우트 **없음**. 푸터 링크 `#`. 법적 문구는 `consentTexts.js`(가입 동의 7종)만 있고 `ConsentList`/`ConsentGateModal`로 가입·기능게이트에서만 노출. → 정식 개인정보처리방침(법 제30조 문서)은 부재.
+- **수집 개인정보 항목**(users 테이블 실측): email, password_hash, nickname, birth_date/birth_year, gender, nationality(내외국인), provider/provider_user_id(소셜), profile_image, bio, region, sns_links, company_name(비즈니스), is_verified/verify_provider/verified_at(본인인증), account_status. + 생성기능 이용 시 업로드 사진(얼굴 가능)·음성·프롬프트. + 생체정보(얼굴 특징정보, 민감정보). + 자동수집(이용기록: 재생·위시·광고 impression/click, anon_id).
+- **국외이전 실제 대상**(코드·consentTexts 교차확인): Google LLC(미국), OpenAI L.L.C.(미국), SunoAPI.org(미국), Kuaishou(중국), fal.ai(미국), xAI(미국) — 생성 입력데이터. Amazon Web Services(일본 도쿄) — 얼굴 라이브니스 생체정보 대조.
+- **국내 수탁**: 실제 없음. SMS(guardian_notify.py)는 **mock**(실발송사 미연동), 스토리지 자체 MinIO, **결제 PG 없음**(포인트=Google AdMob 리워드 SSV 보상). → 존재하지 않는 수탁사 기재 금지.
+- **본인인증**: 별도 기관(NICE/PASS) 아님. Naver/Kakao 소셜로그인(VERIFIED_PROVIDERS)으로 birth_date/gender·인증상태 제공받음. Google은 로그인+AI+AdMob.
+- **파기**: 탈퇴 시 즉시 파기(법령 보존의무분 분리보관), 얼굴 촬영원본 대조 후 즉시 파기, 생체정보 철회·탈퇴 시 파기.
+- **자동수집장치**: localStorage 익명ID(anon_id)+이용기록 → k-익명성 비식별 통계, 만14세 미만 이용기록 광고분석 제외. (전통적 브라우저 쿠키보다 localStorage/JWT 기반)
+- 보호책임자: 김진주 실장 / 02-2272-8952 / kimpearl@lotusai.co.kr.
+- 프론트 구조: App.jsx `<Routes>` 에 public route 추가 가능, Header/Footer 전역 렌더(admin 제외) → 새 페이지는 콘텐츠만. Footer 링크 `#` → react-router Link 로 교체.
+
+### 계획 (구현 매트릭스) — ※ 법정 항목/문구는 병렬 웹리서치 4건 결과 확정 후 확정
+| 파일 | 변경 |
+|---|---|
+| frontend/src/constants/legalTexts.js (신규) | 이용약관·개인정보처리방침 전문(구조화 데이터). 리서치 기반 법정 필수항목 전부 포함 |
+| frontend/src/pages/TermsPage.jsx + PrivacyPage.jsx (신규) | 전문 렌더(목차·섹션). 접근성·반응형 |
+| frontend/src/pages/LegalPage.css (신규) | 공용 스타일 |
+| frontend/src/App.jsx | /terms, /privacy 라우트 + import |
+| frontend/src/components/Footer.jsx | 링크 `#`→`/terms`·`/privacy` (react-router Link) |
+
+- 백엔드 변경 없음(정적 문서). API 클라이언트 불필요.
+- 시행일: 2026-07-30 (서비스 오픈 전 초안, 시행일 명시).
+
+### 리서치 병렬 4건 (웹검색 근거 확보 중)
+1) 처리방침 법정 필수항목·표준 목차 2) 위탁·국외이전 기재요건 3) 정보주체 권리·권익침해 구제기관 최신 연락처·안전성 조치 4) 이용약관 표준조항·유료/환불/AI 특칙.
+
+### 테스트 항목
+- /terms·/privacy 라우트 렌더(비로그인 접근), 푸터 링크 이동, Header/Footer 정상, 반응형(모바일 가로 스크롤 없음), 법정 필수항목 누락 체크리스트, 회귀(기존 라우트·푸터 mailto 고객센터 불변).
+
+## v147 — 2026-07-30 — 아이템 스토어 5단계 계층 드릴다운 (플랫폼→브랜드→성별→제품→색상) [MAIDOL-ItemStoreSquad]
+
+### 요청 원문
+> 아이템스토어가 지금 그냥 브랜드명으로 구분돼서 그 아래에 아이템이 나오게 돼있어. 근데 무신사는 플랫폼명이고 그 안에 여러 브랜드가 들어가있는거잖아. 그래서 제일 최상단을 플랫폼명, 그 하위로 브랜드명, 그 아래 성별, 그아래 제품명, 그 아래 색깔로 구분된 아이템이미지. 상의슬롯 누르면 이렇게 구분돼 나와서 사용자가 선택. (공용은 남/여 양쪽 노출, 성별표시 "공용" / 장소는 계층 제외 / 기존6개는 실제 제품페이지 조사해 백필)
+
+### Plan verification findings (현재 코드 사실)
+- **데이터 모델** `ad_items` (Mongo): `user_id, name, image_object_name, product_url, category(상의/하의/신발/장소), gender(남성용/여성용/공용), is_active`. → **`brand`, `product_name`, `color` 없음**. (backend_9005/app/routes/business.py:190~)
+- **드릴다운 UI**: `ItemSelectModal.jsx`(주 사용, MyMusicPage 캐릭터 흐름 모달) + `ItemSelectPage.jsx`(standalone) 둘 다 `advertiser_nickname` 1단계 그룹핑 후 평면 나열. gender 는 저장되나 미사용.
+- **등록 폼**: `BusinessPage.jsx` — 아이템명(name)/카테고리/성별/이미지/제품URL 만 입력. (라인 234~305)
+- **API**: `getActiveAds(category)` → `/business/ads/active` (doc 통째 반환 → 신규필드 저장만 하면 자동 노출). create=`POST /business/ads`(name required), update=`PUT /business/ads/{id}`. `createAdItem/updateAdItem` 는 FormData 그대로 전달 → **시그니처 변경 불필요**.
+- **미러**: backend_9004/app/routes/business.py 존재 → 동일 반영 필요.
+- **원격로깅**: frontend/src/utils/remoteLogger.js 존재 → console 로그 자동 백엔드 전송.
+- **관측**: 구찌 계정 닉네임이 `gucci`(소문자) → 플랫폼 라벨 그대로 노출됨(계정명 변경은 범위 밖, 관측만).
+
+### 데이터 백필 (기존 6건, 실제 제품페이지 조사 완료)
+플랫폼=advertiser_nickname (무신사 / gucci). gender 는 기존값 유지.
+
+| _id | 플랫폼 | brand | product_name | color | cat/gender |
+|---|---|---|---|---|---|
+| 69d9e45c8132210c17d7d2c6 | 무신사 | 애드호크(ADHOC) | 베이직 쮸리 후드집업 | 오프화이트 | 상의/공용 |
+| 69d9e671bebf6144c3203039 | 무신사 | 리복(Reebok) | 클럽 C 85 빈티지 | 크림 | 신발/여성용 |
+| 69d9e686bebf6144c320303a | 무신사 | 포르테나(PORTERNA) | 립드 디스트레스드 울 니트 팬츠 | 블랙 | 하의/여성용 |
+| 69da23ccc10ecd45c3f50bb2 | gucci | 구찌(GUCCI) | 비토리아 T-스트랩 | 베이지 | 신발/여성용 |
+| 69da23f2c10ecd45c3f50bb3 | gucci | 구찌(GUCCI) | 자수 울 트위드 라메 쇼츠 | 블랙 | 하의/여성용 |
+| 69da2407c10ecd45c3f50bb4 | gucci | 구찌(GUCCI) | 프린트 실크 트윌 셔츠 | 블랙 | 상의/여성용 |
+
+### 변경 매트릭스
+| 파일 | 작업 | 추적자/로그 |
+|---|---|---|
+| backend_9005/app/routes/business.py | create/update 에 brand·product_name·color Form 필드 추가(옵셔널). serialize 자동 노출. name 은 create 시 required 유지(폼에서 product_name 기반 자동합성 전송). | logger `[business] create/update item=... brand=... color=...` |
+| backend_9004/.../business.py | 위와 동일 미러 | 동일 |
+| (백필) 1회성 스크립트 | 위 표 6건 brand/product_name/color set | `[backfill] item=... set brand/product/color` |
+| frontend/src/pages/BusinessPage.jsx | 폼: 브랜드/제품명/색상 입력 추가. 제출 시 name=`{product_name} - {color}` 자동합성 후 FormData append(brand,product_name,color,name). 목록 테이블에 브랜드/색상 열 추가. | `[BusinessPage]` prefix, DEV 가드 |
+| frontend/src/components/ItemSelectModal.jsx | '전체' 탭을 5단계 드릴다운으로 교체. 위시탭 불변. | `[ItemSelectModal]` |
+| frontend/src/pages/ItemSelectPage.jsx | 동일 드릴다운으로 교체(일관성). | `[ItemSelectPage]` |
+| frontend/src/api/index.js | 시그니처 변경 없음(FormData passthrough). 확인만. | — |
+
+### 드릴다운 사양 (프론트)
+- 카테고리는 진입 시 이미 고정(상의/하의/신발). 그 안에서 단계 진행:
+  1. **플랫폼** = `advertiser_nickname || '기타'`
+  2. **브랜드** = `brand || advertiser_nickname`
+  3. **성별** = 버튼 남/여. 매핑: 남성용→남, 여성용→여, **공용→남·여 양쪽 모두**. 카드/뱃지에 원 gender('공용' 등) 표시.
+  4. **제품** = `product_name || name`
+  5. **색상(리프)** = 제품 하위 아이템들. 라벨 `color || '기본'` + 이미지. 클릭=선택(기존 handleSelect 로직·impression·click 그대로). '쇼핑몰에서 보기' 링크 유지.
+- 상단 브레드크럼 + 뒤로가기(상위 단계로). 각 단계 항목 0개면 상위로. 리프에서만 선택 동작.
+- **장소** 카테고리는 드릴다운 대상 아님(요청). 상의/하의/신발만.
+
+### 회귀 테스트 항목
+- 위시리스트 탭(모달) 기존 동작 불변, 광고 impression/click/wishlist 기록 정상, 대시보드/스타/인사이트(item.name 참조) 정상, 캐릭터 착장 선택→MV 스냅샷 정상, 장소 아이템 흐름 불변.
+
+## v148 — 2026-07-30 — 아이템 스토어 실데이터 대량 등록 (6플랫폼 449건 + 고객사 계정 5개) [MAIDOL-ItemSeedSquad]
+
+### 요청
+`item_images/` 크롤링 데이터(6플랫폼 CSV+이미지)를 아이템 스토어에 등록. 플랫폼별 고객사 계정 생성 후 그 밑에 등록. 이미지 캐스케이드(로컬→CSV 이미지URL 다운로드→직접조사→스킵). 기존 6개 테스트 아이템 공존. 에이블리 제품명 공백은 (a) 대체명.
+
+### Plan verification findings
+- **데이터**: `item_images/{플랫폼}/{플랫폼}_목록.csv` (utf-8-sig, 컬럼: 구분,성별,부위,순위,브랜드,아이템명,색상,이미지경로,이미지URL,디테일페이지URL). 총 449행. 로컬 이미지 292 / 원격전용 157(크림120·에이블리7·29cm30, CSV가 `(이미지 미포함)` 표기). 원격 3종 다운로드 테스트 전부 200.
+- **필드 완전성**: 아이템명 공백 = 에이블리 7건뿐(브랜드/URL/색상/부위는 완전). 나머지 442건 완전. gender 100% 판별(성별 컬럼 or 부위 접두). category 100% 상의/하의/신발. 공용 없음.
+- **ad_items 스키마**: v147 에서 brand/product_name/color 추가 완료. 등록만 하면 드릴다운/패싯 자동 동작.
+- **계정**: users(PG) — email/nickname NOT NULL, password_hash bcrypt, role 기본 'user'(→'customer' 지정 필요), account_status 'active'. 무신사 계정 기존(musinsa@aimu.com, nick 무신사). gucci 별도.
+- **이미지 서빙**: business.py `ad_image_proxy` 는 `ads/` prefix 객체만 허용 → 업로드 object_name 은 `ads/{user_id}/{uuid}.{ext}` 필수.
+
+### 계정 생성 (5개, role=customer, pw bcrypt('123456'), account_status active, company_name=플랫폼명)
+- 29cm → twentyninecm@maidol.co.kr / nick 29cm
+- w컨셉 → wconcept@maidol.co.kr / nick w컨셉
+- 에이블리 → a-bly@maidol.co.kr / nick 에이블리
+- 지그재그 → zigzag@maidol.co.kr / nick 지그재그
+- 크림 → kream@maidol.co.kr / nick 크림
+(무신사는 기존 계정 재사용)
+
+### 매핑 & 규칙
+- 구분→플랫폼(계정 user_id), 브랜드→brand, 아이템명→product_name, 색상→color('' 또는 미표기→'기본'), 디테일URL→product_url, 부위→category, 성별|부위접두→gender(남성→남성용/여성→여성용). name = product_name(+ ' - {color}' if color≠기본).
+- 에이블리 7건 product_name 폴백: `"{브랜드} 여성 상의 (인기 {순위}위)"` (WebSearch 특정 실패 확인).
+- 이미지: 로컬파일 우선 → 없으면 이미지URL 다운로드(&amp;→& 치환, 브라우저 UA) → MinIO `ads/{user_id}/` 업로드. 다운로드 실패 건은 수집·보고 후 수동조사/스킵.
+- **멱등성**: 모든 시드 문서에 `seed_source="item_images_csv"` 태깅. 재실행 시 해당 태그 문서 delete 후 재삽입(기존 6개 테스트 아이템은 태그 없어 보존).
+
+### 특이사항/방식
+- 코드 변경 없음(스키마는 v147 완료). 1회성 시드 스크립트(백필과 동일 방식, 직접 Mongo/MinIO). 프론트/백엔드 라우트 무변경.
+
+### 테스트 항목
+- 계정 5개 생성·로그인(bcrypt 검증) 1건 확인. `/business/ads/active?category=상의/하의/신발` 플랫폼·brand·gender·color·이미지 노출. 이미지 프록시 200. 드릴다운/패싯 회귀. 기존 6개 공존 확인.
+
+---
+
+## v149
+**수정일자**: 2026-07-30
+**요청 작업**: 동영상 탭에서, 진짜 MV가 없어도 **커버이미지(정지 배경) + 가사(타임스탬프 싱크)** 를 브라우저 실시간으로 재생하는 "가사싱크 영상"((가)안). 동영상 탭 클릭 시 아직 구성 안 됐으면 즉시 구성해 현재 재생 지점부터 돌리고, 탭을 오가도 **음악은 재시작/중단 없이 이어짐**.
+
+### Plan verification findings (0단계 코드 분석 결과)
+- **동영상 탭 렌더 분기**: `frontend/src/pages/PlayerPage.jsx:298~314` — `mvData.has_music_video`면 `<video>`, 아니면 "뮤직비디오가 없는 음악입니다" 안내만.
+- **탭 전환 핸들러**: `PlayerPage.jsx:147~187` `handleMediaTabChange` — `'video'`로 갈 때 **무조건** `audioRef.pause()` + `setVideoMode(true)` + `<video>` currentTime 동기화. `'song'` 복귀 시 video→audio 시간 넘겨 재생. ⚠️ 이 pause/스왑은 **진짜 `<video>`가 있을 때만** 옳음.
+- **lazy load**: `PlayerPage.jsx:190~204` `handleVideoTabClick` — mvData 없으면 `api.getTrackMusicVideo` 후 `handleMediaTabChange('video')`.
+- **PlayerContext**: `frontend/src/contexts/PlayerContext.jsx` — `audioRef=useRef(new Audio())`(단일 오디오 소스), `videoMode`/`videoRef`, `currentTime`(:11, timeupdate로 갱신 :35), `pause/togglePlay/seek`(:168~208) 모두 `videoMode && videoRef.current`면 video, 아니면 audio를 대상으로 분기. → **videoMode=false로 두면 오디오가 그대로 단일 소스로 재생 유지됨.**
+- **가사 원문**: `PlayerPage.jsx:487~488` `trackDetail.lyrics`(plain text)만 노출. 라인별 타임스탬프는 플레이어에 아직 안 옴.
+- **타임스탬프 단일 진실원**: `backend_9005/app/services/share_video.py` `_fetch_lyric_segments(mongo, track)`(:122) — 1순위 `generations.variants[variant_index].timestamps`, 2순위 `track.recognized_timestamps`. `_filter_segments`(:89)가 섹션태그/빈줄/음수 정리 + `SUBTITLE_LEAD` 선행 적용 → `{text,start,end}` 리스트. **SNS·다운로드 burn-in과 동일 타이밍** 재사용.
+- **track 상세 응답**: `tracks.py` `get_track` 계열은 `has_music_video/music_video_url`은 주지만 라인 세그먼트는 미포함 → **신규 조회 경로 필요**.
+- **원격 로깅 인프라 존재**: `frontend/src/utils/remoteLogger.js` → `/api/_logs`. FE console 로그 자동 수집 → 그대로 사용.
+- **미러 규칙**: 9005 선구현 → 9004 미러(바이트 동일, `_logs.py` 파일명만 예외).
+
+### 설계 결정 (핵심)
+1. **가사싱크 = videoMode 안 건드림.** 별도 미디어 엘리먼트 없음. 동영상 탭은 오디오(단일 소스) 위에 얹는 **시각 오버레이**일 뿐 → `currentTime`만 읽어 현재 줄 하이라이트. 오디오 pause/스왑/재시작 전부 없음 ⇒ "음악 이어짐" 자동 충족.
+2. **동영상 탭 3분기** (우선순위):
+   - 진짜 MV 있음 → 기존 `<video>` + videoMode 스왑 동작 **불변**.
+   - MV 없음 + 타임스탬프 O → **가사싱크 오버레이**(신규, videoMode=false, 오디오 무중단).
+   - MV 없음 + 타임스탬프 X → "MV나 가사 싱크가 준비되면 영상이 제공됩니다".
+3. **"없으면 즉시 만들어 돌림"** = (가)는 파일 굽기 아님. 클릭 즉시 세그먼트 fetch 후 DOM 실시간 구성 → 현재 `currentTime` 지점부터 바로 하이라이트. 별도 생성/캐싱/폴링 없음.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자/로그 prefix |
+|---|---|---|
+| `backend_9005/app/routes/tracks.py` | `GET /{track_id}/lyrics-timeline` 신규 — `_fetch_lyric_segments` 재사용, `{has_timestamps, segments:[{text,start,end}], source}` 반환. 무인증(음악 재생과 동일, `music-video`와 동일 정책) | `logger` — `[lyrics-timeline] track=<id8> source=<..> count=<n>` |
+| `backend_9004/app/routes/tracks.py` | 위 미러(바이트 동일) | 동일 |
+| `frontend/src/api/index.js` | `getTrackLyricsTimeline(trackId)` 추가 | — |
+| `frontend/src/pages/PlayerPage.jsx` | `handleVideoTabClick`에서 timeline도 lazy fetch, `handleMediaTabChange` 3분기(가사싱크 시 videoMode/pause 미적용), 렌더 분기에 `<LyricSyncVideo>` 삽입, 없음 안내 문구 교체 | `console.*("[PlayerPage] ...")` |
+| `frontend/src/components/LyricSyncVideo.jsx` (신규) | 커버 배경 + 3줄 스크롤(지난 흐림/현재 강조/다음 흐림). props: `coverSrc, segments`. context `currentTime` 구독해 현재 세그먼트 계산 | `console.*("[LyricSyncVideo] ...")` (DEV 가드, catch는 error) |
+| `frontend/src/components/LyricSyncVideo.css` (신규) | 오버레이/3줄 스타일 | — |
+
+### 로그 규칙 재강조 (dev 필수)
+- **backend-dev**: 신규 엔드포인트 진입 로그(track_id), 세그먼트 소스/개수 info, 예외 시 `logger.exception` + track_id. 민감정보 금지.
+- **frontend-dev**: `LyricSyncVideo` mount/세그먼트 로드·현재 줄 전환 `console.info`(DEV 가드), fetch catch `console.error("[PlayerPage] lyrics-timeline failed",{err,trackId})`. remoteLogger 자동 수집. 토큰 로그 금지.
+
+### 테스트 항목 (tester)
+1. **음악 무중단(핵심)**: 곡 재생 중(예 1:12) 상세 진입 → 동영상 탭 클릭 → 오디오 재시작·끊김 없이 그 지점부터 이어지고 그 시점 가사 줄이 강조. 커버 탭 복귀 → 계속 재생. 동영상 재클릭 → 현재 시점 가사 물려 있음.
+2. **3분기 정확성**: (a) MV 있는 곡 → `<video>` 정상(회귀), (b) MV 없고 타임스탬프 있는 곡 → 가사싱크, (c) 타임스탬프 없는 곡 → 안내 문구.
+3. **싱크 정확도**: 오디오 currentTime과 강조 줄이 share_video burn-in과 동일 타이밍인지(같은 세그먼트 소스).
+4. **회귀**: 기존 MV 재생/시크/일시정지, SNS 공유·다운로드 영상 생성 무영향.
+5. **로그 동작 확인**: `[lyrics-timeline]` server.log, `[LyricSyncVideo]`/`[PlayerPage]` frontend 수집 1건 이상.
+
+---
+
+## v150
+**수정일자**: 2026-07-30
+**요청 작업**: 동영상 탭 가사싱크(v149)에서 줄이 **뚝뚝 끊겨 바뀌는 대신 자연스럽게 미끄러져 올라가게** (A안 = Apple Music/멜론식 줄 글라이드). 백엔드/데이터 변경 없음.
+
+### Plan verification findings (0단계 코드 분석 결과)
+- `frontend/src/components/LyricSyncVideo.jsx`: 현재 **고정 3칸**만 렌더(`:82~86` prev/current/next `<p>` 3개). `.lyric-sync__lines`가 `justify-content:center`로 화면 중앙 고정, idx 바뀌면 세 칸의 **텍스트만 교체** → 칸은 안 움직이고 글자만 갈림 = "스냅" 체감의 원인.
+- currentTime은 `usePlayer()`에서 구독(`:24`), idx는 `start<=currentTime` 마지막 세그먼트 이진탐색(`:36~56`). **이 로직은 그대로 재사용** (전환 트리거는 여전히 줄 단위, 움직임만 애니메이션화).
+- `LyricSyncVideo.css`: `.lyric-sync__line`에 이미 `transition: opacity/color/font-size`(`:61`) 있으나 **위치(transform) 트랜지션은 없음** → 이동 애니메이션 부재.
+- 렌더 컨테이너 `.lyric-sync`는 `overflow:hidden`(`:6`)라 세로로 길게 렌더해도 밖은 잘림 — 스크롤 마스킹 기반 이미 있음.
+- 상위 `PlayerPage.jsx`는 `<LyricSyncVideo coverSrc segments />`만 넘김 → **props/호출부 변경 불필요**, 컴포넌트 내부만 교체.
+
+### 설계 (A안 = 줄 글라이드)
+1. **전체 줄을 세로로 렌더**: `segments` 전부를 `<p>` 리스트로 그림(중앙 고정 3칸 폐기).
+2. **현재 줄을 중앙에 오도록 컨테이너를 translateY**: `transform: translateY(calc(50% - (현재줄 중심 위치)))` 개념. 구현은 줄 높이 측정 없이 안정적으로 하기 위해 **각 줄에 ref 없이** "줄 인덱스 × 고정 행높이" 방식 또는 현재 줄 엘리먼트를 `scrollIntoView`/offsetTop 기반으로 중앙 정렬. dev가 가장 견고한 방식 택일(권장: 활성 줄 `ref` + `offsetTop`으로 translateY 계산, 가변 줄높이 대응).
+3. **부드러움**: 그 translateY(래퍼)에 `transition: transform 0.45s cubic-bezier(0.4,0,0.2,1)`. 줄 바뀔 때 위치가 점프 없이 미끄러짐.
+4. **가독성**: 현재 줄 강조(흰색·볼드·확대) 유지, 위/아래 줄은 거리에 따라 흐리게(인접=반투명, 더 먼 줄=더 흐림 또는 마스크 페이드). 위아래 fade 마스크(`mask-image: linear-gradient`)로 가장자리 자연 소멸.
+5. **엣지**: idx=-1(첫 줄 전) → 첫 줄이 중앙 아래쪽 대기. 마지막 줄 이후 → 마지막 줄 중앙 유지. 빈 segments → null(기존 유지).
+6. **성능/안정**: currentTime은 timeupdate(~4Hz)로 자주 갱신되나, **transform 값이 idx 기반으로만 바뀌므로**(줄 안 바뀌면 동일 값) 불필요한 재애니메이션 없음. `will-change: transform` 힌트.
+
+### 변경 매트릭스
+| 파일 | 변경 | 로그 prefix |
+|---|---|---|
+| `frontend/src/components/LyricSyncVideo.jsx` | 3칸 고정 → 전체 줄 세로 리스트, 활성 줄 ref + translateY(중앙 정렬), idx별 거리 클래스(`--active`/`--near`/`--far`) | `[LyricSyncVideo]` (mount/line change DEV 가드, catch error) |
+| `frontend/src/components/LyricSyncVideo.css` | 중앙고정 flex 폐기 → 래퍼 `transform` + `transition`, 위아래 mask fade, 줄 거리별 스타일 | — |
+
+- 백엔드/9004·9005/api 변경 **없음**.
+
+### 테스트 항목 (tester)
+1. **부드러운 이동(핵심)**: 재생 진행 시 현재 줄이 중앙에 오도록 리스트가 **점프 없이 미끄러져** 올라가는지(transform transition 적용 확인). 줄 교체가 스냅 아님.
+2. **현재 줄 중앙 유지**: 임의 지점 진입/시크 후에도 현재 줄이 화면 중앙, 위=지난 가사, 아래=예정 가사.
+3. **엣지**: 첫 줄 전(idx=-1), 마지막 줄 이후, 1줄짜리, 빈 segments(null) 무크래시.
+4. **회귀**: v149 음악 무중단 불변(오디오 미접촉), 3분기 렌더(실 MV/싱크/없음) 불변, currentTime 컨텍스트 구독 유지.
+5. **성능**: 긴 가사(70+줄)에서 렌더/스크롤 버벅임 없는지, transform이 idx 안 바뀌면 재트리거 안 되는지.
+6. **로그**: `[LyricSyncVideo] line change` 등 DEV 로그 동작.
+
+---
+
+## v151
+**수정일자**: 2026-08-01
+**요청 작업**: 출석체크(데일리 체크인) 기능 신규 구현. 모바일게임식 데일리 체크인, 보상 = 우리 포인트 "별(⭐)". **스트릭형 10일 1사이클 + 누적**(연속 강제 X, 하루 빠져도 초기화 안 됨). 하루 1회(KST) 도장/적립. 10일차 받으면 다음 체크인은 1일차부터 새 사이클 반복. 보상: 1·2·3·4·6·7·8·9일차 = ⭐10, 5일차 = ⭐30, 10일차 = ⭐100. 별은 기존 포인트 잔액에 즉시 반영. **9005 선구현 → 9004 미러 동일 반영 필수.**
+
+### Plan verification findings (0단계 코드 분석 결과)
+기존 포인트(별) 시스템이 이미 존재하며 이를 최대 재사용한다.
+
+- **`backend_9005/app/services/points_service.py`**:
+  - 컬렉션: `point_events` — 유니크 인덱스 `(user_id, action, track_id, day)` (`:34~37`), `point_balances` — `user_id` 유니크(`:39`). `ensure_indexes()`가 lazy 1회 생성(`_indexes_ready` 가드, `:27~40`).
+  - `_kst_day()` → KST `'%Y%m%d'`(`:43~45`), `KST = timezone(timedelta(hours=9))`(`:22`).
+  - `award_point(user_id, action, track_id)` = **+1 고정**(`:48~97`) → 가변 금액 출석엔 부적합. **건드리지 않는다.** 대신 신규 `credit_points()`(가변 금액, 멱등) 추가.
+  - `spend_points`/`refund_points`/`get_balance`/`get_history` 존재. `get_balance(user_id)->int`(`:206~213`) 재사용.
+  - `get_mongo` = `from ..database.mongodb import get_mongo`. Mongo 컬렉션 접근은 `mongo.<collection>` 속성 방식.
+  - **핵심 재사용 포인트**: `point_events` 유니크 인덱스가 그대로 출석 하루 1회 멱등성 게이트가 된다 → `action="attendance"`, `track_id=KST_day`, `day=KST_day` 로 넣으면 (user, "attendance", 오늘날짜, 오늘날짜) 조합이 **하루 1건**만 허용. 레이스 시 `DuplicateKeyError` → 이미 출석 처리.
+- **`backend_9005/app/routes/points.py`**: `router = APIRouter(prefix="/api/points")`(`:16`), `get_current_user`(from `..auth`)로 인증, `user_id = str(user.get("id") or user.get("user_id"))`(`:25`) 패턴. 신규 attendance 라우터도 동일 패턴 사용.
+- **`backend_9005/app/auth.py`**: `get_current_user(request, authorization)`(`:13`)는 JWT 검증 + Redis 세션 확인 후 **세션 dict** 반환. user id 는 JWT payload `id`(`:34`) 기반이지만 반환 dict의 필드명은 세션 저장 형태에 의존 → points.py 와 동일하게 `str(user.get("id") or user.get("user_id"))` 로 안전하게 추출.
+- **`backend_9005/app/main.py`**: 라우터 등록은 `from .routes import ..., points, ...`(`:54`) 후 `app.include_router(points.router)`(`:546`) 나열식. 신규 `attendance` 를 import 목록·include 목록에 추가(points 근처).
+- **프론트 `frontend/src/api/index.js`**: axios `API` 인스턴스의 baseURL은 `/api`(기존 `API.get('/points/balance')` = 실제 `/api/points/balance`, `:822`). 따라서 attendance 경로는 `'/attendance/status'`, `'/attendance/check-in'` 로 호출. 기존 포인트 함수: `getPointsBalance`(`:822`), `getPointsHistory`(`:823`).
+- **프론트 별 잔액 노출 위치 = `frontend/src/components/Header.jsx`**: 로그인 사용자 헤더에 `<span className="header__points" title="내 포인트">⭐ {points ?? '—'}</span>`(`:470~471`). points 상태는 `useState(null)`(`:63`) + `api.getPointsBalance()`로 로드(`:99~107`, 라우트 변경 시 재조회). **결정: 이 별 배지를 클릭 가능하게 만들어 출석체크 모달을 연다** — 별도 라우트/페이지 불필요.
+- **`frontend/src/App.jsx`**: `<Routes>`(`:59~89`) 나열식. **신규 페이지·라우트 불필요** — 출석체크는 Header 트리거 모달(컴포넌트)로 구현. (기존 프로필 설정도 Header 내 모달 방식.)
+- **원격 로깅**: `frontend/src/utils/remoteLogger.js`가 console → `/api/_logs` 수집. DEV 가드 `console.info` + catch `console.error` 패턴이 코드베이스 관례(Header 전반).
+
+**사양 ↔ 코드 충돌/조정**: 충돌 없음. 기존 `award_point`(+1 고정)은 출석에 부적합하므로 **재사용하지 않고** 가변금액 `credit_points` 신설(award_point 무수정). 나머지(멱등 인덱스, 잔액 컬렉션, KST 헬퍼)는 그대로 재사용.
+
+### 확정 데이터 모델
+- **`point_events`** (기존 재사용): 출석 1건당 `{user_id, action:"attendance", track_id:<KST_day>, day:<KST_day>, amount:<지급 별 수>, created_at}`. 유니크 인덱스가 **하루 1회 멱등 + 동시성 게이트**.
+- **`point_balances`** (기존 재사용): 별 잔액. 출석 보상만큼 `$inc balance`.
+- **`attendance_progress`** (신규, `user_id` 유니크): `{user_id, cumulative_count:int(총 출석일수), last_cycle_day:int(1~10, 마지막으로 받은 칸), last_checkin_day:str(KST '%Y%m%d'), created_at, updated_at}`. 사이클 위치/누적일 추적용.
+  - **사이클 위치 규칙(누적식)**: 다음에 받을 칸 = `(cumulative_count % 10) + 1`. 즉 10일차(=cumulative 10,20,...) 다음은 1일차로 리셋. 연속 강제 없음 — `last_checkin_day` 는 오늘 여부 판정에만 쓰고, 빠진 날이 있어도 초기화하지 않음.
+  - **보상 헬퍼** `_reward_for(cycle_day)`: `cycle_day==5 → 30`, `cycle_day==10 → 100`, else `10`.
+
+### 확정 API 스펙 (prefix `/api/attendance`, `get_current_user` 인증 필수)
+- **`GET /api/attendance/status`** → 
+  ```
+  {
+    checked_today: bool,
+    cycle_day: int,            // checked_today면 오늘 받은 칸(1~10), 아니면 오늘 받을 칸
+    cumulative_count: int,     // 총 출석일수
+    today_reward: int,         // cycle_day 칸의 별 수
+    calendar: [ {day:1..10, reward:int, claimed:bool} x10 ],
+    balance: int               // 현재 별 잔액
+  }
+  ```
+  - `calendar[].claimed` 규칙: `claimed_count = checked_today ? last_cycle_day : (next_cycle_day==1 ? 0 : next_cycle_day-1)`. day ≤ claimed_count 이면 claimed=true. (새 사이클 시작이면 0칸, 진행 중이면 이미 받은 칸까지 true, 오늘 받을 칸은 false로 강조.)
+- **`POST /api/attendance/check-in`** → 오늘 체크인 처리, 별 적립.
+  ```
+  { success: bool, awarded: int, cycle_day: int, cumulative_count: int, balance: int, already: bool }
+  ```
+  - 이미 오늘 받았으면 `already=true, awarded=0, success=true` + 현재 상태 반영. 신규 적립 시 `already=false, awarded=<reward>`.
+
+### 백엔드 작업 지시 (backend-dev)
+**대상: `backend_9005` 선작업 → 완료 후 `backend_9004` 에 byte-identical 미러(파일명 `_logs.py` 예외는 이 작업과 무관).**
+
+1. **`backend_9005/app/services/points_service.py` 수정** — 신규 함수 `credit_points` 추가 (기존 `award_point`/`spend_points` 등은 **무수정**):
+   ```
+   async def credit_points(user_id, action, amount, ref, day=None) -> bool
+   ```
+   - `ensure_indexes()` 호출. `day = day or _kst_day()`.
+   - `mongo.point_events.insert_one({user_id, action, track_id:ref, day, amount, created_at})` — **먼저 이벤트 삽입(멱등 게이트)**. `DuplicateKeyError` → `logger.info("[points] credit dup user=%s action=%s ref=%s", ...)` 후 `return False` (이미 적립됨/레이스).
+   - 성공 시 `point_balances.update_one({user_id}, {"$inc":{"balance":amount}, "$setOnInsert":{...}}, upsert=True)`. 잔액 증가 실패는 `logger.warning` (이벤트는 이미 삽입 → dup 이 재적립 차단, 문서화된 엣지).
+   - `logger.info("[points] credit user=%s action=%s amount=%d ref=%s -> +%d", ...)` 후 `return True`. `amount<=0`/`user_id` 없음 → `return False`.
+   - **디버깅 로그**: `[points] credit ...` (user_id, action, amount, ref).
+
+2. **`backend_9005/app/services/attendance_service.py` 신규 작성**:
+   - 상수 `ATTENDANCE_ACTION = "attendance"`. `from ..database.mongodb import get_mongo`, `from . import points_service`.
+   - `_reward_for(cycle_day:int)->int`: 5→30, 10→100, else 10.
+   - `_next_cycle_day(cumulative_count:int)->int`: `(cumulative_count % 10) + 1`.
+   - `ensure_attendance_indexes()`: `attendance_progress.create_index("user_id", unique=True)` (lazy 가드).
+   - `async def get_status(user_id)->dict`:
+     - `ensure_attendance_indexes()`, `today=points_service._kst_day()`, progress 조회(없으면 cumulative=0, last_cycle_day=0, last_checkin_day=None).
+     - `checked_today = (last_checkin_day == today)`.
+     - `checked_today` 면 `cycle_day = last_cycle_day`, `claimed_count = last_cycle_day`. 아니면 `cycle_day = _next_cycle_day(cumulative)`, `claimed_count = 0 if cycle_day==1 else cycle_day-1`.
+     - `today_reward = _reward_for(cycle_day)`. `calendar = [{"day":d, "reward":_reward_for(d), "claimed": d<=claimed_count} for d in 1..10]`. `balance = await points_service.get_balance(user_id)`.
+     - 반환 dict. 로그 `logger.info("[attendance] status user=%s checked_today=%s cycle_day=%d cumulative=%d", ...)`.
+   - `async def check_in(user_id)->dict`:
+     - `today=_kst_day()`, progress 조회.
+     - **이미 오늘 받음**(`last_checkin_day==today`): `logger.info("[attendance] check-in user=%s already today cycle_day=%d", ...)` 후 `{success:True, awarded:0, cycle_day:last_cycle_day, cumulative_count, balance:get_balance, already:True}`.
+     - 아니면 `cycle_day = _next_cycle_day(cumulative)`, `reward = _reward_for(cycle_day)`.
+     - `credited = await points_service.credit_points(user_id, ATTENDANCE_ACTION, reward, ref=today, day=today)`.
+     - `credited` False(레이스 dup) → 이미 처리로 간주: 최신 progress 재조회 후 `already:True, awarded:0` 반환. `logger.info("[attendance] check-in user=%s race dup -> already", ...)`.
+     - `credited` True → `attendance_progress.update_one({user_id}, {"$inc":{"cumulative_count":1}, "$set":{"last_cycle_day":cycle_day, "last_checkin_day":today, "updated_at":now}, "$setOnInsert":{"user_id":user_id, "created_at":now}}, upsert=True)`. `new_cumulative = cumulative+1`, `balance = get_balance`.
+     - `logger.info("[attendance] check-in user=%s AWARDED cycle_day=%d reward=%d cumulative=%d balance=%d", ...)`.
+     - 반환 `{success:True, awarded:reward, cycle_day, cumulative_count:new_cumulative, balance, already:False}`.
+   - **디버깅 로그 추적자**: 전부 `[attendance]` prefix + `user=%s`. 진입/멱등/적립/레이스 각각 info. 예외는 라우트에서 `logger.exception`.
+
+3. **`backend_9005/app/routes/attendance.py` 신규 작성** (points.py 패턴 복제):
+   - `router = APIRouter(prefix="/api/attendance")`. `from ..auth import get_current_user`, `from ..services import attendance_service as svc`.
+   - `GET /status`: `user_id = str(user.get("id") or user.get("user_id"))`, `logger.info("[attendance] GET /status user=%s", ...)`, `return await svc.get_status(user_id)`. 예외 `logger.exception` + `JSONResponse(500, {"error":"출석 현황 조회에 실패했습니다."})`.
+   - `POST /check-in`: 동일 user_id 추출, `logger.info("[attendance] POST /check-in user=%s", ...)`, `return await svc.check_in(user_id)`. 예외 처리 동일(`"출석체크에 실패했습니다."`).
+
+4. **`backend_9005/app/main.py` 수정**: `:54` import 목록에 `attendance` 추가(points 옆), include 목록(`:546` 근처)에 `app.include_router(attendance.router)` 추가.
+
+5. **9004 미러**: 위 1~4를 `backend_9004` 동일 경로에 그대로 반영(신규 2파일 복사, points_service/main.py 동일 수정). 내용 byte-identical.
+
+### 프론트 작업 지시 (frontend-dev)
+1. **`frontend/src/api/index.js`** — Points 섹션(`:822` 근처)에 추가:
+   ```
+   export const getAttendanceStatus = () => API.get('/attendance/status');
+   export const postAttendanceCheckIn = () => API.post('/attendance/check-in');
+   ```
+2. **`frontend/src/components/AttendanceCard.jsx` + `AttendanceCard.css` 신규**:
+   - props: `{ open, onClose, onBalanceChange }`.
+   - open 시 `getAttendanceStatus()` 로드 → 10칸 카드 그리드 렌더. 각 칸: `day`, 보상(`⭐{reward}`), `claimed`(도장/체크 표시), 오늘 받을 칸(`checked_today===false && day===cycle_day`)은 강조/펄스.
+   - 하단 "오늘 별 받기" 버튼: `checked_today` 면 비활성 + "오늘 출석 완료" 문구. 클릭 → `postAttendanceCheckIn()` → 응답으로 상태 갱신, `already` 아니면 지급 애니메이션/토스트(`+⭐{awarded}`), `onBalanceChange(balance)` 호출로 Header 별 갱신.
+   - 상단에 누적 출석일(`cumulative_count`) + 현재 사이클 진행 표시.
+   - **디버깅 로그 추적자** `[AttendanceCard]` (DEV 가드 `console.info`, catch `console.error`): 모달 open, `status loaded {checked_today, cycle_day, cumulative_count}`, `check-in start`, `check-in success {awarded, already, balance}`, `check-in failed {status, message}`.
+3. **`frontend/src/components/Header.jsx` 수정**:
+   - `header__points` 배지(`:470~471`)를 클릭 가능하게(버튼/onClick) → `attendanceOpen` 상태 true 로 모달 open. `console.info('[Header] attendance modal open')` (DEV 가드).
+   - `<AttendanceCard open={attendanceOpen} onClose={...} onBalanceChange={(b)=>setPoints(b)} />` 렌더. 체크인 성공 시 Header 별 즉시 갱신(`setPoints`). 기존 points 로드 useEffect(`:99~107`) 유지.
+   - 접근성: 로그인 사용자만 노출(기존 `user ?` 블록 내). 비로그인은 변경 없음.
+
+### 변경 매트릭스
+| 파일 | 변경 | 디버깅 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/services/points_service.py` | 신규 `credit_points(user_id, action, amount, ref, day=None)` — 가변금액 멱등 적립. 기존 함수 무수정 | `[points] credit user=... action=... amount=... ref=...` / dup·warning |
+| `backend_9005/app/services/attendance_service.py` (신규) | `_reward_for`, `_next_cycle_day`, `ensure_attendance_indexes`, `get_status`, `check_in` | `[attendance] status/check-in user=... cycle_day=... reward=... cumulative=...` (진입·멱등·적립·레이스) |
+| `backend_9005/app/routes/attendance.py` (신규) | `APIRouter(/api/attendance)` GET /status, POST /check-in | `[attendance] GET /status user=...`, `[attendance] POST /check-in user=...`, 예외 `logger.exception` |
+| `backend_9005/app/main.py` | import + include_router(attendance) | (기동 로그 불필요) |
+| `backend_9004/*` (미러) | 위 4개 동일 반영 (byte-identical) | 동일 |
+| `frontend/src/api/index.js` | `getAttendanceStatus`, `postAttendanceCheckIn` 추가 | — |
+| `frontend/src/components/AttendanceCard.jsx` (신규) | 10칸 카드 + 오늘 받기 버튼 + 지급 토스트/애니메이션 | `[AttendanceCard]` (DEV 가드 info, catch error) |
+| `frontend/src/components/AttendanceCard.css` (신규) | 10칸 그리드/도장/강조/펄스/토스트 스타일 | — |
+| `frontend/src/components/Header.jsx` | 별 배지 클릭 → 모달, `onBalanceChange`→`setPoints` | `[Header] attendance modal open` (DEV 가드) |
+
+- **9005 작업 후 9004 미러 반영 필수** (신규 2파일 + points_service/main.py 수정). 프론트는 단일 소스.
+
+### 테스트 항목 (tester)
+1. **정상 첫 체크인**: 신규/미체크인 유저 `POST /check-in` → `awarded=10, cycle_day=1, cumulative_count=1, already=false`, 별 잔액 +10. `GET /status` 재조회 시 `checked_today=true`, calendar day1 claimed.
+2. **중복 체크인 차단(하루 2회)**: 같은 KST 날짜 재호출 → `already=true, awarded=0`, 잔액 불변. `point_events` 오늘 attendance 문서 1건만.
+3. **동시성**: 같은 유저 동시 2요청 → 한 건만 적립(DuplicateKeyError 게이트), 잔액 1회만 증가, cumulative +1만.
+4. **누적/비연속**: 하루 걸러 체크인해도 초기화 안 됨 — cumulative 계속 증가, cycle_day = (cumulative%10)+1 로 이어짐.
+5. **5일차 보너스**: 5번째 체크인 → `awarded=30`. **10일차 보너스**: 10번째 → `awarded=100`.
+6. **사이클 경계(10→1 리셋)**: 10일차 받은 뒤 다음 체크인 → `cycle_day=1, awarded=10`, calendar 새 사이클(claimed 0칸에서 day1 강조).
+7. **status calendar 정확성**: 진행 중(예 cumulative 4, 미체크인) → day1~4 claimed, day5 강조(오늘 받을 칸), today_reward=30.
+8. **잔액 반영/회귀**: 출석 적립이 기존 `GET /api/points/balance` 값과 일치. 기존 재생·다운로드 +1 적립(`award_point`) 및 `/points/history` 정상(회귀). history 에 attendance 이벤트(amount=보상)도 노출.
+9. **미인증 접근**: 토큰 없이 `/status`·`/check-in` → 401(`get_current_user`).
+10. **프론트**: Header 별 클릭 → 모달, 오늘 받기 → 별 즉시 갱신·토스트, 완료 후 버튼 비활성. `[AttendanceCard]`/`[attendance]` 로그 수집 확인.
+11. **9004 미러 동등성**: 9004 에서도 1~9 동일 동작.
+
+
+## v152 — 2026-08-01 — 실시간 1:1 DM (다이렉트 메시지) MVP — WebSocket+Redis pub/sub [MAIDOL-DmSquad]
+
+**요청 작업**: 경량 실시간 1:1 DM MVP. 인스타(메타) 정책 벤치마킹. 본인인증 게이트, 관계 게이트, 미성년 보호, 정지/차단/신고를 DM과 동시 출시. 실시간=WebSocket+Redis pub/sub. UI=헤더 봉투 아이콘(✉️)→전용 DM함. 텍스트만(MVP). **9005 선구현 → 9004 미러 필수.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작)
+
+- **WS 인증 재사용 가능 (핵심)**: `backend_9005/app/auth.py:13 get_current_user` / `:51 get_current_user_optional` 는 이미 `?token=` 쿼리 파라미터 fallback 지원(`request.query_params.get("token")`). JWT decode(`JWT_SECRET`/`JWT_ALGORITHM`) → payload.get("id") → Redis `session:{user_id}` 조회 → 세션 dict 반환. **세션 dict 필드 = `{id, email, nickname, profile_image, role}`** (`auth.py:44-48`, `routes/auth.py:249 _save_session` 근거). ⚠️ **문제**: 이 두 함수는 실패 시 `HTTPException` 를 raise 하는데, FastAPI WebSocket 핸들러에서는 HTTPException 이 아니라 `websocket.close(code=...)` 로 거절해야 함. → **결정: auth.py 는 수정하지 않고**, dm 라우터 안에 `authenticate_ws(websocket) -> session|None` 헬퍼를 신설(같은 로직: `websocket.query_params.get("token")` → jwt.decode → Redis `session:{id}`). 실패 시 `await websocket.close(code=4401)` 후 None 반환. JWT_SECRET/ALGORITHM 은 `from ..auth import JWT_SECRET, JWT_ALGORITHM` 로 import(값 재정의·로그 금지).
+- **`is_verified` 는 세션 dict 에 없음** → DM 게이트는 반드시 Postgres 조회. `routes/auth.py:266-304 /me` 가 `SELECT ... birth_date, is_verified, is_banned, restricted_until ... FROM users WHERE id=$1` 사용. DM 게이트용 1쿼리로 `SELECT is_verified, is_banned, birth_date FROM users WHERE id=$1` (본인/상대 각각) 조회하면 됨. `is_banned`(bool), `birth_date`(date|null), `is_verified`(bool) 컬럼 존재 확인 완료.
+- **연령 판정 재사용**: `app/models/user.py:29 is_under_14(birth_date)` (만14세 미만, birth_date None 이면 False=게이트 미적용), `:20 age_years`. `GUARDIAN_CONSENT_AGE=14`. → 미성년 게이트는 `is_under_14(peer_birth_date)` 로 판정(성인 기준을 14로 갈지 별도 상수를 둘지는 아래 게이트 설계 참고).
+- **관계 = Postgres `follows(follower_id, followee_id)`**: `routes/follows.py:52-56` 패턴 `SELECT 1 FROM follows WHERE follower_id=$1 AND followee_id=$2`. "상대가 나를 팔로우" = `follower_id=peer, followee_id=me`.
+- **Redis pub/sub 사용 가능하나 헬퍼 없음**: `app/database/redis.py` 전체는 `init_redis`/`get_redis`/`close_redis` 만. `get_redis()` 는 `redis.asyncio` 클라이언트(`decode_responses=True`) 반환. **pub/sub API(pubsub()/subscribe/publish/리스너 태스크)는 신규 작성 필요**. `decode_responses=True` 이므로 publish payload 는 JSON 문자열, 수신 시 `message["data"]` 는 str(디코드됨).
+- **main.py lifespan/라우터**: `main.py:57 lifespan` 에서 DB/Redis init(`:60-63`), 백그라운드 태스크 기동 패턴 존재(`:492 sync_task`, `:497 asset_cleanup_task = asyncio.create_task(...)`), shutdown 에서 `sync_task.cancel()`(`:502-503`). 라우터 등록은 `:524-552`, import 는 `:54`. **WebSocket 사용 0건(첫 도입)**. → DM Redis pub/sub 리스너 태스크를 lifespan 에서 `create_task` 로 기동, shutdown 에서 cancel. dm 라우터는 `:551 reports.router` 뒤에 등록.
+- **Mongo 인덱스 lazy 패턴**: `services/points_service.py:24-40` — 모듈 전역 `_indexes_ready=False` 플래그 + `ensure_indexes()` 최초 1회 `create_index(..., unique=True)`. DM 도 동일 패턴 채용(`dm_service.ensure_indexes()`).
+- **Mongo 접근**: `from ..database.mongodb import get_mongo` → `mongo.<collection>`. feeds/reports 전부 이 패턴(`routes/feeds.py:19`, `routes/reports.py:36`). ObjectId 는 `from bson import ObjectId`.
+- **신고 재사용 = `routes/reports.py`**: 현재 `TARGET_TYPES=("track","feed","comment")`(`:43`), `_TARGET_META`(`:48`) 는 (Mongo 컬렉션, 소유자필드) 매핑, `create_report`(`:505`) 가 `ObjectId.is_valid` + `mongo[coll].find_one` 로 실존/소유자 검증, `_snapshot_evidence`(`:135`) 는 track/feed/comment 별 if/elif 분기. → **DM 신고 추가 방법**: `TARGET_TYPES` 에 `"dm_message"` 추가 + `_TARGET_META["dm_message"]=("dm_messages","sender_id")`. `_snapshot_evidence` 에는 dm_message 분기가 없어 owner_id=None 으로 무해 통과하나, **최소 분기 1개 추가**(sender_id 를 owner_id 로, text 100자 요약) 권장. `REASON_CODES`(portrait/copyright/sexual/abuse/other) 는 그대로 재사용. self-report 방지(`:546`)도 자동 동작.
+- **프론트 프록시 WS OK**: `frontend/vite.config.js` (파일명 확정 — `.ts` 아님) `server.proxy['/api']` 에 `ws:true` + `target:'http://localhost:9005'`, dev 포트 **4000**. → WS 를 `/api/dm/ws` 로 두면 dev 프록시 그대로 통과.
+- **프론트 API 클라이언트**: `src/api/index.js:4` `axios.create({baseURL:'/api'})` + 인터셉터가 `Bearer` 자동 첨부(`:10-16`). DM REST 함수는 이 파일 끝(현재 admin 함수 `:591~` 뒤)에 추가. **기존 dm/message/conversation 함수 0건**(신규).
+- **프론트 라우팅**: `src/App.jsx:59 <Routes>`, 마지막 라우트 `:88 /admin/reports` 뒤 `</Routes>`(`:89`). `/dm`, `/dm/:cid` 여기 추가. import 는 `:8~31` 블록.
+- **프론트 헤더 진입점**: `src/components/Header.jsx:471-498` 로그인 블록. 별 배지 버튼(`:473-483 .header__points`, 클릭 → `setAttendanceOpen(true)`) 과 동일 톤으로 **봉투 아이콘 버튼을 별 배지 옆(`:483` 뒤)에 삽입**. Header 는 이미 `useNavigate`(`:99`), `profileVerify.isVerified`(`:71,201-206`) 상태 보유 → 미인증 시 봉투 비활성/툴팁에 재사용. react-icons 사용 중(`FiSearch`/`FiMenu`) → `FiMail`(봉투) 사용.
+- **모달/카드 톤 참고**: `frontend/src/components/AttendanceCard.jsx`(+`.css`, 2026-08-01 신설) — 최근 모달 패턴. DM 페이지/뷰 톤 참고.
+
+### 사양↔코드 충돌/조정안
+
+1. **WS 인증 함수 재사용 불가(HTTPException)** → auth.py 미수정, dm 라우터에 WS 전용 검증 헬퍼 신설(위 findings). auth.py 의 JWT_SECRET/ALGORITHM 상수만 import 재사용.
+2. **관계 게이트 규칙 택1 (planner 확정)**: **"상대가 나를 팔로우한 경우에만 DM 시작 가능"** 채택. 근거: (a) 코드 단순 — `SELECT 1 FROM follows WHERE follower_id=peer AND followee_id=me` 단일 쿼리, (b) UX — 상대가 나를 팔로우 = 나에게서 소식 받겠다고 이미 opt-in 한 사이 → 스팸/괴롭힘 최소화, (c) 인스타 "메시지 요청함(request inbox)" MVP 미구현 상태에서 가장 안전. **상호 팔로우(양방향)** 는 더 엄격한 대안으로 코드에 상수 플래그(`DM_REQUIRE_MUTUAL=False`) 하나 두어 추후 전환 가능하게. (본인=관리자/스타 채널이 팔로워에게 먼저 말 거는 시나리오 허용됨.)
+3. **미성년 보호 규칙**: 수신자가 미성년(`is_under_14(peer_birth_date)`)이면 관계 게이트를 **무조건 강제**(비팔로우 발신 전면 차단). 즉 성인→미성년은 팔로우 관계(위 2번)여도 추가로 안전. MVP 는 "미성년 수신자 + 발신자와 follow 관계 아님 → 차단" 으로 구현(양방향 연령 대칭 불필요 — 수신자 보호만). birth_date NULL 이면 미성년 게이트 미적용(is_under_14=False).
+4. **WS 배포 리버스프록시(nginx) — 인프라 TODO**: dev 는 vite `ws:true` 로 검증되나, **운영 nginx 는 `/api/dm/ws` location 에 `proxy_http_version 1.1` + `Upgrade`/`Connection` 헤더 + `proxy_read_timeout` 상향 설정 필요**. 이건 코드 밖 인프라 작업 → 배포 담당에게 별도 전달(문서 TODO). 코드/PLAN 은 dev 검증까지 책임.
+5. **Redis pub/sub 리스너 lifespan 통합 리스크**: 단일 프로세스면 in-memory 레지스트리만으로 충분하나 멀티워커(uvicorn --workers>1) 대비 pub/sub 필수. 리스너 태스크가 `get_redis().pubsub()` 를 psubscribe 하고 무한 루프. 리스크 = (a) 리스너 예외 시 조용히 죽으면 실시간 끊김 → try/except+로그로 감싸고 리스너 실패는 REST 폴백으로 흡수, (b) shutdown 시 pubsub close + task cancel 누락 시 경고 → shutdown 에 명시적 정리. (c) lifespan 순서: Redis init(`:62`) 이후에 리스너 기동해야 함.
+6. **decode_responses=True**: publish 는 `redis.publish(channel, json.dumps(payload))`, 수신은 `json.loads(message["data"])` (data 는 이미 str). bytes 처리 불필요.
+
+### 확정 데이터 모델 (Mongo)
+
+- **`dm_conversations`**: `{_id, participants:[uidA,uidB] (문자열 UUID, 오름차순 정렬 고정), pair_key:"<min_uid>_<max_uid>", last_message_text(≤200 요약), last_sender_id, last_at, unread:{<uidA>:int, <uidB>:int}, created_at, updated_at}`.
+  - 인덱스: `pair_key` **unique**(중복 대화 방지 — 동시 생성 경쟁은 DuplicateKeyError→재조회로 흡수), `participants`(multikey, 내 목록 조회), `last_at`(정렬).
+- **`dm_messages`**: `{_id, conversation_id(str), sender_id(str), text, created_at, read:bool(기본 false)}`.
+  - 인덱스: `(conversation_id, created_at)` 복합(페이지네이션/정렬), `conversation_id`.
+  - MVP 는 1:1 이므로 read 는 단일 bool(수신자가 읽으면 true)로 충분. read_by 배열은 그룹DM(2차) 때 승급.
+- **`dm_blocks`**: `{_id, blocker_id(str), blocked_id(str), created_at}`. 인덱스 `(blocker_id, blocked_id)` **unique**. (conversation 임베드 대신 독립 컬렉션 채택 — 대화 시작 전에도 차단 가능해야 하므로.)
+- 관계/연령/정지/인증은 전부 Postgres `users`·`follows` 조회(비정규화 캐시 없음 — MVP).
+- **pair_key/participants 정렬 규칙**: `a,b = sorted([me, peer]); pair_key=f"{a}_{b}"; participants=[a,b]`. unread 키는 uid 문자열 그대로.
+
+### 확정 안전 게이트 (전송·대화시작 공통) — 순서 (실패 시 HTTP + 사용자 메시지)
+
+`dm_service.assert_can_dm(conn, me_id, peer_id)` 헬퍼 1개로 통일, REST 전 엔드포인트가 호출:
+1. **로그인** — `get_current_user`(토큰 없음/무효 = 401/403, 기존 auth.py 처리).
+2. **본인인증** — `me.is_verified == True` 아니면 **403 "본인인증 후 이용 가능합니다."** (발신·수신 모두 이 게이트. 대화목록 조회는 통과시키되 시작/전송만 막을지는 아래: eligibility 로 프론트가 선차단, 서버는 시작/전송에서 강제).
+3. **상대 존재 & 자기자신 아님** — peer 없음 404, `me_id==peer_id` 400.
+4. **정지 계정** — `me.is_banned` 또는 `peer.is_banned` 이면 403(정지 사실은 상대에게 노출 안 함 — "메시지를 보낼 수 없습니다." 일반 문구).
+5. **미성년 보호** — `is_under_14(peer.birth_date)` 이고 (peer 가 me 를 팔로우 안 함) → 403(일반 문구). (수신자 미성년은 팔로우 관계 필수.)
+6. **관계 게이트** — `SELECT 1 FROM follows WHERE follower_id=peer AND followee_id=me` 없으면 403 "상대가 회원님을 팔로우한 경우에만 메시지를 보낼 수 있습니다." (단, 이미 대화가 존재하고 상대가 먼저 시작한 경우엔 통과 — 아래 주: 최초 시작 시점에만 관계 강제, 기존 대화 내 답장은 관계 재검사 완화 가능. MVP 는 단순화를 위해 **전송 시에도 관계 재검사하되, 대화가 이미 존재하면 관계 게이트 skip** 하여 "상대가 언팔해도 기존 대화는 유지" — Instagram 동작).
+7. **개별 차단** — `dm_blocks` 에 (peer blocks me) 또는 (me blocks peer) 있으면 403(차단 사실 비노출 — 일반 문구). me→peer 차단은 애초에 프론트에서 전송 UI 숨김.
+
+> 게이트 실패 문구는 **차단/정지 사실을 상대에게 드러내지 않도록** 4·5·7 은 동일 일반 문구 "메시지를 보낼 수 없습니다." 로 통일, 2·6 만 안내형 구체 문구.
+
+### 확정 REST API (prefix `/api/dm`, 별도 명시 없으면 `get_current_user` 필수)
+
+- `GET /api/dm/eligibility` → `{is_verified: bool}` (+ 필요시 is_banned). 프론트 봉투 아이콘/버튼 활성 판단. 게이트②만 반영.
+- `POST /api/dm/conversations` `{peer_id}` → 안전게이트 전체 통과 시 대화 시작/기존 반환 `{conversation_id, peer:{id,nickname,profile_image}, ...}`. pair_key unique 로 중복 방지(경쟁 시 DuplicateKeyError→재조회).
+- `GET /api/dm/conversations` → 내 대화 목록(참여자=me, `last_at` desc) `[{conversation_id, peer, last_message_text, last_at, unread}]`. 각 peer 닉/프사는 Postgres users 하이드레이션.
+- `GET /api/dm/conversations/{cid}/messages?before=<msg_id|iso>&limit=30` → 메시지 페이지네이션(참여자 검증 403). created_at desc → 프론트 reverse. before 커서로 과거 로드.
+- `POST /api/dm/conversations/{cid}/messages` `{text}` → 참여자 검증 + **안전게이트 재검사**(대화존재 시 관계 skip) + text 검증(1~2000자, trim) + Mongo insert + conversation `last_*` 갱신 + 상대 `unread.<peer>+1` + **Redis publish `dm:user:{peer}`**(신규 메시지 이벤트). 반환 `{message}`.
+- `POST /api/dm/conversations/{cid}/read` → 내 `unread.<me>=0` + 해당 대화의 상대발신 미읽음 `dm_messages.read=true` 일괄. Redis publish `dm:user:{me}`(unread 갱신 — 멀티탭 동기화) 선택.
+- `GET /api/dm/unread-count` → `{count: <총 unread 합>}` (헤더 배지 폴링용, 30s).
+- `POST /api/dm/blocks/{uid}` / `DELETE /api/dm/blocks/{uid}` → 차단/해제(dm_blocks upsert/delete).
+- DM 메시지 신고: 기존 `POST /api/reports` `{target_type:"dm_message", target_id:<message _id>, reason_code, reason_text}` 재사용(reports.py 확장 필요 — 위 findings).
+
+### 확정 WebSocket
+
+- **엔드포인트**: `WS /api/dm/ws?token=<jwt>`. FastAPI `@router.websocket("/ws")` (router prefix `/api/dm`). 연결 시 `authenticate_ws` 로 수동 검증 → 실패 `close(4401)`. 성공 시 `manager.connect(user_id, websocket)`.
+- **연결 매니저(in-memory)**: 모듈 전역 `ConnectionManager` — `dict[str, set[WebSocket]]` (user_id → 소켓들, 멀티탭 대비). `connect/disconnect/send_to_user(user_id, payload)`. send 는 자기 워커 로컬 소켓에만 직접 write.
+- **Redis pub/sub 팬아웃(멀티워커)**: 채널 `dm:user:{uid}`. REST 전송 핸들러가 `redis.publish("dm:user:{peer}", json.dumps(event))`. lifespan 에서 기동하는 **단일 리스너 태스크**가 `pubsub.psubscribe("dm:user:*")` 후 메시지 수신 시 채널에서 uid 파싱 → `manager.send_to_user(uid, event)`. (각 워커가 자기 리스너 + 자기 로컬 소켓 보유 → 어느 워커에 붙어있든 도달.)
+- **이벤트 타입**: `{type:"message", conversation_id, message:{...}}` (신규 메시지 도착), `{type:"unread", count}` 또는 `{type:"read", conversation_id}` (읽음/배지 갱신). 클라 끊기면 재연결 + REST 로 최신 동기화(WS 는 실시간 push 전용, 소스 오브 트루스는 REST/Mongo).
+- **WS 수신 방향(클라→서버)**: MVP 는 서버→클라 push 만 사용(전송은 REST POST). WS 로 들어오는 메시지는 ping/keepalive 외 무시(전송을 WS 로 안 함 → 게이트/영속화 로직 REST 단일화).
+- **lifespan 통합**: `main.py` lifespan Redis init(`:62`) 이후 `dm_listener_task = asyncio.create_task(dm_service.start_pubsub_listener())`, shutdown 에 `dm_listener_task.cancel()` + pubsub close. `sync_task`(`:492`) 패턴 그대로.
+
+### 백엔드 작업 지시 (backend-dev) — 9005 선구현
+
+**신규 파일**:
+- `app/routes/dm.py` — 라우터(prefix `/api/dm`), REST 엔드포인트 전체 + `@router.websocket("/ws")` + `authenticate_ws` 헬퍼 + `ConnectionManager` (매니저는 dm.py 또는 dm_service 중 택1, 매니저 전역 싱글턴). 로그 prefix REST=`[dm]`, WS=`[dm-ws]`, 항상 `user_id`/`conversation_id` 앞 8자만(본문 텍스트 원문 로그 금지 — 길이만, reports.py `_short` 관행).
+- `app/services/dm_service.py` — Mongo 접근/게이트/인덱스 계층: `ensure_indexes()`(lazy, points_service 패턴), `assert_can_dm(conn, me, peer)`(게이트 6단계, 실패 시 HTTPException), `get_or_create_conversation`, `list_conversations`, `get_messages`, `create_message`(insert+conversation 갱신+publish), `mark_read`, `unread_total`, `block/unblock`, `start_pubsub_listener()`, `ConnectionManager`. JWT_SECRET/ALGORITHM 은 `from ..auth import` 로만 참조(재정의/로그 금지).
+
+**편집 파일**:
+- `app/main.py` — (1) `:54` import 에 `dm` 추가, (2) `:551` 뒤 `app.include_router(dm.router)`, (3) lifespan Redis init 이후 `dm_listener_task = asyncio.create_task(...)`, (4) shutdown 에 `dm_listener_task.cancel()`.
+- `app/routes/reports.py` — `TARGET_TYPES` 에 `"dm_message"` 추가, `_TARGET_META["dm_message"]=("dm_messages","sender_id")`, `_snapshot_evidence` 에 dm_message 분기(sender_id→owner_id, text 100자 요약) 추가.
+
+**주의**: WS 는 Depends 대신 수동 인증. HTTPException 은 REST 에서만, WS 는 close. Mongo unread 증가·conversation 갱신은 `find_one_and_update`(upsert) 원자적 처리. birth_date/is_verified/is_banned 는 매 게이트마다 fresh Postgres 조회(세션 dict 신뢰 금지).
+
+**9004 미러 (필수)**: 위 신규 2파일을 `backend_9004/app/routes/dm.py`, `backend_9004/app/services/dm_service.py` 로 **byte-identical 복사**. main.py/reports.py 동일 편집. **예외 규칙**: 9004 의 로그 라우터는 `_logs.py` 파일명 그대로(이미 반영됨) — dm 은 파일명 예외 없음. 9005 완료·검증 후 미러.
+
+### 프론트 작업 지시 (frontend-dev)
+
+**신규 파일**:
+- `src/utils/dmSocket.js` — WS 연결/재연결/이벤트 구독 유틸. URL 은 **location 기반 동적 생성**(하드코딩 호스트 금지): `const proto = location.protocol==='https:'?'wss':'ws'; const url = ${proto}://${location.host}/api/dm/ws?token=${encodeURIComponent(token)}`. 자동 재연결(지수 백오프), `onMessage` 콜백, `close()`. 로그 prefix `[DmSocket]`.
+- `src/pages/DmInboxPage.jsx` (+css) — `/dm` 대화 목록 + 선택 시 `DmChatView`(같은 페이지 2패널 인스타식 or 하위 라우트). `AttendanceCard` 톤 참고. 로그 prefix `[DmInbox]`.
+- `src/components/DmChatView.jsx` (+css, 또는 InboxPage 내 컴포넌트) — 대화 스레드(메시지 리스트+입력창), WS 실시간 수신 반영 + 진입 시 read 처리 + before 커서 과거 로드. 로그 prefix `[DmChat]`.
+
+**편집 파일**:
+- `src/api/index.js` — 파일 끝에 DM REST 함수 추가: `getDmEligibility`, `createDmConversation(peerId)`, `getDmConversations`, `getDmMessages(cid, params)`, `sendDmMessage(cid, text)`, `markDmRead(cid)`, `getDmUnreadCount`, `blockDmUser(uid)`, `unblockDmUser(uid)`. (신고는 기존 `createReport` 재사용 — target_type "dm_message".)
+- `src/App.jsx` — import + 라우트 `<Route path="/dm" element={<DmInboxPage/>}/>` (+ 필요 시 `/dm/:cid`). 로그인 필요(미로그인 시 /login 리다이렉트 or 페이지 내 안내).
+- `src/components/Header.jsx` — 별 배지(`:483`) 뒤에 봉투 버튼(`FiMail`) + unread 배지 삽입. 클릭 → `navigate('/dm')`. **미인증 사용자**(`profileVerify.isVerified===false`, 이미 Header 상태 있음)는 아이콘 비활성 + 툴팁 "본인인증 후 이용 가능". unread 카운트는 `getDmUnreadCount` 30s 폴링(또는 전역 WS 이벤트). 로그인 블록 안에서만 렌더.
+
+**주의**: WS 는 URL `?token=` 로 연결(axios Bearer 인터셉터 미적용 대상). 프사/닉네임은 서버 하이드레이션 신뢰. 차단 사실은 UI 에 상대에게 노출 안 함.
+
+### 변경 매트릭스 (파일별 변경 + 로그 추적자)
+
+| 파일 | 변경 | 로그 prefix |
+|---|---|---|
+| `backend_9005/app/routes/dm.py` | 신규(REST+WS) | `[dm]` / `[dm-ws]` (+user_id/conversation_id 8자) |
+| `backend_9005/app/services/dm_service.py` | 신규(게이트/Mongo/pubsub/매니저) | `[dm]` |
+| `backend_9005/app/main.py` | import·라우터 등록·lifespan 리스너 기동/정리 | 기존 |
+| `backend_9005/app/routes/reports.py` | dm_message target_type 확장 | `[report]` |
+| `backend_9004/*` (위 전부) | **9005 미러(byte-identical 신규 2파일 + 동일 편집)** | 동일 |
+| `frontend/src/utils/dmSocket.js` | 신규(WS 유틸) | `[DmSocket]` |
+| `frontend/src/pages/DmInboxPage.jsx`(+css) | 신규(목록) | `[DmInbox]` |
+| `frontend/src/components/DmChatView.jsx`(+css) | 신규(대화) | `[DmChat]` |
+| `frontend/src/api/index.js` | DM REST 함수 추가 | — |
+| `frontend/src/App.jsx` | `/dm` 라우트 | — |
+| `frontend/src/components/Header.jsx` | 봉투 아이콘+배지 | `[Header]` |
+
+### 테스트 항목 (tester)
+
+1. **본인인증 게이트**: 미인증 계정 → `POST /conversations`·`/messages` 403 "본인인증 후". `GET /eligibility` `is_verified:false`. 프론트 봉투 비활성.
+2. **관계 게이트**: 상대가 나를 팔로우 안 한 상태에서 대화 시작 → 403. 상대가 나를 팔로우한 뒤 → 성공. (내가 상대를 팔로우만 한 건 불충분함을 확인.)
+3. **기존 대화 유지**: 대화 성립 후 상대가 언팔 → 기존 대화 내 전송은 계속 가능(관계 skip).
+4. **미성년 보호**: peer 가 만14세 미만(birth_date) + 비팔로우 → 403. birth_date NULL → 게이트 미적용.
+5. **정지 계정**: me 또는 peer `is_banned` → 403(일반 문구, 상대에게 정지 사실 비노출).
+6. **차단/해제**: `POST /blocks/{uid}` 후 양방향 전송 403. `DELETE` 후 복구.
+7. **대화 시작/중복 방지**: 같은 상대에게 2회 시작 → 동일 conversation_id 반환(신규 미생성). 동시 2요청 → pair_key unique 로 1건만.
+8. **메시지 송수신**: 전송 후 Mongo 저장·목록 last_message 갱신·상대 unread+1.
+9. **WebSocket 실시간 (2 클라이언트)**: A·B 각각 `?token=` WS 연결 → A 전송 시 B 소켓에 즉시 `{type:"message"}` 수신. 토큰 없음/무효 → close(4401). (멀티워커면 서로 다른 워커에 붙어도 도달 — pub/sub 확인.)
+10. **unread/read**: `GET /unread-count` 합산 정확. `POST /read` 후 내 unread=0, 상대발신 메시지 read=true.
+11. **신고**: `POST /reports` target_type="dm_message" 접수 201, 본인 메시지 self-report 400, 중복 pending 409.
+12. **인증/권한**: 비로그인 REST 401, 무효 토큰 403, 비참여자가 남의 conversation messages 조회 403.
+13. **회귀**: feeds/follows/points/attendance/reports 기존 동작 불변. main.py lifespan 정상 기동/종료(리스너 태스크 cancel 경고 없음). WS 미도입 라우트 영향 없음.
+14. **9004 미러 동등성**: 9004 신규 2파일 byte-identical(파일명 예외 없음), main.py/reports.py 동일 편집, 9004 기동 후 동일 시나리오 재현.
+
+### 인프라 TODO (코드 밖 — 배포 담당)
+- 운영 nginx `/api/dm/ws`: `proxy_http_version 1.1;` + `proxy_set_header Upgrade $http_upgrade;` + `proxy_set_header Connection "upgrade";` + `proxy_read_timeout` 상향. dev 는 vite `ws:true` 로 검증됨.
+- uvicorn `--workers>1` 배포 시 Redis pub/sub 팬아웃 필수(코드는 준비됨). 단일 워커면 in-memory 만으로도 동작.
+
+---
+
+## v153 — 2026-08-01 — DM함(/dm) 풀와이드 2패널 레이아웃 수정 [MAIDOL-DmLayoutFix]
+
+**요청 작업**: DM함(`/dm`) 페이지가 넓은 모니터에서 가운데 좁은 박스로 갇혀 좌우 큰 여백이 생기던 문제를 **A안 = 풀와이드 2패널**로 수정. 프론트 CSS 단일 파일·단일 셀렉터 국소 변경. 백엔드 무변경.
+
+### Plan verification findings (원인 분석 — 파일:셀렉터 + 현재 동작)
+
+- **근본 원인**: `frontend/src/pages/DmInboxPage.css` 의 `.dminbox` 셀렉터에 `max-width: var(--max-width, 1100px)`(전역 `--max-width=1400px` 로 해석) + `margin: 0 auto` 조합 → 넓은 뷰포트에서 가운데 정렬되며 좌우 큰 여백 발생.
+- **상위 래퍼 무제약 확인**: 전역 `max-width` 제약은 `.container` 클래스에만 적용되는데 DM 페이지(`.dminbox`)는 `.container` 미사용 → `.app`/`#root` 등 상위 래퍼에 폭 제약 없음. 따라서 `.dminbox` 자체의 `max-width`/`margin` 만 제거하면 풀와이드 성립.
+- **격리성**: `.dminbox` 셀렉터는 `DmInboxPage.css` 에만 존재(전역 CSS 오염 없음) → 국소 수정으로 회귀 위험 최소.
+
+### 수정 방침 (A안 풀와이드 2패널)
+
+- `.dminbox` 에서 `max-width`·`margin:0 auto` **제거** → `width:100%`(내부 padding 16px 유지).
+- 그리드 `grid-template-columns: 320px 1fr`(왼쪽 대화목록 고정폭 + 오른쪽 대화창 flex).
+- 반응형 `@media (max-width:720px)` 단일 컬럼 유지(모바일 회귀 없음).
+- **DmInboxPage.css 단일 파일, `.dminbox` 셀렉터 1곳만 변경.** 백엔드 무변경.
+
+### 변경 매트릭스 (파일 1개)
+
+| 파일 | 변경 | 비고 |
+|---|---|---|
+| `frontend/src/pages/DmInboxPage.css` | `.dminbox` 1곳: `max-width`·`margin:0 auto` 제거 → `width:100%`, 그리드 `320px 1fr` 유지 | 백엔드/기타 무변경 |
+
+---
+
+## v154 — 2026-08-03 — 앱 추천(리퍼럴) 공유 + 추천코드 보상 시스템 [MAIDOL-ReferralSquad]
+
+**요청 작업**: MAIDOL 앱 자체를 홍보/추천하는 공유 기능 + 추천인 보상 시스템. ①헤더 앱 추천(📢) 버튼 → 공유 모달(내 추천코드 표시+복사, 카톡/인스타/페북/링크복사) ②`users.referral_code` 4자리(대문자+숫자, 혼동문자 제외 31종 charset) 가입 시 생성·불변·UNIQUE·기존 유저 전원 백필 ③초대 착지 페이지 `/invite/:code`(비로그인) — "○○님이 MAIDOL에 초대했어요!" + 코드 + 복사 + [MAIDOL 시작하기]→플레이스토어 URL(플레이스홀더, env 관리) ④웹 가입 폼 추천코드 입력칸(선택) ⑤보상: 가입 성공 시 추천인 ⭐+50 / 신규가입자 ⭐+50 ⑥어뷰징 방지(무효 코드/1회만/자기추천 불가). **9005 선구현 → 9004 미러 필수.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작)
+
+- **회원가입 엔드포인트**: `backend_9005/app/routes/auth.py:117-209 POST /api/auth/register` — body `UserCreate`(`app/models/user.py:153-164`, pydantic). 흐름: 필수값/비번/동의/gender 검증 → email 중복 409(`:137`) → 인구통계/국적 검증 → 만14세 미만 게이트(`:157`, 미만이면 400 후 보호자 플로우) → bcrypt 해시 → `INSERT INTO users ... RETURNING`(`:173-180`) → `_record_consents`(`:185`) → `[auth] register ok` 로그(`:189`) → `_create_token`(`:68`)+`_save_session`(`:80`) → 201 `{message, token, user{...}}`. **명시적 트랜잭션 없음**(순차 conn 호출) — 리퍼럴 검증은 INSERT 전, 보상은 INSERT 후 best-effort 로 넣으면 기존 구조 불변.
+- **users 스키마 마이그레이션 관행**: `backend_9005/app/main.py:57 lifespan` 안에 **startup 멱등 마이그레이션 블록** 반복 패턴 — `try: async with _pg._pool.acquire() → ALTER TABLE users ADD COLUMN IF NOT EXISTS ... / CREATE UNIQUE INDEX IF NOT EXISTS ... → print("[migration] ... ensured") except → logger.error`. 실례: provider(`:75-89`), demographics+birth_date 백필 UPDATE(`:127-143`), verification(`:145-154`). **백필도 같은 블록에서 UPDATE 로 수행하는 선례 있음**(`:136-139` birth_year→birth_date). → referral_code 컬럼+유니크 인덱스+백필 루프 전부 이 패턴으로.
+- **포인트 적립**: `backend_9005/app/services/points_service.py:206 credit_points(user_id, action, amount, ref, day=None) -> bool` — Mongo `point_events` 유니크 인덱스 `(user_id, action, track_id, day)`(`:34-37`) 게이트: 이벤트 insert 먼저, DuplicateKeyError 면 잔액 미변경 False(`:235-240`). `ref` 는 `track_id` 필드에 저장(`:231`). **`day` 를 생략하면 KST 오늘로 채워짐(`:224`)** → 리퍼럴은 day 기반이면 안 되므로(하루 지나 재시도 시 이중 적립 위험) **`day` 에 상수 `"-"` 를 명시 전달**하여 멱등키를 `(유저, 액션, 상대유저ID, "-")` = 영구 1회로 고정. 함수는 절대 raise 안 함(`:263-268`) — 가입 응답에 영향 없음. 출석체크는 `attendance_service.py:124-125` 가 `ref=today, day=today` 로 사용 — 액션명이 다르므로(`referral_inviter`/`referral_joiner` vs `ATTENDANCE_ACTION`) 충돌 없음.
+- **소셜 가입 경로**: `backend_9005/app/routes/oauth.py:263-271` 신규 유저 INSERT(referral 무관) — 소셜 신규 유저도 코드가 필요하므로 **`GET /api/referral/my-code` 에서 lazy 생성**으로 커버(oauth.py 는 수정하지 않음). startup 백필 + register 시 생성 + my-code lazy 생성 3중이면 전 유저 커버.
+- **탈퇴 처리**: `routes/auth.py:842-1005 withdraw` 는 users 익명화 UPDATE(`:868-891`)에서 referral 관련 컬럼을 건드리지 않음 → 탈퇴 유저의 코드는 그대로 남아 재사용 안 됨(UNIQUE 유지, 의도된 동작). 단 초대 페이지/가입 검증에서 `account_status='withdrawn'` 유저의 코드는 무효 처리 필요.
+- **config/.env**: `backend_9005/app/config.py:8 Settings`(pydantic-settings, `:200 env_file=".env"`), `frontend_url: str = "https://localhost:4000"`(`:134`) 존재. `.env.example` 에 OAuth 블록(`:51-60`) 등 플레이스홀더 관행. **프론트에는 `.env`/`VITE_*` 사용 이력 0건**(grep 확인) → 플레이스토어 URL 은 **백엔드 config `play_store_url` + API 응답으로 전달**이 프로젝트 관행에 맞음.
+- **프론트 헤더**: `frontend/src/components/Header.jsx:521-584 header__actions` — 로그인 블록(`:529 header__user`)에 ⭐포인트 배지 버튼(`:530-540`, 클릭→출석 모달), ✉️DM 버튼(`:542-558`, `FiMail`), 닉네임/내정보/로그아웃. 모달 관행: `AttendanceCard` 컴포넌트 + `attendanceOpen` state(`:70`), 프로필 모달 오버레이 패턴(`:601-603 header__profile-modal-overlay`, 클릭 시 닫기 + stopPropagation). react-icons/fi(`:3`) 사용. dev 로그 `[Header]` prefix + `import.meta.env.DEV` 가드(`:109` 등).
+- **프론트 라우팅**: `frontend/src/App.jsx:60-93 <Routes>` — 비로그인 공개 라우트 선례 `/feed/:feedId`(`:67`), `/guardian-consent/:token`(`:86`). `/invite/:code` 를 `:86` 근처에 추가하면 됨. import 블록 `:8-32`.
+- **가입 폼**: `frontend/src/pages/RegisterPage.jsx` — STEP gate(`:313`)→form(`:610-737`). form 스텝의 선택 입력 섹션 `추가 정보 (선택)`(`:699-708`). 페이로드 조립 `:200-216`: `extra` 객체에 필드 추가 → `register(email, password, nickname, company, title, extra)`(`:224`) → `AuthContext.jsx:34 register` → `api.register(email, password, nickname, extra)` → **`src/api/index.js:75-81 register` 가 `...extra` 스프레드로 body 에 그대로 병합** → `extra.referral_code` 만 넣으면 API/AuthContext 시그니처 변경 없이 백엔드까지 전달됨. 로그 prefix `[RegisterPage]`(`:132,221` 등) 기존 관행.
+- **API 클라이언트**: `frontend/src/api/index.js:4 axios.create({baseURL:'/api'})` + Bearer 인터셉터(`:10-15`). 무인증 GET 도 같은 API 인스턴스 사용(401 시 토큰 없으면 조용히 reject — `:33-44` anon 처리 확인). 함수는 파일 말미 추가(`:825 getPointsBalance` 등 선례).
+- **카카오 SDK**: `frontend/index.html`/`package.json`/`src` 전체 grep — **Kakao JS SDK 없음**(백엔드 `kakao_client_id` 는 OAuth REST 키, 공유용 JS 키 아님). 실키 대기 항목(프로젝트 방침: SDK 통합 보류) → **카톡 공유는 Web Share API(`navigator.share`) 우선 + 미지원 브라우저는 링크 복사 폴백**으로 확정. 인스타그램은 웹 공유 URL 자체가 없음 → 동일하게 navigator.share/복사 안내. 페북은 `https://www.facebook.com/sharer/sharer.php?u=<invite_url>` 새 창(SDK 불필요).
+- **원격 로깅**: `frontend/src/utils/remoteLogger.js` 인프라 존재 — 신규 컴포넌트도 콘솔 prefix 관행만 지키면 수집됨.
+
+### 사양↔코드 충돌/결정 사항
+
+1. **무효 추천코드 UX (사양 6 위임 결정)**: **가입 전 검증 → 400 에러 반환** 채택 (조용한 무보상 진행 기각). 근거: (a) register 는 INSERT 전에 이미 email 중복 등 다수 선검증을 하는 구조(`auth.py:137`) — 코드 검증을 INSERT 앞에 두면 부분 상태 없이 깔끔, (b) 조용히 보상만 스킵하면 사용자는 ⭐50 을 기대했다가 못 받아 CS 이슈(신뢰 손상), (c) 입력칸이 **선택사항**이므로 "코드를 확인하거나 비워두세요" 안내로 즉시 수정 가능 — 가입 흐름 차단이 아님. 에러 메시지: `"추천코드가 올바르지 않습니다. 코드를 확인하거나 비워두세요."` (빈 문자열/공백은 미입력으로 간주하고 통과).
+2. **credit_points 멱등키**: day 기본값(KST 오늘)을 쓰면 안 됨(영구 1회 필요) → `day="-"` 상수 명시 전달. 멱등키 = (referrer, `referral_inviter`, joiner_id, `"-"`) / (joiner, `referral_joiner`, referrer_id, `"-"`). 자기추천은 가입 시점엔 본인 코드가 아직 없어 원천 불가 + referrer_id == new_user_id 방어 비교 1줄 추가(2중 방어).
+3. **플레이스토어 URL 관리처**: 프론트 env 관행 부재 → 백엔드 `settings.play_store_url`(플레이스홀더 기본값) + `.env.example` `PLAY_STORE_URL=` 추가, invite/my-code API 응답에 포함해 프론트 전달.
+4. **소셜 가입 유저 코드**: oauth.py 무수정 — my-code lazy 생성으로 커버(백필 이후 신규 소셜 가입자 대응).
+5. **만14세 미만(보호자 동의) 가입 경로**: `guardian-consent/request` 는 pending 계정 생성 — 리퍼럴 미적용(모델에 필드 자체를 안 받음). 활성화 시점 보상 연동은 스코프 외(추후 확장 여지만 명시).
+6. **카톡 공유**: SDK 실키 대기 → Web Share API + 링크 복사 폴백(위 findings). 공유 메시지 텍스트에 추천코드 포함(카톡에서 길게 눌러 복사 가능).
+7. **탈퇴/미활성 추천인**: 코드 조회 시 `account_status IN ('active')` 만 유효(withdrawn/pending_consent 코드는 무효 처리 — 익명화된 "탈퇴한사용자" 닉네임 노출 방지 겸함).
+
+### 확정 스키마 / 코드 생성 규칙
+
+- **컬럼**: `ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(4)` + `ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID`(감사/1회 추적용) + `CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_key ON users(referral_code) WHERE referral_code IS NOT NULL`(부분 유니크 — NULL 다수 허용).
+- **charset(31종)**: `"23456789ABCDEFGHJKMNPQRSTUVWXYZ"` — 숫자 8(0,1 제외) + 대문자 23(O,I,L 제외). 검증 정규식 `^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$`. 4자리 = 31⁴ ≈ 92.3만 조합.
+- **생성**: `secrets.choice` 4회. 충돌 시 자동 재시도 — `UPDATE users SET referral_code=$1 WHERE id=$2 AND referral_code IS NULL` 을 `asyncpg.exceptions.UniqueViolationError` catch 루프(최대 20회, 초과 시 예외 → 호출부 best-effort 처리). `AND referral_code IS NULL` 조건으로 **불변성 보장**(이미 있으면 덮어쓰기 불가).
+- **백필**: main.py startup 마이그레이션 블록(기존 관행 위치) — 컬럼/인덱스 ensure 후 `SELECT id FROM users WHERE referral_code IS NULL` 루프 → 개별 생성. `print("[migration] users.referral_code ensured")` + `[referral] backfill done n=<건수>` 로그.
+
+### 확정 API (신규 라우터 prefix `/api/referral`)
+
+- `GET /api/referral/my-code` (인증) → `{referral_code, invite_url, play_store_url}` — 코드 없으면 lazy 생성 후 반환. `invite_url = f"{settings.frontend_url}/invite/{code}"` (프론트는 표시용으로 `window.location.origin` 기반 재조립 가능).
+- `GET /api/referral/invite/{code}` (무인증) → `{referral_code, inviter_nickname, play_store_url}` — 형식 검증 + active 유저 조회, 없으면 404 `{error:"유효하지 않은 초대코드입니다."}`.
+- **register 확장**: `UserCreate.referral_code: Optional[str] = None` — trim/대문자 정규화, 빈값=미입력. INSERT 전 검증(무효 400, 위 결정 1). INSERT 시 `referred_by` 저장. INSERT 후 `credit_points` ×2 (best-effort, 실패해도 가입 성공). 응답에 `"referral": {"applied": bool}` 추가(기존 키 불변).
+
+### 백엔드 작업 지시 (backend-dev) — 9005 선구현
+
+**신규 파일**:
+- `app/services/referral_service.py` — `REFERRAL_CHARSET`/`REFERRAL_CODE_RE` 상수, `generate_code()`, `ensure_referral_code(conn, user_id) -> str`(조회→없으면 충돌 재시도 루프 생성), `resolve_referrer(conn, code) -> row|None`(형식 검증 + active 조회), `backfill_referral_codes(conn) -> int`. 로그 prefix `[referral]` + user 앞 8자 + code (code 는 비밀 아님 — 로그 허용).
+- `app/routes/referral.py` — 위 2개 엔드포인트. `get_current_user` 는 `..auth`, PG 는 `Depends(get_pg)`. 로그 `[referral] my-code user=%s code=%s` / `[referral] invite lookup code=%s found=%s`.
+
+**편집 파일**:
+- `app/models/user.py` — `UserCreate` 에 `referral_code: Optional[str] = None` 추가(`:153-164`).
+- `app/routes/auth.py` — register(`:117`): ①email 중복 검사(`:137-139`) 근처에서 `referral_code` 정규화+`resolve_referrer` 검증(무효 400) ②INSERT 컬럼에 `referred_by` 추가(`:173-180`) ③가입 완료 로그(`:189`) 뒤 `credit_points(referrer, "referral_inviter", 50, ref=new_user_id, day="-")` + `credit_points(new_user, "referral_joiner", 50, ref=referrer_id, day="-")` best-effort + `[referral] reward inviter=%s joiner=%s code=%s` 로그 ④응답에 `referral:{applied}` 추가.
+- `app/config.py` — `play_store_url: str = "https://play.google.com/store/apps/details?id=com.maidol.app"` (플레이스홀더 — 앱 미출시).
+- `.env.example` — `# 앱 추천(리퍼럴) — 플레이스토어 출시 후 실제 URL 로 교체` + `PLAY_STORE_URL=` 블록 추가.
+- `app/main.py` — ①`:54` import 에 `referral` 추가 ②startup 마이그레이션 블록(users.nationality 블록 `:167-177` 뒤 관행 위치): referral_code/referred_by 컬럼 + 부분 유니크 인덱스 + `backfill_referral_codes` 호출 ③`:557` 근처 `app.include_router(referral.router)`.
+
+**주의**: credit_points 는 raise 안 하지만 referral 블록 전체를 try/except 로 감싸 가입 응답 보호. 코드값은 로그 허용, 이메일은 기존 `_mask_email` 관행. `day="-"` 명시 필수(생략 시 KST 오늘로 채워져 영구 멱등 깨짐).
+
+**9004 미러 (필수, 마지막 단계)**: 신규 2파일을 `backend_9004/app/services/referral_service.py`, `backend_9004/app/routes/referral.py` 로 **byte-identical 복사** + models/user.py·routes/auth.py·config.py·.env.example·main.py 동일 편집. 파일명 예외 없음(`_logs.py` 만 기존 예외). 9005 완료·검증 후 미러.
+
+### 프론트 작업 지시 (frontend-dev)
+
+**신규 파일**:
+- `src/components/AppShareModal.jsx`(+css) — 공유 모달: 내 추천코드 크게 표시 + 📋복사(`navigator.clipboard.writeText`, 실패 폴백 `document.execCommand`), 공유 버튼 4종: ①카카오톡 → `navigator.share({title, text(코드 포함 메시지), url})` 시도, 미지원 시 "링크가 복사되었습니다. 카카오톡에 붙여넣어 주세요" 폴백 ②인스타그램 → 동일 navigator.share/복사 안내 ③페이스북 → `window.open('https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(inviteUrl))` ④링크 복사. invite_url 은 `window.location.origin + '/invite/' + code`. 마운트 시 `getMyReferralCode()` 호출. 공유 메시지 예: `"MAIDOL에서 나만의 AI 아이돌을 만들어보세요! 추천코드: {CODE}\n{inviteUrl}"`. 모달 오버레이는 Header 프로필 모달 패턴(`header__profile-modal-overlay`) 참고. 로그 prefix `[AppShareModal]` (open/copy/share 방식별).
+- `src/pages/InvitePage.jsx`(+css) — `/invite/:code` 비로그인 착지: `getInviteInfo(code)` → "{inviter_nickname}님이 MAIDOL에 초대했어요!" + 추천코드 + 📋복사 + [MAIDOL 시작하기] 버튼(`play_store_url` 새 창) + 보조 링크 "웹에서 바로 가입하기" → `/register?ref={code}`. 404 시 "유효하지 않은 초대코드" 안내 + 홈 링크. 로그 prefix `[InvitePage]` (load/copy/cta, 코드값 로그 허용).
+
+**편집 파일**:
+- `src/api/index.js` — 말미 추가: `getMyReferralCode = () => API.get('/referral/my-code')`, `getInviteInfo = (code) => API.get(\`/referral/invite/\${code}\`)`. (register 는 기존 `...extra` 스프레드로 referral_code 전달 — 수정 불필요, `:75-81` 확인됨.)
+- `src/App.jsx` — import + `<Route path="/invite/:code" element={<InvitePage />} />` (공개 라우트, `:86 guardian-consent` 근처).
+- `src/components/Header.jsx` — 로그인 블록(`:529 header__user`) 안 ⭐배지(`:540`) 옆에 📢 앱 추천 버튼(이모지 — ⭐배지와 동일 톤, title="친구에게 MAIDOL 추천하기") + `shareOpen` state + `<AppShareModal open onClose>` 렌더. 로그 `[Header] share modal open`.
+- `src/pages/RegisterPage.jsx` — form 스텝 `추가 정보 (선택)` 섹션(`:699-708`) 근처에 "추천코드 (선택)" 입력칸: maxLength 4, 입력 시 대문자 변환, 클라 검증(비어있거나 `^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$` — 불일치 시 인라인 에러), 페이로드 `:200-216` 에서 값 있을 때만 `extra.referral_code` 포함. `useSearchParams` 로 `?ref=` 쿼리 프리필(InvitePage 보조 링크 연동). 400 `"추천코드가 올바르지 않습니다..."` 는 기존 에러 표시(`:241`)로 자연 노출. 로그 `[RegisterPage] register start { hasReferral }` (코드값은 개인정보 아님 — 로그 허용이나 관행상 유무만).
+
+**주의**: Kakao SDK 통합 금지(실키 대기 — 프로젝트 방침). navigator.share 는 HTTPS(dev 4000 HTTPS 충족) + 모바일 위주 지원 — 데스크톱 폴백 필수. 비로그인 시 📢 버튼 미렌더(코드는 계정 귀속).
+
+### 변경 매트릭스 (파일별 변경 + 로그 추적자)
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/services/referral_service.py` | 신규 — 코드 생성/충돌 재시도/백필/추천인 조회 | `[referral]` + user 8자 + code |
+| `backend_9005/app/routes/referral.py` | 신규 — my-code(lazy 생성)/invite 조회 | `[referral]` |
+| `backend_9005/app/routes/auth.py` | register: 코드 검증(400)/referred_by 저장/보상 ⭐50×2/응답 referral 키 | `[referral] reward inviter= joiner= code=` |
+| `backend_9005/app/models/user.py` | `UserCreate.referral_code` 필드 | — |
+| `backend_9005/app/config.py` | `play_store_url` 설정(플레이스홀더) | — |
+| `backend_9005/.env.example` | `PLAY_STORE_URL=` 플레이스홀더 | — |
+| `backend_9005/app/main.py` | 컬럼/부분유니크 인덱스/백필 마이그레이션 + 라우터 등록 | `[migration] users.referral_code ensured`, `[referral] backfill done n=` |
+| `backend_9004/*` (위 전부) | **9005 미러(byte-identical 신규 2파일 + 동일 편집)** | 동일 |
+| `frontend/src/components/AppShareModal.jsx`(+css) | 신규 — 공유 모달(복사/카톡·인스타 WebShare 폴백/페북/링크) | `[AppShareModal]` |
+| `frontend/src/pages/InvitePage.jsx`(+css) | 신규 — 초대 착지(비로그인) | `[InvitePage]` |
+| `frontend/src/api/index.js` | `getMyReferralCode`/`getInviteInfo` 추가 | — |
+| `frontend/src/App.jsx` | `/invite/:code` 공개 라우트 | — |
+| `frontend/src/components/Header.jsx` | 📢 버튼 + 모달 state | `[Header] share modal open` |
+| `frontend/src/pages/RegisterPage.jsx` | 추천코드 입력칸(선택) + `?ref=` 프리필 + extra 전달 | `[RegisterPage] register start {hasReferral}` |
+
+### 테스트 항목 (tester)
+
+1. **백필**: 기동 후 기존 유저 전원 `referral_code NOT NULL`, 전부 4자리 charset 일치, 중복 0건(`SELECT referral_code, count(*) ... HAVING count(*)>1`). 재기동 시 코드 불변(멱등).
+2. **my-code**: 인증 유저 → `{referral_code, invite_url, play_store_url}`. 코드 없는 유저(백필 후 소셜 신규 가입 시뮬레이션 — 직접 NULL 세팅) → lazy 생성. 비로그인 401.
+3. **invite 조회**: 유효 코드 → 닉네임/코드/스토어 URL. 무효 형식(`0OIL` 포함/3자리/소문자) 및 미존재 코드 → 404. 탈퇴 유저 코드 → 404.
+4. **가입+보상 정상 경로**: 유효 코드로 가입 → 201 + `referral.applied=true`, 추천인 잔액 +50, 신규가입자 잔액 +50, Mongo `point_events` 에 `referral_inviter`/`referral_joiner` 각 1건(day="-").
+5. **어뷰징 방지**: ①무효 코드 가입 → 400(계정 미생성 확인) ②빈 문자열/미입력 → 정상 가입 + 보상 없음 + `applied=false` ③같은 (추천인, 신규가입자) 조합으로 credit_points 재호출 시뮬레이션 → dup False(이중 적립 없음) ④자기 코드 자기 가입은 구조상 불가(가입 전 코드 미존재) — referrer==joiner 방어 코드 리뷰 확인.
+6. **보상 실패 내성**: Mongo 중단 상태에서 유효 코드 가입 → 가입은 201 성공(보상만 스킵, warning 로그).
+7. **프론트 공유 모달**: 로그인 시 헤더 📢 노출/비로그인 미노출, 코드 표시+복사 동작, 4종 버튼(WebShare 미지원 데스크톱에서 복사 폴백 확인), 공유 텍스트에 코드 포함.
+8. **초대 페이지**: `/invite/{유효코드}` 비로그인 렌더, 복사 버튼, [MAIDOL 시작하기]→플레이스토어 플레이스홀더 URL 새 창, 무효 코드 안내 화면, "웹에서 바로 가입" → `/register?ref=` 프리필.
+9. **가입 폼**: 추천코드 칸 선택 입력(빈 채로 가입 성공), 소문자 입력 시 자동 대문자, 무효 코드 400 에러 메시지 표시 후 수정/비우고 재시도 성공.
+10. **회귀 — 기존 회원가입**: 코드 미입력 일반 가입 전 플로우(게이트→동의→가입→자동로그인) 불변, 만14세 미만 게이트/보호자 플로우 불변(리퍼럴 미적용), 소셜 로그인 가입 정상.
+11. **회귀 — 포인트/출석체크**: 출석 체크인 ⭐ 적립 정상(day 기반 멱등 유지), `GET /api/points/balance`·history 정상, 기존 재생/다운로드 +1 적립 영향 없음.
+12. **회귀 — 헤더**: ⭐배지/✉️DM/내정보/스트라이크 배너 등 기존 헤더 기능 불변.
+13. **9004 미러 동등성**: 신규 2파일 byte-identical(diff 0), 편집 5파일 동일 diff, 9004 기동 후 1·4·5 핵심 시나리오 재현.
+
+### 9004 미러 동기화 단계 (필수 — 구현 마지막)
+
+1. 9005 구현·테스트 통과 후 `backend_9004/` 에 신규 2파일 복사(byte-identical) + models/user.py·routes/auth.py·config.py·.env.example·main.py 동일 편집.
+2. `diff -r backend_9005/app backend_9004/app` 로 의도된 차이(`_logs.py` 파일명 예외 등 기존 차이)만 남는지 확인.
+3. 9004 기동 → `[migration] users.referral_code ensured` 로그 확인(같은 DB 공유 시 백필은 no-op 멱등).
+
+## v155 — 2026-08-03 — DM 인스타 완전체(C안): 전체 사용자 검색 + 메시지 요청함 [MAIDOL-DmRequestSquad]
+
+**요청 작업**: DM 을 C안(인스타 실제 정책)으로 수정. ①새 메시지(✏️)에서 **전체 사용자 닉네임 검색**(자기 자신/차단 제외) ②아무나 전송 가능 + **메시지 요청함 격리**: 상대가 나를 팔로우 → 즉시 accepted(기존 동일) / 비팔로우 → **pending(메시지 요청)** 생성 — 보낸 사람은 전송 가능, 받는 사람은 수락 전 답장 불가, 받는 사람 메인 목록이 아닌 "메시지 요청"함에 격리 ③수락 → accepted 전환, 일반 대화 이동 / 거절 → 대화+메시지 삭제(인스타 방식, 발신자 미통지) ④미성년 보호 유지(만14세 미만 비팔로우 상대는 요청조차 403) ⑤본인인증/밴/dm_blocks 게이트 유지 ⑥기존 대화 전부 accepted 취급 ⑦헤더 ✉️ 배지는 accepted 만 집계, 요청함은 별도 "요청 N개" ⑧WS pending 메시지는 수신측 요청함 갱신. **9005 선구현 → 9004 미러 필수.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작)
+
+- **게이트**: `backend_9005/app/services/dm_service.py:187-234 assert_can_dm(conn, mongo, me_id, peer_id, existing_conv=None)` — 반환값 없음(통과 or HTTPException). ①is_verified(`:200-202`) ②self 400/peer 404(`:205-209`) ③banned 403 `_GENERIC_DENY`(`:212-213`) ④**미성년: `is_under_14(peer_row["birth_date"])` && not `_peer_follows_me` → 403 generic(`:216-219`) — C안 사양③과 이미 일치, 무수정 유지** ⑤관계: `existing_conv is None` 일 때만 `_peer_follows_me` 아니면 403 "상대가 회원님을 팔로우한 경우에만..."(`:221-230`) — **C안에서 이 deny 를 제거하고 pending 분기로 대체할 유일 지점** ⑥dm_blocks 양방향 403 generic(`:232-234`). `DM_REQUIRE_MUTUAL=False` 상수(`:45`). 호출부 2곳: `get_or_create_conversation:310`(existing 전달), `send_message:426`(conv 전달 → ⑤ 항상 skip).
+- **대화 스키마**: `dm_service.py:320-329` — `{participants(sorted 2), pair_key(unique), last_message_text, last_sender_id, last_at, unread:{uid:n}, created_at, updated_at}`. **status/requester 개념 없음** → `status`("pending"|"accepted") + `requester_id` 필드 추가 필요. 기존 문서는 status 필드 부재 → **모든 조회를 `{"status": {"$ne": "pending"}}` / `{"status": "pending"}` 로 작성하면 필드 없는 legacy 문서가 자동으로 accepted 취급(마이그레이션 불필요, 사양⑥ 충족)**. `_serialize_conversation:271-284` 반환 키에 status/requester_id 추가 필요.
+- **목록/배지 쿼리**: `list_conversations:347-375` — `find({"participants": me})` 무조건 전체. `unread_total:491-500` — 동일 필터로 unread 합산. 둘 다 pending 필터 추가 지점. 라우터 `GET /api/dm/unread-count`(`app/routes/dm.py:201-210`) 응답 `{count}` — `requests` 키 추가는 하위호환(기존 프론트는 count 만 읽음 `Header.jsx:136`).
+- **전송/WS payload**: `send_message:409-461` — 참여자 검증 → `assert_can_dm(existing_conv=conv)` → insert → conv `last_*` 갱신 + `$inc unread.{peer}` → `publish_to_user(peer, {"type":"message","conversation_id":cid,"message":{id,conversation_id,sender_id,text,created_at,read}})`(`:454-456`). **pending 시 수신자 답장 차단 분기 없음** → 참여자 검증 직후 추가 지점. 이벤트에 `conversation_status` 키 추가는 하위호환(프론트 `dmSocket.js:88-104` 는 type 스위치만, 미지 키 무해).
+- **mark_read**: `dm_service.py:464-488` — unread 0 + read=true + 상대에게 `{"type":"read"}` 발행(읽음표시 동기화). **pending 대화에서 수신자가 열람 시 read 이벤트가 발신자에게 "봤음"을 노출** → 인스타는 요청 열람을 노출하지 않음 → 가드 필요.
+- **사용자 검색 API**: **일반 유저용 닉네임 검색 엔드포인트 부재 확인** — nickname ILIKE 검색은 `app/routes/admin.py:148`(관리자 전용) 뿐. `search_service` 는 ES 곡 검색(별개). 팔로워 목록만 존재: `app/routes/follows.py:116-143 GET /api/follows/followers` → `{followers:[{id,nickname,profile_image,followed_at}],total}`. → **신규 검색 엔드포인트 필요**(dm.py 안에 추가 — 신규 라우터 파일 없이 미러 범위 최소화). users 에 `account_status` 존재(`app/routes/auth.py:280,287` — withdrawn 체크 선례).
+- **신고 증거 vs 거절 삭제 (충돌 검증)**: `app/routes/reports.py:43 TARGET_TYPES` 에 "dm_message" 포함, `:228-246` — **신고 접수 시점에 메시지 전문(text)을 Postgres `reports.evidence`(jsonb) 로 스냅샷**(`:254-258`), 이후 관리자 열람은 스냅샷 기반. `admin.py` 에 dm_messages 삭제/참조 액션 없음(grep 0건). → **거절 시 대화+메시지 hard delete 해도 기접수 신고 증거는 보존됨 — 인스타 방식(삭제) 채택 가능 확정**. 단 삭제 후엔 신규 신고 불가(target gone `:231-233`) → 프론트 거절 확인 문구에 "신고가 필요하면 거절 전에" 안내.
+- **프론트 compose**: `frontend/src/pages/DmInboxPage.jsx:306-353` — `openCompose` 가 `api.getMyFollowers({page:1,limit:100})` 로 팔로워 로드(`:314`), `composeFilter` 는 **클라이언트측 필터**(`:351-353`), 모달 `:466-515`(힌트 "나를 팔로우하는 사용자에게..." `:474`), `startConversation:326-349` → `createDmConversation` → 목록 추가 + `navigate(/dm/{cid})`. WS `onMessage:223-260` — **목록에 없는 대화면 무조건 `loadConversations()` 재조회(`:244-248`)** → pending 이면 요청함 갱신으로 분기 필요. `openConversation:113-140` 은 항상 `markDmRead` 호출(`:135`) → pending 수신자일 땐 skip 필요.
+- **프론트 채팅뷰**: `frontend/src/components/DmChatView.jsx` — 표시+콜백 전용(상태는 DmInboxPage 소유), props `:39-52`, 입력바 `:201-220`, 메뉴(차단) `:146-158`. 요청 모드(입력 숨김+수락/거절 바) props 추가 지점.
+- **헤더/소켓**: `Header.jsx:134-159` — `refreshUnread`=getDmUnreadCount 30s 폴링+WS(onMessage/onUnread/onRead) → **서버 unread_total 이 accepted 만 집계하면 헤더는 무수정으로 사양⑦ 충족**(요청 도착 시 onMessage 로 refreshUnread 호출돼도 서버 값이 불변이라 배지 불변). `dmSocket.js` — type 스위치(`:88-104`), 미지 type 은 DEV 로그만 → 신규 "accepted" 이벤트 추가해도 구버전 무해.
+- **API 클라이언트**: `frontend/src/api/index.js:894-917` DM 함수 9개(getDmEligibility/createDmConversation/getDmConversations/getDmMessages/sendDmMessage/markDmRead/getDmUnreadCount/blockDmUser/unblockDmUser), `getMyFollowers:724`. 신규 4개 추가 지점(파일 말미 관행).
+- **admin/신고 회귀면**: ReportModal `targetType="dm_message"`(`DmInboxPage.jsx:459-463`) — 메시지 존재 시에만 신고 가능(변화 없음).
+
+### 사양↔코드 충돌/결정 사항
+
+1. **거절 = hard delete 확정 (사양③)**: 신고 증거는 접수 시점 스냅샷(reports.py:238-246, PG jsonb)이라 삭제와 충돌 없음(위 findings). 관리자 액션도 dm_messages 미참조. 채택: 거절 → `dm_conversations` 1건 + 해당 `dm_messages` 전체 delete, 발신자 미통지(WS 이벤트 발행 안 함). **부작용**: 발신자는 대화가 사라진 뒤 재요청 가능(스팸 벡터) → 완화책으로 요청함 UI 에 [차단] 버튼 병행 제공(차단 시 dm_blocks 게이트가 재요청 차단). 프론트 거절 confirm 에 "차단하지 않으면 다시 요청이 올 수 있어요 / 신고는 거절 전에" 문구.
+2. **legacy 대화 accepted 취급 (사양⑥)**: Mongo 마이그레이션 없이 **쿼리 레벨 처리** — accepted 조회는 `{"status": {"$ne": "pending"}}`(필드 부재 = accepted), pending 조회는 `{"status": "pending"}` 명시. 신규 생성만 status 명시 저장. 근거: update_many 백필은 재기동마다 스캔 비용 + 기존 프로젝트에 Mongo startup 마이그레이션 관행 없음(PG 만 main.py).
+3. **assert_can_dm 시그니처 변경**: 게이트⑤ deny(`dm_service.py:221-230`)를 제거하고 **반환값 도입** — `assert_can_dm(...) -> dict` 로 `{"peer_follows_me": bool|None}` 반환(existing_conv 존재 시 None — 기존 skip 의미 유지). `get_or_create_conversation` 이 이 값으로 status 결정. 게이트①②③④⑥ 및 deny 문구/로그 stage 불변. `DM_REQUIRE_MUTUAL` 로직은 관계 판정 계산식 안에 유지. send_message 쪽 호출은 existing_conv=conv 라 동작 불변.
+4. **발신자 목록 노출**: 인스타처럼 **발신자(요청자)의 메인 목록에는 보낸 pending 대화 표시**(자기가 보낸 건 자기에게 요청함이 아님) — `list_conversations` 필터 `{"participants": me, "$or": [{"status": {"$ne": "pending"}}, {"requester_id": me}]}`. 수신자 요청함은 `{"participants": me, "status": "pending", "requester_id": {"$ne": me}}`.
+5. **pending 열람 시 읽음 노출 금지**: `mark_read` 에 가드 — conv 가 pending 이고 me != requester_id 면 **no-op 반환**(unread 도 안 건드림 — 수락 시점까지 unread 보존, read 이벤트 미발행). 프론트도 pending 수신자 열람 시 markDmRead 호출 skip(이중 방어). 수락 후 첫 열람에 정상 read 처리.
+6. **요청함 카운트 전달 방식**: 신규 엔드포인트 대신 **`GET /api/dm/unread-count` 응답 확장** `{count, requests}` (count=accepted unread 합, requests=수신 pending 대화 수). 헤더는 count 만 사용(무수정), DM 페이지가 requests 사용. 30s 폴링/WS refreshUnread 인프라 재사용.
+7. **검색 결과에서 미성년 비팔로우 상대 비제외**: 검색은 노출하되 대화 시작 시 기존 게이트④가 403 generic(`_GENERIC_DENY`) — 미성년 여부 비노출 원칙(기존 코드 철학) 유지. 인스타도 검색은 되고 전송이 막히는 구조.
+8. **검색 게이트**: 검색 API 는 인증 + **is_verified 필수**(DM 전용 검색이므로 dm 게이트① 준용 — 미인증 유저의 전체 유저 닉네임 열람 방지). `account_status='active'` 만, 자기 자신 제외, dm_blocks 양방향 제외(PG 조회 후 Mongo 차단목록으로 후필터), 결과 limit 20, q 는 trim 후 1자 이상.
+9. **수락 시 게이트 재검사 불필요**: 수락은 수신자의 명시 동의 — 참여자+pending+수신자 본인 검증만. (차단/밴은 이후 send_message 게이트가 계속 방어.)
+10. **compose 기본 화면**: 검색어 없을 때 기존 팔로워 목록을 "추천" 섹션으로 유지(getMyFollowers 재사용, 인스타 추천 유사) — 검색어 입력 시 서버 검색 결과로 전환(300ms 디바운스).
+
+### 확정 스키마 / API
+
+- **dm_conversations 추가 필드**: `status`: "accepted"|"pending"(신규 생성 시 명시, legacy 는 필드 부재=accepted), `requester_id`: str(대화 개시자 — pending 판정용, accepted 생성 시에도 기록), `accepted_at`: datetime|None. 인덱스 추가 없음(participants 기존 인덱스로 충분, MVP 규모).
+- **`_serialize_conversation`/`list_conversations` 응답 키 추가**: `status`("accepted"|"pending" — 필드 부재 시 "accepted" 로 정규화), `requester_id`.
+- **신규/변경 REST (전부 `app/routes/dm.py` 내)**:
+  - `GET /api/dm/users/search?q=` (인증) → `{users:[{id,nickname,profile_image}]}` — 결정 8 게이트. 로그 `[dm] user_search me=%s qlen=%d results=%d`(검색어 원문 미로그).
+  - `GET /api/dm/requests` (인증) → `{requests:[대화 serialize 동일 형태]}` — 수신 pending 만, last_at desc.
+  - `POST /api/dm/conversations/{cid}/accept` (인증) → 참여자+pending+me!=requester_id 검증 → `$set {status:"accepted", accepted_at, updated_at}` → 요청자에게 `publish_to_user(requester, {"type":"accepted","conversation_id":cid})` → serialize 반환. 로그 `[dm] request accepted conv=%s me=%s`.
+  - `DELETE /api/dm/conversations/{cid}` (인증, 거절) → 참여자+pending+me!=requester_id 검증 → messages delete_many + conversation delete_one, **WS 이벤트 미발행** → `{declined: true}`. 로그 `[dm] request declined conv=%s me=%s deleted_msgs=%d`.
+  - `GET /api/dm/unread-count` 응답 확장 → `{count, requests}`.
+- **WS 이벤트 변경**: `message` 이벤트에 `"conversation_status"` 키 추가(accepted|pending). 신규 `{"type":"accepted","conversation_id"}` (수락 시 요청자에게 — 요청자 UI 목록 상태 갱신용).
+
+### 백엔드 작업 지시 (backend-dev) — 9005 선구현, 편집 2파일만
+
+**`app/services/dm_service.py`**:
+1. `assert_can_dm`(`:187-234`) — 게이트⑤ 블록(`:221-230`)을 deny 없이 관계 계산으로 교체: `relationship = None; if existing_conv is None: ok = await _peer_follows_me(...); if DM_REQUIRE_MUTUAL: ok = ok and await _i_follow_peer(...); relationship = ok` → 함수 끝에서 `return {"peer_follows_me": relationship}`. 게이트①②③④⑥/문구/`_deny` stage 로그 불변. docstring 갱신(⑤ = pending 판정으로 변경 명시).
+2. `get_or_create_conversation`(`:304-344`) — `assert_can_dm` 반환값 수신 → 신규 doc 에 `"status": "accepted" if gate["peer_follows_me"] else "pending"`, `"requester_id": me_id`, `"accepted_at": now if accepted else None` 추가(`:320-329`). DuplicateKeyError 재조회 경로 불변. 로그에 `status=%s` 추가.
+3. `_serialize_conversation`(`:271-284`) 및 `list_conversations`(`:347-375`) 내 인라인 serialize(`:365-374`) — `"status": conv.get("status") or "accepted"`, `"requester_id": conv.get("requester_id")` 키 추가.
+4. `list_conversations` 필터(`:352`) → `{"participants": me_id, "$or": [{"status": {"$ne": "pending"}}, {"requester_id": me_id}]}` (결정 4).
+5. 신규 `list_requests(conn, mongo, me_id)` — `{"participants": me_id, "status": "pending", "requester_id": {"$ne": me_id}}` last_at desc, list_conversations 와 동일 hydration/serialize.
+6. `send_message`(`:409-461`) — 참여자 검증(`:421-422`) 직후: `if conv.get("status") == "pending" and me_id != conv.get("requester_id"): _deny("pending_reply", ..., 403, "메시지 요청을 수락한 후에 답장할 수 있습니다.")`. publish 이벤트(`:454`)에 `"conversation_status": conv.get("status") or "accepted"` 추가.
+7. `mark_read`(`:464-488`) — 참여자 검증 후: pending && me != requester_id 면 no-op `{"conversation_id": cid, "read": False, "marked": 0}` 반환(read 이벤트 미발행, 결정 5).
+8. `unread_total`(`:491-500`) 필터 → `{"participants": me_id, "status": {"$ne": "pending"}}`. 신규 `requests_count(mongo, me_id) -> int` = `count_documents({"participants": me_id, "status": "pending", "requester_id": {"$ne": me_id}})`.
+9. 신규 `accept_request(conn, mongo, me_id, cid)` / `decline_request(mongo, me_id, cid)` — 위 확정 API 사양대로(참여자 404/403, not pending → 400 "이미 처리된 요청입니다.", me==requester → 403). accept 는 `publish_to_user(requester, {"type":"accepted",...})` 후 serialize 반환.
+10. 신규 `search_users(conn, mongo, me_id, q) -> List[dict]` — is_verified fresh 확인(미인증 403 게이트① 문구 재사용) → `SELECT id, nickname, profile_image FROM users WHERE nickname ILIKE $1 AND account_status = 'active' AND id != $2 ORDER BY nickname LIMIT 40`(패턴 `%q%`, q escape `%_`) → dm_blocks 양방향 후필터(`_is_blocked_either` 대신 일괄: `dm_blocks.find({"$or":[{"blocker_id": me},{"blocked_id": me}]})` 1회 조회 후 set 제외) → 20개 절단. 검색어 원문 미로그(qlen 만).
+
+**`app/routes/dm.py`**:
+1. `GET /users/search`, `GET /requests`, `POST /conversations/{cid}/accept`, `DELETE /conversations/{cid}` 핸들러 추가 — 기존 핸들러 관행(try/HTTPException re-raise/500 JSONResponse, `[dm]` 로그, `_short`) 동일.
+2. `GET /unread-count`(`:201-210`) → `{"count": ..., "requests": await dm_service.requests_count(...)}`.
+3. 라우트 순서 주의: `/users/search` 와 `/requests` 는 `/conversations/{cid}` 계열과 경로 충돌 없음(FastAPI prefix 상이). `DELETE /conversations/{cid}` 는 신규 메서드라 기존 GET/POST 와 충돌 없음.
+
+**불변 확인**: `app/main.py`(라우터 신규 등록 없음 — dm.py 내 추가), reports.py, follows.py, admin.py, models/user.py 무수정. WS/pubsub 리스너(`dm.py:240-374`) 무수정(이벤트는 REST 가 발행).
+
+**9004 미러 (필수, 마지막 단계)**: `backend_9004/app/services/dm_service.py`, `backend_9004/app/routes/dm.py` **동일 편집(byte-identical 목표)**. `diff backend_9005/app/services/dm_service.py backend_9004/...` diff 0 확인. 9005 완료·검증 후 미러.
+
+### 프론트 작업 지시 (frontend-dev)
+
+**`src/api/index.js`** (말미, `:917` 뒤): `searchDmUsers = (q) => API.get('/dm/users/search', { params: { q } })`, `getDmRequests = () => API.get('/dm/requests')`, `acceptDmRequest = (cid) => API.post(\`/dm/conversations/\${cid}/accept\`)`, `declineDmRequest = (cid) => API.delete(\`/dm/conversations/\${cid}\`)`. 기존 9개 무수정.
+
+**`src/pages/DmInboxPage.jsx`** (로그 prefix `[DmInbox]` 유지):
+1. **compose 모달 개편**(`:306-353`, `:466-515`): `composeFilter` 입력을 서버 검색으로 — 300ms 디바운스로 `searchDmUsers(q)` 호출(비어있으면 기존 `getMyFollowers` 결과를 "추천" 섹션으로 표시 — 결정 10). 힌트 문구(`:474`) → "닉네임으로 검색해 누구에게나 메시지를 보낼 수 있어요. 상대가 나를 팔로우하지 않으면 메시지 요청으로 전달돼요." `startConversation`(`:326-349`) 은 기존 로직 유지 + 응답 `data.status === 'pending'` 이면 안내 토스트/문구("상대가 수락하면 대화가 시작돼요" — 발신자는 즉시 전송 가능하므로 차단하지 않고 안내만).
+2. **요청함 탭**: 목록 헤더(`:378-388`)에 "메시지 | 요청 N" 탭 — `requests` state + `getDmRequests()` 로드(탭 진입 시 + `getDmUnreadCount` 응답의 `requests` 수로 탭 뱃지). 요청 목록 항목 클릭 → 해당 pending 대화 열람(메시지 로드는 기존 `getDmMessages` 재사용, **`markDmRead` 호출 skip** — `openConversation:133-139` 에 pending 수신자 분기, 결정 5).
+3. **수락/거절**: pending 수신 대화 열람 시 DmChatView 에 `requestMode` 전달 → 수락 → `acceptDmRequest(cid)` → 요청 목록에서 제거 + 메인 목록 선두 추가 + 입력 활성 + 이때 `markDmRead`. 거절 → confirm("요청을 거절하면 대화가 삭제됩니다. 신고가 필요하면 거절 전에 해주세요. 차단하지 않으면 다시 요청이 올 수 있어요.") → `declineDmRequest(cid)` → 요청 목록 제거 + 뷰 닫기. [차단] 병행 노출 — 기존 `handleBlock`(`:282-299`) 재사용 후 decline 호출(결정 1).
+4. **WS 분기**(`:223-260`): `payload.conversation_status === 'pending'` 이고 목록/요청함에 없는 대화면 `loadConversations()` 대신 요청함 재조회(+탭 뱃지 갱신). 현재 열린 pending 대화면 append 는 기존대로(단 markDmRead skip). 신규 `dmSocket.onAccepted` 구독 — 내가 요청자인 대화가 accepted 되면 대화 status 갱신(목록 재조회로 충분).
+5. 발신자측 pending 대화는 메인 목록에 그대로 표시(서버가 내려줌, 결정 4) — 항목에 "요청 대기 중" 보조 라벨(conv.status==='pending' && requester_id===내 id).
+
+**`src/components/DmChatView.jsx`** (로그 prefix `[DmChat]` 유지): props 추가 — `requestMode`(bool: 수신 pending), `onAccept`, `onDecline`. requestMode 시 입력바(`:201-220`) 대신 수락/거절/차단 액션 바 + 상단 안내("메시지 요청 — 수락하기 전까지 상대에게 읽음이 표시되지 않아요"). 발신자 pending(conv.status==='pending' && !requestMode)이면 입력바 유지 + 소형 안내 문구.
+
+**`src/utils/dmSocket.js`**: `acceptedHandlers` Set + `onAccepted(fn)` 구독 + onmessage 스위치에 `type === 'accepted'` 분기 추가(`:96-104` read 분기 옆). 주석 서버 이벤트 목록(PLAN v155) 갱신.
+
+**`src/components/Header.jsx`**: **무수정** — unread-count 의 `count` 가 서버측에서 accepted 만 집계(사양⑦ 자동 충족). `requests` 키는 헤더 미사용.
+
+### 변경 매트릭스 (파일별 변경 + 로그 추적자)
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/services/dm_service.py` | 게이트⑤→pending 판정 반환, status/requester_id 스키마, 목록/배지 pending 필터, 답장 차단, mark_read 가드, requests/accept/decline/search_users 신규 함수 | `[dm]` 유지 + `pending_reply` stage, `request accepted/declined`, `user_search qlen` |
+| `backend_9005/app/routes/dm.py` | 신규 4 엔드포인트 + unread-count `{count,requests}` 확장 | `[dm]` 유지 |
+| `backend_9004/app/services/dm_service.py`, `backend_9004/app/routes/dm.py` | **9005 미러(byte-identical)** | 동일 |
+| `frontend/src/api/index.js` | searchDmUsers/getDmRequests/acceptDmRequest/declineDmRequest 추가 | — |
+| `frontend/src/pages/DmInboxPage.jsx` | compose 서버검색(디바운스)+추천 섹션, 요청함 탭, 수락/거절/차단 흐름, WS pending 분기, 발신자 pending 라벨 | `[DmInbox]` 유지 |
+| `frontend/src/components/DmChatView.jsx` | requestMode(수락/거절 바, 입력 숨김)+발신자 pending 안내 | `[DmChat]` 유지 |
+| `frontend/src/utils/dmSocket.js` | `accepted` 이벤트 구독 추가 | `[DmSocket]` 유지 |
+| `frontend/src/components/Header.jsx` | **무수정** | — |
+
+### 테스트 항목 (tester)
+
+1. **전체 검색**: 비팔로워 닉네임 부분일치 검색 성공, 자기 자신/차단(양방향)/withdrawn 미노출, 미인증 유저 403, q 공백 → 빈 결과, `%`/`_` 포함 검색어 이스케이프.
+2. **pending 생성**: A(B 가 A 를 비팔로우) → B 대화 시작 → 201 `status:"pending"`, `requester_id=A`. A 는 메시지 전송 가능(복수), B 의 **메인 목록에 미노출** + `GET /api/dm/requests` 에 노출 + `unread-count.requests` ≥1 / `count` 불변(헤더 배지 불변).
+3. **수신자 답장 차단**: B 가 수락 전 해당 대화에 POST messages → 403 "메시지 요청을 수락한 후에...". B 열람 시 A 에게 read 이벤트 미발행(A 화면 읽음표시 없음) + unread 보존.
+4. **수락**: B accept → `status:"accepted"`, B 메인 목록 이동 + 답장 성공 + 이후 read 정상, A 에게 WS `accepted` 수신, `requests` 카운트 감소, 수락 후 헤더 배지에 기존 unread 반영.
+5. **거절**: B decline → Mongo 대화+메시지 삭제 확인, A 에게 WS 이벤트 없음, A 목록 재조회 시 대화 소멸, A 재요청 시 새 pending 생성 가능. 거절 흐름의 [차단] 선택 시 재요청 403.
+6. **미성년 보호(사양③)**: 만14세 미만 + 비팔로우 상대에게 대화 시작 → 403 generic(요청 미생성). 만14세 미만이라도 나를 팔로우하면 즉시 accepted(기존 동일).
+7. **권한 방어**: 제3자/요청자 본인의 accept·decline → 403, accepted 대화 decline → 400, 비참여자 requests 접근 불가.
+8. **회귀 — 즉시 accepted**: 팔로워 상태(B 가 A 팔로우) 대화 시작 → 여전히 즉시 `status:"accepted"` + 양방향 송수신/WS 실시간/읽음표시 기존 동일.
+9. **회귀 — 기존(legacy) 대화**: v152 생성분(status 필드 없음) 목록 노출/전송/수신/mark_read/unread 배지/차단/신고 전부 기존 동작. unread-count `count` 값 변화 없음.
+10. **회귀 — 게이트**: 미인증 403, 밴 403 generic, dm_blocks 403 generic(pending 생성도 차단), 신고 접수 → evidence 스냅샷 저장 확인(거절 삭제 후에도 기접수 신고 evidence 열람 가능 — reports.py:228-246 경로).
+11. **WS**: pending 첫 메시지 → B 요청함 실시간 갱신(메인 목록 미영향), accepted 대화 메시지 → 기존 실시간 동작 불변, 멀티탭 read 동기화 불변.
+12. **프론트**: compose 검색 디바운스/추천 섹션 전환, 발신자 "요청 대기 중" 라벨, requestMode 입력 숨김+수락/거절/차단 바, 거절 confirm 문구, `markDmRead` 미호출(pending 수신자) 네트워크 확인.
+13. **9004 미러 동등성**: 편집 2파일 diff 0, 9004 기동 후 2·4·5·8 재현(공유 Mongo 시 데이터 정합 주의 — 테스트 계정 분리).
+
+### 9004 미러 동기화 단계 (필수 — 구현 마지막)
+
+1. 9005 구현·테스트 통과 후 `backend_9004/app/services/dm_service.py`·`backend_9004/app/routes/dm.py` 에 동일 편집(byte-identical 목표 — dm 계열은 `_logs.py` 파일명 예외 대상 아님).
+2. `diff backend_9005/app/services/dm_service.py backend_9004/app/services/dm_service.py` + routes 동일 diff 0 확인.
+3. 9004 기동 → `[dm] indexes ensured` 확인 후 테스트 13 수행.
+
+## v156 — 2026-08-03 — 배틀태그(닉네임#태그) 동명이인 구분: referral_code 태그 재사용 [MAIDOL-BattleTagSquad]
+
+**요청 작업**: 닉네임 중복 허용이라 DM 에서 동명이인 구분 불가 — 블리자드 배틀태그 방식 도입. **태그 = 기존 `users.referral_code`**(v154 — 4자리 대문자+숫자, 불변·유일, 전 유저 발급완료) 재사용, 새 컬럼/마이그레이션 없음. ①DM 사용자 검색 결과에 `오리쟁이 #TX6Y` 태그 표시 ②`#TX6Y`/`오리쟁이#TX6Y` 형식 검색어는 태그 정확 매칭 ③내 태그 확인 UI ④DM 대화 목록/요청함/채팅 헤더 peer 에 태그 병기 ⑤리퍼럴 기능(값/발급 로직) 완전 무변경 — 표시·검색 용도 추가일 뿐. **9005 선구현 → 9004 미러 필수.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작)
+
+- **태그 소스**: `backend_9005/app/services/referral_service.py:21 REFERRAL_CODE_RE = ^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$`(혼동문자 0/O/1/I/L 제외 31종), `:32-36 normalize_code`(trim+upper), 부분 유니크 인덱스 + `UPDATE ... WHERE referral_code IS NULL` 불변성, startup 백필로 전 유저 커버(`:116-126`). **모듈 임포트는 stdlib+asyncpg 뿐 → dm_service 에서 `from .referral_service import REFERRAL_CODE_RE, normalize_code` 순환 없음.** 모듈 docstring "코드값은 비밀이 아님 — 로그 허용" → 태그 검색 시 코드 로그 가능(닉네임 검색어 원문 미로그 원칙과 별개).
+- **hydrate_users**: `dm_service.py:255-283` — `SELECT id, nickname, profile_image`(`:272-275`) → `{id, nickname, profile_image}` dict(`:276-283`). **referral_code 추가 지점 단일** — `_serialize_conversation:289`, `_hydrate_conversation_list:373` 이 공용 소비 → 대화 목록·요청함(`list_requests` 도 `_hydrate_conversation_list` 사용)·채팅 헤더 peer 에 자동 전파. 폴백 dict 2곳(`:290`, `:377-379`)에 `code: None` 병기 필요.
+- **search_users**: `dm_service.py:666-731` — is_verified 게이트(`:680-687`) → `pattern = %escape(q)%`(`:689`) → `SELECT id, nickname, profile_image ... nickname ILIKE $1 AND account_status='active' AND NOT is_banned AND id != $2 ORDER BY nickname LIMIT limit*2`(`:691-703`) → dm_blocks 양방향 set 후필터(`:705-714`) → 20 절단. `#` 은 LIKE 메타문자 아님(`_escape_like:661-663` 은 `\%_` 만) — 이스케이프 무수정. 태그 분기는 SQL WHERE 절만 교체하면 게이트·후필터·절단 로직 전부 재사용 가능 구조.
+- **peer 스키마 파급(프론트)**: `grep peer` 소비처는 `frontend/src/pages/DmInboxPage.jsx` + `frontend/src/components/DmChatView.jsx` **2파일뿐** — 사용 키 `peer.id/nickname/profile_image` 만. `code` 키 추가는 순수 additive, 기존 렌더 무영향. dmSocket 이벤트는 peer 객체 미포함 → WS 무수정.
+- **프론트 렌더 지점**: DmInboxPage.jsx — 대화/요청 **공용** 항목 렌더 `renderConvItem:586-616`(닉네임 `:600`, 요청 탭도 이 함수 재사용 → 1곳 수정으로 목록+요청함 커버), compose 검색 결과 행 `:750-763`(닉네임 `:758`), 팔로워 추천 행 `:778-791`(닉네임 `:786` — **`getMyFollowers` 응답(follows.py)에 code 없음**), compose 힌트 `:727-730`/placeholder `:734`, 디바운스 검색 effect `:532-565`, `openCompose:473-492`. DmChatView.jsx — 헤더 peer `:151-152`(props 주석 `:12` 의 peer 스키마 갱신). CSS 파일 존재: `DmInboxPage.css`, `DmChatView.css`, `Header.css`.
+- **내 태그 확인 경로**: `GET /auth/me`(`app/routes/auth.py:322-360`) 는 **referral_code 미포함**, AuthContext user 는 login 응답/localStorage 캐시 혼재(`contexts/AuthContext.jsx:15,28,47`) → user.referral_code 신뢰 불가. 반면 `GET /api/referral/my-code`(`app/routes/referral.py:25-37`, 프론트 `api.getMyReferralCode:932`) 는 lazy `ensure_referral_code` 로 항상 코드 보장 + 인증만 요구. `AppShareModal.jsx:59-66` 이 이미 이 패턴 사용. **내정보설정 별도 페이지 없음** — 프로필 설정 = Header 프로필 모달(`Header.jsx:214-258 openProfileModal` — getMyConsents/getFaceVerifyStatus **비차단 병렬 로드 관행** 존재, 모달 본문 앵커: 아바타 블록 `:676-706` 아래 / 인증 배지 `:707-711` 위).
+- **9004 동등성 사전 확인**: `dm_service.py`·`referral_service.py` 9004/9005 현재 diff 0 (미러 기준선 정상).
+- 버전 대응: PLAN v156(본 항목) → REPORT v158 예정(REPORT 마지막 v157).
+
+### 설계 결정 사항
+
+1. **검색 파싱 규칙 (사양③)**: q(trim 후)에 `#` 포함 시 **마지막 `#` 기준 분리** → 태그부 `normalize_code`(trim+upper — `#tx6y` 소문자 허용) 후 `REFERRAL_CODE_RE` 정확 매칭 검사. **유효하면 태그 정확 매칭 모드 — 닉네임부는 무시**(태그가 전역 유일이라 결과 최대 1명, `오리쟁#TX6Y` 처럼 닉 일부만 입력해도 매칭 실패하지 않도록. `오리쟁이 #TX6Y` 공백 변형도 trim 으로 흡수). **무효하면**(`#TX6`, `a#b`, 제외문자 포함 등) 검색어 **전체를 기존 ILIKE 닉네임 검색으로 폴백**(닉네임에 `#` 이 든 유저도 검색 가능 유지, `#` 은 LIKE 메타문자 아님).
+2. **태그 모드에도 동일 게이트/필터**: is_verified 게이트, `account_status='active' AND NOT is_banned`, 자기 자신 제외(내 태그 검색 → 빈 결과 — DM 대상 검색이므로), dm_blocks 양방향 후필터 전부 동일 적용. 차단 관계면 태그 정확 검색이라도 미노출(차단 사실 비노출 원칙 유지).
+3. **응답 키 이름 = `code`**: DM 도메인의 사용자 객체(검색 결과·peer)에 `code` 키로 노출(값 = referral_code). DM 문맥에서 "추천" 의미 배제 + 사양⑤(peer 에 code 포함) 표기 일치. 리퍼럴 API(`referral_code` 키)와 도메인 분리.
+4. **peer 에 code 포함 = 필요 확정 (사양⑤)**: hydrate_users 1곳 수정으로 대화 목록/요청함/채팅 헤더 전파(위 findings) — 비용 미미(동일 users 조회에 컬럼 1개 추가), 프론트 additive 라 안전.
+5. **내 태그 노출 위치 (사양④) — 2곳**: ①**Header 프로필 모달**("내 정보 설정" — 별도 설정 페이지 부재로 사실상의 내정보설정): `openProfileModal` 에 `getMyReferralCode()` 비차단 로드(기존 getMyConsents 관행) → 아바타 블록 아래 "내 태그 `#TX6Y`" 행 + 복사 버튼 + "친구가 `닉네임#태그`로 나를 정확히 찾을 수 있어요 · 추천코드와 동일" 보조문구(실패 시 행 숨김). ②**DM compose 모달 하단**: `openCompose` 에 동일 비차단 로드 → 하단 고정 안내 "내 태그: `#TX6Y`". `/auth/me` 확장은 **채택 안 함** — auth.py 미러 부담 + AuthContext localStorage 캐시 스테일 문제, 기존 my-code lazy 보장 경로가 더 견고.
+6. **팔로워 추천 섹션 태그 미표시**: `getMyFollowers`(follows.py) 응답 확장은 스코프 밖(follows.py 무수정 → 미러 범위 최소화). 프론트 태그 렌더를 `{obj.code && ...}` 조건부 공용으로 작성 → 팔로워 행은 code 부재로 자연 미표시, 추후 확장 시 프론트 무수정.
+7. **로그**: 검색에 `mode=%s`(tag|name) 추가. 태그 모드는 코드값 로그 허용(referral 정책 — 비밀 아님), 닉네임 모드는 기존대로 원문 미로그(qlen 만).
+8. **리퍼럴 무변경 확인 (사양⑥)**: referral_service.py·referral.py·auth.py(가입 시 추천코드 입력)·AppShareModal·InvitePage 전부 무수정 — dm_service 가 상수/함수 import 만.
+
+### 확정 스키마 / API
+
+- **`GET /api/dm/users/search?q=` 응답 확장**: `{users:[{id, nickname, profile_image, code}]}` — `code`: 4자리 태그(= referral_code, 이론상 null 가능 — 백필 완료라 실사용 무).
+  - q 파싱: 결정 1. 태그 모드 SQL — `WHERE referral_code = $1 AND account_status='active' AND NOT is_banned AND id != $2` (ILIKE 절만 교체, ORDER/LIMIT 유지 무해).
+- **대화 serialize peer 확장**: `peer: {id, nickname, profile_image, code}` — `_serialize_conversation`/`_hydrate_conversation_list` 공통(hydrate_users 경유), 폴백 시 `code: null`.
+- **REST 신규/변경 없음** — 엔드포인트·메서드·라우터 등록 전부 기존 그대로(응답 additive 확장뿐). `GET /api/referral/my-code` 는 기존 그대로 재사용.
+
+### 백엔드 작업 지시 (backend-dev) — 9005 선구현, **편집 1파일** (`app/services/dm_service.py`)
+
+1. import 추가: `from .referral_service import REFERRAL_CODE_RE, normalize_code` (기존 상대 import 블록 `:35-37` 옆).
+2. `hydrate_users`(`:255-283`) — SELECT 에 `referral_code` 추가, 반환 dict 에 `"code": r["referral_code"]`. docstring "(닉/프사)" → "(닉/프사/태그)" 갱신.
+3. `_serialize_conversation:290` / `_hydrate_conversation_list:377-379` 폴백 dict 에 `"code": None` 추가.
+4. `search_users`(`:666-731`) — 게이트(`:680-687`) 이후 파싱 분기(결정 1):
+   - `tag = ""` ; `if "#" in q: _, _, tail = q.rpartition("#"); cand = normalize_code(tail); tag = cand if REFERRAL_CODE_RE.match(cand) else ""`.
+   - 태그 모드: `SELECT id, nickname, profile_image, referral_code FROM users WHERE referral_code = $1 AND account_status = 'active' AND NOT is_banned AND id != $2 LIMIT $3` — 이후 기존 후필터/절단 공용.
+   - 닉네임 모드: 기존 ILIKE 쿼리에 `referral_code` 컬럼만 추가.
+   - out dict 에 `"code": r["referral_code"]` 추가.
+   - 로그(`:675`) → `"[dm] user_search me=%s qlen=%d mode=%s%s"` 형태(tag 모드 시 ` code=XXXX` 병기, name 모드는 원문 미로그 유지). docstring 에 태그 정확 매칭 규칙 추가.
+5. **불변 확인**: `app/routes/dm.py`(핸들러가 service 반환 그대로 전달 — 무수정), referral_service.py, referral.py, auth.py, follows.py, main.py 전부 무수정.
+
+**9004 미러 (필수, 마지막 단계)**: `backend_9004/app/services/dm_service.py` 동일 편집(현재 diff 0 확인됨) → `diff` 0 재확인. 미러 대상 **1파일뿐**.
+
+### 프론트 작업 지시 (frontend-dev)
+
+**`src/api/index.js`**: **무수정** — `searchDmUsers:921`, `getMyReferralCode:932` 기존 그대로.
+
+**`src/pages/DmInboxPage.jsx`** (로그 prefix `[DmInbox]`):
+1. **공용 태그 렌더**: 소형 헬퍼 또는 인라인 — `{u.code && <span className="dminbox__tag">#{u.code}</span>}`.
+2. `renderConvItem`(`:586-616`) — 닉네임 span(`:600`) 옆에 `peer.code` 태그 병기(메시지 탭+요청 탭 동시 커버, 결정 4).
+3. compose 검색 결과 행(`:758`)에 `f.code` 태그 병기. 팔로워 추천 행(`:786`)도 동일 조건부 코드 사용(code 부재 → 미표시, 결정 6).
+4. compose 검색 UX: placeholder(`:734`) → `"닉네임 또는 #태그 검색"`, 힌트(`:727-730`)에 한 줄 추가 — "`닉네임#태그` 또는 `#태그`로 정확히 찾을 수 있어요."
+5. **내 태그 안내(결정 5②)**: state `myTag` + `openCompose`(`:473-492`)에서 `api.getMyReferralCode()` **비차단** 로드(실패 시 무표시, `console.error` 만) → compose 모달 body 하단에 `myTag && "내 태그: #XXXX"` 고정 문구. DEV 로그 `[DmInbox] my tag loaded`.
+6. 검색 로직(`:532-565`) 무수정 — 파싱은 전부 서버 책임(300ms 디바운스·qlen 로그 그대로).
+
+**`src/components/DmChatView.jsx`** (로그 prefix `[DmChat]`): 헤더 닉네임(`:152`) 옆 `peer.code` 태그 병기(`dmchat__peer-tag`), props 주석(`:12`) peer 스키마에 `code` 추가.
+
+**`src/components/Header.jsx`** (로그 prefix `[Header]`): state `myTag` + `openProfileModal`(`:214-258`)에 `getMyReferralCode()` 비차단 로드(getMyConsents `:221-229` 관행 동일) → 프로필 모달 아바타 블록(`:676-706`) 아래 "내 태그" 행: `#XXXX` + [복사](AppShareModal 복사 관행) + 보조문구 "친구가 닉네임#태그로 나를 정확히 찾을 수 있어요 · 앱 추천코드와 동일". 실패/로딩 중 행 숨김. **DM 봉투/unread 로직 무수정.**
+
+**CSS**: `DmInboxPage.css`(`dminbox__tag` — muted 소형, 말줄임 대비 `flex-shrink:0`), `DmChatView.css`(`dmchat__peer-tag`), `Header.css`(내 태그 행). AppShareModal/InvitePage **무수정**.
+
+### 변경 매트릭스 (파일별 변경 + 로그 추적자)
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/services/dm_service.py` | hydrate_users/search_users 에 referral_code(`code`) 노출 + 태그 정확 매칭 파싱 + 폴백 dict | `[dm] user_search ... mode=tag|name` |
+| `backend_9004/app/services/dm_service.py` | **9005 미러(byte-identical, 유일 미러 대상)** | 동일 |
+| `frontend/src/pages/DmInboxPage.jsx` | 검색/목록/요청함 태그 병기, placeholder/힌트, compose 내 태그 안내 | `[DmInbox]` 유지 |
+| `frontend/src/components/DmChatView.jsx` | 채팅 헤더 태그 병기 | `[DmChat]` 유지 |
+| `frontend/src/components/Header.jsx` | 프로필 모달 "내 태그" 행(+복사) | `[Header]` 유지 |
+| `DmInboxPage.css`/`DmChatView.css`/`Header.css` | 태그 스타일 | — |
+| `app/routes/dm.py`, referral_service.py, referral.py, auth.py, follows.py, `src/api/index.js`, AppShareModal, dmSocket | **무수정** | — |
+
+### 테스트 항목 (tester)
+
+1. **태그 정확 검색**: `#TX6Y` → 해당 유저 1명만, `오리쟁이#TX6Y` → 동일(닉부 무시 — `오리쟁#TX6Y` 오타 닉도 성공), `#tx6y` 소문자/` #TX6Y `(공백) 정규화 매칭, 존재하지 않는 코드 → 빈 결과.
+2. **폴백**: `#TX6`(3자)/`a#b`/`#TX0Y`(제외문자 0) → 전체 문자열 ILIKE 닉네임 검색으로 폴백(500 없음), 일반 닉네임 검색·`%`/`_` 이스케이프 기존 동작 불변.
+3. **태그 모드 게이트**: 내 태그 검색 → 빈 결과(self 제외), 차단 관계(양방향) 유저 태그 → 빈 결과, withdrawn/밴 유저 태그 → 빈 결과, 미인증 유저 403.
+4. **응답 스키마**: `/dm/users/search` 각 항목·`/dm/conversations`·`/dm/requests`·conversation 생성 응답의 peer 에 `code` 4자리 포함, 기존 키 불변.
+5. **UI 태그 병기**: 검색 결과 행·대화 목록·요청함·채팅 헤더에 `닉네임 #XXXX` 표시, 동명이인 2계정으로 실구분 확인. code null(이론상) 시 태그 미렌더·레이아웃 정상. 팔로워 추천 섹션은 태그 없음(정상, 결정 6).
+6. **내 태그 UI**: Header 프로필 모달 행 표시+복사 동작, 값 = AppShareModal 추천코드와 동일. compose 모달 하단 안내 표시. my-code API 실패 모킹 시 행/문구 숨김+모달 기능 정상.
+7. **회귀 — v155 DM 요청함 플로우 전체**: pending 생성→요청함 격리→수락/거절→답장 차단→읽음 가드→unread-count `{count,requests}` — v155 테스트 1~13 스모크 재수행(특히 검색은 이번 수정 파일).
+8. **회귀 — 리퍼럴 무영향**: `GET /referral/my-code`·`GET /referral/invite/{code}`·가입 시 추천코드 입력 보상 흐름·AppShareModal 표시 기존 동작 불변(코드값 변경 없음 확인).
+9. **9004 미러 동등성**: `diff backend_9005/app/services/dm_service.py backend_9004/...` 0, 9004 기동 후 1·3·4 재현.
+
+### 9004 미러 동기화 단계 (필수 — 구현 마지막)
+
+1. 9005 구현·테스트 통과 후 `backend_9004/app/services/dm_service.py` 동일 편집(byte-identical — `_logs.py` 예외 대상 아님).
+2. `diff` 0 확인 → 9004 기동 → 태그 검색 스모크(테스트 9).
+
+
+## v157 — 2026-08-03 — 로그인 시 출석체크 모달 자동 팝업 (로그인 세션당 1회) [MAIDOL-AttendancePopup]
+
+**요청 작업**: "로그인해도 출석체크 화면이 안 뜬다" → ①로그인 시 오늘 미출석이면 AttendanceCard 모달 자동 오픈(이미 출석했으면 안 뜸) ②닫으면(미출석 상태로 X) 같은 로그인 세션 동안 재팝업 없음 — 단 헤더 ⭐ 별배지 클릭 수동 오픈은 기존대로 언제든 가능 ③로그아웃→재로그인 시 여전히 미출석이면 다시 자동 오픈. 기준은 **"하루 1회"가 아니라 "로그인 세션당 1회"**. 새로고침(로그인 유지)은 재로그인이 아니므로 재팝업 없음. **백엔드 무변경(0단계 확정) → backend-dev 배정 생략, 9004 미러 불필요.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작)
+
+1. **status API가 오늘 출석 여부를 이미 반환 — 백엔드 무변경 확정**: `backend_9005/app/services/attendance_service.py:55-91` `get_status` → `{ checked_today: bool(KST 기준, :58,65), cycle_day, cumulative_count, today_reward, calendar[10], balance }`. 라우트 `backend_9005/app/routes/attendance.py`(GET /api/attendance/status, POST /api/attendance/check-in, v151). 프론트 래퍼 `frontend/src/api/index.js:829-830` `getAttendanceStatus`/`postAttendanceCheckIn` 기존재. **백엔드/API 계층 수정 0건 → 9004 미러 대상 없음.**
+2. **Header 현재 구조**: `frontend/src/components/Header.jsx:71` `attendanceOpen` state(주석 "별 배지 클릭으로 오픈"), :589-596 ⭐ 배지 onClick → `setAttendanceOpen(true)` + DEV 로그 `[Header] attendance modal open`, :961-966 `{attendanceOpen && <AttendanceCard onClose onBalanceChange={setPoints}/>}`. :63 `useAuth()` 에서 `user`, :111-112 `navigate`/`location` 보유. :114-122 기존 effect가 `[user, location.pathname]` 의존으로 포인트 잔액 조회 — 동일 의존 패턴으로 자동 팝업 effect 추가 가능. **자동 오픈 로직은 현재 전무** — 이것이 증상("로그인해도 안 뜬다")의 원인.
+3. **AuthContext 로그인 경로 3종 + 복원 경로 1종**: `frontend/src/contexts/AuthContext.jsx` — `login`(:24-30, 이메일), `register`(:34-40, 가입 즉시 로그인), `loginWithToken`(:44-56, OAuth 콜백용 — getMe 성공 시에만 setUser, 실패 시 토큰 제거 후 throw), `logout`(:58-62). **:10-22 초기 마운트 restore(localStorage token+user → setUser)는 새로고침 경로** — 여기서 플래그를 세팅하지 않는 것이 "새로고침 재팝업 없음"의 핵심.
+4. **OAuth 콜백**: `frontend/src/pages/OAuthCallbackPage.jsx` — `loginWithToken` 호출(:98) 후 동의 화면(v125, :118-125)/추가정보 온보딩(:66-73)을 **`/oauth/callback` pathname 유지한 채**(replaceState :69,121) 표시하고 마지막에 `navigate('/')`. sessionStorage 세션 플래그 선례 존재: `aimu:profileExtraSkipped`(:26).
+5. **Header는 비어드민 전 라우트에서 렌더**: `frontend/src/App.jsx:60` `{!isAdminPage && <Header />}` — `/login`(:83), `/register`(:84), `/oauth/callback`(:85) 포함. → 라우트 게이트 없으면 자동 팝업이 OAuth 동의/추가정보 화면 위를 덮는 문제 발생 → **게이트 필요**(설계 결정 3).
+6. **AttendanceCard 무수정 재사용 가능**: `frontend/src/components/AttendanceCard.jsx:47-54` 마운트 시 status 자체 로드, :56-91 체크인 + balance 콜백 — 오픈 경로가 자동이든 수동이든 동작 동일.
+7. **StrictMode ON**: `frontend/src/main.jsx:12` — dev 이중 마운트 시 effect 2회 실행 → 플래그 소비/오픈 타이밍 주의(설계 결정 4).
+
+### 설계 결정
+
+1. **"pending 소비형" sessionStorage 플래그** (키 `aimu:attendancePromptPending`, 값 `'1'`): 로그인 성공 시점(AuthContext `login`/`register`/`loginWithToken`)에 세팅 → Header effect가 `user && 플래그 존재`일 때 **동기적으로 즉시 소비(removeItem)** 후 `getAttendanceStatus()` 조회, `checked_today === false`(엄격 비교)일 때만 `setAttendanceOpen(true)`. 대안이던 "shown 플래그"(팝업 표시 후 세팅, 로그인 시 클리어) 대비 장점: ①새로고침 restore 경로(:10-22)는 플래그를 안 만드므로 자연히 재팝업 없음 ②로그인 유지 상태로 **새 탭**을 열어도(sessionStorage 빈 상태) 팝업 없음 — 새 탭은 재로그인이 아님 ③닫기(X) 시점에 아무 것도 기록할 필요 없음(오픈 시점에 이미 소비됨 → AttendanceCard `onClose` 무수정).
+2. **플래그 상수는 AuthContext 에서 export**: `export const ATTENDANCE_PROMPT_KEY = 'aimu:attendancePromptPending'` — Header가 import(이미 useAuth import 중, 순환 없음). 신규 파일 불필요. 모든 sessionStorage 접근은 try/catch(기존 OAuthCallbackPage :49-52 관례).
+3. **라우트 게이트**: Header 자동 팝업 effect는 `location.pathname`이 `/oauth/callback`·`/login`·`/register` 로 시작하면 **소비하지 않고 보류**(return) — OAuth 동의(v125)/추가정보 온보딩 화면을 모달이 덮지 않음. 홈 등으로 이동하면 pathname 변경으로 effect 재실행 → 그때 소비·판정. 기존 :114-122 effect와 동일한 `[user, location.pathname]` 의존.
+4. **StrictMode 대응**: 플래그 소비는 fetch 이전에 동기 수행(1회성 보장 — 이중 마운트 2번째 실행은 플래그 부재로 no-op). 비동기 응답 후 `setAttendanceOpen(true)`는 **cleanup(alive) 가드 없이 호출** — 이중 마운트에서 1번째 실행이 유일 소비자인데 그 cleanup이 이미 돌았어도 동일 컴포넌트 인스턴스에 state 반영되어 정확히 1회 오픈됨. (alive 가드를 걸면 dev에서 팝업이 아예 안 뜨는 버그가 됨.)
+5. **register 포함**: 가입 즉시 로그인도 "로그인 세션 시작"으로 간주 — 플래그 세팅. 라우트 게이트 덕에 가입 화면에서는 안 뜨고 홈 이동 후 판정.
+6. **실패 시 조용히 무팝업**: status 조회 실패/스키마 이상(`checked_today !== false`) 시 팝업 생략, `console.error('[Header] ...')` 만 — 로그인 흐름을 절대 깨지 않음(플래그는 이미 소비 — 재시도는 ⭐ 배지 수동 경로로 충분).
+7. **logout 시 플래그 제거**: `logout`(:58-62)에 removeItem 추가 — 위생 정리(로그인 직후 미소비 상태에서 즉시 로그아웃한 잔여 플래그가 다음 세션을 오염시키지 않도록).
+8. **자동 오픈 조회의 balance 부수 활용**: status 응답 `balance`로 `setPoints` 동기화(기존 `onBalanceChange` 패턴 :964와 일관) — 추가 API 호출 없음.
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `frontend/src/contexts/AuthContext.jsx` | `ATTENDANCE_PROMPT_KEY` export; `login`/`register`/`loginWithToken` 성공 시(setUser 직전) `sessionStorage.setItem(KEY,'1')`; `logout` 에 removeItem. 각 try/catch + DEV 로그 | `[AuthContext] attendance prompt flag set/cleared` |
+| `frontend/src/components/Header.jsx` | 자동 팝업 useEffect 신설(`[user, location.pathname]` 의존): user 없음/게이트 라우트면 return → 플래그 동기 소비 → `api.getAttendanceStatus()` → `checked_today===false`면 `setAttendanceOpen(true)` + balance 로 setPoints | `[Header] attendance auto-prompt` (open/skip(checked)/failed 구분) |
+| `AttendanceCard.jsx`, `api/index.js`, `App.jsx`, `OAuthCallbackPage.jsx`, **백엔드 전체(9005/9004)** | **무수정** | — |
+
+### 작업 목록
+
+- **frontend-dev** (단독 배정 — backend-dev 생략, 9004 미러 불필요):
+  1. AuthContext: 상수 export + 3개 로그인 함수에 플래그 세팅(성공 경로에서만 — `loginWithToken`은 getMe 성공 후), logout 에 제거.
+  2. Header: 자동 팝업 effect 추가 — 설계 결정 3·4·6·8 의 게이트/StrictMode/실패처리/balance 규칙 준수. ⭐ 배지 수동 오픈(:589-596)과 모달 렌더(:961-966)는 무수정.
+  3. DEV 로그로 흐름 추적 가능하게(`[AuthContext]`/`[Header]` 접두).
+
+### 테스트 항목 (tester)
+
+1. **기본 자동 팝업**: 오늘 미출석 계정 이메일 로그인 → 홈 이동 직후 출석 모달 자동 오픈. 모달 내 출석하기 → 보상 토스트/캘린더 갱신/⭐ 잔액 갱신(기존 v151 로직 그대로) → 닫기 후 재팝업 없음.
+2. **이미 출석한 날**: 출석 완료 상태에서 로그아웃→재로그인 → 자동 팝업 없음(DEV 로그 skip(checked) 확인). ⭐ 배지 수동 오픈 시 "오늘 출석 완료" 표시 정상.
+3. **닫기 후 세션 내 무재팝업**: 자동 팝업을 출석 없이 X 로 닫기 → 페이지 이동(차트/검색 등)·새로고침에도 재팝업 없음. ⭐ 배지 클릭으로는 즉시 다시 열림(회귀).
+4. **재로그인 시 재팝업**: 3 이후 로그아웃→재로그인(여전히 미출석) → 다시 자동 오픈. 로그아웃 직후 sessionStorage 에 `aimu:attendancePromptPending` 잔존 없음 확인.
+5. **새로고침/새 탭**: 로그인 유지 상태 새로고침 → 팝업 없음. 같은 로그인으로 새 탭 열기 → 팝업 없음.
+6. **소셜(OAuth) 로그인**: 콜백 처리 중·동의 화면(v125)·추가정보 온보딩 위로 모달이 덮이지 않음 → 홈 도착 후 미출석이면 자동 오픈. 동의/온보딩 스킵·완료 양 경로 모두 확인.
+7. **가입(register)**: 신규 가입 → 홈 이동 후 자동 오픈(1일차 출석 가능).
+8. **실패 폴백**: `GET /attendance/status` 실패 모킹 → 팝업 없음, `[Header]` console.error 만, 앱/로그인 흐름 정상. 이후 ⭐ 배지 수동 오픈은 모달 자체 재시도 UI 로 동작(기존).
+9. **StrictMode(dev)**: 이중 마운트에서 모달 정확히 1회만 오픈(0회/2회 아님).
+10. **회귀**: ⭐ 배지 수동 오픈 언제든 동작·체크인/보상/balance 갱신 무영향·어드민 라우트(Header 미렌더) 무영향·백엔드 diff 0(무수정 확인).

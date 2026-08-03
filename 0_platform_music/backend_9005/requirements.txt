@@ -1,6 +1,8 @@
 # 기존 유지
 fastapi
 uvicorn
+# v152 DmSquad — uvicorn WebSocket(/api/dm/ws) 구동에 필요
+websockets>=12,<18
 pyjwt
 bcrypt
 python-multipart
@@ -33,4 +35,6 @@ imageio-ffmpeg
 madmom @ git+https://github.com/CPJKU/madmom.git@main
 # v60: Phase 2.5 multimodal 첨부 이미지 압축용 (Claude 5MB base64 제한 우회)
 Pillow
+# v135: FaceGuardSquad — AWS Rekognition CompareFaces/Face Liveness (얼굴 인증)
+boto3
 

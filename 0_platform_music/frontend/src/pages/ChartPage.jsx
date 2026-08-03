@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus, FiDownload, FiBookmark } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiBookmark } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import AddToPlaylistModal from '../components/AddToPlaylistModal';
+import TrackShareButton from '../components/TrackShareButton';
+import TrackDownloadButton from '../components/TrackDownloadButton';
 import './ChartPage.css';
 
 const CHART_TABS = [
@@ -83,7 +85,7 @@ export default function ChartPage() {
   };
 
   const handlePlay = (track) => {
-    play(track, tracks);
+    play(track);
   };
 
   const handleAddToPlaylist = (track) => {
@@ -95,21 +97,6 @@ export default function ChartPage() {
     if (!user) { navigate('/login'); return; }
     if (import.meta.env.DEV) console.info('[ChartPage] openAddToPlaylist', { track: track?.id });
     setModalTrackId(track.id);
-  };
-
-  const handleDownload = async (trackId) => {
-    if (!user) { navigate('/login'); return; }
-    try {
-      const { data } = await api.downloadTrackFile(trackId);
-      const a = document.createElement('a');
-      a.href = data.download_url;
-      a.download = data.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error('Download failed:', err);
-    }
   };
 
   const formatUpdateTime = (timeStr) => {
@@ -203,6 +190,7 @@ export default function ChartPage() {
                       <Link
                         to={user && user.id === track.uploader_id ? '/my-music' : `/artist/${track.uploader_id}`}
                         className="chart-item__artist-link"
+                        title={user && user.id === track.uploader_id ? '내 음악' : '채널 보기'}
                       >
                         {track.artist_name}
                       </Link>
@@ -232,9 +220,9 @@ export default function ChartPage() {
                     <button className="chart-item__btn" onClick={() => handleSaveToPlaylist(track)} title="플레이리스트에 추가">
                       <FiBookmark />
                     </button>
-                    <button className="chart-item__btn" onClick={() => handleDownload(track.id)} title="다운로드">
-                      <FiDownload />
-                    </button>
+                    {/* v129 — 다운로드: 자막 영상 4옵션 팝업 */}
+                    <TrackDownloadButton track={{ id: track.id, title: track.title }} />
+                    <TrackShareButton track={{ id: track.id, title: track.title }} />
                   </div>
                 </div>
               );

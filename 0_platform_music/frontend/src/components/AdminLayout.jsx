@@ -1,5 +1,5 @@
 import { NavLink, Link } from 'react-router-dom';
-import { FiGrid, FiUsers, FiMusic, FiArrowLeft } from 'react-icons/fi';
+import { FiGrid, FiUsers, FiMusic, FiArrowLeft, FiFlag } from 'react-icons/fi';
 import './AdminLayout.css';
 
 export default function AdminLayout({ children }) {
@@ -21,6 +21,9 @@ export default function AdminLayout({ children }) {
           </NavLink>
           <NavLink to="/admin/tracks" className={({ isActive }) => `admin-nav-link ${isActive ? 'active' : ''}`}>
             <FiMusic /> 트랙 관리
+          </NavLink>
+          <NavLink to="/admin/reports" className={({ isActive }) => `admin-nav-link ${isActive ? 'active' : ''}`}>
+            <FiFlag /> 신고 관리
           </NavLink>
         </nav>
       </aside>

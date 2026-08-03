@@ -14,7 +14,11 @@ export default defineConfig({
       interval: 500,
     },
     proxy: {
-      '/api': 'http://localhost:3100',
+      '/api': {
+        target: 'http://localhost:3100',
+        // 백엔드가 접속자 실 IP를 알 수 있도록 x-forwarded-* 헤더 부착
+        xfwd: true,
+      },
     },
   },
 });

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import API from '../api';
-import { recordPlay } from '../api';
+import { recordPlay, getRelatedTracks } from '../api';
 
 const PlayerContext = createContext(null);
 
@@ -19,6 +19,14 @@ export function PlayerProvider({ children }) {
   const currentSong = currentIndex >= 0 ? playlist[currentIndex] : null;
   const duration = audioDuration || currentSong?.duration || 240;
 
+  // Refs mirroring state so the ended handler never reads stale closures
+  const playlistRef = useRef(playlist);
+  const currentIndexRef = useRef(currentIndex);
+  useEffect(() => { playlistRef.current = playlist; }, [playlist]);
+  useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
+  // Guard against duplicate related-track fetches on ended
+  const fetchingRelatedRef = useRef(false);
+
   // Audio 이벤트 리스너
   useEffect(() => {
     const audio = audioRef.current;
@@ -32,13 +40,52 @@ export function PlayerProvider({ children }) {
     };
 
     const onEnded = () => {
-      setCurrentIndex((idx) => {
-        if (idx < playlist.length - 1) {
-          return idx + 1;
-        }
+      const list = playlistRef.current;
+      const idx = currentIndexRef.current;
+      if (idx < list.length - 1) {
+        setCurrentIndex(idx + 1);
+        return;
+      }
+      // Last song ended: fetch one related track and continue (option 3, YouTube Music style)
+      const endedSong = list[idx];
+      if (!endedSong || fetchingRelatedRef.current) {
         setIsPlaying(false);
-        return idx;
-      });
+        return;
+      }
+      fetchingRelatedRef.current = true;
+      const excludeIds = list.map((s) => s.id);
+      if (import.meta.env.DEV) {
+        console.info('[PlayerContext] fetching related track', { track_id: endedSong.id, exclude_count: excludeIds.length });
+      }
+      getRelatedTracks(endedSong.id, excludeIds, 1)
+        .then((res) => {
+          const tracks = res.data?.tracks || [];
+          if (tracks.length === 0) {
+            console.warn('[PlayerContext] no related track found, stopping playback');
+            setIsPlaying(false);
+            return;
+          }
+          const t = tracks[0];
+          const nextSong = {
+            id: t.id,
+            title: t.title,
+            artist_name: t.uploader_nickname || 'AI',
+            cover_image: t.cover_image_url,
+            album_id: t.id,
+          };
+          if (import.meta.env.DEV) {
+            console.info('[PlayerContext] related track appended', { queue_size: list.length + 1, source: res.data?.source });
+          }
+          setPlaylist((prev) => [...prev, nextSong]);
+          setCurrentIndex(idx + 1);
+        })
+        .catch((err) => {
+          console.error('[PlayerContext] related track fetch failed:', err);
+          setIsPlaying(false);
+        })
+        .finally(() => {
+          fetchingRelatedRef.current = false;
+        });
     };
 
     const onPlay = () => setIsPlaying(true);
@@ -58,7 +105,7 @@ export function PlayerProvider({ children }) {
       audio.removeEventListener('pause', onPause);
       audio.pause();
     };
-  }, [playlist.length]);
+  }, []);
 
   // currentIndex 변경 시 새 곡 로드
   useEffect(() => {
@@ -91,19 +138,24 @@ export function PlayerProvider({ children }) {
     audioRef.current.volume = volume / 100;
   }, [volume]);
 
-  const play = useCallback((song, songs) => {
+  const play = useCallback((song, songs, opts = {}) => {
     if (song) {
-      if (songs) {
+      if (opts.queueAll === true && songs) {
+        // Collection playback (playlist/album): replace queue with the full list
         setPlaylist(songs);
         const idx = songs.findIndex((s) => s.id === song.id);
         setCurrentIndex(idx >= 0 ? idx : 0);
+        if (import.meta.env.DEV) console.info('[PlayerContext] queue replaced (queueAll)', { queue_size: songs.length });
       } else {
         const existIdx = playlist.findIndex((s) => s.id === song.id);
         if (existIdx >= 0) {
+          // Already in queue (e.g. queue click on PlayerPage): just move to it
           setCurrentIndex(existIdx);
         } else {
-          setPlaylist((prev) => [...prev, song]);
-          setCurrentIndex(playlist.length);
+          // Single-track playback (option 3): queue becomes just this song
+          setPlaylist([song]);
+          setCurrentIndex(0);
+          if (import.meta.env.DEV) console.info('[PlayerContext] queue replaced with single track', { queue_size: 1 });
         }
       }
     } else {

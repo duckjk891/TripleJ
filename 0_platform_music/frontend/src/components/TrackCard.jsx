@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getAlbumGradient } from '../utils';
+import Avatar from './Avatar';
+import TrackShareButton from './TrackShareButton';
 import './AlbumCard.css';
 
-export default function TrackCard({ track, tracks }) {
+export default function TrackCard({ track, tracks, queueAll = false }) {
   const { play } = usePlayer();
   const { user } = useAuth();
 
@@ -24,7 +26,7 @@ export default function TrackCard({ track, tracks }) {
       cover_image: t.cover_image_url,
       album_id: t.id,
     }));
-    play(song, songList);
+    play(song, songList, { queueAll });
   };
 
   return (
@@ -41,18 +43,25 @@ export default function TrackCard({ track, tracks }) {
         </div>
       </div>
       <div className="album-card__title" title={track.title}>{track.title}</div>
-      {track.uploader_id ? (
-        <Link
-          to={user && user.id === track.uploader_id ? '/my-music' : `/artist/${track.uploader_id}`}
-          className="album-card__artist"
-          title={track.uploader_nickname}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {track.uploader_nickname || 'AI'}
-        </Link>
-      ) : (
-        <div className="album-card__artist" title={track.uploader_nickname}>{track.uploader_nickname || 'AI'}</div>
-      )}
+      <div className="album-card__meta-row">
+        {track.uploader_id ? (
+          <Link
+            to={user && user.id === track.uploader_id ? '/my-music' : `/artist/${track.uploader_id}`}
+            className="album-card__artist album-card__artist--with-avatar"
+            title={user && user.id === track.uploader_id ? '내 음악' : '채널 보기'}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Avatar src={track.uploader_profile_image} name={track.uploader_nickname || 'AI'} size={20} />
+            <span className="album-card__artist-name">{track.uploader_nickname || 'AI'}</span>
+          </Link>
+        ) : (
+          <div className="album-card__artist album-card__artist--with-avatar" title={track.uploader_nickname}>
+            <Avatar src={track.uploader_profile_image} name={track.uploader_nickname || 'AI'} size={20} />
+            <span className="album-card__artist-name">{track.uploader_nickname || 'AI'}</span>
+          </div>
+        )}
+        <TrackShareButton track={{ id: track.id, title: track.title }} size={14} />
+      </div>
     </div>
   );
 }

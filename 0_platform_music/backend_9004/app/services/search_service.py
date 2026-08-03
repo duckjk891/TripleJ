@@ -294,6 +294,30 @@ async def es_index_track(doc: dict) -> bool:
     return True
 
 
+async def es_delete_track(track_id: str) -> bool:
+    """v138 — 트랙 완전 파기 시 ES 문서 제거 (best-effort, 404 무해).
+
+    es_index_track 과 동일한 계약: 실패해도 raise 하지 않고 False 반환.
+    """
+    es = get_es()
+    if es is None:
+        logger.warning("[search.es.delete] track_id=%s skipped: ES client not initialized", track_id)
+        return False
+    if not track_id:
+        return False
+    try:
+        await es.delete(index=ES_TRACKS_INDEX, id=track_id)
+    except Exception as e:
+        # 색인 안 된 트랙(비공개 생성 직후 등)은 404 NotFound — 정상 케이스.
+        if "NotFoundError" in type(e).__name__ or "not_found" in str(e):
+            logger.info("[search.es.delete] track_id=%s not in index (ok)", track_id)
+            return True
+        logger.error("[search.es.delete] track_id=%s delete failed: %s", track_id, e)
+        return False
+    logger.info("[search.es.delete] track_id=%s deleted", track_id)
+    return True
+
+
 async def es_search(query: str, k: int) -> List[str]:
     """BM25 + fuzzy search the ES `tracks` index, return ranked [track_id].
 

@@ -1,5 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import * as api from '../api';
+import { useAuth } from '../contexts/AuthContext';
+import { getAnonId } from '../utils/anonId';
 import './CharacterCoverCard.css';
 
 /**
@@ -13,6 +15,8 @@ import './CharacterCoverCard.css';
  *     sheet_preview_path,
  *     used_items: [{ id, name, image_object_name, product_url, category }]
  *   } | null
+ *   trackId: number | null — 클릭/위시의 스타 귀속용(광고주 "스타별 성과").
+ *            없으면 기존과 동일하게 미귀속으로 기록.
  *
  * 부모(PlayerPage)에서 truthy null-guard 후 렌더되므로 내부에서 또 가드하지 않음.
  * 단, 개별 필드는 모두 옵셔널이라 falsy 면 해당 부분 미노출.
@@ -20,7 +24,11 @@ import './CharacterCoverCard.css';
  * PII (name/age/personality_text) 콘솔 출력 금지 — 길이/카운트/존재여부만 로깅.
  * MyMusicPage 의 마크업은 시각 참고이며, 컴포넌트/state 공유 없음 (새 prefix).
  */
-export default function CharacterCoverCard({ character }) {
+export default function CharacterCoverCard({ character, trackId = null }) {
+  const { user } = useAuth();
+  // { [itemId]: true } — 위시리스트에 담긴 아이템
+  const [wishlisted, setWishlisted] = useState({});
+
   useEffect(() => {
     if (import.meta.env.DEV) {
       console.info('[CharCoverCard] mount', {
@@ -34,6 +42,47 @@ export default function CharacterCoverCard({ character }) {
       });
     }
   }, [character]);
+
+  // 마운트/캐릭터 변경 시 used_items id 들로 초기 위시 상태 조회.
+  // 비로그인/401 이면 조용히 전부 ♡ (console.warn 만).
+  useEffect(() => {
+    const ids = Array.isArray(character?.used_items)
+      ? character.used_items.map((it) => it?.id).filter(Boolean)
+      : [];
+    if (ids.length === 0) return undefined;
+    if (!user) {
+      console.warn('[CharCoverCard] checkWishlist skipped: not logged in');
+      return undefined;
+    }
+    let cancelled = false;
+    if (import.meta.env.DEV) {
+      console.info('[CharCoverCard] checkWishlist start', { count: ids.length });
+    }
+    api.checkWishlist(ids)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const map = {};
+        for (const id of data?.wishlisted_ids || []) map[id] = true;
+        setWishlisted(map);
+        if (import.meta.env.DEV) {
+          console.info('[CharCoverCard] checkWishlist done', {
+            count: ids.length,
+            wishlisted: (data?.wishlisted_ids || []).length,
+          });
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err?.response?.status === 401) {
+          console.warn('[CharCoverCard] checkWishlist unauthorized — all unwishlisted');
+        } else {
+          console.error('[CharCoverCard] checkWishlist failed', { err, count: ids.length });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [character, user]);
 
   // v68-pre3 — MV 만들었지만 '내캐릭터 포함' 안 한 경우: "캐릭터 미사용" 표시
   if (!character) {
@@ -69,13 +118,70 @@ export default function CharacterCoverCard({ character }) {
       return;
     }
     e.preventDefault();
+    // 비로그인 시에만 anon_id 전달 — 익명 클릭 기록. 값 자체는 로그 금지(존재 여부만).
+    const anonId = user ? undefined : (getAnonId() ?? undefined);
     if (import.meta.env.DEV) {
-      console.info('[CharCoverCard] adClick', { id: item.id ?? null });
+      console.info('[CharCoverCard] adClick', {
+        id: item.id ?? null,
+        trackId: trackId ?? null,
+        anon: !user,
+        hasAnonId: !!anonId,
+      });
     }
     if (item.id) {
-      api.recordAdClick(item.id).catch(() => {});
+      api.recordAdClick(item.id, trackId ?? undefined, anonId).catch((err) => {
+        console.error('[CharCoverCard] recordAdClick failed', {
+          err,
+          id: item.id,
+          trackId: trackId ?? null,
+          anon: !user,
+        });
+      });
     }
     window.open(item.product_url, '_blank', 'noopener,noreferrer');
+  };
+
+  // ♡/♥ 위시리스트 토글 — 낙관적 토글 후 실패 시 롤백.
+  // 이미지 클릭(구매페이지 새창)과 충돌하지 않게 stopPropagation 필수.
+  const handleWishToggle = (item) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!item?.id) return;
+    if (!user) {
+      console.warn('[CharCoverCard] toggleWishlist blocked: not logged in');
+      alert('로그인 후 이용할 수 있습니다.');
+      return;
+    }
+    const prev = !!wishlisted[item.id];
+    setWishlisted((m) => ({ ...m, [item.id]: !prev }));
+    if (import.meta.env.DEV) {
+      console.info('[CharCoverCard] toggleWishlist start', {
+        id: item.id,
+        next: !prev,
+        trackId: trackId ?? null,
+      });
+    }
+    api.toggleWishlist(item.id, trackId ?? undefined)
+      .then(({ data }) => {
+        if (typeof data?.wishlisted === 'boolean' && data.wishlisted !== !prev) {
+          console.warn('[CharCoverCard] toggleWishlist server state differs', {
+            id: item.id,
+            server: data.wishlisted,
+          });
+          setWishlisted((m) => ({ ...m, [item.id]: data.wishlisted }));
+        }
+        if (import.meta.env.DEV) {
+          console.info('[CharCoverCard] toggleWishlist done', { id: item.id });
+        }
+      })
+      .catch((err) => {
+        // 롤백
+        setWishlisted((m) => ({ ...m, [item.id]: prev }));
+        console.error('[CharCoverCard] toggleWishlist failed', { err, id: item.id });
+        if (err?.response?.status === 401) {
+          alert('로그인 후 이용할 수 있습니다.');
+        }
+      });
   };
 
   const handleSheetError = (e) => {
@@ -207,6 +313,20 @@ export default function CharacterCoverCard({ character }) {
                     >
                       쇼핑몰에서 보기 ▶
                     </a>
+                  )}
+                  {data.id && (
+                    <button
+                      type="button"
+                      className={
+                        'character-cover-card__wish-btn' +
+                        (wishlisted[data.id] ? ' character-cover-card__wish-btn--active' : '')
+                      }
+                      onClick={handleWishToggle(data)}
+                      aria-pressed={!!wishlisted[data.id]}
+                      title={wishlisted[data.id] ? '위시리스트에서 제거' : '위시리스트에 담기'}
+                    >
+                      {wishlisted[data.id] ? '♥ 담김' : '♡ 위시'}
+                    </button>
                   )}
                 </>
               ) : (

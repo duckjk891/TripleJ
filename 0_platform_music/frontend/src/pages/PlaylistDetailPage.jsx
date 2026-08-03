@@ -124,6 +124,7 @@ export default function PlaylistDetailPage() {
                 song={song}
                 rank={idx + 1}
                 songs={playlist.tracks}
+                queueAll
                 isLiked={likedIds.has(song.id)}
                 onToggleLike={handleToggleLike}
               />

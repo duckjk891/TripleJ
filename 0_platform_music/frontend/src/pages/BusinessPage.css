@@ -518,6 +518,14 @@
   margin-bottom: 20px;
 }
 
+/* 기간 선택 + 인증 회원 필터 그룹 */
+.biz-dashboard__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .biz-period-btns {
   display: flex;
   gap: 0;
@@ -648,6 +656,354 @@
 
 .biz-link-btn:hover {
   text-decoration: underline;
+}
+
+/* ── 스타별 성과 (아이템 행 펼침) ── */
+.biz-dashboard__stars-toggle {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.biz-dashboard__stars-toggle:hover {
+  background: var(--color-hover);
+}
+
+.biz-dashboard__stars-row > td {
+  background: var(--color-bg);
+  padding: 0 12px;
+}
+
+.biz-dashboard__stars-box {
+  padding: 12px 4px 14px;
+}
+
+.biz-dashboard__stars-loading,
+.biz-dashboard__stars-error,
+.biz-dashboard__stars-empty {
+  margin: 0;
+  padding: 14px 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+.biz-dashboard__stars-error {
+  color: var(--color-danger, #e74c3c);
+}
+
+.biz-dashboard__stars-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.biz-dashboard__stars-table th {
+  text-align: left;
+  padding: 6px 12px;
+  color: var(--color-text-sub);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.biz-dashboard__stars-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.biz-dashboard__stars-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.biz-dashboard__untracked-note {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+/* ── 인사이트 (아이템 행 펼침 — 스타 테이블 아래) ── */
+.biz-dashboard__insights-loading,
+.biz-dashboard__insights-error,
+.biz-dashboard__insights-empty {
+  margin: 0;
+  padding: 12px 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+.biz-dashboard__insights-error {
+  color: var(--color-danger, #e74c3c);
+}
+
+.biz-dashboard__insights-box {
+  padding: 4px 4px 16px;
+  border-top: 1px dashed var(--color-border);
+  margin-top: 8px;
+}
+
+.biz-dashboard__insights-title {
+  margin: 12px 0 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.biz-dashboard__insights-subtitle {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* 위시→클릭 전환율 카드 */
+.biz-dashboard__insights-conv {
+  display: inline-block;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* 장르별/느낌별 토글 + 수평 막대 */
+.biz-dashboard__insights-section {
+  margin-bottom: 16px;
+}
+
+.biz-dashboard__insights-dim-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.biz-dashboard__insights-dim-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.biz-dashboard__insights-dim-tab {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+  cursor: pointer;
+}
+
+.biz-dashboard__insights-dim-tab--active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.biz-dashboard__insights-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+.biz-dashboard__insights-legend > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.biz-dashboard__insights-legend-color {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.biz-dashboard__insights-legend-color--wish {
+  background: #f59e0b;
+}
+
+.biz-dashboard__insights-legend-color--click {
+  background: #8b5cf6;
+}
+
+.biz-dashboard__insights-hbars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.biz-dashboard__insights-hrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8rem;
+}
+
+.biz-dashboard__insights-hlabel {
+  width: 80px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.biz-dashboard__insights-htrack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.biz-dashboard__insights-hbar {
+  height: 8px;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  transition: width 0.3s ease;
+}
+
+.biz-dashboard__insights-hbar--wish {
+  background: #f59e0b;
+}
+
+.biz-dashboard__insights-hbar--click {
+  background: #8b5cf6;
+}
+
+.biz-dashboard__insights-hvals {
+  width: 90px;
+  flex-shrink: 0;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+/* 요일/시간대 차트 */
+.biz-dashboard__insights-charts {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.biz-dashboard__insights-chart {
+  flex: 1;
+  min-width: 220px;
+}
+
+.biz-dashboard__insights-chart--hours {
+  flex: 2;
+  min-width: 320px;
+}
+
+.biz-dashboard__insights-vbars {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 90px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.biz-dashboard__insights-vwrap {
+  flex: 1;
+  min-width: 22px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.biz-dashboard__insights-vwrap--hour {
+  min-width: 12px;
+}
+
+.biz-dashboard__insights-vval {
+  font-size: 0.66rem;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+}
+
+.biz-dashboard__insights-vbar {
+  width: 100%;
+  max-width: 20px;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: #3b82f6;
+  transition: height 0.3s ease;
+}
+
+.biz-dashboard__insights-vlabel {
+  font-size: 0.68rem;
+  color: var(--color-text-sub);
+  white-space: pre;
+  min-height: 1em;
+}
+
+/* 인구통계 미니 분포 */
+.biz-dashboard__insights-demo {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.biz-dashboard__insights-demo-col {
+  flex: 1;
+  min-width: 180px;
+}
+
+.biz-dashboard__insights-demo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 0.78rem;
+}
+
+.biz-dashboard__insights-demo-label {
+  width: 64px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.biz-dashboard__insights-demo-track {
+  flex: 1;
+}
+
+.biz-dashboard__insights-demo-bar {
+  height: 8px;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: #10b981;
+  transition: width 0.3s ease;
+}
+
+.biz-dashboard__insights-demo-count {
+  width: 44px;
+  flex-shrink: 0;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+  font-size: 0.75rem;
 }
 
 /* ── 통계 그래프 ── */

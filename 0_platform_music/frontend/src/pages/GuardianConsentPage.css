@@ -1,0 +1,183 @@
+/* v123 — 보호자(법정대리인) 동의 페이지 */
+.guardian-consent {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: calc(100vh - var(--header-height) - var(--player-height));
+  padding: 40px 20px;
+}
+
+.guardian-consent__card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 32px 28px;
+  width: 480px;
+  max-width: 100%;
+}
+
+.guardian-consent__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+  text-align: center;
+  margin: 0 0 8px;
+}
+
+.guardian-consent__desc {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  text-align: center;
+  margin: 0 0 24px;
+}
+
+.guardian-consent__loading {
+  font-size: 14px;
+  color: var(--color-text-sub);
+  text-align: center;
+  padding: 32px 0;
+}
+
+.guardian-consent__section {
+  margin-bottom: 20px;
+}
+
+.guardian-consent__section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 10px;
+}
+
+.guardian-consent__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.guardian-consent__row-label {
+  color: var(--color-text-sub);
+}
+
+.guardian-consent__row-value {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.guardian-consent__items {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.8;
+}
+
+.guardian-consent__sub {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+
+.guardian-consent__mock-notice {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  background: var(--color-bg);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.guardian-consent__actions {
+  display: flex;
+  gap: 10px;
+}
+
+.guardian-consent__btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.guardian-consent__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.guardian-consent__btn--agree {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+}
+
+.guardian-consent__btn--agree:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.guardian-consent__btn--reject {
+  background: transparent;
+  color: var(--color-text-sub);
+  border: 1px solid var(--color-border);
+}
+
+.guardian-consent__btn--reject:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.guardian-consent__inline-error {
+  font-size: 13px;
+  color: var(--color-danger);
+  text-align: center;
+  margin: 12px 0 0;
+}
+
+.guardian-consent__notice-box {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 18px 16px;
+  margin-bottom: 8px;
+}
+
+.guardian-consent__notice-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 8px;
+}
+
+.guardian-consent__notice-sub {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.guardian-consent__footer {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 13px;
+}
+
+.guardian-consent__footer a {
+  color: var(--color-primary);
+}
+
+.guardian-consent__footer a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .guardian-consent { padding: 24px 16px; }
+  .guardian-consent__card { padding: 24px 18px; }
+  .guardian-consent__actions { flex-direction: column; }
+}

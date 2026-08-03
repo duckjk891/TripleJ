@@ -18,6 +18,7 @@ from typing import Optional
 import httpx
 
 from ..config import settings
+from .watermark import embed_image_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -174,8 +175,11 @@ async def generate_image(
     for attempt in range(2):
         try:
             if refs:
-                return await _call_edits(prompt, refs, size, quality)
-            return await _call_generations(prompt, size, quality)
+                result = await _call_edits(prompt, refs, size, quality)
+            else:
+                result = await _call_generations(prompt, size, quality)
+            # v137 [watermark]: 비가시 AI 마커 삽입 (모든 저장 지점 공통 적용).
+            return embed_image_metadata(result)
         except Exception as e:  # noqa: BLE001
             last_err = e
             # httpx.ReadTimeout / TimeoutException 등은 str(e) 가 빈 문자열일 수 있어

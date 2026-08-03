@@ -64,3 +64,4 @@ htmlcov/
 
 # Database files
 *.db
+*.env.bak*

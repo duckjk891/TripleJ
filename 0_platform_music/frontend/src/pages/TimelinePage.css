@@ -1,0 +1,56 @@
+/* v134 — 타임라인 페이지 */
+.timeline-page {
+  max-width: 640px;
+  padding: 24px 0;
+}
+
+.timeline-page__title {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.timeline-page__status {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--color-text-sub);
+  font-size: 14px;
+}
+
+.timeline-page__sentinel {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  color: var(--color-text-sub);
+  font-size: 13px;
+}
+
+.timeline-page__more-btn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin-top: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--color-text-sub);
+  background: var(--color-card);
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.timeline-page__more-btn:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.timeline-page__more-btn:disabled {
+  opacity: 0.6;
+}
+
+@media (max-width: 768px) {
+  .timeline-page {
+    padding: 16px 0;
+  }
+}

@@ -1,0 +1,405 @@
+/* DmInboxPage — 실시간 1:1 DM함 (v152, v155 요청함 탭/검색) */
+.dminbox {
+  /* A안: 풀와이드 2패널 — max-width/가운데정렬 제거해 콘텐츠 영역 가로를 꽉 채움 */
+  width: 100%;
+  /* fixed 헤더 오프셋 — .page-content 래퍼 없이 쓰는 페이지라 직접 밀어줌 (타이틀 행 가림 방지) */
+  margin-top: var(--header-height, 64px);
+  padding: 16px;
+  min-height: calc(100vh - var(--header-height, 64px) - var(--player-height, 0px));
+  box-sizing: border-box;
+}
+
+.dminbox--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub, #aaa);
+}
+
+/* 미인증 게이트 */
+.dminbox__gate {
+  text-align: center;
+  padding: 40px 20px;
+  max-width: 360px;
+}
+.dminbox__gate-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text, #f5f5f7);
+  margin-bottom: 8px;
+}
+.dminbox__gate-sub {
+  font-size: 14px;
+  color: var(--color-text-sub, #aaa);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+.dminbox__gate-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 20px;
+  background: var(--color-primary, #6c5ce7);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* 2패널 레이아웃 */
+.dminbox__panels {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 0;
+  height: calc(100vh - var(--header-height, 64px) - var(--player-height, 0px) - 32px);
+  min-height: 480px;
+  border: 1px solid var(--color-border, #2a2a33);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--color-card, #1b1b22);
+}
+
+/* 좌측 목록 */
+.dminbox__list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--color-border, #2a2a33);
+  background: var(--color-bg, #16161c);
+}
+.dminbox__list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--color-border, #2a2a33);
+  flex-shrink: 0;
+}
+/* 새 메시지(✏️) 버튼 */
+.dminbox__compose-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text, #f5f5f7);
+  cursor: pointer;
+}
+.dminbox__compose-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.dminbox__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text, #f5f5f7);
+}
+/* v155 — "메시지 | 요청 N" 탭 */
+.dminbox__tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border, #2a2a33);
+}
+.dminbox__tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-sub, #999);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dminbox__tab:hover { color: var(--color-text, #f5f5f7); }
+.dminbox__tab--active {
+  color: var(--color-text, #f5f5f7);
+  border-bottom-color: var(--color-primary, #6c5ce7);
+}
+.dminbox__tab-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-primary, #6c5ce7);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.dminbox__list-status {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--color-text-sub, #aaa);
+  font-size: 14px;
+}
+.dminbox__retry {
+  margin-top: 10px;
+  padding: 6px 16px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 16px;
+  background: transparent;
+  color: var(--color-text, #f5f5f7);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dminbox__conv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.dminbox__conv {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  text-align: left;
+}
+.dminbox__conv:hover { background: rgba(255, 255, 255, 0.04); }
+.dminbox__conv--active { background: rgba(108, 92, 231, 0.14); }
+
+.dminbox__conv-main {
+  flex: 1;
+  min-width: 0;
+}
+.dminbox__conv-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dminbox__conv-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text, #f5f5f7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dminbox__conv-time {
+  font-size: 11px;
+  color: var(--color-text-sub, #888);
+  flex-shrink: 0;
+}
+/* v155 — 발신자측 pending 대화 "요청 대기 중" 라벨 */
+.dminbox__conv-pending {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  font-size: 10px;
+  color: var(--color-text-sub, #999);
+  white-space: nowrap;
+}
+.dminbox__conv-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+}
+.dminbox__conv-preview {
+  font-size: 13px;
+  color: var(--color-text-sub, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.dminbox__conv-preview--unread {
+  color: var(--color-text, #f5f5f7);
+  font-weight: 600;
+}
+.dminbox__conv-badge {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-primary, #6c5ce7);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* 우측 대화 */
+.dminbox__chat {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dminbox__chat-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub, #888);
+  font-size: 14px;
+}
+
+/* 새 메시지 — 팔로워 피커 모달 */
+.dmcompose__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 20px;
+}
+.dmcompose {
+  width: 100%;
+  max-width: 400px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-card, #1b1b22);
+  border: 1px solid var(--color-border, #2a2a33);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.dmcompose__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 0;
+}
+.dmcompose__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text, #f5f5f7);
+}
+.dmcompose__close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-sub, #aaa);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.dmcompose__hint {
+  margin: 6px 16px 0;
+  font-size: 12px;
+  color: var(--color-text-sub, #999);
+}
+.dmcompose__filter {
+  margin: 12px 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 10px;
+  background: var(--color-bg, #16161c);
+  color: var(--color-text, #f5f5f7);
+  font-size: 14px;
+  outline: none;
+}
+.dmcompose__filter:focus { border-color: var(--color-primary, #6c5ce7); }
+.dmcompose__body {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border, #2a2a33);
+}
+.dmcompose__status {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--color-text-sub, #aaa);
+  font-size: 14px;
+}
+/* v155 — 추천(나를 팔로우) 섹션 타이틀 */
+.dmcompose__section {
+  margin: 10px 16px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-sub, #999);
+}
+.dmcompose__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dmcompose__user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.dmcompose__user:hover { background: rgba(255, 255, 255, 0.05); }
+.dmcompose__user:disabled { opacity: 0.6; cursor: default; }
+.dmcompose__user-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text, #f5f5f7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dmcompose__user-status {
+  font-size: 12px;
+  color: var(--color-primary, #6c5ce7);
+  flex-shrink: 0;
+}
+
+/* v156 — 배틀태그(#XXXX) 병기 — 닉네임 옆 muted 소형 */
+.dminbox__tag {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-sub, #999);
+  flex-shrink: 0;
+}
+/* v156 — compose 하단 내 태그 안내 */
+.dmcompose__mytag {
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--color-border, #2a2a33);
+  font-size: 12px;
+  color: var(--color-text-sub, #999);
+}
+.dmcompose__mytag-code {
+  font-weight: 600;
+  color: var(--color-text, #f5f5f7);
+  letter-spacing: 1px;
+}
+
+/* 모바일: 단일 패널 전환 */
+@media (max-width: 720px) {
+  .dminbox { padding: 0; }
+  .dminbox__panels {
+    grid-template-columns: 1fr;
+    height: calc(100vh - var(--header-height, 64px) - var(--player-height, 0px));
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+  }
+  .dminbox__list { border-right: none; }
+  .dminbox__chat { display: none; }
+  /* 대화 선택 시: 목록 숨기고 대화만 */
+  .dminbox__panels--chat .dminbox__list { display: none; }
+  .dminbox__panels--chat .dminbox__chat { display: flex; }
+}

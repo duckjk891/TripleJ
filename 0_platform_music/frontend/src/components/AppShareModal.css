@@ -1,0 +1,138 @@
+/* v154 — MAIDOL 앱 추천(리퍼럴) 공유 모달 */
+
+.app-share-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.app-share-modal {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 380px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.app-share-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.app-share-modal__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.app-share-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-text-sub);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.app-share-modal__close:hover {
+  color: var(--color-text);
+}
+
+.app-share-modal__status {
+  font-size: 13px;
+  color: var(--color-text-sub);
+  text-align: center;
+  padding: 24px 0;
+  margin: 0;
+}
+
+.app-share-modal__status--error {
+  color: var(--color-danger);
+}
+
+.app-share-modal__desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-sub);
+  margin: 0 0 16px;
+}
+
+.app-share-modal__code-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--color-bg);
+  border: 1px dashed var(--color-primary);
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+
+.app-share-modal__code {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--color-primary);
+}
+
+.app-share-modal__copy-btn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.app-share-modal__copy-btn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-hover);
+}
+
+.app-share-modal__buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.app-share-modal__share-btn {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 11px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.app-share-modal__share-btn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-secondary);
+}
+
+.app-share-modal__message {
+  font-size: 12px;
+  color: var(--color-accent);
+  text-align: center;
+  margin: 12px 0 0;
+}

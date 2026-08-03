@@ -6,7 +6,7 @@ import {
   type UiChatSchemaComponent,
 } from '@hashbrownai/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { synthesizeSpeech, transcribeAudio } from '../api';
+import { logEvent, synthesizeSpeech, transcribeAudio } from '../api';
 import { PRODUCTS } from '../data/products';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { useShopStore } from '../store';
@@ -146,6 +146,12 @@ export function ChatPanel() {
       - 주문(checkout)은 반드시 사용자에게 주문 내역과 총 금액을 확인받은 뒤에만 실행하세요.
       - checkout이 성공하면 OrderCard 컴포넌트로 주문 결과를 보여주세요.
       - 상품 정보는 추측하지 말고 getProducts 툴로 조회하세요.
+      - 사용자 메시지는 음성 인식을 거쳐 들어오는 경우가 많아 상품명이 잘못
+        인식될 수 있습니다 (예: "네발/4발 지팡이" → "사발/네팔/해발/발창/집합이",
+        "휠체어" → "일체어/힐체어"). 발음이 비슷한 이상한 단어가 나오면 오타로
+        보지 말고 우리 쇼핑몰 상품명으로 해석하세요. 어떤 상품인지 대체로
+        확신되면 "4발 안전 지팡이 말씀이시죠?"처럼 한 마디로 확인하며 해당
+        상품을 바로 보여주고, 전혀 짐작이 안 될 때만 다시 말씀해 달라고 하세요.
 
       ### EXAMPLES
 
@@ -226,6 +232,7 @@ export function ChatPanel() {
     if (!inputValue.trim()) return;
     const userMessage: Chat.UserMessage = { role: 'user', content: inputValue };
     setInputValue('');
+    logEvent('user_message', { source: 'keyboard', text: inputValue.slice(0, 2000) });
     sendMessage(userMessage);
   }, [inputValue, sendMessage]);
 
@@ -270,6 +277,7 @@ export function ChatPanel() {
       if (import.meta.env.DEV) {
         console.info('[ChatPanel] STT 인식 텍스트 전송:', text.slice(0, 50));
       }
+      logEvent('user_message', { source: 'voice', text: text.slice(0, 2000) });
       // 입력창에 잠깐 보여주고, 기존 sendMessage 경로 그대로 자동 전송
       setInputValue(text);
       const userMessage: Chat.UserMessage = { role: 'user', content: text };
@@ -294,6 +302,8 @@ export function ChatPanel() {
   const prevWorkingRef = useRef(false);
   /** 마지막으로 발화한 assistant 메시지 인덱스 (중복 발화 방지) */
   const lastSpokenIndexRef = useRef(-1);
+  /** (v4) 마지막으로 원격 로깅한 assistant 메시지 인덱스 (발화 dedup과 별도) */
+  const lastLoggedIndexRef = useRef(-1);
   /** 발화 세대 토큰 — 새 발화/중지 시 증가시켜 늦게 도착한 오디오를 폐기 */
   const speakSeqRef = useRef(0);
 
@@ -383,7 +393,7 @@ export function ChatPanel() {
     [getSharedAudio, stopSpeaking],
   );
 
-  // isWorking true→false 전이(= 스트리밍·툴콜 완료) 시 마지막 응답을 발화
+  // isWorking true→false 전이(= 스트리밍·툴콜 완료) 시 응답 로깅 + (음성 ON이면) 발화
   useEffect(() => {
     const wasWorking = prevWorkingRef.current;
     prevWorkingRef.current = isWorking;
@@ -394,25 +404,33 @@ export function ChatPanel() {
       return;
     }
     if (!(wasWorking && !isWorking)) return;
-    if (!voiceEnabled || !lastAssistantMessage) return;
+    if (!lastAssistantMessage) return;
 
     const uiNodes = lastAssistantMessage.content?.ui;
     if (!uiNodes || uiNodes.length === 0) return;
 
     const foundIndex = messages.lastIndexOf(lastAssistantMessage);
     const messageIndex = foundIndex >= 0 ? foundIndex : messages.length - 1;
-    if (lastSpokenIndexRef.current === messageIndex) {
-      if (import.meta.env.DEV) {
-        console.info('[ChatPanel] 이미 발화한 메시지 — 중복 발화 생략:', messageIndex);
-      }
-      return;
-    }
 
     const rawText = collectMarkdownText(uiNodes).join('\n');
     const text = stripMarkdownSyntax(rawText).slice(0, TTS_MAX_CHARS);
     if (!text) {
       if (import.meta.env.DEV) {
-        console.info('[ChatPanel] Markdown 텍스트 없음 — 발화 생략');
+        console.info('[ChatPanel] Markdown 텍스트 없음 — 로깅/발화 생략');
+      }
+      return;
+    }
+
+    // (v4) 응답 내용 원격 로깅 — 음성응답이 꺼져 있어도 항상 수행
+    if (lastLoggedIndexRef.current !== messageIndex) {
+      lastLoggedIndexRef.current = messageIndex;
+      logEvent('assistant_response', { text: text.slice(0, 2000) });
+    }
+
+    if (!voiceEnabled) return;
+    if (lastSpokenIndexRef.current === messageIndex) {
+      if (import.meta.env.DEV) {
+        console.info('[ChatPanel] 이미 발화한 메시지 — 중복 발화 생략:', messageIndex);
       }
       return;
     }
@@ -430,8 +448,8 @@ export function ChatPanel() {
     <div className="chat-panel">
       <div className="chat-header">
         <div className="chat-header-text">
-          <h2>💬 AI 쇼핑 도우미</h2>
-          <p>예: "지팡이 추천해줘", "그거 2개 담아줘", "주문해줘"</p>
+          <h2>🤖 AI 도우미</h2>
+          <p>말씀만 하세요, 다 찾아드려요</p>
         </div>
         <button
           type="button"
@@ -440,7 +458,7 @@ export function ChatPanel() {
           aria-pressed={voiceEnabled}
           aria-label="음성으로 응답 듣기 켜기/끄기"
         >
-          {voiceEnabled ? '🔊 음성응답 켜짐' : '🔇 음성응답 꺼짐'}
+          {voiceEnabled ? '🔊 켜짐' : '🔇 꺼짐'}
         </button>
       </div>
 

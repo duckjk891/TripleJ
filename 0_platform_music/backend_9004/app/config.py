@@ -133,6 +133,29 @@ class Settings(BaseSettings):
     # 최종 JWT 를 fragment 로 전달할 프론트엔드 URL.
     frontend_url: str = "https://localhost:4000"
 
+    # ReferralSquad(v154) — 앱 추천(리퍼럴) 초대 착지 페이지의 [MAIDOL 시작하기] 버튼 링크.
+    # 플레이스토어 출시 후 .env PLAY_STORE_URL 로 실제 URL 교체 (현재값은 플레이스홀더).
+    play_store_url: str = "https://play.google.com/store/apps/details?id=com.maidol.app"
+
+    # GuardSquad — 만14세 미만 보호자 동의 플로우 기능 플래그.
+    # 기본 OFF(실서비스 "준비 중" 안내) — 테스트 모드에서만 .env GUARDIAN_CONSENT_ENABLED=true 로 켠다.
+    guardian_consent_enabled: bool = False
+
+    # FaceGuardSquad(v135) — 얼굴 인증(생체 대조) A안: AWS Rekognition CompareFaces(서울)
+    # + Face Liveness(도쿄). 키 빈값이면 mock 모드. 기본 OFF — .env FACE_VERIFY_ENABLED=true 로 켠다.
+    face_verify_enabled: bool = False
+    aws_face_access_key_id: str = ""
+    aws_face_secret_access_key: str = ""
+    face_compare_region: str = "ap-northeast-2"
+    face_liveness_region: str = "ap-northeast-1"
+    face_match_threshold: int = 90
+    # v136: Face Liveness confidence 하한 — 미만이면 liveness_failed (FE 재시도 유도)
+    face_liveness_confidence_threshold: float = 80.0
+    # Fernet 키 — 저장 얼굴(faces/{user_id}.bin) 암복호화. 빈값이면 기동 시 경고 + 저장 불가(mock 전용).
+    face_data_key: str = ""
+    # 테스트용 강제 판정: off | match | mismatch (mock 모드에서만 적용)
+    face_mock_force: str = "off"
+
     # Log access (앱팀 디버깅용 /api/_logs 토큰. 빈 문자열이면 API 비활성)
     log_access_token: str = ""
 

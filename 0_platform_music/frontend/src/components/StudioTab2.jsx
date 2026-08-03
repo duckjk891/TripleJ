@@ -641,7 +641,7 @@ function WonderaTestSection() {
     try {
       const payload = { lyrics: wLyrics, model: wModel, prompt: wPrompt };
       const { data } = await api.wonderaGenerate(payload);
-      const taskId = data?.data?.task_id;
+      const taskId = data?.data?.task_id || data?.id;
       if (!taskId) {
         setAiStatus('failed');
         setAiError('task_id를 받지 못했습니다. 응답: ' + JSON.stringify(data));
@@ -668,7 +668,7 @@ function WonderaTestSection() {
       const payload = { lyrics: wLyrics, model: wModel, vocal_id: vocalId };
       if (wPrompt) payload.prompt = wPrompt;
       const { data } = await api.wonderaGenerate(payload);
-      const taskId = data?.data?.task_id;
+      const taskId = data?.data?.task_id || data?.id;
       if (!taskId) {
         setMyStatus('failed');
         setMyError('task_id를 받지 못했습니다. 응답: ' + JSON.stringify(data));
@@ -696,7 +696,7 @@ function WonderaTestSection() {
 
       {/* Upload */}
       <div className="wondera-test__section">
-        <label className="wondera-test__label">① 내 목소리 업로드 (mp3, m4a / 15~30초)</label>
+        <label className="wondera-test__label">① 내 목소리 업로드 (mp3, m4a / 15~30초) <span style={{color:'var(--color-text-sub)'}}>— 선택 · '내 목소리로 생성'에만 필수</span></label>
         <div className="wondera-test__upload-row">
           <input
             type="file"
@@ -718,16 +718,22 @@ function WonderaTestSection() {
 
       {/* Lyrics & Style */}
       <div className="wondera-test__section">
-        <label className="wondera-test__label">② 가사 & 스타일</label>
+        <label className="wondera-test__label">② 가사 <span style={{color:'#e05a5a'}}>*필수</span> & 스타일</label>
         <textarea
           className="wondera-test__textarea"
           value={wLyrics}
           onChange={(e) => setWLyrics(e.target.value)}
           rows={12}
+          placeholder="가사를 입력해주세요 (필수)"
         />
+        {!wLyrics.trim() && (
+          <div style={{color:'#e05a5a', fontSize:'12px', marginTop:'4px'}}>
+            가사를 입력해야 생성할 수 있습니다.
+          </div>
+        )}
         <div className="wondera-test__row">
           <div className="wondera-test__field">
-            <label>스타일 프롬프트</label>
+            <label>스타일 프롬프트 (선택)</label>
             <input
               type="text"
               value={wPrompt}
@@ -736,7 +742,7 @@ function WonderaTestSection() {
             />
           </div>
           <div className="wondera-test__field">
-            <label>모델</label>
+            <label>모델 (선택 · 기본 auto)</label>
             <select value={wModel} onChange={(e) => setWModel(e.target.value)}>
               {WONDERA_MODELS.map(m => (
                 <option key={m.value} value={m.value}>{m.label}</option>
@@ -753,14 +759,16 @@ function WonderaTestSection() {
           <button
             className="wondera-test__btn wondera-test__btn--ai"
             onClick={handleGenerateAI}
-            disabled={aiStatus === 'generating' || !wLyrics}
+            disabled={aiStatus === 'generating' || !wLyrics.trim()}
+            title={!wLyrics.trim() ? '가사를 입력해주세요 (필수)' : undefined}
           >
             {aiStatus === 'generating' ? '생성 중...' : '🎵 AI 보컬로 생성'}
           </button>
           <button
             className="wondera-test__btn wondera-test__btn--my"
             onClick={handleGenerateMy}
-            disabled={myStatus === 'generating' || !wLyrics || !vocalId}
+            disabled={myStatus === 'generating' || !wLyrics.trim() || !vocalId}
+            title={!vocalId ? '먼저 ①에서 목소리 파일을 업로드해주세요 (필수)' : (!wLyrics.trim() ? '가사를 입력해주세요 (필수)' : undefined)}
           >
             {myStatus === 'generating' ? '생성 중...' : '🎤 내 목소리로 생성'}
           </button>
@@ -1585,7 +1593,9 @@ export default function StudioTab2({ onSendToUpload }) {
       setTranslatedStyleTextSource('');
       fetchHistory();
     } catch (err) {
-      setError(err.response?.data?.error || '요청에 실패했습니다.');
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
+      else setError(err.response?.data?.error || '요청에 실패했습니다.');
     } finally {
       setSubmitting(false);
     }
@@ -1675,7 +1685,9 @@ export default function StudioTab2({ onSendToUpload }) {
       setSimplePrompt('');
       fetchHistory();
     } catch (err) {
-      setError(err.response?.data?.error || '생성에 실패했습니다.');
+      // v139 — 스트라이크 생성 제한 403 공통 처리
+      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
+      else setError(err.response?.data?.error || '생성에 실패했습니다.');
     } finally {
       setSimpleSubmitting(false);
     }

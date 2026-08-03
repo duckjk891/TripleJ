@@ -132,6 +132,15 @@
   display: flex;
   gap: 6px;
   white-space: nowrap;
+  flex-wrap: wrap;
+}
+
+/* SanctionSquad(v145) — 상태 배지 여러 개 래핑 */
+.admin-status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
 }
 
 .admin-btn {

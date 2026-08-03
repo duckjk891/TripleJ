@@ -30,12 +30,22 @@ API.interceptors.response.use(
       status === 401 ||
       (status === 403 && /토큰|token|만료|expired|invalid|세션/i.test(String(detail)));
     if (isTokenInvalid) {
+      // 비로그인 요청의 401: 요청에 Authorization 토큰이 붙어 있지 않았다면
+      // 세션 만료가 아님 — localStorage 정리/리다이렉트 없이 조용히 reject.
+      const hadAuthToken =
+        !!error.config?.headers?.Authorization || !!localStorage.getItem('token');
+      if (!hadAuthToken) {
+        if (import.meta.env.DEV) {
+          console.warn('[API] anon 401, no redirect', { status });
+        }
+        return Promise.reject(error);
+      }
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       try {
         sessionStorage.removeItem('cachedCharacter');
         sessionStorage.removeItem('cachedCharacterAt');
-      } catch (_) { /* ignore */ }
+      } catch { /* ignore */ }
       const path = window.location.pathname || '';
       if (!path.startsWith('/login') && !path.startsWith('/register')) {
         try {
@@ -43,7 +53,7 @@ API.interceptors.response.use(
             'postLoginRedirect',
             (window.location.pathname || '/') + (window.location.search || '')
           );
-        } catch (_) { /* ignore */ }
+        } catch { /* ignore */ }
         if (import.meta.env.DEV) {
           console.warn('[API] token invalid, redirecting to /login', { status, detail });
         }
@@ -58,15 +68,77 @@ API.interceptors.response.use(
 export const login = (email, password) =>
   API.post('/auth/login', { email, password });
 
-export const register = (email, password, nickname) =>
-  API.post('/auth/register', { email, password, nickname });
+// extra: 선택 인구통계 { birth_date?("YYYY-MM-DD"), gender?, region?, nationality?('domestic'|'foreign') }
+// — 값이 있는 키만 포함해 전달할 것. nationality 무효값은 백엔드 400 (v123).
+// v125 — extra.gender 필수(누락 400), extra.consents 필수:
+//   { terms, privacy, overseas, age14: true 필수, marketing: bool, version } (필수 4개 미동의 시 400)
+export const register = (email, password, nickname, extra) =>
+  API.post('/auth/register', {
+    email,
+    password,
+    nickname,
+    ...(extra && typeof extra === 'object' ? extra : {}),
+  });
+
+// v125 — 동의 이력 기록(인증): consents = [{ key, agreed }] (key 7종 화이트리스트 외 400)
+export const recordConsents = (consents, version) =>
+  API.post('/auth/me/consents', { consents, version });
+
+// v125 — 내 동의 최신 상태 조회(인증) → { consents: { [key]: { agreed, version, at } } }
+export const getMyConsents = () =>
+  API.get('/auth/me/consents');
+
+// v123 — 가입 정책 조회(무인증) → { guardian_consent_enabled: bool }
+export const getSignupConfig = () =>
+  API.get('/auth/signup-config');
+
+// v123 — 만14세 미만 가입: 보호자 동의 요청(무인증).
+// payload: { email, password, nickname, birth_date, nationality?, gender?, region?,
+//            guardian_name, guardian_phone } → { consent_url(테스트모드), status }
+// 플래그 OFF 시 503. 주의: guardian_name/guardian_phone 값은 절대 콘솔에 출력하지 않는다.
+export const requestGuardianConsent = (payload) =>
+  API.post('/auth/guardian-consent/request', payload);
+
+// v123 — 보호자 동의 고지 데이터 조회(무인증, 토큰 링크 경유)
+export const getGuardianConsent = (token) =>
+  API.get(`/auth/guardian-consent/${encodeURIComponent(token)}`);
+
+// v123 — 보호자 동의/거부 결정(무인증) — { agree: bool }
+export const decideGuardianConsent = (token, agree) =>
+  API.post(`/auth/guardian-consent/${encodeURIComponent(token)}/decide`, { agree });
 
 export const getMe = () =>
   API.get('/auth/me');
 
+// 인구통계(생년월일/성별/지역) 부분 업데이트 — null 전달 시 해당 값 지우기.
+export const updateMyProfile = (data) =>
+  API.patch('/auth/me/profile', data);
+
 // 소셜(OAuth) 로그인 시작 경로 — 상대경로 반환(컴포넌트가 window.location.assign 에 사용).
 // provider = google | kakao | naver. 직접 URL 조립/호스트 박기 금지.
 export const oauthLoginPath = (provider) => `/api/auth/oauth/${provider}/login`;
+
+// 프로필 이미지 업로드 (multipart field `image`) → { profile_image: "profiles/..jpg" }
+// 서버가 512×512 자동 크롭.
+export const uploadProfileImage = (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  return API.post('/auth/me/profile-image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+// 프로필 이미지 삭제(기본 이니셜로 복귀) → { profile_image: null }
+export const deleteProfileImage = () =>
+  API.delete('/auth/me/profile-image');
+
+// 회원탈퇴 — confirm_text 가 정확히 "회원탈퇴" 여야 성공(불일치 400). 성공 시 서버 세션 삭제.
+export const withdrawAccount = (confirmText) =>
+  API.delete('/auth/me', { data: { confirm_text: confirmText } });
+
+// 프로필 이미지 프록시 URL (무인증) — adImageUrl 패턴. objectName = "profiles/...".
+export const profileImageUrl = (objectName) =>
+  `/api/auth/profile-image/${encodeURIComponent(objectName)}`;
 
 // Albums
 export const getAlbums = (params) =>
@@ -213,6 +285,40 @@ export const getTrackDetail = (id) =>
 export const getTrackMusicVideo = (trackId) =>
   API.get(`/tracks/${trackId}/music-video`);
 
+// v149 — 가사 타임라인 (커버+가사 싱크 재생용)
+// → { has_timestamps: bool, segments: [{text, start, end}], source: string } (초 단위)
+export const getTrackLyricsTimeline = (trackId) =>
+  API.get(`/tracks/${trackId}/lyrics-timeline`);
+
+// v126 — SNS 공유 영상(커버+음원 9:16, 트랙당 1개 캐싱) 생성.
+// 최초 생성은 곡 전체 인코딩으로 수십 초 소요 가능 → per-call 300s
+// (axios 인스턴스 기본 timeout 미설정=무제한이지만 명시적으로 상한을 둔다).
+// → { video_url: "/api/tracks/{id}/share-video/file", cached: bool }
+// v129 — format 파라미터 추가(sns|wide|kakao, 기본 sns — 기존 콜러 무수정 호환)
+export const createShareVideo = (trackId, format = 'sns') =>
+  API.post(`/tracks/${trackId}/share-video`, null, {
+    timeout: 300000,
+    params: { format },
+  });
+
+// v126 — 공유 영상 파일 프록시 경로 헬퍼 (무인증, fetch blob/다운로드용)
+// v129 — format 쿼리 추가(기본 sns)
+export const shareVideoFileUrl = (trackId, format = 'sns') =>
+  `/api/tracks/${trackId}/share-video/file?format=${encodeURIComponent(format)}`;
+
+// v130 — Wondera recognize 가사 타임스탬프 요청 (인증, 본인 곡만).
+// → { cached: bool, segments: N } / 실패 502 { error }
+// 현재 Wondera 접속 차단 상태 — 차단 해제 후 UI 연결 예정 (함수 등록만).
+export const recognizeTrackTimestamps = (trackId) =>
+  API.post(`/tracks/${trackId}/recognize-timestamps`, null, { timeout: 300000 });
+
+// Related tracks (queue auto-continuation)
+export const getRelatedTracks = (trackId, excludeIds = [], limit = 1) => {
+  const params = { limit };
+  if (excludeIds.length > 0) params.exclude = excludeIds.join(',');
+  return API.get(`/tracks/${trackId}/related`, { params });
+};
+
 // My tracks
 export const getMyTracks = (params) => API.get('/tracks/my', { params });
 export const deleteTrack = (id) => API.delete(`/tracks/${id}`);
@@ -301,7 +407,7 @@ export const getCharacterJob = (jobId) =>
 export const saveCharacter = async (data) => {
   const payload = { ...data, variant: data?.variant || 'real' };
   const resp = await API.post('/character/save', payload);
-  try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
+  try { sessionStorage.removeItem('aimu:myCharacter'); } catch { /* ignore */ }
   return resp;
 };
 export const getMyCharacter = async () => {
@@ -315,16 +421,16 @@ export const getMyCharacter = async () => {
         return { data: cached.data };
       }
     }
-  } catch {}
+  } catch { /* ignore */ }
   const resp = await API.get('/character/me');
   try {
     sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: resp.data }));
-  } catch {}
+  } catch { /* ignore */ }
   return resp;
 };
 export const deleteMyCharacter = async () => {
   const resp = await API.delete('/character/me');
-  try { sessionStorage.removeItem('aimu:myCharacter'); } catch {}
+  try { sessionStorage.removeItem('aimu:myCharacter'); } catch { /* ignore */ }
   return resp;
 };
 export const refineCharacterSheet = (formData) =>
@@ -332,6 +438,31 @@ export const refineCharacterSheet = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 180000,
   });
+
+// Face Verify (v135 — 얼굴 인증/생체 대조, FACE_VERIFY_ENABLED 기본 OFF)
+// status: {enabled, is_verified, consent_needed, guardian_needed, guardian_status, registered}
+export const getFaceVerifyStatus = () => API.get('/face-verify/status');
+// 성인 본인 얼굴 인증(생체정보) 동의 기록
+export const consentFaceVerify = (version) => API.post('/face-verify/consent', { version });
+// 미성년 — 보호자 동의 문자 발송(mock) → {link?(mock), status}; 이후 status 폴링으로 승인 확인
+export const requestFaceGuardianConsent = (guardian = {}) => API.post('/face-verify/guardian/request', guardian);
+// 라이브니스 세션 생성(aws 모드) → {session_id, mode}
+export const createFaceSession = () => API.post('/face-verify/session');
+// 대조: photo(캐릭터 생성에 쓸 사진, 필수)
+//  + selfieFile(mock — 실시간 촬영, 최초/재촬영 시) 또는 sessionId(aws — 라이브니스 세션)
+// → {verified, method?, reason?('stored_mismatch'|'live_mismatch'|'liveness_failed'), need_recapture?}
+export const verifyFace = (photoFile, { selfieFile, sessionId } = {}) => {
+  const formData = new FormData();
+  formData.append('photo', photoFile);
+  if (selfieFile) formData.append('selfie', selfieFile);
+  if (sessionId) formData.append('session_id', sessionId);
+  return API.post('/face-verify/verify', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+};
+// 동의 철회 — 저장 얼굴 정보·검증 기록 파기 → {withdrawn:true}
+export const withdrawFaceVerify = () => API.delete('/face-verify');
 
 // Voice Persona
 export const createVoicePersona = (formData) =>
@@ -463,6 +594,9 @@ export const getAdminUsers = (params) => API.get('/admin/users', { params });
 export const getAdminUser = (id) => API.get(`/admin/users/${id}`);
 export const updateUserRole = (id, role) => API.put(`/admin/users/${id}/role`, { role });
 export const banUser = (id, is_banned, reason) => API.put(`/admin/users/${id}/ban`, { is_banned, reason });
+// SanctionSquad(v145) — 제재 컨트롤: 생성 제한 해제 / 위반 기록 초기화
+export const liftUserRestriction = (id) => API.post(`/admin/users/${id}/restriction/lift`);
+export const resetUserStrikes = (id) => API.post(`/admin/users/${id}/strikes/reset`);
 export const getAdminTracks = (params) => API.get('/admin/tracks', { params });
 export const deleteAdminTrack = (id) => API.delete(`/admin/tracks/${id}`);
 export const updateTrackVisibility = (id, is_public) => API.put(`/admin/tracks/${id}/visibility`, { is_public });
@@ -536,19 +670,152 @@ export const updateAdItem = (itemId, formData) =>
   API.put(`/business/ads/${itemId}`, formData);
 export const deleteAdItem = (itemId) => API.delete(`/business/ads/${itemId}`);
 export const toggleAdItem = (itemId) => API.patch(`/business/ads/${itemId}/toggle`);
-export const getBusinessDashboard = (period = 'daily', category) => {
+// verifiedOnly(옵션, 기본 false): true 일 때만 verified_only=true 쿼리 추가(본인인증 회원 필터)
+export const getBusinessDashboard = (period = 'daily', category, verifiedOnly = false) => {
   const params = { period };
   if (category && category !== '전체') params.category = category;
+  if (verifiedOnly) params.verified_only = true;
   return API.get('/business/dashboard', { params });
 };
 export const recordAdImpression = (itemId) =>
   API.post(`/business/ads/${itemId}/impression`);
-export const recordAdClick = (itemId) =>
-  API.post(`/business/ads/${itemId}/click`);
+// trackId(옵션): 곡 페이지 경유 클릭의 스타 귀속용. 없으면 미귀속 기록.
+// anonId(옵션): 비로그인 익명 클릭 기록용 — 있으면 body 에 anon_id 포함.
+export const recordAdClick = (itemId, trackId, anonId) => {
+  const body = {};
+  if (trackId) body.track_id = trackId;
+  if (anonId) body.anon_id = anonId;
+  return API.post(
+    `/business/ads/${itemId}/click`,
+    Object.keys(body).length > 0 ? body : undefined,
+  );
+};
+// 아이템별 스타(사용자) 성과 — 본인 소유 아이템만 조회 가능
+export const getAdItemStars = (itemId, period = 'daily', verifiedOnly = false) =>
+  API.get(`/business/ads/${itemId}/stars`, {
+    params: verifiedOnly ? { period, verified_only: true } : { period },
+  });
 export const getActiveAds = (category) =>
   API.get('/business/ads/active', { params: category ? { category } : {} });
+// 아이템별 인사이트(위시→클릭 전환, 장르/느낌/요일/시간대, 인구통계) — 본인 소유 아이템만
+export const getAdItemInsights = (itemId, period = 'daily', verifiedOnly = false) =>
+  API.get(`/business/ads/${itemId}/insights`, {
+    params: verifiedOnly ? { period, verified_only: true } : { period },
+  });
 export const adImageUrl = (objectName) =>
   `/api/business/items/image/${encodeURIComponent(objectName)}`;
+
+// Wishlist (광고상품 위시리스트)
+// trackId(옵션): 곡 페이지 경유 위시의 스타 귀속용. 없으면 기존과 동일하게 빈 바디 전송.
+export const toggleWishlist = (itemId, trackId) =>
+  API.post(`/wishlist/${itemId}/toggle`, trackId ? { track_id: trackId } : undefined);
+export const checkWishlist = (itemIds) =>
+  API.get('/wishlist/check', { params: { item_ids: (itemIds || []).join(',') } });
+export const getWishlist = (category) =>
+  API.get('/wishlist/', { params: category ? { category } : {} });
+
+// Follows (스타 팔로우)
+export const followUser = (userId) => API.post(`/follows/${userId}`);
+export const unfollowUser = (userId) => API.delete(`/follows/${userId}`);
+// 무인증 가능 — 비로그인 시 is_following 은 false
+export const getFollowSummary = (userId) => API.get(`/follows/summary/${userId}`);
+// 나를 팔로우하는 목록 → { followers: [{id, nickname, profile_image, followed_at}], total }
+// DM 새 대화 상대 피커에 사용 (게이트 정책: 상대가 나를 팔로우해야 대화 시작 가능)
+export const getMyFollowers = (params) => API.get('/follows/followers', { params });
+
+// Feeds (v131 — 스타 채널 음악 피드)
+// blocks: [{type:'text',text}|{type:'track',track_id}], bgm_track_id 선택.
+// 응답 피드는 트랙 블록/bgm 이 하이드레이션된 형태({type:'track',track:{...}}).
+export const createFeed = (payload) => API.post('/feeds/', payload);
+export const updateFeed = (feedId, payload) => API.put(`/feeds/${feedId}`, payload);
+export const deleteFeed = (feedId) => API.delete(`/feeds/${feedId}`);
+// 작성자별 최신순 목록 → { feeds: [...], total }
+// v133 — kind: 'feed'(기본, 음악 피드) | 'community'(공지)
+export const getUserFeeds = (userId, page = 1, limit = 10, kind = 'feed') =>
+  API.get(`/feeds/user/${userId}`, { params: { page, limit, kind } });
+// v134 — 타임라인 (혼합 랭킹 노출, 비로그인 가능) → { feeds: [...], pagination: {page, limit, total} }
+// 랭킹은 서버 몫 — FE 는 받은 순서 그대로 렌더.
+export const getTimeline = (page = 1, limit = 10) =>
+  API.get('/feeds/timeline', { params: { page, limit } });
+// 단건 조회 (공유 링크 착지 — 비로그인 허용)
+export const getFeed = (feedId) => API.get(`/feeds/${feedId}`);
+// 좋아요 — 멱등, 응답 { like_count, is_liked }
+export const likeFeed = (feedId) => API.post(`/feeds/${feedId}/like`);
+export const unlikeFeed = (feedId) => API.delete(`/feeds/${feedId}/like`);
+// 댓글 → { comments: [...], total } (오름차순 페이징)
+export const getFeedComments = (feedId, page = 1, limit = 20) =>
+  API.get(`/feeds/${feedId}/comments`, { params: { page, limit } });
+export const addFeedComment = (feedId, text) =>
+  API.post(`/feeds/${feedId}/comments`, { text });
+export const deleteFeedComment = (commentId) =>
+  API.delete(`/feeds/comments/${commentId}`);
+
+// 공개 트랙 목록 (v131 — TrackPickerModal 인기순 기본, sort=play_count|like_count|created_at)
+export const getTracks = (params) => API.get('/tracks/', { params });
+
+// Reports (v137 — 콘텐츠 신뢰 세트: 신고)
+// targetType: 'track'|'feed'|'comment', reasonCode: 'portrait'|'copyright'|'sexual'|'abuse'|'other'
+// reasonText(≤500) 선택 — 값은 절대 콘솔에 출력하지 않는다.
+// 성공 201 {report_id} / 중복 409 / 본인 콘텐츠 400.
+export const reportContent = (targetType, targetId, reasonCode, reasonText) =>
+  API.post('/reports/', {
+    target_type: targetType,
+    target_id: targetId,
+    reason_code: reasonCode,
+    ...(reasonText ? { reason_text: reasonText } : {}),
+  });
+// 어드민 신고 큐 → { reports: [...target_snapshot 하이드레이션..., urgent, evidence, resolution], pagination }
+export const getAdminReports = (params) => API.get('/admin/reports', { params });
+// action: 'blind'|'delete'|'dismiss'|'confirm_delete'(확정 삭제)|'restore'(복원)
+// (트랙·피드는 blind|restore|confirm_delete|dismiss, 댓글은 delete|dismiss)
+export const actionAdminReport = (reportId, action) =>
+  API.post(`/admin/reports/${reportId}/action`, { action });
+
+// v138 — 신고 집행 패키지 (양면 뷰·확정 삭제·복원·인물 수색 몰수)
+// 어드민 전용 증거 프록시 URL (img src 용) — coverPreviewUrl 의 ?token= 패턴.
+export const adminEvidenceUrl = (reportId, idx) => {
+  const token = localStorage.getItem('token');
+  return `${API.defaults.baseURL}/admin/reports/${reportId}/evidence/${idx}?token=${encodeURIComponent(token || '')}`;
+};
+// content_json 증거 텍스트 조회 — 응답 본문은 절대 콘솔에 출력하지 않는다.
+export const getAdminReportEvidence = (reportId, idx) =>
+  API.get(`/admin/reports/${reportId}/evidence/${idx}`);
+// 양면 뷰 우측 — 사용자의 최근 생성물 { tracks: [...], character: {...} }
+export const getAdminUserRecentContent = (userId) =>
+  API.get(`/admin/users/${userId}/recent-content`);
+// 인물 수색 — 수 초~수십 초 소요 가능 → 타임아웃 여유(120s)
+export const adminFaceSearch = (reportId) =>
+  API.post('/admin/moderation/face-search', { report_id: reportId }, { timeout: 120000 });
+// 선택 항목 일괄 몰수 — targets: [{type: 'track'|'character', id}]
+export const adminPurge = (reportId, targets) =>
+  API.post('/admin/moderation/purge', { report_id: reportId, targets });
+
+// v139 — 신고 후속: 소명 제출·내 신고 내역·스트라이크 생성 제한
+// 내 콘텐츠가 신고 처리된 목록(소명 대상) → { reports: [{report_id, target_type, target_id,
+//   target_summary:{title?/text?/cover_image_url?}, action, resolution, status, handled_at, has_appeal}] }
+export const getMyAffectedReports = () => API.get('/reports/my-affected');
+// 소명 제출 — text 1~2000자. 성공 201 {appeal_id} / 비소유 403 / blind 아님 400 / 중복 409.
+// 주의: 소명 text 원문은 절대 콘솔에 출력하지 않는다(길이만 로깅).
+export const submitAppeal = (reportId, text) =>
+  API.post(`/reports/${reportId}/appeal`, { text });
+// 내가 접수한 신고 목록 → { reports: [{report_id, target_type, target_summary, reason_code,
+//   reason_text, status, action, resolution, handled_at, created_at}] }
+// 주의: reason_text 원문은 절대 콘솔에 출력하지 않는다.
+export const getMyReports = () => API.get('/reports/my');
+
+// v139 — 생성 계열(곡·캐릭터·커버·MV) 위반 제한 403 공통 판별·알럿
+// BE: 403 {"error":"generation_restricted","until":iso,"message":...}
+export const isGenerationRestricted = (err) =>
+  err?.response?.status === 403 &&
+  err?.response?.data?.error === 'generation_restricted';
+export const alertGenerationRestricted = (err) => {
+  const until = err?.response?.data?.until;
+  const d = until ? new Date(until) : null;
+  const untilText = d && !Number.isNaN(d.getTime())
+    ? d.toLocaleString('ko-KR')
+    : '관리자 확인 후';
+  alert(`생성 기능이 제한되었습니다. 해제: ${untilText}`);
+};
 
 // AdMob Rewards
 export const getRewardHistory = () => API.get('/rewards/history');
@@ -557,6 +824,10 @@ export const getRewardBalance = () => API.get('/rewards/balance');
 // Points
 export const getPointsBalance = () => API.get('/points/balance');
 export const getPointsHistory = (limit = 50) => API.get('/points/history', { params: { limit } });
+
+// Attendance (출석체크 / 데일리 체크인) — 보상은 별(⭐) 포인트
+export const getAttendanceStatus = () => API.get('/attendance/status');
+export const postAttendanceCheckIn = () => API.post('/attendance/check-in');
 
 // ─────────────────────────────────────────────────────────────
 // v69-restore: 유저 미커밋 변경에서 손실된 21개 함수 재구현
@@ -619,6 +890,50 @@ export const resetUserEdits = (jobId, payload) =>
   API.post(`/mv/jobs/${jobId}/user-edited/reset`, payload || {});
 export const getUserEditedSummary = (jobId) =>
   API.get(`/mv/jobs/${jobId}/user-edited/summary`);
+
+// DM (v152 — 실시간 1:1 다이렉트 메시지, prefix /api/dm)
+// 게이트/스키마는 PLAN v152 기준. 메시지 text 원문은 절대 콘솔에 출력하지 않는다(길이만).
+// 봉투 아이콘/전송 버튼 활성 판단용 — { is_verified: bool, ... }
+export const getDmEligibility = () => API.get('/dm/eligibility');
+// 대화 시작/기존 반환 — 안전게이트 전체 통과 시. 실패 시 4xx { error }.
+export const createDmConversation = (peerId) =>
+  API.post('/dm/conversations', { peer_id: peerId });
+// 내 대화 목록 (last_at desc) → { conversations: [{conversation_id, peer, last_message_text, last_at, unread}] }
+export const getDmConversations = () => API.get('/dm/conversations');
+// 대화 메시지 페이지네이션 → { messages: [{id, sender_id, text, created_at, read}], has_more }
+// params: { before?(msg_id|iso 커서), limit?(기본 30) }
+export const getDmMessages = (cid, params) =>
+  API.get(`/dm/conversations/${cid}/messages`, { params });
+// 메시지 전송 → { message: {id, sender_id, text, created_at} }
+export const sendDmMessage = (cid, text) =>
+  API.post(`/dm/conversations/${cid}/messages`, { text });
+// 읽음 처리 (내 unread=0 + 상대발신 미읽음 read=true) → { ok: true }
+export const markDmRead = (cid) =>
+  API.post(`/dm/conversations/${cid}/read`);
+// 헤더 배지용 총 미읽음 합계 → { count: int }
+export const getDmUnreadCount = () => API.get('/dm/unread-count');
+// 사용자 차단/해제 (차단 사실은 UI 에 상대에게 노출 안 함) → { ok: true }
+export const blockDmUser = (uid) => API.post(`/dm/blocks/${uid}`);
+export const unblockDmUser = (uid) => API.delete(`/dm/blocks/${uid}`);
+
+// DM (v155 — 인스타 완전체 C안: 전체 사용자 검색 + 메시지 요청함)
+// 닉네임 부분일치 전체 사용자 검색(자기 자신/차단/탈퇴 제외, limit 20) → { users: [{id, nickname, profile_image}] }
+export const searchDmUsers = (q) => API.get('/dm/users/search', { params: { q } });
+// 내가 받은 메시지 요청(pending) 목록 → { requests: [대화 serialize 동일 형태 — status, requester_id 포함] }
+export const getDmRequests = () => API.get('/dm/requests');
+// 요청 수락 (수신자만 — 요청자 호출 403, 이미 accepted 400) → { ok, conversation }
+export const acceptDmRequest = (cid) => API.post(`/dm/conversations/${cid}/accept`);
+// 요청 거절 (수신자만 — 대화+메시지 삭제, 상대 무통지) → { ok }
+export const declineDmRequest = (cid) => API.delete(`/dm/conversations/${cid}`);
+
+// Referral (v154 — 앱 추천/추천코드)
+// 내 추천코드 조회(인증, 코드 없으면 서버가 lazy 생성)
+// → { referral_code, invite_url, play_store_url }
+export const getMyReferralCode = () => API.get('/referral/my-code');
+// 초대 착지 정보 조회(무인증) → { referral_code, inviter_nickname, play_store_url }
+// 무효/탈퇴 유저 코드는 404 { error }.
+export const getInviteInfo = (code) =>
+  API.get(`/referral/invite/${encodeURIComponent(code)}`);
 
 // Frontend remote logging
 export const sendFrontendLogs = (batch) =>

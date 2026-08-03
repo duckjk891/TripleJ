@@ -1,12 +1,65 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
-from ..auth import get_current_user
+from ..auth import get_current_user, get_current_user_optional
 from ..database.postgres import get_pg
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/follows")
+
+
+@router.get("/summary/{user_id}")
+async def follow_summary(
+    user_id: str,
+    current_user=Depends(get_current_user_optional),
+    conn=Depends(get_pg),
+):
+    """공개 팔로우 요약 (무인증 접근 가능).
+
+    follower_count 는 항상 반환, is_following 은 유효 토큰이 있을 때만 판정(없으면 false).
+    """
+    logger.info(
+        "[follows] summary enter target=%s viewer=%s",
+        user_id[:8], str(current_user["id"])[:8] if current_user else "anon",
+    )
+
+    try:
+        target_uuid = uuid.UUID(user_id)
+    except ValueError:
+        logger.warning("[follows] summary invalid target id target=%s", user_id[:8])
+        return JSONResponse(status_code=404, content={"error": "사용자를 찾을 수 없습니다."})
+
+    target = await conn.fetchrow("SELECT id FROM users WHERE id = $1", target_uuid)
+    if not target:
+        logger.warning("[follows] summary target not found target=%s", user_id[:8])
+        return JSONResponse(status_code=404, content={"error": "사용자를 찾을 수 없습니다."})
+
+    follower_count = await conn.fetchval(
+        "SELECT COUNT(*) FROM follows WHERE followee_id = $1", target_uuid
+    )
+
+    is_following = False
+    if current_user:
+        try:
+            viewer_uuid = uuid.UUID(current_user["id"])
+        except (ValueError, KeyError, TypeError):
+            viewer_uuid = None
+        if viewer_uuid and viewer_uuid != target_uuid:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM follows WHERE follower_id = $1 AND followee_id = $2",
+                viewer_uuid, target_uuid,
+            )
+            is_following = row is not None
+
+    logger.info(
+        "[follows] summary done target=%s follower_count=%d is_following=%s",
+        user_id[:8], follower_count, is_following,
+    )
+    return {"follower_count": follower_count, "is_following": is_following}
 
 
 @router.post("/{user_id}", status_code=201)
