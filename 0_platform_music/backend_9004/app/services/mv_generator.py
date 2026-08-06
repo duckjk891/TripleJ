@@ -29,6 +29,7 @@ import httpx
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from .claude_cache import cached_system, log_cache_usage
 from .location_prompt import anchor_clause
 
 logger = logging.getLogger(__name__)
@@ -820,13 +821,16 @@ async def generate_video_prompts_from_images(
     # v60: Claude vision 5MB 제한 우회 위해 1024 thumbnail + JPEG q85 압축. 원본 무변경.
     compressed_bytes, compressed_media_type = _compress_image_for_vision(image_bytes)
     image_b64 = base64.b64encode(compressed_bytes).decode("utf-8")
-    system_prompt = _select_video_prompt_template(video_model, has_character)
+    raw_template = _select_video_prompt_template(video_model, has_character)
     # Inject duration + v45 event/emotion context.
     # Templates contain {duration:.1f}, {scene_event_block}, {emotional_core} placeholders.
     scene_event_block = _format_scene_event_block(scene_event)
     emotional_core_str = (emotional_core or "").strip() or "(not specified)"
+    # Gemini 경로용 formatted system (기존과 동일 — 회귀 0). Claude 경로는 v161 에서
+    # 변동 3값을 user 메시지로 이동하므로 이 formatted 버전을 쓰지 않는다.
+    system_prompt = raw_template
     try:
-        system_prompt = system_prompt.format(
+        system_prompt = raw_template.format(
             duration=float(duration),
             scene_event_block=scene_event_block,
             emotional_core=emotional_core_str,
@@ -853,8 +857,30 @@ async def generate_video_prompts_from_images(
         try:
             anthropic_client = _get_anthropic_client()
 
+            # v161 — prompt caching: 씬별 변동 3값({duration}/{scene_event_block}/
+            # {emotional_core})을 system format 대신 user 메시지 선두 블록으로 이동.
+            # system 은 (video_model, has_character) 조합별 완전 고정 문자열이 되어
+            # cache_control prefix 로 씬 반복 호출 간 재사용된다 (프롬프트 의미 동일).
+            system_fixed = (
+                raw_template
+                .replace("{duration:.1f}", "[CLIP DURATION]")
+                .replace(
+                    "{scene_event_block}",
+                    "(see the [SCENE EVENT] block at the top of the user message)",
+                )
+                .replace(
+                    "{emotional_core}",
+                    "(see the [EMOTIONAL CORE] line at the top of the user message)",
+                )
+            )
+            context_head = (
+                "[CLIP DURATION]: {:.1f} seconds\n\n"
+                "[SCENE EVENT]:\n{}\n\n"
+                "[EMOTIONAL CORE]: {}\n\n"
+            ).format(float(duration), scene_event_block, emotional_core_str)
+
             user_content = [
-                {"type": "text", "text": user_text},
+                {"type": "text", "text": context_head + user_text},
                 {
                     "type": "image",
                     "source": {
@@ -869,7 +895,7 @@ async def generate_video_prompts_from_images(
                 "model": model,
                 # v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 16000 으로 상향.
                 "max_tokens": 16000,
-                "system": system_prompt,
+                "system": cached_system(system_fixed),
                 "messages": [{"role": "user", "content": user_content}],
                 # v75 — adaptive thinking + high effort, no temperature for all Claude paths.
                 "thinking": {"type": "adaptive"},
@@ -880,6 +906,7 @@ async def generate_video_prompts_from_images(
                 model, scene_number,
             )
             response = await anthropic_client.messages.create(**claude_kwargs)
+            log_cache_usage("video_prompt", model, getattr(response, "usage", None))
 
             video_prompt = _first_text_block(response).strip()
             if video_prompt:
@@ -1842,9 +1869,20 @@ async def _generate_brainstorm_claude(
             "[ClaudeTempCap] requested=%.2f capped=%.2f model=%s stage=brainstorm",
             float(temperature), capped_temp, model_name,
         )
+    # v161 — prompt caching: system 은 항상 BRAINSTORM_SYSTEM_PROMPT(고정 head)로
+    # 시작하고 그 뒤에 가중치 가이드/시드 블록/ANTI_EXAMPLE_BLOCK(변동부)이 붙는
+    # 구조 → 고정 head 만 블록1(cache_control), 나머지 전부 블록2. 최종 렌더 텍스트는
+    # 기존 단일 문자열과 동일 (v50 ANTI_EXAMPLE 최후미 규칙 보존 — 블록 경계만 추가).
+    if system_prompt.startswith(BRAINSTORM_SYSTEM_PROMPT):
+        system_arg = cached_system(
+            BRAINSTORM_SYSTEM_PROMPT,
+            system_prompt[len(BRAINSTORM_SYSTEM_PROMPT):],
+        )
+    else:  # 방어적 fallback — 구조가 바뀌면 전체를 고정 1블록으로
+        system_arg = cached_system(system_prompt)
     kwargs = {
         "model": model_name,
-        "system": system_prompt,
+        "system": system_arg,
         "messages": [{"role": "user", "content": user_prompt}],
         # v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 16000 으로 상향.
         "max_tokens": 16000,
@@ -1857,6 +1895,7 @@ async def _generate_brainstorm_claude(
         model_name, capped_temp,
     )
     resp = await client.messages.create(**kwargs)
+    log_cache_usage("brainstorm", model_name, getattr(resp, "usage", None))
     raw = _first_text_block(resp).strip()
     parsed = _parse_brainstorm_json(raw)
     logger.info(
@@ -2238,6 +2277,36 @@ Motif: 첫 event "[과거의 흔적이 묻은 작은 소품]" → 마지막 even
 """
 
 
+# v161 — Drama 시나리오 system 프롬프트의 "고정 head" (첫 변동 슬롯 {auto_infer_rule}
+# 직전까지). Claude prompt caching 의 블록1(cache_control) 로 사용된다.
+# 이 텍스트는 `_build_drama_scenario_prompts` 의 system 조립에서 그대로 선두에
+# 붙으므로, 수정 시 두 곳이 아니라 이 상수 한 곳만 고치면 된다 (SSOT).
+DRAMA_SCENARIO_SYSTEM_FIXED_HEAD = (
+    "당신은 음악 비디오 감독이자 단편영화 시나리오 작가입니다. "
+    "인물(인물 메타데이터) + 사건(스토리) + 감정의 흐름을 갖춘 단편영화식 서사를 작성하세요.\n\n"
+    "## 출력 규칙 (엄격)\n"
+    "- 반드시 아래 형식의 **JSON only** 로 응답하세요. 마크다운 코드 펜스(```), 설명, "
+    "머리말/꼬리말 일체 금지. JSON 그 자체만 출력하세요.\n"
+    "- 모든 한국어 텍스트(이름/설명/본문)는 자연스러운 한국어로 작성하세요.\n"
+    "- narrative 와 scenario 본문에는 characters/locations에 정의한 이름을 직접 사용하세요. "
+    "\"주인공\", \"그녀\", \"장소1\" 같은 플레이스홀더 표현은 금지합니다.\n\n"
+    "## v46 — ABSOLUTE RULE: 사건 비율 60% (절대 준수)\n"
+    "전체 events 중 **최소 60%** 는 \"주인공 캐릭터의 인생·관계·결정에 변화를 일으키는 "
+    "사건\" 을 trigger 로 가져야 합니다.\n"
+    "자연 현상(꽃잎·바람·햇살·하늘·노을·구름·별·태양·달·비·눈·계절·시간·공기·햇빛 등) "
+    "**만** trigger 로 사용하는 events 는 **40% 이하** 로 제한하세요.\n"
+    "사건성 trigger 의 예:\n"
+    "  - 새로운 인물의 등장 / 우연한 마주침\n"
+    "  - 옛 인연의 신호(메시지·전화·소문)\n"
+    "  - [의미 있는 물건의] 발견 / [관계 인물의] 부탁·거절·고백·관계 변화 통보\n"
+    "  - 결단을 요구하는 상황 / 마감·기한\n"
+    "  - 주인공 캐릭터의 능동적 결정 (현재 상태에서 벗어나는 행동, 누군가에게 적극적으로 닿는 행동 등)\n"
+    "자연 현상은 secondary detail (배경) 로만 사용하세요. 자연 현상 단독으로 trigger 를 "
+    "채우지 마세요. 예: trigger=[관계 인물]이 [일상 공간]에서 [예측 못한 형태로 접촉] + "
+    "props=[입력 곡과 어울리는 작은 소품] (자연 현상은 props 로 이동).\n\n"
+)
+
+
 def _format_user_event_seed_block_stage2(user_event_seed: Optional[str]) -> str:
     """v49 — Stage 2 drama scenario system prompt 에 inject 할 시드 블록.
 
@@ -2532,29 +2601,10 @@ def _build_drama_scenario_prompts(
             "events 개수는 8~12개로 작성하세요 (오디오 길이 정보가 없을 때 기본값)."
         )
 
-    system_prompt = (
-        "당신은 음악 비디오 감독이자 단편영화 시나리오 작가입니다. "
-        "인물(인물 메타데이터) + 사건(스토리) + 감정의 흐름을 갖춘 단편영화식 서사를 작성하세요.\n\n"
-        "## 출력 규칙 (엄격)\n"
-        "- 반드시 아래 형식의 **JSON only** 로 응답하세요. 마크다운 코드 펜스(```), 설명, "
-        "머리말/꼬리말 일체 금지. JSON 그 자체만 출력하세요.\n"
-        "- 모든 한국어 텍스트(이름/설명/본문)는 자연스러운 한국어로 작성하세요.\n"
-        "- narrative 와 scenario 본문에는 characters/locations에 정의한 이름을 직접 사용하세요. "
-        "\"주인공\", \"그녀\", \"장소1\" 같은 플레이스홀더 표현은 금지합니다.\n\n"
-        "## v46 — ABSOLUTE RULE: 사건 비율 60% (절대 준수)\n"
-        "전체 events 중 **최소 60%** 는 \"주인공 캐릭터의 인생·관계·결정에 변화를 일으키는 "
-        "사건\" 을 trigger 로 가져야 합니다.\n"
-        "자연 현상(꽃잎·바람·햇살·하늘·노을·구름·별·태양·달·비·눈·계절·시간·공기·햇빛 등) "
-        "**만** trigger 로 사용하는 events 는 **40% 이하** 로 제한하세요.\n"
-        "사건성 trigger 의 예:\n"
-        "  - 새로운 인물의 등장 / 우연한 마주침\n"
-        "  - 옛 인연의 신호(메시지·전화·소문)\n"
-        "  - [의미 있는 물건의] 발견 / [관계 인물의] 부탁·거절·고백·관계 변화 통보\n"
-        "  - 결단을 요구하는 상황 / 마감·기한\n"
-        "  - 주인공 캐릭터의 능동적 결정 (현재 상태에서 벗어나는 행동, 누군가에게 적극적으로 닿는 행동 등)\n"
-        "자연 현상은 secondary detail (배경) 로만 사용하세요. 자연 현상 단독으로 trigger 를 "
-        "채우지 마세요. 예: trigger=[관계 인물]이 [일상 공간]에서 [예측 못한 형태로 접촉] + "
-        "props=[입력 곡과 어울리는 작은 소품] (자연 현상은 props 로 이동).\n\n"
+    # v161 — 캐싱: 아래 고정 head(DRAMA_SCENARIO_SYSTEM_FIXED_HEAD)는 첫 변동 슬롯
+    # ({auto_infer_rule}) 직전까지의 완전 고정 텍스트. Claude 경로에서 블록1(cache_control)
+    # 로 쓰인다. head + formatted tail + ANTI_EXAMPLE 의 최종 렌더 텍스트는 기존과 동일.
+    system_prompt = DRAMA_SCENARIO_SYSTEM_FIXED_HEAD + (
         "{auto_infer_rule}"
         "{user_event_seed_block}"
         "## v45 작성 순서 (절대 준수 — chain-of-thought)\n"
@@ -3387,9 +3437,19 @@ async def _generate_scenario_claude(
             "[ClaudeTempCap] requested=%.2f capped=%.2f model=%s stage=scenario",
             float(temperature), capped_temp, model_name,
         )
+    # v161 — prompt caching: drama system 은 고정 head(첫 변동 슬롯 직전까지) +
+    # 변동 tail 로 2블록 분리 (순서 불변 — 최종 렌더 텍스트 동일). 비드라마 system 은
+    # 전체 고정 문자열이므로 1블록. 미달 여부는 [cache] 로그 create/read 로 실측.
+    if system_prompt.startswith(DRAMA_SCENARIO_SYSTEM_FIXED_HEAD):
+        system_arg = cached_system(
+            DRAMA_SCENARIO_SYSTEM_FIXED_HEAD,
+            system_prompt[len(DRAMA_SCENARIO_SYSTEM_FIXED_HEAD):],
+        )
+    else:
+        system_arg = cached_system(system_prompt)
     scenario_kwargs = {
         "model": model_name,
-        "system": system_prompt,
+        "system": system_arg,
         "messages": [{"role": "user", "content": user_prompt}],
         # v75.1 — adaptive thinking + effort=high 시 thinking 토큰이 max_tokens 에서
         # 차감되어 8000 으로는 본 응답 텍스트가 0 토큰 잘려나가 빈 응답이 됨
@@ -3412,6 +3472,12 @@ async def _generate_scenario_claude(
     async with client.messages.stream(**scenario_kwargs) as _stream:
         async for _chunk in _stream.text_stream:
             _raw_parts.append(_chunk)
+        # v161 — stream 경로의 [cache] 사용량은 final message 의 usage 로 취득.
+        try:
+            _final_msg = await _stream.get_final_message()
+            log_cache_usage("scenario", model_name, getattr(_final_msg, "usage", None))
+        except Exception as _usage_err:  # noqa: BLE001 — 로깅 실패 무해
+            logger.debug("[cache] stage=scenario usage fetch failed: %s", str(_usage_err)[:120])
     raw = "".join(_raw_parts).strip()
 
     if is_drama:
@@ -4917,9 +4983,25 @@ async def _generate_scene_prompts_claude(
     # v58.1: Anthropic SDK 가 max_tokens 큰 경우 streaming 강제 — async stream 모드로 호출
     max_tokens = min(max(len(scenes_input) * 1200, 16000), 64000)
 
+    # v161 — prompt caching: SCENE_PROMPT_ONLY_SYSTEM 의 첫 변동 슬롯({scenario_context})
+    # 직전까지가 video_model 별 "준고정부"({video_image_prompt_guide}만 포함) → video_model
+    # 별 formatted 고정 head 를 블록1(cache_control), 나머지(변동)를 블록2로 분리.
+    # 최종 렌더 텍스트는 기존 단일 문자열과 동일 (블록 경계만 추가).
+    _head_tpl = SCENE_PROMPT_ONLY_SYSTEM.split("{scenario_context}", 1)[0]
+    try:
+        _fixed_head = _head_tpl.format(
+            video_image_prompt_guide=_get_video_image_prompt_guide(video_model)
+        )
+    except (KeyError, IndexError, ValueError):
+        _fixed_head = ""
+    if _fixed_head and system_prompt.startswith(_fixed_head):
+        system_arg = cached_system(_fixed_head, system_prompt[len(_fixed_head):])
+    else:  # 방어적 fallback — 전체 고정 1블록
+        system_arg = cached_system(system_prompt)
+
     scene_kwargs = {
         "model": model_name,
-        "system": system_prompt,
+        "system": system_arg,
         "messages": [{"role": "user", "content": user_message}],
         "max_tokens": max_tokens,
         # v75 — adaptive thinking + high effort (stream mode; text_stream yields only text blocks).
@@ -4935,6 +5017,12 @@ async def _generate_scene_prompts_claude(
     async with client.messages.stream(**scene_kwargs) as stream:
         async for text_chunk in stream.text_stream:
             raw_parts.append(text_chunk)
+        # v161 — stream 경로의 [cache] 사용량은 final message 의 usage 로 취득.
+        try:
+            _final_msg = await stream.get_final_message()
+            log_cache_usage("scene_prompts", model_name, getattr(_final_msg, "usage", None))
+        except Exception as _usage_err:  # noqa: BLE001 — 로깅 실패 무해
+            logger.debug("[cache] stage=scene_prompts usage fetch failed: %s", str(_usage_err)[:120])
     raw = "".join(raw_parts).strip()
     result = _parse_scene_prompts_raw(raw)
     logger.info(

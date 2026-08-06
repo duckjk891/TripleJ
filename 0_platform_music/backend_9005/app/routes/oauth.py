@@ -29,6 +29,7 @@ from ..database.postgres import get_pg
 from ..database.redis import get_redis
 from ..services import oauth_service
 from ..services.oauth_service import OAuthError, OAuthNotConfigured
+from ..services.points_service import credit_points
 from .auth import _create_token, _save_session
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,16 @@ async def oauth_callback(
     db_nickname = row["nickname"]
     db_profile_image = row["profile_image"]
 
+    # StarEconSquad(v158) — 소셜 신규가입 보너스 ⭐+50 (best-effort — 실패해도
+    # 로그인 흐름 계속). day="-" + ref="-" → (유저, signup_bonus) 영구 1회 멱등
+    # (이메일 가입 +50 과 같은 키 → 어느 경로든 1회만).
+    if action == "signup":
+        try:
+            await credit_points(user_id, "signup_bonus", 50, ref="-", day="-")
+            logger.info("[star-econ] signup_bonus +50 user=%s provider=%s", user_id[:8], provider)
+        except Exception:
+            logger.exception("[star-econ] signup_bonus failed user=%s provider=%s", user_id[:8], provider)
+
     try:
         token = _create_token(user_id, db_email, db_nickname, role)
         await _save_session(user_id, db_email, db_nickname, db_profile_image, role=role)
@@ -219,6 +230,13 @@ async def _promote_verification(conn, provider, row, birth_date, gender):
         "[oauth] provider=%s action=verify_promote user=%s has_birth=%s has_gender=%s",
         provider, str(row["id"])[:8], bool(birth_date), bool(gender),
     )
+    # StarEconSquad(v158) — 본인인증 승격 보너스 ⭐+30 (best-effort).
+    # day="-" + ref="-" → (유저, verify_bonus) 영구 1회 멱등 (재승격 시도 무해).
+    try:
+        await credit_points(str(row["id"]), "verify_bonus", 30, ref="-", day="-")
+        logger.info("[star-econ] verify_bonus +30 user=%s provider=%s", str(row["id"])[:8], provider)
+    except Exception:
+        logger.exception("[star-econ] verify_bonus failed user=%s", str(row["id"])[:8])
     return updated
 
 
@@ -280,4 +298,15 @@ async def _resolve_account(conn, provider, provider_uid, email, nickname, profil
             "[oauth] provider=%s action=signup_verified user=%s has_birth=%s has_gender=%s",
             provider, str(created["id"])[:8], bool(birth_date), bool(gender),
         )
+        # StarEconSquad(v158) — 인증 트랙(naver/kakao) 신규가입은 가입 즉시
+        # is_verified=TRUE → verify_bonus ⭐+30 도 함께 지급 (signup_bonus +50 은
+        # callback 의 action=="signup" 분기에서 별도 지급 = 의도된 동시 지급).
+        try:
+            await credit_points(str(created["id"]), "verify_bonus", 30, ref="-", day="-")
+            logger.info(
+                "[star-econ] verify_bonus +30 user=%s provider=%s (signup)",
+                str(created["id"])[:8], provider,
+            )
+        except Exception:
+            logger.exception("[star-econ] verify_bonus failed user=%s (signup)", str(created["id"])[:8])
     return "signup", created

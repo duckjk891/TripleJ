@@ -1252,6 +1252,63 @@ button.mymusic-character__outfit-select:hover {
   color: var(--color-text-sub);
 }
 
+/* v161 — 외모 텍스트 입력칸 (사진 없이 텍스트만으로 생성하는 경로) */
+.mymusic-character__appearance {
+  max-width: 400px;
+  margin: 0 auto 20px;
+  text-align: left;
+}
+
+.mymusic-character__appearance-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.mymusic-character__appearance-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.mymusic-character__appearance-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.mymusic-character__appearance-input::placeholder {
+  color: var(--color-text-sub);
+  opacity: 0.7;
+}
+
+.mymusic-character__appearance-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-text-sub);
+}
+
+/* 텍스트-only 모드 활성 안내(사진 미첨부 + 텍스트 입력) */
+.mymusic-character__appearance-hint--active {
+  color: var(--color-primary);
+}
+
+/* v161 — 생성 버튼 아래 입력 안내(사진·텍스트 둘 다 비었을 때) */
+.mymusic-character__generate-guide {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
 /* v139 — 소명하기 버튼 (blinded 트랙 라벨 옆) */
 .mymusic-track-card__appeal-btn {
   font-size: 11px;
@@ -1271,4 +1328,20 @@ button.mymusic-character__outfit-select:hover {
 .mymusic-track-card__appeal-btn:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* ─── v158: 별 경제 v1.2 — 캐릭터 생성 비용 배지 ─── */
+.mymusic-character__cost-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.16);
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  color: #facc15;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
 }

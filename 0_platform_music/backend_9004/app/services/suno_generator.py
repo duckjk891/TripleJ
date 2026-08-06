@@ -415,21 +415,27 @@ async def generate_music_suno(
 
     logger.info("Suno: generation %s completed, object=%s", generation_id, object_name)
 
-    # Points — best-effort +1 for a completed generation (never affects the
-    # generation flow). Owner is looked up from the generations doc.
+    # StarEcon(v158) — 완성 리베이트 +1 제거(v1.2 표에 없음) → 디렉터 피로
+    # 완성 훅으로 교체: 그날 완성 카운트 +1 + 사다리 쿨다운 시작. best-effort
+    # (생성 완료 흐름에 절대 영향 없음). 이 코루틴은 배경 루프에서 돌므로
+    # 반드시 루프-로컬 mongo_db 를 주입한다 (메인 루프 get_mongo() 금지).
     try:
         from bson import ObjectId as _OID
-        from .points_service import award_point
+        from .fatigue_service import on_generation_completed
 
         _gen_doc = await mongo_db.generations.find_one(
             {"_id": _OID(generation_id)}, {"user_id": 1}
         )
         _gen_user_id = (_gen_doc or {}).get("user_id")
         if _gen_user_id:
-            await award_point(_gen_user_id, "generate", generation_id)
-    except Exception as _pts_exc:
+            await on_generation_completed(_gen_user_id, db=mongo_db)
+            logger.info(
+                "[fatigue] completion hook ok gen_id=%s user=%s",
+                generation_id, _gen_user_id[:8],
+            )
+    except Exception as _ftg_exc:
         logger.warning(
-            "[points] generate hook failed gen_id=%s: %s", generation_id, _pts_exc
+            "[fatigue] completion hook failed gen_id=%s: %s", generation_id, _ftg_exc
         )
 
     # v44 — Background beat extraction (same loop, await to keep wrapper-loop

@@ -1620,3 +1620,19 @@
   text-align: center;
   color: var(--color-text);
 }
+
+/* ─── v158: 별 경제 v1.2 — 커버 생성 비용 배지 ─── */
+.upload-cover-cost-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.16);
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  color: #facc15;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}

@@ -23,7 +23,7 @@ from ..services.face_search_service import (
     BLOCKED_SOURCE_PHOTO_RESPONSE,
     is_blocked_source_photo,
 )
-from ..services.points_service import refund_points, spend_points
+from ..services.points_service import POINT_COSTS, refund_points, spend_points
 from ..services.strike_service import check_generation_allowed
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,8 @@ MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # 캐릭터 시트 생성 비용 (실사/가상, 동기/비동기 공통). 요청 시 선차감,
 # 생성 실패 시 환불. 잔액 부족이면 402 로 차단.
-CHARACTER_POINT_COST = 2
+# StarEcon(v158) — 단가는 POINT_COSTS 단일 소스 (character: 2 → 10).
+CHARACTER_POINT_COST = POINT_COSTS["character"]
 INSUFFICIENT_POINTS_RESPONSE = {
     "error": "포인트가 부족합니다 (필요: {})".format(CHARACTER_POINT_COST)
 }
@@ -304,8 +305,8 @@ async def _resolve_item_image(
 
 def _store_temp_sheet(
     user_id: str,
-    contents: bytes,
-    mime_type: str,
+    contents: Optional[bytes],
+    mime_type: Optional[str],
     ext: str,
     sheet_bytes: bytes,
 ) -> dict:
@@ -315,21 +316,25 @@ def _store_temp_sheet(
     runner. Paths mirror the original inline logic exactly:
       - characters/temp/{user_id}/original_{hex8}{ext}
       - characters/temp/{user_id}/{hex32}.png
+    v161 — 텍스트-only 경로(contents=None)에서는 원본 사진 업로드를 건너뛰고
+    original_object_name=None 을 반환한다 (사진 경로는 기존과 동일).
     Raises on MinIO failure (callers decide how to surface the error).
     Returns {object_name, original_object_name, preview_url}.
     """
     minio_client = get_minio()
 
-    original_object = "characters/temp/{}/original_{}{}".format(
-        user_id, uuid_lib.uuid4().hex[:8], ext
-    )
-    minio_client.put_object(
-        bucket_name=settings.minio_bucket_images,
-        object_name=original_object,
-        data=io.BytesIO(contents),
-        length=len(contents),
-        content_type=mime_type,
-    )
+    original_object = None
+    if contents is not None:
+        original_object = "characters/temp/{}/original_{}{}".format(
+            user_id, uuid_lib.uuid4().hex[:8], ext
+        )
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=original_object,
+            data=io.BytesIO(contents),
+            length=len(contents),
+            content_type=mime_type or "image/jpeg",
+        )
 
     sheet_object = "characters/temp/{}/{}.png".format(user_id, uuid_lib.uuid4().hex)
     minio_client.put_object(
@@ -349,7 +354,7 @@ def _store_temp_sheet(
 
 @router.post("/generate-sheet")
 async def generate_sheet(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     top_image: Optional[UploadFile] = File(None),
     bottom_image: Optional[UploadFile] = File(None),
     shoes_image: Optional[UploadFile] = File(None),
@@ -390,31 +395,48 @@ async def generate_sheet(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
-    # Validate file
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_IMAGE_EXT:
+    # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
+    user_text_clean = (user_text or "").strip()
+    has_photo = file is not None and bool(file.filename)
+    if not has_photo and len(user_text_clean) < 2:
         return JSONResponse(
             status_code=400,
-            content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            content={"error": "얼굴 사진 또는 외모 설명 중 하나는 필요합니다."},
         )
 
-    contents = await file.read()
-    if len(contents) > MAX_IMAGE_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "이미지 크기는 10MB 이하여야 합니다."},
-        )
+    # Validate file (사진 첨부 시에만 — 텍스트-only 는 contents=None 로 진행)
+    contents = None
+    ext = ""
+    mime_type = None
+    if has_photo:
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_IMAGE_EXT:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            )
+
+        contents = await file.read()
+        if len(contents) > MAX_IMAGE_SIZE:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "이미지 크기는 10MB 이하여야 합니다."},
+            )
 
     # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
-    if await is_blocked_source_photo(contents, current_user["id"]):
-        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+    # v161 — 사진 SHA 기반 게이트이므로 사진 첨부 시에만 검사 (텍스트-only 자연 스킵).
+    if contents is not None:
+        if await is_blocked_source_photo(contents, current_user["id"]):
+            return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
 
     # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    # 사용자 단위 게이트 — 텍스트-only 경로에도 동일 적용.
     denied = await check_generation_allowed(None, current_user["id"])
     if denied:
         return denied
 
-    mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    if has_photo:
+        mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve outfit items: ad-product object_name takes priority over upload.
     top_bytes, top_mime, top_src = await _resolve_item_image(top_object_name, top_image)
@@ -426,7 +448,8 @@ async def generate_sheet(
 
     # FaceGuardSquad(v135) — 실사화 경로 얼굴 인증 게이트 (flag ON + 사진 첨부 시,
     # photo SHA256 가 face_photo_verifications 에 없으면 403). cartoon·flag OFF 불변.
-    if settings.face_verify_enabled:
+    # v161 — 사진 SHA 기반 게이트이므로 사진 첨부 시에만 검사 (텍스트-only 자연 스킵).
+    if settings.face_verify_enabled and contents is not None:
         from ..services.face_verify_service import is_photo_verified
 
         if not await is_photo_verified(user_id, contents):
@@ -443,13 +466,14 @@ async def generate_sheet(
     try:
         from ..services.character_generator import generate_character_sheet
 
+        source = "photo+text" if (has_photo and user_text_clean) else ("photo" if has_photo else "text")
         logger.info(
-            "[character.gen] mode=real image_model=%s user=%s items=top:%s/bottom:%s/shoes:%s",
-            norm_image_model, user_id, top_src, bottom_src, shoes_src,
+            "[character.gen] mode=real source=%s image_model=%s user=%s items=top:%s/bottom:%s/shoes:%s",
+            source, norm_image_model, user_id, top_src, bottom_src, shoes_src,
         )
         sheet_bytes = await generate_character_sheet(
             photo_bytes=contents,
-            mime_type=mime_type,
+            mime_type=mime_type or "image/jpeg",
             top_bytes=top_bytes,
             top_mime=top_mime,
             bottom_bytes=bottom_bytes,
@@ -524,7 +548,7 @@ async def get_style_sample(key: str):
 
 @router.post("/generate-sheet-cartoon")
 async def generate_sheet_cartoon(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     top_image: Optional[UploadFile] = File(None),
     bottom_image: Optional[UploadFile] = File(None),
     shoes_image: Optional[UploadFile] = File(None),
@@ -568,30 +592,47 @@ async def generate_sheet_cartoon(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
-    # Validate main face photo.
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_IMAGE_EXT:
+    # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
+    user_text_clean = (user_text or "").strip()
+    has_photo = file is not None and bool(file.filename)
+    if not has_photo and len(user_text_clean) < 2:
         return JSONResponse(
             status_code=400,
-            content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            content={"error": "얼굴 사진 또는 외모 설명 중 하나는 필요합니다."},
         )
-    contents = await file.read()
-    if len(contents) == 0 or len(contents) > MAX_IMAGE_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
-        )
+
+    # Validate main face photo (사진 첨부 시에만 — 텍스트-only 는 contents=None).
+    contents = None
+    ext = ""
+    mime_type = None
+    if has_photo:
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_IMAGE_EXT:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            )
+        contents = await file.read()
+        if len(contents) == 0 or len(contents) > MAX_IMAGE_SIZE:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
+            )
 
     # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
-    if await is_blocked_source_photo(contents, current_user["id"]):
-        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+    # v161 — 사진 SHA 기반 게이트이므로 사진 첨부 시에만 검사 (텍스트-only 자연 스킵).
+    if contents is not None:
+        if await is_blocked_source_photo(contents, current_user["id"]):
+            return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
 
     # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    # 사용자 단위 게이트 — 텍스트-only 경로에도 동일 적용.
     denied = await check_generation_allowed(None, current_user["id"])
     if denied:
         return denied
 
-    mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    if has_photo:
+        mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve outfit items: ad-product object_name takes priority over upload.
     top_bytes, top_mime, top_src = await _resolve_item_image(top_object_name, top_image)
@@ -628,10 +669,11 @@ async def generate_sheet_cartoon(
         art_style_label = preset["art_style_label"]
         art_style_key = preset_key
 
+    source = "photo+text" if (has_photo and user_text_clean) else ("photo" if has_photo else "text")
     logger.info(
-        "[character.gen] mode=cartoon image_model=%s art_style=%s user=%s "
+        "[character.gen] mode=cartoon source=%s image_model=%s art_style=%s user=%s "
         "items=top:%s/bottom:%s/shoes:%s",
-        norm_image_model, art_style_label, user_id, top_src, bottom_src, shoes_src,
+        source, norm_image_model, art_style_label, user_id, top_src, bottom_src, shoes_src,
     )
 
     # Points — 검증 통과 후 생성 시작 전 2포인트 선차감 (부족 시 402 차단).
@@ -644,7 +686,7 @@ async def generate_sheet_cartoon(
 
         sheet_bytes = await generate_character_sheet_cartoon(
             photo_bytes=contents,
-            mime_type=mime_type,
+            mime_type=mime_type or "image/jpeg",
             top_bytes=top_bytes,
             top_mime=top_mime,
             bottom_bytes=bottom_bytes,
@@ -729,8 +771,8 @@ async def _run_character_job(
     job_id: str,
     user_id: str,
     mode: str,
-    contents: bytes,
-    mime_type: str,
+    contents: Optional[bytes],
+    mime_type: Optional[str],
     ext: str,
     top_bytes: Optional[bytes],
     top_mime: Optional[str],
@@ -759,7 +801,7 @@ async def _run_character_job(
 
             sheet_bytes = await generate_character_sheet_cartoon(
                 photo_bytes=contents,
-                mime_type=mime_type,
+                mime_type=mime_type or "image/jpeg",
                 top_bytes=top_bytes,
                 top_mime=top_mime,
                 bottom_bytes=bottom_bytes,
@@ -777,7 +819,7 @@ async def _run_character_job(
 
             sheet_bytes = await generate_character_sheet(
                 photo_bytes=contents,
-                mime_type=mime_type,
+                mime_type=mime_type or "image/jpeg",
                 top_bytes=top_bytes,
                 top_mime=top_mime,
                 bottom_bytes=bottom_bytes,
@@ -835,7 +877,7 @@ async def _run_character_job(
 @router.post("/generate-sheet-async")
 async def generate_sheet_async(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     top_image: Optional[UploadFile] = File(None),
     bottom_image: Optional[UploadFile] = File(None),
     shoes_image: Optional[UploadFile] = File(None),
@@ -868,29 +910,46 @@ async def generate_sheet_async(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_IMAGE_EXT:
+    # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
+    user_text_clean = (user_text or "").strip()
+    has_photo = file is not None and bool(file.filename)
+    if not has_photo and len(user_text_clean) < 2:
         return JSONResponse(
             status_code=400,
-            content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            content={"error": "얼굴 사진 또는 외모 설명 중 하나는 필요합니다."},
         )
-    contents = await file.read()
-    if len(contents) == 0 or len(contents) > MAX_IMAGE_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
-        )
+
+    contents = None
+    ext = ""
+    mime_type = None
+    if has_photo:
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_IMAGE_EXT:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            )
+        contents = await file.read()
+        if len(contents) == 0 or len(contents) > MAX_IMAGE_SIZE:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
+            )
 
     # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
-    if await is_blocked_source_photo(contents, current_user["id"]):
-        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+    # v161 — 사진 SHA 기반 게이트이므로 사진 첨부 시에만 검사 (텍스트-only 자연 스킵).
+    if contents is not None:
+        if await is_blocked_source_photo(contents, current_user["id"]):
+            return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
 
     # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    # 사용자 단위 게이트 — 텍스트-only 경로에도 동일 적용.
     denied = await check_generation_allowed(None, current_user["id"])
     if denied:
         return denied
 
-    mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    if has_photo:
+        mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve ALL bytes inside the handler — UploadFile objects are closed
     # after the response is sent, so nothing may be read in the background.
@@ -901,7 +960,8 @@ async def generate_sheet_async(
     user_id = current_user["id"]
 
     # FaceGuardSquad(v135) — 실사화 경로 얼굴 인증 게이트 (sync 핸들러와 동일).
-    if settings.face_verify_enabled:
+    # v161 — 사진 SHA 기반 게이트이므로 사진 첨부 시에만 검사 (텍스트-only 자연 스킵).
+    if settings.face_verify_enabled and contents is not None:
         from ..services.face_verify_service import is_photo_verified
 
         if not await is_photo_verified(user_id, contents):
@@ -931,10 +991,11 @@ async def generate_sheet_async(
     })
     job_id = str(result.inserted_id)
 
+    source = "photo+text" if (has_photo and user_text_clean) else ("photo" if has_photo else "text")
     logger.info(
-        "[CharJob] job=%s mode=real status=processing image_model=%s user=%s "
+        "[CharJob] job=%s mode=real source=%s status=processing image_model=%s user=%s "
         "items=top:%s/bottom:%s/shoes:%s",
-        job_id, norm_image_model, user_id, top_src, bottom_src, shoes_src,
+        job_id, source, norm_image_model, user_id, top_src, bottom_src, shoes_src,
     )
 
     background_tasks.add_task(
@@ -961,7 +1022,7 @@ async def generate_sheet_async(
 @router.post("/generate-sheet-cartoon-async")
 async def generate_sheet_cartoon_async(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     top_image: Optional[UploadFile] = File(None),
     bottom_image: Optional[UploadFile] = File(None),
     shoes_image: Optional[UploadFile] = File(None),
@@ -998,29 +1059,46 @@ async def generate_sheet_cartoon_async(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_IMAGE_EXT:
+    # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
+    user_text_clean = (user_text or "").strip()
+    has_photo = file is not None and bool(file.filename)
+    if not has_photo and len(user_text_clean) < 2:
         return JSONResponse(
             status_code=400,
-            content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            content={"error": "얼굴 사진 또는 외모 설명 중 하나는 필요합니다."},
         )
-    contents = await file.read()
-    if len(contents) == 0 or len(contents) > MAX_IMAGE_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
-        )
+
+    contents = None
+    ext = ""
+    mime_type = None
+    if has_photo:
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_IMAGE_EXT:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "허용되지 않는 이미지 형식입니다. (jpg, png, webp)"},
+            )
+        contents = await file.read()
+        if len(contents) == 0 or len(contents) > MAX_IMAGE_SIZE:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "이미지 크기는 10MB 이하여야 하며 비어있을 수 없습니다."},
+            )
 
     # TrustSquad(v138) — 신고 확정 도용 원본 사진 재사용 차단 (포인트 차감 전).
-    if await is_blocked_source_photo(contents, current_user["id"]):
-        return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
+    # v161 — 사진 SHA 기반 게이트이므로 사진 첨부 시에만 검사 (텍스트-only 자연 스킵).
+    if contents is not None:
+        if await is_blocked_source_photo(contents, current_user["id"]):
+            return JSONResponse(status_code=403, content=dict(BLOCKED_SOURCE_PHOTO_RESPONSE))
 
     # TrustSquad(v139) — 스트라이크 생성 제한 게이트 (포인트 차감 전 403)
+    # 사용자 단위 게이트 — 텍스트-only 경로에도 동일 적용.
     denied = await check_generation_allowed(None, current_user["id"])
     if denied:
         return denied
 
-    mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    if has_photo:
+        mime_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
     # Resolve ALL bytes inside the handler (UploadFile closes after response).
     top_bytes, top_mime, top_src = await _resolve_item_image(top_object_name, top_image)
@@ -1078,10 +1156,11 @@ async def generate_sheet_cartoon_async(
     })
     job_id = str(result.inserted_id)
 
+    source = "photo+text" if (has_photo and user_text_clean) else ("photo" if has_photo else "text")
     logger.info(
-        "[CharJob] job=%s mode=cartoon status=processing image_model=%s art_style=%s "
+        "[CharJob] job=%s mode=cartoon source=%s status=processing image_model=%s art_style=%s "
         "user=%s items=top:%s/bottom:%s/shoes:%s",
-        job_id, norm_image_model, art_style_label, user_id, top_src, bottom_src, shoes_src,
+        job_id, source, norm_image_model, art_style_label, user_id, top_src, bottom_src, shoes_src,
     )
 
     background_tasks.add_task(

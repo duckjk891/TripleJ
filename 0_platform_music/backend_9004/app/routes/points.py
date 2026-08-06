@@ -18,6 +18,16 @@ router = APIRouter(prefix="/api/points")
 logger = logging.getLogger(__name__)
 
 
+@router.get("/costs")
+async def points_costs():
+    """StarEcon(v158) — 유료 액션 단가 단일 소스 노출 (FE 하드코딩 드리프트 방지).
+
+    비용이 있는 액션만 포함: lyrics/compose/cover/character/fatigue_skip.
+    인증 불요 (가격표는 공개 정보).
+    """
+    return {"costs": svc.POINT_COSTS}
+
+
 @router.get("/balance")
 async def points_balance(user: dict = Depends(get_current_user)):
     """Return the authenticated user's current point balance (0 at account creation)."""

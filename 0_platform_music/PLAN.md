@@ -25376,3 +25376,305 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 8. **실패 폴백**: `GET /attendance/status` 실패 모킹 → 팝업 없음, `[Header]` console.error 만, 앱/로그인 흐름 정상. 이후 ⭐ 배지 수동 오픈은 모달 자체 재시도 UI 로 동작(기존).
 9. **StrictMode(dev)**: 이중 마운트에서 모달 정확히 1회만 오픈(0회/2회 아님).
 10. **회귀**: ⭐ 배지 수동 오픈 언제든 동작·체크인/보상/balance 갱신 무영향·어드민 라우트(Header 미렌더) 무영향·백엔드 diff 0(무수정 확인).
+
+## v158 — 2026-08-04 — 별(⭐) 경제 전면 개편 v1.2 + 디렉터 피로 시스템 [MAIDOL-StarEconSquad]
+
+**요청 작업 (회의 확정 사양 "별 경제 v1.2")**: ①⭐+ 획득 — 첫 가입 +50(일반+소셜, 1회), 본인인증 +30(is_verified 승격 시, 1회), 곡 재생 +1 에 **하루 5곡 상한** 추가, 곡 업로드(발매) +5(상한 없음). 친구초대(v154)/출석(v151) 무변경. ②⭐- 소비 — 작사 -5(신규), 작곡 -15(신규), 커버 -2→**-5**, 캐릭터 -2→**-10**. 잔액 부족 402 + 실패 자동 환불 기존 패턴 유지. MV 스코프 제외. ③**디렉터 피로 시스템(신규)** — 곡 최종 수령(completed) 시 그날 완성 카운트 증가 → 쿨다운(1곡째 2h/2곡째 4h/3곡째 8h/4곡째+ 12h). 쿨다운 중 새 **작곡** 지시 불가(작사/커버/캐릭터는 미게이트). KST 자정 리셋(쿨다운도 해제). 생성 중 대기는 절대 과금/게이트 없음. 스킵: ⭐5=30분 단축(반복 가능) / 광고권 1장=30분 — **기존 AdMob SSV `skip_wait_count` 적립분 소비 로직 구현**(오픈전 체크리스트 B). 피로 상태 조회 API + UI 투명 표시(다크패턴 금지). 기존 -2 차감 유저 잔액 소급 조정 없음. **9005 선구현 → 9004 미러.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작, 전부 실파일 확인)
+
+**points_service (`backend_9005/app/services/points_service.py`, 301줄)**
+1. `KST` :22, `_kst_day()` :43-45. `award_point(user_id, action, track_id)` +1 고정 :48-97 — (user,action,track,day) 유니크 인덱스(:34-37) 멱등, 절대 raise 안 함. `spend_points(user_id, action, amount, ref)` :100-155 — `{balance:{$gte:amount}}` 조건부 $inc 원자 차감, 이벤트 `spend:{action}`(:134), ref=시도당 유니크. `refund_points` :158-203 — 이벤트 `refund:{action}`, **이중환불 방지는 호출자 책임**. `credit_points(user_id, action, amount, ref, day=None)` :206-268 — 가변 멱등 적립(이벤트 선삽입 → dup 시 잔액 미변경). `get_balance` :271-278, `get_history` :281-301.
+
+**현행 획득 지점**
+2. **재생 +1**: `backend_9005/app/routes/charts.py:141` POST `/api/charts/record-play` → :205-209 `award_point(user_id,"play",track_id)` — 곡별 일일 멱등만 있고 **하루 곡 수 상한 없음** (스펙 갭 확인).
+3. **업로드 +1 (스펙은 +5)**: `backend_9005/app/routes/tracks.py:1066` POST `/api/tracks/upload` → :1175-1180 `award_point(uploader_id,"upload",str(track_id))`; :1216 POST `/api/tracks/upload-from-generation` → :1435-1440 동일. 현재 +1 고정 — **스펙-코드 충돌 → +5 로 변경 필요**.
+4. **곡 생성 완료 +1 (v1.2 표에 없음 — 충돌)**: `backend_9005/app/services/suno_generator.py:418-433` — `_update_progress(...,100,"completed",...)`(:406-414) 직후 `award_point(_gen_user_id,"generate",generation_id)`. **⚠ 루프 어피니티 버그 의심**: suno_generator 는 전 구간 루프-로컬 `mongo_db`(generate.py:100-107 에서 배경 루프 전용 motor 클라이언트 생성, :439 주석도 명시)를 쓰는데, award_point 는 내부에서 `get_mongo()`(=메인 루프 바인딩 전역 클라이언트, `app/database/mongodb.py:8-21`) 사용 → 다른 이벤트 루프에서 호출되어 **조용히 실패 중일 가능성** (award_point 는 예외를 삼키고 warning 만 남김). → 신규 피로 훅/환불은 반드시 루프-로컬 db 로 동작해야 함.
+5. **리퍼럴 +50/+50 (v154, 무변경)**: `backend_9005/app/routes/auth.py:221-244` `credit_points(...,"referral_inviter"/"referral_joiner",50,ref=<상대 user_id>,day="-")` — day="-" 영구 1회 패턴(신규 보상들이 재사용할 패턴). **출석 +10/30/100 (v151, 무변경)**: `backend_9005/app/services/attendance_service.py:38-44` `_reward_for`, :94-125 `check_in` → `credit_points(user,"attendance",reward,ref=today,day=today)`. 라우트 `attendance.py:21,:33`.
+
+**현행 소비 지점**
+6. **커버 -2**: `backend_9005/app/routes/upload.py:220` POST `/api/upload/generate-cover` → :269 `cover_point_cost = 2`(로컬 변수), :271-275 spend 실패 시 402 `{"error":"포인트가 부족합니다 (필요: N)"}`, :420 실패 환불. refine-cover(:492)/revert-cover(:666)는 무과금(유지).
+7. **캐릭터 -2**: `backend_9005/app/routes/character.py:38` `CHARACTER_POINT_COST = 2`(모듈 상수), :39-41 402 메시지 상수. spend 4곳 — :440(generate-sheet 동기 :350), :639(generate-sheet-cartoon 동기 :525), :917(generate-sheet-async :835), :1062(generate-sheet-cartoon-async :961). 동기 환불 :464/:476/:666/:677, 비동기는 job doc 에 `point_ref`+`refunded:False` 저장(:928,:1075) 후 `refund_character_job_points`(:699-724)가 `{refunded:{$ne:True}}` 원자 클레임으로 1회 환불 — **작곡 -15 환불이 복제할 검증된 패턴**.
+8. **작사 무과금**: `backend_9005/app/routes/generate.py:295` POST `/api/generate/lyrics/` — 검증(:301-308) → `generate_lyrics(...)`(:313-325) → except 시 500(:326-330). **작곡 무과금**: :333 POST `/api/generate/`(create_generation) — 스트라이크 게이트 :343-347, 배경 시작 조건 `body.start_music_gen and body.lyrics`(:406, 기본값 False :66); :436 POST `/api/generate/{gen_id}/start/` — 400/404/403/409(processing) 검증 :449-459. 배경 래퍼 `_run_music_generation` :98-161 — 실패 시 status="failed" 마킹 :144-159(v76.11) = **환불 훅 지점(단, 래퍼 자체 루프 → 루프-로컬 클라이언트 필수)**. 비suno 모델은 :109-110 에서 ValueError → failed. "최종 수령" 이벤트 = suno_generator.py:406-414 completed 전환(폴링 클라이언트 GET `/api/generate/{gen_id}` :544 로 즉시 수령).
+9. **가입/본인인증**: register `auth.py:119-265` — INSERT :195-203, 리퍼럴 블록 :221-244(신규 가입 보너스 삽입 위치 선례). OAuth `oauth.py:60` login, :94 callback — `_resolve_account` :225-283(①login ②link ③signup INSERT :262-283), callback 에서 `action` 확보 :167-171. `VERIFIED_PROVIDERS={"naver","kakao"}` :41. **is_verified 승격은 전 코드베이스에서 정확히 2곳뿐**: `_promote_verification` :199-222(UPDATE :209-217)와 인증 트랙 신규가입 :265-277(+로그 :278-282). admin/guardian/manual 승격 경로 **부재**(admin.py/business.py/guardian_verify.py grep 확인 — business.py:52 는 SELECT 만). 탈퇴 시 FALSE 리셋 auth.py:941.
+10. **AdMob SSV**: `backend_9005/app/routes/rewards.py`(prefix `/api/rewards` :32) — GET `/admob-callback` :153-246: transaction_id 중복 차단(reward_transactions :208-228) → `reward_balances` `$inc skip_wait_count`(:230-239). GET `/balance` :281-292 → `{user_id, skip_wait_count}`. **소비 로직 전무** 확인(체크리스트 B). 라우터 마운트 main.py:546-576.
+
+**프론트 (전부 실파일 확인)**
+11. **api 래퍼** `frontend/src/api/index.js`(946줄): `recordPlay` :224, `generateCover` :328, `generateCharacterSheet(Cartoon)(Async)` :370/:383/:392/:397, `getCharacterJob` :404, `generateLyrics` :579, `createGeneration` :580, `startMusicGeneration` :581, `getGeneration` :583, `uploadFromGeneration` :588, `uploadTrack` :270, `getRewardBalance` :822, `getPointsBalance`/`getPointsHistory` :825-826, 출석 :829-830, 리퍼럴 :932-936. **403 스트라이크 공통 헬퍼 선례** `isGenerationRestricted`/`alertGenerationRestricted` :808-813 — 402/429 헬퍼가 복제할 패턴. **프론트에 402/"포인트 부족" 전용 처리 현재 0건**(grep 확인 — 전부 generic alert).
+12. **작곡/작사 UI** `frontend/src/components/StudioTab2.jsx`(3533줄, /my-music 작업실): 가사 생성 `handleGenerateLyrics` :1100-1160(버튼 :2215,:2385), 최종 작곡 제출 `start_music_gen:true` 3경로 — 고급 :1473(wondera 분기)/:1516(suno 분기, 버튼 "음악 생성하기" :1959), 심플모드 `handleSimpleGenerate` :1656-1695(작사→작곡 연쇄, :1668 가사 + :1678 createGeneration), 가사비교 선택 후 :1802. draft 저장 :1187(`start_music_gen:false` → 무과금), 재시도 `handleRetry` :1617-1624(startMusicGeneration). **생성 상태 폴링**: `fetchHistory` 10초 setInterval :1022 — 피로 게이지 갱신을 얹을 지점. 레거시 `StudioTab.jsx:92` createGeneration 은 start_music_gen 미전달(기본 False) → draft 만 생성 = 무과금, 수정 불요.
+13. **커버 UI** `frontend/src/pages/UploadPage.jsx`(4358줄): `api.generateCover` 호출 :450(핸들러 :440-499), 재생성 버튼 :2076-2085. **캐릭터 UI** `frontend/src/pages/MyMusicPage.jsx`: 실사 :431(`generateCharacterSheetAsync`, 핸들러 :425-463 — 403 face/스트라이크 처리 :452-461 선례), 가상화 :551, job 5초 폴링 :271-303.
+14. **Header ⭐배지** `frontend/src/components/Header.jsx`: `points` state :66, 잔액 조회 effect `[user, location.pathname]` 의존 :115-120(경로 변경 때만 갱신 — **차감/적립 직후 실시간 갱신 수단 없음**), 출석 자동팝업 balance 동기화 :141(v157), 배지 렌더 :622-629, AttendanceCard onBalanceChange :995.
+
+### 스펙-코드 충돌 및 설계 결정
+
+1. **[충돌] 곡 생성 완료 +1 은 v1.2 표에 없음** → **제거** (suno_generator.py:418-433). 작곡이 -15 유료화되는데 완료 리베이트 +1 은 스펙 외 + 루프 어피니티로 어차피 동작 의심. 해당 위치를 피로 완성 훅으로 교체.
+2. **[충돌] 업로드 +1 vs 스펙 +5** → `award_point` 호출을 `credit_points(uploader_id,"upload",5,ref=str(track_id),day="-")` 로 교체(트랙당 영구 1회). 과거 이벤트 키 (user,"upload",track,YYYYMMDD) 와 신규 키 (…,"-") 는 충돌 없음(신규 트랙은 매번 새 track_id).
+3. **재생 5곡/일 상한**: `award_point` 에 `daily_cap: int = None` 파라미터 추가 — insert 전 `countDocuments({user_id, action, day})` ≥ cap 이면 미적립(False). 호출측은 charts.py:207 만 `daily_cap=5`. 카운트-삽입 사이 미세 레이스는 best-effort 로 허용(초과 +1 수준, 절대 raise 금지 불변).
+4. **가입 +50**: action `signup_bonus`, `credit_points(user_id,"signup_bonus",50,ref="-",day="-")` — ①auth.py register :219 로그 직후(리퍼럴 블록 :221 앞) ②oauth.py callback :171 이후 `action=="signup"` 분기. day="-" 영구 1회 → 재시도/중복 호출 안전.
+5. **본인인증 +30**: action `verify_bonus`, `credit_points(user_id,"verify_bonus",30,ref="-",day="-")` — ①`_promote_verification` UPDATE 성공 직후(oauth.py :217) ②인증 트랙 신규가입 :278-282 분기(이 경우 signup_bonus 와 verify_bonus 동시 지급 = 의도된 동작). **"manual_test 승격 포함" 논점 해소**: 코드상 승격 경로가 OAuth 2곳뿐이라 자동으로 전부 커버. 추후 PASS 본인인증 도입 시 같은 credit 한 줄만 추가.
+6. **작사 -5**: action `lyrics`. generate.py /lyrics/ 검증(:301-308) 통과 후 `spend_points(user,"lyrics",5,uuid4().hex)` — 실패 시 402(커버 :271-275 와 동일 포맷). except 블록(:326-330)에서 `refund_points` 후 500. (요청 루프라 get_mongo 그대로 안전.)
+7. **작곡 -15**: action `compose`. 차감 시점 = **실제 생성 시작 시점**: ①create_generation 에서 `body.start_music_gen and body.lyrics` 일 때만(= :406 조건과 동일) doc insert 전에 spend → 402 시 doc 미생성 ②/{gen_id}/start/ 는 :459 (409 체크) 통과 후 spend. 두 경로 모두 generations doc 에 `point_ref`(uuid4)/`point_cost:15`/`refunded:False` 저장(재시도마다 새 ref 로 $set). **환불**: `_run_music_generation` except 블록(:144-159)의 failed 마킹 직후 — character.py:699-724 패턴 복제한 `refund_generation_points(mongo_db, generation_id)` 를 generate.py 에 신설, `{point_ref:{$ne:None}, refunded:{$ne:True}}` 원자 클레임. **루프-로컬 `mongo_db` 사용 필수** → points_service 의 `spend_points/refund_points/credit_points/award_point` 에 선택 파라미터 `db=None`(기본 get_mongo()) 추가(기존 호출 전부 무영향).
+8. **피로 시스템 저장소**: Mongo 신규 컬렉션 `director_fatigue` `{user_id(유니크 인덱스), day:'%Y%m%d'(KST), completed_count:int, cooldown_until:datetime(UTC)|null, updated_at}` — 재기동 생존(Redis 배제). 신규 `app/services/fatigue_service.py`: `_ladder(count)`→{1:2h,2:4h,3:8h,4+:12h}, `_load(user_id, db)`(day≠오늘이면 **count=0 + cooldown_until=null 로 리셋** — "자정에 쿨다운도 해제" 권장안 채택, 저장은 lazy), `on_generation_completed(user_id, db)`(count+1, cooldown_until=now+ladder — **suno_generator 배경 루프에서 db=mongo_db 로 호출**), `check_gate(user_id)`(쿨다운 중이면 남은 초 반환), `get_status(user_id)`, `reduce_cooldown(user_id, minutes=30)`(cooldown_until=max(now, until-30m), findOneAndUpdate). 전 함수 best-effort 로깅 `[fatigue]`.
+9. **게이트 범위 = 작곡만** (기본 제안 채택): create_generation(start_music_gen 경로)/start_music_generation 에서 순서 **스트라이크 403 → 피로 429 → 포인트 402**. 429 응답 `{"error":"director_fatigue","message":"디렉터가 휴식 중입니다...","cooldown_remaining_sec":N,"cooldown_until":iso}` + `Retry-After` 헤더. 작사/커버/캐릭터는 미게이트(과금이 경제적 억제). 생성 진행 중 대기는 게이트/과금 무관(완성 시점에만 카운트) — 동시 다중 시작은 잔액(-15×n)이 자연 억제.
+10. **스킵**: 신규 라우트 `app/routes/fatigue.py`(prefix `/api/fatigue`, main.py :568 인근 마운트). GET `/status` → `{today_completed, cooldown_active, cooldown_until, cooldown_remaining_sec, skip_point_cost:5, skip_minutes:30, skip_wait_count}`(skip_wait_count 는 reward_balances 조회 — rewards.py :281-292 로직 재사용). POST `/skip` `{method:"points"|"ad"}`: 활성 쿨다운 없으면 409(무과금). `points` → `spend_points(user,"fatigue_skip",5,uuid4().hex)`(부족 402) → reduce 30분. `ad` → `reward_balances` 원자 차감 `{user_id, skip_wait_count:{$gte:1}}, {$inc:{skip_wait_count:-1}}`(modified 0 이면 402 계열 `{"error":"no_skip_tickets"}`) → reduce 30분. 반복 호출 가능(부분 단축). **skip_wait_count 소비 로직 = 체크리스트 B 해소.**
+11. **가격 단일 소스**: points_service.py 에 `POINT_COSTS = {"lyrics":5, "compose":15, "cover":5, "character":10, "fatigue_skip":5}` 신설 — upload.py :269 / character.py :38 상수는 이 dict 참조로 교체. 신규 GET `/api/points/costs`(points.py) 로 FE 노출 → FE 하드코딩 드리프트 방지.
+12. **프론트 ⭐잔액 실시간 갱신**: 커스텀 이벤트 `aimu:points-refresh` — api/index.js 에 `notifyPointsRefresh()` 유틸, 과금/환불 유발 호출 완료 후 dispatch; Header.jsx 는 기존 effect(:115-120)에 이벤트 리스너 추가로 재조회. (컨텍스트 신설보다 최소 diff.)
+13. **소급 조정 없음**: 기존 -2 차감 이력/잔액 그대로. 멱등키 회귀 없음 — 신규 action(signup_bonus/verify_bonus/lyrics/compose/fatigue_skip)과 기존(attendance, referral_*, play, cover, character, upload)은 전부 상이한 (action, ref, day) 조합.
+14. **알려진 한계(명시)**: ①suno 폴링이 영원히 안 끝나는 stuck processing(실패 마킹 없이)은 환불 미발생 — 운영 대응(어드민 수동 환불은 후속) ②StudioTab2 wondera 분기(:1473)는 백엔드 :109-110 에서 즉시 failed → -15 차감 후 자동 환불(순액 0)이나 UX 상 프론트에서 wondera 선택 시 사전 안내 권장(스코프 외 메모).
+
+### 변경 매트릭스 (모두 backend_9005 선구현 → 9004 미러)
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `app/services/points_service.py` | `POINT_COSTS` dict; `award_point` 에 `daily_cap` 파라미터; 4개 함수에 `db=None` 파라미터(기본 get_mongo) | `[star-econ]` (기존 `[points]` 유지 + cap 거부 로그) |
+| `app/services/fatigue_service.py` **(신규)** | 설계 8 전체 — ladder/lazy 리셋/완성 훅/게이트/status/reduce | `[fatigue]` |
+| `app/routes/fatigue.py` **(신규)** + `app/main.py` | GET /api/fatigue/status, POST /api/fatigue/skip(points/ad) — 설계 10; main.py :568 인근 마운트 | `[fatigue]` |
+| `app/routes/generate.py` | /lyrics/ -5 spend+402+except 환불(설계 6); create_generation·start 에 피로 429 게이트 + -15 spend + doc 에 point_ref/refunded(설계 7,9); `_run_music_generation` except 에 `refund_generation_points`(루프-로컬 db) | `[star-econ]` `[fatigue]` |
+| `app/services/suno_generator.py` | :418-433 `award_point("generate")` 제거 → `fatigue_service.on_generation_completed(user_id, db=mongo_db)` 교체 | `[fatigue]` |
+| `app/routes/charts.py` | :207 `award_point(..., daily_cap=5)` | `[star-econ]` |
+| `app/routes/tracks.py` | :1177-1178, :1437-1438 → `credit_points(...,"upload",5,ref=str(track_id),day="-")` | `[star-econ]` |
+| `app/routes/upload.py` | :269 `cover_point_cost = POINT_COSTS["cover"]`(=5) | (기존 로그 유지) |
+| `app/routes/character.py` | :38 `CHARACTER_POINT_COST = POINT_COSTS["character"]`(=10) | (기존 로그 유지) |
+| `app/routes/auth.py` | register :219 이후 `signup_bonus` +50 (best-effort try/except — 가입 201 불변) | `[star-econ]` |
+| `app/routes/oauth.py` | callback `action=="signup"` → +50; `_promote_verification` 성공 + 인증 신규가입 → `verify_bonus` +30 (모두 best-effort) | `[star-econ]` |
+| `app/routes/points.py` | GET /costs → POINT_COSTS | — |
+| `frontend/src/api/index.js` | `getFatigueStatus`/`skipFatigue`/`getPointCosts`; 헬퍼 `isInsufficientPoints`(402)/`isDirectorFatigued`(429) — :808-813 선례 복제; `notifyPointsRefresh()` | `[api]` |
+| `frontend/src/components/Header.jsx` | :115-120 effect 에 `aimu:points-refresh` 리스너 추가 | `[Header]` |
+| `frontend/src/components/StudioTab2.jsx` | 작곡 스텝에 **피로 게이지 패널**(오늘 완성 n곡/쿨다운 카운트다운/스킵 버튼 ⭐5·광고권 n장, 웹은 "앱에서 광고 시청 시 충전" 안내); 429·402 분기 처리(제출 3경로 :1473/:1516/:1678/:1802 + 재시도 :1619); 가사 버튼(:2215,:2385) ⭐5·작곡 버튼(:1959) ⭐15 비용 표기; fetchHistory 폴링(:1022)에 피로 status 재조회 연동; 성공/실패 후 notifyPointsRefresh | `[StudioTab2]` `[fatigue-ui]` |
+| `frontend/src/pages/UploadPage.jsx` | 커버 버튼(:2076-2085) ⭐5 표기 + :440-499 402 분기 + notifyPointsRefresh | `[UploadPage]` |
+| `frontend/src/pages/MyMusicPage.jsx` | 캐릭터 버튼 ⭐10 표기 + :425-463/:545-601 402 분기 + notifyPointsRefresh | `[MyMusicPage]` |
+| `StudioTab.jsx`, `attendance/referral 전체`, `rewards.py` | **무수정** (StudioTab 은 draft 전용=무과금; rewards SSV 적립 로직 그대로 — 소비는 fatigue_service 가 reward_balances 직접 차감) | — |
+
+### 작업 목록
+
+- **backend-dev** (9005 먼저): ①points_service 확장(설계 3,7,11 — 기존 시그니처 하위호환 필수) ②fatigue_service+fatigue 라우트 신설(설계 8,9,10) ③generate.py 작사/작곡 과금+게이트+환불(설계 6,7 — 순서: 403→429→402; 환불은 루프-로컬 db) ④suno_generator 완성 훅 교체(충돌 1) ⑤재생 cap/업로드 +5/커버 5/캐릭터 10/가입·인증 보너스(충돌 2, 설계 3,4,5) ⑥/api/points/costs. 완료 후 **9004 미러**(동일 diff, backend_9004/ 하위 동일 경로 — _logs.py 파일명 예외는 이번 스코프 무관).
+- **frontend-dev**: ①api/index.js 함수+헬퍼 ②StudioTab2 피로 게이지+429/402+비용 표기 ③UploadPage/MyMusicPage 402+비용 표기 ④Header 이벤트 리스너. 모든 제한은 UI 에 사전 표시(버튼 비용 배지 + 게이지) — 몰래 차단 금지.
+- **tester**: 아래 테스트 항목.
+
+### 테스트 항목 (tester)
+
+1. **작사 -5**: 잔액≥5 → 가사 생성 성공 시 -5(history `spend:lyrics`); 잔액<5 → 402 + UI 부족 안내; OpenAI 실패 모킹 → 500 + `refund:lyrics` 환불 확인.
+2. **작곡 -15 + 환불**: 고급/심플/가사비교/재시도 4경로 모두 -15 차감(`spend:compose`); draft 저장(start_music_gen:false)·StudioTab(레거시) 무과금; 생성 실패(모킹) → failed 마킹 + `refund:compose` 정확 1회(이중 환불 없음 — refunded 플래그); 402/429 시 generations doc 미생성(create 경로).
+3. **피로 사이클**: 1곡 완성 → status today_completed=1, 쿨다운 2h, 쿨다운 중 작곡 429(+Retry-After)·작사/커버/캐릭터 정상; 2/3/4곡째 → 4h/8h/12h; KST 자정 경과(day 조작) → 카운트 0 + 잔여 쿨다운 해제.
+4. **스킵**: ⭐5 스킵 → 잔액 -5 + 남은 초 1800 감소, 반복 호출 가능, 30분 미만 잔여 시 즉시 해제; 광고권 스킵 → skip_wait_count -1(SSV 적립분 소비) + 30분 단축; 티켓 0 → no_skip_tickets; 쿨다운 없음 → 409 + 무과금; 잔액<5 → 402 + 쿨다운 불변.
+5. **가입 +50**: 이메일 가입 → +50(`signup_bonus`) 1회; 소셜 신규가입(google) → +50; naver/kakao 신규가입 → +50 **및** +30(`verify_bonus`) 동시; 기존 계정 재로그인/링크 → 보너스 없음.
+6. **본인인증 +30**: 미인증 기존 계정에 naver/kakao 재로그인·연동 → is_verified 승격 + +30 정확 1회(재승격 시도에도 중복 없음 — day="-" 멱등).
+7. **재생 상한**: 서로 다른 곡 5곡 재생 → +5; 6곡째 → 미적립; 같은 곡 재재생 → 기존 멱등 유지; KST 익일 → 리셋.
+8. **업로드 +5**: 직접 업로드/generation 발매 각 +5(`upload`, day="-"); 같은 트랙 재호출 중복 없음.
+9. **가격 변경**: 커버 402 임계 5, 캐릭터 402 임계 10 (동기/비동기 4경로), 실패 환불 금액 5/10 정확; `/api/points/costs` 응답 일치.
+10. **회귀**: 출석 v151(10/30/100, 하루 1회, 자동팝업 v157) 무영향; 리퍼럴 v154(+50/+50, day="-") 무영향; `/api/points/balance`·`/history` 정상; 스트라이크 403 게이트 순서(403이 429/402 보다 먼저); 생성 대기 중 추가 과금/게이트 없음(완성 시에만 카운트); Header ⭐ 즉시 갱신(스킵/과금/환불 후); AdMob SSV 적립 회귀 없음.
+11. **9004 미러**: 9005 diff 와 9004 diff 동일성(경로 치환 비교) + 9004 기동 스모크.
+
+## v159 — 2026-08-04 — 로그아웃 시 음악 플레이어 정지 + 재생 큐 초기화 [MAIDOL-PlayerLogoutFix]
+
+**요청 작업 (버그)**: "로그아웃을 했는데도 음악플레이어가 계속 돌아서 음악이 계속 나와. 오리쟁이로 로그인해서 듣던 플레이어가, 로그아웃하고 무신사로 로그인했는데 그 음악들 그대로 계속 재생." → **로그아웃 시 재생 중 오디오 즉시 정지 + 재생 큐/현재곡/재생 상태 초기화**. 계정 전환(A 로그아웃→B 로그인) 시 이전 계정의 재생 상태가 이어지지 않아야 함. 로그아웃 경로 3종(헤더 버튼/회원탈퇴/인터셉터 강제 로그아웃) 전부 커버. **백엔드 무변경(0단계 확정) → backend-dev 배정 생략, 9004 미러 불필요.**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작, 전부 실파일 확인)
+
+1. **플레이어 구현체**: `frontend/src/contexts/PlayerContext.jsx` — 전역 싱글턴 `new Audio()`(:14, `audioRef`)를 PlayerProvider 가 앱 전 생애 보유(App.jsx:106 에서 전 라우트 래핑 → 언마운트 없음). 상태는 **전부 메모리(React state)**: `playlist` :8, `currentIndex` :9, `isPlaying` :10, `videoMode` :16(+`videoRef` :17, PlayerPage MV 모드). **localStorage/sessionStorage 재생 상태 영속화 없음**(전 src grep 확인 — storage 키는 token/user/anonId/캐릭터캐시/출석플래그/postLoginRedirect 뿐) → 풀 리로드 후 "복원" 경로는 존재하지 않음.
+2. **정지+초기화 함수 기존재·미사용**: `PlayerContext.jsx:254-262` `clearPlaylist` — `audio.pause()` + `src=''` + playlist/currentIndex/isPlaying/currentTime/audioDuration 리셋. context 로 노출(:283)되어 있으나 **호출자 전무**(grep 확인). 단 **videoMode 미커버**: videoRef pause/`setVideoMode(false)` 없음 — MV 재생 중 로그아웃이면 비디오가 계속 재생될 갭.
+3. **로그아웃이 플레이어를 건드리지 않음(=증상의 원인)**: `frontend/src/contexts/AuthContext.jsx:80-85` `logout` — token/user 제거 + 출석 플래그 정리(v157) + `setUser(null)` 뿐. 오디오 정지·큐 초기화 없음. 네비게이션도 없어 페이지 유지 → 싱글턴 Audio 가 계속 재생 + `ended` 핸들러(:42-89)의 **연관곡 자동 이어듣기**가 로그아웃 상태에서도 큐를 계속 늘려 재생 지속.
+4. **로그아웃 경로 3종**: ①헤더 버튼 `frontend/src/components/Header.jsx:682` `onClick={logout}` ②회원탈퇴 `Header.jsx:475-497` `handleWithdraw` → api.withdrawAccount 성공 시 `logout()`(:485) → navigate('/') ③인터셉터 강제 로그아웃 `frontend/src/api/index.js:20-65` — 401/토큰성 403 + 토큰 보유 시 localStorage 정리(:43-48) 후 `window.location.assign('/login')`(:60) = **풀 리로드 → Audio 엘리먼트·메모리 상태 자연 소멸, 영속 재생 상태도 없으므로(finding 1) 복원 위험 없음 → ③은 무변경**. ①②는 동일 `AuthContext.logout` 경유 → 거기(정확히는 auth 상태 전이)에 훅을 걸면 전 경로 커버.
+5. **Provider 중첩 = 구독 방향 결정**: `frontend/src/App.jsx:105-108` `AuthProvider > PlayerProvider > AppContent` — PlayerProvider 는 `useAuth()` 호출 가능(역방향 AuthContext→usePlayer 는 불가). AuthContext 는 PlayerContext 를 import 하지 않으므로 순환 없음.
+6. **스트림 API 는 비로그인 허용**: `backend_9005/app/routes/tracks.py:1465-1468` GET `/tracks/stream/{id}` = `get_current_user_optional` — 공개 트랙은 **비로그인 재생이 정식 지원 흐름** → "로그인 여부"가 아니라 "**로그인돼 있던 사용자가 사라지거나 바뀌는 전이**"에서만 초기화해야 함(설계 1). 백엔드는 세션-재생 결합이 없어 **무변경 확정**.
+7. **피드 오디오는 별개**: `frontend/src/hooks/useFeedAudio.js` — 페이지 스코프의 독립 Audio(:30,:49-50), 전역 플레이어와 상호 배타 정지 로직 자체 보유(:11 주석, :114-170) + 언마운트 cleanup pause. 피드 상세는 비로그인 열람 가능 라우트(App.jsx:68) → 스코프 외(회귀 확인만).
+
+### 설계 결정
+
+1. **PlayerContext 가 auth 사용자 전이를 구독(중앙화)**: PlayerProvider 안에 `useAuth()` + `prevUserIdRef` 로 직전 user id 추적하는 useEffect(`[user]` 의존) 신설 — **"직전 id 가 존재했고, 새 id 가 그와 다르면"**(로그아웃=null 전이, 이론상 직접 계정 전환 포함) 내부에서 `clearPlaylist()` 호출. 초기 마운트(null→localStorage 복원 user)와 **비로그인 재생 중 로그인**(null→id)은 직전 id 부재로 미발화 → finding 6 의 비로그인 재생 UX 보존. 대안이던 "Header 버튼/탈퇴 핸들러 각각에 clearPlaylist 호출 추가"는 호출부 산개로 미래 로그아웃 경로 누락 위험 → 기각. (AuthContext 쪽에서 처리하는 안은 finding 5 중첩상 불가.)
+2. **clearPlaylist 를 videoMode 까지 보강**: `videoRef.current?.pause()` + `setVideoMode(false)` 추가(finding 2 갭) — 로그아웃 경로와 향후 수동 호출 양쪽 일관. 기존 리셋 항목(오디오 pause/src''/큐/인덱스/재생중/시간/길이)은 그대로.
+3. **인터셉터(③) 무변경**: 풀 리로드가 이미 완전 정지·초기화와 동치(finding 4). 알려진 코너(명시적 스코프 외): `api/index.js:50` 게이트로 이미 `/login`·`/register` 에 있으면 리로드 생략 — 이 경우 React user state 도 그대로 유지되는 기존 전반의 비일관(인터셉터가 React 상태를 못 만짐)이며, 그 화면에서 전역 플레이어 재생 + 토큰만료 API 가 동시 발생해야 하는 희귀 케이스 → 본 버그 스코프 외.
+4. **StrictMode 안전**: 판정이 "id 비교 후 ref 갱신"의 멱등 연산이라 dev 이중 마운트/이중 실행에도 no-op 재실행일 뿐(clear 이중 호출도 clearPlaylist 자체가 멱등이라 무해).
+5. **`updateUser`(:88-97) 무영향**: 같은 id 로 merge → id 불변 → 미발화. 로그인 3경로(login/register/loginWithToken)도 직전 id 가 null 이므로 미발화 — v157 출석 플래그 로직과 완전 독립(같은 파일 무수정).
+6. **재생 상태 영속화 미도입 유지**: 현재 무영속(finding 1)이 로그아웃 안전성의 전제 — 이번 스코프에서 저장 기능을 추가하지 않으며, 추후 도입 시 로그아웃 정리 목록에 해당 키를 반드시 포함할 것(스코프 외 메모).
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `frontend/src/contexts/PlayerContext.jsx` | ①`useAuth` import + auth 전이 구독 effect(설계 1: `prevUserIdRef`, 직전 id 존재·불일치 시 clearPlaylist) ②`clearPlaylist` 에 `videoRef.current?.pause()` + `setVideoMode(false)` 추가(설계 2). 각 DEV 로그 | `[PlayerContext] cleared on auth change` (hadUser/nextUser bool), `[PlayerContext] clearPlaylist` |
+| `AuthContext.jsx`, `Header.jsx`, `api/index.js`, `MusicPlayer.jsx`, `useFeedAudio.js`, **백엔드 전체(9005/9004)** | **무수정** | — |
+
+### 작업 목록
+
+- **frontend-dev** (단독 배정 — backend-dev 생략, 9004 미러 불필요):
+  1. PlayerContext: auth 전이 구독 effect 신설(설계 1 판정 규칙 엄수 — null→id 미발화) + clearPlaylist videoMode 보강(설계 2).
+  2. DEV 로그 `[PlayerContext]` 접두로 전이 판정/클리어 추적 가능하게(사용자 식별값 원문 로깅 금지 — bool/유무만).
+  3. 다른 파일 무수정 확인(변경 매트릭스 준수).
+
+### 테스트 항목 (tester)
+
+1. **버그 재현 시나리오(원 리포트)**: 계정 A 로그인 → 곡 재생 중 헤더 로그아웃 → **소리 즉시 정지** + 하단 플레이어 바 "재생할 트랙을 선택하세요" 초기 상태 + 큐 비움. 이어서 계정 B 로그인 → A 의 곡/큐/재생 위치 일절 잔존 없음.
+2. **회원탈퇴 경로**: 재생 중 내 정보 설정 → 회원탈퇴 완료 → 정지+초기화(Header.jsx:485 logout 경유 자동 커버 확인).
+3. **세션만료 강제 로그아웃**: 재생 중 토큰 만료 상태로 API 호출 발생 → /login 풀 리로드로 음악 정지, 재로그인 후 플레이어 빈 상태(재생 상태 무영속 재확인).
+4. **비로그인 재생 보존(핵심 회귀)**: 로그아웃 상태에서 공개 트랙 재생(stream optional auth) → 재생 유지한 채 로그인 → **재생이 끊기지 않음**(null→id 미발화). 그 후 로그아웃 → 정지(id→null 발화).
+5. **MV(videoMode)**: PlayerPage 에서 MV 재생 중 로그아웃 → 비디오 정지 + videoMode 해제 + 큐 초기화.
+6. **연관곡 이어듣기 차단**: 로그아웃 직후 ended 기반 연관곡 자동 추가(:42-89)가 더 이상 발화하지 않음(큐 빈 상태 유지).
+7. **회귀 — 플레이어 기본 동작**: 로그인 상태에서 재생/일시정지/다음·이전/시크/볼륨/큐 전체재생(queueAll)/단일곡 재생/큐에서 곡 제거 정상.
+8. **회귀 — v157 출석 자동팝업 공존**: 로그아웃 시 `aimu:attendancePromptPending` 정리 유지, 재로그인 시(미출석) 자동팝업 정상 — 플레이어 클리어와 상호 간섭 없음.
+9. **회귀 — 새로고침**: 로그인 유지 새로고침 → 플레이어 빈 상태로 시작(기존 무영속 동작 그대로 — restore 경로 null→id 는 미발화이기도 함).
+10. **StrictMode(dev)**: 이중 마운트에서 로그인 직후 재생 시작이 끊기지 않고, 로그아웃 클리어는 정확히 동작(0회/과잉 클리어 아님).
+11. **회귀 — 피드 오디오**: 피드 재생/전역 플레이어 상호 배타 정지(useFeedAudio :11) 기존대로, 로그아웃 플로우로 인한 신규 콘솔 에러 없음.
+12. **무변경 확인**: 백엔드(9005/9004) diff 0, AuthContext/Header/api/index.js diff 0.
+
+## v160 — 2026-08-06 — E2E 발견 5건 일괄 수정: 엔터명 자동접미/비번 안내 가시화/공유 URL 중복/⭐배지 실시간/70% 청취 시 재생기록(A안) [MAIDOL-E2EFiveFixSquad]
+
+**요청 작업 (E2E 중 발견 5건, 5번은 A안 확정)**: ①회원가입 엔터테인먼트명 — "엔터테인먼트"로 안 끝나면 자동으로 붙이고, 이미 붙였으면 중복 없이 그대로. ②비밀번호 조건(8자+영문+숫자) 유지하되 미충족 시 실시간 경고 + 가입 버튼 클릭 시 사유 안내가 **보이게**(현재 안내가 화면 밖). ③SNS 공유 메시지에 URL 이 두 번 나감 — 중복 제거. ④곡 재생 별 적립이 헤더 ⭐배지에 실시간 반영 안 됨 — 즉시 갱신. ⑤곡의 **70% 를 들었을 때만** 재생 기록(별 +1 & 차트 집계 모두 — **A안**) — 현재는 재생 시작 즉시 기록. **백엔드 변경은 ①(auth.py company_name 정규화)뿐 → 9005 선구현 후 9004 미러(소규모).**
+
+### Plan verification findings (0단계 코드 분석 결과 — 파일:라인 + 현재 동작, 전부 실파일 확인)
+
+1. **①엔터명 — 프론트**: `frontend/src/pages/RegisterPage.jsx:80` `companyName` state, :196 `companyName.trim()` 만 수행(접미어 로직 없음), :681 placeholder "예: 이재규 엔터테인먼트". 소셜 온보딩 추가정보 폼 `frontend/src/components/ProfileExtraForm.jsx` 는 **birth_date/gender/region/nationality 만** — company_name 미포함(OAuthCallbackPage 의 updateMyProfile 페이로드도 동일) → 소셜 경로는 가입 시점에 company_name 을 안 받음(무영향, 확인만).
+2. **①엔터명 — 백엔드 저장 지점 3곳** (`backend_9005/app/routes/auth.py`): ⓐ일반 register INSERT :196-200 ⓑ보호자동의 pending 계정 INSERT :611-615 ⓒ`PATCH /me/profile` :371-442 (ProfileUpdate 가 `company_name` 허용 — `models/user.py:205`, max_length=100). 세 곳 모두 정규화 없음 그대로 저장. 앱팀 등 API 직접 가입도 백엔드 정규화로 커버됨. **9004 동기 상태**: `auth.py`·`charts.py` 9005 와 diff 0 → 미러 단순 복사.
+3. **②비번 안내**: `RegisterPage.jsx:185-186` 검증 로직 존재(8자+영문+숫자 — 백엔드와 일치, 유지). 버그 2건: ⓐ:572 placeholder **"비밀번호 (6자 이상)" 오기** ⓑ에러 div `:649` 가 폼 **상단**(이메일 필드 위)인데 제출 버튼은 `:760-766` 폼 하단 → 하단에서 제출 실패 시 에러가 화면 밖. 버튼 disabled 조건은 필수동의뿐(:763)이라 비번 미충족은 제출 후 에러 경로로만 전달됨. 보호자동의 서브폼도 같은 `validateAccountFields`(:274) 재사용 + 자체 에러 div :541(모달성 섹션이라 가시성 문제 없음 — 무수정).
+4. **③공유 URL 중복**: `frontend/src/components/AppShareModal.jsx:81` `shareText` 마지막 줄에 `inviteUrl` 포함 + :100-104 `navigator.share({ text: shareText, url: inviteUrl })` — **text 와 url 파라미터 양쪽에 URL** → 카톡 등에서 두 번 노출. 복사 경로 2곳(:90 handleCopyLink, :115 Web Share 미지원 폴백)은 shareText(URL 포함)를 그대로 복사 — 여긴 URL 이 있어야 정상. 페북 :129 는 URL 만 전달 — 무변경.
+5. **④⭐배지**: `frontend/src/contexts/PlayerContext.jsx:125` `recordPlay(song.id).catch(() => {})` fire-and-forget — 성공 후속 없음. `api/index.js:849` `notifyPointsRefresh()`(v158, `aimu:points-refresh` 커스텀 이벤트) 존재, `Header.jsx:115-131` 이 구독해 잔액 재조회 — **effect 가 `!user` 면 조기 return** 하므로 비로그인 상태 notify 는 안전 no-op. 서버 `backend_9005/app/routes/charts.py:141-210` record-play 가 별 적립 훅(`award_point(user_id,"play",track_id, daily_cap=5)` — 곡별 일일 멱등 + 하루 5곡 상한) 수행 — 응답에 잔액은 없으므로 클라는 성공 시 notify 만 하면 됨.
+6. **⑤재생 기록 호출처는 정확히 2곳**(전 src grep): ⓐ`PlayerContext.jsx:119-129` — 스트림 URL 수신 → `audio.play()` 성공 **즉시** recordPlay ⓑ`frontend/src/hooks/useFeedAudio.js:180-188` — 피드 트랙 `audio.play()` 성공 즉시 recordPlay. 둘 다 70% 게이트로 전환 대상(피드도 전곡 스트림 재생이므로 A안 동일 적용).
+7. **⑤판정 기반 — MV 모드 커버 발견**: PlayerContext 는 audio `timeupdate` 로 `currentTime` state 갱신(:35-37), `audioDuration` 은 loadedmetadata(:39-41). **MV(videoMode) 재생 시 오디오는 pause 되지만 `PlayerPage.jsx:249-272` 가 video 의 timeupdate/duration 을 `ctxSetCurrentTime`/`ctxSetDuration` 으로 동기화** → 70% 판정을 audio 이벤트가 아닌 **context 의 `currentTime`/`audioDuration` state 기준**으로 하면 오디오·MV 양쪽 자동 커버(기존 "로드 즉시 기록"에서 MV 시청이 기록 누락으로 퇴행하는 것 방지). 곡 로드 effect(:112-135, `[currentIndex, playlist]` 의존)가 곡 전환 시점 = 플래그 리셋 지점. `ended` 핸들러(:43-90)는 다음곡/연관곡 진행 — duration 미확정(Infinity 등) 폴백 기록 지점으로 적합.
+8. **⑤서버측 안전망(무변경 근거)**: 별 적립은 곡별 일일 멱등 + daily_cap=5(finding 5), 차트 청취자 집계는 Redis `SADD`(user_id dedup — :180-189)라 클라 중복/반복 호출 무해. `play_count` 는 호출마다 +1(:161-164) — 70% 게이트 이후엔 "유효 청취"당 1 증가로 의미가 개선됨(A안 의도). 비로그인 호출도 play_count 만 증가(:166-167) — 게이트 동일 적용.
+
+### 설계 결정
+
+1. **①정규화 규칙(백엔드가 원천, 프론트는 UX 미러)**: `trim` 후 값이 있으면 `endswith("엔터테인먼트")` 검사 — 아니면 `" 엔터테인먼트"`(공백+접미어) 추가, 이미 끝나면 그대로(중복 방지). 빈값/None 은 무변경 통과. **"엔터"·"Ent."·"Entertainment" 등 변형은 스코프 외**(리터럴 스펙 준수 — "OO엔터" → "OO엔터 엔터테인먼트"). 백엔드는 `auth.py` 모듈 함수 `_normalize_company_name()` 하나를 finding 2 의 3곳(ⓐⓑⓒ)에 적용 + **정규화 결과가 100자 초과 시 400**("엔터테인먼트명이 너무 깁니다. 100자 이내로 입력해주세요." — DB varchar(100)/Pydantic max_length 와 정합). 값 원문 로그 금지 — appended 여부(bool)만.
+2. **①프론트는 blur 시점 시각 반영 + 제출 시 재정규화**: RegisterPage company 입력 onBlur 에서 동일 규칙으로 input 값 자체를 갱신(사용자가 최종 저장값을 눈으로 확인) + 제출 페이로드에서 한 번 더 정규화(이중 방어). 백엔드가 어차피 정규화하므로 프론트 미적용 클라(앱)도 안전.
+3. **②3중 안내**: ⓐplaceholder 정정 "비밀번호 (8자 이상, 영문+숫자 포함)" ⓑ비밀번호 필드 **직하단 실시간 조건 힌트** — 3개 조건(8자 이상/영문 포함/숫자 포함)을 입력과 동시에 충족(✓)/미충족(·) 시각화, 비번 비어있으면 중립 표시(위협적 빨강 남발 방지, 미충족은 입력 시작 후에만 경고색) + 비밀번호 확인 불일치도 확인 필드 하단 실시간 표시 ⓒ제출 실패 시 기존 :649 에러 div 에 `ref` + `scrollIntoView({behavior:'smooth', block:'center'})`(error state 변경 effect) — 에러 div 위치 이동은 게이트/보호자 레이아웃 회귀 위험 대비 이득이 작아 기각. 버튼 disabled 에 비번 조건 추가도 기각(왜 안 되는지 안내가 요청의 본질 — 힌트+스크롤로 충족, 검증 규칙 자체는 백엔드와 일치 유지).
+4. **③text/url 역할 분리**: `shareTextBase`(서비스 소개+추천코드, **URL 없음**)와 `shareTextFull`(= base + 줄바꿈 + inviteUrl) 2종으로 분리. `navigator.share` 는 `{ text: shareTextBase, url: inviteUrl }`(URL 은 url 파라미터 단독), 복사 2경로(handleCopyLink/Web Share 폴백)는 shareTextFull 유지(복사본엔 URL 필수), 페북 무변경. 공유 시트가 url 미지원인 예외 플랫폼은 text 에 URL 이 빠질 수 있으나 주요 타깃(카톡/인스타 시트)은 url 파라미터 표시 — 중복보다 낫다고 판단.
+5. **⑤70% 판정은 context state 기준 1곳(오디오·MV 겸용)**: PlayerContext 에 `playRecordedRef`(현재 로드된 곡의 기록 완료 플래그) + 곡 로드 effect(:116 부근)에서 리셋. 판정은 **`useEffect([currentTime])`**: `currentSong && !playRecordedRef.current && audioDuration > 0 && isFinite(audioDuration) && currentTime >= audioDuration * 0.7` → 플래그 set 후 `recordPlay(currentSong.id)` 성공 시 `notifyPointsRefresh()`(④와 결합). **duration 미확정 폴백**: `ended` 핸들러 진입 시 미기록이면 그 자리에서 기록(완주=100%≥70%). :125 의 즉시 recordPlay 는 제거. 임계값은 `api/index.js` 에 `PLAY_RECORD_RATIO = 0.7` 상수로 export(두 호출처 공유).
+6. **⑤피드 오디오 동일 게이트**: useFeedAudio 는 트랙 재생 시 audio 에 `timeupdate` 리스너(mode==='track' 한정)로 동일 판정 + `ended` 폴백, `playTrack` 호출마다 플래그 리셋, :188 즉시 recordPlay 제거, 성공 시 notifyPointsRefresh. 구조가 달라(훅 내 지역 Audio + op 가드) 코드 공유는 상수(PLAY_RECORD_RATIO)까지만 — 로직 추상화 모듈 신설은 과설계로 기각.
+7. **⑤단순성 원칙(A안 합의사항)**: ⓐ시크로 70% 지점 건너뛰어도 기록됨(청취시간 누적 측정은 스코프 외 — 서버 곡별 일일 멱등+cap5 가 남용 상쇄) ⓑ같은 곡 반복재생은 로드마다 플래그 리셋 → 회당 play_count +1 이지만 별/차트는 서버 dedup(finding 8) ⓒ비로그인도 70% 게이트 동일(play_count 만 증가) ⓓ**백엔드 record-play·차트 산식 무변경** — 호출 시점 변경만으로 차트 집계가 자동으로 70% 기준(A안).
+8. **④notify 는 성공 시에만**: recordPlay `.then(() => notifyPointsRefresh())` — 실패 시 기존처럼 조용히 무시(재생 UX 무영향 원칙 유지). cap 도달 후 notify 는 잔액 불변 재조회일 뿐(무해). Header/api 는 무수정(구독 인프라 v158 기존재).
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/auth.py` | `_normalize_company_name()` 신설(설계 1: 접미어 자동 추가+중복 방지+100자 가드) → register INSERT(:196)·guardian pending INSERT(:611)·PATCH /me/profile(company_name 전달 시) 3곳 적용 | `[auth] company_name normalized appended=%s user=…`(값 원문 금지) |
+| `backend_9004/app/routes/auth.py` | 9005 미러(diff 0 상태에서 동일 반영) | 동일 |
+| `frontend/src/pages/RegisterPage.jsx` | ①company 입력 onBlur 자동접미 + 제출 시 재정규화(설계 2) ②placeholder 정정(:572) + 비번 실시간 조건 힌트/확인 불일치 힌트(설계 3ⓑ) + 에러 div ref & scrollIntoView(설계 3ⓒ) | `[RegisterPage] company suffix applied`(appended bool), `[RegisterPage] submit blocked`(reason 키만) |
+| `frontend/src/pages/RegisterPage.css` | 조건 힌트(충족/미충족/중립) 스타일 | — |
+| `frontend/src/components/AppShareModal.jsx` | shareTextBase/Full 분리(설계 4) — navigator.share 는 base+url, 복사 2경로는 Full, 페북 무변경 | 기존 `[AppShareModal]` 로그 유지 |
+| `frontend/src/api/index.js` | `PLAY_RECORD_RATIO = 0.7` 상수 export 추가(그 외 무수정 — recordPlay/notifyPointsRefresh 기존재) | — |
+| `frontend/src/contexts/PlayerContext.jsx` | :125 즉시 recordPlay 제거 → `playRecordedRef` + currentTime effect 70% 판정(설계 5, MV 겸용) + ended 폴백 + 성공 시 notifyPointsRefresh(설계 8) | `[PlayerContext] play recorded (70%)` {track_id}, `[PlayerContext] play recorded (ended fallback)` |
+| `frontend/src/hooks/useFeedAudio.js` | :188 즉시 recordPlay 제거 → track 모드 timeupdate 70% 판정 + ended 폴백 + notifyPointsRefresh(설계 6) | `[useFeedAudio] play recorded (70%)` {track_id} |
+| `Header.jsx`, `charts.py`(9005/9004), `points_service.py`, `models/user.py`, `ProfileExtraForm.jsx`, `OAuthCallbackPage.jsx` | **무수정** | — |
+
+### 작업 목록
+
+- **backend-dev** (9005 선구현 → 9004 미러):
+  1. `auth.py` `_normalize_company_name()` 신설 + 3곳(register/guardian/PATCH profile) 적용, 100자 초과 400 처리(설계 1). 값 원문 로그 금지.
+  2. `charts.py`·`points_service.py` 무변경 확인(변경 매트릭스 준수 — 호출 시점 변경은 프론트 몫).
+  3. 9004 미러(auth.py 동일 반영, diff 0 재확인).
+- **frontend-dev**:
+  1. RegisterPage: company onBlur 자동접미 + 제출 재정규화, placeholder 정정, 비번 실시간 조건 힌트(+확인 불일치), 에러 scrollIntoView(설계 2·3). 검증 규칙(8자+영문+숫자) 자체는 불변.
+  2. AppShareModal: shareTextBase/Full 분리(설계 4) — 복사 경로에 URL 유지 필수.
+  3. PlayerContext: 70% 판정 effect + ended 폴백 + 플래그 리셋 + notifyPointsRefresh, 즉시 recordPlay 제거(설계 5·8). `PLAY_RECORD_RATIO` 상수는 api/index.js 에.
+  4. useFeedAudio: 동일 게이트 적용(설계 6).
+  5. DEV 로그는 변경 매트릭스의 추적자 접두 준수(개인정보/입력값 원문 로깅 금지).
+
+### 테스트 항목 (tester)
+
+1. **①자동접미**: "이재규" 입력 → blur 시 "이재규 엔터테인먼트" 표시·저장 / "이재규 엔터테인먼트" 입력 → 그대로(중복 없음) / "OO엔터테인먼트"(공백 없음) → 그대로 / 공백만 입력 → 필수값 에러 기존 동작. API 직접 가입(백엔드 정규화)도 동일 결과. 보호자동의(만14세 미만) 경로 company_name 도 정규화. 100자 근접 입력 + 접미어로 초과 시 400 안내.
+2. **②비번 안내**: placeholder "8자 이상, 영문+숫자" / 입력 중 조건 3종 실시간 ✓ 전환 / "abcd123"(7자) 상태로 하단 가입 버튼 클릭 → 에러 메시지로 화면 스크롤되어 **사유가 보임** / 비번 확인 불일치 실시간 표시 / 조건 충족 시 가입 정상. 백엔드 검증(8자+영문+숫자)과 불일치 케이스 없음.
+3. **③공유**: 모바일 카톡 공유 시트 → 메시지에 URL **1회**만 / 링크 복사 & 데스크톱 폴백 복사 → 복사본에 코드+URL 포함(URL 누락 회귀 금지) / 페북 → URL 만 기존대로.
+4. **④+⑤핵심**: 곡 재생 → 70% 도달 순간 헤더 ⭐배지 **즉시** +1(새로고침 불필요) / **70% 미만 청취(60%에서 곡 전환/정지) → 별 미적립·차트 미집계·play_count 불변** / 같은 곡 재재생 → 별 중복 적립 없음(일일 멱등) / 하루 5곡 초과 재생 → 6곡째부터 별 미적립(cap 유지, 배지 불변).
+5. **⑤차트 집계(A안)**: 70% 도달 시 청취자 집계·play_count +1 정상(차트 페이지 반영), 시작 즉시 집계되던 기존 동작 소멸. 시크로 70% 지점 너머 이동 → 기록됨(설계 7ⓐ 허용 동작 확인).
+6. **⑤MV 모드**: PlayerPage 실 MV 재생으로 70% 도달 → 기록·적립 정상(video timeupdate 동기화 경유 — finding 7).
+7. **⑤피드 오디오**: 피드 트랙 70% 청취 → 기록+배지 갱신 / 70% 미만 → 미기록 / 피드↔전역 플레이어 상호 배타 정지 회귀 없음.
+8. **⑤비로그인**: 비로그인 70% 청취 → play_count 만 증가(별/차트 무관), 콘솔 에러·강제 로그아웃 리다이렉트 없음(Header notify no-op — finding 5).
+9. **회귀 — 가입 플로우 전체**: v125 필수동의 4종 게이트(미동의 시 버튼 비활성), v154 추천코드(4자리 검증·에러 :745), v157 가입 직후 출석 팝업, 게이트(생년월일/국적/성별) → 폼 전환, 소셜 가입(company_name 없음 — 온보딩 무영향 확인).
+10. **회귀 — 재생 연속성**: 곡 완주 → 다음곡/연관곡 자동 진행(ended 핸들러) 정상 + duration 미확정 곡 완주 시 ended 폴백 기록 1회(중복 없음). v159 로그아웃 클리어 후 재로그인 재생 정상(플래그 리셋 꼬임 없음).
+11. **회귀 — 프로필**: PATCH /me/profile 로 company_name 외 필드(bio/sns_links/region 등) 수정 정상(정규화 분기 미간섭), 본인인증 잠금·인구통계 검증 기존 동작.
+12. **9004 미러 검증**: backend_9004/app/routes/auth.py 9005 와 diff 0, 9004 기동 스모크.
+
+## v161 — 2026-08-06 — ①캐릭터시트 텍스트 프롬프트 생성 경로(사진 없이 외모 텍스트만) + ②Claude 프롬프트 캐싱(cache_control) 전면 적용 [MAIDOL-TextSheetCacheSquad]
+
+**요청 작업**: ①캐릭터시트를 얼굴사진 없이 **외모 텍스트 프롬프트만으로** 생성("얼굴 동그랗고 긴생머리의 20대 여자를 아이돌로 해줘") + 선택 아이템(상의/하의/신발) 착용 상태 유지. 예전에 있던 얼굴사진 업로드 밑 스타일 텍스트 입력칸이 현재 FE 에서 사라짐 — 복원. **목적: 본인인증(얼굴 인증) 못한/안 한 사용자의 캐릭터 생성 경로 확보**(사진 경로=인증 필요 유지, 텍스트 경로=인증 불필요). ②Claude API 호출부(작사·시나리오·씬프롬프트 등 전부) 프롬프트를 [고정부|변동부]로 분리하고 고정부에 `cache_control` 적용 — 캐시 읽기 0.1배 요금(고정부 ~90% 절감). 9005 선구현 → 9004 미러.
+
+### Plan verification findings (0단계 코드 분석 — 전부 실파일 확인, backend_9005 기준)
+
+**① 캐릭터 생성 파이프라인**
+
+1. **엔드포인트 4경로** (`app/routes/character.py`): `/generate-sheet`(:351 sync 실사), `/generate-sheet-cartoon`(:526 sync 가상화), `/generate-sheet-async`(:836), `/generate-sheet-cartoon-async`(:962). **4곳 모두 `file: UploadFile = File(...)` — 사진 필수**. `user_text: str = Form("")` 은 4곳 모두 **이미 존재**(:360, :535, :846, :972) — 외모 텍스트 슬롯이 BE 에 살아있음.
+2. **외모 슬롯 실체** (`app/services/character_generator.py`): `_build_step1_answer(has_top, has_bottom, has_shoes, user_text)`(:766-817) 가 MASTER_PROMPT 의 `{step1_answer}` 슬롯을 조립. base 는 "[인물 사진] 참조 이미지의 외모 특징 정밀 분석"(:785-792, **사진 전제**), `user_text` 는 "최우선 반영 + 사진과 충돌 시 사용자 설명 우선"(:810-815)으로 append. 즉 **텍스트 우선순위 규칙은 기존재** — 텍스트-only 시 base 지시만 교체하면 됨.
+3. **생성 2-step (Claude 아님 — ②와 무관)**: Step A = Gemini 텍스트 모델이 MASTER_PROMPT(+이미지들) → 캐릭터 시트 프롬프트 텍스트, Step B = 이미지 모델(nb_pro=Gemini/gpt_image_2)이 시트 이미지 생성(:1044-1076). Step B 프롬프트에 "[인물 사진]…반드시 이 참조 사진 속 인물과 동일한 외모"(:1061-1064) **사진 전제 하드코딩**. `_build_inline_images`(:820-856) 는 `[인물 사진]:` 라벨+사진을 무조건 선두 삽입 — 아이템 이미지는 각각 optional.
+4. **카툰 경로 정체성 규칙**: MASTER_PROMPT_CARTOON [화풍 변환 규칙](:415-433) — "캐릭터의 정체성(얼굴형/이목구비/머리/체형/피부톤)은 **오직 [인물 사진]에서만** 가져온다" — 텍스트 경로에선 이 문구가 모순됨(치환 필요). 실사 MASTER_PROMPT 도 동급 규칙 존재.
+5. **게이트 현황** (텍스트 경로 설계의 핵심): ⓐ**FaceGuard v135 얼굴 인증** — `settings.face_verify_enabled` ON 시 **실사 2경로만**(sync :428-437, async :904-911) `is_photo_verified(user_id, contents)` — **사진 SHA256 기반**(사진 없으면 검사 대상 자체가 없음). 카툰 2경로는 게이트 없음. ⓑ**TrustSquad v138 도용 원본 재사용 차단**(:410) — 사진 해시 기반. ⓒ**TrustSquad v139 스트라이크 생성 제한**(:413-416) — 사용자 단위(사진 무관). ⓓ**과금** — `spend_points(user_id, "character", CHARACTER_POINT_COST, ref)` 선차감 + 실패 환불(4경로 동일, async 는 `refund_character_job_points` :700).
+6. **FE 현황** (`frontend/src/pages/MyMusicPage.jsx`): 실사(:950-960)·가상화(:1098-1112) 모두 "클릭하여 얼굴 사진을 선택하세요" — 사진 필수 UI. **formData 에 `user_text` append 자체가 없음**(:435-438 실사, :554-561 가상화) → 텍스트 입력칸 소멸 확인(BE 는 계속 수신 가능 상태). v135 얼굴 인증 플로우: FE 선게이트(:396-424) + BE 403 `face_verification_required` 폴백 재시도(:466-467).
+
+**② Claude 호출부 전수 + 캐싱 적합성**
+
+7. **호출부 7곳 전수** (모두 `AsyncAnthropic().messages.create/stream`, system=단일 문자열):
+
+| # | stage | 파일:라인 | 모델(기본) | system 구성 | 고정부 추정 크기 |
+|---|---|---|---|---|---|
+| 1 | 작사 lyrics | `lyrics_generator.py:447` | `claude-opus-4-6` | SOLO 4,491c/DUET 2,985c(영문) + `{categories}` 치환(고정 리스트 → 사실상 전체 고정) | ~1.1–1.5k tok |
+| 2 | 브레인스톰 | `mv_generator.py:1859` | `claude-opus-4-6` | BRAINSTORM_SYSTEM_PROMPT 2,938c(한글, 고정) + 가중치 가이드(**변동**) + seed_block(**변동**) + ANTI_EXAMPLE_BLOCK 821c(고정, v50 규칙상 항상 마지막) — **고정-변동-고정 샌드위치** | 고정 head ~2–3k tok |
+| 3 | 시나리오 | `mv_generator.py:~3420`(stream) | `claude-opus-4-6` | drama system ~5,575c(한글) — 중간 40% 지점에 `{auto_infer_rule}{user_event_seed_block}` **변동 슬롯**; 비드라마(:2171) ~1k c 고정 | 슬롯 앞 고정부 ~1.5–2.5k tok |
+| 4 | 씬프롬프트 | `mv_generator.py:~4930`(stream) | `claude-opus-4-6` | SCENE_PROMPT_ONLY_SYSTEM 8,904c — `{video_image_prompt_guide}`@14%(video_model 별 **준고정**), `{scenario_context}`@79%·`{user_location_anchor_rule}`·`{asset_refs_line}`(**변동**) | 앞 79% ~3–6k tok |
+| 5 | 영상프롬프트(씬별) | `mv_generator.py:882` | `video_prompt_model`(예 `claude-opus-4-7`) | VIDEO_PROMPT_{VEO,SEEDANCE,GROK,KLING}_{CHARACTER,FREE} 8종 3.1–3.9k c(영문) — **`{duration}`/`{scene_event_block}`/`{emotional_core}` 를 system 에 format → 씬마다 system 상이**. 씬당 1회 × N씬 반복 호출 = 캐싱 최대 수혜처인데 현 구조가 캐시 무효화 | 템플릿 ~0.8–1k tok |
+| 6 | 커버 프롬프트 | `cover_generator.py:126` | `prompt_model`(예 `claude-opus-4-7`) | enhance_system ~700–1,100c 조건 조립(캐릭터/장소/성별 분기 — 변동) | ~200–350 tok |
+| 7 | 번역 | `translation.py:110` | `claude-opus-4-7` 고정 | ~350–400c + `context_hint` **변동이 system 중간 삽입** | ~150–250 tok |
+
+8. **모델별 최소 캐시 길이** (미달 시 에러 없이 조용히 캐싱 안 됨): **`claude-opus-4-6`/`opus-4-5`/`haiku-4-5` = 4096 tok**, `claude-opus-4-7` = 2048 tok, `opus-4-8`/`sonnet-4-5` 계열 = 1024 tok. 우리 기본 모델이 opus-4-6(4096)·opus-4-7(2048)이라 **문턱이 가장 높은 조합**. 한글 프롬프트는 토큰 밀도가 높아(≈1–1.5자/tok) char 추정만으로 #3·#4 의 미달/충족 판별 불가(borderline) → **실측 필수**(설계 6). 사전 판정: **확정 미달(캐싱 비적용)** = #6 커버, #7 번역, #5 영상프롬프트(~1k<2048), #1 작사(~1.5k<4096). **borderline(실측 후 확정)** = #2 브레인스톰 고정 head, #3 드라마 시나리오 고정부, #4 씬프롬프트 고정부.
+9. **SDK**: venv 실측 `anthropic 0.105.2` — `cache_control`(ephemeral) GA 지원 버전. `requirements.txt:23` 은 `anthropic` unpinned.
+10. **캐시 무효화 요인 실존 목록**: ⓐ#5 변동값을 system 에 format ⓑ#2 변동 블록이 고정 블록 사이 ⓒ#3·#4 변동 placeholder 가 고정부 중간 ⓓ#7 context_hint 가 system 중간. timestamp/uuid/현재날짜 삽입은 **전 호출부 없음 확인**(청정). tools 미사용, messages 쪽 대형 고정 컨텍스트 없음 — 캐싱 대상은 system 만.
+
+### 설계 결정
+
+1. **①텍스트 경로 = `file` Optional 화(4경로 공통)**: `file: Optional[UploadFile] = File(None)`. **사진도 user_text 도 없으면 400**("얼굴 사진 또는 외모 설명 중 하나는 필요합니다"). 텍스트-only 시 user_text 최소 2자 검증. 기존 사진 경로는 바이트 검증/게이트/과금 전부 불변(회귀 0 원칙).
+2. **①게이트 정책(핵심 결정)**: 텍스트-only 요청은 **얼굴 인증(v135)·도용 차단(v138) 자연 스킵** — 둘 다 사진 SHA 기반이라 검사 대상이 없고, 텍스트로 만드는 인물은 가상 인물이라 타인 얼굴 도용 리스크 자체가 없음(= 요청 목적: 미인증 사용자 생성 경로). **스트라이크 게이트(v139)와 ⭐과금(선차감+실패환불)은 사용자 단위이므로 텍스트 경로에도 동일 적용**. 코드는 `if contents is not None:` 분기로 사진 전용 게이트를 묶는다(플래그 신설 없음 — face_verify_enabled ON 이어도 텍스트 경로는 통과).
+3. **①프롬프트 조립 분기**: `_build_step1_answer(..., has_photo: bool = True)` 확장 — 텍스트-only base 를 "다음 [사용자 외모 설명]을 캐릭터의 유일한 정체성 소스로 삼아 성별/나이/체형/얼굴형/머리/눈/피부톤을 구체화하라: 「{user_text}」(설명에 없는 요소는 K-pop 아이돌 프로필에 어울리게 자유 생성)" 로 교체(아이템 3종 라벨 로직은 그대로 재사용 — **아이템 착용 요구 충족**). `_build_inline_images` photo 파트를 optional 로(아이템/화풍 라벨 로직 불변). Step B 프롬프트의 "[인물 사진]과 동일 외모" 문구와 MASTER_PROMPT(_CARTOON) 의 "정체성은 오직 [인물 사진]" 규칙은 has_photo=False 시 "STEP 1 의 사용자 외모 설명" 참조로 치환(문자열 조건 조립 — 템플릿 이원화 아님, 사진 경로 byte-identical 유지).
+4. **①FE 복원**: 실사·가상화 두 생성 섹션의 사진 업로드 박스 **아래에 외모 텍스트 입력칸(textarea) 복원** — placeholder "예: 얼굴이 동그랗고 긴 생머리의 20대 여자 아이돌" + 안내문 "사진 없이 텍스트만으로도 생성할 수 있어요(사진 없이 생성 시 얼굴 인증 불필요)". 사진 미선택+텍스트 입력 시 생성 버튼 활성화. **텍스트-only 시 v135 얼굴 인증 모달 플로우 스킵**(사진 첨부 시엔 기존 플로우 그대로), portrait_confirmed 확약 체크도 사진 첨부 시에만 노출. user_text 는 사진 경로에서도 함께 전송(기존 BE 우선순위 규칙 활용 — "사진+텍스트 보정" 부가 효과).
+5. **②캐싱 공통 헬퍼 + [cache] 로깅(전 호출부 무조건)**: `app/services/claude_cache.py` 신설 — ⓐ`cached_system(fixed: str, variable: str = "") -> list` : system 을 `[{"type":"text","text":fixed,"cache_control":{"type":"ephemeral"}}]`(+variable 블록) 블록 리스트로 변환(**고정부 반드시 앞, 변동부 뒤 — prefix 일치**) ⓑ`log_cache_usage(stage: str, model: str, usage)` → `[cache] stage=%s model=%s create=%d read=%d input=%d` (`usage.cache_creation_input_tokens`/`cache_read_input_tokens`; stream 경로는 `get_final_message().usage` 로 취득). **로깅은 적용/비적용 무관 7곳 전부 부착** — 미달 항목은 create=0/read=0 이 실측 증거가 됨. TTL 기본 5분(1h 는 쓰기 2배 — 현 트래픽에서 미채택). 고정부에 timestamp/uuid 삽입 금지, dict 직렬화 시 `json.dumps(..., sort_keys=True)` 원칙 명문화.
+6. **②실측 선행(0.5단계)**: `backend_9005/scripts/measure_prompt_tokens.py`(일회성 dev 스크립트) — 각 stage 의 고정부 문자열을 `client.messages.count_tokens(model=실사용 모델, system=고정부, messages=[더미])` 로 실측 → borderline 3종(#2/#3/#4)의 적용/비적용 확정, 결과를 REPORT 에 기록. **미달 확정 항목은 "캐싱 비적용(길이 미달)" 로 명시하되 cache_control 마커는 부착 유지**(미달 시 무과금·무해, 향후 모델 상향 시 자동 활성).
+7. **②호출부별 분리 설계**:
+   - **#5 영상프롬프트(구조 개선 최우선 — 반복 호출처)**: `{duration}/{scene_event_block}/{emotional_core}` 를 system format 에서 **user 메시지 선두로 이동** → system = 템플릿 원문(8종 각각 완전 고정) + cache_control. 씬 N개 순회 시 2번째 씬부터 read 발생 구조 확보(단 ~1k tok<2048 로 미달 예상 — 비적용 분류 가능성, 구조 개선 자체는 수행).
+   - **#2 브레인스톰**: system 블록 2분할 — block1 고정 = BRAINSTORM_SYSTEM_PROMPT(+cache_control), block2 변동 = 가중치 가이드+seed_block+ANTI_EXAMPLE_BLOCK. **ANTI_EXAMPLE 이 항상 최후미인 v50 규칙 보존**(블록 경계만 바뀌고 최종 텍스트 순서 동일).
+   - **#3 시나리오(drama)**: 프롬프트 순서 변경은 품질 회귀 리스크 → **순서 불변 원칙**. 첫 변동 슬롯(`{auto_infer_rule}`) 직전까지를 block1 고정(+cache_control), 이후 전부 block2. 커버리지 ~40%지만 안전. 비드라마 system 은 전체 고정 1블록(미달 확실 — 마커만).
+   - **#4 씬프롬프트**: `{video_image_prompt_guide}` 는 video_model 별 준고정 → **video_model 별 formatted 고정부**(캐시 엔트리 모델별 분리 허용)로 `{scenario_context}` 직전(79%)까지 block1, 이후 block2.
+   - **#1 작사**: system 전체 고정(solo/duet 2 엔트리) — 1블록+마커. 미달 예상 → 비적용 분류 예상.
+   - **#6 커버·#7 번역**: **캐싱 비적용(길이 미달 확정)** — 마커 미부착, `log_cache_usage` 만 부착. 구조 변경 없음.
+8. **②스코프 외 명시**: 모델 상향(opus-4-6→4-8 등, 최소길이 1024 로 하락해 대부분 활성화됨)은 품질/비용 별도 검증 필요 → 본 건 스코프 외, REPORT 에 후속 옵션으로 기재. `requirements.txt` 는 `anthropic>=0.105` 로 하한 핀(캐시 지원 버전 보장).
+9. **9004 미러**: ①② 전 변경 backend_9004 동일 반영(파일 단순 복사 sync — `_logs.py` 파일명 예외 규칙 외 diff 0 원칙). FE 는 공용 1벌.
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/character.py` | 4경로 `file` Optional 화 + 사진/텍스트 최소입력 400 + 사진 전용 게이트(v135/v138) `contents is not None` 분기 + 텍스트-only 시 mime/검증 스킵(설계 1·2). 과금/환불/스트라이크 불변 | `[character.gen] mode=real|cartoon source=photo|text|photo+text user=…` |
+| `backend_9005/app/services/character_generator.py` | `_build_step1_answer(has_photo)` 확장 + `_build_inline_images` photo optional + Step A/B 프롬프트·MASTER_PROMPT(_CARTOON) 정체성 문구 has_photo 분기(설계 3). 사진 경로 산출물 byte-identical | `[CharGen] items=… text=… photo=%s parts=%d` (기존 로그에 photo 필드 추가) |
+| `backend_9005/app/services/claude_cache.py` **신설** | `cached_system()` + `log_cache_usage()`(설계 5) | `[cache] stage=… model=… create=… read=… input=…` |
+| `backend_9005/app/services/lyrics_generator.py` | #1 system → cached_system 1블록 + [cache] 로깅 | `[cache] stage=lyrics_json` |
+| `backend_9005/app/services/mv_generator.py` | #2 블록 2분할, #3 drama 슬롯 전 고정부 분리, #4 video_model 별 고정부 분리, #5 변동 3값 user 이동+system 고정화(설계 7) + 4곳 [cache] 로깅(stream 은 final usage) | `[cache] stage=brainstorm|scenario|scene_prompts|video_prompt` |
+| `backend_9005/app/services/cover_generator.py` | 마커 없음, [cache] 로깅만(비적용 — 길이 미달) | `[cache] stage=cover_enhance` |
+| `backend_9005/app/services/translation.py` | 마커 없음, [cache] 로깅만(비적용 — 길이 미달) | `[cache] stage=translation` |
+| `backend_9005/scripts/measure_prompt_tokens.py` **신설** | count_tokens 실측(설계 6) — borderline 3종 확정용 일회성 | (stdout 표) |
+| `backend_9005/requirements.txt` | `anthropic` → `anthropic>=0.105` 하한 핀 | — |
+| `backend_9004/**` (위 BE 파일 전부) | 9005 미러 반영(설계 9) | 동일 |
+| `frontend/src/pages/MyMusicPage.jsx` | 실사·가상화 섹션 외모 textarea 복원 + formData `user_text` append + 사진 optional 생성 버튼 조건 + 텍스트-only 시 v135 모달·portrait_confirmed 스킵(설계 4) | `[MyMusicPage] generate source=photo|text|photo+text` |
+| `frontend/src/pages/MyMusicPage.css`(해당 스타일 파일) | textarea/안내문 스타일 | — |
+| `face_verify_service.py`, `points_service.py`, `openai_image.py` | **무수정** | — |
+
+### 작업 목록
+
+- **backend-dev** (9005 선구현 → 9004 미러):
+  1. ① `character.py` 4경로 file Optional + 입력 검증 400 + 사진 전용 게이트 분기(설계 1·2). 과금·환불·async job 흐름 불변 확인.
+  2. ① `character_generator.py` has_photo 분기(설계 3) — 사진 경로 프롬프트 byte-diff 0 을 로컬 확인.
+  3. ② `claude_cache.py` 신설 → 7개 호출부에 [cache] 로깅 전부 부착(설계 5).
+  4. ② `measure_prompt_tokens.py` 실측 → borderline 3종 적용/비적용 확정(결과 REPORT 기재)(설계 6).
+  5. ② 호출부별 분리 적용(설계 7 — #5 는 변동값 user 이동 포함, #2 는 ANTI_EXAMPLE 최후미 보존).
+  6. `requirements.txt` 핀 + 9004 미러(diff 0 재확인).
+- **frontend-dev**:
+  1. MyMusicPage 외모 textarea 복원(실사·가상화) + user_text 전송 + 사진 optional 버튼 조건(설계 4).
+  2. 텍스트-only 시 얼굴 인증 모달 플로우·portrait_confirmed 스킵, 사진 첨부 시 기존 플로우 회귀 0.
+  3. BE 403 face_verification_required 폴백(:466)은 사진 경로 전용으로 유지.
+
+### 테스트 항목 (tester)
+
+1. **①텍스트-only 생성(핵심)**: 사진 없이 외모 텍스트("얼굴 동그랗고 긴생머리의 20대 여자")만으로 실사·가상화 각 sync/async 4경로 생성 성공 — 시트에 텍스트 특징 반영 확인.
+2. **①아이템 착용**: 텍스트-only + 상의/하의/신발 object_name 선택 → 시트 캐릭터가 해당 아이템 착용(4섹션 일관), 카툰 경로는 화풍 변환 착용.
+3. **①미인증 사용자 허용(목적 검증)**: `face_verify_enabled=true` + 얼굴 인증 이력 없는 계정 → 텍스트-only 실사 생성 시 **403 없이 성공**, FE 에서 인증 모달 미출현. 같은 계정이 사진 첨부 시엔 기존대로 403/인증 플로우.
+4. **①사진 경로 회귀**: 사진 경로 생성 결과·게이트(v135/v138/v139)·⭐선차감/실패환불·portrait_confirmed 로깅 전부 기존 동작. 사진+텍스트 병행 시 텍스트 우선 반영(기존 규칙). 빈 사진+빈 텍스트 → 400.
+5. **②캐시 히트**: 적용 확정 stage 에 대해 동일 조건 2회 연속 호출(5분 내) → 1회째 `[cache] create>0`, 2회째 `read>0`. 씬 N≥3 MV 생성 1회에서 video_prompt stage 의 2번째 씬부터 read>0(단 실측 미달 판정 시 create=0 로 비적용 확인으로 대체).
+6. **②비적용 목록 확인**: cover_enhance·translation(+실측 미달 확정 항목) 로그에서 create=0/read=0 이며 **에러·품질 저하 없음**.
+7. **②품질 회귀**: 작사(solo/duet)·브레인스톰(4 archetype+가중치+시드)·시나리오(drama JSON 파싱)·씬프롬프트·영상프롬프트(씬별 duration/이벤트 반영 — user 이동 후에도 정상 반영) 산출물이 캐싱 전과 동등. ANTI_EXAMPLE 최후미 순서 보존 확인.
+8. **9004 미러 검증**: 변경 BE 파일 9004/9005 diff 0(예외 규칙 외), 9004 기동 스모크 + 텍스트-only 생성 1회.

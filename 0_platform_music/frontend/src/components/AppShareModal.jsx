@@ -78,7 +78,10 @@ export default function AppShareModal({ onClose }) {
   }, []);
 
   const inviteUrl = code ? `${window.location.origin}/invite/${code}` : '';
-  const shareText = `MAIDOL — AI가 만든 음악의 새로운 세계 🎵\n추천코드: ${code}\n${inviteUrl}`;
+  // v160 — URL 중복 방지: navigator.share 는 url 파라미터에만 URL 전달(text 는 base),
+  // 복사 2경로(handleCopyLink / Web Share 미지원 폴백)는 URL 포함본(Full) 유지.
+  const shareTextBase = `MAIDOL — AI가 만든 음악의 새로운 세계 🎵\n추천코드: ${code}`;
+  const shareTextFull = `${shareTextBase}\n${inviteUrl}`;
 
   const handleCopyCode = async () => {
     const copied = await copyText(code);
@@ -87,7 +90,7 @@ export default function AppShareModal({ onClose }) {
   };
 
   const handleCopyLink = async () => {
-    const copied = await copyText(shareText);
+    const copied = await copyText(shareTextFull);
     if (import.meta.env.DEV) console.info('[AppShareModal] copy link', { copied });
     showMessage(copied ? '초대 링크가 복사되었습니다.' : '복사에 실패했습니다.');
   };
@@ -99,7 +102,7 @@ export default function AppShareModal({ onClose }) {
       try {
         await navigator.share({
           title: 'MAIDOL 추천하기',
-          text: shareText,
+          text: shareTextBase,
           url: inviteUrl,
         });
         if (import.meta.env.DEV) console.info('[AppShareModal] web share done', { target });
@@ -112,7 +115,7 @@ export default function AppShareModal({ onClose }) {
       }
       return;
     }
-    const copied = await copyText(shareText);
+    const copied = await copyText(shareTextFull);
     if (import.meta.env.DEV) {
       console.info('[AppShareModal] web share unsupported, copy fallback', { target, copied });
     }

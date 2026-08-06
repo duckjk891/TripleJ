@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import API, { recordPlay } from '../api';
+import API, { recordPlay, notifyPointsRefresh, PLAY_RECORD_RATIO } from '../api';
 import { usePlayer } from '../contexts/PlayerContext';
 
 /**
@@ -37,6 +37,24 @@ export default function useFeedAudio() {
   const trackStatusRef = useRef('idle');
   const bgmStatusRef = useRef('idle');
   const opRef = useRef(0); // async race guard — 새 조작마다 증가
+
+  // v160 — 70% 청취 시 재생 기록(A안, track 모드 한정 — BGM 은 기존에도 미기록).
+  // playFeedTrack(새 로드)마다 리셋, timeupdate 70% 판정 / ended 폴백이 공유.
+  const feedTrackIdRef = useRef(null);
+  const trackRecordedRef = useRef(false);
+  const recordFeedPlayOnce = useCallback((trackId, reason) => {
+    if (trackRecordedRef.current) return;
+    trackRecordedRef.current = true;
+    recordPlay(trackId)
+      .then(() => {
+        // ④ 별 적립 → 헤더 ⭐배지 실시간 갱신 (성공 시에만, 실패는 조용히 무시)
+        notifyPointsRefresh();
+        if (import.meta.env.DEV) {
+          console.info(`[useFeedAudio] play recorded (${reason})`, { track_id: trackId });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => { activeKeyRef.current = activeKey; }, [activeKey]);
   useEffect(() => { trackStatusRef.current = trackStatus; }, [trackStatus]);
@@ -173,6 +191,9 @@ export default function useFeedAudio() {
     }
     setActiveKey(key);
     setTrackStatus('loading');
+    // v160 — 새 삽입곡 로드 = 기록 플래그 리셋 (즉시 recordPlay 는 70% 게이트로 대체 — A안)
+    feedTrackIdRef.current = track.id;
+    trackRecordedRef.current = false;
     if (import.meta.env.DEV) {
       console.info('[useFeedAudio] track play start', { track_id: track.id, key });
     }
@@ -184,8 +205,6 @@ export default function useFeedAudio() {
       await audio.play();
       if (op !== opRef.current) return;
       setTrackStatus('playing');
-      // 재생 기록 — fire-and-forget
-      recordPlay(track.id).catch(() => {});
     } catch (err) {
       if (op !== opRef.current) return;
       console.error('[useFeedAudio] track play failed', { err, track_id: track.id });
@@ -198,8 +217,26 @@ export default function useFeedAudio() {
   // ended — 삽입곡 종료 시 BGM 복귀 / BGM 종료 시 정지. 언마운트 시 정지+src 해제.
   useEffect(() => {
     const audio = getAudio();
+    // v160 — track 모드 한정 70% 청취 판정 (PlayerContext 와 동일 게이트, PLAY_RECORD_RATIO 공유)
+    const onTimeUpdate = () => {
+      if (modeRef.current !== 'track' || trackRecordedRef.current) return;
+      const trackId = feedTrackIdRef.current;
+      const dur = audio.duration;
+      if (
+        trackId != null &&
+        dur > 0 &&
+        isFinite(dur) &&
+        audio.currentTime >= dur * PLAY_RECORD_RATIO
+      ) {
+        recordFeedPlayOnce(trackId, '70%');
+      }
+    };
     const onEnded = () => {
       if (modeRef.current === 'track') {
+        // v160 — duration 미확정으로 70% 판정이 못 뛴 곡의 완주 폴백 기록(플래그 공유 — 중복 없음)
+        if (feedTrackIdRef.current != null && !trackRecordedRef.current) {
+          recordFeedPlayOnce(feedTrackIdRef.current, 'ended fallback');
+        }
         setTrackStatus('idle');
         setActiveKey(null);
         if (resumeBgmRef.current && bgmTrackRef.current) {
@@ -216,15 +253,17 @@ export default function useFeedAudio() {
         setBgmStatus('paused');
       }
     };
+    audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('ended', onEnded);
     return () => {
+      audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('ended', onEnded);
       opRef.current += 1;
       audio.pause();
       audio.src = '';
       if (import.meta.env.DEV) console.info('[useFeedAudio] unmounted, audio released');
     };
-  }, [getAudio, startBgmPlayback]);
+  }, [getAudio, startBgmPlayback, recordFeedPlayOnce]);
 
   // 전역 플레이어 재생 시작 감지 → 피드 오디오 정지
   useEffect(() => {

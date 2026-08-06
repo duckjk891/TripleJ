@@ -103,6 +103,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [generatingCover, setGeneratingCover] = useState(false);
   const [aiCoverPreview, setAiCoverPreview] = useState(null);
   const [aiCoverObjectName, setAiCoverObjectName] = useState(null);
+  // v158 — 별 경제 v1.2: 커버 생성 비용(⭐) — /points/costs 단일 소스, 실패 시 5 폴백
+  const [coverCost, setCoverCost] = useState(5);
   // v58: 커버 멀티턴 추가 수정 / 이력 / 되돌리기. 백엔드 cover_sessions 컬렉션 기반.
   const [coverSessionId, setCoverSessionId] = useState(null);
   const [coverHistory, setCoverHistory] = useState([]);  // [{version, object_name, refine_prompt, image_model, created_at}, ...]
@@ -307,6 +309,17 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       .catch(() => setAvailableLocations([]));
   }, []);
 
+  // v158 — 커버 생성 비용 로드 (응답 { costs: {...} } 래핑 — 실패 시 기본값 5 유지)
+  useEffect(() => {
+    api.getPointCosts()
+      .then(({ data }) => {
+        if (typeof data?.costs?.cover === 'number') setCoverCost(data.costs.cover);
+      })
+      .catch((err) => {
+        console.error('[UploadPage] getPointCosts failed (fallback 5)', { status: err?.response?.status, message: err?.message });
+      });
+  }, []);
+
   // Restore from draft
   useEffect(() => {
     if (draftData) {
@@ -459,6 +472,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         image_model: coverImageModel,
         vocal_gender: vocalGender,
       });
+      api.notifyPointsRefresh(); // v158 — 커버 ⭐ 차감 즉시 헤더 배지 갱신
       const proxyUrl = api.coverPreviewUrl(data.object_name);
       setAiCoverPreview(proxyUrl);
       setAiCoverObjectName(data.object_name);
@@ -488,8 +502,16 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       }
     } catch (err) {
       // v139 — 스트라이크 생성 제한 403 공통 처리
-      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
-      else alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
+      if (api.isGenerationRestricted(err)) {
+        api.alertGenerationRestricted(err);
+      } else if (api.isInsufficientPoints(err)) {
+        // v158 — 별 부족(402) 분기
+        console.error('[UploadPage] generateCover insufficient points', { status: err?.response?.status });
+        api.notifyPointsRefresh();
+        alert(`별이 부족해요. AI 커버 생성에는 ⭐${coverCost}개가 필요합니다.`);
+      } else {
+        alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
+      }
     } finally {
       setGeneratingCover(false);
     }
@@ -2085,7 +2107,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                     AI 커버 생성 중...
                   </>
                 ) : (
-                  aiCoverPreview ? '다시 생성' : 'AI 커버 생성'
+                  <>
+                    {aiCoverPreview ? '다시 생성' : 'AI 커버 생성'}
+                    <span className="upload-cover-cost-badge">⭐{coverCost}</span>
+                  </>
                 )}
               </button>
 

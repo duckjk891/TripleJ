@@ -14512,3 +14512,121 @@ canonical transform 전수(스테일 발견→vite 재시작 후 8파일 재검)
 - 스팟체크(planner): AuthContext 플래그 세팅 3곳(login :47/register :58/loginWithToken :70)+logout 제거(:83)+restore 미세팅, Header effect 게이트 3라우트/fetch 전 동기 소비/`checked_today === false` 엄격 비교/balance 갱신/무가드 주석 — PLAN v157 대비 **불일치 없음**.
 - 서버 최종 상태 9005/9004/4000 전부 200.
 - **버전 표기**: PLAN.md v157 ↔ REPORT v159 교차참조(기존 관례 준수).
+
+## v160 — 별(⭐) 경제 전면 개편 v1.2 + 디렉터 피로 시스템 (PLAN v158) — 2026-08-04
+**수정일자**: 2026-08-04
+**요청 작업 (회의 확정 사양 "별 경제 v1.2")**: ①⭐획득 — 첫 가입 +50(이메일/소셜 공통, 영구 1회), 본인인증 +30(is_verified 승격 시 1회), 곡 재생 +1 에 하루 5곡 상한, 곡 업로드(발매) +5(트랙당 1회). 친구초대(v154)/출석(v151) 무변경. ②⭐소비 — 작사 -5(신규), 작곡 -15(신규), 커버 -2→-5, 캐릭터 -2→-10. 잔액 부족 402 + 실패 자동 환불 패턴 유지, MV 스코프 제외. ③디렉터 피로 시스템(신규) — 곡 최종 완성(completed)마다 그날 카운트 증가 → 쿨다운 사다리(1곡 2h/2곡 4h/3곡 8h/4곡+ 12h), 쿨다운 중 새 **작곡**만 429 게이트(작사/커버/캐릭터 미게이트), KST 자정 리셋(쿨다운도 해제), 생성 중 대기는 절대 과금/게이트 없음. 스킵 ⭐5=30분 / 광고권 1장=30분(AdMob SSV `skip_wait_count` 적립분 **소비 로직 구현** — 오픈전 체크리스트 B). 피로 상태 API + UI 투명 표시(다크패턴 금지). 소급 조정 없음. **9005 선구현 → 9004 미러.**
+
+### 수행 결과
+- **BE 신규**: `app/services/fatigue_service.py` — `director_fatigue` 컬렉션(user_id 유니크), 사다리 2/4/8/12h, KST lazy 리셋(카운트+쿨다운 동시 해제), `on_generation_completed`(배경 루프 db 주입)/`check_gate`(장애 시 게이트 오픈 fail-open)/`get_status`/`reduce_cooldown`(aggregation pipeline 원자 `max(now, until-30m)`). `app/routes/fatigue.py` — GET `/api/fatigue/status`(쿨다운/사다리/skip 단가/광고권 잔량), POST `/api/fatigue/skip` `{method:"points"|"ad"}` — 쿨다운 없으면 409 무과금, ad 는 `reward_balances.skip_wait_count` 원자 -1(`$gte:1` 조건) → **체크리스트 B 해소**.
+- **points_service**: `POINT_COSTS` 단일 소스 dict(lyrics 5/compose 15/cover 5/character 10/fatigue_skip 5), `award_point` 에 `daily_cap` 파라미터, 4개 함수에 `db=None` 파라미터(기본 get_mongo — 기존 호출 하위호환).
+- **generate.py**: 작사 -5(실패 시 except 환불), 작곡 -15 — 게이트 순서 **스트라이크 403 → 피로 429(`Retry-After` 헤더) → 잔액 402**, 402/429 시 generations doc 미생성. doc 에 `point_ref`/`refunded` 저장, 실패 마킹 시 `refund_generation_points` — `{point_ref≠null, refunded≠true}` 원자 클레임(이중 환불 구조적 차단), **루프-로컬 db** 사용.
+- **suno_generator**: 기존 완료 +1(`award_point("generate")`) 제거 → `on_generation_completed(user_id, db=mongo_db)` 피로 훅 교체(`[fatigue] completion hook ok` 로그).
+- **획득/단가**: 재생 `daily_cap=5`(charts.py), 업로드 +1→+5(`credit_points day="-"` 트랙당 1회), 커버 5/캐릭터 10(POINT_COSTS 참조), 가입 +50(auth register + oauth signup), 인증 +30(oauth `_promote_verification` + 인증 트랙 신규가입 — 이 경우 +50/+30 동시 지급 의도), GET `/api/points/costs` 신설.
+- **FE**: `api/index.js` — `getFatigueStatus`/`skipFatigue`/`getPointCosts` + 헬퍼 `isInsufficientPoints`(402)/`isDirectorFatigued`(429) + `notifyPointsRefresh()`(커스텀 이벤트). `StudioTab2` — 작곡 스텝 피로 게이지 패널(오늘 완성 n곡/사다리/실시간 카운트다운/스킵 ⭐5·광고권 2버튼), 429·402 분기 제출 4경로(고급/심플/가사비교/재시도) + 429 시 게이지 강조·스크롤, 비용 배지(가사 ⭐5·작곡 ⭐15·심플모드 ⭐20 합산 표기). `UploadPage` 커버 ⭐5 배지+402 분기, `MyMusicPage` 캐릭터 ⭐10 배지+402 분기, `Header` `points-refresh` 리스너로 ⭐ 배지 즉시 갱신. 레거시 `StudioTab`(draft 전용=무과금) 무수정. eslint 신규 유발 0, vite build 성공.
+
+### 변경 파일
+- BE(9005 → 9004 미러 13파일, diff 0): `points_service.py`, `fatigue_service.py`(신규), `routes/fatigue.py`(신규), `generate.py`, `suno_generator.py`, `charts.py`, `tracks.py`, `upload.py`, `character.py`, `auth.py`, `oauth.py`, `points.py`, `main.py`
+- FE: `api/index.js`, `StudioTab2.jsx`, `UploadPage.jsx`, `MyMusicPage.jsx`, `Header.jsx`
+
+### 테스트 결과 (tester: 65케이스 전 PASS, 백엔드 버그 0건)
+- 게이트 순서(403→429→402)·과금/환불 1:1·이중환불 차단·동시성(잔액 5 로 동시 2회 → 정확 1회 성공)·피로 사다리 2/4/8/12h·KST lazy 리셋·스킵 엣지(409/402/no_skip_tickets/잔여 10분 즉시 해제)·획득 전항목(가입 50 + 리퍼럴 병용 100, verify 멱등, 재생 cap 5, 업로드 dup 차단)·402 경계값·회귀(출석/리퍼럴/DM/points API) 전부 확인.
+- 9005/9004 diff 0 + 양쪽 재기동·스모크 OK, 서버 최종 상태 9005/9004/4000 전부 정상.
+
+### 특이사항
+- **기존 +1 보상 2종 제거/교체**: ①곡 생성 완료 +1(suno_generator) — v1.2 표에 없는 스펙 외 항목 + 루프 어피니티로 동작 의심이던 것을 피로 완성 훅으로 교체 ②업로드 +1 → +5 `credit_points(day="-")` 로 교체(과거 이벤트 키와 충돌 없음). 기존 -2 차감 이력/잔액 소급 조정 없음.
+- **체크리스트 B 해소**: AdMob SSV 로 적립만 되고 소비 로직이 없던 `reward_balances.skip_wait_count` 를 POST /fatigue/skip(ad) 이 원자 차감으로 소비.
+- **`/api/points/costs` 무인증 공개는 의도적 설계**: 가격표는 비밀이 아니고 로그인 전 화면에서도 비용 표기가 필요 — FE 하드코딩 드리프트 방지용 단일 소스.
+- **심플모드 ⭐20 합산 표기 판단(FE)**: 심플모드는 작사(-5)+작곡(-15) 연쇄라 버튼에 ⭐20 합산 표기 — 낱개 표기 시 실차감보다 적어 보이는 다크패턴이 되므로 합산이 정직한 표기.
+- **Suno 실완성 훅은 등가 검증**: 실 Suno 호출 금지 정책상 완성 훅을 직접 호출로 등가 검증함 — **실운영 첫 곡 완성 시 `[fatigue] completion hook ok` 로그 확인 권장**.
+- 테스트 데이터 잔존: `starecon_A~F` 계정 6개(point 조작 다수), wondera failed generations 2건, 비공개 트랙 1, 가짜 track_id 6 (`dmtest_A` 는 무조작).
+- 알려진 한계(PLAN 명시): suno stuck processing(실패 마킹 없이 영구 대기)은 환불 미발생 — 운영 대응, 어드민 수동 환불은 후속. wondera 분기는 즉시 failed → -15 후 자동 환불(순액 0, FE 는 무과금 취급).
+- 스팟체크(planner): fatigue_service 사다리 `{1:2,2:4,3:8,4+:12h}`·lazy 리셋(카운트+쿨다운 해제) — generate.py 두 경로 모두 스트라이크 403(:428/:555) → 피로 429+Retry-After → 402 순서, `refund_generation_points` 원자 클레임+루프-로컬 db(:225), draft `point_ref=None` 제외 — suno_generator award_point 완전 제거+훅 교체(:424-438) — oauth verify_bonus 정확 2곳(:236 승격, :305 인증 신규가입)+signup_bonus(:188) — StudioTab2 게이지 패널/10초 폴링/카운트다운/스킵 2버튼/429·402 분기 4경로(:1755/:1785/:1855/:1985) — PLAN v158 대비 **불일치 없음**.
+- **버전 표기**: PLAN.md v158 ↔ REPORT v160 교차참조(기존 관례 준수).
+
+## v161 — 로그아웃 시 음악 플레이어 정지 + 재생 큐 초기화 (PLAN v159) — 2026-08-04
+**수정일자**: 2026-08-04
+**요청 작업 (버그)**: "로그아웃을 했는데도 음악플레이어가 계속 돌아서 음악이 계속 나와" — 계정 A 로 듣던 플레이어가 로그아웃 후에도 재생 지속, 계정 B 로 로그인해도 그대로 이어짐. → 로그아웃 시 재생 중 오디오 즉시 정지 + 재생 큐/현재곡/재생 상태 초기화, 계정 전환(A→B) 시 이전 계정 재생 상태 완전 단절. 로그아웃 경로 3종(헤더 버튼/회원탈퇴/인터셉터 강제 로그아웃) 전부 커버. **백엔드 무변경(0단계 확정) → backend-dev 미배정, 9004 미러 불필요.**
+
+### 수행 결과 (프론트 전용 — 편집 1파일 +22줄)
+- **`PlayerContext.jsx`**: ①`useAuth()` 구독 + `prevUserIdRef`(초기 `undefined`) 로 auth 사용자 전이 감지 effect 신설 — 발화 조건 **`prevId !== undefined && prevId !== null && prevId !== newId`**: id→null(로그아웃), A→B(직접 계정 교체)만 발화. 초기 마운트/새로고침 복원(undefined→id), 비로그인 재생 중 로그인(null→id), `updateUser` merge(id 불변)는 전부 미발화. ②`clearPlaylist` 를 videoMode 까지 보강 — 기존 오디오 pause/src''/큐/인덱스/재생중/시간/길이 리셋에 `videoRef.current?.pause()` + `setVideoMode(false)` 추가(MV 재생 중 로그아웃 갭 해소). ③DEV 로그 `[PlayerContext] cleared on auth change`(bool 만, 유저 id 원문 미출력) + `[PlayerContext] clearPlaylist`. eslint 신규 유발 0(근거 주석 달린 disable 1건).
+- **인터셉터 경로(③)는 설계상 무변경**: 401 강제 로그아웃은 `window.location.assign('/login')` 풀 리로드 → 싱글턴 Audio·메모리 상태 자연 소멸(재생 상태 무영속이 전제).
+
+### 변경 파일
+- FE: `frontend/src/contexts/PlayerContext.jsx` (1파일)
+- BE: 없음 (9005/9004 diff 0)
+
+### 테스트 결과 (tester: 전 항목 PASS, 버그 0건)
+- **정적 검증 6항목** + **로직 시뮬레이션 10/10**: 로그아웃(id→null) 발화, A→B 교체 발화, 마운트/복원/비로그인 재생 중 로그인/updateUser merge 미발화, StrictMode 이중 실행에도 정확 1회 발화 포함.
+- **원 버그 경로 체인 성립 확인**: Header 로그아웃 → `setUser(null)` → PlayerContext effect 발화 → clearPlaylist.
+- **회귀**: 백엔드 무변경, App.jsx Provider 순서(AuthProvider > PlayerProvider — useAuth 구독 가능) 확인.
+
+### 특이사항
+- **버그 원인**: 정지+초기화 함수 `clearPlaylist` 가 이미 존재했으나 **호출자 0곳** + `logout` 이 플레이어를 일절 건드리지 않음 + `ended` 핸들러의 연관곡 자동 이어듣기가 로그아웃 후에도 큐를 늘려 재생 지속.
+- **중앙화 설계**: 로그아웃 호출부(Header/탈퇴 핸들러)마다 clearPlaylist 를 심는 대신 PlayerContext 가 auth 전이를 구독 — **미래에 로그아웃 경로가 추가돼도 자동 커버**(호출부 산개로 인한 누락 위험 제거).
+- **비로그인 재생 보존**: 공개 트랙 스트림은 비로그인 정식 지원 흐름(stream API optional auth) — null→id 미발화 조건으로 "비로그인 재생 중 로그인해도 재생이 끊기지 않음" 을 보장.
+- **실브라우저 E2E 는 사용자 확인 대기**: 검증은 정적+로직 시뮬레이션 기반 — 실제 브라우저에서 로그아웃 시 소리 정지 여부는 사용자 확인 필요.
+- **Vite drvfs 캐시 스테일 재발**: 구버전 transform 서빙 발견 → 오케스트레이터가 Vite 재기동으로 해결, 무버스팅 URL 에서 신규 마커 서빙 확인 완료(FE 수정 후 vite 재시작 필수 절차 재확인 사례).
+- 스팟체크(planner): 전이 조건 `prevId !== undefined && prevId !== null && prevId !== newId`(:277) + ref 갱신(:283) + `[user, clearPlaylist]` 의존 — clearPlaylist videoMode 보강 `videoRef.current?.pause()`(:258)+`setVideoMode(false)`(:259) — DEV 로그 bool 만 출력(:281) — eslint disable 1건 근거 주석(:278-279) — PLAN v159 대비 **불일치 없음**.
+- 서버 최종 상태 9005/9004/4000 전부 정상.
+- **버전 표기**: PLAN.md v159 ↔ REPORT v161 교차참조(기존 관례 준수).
+
+## v162 — E2E 발견 5건 일괄 수정: 엔터명 자동접미/비번 안내 가시화/공유 URL 중복/⭐배지 실시간/70% 청취 시 재생기록(A안) (PLAN v160) — 2026-08-06
+**수정일자**: 2026-08-06
+**요청 작업 (E2E 중 발견 5건, 5번은 A안 확정)**: ①회원가입 엔터테인먼트명 — "엔터테인먼트"로 안 끝나면 자동 접미, 이미 붙어 있으면 중복 없이 그대로. ②비밀번호 조건(8자+영문+숫자) 유지하되 미충족 시 실시간 안내 + 제출 실패 사유가 **보이게**(기존엔 에러가 화면 밖). ③SNS 공유 메시지에 URL 2회 노출 — 중복 제거. ④곡 재생 별 적립이 헤더 ⭐배지에 실시간 미반영 — 즉시 갱신. ⑤곡의 **70% 를 들었을 때만** 재생 기록(별 +1 & 차트 집계 모두 — **A안**, 기존은 재생 시작 즉시 기록). **백엔드 변경은 ①뿐 → 9005 선구현 후 9004 미러.**
+
+### 수행 결과
+- **BE `auth.py`**: `_normalize_company_name()` 신설 — trim 후 "엔터테인먼트" 미종료 시 `" 엔터테인먼트"`(공백 1) 추가, 이미 끝나면 그대로(중복 방지), 빈값/None 무변경 통과, 정규화 결과 100자 초과 시 400("엔터테인먼트명이 너무 깁니다…"), 로그는 appended bool 만(값 원문 금지). 적용 3곳: 일반 register INSERT(:200) / PATCH `/me/profile` company_name 전달 시(:427, 명시적 null 은 지우기로 통과) / 보호자동의 pending 계정 INSERT(:627). **9004 미러 diff 0.** charts.py·points_service.py 무변경(변경 매트릭스 준수).
+- **FE `RegisterPage`**: placeholder 정정 "비밀번호 (8자 이상, 영문+숫자 포함)"(메인+보호자 서브폼 2곳), 비번 필드 직하단 실시간 조건 힌트 3종(8자/영문/숫자 — 빈값 중립, 입력 후 충족 ✓ 전환)+확인 불일치 실시간 표시, 제출 실패 시 에러 div `scrollIntoView`(사유 가시화), company 입력 onBlur 자동접미(저장값 눈으로 확인)+제출 페이로드 재정규화(이중 방어). 검증 규칙 자체는 불변.
+- **FE `AppShareModal`**: `shareTextBase`(URL 없음)/`shareTextFull`(base+URL) 분리 — `navigator.share` 는 `{text: base, url: inviteUrl}` 로 URL 은 url 파라미터 1회만, 복사 2경로(링크 복사/Web Share 폴백)는 Full 유지(복사본 URL 필수), 페북 무변경.
+- **FE `PlayerContext`**: 즉시 recordPlay 제거 → `playRecordedRef` + `useEffect([currentTime, audioDuration, currentSong])` 70% 판정(`PLAY_RECORD_RATIO=0.7`, `api/index.js` export 공유). **context state 기준이라 MV 모드(PlayerPage 의 video timeupdate 동기화 경유) 자동 커버.** duration 미확정 곡은 `ended` 폴백 기록(완주=100%≥70%), 플래그 리셋 3곳(곡 로드 effect/로그아웃 clearPlaylist/피드 playTrack), 기록 성공 시 `notifyPointsRefresh()` → 헤더 ⭐배지 즉시 갱신(④⑤결합, v158 구독 인프라 재사용).
+- **FE `useFeedAudio`**: 동일 게이트 — track 모드 한정 timeupdate 70% 판정 + ended 폴백 + 로드마다 플래그 리셋 + 성공 시 notify(BGM 은 기존대로 미기록 유지). eslint 신규 유발 0.
+- **FE `AuthContext` (추가 수정 — tester 발견 갭)**: `register()` 가 companyName/displayTitle 인자를 받고도 **페이로드에 미포함하던 기존재 버그** 수정 — 웹 일반가입에서 company_name 이 항상 NULL 저장되어 ①자동접미가 화면 표시로만 끝나던 문제. payload 포함으로 수정, 오케스트레이터가 실가입 재현으로 "체인검증" → "체인검증 엔터테인먼트" DB 저장 확인 완료.
+
+### 변경 파일
+- BE(9005 → 9004 미러 1파일, diff 0): `app/routes/auth.py`
+- FE: `RegisterPage.jsx`(+`RegisterPage.css`), `AppShareModal.jsx`, `PlayerContext.jsx`, `useFeedAudio.js`, `api/index.js`(PLAY_RECORD_RATIO 상수), `AuthContext.jsx`
+
+### 테스트 결과 (tester: 8/8 PASS, 신규 버그 0건)
+- ①정규화 4케이스(접미 추가/중복 방지/공백만/100자 초과 400) + PATCH profile 경로, ②비번 실시간 힌트 = 백엔드 규칙 일치 + 제출 실패 스크롤 가시화, ③공유 URL 1회(복사 경로 URL 유지 회귀 없음), ⑤70% 게이트 node 시뮬 6케이스(70% 도달/미달/ended 폴백/중복 방지), record-play 산식 무변경 + cap 5 회귀, 가입 플로우 회귀(필수동의 게이트·리퍼럴 병용 100·출석 팝업), 9004 스모크.
+- 서버 최종 상태 9005/9004/4000 전부 정상.
+
+### 특이사항
+- **기존재 갭 발견·수정 (스코프 내 편입)**: 웹 일반가입이 company_name/display_title 을 아예 전송하지 않던 AuthContext 기존재 버그 — ①테스트 중 tester 가 발견, frontend-dev 가 수정, 실가입 재현으로 저장까지 확인. 이 수정 전엔 백엔드 정규화(①)가 웹 경로에서 도달 불가였음(API 직접 가입만 유효).
+- **차트 집계도 70% 기준화됨(A안 의도)**: 백엔드 record-play·차트 산식은 무변경 — 호출 시점만 70% 게이트로 바뀌어 play_count/청취자 집계/별 적립이 전부 "유효 청취" 기준이 됨. 시작 즉시 집계되던 기존 동작 소멸 → **배포 후 차트 수치가 이전 대비 감소하는 것은 정상**(남용 상쇄는 서버 곡별 일일 멱등+cap5 유지). 시크로 70% 지점 건너뛰어도 기록되는 것은 설계 7ⓐ 허용 동작.
+- **관찰 B (기존재, 스코프 외 — 후속 검토 항목)**: 비번 "영문" 판정이 FE `/[a-zA-Z]/` vs BE `isalpha()`(유니코드 문자 전반 허용) 불일치 — FE 가 더 엄격이라 현재 안전(FE 통과분은 BE 도 통과). 규칙 단일화는 후속 항목으로 등재.
+- **Vite drvfs 캐시 스테일 재발**: 구버전 transform 서빙 → 오케스트레이터 재기동으로 해소, 신규 마커 서빙 확인(FE 수정 후 vite 재시작 필수 절차 3회째 사례).
+- 테스트 데이터 잔존: `e2efix_*` 계정 7개(9005 6 + 9004 1), 일부 트랙 play_count 소폭 증가.
+- 스팟체크(planner): `_normalize_company_name`(:66 — trim/endswith 중복 방지/공백 1 접미/100자 400/appended bool 로그) + 적용 3곳(register :200, PATCH profile :427 `"company_name" in updates` 분기, guardian :627) + 9005↔9004 `diff` 실행 결과 0 — PlayerContext 70% effect(:161-170, `currentTime >= audioDuration * PLAY_RECORD_RATIO` + isFinite 가드, deps `[currentTime, audioDuration, currentSong, recordPlayOnce]`)·즉시 recordPlay 소멸(:140 플래그 리셋으로 대체)·ended 폴백(:66)·성공 시 notify(:40)·로그아웃 리셋(:294)·api/index.js:228 `PLAY_RECORD_RATIO = 0.7`·useFeedAudio 동일 게이트(:229) — AuthContext 페이로드 수정(:57-60, `company_name`/`display_title` 조건부 포함) — PLAN v160 대비 **불일치 없음**.
+- **버전 표기**: PLAN.md v160 ↔ REPORT v162 교차참조(기존 관례 준수).
+
+## v163 — ①캐릭터시트 텍스트 프롬프트 생성 경로(사진 없이 외모 텍스트만) + ②Claude 프롬프트 캐싱(cache_control) 전면 적용 (PLAN v161) — 2026-08-06
+**수정일자**: 2026-08-06
+**요청 작업**: ①캐릭터시트를 얼굴사진 없이 **외모 텍스트만으로** 생성(예: "얼굴 동그랗고 긴생머리의 20대 여자") + 선택 아이템(상의/하의/신발) 착용 유지 + FE 에서 사라진 외모 텍스트 입력칸 복원 — **목적: 얼굴 인증 못한/안 한 사용자의 캐릭터 생성 경로 확보**(사진 경로=인증 유지, 텍스트 경로=인증 불필요). ②Claude API 호출부 7곳 전부 프롬프트를 [고정부|변동부]로 분리하고 고정부에 `cache_control`(ephemeral) 적용 — 캐시 읽기 0.1배 요금. **9005 선구현 → 9004 미러.**
+
+### 수행 결과
+- **① BE `character.py`**: 4경로(`/generate-sheet`·`/generate-sheet-cartoon`·양 async) 모두 `file: Optional[UploadFile] = File(None)` 화 + 사진·텍스트 둘 다 없으면 400("얼굴 사진 또는 외모 설명 중 하나는 필요합니다", 텍스트 최소 2자). **사진 전용 게이트(v135 얼굴 인증·v138 도용 차단)는 `contents is not None` 분기로 텍스트-only 시 자연 스킵**(둘 다 사진 SHA 기반 — 검사 대상 없음), 스트라이크(v139)·⭐선차감/실패환불은 텍스트 경로에도 동일 적용. `source=photo|text|photo+text` 로깅.
+- **① BE `character_generator.py`**: `_build_step1_answer(has_photo)` 확장 — 텍스트-only 시 user_text 를 유일한 정체성 소스로 삼는 base 지시로 교체(아이템 3종 라벨 로직 재사용), `_build_inline_images` photo optional, `_adapt_prompt_for_text_only()` 신설로 MASTER_PROMPT(_CARTOON) "정체성은 오직 [인물 사진]" 규칙·Step B "[인물 사진]과 동일 외모" 문구 치환. **사진 경로 산출 프롬프트 byte-identity 40항목 검증 ALL PASS**(회귀 0).
+- **② BE `claude_cache.py` 신설**: `cached_system(fixed, variable="")`(고정부 첫 블록 + cache_control, 변동부 뒤 블록) + `log_cache_usage(stage, model, usage)`(`[cache] stage=… model=… create=… read=… input=…`, 절대 raise 안 함). **7개 stage 전부 캐시-ready 구조화 + [cache] 로깅 부착**: #1 작사(1블록)·#2 브레인스톰(고정/변동 2분할, ANTI_EXAMPLE 최후미 순서 보존)·#3 시나리오(drama 첫 변동 슬롯 전까지 고정)·#4 씬프롬프트(video_model 별 고정부)·#5 영상프롬프트(**변동 3값 `{duration}/{scene_event_block}/{emotional_core}` 를 system format → user 메시지 선두 블록으로 이동**, system 완전 고정화)·#6 커버·#7 번역(로깅만). `requirements.txt` `anthropic>=0.105` 하한 핀. `scripts/measure_prompt_tokens.py` 로 실측 수행.
+- **② 실측 결론(중요)**: **현행 모델(opus-4-6 최소 캐시 4096tok / opus-4-7 최소 2048tok)에서 7개 stage 전부 최소 길이 미달 → 즉시 캐시 히트 0**(create=0/read=0, 무과금·무해). 즉 본 건의 실효는 "비용 절감 즉시 발생"이 아니라 **캐시-ready 구조 완비**: 프롬프트 [고정|변동] 분리·변동값 user 이동·마커 부착·로깅이 전부 끝나 있어 **모델 상향(opus-4-8 계열, 최소 1024tok) 시 코드 수정 없이 대부분 자동 활성**된다. 모델 상향은 품질/비용 별도 검증 필요 — 후속 옵션으로 이관.
+- **FE `MyMusicPage.jsx`(+css)**: `renderAppearanceInput` 공용 헬퍼로 실사·가상화 두 섹션에 외모 textarea 복원(placeholder+안내문 "사진 없이 텍스트만으로도 생성할 수 있어요(사진 없이 생성 시 얼굴 인증 불필요)"), `user_text` formData 전송(사진 경로에서도 병행 전송 — 기존 BE 우선순위 규칙 활용), 사진 미선택+텍스트 입력 시 생성 버튼 활성, **텍스트-only 시 v135 얼굴 인증 모달·portrait_confirmed 확약 스킵**(사진 첨부 시 기존 플로우 그대로), BE 403 face_verification_required 폴백은 사진 경로 전용 유지, 재생성 경로 유지. eslint 신규 유발 0.
+- **9004 미러**: 변경 8파일(character.py, character_generator.py, claude_cache.py, lyrics_generator.py, mv_generator.py, cover_generator.py, translation.py, requirements.txt) diff SAME, 양쪽 import OK, 재기동 완료.
+
+### 변경 파일
+- BE(9005 → 9004 미러 8파일, diff 0): `app/routes/character.py`, `app/services/character_generator.py`, `app/services/claude_cache.py`(신설), `app/services/lyrics_generator.py`, `app/services/mv_generator.py`, `app/services/cover_generator.py`, `app/services/translation.py`, `requirements.txt` (+9005 `scripts/measure_prompt_tokens.py` 일회성 실측 스크립트)
+- FE: `MyMusicPage.jsx`, `MyMusicPage.css`
+
+### 테스트 결과 (tester: 8/8 PASS, 신규 버그 0건)
+- 400/402 경계(빈 사진+빈 텍스트 400, 별 부족 402), **텍스트-only 실생성 1회 성공** — 얼굴 인증 이력 없는 계정으로 68초 만에 웹툰 4뷰 시트 생성, 선택 아이템 착용 반영, 얼굴 인증 미발동, ⭐10 정상 차감, original_object_name 생략 확인.
+- 사진 경로 403 face gate 회귀 유지(같은 미인증 계정 + 사진 첨부 → 기존대로 차단), byte-identity 재실행 ALL PASS, 회귀 스모크 통과.
+- 작사 소형 실호출로 `cached_system` 블록 리스트 system 이 API 200 수용 + `[cache] create=0/read=0` 로깅 정상(= 길이 미달 실측 증거).
+- 서버 최종 상태 9005/9004/4000 전부 정상.
+
+### 특이사항
+- **캐싱 즉시 비용 효과 0 (실측 확정)**: 현행 기본 모델 조합이 최소 캐시 길이 문턱이 가장 높은 구성(opus-4-6=4096/opus-4-7=2048)이라 7 stage 전부 미달 — cache_control 마커는 미달 시 조용히 무시(무과금·무해)되므로 부착 유지. **캐시-ready 구조는 완비** 상태로, 모델 상향(최소 1024 계열) 시 자동 활성 — 후속 옵션 등재.
+- **텍스트-only 실생성 검증 성공**: 본 건의 핵심 목적(미인증 사용자 생성 경로)이 실계정 실호출로 확인됨.
+- 테스트 데이터 잔존: 텍스트-only 검증용 미인증 테스트 계정 1개 + 생성 캐릭터 시트 1건(⭐10 소비), 작사 소형 실호출 1건.
+- **로그 순서 비대칭(참고, 기능 무영향)**: cartoon-sync 경로에서 생성 로그가 ⭐차감 로그보다 앞에 출력 — 실제 차감/환불 동작은 정상, 표시 순서만 비대칭.
+- Vite drvfs 캐시 스테일 재발(4회째) → 오케스트레이터 재기동으로 해소, 신규 마커 3종 서빙 확인.
+- 스팟체크(planner): `character.py` 4경로 `File(None)`(:357/:551/:880/:1025) + 400 문구·최소 2자 검증(:398-404 외 3곳) + v138 `contents is not None`(:428/:624/:941/:1090) + v135 얼굴 인증 실사 2경로 한정 `settings.face_verify_enabled and contents is not None`(:452 sync/:964 async, 카툰 무게이트 유지) + `source=` 로깅(:469 등) — `character_generator.py` `_build_step1_answer(has_photo)`(:771)·`_adapt_prompt_for_text_only`(:887)·카툰 MASTER_PROMPT 분기(:1224-1225) — `claude_cache.py` `cached_system` 고정부 첫 블록+ephemeral·변동부 후속 블록·`log_cache_usage` no-raise — 7 stage 부착 확인(lyrics_generator:440/453, mv_generator #5 :898/909 변동 3값 user 선두 이동(:876-880 context_head)·#2 :1877-1898·#3 :3444-3478·#4 :4998-5023 video_model 별 고정부, cover:131·translation:115 로깅만) — `requirements.txt:24` `anthropic>=0.105` 양쪽 동일 — 9005↔9004 변경 8파일 `diff` 실행 결과 0 — `MyMusicPage.jsx` `renderAppearanceInput`(:969, 두 섹션 :1037/:1202)·`user_text` append(:452/:578)·portrait_confirmed 사진 시에만(:455/:581)·텍스트-only 게이트 스킵(:409)·403 폴백 사진 경로 전용(:487) — PLAN v161 대비 **불일치 없음**. (참고: character.py:157 `File(...)` 은 별도 `/upload-original-photo` 엔드포인트 — 스코프 외 정상)
+- **버전 표기**: PLAN.md v161 ↔ REPORT v163 교차참조(기존 관례 준수).

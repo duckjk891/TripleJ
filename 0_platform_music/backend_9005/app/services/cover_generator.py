@@ -124,6 +124,11 @@ async def generate_cover_image(
                 prompt_model,
             )
             response = await anthropic_client.messages.create(**cover_kwargs)
+            # v161 — 캐싱 비적용(system ~200-350 tok < 최소 캐시 길이 — 마커 미부착).
+            # [cache] 로깅만 부착: create=0/read=0 이 비적용의 실측 증거.
+            from .claude_cache import log_cache_usage
+
+            log_cache_usage("cover_enhance", prompt_model, getattr(response, "usage", None))
             # v75 — adaptive thinking 응답 안전 추출 ([ThinkingBlock, TextBlock] 순서).
             enhanced_prompt = None
             try:

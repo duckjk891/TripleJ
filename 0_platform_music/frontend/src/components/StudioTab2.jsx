@@ -117,6 +117,37 @@ const getGenreLabel = (v) => _genreLabelMap[v] || v;
 const getMoodLabel = (v) => _moodLabelMap[v] || v;
 const getStyleLabel = (v) => _styleLabelMap[v] || v;
 
+// v158 — 별 경제 v1.2 소비 가격 기본값 (GET /points/costs 로드 실패 시 폴백)
+const DEFAULT_POINT_COSTS = { lyrics: 5, compose: 15, cover: 5, character: 10, fatigue_skip: 5 };
+// v158 — 디렉터 피로 사다리 기본값(시간) — status.ladder 부재 시 폴백 (1곡째 2h/2곡째 4h/3곡째 8h/4곡째+ 12h)
+const DEFAULT_FATIGUE_LADDER_HOURS = [2, 4, 8, 12];
+
+// v158 — 쿨다운 남은 시간 포맷: 1시간 미만 mm:ss, 이상 h:mm:ss
+const formatCooldown = (sec) => {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${String(m).padStart(2, '0')}:${ss}`;
+};
+
+// v158 — status.ladder 를 시간(hours) 배열로 정규화.
+// BE 확정 스펙: {"1":2,"2":4,"3":8,"4+":12} (키 = n곡째, "+" 접미 허용). 숫자 배열도 수용.
+const normalizeLadderHours = (ladder) => {
+  if (Array.isArray(ladder) && ladder.length > 0) {
+    const hours = ladder.filter((v) => typeof v === 'number' && v > 0);
+    if (hours.length > 0) return hours;
+  }
+  if (ladder && typeof ladder === 'object') {
+    const entries = Object.entries(ladder)
+      .map(([k, v]) => [parseInt(String(k).replace('+', ''), 10), Number(v)])
+      .filter(([n, h]) => Number.isFinite(n) && Number.isFinite(h) && h > 0)
+      .sort((a, b) => a[0] - b[0]);
+    if (entries.length > 0) return entries.map(([, h]) => h);
+  }
+  return DEFAULT_FATIGUE_LADDER_HOURS;
+};
+
 // 직접 입력된 태그를 프리셋 value로 매칭 (label 또는 value 대소문자 무시)
 const resolveCustomTag = (input, presets) => {
   const lower = input.toLowerCase();
@@ -951,6 +982,121 @@ export default function StudioTab2({ onSendToUpload }) {
   const pollRef = useRef(null);
   const lyricsRef = useRef(null);
 
+  // ─── v158: 별 경제 v1.2 + 디렉터 피로 ───
+  const [pointCosts, setPointCosts] = useState(DEFAULT_POINT_COSTS);
+  const [fatigue, setFatigue] = useState(null); // GET /fatigue/status 응답
+  const [fatigueRemainSec, setFatigueRemainSec] = useState(0);
+  const [fatigueSkipping, setFatigueSkipping] = useState(null); // 'points' | 'ad' | null
+  const [fatigueHighlight, setFatigueHighlight] = useState(false); // 429 시 게이지 강조
+  const fatiguePanelRef = useRef(null);
+  const fatigueHighlightTimerRef = useRef(null);
+
+  // 가격 단일 소스 로드 — 응답은 { costs: {...} } 래핑 (실패 시 기본값 유지, 표기용이므로 비치명)
+  useEffect(() => {
+    api.getPointCosts()
+      .then(({ data }) => {
+        const costs = data?.costs;
+        if (costs && typeof costs === 'object') {
+          setPointCosts((prev) => ({ ...prev, ...costs }));
+          if (import.meta.env.DEV) console.info('[StudioTab2] point costs loaded', costs);
+        }
+      })
+      .catch((err) => {
+        console.error('[StudioTab2] getPointCosts failed (fallback defaults)', { status: err?.response?.status, message: err?.message });
+      });
+  }, []);
+
+  // 피로 상태 조회 — 마운트 + fetchHistory 10초 폴링 + 429/스킵 후 재조회
+  // (참조: 안정 setter + api 뿐 — 의도적으로 useCallback 미사용, fetchHistory 선례와 동일)
+  const refreshFatigue = async () => {
+    try {
+      const { data } = await api.getFatigueStatus();
+      setFatigue(data);
+      setFatigueRemainSec(Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0)));
+      if (import.meta.env.DEV) {
+        console.info('[StudioTab2] [fatigue-ui] status', {
+          today_completed: data?.today_completed,
+          cooldown_active: data?.cooldown_active,
+          cooldown_remaining_sec: data?.cooldown_remaining_sec,
+          skip_wait_count: data?.skip_wait_count,
+        });
+      }
+    } catch (err) {
+      console.error('[StudioTab2] [fatigue-ui] getFatigueStatus failed', { status: err?.response?.status, message: err?.message });
+    }
+  };
+
+  // 쿨다운 1초 카운트다운 — 0 도달 시 서버 상태 재확인(해제 반영)
+  useEffect(() => {
+    if (fatigueRemainSec <= 0) return undefined;
+    const t = setTimeout(() => {
+      setFatigueRemainSec((s) => Math.max(0, s - 1));
+      if (fatigueRemainSec === 1) refreshFatigue();
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [fatigueRemainSec]);
+
+  // 강조 타이머 언마운트 정리
+  useEffect(() => () => {
+    if (fatigueHighlightTimerRef.current) clearTimeout(fatigueHighlightTimerRef.current);
+  }, []);
+
+  // 쿨다운 스킵 — method: 'points'(⭐) | 'ad'(보유 광고권 skip_wait_count 소비)
+  // 성공 200 = status 동일 payload + skipped_minutes (레이스로 0 가능 = 이미 해제)
+  const handleFatigueSkip = async (method) => {
+    if (fatigueSkipping) return;
+    setFatigueSkipping(method);
+    try {
+      const { data } = await api.skipFatigue(method);
+      if (import.meta.env.DEV) console.info('[StudioTab2] [fatigue-ui] skip ok', { method, skipped_minutes: data?.skipped_minutes });
+      api.notifyPointsRefresh(); // ⭐/광고권 변동 → 헤더 배지 갱신
+      if (data && typeof data === 'object' && 'cooldown_remaining_sec' in data) {
+        // 응답이 최신 status payload — 즉시 반영
+        setFatigue(data);
+        setFatigueRemainSec(Math.max(0, Math.floor(data.cooldown_remaining_sec ?? 0)));
+      } else {
+        await refreshFatigue();
+      }
+      if (data?.skipped_minutes === 0) {
+        alert('쿨다운이 이미 해제되어 있었어요. 바로 작곡을 지시할 수 있습니다.');
+      }
+    } catch (err) {
+      console.error('[StudioTab2] [fatigue-ui] skip failed', { method, status: err?.response?.status, error: err?.response?.data?.error });
+      if (api.isInsufficientPoints(err)) {
+        alert(method === 'ad' || err?.response?.data?.error === 'no_skip_tickets'
+          ? '사용할 수 있는 광고 시청권이 없어요. 앱에서 광고를 시청하면 충전돼요.'
+          : `별이 부족해요. 쿨다운 단축에는 ⭐${fatigue?.skip_point_cost ?? pointCosts.fatigue_skip}개가 필요합니다.`);
+      } else if (err?.response?.status === 409) {
+        alert('지금은 단축할 쿨다운이 없어요.');
+      } else {
+        alert(err?.response?.data?.message || err?.response?.data?.error || '쿨다운 단축에 실패했습니다.');
+      }
+      refreshFatigue();
+    } finally {
+      setFatigueSkipping(null);
+    }
+  };
+
+  // 작곡 제출 공통 에러 분기 (BE 순서: 403 스트라이크 → 429 피로 → 402 별 부족).
+  // 429/402 를 처리하면 사용자 문구를 반환, 미해당이면 null (호출측 기본 처리).
+  const composeErrorMessage = (err) => {
+    if (api.isDirectorFatigued(err)) {
+      refreshFatigue();
+      setFatigueHighlight(true);
+      if (fatigueHighlightTimerRef.current) clearTimeout(fatigueHighlightTimerRef.current);
+      fatigueHighlightTimerRef.current = setTimeout(() => setFatigueHighlight(false), 4000);
+      try { fatiguePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
+      const remain = err?.response?.data?.cooldown_remaining_sec;
+      const remainText = Number.isFinite(remain) ? ` (남은 휴식 ${formatCooldown(remain)})` : '';
+      return `디렉터가 쉬는 중이에요${remainText}. 휴식이 끝나면 새 곡을 지시할 수 있고, 위의 게이지에서 ⭐ 또는 광고권으로 단축할 수 있어요.`;
+    }
+    if (api.isInsufficientPoints(err)) {
+      api.notifyPointsRefresh();
+      return `별이 부족해요. 작곡에는 ⭐${pointCosts.compose}개가 필요합니다.`;
+    }
+    return null;
+  };
+
   // Fetch voice personas for "My Voice" option
   useEffect(() => {
     api.getVoicePersonas()
@@ -1010,7 +1156,8 @@ export default function StudioTab2({ onSendToUpload }) {
   useEffect(() => {
     fetchHistory();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+    // 마운트 1회 의도 — fetchHistory 는 비메모이즈 함수(안정 setter/api 만 참조)
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll for processing generations (including voice conversion in-progress)
   useEffect(() => {
@@ -1024,10 +1171,13 @@ export default function StudioTab2({ onSendToUpload }) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-  }, [generations]);
+    // generations 변화에만 반응하는 폴링 토글 — fetchHistory 는 비메모이즈 함수
+  }, [generations]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchHistory = async () => {
     setLoadingHistory(true);
+    // v158 — 생성 상태 폴링(10초)에 피로 status 갱신 연동 (곡 완성 → 쿨다운 시작 반영)
+    refreshFatigue();
     try {
       const { data } = await api.getGenerations({ limit: 50 });
       setGenerations(data.generations || []);
@@ -1139,6 +1289,7 @@ export default function StudioTab2({ onSendToUpload }) {
         duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
         models: lyricsModels,
       });
+      api.notifyPointsRefresh(); // v158 — 작사 ⭐ 차감 즉시 헤더 배지 갱신
       if (data.results && Array.isArray(data.results)) {
         // 듀얼 모델 결과 → 비교 UI 표시 (categories 는 각 result 에 포함, 선택 시 반영)
         setLyricsResults(data.results);
@@ -1155,8 +1306,14 @@ export default function StudioTab2({ onSendToUpload }) {
         setStep(2);
       }
     } catch (err) {
-      const msg = err.response?.data?.error || '가사 생성에 실패했습니다.';
-      setError(msg);
+      // v158 — 작사 -5 별 부족(402) 분기
+      if (api.isInsufficientPoints(err)) {
+        api.notifyPointsRefresh();
+        setError(`별이 부족해요. AI 작사에는 ⭐${pointCosts.lyrics}개가 필요합니다.`);
+      } else {
+        const msg = err.response?.data?.error || '가사 생성에 실패했습니다.';
+        setError(msg);
+      }
     } finally {
       setGeneratingLyrics(false);
     }
@@ -1591,11 +1748,16 @@ export default function StudioTab2({ onSendToUpload }) {
       setTranslatedMoodSource([]);
       setTranslatedStyleSource([]);
       setTranslatedStyleTextSource('');
+      // v158 — 작곡 ⭐-15 차감 반영 (wondera 는 무과금 테스트 경로)
+      if (selectedModel !== 'wondera') api.notifyPointsRefresh();
       fetchHistory();
     } catch (err) {
-      // v139 — 스트라이크 생성 제한 403 공통 처리
+      // v139 — 스트라이크 생성 제한 403 공통 처리 → v158 — 429(피로)/402(별 부족) 분기
       if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
-      else setError(err.response?.data?.error || '요청에 실패했습니다.');
+      else {
+        const starMsg = composeErrorMessage(err);
+        setError(starMsg || err.response?.data?.error || '요청에 실패했습니다.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1617,9 +1779,13 @@ export default function StudioTab2({ onSendToUpload }) {
   const handleRetry = async (id) => {
     try {
       await api.startMusicGeneration(id);
+      api.notifyPointsRefresh(); // v158 — 재시도도 작곡 ⭐-15 차감
       fetchHistory();
     } catch (err) {
-      alert(err.response?.data?.error || '재시도에 실패했습니다.');
+      // v158 — 403(스트라이크) → 429(피로) → 402(별 부족) 분기
+      if (api.isGenerationRestricted(err)) { api.alertGenerationRestricted(err); return; }
+      const starMsg = composeErrorMessage(err);
+      alert(starMsg || err.response?.data?.error || '재시도에 실패했습니다.');
     }
   };
 
@@ -1683,11 +1849,20 @@ export default function StudioTab2({ onSendToUpload }) {
 
       setSuccessMsg('가사가 자동 생성되었고, 음악 생성이 시작되었습니다!');
       setSimplePrompt('');
+      api.notifyPointsRefresh(); // v158 — 작사 ⭐-5 + 작곡 ⭐-15 차감 반영
       fetchHistory();
     } catch (err) {
-      // v139 — 스트라이크 생성 제한 403 공통 처리
-      if (api.isGenerationRestricted(err)) api.alertGenerationRestricted(err);
-      else setError(err.response?.data?.error || '생성에 실패했습니다.');
+      // v139 — 스트라이크 생성 제한 403 공통 처리 → v158 — 429(피로)/402(별 부족) 분기
+      if (api.isGenerationRestricted(err)) {
+        api.alertGenerationRestricted(err);
+      } else if (api.isInsufficientPoints(err) && String(err?.config?.url || '').includes('/lyrics')) {
+        // 1단계(작사) 402 — 작곡이 아니라 작사 비용 안내
+        api.notifyPointsRefresh();
+        setError(`별이 부족해요. AI 작사에는 ⭐${pointCosts.lyrics}개가 필요합니다.`);
+      } else {
+        const starMsg = composeErrorMessage(err);
+        setError(starMsg || err.response?.data?.error || '생성에 실패했습니다.');
+      }
     } finally {
       setSimpleSubmitting(false);
     }
@@ -1803,10 +1978,17 @@ export default function StudioTab2({ onSendToUpload }) {
           model: 'suno',
           persona_id: vcSelectedModel,
         });
+        api.notifyPointsRefresh(); // v158 — 작곡 ⭐-15 차감 반영
         setVcModalGenId(null);
         fetchHistory();
       } catch (err) {
-        alert(err.response?.data?.error || '음성 생성 시작에 실패했습니다.');
+        // v158 — 403(스트라이크) → 429(피로) → 402(별 부족) 분기
+        if (api.isGenerationRestricted(err)) {
+          api.alertGenerationRestricted(err);
+        } else {
+          const starMsg = composeErrorMessage(err);
+          alert(starMsg || err.response?.data?.error || '음성 생성 시작에 실패했습니다.');
+        }
       } finally {
         setVcSubmitting(false);
       }
@@ -1885,6 +2067,81 @@ export default function StudioTab2({ onSendToUpload }) {
     }
   };
 
+  // ─── v158: 디렉터 피로 게이지 (작곡 스텝 공통 — 상태 투명 표시, 다크패턴 금지) ───
+  const renderFatiguePanel = () => {
+    if (!fatigue) return null;
+    const completed = Math.max(0, Number(fatigue.today_completed) || 0);
+    const ladderHours = normalizeLadderHours(fatigue.ladder);
+    const coolingDown = fatigueRemainSec > 0 && (fatigue.cooldown_active ?? !!fatigue.cooldown_until);
+    const skipCost = fatigue.skip_point_cost ?? pointCosts.fatigue_skip;
+    const skipMinutes = fatigue.skip_minutes ?? 30;
+    const adSkips = Math.max(0, Number(fatigue.skip_wait_count) || 0);
+    return (
+      <div
+        ref={fatiguePanelRef}
+        className={`s2__fatigue ${fatigueHighlight ? 's2__fatigue--highlight' : ''}`}
+      >
+        <div className="s2__fatigue-header">
+          <span className="s2__fatigue-title"><FiClock /> 디렉터 컨디션</span>
+          <span className="s2__fatigue-count">오늘 완성 {completed}곡</span>
+        </div>
+        {/* 사다리 시각화 — n곡째 완성 시 휴식 시간 (자정에 리셋) */}
+        <div className="s2__fatigue-ladder">
+          {ladderHours.map((h, i) => {
+            const isLast = i === ladderHours.length - 1;
+            const done = isLast ? completed >= i + 1 : completed === i + 1;
+            const reached = completed >= i + 1;
+            return (
+              <div
+                key={`rung-${i}`}
+                className={`s2__fatigue-rung ${reached ? 's2__fatigue-rung--reached' : ''} ${done ? 's2__fatigue-rung--current' : ''}`}
+              >
+                <span className="s2__fatigue-rung-num">{i + 1}곡{isLast ? '+' : ''}째</span>
+                <span className="s2__fatigue-rung-hours">휴식 {h}시간</span>
+              </div>
+            );
+          })}
+        </div>
+        {coolingDown ? (
+          <>
+            <div className="s2__fatigue-cooldown">
+              디렉터가 쉬는 중이에요 — <strong className="s2__fatigue-timer">{formatCooldown(fatigueRemainSec)}</strong> 후에 새 작곡을 지시할 수 있어요.
+            </div>
+            <div className="s2__fatigue-skip-row">
+              <button
+                type="button"
+                className="s2__fatigue-skip-btn"
+                onClick={() => handleFatigueSkip('points')}
+                disabled={fatigueSkipping !== null}
+              >
+                {fatigueSkipping === 'points'
+                  ? <><FiLoader className="s2__spin" /> 단축 중...</>
+                  : <>⭐{skipCost}로 {skipMinutes}분 단축</>}
+              </button>
+              <button
+                type="button"
+                className="s2__fatigue-skip-btn"
+                onClick={() => handleFatigueSkip('ad')}
+                disabled={fatigueSkipping !== null || adSkips <= 0}
+              >
+                {fatigueSkipping === 'ad'
+                  ? <><FiLoader className="s2__spin" /> 사용 중...</>
+                  : <>광고권으로 {skipMinutes}분 단축 (보유 {adSkips}장)</>}
+              </button>
+            </div>
+            <div className="s2__fatigue-note">
+              광고 시청은 앱에서 할 수 있어요 — 보유한 광고권은 여기서 바로 사용할 수 있습니다.
+            </div>
+          </>
+        ) : (
+          <div className="s2__fatigue-ready">
+            지금 바로 작곡을 지시할 수 있어요. 곡이 완성될 때마다 디렉터의 휴식 시간이 위 사다리만큼 늘어나요. (매일 자정 리셋)
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="s2">
       {/* ─── Mode Toggle ─── */}
@@ -1945,6 +2202,9 @@ export default function StudioTab2({ onSendToUpload }) {
             <div className="s2__char-count">{simplePrompt.length} / 1,000</div>
           </div>
 
+          {/* v158 — 디렉터 피로 게이지 (작곡 스텝) */}
+          {renderFatiguePanel()}
+
           {error && <div className="s2__msg s2__msg--error">{error}</div>}
           {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
 
@@ -1956,11 +2216,11 @@ export default function StudioTab2({ onSendToUpload }) {
             {simpleSubmitting ? (
               <><FiLoader className="s2__spin" /> AI가 가사를 쓰고 음악을 생성하고 있습니다...</>
             ) : (
-              <><FiMusic /> 음악 생성하기</>
+              <><FiMusic /> 음악 생성하기 <span className="s2__cost-badge">⭐{pointCosts.lyrics + pointCosts.compose}</span></>
             )}
           </button>
           <div className="s2__note">
-            {'ChatGPT가 가사를 자동 생성하고, Suno AI가 음악을 만듭니다.'}
+            {`ChatGPT가 가사를 자동 생성하고, Suno AI가 음악을 만듭니다. (작사 ⭐${pointCosts.lyrics} + 작곡 ⭐${pointCosts.compose})`}
           </div>
         </div>
       )}
@@ -2223,7 +2483,7 @@ export default function StudioTab2({ onSendToUpload }) {
             ) : (
               <>
                 <FiEdit3 />
-                AI 가사 생성하기
+                AI 가사 생성하기 <span className="s2__cost-badge">⭐{pointCosts.lyrics}</span>
               </>
             )}
           </button>
@@ -2386,7 +2646,7 @@ export default function StudioTab2({ onSendToUpload }) {
               disabled={generatingLyrics}
             >
               <FiRefreshCw className={generatingLyrics ? 's2__spin' : ''} />
-              가사 재생성
+              가사 재생성 <span className="s2__cost-badge">⭐{pointCosts.lyrics}</span>
             </button>
             <button className="s2__submit s2__submit--next" onClick={handleConfirmLyrics}>
               가사 확정 <FiArrowRight />
@@ -2398,6 +2658,9 @@ export default function StudioTab2({ onSendToUpload }) {
       {/* ─── Step 3: Music Generation Settings ─── */}
       {step === 3 && (
         <div className="s2__form">
+          {/* v158 — 디렉터 피로 게이지 (작곡 스텝) */}
+          {renderFatiguePanel()}
+
           {/* Preview confirmed lyrics */}
           <div className="s2__preview">
             <div className="s2__preview-header">
@@ -3165,6 +3428,9 @@ export default function StudioTab2({ onSendToUpload }) {
             )}
           </div>
 
+          {/* v158 — 디렉터 피로 게이지 (작곡 제출 직전) */}
+          {renderFatiguePanel()}
+
           {error && <div className="s2__msg s2__msg--error">{error}</div>}
           {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
 
@@ -3180,7 +3446,7 @@ export default function StudioTab2({ onSendToUpload }) {
               {submitting ? (
                 <><FiLoader className="s2__spin" /> 생성 요청 중...</>
               ) : (
-                <><FiZap /> 생성하기 <FiArrowRight /></>
+                <><FiZap /> 생성하기 <span className="s2__cost-badge">⭐{pointCosts.compose}</span> <FiArrowRight /></>
               )}
             </button>
           </div>
@@ -3398,7 +3664,7 @@ export default function StudioTab2({ onSendToUpload }) {
                   <div className="s2__gen-actions">
                     {gen.status === 'failed' && (
                       <button className="s2__gen-retry" onClick={() => handleRetry(gen.id)}>
-                        <FiRefreshCw /> 재시도
+                        <FiRefreshCw /> 재시도 <span className="s2__cost-badge">⭐{pointCosts.compose}</span>
                       </button>
                     )}
                     <button

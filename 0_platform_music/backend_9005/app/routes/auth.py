@@ -43,6 +43,10 @@ _DEMO_FIELDS = ("birth_date", "gender", "region")
 
 # GuardSquad — 보호자 동의 토큰 만료 (requested_at 기준 판정)
 GUARDIAN_TOKEN_TTL_HOURS = 72
+
+# v160 ①엔터명 정규화 — 접미어 리터럴("엔터"/"Ent." 등 변형은 스코프 외) + DB varchar(100) 정합
+COMPANY_NAME_SUFFIX = "엔터테인먼트"
+COMPANY_NAME_MAX_LEN = 100
 # 보호자 연락처 형식 (숫자/+/-/공백, 8~20자) — 값 자체는 로그 금지
 _GUARDIAN_PHONE_RE = re.compile(r"^[0-9+\-\s]{8,20}$")
 
@@ -57,6 +61,26 @@ def _parse_sns_links_value(value) -> list:
         except Exception:
             return []
     return value if isinstance(value, list) else []
+
+
+def _normalize_company_name(value):
+    """v160 ①엔터테인먼트명 정규화 (설계 1) — trim 후 "엔터테인먼트"로 안 끝나면
+    " 엔터테인먼트"(공백 1개+접미어) 추가, 이미 끝나면 중복 없이 그대로(trim 만).
+    빈값/None 은 무변경 통과. 값 원문 로그 금지 — appended bool 만.
+
+    반환 (normalized, error): 정규화 결과가 100자(컬럼 제한) 초과면 (None, 에러메시지).
+    """
+    if value is None:
+        return value, None
+    trimmed = value.strip()
+    if not trimmed:
+        return value, None
+    appended = not trimmed.endswith(COMPANY_NAME_SUFFIX)
+    normalized = f"{trimmed} {COMPANY_NAME_SUFFIX}" if appended else trimmed
+    if len(normalized) > COMPANY_NAME_MAX_LEN:
+        return None, "엔터테인먼트명이 너무 깁니다. 100자 이내로 입력해주세요."
+    logger.info("[auth] company_name normalized appended=%s", appended)
+    return normalized, None
 
 
 def _mask_email(email: str) -> str:
@@ -172,6 +196,11 @@ async def register(body: UserCreate, conn=Depends(get_pg)):
         logger.warning("[auth] register nationality_invalid email=%s", _mask_email(body.email))
         return JSONResponse(status_code=400, content={"error": nat_err})
 
+    # v160 ①엔터명 정규화 — 접미어 자동 추가(중복 방지) + 100자 가드
+    company_name_value, company_err = _normalize_company_name(body.company_name)
+    if company_err:
+        return JSONResponse(status_code=400, content={"error": company_err})
+
     birth_date_value, _ = parse_birth_date(body.birth_date)  # 검증 통과 후라 에러 없음
 
     # GuardSquad — 만14세 미만 게이트 (만나이 기준). register 경로는 항상 거부 —
@@ -197,7 +226,7 @@ async def register(body: UserCreate, conn=Depends(get_pg)):
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10)
            RETURNING id, email, nickname, company_name, display_title, birth_date, gender, region, nationality, account_status, role""",
         body.email, password_hash, body.nickname,
-        body.company_name, body.display_title or "대표",
+        company_name_value, body.display_title or "대표",
         birth_date_value, body.gender, body.region, body.nationality,
         referrer_row["id"] if referrer_row else None,
     )
@@ -217,6 +246,14 @@ async def register(body: UserCreate, conn=Depends(get_pg)):
     role = row["role"] or "user"
     demo_count = sum(1 for f in _DEMO_FIELDS if getattr(body, f) is not None)
     logger.info("[auth] register ok user=%s demo_fields=%d", user_id[:8], demo_count)
+
+    # StarEconSquad(v158) — 첫 가입 보너스 ⭐+50 (best-effort — Mongo 다운이어도
+    # 가입 201 유지). day="-" + ref="-" → (유저, signup_bonus) 영구 1회 멱등.
+    try:
+        await credit_points(user_id, "signup_bonus", 50, ref="-", day="-")
+        logger.info("[star-econ] signup_bonus +50 user=%s", user_id[:8])
+    except Exception:
+        logger.exception("[star-econ] signup_bonus failed user=%s", user_id[:8])
 
     # ReferralSquad(v154) — 가입 보상 ⭐50×2 (best-effort — Mongo 다운이어도 가입 201 유지).
     # credit_points 에 day="-" 명시 필수: 생략 시 KST 오늘이 멱등키에 들어가
@@ -383,6 +420,15 @@ async def update_profile(
         if sns_err:
             logger.warning("[profile] sns_links invalid user=%s", str(current_user["id"])[:8])
             return JSONResponse(status_code=400, content={"error": sns_err})
+
+    # v160 ①엔터명 정규화 — company_name 전달 시 접미어 자동 추가 + 100자 가드
+    # (명시적 null 은 지우기로 무변경 통과). 값 원문 로그 금지.
+    if "company_name" in updates:
+        normalized_company, company_err = _normalize_company_name(updates["company_name"])
+        if company_err:
+            logger.warning("[profile] company_name too long user=%s", str(current_user["id"])[:8])
+            return JSONResponse(status_code=400, content={"error": company_err})
+        updates["company_name"] = normalized_company
 
     # GuardSquad — nationality 수정 허용 (자기신고: domestic/foreign/null, 인증잠금과 무관)
     if "nationality" in updates:
@@ -577,6 +623,11 @@ async def guardian_consent_request(body: GuardianConsentRequest, conn=Depends(ge
     if nat_err:
         return JSONResponse(status_code=400, content={"error": nat_err})
 
+    # v160 ①엔터명 정규화 — 아동(보호자동의) 가입 경로도 동일 적용
+    company_name_value, company_err = _normalize_company_name(body.company_name)
+    if company_err:
+        return JSONResponse(status_code=400, content={"error": company_err})
+
     birth_date_value, _ = parse_birth_date(body.birth_date)
     if birth_date_value is None:
         return JSONResponse(status_code=400, content={"error": "birth_date 는 필수입니다."})
@@ -604,7 +655,7 @@ async def guardian_consent_request(body: GuardianConsentRequest, conn=Depends(ge
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consent')
            RETURNING id""",
         body.email, password_hash, body.nickname,
-        body.company_name, body.display_title or "대표",
+        company_name_value, body.display_title or "대표",
         birth_date_value, body.gender, body.region, body.nationality,
     )
     child_user_id = user_row["id"]

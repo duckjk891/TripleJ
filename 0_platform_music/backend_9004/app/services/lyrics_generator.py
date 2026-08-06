@@ -430,9 +430,14 @@ async def _generate_lyrics_claude(
 
     # v77 — 단일 호출로 title+lyrics+categories 를 JSON 한 번에 산출.
     # Claude 는 response_format 미지원 → 시스템프롬프트로 JSON 강제.
+    # v161 — system 전체가 고정(카테고리 리스트 포함 상수)이므로 1블록 + cache_control.
+    # 실측 ~1.2-1.5k tok < opus-4-6 최소 4096 → 캐싱 비적용(길이 미달) 예상이나
+    # 마커는 무과금·무해 — 모델 상향 시 자동 활성. [cache] 로그의 create=0 이 증거.
+    from .claude_cache import cached_system, log_cache_usage
+
     lyrics_kwargs = {
         "model": model,
-        "system": system_prompt,
+        "system": cached_system(system_prompt),
         "messages": [{"role": "user", "content": user_message}],
         # v75.2 — adaptive thinking 토큰까지 한도에서 차감되므로 16000 으로 상향.
         "max_tokens": 16000,
@@ -445,6 +450,7 @@ async def _generate_lyrics_claude(
         model,
     )
     lyrics_response = await client.messages.create(**lyrics_kwargs)
+    log_cache_usage("lyrics_json", model, getattr(lyrics_response, "usage", None))
 
     raw = _first_text_block(lyrics_response).strip()
     parsed = _parse_lyrics_json(raw)

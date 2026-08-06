@@ -42,10 +42,7 @@ API.interceptors.response.use(
       }
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      try {
-        sessionStorage.removeItem('cachedCharacter');
-        sessionStorage.removeItem('cachedCharacterAt');
-      } catch { /* ignore */ }
+      clearMyCharacterCache(); // 강제 로그아웃 시 캐릭터 캐시 정리 (구키 cachedCharacter* 는 폐기됨)
       const path = window.location.pathname || '';
       if (!path.startsWith('/login') && !path.startsWith('/register')) {
         try {
@@ -223,6 +220,9 @@ export const getChart = (chartType) =>
 
 export const recordPlay = (trackId) =>
   API.post('/charts/record-play', { track_id: trackId });
+
+// v160 — 70% 청취 시 재생 기록(A안) 임계값. PlayerContext / useFeedAudio 공용.
+export const PLAY_RECORD_RATIO = 0.7;
 
 // Playlists
 export const getPlaylists = () =>
@@ -403,34 +403,59 @@ export const generateCharacterSheetCartoonAsync = (formData) =>
 export const getCharacterJob = (jobId) =>
   API.get(`/character/job/${jobId}`);
 
+// ── 캐릭터 캐시 (v162 계정격리 픽스) ─────────────────────────
+// 키에 사용자 id 를 포함해 계정 전환 시 이전 계정 캐시를 절대 읽지 못하게 한다.
+// (구버전 키 'aimu:myCharacter'(무스코프)/'cachedCharacter' 는 폐기 — 정리 함수가 함께 제거)
+function myCharacterCacheKey() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    return u?.id ? `aimu:myCharacter:${u.id}` : null; // 비로그인 시 캐시 미사용
+  } catch { return null; }
+}
+// 로그아웃/계정전환/강제로그아웃 시 캐릭터 캐시 전부 제거 (레거시 키 포함)
+export function clearMyCharacterCache() {
+  try {
+    const doomed = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const k = sessionStorage.key(i);
+      if (k && (k.startsWith('aimu:myCharacter') || k.startsWith('cachedCharacter'))) doomed.push(k);
+    }
+    doomed.forEach((k) => sessionStorage.removeItem(k));
+  } catch { /* ignore */ }
+}
+
 // variant: 'real'(기본, 실사 슬롯) | 'virtual'(가상 슬롯). 호출부에서 'virtual' 지정 가능.
 export const saveCharacter = async (data) => {
   const payload = { ...data, variant: data?.variant || 'real' };
   const resp = await API.post('/character/save', payload);
-  try { sessionStorage.removeItem('aimu:myCharacter'); } catch { /* ignore */ }
+  clearMyCharacterCache();
   return resp;
 };
 export const getMyCharacter = async () => {
-  const CACHE_KEY = 'aimu:myCharacter';
+  const cacheKey = myCharacterCacheKey();
   const TTL_MS = 5 * 60 * 1000; // 5분
-  try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (raw) {
-      const cached = JSON.parse(raw);
-      if (cached.ts && Date.now() - cached.ts < TTL_MS) {
-        return { data: cached.data };
+  if (cacheKey) {
+    try {
+      const raw = sessionStorage.getItem(cacheKey);
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (cached.ts && Date.now() - cached.ts < TTL_MS) {
+          return { data: cached.data };
+        }
       }
-    }
-  } catch { /* ignore */ }
+    } catch { /* ignore */ }
+  }
   const resp = await API.get('/character/me');
-  try {
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: resp.data }));
-  } catch { /* ignore */ }
+  if (cacheKey) {
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: resp.data }));
+    } catch { /* ignore */ }
+  }
   return resp;
 };
 export const deleteMyCharacter = async () => {
   const resp = await API.delete('/character/me');
-  try { sessionStorage.removeItem('aimu:myCharacter'); } catch { /* ignore */ }
+  clearMyCharacterCache();
   return resp;
 };
 export const refineCharacterSheet = (formData) =>
@@ -824,6 +849,33 @@ export const getRewardBalance = () => API.get('/rewards/balance');
 // Points
 export const getPointsBalance = () => API.get('/points/balance');
 export const getPointsHistory = (limit = 50) => API.get('/points/history', { params: { limit } });
+
+// v158 — 별(⭐) 경제 v1.2: 소비 가격 단일 소스 (FE 하드코딩 드리프트 방지)
+// → { costs: { lyrics:5, compose:15, cover:5, character:10, fatigue_skip:5 } } — "costs" 래핑 주의
+export const getPointCosts = () => API.get('/points/costs');
+
+// v158 — 디렉터 피로 시스템
+// → { today_completed, cooldown_active, cooldown_until(iso|null — 쿨다운 없으면 null),
+//     cooldown_remaining_sec, skip_point_cost:5, skip_minutes:30,
+//     ladder: {"1":2,"2":4,"3":8,"4+":12}(시간), skip_wait_count(보유 광고권) }
+export const getFatigueStatus = () => API.get('/fatigue/status');
+// method: 'points'(⭐ 차감) | 'ad'(보유 광고권 skip_wait_count 1장 소비) → 쿨다운 30분 단축(반복 가능).
+// 성공 200 = status 동일 payload + skipped_minutes:30 (레이스로 0 가능 = 이미 해제).
+// 402(points: 별 부족 / ad: {"error":"no_skip_tickets"}) · 409(활성 쿨다운 없음 — 무과금)
+export const skipFatigue = (method) => API.post('/fatigue/skip', { method });
+
+// v158 — 402/429 공통 판별 헬퍼 (:isGenerationRestricted 403 선례와 동일 패턴)
+// BE 순서: 403(스트라이크) → 429(피로, Retry-After) → 402(별 부족)
+export const isInsufficientPoints = (err) => err?.response?.status === 402;
+export const isDirectorFatigued = (err) => err?.response?.status === 429;
+
+// v158 — 포인트 변동(과금/환불/스킵/적립) 직후 헤더 ⭐배지 실시간 갱신 통지.
+// Header.jsx 가 이 이벤트를 구독해 잔액을 재조회한다.
+export const notifyPointsRefresh = () => {
+  try {
+    window.dispatchEvent(new Event('aimu:points-refresh'));
+  } catch { /* SSR/테스트 등 window 부재 환경 무시 */ }
+};
 
 // Attendance (출석체크 / 데일리 체크인) — 보상은 별(⭐) 포인트
 export const getAttendanceStatus = () => API.get('/attendance/status');

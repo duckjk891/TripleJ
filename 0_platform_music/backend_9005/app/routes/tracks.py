@@ -1172,12 +1172,14 @@ async def upload_track(
     await mongo.tracks.insert_one(doc)
     logger.info("[tracks] publish track_id=%s cats=%s", str(track_id), categories_list)
 
-    # Points — best-effort +1 for publishing a track (never affects the upload).
+    # StarEcon(v158) — 발매 보상 ⭐+5 (best-effort, never affects the upload).
+    # day="-" + ref=track_id → 트랙당 영구 1회 멱등 (재호출/재발매 중복 없음).
     try:
-        from ..services.points_service import award_point
-        await award_point(uploader_id, "upload", str(track_id))
+        from ..services.points_service import credit_points
+        await credit_points(uploader_id, "upload", 5, ref=str(track_id), day="-")
+        logger.info("[star-econ] upload +5 user=%s track=%s", uploader_id[:8], str(track_id))
     except Exception as e:
-        logger.warning("[points] upload hook failed: %s", e)
+        logger.warning("[star-econ] upload hook failed: %s", e)
 
     # v44 — fire-and-forget beat extraction in a fresh event loop
     from ..services.beat_extraction import run_track_beat_extraction_in_background
@@ -1432,12 +1434,14 @@ async def upload_from_generation(
     )
     logger.info("[tracks] publish track_id=%s cats=%s", str(track_id), categories_list)
 
-    # Points — best-effort +1 for publishing a track (never affects the upload).
+    # StarEcon(v158) — 발매 보상 ⭐+5 (best-effort, never affects the upload).
+    # day="-" + ref=track_id → 트랙당 영구 1회 멱등 (재호출/재발매 중복 없음).
     try:
-        from ..services.points_service import award_point
-        await award_point(uploader_id, "upload", str(track_id))
+        from ..services.points_service import credit_points
+        await credit_points(uploader_id, "upload", 5, ref=str(track_id), day="-")
+        logger.info("[star-econ] upload +5 user=%s track=%s", uploader_id[:8], str(track_id))
     except Exception as e:
-        logger.warning("[points] upload hook failed: %s", e)
+        logger.warning("[star-econ] upload hook failed: %s", e)
 
     # Update generation with result_track_id
     await mongo.generations.update_one(

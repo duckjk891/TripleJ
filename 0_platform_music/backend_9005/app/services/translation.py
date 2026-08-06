@@ -108,6 +108,11 @@ async def _call_anthropic_translation(
     )
 
     resp = await client.messages.create(**kwargs)
+    # v161 — 캐싱 비적용(system ~150-250 tok < opus-4-7 최소 2048 — 마커 미부착.
+    # context_hint 가 system 중간 삽입되는 구조도 캐시 무효 요인). [cache] 로깅만 부착.
+    from app.services.claude_cache import log_cache_usage
+
+    log_cache_usage("translation", TRANSLATION_MODEL_ID, getattr(resp, "usage", None))
     # v75 — adaptive thinking 응답은 [ThinkingBlock, TextBlock] 순서. 안전 추출 헬퍼 사용.
     raw = _first_text_block(resp)
     if not raw:

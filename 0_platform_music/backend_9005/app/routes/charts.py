@@ -204,7 +204,8 @@ async def record_play(
     # MUST NOT affect the play response or chart logic on failure.
     try:
         from ..services.points_service import award_point
-        await award_point(user_id, "play", track_id)
+        # StarEcon(v158) — 재생 +1 은 하루 5곡 상한 (곡별 멱등은 기존 유지)
+        await award_point(user_id, "play", track_id, daily_cap=5)
     except Exception as _pt_exc:
         logger.warning("[points] play hook failed user=%s track=%s: %s", user_id, track_id, _pt_exc)
 

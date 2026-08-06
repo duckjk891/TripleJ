@@ -50,9 +50,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   // extra: 선택 인구통계 { birth_date?, gender?, region? } — 값이 있는 키만 담아 전달.
-  // (companyName/displayTitle 은 기존과 동일하게 api.register 페이로드에 미포함)
+  // v160 — companyName/displayTitle 을 페이로드에 포함(기존 갭 수정: 인자로 받고도 미전송되어
+  // company_name 이 NULL 저장 → RegisterPage 자동접미가 화면 표시만 되던 문제).
+  // 값이 빈 문자열이면 키 자체를 생략(기존 "값 있는 키만 포함" extra 관행 유지) —
+  // 백엔드 UserCreate 가 company_name/display_title 을 받아 정규화·저장한다.
   const register = useCallback(async (email, password, nickname, companyName, displayTitle, extra) => {
-    const { data } = await api.register(email, password, nickname, extra);
+    const payload = { ...(extra && typeof extra === 'object' ? extra : {}) };
+    if (companyName) payload.company_name = companyName;
+    if (displayTitle) payload.display_title = displayTitle;
+    const { data } = await api.register(email, password, nickname, payload);
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
     setAttendancePromptFlag();
@@ -81,6 +87,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     clearAttendancePromptFlag();
+    api.clearMyCharacterCache(); // v162 — 계정 전환 시 이전 계정 캐릭터 캐시 잔존 방지
     setUser(null);
   }, []);
 

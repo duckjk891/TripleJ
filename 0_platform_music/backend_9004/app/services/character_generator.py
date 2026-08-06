@@ -768,47 +768,72 @@ def _build_step1_answer(
     has_bottom: bool,
     has_shoes: bool,
     user_text: str = "",
+    has_photo: bool = True,
 ) -> str:
     """Assemble the STEP 1 user-answer text dynamically from item selection.
 
-    - Base: analyze the [인물 사진] (person photo) reference for appearance.
+    - Base (has_photo=True): analyze the [인물 사진] (person photo) reference for
+      appearance. `user_text` is appended as the highest-priority instruction.
+    - Base (has_photo=False, v161 텍스트-only 경로): `user_text` becomes the SOLE
+      identity source — the model concretizes gender/age/body/face/hair from the
+      description and free-generates whatever the description omits.
     - For each of top/bottom/shoes: if a reference image is attached, instruct
       the model to analyze the corresponding role-labeled image; otherwise fall
-      back to "reflect if visible in the photo, else free-generate".
-    - If `user_text` is given, append it as the highest-priority instruction.
+      back to "reflect if visible in the photo, else free-generate" (photo path)
+      or "reflect if mentioned in the description, else free-generate" (text path).
 
     Role labels (not attachment ordinals) are used so the answer stays valid no
-    matter the inline-image ordering. Result is semantically equivalent to the
-    previous 16 hardcoded `STEP1_ANSWERS` entries.
+    matter the inline-image ordering. The has_photo=True output is byte-identical
+    to the pre-v161 builder (regression-safe for the photo path).
     """
-    parts = [
-        "첨부된 [인물 사진] 참조 이미지의 외모 특징"
-        "(성별/나이/인종/체형/얼굴/머리/눈/피부톤)을 정밀 분석해 반영하라."
-        " 단, 얼굴 이목구비의 미세한 형태·비율·표정은 [인물 사진]을 직접 따르게 두고"
-        " 주관적 형용사(refined/delicate/두꺼운/얇은/자연스러운 두께 등)로 단정하지 말 것."
-        " 텍스트로는 식별용 객관 범주값(머리색/길이·안경·피부톤·눈동자색·특이점 등)과"
-        " 화풍·아이템·레이아웃 등 구조 지시만 남겨라."
-        " 추출한 위 객관 범주값 중 식별에 중요한 굵직한 특징은 반드시 구체적으로 나열하여"
-        " [고정 요소]로 고정하고, 화풍 변환 시에도 보존되도록 명시하라."
-    ]
+    text = (user_text or "").strip()
+
+    if has_photo:
+        parts = [
+            "첨부된 [인물 사진] 참조 이미지의 외모 특징"
+            "(성별/나이/인종/체형/얼굴/머리/눈/피부톤)을 정밀 분석해 반영하라."
+            " 단, 얼굴 이목구비의 미세한 형태·비율·표정은 [인물 사진]을 직접 따르게 두고"
+            " 주관적 형용사(refined/delicate/두꺼운/얇은/자연스러운 두께 등)로 단정하지 말 것."
+            " 텍스트로는 식별용 객관 범주값(머리색/길이·안경·피부톤·눈동자색·특이점 등)과"
+            " 화풍·아이템·레이아웃 등 구조 지시만 남겨라."
+            " 추출한 위 객관 범주값 중 식별에 중요한 굵직한 특징은 반드시 구체적으로 나열하여"
+            " [고정 요소]로 고정하고, 화풍 변환 시에도 보존되도록 명시하라."
+        ]
+    else:
+        # v161 — 텍스트-only: 사용자 외모 설명이 유일한 정체성 소스.
+        parts = [
+            "이번 생성에는 [인물 사진]이 첨부되지 않았다."
+            " 다음 [사용자 외모 설명]을 캐릭터의 유일한 정체성 소스로 삼아"
+            " 성별/나이/인종/체형/얼굴형/머리/눈/피부톤을 구체적으로 확정하라:"
+            " 「{}」".format(text)
+            + " 설명에 없는 요소는 K-pop 아이돌 프로필에 어울리게 자유 생성하라."
+            " 확정한 특징 중 식별에 중요한 굵직한 특징"
+            "(머리색/길이·안경·피부톤·눈동자색·특이점 등)은 반드시 구체적으로 나열하여"
+            " [고정 요소]로 고정하고, 화풍 변환 시에도 보존되도록 명시하라."
+        ]
 
     if has_top:
         parts.append("[Outfit > Top] 항목은 [상의 참조] 이미지를 분석해 반영하라.")
-    else:
+    elif has_photo:
         parts.append("상의는 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
+    else:
+        parts.append("상의는 [사용자 외모 설명]에 언급되면 반영, 없으면 자유 생성하라.")
 
     if has_bottom:
         parts.append("[Outfit > Skirt/Bottom] 항목은 [하의 참조] 이미지를 분석해 반영하라.")
-    else:
+    elif has_photo:
         parts.append("하의는 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
+    else:
+        parts.append("하의는 [사용자 외모 설명]에 언급되면 반영, 없으면 자유 생성하라.")
 
     if has_shoes:
         parts.append("[Footwear] 항목은 [신발 참조] 이미지를 분석해 반영하라.")
-    else:
+    elif has_photo:
         parts.append("신발은 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
+    else:
+        parts.append("신발은 [사용자 외모 설명]에 언급되면 반영, 없으면 자유 생성하라.")
 
-    text = (user_text or "").strip()
-    if text:
+    if text and has_photo:
         parts.append(
             "추가로 사용자가 명시한 특징을 최우선 반영하라: 「{}」"
             " 사용자 설명과 사진이 충돌하면 사용자 설명을 우선하라.".format(text)
@@ -824,11 +849,14 @@ def _build_inline_images(photo_b64, photo_mime, top_bytes, top_mime, bottom_byte
     model identify each image by role regardless of attachment order. Gemini and
     GPT image backends both accept mixed text+image parts. The cartoon path
     appends a "[화풍 참조]:" labeled style image after these parts.
+
+    v161 — photo_b64 가 falsy(텍스트-only 경로)면 [인물 사진] 파트를 생략한다.
+    사진 경로(photo_b64 truthy) 출력은 기존과 byte-identical.
     """
-    parts = [
-        {"text": "[인물 사진]:"},
-        {"inlineData": {"mimeType": photo_mime, "data": photo_b64}},
-    ]
+    parts = []
+    if photo_b64:
+        parts.append({"text": "[인물 사진]:"})
+        parts.append({"inlineData": {"mimeType": photo_mime, "data": photo_b64}})
     if top_bytes:
         parts.append({"text": "[상의 참조]:"})
         parts.append({
@@ -854,6 +882,24 @@ def _build_inline_images(photo_b64, photo_mime, top_bytes, top_mime, bottom_byte
             }
         })
     return parts
+
+
+def _adapt_prompt_for_text_only(prompt: str) -> str:
+    """v161 — 텍스트-only(사진 미첨부) 경로 전용: 프롬프트의 사진 전제 문구를
+    STEP 1 의 [사용자 외모 설명] 기준으로 치환한다.
+
+    사진 경로에서는 호출되지 않으므로 기존 사진 경로 프롬프트는 byte-identical 로
+    유지된다. 치환 대상:
+      - "[인물 사진]" 참조 → "STEP 1 의 [사용자 외모 설명]" (정체성 소스 교체)
+      - "…을 직접 관찰하여 그대로 따른다" → "…을 기준으로 구체화한다" (텍스트에는 관찰 불가)
+      - "사진을 따른다" → "설명을 따른다"
+      - "원본 인물" → "설명된 인물"
+    """
+    p = prompt.replace("[인물 사진]", "STEP 1 의 [사용자 외모 설명]")
+    p = p.replace("을 직접 관찰하여 그대로 따른다", "을 기준으로 구체화한다")
+    p = p.replace("사진을 따른다", "설명을 따른다")
+    p = p.replace("원본 인물", "설명된 인물")
+    return p
 
 
 def _extract_code_block(text: str) -> str:
@@ -994,7 +1040,7 @@ async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
 
 
 async def generate_character_sheet(
-    photo_bytes: bytes,
+    photo_bytes: bytes = None,
     mime_type: str = "image/jpeg",
     top_bytes: bytes = None,
     top_mime: str = None,
@@ -1015,9 +1061,14 @@ async def generate_character_sheet(
     those images for the corresponding outfit sections.
     Optional user_text adds user-described character traits with highest priority.
 
+    v161 — photo_bytes 는 Optional. None(텍스트-only 경로)이면 user_text 가 유일한
+    정체성 소스가 되고, [인물 사진] 파트/문구가 전부 텍스트 설명 참조로 대체된다.
+    사진 경로(photo_bytes 존재) 프롬프트는 기존과 byte-identical.
+
     Returns PNG bytes of the character sheet image.
     """
-    photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
+    has_photo = bool(photo_bytes)
+    photo_b64 = base64.b64encode(photo_bytes).decode("utf-8") if has_photo else None
 
     # Dynamically assemble STEP 1 answer from item selection + user_text
     # (role labels only — no attachment ordinals).
@@ -1026,6 +1077,7 @@ async def generate_character_sheet(
         has_bottom=bool(bottom_bytes),
         has_shoes=bool(shoes_bytes),
         user_text=user_text,
+        has_photo=has_photo,
     )
 
     # Build inline image parts (role-labeled photo + any outfit images)
@@ -1036,9 +1088,9 @@ async def generate_character_sheet(
         shoes_bytes, shoes_mime,
     )
     logger.info(
-        "[CharGen] items=top:%s/bottom:%s/shoes:%s text=%s parts=%d",
+        "[CharGen] items=top:%s/bottom:%s/shoes:%s text=%s photo=%s parts=%d",
         bool(top_bytes), bool(bottom_bytes), bool(shoes_bytes),
-        bool(user_text), len(image_parts),
+        bool(user_text), has_photo, len(image_parts),
     )
 
     # ── Step A: Generate character sheet prompt via text model ──────────────
@@ -1058,13 +1110,25 @@ async def generate_character_sheet(
     )
 
     # ── Step B: Generate character sheet image via image model ──────────────
-    step_b_prompt = (
-        "아래의 캐릭터 시트 프롬프트를 기반으로 캐릭터 시트 이미지를 생성하라.\n"
-        "[인물 사진] 라벨이 붙은 이미지는 이 캐릭터의 참조 사진이다. "
-        "생성되는 캐릭터는 반드시 이 참조 사진 속 인물과 동일한 외모를 가져야 한다.\n\n"
-        "=== 캐릭터 시트 프롬프트 ===\n\n"
-        "{}"
-    ).format(sheet_prompt_text)
+    if has_photo:
+        step_b_prompt = (
+            "아래의 캐릭터 시트 프롬프트를 기반으로 캐릭터 시트 이미지를 생성하라.\n"
+            "[인물 사진] 라벨이 붙은 이미지는 이 캐릭터의 참조 사진이다. "
+            "생성되는 캐릭터는 반드시 이 참조 사진 속 인물과 동일한 외모를 가져야 한다.\n\n"
+            "=== 캐릭터 시트 프롬프트 ===\n\n"
+            "{}"
+        ).format(sheet_prompt_text)
+    else:
+        # v161 — 텍스트-only: 인물 참조 사진 없음. 시트 프롬프트(STEP 1 사용자 외모
+        # 설명 기반)가 유일한 외모 기준.
+        step_b_prompt = (
+            "아래의 캐릭터 시트 프롬프트를 기반으로 캐릭터 시트 이미지를 생성하라.\n"
+            "이번 생성에는 인물 참조 사진이 없다. 캐릭터의 외모 정체성은 아래 캐릭터 시트 "
+            "프롬프트(사용자 외모 설명 기반)에 명시된 특징을 유일한 기준으로 삼아 "
+            "4개 섹션 모두에서 일관되게 그려야 한다.\n\n"
+            "=== 캐릭터 시트 프롬프트 ===\n\n"
+            "{}"
+        ).format(sheet_prompt_text)
 
     logger.info(
         "Step B: Generating character sheet image via image_model=%s",
@@ -1079,7 +1143,7 @@ async def generate_character_sheet(
 
 
 async def generate_character_sheet_cartoon(
-    photo_bytes: bytes,
+    photo_bytes: bytes = None,
     mime_type: str = "image/jpeg",
     top_bytes: bytes = None,
     top_mime: str = None,
@@ -1108,9 +1172,14 @@ async def generate_character_sheet_cartoon(
     "1990s retro manga style", or "the art style of the attached style
     reference image" (when the user uploaded their own style image).
 
+    v161 — photo_bytes 는 Optional. None(텍스트-only 경로)이면 user_text 가 유일한
+    정체성 소스가 되고, MASTER_PROMPT_CARTOON 의 "정체성은 오직 [인물 사진]" 규칙이
+    "STEP 1 의 [사용자 외모 설명]" 참조로 치환된다 (사진 경로 byte-identical).
+
     Returns PNG bytes of the cartoon character sheet image.
     """
-    photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
+    has_photo = bool(photo_bytes)
+    photo_b64 = base64.b64encode(photo_bytes).decode("utf-8") if has_photo else None
 
     # Dynamically assemble STEP 1 answer (same builder as realistic — role labels).
     step1_answer = _build_step1_answer(
@@ -1118,6 +1187,7 @@ async def generate_character_sheet_cartoon(
         has_bottom=bool(bottom_bytes),
         has_shoes=bool(shoes_bytes),
         user_text=user_text,
+        has_photo=has_photo,
     )
 
     # Build inline image parts (role-labeled photo + items), then append the
@@ -1139,21 +1209,28 @@ async def generate_character_sheet_cartoon(
         })
 
     logger.info(
-        "[CharGen] mode=cartoon items=top:%s/bottom:%s/shoes:%s text=%s "
+        "[CharGen] mode=cartoon items=top:%s/bottom:%s/shoes:%s text=%s photo=%s "
         "style_ref=%s art_style=%s image_model=%s parts=%d",
         bool(top_bytes), bool(bottom_bytes), bool(shoes_bytes),
-        bool(user_text), has_style_ref, art_style_label, image_model,
+        bool(user_text), has_photo, has_style_ref, art_style_label, image_model,
         len(image_parts),
     )
 
     # ── Step A: Generate cartoon character sheet prompt via text model ──────
+    # v161 — 텍스트-only 시 MASTER_PROMPT_CARTOON 의 사진 전제 문구("정체성은 오직
+    # [인물 사진]" 등)를 format 전에 STEP 1 사용자 외모 설명 참조로 치환한다
+    # (step1_answer 본문은 치환 대상 아님). 사진 경로는 원본 템플릿 그대로.
+    master_cartoon = (
+        MASTER_PROMPT_CARTOON if has_photo
+        else _adapt_prompt_for_text_only(MASTER_PROMPT_CARTOON)
+    )
     step_a_prompt = (
         "아래 마스터 프롬프트의 절차를 따라 그림/만화 화풍 캐릭터 시트 프롬프트를 생성하라.\n"
         "STEP 1, STEP 2에는 이미 사용자 답변이 포함되어 있으므로 "
         "질문 단계를 건너뛰고 바로 STEP 4부터 진행하여 "
         "최종 캐릭터 시트 프롬프트를 코드블록으로 출력하라.\n"
         "[화풍 참조] 라벨이 붙은 이미지가 화풍(Art Style) reference 이미지다.\n\n"
-        + MASTER_PROMPT_CARTOON.format(
+        + master_cartoon.format(
             step1_answer=step1_answer, art_style=art_style_label
         )
     )
@@ -1175,23 +1252,41 @@ async def generate_character_sheet_cartoon(
         " [화풍 참조] 라벨 이미지가 화풍 reference 이미지다 — 이 스타일을 충실히 따르라."
         if has_style_ref else ""
     )
-    step_b_prompt = (
-        "아래의 캐릭터 시트 프롬프트를 기반으로 그림/만화 화풍 캐릭터 시트 이미지를 생성하라.\n"
-        "[인물 사진] 라벨 이미지는 이 캐릭터의 인물 참조 사진이다. "
-        "생성되는 캐릭터는 이 인물의 외모적 정체성을 유지하되, 실사가 아니라 "
-        "'{}' 화풍으로 변환하여 그려야 한다.\n"
-        "선택된 아이템([상의 참조]/[하의 참조]/[신발 참조] 라벨 이미지)은 현실 의류 이미지이지만 "
-        "그대로 사실적으로 그리지 말고 동일 화풍으로 변환하여 캐릭터가 착용한 상태로 그려라.{}\n"
-        "정체성(얼굴/이목구비/머리/체형)은 [인물 사진]에서만 가져오고, "
-        "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만). "
-        "얼굴 이목구비의 미세한 형태·비율·표정은 [인물 사진]을 직접 따르고, 텍스트 시트의 "
-        "주관적 형용사 묘사가 아니라 사진 자체를 기하 기준으로 삼아라. 텍스트 시트는 객관 "
-        "범주값(머리색/길이/안경/피부톤/눈동자색/특이점)과 화풍·아이템·레이아웃 구조 지시로 활용하라. "
-        "아래 캐릭터 시트 프롬프트에 명시된 인물의 식별 특징(머리/안경/피부톤/눈동자색 등)을 "
-        "반드시 유지하라. 과도한 스타일화로 정체성을 덮지 말고, 원본 인물을 알아볼 수 있게 그려라.\n\n"
-        "=== 캐릭터 시트 프롬프트 ===\n\n"
-        "{}"
-    ).format(art_style_label, style_ref_note, sheet_prompt_text)
+    if has_photo:
+        step_b_prompt = (
+            "아래의 캐릭터 시트 프롬프트를 기반으로 그림/만화 화풍 캐릭터 시트 이미지를 생성하라.\n"
+            "[인물 사진] 라벨 이미지는 이 캐릭터의 인물 참조 사진이다. "
+            "생성되는 캐릭터는 이 인물의 외모적 정체성을 유지하되, 실사가 아니라 "
+            "'{}' 화풍으로 변환하여 그려야 한다.\n"
+            "선택된 아이템([상의 참조]/[하의 참조]/[신발 참조] 라벨 이미지)은 현실 의류 이미지이지만 "
+            "그대로 사실적으로 그리지 말고 동일 화풍으로 변환하여 캐릭터가 착용한 상태로 그려라.{}\n"
+            "정체성(얼굴/이목구비/머리/체형)은 [인물 사진]에서만 가져오고, "
+            "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만). "
+            "얼굴 이목구비의 미세한 형태·비율·표정은 [인물 사진]을 직접 따르고, 텍스트 시트의 "
+            "주관적 형용사 묘사가 아니라 사진 자체를 기하 기준으로 삼아라. 텍스트 시트는 객관 "
+            "범주값(머리색/길이/안경/피부톤/눈동자색/특이점)과 화풍·아이템·레이아웃 구조 지시로 활용하라. "
+            "아래 캐릭터 시트 프롬프트에 명시된 인물의 식별 특징(머리/안경/피부톤/눈동자색 등)을 "
+            "반드시 유지하라. 과도한 스타일화로 정체성을 덮지 말고, 원본 인물을 알아볼 수 있게 그려라.\n\n"
+            "=== 캐릭터 시트 프롬프트 ===\n\n"
+            "{}"
+        ).format(art_style_label, style_ref_note, sheet_prompt_text)
+    else:
+        # v161 — 텍스트-only: 인물 참조 사진 없음. 시트 프롬프트(STEP 1 사용자 외모
+        # 설명 기반)가 유일한 정체성 기준. 화풍/아이템 규칙은 사진 경로와 동일 유지.
+        step_b_prompt = (
+            "아래의 캐릭터 시트 프롬프트를 기반으로 그림/만화 화풍 캐릭터 시트 이미지를 생성하라.\n"
+            "이번 생성에는 인물 참조 사진이 없다. 캐릭터의 외모 정체성은 아래 캐릭터 시트 "
+            "프롬프트(사용자 외모 설명 기반)에 명시된 특징을 유일한 기준으로 삼아, 실사가 아니라 "
+            "'{}' 화풍으로 4개 섹션 모두에서 일관되게 그려야 한다.\n"
+            "선택된 아이템([상의 참조]/[하의 참조]/[신발 참조] 라벨 이미지)은 현실 의류 이미지이지만 "
+            "그대로 사실적으로 그리지 말고 동일 화풍으로 변환하여 캐릭터가 착용한 상태로 그려라.{}\n"
+            "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만 차용). "
+            "아래 캐릭터 시트 프롬프트에 명시된 인물의 식별 특징(머리/안경/피부톤/눈동자색 등)을 "
+            "반드시 유지하라. 과도한 스타일화로 정체성을 덮지 말고, 설명된 인물의 특징을 "
+            "알아볼 수 있게 그려라.\n\n"
+            "=== 캐릭터 시트 프롬프트 ===\n\n"
+            "{}"
+        ).format(art_style_label, style_ref_note, sheet_prompt_text)
 
     logger.info(
         "[CharGenCartoon] Step B: generating image via image_model=%s",

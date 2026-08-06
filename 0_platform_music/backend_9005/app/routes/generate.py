@@ -25,6 +25,7 @@ from ..auth import get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from ..services.points_service import POINT_COSTS, refund_points, spend_points
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,67 @@ def _serialize(doc: dict) -> dict:
     return doc
 
 
+async def _fatigue_gate_response(user_id: str):
+    """StarEcon(v158) — 디렉터 피로 게이트. 활성 쿨다운이면 429 응답, 아니면 None.
+
+    응답: {"error":"director_fatigue", ...} + Retry-After 헤더(남은 초).
+    게이트 순서는 항상 스트라이크 403 → 피로 429 → 잔액 402.
+    """
+    from ..services.fatigue_service import check_gate
+
+    remaining = await check_gate(user_id)
+    if remaining <= 0:
+        return None
+    until = datetime.now(timezone.utc) + timedelta(seconds=remaining)
+    logger.info("[fatigue] compose gated user=%s remaining=%ds", user_id[:8], remaining)
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "director_fatigue",
+            "message": "디렉터가 휴식 중입니다. 쿨다운이 끝난 뒤 다시 시도하거나 스킵을 이용해주세요.",
+            "cooldown_remaining_sec": remaining,
+            "cooldown_until": until.isoformat(),
+        },
+        headers={"Retry-After": str(remaining)},
+    )
+
+
+async def refund_generation_points(mongo_db, generation_id: str) -> bool:
+    """실패한 작곡의 선차감 ⭐를 정확히 1회 환불 (StarEcon v158).
+
+    character.py `refund_character_job_points` 패턴 복제 — generations doc 의
+    `refunded` 플래그를 find_one_and_update 로 원자 클레임(absent/False → True)
+    하므로 이중 환불이 구조적으로 불가능하다. `point_ref` 없는 doc(과금 전
+    생성물)은 스킵. 배경 루프에서 호출되므로 반드시 루프-로컬 `mongo_db` 를
+    받아 refund_points 에도 그대로 주입한다. Never raises.
+    """
+    try:
+        claimed = await mongo_db.generations.find_one_and_update(
+            {
+                "_id": ObjectId(generation_id),
+                "point_ref": {"$ne": None},
+                "refunded": {"$ne": True},
+            },
+            {"$set": {"refunded": True}},
+        )
+        if not claimed:
+            return False
+        user_id = claimed.get("user_id")
+        point_ref = claimed.get("point_ref")
+        cost = int(claimed.get("point_cost") or POINT_COSTS["compose"])
+        if not user_id or not point_ref:
+            return False
+        await refund_points(user_id, "compose", cost, point_ref, db=mongo_db)
+        logger.info(
+            "[star-econ] compose refund gen_id=%s user=%s amount=+%d",
+            generation_id, user_id[:8], cost,
+        )
+        return True
+    except Exception:
+        logger.exception("[star-econ] compose refund failed gen_id=%s", generation_id)
+        return False
+
+
 # ─── Background task for music generation ────────────────────
 
 def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str, style: str, vocal: str, duration: int, model: str = "suno", title: str = None, prompt: str = None, persona_id: str = None, negative_tags: str = None, style_weight: float = None, weirdness: float = None, audio_weight: float = None, persona_model: str = None, bpm: int = None, key: str = None, reference_audio_url: str = None, duet_main_vocal_style: str = None, duet_sub_vocal_style: str = None, suno_model: str = None):
@@ -157,6 +219,15 @@ def _run_music_generation(generation_id: str, lyrics: str, genre: str, mood: str
             print(f"Music generation marked failed for {generation_id}")
         except Exception as _mark_exc:
             print(f"Music generation failed-mark error for {generation_id}: {_mark_exc}")
+        # StarEcon(v158) — 실패한 작곡의 -15 선차감 자동 환불 (원자 클레임,
+        # 정확히 1회). 이 래퍼는 자체 이벤트 루프 → 반드시 루프-로컬 mongo_db.
+        try:
+            loop.run_until_complete(refund_generation_points(mongo_db, generation_id))
+        except Exception as _refund_exc:
+            logger.exception(
+                "[star-econ] compose refund hook error gen_id=%s: %s",
+                generation_id, _refund_exc,
+            )
     finally:
         loop.close()
 
@@ -307,6 +378,18 @@ async def generate_lyrics_endpoint(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
+    # StarEcon(v158) — 작사 ⭐-5 선차감 (부족 402, 실패 시 환불).
+    lyrics_cost = POINT_COSTS["lyrics"]
+    point_ref = uuid_lib.uuid4().hex
+    user_id = current_user["id"]
+    if not await spend_points(user_id, "lyrics", lyrics_cost, point_ref):
+        logger.info("[star-econ] lyrics denied (insufficient) user=%s", user_id[:8])
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(lyrics_cost)},
+        )
+    logger.info("[star-econ] lyrics spend user=%s -%d ref=%s", user_id[:8], lyrics_cost, point_ref)
+
     try:
         from ..services.lyrics_generator import generate_lyrics
 
@@ -324,6 +407,8 @@ async def generate_lyrics_endpoint(
         )
         return result
     except Exception as e:
+        logger.exception("[star-econ] lyrics failed user=%s ref=%s (refunding)", user_id[:8], point_ref)
+        await refund_points(user_id, "lyrics", lyrics_cost, point_ref)
         return JSONResponse(
             status_code=500,
             content={"error": f"가사 생성 실패: {str(e)[:200]}"},
@@ -348,6 +433,28 @@ async def create_generation(
 
     if not body.prompt.strip():
         return JSONResponse(status_code=400, content={"error": "프롬프트를 입력해주세요."})
+
+    # StarEcon(v158) — 실제 작곡 시작 경로에만 게이트/과금.
+    # 순서: 스트라이크 403(위) → 피로 429 → 잔액 402. draft(start_music_gen
+    # False)는 무과금/무게이트. 402/429 시 generations doc 자체를 만들지 않는다.
+    will_start_music = bool(body.start_music_gen and body.lyrics)
+    compose_cost = POINT_COSTS["compose"]
+    point_ref = None
+    if will_start_music:
+        fatigued = await _fatigue_gate_response(current_user["id"])
+        if fatigued:
+            return fatigued
+        point_ref = uuid_lib.uuid4().hex
+        if not await spend_points(current_user["id"], "compose", compose_cost, point_ref):
+            logger.info("[star-econ] compose denied (insufficient) user=%s", current_user["id"][:8])
+            return JSONResponse(
+                status_code=402,
+                content={"error": "포인트가 부족합니다 (필요: {})".format(compose_cost)},
+            )
+        logger.info(
+            "[star-econ] compose spend user=%s -%d ref=%s (create)",
+            current_user["id"][:8], compose_cost, point_ref,
+        )
 
     mongo = get_mongo()
     now = datetime.now(timezone.utc)
@@ -391,6 +498,11 @@ async def create_generation(
         "result_audio_url": None,
         "output_files": [],
         "error_message": None,
+        # StarEcon(v158) — 작곡 -15 선차감 추적 (실패 시 원자 클레임 환불).
+        # 미시작 draft 는 point_ref=None → 환불 클레임 대상에서 제외.
+        "point_ref": point_ref,
+        "point_cost": compose_cost if will_start_music else None,
+        "refunded": False,
         "created_at": now,
         "updated_at": now,
         "completed_at": None,
@@ -403,7 +515,7 @@ async def create_generation(
     logger.info("[generate] gen_id=%s cats=%s", gen_id, categories)
 
     # Start music generation if requested
-    if body.start_music_gen and body.lyrics:
+    if will_start_music:
         background_tasks.add_task(
             _run_music_generation,
             generation_id=gen_id,
@@ -458,10 +570,35 @@ async def start_music_generation(
     if doc.get("status") == "processing":
         return JSONResponse(status_code=409, content={"error": "이미 생성 중입니다."})
 
-    # Update status
+    # StarEcon(v158) — 게이트 순서: 스트라이크 403(위) → 피로 429 → 잔액 402.
+    fatigued = await _fatigue_gate_response(current_user["id"])
+    if fatigued:
+        return fatigued
+
+    compose_cost = POINT_COSTS["compose"]
+    point_ref = uuid_lib.uuid4().hex  # 재시도마다 새 ref (멱등키 충돌 회피)
+    if not await spend_points(current_user["id"], "compose", compose_cost, point_ref):
+        logger.info(
+            "[star-econ] compose denied (insufficient) user=%s gen_id=%s (start)",
+            current_user["id"][:8], gen_id,
+        )
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(compose_cost)},
+        )
+    logger.info(
+        "[star-econ] compose spend user=%s -%d ref=%s gen_id=%s (start)",
+        current_user["id"][:8], compose_cost, point_ref, gen_id,
+    )
+
+    # Update status (+ v158: 새 선차감 추적 필드 — 실패 환불용)
     await mongo.generations.update_one(
         {"_id": ObjectId(gen_id)},
-        {"$set": {"status": "pending", "progress": 5, "updated_at": datetime.now(timezone.utc)}},
+        {"$set": {
+            "status": "pending", "progress": 5,
+            "point_ref": point_ref, "point_cost": compose_cost, "refunded": False,
+            "updated_at": datetime.now(timezone.utc),
+        }},
     )
 
     background_tasks.add_task(

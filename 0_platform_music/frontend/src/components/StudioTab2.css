@@ -2435,3 +2435,150 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ─── v158: 별 경제 v1.2 — 비용 배지 ─── */
+.s2__cost-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.14);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  color: #facc15;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* ─── v158: 디렉터 피로 게이지 (투명 표시 — 다크패턴 금지) ─── */
+.s2__fatigue {
+  padding: 14px 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.s2__fatigue--highlight {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+}
+
+.s2__fatigue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.s2__fatigue-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.s2__fatigue-count {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+/* 사다리 시각화 — n곡째 완성 시 휴식 시간 */
+.s2__fatigue-ladder {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.s2__fatigue-rung {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border);
+}
+
+.s2__fatigue-rung--reached {
+  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.s2__fatigue-rung--current {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.s2__fatigue-rung-num {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.s2__fatigue-rung-hours {
+  font-size: 0.68rem;
+  color: var(--color-text-sub);
+}
+
+.s2__fatigue-cooldown {
+  font-size: 0.85rem;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.s2__fatigue-timer {
+  color: #f59e0b;
+  font-variant-numeric: tabular-nums;
+}
+
+.s2__fatigue-skip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.s2__fatigue-skip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  background: rgba(250, 204, 21, 0.1);
+  color: var(--color-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.s2__fatigue-skip-btn:hover:not(:disabled) {
+  background: rgba(250, 204, 21, 0.2);
+}
+
+.s2__fatigue-skip-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.s2__fatigue-note,
+.s2__fatigue-ready {
+  font-size: 0.76rem;
+  color: var(--color-text-sub);
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .s2__fatigue-ladder {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

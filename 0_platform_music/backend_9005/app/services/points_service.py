@@ -21,15 +21,29 @@ logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
 
+# StarEcon(v158) — 유료 액션 단가 단일 소스 (⭐). 라우트들은 이 dict 만 참조한다.
+# FE 는 GET /api/points/costs 로 조회 → 하드코딩 드리프트 방지.
+POINT_COSTS = {
+    "lyrics": 5,        # 작사 (generate.py /lyrics/)
+    "compose": 15,      # 작곡 (generate.py create/start)
+    "cover": 5,         # 커버 이미지 (upload.py, 기존 2 → 5)
+    "character": 10,    # 캐릭터 시트 (character.py, 기존 2 → 10)
+    "fatigue_skip": 5,  # 디렉터 피로 쿨다운 30분 스킵 (fatigue.py)
+}
+
 _indexes_ready = False
 
 
-async def ensure_indexes():
-    """Lazily create indexes once (called at start of award/balance/history)."""
+async def ensure_indexes(db=None):
+    """Lazily create indexes once (called at start of award/balance/history).
+
+    v158: accepts an optional loop-local motor db (`db`) so background-loop
+    callers never touch the main-loop-bound global client.
+    """
     global _indexes_ready
     if _indexes_ready:
         return
-    mongo = get_mongo()
+    mongo = db if db is not None else get_mongo()
     # Unique per user+action+track+day → daily/per-track/per-action idempotency
     await mongo.point_events.create_index(
         [("user_id", 1), ("action", 1), ("track_id", 1), ("day", 1)],
@@ -45,7 +59,7 @@ def _kst_day() -> str:
     return datetime.now(KST).strftime("%Y%m%d")
 
 
-async def award_point(user_id: str, action: str, track_id: str) -> bool:
+async def award_point(user_id: str, action: str, track_id: str, daily_cap: int = None, db=None) -> bool:
     """Best-effort award of +1 point.
 
     Idempotent per (user, action, track, KST day) via a unique index:
@@ -53,14 +67,30 @@ async def award_point(user_id: str, action: str, track_id: str) -> bool:
     silently ignored.  NEVER raises — this runs inside chart/download flows,
     so any failure must not affect the HTTP response or chart logic.
     Returns True if a point was newly awarded, False otherwise.
+
+    v158: `daily_cap` — when set, no more than `daily_cap` events of this
+    (user, action) are credited per KST day (checked via countDocuments just
+    before insert; the tiny count→insert race is accepted as best-effort).
+    `db` — optional loop-local motor db for background-loop callers
+    (defaults to the main-loop get_mongo() client — fully backward compatible).
     """
     logger.info("[points] award user=%s action=%s track=%s", user_id, action, track_id)
     if not user_id:
         return False
     try:
-        await ensure_indexes()
+        await ensure_indexes(db)
         day = _kst_day()
-        mongo = get_mongo()
+        mongo = db if db is not None else get_mongo()
+        if daily_cap is not None:
+            todays = await mongo.point_events.count_documents(
+                {"user_id": user_id, "action": action, "day": day}
+            )
+            if todays >= daily_cap:
+                logger.info(
+                    "[star-econ] award capped user=%s action=%s day=%s count=%d cap=%d",
+                    user_id[:8], action, day, todays, daily_cap,
+                )
+                return False
         try:
             await mongo.point_events.insert_one({
                 "user_id": user_id,
@@ -97,7 +127,7 @@ async def award_point(user_id: str, action: str, track_id: str) -> bool:
         return False
 
 
-async def spend_points(user_id: str, action: str, amount: int, ref: str) -> bool:
+async def spend_points(user_id: str, action: str, amount: int, ref: str, db=None) -> bool:
     """Atomically deduct `amount` points from the user's balance.
 
     The deduction is a single conditional update
@@ -112,12 +142,14 @@ async def spend_points(user_id: str, action: str, amount: int, ref: str) -> bool
     (user, action, track_id, day) index; a per-attempt ref avoids collisions
     on same-day retries. The event log is best-effort: if it fails the spend
     itself remains valid (warning only).
+
+    v158: `db` — optional loop-local motor db (background-loop callers).
     """
     if not user_id or amount <= 0:
         return False
     try:
-        await ensure_indexes()
-        mongo = get_mongo()
+        await ensure_indexes(db)
+        mongo = db if db is not None else get_mongo()
         result = await mongo.point_balances.update_one(
             {"user_id": user_id, "balance": {"$gte": amount}},
             {"$inc": {"balance": -amount}},
@@ -155,18 +187,20 @@ async def spend_points(user_id: str, action: str, amount: int, ref: str) -> bool
         return False
 
 
-async def refund_points(user_id: str, action: str, amount: int, ref: str) -> None:
+async def refund_points(user_id: str, action: str, amount: int, ref: str, db=None) -> None:
     """Best-effort refund of a previous spend_points deduction. NEVER raises.
 
     Credits `amount` back (upsert) and logs a `refund:{action}` event with the
     same per-attempt `ref` used at spend time. Callers are responsible for
     double-refund protection (e.g. an atomic `refunded` flag on the job doc).
+
+    v158: `db` — optional loop-local motor db (background-loop callers).
     """
     if not user_id or amount <= 0:
         return
     try:
-        await ensure_indexes()
-        mongo = get_mongo()
+        await ensure_indexes(db)
+        mongo = db if db is not None else get_mongo()
         await mongo.point_balances.update_one(
             {"user_id": user_id},
             {
@@ -203,7 +237,7 @@ async def refund_points(user_id: str, action: str, amount: int, ref: str) -> Non
         )
 
 
-async def credit_points(user_id: str, action: str, amount: int, ref: str, day: str = None) -> bool:
+async def credit_points(user_id: str, action: str, amount: int, ref: str, day: str = None, db=None) -> bool:
     """Idempotently credit a variable `amount` of points.
 
     Unlike `award_point` (+1 fixed), this credits an arbitrary positive amount
@@ -215,14 +249,16 @@ async def credit_points(user_id: str, action: str, amount: int, ref: str, day: s
     `ref` is stored in the `track_id` field. For a once-per-day reward, pass the
     KST day string as both `ref` and `day` so (user, action, day, day) allows
     exactly one credit per day. Returns True when a new credit was applied.
+
+    v158: `db` — optional loop-local motor db (background-loop callers).
     """
     logger.info("[points] credit user=%s action=%s amount=%d ref=%s", user_id, action, amount, ref)
     if not user_id or amount <= 0:
         return False
     try:
-        await ensure_indexes()
+        await ensure_indexes(db)
         day = day or _kst_day()
-        mongo = get_mongo()
+        mongo = db if db is not None else get_mongo()
         try:
             await mongo.point_events.insert_one({
                 "user_id": user_id,

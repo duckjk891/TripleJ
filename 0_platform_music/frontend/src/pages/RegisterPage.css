@@ -271,3 +271,38 @@
   margin: 6px 0 0;
   text-align: left;
 }
+
+/* v160 — 비밀번호 실시간 조건 힌트 (중립/충족/미충족) */
+.register-card__pw-hints {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.register-card__pw-hint {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.register-card__pw-hint--neutral {
+  color: var(--color-text-sub);
+}
+
+.register-card__pw-hint--ok {
+  color: #22c55e;
+}
+
+.register-card__pw-hint--bad {
+  color: var(--color-danger);
+}
+
+/* v160 — 비밀번호 확인 불일치 실시간 표시 */
+.register-card__pw-mismatch {
+  font-size: 12px;
+  color: var(--color-danger);
+  margin: 6px 0 0;
+  text-align: left;
+}

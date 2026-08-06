@@ -263,10 +263,11 @@ async def generate_cover(
     if denied:
         return denied
 
-    # Points — 커버 AI 생성은 2포인트 선차감 (부족 시 402 차단, 실패 시 환불).
+    # Points — 커버 AI 생성 선차감 (부족 시 402 차단, 실패 시 환불).
+    # StarEcon(v158) — 단가는 POINT_COSTS 단일 소스 (cover: 2 → 5).
     # ref 는 시도당 유니크 uuid (point_events 유니크 인덱스 재시도 충돌 회피).
-    from ..services.points_service import refund_points, spend_points
-    cover_point_cost = 2
+    from ..services.points_service import POINT_COSTS, refund_points, spend_points
+    cover_point_cost = POINT_COSTS["cover"]
     point_ref = uuid_lib.uuid4().hex
     if not await spend_points(current_user["id"], "cover", cover_point_cost, point_ref):
         return JSONResponse(

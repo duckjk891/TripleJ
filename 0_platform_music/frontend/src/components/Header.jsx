@@ -112,13 +112,22 @@ export default function Header() {
   const location = useLocation();
 
   useEffect(() => {
-    if (!user) { setPoints(null); return; }
+    if (!user) { setPoints(null); return undefined; }
     let alive = true;
-    if (import.meta.env.DEV) console.info('[Header] fetching points balance', { path: location.pathname });
-    api.getPointsBalance()
-      .then(({ data }) => { if (alive) setPoints(data?.balance ?? 0); })
-      .catch((err) => { console.error('[Header] getPointsBalance failed', { status: err?.response?.status, message: err?.message }); });
-    return () => { alive = false; };
+    const fetchBalance = (reason) => {
+      if (import.meta.env.DEV) console.info('[Header] fetching points balance', { path: location.pathname, reason });
+      api.getPointsBalance()
+        .then(({ data }) => { if (alive) setPoints(data?.balance ?? 0); })
+        .catch((err) => { console.error('[Header] getPointsBalance failed', { status: err?.response?.status, message: err?.message }); });
+    };
+    fetchBalance('route');
+    // v158 — 과금/환불/스킵 직후 실시간 갱신: api.notifyPointsRefresh() 가 dispatch 하는 커스텀 이벤트 구독
+    const onPointsRefresh = () => fetchBalance('points-refresh');
+    window.addEventListener('aimu:points-refresh', onPointsRefresh);
+    return () => {
+      alive = false;
+      window.removeEventListener('aimu:points-refresh', onPointsRefresh);
+    };
   }, [user, location.pathname]);
 
   // v157 — 로그인 세션당 1회 출석체크 자동 팝업.

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import SocialLoginButtons from '../components/SocialLoginButtons';
@@ -55,6 +55,24 @@ const GUARDIAN_OFF_MESSAGE = '만 14세 미만 가입은 보호자 동의 절차
 // v154 — 추천코드 형식 (백엔드 charset: 대문자+숫자 31종, 혼동문자 0/1/O/I/L 제외)
 const REFERRAL_CODE_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
 
+// v160 — 엔터테인먼트명 자동접미 (백엔드 auth.py _normalize_company_name 의 UX 미러).
+// trim 후 값이 있고 "엔터테인먼트"로 끝나지 않으면 " 엔터테인먼트" 추가(이미 끝나면 그대로 — 중복 방지).
+const COMPANY_SUFFIX = '엔터테인먼트';
+const normalizeCompanyName = (value) => {
+  const trimmed = (value || '').trim();
+  if (!trimmed || trimmed.endsWith(COMPANY_SUFFIX)) return trimmed;
+  return `${trimmed} ${COMPANY_SUFFIX}`;
+};
+
+// v160 — 비밀번호 실시간 조건 3종 (검증 규칙 :185 와 동일 기준 — 규칙 자체는 불변)
+const PASSWORD_HINT_RULES = [
+  { key: 'length', label: '8자 이상', test: (pw) => pw.length >= 8 },
+  { key: 'letter', label: '영문 포함', test: (pw) => /[a-zA-Z]/.test(pw) },
+  { key: 'digit', label: '숫자 포함', test: (pw) => /[0-9]/.test(pw) },
+];
+
+const PASSWORD_PLACEHOLDER = '비밀번호 (8자 이상, 영문+숫자 포함)';
+
 export default function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -92,6 +110,15 @@ export default function RegisterPage() {
     () => (searchParams.get('ref') || '').trim().toUpperCase().slice(0, 4)
   );
   const [referralError, setReferralError] = useState('');
+
+  // v160 — 제출 실패 안내 가시화: 에러 div 가 폼 상단이라 하단 버튼에서 제출 시 화면 밖 —
+  // error 변경 시 에러 div 로 부드럽게 스크롤 (에러 div 위치 이동은 회귀 위험으로 기각 — PLAN 설계 3ⓒ)
+  const errorRef = useRef(null);
+  useEffect(() => {
+    if (error && errorRef.current) {
+      errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [error]);
 
   // 보호자 동의 플로우 (만14세 미만 + 플래그 ON)
   const [guardianName, setGuardianName] = useState('');
@@ -193,15 +220,24 @@ export default function RegisterPage() {
     setError('');
 
     const base = validateAccountFields();
-    const trimmedCompany = companyName.trim();
+    // v160 — 제출 시 재정규화(이중 방어 — onBlur 미경유 제출 대비, 백엔드도 동일 정규화)
+    const trimmedCompany = normalizeCompanyName(companyName);
     const trimmedTitle = displayTitle.trim();
     if (base.error || !trimmedCompany || !trimmedTitle) {
+      if (import.meta.env.DEV) {
+        console.info('[RegisterPage] submit blocked', {
+          reason: base.error ? 'account_fields' : 'required_fields',
+        });
+      }
       setError(base.error || '모든 필드를 입력해주세요.');
       return;
     }
 
     // v125 — 필수 동의 4종 모두 체크돼야 가입 진행(버튼 비활성과 이중 방어)
     if (!areRequiredConsentsChecked(consentValues, SIGNUP_CONSENT_KEYS)) {
+      if (import.meta.env.DEV) {
+        console.info('[RegisterPage] submit blocked', { reason: 'consents' });
+      }
       setError('필수 동의 항목에 모두 동의해야 가입할 수 있습니다.');
       return;
     }
@@ -209,6 +245,9 @@ export default function RegisterPage() {
     // v154 — 추천코드(선택) 클라 검증: 비어있거나 4자리 charset 일치
     const trimmedReferral = referralCode.trim().toUpperCase();
     if (trimmedReferral && !REFERRAL_CODE_RE.test(trimmedReferral)) {
+      if (import.meta.env.DEV) {
+        console.info('[RegisterPage] submit blocked', { reason: 'referral_code' });
+      }
       setReferralError('추천코드는 4자리 영문 대문자/숫자입니다. 다시 확인해주세요.');
       return;
     }
@@ -569,7 +608,7 @@ export default function RegisterPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="비밀번호 (6자 이상)"
+                placeholder={PASSWORD_PLACEHOLDER}
               />
             </div>
 
@@ -646,7 +685,11 @@ export default function RegisterPage() {
             </button>
           </div>
 
-          {error && <div className="register-card__error">{error}</div>}
+          {error && (
+            <div className="register-card__error" ref={errorRef}>
+              {error}
+            </div>
+          )}
 
           <div className="register-card__field">
             <label className="register-card__label">이메일</label>
@@ -678,6 +721,17 @@ export default function RegisterPage() {
               type="text"
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
+              onBlur={() => {
+                // v160 — blur 시점 자동접미: 사용자가 최종 저장값을 눈으로 확인 (제출 시 재정규화로 이중 방어)
+                const normalized = normalizeCompanyName(companyName);
+                if (normalized === companyName) return;
+                const appended = normalized !== companyName.trim();
+                setCompanyName(normalized);
+                if (import.meta.env.DEV) {
+                  // 개인정보 — 입력값 원문 미출력, 접미어 추가 여부만
+                  console.info('[RegisterPage] company suffix applied', { appended });
+                }
+              }}
               placeholder="예: 이재규 엔터테인먼트"
               maxLength={100}
             />
@@ -702,8 +756,22 @@ export default function RegisterPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="비밀번호 (6자 이상)"
+              placeholder={PASSWORD_PLACEHOLDER}
             />
+            {/* v160 — 실시간 조건 힌트: 빈 입력은 중립, 입력 시작 후 충족=초록/미충족=빨강 */}
+            <ul className="register-card__pw-hints" aria-live="polite">
+              {PASSWORD_HINT_RULES.map(({ key, label, test }) => {
+                const state = password === '' ? 'neutral' : test(password) ? 'ok' : 'bad';
+                return (
+                  <li
+                    key={key}
+                    className={`register-card__pw-hint register-card__pw-hint--${state}`}
+                  >
+                    {state === 'ok' ? '✓' : '·'} {label}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
 
           <div className="register-card__field">
@@ -715,6 +783,10 @@ export default function RegisterPage() {
               onChange={(e) => setPasswordConfirm(e.target.value)}
               placeholder="비밀번호를 다시 입력하세요"
             />
+            {/* v160 — 확인 불일치 실시간 표시 (검증 자체는 제출 시 :185 규칙 그대로) */}
+            {passwordConfirm !== '' && passwordConfirm !== password && (
+              <p className="register-card__pw-mismatch">비밀번호가 일치하지 않습니다.</p>
+            )}
           </div>
 
           <div className="register-card__extra-section">

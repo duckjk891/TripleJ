@@ -175,6 +175,8 @@ function CharacterSection() {
   const [previewObjectName, setPreviewObjectName] = useState(null);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
+  // v161 — 외모 텍스트 프롬프트(사진 없이도 생성 가능한 텍스트 경로). 사진과 병행 시 보정 텍스트로 함께 전송.
+  const [userText, setUserText] = useState('');
   const [realFormOpen, setRealFormOpen] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0); // 실사 생성 경과시간(초)
   const photoInputRef = useRef(null);
@@ -196,9 +198,13 @@ function CharacterSection() {
   const [vArtStyle, setVArtStyle] = useState(null);
   const [vSaving, setVSaving] = useState(false);
   const [vPhotoFile, setVPhotoFile] = useState(null);
+  // v161 — 가상화 섹션 외모 텍스트 프롬프트(텍스트-only 생성 경로)
+  const [vUserText, setVUserText] = useState('');
   const [vFormOpen, setVFormOpen] = useState(false);
   const [vElapsedSec, setVElapsedSec] = useState(0); // 가상화 생성 경과시간(초)
   const [imageModel, setImageModel] = useState('gpt_image_2');
+  // v158 — 별 경제 v1.2: 캐릭터 생성 비용(⭐) — /points/costs 단일 소스({ costs } 래핑), 실패 시 10 폴백
+  const [characterCost, setCharacterCost] = useState(10);
   const [styleSamples, setStyleSamples] = useState([]);
   const [stylesLoading, setStylesLoading] = useState(false);
   const [selectedStyleKey, setSelectedStyleKey] = useState(null);
@@ -245,6 +251,17 @@ function CharacterSection() {
       });
     }
   }, [character]);
+
+  // v158 — 캐릭터 생성 비용 로드 (표기용 — 실패 시 기본값 10 유지)
+  useEffect(() => {
+    api.getPointCosts()
+      .then(({ data }) => {
+        if (typeof data?.costs?.character === 'number') setCharacterCost(data.costs.character);
+      })
+      .catch((err) => {
+        console.error('[MyMusicPage] getPointCosts failed (fallback 10)', { status: err?.response?.status, message: err?.message });
+      });
+  }, []);
 
   // ── 비동기 캐릭터 job 폴링 (접수 → 5초 폴링 → 완료 미리보기) ──────────
   const clearCharPoll = useCallback(() => {
@@ -380,55 +397,73 @@ function CharacterSection() {
     setPhotoGateOpen(true);
   };
 
+  // v161 — 생성 소스 판별(photo|text|photo+text) — 로그·게이트 분기 공용
+  const genSource = (file, text) => {
+    if (file && text.trim()) return 'photo+text';
+    if (file) return 'photo';
+    return 'text';
+  };
+
   // v135 — 실사화 생성 게이트: flag ON 이면 얼굴 인증 플로우를 먼저 통과해야 한다.
   // flag OFF(현재 기본)면 status 확인 후 기존 흐름 그대로 진행 — 렌더/동작 불변.
+  // v161 — 텍스트-only(사진 미첨부) 경로는 얼굴 인증·사진 확약이 사진 전용 게이트이므로 스킵.
   const handleGenerate = async () => {
-    if (!photoFile) {
-      alert('사진을 먼저 선택해주세요.');
+    if (!photoFile && !userText.trim()) {
+      alert('얼굴 사진을 선택하거나 외모 설명을 입력해주세요.');
       return;
     }
-    // v137 — 사진 확약 미체크 시 생성 중단
-    if (!portraitConfirmed) {
-      alert('사진 확약(본인 또는 인물 동의 확인)에 체크해야 생성할 수 있습니다.');
-      return;
-    }
-    try {
-      const { data: fv } = await api.getFaceVerifyStatus();
-      if (fv?.enabled) {
-        if (import.meta.env.DEV) console.info('[FaceVerifyFlow] gate on — opening flow before real gen');
-        setFaceFlowOpen(true);
-        return; // onVerified 콜백에서 submitRealGeneration 재개
+    if (photoFile) {
+      // v137 — 사진 확약 미체크 시 생성 중단 (사진 첨부 시에만)
+      if (!portraitConfirmed) {
+        alert('사진 확약(본인 또는 인물 동의 확인)에 체크해야 생성할 수 있습니다.');
+        return;
       }
-    } catch (err) {
-      // 상태 확인 실패 시 기존 흐름 진행 — 최종 방어는 BE 403(face_verification_required)
-      console.error('[FaceVerifyFlow] status check failed', {
-        status: err?.response?.status,
-        message: err?.message,
-      });
+      try {
+        const { data: fv } = await api.getFaceVerifyStatus();
+        if (fv?.enabled) {
+          if (import.meta.env.DEV) console.info('[FaceVerifyFlow] gate on — opening flow before real gen');
+          setFaceFlowOpen(true);
+          return; // onVerified 콜백에서 submitRealGeneration 재개
+        }
+      } catch (err) {
+        // 상태 확인 실패 시 기존 흐름 진행 — 최종 방어는 BE 403(face_verification_required)
+        console.error('[FaceVerifyFlow] status check failed', {
+          status: err?.response?.status,
+          message: err?.message,
+        });
+      }
     }
     await submitRealGeneration();
   };
 
   // 실사화 생성 본체 (v135 이전의 handleGenerate 본문 — 얼굴 인증 통과 후에도 여기로 재개)
   const submitRealGeneration = async () => {
-    if (!photoFile) {
-      alert('사진을 먼저 선택해주세요.');
+    // v161 — 사진 또는 외모 텍스트 중 하나는 필요 (BE 도 둘 다 없으면 400)
+    if (!photoFile && !userText.trim()) {
+      alert('얼굴 사진을 선택하거나 외모 설명을 입력해주세요.');
       return;
     }
     setGenerating(true);
     setElapsedSec(0);
     try {
       const formData = new FormData();
-      formData.append('file', photoFile);
+      // v161 — file optional: 사진 첨부 시에만 전송, 외모 텍스트는 있으면 항상 전송(사진+텍스트 보정 겸용)
+      if (photoFile) formData.append('file', photoFile);
+      if (userText.trim()) formData.append('user_text', userText.trim());
       formData.append('image_model', imageModel);
-      // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만)
-      if (portraitConfirmed) formData.append('portrait_confirmed', 'true');
+      // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만 — 사진 첨부 시에만 의미)
+      if (photoFile && portraitConfirmed) formData.append('portrait_confirmed', 'true');
       appendItemObjectNames(formData);
       if (import.meta.env.DEV) {
-        console.info('[MyMusicPage] real gen', { image_model: imageModel });
+        console.info('[MyMusicPage] generate', {
+          mode: 'real',
+          source: genSource(photoFile, userText),
+          image_model: imageModel,
+        });
       }
       // 접수(job_id 즉시 반환) → 5초 폴링 → 완료 시 미리보기
       const { data } = await api.generateCharacterSheetAsync(formData);
+      api.notifyPointsRefresh(); // v158 — 캐릭터 ⭐ 차감(접수 시점) 즉시 헤더 배지 갱신
       if (import.meta.env.DEV) {
         console.info('[MyMusicPage] char job started', { job_id: data.job_id, mode: 'real' });
       }
@@ -442,14 +477,15 @@ function CharacterSection() {
         onFailed: (err) => {
           console.error('[MyMusicPage] char job failed', { err });
           setGenerating(false);
-          alert('캐릭터 시트 생성에 실패했습니다.');
+          api.notifyPointsRefresh(); // v158 — 실패 자동 환불 반영
+          alert('캐릭터 시트 생성에 실패했습니다. 사용된 별은 자동으로 환불됩니다.');
         },
       });
     } catch (err) {
       console.error('[MyMusicPage] char job submit failed', err);
       setGenerating(false);
-      // v135 — BE 게이트 403 폴백: 얼굴 인증 플로우 모달을 띄우고 통과 시 재시도
-      if (err.response?.status === 403 && err.response?.data?.error === 'face_verification_required') {
+      // v135 — BE 게이트 403 폴백: 얼굴 인증 플로우 모달을 띄우고 통과 시 재시도 (v161 — 사진 경로 전용)
+      if (photoFile && err.response?.status === 403 && err.response?.data?.error === 'face_verification_required') {
         if (import.meta.env.DEV) console.info('[FaceVerifyFlow] 403 fallback — opening flow');
         setFaceFlowOpen(true);
         return;
@@ -457,6 +493,12 @@ function CharacterSection() {
       // v139 — 스트라이크 생성 제한 403 공통 처리
       if (api.isGenerationRestricted(err)) {
         api.alertGenerationRestricted(err);
+        return;
+      }
+      // v158 — 별 부족(402) 분기
+      if (api.isInsufficientPoints(err)) {
+        api.notifyPointsRefresh();
+        alert(`별이 부족해요. 캐릭터 시트 생성에는 ⭐${characterCost}개가 필요합니다.`);
         return;
       }
       alert(err.response?.data?.error || '캐릭터 시트 생성에 실패했습니다.');
@@ -513,16 +555,17 @@ function CharacterSection() {
   };
 
   const handleGenerateCartoon = async () => {
-    if (!vPhotoFile) {
-      alert('사진을 먼저 선택해주세요.');
+    // v161 — 사진 또는 외모 텍스트 중 하나는 필요 (BE 도 둘 다 없으면 400)
+    if (!vPhotoFile && !vUserText.trim()) {
+      alert('얼굴 사진을 선택하거나 외모 설명을 입력해주세요.');
       return;
     }
     if (!selectedStyleKey && !customStyleFile) {
       alert('화풍(샘플 택1 또는 직접 업로드)을 선택해주세요.');
       return;
     }
-    // v137 — 사진 확약 미체크 시 생성 중단
-    if (!portraitConfirmed) {
+    // v137 — 사진 확약 미체크 시 생성 중단 (v161 — 사진 첨부 시에만)
+    if (vPhotoFile && !portraitConfirmed) {
       alert('사진 확약(본인 또는 인물 동의 확인)에 체크해야 생성할 수 있습니다.');
       return;
     }
@@ -530,10 +573,12 @@ function CharacterSection() {
     setVElapsedSec(0);
     try {
       const formData = new FormData();
-      formData.append('file', vPhotoFile);
+      // v161 — file optional: 사진 첨부 시에만 전송, 외모 텍스트는 있으면 항상 전송(사진+텍스트 보정 겸용)
+      if (vPhotoFile) formData.append('file', vPhotoFile);
+      if (vUserText.trim()) formData.append('user_text', vUserText.trim());
       formData.append('image_model', imageModel);
-      // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만)
-      if (portraitConfirmed) formData.append('portrait_confirmed', 'true');
+      // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만 — 사진 첨부 시에만 의미)
+      if (vPhotoFile && portraitConfirmed) formData.append('portrait_confirmed', 'true');
       if (customStyleFile) {
         formData.append('style_image', customStyleFile);
       } else {
@@ -542,13 +587,16 @@ function CharacterSection() {
       appendItemObjectNames(formData);
       const fallbackStyle = customStyleFile ? 'custom' : selectedStyleKey;
       if (import.meta.env.DEV) {
-        console.info('[MyMusicPage] cartoon gen', {
+        console.info('[MyMusicPage] generate', {
+          mode: 'cartoon',
+          source: genSource(vPhotoFile, vUserText),
           style: fallbackStyle,
           image_model: imageModel,
         });
       }
       // 접수(job_id 즉시 반환) → 5초 폴링 → 완료 시 미리보기
       const { data } = await api.generateCharacterSheetCartoonAsync(formData);
+      api.notifyPointsRefresh(); // v158 — 캐릭터 ⭐ 차감(접수 시점) 즉시 헤더 배지 갱신
       if (import.meta.env.DEV) {
         console.info('[MyMusicPage] char job started', { job_id: data.job_id, mode: 'cartoon' });
       }
@@ -563,7 +611,8 @@ function CharacterSection() {
         onFailed: (err) => {
           console.error('[MyMusicPage] char job failed', { err });
           setVGenerating(false);
-          alert('가상화 캐릭터 시트 생성에 실패했습니다.');
+          api.notifyPointsRefresh(); // v158 — 실패 자동 환불 반영
+          alert('가상화 캐릭터 시트 생성에 실패했습니다. 사용된 별은 자동으로 환불됩니다.');
         },
       });
     } catch (err) {
@@ -572,6 +621,12 @@ function CharacterSection() {
       // v139 — 스트라이크 생성 제한 403 공통 처리
       if (api.isGenerationRestricted(err)) {
         api.alertGenerationRestricted(err);
+        return;
+      }
+      // v158 — 별 부족(402) 분기
+      if (api.isInsufficientPoints(err)) {
+        api.notifyPointsRefresh();
+        alert(`별이 부족해요. 가상화 캐릭터 시트 생성에는 ⭐${characterCost}개가 필요합니다.`);
         return;
       }
       alert(err.response?.data?.error || '가상화 캐릭터 시트 생성에 실패했습니다.');
@@ -876,7 +931,9 @@ function CharacterSection() {
             onClick={handleGenerate}
             disabled={generating}
           >
-            {generating ? `생성 중... (${formatElapsed(elapsedSec)})` : '다시 생성'}
+            {generating
+              ? `생성 중... (${formatElapsed(elapsedSec)})`
+              : <>다시 생성 <span className="mymusic-character__cost-badge">⭐{characterCost}</span></>}
           </button>
           <button
             className="mymusic-character__btn"
@@ -907,13 +964,38 @@ function CharacterSection() {
     </div>
   );
 
+  // ── v161 — 외모 텍스트 입력칸(실사·가상 공통 헬퍼) ──
+  // 사진 없이 텍스트만으로도 생성 가능. 텍스트-only 모드일 때 얼굴 인증 불필요 안내 노출.
+  const renderAppearanceInput = ({ value, onChange, file }) => (
+    <div className="mymusic-character__appearance">
+      <p className="mymusic-character__appearance-title">외모 설명 (선택)</p>
+      <textarea
+        className="mymusic-character__appearance-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="예: 얼굴이 동그랗고 긴 생머리인 20대 여자 아이돌"
+        rows={3}
+        maxLength={500}
+      />
+      {!file && value.trim() ? (
+        <p className="mymusic-character__appearance-hint mymusic-character__appearance-hint--active">
+          사진 없이 설명만으로 가상 인물을 만들어요 — 본인인증이 필요 없어요.
+        </p>
+      ) : (
+        <p className="mymusic-character__appearance-hint">
+          사진 없이 텍스트만으로도 생성할 수 있어요. (사진 없이 생성 시 얼굴 인증 불필요)
+        </p>
+      )}
+    </div>
+  );
+
   // ── 실사(real) 업로드 폼 ────────────────────────────────
   const renderRealForm = () => (
     <div className="mymusic-character__variant">
       <div className="mymusic-character__empty">
         <div className="mymusic-character__empty-icon"><FiUser /></div>
         <p className="mymusic-character__empty-text">
-          사진을 업로드하여 실사(photorealistic) AI 캐릭터 시트를 만들어보세요.
+          사진을 업로드하거나 외모를 설명해 실사(photorealistic) AI 캐릭터 시트를 만들어보세요.
         </p>
         <p className="mymusic-character__empty-hint">
           실사(photorealistic) 스타일로 정면, 측면, 전신, 표정 변화 등 다양한 앵글의 캐릭터 시트가 생성됩니다.
@@ -951,7 +1033,11 @@ function CharacterSection() {
           )}
         </div>
 
-        {renderPortraitConfirm()}
+        {/* v161 — 외모 텍스트 입력칸 (사진 없이도 생성 가능) */}
+        {renderAppearanceInput({ value: userText, onChange: setUserText, file: photoFile })}
+
+        {/* v137/v161 — 사진 확약 체크는 사진 첨부 시에만 노출 */}
+        {photoFile && renderPortraitConfirm()}
 
         {renderItemSlots()}
 
@@ -971,8 +1057,12 @@ function CharacterSection() {
         <button
           className="mymusic-character__generate-btn"
           onClick={handleGenerate}
-          disabled={!photoFile || !portraitConfirmed || generating}
-          title={!portraitConfirmed ? '사진 확약에 체크해야 생성할 수 있습니다' : undefined}
+          disabled={(!photoFile && !userText.trim()) || (!!photoFile && !portraitConfirmed) || generating}
+          title={
+            (!photoFile && !userText.trim())
+              ? '얼굴 사진을 선택하거나 외모 설명을 입력해주세요'
+              : (photoFile && !portraitConfirmed ? '사진 확약에 체크해야 생성할 수 있습니다' : undefined)
+          }
         >
           {generating ? (
             <>
@@ -980,9 +1070,14 @@ function CharacterSection() {
               캐릭터 시트 생성 중... ({formatElapsed(elapsedSec)})
             </>
           ) : (
-            '캐릭터 시트 생성하기'
+            <>캐릭터 시트 생성하기 <span className="mymusic-character__cost-badge">⭐{characterCost}</span></>
           )}
         </button>
+        {!photoFile && !userText.trim() && (
+          <p className="mymusic-character__generate-guide">
+            얼굴 사진 또는 외모 설명 중 하나를 입력하면 생성할 수 있어요.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1043,7 +1138,9 @@ function CharacterSection() {
             onClick={handleGenerateCartoon}
             disabled={vGenerating}
           >
-            {vGenerating ? `생성 중... (${formatElapsed(vElapsedSec)})` : '다시 생성'}
+            {vGenerating
+              ? `생성 중... (${formatElapsed(vElapsedSec)})`
+              : <>다시 생성 <span className="mymusic-character__cost-badge">⭐{characterCost}</span></>}
           </button>
           <button
             className="mymusic-character__btn"
@@ -1062,7 +1159,7 @@ function CharacterSection() {
       <div className="mymusic-character__empty">
         <div className="mymusic-character__empty-icon"><FiUser /></div>
         <p className="mymusic-character__empty-text">
-          사진과 화풍을 선택해 그림/만화 스타일의 가상화 캐릭터 시트를 만들어보세요.
+          사진(또는 외모 설명)과 화풍을 선택해 그림/만화 스타일의 가상화 캐릭터 시트를 만들어보세요.
         </p>
         <p className="mymusic-character__empty-hint">
           실사 캐릭터와는 별도 슬롯에 저장됩니다. (실사 캐릭터는 그대로 유지)
@@ -1101,7 +1198,11 @@ function CharacterSection() {
           )}
         </div>
 
-        {renderPortraitConfirm()}
+        {/* v161 — 외모 텍스트 입력칸 (사진 없이도 생성 가능) */}
+        {renderAppearanceInput({ value: vUserText, onChange: setVUserText, file: vPhotoFile })}
+
+        {/* v137/v161 — 사진 확약 체크는 사진 첨부 시에만 노출 */}
+        {vPhotoFile && renderPortraitConfirm()}
 
         {/* 2) 화풍 선택 (샘플 갤러리) */}
         <p className="mymusic-character__style-title">화풍 선택</p>
@@ -1182,8 +1283,17 @@ function CharacterSection() {
         <button
           className="mymusic-character__generate-btn"
           onClick={handleGenerateCartoon}
-          disabled={!vPhotoFile || (!selectedStyleKey && !customStyleFile) || !portraitConfirmed || vGenerating}
-          title={!portraitConfirmed ? '사진 확약에 체크해야 생성할 수 있습니다' : undefined}
+          disabled={
+            (!vPhotoFile && !vUserText.trim())
+            || (!selectedStyleKey && !customStyleFile)
+            || (!!vPhotoFile && !portraitConfirmed)
+            || vGenerating
+          }
+          title={
+            (!vPhotoFile && !vUserText.trim())
+              ? '얼굴 사진을 선택하거나 외모 설명을 입력해주세요'
+              : (vPhotoFile && !portraitConfirmed ? '사진 확약에 체크해야 생성할 수 있습니다' : undefined)
+          }
         >
           {vGenerating ? (
             <>
@@ -1191,9 +1301,14 @@ function CharacterSection() {
               가상화 캐릭터 시트 생성 중... ({formatElapsed(vElapsedSec)})
             </>
           ) : (
-            '가상화 캐릭터 시트 생성하기'
+            <>가상화 캐릭터 시트 생성하기 <span className="mymusic-character__cost-badge">⭐{characterCost}</span></>
           )}
         </button>
+        {!vPhotoFile && !vUserText.trim() && (
+          <p className="mymusic-character__generate-guide">
+            얼굴 사진 또는 외모 설명 중 하나를 입력하면 생성할 수 있어요.
+          </p>
+        )}
       </div>
     </div>
   );

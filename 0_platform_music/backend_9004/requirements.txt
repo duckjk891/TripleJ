@@ -20,7 +20,8 @@ apscheduler
 pymongo
 elasticsearch[async]>=8.12,<9
 openai
-anthropic
+# v161 — prompt caching(cache_control ephemeral) GA 지원 하한 핀
+anthropic>=0.105
 httpx
 cryptography
 # google-genai is used via REST API (httpx) since system Python 3.8 doesn't support the SDK
