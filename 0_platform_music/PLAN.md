@@ -25743,3 +25743,113 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 5. **사용자 앱 회귀(4000)**: `npm run build` 성공 + admin 잔존 grep 0건(작업 3 패턴. 단 BusinessRoute 의 `role==='admin'` 문자열·인터셉터 주석은 정당 잔존 — 검사 제외). 메인/차트/로그인/플레이어/피드 스모크 정상, coverPreviewUrl 사용처(MusicPlayer·SongItem·ChartPage 등) 커버 이미지 정상. `/admin` 진입 시 admin 화면 미노출(라우트 미존재).
 6. **관리자 계정의 사용자 앱 이용**: admin 계정으로 4000 로그인 → 일반 기능 + `/business` 접근 종전대로 동작(BusinessRoute 유지 확인).
 7. **동시 기동**: 4000/4001/9005 동시 구동 상태에서 1–6 수행(포트 충돌 없음). drvfs 캐시 유의 — admin 앱 소스 1곳 수정 시 HMR 반영 확인.
+
+---
+
+# v163 — CS 오류신고 → maidol_official DM 문의 + 4001 어드민 대응 (2026-08-06)
+
+## 요청 원문
+"maidol_official 계정을 파고 이게 admin계정. 내정보설정에서 사용자가 오류신고 버튼 → 사유 선택 후 다음 → 오피셜계정(maidol_official)에 DM으로 문의창 열림. 4001 어드민에서 이 DM을 전용으로 조회·대응. 오피셜계정은 모든 가입자를 자동 맞팔(끊기 금지), 기존 사용자도 소급 맞팔, 오피셜 닉네임 예약(아무도 못 씀), role=admin. 오피셜과의 DM은 본인인증 면제(CS이므로 미인증도 문의 가능)."
+
+## Plan verification findings (0단계 — 현재 코드 근거)
+- **follows**: `follows(follower_id, followee_id)` PG 테이블. `follows.py` — POST/DELETE 단순 INSERT/DELETE(사전 존재검사). 맞팔=양방향 2행.
+- **DM 게이트** `dm_service.assert_can_dm` ① `if not me_row["is_verified"]: 403 "본인인증 후 이용 가능"` — 보내는 사람 검사, 팔로우와 무관. ⑤ 관계판정 `peer_follows_me` → `get_or_create_conversation` 에서 accepted/pending 결정. `DM_REQUIRE_MUTUAL=False`.
+- **맞팔이면**: peer(공식)가 나를 팔로우 → `peer_follows_me=True` → 대화 status=accepted (pending 없음). ∴ 맞팔로 게이트⑤ 해결, 게이트①(인증)은 별도 예외 필요.
+- **가입 훅**: `auth.py:225` INSERT 직후(user_id 확보) best-effort 훅 구간 존재. `oauth.py:186` `if action=="signup"` 분기.
+- **닉네임**: register 는 비어있음만 검사(`auth.py:145`), 예약어 로직 없음. 닉네임 중복 허용(배틀태그 존재) → "예약"=명시적 블록리스트.
+- **내정보설정 화면**: `frontend/src/pages/MyMusicPage.jsx` (`/my-music`) — frontend-dev 가 정확한 삽입 위치 확정.
+- **4001 어드민**: DM 조회 기능 전무(슬림 api.js). 신규 CS 화면+엔드포인트 필요.
+- **미러**: 모든 backend_9005 변경은 backend_9004 에 byte-identical 미러(마지막 단계).
+
+## 설계 결정
+1. **오피셜 계정 식별**: `.env OFFICIAL_ACCOUNT_EMAIL`(고유키) + 닉네임 `maidol_official`(예약·표시용). startup `ensure_official_account()` 로 없으면 시드 생성(role=admin, is_verified=true, password=`OFFICIAL_ACCOUNT_PASSWORD` 플레이스홀더). 해석된 official user_id 는 모듈 캐시.
+2. **맞팔(불변)**: 가입 시 (신규유저↔공식) 양방향 INSERT. `unfollow_user` 라우트에서 followee=공식이면 403 거부(끊기 금지). 기존 유저는 startup 백필(ON CONFLICT/NOT EXISTS 멱등).
+3. **인증 면제**: `assert_can_dm` ①에서 `peer_id==OFFICIAL_ID` 면 is_verified 검사 skip.
+4. **4001 어드민 대응**: 신규 관리자 CS 엔드포인트(admin-role 게이트, 내부적으로 me_id=OFFICIAL_ID 로 dm_service 재사용). 답장은 공식 계정 작성자로 기록. WS 없이 폴링.
+5. **오류신고 UI(4000)**: MyMusicPage 에 🚨 버튼 → 사유선택 모달 → "다음" → 공식과 DM 대화 생성 + 첫 메시지 `[오류신고: {사유}] ` 프리필 → DM 화면 이동. 기존 DM API 재사용.
+
+## API 계약 (frontend ↔ backend 병렬작업 기준)
+### 사용자측(4000) — 기존 DM API 재사용 + 1개 신규
+- `GET /api/dm/official` → `{ "official_id": uuid, "nickname": "maidol_official" }` (인증 필요, 오피셜 해석용) **[신규]**
+- (재사용) `POST /api/dm/conversations {peer_id}` → 대화 생성(맞팔이라 accepted 즉시)
+- (재사용) `POST /api/dm/conversations/{cid}/messages {text}` → 첫 메시지
+- 인증 면제는 백엔드 assert_can_dm 내부 처리(FE 변경 불요)
+
+### 관리자측(4001) — 신규 admin CS 엔드포인트 (prefix `/api/admin/cs`)
+- `GET  /api/admin/cs/conversations?page=1&limit=20` → `{ conversations:[{conversation_id, peer:{id,nickname,profile_image,code}, last_message_text, last_at, unread}], pagination }`
+- `GET  /api/admin/cs/conversations/{cid}/messages?before=&limit=30` → `{ messages:[...] }`
+- `POST /api/admin/cs/conversations/{cid}/reply {text}` → 공식 작성자로 메시지 전송
+- `POST /api/admin/cs/conversations/{cid}/read` → 공식측 읽음 처리
+- `GET  /api/admin/cs/unread-count` → `{ count }` (뱃지)
+- 모두 admin-role 필수. 내부적으로 dm_service(list_conversations/get_messages/send_message/mark_read) 를 me_id=OFFICIAL_ID 로 호출.
+
+## 변경 매트릭스 & 추적자 로그
+| 영역 | 파일 | 변경 | 로그 prefix/추적자 |
+|---|---|---|---|
+| BE 설정 | `config.py` | OFFICIAL_ACCOUNT_EMAIL/PASSWORD/NICKNAME | — |
+| BE 시드/백필 | `main.py` startup | ensure_official_account + backfill 맞팔 | `[official] seed/backfill user=...` |
+| BE 공식 해석 | `services/official.py`(신규) | get_official_id() 캐시 | `[official]` |
+| BE 가입훅 | `auth.py`, `oauth.py` | 맞팔 INSERT + 닉네임 예약 차단 | `[official] mutual-follow user=...` |
+| BE 언팔가드 | `follows.py` | followee=공식 → 403 | `[follows] official unfollow blocked` |
+| BE 인증면제 | `services/dm_service.py` | assert_can_dm ① peer=공식 skip | `[dm] official exempt me=...` |
+| BE 사용자 API | `routes/dm.py` | GET /api/dm/official | `[dm] official contact` |
+| BE 관리자 API | `routes/admin.py` 또는 `routes/admin_cs.py`(신규) | CS 5종 | `[admin-cs] cid=... admin=...` |
+| BE 미러 | backend_9004 전체 | byte-identical 미러 | — |
+| FE 4000 | `MyMusicPage.jsx`, 신규 `ReportIssueModal.jsx`, `api/index.js` | 오류신고 버튼/모달/사유선택→DM | `[ReportIssue]`, remoteLogger |
+| FE 4001 | 신규 `AdminCsPage.jsx`, `AdminLayout.jsx`(nav), `api.js`, `App.jsx` | CS 대응 화면 | `[AdminCs]` |
+
+## 테스트 항목 (tester)
+1. 신규 가입 → 공식 자동 맞팔 2행 생성 확인(양방향).
+2. 기존 유저 백필 → startup 후 전원 공식 맞팔 확인.
+3. 닉네임 `maidol_official`(대소문자 변형 포함) 가입/프로필변경 거부.
+4. **미인증 유저**가 오류신고→공식 DM 전송 성공(인증 게이트 우회), 대화 즉시 accepted(pending 아님).
+5. 공식 아닌 상대 DM 은 여전히 인증 필요(회귀) — 게이트 유지 확인.
+6. 공식 언팔 시도 → 403.
+7. 4001 어드민 CS: 대화목록/메시지/답장(공식작성자)/읽음/뱃지 동작.
+8. 답장이 사용자 4000 DM함에 공식 발신으로 표시.
+9. 회귀: 일반 DM 송수신/요청함/차단, 팔로우/언팔(비공식), 신고 큐(기존).
+10. 로그 prefix 출력 확인(`[official]`/`[admin-cs]`/`[ReportIssue]`/`[AdminCs]`).
+
+---
+
+# v166 — 관리자 DM 대상별 전체발송(broadcast) @ 4000 (2026-08-06)
+
+## 요청 원문
+"오피셜계정인 admin role들은 DM 메시지 보낼 때 대상을 '모든 사용자(user+customer)' / 'user 전체' / 'customer 전체' 중 선택해 보낼 수 있게. 4000 포트에서."
+
+## Plan verification findings (현재 코드)
+- `dm_service.get_or_create_conversation(conn, mongo, me_id, peer_id)` (line 342) + `dm_service.send_message(conn, mongo, me_id, conversation_id, text)` (line 469) → 대상별 fan-out 재사용.
+- `dm.py` `POST /conversations/{cid}/messages` 가 send_message 호출.
+- users: `role`(user/customer/admin), `is_banned`, `account_status`('active' 등) 컬럼 존재(auth.py 확인).
+- FE `DmInboxPage.jsx`: compose 모달(`composeOpen`, `composeFilter`, `startConversation(peer)`, `searchDmUsers`). admin 분기 없음(신규).
+- 모든 유저는 오피셜을 자동 맞팔(v163) → 오피셜(=admin) 발신 시 대화 status=accepted (pending 없음). **비오피셜 admin 발신은 pending 가능** → broadcast 는 accepted 강제(안전장치).
+
+## 설계 결정
+1. **대상 3종**: `all`(role in user,customer) / `users`(role=user) / `customers`(role=customer). 공통 제외: 발신자 자신, **admin role 전원**, `is_banned=true`, `account_status<>'active'`.
+2. **발신자**: 현재 로그인한 admin 본인(오피셜로 로그인 시 오피셜). 메시지는 그 계정 작성자로.
+3. **fan-out**: 백그라운드(즉시 응답 `{queued:N}`). 대상별 get_or_create_conversation + send_message, **best-effort**(1명 실패가 나머지 안 막음). broadcast 대화는 accepted 보장(요청함에 안 걸림).
+4. **4000 only**. 4001 미포함.
+5. **권한**: 엔드포인트 admin-role 필수(비admin 403).
+
+## API 계약
+- `POST /api/dm/broadcast` (admin 필수) body `{ "audience": "all"|"users"|"customers", "text": string }` → `{ "queued": int, "audience": str }` (즉시, 백그라운드 발송).
+  - text 공백/과다길이 검증(400). audience 화이트리스트 검증(400).
+- FE api: `broadcastDm(audience, text) => API.post('/dm/broadcast', {audience, text})`.
+
+## 변경 매트릭스 & 로그
+| 영역 | 파일 | 변경 | 로그 |
+|---|---|---|---|
+| BE 서비스 | `services/dm_service.py` | `broadcast_message(conn, mongo, me_id, audience, text)` 신규(대상 조회+fan-out, accepted 보장) | `[dm-broadcast] audience=.. targets=.. sent=.. failed=..` |
+| BE 라우트 | `routes/dm.py` | `POST /api/dm/broadcast` (admin 게이트, BackgroundTasks fan-out) | `[dm-broadcast] req admin=.. audience=..` |
+| BE 미러 | backend_9004 | byte-identical | — |
+| FE 4000 | `pages/DmInboxPage.jsx` | compose 모달에 admin 전용 "📢 전체 발송"(대상 3라디오 + 메시지 + 보내기) | `[DmInbox]`/`[DmBroadcast]` remoteLogger |
+| FE 4000 | `api/index.js` | `broadcastDm` | — |
+
+## 테스트 항목 (tester)
+1. admin(오피셜) 로그인 → compose 에 "전체 발송" 옵션 노출. 일반유저 로그인 → 미노출.
+2. `all` 발송 → user+customer 전원 DM 도착(각 대화 accepted, 개별 답장 가능). admin·banned·비active 제외.
+3. `users` 발송 → role=user 만. `customers` → role=customer 만.
+4. `POST /api/dm/broadcast` 비admin 토큰 → 403. audience 오타/빈 text → 400.
+5. fan-out 백그라운드: 응답 즉시 `{queued:N}`, 잠시 후 각 수신자 DM에 메시지 존재.
+6. 회귀: 기존 개별 DM 작성/검색/전송, CS 오류신고 흐름, 미인증 제한모드 정상.
+7. 로그 `[dm-broadcast]` 출력 확인.

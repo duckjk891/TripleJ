@@ -29,6 +29,7 @@ from ..models.user import (
     validate_password,
 )
 from ..services.guardian_notify import send_guardian_consent_notification
+from ..services.official import ensure_mutual_follow, is_reserved_nickname
 from ..services.guardian_verify import verify_guardian_identity
 from ..services.points_service import credit_points
 from ..services.referral_service import ensure_referral_code, normalize_code, resolve_referrer
@@ -144,6 +145,11 @@ def _signup_consent_entries(normalized: dict):
 async def register(body: UserCreate, conn=Depends(get_pg)):
     if not body.email or not body.password or not body.nickname:
         return JSONResponse(status_code=400, content={"error": "이메일, 비밀번호, 닉네임은 필수입니다."})
+
+    # OfficialSquad — 예약 닉네임(maidol_official) 차단 (대소문자·공백 변형 방어)
+    if is_reserved_nickname(body.nickname):
+        logger.warning("[official] reserved nickname blocked email=%s", _mask_email(body.email))
+        return JSONResponse(status_code=400, content={"error": "사용할 수 없는 닉네임입니다."})
 
     pw_err = validate_password(body.password)
     if pw_err:
@@ -278,6 +284,13 @@ async def register(body: UserCreate, conn=Depends(get_pg)):
                 "[referral] reward failed inviter=%s joiner=%s code=%s",
                 str(referrer_row["id"])[:8], user_id[:8], referral_input,
             )
+
+    # OfficialSquad — 신규 유저 ↔ maidol_official 자동 양방향 맞팔 (best-effort —
+    # 공식 미해석/실패해도 가입 흐름 계속. startup 백필로도 커버됨)
+    try:
+        await ensure_mutual_follow(conn, user_id, provider="local")
+    except Exception:
+        logger.exception("[official] register mutual-follow failed user=%s", user_id[:8])
 
     token = _create_token(user_id, body.email, body.nickname, role)
     await _save_session(user_id, body.email, body.nickname, role=role)

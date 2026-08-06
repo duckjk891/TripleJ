@@ -51,7 +51,7 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, admin_moderation, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
+from .routes import admin, admin_cs, admin_moderation, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
 
 
 @asynccontextmanager
@@ -513,6 +513,48 @@ async def lifespan(app: FastAPI):
     from .services.mv_assets import cleanup_loop as _mv_asset_cleanup_loop
     asset_cleanup_task = _asyncio.create_task(_mv_asset_cleanup_loop(3600))
 
+    # OfficialSquad — maidol_official 공식 계정 시드 + 전체 유저 양방향 맞팔 백필
+    # (CS 오류신고 DM 문의 채널 기반). best-effort — 실패해도 서버 기동 계속.
+    try:
+        from .database import postgres as _pg
+        from .services.official import ensure_official_account
+        async with _pg._pool.acquire() as _conn:
+            _official_id = await ensure_official_account(_conn)
+            # 공식↔모든 기존 유저 양방향 맞팔 멱등 백필 (공식 자기 자신 제외)
+            _r_in = await _conn.execute(
+                """INSERT INTO follows (follower_id, followee_id)
+                   SELECT u.id, $1::uuid FROM users u
+                   WHERE u.id <> $1::uuid
+                     AND NOT EXISTS (
+                         SELECT 1 FROM follows f
+                         WHERE f.follower_id = u.id AND f.followee_id = $1::uuid
+                     )""",
+                _official_id,
+            )
+            _r_out = await _conn.execute(
+                """INSERT INTO follows (follower_id, followee_id)
+                   SELECT $1::uuid, u.id FROM users u
+                   WHERE u.id <> $1::uuid
+                     AND NOT EXISTS (
+                         SELECT 1 FROM follows f
+                         WHERE f.follower_id = $1::uuid AND f.followee_id = u.id
+                     )""",
+                _official_id,
+            )
+
+        def _n(res):
+            try:
+                return int(str(res).split()[-1])
+            except (ValueError, IndexError):
+                return 0
+
+        logging.getLogger(__name__).info(
+            "[official] backfill mutual-follow count=%d", _n(_r_in) + _n(_r_out)
+        )
+        print(f"[official] seed ok id={_official_id[:8]}")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[official] seed/backfill failed: %s", _e)
+
     # v152 DmSquad — Redis pub/sub 리스너(실시간 DM 팬아웃). Redis init(위) 이후 기동.
     from .routes.dm import dm_pubsub_listener
     dm_listener_task = _asyncio.create_task(dm_pubsub_listener())
@@ -574,6 +616,7 @@ app.include_router(reports.router)
 app.include_router(dm.router)
 app.include_router(referral.router)
 app.include_router(admin_moderation.router)
+app.include_router(admin_cs.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 

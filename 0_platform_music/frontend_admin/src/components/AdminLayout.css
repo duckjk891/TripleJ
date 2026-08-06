@@ -73,6 +73,22 @@
   border-right: 3px solid var(--color-primary);
 }
 
+/* CS 미읽음 뱃지 */
+.admin-nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .admin-content {
   margin-left: 240px;
   flex: 1;

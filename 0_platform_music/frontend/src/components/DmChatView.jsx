@@ -23,6 +23,7 @@ import './DmChatView.css';
  *  - onBlock(), onReport(message)
  *  - requestMode: bool (v155 — 내가 수신자인 pending 메시지 요청 → 입력바 대신 수락/거절/차단 바)
  *  - onAccept(), onDecline() — requestMode 전용 콜백
+ *  - initialText: string (CS 오류신고 프리필 — 마운트 시 입력창 초기값. 자동 전송하지 않음)
  */
 
 function fmtTime(iso) {
@@ -55,8 +56,10 @@ export default function DmChatView({
   requestMode = false,
   onAccept,
   onDecline,
+  initialText = '',
 }) {
-  const [text, setText] = useState('');
+  // CS 오류신고 프리필: 마운트 시 초기값으로 시드(자동 전송 X). 대화 전환 시엔 아래에서 '' 로 리셋.
+  const [text, setText] = useState(() => initialText || '');
   const [menuOpen, setMenuOpen] = useState(false);
   const scrollRef = useRef(null);
   const bottomRef = useRef(null);

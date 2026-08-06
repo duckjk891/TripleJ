@@ -29,6 +29,7 @@ from ..database.postgres import get_pg
 from ..database.redis import get_redis
 from ..services import oauth_service
 from ..services.oauth_service import OAuthError, OAuthNotConfigured
+from ..services.official import ensure_mutual_follow
 from ..services.points_service import credit_points
 from .auth import _create_token, _save_session
 
@@ -189,6 +190,13 @@ async def oauth_callback(
             logger.info("[star-econ] signup_bonus +50 user=%s provider=%s", user_id[:8], provider)
         except Exception:
             logger.exception("[star-econ] signup_bonus failed user=%s provider=%s", user_id[:8], provider)
+
+        # OfficialSquad — 소셜 신규가입 유저 ↔ maidol_official 자동 양방향 맞팔
+        # (best-effort — 실패해도 로그인 흐름 계속. startup 백필로도 커버됨)
+        try:
+            await ensure_mutual_follow(conn, user_id, provider=provider)
+        except Exception:
+            logger.exception("[official] oauth mutual-follow failed user=%s provider=%s", user_id[:8], provider)
 
     try:
         token = _create_token(user_id, db_email, db_nickname, role)

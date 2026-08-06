@@ -24,16 +24,25 @@ import uuid
 
 import jwt
 import redis.exceptions as redis_exceptions
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..auth import JWT_ALGORITHM, JWT_SECRET, get_current_user
+from ..config import settings
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
 from ..database.redis import get_redis
 from ..services import dm_service
 from ..services.dm_service import DM_CHANNEL_PATTERN, _short
+from ..services.official import get_official_id
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +104,33 @@ class SendMessageBody(BaseModel):
     text: str
 
 
+class BroadcastBody(BaseModel):
+    audience: str
+    text: str
+
+
 # ---------------------------------------------------------------------------
 # REST 엔드포인트
 # ---------------------------------------------------------------------------
+@router.get("/official")
+async def official_contact(current_user=Depends(get_current_user), conn=Depends(get_pg)):
+    """maidol_official 공식 계정 연락처 조회 (CS 오류신고 문의 대상).
+
+    FE 가 이 id 로 대화 시작(POST /conversations)한다. 공식 미시드 시 503.
+    """
+    me = current_user["id"]
+    logger.info("[dm] official contact me=%s", _short(me))
+    try:
+        official_id = await get_official_id(conn)
+        if not official_id:
+            logger.warning("[dm] official contact unavailable me=%s", _short(me))
+            return JSONResponse(status_code=503, content={"error": "공식 계정을 사용할 수 없습니다."})
+        return {"official_id": official_id, "nickname": settings.official_account_nickname}
+    except Exception:
+        logger.exception("[dm] official contact failed me=%s", _short(me))
+        return JSONResponse(status_code=500, content={"error": "요청을 처리할 수 없습니다."})
+
+
 @router.get("/eligibility")
 async def dm_eligibility(current_user=Depends(get_current_user), conn=Depends(get_pg)):
     """봉투 아이콘/버튼 활성 판단 — 본인인증 게이트②만 반영."""
@@ -241,6 +274,78 @@ async def search_dm_users(
     except Exception:
         logger.exception("[dm] user_search failed me=%s", _short(me))
         return JSONResponse(status_code=500, content={"error": "검색을 처리할 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 관리자 대상별 전체발송 (broadcast)
+# ---------------------------------------------------------------------------
+async def _run_broadcast(me_id: str, audience: str, text: str) -> None:
+    """BackgroundTasks 진입점 — 요청 스코프(get_pg) 커넥션은 응답 종료 시 이미
+    반환됐으므로, 풀에서 **새 커넥션**을 획득해 broadcast_message 를 실행한다.
+    Mongo 는 전역 getter(get_mongo) 라 재사용. text 원문 미로그."""
+    from ..database import postgres as _pg
+
+    try:
+        async with _pg._pool.acquire() as conn:
+            await dm_service.broadcast_message(conn, get_mongo(), me_id, audience, text)
+    except Exception:
+        logger.exception(
+            "[dm-broadcast] background run failed admin=%s audience=%s",
+            _short(me_id), audience,
+        )
+
+
+@router.post("/broadcast")
+async def broadcast(
+    body: BroadcastBody,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_pg),
+):
+    """관리자 대상별 전체발송 — admin 게이트 후 대상 수 선계산 → 백그라운드 fan-out.
+
+    body: {audience: all|users|customers, text}. 대상 수만 미리 세어 즉시
+    `{queued, audience}` 반환하고, 실제 발송은 BackgroundTasks 에서 새 풀 커넥션
+    으로 수행. text 원문 미로그(길이만)."""
+    me = current_user["id"]
+    audience = (body.audience or "").strip()
+    text = (body.text or "").strip()
+    logger.info(
+        "[dm-broadcast] req admin=%s audience=%s text_len=%d",
+        _short(me), audience, len(text),
+    )
+
+    # 관리자 게이트
+    if current_user.get("role") != "admin":
+        logger.info("[dm-broadcast] denied (not admin) me=%s", _short(me))
+        return JSONResponse(status_code=403, content={"error": "관리자만 사용할 수 있습니다."})
+
+    # audience 화이트리스트
+    if audience not in dm_service.BROADCAST_AUDIENCES:
+        logger.info("[dm-broadcast] denied (bad audience) me=%s", _short(me))
+        return JSONResponse(status_code=400, content={"error": "발송 대상이 올바르지 않습니다."})
+
+    # text 검증
+    if not text or len(text) > dm_service.MAX_TEXT_LEN:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"메시지는 1~{dm_service.MAX_TEXT_LEN}자여야 합니다."},
+        )
+
+    try:
+        targets = await dm_service.count_broadcast_targets(conn, me, audience)
+    except Exception:
+        logger.exception(
+            "[dm-broadcast] count failed me=%s audience=%s", _short(me), audience
+        )
+        return JSONResponse(status_code=500, content={"error": "발송을 준비할 수 없습니다."})
+
+    background_tasks.add_task(_run_broadcast, str(me), audience, text)
+    logger.info(
+        "[dm-broadcast] queued admin=%s audience=%s targets=%d",
+        _short(me), audience, targets,
+    )
+    return {"queued": targets, "audience": audience}
 
 
 @router.get("/requests")

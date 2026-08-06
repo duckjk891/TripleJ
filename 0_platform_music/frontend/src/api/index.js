@@ -932,6 +932,11 @@ export const getDmUnreadCount = () => API.get('/dm/unread-count');
 export const blockDmUser = (uid) => API.post(`/dm/blocks/${uid}`);
 export const unblockDmUser = (uid) => API.delete(`/dm/blocks/${uid}`);
 
+// CS 오류신고 — 공식 계정(maidol_official) 연락처 조회 → { official_id, nickname }.
+// 본인인증 여부와 무관하게 공식 대화는 시작 가능(게이트 면제는 백엔드가 처리).
+// 대화 생성/메시지 전송은 기존 createDmConversation / sendDmMessage 재사용.
+export const getOfficialContact = () => API.get('/dm/official');
+
 // DM (v155 — 인스타 완전체 C안: 전체 사용자 검색 + 메시지 요청함)
 // 닉네임 부분일치 전체 사용자 검색(자기 자신/차단/탈퇴 제외, limit 20) → { users: [{id, nickname, profile_image}] }
 export const searchDmUsers = (q) => API.get('/dm/users/search', { params: { q } });
@@ -941,6 +946,12 @@ export const getDmRequests = () => API.get('/dm/requests');
 export const acceptDmRequest = (cid) => API.post(`/dm/conversations/${cid}/accept`);
 // 요청 거절 (수신자만 — 대화+메시지 삭제, 상대 무통지) → { ok }
 export const declineDmRequest = (cid) => API.delete(`/dm/conversations/${cid}`);
+
+// DM 관리자 전체발송(broadcast) — admin 전용. audience: 'all'|'users'|'customers'.
+// → { queued: N, audience }. 비admin 403, 잘못된 audience/빈 text 400.
+// 주의: 메시지 text 원문은 절대 콘솔에 출력하지 않는다(길이/대상만).
+export const broadcastDm = (audience, text) =>
+  API.post('/dm/broadcast', { audience, text });
 
 // Referral (v154 — 앱 추천/추천코드)
 // 내 추천코드 조회(인증, 코드 없으면 서버가 lazy 생성)

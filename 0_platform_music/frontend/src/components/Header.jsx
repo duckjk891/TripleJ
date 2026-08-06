@@ -7,6 +7,7 @@ import dmSocket from '../utils/dmSocket';
 import ProfileExtraForm from './ProfileExtraForm';
 import AttendanceCard from './AttendanceCard';
 import AppShareModal from './AppShareModal';
+import ReportIssueModal from './ReportIssueModal';
 import Avatar from './Avatar';
 import { detectPlatform } from '../utils/snsPlatform';
 import { CONSENTS, CONSENT_VERSION, OPTIONAL_INPUT_NOTICE } from '../constants/consentTexts';
@@ -97,6 +98,8 @@ export default function Header() {
   const [myReports, setMyReports] = useState(null);
   const [myReportsLoading, setMyReportsLoading] = useState(false);
   const [myReportsError, setMyReportsError] = useState('');
+  // CS 오류신고/문의 모달 (maidol_official DM 진입) — 프로필 설정 모달 내 진입점
+  const [reportIssueOpen, setReportIssueOpen] = useState(false);
   // 회원탈퇴 — 모달 내 화면 전환(프로필 ↔ 탈퇴 확인) + 확인 문구 입력/에러/진행 상태
   // v156 — 내 태그(배틀태그 = referral_code). 로드 실패 시 빈값 유지 → 행 숨김.
   const [myTag, setMyTag] = useState('');
@@ -963,6 +966,23 @@ export default function Header() {
                 </div>
               )}
             </div>
+            {/* CS 오류신고/문의 — maidol_official DM 문의로 연결 (내 신고 내역과 같은 맥락) */}
+            <div className="header__profile-report">
+              <button
+                type="button"
+                className="header__profile-report-btn"
+                onClick={() => {
+                  if (import.meta.env.DEV) console.info('[Header] report issue open');
+                  // 오류신고 모달만 보이도록 내 정보 설정 모달을 먼저 닫는다
+                  // (프로필 모달 오버레이가 위를 덮어 리포트 모달이 가려지는 문제 방지).
+                  setReportIssueOpen(true);
+                  closeProfileModal();
+                }}
+                disabled={profileModal === 'saving'}
+              >
+                🚨 오류신고 / 문의하기
+              </button>
+            </div>
             {!profileVerify.isVerified && (
               <div className="header__profile-verify">
                 <button
@@ -1008,6 +1028,19 @@ export default function Header() {
       {/* v154 — 앱 추천(리퍼럴) 공유 모달 (로그인 전용) */}
       {shareOpen && user && (
         <AppShareModal onClose={() => setShareOpen(false)} />
+      )}
+
+      {/* CS 오류신고/문의 모달 — 사유 선택 → maidol_official DM 진입.
+          onClose 는 리포트 모달과 프로필 설정 모달을 함께 닫는다.
+          ReportIssueModal 의 "다음" 흐름이 navigate 직전에 onClose 를 호출하므로
+          라우팅 시점엔 프로필 모달이 이미 닫힌다(모달 뜬 채 라우팅 방지). */}
+      {reportIssueOpen && (
+        <ReportIssueModal
+          onClose={() => {
+            setReportIssueOpen(false);
+            closeProfileModal();
+          }}
+        />
       )}
     </header>
   );

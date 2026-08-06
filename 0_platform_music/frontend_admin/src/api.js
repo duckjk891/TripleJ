@@ -102,6 +102,22 @@ export const adminFaceSearch = (reportId) =>
 export const adminPurge = (reportId, targets) =>
   API.post('/admin/moderation/purge', { report_id: reportId, targets });
 
+// CS 문의 (오류신고 → maidol_official DM 관리자 대응)
+// 대화 목록 → { conversations:[{conversation_id, peer:{id,nickname,profile_image,code},
+//   last_message_text, last_at, unread}], pagination }
+export const getCsConversations = (params) => API.get('/admin/cs/conversations', { params });
+// 대화 메시지 (before 커서 페이지네이션) → { messages:[{id, sender_id, text, created_at, read}], ... }
+export const getCsMessages = (cid, params) =>
+  API.get(`/admin/cs/conversations/${cid}/messages`, { params });
+// 답장 전송 (공식 계정 발신). 메시지 text 원문은 콘솔에 출력하지 않는다.
+export const replyCs = (cid, text) =>
+  API.post(`/admin/cs/conversations/${cid}/reply`, { text });
+// 읽음 처리 (대화 열람 시)
+export const markCsRead = (cid) =>
+  API.post(`/admin/cs/conversations/${cid}/read`);
+// 미읽음 총계 (nav 뱃지) → { count }
+export const getCsUnreadCount = () => API.get('/admin/cs/unread-count');
+
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');

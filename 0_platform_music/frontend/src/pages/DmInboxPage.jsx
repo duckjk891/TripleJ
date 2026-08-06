@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { FiEdit } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
@@ -30,9 +30,17 @@ function fmtListTime(iso) {
 export default function DmInboxPage() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { cid: routeCid } = useParams();
 
+  // CS 오류신고 진입 프리필 — { cid, text }. 해당 대화 입력창에만 시드(자동 전송 X).
+  const [prefill, setPrefill] = useState(null);
+
   const [eligible, setEligible] = useState(null); // null=미확인, true/false
+  // CS 제한 모드 — 미인증 유저는 공식(maidol_official) 대화만 이용 가능.
+  // officialId: 공식 peer id(null=미해결), officialFailed: 공식 조회 실패(게이트 폴백)
+  const [officialId, setOfficialId] = useState(null);
+  const [officialFailed, setOfficialFailed] = useState(false);
   const [conversations, setConversations] = useState([]);
   const [convLoading, setConvLoading] = useState(true);
   const [convError, setConvError] = useState('');
@@ -64,6 +72,12 @@ export default function DmInboxPage() {
   const [searchError, setSearchError] = useState('');
   const [myTag, setMyTag] = useState(''); // v156 — 내 태그(= referral_code), compose 하단 안내. 실패 시 빈값 유지 → 미표시
 
+  // 관리자 전체발송(broadcast) — admin 만 노출. audience: '' | 'all' | 'users' | 'customers'
+  const [bcAudience, setBcAudience] = useState('');
+  const [bcText, setBcText] = useState('');
+  const [bcSending, setBcSending] = useState(false);
+  const [bcNotice, setBcNotice] = useState(''); // 인라인 안내(검증/결과)
+
   // WS 콜백에서 최신 activeCid 참조용
   const activeCidRef = useRef(activeCid);
   useEffect(() => { activeCidRef.current = activeCid; }, [activeCid]);
@@ -74,6 +88,30 @@ export default function DmInboxPage() {
   useEffect(() => { requestsRef.current = requests; }, [requests]);
 
   const currentUserId = user?.id;
+
+  // CS 오류신고 진입: navigate state 로 전달된 prefill/conversation 소비.
+  // 콜드 진입 시 대화 목록 로드 전이라도 렌더되도록 conversation 을 목록에 시드한다.
+  // 소비 후 history state 를 비워 새로고침/뒤로가기 재소비를 막는다.
+  useEffect(() => {
+    const st = location.state;
+    if (!st || (!st.prefill && !st.conversation)) return;
+    if (import.meta.env.DEV) console.info('[DmInbox] consuming nav state', { hasPrefill: !!st.prefill, hasConv: !!st.conversation });
+    const conv = st.conversation;
+    const cid = conv?.conversation_id || routeCid;
+    if (conv?.conversation_id) {
+      setConversations((prev) => (
+        prev.some((c) => c.conversation_id === conv.conversation_id) ? prev : [conv, ...prev]
+      ));
+    }
+    if (st.prefill && cid) {
+      setPrefill({ cid, text: st.prefill });
+    }
+    // 기존 공식 대화면 히스토리 로드 + 읽음 처리. (라우트 자동오픈 가드가 mount 시 안 걸릴 수 있어 명시 호출)
+    if (cid) openConversation(cid, conv || null);
+    navigate(location.pathname, { replace: true, state: null });
+    // openConversation 은 하단 정의 — 최초 소비(1회)만 필요하므로 deps 제외.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location, navigate, routeCid]);
 
   // 비로그인 → 로그인 유도
   useEffect(() => {
@@ -102,6 +140,32 @@ export default function DmInboxPage() {
       });
     return () => { alive = false; };
   }, [user]);
+
+  // 공식 계정(maidol_official) 연락처 조회 — CS 제한 모드 판별/필터용.
+  // 미인증 유저라도 공식 대화는 이용 가능해야 하므로, 게이트 대신 공식 peer 를 확보해 제한 모드로 렌더한다.
+  useEffect(() => {
+    if (!user) return undefined;
+    let alive = true;
+    if (import.meta.env.DEV) console.info('[DmInbox] fetching official contact');
+    api.getOfficialContact()
+      .then(({ data }) => {
+        if (!alive) return;
+        setOfficialId(data?.official_id ?? null);
+        if (import.meta.env.DEV) console.info('[DmInbox] official contact loaded', { has: !!data?.official_id });
+      })
+      .catch((err) => {
+        if (!alive) return;
+        console.error('[DmInbox] getOfficialContact failed', { status: err?.response?.status, message: err?.message });
+        setOfficialFailed(true);
+      });
+    return () => { alive = false; };
+  }, [user]);
+
+  // 공식 대화 판별 (제한 모드 목록 필터)
+  const isOfficialConv = useCallback(
+    (c) => officialId != null && String(c?.peer?.id) === String(officialId),
+    [officialId],
+  );
 
   // 대화 목록 로드
   const loadConversations = useCallback(async () => {
@@ -469,6 +533,7 @@ export default function DmInboxPage() {
   const handleBack = useCallback(() => {
     setActiveCid(null);
     setMessages([]);
+    setPrefill(null); // 프리필은 최초 진입 대화에서만 유효 — 목록 복귀 시 폐기
   }, []);
 
   // ── 새 메시지 (v155 — 전체 사용자 검색 + 추천(나를 팔로우) 섹션) ───────────────
@@ -477,6 +542,9 @@ export default function DmInboxPage() {
     setComposeFilter('');
     setSearchResults([]);
     setSearchError('');
+    setBcAudience('');
+    setBcText('');
+    setBcNotice('');
     setFollowersLoading(true);
     setFollowersError('');
     // v156 — 내 태그(= referral_code) 비차단 로드. 실패 시 조용히 숨김(안내 문구 미표시).
@@ -539,6 +607,49 @@ export default function DmInboxPage() {
     }
   }, [composeStarting, navigate, openConversation, currentUserId]);
 
+  // 관리자 전체발송 — audience/메시지 검증 후 확인창 → broadcastDm 호출.
+  // 로그 prefix [DmBroadcast]. text 원문 미로그(대상/길이만).
+  const handleBroadcast = useCallback(async () => {
+    if (bcSending) return;
+    const text = bcText.trim();
+    if (!bcAudience) {
+      setBcNotice('발송 대상을 선택해주세요.');
+      return;
+    }
+    if (!text) {
+      setBcNotice('메시지를 입력해주세요.');
+      return;
+    }
+    setBcNotice('');
+    if (!window.confirm('전체 발송하시겠어요? 되돌릴 수 없습니다.')) return;
+    setBcSending(true);
+    if (import.meta.env.DEV) console.info('[DmBroadcast] sending', { audience: bcAudience, len: text.length });
+    try {
+      const { data } = await api.broadcastDm(bcAudience, text);
+      const queued = typeof data?.queued === 'number' ? data.queued : 0;
+      if (import.meta.env.DEV) console.info('[DmBroadcast] queued', { audience: data?.audience || bcAudience, queued });
+      // 입력 초기화 + 결과 안내 후 모달 닫기
+      setBcAudience('');
+      setBcText('');
+      setBcNotice('');
+      setComposeOpen(false);
+      alert(`${queued}명에게 발송 예약되었습니다.`);
+    } catch (err) {
+      const status = err?.response?.status;
+      console.error('[DmBroadcast] broadcastDm failed', { status, audience: bcAudience, message: err?.message });
+      if (status === 403) {
+        setBcNotice('관리자만 전체 발송을 할 수 있습니다.');
+      } else if (status === 400) {
+        const detail = err?.response?.data?.error || err?.response?.data?.detail;
+        setBcNotice(detail || '발송 대상 또는 메시지가 올바르지 않습니다.');
+      } else {
+        setBcNotice('전체 발송에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
+    } finally {
+      setBcSending(false);
+    }
+  }, [bcSending, bcAudience, bcText]);
+
   // v155 — 검색어 입력 시 300ms 디바운스 서버 검색 (검색어 원문 미로그 — 길이만)
   const composeQuery = composeFilter.trim();
   useEffect(() => {
@@ -581,8 +692,18 @@ export default function DmInboxPage() {
     return <div className="dminbox dminbox--center"><p>불러오는 중...</p></div>;
   }
 
-  // 미인증 안내 (서버가 최종 게이트지만 UX 상 선안내)
-  if (eligible === false) {
+  // CS 제한 모드 — 미인증 유저는 통째로 막지 않고 공식(maidol_official) 대화만 이용 가능.
+  const restrictedMode = eligible === false;
+  // 관리자 전체발송 섹션 노출 여부 (비admin 유저에겐 이 섹션 자체가 안 보임)
+  const isAdmin = user?.role === 'admin';
+
+  // 미인증인데 공식 연락처가 아직 미해결(조회 성공 전) → 하드 게이트 대신 로딩.
+  if (restrictedMode && officialId == null && !officialFailed) {
+    return <div className="dminbox dminbox--center"><p>불러오는 중...</p></div>;
+  }
+
+  // 미인증이고 공식 조회가 실패(공식 미시드 등)한 경우에만 기존 하드 게이트로 폴백.
+  if (restrictedMode && officialFailed) {
     return (
       <div className="dminbox dminbox--center">
         <div className="dminbox__gate">
@@ -593,6 +714,21 @@ export default function DmInboxPage() {
       </div>
     );
   }
+
+  // 제한 모드에서 표시할 대화 목록 — 공식 대화만 노출.
+  // 활성 대화(방금 시드된 routeCid 대상 포함)가 필터에서 누락되면 포함해 열 수 있게 한다.
+  let displayConversations = conversations;
+  if (restrictedMode) {
+    displayConversations = conversations.filter(isOfficialConv);
+    if (
+      activeConversation
+      && !displayConversations.some((c) => c.conversation_id === activeConversation.conversation_id)
+    ) {
+      displayConversations = [activeConversation, ...displayConversations];
+    }
+  }
+  // 제한 모드는 요청함 접근 불가 → 항상 메시지 탭.
+  const effectiveTab = restrictedMode ? 'messages' : tab;
 
   // 대화/요청 목록 공용 항목 렌더 (v155 — 발신자측 pending 은 "요청 대기 중" 라벨)
   const renderConvItem = (c) => {
@@ -637,34 +773,45 @@ export default function DmInboxPage() {
         <aside className="dminbox__list">
           <div className="dminbox__list-head">
             <h1 className="dminbox__title">메시지</h1>
-            <button
-              className="dminbox__compose-btn"
-              onClick={openCompose}
-              title="새 메시지"
-              aria-label="새 메시지"
-            >
-              <FiEdit size={18} />
-            </button>
+            {/* 제한 모드(미인증)에서는 임의 DM 시작 불가 → compose 버튼 숨김 */}
+            {!restrictedMode && (
+              <button
+                className="dminbox__compose-btn"
+                onClick={openCompose}
+                title="새 메시지"
+                aria-label="새 메시지"
+              >
+                <FiEdit size={18} />
+              </button>
+            )}
           </div>
-          {/* v155 — "메시지 | 요청 N" 탭 */}
-          <div className="dminbox__tabs">
-            <button
-              className={`dminbox__tab ${tab === 'messages' ? 'dminbox__tab--active' : ''}`}
-              onClick={() => setTab('messages')}
-            >
-              메시지
-            </button>
-            <button
-              className={`dminbox__tab ${tab === 'requests' ? 'dminbox__tab--active' : ''}`}
-              onClick={() => { setTab('requests'); loadRequests(); }}
-            >
-              요청
-              {requestsCount > 0 && (
-                <span className="dminbox__tab-badge">{requestsCount > 99 ? '99+' : requestsCount}</span>
-              )}
-            </button>
-          </div>
-          {tab === 'requests' ? (
+          {/* CS 제한 모드 안내 — 공식 계정 문의만 이용 가능 */}
+          {restrictedMode && (
+            <p className="dminbox__cs-notice">
+              본인인증 전에는 공식 계정 문의만 이용할 수 있어요.
+            </p>
+          )}
+          {/* v155 — "메시지 | 요청 N" 탭 (제한 모드에서는 요청함 접근 불가 → 탭 숨김) */}
+          {!restrictedMode && (
+            <div className="dminbox__tabs">
+              <button
+                className={`dminbox__tab ${tab === 'messages' ? 'dminbox__tab--active' : ''}`}
+                onClick={() => setTab('messages')}
+              >
+                메시지
+              </button>
+              <button
+                className={`dminbox__tab ${tab === 'requests' ? 'dminbox__tab--active' : ''}`}
+                onClick={() => { setTab('requests'); loadRequests(); }}
+              >
+                요청
+                {requestsCount > 0 && (
+                  <span className="dminbox__tab-badge">{requestsCount > 99 ? '99+' : requestsCount}</span>
+                )}
+              </button>
+            </div>
+          )}
+          {effectiveTab === 'requests' ? (
             requestsLoading ? (
               <p className="dminbox__list-status">불러오는 중...</p>
             ) : requestsError ? (
@@ -686,11 +833,13 @@ export default function DmInboxPage() {
               <p>{convError}</p>
               <button className="dminbox__retry" onClick={loadConversations}>다시 시도</button>
             </div>
-          ) : conversations.length === 0 ? (
-            <p className="dminbox__list-status">아직 대화가 없습니다.</p>
+          ) : displayConversations.length === 0 ? (
+            <p className="dminbox__list-status">
+              {restrictedMode ? '문의 대화를 불러오는 중입니다...' : '아직 대화가 없습니다.'}
+            </p>
           ) : (
             <ul className="dminbox__conv-list">
-              {conversations.map((c) => renderConvItem(c))}
+              {displayConversations.map((c) => renderConvItem(c))}
             </ul>
           )}
         </aside>
@@ -714,6 +863,7 @@ export default function DmInboxPage() {
               requestMode={isRequestMode}
               onAccept={handleAccept}
               onDecline={handleDecline}
+              initialText={prefill && prefill.cid === activeCid ? prefill.text : ''}
             />
           ) : (
             <div className="dminbox__chat-empty">
@@ -752,6 +902,64 @@ export default function DmInboxPage() {
               onChange={(e) => setComposeFilter(e.target.value)}
               autoFocus
             />
+            {/* 관리자 전체발송 — admin 만 노출. 개별 검색/DM 과 공존. */}
+            {isAdmin && (
+              <div className="dmbroadcast">
+                <p className="dmbroadcast__title">📢 전체 발송 (관리자)</p>
+                <div className="dmbroadcast__audience" role="radiogroup" aria-label="발송 대상">
+                  <label className="dmbroadcast__radio">
+                    <input
+                      type="radio"
+                      name="dm-broadcast-audience"
+                      value="all"
+                      checked={bcAudience === 'all'}
+                      onChange={() => { setBcAudience('all'); setBcNotice(''); }}
+                      disabled={bcSending}
+                    />
+                    <span>모든 사용자</span>
+                  </label>
+                  <label className="dmbroadcast__radio">
+                    <input
+                      type="radio"
+                      name="dm-broadcast-audience"
+                      value="users"
+                      checked={bcAudience === 'users'}
+                      onChange={() => { setBcAudience('users'); setBcNotice(''); }}
+                      disabled={bcSending}
+                    />
+                    <span>일반회원 전체</span>
+                  </label>
+                  <label className="dmbroadcast__radio">
+                    <input
+                      type="radio"
+                      name="dm-broadcast-audience"
+                      value="customers"
+                      checked={bcAudience === 'customers'}
+                      onChange={() => { setBcAudience('customers'); setBcNotice(''); }}
+                      disabled={bcSending}
+                    />
+                    <span>고객사 전체</span>
+                  </label>
+                </div>
+                <textarea
+                  className="dmbroadcast__text"
+                  placeholder="전체 발송할 메시지를 입력하세요"
+                  value={bcText}
+                  onChange={(e) => { setBcText(e.target.value); if (bcNotice) setBcNotice(''); }}
+                  rows={3}
+                  disabled={bcSending}
+                />
+                {bcNotice && <p className="dmbroadcast__notice">{bcNotice}</p>}
+                <button
+                  className="dmbroadcast__send"
+                  onClick={handleBroadcast}
+                  disabled={bcSending}
+                >
+                  {bcSending ? '발송 중...' : '전체 발송'}
+                </button>
+              </div>
+            )}
+            {isAdmin && <p className="dmbroadcast__divider">또는 개별 사용자에게 보내기</p>}
             <div className="dmcompose__body">
               {composeQuery ? (
                 /* 검색어 있음 → 서버 검색 결과 */

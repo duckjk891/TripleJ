@@ -159,6 +159,13 @@ class Settings(BaseSettings):
     # Log access (앱팀 디버깅용 /api/_logs 토큰. 빈 문자열이면 API 비활성)
     log_access_token: str = ""
 
+    # CS/OfficialSquad — maidol_official 공식 계정 (CS 오류신고 DM 문의 채널 + 4001 어드민 대응).
+    # startup 에서 이 이메일로 users 시드(role=admin, is_verified=true) + 전체 유저 양방향 맞팔 백필.
+    # password 는 플레이스홀더 — 빈값이면 랜덤 해시(로그인 불가, DM 대응은 어드민 API 로만).
+    official_account_email: str = "official@maidol.app"
+    official_account_nickname: str = "maidol_official"
+    official_account_password: str = ""
+
     # v76: 외부에서 접근 가능한 백엔드 base URL (Suno 콜백 수신용).
     # 비어있으면 "https://localhost" 더미 사용 (개발환경 — 콜백 미수신, 폴링 폴백).
     public_base_url: str = ""

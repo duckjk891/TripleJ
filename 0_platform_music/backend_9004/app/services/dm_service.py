@@ -35,6 +35,7 @@ from pymongo.errors import DuplicateKeyError
 from ..database.mongodb import get_mongo  # noqa: F401 (참조 편의)
 from ..database.redis import get_redis
 from ..models.user import is_under_14
+from .official import get_official_id, is_official
 from .referral_service import REFERRAL_CODE_RE, normalize_code
 
 logger = logging.getLogger(__name__)
@@ -212,9 +213,17 @@ async def assert_can_dm(conn, mongo, me_id, peer_id, existing_conv=None):
     me_id = str(me_id)
     peer_id = str(peer_id)
 
-    # ① 본인인증 (me)
+    # OfficialSquad — 상대가 maidol_official 공식 계정이면 CS 문의 채널이므로 ①
+    # 본인인증을 면제(미인증 유저도 오류신고 DM 가능). 나머지 게이트는 그대로.
+    peer_is_official = is_official(peer_id) or (peer_id == await get_official_id(conn))
+
+    # ① 본인인증 (me) — 공식 상대면 is_verified 검사만 skip(계정 존재는 유지)
     me_row = await _fetch_gate_row(conn, me_id)
-    if not me_row or not me_row["is_verified"]:
+    if not me_row:
+        _deny("verified", me_id, peer_id, 403, "본인인증 후 이용 가능합니다.")
+    if peer_is_official:
+        logger.info("[dm] official exempt me=%s", _short(me_id))
+    elif not me_row["is_verified"]:
         _deny("verified", me_id, peer_id, 403, "본인인증 후 이용 가능합니다.")
 
     # ② 상대 존재 & 자기자신 아님
@@ -664,6 +673,116 @@ async def decline_request(mongo, cid, me_id) -> dict:
         _short(cid_str), _short(me_id), msg_result.deleted_count,
     )
     return {"declined": True, "deleted_messages": msg_result.deleted_count}
+
+
+# ---------------------------------------------------------------------------
+# 관리자 브로드캐스트 (대상별 전체발송) — 백그라운드 fan-out
+# ---------------------------------------------------------------------------
+# audience → 대상 role 튜플. admin 은 어떤 audience 에도 포함되지 않아 자연 제외.
+BROADCAST_AUDIENCES = {
+    "all": ("user", "customer"),
+    "users": ("user",),
+    "customers": ("customer",),
+}
+
+
+def _broadcast_roles(audience: str):
+    """audience → 대상 role 튜플. 미허용 audience 는 ValueError(라우트 400)."""
+    roles = BROADCAST_AUDIENCES.get(audience)
+    if roles is None:
+        raise ValueError(f"invalid audience: {audience}")
+    return roles
+
+
+async def count_broadcast_targets(conn, me_id, audience: str) -> int:
+    """발송 대상 수 선계산 — 라우트 즉시 응답(queued)용 빠른 COUNT."""
+    roles = _broadcast_roles(audience)
+    try:
+        me_uuid = uuid.UUID(str(me_id))
+    except (ValueError, TypeError):
+        return 0
+    row = await conn.fetchrow(
+        """
+        SELECT COUNT(*) AS n
+        FROM users
+        WHERE role = ANY($1)
+          AND NOT is_banned
+          AND account_status = 'active'
+          AND id <> $2
+        """,
+        list(roles), me_uuid,
+    )
+    return int(row["n"]) if row else 0
+
+
+async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
+    """관리자 대상별 전체발송 — 대상 각각 1:1 대화 확보(accepted 보장) 후 전송.
+
+    audience: all|users|customers (그 외 ValueError→라우트 400). text 는 strip 후
+    빈값/과도길이면 ValueError. 대상은 role 필터로 admin 자연 제외 + 발신자 제외 +
+    비밴/active 만. best-effort per target(try/except 로 1명 실패가 전체를 막지
+    않게 sent/failed 집계). 반환 {audience, targets, sent, failed}.
+    text 원문 미로그(길이만).
+    """
+    me_id = str(me_id)
+    roles = _broadcast_roles(audience)  # ValueError → 라우트 400
+    text = (text or "").strip()
+    if not text or len(text) > MAX_TEXT_LEN:
+        raise ValueError("invalid broadcast text")
+    try:
+        me_uuid = uuid.UUID(me_id)
+    except (ValueError, TypeError) as e:
+        raise ValueError("invalid sender") from e
+
+    rows = await conn.fetch(
+        """
+        SELECT id
+        FROM users
+        WHERE role = ANY($1)
+          AND NOT is_banned
+          AND account_status = 'active'
+          AND id <> $2
+        """,
+        list(roles), me_uuid,
+    )
+    targets = [str(r["id"]) for r in rows]
+    logger.info(
+        "[dm-broadcast] start admin=%s audience=%s targets=%d",
+        _short(me_id), audience, len(targets),
+    )
+
+    sent, failed = 0, 0
+    for target_id in targets:
+        try:
+            conv = await get_or_create_conversation(conn, mongo, me_id, target_id)
+            conv_id = conv.get("conversation_id") or conv.get("_id")
+            if not conv_id:
+                raise RuntimeError("conversation id missing")
+            # accepted 보장 — pending 인 경우만 승격(기존 accepted 대화 status 훼손 방지)
+            if (conv.get("status") or "accepted") == "pending":
+                now = _now()
+                await mongo.dm_conversations.update_one(
+                    {"_id": ObjectId(str(conv_id)), "status": "pending"},
+                    {"$set": {"status": "accepted", "accepted_at": now, "updated_at": now}},
+                )
+                logger.info(
+                    "[dm-broadcast] promote pending->accepted conv=%s target=%s",
+                    _short(conv_id), _short(target_id),
+                )
+            await send_message(conn, mongo, me_id, str(conv_id), text)
+            sent += 1
+        except Exception:
+            failed += 1
+            logger.exception(
+                "[dm-broadcast] target failed admin=%s target=%s",
+                _short(me_id), _short(target_id),
+            )
+
+    logger.info(
+        "[dm-broadcast] done admin=%s audience=%s sent=%d failed=%d",
+        _short(me_id), audience, sent, failed,
+    )
+    return {"audience": audience, "targets": len(targets), "sent": sent, "failed": failed}
 
 
 # ---------------------------------------------------------------------------

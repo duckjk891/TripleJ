@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from ..auth import get_current_user, get_current_user_optional
 from ..database.postgres import get_pg
+from ..services.official import get_official_id
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,12 @@ async def unfollow_user(user_id: str, current_user=Depends(get_current_user), co
         follower_uuid = uuid.UUID(current_user["id"])
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 사용자 ID입니다."})
+
+    # OfficialSquad — maidol_official 공식 계정은 언팔 불가 (CS 문의 채널 유지)
+    official_id = await get_official_id(conn)
+    if official_id and str(followee_uuid) == official_id:
+        logger.warning("[follows] official unfollow blocked user=%s", str(follower_uuid)[:8])
+        return JSONResponse(status_code=403, content={"error": "공식 계정은 언팔로우할 수 없습니다."})
 
     result = await conn.execute(
         "DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2",

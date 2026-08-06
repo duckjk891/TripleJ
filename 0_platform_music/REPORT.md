@@ -14659,3 +14659,100 @@ canonical transform 전수(스테일 발견→vite 재시작 후 8파일 재검)
 - 보안 참고: tester 가 검증용 admin/비관리자 토큰을 mint_token 패턴으로 발급(테스트 관행, 실계정 조작 없음).
 - 스팟체크(planner): vite.config 4001·`./certs`→`../frontend/certs` 폴백·`/api`→9005 프록시 — index.html `MAIDOL Admin` — main.jsx remoteLogger 무(주석뿐) — App.jsx 라우트 6개(`/login` 공개, AdminRoute `!user || role!=='admin'`→`/login`, `*`→`/`) — AdminLoginPage `role !== 'admin'` 시 `logout()`+에러(:31-34) — AdminLayout 로그아웃 버튼+NavLink 루트 4곳 — api.js export 22개(login/getMe+admin 18+coverPreviewUrl/adminEvidenceUrl, clearMyCharacterCache 무) — AuthContext 슬림(register/OAuth/출석 무) — frontend/src admin 잔존 grep 0·pages/admin·AdminLayout 부재·coverPreviewUrl 유지(:619) — 사용자 앱 App.jsx catch-all(:78) — 독립성 grep(remoteLogger/PlayerContext/AttendanceModal) 코드 0 — 서버 4001/4000/9005 전부 200 재확인 — PLAN v162 대비 **불일치 없음**.
 - **버전 표기**: PLAN.md v162 ↔ REPORT v164 교차참조(기존 관례 준수).
+
+---
+
+# v165 — CS 오류신고 → maidol_official DM 문의 + 4001 어드민 대응 (2026-08-06)
+
+## 요청
+사용자 자기 CS 문의(오류신고)를 공식계정 maidol_official 과의 DM 으로 접수하고, 4001 어드민 전용 화면에서 대응. 공식계정=admin, 전원 자동 맞팔(불변)·기존유저 소급, 닉네임 예약, 오피셜 DM 은 본인인증 면제.
+
+## 수행 결과 — 전 항목 완료, tester 10/10 PASS
+
+### 백엔드 (backend_9005 → backend_9004 byte-identical 미러)
+- 신규 `app/services/official.py` — 공식계정 시드/해석/맞팔/예약닉 헬퍼(+모듈 캐시).
+- 신규 `app/routes/admin_cs.py` — 관리자 CS API 5종(prefix `/api/admin/cs`, admin 게이트, 내부 me=official 로 dm_service 재사용).
+- 수정: `config.py`(공식계정 설정 3종+.env.example), `main.py`(startup 시드 + 맞팔 백필 292명 + 라우터 등록), `auth.py`(예약닉 차단 + 가입 맞팔), `oauth.py`(소셜가입 맞팔), `follows.py`(공식 언팔 403 가드), `dm_service.py`(assert_can_dm 공식 peer 인증면제), `dm.py`(`GET /api/dm/official`).
+
+### 프론트 4000 (frontend)
+- 신규 `ReportIssueModal.jsx`(+css) — 사유선택 → 다음 → 공식과 DM 대화생성 + `[오류신고:사유]` 프리필 → `/dm/{cid}` 이동.
+- 수정: `MyMusicPage`(🚨버튼), `api/index.js`(`getOfficialContact`), `DmChatView`(initialText prop), `DmInboxPage`(navigate state 프리필 소비).
+
+### 프론트 4001 (frontend_admin)
+- 신규 `AdminCsPage.jsx`(+css) — 대화목록/스레드/답장, 12초 폴링, 미읽음 뱃지.
+- 수정: `api.js`(CS 5함수), `App.jsx`(/cs 라우트), `AdminLayout`(nav "CS 문의"+30초 뱃지폴링).
+
+## 검증 (tester + planner 스팟체크)
+| 검증 | 결과 |
+|---|---|
+| 공식 시드(role=admin,is_verified) / `GET /dm/official` | PASS |
+| 신규가입 양방향 맞팔 / 기존유저 백필 292명 | PASS |
+| 닉네임 예약(대소문자·공백 변형 400) | PASS |
+| **미인증→공식 DM 성공 + accepted 즉시** | PASS |
+| **회귀: 비공식은 여전히 403 인증요구** | PASS |
+| 공식 언팔 403 차단 | PASS |
+| 어드민 CS list/messages/reply(공식작성)/read/unread + 권한(403/401) | PASS |
+| 왕복(어드민 답장 → 유저 DM 노출) | PASS |
+| 로그 prefix `[official]`/`[dm] official exempt`/`[admin-cs]` 실출력 | PASS |
+| 미러 diff CLEAN / 라우터 등록 / 엔드포인트 라이브(401) | PASS |
+| 회귀: 기존 신고큐·일반 DM·비공식 팔로우/언팔·로그인 | PASS |
+
+## 특이사항
+- 닉네임 수정 API 부재(ProfileUpdate 에 nickname 없음) → 예약가드는 register 에만. 
+- 맞팔 보장으로 CS 대화 항상 accepted → 어드민 답장 pending 미차단.
+- 공식계정 password 는 랜덤(로그인 비활성, CS 는 어드민 API 경유). `.env` 미설정 시 config 기본 이메일 사용.
+- backend_9004 는 패시브 미러 — 배포 확정 시 동일 재시작(startup 시드) 필요.
+- tester 생성 테스트계정: `csA_/csB_/csAdmin_` (태깅됨, 정리 불필요).
+
+---
+
+# v167 — 관리자 DM 대상별 전체발송(broadcast) @ 4000 (2026-08-06)
+
+## 요청
+오피셜(admin) 계정이 DM 전체발송 시 대상 선택: 모든 사용자(user+customer) / 일반회원(user) / 고객사(customer). 4000 포트.
+
+## 수행 결과 — tester 9/9 PASS, 실패 0
+
+### 백엔드 (9005 → 9004 미러 clean)
+- `services/dm_service.py`: `BROADCAST_AUDIENCES`, `count_broadcast_targets()`, `broadcast_message()`(대상 role 필터 + 발신자/admin/banned/비active 제외 + get_or_create_conversation + pending→accepted 승격 + send_message, best-effort sent/failed 집계).
+- `routes/dm.py`: `POST /api/dm/broadcast`(admin 게이트, audience/text 검증, 대상 COUNT 선계산 후 즉시 `{queued:N}`, BackgroundTasks fan-out, 새 풀 커넥션 획득).
+
+### 프론트 4000
+- `pages/DmInboxPage.jsx`: 새 메시지 모달에 `user.role==='admin'` 전용 "📢 전체 발송"(대상 3라디오+메시지+확인창+발송). 비admin 미노출. 개별검색과 공존.
+- `api/index.js`: `broadcastDm(audience,text)`. CSS `.dmbroadcast*`.
+
+## 검증
+| 항목 | 결과 |
+|---|---|
+| admin 로그인/권한(비admin 403, 무토큰 401) | PASS |
+| 입력검증(audience 오타·빈 text·2000자↑ 400) | PASS |
+| all 발송 queued=131 → user+customer 도착, admin·비active 제외 | PASS |
+| users→user만 / customers→customer만 (표본 비교) | PASS |
+| 개별 답장 양방향 | PASS |
+| 백그라운드 비블로킹(응답 3~5ms) | PASS |
+| pending→accepted 승격 분기(테스트계정 강제검증) | PASS |
+| 로그 `[dm-broadcast]` req/queued/start/done | PASS |
+| 회귀(개별DM·CS흐름·미인증 제한모드·기존 검색) | PASS |
+| 미러 clean / 엔드포인트 라이브(401) | PASS |
+
+## 특이사항
+- 발신자(admin)는 is_verified 필요(assert_can_dm ① — peer 가 일반유저라 면제 안 됨). 오피셜 계정 is_verified=true 라 정상. 미인증 admin 이면 각 대상 best-effort failed.
+- **tester 검증이 실계정 131명 오피셜 DM함에 `[테스트공지]` 메시지 3건(all/users/customers 마커)을 남김** → 정리 필요 시 별도 제거.
+- tester 생성 계정 `tester_bcast_*`(role=user) 잔존.
+
+---
+
+# v167.1 — 전체발송 독립 재검증 (2026-08-06)
+
+## 요청
+"방금 한 거(전체발송) 다시 검토·테스트" — planner 코드 정독 + 독립 tester 재검증(실계정 재발송 금지 제약).
+
+## 결과: 기능 결함 0건 — PASS (조건부)
+- planner 코드 정독: 대상 SQL 정합(count=발송 동일 WHERE), pending 승격 안전, best-effort, 게이트 순서(403→400→COUNT→큐), 백그라운드 새 풀 커넥션, FE 가드/에러분기 — 결함 없음.
+- 독립 tester: A(비변이 REST 401/403/400 + 검증이 발송 선행함을 로그로 확증) / B(1차 발송 DB 증거 **전수** 대조 — 수신자 role 정합 100%, admin·banned·비active 수신 0건, 대화 100% accepted) / C(미러 clean, FE 서빙 확인, 회귀 4종) 전부 PASS.
+
+## 발견 사항 (기능 버그 아님)
+1. **1차 tester 보고 부정확**: 라이브 발송은 3회가 아닌 **4회** — promote 분기 검증에서 `[테스트공지] promote-branch check` 가 role=user 실계정 120명에게 추가 발송됨. 즉 user 실계정은 테스트 DM 3건 수신.
+2. **BE 멱등성 부재(개선 권장)**: 같은 admin 이 POST 2번 → 전원 2회 수신. admin별 in-flight 락 or 동일 text 디듑 권장(운영 전).
+3. **설계 한계(문서화)**: BackgroundTasks 인프로세스 — fan-out 중 서버 재시작 시 잔여 유실·재개 불가. `{queued}` 는 예약이지 완료 보장 아님. sent/failed 는 로그에만 존재(FE 미전달) → queued 과대표시 가능(개별 차단 등 게이트 failed).
+4. 잔여물: `[테스트공지]` 마커 4종(실계정), tester 계정 `tester_bcast_*`/`retest_bcast_*` 2건.
