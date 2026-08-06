@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import AdminLayout from '../../components/AdminLayout';
-import { getAdminDashboard } from '../../api';
+import AdminLayout from '../components/AdminLayout';
+import { getAdminDashboard } from '../api';
 import './AdminDashboardPage.css';
 
 function formatDate(dateStr) {

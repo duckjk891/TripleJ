@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { PlayerProvider } from './contexts/PlayerContext';
 import { useAuth } from './contexts/AuthContext';
@@ -27,10 +27,6 @@ import BusinessPage from './pages/BusinessPage';
 import ItemSelectPage from './pages/ItemSelectPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
-import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminUsersPage from './pages/admin/AdminUsersPage';
-import AdminTracksPage from './pages/admin/AdminTracksPage';
-import AdminReportsPage from './pages/admin/AdminReportsPage';
 import './App.css';
 
 function BusinessRoute({ children }) {
@@ -42,22 +38,12 @@ function BusinessRoute({ children }) {
   return children;
 }
 
-function AdminRoute({ children }) {
-  const { user, loading } = useAuth();
-  if (loading) return null;
-  if (!user || user.role !== 'admin') {
-    return <Navigate to="/" replace />;
-  }
-  return children;
-}
-
+// v162 — 관리자 페이지는 독립 앱(frontend_admin, 포트 4001)으로 완전 이사.
+// 관리자 라우트 가드·경로 분기 제거 — Header/Footer/MusicPlayer 무조건 렌더.
 function AppContent() {
-  const location = useLocation();
-  const isAdminPage = location.pathname.startsWith('/admin');
-
   return (
     <div className="app">
-      {!isAdminPage && <Header />}
+      <Header />
       <Routes>
         <Route path="/" element={<MainPage />} />
         <Route path="/chart" element={<ChartPage />} />
@@ -88,14 +74,11 @@ function AppContent() {
         {/* v154 — 앱 추천(리퍼럴) 초대 착지 페이지 (비로그인 열람) */}
         <Route path="/invite/:code" element={<InvitePage />} />
         <Route path="/business" element={<BusinessRoute><BusinessPage /></BusinessRoute>} />
-        <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
-        <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
-        <Route path="/admin/tracks" element={<AdminRoute><AdminTracksPage /></AdminRoute>} />
-        {/* v137 — 신고 큐 */}
-        <Route path="/admin/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
+        {/* v162 — catch-all: 미정의 경로(구 /admin 포함)는 홈으로 (빈 화면 방지) */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      {!isAdminPage && <Footer />}
-      {!isAdminPage && <MusicPlayer />}
+      <Footer />
+      <MusicPlayer />
     </div>
   );
 }

@@ -25678,3 +25678,68 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 6. **②비적용 목록 확인**: cover_enhance·translation(+실측 미달 확정 항목) 로그에서 create=0/read=0 이며 **에러·품질 저하 없음**.
 7. **②품질 회귀**: 작사(solo/duet)·브레인스톰(4 archetype+가중치+시드)·시나리오(drama JSON 파싱)·씬프롬프트·영상프롬프트(씬별 duration/이벤트 반영 — user 이동 후에도 정상 반영) 산출물이 캐싱 전과 동등. ANTI_EXAMPLE 최후미 순서 보존 확인.
 8. **9004 미러 검증**: 변경 BE 파일 9004/9005 diff 0(예외 규칙 외), 9004 기동 스모크 + 텍스트-only 생성 1회.
+
+## v162 — 2026-08-06 — 관리자(admin) 페이지 독립 앱 분리: `frontend_admin/` 신설(포트 4001) + 사용자 앱에서 admin 코드 완전 제거 [MAIDOL-AdminAppSplitSquad]
+
+### 배경/목표
+
+관리자 화면이 사용자 앱(frontend, 4000)에 라우트로 섞여 있어 사용자 번들에 admin 코드가 포함되고 배포/접근 경계가 없음. 사용자 요청 확정 사양: ① `frontend/` 와 같은 레벨에 **`frontend_admin/` 신설**(자체 package.json/vite 독립 앱) ② dev 포트 **4001**(HTTPS + `/api` 프록시 → 9005, 사용자 앱과 동일 패턴) ③ **완전 이사** — 기존 frontend 에서 admin 페이지·라우트·admin 전용 코드 전부 제거(양쪽 유지 아님) ④ 같은 백엔드(9005) 사용, 관리자 로그인(role=admin) 동작. 공유 자산은 모노레포 공유 패키지 없이 **필요 최소만 복사(duplicate)**.
+
+### 0단계 findings (전수 인벤토리 — 실파일 확인 완료)
+
+1. **admin 페이지 자산** `frontend/src/pages/admin/` 8파일: AdminDashboardPage.jsx/.css, AdminUsersPage.jsx/.css, AdminTracksPage.jsx/.css, AdminReportsPage.jsx/.css. 각 페이지 import 는 **react / react-icons(FiSearch) / AdminLayout / api 함수 / 자기 css 뿐** — 사용자 앱 공용 컴포넌트(Avatar·Header 등)·컨텍스트·훅 의존 **0**.
+2. **admin 전용 공용 컴포넌트**: `frontend/src/components/AdminLayout.jsx/.css` (react-router NavLink/Link + react-icons FiGrid/FiUsers/FiMusic/FiArrowLeft/FiFlag). 사이드바 "메인으로" `Link to="/"` 는 분리 후 무의미(admin 앱의 / = 대시보드).
+3. **App.jsx admin 결합부**(113줄): admin 페이지 import 4줄(:30–33), `AdminRoute`(:45–52, `user.role !== 'admin'` 이면 `/` 리다이렉트), `isAdminPage = pathname.startsWith('/admin')`(:56) 로 Header(:60)/Footer(:97)/MusicPlayer(:98) 숨김, `/admin`·`/admin/users`·`/admin/tracks`·`/admin/reports` 라우트 4개(:91–95). `BusinessRoute`(:39) 의 `role==='admin'` 허용은 admin 페이지가 아니라 **비즈니스 페이지 접근 정책** — 이사 대상 아님(유지).
+4. **api/index.js(998줄) admin 전용 함수 18개**: §Admin(:616–628) getAdminDashboard/getAdminUsers/getAdminUser/updateUserRole/banUser/liftUserRestriction/resetUserStrikes/getAdminTracks/deleteAdminTrack/updateTrackVisibility/getAdminLogs(11) + §reports 관리자측(:793–816) getAdminReports/actionAdminReport/adminEvidenceUrl/getAdminReportEvidence/getAdminUserRecentContent/adminFaceSearch/adminPurge(7). 이 중 getAdminUser·getAdminLogs 는 현재 FE 어느 페이지도 미사용(백엔드 대응 엔드포인트는 존재). **admin 페이지가 쓰는 공용 함수는 coverPreviewUrl(:631) 1개**(AdminReportsPage 트랙 커버 썸네일) — 사용자 앱에서도 MusicPlayer/SongItem/feed 3종/ChartPage/PlayerPage/UploadPage 가 사용하므로 **원본 유지 + admin 앱에 복사**. adminEvidenceUrl 은 coverPreviewUrl 과 같은 `?token=` 패턴(`API.defaults.baseURL='/api'` 상대 URL → 4001 origin → vite proxy 경유로 그대로 동작).
+5. **CSS 의존**: admin 4페이지 css + AdminLayout.css 는 `index.css :root` 의 `--color-*`/`--color-hover` 등 CSS 변수에 전면 의존 → **index.css(121줄) 전체 복사 필요**(변수+리셋+미디어쿼리). App.css 는 6줄(레이아웃 래퍼).
+6. **로그인 흐름**: 공용 `POST /auth/login` (api/index.js:65) → `data.user.role` 로 판별. AuthContext(:frontend/src/contexts/AuthContext.jsx) 는 localStorage token/user 저장·복원 + login/register/loginWithToken(OAuth)/logout + v157 출석체크 플래그 — admin 앱에는 **login/logout/복원만 필요**(register·OAuth·출석 불필요). api 클라이언트 인터셉터: 요청 시 Bearer 자동 첨부, 401/토큰성 403 시 localStorage 정리 + `/login` 리다이렉트(admin 앱에서도 그대로 유효) — `clearMyCharacterCache()` 호출부는 admin 복사본에서 제거(캐릭터 캐시 없음).
+7. **vite.config.js**: port 4000, host 0.0.0.0, `frontend/certs/`(cert.pem/key.pem/rootCA.pem 존재 확인) mkcert HTTPS(없으면 HTTP 폴백), proxy `/api` → `http://localhost:9005` (changeOrigin, ws:true). index.html 은 Pretendard/Space Grotesk CDN 폰트 + aimu-logo.svg favicon.
+8. **백엔드**: `backend_9005/app/routes/admin.py` 16 엔드포인트(get_admin_user 의존성이 `role != "admin"` 403, :86–88) + `admin_moderation.py`(`/api/admin/moderation` prefix, face-search/purge). **백엔드 변경 0 확정** — admin 앱도 vite proxy 경유 same-origin 호출이라 CORS 무관, 권한은 기존 get_admin_user 그대로. **9004 미러 불필요**(BE 무변경).
+9. **main.jsx**: initRemoteLogger(콘솔→백엔드 frontend.log 전송) — admin 앱에는 **미포함**(관리자 콘솔 로그가 사용자 로그 파일에 섞이는 것 방지, 필요시 후속 v 에서 별도 파일로).
+
+### 설계 결정
+
+1. **복사 범위(최소 duplicate — 공유 패키지 과설계 배제)**: `frontend_admin/src/` 에 ⓐ `api.js` 신규 슬림본 — axios 클라이언트+인터셉터(6번 findings 그대로, clearMyCharacterCache 제거) + `login`/`getMe` + **admin 18함수 전부**(미사용 getAdminUser/getAdminLogs 포함 — BE 엔드포인트 1:1 대응 유지) + `coverPreviewUrl` + `adminEvidenceUrl` ⓑ `contexts/AuthContext.jsx` 슬림본 — user/loading 복원 + login + logout 만 ⓒ `components/AdminLayout.jsx/.css` ⓓ `pages/` 로 admin 4페이지 8파일 이동(디렉토리 한 단계 승격: `pages/admin/` → `pages/`) ⓔ `index.css` 전체 + App.css 내용 병합. **그 외 사용자 앱 자산(Avatar·Header·PlayerContext·hooks·utils·remoteLogger)은 일절 복사하지 않음**.
+2. **관리자 앱 라우트 구조(루트 승격)**: 독립 앱이므로 `/admin` prefix 제거 — `/`=대시보드, `/users`, `/tracks`, `/reports`, `/login`. AdminLayout NavLink 4곳을 `/`·`/users`·`/tracks`·`/reports` 로 수정(`to="/admin"` end → `to="/"` end), **"메인으로" 백링크는 삭제하고 그 자리에 로그아웃 버튼**(사용자 앱 origin 이 환경별로 달라 하드코딩 부적절). 페이지 내부 코드는 import 경로(`../../` → `../`)와 api import 외 무수정.
+3. **가드**: `AdminRoute`(App.jsx 신설) — loading 대기 후 `!user || user.role !== 'admin'` 이면 **`/login` 리다이렉트**(사용자 앱의 `/` 리다이렉트와 달리 admin 앱은 로그인 화면이 유일한 공개 라우트). 매치 실패 catch-all `*` → `/` 리다이렉트.
+4. **로그인 UX(신설 AdminLoginPage)**: 기존 LoginPage 재활용 대신 **간소 신규**(기존 LoginPage 는 회원가입 링크·OAuth 소셜 버튼·postLoginRedirect 등 사용자 전용 요소가 많아 부적합). email/password 폼 → `auth.login()` → 성공 후 `user.role !== 'admin'` 이면 **즉시 logout(토큰/유저 localStorage 제거) + "관리자 계정이 아닙니다" 에러 표시**(비관리자에게 유효 토큰을 남기지 않음), admin 이면 `/` 이동. 다크 테마 변수 기반 간소 css. 타이틀 "MAIDOL Admin".
+5. **스캐폴드**: `frontend_admin/package.json` — deps: react/react-dom/react-router-dom/react-icons/axios 5개(버전은 frontend 와 동일 지정), devDeps: vite/@vitejs/plugin-react + eslint 세트(frontend 와 동일). scripts 동일(dev/build/lint/preview). `vite.config.js` — port **4001**, host 0.0.0.0, HTTPS 인증서는 **`../frontend/certs` 폴백 포함**(자체 `./certs` 우선, 없으면 사이드카 재사용 — 인증서 파일 중복 방지), proxy `/api`→9005 (ws:true 는 admin 미사용이므로 제거해도 되나 동일 유지). `index.html` — 동일 폰트 CDN, favicon 은 aimu-logo.svg 복사(public/), `<title>MAIDOL Admin</title>`. `main.jsx` — StrictMode+BrowserRouter, remoteLogger 없음(findings 9).
+6. **사용자 앱 완전 제거 범위**: ⓐ `src/pages/admin/` 8파일 삭제 ⓑ `src/components/AdminLayout.jsx/.css` 삭제 ⓒ App.jsx — admin import 4줄·AdminRoute·`/admin/*` 라우트 4개·`isAdminPage` 분기 제거(Header/Footer/MusicPlayer 무조건 렌더로 단순화) ⓓ api/index.js — admin 전용 18함수 삭제(§Admin 블록 + reports 관리자측 블록. **coverPreviewUrl 은 공용이므로 유지**). **BusinessRoute 의 `role==='admin'` 허용과 api 인터셉터의 "관리자 권한" 403 주석은 admin '페이지' 코드가 아니므로 유지**(관리자 계정의 사용자 앱 이용은 종전대로 가능).
+7. **백엔드/9004**: 변경 없음(findings 8). 9004 미러 없음.
+8. **run 관행**: 오케스트레이터가 `frontend_admin` 에서 `npm run dev` 백그라운드 기동(4001). drvfs 캐시 이슈 동일 유의 — 기동 후 소스 수정 반영 확인 절차 포함.
+
+### 변경 매트릭스
+
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `frontend_admin/package.json`·`vite.config.js`·`index.html`·`eslint.config.js`·`.gitignore`·`public/aimu-logo.svg` **신설** | 스캐폴드(설계 5) — 포트 4001, HTTPS ../frontend/certs 폴백, /api→9005 프록시 | vite 기동 로그 `[vite] HTTPS enabled` |
+| `frontend_admin/src/main.jsx`·`App.jsx` **신설** | 라우트 `/`·`/users`·`/tracks`·`/reports`·`/login`·`*` + AdminRoute(→/login)(설계 2·3) | — |
+| `frontend_admin/src/api.js` **신설** | 슬림 클라이언트 + login/getMe + admin 18함수 + coverPreviewUrl/adminEvidenceUrl(설계 1ⓐ) | 기존 `[API]` 인터셉터 경고 유지 |
+| `frontend_admin/src/contexts/AuthContext.jsx` **신설** | login/logout/복원 슬림본(설계 1ⓑ) | — |
+| `frontend_admin/src/components/AdminLayout.jsx/.css` **복사+수정** | NavLink 루트 승격, 백링크→로그아웃 버튼(설계 2) | — |
+| `frontend_admin/src/pages/` 8파일 **이동 복사** | import 경로만 수정, 로직 무수정(설계 1ⓓ) | — |
+| `frontend_admin/src/pages/AdminLoginPage.jsx/.css` **신설** | 관리자 로그인 + 비관리자 즉시 로그아웃/에러(설계 4) | `[AdminLogin] non-admin rejected` (console.warn, DEV) |
+| `frontend_admin/src/index.css` **복사** | :root 변수+리셋(App.css 병합)(설계 1ⓔ) | — |
+| `frontend/src/pages/admin/` 8파일, `components/AdminLayout.jsx/.css` | **삭제**(설계 6ⓐⓑ) | — |
+| `frontend/src/App.jsx` | admin import·AdminRoute·/admin 라우트·isAdminPage 분기 제거(설계 6ⓒ) | — |
+| `frontend/src/api/index.js` | admin 전용 18함수 삭제, coverPreviewUrl 유지(설계 6ⓓ) | — |
+| `backend_9005/**`·`backend_9004/**` | **무수정**(설계 7) | — |
+
+### 작업 목록
+
+- **frontend-dev**:
+  1. `frontend_admin/` 스캐폴드 신설(설계 5) — package.json(deps 5+devDeps)/vite.config(4001·HTTPS 폴백·프록시)/index.html/main.jsx/App.jsx. `npm install` 후 기동 확인.
+  2. 복사·이사(설계 1·2): api.js 슬림본, AuthContext 슬림본, AdminLayout(루트 NavLink+로그아웃), admin 4페이지 8파일(import 경로 조정), index.css. AdminLoginPage 신설(설계 4) + AdminRoute/catch-all(설계 3).
+  3. 사용자 앱 제거(설계 6): pages/admin·AdminLayout 삭제, App.jsx 정리, api/index.js admin 18함수 삭제. `npm run build` 성공 + `grep -rn "AdminLayout\|pages/admin\|AdminRoute\|isAdminPage\|getAdmin\|adminPurge\|adminFaceSearch\|adminEvidenceUrl\|banUser\|updateUserRole\|updateTrackVisibility\|deleteAdminTrack\|liftUserRestriction\|resetUserStrikes\|actionAdminReport" frontend/src` 0건 확인.
+  4. 4001/4000 동시 기동 스모크 후 REPORT 기재.
+- **backend-dev**: 없음(백엔드 무변경 — findings 8).
+
+### 테스트 항목 (tester)
+
+1. **admin 앱 기동**: `frontend_admin` `npm run dev` → https://localhost:4001 접속, HTTPS 인증서 로드(`[vite] HTTPS enabled`), 미로그인 상태 아무 경로 진입 시 `/login` 리다이렉트.
+2. **관리자 로그인**: role=admin 계정으로 4001 로그인 → `/` 대시보드 통계 로드. 새로고침 시 세션 복원(localStorage) 확인.
+3. **관리 기능 스모크(프록시→9005 검증)**: `/users` 목록+검색+제재(밴 후 해제 원복), `/tracks` 목록+공개/비공개 토글 원복, `/reports` 목록+상세(증거 이미지 `?token=` URL 로드, 트랙 커버 썸네일=coverPreviewUrl) — 각 1회 이상.
+4. **비관리자 차단**: role=user 계정 4001 로그인 시도 → "관리자 계정이 아닙니다" 에러 + **localStorage 에 token/user 미잔존**. 로그인 없이 `/users` 직접 진입 → `/login`. 토큰 만료/무효 시 인터셉터가 `/login` 리다이렉트.
+5. **사용자 앱 회귀(4000)**: `npm run build` 성공 + admin 잔존 grep 0건(작업 3 패턴. 단 BusinessRoute 의 `role==='admin'` 문자열·인터셉터 주석은 정당 잔존 — 검사 제외). 메인/차트/로그인/플레이어/피드 스모크 정상, coverPreviewUrl 사용처(MusicPlayer·SongItem·ChartPage 등) 커버 이미지 정상. `/admin` 진입 시 admin 화면 미노출(라우트 미존재).
+6. **관리자 계정의 사용자 앱 이용**: admin 계정으로 4000 로그인 → 일반 기능 + `/business` 접근 종전대로 동작(BusinessRoute 유지 확인).
+7. **동시 기동**: 4000/4001/9005 동시 구동 상태에서 1–6 수행(포트 충돌 없음). drvfs 캐시 유의 — admin 앱 소스 1곳 수정 시 HMR 반영 확인.

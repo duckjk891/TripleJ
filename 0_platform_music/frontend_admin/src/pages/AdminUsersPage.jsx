@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FiSearch } from 'react-icons/fi';
-import AdminLayout from '../../components/AdminLayout';
-import { getAdminUsers, updateUserRole, banUser, liftUserRestriction, resetUserStrikes } from '../../api';
+import AdminLayout from '../components/AdminLayout';
+import { getAdminUsers, updateUserRole, banUser, liftUserRestriction, resetUserStrikes } from '../api';
 import './AdminUsersPage.css';
 
 // SanctionSquad(v145) — restricted_until 이 현재 시각 이후면 "생성 제한 중"

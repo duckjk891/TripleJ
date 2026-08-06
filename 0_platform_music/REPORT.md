@@ -14630,3 +14630,32 @@ canonical transform 전수(스테일 발견→vite 재시작 후 8파일 재검)
 - Vite drvfs 캐시 스테일 재발(4회째) → 오케스트레이터 재기동으로 해소, 신규 마커 3종 서빙 확인.
 - 스팟체크(planner): `character.py` 4경로 `File(None)`(:357/:551/:880/:1025) + 400 문구·최소 2자 검증(:398-404 외 3곳) + v138 `contents is not None`(:428/:624/:941/:1090) + v135 얼굴 인증 실사 2경로 한정 `settings.face_verify_enabled and contents is not None`(:452 sync/:964 async, 카툰 무게이트 유지) + `source=` 로깅(:469 등) — `character_generator.py` `_build_step1_answer(has_photo)`(:771)·`_adapt_prompt_for_text_only`(:887)·카툰 MASTER_PROMPT 분기(:1224-1225) — `claude_cache.py` `cached_system` 고정부 첫 블록+ephemeral·변동부 후속 블록·`log_cache_usage` no-raise — 7 stage 부착 확인(lyrics_generator:440/453, mv_generator #5 :898/909 변동 3값 user 선두 이동(:876-880 context_head)·#2 :1877-1898·#3 :3444-3478·#4 :4998-5023 video_model 별 고정부, cover:131·translation:115 로깅만) — `requirements.txt:24` `anthropic>=0.105` 양쪽 동일 — 9005↔9004 변경 8파일 `diff` 실행 결과 0 — `MyMusicPage.jsx` `renderAppearanceInput`(:969, 두 섹션 :1037/:1202)·`user_text` append(:452/:578)·portrait_confirmed 사진 시에만(:455/:581)·텍스트-only 게이트 스킵(:409)·403 폴백 사진 경로 전용(:487) — PLAN v161 대비 **불일치 없음**. (참고: character.py:157 `File(...)` 은 별도 `/upload-original-photo` 엔드포인트 — 스코프 외 정상)
 - **버전 표기**: PLAN.md v161 ↔ REPORT v163 교차참조(기존 관례 준수).
+
+## v164 — 관리자(admin) 페이지 독립 앱 분리: `frontend_admin/` 신설(포트 4001) + 사용자 앱에서 admin 코드 완전 제거 (PLAN v162) — 2026-08-06
+**수정일자**: 2026-08-06
+**요청 작업**: 관리자 화면을 사용자 앱(frontend, 4000)에서 분리 — ① `frontend/` 와 같은 레벨에 **`frontend_admin/` 독립 앱 신설**(자체 package.json/vite) ② dev 포트 **4001**(HTTPS + `/api` 프록시 → 9005, 사용자 앱과 동일 패턴) ③ **완전 이사** — 기존 frontend 에서 admin 페이지·라우트·admin 전용 API 함수 전부 제거(양쪽 유지 아님) ④ 같은 백엔드(9005) 사용, 관리자 로그인(role=admin) 동작. 공유 자산은 공유 패키지 없이 필요 최소만 복사. **백엔드 무변경(backend-dev 미배정, 9004 미러 불필요).**
+
+### 수행 결과
+- **`frontend_admin/` 신설(22파일)**: package.json(`maidol-admin`, deps 5종 frontend 동일 버전) / vite.config.js(**포트 4001**, host 0.0.0.0, HTTPS 인증서 자체 `./certs` 우선 → **`../frontend/certs` 폴백**(중복 방지), `/api`→9005 프록시) / index.html(`<title>MAIDOL Admin</title>`, aimu-logo.svg favicon) / main.jsx(**remoteLogger 미포함** — 관리자 콘솔 로그가 사용자 frontend.log 에 섞이지 않게) / App.jsx(라우트 **루트 승격**: `/`=대시보드·`/users`·`/tracks`·`/reports`·`/login`·`*`→`/`, AdminRoute 는 미로그인/비관리자 시 `/login` 리다이렉트) / api.js 슬림본(인터셉터+login/getMe+**admin 18함수 전부**+coverPreviewUrl/adminEvidenceUrl, clearMyCharacterCache 제거) / AuthContext 슬림본(login/logout/복원만 — register·OAuth·출석 미포함) / AdminLayout(NavLink 루트 경로화, "메인으로" 백링크 → **로그아웃 버튼**) / admin 4페이지 8파일 이동(pages/ 승격, 로직 무수정) / **AdminLoginPage 신설**(로그인 성공 후 `role !== 'admin'` 이면 **즉시 logout(토큰/유저 localStorage 제거) + "관리자 계정이 아닙니다" 에러** — 비관리자에게 유효 토큰을 남기지 않음) / index.css(변수+리셋, App.css 병합).
+- **frontend 완전 제거**: `src/pages/admin/` 8파일 + `components/AdminLayout.jsx/.css` 삭제, App.jsx 에서 admin import 4줄·AdminRoute·`/admin/*` 라우트 4개·`isAdminPage` 분기(Header/Footer/MusicPlayer 조건 렌더) 제거, api/index.js 에서 admin 전용 18함수 삭제(**coverPreviewUrl 은 공용이라 유지** — MusicPlayer·SongItem·ChartPage 등 사용). `BusinessRoute` 의 `role==='admin'` 허용은 비즈니스 접근 정책이라 정당 잔존.
+- 양쪽 `npm run build` 성공, frontend/src admin 잔존 grep **0건**, eslint 신규 유발 0.
+
+### 변경 파일
+- 신설: `frontend_admin/` 전체 22파일(package.json, vite.config.js, index.html, eslint.config.js, public/aimu-logo.svg, src/main.jsx, App.jsx, api.js, index.css, contexts/AuthContext.jsx, components/AdminLayout.jsx/.css, pages/ 10파일 — admin 4페이지 8 + AdminLoginPage 2)
+- 수정: `frontend/src/App.jsx`(admin 결합부 제거 + catch-all 추가), `frontend/src/api/index.js`(admin 18함수 삭제)
+- 삭제: `frontend/src/pages/admin/` 8파일, `frontend/src/components/AdminLayout.jsx/.css`
+- 백엔드(9005/9004): **무수정**
+
+### 테스트 결과 (tester: 7항목 중 6 PASS + 경미 이슈 1건 발견 → 수정 완료)
+- PASS: 4001 서빙/타이틀/HTTPS·프록시, 관리자 API 200·비관리자 403·무토큰 401, AdminLoginPage 비관리자 즉시 로그아웃·AdminRoute 리다이렉트 로직, 사용자 앱 회귀(admin 잔존 0·마커 서빙), 독립성(remoteLogger/Player/출석 import 0), 동시 기동(4000/4001/9005).
+- **이슈 1건(수정 완료)**: 사용자 앱 App.jsx 에 catch-all 라우트 부재 → 미정의 경로(구 `/admin` 포함) 진입 시 빈 화면. 오케스트레이터가 `<Route path="*" element={<Navigate to="/" replace />} />` 추가, Vite 재기동 후 변환 코드에 `path:"*"` 서빙 확인.
+- 서버 최종 상태: 9005/4000/4001 전부 200.
+
+### 특이사항
+- **catch-all 이슈**: admin 라우트 제거로 드러난 기존 공백(종전에는 어떤 경로든 admin 분기라도 걸렸음) — 사용자 앱 `*`→`/` 리다이렉트 추가로 해소. admin 앱은 설계 단계부터 `*`→`/` 포함.
+- **관리자 앱 실행법**: `cd frontend_admin && npm run dev` → **https://localhost:4001** (인증서는 `../frontend/certs` 자동 재사용, `/api` 는 9005 로 프록시).
+- 백엔드/9004 무변경 — 권한은 기존 `get_admin_user`(role!=admin 403) 그대로, vite proxy same-origin 이라 CORS 무관.
+- remoteLogger 는 관리자 앱에 의도적 미포함(사용자 로그 파일 오염 방지) — 필요시 후속 v 에서 별도 파일로.
+- 보안 참고: tester 가 검증용 admin/비관리자 토큰을 mint_token 패턴으로 발급(테스트 관행, 실계정 조작 없음).
+- 스팟체크(planner): vite.config 4001·`./certs`→`../frontend/certs` 폴백·`/api`→9005 프록시 — index.html `MAIDOL Admin` — main.jsx remoteLogger 무(주석뿐) — App.jsx 라우트 6개(`/login` 공개, AdminRoute `!user || role!=='admin'`→`/login`, `*`→`/`) — AdminLoginPage `role !== 'admin'` 시 `logout()`+에러(:31-34) — AdminLayout 로그아웃 버튼+NavLink 루트 4곳 — api.js export 22개(login/getMe+admin 18+coverPreviewUrl/adminEvidenceUrl, clearMyCharacterCache 무) — AuthContext 슬림(register/OAuth/출석 무) — frontend/src admin 잔존 grep 0·pages/admin·AdminLayout 부재·coverPreviewUrl 유지(:619) — 사용자 앱 App.jsx catch-all(:78) — 독립성 grep(remoteLogger/PlayerContext/AttendanceModal) 코드 0 — 서버 4001/4000/9005 전부 200 재확인 — PLAN v162 대비 **불일치 없음**.
+- **버전 표기**: PLAN.md v162 ↔ REPORT v164 교차참조(기존 관례 준수).

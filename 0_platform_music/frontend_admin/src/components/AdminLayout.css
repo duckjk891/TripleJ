@@ -30,17 +30,19 @@
   margin-bottom: 8px;
 }
 
-.admin-sidebar__back {
+/* v162 — "메인으로" 백링크 자리 → 로그아웃 버튼 */
+.admin-sidebar__logout {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 0;
   font-size: 0.85rem;
   color: var(--color-text-sub);
   transition: color 0.2s;
 }
 
-.admin-sidebar__back:hover {
-  color: var(--color-primary);
+.admin-sidebar__logout:hover {
+  color: var(--color-danger);
 }
 
 .admin-sidebar__nav {

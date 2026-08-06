@@ -2,7 +2,7 @@
 
 > 백엔드 서버: `http://localhost:9005` (메인 작업 라인) — `http://localhost:9004` 는 9005 와 동일한 미러 (앱팀은 9004 사용 가능)
 > 모든 API 경로 접두사: `/api`
-> 작성일: 2026-05-25 / **최종 검증일: 2026-08-03**
+> 작성일: 2026-05-25 / **최종 검증일: 2026-08-06**
 > 기준 버전: **9005 백엔드 (backend_9005)** — 9004 는 byte-identical 미러(`_logs` 파일명만 상이)
 
 본 문서는 백엔드의 모든 REST API 를 앱팀이 바로 연동할 수 있도록 정리한 레퍼런스입니다. 모든 항목은 `backend_9005/app/routes/` 의 실제 코드를 기준으로 작성되었습니다.
@@ -46,6 +46,7 @@
 33. [리퍼럴(앱 추천) API](#33-리퍼럴앱-추천-api-apireferral)
 34. [DM API — REST + WebSocket](#34-dm-api--rest--websocket-apidm)
 35. [얼굴인증 API](#35-얼굴인증-api-apiface-verify)
+36. [디렉터 피로/쿨다운 API](#36-디렉터-피로쿨다운-api-apifatigue)
 
 > 소셜 로그인(OAuth — google/kakao/naver)은 §3 인증 API 의 하위 섹션
 > "[소셜 로그인](#소셜-로그인-oauth-20-authorization-code--apiauthoauth)" 참고.
@@ -5102,57 +5103,58 @@ v76.10 부터 `POST /api/generate/` body 에 다음 두 필드 추가됨.
 
 ---
 
-## 28. 포인트 API (`/api/points`) — v81 (적립 확대 + 차감 도입: 2026-07)
+## 28. 포인트 API (`/api/points`) — v158 별 경제(Star Economy) 개편 (2026-08)
 
-사용자 활동 포인트. 기존 rewards(AdMob) 시스템과는 **완전히 별개**.
+사용자 활동 포인트(⭐**별**). 기존 rewards(AdMob) 시스템과는 **완전히 별개**. 액션별 차감 단가는 `GET /api/points/costs` 를 SSOT 로 사용.
 
 ### 28.1 엔드포인트
 
 | Method | Path | 인증 | 응답 |
 |---|---|---|---|
+| GET | `/api/points/costs` | **불요(공개)** | `{ "costs": { "lyrics":5, "compose":15, "cover":5, "character":10, "fatigue_skip":5 } }` |
 | GET | `/api/points/balance` | 필요 | `{ "balance": int }` — 계정 생성 시 0 |
 | GET | `/api/points/history?limit=50` | 필요 | `{ "history": [ { "action", "track_id", "day", "amount", "created_at" } ] } ` |
 
+- `GET /costs` : **유료 액션 단가의 단일 소스**(SSOT). 앱은 비용을 하드코딩하지 말고 이 값을 조회해 표시할 것(가격 드리프트 방지). 인증 불요(가격표는 공개). 비용이 있는 액션만 포함.
 - `GET /balance` : 로그인 사용자의 현재 누적 포인트. 적립 이력이 없으면 `0`.
-- `GET /history` : 최근 포인트 이벤트(최신순). `limit` 기본 50, 최대 200 (초과 시 거부). 각 항목은 `action`, `track_id`(적립은 곡/생성 ID, 차감·환불은 시도별 유니크 ref), `day`(KST `YYYYMMDD`), `amount`(+1 / −2 / +2), `created_at`(ISO8601 UTC).
+- `GET /history` : 최근 포인트 이벤트(최신순). `limit` 기본 50, 최대 200 (초과 시 거부). 각 항목은 `action`, `track_id`(적립은 곡/생성 ID·영구적립은 `-` 또는 상대 user_id, 차감·환불은 시도별 유니크 ref), `day`(KST `YYYYMMDD` · 영구 1회성은 `-`), `amount`(적립 +N / 차감 −N / 환불 +N), `created_at`(ISO8601 UTC).
 
-### 28.2 포인트 규칙
+### 28.2 포인트 규칙 (v158 별 경제)
 
-**적립 (+1, 하루 1회 / 대상당 / 행위별 — KST 자정 기준):**
-
-| action | 시점 | ref (track_id 필드) |
-|---|---|---|
-| `play` | 로그인 재생 듣기 | track_id |
-| `generate` | 곡 생성 completed 마킹 시 (생성 요청자) | generation_id |
-| `upload` | 곡 발행 시 (`POST /api/tracks/upload`, `/upload-from-generation`) | track_id |
-
-> **v111 (2026-07-08)**: `like` / `playlist_add` / `download` 적립 **제거** — 좋아요·플레이리스트 추가·다운로드는 더 이상 포인트가 쌓이지 않음. 기존에 적립된 이벤트/잔액은 소급 변경 없음. history 에 과거 like/playlist_add/download 이벤트는 그대로 보일 수 있음.
-
-**추가 적립 액션 — 출석·리퍼럴 (2026-08 신규, history 에 함께 노출):**
+**적립 (KST 자정 기준 멱등):**
 
 | action | amount | 시점 / 규칙 | ref (track_id 필드) |
 |---|---|---|---|
+| `signup_bonus` | **+50** | 회원가입 완료 (기본 가입 + 소셜 가입 모두) — 계정당 영구 1회 | `-` (day=`-`) |
+| `verify_bonus` | **+30** | 본인인증 완료 — 소셜(naver/kakao) 가입/승격 시 자동, 계정당 영구 1회 | `-` (day=`-`) |
 | `attendance` | +10 / +30 / +100 | 출석체크 `POST /api/attendance/check-in` (§32) — 하루 1회 KST 멱등, 5일차 +30 / 10일차 +100 / 그 외 +10 | KST `YYYYMMDD` (day 와 동일) |
-| `referral_inviter` | +50 | 회원가입 시 유효한 추천코드 입력 → **추천인**에게 적립 (§33) | 신규 가입자 user_id (`day`="-") |
-| `referral_joiner` | +50 | 같은 시점 **가입자 본인**에게 적립 | 추천인 user_id (`day`="-") |
+| `play` | **+1 (하루 최대 5회)** | 로그인 재생 — **곡의 70% 이상 청취 시** 클라이언트가 `POST /api/charts/record-play` 호출 시점에 적립. 곡당 하루 1회 + **일일 상한 5회**(`daily_cap`) | track_id |
+| `upload` | **+5** | 곡 발행 시 (`POST /api/tracks/upload`, `/upload-from-generation`) — 곡당 1회 | track_id (day=`-`) |
+| `referral_inviter` | +50 | 회원가입 시 유효한 추천코드 입력 → **추천인**에게 적립 (§33) | 신규 가입자 user_id (day=`-`) |
+| `referral_joiner` | +50 | 같은 시점 **가입자 본인**에게 적립 | 추천인 user_id (day=`-`) |
 
 - 리퍼럴 적립은 가입 1회성 (자기추천 차단). 적립 성공 여부는 register 응답의 `referral.applied` 로 확인.
+- **70% 규칙**: 청취 70% 판정은 클라이언트가 수행하고, 백엔드는 `record-play` 훅에서 무조건 `play` 적립을 시도(하루 상한 5회로 억제). 즉 상한/멱등은 서버, 70% 게이트는 클라이언트 책임.
+- **v158 변경점(구 v81/v111 대비)**: `generate` 적립(+1) **폐지**, `upload` +1 → **+5**, `signup_bonus`/`verify_bonus` 신규. `like`/`playlist_add`/`download` 적립은 v111 에서 이미 폐지(과거 이벤트는 history 에 잔존 가능).
+- **비로그인은 적립 없음.** 적립 대상은 **행위자**. **멱등**: 같은 (사용자·행위·대상·날짜) 중복 무시. 적립은 best-effort 훅 — 실패/중복이 본 기능 응답에 영향 없음.
 
-- **비로그인은 적립 없음.** 적립 대상은 **행위자**.
-- **멱등**: 같은 (사용자·행위·대상·날짜) 중복은 무시 (point_events 유니크 인덱스).
-- 적립은 best-effort 훅 — 실패/중복이 본 기능 응답에 절대 영향 없음.
+**차감 (요청 시 즉시 선차감 · 실패 시 자동 환불) — 단가는 액션별 상이:**
 
-**차감 (−2, 요청 시 즉시 차감 · 실패 시 자동 환불):**
+| action | 단가(⭐) | 대상 엔드포인트 |
+|---|---|---|
+| `lyrics` | **5** | `POST /api/generate/lyrics/` (작사) |
+| `compose` | **15** | `POST /api/generate/` (create, `start_music_gen=true`) + `POST /api/generate/{gen_id}/start/` (작곡) |
+| `cover` | **5** | `POST /api/upload/generate-cover` (커버 이미지) |
+| `character` | **10** | `POST /api/character/generate-sheet`, `/generate-sheet-cartoon`, `/generate-sheet-async`, `/generate-sheet-cartoon-async` (캐릭터 시트) |
+| `fatigue_skip` | **5** | `POST /api/fatigue/skip` (`method=points`, 쿨다운 30분 스킵 — §36) |
 
-| action | 대상 엔드포인트 |
-|---|---|
-| `spend:character` | `POST /api/character/generate-sheet`, `/generate-sheet-cartoon`, `/generate-sheet-async`, `/generate-sheet-cartoon-async` |
-| `spend:cover` | `POST /api/upload/generate-cover` |
-
-- **잔액 부족 시 402** `{ "error": "포인트가 부족합니다 (필요: 2)" }` — 생성/작업 미시작 (async 는 job 미생성).
-- 차감은 원자적 조건부 갱신(`balance >= 2` 일 때만 `-2`) — 음수 잔액 불가.
-- **실패 시 자동 환불** (`refund:character` / `refund:cover`, +2): 동기 생성 예외, async job 실패, 서버 재시작 stale job 복구(30분↑ processing → failed) 모두 환불. job 의 `refunded` 플래그로 **이중 환불 방지**.
+- **단가는 코드 상수(`POINT_COSTS`) = `GET /api/points/costs` 응답과 동일.** 앱은 하드코딩 금지, costs 조회값 사용.
+- **잔액 부족 시 402** `{ "error": "포인트가 부족합니다 (필요: N)" }` — N 은 해당 액션 단가. 생성/작업 미시작 (async 는 job 미생성).
+- 차감은 원자적 조건부 갱신(`balance >= 단가` 일 때만 차감) — 음수 잔액 불가.
+- **실패 시 자동 환불** (`refund:*`, +단가): 동기 생성 예외, async job 실패, 서버 재시작 stale job 복구(30분↑ processing → failed) 모두 환불. job 의 `refunded` 플래그로 **이중 환불 방지**.
 - history 의 차감/환불 `track_id` 는 시도별 유니크 ref (uuid) — 곡 ID 아님.
+
+> **⚠️ 유료 생성 API 게이트 순서 (앱 필수 처리):** 스트라이크 **403** → 디렉터 피로 **429**(§36) → 잔액 **402**. `POST /api/generate/`(작곡 시작) 및 `/{gen_id}/start/` 는 이 3단 게이트를 모두 거친다. 429 는 `Retry-After` 헤더(남은 초)를 포함.
 
 ---
 
@@ -5995,4 +5997,60 @@ DELETE /api/face-verify
 - 앱 흐름: `POST /session` → `session_id` 로 SDK 검사 실행 → 완료 후 `POST /verify` 에 `session_id` + `photo` 전달.
 - SDK 초기화에 필요한 **Cognito 자격증명 풀 ID·리전(도쿄 ap-northeast-1) 등 세션 연동 상세는 앱팀과 협의 후 별도 공유 예정**.
 - 현재 mock 모드 운용 중에는 `session_id` 가 무시되고 `selfie` 파일 업로드 경로로 동작합니다 (하위호환).
+
+---
+
+## 36. 디렉터 피로/쿨다운 API (`/api/fatigue`)
+
+StarEcon(v158) — "디렉터도 사람이다" 컨셉. **곡을 완성할 때마다** 디렉터에게 누진 쿨다운(대기시간)이 걸린다. 쿨다운 중에는 유료 곡 생성이 **429** 로 막히며, 광고(광고권) 또는 별(⭐5)로 30분씩 단축할 수 있다. 모두 **인증 필수**.
+
+- **누진 사다리(당일 완성곡 수 기준, KST 자정 리셋):** 1곡 → 2h / 2곡 → 4h / 3곡 → 8h / 4곡 이상 → 12h.
+- **쿨다운 발동 지점:** 곡 생성이 최종 완성(completed)될 때 서버가 자동으로 `cooldown_until` 설정. 발동은 백엔드 내부 훅 — 앱이 별도 호출할 필요 없음.
+- **게이트 노출:** 쿨다운 활성 중 `POST /api/generate/`(작곡 시작)·`/{gen_id}/start/` 호출 시 **429** `{"error":"director_fatigue", "cooldown_remaining_sec":int, "cooldown_until":ISO8601}` + `Retry-After`(남은 초) 헤더. (게이트 순서: 스트라이크 403 → 피로 429 → 잔액 402)
+
+### 36.1 상태 조회
+
+```
+GET /api/fatigue/status
+```
+
+앱이 대기 UI(남은 시간 카운트다운·스킵 버튼 활성화)를 그리는 진입점.
+
+**응답 (200):**
+
+```json
+{
+  "today_completed": 2,
+  "cooldown_active": true,
+  "cooldown_until": "2026-08-06T12:34:56+00:00",
+  "cooldown_remaining_sec": 5400,
+  "skip_point_cost": 5,
+  "skip_minutes": 30,
+  "skip_wait_count": 1,
+  "ladder": { "1": 2, "2": 4, "3": 8, "4+": 12 }
+}
+```
+
+- `today_completed` — 오늘(KST) 완성한 곡 수. `cooldown_active` — 활성 여부. `cooldown_until` — 활성일 때만 ISO8601(비활성이면 `null`). `cooldown_remaining_sec` — 남은 초(비활성 0).
+- `skip_point_cost` — 30분 스킵 1회 별 비용(⭐5). `skip_minutes` — 스킵 1회 단축량(30분). `skip_wait_count` — 보유 **광고권**(AdMob 리워드 적립분, §21 `reward_balances.skip_wait_count` 와 동일 소스). `ladder` — 사다리 사양(FE 표시용).
+
+### 36.2 쿨다운 스킵 (30분 단축)
+
+```
+POST /api/fatigue/skip
+```
+
+**요청 본문:** `{ "method": "points" | "ad" }`
+- `points` — 별 ⭐5 차감(반복 가능). `ad` — 광고권 1장 소비(AdMob 리워드 광고 시청분).
+
+**응답 (200):** `status` 와 동일한 payload + `skipped_minutes`(성공 시 30, 경합으로 미적용 시 0). 즉시 30분 단축된 최신 상태를 반환.
+
+| 에러 | 조건 |
+|------|------|
+| 400 | `method` 가 `points`/`ad` 가 아님 (`{"error":"method 는 'points' 또는 'ad' 여야 합니다."}`) |
+| 402 | (points) 별 부족 `{"error":"포인트가 부족합니다 (필요: 5)"}` / (ad) 광고권 없음 `{"error":"no_skip_tickets"}` |
+| 409 | 진행 중인 쿨다운 없음 (무과금) `{"error":"진행 중인 쿨다운이 없습니다."}` |
+
+- **경합 안전:** 차감(별/광고권)과 쿨다운 단축 사이에 쿨다운이 만료/해제되면 차감분을 **자동 원복**(별 환불 / 광고권 원복)하고 `skipped_minutes:0` 반환.
+- 광고권은 AdMob SSV 콜백(§21 rewards)이 적립 → 여기서 원자 차감으로 소비.
 

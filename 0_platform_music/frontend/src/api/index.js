@@ -613,21 +613,9 @@ export const streamGeneration = (id) => API.get(`/generate/${id}/stream/`);
 export const uploadFromGeneration = (data) => API.post('/tracks/upload-from-generation', data);
 export const getGenerationModels = () => API.get('/generate/models/');
 
-// Admin
-export const getAdminDashboard = () => API.get('/admin/dashboard');
-export const getAdminUsers = (params) => API.get('/admin/users', { params });
-export const getAdminUser = (id) => API.get(`/admin/users/${id}`);
-export const updateUserRole = (id, role) => API.put(`/admin/users/${id}/role`, { role });
-export const banUser = (id, is_banned, reason) => API.put(`/admin/users/${id}/ban`, { is_banned, reason });
-// SanctionSquad(v145) — 제재 컨트롤: 생성 제한 해제 / 위반 기록 초기화
-export const liftUserRestriction = (id) => API.post(`/admin/users/${id}/restriction/lift`);
-export const resetUserStrikes = (id) => API.post(`/admin/users/${id}/strikes/reset`);
-export const getAdminTracks = (params) => API.get('/admin/tracks', { params });
-export const deleteAdminTrack = (id) => API.delete(`/admin/tracks/${id}`);
-export const updateTrackVisibility = (id, is_public) => API.put(`/admin/tracks/${id}/visibility`, { is_public });
-export const getAdminLogs = (params) => API.get('/admin/logs', { params });
+// v162 — Admin 전용 API 는 독립 앱(frontend_admin/src/api.js)으로 완전 이사.
 
-// Cover preview URL helper
+// Cover preview URL helper (공용 — MusicPlayer/SongItem/feed/ChartPage/PlayerPage/UploadPage)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');
   return `${API.defaults.baseURL}/upload/cover-preview/${encodeURIComponent(objectName)}?token=${encodeURIComponent(token || '')}`;
@@ -789,31 +777,7 @@ export const reportContent = (targetType, targetId, reasonCode, reasonText) =>
     reason_code: reasonCode,
     ...(reasonText ? { reason_text: reasonText } : {}),
   });
-// 어드민 신고 큐 → { reports: [...target_snapshot 하이드레이션..., urgent, evidence, resolution], pagination }
-export const getAdminReports = (params) => API.get('/admin/reports', { params });
-// action: 'blind'|'delete'|'dismiss'|'confirm_delete'(확정 삭제)|'restore'(복원)
-// (트랙·피드는 blind|restore|confirm_delete|dismiss, 댓글은 delete|dismiss)
-export const actionAdminReport = (reportId, action) =>
-  API.post(`/admin/reports/${reportId}/action`, { action });
-
-// v138 — 신고 집행 패키지 (양면 뷰·확정 삭제·복원·인물 수색 몰수)
-// 어드민 전용 증거 프록시 URL (img src 용) — coverPreviewUrl 의 ?token= 패턴.
-export const adminEvidenceUrl = (reportId, idx) => {
-  const token = localStorage.getItem('token');
-  return `${API.defaults.baseURL}/admin/reports/${reportId}/evidence/${idx}?token=${encodeURIComponent(token || '')}`;
-};
-// content_json 증거 텍스트 조회 — 응답 본문은 절대 콘솔에 출력하지 않는다.
-export const getAdminReportEvidence = (reportId, idx) =>
-  API.get(`/admin/reports/${reportId}/evidence/${idx}`);
-// 양면 뷰 우측 — 사용자의 최근 생성물 { tracks: [...], character: {...} }
-export const getAdminUserRecentContent = (userId) =>
-  API.get(`/admin/users/${userId}/recent-content`);
-// 인물 수색 — 수 초~수십 초 소요 가능 → 타임아웃 여유(120s)
-export const adminFaceSearch = (reportId) =>
-  API.post('/admin/moderation/face-search', { report_id: reportId }, { timeout: 120000 });
-// 선택 항목 일괄 몰수 — targets: [{type: 'track'|'character', id}]
-export const adminPurge = (reportId, targets) =>
-  API.post('/admin/moderation/purge', { report_id: reportId, targets });
+// v162 — 신고 관리자측 API 는 독립 앱(frontend_admin/src/api.js)으로 완전 이사.
 
 // v139 — 신고 후속: 소명 제출·내 신고 내역·스트라이크 생성 제한
 // 내 콘텐츠가 신고 처리된 목록(소명 대상) → { reports: [{report_id, target_type, target_id,

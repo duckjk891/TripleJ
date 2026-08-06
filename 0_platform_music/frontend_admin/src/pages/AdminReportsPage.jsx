@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback } from 'react';
-import AdminLayout from '../../components/AdminLayout';
+import AdminLayout from '../components/AdminLayout';
 import {
   getAdminReports,
   actionAdminReport,
@@ -9,7 +9,7 @@ import {
   getAdminUserRecentContent,
   adminFaceSearch,
   adminPurge,
-} from '../../api';
+} from '../api';
 import './AdminReportsPage.css';
 
 // v137 — 어드민 신고 큐 (미처리/처리됨/기각 필터, 대상 미리보기, 블라인드/삭제/기각 처리)

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FiSearch } from 'react-icons/fi';
-import AdminLayout from '../../components/AdminLayout';
-import { getAdminTracks, deleteAdminTrack, updateTrackVisibility } from '../../api';
+import AdminLayout from '../components/AdminLayout';
+import { getAdminTracks, deleteAdminTrack, updateTrackVisibility } from '../api';
 import './AdminTracksPage.css';
 
 function formatDate(dateStr) {
