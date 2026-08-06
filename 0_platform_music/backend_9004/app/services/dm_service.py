@@ -387,6 +387,28 @@ async def get_or_create_conversation(conn, mongo, me_id, peer_id) -> dict:
     return await _serialize_conversation(conn, doc, me_id)
 
 
+def _conv_sort_key(item: dict):
+    """대화 목록 정렬키 (v168) — 1차 last_at(분 단위 절삭) desc, 2차 닉네임 오름차순.
+
+    브로드캐스트 fan-out 은 순차 발송이라 last_at 이 밀리초 단위로 전부 다르지만,
+    화면 표시는 분 단위(오후 07:45)라 사용자에겐 "같은 시각인데 무순서"로 보인다.
+    → 동률 판정을 표시 단위(분)로 묶는다: ISO(UTC) 문자열 앞 16자
+    ("YYYY-MM-DDTHH:MM")로 절삭해 같은 분이면 닉네임순.
+    닉네임은 casefold 후 유니코드 코드포인트 순 — 숫자 < 영문 < 한글(가나다)로
+    사용자 기대 순서와 일치. 닉네임 없으면 뒤로.
+    """
+    minute = (item.get("last_at") or "")[:16]
+    nick = ((item.get("peer") or {}).get("nickname") or "￿").casefold()
+    return (minute, nick)
+
+
+def sort_conversations(items: List[dict]) -> List[dict]:
+    """1차 last_at(분) desc + 2차 닉네임 asc 정렬 (v168 공용 — 목록/요청함)."""
+    # 파이썬 안정 정렬: 닉네임 asc 로 먼저 정렬한 뒤 분 단위 desc 재정렬.
+    by_nick = sorted(items, key=lambda c: _conv_sort_key(c)[1])
+    return sorted(by_nick, key=lambda c: _conv_sort_key(c)[0], reverse=True)
+
+
 async def _hydrate_conversation_list(conn, convs, me_id) -> List[dict]:
     """대화 doc 리스트 → peer 닉/프사 일괄 하이드레이션 + serialize (v155 공용)."""
     peer_ids = [p for c in convs for p in (c.get("participants") or []) if p != me_id]
@@ -432,7 +454,9 @@ async def list_conversations(conn, mongo, me_id) -> List[dict]:
         .sort("last_at", -1)
         .to_list(length=MAX_CONVERSATIONS)
     )
-    return await _hydrate_conversation_list(conn, convs, me_id)
+    hydrated = await _hydrate_conversation_list(conn, convs, me_id)
+    # v168 — 동률(last_at 동일, 예: 브로드캐스트 동시발송) 2차 닉네임 정렬
+    return sort_conversations(hydrated)
 
 
 async def get_messages(mongo, conversation_id, me_id, before=None, limit=DEFAULT_MESSAGE_LIMIT) -> List[dict]:
@@ -611,7 +635,9 @@ async def list_requests(conn, mongo, me_id) -> List[dict]:
         .to_list(length=MAX_CONVERSATIONS)
     )
     logger.info("[dm] list_requests me=%s count=%d", _short(me_id), len(convs))
-    return await _hydrate_conversation_list(conn, convs, me_id)
+    hydrated = await _hydrate_conversation_list(conn, convs, me_id)
+    # v168 — 요청함도 동일 규칙(1차 last_at desc, 2차 닉네임 asc)
+    return sort_conversations(hydrated)
 
 
 def _assert_request_receiver(conv, me_id, cid_hint, action: str) -> None:

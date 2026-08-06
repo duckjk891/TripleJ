@@ -25853,3 +25853,21 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 5. fan-out 백그라운드: 응답 즉시 `{queued:N}`, 잠시 후 각 수신자 DM에 메시지 존재.
 6. 회귀: 기존 개별 DM 작성/검색/전송, CS 오류신고 흐름, 미인증 제한모드 정상.
 7. 로그 `[dm-broadcast]` 출력 확인.
+
+---
+
+# v168 — DM 대화목록 정렬 (최신순 + 동시각 닉네임순) (2026-08-06)
+
+## 요청 원문
+"가장 최근 보낸 메시지가 제일 위로. 동시에 보내서 여러 개가 같은 최근이면 1,2,3/a,b,c/ㄱ,ㄴ,ㄷ 순으로 정렬."
+
+## Plan verification findings
+- BE `dm_service.list_conversations`: Mongo `.sort("last_at",-1)` 만 — 동률 순서 미보장.
+- 브로드캐스트 fan-out 은 순차 발송이라 last_at 이 밀리초 단위로 전부 상이 → "동률"이 실제로 안 생기고, 화면 표시는 분 단위라 사용자에겐 무순서로 보임. **→ 동률 판정을 표시 단위(분, ISO 앞 16자)로 절삭해야 요구 충족** (1차 구현 후 실데이터 검증에서 발견, 즉시 보정).
+- 4001 admin CS 목록도 같은 함수 사용 → BE 한 곳 수정으로 양앱 커버. FE 는 WS/낙관 갱신 로컬 변경이 있어 렌더 직전 동일 규칙 정렬 필요.
+
+## 구현
+- BE: `_conv_sort_key`(분 절삭+casefold 닉네임)/`sort_conversations` 신규, `list_conversations`·`list_requests` 적용. 9004 미러.
+- FE 4000 `DmInboxPage.jsx`: `sortConvList` 유틸 + `displayConversations`/`displayRequests` 렌더 직전 정렬.
+- FE 4001 `AdminCsPage.jsx`: 동일 `sortConvList` + 목록 렌더 적용.
+- 닉네임 정렬 = 코드포인트 순(숫자<영문<한글) — 유니코드 기본 순서가 요구와 일치.

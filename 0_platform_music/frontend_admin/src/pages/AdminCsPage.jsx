@@ -16,6 +16,22 @@ import './AdminCsPage.css';
 const POLL_MS = 12000;
 const MSG_LIMIT = 30;
 
+// v168 — 대화 목록 정렬: 1차 last_at(분 단위) desc, 2차 같은 분이면 닉네임 오름차순.
+// 브로드캐스트 순차 발송의 밀리초 차이를 표시 단위(분, ISO 앞 16자)로 묶어 동률 처리.
+// 코드포인트 순(숫자<영문<한글) — 백엔드 sort_conversations/4000 sortConvList 와 동일 규칙.
+function sortConvList(list) {
+  return [...list].sort((a, b) => {
+    const ta = (a?.last_at || '').slice(0, 16);
+    const tb = (b?.last_at || '').slice(0, 16);
+    if (ta !== tb) return ta < tb ? 1 : -1;
+    const na = (a?.peer?.nickname || '￿').toLowerCase();
+    const nb = (b?.peer?.nickname || '￿').toLowerCase();
+    if (na < nb) return -1;
+    if (na > nb) return 1;
+    return 0;
+  });
+}
+
 function fmtListTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -194,7 +210,7 @@ export default function AdminCsPage() {
               <p className="admin-cs__status">접수된 문의가 없습니다.</p>
             ) : (
               <ul className="admin-cs__conv-list">
-                {conversations.map((c) => {
+                {sortConvList(conversations).map((c) => {
                   const peer = c.peer || {};
                   const active = c.conversation_id === activeCid;
                   const unread = c.unread || 0;

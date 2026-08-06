@@ -17,6 +17,24 @@ import './DmInboxPage.css';
 
 const MSG_PAGE = 30;
 
+// v168 — 대화 목록 정렬: 1차 last_at(분 단위) desc, 2차 같은 분이면 닉네임 오름차순.
+// 브로드캐스트는 순차 발송이라 밀리초가 전부 다르지만 화면 표시는 분 단위 →
+// 동률 판정을 표시 단위(분, ISO 앞 16자)로 묶는다. 닉네임은 코드포인트 순
+// (숫자<영문<한글=가나다) — 백엔드 sort_conversations 와 동일 규칙.
+// WS 수신/낙관 갱신 등 로컬 목록 변경 후에도 렌더 직전 일관 정렬을 보장한다.
+function sortConvList(list) {
+  return [...list].sort((a, b) => {
+    const ta = (a?.last_at || '').slice(0, 16); // "YYYY-MM-DDTHH:MM"
+    const tb = (b?.last_at || '').slice(0, 16);
+    if (ta !== tb) return ta < tb ? 1 : -1; // ISO(UTC) 문자열 비교 = 시간순
+    const na = (a?.peer?.nickname || '￿').toLowerCase();
+    const nb = (b?.peer?.nickname || '￿').toLowerCase();
+    if (na < nb) return -1;
+    if (na > nb) return 1;
+    return 0;
+  });
+}
+
 function fmtListTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -727,6 +745,9 @@ export default function DmInboxPage() {
       displayConversations = [activeConversation, ...displayConversations];
     }
   }
+  // v168 — 렌더 직전 일관 정렬 (1차 last_at desc, 2차 닉네임 asc — WS/낙관 갱신 순서 무관)
+  displayConversations = sortConvList(displayConversations);
+  const displayRequests = sortConvList(requests);
   // 제한 모드는 요청함 접근 불가 → 항상 메시지 탭.
   const effectiveTab = restrictedMode ? 'messages' : tab;
 
@@ -823,7 +844,7 @@ export default function DmInboxPage() {
               <p className="dminbox__list-status">받은 메시지 요청이 없습니다.</p>
             ) : (
               <ul className="dminbox__conv-list">
-                {requests.map((c) => renderConvItem(c))}
+                {displayRequests.map((c) => renderConvItem(c))}
               </ul>
             )
           ) : convLoading ? (
