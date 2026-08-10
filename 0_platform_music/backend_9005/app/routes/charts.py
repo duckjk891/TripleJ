@@ -162,6 +162,17 @@ async def record_play(
         {"$inc": {"play_count": 1}},
     )
 
+    # v169 — best-effort ES play_count mirror refresh (function_score popularity
+    # boost). One extra Mongo read for the post-$inc value, then a partial
+    # es.update. MUST NOT affect the play response on any failure.
+    try:
+        doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"play_count": 1})
+        if doc is not None:
+            from ..services.search_service import es_update_play_count
+            await es_update_play_count(track_id, int(doc.get("play_count") or 0))
+    except Exception as _es_exc:
+        logger.warning("[search.es.playcount] track=%s hook failed: %s", track_id, _es_exc)
+
     # Only count for charts if user is authenticated
     if user is None:
         return {"ok": True}

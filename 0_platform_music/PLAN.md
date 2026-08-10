@@ -25871,3 +25871,43 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 - FE 4000 `DmInboxPage.jsx`: `sortConvList` 유틸 + `displayConversations`/`displayRequests` 렌더 직전 정렬.
 - FE 4001 `AdminCsPage.jsx`: 동일 `sortConvList` + 목록 렌더 적용.
 - 닉네임 정렬 = 코드포인트 순(숫자<영문<한글) — 유니코드 기본 순서가 요구와 일치.
+
+---
+
+# v169 — 검색률 개선 0~4번 묶음 (2026-08-10)
+
+## 요청 원문
+"곡 검색 검색률 개선 조사 결과의 0~4번 묶어서 진행" — ⓪가수명 필드 ES+임베딩 추가(실버그) ①골든셋+평가스크립트+검색로그(0건율·클릭) ②한영 오타 폴백 ③별칭(로마자/영문) 커버리지 ④인기도(재생수) 부스팅.
+
+## Plan verification findings (조사 시 정독 완료)
+- `search_service.py`: TRACKS_INDEX_BODY 매핑(title/lyrics/prompt/genre/mood/tags/keywords/is_public — **artist 없음**), `_track_to_doc`, `es_search`(multi_match, title^3/lyrics^2/keywords^2, fuzziness AUTO, filter is_public), `rrf_fuse`(settings.rrf_vec_weight/es_weight), `backfill_es_if_needed(force)` — startup 에서 force=False.
+- `embedding_service.build_track_text`: title/lyrics/prompt + genre/mood/tags/categories/search_keywords — **uploader_nickname 없음**. content_hash 변경 시 재임베딩되는 파이프라인 존재.
+- `tracks.py /search`: hybrid→vec/es→cutoff(빈결과)→regex 폴백(정규식엔 uploader_nickname 있음 — 하이브리드 경로만 가수명 구멍). `_SEMANTIC_TOP_K=100`, `search_min_cosine=0.15`.
+- `keyword_service.generate_search_keywords`: gpt-4o-mini, title+가사요약+prompt+genre/mood 입력, 최대 15개, Mongo `search_keywords` 저장 → ES keywords 필드+임베딩 공유.
+- `charts.py record-play`: Mongo `tracks.play_count` $inc (인증 무관 legacy 카운트) — 인기도 신호 소스 확정.
+- 검색 로그 컬렉션 없음(신규 `search_logs`). es_index_track 은 발행/admin 갱신 시 호출.
+- ES 매핑에 신규 필드 추가는 put_mapping 으로 가능(인덱스 재생성 불요), 값 채우려면 문서 재색인(backfill force) 필요.
+
+## 구현 설계
+⓪ **artist 필드**: `_track_to_doc`+매핑에 `artist`(ko_text_field, uploader_nickname)·`play_count`(integer) 추가, es_search fields 에 `artist^4`. `build_track_text` 에 uploader_nickname 포함(→hash 변경→재임베딩 자동). startup put_mapping+백필 재색인 경로 마련.
+① **측정**: (a) `/search` 라우트에 Mongo `search_logs` best-effort 적재 {q, mode, result_count, top_ids[:10], user_id?, created_at}. (b) 클릭 로그: `POST /api/tracks/search/click` {q, track_id} 신규 + FE SearchPage 결과 클릭 시 호출. (c) `scripts/search_eval.py` + `scripts/search_golden.json`(카탈로그 기반 30~50 쿼리 자동 초안: 제목/가수/가사조각/무드 유형별) — API 호출 MRR@10/Recall@10 채점(하이브리드는 앱 레벨 융합이라 ES _rank_eval 대신 API 평가).
+② **한영 오타 폴백**: `app/services/keyboard_layout.py` 신규(의존성 없이 2벌식 매핑+자모 조합 구현, eng→kor / kor→eng). `/search` 에서 최종 결과 0건 && 쿼리가 전ASCII(또는 전한글)일 때 변환 1회 재검색(재귀 가드), mode=retry_engkor 로깅.
+③ **별칭**: keyword_service 프롬프트 확장 — 제목·가수명의 로마자/영문 표기 별칭 2~4개를 키워드에 포함(기존 search_keywords→ES keywords^2+임베딩 재사용, 신규 인프라 0). 기존곡은 신규 발행분부터 적용(백필은 별도 오더 시).
+④ **인기도**: es_search 쿼리를 function_score 로 래핑 — field_value_factor{play_count, log1p, factor 0.1}, boost_mode sum(관련도 우선, 동점에서 인기곡 부양). record-play 훅에서 best-effort ES partial update(play_count 신선도).
+
+## 변경 매트릭스 & 로그
+| 영역 | 파일 | 로그 |
+|---|---|---|
+| BE | search_service.py(매핑/doc/es_search/function_score), embedding_service.py(build_track_text), keyword_service.py(프롬프트), tracks.py(/search 로깅+폴백+클릭API), charts.py(ES play_count 갱신 훅), keyboard_layout.py(신규), scripts/search_eval.py+search_golden.json(신규) | `[tracks.search]` mode/retry_engkor, `[search.click]`, `[search.es]`, `[keywords]` |
+| FE 4000 | api/index.js(logSearchClick), SearchPage.jsx(클릭 훅) | `[SearchPage]` |
+| 미러 | backend_9004 byte-identical | — |
+
+## 테스트 항목 (tester)
+1. artist 검색: 가수명(예: 무신사)으로 /search → 해당 가수 곡 상위 노출(하이브리드 경로, 폴백 아님).
+2. 매핑/재색인: ES tracks 매핑에 artist·play_count 존재, 문서 값 채워짐.
+3. 한영 폴백: "dkfkd"류 영타 쿼리 0건 → 변환 재검색 동작(mode=retry_engkor 로그), 정상 한글 쿼리는 미발동.
+4. 인기도: play_count 큰 곡이 동일 관련도군에서 상위(function_score 동작), 관련도 역전(무관 인기곡 1위) 없는지.
+5. search_logs 적재 + 클릭 API 200/로그. FE 클릭 시 호출.
+6. eval 스크립트: golden 셋으로 MRR@10 산출 실행 성공(수치 기록 — 기준선).
+7. 회귀: 기존 검색(제목/가사/무드 쿼리) 결과 유지, 빈 검색어 400, 컷오프/정규식 폴백 경로, 차트 record-play 정상.
+8. 임베딩 재색인: uploader_nickname 포함으로 hash 변경 → 재임베딩 경로 동작(비용: 수백곡 × 3-small, 무시 수준).

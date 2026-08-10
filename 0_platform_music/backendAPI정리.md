@@ -2,7 +2,7 @@
 
 > 백엔드 서버: `http://localhost:9005` (메인 작업 라인) — `http://localhost:9004` 는 9005 와 동일한 미러 (앱팀은 9004 사용 가능)
 > 모든 API 경로 접두사: `/api`
-> 작성일: 2026-05-25 / **최종 검증일: 2026-08-06**
+> 작성일: 2026-05-25 / **최종 검증일: 2026-08-10**
 > 기준 버전: **9005 백엔드 (backend_9005)** — 9004 는 byte-identical 미러(`_logs` 파일명만 상이)
 
 본 문서는 백엔드의 모든 REST API 를 앱팀이 바로 연동할 수 있도록 정리한 레퍼런스입니다. 모든 항목은 `backend_9005/app/routes/` 의 실제 코드를 기준으로 작성되었습니다.
@@ -47,6 +47,8 @@
 34. [DM API — REST + WebSocket](#34-dm-api--rest--websocket-apidm)
 35. [얼굴인증 API](#35-얼굴인증-api-apiface-verify)
 36. [디렉터 피로/쿨다운 API](#36-디렉터-피로쿨다운-api-apifatigue)
+37. [관리자 CS(공식계정 DM 대응) API](#37-관리자-cs공식계정-dm-대응-api-apiadmincs)
+37. [관리자 CS(공식계정 DM 대응) API](#37-관리자-cs공식계정-dm-대응-api-apiadmincs)
 
 > 소셜 로그인(OAuth — google/kakao/naver)은 §3 인증 API 의 하위 섹션
 > "[소셜 로그인](#소셜-로그인-oauth-20-authorization-code--apiauthoauth)" 참고.
@@ -621,7 +623,7 @@ GET /api/tracks/search?q={검색어}&page={page}&limit={limit}
 
 **하이브리드 검색(pgvector 의미 + Elasticsearch BM25) + 정규식 폴백.** 두 백엔드를 동시에 질의해 RRF(Reciprocal Rank Fusion)로 융합한다.
 - **의미(벡터):** `q` 를 OpenAI 임베딩(`text-embedding-3-small`, 1536차원)으로 변환해 PostgreSQL `pgvector` 의 `track_embeddings` 와 코사인 유사도 최근접 매칭(top-K=100).
-- **키워드(BM25):** Elasticsearch `tracks` 인덱스에 `multi_match`(필드 부스트 `title^3/lyrics^2/keywords^2/prompt/tags/genre/mood`, 커스텀 한국어 분석기 `ko_search`, `fuzziness:AUTO`) + `is_public=true` 필터(top-K=100). "기계/로봇" 같은 내용·변형어 검색, 그리고 "어머니"처럼 가사에만 등장하는 희귀 키워드를 해당 곡으로 끌어올린다.
+- **키워드(BM25):** Elasticsearch `tracks` 인덱스에 `multi_match`(필드 부스트 **`artist^4`(v169 — 가수/업로더 닉네임, 최상위)**/`title^3/lyrics^2/keywords^2/prompt/tags/genre/mood`, 커스텀 한국어 분석기 `ko_search`, `fuzziness:AUTO`) + `is_public=true` 필터(top-K=100). "기계/로봇" 같은 내용·변형어 검색, 그리고 "어머니"처럼 가사에만 등장하는 희귀 키워드를 해당 곡으로 끌어올린다.
 - **자연어 쿼리 정규화(`ko_search` 분석기, index+search 동일 적용):** `nori_tokenizer` → `nori_part_of_speech`(조사·어미·관형사·접사 등 문법형태소 POS 제거: `J/E/MM/MAG/MAJ/X*/S*` 등 — "듣**는**"의 잔여 `는` 같은 어휘 노이즈 제거) → `lowercase` → **필러 불용어(`music_stop`)** → **무드 동의어/활용형 정규화(`mood_syn`, synonym_graph)** 순으로 적용한다. ① **필러 불용어**: 음악검색 plumbing 어만 큐레이션 제거(노래/음악/곡/듣다(듣·들)/때/추천/플레이리스트/song/music/listen/playlist 등) — 감정·소재 등 **의미어는 절대 제거하지 않음**. ② **무드 동의어**: 활용형·동의어를 단일 대표 토큰으로 합침(`설레임/설레는/설레이/설레일/설렘 → 설렘`, `신나는/신남 → 신남`, `잔잔한/차분한 → 잔잔`, `위로되는/위안 → 위로`, `슬픈/슬픔 → 슬픔`, `행복한 → 행복`, `그리운 → 그리움`, 사랑/이별/에너지 등 음악무드 중심). 이로써 `"설레일때 듣는 노래"`가 nori 단독에서 `[설레이,때,들,노래]` 로 쪼개져 '노래/때/들' 필러가 가사("노래해")에 매칭돼 오답(잊고 싶어 너를)이 상위로 오던 증상이, `ko_search` 에선 설레임/설레는/설렘/설레일때/원문이 **모두 단일 토큰 `[설레]`** 로 정규화돼 벚꽃 곡이 상위 1~6위로 일관되게 나온다. 분석기 변경은 **인덱스 재생성**이 필요하다(`scripts/backfill_es.py` 또는 startup 자가복구가 새 설정으로 생성+재색인).
 - **벡터 쿼리 경량 필러 strip(검색시, 벡터 한정):** 임베딩에 넣는 쿼리에 한해 명백한 음악검색 필러(노래/음악/곡/듣는·듣고싶어/들을때/추천/플레이리스트 등)를 경량 제거해 의미 벡터가 무드·소재에 집중하도록 한다(`"설레일때 듣는 노래" → "설레일때"`). strip 결과가 빈 문자열이면 원문을 사용한다. ES 측은 `ko_search` 분석기가 필러를 처리하므로 **원문을 그대로** 전달한다. 응답 shape·degrade 불변.
 - **개념 키워드 의미보강(index-time):** 색인 시점에 LLM(`gpt-4o-mini`, `KEYWORD_MODEL`)으로 곡당 키워드를 세 종류로 1회 추출해 Mongo 트랙 문서의 `search_keywords` 필드(단일 문자열 리스트, 최대 15개)에 합쳐 저장한다 — ① **한국어 구체 키워드**(소재·상황·관계·감정·계절 + 가사에 없는 상위개념 음식/요리/계절/감정 등), ② **영어 구체 키워드**(제목/가사/개념의 영어 표현: 이별→breakup, 운동→workout/gym, 로봇→robot, 김장→kimchi/food/cooking, 벚꽃→cherry blossom 등 — 영어 쿼리 보강), ③ **추상 무드/느낌 키워드 3개**(한+영 혼용: 잔잔한/calm, 신나는/energetic, 위로되는/comforting 등 — 추상 무드 쿼리 보강). 이 단일 필드를 ES 색인(`keywords` 필드, nori)과 pgvector 임베딩 텍스트가 **공유**하므로 LLM 중복 호출이 없고, 검색 시점엔 LLM 을 호출하지 않는다. 이로써 "음식"→'사랑의 김장', "sad breakup"→'잊고 싶어 너를', "workout"→'심장을 깨워' 같은 **추상/영어 → 구체 사례** 검색이 양쪽(BM25+벡터)에서 강화된다.
@@ -631,7 +633,32 @@ GET /api/tracks/search?q={검색어}&page={page}&limit={limit}
 
 **graceful degrade:** 두 백엔드 모두 결과 → `mode=hybrid`. ES 다운/무결과 → 벡터만(코사인 컷 적용, `mode=vec`). 벡터 실패 → ES만(`mode=es`). 벡터는 정상 동작했으나 코사인 컷 통과 후보·ES 히트가 모두 0 → 무관 쿼리로 판정해 빈 결과(`mode=cutoff`, 정규식 폴백 안 함). 벡터 자체가 실패 + ES 무결과(관련성 판단 불가) → 기존 정규식 매칭(`title / tags / prompt / uploader_nickname`, case-insensitive, `mode=regex`)으로 자동 폴백. 빈 `q` 는 400 유지.
 
+**v169 검색률 개선 (2026-08-10):**
+- **가수명 검색**: `uploader_nickname` 이 ES `artist` 필드(부스트 ^4)와 pgvector 임베딩 텍스트에 포함 — 가수명 쿼리("무신사")가 하이브리드 경로에서 해당 가수 곡을 상위 노출(이전엔 정규식 폴백에서만 가능). 기존 인덱스는 startup 이 put_mapping + artist 키 부재 감지 시 1회 자동 전체 재색인.
+- **인기도 부스팅**: BM25 쿼리를 `function_score`(`field_value_factor: play_count, log1p, factor 0.1, boost_mode sum`)로 래핑 — 관련도 동급군에서 재생수 높은 곡이 위로(관련도 역전 없음, 실측 검증). `record-play` 시 ES `play_count` best-effort 실시간 갱신.
+- **한영 오타 폴백**: 최종 결과 0건 && 쿼리가 전부 영문(또는 전부 한글)이면 2벌식 키보드 변환("dhflwoddl"→"오리쟁이") 후 1회 자동 재검색. 발동 시 서버 mode=`retry_engkor:<inner>`. 앱은 별도 처리 불요(투명).
+- **별칭 커버리지**: 발행 시 LLM 키워드 추출에 제목·가수명의 로마자/영문/한글 음차 별칭 포함(비티에스↔BTS) — 신규 발행분부터 `keywords` 필드로 검색됨.
+- **검색 로그**: 모든 검색이 Mongo `search_logs` 에 적재(q/mode/result_count/top_ids) — 품질 분석용, 앱 영향 없음.
+
 **응답 shape 불변:** `{ tracks: [...], pagination: { page, limit, total, totalPages } }` — 프론트 계약 변경 없음.
+
+---
+
+### 검색 클릭 로그 (CTR 측정) — v169 신규
+
+```
+POST /api/tracks/search/click
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 선택 (토큰 있으면 user_id 함께 기록) |
+
+**요청 본문:** `{ "q": "검색어", "track_id": "클릭한 트랙 id" }` — `track_id` 누락/빈값 400.
+
+**응답 (200):** `{ "ok": true }`
+
+검색 결과에서 사용자가 곡을 탭(재생)할 때 **fire-and-forget** 으로 호출 권장(실패해도 재생 흐름을 막지 말 것). Mongo `search_clicks` 에 적재되어 검색 품질(CTR) 분석에 사용된다.
 
 > 색인: 트랙 발행(직접 업로드 / 생성물 업로드) 시 단일 백그라운드 훅이 **순서 보장**으로 ①개념 키워드 추출→Mongo `search_keywords` 저장 ②pgvector 임베딩 upsert ③Elasticsearch 색인을 수행한다(발행 성공 여부와 무관, best-effort — 키워드 실패해도 색인/발행 진행). 발행 시 입력하는 `title / lyrics / prompt / genre / mood / tags / categories` + LLM 개념 키워드(`search_keywords`)가 색인 텍스트로 쓰인다. 전수 재색인은 `scripts/backfill_search_keywords.py`(키워드+벡터+ES 통합) / `scripts/backfill_embeddings.py`(벡터) / `scripts/backfill_es.py`(ES).
 > nori 플러그인은 ES 커스텀 이미지(`infra/elasticsearch.Dockerfile`)에 내장되어 영구 적용된다.
@@ -5652,6 +5679,8 @@ DmSquad(v152~v156) — 실시간 1:1 DM. **REST 13개 + WebSocket 1개.** REST �
 > - **시간값**: `created_at`/`last_at` 은 **UTC ISO8601, `+00:00` 오프셋 포함** (v156.1) — 클라이언트에서 반드시 로컬 타임존 변환.
 > - **메시지 신고**: `target_type=dm_message` 로 `POST /api/reports/` (§31) — 요청 거절로 대화가 삭제돼도 접수 시점 증거는 보존됨.
 > - **쓰기는 전부 REST** — WS 는 서버→클라 push 전용.
+> - **공식 계정 예외 (v163~165, CS 문의)**: `maidol_official`(공식 CS 계정, role=admin) 과의 대화는 **본인인증 면제** — 미인증 사용자도 공식에게 문의 DM 가능(그 외 상대는 기존 게이트 유지). 모든 사용자는 가입 시 공식과 **자동 상호 팔로우**(기존 유저는 startup 백필)라 공식 대화는 항상 `accepted`(요청함에 안 걸림). 공식 계정 **언팔로우는 403** 차단, 닉네임 `maidol_official` 은 가입 시 예약어로 거부. 앱의 "오류신고/문의" 흐름: `GET /dm/official` 로 공식 id 획득 → `POST /conversations` → 메시지 전송.
+> - **대화 목록 정렬 (v168)**: 목록·요청함은 1차 `last_at` 최신순, **같은 분(표시 단위) 내에서는 닉네임 오름차순**(숫자→영문→한글) — 서버가 정렬해 내려주므로 앱은 받은 순서 그대로 렌더 권장.
 
 ### 34.1 공통 객체
 
@@ -5693,7 +5722,39 @@ DmSquad(v152~v156) — 실시간 1:1 DM. **REST 13개 + WebSocket 1개.** REST �
 GET /api/dm/eligibility
 ```
 
-**응답 (200):** `{"is_verified": true, "is_banned": false}` — 본인인증 게이트 UI 분기용 (미인증이면 DM 진입 대신 본인인증 유도).
+**응답 (200):** `{"is_verified": true, "is_banned": false}` — 본인인증 게이트 UI 분기용 (미인증이면 DM 진입 대신 본인인증 유도. 단 **공식 계정 문의는 미인증도 가능** — 34.0 공식 계정 예외 참조).
+
+#### 공식(CS) 계정 연락처 — v163 신규
+
+```
+GET /api/dm/official
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필요 |
+
+**응답 (200):** `{ "official_id": "uuid", "nickname": "maidol_official" }` — 오류신고/문의 진입 시 이 id 로 `POST /conversations` 호출. 공식 계정 미시드 시 503.
+
+#### 관리자 전체 발송(broadcast) — v166 신규, admin 전용
+
+```
+POST /api/dm/broadcast
+```
+
+| 항목 | 값 |
+|------|---|
+| 인증 | 필요 + **role=admin** (아니면 403) |
+
+**요청 본문:** `{ "audience": "all" | "users" | "customers", "text": "메시지(1~2000자)" }`
+- `all` = role user+customer 전원 / `users` = user 만 / `customers` = customer 만. 발신자 자신·admin·정지·비활성 계정은 자동 제외.
+
+**응답 (200):** `{ "queued": N, "audience": "..." }` — **즉시 반환**(실제 발송은 서버 백그라운드 fan-out, 대상별 개별 1:1 대화로 전송·`accepted` 보장·수신자는 개별 답장 가능).
+
+| 에러 | 조건 |
+|------|------|
+| 400 | audience 미허용 값 / text 빈값·2000자 초과 |
+| 403 | 비 admin |
 
 #### 사용자 검색 (새 메시지 대상)
 
@@ -6054,3 +6115,43 @@ POST /api/fatigue/skip
 - **경합 안전:** 차감(별/광고권)과 쿨다운 단축 사이에 쿨다운이 만료/해제되면 차감분을 **자동 원복**(별 환불 / 광고권 원복)하고 `skipped_minutes:0` 반환.
 - 광고권은 AdMob SSV 콜백(§21 rewards)이 적립 → 여기서 원자 차감으로 소비.
 
+
+---
+
+## 37. 관리자 CS(공식계정 DM 대응) API (`/api/admin/cs`)
+
+v165 — 사용자 오류신고/문의(공식 계정 `maidol_official` 앞 DM)를 관리자가 조회·답장하는 전용 API. **모두 인증 + role=admin 필수**(아니면 401/403). 내부적으로 공식 계정 명의로 동작 — 답장은 사용자에게 `maidol_official` 발신으로 표시된다. 관리자 웹(4001)이 사용하며, 관리자 모바일 도구를 만들 경우 동일 계약.
+
+### 37.1 CS 대화 목록
+
+```
+GET /api/admin/cs/conversations?page=1&limit=20
+```
+
+**응답 (200):** `{ "conversations": [ { conversation_id, peer:{id, nickname, profile_image, code}, last_message_text, last_sender_id, last_at, unread, status } ], "pagination": { page, limit, total, totalPages } }`
+- `peer` = 문의한 사용자. `unread` = 공식측 미읽음. 정렬은 §34.0 규칙(최신분 desc + 닉네임 asc).
+
+### 37.2 메시지 조회
+
+```
+GET /api/admin/cs/conversations/{cid}/messages?before=&limit=30
+```
+
+**응답 (200):** `{ "messages": [...] }` — §34.1 메시지 객체와 동일(`created_at` desc, 클라이언트 reverse). `before` 로 과거 페이지네이션. 공식 계정이 참여하지 않은 대화면 403.
+
+### 37.3 답장 (공식 명의)
+
+```
+POST /api/admin/cs/conversations/{cid}/reply
+```
+
+**요청 본문:** `{ "text": "답장 내용" }` → **응답 (200):** 전송된 메시지 객체(발신자=공식 계정). 사용자 DM 함/WS 로 실시간 전달.
+
+### 37.4 읽음 처리 / 미읽음 뱃지
+
+```
+POST /api/admin/cs/conversations/{cid}/read     → { "ok": true, ... }
+GET  /api/admin/cs/unread-count                 → { "count": N }
+```
+
+`unread-count` 는 공식 계정 앞 미읽음 총합 — 관리자 화면 뱃지용(폴링 권장 15~30초).

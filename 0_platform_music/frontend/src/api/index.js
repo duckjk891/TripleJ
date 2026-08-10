@@ -265,6 +265,9 @@ export const getLatestTracks = (limit = 10) =>
 
 export const searchTracks = (q, params) =>
   API.get('/tracks/search', { params: { q, ...params } });
+// v169 — 검색 결과 클릭 로깅 (CTR 측정, best-effort)
+export const logSearchClick = (q, trackId) =>
+  API.post('/tracks/search/click', { q, track_id: trackId });
 
 // Upload (v2.0 - tracks API)
 export const uploadTrack = (formData, onProgress) =>

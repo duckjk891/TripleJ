@@ -14771,3 +14771,27 @@ canonical transform 전수(스테일 발견→vite 재시작 후 8파일 재검)
 - 오피셜 계정 대화 132개 전수: 분 단위 desc + 같은 분 내 닉네임 asc 위반 0건. 상위 그룹 `29cm→adv…→w컨셉→무신사→에이블리→지그재그→크림` 확인.
 - BE import OK(9005/9004), 미러 CLEAN, FE lint clean(4001 기존 경고 1건은 기수정 무관 기존 패턴).
 - 적용 범위: 4000 메시지목록+요청함, 4001 CS 목록 (BE 공용 함수 + FE 렌더 정렬 이중 보장).
+
+---
+
+# v169 — 곡 검색률 개선 0~4번 묶음 (2026-08-10)
+
+## 요청 / 결과
+검색 조사 보고의 0~4번 구현 — **tester 8/8 PASS, 기준선 MRR@10 0.855 / Recall@10 1.000 확보.**
+
+## 구현
+- ⓪ 가수명 실버그 픽스: ES `artist^4`+play_count 매핑·투영, 임베딩 텍스트에 uploader_nickname, startup 자동 마이그레이션(put_mapping + artist 키 부재 감지 시 1회 force 재색인 — 실측 21곡 reindexed errors=0).
+- ① 측정: `search_logs`/`search_clicks` 컬렉션 + `POST /api/tracks/search/click` + FE SearchPage 클릭로깅(fire-and-forget) + `scripts/build_golden_set.py`(32쿼리)·`search_eval.py`(MRR@10/Recall@10).
+- ② 한영 오타 폴백: 의존성 0 `keyboard_layout.py`(2벌식 오토마타) — 0건 && 단일스크립트일 때 1회 변환 재검색(mode=retry_engkor). 실측 `dhflwoddl`→오리쟁이 곡 상위 5.
+- ③ 별칭: keyword_service 프롬프트에 로마자/영문/음차 별칭 규칙 + 아티스트명 입력(신규 발행분부터).
+- ④ 인기도: function_score(play_count log1p factor0.1 sum) + record-play 시 ES 실시간 갱신. 실측 동명곡 인기순 정렬 + 관련도 역전 없음.
+- 9004 byte-identical 미러(+scripts).
+
+## 기준선 (golden 32쿼리)
+ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.854, title_partial 0.667, lyrics 0.507)
+
+## 차기 튜닝 후보 (tester 관찰, FAIL 아님)
+1. 짧은 영타(antlstk)는 벡터가 무관곡 1건을 넘겨 0건 조건 불성립 → 폴백 트리거를 "저신뢰"로 완화 여지.
+2. 한글 gibberish 가 vec floor(0.15) 통과 — 벡터 컷오프 튜닝 이슈(기존 동작).
+3. ES 고아 문서 6건(과거 테스트 트랙) — heal 에 고아 삭제 추가 고려.
+4. lyrics_phrase MRR 0.507 — 가사 부스트/구절 매칭 개선 여지.

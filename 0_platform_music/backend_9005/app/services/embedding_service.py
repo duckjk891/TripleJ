@@ -44,7 +44,11 @@ def build_track_text(doc: dict) -> str:
 
     parts: List[str] = []
 
-    for key in ("title", "lyrics", "prompt"):
+    # v169 — uploader_nickname (artist name) leads the text alongside title so
+    # artist-name queries also land on the semantic side, not just ES/regex.
+    # Adding it changes content_hash → the existing re-embed pipeline
+    # automatically re-embeds every track on its next index pass.
+    for key in ("uploader_nickname", "title", "lyrics", "prompt"):
         val = doc.get(key)
         if val:
             parts.append(str(val))

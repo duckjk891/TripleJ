@@ -134,6 +134,11 @@ TRACKS_INDEX_BODY = {
             # HybridSearch — LLM-extracted concept keywords (Mongo `search_keywords`).
             # Lets abstract→concrete BM25 hits (e.g. "음식" → '사랑의 김장') surface.
             "keywords": _ko_text_field(),
+            # v169 — artist (Mongo `uploader_nickname`). 아티스트명 검색이 ES 를 전혀
+            # 타지 못하고 regex 폴백에만 의존하던 실버그 픽스. 최상위 부스트 대상.
+            "artist": _ko_text_field(),
+            # v169 — play_count mirror for function_score popularity boosting.
+            "play_count": {"type": "integer"},
             "is_public": {"type": "boolean"},
         }
     },
@@ -161,6 +166,9 @@ def _track_to_doc(doc: dict) -> dict:
         "mood": _as_text(doc.get("mood")),
         # HybridSearch — concept keywords shared with the pgvector embedding text.
         "keywords": _as_text(doc.get("search_keywords")),
+        # v169 — artist name (uploader_nickname) + play_count popularity signal.
+        "artist": _as_text(doc.get("uploader_nickname")),
+        "play_count": int(doc.get("play_count") or 0),
         "is_public": bool(doc.get("is_public", False)),
     }
 
@@ -182,6 +190,19 @@ async def ensure_tracks_index(es) -> bool:
             logger.info("[search.es.index.ensure] created index '%s'", ES_TRACKS_INDEX)
         else:
             logger.info("[search.es.index.ensure] index '%s' present", ES_TRACKS_INDEX)
+            # v169 migration — put_mapping is additive & idempotent: fields that
+            # already exist with the same definition are a no-op, brand-new fields
+            # (artist / play_count) are added without recreating the index. A
+            # mapping failure must NOT disable search (index still works with the
+            # old mapping), so it only logs.
+            try:
+                await es.indices.put_mapping(
+                    index=ES_TRACKS_INDEX,
+                    body={"properties": TRACKS_INDEX_BODY["mappings"]["properties"]},
+                )
+                logger.info("[search.es.migrate] put_mapping ok on '%s'", ES_TRACKS_INDEX)
+            except Exception as me:
+                logger.error("[search.es.migrate] put_mapping failed on '%s': %s", ES_TRACKS_INDEX, me)
         return True
     except Exception as e:
         logger.error("[search.es.index.ensure] failed for '%s': %s", ES_TRACKS_INDEX, e)
@@ -231,6 +252,27 @@ async def backfill_es_if_needed(es, mongo_db, force: bool = False) -> dict:
         return result
 
     need = force or (es_count < mongo_public_count)
+
+    # v169 migration auto-detect — adding `artist`/`play_count` to the mapping
+    # (put_mapping) does NOT touch already-indexed documents, and the count-based
+    # skip above would leave them without the new fields forever. Sample one doc:
+    # if its _source lacks the `artist` key the index predates v169 → one-off
+    # force reindex from Mongo. Idempotent: after that reindex every _source has
+    # the key, so this never triggers again.
+    if not need and es_count > 0:
+        try:
+            sample = await es.search(
+                index=ES_TRACKS_INDEX, body={"size": 1, "query": {"match_all": {}}}
+            )
+            sample_hits = sample.get("hits", {}).get("hits", [])
+            if sample_hits and "artist" not in (sample_hits[0].get("_source") or {}):
+                need = True
+                logger.info(
+                    "[search.es.migrate] sample doc missing 'artist' -> force full reindex (v169)"
+                )
+        except Exception as e:
+            logger.warning("[search.es.migrate] sample probe failed: %s", e)
+
     if not need:
         result["ok"] = True
         result["skipped"] = True
@@ -318,6 +360,32 @@ async def es_delete_track(track_id: str) -> bool:
     return True
 
 
+async def es_update_play_count(track_id: str, play_count: int) -> bool:
+    """v169 — best-effort ES partial update of a track's play_count mirror.
+
+    Called from the charts record-play hook after the Mongo $inc so the
+    function_score popularity boost stays fresh. Never raises: a track that is
+    not in the index (private / not yet published) 404s and is logged as info;
+    any other failure logs a warning. Search correctness never depends on this.
+    """
+    es = get_es()
+    if es is None:
+        logger.warning("[search.es.playcount] track_id=%s skipped: ES client not initialized", track_id)
+        return False
+    if not track_id:
+        return False
+    try:
+        await es.update(index=ES_TRACKS_INDEX, id=track_id, doc={"play_count": int(play_count)})
+    except Exception as e:
+        if "NotFoundError" in type(e).__name__ or "not_found" in str(e):
+            logger.info("[search.es.playcount] track_id=%s not in index (ok)", track_id)
+        else:
+            logger.warning("[search.es.playcount] track_id=%s update failed: %s", track_id, e)
+        return False
+    logger.info("[search.es.playcount] track_id=%s play_count=%d", track_id, int(play_count))
+    return True
+
+
 async def es_search(query: str, k: int) -> List[str]:
     """BM25 + fuzzy search the ES `tracks` index, return ranked [track_id].
 
@@ -337,23 +405,45 @@ async def es_search(query: str, k: int) -> List[str]:
     body = {
         "size": k,
         "_source": ["track_id"],
+        # v169 — function_score wraps the relevance query with a small popularity
+        # boost: log1p(play_count) * 0.1 ADDED to the BM25 score (boost_mode=sum).
+        # factor 0.1 is deliberately low so relevance can never be inverted by a
+        # popular-but-unrelated track — it only lifts popular tracks within a
+        # near-tied relevance cluster (log1p also flattens whale play counts).
         "query": {
-            "bool": {
-                "must": {
-                    "multi_match": {
-                        "query": query,
-                        # Field boosts: title strongest, lyrics + concept keywords next
-                        # so rare lyric keywords (e.g. "어머니") and abstract concepts
-                        # (e.g. "음식") surface; prompt/tags/genre/mood baseline.
-                        "fields": ["title^3", "lyrics^2", "keywords^2", "prompt", "tags", "genre", "mood"],
-                        # ko_search = nori + filler-stop + mood-synonym (same analyzer
-                        # the fields are indexed with): strips 노래/때/들 fillers and
-                        # normalizes 설레이→설렘 so query form no longer has to glyph-match.
-                        "analyzer": KO_SEARCH_ANALYZER,
-                        "fuzziness": "AUTO",
+            "function_score": {
+                "query": {
+                    "bool": {
+                        "must": {
+                            "multi_match": {
+                                "query": query,
+                                # Field boosts: artist strongest (v169 — exact artist-name
+                                # searches must top-rank their tracks), then title,
+                                # lyrics + concept keywords next so rare lyric keywords
+                                # (e.g. "어머니") and abstract concepts (e.g. "음식")
+                                # surface; prompt/tags/genre/mood baseline.
+                                "fields": ["artist^4", "title^3", "lyrics^2", "keywords^2", "prompt", "tags", "genre", "mood"],
+                                # ko_search = nori + filler-stop + mood-synonym (same analyzer
+                                # the fields are indexed with): strips 노래/때/들 fillers and
+                                # normalizes 설레이→설렘 so query form no longer has to glyph-match.
+                                "analyzer": KO_SEARCH_ANALYZER,
+                                "fuzziness": "AUTO",
+                            }
+                        },
+                        "filter": {"term": {"is_public": True}},
                     }
                 },
-                "filter": {"term": {"is_public": True}},
+                "functions": [
+                    {
+                        "field_value_factor": {
+                            "field": "play_count",
+                            "modifier": "log1p",
+                            "factor": 0.1,
+                            "missing": 0,
+                        }
+                    }
+                ],
+                "boost_mode": "sum",
             }
         },
     }

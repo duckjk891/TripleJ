@@ -241,31 +241,22 @@ async def _regex_search_tracks(mongo, q: str, page: int, limit: int) -> dict:
     }
 
 
-@router.get("/search")
-async def search_tracks(
-    q: str = Query(None),
-    page: int = 1,
-    limit: int = 20,
-    pg=Depends(get_pg),
-):
-    """Hybrid track search: pgvector (semantic) + Elasticsearch BM25 (nori +
-    fuzzy), fused with Reciprocal Rank Fusion (RRF).
+async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple:
+    """Hybrid track search core: pgvector (semantic) + Elasticsearch BM25 (nori +
+    fuzzy), fused with Reciprocal Rank Fusion (RRF). Returns (payload, mode)
+    where payload is the unchanged {tracks, pagination} response body.
 
-    Response shape is unchanged: {tracks, pagination}. Both backends return up to
-    _SEMANTIC_TOP_K ranked track_ids; rrf_fuse merges them, matching public
-    tracks are fetched from MongoDB, re-ordered to the fused rank, then paginated.
+    Both backends return up to _SEMANTIC_TOP_K ranked track_ids; rrf_fuse merges
+    them, matching public tracks are fetched from MongoDB, re-ordered to the
+    fused rank, then paginated.
 
     Graceful degrade:
       - both vector + ES available  -> mode=hybrid
       - only vector available       -> mode=vec
       - only ES available           -> mode=es
-      - neither yields results/works -> mode=regex (original MongoDB regex)
-    Empty q -> 400 (unchanged).
+      - vec ran but nothing survived the cosine floor and ES empty -> mode=cutoff
+      - neither backend usable      -> mode=regex (original MongoDB regex)
     """
-    if not q:
-        return JSONResponse(status_code=400, content={"error": "검색어를 입력해주세요."})
-
-    mongo = get_mongo()
     q_len = len(q)
 
     from ..services.embedding_service import search_similar
@@ -313,10 +304,13 @@ async def search_tracks(
             "[tracks.search] mode=cutoff floor=%.3f vec_kept=0 es=0 vec_top1=%.4f n=0 total=0 (no match)",
             floor, vec_top1,
         )
-        return {
-            "tracks": [],
-            "pagination": {"page": page, "limit": limit, "total": 0, "totalPages": 0},
-        }
+        return (
+            {
+                "tracks": [],
+                "pagination": {"page": page, "limit": limit, "total": 0, "totalPages": 0},
+            },
+            "cutoff",
+        )
     else:
         # Vector backend itself failed AND ES yielded nothing -> we cannot judge
         # relevance, so degrade to the original regex fallback.
@@ -324,7 +318,7 @@ async def search_tracks(
             "[tracks.search] mode=regex q_len=%d reason=no_candidates vec_ok=%s es_ok=%s",
             q_len, vec_ok, es_ok,
         )
-        return await _regex_search_tracks(mongo, q, page, limit)
+        return await _regex_search_tracks(mongo, q, page, limit), "regex"
 
     try:
         fused_ids = rrf_fuse(
@@ -350,18 +344,162 @@ async def search_tracks(
             "[tracks.search] mode=%s floor=%.3f vec_kept=%d es=%d n=%d total=%d",
             mode, floor, len(vec_ids), len(es_ids), len(page_docs), total,
         )
-        return {
-            "tracks": _serialize_tracks(page_docs),
-            "pagination": {
-                "page": page,
-                "limit": limit,
-                "total": total,
-                "totalPages": math.ceil(total / limit) if limit else 0,
+        return (
+            {
+                "tracks": _serialize_tracks(page_docs),
+                "pagination": {
+                    "page": page,
+                    "limit": limit,
+                    "total": total,
+                    "totalPages": math.ceil(total / limit) if limit else 0,
+                },
             },
-        }
+            mode,
+        )
     except Exception as e:
         logger.warning("[tracks.search] mode=regex q_len=%d reason=fuse_error: %s", q_len, e)
-        return await _regex_search_tracks(mongo, q, page, limit)
+        return await _regex_search_tracks(mongo, q, page, limit), "regex"
+
+
+def _engkor_retry_query(q: str) -> Optional[str]:
+    """v169 — wrong-IME retry candidate for a zero-result query.
+
+    All-ASCII-letter queries (spaces allowed) are converted qwerty→한글, all-
+    Korean queries 한글→qwerty. Returns the converted query, or None when the
+    query mixes scripts / contains digits-symbols / converts to itself. Pure
+    check — never raises.
+    """
+    from ..services.keyboard_layout import eng_to_kor, kor_to_eng
+
+    if not q:
+        return None
+    stripped = q.replace(" ", "")
+    if not stripped:
+        return None
+    if all("a" <= c.lower() <= "z" for c in stripped):
+        converted = eng_to_kor(q)
+    elif all(0xAC00 <= ord(c) <= 0xD7A3 or 0x3131 <= ord(c) <= 0x3163 for c in stripped):
+        converted = kor_to_eng(q)
+    else:
+        return None
+    converted = (converted or "").strip()
+    if not converted or converted == q:
+        return None
+    return converted
+
+
+async def _log_search(mongo, q: str, mode: str, payload: dict, user_id: Optional[str]) -> None:
+    """v169 — best-effort search-log insert (Mongo `search_logs`).
+
+    Stores the raw query for offline relevance analysis (the collection is the
+    one sanctioned place for raw queries; app logs still log q_len only). Any
+    failure is swallowed with a warning — the search response is never affected.
+    """
+    try:
+        tracks = payload.get("tracks") or []
+        pagination = payload.get("pagination") or {}
+        entry = {
+            "q": q,
+            "q_len": len(q),
+            "mode": mode,
+            "result_count": int(pagination.get("total", len(tracks))),
+            "top_ids": [str(t.get("id")) for t in tracks[:10] if t and t.get("id")],
+            "created_at": datetime.now(timezone.utc),
+        }
+        if user_id:
+            entry["user_id"] = user_id
+        await mongo.search_logs.insert_one(entry)
+        logger.info(
+            "[search.log] mode=%s q_len=%d results=%d user=%s",
+            mode, len(q), entry["result_count"], "y" if user_id else "n",
+        )
+    except Exception as e:
+        logger.warning("[search.log] insert failed q_len=%d: %s", len(q), e)
+
+
+@router.get("/search")
+async def search_tracks(
+    q: str = Query(None),
+    page: int = 1,
+    limit: int = 20,
+    pg=Depends(get_pg),
+    current_user=Depends(get_current_user_optional),
+):
+    """Hybrid track search endpoint. Response shape unchanged: {tracks, pagination}.
+
+    v169 additions on top of _hybrid_search_core:
+      - zero-result + single-script query -> ONE internal retry with the 한/영
+        키보드 변환 query (mode=retry_engkor:<inner_mode>); the retry result is
+        returned only when it actually has hits.
+      - best-effort search_logs insert (raw q stored for relevance analysis).
+    Empty q -> 400 (unchanged).
+    """
+    if not q:
+        return JSONResponse(status_code=400, content={"error": "검색어를 입력해주세요."})
+
+    mongo = get_mongo()
+    payload, mode = await _hybrid_search_core(mongo, pg, q, page, limit)
+
+    # --- v169: wrong-IME (한/영키) fallback — single retry, no recursion ---
+    if int((payload.get("pagination") or {}).get("total", 0)) == 0:
+        converted = _engkor_retry_query(q)
+        if converted:
+            logger.info(
+                "[tracks.search] mode=retry_engkor q_len=%d converted_len=%d",
+                len(q), len(converted),
+            )
+            retry_payload, retry_mode = await _hybrid_search_core(
+                mongo, pg, converted, page, limit
+            )
+            if int((retry_payload.get("pagination") or {}).get("total", 0)) > 0:
+                payload, mode = retry_payload, f"retry_engkor:{retry_mode}"
+
+    user_id = None
+    if current_user:
+        user_id = str(current_user.get("id") or current_user.get("user_id") or "") or None
+    await _log_search(mongo, q, mode, payload, user_id)
+
+    return payload
+
+
+class SearchClickBody(BaseModel):
+    q: str
+    track_id: str
+
+
+@router.post("/search/click")
+async def record_search_click(
+    body: SearchClickBody,
+    current_user=Depends(get_current_user_optional),
+):
+    """v169 — search-result click log (Mongo `search_clicks`), auth optional.
+
+    Feeds the offline relevance evaluation (CTR@rank / golden-set mining).
+    Insert is best-effort but validation failures return 400.
+    """
+    track_id = (body.track_id or "").strip()
+    if not track_id:
+        return JSONResponse(status_code=400, content={"error": "track_id가 필요합니다."})
+
+    q = (body.q or "").strip()
+    user_id = None
+    if current_user:
+        user_id = str(current_user.get("id") or current_user.get("user_id") or "") or None
+
+    mongo = get_mongo()
+    try:
+        entry = {
+            "q": q,
+            "track_id": track_id,
+            "created_at": datetime.now(timezone.utc),
+        }
+        if user_id:
+            entry["user_id"] = user_id
+        await mongo.search_clicks.insert_one(entry)
+        logger.info("[search.click] q_len=%d track=%s user=%s", len(q), track_id, "y" if user_id else "n")
+    except Exception as e:
+        logger.warning("[search.click] insert failed track=%s: %s", track_id, e)
+    return {"ok": True}
 
 
 class TrackUpdateBody(BaseModel):

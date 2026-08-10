@@ -49,6 +49,14 @@ export default function SearchPage() {
     fetchResults();
   }, [query, user]);
 
+  // v169 — 검색 결과 클릭 로깅 (CTR 측정): fire-and-forget, 실패해도 재생 흐름에 영향 없음
+  const logTrackClick = (trackId) => {
+    if (import.meta.env.DEV) console.info('[SearchPage] click log', { qLen: query.length, trackId });
+    api.logSearchClick(query, trackId).catch((err) => {
+      if (import.meta.env.DEV) console.warn('[SearchPage] click log failed', { trackId, status: err?.response?.status });
+    });
+  };
+
   const handleToggleLike = async (songId) => {
     if (!user) { navigate('/login'); return; }
     try {
@@ -99,6 +107,7 @@ export default function SearchPage() {
                   songs={tracks}
                   isLiked={likedIds.has(track.id)}
                   onToggleLike={handleToggleLike}
+                  onPlay={() => logTrackClick(track.id)}
                 />
               ))
             ) : (

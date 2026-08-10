@@ -10,13 +10,14 @@ import TrackShareButton from './TrackShareButton';
 import TrackDownloadButton from './TrackDownloadButton';
 import './SongItem.css';
 
-export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false }) {
+export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false, onPlay }) {
   const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [showAddModal, setShowAddModal] = useState(false);
 
   const handlePlay = () => {
+    if (onPlay) onPlay(song); // v169 — 부모(검색 등) 클릭 로깅 훅, best-effort
     play(song, songs, { queueAll });
   };
 

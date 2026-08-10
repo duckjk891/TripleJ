@@ -1,0 +1,251 @@
+[
+  {
+    "query": "벚꽃피는 날 1",
+    "expected_track_ids": [
+      "69ce4c72b3d9beab06ce01f9"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "벚꽃피는 날",
+    "expected_track_ids": [
+      "69ce4c72b3d9beab06ce01f9"
+    ],
+    "type": "title_partial"
+  },
+  {
+    "query": "벚꽃피는 날 2",
+    "expected_track_ids": [
+      "69ce559c95664045e593cc18"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "벚꽃피는 날 3",
+    "expected_track_ids": [
+      "69ce5b1595664045e593cc1b"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "벚꽃피는 날 4",
+    "expected_track_ids": [
+      "69ce5cd4874e73f0eb1b07af"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "벚꽃피는 날 5",
+    "expected_track_ids": [
+      "69ce5f49d7bdcd377ca0e5e8"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "벚꽃피는 날 6",
+    "expected_track_ids": [
+      "69ce6fa83e517ff3cdc103b0"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "여름의 기억",
+    "expected_track_ids": [
+      "69de44bf8c133e67e802bc7c"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "잊고 싶어 너를",
+    "expected_track_ids": [
+      "69de50e48c133e67e802bc7f"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "잊고 싶어",
+    "expected_track_ids": [
+      "69de50e48c133e67e802bc7f"
+    ],
+    "type": "title_partial"
+  },
+  {
+    "query": "여름의 끝자락에서",
+    "expected_track_ids": [
+      "69e0d99749c1872743267be5"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "너와 나의 꿈",
+    "expected_track_ids": [
+      "69e0de2a49c1872743267be8"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "너와 나의",
+    "expected_track_ids": [
+      "69e0de2a49c1872743267be8"
+    ],
+    "type": "title_partial"
+  },
+  {
+    "query": "행복한 이 순간",
+    "expected_track_ids": [
+      "69e1ef120602cc40f5c99358"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "봄꽃처럼 피어난 사랑",
+    "expected_track_ids": [
+      "69e1f9d50602cc40f5c9935b"
+    ],
+    "type": "title_exact"
+  },
+  {
+    "query": "lovvepearl",
+    "expected_track_ids": [
+      "69de44bf8c133e67e802bc7c",
+      "69de50e48c133e67e802bc7f",
+      "69e0d99749c1872743267be5",
+      "69e0de2a49c1872743267be8",
+      "69e1ef120602cc40f5c99358",
+      "69eb6ece2a5056b40acc3402",
+      "6a1957b72e50d651f1a28a71",
+      "6a1ab5f02e50d651f1a28a7e"
+    ],
+    "type": "artist"
+  },
+  {
+    "query": "무신사",
+    "expected_track_ids": [
+      "6a126e48e8184386ff4a6e3c",
+      "6a127418a553720bda4b768e",
+      "6a3774b73af2f9ea6d0830e7",
+      "6a4e145ccb67cd77e33886f7"
+    ],
+    "type": "artist"
+  },
+  {
+    "query": "오리쟁이",
+    "expected_track_ids": [
+      "69ce4c72b3d9beab06ce01f9",
+      "69ce559c95664045e593cc18",
+      "69ce5b1595664045e593cc1b",
+      "69ce5cd4874e73f0eb1b07af",
+      "69ce5f49d7bdcd377ca0e5e8",
+      "69ce6fa83e517ff3cdc103b0",
+      "69e1f9d50602cc40f5c9935b",
+      "69e310ad6a9eaa9755e1c38d"
+    ],
+    "type": "artist"
+  },
+  {
+    "query": "올이",
+    "expected_track_ids": [
+      "6a72968a6ee8bc2b58fe5653"
+    ],
+    "type": "artist"
+  },
+  {
+    "query": "너의 미소가 나를 밝혀",
+    "expected_track_ids": [
+      "69ce4c72b3d9beab06ce01f9"
+    ],
+    "type": "lyrics_phrase"
+  },
+  {
+    "query": "심장이 뛰는 이 느낌",
+    "expected_track_ids": [
+      "69de44bf8c133e67e802bc7c"
+    ],
+    "type": "lyrics_phrase"
+  },
+  {
+    "query": "너의 모든 순간들이",
+    "expected_track_ids": [
+      "69de50e48c133e67e802bc7f"
+    ],
+    "type": "lyrics_phrase"
+  },
+  {
+    "query": "너의 손을 꼭 잡고",
+    "expected_track_ids": [
+      "69e0d99749c1872743267be5"
+    ],
+    "type": "lyrics_phrase"
+  },
+  {
+    "query": "서로에게 닿을까,",
+    "expected_track_ids": [
+      "69e0de2a49c1872743267be8"
+    ],
+    "type": "lyrics_phrase"
+  },
+  {
+    "query": "Energetic K-Pop 노래",
+    "expected_track_ids": [
+      "6a3774b73af2f9ea6d0830e7"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "Happy Hip-hop 노래",
+    "expected_track_ids": [
+      "6a126e48e8184386ff4a6e3c",
+      "6a127418a553720bda4b768e"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "Happy K-Pop 노래",
+    "expected_track_ids": [
+      "69ce4c72b3d9beab06ce01f9",
+      "69ce559c95664045e593cc18",
+      "69ce5b1595664045e593cc1b",
+      "69ce5cd4874e73f0eb1b07af",
+      "69ce5f49d7bdcd377ca0e5e8",
+      "69ce6fa83e517ff3cdc103b0",
+      "6a72968a6ee8bc2b58fe5653"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "Romantic R&B 노래",
+    "expected_track_ids": [
+      "69de50e48c133e67e802bc7f"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "Sunny and light City pop 노래",
+    "expected_track_ids": [
+      "69de44bf8c133e67e802bc7c"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "로맨틱·달콤한 R&B 노래",
+    "expected_track_ids": [
+      "69e0de2a49c1872743267be8"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "몽환적·신비로운 댄스 노래",
+    "expected_track_ids": [
+      "69e310ad6a9eaa9755e1c38d"
+    ],
+    "type": "mood_genre"
+  },
+  {
+    "query": "밝고 경쾌한 댄스 노래",
+    "expected_track_ids": [
+      "69e0d99749c1872743267be5",
+      "69e1f9d50602cc40f5c9935b"
+    ],
+    "type": "mood_genre"
+  }
+]

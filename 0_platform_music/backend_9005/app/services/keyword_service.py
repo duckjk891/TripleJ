@@ -54,6 +54,11 @@ _SYSTEM_PROMPT = (
     "3) mood (추상 무드/느낌 키워드, 정확히 3개): 곡의 전반적 분위기·감정. 한국어와 영어를 섞어도 된다. "
     "예: 잔잔한/calm, 신나는/energetic, 위로되는/comforting, 슬픈/sad, 설레는/romantic.\n"
     "\n"
+    "추가 규칙 — 별칭(v169): 제목과 아티스트명의 로마자 표기·통용 영문 표기·한글 음차 별칭을 "
+    "2~4개 반드시 포함하라 (영문 표기는 en 목록에, 한글 음차는 ko 목록에 넣는다). "
+    "예: 비티에스↔BTS, 뉴진스↔NewJeans, 아이유↔IU, '봄날'→'bomnal'. "
+    "아티스트명이 주어지면 그 별칭도 포함하라.\n"
+    "\n"
     "- 곡의 주제와 무관한 일반어(예: 노래/음악/좋다/song/music)는 금지.\n"
     "- 각 키워드는 짧은 단어나 짧은 구로.\n"
     '반드시 JSON 객체 하나만 출력: {"ko": ["..."], "en": ["..."], "mood": ["..."]}'
@@ -77,6 +82,8 @@ def _build_keyword_input(doc: dict) -> str:
         return str(val)
 
     title = _txt(doc.get("title"))
+    # v169 — 아티스트명(uploader_nickname): 별칭(로마자/음차) 키워드 추출 입력.
+    artist = _txt(doc.get("uploader_nickname"))
     prompt = _txt(doc.get("prompt"))
     genre = _txt(doc.get("genre"))
     mood = _txt(doc.get("mood"))
@@ -85,6 +92,8 @@ def _build_keyword_input(doc: dict) -> str:
     parts: List[str] = []
     if title:
         parts.append(f"제목: {title}")
+    if artist:
+        parts.append(f"아티스트: {artist}")
     if prompt:
         parts.append(f"곡 설명: {prompt}")
     if genre:
