@@ -99,6 +99,9 @@ export default function DmInboxPage() {
   // WS 콜백에서 최신 activeCid 참조용
   const activeCidRef = useRef(activeCid);
   useEffect(() => { activeCidRef.current = activeCid; }, [activeCid]);
+  // 실제 메시지를 로드한 대화 추적 — activeCid 는 routeCid 로 초기화되므로
+  // 직접 진입(/dm/:cid 새로고침) 시 activeCid 비교만으로는 최초 로드가 스킵된다.
+  const openedCidRef = useRef(null);
   // 콜백에서 최신 목록/요청함 참조용 (pending 판정)
   const conversationsRef = useRef(conversations);
   useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
@@ -250,6 +253,7 @@ export default function DmInboxPage() {
   const openConversation = useCallback(async (cid, convHint = null) => {
     if (!cid) return;
     setActiveCid(cid);
+    openedCidRef.current = cid;
     setMessages([]);
     setHasMore(false);
     setMsgLoading(true);
@@ -286,9 +290,9 @@ export default function DmInboxPage() {
     }
   }, [currentUserId]);
 
-  // 라우트 파라미터(/dm/:cid)로 진입 시 자동 오픈 (목록 로드 후)
+  // 라우트 파라미터(/dm/:cid)로 진입 시 자동 오픈 (직접 진입/새로고침 포함)
   useEffect(() => {
-    if (routeCid && routeCid !== activeCidRef.current) {
+    if (routeCid && routeCid !== openedCidRef.current) {
       openConversation(routeCid);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
