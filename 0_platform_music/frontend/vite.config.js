@@ -21,6 +21,10 @@ export default defineConfig({
   server: {
     port: 4000,
     host: '0.0.0.0',
+    watch: {
+      usePolling: true, // WSL2 /mnt/d(drvfs) inotify 미지원 → 폴링 감시
+      interval: 1000,   // drvfs stat 비용 고려 1s
+    },
     ...(useHttps && {
       https: {
         key: fs.readFileSync(keyPath),
