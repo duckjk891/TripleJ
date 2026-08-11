@@ -260,7 +260,7 @@ async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple
     q_len = len(q)
 
     from ..services.embedding_service import search_similar
-    from ..services.search_service import es_search, rrf_fuse
+    from ..services.search_service import es_anchor_hits, es_search, rrf_fuse
 
     # --- pgvector (semantic) candidates, with cosine cutoff ---
     # search_similar returns [(track_id, score)] where score = cosine similarity
@@ -283,11 +283,44 @@ async def _hybrid_search_core(mongo, pg, q: str, page: int, limit: int) -> tuple
     # --- Elasticsearch BM25 candidates (best-effort, never raises) ---
     es_ids: list = []
     es_ok = False
+    es_top1: float = 0.0
     try:
-        es_ids = await es_search(q, _SEMANTIC_TOP_K)
+        es_ids, es_top1 = await es_search(q, _SEMANTIC_TOP_K)
         es_ok = True
     except Exception as e:
         logger.warning("[tracks.search] es backend failed q_len=%d: %s", q_len, e)
+
+    # --- v171: 아무말(gibberish) 게이트 ---
+    # ES 가 정상 동작했는데(lexical) 히트가 0건 — 또는 top1 점수가 weak 임계
+    # 미만(fuzziness AUTO 잔여 노이즈: 아무말도 저점수 히트를 몇 건 만든다.
+    # 실측 아무말 es_top1 ≤ 2.54 vs 정상 최저 3.24) — 이고 vec_top1 이
+    # gibberish 임계 미만이면 카탈로그와 무관한 쿼리로 판정 → 빈 결과.
+    # 정상 쿼리는 ES 의 강한 lexical 앵커가 잡아준다(v169 artist 필드).
+    # es_ok=False(ES 다운)나 vec_ok=False(판정 근거 부재)면 게이트 미적용 —
+    # 가용성 우선.
+    es_weak = (not es_ids) or (es_top1 < settings.search_es_weak_score)
+    if es_ok and es_weak and vec_ok and vec_top1 < settings.search_gibberish_cosine:
+        # v171.1 — prefix 앵커(제3의 어휘 증거): nori 가 합성어를 분해하지 않아
+        # BM25 0히트가 된 정상 쿼리("면접" → 가사 "면접관을") 오폭 방지. 어절
+        # 서브필드 phrase_prefix 로 부분어 히트가 1건이라도 있으면 게이트 해제.
+        # -1(probe 실패 = 판정 불가)도 해제 — 가용성 우선.
+        anchor_hits = await es_anchor_hits(q)
+        if anchor_hits == 0:
+            logger.info(
+                "[tracks.search] mode=gibberish q_len=%d vec_top1=%.4f es_top1=%.2f gib=%.3f anchor_hits=%d",
+                q_len, vec_top1, es_top1, settings.search_gibberish_cosine, anchor_hits,
+            )
+            return (
+                {
+                    "tracks": [],
+                    "pagination": {"page": page, "limit": limit, "total": 0, "totalPages": 0},
+                },
+                "gibberish",
+            )
+        logger.info(
+            "[tracks.search] gibberish gate released q_len=%d vec_top1=%.4f es_top1=%.2f anchor_hits=%d",
+            q_len, vec_top1, es_top1, anchor_hits,
+        )
 
     # --- determine mode from what produced usable signal ---
     if vec_ids and es_ids:

@@ -11,7 +11,10 @@ GET {base}/api/tracks/search?q=... 로 호출하고 상위 10개 결과로 지�
 Usage:
     cd backend_9005
     ./venv/bin/python scripts/search_eval.py [--base http://127.0.0.1:9005] \
-        [--golden scripts/search_golden.json]
+        [--golden scripts/search_golden.json] [--stabilize] [--es http://127.0.0.1:9200]
+
+--stabilize (v171.1): ES `tracks` 인덱스를 forcemerge(max_num_segments=1) 해
+세그먼트별 통계 차이로 BM25 점수가 요동하는 것을 막는다 — 평가 수치 재현용.
 """
 
 import argparse
@@ -24,6 +27,17 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 
 _TOP_K = 10
+
+
+def stabilize_index(es_base: str) -> None:
+    """v171.1 — forcemerge the ES tracks index to 1 segment for reproducible BM25."""
+    try:
+        r = httpx.post(f"{es_base}/tracks/_forcemerge", params={"max_num_segments": 1}, timeout=60)
+        r.raise_for_status()
+        httpx.post(f"{es_base}/tracks/_refresh", timeout=30)
+        print(f"stabilized: forcemerge max_num_segments=1 ok ({es_base}/tracks)")
+    except Exception as e:
+        print(f"stabilize failed (continuing): {e}")
 
 
 def evaluate(base: str, golden_path: Path) -> int:
@@ -94,7 +108,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate track search vs the golden set")
     parser.add_argument("--base", default="http://127.0.0.1:9005")
     parser.add_argument("--golden", default=str(ROOT / "scripts" / "search_golden.json"))
+    parser.add_argument("--stabilize", action="store_true",
+                        help="forcemerge the ES tracks index to 1 segment before evaluating")
+    parser.add_argument("--es", default="http://127.0.0.1:9200")
     args = parser.parse_args()
+    if args.stabilize:
+        stabilize_index(args.es)
     return evaluate(args.base, Path(args.golden))
 
 

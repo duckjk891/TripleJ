@@ -25911,3 +25911,42 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 6. eval 스크립트: golden 셋으로 MRR@10 산출 실행 성공(수치 기록 — 기준선).
 7. 회귀: 기존 검색(제목/가사/무드 쿼리) 결과 유지, 빈 검색어 400, 컷오프/정규식 폴백 경로, 차트 record-play 정상.
 8. 임베딩 재색인: uploader_nickname 포함으로 hash 변경 → 재임베딩 경로 동작(비용: 수백곡 × 3-small, 무시 수준).
+
+---
+
+# v171 — 검색 튜닝 ⓐⓑⓒ (가사구절 보너스·아무말 게이트·삭제 동기화) (2026-08-11)
+
+## 요청 원문
+"③ 묶음 진행 — ⓐ 가사구절 가산, ⓑ 아무말 차단, ⓒ admin 삭제 ES 동기화 버그 수정+안전망. 기존 검색률 회귀 금지(웹조사+실측 검토 완료)."
+
+## Plan verification findings (실측 포함)
+- **ⓐ 위험 실증**: `match_phrase`(ko_search 필드) "숨 참지"→0건, "노래해"→0건 — 스톱워드·동의어·형태소 문맥분해가 phrase 를 불규칙하게 깨뜨림(ES 공식이슈 #86021/#43574 동일 계열). "김장 생각해"는 됨(불규칙성 확인).
+- **ⓑ 위험 실증**: 골든 정상쿼리 top1 코사인 min 0.167(올이)~0.278(무신사) vs 아무말 0.198~0.331(zzzz화성감자) — 분포 겹침, 절대 임계값 단독 상향 불가. 정상 쿼리들은 ES(artist/title/keywords)가 히트를 잡아줌.
+- **ⓒ 확인**: 사용자 삭제(tracks.py delete_track)는 es_delete_track+임베딩 삭제 호출함. **admin.py DELETE /tracks/{id}(line 476~505)는 Mongo+redis 만 지우고 ES/임베딩 삭제 없음** — 유령 5건 전원이 admin/제재 테스트 삭제분(tst_v137_*, stk_v139_*, Victim Track 1). `backfill_es_if_needed` 자가복구는 부족분 재색인만 하고 고아 삭제 없음.
+- es_search 현행: bool(must multi_match + filter is_public) → function_score 래핑(v169). 기준선: MRR@10 0.855 / Recall@10 1.000 (`scripts/search_eval.py`).
+
+## 구현 설계
+### ⓐ 가사구절 보너스 (재색인 없음, 쿼리측만)
+- es_search bool 에 `should` 절 추가: `match_phrase`(lyrics·title 두 필드, slop 1~2) — **쿼리타임 analyzer 를 동의어·스톱워드 없는 별도 분석기로 지정**. 인덱스 settings 에 `ko_phrase` search-analyzer(nori_tokenizer+POS필터+lowercase 만) 추가 필요 시: 기존 인덱스에 search analyzer 추가는 close/open 또는 재생성 필요하므로 **우선 쿼리타임 `analyzer` 파라미터로 지정 가능한 기존 등록 분석기 확인** — 없으면 인덱스 settings 갱신은 자가복구 force 재색인 경로(이미 구축된 v169 마이그레이션 패턴) 재사용. 부스트는 소폭(예: phrase boost 2)으로 시작, 대안으로 rescore(window 상위 50) 검토 — 골든셋 수치로 결정.
+- should 미매칭 시 점수 기여 0 → 비구절 쿼리 순위 불변이 설계 목표. mood/title_partial 회귀 중점 확인.
+### ⓑ 아무말 게이트 (조합 조건)
+- tracks.py /search 판정부: **ES 히트 0건 && vec_top1 < SEARCH_GIBBERISH_COSINE(신규 env, 실측 기반 기본 0.34)** → 빈 결과(mode=gibberish). 기존 cutoff(0.15) 불변. 한영폴백(retry_engkor)과의 순서: 폴백 재검색 **후에도** 조건 충족 시 빈 결과.
+- 주의: ES 다운(es_ok=False)일 땐 게이트 미적용(가용성 우선 — 벡터 결과 유지).
+### ⓒ 삭제 동기화
+- admin.py DELETE /tracks/{id}: 사용자 삭제와 동일하게 es_delete_track + `DELETE FROM track_embeddings` 추가(best-effort, 로그 `[admin] track delete es/emb`).
+- search_service 자가복구에 **고아 삭제**: ES 전 문서 track_id 수집 → Mongo 실존 대조 → 부재분 delete(삭제 전 대상 id 로그 필수, `[search.es.heal] orphan removed id=...`). 기존 유령 5건 자동 청소.
+
+## 변경 매트릭스 & 로그
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| services/search_service.py | ⓐ phrase should(+분석기)·ⓒ 고아삭제 | `[search.es]` phrase, `[search.es.heal] orphan` |
+| routes/tracks.py | ⓑ gibberish 게이트 | `[tracks.search] mode=gibberish vec_top1=..` |
+| routes/admin.py | ⓒ 삭제 동기화 | `[admin] track delete es=..` |
+| config.py(+.env.example) | SEARCH_GIBBERISH_COSINE | — |
+| backend_9004 | byte-identical 미러 | — |
+
+## 통과 게이트 (필수)
+1. `search_eval.py` 전후 비교: lyrics_phrase **0.507 → 상승**, artist 1.0·title_exact 1.0·mood 0.854·title_partial 0.667 **하락 금지**(±0.02 허용). 전체 MRR 0.855 이상 유지.
+2. 아무말 세트(쨻쨻쨻/ㅁㄴㅇㄹ/asdfgh/qwppp/존재하지않는외계어펑크/zzzz화성감자/냉장고수리비용) → 전부 빈 결과. 짧은 정상 쿼리(김장/벚꽃/무신사/봄) → 생존.
+3. 유령 5건 제거 후 ES count == Mongo 공개곡수. 실곡 오삭제 0(삭제 로그 대조).
+4. 회귀: 한영폴백·인기도 부스팅·클릭로그·record-play ES 갱신 정상.

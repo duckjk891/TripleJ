@@ -58,6 +58,20 @@ class Settings(BaseSettings):
     # < 0.15 with no ES hit) is cut.
     search_min_cosine: float = 0.15
 
+    # v171 — 아무말(gibberish) 게이트 임계. ES 히트 0건(es_ok=True) && vec_top1 <
+    # 이 값 → 카탈로그와 무관한 쿼리로 판정, mode=gibberish 빈 결과. 실측: 아무말
+    # 쿼리 top1 0.198~0.331(전부 ES=0), 정상 쿼리는 ES lexical 히트가 잡아주므로
+    # (artist 필드 v169) 절대 임계 0.34 단독으로도 정상 쿼리를 죽이지 않는다.
+    # ES 다운(es_ok=False) 시에는 게이트 미적용 — 가용성 우선.
+    search_gibberish_cosine: float = 0.34
+
+    # v171 — ES lexical 앵커 최소 점수. fuzziness AUTO 는 아무말 쿼리에도 저점수
+    # 히트를 몇 건 만들 수 있어(실측 "존재하지않는외계어펑크" top1 2.54, 정상
+    # 쿼리 최저 3.24 — 'Happy K-Pop 노래') 히트 0건 판정만으로는 부족하다.
+    # es_top1 < 이 값이면 "lexical 앵커 없음"으로 간주해 gibberish 게이트의
+    # ES 조건을 충족한다. 점수는 function_score(재생수 log1p*0.1 가산) 최종값.
+    search_es_weak_score: float = 3.0
+
     # MinIO
     minio_host: str = "localhost"
     minio_api_port: int = 9000

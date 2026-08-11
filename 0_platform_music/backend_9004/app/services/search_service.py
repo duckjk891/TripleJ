@@ -28,6 +28,19 @@ ES_TRACKS_INDEX = "tracks"
 # HybridSearch — analyzer name applied to every korean text field (index + search).
 KO_SEARCH_ANALYZER = "ko_search"
 
+# v171 — phrase-match analyzer: nori + POS-strip + lowercase ONLY (no music_stop,
+# no mood_syn). match_phrase on ko_search-analyzed queries broke ("숨 참지"→0,
+# "노래해"→0) because stopword removal / synonym_graph mangled the token stream;
+# phrase clauses therefore analyze the query with this stopword-free analyzer.
+KO_PHRASE_ANALYZER = "ko_phrase"
+
+# v171 — eojeol(어절) phrase analyzer: standard tokenizer + lowercase. Nori is
+# context-sensitive ("참지 마" → 참+지 but standalone "참지" → 참지) so nori-based
+# phrase matching breaks even with identical analyzers on both sides. Golden
+# lyric-fragment queries are verbatim quotes → whitespace-level exact phrase on a
+# dedicated subfield (lyrics.phrase / title.phrase) matches them reliably.
+KO_EOJEOL_ANALYZER = "ko_eojeol"
+
 # Music-search filler stopwords (한국어 음악검색 *필러* 큐레이션). Only generic
 # "listen to a song / playlist / when / good / recommend" plumbing words — NEVER
 # meaning-bearing emotion/topic words. nori splits e.g. "설레일때 듣는 노래" into
@@ -106,6 +119,20 @@ _KO_ANALYSIS = {
                 # order: POS-strip particles → lowercase → filler stop → mood synonym.
                 "filter": ["ko_pos", "lowercase", "music_stop", "mood_syn"],
             },
+            # v171 — phrase analyzer: same tokenizer + POS strip, but WITHOUT
+            # music_stop / mood_syn so quoted lyric fragments keep their tokens
+            # (stopword gaps on the ko_search-indexed side are absorbed by slop).
+            KO_PHRASE_ANALYZER: {
+                "type": "custom",
+                "tokenizer": "ko_nori_tokenizer",
+                "filter": ["ko_pos", "lowercase"],
+            },
+            # v171 — verbatim lyric-quote matching (see KO_EOJEOL_ANALYZER note).
+            KO_EOJEOL_ANALYZER: {
+                "type": "custom",
+                "tokenizer": "standard",
+                "filter": ["lowercase"],
+            },
         },
     }
 }
@@ -125,8 +152,16 @@ TRACKS_INDEX_BODY = {
     "mappings": {
         "properties": {
             "track_id": {"type": "keyword"},
-            "title": _ko_text_field(),
-            "lyrics": _ko_text_field(),
+            # v171 — .phrase subfields (ko_eojeol, index+search 동일) carry the
+            # verbatim lyric/title quote bonus; the parent field stays ko_search.
+            "title": {
+                **_ko_text_field(),
+                "fields": {"phrase": {"type": "text", "analyzer": KO_EOJEOL_ANALYZER}},
+            },
+            "lyrics": {
+                **_ko_text_field(),
+                "fields": {"phrase": {"type": "text", "analyzer": KO_EOJEOL_ANALYZER}},
+            },
             "prompt": _ko_text_field(),
             "genre": _ko_text_field(),
             "mood": _ko_text_field(),
@@ -209,6 +244,60 @@ async def ensure_tracks_index(es) -> bool:
         return False
 
 
+async def _heal_es_orphans(es, mongo_db) -> int:
+    """v171 — remove ES `tracks` docs whose track no longer exists in MongoDB.
+
+    Scans every ES doc (id + title for the audit log), builds the set of real
+    Mongo track ids (ALL tracks, not just public — visibility flips are handled
+    elsewhere and must not be treated as deletion) and deletes the difference.
+    An ES id that is not a valid Mongo ObjectId can never be in the set → also
+    treated as an orphan. Idempotent + best-effort: any failure logs and returns
+    the partial count; never raises.
+    """
+    removed = 0
+    try:
+        resp = await es.search(
+            index=ES_TRACKS_INDEX,
+            body={
+                "size": 10000,
+                "_source": ["track_id", "title"],
+                "query": {"match_all": {}},
+            },
+        )
+        hits = resp.get("hits", {}).get("hits", [])
+        if not hits:
+            return 0
+
+        existing: set = set()
+        async for d in mongo_db.tracks.find({}, {"_id": 1}):
+            existing.add(str(d["_id"]))
+
+        for h in hits:
+            doc_id = h.get("_id")
+            src = h.get("_source") or {}
+            tid = str(src.get("track_id") or doc_id or "")
+            if not doc_id or tid in existing:
+                continue
+            try:
+                await es.delete(index=ES_TRACKS_INDEX, id=doc_id)
+                removed += 1
+                logger.info(
+                    "[search.es.heal] orphan removed id=%s title=%s",
+                    doc_id, src.get("title"),
+                )
+            except Exception as de:
+                logger.warning("[search.es.heal] orphan delete failed id=%s: %s", doc_id, de)
+
+        if removed:
+            try:
+                await es.indices.refresh(index=ES_TRACKS_INDEX)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("[search.es.heal] orphan scan failed: %s", e)
+    return removed
+
+
 async def backfill_es_if_needed(es, mongo_db, force: bool = False) -> dict:
     """Self-heal the ES `tracks` index from MongoDB when it has drifted/emptied.
 
@@ -225,6 +314,7 @@ async def backfill_es_if_needed(es, mongo_db, force: bool = False) -> dict:
         "reindexed": 0,
         "errors": 0,
         "skipped": False,
+        "orphans_removed": 0,
     }
     if es is None or mongo_db is None:
         logger.warning(
@@ -236,6 +326,36 @@ async def backfill_es_if_needed(es, mongo_db, force: bool = False) -> dict:
     if not await ensure_tracks_index(es):
         logger.warning("[search.es.heal] aborted: index ensure failed")
         return result
+
+    # v171 migration auto-detect — the ko_phrase analyzer lives in index *settings*
+    # (not mappings), so put_mapping cannot add it. If the live index settings lack
+    # it, the index predates v171 → delete + recreate (new settings) + force a full
+    # reindex from Mongo. Idempotent: the recreated index carries ko_phrase, so
+    # this never triggers again. Corpus is tiny (tens of tracks) → seconds.
+    try:
+        cur = await es.indices.get_settings(index=ES_TRACKS_INDEX)
+        idx_settings = next(iter(dict(cur).values()), {}) or {}
+        analyzers = (
+            idx_settings.get("settings", {})
+            .get("index", {})
+            .get("analysis", {})
+            .get("analyzer", {})
+        )
+        if KO_PHRASE_ANALYZER not in analyzers or KO_EOJEOL_ANALYZER not in analyzers:
+            logger.info("[search.es.migrate] ko_phrase missing -> recreate+reindex")
+            await es.indices.delete(index=ES_TRACKS_INDEX)
+            if not await ensure_tracks_index(es):
+                logger.warning("[search.es.heal] aborted: index recreate failed")
+                return result
+            force = True
+    except Exception as e:
+        logger.warning("[search.es.migrate] ko_phrase settings probe failed: %s", e)
+
+    # v171 — orphan heal BEFORE the count comparison: ghost ES docs (deleted in
+    # Mongo but never removed from ES) inflate es_count and could mask a missing
+    # real track from the es_count < mongo_public_count check below.
+    orphans_removed = await _heal_es_orphans(es, mongo_db)
+    result["orphans_removed"] = orphans_removed
 
     try:
         # ES count (refresh first so freshly-indexed docs are visible/countable).
@@ -386,21 +506,23 @@ async def es_update_play_count(track_id: str, play_count: int) -> bool:
     return True
 
 
-async def es_search(query: str, k: int) -> List[str]:
-    """BM25 + fuzzy search the ES `tracks` index, return ranked [track_id].
+async def es_search(query: str, k: int) -> tuple:
+    """BM25 + fuzzy search the ES `tracks` index → (ranked [track_id], top1_score).
 
     multi_match over lyrics/title/prompt/tags/genre/mood using the nori analyzer
-    with fuzziness AUTO, filtered to public tracks. Best-effort: on any failure
-    (ES down, index missing) logs and returns []. Raising is the caller's job to
-    decide via empty-result degrade.
+    with fuzziness AUTO, filtered to public tracks. v171: also returns the top-1
+    ES score (function_score-final, 0.0 when no hits) so the route's gibberish
+    gate can tell a real lexical anchor from residual fuzzy noise. Best-effort:
+    on any failure (ES down, index missing) logs and returns ([], 0.0). Raising
+    is the caller's job to decide via empty-result degrade.
     """
     q_len = len(query or "")
     es = get_es()
     if es is None:
         logger.warning("[search.es] q_len=%d skipped: ES client not initialized", q_len)
-        return []
+        return [], 0.0
     if not query:
-        return []
+        return [], 0.0
 
     body = {
         "size": k,
@@ -430,6 +552,50 @@ async def es_search(query: str, k: int) -> List[str]:
                                 "fuzziness": "AUTO",
                             }
                         },
+                        # v171 — lyrics-fragment bonus: optional phrase clauses ADD
+                        # score when the query appears as a contiguous phrase in the
+                        # lyrics/title (must/filter unchanged → recall unchanged).
+                        # analyzer=ko_phrase (no music_stop / mood_syn) because the
+                        # ko_search-analyzed query stream breaks match_phrase; the
+                        # indexed side (ko_search) has position gaps where stopwords
+                        # were removed → slop absorbs them.
+                        "should": [
+                            # 어절 verbatim quote bonus (subfield analyzer = ko_eojeol
+                            # both sides → no analyzer override needed). Primary fix:
+                            # nori context-sensitivity makes nori phrase unreliable.
+                            {
+                                "match_phrase": {
+                                    "lyrics.phrase": {"query": query, "slop": 1, "boost": 2.0}
+                                }
+                            },
+                            {
+                                "match_phrase": {
+                                    "title.phrase": {"query": query, "slop": 0, "boost": 1.0}
+                                }
+                            },
+                            # 형태소(nori ko_phrase) bonus — secondary: catches lightly
+                            # inflected quotes the verbatim clause misses.
+                            {
+                                "match_phrase": {
+                                    "lyrics": {
+                                        "query": query,
+                                        "slop": 2,
+                                        "analyzer": KO_PHRASE_ANALYZER,
+                                        "boost": 2.0,
+                                    }
+                                }
+                            },
+                            {
+                                "match_phrase": {
+                                    "title": {
+                                        "query": query,
+                                        "slop": 1,
+                                        "analyzer": KO_PHRASE_ANALYZER,
+                                        "boost": 1.0,
+                                    }
+                                }
+                            },
+                        ],
                         "filter": {"term": {"is_public": True}},
                     }
                 },
@@ -452,7 +618,7 @@ async def es_search(query: str, k: int) -> List[str]:
         resp = await es.search(index=ES_TRACKS_INDEX, body=body)
     except Exception as e:
         logger.error("[search.es] q_len=%d search failed: %s", q_len, e)
-        return []
+        return [], 0.0
 
     hits = resp.get("hits", {}).get("hits", [])
     ids: List[str] = []
@@ -460,8 +626,49 @@ async def es_search(query: str, k: int) -> List[str]:
         tid = (h.get("_source") or {}).get("track_id") or h.get("_id")
         if tid:
             ids.append(str(tid))
-    logger.info("[search.es] q_len=%d hits=%d", q_len, len(ids))
-    return ids
+    top1 = float(hits[0].get("_score") or 0.0) if hits else 0.0
+    logger.info("[search.es] q_len=%d hits=%d top1=%.2f", q_len, len(ids), top1)
+    return ids, top1
+
+
+async def es_anchor_hits(query: str) -> int:
+    """v171.1 — 아무말 게이트용 prefix 앵커 존재성 체크 (제3의 어휘 증거).
+
+    nori 가 합성어를 분해하지 않아 BM25 가 0히트인 정상 쿼리("면접" vs 가사의
+    "면접관을")를 게이트가 오폭하는 회귀 방지: 어절 서브필드(lyrics.phrase /
+    title.phrase) + artist/keywords 에 phrase_prefix 로 "이 쿼리를 접두어로 갖는
+    부분어가 카탈로그에 하나라도 있는가"만 묻는다(size 0, 총 히트 수만).
+    반환: 히트 수(0 = 앵커 없음 → 게이트 발동 가능). 실패 시 -1 — 판정 불가는
+    게이트 해제 쪽(가용성 우선)으로 처리하도록 음수를 돌려준다.
+    """
+    q_len = len(query or "")
+    es = get_es()
+    if es is None or not query:
+        return -1
+    body = {
+        "size": 0,
+        "track_total_hits": True,
+        "query": {
+            "bool": {
+                "must": {
+                    "multi_match": {
+                        "query": query,
+                        "type": "phrase_prefix",
+                        "fields": ["lyrics.phrase", "title.phrase", "artist", "keywords"],
+                    }
+                },
+                "filter": {"term": {"is_public": True}},
+            }
+        },
+    }
+    try:
+        resp = await es.search(index=ES_TRACKS_INDEX, body=body)
+        total = int(((resp.get("hits") or {}).get("total") or {}).get("value") or 0)
+        logger.info("[search.es.anchor] q_len=%d hits=%d", q_len, total)
+        return total
+    except Exception as e:
+        logger.warning("[search.es.anchor] q_len=%d probe failed: %s", q_len, e)
+        return -1
 
 
 def rrf_fuse(

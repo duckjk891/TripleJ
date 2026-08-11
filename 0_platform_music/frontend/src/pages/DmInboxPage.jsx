@@ -655,7 +655,10 @@ export default function DmInboxPage() {
     } catch (err) {
       const status = err?.response?.status;
       console.error('[DmBroadcast] broadcastDm failed', { status, audience: bcAudience, message: err?.message });
-      if (status === 403) {
+      if (status === 429) {
+        // v170 — BE 중복발송 잠금(30초): 더블클릭/재시도로 같은 공지 2회 발송 방지
+        setBcNotice('방금 발송한 건이 처리 중입니다. 잠시 후 다시 시도해주세요.');
+      } else if (status === 403) {
         setBcNotice('관리자만 전체 발송을 할 수 있습니다.');
       } else if (status === 400) {
         const detail = err?.response?.data?.error || err?.response?.data?.detail;

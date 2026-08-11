@@ -340,6 +340,25 @@ async def broadcast(
         )
         return JSONResponse(status_code=500, content={"error": "발송을 준비할 수 없습니다."})
 
+    # v170 — 중복발송 방지: 검증을 모두 통과한 뒤(오타 요청이 잠금을 잡지 않게),
+    # 큐잉 직전 admin별 Redis 잠금(SET NX, TTL 30초). 더블클릭/네트워크 재시도로
+    # 같은 공지가 전원에게 2번 나가는 사고 차단. Redis 불가 시 잠금 없이 진행
+    # (기능 자체를 막지 않음 — best-effort 안전장치).
+    try:
+        redis = get_redis()
+        if redis is not None:
+            acquired = await redis.set(
+                f"dm:broadcast:lock:{me}", "1", nx=True, ex=30
+            )
+            if not acquired:
+                logger.info("[dm-broadcast] denied (duplicate, locked) me=%s", _short(me))
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "방금 발송한 건이 처리 중입니다. 잠시 후 다시 시도해주세요."},
+                )
+    except redis_exceptions.RedisError:
+        logger.warning("[dm-broadcast] lock skipped (redis unavailable) me=%s", _short(me))
+
     background_tasks.add_task(_run_broadcast, str(me), audience, text)
     logger.info(
         "[dm-broadcast] queued admin=%s audience=%s targets=%d",

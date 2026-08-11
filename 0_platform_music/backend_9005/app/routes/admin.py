@@ -504,6 +504,22 @@ async def delete_track(
     await redis.delete(f"cache:track:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
+    # v171 — 검색 인덱스 동기화 (best-effort): 관리자 삭제도 사용자 삭제와 동일하게
+    # ES 문서 + pgvector 임베딩을 제거해 유령 검색 결과를 남기지 않는다.
+    # 어느 쪽이 실패해도 삭제 응답은 불변.
+    es_synced = emb_synced = False
+    try:
+        from ..services.search_service import es_delete_track
+        es_synced = await es_delete_track(track_id)
+    except Exception as e:
+        logger.warning("[admin] track delete es sync failed track=%s: %s", track_id, e)
+    try:
+        await conn.execute("DELETE FROM track_embeddings WHERE track_id = $1", track_id)
+        emb_synced = True
+    except Exception as e:
+        logger.warning("[admin] track delete embedding sync failed track=%s: %s", track_id, e)
+    logger.info("[admin] track delete sync es=%s emb=%s track=%s", es_synced, emb_synced, track_id)
+
     await _log_admin_action(
         conn, current_admin["id"], "delete_track", "track", track_id,
         {"title": doc.get("title"), "uploader_id": doc.get("uploader_id")},
