@@ -25950,3 +25950,50 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 2. 아무말 세트(쨻쨻쨻/ㅁㄴㅇㄹ/asdfgh/qwppp/존재하지않는외계어펑크/zzzz화성감자/냉장고수리비용) → 전부 빈 결과. 짧은 정상 쿼리(김장/벚꽃/무신사/봄) → 생존.
 3. 유령 5건 제거 후 ES count == Mongo 공개곡수. 실곡 오삭제 0(삭제 로그 대조).
 4. 회귀: 한영폴백·인기도 부스팅·클릭로그·record-play ES 갱신 정상.
+
+---
+
+# v172 — WSL2 drvfs vite HMR 미동작 해결: server.watch.usePolling (2026-08-11)
+
+## 요청 원문
+"/mnt/d (drvfs, WSL2) 특성상 inotify 미지원으로 vite HMR/파일감지가 동작하지 않는 문제를 server.watch.usePolling 도입으로 해결하라. REPORT.md에 검토 권장으로 기록되어 있던 작업이다." (REPORT.md 13422행 검토 권장 항목)
+
+## Plan verification findings
+- `frontend/vite.config.js` (39행): server = { port 4000, host 0.0.0.0, https(./certs mkcert 존재 시 조건부 spread), proxy '/api'→http://localhost:9005 (changeOrigin, secure:false, ws:true) }. **watch 옵션 없음** → chokidar 기본(inotify) 사용 → drvfs 에서 파일 변경 이벤트 미수신.
+- `frontend_admin/vite.config.js` (57행): server = { port 4001, host 0.0.0.0, https(./certs 우선, 없으면 ../frontend/certs 사이드카 재사용), proxy 동일 }. **watch 옵션 없음** — 동일 문제.
+- vite 버전: 양쪽 package.json `^7.3.1`, 실설치 frontend 7.3.1 / frontend_admin 7.3.6. Vite 7 의 `server.watch` 는 chokidar 옵션 패스스루 — `usePolling`·`interval` 정식 지원(스펙 호환 문제 없음).
+- 영향 지점 분석:
+  - **CPU**: 폴링은 감시 대상 전 파일 stat 순회. drvfs(9p) stat 은 네이티브 대비 매우 느림 → interval 을 짧게(기본 100ms) 두면 CPU 상시 점유 위험. vite 기본 watch ignore(node_modules/.git)는 유지되므로 대상은 src/ 위주 수백 파일 수준 — **interval 1000ms** 로 시작(변경 반영 지연 최대 ~1초, 허용 범위 / CPU 부담 최소화).
+  - **HMR websocket**: watch 는 "변경 감지" 계층만 담당. HMR ws(https 서버에 wss 로 동승)는 무변경 — 영향 없음.
+  - **proxy**: server.proxy 와 watch 는 독립 — 영향 없음.
+  - **적용 시점 주의**: vite.config.js 변경의 자동 서버 재시작 자체가 watcher 에 의존하므로, 현재 구동 중인 두 dev 서버(4000/4001)는 **수동 재시작 1회 필수**. 이후부터는 폴링이 config 변경도 감지.
+  - build(vite build)는 server.* 미사용 — 프로덕션 영향 없음.
+
+## 변경 계획
+두 파일 모두 `server` 블록에 동일 추가 (port 아래 위치 권장):
+```js
+watch: {
+  usePolling: true, // WSL2 /mnt/d(drvfs) inotify 미지원 → 폴링 감시
+  interval: 1000,   // drvfs stat 비용 고려 1s (CPU vs 반영지연 트레이드오프)
+},
+```
+- `frontend/vite.config.js`: server{} 내 watch 추가. https/proxy/기존 구조 무변경.
+- `frontend_admin/vite.config.js`: 동일 추가. 인증서 사이드카 로직 무변경.
+
+## 변경 매트릭스 & 로그 (frontend-dev)
+| 파일 | 변경 | 확인 방법 |
+|---|---|---|
+| frontend/vite.config.js | server.watch { usePolling:true, interval:1000 } | dev 재시작 → src 파일 수정 저장 → 터미널 `hmr update` 로그 + 브라우저(4000) 즉시 반영 |
+| frontend_admin/vite.config.js | 동일 | 동일 (4001), 재시작 시 `[vite] HTTPS enabled` 로그 유지 확인 |
+- 주의: 적용 위해 구동 중 dev 서버 2개 수동 재시작 필요(위 findings 참조). 재시작 후 top/htop 으로 node CPU 상시 점유율 이상 없는지 확인.
+
+## 테스트 항목 (test-designer)
+1. frontend(4000): src 하위 파일(예: JSX) 수정 저장 → 재시작 없이 브라우저 자동 반영(HMR), 터미널 hmr update 로그 (~1초 내).
+2. frontend_admin(4001): 동일 HMR 실반영 확인.
+3. 신규 파일 추가/삭제 감지: src 에 새 모듈 생성 후 import → 폴링 감시로 인식되어 정상 빌드·반영.
+4. vite.config.js 재수정 시 vite 자동 서버 재시작 발동(폴링 도입 후 config 감지 회복 확인).
+5. [회귀] dev 서버 기동: 4000/4001 HTTPS 로 정상 기동(`[vite] HTTPS enabled` 로그), 자체서명 인증서 접속 유지.
+6. [회귀] /api proxy → localhost:9005 정상(로그인 등 API 호출 성공), ws:true 경유 웹소켓(DM 등) 정상.
+7. [회귀] HMR websocket 연결 정상(콘솔에 `[vite] connected`, 전체 새로고침 루프 없음).
+8. [회귀] CPU: 폴링 도입 후 idle 상태 node 프로세스 CPU 점유 과다(상시 수십%) 없는지.
+9. [회귀] vite build 정상 완료(두 프론트) — server.watch 는 dev 전용임을 확인.

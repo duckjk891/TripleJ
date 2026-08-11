@@ -14838,3 +14838,30 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 ## 특이사항
 - 저신호 관련 쿼리(카탈로그에 어휘 앵커가 전혀 없고 vec 도 낮은 진짜 경계 케이스)는 빈 결과가 될 수 있음 — 설계상 트레이드오프, env(SEARCH_GIBBERISH_COSINE/SEARCH_ES_WEAK_SCORE)로 즉시 조정 가능.
 - 9004 미러 clean, 양 서버 재시작 가동.
+
+---
+
+# v172 — WSL2 drvfs vite HMR 미동작 해결: server.watch.usePolling (2026-08-11)
+
+## 요청 / 결과
+"/mnt/d(drvfs, WSL2) inotify 미지원으로 vite HMR/파일감지 불능 → server.watch.usePolling 도입" (13422행 검토 권장 항목 이행) — **완료. TESTPLAN v172 24/24 PASS (unit 16 / api 4 / e2e 4), 픽스 사이클 0회.** 재시작 우회 불필요해짐.
+
+## 구현
+- `frontend/vite.config.js`·`frontend_admin/vite.config.js` 두 파일 server 블록에 `watch: { usePolling: true, interval: 1000 }` 추가 — 변경은 이 2건이 전부(https/certs 사이드카/proxy 무변경). interval 1000ms 는 drvfs(9p) stat 비용 대비 CPU/반영지연 트레이드오프로 선정.
+- 적용 절차: config 자동 재시작 자체가 watcher 의존이라 구동 중 4000/4001 수동 재시작 1회 수행(계획대로).
+
+## 검증 (핵심 실측)
+| 항목 | 실측 | 판정 |
+|---|---|---|
+| HMR 감지(로그) | 0.95s(4000) / 0.11s(4001) | 상한 2.5s 내 |
+| HMR 브라우저 실반영(e2e) | 0.51s(4000) / 0.21s(4001), 풀 리로드 없음 | PASS |
+| config 자동 재시작 감지 | 0.64~0.94s (drvfs 감지 회복 확인) | PASS |
+| config 문법오류 내성 | 기존 서버 200 유지 → 원복 시 자동 복구 | PASS |
+| idle CPU | 평균 2.63%(4000) / 0.71%(4001) | 폴링 부담 무시 수준 |
+| HMR ws | `[vite] connected` 1회, connection lost 0, 리로드 루프 없음(60s) | PASS |
+| 회귀 | HTTPS 기동·`/api`→9005 프록시(`/api/health`)·ws 업그레이드(`/api/dm/ws` 미인증 403=프록시 통과)·신규파일/삭제 감지·vite build 양쪽 exit 0·첫 여정 화면(pageerror 0, 프록시 4xx 0) | 전부 PASS |
+- 테스트 유래 변경 0건(cleanup 검증), vite.config.js 2건만 잔존. e2e 는 읽기 전용 준수(쓰기/실발송 0), 테스트 계정 플레이스홀더만 사용. 증적: 스크린샷 9장+콘솔 원본 3파일(스크래치패드).
+
+## 특이사항 (비차단, 본 변경과 무관한 기존 이슈 — 별도 작업 후보)
+1. 4000 홈 mixed-content: MinIO presigned 이미지 URL 이 `http://<IP>:9100` 이라 HTTPS 페이지에서 브라우저 차단 — backend .env `MINIO_PUBLIC_HOST` 계열 조정 검토 필요.
+2. 4000/4001 로드 시 리소스 404 각 1건 (favicon 또는 위 차단 이미지 후속 추정, API 아님).
