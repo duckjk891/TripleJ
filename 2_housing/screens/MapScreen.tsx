@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
 import Character, { DirectorType } from '../components/Character';
 import { useTimerStore, DIRECTOR_STAGES } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
@@ -330,11 +331,12 @@ export default function MapScreen({ navigation }: Props) {
             </TouchableOpacity>
           )}
           <TouchableOpacity
-            onPress={() => parent.navigate('Settings' as never)}
+            onPress={() => parent.navigate('MyMusic' as never)}
             style={{ paddingHorizontal: 8, paddingVertical: 4 }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="마이페이지"
           >
-            <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
+            <Feather name="user" size={22} color={colors.text.primary} />
           </TouchableOpacity>
         </View>
       ),

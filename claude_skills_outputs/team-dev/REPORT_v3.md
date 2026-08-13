@@ -4,6 +4,48 @@
 
 ---
 
+## v3.12 (기능 #4 — 작업실 마이페이지 아이콘 + 출석/초대 팝업 이식 + 로그인 자동팝업) — 2026-08-13
+
+### 요청 작업
+① 작업실(스튜디오) 헤더도 설정(⋮) 대신 **마이페이지 아이콘**. ② MAIDOL 출석체크·초대하기 기능을 파악해 **그대로 팝업/토글** 제작. ③ **최초 로그인 시 출석체크 팝업 자동 노출**(MAIDOL 동일).
+
+### Plan verification findings (0단계)
+- MAIDOL `AttendanceCard.jsx`: `GET /attendance/status`(checked_today/cycle_day/cumulative_count/today_reward/calendar[10]/balance) + `POST /attendance/check-in`(awarded/already/cycle_day/balance). 10일 사이클, 5·10일차 보너스, 🎁/✅/🔒 셀 마크.
+- MAIDOL `AppShareModal.jsx`: `GET /referral/my-code`→`{referral_code, invite_url}`. 코드+📋복사 + 공유 4종(카카오톡/인스타그램/페이스북/링크복사), desc "…두 사람 모두 ⭐50…".
+- MAIDOL `Header.jsx` v157: 로그인 세션당 1회 출석 자동팝업(sessionStorage pending 플래그 소비 → status.checked_today===false 시 open).
+- AIDOL `authStore`는 persist 없음 → 콜드스타트 user=null. **user null→set 전환 = 로그인 이벤트**로 판정(세션 1회 등가).
+- 9004 실검증: status(checked_today:false, today_reward:10, calendar 5일차⭐30·10일차⭐100), my-code(`3YEH`, `/invite/3YEH`) 정상.
+
+### 수행 결과
+- **stores/uiStore.ts**(신규): 전역 모달 플래그(attendanceOpen/inviteOpen + open/close 액션) — 헤더·로그인 어디서든 오픈.
+- **components/AttendanceModal.tsx**(신규): MAIDOL AttendanceCard 충실 이식 — 누적/사이클, 10칸 캘린더(claimed/next/bonus 스타일), 체크인 버튼·토스트·중복안내. `[AttendanceModal]` 로그(__DEV__ 가드·catch).
+- **components/AppShareModal.tsx**(신규): MAIDOL AppShareModal 충실 이식 — "📢 AIDOL 추천하기", ⭐50 안내, 코드박스+📋복사, 공유 4종(카카오톡/인스타그램/페이스북=네이티브 Share 시트, 링크복사=클립보드). `[AppShareModal]` 로그.
+- **components/HomeHeaderActions.tsx**: 출석·추천 아이콘이 uiStore로 모달 오픈(기존 즉시호출→모달화).
+- **App.tsx**: `<GlobalModals/>`(출석·초대 모달 전역 렌더) + **로그인 자동 출석팝업 이펙트**(user null→set → status 조회 → checked_today===false 시 openAttendance). `[GlobalModals]` 로그.
+- **screens/MapScreen.tsx**(작업실 헤더 1개 아이콘만): 우상단 `⋮→Settings`을 **Feather user→MyMusic**으로 교체(마이페이지). 나머지 MapScreen 불변.
+- 의존성: `expo-clipboard`(코드/링크 복사).
+
+### 테스트 (tester) — PASS (실로그인 E2E)
+신규 테스트계정 등록(9004, consents+gender 필수) 후 AIDOL 웹 실로그인으로 검증.
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [api] /attendance/status·/referral/my-code (실토큰) | 200, 계약 일치 |
+| [e2e-web] **로그인 즉시 출석팝업 자동 노출** | **PASS** (`/tmp/v312_5_attendance.png` — 누적0일·1일차🎁·5일차⭐30·10일차⭐100·"오늘 출석하고 별 받기 ⭐10") |
+| [e2e-web] 초대 모달(헤더 🎁) | **PASS** (`/tmp/v312_6_invite.png` — 3YEH+📋복사+공유4종) |
+| [e2e-web] **작업실 헤더 마이페이지 아이콘** | **PASS** (`/tmp/v312_7_studio.png` — ⋮ 대신 user) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- MAIDOL 초대의 카카오톡/인스타/페이스북 3버튼은 웹 전용(navigator.share/sharer). RN에선 **네이티브 Share 시트로 통합**하되 4버튼 레이아웃·라벨은 그대로 유지(충실 이식).
+- MAIDOL 자동팝업의 sessionStorage-1회 소비를 AIDOL은 **user 전환 감지**로 등가 구현(persist 없는 스토어 특성 활용).
+- invite_url 호스트: RN엔 window.location.origin 없음 → `BACKEND_BASE_URL/invite/{code}` 사용.
+
+### 커밋
+`feat: v3.12 작업실 마이페이지 아이콘 + 출석/초대 팝업 이식 + 로그인 자동팝업 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.11 (기능 #3 — 헤더/피드/홈 액션 개편) — 2026-08-13
 
 ### 요청 작업

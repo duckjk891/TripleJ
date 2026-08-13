@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Text, TouchableOpacity, View, Platform, LogBox } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -24,6 +25,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DirectorType } from './components/Character';
 import MiniPlayer from './components/MiniPlayer';
 import HomeHeaderActions from './components/HomeHeaderActions';
+import AttendanceModal from './components/AttendanceModal';
+import AppShareModal from './components/AppShareModal';
+import { useAuthStore } from './stores/authStore';
+import { useUiStore } from './stores/uiStore';
+import api from './services/api';
 
 import SplashScreen from './screens/SplashScreen';
 import ChartScreen from './screens/ChartScreen';
@@ -308,6 +314,36 @@ function MainTabs() {
   );
 }
 
+// 전역 모달(출석/초대) + 최초 로그인 시 출석 팝업 자동 오픈
+function GlobalModals() {
+  const user = useAuthStore((s) => s.user);
+  const openAttendance = useUiStore((s) => s.openAttendance);
+  const prevUserRef = useRef<any>(null);
+  useEffect(() => {
+    const wasLoggedOut = !prevUserRef.current;
+    prevUserRef.current = user;
+    if (!user || !wasLoggedOut) return; // 로그인 전환(null→user)일 때만
+    (async () => {
+      if (__DEV__) console.info('[GlobalModals] 로그인 감지 — 출석 상태 확인');
+      try {
+        const { data } = await api.get('/attendance/status');
+        if (data?.checked_today === false) {
+          if (__DEV__) console.info('[GlobalModals] 오늘 미출석 → 출석 팝업 자동 오픈');
+          openAttendance();
+        }
+      } catch (err: any) {
+        console.error('[GlobalModals] 자동 출석 상태 확인 실패', { status: err?.response?.status });
+      }
+    })();
+  }, [user, openAttendance]);
+  return (
+    <>
+      <AttendanceModal />
+      <AppShareModal />
+    </>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -343,6 +379,8 @@ export default function App() {
           <MiniPlayerWrapper />
           {/* 레벨업 토스트 - 전역 표시 (모든 화면 위에 떠오름) */}
           <LevelUpModal />
+          {/* 출석체크·초대 모달 + 최초 로그인 자동 출석 팝업 */}
+          <GlobalModals />
         </View>
       </NavigationContainer>
     </SafeAreaProvider>
