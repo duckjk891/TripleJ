@@ -7,6 +7,33 @@
 
 ---
 
+## v3.14 — 2026-08-13 — 피드 로그인게이트/재생 수정 + 다이아 제거(별 통일) + 작업실 상단바·별팝업 액션
+
+### 요청
+① 비로그인 피드 노출 금지 ② 피드 클릭 무반응·내용/음악 미표시 수정(+노출형태 설명) ③ 다이아 다 없애고 별만 ④ 작업실 상단바 별·출석·초대 아이콘 ⑤ 초대 아이콘 공유 아이콘으로 ⑥ 별 팝업 첫가입~내곡발매만 ⑦ 별 팝업 액션(친구초대→공유, 출석→출석, 남곡듣기→차트, 내곡발매→작업실).
+
+### Plan verification findings (0단계)
+- `/feeds/timeline` = 인스타형 혼합(is_public 최신200 후보 → 팔로잉 +1000 최상단, 동률 created_at desc). 비로그인도 공개 피드 반환 → 클라 게이트 필요.
+- 피드 미표시 원인: 응답이 `{title, blocks:[text|track], author_nickname, like/comment}` 구조인데 기존 카드가 `body/track_title`(없는 필드)만 읽음 + onPress 없음.
+- 💎 = 100% 로컬(gemsStore). 게이트 2곳(디렉터 영입 hireCost, 추가 아티스트 100). 백엔드 별=읽기전용(spend 엔드포인트 부재·원격서버). → 다이아 표시 제거 + 두 게이트 무료화, 별(points) 단일 표시.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/FeedScreen.tsx | 비로그인 게이트 + 실스키마 카드(제목/본문/트랙) + 트랙 탭 재생 | `[FeedScreen]` |
+| components/StarGuideModal.tsx | 쓰는곳/작사·작곡/풀사이클 삭제, 버는곳만 + 항목 액션 | `[StarGuideModal]` |
+| services/navigationRef.ts (신규) + App.tsx | 전역 navigationRef(모달→화면 이동) | `[navigationRef]` |
+| screens/MapScreen.tsx | 작업실 헤더 💎→⭐배지·출석·공유; 버튼 💎 제거 | — |
+| components/HomeHeaderActions.tsx | 초대 user-plus→share-2 | — |
+| screens/DirectorLineupScreen.tsx | 다이아 게이트 제거(영입 무료)·💎 표시 삭제 | `[DirectorLineup]` |
+| screens/ArtistInputScreen.tsx | 추가 아티스트 슬롯 무료화·다이아 문구 삭제 | `[ArtistInput]` |
+| components/LevelUpModal.tsx | `+N💎`→달성 문구 | — |
+
+### 특이(경제 영향)
+다이아가 유일 게이트였던 **디렉터 영입·추가 아티스트가 무료**가 됨(별 차감 백엔드 부재). 별 과금 원하면 `POST /points/spend` 신설 후속 필요. gemsStore 파일은 잔존하나 화면 미표시.
+
+---
+
 ## v3.13 — 2026-08-13 — 별(⭐) 잔액 헤더 배지 + 별 안내 팝업 + 아이콘 교체
 
 ### 요청

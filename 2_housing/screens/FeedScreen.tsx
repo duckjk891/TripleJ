@@ -1,33 +1,69 @@
-// [FeedScreen] 피드 타임라인 — /api/feeds/timeline (백엔드 9004 라이브). Wave1 소셜 코어 시작.
+// [FeedScreen] 피드 타임라인 — /api/feeds/timeline (인스타형 혼합: is_public 최신 + 팔로잉 작성자 최상단).
+// 비로그인 시 노출 금지. 카드에 제목·본문·트랙(재생 가능) 인라인 렌더.
 import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { View, FlatList, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
-import api from '../services/api';
+import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
+import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
-import { spacing } from '../theme/spacing';
+import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 
+interface FeedTrack {
+  id: string;
+  title?: string;
+  artist_name?: string;
+  cover_image?: string;
+  duration_sec?: number;
+}
+interface FeedBlock {
+  type: string; // 'text' | 'track'
+  text?: string;
+  track_id?: string;
+  track?: FeedTrack | null;
+}
 interface FeedPost {
   id?: string | number;
+  author_id?: string;
   author_nickname?: string;
   author_name?: string;
   nickname?: string;
-  body?: string;
-  content?: string;
-  text?: string;
+  title?: string;
+  blocks?: FeedBlock[];
+  like_count?: number;
+  comment_count?: number;
   created_at?: string;
-  track_title?: string;
 }
+
+const coverUri = (img?: string): string | null =>
+  img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
+
+const fmtDuration = (sec?: number): string => {
+  if (!sec || sec <= 0) return '';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+};
 
 export default function FeedScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
+  const playerStore = usePlayerStore();
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchFeed = useCallback(async () => {
+    // 비로그인 시 피드 노출 금지 — 요청도 하지 않음
+    if (!useAuthStore.getState().user) {
+      if (__DEV__) console.info('[FeedScreen] 미로그인 — 피드 미조회');
+      setPosts([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     if (__DEV__) console.info('[FeedScreen] fetchFeed 호출');
     try {
       setLoading(true);
@@ -47,9 +83,50 @@ export default function FeedScreen() {
 
   useFocusEffect(useCallback(() => { fetchFeed(); }, [fetchFeed]));
 
+  // 피드 전체의 트랙을 큐로 모아두고, 탭한 트랙부터 재생
+  const allTracks = useCallback((): FeedTrack[] => {
+    const out: FeedTrack[] = [];
+    for (const p of posts) {
+      for (const b of p.blocks || []) {
+        if (b.type === 'track' && b.track?.id) out.push(b.track);
+      }
+    }
+    return out;
+  }, [posts]);
+
+  const handlePlayTrack = (track: FeedTrack) => {
+    if (!track?.id) return;
+    if (__DEV__) console.info('[FeedScreen] play track', { id: track.id });
+    const queue = allTracks();
+    playerStore.setQueue(queue.length ? queue : [track]);
+    navigation.navigate('Player', { track });
+  };
+
+  const renderTrackBlock = (track: FeedTrack, key: string) => {
+    const uri = coverUri(track.cover_image);
+    return (
+      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => handlePlayTrack(track)} accessibilityLabel={`재생 ${track.title || ''}`}>
+        <View style={styles.trackCover}>
+          {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
+            : <AppText variant="title3" tone="muted">♪</AppText>}
+          <View style={styles.playBadge}><Feather name="play" size={14} color={colors.text.inverse} /></View>
+        </View>
+        <View style={styles.trackMeta}>
+          <AppText variant="bodyStrong" numberOfLines={1}>{track.title || '제목 없음'}</AppText>
+          <AppText variant="caption" tone="muted" numberOfLines={1}>
+            {track.artist_name || '아티스트'}{fmtDuration(track.duration_sec) ? ` · ${fmtDuration(track.duration_sec)}` : ''}
+          </AppText>
+        </View>
+        <Feather name="play-circle" size={26} color={colors.accent.primary} />
+      </TouchableOpacity>
+    );
+  };
+
   const renderPost = ({ item }: { item: FeedPost }) => {
     const author = item.author_nickname || item.author_name || item.nickname || '익명';
-    const text = item.body || item.content || item.text || '';
+    const blocks = item.blocks || [];
+    const textBlocks = blocks.filter((b) => b.type === 'text' && b.text);
+    const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     return (
       <Card variant="filled" style={styles.card}>
         <View style={styles.head}>
@@ -63,13 +140,34 @@ export default function FeedScreen() {
             ) : null}
           </View>
         </View>
-        {text ? <AppText variant="body" tone="secondary" style={styles.body}>{text}</AppText> : null}
-        {item.track_title ? (
-          <AppText variant="footnote" tone="accent" style={styles.track}>♪ {item.track_title}</AppText>
-        ) : null}
+
+        {item.title ? <AppText variant="bodyLg" style={styles.title}>{item.title}</AppText> : null}
+        {textBlocks.map((b, i) => (
+          <AppText key={`t${i}`} variant="body" tone="secondary" style={styles.body}>{b.text}</AppText>
+        ))}
+        {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
+
+        <View style={styles.footer}>
+          <View style={styles.stat}><Feather name="heart" size={14} color={colors.text.muted} /><AppText variant="caption" tone="muted">{item.like_count ?? 0}</AppText></View>
+          <View style={styles.stat}><Feather name="message-circle" size={14} color={colors.text.muted} /><AppText variant="caption" tone="muted">{item.comment_count ?? 0}</AppText></View>
+        </View>
       </Card>
     );
   };
+
+  // 비로그인 → 피드 숨김(로그인 유도)
+  if (!user) {
+    return (
+      <ScreenLayout>
+        <EmptyState
+          icon="🔒"
+          title="로그인이 필요해요"
+          hint="로그인하면 팔로우한 아티스트와 다른 사람들의 소식을 볼 수 있어요"
+          action={<Button label="로그인하기" onPress={() => navigation.navigate('Settings')} />}
+        />
+      </ScreenLayout>
+    );
+  }
 
   return (
     <ScreenLayout>
@@ -92,13 +190,9 @@ export default function FeedScreen() {
       ) : (
         <EmptyState
           icon="👥"
-          title={user ? '팔로우한 아티스트가 없어요' : '로그인이 필요해요'}
-          hint={user
-            ? '팔로우를 추가해주세요. 마음에 드는 아티스트를 팔로우하면 소식이 여기 떠요.'
-            : '로그인하면 팔로우한 아티스트의 소식을 볼 수 있어요'}
-          action={user
-            ? <Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />
-            : undefined}
+          title="아직 소식이 없어요"
+          hint="마음에 드는 아티스트를 팔로우하면 소식이 여기 가장 먼저 떠요."
+          action={<Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />}
         />
       )}
     </ScreenLayout>
@@ -111,6 +205,23 @@ const styles = StyleSheet.create({
   card: { marginBottom: spacing.md },
   head: { flexDirection: 'row', alignItems: 'center' },
   headText: { marginLeft: spacing.md, flex: 1 },
-  body: { marginTop: spacing.md },
-  track: { marginTop: spacing.sm },
+  title: { marginTop: spacing.md },
+  body: { marginTop: spacing.sm },
+  trackRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    marginTop: spacing.md, padding: spacing.sm,
+    backgroundColor: colors.bg.deepest, borderRadius: radius.lg,
+  },
+  trackCover: {
+    width: 52, height: 52, borderRadius: radius.md, overflow: 'hidden',
+    backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
+  },
+  trackCoverImg: { width: '100%', height: '100%' },
+  playBadge: {
+    position: 'absolute', right: 2, bottom: 2,
+    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill, padding: 2,
+  },
+  trackMeta: { flex: 1 },
+  footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
+  stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 });

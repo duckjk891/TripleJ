@@ -43,7 +43,7 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
             <Feather name="calendar" size={20} color={colors.text.primary} />
           </TouchableOpacity>
           <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 8 }} accessibilityLabel="친구초대">
-            <Feather name="user-plus" size={20} color={colors.text.primary} />
+            <Feather name="share-2" size={20} color={colors.text.primary} />
           </TouchableOpacity>
         </>
       ) : null}

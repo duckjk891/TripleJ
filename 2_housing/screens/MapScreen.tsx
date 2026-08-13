@@ -32,6 +32,10 @@ import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import api from '../services/api';
 import { colors } from '../theme/colors';
+import { spacing, radius } from '../theme/spacing';
+import { AppText } from '../components/ui';
+import { useUiStore } from '../stores/uiStore';
+import { usePointsStore } from '../stores/pointsStore';
 
 // AdMob Rewarded Ad
 let RewardedAd: any = null;
@@ -263,22 +267,27 @@ export default function MapScreen({ navigation }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 영입 시스템
-  const gemBalance = useGemsStore((s) => s.balance);
   const artistLevel = useArtistStore((s) => s.level);
   const artistSongs = useArtistStore((s) => s.songsReleased);
   const companyLevel = useCompanyStore((s) => s.level);
   const artistRank = getArtistRank(artistLevel);
   const companyTier = getCompanyTier(companyLevel);
-  const initGems = useGemsStore((s) => s.initIfEmpty);
   const { hiredIds, selectedByCategory, selectForCategory, initIfEmpty: initDirectors } =
     useDirectorsStore();
   const [directorPickerFor, setDirectorPickerFor] = useState<DirectorType | null>(null);
 
-  // 로그인 시 최초 1회 지급
+  // 별(⭐) 잔액 + 전역 모달 액션 (작업실 상단바용)
+  const starBalance = usePointsStore((s) => s.balance);
+  const fetchStarBalance = usePointsStore((s) => s.fetchBalance);
+  const openStarGuide = useUiStore((s) => s.openStarGuide);
+  const openAttendance = useUiStore((s) => s.openAttendance);
+  const openInvite = useUiStore((s) => s.openInvite);
+
+  // 로그인 시 최초 1회 지급 + 별 잔액 로드
   useEffect(() => {
     if (user) {
-      initGems();
       initDirectors();
+      fetchStarBalance();
     }
   }, [user]);
 
@@ -310,13 +319,26 @@ export default function MapScreen({ navigation }: Props) {
             </TouchableOpacity>
           )}
           {user && (
-            <TouchableOpacity
-              onPress={() => parent.navigate('DirectorLineup' as never)}
-              style={[styles.gemPill, { marginLeft: 4 }]}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Text style={styles.gemPillText}>💎 {gemBalance.toLocaleString()}</Text>
-            </TouchableOpacity>
+            <>
+              {/* 별 배지 — 클릭 시 별 안내 팝업 */}
+              <TouchableOpacity
+                onPress={openStarGuide}
+                accessibilityLabel="별 안내"
+                style={styles.starPill}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <AppText variant="footnote">⭐</AppText>
+                <AppText variant="footnote" tone="accent">{starBalance ?? 0}</AppText>
+              </TouchableOpacity>
+              {/* 출석체크 */}
+              <TouchableOpacity onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="calendar" size={19} color={colors.text.primary} />
+              </TouchableOpacity>
+              {/* 친구초대(공유) */}
+              <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 6 }} accessibilityLabel="친구초대" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="share-2" size={19} color={colors.text.primary} />
+              </TouchableOpacity>
+            </>
           )}
           {user && (
             <TouchableOpacity
@@ -324,7 +346,7 @@ export default function MapScreen({ navigation }: Props) {
                 setShowTutorialHint(false);
                 setShowTutorial((v) => !v);
               }}
-              style={{ paddingHorizontal: 8, paddingVertical: 4 }}
+              style={{ paddingHorizontal: 6, paddingVertical: 4 }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={{ fontSize: 20, color: colors.text.primary, fontWeight: '300' }}>{'ⓘ'}</Text>
@@ -341,7 +363,7 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       ),
     });
-  }, [navigation, user?.company_name, user, showTutorialHint, showTutorial, gemBalance]);
+  }, [navigation, user?.company_name, user, showTutorialHint, showTutorial, starBalance]);
 
   // 다음 액션 디렉터 펄스 애니메이션
   useEffect(() => {
@@ -896,7 +918,7 @@ export default function MapScreen({ navigation }: Props) {
                 navigation.getParent()?.navigate('DirectorLineup' as never);
               }}
             >
-              <Text style={styles.skipBtnText}>다른 디렉터 영입하러 가기 💎</Text>
+              <Text style={styles.skipBtnText}>다른 디렉터 영입하러 가기</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1009,6 +1031,19 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
     borderLeftColor: colors.accent.primary,
     marginLeft: -1,
+  },
+
+  // 헤더 별 배지 Pill
+  starPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.bg.surface2,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginLeft: 2,
+    marginRight: 2,
   },
 
   // 헤더 잔액 Pill

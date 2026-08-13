@@ -4,6 +4,47 @@
 
 ---
 
+## v3.14 (기능 #6 — 피드 로그인 게이트·콘텐츠/재생 수정 + 다이아 제거·별 통일 + 작업실 상단바·아이콘·별팝업 액션) — 2026-08-13
+
+### 요청 작업
+① 비로그인 시 피드 노출 금지. ② 피드 클릭 무반응·내용/음악 미표시 수정(노출 형태도 설명). ③ 다이아 다 없애고 별만. ④ 작업실 상단바에 별·출석체크·초대 아이콘 모두. ⑤ 초대 아이콘을 공유 아이콘으로. ⑥ 별 팝업을 첫가입~내곡발매만 남기고 나머지 삭제. ⑦ 별 팝업 항목 클릭 액션(친구초대→공유, 출석체크→출석, 남곡듣기→차트, 내곡발매→작업실).
+
+### Plan verification findings (0단계)
+- **피드 노출 형태(사용자 질문 답)**: `/feeds/timeline` = **인스타형 혼합 타임라인**(`backend feeds.py:374`). `is_public` 최신 200건 후보 → 점수 랭킹, **로그인 시 팔로잉 작성자 글 +1000점(최상단 블록)**, 동률은 `created_at desc`. 즉 "최신순 기반 + 팔로우한 사람 최상단"이 맞음. **단, 팔로우 없어도 공개 피드가 노출**되는 전역 타임라인 → 비로그인도 200 반환 → **클라 게이트 필요**.
+- **피드 미표시 버그 원인**: 실제 응답은 `{title, blocks:[{type:'text',text},{type:'track',track:{id,title,artist_name,cover_image,duration_sec}}], author_nickname, like_count, comment_count}` 구조인데, 기존 `FeedScreen`은 `item.body/content/text`·`item.track_title`(존재하지 않는 필드)만 읽어 **본문·트랙 미표시**. 카드에 `onPress` 없어 **클릭 무반응**.
+- **다이아(💎) = 100% 로컬**(`gemsStore`, AsyncStorage; 백엔드 연동 0). 소비/게이트는 단 2곳(디렉터 영입 `hireCost`, 추가 아티스트 슬롯 100)뿐. 곡/작사/커버/1인 아티스트 생성은 다이아 게이트 없음. **백엔드 별(points)은 읽기전용**(`/points/balance`·`/costs`), 차감 엔드포인트 부재 + 실서버 원격이라 이 환경서 추가·테스트 불가.
+- 이미지 URL 규약: `${BACKEND_BASE_URL}/api/upload/cover-preview/{enc(object)}` (ChartScreen 동일). 트랙 재생: `playerStore.setQueue(...)` + `navigate('Player',{track})`.
+
+### 수행 결과
+- **screens/FeedScreen.tsx**(재작성): (a) **비로그인 → 조회 안 하고 "🔒 로그인이 필요해요" 게이트**(로그인 버튼). (b) 실제 응답 스키마로 카드 렌더 — 작성자(아바타+닉네임)·제목·본문(text 블록)·**트랙 카드(커버·제목·아티스트·길이·▶)**·좋아요/댓글 수. (c) **트랙 탭 → 재생**(전체 피드 트랙 큐잉 후 Player 진입). `[FeedScreen]` 로그.
+- **components/StarGuideModal.tsx**(재작성): "별 쓰는 곳/작사·작곡·커버/풀사이클/팁" **삭제**, **버는 곳(첫가입~내곡발매)만** 유지. 항목 클릭 액션 — 친구초대→**공유(초대 모달)**, 출석체크→**출석 모달**, 남의 곡 듣기→**차트 이동**, 내 곡 발매→**작업실 이동**(전역 `navigationRef`). 클릭 가능 항목은 chevron 표시.
+- **services/navigationRef.ts**(신규): 전역 `navigationRef` + `navigateGlobal()` — 전역 모달에서 화면 이동(순환 import 방지 위해 App 밖 모듈). **App.tsx**: `NavigationContainer ref={navigationRef}`.
+- **screens/MapScreen.tsx**(작업실 헤더): 💎 pill 제거 → **⭐별 배지(→별 안내)·📅출석·share 초대** 추가(+기존 ⓘ·마이페이지 유지). 로그인 시 `fetchStarBalance()`. 버튼 "…영입하러 가기 💎"→💎 제거.
+- **components/HomeHeaderActions.tsx**: 초대 아이콘 `user-plus`→**`share-2`**(공유).
+- **screens/DirectorLineupScreen.tsx**: 다이아 게이트 제거 → **디렉터 영입 무료**(잔액 pill·💎 코스트·"캐시 부족" 삭제). **screens/ArtistInputScreen.tsx**: 추가 아티스트 슬롯 다이아 게이트 제거 → **무료 개방**. **components/LevelUpModal.tsx**: `보너스 +N💎` → "N위 달성!"(다이아 문구 제거).
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] **비로그인 피드 = "🔒 로그인이 필요해요"**(피드 미노출) | PASS (`/tmp/v314_1_feed_loggedout.png`) |
+| [e2e] 로그인 피드 = 제목·본문·**트랙 카드** 노출 | PASS (`/tmp/v314_2_feed_loggedin.png`) |
+| [e2e] **트랙 탭 → Player 진입·재생**(0:02/3:58) | PASS (`/tmp/v314_8_player.png`) |
+| [e2e] 작업실 헤더 💎 제거 + ⭐배지·📅출석·share초대 | PASS (`/tmp/v314_3_studio_header.png`) |
+| [e2e] 별 팝업 = 첫가입~내곡발매만(쓰는곳/작사 없음) | PASS (`/tmp/v314_4_starguide.png`) |
+| [e2e] 별팝업 남곡듣기→차트 / 내곡발매→작업실 / 친구초대→공유 | PASS (`v314_5/6/7`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항 (중요 — 사용자 확인 요망)
+- **다이아 제거의 게임 경제 영향**: 다이아가 유일 게이트였던 **디렉터 영입(최대 10,000)·추가 아티스트 슬롯(100)이 무료가 됨**. 백엔드 별(points) 차감 엔드포인트가 없고 실서버가 원격이라 이 환경에서 별 과금을 구현·검증할 수 없어 내린 결정. **별로 과금(영입/추가슬롯 시 ⭐ 차감)하려면 백엔드 `POST /points/spend` 신설이 필요** — 원하시면 다음 작업으로 진행.
+- `stores/gemsStore.ts` 파일 자체는 잔존(광고 스킵 보상 등 내부 기록에만 사용) — **화면 어디에도 다이아(💎) 미표시**. 완전 삭제는 후속 정리 가능.
+- 피드는 전역 공개 타임라인이라 "팔로우 0명"이어도 공개 글이 보임(팔로우한 사람은 최상단). "내 팔로잉만" 피드를 원하면 백엔드 파라미터/모드 추가 필요.
+
+### 커밋
+`feat: v3.14 피드 로그인게이트·재생 수정 + 다이아 제거(별 통일) + 작업실 상단바·별팝업 액션 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.13 (기능 #5 — 별 잔액 헤더 배지 + 별 안내 팝업 + 아이콘 교체) — 2026-08-13
 
 ### 요청 작업

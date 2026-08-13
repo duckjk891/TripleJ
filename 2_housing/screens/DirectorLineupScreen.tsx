@@ -12,7 +12,6 @@ import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DIRECTOR_CATALOG, DirectorCatalog } from '../data/directors';
 import { useDirectorsStore } from '../stores/directorsStore';
-import { useGemsStore } from '../stores/gemsStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -41,10 +40,8 @@ export default function DirectorLineupScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const { user } = useAuthStore();
-  const { balance } = useGemsStore();
   const { hiredIds, hire, isHired, selectForCategory, selectedByCategory, initIfEmpty } =
     useDirectorsStore();
-  const gemSpend = useGemsStore((s) => s.spend);
 
   useEffect(() => {
     if (user) initIfEmpty();
@@ -70,34 +67,13 @@ export default function DirectorLineupScreen({ navigation }: any) {
       Alert.alert('선택 완료', `${d.name}님을 ${CATEGORY_LABEL[d.category]}로 지정했어요.`);
       return;
     }
-    if (d.hireCost === 0) {
-      hire(d.id);
-      useCompanyStore.getState().addExp(20, 'hire');
-      return;
+    // 다이아(캐시) 제거 — 모든 디렉터는 무료로 영입 (별 경제 통일, 백엔드 별 차감 엔드포인트 부재)
+    if (__DEV__) console.info('[DirectorLineup] hire', { id: d.id });
+    hire(d.id);
+    useCompanyStore.getState().addExp(20, 'hire');
+    if (d.hireCost > 0) {
+      Alert.alert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요!`);
     }
-    Alert.alert(
-      '디렉터 영입',
-      `${d.name}님을 영입하시겠어요?\n\n비용: ${d.hireCost.toLocaleString()} 💎\n현재 잔액: ${balance.toLocaleString()} 💎`,
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '영입하기',
-          onPress: () => {
-            const ok = gemSpend(d.hireCost, 'hire_director', d.id);
-            if (!ok) {
-              Alert.alert('캐시 부족', '광고를 보거나 곡을 만들어 캐시를 모아주세요.');
-              return;
-            }
-            hire(d.id);
-            // 기획사 EXP: 영입 +20 / 사용한 💎 trackSpend
-            const company = useCompanyStore.getState();
-            company.addExp(20, 'hire');
-            company.trackSpend(d.hireCost);
-            Alert.alert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요!`);
-          },
-        },
-      ]
-    );
   };
 
   if (!user) {
@@ -116,9 +92,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
           <AppText style={styles.backText}>{'‹'}</AppText>
         </TouchableOpacity>
         <AppText style={styles.headerTitle}>디렉터 영입</AppText>
-        <View style={styles.balancePill}>
-          <AppText style={styles.balanceText}>💎 {balance.toLocaleString()}</AppText>
-        </View>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 + insets.bottom + (hasMiniPlayer ? 70 : 0) }}>
@@ -161,25 +135,9 @@ export default function DirectorLineupScreen({ navigation }: any) {
                         <View style={[styles.cardCta, { backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.accent.primary }]}>
                           <AppText style={[styles.cardCtaText, { color: colors.accent.primary }]}>탭해서 선택</AppText>
                         </View>
-                      ) : d.hireCost === 0 ? (
-                        <View style={[styles.cardCta, { backgroundColor: colors.accent.primary }]}>
-                          <AppText style={styles.cardCtaText}>기본 지급</AppText>
-                        </View>
                       ) : (
-                        <View
-                          style={[
-                            styles.cardCta,
-                            { backgroundColor: balance >= d.hireCost ? colors.accent.primary : colors.bg.surface2 },
-                          ]}
-                        >
-                          <AppText
-                            style={[
-                              styles.cardCtaText,
-                              balance < d.hireCost && { color: colors.text.muted },
-                            ]}
-                          >
-                            💎 {d.hireCost.toLocaleString()}
-                          </AppText>
+                        <View style={[styles.cardCta, { backgroundColor: colors.accent.primary }]}>
+                          <AppText style={styles.cardCtaText}>영입하기</AppText>
                         </View>
                       )}
                     </View>
@@ -192,8 +150,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
 
         <View style={styles.hintBox}>
           <AppText style={styles.hintText}>
-            💡 곡을 만들거나 광고를 보면 캐시(💎)를 모을 수 있어요.{'\n'}
-            같은 카테고리 디렉터 중 <AppText style={{ color: colors.accent.secondary }}>한 명만</AppText> 작업에 투입돼요. 카드를 탭해 바꿀 수 있어요.
+            💡 같은 카테고리 디렉터 중 <AppText style={{ color: colors.accent.secondary }}>한 명만</AppText> 작업에 투입돼요. 카드를 탭해 바꿀 수 있어요.
           </AppText>
         </View>
       </ScrollView>

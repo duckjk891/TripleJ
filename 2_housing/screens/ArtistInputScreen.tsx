@@ -18,13 +18,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
-import { useGemsStore } from '../stores/gemsStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { colors } from '../theme/colors';
 
-// 추가 아티스트 1회 생성 비용 (다이아)
-const EXTRA_ARTIST_GEM_COST = 100;
 const MINIPLAYER_HEIGHT = 70;
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
@@ -156,9 +153,8 @@ export default function ArtistInputScreen({ navigation }: any) {
       parent.setOptions({ headerLeft: undefined });
     };
   }, [navigation]);
-  // 다이아로 추가 아티스트 생성 결제 완료 시 true → 잠금 해제하고 사진 올리기 가능
+  // 추가 아티스트 슬롯 개방 여부(무료)
   const [extraUnlocked, setExtraUnlocked] = useState(false);
-  const gemsBalance = useGemsStore((s) => s.balance);
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
 
@@ -191,32 +187,19 @@ export default function ArtistInputScreen({ navigation }: any) {
     setChat((prev) => [...prev, { type: 'user' as const, text }]);
 
   const handlePurchaseExtraSlot = () => {
-    if (gemsBalance < EXTRA_ARTIST_GEM_COST) {
-      Alert.alert(
-        '다이아 부족',
-        `추가 아티스트를 만들려면 다이아 ${EXTRA_ARTIST_GEM_COST}개가 필요해요. (보유: ${gemsBalance}개)`
-      );
-      return;
-    }
+    // 다이아 제거 — 추가 아티스트 슬롯 무료 개방 (별 경제 통일)
+    if (__DEV__) console.info('[ArtistInput] unlock extra artist slot (free)');
     Alert.alert(
       '추가 아티스트 만들기',
-      `다이아 ${EXTRA_ARTIST_GEM_COST}개를 사용해서 새로운 아티스트를 만들까요?\n(현재 아티스트는 그대로 유지돼요)`,
+      '새로운 아티스트를 만들까요?\n(현재 아티스트는 그대로 유지돼요)',
       [
         { text: '취소', style: 'cancel' },
         {
-          text: `${EXTRA_ARTIST_GEM_COST} 다이아 사용`,
+          text: '만들기',
           onPress: () => {
-            const ok = useGemsStore.getState().spend(
-              EXTRA_ARTIST_GEM_COST,
-              'extra_artist_slot'
-            );
-            if (!ok) {
-              Alert.alert('오류', '다이아 차감에 실패했어요.');
-              return;
-            }
             setExtraUnlocked(true);
             pushDirector(
-              `다이아 ${EXTRA_ARTIST_GEM_COST}개로 슬롯을 열었어요! 새 아티스트의 사진을 올려주세요.`
+              '슬롯을 열었어요! 새 아티스트의 사진을 올려주세요.'
             );
           },
         },
@@ -339,18 +322,17 @@ export default function ArtistInputScreen({ navigation }: any) {
           <View style={styles.inputArea}>
             <View style={styles.lockNotice}>
               <AppText style={styles.lockNoticeIcon}>🔒</AppText>
-              <AppText style={styles.lockNoticeTitle}>아티스트는 한 명까지 무료로 만들 수 있어요</AppText>
+              <AppText style={styles.lockNoticeTitle}>이미 아티스트가 있어요</AppText>
               <AppText style={styles.lockNoticeDesc}>
-                추가 아티스트를 만들려면 다이아 {EXTRA_ARTIST_GEM_COST}개가 필요해요.
+                새로운 아티스트를 추가로 만들 수 있어요.
               </AppText>
-              <AppText style={styles.lockNoticeBalance}>보유 다이아 💎 {gemsBalance}</AppText>
             </View>
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={handlePurchaseExtraSlot}
             >
               <AppText style={styles.primaryBtnText}>
-                💎 {EXTRA_ARTIST_GEM_COST} 사용하고 추가 아티스트 만들기
+                추가 아티스트 만들기
               </AppText>
             </TouchableOpacity>
           </View>

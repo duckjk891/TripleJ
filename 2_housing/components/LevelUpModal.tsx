@@ -84,7 +84,7 @@ export default function LevelUpModal() {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>🎉 {titlePrefix} Lv.{current.newLevel}!</Text>
           <Text style={styles.sub}>
-            {current.rankLabel} · 보너스 +{current.bonus}💎
+            {current.rankLabel} 달성!
           </Text>
         </View>
       </TouchableOpacity>

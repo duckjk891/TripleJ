@@ -19,6 +19,7 @@ import { colors } from './theme/colors';
 import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
+import { navigationRef } from './services/navigationRef';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -353,7 +354,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <View style={{ flex: 1 }}>
           <RootStack.Navigator
             initialRouteName="Splash"
