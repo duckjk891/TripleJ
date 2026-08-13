@@ -189,6 +189,16 @@ class Settings(BaseSettings):
     # .env 의 MINIO_PUBLIC_HOST 로 오버라이드 (pydantic-settings 자동 매핑).
     minio_public_host: str = ""
 
+    # v173: public presign 클라이언트의 https 여부. SigV4 서명에 scheme 이 포함되므로
+    # 클라우드 이전(media.maidol.co.kr + TLS) 시 true 로 전환 → https presign 발급.
+    # .env 의 MINIO_PUBLIC_SECURE 로 오버라이드 (pydantic-settings 자동 매핑).
+    minio_public_secure: bool = False
+
+    # v173: 브라우저 노출 이미지 URL 생성 모드. "proxy" = /api/upload/cover-preview/
+    # 상대경로 (개발 https 화면 주력) / "presign" = public 클라이언트 presigned URL 직행
+    # (클라우드 이전 후 주경로). .env 의 MEDIA_URL_MODE 로 오버라이드.
+    media_url_mode: str = "proxy"
+
     @property
     def es_url(self) -> str:
         """HybridSearch — Elasticsearch HTTP URL built from ES_HOST/ES_PORT."""

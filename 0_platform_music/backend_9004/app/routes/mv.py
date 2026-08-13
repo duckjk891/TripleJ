@@ -33,6 +33,7 @@ from ..services.mv_pipeline import (
     _v52_cancel_event_cascade,
 )
 from ..services.mv_generator import generate_scene_image
+from ..services.media_urls import browser_image_url, browser_video_url, public_presign
 
 logger = logging.getLogger(__name__)
 
@@ -207,19 +208,9 @@ async def _get_job_with_ownership(mongo_db, oid: ObjectId, user_id: str) -> dict
     return job
 
 
-def _presign(object_name: Optional[str], bucket: Optional[str] = None) -> Optional[str]:
-    """Generate a presigned URL for an object, or return None."""
-    if not object_name:
-        return None
-    try:
-        minio_client = get_minio()
-        return minio_client.presigned_get_object(
-            bucket_name=bucket or settings.minio_bucket_images,
-            object_name=object_name,
-            expires=timedelta(hours=24),
-        )
-    except Exception:
-        return None
+# v173: 로컬 _presign 제거 — 브라우저 노출 URL 은 중앙 헬퍼로 위임.
+# 이미지 필드 → browser_image_url (proxy/presign 모드), 비디오 필드 → browser_video_url
+# (항상 public presign), 외부 API(Grok) 전달용 → public_presign.
 
 
 def _serialize_assets(assets_meta) -> dict:
@@ -246,7 +237,7 @@ def _serialize_assets(assets_meta) -> dict:
             "personality_text": asset.get("personality_text", ""),
             "source": asset.get("source"),
             "object_name": obj,
-            "image_url": _presign(obj),
+            "image_url": browser_image_url(obj),
             "created_at": (
                 created_at.isoformat() if hasattr(created_at, "isoformat") else None
             ),
@@ -269,13 +260,13 @@ def _scene_to_dict(scene: dict) -> dict:
         "video_prompt_ko": scene.get("video_prompt_ko", "") or "",
         "lyrics_segment": scene.get("lyrics_segment", ""),
         "image_object_name": scene.get("image_object_name"),
-        "image_url": _presign(scene.get("image_object_name")),
+        "image_url": browser_image_url(scene.get("image_object_name")),
         "image_source": scene.get("image_source"),
         "video_object_name": scene.get("video_object_name"),
-        "video_url": _presign(scene.get("video_object_name")),
-        "video_with_audio_url": _presign(scene.get("video_with_audio_object")),
-        "video_synclabs_url": _presign(scene.get("video_synclabs_object")),
-        "video_with_audio_synclabs_url": _presign(scene.get("video_with_audio_synclabs_object")),
+        "video_url": browser_video_url(scene.get("video_object_name")),
+        "video_with_audio_url": browser_video_url(scene.get("video_with_audio_object")),
+        "video_synclabs_url": browser_video_url(scene.get("video_synclabs_object")),
+        "video_with_audio_synclabs_url": browser_video_url(scene.get("video_with_audio_synclabs_object")),
         "video_status": scene.get("video_status", "pending"),
         "video_error": scene.get("video_error"),
         "sync_error": scene.get("sync_error"),
@@ -635,12 +626,12 @@ async def list_mv_jobs(
         if scenes:
             for s in scenes:
                 if s.get("image_object_name"):
-                    thumbnail_url = _presign(s["image_object_name"])
+                    thumbnail_url = browser_image_url(s["image_object_name"])
                     break
 
         # Fall back to cover image if no scene thumbnail yet
         if not thumbnail_url and job.get("cover_object_name"):
-            thumbnail_url = _presign(job["cover_object_name"])
+            thumbnail_url = browser_image_url(job["cover_object_name"])
 
         jobs.append({
             "job_id": str(job["_id"]),
@@ -652,8 +643,8 @@ async def list_mv_jobs(
             "completed_video_count": job.get("completed_video_count", 0),
             "cover_object_name": job.get("cover_object_name"),
             "thumbnail_url": thumbnail_url,
-            "result_video_url": _presign(job.get("result_video_url")),
-            "result_music_video_url": _presign(job.get("result_music_video_url")),
+            "result_video_url": browser_video_url(job.get("result_video_url")),
+            "result_music_video_url": browser_video_url(job.get("result_music_video_url")),
             "error_message": job.get("error_message", ""),
             "created_at": job.get("created_at", "").isoformat() if job.get("created_at") else None,
             "updated_at": job.get("updated_at", "").isoformat() if job.get("updated_at") else None,
@@ -785,7 +776,7 @@ async def get_mv_job(
         "mood": job.get("mood"),
         "lyrics": job.get("lyrics"),
         "cover_object_name": job.get("cover_object_name"),
-        "cover_url": _presign(job.get("cover_object_name")),
+        "cover_url": browser_image_url(job.get("cover_object_name")),
         # v61: Phase 1.5 에서 생성된 주인공/장소 자산 — presigned image_url 포함.
         "assets": _serialize_assets(job.get("assets")),
         "status": job.get("status", "draft"),
@@ -795,9 +786,9 @@ async def get_mv_job(
         "completed_image_count": job.get("completed_image_count", 0),
         "completed_video_count": job.get("completed_video_count", 0),
         "scenes": scenes_response,
-        "result_video_url": _presign(job.get("result_video_url")),
+        "result_video_url": browser_video_url(job.get("result_video_url")),
         "result_object_name": job.get("result_video_url"),
-        "result_music_video_url": _presign(job.get("result_music_video_url")),
+        "result_music_video_url": browser_video_url(job.get("result_music_video_url")),
         "result_music_video_object_name": job.get("result_music_video_url"),
         "retry_info": job.get("retry_info"),
         "synclabs_total": job.get("synclabs_total"),
@@ -994,7 +985,7 @@ async def upload_scene_image(
     return {
         "scene_number": scene_number,
         "image_object_name": object_name,
-        "image_url": _presign(object_name),
+        "image_url": browser_image_url(object_name),
         "message": "이미지가 업로드되었습니다.",
     }
 
@@ -1127,7 +1118,7 @@ async def regenerate_scene_image_endpoint(
     return {
         "scene_number": scene_number,
         "image_object_name": object_name,
-        "image_url": _presign(object_name),
+        "image_url": browser_image_url(object_name),
         "message": "이미지가 재생성되었습니다.",
     }
 
@@ -2125,9 +2116,9 @@ async def _generate_single_scene_video(job_id, scene_number, mongo_db):
                 description=scene.get("description", ""),  # v67
             )
         elif video_model == "grok":
-            image_url = minio_client.presigned_get_object(
-                bucket_name=settings.minio_bucket_images,
-                object_name=scene["image_object_name"],
+            # v173: xAI 서버측 fetch — 반드시 public presign (프록시 URL 금지).
+            image_url = public_presign(
+                scene["image_object_name"],
                 expires=timedelta(hours=1),
             )
             logger.info(

@@ -25,6 +25,7 @@ from ..auth import get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from ..services.media_urls import public_presign
 from ..services.points_service import POINT_COSTS, refund_points, spend_points
 
 logger = logging.getLogger(__name__)
@@ -294,12 +295,8 @@ async def upload_reference_audio(
         content_type=content_type,
     )
 
-    # Generate presigned URL (24h)
-    upload_url = minio_client.presigned_get_object(
-        bucket_name=settings.minio_bucket_music,
-        object_name=object_name,
-        expires=timedelta(hours=24),
-    )
+    # v173: 생성 API(외부 서버측 fetch)로 전달되는 URL — public presign (music 버킷, 24h)
+    upload_url = public_presign(object_name, bucket=settings.minio_bucket_music)
 
     return {
         "upload_url": upload_url,

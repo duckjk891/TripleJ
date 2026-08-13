@@ -14865,3 +14865,31 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 ## 특이사항 (비차단, 본 변경과 무관한 기존 이슈 — 별도 작업 후보)
 1. 4000 홈 mixed-content: MinIO presigned 이미지 URL 이 `http://<IP>:9100` 이라 HTTPS 페이지에서 브라우저 차단 — backend .env `MINIO_PUBLIC_HOST` 계열 조정 검토 필요.
 2. 4000/4001 로드 시 리소스 404 각 1건 (favicon 또는 위 차단 이미지 후속 추정, API 아님).
+
+# v173 — 커버 이미지 mixed-content 해결: presign public 클라이언트 통일(③) + 이미지 프록시 보조(①) (2026-08-13 12:44)
+
+## 요청 작업
+사용자 확정 로드맵 ①+②+③ 중 **지금 구현분(①+③ 코드 조각)**:
+- ③ 브라우저 노출 이미지 presigned URL 발급을 전부 public 클라이언트 경유 + 환경설정으로 host/https(secure) 전환 가능한 구조로 통일 (클라우드 이전 후 .env 만 변경 → `https://media.maidol.co.kr/...` 발급)
+- ① 이미지 프록시 확인/보강 — 개발 기간 주력(https 개발화면 이미지 표시), 운영 폴백·접근제어용. 주 경로는 presign 직행(③), 프록시는 보조.
+
+## 구현 요약
+- **신규 `app/services/media_urls.py`** (중앙 헬퍼 3종): `public_presign`(public 클라이언트 presign — 외부 API 전달 + presign 모드 공용), `browser_image_url`(proxy 모드=`/api/upload/cover-preview/` 상대경로 / presign 모드=public presign, faces/·evidence/ 차단), `browser_video_url`(항상 presign — 대용량 프록시 제외). `[media-url]`+object_name 로그, 호스트 마스킹.
+- **환경설정**: `MEDIA_URL_MODE`(기본 proxy), `MINIO_PUBLIC_SECURE`(기본 false) 신규 + 기존 `MINIO_PUBLIC_HOST`. 클라우드 전환 시나리오: 3키 변경+재기동만으로 https presign.
+- **`app/database/minio.py`**: `get_public_minio` 에 region 파라미터 신설 + 캐시 키 (endpoint, secure, region) 3요소 확장. `public_presign` 이 region="us-east-1" 지정 → bucket location 네트워크 조회 생략(**오프라인 SigV4 서명** — hairpin NAT 행 방지, 기존 voice_clone 잠재 버그 근본 픽스. planner 승인 계획 외 수정).
+- **호출부 치환**(41개소): albums/artists(`_presign_cover`), tracks(`_mv_presigned_url`), mv(`_presign`+grok), upload(file_url·scene thumb·result video·범용 presigned-url), generate(reference audio), voice_clone_service, mv_pipeline.
+- **cover-preview 프록시 보강**(upload.py): media_type mimetypes 기반(png 고정 오헤더 수정), `..` 차단 추가, 무인증·faces/·evidence/ 차단 유지.
+- **frontend `AlbumCard.jsx`**: 깨진 `/api/files/` 폴백 → `api.coverPreviewUrl` (홈 "최신 앨범" mixed-content 직접 원인 해소).
+- **backend_9004 미러**: 9005 와 diff CLEAN (media_urls/minio/config/routes 동일 확인). .env 2키 양측 추가.
+
+## 테스트 결과 (TESTPLAN v173 — 총 26건 전건 PASS)
+- 1차 게이트: [unit] 9 + [api] 14 = **23/23 PASS**, 픽스 사이클 0회. 주요 실측: 오프라인 서명 0ms + `/us-east-1/` Credential 확인(U-9), proxy↔presign(http→https) 모드 왕복 전환+원복(P-3), 경로 탈출 5종 404(P-6), 9004 미러 diff 0(R-5), charts/feeds/tracks object name 계약 불변(R-1), voice clone public host 회귀(R-3).
+- 2차 E2E: **3/3 PASS** — E-1 홈 비로그인 차트 커버 10/10 + 최신앨범 AlbumCard 로드(상대경로, naturalWidth>0), **이미지 Mixed Content/4xx 0건**. E-2 앨범 상세(nw=1024)→아티스트 9/9 렌더. E-3 재생 여정 무손상(읽기 전용). cleanup: 테스트 유래 변경 0건, 서버 3종 정상.
+
+## 특이사항
+1. **② 인프라는 이번 범위 아님** — 클라우드 이전 시: media.maidol.co.kr DNS + CDN/LB HTTPS 구성 후 `.env` 전환(`MINIO_PUBLIC_HOST=media.maidol.co.kr`, `MINIO_PUBLIC_SECURE=true`, `MEDIA_URL_MODE=presign`).
+2. **presign URL 외부망 실 fetch 미검증** — 서버에서 hairpin NAT 로 불가. 서명 구조 검증(host/scheme/X-Amz-Credential/Expires)까지 완료 — 실 fetch 는 클라우드 이전 후 확인 항목.
+3. **region "us-east-1" 하드코딩**(media_urls) — 이전 대상 스토리지 리전이 다르면 설정화(`MINIO_PUBLIC_REGION` 등) 필요.
+4. **오디오 mixed-content 후속 후보** — tracks.py stream_track(:1631)이 내부 클라이언트 presign(http+내부 host) 사용, v173 diff 밖 기존 동작. 음원 스트림 URL 도 media_urls 중앙 헬퍼로 통합하는 후속 개선 후보.
+5. **데이터 품질 관찰** — 일부 커버 object 가 확장자 png 인데 실바이트 JPEG(업로드측 불일치, 렌더 무영향). 별도 과제 후보.
+6. 개발 https 화면에서 MV `<video>` 재생 제한은 기존 동작과 동일(비디오는 프록시 제외 설계).

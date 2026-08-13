@@ -1,13 +1,16 @@
 import { useNavigate } from 'react-router-dom';
 import { FiPlay } from 'react-icons/fi';
 import { getAlbumGradient } from '../utils';
+import * as api from '../api';
 import './AlbumCard.css';
 
 function resolveCoverUrl(cover) {
   if (!cover) return '';
+  // 전체 URL(presign 모드) 또는 상대경로(/api/...)는 그대로 사용
   if (cover.startsWith('http') || cover.startsWith('/api/')) return cover;
-  // object_name 형태로 들어오면 /api/files/ 로 매핑
-  return `/api/files/${cover}`;
+  // object_name 형태(legacy)면 공용 헬퍼로 프리뷰 URL 생성
+  if (import.meta.env.DEV) console.warn('[AlbumCard] legacy cover value', cover);
+  return api.coverPreviewUrl(cover);
 }
 
 export default function AlbumCard({ album }) {

@@ -25997,3 +25997,112 @@ watch: {
 7. [회귀] HMR websocket 연결 정상(콘솔에 `[vite] connected`, 전체 새로고침 루프 없음).
 8. [회귀] CPU: 폴링 도입 후 idle 상태 node 프로세스 CPU 점유 과다(상시 수십%) 없는지.
 9. [회귀] vite build 정상 완료(두 프론트) — server.watch 는 dev 전용임을 확인.
+
+# v173 — 커버 이미지 mixed-content 해결: ③ presign public 클라이언트 통일 + ① 이미지 프록시 보조 (2026-08-13)
+
+## 요청 원문 (사용자 확정 사양)
+- ③ 브라우저 노출 이미지 presigned URL 발급을 전부 **public 클라이언트 경유 + 환경설정으로 host/https(secure) 전환 가능한 구조**로 통일. 클라우드 이전 후 .env 만 바꾸면 `https://media.maidol.co.kr/...` 형태 발급. (presign 은 host 가 SigV4 서명에 포함 → 발급 시점 클라이언트 교체 필수)
+- ① 백엔드 이미지 프록시 라우트 확인/신설 — **개발 기간 주력**(https 개발화면에서 이미지 표시), **운영에선 폴백·접근제어용**. 주 경로 설계는 어디까지나 presign 직행(③), 프록시는 보조.
+- ② 인프라(media.maidol.co.kr DNS + CDN/LB HTTPS)는 이번 범위 아님 — 클라우드 이전 시 작업 (REPORT 특이사항 기록).
+
+## Plan verification findings (0단계 — 2026-08-13 코드 직접 정독)
+### presign 발급 전수 (backend_9005)
+- **내부 클라이언트(secure=False, 내부 host)로 발급 → 브라우저 img/video src 로 노출되는 곳 (mixed-content 원인)**:
+  - `app/routes/albums.py:49 _presign_cover` → :78(목록), :103(상세), :743(커버 업로드 응답) — `cover_image` 필드
+  - `app/routes/artists.py:22 _presign_cover` → :182 (아티스트 앨범 목록 `cover_image`)
+  - `app/routes/tracks.py:81 _mv_presigned_url` → :790, :1169 (`music_video_url` — PlayerPage `<video src>`)
+  - `app/routes/mv.py:210 _presign` → :249,:272,:275~278,:638,:643,:655,:656,:788,:798,:800,:997,:1130 (MV 스튜디오 image_url/video_url/cover_url 등)
+  - `app/routes/upload.py:159,:183` (`file_url` — 커버/프로필 업로드 응답), `:875`(scene thumb), `:890`(result video)
+  - `app/routes/upload.py:209` — 범용 `GET /api/upload/presigned-url` (인증, faces/·evidence/ 차단 있음)
+- **외부 API(서버측 fetch) 전달용 — 브라우저 아님, 프록시 모드 적용 금지**:
+  - `app/services/voice_clone_service.py:92~110` — 유일하게 `get_public_minio` 사용 중 (secure=False 하드코딩)
+  - `app/routes/mv.py:2128`, `app/services/mv_pipeline.py:2609` — Grok(xAI) image_url (내부 클라이언트 발급 — 주석에 "public hosting 검토 필요" 기존 한계 명시)
+  - `app/routes/generate.py:298` — reference audio `upload_url` (StudioTab2 → 생성 API 로 전달)
+- **cover_image 를 object name 그대로 반환(프론트에서 프록시 URL 화 — 변경 불필요)**: `tracks.py:42`, `charts.py:54`, `feeds.py:71`, `admin.py`, `reports.py`
+
+### 이미지 프록시 라우트 — **이미 존재 (신설 불필요)**
+- `app/routes/upload.py:428 GET /api/upload/cover-preview/{object_name:path}` — **무인증**, faces/·evidence/ 차단(:431), images 버킷 전용. 단점: media_type `image/png` 고정(:443 — jpg/webp 오헤더)
+- 기타 전용 프록시(무변경): `auth.py:934`(profiles/ 전용), `business.py:373`(ads/ 전용), `admin.py:1191,:1215`(어드민 인증), `character.py:543,:1654`
+- face_verify_service.py:31 — `faces/` 는 "프록시/presign 라우트에서 차단됨" — 유지 필수
+
+### 프론트 소비 경로
+- `frontend/src/api/index.js:622 coverPreviewUrl(objectName)` → `/api/upload/cover-preview/...` (상대경로, vite proxy 로 same-origin https — OK). SongItem:62, MusicPlayer:51, ChartPage:120, PlayerPage:290/585, feed 3종, frontend_admin/src/api.js:124 등 대부분이 이 경로 사용 중
+- **`frontend/src/components/AlbumCard.jsx:6~11 resolveCoverUrl`** — `http` 로 시작하면 그대로 img src (→ **홈 "최신 앨범" mixed-content 직접 원인**), object name 이면 `/api/files/${cover}` 로 매핑하는데 **백엔드에 `/api/files` 라우트가 실존하지 않음 (깨진 폴백)**
+- `AlbumDetailPage.jsx:138` — `album.cover_image` 직접 src (백엔드가 상대경로 반환하면 자동 해결)
+- config: `config.py:190 minio_public_host`(기존, "host:port"), `.env` 키: MINIO_HOST/MINIO_API_PORT/MINIO_PUBLIC_HOST 존재. `minio.py:24 get_public_minio` — **캐시 키가 endpoint 만 비교, secure 변경 시 stale 인스턴스 버그**
+
+### 갭 요약
+1. 앨범/아티스트/MV/트랙MV 응답이 내부 host http presign 을 그대로 브라우저에 내려줌 → https 화면에서 차단
+2. secure(https) presign 전환 설정이 없음 (voice clone 도 secure=False 하드코딩)
+3. AlbumCard 폴백 `/api/files/` 는 존재하지 않는 라우트
+
+## 설계 확정안
+### 환경변수 스킴 (민감값은 플레이스홀더)
+| 키 | 기본값 | 개발(현재) | 클라우드 이전 후 |
+|---|---|---|---|
+| `MINIO_PUBLIC_HOST` (기존) | "" (빈 값 → 내부 minio_endpoint 폴백) | `<PUBLIC_IP>:9100` | `media.maidol.co.kr` |
+| `MINIO_PUBLIC_SECURE` (신규, bool) | `false` | `false` | `true` (→ https presign) |
+| `MEDIA_URL_MODE` (신규) | `proxy` | `proxy` (프록시 주력 — 개발 https 에서 이미지 표시) | `presign` (presign 직행 주경로) |
+- config.py 추가: `minio_public_secure: bool = False`, `media_url_mode: str = "proxy"` (pydantic-settings 자동 매핑)
+- 전환 시나리오: 클라우드 이전 시 .env 세 값만 변경 → 재기동 → `https://media.maidol.co.kr/aimu-images/...?X-Amz-...` 발급
+
+### 중앙 헬퍼 (신규 `app/services/media_urls.py`)
+- `public_presign(object_name, bucket=None, expires=24h)` — `get_public_minio(minio_public_host or minio_endpoint, secure=minio_public_secure)` 로 presign. http(s) passthrough, 실패 시 None+logger.error. **외부 API 전달용 + presign 모드 공용.**
+- `browser_image_url(object_name)` — 브라우저 노출 이미지 전용. `faces/`·`evidence/` → None(안전망). mode=proxy → `/api/upload/cover-preview/{URL-quoted object}` 상대경로 / mode=presign → public_presign(images)
+- `browser_video_url(object_name, bucket=images)` — 항상 public_presign (대용량 비디오는 프록시 메모리 부담 — 프록시 제외. 개발 https 에서 MV 재생 제한은 기존 동작과 동일, REPORT 특이사항)
+- 디버깅 로그: 발급 지점 `logger.info("[media-url] mode=%s kind=%s obj=%s", ...)` (추적자: object_name; host 실값은 debug 레벨/마스킹)
+- `minio.py get_public_minio` — 캐시 키에 secure 포함 (기존 버그 픽스)
+
+### 프록시(①) — 기존 라우트 재사용 + 보강
+- `/api/upload/cover-preview/{object_name:path}` 유지 (신설 없음). 인증 정책: **무인증 유지** (공개 커버는 비로그인 홈에 노출 필요 — 현행). 차단 목록: `faces/`, `evidence/` 유지.
+- 보강: media_type 을 `mimetypes.guess_type` 기반으로 (png 고정 → jpg/webp 오헤더 수정), `..` 경로 차단 추가(profile/ad 프록시 관행과 정합), 404 로그.
+
+### 수정 대상 파일
+- backend_9005 (→ backend_9004 동일 미러, `_logs.py` 파일명 예외 관행): `app/config.py`, `app/database/minio.py`, 신규 `app/services/media_urls.py`, `app/routes/{albums,artists,tracks,mv,upload,generate}.py`, `app/services/{voice_clone_service,mv_pipeline}.py`
+- frontend: `src/components/AlbumCard.jsx` (깨진 `/api/files/` 폴백 → `api.coverPreviewUrl`)
+- .env(9005/9004): `MINIO_PUBLIC_SECURE=false`, `MEDIA_URL_MODE=proxy` 추가 (실값 문서 미기재)
+
+## 변경 매트릭스 & 디버깅 로그
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| config.py | 설정 2종 추가 | - |
+| database/minio.py | secure 캐시 키 | - |
+| services/media_urls.py (신규) | 헬퍼 3종 | `[media-url]` + object_name |
+| routes/albums.py | `_presign_cover` → browser_image_url | `[media-url]` |
+| routes/artists.py | `_presign_cover` → browser_image_url | `[media-url]` |
+| routes/tracks.py | `_mv_presigned_url` → browser_video_url | `[media-url]` |
+| routes/mv.py | `_presign` 이미지→browser_image_url/비디오→browser_video_url, :2128 → public_presign | `[media-url]`, `[GrokSingle]` 유지 |
+| routes/upload.py | :159/:183/:875 → browser_image_url, :890 → browser_video_url, :209 → public_presign, cover-preview media_type 보강 | `[media-url]`, `[cover-preview]` |
+| routes/generate.py | :298 → public_presign | `[media-url]` |
+| services/voice_clone_service.py | 중앙 public_presign 사용 (secure 반영) | `[voice_clone]` 유지 |
+| services/mv_pipeline.py | :2609 → public_presign | 기존 Phase3 로그 유지 |
+| frontend AlbumCard.jsx | 폴백 수정 | `console.warn` DEV 가드 |
+
+## 회귀 주의 지점 (test-designer 필수 반영)
+1. charts/feeds/tracks 목록 `cover_image` = object name 그대로 (변경 없음 — 프론트 coverPreviewUrl 경로 유지)
+2. 외부 API presign (voice clone / grok / generate reference) — 서버측 fetch 이므로 **프록시 모드 적용 금지**, public_presign 유지 (voice clone 은 public host 회귀 확인)
+3. 레거시 full http(s) URL 저장분 passthrough 유지 (albums/artists)
+4. faces/·evidence/ 차단 유지 (cover-preview + presigned-url 엔드포인트)
+5. 전용 프록시(auth profile/business ad/admin/character) 무변경
+6. 홈은 비로그인 노출 — cover-preview 무인증 유지
+
+## 범위 제외 (REPORT 특이사항 예정)
+- ② media.maidol.co.kr DNS + CDN/LB HTTPS 인프라 — 클라우드 이전 시
+- 개발 https 화면에서 MV `<video>` 재생 (비디오는 프록시 제외 — 기존 동작 동일)
+
+## v173 부록 — 계획 외 수정 승인 + TESTPLAN 조정 지시 (2026-08-13, planner)
+### 승인: get_public_minio region 파라미터 신설 (backend-dev 계획 외 수정)
+- 증상: presign 모드에서 minio-py 가 presign 전 bucket location 을 public host 로 네트워크 조회 → 서버 자신은 public host 도달 불가(hairpin NAT) → presign 블로킹/행.
+- 수정: `get_public_minio(..., region=...)` 신설 + `media_urls.public_presign` 에서 `region="us-east-1"`(MinIO 기본, 내부 리전 실측 동일) 지정 → **오프라인 서명** (네트워크 조회 생략). 캐시 키 (endpoint, secure, region) 3요소 확장.
+- 판정: **설계 취지에 부합 — 승인**. ③의 핵심이 "발급 시점 클라이언트 교체(오프라인 SigV4)"인데 bucket location 조회는 그걸 무력화하는 숨은 네트워크 의존이었음. 기존 voice_clone public presign 에도 잠재했던 버그의 근본 픽스. SigV4 서명에 region 이 포함되므로 서버 리전과 일치 필수 — "us-east-1" 실측 확인됨.
+- 유의(REPORT 특이사항 예정): region 은 현재 media_urls 에 상수 — 클라우드 이전 시 오브젝트 스토리지 리전이 us-east-1 이 아니면 설정화 필요.
+### TESTPLAN v173 검토 판정: 승인 (조정 3건 추가 지시)
+- 구조 양호: E2E 3건 한정(아이스크림콘 없음), 모드 전환 1회 묶음+원복 의무, 픽스처/플레이스홀더 규칙 준수, PLAN 지정 항목 전부 커버.
+- 추가 지시 ① U-9 [unit]: public_presign 오프라인 서명 — 도달 불가 public host(TEST-NET `203.0.113.x:9100` 류)로도 즉시(<2s) URL 반환(행 없음), `X-Amz-Credential` 에 `/us-east-1/` 포함.
+- 추가 지시 ② U-8 확장: 캐시 키 3요소 — region 상이 시 재생성 케이스 1건 추가.
+- 추가 지시 ③ P-9 [api] (조건부): MV 잡 조회 응답의 이미지 필드(image_url/thumbnail_url/cover_url)가 proxy 모드에서 상대경로, 비디오 필드는 full presign — MV 잡 픽스처 있으면 검증, 없으면 U-1/U-7 로 갈음 명시하고 스킵 기록.
+- 한계 명시(TESTPLAN 전제에 추가): presign URL 외부망 실 fetch 는 서버에서 검증 불가(동일 hairpin) — 서명 구조 검증(host/scheme/X-Amz-Algorithm/Credential region/Expires)까지로 한정, 실 fetch 는 클라우드 이전 후 확인 항목으로 REPORT 기록.
+### v173 중간 확인 (1차 게이트 통과 후, planner)
+- 1단계 결과: unit 9 + api 14 = 23/23 PASS, 픽스 사이클 0회 → **구현 코드가 TESTPLAN 작성 시점과 동일** — E-1~E-3 시나리오 내용 갱신 불요(최소 갱신 판정).
+- test-designer 지시: E2E 섹션 내용 무변경 확정 마킹 + 전제 3줄 보강(proxy 원복 확인 완료 / 홈 '최신 앨범'에 커버 보유 앨범 실노출 사전 확인, 미노출 시 P-1 픽스처로 시드 후 종료 시 삭제 / E-1 판정에 콘솔 "Mixed Content" 문구 0건 기준 명시).
+- REPORT 이월 특이사항 접수: ① presign 실 fetch hairpin 미검증(서명 구조 검증까지 — 클라우드 이전 후 확인), ② 커버 object 확장자 png·실바이트 JPEG 불일치 관찰(업로드측, 이번 범위 무관 — 별도 과제 후보).

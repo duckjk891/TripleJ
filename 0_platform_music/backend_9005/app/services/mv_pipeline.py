@@ -19,6 +19,7 @@ from bson import ObjectId
 
 from ..config import settings
 from ..database.minio import get_minio
+from .media_urls import public_presign
 from .mv_generator import (
     generate_scene_image,
     generate_video_prompts_from_images,
@@ -2606,9 +2607,9 @@ async def run_phase3_videos(job_id, mongo_db, scene_numbers: Optional[List[int]]
                     # (MINIO_HOST 가 public 또는 인터넷 reachable). Tailscale 환경
                     # 단독 운영 시 도달 불가 — 향후 public hosting 검토 필요.
                     _req_dur = _request_video_duration(_scene_dur_exact, "grok")
-                    image_url = minio_client.presigned_get_object(
-                        bucket_name=settings.minio_bucket_images,
-                        object_name=scene["image_object_name"],
+                    # v173: xAI 서버측 fetch — 반드시 public presign (프록시 URL 금지).
+                    image_url = public_presign(
+                        scene["image_object_name"],
                         expires=timedelta(hours=1),
                     )
                     task_or_op = await start_scene_video_grok(

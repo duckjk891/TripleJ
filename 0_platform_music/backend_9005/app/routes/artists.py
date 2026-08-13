@@ -15,23 +15,14 @@ from ..config import settings
 from ..database.minio import get_minio
 from ..database.postgres import get_pg
 from ..database.mongodb import get_mongo
+from ..services.media_urls import browser_image_url
 
 router = APIRouter(prefix="/api/artists")
 
 
 def _presign_cover(object_name):
-    if not object_name:
-        return None
-    if object_name.startswith("http://") or object_name.startswith("https://"):
-        return object_name
-    try:
-        return get_minio().presigned_get_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=object_name,
-            expires=timedelta(hours=24),
-        )
-    except Exception:
-        return None
+    # v173: 브라우저 노출 커버 URL — 중앙 헬퍼(media_urls.browser_image_url) 위임.
+    return browser_image_url(object_name)
 
 
 def _serialize_track(doc: dict) -> dict:

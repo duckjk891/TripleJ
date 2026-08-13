@@ -19,6 +19,7 @@ from ..database.mongodb import get_mongo
 from ..database.redis import get_redis
 from ..database.minio import get_minio
 from ..database.postgres import get_pg
+from ..services.media_urls import browser_video_url
 
 router = APIRouter(prefix="/api/tracks")
 
@@ -79,18 +80,11 @@ async def _find_completed_mv(mongo, generation_id: str) -> Optional[dict]:
 
 
 def _mv_presigned_url(object_name: Optional[str]) -> Optional[str]:
-    """Generate a presigned URL for an MV object in the images bucket."""
-    if not object_name:
-        return None
-    try:
-        minio_client = get_minio()
-        return minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=object_name,
-            expires=timedelta(hours=24),
-        )
-    except Exception:
-        return None
+    """v173: MV 비디오 URL — 중앙 헬퍼(media_urls.browser_video_url) 위임.
+
+    비디오는 프록시 제외(메모리 부담) — 항상 public presign.
+    """
+    return browser_video_url(object_name)
 
 
 def _serialize_tracks(docs: list) -> list:

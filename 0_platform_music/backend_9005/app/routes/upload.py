@@ -17,6 +17,7 @@ from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
+from ..services.media_urls import browser_image_url, browser_video_url, public_presign
 
 logger = logging.getLogger(__name__)
 
@@ -155,12 +156,8 @@ async def upload_image(
             {"$set": {"cover_image_url": object_name}},
         )
 
-        # Return presigned URL for immediate display
-        url = minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=object_name,
-            expires=timedelta(hours=24),
-        )
+        # v173: 즉시 표시용 브라우저 URL — 중앙 헬퍼 (proxy/presign 모드)
+        url = browser_image_url(object_name)
         return {"file_url": url, "object_name": object_name}
 
     else:
@@ -180,11 +177,8 @@ async def upload_image(
             object_name, user_uuid,
         )
 
-        url = minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=object_name,
-            expires=timedelta(hours=24),
-        )
+        # v173: 즉시 표시용 브라우저 URL — 중앙 헬퍼 (proxy/presign 모드)
+        url = browser_image_url(object_name)
         return {"file_url": url, "object_name": object_name}
 
 
@@ -202,16 +196,11 @@ async def get_presigned_url(
     if object_name.startswith(("faces/", "evidence/")):
         return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
 
-    minio_client = get_minio()
     bucket_name = settings.minio_bucket_images if bucket == "images" else settings.minio_bucket_music
 
-    try:
-        url = minio_client.presigned_get_object(
-            bucket_name=bucket_name,
-            object_name=object_name,
-            expires=timedelta(hours=24),
-        )
-    except Exception:
+    # v173: 범용 presign 도 public 클라이언트 경유 (외부/https 접근 가능 host 로 서명)
+    url = public_presign(object_name, bucket=bucket_name)
+    if url is None:
         return JSONResponse(status_code=404, content={"error": "파일을 찾을 수 없습니다."})
 
     return {"url": url}
@@ -427,9 +416,17 @@ async def generate_cover(
 
 @router.get("/cover-preview/{object_name:path}")
 async def cover_preview(object_name: str):
-    """Proxy cover image from MinIO for external access."""
+    """Proxy cover image from MinIO for external access.
+
+    v173: 무인증 유지(비로그인 홈 커버 노출), faces/·evidence/ 차단 유지.
+    보강 — `..` 경로 차단, media_type 확장자 기반 guess (png 고정 → jpg/webp 오헤더 수정).
+    """
     # v135 faces/ + v138 evidence/ — 백엔드 전용 경로 프록시 노출 금지.
     if object_name.startswith(("faces/", "evidence/")):
+        return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
+    # v173: 경로 탈출(`..`) 차단 — profile/ad 프록시 관행과 정합.
+    if ".." in object_name:
+        logger.info("[cover-preview] blocked path traversal obj=%s", object_name)
         return JSONResponse(status_code=404, content={"error": "이미지를 찾을 수 없습니다."})
     minio_client = get_minio()
     try:
@@ -440,8 +437,11 @@ async def cover_preview(object_name: str):
         data = response.read()
         response.close()
         response.release_conn()
-        return Response(content=data, media_type="image/png")
-    except Exception:
+        # v173: 확장자 기반 media_type — 알 수 없으면 기존 기본값 png 유지.
+        media_type = mimetypes.guess_type(object_name)[0] or "image/png"
+        return Response(content=data, media_type=media_type)
+    except Exception as e:
+        logger.info("[cover-preview] 404 obj=%s err=%s", object_name, e)
         return JSONResponse(
             status_code=404,
             content={"error": "이미지를 찾을 수 없습니다."},
@@ -866,36 +866,17 @@ async def mv_status(
             content={"error": "작업을 찾을 수 없습니다."},
         )
 
-    # Generate presigned URLs for scene thumbnails
+    # v173: scene thumbnail 은 브라우저 노출 이미지 — 중앙 헬퍼 (proxy/presign 모드)
     scene_thumbnail_urls = []
-    minio_client = get_minio()
     for thumb_name in (job.get("scene_thumbnails") or []):
-        if thumb_name:
-            try:
-                url = minio_client.presigned_get_object(
-                    bucket_name=settings.minio_bucket_images,
-                    object_name=thumb_name,
-                    expires=timedelta(hours=24),
-                )
-                scene_thumbnail_urls.append(url)
-            except Exception:
-                scene_thumbnail_urls.append("")
-        else:
-            scene_thumbnail_urls.append("")
+        scene_thumbnail_urls.append(browser_image_url(thumb_name) or "")
 
-    # Generate presigned URL for result video
+    # v173: result video 는 브라우저 노출 비디오 — 항상 public presign
     result_video_url = ""
     if job.get("result_video_url"):
-        try:
-            result_video_url = minio_client.presigned_get_object(
-                bucket_name=settings.minio_bucket_images,
-                object_name=job["result_video_url"],
-                expires=timedelta(hours=24),
-            )
-        except Exception:
-            result_video_url = "/api/upload/mv-preview/{}".format(
-                job["result_video_url"]
-            )
+        result_video_url = browser_video_url(job["result_video_url"]) or (
+            "/api/upload/mv-preview/{}".format(job["result_video_url"])
+        )
 
     return {
         "status": job.get("status", "pending"),

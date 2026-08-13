@@ -30,8 +30,9 @@ from bson import ObjectId
 from urllib.parse import urlparse, urlunparse
 
 from ..config import settings
-from ..database.minio import get_minio, get_public_minio
+from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from .media_urls import public_presign
 from .suno_generator import (
     SUNO_VOICE_CHECK_URL,
     SUNO_VOICE_GENERATE_URL,
@@ -83,35 +84,16 @@ def _presign(object_name: str) -> str:
 
     v76.2: SigV4 서명은 host 를 포함하므로 외부 fetch 용 URL 은 처음부터
     외부 host 로 만들어진 별도 MinIO 클라이언트로 서명한다 (단순 netloc swap 은 서명 불일치 → 403).
-
-    - settings.minio_public_host 가 있으면 그 host 로 만든 public client 로 presign
-    - 없으면 기존 내부 client 로 presign (구 동작 유지)
+    v173: 자체 public 클라이언트 조립 제거 → 중앙 헬퍼(media_urls.public_presign) 사용.
+    MINIO_PUBLIC_HOST 폴백 + MINIO_PUBLIC_SECURE(https) 반영. **music 버킷 주의.**
     """
-    public_host = (getattr(settings, "minio_public_host", "") or "").strip()
-    if public_host:
-        client = get_public_minio(
-            endpoint=public_host,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=False,
-        )
-        url = client.presigned_get_object(
-            bucket_name=settings.minio_bucket_music,
-            object_name=object_name,
-            expires=timedelta(hours=PRESIGN_HOURS),
-        )
-        logger.info(
-            "[voice_clone] presign via public client host=%s object=%s",
-            public_host, object_name,
-        )
-        return url
-
-    minio_client = get_minio()
-    return minio_client.presigned_get_object(
-        bucket_name=settings.minio_bucket_music,
-        object_name=object_name,
+    url = public_presign(
+        object_name,
+        bucket=settings.minio_bucket_music,
         expires=timedelta(hours=PRESIGN_HOURS),
     )
+    logger.info("[voice_clone] presign via media_urls object=%s ok=%s", object_name, url is not None)
+    return url
 
 
 def _serialize(doc: dict) -> dict:

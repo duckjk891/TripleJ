@@ -24,6 +24,7 @@ from ..auth import JWT_ALGORITHM, JWT_SECRET, get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from ..services.media_urls import browser_image_url
 from ..models.album import (
     AlbumCoverGenerateBody,
     AlbumCreate,
@@ -47,21 +48,12 @@ COVER_PRESIGN_HOURS = 24
 
 
 def _presign_cover(object_name: Optional[str]) -> Optional[str]:
-    """Generate a presigned GET URL for a cover object in the images bucket."""
-    if not object_name:
-        return None
-    # If already a fully-qualified URL, return as-is.
-    if object_name.startswith("http://") or object_name.startswith("https://"):
-        return object_name
-    try:
-        client = get_minio()
-        return client.presigned_get_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=object_name,
-            expires=timedelta(hours=COVER_PRESIGN_HOURS),
-        )
-    except Exception:
-        return None
+    """v173: 브라우저 노출 커버 URL — 중앙 헬퍼(media_urls.browser_image_url) 위임.
+
+    proxy 모드면 /api/upload/cover-preview/ 상대경로, presign 모드면 public presign.
+    full http(s) URL passthrough 는 헬퍼가 처리.
+    """
+    return browser_image_url(object_name)
 
 
 def _serialize_track(doc: dict) -> dict:
