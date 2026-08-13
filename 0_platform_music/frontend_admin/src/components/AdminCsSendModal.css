@@ -1,0 +1,266 @@
+/* 지정 발송 모달 — AdminCsPage 헤더 버튼으로 오픈. AdminBroadcastModal 톤 재사용(다크 테마 변수). */
+
+.admin-cs-send__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 20px;
+}
+
+.admin-cs-send {
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.admin-cs-send__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.admin-cs-send__title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.admin-cs-send__close {
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--color-text-sub);
+  padding: 2px 6px;
+}
+
+.admin-cs-send__close:hover {
+  color: var(--color-text);
+}
+
+/* ── 검색 입력 + 결과 ─────────────────────────── */
+.admin-cs-send__search {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.admin-cs-send__search:focus {
+  border-color: var(--color-primary);
+}
+
+.admin-cs-send__results {
+  margin-top: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.admin-cs-send__results-status {
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+.admin-cs-send__result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-cs-send__result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.admin-cs-send__result:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.admin-cs-send__result--picked {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.admin-cs-send__avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.admin-cs-send__result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-cs-send__result-picked-mark {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-sub);
+}
+
+/* ── 선택 chips ─────────────────────────────── */
+.admin-cs-send__chips-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0 6px;
+}
+
+.admin-cs-send__chips-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+}
+
+.admin-cs-send__chips-counter {
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+}
+
+.admin-cs-send__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.admin-cs-send__chips-empty {
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+  align-self: center;
+}
+
+.admin-cs-send__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.admin-cs-send__chip-remove {
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 4px;
+  color: var(--color-text-sub);
+}
+
+.admin-cs-send__chip-remove:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+
+/* ── 본문 textarea ───────────────────────────── */
+.admin-cs-send__text {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.admin-cs-send__text:focus {
+  border-color: var(--color-primary);
+}
+
+.admin-cs-send__counter {
+  margin-top: 4px;
+  text-align: right;
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+}
+
+.admin-cs-send__notice {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--color-danger);
+}
+
+/* ── 하단 버튼 ──────────────────────────────── */
+.admin-cs-send__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.admin-cs-send__cancel {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 0.9rem;
+}
+
+.admin-cs-send__cancel:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.admin-cs-send__send {
+  padding: 8px 20px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.admin-cs-send__send:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.admin-cs-send__cancel:disabled,
+.admin-cs-send__send:disabled,
+.admin-cs-send__result:disabled,
+.admin-cs-send__chip-remove:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

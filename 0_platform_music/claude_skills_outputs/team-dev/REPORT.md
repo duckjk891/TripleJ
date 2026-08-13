@@ -15007,3 +15007,39 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - `frontend_admin/src/components/AdminLayout.jsx` — NavLink 추가 (+5/-1)
 - `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md` — v176 append
 - api.js **무변경**(기존 래퍼 첫 사용), DB 스키마 **무변경**(ALTER 없음)
+
+---
+
+# v177 — 감사 로그 대상 닉네임#태그 표시 + CS 지정발송 (2026-08-13 17:03)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+① 감사 로그(`GET /admin/logs`) 대상 표시를 `닉네임#태그` 로 개선 — 백엔드 target 닉네임/코드 필드 추가 + 프론트 렌더.
+② CS 지정발송 — 유저 검색·다중선택 후 official 발신으로 메시지 발송(감사 적재 포함). 9005 선구현 → 9004 미러.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **① hydrate 후처리 additive**: `admin_logs.target_id` 는 VARCHAR(100)에 비 uuid 값 혼재(track ObjectId·audience 문자열) — SQL LEFT JOIN 캐스트 리스크 대신 페이지 rows 대상 `dm_service.hydrate_users` 1회 후처리(비 uuid 안전 skip 검증된 경로). 응답에 `target_nickname`/`target_code` **additive**(미해석 null), 기존 8키 불변. 프론트는 `사용자 닉네임#code` Link + title=uuid 원문, null 이면 기존 `사용자 #id` fallback(하이브리드 — 판정 근거 id 유지).
+- **② 브로드캐스트 순수 추출 재사용**: `broadcast_message` 는 role 쿼리 내장이라 시그니처 재사용 불가 → per-target 루프를 `_deliver_official_message` 로 추출(get_or_create=assert_can_dm 풀 게이트 우회 없음 → pending 조건부 승격 → send_message, 바이트 동일 이동)하고 신규 `send_to_users` 가 공유. v174 브로드캐스트 대외 동작·로그 불변(diff 단일 헌크 증빙 + 회귀 테스트).
+- **② 동기 + 20명 상한 + 잠금 불요**: `POST /admin/cs/send` 는 dedupe 후 1~`MAX_CS_SEND_TARGETS(20)` 검증(초과 400 + 전체발송 유도 문구), uuid 형식 400, text 1~2000 400, **동기 실행**으로 `{requested, sent, failed, failed_ids}` 즉시 응답(실측 0.039s). Redis 잠금 미적용 — 동기라 응답 전 재요청 불가 + 프론트 sending 가드, 잠금 시 연속 정당 발송 오차단 부작용. per-target 실패(게이트 거부·미존재)는 best-effort 집계.
+- **② 검색 게이트 정합**: `GET /admin/cs/users/search` 는 `dm_service.search_users(me=official)` 위임(limit 1~20 클램프) — 닉 ILIKE + `#태그` 정확 매칭 + active/비밴/비차단만 → 검색 결과 ≒ 발송 가능 대상. `GET /admin/users?search` 는 code 미반환·banned 포함이라 배제.
+- **② 대상별 감사 1행**: action=`cs_send`, target_type=`user`, target_id=대상 uuid, details=`{result: sent|failed, targets: 총수, text_len}` — 본문 원문 미저장, best-effort. ①과 시너지로 감사 로그 화면에서 대상이 닉네임#태그 Link 로 렌더.
+- 프론트: `AdminCsSendModal` 신설(300ms debounce+stale 가드, chips 20 상한 차단, confirm 대상 나열, 콘솔은 건수/길이/status 만 — 닉네임·본문·이메일 미출력), CS 헤더 📢 옆 "✉️ 지정 발송" 버튼, api.js `searchCsUsers`/`sendCsDirect`.
+
+## 3. 테스트 결과 — 23/23 PASS (api 16 / unit 4 / e2e 3), 앱 픽스 사이클 1회
+- 1단계 20/20 PASS(픽스 0회) → planner 판정 7건 확정(ban+unban 승인, 게이트 전제 코드 실측 성립 — 수신자 is_verified 비게이트·birth_date None 미적용, limit 클램프, 400 확정·CS-API-11↔14 정합 등) → E2E 3/3 PASS.
+- **픽스 1회**: `AdminLogsPage.jsx` ACTION_META 에 `cs_send: { label: '지정 발송', badge: green }` 1줄 누락 — 신규 액션이 미등록이어도 fallback(원문+gray)으로 안전 렌더돼 차단은 아니었으나 라벨 요건 미충족. 원인: v176 라벨 맵에 v177 신규 액션 추가를 프론트 지시서에 명시하지 않은 계획 측 누락. **재발 방지**: 신규 감사 action 추가 시 "ACTION_META 라벨 등록" 을 백엔드 적재 작업의 짝 항목으로 매트릭스에 명기(차기 PLAN 관행화). 픽스 후 스모크(CS-API-03·라벨 렌더) + 잔여 E2E 읽기 전용 재검증 통과, 2차 게이트 통과.
+- 핵심 증적: additive 2필드+비 uuid 무오류+v176 스키마·필터 회귀 불변 / 검색 부분·태그정확·밴 미노출(원복)·클램프 / 실발송 sent:2 정합+수신측 accepted 교차 확인 / 감사 대상별 1행·본문 원문 0건 / 21명 400 유도 문구·dedupe·GHOST failed 집계 / 지정발송 풀 여정(confirm→감사 로그 "지정 발송" green 배지+닉네임#태그 렌더+필터) / 회귀(broadcast dismiss POST 0·답장 1·5페이지·9004 diff 0) / 콘솔 위생.
+
+## 4. 특이사항
+- **실발송 최종 8건 — 예산(6건) 대비 +2 초과**: tester 드라이버 재실행 실수로 지정발송 1회분(2건)이 중복 실행됨. **전 건 official→테스트 계정 한정·confirm 허용 목록 대조 통과 — 실사용자 무접촉 유지.** 이후 route abort 이중 차단을 드라이버에 도입해 재발 차단. 정직 기록 차원 명시.
+- 07:20 경 maidol_official 유래 `cs_broadcast` 실발송 흔적 관측 — 사용자 수동 E2E 발송으로 추정(팀 예산 무관·비버그). E2E 판정에서 혼입 배제 처리.
+- text 2000자 정확 경계는 실발송 예산 절약을 위해 코드 리뷰 갈음(`MAX_TEXT_LEN` 포함 비교 확인) — 2001자 400 은 실측.
+- **잔존 테스트 데이터(무해, 감사 무결성상 미삭제)**: `cs_send` 감사 행 8 / ban·unban 감사 행 2 / official↔테스트 계정 DM 대화·메시지 / **신설 테스트 계정 1**(`bcast_user_test_*@test.invalid` 계열 TEST_USER_2 — 1단계에서 2인 시나리오용 생성). 정리 원하면 후속 요청.
+- 서버 9005/9004 는 tester 가 v177 반영본으로 재시작 완료 상태.
+
+## 5. 변경 파일 (커밋 대상 15)
+- 백엔드 6: `backend_9005/app/routes/admin.py` `backend_9005/app/routes/admin_cs.py` `backend_9005/app/services/dm_service.py` + 9004 동일 3파일(미러 — byte-identical 최종 실측)
+- 프론트 6: `frontend_admin/src/api.js` `frontend_admin/src/components/AdminCsSendModal.jsx` `frontend_admin/src/components/AdminCsSendModal.css`(신설 2) `frontend_admin/src/pages/AdminCsPage.jsx` `frontend_admin/src/pages/AdminCsPage.css` `frontend_admin/src/pages/AdminLogsPage.jsx`
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v177 append)
+- 하니스·임시 스크립트 git 잔재 0건(`git status` 실측 — 위 15개 외 변경 없음).

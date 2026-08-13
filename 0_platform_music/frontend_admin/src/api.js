@@ -122,6 +122,15 @@ export const getCsUnreadCount = () => API.get('/admin/cs/unread-count');
 // 메시지 text 원문은 콘솔에 출력하지 않는다.
 export const broadcastCs = (audience, text) =>
   API.post('/admin/cs/broadcast', { audience, text });
+// 지정 발송용 사용자 검색 — 닉네임 ILIKE + #태그 정확 매칭, active·비밴만.
+// → { users: [{id, nickname, profile_image, code}] }. 검색어 원문은 콘솔에 출력하지 않는다.
+export const searchCsUsers = (q, limit) =>
+  API.get('/admin/cs/users/search', { params: { q, limit } });
+// 지정 발송 (공식 계정 발신, 최대 20명) → { requested, sent, failed, failed_ids }.
+// 401 무토큰 / 403 비관리자 / 400 잘못된 입력(빈 대상·21명 초과·text 1~2000자) / 503 공식 계정 미시드.
+// 메시지 text 원문은 콘솔에 출력하지 않는다.
+export const sendCsDirect = (userIds, text) =>
+  API.post('/admin/cs/send', { user_ids: userIds, text });
 
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {

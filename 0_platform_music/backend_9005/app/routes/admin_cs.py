@@ -9,6 +9,7 @@ me_id = get_official_id() 로 기존 dm_service 함수를 그대로 재사용해
 """
 
 import logging
+import uuid
 
 import redis.exceptions as redis_exceptions
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -30,6 +31,9 @@ router = APIRouter(prefix="/api/admin/cs", tags=["admin-cs"])
 
 MAX_PAGE_LIMIT = 100
 
+# v177 지정발송 대상 인원 상한 (dedupe 후 판정) — 초과는 전체발송(broadcast) 유도
+MAX_CS_SEND_TARGETS = 20
+
 
 class ReplyBody(BaseModel):
     text: str
@@ -37,6 +41,11 @@ class ReplyBody(BaseModel):
 
 class BroadcastCsBody(BaseModel):
     audience: str
+    text: str
+
+
+class SendCsBody(BaseModel):
+    user_ids: list[str]
     text: str
 
 
@@ -310,3 +319,136 @@ async def broadcast_cs(
         )
 
     return {"queued": targets, "audience": audience}
+
+
+# ---------------------------------------------------------------------------
+# 지정발송 (v177) — 발신자=공식 계정(official), 명시 user_ids 대상 동기 발송
+# ---------------------------------------------------------------------------
+@router.get("/users/search")
+async def search_cs_users(
+    q: str = "",
+    limit: int = 20,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """지정발송 대상 검색 — dm_service.search_users 위임(me=official).
+
+    닉네임 ILIKE + '#태그' 정확 매칭(v156). active/비밴 + dm_blocks 후필터라
+    검색 결과 ≒ 발송 가능 대상(게이트 정합). 검색어 원문 미로그(길이만)."""
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        limit = max(1, min(int(limit), 20))
+    except (ValueError, TypeError):
+        limit = 20
+    logger.info(
+        "[admin-cs] user search admin=%s qlen=%d limit=%d",
+        admin_tag, len((q or "").strip()), limit,
+    )
+    try:
+        official_id = await _resolve_official(conn)  # 미시드 503
+        users = await dm_service.search_users(conn, get_mongo(), official_id, q, limit=limit)
+        return {"users": users}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-cs] user search failed admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "사용자를 검색할 수 없습니다."})
+
+
+@router.post("/send")
+async def send_cs_direct(
+    body: SendCsBody,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """지정발송 — 발신자=official, 명시 user_ids(dedupe 후 1~20명) 대상 **동기** 발송.
+
+    admin 게이트 → official 해석(미시드 503) → user_ids/text 검증(400) →
+    dm_service.send_to_users(assert_can_dm 풀 게이트 — per-target 실패는 집계만)
+    → 대상별 감사 적재(cs_send, best-effort). Redis 잠금 없음(동기 + 상한 20 —
+    v177 설계 확정). 응답 {requested, sent, failed, failed_ids}.
+    text 원문 미로그(길이만)."""
+    admin_tag = str(current_user["id"])[:8]
+    text = (body.text or "").strip()
+
+    # dedupe (순서 보존)
+    seen: set = set()
+    user_ids: list[str] = []
+    for uid in body.user_ids or []:
+        uid = str(uid or "").strip()
+        if uid and uid not in seen:
+            seen.add(uid)
+            user_ids.append(uid)
+
+    logger.info(
+        "[admin-cs] send enter admin=%s targets=%d text_len=%d",
+        admin_tag, len(user_ids), len(text),
+    )
+    try:
+        official_id = await _resolve_official(conn)  # 미시드 503
+
+        if not user_ids:
+            return JSONResponse(status_code=400, content={"error": "발송 대상을 선택해주세요."})
+        if len(user_ids) > MAX_CS_SEND_TARGETS:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": f"지정 발송은 최대 {MAX_CS_SEND_TARGETS}명까지 가능합니다. "
+                             "그 이상은 전체 발송을 이용해주세요."
+                },
+            )
+        for uid in user_ids:
+            try:
+                uuid.UUID(uid)
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "잘못된 사용자 ID 형식이 포함되어 있습니다."},
+                )
+        if not text or len(text) > dm_service.MAX_TEXT_LEN:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"메시지는 1~{dm_service.MAX_TEXT_LEN}자여야 합니다."},
+            )
+
+        result = await dm_service.send_to_users(
+            conn, get_mongo(), official_id, user_ids, text
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-cs] send failed admin=%s targets=%d", admin_tag, len(user_ids)
+        )
+        return JSONResponse(status_code=500, content={"error": "발송할 수 없습니다."})
+
+    # 감사 로그 적재 (best-effort) — 대상별 1행, text 원문 미저장(길이만).
+    # 적재 실패가 발송 응답을 막지 않음.
+    failed_set = set(result.get("failed_ids") or [])
+    for uid in user_ids:
+        try:
+            await _log_admin_action(
+                conn,
+                str(current_user["id"]),
+                "cs_send",
+                "user",
+                uid,
+                {
+                    "result": "failed" if uid in failed_set else "sent",
+                    "targets": result.get("requested", len(user_ids)),
+                    "text_len": len(text),
+                },
+            )
+        except Exception:
+            logger.warning(
+                "[admin-cs] send audit log failed admin=%s target=%s",
+                admin_tag, uid[:8],
+                exc_info=True,
+            )
+
+    logger.info(
+        "[admin-cs] send done admin=%s requested=%d sent=%d failed=%d",
+        admin_tag,
+        int(result.get("requested", 0)), int(result.get("sent", 0)), int(result.get("failed", 0)),
+    )
+    return result

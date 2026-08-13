@@ -17,6 +17,7 @@ from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
 from ..database.redis import get_redis
 from ..database.minio import get_minio
+from ..services import dm_service
 
 router = APIRouter(prefix="/api/admin")
 
@@ -1275,6 +1276,21 @@ async def list_admin_logs(
         }
         for r in rows
     ]
+
+    # v177: user 타입 대상 닉네임#태그 하이드레이션 (additive — 기존 필드·정렬·
+    # 페이지네이션 불변). target_id 는 VARCHAR 혼재(track ObjectId·audience 등) —
+    # hydrate_users 가 비 uuid 를 안전 skip. 실패/미해석 행은 null.
+    user_target_ids = [l["target_id"] for l in logs if l["target_type"] == "user"]
+    hydrated = {}
+    if user_target_ids:
+        try:
+            hydrated = await dm_service.hydrate_users(conn, user_target_ids)
+        except Exception:
+            logger.warning("[admin] logs target hydrate failed", exc_info=True)
+    for l in logs:
+        info = hydrated.get(l["target_id"]) if l["target_type"] == "user" else None
+        l["target_nickname"] = info["nickname"] if info else None
+        l["target_code"] = info["code"] if info else None
 
     return {
         "logs": logs,

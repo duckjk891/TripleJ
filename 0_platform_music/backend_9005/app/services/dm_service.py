@@ -741,6 +741,31 @@ async def count_broadcast_targets(conn, me_id, audience: str) -> int:
     return int(row["n"]) if row else 0
 
 
+async def _deliver_official_message(conn, mongo, me_id, target_id, text, log_prefix="[dm-broadcast]"):
+    """공식 발신 1건 전달 — broadcast_message per-target 루프 본문의 순수 추출(v177).
+
+    get_or_create_conversation(assert_can_dm 풀 게이트 — 우회 없음) → pending 인
+    경우만 accepted 승격(기존 accepted 대화 status 훼손 방지) → send_message.
+    실패 시 예외 전파 — sent/failed 집계(try/except)는 호출측 책임.
+    """
+    conv = await get_or_create_conversation(conn, mongo, me_id, target_id)
+    conv_id = conv.get("conversation_id") or conv.get("_id")
+    if not conv_id:
+        raise RuntimeError("conversation id missing")
+    # accepted 보장 — pending 인 경우만 승격(기존 accepted 대화 status 훼손 방지)
+    if (conv.get("status") or "accepted") == "pending":
+        now = _now()
+        await mongo.dm_conversations.update_one(
+            {"_id": ObjectId(str(conv_id)), "status": "pending"},
+            {"$set": {"status": "accepted", "accepted_at": now, "updated_at": now}},
+        )
+        logger.info(
+            "%s promote pending->accepted conv=%s target=%s",
+            log_prefix, _short(conv_id), _short(target_id),
+        )
+    await send_message(conn, mongo, me_id, str(conv_id), text)
+
+
 async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
     """관리자 대상별 전체발송 — 대상 각각 1:1 대화 확보(accepted 보장) 후 전송.
 
@@ -780,22 +805,7 @@ async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
     sent, failed = 0, 0
     for target_id in targets:
         try:
-            conv = await get_or_create_conversation(conn, mongo, me_id, target_id)
-            conv_id = conv.get("conversation_id") or conv.get("_id")
-            if not conv_id:
-                raise RuntimeError("conversation id missing")
-            # accepted 보장 — pending 인 경우만 승격(기존 accepted 대화 status 훼손 방지)
-            if (conv.get("status") or "accepted") == "pending":
-                now = _now()
-                await mongo.dm_conversations.update_one(
-                    {"_id": ObjectId(str(conv_id)), "status": "pending"},
-                    {"$set": {"status": "accepted", "accepted_at": now, "updated_at": now}},
-                )
-                logger.info(
-                    "[dm-broadcast] promote pending->accepted conv=%s target=%s",
-                    _short(conv_id), _short(target_id),
-                )
-            await send_message(conn, mongo, me_id, str(conv_id), text)
+            await _deliver_official_message(conn, mongo, me_id, target_id, text)
             sent += 1
         except Exception:
             failed += 1
@@ -809,6 +819,46 @@ async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
         _short(me_id), audience, sent, failed,
     )
     return {"audience": audience, "targets": len(targets), "sent": sent, "failed": failed}
+
+
+# ---------------------------------------------------------------------------
+# CS 지정발송 (v177) — 명시 user_ids 대상 공식 메시지 발송 (동기)
+# ---------------------------------------------------------------------------
+async def send_to_users(conn, mongo, me_id, user_ids, text) -> dict:
+    """CS 지정발송 — 브로드캐스트와 동일 전달 경로(_deliver_official_message:
+    assert_can_dm 풀 게이트 우회 없음 + pending 조건부 승격)를 명시 user_ids 로 실행.
+
+    per-target 실패(게이트 거부·미성년 비팔로우·차단 등 포함)는 집계만 —
+    1명 실패가 전체를 막지 않음. 검증(dedupe/상한/텍스트)은 라우트 책임.
+    반환 {requested, sent, failed, failed_ids}. text 원문 미로그(길이만).
+    """
+    me_id = str(me_id)
+    ids = [str(u) for u in (user_ids or [])]
+    logger.info(
+        "[dm-send] start sender=%s targets=%d text_len=%d",
+        _short(me_id), len(ids), len(text or ""),
+    )
+    sent, failed = 0, 0
+    failed_ids: List[str] = []
+    for target_id in ids:
+        try:
+            await _deliver_official_message(
+                conn, mongo, me_id, target_id, text, log_prefix="[dm-send]"
+            )
+            sent += 1
+        except Exception:
+            failed += 1
+            failed_ids.append(target_id)
+            logger.exception(
+                "[dm-send] target failed sender=%s target=%s",
+                _short(me_id), _short(target_id),
+            )
+
+    logger.info(
+        "[dm-send] done sender=%s sent=%d failed=%d",
+        _short(me_id), sent, failed,
+    )
+    return {"requested": len(ids), "sent": sent, "failed": failed, "failed_ids": failed_ids}
 
 
 # ---------------------------------------------------------------------------

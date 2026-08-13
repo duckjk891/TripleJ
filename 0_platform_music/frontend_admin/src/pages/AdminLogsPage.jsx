@@ -21,6 +21,7 @@ const ACTION_META = {
   report_restore: { label: '신고 복원', badge: 'admin-badge--green' },
   face_purge: { label: '인물 몰수', badge: 'admin-badge--red' },
   cs_broadcast: { label: '전체 발송', badge: 'admin-badge--blue' },
+  cs_send: { label: '지정 발송', badge: 'admin-badge--green' },
 };
 
 const TARGET_TYPE_LABELS = {
@@ -102,6 +103,14 @@ export default function AdminLogsPage() {
     if (!log.target_type) return '-';
     const typeLabel = TARGET_TYPE_LABELS[log.target_type] || log.target_type;
     if (log.target_type === 'user' && log.target_id != null) {
+      // v177 — target_nickname 있으면 현재 닉네임#태그 표시(title=uuid 원문), null(탈퇴 등)이면 기존 id fallback.
+      if (log.target_nickname) {
+        return (
+          <Link to={`/users/${log.target_id}`} className="admin-logs__link" title={String(log.target_id)}>
+            {typeLabel} {log.target_nickname}{log.target_code ? `#${log.target_code}` : ''}
+          </Link>
+        );
+      }
       return (
         <Link to={`/users/${log.target_id}`} className="admin-logs__link">
           {typeLabel} #{log.target_id}

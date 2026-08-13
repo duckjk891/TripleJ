@@ -26389,3 +26389,89 @@ E2E (실발송 금지):
 - **마이크로픽스 1건 지시 (frontend-dev)**: `AdminLogsPage.jsx` `TARGET_TYPE_LABELS` 에 `feed: '피드'`, `comment: '댓글'` 추가 — report_* 액션의 target_type 이 track/**feed**/**comment** 로 적재됨(admin.py:1048 실측)에 대응. 필터 select 옵션은 라벨 맵에서 파생되므로 자동 반영. 미반영 행도 fallback 원문 표시로 안전(비차단) — AL-UNIT-01 실행 전 랜딩.
 - **AL-OPT-01 판정**: (a) 코드 리뷰 갈음 확정(실발송 금지 유지). 화면 측은 AL-UNIT-03 임시 행으로 보완. 상세는 TESTPLAN v176 §5 planner 판정 블록.
 - **§2 대상 컬럼 문안 정정 (1단계 결과 접수 후, 15:47)**: "target_id 축약 8자 + 원문 title" → **target_id 원문 표기(nowrap)** 로 구현 흡수. 근거: 감사 로그는 id 정확 대조·복사가 1차 용도(축약 가독성보다 우선), 렌더 무결 확인(tester 편차 보고 — 비차단). dev 픽스 없음, 픽스 사이클 0회 유지.
+
+---
+
+# v177 — 감사 로그 대상 닉네임#태그 표시 + CS 지정발송 (2026-08-13 16:30)
+
+## 0. 사전 코드 분석 (planner 직접 실측)
+
+### 0-1. ① 감사 로그 대상 표시 관련
+- `backend_9005/app/routes/admin.py:1222` `GET /logs` — users JOIN 은 `u.nickname AS admin_nickname`(admin_id 기준)만. target 은 `al.target_id` raw 반환(:1256). 응답 로그 객체 키: id/admin_id/admin_nickname/action/target_type/target_id/details/created_at.
+- `admin_logs.target_id` 는 **VARCHAR(100)** (`backend_9005/infra/init_postgres.sql:86`) — user UUID 외에 track ObjectId, report id, cs_broadcast 의 audience 문자열(`all` 등) 혼재. **uuid 캐스팅 불가 값 존재 → SQL LEFT JOIN 시 `::uuid` 캐스트 오류 리스크**, `u.id::text = al.target_id` 텍스트 비교는 인덱스 미사용.
+- `backend_9005/app/services/dm_service.py:269` `hydrate_users(conn, ids)` — 비 UUID 값을 try/except 로 **안전 skip**(:283-286 실측), 반환 `{id: {id, nickname, profile_image, code}}`, code=`users.referral_code`(v156 배틀태그).
+- 프론트 `frontend_admin/src/pages/AdminLogsPage.jsx:101-111` `renderTarget` — target_type user 면 `<Link to=/users/{id}>{라벨} #{id}</Link>`, 아니면 `라벨 #id` 텍스트.
+
+### 0-2. ② CS 지정발송 관련 — broadcast_message 내부 게이트 실측
+- `dm_service.py:744` `broadcast_message` — **대상을 내부 role 쿼리로 도출**(audience→roles, `NOT is_banned AND account_status='active' AND id<>me`) → **명시 대상 리스트를 받을 수 없음**(시그니처 재사용 불가).
+- per-target 루프(:781-806) 실측: `get_or_create_conversation`(:342) 호출 → 내부에서 **`assert_can_dm` 풀 게이트 통과**(:348 — 우회 없음): ①발신자 is_verified ②상대 존재 ③양측 비밴 ④미성년 보호(팔로우 필수) ⑤관계 판정(pending 결정용) ⑥dm_blocks 양방향. 이후 **status=='pending' 이면 accepted 승격**(:788-798, 조건부 update — 기존 accepted 훼손 방지) → `send_message`(:493, 내부 :517 에서 existing_conv 로 assert_can_dm 재실행) → best-effort try/except sent/failed 집계.
+- → **지정발송이 보장해야 할 동일 동작 = "get_or_create(풀 게이트) → pending 승격 → send" 루프**. broadcast_message 는 재사용 불가지만 루프 본문은 추출 가능.
+- 발신자(official) 게이트 통과 근거: `services/official.py` 시드 실측 — **is_verified=true 로 INSERT**(공식 계정), role=admin.
+- `dm_service.py:822` `search_users(conn, mongo, me_id, q, limit=20)` — 닉네임 ILIKE + `#태그` 정확 매칭(v156), **active/비밴만 + dm_blocks 후필터 + 자기(me) 제외**, 반환 `{id, nickname, profile_image, code}`. me 의 is_verified 게이트 있음(official 은 통과). 유저용 노출은 `routes/dm.py:259 GET /dm/users/search`.
+- `admin.py:133 GET /admin/users?search` — email/nickname ILIKE, **referral_code(code) 미반환 + banned 포함** → 지정발송 검색용으로 부적합(발송 게이트에서 어차피 실패할 대상이 검색됨).
+- `admin_cs.py` 관행: `_resolve_official`(:43, 미시드 503), reply(:128)는 **동기** `dm_service.send_message`, v174 broadcast(:220)는 count 선계산→Redis 잠금(SET NX 30s)→BackgroundTasks, v176 감사 적재(:297 `_log_admin_action` — `from .admin import` :25) best-effort try/except.
+- 상수: `MAX_TEXT_LEN=2000`(dm_service.py:46), `_log_admin_action`(admin.py:57) — target_id 는 str 그대로 INSERT.
+
+### 0-3. 회귀 지점·미러 실측
+- v176 `/logs` 응답 소비처는 AdminLogsPage 뿐 — 필드 **추가(additive)는 비파괴**.
+- v174 broadcast 경로: broadcast_message 루프 추출 리팩터 시 동작 불변 필수(테스트 항목화).
+- 9004 미러: `admin.py`/`admin_cs.py`/`dm_service.py`/`official.py` 모두 **9005 와 byte-identical 실측**(diff 없음) → 미러 충돌 없음. routes 파일명 예외는 `_logs.py` 뿐(이번 변경 파일 아님).
+
+## 1. 설계 결정
+
+### ① 감사 로그 대상 닉네임#태그
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 조회 방식 | **hydrate_users 후처리** (SQL LEFT JOIN 안 함) — 페이지 rows 중 `target_type=='user'` 인 target_id 만 모아 1회 호출 후 dict 매핑 | target_id VARCHAR 에 비 uuid 혼재 → JOIN 캐스트 오류/인덱스 미사용 리스크. hydrate_users 는 비 uuid 안전 skip 검증된 코드, 페이지당 +1 쿼리(≤100건)로 비용 무시 가능 |
+| 응답 필드 | **additive**: `target_nickname`, `target_code` (user 아님/JOIN 실패/탈퇴 시 null). 기존 필드 전부 유지 | 비파괴 — AdminLogsPage 외 소비처 없음 실측이나 원칙 준수 |
+| 프론트 표시 | `target_nickname` 있으면 `사용자 {nickname}#{code}`(code null 이면 닉네임만) Link, **title=target_id(uuid 원문)**. null 이면 기존 `사용자 #{id}` fallback 유지 | 하이브리드(사용자 확정): 표시=현재 닉/코드, 판정 근거=id 유지, 탈퇴 시 id fallback |
+
+### ② CS 지정발송
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 서비스 재사용 | broadcast_message 의 per-target 루프를 `_deliver_official_message(conn, mongo, me_id, target_id, text)` 로 **추출**(get_or_create→pending 승격→send) → broadcast_message 가 이를 호출하도록 리팩터 + 신규 `send_to_users(conn, mongo, me_id, target_ids, text) -> {requested, sent, failed, failed_ids}` | broadcast_message 는 role 쿼리 내장이라 시그니처 재사용 불가(0-2 실측). 루프 추출로 게이트·pending 승격 **동일 동작 보장** + 중복 구현 회피 |
+| 게이트 | assert_can_dm **우회 없음** — 미성년 비팔로우/차단/밴 대상은 failed 집계(best-effort) | 브로드캐스트와 동일 정책. failed_ids 로 UI 피드백 |
+| 엔드포인트 | `POST /admin/cs/send` body `{user_ids: [str], text: str}` → 200 `{requested, sent, failed, failed_ids}` / 400(빈·중복 제거 후 0개·상한 초과·비 uuid 형식·text 위반) / 503(official 미시드) | admin_cs 관행(reply/broadcast 와 동거) |
+| 인원 상한 | `MAX_CS_SEND_TARGETS = 20` (dedupe 후 판정). 초과 시 400 + "20명 초과는 전체 발송을 이용해주세요" | 사용자 확정. 동기 처리 상한 근거이기도 함 |
+| 동기/비동기 | **동기** (BackgroundTasks 안 씀) | 상한 20 × 대상당 소수 쿼리 — reply 동기 관행과 동급 부하. 정확한 sent/failed 즉시 응답이 UX 핵심(브로드캐스트 queued 방식과 차별점) |
+| Redis 잠금 | **불요** | 동기 처리라 응답 전 재요청 불가 + 프론트 sending 가드. 30s 잠금은 서로 다른 대상 연속 발송(정당 CS 업무)을 오차단하는 부작용. 브로드캐스트(대규모 fan-out 비동기)와 리스크 구조가 다름 |
+| 검색 API | `GET /admin/cs/users/search?q=` → `dm_service.search_users(conn, mongo, official_id, q)` 위임 (me=official) | code 포함 + #태그 검색 + banned/inactive/blocked 제외 = **검색 결과 ≒ 발송 가능 대상**(게이트 정합). `GET /admin/users?search` 는 code 없고 banned 포함이라 부적합(0-2). official is_verified=true 시드 실측으로 게이트 통과 |
+| 감사 적재 | **대상별 1행**: action=`cs_send`, target_type=`user`, target_id=uid, details=`{result: sent|failed, targets: 총대상수, text_len}` — **본문 원문 미저장**, best-effort try/except | 사용자 확정(대상 수 기록=details.targets, 원문 미저장). 상한 20이라 행 수 유계. ①과 시너지 — 로그 페이지에 대상이 닉네임#태그로 렌더 |
+| 프론트 | AdminCsPage 헤더 📢 옆 "✉️ 지정 발송" 버튼 + 신규 `AdminCsSendModal`(v174 모달 패턴): 검색 input(debounce 300ms)→결과 클릭 선택→선택 chips(닉네임#code, ×제거, 최대 20 초과 시 안내)→textarea(2000자)→`window.confirm`(대상 닉네임 나열+N명)→발송→alert(sent/failed)→onSuccess 로 CS 목록 갱신 | 사용자 확정(confirm+목록 갱신+v174 패턴). window.confirm 관행 |
+| api.js | `searchCsUsers(q)`, `sendCsDirect(userIds, text)` 추가 | 중앙 클라이언트 관행 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/services/dm_service.py` | `_deliver_official_message` 추출(broadcast_message 리팩터) + `send_to_users` 신설 | `[dm-send]` (broadcast 는 기존 `[dm-broadcast]` 유지) |
+| `backend_9005/app/routes/admin.py` | `list_admin_logs` 후처리 — hydrate_users 로 `target_nickname`/`target_code` additive 부착 | 기존 `[admin]` |
+| `backend_9005/app/routes/admin_cs.py` | `GET /users/search`(=/admin/cs/users/search) + `POST /send` 신설, cs_send 감사 적재 | `[admin-cs]` |
+| `backend_9004/app/...` 동일 3파일 | 9005 완성본 복사(미러 — 현재 diff 없음 실측) | - |
+| `frontend_admin/src/api.js` | `searchCsUsers`, `sendCsDirect` 래퍼 추가 | - |
+| `frontend_admin/src/components/AdminCsSendModal.jsx` `.css` | **신설** — 검색·다중선택·발송 모달 | `[AdminCsSend]` |
+| `frontend_admin/src/pages/AdminCsPage.jsx` | "✉️ 지정 발송" 버튼 + 모달 마운트 + onSuccess 목록 갱신 | 기존 `[AdminCs]` |
+| `frontend_admin/src/pages/AdminLogsPage.jsx` | renderTarget — target_nickname 우선 표시(`닉네임#code`), title=id, null fallback 유지 | 기존 `[AdminLogs]` |
+
+## 3. 작업 분담
+- **backend-dev** (선행): ① admin.py logs 후처리(rows 취득 후 user 타입 target_id 수집→hydrate_users 1회→dict 매핑, 실패/미존재 null — 응답 기존 필드 순서·형 불변) ② dm_service 루프 추출 리팩터(**broadcast_message 반환·로그 문구 불변**) + send_to_users(dedupe→uuid 형식 검증→상한 20→per-target best-effort, failed_ids 수집) ③ admin_cs.py 검색 위임 + POST /send(동기, 잠금 없음) + cs_send 대상별 적재(best-effort, text 원문·비밀값 금지) ④ 9004 미러 3파일 복사 후 diff 검증.
+- **frontend-dev** (백엔드 후): api.js 2래퍼 → AdminCsSendModal(검색 debounce, 선택 chips 상태, 20명 초과 방지 UI, confirm, 결과 alert — 콘솔에 text 원문 미출력, `[AdminCsSend]` DEV 로그) → AdminCsPage 버튼/마운트 → AdminLogsPage renderTarget 수정. Vite dev 육안 확인.
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+**안전 제약**: 지정발송 실발송은 **테스트 계정 간만 허용** — 발신=official, 수신=`bcast_user_test_*@test.invalid` 계정 UUID 만. **실사용자 UUID 를 user_ids 에 넣는 호출 절대 금지**(소수 지정 대상이라 브로드캐스트와 달리 실측 가능하되 대상 통제 필수). 쓰기 후 정리: 테스트로 생성된 official↔테스트계정 DM 메시지는 잔존 허용(테스트 계정 전용 대화), 필요 시 Mongo 에서 해당 대화만 삭제. admin_logs 의 cs_send 테스트 행은 감사 무결성상 삭제하지 않고 REPORT 에 생성 내역 명시.
+1. ① API: `GET /api/admin/logs` 200 — user 타입 행에 `target_nickname`/`target_code` 존재, 값=현재 닉/코드. 비 user 행(track/report/broadcast·audience 문자열)은 null + **기존 필드 전부 불변**(v176 스키마 회귀). 비 uuid target_id 행이 있어도 500 없음.
+2. ① UI: 감사 로그 페이지 — user 행이 `사용자 닉네임#code` Link 로 렌더(title=uuid), 닉네임 미해석 행은 기존 `사용자 #id` fallback. `/users/:id` 이동 동작 유지.
+3. ② 검색 API: `GET /api/admin/cs/users/search?q=bcast_user_test` 200 — id/nickname/code 반환. `#code` 태그 검색 1건 정확 매칭. 무토큰 401/비관리자 403.
+4. ② 발송 API(테스트 계정 대상만): `POST /api/admin/cs/send` — 테스트 유저 1~2명 → 200 `{requested, sent, failed, failed_ids}` sent 일치, Mongo 대화 accepted + 메시지 적재 확인(수신측 GET 으로 교차 검증 가능 시).
+5. ② 검증 경로: user_ids 빈 배열/21명(중복 제거 후)/비 uuid 문자열/빈 text/2001자 → 400. official 참조 실패 환경이면 503 경로는 코드 리뷰 갈음.
+6. ② 감사: 발송 후 `GET /logs?action=cs_send` — 대상별 행(target_type=user, target_id=대상 uuid), details 에 result/targets/text_len 만(**본문 원문 부재 확인**). ①과 결합해 로그 화면에서 닉네임#태그 렌더 확인.
+7. ② UI: CS 페이지 "✉️ 지정 발송" → 검색→2명 선택(chips)→본문 입력→confirm→발송→alert→CS 목록 갱신. 21명 선택 시도 시 차단 안내.
+8. 회귀(v174): `POST /admin/cs/broadcast` 검증 경로(400 빈 text/잘못된 audience, 429 잠금) 불변 + **broadcast_message 리팩터 후 동작 동일**(가능 시 v174 TESTPLAN 절차 준용 — 임의 전체 실발송 금지, 코드 리뷰 병행). 회귀(admin_cs): conversations/reply/read/unread-count 정상.
+9. 회귀(①): logs 필터(action/target_type)·페이지네이션·클램프 v176 항목 재확인.
+10. 9004 미러: 변경 3파일 diff 없음. 콘솔: `[AdminCsSend]` 에 본문 원문·이메일 미출력.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① **실사용자 대상 지정발송 호출 금지** — user_ids 는 테스트 계정 UUID 만(§4 안전 제약) ② 전체 브로드캐스트 임의 실발송 금지(v174 정책 유지) ③ broadcast_message 의 대외 동작(시그니처·반환·게이트·pending 승격) 변경 금지 — 루프 추출은 순수 리팩터로 한정 ④ admin_logs ALTER 금지, details 에 본문 원문·토큰 저장 금지 ⑤ `/logs` 기존 응답 필드 제거·개명 금지(additive only) ⑥ api.js 인터셉터 수정 금지 ⑦ 지정발송에서 assert_can_dm 게이트 우회 로직 추가 금지.
+- hydrate_users 후처리는 페이지 rows 기준 — details 내부 id 등은 범위 밖(현행 유지).
+- send_to_users 의 failed 는 게이트 거부(미성년·차단 등) 포함 — 프론트는 failed>0 을 오류가 아닌 "일부 발송 불가" 안내로 처리.

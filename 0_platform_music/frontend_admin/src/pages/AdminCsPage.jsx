@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import AdminLayout from '../components/AdminLayout';
 import AdminBroadcastModal from '../components/AdminBroadcastModal';
+import AdminCsSendModal from '../components/AdminCsSendModal';
 import {
   getCsConversations,
   getCsMessages,
@@ -70,6 +71,8 @@ export default function AdminCsPage() {
 
   // 전체 발송 모달 (공식 계정 브로드캐스트)
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  // 지정 발송 모달 (공식 계정 → 선택 사용자 최대 20명)
+  const [directSendOpen, setDirectSendOpen] = useState(false);
 
   // 폴링 콜백에서 최신 activeCid 참조용
   const activeCidRef = useRef(activeCid);
@@ -191,6 +194,12 @@ export default function AdminCsPage() {
     loadConversations({ silent: true });
   }, [loadConversations]);
 
+  // ── 지정 발송 성공 → 목록 즉시 갱신 (발송 대화 수렴) ───────────
+  const handleDirectSendSuccess = useCallback((result) => {
+    if (import.meta.env.DEV) console.info('[AdminCs] direct send success, refreshing list', { requested: result?.requested, sent: result?.sent, failed: result?.failed });
+    loadConversations({ silent: true });
+  }, [loadConversations]);
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -206,15 +215,26 @@ export default function AdminCsPage() {
       <div className="admin-cs">
         <div className="admin-cs__header">
           <h2 className="admin-page-title">CS 문의</h2>
-          <button className="admin-cs__broadcast-btn" onClick={() => setBroadcastOpen(true)}>
-            📢 전체 발송
-          </button>
+          <div className="admin-cs__header-actions">
+            <button className="admin-cs__broadcast-btn" onClick={() => setBroadcastOpen(true)}>
+              📢 전체 발송
+            </button>
+            <button className="admin-cs__direct-btn" onClick={() => setDirectSendOpen(true)}>
+              ✉️ 지정 발송
+            </button>
+          </div>
         </div>
 
         <AdminBroadcastModal
           open={broadcastOpen}
           onClose={() => setBroadcastOpen(false)}
           onSuccess={handleBroadcastSuccess}
+        />
+
+        <AdminCsSendModal
+          open={directSendOpen}
+          onClose={() => setDirectSendOpen(false)}
+          onSuccess={handleDirectSendSuccess}
         />
 
         <div className="admin-cs__panels">
