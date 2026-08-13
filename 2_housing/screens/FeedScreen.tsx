@@ -56,14 +56,7 @@ export default function FeedScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchFeed = useCallback(async () => {
-    // 비로그인 시 피드 노출 금지 — 요청도 하지 않음
-    if (!useAuthStore.getState().user) {
-      if (__DEV__) console.info('[FeedScreen] 미로그인 — 피드 미조회');
-      setPosts([]);
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
+    // 피드는 비로그인도 우선 노출(공개 타임라인). 로그인 유도는 하단 CTA로 처리.
     if (__DEV__) console.info('[FeedScreen] fetchFeed 호출');
     try {
       setLoading(true);
@@ -129,7 +122,13 @@ export default function FeedScreen() {
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     return (
       <Card variant="filled" style={styles.card}>
-        <View style={styles.head}>
+        <TouchableOpacity
+          style={styles.head}
+          activeOpacity={0.7}
+          disabled={!item.author_id}
+          onPress={() => item.author_id && navigation.navigate('UserChannel', { authorId: item.author_id, name: author })}
+          accessibilityLabel={`${author} 채널`}
+        >
           <Avatar name={author} size={36} />
           <View style={styles.headText}>
             <AppText variant="bodyStrong" numberOfLines={1}>{author}</AppText>
@@ -139,7 +138,8 @@ export default function FeedScreen() {
               </AppText>
             ) : null}
           </View>
-        </View>
+          {item.author_id ? <Feather name="chevron-right" size={18} color={colors.text.muted} /> : null}
+        </TouchableOpacity>
 
         {item.title ? <AppText variant="bodyLg" style={styles.title}>{item.title}</AppText> : null}
         {textBlocks.map((b, i) => (
@@ -155,19 +155,15 @@ export default function FeedScreen() {
     );
   };
 
-  // 비로그인 → 피드 숨김(로그인 유도)
-  if (!user) {
-    return (
-      <ScreenLayout>
-        <EmptyState
-          icon="🔒"
-          title="로그인이 필요해요"
-          hint="로그인하면 팔로우한 아티스트와 다른 사람들의 소식을 볼 수 있어요"
-          action={<Button label="로그인하기" onPress={() => navigation.navigate('Settings')} />}
-        />
-      </ScreenLayout>
-    );
-  }
+  // 비로그인: 피드를 아래로 내리면 뜨는 로그인 CTA (하단 푸터)
+  const LoginCta = () => (
+    <View style={styles.loginCta}>
+      <AppText variant="body" tone="secondary" center style={styles.loginHint}>
+        로그인하면 팔로우한 아티스트와{'\n'}다른 사람들의 소식을 더 볼 수 있어요
+      </AppText>
+      <Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />
+    </View>
+  );
 
   return (
     <ScreenLayout>
@@ -179,6 +175,7 @@ export default function FeedScreen() {
           keyExtractor={(it, i) => String(it.id ?? i)}
           renderItem={renderPost}
           contentContainerStyle={styles.list}
+          ListFooterComponent={!user ? <LoginCta /> : null}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -187,6 +184,8 @@ export default function FeedScreen() {
             />
           }
         />
+      ) : !user ? (
+        <LoginCta />
       ) : (
         <EmptyState
           icon="👥"
@@ -224,4 +223,6 @@ const styles = StyleSheet.create({
   trackMeta: { flex: 1 },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  loginCta: { alignItems: 'center', paddingVertical: spacing.xxl, paddingHorizontal: spacing.lg, gap: spacing.lg },
+  loginHint: { lineHeight: 20 },
 });

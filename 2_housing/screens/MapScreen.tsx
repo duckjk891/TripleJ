@@ -291,33 +291,31 @@ export default function MapScreen({ navigation }: Props) {
     }
   }, [user]);
 
-  // Studio 탭 헤더: 엔터명 + 튜토리얼 힌트 말풍선(⟶ⓘ) + 설정 아이콘
+  // Studio 탭 헤더: (엔터명 + 도움말ⓘ) 좌측 / 별·출석·초대·마이페이지 우측
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent) return;
-    const hintVisible = !!user && showTutorialHint && !showTutorial;
     parent.setOptions({
-      headerTitle: user?.company_name || '작업실',
+      // 도움말(ⓘ) 아이콘을 엔터 이름 오른편에 배치 (말풍선 제거)
+      headerTitle: () => (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text.primary }} numberOfLines={1}>
+            {user?.company_name || '작업실'}
+          </Text>
+          {user && (
+            <TouchableOpacity
+              onPress={() => { setShowTutorialHint(false); setShowTutorial((v) => !v); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="도움말"
+            >
+              <Text style={{ fontSize: 18, color: colors.text.secondary, fontWeight: '300' }}>{'ⓘ'}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ),
       headerLeft: undefined,
       headerRight: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
-          {hintVisible && (
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => {
-                setShowTutorialHint(false);
-                setShowTutorial(true);
-              }}
-              style={{ flexDirection: 'row', alignItems: 'center', marginRight: 6 }}
-            >
-              <View style={styles.headerHintBubble}>
-                <Text style={styles.headerHintText} numberOfLines={1}>
-                  도움말을 보려면 클릭
-                </Text>
-              </View>
-              <View style={styles.headerHintTail} />
-            </TouchableOpacity>
-          )}
           {user && (
             <>
               {/* 별 배지 — 클릭 시 별 안내 팝업 */}
@@ -334,23 +332,11 @@ export default function MapScreen({ navigation }: Props) {
               <TouchableOpacity onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Feather name="calendar" size={19} color={colors.text.primary} />
               </TouchableOpacity>
-              {/* 친구초대(공유) */}
+              {/* 친구초대(공유) — 화살표형 공유 아이콘 */}
               <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 6 }} accessibilityLabel="친구초대" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Feather name="share-2" size={19} color={colors.text.primary} />
+                <Feather name="share" size={19} color={colors.text.primary} />
               </TouchableOpacity>
             </>
-          )}
-          {user && (
-            <TouchableOpacity
-              onPress={() => {
-                setShowTutorialHint(false);
-                setShowTutorial((v) => !v);
-              }}
-              style={{ paddingHorizontal: 6, paddingVertical: 4 }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={{ fontSize: 20, color: colors.text.primary, fontWeight: '300' }}>{'ⓘ'}</Text>
-            </TouchableOpacity>
           )}
           <TouchableOpacity
             onPress={() => parent.navigate('MyMusic' as never)}
@@ -363,7 +349,7 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       ),
     });
-  }, [navigation, user?.company_name, user, showTutorialHint, showTutorial, starBalance]);
+  }, [navigation, user?.company_name, user, showTutorial, starBalance]);
 
   // 다음 액션 디렉터 펄스 애니메이션
   useEffect(() => {

@@ -7,6 +7,28 @@
 
 ---
 
+## v3.15 — 2026-08-13 — 피드 소프트게이트·유저채널 + 검색 느낌별음악·게이트 + 작업실 헤더 정리
+
+### 요청
+① 피드 우선노출+하단 로그인CTA / "로그인이 필요해요" 삭제 / "아티스트와" 개행 ② 검색 미로그인 게이트 + 기본=느낌별 음악(운동~잠자기) ③ 공유 아이콘 화살표형 ④ 작업실 ⓘ 엔터명 우측 ⑤ 도움말 말풍선 제거 ⑥ 피드 아바타→채널(팔로워/피드/공지/음악, MAIDOL 내채널).
+
+### Plan verification findings (0단계)
+- 피드 = 전역 공개 타임라인(비로그인 200) → 소프트 게이트.
+- 느낌별 음악: `/charts/categories`(10종) → `/charts/category/{name}`. 이모지 클라 신규 매핑.
+- 채널: `/artists/{id}`(프로필/track_count/total_plays), `/follows/summary/{id}`(follower_count/is_following, POST·DELETE), `/feeds/user/{id}?kind=feed|community`(피드/공지), `/artists/{id}/tracks`(음악). 이미지=`/api/upload/cover-preview/{obj}`. 피드에 author_id 존재.
+- 기존 ArtistDetailScreen은 트랙+광고만 → 신규 UserChannelScreen.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/UserChannelScreen.tsx (신규) + App.tsx | 채널 페이지(프로필·팔로워·팔로우·음악/피드/공지 탭) + 라우트 | `[UserChannel]` |
+| screens/FeedScreen.tsx | 소프트게이트(우선노출+하단CTA), "로그인이 필요해요" 삭제, 아바타→채널 | `[FeedScreen]` |
+| screens/SearchScreen.tsx | 느낌별 음악 그리드 + 미로그인 검색 게이트 | `[SearchScreen]` |
+| screens/MapScreen.tsx | ⓘ 엔터명 우측, 말풍선 제거, 공유 share(화살표) | — |
+| components/HomeHeaderActions.tsx | 공유 share-2→share | — |
+
+---
+
 ## v3.14 — 2026-08-13 — 피드 로그인게이트/재생 수정 + 다이아 제거(별 통일) + 작업실 상단바·별팝업 액션
 
 ### 요청

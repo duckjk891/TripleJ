@@ -4,6 +4,43 @@
 
 ---
 
+## v3.15 (기능 #7 — 피드 소프트게이트·유저채널 페이지 + 검색 느낌별음악·게이트 + 작업실 헤더/아이콘 정리) — 2026-08-13
+
+### 요청 작업
+① 피드: 우선 노출하고 아래로 내리면 "로그인하고 시작하기" CTA / "로그인이 필요해요" 텍스트 삭제 / "아티스트와" 뒤 개행. ② 검색: 검색 시작 시(미로그인) 로그인 CTA + 기본 화면에 MAIDOL "느낌별 음악"(운동~잠자기). ③ 상단바 공유 아이콘을 화살표형으로. ④ 작업실 도움말(ⓘ)을 엔터명 오른편에. ⑤ "도움말을 보려면 클릭" 말풍선 제거. ⑥ 피드 작성자 아바타 클릭 → 그 사람 채널(팔로워 수·작성 피드·공지사항·만든 음악, MAIDOL 내채널 참고).
+
+### Plan verification findings (0단계)
+- 피드는 **전역 공개 타임라인**(비로그인도 200) → v3.14의 하드 게이트를 **소프트 게이트**(노출+하단 CTA)로 전환.
+- **느낌별 음악**: MAIDOL MainPage = `GET /charts/categories`(고정 10종: 운동·에너지 충전·휴식·출퇴근길·행복한 기분·집중·로맨스·파티·슬픔·잠자기) → 칩 탭 시 `GET /charts/category/{name}?limit=50`(트랙 배열). 이모지/색은 코드에 없음 → 클라에서 이모지 매핑 신규.
+- **유저 채널(MAIDOL ArtistDetailPage=/artist/:id)**: (a)프로필 `GET /artists/{id}`(name·image·track_count·total_plays·bio) (b)팔로워 `GET /follows/summary/{id}`→`{follower_count,is_following}`(+`POST`/`DELETE /follows/{id}`) (c)피드 `GET /feeds/user/{id}?kind=feed` (d)**공지=커뮤니티** `?kind=community` (e)음악 `GET /artists/{id}/tracks`. 프로필/커버 이미지 = `/api/upload/cover-preview/{obj}`. 피드 아이템에 `author_id` 존재(채널 이동 키).
+- 기존 `ArtistDetailScreen`은 트랙+광고만(팔로워·피드·공지 없음) → 요건 미달 → 신규 `UserChannelScreen` 작성.
+
+### 수행 결과
+- **screens/UserChannelScreen.tsx**(신규): 프로필(아바타·이름·bio) + 통계(트랙/**팔로워**/재생) + **팔로우 토글**(POST/DELETE) + 탭(**음악**/피드/**공지사항**). 음악=재생 가능(Player), 피드/공지=제목·본문·트랙 카드 렌더. `[UserChannel]` 로그. **App.tsx**: `UserChannel` 라우트(헤더 표시) 등록.
+- **screens/FeedScreen.tsx**: 비로그인도 **피드 우선 노출**(fetch 게이트 제거) + 목록 하단 `ListFooterComponent`로 **"로그인하고 시작하기" CTA**(문구 "…팔로우한 아티스트와\\n다른 사람들의 소식을…" 개행). **"로그인이 필요해요" 제거**. 작성자 헤더(아바타+닉네임) 탭 → **UserChannel 이동**(chevron 표시).
+- **screens/SearchScreen.tsx**: 기본 화면 = **느낌별 음악** 10칸 그리드(이모지+라벨, `/charts/categories`) → 탭 시 `/charts/category/{name}` 트랙 리스트(재생). **미로그인 사용자가 입력창 포커스/입력 시 → "로그인하고 시작하기" CTA**(검색 차단). `[SearchScreen]` 로그.
+- **screens/MapScreen.tsx**: 헤더 재구성 — **도움말(ⓘ)을 엔터명 오른편**(custom headerTitle)로 이동, **"도움말을 보려면 클릭" 말풍선 삭제**, 공유 아이콘 `share-2`→**`share`(화살표형)**. **components/HomeHeaderActions.tsx**: 공유 `share-2`→**`share`**.
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 비로그인 피드 노출 + 하단 "로그인하고 시작하기" + "로그인이 필요해요" 없음 + 개행 | PASS (`/tmp/v315_1_feed_out.png`) |
+| [e2e] 검색 기본 = 느낌별 음악(운동~잠자기 10칸) | PASS (`/tmp/v315_2_search_mood.png`) |
+| [e2e] 미로그인 검색 포커스 → 로그인 CTA | PASS (`/tmp/v315_3_search_gate.png`) |
+| [e2e] 작업실 ⓘ 엔터명 우측 + 말풍선 제거 + share(화살표) | PASS (`/tmp/v315_4_studio_header.png`) |
+| [e2e] 피드 아바타 → **채널**(팔로워/음악/피드/공지 탭·팔로우 버튼·재생) | PASS (`/tmp/v315_5_channel.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- 채널의 "재생/팔로워" 통계는 `/artists/{id}`·`/follows/summary` 기준(앨범 수는 미표기 — 엔드포인트 미제공). 공지사항 탭은 `kind=community` 글(테스트 계정 대상 0건이면 빈 상태 안내).
+- 검색 게이트는 **텍스트 검색만** 차단(느낌별 음악 브라우징은 비로그인도 허용) — "검색을 시작하면" 해석.
+
+### 커밋
+`feat: v3.15 피드 소프트게이트·유저채널 + 검색 느낌별음악·게이트 + 작업실 헤더 정리 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.14 (기능 #6 — 피드 로그인 게이트·콘텐츠/재생 수정 + 다이아 제거·별 통일 + 작업실 상단바·아이콘·별팝업 액션) — 2026-08-13
 
 ### 요청 작업
