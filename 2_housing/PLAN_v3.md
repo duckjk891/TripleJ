@@ -7,6 +7,24 @@
 
 ---
 
+## v3.7 — 2026-08-13 — 화면 통일 스윕 #2 (하드코딩 색 토큰화)
+
+### 변경 매트릭스
+| 파일 | 작업 |
+|---|---|
+| SplashScreen | 그라데이션 하드코딩→토큰 |
+| AgencyProfileScreen | 레거시 태그색→온브랜드 틴트 |
+| ArtistDetailScreen | 히어로 그라데이션→토큰 |
+| SettingsScreen | 보더 #2a2a3e→border.subtle, 에러 틴트→error |
+
+### 남은 큐
+MapScreen(1460줄·15색, 별도 턴) · MusicGenerationScreen · ArtistResultScreen · Composer*/Lyrics*/Cover/Artist*/WaitTimer/Dialogue(색은 의도적) — 이후 EmptyState/AppText 심화 통일.
+
+### 테스트 지정
+[unit] tsc 0. [정적] 하드코딩 HEX 제거. [회귀] 레이아웃/로직 무변경.
+
+---
+
 ## v3.6 — 2026-08-13 — 화면 통일 스윕 #1 (MyMusic·Playlist)
 
 ### 요청

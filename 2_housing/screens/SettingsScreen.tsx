@@ -441,8 +441,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    // TODO: 테마화 검토 (세팅 구분선 배경)
-    borderBottomColor: '#2a2a3e',
+    borderBottomColor: colors.border.subtle,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -493,7 +492,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   errorContainer: {
-    backgroundColor: 'rgba(233, 69, 96, 0.15)',
+    backgroundColor: 'rgba(248, 113, 113, 0.15)',
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
@@ -512,8 +511,7 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     marginBottom: 12,
     borderWidth: 1,
-    // TODO: 테마화 검토 (입력 폼 테두리)
-    borderColor: '#2a2a3e',
+    borderColor: colors.border.subtle,
   },
   submitButton: {
     backgroundColor: colors.accent.primary,

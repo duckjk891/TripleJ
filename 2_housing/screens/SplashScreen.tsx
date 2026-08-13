@@ -45,7 +45,7 @@ export default function SplashScreen({ navigation }: Props) {
 
   return (
     <LinearGradient
-      colors={[colors.bg.deepest, '#1e0e4a', '#4c1d95', '#2a1758']}
+      colors={[colors.bg.deepest, colors.bg.surface1, colors.gradient.twilight[0], colors.bg.surface2]}
       locations={[0, 0.35, 0.7, 1]}
       style={styles.container}
     >

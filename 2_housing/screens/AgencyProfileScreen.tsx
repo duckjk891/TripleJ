@@ -261,11 +261,11 @@ const styles = StyleSheet.create({
   trackTitle: { fontSize: 14, fontWeight: '700', color: colors.text.primary, marginBottom: 4 },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 },
   tag: {
-    backgroundColor: 'rgba(233, 69, 96, 0.2)',
+    backgroundColor: 'rgba(168, 85, 247, 0.18)',
     borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
     marginRight: 4, marginBottom: 2,
   },
-  moodTag: { backgroundColor: 'rgba(100, 100, 255, 0.2)' },
+  moodTag: { backgroundColor: 'rgba(251, 191, 36, 0.15)' },
   tagText: { fontSize: 11, color: colors.text.secondary },
   statsRow: { flexDirection: 'row', gap: 12 },
   statText: { fontSize: 11, color: colors.text.muted },

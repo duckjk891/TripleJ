@@ -138,7 +138,7 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
       >
         {/* 헤더: 그라데이션 + 프로필 */}
         <LinearGradient
-          colors={['#4c1d95', '#2a1758', colors.bg.deepest]}
+          colors={[colors.gradient.twilight[0], colors.bg.surface2, colors.bg.deepest]}
           locations={[0, 0.6, 1]}
           style={[styles.heroBg, { paddingTop: insets.top + 12 }]}
         >

@@ -4,6 +4,30 @@
 
 ---
 
+## v3.4 (화면 통일 스윕 #2) — 2026-08-13 — 하드코딩 색 토큰화 (Splash·Agency·ArtistDetail·Settings)
+
+### 요청 작업
+"각 화면마다 공용 컴포넌트/토큰으로 통일" (자율 계속).
+
+### 수행 결과 (색상 토큰화 — 로직/레이아웃 무변경)
+- `SplashScreen`: 그라데이션 하드코딩(#1e0e4a·#4c1d95·#2a1758) → `colors.bg.*`/`gradient.twilight[0]`.
+- `AgencyProfileScreen`: 레거시 레드/블루 태그(rgba 233,69,96 / 100,100,255) → 온브랜드 보라·금 틴트.
+- `ArtistDetailScreen`: 히어로 그라데이션(#4c1d95·#2a1758) → 토큰.
+- `SettingsScreen`: 구분선/폼 보더(#2a2a3e) → `colors.border.subtle`, 에러 틴트(레거시 레드) → error 틴트.
+- 유지(의도적): Dialogue `#e8e8e8`(밝은 선택지 버튼)·오버레이/그림자 rgba, WaitTimer 반투명 흰색.
+
+### 테스트 (tester)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [정적] 실 하드코딩 HEX 제거 확인 | PASS(#2a2a3e·#4c1d95·#1e0e4a·레거시레드 제거) |
+| [e2e-web] | 순수 색-토큰 스왑(시각 등가)이라 이번 배치는 타입/정적 게이트로 갈음 — 렌더 E2E는 다음 통합 스윕서 재확인 |
+
+### 커밋
+`feat: v3.4 화면 통일 스윕#2 — 하드코딩 색 토큰화 4화면 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.3 (화면 통일 스윕 #1) — 2026-08-13 — MyMusic · Playlist 공용 컴포넌트 통일
 
 ### 요청 작업
