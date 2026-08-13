@@ -1605,3 +1605,151 @@
 
 - 2026-08-13 초판 작성 (18건) — PLAN v180 §4 항목 1~8 전부 시나리오화(§4-1→PT-API-01·02, §4-2→PT-API-03, §4-3→PT-API-04·05·06, §4-4→PT-API-07, §4-5→PT-UNIT-01~05, §4-6→PT-UNIT-06, §4-7→PT-API-08·09·PT-UNIT-07, §4-8→PT-UNIT-08). 조정 쓰기는 grant/deduct 짝(순변화 0)으로 설계하고 종료 시 잔액 원상 검증을 불변식으로. summary delta 전제·비정수 422·fallback 실측·earn 매핑·BASE_REV 5건 planner 회신 대기(§4).
 - 2026-08-13 planner 판정 반영 — §4 판정 블록 5건 확정(delta 정확 판정+완화 절차 / 비정수 400 — `amount: Any` 수동 검증 실측 / fallback 코드 리뷰 갈음 — 원장 INSERT 금지 / earn 필터 admin_adjust 제외 — `_EVENT_FILTERS` 실측 / BASE_REV `4f52f16`). §0·PT-API-01·04·07·08·PT-UNIT-05 문안 6곳 고정. 보류 0건 — tester 착수 가능(**전제: 9005·9004 v180 반영 재기동** — frontend-dev 보고의 404 는 구버전 백엔드 유래).
+
+# v181 — 별 분석 대시보드 (/points 탭 분리 + 집계 3블록) (2026-08-13 19:22)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전)
+근거: PLAN.md v181 §0 실측(birth_date 백필·GENDERS 도메인·day 사전순 범위 매치·라벨 named export), §1 설계 결정, §4 테스트 항목 1~7, §5 강행 금지 6항·리스크 3건
+대상: backend_9005 `admin_points.py` analytics 3 엔드포인트 추가(daily/breakdown/demographics — 9004 미러) / frontend_admin AdminPointsDashboard 신설 + AdminPointsPage 탭 분리(운영 탭 무변경)+라벨 export+`signup_bonus` 라벨 + api.js 3래퍼. **points_service.py·routes/points.py·main.py·package.json 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **기본 전부 읽기 전용** — 집계 조회뿐. 유일한 쓰기 = PD-API-04 delta 검증 **1쌍**(테스트 계정 grant N → 동량 deduct 원복, 잔액 순변화 0). CS 발송·브로드캐스트 호출 0건. 실사용자 무접촉.
+- **delta 의 집계 잔존**: grant/deduct 는 잔액은 원상이나 원장·집계(daily earned/spent, breakdown ±)에는 **±N 이 영구 잔존**(원장 삭제 불가 방침의 연장 — 정상). REPORT 에 잔존 내역 기재(planner 확인 §4-3).
+- **개인정보 비노출이 이번 검증의 핵심**(강행 금지 ④): 응답·화면·서버 로그·콘솔 어디에도 birth_date/gender/user_id **개별값** 금지 — 버킷 합산만. tester 의 REPORT 에도 테스트 계정의 생년월일·성별 원문을 기재하지 않고 **버킷명만** 기재(예: "20대 버킷 반영 확인").
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN`/`USER_TOKEN`/`TEST_USER_1_ID` — v177~180 방식. `BASE_REV` = **v180 종료 커밋(planner 검토 시 확정 예정 — 확정 전 diff 판정 보류)**.
+- 정합 대조 전제(planner 확정 §4-4): 3 API 짧은 시간창 연속 호출 — **불일치 시 즉시 1회 재실행, 재불일치면 FAIL**(외부 트래픽은 3 API 에 동일 반영되므로 재실행으로 호출 간 시차 경합만 배제하면 잔여 불일치는 버그).
+- 환경: 9005·9004, Mongo(point_events)·PG(users), frontend_admin Vite dev(4001). 추적자 `[admin-points]`·`[AdminPointsDash]`·`[AdminPoints]`.
+
+## 1. [api] 시나리오 — analytics 3 엔드포인트 (기본 대상 9005)
+
+### PD-API-01. 3 API 200 스키마 — daily 0 채움 연속성·breakdown DESC·demographics 5행 고정 [api] — 핵심
+- Given: `ADMIN_TOKEN`
+- When: ① `GET /api/admin/points/analytics/daily?days=30` ② `GET .../analytics/breakdown?days=30` ③ `GET .../analytics/demographics?days=30&mode=earn` 호출(+days=7·90 스팟 각 1회)하면
+- Then:
+  - ① 200 `{days:[{day, earned, spent}]}` — **배열 길이 == 30 정확**(7→7, 90→90), day 가 KST `%Y%m%d` 연속 오름차순(누락일 **0 채움** — earned/spent 0인 날도 행 실재), 마지막 요소 == KST 오늘, earned ≥0·spent ≥0 숫자
+  - ② 200 `{earn:[{action, total}], spend:[{action, total}]}` — 양 패널 total **DESC 정렬**, action 은 원문(라벨 없음 — 프론트 책임), total >0
+  - ③ 200 `{rows:[...5행 고정], total}` — rows 순서 10대/20대/30대/40대+/미상, 각 행 `{bucket, male, female, unknown, total}` — **행 total == male+female+unknown**, 응답 total == Σ행 total. 데이터 없는 버킷도 0 행 실재(5행 불변)
+
+### PD-API-02. 파라미터 화이트리스트 400 + 401·403 [api]
+- Given: `ADMIN_TOKEN` / 토큰 없음 / `USER_TOKEN`
+- When: ① days=8 / 0 / 91 / −7 / abc (daily 기준, breakdown·demographics 각 1케이스 스팟) ② demographics mode=all / 빈값 / 대문자 EARN ③ 3 엔드포인트 무토큰 ④ 대표 1개(demographics — 민감 집계) `USER_TOKEN` 으로 각각 호출하면
+- Then: ① 전부 **400**(화이트리스트 {7,30,90} 외 — 422 관측 시 비고 후 통일, v177 §6-7 관행) ② 전부 400(earn|spend 외) ③ 전부 401 ④ 403. 오류 응답에 내부 정보(스택·쿼리) 미노출.
+
+### PD-API-03. 3 API 상호 정합 — 교차 대조 (같은 원장 유래, 정확 일치) [api] — 핵심
+- Given: `ADMIN_TOKEN`. 동일 days(30)로 4콜을 **짧은 시간창 내 연속 실행**: daily / breakdown / demographics(mode=earn) / demographics(mode=spend)
+- When: 각 응답의 합계를 계산·대조하면
+- Then: **전부 정확 일치 — 불일치 시 FAIL**(전 응답이 동일 point_events 기간 슬라이스 유래):
+  - `Σ daily[].earned` == `Σ breakdown.earn[].total` == `demographics(mode=earn).total`
+  - `Σ daily[].spent` == `Σ breakdown.spend[].total` == `demographics(mode=spend).total` — **spent 계열 전부 양수(절대값) 확정**(§4-5, 코드 실측: 3 엔드포인트 모두 `$abs` — 음수 관측 시 FAIL)
+  - 보조: v180 summary 와 부분 정합 — `daily 마지막 요소(오늘).earned/spent` == summary `today_earned/today_spent`(같은 시간창 재조회)
+
+### PD-API-04. delta 검증 1쌍 (선택) — grant +N 3면 반영 → 동량 차감 원복 [api] — (유일한 쓰기: ±N, 테스트 계정)
+- Given: `ADMIN_TOKEN`, `TEST_USER_1_ID`. 사전: 3 API(30일·earn) 기준값 기록 + 테스트 계정의 기대 버킷 확인(DB 조회 — REPORT 에는 버킷명만 기재, 원문 금지)
+- When: v180 패턴 `POST /adjust` grant N → 3 API 재조회 → 동량 deduct(원복) → 재조회하면
+- Then:
+  - grant 후: daily **오늘** earned +N / breakdown.earn 에 `admin_adjust` 항목 +N(신규 또는 증가) / demographics(earn) **해당 버킷·해당 성별 열** +N + total +N — 타 버킷·타 열 불변
+  - deduct 후: 잔액 원상(v180 불변식) + daily 오늘 spent +N / breakdown.spend 에 `spend:admin_adjust` +N / demographics(spend) 동일 버킷 +N — **earned 쪽 +N 은 잔존**(집계 잔존 정상 — §0)
+  - PD-API-03 정합식이 delta 후에도 성립(재대조 1회)
+
+### PD-API-05. 개인정보 비노출 — 응답 전문·서버 로그 [api] — 핵심 (강행 금지 ④)
+- Given: PD-API-01~04 의 3 API 응답 전문(JSON 원문 보관), 백엔드 로그(테스트 실행 구간)
+- When: ① 응답 원문에서 uuid 패턴(`[0-9a-f]{8}-[0-9a-f]{4}-…`)·날짜 패턴(생년월일 `\d{4}-\d{2}-\d{2}`)·`@`(이메일)·사용자 개별 레코드 배열 구조를 검사 ② 서버 로그를 동일 패턴 + 테스트 계정 닉네임으로 grep 하면
+- Then: ① **전부 0건** — 응답은 버킷·액션 합산값만(demographics 의 male/female/unknown 은 **집계 열 이름**이며 개별 사용자 성별 값 아님 — 구조 검사로 구분: rows 5행 외 사용자 단위 배열 부재) ② 서버 로그는 `[admin-points]` days/mode/행 수 수준만 — birth_date 값·user_id 나열·성별 개별값 **0건**. 위반 발견 시 즉시 중단·planner 보고(비노출은 협상 불가 항목).
+
+### PD-API-06. 회귀 — v180 4 엔드포인트·사용자 API·package.json [api] — 회귀 핵심
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, `BASE_REV`(v180 종료 커밋 — planner 확정 후)
+- When: ① v180 대표 케이스 재실행 — summary 200 5필드 / `users/{TEST_USER_1_ID}/balance` / events `filter=admin` 매핑 / adjust 검증 400 대표 1건(빈 reason — 비파괴) ② 사용자용 `GET /api/points/costs·balance·history`(USER_TOKEN) ③ `git diff {BASE_REV}..HEAD --name-only` 하면
+- Then: ① v180 TESTPLAN 판정 기준 그대로 PASS(analytics 추가가 기존 4개를 건드리지 않음) ② 200·스키마 불변 ③ 변경 파일 == PLAN §2 매트릭스 정확 일치 — points_service.py·routes/points.py·main.py 부재 + **package.json(및 lock 파일) 부재 — 차트 라이브러리 미도입 검증**(강행 금지 ③). 초과 파일 출현 시 즉시 중단·보고.
+
+### PD-API-07. 9004 미러 — diff 0 + 대표 케이스 [api] — 미러 규칙
+- Given: 9004 기동
+- When: ① `diff backend_9005/app/routes/admin_points.py backend_9004/app/routes/admin_points.py` ② **9004** daily(30일) `ADMIN_TOKEN` 200 + demographics `USER_TOKEN` 403 각 1회 하면
+- Then: ① diff **0** ② 9005 와 동일 판정(9004 main.py 는 무변경 — 등록 기존이므로 diff 대상 아님, 확인만).
+
+## 2. [unit] 시나리오 — 탭 분리·대시보드 (브라우저 하니스, 4001 dev)
+
+### PD-UNIT-01. 운영 탭 회귀 — v180 무변경 증빙 [unit] — 핵심
+- Given: 관리자 로그인, `/points` 진입
+- When: ① 탭 2개(운영/분석 대시보드) 확인 — 기본 탭 상태 기록 ② **운영 탭**에서 v180 핵심 동작 재실행 — 4블록 렌더·검색 드롭다운(focus 오픈→첫 클릭 단일 선택·닫힘·잔액 표시)·조정 폼 유효 입력 후 confirm **취소**(adjust POST 0건)·원장 라벨/필터·비용표 읽기 전용 하면
+- Then: v180 PT-UNIT-01/02/03/05 판정 기준 그대로 PASS — 탭 래핑이 운영 기능을 훼손하지 않음. 보조(코드 리뷰): AdminPointsPage diff 가 **탭 스위치·JSX 래핑·named export 2·`signup_bonus` 라벨 1줄뿐**(핸들러·상태 로직 무변경 — 강행 금지 ①), 탭 전환 왕복 후 운영 탭 상태(선택 대상·입력값) 처리 방식 기록(초기화/유지 어느 쪽이든 크래시 없음).
+
+### PD-UNIT-02. 분석 탭 — 3블록 렌더·라벨·각주 [unit] — 핵심
+- Given: 분석 대시보드 탭 진입(기본 30일)
+- When: 3블록을 확인하면
+- Then:
+  - **추이**: 이중 막대 30쌍(적립 green/소진 red, 높이 비율 = 값/기간 최대값), **hover 툴팁에 일자·수치**(title 폴백 병행), 0 값 날도 슬롯 실재(0 채움 시각 반영)
+  - **분포**: 2패널(획득/소비) 가로 비율 바 — actionLabel 라벨(admin_adjust="관리자 지급" 등)·%·⭐값, **`signup_bonus` → "가입 보너스" 신라벨**(기간 내 실데이터 등장 시 실측 — 미등장 시 라벨 맵 코드 확인으로 갈음, planner 확인 §4-6), 미등록 액션 원문 fallback
+  - **인구**: 5행 스택 바(남/여/미상 구성비)+행별 합계 ⭐+획득/소비 **토글 버튼**+각주 **"미상 = 미입력·기타"** 문구 실재. 값이 PD-API-01 ③ 응답과 일치
+
+### PD-UNIT-03. 기간 필터 연동·토글·빈/에러 상태 [unit] — 핵심
+- Given: 분석 탭(30일)
+- When: ① 7일 버튼 클릭 ② 90일 클릭 ③ 인구 토글 earn↔spend ④ (가능 시) 데이터 없는 구간 관찰 ⑤ 백엔드 일시 중단 후 기간 전환 1회 하면
+- Then: ① **3블록 동시 재조회**(네트워크에 daily/breakdown/demographics 3콜, days=7)+추이 막대 7쌍으로 갱신 ② 동일(days=90, 90쌍) ③ demographics 재조회(mode 전환)+스택 바 갱신 — 다른 2블록 불필요 재조회 없음(관측 결과 기록) ④ 빈 구간 안전 렌더 — 0 높이 막대/빈 상태 문구, 크래시·NaN 표시 없음 ⑤ 에러 상태 문구 표시·화면 유지(백엔드 복구 후 재시도 정상). stale 응답이 최신 기간 화면을 덮지 않음(빠른 연속 전환 1회).
+
+### PD-UNIT-04. 콘솔 위생 + eslint [unit] — 마감
+- Given: PD-UNIT-01~03 수행 세션 콘솔(+에러 상태 1회 포함), frontend_admin 저장소
+- When: ① 콘솔에서 생년월일 패턴·성별 개별값·uuid·닉네임·`@test.invalid` 검색 ② eslint 실행하면
+- Then: ① `[AdminPointsDash]`·`[AdminPoints]` 포함 전부 **0건** — 로그는 기간/모드/건수 수준만, 3 API 응답 덤프 미출력 ② eslint 신규 오류 0.
+
+## 3. [e2e] 시나리오 — 1건 (행동 수준, 읽기 전용)
+
+### PD-E2E-01. 풀 여정 — 분석 탭→기간 전환→토글→운영 탭 복귀 [e2e] — 핵심 (쓰기 0건)
+- Given: 관리자 앱(4001) 테스트 관리자 로그인
+- When: 사이드바 "별 관리" → **분석 대시보드 탭** 클릭 → 30일 3블록 데이터 렌더 확인 → 기간 **7일 전환**(3블록 재조회·막대 7쌍) → 인구 **토글 전환**(스택 바 갱신) → **운영 탭 복귀** → v180 기능 정상(검색→테스트 계정 선택→잔액 표시 — 조정은 confirm **취소**, adjust POST 0건)하면
+- Then: 전 단계 정상 전이, 탭 왕복 후 양 탭 모두 정상 상태, 콘솔 신규 에러 0건, **네트워크에 adjust/send/broadcast POST 0건**(전 여정 읽기 전용). 감사 로그·원장에 이번 E2E 유래 신규 행 0건.
+- 증적: 분석 탭 30일·7일 전환 후·토글 후·운영 탭 복귀 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **BASE_REV 확정**: v180 종료 커밋 — **`c04f9c7` 확정**(§4 판정 블록 1 — 보류 해제, PD-API-06 diff 실행 가능).
+2. **delta 버킷 판정용 DB 조회**: PD-API-04 는 테스트 계정의 기대 버킷 확인을 위해 users 의 birth_date/gender 를 DB 에서 1회 조회 — 결과는 REPORT 에 **버킷명만** 기재(원문 미기재) 방침. 조회 자체 승인 확인.
+3. **delta 의 집계 영구 잔존 허용**: grant/deduct 1쌍이 daily/breakdown 집계에 ±N 으로 잔존(잔액만 원상) — 원장 잔존 방침의 연장으로 설계. 허용 확인(불허 시 PD-API-04 SKIP·코드 리뷰 갈음).
+4. **정합 대조 판정 규칙**: 정확 일치 기준은 "짧은 시간창 내 연속 호출 + dev DB 단독" 전제 — 호출 사이 이벤트 유입 가능 환경이면 "불일치 시 즉시 1회 재실행, 재불일치 시 FAIL" 규칙 채택 여부 회신.
+5. **spent 부호 규약**: daily.spent·breakdown.spend.total·demographics(spend).total 의 절대값/음수 표기 통일 — 구현 확정 후 PD-API-03 비교식 부호 고정.
+6. **signup_bonus 실측 가능성**: 조회 기간 내 가입 보너스 이벤트 부재 시 "가입 보너스" 라벨은 코드 확인으로 갈음(PD-UNIT-02) — 실측 요구 시 신규 가입 시드가 필요해 범위 초과, 갈음 승인 요청.
+
+### planner 판정 (2026-08-13, 6건 전부 확정 — 해당 문안 반영 완료)
+
+1. **BASE_REV = `c04f9c7`** (v180 커밋 — planner git log 실측: 현재 HEAD, v181 변경분 워킹트리 미커밋). PD-API-06 diff 는 `git diff c04f9c7 --name-only` 워킹트리 기준.
+2. **버킷 판정용 DB 조회 승인** — 읽기 전용 SELECT 1회(v174 OFFICIAL_ID 조회 관행 준용). REPORT 에는 **버킷명만**(생년월일·성별 원문 기재 금지 — 개인정보 강행 금지의 문서 측 연장).
+3. **집계 영구 잔존 허용** — 잔액 원상이 불변식이고 원장·집계는 append-only(원장 방침 연장). 오늘 daily 의 earned/spent 양쪽 +N 동일 부풀림은 정보성 무해. REPORT 기재 조건.
+4. **정합 재실행 규칙 채택** — 불일치→1회 재실행→재불일치 FAIL. summary delta 완화(v180 §4-1)와 구별: 그쪽은 기준 시점 대비 delta(외부 유입이 오차가 됨), 이쪽은 동일 시점 API 간 비교(외부 유입도 3 API 에 같이 반영 — 재실행 후 불일치는 구현 버그).
+5. **spent 전부 양수 확정** — 코드 실측: daily(:$abs)·breakdown(spend $abs)·demographics(spend $abs) 3곳 일관. PD-API-03 비교식 고정 완료.
+6. **signup_bonus 코드 확인 갈음 승인** — 단 live 원장에 가입 보너스 행 실재 가능성이 높으므로(156명 가입 이력) **기간 내 실데이터 우선, 부재 시에만 갈음**(신규 가입 시드는 금지 — 범위 초과+테스트 계정 증식).
+
+**편차 승인 기록**: PLAN §1 "actionLabel named export" → `src/utils/pointsLabels.js` 모듈 추출로 변경(frontend-dev 발견: 페이지 파일 named export 는 eslint `react-refresh/only-export-components` error 위반). byte-identical 추출 + signup_bonus 1줄 추가 diff 검증 완료 — 단일 소스 의도 충족·운영 탭 로직 무변경이라 **승인**(PLAN 측 정정으로 기록, 구현 재작업 없음).
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. PD-API-01→02 (읽기 전용 스키마·검증) → PD-API-03 (정합 — 짧은 시간창 4콜) → PD-API-04 (유일한 쓰기 ±N — §4-2·3 확정 후) → PD-API-05 (응답 원문·서버 로그 검사 — 01~04 산출물 재사용) → PD-API-06 (회귀+diff — BASE_REV 확정 후) → PD-API-07 (9004)
+2. PD-UNIT-01 (운영 탭 회귀) → PD-UNIT-02→03 (분석 탭) → PD-UNIT-04 (콘솔 마감+eslint)
+3. PD-E2E-01 (읽기 전용 여정)
+4. 종료: 잔액 원상 재확인(PD-API-04 실행 시) + REPORT: 집계 잔존 내역·버킷명(원문 금지)·코드 리뷰 갈음 항목 기재
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| PD-API-01 | api | | 3 스키마 — daily 길이=days·0 채움, DESC, 5행 고정 |
+| PD-API-02 | api | | days·mode 화이트리스트 400 + 401/403 |
+| PD-API-03 | api | | 3 API 합계 정확 일치 + summary 부분 정합 |
+| PD-API-04 | api | | delta ±N 3면 반영 — 유일한 쓰기, 버킷명만 기재 |
+| PD-API-05 | api | | 응답·서버 로그 개인정보 0건 — 위반 시 즉시 중단 |
+| PD-API-06 | api | | v180 대표·사용자 API·diff 매트릭스+package.json 0 |
+| PD-API-07 | api | | 9004 diff 0 + daily 200·demographics 403 |
+| PD-UNIT-01 | unit | | 운영 탭 v180 회귀 + diff 코드 리뷰(래핑·export만) |
+| PD-UNIT-02 | unit | | 3블록·툴팁·가입 보너스 라벨·각주 |
+| PD-UNIT-03 | unit | | 기간 3콜 재조회·토글·빈/에러 상태·stale |
+| PD-UNIT-04 | unit | | 개인 속성·응답 덤프 콘솔 0건 + eslint 0 |
+| PD-E2E-01 | e2e | | 풀 여정 — 읽기 전용, adjust/send POST 0건 |
+
+## v181 시나리오 집계
+
+- 총 **12건** — [api] 7 / [unit] 4 / [e2e] 1 (보류 없음 — planner 확인 6건은 §4)
+- 쓰기: PD-API-04 delta **1쌍만**(테스트 계정 grant N→deduct N, 잔액 순변화 0 — 집계 잔존은 §4-3 확정 조건). 그 외 전부 읽기 전용. CS 발송·브로드캐스트 0건, E2E 는 adjust 포함 쓰기 0건(confirm 취소). 개인정보 비노출(PD-API-05·PD-UNIT-04)은 위반 시 즉시 중단 항목.
+
+## 개정 이력 (v181)
+
+- 2026-08-13 초판 작성 (12건) — PLAN v181 §4 항목 1~7 전부 시나리오화(§4-1→PD-API-01·02, §4-2→PD-API-03, §4-3→PD-API-04, §4-4→PD-API-05, §4-5→PD-UNIT-01~03, §4-6→PD-API-06·07, §4-7→PD-UNIT-04). 개인정보 비노출을 즉시 중단 항목으로 승격, delta 는 유일한 쓰기 1쌍으로 한정(집계 잔존 명시). BASE_REV(planner 확정 예정)·버킷 확인 DB 조회·집계 잔존·정합 재시도 규칙·spent 부호·signup_bonus 갈음 6건 planner 회신 대기(§4).
+- 2026-08-13 planner 판정 반영 — §4 판정 블록 6건 확정(BASE_REV `c04f9c7` / 버킷 DB 조회 승인(REPORT 버킷명만) / 집계 잔존 허용 / 정합 재실행 1회 후 FAIL / spent 전부 양수 — 3곳 `$abs` 실측 / signup_bonus 실데이터 우선·부재 시 갈음) + pointsLabels.js 편차 승인 기록. §0·§4-1·PD-API-03 문안 3곳 고정. 보류 0건 — tester 착수 가능(전제: 9005·9004 v181 반영 재기동).

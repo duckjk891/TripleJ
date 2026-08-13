@@ -19,6 +19,7 @@ ref=`adm:{uuid8}:{사유≤40자}` — uuid8 로 시도별 유니크(멱등 충�
 
 import logging
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -28,6 +29,7 @@ from pydantic import BaseModel
 from ..auth import get_admin_user
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
+from ..models.user import age_years
 from ..services import points_service as svc
 from .admin import _log_admin_action
 
@@ -362,3 +364,244 @@ async def adjust_points(
         admin_tag, uid[:8], direction, amount, balance,
     )
     return {"balance": balance, "event_ref": ref}
+
+
+# ---------------------------------------------------------------------------
+# 5. 분석 대시보드 (v181) — GET /analytics/{daily|breakdown|demographics}
+# ---------------------------------------------------------------------------
+# day 는 KST %Y%m%d 고정폭 문자열 — 사전순 비교 == 날짜순이라 $gte 범위 매치 유효.
+# day 단독 인덱스 부재(스캔 — 현 볼륨 수용, v180 §5 리스크 승계).
+#
+# 개인정보 비노출 절대 규칙: 응답·로그에 user_id/birth_date/gender 개별값 금지 —
+# demographics 의 원시 속성은 버킷 합산 직후 서버 내부에서 소멸(버킷 집계만 반환).
+
+_ANALYTICS_DAYS = {7, 30, 90}
+_DEMOGRAPHICS_MODES = {"earn", "spend"}
+_AGE_BUCKETS = ("10대", "20대", "30대", "40대+", "미상")
+
+
+def _parse_analytics_days(days) -> int:
+    """days 화이트리스트 {7,30,90} — 그 외(비정수 포함) 400."""
+    try:
+        d = int(days)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="기간은 7·30·90일 중 하나여야 합니다.")
+    if d not in _ANALYTICS_DAYS:
+        raise HTTPException(status_code=400, detail="기간은 7·30·90일 중 하나여야 합니다.")
+    return d
+
+
+def _kst_day_range(days: int) -> list:
+    """KST 오늘 포함 최근 days 일의 %Y%m%d 문자열 리스트(과거→오늘, 연속)."""
+    now = datetime.now(svc.KST)
+    return [(now - timedelta(days=days - 1 - i)).strftime("%Y%m%d") for i in range(days)]
+
+
+@router.get("/analytics/daily")
+async def analytics_daily(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+):
+    """일별 적립/소진 추이 — day 범위 $match + $group. 누락일 0 채움 연속 range.
+
+    응답 {days: [{day, earned, spent}]} — 배열 길이 == 기간 일수 고정(과거→오늘).
+    소진(spent)은 절대값(양수).
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        day_range = _kst_day_range(n_days)
+        logger.info("[admin-points] analytics daily admin=%s days=%d", admin_tag, n_days)
+
+        mongo = get_mongo()
+        by_day = {}
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": day_range[0]}}},
+            {
+                "$group": {
+                    "_id": "$day",
+                    "earned": {"$sum": {"$cond": [{"$gt": ["$amount", 0]}, "$amount", 0]}},
+                    "spent": {
+                        "$sum": {"$cond": [{"$lt": ["$amount", 0]}, {"$abs": "$amount"}, 0]}
+                    },
+                }
+            },
+        ]):
+            by_day[doc["_id"]] = doc
+
+        out = [
+            {
+                "day": d,
+                "earned": int((by_day.get(d) or {}).get("earned") or 0),
+                "spent": int((by_day.get(d) or {}).get("spent") or 0),
+            }
+            for d in day_range
+        ]
+        return {"days": out}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-points] analytics daily failed admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "추이를 불러올 수 없습니다."})
+
+
+@router.get("/analytics/breakdown")
+async def analytics_breakdown(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+):
+    """기간 내 액션별 획득/소비 분포 — $facet 2패널, total DESC.
+
+    응답 {earn: [{action, total}], spend: [{action, total}]} — action 은 원장
+    원문 그대로(라벨링은 프론트 actionLabel 단일 소스). total 은 양수.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics breakdown admin=%s days=%d", admin_tag, n_days
+        )
+
+        mongo = get_mongo()
+        earn, spend = [], []
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": start_day}}},
+            {
+                "$facet": {
+                    "earn": [
+                        {"$match": {"amount": {"$gt": 0}}},
+                        {"$group": {"_id": "$action", "total": {"$sum": "$amount"}}},
+                        {"$sort": {"total": -1, "_id": 1}},
+                    ],
+                    "spend": [
+                        {"$match": {"amount": {"$lt": 0}}},
+                        {"$group": {"_id": "$action", "total": {"$sum": {"$abs": "$amount"}}}},
+                        {"$sort": {"total": -1, "_id": 1}},
+                    ],
+                }
+            },
+        ]):
+            earn = doc.get("earn") or []
+            spend = doc.get("spend") or []
+
+        def _panel(rows):
+            return [
+                {"action": r["_id"], "total": int(r.get("total") or 0)} for r in rows
+            ]
+
+        return {"earn": _panel(earn), "spend": _panel(spend)}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-points] analytics breakdown failed admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+def _age_bucket(birth_date) -> str:
+    """만 나이 → 버킷. birth_date NULL(미입력·탈퇴 파기·유저 미실재)은 '미상'."""
+    if birth_date is None:
+        return "미상"
+    age = age_years(birth_date)
+    if age < 20:
+        return "10대"
+    if age < 30:
+        return "20대"
+    if age < 40:
+        return "30대"
+    return "40대+"
+
+
+@router.get("/analytics/demographics")
+async def analytics_demographics(
+    days: str = "30",
+    mode: str = "earn",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """기간 내 연령대×성별 별 유통 분포 — mode=earn|spend(그 외 400).
+
+    Mongo user_id별 Σ → PG `ANY($1::uuid[])` 일괄 조회(비 uuid skip) →
+    age_years 버킷 × 성별(male/female/unknown=NULL+other+미실재) 합산.
+    응답 {rows: [{bucket, male, female, unknown, total}](5행 고정), total} —
+    **버킷 합산값만**(개별 user_id·birth_date·gender 미포함·미로그).
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        if mode not in _DEMOGRAPHICS_MODES:
+            return JSONResponse(
+                status_code=400, content={"error": "mode 는 earn 또는 spend 여야 합니다."}
+            )
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics demographics admin=%s days=%d mode=%s",
+            admin_tag, n_days, mode,
+        )
+
+        if mode == "earn":
+            amount_match = {"$gt": 0}
+            sum_expr = "$amount"
+        else:
+            amount_match = {"$lt": 0}
+            sum_expr = {"$abs": "$amount"}
+
+        mongo = get_mongo()
+        per_user = {}
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": start_day}, "amount": amount_match}},
+            {"$group": {"_id": "$user_id", "total": {"$sum": sum_expr}}},
+        ]):
+            per_user[str(doc["_id"])] = int(doc.get("total") or 0)
+
+        # PG 속성 일괄 조회 (hydrate 관행 — 비 uuid 안전 skip)
+        uuids = []
+        for uid in per_user:
+            try:
+                uuids.append(uuid.UUID(uid))
+            except (ValueError, TypeError):
+                continue
+        attrs = {}
+        if uuids:
+            rows = await conn.fetch(
+                "SELECT id, birth_date, gender FROM users WHERE id = ANY($1::uuid[])",
+                uuids,
+            )
+            attrs = {str(r["id"]): (r["birth_date"], r["gender"]) for r in rows}
+
+        # 버킷 합산 — 개별 속성은 이 루프 안에서 소멸(응답·로그 미출력)
+        table = {b: {"male": 0, "female": 0, "unknown": 0} for b in _AGE_BUCKETS}
+        for uid, total in per_user.items():
+            birth_date, gender = attrs.get(uid, (None, None))
+            bucket = _age_bucket(birth_date)
+            col = gender if gender in ("male", "female") else "unknown"
+            table[bucket][col] += total
+
+        out_rows = []
+        grand_total = 0
+        for b in _AGE_BUCKETS:
+            row = table[b]
+            row_total = row["male"] + row["female"] + row["unknown"]
+            grand_total += row_total
+            out_rows.append(
+                {
+                    "bucket": b,
+                    "male": row["male"],
+                    "female": row["female"],
+                    "unknown": row["unknown"],
+                    "total": row_total,
+                }
+            )
+
+        logger.info(
+            "[admin-points] analytics demographics done admin=%s days=%d mode=%s users=%d",
+            admin_tag, n_days, mode, len(per_user),
+        )
+        return {"rows": out_rows, "total": grand_total}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics demographics failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})

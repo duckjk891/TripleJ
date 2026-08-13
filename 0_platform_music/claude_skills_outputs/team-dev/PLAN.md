@@ -26664,3 +26664,68 @@ E2E (실발송 금지):
 - point_events 에 day 단독 인덱스 없음 — summary 오늘 집계는 스캔(현 볼륨 수용). 볼륨 증가 시 인덱스 추가는 **후속 후보**(서비스 파일 무접촉 원칙과 함께 재검토).
 - ref 임베드 사유는 40자 절단 — 전문은 감사 details 가 원본(원장은 요약 가시성 용도임을 프론트 툴팁 등으로 오해 방지).
 - credit_points False(멱등 충돌) 는 uuid8 로 사실상 불가하나 발생 시 500 처리(잔액 무접촉이므로 재시도 안전).
+
+---
+
+# v181 — 별 분석 대시보드 (/points 탭 분리 + 집계 3블록) (2026-08-13 19:20)
+
+## 0. 사전 코드 분석 (planner 직접 실측)
+
+- **인구통계 마이그레이션 위치**: `backend_9005/app/main.py:125-140` startup 블록 — `ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_year INT / gender VARCHAR(16) / region / birth_date DATE` + **birth_year→birth_date 1월1일 기준 backfill**(:137-138, idempotent). → **나이 버킷은 birth_date 단독 기준으로 충분**(birth_year 폴백 불요 — 이미 백필됨). init_postgres.sql 기본 CREATE 에는 없음(오케스트레이터 실측 정합).
+- **gender 값 도메인**: `models/user.py:7 GENDERS = {"male", "female", "other"}` + NULL(선택 입력, v125부터 가입 시 필수). 탈퇴 시 파기(auth.py:998 birth_year NULL 등).
+- **나이 계산**: `models/user.py:20 age_years(birth_date, today)` — 만 나이, 재사용.
+- **day 범위 쿼리**: point_events.day 는 KST `%Y%m%d` 고정폭 문자열 — **사전순 비교 == 날짜순**이라 `{"day": {"$gte": start_day}}` 범위 매치 유효. day 단독 인덱스 부재(v180 §5 리스크 승계 — 기간 집계는 스캔, 현 볼륨 수용·인덱스 추가는 후속 후보 유지).
+- **v180 구조**: `admin_points.py` 364줄(집계 엔드포인트 추가 여지 충분 — 신규 파일 불요), `AdminPointsPage.jsx` 450줄 — `BASE_ACTION_LABELS`(:23)·`actionLabel`(:34 — spend:/refund: 접두 분해+fallback) 내부 함수로 실재 → 분석 탭에서 재사용하려면 **named export 추가 필요**(비파괴 additive).
+- Mongo(원장)×PG(속성) 조인: 기존 앱 레벨 hydrate 패턴(`ANY($1::uuid[])` 일괄 조회 — hydrate_users :290 실측 방식) 준용.
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 엔드포인트 | `admin_points.py` 에 **3개 추가**(신규 파일 없음): `GET /analytics/daily` / `GET /analytics/breakdown` / `GET /analytics/demographics` — 공통 `days` 파라미터 **화이트리스트 {7,30,90}**(그 외 400), 시작일 = KST 오늘−(days−1) 문자열 `$gte` | 364줄 여유·동일 도메인. 화이트리스트 = 승인 UI 와 1:1 |
+| daily 응답 | `{days: [{day, earned, spent}]}` — `$match`(day 범위)→`$group`(_id=day, earned=Σ(+), spent=Σ|−|)→정렬 후 **백엔드에서 누락일 0 채움**(연속 range 보장) | 프론트 계약 단순화(막대 개수 = days 고정) |
+| breakdown 응답 | `{earn: [{action, total}], spend: [{action, total}]}` — `$facet` 2패널(earn: amount>0 group by action / spend: amount<0 group by action Σ|−|), total DESC 정렬. **action 원문 반환**(라벨링은 프론트 actionLabel 재사용) | 승인 2패널. 라벨 단일 소스 유지 |
+| demographics 응답 | `GET /analytics/demographics?days=&mode=earn|spend`(토글 — 그 외 400) → `{rows: [{bucket, male, female, unknown, total}], total}` — 버킷 5행 고정(10대/20대/30대/40대+/미상). 파이프라인: day 범위+mode 부호 match → user_id 별 Σ → **PG 일괄 조회**(`SELECT id, birth_date, gender FROM users WHERE id = ANY($1::uuid[])` — 비 uuid skip) → age_years 로 버킷·gender 매핑 후 합산 | 앱 레벨 조인(hydrate 관행). 개별 사용자 데이터는 서버 내부에서만 소멸 |
+| 미상 정의 | 나이 미상 = birth_date NULL. 성별 열은 **남(male)/여(female)/미상(NULL+other)** — 화면 각주 "미상 = 미입력·기타" 명시 | 승인 3열 구조 유지 + other(도메인 실재) 누락 없이 합계 보존 — 각주로 정직성 확보 |
+| **개인정보 강행 금지 구현** | 응답은 **버킷 합산값만**(user_id·birth_date·gender 개별값 미포함), 서버 로그도 집계 건수만(개인 속성 미로그), 프론트 콘솔 동일 | 오더 명시 — 생년월일 원문 등 노출 금지 |
+| 탭 분리 | AdminPointsPage 에 탭 상태(`운영`/`분석 대시보드`) 추가 — **v180 블록 JSX 는 운영 탭 컨테이너로 감싸기만(내용·로직 무변경)**, 분석 탭은 신규 `AdminPointsDashboard.jsx/.css` 컴포넌트 마운트 | 450줄 페이지 비대 방지 + 운영 탭 무변경 강행 금지 준수 구조 |
+| 기간 필터 | 대시보드 상단 7/30/90일 버튼(기본 **30일**) — 상태 1개로 3블록 공통 재조회 | 승인 "전 블록 연동". 30일 = 추이·분포 균형 기본값 |
+| 차트 구현 | **라이브러리 0**: ①추이 = flex 이중 막대(적립 green/소진 red, 높이 = 값/기간 내 최대값 %, **CSS hover 툴팁**(일자·수치 — ::after 또는 경량 span, title 폴백 병행)) ②분포 = 가로 비율 바 2패널(액션 라벨+%+⭐값) ③인구 = 행별 가로 스택 바(남/여/미상 구성비)+합계 ⭐+획득/소비 토글 버튼 | 사용자 합의(의존성 추가 금지) |
+| 라벨 재사용 | AdminPointsPage 의 `BASE_ACTION_LABELS`·`actionLabel` 에 **named export 추가**(운영 탭 로직 무변경) → 대시보드 import. v180 후속 후보 `signup_bonus: '가입 보너스'` 라벨 **이번에 등록**(분포 패널에 실데이터로 등장 — fallback 실증됨) | 라벨 단일 소스. 후속 후보 저비용 흡수(1줄) |
+| api.js | `getAdminPointsDaily(days)`·`getAdminPointsBreakdown(days)`·`getAdminPointsDemographics(days, mode)` 3래퍼 | 관행 |
+| 미러 | 9005 → 9004: admin_points.py 복사 | main.py 무변경(등록 기존) |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_points.py` | analytics 3 엔드포인트 추가(파일 하단 — 기존 4개 무변경) | 기존 `[admin-points]` |
+| `backend_9004/app/routes/admin_points.py` | 미러 복사 | - |
+| `frontend_admin/src/components/AdminPointsDashboard.jsx/.css` | **신설** — 기간 필터+3블록 CSS 차트 | `[AdminPointsDash]` |
+| `frontend_admin/src/pages/AdminPointsPage.jsx/.css` | 탭 스위치 추가 + 운영 탭 래핑(**v180 블록 무변경**) + 라벨 named export + `signup_bonus` 라벨 1줄 | 기존 `[AdminPoints]` |
+| `frontend_admin/src/api.js` | 래퍼 3개 | - |
+| **무변경** | points_service.py·routes/points.py·main.py·기타 페이지 | - |
+
+## 3. 작업 분담
+- **backend-dev** (선행): analytics 3 엔드포인트 — ① 공통: get_admin_user 게이트, days 화이트리스트 400, KST 시작일 계산(_kst_day 기반 timedelta) ② daily: $group 후 **파이썬에서 연속 날짜 0 채움** ③ breakdown: $facet, total DESC ④ demographics: mode 화이트리스트 400, user_id Σ → PG ANY 일괄(비 uuid skip) → age_years/GENDERS 버킷 합산(개별값 응답·로그 금지 — **로그는 admin_tag·days·mode·행 수만**) ⑤ 기존 4 엔드포인트 diff 0 유지 ⑥ 9004 미러.
+- **frontend-dev** (백엔드 후): AdminPointsPage 탭(운영 JSX 이동만 — 로직·핸들러 무변경 증빙)+export 2·라벨 1줄 → api.js 3래퍼 → AdminPointsDashboard(기간 필터 상태→3블록 병렬 로드, 추이 막대+hover 툴팁, 분포 2패널(actionLabel), 인구 스택 바+토글+각주 "미상 = 미입력·기타", 빈 데이터 상태 문구, 로딩/에러 상태). 콘솔 `[AdminPointsDash]` — 건수/기간만. eslint 신규 0.
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: **기본 전부 읽기 전용** — 집계 조회뿐. delta 검증 필요 시에만 v180 패턴 지급→동량 차감 **최소 1쌍**(테스트 계정·순변화 0). 실사용자 개인정보 비노출이 검증 대상.
+1. analytics 3 API: 200 스키마(daily days 연속 range·0 채움 / breakdown 2패널 DESC / demographics 5행 고정+total) + days 화이트리스트(8·0·음수·문자 400) + mode 화이트리스트 400 + 401/403.
+2. 정합: daily 합계(기간 내 Σearned/Σspent) == breakdown 패널 합계 == demographics total(동일 days·mode 교차 대조 — 전부 같은 원장이므로 일치해야 함). v180 summary 누적값과 부분 정합(오늘 값).
+3. delta(선택 — 쓰기 1쌍): 테스트 계정 grant N → daily 오늘 earned +N·breakdown earn 에 admin_adjust(관리자 지급) +N·demographics(해당 버킷) +N → 동량 차감 원복.
+4. **개인정보 비노출(핵심)**: 3 API 응답 전문에 user_id·birth_date·gender 개별값·이메일 부재(버킷 합산만), 서버 로그·브라우저 콘솔 동일(집계 건수 수준만).
+5. UI: /points 탭 2개 — 운영 탭 = v180 렌더·기능 그대로(회귀: 검색→조정 confirm 취소·원장·비용표), 분석 탭 = 3블록+기간 필터 전환 시 3블록 동시 재조회(7/30/90), 추이 hover 툴팁(일자·수치), 분포 라벨(signup_bonus="가입 보너스" 신규 등록 확인), 인구 토글·각주. 빈 기간(데이터 없는 구간) 안전 렌더.
+6. 회귀: v180 기존 4 엔드포인트 응답 불변(summary/balance/events/adjust 검증 경로 대표), 사용자용 points API 무변경, 9004 diff 0, **번들에 차트 라이브러리 미추가**(package.json diff 없음).
+7. 콘솔: `[AdminPointsDash]` 위생(개인 속성·닉네임·이메일 0건). eslint 신규 0.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① 운영 탭(v180 기능) 무변경 — JSX 래핑·export 추가 외 수정 금지 ② points_service.py·routes/points.py·main.py 무접촉 ③ **차트 라이브러리 도입 금지**(package.json 의존성 diff 0) ④ **개인정보 노출 금지** — 응답·화면·로그에 birth_date/gender/user_id 개별값 금지(버킷 집계만), 프론트에 원시 사용자 리스트 전달 금지 ⑤ 조정 쓰기는 delta 검증 1쌍 외 금지(테스트 계정·원복) ⑥ v177~180 금지 승계.
+- day 인덱스 부재 — 기간 집계 스캔(90일 최대). 현 볼륨 수용, 볼륨 증가 시 인덱스+사전집계 후속 후보(v180 승계).
+- demographics 는 user_id distinct 수에 비례한 PG ANY 조회 — 현 156명 규모 무해, 대규모화 시 청크 분할 후속.
+- other 성별의 "미상" 합산은 각주로 정직 표기 — 승인 3열 구조와 데이터 보존의 절충(§1).
+
+## 6. v181 정정 (planner 구현 검토, 2026-08-13)
+- **§1 라벨 재사용 문안 정정**: "AdminPointsPage named export 추가" → **`src/utils/pointsLabels.js` 신규 모듈로 추출**(+ 매트릭스에 신설 파일 1 추가). 근거: 페이지 파일의 컴포넌트 외 named export 는 eslint `react-refresh/only-export-components`(error) 위반 — frontend-dev 발견, byte-identical 추출 + `signup_bonus: '가입 보너스'` 1줄로 단일 소스 의도·운영 탭 무변경 모두 충족. 계획 측 정정으로 확정, 구현 재작업 없음.

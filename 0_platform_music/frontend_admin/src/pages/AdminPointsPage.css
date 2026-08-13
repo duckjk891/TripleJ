@@ -26,6 +26,34 @@
   margin-top: 12px;
 }
 
+/* ── 탭 (v181) ───────────────────────────────────────── */
+
+.admin-points__tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.admin-points__tab {
+  padding: 10px 18px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-sub);
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.admin-points__tab:hover {
+  color: var(--color-text);
+}
+
+.admin-points__tab--active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-primary);
+}
+
 /* ── ① 요약 카드 ─────────────────────────────────────── */
 
 .admin-points__stats {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '../components/AdminLayout';
 import AdminUserSearchDropdown from '../components/AdminUserSearchDropdown';
+import AdminPointsDashboard from '../components/AdminPointsDashboard';
 import {
   getAdminPointsSummary,
   getAdminUserPointBalance,
@@ -9,6 +10,7 @@ import {
   getPointsCosts,
 } from '../api';
 import { formatDate } from '../utils/format';
+import { actionLabel } from '../utils/pointsLabels';
 import './AdminPointsPage.css';
 
 // 별(재화) 관리 (v180) — 4블록: ①전체 요약 카드 ②사용자 검색+잔액+지급/차감 ③원장 테이블 ④비용표(읽기 전용).
@@ -19,32 +21,8 @@ const MAX_ADJUST_AMOUNT = 10000;
 const MAX_REASON_LEN = 200;
 const EVENTS_LIMIT = 20;
 
-// 기본 액션 한글 라벨 — spend:/refund: 접두는 분해 후 조합. 미등록 action 은 원문 fallback.
-const BASE_ACTION_LABELS = {
-  listen: '재생 적립',
-  download: '다운로드 적립',
-  attendance: '출석',
-  lyrics: '작사',
-  compose: '작곡',
-  cover: '커버 이미지',
-  character: '캐릭터 시트',
-  fatigue_skip: '피로 스킵',
-};
-
-function actionLabel(action) {
-  if (!action) return '-';
-  if (action === 'admin_adjust') return '관리자 지급';
-  if (action === 'spend:admin_adjust') return '관리자 차감';
-  if (action.startsWith('spend:')) {
-    const base = BASE_ACTION_LABELS[action.slice(6)];
-    return base ? `${base} 사용` : action; // 미등록 원문 fallback
-  }
-  if (action.startsWith('refund:')) {
-    const base = BASE_ACTION_LABELS[action.slice(7)];
-    return base ? `${base} 환불` : action;
-  }
-  return BASE_ACTION_LABELS[action] || action;
-}
+// 액션 한글 라벨(BASE_ACTION_LABELS·actionLabel)은 v181 에서 utils/pointsLabels.js 로 추출 —
+// 분석 대시보드와 공유하는 단일 소스. (페이지 파일 named export 는 react-refresh 규칙 위반이라 모듈 분리)
 
 // 비용표 액션 라벨 (POINT_COSTS 키 기준) — 미등록 원문 fallback
 const COST_LABELS = {
@@ -69,6 +47,9 @@ function displayName(user) {
 }
 
 export default function AdminPointsPage() {
+  // v181 — 탭: 운영(ops, v180 기존 블록) / 분석 대시보드(dash)
+  const [tab, setTab] = useState('ops');
+
   // ① 전체 요약
   const [summary, setSummary] = useState(null);
   const [summaryError, setSummaryError] = useState('');
@@ -252,6 +233,30 @@ export default function AdminPointsPage() {
       <div className="admin-points">
         <h2 className="admin-page-title">별 관리</h2>
 
+        {/* v181 — 탭 스위치: 운영(v180 블록 그대로) / 분석 대시보드 */}
+        <div className="admin-points__tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={tab === 'ops'}
+            className={`admin-points__tab ${tab === 'ops' ? 'admin-points__tab--active' : ''}`}
+            onClick={() => setTab('ops')}
+          >
+            운영
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === 'dash'}
+            className={`admin-points__tab ${tab === 'dash' ? 'admin-points__tab--active' : ''}`}
+            onClick={() => setTab('dash')}
+          >
+            분석 대시보드
+          </button>
+        </div>
+
+        {tab === 'dash' && <AdminPointsDashboard />}
+
+        {tab === 'ops' && (
+        <>
         {/* ① 전체 요약 */}
         {summaryError ? (
           <div className="admin-error">
@@ -444,6 +449,8 @@ export default function AdminPointsPage() {
             </div>
           )}
         </section>
+        </>
+        )}
       </div>
     </AdminLayout>
   );

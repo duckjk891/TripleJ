@@ -148,6 +148,17 @@ export const adjustAdminPoints = (userId, direction, amount, reason) =>
 // 비용표 — 기존 공개 엔드포인트 재사용 (StarEcon 단가 단일 소스) → { costs: {action: cost} }
 export const getPointsCosts = () => API.get('/points/costs');
 
+// 별 분석 대시보드 (v181) — 버킷 집계만 반환(개인 식별 값 없음). days 는 7|30|90 화이트리스트.
+// 일별 추이 → { days: [{day, earned, spent}] } (연속 range, 0 채움)
+export const getAdminPointsDaily = (days) =>
+  API.get('/admin/points/analytics/daily', { params: { days } });
+// 획득/소비 경로 분포 → { earn: [{action, total}], spend: [{action, total}] } (total DESC)
+export const getAdminPointsBreakdown = (days) =>
+  API.get('/admin/points/analytics/breakdown', { params: { days } });
+// 나이대×성별 집계 — mode 'earn'|'spend' → { rows: [{bucket, male, female, unknown, total}], total }
+export const getAdminPointsDemographics = (days, mode) =>
+  API.get('/admin/points/analytics/demographics', { params: { days, mode } });
+
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');

@@ -1,0 +1,314 @@
+/* 별 분석 대시보드 (v181) — 순수 CSS 차트. 관리자 다크 테마 변수 사용. */
+
+.admin-points-dash__range {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.admin-points-dash__range-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-sub);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.admin-points-dash__range-btn:hover {
+  color: var(--color-text);
+  background: var(--color-hover);
+}
+
+.admin-points-dash__range-btn--active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.admin-points-dash__section {
+  margin-bottom: 28px;
+  padding: 16px 18px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-points-dash__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 12px;
+}
+
+.admin-points-dash__loading,
+.admin-points-dash__empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--color-text-sub);
+  font-size: 0.9rem;
+}
+
+.admin-points-dash__error {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--color-danger);
+  font-size: 0.9rem;
+}
+
+.admin-points-dash__retry {
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+
+.admin-points-dash__retry:hover {
+  background: var(--color-hover);
+}
+
+/* ── 범례 ────────────────────────────────────────────── */
+
+.admin-points-dash__legend {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.admin-points-dash__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points-dash__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.admin-points-dash__dot--earn { background: #22c55e; }
+.admin-points-dash__dot--spend { background: #ef4444; }
+.admin-points-dash__dot--male { background: #3b82f6; }
+.admin-points-dash__dot--female { background: #ec4899; }
+.admin-points-dash__dot--unknown { background: #94a3b8; }
+
+/* ── ① 일별 추이 (이중 막대) ─────────────────────────── */
+
+.admin-points-dash__chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 180px;
+  padding-top: 28px; /* hover 툴팁 공간 */
+}
+
+.admin-points-dash__day {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.admin-points-dash__bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+}
+
+.admin-points-dash__bar {
+  width: 45%;
+  max-width: 14px;
+  border-radius: 2px 2px 0 0;
+  min-height: 0;
+}
+
+.admin-points-dash__bar--earn { background: #22c55e; }
+.admin-points-dash__bar--spend { background: #ef4444; }
+
+.admin-points-dash__day:hover .admin-points-dash__bar--earn { background: #4ade80; }
+.admin-points-dash__day:hover .admin-points-dash__bar--spend { background: #f87171; }
+
+/* CSS hover 툴팁 (title 폴백 병행) */
+.admin-points-dash__tooltip {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.admin-points-dash__day:hover .admin-points-dash__tooltip {
+  display: block;
+}
+
+.admin-points-dash__x-label {
+  height: 14px;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--color-text-sub);
+  text-align: center;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+/* ── ② 경로 분포 (가로 비율 바 2패널) ────────────────── */
+
+.admin-points-dash__panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .admin-points-dash__panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-points-dash__panel-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+  margin-bottom: 10px;
+}
+
+.admin-points-dash__ratio-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-points-dash__ratio-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-points-dash__ratio-label {
+  font-size: 0.85rem;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-points-dash__ratio-track {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.admin-points-dash__ratio-fill {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  min-width: 2px;
+}
+
+.admin-points-dash__ratio-fill--earn { background: #22c55e; }
+.admin-points-dash__ratio-fill--spend { background: #ef4444; }
+
+.admin-points-dash__ratio-value {
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+}
+
+/* ── ③ 나이대×성별 (스택 바) ─────────────────────────── */
+
+.admin-points-dash__demo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.admin-points-dash__demo-head .admin-points-dash__title {
+  margin-bottom: 0;
+}
+
+.admin-points-dash__mode {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-points-dash__demo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-points-dash__demo-row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-points-dash__demo-bucket {
+  font-size: 0.85rem;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.admin-points-dash__demo-track {
+  display: flex;
+  height: 16px;
+  border-radius: 6px;
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.admin-points-dash__demo-seg {
+  display: block;
+  height: 100%;
+}
+
+.admin-points-dash__demo-seg--male { background: #3b82f6; }
+.admin-points-dash__demo-seg--female { background: #ec4899; }
+.admin-points-dash__demo-seg--unknown { background: #94a3b8; }
+
+.admin-points-dash__demo-total {
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+}
+
+.admin-points-dash__footnote {
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}

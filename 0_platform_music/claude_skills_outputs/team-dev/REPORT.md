@@ -15142,3 +15142,38 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 8: 신설 4 — `frontend_admin/src/components/AdminUserSearchDropdown.jsx` `.css` `frontend_admin/src/pages/AdminPointsPage.jsx` `.css` / 수정 4 — `frontend_admin/src/App.jsx` `frontend_admin/src/api.js` `frontend_admin/src/components/AdminLayout.jsx` `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목 1줄)
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v180 append)
 - 무변경 확인: `points_service.py`·`routes/points.py`·AdminCsSendModal — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v181 — 별 분석 대시보드 (/points 탭 분리 + 집계 3블록) (2026-08-13 19:40)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+사용자 승인 설계(그림 확인) — 별 관리 페이지를 **[운영]/[분석 대시보드] 탭**으로 분리(운영=v180 무변경), 분석 탭 3블록 + 기간 필터(7/30/90일) 전 블록 연동: ①일별 적립·소진 이중 막대(hover 툴팁) ②획득/소비 경로 분포 2패널 ③나이대×성별 구성비(획득/소비 토글). 차트는 **라이브러리 없이 CSS 바**(의존성 추가 금지 합의). 9005 선구현 → 9004 미러.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **탭 분리 구조**: AdminPointsPage 에 탭 스위치만 추가하고 **v180 블록 JSX 는 운영 탭 래핑만(내부 무변경 — diff 증빙)**, 분석 탭은 신규 `AdminPointsDashboard` 컴포넌트 — 450줄 페이지 비대 방지 + 운영 무변경 강행 금지의 구조적 보장.
+- **집계 3 엔드포인트**(admin_points.py 추가, 신규 파일 없음): `GET /analytics/daily|breakdown|demographics` — days 화이트리스트 {7,30,90}(비정수 포함 400), day 는 KST 고정폭 문자열이라 사전순 `$gte` 범위 매치. daily 는 **백엔드 0 채움 연속 range**(배열 길이==days), breakdown 은 $facet 2패널(action 원문 — 라벨은 프론트 단일 소스), **spent 계열 전부 양수($abs) 규약**.
+- **개인정보 버킷 집계 원칙**: demographics 는 Mongo user_id별 Σ → PG `ANY(uuid[])` 일괄 조회(birth_date/gender) → **버킷 합산 직후 개별 속성 서버 내부 소멸** — 응답·서버 로그·콘솔 어디에도 user_id/생년월일/성별 개별값 없음(로그는 distinct 사용자 수만). 나이 버킷은 birth_date 단독(main.py:131-138 startup 마이그레이션이 birth_year→birth_date 백필 완료 실측 — 폴백 불요), `age_years` 재사용.
+- **unknown 합산 각주**: 성별 도메인 {male, female, other}+NULL vs 승인 3열(남/여/미상) — **미상 = NULL+other(+유저 미실재)** 로 합산하되 화면 각주 "미상 = 미입력·기타"로 정직 표기(합계 보존).
+- **라벨 모듈 편차 경위**: PLAN 의 "페이지 named export" 가 eslint `react-refresh/only-export-components`(error) 위반 — frontend-dev 발견, `utils/pointsLabels.js` 로 **byte-identical 추출** + v180 후속 후보 `signup_bonus: '가입 보너스'` 1줄 흡수. planner 가 PLAN §6 정정으로 승인(단일 소스 의도·운영 무변경·eslint 0 양립, 구현 재작업 없음).
+- CSS 차트: 추이=flex 이중 막대(값/기간 최대값 % 높이)+CSS 툴팁, 분포=가로 비율 바, 인구=행별 스택 바+토글. package.json 무변경.
+
+## 3. 테스트 결과 — 12/12 PASS (api 7 / unit 4 / e2e 1), 앱 픽스 사이클 0회
+- 잔액 원상(delta ±7 1쌍 원복), 유일한 쓰기 1쌍 외 전부 읽기 전용. 실사용자 무접촉.
+- 핵심 증적: 3 API 스키마(0채움 연속·DESC·5행 고정) / days·mode 화이트리스트 400+401/403 / **3 API 상호 정합 정확 일치(earn 431·spend 320 — 재실행 불요)** / delta 버킷 정밀 반영(해당 버킷만 ±N, 타 버킷 불변) / **개인정보 비노출 3면(응답 전문·서버 로그·콘솔) 0건** / v180 4 엔드포인트·사용자 points API 회귀 불변 / **package.json 무변경 확증(라이브러리 0)** / 9004 diff 0 / UI: 운영 탭 v180 라이브 회귀·분석 3블록·기간 필터 3콜/토글 1콜 effect 분리·stale 가드·각주 렌더 / E2E 읽기 전용 여정.
+- planner 판정 6건(TESTPLAN §4 블록): BASE_REV `c04f9c7` / 버킷 DB 조회 승인(REPORT 버킷명만) / 집계 잔존 허용 / 정합 재실행 1회 후 FAIL / spent 양수 / signup_bonus 실데이터 우선.
+
+## 4. 특이사항
+- **signup_bonus 분석 구조적 미등장(제품 판단 후보)**: 가입 보너스 원장 26행의 `day == "-"`(비일자 멱등 키) — 일자 범위 매치에서 **일관 제외**(정합은 유지 — 3 API 모두 동일 제외). "적립 분석에 가입 보너스 영구 미포함"이 제품 의도인지 판단 필요 — 수정 시 day 백필 또는 집계 분기 필요(**이번 범위 밖, 차기 오더 후보**).
+- **분포 패널 원문 fallback 3종 관측**: `play`/`upload`/`generate` — 라벨 미등록(fallback 정상 동작 실증). pointsLabels.js 라벨 추가 후보.
+- **외부 트래픽 관측**: 19:13 maidol_official 수동 조정 3건(사용자 v180 수동 테스트 유래 추정) — 정합 판정 무영향(비버그).
+- **delta 집계 잔존**: 테스트 grant/deduct 1쌍(±7)이 오늘 daily·breakdown·감사에 잔존(ref `adm:` 2건) — 잔액 원상, 승인 방침(§4-3). 버킷명만 기재: 테스트 계정은 미상 버킷.
+- 승계 후속 후보: point_events `day` 단독 인덱스(기간 집계 스캔 — 볼륨 증가 시), CS 모달 드롭다운 통합, tie 결정화, 필터 복제 동기화, eslint 부채 6건.
+
+## 5. 변경 파일 (커밋 대상 11)
+- 백엔드 2: `backend_9005/app/routes/admin_points.py` `backend_9004/app/routes/admin_points.py`(미러 — byte-identical 최종 실측)
+- 프론트 6: 신설 3 — `frontend_admin/src/components/AdminPointsDashboard.jsx` `.css` `frontend_admin/src/utils/pointsLabels.js`(승인 편차) / 수정 3 — `frontend_admin/src/pages/AdminPointsPage.jsx` `.css` `frontend_admin/src/api.js`
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md`(§6 정정 포함) `TESTPLAN.md` `REPORT.md` (v181 append)
+- 무변경 확인: points_service.py·routes/points.py·main.py·package.json — git status 실측, 하니스 잔재 0건.
