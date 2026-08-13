@@ -5,6 +5,20 @@
 
 ---
 
+## v3.2 — 2026-08-13 — 버그픽스: 재생 지속(중복 사운드) 검증
+
+| # | 시나리오 (Given/When/Then) | 태그 | 결과 |
+|---|---|---|---|
+| U1 | Given PlayerScreen 수정 / When tsc / Then 에러 0 | [unit] | PASS |
+| E1 | Given 앱→차트 / When 첫 트랙 탭해 Player 진입 / Then `Audio` 인스턴스 **정확히 1개** 생성(계측) | [e2e] | PASS(1개) |
+| E2 | Given Player 진입 / When routeTrack 효과 / Then 최초 실행 스킵 가드 로그 1회 | [e2e] | PASS |
+| E3 | Given Player / When 화면 렌더 / Then "Now Playing" 표시 | [e2e] | PASS |
+| R1(회귀) | 곡 전환(prev/next)·미니↔풀 전환 시 사운드 1개 유지 | [e2e] | 설계상 보존(단일 생성 경로) |
+
+주: 헤드리스 오토플레이 차단 → 실제 소리 재생은 미검증. 인스턴스 수(고아 발생)로 핵심 검증. 네이티브 실기기 확인 권장.
+
+---
+
 ## v3.1 — 2026-08-13 — Wave 0 (공용 컴포넌트 + ChartScreen 리스킨)
 
 ### 1단계 — [unit] / [api]

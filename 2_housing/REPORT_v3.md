@@ -4,6 +4,35 @@
 
 ---
 
+## v3.1 (버그픽스) — 2026-08-13 — 재생 중 일시정지/닫기 후에도 노래가 계속 재생되는 버그
+
+### 요청 작업
+"노래가 한번 재생되면 일시정지해도, 미니 플레이어 닫아도 계속 재생됨 — 우선 빨리 수정."
+
+### 근본 원인 (0단계 실측)
+`screens/PlayerScreen.tsx` mount 시 **두 useEffect가 동시에 `Audio.Sound.createAsync({shouldPlay:true})` 호출**:
+- `[]` 효과 → `loadAndPlay()` (사운드 A)
+- `[routeTrack?.id]` 효과 → 최초 실행 가드(`routeTrack.id === storeTrackId`)가 **첫 재생 시 store.track이 아직 null이라 무력화** → 사운드 B
+→ 사운드 2개 동시 재생, 하나가 **고아(orphan)**. pause/close는 추적 중인 하나(`soundRef`/`store.sound`)만 정지 → 고아 인스턴스는 계속 재생.
+
+### 수정
+`routeTrackInitRef`(useRef) 추가 → `[routeTrack?.id]` 효과의 **최초 mount 실행을 명시적으로 스킵**(초기 로드는 `[]` 효과 전담). 이후 routeTrack.id 변경 시에만 곡 교체. `[PlayerScreen]` 디버깅 로그 추가(__DEV__).
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] Player 진입당 `Audio` 생성 계측 | **1개** (버그=2, 스킵 가드 로그 1회) |
+| [e2e-web] Player 화면 진입 | PASS(Now Playing 렌더) |
+| 증적 | `/tmp/aidol_player.png` |
+
+특이: 헤드리스 브라우저는 오토플레이 차단이라 실제 소리 재생은 미검증 → **인스턴스 생성 수(고아 발생 여부)로 검증**. 네이티브 실기기 확인은 대표님 측 권장.
+
+### 커밋
+`fix: v3.1 PlayerScreen 중복 사운드 제거(일시정지/닫기 후 재생 지속 버그) (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3 (Wave 0) — 2026-08-13 — 공용 컴포넌트 라이브러리 + ChartScreen 리스킨
 
 ### 요청 작업

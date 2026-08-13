@@ -7,6 +7,26 @@
 
 ---
 
+## v3.4 — 2026-08-13 — [버그픽스] 일시정지/닫기 후 재생 지속 (우선 처리)
+
+### 요청
+"노래가 재생되면 일시정지·미니플레이어 닫기 후에도 계속 재생 — 우선 빨리 수정."
+
+### Plan verification findings (0단계)
+- `screens/PlayerScreen.tsx`: mount 시 `[]` 효과(loadAndPlay)와 `[routeTrack?.id]` 효과가 **둘 다** `Audio.Sound.createAsync({shouldPlay:true})` 실행. 후자의 가드는 첫 재생 시 store.track=null이라 무력 → **사운드 2개(고아 발생)**.
+- `components/MiniPlayer.tsx` pause/close 로직(`pauseAsync`/`cleanup→unloadAsync`)은 정상 — 단일 인스턴스 전제.
+- 결론: pause/close가 추적 인스턴스만 정지, 고아는 지속 = 신고 증상.
+
+### 계획 / 변경 매트릭스
+| 파일 | 작업 | 추적자 |
+|---|---|---|
+| `screens/PlayerScreen.tsx` | `routeTrackInitRef` 추가 → routeTrack 효과 최초 실행 스킵(중복 사운드 방지) | `[PlayerScreen]` |
+
+### 테스트 지정 (→ test-designer)
+- [e2e] Player 진입당 Audio 인스턴스 생성 수 = 1 (버그=2). [unit] tsc 0. [회귀] 곡 전환(prev/next)·미니↔풀 전환 정상.
+
+---
+
 ## v3.3 — 2026-08-13 — [보강] MAIDOL 프론트 기능 파리티(Track B) + 디자인 시스템 근거
 
 ### 요청 반영

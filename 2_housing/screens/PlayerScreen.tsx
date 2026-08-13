@@ -147,6 +147,10 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [ads, setAds] = useState<AdItem[]>([]);
   const impressionLoggedRef = useRef<Set<string>>(new Set());
   const soundRef = useRef<Audio.Sound | null>(null);
+  // 🔑 [PlayerScreen] routeTrack 효과의 "최초 mount 실행"을 건너뛰기 위한 플래그.
+  // 초기 로드는 아래 [] 효과의 loadAndPlay가 전담한다. 둘 다 createAsync({shouldPlay:true})
+  // 하면 사운드가 2개 동시에 재생되어 하나가 고아가 되고, pause/미니플레이어 닫기가 안 먹힌다.
+  const routeTrackInitRef = useRef(true);
 
   // route 전달 track은 차트/리스트의 축약 객체라 prompt/lyrics/bpm 등이 비어있을 수 있음
   // → full track을 따로 가져와 상세 화면에서 사용
@@ -332,7 +336,14 @@ export default function PlayerScreen({ route, navigation }: any) {
   // routeTrack.id가 바뀌면 새 곡으로 sound 교체
   useEffect(() => {
     if (!routeTrack?.id) return;
-    // 첫 mount는 위 useEffect가 처리. routeTrack.id가 store.track.id와 다를 때만 교체
+    // 🔑 최초 mount 실행은 스킵 — 초기 로드는 위 [] 효과의 loadAndPlay가 담당.
+    // (둘 다 createAsync 하면 사운드 2개 동시 재생 → 고아 사운드로 pause/닫기 불능)
+    if (routeTrackInitRef.current) {
+      routeTrackInitRef.current = false;
+      if (__DEV__) console.info('[PlayerScreen] routeTrack effect 최초 실행 스킵(중복 사운드 방지)');
+      return;
+    }
+    // routeTrack.id가 store.track.id와 다를 때만 교체
     const storeTrackId = usePlayerStore.getState().track?.id;
     if (routeTrack.id === storeTrackId) return;
     (async () => {
