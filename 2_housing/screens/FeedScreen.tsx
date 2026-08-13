@@ -2,7 +2,7 @@
 // 비로그인은 피드 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
 import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { View, Text, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet } from 'react-native';
+import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -10,7 +10,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
-import LoginStartButton from '../components/LoginStartButton';
+import LoginPrompt from '../components/LoginPrompt';
 
 interface FeedTrack {
   id: string;
@@ -209,12 +209,10 @@ export default function FeedScreen() {
           activeOpacity={1}
           onPress={() => setCtaVisible(false)}
         >
-          <View style={styles.loginOverlayContent}>
-            <Text style={styles.loginOverlayDesc}>
-              {'로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요'}
-            </Text>
-            <LoginStartButton onPress={goLogin} />
-          </View>
+          <LoginPrompt
+            desc={'로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요'}
+            onPress={goLogin}
+          />
         </TouchableOpacity>
       ) : null}
     </ScreenLayout>

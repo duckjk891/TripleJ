@@ -4,6 +4,37 @@
 
 ---
 
+## v3.22 (로그인 유도 화면 텍스트까지 3화면 통일 — LoginPrompt 공용화) — 2026-08-13
+
+### 요청 작업
+플레이리스트 로그인 화면의 **버튼 외 나머지 텍스트(제목·설명) 폰트**가 피드·작업실과 아직 다름 → 통일.
+
+### Plan verification findings (0단계)
+- 플레이리스트 비로그인 = 공용 `EmptyState`(제목 `callout`·tone `muted` / 힌트 `footnote`·`muted`) → 오버레이 텍스트와 크기·색상 상이.
+- 작업실/피드 오버레이 = `loginOverlayTitle`(20 bold, text.primary) + `loginOverlayDesc`(15, text.secondary). ← 통일 기준.
+
+### 수행 결과
+- **components/LoginPrompt.tsx**(신규): 아이콘(선택)·제목(선택)·설명 + `LoginStartButton`을 묶은 공용 로그인 유도 콘텐츠. 텍스트 스펙 = 제목 20/bold/primary · 설명 15/secondary/lineHeight24(작업실·피드 기준).
+- **screens/PlaylistScreen.tsx**: 비로그인 `EmptyState` → 중앙정렬 래퍼 + `<LoginPrompt icon="♫" title="나만의 플레이리스트" desc=… />`.
+- **screens/MapScreen.tsx · FeedScreen.tsx**: 오버레이 인라인 제목/설명/버튼 → `<LoginPrompt/>`(단일 소스로 수렴). 작업실=title+desc, 피드=desc.
+
+### 테스트 (tester) — PASS (E2E 폰트 측정, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 제목 폰트 동일(플레이리스트=작업실: 20px/700/#fff) | PASS |
+| [e2e] 설명 폰트 동일(15px/400/#a78bfa) | PASS |
+| [e2e] 플레이리스트 로그인 화면 룩 = 작업실/피드 | PASS (`/tmp/v322_1_playlist.png`·`v322_2_studio.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- 이제 로그인 유도 화면의 **버튼(v3.21)+제목/설명(v3.22)** 모두 `LoginPrompt`/`LoginStartButton` 단일 소스 공유 → 3화면 완전 통일, 향후 드리프트 방지.
+
+### 커밋
+`feat: v3.22 로그인 유도 텍스트까지 3화면 통일(LoginPrompt 공용화) (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.21 ("로그인하고 시작하기" 버튼 3화면 통일 — 공용 컴포넌트 추출) — 2026-08-13
 
 ### 요청 작업

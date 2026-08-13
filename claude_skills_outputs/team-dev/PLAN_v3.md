@@ -7,6 +7,25 @@
 
 ---
 
+## v3.22 — 2026-08-13 — 로그인 유도 텍스트(제목/설명)까지 3화면 통일
+
+### 요청
+플레이리스트 로그인 화면 버튼 외 텍스트 폰트가 피드·작업실과 다름 → 통일.
+
+### Plan verification findings (0단계)
+- 플레이리스트=EmptyState(callout/footnote·muted), 작업실/피드=loginOverlayTitle(20 bold primary)+Desc(15 secondary). 상이.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| components/LoginPrompt.tsx (신규) | 아이콘/제목/설명+버튼 공용 콘텐츠(통일 폰트) | — |
+| screens/PlaylistScreen.tsx | EmptyState → LoginPrompt(중앙정렬) | — |
+| screens/MapScreen.tsx·FeedScreen.tsx | 오버레이 인라인 텍스트/버튼 → LoginPrompt | — |
+
+측정: 제목 20/700/#fff, 설명 15/400/#a78bfa — 플레이리스트=작업실 동일.
+
+---
+
 ## v3.21 — 2026-08-13 — "로그인하고 시작하기" 버튼 3화면 통일
 
 ### 요청

@@ -18,7 +18,7 @@ import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { AppText, EmptyState, Button } from '../components/ui';
-import LoginStartButton from '../components/LoginStartButton';
+import LoginPrompt from '../components/LoginPrompt';
 
 interface Playlist {
   id: string;
@@ -227,12 +227,14 @@ export default function PlaylistScreen({ navigation }: any) {
       {loading ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
       ) : !user ? (
-        <EmptyState
-          icon="♫"
-          title="나만의 플레이리스트"
-          hint={'좋아하는 곡을 모아서\n나만의 플레이리스트를 만들어보세요!'}
-          action={<LoginStartButton onPress={() => navigation.navigate('Settings')} />}
-        />
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <LoginPrompt
+            icon="♫"
+            title="나만의 플레이리스트"
+            desc={'좋아하는 곡을 모아서\n나만의 플레이리스트를 만들어보세요!'}
+            onPress={() => navigation.navigate('Settings')}
+          />
+        </View>
       ) : selectedPlaylist ? (
         // 플레이리스트 상세 - 곡 목록
         <View style={{ flex: 1 }}>

@@ -34,7 +34,7 @@ import api from '../services/api';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from '../components/ui';
-import LoginStartButton from '../components/LoginStartButton';
+import LoginPrompt from '../components/LoginPrompt';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
 
@@ -647,13 +647,11 @@ export default function MapScreen({ navigation }: Props) {
           activeOpacity={1}
           onPress={() => setShowLoginOverlay(false)}
         >
-          <View style={styles.loginOverlayContent}>
-            <Text style={styles.loginOverlayTitle}>AI 음악 작업실</Text>
-            <Text style={styles.loginOverlayDesc}>
-              {'나만의 음악을 만들어서\n차트에 올려보세요!'}
-            </Text>
-            <LoginStartButton onPress={() => navigation.getParent()?.navigate('Settings')} />
-          </View>
+          <LoginPrompt
+            title="AI 음악 작업실"
+            desc={'나만의 음악을 만들어서\n차트에 올려보세요!'}
+            onPress={() => navigation.getParent()?.navigate('Settings')}
+          />
         </TouchableOpacity>
       )}
 
