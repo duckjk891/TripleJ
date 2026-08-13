@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { FiGrid, FiUsers, FiMusic, FiLogOut, FiFlag, FiMessageSquare, FiFileText } from 'react-icons/fi';
+import { FiGrid, FiUsers, FiMusic, FiLogOut, FiFlag, FiMessageSquare, FiFileText, FiStar } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { getCsUnreadCount } from '../api';
 import './AdminLayout.css';
@@ -67,6 +67,9 @@ export default function AdminLayout({ children }) {
           </NavLink>
           <NavLink to="/logs" className={({ isActive }) => `admin-nav-link ${isActive ? 'active' : ''}`}>
             <FiFileText /> 감사 로그
+          </NavLink>
+          <NavLink to="/points" className={({ isActive }) => `admin-nav-link ${isActive ? 'active' : ''}`}>
+            <FiStar /> 별 관리
           </NavLink>
         </nav>
       </aside>

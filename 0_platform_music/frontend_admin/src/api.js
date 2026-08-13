@@ -132,6 +132,22 @@ export const searchCsUsers = (q, limit) =>
 export const sendCsDirect = (userIds, text) =>
   API.post('/admin/cs/send', { user_ids: userIds, text });
 
+// 별(재화) 관리 (v180 — /points 관리자 페이지)
+// 전체 요약 → { total_balance, total_earned, total_spent, today_earned, today_spent }
+export const getAdminPointsSummary = () => API.get('/admin/points/summary');
+// 특정 사용자 잔액 → { balance }
+export const getAdminUserPointBalance = (userId) =>
+  API.get(`/admin/points/users/${userId}/balance`);
+// 특정 사용자 원장 (page/limit/filter: earn|spend|refund|admin) → { events:[{action, amount, ref, day, created_at}], pagination }
+export const getAdminUserPointEvents = (userId, params) =>
+  API.get(`/admin/points/users/${userId}/events`, { params });
+// 지급/차감 — direction 'grant'|'deduct', amount 1~10000, reason 필수(1~200자) → { balance }.
+// 401 무토큰 / 403 비관리자 / 400 유효성·잔액 부족 / 404 사용자 없음. 사유 원문은 콘솔에 출력하지 않는다.
+export const adjustAdminPoints = (userId, direction, amount, reason) =>
+  API.post('/admin/points/adjust', { user_id: userId, direction, amount, reason });
+// 비용표 — 기존 공개 엔드포인트 재사용 (StarEcon 단가 단일 소스) → { costs: {action: cost} }
+export const getPointsCosts = () => API.get('/points/costs');
+
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');

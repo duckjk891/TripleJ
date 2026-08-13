@@ -15107,3 +15107,38 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 2: `frontend_admin/src/components/AdminCsSendModal.jsx` `frontend_admin/src/components/AdminCsSendModal.css`
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v179 append)
 - **백엔드 무접촉 재확증**: git status 실측 — backend_9005/9004·dm_service.py·api.js·타 페이지 변경 0건, 하니스 잔재 0건.
+
+---
+
+# v180 — 관리자 별(재화) 관리 페이지 신설 (/points) (2026-08-13 18:59)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+사용자 승인 설계(그림 확인 완료) 4블록의 관리자 별(포인트) 관리 페이지 — 라우트 `/points`, 사이드바 7번째 "⭐ 별 관리": ①요약 카드 4(유통 잔액·누적 적립·누적 소진·오늘) ②사용자 검색+지급/차감(사유 필수·confirm·마이너스 금지) ③원장 테이블(라벨·필터·페이지네이션) ④비용표 읽기 전용. 9005 선구현 → 9004 미러.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **신규 `routes/admin_points.py` 분리**(4 엔드포인트: summary/balance/events/adjust) — admin.py 1303줄 비대, admin_cs/admin_moderation 분리 관행. main.py 등록 2줄.
+- **차감 = `spend_points` 원자성 재사용이 곧 마이너스 원천 차단**: `{balance: {$gte: amount}}` 조건부 update 실측 — 잔액 미달 시 False→400 "잔액 부족". balance 직접 조작 금지(강행 금지). 지급 = `credit_points`(이벤트 선삽입 멱등). **points_service 시그니처·본문 무접촉.**
+- **ref 사유 임베드 + 감사 전문 이원화**: point_events 에 reason 필드 없음 + 시그니처 불변 → ref=`adm:{uuid8}:{사유≤40자}`(원장 가시 + 시도별 유니크로 멱등 오차단 방지 — 동일 사유 연속 지급 성공 보장), 전문은 감사 `points_adjust` details(direction/amount/reason/ref/balance_after). 원장 기록: 지급 `admin_adjust`/+n, 차감 `spend:admin_adjust`/−n(서비스 접두 자동 부여 실측).
+- **공용 `AdminUserSearchDropdown` 신설**: 검색은 v178 브라우즈 엔드포인트 재사용, UI 는 v179 검증 패턴 이식(focus/click 트리거·blur 금지·outside mousedown·height 고정) — 단일 선택(선택 시 닫힘). **AdminCsSendModal 무접촉**(안정 코드 보호 — 모달 통합은 후속 후보).
+- **짝 항목 관행 첫 적용**: 신규 감사 action `points_adjust` 의 AdminLogsPage ACTION_META 라벨("별 조정")을 매트릭스에 짝 항목으로 명기(v177 픽스 재발 방지) — 이번 픽스 0회의 직접 요인.
+- events 필터 매핑: admin={admin_adjust, spend:admin_adjust} / spend=`^spend:` 제외 spend:admin_adjust / refund=`^refund:` / earn=amount>0·refund·admin_adjust 제외. amount 는 `Any`+수동 검증(비정수도 400 계약 — pydantic 422 회피).
+
+## 3. 테스트 결과 — 18/18 PASS (api 9 / unit 8 / e2e 1), 앱 픽스 사이클 0회
+- **조정 순변화 0 입증**: 최종 balance == B0(50), admin 계열 원장 7행 합계 0. 실사용자 무접촉·CS 발송류 호출 0건.
+- 핵심 증적: summary 5필드+delta 정확 일치(완화 절차 미발동) / 신규 4 엔드포인트 401/403 / grant→원장(ref `adm:` 접두+사유 임베드)→deduct 원복+감사 2행 / 검증 스윕 전건 400/404 정합(**비정수 400, 422 관측 0** — Any 수동 검증) / **잔액 초과 차감 400+잔액 불변(원자성 핵심)** / 동일 사유 연속 지급 2회 성공(ref uuid8 유니크 — 멱등 오차단 없음) / 필터 4종 매핑 정합(earn 에 admin_adjust 부재 확정) / 사용자용 points 3 API 무변경+admin_adjust 행 사용자 뷰 정상 노출 / 9004 diff 0 / UI: 7번째 NavLink·4블록·비용표 읽기 전용·단일 선택 드롭다운(v179 패턴 회귀)·조정 후 잔액·요약·원장 3자 갱신·**"별 조정" 짝 항목 라벨 렌더** / E2E 풀 여정 원복 완결 / 콘솔 위생 0(사유 원문 미출력).
+- planner 판정 5건(TESTPLAN §4 블록): delta 정확+완화 절차 / 비정수 400 / fallback 코드 리뷰 갈음(원장 INSERT 금지) / earn 제외 / BASE_REV `4f52f16`.
+
+## 4. 특이사항
+- **잔존 테스트 데이터(정상 — 감사·원장 무결성상 미삭제)**: TEST_USER_1 원장 admin 계열 7행(합계 0) + 감사 `points_adjust` 7행. 잔액 원상(50).
+- **개선 후보(비차단)**: ① `signup_bonus` 원장 라벨 미등록 — fallback(원문+gray) 실증됨, **"가입 보너스" 라벨 추가 후보** ② point_events `day` 단독 인덱스 부재 — summary 오늘 집계 스캔(현 볼륨 수용, 볼륨 증가 시 후속) ③ AdminCsSendModal 의 공용 드롭다운 통합(v179 안정 코드 보호로 이번엔 무접촉).
+- 감사 details 에 `balance_after` 추가 필드 — PLAN 명세(direction/amount/reason/ref) 대비 정보성 초과분(tester 관찰). 조정 후 잔액 추적에 유용해 **채택 유지**(비파괴 additive).
+- 드라이버 셀렉터 오판 1회 재판정 — 비버그(앱 픽스 0회 유지).
+- 승계 후속 후보: `ORDER BY nickname, id` tie 결정화 / search_users↔브라우즈 필터 복제 동기화 / eslint 부채 6건.
+
+## 5. 변경 파일 (커밋 대상 15)
+- 백엔드 4: `backend_9005/app/routes/admin_points.py`(신설) `backend_9005/app/main.py` + 9004 동일 2파일(미러 — byte-identical 최종 실측)
+- 프론트 8: 신설 4 — `frontend_admin/src/components/AdminUserSearchDropdown.jsx` `.css` `frontend_admin/src/pages/AdminPointsPage.jsx` `.css` / 수정 4 — `frontend_admin/src/App.jsx` `frontend_admin/src/api.js` `frontend_admin/src/components/AdminLayout.jsx` `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목 1줄)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v180 append)
+- 무변경 확인: `points_service.py`·`routes/points.py`·AdminCsSendModal — git status 실측, 하니스 잔재 0건.

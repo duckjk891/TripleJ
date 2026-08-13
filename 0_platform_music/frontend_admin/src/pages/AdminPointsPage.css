@@ -1,0 +1,334 @@
+/* AdminPointsPage — 별(재화) 관리. AdminLogsPage 관행을 따르는 standalone 스타일. */
+
+.admin-points {
+  max-width: 1100px;
+}
+
+.admin-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--color-text);
+}
+
+.admin-loading,
+.admin-error {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--color-text-sub);
+}
+
+.admin-error {
+  color: var(--color-danger);
+}
+
+.admin-error .admin-btn {
+  margin-top: 12px;
+}
+
+/* ── ① 요약 카드 ─────────────────────────────────────── */
+
+.admin-points__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+@media (max-width: 900px) {
+  .admin-points__stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.admin-points__stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-points__stat-label {
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points__stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+/* ── 섹션 공통 ───────────────────────────────────────── */
+
+.admin-points__section {
+  margin-bottom: 28px;
+}
+
+.admin-points__section-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 12px;
+}
+
+/* ── ② 검색 + 조정 폼 ────────────────────────────────── */
+
+.admin-points__search-row {
+  max-width: 420px;
+  margin-bottom: 12px;
+}
+
+.admin-points__user-card {
+  padding: 16px 18px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-points__user-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.admin-points__user-name {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.admin-points__user-balance {
+  font-size: 0.95rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points__user-balance strong {
+  color: var(--color-text);
+  font-size: 1.1rem;
+}
+
+.admin-points__adjust-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-points__direction {
+  display: flex;
+  gap: 12px;
+}
+
+.admin-points__radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--color-text-sub);
+  cursor: pointer;
+}
+
+.admin-points__radio input {
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+.admin-points__amount {
+  width: 110px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.admin-points__reason {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.admin-points__amount:focus,
+.admin-points__reason:focus {
+  border-color: var(--color-primary);
+}
+
+.admin-points__submit {
+  padding: 8px 20px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.admin-points__submit:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.admin-points__submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-points__notice {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--color-danger);
+}
+
+/* ── ③ 원장 ──────────────────────────────────────────── */
+
+.admin-points__ledger-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.admin-points__ledger-head .admin-points__section-title {
+  margin-bottom: 0;
+}
+
+.admin-points__filter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points__select {
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.admin-points__nowrap {
+  white-space: nowrap;
+}
+
+.admin-points__amount-pos {
+  color: #22c55e;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-points__amount-neg {
+  color: #ef4444;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-points__ref-cell {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-sub);
+}
+
+/* ── ④ 비용표 ────────────────────────────────────────── */
+
+.admin-points__costs {
+  max-width: 420px;
+}
+
+/* ── 테이블/버튼/페이지네이션 (standalone 공용 스타일) ── */
+
+.admin-table-wrap {
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-table--full {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.admin-table--full th {
+  text-align: left;
+  padding: 12px 14px;
+  color: var(--color-text-sub);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.admin-table--full td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-table--full tbody tr:hover {
+  background: var(--color-hover);
+}
+
+.admin-table--full tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-btn:hover {
+  background: var(--color-hover);
+}
+
+.admin-btn--small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-empty {
+  text-align: center;
+  color: var(--color-text-sub) !important;
+  padding: 20px 14px !important;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.admin-pagination__info {
+  font-size: 0.9rem;
+  color: var(--color-text-sub);
+}

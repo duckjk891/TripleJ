@@ -1427,3 +1427,181 @@
 - 2026-08-13 초판 작성 (9건) — PLAN v179 §4 항목 1~7 전부 시나리오화(§4-1→DD-UNIT-01, §4-2→DD-UNIT-02, §4-3→DD-UNIT-03, §4-4→DD-UNIT-04, §4-5→DD-UNIT-05, §4-6→DD-UNIT-06, §4-7→DD-API-01·DD-UNIT-07·DD-E2E-01). blur 씹힘 회귀는 DD-UNIT-05 행동 수준(첫 클릭 성공)으로, 레이아웃 시프트·높이 고정은 rect 실측(±1px)으로 판정. 허용 오차·소형 뷰포트 스팟체크·BASE_REV·Esc 기본 동작 4건 planner 회신 대기(§4).
 - 2026-08-13 planner 판정 반영 — §4 판정 블록 4건 확정(±1px 확정 / 소형 뷰포트 스팟체크 DD-UNIT-03 보조 편입(비차단) / BASE_REV `c662064` 워킹트리 diff 고정 / Esc 현행 무동작 유지 — 닫힌 상태 리스너 부재 diff 실측). §0·DD-API-01·DD-UNIT-03 문안 3곳 고정. 보류 0건 — tester 착수 가능(1단계+E2E 한 흐름 승인).
 - 2026-08-13 실행 9/9 PASS 후 마이크로픽스 1건 planner 승인 — tester UX 관찰(비차단): **Esc 닫기 후 input focus 잔존 상태에서 재클릭 시 재오픈 불가**(트리거 onFocus 단일 — focus 이벤트 미재발생). 사용자 원 요구 "클릭하거나 터치하면 리스트가 나오게" 문언상 요구 위반 소지 → v179 범위 포함 확정. 픽스: input `onClick={() => setDropdownOpen(true)}` 1줄 보강(onFocus 유지 — 최초 클릭 시 focus·click 이 동일 true 세팅이라 상태 전이 1회 = **이중 fetch 없음**, effect 는 dropdownOpen 전이에만 발화). 재검증 범위(오케스트레이터 실행): ① Esc 닫기 → (focus 유지 상태) input 재클릭 → 재오픈+브라우즈 재호출 1회 ② 회귀 — 최초 focus/클릭 시 요청 1회(이중 호출 없음), 바깥 클릭 닫힘·첫 클릭 선택 불변(DD-UNIT-05/06 스모크).
+
+# v180 — 관리자 별(재화) 관리 페이지 신설 (/points) (2026-08-13 18:35)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전)
+근거: PLAN.md v180 §0 실측(point_events 유니크 인덱스·spend_points 원자 차감·credit_points 멱등·ref 임베드 `adm:{uuid8}:{사유≤40}`), §1 설계 결정, §4 테스트 항목 1~8, §5 강행 금지 8항·리스크 3건
+대상: backend_9005 `routes/admin_points.py` 신설(summary/balance/events/adjust) + main.py 2줄(9004 미러) / frontend_admin AdminUserSearchDropdown·AdminPointsPage 신설 + App/Layout/api.js/AdminLogsPage 라벨 1줄. **points_service.py·routes/points.py·AdminCsSendModal 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **조정 실측은 테스트 계정(`bcast_user_test_*`)만** — 실사용자 UUID 절대 금지. **모든 지급은 동량 차감으로 잔액 원복 필수**(시나리오별 grant/deduct 짝 명시, 종료 시 잔액 == 시작 잔액 검증). 원장(point_events)·감사(admin_logs) 행은 삭제 불가 잔존이 정상 — REPORT 에 생성 내역(행 수·ref·시각 범위) 기재.
+- **조정 외 쓰기 없음**. CS 지정발송·브로드캐스트는 이번 범위 밖 — **호출 자체 금지**(CS 모달 회귀 스모크는 선택 단계까지, send/broadcast POST 0건 네트워크 확인).
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN` / `USER_TOKEN`(=TEST_USER_1 로그인) / `TEST_USER_1_ID`·code — v177~179 방식, 실값 기재 금지. `GHOST_UUID` = 형식 유효·미존재(사전 404 확인). 조정 수량 `N` = 7(식별 용이한 소액), 사유 = `"v180 테스트 지급(원복 예정)"` 계열 — 민감정보 없는 고정 문구.
+- 강행 금지(PLAN §5): points_service.py·routes/points.py 무접촉(git diff 검증 — PT-API-08), 마이너스 잔액 불가(PT-API-05 가 핵심 검증), 비용표 읽기 전용(수정 UI 부재 확인), AdminCsSendModal 무접촉(PT-UNIT-07 스모크), 사유는 감사 details 저장 허용·**콘솔 미출력**(PT-UNIT-08).
+- 환경: 9005·9004, Mongo(point_*), PG(users), frontend_admin Vite dev(4001). 추적자 `[admin-points]`·`[AdminPoints]`·`[AdminUserSearch]`·`[AdminLogs]`.
+- summary delta 판정 전제(planner 확정 §4-1): 기본은 정확 delta(±N) 판정하되 **호출 창 최소화**(grant/deduct 직전·직후 연속 호출, 수 초 내). 이 dev 환경은 사용자 수동 테스트 간헐 발생 이력(07:20 브로드캐스트 전례) — 불일치 관측 시 1회 재실행, 재차 불일치면 "TEST_USER_1 balance·원장 반영 확인"으로 **완화 판정(FAIL 아님)** + 외부 트래픽 관측 사실 비고 기재.
+
+## 1. [api] 시나리오 — admin_points 4 엔드포인트 (기본 대상 9005)
+
+### PT-API-01. summary 200 — 5필드 정합 + 조정 delta 검증 [api] — 핵심
+- Given: `ADMIN_TOKEN`. PT-API-03 실행 전후에 각 1회 호출하도록 배치
+- When: `GET /api/admin/points/summary` 호출하면
+- Then: HTTP 200 — `{total_balance, total_earned, total_spent, today_earned, today_spent}` 5필드 전부 숫자(음수 아님·빈 컬렉션이어도 0 방어). 정합: `total_balance` 가 TEST_USER_1 잔액 변화를 반영 —
+  - **delta 검증**: PT-API-03 의 grant +N 직후 재호출 시 `total_balance`·`total_earned`·`today_earned` 가 각 **+N**, deduct −N 원복 후 `total_balance` 원상·`total_spent`/`today_spent` **+N** — 호출 창 최소화·불일치 시 §0 완화 절차(재실행 1회 → balance·원장 반영 확인으로 완화 판정+비고)
+  - today_* 는 KST 기준 오늘 집계(자정 경계 실행 회피 — 실행 시각 기록)
+
+### PT-API-02. 신규 엔드포인트 401·403 [api]
+- Given: 토큰 없음 / `USER_TOKEN`
+- When: ① 4 엔드포인트(summary / `users/{TEST_USER_1_ID}/balance` / `users/{TEST_USER_1_ID}/events` / adjust 유효 body) 각각 무토큰 호출 ② summary·adjust 2종을 `USER_TOKEN` 으로 호출하면
+- Then: ① 전부 HTTP 401 ② 전부 HTTP 403 — 특히 **adjust 는 비관리자 403**(파괴 API 게이트 최우선). 403 케이스의 잔액 불변 확인(발동 0건).
+
+### PT-API-03. adjust 정상 흐름 — grant +N → 원장 → deduct −N 원복 [api] — 핵심 (쓰기: grant N + deduct N, 순변화 0)
+- Given: `ADMIN_TOKEN`, `TEST_USER_1_ID`. 사전 기록: `GET /users/{id}/balance` → `B0`, `GET /admin/logs?action=points_adjust` total(`P0`)
+- When: ① `POST /api/admin/points/adjust` `{user_id, direction:"grant", amount:N, reason:"v180 테스트 지급(원복 예정)"}` → ② balance·events 조회 → ③ 동일 body 로 `direction:"deduct"`(사유 "v180 테스트 차감(원복)") → ④ 재조회하면
+- Then:
+  - ① 200 + 응답 `{balance}` == B0+N ② balance == B0+N. events 최신 행: `action=="admin_adjust"`, `amount==+N`, **ref `adm:` 접두 + uuid8 + 사유(≤40자) 임베드**, day==KST 오늘
+  - ③ 200 + balance == **B0(원상)** ④ events 최신 행: `action=="spend:admin_adjust"`(서비스 접두 자동 부여 실측 정합), `amount==−N`
+  - 감사: `?action=points_adjust` total == P0+2 — 각 행 target_type=user·target_id=TEST_USER_1_ID, details == `{direction, amount, reason(원문), ref}` — 토큰·이메일 등 **비밀값 없음**(reason 저장은 허용 사양)
+  - PT-API-01 delta 와 교차 정합
+
+### PT-API-04. adjust 입력 검증 — 400/404 스윕 (비파괴) [api]
+- Given: `ADMIN_TOKEN`, 사전 balance 기록
+- When: ① user_id="not-a-uuid" ② user_id=GHOST_UUID(실재 검증) ③ direction="gift"(미정의) ④ amount: 0 / −1 / 10001 / 1.5(비정수) ⑤ reason: 누락 / 공백만 / 201자 — 각각 호출하면
+- Then: ① 400 ② **404**(uuid 형식 통과 후 users 실재 검증 — 검증 순서 정합) ③ 400 ④ 전부 **400 확정**(§4-2 — 구현 실측: `AdjustBody.amount: Any`(:51) + 수동 `isinstance(int)`·bool 거부 검증이라 1.5 도 pydantic 422 없이 400 도달. 422 관측 시 FAIL) ⑤ 전부 400(trim 1~200). **전 케이스 잔액·원장·감사 무변화**(발동 0건 — balance 재조회로 확인).
+
+### PT-API-05. 잔액 초과 차감 400 — spend_points 원자성 [api] — 핵심
+- Given: `ADMIN_TOKEN`, TEST_USER_1 현재 잔액 `B` 조회
+- When: `direction:"deduct", amount:B+1`(단 B+1 ≤ 10000 — 초과 시 amount 상한 내 시나리오로 조정: 잔액을 0 근처로 만든 뒤 1 차감 등) 호출하면
+- Then: HTTP **400 "잔액 부족"** 계열 — **balance == B 불변**(마이너스 잔액 원천 불가 — `{balance:{$gte:amount}}` 원자 필터 실측 정합). 원장·감사에 행 미생성. 보조(코드 리뷰): balance 직접 `$inc/$set` 우회 코드 부재(강행 금지 ④).
+
+### PT-API-06. 동일 사유 연속 지급 — ref 유니크·멱등 오차단 없음 [api] — (쓰기: grant N×2 + deduct 2N, 순변화 0)
+- Given: `ADMIN_TOKEN`, balance `B0` 기록
+- When: **동일 reason·동일 amount(N)** 로 grant 를 즉시 2회 연속 호출 → 이후 deduct 2N 1회(원복)하면
+- Then: 2회 모두 **200 성공**(ref 의 uuid8 이 시도별 유니크 — (user, action, ref, day) 멱등 유니크 인덱스와 충돌 없음, DuplicateKey 500 미발생), balance == B0+2N → 원복 후 B0. 원장에 admin_adjust +N 2행(ref 상이) + spend:admin_adjust −2N 1행. 감사 points_adjust 3행 증가.
+
+### PT-API-07. events — 필터 4종 매핑·클램프·타 사용자 미혼입 [api] — 핵심
+- Given: `ADMIN_TOKEN`. PT-API-03/06 이후(admin_adjust ±행 실재), TEST_USER_1 에 기존 적립/소진 행 유무 확인
+- When: `GET /users/{TEST_USER_1_ID}/events` 를 ① 무필터 ② `filter=admin` ③ `filter=spend` ④ `filter=refund` ⑤ `filter=earn` ⑥ `limit=0`/`limit=999`/`page=0` 으로 각각 호출하면
+- Then:
+  - ① 200 — 행 `{action, amount, ref, day, created_at}` + pagination(v176 형식), created_at DESC, **전 행이 TEST_USER_1 것만**(타 사용자 미혼입 — 다른 테스트 계정 행 부재로 판정)
+  - ② **admin_adjust 와 spend:admin_adjust 만**(이번 생성분 전부 포함) ③ `^spend:` 중 **spend:admin_adjust 제외** ④ `^refund:` 만(부재 시 0건 정상) ⑤ earn 매핑 — **admin_adjust 제외 확정**(§4-4 — `_EVENT_FILTERS["earn"]` 에 `$ne: "admin_adjust"` 코드 실측): earn 결과에 admin_adjust·refund:·spend: 계열 부재, 적립 원액션(amount>0)만
+  - ⑥ 클램프 — limit 0→1, 999→**100**, page 0→1 (전부 200)
+
+### PT-API-08. 회귀 — 사용자용 points API 무변경 + git diff [api] — 회귀 핵심
+- Given: `USER_TOKEN`(TEST_USER_1), 구현 브랜치. `BASE_REV` = **v179 커밋 `4f52f16`** (== 현재 HEAD, planner git log 실측 확정 §4-5 — v180 변경분은 워킹트리 미커밋)
+- When: ① `GET /api/points/costs`(무토큰 공개) ② `GET /api/points/balance` ③ `GET /api/points/history` 를 `USER_TOKEN` 으로 호출 ④ `git diff 4f52f16 --name-only` (워킹트리 diff) 실행하면
+- Then: ①~③ 200 — 기존 스키마 그대로(costs 액션·단가 불변, balance 가 PT-API-03 원복 후 값과 일치 — 사용자 뷰와 관리자 뷰 정합), history 에 admin_adjust ±행이 **사용자에게도 정상 노출**(원장 공유 — 이상 렌더·500 없음) ④ 변경 파일 목록에 **points_service.py·routes/points.py 부재**, 변경분이 PLAN §2 매트릭스와 정확 일치(초과 파일 출현 시 즉시 중단·planner 보고).
+
+### PT-API-09. 9004 미러 — 2파일 diff 0 + 대표 케이스 [api] — 미러 규칙
+- Given: 9004 기동, `ADMIN_TOKEN`·`USER_TOKEN`
+- When: ① `diff backend_9005/app/routes/admin_points.py backend_9004/app/routes/admin_points.py` + main.py 상호 diff ② **9004** summary 를 `ADMIN_TOKEN`(200)·`USER_TOKEN`(403) 으로 각 1회 호출하면
+- Then: ① admin_points.py diff **0**, main.py 는 기존 미러 예외(`_logs.py` 파일명) 외 diff 없음 ② 9005 와 동일 판정. **9004 에 adjust 호출은 하지 않음**(쓰기 중복 회피 — diff 0 으로 갈음).
+
+## 2. [unit] 시나리오 — AdminPointsPage·검색 드롭다운 (브라우저 하니스, 4001 dev)
+
+### PT-UNIT-01. /points 진입 — 사이드바 7번째·4블록·비용표 [unit] — 핵심
+- Given: 관리자 로그인
+- When: 사이드바 7번째 메뉴 **"별 관리"**(FiStar) 클릭하면
+- Then: `/points` 진입 + active 하이라이트(기존 6개 NavLink 무손상), 4블록 렌더 — ①요약 카드 4(summary 값과 일치) ②검색+조정 폼 ③원장 영역(선택 전 상태) ④비용표: `GET /api/points/costs` 기반 5행(작사/작곡/커버/캐릭터/피로스킵 라벨 + ⭐단가) **읽기 전용**(수정 입력·버튼 부재 — 강행 금지 ③). 콘솔 신규 에러 0건.
+
+### PT-UNIT-02. 검색 드롭다운 — 단일 선택·선택 시 닫힘 (v179 패턴 회귀) [unit] — 핵심
+- Given: `/points` 진입 상태
+- When: ① 검색 input focus → ② 타이핑 축소 → ③ 테스트 계정 항목 **첫 클릭** → ④ 재focus → ⑤ 바깥 mousedown / Esc 하면
+- Then: ① 브라우즈 1회+드롭다운 표시(height 고정·오버레이 — v179 판정 기준 준용) ② 300ms 디바운스·자연 축소 ③ **첫 클릭 선택 성공(씹힘 없음) + 드롭다운 즉시 닫힘**(CS 모달의 다중선택 유지와 달리 **단일 선택 사양**) + input 에 `닉네임#code` 표시 + **잔액 자동 표시**(balance API 호출 1회) ④ 재오픈·재호출 ⑤ 닫힘 / 드롭다운만 닫힘. `[AdminUserSearch]` 신규 컴포넌트가 v179 검증 패턴(blur 금지)을 계승함을 행동 수준으로 확인.
+
+### PT-UNIT-03. 조정 폼 검증·confirm 문안 [unit]
+- Given: 테스트 계정 선택된 상태
+- When: ① 사유 빈 값으로 지급 시도 ② 수량 0/미입력 시도 ③ 유효 입력 후 지급 클릭 → confirm 에서 **취소** 하면
+- Then: ①② 클라이언트 차단(안내 표시) — **네트워크 adjust POST 0건** ③ `window.confirm` 문안에 **대상 `닉네임#code`·방향(지급/차감)·수량·사유** 전부 명시, 취소 시 POST 0건·상태 불변.
+
+### PT-UNIT-04. 조정 성공 — 잔액·요약·원장 3자 갱신 [unit] — 핵심 (쓰기 — PT-E2E-01 과 동일 세션 겸측 권장)
+- Given: 테스트 계정 선택, 사전 잔액 표시값 기록
+- When: 지급 N confirm **수락** → (검증 후) 동량 차감 confirm 수락(원복)하면
+- Then: 성공 안내 후 **3자 동시 갱신** — ① 잔액 표시 +N ② 요약 카드(total/today) delta 반영 ③ 원장 테이블 최상단에 admin_adjust 행(수동 새로고침 불요). 차감 원복 후 3자 원상+spend:admin_adjust 행. 실패(400) 시 사유 표시 경로는 잔액 초과 차감 1회로 확인(서버 400 메시지 렌더 — PT-API-05 재사용, 추가 쓰기 없음).
+
+### PT-UNIT-05. 원장 렌더 — 라벨·증감 색·fallback·필터 버튼 [unit]
+- Given: TEST_USER_1 원장 표시 상태(admin_adjust ±행 실재)
+- When: 원장 테이블과 필터 버튼(전체/earn/spend/refund/admin)을 확인·전환하면
+- Then: `admin_adjust`→**"관리자 지급"**·+N green / `spend:admin_adjust`→**"관리자 차감"**·−N red, ref(`adm:` 접두+사유 가시)·day·시각 formatDate 렌더. 필터 전환 시 재조회+매핑 결과 일치(PT-API-07 정합)+페이지네이션 동작. 미등록 액션 fallback(원문+gray)은 **코드 리뷰 갈음 확정**(§4-3 — 원장 직접 INSERT 는 오염이라 금지) — 기존 listen/attendance 등 행이 있으면 등록 라벨 실측 병행.
+
+### PT-UNIT-06. 감사 짝 항목 — /logs "별 조정" 라벨 [unit] — 핵심 (v177 재발 방지)
+- Given: PT-API-03/06 실행 후(points_adjust 행 실재), `/logs` 진입
+- When: action 필터에서 points_adjust 행을 표시하면
+- Then: **"별 조정" 라벨+배지**로 렌더(gray fallback 아님 — ACTION_META 등록 확인, 짝 항목 검증), 대상 셀 `사용자 닉네임#code` Link+title=uuid(v177 기능 회귀), details 요약에 사유 노출은 허용 사양(콘솔 미출력과 구분). action 필터 select 에 항목 노출 여부 보조 확인.
+
+### PT-UNIT-07. 회귀 스모크 — CS 모달 무변경·기존 7페이지 [unit]
+- Given: 관리자 로그인
+- When: ① `/cs` "✉️ 지정 발송" 모달 — focus 오픈→첫 클릭 선택(**다중선택 유지** — v179 동작)→바깥 클릭 닫힘→모달 닫기(발송 시도 없음) ② 대시보드/사용자/트랙/신고/CS/감사 로그/사용자 상세 등 기존 페이지 순회하면
+- Then: ① v179 판정 기준 그대로(공용 드롭다운 신설이 AdminCsSendModal 을 건드리지 않음 — git diff 부재는 PT-API-08 ④ 겸측) + **send/broadcast POST 0건** ② 전 페이지 정상 렌더+사이드바 7개 체제에서 기존 6개 무손상. 콘솔 신규 에러 0건.
+
+### PT-UNIT-08. 콘솔 위생 [unit] — 마감
+- Given: PT-UNIT-01~07 수행 세션 콘솔(+adjust 실패 1회 포함됨 — PT-UNIT-04)
+- When: 콘솔 전체에서 ① **사유 원문** ② 닉네임 ③ `@test.invalid` 를 검색하면
+- Then: `[AdminPoints]`·`[AdminUserSearch]` 포함 전부 **0건** — 로그는 건수/길이(reason_len 등)/status 수준만. adjust 요청 body 덤프 미출력.
+
+## 3. [e2e] 시나리오 — 1건 (행동 수준)
+
+### PT-E2E-01. 풀 여정 — 검색→지급 수락→3자 확인→감사→동량 차감 원복 [e2e] — 핵심 (쓰기: grant N + deduct N, 순변화 0 — 테스트 계정만)
+- Given: 관리자 앱(4001) 테스트 관리자 로그인. 대상 = TEST_USER_1 만(confirm 문안에서 `닉네임#code` 최종 대조 — 불일치 시 즉시 취소·FAIL)
+- When: 사이드바 "별 관리" → 검색 input focus → `bcast_user_test` 타이핑 → 대상 선택(드롭다운 닫힘·잔액 표시) → 지급 N·사유 입력 → confirm **수락** → 잔액 +N 갱신 확인 → 원장에 "관리자 지급" +N 행 확인 → "감사 로그" 이동 → points_adjust 행 **"별 조정" 라벨+닉네임#code** 확인 → `/points` 복귀 → **동량 차감 N** confirm 수락 → 잔액 원상·"관리자 차감" −N 행 확인하면
+- Then: 전 단계 정상 전이·콘솔 신규 에러 0건·**종료 잔액 == 시작 잔액**(원복 완결). PT-UNIT-04 와 동일 세션 겸측 가능(쓰기 중복 최소화 — 겸측 시 결과표 비고 기재).
+- 증적: 선택+잔액·confirm·지급 후 3블록·감사 로그 행·차감 원복 후 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **summary delta 판정 전제**: dev DB 단독 사용(동시 적립/소진 트래픽 없음) 전제로 total/today delta == ±N 정확 일치 판정 — 동시 트래픽 가능 환경이면 "TEST_USER_1 balance 반영 확인"으로 완화 필요. 전제 확정 회신.
+2. **비정수 amount 상태 코드**: 1.5 등은 FastAPI 타입 강제 시 422 가능 — PLAN 은 400 계열 명시. 구현 확정 후 400/422 기대값 통일(v177 §6-7 동일 이슈).
+3. **원장 미등록 액션 fallback 실측**: point_events 직접 INSERT 는 원장 오염이라 지양 — 실 미등록 행 부재 시 **라벨 맵 코드 리뷰 갈음**으로 설계(PT-UNIT-05). 임시 행 방식 요구 시 회신(admin_logs 와 달리 원장은 원복 DELETE 도 감사성 훼손 소지).
+4. **earn 필터의 admin_adjust 포함 여부**: PLAN §1 매핑은 `earn=나머지(amount>0)` — admin_adjust(+) 가 admin 필터 전용인지 earn 에도 잡히는지 모호. 구현 확정 후 PT-API-07 ⑤ 기대값 고정 요청.
+5. **BASE_REV**: git diff 기준(v179 종료 커밋 해시)을 backend-dev/frontend-dev 완료 보고에서 tester 에 전달(관행 — v178 §4-5·v179 §4-3 동일).
+
+### planner 판정 (2026-08-13, 5건 전부 확정 — 해당 문안 반영 완료)
+
+1. **summary delta — 정확 판정 유지 + 완화 절차 병기.** dev 환경에 사용자 수동 테스트 간헐 발생 이력(07:20 전례)이 있어 무조건 정확 일치를 강제하면 위양성 FAIL 위험 → 호출 창 최소화(직전·직후 연속 호출) 기본 + 불일치 시 1회 재실행 → 재차 불일치면 balance·원장 반영 확인으로 완화 판정(FAIL 아님)+외부 트래픽 비고. §0·PT-API-01 반영.
+2. **비정수 amount 400 확정.** 코드 실측: `AdjustBody.amount: Any`(admin_points.py:51 — "pydantic 422 회피" 주석) + 수동 `isinstance(int)`·bool 명시 거부 → 1.5/true 전부 400 도달. 422 관측 시 FAIL.
+3. **원장 미등록 액션 fallback — 코드 리뷰 갈음 확정.** point_events 직접 INSERT 는 재화 원장 오염(DELETE 원복도 감사성 훼손 소지 — admin_logs 임시 행과 달리 금전 기록) → 금지. 라벨 맵+fallback 분기 코드 리뷰 + 실재 등록 액션 행 실측 병행으로 충분.
+4. **earn 필터 admin_adjust 제외 확정.** `_EVENT_FILTERS["earn"]` = `{amount>0, action: {$not: ^refund:, $ne: admin_adjust}}` 코드 실측 — PT-API-07 ⑤ 기대값 고정(관리자 지급은 admin 필터 전용).
+5. **BASE_REV = `4f52f16`** (v179 커밋 — planner git log 실측: 현재 HEAD, v180 워킹트리 미커밋). PT-API-08 을 `git diff 4f52f16 --name-only` 로 고정.
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. 사전: TEST_USER_1 잔액 `B0`·`P0`(points_adjust total) 기록, GHOST_UUID 404 확인
+2. PT-API-02 (401/403 — 비파괴 선행) → PT-API-04 (검증 스윕) → PT-API-01+03 (summary 전→grant→delta→deduct→원상) → PT-API-05 (잔액 초과 400) → PT-API-06 (연속 지급+원복) → PT-API-07 (events 필터 — 생성 행 활용) → PT-API-08 (사용자 API+diff) → PT-API-09 (9004)
+3. PT-UNIT-01→02→03 (비파괴) → PT-UNIT-04(+PT-E2E-01 겸측 판단) → PT-UNIT-05→06→07 → PT-UNIT-08 (콘솔 마감)
+4. PT-E2E-01 (겸측 안 했으면 단독 실행 — grant/deduct 짝 엄수)
+5. 종료: 전 계정 잔액 원상 재확인 + REPORT 에 원장·감사 잔존 행 내역 기재
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| PT-API-01 | api | | summary 5필드 + grant/deduct delta |
+| PT-API-02 | api | | 4 엔드포인트 401 + summary·adjust 403 |
+| PT-API-03 | api | | grant→원장 admin_adjust→deduct 원복 + 감사 2행 |
+| PT-API-04 | api | | 400/404 스윕 — 잔액·원장 무변화 |
+| PT-API-05 | api | | 잔액 초과 차감 400·잔액 불변 (원자성 핵심) |
+| PT-API-06 | api | | 동일 사유 연속 2회 성공(ref 유니크) + 2N 원복 |
+| PT-API-07 | api | | 필터 4종 매핑·클램프·미혼입 (earn 은 §4-4 확정 후) |
+| PT-API-08 | api | | 사용자 points API 무변경 + git diff 매트릭스 일치 |
+| PT-API-09 | api | | 9004 diff 0 + summary 200/403 — adjust 미호출 |
+| PT-UNIT-01 | unit | | 7번째 NavLink·4블록·비용표 읽기 전용 |
+| PT-UNIT-02 | unit | | 단일 선택·선택 시 닫힘·잔액 표시 (v179 패턴) |
+| PT-UNIT-03 | unit | | 폼 차단·confirm 문안·취소 POST 0건 |
+| PT-UNIT-04 | unit | | 3자 갱신(잔액·요약·원장) + 원복 — E2E 겸측 가능 |
+| PT-UNIT-05 | unit | | 원장 라벨·색·ref 가시·필터 버튼 (fallback 은 §4-3) |
+| PT-UNIT-06 | unit | | "별 조정" 라벨+닉네임#태그 (짝 항목) |
+| PT-UNIT-07 | unit | | CS 모달 스모크(발송 0)·기존 페이지 |
+| PT-UNIT-08 | unit | | 사유·닉네임·이메일 콘솔 0건 |
+| PT-E2E-01 | e2e | | 풀 여정 + 동량 차감 원복 — 종료 잔액 == 시작 잔액 |
+
+## v180 시나리오 집계
+
+- 총 **18건** — [api] 9 / [unit] 8 / [e2e] 1 (피라미드 유지, 보류 없음 — planner 확인 5건은 §4)
+- 쓰기: point 조정만 — PT-API-03(±N)·PT-API-06(+2N/−2N)·PT-UNIT-04/PT-E2E-01(±N, 겸측 시 1회) 전부 **테스트 계정 + 동량 원복(순변화 0)**. 원장·감사 행 잔존 정상 — REPORT 기재. CS 발송·브로드캐스트 호출 0건(스모크는 선택 단계까지, POST 0건 확인). 실사용자 무접촉.
+
+## 개정 이력 (v180)
+
+- 2026-08-13 초판 작성 (18건) — PLAN v180 §4 항목 1~8 전부 시나리오화(§4-1→PT-API-01·02, §4-2→PT-API-03, §4-3→PT-API-04·05·06, §4-4→PT-API-07, §4-5→PT-UNIT-01~05, §4-6→PT-UNIT-06, §4-7→PT-API-08·09·PT-UNIT-07, §4-8→PT-UNIT-08). 조정 쓰기는 grant/deduct 짝(순변화 0)으로 설계하고 종료 시 잔액 원상 검증을 불변식으로. summary delta 전제·비정수 422·fallback 실측·earn 매핑·BASE_REV 5건 planner 회신 대기(§4).
+- 2026-08-13 planner 판정 반영 — §4 판정 블록 5건 확정(delta 정확 판정+완화 절차 / 비정수 400 — `amount: Any` 수동 검증 실측 / fallback 코드 리뷰 갈음 — 원장 INSERT 금지 / earn 필터 admin_adjust 제외 — `_EVENT_FILTERS` 실측 / BASE_REV `4f52f16`). §0·PT-API-01·04·07·08·PT-UNIT-05 문안 6곳 고정. 보류 0건 — tester 착수 가능(**전제: 9005·9004 v180 반영 재기동** — frontend-dev 보고의 404 는 구버전 백엔드 유래).

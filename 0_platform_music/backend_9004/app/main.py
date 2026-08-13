@@ -51,7 +51,7 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, admin_cs, admin_moderation, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
+from .routes import admin, admin_cs, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
 
 
 @asynccontextmanager
@@ -617,6 +617,7 @@ app.include_router(dm.router)
 app.include_router(referral.router)
 app.include_router(admin_moderation.router)
 app.include_router(admin_cs.router)
+app.include_router(admin_points.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 

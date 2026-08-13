@@ -22,6 +22,7 @@ const ACTION_META = {
   face_purge: { label: '인물 몰수', badge: 'admin-badge--red' },
   cs_broadcast: { label: '전체 발송', badge: 'admin-badge--blue' },
   cs_send: { label: '지정 발송', badge: 'admin-badge--green' },
+  points_adjust: { label: '별 조정', badge: 'admin-badge--yellow' },
 };
 
 const TARGET_TYPE_LABELS = {

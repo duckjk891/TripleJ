@@ -26585,3 +26585,82 @@ E2E (실발송 금지):
 - **강행 금지**: ① **백엔드 파일 일체 무접촉**(9005·9004·dm_service.py — git diff 에 프론트 2파일 외 출현 금지) ② blur 이벤트 기반 드롭다운 닫기 금지(클릭 씹힘) ③ 실발송 0건 — send/broadcast 호출 금지 ④ runSearch·디바운스·seq 가드·문구 로직 변경 금지(트리거만 교체) ⑤ v177~178 강행 금지 승계.
 - 소형 뷰포트: `.admin-cs-send` 가 overflow-y:auto 스크롤 컨테이너라 absolute 패널이 내부 스크롤에 포함됨 — `min(240px, 40vh)` 로 완화, 극단 케이스는 내부 스크롤로 접근 가능(비차단, 관측 시 비고).
 - Esc 처리 시 이벤트 전파로 상위(브라우저 기본·모달)와 간섭하지 않게 드롭다운 열림 상태에서만 소비.
+
+---
+
+# v180 — 관리자 별(재화) 관리 페이지 신설 (/points) (2026-08-13 18:32)
+
+## 0. 사전 코드 분석 (planner 직접 실측)
+
+### 0-1. 원장·잔액 스키마 (points_service.py 337줄 전체 실측)
+- `point_events` 필드: `user_id, action, track_id(=ref 겸용), day(KST %Y%m%d), amount(±int), created_at(UTC)`. **유니크 인덱스 (user_id, action, track_id, day)**(:48-51 — 멱등 게이트) + user_id 단독(:52). **day 단독 인덱스 없음**(오늘 집계는 스캔 — §5 리스크).
+- `point_balances`: `user_id(유니크), balance, created_at`(:53).
+- action 체계: 적립 원액션(`award_point` +1: listen 등 / `credit_points`: attendance 등 가변) / 소진 `spend:{action}`(:166) / 환불 `refund:{action}`(:218). **ref 는 track_id 필드에 저장**(:144, :167 — "ref MUST be unique per attempt").
+- `spend_points`(:130) — **원자 차감**: `{balance: {$gte: amount}}` 필터 + `$inc -amount`(:153-156) → 잔액 미달 시 modified_count 0 → False. **마이너스 잔액 원천 불가 — 관리자 차감에 그대로 재사용 가능**(사용자 확정 요건 충족). 이벤트 로그는 best-effort(차감 유지).
+- `credit_points`(:240) — **이벤트 선삽입 멱등**(DuplicateKeyError → 잔액 무접촉 False): (user, action, ref, day) 유니크 → **관리자 지급 ref 는 시도별 유니크 필수**(같은 사유 하루 2회 지급이 막히면 안 됨).
+- `get_history`(:317) — skip/총계 없음(limit 만) → 관리자 원장 페이지네이션은 자체 쿼리 필요.
+
+### 0-2. 라우트·등록·프론트 관행
+- 사용자용 `routes/points.py`(57줄): GET /costs(인증 불요 공개 — **비용표 4블록은 이 엔드포인트 재사용, admin 신설 불요**)·/balance·/history. **무변경 대상**.
+- admin.py 1303줄(비대) vs 분리 관행 admin_cs.py·admin_moderation.py 실재 + `main.py:618-619` include_router 등록 지점 → **신규 `routes/admin_points.py` 채택**(main.py import :54·등록 1줄씩 추가).
+- `_log_admin_action` import 는 admin_cs.py:25 `from .admin import` 패턴.
+- 프론트: `AdminLayout.jsx:50-69` NavLink 6개(react-icons/fi — 7번째 `FiStar` "⭐ 별 관리"), `App.jsx:35` 뒤 `/points` Route, api.js 에 points 래퍼 전무(신설 필요).
+- 검색 재사용: "재사용" 대상은 **엔드포인트**(`GET /admin/cs/users/search` — v178 브라우즈+v179 UX 검증 완료). UI 는 AdminCsSendModal 이 모달+다중선택 chips 구조라 직접 재사용 불가 — v179 검증 패턴(focus/click 트리거·outside mousedown·Esc·height 고정·debounce·seq 가드)을 **단일 선택용 공용 컴포넌트로 신설**하는 것이 타당. **AdminCsSendModal 은 무변경**(v179 직후 안정 코드 리팩터 회귀 방지 — 모달 통합은 후속 후보).
+
+### 0-3. 관리자 조정의 원장 기록 방식 (실측 기반 확정)
+- action=`admin_adjust`: 지급=`credit_points(uid, "admin_adjust", n, ref)` → 원장 action `admin_adjust`/+n. 차감=`spend_points(uid, "admin_adjust", n, ref)` → 원장 action **`spend:admin_adjust`**/−n(서비스가 접두 자동 부여 — :166 실측).
+- **사유 저장**: point_events 에 reason 필드가 없고 함수 시그니처 변경 금지 → ① **ref 에 임베드**: `adm:{uuid4().hex[:8]}:{사유 trim ≤40자}` — uuid8 로 시도별 유니크(멱등 충돌 방지) + 원장 테이블에서 사유 가시(사용자 승인 "ref/사유" 표시 충족) ② **전문은 감사 로그 details** 에 저장(`points_adjust` — reason 원문·amount·direction·ref).
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 백엔드 파일 | **신규 `routes/admin_points.py`** (prefix `/api/admin/points`, get_admin_user 게이트) + main.py import·include_router 각 1줄 | admin.py 1303줄 비대, 분리 관행 실재(0-2) |
+| 요약 API | `GET /summary` → `{total_balance, total_earned, total_spent, today_earned, today_spent}` — point_balances `$group sum` 1회 + point_events **`$facet`**(누적: amount 부호별 `$cond` 합 / 오늘: `day == KST 오늘` match 후 동일) 1회 | 왕복 2회로 4카드 충족. day 인덱스 없음 → §5 리스크(현 볼륨 수용, 인덱스 추가는 서비스 파일 무접촉 원칙상 범위 외) |
+| 잔액 API | `GET /users/{user_id}/balance` → `{balance}` — `points_service.get_balance` 재사용 | 검색 선택 직후 표시용 |
+| 원장 API | `GET /users/{user_id}/events?page=1&limit=20&filter=` — 자체 쿼리(count + sort created_at DESC + skip/limit, limit 1~100 클램프). filter 매핑: `admin`=action ∈ {admin_adjust, spend:admin_adjust} / `refund`=`^refund:` / `spend`=`^spend:` **제외** spend:admin_adjust / `earn`=나머지(amount>0). 응답 행 `{action, amount, ref(track_id), day, created_at}` + pagination(v176 형식) | get_history 는 skip/총계 없음(0-1). 필터 4종=사용자 승인 구성 |
+| 조정 API | `POST /adjust` body `{user_id, direction: grant|deduct, amount, reason}` — 검증: user_id uuid 형식·users 실재 확인(PG), amount int 1~**10,000**(오입력 상한), **reason 필수**(trim 1~200자). ref=`adm:{uuid8}:{reason≤40}`. grant→credit_points(False 면 500 — 멱등 충돌은 uuid8 로 사실상 불가), deduct→spend_points(**False 면 400 "잔액 부족" — 원자성 그대로 마이너스 방지**). 성공 시 `{balance}`(get_balance 재조회) + **감사 적재 `points_adjust`**(target=user, details `{direction, amount, reason, ref}` — best-effort, v176 체계) | 기존 함수 재사용 원칙(원장 정합·시그니처 무변경). 상한·사유 필수는 사용자 확정 |
+| 비용표 | 기존 `GET /api/points/costs` 재사용 — admin 신설 불요 | 공개 엔드포인트(0-2) |
+| 검색 UI | **신규 공용 `AdminUserSearchDropdown.jsx/.css`** — v179 검증 패턴 이식(focus/click 트리거·document mousedown+ref·Esc·`height:min(240px,40vh)`·debounce `q?300:0`·seq 가드·`[AdminUserSearch]` 로그), props `onSelect(user)` 단일 선택(선택 시 드롭다운 닫고 input 에 `닉네임#code` 표시). searchCsUsers 래퍼 재사용 | 엔드포인트 재사용+패턴 재사용, **AdminCsSendModal 무변경**(안정 코드 보호 — 모달의 공용화 통합은 후속 후보) |
+| 페이지 | `AdminPointsPage.jsx/.css` — 4블록: ①요약 카드 4(로드 시 1회+조정 후 갱신) ②검색 드롭다운+잔액+지급/차감 폼(수량 number·사유 text 필수·`window.confirm` — 대상 `닉네임#code`·방향·수량·사유 명시) ③원장 테이블(액션 한글 라벨 맵+fallback, +green/−red, ref·day·시각 formatDate, 필터 4버튼+전체, 페이지네이션 v176 관행) ④비용표 읽기 전용(액션 라벨·⭐단가). 추적자 `[AdminPoints]` | 사용자 승인 4블록. AdminLogsPage 관행 |
+| 원장 액션 라벨 | `admin_adjust`=관리자 지급 / `spend:admin_adjust`=관리자 차감 / `spend:*`·`refund:*` 접두 분해+POINT_COSTS 액션명(작사/작곡/커버/캐릭터/피로스킵)·listen/download/attendance 등 매핑, **미등록 원문+gray fallback**(v176 관행) | 라벨 맵 fallback 필수 |
+| **감사 로그 짝 항목** | `AdminLogsPage.jsx` ACTION_META 에 **`points_adjust: {label: '별 조정', badge: purple(관행 색 중 택1)}` 추가** | **v177 재발 방지 관행 명문화분** — 신규 감사 action 의 라벨 등록은 적재 작업의 짝 항목 |
+| api.js | `getAdminPointsSummary`·`getAdminUserPointBalance`·`getAdminUserPointEvents`·`adjustAdminPoints`·`getPointsCosts` 5래퍼 | 중앙 클라이언트 관행 |
+| 라우팅 | App.jsx `/points`(AdminRoute), AdminLayout 7번째 NavLink `FiStar` "별 관리" | 사용자 승인(사이드바 7번째) |
+| 미러 | 9005 완성 후 9004: admin_points.py 복사 + main.py 동일 2줄 | 미러 규칙 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_points.py` | **신설** — summary/balance/events/adjust 4 엔드포인트 | `[admin-points]` |
+| `backend_9005/app/main.py` | import + include_router 각 1줄 | - |
+| `backend_9004/...` 동일 2파일 | 9005 완성본 미러 | - |
+| `frontend_admin/src/components/AdminUserSearchDropdown.jsx/.css` | **신설** — 단일 선택 검색 드롭다운(v179 패턴) | `[AdminUserSearch]` |
+| `frontend_admin/src/pages/AdminPointsPage.jsx/.css` | **신설** — 4블록 | `[AdminPoints]` |
+| `frontend_admin/src/App.jsx` / `components/AdminLayout.jsx` | `/points` Route / NavLink 7번째(FiStar) | - |
+| `frontend_admin/src/api.js` | 래퍼 5개 | - |
+| `frontend_admin/src/pages/AdminLogsPage.jsx` | ACTION_META `points_adjust` 라벨 1줄(짝 항목) | 기존 `[AdminLogs]` |
+| **무변경** | `points_service.py`·`routes/points.py`·AdminCsSendModal | - |
+
+## 3. 작업 분담
+- **backend-dev** (선행): admin_points.py — ① summary(`$facet` — 빈 컬렉션 0 반환 방어) ② balance(get_balance 위임) ③ events(자체 쿼리 — filter 매핑 §1, ObjectId 미사용·user_id 문자열 매치, count/skip/limit, 응답에 pagination) ④ adjust(검증 순서: uuid 형식 400→users 실재 404→direction 400→amount 1~10000 400→reason 필수 400→credit/spend→spend False 400 잔액부족→get_balance→감사 best-effort). **points_service 함수 시그니처·본문 무접촉, routes/points.py 무변경.** ⑤ main.py 2줄 ⑥ 9004 미러 2파일.
+- **frontend-dev** (백엔드 후): AdminUserSearchDropdown 신설(v179 AdminCsSendModal 의 검증 로직 이식 — blur 금지·onClick 병행 트리거 포함, 콘솔 위생 동일) → api.js 5래퍼 → AdminPointsPage 4블록(조정 성공 시 잔액·요약·원장 3자 갱신, 실패 400 사유 표시) → App/Layout 2줄 → AdminLogsPage 라벨 1줄. **AdminCsSendModal 무접촉.** eslint 신규 0.
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: 조정 실측은 **테스트 계정(`bcast_user_test_*`)만** — **지급 후 동량 차감으로 잔액 원복**(원장·감사 행 잔존은 정상, REPORT 기재). 실사용자 무접촉. 조정 외 쓰기 없음.
+1. summary API: 200 + 5필드 숫자·정합(수동 대조 — 조정 전후 delta 일치). 무토큰 401/비관리자 403(신규 4 엔드포인트 공통 대표).
+2. adjust 정상(테스트 계정): grant n → balance +n·원장 `admin_adjust`/+n/ref `adm:` 접두+사유 포함 → deduct n(원복) → balance 복원·원장 `spend:admin_adjust`/−n. 감사 로그 `points_adjust` 2행(details 에 direction/amount/reason/ref — **비밀값 없음**).
+3. adjust 검증: 잔액 초과 차감 400 "잔액 부족"(**마이너스 금지 핵심** — 잔액 불변 확인), reason 누락/공백 400, amount 0·음수·10001·비정수 400, 미존재 uuid 404, 비 uuid 400, 동일 사유 즉시 2회 지급 성공(ref uuid8 유니크 — 멱등 오차단 없음).
+4. events API: 필터 4종 매핑 정확(admin 필터에 admin_adjust+spend:admin_adjust 만, spend 필터에 spend:admin_adjust **제외**), 페이지네이션·클램프, 타 사용자 이력 미혼입.
+5. UI: /points 진입(사이드바 7번째 active) → 4블록 렌더 → 검색 드롭다운(v179 동작 회귀: focus/클릭 오픈·첫 클릭 선택·outside 닫힘) → 선택 시 잔액 표시 → 지급 confirm→성공 alert→잔액·요약·원장 갱신 → 차감 원복 → 원장 라벨·색·fallback, 비용표 5행(POINT_COSTS).
+6. 감사 로그 페이지: `points_adjust` 행이 **"별 조정" 라벨+배지**로 렌더(짝 항목 검증 — v177 재발 케이스), 대상 닉네임#태그(v177 기능) 정상.
+7. 회귀: 사용자용 GET /points/costs·/balance·/history 무변경(USER_TOKEN 실측 + git diff 에 points.py·points_service.py 부재), CS 지정발송 모달 무변경(스모크 — 드롭다운 오픈·첫 클릭), 기존 7페이지 렌더, 9004 미러 diff 0.
+8. 콘솔: `[AdminPoints]`·`[AdminUserSearch]` 에 사유 원문·닉네임·이메일 미출력(건수/길이/status 만).
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① `points_service.py` 함수 시그니처·본문 변경 금지(재사용만) ② 사용자용 `routes/points.py` 무변경 ③ 비용표 **수정 기능 구현 금지**(읽기 전용 — 별도 버전) ④ 마이너스 잔액 허용 로직 금지(spend_points 원자성 우회 금지 — balance 직접 $inc/$set 금지) ⑤ AdminCsSendModal 무접촉 ⑥ 감사 details·콘솔에 비밀값 금지(사유는 관리자 입력 텍스트라 저장 허용 — 단 콘솔 미출력) ⑦ 실사용자 대상 조정 금지(테스트 계정+원복) ⑧ v177~179 금지 승계.
+- point_events 에 day 단독 인덱스 없음 — summary 오늘 집계는 스캔(현 볼륨 수용). 볼륨 증가 시 인덱스 추가는 **후속 후보**(서비스 파일 무접촉 원칙과 함께 재검토).
+- ref 임베드 사유는 40자 절단 — 전문은 감사 details 가 원본(원장은 요약 가시성 용도임을 프론트 툴팁 등으로 오해 방지).
+- credit_points False(멱등 충돌) 는 uuid8 로 사실상 불가하나 발생 시 500 처리(잔액 무접촉이므로 재시도 안전).
