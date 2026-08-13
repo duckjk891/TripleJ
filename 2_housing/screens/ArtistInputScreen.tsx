@@ -12,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -147,7 +148,7 @@ export default function ArtistInputScreen({ navigation }: any) {
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</Text>
+          <AppText style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</AppText>
         </TouchableOpacity>
       ),
     });
@@ -301,14 +302,14 @@ export default function ArtistInputScreen({ navigation }: any) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyBox}>
-          <Text style={styles.emptyIcon}>🎤</Text>
-          <Text style={styles.emptyTitle}>로그인이 필요해요</Text>
-          <Text style={styles.emptyDesc}>아티스트 디렉터와 함께 나만의 아티스트를 만들어보세요!</Text>
+          <AppText style={styles.emptyIcon}>🎤</AppText>
+          <AppText style={styles.emptyTitle}>로그인이 필요해요</AppText>
+          <AppText style={styles.emptyDesc}>아티스트 디렉터와 함께 나만의 아티스트를 만들어보세요!</AppText>
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={() => navigation.getParent()?.navigate('Settings')}
           >
-            <Text style={styles.primaryBtnText}>로그인하기</Text>
+            <AppText style={styles.primaryBtnText}>로그인하기</AppText>
           </TouchableOpacity>
         </View>
       </View>
@@ -337,20 +338,20 @@ export default function ArtistInputScreen({ navigation }: any) {
         return (
           <View style={styles.inputArea}>
             <View style={styles.lockNotice}>
-              <Text style={styles.lockNoticeIcon}>🔒</Text>
-              <Text style={styles.lockNoticeTitle}>아티스트는 한 명까지 무료로 만들 수 있어요</Text>
-              <Text style={styles.lockNoticeDesc}>
+              <AppText style={styles.lockNoticeIcon}>🔒</AppText>
+              <AppText style={styles.lockNoticeTitle}>아티스트는 한 명까지 무료로 만들 수 있어요</AppText>
+              <AppText style={styles.lockNoticeDesc}>
                 추가 아티스트를 만들려면 다이아 {EXTRA_ARTIST_GEM_COST}개가 필요해요.
-              </Text>
-              <Text style={styles.lockNoticeBalance}>보유 다이아 💎 {gemsBalance}</Text>
+              </AppText>
+              <AppText style={styles.lockNoticeBalance}>보유 다이아 💎 {gemsBalance}</AppText>
             </View>
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={handlePurchaseExtraSlot}
             >
-              <Text style={styles.primaryBtnText}>
+              <AppText style={styles.primaryBtnText}>
                 💎 {EXTRA_ARTIST_GEM_COST} 사용하고 추가 아티스트 만들기
-              </Text>
+              </AppText>
             </TouchableOpacity>
           </View>
         );
@@ -358,7 +359,7 @@ export default function ArtistInputScreen({ navigation }: any) {
       return (
         <View style={styles.inputArea}>
           <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
-            <Text style={styles.primaryBtnText}>📷 사진 올리기</Text>
+            <AppText style={styles.primaryBtnText}>📷 사진 올리기</AppText>
           </TouchableOpacity>
         </View>
       );
@@ -370,9 +371,9 @@ export default function ArtistInputScreen({ navigation }: any) {
       return (
         <View style={styles.inputArea}>
           <View style={styles.qProgress}>
-            <Text style={styles.qProgressText}>
+            <AppText style={styles.qProgressText}>
               {qIndex + 1} / {QUESTIONS.length} · {q.short}
-            </Text>
+            </AppText>
           </View>
           <View style={styles.chipsRow}>
             {q.chips.map((chip) => {
@@ -383,7 +384,7 @@ export default function ArtistInputScreen({ navigation }: any) {
                   style={[styles.chip, sel && styles.chipSelected]}
                   onPress={() => handleChipTap(chip)}
                 >
-                  <Text style={[styles.chipText, sel && styles.chipTextSelected]}>{chip}</Text>
+                  <AppText style={[styles.chipText, sel && styles.chipTextSelected]}>{chip}</AppText>
                 </TouchableOpacity>
               );
             })}
@@ -398,10 +399,10 @@ export default function ArtistInputScreen({ navigation }: any) {
           />
           <View style={styles.twoBtnRow}>
             <TouchableOpacity style={styles.skipBtn} onPress={() => handleAnswerNext(true)}>
-              <Text style={styles.skipBtnText}>건너뛰기</Text>
+              <AppText style={styles.skipBtnText}>건너뛰기</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.applyBtn} onPress={() => handleAnswerNext(false)}>
-              <Text style={styles.applyBtnText}>{isLast ? '만들기' : '다음'}</Text>
+              <AppText style={styles.applyBtnText}>{isLast ? '만들기' : '다음'}</AppText>
             </TouchableOpacity>
           </View>
         </View>
@@ -424,7 +425,7 @@ export default function ArtistInputScreen({ navigation }: any) {
         {/* 기존 캐릭터 카드 */}
         {myCharacter && step === 'welcome' && (
           <View style={styles.myArtistCard}>
-            <Text style={styles.myArtistLabel}>현재 아티스트</Text>
+            <AppText style={styles.myArtistLabel}>현재 아티스트</AppText>
             {existingPreviewUrl ? (
               <Image source={{ uri: existingPreviewUrl }} style={styles.myArtistImg} />
             ) : null}
@@ -433,7 +434,7 @@ export default function ArtistInputScreen({ navigation }: any) {
                 style={[styles.applyBtn, { flex: 1 }]}
                 onPress={() => navigation.replace('ArtistResult')}
               >
-                <Text style={styles.applyBtnText}>✨ 아티스트 꾸미기</Text>
+                <AppText style={styles.applyBtnText}>✨ 아티스트 꾸미기</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -452,14 +453,14 @@ export default function ArtistInputScreen({ navigation }: any) {
             <View
               style={[styles.bubble, msg.type === 'user' ? styles.userBubble : styles.dirBubble]}
             >
-              <Text
+              <AppText
                 style={[
                   styles.bubbleText,
                   msg.type === 'user' ? { color: colors.text.primary } : { color: colors.bg.deepest },
                 ]}
               >
                 {msg.text}
-              </Text>
+              </AppText>
             </View>
           </View>
         ))}

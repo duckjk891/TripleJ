@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
@@ -284,19 +285,19 @@ export default function MusicResultScreen({ navigation }: Props) {
             <Image source={portrait} style={styles.portraitImage} />
           </View>
           <View style={styles.directorBubble}>
-            <Text style={styles.directorName}>{composerName}</Text>
-            <Text style={styles.directorText}>
+            <AppText style={styles.directorName}>{composerName}</AppText>
+            <AppText style={styles.directorText}>
               {hasError
                 ? '앗, 문제가 생겼어요. 다시 시도해볼까요?'
                 : '곡이 완성됐어요! 들어보세요!'}
-            </Text>
+            </AppText>
           </View>
         </View>
 
         {/* Error display */}
         {hasError && (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{typeof store.error === 'string' ? store.error : JSON.stringify(store.error)}</Text>
+            <AppText style={styles.errorText}>{typeof store.error === 'string' ? store.error : JSON.stringify(store.error)}</AppText>
           </View>
         )}
 
@@ -309,12 +310,12 @@ export default function MusicResultScreen({ navigation }: Props) {
                 <Image source={portrait} style={styles.albumImage} />
               </View>
 
-              <Text style={styles.trackTitle}>
+              <AppText style={styles.trackTitle}>
                 {lyricsStore.generatedTitle || `${store.genre} - ${store.mood}`}
-              </Text>
-              <Text style={styles.trackSubtitle}>
+              </AppText>
+              <AppText style={styles.trackSubtitle}>
                 {composerName} | {store.tempo} 템포
-              </Text>
+              </AppText>
 
               {/* Progress bar */}
               <View style={styles.progressContainer}>
@@ -331,8 +332,8 @@ export default function MusicResultScreen({ navigation }: Props) {
                   />
                 </View>
                 <View style={styles.timeRow}>
-                  <Text style={styles.timeText}>{formatTime(position)}</Text>
-                  <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                  <AppText style={styles.timeText}>{formatTime(position)}</AppText>
+                  <AppText style={styles.timeText}>{formatTime(duration)}</AppText>
                 </View>
               </View>
 
@@ -341,9 +342,9 @@ export default function MusicResultScreen({ navigation }: Props) {
                 style={styles.playButton}
                 onPress={togglePlay}
               >
-                <Text style={styles.playButtonText}>
+                <AppText style={styles.playButtonText}>
                   {isPlaying ? '일시정지' : '재생'}
-                </Text>
+                </AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -355,7 +356,7 @@ export default function MusicResultScreen({ navigation }: Props) {
             style={styles.regenerateButton}
             onPress={handleRegenerate}
           >
-            <Text style={styles.regenerateButtonText}>다시 생성하기</Text>
+            <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
           </TouchableOpacity>
 
           {hasResult && (
@@ -364,9 +365,9 @@ export default function MusicResultScreen({ navigation }: Props) {
               onPress={handleSave}
               disabled={isSaving || isSaved}
             >
-              <Text style={styles.saveButtonText}>
+              <AppText style={styles.saveButtonText}>
                 {isSaved ? '저장 완료' : isSaving ? '저장 중...' : '저장하기'}
-              </Text>
+              </AppText>
             </TouchableOpacity>
           )}
 
@@ -376,7 +377,7 @@ export default function MusicResultScreen({ navigation }: Props) {
               style={styles.coverButton}
               onPress={handleGenerateCover}
             >
-              <Text style={styles.coverButtonText}>커버 이미지 생성하기</Text>
+              <AppText style={styles.coverButtonText}>커버 이미지 생성하기</AppText>
             </TouchableOpacity>
           )}
 
@@ -385,14 +386,14 @@ export default function MusicResultScreen({ navigation }: Props) {
             style={[styles.mvButton, styles.mvButtonDisabled]}
             disabled
           >
-            <Text style={styles.mvButtonText}>MV 만들기 (준비 중)</Text>
+            <AppText style={styles.mvButtonText}>MV 만들기 (준비 중)</AppText>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.backButton}
             onPress={handleBackToMap}
           >
-            <Text style={styles.backButtonText}>맵으로 돌아가기</Text>
+            <AppText style={styles.backButtonText}>맵으로 돌아가기</AppText>
           </TouchableOpacity>
         </View>
 

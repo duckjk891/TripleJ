@@ -8,6 +8,7 @@ import {
   Easing,
   ActivityIndicator,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { generateLyrics } from '../services/lyricsService';
@@ -126,7 +127,7 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           </View>
         </Animated.View>
 
-        <Text style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</Text>
+        <AppText style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</AppText>
 
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
 
@@ -143,11 +144,11 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
                     state === 'done' && styles.stepDotDone,
                   ]}
                 >
-                  <Text style={styles.stepDotText}>
+                  <AppText style={styles.stepDotText}>
                     {state === 'done' ? '✓' : i + 1}
-                  </Text>
+                  </AppText>
                 </View>
-                <Text
+                <AppText
                   style={[
                     styles.stepLabel,
                     state === 'active' && styles.stepLabelActive,
@@ -156,16 +157,16 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
                   numberOfLines={1}
                 >
                   {s.label}
-                </Text>
+                </AppText>
               </View>
             );
           })}
         </View>
 
         <View style={styles.noteContainer}>
-          <Text style={styles.noteText}>
+          <AppText style={styles.noteText}>
             작사 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}잠시만 기다려주세요...
-          </Text>
+          </AppText>
         </View>
       </View>
     </AppScreenLayout>

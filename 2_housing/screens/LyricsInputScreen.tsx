@@ -11,6 +11,7 @@ import {
   Platform,
   Modal,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -230,10 +231,10 @@ export default function LyricsInputScreen({ navigation }: Props) {
       {/* 진행도 바 */}
       <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 6, backgroundColor: colors.bg.deepest }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-          <Text style={{ fontSize: 11, color: colors.text.secondary, fontWeight: '600' }}>작사 진행</Text>
-          <Text style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '700' }}>
+          <AppText style={{ fontSize: 11, color: colors.text.secondary, fontWeight: '600' }}>작사 진행</AppText>
+          <AppText style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '700' }}>
             {displayedStep} / {STEPS.length}
-          </Text>
+          </AppText>
         </View>
         <View style={{ height: 4, backgroundColor: colors.border.subtle, borderRadius: 2, overflow: 'hidden' }}>
           <View style={{ width: `${progressPct}%`, height: 4, backgroundColor: colors.accent.primary }} />
@@ -243,7 +244,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
       {/* 안내 */}
       {chatHistory.some((m) => m.type === 'user') && (
         <View style={{ paddingHorizontal: 16, paddingBottom: 4, backgroundColor: colors.bg.deepest }}>
-          <Text style={{ fontSize: 11, color: colors.text.muted, textAlign: 'center' }}>이전 답변을 탭하면 다시 선택할 수 있어요</Text>
+          <AppText style={{ fontSize: 11, color: colors.text.muted, textAlign: 'center' }}>이전 답변을 탭하면 다시 선택할 수 있어요</AppText>
         </View>
       )}
 
@@ -277,14 +278,14 @@ export default function LyricsInputScreen({ navigation }: Props) {
                 msg.type === 'user' ? styles.userBubble : styles.directorBubble,
               ]}
             >
-              <Text
+              <AppText
                 style={[
                   styles.messageText,
                   msg.type === 'user' ? styles.userText : styles.directorText,
                 ]}
               >
                 {msg.text}
-              </Text>
+              </AppText>
             </TouchableOpacity>
           </View>
         ))}
@@ -297,7 +298,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
             style={[styles.sendButton, { flex: 1, paddingVertical: 14 }]}
             onPress={() => navigation.navigate('LyricsPromptReview')}
           >
-            <Text style={styles.sendButtonText}>요청사항으로 돌아가기</Text>
+            <AppText style={styles.sendButtonText}>요청사항으로 돌아가기</AppText>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -318,8 +319,8 @@ export default function LyricsInputScreen({ navigation }: Props) {
                   style={styles.choiceButton}
                   onPress={() => handleChoicePress(choice)}
                 >
-                  <Text style={styles.choiceNumber}>{idx + 1}</Text>
-                  <Text style={styles.choiceText}>{choice}</Text>
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={styles.choiceText}>{choice}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -358,7 +359,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
                 }}
                 disabled={!customInput.trim() && step !== STEPS.length - 1}
               >
-                <Text style={styles.sendButtonText}>{step === STEPS.length - 1 ? (customInput.trim() ? '확인' : '건너뛰기') : '확인'}</Text>
+                <AppText style={styles.sendButtonText}>{step === STEPS.length - 1 ? (customInput.trim() ? '확인' : '건너뛰기') : '확인'}</AppText>
               </TouchableOpacity>
             </View>
           )}
@@ -368,7 +369,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
       <Modal visible={reselectStep != null} transparent animationType="fade" onRequestClose={() => setReselectStep(null)}>
         <TouchableOpacity style={styles.reselectOverlay} activeOpacity={1} onPress={() => setReselectStep(null)}>
           <View style={styles.reselectContainer}>
-            <Text style={styles.reselectTitle}>다시 선택하기</Text>
+            <AppText style={styles.reselectTitle}>다시 선택하기</AppText>
             <ScrollView style={{ maxHeight: 300 }}>
               {reselectStep != null && STEPS[reselectStep]?.choices?.map((choice, idx) => (
                 <TouchableOpacity
@@ -376,12 +377,12 @@ export default function LyricsInputScreen({ navigation }: Props) {
                   style={styles.reselectOption}
                   onPress={() => handleReselectChoice(choice)}
                 >
-                  <Text style={styles.reselectOptionText}>{choice}</Text>
+                  <AppText style={styles.reselectOptionText}>{choice}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
             <TouchableOpacity style={styles.reselectClose} onPress={() => setReselectStep(null)}>
-              <Text style={styles.reselectCloseText}>취소</Text>
+              <AppText style={styles.reselectCloseText}>취소</AppText>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>

@@ -10,6 +10,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
+import { AppText } from '../components/ui';
 // expo-file-system v19+ : 신 API에서는 cacheDirectory/downloadAsync가 빠짐 → legacy 사용
 import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -361,7 +362,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           <Image source={ARTIST_PORTRAIT} style={styles.portraitImage} />
         </Animated.View>
 
-        <Text style={styles.loadingText}>{currentStage.message}</Text>
+        <AppText style={styles.loadingText}>{currentStage.message}</AppText>
 
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
 
@@ -378,11 +379,11 @@ export default function ArtistLoadingScreen({ navigation }: any) {
                     state === 'done' && styles.stepDotDone,
                   ]}
                 >
-                  <Text style={styles.stepDotText}>
+                  <AppText style={styles.stepDotText}>
                     {state === 'done' ? '✓' : i + 1}
-                  </Text>
+                  </AppText>
                 </View>
-                <Text
+                <AppText
                   style={[
                     styles.stepLabel,
                     state === 'active' && styles.stepLabelActive,
@@ -391,16 +392,16 @@ export default function ArtistLoadingScreen({ navigation }: any) {
                   numberOfLines={1}
                 >
                   {s.label}
-                </Text>
+                </AppText>
               </View>
             );
           })}
         </View>
 
         <View style={styles.noteContainer}>
-          <Text style={styles.noteText}>
+          <AppText style={styles.noteText}>
             아티스트 디렉터가 {meta.taskName} 마무리 중이에요.{'\n'}잠시만 기다려주세요...
-          </Text>
+          </AppText>
         </View>
       </View>
     </AppScreenLayout>

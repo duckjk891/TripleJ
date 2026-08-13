@@ -11,6 +11,7 @@ import {
   Alert,
   ScrollView,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
@@ -329,7 +330,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</Text>
+          <AppText style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</AppText>
         </TouchableOpacity>
       ),
     });
@@ -340,14 +341,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.title, { paddingTop: 12 }]}>
+      <AppText style={[styles.title, { paddingTop: 12 }]}>
         {isSheetMode ? '아티스트 의상 선택' : '옷 입히기'}
-      </Text>
-      <Text style={styles.subtitle}>
+      </AppText>
+      <AppText style={styles.subtitle}>
         {isSheetMode
           ? '옷·헤어를 골라주세요. 사진과 함께 한 번에 아티스트로 만들어요. (미선택 카테고리는 기본형 적용)'
           : '원하는 카테고리를 골라보세요. 여러 개 동시에 선택할 수 있어요.'}
-      </Text>
+      </AppText>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
         <View style={styles.grid}>
@@ -360,15 +361,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 onPress={() => openPicker(cat)}
                 onLongPress={() => sel && clearItem(cat)}
               >
-                <Text style={styles.catIcon}>{CAT_ICONS[cat]}</Text>
-                <Text style={styles.catName}>{cat}</Text>
-                <Text style={styles.catSub} numberOfLines={1}>
+                <AppText style={styles.catIcon}>{CAT_ICONS[cat]}</AppText>
+                <AppText style={styles.catName}>{cat}</AppText>
+                <AppText style={styles.catSub} numberOfLines={1}>
                   {sel ? sel.name : '고르기'}
-                </Text>
+                </AppText>
                 {sel?.advertiser_nickname ? (
-                  <Text style={styles.catBrand} numberOfLines={1}>
+                  <AppText style={styles.catBrand} numberOfLines={1}>
                     {sel.advertiser_nickname}
-                  </Text>
+                  </AppText>
                 ) : null}
               </TouchableOpacity>
             );
@@ -378,7 +379,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         {/* 선택된 카테고리의 옵션 칩 (핏/기장 등) */}
         {selectedEntries.some(([cat]) => CAT_OPTIONS[cat as Cat]) && (
           <View style={styles.optBox}>
-            <Text style={styles.optBoxTitle}>세부 옵션</Text>
+            <AppText style={styles.optBoxTitle}>세부 옵션</AppText>
             {selectedEntries
               .filter(([cat]) => CAT_OPTIONS[cat as Cat])
               .map(([cat]) => {
@@ -386,10 +387,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 const catOpts = itemOptions[cat as Cat] || {};
                 return (
                   <View key={cat} style={styles.optCatRow}>
-                    <Text style={styles.optCatLabel}>{CAT_ICONS[cat as Cat]} {cat}</Text>
+                    <AppText style={styles.optCatLabel}>{CAT_ICONS[cat as Cat]} {cat}</AppText>
                     {groups.map((group) => (
                       <View key={group.label} style={styles.optGroupRow}>
-                        <Text style={styles.optGroupLabel}>{group.label}</Text>
+                        <AppText style={styles.optGroupLabel}>{group.label}</AppText>
                         <View style={styles.optChipsRow}>
                           {group.values.map((v) => {
                             const sel = catOpts[group.label] === v;
@@ -399,9 +400,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                                 style={[styles.optChip, sel && styles.optChipSelected]}
                                 onPress={() => toggleOption(cat as Cat, group.label, v)}
                               >
-                                <Text style={[styles.optChipText, sel && styles.optChipTextSelected]}>
+                                <AppText style={[styles.optChipText, sel && styles.optChipTextSelected]}>
                                   {v}
-                                </Text>
+                                </AppText>
                               </TouchableOpacity>
                             );
                           })}
@@ -416,22 +417,22 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 
         {selectedEntries.length > 0 && (
           <View style={styles.summaryBox}>
-            <Text style={styles.summaryLabel}>선택한 아이템 ({selectedEntries.length})</Text>
+            <AppText style={styles.summaryLabel}>선택한 아이템 ({selectedEntries.length})</AppText>
             <View style={styles.summaryChips}>
               {selectedEntries.map(([cat, item]) => (
                 <View key={cat} style={styles.summaryChip}>
-                  <Text style={styles.summaryChipText}>
+                  <AppText style={styles.summaryChipText}>
                     {CAT_ICONS[cat as Cat]} {item!.name}
-                  </Text>
+                  </AppText>
                   {item!.advertiser_nickname ? (
-                    <Text style={styles.summaryChipBrand}>
+                    <AppText style={styles.summaryChipBrand}>
                       {item!.advertiser_nickname}
-                    </Text>
+                    </AppText>
                   ) : null}
                 </View>
               ))}
             </View>
-            <Text style={styles.hint}>꾹 누르면 카테고리 선택 해제</Text>
+            <AppText style={styles.hint}>꾹 누르면 카테고리 선택 해제</AppText>
           </View>
         )}
       </ScrollView>
@@ -449,7 +450,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               }
             }}
           >
-            <Text style={styles.skipBtnText}>취소</Text>
+            <AppText style={styles.skipBtnText}>취소</AppText>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
@@ -459,9 +460,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
             onPress={handleApply}
             disabled={!isSheetMode && selectedEntries.length === 0}
           >
-            <Text style={styles.applyBtnText}>
+            <AppText style={styles.applyBtnText}>
               {isSheetMode ? '이 옷으로 만들기 (대기 필요)' : '이 옷으로 입히기 (대기 필요)'}
-            </Text>
+            </AppText>
           </TouchableOpacity>
         </View>
       </View>
@@ -476,11 +477,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
+              <AppText style={styles.modalTitle}>
                 {pickerCat ? `${CAT_ICONS[pickerCat]} ${pickerCat} 고르기` : ''}
-              </Text>
+              </AppText>
               <TouchableOpacity onPress={() => setPickerCat(null)}>
-                <Text style={styles.modalClose}>✕</Text>
+                <AppText style={styles.modalClose}>✕</AppText>
               </TouchableOpacity>
             </View>
             {pickerLoading ? (
@@ -489,9 +490,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               </View>
             ) : pickerItems.length === 0 ? (
               <View style={{ padding: 40 }}>
-                <Text style={styles.emptyDesc}>
+                <AppText style={styles.emptyDesc}>
                   등록된 {pickerCat} 아이템이 없어요.
-                </Text>
+                </AppText>
               </View>
             ) : (
               <FlatList
@@ -510,19 +511,19 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                           <Image source={{ uri: url }} style={styles.itemImg} />
                         ) : (
                           <View style={[styles.itemImg, styles.itemImgFallback]}>
-                            <Text style={{ fontSize: 28 }}>{pickerCat ? CAT_ICONS[pickerCat] : '?'}</Text>
+                            <AppText style={{ fontSize: 28 }}>{pickerCat ? CAT_ICONS[pickerCat] : '?'}</AppText>
                           </View>
                         )}
                         {/* 브랜드 배지 — 이미지 좌상단에 강조 */}
                         {item.advertiser_nickname ? (
                           <View style={styles.brandBadge}>
-                            <Text style={styles.brandBadgeText} numberOfLines={1}>
+                            <AppText style={styles.brandBadgeText} numberOfLines={1}>
                               {item.advertiser_nickname}
-                            </Text>
+                            </AppText>
                           </View>
                         ) : null}
                       </View>
-                      <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+                      <AppText style={styles.itemName} numberOfLines={2}>{item.name}</AppText>
                     </TouchableOpacity>
                   );
                 }}

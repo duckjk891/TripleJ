@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -68,28 +69,28 @@ export default function LyricsResultScreen({ navigation }: Props) {
             <Image source={LYRICIST_PORTRAIT} style={styles.portraitImage} />
           </View>
           <View style={styles.directorBubble}>
-            <Text style={styles.directorName}>작사 디렉터</Text>
-            <Text style={styles.directorText}>
+            <AppText style={styles.directorName}>작사 디렉터</AppText>
+            <AppText style={styles.directorText}>
               {hasError
                 ? '앗, 문제가 생겼어요. 다시 시도해볼까요?'
                 : '가사가 완성됐어요! 마음에 드시나요?'}
-            </Text>
+            </AppText>
           </View>
         </View>
 
         {/* Error display */}
         {hasError && (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{store.error}</Text>
+            <AppText style={styles.errorText}>{store.error}</AppText>
           </View>
         )}
 
         {/* Title display */}
         <View style={styles.titleSection}>
           <View style={styles.lyricsTitleRow}>
-            <Text style={styles.sectionTitle}>곡 제목</Text>
+            <AppText style={styles.sectionTitle}>곡 제목</AppText>
             <TouchableOpacity onPress={() => setIsEditingTitle(!isEditingTitle)}>
-              <Text style={styles.editButton}>{isEditingTitle ? '완료' : '수정'}</Text>
+              <AppText style={styles.editButton}>{isEditingTitle ? '완료' : '수정'}</AppText>
             </TouchableOpacity>
           </View>
           {isEditingTitle ? (
@@ -101,16 +102,16 @@ export default function LyricsResultScreen({ navigation }: Props) {
               placeholderTextColor={colors.text.muted}
             />
           ) : (
-            <Text style={styles.titleDisplay}>{editedTitle || '제목 없음'}</Text>
+            <AppText style={styles.titleDisplay}>{editedTitle || '제목 없음'}</AppText>
           )}
         </View>
 
         {/* Lyrics display */}
         <View style={styles.lyricsSection}>
           <View style={styles.lyricsTitleRow}>
-            <Text style={styles.sectionTitle}>생성된 가사</Text>
+            <AppText style={styles.sectionTitle}>생성된 가사</AppText>
             <TouchableOpacity onPress={() => setIsEditingLyrics(!isEditingLyrics)}>
-              <Text style={styles.editButton}>{isEditingLyrics ? '완료' : '수정'}</Text>
+              <AppText style={styles.editButton}>{isEditingLyrics ? '완료' : '수정'}</AppText>
             </TouchableOpacity>
           </View>
 
@@ -124,9 +125,9 @@ export default function LyricsResultScreen({ navigation }: Props) {
             />
           ) : (
             <View style={styles.lyricsBox}>
-              <Text style={styles.lyricsText}>
+              <AppText style={styles.lyricsText}>
                 {hasLyrics ? editedLyrics : '가사가 없습니다.'}
-              </Text>
+              </AppText>
             </View>
           )}
         </View>
@@ -137,7 +138,7 @@ export default function LyricsResultScreen({ navigation }: Props) {
             style={styles.regenerateButton}
             onPress={handleRegenerate}
           >
-            <Text style={styles.regenerateButtonText}>다시 생성하기</Text>
+            <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
           </TouchableOpacity>
 
           {hasLyrics && (
@@ -145,9 +146,9 @@ export default function LyricsResultScreen({ navigation }: Props) {
               style={styles.composeButton}
               onPress={handleSaveAndCompose}
             >
-              <Text style={styles.composeButtonText}>
+              <AppText style={styles.composeButtonText}>
                 저장하고 작곡하러 가기
-              </Text>
+              </AppText>
             </TouchableOpacity>
           )}
         </View>

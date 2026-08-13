@@ -1,4 +1,5 @@
 import { StyleSheet, View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoyaltyStore } from '../stores/royaltyStore';
 import { useFanSimulationStore } from '../stores/fanSimulationStore';
@@ -36,9 +37,9 @@ export default function RoyaltyScreen({ navigation }: any) {
     <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backText}>← 뒤로</Text>
+          <AppText style={styles.backText}>← 뒤로</AppText>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>내 정산</Text>
+        <AppText style={styles.headerTitle}>내 정산</AppText>
         <View style={{ width: 60 }} />
       </View>
 
@@ -47,20 +48,20 @@ export default function RoyaltyScreen({ navigation }: any) {
       >
         {/* 매출 카드 */}
         <View style={styles.bigCard}>
-          <Text style={styles.bigLabel}>누적 매출</Text>
-          <Text style={styles.bigValue}>{formatKrw(totalEarnedKrw)}</Text>
+          <AppText style={styles.bigLabel}>누적 매출</AppText>
+          <AppText style={styles.bigValue}>{formatKrw(totalEarnedKrw)}</AppText>
           <View style={styles.subRow}>
             <View style={styles.subItem}>
-              <Text style={styles.subItemLabel}>출금 가능</Text>
-              <Text style={styles.subItemValue}>{formatKrw(availableKrw)}</Text>
+              <AppText style={styles.subItemLabel}>출금 가능</AppText>
+              <AppText style={styles.subItemValue}>{formatKrw(availableKrw)}</AppText>
             </View>
             <View style={styles.subItem}>
-              <Text style={styles.subItemLabel}>출금 진행 중</Text>
-              <Text style={styles.subItemValue}>{formatKrw(pendingPayoutKrw)}</Text>
+              <AppText style={styles.subItemLabel}>출금 진행 중</AppText>
+              <AppText style={styles.subItemValue}>{formatKrw(pendingPayoutKrw)}</AppText>
             </View>
             <View style={styles.subItem}>
-              <Text style={styles.subItemLabel}>다운로드 수</Text>
-              <Text style={styles.subItemValue}>{downloadsCount.toLocaleString()}회</Text>
+              <AppText style={styles.subItemLabel}>다운로드 수</AppText>
+              <AppText style={styles.subItemValue}>{downloadsCount.toLocaleString()}회</AppText>
             </View>
           </View>
           <TouchableOpacity
@@ -68,73 +69,73 @@ export default function RoyaltyScreen({ navigation }: any) {
             onPress={handlePayout}
             disabled={!canPayout}
           >
-            <Text style={[styles.payoutText, !canPayout && { color: colors.text.muted }]}>
+            <AppText style={[styles.payoutText, !canPayout && { color: colors.text.muted }]}>
               {canPayout ? '💸 출금 신청하기' : `최소 ${formatKrw(MIN_PAYOUT_KRW)}부터 출금 가능`}
-            </Text>
+            </AppText>
           </TouchableOpacity>
         </View>
 
         {/* 가격 분해 */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>곡 1회 다운로드 정산 구조</Text>
+          <AppText style={styles.cardTitle}>곡 1회 다운로드 정산 구조</AppText>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>판매가 (부가세 포함)</Text>
-            <Text style={styles.rowAmount}>{formatKrw(split.total)}</Text>
+            <AppText style={styles.rowLabel}>판매가 (부가세 포함)</AppText>
+            <AppText style={styles.rowAmount}>{formatKrw(split.total)}</AppText>
           </View>
           <View style={styles.divider} />
           <View style={styles.row}>
-            <Text style={styles.rowSub}>· 부가세 (9%)</Text>
-            <Text style={styles.rowSubAmount}>{formatKrw(split.vat)}</Text>
+            <AppText style={styles.rowSub}>· 부가세 (9%)</AppText>
+            <AppText style={styles.rowSubAmount}>{formatKrw(split.vat)}</AppText>
           </View>
           <View style={styles.row}>
-            <Text style={styles.rowSub}>· 결제 수수료 (3%)</Text>
-            <Text style={styles.rowSubAmount}>{formatKrw(split.pgFee)}</Text>
+            <AppText style={styles.rowSub}>· 결제 수수료 (3%)</AppText>
+            <AppText style={styles.rowSubAmount}>{formatKrw(split.pgFee)}</AppText>
           </View>
           <View style={styles.row}>
-            <Text style={styles.rowSub}>· 플랫폼 수수료 (22%) — 디렉터 보상</Text>
-            <Text style={styles.rowSubAmount}>{formatKrw(split.platformFee)}</Text>
+            <AppText style={styles.rowSub}>· 플랫폼 수수료 (22%) — 디렉터 보상</AppText>
+            <AppText style={styles.rowSubAmount}>{formatKrw(split.platformFee)}</AppText>
           </View>
           {splitPlatformFee(split.platformFee).map((d) => (
             <View key={d.key} style={styles.row}>
-              <Text style={styles.rowDeepSub}>   ↳ {d.emoji} {d.label}</Text>
-              <Text style={styles.rowDeepSubAmount}>{formatKrw(d.amount)}</Text>
+              <AppText style={styles.rowDeepSub}>   ↳ {d.emoji} {d.label}</AppText>
+              <AppText style={styles.rowDeepSubAmount}>{formatKrw(d.amount)}</AppText>
             </View>
           ))}
           <View style={styles.divider} />
           <View style={styles.row}>
-            <Text style={[styles.rowLabel, { color: colors.accent.primary }]}>
+            <AppText style={[styles.rowLabel, { color: colors.accent.primary }]}>
               🎤 아티스트 받는 금액
-            </Text>
-            <Text style={[styles.rowAmount, { color: colors.accent.primary }]}>
+            </AppText>
+            <AppText style={[styles.rowAmount, { color: colors.accent.primary }]}>
               {formatKrw(split.creator)}
-            </Text>
+            </AppText>
           </View>
         </View>
 
         {/* 활동 통계 */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>아티스트 활동</Text>
+          <AppText style={styles.cardTitle}>아티스트 활동</AppText>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>레벨</Text>
-            <Text style={styles.rowAmount}>Lv.{level}</Text>
+            <AppText style={styles.rowLabel}>레벨</AppText>
+            <AppText style={styles.rowAmount}>Lv.{level}</AppText>
           </View>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>발매한 곡</Text>
-            <Text style={styles.rowAmount}>{songsReleased}곡</Text>
+            <AppText style={styles.rowLabel}>발매한 곡</AppText>
+            <AppText style={styles.rowAmount}>{songsReleased}곡</AppText>
           </View>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>총 청취 수</Text>
-            <Text style={styles.rowAmount}>{totalPlays.toLocaleString()}회</Text>
+            <AppText style={styles.rowLabel}>총 청취 수</AppText>
+            <AppText style={styles.rowAmount}>{totalPlays.toLocaleString()}회</AppText>
           </View>
           <View style={styles.row}>
-            <Text style={styles.rowSub}>· 그중 가상 팬덤</Text>
-            <Text style={styles.rowSubAmount}>{totalSimulatedPlays.toLocaleString()}회</Text>
+            <AppText style={styles.rowSub}>· 그중 가상 팬덤</AppText>
+            <AppText style={styles.rowSubAmount}>{totalSimulatedPlays.toLocaleString()}회</AppText>
           </View>
         </View>
 
-        <Text style={styles.notice}>
+        <AppText style={styles.notice}>
           ⓘ 결제·출금은 백엔드 결제 시스템 반영 후 활성화됩니다. 현재는 미리보기 단계입니다.
-        </Text>
+        </AppText>
       </ScrollView>
     </View>
   );

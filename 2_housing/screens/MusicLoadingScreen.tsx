@@ -8,6 +8,7 @@ import {
   Easing,
   ActivityIndicator,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMusicStore } from '../stores/musicStore';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -237,7 +238,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           </View>
         </Animated.View>
 
-        <Text style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</Text>
+        <AppText style={styles.loadingText}>{LOADING_STEPS[messageIndex].message}</AppText>
 
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
 
@@ -254,11 +255,11 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                     state === 'done' && styles.stepDotDone,
                   ]}
                 >
-                  <Text style={styles.stepDotText}>
+                  <AppText style={styles.stepDotText}>
                     {state === 'done' ? '✓' : i + 1}
-                  </Text>
+                  </AppText>
                 </View>
-                <Text
+                <AppText
                   style={[
                     styles.stepLabel,
                     state === 'active' && styles.stepLabelActive,
@@ -267,7 +268,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                   numberOfLines={1}
                 >
                   {s.label}
-                </Text>
+                </AppText>
               </View>
             );
           })}
@@ -280,15 +281,15 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                 style={[styles.progressFill, { width: `${progress}%` }]}
               />
             </View>
-            <Text style={styles.progressText}>{Math.round(progress)}%</Text>
+            <AppText style={styles.progressText}>{Math.round(progress)}%</AppText>
           </View>
         )}
 
         <View style={styles.noteContainer}>
-          <Text style={styles.noteText}>
+          <AppText style={styles.noteText}>
             작곡 디렉터가 {messageIndex + 1}/{LOADING_STEPS.length} 단계를 진행 중이에요.{'\n'}
             1~3분 정도 소요될 수 있어요.
-          </Text>
+          </AppText>
         </View>
       </View>
     </AppScreenLayout>

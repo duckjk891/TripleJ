@@ -14,6 +14,7 @@ import {
   Animated,
   Easing,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
@@ -279,7 +280,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
               <Image source={IMAGE_PORTRAIT} style={styles.loadingPortraitImage} />
             </View>
           </Animated.View>
-          <Text style={styles.loadingText}>{LOADING_STEPS[loadingMsgIndex].message}</Text>
+          <AppText style={styles.loadingText}>{LOADING_STEPS[loadingMsgIndex].message}</AppText>
           <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 20 }} />
 
           {/* 스텝 인디케이터 */}
@@ -295,11 +296,11 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                       state === 'done' && styles.stepDotDone,
                     ]}
                   >
-                    <Text style={styles.stepDotText}>
+                    <AppText style={styles.stepDotText}>
                       {state === 'done' ? '✓' : i + 1}
-                    </Text>
+                    </AppText>
                   </View>
-                  <Text
+                  <AppText
                     style={[
                       styles.stepLabel,
                       state === 'active' && styles.stepLabelActive,
@@ -308,16 +309,16 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                     numberOfLines={1}
                   >
                     {s.label}
-                  </Text>
+                  </AppText>
                 </View>
               );
             })}
           </View>
 
           <View style={styles.loadingNote}>
-            <Text style={styles.loadingNoteText}>
+            <AppText style={styles.loadingNoteText}>
               {`이미지 디렉터가 ${loadingMsgIndex + 1}/${LOADING_STEPS.length} 단계를 진행 중이에요.\n잠시만 기다려주세요.`}
-            </Text>
+            </AppText>
           </View>
         </View>
       </View>
@@ -335,17 +336,17 @@ export default function CoverGenerationScreen({ navigation }: Props) {
               <Image source={IMAGE_PORTRAIT} style={styles.portraitCircleImage} />
             </View>
             <View style={styles.directorBubble}>
-              <Text style={styles.directorName}>이미지 디렉터</Text>
-              <Text style={styles.directorText}>
+              <AppText style={styles.directorName}>이미지 디렉터</AppText>
+              <AppText style={styles.directorText}>
                 {errorMsg ? '앗, 문제가 생겼어요. 다시 시도해볼까요?' : '커버 이미지가 완성됐어요!'}
-              </Text>
+              </AppText>
             </View>
           </View>
 
           {/* 에러 */}
           {errorMsg && (
             <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{errorMsg}</Text>
+              <AppText style={styles.errorText}>{errorMsg}</AppText>
             </View>
           )}
 
@@ -359,17 +360,17 @@ export default function CoverGenerationScreen({ navigation }: Props) {
           {/* 버튼 */}
           <View style={styles.buttonContainer}>
             <TouchableOpacity style={styles.regenerateButton} onPress={handleRegenerate}>
-              <Text style={styles.regenerateButtonText}>다시 생성하기</Text>
+              <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
             </TouchableOpacity>
 
             {coverImageUrl && (
               <TouchableOpacity style={styles.saveButton} onPress={handleConfirm}>
-                <Text style={styles.saveButtonText}>커버 이미지 확정</Text>
+                <AppText style={styles.saveButtonText}>커버 이미지 확정</AppText>
               </TouchableOpacity>
             )}
 
             <TouchableOpacity style={styles.backButton} onPress={() => navigation.popToTop()}>
-              <Text style={styles.backButtonText}>맵으로 돌아가기</Text>
+              <AppText style={styles.backButtonText}>맵으로 돌아가기</AppText>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -387,7 +388,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
               <View style={styles.smallPortrait}><Image source={IMAGE_PORTRAIT} style={styles.smallPortraitImg} /></View>
             )}
             <View style={[styles.bubble, msg.type === 'user' ? styles.userBubble : styles.dirBubble]}>
-              <Text style={[styles.bubbleText, msg.type === 'user' ? { color: colors.text.primary } : { color: colors.bg.deepest }]}>{msg.text}</Text>
+              <AppText style={[styles.bubbleText, msg.type === 'user' ? { color: colors.text.primary } : { color: colors.bg.deepest }]}>{msg.text}</AppText>
             </View>
           </View>
         ))}
@@ -399,13 +400,13 @@ export default function CoverGenerationScreen({ navigation }: Props) {
           <ActivityIndicator size="large" color={colors.accent.primary} />
         ) : step === 0 ? (
           tracks.length === 0 ? (
-            <Text style={{ color: colors.text.secondary, textAlign: 'center', paddingVertical: 20 }}>곡이 없어요. 먼저 곡을 만들어주세요!</Text>
+            <AppText style={{ color: colors.text.secondary, textAlign: 'center', paddingVertical: 20 }}>곡이 없어요. 먼저 곡을 만들어주세요!</AppText>
           ) : (
             <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
               {tracks.map((t) => (
                 <TouchableOpacity key={t.id} style={styles.trackOption} onPress={() => handleTrackSelect(t)}>
-                  <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{t.title}</Text>
-                  <Text style={{ color: colors.text.secondary, fontSize: 12 }}>{(t.cover_image || t.cover_image_url) ? '커버 있음 (재생성 가능)' : '커버 없음'}</Text>
+                  <AppText style={{ color: colors.text.primary, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{t.title}</AppText>
+                  <AppText style={{ color: colors.text.secondary, fontSize: 12 }}>{(t.cover_image || t.cover_image_url) ? '커버 있음 (재생성 가능)' : '커버 없음'}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -417,13 +418,13 @@ export default function CoverGenerationScreen({ navigation }: Props) {
               style={[styles.chip, styles.choiceChip]}
               onPress={() => handleArtistChoice(true)}
             >
-              <Text style={styles.choiceChipText}>네, 아티스트 포함</Text>
+              <AppText style={styles.choiceChipText}>네, 아티스트 포함</AppText>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.chip, styles.choiceChip, styles.choiceChipAlt]}
               onPress={() => handleArtistChoice(false)}
             >
-              <Text style={styles.choiceChipTextAlt}>아니요, 빼고</Text>
+              <AppText style={styles.choiceChipTextAlt}>아니요, 빼고</AppText>
             </TouchableOpacity>
           </View>
         ) : step === 2 ? (
@@ -431,14 +432,14 @@ export default function CoverGenerationScreen({ navigation }: Props) {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
               {STYLE_OPTIONS.map((s) => (
                 <TouchableOpacity key={s} style={[styles.chip, styleInput === s && styles.chipSelected]} onPress={() => handleStyleConfirm(s)}>
-                  <Text style={[styles.chipText, styleInput === s && styles.chipTextSelected]}>{s}</Text>
+                  <AppText style={[styles.chipText, styleInput === s && styles.chipTextSelected]}>{s}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
             <View style={styles.inputRow}>
               <TextInput style={styles.textInput} value={styleInput} onChangeText={setStyleInput} placeholder="자유롭게 입력..." placeholderTextColor={colors.text.muted} onSubmitEditing={() => styleInput.trim() && handleStyleConfirm(styleInput.trim())} />
               <TouchableOpacity style={[styles.sendBtn, !styleInput.trim() && { opacity: 0.4 }]} onPress={() => styleInput.trim() && handleStyleConfirm(styleInput.trim())} disabled={!styleInput.trim()}>
-                <Text style={styles.sendBtnText}>확인</Text>
+                <AppText style={styles.sendBtnText}>확인</AppText>
               </TouchableOpacity>
             </View>
           </>

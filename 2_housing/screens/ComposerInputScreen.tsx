@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -187,14 +188,14 @@ export default function ComposerInputScreen({ navigation }: Props) {
                 msg.type === 'user' ? styles.userBubble : styles.directorBubble,
               ]}
             >
-              <Text
+              <AppText
                 style={[
                   styles.messageText,
                   msg.type === 'user' ? styles.userText : styles.directorText,
                 ]}
               >
                 {msg.text}
-              </Text>
+              </AppText>
             </View>
           </View>
         ))}
@@ -216,8 +217,8 @@ export default function ComposerInputScreen({ navigation }: Props) {
                   style={styles.choiceButton}
                   onPress={() => handleChoicePress(choice)}
                 >
-                  <Text style={styles.choiceNumber}>{idx + 1}</Text>
-                  <Text style={styles.choiceText}>{choice}</Text>
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={styles.choiceText}>{choice}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -249,7 +250,7 @@ export default function ComposerInputScreen({ navigation }: Props) {
               onPress={handleCustomSubmit}
               disabled={!customInput.trim()}
             >
-              <Text style={styles.sendButtonText}>{'확인'}</Text>
+              <AppText style={styles.sendButtonText}>{'확인'}</AppText>
             </TouchableOpacity>
           </View>
         </View>

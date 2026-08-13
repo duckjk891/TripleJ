@@ -4,6 +4,33 @@
 
 ---
 
+## v3.7 (AppText 심화 통일 #3 — 남은 화면 일괄) — 2026-08-13
+
+### 요청 작업
+"남은 거 다 해" — 남은 16개 화면 일괄 통일(자율, 무중단).
+
+### 수행 결과
+`Text → AppText` 일괄 변환 + `components/ui` import 주입 (perl bulk, `<TextInput` 단어경계로 보호):
+ArtistCody · ArtistInput · ArtistLoading · ArtistResult · ComposerInput · CoverGeneration · Dialogue · DirectorLineup · LyricsInput · LyricsLoading · LyricsPromptReview · LyricsResult · MusicGeneration · MusicLoading · MusicResult · Royalty (**16화면**).
+- 안전확인: 대상 파일들은 HEAD 대비 **내용 diff 0**(모드 플래그만) → 기존 WIP 뭉갬 없음.
+- 스타일은 유지(시각 등가·컴포넌트 어댑션). 개별 토큰 스트립/칩·EmptyState 심화는 후속.
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc(전체) | 에러 0 |
+| 정적: `<AppTextInput` 파손 | 0 (TextInput 안전) |
+| 정적: 잔여 `<Text>`·import 미주입 | 0 |
+| [e2e-web] 앱 루트 로드(네비게이터가 전 화면 import) | **콘솔 에러 0** |
+
+### 결과 — 화면 통일 완료
+AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통일됨. **MapScreen만 hands-off**(사용자 지시).
+
+### 커밋
+`feat: v3.7 AppText 일괄통일 — 남은 16화면 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.6 (AppText 심화 통일 #2) — 2026-08-13 — WaitTimer · ComposerSelect
 
 ### 수행 결과

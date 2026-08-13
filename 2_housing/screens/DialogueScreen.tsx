@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   ScrollView,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Character, { DirectorType } from '../components/Character';
 import { DialogueNode } from '../types';
@@ -336,15 +337,15 @@ export default function DialogueScreen({ route, navigation }: Props) {
 
         {/* Director name */}
         <View style={styles.nameContainer}>
-          <Text style={styles.nameText}>{directorName}</Text>
+          <AppText style={styles.nameText}>{directorName}</AppText>
         </View>
 
         {/* White dialogue box at bottom */}
         <View style={styles.dialogueBox}>
-          <Text style={styles.dialogueText}>
+          <AppText style={styles.dialogueText}>
             {displayedText}
-            {isTyping && <Text style={styles.cursor}>|</Text>}
-          </Text>
+            {isTyping && <AppText style={styles.cursor}>|</AppText>}
+          </AppText>
 
           {/* Choices */}
           {!isTyping &&
@@ -357,7 +358,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
                     style={styles.choiceButton}
                     onPress={() => handleChoice(choice.next, choice.action)}
                   >
-                    <Text style={styles.choiceText}>{choice.text}</Text>
+                    <AppText style={styles.choiceText}>{choice.text}</AppText>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -365,7 +366,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
 
           {/* Tap to continue */}
           {!isTyping && !currentNode.choices && (
-            <Text style={styles.continueHint}>{'\u0009\u0009탭하여 계속\u25BC'}</Text>
+            <AppText style={styles.continueHint}>{'\u0009\u0009탭하여 계속\u25BC'}</AppText>
           )}
         </View>
       </TouchableOpacity>

@@ -12,6 +12,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
@@ -371,7 +372,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       return (
         <View style={styles.inputArea}>
           <TouchableOpacity style={styles.generateButton} onPress={handleGenerate}>
-            <Text style={styles.generateButtonText}>음악 생성 시작</Text>
+            <AppText style={styles.generateButtonText}>음악 생성 시작</AppText>
           </TouchableOpacity>
         </View>
       );
@@ -390,7 +391,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               placeholderTextColor={colors.text.muted}
             />
             <TouchableOpacity style={styles.confirmButton} onPress={handleTitleConfirm}>
-              <Text style={styles.confirmButtonText}>제목 확인</Text>
+              <AppText style={styles.confirmButtonText}>제목 확인</AppText>
             </TouchableOpacity>
           </View>
         );
@@ -413,7 +414,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               onPress={handleLyricsConfirm}
               disabled={!editedLyrics.trim()}
             >
-              <Text style={styles.confirmButtonText}>가사 확인 완료</Text>
+              <AppText style={styles.confirmButtonText}>가사 확인 완료</AppText>
             </TouchableOpacity>
           </View>
         );
@@ -437,10 +438,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   style={[styles.choiceButton, selectedVocalGender === vocal && styles.choiceButtonSelected]}
                   onPress={() => handleVocalSelect(vocal)}
                 >
-                  <Text style={styles.choiceNumber}>{idx + 1}</Text>
-                  <Text style={[styles.choiceText, selectedVocalGender === vocal && styles.choiceTextSelected]}>
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={[styles.choiceText, selectedVocalGender === vocal && styles.choiceTextSelected]}>
                     {vocal}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -463,9 +464,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   style={[styles.vocalChip, selectedVocalStyle === style && styles.vocalChipSelected]}
                   onPress={() => handleVocalStyleSelect(style)}
                 >
-                  <Text style={[styles.vocalChipText, selectedVocalStyle === style && styles.vocalChipTextSelected]}>
+                  <AppText style={[styles.vocalChipText, selectedVocalStyle === style && styles.vocalChipTextSelected]}>
                     {style}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -483,8 +484,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   style={[styles.choiceButton, subVocalGender === vocal && styles.choiceButtonSelected]}
                   onPress={() => handleSubVocalSelect(vocal)}
                 >
-                  <Text style={styles.choiceNumber}>{idx + 1}</Text>
-                  <Text style={[styles.choiceText, subVocalGender === vocal && styles.choiceTextSelected]}>{vocal}</Text>
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={[styles.choiceText, subVocalGender === vocal && styles.choiceTextSelected]}>{vocal}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -502,7 +503,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   style={[styles.vocalChip, subVocalStyle === style && styles.vocalChipSelected]}
                   onPress={() => handleSubVocalStyleSelect(style)}
                 >
-                  <Text style={[styles.vocalChipText, subVocalStyle === style && styles.vocalChipTextSelected]}>{style}</Text>
+                  <AppText style={[styles.vocalChipText, subVocalStyle === style && styles.vocalChipTextSelected]}>{style}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -517,18 +518,18 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               style={styles.uploadButton}
               onPress={handlePickReference}
             >
-              <Text style={styles.uploadButtonText}>파일 업로드</Text>
+              <AppText style={styles.uploadButtonText}>파일 업로드</AppText>
             </TouchableOpacity>
             {musicStore.referenceFileName && (
               <View style={styles.fileInfo}>
-                <Text style={styles.fileInfoText}>선택됨: {musicStore.referenceFileName}</Text>
+                <AppText style={styles.fileInfoText}>선택됨: {musicStore.referenceFileName}</AppText>
                 <TouchableOpacity onPress={() => musicStore.setReferenceFile(null, null)}>
-                  <Text style={styles.removeFileText}>제거</Text>
+                  <AppText style={styles.removeFileText}>제거</AppText>
                 </TouchableOpacity>
               </View>
             )}
             <TouchableOpacity style={styles.skipButton} onPress={() => advanceStep(musicStore.referenceFileName || '건너뛰기', 6)}>
-              <Text style={styles.skipButtonText}>{musicStore.referenceFileName ? '확인' : '건너뛰기'}</Text>
+              <AppText style={styles.skipButtonText}>{musicStore.referenceFileName ? '확인' : '건너뛰기'}</AppText>
             </TouchableOpacity>
           </View>
         );
@@ -546,14 +547,14 @@ export default function MusicGenerationScreen({ navigation }: Props) {
             />
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleNegativeConfirm(false)}>
-                <Text style={styles.skipBtnText}>건너뛰기</Text>
+                <AppText style={styles.skipBtnText}>건너뛰기</AppText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.applyBtn, !negativeTags.trim() && { opacity: 0.4 }]}
                 onPress={() => handleNegativeConfirm(true)}
                 disabled={!negativeTags.trim()}
               >
-                <Text style={styles.applyBtnText}>적용</Text>
+                <AppText style={styles.applyBtnText}>적용</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -564,7 +565,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={styles.inputArea}>
             <View style={styles.sliderRow}>
-              <Text style={styles.sliderEndLabel}>자유롭게</Text>
+              <AppText style={styles.sliderEndLabel}>자유롭게</AppText>
               <Slider
                 style={{ flex: 1 }}
                 minimumValue={0}
@@ -576,15 +577,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 maximumTrackTintColor={colors.border.subtle}
                 thumbTintColor={colors.accent.primary}
               />
-              <Text style={styles.sliderEndLabel}>엄격하게</Text>
+              <AppText style={styles.sliderEndLabel}>엄격하게</AppText>
             </View>
-            <Text style={styles.sliderValueCenter}>{styleWeight.toFixed(1)}</Text>
+            <AppText style={styles.sliderValueCenter}>{styleWeight.toFixed(1)}</AppText>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleStyleWeightConfirm(false)}>
-                <Text style={styles.skipBtnText}>건너뛰기</Text>
+                <AppText style={styles.skipBtnText}>건너뛰기</AppText>
               </TouchableOpacity>
               <TouchableOpacity style={styles.applyBtn} onPress={() => handleStyleWeightConfirm(true)}>
-                <Text style={styles.applyBtnText}>이대로 갈게요</Text>
+                <AppText style={styles.applyBtnText}>이대로 갈게요</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -595,7 +596,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={styles.inputArea}>
             <View style={styles.sliderRow}>
-              <Text style={styles.sliderEndLabel}>대중적</Text>
+              <AppText style={styles.sliderEndLabel}>대중적</AppText>
               <Slider
                 style={{ flex: 1 }}
                 minimumValue={0}
@@ -607,15 +608,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 maximumTrackTintColor={colors.border.subtle}
                 thumbTintColor={colors.accent.primary}
               />
-              <Text style={styles.sliderEndLabel}>실험적</Text>
+              <AppText style={styles.sliderEndLabel}>실험적</AppText>
             </View>
-            <Text style={styles.sliderValueCenter}>{weirdness.toFixed(1)}</Text>
+            <AppText style={styles.sliderValueCenter}>{weirdness.toFixed(1)}</AppText>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleWeirdnessConfirm(false)}>
-                <Text style={styles.skipBtnText}>건너뛰기</Text>
+                <AppText style={styles.skipBtnText}>건너뛰기</AppText>
               </TouchableOpacity>
               <TouchableOpacity style={styles.applyBtn} onPress={() => handleWeirdnessConfirm(true)}>
-                <Text style={styles.applyBtnText}>이대로 갈게요</Text>
+                <AppText style={styles.applyBtnText}>이대로 갈게요</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -626,7 +627,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={styles.inputArea}>
             <View style={styles.sliderRow}>
-              <Text style={styles.sliderEndLabel}>약하게</Text>
+              <AppText style={styles.sliderEndLabel}>약하게</AppText>
               <Slider
                 style={{ flex: 1 }}
                 minimumValue={0}
@@ -638,15 +639,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 maximumTrackTintColor={colors.border.subtle}
                 thumbTintColor={colors.accent.primary}
               />
-              <Text style={styles.sliderEndLabel}>강하게</Text>
+              <AppText style={styles.sliderEndLabel}>강하게</AppText>
             </View>
-            <Text style={styles.sliderValueCenter}>{audioWeight.toFixed(1)}</Text>
+            <AppText style={styles.sliderValueCenter}>{audioWeight.toFixed(1)}</AppText>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleAudioWeightConfirm(false)}>
-                <Text style={styles.skipBtnText}>건너뛰기</Text>
+                <AppText style={styles.skipBtnText}>건너뛰기</AppText>
               </TouchableOpacity>
               <TouchableOpacity style={styles.applyBtn} onPress={() => handleAudioWeightConfirm(true)}>
-                <Text style={styles.applyBtnText}>이대로 갈게요</Text>
+                <AppText style={styles.applyBtnText}>이대로 갈게요</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -657,7 +658,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         return (
           <View style={styles.inputArea}>
             <View style={styles.sliderRow}>
-              <Text style={styles.sliderEndLabel}>60</Text>
+              <AppText style={styles.sliderEndLabel}>60</AppText>
               <Slider
                 style={{ flex: 1 }}
                 minimumValue={60}
@@ -669,15 +670,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 maximumTrackTintColor={colors.border.subtle}
                 thumbTintColor={colors.accent.primary}
               />
-              <Text style={styles.sliderEndLabel}>200</Text>
+              <AppText style={styles.sliderEndLabel}>200</AppText>
             </View>
-            <Text style={styles.sliderValueCenter}>{Math.round(bpmValue)} BPM</Text>
+            <AppText style={styles.sliderValueCenter}>{Math.round(bpmValue)} BPM</AppText>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleBpmConfirm(false)}>
-                <Text style={styles.skipBtnText}>자동 템포</Text>
+                <AppText style={styles.skipBtnText}>자동 템포</AppText>
               </TouchableOpacity>
               <TouchableOpacity style={styles.applyBtn} onPress={() => handleBpmConfirm(true)}>
-                <Text style={styles.applyBtnText}>이 BPM으로</Text>
+                <AppText style={styles.applyBtnText}>이 BPM으로</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -694,20 +695,20 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   style={[styles.keyChip, musicalKey === k && styles.keyChipSelected]}
                   onPress={() => setMusicalKey(musicalKey === k ? '' : k)}
                 >
-                  <Text style={[styles.keyChipText, musicalKey === k && styles.keyChipTextSelected]}>{k}</Text>
+                  <AppText style={[styles.keyChipText, musicalKey === k && styles.keyChipTextSelected]}>{k}</AppText>
                 </TouchableOpacity>
               ))}
             </ScrollView>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handleKeyConfirm(false)}>
-                <Text style={styles.skipBtnText}>자동 키</Text>
+                <AppText style={styles.skipBtnText}>자동 키</AppText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.applyBtn, !musicalKey && { opacity: 0.4 }]}
                 onPress={() => handleKeyConfirm(true)}
                 disabled={!musicalKey}
               >
-                <Text style={styles.applyBtnText}>적용</Text>
+                <AppText style={styles.applyBtnText}>적용</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -722,29 +723,29 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 style={[styles.keyChip, { flex: 1 }, personaModel === 'style' && styles.keyChipSelected]}
                 onPress={() => setPersonaModel(personaModel === 'style' ? '' : 'style')}
               >
-                <Text style={[styles.keyChipText, personaModel === 'style' && styles.keyChipTextSelected]}>
+                <AppText style={[styles.keyChipText, personaModel === 'style' && styles.keyChipTextSelected]}>
                   🎨 Style Persona
-                </Text>
+                </AppText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.keyChip, { flex: 1 }, personaModel === 'voice' && styles.keyChipSelected]}
                 onPress={() => setPersonaModel(personaModel === 'voice' ? '' : 'voice')}
               >
-                <Text style={[styles.keyChipText, personaModel === 'voice' && styles.keyChipTextSelected]}>
+                <AppText style={[styles.keyChipText, personaModel === 'voice' && styles.keyChipTextSelected]}>
                   🎤 Voice Persona
-                </Text>
+                </AppText>
               </TouchableOpacity>
             </View>
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handlePersonaConfirm(false)}>
-                <Text style={styles.skipBtnText}>자동</Text>
+                <AppText style={styles.skipBtnText}>자동</AppText>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.applyBtn, !personaModel && { opacity: 0.4 }]}
                 onPress={() => handlePersonaConfirm(true)}
                 disabled={!personaModel}
               >
-                <Text style={styles.applyBtnText}>적용</Text>
+                <AppText style={styles.applyBtnText}>적용</AppText>
               </TouchableOpacity>
             </View>
           </View>
@@ -769,10 +770,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       {/* 진행도 바 */}
       <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 6, backgroundColor: colors.bg.deepest }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-          <Text style={{ fontSize: 11, color: colors.text.secondary, fontWeight: '600' }}>작곡 진행</Text>
-          <Text style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '700' }}>
+          <AppText style={{ fontSize: 11, color: colors.text.secondary, fontWeight: '600' }}>작곡 진행</AppText>
+          <AppText style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '700' }}>
             {displayedStep} / {totalSteps}
-          </Text>
+          </AppText>
         </View>
         <View style={{ height: 4, backgroundColor: colors.border.subtle, borderRadius: 2, overflow: 'hidden' }}>
           <View style={{ width: `${progressPct}%`, height: 4, backgroundColor: colors.accent.primary }} />
@@ -805,14 +806,14 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 msg.type === 'user' ? styles.userBubble : styles.directorBubble,
               ]}
             >
-              <Text
+              <AppText
                 style={[
                   styles.messageText,
                   msg.type === 'user' ? styles.userText : styles.directorText,
                 ]}
               >
                 {msg.text}
-              </Text>
+              </AppText>
             </View>
           </View>
         ))}

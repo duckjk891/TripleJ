@@ -8,6 +8,7 @@ import {
   Alert,
   Image,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DIRECTOR_CATALOG, DirectorCatalog } from '../data/directors';
 import { useDirectorsStore } from '../stores/directorsStore';
@@ -102,7 +103,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
   if (!user) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
-        <Text style={styles.emptyTitle}>로그인이 필요해요</Text>
+        <AppText style={styles.emptyTitle}>로그인이 필요해요</AppText>
       </View>
     );
   }
@@ -112,22 +113,22 @@ export default function DirectorLineupScreen({ navigation }: any) {
       {/* 헤더 */}
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backText}>{'‹'}</Text>
+          <AppText style={styles.backText}>{'‹'}</AppText>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>디렉터 영입</Text>
+        <AppText style={styles.headerTitle}>디렉터 영입</AppText>
         <View style={styles.balancePill}>
-          <Text style={styles.balanceText}>💎 {balance.toLocaleString()}</Text>
+          <AppText style={styles.balanceText}>💎 {balance.toLocaleString()}</AppText>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 + insets.bottom + (hasMiniPlayer ? 70 : 0) }}>
-        <Text style={styles.subTitle}>
+        <AppText style={styles.subTitle}>
           영입한 {hiredIds.length}명 / 전체 {DIRECTOR_CATALOG.length}명
-        </Text>
+        </AppText>
 
         {grouped.map(({ category, list }) => (
           <View key={category} style={styles.section}>
-            <Text style={styles.sectionTitle}>{CATEGORY_LABEL[category]}</Text>
+            <AppText style={styles.sectionTitle}>{CATEGORY_LABEL[category]}</AppText>
             <View style={styles.grid}>
               {list.map((d) => {
                 const hired = isHired(d.id);
@@ -144,25 +145,25 @@ export default function DirectorLineupScreen({ navigation }: any) {
                         <Image source={portrait} style={styles.cardPortrait} />
                       </View>
                     ) : null}
-                    <Text style={styles.cardName} numberOfLines={1}>{d.name}</Text>
-                    <Text style={styles.cardConcept} numberOfLines={2}>{d.concept}</Text>
+                    <AppText style={styles.cardName} numberOfLines={1}>{d.name}</AppText>
+                    <AppText style={styles.cardConcept} numberOfLines={2}>{d.concept}</AppText>
                     <View style={styles.tierRow}>
                       {Array.from({ length: d.tier }).map((_, i) => (
-                        <Text key={i} style={styles.tierStar}>★</Text>
+                        <AppText key={i} style={styles.tierStar}>★</AppText>
                       ))}
                     </View>
                     <View style={styles.cardCtaWrap}>
                       {selected ? (
                         <View style={[styles.cardCta, { backgroundColor: colors.accent.secondary }]}>
-                          <Text style={styles.cardCtaText}>선택됨</Text>
+                          <AppText style={styles.cardCtaText}>선택됨</AppText>
                         </View>
                       ) : hired ? (
                         <View style={[styles.cardCta, { backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.accent.primary }]}>
-                          <Text style={[styles.cardCtaText, { color: colors.accent.primary }]}>탭해서 선택</Text>
+                          <AppText style={[styles.cardCtaText, { color: colors.accent.primary }]}>탭해서 선택</AppText>
                         </View>
                       ) : d.hireCost === 0 ? (
                         <View style={[styles.cardCta, { backgroundColor: colors.accent.primary }]}>
-                          <Text style={styles.cardCtaText}>기본 지급</Text>
+                          <AppText style={styles.cardCtaText}>기본 지급</AppText>
                         </View>
                       ) : (
                         <View
@@ -171,14 +172,14 @@ export default function DirectorLineupScreen({ navigation }: any) {
                             { backgroundColor: balance >= d.hireCost ? colors.accent.primary : colors.bg.surface2 },
                           ]}
                         >
-                          <Text
+                          <AppText
                             style={[
                               styles.cardCtaText,
                               balance < d.hireCost && { color: colors.text.muted },
                             ]}
                           >
                             💎 {d.hireCost.toLocaleString()}
-                          </Text>
+                          </AppText>
                         </View>
                       )}
                     </View>
@@ -190,10 +191,10 @@ export default function DirectorLineupScreen({ navigation }: any) {
         ))}
 
         <View style={styles.hintBox}>
-          <Text style={styles.hintText}>
+          <AppText style={styles.hintText}>
             💡 곡을 만들거나 광고를 보면 캐시(💎)를 모을 수 있어요.{'\n'}
-            같은 카테고리 디렉터 중 <Text style={{ color: colors.accent.secondary }}>한 명만</Text> 작업에 투입돼요. 카드를 탭해 바꿀 수 있어요.
-          </Text>
+            같은 카테고리 디렉터 중 <AppText style={{ color: colors.accent.secondary }}>한 명만</AppText> 작업에 투입돼요. 카드를 탭해 바꿀 수 있어요.
+          </AppText>
         </View>
       </ScrollView>
     </View>

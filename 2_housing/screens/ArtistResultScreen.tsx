@@ -16,6 +16,7 @@ import {
   PanResponder,
   Linking,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -60,7 +61,7 @@ export default function ArtistResultScreen({ navigation }: any) {
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</Text>
+          <AppText style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</AppText>
         </TouchableOpacity>
       ),
     });
@@ -209,12 +210,12 @@ export default function ArtistResultScreen({ navigation }: any) {
     return (
       <View style={styles.container}>
         <View style={styles.center}>
-          <Text style={styles.emptyTitle}>아직 만든 아티스트가 없어요</Text>
+          <AppText style={styles.emptyTitle}>아직 만든 아티스트가 없어요</AppText>
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={() => navigation.replace('ArtistInput')}
           >
-            <Text style={styles.primaryBtnText}>아티스트 만들러 가기</Text>
+            <AppText style={styles.primaryBtnText}>아티스트 만들러 가기</AppText>
           </TouchableOpacity>
         </View>
       </View>
@@ -224,23 +225,23 @@ export default function ArtistResultScreen({ navigation }: any) {
   return (
     <View style={styles.container}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
-        <Text style={styles.title}>
+        <AppText style={styles.title}>
           {isUnsaved ? '완성된 아티스트 시트' : meeName ? `내 아티스트 · ${meeName}` : '내 아티스트'}
-        </Text>
-        <Text style={styles.subtitle}>
+        </AppText>
+        <AppText style={styles.subtitle}>
           {isUnsaved
             ? '마음에 드시면 저장하세요. 꾸미기로 옷·악세서리·헤어를 바꿀 수 있어요.'
             : '꾸미기로 옷·악세서리·헤어스타일·염색까지 모두 바꿀 수 있어요.'}
-        </Text>
+        </AppText>
 
         {/* 9004: 캐릭터 생성 시 업로드한 원본 사진 표시 */}
         {originalPhotoUrl && (
           <View style={styles.originalPhotoBox}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.originalPhotoLabel}>📸 내가 올린 사진</Text>
-              <Text style={styles.originalPhotoSub}>
+              <AppText style={styles.originalPhotoLabel}>📸 내가 올린 사진</AppText>
+              <AppText style={styles.originalPhotoSub}>
                 이 사진을 바탕으로 캐릭터가 생성됐어요. 꾸미기 시에도 이 사진이 다시 사용돼요.
-              </Text>
+              </AppText>
             </View>
             <Image source={{ uri: originalPhotoUrl }} style={styles.originalPhotoImg} />
           </View>
@@ -253,14 +254,14 @@ export default function ArtistResultScreen({ navigation }: any) {
         >
           <Image source={{ uri: apiResult.preview_url }} style={styles.previewImg} />
           <View style={styles.zoomHint}>
-            <Text style={styles.zoomHintText}>🔍 탭하여 확대 보기</Text>
+            <AppText style={styles.zoomHintText}>🔍 탭하여 확대 보기</AppText>
           </View>
         </TouchableOpacity>
 
         {/* 착용 중인 제품 정보 */}
         {outfitItems.length > 0 && (
           <View style={styles.outfitListBox}>
-            <Text style={styles.outfitListTitle}>👕 착용 중인 제품</Text>
+            <AppText style={styles.outfitListTitle}>👕 착용 중인 제품</AppText>
             {outfitItems.map((it, i) => {
               const optStr = it.options && Object.keys(it.options).length > 0
                 ? Object.entries(it.options).map(([k, v]) => `${k}:${v}`).join(' · ')
@@ -274,15 +275,15 @@ export default function ArtistResultScreen({ navigation }: any) {
                     />
                   ) : (
                     <View style={[styles.outfitThumb, styles.outfitThumbPh]}>
-                      <Text style={{ fontSize: 18 }}>👕</Text>
+                      <AppText style={{ fontSize: 18 }}>👕</AppText>
                     </View>
                   )}
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.outfitRowCat}>{it.cat}</Text>
-                    <Text style={styles.outfitRowName} numberOfLines={2}>
+                    <AppText style={styles.outfitRowCat}>{it.cat}</AppText>
+                    <AppText style={styles.outfitRowName} numberOfLines={2}>
                       {it.brand ? `${it.brand} ` : ''}{it.name}
-                    </Text>
-                    {optStr ? <Text style={styles.outfitRowOpt}>{optStr}</Text> : null}
+                    </AppText>
+                    {optStr ? <AppText style={styles.outfitRowOpt}>{optStr}</AppText> : null}
                   </View>
                   {it.productUrl ? (
                     <TouchableOpacity
@@ -291,7 +292,7 @@ export default function ArtistResultScreen({ navigation }: any) {
                         Alert.alert('링크 열기 실패', '브라우저로 열 수 없는 링크예요.');
                       })}
                     >
-                      <Text style={styles.outfitLinkBtnText}>🛒 보러가기</Text>
+                      <AppText style={styles.outfitLinkBtnText}>🛒 보러가기</AppText>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -302,12 +303,12 @@ export default function ArtistResultScreen({ navigation }: any) {
 
         {/* 캐릭터 다시 만들기 — destructive (스크롤 끝) */}
         <View style={styles.resetBox}>
-          <Text style={styles.resetBoxLabel}>옷 갈아입히기가 잘 안 되시나요?</Text>
-          <Text style={styles.resetBoxDesc}>
+          <AppText style={styles.resetBoxLabel}>옷 갈아입히기가 잘 안 되시나요?</AppText>
+          <AppText style={styles.resetBoxDesc}>
             현재 캐릭터의 베이스 의상이 코디 적용을 방해할 수 있어요. 처음부터 다시 만들면 코디가 잘 적용됩니다. (현재 캐릭터와 코디 기록은 모두 삭제돼요)
-          </Text>
+          </AppText>
           <TouchableOpacity style={styles.resetBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
-            <Text style={styles.resetBtnText}>🗑 캐릭터 다시 만들기</Text>
+            <AppText style={styles.resetBtnText}>🗑 캐릭터 다시 만들기</AppText>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -316,14 +317,14 @@ export default function ArtistResultScreen({ navigation }: any) {
         {isUnsaved ? (
           <View style={styles.btnRow}>
             <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-              <Text style={styles.skipBtnText}>✨ 꾸미기</Text>
+              <AppText style={styles.skipBtnText}>✨ 꾸미기</AppText>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.applyBtn, saving && { opacity: 0.5 }]}
               onPress={handleSave}
               disabled={saving}
             >
-              <Text style={styles.applyBtnText}>{saving ? '저장 중...' : '💾 저장'}</Text>
+              <AppText style={styles.applyBtnText}>{saving ? '저장 중...' : '💾 저장'}</AppText>
             </TouchableOpacity>
           </View>
         ) : (
@@ -334,14 +335,14 @@ export default function ArtistResultScreen({ navigation }: any) {
             ]}
             onPress={handleGoCody}
           >
-            <Text
+            <AppText
               style={[
                 styles.applyBtnText,
                 { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
               ]}
             >
               ✨ 아티스트 꾸미기
-            </Text>
+            </AppText>
           </TouchableOpacity>
         )}
       </View>
@@ -506,26 +507,26 @@ function ZoomModal({
         {/* 상단 좌측: +/- 버튼 */}
         <View style={styles.zoomCtrlGroup}>
           <TouchableOpacity style={styles.zoomCtrlBtn} onPress={zoomIn} activeOpacity={0.7}>
-            <Text style={styles.zoomCtrlText}>＋</Text>
+            <AppText style={styles.zoomCtrlText}>＋</AppText>
           </TouchableOpacity>
           <TouchableOpacity style={styles.zoomCtrlBtn} onPress={zoomOut} activeOpacity={0.7}>
-            <Text style={styles.zoomCtrlText}>－</Text>
+            <AppText style={styles.zoomCtrlText}>－</AppText>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.zoomCtrlBtn, styles.zoomCtrlBtnWide]} onPress={reset} activeOpacity={0.7}>
-            <Text style={styles.zoomCtrlTextSmall}>↺</Text>
+            <AppText style={styles.zoomCtrlTextSmall}>↺</AppText>
           </TouchableOpacity>
         </View>
 
         {/* 상단 우측: 닫기 */}
         <TouchableOpacity style={styles.zoomCloseBtn} onPress={onClose} activeOpacity={0.7}>
-          <Text style={styles.zoomCloseText}>✕</Text>
+          <AppText style={styles.zoomCloseText}>✕</AppText>
         </TouchableOpacity>
 
         {/* 하단 힌트 */}
         <View style={styles.zoomBottomHint}>
-          <Text style={styles.zoomBottomHintText}>
+          <AppText style={styles.zoomBottomHintText}>
             +/− 확대·축소  ·  이미지 탭 → 그 위치 자세히 보기  ·  드래그로 이동
-          </Text>
+          </AppText>
         </View>
       </View>
     </Modal>

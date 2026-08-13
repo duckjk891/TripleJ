@@ -13,6 +13,7 @@ import {
   Alert,
   Switch,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -169,28 +170,28 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             <Image source={LYRICIST_PORTRAIT} style={styles.portraitImage} />
           </View>
           <View style={styles.directorBubble}>
-            <Text style={styles.directorName}>작사 디렉터</Text>
-            <Text style={styles.directorText}>
+            <AppText style={styles.directorName}>작사 디렉터</AppText>
+            <AppText style={styles.directorText}>
               {`${titleLabel}님의 12가지 답변을 모아\n아래 프롬프트로 정리했어요`}
-            </Text>
+            </AppText>
           </View>
         </View>
 
         {/* 답변 → 프롬프트 흐름 안내 */}
         <View style={styles.flowHint}>
-          <Text style={styles.flowHintText}>
-            <Text style={{ color: colors.accent.primary, fontWeight: '700' }}>① 답변 요약</Text>
-            <Text>{'  →  '}</Text>
-            <Text style={{ color: colors.accent.primary, fontWeight: '700' }}>② 작사 디렉터에 전달할 내용</Text>
-          </Text>
-          <Text style={styles.flowHintSubtext}>
+          <AppText style={styles.flowHintText}>
+            <AppText style={{ color: colors.accent.primary, fontWeight: '700' }}>① 답변 요약</AppText>
+            <AppText>{'  →  '}</AppText>
+            <AppText style={{ color: colors.accent.primary, fontWeight: '700' }}>② 작사 디렉터에 전달할 내용</AppText>
+          </AppText>
+          <AppText style={styles.flowHintSubtext}>
             요약 카드를 탭하면 수정할 수 있고, 프롬프트도 직접 다듬을 수 있어요
-          </Text>
+          </AppText>
         </View>
 
         {/* Summary - clickable items (위) */}
         <View style={styles.summarySection}>
-          <Text style={styles.sectionTitle}>{`① ${titleLabel}님의 선택 (탭하여 수정)`}</Text>
+          <AppText style={styles.sectionTitle}>{`① ${titleLabel}님의 선택 (탭하여 수정)`}</AppText>
           <View style={styles.summaryGrid}>
             <TouchableOpacity onPress={() => handleFieldEdit('genre')}>
               <SummaryItem label="장르" value={store.genre} editable />
@@ -227,10 +228,10 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
 
         {/* Prompt review (아래) */}
         <View style={styles.promptSection}>
-          <Text style={styles.sectionTitle}>② 작사 디렉터에 전달할 내용 (자동 생성됨)</Text>
-          <Text style={styles.promptHelper}>
+          <AppText style={styles.sectionTitle}>② 작사 디렉터에 전달할 내용 (자동 생성됨)</AppText>
+          <AppText style={styles.promptHelper}>
             ✏ 직접 다듬으셔도 좋아요. 위 답변을 수정하면 자동으로 다시 생성돼요.
-          </Text>
+          </AppText>
           <TextInput
             style={styles.promptInput}
             value={editablePrompt}
@@ -247,13 +248,13 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             style={styles.backButton}
             onPress={() => navigation.goBack()}
           >
-            <Text style={styles.backButtonText}>뒤로 가기</Text>
+            <AppText style={styles.backButtonText}>뒤로 가기</AppText>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.generateButton}
             onPress={handleGenerate}
           >
-            <Text style={styles.generateButtonText}>가사 생성 시작</Text>
+            <AppText style={styles.generateButtonText}>가사 생성 시작</AppText>
           </TouchableOpacity>
         </View>
 
@@ -273,11 +274,11 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
           onPress={() => setEditingField(null)}
         >
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{getFieldTitle()}</Text>
+            <AppText style={styles.modalTitle}>{getFieldTitle()}</AppText>
 
             {editingField === 'rap' ? (
               <View style={styles.rapToggleRow}>
-                <Text style={styles.rapToggleLabel}>랩 파트 포함</Text>
+                <AppText style={styles.rapToggleLabel}>랩 파트 포함</AppText>
                 <Switch
                   value={store.hasRap}
                   onValueChange={handleRapToggle}
@@ -296,14 +297,14 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                     ]}
                     onPress={() => handleDurationSelect(d.value)}
                   >
-                    <Text
+                    <AppText
                       style={[
                         styles.optionText,
                         store.duration === d.value && styles.optionTextSelected,
                       ]}
                     >
                       {d.label}
-                    </Text>
+                    </AppText>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -326,7 +327,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                       ]}
                       onPress={() => handleSelectOption(opt)}
                     >
-                      <Text
+                      <AppText
                         style={[
                           styles.optionText,
                           ((editingField === 'genre' && store.genre === opt) ||
@@ -340,7 +341,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                         ]}
                       >
                         {opt}
-                      </Text>
+                      </AppText>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -358,7 +359,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
                     onPress={handleCustomSubmit}
                     disabled={!customInput.trim()}
                   >
-                    <Text style={styles.customSubmitText}>확인</Text>
+                    <AppText style={styles.customSubmitText}>확인</AppText>
                   </TouchableOpacity>
                 </View>
               </>
@@ -373,10 +374,10 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
 function SummaryItem({ label, value, editable }: { label: string; value: string; editable?: boolean }) {
   return (
     <View style={[styles.summaryItem, editable && styles.summaryItemEditable]}>
-      <Text style={styles.summaryLabel}>{label}</Text>
+      <AppText style={styles.summaryLabel}>{label}</AppText>
       <View style={styles.summaryValueRow}>
-        <Text style={styles.summaryValue}>{value}</Text>
-        {editable && <Text style={styles.editIcon}>{'✎'}</Text>}
+        <AppText style={styles.summaryValue}>{value}</AppText>
+        {editable && <AppText style={styles.editIcon}>{'✎'}</AppText>}
       </View>
     </View>
   );
