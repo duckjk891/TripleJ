@@ -23,6 +23,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DirectorType } from './components/Character';
 import MiniPlayer from './components/MiniPlayer';
+import HomeHeaderActions from './components/HomeHeaderActions';
 
 import SplashScreen from './screens/SplashScreen';
 import ChartScreen from './screens/ChartScreen';
@@ -162,27 +163,43 @@ function MiniPlayerWrapper() {
   );
 }
 
-// 상단 헤더 로고 (메뉴명 대신) — 모든 탭 공통
+// 상단 헤더 로고 (차트=홈 전용)
 function LogoTitle() {
   return <AppText variant="title2" tone="accent" style={{ letterSpacing: 1 }}>AIDOL</AppText>;
 }
 
-// 탭 공통 헤더: 좌측 로고 + 우측 마이페이지(👤) 아이콘 → MyMusic
-const tabHeader = (navigation: any) => ({
+// 마이페이지(user) 아이콘 → MyMusic
+const MyPageIcon = ({ navigation }: any) => (
+  <TouchableOpacity onPress={() => navigation.navigate('MyMusic')} style={{ marginRight: 16 }} accessibilityLabel="마이페이지">
+    <Feather name="user" size={22} color={colors.text.primary} />
+  </TouchableOpacity>
+);
+
+// 이전으로 돌아가기(←) → 홈(차트)
+const BackIcon = ({ navigation }: any) => (
+  <TouchableOpacity onPress={() => navigation.navigate('Chart')} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+    <Feather name="arrow-left" size={22} color={colors.text.primary} />
+  </TouchableOpacity>
+);
+
+// 홈(차트) 헤더: 좌 로고 + 우 (출석체크·추천하기·마이페이지)
+const homeHeader = (navigation: any) => ({
   headerShown: true,
   headerTitle: () => <LogoTitle />,
   headerTitleAlign: 'left' as const,
   headerStyle: { backgroundColor: colors.bg.deepest },
   headerTintColor: colors.text.primary,
-  headerRight: () => (
-    <TouchableOpacity
-      onPress={() => navigation.navigate('MyMusic')}
-      style={{ marginRight: 16 }}
-      accessibilityLabel="마이페이지"
-    >
-      <Feather name="user" size={22} color={colors.text.primary} />
-    </TouchableOpacity>
-  ),
+  headerRight: () => <HomeHeaderActions navigation={navigation} />,
+});
+
+// 일반 페이지 헤더: 좌 뒤로가기 + 페이지명 + 우 마이페이지
+const pageHeader = (navigation: any, title: string) => ({
+  headerShown: true,
+  headerTitle: () => <AppText variant="subtitle">{title}</AppText>,
+  headerStyle: { backgroundColor: colors.bg.deepest },
+  headerTintColor: colors.text.primary,
+  headerLeft: () => <BackIcon navigation={navigation} />,
+  headerRight: () => <MyPageIcon navigation={navigation} />,
 });
 
 function MainTabs() {
@@ -211,7 +228,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="bar-chart-2" size={size - 2} color={color} />
           ),
-          ...tabHeader(navigation),
+          ...homeHeader(navigation),
         })}
       />
       <Tab.Screen
@@ -222,7 +239,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="list" size={size - 2} color={color} />
           ),
-          ...tabHeader(navigation),
+          ...pageHeader(navigation, '플레이리스트'),
         })}
       />
       <Tab.Screen
@@ -231,9 +248,9 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '피드',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="home" size={size - 2} color={color} />
+            <Feather name="users" size={size - 2} color={color} />
           ),
-          ...tabHeader(navigation),
+          ...pageHeader(navigation, '피드'),
         })}
       />
       <Tab.Screen
@@ -244,7 +261,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="search" size={size - 2} color={color} />
           ),
-          ...tabHeader(navigation),
+          ...pageHeader(navigation, '검색'),
         })}
       />
       <Tab.Screen
@@ -261,7 +278,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="mic" size={size - 2} color={color} />
           ),
-          ...tabHeader(navigation),
+          ...pageHeader(navigation, '작업실'),
         })}
       />
       {/* 마이뮤직=마이페이지: 하단바에서 숨김(상단 👤로 진입). 설정은 이 화면 헤더 ⚙️로 진입. */}
@@ -272,9 +289,10 @@ function MainTabs() {
           tabBarButton: () => null,
           tabBarItemStyle: { display: 'none' },
           headerShown: true,
-          headerTitle: '마이페이지',
+          headerTitle: () => <AppText variant="subtitle">마이페이지</AppText>,
           headerStyle: { backgroundColor: colors.bg.deepest },
           headerTintColor: colors.text.primary,
+          headerLeft: () => <BackIcon navigation={navigation} />,
           headerRight: () => (
             <TouchableOpacity
               onPress={() => navigation.navigate('Settings')}

@@ -4,6 +4,37 @@
 
 ---
 
+## v3.11 (기능 #3 — 헤더/피드/홈 액션 개편) — 2026-08-13
+
+### 요청 작업
+① 차트=홈, 피드=팔로우 소식(아이콘 홈 말고 딴 걸로) ② 팔로우 없으면 피드에 "팔로우를 추가해주세요" ③ 차트 상단 돋보기 제거 + 마이페이지 아이콘 통일 ④ 돋보기 대신 로그인 시 출석체크·추천하기 ⑤ 차트 외 페이지는 상단에 페이지명 + 뒤로가기.
+
+### Plan verification findings (0단계)
+- 헤더 = `App.tsx` 탭별 옵션. 기존 tabHeader = 로고+마이페이지 공통.
+- 백엔드: `POST /attendance/check-in`, `GET /referral/my-code`→`{referral_code, invite_url}` (인증 필요·라이브).
+
+### 수행 결과
+- **App.tsx**: 헤더 2종 분리 — **홈(차트)**=로고+`HomeHeaderActions`(출석·추천·마이페이지) / **일반 페이지**(플레이리스트·피드·검색·작업실·마이페이지)=**뒤로가기(←)+페이지명+마이페이지**. 피드 탭 아이콘 `home`→**`users`**.
+- **components/HomeHeaderActions.tsx**(신규): 로그인 시 **출석체크**(Feather calendar→`/attendance/check-in`)·**추천하기**(gift→`/referral/my-code`+Share), 항상 마이페이지(user).
+- **FeedScreen.tsx**: 빈/미로그인 상태 → "**팔로우를 추가해주세요**"(+아티스트 둘러보기 버튼)/"로그인이 필요해요".
+- (차트 상단 돋보기는 v3.10에서 제거 완료 — 홈 헤더로 대체됨.)
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] 홈: 로고 AIDOL + user | PASS (`/tmp/hdr_home.png`) |
+| [e2e-web] 플레이리스트: **← 플레이리스트** 헤더 | PASS (`/tmp/hdr_playlist.png`) |
+| [e2e-web] 피드 아이콘 users + 실데이터/빈상태 문구 | PASS (`/tmp/hdr_feed.png`) |
+| 콘솔 에러 | 0 |
+
+특이: 출석체크·추천하기·팔로우빈상태 문구는 **로그인 경로**라 미로그인 웹에선 UI 노출까지만 검증(로직 코드 완비). 실기기/로그인 시 동작.
+
+### 커밋
+`feat: v3.11 헤더 페이지명+뒤로가기, 홈 출석·추천, 피드 users아이콘·팔로우유도 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.10 (기능 #2 — 검색 탭 + Feather 아이콘) — 2026-08-13
 
 ### 요청 작업

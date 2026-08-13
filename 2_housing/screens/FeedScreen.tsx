@@ -1,12 +1,12 @@
 // [FeedScreen] 피드 타임라인 — /api/feeds/timeline (백엔드 9004 라이브). Wave1 소셜 코어 시작.
 import { useState, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
 import { spacing } from '../theme/spacing';
-import { AppText, Card, Avatar, EmptyState, ScreenLayout } from '../components/ui';
+import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 
 interface FeedPost {
   id?: string | number;
@@ -21,6 +21,7 @@ interface FeedPost {
 }
 
 export default function FeedScreen() {
+  const navigation = useNavigation<any>();
   const { user } = useAuthStore();
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,9 +91,14 @@ export default function FeedScreen() {
         />
       ) : (
         <EmptyState
-          icon="📰"
-          title="피드가 비어있어요"
-          hint={user ? '팔로우한 아티스트의 소식이 여기 표시됩니다' : '로그인하면 피드를 볼 수 있어요'}
+          icon="👥"
+          title={user ? '팔로우한 아티스트가 없어요' : '로그인이 필요해요'}
+          hint={user
+            ? '팔로우를 추가해주세요. 마음에 드는 아티스트를 팔로우하면 소식이 여기 떠요.'
+            : '로그인하면 팔로우한 아티스트의 소식을 볼 수 있어요'}
+          action={user
+            ? <Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />
+            : undefined}
         />
       )}
     </ScreenLayout>
