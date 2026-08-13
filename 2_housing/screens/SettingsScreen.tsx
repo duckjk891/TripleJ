@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
+import { AppText } from '../components/ui';
 
 export default function SettingsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -85,7 +86,7 @@ export default function SettingsScreen({ navigation }: any) {
   // 닫기 버튼 + 제목 row (양쪽 분기 공통)
   const TitleRow = (
     <View style={styles.headerRow}>
-      <Text style={styles.title}>설정</Text>
+      <AppText variant="title2">설정</AppText>
       <TouchableOpacity
         onPress={() => navigation.goBack()}
         style={styles.closeBtn}
@@ -117,7 +118,7 @@ export default function SettingsScreen({ navigation }: any) {
         </View>
 
         {/* 계정 관리 */}
-        <Text style={styles.sectionTitle}>계정 관리</Text>
+        <AppText variant="callout" style={styles.sectionTitle}>계정 관리</AppText>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowFirst]}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
@@ -141,7 +142,7 @@ export default function SettingsScreen({ navigation }: any) {
         </TouchableOpacity>
 
         {/* 알림 설정 */}
-        <Text style={styles.sectionTitle}>알림 설정</Text>
+        <AppText variant="callout" style={styles.sectionTitle}>알림 설정</AppText>
         <View style={[styles.settingRow, styles.settingRowFirst]}>
           <Text style={styles.settingLabel}>곡 생성 완료 알림</Text>
           <Switch
@@ -162,7 +163,7 @@ export default function SettingsScreen({ navigation }: any) {
         </View>
 
         {/* 앱 정보 */}
-        <Text style={styles.sectionTitle}>앱 정보</Text>
+        <AppText variant="callout" style={styles.sectionTitle}>앱 정보</AppText>
         <View style={[styles.settingRow, styles.settingRowFirst]}>
           <Text style={styles.settingLabel}>앱 버전</Text>
           <Text style={styles.settingValue}>v1.0.0</Text>
@@ -190,7 +191,7 @@ export default function SettingsScreen({ navigation }: any) {
         </TouchableOpacity>
 
         {/* 기타 */}
-        <Text style={styles.sectionTitle}>기타</Text>
+        <AppText variant="callout" style={styles.sectionTitle}>기타</AppText>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowFirst]}
           onPress={() => Alert.alert('알림', '캐시가 삭제되었습니다')}
@@ -272,9 +273,9 @@ export default function SettingsScreen({ navigation }: any) {
     <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent}>
       {TitleRow}
       <View style={styles.formContainer}>
-        <Text style={styles.formTitle}>
+        <AppText variant="title3" center style={styles.formTitle}>
           {isRegister ? '회원가입' : '로그인'}
-        </Text>
+        </AppText>
 
         {error && (
           <View style={styles.errorContainer}>
@@ -429,9 +430,6 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.text.primary,
     marginTop: 24,
     marginBottom: 12,
     paddingHorizontal: 20,
@@ -485,11 +483,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
   },
   formTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.text.primary,
     marginBottom: 20,
-    textAlign: 'center',
   },
   errorContainer: {
     backgroundColor: 'rgba(248, 113, 113, 0.15)',

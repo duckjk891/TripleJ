@@ -7,6 +7,23 @@
 
 ---
 
+## v3.8 — 2026-08-13 — AppText 심화 통일 #1 (Settings) + MAIDOL 비교 서버
+
+### 요청
+"AppText 심화 통일 계속" + "MAIDOL 프론트 따로 띄워 빠진 기능 확인".
+
+### 수행
+- SettingsScreen 위계 텍스트(제목/섹션×4/폼) → AppText, style 타이포 속성 제거.
+- MAIDOL 프론트 실행: `git worktree add /Users/pearl/TripleJ-maidol origin/backend` → `0_platform_music/frontend` proxy를 원격 9005로 수정 → `npm run dev`(Vite:4000). AIDOL(8081)과 병행 비교 가능. Track B 갭 체크리스트 제공.
+
+### 남은 AppText 큐
+반복 행 텍스트(settingLabel 등) + 창작 플로우 화면(Lyrics/Composer/Cover/Artist/Director/Royalty/WaitTimer 등) 순차.
+
+### 테스트 지정
+[unit] tsc 0. [e2e] 화면 렌더·에러 0. [회귀] 레이아웃/로직 보존.
+
+---
+
 ## v3.7 — 2026-08-13 — 화면 통일 스윕 #2 (하드코딩 색 토큰화)
 
 ### 변경 매트릭스

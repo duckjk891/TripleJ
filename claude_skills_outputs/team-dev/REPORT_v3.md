@@ -4,6 +4,30 @@
 
 ---
 
+## v3.5 (AppText 심화 통일 #1) — 2026-08-13 — SettingsScreen 타입 위계 토큰화
+
+### 요청 작업
+"AppText 심화 통일 계속" (자율).
+
+### 수행 결과
+- `SettingsScreen`: 핵심 위계 텍스트(화면 제목·섹션 타이틀 4개·폼 타이틀)를 **`AppText`**(variant title2/callout/title3)로 변환, 해당 style에서 fontSize/fontWeight/color 제거(토큰이 담당, 레이아웃만 유지).
+- MAIDOL 비교용 프론트 서버(worktree/Vite:4000) 기동 — 원격 9005 프록시 200 확인(별도 산출물 아님, 운영 메모).
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] ⋮→설정 진입, "설정"(AppText) 렌더 | PASS |
+| 에러 | 콘솔 0 |
+| 증적 | `/tmp/settings_reskin.png` |
+
+특이: 반복 행(settingLabel/arrow) 등 나머지 텍스트는 다음 심화 패스에서 순차 변환. 이번은 위계(제목/섹션) 우선.
+
+### 커밋
+`feat: v3.5 AppText 심화통일#1 — SettingsScreen 타입위계 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.4 (화면 통일 스윕 #2) — 2026-08-13 — 하드코딩 색 토큰화 (Splash·Agency·ArtistDetail·Settings)
 
 ### 요청 작업
