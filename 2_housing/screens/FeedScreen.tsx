@@ -100,7 +100,7 @@ export default function FeedScreen() {
   const renderTrackBlock = (track: FeedTrack, key: string) => {
     const uri = coverUri(track.cover_image);
     return (
-      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => (user ? handlePlayTrack(track) : goLogin())} accessibilityLabel={`재생 ${track.title || ''}`}>
+      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => user && handlePlayTrack(track)} accessibilityLabel={`재생 ${track.title || ''}`}>
         <View style={styles.trackCover}>
           {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
             : <AppText variant="title3" tone="muted">♪</AppText>}
@@ -128,7 +128,7 @@ export default function FeedScreen() {
           style={styles.head}
           activeOpacity={0.7}
           onPress={() => {
-            if (!user) return goLogin();
+            if (!user) return; // 비로그인: 하단 고정 CTA로 로그인 유도
             if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: author });
           }}
           accessibilityLabel={`${author} 채널`}
@@ -157,24 +157,8 @@ export default function FeedScreen() {
         </View>
       </Card>
     );
-    // 비로그인: 피드를 클릭하면 로그인 유도(텍스트 영역 탭 포함)
-    if (!user) {
-      return (
-        <TouchableOpacity activeOpacity={0.9} onPress={goLogin}>{card}</TouchableOpacity>
-      );
-    }
     return card;
   };
-
-  // 비로그인: 피드를 아래로 내리면 뜨는 로그인 CTA (하단 푸터)
-  const LoginCta = () => (
-    <View style={styles.loginCta}>
-      <AppText variant="body" tone="secondary" center style={styles.loginHint}>
-        로그인하면 팔로우한 아티스트와{'\n'}다른 사람들의 소식을 더 볼 수 있어요
-      </AppText>
-      <Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />
-    </View>
-  );
 
   return (
     <ScreenLayout>
@@ -185,8 +169,7 @@ export default function FeedScreen() {
           data={posts}
           keyExtractor={(it, i) => String(it.id ?? i)}
           renderItem={renderPost}
-          contentContainerStyle={styles.list}
-          ListFooterComponent={!user ? <LoginCta /> : null}
+          contentContainerStyle={[styles.list, !user && { paddingBottom: 140 }]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -196,7 +179,7 @@ export default function FeedScreen() {
           }
         />
       ) : !user ? (
-        <LoginCta />
+        <View style={{ flex: 1 }} />
       ) : (
         <EmptyState
           icon="👥"
@@ -205,6 +188,18 @@ export default function FeedScreen() {
           action={<Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />}
         />
       )}
+
+      {/* 비로그인: 하단 고정 로그인 CTA (스크롤/클릭 시 항상 노출) */}
+      {!user ? (
+        <View style={styles.stickyCta} pointerEvents="box-none">
+          <View style={styles.stickyCtaInner}>
+            <AppText variant="footnote" tone="secondary" center style={styles.stickyHint}>
+              로그인하면 팔로우한 아티스트와{'\n'}다른 사람들의 소식을 더 볼 수 있어요
+            </AppText>
+            <Button label="로그인하고 시작하기" fullWidth onPress={goLogin} />
+          </View>
+        </View>
+      ) : null}
     </ScreenLayout>
   );
 }
@@ -234,6 +229,11 @@ const styles = StyleSheet.create({
   trackMeta: { flex: 1 },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  loginCta: { alignItems: 'center', paddingVertical: spacing.xxl, paddingHorizontal: spacing.lg, gap: spacing.lg },
-  loginHint: { lineHeight: 20 },
+  stickyCta: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  stickyCtaInner: {
+    padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md,
+    backgroundColor: colors.bg.surface1,
+    borderTopWidth: 1, borderTopColor: colors.border.subtle,
+  },
+  stickyHint: { lineHeight: 18 },
 });

@@ -2,7 +2,7 @@
 // 느낌별 음악 = 작은 아이콘 칩이 가로로 나열(가로 스크롤). 칩 탭 → 해당 느낌 곡 목록.
 // 비로그인 사용자가 (검색 시도 | 느낌 칩 탭) 하면 "로그인하고 시작하기" CTA.
 // 검색 로딩은 스피너 대신 "최적의 음악을 찾고 있습니다" 멘트.
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, TextInput, FlatList, ScrollView, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
@@ -90,12 +90,10 @@ export default function SearchScreen() {
     }
   };
 
-  const handleSelectCategory = useCallback(async (cat: string) => {
-    if (!useAuthStore.getState().user) { setGated(true); return; }
-    if (activeCategory === cat) { setActiveCategory(null); setResults([]); setSubmitted(false); return; }
+  // 카테고리(느낌) 곡 로드 — 게이트 없음(디폴트 노출/실제 선택 공용)
+  const loadCategory = useCallback(async (cat: string) => {
     if (__DEV__) console.info('[SearchScreen] getCategoryChart', { cat });
     setActiveCategory(cat);
-    setSubmitted(true);
     setLoading(true);
     try {
       const res = await api.get(`/charts/category/${encodeURIComponent(cat)}`, { params: { limit: 50 } });
@@ -106,7 +104,22 @@ export default function SearchScreen() {
     } finally {
       setLoading(false);
     }
-  }, [activeCategory]);
+  }, []);
+
+  // 느낌 칩 탭 — 비로그인은 게이트, 로그인은 로드
+  const handleSelectCategory = (cat: string) => {
+    if (!useAuthStore.getState().user) { setGated(true); return; }
+    loadCategory(cat);
+  };
+
+  // 기본: 첫 카테고리(운동)를 디폴트 선택 + 곡 로드 (검색 전 빈 화면 방지)
+  const didDefault = useRef(false);
+  useEffect(() => {
+    if (didDefault.current || !categories.length) return;
+    if (query || activeCategory || submitted) return;
+    didDefault.current = true;
+    loadCategory(categories[0]);
+  }, [categories, query, activeCategory, submitted, loadCategory]);
 
   const handlePress = (t: Track) => {
     const idx = results.findIndex((x) => x.id === t.id);
@@ -188,7 +201,7 @@ export default function SearchScreen() {
       {gated ? (
         <View style={styles.loginCta}>
           <AppText variant="body" tone="secondary" center style={styles.loginHint}>
-            검색과 느낌별 음악은{'\n'}로그인 후 이용할 수 있어요
+            검색 기능은 로그인 후{'\n'}이용할 수 있어요
           </AppText>
           <Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />
         </View>
