@@ -10,6 +10,7 @@ import {
   Linking,
   FlatList,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -143,33 +144,33 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
           style={[styles.heroBg, { paddingTop: insets.top + 12 }]}
         >
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>{'←'}</Text>
+            <AppText style={styles.backText}>{'←'}</AppText>
           </TouchableOpacity>
           <View style={styles.profileSection}>
             {profileImg ? (
               <Image source={{ uri: profileImg }} style={styles.profileImage} />
             ) : (
               <View style={[styles.profileImage, styles.profilePlaceholder]}>
-                <Text style={styles.profilePlaceholderText}>
+                <AppText style={styles.profilePlaceholderText}>
                   {artist?.name?.[0] || artistName?.[0] || '♪'}
-                </Text>
+                </AppText>
               </View>
             )}
-            <Text style={styles.profileName}>{artist?.name || artistName || '알 수 없음'}</Text>
-            {artist?.bio ? <Text style={styles.bioText}>{artist.bio}</Text> : null}
+            <AppText style={styles.profileName}>{artist?.name || artistName || '알 수 없음'}</AppText>
+            {artist?.bio ? <AppText style={styles.bioText}>{artist.bio}</AppText> : null}
 
             <View style={styles.statsRow}>
               <View style={styles.statBox}>
-                <Text style={styles.statValue}>{artist?.track_count ?? 0}</Text>
-                <Text style={styles.statLabel}>곡</Text>
+                <AppText style={styles.statValue}>{artist?.track_count ?? 0}</AppText>
+                <AppText style={styles.statLabel}>곡</AppText>
               </View>
               <View style={styles.statBox}>
-                <Text style={styles.statValue}>{(artist?.total_plays ?? 0).toLocaleString()}</Text>
-                <Text style={styles.statLabel}>재생</Text>
+                <AppText style={styles.statValue}>{(artist?.total_plays ?? 0).toLocaleString()}</AppText>
+                <AppText style={styles.statLabel}>재생</AppText>
               </View>
               <View style={styles.statBox}>
-                <Text style={styles.statValue}>{(artist?.total_likes ?? 0).toLocaleString()}</Text>
-                <Text style={styles.statLabel}>좋아요</Text>
+                <AppText style={styles.statValue}>{(artist?.total_likes ?? 0).toLocaleString()}</AppText>
+                <AppText style={styles.statLabel}>좋아요</AppText>
               </View>
             </View>
           </View>
@@ -177,27 +178,27 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
 
         {/* 트랙 목록 */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🎵 곡</Text>
+          <AppText style={styles.sectionTitle}>🎵 곡</AppText>
           {tracks.length === 0 ? (
-            <Text style={styles.emptyText}>등록된 곡이 없어요</Text>
+            <AppText style={styles.emptyText}>등록된 곡이 없어요</AppText>
           ) : (
             tracks.map((t, idx) => {
               const cover = getCoverUrl(t.cover_image || t.cover_image_url);
               return (
                 <TouchableOpacity key={t.id} style={styles.trackRow} onPress={() => handleTrackPress(t)}>
-                  <Text style={styles.trackRank}>{idx + 1}</Text>
+                  <AppText style={styles.trackRank}>{idx + 1}</AppText>
                   {cover ? (
                     <Image source={{ uri: cover }} style={styles.trackCover} />
                   ) : (
                     <View style={[styles.trackCover, styles.trackCoverPlaceholder]}>
-                      <Text style={{ color: colors.text.muted, fontSize: 18 }}>♪</Text>
+                      <AppText style={{ color: colors.text.muted, fontSize: 18 }}>♪</AppText>
                     </View>
                   )}
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.trackTitle} numberOfLines={1}>{t.title}</Text>
-                    <Text style={styles.trackMeta}>
+                    <AppText style={styles.trackTitle} numberOfLines={1}>{t.title}</AppText>
+                    <AppText style={styles.trackMeta}>
                       ▶ {(t.play_count ?? 0).toLocaleString()} · ♥ {(t.like_count ?? 0).toLocaleString()}
-                    </Text>
+                    </AppText>
                   </View>
                 </TouchableOpacity>
               );
@@ -208,7 +209,7 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
         {/* 착용/협찬 제품 섹션 */}
         {ads.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>💼 이 아티스트의 아이템</Text>
+            <AppText style={styles.sectionTitle}>💼 이 아티스트의 아이템</AppText>
             <FlatList
               horizontal
               data={ads}
@@ -224,12 +225,12 @@ export default function ArtistDetailScreen({ route, navigation }: any) {
                       <Image source={{ uri: img }} style={styles.adImage} />
                     ) : (
                       <View style={[styles.adImage, styles.adImagePlaceholder]}>
-                        <Text style={{ fontSize: 36 }}>{icon}</Text>
+                        <AppText style={{ fontSize: 36 }}>{icon}</AppText>
                       </View>
                     )}
-                    <Text style={styles.adCategory}>{icon} {item.category}</Text>
-                    <Text style={styles.adTitle} numberOfLines={2}>{item.title || '아이템'}</Text>
-                    {item.brand ? <Text style={styles.adBrand}>{item.brand}</Text> : null}
+                    <AppText style={styles.adCategory}>{icon} {item.category}</AppText>
+                    <AppText style={styles.adTitle} numberOfLines={2}>{item.title || '아이템'}</AppText>
+                    {item.brand ? <AppText style={styles.adBrand}>{item.brand}</AppText> : null}
                   </TouchableOpacity>
                 );
               }}

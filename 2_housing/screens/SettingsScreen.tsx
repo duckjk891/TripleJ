@@ -92,7 +92,7 @@ export default function SettingsScreen({ navigation }: any) {
         style={styles.closeBtn}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        <Text style={styles.closeBtnText}>✕</Text>
+        <AppText style={styles.closeBtnText}>✕</AppText>
       </TouchableOpacity>
     </View>
   );
@@ -103,17 +103,17 @@ export default function SettingsScreen({ navigation }: any) {
         {TitleRow}
         <View style={styles.profileCard}>
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>{user.nickname[0]}</Text>
+            <AppText style={styles.avatarText}>{user.nickname[0]}</AppText>
           </View>
-          <Text style={styles.companyText}>
+          <AppText style={styles.companyText}>
             {user.company_name || `${user.nickname} 엔터테인먼트`}
-          </Text>
-          <Text style={styles.nicknameText}>
+          </AppText>
+          <AppText style={styles.nicknameText}>
             {user.nickname} {user.display_title || '대표'}
-          </Text>
-          <Text style={styles.emailText}>{user.email}</Text>
+          </AppText>
+          <AppText style={styles.emailText}>{user.email}</AppText>
           <TouchableOpacity style={styles.profileEditBtn} onPress={openProfileEdit}>
-            <Text style={styles.profileEditBtnText}>기획사 정보 편집</Text>
+            <AppText style={styles.profileEditBtnText}>기획사 정보 편집</AppText>
           </TouchableOpacity>
         </View>
 
@@ -123,28 +123,28 @@ export default function SettingsScreen({ navigation }: any) {
           style={[styles.settingRow, styles.settingRowFirst]}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
         >
-          <Text style={styles.settingLabel}>닉네임 변경</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>닉네임 변경</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.settingRow}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
         >
-          <Text style={styles.settingLabel}>비밀번호 변경</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>비밀번호 변경</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
           onPress={() => navigation.navigate('Royalty' as never)}
         >
-          <Text style={styles.settingLabel}>💸 내 정산</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>💸 내 정산</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 
         {/* 알림 설정 */}
         <AppText variant="callout" style={styles.sectionTitle}>알림 설정</AppText>
         <View style={[styles.settingRow, styles.settingRowFirst]}>
-          <Text style={styles.settingLabel}>곡 생성 완료 알림</Text>
+          <AppText style={styles.settingLabel}>곡 생성 완료 알림</AppText>
           <Switch
             value={notifySongComplete}
             onValueChange={setNotifySongComplete}
@@ -153,7 +153,7 @@ export default function SettingsScreen({ navigation }: any) {
           />
         </View>
         <View style={[styles.settingRow, styles.settingRowLast]}>
-          <Text style={styles.settingLabel}>새로운 차트 업데이트</Text>
+          <AppText style={styles.settingLabel}>새로운 차트 업데이트</AppText>
           <Switch
             value={notifyChartUpdate}
             onValueChange={setNotifyChartUpdate}
@@ -165,29 +165,29 @@ export default function SettingsScreen({ navigation }: any) {
         {/* 앱 정보 */}
         <AppText variant="callout" style={styles.sectionTitle}>앱 정보</AppText>
         <View style={[styles.settingRow, styles.settingRowFirst]}>
-          <Text style={styles.settingLabel}>앱 버전</Text>
-          <Text style={styles.settingValue}>v1.0.0</Text>
+          <AppText style={styles.settingLabel}>앱 버전</AppText>
+          <AppText style={styles.settingValue}>v1.0.0</AppText>
         </View>
         <TouchableOpacity
           style={styles.settingRow}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
         >
-          <Text style={styles.settingLabel}>이용약관</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>이용약관</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.settingRow}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
         >
-          <Text style={styles.settingLabel}>개인정보 처리방침</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>개인정보 처리방침</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
           onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
         >
-          <Text style={styles.settingLabel}>오픈소스 라이선스</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>오픈소스 라이선스</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 
         {/* 기타 */}
@@ -196,19 +196,19 @@ export default function SettingsScreen({ navigation }: any) {
           style={[styles.settingRow, styles.settingRowFirst]}
           onPress={() => Alert.alert('알림', '캐시가 삭제되었습니다')}
         >
-          <Text style={styles.settingLabel}>캐시 삭제</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>캐시 삭제</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
           onPress={() => Alert.alert('알림', 'triplej@support.com으로 문의해주세요')}
         >
-          <Text style={styles.settingLabel}>문의하기</Text>
-          <Text style={styles.settingArrow}>{'>'}</Text>
+          <AppText style={styles.settingLabel}>문의하기</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-          <Text style={styles.logoutText}>로그아웃</Text>
+          <AppText style={styles.logoutText}>로그아웃</AppText>
         </TouchableOpacity>
 
         {/* 프로필 편집 모달 */}
@@ -220,8 +220,8 @@ export default function SettingsScreen({ navigation }: any) {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>기획사 정보 편집</Text>
-              <Text style={styles.modalLabel}>기획사명</Text>
+              <AppText style={styles.modalTitle}>기획사 정보 편집</AppText>
+              <AppText style={styles.modalLabel}>기획사명</AppText>
               <TextInput
                 style={styles.input}
                 placeholder={`${user.nickname} 엔터테인먼트`}
@@ -230,7 +230,7 @@ export default function SettingsScreen({ navigation }: any) {
                 onChangeText={setEditCompany}
                 maxLength={100}
               />
-              <Text style={styles.modalLabel}>호칭</Text>
+              <AppText style={styles.modalLabel}>호칭</AppText>
               <TextInput
                 style={styles.input}
                 placeholder="대표"
@@ -239,16 +239,16 @@ export default function SettingsScreen({ navigation }: any) {
                 onChangeText={setEditTitle}
                 maxLength={20}
               />
-              <Text style={styles.helperText}>
+              <AppText style={styles.helperText}>
                 비워두면 기본값(닉네임 엔터테인먼트 / 대표)으로 저장돼요.
-              </Text>
+              </AppText>
               <View style={styles.modalBtnRow}>
                 <TouchableOpacity
                   style={[styles.modalBtn, styles.modalBtnCancel]}
                   onPress={() => setShowProfileEdit(false)}
                   disabled={editSaving}
                 >
-                  <Text style={styles.modalBtnCancelText}>취소</Text>
+                  <AppText style={styles.modalBtnCancelText}>취소</AppText>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.modalBtn, styles.modalBtnSave, editSaving && { opacity: 0.6 }]}
@@ -258,7 +258,7 @@ export default function SettingsScreen({ navigation }: any) {
                   {editSaving ? (
                     <ActivityIndicator color={colors.text.primary} />
                   ) : (
-                    <Text style={styles.modalBtnSaveText}>저장</Text>
+                    <AppText style={styles.modalBtnSaveText}>저장</AppText>
                   )}
                 </TouchableOpacity>
               </View>
@@ -279,7 +279,7 @@ export default function SettingsScreen({ navigation }: any) {
 
         {error && (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
+            <AppText style={styles.errorText}>{error}</AppText>
           </View>
         )}
 
@@ -326,9 +326,9 @@ export default function SettingsScreen({ navigation }: any) {
               onChangeText={setDisplayTitle}
               maxLength={20}
             />
-            <Text style={styles.helperText}>
+            <AppText style={styles.helperText}>
               AIDOL에서는 기획사명과 호칭으로 불러드려요. 나중에 설정에서 변경할 수 있어요.
-            </Text>
+            </AppText>
           </>
         )}
 
@@ -340,18 +340,18 @@ export default function SettingsScreen({ navigation }: any) {
           {isLoading ? (
             <ActivityIndicator color={colors.text.primary} />
           ) : (
-            <Text style={styles.submitText}>
+            <AppText style={styles.submitText}>
               {isRegister ? '회원가입' : '로그인'}
-            </Text>
+            </AppText>
           )}
         </TouchableOpacity>
 
         <TouchableOpacity onPress={toggleMode}>
-          <Text style={styles.toggleText}>
+          <AppText style={styles.toggleText}>
             {isRegister
               ? '이미 계정이 있으신가요? 로그인'
               : '계정이 없으신가요? 회원가입'}
-          </Text>
+          </AppText>
         </TouchableOpacity>
       </View>
     </ScrollView>

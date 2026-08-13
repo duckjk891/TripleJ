@@ -8,6 +8,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
@@ -107,22 +108,22 @@ export default function AgencyProfileScreen({ route, navigation }: any) {
           <Image source={{ uri: coverUri }} style={styles.coverImg} />
         ) : (
           <View style={[styles.coverImg, styles.coverPh]}>
-            <Text style={{ fontSize: 22, color: colors.text.muted }}>♪</Text>
+            <AppText style={{ fontSize: 22, color: colors.text.muted }}>♪</AppText>
           </View>
         )}
         <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
-          <Text style={styles.trackTitle} numberOfLines={1}>{item.title}</Text>
+          <AppText style={styles.trackTitle} numberOfLines={1}>{item.title}</AppText>
           <View style={styles.tagsRow}>
             {(item.genre || []).slice(0, 2).map((g, i) => (
-              <View key={`g-${i}`} style={styles.tag}><Text style={styles.tagText}>{g}</Text></View>
+              <View key={`g-${i}`} style={styles.tag}><AppText style={styles.tagText}>{g}</AppText></View>
             ))}
             {(item.mood || []).slice(0, 2).map((m, i) => (
-              <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}><Text style={styles.tagText}>{m}</Text></View>
+              <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}><AppText style={styles.tagText}>{m}</AppText></View>
             ))}
           </View>
           <View style={styles.statsRow}>
-            <Text style={styles.statText}>▶ {item.play_count ?? 0}</Text>
-            <Text style={styles.statText}>♥ {item.like_count ?? 0}</Text>
+            <AppText style={styles.statText}>▶ {item.play_count ?? 0}</AppText>
+            <AppText style={styles.statText}>♥ {item.like_count ?? 0}</AppText>
           </View>
         </View>
       </TouchableOpacity>
@@ -133,9 +134,9 @@ export default function AgencyProfileScreen({ route, navigation }: any) {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>‹</Text>
+          <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>{uploaderNickname}</Text>
+        <AppText style={styles.headerTitle} numberOfLines={1}>{uploaderNickname}</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -150,39 +151,39 @@ export default function AgencyProfileScreen({ route, navigation }: any) {
         ListHeaderComponent={
           <>
             <View style={styles.profileBox}>
-              <Text style={styles.companyLabel}>{uploaderNickname} 엔터테인먼트</Text>
+              <AppText style={styles.companyLabel}>{uploaderNickname} 엔터테인먼트</AppText>
               <View style={styles.statsBox}>
                 <View style={styles.statCol}>
-                  <Text style={styles.statValue}>{tracks.length}</Text>
-                  <Text style={styles.statLabel}>발매곡</Text>
+                  <AppText style={styles.statValue}>{tracks.length}</AppText>
+                  <AppText style={styles.statLabel}>발매곡</AppText>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statCol}>
-                  <Text style={styles.statValue}>{totalPlays.toLocaleString()}</Text>
-                  <Text style={styles.statLabel}>총 재생수</Text>
+                  <AppText style={styles.statValue}>{totalPlays.toLocaleString()}</AppText>
+                  <AppText style={styles.statLabel}>총 재생수</AppText>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statCol}>
-                  <Text style={styles.statValue}>{totalLikes.toLocaleString()}</Text>
-                  <Text style={styles.statLabel}>총 좋아요</Text>
+                  <AppText style={styles.statValue}>{totalLikes.toLocaleString()}</AppText>
+                  <AppText style={styles.statLabel}>총 좋아요</AppText>
                 </View>
               </View>
             </View>
 
             {artistNames.length > 0 && (
               <View style={styles.artistsBox}>
-                <Text style={styles.sectionLabel}>소속 아티스트</Text>
+                <AppText style={styles.sectionLabel}>소속 아티스트</AppText>
                 <View style={styles.artistChipsRow}>
                   {artistNames.map((n) => (
                     <View key={n} style={styles.artistChip}>
-                      <Text style={styles.artistChipText}>🎤 {n}</Text>
+                      <AppText style={styles.artistChipText}>🎤 {n}</AppText>
                     </View>
                   ))}
                 </View>
               </View>
             )}
 
-            <Text style={styles.sectionLabel}>발매곡 ({tracks.length})</Text>
+            <AppText style={styles.sectionLabel}>발매곡 ({tracks.length})</AppText>
           </>
         }
         ListEmptyComponent={
@@ -192,7 +193,7 @@ export default function AgencyProfileScreen({ route, navigation }: any) {
             </View>
           ) : (
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyText}>아직 발매한 곡이 없어요</Text>
+              <AppText style={styles.emptyText}>아직 발매한 곡이 없어요</AppText>
             </View>
           )
         }

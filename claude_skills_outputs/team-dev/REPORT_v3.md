@@ -4,6 +4,26 @@
 
 ---
 
+## v3.8 (AppText 통일 마무리) — 2026-08-13 — 잔여 Text 전량 변환
+
+### 수행 결과
+앞서 부분 변환했던 7개 화면(Agency·ArtistDetail·Playlist·Settings·MyMusic·Splash·Player)의 **잔여 `<Text>`도 전량 AppText**로 변환. MyMusic·Playlist는 기존 ui import(EmptyState/Button)에 **AppText 누락**으로 tsc 120에러 발생 → import에 AppText 추가로 즉시 수정.
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc(전체) | **에러 0** (120→0 수정) |
+| 정적: 전 화면(맵 제외) 잔여 `<Text>` | **0** |
+| [e2e-web] 앱 루트 로드 | 콘솔 에러 0 |
+
+### 결과
+**AIDOL 전 화면(맵 제외) `<Text>` = 0, 100% AppText 기반 통일 완료.** 화면 통일 단계 종료 → 다음은 기능(빠진 것 채우기 → Wave 이식).
+
+### 커밋
+`fix: v3.8 AppText 통일 마무리 — 잔여 Text 전량 + import 수정 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.7 (AppText 심화 통일 #3 — 남은 화면 일괄) — 2026-08-13
 
 ### 요청 작업

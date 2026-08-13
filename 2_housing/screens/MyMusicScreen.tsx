@@ -20,7 +20,7 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
-import { EmptyState, Button } from '../components/ui';
+import { AppText, EmptyState, Button } from '../components/ui';
 
 interface Track {
   id: number;
@@ -203,7 +203,7 @@ export default function MyMusicScreen({ navigation }: any) {
           handleDeleteTrack(String(item.id), item.title);
         }}
       >
-        <Text style={{ fontSize: 16, color: colors.text.muted }}>{'🗑'}</Text>
+        <AppText style={{ fontSize: 16, color: colors.text.muted }}>{'🗑'}</AppText>
       </TouchableOpacity>
       {item.cover_image ? (
         <Image
@@ -212,31 +212,31 @@ export default function MyMusicScreen({ navigation }: any) {
         />
       ) : (
         <View style={[styles.coverImage, styles.coverPlaceholder]}>
-          <Text style={styles.coverPlaceholderText}>♪</Text>
+          <AppText style={styles.coverPlaceholderText}>♪</AppText>
         </View>
       )}
       <View style={styles.trackInfo}>
-        <Text style={styles.trackTitle} numberOfLines={1}>
+        <AppText style={styles.trackTitle} numberOfLines={1}>
           {item.title}
-        </Text>
+        </AppText>
         <View style={styles.tagsRow}>
           {(item.genre || []).slice(0, 2).map((g, i) => (
             <View key={`g-${i}`} style={styles.tag}>
-              <Text style={styles.tagText}>{g}</Text>
+              <AppText style={styles.tagText}>{g}</AppText>
             </View>
           ))}
           {(item.mood || []).slice(0, 2).map((m, i) => (
             <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}>
-              <Text style={styles.tagText}>{m}</Text>
+              <AppText style={styles.tagText}>{m}</AppText>
             </View>
           ))}
         </View>
         <View style={styles.statsRow}>
-          <Text style={styles.statText}>▶ {item.play_count ?? 0}</Text>
-          <Text style={styles.statText}>♥ {item.like_count ?? 0}</Text>
-          <Text style={styles.statText}>{formatDate(item.created_at)}</Text>
+          <AppText style={styles.statText}>▶ {item.play_count ?? 0}</AppText>
+          <AppText style={styles.statText}>♥ {item.like_count ?? 0}</AppText>
+          <AppText style={styles.statText}>{formatDate(item.created_at)}</AppText>
           {item.is_public ? (
-            <Text style={{ fontSize: 11, color: colors.status.success, fontWeight: '600' }}>차트 스트리밍 중</Text>
+            <AppText style={{ fontSize: 11, color: colors.status.success, fontWeight: '600' }}>차트 스트리밍 중</AppText>
           ) : (
             <TouchableOpacity
               onPress={(e) => {
@@ -244,7 +244,7 @@ export default function MyMusicScreen({ navigation }: any) {
                 handlePublishToChart(String(item.id), item.title);
               }}
             >
-              <Text style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '600' }}>차트 업로드</Text>
+              <AppText style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '600' }}>차트 업로드</AppText>
             </TouchableOpacity>
           )}
         </View>
@@ -274,35 +274,35 @@ export default function MyMusicScreen({ navigation }: any) {
         >
           <View style={styles.growthHeaderRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.growthCompany} numberOfLines={1}>{companyLabel}</Text>
-              <Text style={styles.growthName} numberOfLines={1}>{displayLabel}님</Text>
+              <AppText style={styles.growthCompany} numberOfLines={1}>{companyLabel}</AppText>
+              <AppText style={styles.growthName} numberOfLines={1}>{displayLabel}님</AppText>
             </View>
             <View style={styles.levelBadge}>
-              <Text style={styles.levelBadgeLabel}>LV.</Text>
-              <Text style={styles.levelBadgeValue}>{level}</Text>
+              <AppText style={styles.levelBadgeLabel}>LV.</AppText>
+              <AppText style={styles.levelBadgeValue}>{level}</AppText>
             </View>
           </View>
           <View style={styles.growthStatsRow}>
             <View style={styles.growthStat}>
-              <Text style={styles.growthStatValue}>{tracks.length}</Text>
-              <Text style={styles.growthStatLabel}>발매곡</Text>
+              <AppText style={styles.growthStatValue}>{tracks.length}</AppText>
+              <AppText style={styles.growthStatLabel}>발매곡</AppText>
             </View>
             <View style={styles.growthStatDivider} />
             <View style={styles.growthStat}>
-              <Text style={styles.growthStatValue}>{totalPlays.toLocaleString()}</Text>
-              <Text style={styles.growthStatLabel}>총 재생수</Text>
+              <AppText style={styles.growthStatValue}>{totalPlays.toLocaleString()}</AppText>
+              <AppText style={styles.growthStatLabel}>총 재생수</AppText>
             </View>
             <View style={styles.growthStatDivider} />
             <View style={styles.growthStat}>
-              <Text style={styles.growthStatValue}>{tracksToNext}</Text>
-              <Text style={styles.growthStatLabel}>다음 레벨까지</Text>
+              <AppText style={styles.growthStatValue}>{tracksToNext}</AppText>
+              <AppText style={styles.growthStatLabel}>다음 레벨까지</AppText>
             </View>
           </View>
           {bestTrack && (
             <View style={styles.bestTrackRow}>
-              <Text style={styles.bestTrackLabel}>★ 베스트</Text>
-              <Text style={styles.bestTrackTitle} numberOfLines={1}>{bestTrack.title}</Text>
-              <Text style={styles.bestTrackPlay}>▶ {bestTrack.play_count ?? 0}</Text>
+              <AppText style={styles.bestTrackLabel}>★ 베스트</AppText>
+              <AppText style={styles.bestTrackTitle} numberOfLines={1}>{bestTrack.title}</AppText>
+              <AppText style={styles.bestTrackPlay}>▶ {bestTrack.play_count ?? 0}</AppText>
             </View>
           )}
         </LinearGradient>
@@ -310,7 +310,7 @@ export default function MyMusicScreen({ navigation }: any) {
 
       {/* 내 아티스트 카드 */}
       <View style={styles.artistSection}>
-        <Text style={styles.artistSectionLabel}>내 아티스트</Text>
+        <AppText style={styles.artistSectionLabel}>내 아티스트</AppText>
         {myCharacter ? (
           <TouchableOpacity style={styles.artistCard} activeOpacity={0.85} onPress={handleOpenArtist}>
             <Image
@@ -318,19 +318,19 @@ export default function MyMusicScreen({ navigation }: any) {
               style={styles.artistCardImage}
             />
             <View style={styles.artistCardBody}>
-              <Text style={styles.artistCardTitle}>나의 아티스트</Text>
-              <Text style={styles.artistCardHint}>탭하여 자세히 보기 · 코디/미세조정</Text>
+              <AppText style={styles.artistCardTitle}>나의 아티스트</AppText>
+              <AppText style={styles.artistCardHint}>탭하여 자세히 보기 · 코디/미세조정</AppText>
             </View>
-            <Text style={styles.artistCardArrow}>{'›'}</Text>
+            <AppText style={styles.artistCardArrow}>{'›'}</AppText>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.artistEmpty} activeOpacity={0.85} onPress={handleCreateArtist}>
-            <Text style={styles.artistEmptyIcon}>🎤</Text>
+            <AppText style={styles.artistEmptyIcon}>🎤</AppText>
             <View style={{ flex: 1 }}>
-              <Text style={styles.artistEmptyTitle}>아직 만든 아티스트가 없어요</Text>
-              <Text style={styles.artistEmptyHint}>아티스트 디렉터에서 만들어보세요</Text>
+              <AppText style={styles.artistEmptyTitle}>아직 만든 아티스트가 없어요</AppText>
+              <AppText style={styles.artistEmptyHint}>아티스트 디렉터에서 만들어보세요</AppText>
             </View>
-            <Text style={styles.artistEmptyButton}>만들러 가기</Text>
+            <AppText style={styles.artistEmptyButton}>만들러 가기</AppText>
           </TouchableOpacity>
         )}
       </View>
@@ -341,13 +341,13 @@ export default function MyMusicScreen({ navigation }: any) {
           style={[styles.tab, activeTab === 'tracks' && styles.tabActive]}
           onPress={() => setActiveTab('tracks')}
         >
-          <Text style={[styles.tabText, activeTab === 'tracks' && styles.tabTextActive]}>작곡</Text>
+          <AppText style={[styles.tabText, activeTab === 'tracks' && styles.tabTextActive]}>작곡</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'lyrics' && styles.tabActive]}
           onPress={() => setActiveTab('lyrics')}
         >
-          <Text style={[styles.tabText, activeTab === 'lyrics' && styles.tabTextActive]}>작사</Text>
+          <AppText style={[styles.tabText, activeTab === 'lyrics' && styles.tabTextActive]}>작사</AppText>
         </TouchableOpacity>
       </View>
 
@@ -389,18 +389,18 @@ export default function MyMusicScreen({ navigation }: any) {
               }}
             >
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '600' }}>작업 중</Text>
-                <Text style={{ fontSize: 12, color: colors.text.muted }}>{expandedLyrics.has('draft') ? '접기' : '펼치기'}</Text>
+                <AppText style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '600' }}>작업 중</AppText>
+                <AppText style={{ fontSize: 12, color: colors.text.muted }}>{expandedLyrics.has('draft') ? '접기' : '펼치기'}</AppText>
               </View>
               {lyricsStore.generatedTitle ? (
-                <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginTop: 6, marginBottom: 4 }}>{lyricsStore.generatedTitle}</Text>
+                <AppText style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginTop: 6, marginBottom: 4 }}>{lyricsStore.generatedTitle}</AppText>
               ) : null}
               <View style={styles.lyricsTagRow}>
-                {lyricsStore.genre ? <View style={styles.tag}><Text style={styles.tagText}>{lyricsStore.genre}</Text></View> : null}
-                {lyricsStore.mood ? <View style={[styles.tag, styles.moodTag]}><Text style={styles.tagText}>{lyricsStore.mood}</Text></View> : null}
+                {lyricsStore.genre ? <View style={styles.tag}><AppText style={styles.tagText}>{lyricsStore.genre}</AppText></View> : null}
+                {lyricsStore.mood ? <View style={[styles.tag, styles.moodTag]}><AppText style={styles.tagText}>{lyricsStore.mood}</AppText></View> : null}
               </View>
-              <Text style={styles.lyricsPreview} numberOfLines={expandedLyrics.has('draft') ? undefined : 3}>{lyricsStore.generatedLyrics}</Text>
-              {!expandedLyrics.has('draft') && <Text style={styles.lyricsHint}>탭하여 전체 가사 보기</Text>}
+              <AppText style={styles.lyricsPreview} numberOfLines={expandedLyrics.has('draft') ? undefined : 3}>{lyricsStore.generatedLyrics}</AppText>
+              {!expandedLyrics.has('draft') && <AppText style={styles.lyricsHint}>탭하여 전체 가사 보기</AppText>}
             </TouchableOpacity>
           ) : null}
 
@@ -422,18 +422,18 @@ export default function MyMusicScreen({ navigation }: any) {
                 }}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary }}>{track.title}</Text>
-                  <Text style={{ fontSize: 12, color: colors.text.muted }}>{isExpanded ? '접기' : '펼치기'}</Text>
+                  <AppText style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary }}>{track.title}</AppText>
+                  <AppText style={{ fontSize: 12, color: colors.text.muted }}>{isExpanded ? '접기' : '펼치기'}</AppText>
                 </View>
                 <View style={[styles.lyricsTagRow, { marginTop: 6 }]}>
                   {(track.genre || []).map((g, i) => (
-                    <View key={`g-${i}`} style={styles.tag}><Text style={styles.tagText}>{g}</Text></View>
+                    <View key={`g-${i}`} style={styles.tag}><AppText style={styles.tagText}>{g}</AppText></View>
                   ))}
                   {(track.mood || []).map((m, i) => (
-                    <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}><Text style={styles.tagText}>{m}</Text></View>
+                    <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}><AppText style={styles.tagText}>{m}</AppText></View>
                   ))}
                 </View>
-                <Text style={styles.lyricsPreview} numberOfLines={isExpanded ? undefined : 3}>{track.lyrics}</Text>
+                <AppText style={styles.lyricsPreview} numberOfLines={isExpanded ? undefined : 3}>{track.lyrics}</AppText>
               </TouchableOpacity>
             );
           })}

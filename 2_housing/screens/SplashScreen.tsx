@@ -5,6 +5,7 @@ import {
   Text,
   Animated,
 } from 'react-native';
+import { AppText } from '../components/ui';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '../theme/colors';
@@ -58,8 +59,8 @@ export default function SplashScreen({ navigation }: Props) {
           },
         ]}
       >
-        <Text style={styles.title}>AIDOL</Text>
-        <Text style={styles.subtitle}>당신의 1인 기획사</Text>
+        <AppText style={styles.title}>AIDOL</AppText>
+        <AppText style={styles.subtitle}>당신의 1인 기획사</AppText>
       </Animated.View>
     </LinearGradient>
   );

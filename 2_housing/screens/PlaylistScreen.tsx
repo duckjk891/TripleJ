@@ -17,7 +17,7 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
-import { EmptyState, Button } from '../components/ui';
+import { AppText, EmptyState, Button } from '../components/ui';
 
 interface Playlist {
   id: string;
@@ -172,17 +172,17 @@ export default function PlaylistScreen({ navigation }: any) {
           </View>
         ) : (
           <View style={styles.playlistIcon}>
-            <Text style={styles.playlistIconText}>{'♫'}</Text>
+            <AppText style={styles.playlistIconText}>{'♫'}</AppText>
           </View>
         )}
         <View style={styles.playlistInfo}>
-          <Text style={styles.playlistName} numberOfLines={1}>{item.name || item.title}</Text>
+          <AppText style={styles.playlistName} numberOfLines={1}>{item.name || item.title}</AppText>
           {item.description ? (
-            <Text style={styles.playlistDesc} numberOfLines={1}>{item.description}</Text>
+            <AppText style={styles.playlistDesc} numberOfLines={1}>{item.description}</AppText>
           ) : null}
-          <Text style={styles.playlistCount}>
+          <AppText style={styles.playlistCount}>
             {item.track_count != null ? `${item.track_count}곡` : `${covers.length}곡`}
-          </Text>
+          </AppText>
         </View>
       </TouchableOpacity>
     );
@@ -204,19 +204,19 @@ export default function PlaylistScreen({ navigation }: any) {
         <Image source={{ uri: getCoverUrl(item.cover_image || item.cover_image_url) }} style={styles.trackCover} />
       ) : (
         <View style={[styles.trackCover, { backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' }]}>
-          <Text style={{ fontSize: 20, color: colors.border.default }}>{'♪'}</Text>
+          <AppText style={{ fontSize: 20, color: colors.border.default }}>{'♪'}</AppText>
         </View>
       )}
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 4 }} numberOfLines={1}>{item.title}</Text>
-        <Text style={{ fontSize: 12, color: colors.text.secondary }}>{item.artist_name || item.uploader_nickname || 'AI'}</Text>
+        <AppText style={{ fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 4 }} numberOfLines={1}>{item.title}</AppText>
+        <AppText style={{ fontSize: 12, color: colors.text.secondary }}>{item.artist_name || item.uploader_nickname || 'AI'}</AppText>
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
-          <Text style={{ fontSize: 11, color: colors.text.muted }}>{'▶'} {item.play_count ?? 0}</Text>
-          <Text style={{ fontSize: 11, color: colors.text.muted }}>{'♥'} {item.like_count ?? 0}</Text>
+          <AppText style={{ fontSize: 11, color: colors.text.muted }}>{'▶'} {item.play_count ?? 0}</AppText>
+          <AppText style={{ fontSize: 11, color: colors.text.muted }}>{'♥'} {item.like_count ?? 0}</AppText>
         </View>
       </View>
       <TouchableOpacity onPress={() => handleRemoveTrackFromPlaylist(String(item.id || item.track_id))} style={{ padding: 8 }}>
-        <Text style={{ color: colors.text.muted, fontSize: 14 }}>{'✕'}</Text>
+        <AppText style={{ color: colors.text.muted, fontSize: 14 }}>{'✕'}</AppText>
       </TouchableOpacity>
     </TouchableOpacity>
   );
@@ -237,14 +237,14 @@ export default function PlaylistScreen({ navigation }: any) {
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
             <TouchableOpacity onPress={() => { setSelectedPlaylist(null); setPlaylistTracks([]); }}>
-              <Text style={{ color: colors.accent.primary, fontSize: 14 }}>{'← 목록으로'}</Text>
+              <AppText style={{ color: colors.accent.primary, fontSize: 14 }}>{'← 목록으로'}</AppText>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => { setRenameText(selectedPlaylist.name || selectedPlaylist.title || ''); setShowRenameModal(true); }}>
-              <Text style={{ color: colors.text.secondary, fontSize: 13 }}>이름 변경</Text>
+              <AppText style={{ color: colors.text.secondary, fontSize: 13 }}>이름 변경</AppText>
             </TouchableOpacity>
           </View>
-          <Text style={{ paddingHorizontal: 20, fontSize: 20, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>{selectedPlaylist.name || selectedPlaylist.title}</Text>
-          <Text style={{ paddingHorizontal: 20, fontSize: 12, color: colors.text.muted, marginBottom: 12 }}>{playlistTracks.length}곡 · 길게 눌러서 삭제</Text>
+          <AppText style={{ paddingHorizontal: 20, fontSize: 20, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>{selectedPlaylist.name || selectedPlaylist.title}</AppText>
+          <AppText style={{ paddingHorizontal: 20, fontSize: 12, color: colors.text.muted, marginBottom: 12 }}>{playlistTracks.length}곡 · 길게 눌러서 삭제</AppText>
           {loadingTracks ? (
             <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 20 }} />
           ) : playlistTracks.length > 0 ? (
@@ -274,7 +274,7 @@ export default function PlaylistScreen({ navigation }: any) {
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
         <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowRenameModal(false)}>
           <View style={{ backgroundColor: colors.bg.surface1, borderRadius: 16, padding: 20, width: '80%' }}>
-            <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>플레이리스트 이름 변경</Text>
+            <AppText style={{ fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>플레이리스트 이름 변경</AppText>
             <TextInput
               style={{ backgroundColor: colors.bg.deepest, borderRadius: 10, padding: 12, color: colors.text.primary, borderWidth: 1, borderColor: colors.border.subtle, marginBottom: 16 }}
               value={renameText}

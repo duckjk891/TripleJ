@@ -462,7 +462,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           <Image source={{ uri: coverUri }} style={styles.coverArt} />
         ) : (
           <View style={[styles.coverArt, styles.coverPlaceholder]}>
-            <Text style={styles.coverPlaceholderIcon}>{'♪'}</Text>
+            <AppText style={styles.coverPlaceholderIcon}>{'♪'}</AppText>
           </View>
         )}
       </View>
@@ -633,59 +633,59 @@ export default function PlayerScreen({ route, navigation }: any) {
             <ScrollView style={styles.sheetContent} showsVerticalScrollIndicator={false}>
               {detailTab === 'lyrics' && (
                 track?.lyrics ? (
-                  <Text style={styles.sheetText}>{track.lyrics}</Text>
+                  <AppText style={styles.sheetText}>{track.lyrics}</AppText>
                 ) : fullTrack === null ? (
-                  <Text style={styles.sheetEmptyText}>불러오는 중...</Text>
+                  <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
                 ) : (
-                  <Text style={styles.sheetEmptyText}>가사 정보가 없습니다</Text>
+                  <AppText style={styles.sheetEmptyText}>가사 정보가 없습니다</AppText>
                 )
               )}
               {detailTab === 'prompt' && (
                 track?.prompt ? (
                   <View>
-                    <Text style={styles.detailSectionTitle}>작곡 프롬프트</Text>
-                    <Text style={styles.detailHelperText}>작곡 디렉터와 대화하며 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</Text>
-                    <Text style={styles.sheetText}>{track.prompt}</Text>
+                    <AppText style={styles.detailSectionTitle}>작곡 프롬프트</AppText>
+                    <AppText style={styles.detailHelperText}>작곡 디렉터와 대화하며 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</AppText>
+                    <AppText style={styles.sheetText}>{track.prompt}</AppText>
 
                     {/* 프롬프트에 묶여 있는 주요 파라미터를 분해해서 한 번 더 정리 */}
                     {(track?.genre || track?.mood || track?.bpm || track?.key || track?.tags?.length) ? (
                       <View style={styles.promptChipsBox}>
-                        <Text style={styles.promptChipsLabel}>핵심 파라미터</Text>
+                        <AppText style={styles.promptChipsLabel}>핵심 파라미터</AppText>
                         <View style={styles.promptChipsRow}>
                           {track?.genre ? (
                             <View style={styles.promptChip}>
-                              <Text style={styles.promptChipLabel}>장르</Text>
-                              <Text style={styles.promptChipValue}>{Array.isArray(track.genre) ? track.genre.join(', ') : track.genre}</Text>
+                              <AppText style={styles.promptChipLabel}>장르</AppText>
+                              <AppText style={styles.promptChipValue}>{Array.isArray(track.genre) ? track.genre.join(', ') : track.genre}</AppText>
                             </View>
                           ) : null}
                           {track?.mood ? (
                             <View style={styles.promptChip}>
-                              <Text style={styles.promptChipLabel}>분위기</Text>
-                              <Text style={styles.promptChipValue}>{Array.isArray(track.mood) ? track.mood.join(', ') : track.mood}</Text>
+                              <AppText style={styles.promptChipLabel}>분위기</AppText>
+                              <AppText style={styles.promptChipValue}>{Array.isArray(track.mood) ? track.mood.join(', ') : track.mood}</AppText>
                             </View>
                           ) : null}
                           {track?.bpm ? (
                             <View style={styles.promptChip}>
-                              <Text style={styles.promptChipLabel}>BPM</Text>
-                              <Text style={styles.promptChipValue}>{track.bpm}</Text>
+                              <AppText style={styles.promptChipLabel}>BPM</AppText>
+                              <AppText style={styles.promptChipValue}>{track.bpm}</AppText>
                             </View>
                           ) : null}
                           {track?.key ? (
                             <View style={styles.promptChip}>
-                              <Text style={styles.promptChipLabel}>키</Text>
-                              <Text style={styles.promptChipValue}>{track.key}</Text>
+                              <AppText style={styles.promptChipLabel}>키</AppText>
+                              <AppText style={styles.promptChipValue}>{track.key}</AppText>
                             </View>
                           ) : null}
                           {track?.ai_model ? (
                             <View style={styles.promptChip}>
-                              <Text style={styles.promptChipLabel}>AI 모델</Text>
-                              <Text style={styles.promptChipValue}>{track.ai_model}</Text>
+                              <AppText style={styles.promptChipLabel}>AI 모델</AppText>
+                              <AppText style={styles.promptChipValue}>{track.ai_model}</AppText>
                             </View>
                           ) : null}
                           {track?.tags && track.tags.length > 0 ? (
                             <View style={styles.promptChip}>
-                              <Text style={styles.promptChipLabel}>태그</Text>
-                              <Text style={styles.promptChipValue}>{track.tags.join(', ')}</Text>
+                              <AppText style={styles.promptChipLabel}>태그</AppText>
+                              <AppText style={styles.promptChipValue}>{track.tags.join(', ')}</AppText>
                             </View>
                           ) : null}
                         </View>
@@ -693,21 +693,21 @@ export default function PlayerScreen({ route, navigation }: any) {
                     ) : null}
                   </View>
                 ) : fullTrack === null ? (
-                  <Text style={styles.sheetEmptyText}>불러오는 중...</Text>
+                  <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
                 ) : (
                   <View>
-                    <Text style={styles.sheetEmptyText}>이 곡은 작곡 프롬프트가 없습니다</Text>
-                    <Text style={[styles.sheetEmptyText, { fontSize: 12, marginTop: 8 }]}>
+                    <AppText style={styles.sheetEmptyText}>이 곡은 작곡 프롬프트가 없습니다</AppText>
+                    <AppText style={[styles.sheetEmptyText, { fontSize: 12, marginTop: 8 }]}>
                       AI가 자동으로 생성했거나, 외부 업로드 곡일 수 있어요.
-                    </Text>
+                    </AppText>
                   </View>
                 )
               )}
               {detailTab === 'outfit' && (
                 track?.cover_character?.used_items && track.cover_character.used_items.length > 0 ? (
                   <View>
-                    <Text style={styles.detailSectionTitle}>이 곡 아티스트의 착장</Text>
-                    <Text style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다.</Text>
+                    <AppText style={styles.detailSectionTitle}>이 곡 아티스트의 착장</AppText>
+                    <AppText style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다.</AppText>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
                       {track.cover_character.used_items.map((item, i) => {
                         const img = item.image_object_name
@@ -721,8 +721,8 @@ export default function PlayerScreen({ route, navigation }: any) {
                             ) : (
                               <View style={[styles.outfitItemImg, styles.outfitItemImgPh]} />
                             )}
-                            <Text style={styles.outfitItemCat}>{item.category || '아이템'}</Text>
-                            <Text style={styles.outfitItemName} numberOfLines={2}>{item.name || ''}</Text>
+                            <AppText style={styles.outfitItemCat}>{item.category || '아이템'}</AppText>
+                            <AppText style={styles.outfitItemName} numberOfLines={2}>{item.name || ''}</AppText>
                             {hasUrl ? (
                               <TouchableOpacity
                                 style={styles.outfitDetailBtn}
@@ -733,11 +733,11 @@ export default function PlayerScreen({ route, navigation }: any) {
                                   Linking.openURL(url).catch(() => Alert.alert('알림', '링크를 열 수 없어요'));
                                 }}
                               >
-                                <Text style={styles.outfitDetailBtnText}>자세히 보기</Text>
+                                <AppText style={styles.outfitDetailBtnText}>자세히 보기</AppText>
                               </TouchableOpacity>
                             ) : (
                               <View style={[styles.outfitDetailBtn, styles.outfitDetailBtnDisabled]}>
-                                <Text style={styles.outfitDetailBtnTextDisabled}>링크 없음</Text>
+                                <AppText style={styles.outfitDetailBtnTextDisabled}>링크 없음</AppText>
                               </View>
                             )}
                           </View>
@@ -746,36 +746,36 @@ export default function PlayerScreen({ route, navigation }: any) {
                     </View>
                   </View>
                 ) : fullTrack === null ? (
-                  <Text style={styles.sheetEmptyText}>불러오는 중...</Text>
+                  <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
                 ) : (
-                  <Text style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</Text>
+                  <AppText style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</AppText>
                 )
               )}
               {detailTab === 'info' && (
                 <View>
-                  {track?.title ? <Text style={styles.detailText}>제목: {track.title}</Text> : null}
+                  {track?.title ? <AppText style={styles.detailText}>제목: {track.title}</AppText> : null}
                   {(track?.artist_name || track?.uploader_nickname) ? (
-                    <Text style={styles.detailText}>아티스트: {track.artist_name || track.uploader_nickname}</Text>
+                    <AppText style={styles.detailText}>아티스트: {track.artist_name || track.uploader_nickname}</AppText>
                   ) : null}
                   {track?.genre ? (
-                    <Text style={styles.detailText}>장르: {Array.isArray(track.genre) ? track.genre.join(', ') : track.genre}</Text>
+                    <AppText style={styles.detailText}>장르: {Array.isArray(track.genre) ? track.genre.join(', ') : track.genre}</AppText>
                   ) : null}
                   {track?.mood ? (
-                    <Text style={styles.detailText}>분위기: {Array.isArray(track.mood) ? track.mood.join(', ') : track.mood}</Text>
+                    <AppText style={styles.detailText}>분위기: {Array.isArray(track.mood) ? track.mood.join(', ') : track.mood}</AppText>
                   ) : null}
                   {track?.tags && track.tags.length > 0 ? (
-                    <Text style={styles.detailText}>태그: {track.tags.join(', ')}</Text>
+                    <AppText style={styles.detailText}>태그: {track.tags.join(', ')}</AppText>
                   ) : null}
-                  {track?.bpm ? <Text style={styles.detailText}>BPM: {track.bpm}</Text> : null}
-                  {track?.key ? <Text style={styles.detailText}>키: {track.key}</Text> : null}
-                  {track?.ai_model ? <Text style={styles.detailText}>AI 모델: {track.ai_model}</Text> : null}
+                  {track?.bpm ? <AppText style={styles.detailText}>BPM: {track.bpm}</AppText> : null}
+                  {track?.key ? <AppText style={styles.detailText}>키: {track.key}</AppText> : null}
+                  {track?.ai_model ? <AppText style={styles.detailText}>AI 모델: {track.ai_model}</AppText> : null}
                   {track?.duration_sec ? (
-                    <Text style={styles.detailText}>길이: {Math.floor(track.duration_sec / 60)}분 {track.duration_sec % 60}초</Text>
+                    <AppText style={styles.detailText}>길이: {Math.floor(track.duration_sec / 60)}분 {track.duration_sec % 60}초</AppText>
                   ) : null}
-                  {track?.play_count != null ? <Text style={styles.detailText}>재생수: {track.play_count.toLocaleString()}</Text> : null}
-                  {track?.like_count != null ? <Text style={styles.detailText}>좋아요: {track.like_count.toLocaleString()}</Text> : null}
+                  {track?.play_count != null ? <AppText style={styles.detailText}>재생수: {track.play_count.toLocaleString()}</AppText> : null}
+                  {track?.like_count != null ? <AppText style={styles.detailText}>좋아요: {track.like_count.toLocaleString()}</AppText> : null}
                   {track?.created_at ? (
-                    <Text style={styles.detailText}>생성일: {new Date(track.created_at).toLocaleDateString('ko-KR')}</Text>
+                    <AppText style={styles.detailText}>생성일: {new Date(track.created_at).toLocaleDateString('ko-KR')}</AppText>
                   ) : null}
                 </View>
               )}
