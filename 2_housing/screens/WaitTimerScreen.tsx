@@ -13,6 +13,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Character, { DirectorType } from '../components/Character';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
+import { AppText } from '../components/ui';
 
 // AdMob Rewarded Ad
 let RewardedAd: any = null;
@@ -242,12 +243,12 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
       <Image source={portrait} style={styles.portrait} resizeMode="contain" />
 
       {/* Task info */}
-      <Text style={styles.taskName}>{taskName} 진행 중...</Text>
+      <AppText variant="title2" style={styles.taskName}>{taskName} 진행 중...</AppText>
 
       {/* Timer */}
       <View style={styles.timerBox}>
-        <Text style={styles.timerLabel}>완료까지 남은 시간</Text>
-        <Text style={styles.timerText}>{formatTime(remainingSeconds)}</Text>
+        <AppText variant="bodyLg" tone="secondary" style={styles.timerLabel}>완료까지 남은 시간</AppText>
+        <AppText style={styles.timerText}>{formatTime(remainingSeconds)}</AppText>
       </View>
 
       {/* Ad button */}
@@ -257,12 +258,12 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
           onPress={handleWatchAd}
           disabled={isWatchingAd}
         >
-          <Text style={styles.adButtonIcon}>{'▶'}</Text>
+          <AppText style={styles.adButtonIcon}>{'▶'}</AppText>
           <View>
-            <Text style={styles.adButtonText}>
+            <AppText variant="callout" tone="primary" style={styles.adButtonText}>
               {isWatchingAd ? '광고 시청 중...' : '광고 보고 시간 단축하기'}
-            </Text>
-            <Text style={styles.adButtonSub}>30분 단축</Text>
+            </AppText>
+            <AppText style={styles.adButtonSub}>30분 단축</AppText>
           </View>
         </TouchableOpacity>
       </Animated.View>
@@ -278,7 +279,7 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
           }
         }}
       >
-        <Text style={styles.skipButtonText}>건너뛰기 (테스트용)</Text>
+        <AppText variant="body" tone="muted" style={styles.skipButtonText}>건너뛰기 (테스트용)</AppText>
       </TouchableOpacity>
     </AppScreenLayout>
   );
@@ -303,9 +304,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   taskName: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: colors.text.primary,
     marginBottom: 24,
   },
   timerBox: {
@@ -319,8 +317,6 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   timerLabel: {
-    fontSize: 14,
-    color: colors.text.secondary,
     marginBottom: 8,
   },
   timerText: {
@@ -346,11 +342,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: colors.text.primary,
   },
-  adButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.text.primary,
-  },
+  adButtonText: {},
   adButtonSub: {
     fontSize: 12,
     color: 'rgba(255,255,255,0.7)',
@@ -360,8 +352,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   skipButtonText: {
-    fontSize: 13,
-    color: colors.text.muted,
     textDecorationLine: 'underline',
   },
 });

@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { colors } from '../theme/colors';
+import { AppText, Tag } from '../components/ui';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
@@ -89,10 +90,10 @@ export default function ComposerSelectScreen({ navigation }: Props) {
             <Image source={LYRICIST_PORTRAIT} style={styles.portraitImage} />
           </View>
           <View style={styles.directorBubble}>
-            <Text style={styles.directorName}>작사 디렉터</Text>
-            <Text style={styles.directorText}>
+            <AppText style={styles.directorName}>작사 디렉터</AppText>
+            <AppText style={styles.directorText}>
               작곡을 도와줄 친구들을 소개해줄게요! 장르에 맞는 작곡가를 선택해보세요.
-            </Text>
+            </AppText>
           </View>
         </View>
 
@@ -108,7 +109,7 @@ export default function ComposerSelectScreen({ navigation }: Props) {
             >
               {recommended && (
                 <View style={styles.recommendBadge}>
-                  <Text style={styles.recommendText}>추천</Text>
+                  <AppText style={styles.recommendText}>추천</AppText>
                 </View>
               )}
 
@@ -117,26 +118,24 @@ export default function ComposerSelectScreen({ navigation }: Props) {
                   <Image source={composer.portrait} style={styles.composerPortraitImage} />
                 </View>
                 <View style={styles.composerInfo}>
-                  <Text style={styles.composerName}>{composer.name}</Text>
-                  <Text style={styles.composerDescription}>
+                  <AppText style={styles.composerName}>{composer.name}</AppText>
+                  <AppText style={styles.composerDescription}>
                     {composer.description}
-                  </Text>
+                  </AppText>
                 </View>
               </View>
 
               <View style={styles.specialtiesContainer}>
-                <Text style={styles.specialtiesLabel}>전문 장르</Text>
+                <AppText style={styles.specialtiesLabel}>전문 장르</AppText>
                 <View style={styles.specialtiesChips}>
                   {composer.specialties.map((s) => (
-                    <View key={s} style={styles.specialtyChip}>
-                      <Text style={styles.specialtyText}>{s}</Text>
-                    </View>
+                    <Tag key={s} label={s} size="sm" />
                   ))}
                 </View>
               </View>
 
               <View style={styles.selectIndicator}>
-                <Text style={styles.selectText}>선택하기</Text>
+                <AppText style={styles.selectText}>선택하기</AppText>
               </View>
             </TouchableOpacity>
           );

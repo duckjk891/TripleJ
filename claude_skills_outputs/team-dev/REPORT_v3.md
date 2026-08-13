@@ -4,6 +4,24 @@
 
 ---
 
+## v3.6 (AppText 심화 통일 #2) — 2026-08-13 — WaitTimer · ComposerSelect
+
+### 수행 결과
+- `WaitTimerScreen`: 텍스트 7개 → AppText, 위계(taskName/timerLabel/adButtonText/skipButtonText) style 타이포 제거(토큰화). 타이머 대형숫자·반투명 흰색은 style 유지(의도적).
+- `ComposerSelectScreen`: 텍스트 → AppText, **전문장르 칩 → `Tag`**(size sm).
+
+### 테스트 (tester)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] | 창작 플로우 깊은 화면(웹 도달 난이) → 타입체크+시각등가로 갈음, 앱 번들 정상 |
+| [회귀] 로직 무변경 | PASS |
+
+### 커밋
+`feat: v3.6 AppText 심화통일#2 — WaitTimer·ComposerSelect (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.5 (AppText 심화 통일 #1) — 2026-08-13 — SettingsScreen 타입 위계 토큰화
 
 ### 요청 작업
