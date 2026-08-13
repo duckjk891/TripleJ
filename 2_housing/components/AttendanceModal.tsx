@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Modal, View, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import api from '../services/api';
 import { useUiStore } from '../stores/uiStore';
+import { usePointsStore } from '../stores/pointsStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
@@ -34,6 +35,7 @@ export default function AttendanceModal() {
     try {
       const { data } = await api.get('/attendance/status');
       setStatus(data);
+      if (typeof data?.balance === 'number') usePointsStore.getState().setBalance(data.balance); // 별 배지 동기화
       return data as Status;
     } catch (err: any) {
       console.error('[AttendanceModal] status 실패', { status: err?.response?.status });
@@ -60,6 +62,7 @@ export default function AttendanceModal() {
     if (__DEV__) console.info('[AttendanceModal] check-in start');
     try {
       const { data } = await api.post('/attendance/check-in');
+      if (typeof data?.balance === 'number') usePointsStore.getState().setBalance(data.balance); // 체크인 즉시 별 배지 갱신
       if (data?.already) {
         setNotice('이미 오늘 출석했어요 ✅');
       } else if (data?.awarded > 0) {

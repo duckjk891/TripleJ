@@ -27,8 +27,10 @@ import MiniPlayer from './components/MiniPlayer';
 import HomeHeaderActions from './components/HomeHeaderActions';
 import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
+import StarGuideModal from './components/StarGuideModal';
 import { useAuthStore } from './stores/authStore';
 import { useUiStore } from './stores/uiStore';
+import { usePointsStore } from './stores/pointsStore';
 import api from './services/api';
 
 import SplashScreen from './screens/SplashScreen';
@@ -282,7 +284,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '작업실',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="mic" size={size - 2} color={color} />
+            <Feather name="music" size={size - 2} color={color} />
           ),
           ...pageHeader(navigation, '작업실'),
         })}
@@ -318,13 +320,15 @@ function MainTabs() {
 function GlobalModals() {
   const user = useAuthStore((s) => s.user);
   const openAttendance = useUiStore((s) => s.openAttendance);
+  const fetchBalance = usePointsStore((s) => s.fetchBalance);
   const prevUserRef = useRef<any>(null);
   useEffect(() => {
     const wasLoggedOut = !prevUserRef.current;
     prevUserRef.current = user;
     if (!user || !wasLoggedOut) return; // 로그인 전환(null→user)일 때만
     (async () => {
-      if (__DEV__) console.info('[GlobalModals] 로그인 감지 — 출석 상태 확인');
+      if (__DEV__) console.info('[GlobalModals] 로그인 감지 — 별 잔액 + 출석 상태 확인');
+      fetchBalance(); // 별 배지 즉시 갱신
       try {
         const { data } = await api.get('/attendance/status');
         if (data?.checked_today === false) {
@@ -335,11 +339,12 @@ function GlobalModals() {
         console.error('[GlobalModals] 자동 출석 상태 확인 실패', { status: err?.response?.status });
       }
     })();
-  }, [user, openAttendance]);
+  }, [user, openAttendance, fetchBalance]);
   return (
     <>
       <AttendanceModal />
       <AppShareModal />
+      <StarGuideModal />
     </>
   );
 }

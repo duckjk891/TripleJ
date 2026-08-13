@@ -5,6 +5,23 @@
 
 ---
 
+## v3.13 — 2026-08-13 — 별 배지 + 별 안내 팝업 + 아이콘 교체 검증
+
+| # | 시나리오 (Given/When/Then) | 태그 | 결과 |
+|---|---|---|---|
+| U1 | 전체 프로젝트 `tsc --noEmit` 에러 0 | [unit] | PASS |
+| A1 | 실토큰 GET /points/balance → `{balance:number}` | [api] | PASS (`{balance:50}`) |
+| A2 | 실토큰 GET /points/costs → lyrics/compose/cover/character/fatigue_skip | [api] | PASS (5/15/5/10/5) |
+| E1 | 로그인 후 차트 헤더에 **⭐+잔액 배지** 노출 | [e2e] | PASS (`v313_2` ⭐50) |
+| E2 | 별 배지 클릭 → **별 안내 팝업**(모으는 법/쓰는 곳/풀사이클) | [e2e] | PASS (`v313_3`) |
+| E3 | 별 안내 팝업 금액이 실 costs 반영(작사5·작곡15·커버5·아티스트10) | [e2e] | PASS |
+| E4 | 추천 아이콘 **user-plus(친구초대)** 클릭 → 초대 모달(3YEH) | [e2e] | PASS (`v313_4`) |
+| E5 | 작업실 탭 아이콘 **음표(music)** 렌더 | [e2e] | PASS (`v313_6`) |
+| R1 (회귀) | 로그인 자동 출석 팝업 정상(v3.12) + 체크인 시 별 배지 동기화 | [e2e] | PASS |
+| R2 (회귀) | 콘솔 에러 / 4xx·5xx | [e2e] | 0 / 0 |
+
+---
+
 ## v3.6 — 2026-08-13 — AppText 심화 통일 #1 (Settings) 검증
 
 | # | 시나리오 | 태그 | 결과 |

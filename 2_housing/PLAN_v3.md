@@ -7,6 +7,30 @@
 
 ---
 
+## v3.13 — 2026-08-13 — 별(⭐) 잔액 헤더 배지 + 별 안내 팝업 + 아이콘 교체
+
+### 요청
+① 로그인 후 상단바에 **내 별(⭐) 갯수** 표시(MAIDOL과 동일 — 별=작업실 다이아몬드 개념). ② 별 클릭 시 MAIDOL은 출석팝업이지만 AIDOL은 **"별 버는 법" 안내 팝업**(코드에 별 정책 있으면 참고, 없으면 `/Users/pearl/TripleJ/별정책.txt` 참고). ③ 추천하기 아이콘(선물상자)이 기능과 안 어울림 → 다른 아이콘. ④ 작업실 탭 아이콘 → 음표.
+
+### Plan verification findings (0단계)
+- **별 잔액 소스오브트루스 = `GET /api/points/balance`→`{balance}`** (MAIDOL 헤더도 `getPointsBalance()` 사용, `components/Header.jsx:122`). 9004 실검증 `{balance:50}`.
+- **`GET /api/points/costs`→`{costs:{lyrics:5,compose:15,cover:5,character:10,fatigue_skip:5}}`** — 별정책.txt 소비 금액과 1:1 일치.
+- AIDOL 기존 `stores/gemsStore.ts` 💎 = **로컬 persist(AsyncStorage) 전용**(백엔드 별과 별개). Studio 헤더 `MapScreen` 의 💎 는 이 로컬 스토어. → 이번 top-bar 별 배지는 **백엔드 별(points)** 로 연결. (Studio 💎 통합은 MapScreen 핸즈오프 방침상 이번 범위 제외 — REPORT 특이사항에 명시.)
+- 추천하기 아이콘 = `HomeHeaderActions.tsx` Feather `gift`. 작업실 탭 아이콘 = `App.tsx:285` Feather `mic`.
+- 별정책.txt(별 경제 v1.2): 버는 곳(첫가입+50·인증+30·친구초대+50/+50·출석+10[5일차30·10일차100]·남곡듣기+1×5·내곡발매+5), 쓰는 곳(작사5·작곡15·커버5·아티스트10·피로스킵5, 풀사이클 -25).
+
+### 변경 매트릭스 (추적자 = 컴포넌트 prefix)
+| 파일 | 변경 | 로그 prefix |
+|---|---|---|
+| stores/pointsStore.ts (신규) | 별 잔액 스토어(fetchBalance/setBalance) | `[pointsStore]` |
+| stores/uiStore.ts | starGuideOpen 플래그 추가 | — |
+| components/StarGuideModal.tsx (신규) | 별 안내 팝업(정책+실코스트) | `[StarGuideModal]` |
+| components/HomeHeaderActions.tsx | ⭐배지 추가 + 추천 gift→user-plus | — |
+| components/AttendanceModal.tsx | status/check-in balance→pointsStore 동기화 | `[AttendanceModal]` |
+| App.tsx | StarGuideModal 렌더 + 로그인 시 fetchBalance + 작업실 mic→music | `[GlobalModals]` |
+
+---
+
 ## v3.8 — 2026-08-13 — AppText 심화 통일 #1 (Settings) + MAIDOL 비교 서버
 
 ### 요청

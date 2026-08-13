@@ -4,6 +4,46 @@
 
 ---
 
+## v3.13 (기능 #5 — 별 잔액 헤더 배지 + 별 안내 팝업 + 아이콘 교체) — 2026-08-13
+
+### 요청 작업
+① 로그인 후 상단바에 **내 별(⭐) 갯수** 표시(별=작업실 다이아몬드 개념, MAIDOL 동일). ② 별 클릭 시 MAIDOL은 출석팝업이지만 AIDOL은 **"별 버는 법" 안내 팝업**(별정책.txt 참고). ③ 선물상자 추천 아이콘 → 기능에 어울리는 다른 아이콘. ④ 작업실 탭 아이콘 → 음표.
+
+### Plan verification findings (0단계)
+- **별 잔액 = `GET /points/balance`→`{balance}`** (MAIDOL 헤더도 `getPointsBalance()`). 9004 실검증 `{balance:50}`.
+- **`GET /points/costs`** = 별정책.txt 소비금액과 1:1 일치(작사5·작곡15·커버5·아티스트10·피로스킵5).
+- AIDOL `gemsStore` 💎 는 **로컬 persist 전용**(백엔드 별과 별개). Studio 헤더 💎 는 로컬 스토어 → top-bar 별 배지는 **백엔드 별(points)** 로 연결.
+- 코드에 별 정책 문서 없음 → **`별정책.txt`(별 경제 v1.2)** 기반으로 안내 팝업 제작.
+
+### 수행 결과
+- **stores/pointsStore.ts**(신규): 별 잔액 스토어 — `fetchBalance()`(GET /points/balance) + `setBalance()`(응답 balance 직접 반영). `[pointsStore]` 로그.
+- **components/StarGuideModal.tsx**(신규): 별 안내 팝업 — 내 별 잔액, **⭐ 별 모으는 법**(첫가입+50·인증+30·친구초대+50·출석+10[5일차+30·10일차+100]·남곡듣기+1·내곡발매+5), **🎬 별 쓰는 곳**(작사·작곡·커버·아티스트·피로스킵, 금액은 **실 /points/costs 우선**·폴백 정책값), 풀사이클(-25) + 팁. `[StarGuideModal]` 로그.
+- **components/HomeHeaderActions.tsx**: 로그인 시 **⭐배지(잔액)** 추가(클릭→별 안내 팝업), 헤더 마운트 시 fetchBalance. 추천 아이콘 **gift→user-plus**(친구초대, accessibilityLabel도 "친구초대").
+- **components/AttendanceModal.tsx**: status 로드/체크인 응답의 `balance` → `pointsStore.setBalance` 동기화(별 배지 즉시 갱신).
+- **App.tsx**: `<StarGuideModal/>` 전역 렌더, 로그인 전환 시 `fetchBalance()` 호출, 작업실 탭 아이콘 **`mic`→`music`**(음표).
+- **stores/uiStore.ts**: `starGuideOpen` 플래그 추가.
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [api] /points/balance·/points/costs (실토큰) | 200, 정책 일치 |
+| [e2e-web] 차트 헤더 **⭐50 배지** | PASS (`/tmp/v313_2_chart_header.png`) |
+| [e2e-web] 별 배지 클릭 → **별 안내 팝업**(모으는 법/쓰는 곳/풀사이클) | PASS (`/tmp/v313_3_starguide.png`) |
+| [e2e-web] 추천 **user-plus** → 초대 모달(3YEH) | PASS (`/tmp/v313_4_invite.png`) |
+| [e2e-web] 작업실 탭 **음표 아이콘** | PASS (`/tmp/v313_6_tabbar.png`) |
+| 회귀: 로그인 자동 출석팝업 + 체크인 별 배지 동기화 | PASS |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- **별(백엔드 points) vs 작업실 💎(로컬 gemsStore)**: 현재 이원화 상태. 이번엔 사용자 요청대로 **상단바 별 배지=백엔드 points**로 연결. Studio 💎(MapScreen) 통합은 MapScreen 핸즈오프 방침상 **이번 범위 제외** — 두 잔액 단일화가 필요하면 별도 작업으로 진행 권장.
+- 별 안내 팝업의 소비 금액은 **런타임 /points/costs** 우선 표기(정책 변경 시 자동 반영), 실패 시 정책 기본값 폴백.
+
+### 커밋
+`feat: v3.13 별 잔액 헤더 배지 + 별 안내 팝업 + 추천/작업실 아이콘 교체 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.12 (기능 #4 — 작업실 마이페이지 아이콘 + 출석/초대 팝업 이식 + 로그인 자동팝업) — 2026-08-13
 
 ### 요청 작업
