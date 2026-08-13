@@ -46,7 +46,11 @@
   color: var(--color-text);
 }
 
-/* ── 검색 입력 + 결과 ─────────────────────────── */
+/* ── 검색 입력 + 드롭다운 오버레이 ─────────────── */
+.admin-cs-send__search-wrap {
+  position: relative;
+}
+
 .admin-cs-send__search {
   width: 100%;
   padding: 10px 12px;
@@ -62,13 +66,20 @@
   border-color: var(--color-primary);
 }
 
-.admin-cs-send__results {
-  margin-top: 6px;
+/* 오버레이 패널 — height 고정(max-height 아님): 결과 1건/20건/빈/로딩 전부 패널 크기 불변.
+   불투명 배경+그림자로 아래 chips/textarea 를 가린다(레이아웃 시프트 없음). */
+.admin-cs-send__dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  height: min(240px, 40vh);
+  overflow-y: auto;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg-secondary);
-  max-height: 180px;
-  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 .admin-cs-send__results-status {

@@ -26531,3 +26531,57 @@ E2E (실발송 금지):
 - **강행 금지**: ① **`dm_service.search_users` 의 빈 검색어 가드(`if not q: return []`, :901-902) 및 dm_service.py 일체 수정 금지** — 사용자 앱 전체 유저 열람 방지 프라이버시 가드 ② 브라우즈를 dm.py(사용자 라우트)에 노출 금지 ③ 이번 버전 실발송 0건 — 발송 API 호출 자체 금지(UI 여정은 confirm 직전 취소) ④ 응답 스키마 변경 금지(`{users:[...]}` 유지) ⑤ v177 강행 금지 항목 전부 승계.
 - 브라우즈 쿼리와 search_users 필터 조건의 **정합이 수동 복제** — 향후 search_users 필터 변경 시 브라우즈 분기 동반 수정 필요(admin_cs.py 주석으로 상호 참조 명시 지시).
 - SEARCH_LIMIT 20 확대는 검색 모드에도 적용 — 서버 클램프 상한과 동일해 부작용 없음(응답 크기 소폭 증가뿐).
+
+---
+
+# v179 — 지정발송 검색 리스트 드롭다운 오버레이 전환 (2026-08-13 17:55)
+
+## 0. 증분 분석 (v178 코드 기준 — planner 직접 실측)
+
+- `AdminCsSendModal.jsx:61-67` — 검색 effect 가 `[open, query]` 의존: **모달 open 즉시** 빈 q 브라우즈 자동 호출(v178). v179 요구 1(open 시 리스트 없음)에 따라 트리거를 focus 로 이관 필요.
+- `:190-217` — 결과 블록 `.admin-cs-send__results` 가 **in-flow**(input 과 chips 사이) — 결과 유무·길이에 따라 모달 높이가 변동(v178 관측 문제). CSS `:65-72` `max-height:180px + overflow-y:auto` — max-height 라 1건이면 패널이 줄어듦(요구 3 위반 지점).
+- `:85-88 handleQueryChange` / `:38-57 runSearch(seq stale 가드)` / `delay = q ? 300 : 0`(:64) — **타이핑·복귀 로직은 요구 4 그대로 재사용 가능**(트리거 조건만 교체).
+- `.admin-cs-send`(css:14-23) — `max-height: calc(100vh-40px); overflow-y: auto` — **absolute 오버레이가 이 스크롤 컨테이너에 클리핑/포함됨**: 소형 뷰포트에서 패널 하단이 모달 스크롤 영역으로 접힐 수 있음(§5 리스크로 관리, 패널 높이를 `min(240px, 40vh)` 로 완화).
+- 클릭 씹힘 버그 검토: input `blur` 로 닫으면 리스트 항목 `click`(mousedown→blur→click 순서) 전에 패널이 언마운트돼 클릭 소실 — **blur 기반 닫기 금지**. 대안: ① document `mousedown` 리스너 + wrapper ref 포함 판정(패널이 wrapper 내부라 항목 클릭은 "내부"로 판정 → 닫히지 않고 click 정상 도달) ② 항목 onMouseDown preventDefault. **①이 요구 4의 "다중선택 유지·바깥 클릭 닫기"까지 한 방식으로 충족 — 채택.**
+- 백엔드: v178 브라우즈 엔드포인트(`GET /admin/cs/users/search` 빈 q)가 focus 시점 호출로 그대로 사용 가능 — **백엔드 무변경 확정, backend-dev 불요, 9004 미러 대상 없음.**
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 상태 | `dropdownOpen` state + `searchAreaRef`(input+패널을 감싸는 wrapper div ref) 신설 | 표시 여부와 outside 판정 경계를 단일 ref 로 |
+| 열기 트리거 | input `onFocus` → `setDropdownOpen(true)`. **모달 open 자동 브라우즈 제거** — fetch effect 의존을 `[open, query]` → `[dropdownOpen, query]` 로 교체(`if (!dropdownOpen) return`) | 요구 1·2. dropdownOpen false→true 전이가 effect 를 발화시켜 빈 q 즉시(0ms) 브라우즈 — 재focus 시 자동 재호출(신선도 확보, stale 은 기존 seq 가드) |
+| 닫기 | **document `mousedown` 리스너**(open && dropdownOpen 동안 등록) — `searchAreaRef.contains(e.target)` 밖이면 close. **blur 기반 금지**(클릭 씹힘 — §0 실측). + `Escape` keydown 시 드롭다운만 닫기(모달 유지). handleClose/reset 에 dropdownOpen false 동기화 | 요구 4. 패널이 wrapper 내부라 항목 클릭은 내부 판정 → 안 닫힘 |
+| 항목 클릭 후 | **드롭다운 열린 채 유지**(handlePick 무변경 — 닫기 호출 안 함) | 다중선택 UX(오케스트레이터 위임 판단 — 연속 선택이 자연) |
+| 렌더 | in-flow `__results` 블록 제거 → wrapper 내부 `{dropdownOpen && <div className="admin-cs-send__dropdown">…}` — 내부 3상태(검색 중/빈/리스트)와 항목 마크업·문구는 v178 그대로 이동 | 요구 2(본문을 겹치는 오버레이) — 기본 상태는 v177 모습 복원 |
+| CSS | `.admin-cs-send__search-wrap { position: relative }`, `.admin-cs-send__dropdown { position: absolute; top: calc(100% + 4px); left/right: 0; z-index: 10; **height: min(240px, 40vh)**; overflow-y: auto; bg/border 기존 결과 블록 톤 + box-shadow }`. 기존 `__results` 규칙(:65-72) 제거 | 요구 3 — **height 고정**(max-height 아님): 결과 1건/20건/빈/로딩 전부 패널·모달 크기 불변. min() 은 뷰포트 대응일 뿐 콘텐츠 무관이라 "고정" 충족 |
+| 호출 로직 | runSearch·디바운스(`q ? 300 : 0`)·handleQueryChange·문구 분기 **무변경** | 요구 4 — 검증된 v178 로직 재사용, 트리거만 교체 |
+| 백엔드 | **무변경**(9004 포함) | §0 확정 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `frontend_admin/src/components/AdminCsSendModal.jsx` | dropdownOpen/ref/mousedown·Esc 리스너, effect 의존 교체, 결과 블록 → 오버레이 이동 | `[AdminCsSend]` |
+| `frontend_admin/src/components/AdminCsSendModal.css` | search-wrap/dropdown 신설, `__results` 규칙 대체 | - |
+| **그 외 전부 무변경** | 백엔드(9005·9004)·api.js·AdminCsPage·AdminLogsPage·dm_service.py | - |
+
+## 3. 작업 분담
+- **frontend-dev** (단독): §1 그대로. 주의 — ① **blur 로 닫지 말 것**(document mousedown + ref 포함 판정만) ② 리스너는 `open && dropdownOpen` 조건부 등록·해제(useEffect cleanup) ③ 오버레이 backdrop 클릭(모달 닫기)과의 중첩: mousedown 리스너가 먼저 dropdown 을 닫아도 기존 handleClose 동작 불변이어야 함 ④ fetch effect 는 dropdownOpen false 시 setSearching(false)·seq 무효화로 잔여 로딩 표시 방지 ⑤ 콘솔 위생·DEV 로그 관행 유지. eslint 0. 육안: open 시 목록 없음→focus 시 오버레이(본문 가림)→타이핑 축소→항목 연속 2명 클릭(씹힘 없음·유지)→밖 클릭 닫힘→재focus 재표시→Esc 닫힘.
+- **backend-dev**: **작업 없음**(무변경 확정).
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: v178 승계 — **실발송 0건 불변식**(send/broadcast 호출 금지, confirm 직전 취소, S0/C0 전후 대조). 쓰기 0건(이번엔 ban 도 불요 — 백엔드 무변경).
+1. open 기본 상태: 모달 열기 직후 **네트워크 호출 0 + 리스트 미표시**(v177 모습) — v178 자동 브라우즈 제거 확인.
+2. focus: 드롭다운 표시 + 빈 q 브라우즈 **1회** 호출. 오버레이가 chips·textarea 를 **겹쳐 가림**(모달 높이·본문 레이아웃 시프트 없음 — focus 전후 모달 크기 동일).
+3. 높이 고정: 브라우즈 20건 ↔ 검색 축소 1건 ↔ 빈 결과 ↔ 로딩 — **패널 높이 동일**(내부 스크롤) + 모달 크기 불변.
+4. 타이핑·복귀 회귀(v178): 디바운스 1회 수준·전부 삭제 시 즉시 브라우즈 복귀·stale 가드.
+5. 클릭: 항목 클릭 → chip 추가 **첫 클릭에 성공(씹힘 없음)** + 드롭다운 유지 → 연속 2명째 클릭 정상. picked 표시·중복 방지·20명 상한 문구 회귀.
+6. 닫기: 본문(textarea 등) 클릭 → 닫힘+본문 노출·chip 유지 / 재focus → 재표시(재호출) / Esc → 드롭다운만 닫힘(모달 유지) / backdrop 클릭 → 모달 닫기 기존 동작 불변.
+7. 회귀: 발송 여정 confirm 직전 취소(S0/C0 불변 — 실발송 0), 콘솔 위생(닉네임·검색어·이메일 0건), 백엔드 무변경(`git diff` 에 backend·api.js 부재), eslint 0.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① **백엔드 파일 일체 무접촉**(9005·9004·dm_service.py — git diff 에 프론트 2파일 외 출현 금지) ② blur 이벤트 기반 드롭다운 닫기 금지(클릭 씹힘) ③ 실발송 0건 — send/broadcast 호출 금지 ④ runSearch·디바운스·seq 가드·문구 로직 변경 금지(트리거만 교체) ⑤ v177~178 강행 금지 승계.
+- 소형 뷰포트: `.admin-cs-send` 가 overflow-y:auto 스크롤 컨테이너라 absolute 패널이 내부 스크롤에 포함됨 — `min(240px, 40vh)` 로 완화, 극단 케이스는 내부 스크롤로 접근 가능(비차단, 관측 시 비고).
+- Esc 처리 시 이벤트 전파로 상위(브라우저 기본·모달)와 간섭하지 않게 드롭다운 열림 상태에서만 소비.

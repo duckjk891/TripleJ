@@ -1301,3 +1301,129 @@
 
 - 2026-08-13 초판 작성 (12건) — PLAN v178 §4 항목 1~6 전부 시나리오화(§4-1→BR-API-01·02, §4-2→BR-API-03·04, §4-3→BR-API-05, §4-4→BR-API-06(3중), §4-5→BR-UNIT-01~04, §4-6→BR-API-07·BR-E2E-01). 강행 금지 ③(실발송 0건)을 설계 불변식으로 승격 — send 계열 요청 전무+total 전후 비교 마감. ban 실측·dm_blocks 후필터·브라우즈 빈 문구·정렬 판정·diff 기준 커밋 5건 planner 회신 대기(§4).
 - 2026-08-13 planner 판정 반영 — §4 판정 블록 5건 확정(BR-API-04 실측 확정 — "v177 pending" 전제 착오 정정 / dm_blocks·빈 문구 코드 리뷰 갈음 동의(+구버전 스크린샷 보조 증적 채택) / 정렬 상호 일치 판정 동의 / diff 기준 `6995395` 반영). §0·BR-API-04·BR-API-06·BR-UNIT-03 문안 4곳 고정. 프론트 파생 수정(결과 블록 `{trimmedQuery && ...}` 렌더 게이트 제거) planner 승인 — 미제거 시 브라우즈 목록 렌더 불가로 필수 수정 판정. 보류 0건 — tester 1단계 착수 가능.
+
+# v179 — 지정발송 검색 리스트 드롭다운 오버레이 전환 (2026-08-13 17:57)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전)
+근거: PLAN.md v179 §0 증분 실측(effect 의존 [open,query]→[dropdownOpen,query]·in-flow 결과 블록·blur 클릭 씹힘 분석·height 고정), §1 설계 결정, §4 테스트 항목 1~7, §5 강행 금지
+대상: **프론트 2파일만** — `frontend_admin/src/components/AdminCsSendModal.jsx`·`.css` (백엔드 9005·9004·dm_service.py·api.js·타 페이지 **무변경**이 검증 대상)
+
+## 0. 전제 및 안전 규칙
+
+- **실발송 0건 불변식(v178 승계)**: send/broadcast 호출 자체 금지, E2E confirm 직전 취소(dismiss). 시작 시 `GET /api/admin/logs?action=cs_send` total(`S0`)·`GET /api/admin/cs/conversations` total(`C0`) 기록 → 종료 시 재대조(DD-API-01 ③).
+- **쓰기 전무**: 이번 버전은 순수 UI — ban/unban 도 불요(백엔드 무변경). DB·Redis·Mongo 쓰기 0건.
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN`·`USER_TOKEN`·테스트 계정 닉네임/`TEST_USER_1_CODE` — v177~178 방식, 실값 기재 금지.
+- 강행 금지(PLAN §5): 백엔드 파일 무접촉이 검증 대상(git diff — DD-API-01). blur 기반 닫기 금지(씹힘) — DD-UNIT-05 가 행동 수준으로 검증. runSearch·디바운스·seq 가드·문구 로직 불변 — DD-UNIT-04 회귀.
+- 환경: 9005 백엔드(읽기 전용)·frontend_admin Vite dev(4001). 추적자 `[AdminCsSend]`. 측정 도구: 브라우저 devtools — 요소 `getBoundingClientRect()`(패널 높이·본문 요소 위치)·네트워크 탭(요청 횟수)·콘솔.
+- 높이·위치 판정 공통 기준: 패널 높이 = `min(240px, 40vh)` 고정(내용 무관), 비교는 동일 뷰포트에서 rect 값 대조(**허용 오차 ±1px — planner 확정 §4-1**, 0px 요구·±2px 완화 모두 기각).
+
+## 1. [api] 시나리오 — 백엔드 무변경·API 불변·발송 0건 마감
+
+### DD-API-01. 백엔드 무변경 git diff + v178 API 응답 불변 + S0/C0 대조 [api] — 회귀 핵심
+- Given: 구현 브랜치 체크아웃, `BASE_REV` = **v178 커밋 `c662064`** (== 현재 HEAD, planner git log 실측 확정 §4-3 — v179 변경분은 워킹트리 미커밋), `ADMIN_TOKEN`, 시작 기록 `S0`·`C0`
+- When: ① `git diff c662064 --name-only` (워킹트리 diff) ② v178 대표 2케이스 재호출 — `GET /api/admin/cs/users/search`(빈 q) / `?q={테스트 계정 닉네임 부분 문자열}` ③ 전체 시나리오([unit]·[e2e] 포함) 종료 후 `S0`·`C0` 재조회하면
+- Then:
+  - ① 변경 파일이 **`AdminCsSendModal.jsx`·`AdminCsSendModal.css` 2파일뿐** — backend_9005/9004·dm_service.py·api.js·타 페이지 **출현 금지**(강행 금지 ①). 위반 시 즉시 중단·planner 보고
+  - ② 빈 q: 200 `{users:[...]}` 닉네임순·4키·official 미포함 / 부분매칭: 테스트 계정 포함 — **v178 BR-API-01·05 실행 결과와 동일**(프론트만 바뀐 버전에서 API 응답 불변)
+  - ③ `cs_send` total == S0, conversations total == C0 — **전 구간 실발송 0건·신규 대화 0건 입증**
+
+## 2. [unit] 시나리오 — AdminCsSendModal 드롭다운 (브라우저 하니스, 4001 dev)
+
+### DD-UNIT-01. open 기본 상태 — 요청 0건 + 리스트 미표시 [unit] — 핵심
+- Given: 관리자 로그인, `/cs` 진입, 네트워크 탭 기록 시작
+- When: "✉️ 지정 발송" 클릭으로 모달을 열고 **아무것도 하지 않으면**(focus·입력 없음)
+- Then: `admin/cs/users/search` 요청 **0건**(v178 의 open 자동 브라우즈 제거 확인), 드롭다운·결과 리스트 **미표시** — 모달 기본 모습이 v177 과 동일(입력창·chips 안내·textarea·버튼만). 잔여 로딩 표시 없음.
+
+### DD-UNIT-02. focus → 브라우즈 1회 + 오버레이 겹침·레이아웃 시프트 없음 [unit] — 핵심
+- Given: DD-UNIT-01 상태. focus **전** 기준 rect 기록: 모달(`.admin-cs-send`) 크기, chips 영역·textarea·발송 버튼의 위치(top)
+- When: 검색 input 을 focus 하면
+- Then:
+  - 빈 q 브라우즈 요청 **정확 1회**(즉시 — 0ms 딜레이) + 드롭다운 패널 표시(≤20건, `닉네임#code`, 닉네임순 — DD-API-01 ② 응답과 순서 일치)
+  - 패널이 **chips 영역·textarea 위에 겹쳐** 렌더(absolute 오버레이): 패널 rect 가 chips/textarea rect 와 교차 + z-order 상 패널이 위(가려진 요소 클릭 시 패널이 받음 — DD-UNIT-06 ①에서 겸측)
+  - **레이아웃 시프트 없음**: focus 전후 모달 크기·chips·textarea·버튼의 rect **동일**(±1px) — in-flow 밀림 부재
+- 보조: 드롭다운 닫은 뒤 **재focus** → 브라우즈 재요청 1회 + 재표시(PLAN §1 신선도 확보 — 재호출은 남발이 아닌 기대 동작).
+
+### DD-UNIT-03. 패널 높이 고정 — 4상태 + 로딩 대조 [unit] — 핵심
+- Given: 드롭다운 열린 상태. 각 상태에서 패널(`.admin-cs-send__dropdown`) 높이 + 모달 크기 rect 기록
+- When: ① 빈 q 브라우즈(20건 — 내부 스크롤 발생) → ② `bcast_user_test` 타이핑(축소 — 2건 수준) → ③ `#`+`TEST_USER_1_CODE`(정확 1건) → ④ `zzzz_none`(빈 결과 — "검색 결과가 없습니다") 순으로 전환하면(+전환 중 로딩 표시 상태 1회 캡처)
+- Then: **4상태(+로딩) 전부 패널 높이 동일**(`min(240px, 40vh)` — 내용량 무관 고정, max-height 축소 없음: 1건·빈 결과에서도 동일) + **모달 크기 불변**(4상태 rect 동일 ±1px). 20건 상태는 패널 **내부 스크롤**로 전체 접근 가능. ①~④ 각 상태 스크린샷 증적.
+- 보조(planner 확정 §4-2 — 소형 뷰포트 스팟체크): 뷰포트 높이 **약 600px** 로 축소 후 ① 상태 1회 재확인 — 패널 높이가 `40vh` 분기로 적용되고 목록 전체가 **내부 스크롤로 접근 가능**하면 PASS. 모달 스크롤 컨테이너 내 패널 하단 접힘이 관측되면 **비고 기재(비차단 — FAIL 아님**, PLAN §5 기지 리스크). 종료 후 원 뷰포트 복원(rect 계열 판정과 뷰포트 분리).
+
+### DD-UNIT-04. v178 회귀 — 디바운스·전부 삭제 복귀·stale 가드 (드롭다운 열린 상태) [unit]
+- Given: 드롭다운 열린 상태(focus 유지)
+- When: ① 닉네임을 한 글자씩 빠르게 연속 타이핑 ② 검색어 전부 삭제 ③ 빠른 연속 입력 직후 결과 확인하면
+- Then: ① 타이핑 중 요청 남발 없음 — **300ms 디바운스로 입력 종료 후 1회 수준**(중간 요청 잔존 시 횟수 기록) ② **즉시(0ms) 빈 q 브라우즈 재호출** → 전체 목록 복귀 — 드롭다운이 닫히지 않고 열린 채 전환 ③ 최종 화면 == 최종 q 결과(seq stale 가드 생존). v178 BR-UNIT-02/03 판정 기준 동일 — 트리거 교체가 호출 로직을 훼손하지 않음(강행 금지 ④).
+
+### DD-UNIT-05. 항목 첫 클릭 성공 + 연속 다중선택·드롭다운 유지 [unit] — 핵심 (blur 씹힘 회귀)
+- Given: 드롭다운 열린 상태(테스트 계정 ≥2 노출)
+- When: ① 첫 항목을 **단 1회 클릭** ② 이어서 둘째 항목 클릭 ③ 동일 항목 재클릭 시도하면
+- Then: ① **첫 클릭에 chip 즉시 추가**(씹힘 없음 — mousedown→blur 언마운트로 click 소실되는 버그 부재, 클릭 후에도 **드롭다운 열린 채 유지**) ② 둘째도 첫 클릭 성공 — chips 2개(`닉네임#code`) ③ 중복 추가 안 됨 + picked 표시 회귀. 20명 상한 문구·chip × 제거 v177~178 동작 회귀(보조 1회). 클릭 시 패널 깜빡임·재호출 남발 없음.
+
+### DD-UNIT-06. 닫기 3종 + backdrop 모달 닫기 불변 [unit] — 핵심
+- Given: 드롭다운 열린 상태, chips 1개 이상
+- When: ① 본문 요소(textarea 등 패널 밖 모달 내부) **mousedown** ② 검색 input 재focus ③ (드롭다운 재오픈 후) **Esc** 키 ④ (드롭다운 닫힌 상태에서) 모달 backdrop 클릭하면
+- Then:
+  - ① 드롭다운 **닫힘** — 가려졌던 chips·textarea 노출, **chips 유지**, 모달은 열린 채(내부 클릭이 모달을 닫지 않음)
+  - ② 재표시 + 브라우즈 재호출 1회(DD-UNIT-02 보조와 동일 판정)
+  - ③ **드롭다운만 닫힘 — 모달 유지**(Esc 가 모달·페이지로 전파돼 이중 닫힘 없음, PLAN §5 전파 소비)
+  - ④ backdrop 클릭 시 **모달 닫기 기존 동작 불변**(v177~178 회귀) — 재오픈 시 상태 초기화(reset) 정상
+- 보조: 패널 내부 스크롤바 드래그/패널 여백 클릭은 "내부" 판정 — 드롭다운 유지(wrapper ref 포함 판정).
+
+### DD-UNIT-07. 콘솔 위생 + eslint 0 [unit] — 마감
+- Given: DD-UNIT-01~06 수행 세션 콘솔 기록(+브라우즈 실패 1회 유도 — 백엔드 일시 중단/오프라인 토글 후 복구), frontend_admin 저장소
+- When: ① 콘솔 전체에서 사용자 닉네임·입력 검색어 원문·`@test.invalid` 검색 ② `eslint` 실행(frontend_admin 관행 명령)하면
+- Then: ① `[AdminCsSend]` 포함 전부 **0건** — DEV 로그는 q_len·건수·status 수준만. 리스너 등록/해제 관련 경고(React state update on unmounted 등)·신규 콘솔 에러 0건 ② eslint 오류 **0**(PLAN §3 지시).
+
+## 3. [e2e] 시나리오 — 1건 (행동 수준, 발송 금지)
+
+### DD-E2E-01. 풀 여정 — open→focus→목록→축소→2명 선택→바깥 클릭 닫힘→본문→confirm dismiss [e2e] — 핵심 (실발송 0건)
+- Given: 관리자 앱(4001) 테스트 관리자 로그인
+- When: `/cs` → "✉️ 지정 발송" → (리스트 없음 확인) → input **focus** → 목록 표시 → 닉네임 타이핑으로 축소 → 테스트 계정 **2명 연속 선택**(chips 2개·드롭다운 유지) → **바깥(본문) 클릭**으로 드롭다운 닫힘 → 본문 입력 → 발송 클릭 → `window.confirm` 노출 → **취소(dismiss)** → 모달 닫기
+- Then: 각 단계 정상 전이(open 시 요청 0건 → focus 시 1회 → 축소 → 첫 클릭 선택 성공 ×2 → 닫힘 후 chips·본문 노출) — confirm dismiss 후 **네트워크에 `admin/cs/send`·`admin/cs/broadcast` POST 0건**, CS 페이지·목록 무손상, 콘솔 신규 에러 0건. 발송 0건 최종 입증은 DD-API-01 ③ 의 S0/C0 대조.
+- 증적: open 직후(리스트 없음)·focus 오버레이(본문 가림)·축소·chips 2개+드롭다운 유지·바깥 클릭 후·confirm 대화상자 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **높이·위치 판정 허용 오차**: rect 대조를 ±1px 로 설계(서브픽셀·스크롤바 렌더 감안) — 정확 0px 요구 또는 완화(±2px) 여부 회신.
+2. **소형 뷰포트 스팟체크**: PLAN §5 리스크(스크롤 컨테이너 내 absolute 패널 접힘, `min(240px,40vh)` 완화·비차단) — 축소 뷰포트(예: 높이 600px)에서 DD-UNIT-03 1회 반복을 보조 항목으로 넣을지 판정 위임(초안은 미포함, 관측 시 비고만).
+3. **git diff 기준 리비전(BASE_REV)**: v178 종료 커밋 해시를 frontend-dev 완료 보고에서 확정해 tester 전달 요청(v178 §4-5 와 동일 이슈).
+4. **드롭다운 닫힌 상태의 Esc**: 요구는 "드롭다운 열림 시 Esc → 드롭다운만 닫힘"만 명세 — 드롭다운 닫힌 상태에서 Esc 의 모달 동작(v177~178 현행 유지 전제)을 회귀 기준으로 삼음. 기대 동작이 다르면 회신.
+
+### planner 판정 (2026-08-13, 4건 전부 확정 — 해당 문안 반영 완료)
+
+1. **±1px 확정** — 서브픽셀·스크롤바 렌더 감안 적정. 0px 은 환경 취약(위양성 FAIL), ±2px 은 실제 시프트를 놓칠 수 있어 기각.
+2. **소형 뷰포트 스팟체크 — 보조 항목 추가 확정**(DD-UNIT-03 보조로 편입). PLAN §5 에 명시한 기지 리스크의 실측 확인 — 비용 1회로 낮고, 판정은 비차단(접힘 관측 시 비고). 원 뷰포트 복원 조건 포함.
+3. **BASE_REV = `c662064`** (v178 커밋 — planner git log 실측: 현재 HEAD 와 동일, v179 변경분 워킹트리 미커밋). DD-API-01 을 `git diff c662064 --name-only` 워킹트리 diff 로 고정.
+4. **Esc 현행 유지 회귀 기준 — 동의.** 코드 실측: v177~179 모달은 자체 Esc 핸들링이 없음(닫기는 backdrop/×/취소뿐) — 드롭다운 닫힌 상태 Esc 는 무동작이 현행이며, v179 리스너는 `open && dropdownOpen` 조건부 등록이라 닫힌 상태에 리스너 자체가 없음(diff 실측). 무동작 유지가 기대값.
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. 시작 기록: `S0`·`C0` → DD-API-01 ①②(diff·API 대표 케이스 — 위반 시 즉시 중단)
+2. DD-UNIT-01→02→03→04→05→06 (단일 세션 연속 — rect 기록은 동일 뷰포트 유지) → DD-UNIT-07 (콘솔 마감+eslint)
+3. DD-E2E-01 (confirm dismiss)
+4. DD-API-01 ③ (S0/C0 재대조 — 발송 0건 마감) → REPORT: 코드 리뷰 갈음 항목·rect 측정값 기재
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| DD-API-01 | api | | diff 프론트 2파일뿐 + API 대표 2케이스 불변 + S0/C0 대조 |
+| DD-UNIT-01 | unit | | open 요청 0건·리스트 없음(v177 복원) |
+| DD-UNIT-02 | unit | | focus 1회 호출 + 오버레이 겹침 + 시프트 없음(±1px) |
+| DD-UNIT-03 | unit | | 4상태+로딩 패널 높이·모달 크기 동일 |
+| DD-UNIT-04 | unit | | 디바운스 1회·삭제 즉시 복귀·stale 가드(v178 회귀) |
+| DD-UNIT-05 | unit | | 첫 클릭 성공·연속 2명·드롭다운 유지·중복 방지 |
+| DD-UNIT-06 | unit | | 바깥 mousedown/재focus/Esc + backdrop 불변 |
+| DD-UNIT-07 | unit | | 콘솔 0건 + eslint 0 |
+| DD-E2E-01 | e2e | | 풀 여정 + confirm dismiss — send/broadcast POST 0건 |
+
+## v179 시나리오 집계
+
+- 총 **9건** — [api] 1 / [unit] 7 / [e2e] 1 (보류 없음 — planner 확인 4건은 §4)
+- 쓰기·실발송: **전무** — 순수 UI 버전(ban 불요·DB/Redis/Mongo 무접촉), send/broadcast 호출 0건, confirm dismiss, S0/C0 전후 대조로 발송 0건 입증(DD-API-01 ③). 백엔드 무변경은 git diff 로 검증(강행 금지 ①).
+
+## 개정 이력 (v179)
+
+- 2026-08-13 초판 작성 (9건) — PLAN v179 §4 항목 1~7 전부 시나리오화(§4-1→DD-UNIT-01, §4-2→DD-UNIT-02, §4-3→DD-UNIT-03, §4-4→DD-UNIT-04, §4-5→DD-UNIT-05, §4-6→DD-UNIT-06, §4-7→DD-API-01·DD-UNIT-07·DD-E2E-01). blur 씹힘 회귀는 DD-UNIT-05 행동 수준(첫 클릭 성공)으로, 레이아웃 시프트·높이 고정은 rect 실측(±1px)으로 판정. 허용 오차·소형 뷰포트 스팟체크·BASE_REV·Esc 기본 동작 4건 planner 회신 대기(§4).
+- 2026-08-13 planner 판정 반영 — §4 판정 블록 4건 확정(±1px 확정 / 소형 뷰포트 스팟체크 DD-UNIT-03 보조 편입(비차단) / BASE_REV `c662064` 워킹트리 diff 고정 / Esc 현행 무동작 유지 — 닫힌 상태 리스너 부재 diff 실측). §0·DD-API-01·DD-UNIT-03 문안 3곳 고정. 보류 0건 — tester 착수 가능(1단계+E2E 한 흐름 승인).
+- 2026-08-13 실행 9/9 PASS 후 마이크로픽스 1건 planner 승인 — tester UX 관찰(비차단): **Esc 닫기 후 input focus 잔존 상태에서 재클릭 시 재오픈 불가**(트리거 onFocus 단일 — focus 이벤트 미재발생). 사용자 원 요구 "클릭하거나 터치하면 리스트가 나오게" 문언상 요구 위반 소지 → v179 범위 포함 확정. 픽스: input `onClick={() => setDropdownOpen(true)}` 1줄 보강(onFocus 유지 — 최초 클릭 시 focus·click 이 동일 true 세팅이라 상태 전이 1회 = **이중 fetch 없음**, effect 는 dropdownOpen 전이에만 발화). 재검증 범위(오케스트레이터 실행): ① Esc 닫기 → (focus 유지 상태) input 재클릭 → 재오픈+브라우즈 재호출 1회 ② 회귀 — 최초 focus/클릭 시 요청 1회(이중 호출 없음), 바깥 클릭 닫힘·첫 클릭 선택 불변(DD-UNIT-05/06 스모크).

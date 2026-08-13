@@ -3,9 +3,10 @@ import { searchCsUsers, sendCsDirect } from '../api';
 import './AdminCsSendModal.css';
 
 // 지정 발송 모달 — CS 페이지 헤더 "✉️ 지정 발송" 버튼으로 오픈.
-// 닉네임/#태그 검색(300ms 디바운스) + 빈 검색어면 브라우즈 목록(닉네임순, 서버 v178)
-// → 결과 클릭으로 대상 선택 chips(최대 20명)
-// → textarea(최대 2000자) → window.confirm 최종 확인 → POST /admin/cs/send.
+// 닉네임/#태그 검색(300ms 디바운스) + 빈 검색어면 브라우즈 목록(닉네임순, 서버 v178).
+// 결과 리스트는 검색 입력 focus 시 열리는 드롭다운 오버레이(v179) — 항목 클릭으로 다중 선택,
+// 바깥 mousedown/Esc 로 닫힘(blur 사용 금지 — 항목 클릭 씹힘).
+// 선택 chips(최대 20명) → textarea(최대 2000자) → window.confirm 최종 확인 → POST /admin/cs/send.
 // 로그 prefix `[AdminCsSend]`. 메시지 text·닉네임 원문은 콘솔에 출력하지 않는다(길이/건수만).
 
 const MAX_LEN = 2000;
@@ -31,6 +32,9 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState(''); // 인라인 안내(검증/에러)
+  // 검색 드롭다운 오버레이 (v179) — input focus 로 열고, 바깥 mousedown/Esc/모달 close 로 닫는다.
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const searchAreaRef = useRef(null); // input+드롭다운 wrapper — outside 판정 경계
 
   // 늦게 도착한 이전 검색 응답 무시용 시퀀스
   const searchSeqRef = useRef(0);
@@ -56,21 +60,54 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
     }
   }, []);
 
-  // 검색/브라우즈 — 타이핑은 300ms 디바운스, 빈 검색어(모달 open 직후·전부 삭제)는 즉시 브라우즈 목록 호출.
+  // 검색/브라우즈 — 타이핑은 300ms 디바운스, 빈 검색어(드롭다운 열림 직후·전부 삭제)는 즉시 브라우즈 목록 호출.
   // 빈 q 호출은 서버(v178)가 닉네임순 브라우즈 목록으로 응답 — 형식 동일.
+  // v179 — 트리거가 모달 open → 드롭다운 open(입력창 focus)으로 교체됨. 재focus 시 자동 재호출(신선도).
   useEffect(() => {
-    if (!open) return undefined;
+    if (!dropdownOpen) return undefined;
     const q = query.trim();
     const delay = q ? DEBOUNCE_MS : 0;
     const timer = setTimeout(() => { runSearch(q); }, delay);
     return () => clearTimeout(timer);
-  }, [open, query, runSearch]);
+  }, [dropdownOpen, query, runSearch]);
+
+  // 드롭다운 닫기 — 진행 중 검색 무효화 + 로딩 표시 해제 (잔여 "검색 중..." 방지)
+  const closeDropdown = useCallback(() => {
+    setDropdownOpen(false);
+    searchSeqRef.current += 1;
+    setSearching(false);
+  }, []);
+
+  // 바깥 mousedown + Esc 로 닫기 — 드롭다운 열림 동안만 리스너 등록.
+  // blur 기반 닫기 금지: mousedown→blur→click 순서로 항목 클릭이 씹힌다.
+  // 패널이 wrapper 내부라 항목 클릭은 "내부" 판정 → 닫히지 않고 click 정상 도달(다중선택 유지).
+  useEffect(() => {
+    if (!(open && dropdownOpen)) return undefined;
+    const onMouseDown = (e) => {
+      if (searchAreaRef.current && !searchAreaRef.current.contains(e.target)) {
+        closeDropdown();
+      }
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation(); // 드롭다운 열림 상태에서만 소비 — 모달은 유지
+        closeDropdown();
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, dropdownOpen, closeDropdown]);
 
   const reset = useCallback(() => {
     searchSeqRef.current += 1; // 진행 중 검색 응답 무효화
     setQuery('');
     setResults([]);
     setSearching(false);
+    setDropdownOpen(false); // 모달 close 시 드롭다운 상태 동기화
     setSelected([]);
     setText('');
     setNotice('');
@@ -178,41 +215,48 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
           <button className="admin-cs-send__close" onClick={handleClose} aria-label="닫기">×</button>
         </div>
 
-        <input
-          type="text"
-          className="admin-cs-send__search"
-          placeholder="닉네임 또는 #태그로 검색"
-          value={query}
-          onChange={handleQueryChange}
-          disabled={sending}
-        />
+        {/* 검색 입력 + 드롭다운 오버레이 wrapper — ref 가 outside mousedown 판정 경계 */}
+        <div className="admin-cs-send__search-wrap" ref={searchAreaRef}>
+          <input
+            type="text"
+            className="admin-cs-send__search"
+            placeholder="닉네임 또는 #태그로 검색"
+            value={query}
+            onChange={handleQueryChange}
+            onFocus={() => setDropdownOpen(true)}
+            onClick={() => setDropdownOpen(true)} // Esc 닫기 후 focus 잔존 상태 재클릭 재오픈(원 요구 '클릭하거나 터치하면')
+            disabled={sending}
+          />
 
-        <div className="admin-cs-send__results">
-          {searching ? (
-            <p className="admin-cs-send__results-status">검색 중...</p>
-          ) : results.length === 0 ? (
-            <p className="admin-cs-send__results-status">
-              {trimmedQuery ? '검색 결과가 없습니다.' : '표시할 사용자가 없습니다.'}
-            </p>
-          ) : (
-            <ul className="admin-cs-send__result-list">
-              {results.map((u) => {
-                const picked = selected.some((s) => s.id === u.id);
-                return (
-                  <li key={u.id}>
-                    <button
-                      className={`admin-cs-send__result ${picked ? 'admin-cs-send__result--picked' : ''}`}
-                      onClick={() => handlePick(u)}
-                      disabled={sending || picked}
-                    >
-                      <span className="admin-cs-send__avatar">{initials(u.nickname)}</span>
-                      <span className="admin-cs-send__result-name">{displayName(u)}</span>
-                      {picked && <span className="admin-cs-send__result-picked-mark">선택됨</span>}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+          {dropdownOpen && (
+            <div className="admin-cs-send__dropdown">
+              {searching ? (
+                <p className="admin-cs-send__results-status">검색 중...</p>
+              ) : results.length === 0 ? (
+                <p className="admin-cs-send__results-status">
+                  {trimmedQuery ? '검색 결과가 없습니다.' : '표시할 사용자가 없습니다.'}
+                </p>
+              ) : (
+                <ul className="admin-cs-send__result-list">
+                  {results.map((u) => {
+                    const picked = selected.some((s) => s.id === u.id);
+                    return (
+                      <li key={u.id}>
+                        <button
+                          className={`admin-cs-send__result ${picked ? 'admin-cs-send__result--picked' : ''}`}
+                          onClick={() => handlePick(u)}
+                          disabled={sending || picked}
+                        >
+                          <span className="admin-cs-send__avatar">{initials(u.nickname)}</span>
+                          <span className="admin-cs-send__result-name">{displayName(u)}</span>
+                          {picked && <span className="admin-cs-send__result-picked-mark">선택됨</span>}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           )}
         </div>
 

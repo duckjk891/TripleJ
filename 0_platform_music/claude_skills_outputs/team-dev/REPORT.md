@@ -15075,3 +15075,35 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 1: `frontend_admin/src/components/AdminCsSendModal.jsx`
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v178 append)
 - 무변경 확인: dm_service.py(가드 보존)·api.js·AdminCsPage·AdminLogsPage — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v179 — 지정발송 검색 리스트 드롭다운 오버레이 전환 (2026-08-13 18:26)
+
+팀: platform-music-cs-send (planner/frontend-dev/test-designer+tester — backend-dev 무작업)
+
+## 1. 요청 작업
+지정발송 모달 검색 리스트를 **드롭다운 오버레이**로 전환: ① 모달 open 시 리스트 없음(v177 기본 모습 복원) ② 입력창 focus/클릭 시 드롭다운 표시(이때 브라우즈 호출) — 본문(chips·textarea)을 겹쳐 가리는 absolute 오버레이 ③ 패널 높이 고정(내부 스크롤 — 결과량 무관 모달 크기 불변) ④ 타이핑 축소·항목 클릭 다중선택·바깥 클릭 닫힘·재focus 재표시. **백엔드 무변경**(v178 브라우즈 엔드포인트 그대로).
+
+## 2. 설계 결정 (0단계 증분 실측 기반)
+- **트리거 이관**: fetch effect 의존 `[open, query]` → `[dropdownOpen, query]` 교체만 — runSearch·디바운스(`q?300:0`)·seq stale 가드·문구 로직 원형 보존. focus/클릭 → `dropdownOpen=true` 전이가 effect 를 발화(재오픈 시 자동 재호출 = 신선도).
+- **닫기 방식 — blur 금지**: blur 로 닫으면 mousedown→blur→click 순서로 항목 클릭이 씹히는 고전 버그(0단계 분석) → **document `mousedown` 리스너 + wrapper ref 포함 판정** 채택. 패널이 wrapper 내부라 항목 클릭은 "내부" 판정 → 닫히지 않아 **다중선택 유지까지 동일 메커니즘으로 충족**. Esc 는 드롭다운만 닫음(모달 유지 — 닫힌 상태엔 리스너 미등록이라 현행 무동작 유지). 리스너는 `open && dropdownOpen` 조건부 등록·cleanup.
+- **높이 고정**: 패널 `height: min(240px, 40vh)`(**max-height 아님**) — 결과 1건/20건/빈/로딩 전부 패널·모달 크기 불변. absolute(top:100%+4px, z-10, 그림자)라 레이아웃 시프트 0. 40vh 는 소형 뷰포트 완화(모달이 overflow-y:auto 스크롤 컨테이너라 접힘 리스크 — 기지 리스크로 관리).
+- **백엔드 무변경 확정**: backend-dev 무작업, 9004 미러 대상 없음 — git diff 로 무접촉 검증(강행 금지 승격).
+
+## 3. 테스트 결과 — 9/9 PASS (api 1 / unit 7 / e2e 1) + 마이크로픽스 재검증 PASS, **앱 픽스 사이클 1회**
+- **실발송 0건 불변식 입증**(cs_send total 8→8, conversations 133→133), **쓰기 전무**(순수 UI 버전 — ban 도 불요).
+- 핵심 증적: open 시 요청 0+리스트 없음(v177 복원) / focus 1회 호출+오버레이 겹침+**rect 0px 차**(±1px 기준 통과) / 4상태+로딩 **240px 고정**·모달 불변·소형 뷰포트(600px) **220px=40vh 정합**·접힘 미관측 / 디바운스·삭제 즉시 복귀·stale 가드(v178 회귀) / **첫 클릭 씹힘 없음**·연속 2명·드롭다운 유지 / 닫기 3종(바깥 mousedown·재focus 재호출·Esc)+backdrop 모달 닫기 불변 / 백엔드 무접촉 diff+v178 API 응답 불변 / 콘솔 위생 0.
+- **픽스 1회 — 게이트 통과 후 tester UX 관찰 유래, 요구 문언 위반 판정으로 v179 포함**: Esc 닫기 후 input focus 잔존 상태에서 재클릭해도 재오픈 불가(트리거 onFocus 단일). 사용자 원 요구 "클릭하거나 터치하면 리스트가 나오게" 문언상 결함으로 분류 → input `onClick={() => setDropdownOpen(true)}` 1줄 보강(:227). 재검증 전 항목 PASS — Esc→재클릭 재오픈+재호출 1회(시나리오 정확 재현·해소), **최초 클릭 이중 호출 없음**(800ms 창 요청 정확 1회 — focus·click 동시 세팅이 상태 전이 1회라 effect 1회 발화), 선택·닫힘 회귀, 콘솔 0. planner 판정 4건(±1px·소형 뷰포트 보조 편입·BASE_REV `c662064`·Esc 현행 유지)은 TESTPLAN §4 블록 참조.
+
+## 4. 특이사항
+- **eslint 기존 부채 6건** — 이번 변경 유발 아님(신규 0). 별도 과제 후보로 이관.
+- **드라이버 이슈 3건 비버그** — tester 하니스 측 재판정으로 해소(앱 픽스 아님, 픽스 사이클 집계 무관).
+- **소형 뷰포트 접힘 미관측** — 600px 뷰포트에서 40vh 분기 정합·내부 스크롤 접근 확인(PLAN §5 기지 리스크 현재 비발현, 유지 관찰).
+- 마이크로픽스 경위는 §3 — 재발 방지 관점: 열림 트리거를 focus 단일로 두면 "focus 잔존+재클릭" 데드 케이스가 생김. 드롭다운류 UI 는 **click 트리거 병행**을 관행화(차기 PLAN 체크 항목).
+- 잔존 테스트 데이터 신규 없음(읽기 전용). 후속 후보 승계: `ORDER BY nickname, id` tie 결정화, search_users↔브라우즈 필터 수동 복제 동기화(v178 REPORT).
+
+## 5. 변경 파일 (커밋 대상 5)
+- 프론트 2: `frontend_admin/src/components/AdminCsSendModal.jsx` `frontend_admin/src/components/AdminCsSendModal.css`
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v179 append)
+- **백엔드 무접촉 재확증**: git status 실측 — backend_9005/9004·dm_service.py·api.js·타 페이지 변경 0건, 하니스 잔재 0건.
