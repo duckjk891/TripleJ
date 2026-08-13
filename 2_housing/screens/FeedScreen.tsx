@@ -209,8 +209,6 @@ export default function FeedScreen() {
           onPress={() => setCtaVisible(false)}
         >
           <View style={styles.loginOverlayContent}>
-            <Text style={styles.loginOverlayIcon}>{'👥'}</Text>
-            <Text style={styles.loginOverlayTitle}>AIDOL 피드</Text>
             <Text style={styles.loginOverlayDesc}>
               {'로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요'}
             </Text>

@@ -4,6 +4,35 @@
 
 ---
 
+## v3.20 (로그인 오버레이 정리 — 작업실 아이콘 제거 + 피드 "AIDOL 피드" 텍스트·아이콘 제거) — 2026-08-13
+
+### 요청 작업
+"작업실에 로그인하고 시작하기 버튼 위에 아이콘, AIDOL 피드 텍스트랑 그 위에 아이콘 빼줘." → ① 작업실 오버레이의 아이콘(🎵), ② 피드 오버레이의 "AIDOL 피드" 텍스트, ③ 그 위 아이콘(👥) 제거.
+
+### Plan verification findings (0단계)
+- 작업실(MapScreen) loginOverlay 콘텐츠 순서: `loginOverlayIcon(🎵)` → `loginOverlayTitle("AI 음악 작업실")` → desc → 버튼.
+- 피드(FeedScreen) loginOverlay(v3.19) 콘텐츠 순서: `loginOverlayIcon(👥)` → `loginOverlayTitle("AIDOL 피드")` → desc → 버튼.
+
+### 수행 결과
+- **screens/MapScreen.tsx**: loginOverlay에서 **🎵 아이콘 라인 제거**. 타이틀("AI 음악 작업실")·설명·버튼 유지.
+- **screens/FeedScreen.tsx**: loginOverlay에서 **👥 아이콘 + "AIDOL 피드" 타이틀 제거**. 설명("로그인하면 팔로우한 아티스트와…")·버튼 유지. (딤드 배경·트리거·배경탭닫힘 등 v3.19 동작 불변; 미사용 스타일 키는 무해하게 잔존)
+
+### 테스트 (tester) — PASS (E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 피드 오버레이: "AIDOL 피드"·👥 제거, 설명/버튼 유지 | PASS (`/tmp/v320_1_feed_overlay.png`) |
+| [e2e] 작업실 오버레이: 🎵 제거, 타이틀/버튼 유지 | PASS (`/tmp/v320_2_studio_overlay.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- 요청 문구를 콤마 기준 3요소(작업실 아이콘 / 피드 텍스트 / 피드 아이콘)로 해석 — 작업실은 아이콘만, 피드는 텍스트+아이콘 제거. 해석이 다르면 알려주시면 조정.
+
+### 커밋
+`fix: v3.20 로그인 오버레이 정리 — 작업실 아이콘·피드 텍스트/아이콘 제거 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.19 (피드 로그인 CTA를 작업실과 동일한 전체화면 딤드 오버레이로 통일) — 2026-08-13
 
 ### 요청 작업

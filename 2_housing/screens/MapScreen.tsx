@@ -647,7 +647,6 @@ export default function MapScreen({ navigation }: Props) {
           onPress={() => setShowLoginOverlay(false)}
         >
           <View style={styles.loginOverlayContent}>
-            <Text style={styles.loginOverlayIcon}>{'🎵'}</Text>
             <Text style={styles.loginOverlayTitle}>AI 음악 작업실</Text>
             <Text style={styles.loginOverlayDesc}>
               {'나만의 음악을 만들어서\n차트에 올려보세요!'}
