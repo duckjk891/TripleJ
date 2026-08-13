@@ -34,6 +34,7 @@ import api from '../services/api';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from '../components/ui';
+import LoginStartButton from '../components/LoginStartButton';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
 
@@ -651,12 +652,7 @@ export default function MapScreen({ navigation }: Props) {
             <Text style={styles.loginOverlayDesc}>
               {'나만의 음악을 만들어서\n차트에 올려보세요!'}
             </Text>
-            <TouchableOpacity
-              style={styles.loginOverlayButton}
-              onPress={() => navigation.getParent()?.navigate('Settings')}
-            >
-              <Text style={styles.loginOverlayButtonText}>로그인하고 시작하기</Text>
-            </TouchableOpacity>
+            <LoginStartButton onPress={() => navigation.getParent()?.navigate('Settings')} />
           </View>
         </TouchableOpacity>
       )}

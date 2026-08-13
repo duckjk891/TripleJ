@@ -18,6 +18,7 @@ import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { AppText, EmptyState, Button } from '../components/ui';
+import LoginStartButton from '../components/LoginStartButton';
 
 interface Playlist {
   id: string;
@@ -230,7 +231,7 @@ export default function PlaylistScreen({ navigation }: any) {
           icon="♫"
           title="나만의 플레이리스트"
           hint={'좋아하는 곡을 모아서\n나만의 플레이리스트를 만들어보세요!'}
-          action={<Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />}
+          action={<LoginStartButton onPress={() => navigation.navigate('Settings')} />}
         />
       ) : selectedPlaylist ? (
         // 플레이리스트 상세 - 곡 목록

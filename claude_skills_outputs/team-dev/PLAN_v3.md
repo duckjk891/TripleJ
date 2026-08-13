@@ -7,6 +7,25 @@
 
 ---
 
+## v3.21 — 2026-08-13 — "로그인하고 시작하기" 버튼 3화면 통일
+
+### 요청
+플레이리스트/피드/작업실 로그인 버튼 크기·폰트 색상·크기 통일.
+
+### Plan verification findings (0단계)
+- 플레이리스트=공용 Button(filled), 피드·작업실=커스텀 loginOverlayButton(accent/radius24/py14 px40/white bold16). 피드=작업실 동일, 플레이리스트만 상이.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| components/LoginStartButton.tsx (신규) | 통일 버튼 컴포넌트 | — |
+| screens/MapScreen.tsx·FeedScreen.tsx | 인라인 버튼 → LoginStartButton | — |
+| screens/PlaylistScreen.tsx | 공용 Button → LoginStartButton | — |
+
+측정: 3화면 버튼 텍스트 128×18 동일 · 폰트 16/700/#fff 동일.
+
+---
+
 ## v3.20 — 2026-08-13 — 로그인 오버레이 정리(작업실 아이콘·피드 텍스트/아이콘 제거)
 
 ### 요청

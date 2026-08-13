@@ -4,6 +4,36 @@
 
 ---
 
+## v3.21 ("로그인하고 시작하기" 버튼 3화면 통일 — 공용 컴포넌트 추출) — 2026-08-13
+
+### 요청 작업
+비로그인 상태에서 **플레이리스트 / 피드 / 작업실**의 "로그인하고 시작하기" 버튼 디자인(버튼 크기·폰트 색상·크기)이 제각각 → 통일.
+
+### Plan verification findings (0단계)
+- **플레이리스트**(`PlaylistScreen.tsx:233`): 공용 `Button` 컴포넌트(filled 변형) 사용 — 패딩/라운드/폰트가 오버레이 버튼과 상이.
+- **피드**(`FeedScreen`)·**작업실**(`MapScreen`): 커스텀 `loginOverlayButton`(bg accent.primary, radius 24, py14/px40) + `loginOverlayButtonText`(text.primary, 16, bold). 둘은 v3.19에서 1:1 동일화됨.
+- 즉 피드=작업실은 이미 동일, **플레이리스트만 다름**. 향후 드리프트 방지 위해 **공용 컴포넌트로 추출**해 3곳 공유가 최선.
+
+### 수행 결과
+- **components/LoginStartButton.tsx**(신규): "로그인하고 시작하기" 통일 버튼(작업실/피드 스펙 = accent bg·radius 24·py14/px40·white bold 16). 버튼 크기/폰트를 한 곳에서 관리.
+- **screens/MapScreen.tsx · FeedScreen.tsx**: 오버레이 인라인 버튼 → `<LoginStartButton/>` 로 교체.
+- **screens/PlaylistScreen.tsx**: 비로그인 EmptyState의 공용 `Button` → `<LoginStartButton/>` 로 교체.
+- (기존 `loginOverlayButton*` 스타일 키는 미사용으로 무해하게 잔존)
+
+### 테스트 (tester) — PASS (E2E 픽셀 측정, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 3화면 버튼 텍스트 박스 동일(128×18, 동일 좌표) | PASS |
+| [e2e] 3화면 폰트 동일(16px / 700 / #fff) | PASS |
+| [e2e] 플레이리스트 버튼 = 피드·작업실과 동일 룩 | PASS (`/tmp/v321_1_playlist.png`·`v321_2_feed.png`·`v321_3_studio.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 커밋
+`feat: v3.21 로그인하고 시작하기 버튼 3화면 통일(LoginStartButton 공용화) (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.20 (로그인 오버레이 정리 — 작업실 아이콘 제거 + 피드 "AIDOL 피드" 텍스트·아이콘 제거) — 2026-08-13
 
 ### 요청 작업

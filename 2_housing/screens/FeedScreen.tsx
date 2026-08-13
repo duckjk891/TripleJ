@@ -10,6 +10,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
+import LoginStartButton from '../components/LoginStartButton';
 
 interface FeedTrack {
   id: string;
@@ -212,9 +213,7 @@ export default function FeedScreen() {
             <Text style={styles.loginOverlayDesc}>
               {'로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요'}
             </Text>
-            <TouchableOpacity style={styles.loginOverlayButton} onPress={goLogin}>
-              <Text style={styles.loginOverlayButtonText}>로그인하고 시작하기</Text>
-            </TouchableOpacity>
+            <LoginStartButton onPress={goLogin} />
           </View>
         </TouchableOpacity>
       ) : null}
