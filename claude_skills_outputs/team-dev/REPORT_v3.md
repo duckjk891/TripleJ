@@ -4,6 +4,34 @@
 
 ---
 
+## v3.9 (기능 #1 — 네비게이션 개편) — 2026-08-13 — 로고 헤더 · 마이페이지 · 피드 탭
+
+### 요청 작업 (MAIDOL 대비 개선, 화면별 피드백 시작)
+① 상단 헤더 메뉴명 → 로고 ② 하단 마이뮤직 → 상단 우측 마이페이지(👤) 아이콘 ③ 설정을 마이페이지 내부로(⚙️) ④ 하단바 순서: 차트·플레이리스트·피드·작업실.
+
+### Plan verification findings (0단계)
+- 네비게이션 = `App.tsx` 단일(RootStack + BottomTab + StudioStack). 각 탭 `headerTitle`=메뉴명, `headerRight`=⋮→Settings. MyMusic이 4번째 탭. Settings는 RootStack 모달.
+- ChartScreen은 `useLayoutEffect`로 자체 headerRight(🔍+⋮) 설정 → 별도 수정 필요.
+
+### 수행 결과
+- **App.tsx**: `tabHeader` 공통 헤더(좌 로고 `AIDOL` + 우 👤→MyMusic). 탭 순서 **Chart·Playlist·Feed·Studio**. **MyMusic**은 `tabBarButton:()=>null`+`display:none`으로 하단바 숨김, 헤더 `마이페이지`+⚙️→Settings.
+- **FeedScreen.tsx**(신규): `/api/feeds/timeline`(9004 라이브) 연동, Card/Avatar/EmptyState, `[FeedScreen]` 로그.
+- **ChartScreen.tsx**: 자체 headerRight ⋮→Settings → **👤→MyMusic**(🔍 검색 유지).
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] 홈 렌더: 로고 AIDOL·🔍·👤, 하단바 차트/플레이리스트/피드/작업실(마이뮤직 없음) | **PASS** (증적 `/tmp/nav_home.png`) |
+| [e2e-web] 피드 탭 진입 | PASS (`/tmp/nav_feed.png`) |
+| [e2e-web] 👤→마이페이지(헤더 '마이페이지'+⚙️) | **PASS** (`/tmp/nav_mypage.png`) |
+| 콘솔 에러 | 0 |
+
+### 커밋
+`feat: v3.9 네비 개편 — 로고헤더·마이페이지·피드탭·하단바 순서 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.8 (AppText 통일 마무리) — 2026-08-13 — 잔여 Text 전량 변환
 
 ### 수행 결과

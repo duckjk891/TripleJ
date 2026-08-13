@@ -15,6 +15,7 @@ if (Platform.OS === 'android') {
   NavigationBar.setButtonStyleAsync('light').catch(() => {});
 }
 import { colors } from './theme/colors';
+import { AppText } from './components/ui';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -25,6 +26,7 @@ import MiniPlayer from './components/MiniPlayer';
 import SplashScreen from './screens/SplashScreen';
 import ChartScreen from './screens/ChartScreen';
 import PlaylistScreen from './screens/PlaylistScreen';
+import FeedScreen from './screens/FeedScreen';
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -158,6 +160,29 @@ function MiniPlayerWrapper() {
   );
 }
 
+// 상단 헤더 로고 (메뉴명 대신) — 모든 탭 공통
+function LogoTitle() {
+  return <AppText variant="title2" tone="accent" style={{ letterSpacing: 1 }}>AIDOL</AppText>;
+}
+
+// 탭 공통 헤더: 좌측 로고 + 우측 마이페이지(👤) 아이콘 → MyMusic
+const tabHeader = (navigation: any) => ({
+  headerShown: true,
+  headerTitle: () => <LogoTitle />,
+  headerTitleAlign: 'left' as const,
+  headerStyle: { backgroundColor: colors.bg.deepest },
+  headerTintColor: colors.text.primary,
+  headerRight: () => (
+    <TouchableOpacity
+      onPress={() => navigation.navigate('MyMusic')}
+      style={{ marginRight: 16 }}
+      accessibilityLabel="마이페이지"
+    >
+      <Text style={{ fontSize: 22, color: colors.text.primary }}>{'👤'}</Text>
+    </TouchableOpacity>
+  ),
+});
+
 function MainTabs() {
   return (
     <Tab.Navigator
@@ -184,15 +209,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Text style={{ fontSize: size - 6, color }}>{'☰'}</Text>
           ),
-          headerShown: true,
-          headerTitle: '차트',
-          headerStyle: { backgroundColor: colors.bg.deepest },
-          headerTintColor: colors.text.primary,
-          headerRight: () => (
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
-            </TouchableOpacity>
-          ),
+          ...tabHeader(navigation),
         })}
       />
       <Tab.Screen
@@ -203,15 +220,18 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Text style={{ fontSize: size - 6, color }}>{'♬'}</Text>
           ),
-          headerShown: true,
-          headerTitle: '플레이리스트',
-          headerStyle: { backgroundColor: colors.bg.deepest },
-          headerTintColor: colors.text.primary,
-          headerRight: () => (
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
-            </TouchableOpacity>
+          ...tabHeader(navigation),
+        })}
+      />
+      <Tab.Screen
+        name="Feed"
+        component={FeedScreen}
+        options={({ navigation }) => ({
+          tabBarLabel: '피드',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size - 6, color }}>{'📰'}</Text>
           ),
+          ...tabHeader(navigation),
         })}
       />
       <Tab.Screen
@@ -228,32 +248,27 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Text style={{ fontSize: size - 6, color }}>{'✦'}</Text>
           ),
-          headerShown: true,
-          headerTitle: '작업실',
-          headerStyle: { backgroundColor: colors.bg.deepest },
-          headerTintColor: colors.text.primary,
-          headerRight: () => (
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
-            </TouchableOpacity>
-          ),
+          ...tabHeader(navigation),
         })}
       />
+      {/* 마이뮤직=마이페이지: 하단바에서 숨김(상단 👤로 진입). 설정은 이 화면 헤더 ⚙️로 진입. */}
       <Tab.Screen
         name="MyMusic"
         component={MyMusicScreen}
         options={({ navigation }) => ({
-          tabBarLabel: '마이뮤직',
-          tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size - 6, color }}>{'♪'}</Text>
-          ),
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none' },
           headerShown: true,
-          headerTitle: '마이뮤직',
+          headerTitle: '마이페이지',
           headerStyle: { backgroundColor: colors.bg.deepest },
           headerTintColor: colors.text.primary,
           headerRight: () => (
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={{ marginRight: 16 }}>
-              <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Settings')}
+              style={{ marginRight: 16 }}
+              accessibilityLabel="설정"
+            >
+              <Text style={{ fontSize: 20, color: colors.text.primary }}>{'⚙️'}</Text>
             </TouchableOpacity>
           ),
         })}

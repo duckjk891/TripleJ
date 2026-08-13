@@ -90,8 +90,8 @@ export default function ChartScreen() {
           <TouchableOpacity onPress={() => setShowSearchModal(true)} style={styles.headerBtn}>
             <AppText variant="subtitle">{'🔍'}</AppText>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('Settings' as never)} style={styles.headerBtn}>
-            <AppText variant="title3">{'⋮'}</AppText>
+          <TouchableOpacity onPress={() => navigation.navigate('MyMusic' as never)} style={styles.headerBtn} accessibilityLabel="마이페이지">
+            <AppText variant="title3">{'👤'}</AppText>
           </TouchableOpacity>
         </View>
       ),
