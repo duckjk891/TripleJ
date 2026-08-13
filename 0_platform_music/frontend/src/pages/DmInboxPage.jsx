@@ -90,12 +90,6 @@ export default function DmInboxPage() {
   const [searchError, setSearchError] = useState('');
   const [myTag, setMyTag] = useState(''); // v156 — 내 태그(= referral_code), compose 하단 안내. 실패 시 빈값 유지 → 미표시
 
-  // 관리자 전체발송(broadcast) — admin 만 노출. audience: '' | 'all' | 'users' | 'customers'
-  const [bcAudience, setBcAudience] = useState('');
-  const [bcText, setBcText] = useState('');
-  const [bcSending, setBcSending] = useState(false);
-  const [bcNotice, setBcNotice] = useState(''); // 인라인 안내(검증/결과)
-
   // WS 콜백에서 최신 activeCid 참조용
   const activeCidRef = useRef(activeCid);
   useEffect(() => { activeCidRef.current = activeCid; }, [activeCid]);
@@ -564,9 +558,6 @@ export default function DmInboxPage() {
     setComposeFilter('');
     setSearchResults([]);
     setSearchError('');
-    setBcAudience('');
-    setBcText('');
-    setBcNotice('');
     setFollowersLoading(true);
     setFollowersError('');
     // v156 — 내 태그(= referral_code) 비차단 로드. 실패 시 조용히 숨김(안내 문구 미표시).
@@ -629,52 +620,6 @@ export default function DmInboxPage() {
     }
   }, [composeStarting, navigate, openConversation, currentUserId]);
 
-  // 관리자 전체발송 — audience/메시지 검증 후 확인창 → broadcastDm 호출.
-  // 로그 prefix [DmBroadcast]. text 원문 미로그(대상/길이만).
-  const handleBroadcast = useCallback(async () => {
-    if (bcSending) return;
-    const text = bcText.trim();
-    if (!bcAudience) {
-      setBcNotice('발송 대상을 선택해주세요.');
-      return;
-    }
-    if (!text) {
-      setBcNotice('메시지를 입력해주세요.');
-      return;
-    }
-    setBcNotice('');
-    if (!window.confirm('전체 발송하시겠어요? 되돌릴 수 없습니다.')) return;
-    setBcSending(true);
-    if (import.meta.env.DEV) console.info('[DmBroadcast] sending', { audience: bcAudience, len: text.length });
-    try {
-      const { data } = await api.broadcastDm(bcAudience, text);
-      const queued = typeof data?.queued === 'number' ? data.queued : 0;
-      if (import.meta.env.DEV) console.info('[DmBroadcast] queued', { audience: data?.audience || bcAudience, queued });
-      // 입력 초기화 + 결과 안내 후 모달 닫기
-      setBcAudience('');
-      setBcText('');
-      setBcNotice('');
-      setComposeOpen(false);
-      alert(`${queued}명에게 발송 예약되었습니다.`);
-    } catch (err) {
-      const status = err?.response?.status;
-      console.error('[DmBroadcast] broadcastDm failed', { status, audience: bcAudience, message: err?.message });
-      if (status === 429) {
-        // v170 — BE 중복발송 잠금(30초): 더블클릭/재시도로 같은 공지 2회 발송 방지
-        setBcNotice('방금 발송한 건이 처리 중입니다. 잠시 후 다시 시도해주세요.');
-      } else if (status === 403) {
-        setBcNotice('관리자만 전체 발송을 할 수 있습니다.');
-      } else if (status === 400) {
-        const detail = err?.response?.data?.error || err?.response?.data?.detail;
-        setBcNotice(detail || '발송 대상 또는 메시지가 올바르지 않습니다.');
-      } else {
-        setBcNotice('전체 발송에 실패했습니다. 잠시 후 다시 시도해주세요.');
-      }
-    } finally {
-      setBcSending(false);
-    }
-  }, [bcSending, bcAudience, bcText]);
-
   // v155 — 검색어 입력 시 300ms 디바운스 서버 검색 (검색어 원문 미로그 — 길이만)
   const composeQuery = composeFilter.trim();
   useEffect(() => {
@@ -719,8 +664,6 @@ export default function DmInboxPage() {
 
   // CS 제한 모드 — 미인증 유저는 통째로 막지 않고 공식(maidol_official) 대화만 이용 가능.
   const restrictedMode = eligible === false;
-  // 관리자 전체발송 섹션 노출 여부 (비admin 유저에겐 이 섹션 자체가 안 보임)
-  const isAdmin = user?.role === 'admin';
 
   // 미인증인데 공식 연락처가 아직 미해결(조회 성공 전) → 하드 게이트 대신 로딩.
   if (restrictedMode && officialId == null && !officialFailed) {
@@ -930,64 +873,6 @@ export default function DmInboxPage() {
               onChange={(e) => setComposeFilter(e.target.value)}
               autoFocus
             />
-            {/* 관리자 전체발송 — admin 만 노출. 개별 검색/DM 과 공존. */}
-            {isAdmin && (
-              <div className="dmbroadcast">
-                <p className="dmbroadcast__title">📢 전체 발송 (관리자)</p>
-                <div className="dmbroadcast__audience" role="radiogroup" aria-label="발송 대상">
-                  <label className="dmbroadcast__radio">
-                    <input
-                      type="radio"
-                      name="dm-broadcast-audience"
-                      value="all"
-                      checked={bcAudience === 'all'}
-                      onChange={() => { setBcAudience('all'); setBcNotice(''); }}
-                      disabled={bcSending}
-                    />
-                    <span>모든 사용자</span>
-                  </label>
-                  <label className="dmbroadcast__radio">
-                    <input
-                      type="radio"
-                      name="dm-broadcast-audience"
-                      value="users"
-                      checked={bcAudience === 'users'}
-                      onChange={() => { setBcAudience('users'); setBcNotice(''); }}
-                      disabled={bcSending}
-                    />
-                    <span>일반회원 전체</span>
-                  </label>
-                  <label className="dmbroadcast__radio">
-                    <input
-                      type="radio"
-                      name="dm-broadcast-audience"
-                      value="customers"
-                      checked={bcAudience === 'customers'}
-                      onChange={() => { setBcAudience('customers'); setBcNotice(''); }}
-                      disabled={bcSending}
-                    />
-                    <span>고객사 전체</span>
-                  </label>
-                </div>
-                <textarea
-                  className="dmbroadcast__text"
-                  placeholder="전체 발송할 메시지를 입력하세요"
-                  value={bcText}
-                  onChange={(e) => { setBcText(e.target.value); if (bcNotice) setBcNotice(''); }}
-                  rows={3}
-                  disabled={bcSending}
-                />
-                {bcNotice && <p className="dmbroadcast__notice">{bcNotice}</p>}
-                <button
-                  className="dmbroadcast__send"
-                  onClick={handleBroadcast}
-                  disabled={bcSending}
-                >
-                  {bcSending ? '발송 중...' : '전체 발송'}
-                </button>
-              </div>
-            )}
-            {isAdmin && <p className="dmbroadcast__divider">또는 개별 사용자에게 보내기</p>}
             <div className="dmcompose__body">
               {composeQuery ? (
                 /* 검색어 있음 → 서버 검색 결과 */

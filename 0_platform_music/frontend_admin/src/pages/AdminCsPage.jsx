@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import AdminLayout from '../components/AdminLayout';
+import AdminBroadcastModal from '../components/AdminBroadcastModal';
 import {
   getCsConversations,
   getCsMessages,
@@ -66,6 +67,9 @@ export default function AdminCsPage() {
 
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
+
+  // 전체 발송 모달 (공식 계정 브로드캐스트)
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
 
   // 폴링 콜백에서 최신 activeCid 참조용
   const activeCidRef = useRef(activeCid);
@@ -181,6 +185,12 @@ export default function AdminCsPage() {
     }
   }, [replyText, sending, loadMessages]);
 
+  // ── 전체 발송 성공 → 목록 즉시 갱신 (발송 대화 수렴) ───────────
+  const handleBroadcastSuccess = useCallback((result) => {
+    if (import.meta.env.DEV) console.info('[AdminCs] broadcast success, refreshing list', { queued: result?.queued, audience: result?.audience });
+    loadConversations({ silent: true });
+  }, [loadConversations]);
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -194,7 +204,18 @@ export default function AdminCsPage() {
   return (
     <AdminLayout>
       <div className="admin-cs">
-        <h2 className="admin-page-title">CS 문의</h2>
+        <div className="admin-cs__header">
+          <h2 className="admin-page-title">CS 문의</h2>
+          <button className="admin-cs__broadcast-btn" onClick={() => setBroadcastOpen(true)}>
+            📢 전체 발송
+          </button>
+        </div>
+
+        <AdminBroadcastModal
+          open={broadcastOpen}
+          onClose={() => setBroadcastOpen(false)}
+          onSuccess={handleBroadcastSuccess}
+        />
 
         <div className="admin-cs__panels">
           {/* 좌측: 대화 목록 */}

@@ -26106,3 +26106,99 @@ watch: {
 - 1단계 결과: unit 9 + api 14 = 23/23 PASS, 픽스 사이클 0회 → **구현 코드가 TESTPLAN 작성 시점과 동일** — E-1~E-3 시나리오 내용 갱신 불요(최소 갱신 판정).
 - test-designer 지시: E2E 섹션 내용 무변경 확정 마킹 + 전제 3줄 보강(proxy 원복 확인 완료 / 홈 '최신 앨범'에 커버 보유 앨범 실노출 사전 확인, 미노출 시 P-1 픽스처로 시드 후 종료 시 삭제 / E-1 판정에 콘솔 "Mixed Content" 문구 0건 기준 명시).
 - REPORT 이월 특이사항 접수: ① presign 실 fetch hairpin 미검증(서명 구조 검증까지 — 클라우드 이전 후 확인), ② 커버 object 확장자 png·실바이트 JPEG 불일치 관찰(업로드측, 이번 범위 무관 — 별도 과제 후보).
+
+
+# v174 — 전체발송(브로드캐스트) UI 관리자 앱 이관: 사용자 DmInbox → frontend_admin CS (2026-08-13 13:04)
+
+## 0. 목표
+사용자 앱(`frontend/src/pages/DmInboxPage.jsx`) 새 메시지 모달 안에 있던 관리자 전체발송 UI를 관리자 앱(`frontend_admin`)으로 이관한다. 사용자 앱에서는 브로드캐스트 UI/코드를 제거(이관 원칙), 관리자 앱 CS 페이지에 버튼+모달로 신설, 백엔드는 **공식 계정(maidol_official) 발신 전용 어드민 엔드포인트를 신설**한다(아래 Plan verification findings 근거).
+
+## 1. Plan verification findings (0단계 사전 코드 분석 — 파일:라인 실측)
+
+### 1-1. 현행 사용자 앱 브로드캐스트 UI
+- `frontend/src/pages/DmInboxPage.jsx`
+  - :93-97 상태 4종 `bcAudience('' | 'all' | 'users' | 'customers')`, `bcText`, `bcSending`, `bcNotice`
+  - :632-676 `handleBroadcast` — audience/text 검증 → `window.confirm('전체 발송하시겠어요? 되돌릴 수 없습니다.')` → `api.broadcastDm` 호출. 에러 매핑: 429→"처리 중" 안내(v170 잠금), 403→"관리자만", 400→detail 표시. 로그 prefix `[DmBroadcast]`, text 원문 미로그(길이만)
+  - :723 `const isAdmin = user?.role === 'admin'` — 사용처는 :934, :990 브로드캐스트 블록 **뿐** (다른 admin 조건부 UI 없음)
+  - :933-990 compose 모달 내 `isAdmin &&` 조건부 렌더 — audience 라디오 3개(all/users/customers) + textarea + 발송 버튼 + `dmbroadcast__divider`
+- `frontend/src/api/index.js` :953-957 `broadcastDm(audience, text)` = `API.post('/dm/broadcast', {audience, text})` — 호출처는 DmInboxPage 뿐
+- `frontend/src/pages/DmInboxPage.css` :402-468 `.dmbroadcast*` 블록 (브로드캐스트 전용, 다른 셀렉터와 비공유)
+
+### 1-2. 백엔드 현행 (backend_9005)
+- `app/routes/dm.py`
+  - :107-109 `BroadcastBody {audience, text}`
+  - :298-367 `POST /api/dm/broadcast` — ① role!=admin → 403 ② audience 화이트리스트 밖 → 400 ③ text 빈값/2000자 초과 → 400 ④ `count_broadcast_targets` 선계산 ⑤ Redis `SET dm:broadcast:lock:{me} NX EX 30` 실패 → 429 (Redis 불가 시 잠금 생략 진행) ⑥ `BackgroundTasks`로 `_run_broadcast` 큐잉 → 즉시 `{queued, audience}` 반환
+  - :282-295 `_run_broadcast` — 요청 스코프 커넥션 반환 후라 **풀에서 새 커넥션** 획득해 `dm_service.broadcast_message` 실행
+- `app/services/dm_service.py`
+  - :46 `MAX_TEXT_LEN = 2000`
+  - :708-712 `BROADCAST_AUDIENCES = {all:(user,customer), users:(user,), customers:(customer,)}` — admin role 자연 제외
+  - :723-741 `count_broadcast_targets` — role ANY + NOT is_banned + account_status='active' + 발신자 제외 COUNT
+  - :744-810 `broadcast_message(conn, mongo, me_id, audience, text)` — 대상별 `get_or_create_conversation` → pending이면 accepted 승격 → `send_message`. best-effort per target(sent/failed 집계)
+- `app/routes/admin_cs.py` — prefix `/api/admin/cs`, 전 엔드포인트 `get_admin_user` 게이트. **me = get_official_id()** 로 공식 계정 관점의 대화 목록/메시지/답장/읽음/미읽음합 제공. `_resolve_official` 미시드 503, `_assert_official_conversation` 참여 검증
+- `app/services/official.py` — 공식 계정 시드(role=admin). :36-39 password 빈값이면 랜덤 해시 → **로그인 불가, "DM 대응은 어드민 API 전용"** (config.py :178 동일 명시)
+
+### 1-3. 관리자 앱 현행 (frontend_admin)
+- `src/api.js` — axios baseURL '/api', 토큰 인터셉터, 401/토큰성 403 시 /login 리다이렉트. CS 함수군 :108-119 (`getCsConversations/getCsMessages/replyCs/markCsRead/getCsUnreadCount`)
+- `src/components/AdminLayout.jsx` :49-68 — 사이드바 NavLink 5개(/, /users, /tracks, /reports, /cs), CS 미읽음 뱃지 30초 폴링
+- `src/pages/AdminCsPage.jsx` — 12초 폴링(:16, :137-144), `sortConvList`(:22-33, v168: 브로드캐스트 순차발송 ms 차이를 분 단위로 동률 처리), 좌측 목록+우측 스레드+답장. 로그 prefix `[AdminCs]`, text 원문 미로그
+- `src/main.jsx` — **remoteLogger 미포함 확인**(v162 주석: 관리자 로그가 사용자 frontend.log 에 섞이는 것 방지) → 이관 후 콘솔 로그만, DEV 게이트
+- `src/App.jsx` — `AdminRoute` 가 비관리자/미로그인 → /login
+
+### 1-4. ★ 사양-코드 충돌 (설계 변경 근거 — 강행 금지 사항)
+**`POST /api/dm/broadcast` 는 발신자 = 호출한 관리자 본인 계정**(dm.py :310 `me = current_user["id"]`, :362 `_run_broadcast(str(me),...)`)이다. 반면 **관리자 앱 CS 인박스는 공식 계정(maidol_official) 참여 대화만** 보여준다(admin_cs.py `me=official_id`).
+- 사용자 앱 시절: 브로드캐스트 발신 대화/유저 답장이 그 관리자의 **사용자 앱 개인 DM 인박스**에 보였으므로 문제 없었음 (또는 official 로 로그인해 발송 — AdminCsPage sortConvList v168 주석이 브로드캐스트 대화가 CS 목록에 나타나는 상황을 전제)
+- 이관 후: 관리자는 **본인 admin 계정**으로 관리자 앱에 로그인(공식 계정은 password 빈값 시 로그인 불가). 기존 `/dm/broadcast` 를 그대로 호출하면 발신자=개인 admin → 발송 대화와 **유저 답장이 관리자 앱 어디에도 안 보이는** 블랙홀 발생
+- **판정: 기존 엔드포인트 재사용 강행 금지.** 공식 계정 발신의 어드민 전용 엔드포인트 `POST /api/admin/cs/broadcast` 신설(발신자=official_id)로 발송 대화·답장이 CS 인박스에 그대로 수렴하게 한다. "백엔드 무변경" 가정은 이 발견으로 폐기.
+
+## 2. 설계 결정
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 관리자 앱 부착 위치 | **AdminCsPage 상단 "📢 전체 발송" 버튼 + 모달** (별도 페이지/NavLink 아님) | 발신자=official 이므로 발송 결과가 바로 아래 CS 대화 목록에 나타남(v168 정렬이 이미 대비). 단일 폼 기능에 라우트/사이드바 추가는 과함 |
+| 신규 컴포넌트 | `frontend_admin/src/components/AdminBroadcastModal.jsx` + `.css` | AdminCsPage 316줄 비대화 방지, 페이지별 CSS 관행 유지 |
+| 백엔드 | `admin_cs.py` 에 `POST /api/admin/cs/broadcast` 신설 (official 발신). 기존 `/dm/broadcast` 는 **유지 + docstring deprecated 표기** (제거는 후속 버전 정리 과제 — admin 게이트라 보안 위험 없음, 이번 회귀 표면 최소화) | 1-4 충돌 해소. 9005 선구현 → 9004 미러 |
+| 사용자 앱 제거 범위 | DmInboxPage.jsx 브로드캐스트 상태/핸들러/JSX + isAdmin 상수, api/index.js broadcastDm, DmInboxPage.css .dmbroadcast* 전체 | isAdmin 사용처가 브로드캐스트뿐임을 실측 확인 → 완전 제거 가능. compose 모달 나머지(검색/추천/CS prefill 진입 :113-135)는 무접촉 |
+| 중복 잠금 키 | `dm:broadcast:lock:{official_id}` (신규 엔드포인트) | 발신 주체가 official 단일이므로 관리자 2명 동시 발송도 직렬화됨 (기존 키는 per-admin) |
+| 로깅 | FE prefix `[AdminBroadcast]` (DEV 게이트 console, text 원문 미로그 — 대상/길이만), BE prefix `[admin-cs]` broadcast 계열 | frontend_admin 은 remoteLogger 미포함(1-3) — 콘솔만 |
+
+## 3. 변경 매트릭스
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_cs.py` | `BroadcastCsBody{audience,text}` + `POST /broadcast` 신설: get_admin_user → `_resolve_official`(503) → audience `dm_service.BROADCAST_AUDIENCES` 검증(400) → text 1~`MAX_TEXT_LEN` 검증(400) → `count_broadcast_targets(conn, official_id, audience)` → Redis `SET dm:broadcast:lock:{official_id} NX EX 30` 실패 429 / Redis 불가 시 잠금 생략 → BackgroundTasks 로 official 발신 `_run_broadcast_official`(dm.py `_run_broadcast` 패턴 — 풀 새 커넥션) → `{queued, audience}` | `[admin-cs] broadcast req/denied/queued` (admin id·official id 앞 8자, text_len 만) |
+| `backend_9005/app/routes/dm.py` | `POST /broadcast` docstring 에 deprecated(관리자 앱 `/api/admin/cs/broadcast` 로 이관) 1줄 추가 — 동작 무변경 | 기존 `[dm-broadcast]` 유지 |
+| `backend_9004/` 동일 2파일 | 9005 확정 후 미러(diff 0 원칙, `_logs.py` 예외 무관) | 동일 |
+| `frontend_admin/src/api.js` | `broadcastCs = (audience, text) => API.post('/admin/cs/broadcast', {audience, text})` 추가 (주석: text 원문 콘솔 출력 금지) | — |
+| `frontend_admin/src/components/AdminBroadcastModal.jsx` (신규) | audience 라디오 3(모든 사용자/일반회원/고객사) + textarea(maxLength 2000) + 인라인 notice + `window.confirm('전체 발송하시겠어요? 되돌릴 수 없습니다.')` → `broadcastCs`. 에러 매핑 429/403/400/503 (사용자 앱 :662-672 로직 이식 + 503 "공식 계정을 사용할 수 없습니다"). 성공 시 `${queued}명에게 발송 예약` alert + onSuccess 콜백 | `[AdminBroadcast] sending/queued/failed` |
+| `frontend_admin/src/components/AdminBroadcastModal.css` (신규) | 사용자 앱 `.dmbroadcast*` 스타일을 admin 톤으로 이식 | — |
+| `frontend_admin/src/pages/AdminCsPage.jsx` | 제목 옆 "📢 전체 발송" 버튼 + 모달 open 상태, onSuccess 시 `loadConversations({silent:true})` | 기존 `[AdminCs]` 유지 |
+| `frontend/src/pages/DmInboxPage.jsx` | 제거: :93-97 상태, :632-676 핸들러, :723 isAdmin, :933-990 JSX(divider 포함) | `[DmBroadcast]` 소멸 |
+| `frontend/src/api/index.js` | 제거: :953-957 `broadcastDm` | — |
+| `frontend/src/pages/DmInboxPage.css` | 제거: :402-468 `.dmbroadcast*` | — |
+
+## 4. 작업 분담
+- **backend-dev**: admin_cs.py 신설 엔드포인트 + dm.py deprecated 주석 (9005 먼저, 자체 검증 후 9004 미러). Redis import 는 dm.py :347-360 패턴 재사용
+- **frontend-dev**: (A) frontend_admin 3파일 신규/수정 (B) 사용자 앱 3파일 제거 — B는 A 완료 후 착수(기능 공백 방지)
+- **test-designer/tester**: 아래 5장 항목. 1차 API → 2차 E2E
+
+## 5. 테스트 항목 (test-designer 지시 — 안전 제약 필수 준수)
+**★ 안전 제약: 전체발송은 되돌릴 수 없는 실액션. E2E 에서 confirm 다이얼로그 수락(실발송) 절대 금지 — dismiss 까지만. API 실발송 케이스는 명시 승인 없으면 스킵.**
+
+API (비파괴):
+1. `POST /api/admin/cs/broadcast` 토큰 없음 → 401
+2. 일반 user 토큰 → 403 (get_admin_user)
+3. admin 토큰 + `audience:'everyone'` → 400 (발송 없음 — 검증이 잠금보다 선행)
+4. admin 토큰 + 빈 text / 2001자 text → 400
+5. **429 비파괴 검증**: redis-cli 로 `dm:broadcast:lock:{official_id}` 를 사전 SET(EX 30) → 유효 요청 → 429 + 발송 미발생(백그라운드 로그 부재) 확인 → 키 DEL
+6. 회귀: 기존 `POST /api/dm/broadcast` 비관리자 403 동작 불변
+7. (선택·명시 승인 시만) dev DB 한정 실발송 1회: 대상 최소 audience(테스트 계정만 남긴 `customers` 등) → `{queued:N}` + CS 목록에 발송 대화 노출 + 유저 답장이 CS 인박스 수신 확인
+
+E2E (실발송 금지):
+8. 관리자 앱 /cs — "전체 발송" 버튼 노출 → 모달: 대상 미선택 발송 → 인라인 notice / text 빈값 → notice / 유효 입력 발송 클릭 → confirm 노출 확인 후 **dismiss** → 요청 미발생(네트워크 0건) 확인
+9. 회귀: 사용자 앱 DmInbox — admin 계정 compose 모달에 브로드캐스트 섹션 **부재**, 일반 유저 화면 불변, 개별 검색→대화 시작 정상, CS 오류신고 prefill 진입(:113-135) 정상
+10. 회귀: AdminCsPage 목록/스레드/답장/12초 폴링/sortConvList 정렬 불변
+11. 회귀: 관리자 앱 로그인 게이트(AdminRoute) 불변 — 비관리자 /cs 접근 → /login
+
+## 6. 리스크/메모
+- 공식 계정 미시드 환경 → 신설 엔드포인트 503 — 모달 에러 매핑에 포함
+- 대량 발송 시 CS 목록이 브로드캐스트 대화로 채워지는 현상은 **기존 동작과 동일**(v168 정렬이 전제) — 이번 범위에서 미해결, 후속 과제 후보
+- `/dm/broadcast` 완전 제거는 후속 버전에서 검토 (이번엔 deprecated 표기만)
+- 민감정보: 계정/토큰 실값은 본 문서·로그에 미기재 (플레이스홀더)

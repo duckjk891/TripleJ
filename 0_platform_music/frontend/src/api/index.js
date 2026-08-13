@@ -950,12 +950,6 @@ export const acceptDmRequest = (cid) => API.post(`/dm/conversations/${cid}/accep
 // 요청 거절 (수신자만 — 대화+메시지 삭제, 상대 무통지) → { ok }
 export const declineDmRequest = (cid) => API.delete(`/dm/conversations/${cid}`);
 
-// DM 관리자 전체발송(broadcast) — admin 전용. audience: 'all'|'users'|'customers'.
-// → { queued: N, audience }. 비admin 403, 잘못된 audience/빈 text 400.
-// 주의: 메시지 text 원문은 절대 콘솔에 출력하지 않는다(길이/대상만).
-export const broadcastDm = (audience, text) =>
-  API.post('/dm/broadcast', { audience, text });
-
 // Referral (v154 — 앱 추천/추천코드)
 // 내 추천코드 조회(인증, 코드 없으면 서버가 lazy 생성)
 // → { referral_code, invite_url, play_store_url }

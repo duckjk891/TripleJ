@@ -10,13 +10,15 @@ me_id = get_official_id() 로 기존 dm_service 함수를 그대로 재사용해
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+import redis.exceptions as redis_exceptions
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..auth import get_admin_user
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
+from ..database.redis import get_redis
 from ..services import dm_service
 from ..services.dm_service import _get_conv, _short
 from ..services.official import get_official_id
@@ -29,6 +31,11 @@ MAX_PAGE_LIMIT = 100
 
 
 class ReplyBody(BaseModel):
+    text: str
+
+
+class BroadcastCsBody(BaseModel):
+    audience: str
     text: str
 
 
@@ -176,3 +183,111 @@ async def cs_unread_count(current_user=Depends(get_admin_user), conn=Depends(get
     except Exception:
         logger.exception("[admin-cs] unread-count failed admin=%s", admin_tag)
         return JSONResponse(status_code=500, content={"error": "요청을 처리할 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 대상별 전체발송 (broadcast) — 발신자=공식 계정(official)
+# ---------------------------------------------------------------------------
+async def _run_cs_broadcast(official_id: str, audience: str, text: str) -> None:
+    """BackgroundTasks 진입점 — dm.py `_run_broadcast` 와 동일 패턴. 요청 스코프
+    (get_pg) 커넥션은 응답 종료 시 이미 반환됐으므로, 풀에서 **새 커넥션**을
+    획득해 broadcast_message 를 실행한다. Mongo 는 전역 getter(get_mongo) 재사용.
+    text 원문 미로그."""
+    from ..database import postgres as _pg
+
+    logger.info(
+        "[admin-cs] broadcast background start official=%s audience=%s",
+        _short(official_id), audience,
+    )
+    try:
+        async with _pg._pool.acquire() as conn:
+            result = await dm_service.broadcast_message(
+                conn, get_mongo(), official_id, audience, text
+            )
+        logger.info(
+            "[admin-cs] broadcast background done official=%s audience=%s sent=%d failed=%d",
+            _short(official_id), audience,
+            int(result.get("sent", 0)), int(result.get("failed", 0)),
+        )
+    except Exception:
+        logger.exception(
+            "[admin-cs] broadcast background failed official=%s audience=%s",
+            _short(official_id), audience,
+        )
+
+
+@router.post("/broadcast")
+async def broadcast_cs(
+    body: BroadcastCsBody,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """대상별 전체발송 — 발신자=공식 계정(official). admin 게이트(get_admin_user)
+    → official 해석(미시드 503) → audience/text 검증(400) → 대상 수 선계산 →
+    중복발송 잠금(429) → BackgroundTasks 로 fan-out. 응답 `{queued, audience}`
+    (dm.py `/dm/broadcast` 와 동일 형식). text 원문 미로그(길이만)."""
+    admin_tag = str(current_user["id"])[:8]
+    audience = (body.audience or "").strip()
+    text = (body.text or "").strip()
+    logger.info(
+        "[admin-cs] broadcast enter admin=%s audience=%s text_len=%d",
+        admin_tag, audience, len(text),
+    )
+    try:
+        official_id = await _resolve_official(conn)  # 미시드 503
+
+        # audience 화이트리스트
+        if audience not in dm_service.BROADCAST_AUDIENCES:
+            logger.info(
+                "[admin-cs] broadcast denied (bad audience) admin=%s audience=%s",
+                admin_tag, audience,
+            )
+            return JSONResponse(status_code=400, content={"error": "발송 대상이 올바르지 않습니다."})
+
+        # text 검증 (1~MAX_TEXT_LEN)
+        if not text or len(text) > dm_service.MAX_TEXT_LEN:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"메시지는 1~{dm_service.MAX_TEXT_LEN}자여야 합니다."},
+            )
+
+        # 대상 수 선계산 (발신자=official)
+        targets = await dm_service.count_broadcast_targets(conn, official_id, audience)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-cs] broadcast prepare failed admin=%s audience=%s", admin_tag, audience
+        )
+        return JSONResponse(status_code=500, content={"error": "발송을 준비할 수 없습니다."})
+
+    # 중복발송 방지 — official별 Redis 잠금(SET NX, TTL 30초). dm.py v170 패턴.
+    # Redis 불가 시 잠금 없이 진행(best-effort 안전장치).
+    try:
+        redis = get_redis()
+        if redis is not None:
+            acquired = await redis.set(
+                f"dm:broadcast:lock:{official_id}", "1", nx=True, ex=30
+            )
+            if not acquired:
+                logger.warning(
+                    "[admin-cs] broadcast denied (duplicate, locked) admin=%s official=%s audience=%s",
+                    admin_tag, _short(official_id), audience,
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "방금 발송한 건이 처리 중입니다. 잠시 후 다시 시도해주세요."},
+                )
+    except redis_exceptions.RedisError:
+        logger.warning(
+            "[admin-cs] broadcast lock skipped (redis unavailable) admin=%s official=%s",
+            admin_tag, _short(official_id),
+        )
+
+    background_tasks.add_task(_run_cs_broadcast, str(official_id), audience, text)
+    logger.info(
+        "[admin-cs] broadcast queued admin=%s official=%s audience=%s targets=%d",
+        admin_tag, _short(official_id), audience, targets,
+    )
+    return {"queued": targets, "audience": audience}

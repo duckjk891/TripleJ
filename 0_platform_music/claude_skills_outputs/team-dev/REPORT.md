@@ -14893,3 +14893,42 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 4. **오디오 mixed-content 후속 후보** — tracks.py stream_track(:1631)이 내부 클라이언트 presign(http+내부 host) 사용, v173 diff 밖 기존 동작. 음원 스트림 URL 도 media_urls 중앙 헬퍼로 통합하는 후속 개선 후보.
 5. **데이터 품질 관찰** — 일부 커버 object 가 확장자 png 인데 실바이트 JPEG(업로드측 불일치, 렌더 무영향). 별도 과제 후보.
 6. 개발 https 화면에서 MV `<video>` 재생 제한은 기존 동작과 동일(비디오는 프록시 제외 설계).
+
+# v174 — 전체발송(브로드캐스트) UI 관리자 앱 이관 완료 (사용자 DmInbox → frontend_admin CS) (2026-08-13 13:30)
+
+## 1. 요청 작업
+사용자 앱(`frontend/src/pages/DmInboxPage.jsx`) 새 메시지 모달 내 관리자 전체발송 UI를 관리자 앱(`frontend_admin`)으로 이관. 사용자 앱에서 브로드캐스트 코드 완전 제거, 관리자 앱 CS 페이지에 신설, 백엔드 9005 선구현 → 9004 미러.
+
+## 2. 설계 결정 (PLAN v174)
+- **★ 핵심 finding — 기존 엔드포인트 재사용 강행 금지**: `POST /api/dm/broadcast` 는 발신자=호출 관리자 본인 계정인데, 관리자 앱 CS 인박스는 공식 계정(maidol_official) 참여 대화만 표시. 공식 계정은 password 미설정 시 로그인 불가 → 이관 후 기존 엔드포인트를 쓰면 발송 대화·유저 답장이 관리자 앱 어디에도 안 보이는 **블랙홀** 발생. → **공식 계정 발신 전용 `POST /api/admin/cs/broadcast` 신설**(발신자=official_id)로 발송 대화·답장이 CS 인박스에 수렴.
+- 부착 위치: AdminCsPage 헤더 "📢 전체 발송" 버튼 + `AdminBroadcastModal`(별도 페이지/NavLink 아님) — 발송 결과가 바로 아래 CS 목록에 나타나며 v168 `sortConvList` 가 이미 브로드캐스트 동률 정렬에 대비돼 있음.
+- 중복 잠금: Redis `dm:broadcast:lock:{official_id}` NX EX 30 → 429 (발신 주체 official 단일이라 관리자 2명 동시 발송도 직렬화).
+- 기존 `/api/dm/broadcast` 는 deprecated 주석만 추가하고 유지(회귀 표면 최소화 — 완전 제거는 후속 검토).
+
+## 3. 구현 결과 (git diff 실측 — PLAN 변경 매트릭스 전 항목 이행)
+- `backend_9005/app/routes/admin_cs.py` (+117): `BroadcastCsBody` + `POST /broadcast` — get_admin_user 403 → official 미시드 503 → audience 400 → text 1~2000 400 → 대상 COUNT → Redis 잠금 429(RedisError 시 잠금 스킵) → BackgroundTasks `_run_cs_broadcast`(풀 새-커넥션) → `{queued, audience}`. 로그 `[admin-cs] broadcast` 9종, text 원문 미로그
+- `backend_9005/app/routes/dm.py` (+1): deprecated 주석. `backend_9004/` 동일 2파일 미러(diff 완전 동일, import 검증 OK)
+- `frontend_admin`: `src/api.js` `broadcastCs` 추가, `src/components/AdminBroadcastModal.jsx/.css` 신규(라디오 3종 기본 미선택, maxLength 2000 + "N자 남음" 카운터, confirm(대상 라벨+80자 미리보기), 429/403/400/503 에러 매핑, 로그 `[AdminBroadcast]`), `src/pages/AdminCsPage.jsx/.css` 버튼+모달 통합(성공 시 목록 silent 갱신)
+- `frontend` 제거: DmInboxPage.jsx -115줄(상태/핸들러/JSX/isAdmin + 계획 외 발견된 openCompose 내 bc 리셋 3줄), api/index.js `broadcastDm` -6줄, DmInboxPage.css `.dmbroadcast*` -69줄 — `grep "broadcast|dmbroadcast" frontend/src` 매치 0건
+- eslint 신규 유발 에러 0 (AdminCsPage set-state-in-effect 1건은 HEAD 기존 에러)
+
+## 4. 테스트 결과 — v174 총 14/14 PASS, 픽스 사이클 0회
+| 구간 | 결과 | 핵심 증적 |
+|---|---|---|
+| [api] 8건 | 8/8 PASS | 401/403/400×3 · **429**(redis-cli 잠금 선점 → CS conversations total 131→131 불변 + background start 로그 0건 + DEL 정리) · 기존 `/dm/broadcast` 403 회귀 · 9004 미러 동일 응답 |
+| [unit] 3건 | 3/3 PASS | 빈 text 차단(핸들러 조기 차단) · maxLength 2000 클램프+잔여 카운터 · 기본값 미선택('') + route-abort 로 payload audience 일치 검증 |
+| [e2e] 3건 | 3/3 PASS | 관리자 여정 confirm 표시→**dismiss**(모달 입력값 유지, POST 네트워크 0건) · 사용자 앱 브로드캐스트 완전 부재+개별 DM 정상 · AdminCsPage 답장 회귀 정상 |
+
+**안전 경계 전 항목 준수 — 실제 브로드캐스트 발송 0건 확증**(유효 요청은 잠금 선점된 429 케이스 1건뿐, E2E confirm 전부 dismiss). 쓰기 액션은 승인된 2건(테스트 계정 간 개별 DM 1·CS 답장 1) 한도 내.
+
+## 5. 특이사항 / 이월
+- **BC-OPT-01 실발송 검증 미실행** — 사용자 명시 승인 필요(dev DB 최소 audience 1회 안 제시됨). 실발송 경로(queued 실값·수신 도착·발송 대화 CS 수렴·발송 직후 429)는 미검증 상태로 이월.
+- **503(official 미시드) 케이스** — 비파괴 재현 불가(시드 삭제는 파괴적 + startup 멱등 복구)로 범위 제외, 모달 에러 매핑은 코드 리뷰로 확인.
+- **잔존 테스트 데이터(무해)**: 테스트 계정 2개(`bcast_admin_test_*`/`bcast_user_test_*`@test.invalid, admin 계정은 is_verified=true DB 설정) + 개별 DM 1건 + CS 답장 1건 — 정리 원하면 후속 요청.
+- 기존 `/api/dm/broadcast` 는 deprecated 유지 — 완전 제거는 후속 버전 정리 과제.
+- 절차 특이 2건: ① 사용자 앱(4000) 출석 모달이 클릭을 가로채 BC-E2E-02 단독 재실행으로 해소 ② compose 경로의 본인인증 요구로 테스트 admin 계정에 한해 is_verified=true 설정.
+- 대량 발송 시 CS 목록이 브로드캐스트 대화로 채워지는 현상은 기존과 동일(이번 범위 외) — 후속 과제 후보.
+- 민감정보: 계정/토큰 실값 미기재(플레이스홀더), 메시지 text 원문 미로그 정책 FE/BE 전 구간 유지.
+
+## 6. 최종 판정
+**PASS** — PLAN v174 변경 매트릭스 전 항목 이행 + 1·2차 게이트 통과(14/14, 픽스 0회). 커밋 가능 상태(테스트 하니스 잔재 git 미포함 확인).

@@ -295,6 +295,7 @@ async def _run_broadcast(me_id: str, audience: str, text: str) -> None:
         )
 
 
+# deprecated(v174): 관리자 앱은 /api/admin/cs/broadcast 사용 — 이 엔드포인트는 호환 유지용
 @router.post("/broadcast")
 async def broadcast(
     body: BroadcastBody,

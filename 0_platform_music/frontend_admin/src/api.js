@@ -117,6 +117,11 @@ export const markCsRead = (cid) =>
   API.post(`/admin/cs/conversations/${cid}/read`);
 // 미읽음 총계 (nav 뱃지) → { count }
 export const getCsUnreadCount = () => API.get('/admin/cs/unread-count');
+// 전체 발송 (공식 계정 발신 브로드캐스트) — audience: 'all'|'users'|'customers', text 1~2000자.
+// → { queued: N, audience }. 401 무토큰 / 403 비관리자 / 400 잘못된 입력 / 429 중복 발송 잠금(30초) / 503 공식 계정 미시드.
+// 메시지 text 원문은 콘솔에 출력하지 않는다.
+export const broadcastCs = (audience, text) =>
+  API.post('/admin/cs/broadcast', { audience, text });
 
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {

@@ -11,6 +11,31 @@
   margin-bottom: 20px;
 }
 
+/* 헤더 행 — 타이틀 + 전체 발송 버튼 */
+.admin-cs__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.admin-cs__header .admin-page-title {
+  margin-bottom: 0;
+}
+
+.admin-cs__broadcast-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.admin-cs__broadcast-btn:hover {
+  background: var(--color-primary-dark);
+}
+
 .admin-cs__panels {
   flex: 1;
   min-height: 0;
