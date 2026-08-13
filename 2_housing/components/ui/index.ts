@@ -1,0 +1,20 @@
+// AIDOL 공용 컴포넌트 라이브러리 (Wave 0) — 토큰 기반, Material 3 + HIG + 음악앱 다크 패턴.
+// 사용: import { Button, Card, ListRow, AppText } from '../components/ui';
+export { default as AppText } from './AppText';
+export type { AppTextProps } from './AppText';
+export { default as Button } from './Button';
+export type { ButtonProps } from './Button';
+export { default as Card } from './Card';
+export type { CardProps } from './Card';
+export { default as ListRow } from './ListRow';
+export type { ListRowProps } from './ListRow';
+export { default as SectionHeader } from './SectionHeader';
+export type { SectionHeaderProps } from './SectionHeader';
+export { default as Tag } from './Tag';
+export type { TagProps } from './Tag';
+export { default as Avatar } from './Avatar';
+export type { AvatarProps } from './Avatar';
+export { default as ScreenLayout } from './ScreenLayout';
+export type { ScreenLayoutProps } from './ScreenLayout';
+export { default as EmptyState } from './EmptyState';
+export type { EmptyStateProps } from './EmptyState';

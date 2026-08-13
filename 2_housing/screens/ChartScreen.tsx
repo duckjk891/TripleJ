@@ -1,24 +1,18 @@
+// [ChartScreen] Wave 0 리스킨 — 공용 컴포넌트(ui/) + 디자인 토큰만 사용. 기능/데이터 흐름 불변.
+// 디자인: Spotify식 가로 칩 필터 + Material 3 리스트/카드 + PANN 황혼 토큰.
 import { useState, useCallback, useLayoutEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  StyleSheet,
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  Image,
-  ActivityIndicator,
-  RefreshControl,
-  Alert,
-  Modal,
-  TextInput,
+  StyleSheet, View, FlatList, TouchableOpacity, Image, ActivityIndicator,
+  RefreshControl, Alert, Modal, TextInput, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
+import { spacing, radius } from '../theme/spacing';
+import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
 
 interface ChartTrack {
   id: string;
@@ -44,11 +38,10 @@ const TABS: { key: ChartTab; label: string; endpoint: string }[] = [
   { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },
 ];
 
-// TODO: 테마화 검토 (랭크 메달 색: 금/은/동)
 const RANK_COLORS: Record<number, string> = {
-  1: '#FFD700',
-  2: '#C0C0C0',
-  3: '#CD7F32',
+  1: colors.accent.secondary,       // 금
+  2: colors.text.secondary,         // 은(연보라)
+  3: colors.accent.secondaryDim,    // 동
 };
 
 export default function ChartScreen() {
@@ -68,72 +61,52 @@ export default function ChartScreen() {
   const [searchResults, setSearchResults] = useState<ChartTrack[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchSubmitted, setSearchSubmitted] = useState(false);
+  const playerStore = usePlayerStore();
 
   const fetchChart = useCallback(async (tab: ChartTab) => {
     const endpoint = TABS.find((t) => t.key === tab)?.endpoint || '/charts/top100';
+    if (__DEV__) console.info('[ChartScreen] fetchChart 호출', { tab, endpoint });
     try {
       setLoading(true);
       const res = await api.get(endpoint);
       const data = Array.isArray(res.data) ? res.data : (res.data.tracks || []);
+      if (__DEV__) console.info('[ChartScreen] fetchChart 응답', { tab, count: data.length });
+      if (!data.length) console.warn('[ChartScreen] 차트 비어있음', { tab });
       setTracks(data);
-    } catch {
-      // Backend not available
+    } catch (err: any) {
+      console.error('[ChartScreen] fetchChart 실패', { tab, endpoint, status: err?.response?.status });
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
-  // 탭 전환 시 + 포커스 시 항상 새로고침
-  useFocusEffect(
-    useCallback(() => {
-      fetchChart(activeTab);
-    }, [activeTab])
-  );
+  useFocusEffect(useCallback(() => { fetchChart(activeTab); }, [activeTab]));
 
-  // 상단바에 검색 아이콘 + 설정 아이콘 배치 (검색이 설정 왼쪽)
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
-          <TouchableOpacity
-            onPress={() => setShowSearchModal(true)}
-            style={{ paddingHorizontal: 10, paddingVertical: 6 }}
-          >
-            <Text style={{ fontSize: 18, color: colors.text.primary }}>{'🔍'}</Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity onPress={() => setShowSearchModal(true)} style={styles.headerBtn}>
+            <AppText variant="subtitle">{'🔍'}</AppText>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Settings' as never)}
-            style={{ paddingHorizontal: 8, paddingVertical: 6 }}
-          >
-            <Text style={{ fontSize: 22, color: colors.text.primary }}>{'⋮'}</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Settings' as never)} style={styles.headerBtn}>
+            <AppText variant="title3">{'⋮'}</AppText>
           </TouchableOpacity>
         </View>
       ),
     });
   }, [navigation]);
 
-  const handleRefresh = () => {
-    setRefreshing(true);
-    fetchChart(activeTab);
-  };
-
-  const handleTabPress = (tab: ChartTab) => {
-    if (tab !== activeTab) {
-      setActiveTab(tab);
-    }
-  };
+  const handleRefresh = () => { setRefreshing(true); fetchChart(activeTab); };
+  const handleTabPress = (tab: ChartTab) => { if (tab !== activeTab) setActiveTab(tab); };
 
   const requireLogin = (): boolean => {
     if (!user) {
-      Alert.alert(
-        '로그인 필요',
-        '이 기능을 사용하려면 로그인이 필요해요.',
-        [
-          { text: '취소', style: 'cancel' },
-          { text: '로그인', onPress: () => navigation.navigate('Settings') },
-        ]
-      );
+      Alert.alert('로그인 필요', '이 기능을 사용하려면 로그인이 필요해요.', [
+        { text: '취소', style: 'cancel' },
+        { text: '로그인', onPress: () => navigation.navigate('Settings') },
+      ]);
       return false;
     }
     return true;
@@ -143,11 +116,7 @@ export default function ChartScreen() {
     if (!requireLogin()) return;
     setLikedTracks((prev) => {
       const next = new Set(prev);
-      if (next.has(trackId)) {
-        next.delete(trackId);
-      } else {
-        next.add(trackId);
-      }
+      next.has(trackId) ? next.delete(trackId) : next.add(trackId);
       return next;
     });
   };
@@ -158,7 +127,8 @@ export default function ChartScreen() {
     try {
       const res = await api.get('/playlists/');
       setPlaylists(res.data.playlists || res.data || []);
-    } catch {
+    } catch (err: any) {
+      console.error('[ChartScreen] 플레이리스트 조회 실패', { status: err?.response?.status });
       setPlaylists([]);
     }
     setShowPlaylistModal(true);
@@ -169,6 +139,7 @@ export default function ChartScreen() {
       await api.post(`/playlists/${playlistId}/tracks`, { track_id: selectedTrackId });
       Alert.alert('완료', '플레이리스트에 추가되었습니다!');
     } catch (err: any) {
+      console.error('[ChartScreen] 플레이리스트 추가 실패', { playlistId, status: err?.response?.status });
       Alert.alert('오류', err?.response?.data?.error || '추가에 실패했습니다.');
     }
     setShowPlaylistModal(false);
@@ -176,15 +147,13 @@ export default function ChartScreen() {
 
   const createAndAddToPlaylist = async () => {
     const name = newPlaylistName.trim();
-    if (!name) {
-      Alert.alert('알림', '플레이리스트 이름을 입력해주세요.');
-      return;
-    }
+    if (!name) { Alert.alert('알림', '플레이리스트 이름을 입력해주세요.'); return; }
     try {
       const createRes = await api.post('/playlists/', { title: name });
       await api.post(`/playlists/${createRes.data.id}/tracks`, { track_id: selectedTrackId });
       Alert.alert('완료', `"${name}"에 추가되었습니다!`);
     } catch (err: any) {
+      console.error('[ChartScreen] 플레이리스트 생성 실패', { status: err?.response?.status });
       Alert.alert('오류', err?.response?.data?.error || '생성에 실패했습니다.');
     }
     setNewPlaylistName('');
@@ -194,13 +163,14 @@ export default function ChartScreen() {
   const handleSearch = async (q: string) => {
     const query = q.trim();
     if (!query) return;
+    if (__DEV__) console.info('[ChartScreen] handleSearch', { q: query });
     setSearchLoading(true);
     setSearchSubmitted(true);
     try {
       const res = await api.get(`/tracks/search`, { params: { q: query, limit: 50 } });
-      const data = res.data?.tracks || [];
-      setSearchResults(data);
-    } catch {
+      setSearchResults(res.data?.tracks || []);
+    } catch (err: any) {
+      console.error('[ChartScreen] 검색 실패', { q: query, status: err?.response?.status });
       setSearchResults([]);
     } finally {
       setSearchLoading(false);
@@ -209,15 +179,10 @@ export default function ChartScreen() {
 
   const closeSearchModal = () => {
     setShowSearchModal(false);
-    setSearchQuery('');
-    setSearchResults([]);
-    setSearchSubmitted(false);
+    setSearchQuery(''); setSearchResults([]); setSearchSubmitted(false);
   };
 
-  const playerStore = usePlayerStore();
-
   const handleTrackPress = (track: ChartTrack) => {
-    // 차트 목록을 queue로 설정
     const idx = tracks.findIndex((t) => t.id === track.id);
     playerStore.setQueue(tracks);
     playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
@@ -238,116 +203,62 @@ export default function ChartScreen() {
     return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
   };
 
+  const Cover = ({ track }: { track: ChartTrack }) => {
+    const uri = getCoverUri(track);
+    return (
+      <View style={styles.cover}>
+        {uri ? <Image source={{ uri }} style={styles.coverImg} />
+          : <View style={styles.coverPlaceholder}><AppText variant="title2" tone="muted">{'♪'}</AppText></View>}
+      </View>
+    );
+  };
+
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
     const rank = index + 1;
-    const rankColor = RANK_COLORS[rank] || colors.text.secondary;
-    const coverUri = getCoverUri(item);
+    const rankColor = RANK_COLORS[rank] || colors.text.muted;
     const isLiked = likedTracks.has(item.id);
-    const isNewTab = activeTab === 'new';
+    const g = Array.isArray(item.genre) ? item.genre[0] : item.genre;
 
     return (
-      <TouchableOpacity
-        style={styles.trackItem}
-        activeOpacity={0.7}
-        onPress={() => handleTrackPress(item)}
-      >
-        {isNewTab ? (
-          <View style={styles.newBadge}>
-            <Text style={styles.newBadgeText}>NEW</Text>
-          </View>
-        ) : (
-          <Text style={[styles.rankNumber, { color: rankColor }]}>{rank}</Text>
-        )}
-
-        <View style={styles.coverContainer}>
-          {coverUri ? (
-            <Image
-              source={{ uri: coverUri }}
-              style={styles.coverImage}
-              defaultSource={undefined}
-              onError={() => {}}
-            />
-          ) : (
-            <View style={styles.coverPlaceholder}>
-              <Text style={styles.coverPlaceholderIcon}>{'♪'}</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.trackInfo}>
-          <Text style={styles.trackTitle} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.trackArtist} numberOfLines={1}>
+      <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={() => handleTrackPress(item)}>
+        {activeTab === 'new'
+          ? <View style={styles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
+          : <AppText variant="title3" center style={[styles.rank, { color: rankColor }]}>{rank}</AppText>}
+        <Cover track={item} />
+        <View style={styles.info}>
+          <AppText variant="bodyStrong" numberOfLines={1}>{item.title}</AppText>
+          <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
             {item.artist_name || '알 수 없는 아티스트'}
-          </Text>
+          </AppText>
           <View style={styles.statsRow}>
-            {(() => {
-              const g = Array.isArray(item.genre) ? item.genre[0] : item.genre;
-              return g ? (
-                <View style={styles.genreBadge}>
-                  <Text style={styles.genreBadgeText} numberOfLines={1}>{g}</Text>
-                </View>
-              ) : null;
-            })()}
-            {item.play_count != null && (
-              <Text style={styles.statText}>{'▶'} {item.play_count.toLocaleString()}</Text>
-            )}
-            {item.like_count != null && (
-              <Text style={styles.statText}>{'♥'} {item.like_count.toLocaleString()}</Text>
-            )}
+            {g ? <Tag label={String(g)} size="sm" /> : null}
+            {item.play_count != null && <AppText variant="caption" tone="muted">{'▶'} {item.play_count.toLocaleString()}</AppText>}
+            {item.like_count != null && <AppText variant="caption" tone="muted">{'♥'} {item.like_count.toLocaleString()}</AppText>}
           </View>
         </View>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={(e) => {
-            e.stopPropagation();
-            toggleLike(item.id);
-          }}
-        >
-          <Text style={[styles.likeIcon, isLiked && styles.likeIconActive]}>
-            {isLiked ? '♥' : '♡'}
-          </Text>
+        <TouchableOpacity style={styles.action} onPress={(e) => { e.stopPropagation(); toggleLike(item.id); }}>
+          <AppText variant="subtitle" tone={isLiked ? 'accent' : 'muted'}>{isLiked ? '♥' : '♡'}</AppText>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={(e) => {
-            e.stopPropagation();
-            handleAddToPlaylist(item);
-          }}
-        >
-          <Text style={styles.addIcon}>+</Text>
+        <TouchableOpacity style={styles.action} onPress={(e) => { e.stopPropagation(); handleAddToPlaylist(item); }}>
+          <AppText variant="title3" tone="muted">+</AppText>
         </TouchableOpacity>
       </TouchableOpacity>
     );
   };
 
   return (
-    <View style={styles.container}>
-      {/* 황혼 그라데이션 배경 (상단 은은하게) */}
-      <LinearGradient
-        colors={['#2a1758', 'transparent']}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 160 }}
-        pointerEvents="none"
-      />
-      {/* Tab bar */}
-      <View style={styles.tabBar}>
-        {TABS.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tabItem, activeTab === tab.key && styles.tabItemActive]}
-            onPress={() => handleTabPress(tab.key)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+    <ScreenLayout>
+      {/* Spotify식 가로 칩 필터 */}
+      <View style={styles.chipBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {TABS.map((tab) => (
+            <Tag key={tab.key} label={tab.label} selected={activeTab === tab.key} onPress={() => handleTabPress(tab.key)} />
+          ))}
+        </ScrollView>
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
       ) : tracks.length > 0 ? (
         <FlatList
           data={tracks}
@@ -355,39 +266,26 @@ export default function ChartScreen() {
           renderItem={renderTrack}
           contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={colors.accent.primary}
-              colors={[colors.accent.primary]}
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
+              tintColor={colors.accent.primary} colors={[colors.accent.primary]} />
           }
         />
       ) : (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>{'📊'}</Text>
-          <Text style={styles.emptyText}>차트 데이터가 없습니다</Text>
-          <Text style={styles.emptyHint}>곡이 등록되면 차트가 표시됩니다</Text>
-        </View>
+        <EmptyState icon="📊" title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />
       )}
 
-      {/* FAB button - 미니 플레이어 활성화 시 숨김 */}
       {!playerStore.track && (
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => navigation.navigate('MyMusic')}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.fabText}>+</Text>
+        <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('MyMusic')} activeOpacity={0.85}>
+          <AppText variant="headline" tone="primary" style={styles.fabIcon}>+</AppText>
         </TouchableOpacity>
       )}
-      {/* 검색 모달 (전체 트랙 검색) */}
+
+      {/* 검색 모달 */}
       <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
-        <View style={styles.searchModalContainer}>
-          {/* 검색 헤더 */}
+        <View style={styles.searchModal}>
           <View style={styles.searchHeader}>
-            <TouchableOpacity onPress={closeSearchModal} style={styles.searchBackButton}>
-              <Text style={styles.searchBackIcon}>{'←'}</Text>
+            <TouchableOpacity onPress={closeSearchModal} style={styles.searchBack}>
+              <AppText variant="title2">{'←'}</AppText>
             </TouchableOpacity>
             <TextInput
               style={styles.searchInput}
@@ -400,341 +298,127 @@ export default function ChartScreen() {
               autoFocus
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity
-                onPress={() => {
-                  setSearchQuery('');
-                  setSearchResults([]);
-                  setSearchSubmitted(false);
-                }}
-                style={styles.searchClearButton}
-              >
-                <Text style={styles.searchClearIcon}>{'✕'}</Text>
+              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); setSearchSubmitted(false); }} style={styles.searchClear}>
+                <AppText variant="callout" tone="secondary">{'✕'}</AppText>
               </TouchableOpacity>
             )}
           </View>
-
-          {/* 결과 영역 */}
           {searchLoading ? (
-            <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
+            <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
           ) : searchResults.length > 0 ? (
             <FlatList
               data={searchResults}
               keyExtractor={(item) => item.id}
-              renderItem={({ item }) => {
-                const coverUri = getCoverUri(item);
-                return (
-                  <TouchableOpacity
-                    style={styles.searchResultItem}
-                    activeOpacity={0.7}
-                    onPress={() => handleSearchTrackPress(item)}
-                  >
-                    <View style={styles.coverContainer}>
-                      {coverUri ? (
-                        <Image source={{ uri: coverUri }} style={styles.coverImage} />
-                      ) : (
-                        <View style={styles.coverPlaceholder}>
-                          <Text style={styles.coverPlaceholderIcon}>{'♪'}</Text>
-                        </View>
-                      )}
-                    </View>
-                    <View style={styles.trackInfo}>
-                      <Text style={styles.trackTitle} numberOfLines={1}>{item.title}</Text>
-                      <Text style={styles.trackArtist} numberOfLines={1}>
-                        {item.artist_name || '알 수 없는 아티스트'}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              }}
               keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <TouchableOpacity style={styles.searchResult} activeOpacity={0.7} onPress={() => handleSearchTrackPress(item)}>
+                  <Cover track={item} />
+                  <View style={styles.info}>
+                    <AppText variant="bodyStrong" numberOfLines={1}>{item.title}</AppText>
+                    <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
+                      {item.artist_name || '알 수 없는 아티스트'}
+                    </AppText>
+                  </View>
+                </TouchableOpacity>
+              )}
             />
           ) : searchSubmitted ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>{'🔍'}</Text>
-              <Text style={styles.emptyText}>검색 결과가 없습니다</Text>
-              <Text style={styles.emptyHint}>다른 검색어로 시도해보세요</Text>
-            </View>
+            <EmptyState icon="🔍" title="검색 결과가 없습니다" hint="다른 검색어로 시도해보세요" />
           ) : (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>{'🎵'}</Text>
-              <Text style={styles.emptyText}>곡을 검색해보세요</Text>
-              <Text style={styles.emptyHint}>제목, 아티스트, 태그로 검색 가능</Text>
-            </View>
+            <EmptyState icon="🎵" title="곡을 검색해보세요" hint="제목, 아티스트, 태그로 검색 가능" />
           )}
         </View>
       </Modal>
 
-      {/* 플레이리스트 선택 모달 */}
+      {/* 플레이리스트 담기 바텀시트 */}
       <Modal visible={showPlaylistModal} transparent animationType="slide" onRequestClose={() => setShowPlaylistModal(false)}>
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
-          <View style={{ backgroundColor: colors.bg.surface1, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '60%' }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text.primary, marginBottom: 16 }}>플레이리스트에 담기</Text>
-
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
+          <View style={styles.sheet}>
+            <AppText variant="title3" style={styles.sheetTitle}>플레이리스트에 담기</AppText>
             {playlists.length > 0 && (
-              <View style={{ marginBottom: 16 }}>
+              <View style={styles.sheetList}>
                 {playlists.map((pl: any) => (
-                  <TouchableOpacity
-                    key={pl.id}
-                    style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border.subtle }}
-                    onPress={() => addToExistingPlaylist(pl.id)}
-                  >
-                    <Text style={{ color: colors.text.primary, fontSize: 15 }}>{pl.title || pl.name}</Text>
-                    <Text style={{ color: colors.text.muted, fontSize: 12 }}>{pl.track_count ?? 0}곡</Text>
+                  <TouchableOpacity key={pl.id} style={styles.sheetItem} onPress={() => addToExistingPlaylist(pl.id)}>
+                    <AppText variant="body">{pl.title || pl.name}</AppText>
+                    <AppText variant="caption" tone="muted">{pl.track_count ?? 0}곡</AppText>
                   </TouchableOpacity>
                 ))}
               </View>
             )}
-
-            <Text style={{ color: colors.text.secondary, fontSize: 13, marginBottom: 8 }}>새 플레이리스트 만들기</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <AppText variant="footnote" tone="secondary" style={styles.sheetLabel}>새 플레이리스트 만들기</AppText>
+            <View style={styles.sheetCreateRow}>
               <TextInput
-                style={{ flex: 1, backgroundColor: colors.bg.deepest, borderRadius: 10, padding: 12, color: colors.text.primary, borderWidth: 1, borderColor: colors.border.subtle }}
+                style={styles.sheetInput}
                 placeholder="플레이리스트 이름"
                 placeholderTextColor={colors.text.muted}
                 value={newPlaylistName}
                 onChangeText={setNewPlaylistName}
               />
-              <TouchableOpacity
-                style={{ backgroundColor: colors.accent.primary, borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' }}
-                onPress={createAndAddToPlaylist}
-              >
-                <Text style={{ color: colors.text.primary, fontWeight: 'bold' }}>만들기</Text>
-              </TouchableOpacity>
+              <Button label="만들기" size="md" onPress={createAndAddToPlaylist} />
             </View>
           </View>
         </TouchableOpacity>
       </Modal>
-    </View>
+    </ScreenLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.deepest,
+  headerRight: { flexDirection: 'row', alignItems: 'center', marginRight: spacing.sm },
+  headerBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  chipBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+  chipRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  spinner: { marginTop: spacing.huge },
+  row: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
-  searchModalContainer: {
-    flex: 1,
-    backgroundColor: colors.bg.deepest,
-    paddingTop: 50,
-  },
-  searchHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.bg.surface1,
-  },
-  searchBackButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchBackIcon: {
-    fontSize: 24,
-    color: colors.text.primary,
-  },
-  searchInput: {
-    flex: 1,
-    backgroundColor: colors.bg.surface1,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: colors.text.primary,
-    fontSize: 14,
-    marginHorizontal: 4,
-  },
-  searchClearButton: {
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchClearIcon: {
-    fontSize: 16,
-    color: colors.text.secondary,
-  },
-  searchResultItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.bg.surface1,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.bg.surface1,
-    paddingHorizontal: 8,
-  },
-  tabItem: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabItemActive: {
-    borderBottomColor: colors.accent.primary,
-  },
-  tabLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text.muted,
-  },
-  tabLabelActive: {
-    color: colors.accent.primary,
-  },
-  trackItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.bg.surface1,
-  },
-  rankNumber: {
-    width: 32,
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
+  rank: { width: 32 },
   newBadge: {
-    width: 32,
-    height: 18,
-    backgroundColor: colors.accent.primary,
-    borderRadius: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 32, height: 18, backgroundColor: colors.accent.primary, borderRadius: radius.sm,
+    justifyContent: 'center', alignItems: 'center',
   },
-  newBadgeText: {
-    color: colors.text.primary,
-    fontSize: 10,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-  },
-  coverContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginRight: 12,
-  },
-  coverImage: {
-    width: 48,
-    height: 48,
-  },
-  coverPlaceholder: {
-    width: 48,
-    height: 48,
-    backgroundColor: colors.bg.surface1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  coverPlaceholderIcon: {
-    fontSize: 22,
-    color: colors.border.default,
-  },
-  trackInfo: {
-    flex: 1,
-    marginRight: 8,
-  },
-  trackTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.text.primary,
-    marginBottom: 2,
-  },
-  trackArtist: {
-    fontSize: 13,
-    color: colors.text.secondary,
-    marginBottom: 4,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statText: {
-    fontSize: 11,
-    color: colors.text.muted,
-  },
-  genreBadge: {
-    backgroundColor: 'rgba(168, 85, 247, 0.18)',
-    borderColor: colors.accent.primary,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    maxWidth: 80,
-  },
-  genreBadgeText: {
-    fontSize: 10,
-    color: colors.accent.primaryGlow,
-    fontWeight: '700',
-  },
-  actionButton: {
-    width: 34,
-    height: 34,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  likeIcon: {
-    fontSize: 20,
-    color: colors.text.muted,
-  },
-  likeIconActive: {
-    color: colors.accent.primary,
-  },
-  addIcon: {
-    fontSize: 22,
-    color: colors.text.muted,
-    fontWeight: '300',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingBottom: 100,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    color: colors.border.subtle,
-    marginBottom: 16,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: colors.text.muted,
-    marginBottom: 8,
-  },
-  emptyHint: {
-    fontSize: 13,
-    color: colors.border.default,
-  },
+  cover: { width: 48, height: 48, borderRadius: radius.md, overflow: 'hidden', marginHorizontal: spacing.md },
+  coverImg: { width: 48, height: 48 },
+  coverPlaceholder: { width: 48, height: 48, backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
+  info: { flex: 1, marginRight: spacing.sm },
+  artist: { marginTop: 2, marginBottom: spacing.xs },
+  statsRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  action: { width: 34, height: 34, justifyContent: 'center', alignItems: 'center' },
   fab: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.accent.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.accent.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
+    position: 'absolute', bottom: spacing.xl, right: spacing.xl, width: 56, height: 56, borderRadius: radius.pill,
+    backgroundColor: colors.accent.primary, justifyContent: 'center', alignItems: 'center',
+    shadowColor: colors.accent.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 8,
   },
-  fabText: {
-    fontSize: 28,
-    color: colors.text.primary,
-    fontWeight: '300',
-    marginTop: -2,
+  fabIcon: { marginTop: -2 },
+  // search modal
+  searchModal: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  searchHeader: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  searchBack: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  searchInput: {
+    flex: 1, backgroundColor: colors.bg.surface1, borderRadius: radius.md,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, color: colors.text.primary,
+    fontSize: 14, marginHorizontal: spacing.xs,
+  },
+  searchClear: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+  searchResult: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  // playlist sheet
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: colors.bg.surface1, borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl, padding: spacing.xl, maxHeight: '60%' },
+  sheetTitle: { marginBottom: spacing.lg },
+  sheetList: { marginBottom: spacing.lg },
+  sheetItem: { paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+  sheetLabel: { marginBottom: spacing.sm },
+  sheetCreateRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'stretch' },
+  sheetInput: {
+    flex: 1, backgroundColor: colors.bg.deepest, borderRadius: radius.md, padding: spacing.md,
+    color: colors.text.primary, borderWidth: 1, borderColor: colors.border.subtle,
   },
 });
