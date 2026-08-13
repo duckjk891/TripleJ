@@ -1,0 +1,99 @@
+/* v175 — RecentContentPane (AdminReportsPage.css v138 의 admin-reports__recent* 블록 이동)
+   클래스명은 기존 Reports 페이지와의 호환을 위해 admin-reports__* 를 유지한다. */
+
+.admin-reports__recent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-reports__recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.admin-reports__recent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-reports__recent-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.admin-reports__recent-thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__recent-title {
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-reports__recent-visibility {
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__recent-visibility--private {
+  color: #f59e0b;
+}
+
+.admin-reports__recent-character {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-reports__recent-character-imgs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-reports__recent-figure {
+  margin: 0;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-reports__recent-figure figcaption {
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+  text-align: center;
+}
+
+/* 공용 보조 클래스 — AdminReportsPage.css(증거 패널 v138)에도 동일 정의가 남아 있다.
+   Reports 외 단독 사용처(AdminUserDetailPage)를 위해 복제 유지 — 값 변경 시 양쪽 동기화. */
+.admin-reports__pane-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__evidence-kind {
+  font-size: 0.75rem;
+  color: var(--color-text-sub);
+}
+
+.admin-reports__evidence-failed {
+  font-size: 0.8rem;
+  color: #ef4444;
+}

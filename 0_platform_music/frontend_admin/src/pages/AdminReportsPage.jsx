@@ -1,12 +1,13 @@
 import { Fragment, useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import RecentContentPane from '../components/RecentContentPane';
+import { coverSrc, adminMediaSrc } from '../utils/media';
 import {
   getAdminReports,
   actionAdminReport,
-  coverPreviewUrl,
   adminEvidenceUrl,
   getAdminReportEvidence,
-  getAdminUserRecentContent,
   adminFaceSearch,
   adminPurge,
 } from '../api';
@@ -72,22 +73,7 @@ function formatDate(dateStr) {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
-function coverSrc(url) {
-  if (!url) return '';
-  if (url.startsWith('http') || url.startsWith('/api/')) return url;
-  return coverPreviewUrl(url);
-}
-
-// v138 — 어드민 전용 미디어(/api/admin/media/...)는 img src 에 토큰 쿼리 필요
-// (인터셉터가 못 붙는 <img> 태그 경로 — adminEvidenceUrl 과 동일 패턴)
-function adminMediaSrc(url) {
-  if (!url) return '';
-  if (url.startsWith('/api/admin/')) {
-    const token = localStorage.getItem('token') || '';
-    return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
-  }
-  return coverSrc(url);
-}
+// coverSrc / adminMediaSrc — v175 에서 utils/media.js 로 이동, 위에서 import.
 
 // 신고당한 게시자 user id — BE 필드 확정 전 방어적 추출(대상 자진 삭제 시 부재 가능)
 function reportedUserId(report) {
@@ -215,106 +201,7 @@ function EvidenceItem({ reportId, item, idx }) {
   );
 }
 
-// 양면 뷰 우측 — 게시자의 최근 생성물(트랙 커버 그리드 + 현재 캐릭터)
-function RecentContentPane({ userId }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(!!userId);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (!userId) return undefined;
-    let cancelled = false;
-    setLoading(true);
-    setError('');
-    (async () => {
-      try {
-        const res = await getAdminUserRecentContent(userId);
-        if (!cancelled) setData(res.data || {});
-      } catch (err) {
-        if (cancelled) return;
-        console.error('[AdminReports] recent-content load failed', {
-          status: err?.response?.status,
-        });
-        setError('최근 생성물을 불러오지 못했습니다.');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [userId]);
-
-  if (!userId) return <p className="admin-reports__pane-empty">게시자 정보를 확인할 수 없습니다.</p>;
-  if (loading) return <p className="admin-reports__pane-empty">불러오는 중...</p>;
-  if (error) return <p className="admin-reports__evidence-failed">{error}</p>;
-
-  const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
-  const character = data?.character || {};
-  // v138 BE 실필드: has_original_photo / *_path (구 명칭도 방어 유지)
-  const hasOriginal = character.has_original_photo || character.has_original;
-  const hasCharacter = character.has_sheet || character.has_virtual_sheet || hasOriginal;
-  const originalSrc = character.original_photo_path || character.original_preview_url;
-  const sheetSrc = character.sheet_path || character.sheet_preview_url;
-  const virtualSheetSrc = character.virtual_sheet_path;
-
-  return (
-    <div className="admin-reports__recent">
-      {tracks.length > 0 ? (
-        <div className="admin-reports__recent-grid">
-          {tracks.map((t) => (
-            <div key={t.id} className="admin-reports__recent-card">
-              {t.cover_image_url ? (
-                <img className="admin-reports__recent-thumb" src={coverSrc(t.cover_image_url)} alt="" />
-              ) : (
-                <span className="admin-reports__recent-thumb admin-reports__recent-thumb--empty">♪</span>
-              )}
-              <span className="admin-reports__recent-title" title={t.title || ''}>{t.title || '-'}</span>
-              <span className={`admin-reports__recent-visibility ${t.is_public ? '' : 'admin-reports__recent-visibility--private'}`}>
-                {t.is_public ? '공개' : '비공개'}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="admin-reports__pane-empty">최근 트랙이 없습니다.</p>
-      )}
-
-      <div className="admin-reports__recent-character">
-        <span className="admin-reports__evidence-kind">현재 캐릭터</span>
-        {hasCharacter ? (
-          <div className="admin-reports__recent-character-imgs">
-            {originalSrc && (
-              <figure className="admin-reports__recent-figure">
-                <img className="admin-reports__recent-thumb" src={adminMediaSrc(originalSrc)} alt="원본 사진" />
-                <figcaption>원본 사진</figcaption>
-              </figure>
-            )}
-            {sheetSrc && (
-              <figure className="admin-reports__recent-figure">
-                <img className="admin-reports__recent-thumb" src={adminMediaSrc(sheetSrc)} alt="캐릭터 시트(실사)" />
-                <figcaption>캐릭터 시트(실사)</figcaption>
-              </figure>
-            )}
-            {virtualSheetSrc && (
-              <figure className="admin-reports__recent-figure">
-                <img className="admin-reports__recent-thumb" src={adminMediaSrc(virtualSheetSrc)} alt="캐릭터 시트(가상)" />
-                <figcaption>캐릭터 시트(가상)</figcaption>
-              </figure>
-            )}
-            {!originalSrc && !sheetSrc && !virtualSheetSrc && (
-              <span className="admin-reports__pane-empty">
-                {[hasOriginal ? '원본 사진 보유' : null, character.has_sheet ? '시트 보유' : null,
-                  character.has_virtual_sheet ? '가상 시트 보유' : null]
-                  .filter(Boolean).join(' · ')}
-              </span>
-            )}
-          </div>
-        ) : (
-          <span className="admin-reports__pane-empty">등록된 캐릭터가 없습니다.</span>
-        )}
-      </div>
-    </div>
-  );
-}
+// RecentContentPane — v175 에서 src/components/RecentContentPane.jsx 로 추출(공용화), 위에서 import.
 
 export default function AdminReportsPage() {
   const [reports, setReports] = useState([]);
@@ -621,7 +508,19 @@ export default function AdminReportsPage() {
                                     )}
                                   </section>
                                   <section className="admin-reports__pane">
-                                    <h4 className="admin-reports__pane-title">이 사용자의 최근 생성물</h4>
+                                    <h4 className="admin-reports__pane-title">
+                                      이 사용자의 최근 생성물
+                                      {/* v175 — 신고 대상 유저 상세로 이동 (게시자 id 확인 가능할 때만) */}
+                                      {reportedUserId(r) && (
+                                        <Link
+                                          className="admin-reports__user-link"
+                                          to={`/users/${reportedUserId(r)}`}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          사용자 상세 →
+                                        </Link>
+                                      )}
+                                    </h4>
                                     <RecentContentPane userId={reportedUserId(r)} />
                                   </section>
                                 </div>

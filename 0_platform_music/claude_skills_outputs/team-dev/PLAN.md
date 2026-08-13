@@ -26202,3 +26202,87 @@ E2E (실발송 금지):
 - 대량 발송 시 CS 목록이 브로드캐스트 대화로 채워지는 현상은 **기존 동작과 동일**(v168 정렬이 전제) — 이번 범위에서 미해결, 후속 과제 후보
 - `/dm/broadcast` 완전 제거는 후속 버전에서 검토 (이번엔 deprecated 표기만)
 - 민감정보: 계정/토큰 실값은 본 문서·로그에 미기재 (플레이스홀더)
+
+
+# v175 — 관리자 앱 사용자 상세 페이지 신설 (/users/:id) (2026-08-13 14:55)
+
+팀: platform-music-admin-userdetail (team-dev) / planner 작성
+대상 체크아웃: `0_platform_music` (브랜치 `admin`, HEAD=eb6d53f v174)
+
+## 1. Plan verification findings (0단계 — 파일 실측)
+
+### 1-1. 백엔드 (backend_9005/app/routes/admin.py) — 기존 구현 확인, 변경 불요
+- `GET /api/admin/users/{user_id}` (admin.py:208~258) **이미 구현**. 응답 스키마 실측(전체 필드):
+  - `id, email, nickname, profile_image, bio, plan, role`(기본 "user")
+  - `is_banned, banned_at, ban_reason, restricted_until` (ISO 문자열/None)
+  - `violation_count` (user_violations COUNT — SanctionSquad v145 정의)
+  - `created_at` (ISO)
+  - `track_count, total_plays` (Mongo tracks aggregate)
+  - 오류: 400(잘못된 UUID) / 404(사용자 없음) / 관리자 인증 `get_admin_user` 의존
+  - **주의: "포인트", "본인인증" 필드는 응답에 존재하지 않음** → 화면에 넣지 않는다 (아래 6-1)
+- 액션 엔드포인트 (모두 기존, 목록 페이지에서 사용 중):
+  - `PUT /users/{id}/role` (:265) — user|customer|admin, 자기 자신 변경 400
+  - `PUT /users/{id}/ban` (:299) — ban 시 Redis 세션 삭제, 자기 자신 400
+  - `POST /users/{id}/restriction/lift` (:345) — restricted_until만 해제
+  - `POST /users/{id}/strikes/reset` (:381~430) — 위반 기록 삭제 + 자동밴만 해제(수동 밴 유지), 응답에 `is_banned` 갱신값 포함
+- `GET /users/{user_id}/recent-content` (:1085~1143) — `{user_id, tracks:[{id,title,cover_image_url,created_at,is_public,report_blinded}] (최근 20), character:{name,has_*,original_photo_path,sheet_path,virtual_sheet_path}|null}`
+
+### 1-2. 프론트 (frontend_admin)
+- `src/api.js:68` — **`getAdminUser(id)` 래퍼 이미 존재, 현재 미사용** → 이번에 첫 사용처. 액션 래퍼 4종(:69~73)·`getAdminUserRecentContent`(:96) 모두 존재. **api.js 변경 불요.**
+- `src/App.jsx` — flat Routes + `AdminRoute` 가드(비관리자 → /login). `/users` 라우트 :27.
+- `src/components/AdminLayout.jsx:53` — `/users` NavLink 에 `end` 없음 → **`/users/:id` 진입 시에도 "사용자 관리" 하이라이트 자동 유지. 사이드바 NavLink 추가 불필요(확정).**
+- `src/pages/AdminUsersPage.jsx` — 검색/페이지네이션/행 단위 액션(역할 select :187, 밴 :196, 제한해제 :202, 위반초기화 :210). 핸들러들은 `fetchUsers` 클로저에 묶인 페이지 로컬 함수. `isRestricted`(:8) / `formatDate`(:13) 로컬 정의.
+- `src/pages/AdminReportsPage.jsx` — `RecentContentPane`(:219~317, 페이지 내부 컴포넌트, `admin-reports__*` CSS), `reportedUserId(r)`(:93, 방어적 추출) 존재. 확장 행 우측 패널 "이 사용자의 최근 생성물"(:623~626) → **신고 대상 유저 상세로 이동하는 링크 니즈 실재** (현재 이동 수단 없음).
+- `formatDate` 복붙 4곳 실측: AdminUsersPage:13, AdminTracksPage:7, AdminDashboardPage:6, AdminReportsPage:64 (동일 구현 `YYYY-MM-DD HH:mm`).
+
+## 2. 설계 결정 (근거 포함)
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 라우트 | `/users/:id` → `AdminUserDetailPage` (AdminRoute 가드) | flat Routes 관행 유지, NavLink `end` 부재로 사이드바 하이라이트 자동 |
+| 진입점 ① | AdminUsersPage 닉네임 셀을 `<Link to={'/users/'+u.id}>` 로 | 목록 경유가 1차 동선 |
+| 진입점 ② | AdminReportsPage 확장 패널 "이 사용자의 최근 생성물" 제목 옆 "사용자 상세 →" 링크 (`reportedUserId(r)` 있을 때만) | 신고 처리 중 유저 컨텍스트 확인 니즈 실재(1-2), null 방어 기존 함수 재사용 |
+| 사이드바 | NavLink 추가 **안 함** | 목록 경유 상세 — 독립 메뉴 아님 |
+| 화면 구성 | ① 프로필(이미지·닉네임·이메일·id·bio·plan·role·created_at) ② 활동(track_count·total_plays·violation_count) ③ 제재 상태(is_banned·banned_at·ban_reason·restricted_until) ④ 액션 ⑤ 최근 생성물(RecentContentPane) | **응답 스키마 실재 필드만** — 포인트/인증 없음(6-1) |
+| 액션 | role select / 밴·해제 / 제한 해제 / 위반 초기화 — api.js 기존 래퍼 호출, 핸들러는 페이지 로컬 재구현(성공 시 `getAdminUser` 재조회). `window.confirm`/`prompt` 관행 유지 | AdminUsersPage 핸들러는 fetchUsers 클로저 종속 — 공용 훅 추출은 목록 페이지 회귀 리스크 대비 이득 작음. **AdminUsersPage 무수정 원칙(닉네임 Link 제외)** |
+| RecentContentPane | `src/components/RecentContentPane.jsx` 로 **추출 공용화** + 관련 CSS를 `RecentContentPane.css` 로 이동(클래스명 `admin-reports__recent*` 유지). AdminReportsPage 는 import 로 대체 | 중복 구현 금지 요구. 클래스명 유지로 CSS diff 최소화. `adminMediaSrc`/`coverSrc` 헬퍼도 함께 이동 후 Reports 에서 re-import (또는 utils 로) |
+| formatDate | `src/utils/format.js` 신설(`formatDate`, `isRestricted`) — **새 상세 페이지 + AdminUsersPage(이번 작업으로 이미 touch)만 전환**. Tracks/Dashboard/Reports 3곳은 이번 범위 밖(후속) | 범위 침식 방지 — 수정 파일에 한정 |
+| 백엔드 | **무변경** (9004 미러 대상 없음) | 상세+recent-content 응답으로 화면 요구 전부 충족 |
+| 로그 추적자 | DEV 콘솔 `[AdminUserDetail]` (로딩 실패·액션 호출), 기존 `[AdminUsersPage]` 관행 동일 | 관행 유지 |
+| 404/400 | 상세 로드 실패 시 에러 문구 + "목록으로" 백링크 | 400/404 실측 확인 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `frontend_admin/src/pages/AdminUserDetailPage.jsx` | **신설** — 상세 화면 + 액션 + RecentContentPane | `[AdminUserDetail]` |
+| `frontend_admin/src/pages/AdminUserDetailPage.css` | **신설** | - |
+| `frontend_admin/src/components/RecentContentPane.jsx` | **신설(추출)** — AdminReportsPage :219~317 이동 + coverSrc/adminMediaSrc 헬퍼 | `[RecentContent]` (기존 `[AdminReports] recent-content` 로그 문구는 공용화에 맞춰 변경) |
+| `frontend_admin/src/components/RecentContentPane.css` | **신설(이동)** — AdminReportsPage.css 의 `admin-reports__recent*` 규칙 이동 | - |
+| `frontend_admin/src/utils/format.js` | **신설** — formatDate, isRestricted | - |
+| `frontend_admin/src/App.jsx` | `/users/:id` Route 추가 | - |
+| `frontend_admin/src/pages/AdminUsersPage.jsx` | 닉네임 셀 Link 화 + formatDate/isRestricted 를 utils import 로 전환 (액션 핸들러 무수정) | - |
+| `frontend_admin/src/pages/AdminReportsPage.jsx` | RecentContentPane/헬퍼를 import 로 대체 + 패널 제목 옆 상세 링크 | - |
+| `frontend_admin/src/pages/AdminReportsPage.css` | recent* 규칙 이동에 따른 삭제만 | - |
+| backend_9005 / backend_9004 | **변경 없음** | - |
+
+## 4. 작업 분담
+- **frontend-dev**: 위 매트릭스 전체. 순서: utils/format.js → RecentContentPane 추출(Reports 동작 확인) → AdminUserDetailPage 신설 → App.jsx 라우트 → 진입점 2곳. Vite dev(4001)에서 육안 확인.
+- **backend-dev**: **불요** (백엔드 무변경 — 기존 엔드포인트 그대로 사용).
+- **test-designer**: §5 항목 설계·실행.
+
+## 5. 테스트 항목 (test-designer)
+안전 제약: **실사용자 데이터 무접촉.** 조회·쓰기 전부 v174 테스트 계정(`bcast_admin_test_*` / `bcast_user_test_*@test.invalid`)만 사용. 쓰기 액션은 **실행 후 반드시 원복**.
+1. API: `GET /api/admin/users/{테스트유저 id}` 200 + §1-1 필드 전체 존재 / 잘못된 UUID 400 / 없는 UUID 404 / 무토큰 401·비관리자 403
+2. UI: 관리자 로그인 → /users 목록 닉네임 클릭 → 상세 렌더(프로필·활동·제재·최근 생성물), 사이드바 "사용자 관리" active 유지
+3. UI: `/users/:id` 직접 진입(새로고침) 정상 / 미로그인 시 /login 리다이렉트 / 존재하지 않는 id → 에러 + 목록 백링크
+4. 액션(테스트 계정 한정, 원복 필수): 역할 user→customer→user / 밴(사유 입력)→상태 반영(banned·ban_reason·banned_at)→밴 해제. 제한 해제·위반 초기화는 테스트 계정에 위반 데이터 없으면 버튼 미노출 확인으로 대체
+5. 회귀: AdminUsersPage 기존 액션(역할변경·밴) 정상 동작, 목록 날짜 표기 동일(`YYYY-MM-DD HH:mm`)
+6. 회귀: AdminReportsPage 확장 행 — RecentContentPane 추출 후에도 최근 트랙 그리드·캐릭터 이미지 렌더 및 CSS 동일, "사용자 상세 →" 링크 이동
+7. 콘솔: `[AdminUserDetail]` 로그에 이메일 등 개인정보 원문 미출력(id 축약 관행)
+
+## 6. 리스크 / 사양-코드 충돌
+- **6-1 (사양-코드 충돌)**: 요구 스케치의 "포인트·인증" 정보는 `GET /users/{id}` 응답에 **필드가 존재하지 않음** → 화면 미표시(백엔드 확장 강행 금지 — 무변경 원칙). 필요 시 별도 버전에서 스키마 확장 논의.
+- RecentContentPane 추출은 Reports 페이지 회귀 지점 — §5-6 필수.
+- formatDate 공용화는 이번 touch 파일 2곳에 한정 (Tracks/Dashboard/Reports 3곳 후속 과제).
+- 민감정보: 테스트 계정 실비밀번호·토큰은 문서/로그 미기재.

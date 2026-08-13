@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminUsersPage from './pages/AdminUsersPage';
+import AdminUserDetailPage from './pages/AdminUserDetailPage';
 import AdminTracksPage from './pages/AdminTracksPage';
 import AdminReportsPage from './pages/AdminReportsPage';
 import AdminCsPage from './pages/AdminCsPage';
@@ -25,6 +26,8 @@ function App() {
         <Route path="/login" element={<AdminLoginPage />} />
         <Route path="/" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
+        {/* v175 — 사용자 상세. react-router v7 은 경로 구체도 랭킹이라 /users 와 공존 안전 */}
+        <Route path="/users/:id" element={<AdminRoute><AdminUserDetailPage /></AdminRoute>} />
         <Route path="/tracks" element={<AdminRoute><AdminTracksPage /></AdminRoute>} />
         <Route path="/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
         <Route path="/cs" element={<AdminRoute><AdminCsPage /></AdminRoute>} />

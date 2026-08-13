@@ -207,6 +207,17 @@
   color: var(--color-text-sub);
 }
 
+/* v175 — 닉네임 셀 → 사용자 상세 링크 (셀 텍스트 스타일 유지, hover 시에만 구분) */
+.admin-users__user-link {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.admin-users__user-link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
 .admin-role-select {
   padding: 5px 8px;
   background: var(--color-bg);

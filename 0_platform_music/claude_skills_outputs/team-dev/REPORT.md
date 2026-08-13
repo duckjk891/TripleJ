@@ -14932,3 +14932,41 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 
 ## 6. 최종 판정
 **PASS** — PLAN v174 변경 매트릭스 전 항목 이행 + 1·2차 게이트 통과(14/14, 픽스 0회). 커밋 가능 상태(테스트 하니스 잔재 git 미포함 확인).
+
+# v175 — 관리자 앱 사용자 상세 페이지 신설 (/users/:id) (2026-08-13 15:20)
+
+팀: platform-music-admin-userdetail (team-dev) / planner 최종 작성
+브랜치 `admin` (기반 HEAD=eb6d53f v174) / 백엔드 무변경 (9004 미러 대상 없음)
+
+## 1. 요청 작업
+
+관리자 앱(frontend_admin)에 사용자 상세 페이지 신설 — 목록에서 진입하는 `/users/:id` 상세 화면(기본 정보·제재 상태·액션·최근 생성물) + 신고 관리에서의 진입점.
+
+## 2. 설계 결정 (PLAN v175 §2 확정분)
+
+- **백엔드 무변경**: 기존 `GET /api/admin/users/{id}`(15필드) + `GET /users/{id}/recent-content`(v138)로 화면 요구 전부 충족 — 신규/수정 엔드포인트 0, 9004 미러 불요. `api.js`의 미사용 `getAdminUser` 래퍼 첫 사용처.
+- **RecentContentPane 공용화**: AdminReportsPage 내부 컴포넌트를 `src/components/RecentContentPane.jsx/.css`로 추출(클래스명 `admin-reports__*` 유지로 CSS diff 최소화), 신고 양면 뷰와 상세 페이지가 공유. `coverSrc`/`adminMediaSrc`는 react-refresh 규칙상 `src/utils/media.js`로 분리(PLAN 허용 경로).
+- **formatDate 부분 공용화**: `src/utils/format.js`(formatDate·isRestricted) 신설 — 이번 touch 파일(신규 상세 + AdminUsersPage)만 전환. Tracks/Dashboard/Reports 3곳 로컬 복사본은 범위 침식 방지로 후속 과제.
+- **포인트·본인인증 미표시**: 요구 스케치에 있었으나 응답 스키마에 필드 부재(코드 실측) — 표시하지 않음. 표시하려면 백엔드 스키마 확장 필요(후속 후보).
+- 액션 4종(역할변경/밴·해제/제한해제/위반초기화)은 api.js 기존 래퍼 재사용 + 페이지 로컬 핸들러(AdminUsersPage 관행 유지, 목록 페이지 핸들러 무수정). 진입점 2곳: 목록 닉네임 Link, 신고 확장 패널 "사용자 상세 →"(`reportedUserId` 가드). 사이드바 NavLink 미추가(NavLink `end` 부재로 하이라이트 자동 유지). 로그 추적자 `[AdminUserDetail]`/`[RecentContent]` — userId·status만 출력.
+
+## 3. 테스트 결과 — 11/11 PASS (앱 픽스 사이클 0회)
+
+- 1단계 (api 5 + unit 3): 8/8 PASS — 응답 15키 정확 실재(포인트/인증류 부재 확인), 400/404/401/403 정상, 5섹션 렌더·null 처리, 404·400 경로 not_found 화면, 콘솔 이메일 원문 0건. 전부 읽기 전용.
+- 2단계 (e2e 3): 3/3 PASS — 목록→상세→role 변경·원복(GET 재검증), Reports 진입(href 일치 + 신고 대상이 테스트 계정임을 DB 실측 확인 후 클릭 진입, 신고 시드 0건), 회귀(목록 밴/해제 원복 클린, formatDate 유지, RecentContentPane 스타일 붕괴 없음).
+- 안전 준수: 쓰기 4액션 전부 테스트 일반 계정(bcast_user_test_*@test.invalid) 대상, 관리자 계정 무접촉, 실사용자 무접촉, 종료 시 데이터 = 시작 상태 (크리덴셜 실값은 문서·로그 미기재).
+
+## 4. 변경 파일 (커밋 대상)
+
+- 신규: `frontend_admin/src/pages/AdminUserDetailPage.jsx`, `.css` / `frontend_admin/src/components/RecentContentPane.jsx`, `.css` / `frontend_admin/src/utils/format.js`, `media.js`
+- 수정: `frontend_admin/src/App.jsx`(라우트), `frontend_admin/src/pages/AdminUsersPage.jsx`(닉네임 Link·utils 전환), `AdminUsersPage.css`(링크 스타일), `AdminReportsPage.jsx`(추출분 import·상세 링크), `AdminReportsPage.css`(recent* 규칙 이동 삭제)
+- 산출물: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md` (v175 append)
+- eslint: 신규 유발 0, 전체 baseline 7→6(순감 1). 테스트 하니스 잔재 git 미포함 확인.
+
+## 5. 특이사항 / 후속 과제 후보
+
+- **포인트·본인인증 표시**: 백엔드 `GET /users/{id}` 스키마 확장 필요 (9005 선구현→9004 미러) — 이번 무변경 원칙으로 보류.
+- **프론트 테스트 러너 부재**: unit 은 브라우저(4001) 직접 확인으로 수행 — 러너 도입은 후속 후보.
+- **formatDate 잔여 3곳**(Tracks/Dashboard/Reports 로컬 복사본) utils 전환 — 후속.
+- **RecentContentPane.css 보조 3클래스 복제**: 단독 사용용으로 AdminReportsPage.css 일부 클래스 복제됨 — 양쪽 수정 시 동기화 의무(파일 내 주석 명시).
+- 테스트 특이(앱 버그 아님): ① bash `UID` 예약변수 충돌로 API 오호출 1회(스크립트 정정 후 재실행 — 이후 스크립트에서 `UID` 변수명 금지) ② e2e 드라이버 기대값 오기로 FAIL 오판 1회(스크린샷+GET 재검증으로 PASS 확정) ③ e2e03_3 캡처가 로딩 중 시점 — e2e02_2로 교차 확인.

@@ -1,25 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { FiSearch } from 'react-icons/fi';
 import AdminLayout from '../components/AdminLayout';
 import { getAdminUsers, updateUserRole, banUser, liftUserRestriction, resetUserStrikes } from '../api';
+import { formatDate, isRestricted } from '../utils/format';
 import './AdminUsersPage.css';
 
-// SanctionSquad(v145) — restricted_until 이 현재 시각 이후면 "생성 제한 중"
-function isRestricted(user) {
-  if (!user?.restricted_until) return false;
-  return new Date(user.restricted_until).getTime() > Date.now();
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return '-';
-  const d = new Date(dateStr);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
-}
+// v175 — formatDate / isRestricted 는 utils/format.js 로 공용화(로컬 정의 제거).
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState([]);
@@ -158,7 +145,12 @@ export default function AdminUsersPage() {
                 <tbody>
                   {users.map((u) => (
                     <tr key={u.id}>
-                      <td>{u.nickname}</td>
+                      <td>
+                        {/* v175 — 사용자 상세(/users/:id) 진입점 */}
+                        <Link to={`/users/${u.id}`} className="admin-users__user-link">
+                          {u.nickname}
+                        </Link>
+                      </td>
                       <td>{u.email}</td>
                       <td>
                         <span className={`admin-badge ${u.role === 'admin' ? 'admin-badge--green' : 'admin-badge--gray'}`}>

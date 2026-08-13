@@ -210,84 +210,20 @@
   color: #ef4444;
 }
 
-/* 우측 — 최근 생성물 */
-.admin-reports__recent {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+/* 우측 — 최근 생성물: admin-reports__recent* 규칙은 v175 에서
+   src/components/RecentContentPane.css 로 이동(공용화). */
 
-.admin-reports__recent-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 10px;
-}
-
-.admin-reports__recent-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.admin-reports__recent-thumb {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
-}
-
-.admin-reports__recent-thumb--empty {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-sub);
-}
-
-.admin-reports__recent-title {
+/* v175 — 최근 생성물 패널 제목 옆 사용자 상세 링크 */
+.admin-reports__user-link {
+  margin-left: 8px;
   font-size: 0.78rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 500;
+  color: var(--color-primary);
+  text-decoration: none;
 }
 
-.admin-reports__recent-visibility {
-  font-size: 0.72rem;
-  color: var(--color-text-sub);
-}
-
-.admin-reports__recent-visibility--private {
-  color: #f59e0b;
-}
-
-.admin-reports__recent-character {
-  border-top: 1px dashed var(--color-border);
-  padding-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.admin-reports__recent-character-imgs {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.admin-reports__recent-figure {
-  margin: 0;
-  width: 96px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.admin-reports__recent-figure figcaption {
-  font-size: 0.72rem;
-  color: var(--color-text-sub);
-  text-align: center;
+.admin-reports__user-link:hover {
+  text-decoration: underline;
 }
 
 /* 인물 수색 모달 */

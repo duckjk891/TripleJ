@@ -1,0 +1,161 @@
+/* v175 — 관리자 사용자 상세 (/users/:id) */
+
+.admin-user-detail {
+  max-width: 900px;
+}
+
+.admin-user-detail__back {
+  display: inline-block;
+  margin-bottom: 14px;
+  font-size: 0.88rem;
+  color: var(--color-text-sub);
+  text-decoration: none;
+}
+
+.admin-user-detail__back:hover {
+  color: var(--color-primary);
+}
+
+.admin-user-detail__notfound {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 24px 0;
+}
+
+.admin-user-detail__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-user-detail__section {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+  padding: 16px;
+}
+
+.admin-user-detail__section-title {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  font-weight: 600;
+}
+
+/* ① 프로필 */
+.admin-user-detail__profile {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.admin-user-detail__avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.admin-user-detail__avatar--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+}
+
+.admin-user-detail__profile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-user-detail__nickname {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-user-detail__email {
+  font-size: 0.88rem;
+  color: var(--color-text-sub);
+  word-break: break-all;
+}
+
+.admin-user-detail__bio {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-user-detail__meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+/* ② 활동 */
+.admin-user-detail__stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-user-detail__stat {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 12px 14px;
+}
+
+.admin-user-detail__stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.admin-user-detail__stat-label {
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+/* ③ 제재 상태 */
+.admin-user-detail__sanction {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-user-detail__sanction-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.admin-user-detail__sanction-label {
+  min-width: 90px;
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+}
