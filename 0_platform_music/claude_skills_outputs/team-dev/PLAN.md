@@ -26475,3 +26475,59 @@ E2E (실발송 금지):
 - **강행 금지**: ① **실사용자 대상 지정발송 호출 금지** — user_ids 는 테스트 계정 UUID 만(§4 안전 제약) ② 전체 브로드캐스트 임의 실발송 금지(v174 정책 유지) ③ broadcast_message 의 대외 동작(시그니처·반환·게이트·pending 승격) 변경 금지 — 루프 추출은 순수 리팩터로 한정 ④ admin_logs ALTER 금지, details 에 본문 원문·토큰 저장 금지 ⑤ `/logs` 기존 응답 필드 제거·개명 금지(additive only) ⑥ api.js 인터셉터 수정 금지 ⑦ 지정발송에서 assert_can_dm 게이트 우회 로직 추가 금지.
 - hydrate_users 후처리는 페이지 rows 기준 — details 내부 id 등은 범위 밖(현행 유지).
 - send_to_users 의 failed 는 게이트 거부(미성년·차단 등) 포함 — 프론트는 failed>0 을 오류가 아닌 "일부 발송 불가" 안내로 처리.
+
+---
+
+# v178 — CS 지정발송 검색창 브라우즈 모드 (빈 검색어 시 사용자 목록 표시) (2026-08-13 17:12)
+
+## 0. 증분 분석 (v177 코드 기준 — planner 직접 실측)
+
+- **사용자 앱 프라이버시 가드 실측**: `backend_9005/app/services/dm_service.py:901-902` — `search_users` 내 `if not q: return []`. 이 가드는 사용자 앱 노출 경로(`routes/dm.py:259 GET /dm/users/search`)가 공유 — **절대 불변**(전체 유저 목록 열람 방지). 브라우즈 분기는 여기 두면 안 됨.
+- **관리자 검색 엔드포인트**: `backend_9005/app/routes/admin_cs.py:327 search_cs_users` — q 기본 `""`, limit 1~20 클램프, `_resolve_official`(503) 후 search_users 위임. 현재 빈 q 는 위 가드로 **빈 배열 반환**(브라우즈 미지원) — 분기 삽입 지점은 위임 직전.
+- **search_users 필터 조건 실측**(:866-896): `account_status='active' AND NOT is_banned AND id != me` + `ORDER BY nickname`(name 모드) + limit*2 조회 후 **dm_blocks 양방향 후필터**(:900대 — mongo 1회 조회 set 제외) 절단. 반환 `{id, nickname, profile_image, code}`.
+- **dm_blocks 브라우즈 정합 판단 실측**: 발송 게이트 `assert_can_dm` ⑥(:262-264)이 차단 관계를 403 deny → 브라우즈 목록에 차단 관계 유저가 보이면 "검색 결과 ≒ 발송 가능 대상"(v177 원칙) 붕괴, 선택→발송 시 failed 유발. → **브라우즈에도 동일 후필터 적용 확정**.
+- **프론트 실측**: `AdminCsSendModal.jsx:59-65` 검색 effect — `if (!q) return undefined` 로 빈 검색어 스킵, `:83-90 handleQueryChange` 가 빈값 시 결과 클리어. `runSearch`(:37) 자체는 빈 q 호출 가능(가드 없음, seq stale 가드 보유). `SEARCH_LIMIT=10`(:12). 빈 결과 문구 `검색 결과가 없습니다`(:198), chips 안내 `검색 결과를 클릭해...`(:228).
+- 9004 미러: admin_cs.py byte-identical(v177 종료 시점 실측) — 이번도 복사만.
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 분기 위치 | **admin_cs.py `search_cs_users` 내부에서만** — `q.strip()` 빈값이면 자체 브라우즈 쿼리, 아니면 기존 search_users 위임(무변경) | 공용 가드 불변(강행 금지). 관리자 인증(get_admin_user) 뒤에만 존재하는 경로 |
+| 브라우즈 쿼리 | `SELECT id, nickname, profile_image, referral_code FROM users WHERE account_status='active' AND NOT is_banned AND id <> $official ORDER BY nickname LIMIT limit*2` → **dm_blocks 양방향 후필터**(search_users 동일 패턴, me=official) → limit 절단. 응답 형식 동일 `{users:[{id, nickname, profile_image, code}]}` | 필터·후필터·응답 스키마를 검색 모드와 완전 정합 — 목록 ≒ 발송 가능 대상(v177 원칙 유지) |
+| 정렬 | **닉네임순(ORDER BY nickname)** — 최근 가입순 배제 | 검색 모드(name)와 동일 정렬 → 타이핑으로 좁혀질 때 리스트가 재배열 없이 자연 축소(사용자 요구 UX의 핵심). limit 20이라 가입순 탐색 용도엔 어차피 부적합 |
+| role 필터 | 없음(검색 모드와 동일 — admin 계정도 노출) | search_users 정합. 발송 게이트도 role 미차별 |
+| me 게이트 | 브라우즈 분기는 is_verified 재검사 없음 — get_admin_user + _resolve_official 로 충분. 검색 모드는 기존 게이트 그대로 | 분기가 search_users 를 안 타므로 자연 귀결. official 시드 is_verified=true 라 동작 차이도 없음 |
+| limit | 기존 1~20 클램프 공용(브라우즈 동일) | v177 확정 유지 |
+| 로그 | `[admin-cs] user search admin=%s qlen=0 mode=browse limit=%d` — 검색어 원문 미로그 관행 유지(브라우즈는 원문 자체 없음) | 모드 구분 관측성 |
+| 프론트 effect | **최소 diff**: 검색 effect 의 `if (!q) return undefined` 가드 제거 + `const delay = q ? DEBOUNCE_MS : 0` — 모달 open·검색어 전부 삭제 시 **즉시(0ms)** 브라우즈 호출, 타이핑은 기존 300ms 디바운스 유지. `handleQueryChange` 의 빈값 클리어 분기 제거(seq stale 가드가 경합 처리). `reset`(닫기) 불변 | open 시 별도 effect 추가 없이 기존 [open, query] deps 로 자연 발화 — 이중 호출·경합 리스크 최소 |
+| SEARCH_LIMIT | 10 → **20** | 브라우즈 목록 10건은 빈약, 서버 상한 20 정합. 검색 모드도 동반 확대(무해) |
+| 빈 결과 문구 | q 있으면 기존 `검색 결과가 없습니다`, **빈 q(브라우즈)면 `표시할 사용자가 없습니다`**. chips 안내 `목록에서 사용자를 클릭해 대상을 추가하세요` 로 문구 조정 | 브라우즈 시 "검색 결과 없음"은 오문맥 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_cs.py` | `search_cs_users` 빈 q 브라우즈 분기(자체 쿼리+dm_blocks 후필터) + mode=browse 로그 | 기존 `[admin-cs]` |
+| `backend_9004/app/routes/admin_cs.py` | 9005 완성본 복사(미러) | - |
+| `frontend_admin/src/components/AdminCsSendModal.jsx` | effect 가드 제거+delay 분기, 빈값 클리어 분기 제거, SEARCH_LIMIT 20, 문구 2곳 | `[AdminCsSend]` |
+| 그 외(**무변경**) | `dm_service.py`(가드 포함 전체)·api.js·AdminCsPage·AdminLogsPage | - |
+
+## 3. 작업 분담
+- **backend-dev**: admin_cs.py 분기 — try 블록 내 `_resolve_official` 직후 `if not (q or "").strip():` 분기, uuid.UUID(official_id)로 제외 조건, dm_blocks 후필터는 search_users 의 패턴(:900대) 복제(blocker/blocked set → discard(me) → 제외, limit*2→절단). **dm_service.py 는 한 줄도 만지지 않는다.** 완료 후 9004 복사+diff 0 확인.
+- **frontend-dev**: 모달 3곳 — ① effect: 가드 제거+`const delay = q ? DEBOUNCE_MS : 0; setTimeout(..., delay)` ② handleQueryChange 빈값 분기 제거 ③ SEARCH_LIMIT 20 + 빈 결과 문구 조건 분기(q 유무)+chips 안내 문구. runSearch 의 DEV 로그는 q_len 그대로(0 허용). Vite dev 육안: 모달 열자마자 목록, 타이핑 축소, 전부 지우면 목록 복귀.
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: v177 §4 승계(실사용자 무접촉·발송 없는 버전 — 이번 범위는 **읽기 전용**, 실발송 0건 설계. ban+unban 재사용은 v177 승인 패턴 준용 시에만).
+1. 브라우즈 API: `GET /api/admin/cs/users/search` (q 생략/`q=`/`q=%20`) 200 — 목록 ≤limit, **닉네임 오름차순**, 각 항목 4키(code 포함), official 자기 미포함, 401/403 기존 동일.
+2. 브라우즈 필터 정합: 밴 계정 미노출(v177 CS-API-06 승인 패턴 ban→브라우즈→unban 원복, 또는 코드 리뷰 갈음 — tester 환경 판단), limit 클램프 0→1/999→20 브라우즈에도 적용.
+3. 검색 모드 회귀(v177): 부분매칭·#태그 정확매칭·밴 미노출 — **기존 결과와 동일**(분기 추가가 비어있지 않은 q 경로를 건드리지 않음).
+4. **사용자 앱 가드 불변(핵심 회귀)**: ① `GET /api/dm/users/search?q=` (USER_TOKEN) → 200 **빈 배열**(브라우즈 미동작 — 프라이버시 가드 생존) ② dm_service.py:901-902 가드 라인 무변경 코드 리뷰 ③ git diff 에 dm_service.py 부재 확인.
+5. UI: 모달 열자마자 목록 표시(추가 입력 없이) → 타이핑 시 점진 축소(디바운스 유지 — 남발 없음) → 전부 삭제 시 목록 복귀 → 빈 결과 문구 모드별 분기 확인. 콘솔 위생(닉네임·이메일 미출력) 유지.
+6. 9004 미러 diff 0. 회귀: 지정발송 여정(선택→confirm — **발송 직전 취소, 실발송 0건**), 전체 발송 모달 dismiss.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① **`dm_service.search_users` 의 빈 검색어 가드(`if not q: return []`, :901-902) 및 dm_service.py 일체 수정 금지** — 사용자 앱 전체 유저 열람 방지 프라이버시 가드 ② 브라우즈를 dm.py(사용자 라우트)에 노출 금지 ③ 이번 버전 실발송 0건 — 발송 API 호출 자체 금지(UI 여정은 confirm 직전 취소) ④ 응답 스키마 변경 금지(`{users:[...]}` 유지) ⑤ v177 강행 금지 항목 전부 승계.
+- 브라우즈 쿼리와 search_users 필터 조건의 **정합이 수동 복제** — 향후 search_users 필터 변경 시 브라우즈 분기 동반 수정 필요(admin_cs.py 주석으로 상호 참조 명시 지시).
+- SEARCH_LIMIT 20 확대는 검색 모드에도 적용 — 서버 클램프 상한과 동일해 부작용 없음(응답 크기 소폭 증가뿐).

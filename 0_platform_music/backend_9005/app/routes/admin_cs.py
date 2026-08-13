@@ -334,19 +334,79 @@ async def search_cs_users(
     """지정발송 대상 검색 — dm_service.search_users 위임(me=official).
 
     닉네임 ILIKE + '#태그' 정확 매칭(v156). active/비밴 + dm_blocks 후필터라
-    검색 결과 ≒ 발송 가능 대상(게이트 정합). 검색어 원문 미로그(길이만)."""
+    검색 결과 ≒ 발송 가능 대상(게이트 정합). 검색어 원문 미로그(길이만).
+
+    v178: 빈 q(트림 후)는 **브라우즈 모드** — 관리자 전용 목록(닉네임순).
+    dm_service.search_users 의 빈 검색어 가드(`if not q: return []` — 사용자 앱
+    전체 유저 열람 방지 프라이버시 가드)는 절대 불변이라 여기서 자체 쿼리."""
     admin_tag = str(current_user["id"])[:8]
     try:
         limit = max(1, min(int(limit), 20))
     except (ValueError, TypeError):
         limit = 20
+    q_stripped = (q or "").strip()
+    mode = "search" if q_stripped else "browse"
     logger.info(
-        "[admin-cs] user search admin=%s qlen=%d limit=%d",
-        admin_tag, len((q or "").strip()), limit,
+        "[admin-cs] user search admin=%s qlen=%d mode=%s limit=%d",
+        admin_tag, len(q_stripped), mode, limit,
     )
     try:
         official_id = await _resolve_official(conn)  # 미시드 503
-        users = await dm_service.search_users(conn, get_mongo(), official_id, q, limit=limit)
+        mongo = get_mongo()
+
+        if not q_stripped:
+            # v178 브라우즈 분기 — 필터·정렬·dm_blocks 후필터·응답 키를
+            # dm_service.search_users 필터와 동기 유지 필요(:866-896 조회 쿼리
+            # 및 :945-970 후필터 참조 — search_users 필터 변경 시 이 분기 동반
+            # 수정). dm_service.py 수정 금지 정책상 수동 복제본임.
+            official_uuid = uuid.UUID(str(official_id))
+            # 후필터(차단)로 줄어들 수 있어 limit 의 2배 조회 후 절단
+            rows = await conn.fetch(
+                """
+                SELECT id, nickname, profile_image, referral_code
+                FROM users
+                WHERE account_status = 'active'
+                  AND NOT is_banned
+                  AND id != $1
+                ORDER BY nickname
+                LIMIT $2
+                """,
+                official_uuid, limit * 2,
+            )
+
+            # dm_blocks 양방향 관계 일괄 후필터 (search_users 동일 패턴, me=official)
+            me_id = str(official_id)
+            blocked = set()
+            cursor = mongo.dm_blocks.find(
+                {"$or": [{"blocker_id": me_id}, {"blocked_id": me_id}]},
+                {"blocker_id": 1, "blocked_id": 1},
+            )
+            async for b in cursor:
+                blocked.add(b.get("blocker_id"))
+                blocked.add(b.get("blocked_id"))
+            blocked.discard(me_id)
+
+            users = []
+            for r in rows:
+                uid = str(r["id"])
+                if uid in blocked:
+                    continue
+                users.append(
+                    {
+                        "id": uid,
+                        "nickname": r["nickname"],
+                        "profile_image": r["profile_image"],
+                        "code": r["referral_code"],
+                    }
+                )
+                if len(users) >= limit:
+                    break
+            logger.info(
+                "[admin-cs] user search done admin=%s mode=browse results=%d",
+                admin_tag, len(users),
+            )
+        else:
+            users = await dm_service.search_users(conn, mongo, official_id, q, limit=limit)
         return {"users": users}
     except HTTPException:
         raise

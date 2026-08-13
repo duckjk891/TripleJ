@@ -15043,3 +15043,35 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 6: `frontend_admin/src/api.js` `frontend_admin/src/components/AdminCsSendModal.jsx` `frontend_admin/src/components/AdminCsSendModal.css`(신설 2) `frontend_admin/src/pages/AdminCsPage.jsx` `frontend_admin/src/pages/AdminCsPage.css` `frontend_admin/src/pages/AdminLogsPage.jsx`
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v177 append)
 - 하니스·임시 스크립트 git 잔재 0건(`git status` 실측 — 위 15개 외 변경 없음).
+
+---
+
+# v178 — CS 지정발송 검색창 브라우즈 모드 (빈 검색어 시 사용자 목록 표시) (2026-08-13 17:40)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+지정발송 모달의 "닉네임 또는 #태그로 검색" 입력창을 클릭하면 **즉시 사용자 목록이 표시**되고, 타이핑할수록 목록이 점점 좁혀지는 브라우즈 UX. 9005 선구현 → 9004 미러.
+
+## 2. 설계 결정 (0단계 증분 실측 기반)
+- **관리자 엔드포인트 한정 브라우즈**: 공용 `dm_service.search_users` 의 빈 검색어 가드(`if not q: return []`, :901-902)는 사용자 앱 경로(`GET /dm/users/search`)가 공유하는 **프라이버시 가드(전체 유저 열람 방지)라 절대 불변** — 브라우즈 분기는 `admin_cs.py search_cs_users` 내부(관리자 인증 뒤)에서 빈 q(트림 후)일 때 자체 쿼리로만 구현. **dm_service.py 한 줄도 수정하지 않음**(git diff 부재 3중 검증).
+- **필터·정렬 정합**: 자체 쿼리는 search_users 와 동일 필터(`active AND NOT is_banned AND id <> official`) + **dm_blocks 양방향 후필터 복제**(발송 게이트 ⑥ 정합 — 목록 ≒ 발송 가능 대상 원칙 유지) + limit 1~20 클램프 공용. 정렬은 **닉네임순** — 검색 모드(name)와 동일 정렬이라 타이핑 시 목록이 재배열 없이 자연 축소(요구 UX 핵심). 로그 `mode=browse|search` 구분, 검색어 원문 미로그 유지.
+- **프론트 최소 diff**: 검색 effect 의 빈 q 가드 제거 + `delay = q ? 300 : 0` — 모달 open·검색어 전부 삭제 시 즉시 브라우즈, 타이핑은 300ms 디바운스 유지(stale 응답은 기존 seq 가드). SEARCH_LIMIT 10→20(서버 상한 정합). 빈 결과 문구 모드 분기("표시할 사용자가 없습니다"/"검색 결과가 없습니다") + chips 안내 문구 조정.
+- **파생 수정 승인 경위**: 결과 블록의 `{trimmedQuery && (...)}` 렌더 게이트 제거(frontend-dev 발견) — 이 게이트가 남으면 빈 q 에서 결과 블록이 언마운트돼 브라우즈 표시 자체가 불가. 계획이 놓친 필수 수정으로 planner 가 diff 검토 후 승인(내부 리스트·선택 로직은 무변경 이동). 재발 방지: UI 상태 전환 지시 시 렌더 조건부까지 0단계 실측 항목에 포함.
+
+## 3. 테스트 결과 — 12/12 PASS (api 7 / unit 4 / e2e 1), 앱 픽스 사이클 0회
+- **실발송 0건 불변식 입증**: cs_send 감사 total 8→8, conversations total 133→133, send 계열 로그 0 — 전 구간 발송·신규 대화 없음.
+- 핵심 증적: 브라우즈 3형(q 생략/빈/공백) 동일 응답·DB 정렬 20/20 상호 일치·official 미포함·4키 / 401·403 / limit 클램프 0→1·999→20 / 밴 계정 브라우즈·검색 미노출 실측 / 검색 모드 v177 결과 동일(회귀 무결) / **사용자 앱 가드 3중 확인**(`GET /dm/users/search?q=` 빈 배열 + 가드 라인 문면 무변경 + `git diff 6995395` 에 dm_service.py 부재) / 9004 미러 diff 0·대표 케이스 동일 / UI(open 즉시 1회 호출·디바운스 1회·삭제 즉시 복귀·chip 유지·콘솔 위생 0건) / E2E confirm dismiss·send/broadcast POST 0건.
+- planner 판정 5건(§4): ban 실측 확정(v177 승인·실측 이력 기준 — "pending" 전제 착오 정정), dm_blocks·브라우즈 빈 문구 코드 리뷰 갈음(빈 문구는 구버전 백엔드 실렌더 스크린샷 보조 증적), 정렬 상호 일치 판정, diff 기준 `6995395`.
+
+## 4. 특이사항
+- **ban 사이클 2회**: BR-API-01 기준 목록(top-20, 닉네임순)에 TEST_USER_2 가 들지 않아 TESTPLAN 대체 규정대로 목록 내 테스트 계정(U1)으로 실측 — ban→미노출→unban→재노출 사이클이 검색·브라우즈 겸측으로 2회 수행, **전부 원복 검증 완료**. ban/unban 감사 행 4건 잔존(감사 무결성상 미삭제).
+- **개선 후보(비차단)**: ① DB collation 이 한글 우선 정렬(로케일 사전순과 상이할 수 있음 — API==UI==DB 상호 일치로 PASS 처리) ② **닉네임 동명 tie 순서 비결정 — `ORDER BY nickname, id` 결정화**(브라우즈·search_users 양쪽, 차기 버전 후보) ③ 브라우즈 쿼리와 search_users 필터의 **수동 복제 동기화 리스크** — 상호 참조 주석으로 완화했으나 search_users 필터 변경 시 admin_cs.py 분기 동반 수정 필요(차기 작업 체크 항목).
+- tester 드라이버 기준 오류 1회 재판정(비버그 — 앱 픽스 아님, 픽스 사이클 0회 유지).
+- 잔존 테스트 데이터: ban/unban 감사 행 4건뿐(신규 계정·DM·발송 없음).
+
+## 5. 변경 파일 (커밋 대상 6)
+- 백엔드 2: `backend_9005/app/routes/admin_cs.py` `backend_9004/app/routes/admin_cs.py`(미러 — byte-identical 최종 실측)
+- 프론트 1: `frontend_admin/src/components/AdminCsSendModal.jsx`
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v178 append)
+- 무변경 확인: dm_service.py(가드 보존)·api.js·AdminCsPage·AdminLogsPage — git status 실측, 하니스 잔재 0건.

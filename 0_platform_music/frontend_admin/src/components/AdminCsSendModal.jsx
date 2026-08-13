@@ -3,13 +3,14 @@ import { searchCsUsers, sendCsDirect } from '../api';
 import './AdminCsSendModal.css';
 
 // 지정 발송 모달 — CS 페이지 헤더 "✉️ 지정 발송" 버튼으로 오픈.
-// 닉네임/#태그 검색(300ms 디바운스) → 결과 클릭으로 대상 선택 chips(최대 20명)
+// 닉네임/#태그 검색(300ms 디바운스) + 빈 검색어면 브라우즈 목록(닉네임순, 서버 v178)
+// → 결과 클릭으로 대상 선택 chips(최대 20명)
 // → textarea(최대 2000자) → window.confirm 최종 확인 → POST /admin/cs/send.
 // 로그 prefix `[AdminCsSend]`. 메시지 text·닉네임 원문은 콘솔에 출력하지 않는다(길이/건수만).
 
 const MAX_LEN = 2000;
 const MAX_TARGETS = 20;
-const SEARCH_LIMIT = 10;
+const SEARCH_LIMIT = 20;
 const DEBOUNCE_MS = 300;
 
 function initials(name) {
@@ -55,12 +56,13 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
     }
   }, []);
 
-  // 검색 디바운스 — 입력 후 300ms 지나면 호출. 빈 검색어 정리는 handleQueryChange 에서.
+  // 검색/브라우즈 — 타이핑은 300ms 디바운스, 빈 검색어(모달 open 직후·전부 삭제)는 즉시 브라우즈 목록 호출.
+  // 빈 q 호출은 서버(v178)가 닉네임순 브라우즈 목록으로 응답 — 형식 동일.
   useEffect(() => {
     if (!open) return undefined;
     const q = query.trim();
-    if (!q) return undefined;
-    const timer = setTimeout(() => { runSearch(q); }, DEBOUNCE_MS);
+    const delay = q ? DEBOUNCE_MS : 0;
+    const timer = setTimeout(() => { runSearch(q); }, delay);
     return () => clearTimeout(timer);
   }, [open, query, runSearch]);
 
@@ -81,13 +83,8 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
   }, [sending, reset, onClose]);
 
   const handleQueryChange = (e) => {
-    const v = e.target.value;
-    setQuery(v);
-    if (!v.trim()) {
-      searchSeqRef.current += 1;
-      setResults([]);
-      setSearching(false);
-    }
+    // 빈값 클리어 분기 없음 — 빈 q 는 effect 가 즉시 브라우즈로 대체(stale 응답은 seq 가드가 처리).
+    setQuery(e.target.value);
   };
 
   const handlePick = (user) => {
@@ -190,34 +187,34 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
           disabled={sending}
         />
 
-        {trimmedQuery && (
-          <div className="admin-cs-send__results">
-            {searching ? (
-              <p className="admin-cs-send__results-status">검색 중...</p>
-            ) : results.length === 0 ? (
-              <p className="admin-cs-send__results-status">검색 결과가 없습니다.</p>
-            ) : (
-              <ul className="admin-cs-send__result-list">
-                {results.map((u) => {
-                  const picked = selected.some((s) => s.id === u.id);
-                  return (
-                    <li key={u.id}>
-                      <button
-                        className={`admin-cs-send__result ${picked ? 'admin-cs-send__result--picked' : ''}`}
-                        onClick={() => handlePick(u)}
-                        disabled={sending || picked}
-                      >
-                        <span className="admin-cs-send__avatar">{initials(u.nickname)}</span>
-                        <span className="admin-cs-send__result-name">{displayName(u)}</span>
-                        {picked && <span className="admin-cs-send__result-picked-mark">선택됨</span>}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
+        <div className="admin-cs-send__results">
+          {searching ? (
+            <p className="admin-cs-send__results-status">검색 중...</p>
+          ) : results.length === 0 ? (
+            <p className="admin-cs-send__results-status">
+              {trimmedQuery ? '검색 결과가 없습니다.' : '표시할 사용자가 없습니다.'}
+            </p>
+          ) : (
+            <ul className="admin-cs-send__result-list">
+              {results.map((u) => {
+                const picked = selected.some((s) => s.id === u.id);
+                return (
+                  <li key={u.id}>
+                    <button
+                      className={`admin-cs-send__result ${picked ? 'admin-cs-send__result--picked' : ''}`}
+                      onClick={() => handlePick(u)}
+                      disabled={sending || picked}
+                    >
+                      <span className="admin-cs-send__avatar">{initials(u.nickname)}</span>
+                      <span className="admin-cs-send__result-name">{displayName(u)}</span>
+                      {picked && <span className="admin-cs-send__result-picked-mark">선택됨</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
         <div className="admin-cs-send__chips-head">
           <span className="admin-cs-send__chips-label">발송 대상</span>
@@ -225,7 +222,7 @@ export default function AdminCsSendModal({ open, onClose, onSuccess }) {
         </div>
         <div className="admin-cs-send__chips">
           {selected.length === 0 ? (
-            <p className="admin-cs-send__chips-empty">검색 결과를 클릭해 대상을 추가하세요.</p>
+            <p className="admin-cs-send__chips-empty">목록에서 사용자를 클릭해 대상을 추가하세요.</p>
           ) : (
             selected.map((u) => (
               <span key={u.id} className="admin-cs-send__chip">
