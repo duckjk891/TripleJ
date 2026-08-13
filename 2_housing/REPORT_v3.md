@@ -4,6 +4,36 @@
 
 ---
 
+## v3.10 (기능 #2 — 검색 탭 + Feather 아이콘) — 2026-08-13
+
+### 요청 작업
+① 하단바 5탭: 차트·플레이리스트·피드·검색·작업실 ② 상단 검색을 검색 페이지로 ③ 비-플랫 아이콘 전부 플랫으로, **MAIDOL이 쓰는 아이콘 세트** 조사해 적용.
+
+### Plan verification findings (0단계)
+- **MAIDOL 아이콘 = `react-icons/fi`(Feather)** — 헤더/네비에 FiSearch·FiMenu·FiList·FiMusic·FiUser 등. → AIDOL(RN)은 **`@expo/vector-icons`의 `Feather`**(동일 세트)로 대응. (AIDOL엔 미설치 → `npx expo install @expo/vector-icons`로 설치)
+- 기존 탭 아이콘은 이모지/글리프(☰♬✦📰👤⚙️) 혼용 — 플랫 아님.
+
+### 수행 결과
+- **SearchScreen.tsx**(신규): `/tracks/search` 전용 검색 페이지(Feather search/x 아이콘, 결과→Player).
+- **App.tsx**: 하단바 **5탭**(차트·플레이리스트·피드·**검색**·작업실), 모든 탭 아이콘 **Feather**(bar-chart-2/list/home/search/mic), 마이페이지=Feather user, 설정=Feather settings.
+- **ChartScreen.tsx**: 상단 🔍 헤더(useLayoutEffect) 제거 → 탭 공통헤더(로고+user) 사용. (내부 검색 모달은 미사용 dead code로 잔존 — 후속 정리)
+- 의존성: `@expo/vector-icons` 추가(package.json).
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] 하단바 5탭(차트/플레이리스트/피드/검색/작업실) | **전부 표시** |
+| [e2e-web] 상단 🔍 제거 확인 | 없음(OK) |
+| [e2e-web] 검색 탭 → SearchScreen | PASS |
+| 아이콘 플랫(Feather) 렌더 | PASS (`/tmp/tabs5_home.png`) |
+| 콘솔 에러 | 0 |
+
+### 커밋
+`feat: v3.10 검색 탭 + Feather(MAIDOL 동일) 플랫 아이콘 5탭 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.9 (기능 #1 — 네비게이션 개편) — 2026-08-13 — 로고 헤더 · 마이페이지 · 피드 탭
 
 ### 요청 작업 (MAIDOL 대비 개선, 화면별 피드백 시작)

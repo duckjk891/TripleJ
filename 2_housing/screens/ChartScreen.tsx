@@ -83,20 +83,8 @@ export default function ChartScreen() {
 
   useFocusEffect(useCallback(() => { fetchChart(activeTab); }, [activeTab]));
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <View style={styles.headerRight}>
-          <TouchableOpacity onPress={() => setShowSearchModal(true)} style={styles.headerBtn}>
-            <AppText variant="subtitle">{'🔍'}</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('MyMusic' as never)} style={styles.headerBtn} accessibilityLabel="마이페이지">
-            <AppText variant="title3">{'👤'}</AppText>
-          </TouchableOpacity>
-        </View>
-      ),
-    });
-  }, [navigation]);
+  // 헤더는 App.tsx 탭 공통(tabHeader): 좌 로고 + 우 마이페이지(user) 아이콘.
+  // 검색은 별도 '검색' 탭(SearchScreen)으로 이동 — 여기 상단 🔍 제거.
 
   const handleRefresh = () => { setRefreshing(true); fetchChart(activeTab); };
   const handleTabPress = (tab: ChartTab) => { if (tab !== activeTab) setActiveTab(tab); };

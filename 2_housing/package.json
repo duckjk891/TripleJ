@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
+    "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "5.0.1",
     "@react-navigation/bottom-tabs": "^7.15.9",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "playwright": "^1.62.1",
     "typescript": "~5.9.2"
   },
   "private": true

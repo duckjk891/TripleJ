@@ -16,6 +16,7 @@ if (Platform.OS === 'android') {
 }
 import { colors } from './theme/colors';
 import { AppText } from './components/ui';
+import { Feather } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -27,6 +28,7 @@ import SplashScreen from './screens/SplashScreen';
 import ChartScreen from './screens/ChartScreen';
 import PlaylistScreen from './screens/PlaylistScreen';
 import FeedScreen from './screens/FeedScreen';
+import SearchScreen from './screens/SearchScreen';
 import MapScreen from './screens/MapScreen';
 import MyMusicScreen from './screens/MyMusicScreen';
 import SettingsScreen from './screens/SettingsScreen';
@@ -178,7 +180,7 @@ const tabHeader = (navigation: any) => ({
       style={{ marginRight: 16 }}
       accessibilityLabel="마이페이지"
     >
-      <Text style={{ fontSize: 22, color: colors.text.primary }}>{'👤'}</Text>
+      <Feather name="user" size={22} color={colors.text.primary} />
     </TouchableOpacity>
   ),
 });
@@ -207,7 +209,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '차트',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size - 6, color }}>{'☰'}</Text>
+            <Feather name="bar-chart-2" size={size - 2} color={color} />
           ),
           ...tabHeader(navigation),
         })}
@@ -218,7 +220,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '플레이리스트',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size - 6, color }}>{'♬'}</Text>
+            <Feather name="list" size={size - 2} color={color} />
           ),
           ...tabHeader(navigation),
         })}
@@ -229,7 +231,18 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '피드',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size - 6, color }}>{'📰'}</Text>
+            <Feather name="home" size={size - 2} color={color} />
+          ),
+          ...tabHeader(navigation),
+        })}
+      />
+      <Tab.Screen
+        name="Search"
+        component={SearchScreen}
+        options={({ navigation }) => ({
+          tabBarLabel: '검색',
+          tabBarIcon: ({ color, size }) => (
+            <Feather name="search" size={size - 2} color={color} />
           ),
           ...tabHeader(navigation),
         })}
@@ -246,7 +259,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '작업실',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size - 6, color }}>{'✦'}</Text>
+            <Feather name="mic" size={size - 2} color={color} />
           ),
           ...tabHeader(navigation),
         })}
@@ -268,7 +281,7 @@ function MainTabs() {
               style={{ marginRight: 16 }}
               accessibilityLabel="설정"
             >
-              <Text style={{ fontSize: 20, color: colors.text.primary }}>{'⚙️'}</Text>
+              <Feather name="settings" size={20} color={colors.text.primary} />
             </TouchableOpacity>
           ),
         })}
