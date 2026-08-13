@@ -7,6 +7,25 @@
 
 ---
 
+## v3.6 — 2026-08-13 — 화면 통일 스윕 #1 (MyMusic·Playlist)
+
+### 요청
+"각 화면마다 공용 컴포넌트로 통일" → 화면 순차 스윕 시작(자율).
+
+### 변경 매트릭스
+| 파일 | 작업 |
+|---|---|
+| `MyMusicScreen.tsx` | 하드코딩 색→토큰, 빈/로그인 상태 3곳→EmptyState+Button |
+| `PlaylistScreen.tsx` | 빈/로그인 3곳→EmptyState+Button, 모달 버튼→Button |
+
+### 남은 화면(우선순위 큐)
+Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGeneration/DirectorLineup/Royalty/Composer*/Lyrics*/Cover/Artist* — 하드코딩 HEX 있는 화면부터 순차 통일 예정.
+
+### 테스트 지정
+[unit] tsc 0. [e2e] 각 탭 렌더·에러 0. [회귀] 로그인 후 데이터/로직 보존.
+
+---
+
 ## v3.5 — 2026-08-13 — PlayerScreen 리스킨 (공용 컴포넌트 확산)
 
 ### 요청

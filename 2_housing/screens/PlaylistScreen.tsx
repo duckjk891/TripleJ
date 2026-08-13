@@ -17,6 +17,7 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
+import { EmptyState, Button } from '../components/ui';
 
 interface Playlist {
   id: string;
@@ -225,19 +226,12 @@ export default function PlaylistScreen({ navigation }: any) {
       {loading ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
       ) : !user ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.promoIcon}>{'♫'}</Text>
-          <Text style={styles.promoTitle}>나만의 플레이리스트</Text>
-          <Text style={styles.promoDesc}>
-            {'좋아하는 곡을 모아서\n나만의 플레이리스트를 만들어보세요!'}
-          </Text>
-          <TouchableOpacity
-            style={styles.loginButton}
-            onPress={() => navigation.navigate('Settings')}
-          >
-            <Text style={styles.loginButtonText}>로그인하고 시작하기</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          icon="♫"
+          title="나만의 플레이리스트"
+          hint={'좋아하는 곡을 모아서\n나만의 플레이리스트를 만들어보세요!'}
+          action={<Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />}
+        />
       ) : selectedPlaylist ? (
         // 플레이리스트 상세 - 곡 목록
         <View style={{ flex: 1 }}>
@@ -262,9 +256,7 @@ export default function PlaylistScreen({ navigation }: any) {
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.accent.primary} />}
             />
           ) : (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>이 플레이리스트에 곡이 없어요</Text>
-            </View>
+            <EmptyState title="이 플레이리스트에 곡이 없어요" />
           )}
         </View>
       ) : playlists.length > 0 ? (
@@ -276,11 +268,7 @@ export default function PlaylistScreen({ navigation }: any) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.accent.primary} colors={[colors.accent.primary]} />}
         />
       ) : (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>{'♫'}</Text>
-          <Text style={styles.emptyText}>담은 곡이 없습니다</Text>
-          <Text style={styles.emptyHint}>차트에서 곡을 담아보세요!</Text>
-        </View>
+        <EmptyState icon="♫" title="담은 곡이 없습니다" hint="차트에서 곡을 담아보세요!" />
       )}
       {/* 이름 변경 모달 */}
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
@@ -296,12 +284,12 @@ export default function PlaylistScreen({ navigation }: any) {
               autoFocus
             />
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, backgroundColor: colors.border.subtle }} onPress={() => setShowRenameModal(false)}>
-                <Text style={{ color: colors.text.secondary }}>취소</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10, backgroundColor: colors.accent.primary }} onPress={handleRenamePlaylist}>
-                <Text style={{ color: colors.text.primary, fontWeight: 'bold' }}>변경</Text>
-              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Button label="취소" variant="tonal" fullWidth onPress={() => setShowRenameModal(false)} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button label="변경" fullWidth onPress={handleRenamePlaylist} />
+              </View>
             </View>
           </View>
         </TouchableOpacity>

@@ -20,6 +20,7 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
+import { EmptyState, Button } from '../components/ui';
 
 interface Track {
   id: number;
@@ -168,19 +169,12 @@ export default function MyMusicScreen({ navigation }: any) {
   if (!user) {
     return (
       <View style={styles.container}>
-        <View style={styles.emptyContainer}>
-          <Text style={{ fontSize: 48, marginBottom: 16 }}>{'🎧'}</Text>
-          <Text style={{ fontSize: 20, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 }}>내가 만든 음악 보관함</Text>
-          <Text style={{ fontSize: 15, color: colors.text.secondary, textAlign: 'center', lineHeight: 24, marginBottom: 28 }}>
-            {'AI로 만든 나만의 곡을\n한곳에서 관리하고 들을 수 있어요!'}
-          </Text>
-          <TouchableOpacity
-            style={{ backgroundColor: colors.accent.primary, borderRadius: 24, paddingVertical: 14, paddingHorizontal: 40 }}
-            onPress={() => navigation.getParent()?.navigate('Settings')}
-          >
-            <Text style={{ color: colors.text.primary, fontSize: 16, fontWeight: 'bold' }}>로그인하고 시작하기</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          icon="🎧"
+          title="내가 만든 음악 보관함"
+          hint={'AI로 만든 나만의 곡을\n한곳에서 관리하고 들을 수 있어요!'}
+          action={<Button label="로그인하고 시작하기" onPress={() => navigation.getParent()?.navigate('Settings')} />}
+        />
       </View>
     );
   }
@@ -360,11 +354,7 @@ export default function MyMusicScreen({ navigation }: any) {
       {/* 작곡 탭 */}
       {activeTab === 'tracks' && (
         tracks.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>{'🎧'}</Text>
-            <Text style={styles.emptyText}>아직 생성한 곡이 없어요.</Text>
-            <Text style={styles.emptyHint}>작업실에서 곡을 만들어보세요!</Text>
-          </View>
+          <EmptyState icon="🎧" title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
         ) : (
           <FlatList
             data={tracks}
@@ -450,11 +440,7 @@ export default function MyMusicScreen({ navigation }: any) {
 
           {/* 완성된 곡도 없고 작업 중도 없으면 빈 상태 */}
           {tracks.filter((t) => t.lyrics).length === 0 && !lyricsStore.generatedLyrics ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>{'📝'}</Text>
-              <Text style={styles.emptyText}>아직 작사한 기록이 없어요.</Text>
-              <Text style={styles.emptyHint}>작업실에서 작사 디렉터와 대화해보세요!</Text>
-            </View>
+            <EmptyState icon="📝" title="아직 작사한 기록이 없어요." hint="작업실에서 작사 디렉터와 대화해보세요!" />
           ) : null}
         </ScrollView>
       )}
@@ -706,8 +692,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   coverPlaceholder: {
-    // TODO: 테마화 검토 (커버 플레이스홀더 배경)
-    backgroundColor: '#2a2a3e',
+    backgroundColor: colors.bg.surface2,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -732,7 +717,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   tag: {
-    backgroundColor: 'rgba(233, 69, 96, 0.2)',
+    backgroundColor: 'rgba(168, 85, 247, 0.18)',
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -740,7 +725,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   moodTag: {
-    backgroundColor: 'rgba(100, 100, 255, 0.2)',
+    backgroundColor: 'rgba(251, 191, 36, 0.15)',
   },
   tagText: {
     fontSize: 11,

@@ -4,6 +4,29 @@
 
 ---
 
+## v3.3 (화면 통일 스윕 #1) — 2026-08-13 — MyMusic · Playlist 공용 컴포넌트 통일
+
+### 요청 작업
+"각 화면마다 공용 컴포넌트로 통일" (자율 진행). 순서: 기존화면 통일 → 빠진기능 → 신규페이지.
+
+### 수행 결과
+- `screens/MyMusicScreen.tsx`: 하드코딩 색 제거(`#2a2a3e`→`bg.surface2`, 레거시 레드/블루 태그→온브랜드 보라·금 틴트), 로그인/빈 상태(트랙·가사) 3곳 → **`EmptyState`+`Button`**.
+- `screens/PlaylistScreen.tsx`: 로그인/빈 상태 3곳 → **`EmptyState`+`Button`**, 이름변경 모달 버튼 → **`Button`**(tonal/filled).
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] 플레이리스트·마이뮤직 탭 렌더 | PASS(콘솔/에러 0) |
+| 증적 | `/tmp/tab_playlist.png`, `/tmp/tab_mymusic.png` |
+
+특이: 미로그인 상태라 EmptyState+Button(스타디움형) 렌더 확인. 로그인 후 리스트/성장카드는 로직 무변경으로 보존.
+
+### 커밋
+`feat: v3.3 화면 통일 스윕#1 — MyMusic·Playlist 공용 컴포넌트 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.2 (Wave 0 이어서) — 2026-08-13 — PlayerScreen 리스킨(공용 컴포넌트 적용)
 
 ### 요청 작업

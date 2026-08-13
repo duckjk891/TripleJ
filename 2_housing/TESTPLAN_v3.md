@@ -5,6 +5,19 @@
 
 ---
 
+## v3.4 — 2026-08-13 — 화면 통일 스윕 #1 (MyMusic·Playlist) 검증
+
+| # | 시나리오 | 태그 | 결과 |
+|---|---|---|---|
+| U1 | MyMusic·Playlist tsc 에러 0 | [unit] | PASS |
+| U2 | MyMusic 하드코딩 HEX 제거(토큰화) | [unit] | PASS(#2a2a3e·레거시 rgba 제거) |
+| E1 | 플레이리스트 탭 → EmptyState+Button 렌더 | [e2e] | PASS |
+| E2 | 마이뮤직 탭 렌더 | [e2e] | PASS |
+| E3 | 콘솔/네트워크 에러 | [e2e] | 0/0 |
+| R1(회귀) | 로그인 후 리스트/성장카드/모달 로직 무변경 | [unit] | PASS(로직 미수정) |
+
+---
+
 ## v3.3 — 2026-08-13 — PlayerScreen 리스킨 검증
 
 | # | 시나리오 | 태그 | 결과 |
