@@ -4,6 +4,32 @@
 
 ---
 
+## v3.2 (Wave 0 이어서) — 2026-08-13 — PlayerScreen 리스킨(공용 컴포넌트 적용)
+
+### 요청 작업
+"이 공용 컴포넌트로 다음 화면 작업" → PlayerScreen 리스킨.
+
+### 수행 결과
+`screens/PlayerScreen.tsx` — 오디오/슬라이더/커스텀 아이콘/상세시트 **로직 전부 보존**, UI만 공용 컴포넌트로 교체:
+- 텍스트(헤더 Now Playing·곡 제목·아티스트·시간·액션 라벨 좋아요/담기/다운로드·스와이프업) → **`AppText`**(타입 위계 토큰).
+- 상세시트 탭바(가사/프롬프트/착장/상세정보) → **`Tag` 칩**(Spotify식).
+- 신규 레이아웃 style 키(headerTitleFlex/trackArtistSpacing/actionLabelSpacing)만 추가, spacing 토큰 사용.
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e-web] Player 실화면 렌더 | PASS(콘솔/네트워크 에러 0) |
+| [e2e-web] 상세시트 열림 + Tag 탭 렌더 | PASS |
+| 증적 | `/tmp/player_reskin.png`, `/tmp/player_sheet.png` |
+
+특이: 곡 제목/아티스트/컨트롤/액션/상세 탭이 토큰·컴포넌트로 일관화(디자이너급). 로직 회귀 없음(로직 무변경).
+
+### 커밋
+`feat: v3.2 PlayerScreen 리스킨(공용 컴포넌트 적용) (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.1 (버그픽스) — 2026-08-13 — 재생 중 일시정지/닫기 후에도 노래가 계속 재생되는 버그
 
 ### 요청 작업

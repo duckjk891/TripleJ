@@ -7,6 +7,24 @@
 
 ---
 
+## v3.5 — 2026-08-13 — PlayerScreen 리스킨 (공용 컴포넌트 확산)
+
+### 요청
+"이 공용 컴포넌트로 다음 화면 작업" → PlayerScreen.
+
+### Plan verification findings (0단계)
+- `screens/PlayerScreen.tsx`: 이미 color 토큰 사용·레이아웃 양호하나 **타이포가 raw fontSize로 흩어짐**, 상세시트 탭이 커스텀. 오디오/슬라이더/SVG 아이콘/상세시트 로직 존재(보존 대상).
+
+### 변경 매트릭스
+| 파일 | 작업 | 추적자 |
+|---|---|---|
+| `screens/PlayerScreen.tsx` | 텍스트→AppText, 상세탭→Tag, spacing 토큰. 로직 무변경 | `[PlayerScreen]`(기존 유지) |
+
+### 테스트 지정
+- [unit] tsc 0. [e2e] Player 실화면 렌더·상세시트 Tag 탭·에러 0. [회귀] 오디오/슬라이더/셔플·반복 로직 보존.
+
+---
+
 ## v3.4 — 2026-08-13 — [버그픽스] 일시정지/닫기 후 재생 지속 (우선 처리)
 
 ### 요청

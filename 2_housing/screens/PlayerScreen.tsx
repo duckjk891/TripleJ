@@ -24,6 +24,8 @@ import { useAuthStore } from '../stores/authStore';
 import PurchaseModal from '../components/PurchaseModal';
 import { TRACK_PRICE_KRW, formatKrw } from '../data/pricing';
 import { colors } from '../theme/colors';
+import { spacing } from '../theme/spacing';
+import { AppText, Tag } from '../components/ui';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -448,9 +450,9 @@ export default function PlayerScreen({ route, navigation }: any) {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={styles.backText}>{'✕'}</Text>
+          <AppText variant="title2">{'✕'}</AppText>
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>Now Playing</Text>
+        <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.headerTitleFlex}>Now Playing</AppText>
         <View style={styles.backButton} />
       </View>
 
@@ -467,9 +469,9 @@ export default function PlayerScreen({ route, navigation }: any) {
 
       {/* Track Info */}
       <View style={styles.trackInfoContainer}>
-        <Text style={styles.trackTitle} numberOfLines={1}>
+        <AppText variant="title1" center numberOfLines={1}>
           {track?.title || '알 수 없는 곡'}
-        </Text>
+        </AppText>
         <TouchableOpacity
           onPress={() => {
             const nickname = track?.uploader_nickname || track?.artist_name;
@@ -482,9 +484,9 @@ export default function PlayerScreen({ route, navigation }: any) {
           }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={styles.trackArtist} numberOfLines={1}>
-            {track?.artist_name || '알 수 없는 아티스트'} <Text style={styles.trackArtistArrow}>›</Text>
-          </Text>
+          <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.trackArtistSpacing}>
+            {track?.artist_name || '알 수 없는 아티스트'} {'›'}
+          </AppText>
         </TouchableOpacity>
       </View>
 
@@ -502,8 +504,8 @@ export default function PlayerScreen({ route, navigation }: any) {
           thumbTintColor={colors.accent.primary}
         />
         <View style={styles.timeRow}>
-          <Text style={styles.timeText}>{formatTime(position)}</Text>
-          <Text style={styles.timeText}>{formatTime(duration)}</Text>
+          <AppText variant="caption" tone="muted">{formatTime(position)}</AppText>
+          <AppText variant="caption" tone="muted">{formatTime(duration)}</AppText>
         </View>
       </View>
 
@@ -549,15 +551,15 @@ export default function PlayerScreen({ route, navigation }: any) {
           style={styles.actionBtn}
           onPress={() => setIsLiked(!isLiked)}
         >
-          <Text style={[styles.actionIcon, isLiked && styles.actionIconActive]}>
+          <AppText variant="title2" tone={isLiked ? 'accent' : 'muted'}>
             {isLiked ? '♥' : '♡'}
-          </Text>
-          <Text style={styles.actionLabel}>좋아요</Text>
+          </AppText>
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>좋아요</AppText>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlaylist}>
-          <Text style={styles.actionIcon}>+</Text>
-          <Text style={styles.actionLabel}>담기</Text>
+          <AppText variant="title2" tone="muted">+</AppText>
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>담기</AppText>
         </TouchableOpacity>
 
         {/* 다운로드 (구매) */}
@@ -572,8 +574,8 @@ export default function PlayerScreen({ route, navigation }: any) {
             setShowPurchase(true);
           }}
         >
-          <Text style={styles.actionIcon}>↓</Text>
-          <Text style={styles.actionLabel}>다운로드</Text>
+          <AppText variant="title2" tone="muted">↓</AppText>
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>다운로드</AppText>
         </TouchableOpacity>
       </View>
 
@@ -592,7 +594,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         onPress={() => setShowDetails(true)}
       >
         <View style={styles.swipeUpHandle} />
-        <Text style={styles.swipeUpText}>가사 · 상세정보</Text>
+        <AppText variant="footnote" tone="muted">가사 · 상세정보</AppText>
       </TouchableOpacity>
 
       {/* Bottom Sheet Modal (YouTube Music style) */}
@@ -622,15 +624,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               {(['lyrics', 'prompt', 'outfit', 'info'] as const).map((tab) => {
                 const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장', info: '상세 정보' };
                 return (
-                  <TouchableOpacity
-                    key={tab}
-                    style={[styles.sheetTab, detailTab === tab && styles.sheetTabActive]}
-                    onPress={() => setDetailTab(tab)}
-                  >
-                    <Text style={[styles.sheetTabText, detailTab === tab && styles.sheetTabTextActive]}>
-                      {labels[tab]}
-                    </Text>
-                  </TouchableOpacity>
+                  <Tag key={tab} label={labels[tab]} selected={detailTab === tab} onPress={() => setDetailTab(tab)} />
                 );
               })}
             </View>
@@ -800,6 +794,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.deepest,
     alignItems: 'center',
   },
+  headerTitleFlex: { flex: 1 },
+  trackArtistSpacing: { marginTop: spacing.xs },
+  actionLabelSpacing: { marginTop: spacing.xxs },
   bgOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: colors.bg.deepest,
