@@ -7,6 +7,21 @@
 
 ---
 
+## v3.18 — 2026-08-13 — 피드 로그인 CTA 고정 제거 → 스크롤/팔로워 클릭 트리거
+
+### 요청 (재지적)
+하단 고정 말고, 스크롤 동작 발생 시 또는 팔로워 클릭 시 로그인 CTA가 뜨게.
+
+### Plan verification findings (0단계)
+- v3.17 = `{!user ? <stickyCta>}` 상시 고정. 테스트 피드가 짧아(1건) FlatList 미스크롤 → onScroll 미발화.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/FeedScreen.tsx | 고정 배너 제거 → ctaVisible 트리거(onScroll/onScrollBeginDrag/아바타·트랙 탭), 닫기 버튼, minHeight로 스크롤 보장 | `[FeedScreen]` |
+
+---
+
 ## v3.17 — 2026-08-13 — 검색 운동 디폴트·게이트멘트 + 피드 하단고정 로그인 CTA
 
 ### 요청

@@ -1,8 +1,8 @@
 // [FeedScreen] 피드 타임라인 — /api/feeds/timeline (인스타형 혼합: is_public 최신 + 팔로잉 작성자 최상단).
-// 비로그인 시 노출 금지. 카드에 제목·본문·트랙(재생 가능) 인라인 렌더.
+// 비로그인은 피드 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
 import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -54,9 +54,11 @@ export default function FeedScreen() {
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님)
+  const [ctaVisible, setCtaVisible] = useState(false);
 
   const fetchFeed = useCallback(async () => {
-    // 피드는 비로그인도 우선 노출(공개 타임라인). 로그인 유도는 하단 CTA로 처리.
+    // 피드는 비로그인도 우선 노출(공개 타임라인). 스크롤/클릭 시 로그인 CTA를 띄운다.
     if (__DEV__) console.info('[FeedScreen] fetchFeed 호출');
     try {
       setLoading(true);
@@ -100,7 +102,7 @@ export default function FeedScreen() {
   const renderTrackBlock = (track: FeedTrack, key: string) => {
     const uri = coverUri(track.cover_image);
     return (
-      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => user && handlePlayTrack(track)} accessibilityLabel={`재생 ${track.title || ''}`}>
+      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => (user ? handlePlayTrack(track) : setCtaVisible(true))} accessibilityLabel={`재생 ${track.title || ''}`}>
         <View style={styles.trackCover}>
           {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
             : <AppText variant="title3" tone="muted">♪</AppText>}
@@ -128,7 +130,7 @@ export default function FeedScreen() {
           style={styles.head}
           activeOpacity={0.7}
           onPress={() => {
-            if (!user) return; // 비로그인: 하단 고정 CTA로 로그인 유도
+            if (!user) { setCtaVisible(true); return; } // 비로그인: 팔로워 클릭 → 로그인 CTA 노출
             if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: author });
           }}
           accessibilityLabel={`${author} 채널`}
@@ -169,7 +171,17 @@ export default function FeedScreen() {
           data={posts}
           keyExtractor={(it, i) => String(it.id ?? i)}
           renderItem={renderPost}
-          contentContainerStyle={[styles.list, !user && { paddingBottom: 140 }]}
+          // 비로그인: 글이 적어도 스크롤이 가능하도록 최소 높이 확보(스크롤 시 CTA 트리거)
+          contentContainerStyle={[styles.list, !user && { minHeight: Dimensions.get('window').height + 140 }]}
+          scrollEventThrottle={16}
+          onScrollBeginDrag={() => { if (!user) setCtaVisible(true); }}
+          onScroll={(e) => {
+            // 비로그인: 스크롤 동작이 발생하면 로그인 CTA를 띄운다
+            if (!user && !ctaVisible && e.nativeEvent.contentOffset.y > 10) {
+              if (__DEV__) console.info('[FeedScreen] 스크롤 감지 → 로그인 CTA');
+              setCtaVisible(true);
+            }
+          }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -189,11 +201,14 @@ export default function FeedScreen() {
         />
       )}
 
-      {/* 비로그인: 하단 고정 로그인 CTA (스크롤/클릭 시 항상 노출) */}
-      {!user ? (
-        <View style={styles.stickyCta} pointerEvents="box-none">
-          <View style={styles.stickyCtaInner}>
-            <AppText variant="footnote" tone="secondary" center style={styles.stickyHint}>
+      {/* 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님, 닫기 가능) */}
+      {!user && ctaVisible ? (
+        <View style={styles.ctaOverlay} pointerEvents="box-none">
+          <View style={styles.ctaCard}>
+            <TouchableOpacity style={styles.ctaClose} onPress={() => setCtaVisible(false)} accessibilityLabel="닫기" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Feather name="x" size={18} color={colors.text.muted} />
+            </TouchableOpacity>
+            <AppText variant="footnote" tone="secondary" center style={styles.ctaHint}>
               로그인하면 팔로우한 아티스트와{'\n'}다른 사람들의 소식을 더 볼 수 있어요
             </AppText>
             <Button label="로그인하고 시작하기" fullWidth onPress={goLogin} />
@@ -229,11 +244,13 @@ const styles = StyleSheet.create({
   trackMeta: { flex: 1 },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  stickyCta: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  stickyCtaInner: {
-    padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md,
-    backgroundColor: colors.bg.surface1,
-    borderTopWidth: 1, borderTopColor: colors.border.subtle,
+  ctaOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: spacing.lg },
+  ctaCard: {
+    padding: spacing.lg, paddingTop: spacing.xl, gap: spacing.md,
+    backgroundColor: colors.bg.surface2, borderRadius: radius.xl,
+    borderWidth: 1, borderColor: colors.border.accent,
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 12,
   },
-  stickyHint: { lineHeight: 18 },
+  ctaClose: { position: 'absolute', top: spacing.sm, right: spacing.sm, padding: 4, zIndex: 1 },
+  ctaHint: { lineHeight: 18 },
 });
