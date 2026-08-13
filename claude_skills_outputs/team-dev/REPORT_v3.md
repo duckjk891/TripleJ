@@ -4,6 +4,33 @@
 
 ---
 
+## v3.19 (피드 로그인 CTA를 작업실과 동일한 전체화면 딤드 오버레이로 통일) — 2026-08-13
+
+### 요청 작업
+"작업실에서 로그인하고 시작하기 화면이 뜨는 것과 같이(까만 화면으로 불투명하게 배경을 덮고 그 위에 텍스트) 피드도 동일하게."
+
+### Plan verification findings (0단계)
+- 작업실(MapScreen)의 로그인 오버레이 = `styles.loginOverlay`(`MapScreen.tsx:1298`): `StyleSheet.absoluteFillObject` + `backgroundColor:'rgba(0,0,0,0.75)'` 전체화면 딤 + 중앙 콘텐츠(아이콘 48 / 타이틀 20 bold / 설명 15 secondary / pill 버튼). 배경 탭 시 닫힘.
+- 피드(v3.18) = 하단에 뜨는 작은 카드형 CTA(`ctaCard`). → 시각을 작업실과 통일 필요.
+
+### 수행 결과
+- **screens/FeedScreen.tsx**: 하단 카드형 CTA 제거 → **작업실과 동일 스펙의 전체화면 딤드 오버레이**로 교체. `rgba(0,0,0,0.75)` absoluteFill + 중앙(👥 아이콘 · "AIDOL 피드" 타이틀 · "로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요" · pill "로그인하고 시작하기" 버튼). **배경 탭 → 닫힘**(작업실과 동일). 트리거(스크롤 y>10 / onScrollBeginDrag / 팔로워·트랙 클릭)와 기본 숨김은 v3.18 그대로 유지. 스타일 값은 MapScreen `loginOverlay*` 1:1 복제.
+
+### 테스트 (tester) — PASS (E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 초기 오버레이 미노출 | PASS |
+| [e2e] 스크롤 시 **전체화면 딤드 오버레이**(AIDOL 피드 + 버튼) | PASS (`/tmp/v319_1_overlay.png`) |
+| [e2e] 배경 탭 → 오버레이 닫힘(작업실과 동일) | PASS |
+| [e2e] 팔로워 클릭 시 오버레이 등장 | PASS (`/tmp/v319_2_click_overlay.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 커밋
+`feat: v3.19 피드 로그인 CTA를 작업실과 동일한 전체화면 딤드 오버레이로 통일 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.18 (피드 로그인 CTA — 고정 제거, 스크롤/팔로워 클릭 트리거로 전환) — 2026-08-13
 
 ### 요청 작업 (사용자 재지적)

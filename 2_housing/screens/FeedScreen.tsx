@@ -2,7 +2,7 @@
 // 비로그인은 피드 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
 import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet } from 'react-native';
+import { View, Text, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -201,19 +201,24 @@ export default function FeedScreen() {
         />
       )}
 
-      {/* 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님, 닫기 가능) */}
+      {/* 비로그인: 스크롤/팔로워 클릭 시 뜨는 전체화면 로그인 오버레이 (작업실과 동일 — 까만 반투명 배경 + 중앙 텍스트) */}
       {!user && ctaVisible ? (
-        <View style={styles.ctaOverlay} pointerEvents="box-none">
-          <View style={styles.ctaCard}>
-            <TouchableOpacity style={styles.ctaClose} onPress={() => setCtaVisible(false)} accessibilityLabel="닫기" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Feather name="x" size={18} color={colors.text.muted} />
+        <TouchableOpacity
+          style={styles.loginOverlay}
+          activeOpacity={1}
+          onPress={() => setCtaVisible(false)}
+        >
+          <View style={styles.loginOverlayContent}>
+            <Text style={styles.loginOverlayIcon}>{'👥'}</Text>
+            <Text style={styles.loginOverlayTitle}>AIDOL 피드</Text>
+            <Text style={styles.loginOverlayDesc}>
+              {'로그인하면 팔로우한 아티스트와\n다른 사람들의 소식을 볼 수 있어요'}
+            </Text>
+            <TouchableOpacity style={styles.loginOverlayButton} onPress={goLogin}>
+              <Text style={styles.loginOverlayButtonText}>로그인하고 시작하기</Text>
             </TouchableOpacity>
-            <AppText variant="footnote" tone="secondary" center style={styles.ctaHint}>
-              로그인하면 팔로우한 아티스트와{'\n'}다른 사람들의 소식을 더 볼 수 있어요
-            </AppText>
-            <Button label="로그인하고 시작하기" fullWidth onPress={goLogin} />
           </View>
-        </View>
+        </TouchableOpacity>
       ) : null}
     </ScreenLayout>
   );
@@ -244,13 +249,17 @@ const styles = StyleSheet.create({
   trackMeta: { flex: 1 },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  ctaOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: spacing.lg },
-  ctaCard: {
-    padding: spacing.lg, paddingTop: spacing.xl, gap: spacing.md,
-    backgroundColor: colors.bg.surface2, borderRadius: radius.xl,
-    borderWidth: 1, borderColor: colors.border.accent,
-    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 12,
+  // 작업실(MapScreen) 로그인 오버레이와 동일 스펙 — 까만 반투명 전체화면 + 중앙 텍스트
+  loginOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  ctaClose: { position: 'absolute', top: spacing.sm, right: spacing.sm, padding: 4, zIndex: 1 },
-  ctaHint: { lineHeight: 18 },
+  loginOverlayContent: { alignItems: 'center', paddingHorizontal: 40 },
+  loginOverlayIcon: { fontSize: 48, marginBottom: 16 },
+  loginOverlayTitle: { fontSize: 20, fontWeight: 'bold', color: colors.text.primary, marginBottom: 12 },
+  loginOverlayDesc: { fontSize: 15, color: colors.text.secondary, textAlign: 'center', lineHeight: 24, marginBottom: 28 },
+  loginOverlayButton: { backgroundColor: colors.accent.primary, borderRadius: 24, paddingVertical: 14, paddingHorizontal: 40 },
+  loginOverlayButtonText: { color: colors.text.primary, fontSize: 16, fontWeight: 'bold' },
 });
