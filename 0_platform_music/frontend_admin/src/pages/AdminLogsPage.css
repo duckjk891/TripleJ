@@ -1,0 +1,197 @@
+/* AdminLogsPage — 감사 로그. AdminTracksPage 관행을 따르는 standalone 스타일. */
+
+.admin-logs {
+  max-width: 1100px;
+}
+
+.admin-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--color-text);
+}
+
+.admin-loading,
+.admin-error {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--color-text-sub);
+}
+
+.admin-error {
+  color: var(--color-danger);
+}
+
+.admin-error .admin-btn {
+  margin-top: 12px;
+}
+
+/* ── 필터 ─────────────────────────────────────────────── */
+
+.admin-logs__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.admin-logs__filter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+.admin-logs__select {
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+/* ── 테이블 (standalone 공용 스타일) ───────────────────── */
+
+.admin-table-wrap {
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-table--full {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.admin-table--full th {
+  text-align: left;
+  padding: 12px 14px;
+  color: var(--color-text-sub);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.admin-table--full td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-table--full tbody tr:hover {
+  background: var(--color-hover);
+}
+
+.admin-table--full tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-logs__date-cell,
+.admin-logs__target-cell {
+  white-space: nowrap;
+}
+
+.admin-logs__details-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-sub);
+}
+
+.admin-logs__link {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.admin-logs__link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+/* ── 뱃지 ─────────────────────────────────────────────── */
+
+.admin-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-badge--green {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.admin-badge--gray {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.admin-badge--red {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.admin-badge--yellow {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.admin-badge--blue {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+/* ── 버튼 / 페이지네이션 (standalone 공용 스타일) ──────── */
+
+.admin-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-btn:hover {
+  background: var(--color-hover);
+}
+
+.admin-btn--small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-empty {
+  text-align: center;
+  color: var(--color-text-sub) !important;
+  padding: 20px 14px !important;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.admin-pagination__info {
+  font-size: 0.9rem;
+  color: var(--color-text-sub);
+}

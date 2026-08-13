@@ -22,6 +22,7 @@ from ..database.redis import get_redis
 from ..services import dm_service
 from ..services.dm_service import _get_conv, _short
 from ..services.official import get_official_id
+from .admin import _log_admin_action
 
 logger = logging.getLogger(__name__)
 
@@ -290,4 +291,22 @@ async def broadcast_cs(
         "[admin-cs] broadcast queued admin=%s official=%s audience=%s targets=%d",
         admin_tag, _short(official_id), audience, targets,
     )
+
+    # 감사 로그 적재 (best-effort) — text 원문 미저장(길이만), 실패해도 발송은 유지
+    try:
+        await _log_admin_action(
+            conn,
+            str(current_user["id"]),
+            "cs_broadcast",
+            "broadcast",
+            audience,
+            {"targets": targets, "text_len": len(text)},
+        )
+    except Exception:
+        logger.warning(
+            "[admin-cs] broadcast audit log failed admin=%s audience=%s targets=%d",
+            admin_tag, audience, targets,
+            exc_info=True,
+        )
+
     return {"queued": targets, "audience": audience}

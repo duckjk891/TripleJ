@@ -1223,20 +1223,43 @@ async def admin_media_proxy(
 async def list_admin_logs(
     page: int = 1,
     limit: int = 20,
+    action: Optional[str] = None,
+    target_type: Optional[str] = None,
     current_admin=Depends(get_admin_user),
     conn=Depends(get_pg),
 ):
-    total = await conn.fetchval("SELECT COUNT(*) FROM admin_logs")
+    page = max(page, 1)
+    limit = max(1, min(limit, 100))
+    logger.info(
+        "[admin] logs page=%d limit=%d action=%s target_type=%s",
+        page, limit, action, target_type,
+    )
+
+    # 동적 WHERE — exact match, 파라미터 바인딩만 사용(SQL 인젝션 금지)
+    conditions = []
+    params: list = []
+    if action:
+        params.append(action)
+        conditions.append(f"al.action = ${len(params)}")
+    if target_type:
+        params.append(target_type)
+        conditions.append(f"al.target_type = ${len(params)}")
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    total = await conn.fetchval(
+        f"SELECT COUNT(*) FROM admin_logs al {where_sql}", *params
+    )
     offset = (page - 1) * limit
 
     rows = await conn.fetch(
-        """SELECT al.id, al.admin_id, u.nickname AS admin_nickname, al.action,
+        f"""SELECT al.id, al.admin_id, u.nickname AS admin_nickname, al.action,
                   al.target_type, al.target_id, al.details, al.created_at
            FROM admin_logs al
            JOIN users u ON u.id = al.admin_id
+           {where_sql}
            ORDER BY al.created_at DESC
-           LIMIT $1 OFFSET $2""",
-        limit, offset,
+           LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}""",
+        *params, limit, offset,
     )
 
     logs = [

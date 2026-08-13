@@ -26286,3 +26286,106 @@ E2E (실발송 금지):
 - RecentContentPane 추출은 Reports 페이지 회귀 지점 — §5-6 필수.
 - formatDate 공용화는 이번 touch 파일 2곳에 한정 (Tracks/Dashboard/Reports 3곳 후속 과제).
 - 민감정보: 테스트 계정 실비밀번호·토큰은 문서/로그 미기재.
+
+# v176 — 관리자 앱 감사 로그 페이지 신설 (/logs) + 로그 필터·브로드캐스트 적재 보강 (2026-08-13 15:26)
+
+## 0. 요약
+`frontend_admin` 에 감사 로그(admin_logs) 조회 페이지를 신설한다. 백엔드 `GET /api/admin/logs` 와 프론트 `getAdminLogs` 래퍼(api.js:77)는 v162부터 존재했으나 **UI 사용처가 한 번도 없었음** — 이번이 첫 사용. 적재 커버리지 실측 결과 핵심 admin 액션은 이미 전부 기록 중이며, **유일한 유의미 갭은 v174 브로드캐스트 미적재** → 이번에 적재 추가(소규모 백엔드 확장 + 9004 미러). 조회 필터(action/target_type)도 백엔드에 최소 추가.
+
+## 1. 0단계 분석 (파일 실측)
+
+### 1-1. 백엔드 — GET /api/admin/logs (backend_9005/app/routes/admin.py:1222~1264)
+- **쿼리 파라미터**: `page`(기본 1), `limit`(기본 20) **뿐** — 필터(action/기간/관리자) 미지원, limit 상한 클램프 없음.
+- **응답 스키마** (실측):
+  ```
+  { logs: [{ id, admin_id, admin_nickname, action, target_type, target_id,
+             details(object|null), created_at(ISO|null) }],
+    pagination: { page, limit, total, totalPages } }
+  ```
+- SQL: `admin_logs al JOIN users u ON u.id=al.admin_id`, `ORDER BY al.created_at DESC`. 인덱스 `idx_admin_logs_created(created_at DESC)`·`idx_admin_logs_admin(admin_id)` 존재 (infra/init_postgres.sql:81~91).
+- 테이블: `admin_logs(id UUID, admin_id UUID FK users, action VARCHAR(50), target_type VARCHAR(20), target_id VARCHAR(100) NOT NULL, details JSONB, created_at TIMESTAMPTZ)`.
+
+### 1-2. 적재 커버리지 실측 — `_log_admin_action` (admin.py:57~73, INSERT INTO admin_logs)
+호출처 전수 (grep 실측):
+| action | target_type | details | 위치 |
+|---|---|---|---|
+| `change_role` | user | {role} | admin.py:290 |
+| `ban_user` / `unban_user` | user | {reason} | admin.py:334 |
+| `lift_restriction` | user | {had_restriction} | admin.py:368 |
+| `reset_strikes` | user | {deleted, auto_ban_lifted} | admin.py:420 |
+| `delete_track` | track | {title, uploader_id} | admin.py:523 |
+| `change_visibility` | track | {is_public} | admin.py:557 |
+| `report_{blind\|delete\|dismiss\|confirm_delete\|restore}` | track/feed/comment 등 | resolution detail | admin.py:1048 |
+| `face_purge` | report | {owner_id, purged_tracks, purged_characters, blacklisted, violation_recorded, failed} | admin_moderation.py:282 (import 재사용 :37) |
+
+**미기록 실측**:
+- **v174 브로드캐스트** (`POST /admin/cs/broadcast`, admin_cs.py:219~) — `logger.info` 만 있고 `_log_admin_action` 호출 **없음**. 전 사용자 대상 발송이라는 고위험 액션이 감사 로그에 안 남음 → **이번 작업의 핵심 갭**.
+- CS 답장/읽음 — DM 메시지 자체가 기록(발신자=official)이라 감사 로그 불요 판단. face-search — 조회성 액션, 미적재 허용.
+- v175 는 백엔드 무변경(신규 액션 없음) → 갭 없음. v145 제재 액션(lift/reset)·role/ban 모두 기록 중 확인.
+
+### 1-3. 프론트 (frontend_admin)
+- `src/api.js:77` — `getAdminLogs(params)` 존재·미사용. **api.js 변경 불요.**
+- `src/App.jsx:26~34` — flat Routes + AdminRoute 가드. `/logs` 자리는 :33(/cs) 다음.
+- `src/components/AdminLayout.jsx:49~68` — NavLink 5개(대시보드/사용자/트랙/신고/CS). 감사 로그는 목록 경유가 아닌 독립 페이지 → **NavLink 추가 필요** (아이콘 `FiFileText`, react-icons/fi 기존 의존).
+- `src/pages/AdminTracksPage.jsx` — 목록 페이지 관행 기준: `admin-table admin-table--full`/`admin-badge`/`admin-pagination`, 필터 버튼 `admin-filter-btn`, page/totalPages state + `fetchX` useCallback. 로컬 formatDate 는 **v175 `src/utils/format.js`(formatDate) 재사용**으로 대체.
+- `/users/:id` 상세(v175) 존재 — 로그 행 target_type==='user' 이면 target_id 가 user UUID (change_role/ban 등 실측) → Link 가능. admin_id 도 users 소속 → 관리자 닉네임 Link 가능.
+
+## 2. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| **적재 갭 처리** | **(a)-lite: 브로드캐스트 적재 1건만 추가** — `cs_broadcast` / target_type `broadcast` / target_id `{audience}` / details `{targets, text_len}`. **text 원문 절대 저장 금지**(v174 "원문 미로그" 정책 준수) | 핵심 액션(role/ban/제재/트랙/신고/몰수)은 이미 전부 기록 중(1-2) — 페이지가 비지 않음. 유일 갭인 고위험 브로드캐스트만 소규모 추가. 파일 변경 40% 제한 내 |
+| 백엔드 조회 확장 | `/logs` 에 optional `action`(exact match)·`target_type`(exact match) 파라미터 + `limit` 1~100 클램프, `page` ≥1 클램프. COUNT 쿼리에도 동일 WHERE | UI 필터는 "백엔드 지원 파라미터만" 원칙 — 최소 확장. 기간 필터는 이번 범위 밖(created_at DESC 정렬로 충분) |
+| 라우트 | `/logs` → `AdminLogsPage` (AdminRoute 가드), App.jsx :33 뒤 | flat Routes 관행 |
+| 사이드바 | AdminLayout NavLink 6번째 "감사 로그" (FiFileText), CS 다음 | 독립 페이지 — 진입점 필요 |
+| 테이블 컬럼 | 시각(formatDate) / 관리자(admin_nickname→`/users/{admin_id}` Link) / 액션(한글 라벨+색 badge) / 대상(target_type badge + target_id 축약 8자, user 면 `/users/{target_id}` Link) / 상세(details 요약) | **응답 실재 필드만**(1-1). id 원문은 title 속성 |
+| 액션 라벨 맵 | 1-2 표의 14종 + `cs_broadcast` 한글 라벨·badge 색 매핑, **미등록 action 은 원문 그대로 + gray badge** (fallback 필수) | 향후 action 추가 시 화면 깨짐 방지 |
+| details 표시 | `key: value` 나열 1줄 요약(길면 말줄임 + title 전체) — reason/role/is_public/targets 등 | JSONB 자유 스키마 — 범용 렌더 |
+| 필터 UI | target_type 버튼(전체/user/track/report/broadcast) + action select(라벨 맵 기반, 전체 포함). 변경 시 page=1 | 백엔드 확장분만 사용. AdminTracksPage 필터 버튼 관행 |
+| 페이지네이션 | limit 20, 이전/다음 + `{page}/{totalPages}` | 관행 동일 |
+| formatDate | `src/utils/format.js` import (신규 페이지라 전환 비용 0) | v175 공용화 방침 |
+| 로그 추적자 | DEV 콘솔 `[AdminLogs]` (로드 실패 시 status 만, details 원문 미출력) | ban reason 등 포함 가능 — 콘솔 미출력 관행 |
+| 9004 미러 | admin.py + admin_cs.py 복사 (현재 두 파일 9004와 diff 없음 실측 — 충돌 없음) | 미러 규칙 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `frontend_admin/src/pages/AdminLogsPage.jsx` | **신설** — 테이블+필터+페이지네이션, user Link | `[AdminLogs]` |
+| `frontend_admin/src/pages/AdminLogsPage.css` | **신설** | - |
+| `frontend_admin/src/App.jsx` | `/logs` Route 추가 | - |
+| `frontend_admin/src/components/AdminLayout.jsx` | NavLink "감사 로그"(FiFileText) 추가 | - |
+| `backend_9005/app/routes/admin.py` | `list_admin_logs` 에 action/target_type 필터 + limit/page 클램프 | `[admin]` 기존 관행 |
+| `backend_9005/app/routes/admin_cs.py` | broadcast queue 직후 `_log_admin_action("cs_broadcast", ...)` (from .admin import — admin_moderation.py:37 패턴) | 기존 `[admin-cs]` |
+| `backend_9004/app/routes/admin.py`, `admin_cs.py` | 9005 완성본 복사(미러) | - |
+| `frontend_admin/src/api.js` | **무변경** (getAdminLogs 기존 래퍼 그대로) | - |
+
+## 4. 작업 분담
+- **backend-dev**: ① admin.py `/logs` 필터·클램프 (WHERE 동적 구성, COUNT 동일 조건 — 파라미터 바인딩 필수, 문자열 포맷 금지) ② admin_cs.py broadcast 적재 (**queue 성공 경로에서만**, text 원문·비밀값 저장 금지, 적재 실패가 발송 응답을 막지 않게 try/except 로그) ③ 9005 완료 후 9004 두 파일 미러. 순서: 백엔드 선행 → 프론트.
+- **frontend-dev**: 매트릭스 프론트 4파일. AdminTracksPage 관행(테이블/필터/페이지네이션) + utils/format.js formatDate. 액션 라벨 맵 fallback 필수. Vite dev(4001) 육안 확인.
+- **test-designer**: §5.
+
+## 5. 테스트 항목 (test-designer)
+안전 제약: **실사용자 무접촉** — 조회·쓰기 전부 기존 테스트 계정(`bcast_admin_test_*` / `bcast_user_test_*@test.invalid`)만. 쓰기 액션 원복 필수.
+1. API: `GET /api/admin/logs` 200 + 스키마(1-1) / `?action=change_role`·`?target_type=user` 필터 결과 검증 / `limit=1000` 클램프(≤100) / 무토큰 401·비관리자 403
+2. 적재: 테스트 유저에 `change_role`(user↔customer, 원복) 실행 → 로그 최신 행에 action/admin_id/target_id/details.role 기록 확인
+3. 적재(브로드캐스트): **v174 TESTPLAN 검증 절차를 먼저 확인하고 동일 방식으로만** 발송 → `cs_broadcast` 행 생성 + details 에 text 원문 없음(text_len 만) 확인. 실발송이 부적절한 환경이면 400 경로(빈 text/잘못된 audience) 회귀 + 코드 리뷰로 한정하고 REPORT 에 명시
+4. UI: 로그인 → 사이드바 "감사 로그" → 테이블 렌더(시각·관리자·액션 badge·대상·상세), 필터 조합, 페이지네이션(21건 이상 시)
+5. UI: target_type user 행의 대상 클릭 → `/users/:id` 상세 이동 / 미등록 action 이 원문+gray 로 안전 렌더(테스트 DB에 임시 행 INSERT 후 DELETE 원복)
+6. 회귀(적재 추가 영향): `PUT /users/{id}/role`·`/ban`(원복), `POST /admin/cs/broadcast` 검증 실패 경로(400/429) 기존 동작 불변
+7. 회귀(기존 페이지 무영향): 대시보드/사용자/트랙/신고/CS 5페이지 정상 렌더 + 사이드바 active 하이라이트
+8. 9004 미러: admin.py·admin_cs.py diff 일치(기 실측: 현재 diff 없음 → 작업 후에도 없어야 함)
+9. 콘솔: `[AdminLogs]` 에 details 원문(ban reason 등)·이메일 미출력
+
+## 6. 리스크 / 강행 금지
+- **강행 금지**: ① 브로드캐스트 **임의 실발송 금지** — audience 'all' 등 전체 발송은 v174 검증 절차 확인 없이 실행하지 말 것(§5-3) ② admin_logs 테이블 스키마 변경(ALTER) 금지 — 기존 컬럼만 사용 ③ details 에 메시지 text 원문·토큰·비밀번호 저장 금지 ④ api.js 인터셉터 수정 금지.
+- 브로드캐스트 적재 실패가 발송 자체를 실패시키면 안 됨(§4 backend-dev ②) — 적재는 best-effort.
+- `/logs` JOIN users 는 inner — admin 계정 삭제 시 해당 로그가 목록에서 빠지는 기존 동작은 이번 범위에서 변경하지 않음(현 정책상 admin 삭제 미지원).
+- SQL 필터는 동적 WHERE — 파라미터 인덱스($1,$2..) 재번호 실수 주의, COUNT/SELECT 조건 불일치 시 totalPages 오류.
+
+## 7. v176 정정 (planner 구현 검토, 2026-08-13 15:37)
+- **§2 필터 UI 문안 정정**: "target_type 버튼 + action select" → **select 2종(액션·대상 유형, onChange 즉시 page 1 재조회)** 으로 구현 흡수. 액션 14종에는 버튼 나열보다 select 가 적합 — 계획 측 수정으로 확정, 구현 재작업 없음.
+- **스팟체크 결과**: 백엔드(동적 WHERE $N 바인딩·COUNT/SELECT 동일 조건·limit 1~100/page≥1 클램프·cs_broadcast 큐잉 성공 직후 best-effort 적재·거절 경로 미적재)와 프론트(5컬럼·ACTION_META 14종+fallback·user/admin Link·[AdminLogs] 3종) 모두 매트릭스 일치. 9004 미러 byte-identical 확인.
+- **마이크로픽스 1건 지시 (frontend-dev)**: `AdminLogsPage.jsx` `TARGET_TYPE_LABELS` 에 `feed: '피드'`, `comment: '댓글'` 추가 — report_* 액션의 target_type 이 track/**feed**/**comment** 로 적재됨(admin.py:1048 실측)에 대응. 필터 select 옵션은 라벨 맵에서 파생되므로 자동 반영. 미반영 행도 fallback 원문 표시로 안전(비차단) — AL-UNIT-01 실행 전 랜딩.
+- **AL-OPT-01 판정**: (a) 코드 리뷰 갈음 확정(실발송 금지 유지). 화면 측은 AL-UNIT-03 임시 행으로 보완. 상세는 TESTPLAN v176 §5 planner 판정 블록.
+- **§2 대상 컬럼 문안 정정 (1단계 결과 접수 후, 15:47)**: "target_id 축약 8자 + 원문 title" → **target_id 원문 표기(nowrap)** 로 구현 흡수. 근거: 감사 로그는 id 정확 대조·복사가 1차 용도(축약 가독성보다 우선), 렌더 무결 확인(tester 편차 보고 — 비차단). dev 픽스 없음, 픽스 사이클 0회 유지.

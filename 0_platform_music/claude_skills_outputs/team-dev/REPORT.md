@@ -14970,3 +14970,40 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - **formatDate 잔여 3곳**(Tracks/Dashboard/Reports 로컬 복사본) utils 전환 — 후속.
 - **RecentContentPane.css 보조 3클래스 복제**: 단독 사용용으로 AdminReportsPage.css 일부 클래스 복제됨 — 양쪽 수정 시 동기화 의무(파일 내 주석 명시).
 - 테스트 특이(앱 버그 아님): ① bash `UID` 예약변수 충돌로 API 오호출 1회(스크립트 정정 후 재실행 — 이후 스크립트에서 `UID` 변수명 금지) ② e2e 드라이버 기대값 오기로 FAIL 오판 1회(스크린샷+GET 재검증으로 PASS 확정) ③ e2e03_3 캡처가 로딩 중 시점 — e2e02_2로 교차 확인.
+
+# v176 — 관리자 앱 감사 로그 페이지 신설 (/logs) + 로그 필터·브로드캐스트 적재 보강 (2026-08-13 15:49)
+
+팀: platform-music-admin-auditlog (planner / frontend-dev / backend-dev / test-designer+tester)
+
+## 1. 요청 작업
+관리자 앱(frontend_admin)에 감사 로그(admin_logs) 조회 페이지 신설. v162부터 존재하던 백엔드 `GET /api/admin/logs` + 프론트 `getAdminLogs` 래퍼(api.js:77)의 **첫 UI 사용처**. 0단계 사전 분석으로 적재 커버리지 실측 후 갭 처리 방침 판단 포함.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **적재 커버리지 실측**: `_log_admin_action`(admin.py:57) 호출처 전수 조사 — change_role / ban·unban / lift_restriction / reset_strikes / delete_track / change_visibility / report_{blind·delete·dismiss·confirm_delete·restore} / face_purge **8계열 이미 기록 중**. 미기록 갭은 **v174 브로드캐스트 단 1건** → **(a)-lite 채택**: `cs_broadcast` 적재만 추가(admin_cs.py, 큐잉 성공 직후·best-effort·거절 경로 미적재·details={targets, text_len} — **text 원문 미저장**). 대규모 적재 확장 불요 판단(페이지 공백 리스크 없음).
+- **조회 필터 최소 확장**: `/logs` 에 `action`·`target_type` exact 필터($N 바인딩 동적 WHERE, COUNT/SELECT 동일 조건) + `limit` 1~100·`page` ≥1 클램프 도입. 기간 필터는 범위 외(후속 후보).
+- **화면**: `/logs` 라우트 + 사이드바 6번째 NavLink(FiFileText "감사 로그"). 5컬럼(시각 formatDate 공용 재사용 / 관리자 Link / 액션 ACTION_META 15종 한글 badge + 미등록 원문 gray fallback / 대상 target_type 라벨 + id / 상세 details 요약). **필터 select 2종**(계획 "버튼+select"를 구현 흡수 — 액션 다수엔 select 적합), **target_id 원문 표시** 채택(감사 로그는 id 대조·복사가 1차 용도 — 축약+title 안 폐기). target_type user 행 → `/users/:id`(v175) Link 연동.
+- **마이크로픽스**: report_* 의 target_type 이 track/feed/comment 로 적재되는 실측(admin.py:1048)에 따라 `TARGET_TYPE_LABELS` 에 feed/comment 추가(planner 스팟체크 발견).
+- **9004 미러**: admin.py·admin_cs.py 복사 — byte-identical 확인.
+
+## 3. 테스트 결과 — 17/17 PASS (+보류 1 SKIP 확정), 앱 픽스 사이클 0회
+- [api] 9/9: 스키마 8키+DESC 정렬, action/target_type exact 필터(대소문자 상이 0건 확증)·AND 복합·total 정합, limit 클램프 0→1/999→100·page 0→1, 401/403, change_role 변경+원복 각 1행 적재(+2 정확, details 민감정보 부재), 브로드캐스트 429 거절 경로 미적재+발송 0건(Redis 잠금 선점→DEL 정리), 9004 403 동일+파일 diff 0.
+- [unit] 5/5: 5컬럼 렌더+formatDate, 필터 재조회+page=1 리셋, 미등록 action fallback+cs_broadcast 라벨(임시 행 2건 INSERT→DELETE 원복 잔존 0), details null='-', 콘솔 민감정보 0건.
+- [e2e] 3/3: 사이드바→/logs→필터→user Link→상세 여정, role 변경·원복 후 새 행 2건 실시간 노출, 기존 5페이지 회귀 무손상+브로드캐스트 400·confirm dismiss·POST 0건.
+- 안전: 실사용자 무접촉(테스트 계정 한정), 실발송 0건, 쓰기 전부 원복 GET 검증 완료.
+
+## 4. 특이사항
+- **AL-OPT-01(큐잉 성공 적재 실측) = 코드 리뷰 갈음으로 SKIP 확정** — 큐잉 성공=실발송이라 v174 안전 규칙과 충돌. planner·tester 이중 소스 확인으로 대체(배치·원문 미전달·best-effort 검증). 실측은 v174 BC-OPT-01 과 묶어 **사용자 명시 승인 시** 별도 사이클.
+- **기간(날짜 범위) 필터 미지원** — 이번 범위 외, 후속 후보(created_at DESC 정렬 + 인덱스는 기존재).
+- 테스트가 남긴 change_role 감사 행(API 2 + E2E 2)은 감사 기록 특성상 **잔존이 정상**(삭제 불가 전제). 임시 INSERT 행은 전량 원복.
+- 드라이버 경합 2건은 앱 버그 아님 — 읽기 전용 재검증으로 해소.
+- limit 클램프(1~100) 신규 도입 — 기존 무제한 limit 의 잠재 과부하 제거.
+
+## 5. 변경 파일 (커밋 대상)
+- `backend_9005/app/routes/admin.py` — /logs 필터·클램프 (+31)
+- `backend_9005/app/routes/admin_cs.py` — cs_broadcast 감사 적재 (+19)
+- `backend_9004/app/routes/admin.py`, `backend_9004/app/routes/admin_cs.py` — 9005 미러 (diff 0)
+- `frontend_admin/src/pages/AdminLogsPage.jsx`, `AdminLogsPage.css` — 신설
+- `frontend_admin/src/App.jsx` — /logs 라우트 (+2)
+- `frontend_admin/src/components/AdminLayout.jsx` — NavLink 추가 (+5/-1)
+- `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md` — v176 append
+- api.js **무변경**(기존 래퍼 첫 사용), DB 스키마 **무변경**(ALTER 없음)
