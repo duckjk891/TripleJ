@@ -95,10 +95,12 @@ export default function FeedScreen() {
     navigation.navigate('Player', { track });
   };
 
+  const goLogin = () => navigation.navigate('Settings');
+
   const renderTrackBlock = (track: FeedTrack, key: string) => {
     const uri = coverUri(track.cover_image);
     return (
-      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => handlePlayTrack(track)} accessibilityLabel={`재생 ${track.title || ''}`}>
+      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => (user ? handlePlayTrack(track) : goLogin())} accessibilityLabel={`재생 ${track.title || ''}`}>
         <View style={styles.trackCover}>
           {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
             : <AppText variant="title3" tone="muted">♪</AppText>}
@@ -120,13 +122,15 @@ export default function FeedScreen() {
     const blocks = item.blocks || [];
     const textBlocks = blocks.filter((b) => b.type === 'text' && b.text);
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
-    return (
+    const card = (
       <Card variant="filled" style={styles.card}>
         <TouchableOpacity
           style={styles.head}
           activeOpacity={0.7}
-          disabled={!item.author_id}
-          onPress={() => item.author_id && navigation.navigate('UserChannel', { authorId: item.author_id, name: author })}
+          onPress={() => {
+            if (!user) return goLogin();
+            if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: author });
+          }}
           accessibilityLabel={`${author} 채널`}
         >
           <Avatar name={author} size={36} />
@@ -153,6 +157,13 @@ export default function FeedScreen() {
         </View>
       </Card>
     );
+    // 비로그인: 피드를 클릭하면 로그인 유도(텍스트 영역 탭 포함)
+    if (!user) {
+      return (
+        <TouchableOpacity activeOpacity={0.9} onPress={goLogin}>{card}</TouchableOpacity>
+      );
+    }
+    return card;
   };
 
   // 비로그인: 피드를 아래로 내리면 뜨는 로그인 CTA (하단 푸터)

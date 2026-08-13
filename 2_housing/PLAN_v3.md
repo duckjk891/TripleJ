@@ -7,6 +7,27 @@
 
 ---
 
+## v3.16 — 2026-08-13 — 느낌별음악 가로칩·게이트확장·검색로딩멘트 + 피드 클릭게이트 + 헤더 좌측정렬 통일
+
+### 요청
+① 느낌별 음악 작은 아이콘 가로 스크롤 + 탭 시 곡 ② 검색/느낌칩(미로그인) → 로그인 CTA ③ 검색 로딩 "최적의 음악을 찾고 있습니다" 멘트 ④ 피드 클릭/스크롤 → 로그인 CTA ⑤ 차트/작업실 상단바 좌측 아이콘 정렬 통일.
+
+### Plan verification findings (0단계)
+- SearchScreen(v3.15): 큰 카드 그리드 + 스피너 + 텍스트검색만 게이트.
+- FeedScreen(v3.15): 비로그인 피드 노출+하단CTA, 카드 탭 게이트 없음.
+- 헤더: 차트 `headerTitleAlign:'left'`(App.tsx), 작업실 setOptions 커스텀 title에 align 미설정 → 좌측 인셋 상이.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/SearchScreen.tsx | 느낌별 음악 가로칩 바 + 게이트확장(포커스/입력/칩탭/검색) + 로딩멘트 | `[SearchScreen]` |
+| screens/FeedScreen.tsx | 비로그인 카드 탭→로그인(Settings) 래핑 + 핸들러 게이트 | `[FeedScreen]` |
+| screens/MapScreen.tsx | 작업실 헤더 headerTitleAlign:'left' (차트와 좌측 정렬 통일) | — |
+
+측정: 차트 AIDOL x=16 == 작업실 작업실 x=16 (diff 0.0).
+
+---
+
 ## v3.15 — 2026-08-13 — 피드 소프트게이트·유저채널 + 검색 느낌별음악·게이트 + 작업실 헤더 정리
 
 ### 요청

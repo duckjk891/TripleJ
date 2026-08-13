@@ -1,8 +1,9 @@
 // [SearchScreen] 곡 검색 + 느낌별 음악(MAIDOL 메인 이식).
-// 기본 화면(검색 전)=느낌별 음악 카테고리(운동~잠자기, GET /charts/categories → 탭 시 /charts/category/{name}).
-// 비로그인 사용자가 검색을 시작(입력창 포커스)하면 "로그인하고 시작하기" CTA.
+// 느낌별 음악 = 작은 아이콘 칩이 가로로 나열(가로 스크롤). 칩 탭 → 해당 느낌 곡 목록.
+// 비로그인 사용자가 (검색 시도 | 느낌 칩 탭) 하면 "로그인하고 시작하기" CTA.
+// 검색 로딩은 스피너 대신 "최적의 음악을 찾고 있습니다" 멘트.
 import { useState, useEffect, useCallback } from 'react';
-import { View, TextInput, FlatList, ScrollView, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, TextInput, FlatList, ScrollView, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -35,9 +36,12 @@ export default function SearchScreen() {
   const [results, setResults] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [focused, setFocused] = useState(false);
+  const [gated, setGated] = useState(false);
   const [categories, setCategories] = useState<string[]>(CATEGORY_FALLBACK);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+
+  // 로그인되면 게이트 해제
+  useEffect(() => { if (user) setGated(false); }, [user]);
 
   // 카테고리 목록 로드
   useEffect(() => {
@@ -57,7 +61,18 @@ export default function SearchScreen() {
     return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
   };
 
+  // 비로그인 → 로그인 CTA 노출(true 반환 시 차단)
+  const blockIfGuest = (): boolean => {
+    if (!user) {
+      if (__DEV__) console.info('[SearchScreen] 미로그인 게이트');
+      setGated(true);
+      return true;
+    }
+    return false;
+  };
+
   const handleSearch = async (q: string) => {
+    if (blockIfGuest()) return;
     const trimmed = q.trim();
     if (!trimmed) return;
     if (__DEV__) console.info('[SearchScreen] handleSearch', { q: trimmed });
@@ -76,6 +91,7 @@ export default function SearchScreen() {
   };
 
   const handleSelectCategory = useCallback(async (cat: string) => {
+    if (!useAuthStore.getState().user) { setGated(true); return; }
     if (activeCategory === cat) { setActiveCategory(null); setResults([]); setSubmitted(false); return; }
     if (__DEV__) console.info('[SearchScreen] getCategoryChart', { cat });
     setActiveCategory(cat);
@@ -101,9 +117,6 @@ export default function SearchScreen() {
 
   const clearAll = () => { setQuery(''); setResults([]); setSubmitted(false); setActiveCategory(null); };
 
-  // 비로그인 사용자가 검색을 시작(입력창 포커스/입력)하면 로그인 유도
-  const searchGated = !user && (focused || query.length > 0);
-
   const renderTrack = ({ item }: { item: Track }) => {
     const uri = getCoverUri(item);
     return (
@@ -119,6 +132,35 @@ export default function SearchScreen() {
     );
   };
 
+  // 느낌별 음악 — 작은 칩 가로 스크롤 바
+  const MoodBar = () => (
+    <View style={styles.moodSection}>
+      <AppText variant="footnote" tone="secondary" style={styles.moodTitle}>느낌별 음악</AppText>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.moodBar}
+        keyboardShouldPersistTaps="handled"
+      >
+        {categories.map((cat) => {
+          const active = activeCategory === cat;
+          return (
+            <TouchableOpacity
+              key={cat}
+              style={[styles.moodChip, active && styles.moodChipActive]}
+              activeOpacity={0.8}
+              onPress={() => handleSelectCategory(cat)}
+              accessibilityLabel={`느낌별 ${cat}`}
+            >
+              <AppText variant="footnote">{CATEGORY_EMOJI[cat] || '🎵'}</AppText>
+              <AppText variant="footnote" tone={active ? 'accent' : 'primary'} numberOfLines={1}>{cat}</AppText>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+
   return (
     <ScreenLayout>
       <View style={styles.searchBar}>
@@ -128,10 +170,9 @@ export default function SearchScreen() {
           placeholder="곡 제목, 아티스트, 태그 검색"
           placeholderTextColor={colors.text.muted}
           value={query}
-          onChangeText={setQuery}
-          onFocus={() => { setFocused(true); if (!user && __DEV__) console.info('[SearchScreen] 미로그인 검색 시도'); }}
-          onBlur={() => setFocused(false)}
-          onSubmitEditing={() => !searchGated && handleSearch(query)}
+          onChangeText={(v) => { if (!user) { setGated(true); return; } setQuery(v); }}
+          onFocus={() => { if (!user) setGated(true); }}
+          onSubmitEditing={() => handleSearch(query)}
           returnKeyType="search"
         />
         {query.length > 0 && (
@@ -141,15 +182,23 @@ export default function SearchScreen() {
         )}
       </View>
 
-      {searchGated ? (
+      {/* 느낌별 음악 가로 칩 바 (항상 노출) */}
+      <MoodBar />
+
+      {gated ? (
         <View style={styles.loginCta}>
           <AppText variant="body" tone="secondary" center style={styles.loginHint}>
-            검색은 로그인 후 이용할 수 있어요
+            검색과 느낌별 음악은{'\n'}로그인 후 이용할 수 있어요
           </AppText>
           <Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />
         </View>
       ) : loading ? (
-        <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
+        <View style={styles.loadingWrap}>
+          <AppText variant="title3">🎧</AppText>
+          <AppText variant="body" tone="secondary" center style={{ marginTop: spacing.sm }}>
+            최적의 음악을 찾고 있습니다…
+          </AppText>
+        </View>
       ) : results.length > 0 ? (
         <FlatList
           data={results}
@@ -161,20 +210,9 @@ export default function SearchScreen() {
           ) : null}
         />
       ) : submitted ? (
-        <EmptyState icon="🔍" title="결과가 없습니다" hint="다른 검색어/카테고리로 시도해보세요" />
+        <EmptyState icon="🔍" title="결과가 없습니다" hint="다른 검색어/느낌으로 시도해보세요" />
       ) : (
-        // 기본: 느낌별 음악
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.moodWrap}>
-          <AppText variant="title3" style={styles.moodTitle}>느낌별 음악</AppText>
-          <View style={styles.moodGrid}>
-            {categories.map((cat) => (
-              <TouchableOpacity key={cat} style={styles.moodChip} activeOpacity={0.8} onPress={() => handleSelectCategory(cat)} accessibilityLabel={`느낌별 ${cat}`}>
-                <AppText variant="title2">{CATEGORY_EMOJI[cat] || '🎵'}</AppText>
-                <AppText variant="footnote" numberOfLines={1}>{cat}</AppText>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </ScrollView>
+        <EmptyState icon="🎵" title="느낌을 선택하거나 검색해보세요" hint="위의 느낌별 음악을 눌러보세요" />
       )}
     </ScreenLayout>
   );
@@ -183,11 +221,21 @@ export default function SearchScreen() {
 const styles = StyleSheet.create({
   searchBar: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    margin: spacing.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    margin: spacing.lg, marginBottom: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     backgroundColor: colors.bg.surface1, borderRadius: radius.md,
   },
   input: { flex: 1, color: colors.text.primary, fontSize: 14, paddingVertical: 4 },
-  spinner: { marginTop: spacing.huge },
+  moodSection: { marginBottom: spacing.sm },
+  moodTitle: { marginLeft: spacing.lg, marginBottom: spacing.xs },
+  moodBar: { paddingHorizontal: spacing.lg, gap: spacing.sm },
+  moodChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  moodChipActive: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
+  loadingWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.huge },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
@@ -199,12 +247,4 @@ const styles = StyleSheet.create({
   resultHead: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   loginCta: { alignItems: 'center', paddingVertical: spacing.huge, paddingHorizontal: spacing.lg, gap: spacing.lg },
   loginHint: { lineHeight: 20 },
-  moodWrap: { padding: spacing.lg },
-  moodTitle: { marginBottom: spacing.md },
-  moodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' },
-  moodChip: {
-    width: '31%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: colors.bg.surface1, borderRadius: radius.lg, marginBottom: spacing.sm,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
 });

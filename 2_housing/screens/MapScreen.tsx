@@ -296,6 +296,7 @@ export default function MapScreen({ navigation }: Props) {
     const parent = navigation.getParent();
     if (!parent) return;
     parent.setOptions({
+      headerTitleAlign: 'left',
       // 도움말(ⓘ) 아이콘을 엔터 이름 오른편에 배치 (말풍선 제거)
       headerTitle: () => (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

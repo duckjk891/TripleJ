@@ -4,6 +4,42 @@
 
 ---
 
+## v3.16 (UX 다듬기 — 느낌별음악 가로칩·게이트확장·검색로딩멘트 + 피드 클릭게이트 + 헤더 좌측정렬 통일) — 2026-08-13
+
+### 요청 작업
+① 느낌별 음악을 큰 아이콘 그리드가 아니라 **작은 아이콘 가로 나열(가로 스크롤)** + 칩 탭 시 곡 노출. ② 검색 시도 **또는 느낌별 음악 클릭** 시(미로그인) 로그인 CTA. ③ 검색 로딩바 대신 **"최적의 음악을 찾고 있습니다"** 멘트. ④ 피드 **클릭하거나 스크롤 내리면** 로그인 CTA. ⑤ **차트/작업실 상단바 왼쪽 아이콘 간격 통일**.
+
+### Plan verification findings (0단계)
+- SearchScreen(v3.15) 느낌별 음악 = 3열 큰 카드 그리드 + `ActivityIndicator` 로딩 + 텍스트검색만 게이트(칩 탭은 미게이트).
+- FeedScreen(v3.15) = 비로그인 피드 노출 + 하단 CTA만(카드 탭은 채널/재생으로 이동 — 게이트 없음).
+- 헤더 좌측: 차트=`homeHeader` `headerTitle=<LogoTitle/>` + `headerTitleAlign:'left'`(App.tsx:197). 작업실=`MapScreen` setOptions 커스텀 `headerTitle` 인데 **`headerTitleAlign` 미설정** → 좌측 인셋 상이(측정: 작업실 title x가 차트와 어긋남).
+
+### 수행 결과
+- **screens/SearchScreen.tsx**: 느낌별 음악을 **가로 스크롤 칩 바**(`ScrollView horizontal`, 이모지+라벨 작은 pill, 활성 칩 강조)로 교체 — 항상 상단 노출, 칩 탭 → `/charts/category/{name}` 결과. **게이트 확장**: 미로그인 사용자가 (입력창 포커스/입력 | 느낌 칩 탭 | 검색 실행) 시 `gated=true` → "로그인하고 시작하기" CTA(로그인 시 자동 해제). **로딩 멘트**: 스피너 제거 → `🎧 최적의 음악을 찾고 있습니다…`.
+- **screens/FeedScreen.tsx**: 비로그인 시 **피드 카드 전체 탭 → 로그인(Settings) 이동**(카드를 `TouchableOpacity`로 래핑 + 작성자헤더·트랙 핸들러도 미로그인 시 로그인으로). 하단 스크롤 CTA(v3.15)는 유지. `goLogin()` 헬퍼.
+- **screens/MapScreen.tsx**: 작업실 헤더에 **`headerTitleAlign:'left'`** 추가 → 차트 헤더와 좌측 정렬 통일(측정 결과 두 타이틀 모두 x=16, diff 0.0).
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 느낌별 음악 = 가로 스크롤 칩 바(운동~잠자기) | PASS (`/tmp/v316_1_search_moodbar.png`) |
+| [e2e] 미로그인 느낌칩 탭 → 로그인 CTA | PASS (`/tmp/v316_2_search_gate.png`) |
+| [e2e] 미로그인 피드 클릭 → 로그인 화면 | PASS (`/tmp/v316_3_feed_click_gate.png`) |
+| [e2e] 텍스트 검색 로딩 = "최적의 음악을 찾고 있습니다" 멘트 | PASS (`/tmp/v316_5_loading_msg.png`) |
+| [e2e] 로그인 후 느낌칩 탭 → 곡 결과 | PASS (`/tmp/v316_4_category_results.png`) |
+| [e2e] 차트/작업실 헤더 좌측 타이틀 x=16 동일 | PASS (`/tmp/v316_chart_hdr.png`·`v316_studio_hdr.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- 카테고리(느낌) 결과 로딩은 매우 빨라 멘트가 순간 노출 → 멘트 검증은 느린 **텍스트 검색**(`/tracks/search` 시맨틱)에서 확인.
+- 피드 "클릭→로그인"은 로그인 화면(Settings)으로 이동하는 방식(= "로그인하고 시작하기"와 동일 진입점).
+
+### 커밋
+`feat: v3.16 느낌별음악 가로칩·게이트확장·검색로딩멘트 + 피드 클릭게이트 + 헤더 좌측정렬 통일 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.15 (기능 #7 — 피드 소프트게이트·유저채널 페이지 + 검색 느낌별음악·게이트 + 작업실 헤더/아이콘 정리) — 2026-08-13
 
 ### 요청 작업
