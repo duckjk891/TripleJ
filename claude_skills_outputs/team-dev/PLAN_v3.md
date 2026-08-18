@@ -7,6 +7,27 @@
 
 ---
 
+## v3.34 — 2026-08-18 — 재생목록↔플레이리스트 구분(큐 보존) + 재생목록 아이콘 위치 교체
+
+### 요청
+① 플레이리스트 재생이 재생목록(누적 큐)을 덮어써 섞인 것처럼 보임 — 구분 필요. ② ≡(순서 편집)와 ×(닫기) 위치 교체.
+
+### Plan verification findings
+- PlaylistScreen 곡 탭 = `setQueue(playlistTracks)`(교체) → 누적 18곡이 5곡으로 덮여 사라짐(파괴적). 차트/‘재생목록에 추가’는 이미 `addToQueue`(누적).
+- DraggableQueue 행: `본문 → ×(제거) → ≡(핸들)` 순.
+
+### 변경 매트릭스 (추적자: 컴포넌트 prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| stores/playerStore.ts | `mergeAndPlay(tracks,targetId)` — 누적(중복제외)+id정규화+선택곡 재생, 파괴적 교체 제거 | — |
+| screens/PlaylistScreen.tsx | 곡 탭 `setQueue`→`mergeAndPlay`(큐 보존) | `[PlaylistScreen] mergeAndPlay` |
+| components/DraggableQueue.tsx | 행 배치 `본문 → ≡ → ×`로 교체 | — |
+
+### 설계 결정
+재생목록 = 단일 누적 '지금 재생' 목록 / 플레이리스트 = 저장 소스. 플레이리스트 재생은 큐를 보존 누적. Search/Artist/Feed/UserChannel의 setQueue 교체는 이번 범위 외(후속 통일 가능).
+
+---
+
 ## v3.33 — 2026-08-18 — 마퀴 크로스플랫폼 측정 + 재생목록 드래그 편집 + 차트 '내 재생목록' 탭
 
 ### 요청

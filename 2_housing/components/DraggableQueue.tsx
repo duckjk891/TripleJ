@@ -96,13 +96,13 @@ export default function DraggableQueue({ data, currentIndex, onReorder, onPress,
                 <AppText variant="caption" tone="muted" numberOfLines={1}>{q?.artist_name || q?.uploader_nickname || '아티스트'}</AppText>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onRemove(i)} accessibilityLabel="목록에서 제거" style={styles.iconBtn}>
-              <Feather name="x" size={16} color={colors.text.muted} />
-            </TouchableOpacity>
-            {/* 드래그 핸들 — 이 영역을 잡고 끌어 순서 변경 */}
+            {/* 드래그 핸들 — 이 영역을 잡고 끌어 순서 변경 (닫기 아이콘보다 앞쪽에 배치) */}
             <View style={styles.handle} {...getResponder(i).panHandlers} accessibilityLabel="순서 변경 손잡이">
               <Feather name="menu" size={18} color={colors.text.muted} />
             </View>
+            <TouchableOpacity onPress={() => onRemove(i)} accessibilityLabel="목록에서 제거" style={styles.iconBtn}>
+              <Feather name="x" size={16} color={colors.text.muted} />
+            </TouchableOpacity>
           </Animated.View>
         );
       })}
