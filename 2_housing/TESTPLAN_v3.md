@@ -5,6 +5,16 @@
 
 ---
 
+## v3.38 — 2026-08-18 — 검색 로그인 CTA 통일 검증
+
+- [unit] tsc --noEmit → 에러 0.
+- [e2e] 디자인 통일: Given 비로그인 When 검색창 포커스 / 플레이리스트 진입 / 피드 스크롤 Then 3화면의 버튼(fontSize·fontWeight·color·width)과 설명문(fontSize·lineHeight·color) 실측값이 **모두 동일**.
+- [e2e] 위치 통일: Then 버튼 중심 Y좌표가 3화면 동일(중앙 정렬).
+- [regression] 검색 상단 검색창·느낌별 칩 바 유지, 게이트 트리거(포커스/입력) 유지, 로그인 버튼 탭 시 Settings 이동.
+- [regression] 콘솔 에러 0.
+
+---
+
 ## v3.37 — 2026-08-18 — 별 안내 문구 + 가입 승계 / 로그인 복원 검증
 
 - [unit] tsc --noEmit → 에러 0.

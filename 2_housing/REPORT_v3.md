@@ -4,6 +4,34 @@
 
 ---
 
+## v3.38 (검색 화면 로그인 CTA를 공통 컴포넌트로 통일) — 2026-08-18
+
+### 요청 작업
+검색 페이지의 "로그인하고 시작하기"도 다른 화면과 **디자인·위치가 통일**되어야 함.
+
+### Plan verification findings (0단계)
+- 피드/플레이리스트/작업실(Map)은 공통 `components/LoginPrompt.tsx`(내부 `LoginStartButton`)를 사용 — 설명문 15px/lineHeight 24/secondary, 버튼은 accent 배경·radius 24·py14/px40·흰색 bold 16, 컨테이너는 `flex:1 + justifyContent:'center'`(세로 중앙).
+- **검색만 예외**(`screens/SearchScreen.tsx:202`): 공통 컴포넌트 대신 `AppText`(body, lineHeight 20) + 범용 `Button`을 직접 조합했고, 컨테이너가 `paddingVertical: spacing.huge`라 **세로 중앙이 아니라 상단 쪽에 붙어** 있었음 → 폰트·버튼 스타일·위치가 모두 달랐음.
+
+### 수행 결과
+- **screens/SearchScreen.tsx**: 자체 조합(AppText+Button)을 **공통 `LoginPrompt`로 교체**하고, 컨테이너를 `flex:1 + justifyContent:'center'`로 바꿔 다른 화면과 동일한 세로 중앙 배치로 통일. 문구는 기존 그대로("검색 기능은 로그인 후 이용할 수 있어요"). 미사용이 된 `Button` import 제거, `loginHint` 스타일 삭제.
+- 검색 상단의 검색창·느낌별 칩 바는 기존대로 유지(v3.16/17 사양) — CTA는 그 아래 남는 영역의 중앙에 배치된다.
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc --noEmit | 에러 0 |
+| [e2e] 검색·플레이리스트·피드 3화면 CTA 실측 비교(버튼 fontSize/weight/color/width, 설명문 fontSize/lineHeight/color) | **불일치 0** — 전부 16px/700/#fff/128px, 설명 15px/24px/secondary |
+| [e2e] 위치 통일: 버튼 중심 Y좌표 | 3화면 모두 **531px**(viewport 844) 동일 |
+| [e2e] 스크린샷 육안 확인 | PASS (`/tmp/v338_search.png`, `/tmp/v338_playlist.png`, `/tmp/v338_feed.png`) |
+| 콘솔 에러 | 0 |
+
+### 특이사항
+- 검색은 게이트 진입 조건이 다른 화면과 다름(검색창 포커스/입력 시 노출) — 이번 요청은 디자인·위치 통일이므로 트리거 방식은 유지했다.
+- 남은 비통일 지점: `MyMusicScreen`/`ArtistInputScreen`은 `EmptyState`+`Button` 조합(작업실 오버레이와 별개 경로)이라 CTA 형태가 다르다. 요청 범위 밖이라 손대지 않았으며, 원하면 동일하게 통일 가능.
+
+---
+
 ## v3.37 (별 안내 문구 보강 + 가입=승계·로그인=계정 목록 복원) — 2026-08-18
 
 ### 요청 작업

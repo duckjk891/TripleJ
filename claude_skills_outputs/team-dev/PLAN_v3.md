@@ -7,6 +7,22 @@
 
 ---
 
+## v3.38 — 2026-08-18 — 검색 화면 로그인 CTA 공통 컴포넌트로 통일
+
+### 요청
+검색 페이지의 "로그인하고 시작하기"를 다른 화면과 디자인·위치 통일.
+
+### Plan verification findings
+- 피드/플레이리스트/작업실: 공통 `LoginPrompt`(+LoginStartButton), 컨테이너 flex:1+center.
+- 검색(`SearchScreen.tsx:202`)만 AppText(body/lineHeight 20)+범용 Button 자체 조합, 컨테이너 paddingVertical:huge → 상단 치우침. 폰트·버튼·위치 모두 상이.
+
+### 변경 매트릭스
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| screens/SearchScreen.tsx | 자체 CTA → 공통 LoginPrompt, loginCta를 flex:1+center로, Button import·loginHint 제거 | (기존 화면 로그 유지) |
+
+---
+
 ## v3.37 — 2026-08-18 — 별 안내 문구 보강 + 가입=승계 / 로그인=계정 목록 복원
 
 ### 요청

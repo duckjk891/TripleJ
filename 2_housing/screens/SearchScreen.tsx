@@ -11,7 +11,8 @@ import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
-import { AppText, EmptyState, ScreenLayout, Button } from '../components/ui';
+import { AppText, EmptyState, ScreenLayout } from '../components/ui';
+import LoginPrompt from '../components/LoginPrompt';
 
 interface Track {
   id: string;
@@ -199,11 +200,12 @@ export default function SearchScreen() {
       <MoodBar />
 
       {gated ? (
+        // 로그인 CTA는 피드/플레이리스트/작업실과 동일하게 공통 LoginPrompt + 세로 중앙 정렬로 통일
         <View style={styles.loginCta}>
-          <AppText variant="body" tone="secondary" center style={styles.loginHint}>
-            검색 기능은 로그인 후{'\n'}이용할 수 있어요
-          </AppText>
-          <Button label="로그인하고 시작하기" onPress={() => navigation.navigate('Settings')} />
+          <LoginPrompt
+            desc={'검색 기능은 로그인 후\n이용할 수 있어요'}
+            onPress={() => navigation.navigate('Settings')}
+          />
         </View>
       ) : loading ? (
         <View style={styles.loadingWrap}>
@@ -258,6 +260,5 @@ const styles = StyleSheet.create({
   coverPh: { backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
   info: { flex: 1 },
   resultHead: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  loginCta: { alignItems: 'center', paddingVertical: spacing.huge, paddingHorizontal: spacing.lg, gap: spacing.lg },
-  loginHint: { lineHeight: 20 },
+  loginCta: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });
