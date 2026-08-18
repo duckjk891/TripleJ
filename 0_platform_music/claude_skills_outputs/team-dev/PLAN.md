@@ -26845,3 +26845,89 @@ E2E (실발송 금지):
 - **plan 단일 버킷 현상**: 현 데이터 free 100% — 프리미엄 행이 0 으로 표시됨(정상). 과금 도입 전까지 정보량 낮음을 REPORT 에 기재(구현은 일반형 유지).
 - 코호트 인원 합 검산은 users 전체(157) 기준 — 탈퇴 익명화 계정도 created_at 보존이라 포함됨(모수 정의 각주 불요, 검산엔 영향 없음).
 - `_sum_points_by_user` 와 demographics 내 기존 파이프라인의 중복은 의도적(기존 코드 보호) — 공통화 추출은 후속 후보에 추가.
+
+---
+
+# v184 — 관리자 광고주 관리 페이지 (/advertisers 목록·상세 + 강제 숨김) (2026-08-18 16:57)
+
+## 0. 사전 코드 분석 (Explore 전수조사 + planner 핵심 재확인)
+
+- `business.py:1106 GET /dashboard` — 핸들러 인라인 로직: 아이템 조회→impressions/clicks 집계→PG ad_wishlist→`_worn_counts_by_item`(:637 풀스캔 — 단일 광고주 한정 수용)→아이템별 성과 배열→chart_data 시계열→합계 반환. **응답에 시계열+아이템별 성과(worn 포함) 전부 포함 실측** → ⑧("대시보드와 동일 + 인사이트")은 **dashboard 단일 재사용으로 충족**(per-item insights :863 재사용은 범위 외 — 아이템 심화 화면은 차기 후보. 판단 사항으로 보고).
+- `business.py:422` `GET /ads/active` — `match_filter = {"is_active": True}` → **admin_hidden 필터 삽입 지점 확정**.
+- require_business(:41) 게이트 때문에 admin 이 business 라우트 직접 호출 불가 → **순수 추출 방식 필요**(v179 broadcast 전례).
+- main.py 인덱스 관행: `:375-378` feeds create_index idempotent try/except 블록 — 동일 방식으로 ad_impressions/ad_clicks 추가 가능.
+- 이벤트 의미 재확인: `ad_impressions` = **"착장 선택"**(용어 통일 대상), CTR = clicks/impressions(기존 광고주 화면 정의).
+- 회사 정보 정본 = Mongo `business_profiles`(PG company_name 은 `_normalize_company_name` 오염 가능 — 실측 기지). 광고주 11(customer), 아이템 449.
+- 관리자 측 ad_* 참조 전무 — admin_ads.py·프론트 페이지·api 래퍼 전부 신설.
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| dashboard 재사용 | **순수 추출**: `business_dashboard` 본문 → 모듈 함수 `build_dashboard_data(mongo, conn, user_id, period, category, verified_only) -> dict`, 기존 핸들러는 검증(category 400)+위임 — **대외 동작·응답·로그 불변(diff 단일 이동 헌크 증빙 요구)**. admin_ads 가 import 호출 | require_business 우회 불가(0단계) + 코드 복제 금지 지시. v179 순수 추출 전례 |
+| 강제 숨김 필드 | `ad_items.admin_hidden: bool`(신규, 광고주 is_active 와 **별개**) + `admin_hidden_at`(감사 보조 — updated_at 은 광고주 수정 의미라 불변). `GET /ads/active` 에 `"admin_hidden": {"$ne": True}` 추가(기존 문서 필드 부재 → $ne true 로 자동 통과, 마이그레이션 불요). 광고주 본인 GET /ads 에는 admin_hidden **노출**(상태 인지 — `_serialize_doc` 전 필드 직렬화 확인, 아니면 명시 추가). **사유는 광고주에게 비노출**(내부 감사용 — 분쟁은 CS 채널) | 광고주 toggle 로 해제 불가 구조(별개 필드). 비파괴 필터 |
+| 숨김 API | **PATCH `/api/admin/ads/items/{item_id}/hidden`** body `{hidden: bool, reason?: str ≤200}` — 단일 엔드포인트(admin.py 트랙 visibility PUT 관행 정합). ObjectId 형식 400·미존재 404·**멱등**(동일 상태 200). 감사 action = hidden 값 따라 **`ads_admin_hide` / `ads_admin_unhide`**, target_type=`ad_item`, target_id=item_id, details `{advertiser_id, item_name, reason}` best-effort | 관행 정합 + 감사 로그 가독(2 액션 분리) |
+| 신규 admin_ads.py | prefix `/api/admin/ads`, get_admin_user 게이트(admin_points 패턴). ① `GET /advertisers?q=&days=30`(days 화이트리스트 {7,30,90} — analytics 관행): summary 카드 4(광고주 수·등록 아이템·활성=is_active∧¬admin_hidden·기간 클릭) + 행별 {user_id, nickname, company_name(Mongo 정본, 폴백 PG), item_count, active_count, impressions(착장 선택), clicks, ctr, wish, status(account_status/is_banned)}. q = 회사명·닉네임 부분일치(앱 레벨 필터 — 광고주 11 규모) ② `GET /advertisers/{user_id}?days=`: ④프로필(Mongo 정본+PG 계정 email/nickname/created_at/상태) + ⑥성과 요약 4 + ⑦items[](누적 clicks/wish·is_active·admin_hidden·category·brand·product_name·image_object_name·created_at — **worn 미포함**: `_worn_counts_by_item` 풀스캔은 ⑧ 전용) ③ `GET /advertisers/{user_id}/dashboard?period=&category=&verified_only=` — build_dashboard_data 위임(읽기 전용) ④ PATCH hidden(상기) | 집계는 ad_items 전량 로드(449 — 무해) 후 item→광고주 fold — `_worn_counts_by_item` 목록 사용 금지(성능 지뢰) 준수 |
+| 인덱스 | main.py lifespan — `ad_impressions`·`ad_clicks` 에 `[("item_id",1),("timestamp",-1)]` create_index(idempotent try/except — feeds :375 관행) | 기간 집계 상시화 대비. 지시 3 |
+| ⑤ 플랜·과금 | **백엔드 없음** — 프론트 자리 블록("향후" 배지, 전값 "—", 과금 모델 설명 1줄: 노출 아이템 개수별 월 정액) | 승인 목업(자리만) |
+| 썸네일 | 우선 기존 admin 미디어 프록시(`GET /api/admin/media/{object_name:path}` — admin.py:1194) 재사용 — **backend-dev 가 ads/ 오브젝트 접근 가능 여부 실측**, 불가 시 business 공개 프록시(:372) 사용 판단 보고 | 신규 프록시 지양 |
+| 용어·정의 | 화면 전체 "착장 선택"(노출 금지어)·"클릭율"(CTR=클릭/착장 선택 — 목록·상세·⑧ 동일) | 지시 4·6 |
+| 개인정보 | 위시/클릭 개별 사용자 목록 금지(집계만). ⑧ 재사용 로직은 기존 규칙 내장(14세 미만 제외·k-익명 5 — 무변경 재사용이라 자동 준수). 서버 로그 개인값 금지 | 지시 5 |
+| 프론트 | `AdminAdvertisersPage.jsx/.css`(요약 4+검색+테이블, 행 클릭 → 상세) + `AdminAdvertiserDetailPage.jsx/.css`(④~⑧ 블록 — ⑧은 기간 토글 대신 기존 대시보드 period(daily/weekly/monthly) 규약 그대로, ⑥은 days 7/30/90) 신설. App.jsx 라우트 2(`/advertisers`, `/advertisers/:id`), AdminLayout 8번째 NavLink(FiShoppingBag "광고주 관리"), api.js 래퍼 4(`getAdminAdvertisers`/`getAdminAdvertiser`/`getAdminAdvertiserDashboard`/`setAdminAdItemHidden`). 숨김 버튼 window.confirm(아이템명·방향 명시). 추적자 `[AdminAds]` | 관행. ⑥/⑧ 기간 규약 상이는 화면 구분 표기 |
+| **감사 라벨 짝 항목** | AdminLogsPage ACTION_META `ads_admin_hide: '광고 숨김'(red)`·`ads_admin_unhide: '광고 숨김 해제'(green)` + TARGET_TYPE_LABELS `ad_item: '광고 아이템'` | v177 관행(필수) |
+| 미러 | 9005 → 9004: admin_ads.py(신설)·business.py·main.py 3파일 | 미러 규칙 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_ads.py` | **신설** — advertisers 목록/상세/dashboard/hidden 4 엔드포인트 | `[admin-ads]` |
+| `backend_9005/app/routes/business.py` | ① dashboard 순수 추출(`build_dashboard_data`) ② `/ads/active` admin_hidden 필터 1줄 ③ (필요시) GET /ads 직렬화에 admin_hidden 포함 | 기존 `[business]`(실태그 확인) |
+| `backend_9005/app/main.py` | admin_ads import+등록 2줄 + ad_impressions/ad_clicks 인덱스 블록 | - |
+| `backend_9004/...` 동일 3파일 | 9005 완성본 미러(byte-identical) | - |
+| `frontend_admin/src/pages/AdminAdvertisersPage.jsx/.css`·`AdminAdvertiserDetailPage.jsx/.css` | **신설** — 화면 1·2 | `[AdminAds]` |
+| `frontend_admin/src/App.jsx`·`components/AdminLayout.jsx` | 라우트 2 + NavLink 8번째 | - |
+| `frontend_admin/src/api.js` | 래퍼 4 | - |
+| `frontend_admin/src/pages/AdminLogsPage.jsx` | ACTION_META 2 + TARGET_TYPE_LABELS 1 (짝 항목) | 기존 `[AdminLogs]` |
+| **무변경** | admin.py·admin_points.py·points 계열·package.json | - |
+
+## 3. 작업 분담 (병렬)
+- **backend-dev**: ① business.py 순수 추출 — **응답·로그 문구 바이트 불변 목표, diff 가 이동 헌크+위임 호출로만 구성됨을 자가 증빙** ② /ads/active 필터 1줄 ③ admin_ads.py 4 엔드포인트(목록 집계는 ad_items 전량 fold — `_worn_counts_by_item` 호출 금지, days·period 화이트리스트, hidden 멱등+감사 best-effort, 로그 개인값 금지) ④ main.py 2줄+인덱스 블록 ⑤ 썸네일 프록시 ads/ 접근 실측 보고 ⑥ 9004 미러 3파일.
+- **frontend-dev**: 페이지 2종(용어 "착장 선택"/"클릭율" 준수, ⑤ 자리 블록 "향후" 배지, 숨김 confirm+성공 시 아이템 행·요약 갱신, 빈/에러/로딩 상태), 라우트·NavLink·api.js 4·로그 라벨 짝 항목 3. eslint 신규 0. 콘솔 위생(회사명·이메일·연락처 미출력 — 건수/status 만).
+- **test-designer**: §4 (병렬 초안 — 구현 스키마 확정분은 §4 판단 요청으로).
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: 강제 숨김 실측은 **테스트 유래 아이템만** — bcast 테스트 계정을 customer 로 역할 변경(v177 승인 패턴·원복 필수) 후 테스트 아이템 생성→숨김→해제→**아이템 삭제+역할 원복**. 실광고주 아이템 숨김 절대 금지. 감사 행 잔존 정상.
+1. 목록 API: 200 스키마(summary 4+행 필드), q 검색(회사명·닉네임), days 화이트리스트 400, 401/403. 광고주 수 == PG customer count 검산(11).
+2. 상세 API: ④ Mongo 정본 회사 정보(PG 오염값 아님 — 시드 계정 대조)+계정 필드, ⑥ days 토글 값 변화, ⑦ items 필드(admin_hidden 포함·worn 부재), 미존재/비 uuid 400/404.
+3. dashboard API: 관리자 호출 200 == **광고주 본인 GET /business/dashboard 응답과 동일 구조·동일 값**(같은 user_id·period — 추출 회귀 핵심 교차), verified_only·category 전달.
+4. 숨김: hidden true → `GET /api/business/ads/active` 에서 해당 아이템 **미노출** + 광고주 본인 GET /ads 에는 admin_hidden true 로 노출 + **광고주 toggle 을 눌러도 admin_hidden 불변**(독립 필드 핵심) → unhide 원복. 멱등(동일 상태 재요청 200). 감사 2행(`ads_admin_hide`/`unhide`, details reason — 광고주 응답에 reason 부재 확인).
+5. 감사 로그 UI: "광고 숨김"/"광고 숨김 해제" 라벨+배지, target "광고 아이템"(짝 항목 검증).
+6. 추출 회귀(핵심): 광고주 앱 GET /business/dashboard·/profile·/ads·/ads/active·toggle 기존 응답 불변(리팩터·필터 추가 전후 — admin_hidden 미설정 기존 문서 전량 통과), 인덱스 생성 확인(재기동 후 index 목록 — (item_id,timestamp) 2 컬렉션).
+7. UI: 목록(요약 4·검색·행 클릭 이동), 상세 5블록(⑤ "향후" 배지·"—"), 용어 검증(**"노출" 문자열 부재, "착장 선택"·"클릭율"**), 숨김 confirm 여정(실행은 테스트 아이템만), 8번째 NavLink·기존 7메뉴 무손상.
+8. 개인정보·위생: 위시/클릭 개별 사용자 목록 부재(응답 전문), 서버 로그·콘솔에 회사명·연락처·이메일 0건. 기존 12+ 엔드포인트 대표 회귀, 9004 diff 0, package.json 무변경.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① `_worn_counts_by_item` 을 목록/상세 ⑦ 에서 호출 금지(풀스캔 — ⑧ dashboard 내부 기존 호출만 허용) ② business.py 추출은 대외 동작 불변(응답 필드·상태코드·로그 변경 금지) ③ 실광고주 아이템 숨김·수정·삭제 금지(테스트 유래 아이템만) ④ 개인정보 — 위시/클릭 개별 사용자 노출 금지, 광고주 연락처는 관리자 화면 표시만(로그·콘솔 금지) ⑤ 용어 "노출" 사용 금지("착장 선택") ⑥ admin_hidden 을 광고주 측 API 로 변경 가능하게 만들지 금지(toggle 은 is_active 만) ⑦ 라이브러리 금지·v177~183 승계(후속 7건 유지).
+- ⑧ 은 per-item insights 미포함(dashboard 단일 재사용) — **판단 사항으로 보고**: 목업 "인사이트"는 dashboard 의 아이템별 성과 표로 충족 해석. 사용자 이견 시 차기 버전에서 insights 추출 확장.
+- ⑥(7/30/90일)과 ⑧(daily/weekly/monthly) 기간 규약 상이 — 화면에 각 블록 기준 표기(혼동 방지).
+- 시드 449 아이템 중 admin_hidden 필드 전무 — $ne true 필터로 무마이그레이션 통과(테스트 6 에서 회귀 확인).
+
+## 6. v184 판정 반영 (오케스트레이터 판단 회신, 2026-08-18 17:05)
+
+### ① ⑧ 범위 — per-item 스타별 성과·인사이트 **포함으로 확정** (planner 축소 해석 기각 — 승인 목업 문구 "시계열 차트 · 스타별 성과 · 장르/시간대/인구통계 인사이트" 기준)
+- **추출 실측 보강(planner)**: stars(:705)·insights(:863) 핸들러 모두 `item_id + {"user_id": user["id"]} 소유 검증` 후 인라인 로직, 오류는 JSONResponse 반환 — dashboard 와 동일한 순수 추출 성립. **추출 규약**: `build_item_stars_data(mongo, conn, user_id, item_id, period, verified_only)` / `build_item_insights_data(...)` — **기존 본문을 JSONResponse 오류 경로까지 그대로 이동**(소유 검증 포함 — admin 이 user_id 지정 시 타 광고주 아이템이면 기존과 동일 404), 양측 라우트는 `return await build_...()` 위임. 로그 user= 태그는 user_id 파라미터로 동일 출력 — **대외 business 동작 바이트 불변 증빙 동일 요구**.
+- admin_ads.py 에 `GET /advertisers/{user_id}/items/{item_id}/stars`·`/insights` 2 엔드포인트 추가(admin 게이트, period/verified_only 그대로 전달) — **총 6 엔드포인트**.
+- 프론트: 상세 ⑦ 아이템 테이블 **행 확장(▼) lazy load** — BusinessPage renderStarsPanel/renderInsightsPanel 패턴 포팅(동일 UX — 학습 비용 0). api.js 래퍼 +2(`getAdminAdItemStars`/`getAdminAdItemInsights`) — **총 6**.
+- 개인정보: 기존 규칙 무변경 재사용으로 자동 승계(14세 미만 제외·k-익명 5·개별 user_id 미노출, **스타 닉네임은 기존 광고주 화면 사양 — 허용**).
+- 테스트 추가: **stars/insights 관리자 == 광고주 본인 응답 동일값 교차검증**(§4-3 과 동일 방식 — 추출 회귀 3종 세트로 확장), 타 광고주 아이템 조합(user_id ≠ 소유자) 404, k-익명/미성년 제외 동작은 기존 응답 동일성으로 갈음.
+
+### ② 기간 규약 상이 — planner 안 수용 확정: ⑥(7/30/90일)·⑧(daily/weekly/monthly) 각 블록 기준 표기, 통일 안 함.
+
+### 매트릭스 증분
+| 파일 | 추가 변경 |
+|---|---|
+| `backend_9005/app/routes/business.py` | stars·insights 순수 추출 2건 추가(총 3건 추출) |
+| `backend_9005/app/routes/admin_ads.py` | stars·insights 프록시 2 엔드포인트(총 6) |
+| `frontend_admin/src/pages/AdminAdvertiserDetailPage.jsx/.css` | ⑦ 행 확장 stars/insights 패널(BusinessPage 패턴 포팅) |
+| `frontend_admin/src/api.js` | 래퍼 +2(총 6) |

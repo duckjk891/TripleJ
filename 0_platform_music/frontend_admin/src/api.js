@@ -173,6 +173,35 @@ export const getAdminPointsSegments = (days, mode) =>
 export const getAdminPointsCohorts = (days) =>
   API.get('/admin/points/analytics/cohorts', { params: { days } });
 
+// 광고주 관리 (v184 — /advertisers 목록·상세·강제 숨김)
+// 목록 — q 회사명·닉네임 부분일치, days 7|30|90 → { summary: {카드4}, advertisers: [행...] }
+export const getAdminAdvertisers = (q, days) =>
+  API.get('/admin/ads/advertisers', { params: { q: q || undefined, days } });
+// 상세 — ④프로필(Mongo 정본)+계정 / ⑥성과 요약(days 기준) / ⑦items(누적, admin_hidden 포함)
+export const getAdminAdvertiserDetail = (userId, days) =>
+  API.get(`/admin/ads/advertisers/${userId}`, { params: { days } });
+// ⑧ 광고주 대시보드 그대로 — business dashboard 추출본 위임(period daily|weekly|monthly).
+// category '전체' 는 파라미터 생략(사용자 앱 getBusinessDashboard 규약 동일).
+export const getAdminAdvertiserDashboard = (userId, period, category, verifiedOnly) => {
+  const params = { period };
+  if (category && category !== '전체') params.category = category;
+  if (verifiedOnly) params.verified_only = true;
+  return API.get(`/admin/ads/advertisers/${userId}/dashboard`, { params });
+};
+// ⑦ 행 확장 — 아이템 스타별 성과 / 인사이트 (광고주 화면과 동일 응답)
+export const getAdminAdvertiserItemStars = (userId, itemId, period, verifiedOnly) =>
+  API.get(`/admin/ads/advertisers/${userId}/items/${itemId}/stars`, {
+    params: { period, ...(verifiedOnly ? { verified_only: true } : {}) },
+  });
+export const getAdminAdvertiserItemInsights = (userId, itemId, period, verifiedOnly) =>
+  API.get(`/admin/ads/advertisers/${userId}/items/${itemId}/insights`, {
+    params: { period, ...(verifiedOnly ? { verified_only: true } : {}) },
+  });
+// 강제 숨김/해제 — 멱등 PATCH → { item_id, hidden, changed }. reason 은 내부 감사용(광고주 비노출). 원문 콘솔 미출력.
+// 썸네일은 기존 admin 미디어 프록시 재사용: utils/media.js adminMediaSrc('/api/admin/media/'+object_name).
+export const setAdminAdItemHidden = (itemId, hidden, reason) =>
+  API.patch(`/admin/ads/items/${itemId}/hidden`, { hidden, ...(reason ? { reason } : {}) });
+
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');

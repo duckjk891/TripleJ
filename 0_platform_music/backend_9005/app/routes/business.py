@@ -419,7 +419,8 @@ async def get_active_ads(
             content={"error": f"허용되지 않는 카테고리입니다. 허용값: {', '.join(sorted(ALLOWED_AD_CATEGORIES))}"},
         )
 
-    match_filter: dict = {"is_active": True}
+    # v184: 관리자 강제 숨김(admin_hidden) 제외 — 필드 부재 기존 문서는 $ne 로 통과
+    match_filter: dict = {"is_active": True, "admin_hidden": {"$ne": True}}
     if category is not None:
         match_filter["category"] = category
 
@@ -702,34 +703,31 @@ async def _worn_counts_by_item(mongo, item_ids: set) -> dict:
     return result
 
 
-@router.get("/ads/{item_id}/stars")
-async def ad_item_stars(
-    item_id: str,
-    period: str = Query("daily", regex="^(daily|weekly|monthly)$"),
-    verified_only: bool = Query(False),
-    user=Depends(require_business),
-    conn=Depends(get_pg),
-):
-    """아이템별 '스타별 성과' 집계 (착장/위시/클릭).
+async def build_item_stars_data(mongo, conn, user_id, item_id, period, verified_only):
+    """아이템별 '스타별 성과' 집계 본문 — v184 순수 추출(ad_item_stars 에서 이동).
+
+    require_business 게이트 때문에 admin 이 라우트를 직접 호출할 수 없어
+    admin_ads.py 가 이 함수를 재사용한다(v179 추출 전례). 소유 검증
+    ({"user_id": user_id})·JSONResponse 오류 경로 포함 본문 그대로 —
+    소유 불일치는 기존과 동일 404. 대외 동작·응답·로그 불변.
 
     verified_only=true 면 위시/클릭 카운트를 본인인증 유저 행적만으로 집계
     (익명 클릭 제외). worn_count 는 행적이 아니므로 무필터 유지.
     """
     logger.info(
         "[adstars] enter item=%s period=%s user=%s verified_only=%s",
-        item_id, period, str(user["id"])[:8], verified_only,
+        item_id, period, str(user_id)[:8], verified_only,
     )
 
-    mongo = get_mongo()
     if not ObjectId.is_valid(item_id):
         logger.warning("[adstars] invalid item id item=%s", item_id)
         return JSONResponse(status_code=404, content={"error": "아이템을 찾을 수 없습니다."})
 
     doc = await mongo.ad_items.find_one(
-        {"_id": ObjectId(item_id), "user_id": user["id"]}, {"_id": 1}
+        {"_id": ObjectId(item_id), "user_id": user_id}, {"_id": 1}
     )
     if not doc:
-        logger.warning("[adstars] item not found or not owned item=%s user=%s", item_id, str(user["id"])[:8])
+        logger.warning("[adstars] item not found or not owned item=%s user=%s", item_id, str(user_id)[:8])
         return JSONResponse(status_code=404, content={"error": "아이템을 찾을 수 없습니다."})
 
     start = _period_start(period)
@@ -846,6 +844,20 @@ async def ad_item_stars(
     return {"stars": stars, "untracked_clicks": untracked_clicks, "verified_only": verified_only}
 
 
+@router.get("/ads/{item_id}/stars")
+async def ad_item_stars(
+    item_id: str,
+    period: str = Query("daily", regex="^(daily|weekly|monthly)$"),
+    verified_only: bool = Query(False),
+    user=Depends(require_business),
+    conn=Depends(get_pg),
+):
+    """아이템별 '스타별 성과' 집계 (착장/위시/클릭) — build_item_stars_data 위임(v184)."""
+    return await build_item_stars_data(
+        get_mongo(), conn, user["id"], item_id, period, verified_only
+    )
+
+
 KST = timezone(timedelta(hours=9))
 
 
@@ -860,15 +872,12 @@ def _label_keys(track: dict, field: str) -> list:
     return ["기타"]
 
 
-@router.get("/ads/{item_id}/insights")
-async def ad_item_insights(
-    item_id: str,
-    period: str = Query("daily"),
-    verified_only: bool = Query(False),
-    user=Depends(require_business),
-    conn=Depends(get_pg),
-):
-    """아이템별 전환/장르·무드/시간대/인구통계 인사이트 집계.
+async def build_item_insights_data(mongo, conn, user_id, item_id, period, verified_only):
+    """아이템별 인사이트 집계 본문 — v184 순수 추출(ad_item_insights 에서 이동).
+
+    admin_ads.py 재사용(v179 추출 전례). 소유 검증({"user_id": user_id})·
+    JSONResponse 오류 경로(period 400 포함) 본문 그대로 — 소유 불일치는 기존과
+    동일 404. 대외 동작·응답·로그 불변.
 
     개별 user_id 는 응답에 포함하지 않는다(집계만).
     verified_only=true 면 본인인증 유저의 위시/클릭 이벤트만 집계(익명 클릭 제외)
@@ -882,21 +891,20 @@ async def ad_item_insights(
 
     logger.info(
         "[adinsights] enter item=%s period=%s user=%s verified_only=%s",
-        item_id, period, str(user["id"])[:8], verified_only,
+        item_id, period, str(user_id)[:8], verified_only,
     )
 
-    mongo = get_mongo()
     if not ObjectId.is_valid(item_id):
         logger.warning("[adinsights] invalid item id item=%s", item_id)
         return JSONResponse(status_code=404, content={"error": "아이템을 찾을 수 없습니다."})
 
     doc = await mongo.ad_items.find_one(
-        {"_id": ObjectId(item_id), "user_id": user["id"]}, {"_id": 1}
+        {"_id": ObjectId(item_id), "user_id": user_id}, {"_id": 1}
     )
     if not doc:
         logger.warning(
             "[adinsights] item not found or not owned item=%s user=%s",
-            item_id, str(user["id"])[:8],
+            item_id, str(user_id)[:8],
         )
         return JSONResponse(status_code=404, content={"error": "아이템을 찾을 수 없습니다."})
 
@@ -1103,21 +1111,33 @@ async def ad_item_insights(
     }
 
 
-@router.get("/dashboard")
-async def business_dashboard(
-    period: str = Query("daily", regex="^(daily|weekly|monthly)$"),
-    category: Optional[str] = Query(None),
+@router.get("/ads/{item_id}/insights")
+async def ad_item_insights(
+    item_id: str,
+    period: str = Query("daily"),
     verified_only: bool = Query(False),
     user=Depends(require_business),
     conn=Depends(get_pg),
 ):
+    """아이템별 전환/장르·무드/시간대/인구통계 인사이트 — build_item_insights_data 위임(v184)."""
+    return await build_item_insights_data(
+        get_mongo(), conn, user["id"], item_id, period, verified_only
+    )
+
+
+async def build_dashboard_data(mongo, conn, user_id, period, category, verified_only):
+    """대시보드 집계 본문 — v184 순수 추출(business_dashboard 에서 이동).
+
+    require_business 게이트 때문에 admin 이 라우트를 직접 호출할 수 없어
+    admin_ads.py 가 이 함수를 재사용한다(v179 추출 전례). category 400 등
+    JSONResponse 오류 경로 포함 본문 그대로 — 대외 동작·응답·로그 불변.
+    """
     if category is not None and category not in ALLOWED_AD_CATEGORIES:
         return JSONResponse(
             status_code=400,
             content={"error": f"허용되지 않는 카테고리입니다. 허용값: {', '.join(sorted(ALLOWED_AD_CATEGORIES))}"},
         )
 
-    mongo = get_mongo()
     start = _period_start(period)
 
     # verified_only — 본인인증 유저 id 집합 1회 조회 후 재사용 (익명 클릭 자동 제외)
@@ -1125,7 +1145,7 @@ async def business_dashboard(
     actor_filter = {"user_id": {"$in": verified_ids}} if verified_ids is not None else {}
 
     # Get ad items for this user (optionally filtered by category)
-    item_query = {"user_id": user["id"]}
+    item_query = {"user_id": user_id}
     if category is not None:
         item_query["category"] = category
     items_cursor = mongo.ad_items.find(item_query)
@@ -1174,7 +1194,7 @@ async def business_dashboard(
                 )
             wish_map = {row["item_id"]: row["cnt"] for row in wish_rows}
         except Exception:
-            logger.exception("[dashboard] wishlist count query failed user=%s", str(user["id"])[:8])
+            logger.exception("[dashboard] wishlist count query failed user=%s", str(user_id)[:8])
 
     # 아이템별 착장 스타 카운트 (공개 트랙 1회 전수 스캔)
     worn_by_item = await _worn_counts_by_item(mongo, set(item_ids))
@@ -1260,7 +1280,7 @@ async def business_dashboard(
 
     logger.info(
         "[dashboard] done user=%s items=%d verified_only=%s",
-        str(user["id"])[:8], len(dashboard_items), verified_only,
+        str(user_id)[:8], len(dashboard_items), verified_only,
     )
     return {
         "category": category,
@@ -1274,3 +1294,17 @@ async def business_dashboard(
         "total_wishes": total_wishes,
         "total_worn": total_worn,
     }
+
+
+@router.get("/dashboard")
+async def business_dashboard(
+    period: str = Query("daily", regex="^(daily|weekly|monthly)$"),
+    category: Optional[str] = Query(None),
+    verified_only: bool = Query(False),
+    user=Depends(require_business),
+    conn=Depends(get_pg),
+):
+    """고객사 대시보드 — build_dashboard_data 위임(v184)."""
+    return await build_dashboard_data(
+        get_mongo(), conn, user["id"], period, category, verified_only
+    )

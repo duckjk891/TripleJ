@@ -15243,3 +15243,37 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 3: `frontend_admin/src/components/AdminPointsDashboard.jsx` `.css` `frontend_admin/src/api.js`
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v183 append)
 - 무변경 확인: AdminPointsPage·pointsLabels·points_service·routes/points.py·main.py·package.json — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v184 — 관리자 광고주 관리 페이지 (/advertisers 목록·상세 + 강제 숨김) (2026-08-18 17:30)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+관리자 앱에서 광고주(패션업체) 데이터 전면 열람 — 사용자 목업 승인 구성 그대로: 화면 1 목록(`/advertisers` — 요약 카드 4+검색+테이블) / 화면 2 상세(`/advertisers/:id` — ④회사 정보 ⑤플랜·과금 자리 ⑥성과 요약 ⑦아이템 테이블+**강제 숨김** ⑧광고주 대시보드 그대로 보기 — **오케스트레이터 판정으로 per-item 스타별 성과·인사이트 포함 확정**). 9005 선구현 → 9004 미러.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **순수 추출 3건**: `require_business` 게이트 때문에 admin 직접 호출 불가 → business.py 의 dashboard/stars/insights 본문을 `build_dashboard_data`/`build_item_stars_data`/`build_item_insights_data` 모듈 함수로 이동(JSONResponse 오류 경로·소유 검증 포함 — admin 경유 타 광고주 아이템도 기존과 동일 404). **대외 동작 바이트 불변**: diff 변경 라인은 시그니처 치환·get_mongo 파라미터화·위임 append 뿐(집계/응답/로그 라인 변경 0 — 2중 증빙: diff 전수 분류 + 관리자↔광고주 본인 6쌍 JSON 완전 동일값).
+- **강제 숨김**: `ad_items.admin_hidden`(+`admin_hidden_at`) — 광고주 `is_active` 와 **별개 필드**(toggle 로 해제 불가). `GET /ads/active` 에 `$ne: True` 필터 1줄(기존 455건 무마이그레이션 전량 통과 실측). API 는 `PATCH /api/admin/ads/items/{id}/hidden`(멱등 — 동일 상태 changed:false·감사 미적재), reason 은 감사 details 저장·**광고주 비노출**. 감사 `ads_admin_hide`/`ads_admin_unhide`(target_type `ad_item`) + AdminLogsPage 짝 항목 3종(라벨 2+타입 1 — v177 관행).
+- **admin_ads.py 6 엔드포인트**: 목록(ad_items 전량 fold — **`_worn_counts_by_item` 풀스캔 목록 사용 금지** 준수, 자체 집계 헬퍼)/상세(회사 정보 **Mongo business_profiles 정본** — PG company_name 오염 기지)/dashboard/stars/insights(추출 함수 위임)/hidden. 인덱스: ad_impressions·ad_clicks `(item_id, timestamp)` lifespan idempotent.
+- **용어·개인정보**: "착장 선택"/"클릭율"(CTR=클릭/착장 선택) 전면 — "노출" 0건. 상태 라벨은 planner 판정으로 **"게재중"**(제안된 "노출중" 예외 기각 — 금지어 불변식 유지가 예외 조항보다 우위). 위시/클릭 개별 사용자 미노출(집계만), k-익명·14세 미만 제외는 추출 동일성으로 자동 승계. 썸네일은 기존 admin 미디어 프록시 재사용(신설 0).
+- 프론트: 페이지 2종 신설, ⑦ 행 확장(▼) lazy load — BusinessPage 패널 완전 포팅(itemId 캐시), 상태 3분류(숨김(관리자)/비활성(광고주)/게재중), ⑥(7/30/90일)·⑧(daily/weekly/monthly) 기간 규약 각 블록 표기(통일 안 함 — 판정 ②).
+
+## 3. 테스트 결과 — 14/14 PASS (api 8 / unit 5 / e2e 1), 픽스 루프 0회
+- 핵심 증적: 목록 검산(11==PG customer·Σ455==ad_items 라이브·표본 $group 일치·ctr 재계산) / 상세 Mongo 정본 확증(PG 빈 값 대비)·⑦ 167행 admin_hidden 포함·worn 부재 / **추출 회귀 6쌍 JSON 완전 동일값**(dashboard·stars·insights × 표본 2 아이템, verified_only 대칭·소유 불일치 404) / **숨김 4단**(active 456→455 미노출·본인 노출+reason 부재·**toggle 독립성**·멱등 changed:false) + 감사 2행 / business 5 API 회귀 불변·인덱스 2종 실재·active 455 전량 통과 / git diff == 매트릭스 정확 일치·package.json 부재·서버 로그 개인정보 0건 / NavLink 8번째·짝 항목 3종 렌더·"노출" 0건 grep·9004 byte-identical·eslint 0 / E2E: 전용 사이클(v184-test-item-e2e) 생성→행 확장(진입 0콜→확장 시 stars+insights 각 1회→재확장 캐시 0콜)→숨김 confirm(아이템명 대조 가드)→"숨김(관리자)"→해제→"게재중" 복귀→감사 라벨 red/green→삭제·원복·종료 검증 완전(잔존 0·active 455 원상).
+- planner 판정: TESTPLAN §4 블록 6건(SEED/TEST BIZ 토큰 이원화·DELETE API 삭제·BASE_REV `9ee2703`·증빙 2중·표본 2개 양극·DB 읽기 3회) + E2E Given 갱신(1차 Cleanup 완료로 연계 전제 소멸 → 전용 사이클 재수행) + 용어 판정("게재중").
+
+## 4. 특이사항
+- **감사 잔존 행**: `ads_admin_hide`/`ads_admin_unhide` 각 2행(1차+E2E 사이클) + `change_role` 4행(customer 전환·원복 ×2회) — 전부 테스트 유래, 감사 무결성상 미삭제. 테스트 아이템·역할은 완전 원복(잔존 0 종료 검증).
+- **편차 수용 2건**: ① 목록 status 단일 필드 → `account_status`+`is_banned` 2필드(정보 동등 이상 — 계약 확정) ② api.js 주석 "광고주 비노출" 1곳(화면 리터럴 아님 — 사양 설명이라 유지 가치, AD-UNIT-03 규정 내 비고).
+- **ad_items 455**: 계획 시점 449 에서 라이브 자연 증가(+6) — 검산은 라이브 기준으로 전부 정합.
+- **"게재중" 라벨 판정 경위**: 계약 초안의 "노출중"이 금지어 grep 에 저촉 — 예외 조항 대신 라벨 변경으로 해소(금지어 0건 불변식 유지, 예외 누적 방지).
+- 드라이버 이슈 1회(행 클릭 vs 전용 버튼 오판 — 재검증 확정, dev 수정 0). 패널 지표 라벨은 데이터 존재 시 렌더(빈 상태 문구 — BusinessPage 원본 동일 패턴).
+- 승계 후속 후보(7건 유지): signup_bonus day 백필/분기(제품 판단) / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채 6건 / `_sum_points_by_user` 공통화. (v184 신규 후보 없음 — per-item insights 는 이번에 포함 완료.)
+
+## 5. 변경 파일 (커밋 대상 17)
+- 백엔드 6: `backend_9005/app/routes/admin_ads.py`(신설) `backend_9005/app/routes/business.py`(추출 3+필터 1줄) `backend_9005/app/main.py`(등록+인덱스) + 9004 동일 3파일(미러 — byte-identical 최종 실측)
+- 프론트 8: 신설 4 — `frontend_admin/src/pages/AdminAdvertisersPage.jsx` `.css` `AdminAdvertiserDetailPage.jsx` `.css` / 수정 4 — `frontend_admin/src/App.jsx` `frontend_admin/src/api.js` `frontend_admin/src/components/AdminLayout.jsx` `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목 3종)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md`(§6 판정 반영 포함) `TESTPLAN.md` `REPORT.md` (v184 append)
+- 무변경 확인: admin.py·admin_points.py·points 계열·AdminCsSendModal·package.json — git status 실측, 하니스 잔재 0건.

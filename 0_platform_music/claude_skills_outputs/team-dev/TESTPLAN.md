@@ -2051,3 +2051,170 @@
 
 - 2026-08-18 초판 작성 (12건) — PLAN v183 §4 항목 1~6 전부 시나리오화(§4-1→SG-API-01·03, §4-2→SG-API-02, §4-3→SG-API-04, §4-4→SG-API-05, §4-5→SG-UNIT-01~04, §4-6→SG-API-06·07). v181~182 확정 규칙 승계(재실행 1회·양수 규약·집계 잔존). PLAN "11 엔드포인트" 표기와 실측 9 의 편차를 §4-3 으로 질의(초안은 전부 커버 안전측). BASE_REV·PG COUNT 승인·카운트 편차·created_at 조회·demographics 포함 전제 5건 planner 회신 대기(§4).
 - 2026-08-18 planner 판정 반영 — §4 판정 블록 5건 확정(BASE_REV `e0f2c64` / users COUNT 승인 / 카운트 편차 정정 — 회귀 대상 12(admin 9+사용자 3), PLAN "기존 11" 은 오산정으로 본 블록이 정정 기록 / created_at 조회 승인 — REPORT 가입월만 / demographics 포함 확정 — 양측 per_user 전량 합산·미해석 미상 합류 코드 실측으로 4면 비교식 유지). §4-1·2 문안 고정. 보류 0건 — tester 착수 가능(전제: 9005·9004 v183 반영 재기동).
+
+# v184 — 관리자 광고주 관리 페이지 (/advertisers 목록·상세 + 강제 숨김) (2026-08-18 17:02)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전, planner 검토 대기)
+근거: PLAN.md v184 §0 실측(dashboard 인라인·/ads/active 필터 지점·require_business 게이트·광고주 11/아이템 449·PG company_name 오염 기지), §1 설계, §4 테스트 항목 1~8, §5 강행 금지 7항, **§6 판정 반영(⑧ per-item stars/insights 포함 — 총 6 엔드포인트·추출 3건)**
+대상: backend_9005 `admin_ads.py` 신설 6 엔드포인트 + business.py 순수 추출 3건(`build_dashboard_data`/`build_item_stars_data`/`build_item_insights_data`)+/ads/active `admin_hidden` 필터 + main.py 등록·인덱스 2종(9004 미러 3파일) / frontend_admin 페이지 2종 신설+라우트·NavLink 8번째·api.js 6래퍼·AdminLogsPage 짝 항목 3. **admin.py·admin_points.py·points 계열·package.json 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **강제 숨김 실측은 테스트 유래 아이템만**: bcast 테스트 계정을 customer 로 역할 변경(v177 승인 패턴) → 해당 계정으로 테스트 아이템 생성 → 숨김/해제 실측 → **아이템 삭제 + 역할 원복 필수**(종료 검증: role==user·테스트 아이템 잔존 0건). **실광고주(무신사·크림 등 시드 포함) 아이템의 숨김·수정·삭제 절대 금지** — PATCH 대상 item_id 를 매 호출 전 테스트 아이템 id 와 대조. 감사 행(ads_admin_hide/unhide·change_role) 잔존은 정상 — REPORT 기재.
+- **실광고주 대상 허용 범위 = 읽기 전용 GET 만**(목록·상세·dashboard/stars/insights 프록시 — 집계 조회는 비파괴). 쓰기는 위 테스트 아이템 사이클과 역할 변경뿐.
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN` / `USER_TOKEN` / `TEST_USER_1_ID`(customer 전환 대상) / `TEST_ITEM_ID`(생성 후 기록) / `SEED_ADV_ID`(시드 광고주 user_id — 읽기 전용) / `BIZ_TOKEN`(광고주 본인 토큰 — 확보 방법은 planner 확인 §4-1). 실값 기재 금지.
+- **개인정보 판정 경계(§4 지시 7)**: 상세 ④ 의 email·연락처·회사명은 **관리자 화면 표시 사양(허용)** — 검증 대상은 ① 위시/클릭 **개별 사용자 목록 부재**(집계만) ② 서버 로그·콘솔에 회사명·이메일·연락처 0건. k-익명·14세 미만 제외는 기존 로직 무변경 재사용이므로 **추출 동일성 검증(AD-API-04)으로 갈음**.
+- **용어 강행 금지(⑤)**: 신규 화면에 "노출" 금지 — "착장 선택"·"클릭율"(CTR=클릭/착장 선택).
+- DB 읽기(검산용, 승인 관행 준용): PG `users WHERE role='customer'` COUNT 1회(실측 기준 11) + Mongo `ad_items` $group 1회 + `list_indexes` 2회.
+- `BASE_REV` = **`9ee2703` 확정**(§4 판정 3). BIZ 토큰 2종 구분: `SEED_BIZ_TOKEN`(시드 광고주 — **읽기 전용 GET 만**)/`TEST_BIZ_TOKEN`(customer 전환 테스트 계정 — 쓰기 사이클 전용)(§4 판정 1). 환경: 9005·9004, Mongo·PG, frontend_admin Vite dev(4001). 추적자 `[admin-ads]`·`[AdminAds]`·`[AdminLogs]`.
+
+## 1. [api] 시나리오 (기본 대상 9005)
+
+### AD-API-01. 목록 200 스키마 + 검산 [api] — 핵심
+- Given: `ADMIN_TOKEN`. PG customer COUNT·Mongo ad_items $group(광고주별 count) 실측값 확보(§0)
+- When: `GET /api/admin/ads/advertisers?days=30` 호출하면
+- Then: HTTP 200 —
+  - summary 카드 4(광고주 수·등록 아이템·활성=is_active∧¬admin_hidden·기간 클릭) + 행별 `{user_id, nickname, company_name, item_count, active_count, impressions, clicks, ctr, wish, status}` 필드 실재
+  - **검산 ①**: 행 수·광고주 수 == PG customer COUNT(**실측 기준 11**) — 정확 일치
+  - **검산 ②**: `Σ item_count` == ad_items 전체 수(**실측 기준 449**) + 행별 item_count == $group 실측값 표본 2행 대조(시드 광고주)
+  - ctr == clicks/impressions 재계산 일치(0 나눗셈 방어 — impressions 0 행 "0" 또는 "—" 정상)
+
+### AD-API-02. 목록 q 검색·days 400·401/403 [api]
+- Given: `ADMIN_TOKEN` / 토큰 없음 / `USER_TOKEN`
+- When: ① `?q={시드 회사명 부분 문자열}` ② `?q={시드 닉네임 부분}` ③ `?q=zzzz_none` ④ days=8/0/91/문자 ⑤ 6 엔드포인트 무토큰 ⑥ 목록·PATCH hidden `USER_TOKEN` 하면
+- Then: ①② 해당 광고주만 필터(회사명·닉네임 부분일치) ③ 빈 목록(요약 카드 정상) ④ 전부 400(화이트리스트 {7,30,90} — 422 관측 시 비고 후 통일 관행) ⑤ 전부 401 ⑥ 403 — **PATCH 403 은 발동 0**(비관리자가 숨김 불가·잔존 상태 불변).
+
+### AD-API-03. 상세 — Mongo 정본 회사 정보·⑥ days·⑦ items [api] — 핵심
+- Given: `ADMIN_TOKEN`, `SEED_ADV_ID`(PG company_name 오염값 실측 기지 계정 — "엔터테인먼트" 등). Mongo business_profiles 해당 문서 실측값 확보(읽기 1회)
+- When: ① `GET /advertisers/{SEED_ADV_ID}?days=30` ② 동일 요청 days=7 ③ `GET /advertisers/{GHOST_UUID}` ④ 비 uuid 하면
+- Then:
+  - ① ④블록 회사 정보 == **Mongo business_profiles 정본**(PG 오염값 "엔터테인먼트" 계열이 **아님** — 필드별 대조) + 계정 필드(email/nickname/created_at/상태), ⑥ 성과 요약 4, ⑦ items[] 각 행에 **admin_hidden 포함·worn 부재**(`_worn_counts_by_item` 미호출 — 강행 금지 ① 응답 증거)·clicks/wish/is_active/category/brand/product_name/image_object_name/created_at
+  - ② ⑥ 값이 days 에 따라 변화(기간 필터 동작 — ⑦ 누적값은 불변)
+  - ③ 404 ④ 400
+  - 응답 전문에 위시/클릭 **개별 사용자 목록 부재**(집계만 — §0 경계)
+
+### AD-API-04. 추출 회귀 3종 세트 — 관리자 == 광고주 본인 동일값 + 타 광고주 404 [api] — v184 핵심
+- Given: `ADMIN_TOKEN` + `BIZ_TOKEN`(동일 광고주 본인 — 확보 방법 §4-1 확정 후), 대상 광고주 user_id·아이템 item_id, 동일 조합 {period, category, verified_only} 2세트(기본+verified_only=true)
+- When: 짧은 시간창 내 쌍호출 — ① admin `GET /advertisers/{uid}/dashboard?period=&category=&verified_only=` ↔ 본인 `GET /api/business/dashboard`(동일 파라미터) ② admin `GET /advertisers/{uid}/items/{item_id}/stars?period=&verified_only=` ↔ 본인 `GET /api/business/ads/{item_id}/stars` ③ admin `.../items/{item_id}/insights` ↔ 본인 `GET /api/business/ads/{item_id}/insights` ④ admin `GET /advertisers/{TEST_USER_1_ID}/items/{실광고주 item_id}/stars`(소유자 불일치 — 읽기 전용) 하면
+- Then:
+  - ①②③ **응답 동일 구조·동일 값**(JSON 정규화 비교 — 순수 추출 증빙, 시계열·아이템별 성과·스타별·인사이트 전부. 불일치→1회 재실행(시차 이벤트)→재불일치 FAIL) — k-익명 5·14세 미만 제외·스타 닉네임 사양은 동일성으로 자동 갈음(§0)
+  - ④ **404**(추출된 소유 검증이 admin 경유에도 그대로 — 기존과 동일 오류 경로)
+  - verified_only·category 파라미터가 양측에 동일 전달·동일 반영(값 변화 대칭)
+
+### AD-API-05. 강제 숨김 4단 + 감사 2행 [api] — 핵심 (쓰기 — 테스트 유래 아이템 사이클)
+- Given: `ADMIN_TOKEN`. 사전: `TEST_USER_1_ID` role user→customer(v177 패턴·원복 예정) → 해당 계정 `BIZ_TOKEN` 으로 테스트 아이템 1건 생성(`TEST_ITEM_ID` 기록, 상품명 "v184-test-item") → `GET /api/business/ads/active` 에 노출 확인. PATCH 대상 == TEST_ITEM_ID 대조(§0)
+- When: ⓐ `PATCH /api/admin/ads/items/{TEST_ITEM_ID}/hidden` `{hidden:true, reason:"v184 테스트 숨김(원복 예정)"}` → ⓑ 본인 `GET /api/business/ads` 확인 → ⓒ 본인 toggle(is_active) 왕복 → ⓓ 동일 `{hidden:true}` 재요청 → 이후 `{hidden:false}` 해제하면
+- Then:
+  - ⓐ 200 → `GET /api/business/ads/active` 에 TEST_ITEM_ID **미노출**(타 448 아이템 count 불변)
+  - ⓑ 본인 GET /ads 에는 **노출 + admin_hidden true 표시** — 응답에 **reason 부재**(광고주 비노출 사양)
+  - ⓒ 본인 toggle 이후에도 **admin_hidden true 불변**(독립 필드 핵심 — is_active 만 변화, toggle 원복 후에도 active 목록 미노출 유지)
+  - ⓓ 동일 상태 재요청 **200 멱등**(오류·중복 감사 행 없음 — 감사 행 수 기록)
+  - 해제 후 active 재노출. 감사: `?action=ads_admin_hide`·`ads_admin_unhide` 각 1행 — target_type=ad_item·target_id=TEST_ITEM_ID·details `{advertiser_id, item_name, reason}`(비밀값 없음)
+- Cleanup: **테스트 아이템 삭제 + role 원복**(§0 — 종료 검증 포함, 삭제 방법은 §4-2 확정).
+
+### AD-API-06. 숨김 검증 경로 — 400/404 [api]
+- Given: `ADMIN_TOKEN`
+- When: ① item_id="not-an-objectid" ② 형식 유효 미존재 ObjectId 각 PATCH 하면
+- Then: ① 400 ② 404 — 전 케이스 상태 변화·감사 행 0(실광고주 아이템 무접촉 확인 겸용).
+
+### AD-API-07. business 5 API 회귀 + 인덱스 2종 [api] — 회귀 핵심
+- Given: `BIZ_TOKEN`(§4-1), 리팩터 전 기준값(v183 시점 응답 또는 시드 실측), 9005 재기동 완료 상태
+- When: ① `GET /api/business/dashboard` ② `GET /ads/{id}/stars` ③ `GET /ads/{id}/insights` ④ `GET /ads/active`(무인증 공개면 무토큰) ⑤ `GET /ads` + toggle 왕복 1회 ⑥ Mongo `list_indexes`(ad_impressions·ad_clicks) 하면
+- Then: ①~⑤ **기존 동작 불변** — 응답 필드·상태코드 동일, ④ 는 admin_hidden 미설정 기존 문서(449) **전량 통과**(`$ne true` 무마이그레이션 — count 기존과 동일), ⑤ toggle 은 is_active 만 변경. ⑥ 두 컬렉션에 **`[("item_id",1),("timestamp",-1)]` 인덱스 실재**(재기동 후 idempotent 생성 확인). 보조(코드 리뷰): business.py diff 가 **이동 헌크+위임 호출로만** 구성(응답·로그 문구 불변 — JSONResponse 오류 경로 포함 이동), `/ads/active` 필터 1줄 외 변경 없음.
+
+### AD-API-08. 기존 회귀 + git diff + 개인정보·서버 로그 [api] — 회귀 마감
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, `BASE_REV`(확정 후)
+- When: ① 기존 admin 대표 재실행(points summary·logs·cs search 등 대표 3~4건) + 사용자용 points 대표 ② `git diff {BASE_REV}..HEAD --name-only` ③ 신규 6 엔드포인트 응답 전문·서버 로그 grep(이메일·연락처·회사명·개별 이벤트 user_id 나열) 하면
+- Then: ① 전부 기존 TESTPLAN 판정 기준 PASS ② 변경 파일 == PLAN §2+§6 증분 매트릭스 정확 일치(admin.py·admin_points.py·points 계열·**package.json/lock 부재**) ③ 응답은 §0 허용 경계 내(상세 ④ 표시 항목 외 개별값 0건), **서버 로그는 [admin-ads] 건수/파라미터 수준만 — 회사명·이메일·연락처·개별 user_id 0건**. 위반 시 즉시 중단·보고.
+
+## 2. [unit] 시나리오 (브라우저 하니스, 4001 dev + 정적 검사)
+
+### AD-UNIT-01. 목록 페이지 — 8번째 NavLink·요약·검색·행 이동 [unit] — 핵심
+- Given: 관리자 로그인
+- When: 사이드바 8번째 **"광고주 관리"**(FiShoppingBag) 클릭 → 목록 확인 → 검색 입력 → 행 클릭하면
+- Then: `/advertisers` 진입+active 하이라이트(기존 7메뉴 무손상), 요약 카드 4·테이블 렌더(AD-API-01 값 일치), 검색 필터 동작, 행 클릭 → `/advertisers/:id` 이동. 콘솔 신규 에러 0건.
+
+### AD-UNIT-02. 상세 5블록 — 정본·향후 배지·기간 규약 표기·confirm [unit] — 핵심
+- Given: 상세 페이지(`SEED_ADV_ID` — 읽기 전용)
+- When: ④~⑧ 블록과 숨김 버튼(confirm **취소**)을 확인하면
+- Then: ④ Mongo 정본 회사 정보 렌더 ⑤ 플랜·과금 자리 블록 — **"향후" 배지 + 전값 "—"** + 과금 설명 1줄 ⑥ days 7/30/90 토글(재조회) ⑦ 아이템 테이블(admin_hidden 상태 표시) ⑧ 기간 규약 **각 블록 기준 표기**(⑥ 일수 vs ⑧ daily/weekly/monthly — 혼동 방지 §5). 숨김 confirm 문안에 **아이템명·방향** 명시 — 취소 시 PATCH 0건(실광고주 아이템에서 confirm 수락 금지 — 취소만).
+
+### AD-UNIT-03. 용어 검사 — "노출" 부재 grep [unit] — 핵심 (지시 6)
+- Given: frontend_admin 신규 소스(AdminAdvertisersPage·AdminAdvertiserDetailPage jsx/css + 관련 추가분)
+- When: ① `grep "노출"` ② `grep "착장 선택"`·`grep "클릭율"` 실행하면
+- Then: ① 신규 화면 소스·문자열 리터럴에 **"노출" 0건**(코드 주석 포함 여부는 리터럴 우선 — 주석 검출 시 비고) ② "착장 선택"·"클릭율" 사용 확인(지표 라벨). 화면 렌더 수준 확인은 AD-E2E-01 겸측.
+
+### AD-UNIT-04. 감사 라벨 짝 항목 + 콘솔 위생 + eslint [unit]
+- Given: AD-API-05 실행 후(감사 행 잔존), `/logs` 진입 + AD-UNIT-01~03 세션 콘솔
+- When: ① ads_admin_hide/unhide 행 표시 ② 콘솔 검색(회사명·이메일·연락처·`@test.invalid`) ③ eslint 하면
+- Then: ① **"광고 숨김"(red)·"광고 숨김 해제"(green) 라벨+배지**, target **"광고 아이템"** 라벨(짝 항목 3종 — gray fallback 아님) + 대상 표기 정상 ② `[AdminAds]` 포함 **0건**(건수/status 수준만) ③ eslint 신규 0.
+
+### AD-UNIT-05. 9004 미러 byte-identical + package.json diff 0 [unit] — 미러 규칙 (코디네이터 태그 준수)
+- Given: 9004 기동, 저장소
+- When: ① `diff` 3파일 — admin_ads.py·business.py·main.py 9005↔9004 ② package.json(+lock) `git diff` ③ **9004** 목록 `USER_TOKEN` 403 대표 1회 하면
+- Then: ① 3파일 **byte-identical**(main.py 는 기존 미러 예외 외 diff 없음) ② diff **0**(라이브러리 금지) ③ 9005 와 동일 403. 9004 에 PATCH hidden 호출 없음(쓰기 중복 회피).
+
+## 3. [e2e] 시나리오 — 1건 (사용자 여정·회귀 지점만)
+
+### AD-E2E-01. 풀 여정 — 목록→상세→행 확장 lazy load→테스트 아이템 숨김/해제→감사 확인 [e2e] — 핵심
+- Given: 관리자 로그인. ~~AD-API-05 사이클과 연계 실행~~ **(planner E2E 확정 갱신)**: 1차 게이트에서 AD-API-05 Cleanup 이 완료됐으므로 **E2E 전용 테스트 아이템 사이클 1회 재수행**(동일 승인 패턴: TEST_USER_1 role→customer → `TEST_BIZ_TOKEN` 으로 아이템 생성 "v184-test-item-e2e" → 여정 수행 → 숨김/해제 → DELETE API 삭제 → 역할 원복+종료 검증). 숨김 실측 대상은 이 아이템만 — 추가 쓰기는 승인 패턴 반복이라 허용(감사 행 잔존 REPORT 기재).
+- When: "광고주 관리" → 목록 렌더 → 테스트 광고주(customer 전환 계정) 행 클릭 → 상세 → ⑦ 아이템 행 **확장(▼)** → stars/insights 패널 lazy load → 같은 행 **재확장** → 테스트 아이템 **숨김 confirm 수락** → 행·요약 갱신 확인 → **해제** → "감사 로그" 이동 → 라벨 확인 → 기존 페이지 1~2곳 순회하면
+- Then:
+  - 확장 시 **stars·insights 각 1회 호출**(네트워크 캡처 — 페이지 진입 시 일괄 로드 아님), 패널 렌더가 광고주 화면 패턴과 동일(용어 "착장 선택"/"클릭율" 화면 확인 — AD-UNIT-03 겸측). **재확장 동작은 구현 기준 명기**: 재호출/캐시 어느 쪽이든 관측 결과를 비고 기록(중복 폭주만 FAIL)
+  - 숨김 수락 → 성공 안내+행 admin_hidden 표시·요약 활성 수 갱신, 해제 → 원상. confirm 문안의 아이템명 == "v184-test-item-e2e"(E2E 전용 사이클 생성분 — Given 갱신) 대조 후 수락(불일치 시 즉시 취소·FAIL)
+  - 감사 로그에 hide/unhide 라벨 렌더, 기존 페이지 정상, 콘솔 신규 에러 0건. **실광고주 아이템 행에서는 확장(읽기)만 — 숨김 confirm 수락 금지**
+- 증적: 목록·상세 5블록·확장 패널·confirm·숨김 후 행·감사 로그 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **BIZ_TOKEN 확보 방법(AD-API-04·07 전제)**: (a) 시드 광고주 테스트 크리덴셜이 dev 시드에 존재하면 그것으로 로그인(**읽기 전용 GET 만** — 쓰기·toggle 은 테스트 계정 쪽만) (b) 부재 시 customer 전환한 테스트 계정으로 한정 — 단 이벤트 데이터가 빈약해 k-익명·인사이트 경로의 동일성 검증 강도가 낮아짐(구조 동일성 위주로 축소). 어느 쪽인지 판정 요청. AD-API-07 ⑤ toggle 은 (b)의 테스트 계정에서만 수행.
+2. **테스트 아이템 생성·삭제 경로**: 생성은 광고주 POST(business 라우트) 사용 전제 — 삭제 엔드포인트 부재 시 Mongo 직접 delete(테스트 유래 문서 1건 한정) 허용 여부 확정.
+3. **BASE_REV**: v183 종료 커밋 — planner 확정 예정 표기(확정 전 AD-API-08 ② 보류).
+4. **추출 "바이트 불변" 증빙 판정**: diff 이동 헌크 코드 리뷰(AD-API-07 보조) + 응답 동일값 교차(AD-API-04)의 2중으로 설계 — 추가 증빙(로그 문구 비교 등) 요구 여부.
+5. **AD-API-04 대상 광고주**: (a) 채택 시 실광고주 데이터 조회가 관리자·본인 양측에서 발생(읽기 전용) — 허용 확인. 비교 표본 아이템 수(기본 1~2개) 지정 여부.
+6. **검산 DB 읽기 3회 승인**: PG customer COUNT·ad_items $group·list_indexes(§0 — v182~183 승인 관행 준용) 확인.
+
+### planner 판정 (2026-08-18, 6건 전부 확정 — 해당 문안 반영 완료)
+
+1. **BIZ_TOKEN = (a) 시드 광고주 크리덴셜 채택**(오케스트레이터 의견 동의) — 추출 회귀의 핵심 가치는 **실데이터 동일값 비교**라 (b)면 검증력 급락. 조건: 크리덴셜 실값은 산출물·로그에 플레이스홀더만, **BIZ_TOKEN 으로는 읽기 전용 GET 만**(toggle 등 쓰기는 AD-API-05/07⑤ 의 customer 전환 테스트 계정 쪽 BIZ 토큰으로만 — 두 토큰을 구분 표기: `SEED_BIZ_TOKEN`/`TEST_BIZ_TOKEN`). planner 가 seed_data.py 에서 광고주 시드 크리덴셜을 미발견 — **tester 가 확보 실패 시 (b) 폴백**(구조 동일성 위주 축소 + 비고, FAIL 아님).
+2. **테스트 아이템 삭제 = 광고주 `DELETE /api/business/ads/{item_id}` API 사용**(business.py:319 실재 — MinIO 이미지까지 정리). **Mongo 직접 delete 불허**(이미지 잔존 유발). API 삭제가 오류로 실패하는 경우에만 예외적 Mongo delete + MinIO 잔존 오브젝트명 REPORT 보고.
+3. **BASE_REV = `9ee2703`** (v183 커밋 — planner git log 실측: 현재 HEAD, v184 워킹트리 미커밋). AD-API-08 ② 는 `git diff 9ee2703 --name-only` 워킹트리 기준 — 보류 해제.
+4. **증빙 2중으로 충분** — diff 이동 헌크 코드 리뷰(AD-API-07 보조) + 응답 동일값 교차(AD-API-04). 응답 동일값이 기능 등가를 직접 증명하므로 별도 로그 문구 런타임 비교는 불요. 단 diff 리뷰 시 **"로그 라인이 이동 헌크에 포함(문구 무변경)"을 명시 확인 항목**으로 포함.
+5. **실광고주 읽기 전용 조회 허용 확정**(§0 경계와 일치 — 비파괴 GET 양측 비교). 표본 아이템 **2개 지정**: 이벤트 데이터가 풍부한 아이템 1 + 희소한 아이템 1(분포 양극 — k-익명 발동/미발동 경로 양쪽 커버 기대).
+6. **DB 읽기 3회 승인** (관행 준용).
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. AD-API-01→02→03 (읽기 전용 — 검산 DB 읽기 포함) → AD-API-04 (§4-1 확정 후 — 추출 3종 교차+404) → AD-API-06 (비파괴 검증 선행) → AD-API-05 (테스트 아이템 사이클: 역할 변경→생성→4단→감사 확인) → **AD-E2E-01 연계 실행**(정리 전 구간) → Cleanup(아이템 삭제+역할 원복+종료 검증) → AD-API-07 (business 회귀+인덱스) → AD-API-08 (회귀 마감+diff — BASE_REV 확정 후)
+2. AD-UNIT-01→02→03 (grep) → AD-UNIT-04 (감사 라벨 — API-05 이후) → AD-UNIT-05 (9004+package.json)
+3. 종료: REPORT — 감사 잔존 행·테스트 아이템 생성/삭제 내역·역할 변경/원복·재확장 동작 관측치·BIZ_TOKEN 방식 기재(크리덴셜 실값 금지)
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| AD-API-01 | api | | 스키마+검산(customer 11·items 449·표본 대조) |
+| AD-API-02 | api | | q 검색·days 400·401/403(PATCH 발동 0) |
+| AD-API-03 | api | | Mongo 정본(오염값 아님)·⑥ days·⑦ admin_hidden 포함/worn 부재 |
+| AD-API-04 | api | | 추출 3종 동일값 교차 + 소유자 불일치 404 |
+| AD-API-05 | api | | 숨김 4단(active 미노출/본인 노출/toggle 독립/멱등)+감사 2행 — 테스트 아이템만 |
+| AD-API-06 | api | | PATCH 400/404 — 상태 변화 0 |
+| AD-API-07 | api | | business 5 API 불변+/ads/active 449 통과+인덱스 2종 |
+| AD-API-08 | api | | 기존 대표·diff 매트릭스·개인정보/서버 로그 0건 |
+| AD-UNIT-01 | unit | | 8번째 NavLink·요약·검색·행 이동 |
+| AD-UNIT-02 | unit | | 5블록·"향후" 배지·기간 규약 표기·confirm 취소 |
+| AD-UNIT-03 | unit | | "노출" 0건 grep + 착장 선택/클릭율 |
+| AD-UNIT-04 | unit | | 짝 항목 3종 라벨 + 콘솔 0건 + eslint 0 |
+| AD-UNIT-05 | unit | | 9004 3파일 byte-identical + package.json 0 |
+| AD-E2E-01 | e2e | | 행 확장 lazy 1회 호출·재확장 관측·숨김/해제 여정 — 테스트 아이템만 |
+
+## v184 시나리오 집계
+
+- 총 **14건** — [api] 8 / [unit] 5 / [e2e] 1 (보류 없음 — planner 확인 6건은 §4)
+- 쓰기: 테스트 아이템 사이클(역할 변경→생성→숨김/해제→삭제→역할 원복 — AD-API-05·AD-E2E-01 연계)뿐. 실광고주는 읽기 전용 GET 만(숨김·toggle·수정 절대 금지 — 매 PATCH 전 item_id 대조). 개인정보는 허용 경계(상세 ④ 표시 항목) 명문화 후 응답·서버 로그·콘솔 3면 검증, k-익명은 추출 동일성으로 갈음. CS 발송류·points 조정 0건.
+
+## 개정 이력 (v184)
+
+- 2026-08-18 초판 작성 (14건) — 코디네이터 필수 9항목 전부 시나리오화(1→AD-API-01, 2→AD-API-03, 3→AD-API-04, 4→AD-API-05·06·AD-UNIT-04·AD-E2E-01, 5→AD-API-07, 6→AD-UNIT-03·AD-E2E-01 겸측, 7→AD-API-03·08·AD-UNIT-04, 8→AD-E2E-01, 9→AD-UNIT-05) + PLAN §6 판정(⑧ stars/insights 포함 — 추출 회귀 3종 세트·행 확장 lazy load) 반영. 강제 숨김은 테스트 유래 아이템 사이클로 한정하고 실광고주 무접촉을 불변식으로. BIZ_TOKEN 확보·아이템 삭제 경로·BASE_REV·증빙 수준·실광고주 읽기 허용·DB 읽기 승인 6건 planner 회신 대기(§4). planner 검토 후 확정 예정.
+- 2026-08-18 planner 판정 반영 — §4 판정 블록 6건 확정(SEED/TEST BIZ 토큰 이원화 — (a) 채택+폴백 (b) / 삭제는 광고주 DELETE API(Mongo 직접 delete 불허 — MinIO 정리) / BASE_REV `9ee2703` / 증빙 2중 충분(diff 리뷰에 로그 라인 이동 명시 확인 포함) / 실광고주 읽기 전용 표본 2개(이벤트 풍부·희소 양극) / DB 읽기 3회 승인). §0 문안 2곳 고정. 보류 0건 — dev 구현 완료·재기동 후 tester 착수 가능.
+- 2026-08-18 planner E2E 확정 (1차 게이트 13/13 PASS·픽스 0회 접수 후) — AD-E2E-01 Given 갱신 1곳: 연계 실행 전제가 1차 Cleanup 완료로 소멸 → E2E 전용 사이클 재수행("v184-test-item-e2e", 동일 승인 패턴·원복 포함)으로 확정. confirm 대조 아이템명도 갱신값 기준. 편차 비고 2건 수용: ① 목록 status → account_status+is_banned 2필드(정보 동등 — 계약 확정, PLAN 정정 갈음) ② api.js 주석 "광고주 비노출"(화면 리터럴 아님 — AD-UNIT-03 규정 내 비고 처리 정당). 상태 라벨 확정값 "게재중"(planner 판정 — 노출 0건 불변식 유지) 랜딩 실측. E2E 갱신 외 잔여 문안 현재 코드와 일치 — 2단계 착수 가능.

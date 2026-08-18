@@ -51,7 +51,7 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, admin_cs, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
+from .routes import admin, admin_ads, admin_cs, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
 
 
 @asynccontextmanager
@@ -380,6 +380,16 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] feed indexes ensure failed: %s", _e)
 
+    # AdOps(v184) — 광고 이벤트 기간 집계용 인덱스 (idempotent, feeds 관행)
+    try:
+        from .database.mongodb import get_mongo as _ads_get_mongo
+        _ads_mongo = _ads_get_mongo()
+        await _ads_mongo.ad_impressions.create_index([("item_id", 1), ("timestamp", -1)])
+        await _ads_mongo.ad_clicks.create_index([("item_id", 1), ("timestamp", -1)])
+        print("[migration] ad event indexes ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] ad event indexes ensure failed: %s", _e)
+
     # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
     # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
     # if the ES index emptied/drifted across a restart, re-index public tracks from
@@ -618,6 +628,7 @@ app.include_router(referral.router)
 app.include_router(admin_moderation.router)
 app.include_router(admin_cs.router)
 app.include_router(admin_points.router)
+app.include_router(admin_ads.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 
