@@ -13,8 +13,9 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, EmptyState, ScreenLayout } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
-import TrackRow, { trackRowStyles } from '../components/TrackRow';
+import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
+import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
 import { useLikesStore } from '../stores/likesStore';
 
 interface Track {
@@ -30,6 +31,21 @@ interface Track {
 // 느낌 카테고리 — 백엔드 고정 10종(운동~잠자기). 칩은 이모지 없이 텍스트만 표시한다.
 const CATEGORY_FALLBACK = ['운동', '에너지 충전', '휴식', '출퇴근길', '행복한 기분', '집중', '로맨스', '파티', '슬픔', '잠자기'];
 
+// 결과 제목 문구 — 카테고리명만 덩그러니 두지 않고 상황을 설명한다. (예: 운동 → "운동할 때 듣는 음악")
+const CATEGORY_HEADLINE: Record<string, string> = {
+  '운동': '운동할 때 듣는 음악',
+  '에너지 충전': '에너지가 필요할 때 듣는 음악',
+  '휴식': '쉬어갈 때 듣는 음악',
+  '출퇴근길': '출퇴근길에 듣는 음악',
+  '행복한 기분': '기분 좋을 때 듣는 음악',
+  '집중': '집중할 때 듣는 음악',
+  '로맨스': '설렐 때 듣는 음악',
+  '파티': '신나게 놀 때 듣는 음악',
+  '슬픔': '슬플 때 듣는 음악',
+  '잠자기': '잠들기 전에 듣는 음악',
+};
+const categoryHeadline = (cat: string) => CATEGORY_HEADLINE[cat] || `${cat} 할 때 듣는 음악`;
+
 export default function SearchScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
@@ -42,6 +58,7 @@ export default function SearchScreen() {
   const [categories, setCategories] = useState<string[]>(CATEGORY_FALLBACK);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
+  const [showBulkPicker, setShowBulkPicker] = useState(false); // 결과 전체 담기
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
 
@@ -135,11 +152,18 @@ export default function SearchScreen() {
 
   const clearAll = () => { setQuery(''); setResults([]); setSubmitted(false); setActiveCategory(null); };
 
-  // 행 디자인은 차트와 동일한 공용 TrackRow (좌측은 순번, 우측 재생수·좋아요수 + ⋮ 더보기)
-  const renderTrack = ({ item, index }: { item: Track; index: number }) => (
+  // 지금 보이는 결과 전체를 플레이리스트에 담기 (로그인 필요)
+  const handleAddAllToPlaylist = () => {
+    if (!user) { setGated(true); return; }
+    if (!results.length) return;
+    if (__DEV__) console.info('[SearchScreen] 모두 담기', { count: results.length, category: activeCategory });
+    setShowBulkPicker(true);
+  };
+
+  // 행 디자인은 차트와 동일한 공용 TrackRow — 순위 개념이 없어 좌측 순번은 비운다
+  const renderTrack = ({ item }: { item: Track }) => (
     <TrackRow
       track={item}
-      left={<AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{index + 1}</AppText>}
       liked={!!likedMap[item.id]}
       onPress={() => handlePress(item)}
       onMore={() => setActionTrack(item)}
@@ -218,15 +242,31 @@ export default function SearchScreen() {
           keyExtractor={(it) => it.id}
           keyboardShouldPersistTaps="handled"
           renderItem={renderTrack}
-          ListHeaderComponent={activeCategory ? (
-            <AppText variant="title3" style={styles.resultHead}>{activeCategory}</AppText>
-          ) : null}
+          ListHeaderComponent={
+            <View style={styles.resultHead}>
+              <AppText variant="title3" style={styles.resultHeadText} numberOfLines={2}>
+                {activeCategory ? categoryHeadline(activeCategory) : `'${query.trim()}' 검색 결과`}
+              </AppText>
+              {/* 결과 전체를 한 번에 플레이리스트로 */}
+              <TouchableOpacity style={styles.bulkBtn} onPress={handleAddAllToPlaylist} accessibilityLabel="모두 담기">
+                <Feather name="bookmark" size={14} color={colors.accent.primary} />
+                <AppText variant="footnote" tone="accent">모두 담기</AppText>
+              </TouchableOpacity>
+            </View>
+          }
         />
       ) : submitted ? (
         <EmptyState icon="🔍" title="결과가 없습니다" hint="다른 검색어/느낌으로 시도해보세요" />
       ) : (
         <EmptyState icon="🎵" title="느낌을 선택하거나 검색해보세요" hint="위의 느낌을 눌러보세요" />
       )}
+
+      {/* 결과 전체 담기 — 공용 플레이리스트 시트 */}
+      <PlaylistPickerSheet
+        visible={showBulkPicker}
+        trackIds={results.map((t) => t.id)}
+        onClose={() => setShowBulkPicker(false)}
+      />
 
       {/* 곡 더보기(⋮) — 차트와 동일한 공용 액션 시트 */}
       <TrackActionSheet
@@ -258,6 +298,15 @@ const styles = StyleSheet.create({
   },
   moodChipActive: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
   loadingWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.huge },
-  resultHead: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  resultHead: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm, gap: spacing.sm,
+  },
+  resultHeadText: { flex: 1 },
+  bulkBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.accent.primary,
+  },
   loginCta: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });

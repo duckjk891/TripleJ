@@ -1,18 +1,27 @@
 // [TrackActionSheet] 곡 더보기(⋮) 액션 시트 — 재생 / 좋아요 / 재생목록에 추가 / 플레이리스트에 담기.
 // 차트·검색 등 곡 목록 화면이 같은 메뉴·동작을 쓰도록 공용화(플레이리스트 담기 시트, 비회원 담기 안내 포함).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, Alert, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { AppText, Button } from './ui';
+import { AppText } from './ui';
 import { TrackCover, RowTrack } from './TrackRow';
 import GuestQueueNoticeModal from './GuestQueueNoticeModal';
+import PlaylistPickerSheet from './PlaylistPickerSheet';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+
+/** 화면별 추가 메뉴 항목(플레이리스트에서 제거, 공유, 다운로드 등) */
+export interface ExtraAction {
+  icon: any;                 // Feather 아이콘 이름
+  label: string;
+  onPress: (track: RowTrack) => void;
+  danger?: boolean;          // 삭제 등 위험 동작(빨간색)
+}
 
 interface Props {
   track: RowTrack | null;          // null이면 닫힌 상태
@@ -20,19 +29,18 @@ interface Props {
   onPlay: (track: RowTrack) => void;
   /** 좋아요 토글 시 화면의 like_count를 낙관적으로 보정하고 싶을 때 */
   onLikeChanged?: (trackId: string, delta: number) => void;
+  /** 기본 4개 항목 아래에 붙는 화면 고유 항목 */
+  extraItems?: ExtraAction[];
 }
 
-export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged }: Props) {
+export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged, extraItems }: Props) {
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
   const likedMap = useLikesStore((s) => s.liked);
   const toggleLikeStore = useLikesStore((s) => s.toggle);
   const playerStore = usePlayerStore();
 
-  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
-  const [playlists, setPlaylists] = useState<any[]>([]);
-  const [selectedTrackId, setSelectedTrackId] = useState('');
-  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [playlistTarget, setPlaylistTarget] = useState<string | null>(null); // 플레이리스트에 담을 곡 id
   const [pendingQueueTrack, setPendingQueueTrack] = useState<RowTrack | null>(null);
 
   // 비로그인 → 로그인 화면으로 이동(Alert 다중버튼은 웹에서 미동작)
@@ -69,43 +77,9 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
     addToQueueNow(t);
   };
 
-  const handleAddToPlaylist = async (t: RowTrack) => {
+  const handleAddToPlaylist = (t: RowTrack) => {
     if (!requireLogin()) return;
-    setSelectedTrackId(t.id);
-    try {
-      const res = await api.get('/playlists/');
-      setPlaylists(res.data.playlists || res.data || []);
-    } catch (err: any) {
-      console.error('[TrackActionSheet] 플레이리스트 조회 실패', { status: err?.response?.status });
-      setPlaylists([]);
-    }
-    setShowPlaylistModal(true);
-  };
-
-  const addToExistingPlaylist = async (playlistId: string) => {
-    try {
-      await api.post(`/playlists/${playlistId}/tracks`, { track_id: selectedTrackId });
-      Alert.alert('완료', '플레이리스트에 추가되었습니다!');
-    } catch (err: any) {
-      console.error('[TrackActionSheet] 플레이리스트 추가 실패', { playlistId, status: err?.response?.status });
-      Alert.alert('오류', err?.response?.data?.error || '추가에 실패했습니다.');
-    }
-    setShowPlaylistModal(false);
-  };
-
-  const createAndAddToPlaylist = async () => {
-    const name = newPlaylistName.trim();
-    if (!name) { Alert.alert('알림', '플레이리스트 이름을 입력해주세요.'); return; }
-    try {
-      const createRes = await api.post('/playlists/', { title: name });
-      await api.post(`/playlists/${createRes.data.id}/tracks`, { track_id: selectedTrackId });
-      Alert.alert('완료', `"${name}"에 추가되었습니다!`);
-    } catch (err: any) {
-      console.error('[TrackActionSheet] 플레이리스트 생성 실패', { status: err?.response?.status });
-      Alert.alert('오류', err?.response?.data?.error || '생성에 실패했습니다.');
-    }
-    setNewPlaylistName('');
-    setShowPlaylistModal(false);
+    setPlaylistTarget(t.id);
   };
 
   return (
@@ -139,6 +113,17 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
                   <Feather name="bookmark" size={20} color={colors.text.secondary} />
                   <AppText variant="body">플레이리스트에 담기</AppText>
                 </TouchableOpacity>
+                {/* 화면 고유 항목 (제거·공유·다운로드·삭제 등) */}
+                {(extraItems || []).map((ex) => (
+                  <TouchableOpacity
+                    key={ex.label}
+                    style={styles.actionSheetItem}
+                    onPress={() => { const t = track; onClose(); ex.onPress(t); }}
+                  >
+                    <Feather name={ex.icon} size={20} color={ex.danger ? colors.status.error : colors.text.secondary} />
+                    <AppText variant="body" style={ex.danger ? { color: colors.status.error } : undefined}>{ex.label}</AppText>
+                  </TouchableOpacity>
+                ))}
               </>
             ) : null}
           </View>
@@ -158,35 +143,12 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
         onClose={() => setPendingQueueTrack(null)}
       />
 
-      {/* 플레이리스트 담기 바텀시트 */}
-      <Modal visible={showPlaylistModal} transparent animationType="slide" onRequestClose={() => setShowPlaylistModal(false)}>
-        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
-          <View style={styles.sheet}>
-            <AppText variant="title3" style={styles.sheetTitle}>플레이리스트에 담기</AppText>
-            {playlists.length > 0 && (
-              <View style={styles.sheetList}>
-                {playlists.map((pl: any) => (
-                  <TouchableOpacity key={pl.id} style={styles.sheetItem} onPress={() => addToExistingPlaylist(pl.id)}>
-                    <AppText variant="body">{pl.title || pl.name}</AppText>
-                    <AppText variant="caption" tone="muted">{pl.track_count ?? 0}곡</AppText>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            <AppText variant="footnote" tone="secondary" style={styles.sheetLabel}>새 플레이리스트 만들기</AppText>
-            <View style={styles.sheetCreateRow}>
-              <TextInput
-                style={styles.sheetInput}
-                placeholder="플레이리스트 이름"
-                placeholderTextColor={colors.text.muted}
-                value={newPlaylistName}
-                onChangeText={setNewPlaylistName}
-              />
-              <Button label="만들기" size="md" onPress={createAndAddToPlaylist} />
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {/* 플레이리스트 담기 — 공용 시트 */}
+      <PlaylistPickerSheet
+        visible={!!playlistTarget}
+        trackIds={playlistTarget ? [playlistTarget] : []}
+        onClose={() => setPlaylistTarget(null)}
+      />
     </>
   );
 }

@@ -24,6 +24,8 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { AppText, EmptyState, Button } from '../components/ui';
+import TrackRow from '../components/TrackRow';
+import TrackActionSheet from '../components/TrackActionSheet';
 
 interface Track {
   id: number;
@@ -66,6 +68,7 @@ export default function MyMusicScreen({ navigation }: any) {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
+  const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
 
   const fetchTracks = useCallback(async (isRefresh = false) => {
@@ -217,86 +220,14 @@ export default function MyMusicScreen({ navigation }: any) {
     );
   }
 
+  // 행 디자인은 차트·검색·플레이리스트와 동일한 공용 TrackRow (좌측 순번은 비움).
+  // 내 곡 고유 기능(공유·다운로드·차트 업로드·삭제)은 ⋮ 메뉴로 옮겨 보존한다.
   const renderTrack = ({ item }: { item: Track }) => (
-    <TouchableOpacity
-      style={styles.trackItem}
-      activeOpacity={0.7}
+    <TrackRow
+      track={{ ...item, id: String(item.id) }}
       onPress={() => navigation.getParent()?.navigate('Player', { track: item })}
-    >
-      {/* 휴지통 삭제 버튼 - 오른쪽 상단 */}
-      <TouchableOpacity
-        style={{ position: 'absolute', top: 8, right: 8, zIndex: 1, padding: 4 }}
-        onPress={(e) => {
-          e.stopPropagation();
-          handleDeleteTrack(String(item.id), item.title);
-        }}
-      >
-        <AppText style={{ fontSize: 16, color: colors.text.muted }}>{'🗑'}</AppText>
-      </TouchableOpacity>
-      {item.cover_image ? (
-        <Image
-          source={{ uri: getCoverUrl(item.cover_image) }}
-          style={styles.coverImage}
-        />
-      ) : (
-        <View style={[styles.coverImage, styles.coverPlaceholder]}>
-          <AppText style={styles.coverPlaceholderText}>♪</AppText>
-        </View>
-      )}
-      <View style={styles.trackInfo}>
-        <AppText style={styles.trackTitle} numberOfLines={1}>
-          {item.title}
-        </AppText>
-        <View style={styles.tagsRow}>
-          {(item.genre || []).slice(0, 2).map((g, i) => (
-            <View key={`g-${i}`} style={styles.tag}>
-              <AppText style={styles.tagText}>{g}</AppText>
-            </View>
-          ))}
-          {(item.mood || []).slice(0, 2).map((m, i) => (
-            <View key={`m-${i}`} style={[styles.tag, styles.moodTag]}>
-              <AppText style={styles.tagText}>{m}</AppText>
-            </View>
-          ))}
-        </View>
-        <View style={styles.statsRow}>
-          <AppText style={styles.statText}>▶ {item.play_count ?? 0}</AppText>
-          <AppText style={styles.statText}>♥ {item.like_count ?? 0}</AppText>
-          <AppText style={styles.statText}>{formatDate(item.created_at)}</AppText>
-          {item.is_public ? (
-            <AppText style={{ fontSize: 11, color: colors.status.success, fontWeight: '600' }}>차트 스트리밍 중</AppText>
-          ) : (
-            <TouchableOpacity
-              onPress={(e) => {
-                e.stopPropagation();
-                handlePublishToChart(String(item.id), item.title);
-              }}
-            >
-              <AppText style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '600' }}>차트 업로드</AppText>
-            </TouchableOpacity>
-          )}
-        </View>
-        {/* 내 곡 관리: 공유 · 다운로드 */}
-        <View style={styles.ownActionsRow}>
-          <TouchableOpacity
-            style={styles.ownActionBtn}
-            accessibilityLabel="공유"
-            onPress={(e) => { e.stopPropagation(); handleShareTrack(item); }}
-          >
-            <Feather name="share-2" size={14} color={colors.text.secondary} />
-            <AppText style={styles.ownActionText}>공유</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.ownActionBtn}
-            accessibilityLabel="다운로드"
-            onPress={(e) => { e.stopPropagation(); handleDownloadTrack(item); }}
-          >
-            <Feather name="download" size={14} color={colors.text.secondary} />
-            <AppText style={styles.ownActionText}>다운로드</AppText>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </TouchableOpacity>
+      onMore={() => setActionTrack(item)}
+    />
   );
 
   // 성장 지표 계산
@@ -491,6 +422,21 @@ export default function MyMusicScreen({ navigation }: any) {
           ) : null}
         </ScrollView>
       )}
+
+      {/* 곡 더보기(⋮) — 공용 시트 + 내 곡 고유 기능(공유·다운로드·차트 업로드·삭제) */}
+      <TrackActionSheet
+        track={actionTrack ? { ...actionTrack, id: String(actionTrack.id) } : null}
+        onClose={() => setActionTrack(null)}
+        onPlay={(t) => navigation.getParent()?.navigate('Player', { track: t })}
+        extraItems={actionTrack ? [
+          { icon: 'share-2', label: '공유', onPress: () => handleShareTrack(actionTrack) },
+          { icon: 'download', label: '다운로드', onPress: () => handleDownloadTrack(actionTrack) },
+          ...(actionTrack.is_public
+            ? []
+            : [{ icon: 'upload-cloud' as const, label: '차트에 업로드', onPress: () => handlePublishToChart(String(actionTrack.id), actionTrack.title) }]),
+          { icon: 'trash-2', label: '삭제', danger: true, onPress: () => handleDeleteTrack(String(actionTrack.id), actionTrack.title) },
+        ] : undefined}
+      />
     </View>
   );
 }

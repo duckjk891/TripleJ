@@ -19,6 +19,9 @@ import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { AppText, EmptyState, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
+import TrackRow from '../components/TrackRow';
+import TrackActionSheet from '../components/TrackActionSheet';
+import { useLikesStore } from '../stores/likesStore';
 
 interface Playlist {
   id: string;
@@ -45,6 +48,8 @@ export default function PlaylistScreen({ navigation }: any) {
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameText, setRenameText] = useState('');
+  const [actionTrack, setActionTrack] = useState<any | null>(null); // ⋮ 더보기 대상
+  const likedMap = useLikesStore((s) => s.liked);
 
   const fetchPlaylists = useCallback(async () => {
     if (!user) return;
@@ -189,39 +194,23 @@ export default function PlaylistScreen({ navigation }: any) {
     );
   };
 
+  // 행 디자인은 차트·검색과 동일한 공용 TrackRow (순위 개념 없어 좌측 순번은 비움)
+  const playTrack = (item: any) => {
+    // 플레이리스트에서 재생 → 그 플레이리스트가 곧 재생목록이 된다(큐 교체).
+    const idx = playlistTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
+    usePlayerStore.getState().setQueue(playlistTracks);
+    usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
+    if (__DEV__) console.info('[PlaylistScreen] 플레이리스트 재생(큐 교체)', { playIndex: idx >= 0 ? idx : 0, len: playlistTracks.length });
+    navigation.navigate('Player', { track: item });
+  };
+
   const renderTrack = ({ item }: { item: any }) => (
-    <TouchableOpacity
-      style={styles.trackItem}
-      activeOpacity={0.7}
-      onPress={() => {
-        // 플레이리스트에서 재생 → 그 플레이리스트가 곧 재생목록이 된다(큐 교체).
-        // 플레이리스트 곡을 기존 재생목록에 '누적'하지 않는다(재생목록은 로그인 사용자의 별개 목록).
-        const idx = playlistTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
-        usePlayerStore.getState().setQueue(playlistTracks);
-        usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
-        if (__DEV__) console.info('[PlaylistScreen] 플레이리스트 재생(큐 교체)', { playIndex: idx >= 0 ? idx : 0, len: playlistTracks.length });
-        navigation.navigate('Player', { track: item });
-      }}
-    >
-      {item.cover_image || item.cover_image_url ? (
-        <Image source={{ uri: getCoverUrl(item.cover_image || item.cover_image_url) }} style={styles.trackCover} />
-      ) : (
-        <View style={[styles.trackCover, { backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' }]}>
-          <AppText style={{ fontSize: 20, color: colors.border.default }}>{'♪'}</AppText>
-        </View>
-      )}
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <AppText style={{ fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 4 }} numberOfLines={1}>{item.title}</AppText>
-        <AppText style={{ fontSize: 12, color: colors.text.secondary }}>{item.artist_name || item.uploader_nickname || 'AI'}</AppText>
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
-          <AppText style={{ fontSize: 11, color: colors.text.muted }}>{'▶'} {item.play_count ?? 0}</AppText>
-          <AppText style={{ fontSize: 11, color: colors.text.muted }}>{'♥'} {item.like_count ?? 0}</AppText>
-        </View>
-      </View>
-      <TouchableOpacity onPress={() => handleRemoveTrackFromPlaylist(String(item.id || item.track_id))} style={{ padding: 8 }}>
-        <AppText style={{ color: colors.text.muted, fontSize: 14 }}>{'✕'}</AppText>
-      </TouchableOpacity>
-    </TouchableOpacity>
+    <TrackRow
+      track={{ ...item, id: String(item.id || item.track_id) }}
+      liked={!!likedMap[String(item.id || item.track_id)]}
+      onPress={() => playTrack(item)}
+      onMore={() => setActionTrack(item)}
+    />
   );
 
   return (
@@ -299,6 +288,21 @@ export default function PlaylistScreen({ navigation }: any) {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* 곡 더보기(⋮) — 차트·검색과 동일한 공용 시트 + 이 화면 고유의 '플레이리스트에서 제거' */}
+      <TrackActionSheet
+        track={actionTrack ? { ...actionTrack, id: String(actionTrack.id || actionTrack.track_id) } : null}
+        onClose={() => setActionTrack(null)}
+        onPlay={(t) => playTrack(t)}
+        onLikeChanged={(trackId, delta) => setPlaylistTracks((prev) => prev.map((t: any) =>
+          String(t.id || t.track_id) === trackId ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) } : t))}
+        extraItems={selectedPlaylist ? [{
+          icon: 'trash-2',
+          label: '이 플레이리스트에서 제거',
+          danger: true,
+          onPress: (t) => handleRemoveTrackFromPlaylist(String(t.id)),
+        }] : undefined}
+      />
     </View>
   );
 }
