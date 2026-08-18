@@ -11,7 +11,10 @@ import {
   RefreshControl,
   Alert,
   ScrollView,
+  Share,
+  Linking,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '../stores/authStore';
@@ -166,6 +169,31 @@ export default function MyMusicScreen({ navigation }: any) {
     );
   };
 
+  // 내 곡 공유 (내가 만든 곡만 노출되는 화면이므로 소유권 체크 불필요)
+  const handleShareTrack = async (track: Track) => {
+    const link = `${BACKEND_BASE_URL}/track/${track.id}`;
+    if (__DEV__) console.info('[MyMusic] share', { id: track.id });
+    try {
+      await Share.share({ message: `AIDOL에서 내가 만든 곡 "${track.title}" 들어보세요! 🎵\n${link}` });
+    } catch (err: any) {
+      console.error('[MyMusic] share 실패', { message: err?.message });
+    }
+  };
+
+  // 내 곡 다운로드 — presigned URL 받아 열기(웹=다운로드/새탭, 네이티브=브라우저 저장)
+  const handleDownloadTrack = async (track: Track) => {
+    if (__DEV__) console.info('[MyMusic] download 호출', { id: track.id });
+    try {
+      const { data } = await api.post(`/tracks/download/${track.id}`);
+      const url = data?.download_url;
+      if (!url) { Alert.alert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
+      await Linking.openURL(url);
+    } catch (err: any) {
+      console.error('[MyMusic] download 실패', { status: err?.response?.status });
+      Alert.alert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+    }
+  };
+
   if (!user) {
     return (
       <View style={styles.container}>
@@ -247,6 +275,25 @@ export default function MyMusicScreen({ navigation }: any) {
               <AppText style={{ fontSize: 11, color: colors.accent.primary, fontWeight: '600' }}>차트 업로드</AppText>
             </TouchableOpacity>
           )}
+        </View>
+        {/* 내 곡 관리: 공유 · 다운로드 */}
+        <View style={styles.ownActionsRow}>
+          <TouchableOpacity
+            style={styles.ownActionBtn}
+            accessibilityLabel="공유"
+            onPress={(e) => { e.stopPropagation(); handleShareTrack(item); }}
+          >
+            <Feather name="share-2" size={14} color={colors.text.secondary} />
+            <AppText style={styles.ownActionText}>공유</AppText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.ownActionBtn}
+            accessibilityLabel="다운로드"
+            onPress={(e) => { e.stopPropagation(); handleDownloadTrack(item); }}
+          >
+            <Feather name="download" size={14} color={colors.text.secondary} />
+            <AppText style={styles.ownActionText}>다운로드</AppText>
+          </TouchableOpacity>
         </View>
       </View>
     </TouchableOpacity>
@@ -739,6 +786,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.text.muted,
   },
+  ownActionsRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  ownActionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingVertical: 5, paddingHorizontal: 10,
+    backgroundColor: colors.bg.surface2, borderRadius: 8,
+  },
+  ownActionText: { fontSize: 12, color: colors.text.secondary, fontWeight: '600' },
   lyricsSection: { paddingHorizontal: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 10 },
   lyricsCard: { backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: colors.border.subtle },

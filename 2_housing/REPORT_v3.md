@@ -4,6 +4,43 @@
 
 ---
 
+## v3.25 (기능 #9 — 재생목록(큐) 추가·뷰 + 다운로드/공유를 마이뮤직으로 이관) — 2026-08-18
+
+### 요청 작업
+① 재생목록(큐) 진행: 차트에 "재생목록 추가" 버튼 + 플레이어에 재생목록(큐) 보기. ② MAIDOL의 다운로드/공유 버튼은 **내가 만든 곡만** 대상이므로 **마이뮤직의 내 음악 리스트에서 관리**.
+
+### Plan verification findings (0단계)
+- **큐**: `playerStore`에 queue/currentIndex/`switchToTrack(idx)`(점프+재생) 존재하나 **큐 append/remove 액션·큐 보기 화면 없음**. MAIDOL: 차트 FiPlus=재생목록(큐, 인메모리), 큐 뷰=PlayerPage 탭.
+- **다운로드**: 백엔드 `POST /tracks/download/{id}`→`{download_url(presigned), filename}` (실측 200). 기존 PlayerScreen 다운로드 버튼은 **타인 곡 구매(PurchaseModal)까지 겸함** → 사용자 의도(내 곡만)와 불일치.
+- MyMusic는 `/tracks/my`로 **본인 곡만** 로드 → 다운로드/공유 배치에 적합(소유권 체크 불필요).
+
+### 수행 결과
+- **stores/playerStore.ts**: `addToQueue(track)`(중복 방지 append) · `removeFromQueue(index)`(currentIndex 보정) 추가.
+- **screens/ChartScreen.tsx**: 곡 행에 **"재생목록 추가"(Feather list)** 버튼 추가(클라 큐라 로그인 불필요, 토스트). 하트/재생목록/+ 3버튼 + accessibilityLabel.
+- **screens/PlayerScreen.tsx**: 액션열의 **다운로드 버튼 제거**(+PurchaseModal·pricing import 정리) → **재생목록(큐) 버튼**으로 교체. **재생목록 모달**(큐 리스트, 현재곡 ▶ 강조, 탭→`switchToTrack` 점프재생, ✕ 제거) 신규.
+- **screens/MyMusicScreen.tsx**: 내 곡 행에 **공유(Share.share, 곡 링크)** · **다운로드(`POST /tracks/download/{id}`→`Linking.openURL(presigned)`)** 버튼 추가. `[MyMusic]` 로그.
+
+### 테스트 (tester) — PASS / 부분 (tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [api] POST /tracks/download/{id} → download_url(presigned) | PASS (200) |
+| [e2e] 차트 "재생목록 추가" 버튼 렌더·클릭 | PASS (`/tmp/v325_diag.png` — 하트/list/+ 3버튼) |
+| [e2e] 곡 재생 → 플레이어 **재생목록 버튼**(다운로드 제거 확인) | PASS |
+| [e2e] 재생목록 모달 — 큐 목록·현재곡 ▶·제거 | PASS (`/tmp/v325_queue.png`) |
+| [e2e] 마이뮤직 공유/다운로드 버튼 | **부분** — 테스트계정 본인곡 0개라 행 미표시로 E2E 미검증. **코드/타입 + 다운로드 API 실측**으로 검증 |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- **차트 시간窓**: 오늘(8/18) 공개 트랙이 1곡뿐이라 버튼 카운트가 1로 나옴(데이터, 코드 정상). 다곡 시 각 행에 3버튼.
+- **MyMusic 버튼 E2E 미검증 사유**: 테스트 계정이 본인 곡이 없어 트랙 행이 안 뜸. 곡 보유 계정에서 확인 필요(추후). 다운로드 presigned URL 호스트가 `…:9100`(MinIO) — 사용자 디바이스 망 접근성은 실기기 확인 권장(MINIO_PUBLIC_HOST 이슈 가능).
+- 큐는 **클라이언트 인메모리**(playerStore persist에 포함) — MAIDOL과 동일하게 백엔드 큐 없음.
+
+### 커밋
+`feat: v3.25 재생목록(큐) 추가·뷰 + 다운로드/공유 마이뮤직 이관 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.24 (버그픽스 — 비로그인 좋아요/담기 무반응 → 로그인 화면 이동) — 2026-08-18
 
 ### 요청 작업

@@ -7,6 +7,7 @@ import {
   RefreshControl, Alert, Modal, TextInput, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
@@ -177,6 +178,13 @@ export default function ChartScreen() {
     navigation.navigate('Player', { track });
   };
 
+  // 재생목록(큐)에 추가 — 클라이언트 큐라 로그인 불필요
+  const handleAddToQueue = (track: ChartTrack) => {
+    const ok = playerStore.addToQueue(track);
+    if (__DEV__) console.info('[ChartScreen] addToQueue', { id: track.id, ok });
+    Alert.alert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
+  };
+
   const handleSearchTrackPress = (track: ChartTrack) => {
     const idx = searchResults.findIndex((t) => t.id === track.id);
     playerStore.setQueue(searchResults);
@@ -227,7 +235,10 @@ export default function ChartScreen() {
         <TouchableOpacity style={styles.action} accessibilityLabel={isLiked ? '좋아요 취소' : '좋아요'} onPress={(e) => { e.stopPropagation(); toggleLike(item.id); }}>
           <AppText variant="subtitle" tone={isLiked ? 'accent' : 'muted'}>{isLiked ? '♥' : '♡'}</AppText>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.action} onPress={(e) => { e.stopPropagation(); handleAddToPlaylist(item); }}>
+        <TouchableOpacity style={styles.action} accessibilityLabel="재생목록 추가" onPress={(e) => { e.stopPropagation(); handleAddToQueue(item); }}>
+          <Feather name="list" size={18} color={colors.text.muted} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.action} accessibilityLabel="플레이리스트에 담기" onPress={(e) => { e.stopPropagation(); handleAddToPlaylist(item); }}>
           <AppText variant="title3" tone="muted">+</AppText>
         </TouchableOpacity>
       </TouchableOpacity>

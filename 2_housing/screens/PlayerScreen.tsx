@@ -17,14 +17,13 @@ import {
 import { Audio } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
+import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { useArtistStore } from '../stores/artistStore';
 import { useAuthStore } from '../stores/authStore';
-import PurchaseModal from '../components/PurchaseModal';
-import { TRACK_PRICE_KRW, formatKrw } from '../data/pricing';
 import { colors } from '../theme/colors';
-import { spacing } from '../theme/spacing';
+import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -137,8 +136,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const playerStore = usePlayerStore();
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showPurchase, setShowPurchase] = useState(false);
-  const currentUser = useAuthStore((s) => s.user);
+  const [showQueue, setShowQueue] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
@@ -562,30 +560,49 @@ export default function PlayerScreen({ route, navigation }: any) {
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>담기</AppText>
         </TouchableOpacity>
 
-        {/* 다운로드 (구매) */}
-        <TouchableOpacity
-          style={styles.actionBtn}
-          onPress={() => {
-            const isOwn = currentUser?.id && track?.uploader_id && currentUser.id === track.uploader_id;
-            if (isOwn) {
-              Alert.alert('내 곡', '본인 곡은 결제 없이 다운로드할 수 있어요. (백엔드 반영 후 활성화)');
-              return;
-            }
-            setShowPurchase(true);
-          }}
-        >
-          <AppText variant="title2" tone="muted">↓</AppText>
-          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>다운로드</AppText>
+        {/* 재생목록(큐) */}
+        <TouchableOpacity style={styles.actionBtn} onPress={() => setShowQueue(true)} accessibilityLabel="재생목록">
+          <Feather name="list" size={24} color={colors.text.muted} />
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>재생목록</AppText>
         </TouchableOpacity>
       </View>
 
-      <PurchaseModal
-        visible={showPurchase}
-        trackTitle={track?.title || '제목 없음'}
-        trackArtist={track?.artist_name || track?.uploader_nickname}
-        onClose={() => setShowPurchase(false)}
-        onPurchase={() => setShowPurchase(false)}
-      />
+      {/* 재생목록(큐) 모달 — 현재 재생 큐를 보고 곡 선택/삭제 */}
+      <Modal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>
+        <TouchableOpacity style={styles.queueOverlay} activeOpacity={1} onPress={() => setShowQueue(false)}>
+          <TouchableOpacity style={styles.queueSheet} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.queueHead}>
+              <AppText variant="title3">재생목록 {playerStore.queue.length}</AppText>
+              <TouchableOpacity onPress={() => setShowQueue(false)} accessibilityLabel="닫기">
+                <Feather name="x" size={22} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+            {playerStore.queue.length === 0 ? (
+              <AppText tone="muted" center style={{ paddingVertical: 40 }}>재생목록이 비어있어요</AppText>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }}>
+                {playerStore.queue.map((q: any, i: number) => {
+                  const playing = i === playerStore.currentIndex;
+                  return (
+                    <View key={`${q?.id}-${i}`} style={styles.queueRow}>
+                      <TouchableOpacity style={styles.queueRowMain} activeOpacity={0.7} onPress={() => { setShowQueue(false); switchToTrack(i); }}>
+                        <AppText variant="footnote" tone={playing ? 'accent' : 'muted'} style={{ width: 24 }}>{playing ? '▶' : i + 1}</AppText>
+                        <View style={{ flex: 1 }}>
+                          <AppText variant="body" tone={playing ? 'accent' : 'primary'} numberOfLines={1}>{q?.title || '제목 없음'}</AppText>
+                          <AppText variant="caption" tone="muted" numberOfLines={1}>{q?.artist_name || q?.uploader_nickname || '아티스트'}</AppText>
+                        </View>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => playerStore.removeFromQueue(i)} accessibilityLabel="목록에서 제거" style={{ padding: 8 }}>
+                        <Feather name="x" size={16} color={colors.text.muted} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
 
       {/* Bottom swipe-up indicator */}
@@ -974,6 +991,19 @@ const styles = StyleSheet.create({
     gap: 48,
     marginTop: 32,
   },
+  // 재생목록(큐) 모달
+  queueOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  queueSheet: {
+    backgroundColor: colors.bg.surface1,
+    borderTopLeftRadius: radius.xxl, borderTopRightRadius: radius.xxl,
+    padding: spacing.xl, paddingBottom: spacing.xxl,
+  },
+  queueHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
+  queueRow: {
+    flexDirection: 'row', alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  queueRowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.md },
   actionBtn: {
     alignItems: 'center',
     justifyContent: 'center',

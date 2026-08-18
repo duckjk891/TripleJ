@@ -7,6 +7,26 @@
 
 ---
 
+## v3.25 — 2026-08-18 — 재생목록(큐) 추가·뷰 + 다운로드/공유 마이뮤직 이관
+
+### 요청
+① 큐: 차트 재생목록 추가 버튼 + 플레이어 큐 뷰. ② 다운로드/공유는 내 곡만 → 마이뮤직에서 관리.
+
+### Plan verification findings (0단계)
+- playerStore에 큐/switchToTrack 있으나 add/remove·큐 뷰 없음. 다운로드 API=POST /tracks/download/{id}(presigned). PlayerScreen 다운로드는 타인곡 구매 겸함 → 내 곡만 원칙과 불일치. MyMusic=/tracks/my(본인곡).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| stores/playerStore.ts | addToQueue/removeFromQueue | — |
+| screens/ChartScreen.tsx | 행에 재생목록 추가 버튼 | `[ChartScreen]` |
+| screens/PlayerScreen.tsx | 다운로드 제거 → 재생목록 버튼+큐 모달 | — |
+| screens/MyMusicScreen.tsx | 내 곡 행 공유(Share)/다운로드(presigned) | `[MyMusic]` |
+
+큐=클라 인메모리. MyMusic 버튼 E2E는 본인곡 보유 계정 필요(추후).
+
+---
+
 ## v3.24 — 2026-08-18 — 비로그인 좋아요/담기 무반응 픽스 + 재생목록 화면 조사
 
 ### 요청

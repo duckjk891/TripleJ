@@ -22,6 +22,8 @@ interface PlayerState {
   setPosition: (v: number) => void;
   setDuration: (v: number) => void;
   setQueue: (tracks: any[]) => void;
+  addToQueue: (track: any) => boolean;   // 재생목록(큐) 맨 뒤 추가. 이미 있으면 false
+  removeFromQueue: (index: number) => void;
   setCurrentIndex: (i: number) => void;
   setPlayerScreenOpen: (v: boolean) => void;
   toggleShuffle: () => void;
@@ -53,6 +55,23 @@ export const usePlayerStore = create<PlayerState>()(
       setPosition: (position) => set({ position }),
       setDuration: (duration) => set({ duration }),
       setQueue: (queue) => set({ queue }),
+      addToQueue: (track) => {
+        if (!track?.id) return false;
+        const { queue } = get();
+        if (queue.some((t) => t?.id === track.id)) return false; // 중복 방지
+        set({ queue: [...queue, track] });
+        return true;
+      },
+      removeFromQueue: (index) => {
+        const { queue, currentIndex } = get();
+        if (index < 0 || index >= queue.length) return;
+        const next = queue.filter((_, i) => i !== index);
+        // 현재 재생 인덱스 보정
+        let nextIndex = currentIndex;
+        if (index < currentIndex) nextIndex = currentIndex - 1;
+        else if (index === currentIndex) nextIndex = Math.min(currentIndex, next.length - 1);
+        set({ queue: next, currentIndex: nextIndex });
+      },
       setCurrentIndex: (currentIndex) => set({ currentIndex }),
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),
       toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
