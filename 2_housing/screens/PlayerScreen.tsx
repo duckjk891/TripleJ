@@ -552,7 +552,7 @@ export default function PlayerScreen({ route, navigation }: any) {
       <View style={styles.coverWrapper}>
         {mediaTab === 'video' ? (
           lyricsTimeline.length > 0 ? (
-            <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={250} />
+            <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={210} />
           ) : (
             <View style={[styles.coverArt, styles.coverPlaceholder]}>
               <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
@@ -917,7 +917,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg.deepest,
     alignItems: 'center',
-    paddingBottom: 56, // 하단 절대배치 토글(가사·상세정보) 공간 확보
   },
   headerTitleFlex: { flex: 1 },
   trackArtistSpacing: { marginTop: spacing.xs },
@@ -932,8 +931,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     width: '100%',
     paddingHorizontal: 16,
-    paddingTop: 56,
+    paddingTop: 10,
     paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border.subtle,
   },
   backButton: {
     width: 40,
@@ -965,8 +966,8 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   coverArt: {
-    width: 250,
-    height: 250,
+    width: 210,
+    height: 210,
     borderRadius: 16,
   },
   coverPlaceholder: {
@@ -1103,7 +1104,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 48,
-    marginTop: 32,
+    marginTop: 20,
+    marginBottom: 8,
   },
   // 재생목록(큐) 모달
   queueOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
@@ -1142,13 +1144,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   swipeUpButton: {
-    position: 'absolute',
-    left: 0, right: 0, bottom: 0,
     width: '100%',
     alignItems: 'center',
     paddingTop: 10,
-    paddingBottom: 20,
-    backgroundColor: colors.bg.deepest,
+    paddingBottom: 18,
     borderTopWidth: 1,
     borderTopColor: colors.bg.surface1,
   },

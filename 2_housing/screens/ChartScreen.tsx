@@ -15,6 +15,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
+import Marquee from '../components/Marquee';
 
 interface ChartTrack {
   id: string;
@@ -230,7 +231,7 @@ export default function ChartScreen() {
           : <AppText variant="bodyStrong" center style={[styles.rank, { color: rankColor }]}>{rank}</AppText>}
         <Cover track={item} />
         <View style={styles.info}>
-          <AppText variant="bodyStrong" numberOfLines={1}>{item.title}</AppText>
+          <Marquee text={item.title} variant="bodyStrong" tone="primary" />
           <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
             {item.artist_name || '알 수 없는 아티스트'}
           </AppText>
