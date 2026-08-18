@@ -15210,3 +15210,36 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 4: `frontend_admin/src/components/AdminPointsDashboard.jsx` `.css` `frontend_admin/src/api.js` `frontend_admin/src/utils/pointsLabels.js`(마이크로픽스)
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v182 append)
 - 무변경 확인: AdminPointsPage(운영 탭)·points_service.py·routes/points.py·main.py·package.json — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v183 — 분석 대시보드 세그먼트 2종 (플랜·역할 / 가입 코호트) (2026-08-18 14:52)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+분석 대시보드에 세그먼트 2종 추가(사용자 승인): ④플랜·역할 세그먼트 — 별 획득/소비를 `users.plan/role` 버킷으로 집계(v181 패턴 재사용) ⑤가입 코호트 — `created_at` 가입월별 별 활동(획득/소비)+코호트 인원. 9005→9004 미러.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **admin 포함 근거**: 세그먼트에서 admin 을 제외하면 세그먼트 합 ≠ 기존 3면(daily/breakdown/demographics) 합 — **정합 검산이 붕괴** → 포함하되 role 스택 바의 "관리자" 세그먼트로 분리 가시화(별도 제외·각주 없이 요구 충족).
+- **월 코호트 확정**: live PG 실측 — 가입월 5개(2026-03:2/04:5/05:1/07:112/08:37, 계 157). 주 단위는 행 과다·희소로 기각.
+- **직교 정의**: 코호트 축(가입월)·인원수는 기간 필터와 직교(전체 기준), **별 활동(earned/spent)에만 days 적용** — 화면 각주 "인원은 가입월 전체 기준 · 별 활동은 선택 기간 내" 명시. rows 는 PG 전체 가입월(활동 0 월 포함)이라 **인원 합 == users 전체(157) 검산 축** 성립. 유저 미실재 활동은 미상 행(month null, 조건부).
+- **헬퍼 사설 복제**: `_sum_points_by_user(mode earn|spend|both)` + `_fetch_user_attrs` 신설 — v181 demographics 파이프라인과 동일 로직의 **의도적 복제**(기존 함수 무변경 원칙 — 검증 코드 보호). 공통화 추출은 후속 후보 등재. segments 는 Σ 1회로 plan·role 두 축 동시 매핑(1왕복), 미해석(비 uuid 포함)은 미상 버킷 합류로 **합산 무탈락**(4면 정합의 근거).
+- 표시: ④ 스택 바 2줄(인구 블록 통일)+독립 토글, ⑤ 소형 표(월/인원/획득/소비). 배치: 인구→세그먼트→코호트→티어→잔액(8블록). 버킷 라벨은 실분포 값 기준(v182 교훈 관행).
+
+## 3. 테스트 결과 — 12/12 PASS (api 7 / unit 4 / e2e 1), 앱 픽스 사이클 0회
+- 핵심 증적: 신규 2 엔드포인트 스키마(plan 3행·role 4행 고정 / 코호트 월 ASC+미상 조건부)·화이트리스트 400·401/403 / **코호트 인원 검산 3자 일치(Σrows == total_users == PG count 157)** / **4면 정합 정확 일치 — earn 491·spend 344, segments==demographics==Σdaily==Σbreakdown + 코호트 활동 교차까지(재실행 0회)** / delta 1쌍 버킷 정밀 반영(free·user·2026-08 만 ±7, 타 버킷 불변)·잔액 원상 / 개인정보 3면(응답·서버 로그·콘솔) 0건 / UI 8블록 순서·독립 토글(교차 간섭 0)·기간 전환 6콜(잔액 제외)·직교 각주·미상 gray fallback / 기존 12 엔드포인트(admin 9+사용자 3) 대표 회귀 불변 / 9004 diff 0 / package.json 무변경.
+- planner 판정 5건(TESTPLAN §4 블록): BASE_REV `e0f2c64` / users COUNT 승인 / **카운트 편차 정정** / created_at 조회 승인(가입월만) / demographics 4면 포함 — 모수 규약 동일성 코드 실측.
+
+## 4. 특이사항
+- **PLAN 카운트 오산정 정정 기록**: PLAN v183 의 "기존 11 엔드포인트" 는 planner 오산정 — 실측 admin_points 누계 **9**(v180 4+v181 3+v182 2)+사용자용 3 = 회귀 대상 12. TESTPLAN §4 판정 블록이 정정 기록(문서 우선).
+- **plan 단일 버킷 현상**: free 157명(100%) — 프리미엄 행 0 표시는 정상(일반형 구현). **과금 도입 후 유효해지는 지표**로 기재.
+- **미상 코호트 활동 6⭐**: 유저 미실재(탈퇴 등) 활동의 미상 행 합류 — 사양 동작(조건부 표시 확인). dev DB 특성.
+- delta 잔존: 테스트 1쌍(±7, ref `adm:` 2건)이 당일 집계·감사에 잔존(잔액 원상 — 승인 방침). 드라이버 이슈 3건 재검증 해소(앱 버그 0 — 픽스 0회 유지).
+- 승계 후속 후보(+1): signup_bonus day 백필/분기(제품 판단) / day 단독 인덱스 / CS 모달 드롭다운 통합 / tie 결정화 / 필터 복제 동기화 / eslint 부채 6건 / **`_sum_points_by_user`↔demographics 파이프라인 공통화 추출**(신규).
+
+## 5. 변경 파일 (커밋 대상 8)
+- 백엔드 2: `backend_9005/app/routes/admin_points.py` `backend_9004/app/routes/admin_points.py`(미러 — byte-identical 최종 실측)
+- 프론트 3: `frontend_admin/src/components/AdminPointsDashboard.jsx` `.css` `frontend_admin/src/api.js`
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v183 append)
+- 무변경 확인: AdminPointsPage·pointsLabels·points_service·routes/points.py·main.py·package.json — git status 실측, 하니스 잔재 0건.

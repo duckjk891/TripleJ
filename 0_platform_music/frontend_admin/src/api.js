@@ -164,6 +164,14 @@ export const getAdminPointsTopSpenders = (days) =>
 // 잔액 분포 (v182) — 현재 스냅샷(기간 무관) → { buckets: [{label, count}×5], total_users, total_balance }
 export const getAdminPointsBalanceDist = () =>
   API.get('/admin/points/analytics/balance-distribution');
+// 플랜·역할 세그먼트 (v183) — mode 'earn'|'spend' → { plan_rows|plan: [{bucket, total, users?}×3],
+// role_rows|role: [{bucket, total, users?}×4], users, total } (버킷 집계만 — 개별값 없음)
+export const getAdminPointsSegments = (days, mode) =>
+  API.get('/admin/points/analytics/segments', { params: { days, mode } });
+// 가입 코호트 (v183) — 인원은 가입월 전체·별 활동만 days 필터(직교)
+// → { rows: [{month "YYYY-MM"|"미상", users, earned, spent}], total_users }
+export const getAdminPointsCohorts = (days) =>
+  API.get('/admin/points/analytics/cohorts', { params: { days } });
 
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {

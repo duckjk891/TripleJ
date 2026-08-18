@@ -6,17 +6,27 @@ import {
   getAdminPointsDemographics,
   getAdminPointsTopSpenders,
   getAdminPointsBalanceDist,
+  getAdminPointsSegments,
+  getAdminPointsCohorts,
 } from '../api';
 import { actionLabel } from '../utils/pointsLabels';
 import './AdminPointsDashboard.css';
 
-// 별 분석 대시보드 (v181, v182 확장) — /points [분석 대시보드] 탭. 순수 CSS 차트(라이브러리 금지).
-// 블록 순서: ①일별 추이 ②순증·소진율(v182 — daily 재가공, 추가 fetch 없음) ③경로 분포 ④나이대×성별
-// ⑤소비자 티어(v182 — 기간 연동 재조회) ⑥잔액 분포(v182 — 현재 스냅샷, 마운트 1회).
-// 기간 필터 7/30/90일(기본 30). 로그 prefix `[AdminPointsDash]`.
+// 별 분석 대시보드 (v181~v183) — /points [분석 대시보드] 탭. 순수 CSS 차트(라이브러리 금지).
+// 블록 순서(8블록): ①일별 추이 ②순증·소진율(daily 재가공) ③경로 분포 ④나이대×성별
+// ⑤플랜·역할 세그먼트(v183 — 독립 토글) ⑥가입 코호트(v183 — 인원은 전체·활동만 기간 필터)
+// ⑦소비자 티어 ⑧잔액 분포(현재 스냅샷, 마운트 1회).
+// 기간 필터 7/30/90일(기본 30) — 전환 시 잔액 제외 6콜 재조회. 로그 prefix `[AdminPointsDash]`.
 // 응답은 집계/닉네임#code 수준뿐이며, 콘솔에는 기간·모드·건수만 출력한다(닉네임·개별값 미출력).
 
 const DAY_OPTIONS = [7, 30, 90];
+
+// v183 — 세그먼트 버킷 한글 라벨(실분포 값 기준 등록 — 미등록 원문 fallback, '미상'은 원문 통과)
+const PLAN_LABELS = { free: '무료', premium: '프리미엄' };
+const ROLE_LABELS = { user: '일반', customer: '고객', admin: '관리자' };
+// 세그먼트 색 — 행 순서 기준(마지막 버킷 '미상' gray). 기존 팔레트 톤 재사용.
+const PLAN_PALETTE = ['#3b82f6', '#a855f7', '#94a3b8'];
+const ROLE_PALETTE = ['#3b82f6', '#22c55e', '#f59e0b', '#94a3b8'];
 
 // day 'YYYYMMDD' → 'MM-DD' (백엔드 확정 스키마 — bucket 은 한글 원문이라 별도 매핑 불요)
 function shortDay(day) {
@@ -44,6 +54,12 @@ export default function AdminPointsDashboard() {
   const [tiersError, setTiersError] = useState('');
   const [balDist, setBalDist] = useState(null);
   const [balDistError, setBalDistError] = useState('');
+  // v183 — 플랜·역할 세그먼트(독립 획득/소비 토글) / 가입 코호트(토글 없음)
+  const [seg, setSeg] = useState(null);
+  const [segError, setSegError] = useState('');
+  const [segMode, setSegMode] = useState('earn'); // 인구 블록 토글(demoMode)과 독립
+  const [cohorts, setCohorts] = useState(null);
+  const [cohortsError, setCohortsError] = useState('');
 
   const loadDaily = useCallback(async (d) => {
     setDailyError('');
@@ -147,14 +163,66 @@ export default function AdminPointsDashboard() {
     }
   }, []);
 
-  // 기간 변경 → 추이·분포·티어 재조회 / 모드 토글은 아래 별도 effect(demographics 만) — 불필요 재조회 방지
+  // v183 — 플랜·역할 세그먼트. 확정 스키마: plan_rows 3행·role_rows 4행 고정(행에 users 포함),
+  // Σplan==Σrole==total 내부 정합 보장. (plan/role 키는 구계약 방어 폴백)
+  const loadSegments = useCallback(async (d, mode) => {
+    setSegError('');
+    setSeg(null);
+    if (import.meta.env.DEV) console.info('[AdminPointsDash] loading segments', { days: d, mode });
+    try {
+      const { data } = await getAdminPointsSegments(d, mode);
+      const planRows = Array.isArray(data?.plan_rows) ? data.plan_rows : Array.isArray(data?.plan) ? data.plan : [];
+      const roleRows = Array.isArray(data?.role_rows) ? data.role_rows : Array.isArray(data?.role) ? data.role : [];
+      if (planRows.length === 0 && roleRows.length === 0) {
+        console.warn('[AdminPointsDash] unexpected segments response shape', { keys: Object.keys(data || {}) });
+      }
+      setSeg({
+        planRows,
+        roleRows,
+        total: typeof data?.total === 'number' ? data.total : planRows.reduce((s, r) => s + (r.total || 0), 0),
+        users: typeof data?.users === 'number' ? data.users : null,
+      });
+      if (import.meta.env.DEV) console.info('[AdminPointsDash] segments loaded', { plan: planRows.length, role: roleRows.length });
+    } catch (err) {
+      console.error('[AdminPointsDash] getAdminPointsSegments failed', { status: err?.response?.status, days: d, mode, message: err?.message });
+      setSegError('플랜·역할 세그먼트를 불러오지 못했습니다.');
+    }
+  }, []);
+
+  // v183 — 가입 코호트(활동만 days 필터 — 인원·가입월 축은 전체 기준 직교)
+  const loadCohorts = useCallback(async (d) => {
+    setCohortsError('');
+    setCohorts(null);
+    if (import.meta.env.DEV) console.info('[AdminPointsDash] loading cohorts', { days: d });
+    try {
+      const { data } = await getAdminPointsCohorts(d);
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      if (!Array.isArray(data?.rows)) {
+        console.warn('[AdminPointsDash] unexpected cohorts response shape', { keys: Object.keys(data || {}) });
+      }
+      setCohorts({ rows, totalUsers: typeof data?.total_users === 'number' ? data.total_users : 0 });
+      if (import.meta.env.DEV) console.info('[AdminPointsDash] cohorts loaded', { rows: rows.length });
+    } catch (err) {
+      console.error('[AdminPointsDash] getAdminPointsCohorts failed', { status: err?.response?.status, days: d, message: err?.message });
+      setCohortsError('가입 코호트를 불러오지 못했습니다.');
+    }
+  }, []);
+
+  // 기간 변경 → 추이·분포·티어·코호트 재조회 / 모드 토글은 별도 effect(demographics·segments 각각) — 불필요 재조회 방지
   useEffect(() => {
     // 기존 페이지 관행(fetch-in-effect)과 동일 패턴
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDaily(days);
     loadBreakdown(days);
     loadTiers(days); // v182 — 티어는 기간 연동
-  }, [days, loadDaily, loadBreakdown, loadTiers]);
+    loadCohorts(days); // v183 — 코호트도 기간 연동(활동 축)
+  }, [days, loadDaily, loadBreakdown, loadTiers, loadCohorts]);
+
+  // v183 — 기간 또는 세그먼트 토글 변경 → segments 만 재조회(독립 상태)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadSegments(days, segMode);
+  }, [days, segMode, loadSegments]);
 
   // v182 — 잔액 분포는 현재 스냅샷: 마운트 1회만(기간 전환 시 재조회 불요)
   useEffect(() => {
@@ -192,6 +260,38 @@ export default function AdminPointsDashboard() {
   const balMax = balDist && balDist.buckets.length > 0
     ? Math.max(1, ...balDist.buckets.map((b) => b.count || 0))
     : 1;
+
+  // v183 — 세그먼트 스택 바 1줄(축 라벨+합계 ⭐+스택+범례 chips). 인구 블록 패턴 재사용.
+  const renderSegRow = (axisLabel, rows, palette, labels) => {
+    const rowTotal = rows.reduce((s, r) => s + (r.total || 0), 0);
+    return (
+      <div className="admin-points-dash__seg-row">
+        <div className="admin-points-dash__seg-head">
+          <span className="admin-points-dash__seg-axis">{axisLabel}</span>
+          <span className="admin-points-dash__seg-sum">합계 ⭐ {rowTotal.toLocaleString()}</span>
+        </div>
+        <div className="admin-points-dash__demo-track">
+          {rows.map((r, i) => (r.total || 0) > 0 && (
+            <span
+              key={r.bucket}
+              className="admin-points-dash__demo-seg"
+              style={{ width: `${pct(r.total || 0, rowTotal)}%`, background: palette[i % palette.length] }}
+              title={`${labels[r.bucket] || r.bucket} ⭐ ${(r.total || 0).toLocaleString()}`}
+            />
+          ))}
+        </div>
+        <div className="admin-points-dash__legend admin-points-dash__seg-legend">
+          {rows.map((r, i) => (
+            <span key={r.bucket} className="admin-points-dash__legend-item">
+              <i className="admin-points-dash__dot" style={{ background: palette[i % palette.length] }} />
+              {labels[r.bucket] || r.bucket} ⭐ {(r.total || 0).toLocaleString()}
+              {typeof r.users === 'number' ? ` · ${r.users.toLocaleString()}명` : ''}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const renderBreakdownPanel = (title, list) => {
     const panelTotal = list.reduce((sum, row) => sum + (row.total || 0), 0);
@@ -428,7 +528,91 @@ export default function AdminPointsDashboard() {
         )}
       </section>
 
-      {/* ⑤(v182) 소비자 티어 — 기간 연동. 닉네임 미해석 시 `사용자 #id8` fallback, /users/:id Link(v177 관행) */}
+      {/* ⑤(v183) 플랜·역할 세그먼트 — 인구 블록 직후. 독립 획득/소비 토글(segments 만 재조회) */}
+      <section className="admin-points-dash__section">
+        <div className="admin-points-dash__demo-head">
+          <h3 className="admin-points-dash__title">플랜·역할 세그먼트</h3>
+          <div className="admin-points-dash__mode" role="radiogroup" aria-label="세그먼트 집계 모드">
+            <button
+              className={`admin-points-dash__range-btn ${segMode === 'earn' ? 'admin-points-dash__range-btn--active' : ''}`}
+              onClick={() => setSegMode('earn')}
+              aria-pressed={segMode === 'earn'}
+            >
+              획득
+            </button>
+            <button
+              className={`admin-points-dash__range-btn ${segMode === 'spend' ? 'admin-points-dash__range-btn--active' : ''}`}
+              onClick={() => setSegMode('spend')}
+              aria-pressed={segMode === 'spend'}
+            >
+              소비
+            </button>
+          </div>
+        </div>
+        {segError ? (
+          <div className="admin-points-dash__error">
+            <p>{segError}</p>
+            <button className="admin-points-dash__retry" onClick={() => loadSegments(days, segMode)}>재시도</button>
+          </div>
+        ) : seg === null ? (
+          <p className="admin-points-dash__loading">로딩 중...</p>
+        ) : seg.total === 0 ? (
+          <p className="admin-points-dash__empty">기간 내 데이터가 없습니다.</p>
+        ) : (
+          <div className="admin-points-dash__seg-rows">
+            {renderSegRow('플랜', seg.planRows, PLAN_PALETTE, PLAN_LABELS)}
+            {renderSegRow('역할', seg.roleRows, ROLE_PALETTE, ROLE_LABELS)}
+          </div>
+        )}
+      </section>
+
+      {/* ⑥(v183) 가입 코호트 — 인원은 가입월 전체 기준, 별 활동만 선택 기간 필터(직교) */}
+      <section className="admin-points-dash__section">
+        <h3 className="admin-points-dash__title">가입 코호트</h3>
+        {cohortsError ? (
+          <div className="admin-points-dash__error">
+            <p>{cohortsError}</p>
+            <button className="admin-points-dash__retry" onClick={() => loadCohorts(days)}>재시도</button>
+          </div>
+        ) : cohorts === null ? (
+          <p className="admin-points-dash__loading">로딩 중...</p>
+        ) : cohorts.rows.length === 0 ? (
+          <p className="admin-points-dash__empty">가입 이력이 없습니다.</p>
+        ) : (
+          <>
+            <table className="admin-points-dash__cohort-table">
+              <thead>
+                <tr>
+                  <th>가입월</th>
+                  <th>인원</th>
+                  <th>획득 ⭐</th>
+                  <th>소비 ⭐</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* 확정 스키마 — 미상 행은 month:null 로 맨 뒤(있을 때만) */}
+                {cohorts.rows.map((row) => (
+                  <tr key={row.month || '미상'}>
+                    <td>{row.month || '미상'}</td>
+                    <td>{(row.users || 0).toLocaleString()}</td>
+                    <td className={row.earned > 0 ? 'admin-points-dash__cohort-earn' : ''}>
+                      {(row.earned || 0).toLocaleString()}
+                    </td>
+                    <td className={row.spent > 0 ? 'admin-points-dash__cohort-spend' : ''}>
+                      {(row.spent || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="admin-points-dash__footnote">
+              인원은 가입월 전체 기준 · 별 활동(획득/소비)은 선택 기간 내 집계 · 총 {cohorts.totalUsers.toLocaleString()}명
+            </p>
+          </>
+        )}
+      </section>
+
+      {/* ⑦(v182) 소비자 티어 — 기간 연동. 닉네임 미해석 시 `사용자 #id8` fallback, /users/:id Link(v177 관행) */}
       <section className="admin-points-dash__section">
         <h3 className="admin-points-dash__title">소비자 티어 (상위 10)</h3>
         {tiersError ? (

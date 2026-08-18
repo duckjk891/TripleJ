@@ -1905,3 +1905,149 @@
 
 - 2026-08-18 초판 작성 (13건) — PLAN v182 §4 항목 1~7 전부 시나리오화(§4-1→EH-API-01·03, §4-2→EH-API-02·04, §4-3→EH-API-05, §4-4→EH-UNIT-01, §4-5→EH-API-06, §4-6→EH-UNIT-02·03·04, §4-7→EH-API-07·08). v181 확정 규칙 승계(재실행 1회 후 FAIL·spent 양수 $abs). 티어 개인정보 허용 경계(닉네임#code·user_id 허용 / 이메일·생년월일·성별 금지)를 판정 기준으로 명문화. BASE_REV·DB count 승인·빈 소비 기간 갈음·E2E Link 대상·소진율 포맷 5건 planner 회신 대기(§4).
 - 2026-08-18 planner 판정 반영 — §4 판정 블록 5건 확정(BASE_REV `54c22c3` / countDocuments 승인 / whale null 코드 리뷰 갈음 — 조기 반환 실측 / E2E Link 테스트 행 한정 / share_pct·소진율 소수 1자리 통일) + **라벨 마이크로픽스 v182 포함 확정**(원장 전수 실측: listen→play 키 정정, upload·referral 2종·verify_bonus 등록, generate 미등록 유지 — EH-UNIT-02 겸측 재검증). §4-1·EH-API-04·EH-UNIT-01 문안 3곳 고정. 보류 0건 — tester 착수 가능(전제: 9005·9004 v182+마이크로픽스 반영 재기동).
+
+# v183 — 분석 대시보드 세그먼트 2종 (플랜·역할 / 가입 코호트) (2026-08-18 14:39)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전)
+근거: PLAN.md v183 §0 실측(plan free 157/100%·role 3분포·가입월 5개·admin 포함 판단·`_sum_points_by_user` 헬퍼 신설), §1 설계 결정, §4 테스트 항목 1~6, §5 강행 금지 6항·리스크
+대상: backend_9005 `admin_points.py` 신규 2 엔드포인트(`GET /analytics/segments`·`GET /analytics/cohorts`)+헬퍼 1(기존 demographics 함수 무변경 — 9004 미러) / frontend_admin AdminPointsDashboard ⑥⑦블록 추가(8블록 체제)+api.js 2래퍼. **기존 엔드포인트·AdminPointsPage·pointsLabels·points_service·package.json 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **읽기 전용 위주** — 유일한 쓰기 = SG-API-05 delta **1쌍**(테스트 계정 grant N→동량 deduct, 잔액 순변화 0, 집계 잔존 승인 방침 연장 — REPORT 기재). E2E 쓰기 0건. CS 발송류 0건.
+- **DB 읽기**: ① users 전체 COUNT 1회(코호트 인원 검산 — v182 §4-2 승인 방식 준용, **승인 예정 표기**, 실측 기준 157) ② 테스트 계정 created_at 가입월 확인 1회(SG-API-05 버킷 판정용 — REPORT 에 **가입월 YYYY-MM 만** 기재).
+- **개인정보 3면 원칙(강행 금지 ③)**: 신규 2 응답·서버 로그·콘솔에 **개별 plan/role/가입일(YYYY-MM-DD)·이메일·user_id 나열 부재** — 버킷 집계만(cohorts 의 month 는 버킷값). 위반 시 즉시 중단·보고.
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN`/`USER_TOKEN`/`TEST_USER_1_ID`. `BASE_REV` = **v182 종료 커밋(planner 검토 시 확정 예정 — 확정 전 diff 판정 보류)**.
+- 정합 판정 규칙 승계(v181~182 확정): 짧은 시간창 연속 호출·**불일치→1회 재실행→FAIL**, spent 계열 전부 양수($abs). signup_bonus(day `-`) 는 day 범위 매치 특성상 daily·cohorts 활동 집계에서 일관 제외(REPORT 재기재).
+- 환경: 9005·9004, Mongo·PG, frontend_admin Vite dev(4001). 추적자 `[admin-points]`·`[AdminPointsDash]`.
+
+## 1. [api] 시나리오 — 신규 2 엔드포인트 (기본 대상 9005)
+
+### SG-API-01. segments 200 스키마 — plan 3행·role 4행 고정 + 내부 정합 [api] — 핵심
+- Given: `ADMIN_TOKEN`
+- When: `GET /api/admin/points/analytics/segments?days=90&mode=earn`(+spend·30일 스팟) 호출하면
+- Then: HTTP 200 —
+  - `plan_rows` **3행 고정 순서**(free/premium/미상), `role_rows` **4행 고정**(user/customer/admin/미상) — 빈 버킷도 `{bucket, users:0, total:0}` 행 실재
+  - 각 행 users(distinct 활동 유저 수) ≥0 정수·total ≥0(양수 규약)
+  - **내부 정합**: `Σ plan_rows[].total == Σ role_rows[].total == total`(같은 Σ 의 두 축 매핑 — 합계 보존, users 도 축별 Σ 일치)
+  - 현 데이터 특성 확인: **plan 은 free 단일 집중(premium 0)** — 오류 아닌 정상(§5, REPORT 기재)
+
+### SG-API-02. cohorts 200 — 가입월 전체 행 + 인원 검산 [api] — 핵심
+- Given: `ADMIN_TOKEN`. **users 전체 COUNT 1회**(PG 읽기 전용 — §0 승인 예정)
+- When: `GET /api/admin/points/analytics/cohorts?days=90`(+30 스팟) 호출하면
+- Then: HTTP 200 —
+  - `rows` — `month` "YYYY-MM" **오름차순**(실측 5개 월: 2026-03/04/05/07/08 수준), 각 행 `{month, users, earned, spent}`, **활동 0 월도 행 실재**(earned/spent 0 — 전체 가입월 축), `미상` 행은 유저 미실재 활동 존재 시에만 월 정렬 뒤 조건 표시
+  - **인원 검산**: `Σ rows[].users == total_users == users 테이블 COUNT`(실측 기준 157 — 탈퇴 익명화 포함이 정상, 3자 정확 일치)
+  - **직교 사양**: days 변경(90→30) 시 earned/spent 만 변하고 **rows 의 월 구성·users 는 불변**(인원은 기간과 직교)
+
+### SG-API-03. days·mode 화이트리스트 400 + 401·403 [api]
+- Given: `ADMIN_TOKEN` / 토큰 없음 / `USER_TOKEN`
+- When: ① segments days=8/0/91/문자 + mode=all/빈/대문자 EARN ② cohorts days=8/문자 (mode 파라미터 무시 확인 1회) ③ 신규 2개 무토큰 ④ 대표 1개 `USER_TOKEN` 하면
+- Then: ①② 전부 **400**(화이트리스트 {7,30,90}·earn|spend — 422 관측 시 비고 후 통일 관행) ③ 전부 401 ④ 403. 오류 응답 내부 정보 미노출.
+
+### SG-API-04. 4면 정합 교차 — segments·티어·분포·추이 + 코호트 [api] — 핵심
+- Given: `ADMIN_TOKEN`. 동일 days(90)로 관련 콜을 짧은 시간창 내 연속 실행
+- When: 합계를 대조하면
+- Then: **전부 정확 일치(불일치→1회 재실행→FAIL)**:
+  - **spend 4면**: `segments(spend).total` == `top-spenders.whale.all_total` == `Σ breakdown.spend[].total` == `Σ daily[].spent` (v182 3면에서 확장)
+  - **earn 동일**: `segments(earn).total` == `Σ breakdown.earn[].total` == `Σ daily[].earned` == `demographics(earn).total`
+  - **코호트 교차**: `Σ cohorts.rows[].earned == Σ daily[].earned`, `Σ cohorts.rows[].spent == Σ daily[].spent` (동일 days — 활동만 기간 필터인 직교 정의 검증)
+  - days=30 으로 spend 4면 1회 반복(기간 매개 정합)
+
+### SG-API-05. delta 1쌍 (선택) — plan·role·가입월 버킷 정밀 반영 + 원복 [api] — (유일한 쓰기: ±N, 테스트 계정)
+- Given: `ADMIN_TOKEN`, `TEST_USER_1_ID`(plan=free·role=user 전제 — 사전 확인, 가입월 `M0` 확보 §0). segments(earn·spend)·cohorts 기준값 기록
+- When: grant N → 재조회 → deduct N(원복) → 재조회하면
+- Then:
+  - grant 후(earn): plan_rows **free 행만** total +N(premium·미상 불변), role_rows **user 행만** +N(customer/admin/미상 불변), cohorts **M0 행만** earned +N(타 월 불변) — users 는 기등장 시 불변·신규 등장 시 +1 기록
+  - deduct 후(spend): 동일 버킷들 spend 측 +N — 잔액 원상(v180 불변식) + SG-API-04 정합식 재성립(재대조 1회)
+  - 집계 ±N 영구 잔존 REPORT 기재(승인 방침 연장)
+
+### SG-API-06. 회귀 — 기존 엔드포인트·demographics 무변경·diff·개인정보 3면 [api] — 회귀 핵심
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, `BASE_REV`(v182 커밋 — 확정 후)
+- When: ① 기존 admin_points 엔드포인트 대표 재실행 — v180 summary/events(filter=admin)/adjust 400 대표 + v181 daily/breakdown/demographics + v182 top-spenders/balance-distribution 스키마 대표 각 1건(PLAN 표기 "11 엔드포인트"와 실측 카운트 대조 — planner 확인 §4-3) ② 사용자용 `GET /api/points/costs·balance·history`(USER_TOKEN) ③ `git diff {BASE_REV}..HEAD --name-only` + admin_points.py 내 **demographics 함수 본문 diff 무변경**(헬퍼 신설만 — 코드 리뷰) ④ 신규 2 응답 전문·서버 로그 검사하면
+- Then: ① 전부 기존 TESTPLAN 판정 기준 PASS ② 스키마 불변 ③ 변경 파일 == PLAN §2 매트릭스 정확 일치(pointsLabels·points_service·routes/points.py·main.py·**package.json/lock 부재**), demographics 함수 무변경 ④ **개인정보 3면**: 응답에 개별 plan/role/가입일·이메일·uuid 나열 0건(버킷 집계만 — plan_rows/role_rows/month 는 버킷값), 서버 로그 admin_tag/days/mode/행 수만, 위반 시 즉시 중단.
+
+### SG-API-07. 9004 미러 — diff 0 + 대표 케이스 [api] — 미러 규칙
+- Given: 9004 기동
+- When: ① admin_points.py 9005↔9004 diff ② **9004** segments `ADMIN_TOKEN` 200 + cohorts `USER_TOKEN` 403 각 1회 하면
+- Then: ① diff **0** ② 9005 와 동일 판정.
+
+## 2. [unit] 시나리오 — 대시보드 ⑥⑦블록 (브라우저 하니스, 4001 dev)
+
+### SG-UNIT-01. 8블록 순서·세그먼트 렌더·한글 라벨 [unit] — 핵심
+- Given: 분석 탭(30일)
+- When: 블록 순서와 세그먼트 블록을 확인하면
+- Then: 순서 **추이→순증→분포→인구→[⑥플랜·역할 세그먼트]→[⑦가입 코호트]→티어→잔액** 정확(8블록). 세그먼트 = **가로 스택 바 2줄**(인구 블록 패턴) — 라벨 무료/프리미엄/일반/고객/**관리자**(admin 포함·분리 가시화 — 제외 아님)/미상, 각 행 ⭐합계·유저 수 병기, 값 == API 응답. **plan 단일 버킷 현상 정상 표기**(free 100%·프리미엄 0 — 빈 스택도 안전 렌더, 오류 표시 아님). 미등록 버킷값 원문 fallback(코드 확인 갈음 가능).
+
+### SG-UNIT-02. 독립 토글·기간 전환 6콜·직교 각주 [unit] — 핵심
+- Given: 분석 탭(30일)
+- When: ① 세그먼트 블록 획득/소비 토글 ② 인구 블록 토글 ③ 기간 7일 전환 ④ 코호트 블록 확인하면
+- Then: ① **segments 1콜만 재조회**(demographics·타 블록 콜 없음 — 독립 상태) ② demographics 1콜만(세그먼트 불변 — 상호 독립 검증) ③ 재조회 == **6콜**(daily/breakdown/demographics/top-spenders/segments/cohorts — **balance-distribution 제외 유지**) ④ 직교 각주 **"인원은 가입월 전체, 별 활동은 선택 기간 내"** 실재 + 기간 전환 후 코호트 **인원 열 불변·활동 열 갱신**(SG-API-02 직교 사양의 화면 검증).
+
+### SG-UNIT-03. 코호트 표 렌더·빈/에러 상태 [unit]
+- Given: 분석 탭, cohorts 응답 보유
+- When: 코호트 표와 에러 경로를 확인하면
+- Then: 표 = 월/인원/획득⭐/소비⭐ 열, 월 ASC·활동 0 월 행 표시(0 값 정상 렌더·NaN 없음), `미상` 행은 조건 표시(부재 시 미노출 — 코드 확인 갈음 가능), 값 == API. 백엔드 일시 중단 1회 → 블록 에러 상태 문구·화면 유지(복구 후 재시도 정상), stale 응답이 최신 기간 화면을 덮지 않음.
+
+### SG-UNIT-04. 운영 탭 회귀 스모크 + 콘솔 위생 + eslint [unit] — 마감
+- Given: SG-UNIT-01~03 수행 세션, `/points` 운영 탭
+- When: ① 운영 탭 — 검색 첫 클릭 선택·조정 confirm **취소**(adjust POST 0건)·원장·비용표 스모크 ② 콘솔에서 개별 plan/role 값 나열·가입일 패턴(`\d{4}-\d{2}-\d{2}`)·이메일·응답 덤프 검색 ③ eslint 실행하면
+- Then: ① v180~182 판정 기준 그대로(무변경 — diff 는 SG-API-06 ③ 겸측) ② `[AdminPointsDash]` 포함 **0건**(로그는 기간/모드/건수 수준만) ③ eslint 신규 0.
+
+## 3. [e2e] 시나리오 — 1건 (행동 수준, 쓰기 0건)
+
+### SG-E2E-01. 8블록 풀 여정 — 기간 전환→세그먼트 토글→코호트→운영 복귀 [e2e] — 핵심 (쓰기 0건)
+- Given: 관리자 앱(4001) 테스트 관리자 로그인
+- When: "별 관리" → 분석 탭 → 스크롤로 **8블록 순서·신규 2블록 렌더** 확인 → 기간 **7일 전환**(6콜 재조회·잔액 유지·코호트 인원 열 불변) → 세그먼트 **토글 전환**(1콜·스택 바 갱신) → 코호트 표·직교 각주 확인 → **운영 탭 복귀** → v180 기능 정상(검색·선택·잔액 표시 — 조정 confirm **취소**)하면
+- Then: 전 단계 정상 전이, 콘솔 신규 에러 0건, **네트워크에 adjust/send/broadcast POST 0건**(전 여정 읽기 전용 — delta 는 [api] 단계 전용). 관리자 행이 role 스택 바에 분리 가시(별도 제외 없음 확인).
+- 증적: 8블록 전경·7일 전환 후 세그먼트/코호트·토글 후·운영 탭 복귀 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **BASE_REV 확정**: v182 종료 커밋 = **`e0f2c64` 확정**(§4 판정 블록 1 — 보류 해제, `git diff e0f2c64 --name-only` 워킹트리 기준).
+2. **PG COUNT 읽기 1회 승인 완료**(§4 판정 블록 2): users 전체 수(실측 기준 157 — SG-API-02 검산 축), v182 §4-2 방식 준용.
+3. **"기존 11 엔드포인트" 카운트 편차**: admin_points 실측 누계 9(v180 4+v181 3+v182 2) vs PLAN §4-6 표기 11 — 회귀 대상 목록(사용자용 points 3 포함 여부 등) 확정 요청. 초안은 admin 9+사용자용 3 전부 대표 커버로 설계(포함이 안전측).
+4. **테스트 계정 created_at 조회 1회**: SG-API-05 가입월 버킷 판정용 — REPORT 에 **가입월(YYYY-MM)만** 기재(가입일 원문 금지) 방침 승인.
+5. **4면 정합의 demographics 포함 전제**: segments 미상(비 uuid skip)과 demographics 버킷의 합계 보존 규약이 동일하다는 전제로 earn 면에 demographics 포함 — 구현상 모수 차이(skip 규칙 상이)가 있으면 비교식에서 demographics 를 분리(3면+별도 대조)할지 회신.
+
+### planner 판정 (2026-08-18, 5건 전부 확정 — 해당 문안 반영 완료)
+
+1. **BASE_REV = `e0f2c64`** (v182 커밋 — planner git log 실측: 현재 HEAD, v183 변경분 워킹트리 미커밋). SG-API-06 은 `git diff e0f2c64 --name-only` 워킹트리 기준 — 보류 해제.
+2. **users COUNT 읽기 1회 승인** — v182 §4-2 방식 준용(읽기 전용 검산 축, 실측 157).
+3. **카운트 편차 — PLAN 표기 오류 정정(planner 오산정).** 실측 확정: admin_points 누계 **9**(v180 4 + v181 3 + v182 2), 사용자용 points **3** — 회귀 대상 = **12 엔드포인트**(초안 안전측 설계 채택). PLAN v183 §4-6·§5-① 의 "기존 11" 은 "기존 9(admin_points)+사용자용 3" 으로 읽는다(본 판정 블록이 정정 기록 — PLAN 재수정 없이 이 문서 우선).
+4. **테스트 계정 created_at 조회 1회 승인** — REPORT 에 **가입월(YYYY-MM)만** 기재(가입일 원문 금지).
+5. **demographics 포함 확정 — 모수 규약 동일성 코드 실측 완료.** 양쪽 모두 `per_user`(기간 내 활동 전원)를 **누락 없이 합산**: demographics 는 attrs 미해석 `(None,None)`→미상/unknown 열 합류(v181 코드), segments 는 `_fetch_user_attrs` 미해석(비 uuid 포함)→미상 버킷 합류(v183 코드 — skip 은 PG 조회 대상에서만, 합산에서는 미탈락). ∴ `segments.total == demographics.total == Σdaily.earned == Σbreakdown.earn` **4면 정합 비교식 유지**(분리 불요).
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. SG-API-01→02(§4-2 확정 후 COUNT 포함)→03 (읽기 전용) → SG-API-04 (4면 정합 — 짧은 시간창) → SG-API-05 (유일한 쓰기 ±N — §4-4 확정 후, 정합 재대조 포함) → SG-API-06 (회귀+diff — BASE_REV 확정 후) → SG-API-07 (9004)
+2. SG-UNIT-01→02→03 → SG-UNIT-04 (운영 스모크+콘솔 마감+eslint)
+3. SG-E2E-01 (쓰기 0건)
+4. 종료: 잔액 원상 재확인(SG-API-05 실행 시) + REPORT: plan 단일 버킷 현상·signup_bonus 제외 일관성·집계 잔존·코드 확인 갈음 항목 기재(개인값 미기재 — 가입월·버킷명만)
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| SG-API-01 | api | | plan 3행·role 4행 고정 + Σplan==Σrole==total |
+| SG-API-02 | api | | 월 ASC·활동 0 월 행·Σusers==COUNT(157 기준)·직교 |
+| SG-API-03 | api | | days·mode 400 + 401/403 |
+| SG-API-04 | api | | spend 4면·earn 4면·코호트 교차 — 재실행 1회 규칙 |
+| SG-API-05 | api | | delta ±N — free/user/가입월 버킷만 반영·타 버킷 불변 |
+| SG-API-06 | api | | 기존 대표 불변 + demographics 무변경 + diff·package.json + 개인정보 3면 |
+| SG-API-07 | api | | 9004 diff 0 + 200/403 대표 |
+| SG-UNIT-01 | unit | | 8블록 순서·스택 바 2줄·관리자 행·plan 단일 버킷 정상 |
+| SG-UNIT-02 | unit | | 독립 토글 1콜·기간 6콜(잔액 제외)·직교 각주·인원 열 불변 |
+| SG-UNIT-03 | unit | | 코호트 표·0 값·미상 조건·에러/stale |
+| SG-UNIT-04 | unit | | 운영 스모크 + 콘솔 0건 + eslint 0 |
+| SG-E2E-01 | e2e | | 8블록 풀 여정 — 쓰기 0건 |
+
+## v183 시나리오 집계
+
+- 총 **12건** — [api] 7 / [unit] 4 / [e2e] 1 (보류 없음 — planner 확인 5건은 §4)
+- 쓰기: SG-API-05 delta **1쌍만**(테스트 계정 ±N·잔액 원상·집계 잔존 REPORT 기재). DB 읽기 = users COUNT 1회+테스트 계정 created_at 1회(각 승인 예정 표기). E2E 쓰기 0건·CS 발송류 0건. 개인정보 3면(응답·서버 로그·콘솔)에서 개별 plan/role/가입일·이메일 부재 검증 — 위반 시 즉시 중단.
+
+## 개정 이력 (v183)
+
+- 2026-08-18 초판 작성 (12건) — PLAN v183 §4 항목 1~6 전부 시나리오화(§4-1→SG-API-01·03, §4-2→SG-API-02, §4-3→SG-API-04, §4-4→SG-API-05, §4-5→SG-UNIT-01~04, §4-6→SG-API-06·07). v181~182 확정 규칙 승계(재실행 1회·양수 규약·집계 잔존). PLAN "11 엔드포인트" 표기와 실측 9 의 편차를 §4-3 으로 질의(초안은 전부 커버 안전측). BASE_REV·PG COUNT 승인·카운트 편차·created_at 조회·demographics 포함 전제 5건 planner 회신 대기(§4).
+- 2026-08-18 planner 판정 반영 — §4 판정 블록 5건 확정(BASE_REV `e0f2c64` / users COUNT 승인 / 카운트 편차 정정 — 회귀 대상 12(admin 9+사용자 3), PLAN "기존 11" 은 오산정으로 본 블록이 정정 기록 / created_at 조회 승인 — REPORT 가입월만 / demographics 포함 확정 — 양측 per_user 전량 합산·미해석 미상 합류 코드 실측으로 4면 비교식 유지). §4-1·2 문안 고정. 보류 0건 — tester 착수 가능(전제: 9005·9004 v183 반영 재기동).

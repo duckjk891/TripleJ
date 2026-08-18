@@ -768,3 +768,209 @@ async def analytics_balance_distribution(current_user=Depends(get_admin_user)):
             "[admin-points] analytics balance-dist failed admin=%s", admin_tag
         )
         return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 7. 세그먼트 2종 (v183) — GET /analytics/{segments|cohorts}
+# ---------------------------------------------------------------------------
+# 개인정보: v181 원칙 그대로 — plan/role/가입월 개별값은 서버 내부에서 소멸,
+# 응답·로그는 버킷 집계만(로그: admin_tag/days/mode/행·유저 수).
+
+_PLAN_BUCKETS = ("free", "premium", "미상")
+_ROLE_BUCKETS = ("user", "customer", "admin", "미상")
+
+
+async def _sum_points_by_user(mongo, start_day: str, mode: str) -> dict:
+    """기간 내 user_id별 별 합계 — {user_id: {"earned": int, "spent": int}}.
+
+    v181 demographics 파이프라인(day범위+부호 match → user_id Σ)과 동일 로직의
+    **사설 복제** — 기존 demographics 함수는 무변경(검증 코드 보호)이라 리팩터
+    하지 않음. 중복은 의도적, 공통화 추출은 후속 후보(v183 §0).
+
+    mode: "earn"(양수만 match)|"spend"(음수만)|"both"(부호 무필터 — 양측 동시 Σ).
+    spent 는 절대값(양수) 규약.
+    """
+    match: dict = {"day": {"$gte": start_day}}
+    if mode == "earn":
+        match["amount"] = {"$gt": 0}
+    elif mode == "spend":
+        match["amount"] = {"$lt": 0}
+    out = {}
+    async for doc in mongo.point_events.aggregate([
+        {"$match": match},
+        {
+            "$group": {
+                "_id": "$user_id",
+                "earned": {"$sum": {"$cond": [{"$gt": ["$amount", 0]}, "$amount", 0]}},
+                "spent": {
+                    "$sum": {"$cond": [{"$lt": ["$amount", 0]}, {"$abs": "$amount"}, 0]}
+                },
+            }
+        },
+    ]):
+        out[str(doc["_id"])] = {
+            "earned": int(doc.get("earned") or 0),
+            "spent": int(doc.get("spent") or 0),
+        }
+    return out
+
+
+async def _fetch_user_attrs(conn, user_ids, columns: str) -> dict:
+    """PG 속성 일괄 조회(hydrate 관행 — 비 uuid 안전 skip) → {user_id: Record}."""
+    uuids = []
+    for uid in user_ids:
+        try:
+            uuids.append(uuid.UUID(uid))
+        except (ValueError, TypeError):
+            continue
+    if not uuids:
+        return {}
+    rows = await conn.fetch(
+        f"SELECT id, {columns} FROM users WHERE id = ANY($1::uuid[])", uuids
+    )
+    return {str(r["id"]): r for r in rows}
+
+
+@router.get("/analytics/segments")
+async def analytics_segments(
+    days: str = "30",
+    mode: str = "earn",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """기간 내 플랜·역할별 별 유통 분포 — mode=earn|spend(그 외 400).
+
+    user별 Σ 1회 → PG `id, plan, role` ANY 일괄 → 두 축 동시 매핑(1왕복).
+    응답 {plan_rows: [{bucket, users, total}](free/premium/미상 고정 3행)],
+    role_rows: [(user/customer/admin/미상 고정 4행)], users, total} — 빈 버킷 0.
+    미상 = NULL·미등록 값·유저 미실재(비 uuid 포함). admin 포함(role 행으로
+    분리 가시화 — 제외 시 3면 정합 검산 붕괴, v183 §0). 버킷 집계값만 응답.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        if mode not in _DEMOGRAPHICS_MODES:
+            return JSONResponse(
+                status_code=400, content={"error": "mode 는 earn 또는 spend 여야 합니다."}
+            )
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics segments admin=%s days=%d mode=%s",
+            admin_tag, n_days, mode,
+        )
+
+        per_user = await _sum_points_by_user(get_mongo(), start_day, mode)
+        value_key = "earned" if mode == "earn" else "spent"
+
+        attrs = await _fetch_user_attrs(conn, per_user.keys(), "plan, role")
+
+        plan_table = {b: {"users": 0, "total": 0} for b in _PLAN_BUCKETS}
+        role_table = {b: {"users": 0, "total": 0} for b in _ROLE_BUCKETS}
+        grand_total = 0
+        for uid, sums in per_user.items():
+            value = sums[value_key]
+            row = attrs.get(uid)
+            plan = row["plan"] if row else None
+            role = row["role"] if row else None
+            plan_bucket = plan if plan in ("free", "premium") else "미상"
+            role_bucket = role if role in ("user", "customer", "admin") else "미상"
+            plan_table[plan_bucket]["users"] += 1
+            plan_table[plan_bucket]["total"] += value
+            role_table[role_bucket]["users"] += 1
+            role_table[role_bucket]["total"] += value
+            grand_total += value
+
+        logger.info(
+            "[admin-points] analytics segments done admin=%s days=%d mode=%s users=%d",
+            admin_tag, n_days, mode, len(per_user),
+        )
+        return {
+            "plan_rows": [
+                {"bucket": b, "users": plan_table[b]["users"], "total": plan_table[b]["total"]}
+                for b in _PLAN_BUCKETS
+            ],
+            "role_rows": [
+                {"bucket": b, "users": role_table[b]["users"], "total": role_table[b]["total"]}
+                for b in _ROLE_BUCKETS
+            ],
+            "users": len(per_user),
+            "total": grand_total,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics segments failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+@router.get("/analytics/cohorts")
+async def analytics_cohorts(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """가입월 코호트 — 인원은 가입월 전체(기간 직교), 별 활동만 days 필터.
+
+    rows = PG 전체 가입월(`to_char(created_at,'YYYY-MM')` group — 활동 0 월도
+    행 유지 → 인원 합 == users 전체 검산 축) + 기간 내 user별 earned/spent Σ 를
+    가입월에 매핑. 유저 미실재(비 uuid 포함) 활동은 미상 행(month null, 월 뒤,
+    활동 있을 때만). 응답 {rows: [{month "YYYY-MM"|null, users, earned, spent}],
+    total_users}. earned/spent 양수($abs 규약). 버킷 집계값만 응답.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics cohorts admin=%s days=%d", admin_tag, n_days
+        )
+
+        # 코호트 축 — 전체 가입월(기간 직교). created_at NULL 방어는 미상 합류.
+        axis_rows = await conn.fetch(
+            """SELECT to_char(created_at, 'YYYY-MM') AS month, COUNT(*) AS n
+               FROM users GROUP BY 1 ORDER BY 1"""
+        )
+        months = {}  # month(str) -> {"users", "earned", "spent"}
+        unknown = {"users": 0, "earned": 0, "spent": 0}
+        for r in axis_rows:
+            if r["month"]:
+                months[r["month"]] = {"users": int(r["n"]), "earned": 0, "spent": 0}
+            else:
+                unknown["users"] += int(r["n"])
+
+        # 기간 내 활동 → 가입월 매핑
+        per_user = await _sum_points_by_user(get_mongo(), start_day, "both")
+        attrs = await _fetch_user_attrs(
+            conn, per_user.keys(), "to_char(created_at, 'YYYY-MM') AS month"
+        )
+        for uid, sums in per_user.items():
+            row = attrs.get(uid)
+            month = row["month"] if row else None
+            target = months.get(month) if month else None
+            if target is None:
+                target = unknown
+            target["earned"] += sums["earned"]
+            target["spent"] += sums["spent"]
+
+        rows = [
+            {"month": m, "users": v["users"], "earned": v["earned"], "spent": v["spent"]}
+            for m, v in sorted(months.items())
+        ]
+        if unknown["users"] or unknown["earned"] or unknown["spent"]:
+            rows.append({"month": None, **unknown})
+        total_users = sum(r["users"] for r in rows)
+
+        logger.info(
+            "[admin-points] analytics cohorts done admin=%s days=%d months=%d users=%d",
+            admin_tag, n_days, len(rows), total_users,
+        )
+        return {"rows": rows, "total_users": total_users}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics cohorts failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "코호트를 불러올 수 없습니다."})

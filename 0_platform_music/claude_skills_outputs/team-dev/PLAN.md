@@ -26786,3 +26786,62 @@ E2E (실발송 금지):
 - signup_bonus(day `-`) 는 순증에도 미포함(v181 과 일관 — 3면 정합 유지). REPORT 재기재.
 - 잔액 분포 모수는 잔액 문서 보유자(39명) — users 전체(156명)와 다름을 각주로 명시(오독 방지).
 - 소비 유저 8명 소규모 — whale 지표가 "상위 1명" 수준으로 계산됨(일반형 구현이므로 정상, 화면 N명 병기로 오해 방지).
+
+---
+
+# v183 — 분석 대시보드 세그먼트 2종 (플랜·역할 / 가입 코호트) (2026-08-18 14:37)
+
+## 0. 사전 코드 분석 (planner 직접 실측 — live PG 집계 조회, 개별값 미출력)
+
+- **plan 실분포**: `free` **157명(100%)** — premium 0·NULL 0. 세그먼트는 일반형(free/premium/미상 행 고정)으로 구현하되 현 데이터에선 단일 버킷임을 인지(§5).
+- **role 실분포**: user 136 / customer 11 / admin 10.
+- **가입 코호트**: created_at 월별 = 2026-03(2)/04(5)/05(1)/07(112)/08(37), 계 157 — **5개 월 → 월 코호트 확정**(주 단위는 행 과다·희소해 부적합. 07월 112명 집중도 월 행 1개로 수용).
+- **admin 포함 판단**: 제외하면 세그먼트 합 ≠ 기존 3면(daily/breakdown/demographics) 합 — **정합 검산이 깨짐** → **포함하되 role 스택 바에서 "관리자" 세그먼트로 자연 분리 가시화**(별도 제외 없음). dev DB 특성상 관리자 조정 비중이 보임은 v182 특이사항과 동일 맥락(화면 왜곡 아님 — 각주 불요, role 바가 곧 분리 표기).
+- **파이프라인 재사용 방식**: demographics(:v181)의 "day범위+부호 match → user_id Σ → PG ANY 매핑" 패턴 — **기존 함수 무변경 원칙 우선**으로 신규 헬퍼 `_sum_points_by_user(mongo, start_day, mode)` 를 신설해 신규 2 엔드포인트가 공유(기존 demographics 리팩터는 안 함 — 검증 코드 보호, 공통화 추출은 후속 후보). 코호트는 earned/spent 동시 집계라 별도 파이프라인($group $cond 양측).
+- users.created_at·plan·role 은 기본 스키마 컬럼(마이그레이션 불요 실측 — COALESCE NULL 0).
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| ④ 세그먼트 API | `GET /analytics/segments?days=&mode=earn|spend`(화이트리스트 재사용) → `{plan_rows: [{bucket, users, total}](free/premium/미상 고정 3행)], role_rows: [(user/customer/admin/미상 고정 4행)], total}` — user별 Σ 1회 → PG `SELECT id, plan, role` ANY 일괄 → 두 축 동시 매핑(1왕복). users=버킷 내 활동 distinct 수 | plan·role 을 1 엔드포인트로(같은 Σ 재사용). mode 토글은 demographics 와 동일 규약(통일감) |
+| ⑤ 코호트 API | `GET /analytics/cohorts?days=` (mode 없음 — earned/spent 동시) → `{rows: [{month: "YYYY-MM", users, earned, spent}], total_users}` — **rows = PG 전체 가입월**(`to_char(created_at,'YYYY-MM')` group — 활동 0 월도 행 유지 → 인원 합 == users 전체 검산 가능) + Mongo user별 earned/spent Σ 를 가입월에 매핑. 유저 미실재 활동은 `미상` 행(월 정렬 뒤) | 코호트 표는 획득/소비 2열이 자연(토글 불요). 전체 월 행 = 검산 축 |
+| 기간 관계 정의 | **활동(earned/spent)에만 days 필터 적용, 코호트 축(가입월)·인원수는 기간과 직교(전체 기준)** — 화면 문구 명시: "인원은 가입월 전체, 별 활동은 선택 기간 내" | 승인 요구(관계 명시). 인원까지 기간 필터하면 코호트 의미 상실 |
+| 코호트 단위 | **월**(5개 월 실측 — 주 단위 기각) | 0단계 실측 |
+| admin 처리 | **포함** — role 스택 바의 "관리자" 세그먼트로 분리 가시화(제외 없음) | 제외 시 3면 정합 검산 붕괴(0단계 판단). 분리 표기 요구 충족 |
+| 표시 형태 | ④ = **가로 스택 바 2줄**(플랜: free/premium/미상, 역할: user/customer/admin/미상 — 인구 블록과 동일 패턴) + 블록 내 획득/소비 토글(재사용 — 독립 상태) + 각 행 ⭐합계·유저 수 병기. ⑤ = **소형 표**(월/인원/획득⭐/소비⭐ — 미상 행 조건 표시) + 직교 관계 문구 | 인구 블록 통일감(승인 권장안). 코호트는 표가 정보 밀도 우위 |
+| 배치 | 인구 블록 직후 **⑥플랜·역할 세그먼트 → ⑦가입 코호트** → 티어 → 잔액 (총 8블록) | 정보 구조: 사용자 속성 그룹 연속(인구→세그먼트→코호트) |
+| 버킷 라벨 | plan: free="무료"/premium="프리미엄"/미상, role: user="일반"/customer="고객"/admin="관리자"/미상 — 프론트 상수(미등록 원문 fallback) | 라벨 실측 관행(v182 교훈 — 실분포 값 기준 등록) |
+| 개인정보 | v181 원칙 그대로 — plan/role/가입월 개별값은 서버 내부 소멸, 응답·로그는 버킷 집계만(로그: admin_tag/days/mode/행 수) | 강행 금지 |
+| api.js | `getAdminPointsSegments(days, mode)`·`getAdminPointsCohorts(days)` 2래퍼 | 관행 |
+| 미러 | admin_points.py 9005→9004 복사(기존 11 엔드포인트 무변경 — 신규 2+헬퍼 1 추가만) | 미러 규칙 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_points.py` | `_sum_points_by_user` 헬퍼 + segments·cohorts 2 엔드포인트(하단 추가 — 기존 11개 무변경) | 기존 `[admin-points]` |
+| `backend_9004/app/routes/admin_points.py` | 미러 복사 | - |
+| `frontend_admin/src/components/AdminPointsDashboard.jsx/.css` | ⑥세그먼트 블록(스택 바 2줄+토글)+⑦코호트 블록(표+직교 문구) — 8블록 체제 | 기존 `[AdminPointsDash]` |
+| `frontend_admin/src/api.js` | 래퍼 2개 | - |
+| **무변경** | AdminPointsPage·pointsLabels(신규 세그먼트 라벨은 대시보드 내 상수 — 원장 액션 아님)·points_service·routes/points.py·main.py·package.json | - |
+
+## 3. 작업 분담
+- **backend-dev** (선행): ① `_sum_points_by_user(mongo, start_day, mode)` 신설(demographics 파이프라인 패턴 복제 — **기존 demographics 함수는 무변경**) ② segments — Σ 1회+PG `id, plan, role` ANY 매핑(비 uuid skip→미상), 고정 행 반환(빈 버킷 0), mode 화이트리스트 400 ③ cohorts — PG 전체 가입월 group(활동 0 월 포함)+Mongo both Σ 매핑+미상 행, days 화이트리스트 ④ 로그 버킷 집계 수만 ⑤ 기존 11 엔드포인트 diff 0 ⑥ 9004 미러.
+- **frontend-dev**: ⑥ 스택 바 2줄(인구 블록 CSS 패턴 재사용)+독립 토글+행별 ⭐/유저 수 ⑦ 코호트 표+"인원은 가입월 전체, 별 활동은 선택 기간 내" 문구+미상 행 조건 표시 — 기간 전환 시 재조회 대상에 segments·cohorts 편입(잔액 제외 유지). api.js 2래퍼. 라벨 상수(무료/프리미엄/일반/고객/관리자/미상+원문 fallback). 콘솔 위생. eslint 신규 0.
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: 읽기 전용 위주 + delta 1쌍 선택(v182 패턴 — 테스트 계정·잔액 원상). 개인정보 3면 검증 유지.
+1. segments API: 200 스키마(plan 3행·role 4행 고정, users/total), days·mode 화이트리스트 400, 401/403. 현 데이터 특성 확인: plan 은 free 단일 집중(premium 0 정상 — 오류 아님).
+2. cohorts API: 200 — rows 월 ASC(+미상 조건), **인원 합 == users 전체 수 검산**(PG count 1회 — v182 §4-2 승인 방식 준용), 활동 0 월 행 존재(earned/spent 0). days 화이트리스트 400.
+3. 정합(핵심): `segments.total` == 기존 3면 합(Σdaily earned 또는 spent — 동일 days·mode) == `Σ cohorts.rows[].earned|spent`(동일 days — **4면 교차**로 확장). plan_rows Σtotal == role_rows Σtotal == total(내부 정합).
+4. delta 1쌍(선택): grant N→차감 N — 테스트 계정의 plan/role/가입월 버킷에 ±N 반영(타 버킷 불변) 후 원복 기재.
+5. UI: 8블록 순서(인구→세그먼트→코호트→티어→잔액), 스택 바 토글(segments 1콜 재조회 — demographics 토글과 독립), 코호트 직교 문구·미상 행, 기간 전환 시 재조회 콜 수(기존 4+2=6, 잔액 제외), 라벨(관리자 행 가시). 운영 탭 회귀.
+6. 회귀: 기존 11 엔드포인트 대표 불변, 사용자용 points API, 9004 diff 0, package.json 무변경, 개인정보(plan/role/가입월 개별값·이메일) 응답·로그·콘솔 0건.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① 기존 11 엔드포인트·demographics 함수 본문 무변경(헬퍼는 신설만) ② 운영 탭·AdminPointsPage 무접촉 ③ 개인정보 버킷 원칙(개별 plan/role/가입월·이메일 금지) ④ 차트 라이브러리 금지 ⑤ points_service 무접촉 ⑥ v177~182 승계(후속 6건 목록 유지).
+- **plan 단일 버킷 현상**: 현 데이터 free 100% — 프리미엄 행이 0 으로 표시됨(정상). 과금 도입 전까지 정보량 낮음을 REPORT 에 기재(구현은 일반형 유지).
+- 코호트 인원 합 검산은 users 전체(157) 기준 — 탈퇴 익명화 계정도 created_at 보존이라 포함됨(모수 정의 각주 불요, 검산엔 영향 없음).
+- `_sum_points_by_user` 와 demographics 내 기존 파이프라인의 중복은 의도적(기존 코드 보호) — 공통화 추출은 후속 후보에 추가.
