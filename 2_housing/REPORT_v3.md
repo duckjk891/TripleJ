@@ -4,6 +4,41 @@
 
 ---
 
+## v3.33 (마퀴 크로스플랫폼 측정 + 재생목록 드래그 편집 + 차트 '내 재생목록' 탭) — 2026-08-18
+
+### 요청 작업
+① 제목이 아직 말줄임 형태 — 다시 확인. ② 재생목록을 드래그로 잡아 끌어 순서 편집 가능하게. ③ 차트에 주간/월간/신곡 다음에 '내 재생목록' 탭을 둬 내 큐를 보기 — 멜론은 어떻게 되어있나?
+
+### Plan verification findings (0단계)
+- ① v3.32는 **웹만** 해결됨. Marquee의 폭 측정이 `whiteSpace:nowrap`(web 전용) + `position:absolute` 요소 기반이라 **네이티브에선 측정 텍스트가 개행 → 자연폭 미측정 → overflow 미감지 → 말줄임 유지**. 사용자가 실기기(네이티브)에서 보면 여전히 "..."로 보이는 원인.
+- ② 큐 편집 라이브러리 미설치: `react-native-draggable-flatlist`/`gesture-handler`/`reanimated` **모두 없음**. reanimated 도입은 babel 설정·빌드 리스크 → **내장 PanResponder**로 자체 구현 결정.
+- ③ 차트 TABS는 `top100/weekly/monthly/new` 4개(`screens/ChartScreen.tsx:37`). playerStore에 `queue`/`currentIndex` 존재 → 로컬 큐를 그대로 노출 가능. **멜론 실제**: '재생목록(현재 재생 큐)'은 차트 탭이 아니라 **플레이어/미니플레이어의 상시 버튼**으로 접근하고, '내 플레이리스트'는 라이브러리(보관함)에 별도로 둠 — 차트(랭킹)와 큐를 섞지 않음. 사용자 요청대로 차트 탭에 큐 뷰를 추가하되, 랭킹과 구분되게 라벨을 '내 재생목록'으로 명시.
+
+### 수행 결과
+- **components/Marquee.tsx (크로스플랫폼 측정으로 재작성)**: 별도 absolute 측정요소 제거. **실제 표시 텍스트 자체**(`flexShrink:0` + web `whiteSpace:nowrap`)를 `onLayout`으로 측정 → 네이티브는 yoga가 flexShrink:0 행 자식을 자연폭 한 줄로 측정, 웹은 nowrap로 한 줄 유지. 양 플랫폼 모두 자연폭 정확 측정 → **overflow 감지 정상**. numberOfLines 미사용(말줄임 원천 차단).
+- **stores/playerStore.ts**: `reorderQueue(from,to)` 추가 — 배열 splice 이동 + **현재 재생 인덱스(currentIndex) 보정**(끌린 곡이 재생 중이면 따라 이동, 사이를 지나가면 ±1).
+- **components/DraggableQueue.tsx (신규)**: 라이브러리 없이 내장 **PanResponder** 드래그 편집. 고정 행높이(ROW_H=60) 절대배치, 끌리는 행 `translateY`로 손가락 추종·사이 행 ±ROW_H로 자리 양보, 우측 그립(≡) 핸들에서만 드래그. **핵심 버그 회피**: PanResponder를 렌더마다 재생성하면 제스처 중 terminate → **index별 1회 생성 캐시(respondersRef)** + 가변값 ref 참조.
+- **screens/PlayerScreen.tsx**: 큐 모달의 정적 리스트를 `<DraggableQueue/>`로 교체 + "≡ 손잡이를 잡고 끌어 순서를 바꿀 수 있어요" 안내.
+- **screens/ChartScreen.tsx**: TABS에 `{key:'queue', label:'내 재생목록'}` 추가(API 없이 로컬 큐 노출). fetchChart는 queue탭이면 API 스킵, 렌더는 `playerStore.queue`를 데이터소스로. 빈 큐 EmptyState, 현재 재생곡 ▶ 표시.
+
+### 멜론 답변(사용자 질문)
+멜론은 '재생목록(현재 큐)'을 **차트 탭이 아니라 플레이어/하단 재생바의 상시 버튼**으로 열고, '내 플레이리스트/보관함'은 라이브러리에 따로 둡니다(차트=랭킹, 큐=재생대기열을 분리). 요청대로 차트에 '내 재생목록' 탭을 추가하되 랭킹과 혼동되지 않게 라벨을 명확히 했고, 큐 접근성은 v3.32의 미니플레이어 바로가기 + 이번 탭으로 이중 확보했습니다.
+
+### 테스트 (tester) — PASS (웹 실측, tsc 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc --noEmit | 에러 0 |
+| [e2e] 긴 제목(주입)→마퀴: copies=2·textOverflow=clip(말줄임 없음)·좌측 이동(106→28px) | PASS (`/tmp/v333_marquee_a.png`·`_b.png`) |
+| [e2e] '내 재생목록' 탭 존재·빈 상태 문구·큐 채워지면 목록 노출 | PASS (`/tmp/v333_mylist.png`) |
+| [e2e] 큐 드래그(터치)로 순서 변경: [쉬었음청년,여름의끝자락에서]→[여름의끝자락에서,쉬었음청년], ▶ 인덱스 추종 | PASS (`/tmp/v333_touch_after.png`) |
+| 콘솔 에러(내 코드) / reorder 로그 동작 | 0 / `[DraggableQueue] reorder {from:0,to:1}` 확인 |
+
+### 특이사항
+- 드래그는 RNW responder가 **터치 이벤트** 경로를 우선 → Playwright 합성 마우스로는 재현 불안정, **CDP 터치 이벤트**로 실제 순서 변경까지 검증(실기기 터치는 PanResponder 정식 지원 경로라 정상 동작 예상). 네이티브 실기기 테스트는 에뮬레이터 부재로 미실시.
+- 관측된 `401 /business/ads/*/impression`은 광고 노출 트래킹(비로그인) — 이번 변경과 무관한 기존 사항.
+
+---
+
 ## v3.32 (마퀴 실동작 수정 + 미니플레이어 재생목록 바로가기 + Now Playing 하단 라인 제거) — 2026-08-18
 
 ### 요청 작업

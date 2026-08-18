@@ -7,6 +7,27 @@
 
 ---
 
+## v3.33 — 2026-08-18 — 마퀴 크로스플랫폼 측정 + 재생목록 드래그 편집 + 차트 '내 재생목록' 탭
+
+### 요청
+① 제목 아직 말줄임 재확인 ② 재생목록 드래그로 순서 편집 ③ 차트에 '내 재생목록' 탭 추가(멜론 대비 자문)
+
+### Plan verification findings
+- Marquee: v3.32는 web 전용(whiteSpace nowrap + absolute 측정) → 네이티브 측정 실패로 말줄임 잔존. → 실표시 텍스트(flexShrink:0) onLayout 측정으로 크로스플랫폼화.
+- 드래그 라이브러리 전무(draggable-flatlist/gesture-handler/reanimated) → reanimated 도입 리스크 회피 위해 내장 PanResponder로 구현.
+- 차트 TABS 4개(ChartScreen.tsx:37), playerStore.queue/currentIndex 존재 → 로컬 큐 노출 탭 추가. 멜론은 큐를 플레이어 상시버튼, 플레이리스트는 라이브러리로 분리(랭킹과 큐 미혼합) — 라벨 '내 재생목록'으로 구분.
+
+### 변경 매트릭스 (추적자: 컴포넌트 prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/Marquee.tsx | 측정 방식 재작성(실표시 텍스트 onLayout, numberOfLines 제거) | — |
+| stores/playerStore.ts | `reorderQueue(from,to)` + currentIndex 보정 | — |
+| components/DraggableQueue.tsx (신규) | PanResponder 드래그 편집(응답기 index별 캐시) | `[DraggableQueue] reorder` |
+| screens/PlayerScreen.tsx | 큐 모달 → DraggableQueue 교체 + 안내문구 | — |
+| screens/ChartScreen.tsx | TABS에 queue 탭, fetch 스킵, 큐 데이터소스, ▶표시 | `[ChartScreen] 내 재생목록 탭` |
+
+---
+
 ## v3.32 — 2026-08-18 — 마퀴 실동작 수정 + 미니플레이어 재생목록 바로가기 + Now Playing 라인 제거
 
 ### 요청

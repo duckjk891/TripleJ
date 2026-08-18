@@ -24,6 +24,7 @@ interface PlayerState {
   setQueue: (tracks: any[]) => void;
   addToQueue: (track: any) => boolean;   // 재생목록(큐) 맨 뒤 추가. 이미 있으면 false
   removeFromQueue: (index: number) => void;
+  reorderQueue: (from: number, to: number) => void; // 드래그 편집: from→to 이동(현재재생 인덱스 보정)
   setCurrentIndex: (i: number) => void;
   setPlayerScreenOpen: (v: boolean) => void;
   toggleShuffle: () => void;
@@ -70,6 +71,19 @@ export const usePlayerStore = create<PlayerState>()(
         let nextIndex = currentIndex;
         if (index < currentIndex) nextIndex = currentIndex - 1;
         else if (index === currentIndex) nextIndex = Math.min(currentIndex, next.length - 1);
+        set({ queue: next, currentIndex: nextIndex });
+      },
+      reorderQueue: (from, to) => {
+        const { queue, currentIndex } = get();
+        if (from === to || from < 0 || to < 0 || from >= queue.length || to >= queue.length) return;
+        const next = queue.slice();
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        // 현재 재생 인덱스가 이동에 따라 어디로 갔는지 추적
+        let nextIndex = currentIndex;
+        if (currentIndex === from) nextIndex = to;
+        else if (from < currentIndex && to >= currentIndex) nextIndex = currentIndex - 1;
+        else if (from > currentIndex && to <= currentIndex) nextIndex = currentIndex + 1;
         set({ queue: next, currentIndex: nextIndex });
       },
       setCurrentIndex: (currentIndex) => set({ currentIndex }),

@@ -32,13 +32,14 @@ interface ChartTrack {
   lyrics?: string;
 }
 
-type ChartTab = 'top100' | 'weekly' | 'monthly' | 'new';
+type ChartTab = 'top100' | 'weekly' | 'monthly' | 'new' | 'queue';
 
 const TABS: { key: ChartTab; label: string; endpoint: string }[] = [
   { key: 'top100', label: 'TOP 100', endpoint: '/charts/top100' },
   { key: 'weekly', label: '주간', endpoint: '/charts/weekly' },
   { key: 'monthly', label: '월간', endpoint: '/charts/monthly' },
   { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },
+  { key: 'queue', label: '내 재생목록', endpoint: '' }, // 로컬 큐(playerStore) — API 없음
 ];
 
 const RANK_COLORS: Record<number, string> = {
@@ -70,6 +71,12 @@ export default function ChartScreen() {
   const playerStore = usePlayerStore();
 
   const fetchChart = useCallback(async (tab: ChartTab) => {
+    // '내 재생목록' 탭은 로컬 큐(playerStore)를 그대로 노출 — API 호출 없음
+    if (tab === 'queue') {
+      if (__DEV__) console.info('[ChartScreen] 내 재생목록 탭 — 로컬 큐 사용', { len: usePlayerStore.getState().queue.length });
+      setLoading(false);
+      return;
+    }
     const endpoint = TABS.find((t) => t.key === tab)?.endpoint || '/charts/top100';
     if (__DEV__) console.info('[ChartScreen] fetchChart 호출', { tab, endpoint });
     try {
@@ -228,6 +235,8 @@ export default function ChartScreen() {
       <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={() => handleTrackPress(item)}>
         {activeTab === 'new'
           ? <View style={styles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
+          : activeTab === 'queue'
+          ? <AppText variant="bodyStrong" center style={styles.rank} tone={index === playerStore.currentIndex ? 'accent' : 'muted'}>{index === playerStore.currentIndex ? '▶' : rank}</AppText>
           : <AppText variant="bodyStrong" center style={[styles.rank, { color: rankColor }]}>{rank}</AppText>}
         <Cover track={item} />
         <View style={styles.info}>
@@ -266,22 +275,30 @@ export default function ChartScreen() {
         </ScrollView>
       </View>
 
-      {loading ? (
-        <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
-      ) : tracks.length > 0 ? (
-        <FlatList
-          data={tracks}
-          keyExtractor={(item) => item.id}
-          renderItem={renderTrack}
-          contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
-              tintColor={colors.accent.primary} colors={[colors.accent.primary]} />
-          }
-        />
-      ) : (
-        <EmptyState icon="📊" title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />
-      )}
+      {(() => {
+        const isQueue = activeTab === 'queue';
+        const data = isQueue ? playerStore.queue : tracks;
+        if (loading) {
+          return <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />;
+        }
+        if (data.length > 0) {
+          return (
+            <FlatList
+              data={data}
+              keyExtractor={(item, i) => `${item.id}-${i}`}
+              renderItem={renderTrack}
+              contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
+              refreshControl={isQueue ? undefined :
+                <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
+                  tintColor={colors.accent.primary} colors={[colors.accent.primary]} />
+              }
+            />
+          );
+        }
+        return isQueue
+          ? <EmptyState icon="🎧" title="재생목록이 비어있어요" hint="차트나 검색에서 곡을 재생하면 여기에 쌓여요" />
+          : <EmptyState icon="📊" title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />;
+      })()}
 
       {!playerStore.track && (
         <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('MyMusic')} activeOpacity={0.85}>

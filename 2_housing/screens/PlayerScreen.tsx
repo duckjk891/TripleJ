@@ -23,6 +23,7 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
+import DraggableQueue from '../components/DraggableQueue';
 import { useArtistStore } from '../stores/artistStore';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
@@ -683,25 +684,18 @@ export default function PlayerScreen({ route, navigation }: any) {
             {playerStore.queue.length === 0 ? (
               <AppText tone="muted" center style={{ paddingVertical: 40 }}>재생목록이 비어있어요</AppText>
             ) : (
-              <ScrollView style={{ maxHeight: 420 }}>
-                {playerStore.queue.map((q: any, i: number) => {
-                  const playing = i === playerStore.currentIndex;
-                  return (
-                    <View key={`${q?.id}-${i}`} style={styles.queueRow}>
-                      <TouchableOpacity style={styles.queueRowMain} activeOpacity={0.7} onPress={() => { setShowQueue(false); switchToTrack(i); }}>
-                        <AppText variant="footnote" tone={playing ? 'accent' : 'muted'} style={{ width: 24 }}>{playing ? '▶' : i + 1}</AppText>
-                        <View style={{ flex: 1 }}>
-                          <AppText variant="body" tone={playing ? 'accent' : 'primary'} numberOfLines={1}>{q?.title || '제목 없음'}</AppText>
-                          <AppText variant="caption" tone="muted" numberOfLines={1}>{q?.artist_name || q?.uploader_nickname || '아티스트'}</AppText>
-                        </View>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => playerStore.removeFromQueue(i)} accessibilityLabel="목록에서 제거" style={{ padding: 8 }}>
-                        <Feather name="x" size={16} color={colors.text.muted} />
-                      </TouchableOpacity>
-                    </View>
-                  );
-                })}
-              </ScrollView>
+              <>
+                <AppText variant="caption" tone="muted" style={{ marginBottom: spacing.sm }}>≡ 손잡이를 잡고 끌어 순서를 바꿀 수 있어요</AppText>
+                <ScrollView style={{ maxHeight: 420 }}>
+                  <DraggableQueue
+                    data={playerStore.queue}
+                    currentIndex={playerStore.currentIndex}
+                    onReorder={(from, to) => playerStore.reorderQueue(from, to)}
+                    onPress={(i) => { setShowQueue(false); switchToTrack(i); }}
+                    onRemove={(i) => playerStore.removeFromQueue(i)}
+                  />
+                </ScrollView>
+              </>
             )}
           </TouchableOpacity>
         </TouchableOpacity>

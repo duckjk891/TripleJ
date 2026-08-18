@@ -5,6 +5,17 @@
 
 ---
 
+## v3.33 — 2026-08-18 — 마퀴 크로스플랫폼 + 재생목록 드래그 편집 + 차트 '내 재생목록' 탭 검증
+
+- [unit] tsc --noEmit → 에러 0.
+- [e2e] Marquee: 차트 top100 응답 첫 곡에 긴 제목 주입 → Given 컨테이너보다 긴 제목 When 렌더 Then 조각 2개(복제본)·textOverflow=clip(말줄임 없음)·1.8초 뒤 좌측 이동. (`/tmp/v333_marquee_a.png`·`_b.png`)
+- [e2e] 차트 '내 재생목록' 탭: Given 큐 비어있음 When 탭 클릭 Then "재생목록이 비어있어요"; Given ⋮로 3곡 추가 When 탭 Then 3곡 목록·현재곡 ▶. (`/tmp/v333_mylist.png`)
+- [e2e] 큐 드래그 편집: Given 큐 3곡·1번 재생중 When 1번 핸들을 아래로 1칸 드래그(CDP 터치) Then 순서 [1,2]→[2,1] 변경·▶ 인덱스 추종·재생 연속. (`/tmp/v333_touch_after.png`)
+- [regression] 마퀴 짧은 제목 정적(말줄임 없음), 큐 곡 클릭 재생/삭제(×), Now Playing 라인 없음 유지.
+- 회귀 안전망: reorder 로그 동작 확인(`[DraggableQueue] reorder {from,to}`).
+
+---
+
 ## v3.32 — 2026-08-18 — 마퀴 실동작 + 미니플레이어 재생목록 + Now Playing 라인 제거 검증
 
 | # | 시나리오 (G/W/T) | 태그 | 결과 |
