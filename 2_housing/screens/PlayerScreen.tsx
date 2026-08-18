@@ -24,6 +24,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 import DraggableQueue from '../components/DraggableQueue';
+import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import { useArtistStore } from '../stores/artistStore';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
@@ -141,6 +142,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showQueue, setShowQueue] = useState(!!route.params?.openQueue); // 미니플레이어에서 재생목록 바로열기
+  const [showGuestNotice, setShowGuestNotice] = useState(false); // 비회원 담기 안내 팝업
+  const user = useAuthStore((s) => s.user);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
@@ -517,8 +520,22 @@ export default function PlayerScreen({ route, navigation }: any) {
     setIsSeeking(true);
   };
 
+  // '담기' = 지금 곡을 내 재생목록(큐)에 담기. 회원 전용 아님 —
+  // 비회원 첫 담기 때만 안내 팝업(로그인 / 계속 담기)을 띄운다.
+  const addCurrentToQueue = () => {
+    if (!track) return;
+    const ok = playerStore.addToQueue(track);
+    if (__DEV__) console.info('[PlayerScreen] 담기 → addToQueue', { id: track?.id, ok });
+    Alert.alert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
+  };
+
   const handleAddToPlaylist = () => {
-    Alert.alert('플레이리스트', '플레이리스트에 추가되었습니다');
+    if (!user && !playerStore.guestNoticeAck) {
+      if (__DEV__) console.info('[PlayerScreen] 비회원 담기 → 안내 팝업');
+      setShowGuestNotice(true);
+      return;
+    }
+    addCurrentToQueue();
   };
 
   const coverUri = getCoverUri();
@@ -670,6 +687,18 @@ export default function PlayerScreen({ route, navigation }: any) {
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>재생목록</AppText>
         </TouchableOpacity>
       </View>
+
+      {/* 비회원 담기 안내 — 로그인 화면으로 튕기지 않고 선택하게 함 */}
+      <GuestQueueNoticeModal
+        visible={showGuestNotice}
+        onLogin={() => { setShowGuestNotice(false); navigation.navigate('Settings'); }}
+        onContinue={() => {
+          setShowGuestNotice(false);
+          playerStore.setGuestNoticeAck(true);
+          addCurrentToQueue();
+        }}
+        onClose={() => setShowGuestNotice(false)}
+      />
 
       {/* 재생목록(큐) 모달 — 현재 재생 큐를 보고 곡 선택/삭제 */}
       <Modal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>

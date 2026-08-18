@@ -40,6 +40,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { token, user } = res.data;
       setAuthToken(token);
       set({ token, user, isLoading: false });
+      // 비회원으로 담아둔 재생목록을 이 계정으로 승계 → 로그인 후에도 그대로 유지
+      try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(login)', { err }); }
       return true;
     } catch (err: any) {
       set({ error: err.response?.data?.detail || '로그인에 실패했습니다.', isLoading: false });
@@ -56,6 +58,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { token, user } = res.data;
       setAuthToken(token);
       set({ token, user, isLoading: false });
+      // 가입 직전까지 담아둔 재생목록도 그대로 승계
+      try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(register)', { err }); }
       return true;
     } catch (err: any) {
       set({ error: err.response?.data?.detail || '회원가입에 실패했습니다.', isLoading: false });

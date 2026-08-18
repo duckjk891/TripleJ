@@ -16,7 +16,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
 import Marquee from '../components/Marquee';
-import LoginPrompt from '../components/LoginPrompt';
+import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 
 interface ChartTrack {
   id: string;
@@ -61,6 +61,7 @@ export default function ChartScreen() {
   const [selectedTrackId, setSelectedTrackId] = useState<string>('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [actionTrack, setActionTrack] = useState<ChartTrack | null>(null); // ⋮ 오버플로 메뉴 대상
+  const [pendingQueueTrack, setPendingQueueTrack] = useState<ChartTrack | null>(null); // 비회원 담기 안내 팝업 대상
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
   const toggleLikeStore = useLikesStore((s) => s.toggle);
@@ -196,11 +197,20 @@ export default function ChartScreen() {
     navigation.navigate('Player', { track });
   };
 
-  // 재생목록(큐)에 추가 — 클라이언트 큐라 로그인 불필요
-  const handleAddToQueue = (track: ChartTrack) => {
+  // 재생목록(큐)에 추가 — 회원 전용 아님. 비회원 첫 담기 때만 선택 팝업(로그인 / 계속 담기)을 띄운다.
+  const addToQueueNow = (track: ChartTrack) => {
     const ok = playerStore.addToQueue(track);
     if (__DEV__) console.info('[ChartScreen] addToQueue', { id: track.id, ok });
     Alert.alert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
+  };
+
+  const handleAddToQueue = (track: ChartTrack) => {
+    if (!user && !playerStore.guestNoticeAck) {
+      if (__DEV__) console.info('[ChartScreen] 비회원 담기 → 안내 팝업', { id: track.id });
+      setPendingQueueTrack(track); // 팝업에서 '계속 담기' 선택 시 담을 대상
+      return;
+    }
+    addToQueueNow(track);
   };
 
   const handleSearchTrackPress = (track: ChartTrack) => {
@@ -278,36 +288,33 @@ export default function ChartScreen() {
 
       {(() => {
         const isQueue = activeTab === 'queue';
-        // 내 재생목록은 로그인(회원) 기능 — 비로그인 시 큐를 노출하지 않고 로그인 유도
-        if (isQueue && !user) {
-          if (__DEV__) console.info('[ChartScreen] 내 재생목록 탭 — 비로그인 → 로그인 유도');
-          return (
-            <View style={styles.gateWrap}>
-              <LoginPrompt
-                icon="🎧"
-                title="내 재생목록은 회원 전용이에요"
-                desc="로그인하면 재생목록을 저장하고 언제든 이어들을 수 있어요."
-                onPress={() => navigation.navigate('Settings')}
-              />
-            </View>
-          );
-        }
+        // 내 재생목록은 회원 전용이 아님 — 비회원도 담은 곡을 그대로 볼 수 있고, 상단에 안내만 노출
         const data = isQueue ? playerStore.queue : tracks;
         if (loading) {
           return <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />;
         }
         if (data.length > 0) {
           return (
-            <FlatList
-              data={data}
-              keyExtractor={(item, i) => `${item.id}-${i}`}
-              renderItem={renderTrack}
-              contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
-              refreshControl={isQueue ? undefined :
-                <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
-                  tintColor={colors.accent.primary} colors={[colors.accent.primary]} />
-              }
-            />
+            <>
+              {/* 비회원 안내 — 게이트가 아니라 배너. 담은 곡은 그대로 보인다 */}
+              {isQueue && !user ? (
+                <TouchableOpacity style={styles.guestBanner} onPress={() => navigation.navigate('Settings')} activeOpacity={0.8}>
+                  <AppText variant="caption" tone="secondary">
+                    로그인하지 않으면 다음 접속 시 재생목록이 사라지고 별(⭐)도 받을 수 없어요. <AppText variant="caption" tone="accent">로그인하기</AppText>
+                  </AppText>
+                </TouchableOpacity>
+              ) : null}
+              <FlatList
+                data={data}
+                keyExtractor={(item, i) => `${item.id}-${i}`}
+                renderItem={renderTrack}
+                contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
+                refreshControl={isQueue ? undefined :
+                  <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
+                    tintColor={colors.accent.primary} colors={[colors.accent.primary]} />
+                }
+              />
+            </>
           );
         }
         return isQueue
@@ -320,6 +327,19 @@ export default function ChartScreen() {
           <AppText variant="headline" tone="primary" style={styles.fabIcon}>+</AppText>
         </TouchableOpacity>
       )}
+
+      {/* 비회원 담기 안내 — 로그인 화면으로 튕기지 않고 선택하게 함 */}
+      <GuestQueueNoticeModal
+        visible={!!pendingQueueTrack}
+        onLogin={() => { setPendingQueueTrack(null); navigation.navigate('Settings'); }}
+        onContinue={() => {
+          const t = pendingQueueTrack;
+          setPendingQueueTrack(null);
+          playerStore.setGuestNoticeAck(true); // 이후에는 바로 담김
+          if (t) addToQueueNow(t);
+        }}
+        onClose={() => setPendingQueueTrack(null)}
+      />
 
       {/* 검색 모달 */}
       <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
@@ -445,7 +465,11 @@ const styles = StyleSheet.create({
   chipBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
   chipRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   spinner: { marginTop: spacing.huge },
-  gateWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  guestBanner: {
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    backgroundColor: colors.bg.surface1,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
   row: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,

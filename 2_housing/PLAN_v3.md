@@ -7,6 +7,29 @@
 
 ---
 
+## v3.36 — 2026-08-18 — 담기 선택 팝업 + 내 재생목록 비회원 개방 + 로그인 시 큐 승계
+
+### 요청
+① 비회원 담기 → 로그인 화면 튕김 대신 [로그인하고 시작하기]/[계속 담기] 팝업(경고: 다음 접속 시 사라짐, 별 못 받음) ② 계속 담기 시 담은 곡이 내 재생목록에 그대로 보임(회원 전용 철회) ③ 담다가 로그인하면 재생목록 보존.
+
+### Plan verification findings
+- v3.35 회원 전용 게이트 = 철회 대상. PlayerScreen '담기'(:520)는 실제로 담지 않는 스텁이었음.
+- authStore 영속/복원 없음 + playerStore 큐 무조건 영속 → 비회원 큐가 재접속에도 남아 안내문과 모순 → queueOwnerId 도입으로 해소.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/GuestQueueNoticeModal.tsx (신규) | 2선택 팝업 + 경고문 | — |
+| screens/ChartScreen.tsx | 게이트 제거, 안내 배너, 담기 시 팝업 | `[ChartScreen] 비회원 담기 → 안내 팝업` |
+| screens/PlayerScreen.tsx | 담기 스텁 → 실제 큐 추가 + 팝업 | `[PlayerScreen] 담기 → addToQueue` |
+| stores/playerStore.ts | queueOwnerId(영속)·claimQueue·guestNoticeAck·재수화 시 비회원 큐 폐기 | `[playerStore] claimQueue`, `비회원 재생목록 폐기` |
+| stores/authStore.ts | login/register 성공 → claimQueue(user.id) | `[authStore] claimQueue 실패`(catch) |
+
+### 정책
+내 재생목록 = 비회원도 사용 가능(재시작 시 폐기·별 미적립), 로그인 시 승계 보존. v3.35의 회원 전용 규정을 대체.
+
+---
+
 ## v3.35 — 2026-08-18 — 내 재생목록 회원 전용 게이트 + 플레이리스트 재생=큐 교체(정정)
 
 ### 요청

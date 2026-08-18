@@ -16,6 +16,10 @@ interface PlayerState {
   isPlayerScreenOpen: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  /** 현재 재생목록의 소유자 user.id. 비회원이 담은 큐는 null → 다음 접속(재시작) 시 폐기된다. */
+  queueOwnerId: string | null;
+  /** 비회원 담기 안내 팝업을 이미 확인했는지(세션 한정, 영속화 X) — 매번 뜨지 않게 함 */
+  guestNoticeAck: boolean;
   setSound: (sound: Audio.Sound | null) => void;
   setTrack: (track: any | null) => void;
   setIsPlaying: (v: boolean) => void;
@@ -25,8 +29,11 @@ interface PlayerState {
   addToQueue: (track: any) => boolean;   // 재생목록(큐) 맨 뒤 추가. 이미 있으면 false
   removeFromQueue: (index: number) => void;
   reorderQueue: (from: number, to: number) => void; // 드래그 편집: from→to 이동(현재재생 인덱스 보정)
-  /** 로그아웃/세션 종료 시 재생목록(큐)·재생상태를 초기화. 내 재생목록은 로그인 사용자 기능이므로 비회원엔 남기지 않는다. */
+  /** 로그아웃 시 재생목록(큐)·재생상태를 초기화 */
   resetOnLogout: () => void;
+  /** 로그인/가입 성공 시 호출 — 비회원으로 담아둔 재생목록을 그대로 그 계정의 것으로 승계(보존)한다. */
+  claimQueue: (userId: string) => void;
+  setGuestNoticeAck: (v: boolean) => void;
   setCurrentIndex: (i: number) => void;
   setPlayerScreenOpen: (v: boolean) => void;
   toggleShuffle: () => void;
@@ -50,6 +57,8 @@ export const usePlayerStore = create<PlayerState>()(
       queue: [],
       currentIndex: -1,
       isPlayerScreenOpen: false,
+      queueOwnerId: null,
+      guestNoticeAck: false,
       shuffle: false,
       repeat: 'off' as RepeatMode,
       setSound: (sound) => set({ sound }),
@@ -92,8 +101,19 @@ export const usePlayerStore = create<PlayerState>()(
         const { sound } = get();
         if (sound) { try { await sound.unloadAsync(); } catch {} }
         if (__DEV__) console.info('[playerStore] resetOnLogout — 큐/재생상태 초기화');
-        set({ sound: null, track: null, isPlaying: false, position: 0, duration: 0, queue: [], currentIndex: -1 });
+        set({
+          sound: null, track: null, isPlaying: false, position: 0, duration: 0,
+          queue: [], currentIndex: -1, queueOwnerId: null, guestNoticeAck: false,
+        });
       },
+      claimQueue: (userId) => {
+        // 비회원으로 담아둔 곡을 그대로 두고 소유자만 부여 → 로그인 후에도 재생목록 유지
+        const { queue, queueOwnerId } = get();
+        if (queueOwnerId === userId) return;
+        if (__DEV__) console.info('[playerStore] claimQueue — 로그인 후 재생목록 승계', { kept: queue.length });
+        set({ queueOwnerId: userId });
+      },
+      setGuestNoticeAck: (guestNoticeAck) => set({ guestNoticeAck }),
       setCurrentIndex: (currentIndex) => set({ currentIndex }),
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),
       toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
@@ -151,7 +171,18 @@ export const usePlayerStore = create<PlayerState>()(
         currentIndex: state.currentIndex,
         shuffle: state.shuffle,
         repeat: state.repeat,
+        queueOwnerId: state.queueOwnerId,
       }),
+      // 비회원(queueOwnerId=null)이 담은 재생목록은 다음 접속 시 폐기 — "로그인 안 하면 재생목록이 사라진다" 안내와 일치.
+      // 로그인 상태에서 담은 재생목록(소유자 있음)은 그대로 복원.
+      onRehydrateStorage: () => (state) => {
+        if (state && !state.queueOwnerId && state.queue?.length) {
+          if (__DEV__) console.info('[playerStore] 비회원 재생목록 폐기(재시작)', { discarded: state.queue.length });
+          state.queue = [];
+          state.currentIndex = -1;
+          state.track = null;
+        }
+      },
     }
   )
 );
