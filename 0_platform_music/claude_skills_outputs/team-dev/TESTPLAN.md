@@ -1753,3 +1753,155 @@
 
 - 2026-08-13 초판 작성 (12건) — PLAN v181 §4 항목 1~7 전부 시나리오화(§4-1→PD-API-01·02, §4-2→PD-API-03, §4-3→PD-API-04, §4-4→PD-API-05, §4-5→PD-UNIT-01~03, §4-6→PD-API-06·07, §4-7→PD-UNIT-04). 개인정보 비노출을 즉시 중단 항목으로 승격, delta 는 유일한 쓰기 1쌍으로 한정(집계 잔존 명시). BASE_REV(planner 확정 예정)·버킷 확인 DB 조회·집계 잔존·정합 재시도 규칙·spent 부호·signup_bonus 갈음 6건 planner 회신 대기(§4).
 - 2026-08-13 planner 판정 반영 — §4 판정 블록 6건 확정(BASE_REV `c04f9c7` / 버킷 DB 조회 승인(REPORT 버킷명만) / 집계 잔존 허용 / 정합 재실행 1회 후 FAIL / spent 전부 양수 — 3곳 `$abs` 실측 / signup_bonus 실데이터 우선·부재 시 갈음) + pointsLabels.js 편차 승인 기록. §0·§4-1·PD-API-03 문안 3곳 고정. 보류 0건 — tester 착수 가능(전제: 9005·9004 v181 반영 재기동).
+
+# v182 — 별 경제 건전성 지표 3종 (순증·소비자 티어·잔액 분포) (2026-08-18 14:02)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전)
+근거: PLAN.md v182 §0 실측(잔액 실분포 5구간·소비 유저 8명·day `-` 행 적립 계열 한정·순증=daily 프론트 재가공), §1 설계 결정, §4 테스트 항목 1~7, §5 강행 금지 6항·리스크 3건
+대상: backend_9005 `admin_points.py` 신규 2 엔드포인트(`GET /analytics/top-spenders`·`GET /analytics/balance-distribution` — 9004 미러) / frontend_admin AdminPointsDashboard 3블록 추가(순증·소진율은 **백엔드 무변경 프론트 계산**)+api.js 2래퍼. **기존 9 엔드포인트·AdminPointsPage·pointsLabels·points_service·package.json 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **읽기 전용 위주** — 유일한 쓰기 = EH-API-06 delta **1쌍**(테스트 계정 grant N→동량 deduct, 잔액 순변화 0, v181 §4-3 집계 잔존 승인 방침 연장 — REPORT 기재). CS 발송류 0건. E2E 는 쓰기 0건.
+- **개인정보 경계(강행 금지 ③)**: 티어 응답의 `nickname`/`code`/`user_id` 는 **허용 사양**(v177 감사 로그 동급 — 관리자 화면 표준). 검증 대상은 **이메일·생년월일·성별 부재**(응답·서버 로그·콘솔). REPORT 에 개인값 미기재 — 단 닉네임#code 는 허용(코디네이터 확정), 생년월일·성별·이메일은 금지 유지.
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN`/`USER_TOKEN`/`TEST_USER_1_ID` — v177~181 방식. `BASE_REV` = **v181 종료 커밋(planner 검토 시 확정 예정 — 확정 전 diff 판정 보류)**.
+- 정합 판정 규칙: v181 확정 규칙 승계 — **불일치 시 즉시 1회 재실행, 재불일치 FAIL**(짧은 시간창 연속 호출·dev DB 단독 전제). spent 계열은 **전부 양수($abs) 규약**(v181 판정 확정 반영).
+- signup_bonus(day `-`) 는 daily(=순증)·3면 정합에서 일관 제외(§5 — REPORT 재기재).
+- 환경: 9005·9004, Mongo(point_events·point_balances)·PG(users), frontend_admin Vite dev(4001). 추적자 `[admin-points]`·`[AdminPointsDash]`.
+
+## 1. [api] 시나리오 — 신규 2 엔드포인트 (기본 대상 9005)
+
+### EH-API-01. top-spenders 200 스키마 + 빈 기간 안전 [api] — 핵심
+- Given: `ADMIN_TOKEN`
+- When: `GET /api/admin/points/analytics/top-spenders?days=90`(+30·7 스팟) 호출하면
+- Then: HTTP 200 —
+  - `top`: **≤10행**, 각 행 `{user_id, nickname, code, total}` — total **양수·DESC 정렬**, nickname/code 는 hydrate 결과(미해석 시 null — 프론트 fallback 몫)
+  - `whale`: **4필드** `{top_count, top_total, all_total, share_pct}` — `top_count == max(1, ceil(0.1×spenders))`, `top_total ≤ all_total`, `share_pct == round(top_total/all_total×100, 1)` 재계산 일치
+  - `spenders`: 기간 내 소비 distinct 사용자 수(음수 아님)
+  - **빈 소비 기간**(소비 0 인 days 가 있으면 — 실행 시점 확인): `whale == null`·`top == []`·`spenders == 0` — 500 없음(부재 시 코드 리뷰 갈음, planner 확인 §4-3)
+
+### EH-API-02. balance-distribution 200 — 5행 고정·스냅샷 [api] — 핵심
+- Given: `ADMIN_TOKEN`
+- When: ① `GET /api/admin/points/analytics/balance-distribution` ② 동일 요청에 `?days=7` 붙여 호출하면
+- Then: ① 200 — `buckets` **5행 고정 라벨 순서 "0"/"1~10"/"11~50"/"51~100"/"101+"**(빈 버킷도 count 0 행 실재), 각 count ≥0 정수, `total_users`·`total_balance` 숫자 ② **days 무시**(파라미터 없는 스냅샷 사양) — ①과 동일 응답(400 아님·값 동일).
+
+### EH-API-03. days 화이트리스트 400 + 401·403 [api]
+- Given: `ADMIN_TOKEN` / 토큰 없음 / `USER_TOKEN`
+- When: ① top-spenders days=8/0/91/−7/abc ② 신규 2 엔드포인트 무토큰 ③ top-spenders(닉네임 노출 응답 — 민감 대표) `USER_TOKEN` 으로 각각 호출하면
+- Then: ① 전부 **400**(화이트리스트 {7,30,90} — 422 관측 시 비고 후 통일 관행) ② 전부 401 ③ 403 — 비관리자에게 티어(닉네임 순위) 비노출. 오류 응답에 내부 정보 미노출.
+
+### EH-API-04. 잔액 검산 — Σcount == total_users == 문서 수 + summary 교차 [api] — 핵심
+- Given: `ADMIN_TOKEN`. **point_balances 문서 수 DB 읽기 1회**(`countDocuments` — 읽기 전용, **planner 승인 완료 §4-2**)
+- When: balance-distribution 과 v180 `GET /summary` 를 짧은 시간창 내 연속 호출하고 DB count 와 대조하면
+- Then: **`Σ buckets[].count == total_users == point_balances 문서 수`**(3자 정확 일치 — 잔액 문서 보유자 모수 사양 검증, users 전체 156명과 다름이 정상) + **`total_balance == summary.total_balance`**(같은 스냅샷 교차 — 시차 쓰기로 불일치 시 1회 재실행 규칙 준용). 실분포 sanity(음수 버킷 없음 — spend 원자 차감 정합) 보조 기재.
+
+### EH-API-05. 소비 3면 정합 — whale.all_total 교차 대조 [api] — 핵심
+- Given: `ADMIN_TOKEN`. 동일 days(90)로 3콜을 짧은 시간창 내 연속 실행: top-spenders / breakdown / daily
+- When: 합계를 대조하면
+- Then: **`whale.all_total == Σ breakdown.spend[].total == Σ daily[].spent`** — 같은 amount<0 소스 3면, 전부 양수 규약, **정확 일치(불일치→1회 재실행→FAIL)**. 보조: `Σ top[].total ≤ all_total`(top10 부분합), `spenders ≥ top 행 수`. days=30 으로 1회 반복(기간 매개 정합).
+
+### EH-API-06. delta 1쌍 (선택) — 순증·소진율·티어 반영 + 원복 [api] — (유일한 쓰기: ±N, 테스트 계정)
+- Given: `ADMIN_TOKEN`, `TEST_USER_1_ID`. 사전: daily(오늘 행)·top-spenders(테스트 계정 등장 여부)·balance-distribution 기준값 기록
+- When: v180 패턴 grant N → 즉시 deduct N(원복) → 3 API 재조회하면
+- Then:
+  - daily 오늘: earned +N **및** spent +N — **순증(earned−spent) 기여 0**(상쇄), 소진율 분자·분모 각 +N(프론트 대조는 EH-UNIT-01 몫)
+  - top-spenders: 테스트 계정이 소비 Σ ≥N 으로 **등장 또는 total 증가**(deduct 가 소비 행 — day 정상 세팅이라 티어 집계 포함 실측), whale.all_total +N — EH-API-05 정합식 재성립(재대조 1회)
+  - balance-distribution: **원복 후 기준값과 동일**(잔액 원상 — 버킷 이동 없음. grant 직후 중간 상태는 미판정)
+  - 잔액 원상 확인(v180 불변식) + 집계 ±N 영구 잔존 REPORT 기재
+
+### EH-API-07. 회귀 — 기존 9 엔드포인트·diff·개인정보 [api] — 회귀 핵심
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, `BASE_REV`(v181 커밋 — 확정 후)
+- When: ① 대표 재실행 — v180 summary/balance/events(filter=admin)/adjust 400 대표 1건 + v181 daily·breakdown·demographics 스키마 대표 각 1건 ② 사용자용 `GET /api/points/costs·balance·history`(USER_TOKEN) ③ `git diff {BASE_REV}..HEAD --name-only` ④ 신규 2 응답 전문·서버 로그 검사하면
+- Then: ① v180~181 TESTPLAN 판정 기준 그대로 PASS(신규 2개 추가가 기존을 건드리지 않음) ② 스키마 불변 ③ 변경 파일 == PLAN §2 매트릭스 정확 일치 — AdminPointsPage·pointsLabels·points_service·routes/points.py·main.py·**package.json(및 lock) 부재**(라이브러리 금지) ④ **개인정보 회귀**: 신규 2 응답 전문에 `@`(이메일)·생년월일 패턴·성별 필드 **0건**(티어의 nickname/code/user_id 는 허용 사양 — 판정 제외 명시), 서버 로그는 admin_tag/days/spenders 수만(닉네임·id 나열 0건). 위반 시 즉시 중단·보고.
+
+### EH-API-08. 9004 미러 — diff 0 + 대표 케이스 [api] — 미러 규칙
+- Given: 9004 기동
+- When: ① `diff backend_9005/app/routes/admin_points.py backend_9004/app/routes/admin_points.py` ② **9004** top-spenders `ADMIN_TOKEN` 200 + balance-distribution `USER_TOKEN` 403 각 1회 하면
+- Then: ① diff **0** ② 9005 와 동일 판정.
+
+## 2. [unit] 시나리오 — 대시보드 3블록 (브라우저 하니스, 4001 dev)
+
+### EH-UNIT-01. 순증·소진율 프론트 계산 대조 [unit] — 핵심
+- Given: 분석 탭(30일), 같은 세션에서 `GET /analytics/daily?days=30` 응답 확보(네트워크 탭)
+- When: 순증 블록·소진율 카드 값을 daily 응답으로 재계산·대조하면
+- Then: **일별 순증 막대 값 == earned−spent**(양수 green 상향/음수 red 하향 — 0축 기준), **소진율 카드 == Σspent/Σearned %**(**소수 1자리 확정 §4-5** — frontend 실측 73.4% 형식·backend share_pct round(,1) 와 동일 규약), **신규 fetch 없음**(순증 블록은 daily state 재가공 — 기간 전환 시에도 순증용 추가 콜 0). `Σearned == 0` 기간의 **"-" 방어**는 실측 가능 시 실측(7일 등), 불가 시 코드 리뷰 갈음. 기간 전환 시 순증·소진율이 새 daily 와 함께 갱신.
+
+### EH-UNIT-02. 블록 배치·기간 연동·스냅샷 배지 [unit] — 핵심
+- Given: 분석 탭(30일)
+- When: ① 블록 순서 확인 ② 기간 7일 전환 ③ 잔액 블록 확인하면
+- Then: ① 위→아래 **추이→[순증·소진율]→분포→인구→티어→잔액 분포** 순서 정확 ② 재조회 네트워크 == **daily/breakdown/demographics/top-spenders 4콜**(days=7) — **balance-distribution 콜 없음**(스냅샷 미재조회) ③ 잔액 블록에 **"현재 기준" 배지** + 각주 **"잔액 기록 보유 사용자 기준"** 실재(모수 오독 방지 — §5), 세로 히스토그램 5구간 라벨이 API buckets 와 일치.
+
+### EH-UNIT-03. 티어 렌더 — Link·fallback·whale 카드·빈 상태 [unit]
+- Given: 분석 탭, top-spenders 응답 보유
+- When: 티어 블록을 확인하면
+- Then: 순위+**`닉네임#code` Link(→`/users/:id`, title=uuid — v177 관행)**+소비 ⭐ 가 응답 순서·값과 일치, whale 카드 **"상위 10%(N명)가 전체 소비의 X% 점유"**(N=top_count·X=share_pct 병기 — 소규모 모수 오해 방지 §5), hydrate 미해석 행 `사용자 #id8` fallback(실 미해석 행 부재 시 코드 리뷰 갈음), 빈 상태 문구 "기간 내 소비 없음"(소비 0 기간 실측 가능 시 — EH-API-01 과 동일 조건). Link 클릭 검증은 **테스트 계정 행만**(실사용자 상세 진입 금지 — 부재 시 href 속성 검사로 갈음).
+
+### EH-UNIT-04. 운영 탭 회귀 스모크 + 콘솔 위생 + eslint [unit] — 마감
+- Given: EH-UNIT-01~03 수행 세션, `/points` 운영 탭
+- When: ① 운영 탭 — 검색 드롭다운 첫 클릭 선택·조정 confirm **취소**(adjust POST 0건)·원장·비용표 스모크 ② 콘솔에서 이메일·생년월일 패턴·성별 값·응답 덤프 검색 ③ eslint 실행하면
+- Then: ① v180~181 판정 기준 그대로(무변경 — git diff 는 EH-API-07 ③ 겸측) ② `[AdminPointsDash]` 포함 **0건** — 티어 닉네임은 화면 렌더 허용이나 **콘솔 로그에는 미출력**(건수/기간 수준만) ③ eslint 신규 0.
+
+## 3. [e2e] 시나리오 — 1건 (행동 수준, 쓰기 0건)
+
+### EH-E2E-01. 분석 탭 풀 여정 — 신규 3블록→기간 전환→운영 복귀 [e2e] — 핵심 (쓰기 0건)
+- Given: 관리자 앱(4001) 테스트 관리자 로그인 (EH-API-06 실행 후면 티어에 테스트 계정 행 존재 — Link 클릭 검증 가능)
+- When: "별 관리" → 분석 탭 → 스크롤로 **6블록 순서·신규 3블록(순증/티어/잔액) 렌더** 확인 → 기간 **7일 전환** → 티어 포함 4콜 재조회·잔액 블록 유지 확인 → (티어에 테스트 계정 행이 있으면) Link 클릭 → `/users/:id` 이동·복귀 → **운영 탭 복귀** → v180 기능 정상(검색·선택·잔액 표시 — 조정 confirm 취소)하면
+- Then: 전 단계 정상 전이, 잔액 블록 "현재 기준" 배지 유지, 콘솔 신규 에러 0건, **네트워크에 adjust/send/broadcast POST 0건**(전 여정 읽기 전용 — delta 는 [api] 단계 전용). 실사용자 티어 행 클릭 금지(테스트 계정 행 부재 시 클릭 생략·비고).
+- 증적: 6블록 전경·7일 전환 후 티어/잔액·운영 탭 복귀 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **BASE_REV 확정**: v181 종료 커밋 = **`54c22c3` 확정**(planner git log 실측 — 현재 HEAD, v182 변경분 워킹트리 미커밋). EH-API-07 ③ 은 `git diff 54c22c3 --name-only` 워킹트리 기준 — 보류 해제.
+2. **EH-API-04 DB 읽기 1회 승인**: point_balances `countDocuments`(읽기 전용) — 코디네이터 "승인 예정" 표기에 따라 확정 회신 요청. 불허 시 Σcount == total_users 2자 검산으로 축소.
+3. **빈 소비 기간 실측 가능성**: whale null·top []·빈 상태 문구는 소비 0 인 days 존재 여부(실행 시점 데이터)에 의존 — 부재 시 코드 리뷰 갈음 승인(EH-API-01·EH-UNIT-03 공통).
+4. **E2E 티어 Link 클릭 대상**: 테스트 계정 행 한정(실사용자 상세 진입 금지) — EH-API-06 delta 실행 후 잔존 소비로 등장 예상이나, 미등장 시 href 검사 갈음. 실행 순서 의존(api→e2e) 승인 확인.
+5. **소진율 표기 포맷**: Σspent/Σearned % 의 반올림 자리(정수/1자리)·share_pct 표기 — 구현 확정 후 EH-UNIT-01·EH-UNIT-03 기대값 고정 회신.
+
+### planner 판정 (2026-08-18, 5건 확정 + 라벨 마이크로픽스 1건 — 해당 문안 반영 완료)
+
+1. **BASE_REV = `54c22c3`** (v181 커밋 — planner git log 실측: 현재 HEAD, v182 워킹트리 미커밋). EH-API-07 워킹트리 diff 고정, 보류 해제.
+2. **point_balances countDocuments 읽기 1회 승인** — 읽기 전용 검산용(v182 §0 planner 실측과 동일 방식).
+3. **빈 소비 기간 whale null — 코드 리뷰 갈음 승인.** 근거: 코드 실측 `spenders == 0` 조기 반환 `{top:[], whale:null, spenders:0}` 확인(500 경로 없음). 실행 시점에 소비 0 인 days 창이 실재하면 실측 우선.
+4. **E2E 티어 Link 클릭 = 테스트 계정 행 한정 승인**(api→e2e 순서 의존 수용) — 실사용자 행 클릭 금지 원칙 유지, 테스트 행 부재 시 클릭 생략+비고(Link href 존재 확인 갈음).
+5. **share_pct 소수 1자리 확정**(backend `round(,1)` 코드 실측) + **소진율 카드 73.4% 형식(소수 1자리) 고정** — 양쪽 동일 규약, EH-API-01·EH-UNIT-01 판정식 반영 완료.
+
+**라벨 마이크로픽스 — v182 포함 확정 (frontend-dev 지시, pointsLabels.js 한정)**: planner 가 live 원장 distinct action 전수 실측 — `play`(175)·`upload`(13)·`download`(1)·`generate`(1)·`referral_inviter`(4)·`referral_joiner`(4)·`verify_bonus`(3) 실재, **`listen` 은 원장 0건**(v180 라벨 맵의 추정 오류 — 실액션은 `play`, award_point 콜사이트 실측 정합). 수정 내역:
+- `listen: '재생 적립'` **제거** → **`play: '재생 적립'`** 등록(키 정정)
+- 추가: `upload: '업로드 적립'` / `referral_inviter: '친구초대 보상(초대)'` / `referral_joiner: '친구초대 보상(가입)'` / `verify_bonus: '본인인증 보너스'`
+- `generate` 는 **미등록 유지**(콜사이트 부재·legacy 1행 — 의미 미확정 라벨 추정 금지, fallback 원문이 정직)
+재검증(EH-UNIT-02 겸측 편입): 분포 패널 `play`→"재생 적립"·`upload`→"업로드 적립" 렌더 + `generate` 원문 fallback 잔존(fallback 실증 겸측). 운영 탭 원장도 동일 모듈이라 자동 반영(표시 전용 — 무해).
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. EH-API-01→02→03 (읽기 전용 스키마·검증) → EH-API-04 (검산 — §4-2 확정 후 DB count 포함) → EH-API-05 (3면 정합 — 짧은 시간창) → EH-API-06 (유일한 쓰기 ±N — 정합 재대조 포함) → EH-API-07 (회귀+diff — BASE_REV 확정 후) → EH-API-08 (9004)
+2. EH-UNIT-01→02→03 → EH-UNIT-04 (운영 스모크+콘솔 마감+eslint)
+3. EH-E2E-01 (쓰기 0건 — EH-API-06 이후 실행 시 티어 Link 검증 가능)
+4. 종료: 잔액 원상 재확인(EH-API-06 실행 시) + REPORT: 집계 잔존·signup_bonus 제외 일관성 재기재·코드 리뷰 갈음 항목 — 개인값 미기재(닉네임#code 허용)
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| EH-API-01 | api | | top ≤10 DESC·whale 4필드·spenders·빈 기간 안전 |
+| EH-API-02 | api | | buckets 5행 고정·total 2종·days 무시(스냅샷) |
+| EH-API-03 | api | | days 400 + 401/403 |
+| EH-API-04 | api | | Σcount==total_users==문서 수 + summary 교차(재실행 1회 규칙) |
+| EH-API-05 | api | | all_total 3면 정확 일치(90·30) + top 부분합 |
+| EH-API-06 | api | | delta ±N — 순증 상쇄·티어 등장·잔액 분포 원상 |
+| EH-API-07 | api | | 기존 9 대표 불변 + diff 매트릭스·package.json 0 + 개인정보 회귀 |
+| EH-API-08 | api | | 9004 diff 0 + 200/403 대표 |
+| EH-UNIT-01 | unit | | 순증·소진율 == daily 재계산·추가 콜 0·"-" 방어 |
+| EH-UNIT-02 | unit | | 6블록 순서·기간 4콜(잔액 제외)·배지·각주 |
+| EH-UNIT-03 | unit | | 티어 Link·fallback·whale 카드·빈 상태 |
+| EH-UNIT-04 | unit | | 운영 탭 스모크 + 콘솔 0건 + eslint 0 |
+| EH-E2E-01 | e2e | | 풀 여정 — 쓰기 0건, 테스트 계정 행만 클릭 |
+
+## v182 시나리오 집계
+
+- 총 **13건** — [api] 8 / [unit] 4 / [e2e] 1 (보류 없음 — planner 확인 5건은 §4)
+- 쓰기: EH-API-06 delta **1쌍만**(테스트 계정 ±N·잔액 원상·집계 잔존 승인 방침 연장). 그 외 전부 읽기 전용, E2E 쓰기 0건, CS 발송류 0건. 개인정보: 티어의 닉네임/code/user_id 는 허용 사양으로 판정 제외를 명문화하고, 이메일·생년월일·성별 부재를 응답·서버 로그·콘솔 3면에서 검증(EH-API-07 ④·EH-UNIT-04 — 위반 시 즉시 중단).
+
+## 개정 이력 (v182)
+
+- 2026-08-18 초판 작성 (13건) — PLAN v182 §4 항목 1~7 전부 시나리오화(§4-1→EH-API-01·03, §4-2→EH-API-02·04, §4-3→EH-API-05, §4-4→EH-UNIT-01, §4-5→EH-API-06, §4-6→EH-UNIT-02·03·04, §4-7→EH-API-07·08). v181 확정 규칙 승계(재실행 1회 후 FAIL·spent 양수 $abs). 티어 개인정보 허용 경계(닉네임#code·user_id 허용 / 이메일·생년월일·성별 금지)를 판정 기준으로 명문화. BASE_REV·DB count 승인·빈 소비 기간 갈음·E2E Link 대상·소진율 포맷 5건 planner 회신 대기(§4).
+- 2026-08-18 planner 판정 반영 — §4 판정 블록 5건 확정(BASE_REV `54c22c3` / countDocuments 승인 / whale null 코드 리뷰 갈음 — 조기 반환 실측 / E2E Link 테스트 행 한정 / share_pct·소진율 소수 1자리 통일) + **라벨 마이크로픽스 v182 포함 확정**(원장 전수 실측: listen→play 키 정정, upload·referral 2종·verify_bonus 등록, generate 미등록 유지 — EH-UNIT-02 겸측 재검증). §4-1·EH-API-04·EH-UNIT-01 문안 3곳 고정. 보류 0건 — tester 착수 가능(전제: 9005·9004 v182+마이크로픽스 반영 재기동).

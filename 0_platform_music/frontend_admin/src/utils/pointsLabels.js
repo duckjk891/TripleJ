@@ -4,10 +4,16 @@
 
 // 기본 액션 한글 라벨 — spend:/refund: 접두는 분해 후 조합. 미등록 action 은 원문 fallback.
 export const BASE_ACTION_LABELS = {
-  listen: '재생 적립',
+  // v182 마이크로픽스 — live 원장 distinct action 실측 기준 정정/추가.
+  // 'generate' 는 의미 미확정 legacy 라 의도적으로 미등록(원문 fallback 이 정직).
+  play: '재생 적립', // 실측 정정 — 원장 액션명은 listen 이 아니라 play
+  upload: '업로드 적립',
   download: '다운로드 적립',
   attendance: '출석',
   signup_bonus: '가입 보너스',
+  referral_inviter: '추천인 보상',
+  referral_joiner: '피추천 보상',
+  verify_bonus: '인증 보너스',
   lyrics: '작사',
   compose: '작곡',
   cover: '커버 이미지',

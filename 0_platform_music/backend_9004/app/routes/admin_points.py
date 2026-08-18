@@ -18,6 +18,7 @@ ref=`adm:{uuid8}:{사유≤40자}` — uuid8 로 시도별 유니크(멱등 충�
 """
 
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -30,7 +31,7 @@ from ..auth import get_admin_user
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
 from ..models.user import age_years
-from ..services import points_service as svc
+from ..services import dm_service, points_service as svc
 from .admin import _log_admin_action
 
 logger = logging.getLogger(__name__)
@@ -603,5 +604,167 @@ async def analytics_demographics(
     except Exception:
         logger.exception(
             "[admin-points] analytics demographics failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 6. 경제 건전성 지표 (v182) — GET /analytics/{top-spenders|balance-distribution}
+# ---------------------------------------------------------------------------
+# 소비 행(spend_points)은 항상 day=_kst_day() 세팅 — day 비일자(`-`) 행은 전부
+# 적립 계열이라 amount<0 + day 범위 필터는 안전(v182 §0 실측).
+# 개인정보: 티어 응답은 user_id·닉네임#code 까지만(관리자 화면 표준 — v177 동급),
+# 이메일·생년월일·성별 금지. 서버 로그에는 닉네임·id 등 개인값 미출력(건수만).
+
+TOP_SPENDERS_LIMIT = 10
+WHALE_TOP_RATIO = 0.1  # 상위 10% = max(1, ceil(0.1×N)) 명
+
+# 잔액 히스토그램 5구간 — $bucket boundaries [0,1,11,51,101) + default "101+"
+_BALANCE_BUCKET_BOUNDARIES = [0, 1, 11, 51, 101]
+_BALANCE_BUCKET_LABELS = {0: "0", 1: "1~10", 11: "11~50", 51: "51~100", "101+": "101+"}
+_BALANCE_BUCKET_ORDER = ("0", "1~10", "11~50", "51~100", "101+")
+
+
+@router.get("/analytics/top-spenders")
+async def analytics_top_spenders(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """기간 내 소비 상위 사용자 + whale(상위 10%) 점유 지표.
+
+    day 범위+amount<0 → user_id별 Σ|−| DESC. top 은 상위 10명에
+    dm_service.hydrate_users 로 닉네임#code 부착(미해석 null — 프론트 fallback).
+    whale = 상위 max(1, ceil(0.1×spenders)) 명의 소비합·전체 대비 %(반올림 1자리).
+    소비자 0명이면 top []·whale null. 응답에 이메일·생년월일 미포함.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics top-spenders admin=%s days=%d", admin_tag, n_days
+        )
+
+        mongo = get_mongo()
+        rows = []  # [(user_id, total)] — Σ|−| DESC
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": start_day}, "amount": {"$lt": 0}}},
+            {"$group": {"_id": "$user_id", "total": {"$sum": {"$abs": "$amount"}}}},
+            {"$sort": {"total": -1, "_id": 1}},
+        ]):
+            rows.append((str(doc["_id"]), int(doc.get("total") or 0)))
+
+        spenders = len(rows)
+        if spenders == 0:
+            return {"top": [], "whale": None, "spenders": 0}
+
+        top_rows = rows[:TOP_SPENDERS_LIMIT]
+        hydrated = {}
+        try:
+            hydrated = await dm_service.hydrate_users(conn, [uid for uid, _ in top_rows])
+        except Exception:
+            logger.warning(
+                "[admin-points] top-spenders hydrate failed admin=%s", admin_tag,
+                exc_info=True,
+            )
+        top = [
+            {
+                "user_id": uid,
+                "nickname": (hydrated.get(uid) or {}).get("nickname"),
+                "code": (hydrated.get(uid) or {}).get("code"),
+                "total": total,
+            }
+            for uid, total in top_rows
+        ]
+
+        all_total = sum(total for _, total in rows)
+        top_count = max(1, math.ceil(WHALE_TOP_RATIO * spenders))
+        top_total = sum(total for _, total in rows[:top_count])
+        share_pct = round(top_total / all_total * 100, 1) if all_total else 0.0
+        whale = {
+            "top_count": top_count,
+            "top_total": top_total,
+            "all_total": all_total,
+            "share_pct": share_pct,
+        }
+
+        logger.info(
+            "[admin-points] analytics top-spenders done admin=%s days=%d spenders=%d",
+            admin_tag, n_days, spenders,
+        )
+        return {"top": top, "whale": whale, "spenders": spenders}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics top-spenders failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "지표를 불러올 수 없습니다."})
+
+
+@router.get("/analytics/balance-distribution")
+async def analytics_balance_distribution(current_user=Depends(get_admin_user)):
+    """잔액 분포 히스토그램 — 현재 스냅샷(기간 파라미터 없음).
+
+    point_balances $bucket 5구간(0 / 1~10 / 11~50 / 51~100 / 101+) + 합계 2종.
+    모수는 잔액 문서 보유자 기준(적립 이력 없는 유저는 문서 자체가 없음 —
+    프론트 각주 소관). 빈 컬렉션은 전부 0. 버킷 집계만(개인값 미포함).
+    """
+    admin_tag = str(current_user["id"])[:8]
+    logger.info("[admin-points] analytics balance-dist admin=%s", admin_tag)
+    try:
+        mongo = get_mongo()
+        counts = {label: 0 for label in _BALANCE_BUCKET_ORDER}
+        total_users = 0
+        total_balance = 0
+        async for doc in mongo.point_balances.aggregate([
+            {
+                "$facet": {
+                    "hist": [
+                        {
+                            "$bucket": {
+                                "groupBy": "$balance",
+                                "boundaries": _BALANCE_BUCKET_BOUNDARIES,
+                                "default": "101+",
+                                "output": {"count": {"$sum": 1}},
+                            }
+                        }
+                    ],
+                    "totals": [
+                        {
+                            "$group": {
+                                "_id": None,
+                                "total_users": {"$sum": 1},
+                                "total_balance": {"$sum": "$balance"},
+                            }
+                        }
+                    ],
+                }
+            }
+        ]):
+            for b in doc.get("hist") or []:
+                label = _BALANCE_BUCKET_LABELS.get(b.get("_id"))
+                if label:
+                    counts[label] = int(b.get("count") or 0)
+            totals = doc.get("totals") or []
+            if totals:
+                total_users = int(totals[0].get("total_users") or 0)
+                total_balance = int(totals[0].get("total_balance") or 0)
+
+        logger.info(
+            "[admin-points] analytics balance-dist done admin=%s users=%d",
+            admin_tag, total_users,
+        )
+        return {
+            "buckets": [{"label": l, "count": counts[l]} for l in _BALANCE_BUCKET_ORDER],
+            "total_users": total_users,
+            "total_balance": total_balance,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics balance-dist failed admin=%s", admin_tag
         )
         return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})

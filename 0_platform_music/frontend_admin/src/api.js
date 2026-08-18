@@ -158,6 +158,12 @@ export const getAdminPointsBreakdown = (days) =>
 // 나이대×성별 집계 — mode 'earn'|'spend' → { rows: [{bucket, male, female, unknown, total}], total }
 export const getAdminPointsDemographics = (days, mode) =>
   API.get('/admin/points/analytics/demographics', { params: { days, mode } });
+// 소비자 티어 (v182) — 상위 10 소비자 + whale 지표 → { top: [{user_id, nickname, code, total}], whale, spenders }
+export const getAdminPointsTopSpenders = (days) =>
+  API.get('/admin/points/analytics/top-spenders', { params: { days } });
+// 잔액 분포 (v182) — 현재 스냅샷(기간 무관) → { buckets: [{label, count}×5], total_users, total_balance }
+export const getAdminPointsBalanceDist = () =>
+  API.get('/admin/points/analytics/balance-distribution');
 
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {

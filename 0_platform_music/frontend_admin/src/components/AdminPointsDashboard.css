@@ -312,3 +312,222 @@
   font-size: 0.78rem;
   color: var(--color-text-sub);
 }
+
+/* ── ②(v182) 순증·소진율 ─────────────────────────────── */
+
+.admin-points-dash__net-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 900px) {
+  .admin-points-dash__net-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.admin-points-dash__net-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.admin-points-dash__net-label {
+  font-size: 0.75rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points-dash__net-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.admin-points-dash__net-value--pos { color: #22c55e; }
+.admin-points-dash__net-value--neg { color: #ef4444; }
+
+/* 0축 상하 막대 — 상/하 반반 트랙, 양수는 위로·음수는 아래로 */
+.admin-points-dash__net-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 160px;
+  padding-top: 28px; /* hover 툴팁 공간 */
+}
+
+.admin-points-dash__net-day {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-points-dash__net-half {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.admin-points-dash__net-half--up {
+  align-items: flex-end;
+  border-bottom: 1px solid var(--color-border); /* 0축 */
+}
+
+.admin-points-dash__net-half--down {
+  align-items: flex-start;
+}
+
+.admin-points-dash__net-bar {
+  width: 45%;
+  max-width: 14px;
+}
+
+.admin-points-dash__net-bar--pos {
+  background: #22c55e;
+  border-radius: 2px 2px 0 0;
+}
+
+.admin-points-dash__net-bar--neg {
+  background: #ef4444;
+  border-radius: 0 0 2px 2px;
+}
+
+.admin-points-dash__net-day:hover .admin-points-dash__net-bar--pos { background: #4ade80; }
+.admin-points-dash__net-day:hover .admin-points-dash__net-bar--neg { background: #f87171; }
+
+.admin-points-dash__net-day:hover .admin-points-dash__tooltip {
+  display: block;
+}
+
+/* ── ⑤(v182) 소비자 티어 ─────────────────────────────── */
+
+.admin-points-dash__whale {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points-dash__whale strong {
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.admin-points-dash__spender-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-points-dash__spender-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.admin-points-dash__spender-row:last-child {
+  border-bottom: none;
+}
+
+.admin-points-dash__spender-rank {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-sub);
+  text-align: center;
+}
+
+.admin-points-dash__spender-name {
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-points-dash__link {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.admin-points-dash__link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.admin-points-dash__spender-total {
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+  white-space: nowrap;
+}
+
+/* ── ⑥(v182) 잔액 분포 ───────────────────────────────── */
+
+.admin-points-dash__snapshot-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.admin-points-dash__hist {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  height: 170px;
+  padding: 0 6px;
+}
+
+.admin-points-dash__hist-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.admin-points-dash__hist-count {
+  font-size: 0.78rem;
+  color: var(--color-text-sub);
+}
+
+.admin-points-dash__hist-track {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.admin-points-dash__hist-bar {
+  width: 60%;
+  max-width: 56px;
+  background: var(--color-primary);
+  border-radius: 4px 4px 0 0;
+}
+
+.admin-points-dash__hist-label {
+  font-size: 0.78rem;
+  color: var(--color-text);
+  white-space: nowrap;
+}

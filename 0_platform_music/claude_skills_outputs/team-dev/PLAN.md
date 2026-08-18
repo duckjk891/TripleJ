@@ -26729,3 +26729,60 @@ E2E (실발송 금지):
 
 ## 6. v181 정정 (planner 구현 검토, 2026-08-13)
 - **§1 라벨 재사용 문안 정정**: "AdminPointsPage named export 추가" → **`src/utils/pointsLabels.js` 신규 모듈로 추출**(+ 매트릭스에 신설 파일 1 추가). 근거: 페이지 파일의 컴포넌트 외 named export 는 eslint `react-refresh/only-export-components`(error) 위반 — frontend-dev 발견, byte-identical 추출 + `signup_bonus: '가입 보너스'` 1줄로 단일 소스 의도·운영 탭 무변경 모두 충족. 계획 측 정정으로 확정, 구현 재작업 없음.
+
+---
+
+# v182 — 별 경제 건전성 지표 3종 (순증·소비자 티어·잔액 분포) (2026-08-13 19:53)
+
+## 0. 사전 코드 분석 (planner 직접 실측 — live Mongo 집계 조회, 개인 식별값 미출력)
+
+- **잔액 실분포**(point_balances, 39 docs): balance 0→**2명** / 1~10→**7** / 11~50→**19** / 51~100→**8** / 101~200→**3** / 201+→0. min 0·max 130·avg ≈48. → **구간 확정: 0 / 1~10 / 11~50 / 51~100 / 101+ (5구간)** — 제안안(51+ 단일)보다 상위 분해능 확보(51+ 에 11명 몰림 실측). 음수 불가(spend 원자 차감).
+- **잔액 문서 보유 39명 vs users 156명** — 적립 이력 없는 117명은 point_balances 문서 자체가 없음 → 히스토그램 모수는 **잔액 문서 보유자 기준**(합계 검산 가능·PG 조인 불요), 화면 각주로 명시.
+- **소비 distinct 사용자 8명**(all-time == 최근 90일). whale 지표는 일반형으로 구현(상위 10% = `max(1, ceil(0.1×N))` 명).
+- **day 비일자(`-`) 행 39건 전부 적립 계열**(signup_bonus 26 포함) — `spend_points` 는 항상 `day=_kst_day()` 세팅(:168 실측)이라 **소비 행에 `-` 없음 → 티어 집계(amount<0 + day 범위)는 안전**. 순증 지표는 daily 재가공이므로 signup_bonus 제외가 v181 과 동일하게 일관 유지(REPORT 재기재 예정).
+- **순증·소진율 데이터 소스**: v181 `GET /analytics/daily` 응답 `{day, earned, spent}` 로 순증(earned−spent)·소진율(Σspent/Σearned) **완전 도출 가능 → 프론트 계산 채택**(신규 엔드포인트 불요 — 동일 소스라 정합 자동 보장, 서버 왕복 0 추가).
+- hydrate 재사용: `dm_service.hydrate_users(conn, ids)`(:269) — {nickname, code} v177 관행. admin_points.py 는 admin.py 가 이미 `from ..services import dm_service` 사용하는 것과 동일 패턴 import 가능.
+
+## 1. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| ① 순증·소진율 | **백엔드 무변경 — 프론트 계산**: 대시보드가 기존 daily 응답으로 일별 순증 막대(양수 green/음수 red — 0축 기준)+**소진율 카드**(기간 Σspent/Σearned %, earned 0 이면 "-" 방어). 기간 필터 연동(daily 와 동일 상태) | 동일 소스 재가공 — 정합 자동·왕복 0. sink/faucet 업계 표준 |
+| ② 티어 API | `GET /analytics/top-spenders?days=` → `{top: [{user_id, nickname, code, total}](≤10, DESC)], whale: {top_count, top_total, all_total, share_pct}, spenders}` — 파이프라인: day 범위+amount<0 → user_id Σabs → sort DESC. top10 은 `hydrate_users` 로 닉네임#code(미해석 null→프론트 fallback), whale = 상위 `max(1, ceil(0.1×spenders))` 명 소비합/전체 % (반올림 1자리) | 승인 지표 2개를 1 엔드포인트로. user_id 는 관리자 화면 표준(v177 감사 로그 동급 — `/users/:id` Link 용) 허용, 이메일·생년월일 금지 유지 |
+| ③ 잔액 분포 API | `GET /analytics/balance-distribution` (기간 파라미터 없음 — 현재 스냅샷) → `{buckets: [{label, count}](5행 고정: "0"/"1~10"/"11~50"/"51~100"/"101+"), total_users, total_balance}` — `$bucket`(boundaries [0,1,11,51,101,∞]) 1회 | 실분포 기반 구간(0-1). 버킷 집계만(개인정보 원칙) |
+| 화면 배치 | 분석 탭: 기존 ①추이 **직후에 [순증·소진율]**(시계열 그룹 연속성 — "사이" 배치) → 기존 ②분포·③인구 → **④소비자 티어** → **⑤잔액 분포**(맨 아래). ④까지 기간 필터 연동, ⑤는 **"현재 기준" 배지**로 스냅샷 구분 표기 | 정보 구조: 시계열→구성→사용자→스톡. 승인 원칙(기간 연동/스냅샷 구분) |
+| 티어 리스트 표기 | 순위+`닉네임#code`(`/users/:id` Link, title=uuid — v177 관행)+소비 ⭐. hydrate 미해석 시 `사용자 #id8` fallback. whale 카드: "상위 10%(N명)가 전체 소비의 X% 점유" | 관리자 표준 표기 허용 범위 준수 |
+| CSS 차트 | 순증=0축 상하 막대, 잔액=세로 히스토그램(count/최대 %) — 기존 대시보드 관행. 라이브러리 0 | 강행 금지 유지 |
+| api.js | `getAdminPointsTopSpenders(days)`·`getAdminPointsBalanceDist()` 2래퍼 | 관행 |
+| 미러 | admin_points.py 9005→9004 복사(기존 7 엔드포인트 무변경 — 신규 2개 추가만) | 미러 규칙 |
+
+## 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_points.py` | top-spenders·balance-distribution 2 엔드포인트 추가(하단 — 기존 7개 무변경) | 기존 `[admin-points]` |
+| `backend_9004/app/routes/admin_points.py` | 미러 복사 | - |
+| `frontend_admin/src/components/AdminPointsDashboard.jsx/.css` | 순증·소진율 블록(프론트 계산)+티어 블록+잔액 분포 블록+스냅샷 배지 | 기존 `[AdminPointsDash]` |
+| `frontend_admin/src/api.js` | 래퍼 2개 | - |
+| **무변경** | AdminPointsPage(운영 탭·탭 스위치)·pointsLabels·points_service·routes/points.py·main.py·package.json | - |
+
+## 3. 작업 분담
+- **backend-dev** (선행): ① top-spenders — days 화이트리스트(기존 `_parse_analytics_days` 재사용), Σabs DESC, top10 hydrate(`dm_service.hydrate_users` — conn 필요·get_pg 의존 추가), whale 계산(spenders 0 이면 whale null·top []), **로그는 admin_tag/days/spenders 수만**(닉네임·id 미로그) ② balance-distribution — `$bucket` 5구간+total 2종, 빈 컬렉션 0 방어 ③ 기존 7 엔드포인트 diff 0 ④ 9004 미러.
+- **frontend-dev**: 대시보드 — ① 순증 블록(추이 직후 삽입 — 기존 daily state 재가공, 신규 fetch 없음)+소진율 카드(0 나눗셈 "-") ② 티어 블록(Link·fallback·whale 카드·빈 상태 "기간 내 소비 없음") ③ 잔액 히스토그램+"현재 기준" 배지+각주("잔액 기록 보유 사용자 기준") ④ api.js 2래퍼. 기간 전환 시 티어 재조회 포함(잔액은 미재조회 — 스냅샷). 콘솔 `[AdminPointsDash]` 위생 유지. eslint 신규 0.
+- **test-designer**: §4.
+
+## 4. 테스트 항목 (test-designer)
+안전 제약: **읽기 전용 위주** — 쓰기는 delta 검증 1쌍 선택(v181 패턴 — 테스트 계정·잔액 원상). 개인정보: 티어 응답에 닉네임/code/user_id 허용, **이메일·생년월일 부재 검증**.
+1. top-spenders API: 200 스키마(top ≤10 DESC·whale 4필드·spenders), days 화이트리스트 400, 401/403. 빈 소비 기간(days=7 에 소비 0 이면) whale null·top [] 안전.
+2. balance-distribution API: 200 — buckets 5행 고정 라벨, **Σcount == total_users == point_balances 문서 수**(검산), total_balance == v180 summary total_balance(같은 스냅샷 교차 — 시차 쓰기 시 재실행 1회 규칙 준용). 파라미터 없음(days 무시 확인).
+3. 정합(핵심): `top-spenders.whale.all_total` == `Σ breakdown.spend[].total` == `Σ daily[].spent`(동일 days — 같은 amount<0 소스 3면 교차). top10 합 ≤ all_total. whale share_pct == round(top_total/all_total).
+4. 순증·소진율(프론트 계산): UI 값 == daily 응답 재계산(earned−spent 일별, Σ 비율) — 코드 리뷰+화면 대조. earned 0 기간 "-" 방어.
+5. delta 1쌍(선택): grant N→차감 N — 순증 오늘 0 합산(+N/−N 상쇄)·소진율 분자분모 +N·티어에 테스트 계정 +N 등장 확인 후 원복 상태 기재(집계 잔존 승인 방침 연장).
+6. UI: 블록 순서(추이→순증→분포→인구→티어→잔액)·기간 전환 시 티어 재조회+잔액 미재조회·스냅샷 배지·티어 Link→/users/:id·fallback·빈 상태. 운영 탭 회귀(무변경).
+7. 회귀: v181 3 엔드포인트+v180 4 엔드포인트 응답 불변, 사용자용 points API, 9004 diff 0, package.json 무변경, 개인정보(이메일 등) 응답·콘솔 0건.
+
+## 5. 리스크 / 강행 금지
+- **강행 금지**: ① 기존 9 엔드포인트(v180 4+v181 3+사용자용) 무변경 ② 운영 탭·AdminPointsPage 무접촉 ③ 개인정보 — 티어는 닉네임#code·user_id 까지만(이메일·생년월일·성별 금지), 잔액은 버킷만, 서버 로그에 개인값 금지 ④ 차트 라이브러리 금지 ⑤ points_service 무접촉(hydrate 는 dm_service 읽기 재사용) ⑥ v177~181 승계.
+- signup_bonus(day `-`) 는 순증에도 미포함(v181 과 일관 — 3면 정합 유지). REPORT 재기재.
+- 잔액 분포 모수는 잔액 문서 보유자(39명) — users 전체(156명)와 다름을 각주로 명시(오독 방지).
+- 소비 유저 8명 소규모 — whale 지표가 "상위 1명" 수준으로 계산됨(일반형 구현이므로 정상, 화면 N명 병기로 오해 방지).

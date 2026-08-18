@@ -15177,3 +15177,36 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 6: 신설 3 — `frontend_admin/src/components/AdminPointsDashboard.jsx` `.css` `frontend_admin/src/utils/pointsLabels.js`(승인 편차) / 수정 3 — `frontend_admin/src/pages/AdminPointsPage.jsx` `.css` `frontend_admin/src/api.js`
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md`(§6 정정 포함) `TESTPLAN.md` `REPORT.md` (v181 append)
 - 무변경 확인: points_service.py·routes/points.py·main.py·package.json — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v182 — 별 경제 건전성 지표 3종 (순증·소비자 티어·잔액 분포) (2026-08-18 14:18)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+별 분석 대시보드에 업계 표준 경제 건전성 지표 3종(웹조사 근거 사용자 승인): ①순증(인플레이션) 지표 — 일별 순증(적립−소진)+소진율(sink/faucet %) ②소비자 티어 — 상위 10 소비자 리스트+상위 10% 점유(whale) ③잔액 분포(호딩) 히스토그램. 기간 필터 연동(①②)/현재 스냅샷(③) 구분, CSS 차트 유지, 9005→9004 미러.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **순증·소진율 = 프론트 재가공**(백엔드 무변경): v181 daily 응답 `{day, earned, spent}` 로 완전 도출 — 신규 엔드포인트 없이 정합 자동 보장·왕복 0. 소진율은 Σspent/Σearned %(소수 1자리, earned 0 이면 "-" 방어). 배치는 추이 블록 직후("사이" — 시계열 그룹 연속성).
+- **잔액 5구간 실측 확정**: planner 가 live point_balances 실분포 집계(39 docs: 0→2/1~10→7/11~50→19/51~100→8/101+→3, max 130) — 제안안(51+ 단일)에 11명이 몰려 **0/1~10/11~50/51~100/101+ 로 세분**. 모수는 잔액 문서 보유자(각주 명시 — 적립 이력 없는 유저는 문서 부재). `$bucket`+`$facet` 1왕복.
+- **whale 일반형**: 상위 `max(1, ceil(0.1×spenders))` 명 소비합/전체 %(round 1자리) — 현 소비자 8명이라 "상위 1명" 수준으로 계산됨(N명 병기로 오해 방지). 소비 행은 전부 `day=_kst_day()` 세팅 실측 — day 범위 필터 안전. `spenders==0` 이면 `{top:[], whale:null}`. top10 은 dm_service.hydrate_users 로 닉네임#code(v177 관행 — user_id/닉네임/code 까지 허용, 이메일·생년월일 금지).
+- **라벨 실측 정정 경위**: frontend-dev 가 분포 패널에서 `play`/`upload` 원문 노출 관찰 → planner 가 **live 원장 distinct action 전수 실측** — `play` 175행 실재·**`listen` 은 0행**(v180 라벨 맵이 실측 없이 액션명을 추정 등록한 오류). pointsLabels.js 마이크로픽스: listen 제거→`play` 정정 + upload/referral_inviter/referral_joiner/verify_bonus 등록, `generate` 는 의미 미확정 legacy(콜사이트 부재)라 의도적 미등록(fallback 원문이 정직). **교훈: 라벨 맵은 코드 추정이 아니라 원장 실측 기준으로 등록한다**(차기 관행).
+
+## 3. 테스트 결과 — 13/13 PASS (api 8 / unit 4 / e2e 1), 앱 픽스 사이클 0회(라벨 마이크로픽스는 착수 전 랜딩)
+- 핵심 증적: 신규 2 엔드포인트 스키마·화이트리스트 400·401/403 / **잔액 검산 3자 일치(Σcount==total_users==문서 수 39, total_balance 1876==v180 summary 교차)** / **소비 3면 정합 정확 일치(whale.all_total==Σbreakdown.spend==Σdaily.spent — 337/317, 재실행 불요)** / 순증 프론트 계산 대조(432−317=115·73.4%) / delta 1쌍 원복(잔액 50 원상·순증 상쇄 0·잔액 분포 불변 — 스냅샷 무영향 확인) / 개인정보 3면(응답·서버 로그·콘솔) 0건 / 라벨 겸측(play→"재생 적립"·generate fallback 잔존 — fallback 실증) / 기존 9 엔드포인트·사용자 API·운영 탭 회귀 불변 / 9004 diff 0 / package.json 무변경(라이브러리 0 확증).
+- planner 판정 5건+마이크로픽스 1건(TESTPLAN §4 블록): BASE_REV `54c22c3` / countDocuments 승인 / whale null 코드 리뷰 갈음(조기 반환 실측) / E2E Link 테스트 행 한정 / share_pct·소진율 소수 1자리 통일 / 라벨 픽스 포함.
+
+## 4. 특이사항
+- **delta 집계 잔존**: 테스트 grant/deduct 1쌍(ref `adm:` 2건)이 오늘 daily·breakdown·감사에 잔존(잔액 원상 — 승인 방침).
+- **signup_bonus 일관 제외 재확인**: `day=="-"` 26행은 순증 지표에서도 동일 제외(v181 관찰의 연장 — 3면 정합은 유지되므로 지표 간 모순 없음). **제품 판단 후보 유지**(백필 vs 집계 분기 — 차기 오더).
+- **소비 분포의 관리자 조정 비중**: dev DB 특성상 테스트 유래 `spend:admin_adjust` 가 소비 분포에 노출 — 운영 데이터에서는 자연 희석 예상(비버그).
+- 각주 자구 차이(계획 "잔액 기록 보유 사용자 기준" vs 구현 유사 문구) — 취지 충족으로 PASS(비고). 라벨 자구도 지시안 대비 경미 차이(추천인/피추천/인증 보너스) — 실측 겸측 PASS·취지 충족 허용.
+- 드라이버 기준 오판 2회 재판정 — 비버그(앱 픽스 0회 유지).
+- 승계 후속 후보: signup_bonus day 백필/분기(제품 판단), day 단독 인덱스, CS 모달 드롭다운 통합, tie 결정화, 필터 복제 동기화, eslint 부채 6건.
+
+## 5. 변경 파일 (커밋 대상 9)
+- 백엔드 2: `backend_9005/app/routes/admin_points.py` `backend_9004/app/routes/admin_points.py`(미러 — byte-identical 최종 실측)
+- 프론트 4: `frontend_admin/src/components/AdminPointsDashboard.jsx` `.css` `frontend_admin/src/api.js` `frontend_admin/src/utils/pointsLabels.js`(마이크로픽스)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v182 append)
+- 무변경 확인: AdminPointsPage(운영 탭)·points_service.py·routes/points.py·main.py·package.json — git status 실측, 하니스 잔재 0건.
