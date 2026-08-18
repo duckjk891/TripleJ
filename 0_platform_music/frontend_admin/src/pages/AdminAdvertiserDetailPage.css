@@ -504,6 +504,7 @@
   font-size: 0.68rem;
   color: var(--color-text-sub);
   white-space: nowrap;
+  min-height: 1em; /* 라벨 유무와 무관하게 칸 높이 고정 — 막대 기준선 정렬(이중 안전) */
 }
 
 .admin-ads-detail__demo {

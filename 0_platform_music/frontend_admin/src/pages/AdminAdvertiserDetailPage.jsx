@@ -319,7 +319,8 @@ export default function AdminAdvertiserDetailPage() {
                 {byHour.map((r, i) => (
                   <div key={r.hour ?? i} className="admin-ads-detail__vwrap admin-ads-detail__vwrap--hour" title={`${r.hour ?? i}시 ${r.count ?? 0}건`}>
                     <div className="admin-ads-detail__vbar" style={{ height: `${((r.count || 0) / hourMax) * 100}%` }} />
-                    <span className="admin-ads-detail__vlabel">{(r.hour ?? i) % 3 === 0 ? `${r.hour ?? i}` : ' '}</span>
+                    {/* 라벨 없는 칸도 nbsp 로 라인 높이 유지 — 공백 1개는 span 이 0 높이로 접혀 막대 기준선이 어긋남 */}
+                    <span className="admin-ads-detail__vlabel">{(r.hour ?? i) % 3 === 0 ? `${r.hour ?? i}` : ' '}</span>
                   </div>
                 ))}
               </div>
