@@ -4,6 +4,44 @@
 
 ---
 
+## v3.29 (차트클릭 즉시재생 픽스 · 70%재생보상(seek허용) · 하단토글 절대노출 · 음악/동영상 가사싱크) — 2026-08-18
+
+### 요청 작업
+① seek이 별 지급과 무관한지(70% 기준인지) 확인해 정책 반영. ② MAIDOL 플레이어 곡정보 화면 분석 → AIDOL에 없는 화면 파악·수정. ③ MAIDOL 음악/동영상 전환 + 동영상 클릭 시 가사 화면 적용. ④ 하단 토글 아직도 안 보임. ⑤ 차트에서 클릭한 곡이 기존 재생 중이어도 그 곡이 먼저 재생(현재 플레이리스트에 추가만 됨).
+
+### Plan verification findings (0단계, MAIDOL 실측 분석)
+- **①⑤ 재생보상**: MAIDOL = **70% 위치 도달 시 `POST /charts/record-play {track_id}` → 별 +1(하루 5곡 상한)**. **위치 기반이라 seek 허용**(연속청취 요구 없음). 서버 검증 없음(클라 신뢰). AIDOL엔 record-play 호출·70% 게이트 **전무**(didJustFinish에 로컬 EXP만).
+- **⑤ 차트클릭 버그**: `PlayerScreen`의 `track = fullTrack||storeTrack||routeTrack`. 새 곡 클릭 시 storeTrack=옛곡이라 `track`=옛곡 → 마운트 효과가 "같은 곡"으로 판단해 **기존 사운드 재사용 → 새 곡 미재생**(큐에만 추가).
+- **② 곡정보 탭**: MAIDOL=2탭(프롬프트정보[프롬프트+상세grid+가사+착장+SNS] / 재생목록). AIDOL=4탭(가사/프롬프트/착장/상세). AIDOL이 오히려 세분화 — 큰 결손은 **동영상 탭 부재**.
+- **③ 음악/동영상**: 노래/동영상 media-tabs. 동영상 = MV(`GET /tracks/{id}/music-video`) 있으면 재생, 없으면 **가사 싱크(LyricSyncVideo, `GET /tracks/{id}/lyrics-timeline`→segments[{text,start,end}])**. 실측: lyrics-timeline **정상(실제 타임스탬프)**, music-video는 대개 없음(이 곡도 404) → 가사싱크가 주 경로.
+
+### 수행 결과
+- **⑤ screens/PlayerScreen.tsx (차트클릭 재생)**: 마운트 효과·`loadAndPlay(target)`가 **routeTrack(명시 곡) 우선 재생** — 다른 곡 재생 중이어도 클릭 곡 즉시 재생.
+- **① screens/PlayerScreen.tsx (70% 보상)**: `onPlaybackStatusUpdate`에서 `position ≥ duration*0.7` 도달 시 `POST /charts/record-play` **트랙당 1회** + 별 잔액 갱신. **위치 기반이라 seek로 넘겨도 인정**(MAIDOL 동일) → **seek 자유 허용**(별 지급과 무관, 되돌리기 가능).
+- **④ 하단 토글**: 가사·상세정보 토글을 **하단 절대배치(bottom:0, 배경 포함) + 컨테이너 paddingBottom 56** → 기기·오버플로와 무관하게 **항상 노출**.
+- **③ 음악/동영상 + 가사싱크**: **components/LyricSyncView.tsx**(신규, MAIDOL LyricSyncVideo 이식 — 커버 블러 배경 + 현재 재생위치로 활성 가사 라인 중앙 하이라이트·자동스크롤). PlayerScreen에 **노래/동영상 토글** 추가 — 동영상 탭 진입 시 `lyrics-timeline` 로드, 타임스탬프 있으면 **가사 싱크** 표시(없으면 안내). `[PlayerScreen]` 로그.
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [api] POST /charts/record-play · GET lyrics-timeline · music-video | ok / segments / (MV 없음) |
+| [e2e] 차트 곡 클릭 → 즉시 재생(loadAndPlay 로그) | PASS |
+| [e2e] 하단 가사·상세정보 토글 노출 | PASS (`/tmp/v329_player.png`) |
+| [e2e] 노래/동영상 토글 + 동영상=가사 싱크(활성 라인 하이라이트) | PASS (`/tmp/v329_video.png`) |
+| [e2e] 70% 도달 시 record-play 호출(위치 기반) | 코드/로그 검증 |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항 (사용자 질문 답)
+- **seek 정책 답**: 별 지급은 **70% 위치 도달 기준(위치 기반)** — 되감기/앞으로 감기 자유, seek이 별 지급을 방해하지 않음. 따라서 **seek 되돌리기 제한 불필요**로 결정(MAIDOL과 동일). (웹 오디오 실제 seek은 여전히 백엔드 stream-proxy Range(206) 필요 — v3.28 기록.)
+- **MV 재생(`<video>`)**: 대상 트랙에 MV가 거의 없어 이번엔 **가사 싱크 경로만 구현**. MV 있는 트랙용 expo-av Video 재생은 후속(엔드포인트·컴포넌트 준비됨).
+- AIDOL 4탭 상세는 MAIDOL보다 세분화 상태 유지, 추가 결손(스타 SNS 채널)은 경미 — 필요 시 후속.
+
+### 커밋
+`feat: v3.29 차트클릭 즉시재생 · 70%재생보상(seek허용) · 하단토글 절대노출 · 음악/동영상 가사싱크 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.28 (차트 곡클릭→큐추가+재생 · seek 리셋 픽스 · 정보토글 노출 · 플리 탭 아이콘) — 2026-08-18
 
 ### 요청 작업

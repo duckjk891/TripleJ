@@ -20,6 +20,8 @@ import Svg, { Path } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
+import { usePointsStore } from '../stores/pointsStore';
+import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 import { useArtistStore } from '../stores/artistStore';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
@@ -143,6 +145,11 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);       // 드래그 중 슬라이더 위치(웹 리셋 방지)
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
+  const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
+  const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
+  const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
   const [showDetails, setShowDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit' | 'info'>('lyrics');
   const [fullTrack, setFullTrack] = useState<TrackData | null>(null);
@@ -166,6 +173,21 @@ export default function PlayerScreen({ route, navigation }: any) {
     return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
   };
 
+  // 70% 위치 도달 시 재생 기록(별 +1) — MAIDOL과 동일하게 위치 기반(seek 허용). 트랙당 1회.
+  const PLAY_RECORD_RATIO = 0.7;
+  const recordPlayIfNeeded = (positionMillis: number, durationMillis: number) => {
+    if (!durationMillis || durationMillis <= 0) return;
+    const tid = usePlayerStore.getState().track?.id;
+    if (!tid || recordedTrackRef.current === tid) return;
+    if (positionMillis >= durationMillis * PLAY_RECORD_RATIO) {
+      recordedTrackRef.current = tid;
+      if (__DEV__) console.info('[PlayerScreen] 70% 재생 기록', { tid });
+      api.post('/charts/record-play', { track_id: tid })
+        .then(() => { usePointsStore.getState().fetchBalance(); }) // 별 배지 갱신
+        .catch((err: any) => console.error('[PlayerScreen] record-play 실패', { status: err?.response?.status }));
+    }
+  };
+
   const onPlaybackStatusUpdate = (status: any) => {
     if (status.isLoaded) {
       // isSeekingRef(live) — 드래그 중엔 재생바를 status로 덮어쓰지 않음
@@ -177,6 +199,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.setDuration(status.durationMillis || 0);
       setIsPlaying(status.isPlaying);
       playerStore.setIsPlaying(status.isPlaying);
+      // 70% 도달(또는 seek로 넘김) 시 재생 기록 — 위치 기반
+      recordPlayIfNeeded(status.positionMillis, status.durationMillis || 0);
       if (status.didJustFinish) {
         // 재생 완료 EXP — 내 아티스트 +1
         useArtistStore.getState().addExp(1, 'play');
@@ -220,8 +244,8 @@ export default function PlayerScreen({ route, navigation }: any) {
     }
   };
 
-  const loadAndPlay = async () => {
-    if (!track?.id) return;
+  const loadAndPlay = async (target: TrackData = track) => {
+    if (!target?.id) return;
     try {
       if (soundRef.current) {
         await soundRef.current.unloadAsync();
@@ -229,7 +253,8 @@ export default function PlayerScreen({ route, navigation }: any) {
 
       // Use proxy endpoint that streams audio directly through the backend
       // This avoids MinIO presigned URL host mismatch (localhost vs IP)
-      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${track.id}`;
+      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${target.id}`;
+      if (__DEV__) console.info('[PlayerScreen] loadAndPlay', { id: target.id });
 
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -245,9 +270,10 @@ export default function PlayerScreen({ route, navigation }: any) {
       setSound(newSound);
       // 전역 playerStore에 저장 (미니 플레이어용)
       playerStore.setSound(newSound);
-      playerStore.setTrack(track);
+      playerStore.setTrack(target);
       playerStore.setIsPlaying(true);
       setIsPlaying(true);
+      setPosition(0);
     } catch (err) {
       console.error('Audio load error:', err);
     }
@@ -261,6 +287,10 @@ export default function PlayerScreen({ route, navigation }: any) {
     let cancelled = false;
     // 이전 곡의 fullTrack은 일단 비우고 다시 fetch
     setFullTrack(null);
+    // 곡 전환 시 미디어탭/가사싱크 초기화
+    setMediaTab('song');
+    setLyricsTimeline([]);
+    lyricsFetchedRef.current = null;
     (async () => {
       try {
         const res = await api.get(`/tracks/${currentId}`);
@@ -271,6 +301,26 @@ export default function PlayerScreen({ route, navigation }: any) {
     })();
     return () => { cancelled = true; };
   }, [currentId]);
+
+  // 동영상 탭 열기 — 가사 싱크(lyrics-timeline) 로드(트랙당 1회)
+  const openVideoTab = async () => {
+    setMediaTab('video');
+    const tid = usePlayerStore.getState().track?.id || currentId;
+    if (!tid || lyricsFetchedRef.current === tid) return;
+    lyricsFetchedRef.current = tid;
+    setLyricsLoading(true);
+    if (__DEV__) console.info('[PlayerScreen] 동영상탭 — lyrics-timeline 로드', { tid });
+    try {
+      const res = await api.get(`/tracks/${tid}/lyrics-timeline`);
+      const segs = res.data?.has_timestamps ? (res.data?.segments || []) : [];
+      setLyricsTimeline(segs);
+    } catch (err: any) {
+      console.error('[PlayerScreen] lyrics-timeline 실패', { status: err?.response?.status });
+      setLyricsTimeline([]);
+    } finally {
+      setLyricsLoading(false);
+    }
+  };
 
   // 아티스트 광고 아이템 로드 + impression 기록
   useEffect(() => {
@@ -313,8 +363,10 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   useEffect(() => {
-    // 미니 플레이어에서 같은 곡이 재생 중이면 기존 사운드 재사용
-    if (playerStore.track?.id === track?.id && playerStore.sound) {
+    // 🔑 재생 대상 = 명시적으로 넘어온 routeTrack 우선(다른 곡이 재생 중이어도 클릭한 곡을 재생)
+    const target: TrackData = routeTrack || storeTrack;
+    // 미니 플레이어에서 "그 곡"이 이미 재생 중이면 기존 사운드 재사용
+    if (playerStore.track?.id === target?.id && playerStore.sound) {
       soundRef.current = playerStore.sound;
       setSound(playerStore.sound);
       setIsPlaying(playerStore.isPlaying);
@@ -324,11 +376,11 @@ export default function PlayerScreen({ route, navigation }: any) {
       // PlayerScreen의 local position/duration state가 업데이트되지 않아 재생바가 멈춘 것처럼 보임
       playerStore.sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
     } else {
-      // 다른 곡이면 기존 사운드 정리 후 새로 로드
+      // 다른 곡(=클릭한 곡)이면 기존 사운드 정리 후 그 곡을 새로 로드+재생
       if (playerStore.sound) {
         playerStore.sound.unloadAsync().catch(() => {});
       }
-      loadAndPlay();
+      loadAndPlay(target);
     }
     // Player 화면 열림 표시
     playerStore.setPlayerScreenOpen(true);
@@ -467,9 +519,29 @@ export default function PlayerScreen({ route, navigation }: any) {
         <View style={styles.backButton} />
       </View>
 
-      {/* Cover Art */}
+      {/* 노래 / 동영상 미디어 전환 (MAIDOL media-tabs) */}
+      <View style={styles.mediaTabs}>
+        <TouchableOpacity style={[styles.mediaTab, mediaTab === 'song' && styles.mediaTabActive]} onPress={() => setMediaTab('song')} accessibilityLabel="노래">
+          <Feather name="music" size={14} color={mediaTab === 'song' ? colors.text.primary : colors.text.muted} />
+          <AppText variant="caption" tone={mediaTab === 'song' ? 'primary' : 'muted'}>노래</AppText>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.mediaTab, mediaTab === 'video' && styles.mediaTabActive]} onPress={openVideoTab} accessibilityLabel="동영상">
+          <Feather name="film" size={14} color={mediaTab === 'video' ? colors.text.primary : colors.text.muted} />
+          <AppText variant="caption" tone={mediaTab === 'video' ? 'primary' : 'muted'}>동영상</AppText>
+        </TouchableOpacity>
+      </View>
+
+      {/* Cover Art / 동영상(가사 싱크) */}
       <View style={styles.coverWrapper}>
-        {coverUri ? (
+        {mediaTab === 'video' ? (
+          lyricsTimeline.length > 0 ? (
+            <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={250} />
+          ) : (
+            <View style={[styles.coverArt, styles.coverPlaceholder]}>
+              <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
+            </View>
+          )
+        ) : coverUri ? (
           <Image source={{ uri: coverUri }} style={styles.coverArt} />
         ) : (
           <View style={[styles.coverArt, styles.coverPlaceholder]}>
@@ -619,10 +691,10 @@ export default function PlayerScreen({ route, navigation }: any) {
       </Modal>
 
 
-      {/* 남는 세로 공간을 흡수 → 정보 토글이 항상 하단에 보이도록 */}
+      {/* 남는 세로 공간 흡수(콘텐츠가 짧을 때) — 토글은 아래 절대배치로 항상 노출 */}
       <View style={{ flex: 1 }} />
 
-      {/* Bottom swipe-up indicator (가사·상세정보 토글) */}
+      {/* Bottom swipe-up indicator (가사·상세정보 토글) — 하단 절대배치로 기기·오버플로 무관 항상 노출 */}
       <TouchableOpacity
         style={styles.swipeUpButton}
         onPress={() => setShowDetails(true)}
@@ -828,6 +900,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg.deepest,
     alignItems: 'center',
+    paddingBottom: 56, // 하단 절대배치 토글(가사·상세정보) 공간 확보
   },
   headerTitleFlex: { flex: 1 },
   trackArtistSpacing: { marginTop: spacing.xs },
@@ -860,8 +933,14 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     fontWeight: '600',
   },
+  mediaTabs: {
+    flexDirection: 'row', gap: 8, marginTop: 8,
+    backgroundColor: colors.bg.surface1, borderRadius: radius.pill, padding: 3,
+  },
+  mediaTab: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 16, borderRadius: radius.pill },
+  mediaTabActive: { backgroundColor: colors.bg.surface3 },
   coverWrapper: {
-    marginTop: 24,
+    marginTop: 16,
     shadowColor: colors.bg.deepest,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.6,
@@ -1046,11 +1125,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   swipeUpButton: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
     width: '100%',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingBottom: 16,
-    marginTop: 20,
+    paddingTop: 10,
+    paddingBottom: 20,
+    backgroundColor: colors.bg.deepest,
     borderTopWidth: 1,
     borderTopColor: colors.bg.surface1,
   },

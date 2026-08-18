@@ -7,6 +7,26 @@
 
 ---
 
+## v3.29 — 2026-08-18 — 차트클릭 즉시재생 · 70%재생보상(seek허용) · 하단토글 절대노출 · 음악/동영상 가사싱크
+
+### 요청
+① seek vs 별지급(70%?) ② 곡정보 화면 분석·결손수정 ③ 음악/동영상 전환+동영상 가사 ④ 하단 토글 여전히 안보임 ⑤ 차트클릭 곡이 기존 재생중이어도 즉시 재생(현재 큐추가만).
+
+### Plan verification findings (0단계, MAIDOL 실측)
+- 재생보상=70% 위치 도달 시 POST /charts/record-play→별+1(하루5), 위치기반=seek허용. AIDOL 미구현.
+- 차트클릭버그: track=storeTrack(옛곡) 우선→마운트 효과 재사용→새곡 미재생.
+- 동영상=music-video(대개없음) or lyrics-timeline 가사싱크(정상). 
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/PlayerScreen.tsx | loadAndPlay(target=routeTrack) 즉시재생, 70% record-play, 하단토글 절대배치, 노래/동영상 토글+가사싱크 | `[PlayerScreen]` |
+| components/LyricSyncView.tsx (신규) | 가사 싱크(활성라인 하이라이트) | — |
+
+seek 정책=70% 위치기반이라 자유 허용(제한 불필요). MV 재생은 후속.
+
+---
+
 ## v3.28 — 2026-08-18 — 차트클릭→큐추가+재생 · seek 리셋 픽스 · 정보토글 · 플리탭 아이콘
 
 ### 요청
