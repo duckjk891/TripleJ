@@ -7,6 +7,21 @@
 
 ---
 
+## v3.26 — 2026-08-18 — 차트 클린 리디자인 + MAIDOL 아이콘 + 재생목록/플레이리스트 구분
+
+### 요청
+차트 어지러움→깔끔, MAIDOL 아이콘 그대로, 재생목록/플레이리스트 아이콘 구별.
+
+### Plan verification findings (0단계)
+- 기존 행 과밀(장르pill+2카운트+3버튼). 재생목록=list, 플레이리스트=+ 혼동. MAIDOL=FiPlay/FiHeart/FiPlus(큐)/FiBookmark(플리)=Feather play/heart/plus/bookmark.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/ChartScreen.tsx | 행 미니멀화(순위/커버/제목·아티스트/♥/⋮), ⋮ 액션시트(재생/좋아요/재생목록plus/플리bookmark) | `[ChartScreen]` |
+
+---
+
 ## v3.25 — 2026-08-18 — 재생목록(큐) 추가·뷰 + 다운로드/공유 마이뮤직 이관
 
 ### 요청

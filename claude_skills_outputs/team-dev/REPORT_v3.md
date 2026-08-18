@@ -4,6 +4,39 @@
 
 ---
 
+## v3.26 (차트 UI 클린 리디자인 + MAIDOL 아이콘 통일 + 재생목록/플레이리스트 구분) — 2026-08-18
+
+### 요청 작업
+① 차트 UI가 어지러움 → 다른 음악 앱처럼 깔끔하게. ② 아이콘은 MAIDOL과 동일하게. ③ 재생목록·플레이리스트 아이콘이 같아 구별 안 됨 → 구분.
+
+### Plan verification findings (0단계)
+- 기존 차트 행이 과밀: rank + cover + (title/artist/**장르pill + ▶count + ♥count**) + **♡(text) + list(Feather) + +(text)** 3버튼. 정보/아이콘 과다.
+- **아이콘 혼동 원인**: 재생목록=Feather `list`, 플레이리스트=text `+` — 둘 다 애매하고 MAIDOL과 불일치.
+- **MAIDOL SongItem 아이콘(react-icons/fi = Feather)**: `FiPlay·FiHeart·FiPlus(재생목록/큐)·FiBookmark(플레이리스트)` → Feather `play·heart·plus·bookmark`.
+
+### 수행 결과 (screens/ChartScreen.tsx)
+- **행 리디자인(멜론/스포티파이식 미니멀)**: `[순위][커버][제목/아티스트][♥ 빠른좋아요][⋮ 더보기]`. 장르 pill·▶count·♥count 인라인 **제거** → 깔끔.
+- **MAIDOL 아이콘 적용**: 좋아요=Feather `heart`(좋아요 시 accent 채움), 더보기=`more-vertical`.
+- **⋮ 더보기 액션 시트**(신규): 곡 헤더(커버+제목/아티스트) + 4개 **아이콘+라벨** 항목 — **재생(play) · 좋아요(heart) · 재생목록에 추가(plus·FiPlus) · 플레이리스트에 담기(bookmark·FiBookmark)**. → 재생목록/플레이리스트가 **서로 다른 아이콘 + 라벨**로 명확히 구분. 플레이리스트에 담기는 기존 플레이리스트 선택 시트로 연결. `[ChartScreen]` 로그.
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 차트 행 클린(순위/커버/제목·아티스트/♥/⋮, 잡정보 제거) | PASS (`/tmp/v326_1_chart.png`) |
+| [e2e] ⋮ 더보기 → 액션시트 4항목(재생/좋아요/재생목록에 추가/플레이리스트에 담기) | PASS (`/tmp/v326_2_sheet.png`) |
+| [e2e] 재생목록(plus)·플레이리스트(bookmark) 아이콘·라벨 구분 | PASS |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- 빠른 좋아요는 행에 유지(1탭), 나머지 곡 액션은 ⋮로 모아 클러터 제거 — 실제 음악앱(멜론/스포티파이) 관행.
+- 검색 결과 행은 이번 범위 외(탭 시 재생). 필요 시 동일 ⋮ 패턴 확장 가능.
+
+### 커밋
+`feat: v3.26 차트 클린 리디자인 + MAIDOL 아이콘 + 재생목록/플레이리스트 구분(⋮ 액션시트) (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.25 (기능 #9 — 재생목록(큐) 추가·뷰 + 다운로드/공유를 마이뮤직으로 이관) — 2026-08-18
 
 ### 요청 작업

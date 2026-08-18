@@ -57,6 +57,7 @@ export default function ChartScreen() {
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string>('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [actionTrack, setActionTrack] = useState<ChartTrack | null>(null); // ⋮ 오버플로 메뉴 대상
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
   const toggleLikeStore = useLikesStore((s) => s.toggle);
@@ -213,33 +214,26 @@ export default function ChartScreen() {
     const rank = index + 1;
     const rankColor = RANK_COLORS[rank] || colors.text.muted;
     const isLiked = !!likedMap[item.id];
-    const g = Array.isArray(item.genre) ? item.genre[0] : item.genre;
 
     return (
       <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={() => handleTrackPress(item)}>
         {activeTab === 'new'
           ? <View style={styles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
-          : <AppText variant="title3" center style={[styles.rank, { color: rankColor }]}>{rank}</AppText>}
+          : <AppText variant="bodyStrong" center style={[styles.rank, { color: rankColor }]}>{rank}</AppText>}
         <Cover track={item} />
         <View style={styles.info}>
           <AppText variant="bodyStrong" numberOfLines={1}>{item.title}</AppText>
           <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
             {item.artist_name || '알 수 없는 아티스트'}
           </AppText>
-          <View style={styles.statsRow}>
-            {g ? <Tag label={String(g)} size="sm" /> : null}
-            {item.play_count != null && <AppText variant="caption" tone="muted">{'▶'} {item.play_count.toLocaleString()}</AppText>}
-            {item.like_count != null && <AppText variant="caption" tone="muted">{'♥'} {item.like_count.toLocaleString()}</AppText>}
-          </View>
         </View>
+        {/* 빠른 좋아요 (MAIDOL FiHeart) */}
         <TouchableOpacity style={styles.action} accessibilityLabel={isLiked ? '좋아요 취소' : '좋아요'} onPress={(e) => { e.stopPropagation(); toggleLike(item.id); }}>
-          <AppText variant="subtitle" tone={isLiked ? 'accent' : 'muted'}>{isLiked ? '♥' : '♡'}</AppText>
+          <Feather name="heart" size={20} color={isLiked ? colors.accent.primary : colors.text.muted} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.action} accessibilityLabel="재생목록 추가" onPress={(e) => { e.stopPropagation(); handleAddToQueue(item); }}>
-          <Feather name="list" size={18} color={colors.text.muted} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.action} accessibilityLabel="플레이리스트에 담기" onPress={(e) => { e.stopPropagation(); handleAddToPlaylist(item); }}>
-          <AppText variant="title3" tone="muted">+</AppText>
+        {/* 더보기(⋮) — 재생목록/플레이리스트는 여기서 구분 */}
+        <TouchableOpacity style={styles.action} accessibilityLabel="더보기" onPress={(e) => { e.stopPropagation(); setActionTrack(item); }}>
+          <Feather name="more-vertical" size={20} color={colors.text.muted} />
         </TouchableOpacity>
       </TouchableOpacity>
     );
@@ -329,6 +323,41 @@ export default function ChartScreen() {
         </View>
       </Modal>
 
+      {/* 곡 더보기(⋮) 액션 시트 — 재생/좋아요/재생목록/플레이리스트를 아이콘+라벨로 구분 (MAIDOL Feather) */}
+      <Modal visible={!!actionTrack} transparent animationType="slide" onRequestClose={() => setActionTrack(null)}>
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setActionTrack(null)}>
+          <View style={styles.sheet}>
+            {actionTrack ? (
+              <>
+                <View style={styles.actionSheetHead}>
+                  <Cover track={actionTrack} />
+                  <View style={{ flex: 1, marginLeft: spacing.md }}>
+                    <AppText variant="bodyStrong" numberOfLines={1}>{actionTrack.title}</AppText>
+                    <AppText variant="footnote" tone="secondary" numberOfLines={1}>{actionTrack.artist_name || '알 수 없는 아티스트'}</AppText>
+                  </View>
+                </View>
+                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = actionTrack; setActionTrack(null); handleTrackPress(t); }}>
+                  <Feather name="play" size={20} color={colors.text.secondary} />
+                  <AppText variant="body">재생</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { toggleLike(actionTrack.id); }}>
+                  <Feather name="heart" size={20} color={likedMap[actionTrack.id] ? colors.accent.primary : colors.text.secondary} />
+                  <AppText variant="body">{likedMap[actionTrack.id] ? '좋아요 취소' : '좋아요'}</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = actionTrack; setActionTrack(null); handleAddToQueue(t); }}>
+                  <Feather name="plus" size={20} color={colors.text.secondary} />
+                  <AppText variant="body">재생목록에 추가</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = actionTrack; setActionTrack(null); handleAddToPlaylist(t); }}>
+                  <Feather name="bookmark" size={20} color={colors.text.secondary} />
+                  <AppText variant="body">플레이리스트에 담기</AppText>
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* 플레이리스트 담기 바텀시트 */}
       <Modal visible={showPlaylistModal} transparent animationType="slide" onRequestClose={() => setShowPlaylistModal(false)}>
         <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
@@ -382,9 +411,15 @@ const styles = StyleSheet.create({
   coverImg: { width: 48, height: 48 },
   coverPlaceholder: { width: 48, height: 48, backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
   info: { flex: 1, marginRight: spacing.sm },
-  artist: { marginTop: 2, marginBottom: spacing.xs },
-  statsRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  action: { width: 34, height: 34, justifyContent: 'center', alignItems: 'center' },
+  artist: { marginTop: 3 },
+  action: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  // 곡 더보기(⋮) 액션 시트
+  actionSheetHead: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingBottom: spacing.md, marginBottom: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  actionSheetItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
   fab: {
     position: 'absolute', bottom: spacing.xl, right: spacing.xl, width: 56, height: 56, borderRadius: radius.pill,
     backgroundColor: colors.accent.primary, justifyContent: 'center', alignItems: 'center',
