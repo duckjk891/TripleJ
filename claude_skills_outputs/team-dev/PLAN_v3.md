@@ -7,6 +7,23 @@
 
 ---
 
+## v3.30 — 2026-08-18 — 웹 seek 실동작(Range presigned 스트림 소스) + 재생/seek 실측
+
+### 질문
+웹 실제 재생/seek 테스트 못 하나?
+
+### Plan verification findings (0단계 실측)
+- 재생=웹 테스트 가능·정상(위치 진행). seek=stream-proxy가 Range 무시(200)라 웹 불가였음. GET /tracks/stream/{id}=presigned(부작용無)+Range 206 지원, 호스트 동일 IP(도달가능).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/PlayerScreen.tsx | getAudioUri: 웹=presigned(/tracks/stream, Range), 네이티브=stream-proxy. 오디오 로드 4곳 통일 | `[PlayerScreen]` |
+
+실측: 재생 3s→7s, seek 드래그→3:04 점프·유지(웹 seek 실동작). 네이티브 실기기 테스트는 환경상 불가(stream-proxy로 이미 정상).
+
+---
+
 ## v3.29 — 2026-08-18 — 차트클릭 즉시재생 · 70%재생보상(seek허용) · 하단토글 절대노출 · 음악/동영상 가사싱크
 
 ### 요청

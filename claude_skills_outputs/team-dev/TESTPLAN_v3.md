@@ -5,6 +5,21 @@
 
 ---
 
+## v3.30 — 2026-08-18 — 웹 seek 실동작(presigned Range 소스) 검증
+
+| # | 시나리오 (G/W/T) | 태그 | 결과 |
+|---|---|---|---|
+| U1 | 전체 tsc 0 | [unit] | PASS |
+| A1 | GET /tracks/stream/{id} → presigned, Range 요청 206(Content-Range) | [api] | PASS |
+| E1 | 웹 재생 진행(위치 증가 3s→7s) | [e2e] | PASS |
+| E2 | 웹 seek 드래그 → 그 지점(3:04)부터 재생 유지(0 리셋 없음) | [e2e] | PASS (`v330_seek`) |
+| E3 | web audio = presigned(stream) 소스 사용 로그 | [e2e] | PASS |
+| R1 (회귀) | 재생/일시정지/다음·이전·70%기록·가사싱크 정상 | [e2e] | PASS |
+| R2 (회귀) | 콘솔 에러 / 4xx·5xx | [e2e] | 0 / 0 |
+| N1 | 네이티브 실기기 seek | [e2e] | 미검증(환경 없음) — stream-proxy로 기존 정상 |
+
+---
+
 ## v3.29 — 2026-08-18 — 차트클릭 즉시재생·70%보상·하단토글·음악/동영상 가사싱크 검증
 
 | # | 시나리오 (G/W/T) | 태그 | 결과 |

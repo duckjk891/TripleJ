@@ -13,6 +13,7 @@ import {
   SafeAreaView,
   Linking,
   FlatList,
+  Platform,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import Slider from '@react-native-community/slider';
@@ -216,7 +217,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               if (soundRef.current) {
                 await soundRef.current.unloadAsync().catch(() => {});
               }
-              const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${nextTrack.id}`;
+              const audioUrl = await getAudioUri(nextTrack.id);
               const { sound: newSound } = await Audio.Sound.createAsync(
                 { uri: audioUrl },
                 { shouldPlay: true },
@@ -244,6 +245,22 @@ export default function PlayerScreen({ route, navigation }: any) {
     }
   };
 
+  // 오디오 소스 결정. 웹: Range(206) 지원 presigned URL(/tracks/stream) → 실제 seek 가능.
+  //            네이티브: stream-proxy(버퍼링으로 seek 정상, presigned 호스트 도달성 회피).
+  const getAudioUri = async (id: string): Promise<string> => {
+    const proxy = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${id}`;
+    if (Platform.OS !== 'web') return proxy;
+    try {
+      const res = await api.get(`/tracks/stream/${id}`);
+      const url = res.data?.stream_url;
+      if (__DEV__) console.info('[PlayerScreen] web audio = presigned(stream)', { ok: !!url });
+      return url || proxy;
+    } catch (err: any) {
+      console.error('[PlayerScreen] stream presigned 실패 → proxy 폴백', { status: err?.response?.status });
+      return proxy;
+    }
+  };
+
   const loadAndPlay = async (target: TrackData = track) => {
     if (!target?.id) return;
     try {
@@ -253,7 +270,7 @@ export default function PlayerScreen({ route, navigation }: any) {
 
       // Use proxy endpoint that streams audio directly through the backend
       // This avoids MinIO presigned URL host mismatch (localhost vs IP)
-      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${target.id}`;
+      const audioUrl = await getAudioUri(target.id);
       if (__DEV__) console.info('[PlayerScreen] loadAndPlay', { id: target.id });
 
       await Audio.setAudioModeAsync({
@@ -407,7 +424,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           await soundRef.current.unloadAsync().catch(() => {});
           soundRef.current = null;
         }
-        const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${routeTrack.id}`;
+        const audioUrl = await getAudioUri(routeTrack.id);
         const { sound: newSound } = await Audio.Sound.createAsync(
           { uri: audioUrl },
           { shouldPlay: true },
@@ -451,7 +468,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         await soundRef.current.unloadAsync().catch(() => {});
         soundRef.current = null;
       }
-      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${target.id}`;
+      const audioUrl = await getAudioUri(target.id);
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
         { shouldPlay: true },

@@ -4,6 +4,39 @@
 
 ---
 
+## v3.30 (웹 seek 실동작 — Range 지원 presigned 스트림 소스로 전환 + 재생/seek 실측) — 2026-08-18
+
+### 요청/질문
+"웹 오디오 실제 seek은 백엔드 Range 필요 / 네이티브 정상 예상 — 이거 테스트를 못 해본다는 얘기? 실제 재생이 잘 되는지?"
+
+### 답변 + Plan verification findings (0단계, 실측)
+- **재생(playback)**: 웹에서 **테스트 가능하고 잘 됨** — E2E로 위치 진행 확인(3초→7초). 예전에도 재생 자체는 정상이었음.
+- **seek(웹)**: 기존 `stream-proxy`가 Range를 무시(**200 반환**)해 웹 seek 불가였음(v3.28). 그러나 **`GET /tracks/stream/{id}` 가 부작용 없이 presigned MinIO URL을 반환하고, 그 URL은 Range를 지원(206, Content-Range 정상)**함을 실측. presigned 호스트=`100.127.225.55:9100`(백엔드와 동일 IP → 도달 가능). `/download`(다운로드 카운트↑)와 달리 `/stream`은 카운트 부작용 없음.
+- 즉 **웹 오디오 소스를 stream-proxy → presigned(stream)로 바꾸면 웹에서도 실제 seek 가능**하며, **내가 웹에서 직접 테스트 가능**.
+
+### 수행 결과 (screens/PlayerScreen.tsx)
+- **`getAudioUri(id)` 헬퍼**: **웹 = `GET /tracks/stream/{id}`의 presigned URL(Range 지원)**, **네이티브 = stream-proxy(버퍼링 seek 정상·presigned 호스트 도달성 회피)**. 실패 시 proxy 폴백. 오디오 로드 4곳(loadAndPlay·routeTrack효과·switchToTrack·didJustFinish next) 전부 이 헬퍼로 통일.
+
+### 테스트 (tester) — PASS (웹 실측, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [api] GET /tracks/stream/{id} presigned Range | **206**(Content-Range) |
+| [e2e] 웹 재생 진행(위치 증가) | PASS (3s→7s) |
+| [e2e] 웹 seek: 슬라이더 드래그 → **그 지점부터 재생 유지**(0으로 안 돌아감) | PASS (`/tmp/v330_seek.png` — 3:04 점프·유지) |
+| [e2e] `web audio = presigned(stream)` 로그 | 확인 |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항 (사용자 질문 정리 답)
+- **재생은 원래도 웹에서 테스트 가능·정상**. **seek이 웹에서 안 됐던 것**이며, 이제 **presigned 스트림 소스로 전환해 웹 seek도 실동작 + 실측 완료**(더 이상 "네이티브에서만 될 것" 추정 아님).
+- 네이티브(iOS/Android 실기기·에뮬)는 이 환경에 없어 **네이티브 직접 실행 테스트는 불가**하나, 네이티브는 stream-proxy로 이미 버퍼링 seek이 되며 회귀 위험 없음.
+- presigned URL 1시간 만료 — 곡 로드 시마다 새로 발급하므로 실사용 문제 없음.
+
+### 커밋
+`fix: v3.30 웹 seek 실동작 — Range 지원 presigned(/tracks/stream) 오디오 소스 + 웹 재생/seek 실측 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.29 (차트클릭 즉시재생 픽스 · 70%재생보상(seek허용) · 하단토글 절대노출 · 음악/동영상 가사싱크) — 2026-08-18
 
 ### 요청 작업
