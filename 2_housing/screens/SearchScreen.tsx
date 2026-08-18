@@ -22,11 +22,7 @@ interface Track {
   cover_image_url?: string;
 }
 
-// 느낌별 음악 — 백엔드 고정 카테고리 10종(운동~잠자기)에 표시용 이모지 매핑.
-const CATEGORY_EMOJI: Record<string, string> = {
-  '운동': '🏃', '에너지 충전': '⚡', '휴식': '🛋️', '출퇴근길': '🚇', '행복한 기분': '😊',
-  '집중': '🎯', '로맨스': '💕', '파티': '🎉', '슬픔': '😢', '잠자기': '😴',
-};
+// 느낌 카테고리 — 백엔드 고정 10종(운동~잠자기). 칩은 이모지 없이 텍스트만 표시한다.
 const CATEGORY_FALLBACK = ['운동', '에너지 충전', '휴식', '출퇴근길', '행복한 기분', '집중', '로맨스', '파티', '슬픔', '잠자기'];
 
 export default function SearchScreen() {
@@ -146,10 +142,9 @@ export default function SearchScreen() {
     );
   };
 
-  // 느낌별 음악 — 작은 칩 가로 스크롤 바
+  // 느낌 칩 가로 스크롤 바 (섹션 제목·이모지 없이 텍스트 칩만)
   const MoodBar = () => (
     <View style={styles.moodSection}>
-      <AppText variant="footnote" tone="secondary" style={styles.moodTitle}>느낌별 음악</AppText>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -166,7 +161,6 @@ export default function SearchScreen() {
               onPress={() => handleSelectCategory(cat)}
               accessibilityLabel={`느낌별 ${cat}`}
             >
-              <AppText variant="footnote">{CATEGORY_EMOJI[cat] || '🎵'}</AppText>
               <AppText variant="footnote" tone={active ? 'accent' : 'primary'} numberOfLines={1}>{cat}</AppText>
             </TouchableOpacity>
           );
@@ -221,13 +215,13 @@ export default function SearchScreen() {
           keyboardShouldPersistTaps="handled"
           renderItem={renderTrack}
           ListHeaderComponent={activeCategory ? (
-            <AppText variant="title3" style={styles.resultHead}>{CATEGORY_EMOJI[activeCategory] || '🎵'} {activeCategory}</AppText>
+            <AppText variant="title3" style={styles.resultHead}>{activeCategory}</AppText>
           ) : null}
         />
       ) : submitted ? (
         <EmptyState icon="🔍" title="결과가 없습니다" hint="다른 검색어/느낌으로 시도해보세요" />
       ) : (
-        <EmptyState icon="🎵" title="느낌을 선택하거나 검색해보세요" hint="위의 느낌별 음악을 눌러보세요" />
+        <EmptyState icon="🎵" title="느낌을 선택하거나 검색해보세요" hint="위의 느낌을 눌러보세요" />
       )}
     </ScreenLayout>
   );
@@ -241,7 +235,6 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, color: colors.text.primary, fontSize: 14, paddingVertical: 4 },
   moodSection: { marginBottom: spacing.sm },
-  moodTitle: { marginLeft: spacing.lg, marginBottom: spacing.xs },
   moodBar: { paddingHorizontal: spacing.lg, gap: spacing.sm },
   moodChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

@@ -20,7 +20,7 @@ interface PlayerState {
   queueOwnerId: string | null;
   /** 계정별 재생목록 보관함(영속) — 로그인하면 그 계정이 쓰던 재생목록을 여기서 복원한다. */
   savedQueues: Record<string, { queue: any[]; currentIndex: number; track: any | null }>;
-  /** 비회원 담기 안내 팝업을 이미 확인했는지(세션 한정, 영속화 X) — 매번 뜨지 않게 함 */
+  /** 비회원 담기 안내 팝업을 이미 확인했는지(영속) — 한 번 '계속 담기'를 고르면 다시 뜨지 않는다 */
   guestNoticeAck: boolean;
   setSound: (sound: Audio.Sound | null) => void;
   setTrack: (track: any | null) => void;
@@ -121,7 +121,8 @@ export const usePlayerStore = create<PlayerState>()(
         if (__DEV__) console.info('[playerStore] resetOnLogout — 큐/재생상태 초기화');
         set({
           sound: null, track: null, isPlaying: false, position: 0, duration: 0,
-          queue: [], currentIndex: -1, queueOwnerId: null, guestNoticeAck: false,
+          // guestNoticeAck은 유지 — 한 번 확인한 안내를 로그아웃했다고 다시 띄우지 않는다
+          queue: [], currentIndex: -1, queueOwnerId: null,
         });
       },
       claimQueue: (userId) => {
@@ -212,6 +213,7 @@ export const usePlayerStore = create<PlayerState>()(
         savedQueues: state.savedQueues,
         shuffle: state.shuffle,
         repeat: state.repeat,
+        guestNoticeAck: state.guestNoticeAck, // 한 번 확인했으면 앱을 다시 켜도 팝업 재노출 X
       }),
     }
   )

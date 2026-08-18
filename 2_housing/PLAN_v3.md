@@ -7,6 +7,23 @@
 
 ---
 
+## v3.39 — 2026-08-18 — 담기 안내 팝업 1회만 + 검색 느낌 칩 이모지·라벨 제거
+
+### 요청
+① 계속 담기 1회 후 차트 담기에서 팝업 재노출 금지 ② 검색 칩 이모지 전부 제거 ③ "느낌별 음악" 텍스트 제거.
+
+### Plan verification findings
+- guestNoticeAck가 partialize에 없어 비영속 → 재시작 시 false로 복귀해 팝업 재노출. resetOnLogout도 ack를 초기화.
+- 검색 이모지 3지점: 칩, 결과 헤더, CATEGORY_EMOJI 상수. "느낌별 음악"은 섹션 제목 + EmptyState 힌트 참조.
+
+### 변경 매트릭스
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| stores/playerStore.ts | guestNoticeAck 영속화, resetOnLogout에서 ack 초기화 제거 | 기존 유지 |
+| screens/SearchScreen.tsx | 칩·결과헤더 이모지 제거, CATEGORY_EMOJI 삭제, "느낌별 음악" 제목 제거, 힌트 문구/미사용 스타일 정리 | 기존 유지 |
+
+---
+
 ## v3.38 — 2026-08-18 — 검색 화면 로그인 CTA 공통 컴포넌트로 통일
 
 ### 요청
