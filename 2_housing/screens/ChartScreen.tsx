@@ -178,9 +178,12 @@ export default function ChartScreen() {
   };
 
   const handleTrackPress = (track: ChartTrack) => {
-    const idx = tracks.findIndex((t) => t.id === track.id);
-    playerStore.setQueue(tracks);
-    playerStore.setCurrentIndex(idx >= 0 ? idx : 0);
+    // 곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생
+    playerStore.addToQueue(track);
+    const q = usePlayerStore.getState().queue;
+    const idx = q.findIndex((t: any) => t.id === track.id);
+    playerStore.setCurrentIndex(idx >= 0 ? idx : q.length - 1);
+    if (__DEV__) console.info('[ChartScreen] 곡 클릭 → 큐 추가+재생', { id: track.id, queueLen: q.length });
     navigation.navigate('Player', { track });
   };
 

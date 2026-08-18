@@ -248,7 +248,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '플레이리스트',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="list" size={size - 2} color={color} />
+            <Feather name="folder" size={size - 2} color={color} />
           ),
           ...pageHeader(navigation, '플레이리스트'),
         })}

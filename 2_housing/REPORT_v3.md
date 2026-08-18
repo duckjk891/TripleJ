@@ -4,6 +4,42 @@
 
 ---
 
+## v3.28 (차트 곡클릭→큐추가+재생 · seek 리셋 픽스 · 정보토글 노출 · 플리 탭 아이콘) — 2026-08-18
+
+### 요청 작업
+① 차트 곡 클릭 시 재생목록(큐)에 추가되고 재생. ② 플레이어 재생바를 움직이면 그 지점부터 재생돼야 하는데 처음으로 돌아감(점검). ③ 플레이어 하단 곡 정보(가사·상세) 토글이 안 보임(확인). ④ 하단바 플레이리스트 아이콘을 목록 아이콘 대신 폴더/묶음 아이콘으로.
+
+### Plan verification findings (0단계)
+- ① `handleTrackPress` = `setQueue(전체 차트)` + navigate → 큐가 차트 전체로 대체됨(사용자 큐 유실). 원하는 건 "그 곡을 큐에 추가+재생".
+- ② **버그 2겹**: (a) 슬라이더 `value={isSeeking ? undefined : position}` — 드래그 시작 시 `undefined` → **웹 슬라이더가 0으로 리셋** → 놓으면 0으로 seek. (b) `onPlaybackStatusUpdate`가 stale 클로저 `isSeeking(항상 false)` 참조. **추가로 백엔드 `stream-proxy`가 Range 헤더 무시(206 아닌 200 반환) → 웹은 애초에 seek 불가**.
+- ③ 플레이어 `가사·상세정보` 토글은 렌더되나 세로 오버플로 시 하단 잘림 위험.
+- ④ App.tsx 플레이리스트 탭 아이콘 = Feather `list`.
+
+### 수행 결과
+- **screens/ChartScreen.tsx**: `handleTrackPress` → **`addToQueue(track)`(중복방지) 후 그 곡 인덱스로 재생**. 사용자가 쌓은 재생목록 보존 + 클릭 곡 추가+재생.
+- **screens/PlayerScreen.tsx (seek)**: `seekValue` 상태 + `isSeekingRef`(라이브) 도입. 슬라이더 `value={isSeeking ? seekValue : position}`(undefined 제거) + `onValueChange`로 드래그 추적, `onPlaybackStatusUpdate`는 `isSeekingRef.current`로 판정, `handleSeek`은 낙관적 position 반영 후 `setPositionAsync`. 시간 라벨도 드래그값 추종.
+- **screens/PlayerScreen.tsx (토글)**: 액션열과 토글 사이 `flex:1` 스페이서 추가 → **가사·상세정보 토글 하단 고정 노출**(tone muted→secondary로 가시성↑, accessibilityLabel 추가).
+- **App.tsx**: 플레이리스트 탭 아이콘 `list`→**`folder`**(묶음).
+
+### 테스트 (tester) — PASS / 부분 (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 차트 곡 클릭 → 플레이어 재생 + **재생목록(큐)에 추가** | PASS |
+| [e2e] 슬라이더 드래그 → seek 값이 **드래그 지점(159867ms)** 전달(0 아님) — 프론트 리셋 버그 해결 | PASS (로그 확인) |
+| [e2e] 정보(가사·상세) 토글 하단 노출 | PASS (`/tmp/v328_player.png`) |
+| [e2e] 플레이리스트 탭 = 폴더 아이콘 | PASS (`/tmp/v328_tabbar.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항 (중요 — seek 웹 미완, 백엔드 블로커)
+- **프론트 seek 리셋 버그(undefined→0, stale 클로저)는 수정 완료** → **네이티브 기기에선 seek 정상 예상**(expo-av가 파일 버퍼링해 로컬 seek).
+- **웹(Expo Web) seek은 여전히 0 부근으로 남음**: 백엔드 `/api/tracks/stream-proxy/{id}`가 `Accept-Ranges: bytes`를 광고하지만 **Range 요청에 206(Content-Range) 대신 200(전체)를 반환** → 브라우저가 seek 불가(실측: `curl -H "Range: bytes=..."` → `200 OK`, Content-Range 없음). **웹 seek을 완성하려면 백엔드 stream_track_proxy가 Range를 파싱해 부분(206) 반환하도록 수정 필요** — 원격 9004는 사용자측 재배포 필요(메모리 [[server-restart-wsl-constraint]]). 원하시면 maidol 백엔드 소스에 Range 대응 패치를 준비해 드리겠습니다(핸드오프).
+
+### 커밋
+`fix: v3.28 차트클릭→큐추가+재생 · seek 프론트리셋 픽스 · 정보토글 하단고정 · 플리탭 폴더아이콘 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.27 (차트 행에 재생수·좋아요수 표시 — 하트 버튼 자리, 좋아요는 ⋮에서) — 2026-08-18
 
 ### 요청 작업

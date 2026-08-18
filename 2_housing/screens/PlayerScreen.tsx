@@ -141,6 +141,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [duration, setDuration] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [seekValue, setSeekValue] = useState(0);       // 드래그 중 슬라이더 위치(웹 리셋 방지)
+  const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
   const [showDetails, setShowDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit' | 'info'>('lyrics');
   const [fullTrack, setFullTrack] = useState<TrackData | null>(null);
@@ -166,7 +168,8 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const onPlaybackStatusUpdate = (status: any) => {
     if (status.isLoaded) {
-      if (!isSeeking) {
+      // isSeekingRef(live) — 드래그 중엔 재생바를 status로 덮어쓰지 않음
+      if (!isSeekingRef.current) {
         setPosition(status.positionMillis);
         playerStore.setPosition(status.positionMillis);
       }
@@ -425,12 +428,22 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   const handleSeek = async (value: number) => {
+    // 드래그 완료 지점부터 재생 — 낙관적으로 position 반영 후 실제 seek
+    setPosition(value);
+    playerStore.setPosition(value);
+    isSeekingRef.current = false;
     setIsSeeking(false);
-    if (!soundRef.current) return;
-    await soundRef.current.setPositionAsync(value);
+    if (__DEV__) console.info('[PlayerScreen] seek', { ms: Math.round(value) });
+    try {
+      if (soundRef.current) await soundRef.current.setPositionAsync(value);
+    } catch (err: any) {
+      console.error('[PlayerScreen] seek 실패', { message: err?.message });
+    }
   };
 
   const handleSlidingStart = () => {
+    isSeekingRef.current = true;
+    setSeekValue(position);
     setIsSeeking(true);
   };
 
@@ -494,7 +507,8 @@ export default function PlayerScreen({ route, navigation }: any) {
           style={styles.slider}
           minimumValue={0}
           maximumValue={duration || 1}
-          value={isSeeking ? undefined : position}
+          value={isSeeking ? seekValue : position}
+          onValueChange={(v) => { if (isSeekingRef.current) setSeekValue(v); }}
           onSlidingStart={handleSlidingStart}
           onSlidingComplete={handleSeek}
           minimumTrackTintColor={colors.accent.primary}
@@ -502,7 +516,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           thumbTintColor={colors.accent.primary}
         />
         <View style={styles.timeRow}>
-          <AppText variant="caption" tone="muted">{formatTime(position)}</AppText>
+          <AppText variant="caption" tone="muted">{formatTime(isSeeking ? seekValue : position)}</AppText>
           <AppText variant="caption" tone="muted">{formatTime(duration)}</AppText>
         </View>
       </View>
@@ -605,13 +619,17 @@ export default function PlayerScreen({ route, navigation }: any) {
       </Modal>
 
 
-      {/* Bottom swipe-up indicator */}
+      {/* 남는 세로 공간을 흡수 → 정보 토글이 항상 하단에 보이도록 */}
+      <View style={{ flex: 1 }} />
+
+      {/* Bottom swipe-up indicator (가사·상세정보 토글) */}
       <TouchableOpacity
         style={styles.swipeUpButton}
         onPress={() => setShowDetails(true)}
+        accessibilityLabel="가사 상세정보"
       >
         <View style={styles.swipeUpHandle} />
-        <AppText variant="footnote" tone="muted">가사 · 상세정보</AppText>
+        <AppText variant="footnote" tone="secondary">가사 · 상세정보</AppText>
       </TouchableOpacity>
 
       {/* Bottom Sheet Modal (YouTube Music style) */}

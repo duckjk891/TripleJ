@@ -7,6 +7,25 @@
 
 ---
 
+## v3.28 — 2026-08-18 — 차트클릭→큐추가+재생 · seek 리셋 픽스 · 정보토글 · 플리탭 아이콘
+
+### 요청
+① 차트 곡 클릭→재생목록 추가+재생 ② seek 드래그 시 처음으로 돌아감 점검 ③ 플레이어 곡정보 토글 안보임 ④ 플리 탭 아이콘 폴더/묶음.
+
+### Plan verification findings (0단계)
+- handleTrackPress=setQueue(전체차트). seek: value undefined→웹 0리셋 + onPlaybackStatusUpdate stale isSeeking. **+백엔드 stream-proxy Range 미대응(200 반환)→웹 seek 불가**. 정보토글 오버플로 잘림. 플리 탭=list.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/ChartScreen.tsx | handleTrackPress → addToQueue+재생 | `[ChartScreen]` |
+| screens/PlayerScreen.tsx | seek seekValue/isSeekingRef, 슬라이더 value·onValueChange, 정보토글 flex 하단고정 | `[PlayerScreen]` |
+| App.tsx | 플리 탭 list→folder | — |
+
+특이: seek 프론트 리셋버그 수정=네이티브 OK 예상. 웹 seek은 백엔드 stream-proxy Range(206) 대응 필요(사용자 재배포). 
+
+---
+
 ## v3.27 — 2026-08-18 — 차트 행 재생수·좋아요수 표시(하트 자리) + 좋아요는 ⋮
 
 ### 요청
