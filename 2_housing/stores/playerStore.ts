@@ -25,9 +25,8 @@ interface PlayerState {
   addToQueue: (track: any) => boolean;   // 재생목록(큐) 맨 뒤 추가. 이미 있으면 false
   removeFromQueue: (index: number) => void;
   reorderQueue: (from: number, to: number) => void; // 드래그 편집: from→to 이동(현재재생 인덱스 보정)
-  /** 소스(플레이리스트/앨범 등) 곡들을 기존 재생목록에 누적(중복 제외)하고 선택곡으로 재생. 반환: 선택곡 인덱스.
-   *  재생목록(누적 큐)을 파괴적으로 교체하지 않아 사용자가 쌓아둔 곡을 보존한다. */
-  mergeAndPlay: (tracks: any[], targetId: string) => number;
+  /** 로그아웃/세션 종료 시 재생목록(큐)·재생상태를 초기화. 내 재생목록은 로그인 사용자 기능이므로 비회원엔 남기지 않는다. */
+  resetOnLogout: () => void;
   setCurrentIndex: (i: number) => void;
   setPlayerScreenOpen: (v: boolean) => void;
   toggleShuffle: () => void;
@@ -89,19 +88,11 @@ export const usePlayerStore = create<PlayerState>()(
         else if (from > currentIndex && to <= currentIndex) nextIndex = currentIndex + 1;
         set({ queue: next, currentIndex: nextIndex });
       },
-      mergeAndPlay: (tracks, targetId) => {
-        const { queue } = get();
-        const idOf = (t: any) => t && (t.id || t.track_id);
-        const existing = new Set(queue.map(idOf));
-        // 재생목록에 없는 곡만 누적. id 필드 정규화(플레이리스트 곡은 track_id만 있을 수 있음)
-        const additions = (tracks || [])
-          .filter((t) => idOf(t) && !existing.has(idOf(t)))
-          .map((t) => (t.id ? t : { ...t, id: t.track_id }));
-        const merged = additions.length ? [...queue, ...additions] : queue;
-        let idx = merged.findIndex((t) => idOf(t) === targetId);
-        if (idx < 0) idx = 0;
-        set({ queue: merged, currentIndex: idx });
-        return idx;
+      resetOnLogout: async () => {
+        const { sound } = get();
+        if (sound) { try { await sound.unloadAsync(); } catch {} }
+        if (__DEV__) console.info('[playerStore] resetOnLogout — 큐/재생상태 초기화');
+        set({ sound: null, track: null, isPlaying: false, position: 0, duration: 0, queue: [], currentIndex: -1 });
       },
       setCurrentIndex: (currentIndex) => set({ currentIndex }),
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),

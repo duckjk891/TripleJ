@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api, { setAuthToken } from '../services/api';
+import { usePlayerStore } from './playerStore';
 
 interface AuthUser {
   id: string;
@@ -86,6 +87,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     setAuthToken(null);
     set({ token: null, user: null });
+    // 내 재생목록(큐)은 로그인 사용자 기능 → 로그아웃 시 초기화(재진입 시 비회원에겐 아무것도 남기지 않음)
+    try { usePlayerStore.getState().resetOnLogout(); } catch (err) { console.error('[authStore] resetOnLogout 실패', { err }); }
   },
   clearError: () => set({ error: null }),
 }));

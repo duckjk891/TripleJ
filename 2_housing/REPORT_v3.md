@@ -4,6 +4,38 @@
 
 ---
 
+## v3.35 (내 재생목록 회원 전용 게이트 + 플레이리스트 재생=큐 교체로 정정) — 2026-08-18
+
+### 요청 작업
+① 내 재생목록은 가입(로그인)해야 제공 — 세션 끊기고 재진입 시 비회원엔 아무것도 없어야 함. ② 플레이리스트 곡은 재생목록에 담기지 않게(=v3.34 누적 되돌리기). ③ 단, 플레이리스트에서 재생하면 그 플레이리스트가 재생목록이 되어야 함(=큐 교체).
+
+### Plan verification findings (0단계)
+- v3.34에서 PlaylistScreen을 `mergeAndPlay`(누적 보존)로 바꿨음 → 사용자 의도는 반대(누적 금지 + 재생 시 교체). **정정 필요.**
+- `stores/authStore.ts:86` `logout`은 `token/user`만 초기화, 큐는 그대로. playerStore는 queue/currentIndex/track을 AsyncStorage에 영속화 → 로그아웃/재진입해도 큐 잔존.
+- 차트 '내 재생목록' 탭(v3.33)은 로그인 여부와 무관하게 로컬 큐 노출 → 회원 전용 게이트 없음.
+- ChartScreen엔 이미 `requireLogin()` 패턴, 앱 전역엔 `LoginPrompt` 공통 컴포넌트 존재(Feed/Playlist에서 사용).
+
+### 수행 결과
+- **screens/PlaylistScreen.tsx (정정)**: 곡 탭을 `mergeAndPlay`(누적) → `setQueue(playlistTracks)+setCurrentIndex`(교체)로 되돌림 → **플레이리스트에서 재생하면 그 플레이리스트가 곧 재생목록**. 기존 큐에 누적하지 않음.
+- **stores/playerStore.ts**: v3.34 `mergeAndPlay` 제거. 대신 `resetOnLogout()` 추가 — sound 언로드 + queue/currentIndex/track/재생상태 초기화.
+- **stores/authStore.ts**: `logout`에서 `usePlayerStore.getState().resetOnLogout()` 호출 → 로그아웃 시 재생목록 완전 초기화(재진입 시 비회원엔 잔존 없음).
+- **screens/ChartScreen.tsx**: '내 재생목록' 탭을 **회원 전용 게이트** — 비로그인 시 큐를 노출하지 않고 `LoginPrompt`(🎧 "내 재생목록은 회원 전용이에요" + 로그인하고 시작하기) 표시. (게스트가 큐를 만들어도 탭에선 곡이 아니라 로그인 유도.)
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc --noEmit | 에러 0 |
+| [unit] `mergeAndPlay` 참조 전무 확인(정정 완료) | PASS |
+| [e2e] 게스트가 큐에 곡 추가 후 '내 재생목록' 탭 → 회원 전용 문구+로그인 버튼, 큐 곡·빈상태문구 미노출 | PASS (`/tmp/v335_gate.png`) |
+| [e2e] 게스트 흐름 콘솔 에러(authStore↔playerStore import 포함) | 0 |
+
+### 특이사항
+- 로그아웃→큐 초기화, 플레이리스트 교체 재생은 로직이 단순하고 tsc/임포트 그래프 무오류로 검증(로그인 필요한 전체 플로우는 웹 E2E 대신 정적+게스트 임포트 검증으로 대체).
+- **정책 정리(확정)**: 재생목록(큐)=로그인 회원의 단일 '지금 재생' 목록(영속·로그아웃 시 소멸). 플레이리스트=저장 목록, 재생 시 큐를 교체(누적 아님). 차트 곡 클릭/‘재생목록에 추가’ 누적은 유지(회원이 큐를 쌓는 정식 경로).
+- 잔여 참고: Search/Artist/Feed/UserChannel 재생도 `setQueue` 교체(일관). 미니플레이어는 활성 재생 중에만 노출.
+
+---
+
 ## v3.34 (재생목록↔플레이리스트 구분: 큐 보존 + 재생목록 아이콘 위치 교체) — 2026-08-18
 
 ### 요청 작업

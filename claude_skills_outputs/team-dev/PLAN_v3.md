@@ -7,6 +7,26 @@
 
 ---
 
+## v3.35 — 2026-08-18 — 내 재생목록 회원 전용 게이트 + 플레이리스트 재생=큐 교체(정정)
+
+### 요청
+① 내 재생목록 = 로그인 회원 기능(비회원 재진입 시 없음) ② 플레이리스트 곡 재생목록에 누적 금지(v3.34 되돌리기) ③ 플레이리스트 재생 시 그 목록이 재생목록이 됨(교체).
+
+### Plan verification findings
+- v3.34 mergeAndPlay(누적)는 의도와 반대 → setQueue(교체)로 정정.
+- authStore.logout(:86)은 큐 미초기화, playerStore는 큐 영속 → 로그아웃 후 잔존.
+- 차트 '내 재생목록' 탭 게이트 없음. LoginPrompt/ requireLogin 패턴 기존 존재.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| screens/PlaylistScreen.tsx | mergeAndPlay→setQueue(교체) | `[PlaylistScreen] 플레이리스트 재생(큐 교체)` |
+| stores/playerStore.ts | mergeAndPlay 제거, `resetOnLogout()` 추가 | `[playerStore] resetOnLogout` |
+| stores/authStore.ts | logout에서 resetOnLogout 호출 | `[authStore] resetOnLogout 실패`(catch) |
+| screens/ChartScreen.tsx | '내 재생목록' 탭 비로그인 시 LoginPrompt 게이트 | `[ChartScreen] 내 재생목록 탭 — 비로그인` |
+
+---
+
 ## v3.34 — 2026-08-18 — 재생목록↔플레이리스트 구분(큐 보존) + 재생목록 아이콘 위치 교체
 
 ### 요청

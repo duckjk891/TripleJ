@@ -194,11 +194,12 @@ export default function PlaylistScreen({ navigation }: any) {
       style={styles.trackItem}
       activeOpacity={0.7}
       onPress={() => {
-        // 플레이리스트(저장 목록)의 곡을 '재생목록(누적 큐)'에 누적(중복 제외)하고 선택곡 재생.
-        // 기존 재생목록을 파괴적으로 교체하지 않음 → 사용자가 쌓아둔 곡 보존(재생목록 ≠ 플레이리스트 구분).
-        const targetId = item.id || item.track_id;
-        const idx = usePlayerStore.getState().mergeAndPlay(playlistTracks, String(targetId));
-        if (__DEV__) console.info('[PlaylistScreen] mergeAndPlay', { targetId, playIndex: idx, added: playlistTracks.length });
+        // 플레이리스트에서 재생 → 그 플레이리스트가 곧 재생목록이 된다(큐 교체).
+        // 플레이리스트 곡을 기존 재생목록에 '누적'하지 않는다(재생목록은 로그인 사용자의 별개 목록).
+        const idx = playlistTracks.findIndex((t: any) => (t.id || t.track_id) === (item.id || item.track_id));
+        usePlayerStore.getState().setQueue(playlistTracks);
+        usePlayerStore.getState().setCurrentIndex(idx >= 0 ? idx : 0);
+        if (__DEV__) console.info('[PlaylistScreen] 플레이리스트 재생(큐 교체)', { playIndex: idx >= 0 ? idx : 0, len: playlistTracks.length });
         navigation.navigate('Player', { track: item });
       }}
     >

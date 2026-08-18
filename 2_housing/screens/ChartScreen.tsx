@@ -16,6 +16,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
 import Marquee from '../components/Marquee';
+import LoginPrompt from '../components/LoginPrompt';
 
 interface ChartTrack {
   id: string;
@@ -277,6 +278,20 @@ export default function ChartScreen() {
 
       {(() => {
         const isQueue = activeTab === 'queue';
+        // 내 재생목록은 로그인(회원) 기능 — 비로그인 시 큐를 노출하지 않고 로그인 유도
+        if (isQueue && !user) {
+          if (__DEV__) console.info('[ChartScreen] 내 재생목록 탭 — 비로그인 → 로그인 유도');
+          return (
+            <View style={styles.gateWrap}>
+              <LoginPrompt
+                icon="🎧"
+                title="내 재생목록은 회원 전용이에요"
+                desc="로그인하면 재생목록을 저장하고 언제든 이어들을 수 있어요."
+                onPress={() => navigation.navigate('Settings')}
+              />
+            </View>
+          );
+        }
         const data = isQueue ? playerStore.queue : tracks;
         if (loading) {
           return <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />;
@@ -430,6 +445,7 @@ const styles = StyleSheet.create({
   chipBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
   chipRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   spinner: { marginTop: spacing.huge },
+  gateWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   row: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
