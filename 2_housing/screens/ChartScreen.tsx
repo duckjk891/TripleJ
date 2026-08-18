@@ -300,7 +300,8 @@ export default function ChartScreen() {
               {isQueue && !user ? (
                 <TouchableOpacity style={styles.guestBanner} onPress={() => navigation.navigate('Settings')} activeOpacity={0.8}>
                   <AppText variant="caption" tone="secondary">
-                    로그인하지 않으면 다음 접속 시 재생목록이 사라지고 별(⭐)도 받을 수 없어요. <AppText variant="caption" tone="accent">로그인하기</AppText>
+                    로그인하지 않으면 다음 접속 시 재생목록이 사라지고, 별(⭐)도 쌓이지 않아요.
+                    별을 모으면 작업실에서 나만의 음악을 만들 수 있어요. <AppText variant="caption" tone="accent">로그인하기</AppText>
                   </AppText>
                 </TouchableOpacity>
               ) : null}

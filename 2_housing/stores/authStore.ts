@@ -40,8 +40,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { token, user } = res.data;
       setAuthToken(token);
       set({ token, user, isLoading: false });
-      // 비회원으로 담아둔 재생목록을 이 계정으로 승계 → 로그인 후에도 그대로 유지
-      try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(login)', { err }); }
+      // 로그인: 이 계정이 쓰던 재생목록을 복원해서 보여준다(보관 목록이 없으면 담아둔 목록 승계)
+      try { usePlayerStore.getState().restoreQueueFor(String(user?.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(login)', { err }); }
       return true;
     } catch (err: any) {
       set({ error: err.response?.data?.detail || '로그인에 실패했습니다.', isLoading: false });
@@ -58,7 +58,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { token, user } = res.data;
       setAuthToken(token);
       set({ token, user, isLoading: false });
-      // 가입 직전까지 담아둔 재생목록도 그대로 승계
+      // 회원가입: 가입 직전까지 비회원으로 담아둔 재생목록을 그대로 새 계정에 승계(보존)
       try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(register)', { err }); }
       return true;
     } catch (err: any) {

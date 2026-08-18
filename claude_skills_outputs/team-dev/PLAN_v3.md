@@ -7,6 +7,29 @@
 
 ---
 
+## v3.37 — 2026-08-18 — 별 안내 문구 보강 + 가입=승계 / 로그인=계정 목록 복원
+
+### 요청
+① 별이 뭔지 알 수 있게 "별을 모으면 작업실에서 나만의 음악을 만들 수 있다" 문구 추가 ② 가입 사용자만 담아둔 재생목록 승계, 로그인은 그 계정의 기존 목록을 복원.
+
+### Plan verification findings
+- v3.36은 login/register 모두 claimQueue → 분기 필요.
+- v3.36 잠재 버그: queue+owner를 영속화해 재시작(=세션 초기화) 후 이전 사용자 목록이 게스트에게 노출 가능.
+- 계정별 목록 보관소 없음(서버 API도 없음) → 로컬 savedQueues 도입.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| stores/playerStore.ts | savedQueues(계정별 보관, 영속) + 큐 변경 시 자동 저장, claimQueue=가입 전용, restoreQueueFor=로그인 복원, resetOnLogout 저장 후 비움, 영속 대상 축소(작업 큐 비영속) | `[playerStore] restoreQueueFor`, `claimQueue`, `resetOnLogout` |
+| stores/authStore.ts | login→restoreQueueFor / register→claimQueue 분기 | `[authStore] restoreQueueFor 실패`(catch) |
+| components/GuestQueueNoticeModal.tsx | 별 설명 문구(작업실에서 나만의 음악) 추가 | — |
+| screens/ChartScreen.tsx | 목록 상단 배너 문구 동일 보강 | — |
+
+### 정책
+가입=승계 / 로그인=계정 목록 복원(없으면 승계) / 로그아웃=보관 후 비움 / 재시작=비회원 목록 소멸·계정 목록은 보관함 유지.
+
+---
+
 ## v3.36 — 2026-08-18 — 담기 선택 팝업 + 내 재생목록 비회원 개방 + 로그인 시 큐 승계
 
 ### 요청
