@@ -9,6 +9,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
+import { useLikesStore } from '../stores/likesStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -55,7 +56,9 @@ export default function ChartScreen() {
   const [playlists, setPlaylists] = useState<any[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string>('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [likedTracks, setLikedTracks] = useState<Set<string>>(new Set());
+  const likedMap = useLikesStore((s) => s.liked);
+  const syncLikes = useLikesStore((s) => s.sync);
+  const toggleLikeStore = useLikesStore((s) => s.toggle);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ChartTrack[]>([]);
@@ -73,6 +76,8 @@ export default function ChartScreen() {
       if (__DEV__) console.info('[ChartScreen] fetchChart 응답', { tab, count: data.length });
       if (!data.length) console.warn('[ChartScreen] 차트 비어있음', { tab });
       setTracks(data);
+      // 로그인 상태면 보이는 곡들의 좋아요 여부 동기화
+      if (useAuthStore.getState().user) syncLikes(data.map((t: ChartTrack) => t.id));
     } catch (err: any) {
       console.error('[ChartScreen] fetchChart 실패', { tab, endpoint, status: err?.response?.status });
     } finally {
@@ -102,11 +107,7 @@ export default function ChartScreen() {
 
   const toggleLike = (trackId: string) => {
     if (!requireLogin()) return;
-    setLikedTracks((prev) => {
-      const next = new Set(prev);
-      next.has(trackId) ? next.delete(trackId) : next.add(trackId);
-      return next;
-    });
+    toggleLikeStore(trackId); // 백엔드 연동(낙관적) — 실패 시 스토어가 롤백
   };
 
   const handleAddToPlaylist = async (track: ChartTrack) => {
@@ -204,7 +205,7 @@ export default function ChartScreen() {
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
     const rank = index + 1;
     const rankColor = RANK_COLORS[rank] || colors.text.muted;
-    const isLiked = likedTracks.has(item.id);
+    const isLiked = !!likedMap[item.id];
     const g = Array.isArray(item.genre) ? item.genre[0] : item.genre;
 
     return (
@@ -224,7 +225,7 @@ export default function ChartScreen() {
             {item.like_count != null && <AppText variant="caption" tone="muted">{'♥'} {item.like_count.toLocaleString()}</AppText>}
           </View>
         </View>
-        <TouchableOpacity style={styles.action} onPress={(e) => { e.stopPropagation(); toggleLike(item.id); }}>
+        <TouchableOpacity style={styles.action} accessibilityLabel={isLiked ? '좋아요 취소' : '좋아요'} onPress={(e) => { e.stopPropagation(); toggleLike(item.id); }}>
           <AppText variant="subtitle" tone={isLiked ? 'accent' : 'muted'}>{isLiked ? '♥' : '♡'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity style={styles.action} onPress={(e) => { e.stopPropagation(); handleAddToPlaylist(item); }}>

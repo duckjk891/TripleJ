@@ -4,6 +4,40 @@
 
 ---
 
+## v3.23 (기능 #8 — 좋아요(likes) 백엔드 실연동) — 2026-08-18
+
+### 요청 작업
+"이 부분(로그인 CTA 통일)은 넘어가고 다음 차례" → 로드맵 대조 후 **다음 미반영 기능 = 좋아요(likes) 실연동** 착수.
+
+### Plan verification findings (0단계)
+- **버그**: 차트 하트가 **로컬 Set 토글만**(`ChartScreen.tsx` `toggleLike` — API 호출 0). 눌러도 저장 안 됨 → 재진입 시 사라짐.
+- 백엔드 likes API 완비(실측): `POST /likes/{track_id}`(201, 중복 시 400 "이미 좋아요한 트랙"), `DELETE /likes/{track_id}`, `GET /likes/check?song_ids=a,b`→`{liked_ids:[...]}`, `GET /likes/`(내 좋아요 목록).
+- 피드 footer 하트는 **feed post 좋아요 수 표시**(트랙 likes와 별개 시스템) → 이번 범위 제외.
+
+### 수행 결과
+- **stores/likesStore.ts**(신규): 전역 좋아요 상태 — `isLiked` / `sync(ids)`(check 일괄조회) / `toggle(id)`(낙관적 POST·DELETE, 실패 롤백, 중복 400은 성공 취급). `[likesStore]` 로그.
+- **screens/ChartScreen.tsx**: 로컬 `likedTracks` Set 제거 → likesStore 연동. 차트 로드 시(로그인 상태) 보이는 곡 `sync`, 하트 탭 → `toggle`(백엔드). 하트 토글에 accessibilityLabel(좋아요/좋아요 취소).
+
+### 테스트 (tester) — PASS (실로그인 E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [api] POST/DELETE/check/list likes 실측 | 계약 일치 |
+| [e2e] 하트 탭 → 좋아요 저장(♥) | PASS |
+| [e2e] **다른 탭 갔다 차트 복귀 시 좋아요 유지**(백엔드 반영) | PASS (`/tmp/v323_like_persist.png`) |
+| [e2e] 취소 탭 → 삭제(♡ 복귀) | PASS |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항
+- 검색/채널 트랙 행에는 현재 하트 UI가 없어 이번엔 차트에만 연동(공용 likesStore라 추후 확장 용이).
+- 피드 post 좋아요(별도 엔드포인트)와 트랙 좋아요는 다른 시스템 — 혼동 방지.
+- **로그인 CTA 3화면 구조 통일(v3.23 후보)은 사용자 요청으로 보류** — 재개 시 icon/title/desc 구조 방향 결정 필요.
+
+### 커밋
+`feat: v3.23 좋아요(likes) 백엔드 실연동 — likesStore + 차트 하트 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.22 (로그인 유도 화면 텍스트까지 3화면 통일 — LoginPrompt 공용화) — 2026-08-13
 
 ### 요청 작업

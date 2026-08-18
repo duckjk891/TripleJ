@@ -7,6 +7,24 @@
 
 ---
 
+## v3.23 — 2026-08-18 — 좋아요(likes) 백엔드 실연동
+
+### 요청
+로그인 CTA 통일 보류 → 다음 미반영 기능 진행. 로드맵 대조로 좋아요 실연동 선정.
+
+### Plan verification findings (0단계)
+- 차트 하트 = 로컬 Set만(저장 안 됨). 백엔드 likes API 완비(POST/DELETE /likes/{id}, GET /likes/check?song_ids=, GET /likes/). 피드 하트=feed post 좋아요(별개).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| stores/likesStore.ts (신규) | 좋아요 전역 상태(sync/toggle, 낙관적+롤백) | `[likesStore]` |
+| screens/ChartScreen.tsx | 로컬 Set → likesStore, 로드 시 sync, 하트 탭 toggle | `[ChartScreen]` |
+
+미반영 잔여: dm·wishlist·fatigue·rewards·albums·face_verify·oauth·reports·voice_convert·voice_persona·vocal_repair.
+
+---
+
 ## v3.22 — 2026-08-13 — 로그인 유도 텍스트(제목/설명)까지 3화면 통일
 
 ### 요청
