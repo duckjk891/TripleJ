@@ -108,7 +108,12 @@ export default function ChartScreen() {
 
   const toggleLike = (trackId: string) => {
     if (!requireLogin()) return;
+    const wasLiked = !!useLikesStore.getState().liked[trackId];
     toggleLikeStore(trackId); // 백엔드 연동(낙관적) — 실패 시 스토어가 롤백
+    // 차트 행의 좋아요수도 낙관적으로 ±1 반영
+    setTracks((prev) => prev.map((t) => t.id === trackId
+      ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + (wasLiked ? -1 : 1)) }
+      : t));
   };
 
   const handleAddToPlaylist = async (track: ChartTrack) => {
@@ -227,11 +232,18 @@ export default function ChartScreen() {
             {item.artist_name || '알 수 없는 아티스트'}
           </AppText>
         </View>
-        {/* 빠른 좋아요 (MAIDOL FiHeart) */}
-        <TouchableOpacity style={styles.action} accessibilityLabel={isLiked ? '좋아요 취소' : '좋아요'} onPress={(e) => { e.stopPropagation(); toggleLike(item.id); }}>
-          <Feather name="heart" size={20} color={isLiked ? colors.accent.primary : colors.text.muted} />
-        </TouchableOpacity>
-        {/* 더보기(⋮) — 재생목록/플레이리스트는 여기서 구분 */}
+        {/* 재생수 · 좋아요수 (하트 자리) — 좋아요 실행은 ⋮ 액션시트에서 */}
+        <View style={styles.statCol}>
+          <View style={styles.statLine}>
+            <Feather name="play" size={11} color={colors.text.muted} />
+            <AppText variant="caption" tone="muted">{(item.play_count ?? 0).toLocaleString()}</AppText>
+          </View>
+          <View style={styles.statLine}>
+            <Feather name="heart" size={11} color={isLiked ? colors.accent.primary : colors.text.muted} />
+            <AppText variant="caption" tone={isLiked ? 'accent' : 'muted'}>{(item.like_count ?? 0).toLocaleString()}</AppText>
+          </View>
+        </View>
+        {/* 더보기(⋮) — 좋아요·재생목록·플레이리스트 */}
         <TouchableOpacity style={styles.action} accessibilityLabel="더보기" onPress={(e) => { e.stopPropagation(); setActionTrack(item); }}>
           <Feather name="more-vertical" size={20} color={colors.text.muted} />
         </TouchableOpacity>
@@ -412,6 +424,8 @@ const styles = StyleSheet.create({
   coverPlaceholder: { width: 48, height: 48, backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
   info: { flex: 1, marginRight: spacing.sm },
   artist: { marginTop: 3 },
+  statCol: { alignItems: 'flex-end', gap: 3, marginRight: spacing.xs, minWidth: 44 },
+  statLine: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   action: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
   // 곡 더보기(⋮) 액션 시트
   actionSheetHead: {
