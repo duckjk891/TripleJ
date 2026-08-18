@@ -1,5 +1,6 @@
 import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { Feather } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from '../services/api';
@@ -133,6 +134,15 @@ export default function MiniPlayer() {
         {/* 다음곡 */}
         <TouchableOpacity onPress={handleNext} style={styles.skipButton} disabled={!hasNext}>
           <Text style={[styles.skipIcon, !hasNext && { opacity: 0.3 }]}>{'⏭'}</Text>
+        </TouchableOpacity>
+
+        {/* 재생목록 바로가기 — 곡 클릭 없이 큐를 한 번에 열기 */}
+        <TouchableOpacity
+          onPress={(e) => { e.stopPropagation?.(); navigation.navigate('Player', { track, fromMiniPlayer: true, openQueue: true }); }}
+          style={styles.skipButton}
+          accessibilityLabel="재생목록"
+        >
+          <Feather name="list" size={18} color={colors.text.secondary} />
         </TouchableOpacity>
 
         {/* 닫기 */}

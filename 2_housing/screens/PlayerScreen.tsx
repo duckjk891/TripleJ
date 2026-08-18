@@ -139,7 +139,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const playerStore = usePlayerStore();
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showQueue, setShowQueue] = useState(false);
+  const [showQueue, setShowQueue] = useState(!!route.params?.openQueue); // 미니플레이어에서 재생목록 바로열기
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLiked, setIsLiked] = useState(false);
@@ -933,8 +933,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border.subtle,
   },
   backButton: {
     width: 40,

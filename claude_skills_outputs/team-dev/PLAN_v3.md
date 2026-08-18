@@ -7,6 +7,24 @@
 
 ---
 
+## v3.32 — 2026-08-18 — 마퀴 실동작 수정 + 미니플레이어 재생목록 바로가기 + Now Playing 라인 제거
+
+### 요청
+① 마퀴 아직 ...으로 보임(재확인) ② 재생목록 접근 불편(MAIDOL도 곡 클릭 필요?) ③ Now Playing 하단 라인 제거.
+
+### Plan verification findings (0단계)
+- 마퀴 overflow 미감지: 측정텍스트가 컨테이너폭으로 개행→자연폭 측정 실패. 복사본 numberOfLines=1이 웹 ellipsis 강제.
+- 재생목록=MAIDOL도 /player 내부(곡 클릭 필요). v3.31에서 헤더 borderBottom 추가로 상단바 룩.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| components/Marquee.tsx | 측정텍스트 web nowrap→자연폭, 복사본 numberOfLines 제거+폭고정+nowrap→말줄임 없이 흐름 | — |
+| components/MiniPlayer.tsx + PlayerScreen.tsx | 미니플레이어 재생목록 버튼→openQueue param→큐 모달 즉시 | — |
+| screens/PlayerScreen.tsx | 헤더 borderBottom 제거 | — |
+
+---
+
 ## v3.31 — 2026-08-18 — 차트 제목 마퀴 + 플레이어 레이아웃 재정비 + 동영상 가사 중앙/개행
 
 ### 요청

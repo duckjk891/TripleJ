@@ -4,6 +4,39 @@
 
 ---
 
+## v3.32 (마퀴 실동작 수정 + 미니플레이어 재생목록 바로가기 + Now Playing 하단 라인 제거) — 2026-08-18
+
+### 요청 작업
+① 차트 제목 마퀴가 아직 ...(말줄임)으로 보임 — 다시 확인/수정. ② 내 재생목록은 MAIDOL도 곡 클릭해야 나오나?(불편). ③ Now Playing을 상단바처럼 만들라 한 적 없음 — 하단 라인 없애줘.
+
+### Plan verification findings (0단계)
+- ① v3.31 Marquee가 **오버플로 미감지** → static 분기(numberOfLines=1)로 말줄임. 원인: 폭 측정용 텍스트가 컨테이너 폭으로 **개행**돼 자연폭이 아닌 컨테이너폭으로 측정됨(overflow=false). 또 마퀴 복사본의 numberOfLines=1이 웹에서 ellipsis 강제.
+- ② MAIDOL도 재생목록(큐)은 `/player` 안에서만 보임(곡 재생/클릭 필요) — 구조상 동일. 다만 **한 번에 열 진입점**이 없어 불편.
+- ③ v3.31에서 헤더에 하단 보더(borderBottom)를 추가해 "상단바처럼" 보이게 됨 — 사용자는 위치만 옮기길 원했음.
+
+### 수행 결과
+- **components/Marquee.tsx (실동작 수정)**: 폭 측정 텍스트에 **web `whiteSpace:nowrap`** 부여 → 자연폭 정확 측정(개행 방지) → 긴 제목 **오버플로 감지 성공**. 마퀴 복사본은 **numberOfLines 제거 + 측정폭 고정(width:textW+4) + web nowrap** → **말줄임 없이 전체 텍스트가 좌우로 흐름**. 웹 네이티브드라이버 미지원 대응(`useNativeDriver: Platform.OS!=='web'`).
+- **components/MiniPlayer.tsx + PlayerScreen.tsx (재생목록 바로가기)**: 미니플레이어에 **재생목록(list) 버튼** 추가 → `Player`로 `openQueue:true` 전달 → **큐 모달 즉시 오픈**(곡 클릭 후 플레이어 진입→버튼탭 2스텝을 1탭으로 단축).
+- **screens/PlayerScreen.tsx (라인 제거)**: 헤더 `borderBottom` 제거 → Now Playing 하단 라인 없음(상단바 룩 해제).
+
+### 테스트 (tester) — PASS (웹 실측, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 긴 제목(주입) → 마퀴 흐름·**말줄임 없음**(textOverflow=clip, 2프레임 위치 이동) | PASS (`/tmp/v332_marquee1.png`·`marquee2.png`) |
+| [e2e] 미니플레이어 재생목록 버튼 → 큐 모달 즉시 오픈 | PASS (`/tmp/v332_mini_queue.png`) |
+| [e2e] Now Playing 하단 라인 제거 | PASS (`/tmp/v332_player.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항 (질문 답)
+- **재생목록(큐)은 MAIDOL도 플레이어 내부 구조** — 곡을 재생/클릭해야 큐가 채워지고 보임. 이번에 **미니플레이어 바로가기**로 접근성만 개선(빈 큐일 땐 "비어있어요" 안내).
+- 마퀴 자연폭 측정은 web `whiteSpace:nowrap` 기반 → **웹에서 실동작 검증 완료**. 네이티브는 측정 방식 차이로 미검증(환경 없음)이나, 오버플로 미감지 시 기존처럼 말줄임 폴백(회귀 없음).
+
+### 커밋
+`fix: v3.32 마퀴 실동작(자연폭 측정) + 미니플레이어 재생목록 바로가기 + Now Playing 하단 라인 제거 (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.31 (차트 제목 마퀴 + 플레이어 레이아웃 재정비(액션열 노출) + 동영상 가사 중앙정렬/개행) — 2026-08-18
 
 ### 요청 작업
