@@ -25,6 +25,7 @@ const ACTION_META = {
   points_adjust: { label: '별 조정', badge: 'admin-badge--yellow' },
   ads_admin_hide: { label: '광고 숨김', badge: 'admin-badge--red' },
   ads_admin_unhide: { label: '광고 숨김 해제', badge: 'admin-badge--green' },
+  issue_status_change: { label: '오류신고 상태 변경', badge: 'admin-badge--blue' },
 };
 
 const TARGET_TYPE_LABELS = {
@@ -35,6 +36,7 @@ const TARGET_TYPE_LABELS = {
   report: '신고',
   broadcast: '브로드캐스트',
   ad_item: '광고 아이템',
+  issue_report: '오류 신고',
 };
 
 // details 객체 요약 — key: value 나열. null/비객체/빈 객체는 '-'.

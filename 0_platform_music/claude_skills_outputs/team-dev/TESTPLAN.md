@@ -2218,3 +2218,163 @@
 - 2026-08-18 초판 작성 (14건) — 코디네이터 필수 9항목 전부 시나리오화(1→AD-API-01, 2→AD-API-03, 3→AD-API-04, 4→AD-API-05·06·AD-UNIT-04·AD-E2E-01, 5→AD-API-07, 6→AD-UNIT-03·AD-E2E-01 겸측, 7→AD-API-03·08·AD-UNIT-04, 8→AD-E2E-01, 9→AD-UNIT-05) + PLAN §6 판정(⑧ stars/insights 포함 — 추출 회귀 3종 세트·행 확장 lazy load) 반영. 강제 숨김은 테스트 유래 아이템 사이클로 한정하고 실광고주 무접촉을 불변식으로. BIZ_TOKEN 확보·아이템 삭제 경로·BASE_REV·증빙 수준·실광고주 읽기 허용·DB 읽기 승인 6건 planner 회신 대기(§4). planner 검토 후 확정 예정.
 - 2026-08-18 planner 판정 반영 — §4 판정 블록 6건 확정(SEED/TEST BIZ 토큰 이원화 — (a) 채택+폴백 (b) / 삭제는 광고주 DELETE API(Mongo 직접 delete 불허 — MinIO 정리) / BASE_REV `9ee2703` / 증빙 2중 충분(diff 리뷰에 로그 라인 이동 명시 확인 포함) / 실광고주 읽기 전용 표본 2개(이벤트 풍부·희소 양극) / DB 읽기 3회 승인). §0 문안 2곳 고정. 보류 0건 — dev 구현 완료·재기동 후 tester 착수 가능.
 - 2026-08-18 planner E2E 확정 (1차 게이트 13/13 PASS·픽스 0회 접수 후) — AD-E2E-01 Given 갱신 1곳: 연계 실행 전제가 1차 Cleanup 완료로 소멸 → E2E 전용 사이클 재수행("v184-test-item-e2e", 동일 승인 패턴·원복 포함)으로 확정. confirm 대조 아이템명도 갱신값 기준. 편차 비고 2건 수용: ① 목록 status → account_status+is_banned 2필드(정보 동등 — 계약 확정, PLAN 정정 갈음) ② api.js 주석 "광고주 비노출"(화면 리터럴 아님 — AD-UNIT-03 규정 내 비고 처리 정당). 상태 라벨 확정값 "게재중"(planner 판정 — 노출 0건 불변식 유지) 랜딩 실측. E2E 갱신 외 잔여 문안 현재 코드와 일치 — 2단계 착수 가능.
+
+# v185 — 기능오류 신고 시스템 1단계 (신고 인박스 + 실패 API 수집 + 자동 에러 뷰) (2026-08-18 20:46)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전, planner 검토 대기)
+근거: PLAN.md v185 §0 실측(_logs.py 포트 문자열 예외·수신부 계약·remoteLogger 후킹), §1 판정 3건(스크린샷 차기·백필 기각·error 만 저장), §2 설계, §5 테스트 항목 1~7, §6 강행 금지 7항
+대상: backend_9005 `issues.py`·`admin_issues.py` 신설 + `_logs.py` error Mongo 병행 저장·fingerprint + main.py 등록·인덱스(9004 미러 4파일 — _logs.py 포트 예외) / 사용자 앱(4000) ReportIssueModal 플로우·api_failure 인터셉터 / 관리자 앱(4001) AdminIssuesPage 탭2·NavLink 9번째·AdminCsPage cid 쿼리·감사 짝 항목 2종. **파일 로그 계약·AdminCsSendModal·package.json 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **신고 생성·상태 변경은 테스트 계정 신고만**: 접수 본문은 전부 **`[v185-test]` prefix 표식**(예: "[v185-test] 재생 오류 검증") — 신규 컬렉션이라 실사용자 오염 원천 없음이나 표식으로 테스트 유래 식별 보장. **정리 계획**: 테스트 신고는 검증 종료 시 상태를 종결(resolved/dismissed)로 정리 후 **기본 잔존 + REPORT 에 id 목록 기재**(Mongo 직접 delete 는 planner 판정 위임 §4-2). frontend_errors 테스트 유발 문서도 동일(표식 = 유발 URL 경로 패턴 기재).
+- **수집기 검증용 에러 유발은 사용자 앱(4000)+테스트 계정 세션에서만** — 유발 대상은 무해한 실패 호출(존재하지 않는 GET 404 등, 쓰기 API 아님). DM 연결 검증은 official↔테스트 계정 대화만.
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN` / `USER_TOKEN`(테스트 계정) / `TEST_USER_1_ID` / `TEST_ISSUE_ID`(접수 후 기록) / `TEST_CID`(테스트 DM 대화 id). 실값 기재 금지. `BASE_REV` = **`3d05227` 확정**(§5 판정 1 — v184 마이크로픽스 포함 HEAD).
+- 강행 금지(§6) 검증 관점: 파일 로그 계약 불변(경로·포맷·한도·인증 — IS-API-04), 감사 details·서버 로그에 본문·메모 원문 금지(길이만 — IS-API-06·08), 관리자 앱 remoteLogger 미적용(IS-UNIT-01), 2단계 기능(재발사·curl) 부재.
+- 검산 DB 읽기(승인 관행 준용, §4-5): issue_reports count/필드 검증·frontend_errors $group 대조·frontend.log tail — 전부 읽기 전용.
+- 환경: 9005·9004, Mongo, 사용자 앱 4000·관리자 앱 4001. 추적자 `[issues]`·`[admin-issues]`·`[_logs]`·`[AdminIssues]`·`[ReportIssue]`.
+
+## 1. [api] 시나리오 — 접수·수집·파일 계약 (기본 대상 9005)
+
+### IS-API-01. 접수 정상 — 5종 reason + DM 실패 격리 [api] — 핵심
+- Given: `USER_TOKEN`(테스트 계정)
+- When: ① reason 5종(playback/payment/account/auth/other) 각 1건 `POST /api/issues` — body `{reason, text:"[v185-test] {사유} 검증", page_url, app_version?}` — **dm_conversation_id 생략** ② 1건은 `dm_conversation_id: TEST_CID` 포함(사전 official↔테스트 대화 확보) 하면
+- Then:
+  - ① 전부 **201 {id}** — **cid 없이 접수 성공**(DM 실패 격리의 서버측 보장: cid 는 선택 필드). Mongo issue_reports 레코드: reason 코드 저장·`status=="received"`·**user_agent 서버 캡처**(요청 UA 헤더와 일치 — body 아닌 서버 기록)·page_url·created_at·user_id==TEST_USER_1_ID·dm_conversation_id 부재
+  - ② 레코드에 TEST_CID 저장(상세 "CS 대화 열기" 연결 근거)
+  - 모달 측 실패 격리(DM 생성 실패 시에도 POST 수행)는 **코드 리뷰 갈음 기본**(실측 유발 곤란 — §4-3)
+
+### IS-API-02. 접수 검증 — 400·401 [api]
+- Given: `USER_TOKEN` / 토큰 없음
+- When: ① reason="bug"(비화이트리스트)·빈 reason ② text 빈/공백만/2001자 ③ 유효 body 무토큰 하면
+- Then: ①② 전부 **400**(422 관측 시 비고 후 통일 관행) ③ **401**. 전 케이스 issue_reports 레코드 미생성(count 불변).
+
+### IS-API-03. 수집기 저장 — fingerprint 묶임·context.api·error 한정 [api] — 핵심
+- Given: 4000 테스트 계정 세션. frontend_errors 사전 상태 기록
+- When: ① 동일한 실패 API(존재하지 않는 GET → 404)를 **2회** 유발 ② 다른 경로 실패 1회 유발 ③ console.warn 1회 유발 → remoteLogger 배치 전송 대기(5초) 후 Mongo 확인하면
+- Then:
+  - ① 두 문서가 **같은 fingerprint**(16 hex — id/숫자열 정규화 확인: url 내 uuid/ObjectId 상이해도 동일 fp)로 적재 — 묶음 키 동작. `context.api == {method, url, status}` 저장, message `[api_failure] GET {경로} -> 404` 형식
+  - ② 다른 fingerprint(과대 묶음 아님 — 경로 상이)
+  - ③ **warn 은 frontend_errors 미적재**(error 만 — 판정 3), 파일 로그에는 기록(IS-API-04 겸측)
+  - user_id·page·created_at 필드 실재, stack 은 존재 시만
+
+### IS-API-04. 파일 로그 계약 회귀 — 응답·append 포맷 불변 + Mongo 실패 격리 [api] — 핵심 (강행 금지 ①)
+- Given: `USER_TOKEN`. 변경 전 frontend.log 기존 라인 표본(형식 기준) 확보
+- When: ① `POST /api/_logs/frontend` 정상 배치(error 1+warn 1) ② 무토큰 ③ batch 51건 ④ IS-API-03 유발분의 frontend.log 확인 ⑤ Mongo 저장 실패 경로 검토하면
+- Then:
+  - ① 응답 **기존 계약과 불변**(상태·body 형식) + frontend.log 에 error·warn 모두 **기존 `_format_line` 포맷 그대로 append**(라인 구조 diff 관점 대조 — 신규 필드 삽입 없음) ② 401(기존 동일) ③ 기존 한도 동작 동일(400/절단 — 기존 계약 기준)
+  - ④ Mongo 병행 저장이 파일 기록을 대체하지 않음(파일·Mongo 양쪽 실재)
+  - ⑤ **Mongo insert 가 try/except best-effort 로 격리**되어 실패해도 파일 append·응답 불변 — 모킹 수단 부재 시 **코드 리뷰 갈음**(§4-3): except 블록이 응답 경로에 영향 없음 확인
+
+## 2. [api] 시나리오 — 관리자 API
+
+### IS-API-05. 목록·요약 — 필터 3종 + 4수치 검산 [api] — 핵심
+- Given: `ADMIN_TOKEN`. IS-API-01 접수분(5+1건) 존재. DB 직접 count 확보(읽기 전용 — status별·오늘 인입·7일 완료)
+- When: ① `GET /api/admin/issues`(무필터) ② `?status=received` ③ `?reason=playback` ④ `?q={테스트 계정 닉네임}`·`?q=[v185-test]`(내용) ⑤ `GET /api/admin/issues/summary` 하면
+- Then: ① 200 — 행에 닉네임#code(hydrate)·reason·상태·내용 요약·접수일+pagination, created_at DESC ② 전 행 status 일치 ③ 전 행 reason 일치 ④ 닉네임/내용 매칭 행만 ⑤ **4수치(미처리·처리중·오늘 인입·7일 완료) == DB 직접 count 정확 일치**(시차 쓰기 시 1회 재실행 규칙 준용).
+
+### IS-API-06. PATCH 상태 전이 + 감사 적재 + 401/403 [api] — 핵심
+- Given: `ADMIN_TOKEN`, `TEST_ISSUE_ID`(테스트 신고만 — §0)
+- When: ① `PATCH /{TEST_ISSUE_ID}` `{status:"in_progress", admin_note:"[v185-test] 확인 중"}` → ② `{status:"resolved"}` ③ `{status:"zzz"}` ④ 미존재 id ⑤ 유효 body 무토큰/`USER_TOKEN` 하면
+- Then: ①② 200 — 레코드 status·admin_note·handled_by·handled_at 갱신. **감사 `issue_status_change` 행**(target_type=`issue_report`·target_id=id, details `{from, to, note_len}` — **본문·메모 원문 부재**, 전이당 1행) ③ 400(화이트리스트) ④ 404 ⑤ 401/403 — 발동 0(레코드 불변).
+
+### IS-API-07. errors 묶음·이력 — 집계 검산 + days·401/403 [api]
+- Given: `ADMIN_TOKEN`. IS-API-03 유발분 존재. frontend_errors $group 직접 대조값 확보(읽기 전용)
+- When: ① `GET /api/admin/issues/errors?days=7` ② `GET /errors/{fingerprint}?days=7`(IS-API-03 의 fp) ③ days=8/0/문자 ④ 무토큰·`USER_TOKEN` 하면
+- Then: ① 묶음 행 `{fingerprint, count, 영향 사용자 수(distinct), last_seen, 대표 message/page}` — **count·distinct·last_seen == DB $group 정확 일치**(테스트 fp 행 count==2) ② 발생 이력에 **context.api {method,url,status} 포함**(2단계 재확인용 메타데이터 확보 검증)+페이지네이션 ③ 전부 400(화이트리스트 {7,30,90}) ④ 401/403.
+
+### IS-API-08. 개인정보 — 서버 로그·응답 경계 [api] — 핵심 (강행 금지 ③)
+- Given: IS-API-01~07 실행 구간의 백엔드 로그, 관리자 응답 전문 보관
+- When: ① 서버 로그 grep — 신고 본문("[v185-test]" 이후 내용 원문)·admin_note 원문·page_url 쿼리 원문·이메일 ② 관리자 목록/상세/errors 응답 전문 검사 ③ frontend_errors 저장 문서의 sanitize 확인하면
+- Then: ① **0건** — `[issues]`/`[admin-issues]`/`[_logs]` 로그는 길이·id·건수 수준만 ② 필요 필드 외 개인정보 부재(닉네임#code·UA·page_url 은 표시 사양 허용 — 이메일·연락처 부재) ③ 기존 `_sanitize_message`/`_sanitize_stack` 통과(민감 키 drop — IS-UNIT-01 의 마스킹과 이중 확인). 위반 시 즉시 중단·보고.
+
+### IS-API-09. 회귀 — 기존 대표·_logs server.log·git diff [api] — 회귀 마감
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, `BASE_REV`(확정 후)
+- When: ① 기존 _logs 의 server.log 계열 API 대표 1건(기존 계약 불변) ② admin 대표 재실행(points summary·logs·cs search·advertisers 목록 등 대표 3~4건)+사용자용 대표 ③ `git diff {BASE_REV}..HEAD --name-only` 하면
+- Then: ① 기존 동작 불변 ② 전부 기존 TESTPLAN 판정 기준 PASS ③ 변경 파일 == PLAN §3 매트릭스 정확 일치 — AdminCsSendModal·points 계열·**package.json/lock 부재**. 초과 파일 시 즉시 중단.
+
+## 3. [unit] 시나리오 (브라우저 하니스 + 정적 검사)
+
+### IS-UNIT-01. 수집기 클라이언트 — 인터셉터·마스킹·4001 미적용 [unit] — 핵심
+- Given: 4000 테스트 계정 세션(네트워크 탭 기록)
+- When: ① 실패 API 유발 → `/api/_logs/frontend` 배치 전송 payload 검사 ② **`?token=abc&key=xyz` 계열 쿼리를 가진 실패 URL** 유발 ③ 4001 관리자 앱에서 동일 관찰하면
+- Then: ① payload 에 `[api_failure] {METHOD} {경로} -> {status}` 구조화 이벤트(level error·context.api)·5초 배치 관행 유지 ② **payload·저장값에서 token/key/secret/password 계열 파라미터 값 마스킹**(원문 0건 — IS-API-03 Mongo 측과 이중) ③ **4001 은 `/_logs/frontend` 전송 자체 없음**(관리자 앱 remoteLogger 미적용 유지 — 강행 금지 ②).
+
+### IS-UNIT-02. 관리자 UI — NavLink 9·탭 2·인박스·행 확장 [unit] — 핵심
+- Given: 관리자 로그인, 테스트 신고·에러 데이터 존재
+- When: 사이드바 9번째 **"오류 신고"**(FiAlertCircle) → 탭① 인박스 → 필터·상세 패널 → 탭② 전환 → 묶음 행 확장하면
+- Then: `/issues` 진입+active(기존 8메뉴 무손상), 탭① — 요약 카드 4·사유 필터 5+전체·검색·목록(상태 배지·닉네임#code·요약·접수일)·상세 패널(전문+환경정보(UA·page_url)+`/users/:id` 링크+상태 변경 UI+메모+CS 대화 열기 버튼), 탭② — 묶음 목록(count·영향 사용자·last_seen)·기간 필터·**행 확장 시 이력 lazy load 1회 호출**(v184 관행)+**api 메타데이터(method/url/status) 표시**. 콘솔 신규 에러 0건.
+
+### IS-UNIT-03. 감사 짝 항목 + AdminCsPage 회귀 + 콘솔 위생 + eslint [unit]
+- Given: IS-API-06 실행 후, `/logs`·`/cs` 진입 + IS-UNIT-01~02 세션 콘솔
+- When: ① issue_status_change 행 확인 ② `/cs` **cid 쿼리 없는 진입** ③ 콘솔 검색(신고 본문·메모·닉네임·이메일) ④ eslint 하면
+- Then: ① **"오류신고 상태 변경"(blue) 라벨+배지·target "오류 신고"** 라벨(짝 항목 2종 — gray fallback 아님) ② 기존 CS 목록·선택 동작 불변(cid 처리 추가의 회귀 조건 — §6) ③ `[AdminIssues]`·`[ReportIssue]` 포함 **0건**(길이/건수/status 만) ④ eslint 신규 0.
+
+### IS-UNIT-04. 9004 미러 — 3파일 byte-identical + _logs.py 포트 치환 diff 0 + package.json [unit] — 미러 규칙
+- Given: 9004 기동, 저장소
+- When: ① issues.py·admin_issues.py·main.py 9005↔9004 diff ② **_logs.py 포트 치환 검증 절차**: `diff <(sed -e 's/backend_9005/backend_9004/g' -e 's/9005/9004/g' backend_9005/app/routes/_logs.py) backend_9004/app/routes/_logs.py` — 포트·경로 문자열 치환 후 비교 ③ package.json(+lock) git diff ④ **9004** POST /api/issues 401 대표 1회 하면
+- Then: ① 3파일 **byte-identical** ② 치환 후 **diff 0**(포트 문자열 외 차이 없음 — 기존 미러 예외 규칙 준수) ③ diff **0** ④ 9005 와 동일 401. 9004 에 쓰기 성공 케이스 없음(중복 회피).
+
+## 4. [e2e] 시나리오 — 1건 (사용자 여정)
+
+### IS-E2E-01. 풀 여정 — 4000 신고 → 4001 인박스 → 상태 변경 → CS 열기 → 탭② [e2e] — 핵심
+- Given: 4000 테스트 계정 로그인 + 4001 테스트 관리자 로그인. 사전에 IS-API-03 의 에러 유발분 존재
+- When: **[4000]** 신고 모달 열기 → 사유 선택+내용 `"[v185-test] E2E 여정 신고"` 입력 → 제출 → 접수 확인(+DM 프리필 화면 이동 관찰) → **[4001]** `/issues` 인박스에 해당 신고 표시 확인 → 상세 열기(전문·환경정보) → 상태 변경(**confirm 수락** — 대상이 [v185-test] 신고임을 문안 대조)+메모 입력 → `/logs` 에서 "오류신고 상태 변경" 라벨 렌더 → 상세의 **"CS 대화 열기"** → `/cs?cid=` 진입 시 **해당 대화 자동 선택** → `/issues` 복귀 → **탭② 에러 묶음 표시**(유발 fp 행·count) 확인하면
+- Then: 전 단계 정상 전이 — 접수·인박스 반영(새로고침 허용)·상태 배지 갱신·감사 라벨·cid 자동 선택(대화 부재 시 무시 동작은 별도 1회 확인 — 잘못된 cid 로 진입 시 크래시 없음)·묶음 행 표시. 콘솔 신규 에러 0건. **상태 변경 confirm 은 테스트 신고에서만 수락**(타 신고 존재 시 취소).
+- 증적: 모달·접수 확인·인박스·상세·감사 로그·cid 자동 선택된 /cs·탭② 스크린샷.
+
+## 5. planner 확인 필요 사항
+
+1. **BASE_REV**: v184 종료 커밋 — planner 확정 예정 표기(확정 전 IS-API-09 ③ 보류). 해시 회신 요청.
+2. **테스트 레코드 정리 방식**: 기본안 = 테스트 신고를 종결 상태(resolved/dismissed)로 정리 후 **잔존+REPORT 에 id 목록 기재**(신규 컬렉션·dev 환경). Mongo 직접 delete 를 허용할지 판정 위임(frontend_errors 테스트 유발 문서 동일).
+3. **격리 2건의 코드 리뷰 갈음 승인**: ① 모달 DM 생성 실패 시 접수 성공(실측 유발 곤란 — 프론트 코드 리뷰) ② _logs Mongo insert 실패 시 파일·응답 불변(모킹 수단 부재 시 try/except 코드 리뷰) — 각 갈음 기본값 승인 요청.
+4. **수집기 유발 에러의 잔존**: IS-API-03/IS-UNIT-01/IS-E2E-01 이 frontend_errors 에 테스트 문서(수 건)를 남김 — 유발 URL 패턴을 REPORT 에 표식 기재하고 잔존하는 방침(§4-2 와 동일 판정) 확인.
+5. **검산 DB 읽기 승인**: issue_reports count/필드·frontend_errors $group·frontend.log tail(읽기 전용 — 기존 승인 관행 준용) 확인.
+6. **batch 51건 한도 동작(IS-API-04 ③)**: 기존 계약의 정확한 한도 초과 동작(400 vs 절단)을 구현·기존 코드 기준으로 고정 필요 — 실측 전 기존 동작 기준값 회신(변경 없음이 판정 기준).
+
+### planner 판정 (2026-08-18, 6건 전부 확정 — 해당 문안 반영 완료)
+
+1. **BASE_REV = `3d05227`** (v184 마이크로픽스 커밋 — planner git log 실측: 현재 HEAD, 픽스 포함 최신 기준이 맞음. 본커밋 359c829 아님). IS-API-09 ③ 은 `git diff 3d05227 --name-only` 워킹트리 기준 — 보류 해제.
+2. **테스트 레코드 — 기본안 채택, Mongo 직접 delete 불허.** 근거: issue_reports 는 상태 이력이 감사 로그 `issue_status_change` 의 target_id 와 연결되는 **감사성 데이터** — 삭제 시 감사 행이 고아화. `[v185-test]` 표식+종결 상태로 오염 없고, 원장·감사 잔존 관행과도 일관. frontend_errors 테스트 문서 동일(잔존+fp 기재).
+3. **격리 2건 코드 리뷰 갈음 승인** — 모킹 인프라 부재 상태에서 비용 대비 적정(오케스트레이터 의견 동의). try/except·플로우 분기 문면 확인으로 판정.
+4. **수집기 유발 에러 잔존 허용** + REPORT 에 **유발 URL 패턴과 fingerprint 값 명기**(탭② 상단에 테스트 fp 가 보이는 것은 dev 환경 특성으로 함께 기재 — 오케스트레이터 권장 채택).
+5. **검산 DB 읽기 승인**(관행 준용 — 전부 읽기 전용).
+6. **batch 한도 동작 — 전부 422 거절(절단 아님) 확정.** planner 코드 실측(_logs.py): body >256KB → **422**(:358)·빈 배치 → **422**(:394)·batch >50 → **422**(:401) — 요청 전체 거절, 부분 수용·절단 없음. IS-API-04 ③ 기대값 = 422 + 파일·Mongo 양쪽 미기록(레코드 수 불변). "변경 없음" 판정 기준 유지.
+
+## 6. 실행 순서 권고 (tester 참고)
+
+1. 사전: 테스트 DM 대화(TEST_CID) 확보 → IS-API-01→02 (접수) → IS-API-03 (4000 유발 — 표식 기록) → IS-API-04 (파일 계약 — 유발분 재사용)
+2. IS-API-05→06 (관리자 목록·PATCH — 테스트 신고만) → IS-API-07 (errors 검산) → IS-API-08 (개인정보 — 01~07 산출물 재사용) → IS-API-09 (회귀+diff — BASE_REV 확정 후)
+3. IS-UNIT-01 (4000) → IS-UNIT-02→03 (4001) → IS-UNIT-04 (미러 — 치환 diff 절차)
+4. IS-E2E-01 (양 앱 여정 — 테스트 신고만 confirm 수락)
+5. 종료: 테스트 신고 종결 상태 정리(§5-2 확정 방식) + REPORT — 테스트 신고 id·frontend_errors 유발 표식·감사 잔존 행·코드 리뷰 갈음 항목 기재
+
+## 7. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| IS-API-01 | api | | 5종 201·UA 서버 캡처·cid 없이 성공(격리) |
+| IS-API-02 | api | | reason·text 400 + 401 — 레코드 0 |
+| IS-API-03 | api | | 동일 에러 2회 같은 fp·context.api·warn 미적재 |
+| IS-API-04 | api | | 파일 응답·포맷 불변 + Mongo 실패 격리(코드 리뷰 §5-3) |
+| IS-API-05 | api | | 필터 3종 + summary 4수치 DB 대조 |
+| IS-API-06 | api | | 전이+감사(원문 부재)+400/404/401/403 |
+| IS-API-07 | api | | 묶음 $group 검산·이력 api 메타·days 400 |
+| IS-API-08 | api | | 서버 로그·응답 개인정보 0건 — 위반 시 중단 |
+| IS-API-09 | api | | server.log 계약·기존 대표·diff 매트릭스 |
+| IS-UNIT-01 | unit | | [api_failure] payload·마스킹·4001 미적용 |
+| IS-UNIT-02 | unit | | NavLink 9·탭 2·상세 패널·행 확장 1회 호출 |
+| IS-UNIT-03 | unit | | 짝 항목 2종 + /cs 무쿼리 회귀 + 콘솔 0 + eslint 0 |
+| IS-UNIT-04 | unit | | 3파일 identical + _logs 치환 diff 0 + package.json 0 |
+| IS-E2E-01 | e2e | | 4000→4001 풀 여정·cid 자동 선택·탭② 묶음 |
+
+## v185 시나리오 집계
+
+- 총 **14건** — [api] 9 / [unit] 4 / [e2e] 1 (보류 없음 — planner 확인 6건은 §5)
+- 쓰기: 테스트 신고 접수(6건 내외·[v185-test] 표식)+상태 전이(테스트 신고만)+수집기 유발 에러 문서(무해 실패 호출) — 실사용자 데이터 무접촉(신규 컬렉션+표식+정리 계획 §0). DM 연결은 official↔테스트 계정만. CS 발송·points 조정·광고 조작 0건. 개인정보(본문·메모·쿼리 원문)는 서버 로그·감사 details·콘솔 3면에서 부재 검증 — 위반 시 즉시 중단.
+
+## 개정 이력 (v185)
+
+- 2026-08-18 초판 작성 (14건) — 코디네이터 필수 7축 전부 시나리오화(1→IS-API-01·02, 2→IS-API-03·IS-UNIT-01, 3→IS-API-04, 4→IS-API-05·06·07, 5→IS-E2E-01, 6→IS-UNIT-04(_logs 포트 치환 sed diff 절차 명기), 7→IS-API-08) + PLAN §5 잔여(짝 항목·cs 회귀 → IS-UNIT-03, 기존 회귀 → IS-API-09) 반영. 테스트 유래 레코드는 [v185-test] 표식+종결 상태 정리+잔존/REPORT 방침으로 설계(삭제는 §5-2 위임). BASE_REV·정리 방식·격리 2건 갈음·유발 에러 잔존·DB 읽기·batch 한도 기준 6건 planner 회신 대기(§5). planner 검토 후 확정 예정.
+- 2026-08-18 planner 판정 반영 — §5 판정 블록 6건 확정(BASE_REV `3d05227` — 마이크로픽스 포함 HEAD / 테스트 레코드 잔존·delete 불허 — 감사 target 고아화 방지 / 격리 2건 코드 리뷰 갈음 승인 / 유발 에러 잔존+fp 명기 / DB 읽기 승인 / batch 한도 = 전부 422 거절 코드 실측 — body·빈배치·51건 3경로). §0 문안 1곳 고정. 보류 0건 — dev 구현 완료·재기동 후 tester 착수 가능.
+- 2026-08-18 planner E2E 확정 (1차 게이트 13/13 PASS 접수 후) — ① 마스킹 픽스 1줄(`?&` 잔존 정리 — 코스메틱, 민감값 제거는 게이트에서 완전 확인)은 IS-E2E-01 판정 요소(접수·인박스·상태 변경·cid 선택·탭②)와 무관 판정 — E2E 문안 갱신 불요, 스모크 재실행 통과를 전제로 그대로 확정. Given 의 "IS-API-03 유발분 존재"는 게이트 잔존 fp 재사용으로 충족(v184 형 전제 소멸 없음). ② fingerprint 의 page 포함으로 동일 URL 오류가 발생 page 별로 분리되는 관측(artists 사례) — PLAN §2 설계 사양 동작이자 §6 기지 리스크(과소 묶음) 범위로 **1단계 수용 확정**. 2단계 개선 후보 구체화: api_failure 이벤트는 page 대신 api.url 기준 fp 가 적합(REPORT 후속 후보 예약).

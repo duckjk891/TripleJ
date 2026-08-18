@@ -122,3 +122,30 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* ── v185 — 내용 작성 textarea ─────────────────────────── */
+
+.report-issue__text {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #2D2D44);
+  border-radius: 10px;
+  background: var(--color-bg-secondary, #12122A);
+  color: var(--color-text, #E2E8F0);
+  font-size: 0.9rem;
+  resize: vertical;
+  box-sizing: border-box;
+  margin-top: 4px;
+}
+
+.report-issue__text:focus {
+  border-color: var(--color-primary, #7C3AED);
+  outline: none;
+}
+
+.report-issue__counter {
+  margin-top: 4px;
+  text-align: right;
+  font-size: 0.78rem;
+  color: var(--color-text-sub, #94A3B8);
+}

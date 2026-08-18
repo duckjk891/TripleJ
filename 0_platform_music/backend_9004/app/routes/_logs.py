@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -28,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..config import settings
+from ..database.mongodb import get_mongo
 
 
 logger = logging.getLogger(__name__)
@@ -227,6 +230,86 @@ def _record_rate(user_id: Any) -> int:
     return len(bucket)
 
 
+# ---------------------------------------------------------------------------
+# v185: error 레벨 이벤트 Mongo 병행 저장 (frontend_errors) — 파일 append 계약 불변
+# ---------------------------------------------------------------------------
+# fingerprint = sha1(정규화 message + "|" + 정규화 page 경로)[:16].
+# 정규화: uuid/ObjectId/숫자열 → '#', page 는 쿼리스트링·해시 제거(경로만).
+# 서버 일원화 — 클라이언트 조작 무관한 묶음 키.
+_FP_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_FP_OBJECTID_RE = re.compile(r"\b[0-9a-f]{24}\b")
+_FP_NUM_RE = re.compile(r"\d+")
+
+
+def _fp_normalize(text: Any) -> str:
+    if not isinstance(text, str):
+        text = str(text or "")
+    text = _FP_UUID_RE.sub("#", text)
+    text = _FP_OBJECTID_RE.sub("#", text)
+    return _FP_NUM_RE.sub("#", text)
+
+
+def _page_path(url: Any) -> str:
+    """page URL → 경로만 (쿼리스트링·프래그먼트 제거 — 토큰 등 쿼리 원문 미저장)."""
+    if not isinstance(url, str):
+        url = str(url or "")
+    return url.split("?", 1)[0].split("#", 1)[0]
+
+
+def _make_fingerprint(message: Any, url: Any) -> str:
+    norm = f"{_fp_normalize(_sanitize_message(message or ''))}|{_fp_normalize(_page_path(url))}"
+    return hashlib.sha1(norm.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+async def _store_frontend_errors(user_id: Any, events: List[FrontendLogEvent]) -> None:
+    """level=error 이벤트만 Mongo frontend_errors 병행 insert.
+
+    best-effort — 어떤 실패도 전파하지 않아 파일 저장·응답 계약이 불변이다.
+    context.api {method,url,status} 가 있으면 구조화 필드(api)로 승격 저장
+    (2단계 재확인 기능의 데이터 기반). page 는 경로만 저장(쿼리 원문 미저장).
+    """
+    try:
+        docs = []
+        now_utc = datetime.now(timezone.utc)
+        for ev in events:
+            if _normalize_level(ev.level) != "error":
+                continue
+            ctx = ev.context if isinstance(ev.context, dict) else {}
+            doc: Dict[str, Any] = {
+                "user_id": str(user_id),
+                "message": _sanitize_message(ev.message or ""),
+                "page": _page_path(ev.url),
+                "context": ctx,
+                "fingerprint": _make_fingerprint(ev.message, ev.url),
+                "created_at": now_utc,
+            }
+            stack = _sanitize_stack(ev.stack)
+            if stack:
+                doc["stack"] = stack
+            api_ctx = ctx.get("api") if isinstance(ctx.get("api"), dict) else None
+            if api_ctx:
+                doc["api"] = {
+                    "method": str(api_ctx.get("method") or "")[:16],
+                    "url": str(api_ctx.get("url") or "")[:500],
+                    "status": api_ctx.get("status"),
+                }
+            docs.append(doc)
+        if not docs:
+            return
+        await get_mongo().frontend_errors.insert_many(docs, ordered=False)
+        logger.info(
+            "[FrontendLog] mongo errors stored user_id=%s count=%d",
+            user_id, len(docs),
+        )
+    except Exception:
+        logger.warning(
+            "[FrontendLog] mongo error store failed user_id=%s (file log kept)",
+            user_id, exc_info=True,
+        )
+
+
 def _format_line(user_id: Any, ev: FrontendLogEvent) -> str:
     """1 이벤트를 1 라인으로 직렬화."""
     ts_local = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -365,4 +448,8 @@ async def receive_frontend_logs(
         "[FrontendLog] batch stored user_id=%s written=%d",
         user_id, written,
     )
+
+    # v185: error 레벨만 Mongo 병행 저장 (best-effort — 응답·파일 계약 불변)
+    await _store_frontend_errors(user_id, batch.events)
+
     return {"received": written}

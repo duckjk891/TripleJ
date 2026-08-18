@@ -15277,3 +15277,41 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 프론트 8: 신설 4 — `frontend_admin/src/pages/AdminAdvertisersPage.jsx` `.css` `AdminAdvertiserDetailPage.jsx` `.css` / 수정 4 — `frontend_admin/src/App.jsx` `frontend_admin/src/api.js` `frontend_admin/src/components/AdminLayout.jsx` `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목 3종)
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md`(§6 판정 반영 포함) `TESTPLAN.md` `REPORT.md` (v184 append)
 - 무변경 확인: admin.py·admin_points.py·points 계열·AdminCsSendModal·package.json — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v185 — 기능오류 신고 시스템 1단계 (신고 인박스 + 실패 API 수집 + 자동 에러 뷰) (2026-08-18 21:20)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+4000(사용자 앱) 기능오류 신고를 4001(관리자)에서 모아보는 시스템 1단계: ① 신고 전용 저장+상태 관리 인박스 ② 실패 API 요청 메타데이터 수집기 업그레이드(2단계 curl 재확인의 데이터 기반 — method/url/status 확보가 존재 이유) ③ 자동 수집 에러 묶음 뷰. 2단계(재발사·판정·신고↔에러 연결·curl 복사)는 차기. 9005 선구현 → 9004 미러(_logs.py 포트 문자열 예외).
+
+## 2. 설계 결정 (0단계 실측 기반 — planner 판정 3건 포함)
+- **판정 ① 스크린샷 첨부 — 차기 이관**: 업로드 인프라(버킷·검증·프록시·정리) 비용 > 1단계 가치. page_url·UA 자동 캡처+탭②가 컨텍스트 대체, 2단계와 묶어 재평가.
+- **판정 ② DM prefix 소급 백필 — 기각**: 프리필은 수정·미전송 가능(파싱 신뢰도 낮음), 백필 레코드는 상태·환경정보 없는 반쪽 데이터로 인박스 오염. 과거 대화는 "CS 대화 열기"/기존 /cs 로 접근 — **인박스는 신규 접수부터 정본**.
+- **판정 ③ frontend_errors 저장 범위 — level error 만**: warn 상시 후킹 노이즈 과대, 전량 보존은 파일 로그가 계속 담당.
+- **저장소**: Mongo `issue_reports`(reason 코드 5종·status 4종·UA 서버 캡처·dm_conversation_id 연결 — reports 테이블 상태 모델 차용) + `frontend_errors`(**fingerprint 서버 생성** — sha1(정규화 message+page)[:16], 숫자/uuid→`#`). 신규 `issues.py`(사용자 POST 1)+`admin_issues.py`(6 엔드포인트 — errors 이력 분리·경로 선선언).
+- **_logs.py 병행 저장 — additive-only**: 삭제/수정 라인 0(git 실측) — 파일 포맷·한도(3경로 422)·인증·응답 계약 불변, error 만 Mongo try/except 격리. 미러는 포트 문자열 예외 유지.
+- **수집기 마스킹 — 파라미터 쌍 제거 방식**(frontend-dev 판단 승인): 값만 가리면 기존 SECRET_PATTERNS drop 필터가 이벤트 전체를 유실시키는 함정 회피 — 필터 유지+이벤트 보존 양립. `/_logs/` 자기 루프 방지. 관리자 앱 미적용 유지.
+- **모달 플로우 — DM 실패 격리**: 접수(POST /api/issues)가 1차 가치 — cid 는 선택 필드(DM 생성 실패에도 접수 성공). 프리필 `[오류신고: {사유}] {내용}` 유지.
+- 관리자: `/issues` 탭2(인박스: 카드 4·사유 필터·검색·상세·상태 confirm·메모·**CS 대화 열기 = /cs?cid= 초기 선택**(1회 ref·무쿼리 불변) / 탭②: fp 묶음·행 확장 이력·기간 칩 7/30/90 — 지시서 24h 칩 대신 **백엔드 계약 준수 수용**). NavLink 9번째(FiAlertCircle). 감사 `issue_status_change`(details {from,to,note_len} — 본문·메모 원문 미적재)+**짝 항목 2종**.
+
+## 3. 테스트 결과 — 14/14 PASS (api 9 / unit 4 / e2e 1), 픽스 루프 1회
+- **픽스 1회 — maskSensitiveUrl 정리 순서 1줄**: 민감 파라미터 제거는 완전했으나 제거 후 `?&` 잔존(코스메틱) — 게이트 중 발견·frontend-dev 1줄 픽스·node 5케이스 검증·스모크 재실행 통과. E2E 판정 요소와 무관(planner 확정).
+- 핵심 증적: 접수 5종 reason 201·**cid 선택 필드(DM 실패 격리 서버측 보장)**·UA 서버 캡처 행별 확인·검증 400/401 / fp 정규화 실증(uuid→# 동일 fp·count 2) / **파일 로그 계약 불변**(포맷 동일 append·한도 3경로 422·양쪽 미기록 — planner 코드 실측 기준값 정합) / 관리자 summary 4수치 DB 정확 일치·필터·PATCH 화이트리스트·감사 details 최소화 / 9004 미러(신설 2+main byte-identical·_logs 포트 문자열만) / 4001 수집기 미적용·짝 항목 blue 라벨·NavLink 9 / E2E 풀 여정(접수→인박스→상태 변경([v185-test] 문안 대조 가드)→감사 라벨→**cid 자동 선택+잘못된 cid 무시·크래시 0**→탭② 묶음) 콘솔 에러 0.
+- planner 판정(TESTPLAN §5 블록): BASE_REV `3d05227` / 테스트 레코드 delete 불허(감사 target 고아화 방지) / 격리 2건 코드 리뷰 갈음 / 유발 에러 잔존+fp 명기 / DB 읽기 승인 / batch 한도 422 3경로 실측.
+
+## 4. 특이사항
+- **잔존물(delete 0 — 불허 준수, 전부 테스트 유래)**: issue_reports 테스트 신고 9(1단계 7 전부 resolved 종결 + dev 스모크 2 in_progress 잔존 — 종결 후 summary received 0) / frontend_errors 테스트 fp **6종**(1단계 5 + 마스킹 refix 재검증 1 — 유발 URL 패턴 포함 탭② 상단 노출은 dev 환경 특성) / 감사 행 누적(issue_status_change — 상태 변경+종결 7행 포함) / E2E cid 대화(official↔테스트 계정).
+- **재기동 사고 1회 자가 복구**: 1차 재기동 중 발생 — backend-dev 자가 복구 후 v185 코드 기동·health 200 확인(비버그, 절차 기록).
+- **fingerprint page 분리 관측 → 2단계 개선 후보**: 같은 URL 오류도 발생 page 가 다르면 별도 fp(artists 사례) — 설계 사양 동작·기지 리스크(과소 묶음) 범위로 1단계 수용. **개선 방향 확정: api_failure 이벤트는 page 대신 api.url 기준 fp 가 적합** — 2단계 판정 로직과 함께.
+- 탭② 기간 칩 7/30/90(지시서 24h 편차 — 계약 일관성 우선 수용). admin_issues 5→6 엔드포인트(errors 이력 분리 — additive 구조 개선 수용).
+- 승계 후속 후보(8건): signup_bonus day 백필/분기(제품 판단) / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채(기존 — AdminCsPage 1건 HEAD 기존분 포함) / `_sum_points_by_user` 공통화 / **api_failure fp 를 api.url 기준으로 개선(2단계 — 신규)**.
+
+## 5. 변경 파일 (커밋 대상 22)
+- 백엔드 8: `backend_9005/app/routes/issues.py`(신설) `backend_9005/app/routes/admin_issues.py`(신설) `backend_9005/app/routes/_logs.py`(additive) `backend_9005/app/main.py` + 9004 동일 4파일(미러 — 신설 2·main byte-identical, _logs 는 포트 문자열 예외)
+- 사용자 앱 4: `frontend/src/components/ReportIssueModal.jsx` `.css` `frontend/src/utils/remoteLogger.js` `frontend/src/api/index.js`
+- 관리자 앱 7: 신설 2 — `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` / 수정 5 — `frontend_admin/src/App.jsx` `frontend_admin/src/api.js` `frontend_admin/src/components/AdminLayout.jsx` `frontend_admin/src/pages/AdminCsPage.jsx`(cid 쿼리) `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v185 append)
+- 무변경 확인: AdminCsSendModal·admin.py·admin_points.py·admin_ads.py·points 계열·package.json — git status 실측, 하니스 잔재 0건.

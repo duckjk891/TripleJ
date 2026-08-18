@@ -202,6 +202,25 @@ export const getAdminAdvertiserItemInsights = (userId, itemId, period, verifiedO
 export const setAdminAdItemHidden = (itemId, hidden, reason) =>
   API.patch(`/admin/ads/items/${itemId}/hidden`, { hidden, ...(reason ? { reason } : {}) });
 
+// 오류 신고 (v185 — /issues 인박스 + 자동 수집 에러)
+// 목록 — status(received|in_progress|resolved|dismissed)·reason(playback|payment|account|auth|other)·q(내용·닉네임)
+// → { issues: [{id, user_id, nickname, code, reason, text, page_url, user_agent, status, admin_note,
+//    handled_at, dm_conversation_id, created_at, ...}], pagination }
+export const getAdminIssues = (params) => API.get('/admin/issues', { params });
+// 요약 카드 4 → { received, in_progress, today, resolved_7d }
+export const getAdminIssuesSummary = () => API.get('/admin/issues/summary');
+// 단건 조회 — 목록 행 동일형 (상세 패널 열 때 최신본 갱신용)
+export const getAdminIssueDetail = (issueId) => API.get(`/admin/issues/${issueId}`);
+// 상태 전이 — status 화이트리스트 400 / 미존재 404. note ≤500(감사에는 길이만 적재).
+// 신고 본문·메모 원문은 콘솔에 출력하지 않는다.
+export const patchAdminIssueStatus = (issueId, status, note) =>
+  API.patch(`/admin/issues/${issueId}/status`, { status, ...(note ? { note } : {}) });
+// 자동 수집 에러 묶음 — days 7|30|90 → { errors: [{fingerprint, count, users, last_seen, message, page}], days }
+export const getAdminIssueErrors = (days) => API.get('/admin/issues/errors', { params: { days } });
+// 묶음 발생 이력 → { events: [{id, message, page, api{method,url,status}, stack, created_at}], pagination }
+export const getAdminIssueErrorHistory = (fingerprint, params) =>
+  API.get(`/admin/issues/errors/${fingerprint}`, { params });
+
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');

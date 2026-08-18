@@ -216,6 +216,37 @@ export function initRemoteLogger() {
   }, FLUSH_INTERVAL_MS);
 }
 
+// ── v185 — 실패 API 구조화 수집(api_failure) ────────────────────────────
+// api/index.js 응답 인터셉터에서 호출. 4xx/5xx·네트워크 에러를 level error 이벤트로 적재.
+// 민감 파라미터는 "쌍 제거" 방식 마스킹 — 값만 가리면 `token=` 문자열이 남아
+// SECRET_PATTERNS drop 필터(기존 유지)가 이벤트 전체를 버리므로 파라미터 자체를 제거한다.
+const URL_SENSITIVE_PARAM_RE = /([?&])[^=&#]*(?:token|api[_-]?key|password|secret|auth)[^=&#]*=[^&#]*/gi;
+
+export function maskSensitiveUrl(url) {
+  if (typeof url !== 'string' || !url) return '';
+  let u = url.replace(URL_SENSITIVE_PARAM_RE, '$1');
+  // 잔여 구분자 정리 — 순서 중요: "&&"(연속 제거 잔재) 축약을 먼저 해야
+  // "?&&x" → "?&x" → "?x" 로 수렴한다("?&" 먼저 하면 "?&x" 잔존 — tester 실측 버그).
+  u = u.replace(/&{2,}/g, '&').replace(/\?&/g, '?').replace(/[?&]+$/, '');
+  return u;
+}
+
+export function logApiFailure({ method, url, status } = {}) {
+  try {
+    if (!_initialized) return;
+    const maskedUrl = maskSensitiveUrl(url);
+    // 로그 전송 자신의 실패는 수집하지 않는다(적재→전송 실패→적재 루프 방지)
+    if (maskedUrl.includes('/_logs/')) return;
+    const m = String(method || 'GET').toUpperCase();
+    const st = status ?? 'network';
+    const page = typeof window !== 'undefined' ? window.location.pathname : '';
+    _enqueue('error', [
+      `[api_failure] ${m} ${maskedUrl} -> ${st}`,
+      { api: { method: m, url: maskedUrl, status: st, page } },
+    ]);
+  } catch { /* noop — 절대 throw 금지 */ }
+}
+
 // 테스트/디버그 보조 (옵션) — 큐 길이 확인용
 export function _remoteLoggerDebug() {
   return { initialized: _initialized, queueLen: _queue.length };

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import AdminBroadcastModal from '../components/AdminBroadcastModal';
 import AdminCsSendModal from '../components/AdminCsSendModal';
@@ -78,6 +79,10 @@ export default function AdminCsPage() {
   const activeCidRef = useRef(activeCid);
   useEffect(() => { activeCidRef.current = activeCid; }, [activeCid]);
 
+  // v185 — /cs?cid= 진입 시 해당 대화 초기 선택 (1회, 목록에 없으면 무시. 쿼리 없으면 기존 동작 불변)
+  const [searchParams] = useSearchParams();
+  const pendingCidRef = useRef(searchParams.get('cid') || null);
+
   // ── 대화 목록 로드 ───────────────────────────────
   const loadConversations = useCallback(async (opts = {}) => {
     const { silent = false } = opts;
@@ -139,6 +144,19 @@ export default function AdminCsPage() {
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  // v185 — cid 쿼리 초기 선택: 목록 도착 후 1회 시도, 목록에 없으면 조용히 무시
+  useEffect(() => {
+    const cid = pendingCidRef.current;
+    if (!cid || conversations.length === 0) return;
+    pendingCidRef.current = null; // 1회만
+    if (conversations.some((c) => String(c.conversation_id) === String(cid))) {
+      if (import.meta.env.DEV) console.info('[AdminCs] opening conversation from cid query', { cid: String(cid).slice(0, 8) });
+      openConversation(cid);
+    } else if (import.meta.env.DEV) {
+      console.info('[AdminCs] cid query not in conversation list — ignored', { cid: String(cid).slice(0, 8) });
+    }
+  }, [conversations, openConversation]);
 
   // 폴링 — 목록 + 열린 대화 메시지 (silent 갱신)
   useEffect(() => {

@@ -1,4 +1,6 @@
 import axios from 'axios';
+// v185 — 실패 API 구조화 수집. remoteLogger 는 flush 시점에만 ../api 를 사용(지연 바인딩)이라 순환 안전.
+import { logApiFailure } from '../utils/remoteLogger';
 
 // vite proxy 가 /api → backend (9005) 로 forward
 const API = axios.create({
@@ -57,6 +59,24 @@ API.interceptors.response.use(
         window.location.assign('/login');
       }
     }
+    return Promise.reject(error);
+  }
+);
+
+// v185 — 실패 API 수집(api_failure): 4xx/5xx·네트워크 에러를 remoteLogger 구조화 이벤트로 적재.
+// 민감 파라미터 마스킹·/_logs/ 자기 전송 제외는 remoteLogger.logApiFailure 내부 처리.
+API.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    try {
+      let fullUrl = '';
+      try { fullUrl = error.config ? API.getUri(error.config) : ''; } catch { fullUrl = error.config?.url || ''; }
+      logApiFailure({
+        method: error.config?.method,
+        url: fullUrl,
+        status: error.response?.status,
+      });
+    } catch { /* noop — 수집 실패가 원 에러 흐름을 막지 않는다 */ }
     return Promise.reject(error);
   }
 );
@@ -958,6 +978,11 @@ export const getMyReferralCode = () => API.get('/referral/my-code');
 // 무효/탈퇴 유저 코드는 404 { error }.
 export const getInviteInfo = (code) =>
   API.get(`/referral/invite/${encodeURIComponent(code)}`);
+
+// v185 — 기능오류 신고 접수. payload = { reason(코드 5종), text(1~2000),
+// page_url?, app_version?, dm_conversation_id? } → 201 { id }. user_agent 는 서버 캡처.
+// 신고 본문 원문은 콘솔에 출력하지 않는다.
+export const reportIssue = (payload) => API.post('/issues', payload);
 
 // Frontend remote logging
 export const sendFrontendLogs = (batch) =>

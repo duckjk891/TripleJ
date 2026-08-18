@@ -26931,3 +26931,74 @@ E2E (실발송 금지):
 | `backend_9005/app/routes/admin_ads.py` | stars·insights 프록시 2 엔드포인트(총 6) |
 | `frontend_admin/src/pages/AdminAdvertiserDetailPage.jsx/.css` | ⑦ 행 확장 stars/insights 패널(BusinessPage 패턴 포팅) |
 | `frontend_admin/src/api.js` | 래퍼 +2(총 6) |
+
+---
+
+# v185 — 기능오류 신고 시스템 1단계 (신고 인박스 + 실패 API 수집 + 자동 에러 뷰) (2026-08-18 20:43)
+
+## 0. 사전 코드 분석 (Explore 전수조사 + planner 핵심 재확인)
+
+- **_logs.py 미러 예외 실측**: 9004/9005 파일명 동일 — **내용 중 포트 경로 문자열(주석·docstring 의 backend_900X)만 상이**, 포트 치환 시 나머지 동일. 이번 수정도 동일 규칙(포트 문자열 차이만 허용) 유지.
+- **reports 테이블 상태 모델 참고**(main.py:274-300): status 기본값 + handled_at/handled_by + `(status, created_at DESC)` 인덱스 — issue_reports 설계에 차용.
+- 수신부 `_logs.py:253` POST /frontend — JWT 필수·batch≤50·`_format_line`(:230) 파일 append 전용. `_sanitize_message`/`_sanitize_stack` 기존 민감정보 필터 재사용 가능.
+- `remoteLogger.js` — console.error/warn 후킹·5초 배치·sendBeacon 폴백·민감 키 drop. `ReportIssueModal.jsx` — 사유 5종(한글)·DM 프리필만(자동 전송 아님·전용 저장 0)·환경정보 미캡처.
+- 기존 오류신고 데이터: dm_messages 의 `[오류신고: ` prefix 뿐 — 카테고리 필드 전무.
+
+## 1. planner 판정 3건 (오케스트레이터 보고 사항)
+
+1. **스크린샷 첨부 — 차기 이관.** 업로드 인프라(전용 버킷·용량/형식 검증·관리자 프록시·삭제 정리) 비용이 1단계 가치 대비 과대. page_url·UA 자동 캡처 + 탭②(자동 수집 에러)가 컨텍스트를 상당 부분 대체. 2단계(curl 재확인)와 묶어 재평가.
+2. **DM prefix 소급 백필 — 기각.** 근거: ① 프리필은 자동 전송이 아니라 사용자가 수정·미전송 가능 — prefix 파싱 신뢰도 낮음 ② 백필 레코드는 reason 원문(한글)·환경정보·상태 이력이 없는 반쪽 데이터로 인박스 오염 ③ 과거 대화는 상세의 "CS 대화 열기"·기존 /cs 로 접근 가능. 인박스는 신규 접수부터 정본.
+3. **frontend_errors 저장 범위 — level error 만**(B 의 api_failure 구조화 이벤트 포함). warn/info 는 상시 후킹이라 볼륨·노이즈 과대, 전량 보존은 파일 로그가 계속 담당(병행 append 유지). 묶음 뷰 목적엔 error 로 충분.
+
+## 2. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| A. 저장소 | Mongo `issue_reports`: `{user_id, reason(코드 5종: playback/payment/account/auth/other — 한글 라벨은 프론트 맵), text(필수 1~2000), page_url, user_agent(서버가 요청 헤더 캡처), app_version?, status(received|in_progress|resolved|dismissed — 기본 received), admin_note?(≤500), handled_by?, handled_at?, created_at, dm_conversation_id?}`. 인덱스: `(status, created_at DESC)`·`(created_at DESC)`·`user_id` | reports 테이블 모델 차용(0단계). reason 은 코드화(필터 안정) |
+| A. 사용자 API | 신규 `routes/issues.py` — `POST /api/issues`(get_current_user, body {reason, text, page_url?, app_version?, dm_conversation_id?}) → 201 {id}. reason 화이트리스트·text trim 1~2000 검증 400 | 접수 전용 최소 표면 |
+| A. 모달 플로우 | ReportIssueModal: 사유 + **내용 textarea(필수)** → 제출 시 ① DM 대화 생성(cid 확보 — 기존 (a)(b) 유지) ② `POST /api/issues`(cid 포함) ③ DM 화면 이동(프리필 `[오류신고: {사유}] {내용}`). **DM 생성 실패 시에도 접수는 성공**(cid 없이 POST → 접수 완료 안내 후 닫기 — 접수가 1차 가치) | 전용 접수+대화 채널 병행(승인 목업). 실패 격리 |
+| B. 수집기 | 사용자 앱 axios 실패 인터셉터(4xx/5xx·네트워크 에러) → remoteLogger 에 구조화 이벤트: level error, message `[api_failure] {METHOD} {url경로} -> {status|network}`, context.api `{method, url(쿼리 포함 — token/key/secret/password 계열 파라미터 값 마스킹), status, page}`. 기존 민감 필터 유지. **관리자 앱(4001) 미적용 유지** | 2단계 재확인(curl)의 데이터 기반 — method/url/status 확보가 ② 존재 이유 |
+| C. 저장 전환 | `_logs.py` 수신부: 파일 append **유지** + **level error 만** Mongo `frontend_errors` 병행 insert(best-effort — 실패해도 파일 기록 유지): `{user_id, message(sanitize 재사용), page, context, stack?, fingerprint, created_at}`. **fingerprint 서버 생성**: `sha1(정규화 message + 정규화 page 경로)[:16]` — 정규화 = 숫자열/uuid/ObjectId → `#`, 쿼리스트링 제거. 인덱스: `(fingerprint, created_at DESC)`·`(created_at DESC)` | 판정 3. 묶음 키 서버 일원화(클라 조작 무관) |
+| D. 관리자 API | 신규 `routes/admin_issues.py`(prefix `/api/admin/issues`, get_admin_user): ① `GET /`(status·reason·q(내용·닉네임)·page/limit — hydrate_users 로 닉네임#code) ② `GET /summary`(미처리·처리중·오늘 인입·7일 완료) ③ `PATCH /{id}` {status, admin_note?} — 상태 화이트리스트 400·미존재 404·**감사 `issue_status_change`**(target_type `issue_report`, details {from, to, note_len} — **본문·메모 원문 미적재**) ④ `GET /errors?days=`(묶음 — $group fingerprint: count·영향 사용자 수(distinct user_id)·last_seen·대표 message/page, days {7,30,90}) ⑤ `GET /errors/{fingerprint}?days=&page=`(발생 이력 — 요청 메타데이터 context.api 포함 표시) | 목록/상태/묶음/이력. 재확인 버튼은 2단계 예약(메타데이터만 이번에 확보) |
+| D. 페이지 | `AdminIssuesPage.jsx/.css` — 탭① 신고 인박스(요약 카드 4·사유 필터 5+전체·검색·목록(상태 배지·사유·내용 요약·닉네임#code·접수일)·상세 패널(전문+환경정보+`/users/:id` 링크+상태 변경 confirm+처리 메모+**CS 대화 열기**)) / 탭② 자동 수집 에러(묶음 목록·기간 필터·행 확장 시 발생 이력+api 메타데이터 — v184 행 확장 관행). 사이드바 9번째 NavLink **FiAlertCircle "오류 신고"**, 라우트 `/issues`, api.js 래퍼 5 | 승인 목업 |
+| CS 대화 열기 | `/cs?cid={dm_conversation_id}` — AdminCsPage 에 **cid 쿼리 초기 선택 처리 소폭 추가**(마운트 시 목록 로드 후 해당 대화 자동 선택, 없으면 무시). AdminCsSendModal 무접촉 | 최소 변경으로 연결 동선 |
+| **감사 짝 항목** | AdminLogsPage ACTION_META `issue_status_change: '오류신고 상태 변경'(blue)` + TARGET_TYPE_LABELS `issue_report: '오류 신고'` | v177 관행(필수) |
+| 미러 | 9005→9004: issues.py·admin_issues.py(신설)·_logs.py(**포트 문자열 차이만 허용**)·main.py. 프론트 사용자 앱(frontend/)은 단일 | 미러 규칙+예외 준수 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/issues.py` | **신설** — POST /api/issues | `[issues]` |
+| `backend_9005/app/routes/admin_issues.py` | **신설** — 목록/summary/PATCH/errors 묶음/이력 5 엔드포인트 | `[admin-issues]` |
+| `backend_9005/app/routes/_logs.py` | error 레벨 Mongo 병행 저장+fingerprint(파일 append 불변) | 기존 `[_logs]` 태그 확인 |
+| `backend_9005/app/main.py` | 라우터 2 등록 + issue_reports·frontend_errors 인덱스 idempotent 블록 | - |
+| `backend_9004/...` 동일 4파일 | 미러(_logs.py 는 포트 문자열 예외) | - |
+| `frontend/src/components/ReportIssueModal.jsx`(+css 필요 시) | 내용 필드+접수 API+실패 격리 플로우 | `[ReportIssue]` 기존 |
+| `frontend/src/utils/remoteLogger.js`+axios 클라이언트(실측 위치) | api_failure 구조화 인터셉터·마스킹 | 기존 관행 |
+| `frontend/src/api.js`(사용자 앱 — 실측) | reportIssue 래퍼 | - |
+| `frontend_admin/src/pages/AdminIssuesPage.jsx/.css` | **신설** — 탭 2 | `[AdminIssues]` |
+| `frontend_admin/src/App.jsx`·`AdminLayout.jsx`·`api.js` | 라우트·NavLink 9(FiAlertCircle)·래퍼 5 | - |
+| `frontend_admin/src/pages/AdminCsPage.jsx` | cid 쿼리 초기 선택 소폭 추가 | 기존 `[AdminCs]` |
+| `frontend_admin/src/pages/AdminLogsPage.jsx` | 짝 항목 2종(라벨+타입) | 기존 `[AdminLogs]` |
+
+## 4. 작업 분담 (병렬)
+- **backend-dev**: issues.py(검증·UA 서버 캡처)+admin_issues.py 5 엔드포인트(q 는 hydrate 후 앱 레벨 닉네임 매칭 허용 — 규모 소, 본문·메모 서버 로그 미출력: 길이만)+_logs.py error 병행 저장·fingerprint(파일 경로/포맷/한도 불변 — 기존 수신 계약 무회귀)+main.py 등록·인덱스+9004 미러 4파일(_logs 포트 예외 확인 diff 절차 포함).
+- **frontend-dev**: 사용자 앱(모달 내용 필드·플로우·api_failure 인터셉터 — axios 클라이언트 위치 실측 후 삽입·마스킹, 관리자 앱 미적용 확인) + 관리자 앱(AdminIssuesPage 탭2·행 확장 관행·상태 confirm·CS 열기 cid 쿼리·NavLink 9·래퍼·짝 항목 2). 콘솔 위생: 신고 본문·닉네임·이메일 미출력(길이/건수). eslint 신규 0.
+- **test-designer**: §5.
+
+## 5. 테스트 항목 (test-designer)
+안전 제약: 접수·상태 변경은 **테스트 계정 신고만**(reason 코드·본문 "v185 테스트" 계열). 실사용자 신고 데이터 없음(신규 컬렉션 — 오염 원천 없음). frontend_errors 는 테스트 유발 에러로 검증. DM 연결은 official↔테스트 계정만.
+1. 접수 API: POST 201+Mongo 레코드(UA 서버 캡처·status received)·reason/text 검증 400·무토큰 401. 모달 플로우: DM cid 연결 저장, **DM 실패 격리**(모킹/차단 시 접수만 성공) — 실측 불가 시 코드 리뷰 갈음.
+2. 수집기: 사용자 앱에서 실패 API 유발(404 등) → remoteLogger 이벤트에 context.api {method,url,status} + **민감 파라미터 마스킹**(?token= 등 실측) → frontend_errors 적재+fingerprint 동일 오류 묶임(2회 유발 → count 2·같은 fingerprint).
+3. 저장 전환 회귀: frontend.log **파일 append 불변**(포맷·한도 — 기존 라인 형식 대조), warn/info 는 Mongo 미적재(error 만), Mongo 실패해도 파일 기록(코드 리뷰).
+4. 관리자 API: 목록 필터(status·reason·q)·summary 4·PATCH 상태 화이트리스트/404·**감사 `issue_status_change`**(details 에 본문·메모 원문 부재)·errors 묶음(count·distinct 사용자·last_seen)·이력(api 메타데이터 포함)·days 화이트리스트·401/403.
+5. UI: NavLink 9번째·탭 2·인박스 여정(필터→상세→상태 변경 confirm→메모→**CS 대화 열기 → /cs 해당 대화 자동 선택**)·탭② 묶음+행 확장 이력·감사 로그 짝 항목 렌더.
+6. 회귀: 기존 /cs(cid 없는 진입 무변화)·기존 _logs server.log API·admin 대표 엔드포인트·9004 미러(4파일 — _logs 는 포트 문자열 외 diff 0)·package.json 무변경.
+7. 개인정보: 신고 본문 내 이메일 등 서버 로그 미출력(길이만)·frontend_errors 의 기존 sanitize 통과 확인·콘솔 위생.
+
+## 6. 리스크 / 강행 금지
+- **강행 금지**: ① _logs.py 파일 로그 경로·포맷·한도·인증 계약 변경 금지(병행 저장 추가만) ② 관리자 앱에 remoteLogger 적용 금지(기존 의도 유지) ③ 신고 본문·처리 메모 원문을 감사 details·서버 로그에 적재 금지(길이만 — 본문은 issue_reports 가 정본) ④ DM prefix 백필 금지(판정 2) ⑤ 스크린샷 업로드 구현 금지(차기 — 판정 1) ⑥ 2단계 기능(재발사·연결·curl 복사) 구현 금지 — 단 요청 메타데이터 확보는 이번 범위 ⑦ AdminCsSendModal 무접촉·라이브러리 금지·v177~184 승계(후속 7건 유지).
+- fingerprint 정규화는 휴리스틱 — 과소/과대 묶음 가능(1단계 수용, 2단계 판정 로직과 함께 개선 후보).
+- 사용자 앱 파일(frontend/) 은 미러 대상 아님(단일) — 4000 재빌드/재기동 절차는 dev 가 기존 관행 확인.
+- AdminCsPage cid 쿼리 추가는 소폭 — 기존 진입(쿼리 없음) 동작 불변이 회귀 조건.

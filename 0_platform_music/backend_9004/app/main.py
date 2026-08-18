@@ -51,7 +51,7 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, admin_ads, admin_cs, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, _logs
+from .routes import admin, admin_ads, admin_cs, admin_issues, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, issues, _logs
 
 
 @asynccontextmanager
@@ -390,6 +390,19 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] ad event indexes ensure failed: %s", _e)
 
+    # IssueDesk(v185) — 오류 신고·자동 수집 에러 인덱스 (idempotent, feeds 관행)
+    try:
+        from .database.mongodb import get_mongo as _issues_get_mongo
+        _issues_mongo = _issues_get_mongo()
+        await _issues_mongo.issue_reports.create_index([("status", 1), ("created_at", -1)])
+        await _issues_mongo.issue_reports.create_index([("created_at", -1)])
+        await _issues_mongo.issue_reports.create_index("user_id")
+        await _issues_mongo.frontend_errors.create_index([("fingerprint", 1), ("created_at", -1)])
+        await _issues_mongo.frontend_errors.create_index([("created_at", -1)])
+        print("[migration] issue indexes ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] issue indexes ensure failed: %s", _e)
+
     # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
     # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
     # if the ES index emptied/drifted across a restart, re-index public tracks from
@@ -629,6 +642,8 @@ app.include_router(admin_moderation.router)
 app.include_router(admin_cs.router)
 app.include_router(admin_points.router)
 app.include_router(admin_ads.router)
+app.include_router(admin_issues.router)
+app.include_router(issues.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 
