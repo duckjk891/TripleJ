@@ -4,6 +4,46 @@
 
 ---
 
+## v3.42 (빈 상태 이모지·마이페이지 CTA·flex 정렬 + 공유/다운로드 선택지 + 신고 + 프롬프트 파라미터) — 2026-08-18
+
+### 요청 작업
+① '재생목록이 비어있어요' 위 이모지 제거 ② 상단바 마이페이지의 로그인 CTA를 다른 화면과 통일 ③ 순번 없는 목록(재생목록·플레이리스트·검색·마이뮤직)에서 **빈 공간 없이 flex 정렬** ④ 마이뮤직 공유/다운로드에 MAIDOL과 동일한 선택지(쇼츠·릴스·틱톡 / 다운로드 여러 옵션) ⑤ Now Playing에 **콘텐츠 신고** 기능(MAIDOL 참고) ⑥ 곡 생성 시 선택한 **프롬프트 설정값**을 DB에서 가져와 표시.
+
+### Plan verification findings (0단계)
+- **MAIDOL 최신 코드는 별도 worktree**(`/Users/pearl/TripleJ-maidol/0_platform_music`)에 있었다. 기존 `0_platform_music`(main)에는 공유 선택지·신고가 아예 없어, 그쪽만 보면 "기능 없음"으로 오판하게 된다.
+- **신고**: MAIDOL `frontend/src/components/ReportModal.jsx` — 사유 5종(`portrait/copyright/sexual/abuse/other`), '기타'만 상세 입력(500자), 409=이미 신고, 400=신고 불가. 플레이어에서 **본인 곡엔 버튼 미표시**(`PlayerPage.jsx:422`). AIDOL 원격 백엔드에 **`POST /api/reports/`가 이미 존재**(무효값 호출로 "지원하지 않는 신고 사유/대상입니다" 검증 확인) → 백엔드 신규 개발 불필요.
+- **공유**: 쇼츠/릴스/틱톡은 **모두 같은 API**(`POST /tracks/{id}/share-video?format=sns`)를 쓰고 폴백 업로드 URL만 다름. + 링크 복사.
+- **다운로드**: `format=wide`(가로 16:9) / `sns`(세로 9:16) / `kakao`(15초) 영상 3종 + `POST /tracks/download/{id}`(mp3, 로그인 필요). 영상 최초 생성은 서버 ffmpeg로 1~2분.
+- **프롬프트**: 트랙 문서에는 `prompt/genre/mood/tags/bpm/key/tempo/language/ai_model/duration_sec/play_count/like_count/download_count`가 있고, **보컬·스타일·악기·실험성·페르소나 등은 `generations` 문서에만** 존재. 해당 조회 API(`GET /generate/{id}`)는 **소유자 전용(403)** — MAIDOL도 동일 한계.
+
+### 수행 결과
+- **components/TrackRow.tsx**: 좌측 슬롯이 없으면 32px 빈 칸을 만들지 않고 **커버가 앞으로 당겨지도록**(`coverFirst`) 변경 → 검색·플레이리스트·마이뮤직·내 재생목록이 빈 공간 없이 정렬. 차트(순위 있음)는 그대로.
+- **screens/ChartScreen.tsx**: '재생목록이 비어있어요' 빈 상태의 이모지 제거.
+- **screens/MyMusicScreen.tsx**: 마이페이지 비로그인 화면을 `EmptyState+Button` → **공용 `LoginPrompt` + 세로 중앙 정렬**로 교체(다른 화면과 동일). ⋮의 공유·다운로드를 **선택지 시트**로 연결.
+- **components/TrackShareDownloadSheet.tsx (신규)**: 공유 4종(YouTube 쇼츠·릴스·틱톡·링크 복사) / 다운로드 4종(일반 화질 16:9·SNS용 9:16·카톡 프로필 15초·음원 mp3). 영상은 `share-video` API(timeout 300s) 사용, mp3는 로그인 필요, MAIDOL과 동일한 에러 문구(404 공개 곡만/400 커버 없음/기타).
+- **components/ReportModal.tsx (신규)**: MAIDOL과 동일한 사유 5종 라디오 + '기타' 상세 입력(500자 제한), 비로그인 시 로그인 유도, 409 "이미 신고한 콘텐츠입니다", 접수 완료 안내. **신고 사유 원문은 로그에 남기지 않고 길이만 기록**.
+- **screens/PlayerScreen.tsx**: 액션 행에 **공유·신고** 추가(신고는 `uploader_id === user.id`면 숨김). 프롬프트 탭을 확장 — 트랙 필드 + (내 곡이면) `GET /generate/{id}`의 생성 설정을 합쳐 **값이 있는 항목만** 칩으로 표시(장르·분위기·보컬·스타일·악기·참조/제외 스타일·강도·실험성·오디오 영향도·페르소나·BPM·템포·키·언어·AI 모델·길이·태그·재생/좋아요/다운로드 수). 남의 곡은 403이므로 "생성 당시 설정값은 본인에게만 표시" 안내를 띄우고 조용히 생략. 프롬프트 문구가 없어도 파라미터가 있으면 탭이 보이도록 조건 완화.
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc --noEmit | 에러 0 |
+| [e2e] 빈 재생목록 이모지 제거(텍스트만 노출) | PASS (`/tmp/v342_queue_empty.png`) |
+| [e2e] 마이페이지 로그인 CTA = 공용 LoginPrompt(중앙 정렬) | PASS (`/tmp/v342_mypage.png`) |
+| [e2e] 검색 행 좌측 빈 공간 제거(커버가 선두), 차트는 순위 유지 | PASS (`/tmp/v342_search.png`) |
+| [e2e] 플레이어 액션행에 공유·신고 노출, 공유 시트 4종(쇼츠/릴스/틱톡/링크 복사) | PASS (`/tmp/v342_share.png`) |
+| [e2e] 신고 모달 — 비로그인 시 로그인 유도 / 로그인 시 사유 5종 전부 노출 | PASS (`/tmp/v342_report_login.png`) |
+| [e2e] 프롬프트 탭 — 작곡 프롬프트 + 파라미터(장르·AI 모델·템포·길이·재생 수·좋아요) + 소유자 안내 | PASS (`/tmp/v342_prompt.png`) |
+| 콘솔 에러(내 코드) | 0 (남의 곡 `/generate/{id}` 403은 설계상 무시) |
+
+### 특이사항
+- **신고는 접수 API만 호출**했고 실제 신고 데이터를 만들지 않았다(무효값으로 검증 메시지만 확인). 사유 선택 후 '신고' 제출은 되돌릴 수 없어 E2E에서 누르지 않았다 — 화면 노출까지만 검증.
+- **다운로드 영상 3종은 실제 생성 미검증**: 최초 생성이 서버 ffmpeg로 1~2분 걸려 자동화에서 실행하지 않았다(선택지 노출·API 경로·파라미터는 MAIDOL과 동일하게 맞춤). 실기기에서 한 번 확인 필요.
+- **파일 저장 방식 한계**: 현재 영상/음원은 `Linking.openURL`로 브라우저에 넘긴다. iOS에서 앨범 저장이 어색할 수 있어, 원하면 `expo-file-system` + `expo-sharing` 도입으로 개선 가능(패키지 추가 필요).
+- **프롬프트 완전 표시의 구조적 한계**: 보컬·스타일·악기 등은 `generations`에만 있고 소유자 전용이라 **남의 곡에서는 원천적으로 볼 수 없다**(MAIDOL도 동일). 모든 사용자에게 보이게 하려면 곡 발행 시 해당 값을 tracks에 복사하거나 `GET /tracks/{id}` 응답에 병합하는 **백엔드 수정**이 필요하다.
+
+---
+
 ## v3.41 (순번 비우기 확대 + 검색 카테고리 문구 + 결과 전체 담기) — 2026-08-18
 
 ### 요청 작업

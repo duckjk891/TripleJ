@@ -25,10 +25,11 @@ export function getTrackCoverUri(track: RowTrack): string | null {
   return `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}`;
 }
 
-export function TrackCover({ track }: { track: RowTrack }) {
+/** left=true면 좌측 슬롯(순번)이 없는 목록 — 앞쪽 여백 없이 커버부터 시작한다 */
+export function TrackCover({ track, left }: { track: RowTrack; left?: boolean }) {
   const uri = getTrackCoverUri(track);
   return (
-    <View style={styles.cover}>
+    <View style={[styles.cover, left && styles.coverFirst]}>
       {uri ? <Image source={{ uri }} style={styles.coverImg} />
         : <View style={styles.coverPlaceholder}><AppText variant="title2" tone="muted">{'♪'}</AppText></View>}
     </View>
@@ -37,7 +38,7 @@ export function TrackCover({ track }: { track: RowTrack }) {
 
 interface Props {
   track: RowTrack;
-  /** 좌측 영역(순위 숫자, NEW 뱃지, ▶ 등). 없으면 여백만 차지 */
+  /** 좌측 영역(순위 숫자, NEW 뱃지, ▶ 등). 없으면 자리를 비우지 않고 커버가 앞으로 당겨진다 */
   left?: ReactNode;
   liked?: boolean;
   onPress: () => void;
@@ -47,8 +48,8 @@ interface Props {
 export default function TrackRow({ track, left, liked, onPress, onMore }: Props) {
   return (
     <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={onPress}>
-      {left ?? <View style={styles.rank} />}
-      <TrackCover track={track} />
+      {left}
+      <TrackCover track={track} left={!left} />
       <View style={styles.info}>
         <Marquee text={track.title} variant="bodyStrong" tone="primary" />
         <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
@@ -91,6 +92,7 @@ const styles = StyleSheet.create({
   },
   rank: { width: 32 },
   cover: { width: 48, height: 48, borderRadius: radius.md, overflow: 'hidden', marginHorizontal: spacing.md },
+  coverFirst: { marginLeft: 0 }, // 순번 없는 목록: 좌측 빈 공간 제거
   coverImg: { width: 48, height: 48 },
   coverPlaceholder: { width: 48, height: 48, backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
   info: { flex: 1, marginRight: spacing.sm },

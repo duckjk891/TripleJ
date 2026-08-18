@@ -24,8 +24,10 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { AppText, EmptyState, Button } from '../components/ui';
+import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
+import TrackShareDownloadSheet, { SheetMode } from '../components/TrackShareDownloadSheet';
 
 interface Track {
   id: number;
@@ -69,6 +71,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
   const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
+  const [sdTrack, setSdTrack] = useState<Track | null>(null);   // 공유/다운로드 선택지 대상
+  const [sdMode, setSdMode] = useState<SheetMode>('share');
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
 
   const fetchTracks = useCallback(async (isRefresh = false) => {
@@ -198,13 +202,13 @@ export default function MyMusicScreen({ navigation }: any) {
   };
 
   if (!user) {
+    // 로그인 CTA는 피드/검색/플레이리스트/작업실과 동일하게 공통 LoginPrompt + 세로 중앙 정렬
     return (
-      <View style={styles.container}>
-        <EmptyState
-          icon="🎧"
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <LoginPrompt
           title="내가 만든 음악 보관함"
-          hint={'AI로 만든 나만의 곡을\n한곳에서 관리하고 들을 수 있어요!'}
-          action={<Button label="로그인하고 시작하기" onPress={() => navigation.getParent()?.navigate('Settings')} />}
+          desc={'AI로 만든 나만의 곡을\n한곳에서 관리하고 들을 수 있어요!'}
+          onPress={() => navigation.getParent()?.navigate('Settings')}
         />
       </View>
     );
@@ -423,14 +427,22 @@ export default function MyMusicScreen({ navigation }: any) {
         </ScrollView>
       )}
 
+      {/* 공유·다운로드 선택지 (쇼츠/릴스/틱톡·화질별 영상·mp3) */}
+      <TrackShareDownloadSheet
+        visible={!!sdTrack}
+        mode={sdMode}
+        track={sdTrack ? { id: sdTrack.id, title: sdTrack.title } : null}
+        onClose={() => setSdTrack(null)}
+      />
+
       {/* 곡 더보기(⋮) — 공용 시트 + 내 곡 고유 기능(공유·다운로드·차트 업로드·삭제) */}
       <TrackActionSheet
         track={actionTrack ? { ...actionTrack, id: String(actionTrack.id) } : null}
         onClose={() => setActionTrack(null)}
         onPlay={(t) => navigation.getParent()?.navigate('Player', { track: t })}
         extraItems={actionTrack ? [
-          { icon: 'share-2', label: '공유', onPress: () => handleShareTrack(actionTrack) },
-          { icon: 'download', label: '다운로드', onPress: () => handleDownloadTrack(actionTrack) },
+          { icon: 'share-2', label: '공유', onPress: () => { setSdMode('share'); setSdTrack(actionTrack); } },
+          { icon: 'download', label: '다운로드', onPress: () => { setSdMode('download'); setSdTrack(actionTrack); } },
           ...(actionTrack.is_public
             ? []
             : [{ icon: 'upload-cloud' as const, label: '차트에 업로드', onPress: () => handlePublishToChart(String(actionTrack.id), actionTrack.title) }]),

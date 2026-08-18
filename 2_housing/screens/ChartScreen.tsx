@@ -231,7 +231,7 @@ export default function ChartScreen() {
           );
         }
         return isQueue
-          ? <EmptyState icon="🎧" title="재생목록이 비어있어요" hint="차트나 검색에서 곡을 재생하면 여기에 쌓여요" />
+          ? <EmptyState title="재생목록이 비어있어요" hint="차트나 검색에서 곡을 재생하면 여기에 쌓여요" />
           : <EmptyState icon="📊" title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />;
       })()}
 

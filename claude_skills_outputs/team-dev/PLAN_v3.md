@@ -7,6 +7,29 @@
 
 ---
 
+## v3.42 — 2026-08-18 — 빈 상태·CTA·flex 정렬 + 공유/다운로드 선택지 + 신고 + 프롬프트 파라미터
+
+### 요청
+① 빈 재생목록 이모지 제거 ② 마이페이지 로그인 CTA 통일 ③ 순번 없는 목록 flex 정렬(빈 공간 제거) ④ 마이뮤직 공유/다운로드 선택지(MAIDOL 동일) ⑤ Now Playing 신고 ⑥ 곡 생성 프롬프트 설정값 표시.
+
+### Plan verification findings
+- MAIDOL 최신 코드는 worktree `/Users/pearl/TripleJ-maidol/0_platform_music`. main 체크아웃엔 공유 선택지·신고 없음(오판 주의).
+- 신고: ReportModal.jsx 사유 5종, 본인 곡 미표시. AIDOL 원격 백엔드에 POST /api/reports/ 이미 존재(검증 메시지로 확인) → 백엔드 개발 불필요.
+- 공유 3종은 동일 API(format=sns), 폴백 URL만 상이 + 링크 복사. 다운로드는 wide/sns/kakao 영상 + mp3(로그인).
+- 프롬프트: 보컬·스타일·악기 등은 generations 전용이며 GET /generate/{id}는 소유자만(403). MAIDOL도 동일 한계.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/TrackRow.tsx | 좌측 슬롯 없으면 커버가 선두(coverFirst) | — |
+| screens/ChartScreen.tsx | 빈 재생목록 이모지 제거 | — |
+| screens/MyMusicScreen.tsx | 로그인 CTA → 공용 LoginPrompt, ⋮ 공유·다운로드 → 선택지 시트 | 기존 유지 |
+| components/TrackShareDownloadSheet.tsx (신규) | 공유 4종/다운로드 4종 | `[TrackShareDownloadSheet] share-video/mp3` |
+| components/ReportModal.tsx (신규) | 사유 5종 + 기타 상세, 409/400 처리 (사유 원문 미로깅) | `[ReportModal] submit` (길이만) |
+| screens/PlayerScreen.tsx | 액션행 공유·신고(본인 곡 숨김), 프롬프트 탭 파라미터 확장 + generation 조인 | `[PlayerScreen] generation 상세 조회` |
+
+---
+
 ## v3.41 — 2026-08-18 — 순번 비우기(검색·플레이리스트·마이뮤직) + 카테고리 문구 + 결과 전체 담기
 
 ### 요청

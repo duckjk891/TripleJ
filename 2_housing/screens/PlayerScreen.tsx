@@ -25,6 +25,8 @@ import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
+import ReportModal from '../components/ReportModal';
+import TrackShareDownloadSheet from '../components/TrackShareDownloadSheet';
 import { useArtistStore } from '../stores/artistStore';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
@@ -143,6 +145,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showQueue, setShowQueue] = useState(!!route.params?.openQueue); // 미니플레이어에서 재생목록 바로열기
   const [showGuestNotice, setShowGuestNotice] = useState(false); // 비회원 담기 안내 팝업
+  const [showReport, setShowReport] = useState(false);           // 신고 모달
+  const [showShare, setShowShare] = useState(false);             // 공유 선택지 시트
   const user = useAuthStore((s) => s.user);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -158,6 +162,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [showDetails, setShowDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit' | 'info'>('lyrics');
   const [fullTrack, setFullTrack] = useState<TrackData | null>(null);
+  const [genDetail, setGenDetail] = useState<any | null>(null); // 곡 생성 설정(내 곡만 조회 가능)
   const [ads, setAds] = useState<AdItem[]>([]);
   const impressionLoggedRef = useRef<Set<string>>(new Set());
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -171,6 +176,44 @@ export default function PlayerScreen({ route, navigation }: any) {
   // store.track 구독 → prev/next로 곡 바뀌면 화면도 즉시 갱신 (navigation.replace 없이)
   const storeTrack = usePlayerStore((s) => s.track);
   const track: TrackData = fullTrack || storeTrack || routeTrack;
+
+  // 본인 곡이면 신고 버튼을 숨긴다 (MAIDOL 규칙과 동일)
+  const isMyTrack = !!user && !!track?.uploader_id && String(track.uploader_id) === String(user.id);
+
+  // 프롬프트 탭에 보여줄 파라미터 — 트랙 필드 + (내 곡이면) 생성 설정(genDetail)을 합친다.
+  // 값이 없는 항목은 아예 노출하지 않는다(빈 '-' 나열 방지).
+  const promptParams = (() => {
+    const g: any = genDetail || {};
+    const t: any = track || {};
+    const join = (v: any) => Array.isArray(v) ? v.join(', ') : v;
+    const secs = t.duration_sec ? `${Math.floor(t.duration_sec / 60)}:${String(t.duration_sec % 60).padStart(2, '0')}` : null;
+    const rows: { label: string; value: any }[] = [
+      { label: '장르', value: join(t.genre) },
+      { label: '분위기', value: join(t.mood) },
+      { label: '보컬', value: join(g.vocal) },
+      { label: '스타일', value: join(g.style) },
+      { label: '악기', value: join(g.instruments) },
+      { label: '참조 스타일', value: g.reference_style },
+      { label: '제외 스타일', value: join(g.negative_tags) },
+      { label: '스타일 강도', value: g.style_weight },
+      { label: '실험성', value: g.weirdness },
+      { label: '오디오 영향도', value: g.audio_weight },
+      { label: '페르소나', value: g.persona_model },
+      { label: 'BPM', value: t.bpm ?? g.bpm },
+      { label: '템포', value: t.tempo ? Math.round(t.tempo) : null },
+      { label: '키', value: t.key ?? g.key },
+      { label: '언어', value: t.language },
+      { label: 'AI 모델', value: t.ai_model },
+      { label: '길이', value: secs },
+      { label: '태그', value: t.tags?.length ? t.tags.join(', ') : null },
+      { label: '재생 수', value: t.play_count?.toLocaleString?.() },
+      { label: '좋아요', value: t.like_count?.toLocaleString?.() },
+      { label: '다운로드', value: t.download_count?.toLocaleString?.() },
+    ];
+    return rows
+      .filter((r) => r.value !== null && r.value !== undefined && r.value !== '' && !(Array.isArray(r.value) && !r.value.length))
+      .map((r) => ({ label: r.label, value: String(r.value) }));
+  })();
 
   const getCoverUri = (): string | null => {
     const img = track?.cover_image || track?.cover_image_url;
@@ -368,6 +411,26 @@ export default function PlayerScreen({ route, navigation }: any) {
     })();
     return () => { cancelled = true; };
   }, [fullTrack?.uploader_id]);
+
+  // 곡 생성 시 선택한 프롬프트 설정값 — generations 문서에만 있는 값(보컬/스타일/실험성 등).
+  // 소유자 전용 API라 남의 곡은 403 → 조용히 생략하고 트랙 필드만 보여준다.
+  useEffect(() => {
+    const gid = (fullTrack as any)?.generation_id;
+    if (!gid) { setGenDetail(null); return; }
+    let alive = true;
+    (async () => {
+      if (__DEV__) console.info('[PlayerScreen] generation 상세 조회', { gid });
+      try {
+        const res = await api.get(`/generate/${gid}`);
+        if (alive) setGenDetail(res.data?.generation ?? res.data ?? null);
+      } catch (err: any) {
+        if (alive) setGenDetail(null);
+        if (__DEV__) console.info('[PlayerScreen] generation 조회 생략', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, [(fullTrack as any)?.generation_id]);
+
 
   const handleAdClick = async (item: AdItem) => {
     api.post(`/business/ads/${item.id}/click`).catch(() => {});
@@ -686,6 +749,20 @@ export default function PlayerScreen({ route, navigation }: any) {
           <Feather name="list" size={24} color={colors.text.muted} />
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>재생목록</AppText>
         </TouchableOpacity>
+
+        {/* 공유 — 쇼츠/릴스/틱톡/링크 복사 */}
+        <TouchableOpacity style={styles.actionBtn} onPress={() => setShowShare(true)} accessibilityLabel="공유">
+          <Feather name="share-2" size={22} color={colors.text.muted} />
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>공유</AppText>
+        </TouchableOpacity>
+
+        {/* 신고 — 본인 곡에는 표시하지 않는다 */}
+        {!isMyTrack ? (
+          <TouchableOpacity style={styles.actionBtn} onPress={() => setShowReport(true)} accessibilityLabel="신고">
+            <Feather name="flag" size={22} color={colors.text.muted} />
+            <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>신고</AppText>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* 비회원 담기 안내 — 로그인 화면으로 튕기지 않고 선택하게 함 */}
@@ -698,6 +775,22 @@ export default function PlayerScreen({ route, navigation }: any) {
           addCurrentToQueue();
         }}
         onClose={() => setShowGuestNotice(false)}
+      />
+
+      {/* 공유 선택지 (쇼츠/릴스/틱톡/링크 복사) */}
+      <TrackShareDownloadSheet
+        visible={showShare}
+        mode="share"
+        track={track ? { id: track.id, title: track.title } : null}
+        onClose={() => setShowShare(false)}
+      />
+
+      {/* 콘텐츠 신고 (본인 곡 제외) */}
+      <ReportModal
+        visible={showReport}
+        targetType="track"
+        targetId={String(track?.id ?? '')}
+        onClose={() => setShowReport(false)}
       />
 
       {/* 재생목록(큐) 모달 — 현재 재생 큐를 보고 곡 선택/삭제 */}
@@ -788,56 +881,29 @@ export default function PlayerScreen({ route, navigation }: any) {
                 )
               )}
               {detailTab === 'prompt' && (
-                track?.prompt ? (
+                (track?.prompt || promptParams.length) ? (
                   <View>
                     <AppText style={styles.detailSectionTitle}>작곡 프롬프트</AppText>
-                    <AppText style={styles.detailHelperText}>작곡 디렉터와 대화하며 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</AppText>
-                    <AppText style={styles.sheetText}>{track.prompt}</AppText>
+                    <AppText style={styles.detailHelperText}>곡을 만들 때 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</AppText>
+                    {track?.prompt ? <AppText style={styles.sheetText}>{track.prompt}</AppText> : null}
 
-                    {/* 프롬프트에 묶여 있는 주요 파라미터를 분해해서 한 번 더 정리 */}
-                    {(track?.genre || track?.mood || track?.bpm || track?.key || track?.tags?.length) ? (
-                      <View style={styles.promptChipsBox}>
-                        <AppText style={styles.promptChipsLabel}>핵심 파라미터</AppText>
-                        <View style={styles.promptChipsRow}>
-                          {track?.genre ? (
-                            <View style={styles.promptChip}>
-                              <AppText style={styles.promptChipLabel}>장르</AppText>
-                              <AppText style={styles.promptChipValue}>{Array.isArray(track.genre) ? track.genre.join(', ') : track.genre}</AppText>
-                            </View>
-                          ) : null}
-                          {track?.mood ? (
-                            <View style={styles.promptChip}>
-                              <AppText style={styles.promptChipLabel}>분위기</AppText>
-                              <AppText style={styles.promptChipValue}>{Array.isArray(track.mood) ? track.mood.join(', ') : track.mood}</AppText>
-                            </View>
-                          ) : null}
-                          {track?.bpm ? (
-                            <View style={styles.promptChip}>
-                              <AppText style={styles.promptChipLabel}>BPM</AppText>
-                              <AppText style={styles.promptChipValue}>{track.bpm}</AppText>
-                            </View>
-                          ) : null}
-                          {track?.key ? (
-                            <View style={styles.promptChip}>
-                              <AppText style={styles.promptChipLabel}>키</AppText>
-                              <AppText style={styles.promptChipValue}>{track.key}</AppText>
-                            </View>
-                          ) : null}
-                          {track?.ai_model ? (
-                            <View style={styles.promptChip}>
-                              <AppText style={styles.promptChipLabel}>AI 모델</AppText>
-                              <AppText style={styles.promptChipValue}>{track.ai_model}</AppText>
-                            </View>
-                          ) : null}
-                          {track?.tags && track.tags.length > 0 ? (
-                            <View style={styles.promptChip}>
-                              <AppText style={styles.promptChipLabel}>태그</AppText>
-                              <AppText style={styles.promptChipValue}>{track.tags.join(', ')}</AppText>
-                            </View>
-                          ) : null}
-                        </View>
+                    {/* 곡에 저장된 값 + (내 곡이면) 생성 설정까지 합쳐서 표시 */}
+                    <View style={styles.promptChipsBox}>
+                      <AppText style={styles.promptChipsLabel}>핵심 파라미터</AppText>
+                      <View style={styles.promptChipsRow}>
+                        {promptParams.map((p) => (
+                          <View key={p.label} style={styles.promptChip}>
+                            <AppText style={styles.promptChipLabel}>{p.label}</AppText>
+                            <AppText style={styles.promptChipValue}>{p.value}</AppText>
+                          </View>
+                        ))}
                       </View>
-                    ) : null}
+                      {!genDetail && (fullTrack as any)?.generation_id ? (
+                        <AppText style={styles.detailHelperText}>
+                          보컬·스타일·실험성 등 생성 당시 설정값은 곡을 만든 본인에게만 표시돼요.
+                        </AppText>
+                      ) : null}
+                    </View>
                   </View>
                 ) : fullTrack === null ? (
                   <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
