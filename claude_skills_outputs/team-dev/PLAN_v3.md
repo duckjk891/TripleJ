@@ -7,6 +7,26 @@
 
 ---
 
+## v3.40 — 2026-08-18 — 곡 목록 행·더보기 메뉴 공용화(검색 = 차트 동일 디자인)
+
+### 요청
+검색 결과 곡 행을 차트와 동일한 디자인으로.
+
+### Plan verification findings
+- 차트/검색이 각자 행을 렌더(복붙) → 구조 자체가 다름(차트: 순위·통계·⋮·마퀴 / 검색: 커버·제목·▶아이콘).
+- v3.38 로그인 CTA와 동일한 유형의 불일치 → 공용 컴포넌트 추출로 재발 방지.
+- 검색엔 play_count/like_count 타입 필드·좋아요 동기화 부재.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/TrackRow.tsx (신규) | 공용 곡 행(좌측 슬롯/커버/마퀴/통계/⋮) + TrackCover·getTrackCoverUri·trackRowStyles | — |
+| components/TrackActionSheet.tsx (신규) | 공용 ⋮ 메뉴 + 플레이리스트 시트 + 비회원 담기 안내 | `[TrackActionSheet] addToQueue` 등 |
+| screens/ChartScreen.tsx | 자체 행·시트·핸들러 → 공용 컴포넌트로 대체, 중복 제거 | 기존 유지 |
+| screens/SearchScreen.tsx | TrackRow(좌측 순번)+TrackActionSheet 적용, likes sync, 타입 보강, 미사용 코드 제거 | 기존 유지 |
+
+---
+
 ## v3.39 — 2026-08-18 — 담기 안내 팝업 1회만 + 검색 느낌 칩 이모지·라벨 제거
 
 ### 요청

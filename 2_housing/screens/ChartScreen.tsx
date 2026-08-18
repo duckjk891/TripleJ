@@ -15,8 +15,8 @@ import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
-import Marquee from '../components/Marquee';
-import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
+import TrackRow, { trackRowStyles } from '../components/TrackRow';
+import TrackActionSheet from '../components/TrackActionSheet';
 
 interface ChartTrack {
   id: string;
@@ -56,15 +56,9 @@ export default function ChartScreen() {
   const [tracks, setTracks] = useState<ChartTrack[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
-  const [playlists, setPlaylists] = useState<any[]>([]);
-  const [selectedTrackId, setSelectedTrackId] = useState<string>('');
-  const [newPlaylistName, setNewPlaylistName] = useState('');
   const [actionTrack, setActionTrack] = useState<ChartTrack | null>(null); // ⋮ 오버플로 메뉴 대상
-  const [pendingQueueTrack, setPendingQueueTrack] = useState<ChartTrack | null>(null); // 비회원 담기 안내 팝업 대상
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
-  const toggleLikeStore = useLikesStore((s) => s.toggle);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ChartTrack[]>([]);
@@ -116,55 +110,6 @@ export default function ChartScreen() {
     return true;
   };
 
-  const toggleLike = (trackId: string) => {
-    if (!requireLogin()) return;
-    const wasLiked = !!useLikesStore.getState().liked[trackId];
-    toggleLikeStore(trackId); // 백엔드 연동(낙관적) — 실패 시 스토어가 롤백
-    // 차트 행의 좋아요수도 낙관적으로 ±1 반영
-    setTracks((prev) => prev.map((t) => t.id === trackId
-      ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + (wasLiked ? -1 : 1)) }
-      : t));
-  };
-
-  const handleAddToPlaylist = async (track: ChartTrack) => {
-    if (!requireLogin()) return;
-    setSelectedTrackId(track.id);
-    try {
-      const res = await api.get('/playlists/');
-      setPlaylists(res.data.playlists || res.data || []);
-    } catch (err: any) {
-      console.error('[ChartScreen] 플레이리스트 조회 실패', { status: err?.response?.status });
-      setPlaylists([]);
-    }
-    setShowPlaylistModal(true);
-  };
-
-  const addToExistingPlaylist = async (playlistId: string) => {
-    try {
-      await api.post(`/playlists/${playlistId}/tracks`, { track_id: selectedTrackId });
-      Alert.alert('완료', '플레이리스트에 추가되었습니다!');
-    } catch (err: any) {
-      console.error('[ChartScreen] 플레이리스트 추가 실패', { playlistId, status: err?.response?.status });
-      Alert.alert('오류', err?.response?.data?.error || '추가에 실패했습니다.');
-    }
-    setShowPlaylistModal(false);
-  };
-
-  const createAndAddToPlaylist = async () => {
-    const name = newPlaylistName.trim();
-    if (!name) { Alert.alert('알림', '플레이리스트 이름을 입력해주세요.'); return; }
-    try {
-      const createRes = await api.post('/playlists/', { title: name });
-      await api.post(`/playlists/${createRes.data.id}/tracks`, { track_id: selectedTrackId });
-      Alert.alert('완료', `"${name}"에 추가되었습니다!`);
-    } catch (err: any) {
-      console.error('[ChartScreen] 플레이리스트 생성 실패', { status: err?.response?.status });
-      Alert.alert('오류', err?.response?.data?.error || '생성에 실패했습니다.');
-    }
-    setNewPlaylistName('');
-    setShowPlaylistModal(false);
-  };
-
   const handleSearch = async (q: string) => {
     const query = q.trim();
     if (!query) return;
@@ -197,22 +142,6 @@ export default function ChartScreen() {
     navigation.navigate('Player', { track });
   };
 
-  // 재생목록(큐)에 추가 — 회원 전용 아님. 비회원 첫 담기 때만 선택 팝업(로그인 / 계속 담기)을 띄운다.
-  const addToQueueNow = (track: ChartTrack) => {
-    const ok = playerStore.addToQueue(track);
-    if (__DEV__) console.info('[ChartScreen] addToQueue', { id: track.id, ok });
-    Alert.alert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
-  };
-
-  const handleAddToQueue = (track: ChartTrack) => {
-    if (!user && !playerStore.guestNoticeAck) {
-      if (__DEV__) console.info('[ChartScreen] 비회원 담기 → 안내 팝업', { id: track.id });
-      setPendingQueueTrack(track); // 팝업에서 '계속 담기' 선택 시 담을 대상
-      return;
-    }
-    addToQueueNow(track);
-  };
-
   const handleSearchTrackPress = (track: ChartTrack) => {
     const idx = searchResults.findIndex((t) => t.id === track.id);
     playerStore.setQueue(searchResults);
@@ -237,41 +166,24 @@ export default function ChartScreen() {
     );
   };
 
+  // 행 디자인은 공용 TrackRow (검색 등 다른 목록 화면과 동일) — 좌측 슬롯만 탭별로 다르다
   const renderTrack = ({ item, index }: { item: ChartTrack; index: number }) => {
     const rank = index + 1;
     const rankColor = RANK_COLORS[rank] || colors.text.muted;
-    const isLiked = !!likedMap[item.id];
+    const left = activeTab === 'new'
+      ? <View style={trackRowStyles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
+      : activeTab === 'queue'
+      ? <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone={index === playerStore.currentIndex ? 'accent' : 'muted'}>{index === playerStore.currentIndex ? '▶' : rank}</AppText>
+      : <AppText variant="bodyStrong" center style={[trackRowStyles.rank, { color: rankColor }]}>{rank}</AppText>;
 
     return (
-      <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={() => handleTrackPress(item)}>
-        {activeTab === 'new'
-          ? <View style={styles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
-          : activeTab === 'queue'
-          ? <AppText variant="bodyStrong" center style={styles.rank} tone={index === playerStore.currentIndex ? 'accent' : 'muted'}>{index === playerStore.currentIndex ? '▶' : rank}</AppText>
-          : <AppText variant="bodyStrong" center style={[styles.rank, { color: rankColor }]}>{rank}</AppText>}
-        <Cover track={item} />
-        <View style={styles.info}>
-          <Marquee text={item.title} variant="bodyStrong" tone="primary" />
-          <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
-            {item.artist_name || '알 수 없는 아티스트'}
-          </AppText>
-        </View>
-        {/* 재생수 · 좋아요수 (하트 자리) — 좋아요 실행은 ⋮ 액션시트에서 */}
-        <View style={styles.statCol}>
-          <View style={styles.statLine}>
-            <Feather name="play" size={11} color={colors.text.muted} />
-            <AppText variant="caption" tone="muted">{(item.play_count ?? 0).toLocaleString()}</AppText>
-          </View>
-          <View style={styles.statLine}>
-            <Feather name="heart" size={11} color={isLiked ? colors.accent.primary : colors.text.muted} />
-            <AppText variant="caption" tone={isLiked ? 'accent' : 'muted'}>{(item.like_count ?? 0).toLocaleString()}</AppText>
-          </View>
-        </View>
-        {/* 더보기(⋮) — 좋아요·재생목록·플레이리스트 */}
-        <TouchableOpacity style={styles.action} accessibilityLabel="더보기" onPress={(e) => { e.stopPropagation(); setActionTrack(item); }}>
-          <Feather name="more-vertical" size={20} color={colors.text.muted} />
-        </TouchableOpacity>
-      </TouchableOpacity>
+      <TrackRow
+        track={item}
+        left={left}
+        liked={!!likedMap[item.id]}
+        onPress={() => handleTrackPress(item)}
+        onMore={() => setActionTrack(item)}
+      />
     );
   };
 
@@ -329,19 +241,6 @@ export default function ChartScreen() {
         </TouchableOpacity>
       )}
 
-      {/* 비회원 담기 안내 — 로그인 화면으로 튕기지 않고 선택하게 함 */}
-      <GuestQueueNoticeModal
-        visible={!!pendingQueueTrack}
-        onLogin={() => { setPendingQueueTrack(null); navigation.navigate('Settings'); }}
-        onContinue={() => {
-          const t = pendingQueueTrack;
-          setPendingQueueTrack(null);
-          playerStore.setGuestNoticeAck(true); // 이후에는 바로 담김
-          if (t) addToQueueNow(t);
-        }}
-        onClose={() => setPendingQueueTrack(null)}
-      />
-
       {/* 검색 모달 */}
       <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
         <View style={styles.searchModal}>
@@ -392,70 +291,16 @@ export default function ChartScreen() {
         </View>
       </Modal>
 
-      {/* 곡 더보기(⋮) 액션 시트 — 재생/좋아요/재생목록/플레이리스트를 아이콘+라벨로 구분 (MAIDOL Feather) */}
-      <Modal visible={!!actionTrack} transparent animationType="slide" onRequestClose={() => setActionTrack(null)}>
-        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setActionTrack(null)}>
-          <View style={styles.sheet}>
-            {actionTrack ? (
-              <>
-                <View style={styles.actionSheetHead}>
-                  <Cover track={actionTrack} />
-                  <View style={{ flex: 1, marginLeft: spacing.md }}>
-                    <AppText variant="bodyStrong" numberOfLines={1}>{actionTrack.title}</AppText>
-                    <AppText variant="footnote" tone="secondary" numberOfLines={1}>{actionTrack.artist_name || '알 수 없는 아티스트'}</AppText>
-                  </View>
-                </View>
-                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = actionTrack; setActionTrack(null); handleTrackPress(t); }}>
-                  <Feather name="play" size={20} color={colors.text.secondary} />
-                  <AppText variant="body">재생</AppText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { toggleLike(actionTrack.id); }}>
-                  <Feather name="heart" size={20} color={likedMap[actionTrack.id] ? colors.accent.primary : colors.text.secondary} />
-                  <AppText variant="body">{likedMap[actionTrack.id] ? '좋아요 취소' : '좋아요'}</AppText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = actionTrack; setActionTrack(null); handleAddToQueue(t); }}>
-                  <Feather name="plus" size={20} color={colors.text.secondary} />
-                  <AppText variant="body">재생목록에 추가</AppText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionSheetItem} onPress={() => { const t = actionTrack; setActionTrack(null); handleAddToPlaylist(t); }}>
-                  <Feather name="bookmark" size={20} color={colors.text.secondary} />
-                  <AppText variant="body">플레이리스트에 담기</AppText>
-                </TouchableOpacity>
-              </>
-            ) : null}
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {/* 곡 더보기(⋮) — 공용 액션 시트(재생/좋아요/재생목록/플레이리스트 + 비회원 담기 안내) */}
+      <TrackActionSheet
+        track={actionTrack}
+        onClose={() => setActionTrack(null)}
+        onPlay={(t) => handleTrackPress(t as ChartTrack)}
+        onLikeChanged={(trackId, delta) => setTracks((prev) => prev.map((t) => t.id === trackId
+          ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) }
+          : t))}
+      />
 
-      {/* 플레이리스트 담기 바텀시트 */}
-      <Modal visible={showPlaylistModal} transparent animationType="slide" onRequestClose={() => setShowPlaylistModal(false)}>
-        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={() => setShowPlaylistModal(false)}>
-          <View style={styles.sheet}>
-            <AppText variant="title3" style={styles.sheetTitle}>플레이리스트에 담기</AppText>
-            {playlists.length > 0 && (
-              <View style={styles.sheetList}>
-                {playlists.map((pl: any) => (
-                  <TouchableOpacity key={pl.id} style={styles.sheetItem} onPress={() => addToExistingPlaylist(pl.id)}>
-                    <AppText variant="body">{pl.title || pl.name}</AppText>
-                    <AppText variant="caption" tone="muted">{pl.track_count ?? 0}곡</AppText>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            <AppText variant="footnote" tone="secondary" style={styles.sheetLabel}>새 플레이리스트 만들기</AppText>
-            <View style={styles.sheetCreateRow}>
-              <TextInput
-                style={styles.sheetInput}
-                placeholder="플레이리스트 이름"
-                placeholderTextColor={colors.text.muted}
-                value={newPlaylistName}
-                onChangeText={setNewPlaylistName}
-              />
-              <Button label="만들기" size="md" onPress={createAndAddToPlaylist} />
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </ScreenLayout>
   );
 }

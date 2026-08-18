@@ -3,7 +3,7 @@
 // 비로그인 사용자가 (검색 시도 | 느낌 칩 탭) 하면 "로그인하고 시작하기" CTA.
 // 검색 로딩은 스피너 대신 "최적의 음악을 찾고 있습니다" 멘트.
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, TextInput, FlatList, ScrollView, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, TextInput, FlatList, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -13,6 +13,9 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, EmptyState, ScreenLayout } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
+import TrackRow, { trackRowStyles } from '../components/TrackRow';
+import TrackActionSheet from '../components/TrackActionSheet';
+import { useLikesStore } from '../stores/likesStore';
 
 interface Track {
   id: string;
@@ -20,6 +23,8 @@ interface Track {
   artist_name?: string;
   cover_image?: string;
   cover_image_url?: string;
+  play_count?: number;
+  like_count?: number;
 }
 
 // 느낌 카테고리 — 백엔드 고정 10종(운동~잠자기). 칩은 이모지 없이 텍스트만 표시한다.
@@ -36,9 +41,17 @@ export default function SearchScreen() {
   const [gated, setGated] = useState(false);
   const [categories, setCategories] = useState<string[]>(CATEGORY_FALLBACK);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
+  const likedMap = useLikesStore((s) => s.liked);
+  const syncLikes = useLikesStore((s) => s.sync);
 
   // 로그인되면 게이트 해제
   useEffect(() => { if (user) setGated(false); }, [user]);
+
+  // 결과가 바뀌면 좋아요 상태 동기화(차트와 동일하게 하트 수치 표시)
+  useEffect(() => {
+    if (user && results.length) syncLikes(results.map((t) => t.id));
+  }, [results, user, syncLikes]);
 
   // 카테고리 목록 로드
   useEffect(() => {
@@ -52,11 +65,6 @@ export default function SearchScreen() {
       }
     })();
   }, []);
-
-  const getCoverUri = (t: Track): string | null => {
-    const img = t.cover_image || t.cover_image_url;
-    return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
-  };
 
   // 비로그인 → 로그인 CTA 노출(true 반환 시 차단)
   const blockIfGuest = (): boolean => {
@@ -127,20 +135,16 @@ export default function SearchScreen() {
 
   const clearAll = () => { setQuery(''); setResults([]); setSubmitted(false); setActiveCategory(null); };
 
-  const renderTrack = ({ item }: { item: Track }) => {
-    const uri = getCoverUri(item);
-    return (
-      <TouchableOpacity style={styles.row} onPress={() => handlePress(item)} activeOpacity={0.7}>
-        {uri ? <Image source={{ uri }} style={styles.cover} />
-          : <View style={[styles.cover, styles.coverPh]}><AppText variant="title3" tone="muted">♪</AppText></View>}
-        <View style={styles.info}>
-          <AppText variant="bodyStrong" numberOfLines={1}>{item.title}</AppText>
-          <AppText variant="footnote" tone="secondary" numberOfLines={1}>{item.artist_name || '알 수 없는 아티스트'}</AppText>
-        </View>
-        <Feather name="play-circle" size={22} color={colors.accent.primary} />
-      </TouchableOpacity>
-    );
-  };
+  // 행 디자인은 차트와 동일한 공용 TrackRow (좌측은 순번, 우측 재생수·좋아요수 + ⋮ 더보기)
+  const renderTrack = ({ item, index }: { item: Track; index: number }) => (
+    <TrackRow
+      track={item}
+      left={<AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{index + 1}</AppText>}
+      liked={!!likedMap[item.id]}
+      onPress={() => handlePress(item)}
+      onMore={() => setActionTrack(item)}
+    />
+  );
 
   // 느낌 칩 가로 스크롤 바 (섹션 제목·이모지 없이 텍스트 칩만)
   const MoodBar = () => (
@@ -223,6 +227,16 @@ export default function SearchScreen() {
       ) : (
         <EmptyState icon="🎵" title="느낌을 선택하거나 검색해보세요" hint="위의 느낌을 눌러보세요" />
       )}
+
+      {/* 곡 더보기(⋮) — 차트와 동일한 공용 액션 시트 */}
+      <TrackActionSheet
+        track={actionTrack}
+        onClose={() => setActionTrack(null)}
+        onPlay={(t) => handlePress(t as Track)}
+        onLikeChanged={(trackId, delta) => setResults((prev) => prev.map((t) => t.id === trackId
+          ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) }
+          : t))}
+      />
     </ScreenLayout>
   );
 }
@@ -244,14 +258,6 @@ const styles = StyleSheet.create({
   },
   moodChipActive: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
   loadingWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.huge },
-  row: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
-  },
-  cover: { width: 48, height: 48, borderRadius: radius.md },
-  coverPh: { backgroundColor: colors.bg.surface1, justifyContent: 'center', alignItems: 'center' },
-  info: { flex: 1 },
   resultHead: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   loginCta: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });
