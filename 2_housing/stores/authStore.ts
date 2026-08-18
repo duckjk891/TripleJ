@@ -21,7 +21,8 @@ interface AuthState {
     password: string,
     nickname: string,
     companyName?: string,
-    displayTitle?: string
+    displayTitle?: string,
+    extra?: Record<string, any>  // birth_date/nationality/gender/region/consents/referral_code (현행 백엔드 필수 필드 포함)
   ) => Promise<boolean>;
   updateProfile: (patch: { company_name?: string; display_title?: string; bio?: string }) => Promise<boolean>;
   logout: () => void;
@@ -44,14 +45,14 @@ export const useAuthStore = create<AuthState>((set) => ({
       try { usePlayerStore.getState().restoreQueueFor(String(user?.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(login)', { err }); }
       return true;
     } catch (err: any) {
-      set({ error: err.response?.data?.detail || '로그인에 실패했습니다.', isLoading: false });
+      set({ error: err.response?.data?.error || err.response?.data?.detail || '로그인에 실패했습니다.', isLoading: false });
       return false;
     }
   },
-  register: async (email, password, nickname, companyName, displayTitle) => {
+  register: async (email, password, nickname, companyName, displayTitle, extra) => {
     set({ isLoading: true, error: null });
     try {
-      const body: Record<string, string> = { email, password, nickname };
+      const body: Record<string, any> = { email, password, nickname, ...(extra || {}) };
       if (companyName && companyName.trim()) body.company_name = companyName.trim();
       if (displayTitle && displayTitle.trim()) body.display_title = displayTitle.trim();
       const res = await api.post('/auth/register', body);
@@ -62,7 +63,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(register)', { err }); }
       return true;
     } catch (err: any) {
-      set({ error: err.response?.data?.detail || '회원가입에 실패했습니다.', isLoading: false });
+      set({ error: err.response?.data?.error || err.response?.data?.detail || '회원가입에 실패했습니다.', isLoading: false });
       return false;
     }
   },

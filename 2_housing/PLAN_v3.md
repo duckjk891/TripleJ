@@ -7,6 +7,30 @@
 
 ---
 
+## v3.43 — 2026-08-18 — 마이뮤직 정렬 + 하단바 아이콘 + 로그인·회원가입 MAIDOL 이식
+
+### 요청
+① 마이뮤직 곡 목록을 플레이리스트/차트와 통일 ② 하단바 플레이리스트=재생·피드=연필 아이콘 ③ 로그인·회원가입 MAIDOL 참고 개편(소셜 포함).
+
+### Plan verification findings
+- 마이뮤직: listContent paddingHorizontal:20 이중 들여쓰기 + likedMap 미연동이 원인.
+- 치명 버그: 현행 백엔드 register는 consents·gender 필수 → AIDOL 가입 항상 400 + 에러 키(detail vs error) 불일치로 원인 은폐.
+- MAIDOL 로그인/가입 구성·문구·검증 규칙 전수 조사(worktree). 소셜 3종은 서버 리다이렉트 방식, 현재 키 미설정으로 503.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| screens/MyMusicScreen.tsx | 이중 패딩 제거, likes 연동 | 기존 유지 |
+| App.tsx | 탭 아이콘 play-circle/edit-3 | — |
+| constants/consentTexts.ts (신규) | 약관 전문(AIDOL 치환) | — |
+| components/auth/ConsentList.tsx (신규) | 전체동의+5항목+보기 | — |
+| components/auth/SocialLoginButtons.tsx (신규) | 소셜 3종, 503 안내 | `[AuthPanel:*] 소셜 로그인` |
+| components/auth/AuthPanel.tsx (신규) | 로그인/게이트/가입/blocked 흐름 | `[AuthPanel] login/register 시도` |
+| stores/authStore.ts | register extra payload, error 키 수정 | 기존 유지 |
+| screens/SettingsScreen.tsx | 인라인 폼 → AuthPanel | 기존 유지 |
+
+---
+
 ## v3.42 — 2026-08-18 — 빈 상태·CTA·flex 정렬 + 공유/다운로드 선택지 + 신고 + 프롬프트 파라미터
 
 ### 요청

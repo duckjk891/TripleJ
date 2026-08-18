@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
+import AuthPanel from '../components/auth/AuthPanel';
 import { colors } from '../theme/colors';
 import { AppText } from '../components/ui';
 
@@ -273,86 +274,8 @@ export default function SettingsScreen({ navigation }: any) {
     <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent}>
       {TitleRow}
       <View style={styles.formContainer}>
-        <AppText variant="title3" center style={styles.formTitle}>
-          {isRegister ? '회원가입' : '로그인'}
-        </AppText>
-
-        {error && (
-          <View style={styles.errorContainer}>
-            <AppText style={styles.errorText}>{error}</AppText>
-          </View>
-        )}
-
-        <TextInput
-          style={styles.input}
-          placeholder="이메일"
-          placeholderTextColor={colors.text.muted}
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="비밀번호"
-          placeholderTextColor={colors.text.muted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
-
-        {isRegister && (
-          <>
-            <TextInput
-              style={styles.input}
-              placeholder="닉네임"
-              placeholderTextColor={colors.text.muted}
-              value={nickname}
-              onChangeText={setNickname}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder={`기획사명 (비워두면 "${nickname || '닉네임'} 엔터테인먼트")`}
-              placeholderTextColor={colors.text.muted}
-              value={companyName}
-              onChangeText={setCompanyName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder='호칭 (예: 대표, PD)'
-              placeholderTextColor={colors.text.muted}
-              value={displayTitle}
-              onChangeText={setDisplayTitle}
-              maxLength={20}
-            />
-            <AppText style={styles.helperText}>
-              AIDOL에서는 기획사명과 호칭으로 불러드려요. 나중에 설정에서 변경할 수 있어요.
-            </AppText>
-          </>
-        )}
-
-        <TouchableOpacity
-          style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
-          onPress={handleSubmit}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color={colors.text.primary} />
-          ) : (
-            <AppText style={styles.submitText}>
-              {isRegister ? '회원가입' : '로그인'}
-            </AppText>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={toggleMode}>
-          <AppText style={styles.toggleText}>
-            {isRegister
-              ? '이미 계정이 있으신가요? 로그인'
-              : '계정이 없으신가요? 회원가입'}
-          </AppText>
-        </TouchableOpacity>
+        {/* 로그인/회원가입 — MAIDOL 구성(연령 게이트·약관 동의·소셜 로그인 포함) 공용 패널 */}
+        <AuthPanel onSuccess={() => navigation.goBack()} />
       </View>
     </ScrollView>
   );

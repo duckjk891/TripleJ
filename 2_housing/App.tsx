@@ -248,7 +248,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '플레이리스트',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="folder" size={size - 2} color={color} />
+            <Feather name="play-circle" size={size - 2} color={color} />
           ),
           ...pageHeader(navigation, '플레이리스트'),
         })}
@@ -259,7 +259,7 @@ function MainTabs() {
         options={({ navigation }) => ({
           tabBarLabel: '피드',
           tabBarIcon: ({ color, size }) => (
-            <Feather name="users" size={size - 2} color={color} />
+            <Feather name="edit-3" size={size - 2} color={color} />
           ),
           ...pageHeader(navigation, '피드'),
         })}

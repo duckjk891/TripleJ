@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
+import { useLikesStore } from '../stores/likesStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
@@ -71,6 +72,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
   const [actionTrack, setActionTrack] = useState<Track | null>(null); // ⋮ 더보기 대상
+  const likedMap = useLikesStore((s) => s.liked);
+  const syncLikes = useLikesStore((s) => s.sync);
   const [sdTrack, setSdTrack] = useState<Track | null>(null);   // 공유/다운로드 선택지 대상
   const [sdMode, setSdMode] = useState<SheetMode>('share');
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
@@ -85,7 +88,9 @@ export default function MyMusicScreen({ navigation }: any) {
       const res = await api.get('/tracks/my', {
         params: { page: 1, limit: 20, sort: 'created_at' },
       });
-      setTracks(res.data.tracks || []);
+      const list = res.data.tracks || [];
+      setTracks(list);
+      if (list.length) syncLikes(list.map((t: Track) => String(t.id)));
     } catch (e) {
       console.error('[MyMusic] fetch error', e);
     } finally {
@@ -229,6 +234,7 @@ export default function MyMusicScreen({ navigation }: any) {
   const renderTrack = ({ item }: { item: Track }) => (
     <TrackRow
       track={{ ...item, id: String(item.id) }}
+      liked={!!likedMap[String(item.id)]}
       onPress={() => navigation.getParent()?.navigate('Player', { track: item })}
       onMore={() => setActionTrack(item)}
     />
@@ -440,6 +446,8 @@ export default function MyMusicScreen({ navigation }: any) {
         track={actionTrack ? { ...actionTrack, id: String(actionTrack.id) } : null}
         onClose={() => setActionTrack(null)}
         onPlay={(t) => navigation.getParent()?.navigate('Player', { track: t })}
+        onLikeChanged={(trackId, delta) => setTracks((prev) => prev.map((t) =>
+          String(t.id) === trackId ? { ...t, like_count: Math.max(0, (t.like_count ?? 0) + delta) } : t))}
         extraItems={actionTrack ? [
           { icon: 'share-2', label: '공유', onPress: () => { setSdMode('share'); setSdTrack(actionTrack); } },
           { icon: 'download', label: '다운로드', onPress: () => { setSdMode('download'); setSdTrack(actionTrack); } },
@@ -681,7 +689,7 @@ const styles = StyleSheet.create({
     color: colors.border.default,
   },
   listContent: {
-    paddingHorizontal: 20,
+    // 행(TrackRow)이 자체 좌우 패딩을 가지므로 여기선 넣지 않는다(플레이리스트·차트와 동일 정렬)
     paddingBottom: 100,
   },
   trackItem: {

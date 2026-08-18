@@ -4,6 +4,49 @@
 
 ---
 
+## v3.43 (마이뮤직 정렬 통일 + 하단바 아이콘 + 로그인·회원가입 MAIDOL 이식) — 2026-08-18
+
+### 요청 작업
+① 마이뮤직 곡 목록이 플레이리스트/차트와 다름 → 맞출 것 ② 하단바: 플레이리스트=재생 아이콘, 피드=연필 아이콘 ③ 로그인·회원가입을 MAIDOL 참고해 개편(소셜 로그인 포함).
+
+### Plan verification findings (0단계)
+- **마이뮤직 다르게 보인 원인**: 행은 v3.41에서 공용 TrackRow로 교체됐지만 FlatList `listContent`에 `paddingHorizontal: 20`이 남아 **이중 들여쓰기**(행 자체 패딩 16 + 20) → 플레이리스트·차트와 정렬이 어긋남. 좋아요 하트 상태(likedMap)도 미연동이라 하트가 항상 회색.
+- **치명 버그 발견**: 현행 백엔드 `POST /auth/register`는 `consents`(필수 4종+version)·`gender`가 **필수** — AIDOL은 안 보내서 **신규 가입이 항상 400 실패**. 게다가 에러 키 불일치(백엔드 `{error}` vs 프론트 `detail` 파싱)로 사용자에겐 "회원가입에 실패했습니다"만 표시돼 원인 불명.
+- MAIDOL(worktree) 로그인: 라벨+입력, 소셜 3종(Google/카카오/네이버, "~로 계속하기", 구분선 "또는"), 비밀번호 찾기 없음(양쪽 공통). 가입: 연령 게이트(생년월일·내외국인·성별 필수) → 본 폼(이메일/닉네임/기획사명·호칭 필수/비번+실시간 힌트 3종+확인/추천코드 4자리/약관 5종 전체동의+보기 토글). 만14세 미만은 `guardian_consent_enabled=false`라 blocked 안내.
+- 소셜 3종은 백엔드 리다이렉트 방식(SDK 없음)이며 **현재 원격 서버에 OAuth 키 미설정 → 3종 모두 503**(직접 호출로 확인).
+
+### 수행 결과
+- **screens/MyMusicScreen.tsx**: `listContent`의 paddingHorizontal 제거(이중 들여쓰기 해소 → 플레이리스트·차트와 동일 정렬), likesStore 연동(하트 상태 표시 + ⋮ 좋아요 시 카운트 보정).
+- **App.tsx**: 하단바 아이콘 — 플레이리스트 `folder`→`play-circle`(재생), 피드 `users`→`edit-3`(연필).
+- **constants/consentTexts.ts (신규)**: MAIDOL 약관 전문 이식(서비스명만 AIDOL 치환, 회사·법률 정보 원문 유지). CONSENT_VERSION `2026-07-30.v1`.
+- **components/auth/ConsentList.tsx (신규)**: 전체 동의 + 5항목(필수4·선택1) + 보기/접기 전문 + 행태정보 고지.
+- **components/auth/SocialLoginButtons.tsx (신규)**: Google/카카오/네이버 3종(MAIDOL 색상·문구) + "또는" 구분선. 탭 시 서버 503이면 서버 안내 문구 표시, 활성 시 리다이렉트 — **키가 설정되면 코드 수정 없이 동작**.
+- **components/auth/AuthPanel.tsx (신규)**: 로그인(라벨+입력+소셜+가입 링크) / 가입(연령 게이트→본 폼→blocked) 전체 흐름. 기획사명 '엔터테인먼트' 자동 접미(onBlur+제출), 비번 실시간 힌트 3종·확인 필드, 추천코드 정규식(4자리, 0/1/O/I/L 제외), 필수 동의 미완료 시 가입 버튼 disabled. **register에 birth_date/nationality/gender/consents/referral_code 포함** → 400 버그 해소.
+- **stores/authStore.ts**: register에 `extra` payload 지원, 에러 파싱 `error` 우선(`detail` 폴백) — 서버 문구("이미 등록된 이메일입니다." 등)가 이제 그대로 표시됨.
+- **screens/SettingsScreen.tsx**: 비로그인 인라인 폼 → `AuthPanel`로 교체(라우트 유지 → 기존 `navigate('Settings')` 호출 전부 그대로 동작).
+
+### 테스트 (tester) — PASS
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc --noEmit | 에러 0 |
+| [e2e] 하단바: 플레이리스트=▶, 피드=✎ 렌더 | PASS (`/tmp/v343_tabs.png`) |
+| [e2e] 로그인 화면: 라벨·"또는"·소셜 3종(색상 포함)·회원가입 링크 | PASS (`/tmp/v343_login.png`) |
+| [e2e] 소셜 탭(카카오) → 503 감지·비활성 안내 | PASS (콘솔 `[AuthPanel:login] 소셜 로그인 비활성`) |
+| [e2e] 연령 게이트 3필드 → 만14세 미만 blocked 안내 → 이전으로 복귀 | PASS (`/tmp/v343_blocked.png`) |
+| [e2e] 성인 → 본 폼: 게이트 요약+수정, 자동 접미("브이343 엔터테인먼트"), 비번 힌트 ✓3종, 약관 전체동의 | PASS (`/tmp/v343_form_filled.png`) |
+| [e2e] **실제 신규 가입 성공**(테스트 계정) — consents·gender 포함 payload로 201 | PASS (`/tmp/v343_registered.png`) |
+| [regression] 마이뮤직 이중 패딩 제거·likes 연동 (tsc·코드 확인) | PASS |
+| 콘솔 에러(내 코드) | 0 (503은 소셜 비활성 — 의도된 처리) |
+
+### 특이사항
+- **소셜 로그인은 서버 측 비활성**: 원격 백엔드에 Google/카카오/네이버 OAuth 키가 미설정(3종 모두 503)이라, 버튼은 MAIDOL과 동일하게 노출하되 탭 시 서버 안내 문구를 보여준다. 키 설정 + `frontend_url`(OAuth 콜백 복귀 주소)을 AIDOL로 지정하는 **서버 설정 작업이 되면 그대로 동작**한다. 네이티브 앱 딥링크 콜백은 그 시점에 추가 필요(expo-web-browser).
+- MAIDOL 가입 폼의 '지역(선택)' select는 이번 이식에서 생략(선택 항목, RN picker 미설치) — 원하면 추가 가능. 생년월일도 select 3개 대신 숫자 입력 3칸으로 치환(RN 관용).
+- 비밀번호 찾기는 MAIDOL에도 없음(백엔드 API 부재) — 갭 아님.
+- 테스트로 신규 계정 1개가 생성됨(`v343test…@example.com`) — 실사용자 데이터는 건드리지 않음.
+- SettingsScreen의 구 폼 상태/핸들러 일부는 죽은 코드로 남아 있음(로그인 상태 화면과 공유하는 상태라 이번엔 미제거 — 후속 정리 가능).
+
+---
+
 ## v3.42 (빈 상태 이모지·마이페이지 CTA·flex 정렬 + 공유/다운로드 선택지 + 신고 + 프롬프트 파라미터) — 2026-08-18
 
 ### 요청 작업
