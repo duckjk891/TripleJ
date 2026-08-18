@@ -4,6 +4,35 @@
 
 ---
 
+## v3.24 (버그픽스 — 비로그인 좋아요/담기 무반응 → 로그인 화면 이동) — 2026-08-18
+
+### 요청 작업
+비로그인 상태에서 차트의 **좋아요·담기 버튼**을 누르면 로그인 유도 화면으로 넘어가야 하는데 **반응이 없음**. (+ 재생목록 화면 관련 질문 — 아래 특이사항)
+
+### Plan verification findings (0단계)
+- 원인: `ChartScreen.requireLogin()`이 `Alert.alert('로그인 필요', …, [취소, 로그인])` 다중버튼 얼럿 사용. **react-native-web(Expo Web)은 다중버튼 Alert 미지원 → 아무것도 안 뜸("반응 없음")**. 좋아요(toggleLike)·담기(handleAddToPlaylist) 둘 다 이 함수를 거침.
+
+### 수행 결과
+- **screens/ChartScreen.tsx**: `requireLogin()`을 **다중버튼 Alert 제거 → 비로그인 시 `navigation.navigate('Settings')`(로그인 화면) 즉시 이동**으로 변경. 좋아요·담기 양쪽 동일 적용. `[ChartScreen]` 로그.
+
+### 테스트 (tester) — PASS (E2E, tsc 0 / 콘솔에러 0)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc | 에러 0 |
+| [e2e] 비로그인 좋아요(♡) 탭 → 로그인 화면 | PASS (`/tmp/v324_like_gate.png`) |
+| [e2e] 비로그인 담기(+) 탭 → 로그인 화면 | PASS (`/tmp/v324_add_gate.png`) |
+| 콘솔 에러 / 4xx·5xx | 0 / 0 |
+
+### 특이사항 (재생목록 화면 질문 답변)
+- MAIDOL 조사 결과: **재생목록(재생 큐/멜론식)은 존재**하나 별도 최상위 메뉴가 아니라 **전체화면 플레이어(`/player`) 안의 "재생목록" 탭**임(`PlayerPage.jsx`). 큐는 **100% 클라이언트 인메모리**(PlayerContext `playlist` 배열, 백엔드 큐 엔드포인트 없음). 저장형 **플레이리스트**(`/playlists` API)와는 별개.
+- MAIDOL 차트 곡별 버튼 4종: 재생 / 좋아요 / **재생목록 추가(FiPlus=큐에 담기, 인메모리)** / **플레이리스트에 추가(FiBookmark=모달→POST /playlists/{id}/tracks)**.
+- **AIDOL 현재 상태**: 차트에 담기 버튼이 **`+`(플레이리스트 담기) 1종만** 있음. "재생목록(큐)에 담기" 버튼과 **큐 보기 화면(PlayerScreen 내 재생목록 탭)** 은 미구현. AIDOL엔 이미 `playerStore.queue`가 있어 큐 자체는 존재(setQueue로 재생 시 채워짐)하나 **보는 화면·큐 추가 버튼이 없음** → 원하시면 다음 증분으로 (a)차트에 "재생목록 추가" 버튼 + (b)PlayerScreen에 재생목록(큐) 탭 추가 가능.
+
+### 커밋
+`fix: v3.24 비로그인 좋아요/담기 무반응 수정(Alert→로그인 화면 이동) (team-dev)` — 푸시 OFF.
+
+---
+
 ## v3.23 (기능 #8 — 좋아요(likes) 백엔드 실연동) — 2026-08-18
 
 ### 요청 작업

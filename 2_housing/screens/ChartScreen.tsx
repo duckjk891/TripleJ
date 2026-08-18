@@ -96,10 +96,9 @@ export default function ChartScreen() {
 
   const requireLogin = (): boolean => {
     if (!user) {
-      Alert.alert('로그인 필요', '이 기능을 사용하려면 로그인이 필요해요.', [
-        { text: '취소', style: 'cancel' },
-        { text: '로그인', onPress: () => navigation.navigate('Settings') },
-      ]);
+      // 비로그인 → 로그인 화면으로 바로 이동 (Alert.alert 다중버튼은 웹에서 미동작 → 반응 없음 버그)
+      if (__DEV__) console.info('[ChartScreen] 비로그인 액션 → 로그인 화면 이동');
+      navigation.navigate('Settings');
       return false;
     }
     return true;

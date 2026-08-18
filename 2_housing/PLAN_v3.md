@@ -7,6 +7,24 @@
 
 ---
 
+## v3.24 — 2026-08-18 — 비로그인 좋아요/담기 무반응 픽스 + 재생목록 화면 조사
+
+### 요청
+비로그인 좋아요·담기 클릭 시 로그인 화면으로 이동해야 하는데 무반응. + MAIDOL 재생목록(큐) 화면 존재 여부 질문.
+
+### Plan verification findings (0단계)
+- `ChartScreen.requireLogin` = Alert.alert 다중버튼 → RN-Web 미지원 → 무반응.
+- MAIDOL 재생목록 = PlayerPage(/player) 내 탭(인메모리 PlayerContext.playlist), 백엔드 큐 없음. 플레이리스트(/playlists)와 별개. AIDOL엔 playerStore.queue만 있고 큐 보기 화면·큐추가 버튼 없음.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/ChartScreen.tsx | requireLogin: Alert 다중버튼 → navigate('Settings') | `[ChartScreen]` |
+
+후속 후보: 차트 "재생목록 추가" 버튼 + PlayerScreen 재생목록(큐) 탭.
+
+---
+
 ## v3.23 — 2026-08-18 — 좋아요(likes) 백엔드 실연동
 
 ### 요청
