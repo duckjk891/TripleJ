@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import AdminLayout from '../components/AdminLayout';
 import AdminBroadcastModal from '../components/AdminBroadcastModal';
 import { getAdminNotices, getAdminNoticeDetail } from '../api';
@@ -8,10 +8,16 @@ import './AdminNoticesPage.css';
 // 공지 관리 (v194) — 전체발송으로 나간 공지 DM 의 이력 + 읽음 통계.
 // 발송/재발송은 신규 API 없이 기존 POST /admin/cs/broadcast(AdminBroadcastModal) 를 그대로 쓴다.
 // 행 클릭 → 확장행에서 본문 전문(상세 API) + "이 공지 재발송"(모달 prefill).
+// v195 — 읽음 수가 새로고침 전까지 멈춰 있던 문제를 20초 silent 폴링으로 해소(NOTICE_POLL_MS 참조).
 // 로그 prefix `[AdminNotices]` — 모든 라인에 추적자 notice(=id 앞 8자) 포함.
 // **공지 본문 원문·관리자 닉네임 원문은 콘솔에 출력하지 않는다**(길이·건수·상태만).
 
 const LIST_LIMIT = 20;
+
+// v195 — 읽음 수 자동 갱신 폴링 주기. 관리자 앱에 WS 사용처가 0건이라 폴링으로 해결한다.
+// CS 목록(12s)보다 느리게 — 공지 읽음 집계($in aggregation)는 (페이지 공지 수 × 공지당 수신자 수)
+// 로 스캔량이 사용자 수에 선형 증가한다. 사이드바(30s)보다는 빠르게 — 체감 지연 절반 이하.
+const NOTICE_POLL_MS = 20000;
 
 // 상태 뱃지. stale(=sending 고착 추정)은 서버 판정값이며 status 표시를 덮어쓴다 — 프론트 재판정 금지.
 const STATUS_META = {
@@ -69,11 +75,34 @@ export default function AdminNoticesPage() {
   // 발송/재발송 모달 — prefill 은 열 때만 주입된다(모달 내부 useEffect 계약).
   const [modal, setModal] = useState({ open: false, text: '', audience: '', title: '📢 공지 발송' });
 
-  const loadNotices = useCallback(async (pageNum) => {
-    setLoading(true);
-    setError('');
+  // v195 — 폴링 콜백은 재생성되면 안 되므로(인터벌 재시작) 최신 상태는 ref 로 참조한다.
+  const pageRef = useRef(page);
+  useEffect(() => { pageRef.current = page; }, [page]);
+  const expandedIdRef = useRef(expandedId);
+  useEffect(() => { expandedIdRef.current = expandedId; }, [expandedId]);
+  const modalOpenRef = useRef(modal.open);
+  useEffect(() => { modalOpenRef.current = modal.open; }, [modal.open]);
+  const inFlightRef = useRef(false);
+
+  // silent(=폴링) 로드는 `loading`/`error` 를 건드리지 않는다 — AdminCsPage 의 { silent:true } 관행 승계.
+  // 표가 `로딩 중...` 으로 통째 교체되지 않도록 성공 시에만 데이터를 갈아끼운다.
+  const loadNotices = useCallback(async (pageNum, opts = {}) => {
+    const { silent = false } = opts;
+    if (!silent) {
+      setLoading(true);
+      setError('');
+    }
+    inFlightRef.current = true;
     try {
       const { data } = await getAdminNotices({ page: pageNum, limit: LIST_LIMIT });
+      // 페이지 레이스 가드 — 응답이 오는 사이 사용자가 페이지를 넘겼으면 결과를 폐기한다.
+      // (폐기하지 않으면 2페이지 화면에 1페이지 데이터가 들어와 위치가 튄다)
+      if (silent && pageRef.current !== pageNum) {
+        if (import.meta.env.DEV) {
+          console.info('[AdminNotices] poll response discarded (page changed)', { requested: pageNum, current: pageRef.current });
+        }
+        return;
+      }
       const list = Array.isArray(data?.notices) ? data.notices : [];
       if (!Array.isArray(data?.notices)) {
         console.warn('[AdminNotices] unexpected notices response shape', { keys: Object.keys(data || {}) });
@@ -84,13 +113,27 @@ export default function AdminNoticesPage() {
         pg.totalPages ?? pg.pages ?? pg.total_pages ??
         (pg.total && pg.limit ? Math.ceil(pg.total / pg.limit) : 1);
       setTotalPages(Math.max(1, tp || 1));
-      if (import.meta.env.DEV) console.info('[AdminNotices] list loaded', { page: pageNum, count: list.length });
+      if (import.meta.env.DEV) {
+        if (silent) {
+          const readTotal = list.reduce((s, n) => s + (typeof n?.read_count === 'number' ? n.read_count : 0), 0);
+          console.info('[AdminNotices] poll merged', { page: pageNum, count: list.length, read_total: readTotal });
+        } else {
+          console.info('[AdminNotices] list loaded', { page: pageNum, count: list.length });
+        }
+      }
     } catch (err) {
-      console.error('[AdminNotices] getAdminNotices failed', { status: err?.response?.status, message: err?.message });
+      const meta = { status: err?.response?.status, message: err?.message };
+      if (silent) {
+        // 폴링 실패는 조용히 무시 — 기존 목록을 유지하고 에러 화면으로 바꾸지 않는다(다음 tick 이 재시도).
+        console.error('[AdminNotices] poll getAdminNotices failed (ignored)', meta);
+        return;
+      }
+      console.error('[AdminNotices] getAdminNotices failed', meta);
       setNotices([]);
       setError('공지 목록을 불러오지 못했습니다.');
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -101,22 +144,57 @@ export default function AdminNoticesPage() {
     loadNotices(page);
   }, [page, reloadKey, loadNotices]);
 
-  const fetchDetail = useCallback(async (id) => {
-    setDetailState((m) => ({ ...m, [id]: { loading: true } }));
+  // silent(=폴링) 재조회는 `loading:true` 로 만들지 않는다(`본문 불러오는 중...` 깜빡임 방지).
+  // 실패해도 기존 data 를 보존한다 — 펼쳐둔 본문이 에러 화면으로 바뀌면 안 된다.
+  const fetchDetail = useCallback(async (id, opts = {}) => {
+    const { silent = false } = opts;
+    if (silent) {
+      if (import.meta.env.DEV) console.info('[AdminNotices] detail silent refresh', { notice: shortId(id) });
+    } else {
+      setDetailState((m) => ({ ...m, [id]: { loading: true } }));
+    }
     try {
       const { data } = await getAdminNoticeDetail(id);
       const detail = data?.notice || data || {};
       setDetailState((m) => ({ ...m, [id]: { loading: false, data: detail } }));
-      if (import.meta.env.DEV) {
+      if (import.meta.env.DEV && !silent) {
         console.info('[AdminNotices] detail loaded', { notice: shortId(id), text_len: (detail.text || '').length });
       }
     } catch (err) {
       console.error('[AdminNotices] getAdminNoticeDetail failed', {
-        notice: shortId(id), status: err?.response?.status, message: err?.message,
+        notice: shortId(id), silent, status: err?.response?.status, message: err?.message,
       });
+      if (silent) return; // 기존 data 유지 — 다음 tick 이 재시도한다
       setDetailState((m) => ({ ...m, [id]: { loading: false, error: true } }));
     }
   }, []);
+
+  // v195 — 읽음 수 자동 갱신 폴링. `expandedId`/`page`/`modal`/`reloadKey` 를 절대 건드리지 않는다.
+  // 중단 조건 3종: 발송 모달 열림(입력 방해) / 백그라운드 탭(무의미한 집계 부하) / 인플라이트(요청 중첩).
+  useEffect(() => {
+    const tick = () => {
+      if (modalOpenRef.current) {
+        if (import.meta.env.DEV) console.info('[AdminNotices] poll skipped', { reason: 'modal' });
+        return;
+      }
+      if (document.hidden) {
+        if (import.meta.env.DEV) console.info('[AdminNotices] poll skipped', { reason: 'hidden' });
+        return;
+      }
+      if (inFlightRef.current) {
+        if (import.meta.env.DEV) console.info('[AdminNotices] poll skipped', { reason: 'inflight' });
+        return;
+      }
+      const pageNum = pageRef.current;
+      if (import.meta.env.DEV) console.info('[AdminNotices] poll tick', { page: pageNum, silent: true });
+      loadNotices(pageNum, { silent: true });
+      // 펼쳐둔 행이 있으면 그 1건만 상세도 함께 갱신(전체 상세 재조회 금지 — 집계 비용).
+      const openId = expandedIdRef.current;
+      if (openId) fetchDetail(openId, { silent: true });
+    };
+    const timer = setInterval(tick, NOTICE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [loadNotices, fetchDetail]);
 
   const handleToggle = useCallback((id) => {
     if (expandedId === id) {

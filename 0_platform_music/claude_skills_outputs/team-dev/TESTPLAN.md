@@ -3618,3 +3618,509 @@ BASE_REV: **d19af4b** (git diff 기준 — 코디네이터 확정 시 갱신)
 
 - 2026-08-19 초판 작성 (41건) — PLAN v194 §1~§7 전 항목 시나리오화. 안전 제약(**실발송 금지**)을 §0 불변식으로 두고 발송 계열을 **검증 분기·인가·429 락(수동 선점)·`window.confirm` 취소·410** 경로로만 설계. 실발송이 원리적으로 필요한 2건(NT-API-16·17)은 **격리 조건 설계서(§5-A)와 함께 승인 대기**로 분리. 태그 균형은 정적 검사·순수 함수 검증을 unit 으로 끌어올려 unit 41.5% / api 41.5% / e2e 17.1% 로 확보(승인 대기 2건 제외 시에도 43.6/38.5/17.9 로 충족). BASE_REV=d19af4b 초안 반영. planner 회신 대기 7건(§5-C). planner 검토 후 확정 예정.
 - 2026-08-19 실측 반영(설계 중 구현분 착지) — 작성 중 backend-dev/frontend-dev 산출물(`notice_service.py`·`admin_notices.py`·`AdminNoticesPage.jsx`·`AdminBroadcastModal` props)이 워킹트리에 착지해, "구현 확정값 관측" 으로 열어 두었던 3건의 기대값을 **실측으로 고정**: ① `_is_stale` 엄격 부등호(`dt < now-30분`) → 30분 정각 **false**(NT-UNIT-03 b) ② `text_preview = text[:60]` **말줄임 기호 미부착**(NT-UNIT-04) ③ audience 라벨 `all=전체 / users=일반 사용자 / customers=고객` + `|| value || '-'` 폴백, 모달과 값·라벨 일원화 대조 추가(NT-UNIT-05) ④ 목록 행 17키·상세 +2키가 PLAN §3-4 계약과 일치하고 `profile_image` 미포함(NT-UNIT-10). §5-C 4·5번 회신 항목 **해소**(잔여 회신 5건). **시나리오 개수·태그 비율은 불변**(41건 / 17·17·7).
+
+
+## v195 — 미읽음 뱃지 실시간 반영 + 공지 읽음 수 자동 갱신
+
+팀: MAIDOL-RealtimeSquad / test-designer 작성 (**설계 산출물 — 본 문서는 실행하지 않는다. 실행은 tester 담당**)
+근거: PLAN.md v195 §2 실측(①본인 대상 이벤트 부재가 근본 원인 / ②`loadNotices` 가 `setLoading` 으로 표를 통째 교체 / ③관리자 앱 WS 0건), §3 변경 매트릭스 B1~B3·F1~F8, §4 회귀 위험 R1~R17, §5 범위 밖, §6 절대 준수
+BASE_REV: **e356a70**(v194) + 워킹트리 v195 구현분(미커밋)
+
+**대상 파일 (작성 시점 워킹트리 실측)**
+
+| # | 파일 | 상태 |
+|---|---|---|
+| B1·B2 | `backend_9005/app/services/dm_service.py` `mark_read`(`:571~628`) | 착지 — prev_unread 캡처 `:597`, peer `read` `:609`, self `unread` `:616`, published 로그 `:618`, skipped 로그 `:623` |
+| B3 | `backend_9004/app/services/dm_service.py` | 착지 — `:616`/`:618` 동일 위치 (미러 확인됨) |
+| F1 | `frontend/src/components/Header.jsx:201~209` | 착지 — DEV 로그 1줄만 추가, `onUnread` 폴백 로직 무변경 |
+| F2·F3 | `frontend/src/utils/dmSocket.js`, `frontend/src/pages/DmInboxPage.jsx` | **무수정**(설계대로) |
+| F4·F5 | `frontend_admin/src/pages/AdminNoticesPage.jsx` | 착지 — `NOTICE_POLL_MS=20000`(`:20`), ref 4종(`:77~84`), `loadNotices(pageNum,{silent})`(`:88~137`), 폴링 이펙트(`:174~197`), `fetchDetail(id,{silent})`(`:148~169`) |
+| F6 | `frontend_admin/src/utils/csUnreadBus.js` **(신규, untracked)** | 착지 — `subscribe`(`:17~20`), `emitDelta`(`:26~37`) |
+| F7 | `frontend_admin/src/components/AdminLayout.jsx:51~59` | 착지 — `csUnreadBus.subscribe` + `Math.max(0, v+delta)`(`:56`), 30초 폴링(`:47`) 유지 |
+| F8 | `frontend_admin/src/pages/AdminCsPage.jsx:150~173` | 착지 — `prevUnread` 열기 전 캡처(`:154`), `markCsRead` 성공 후 `prevUnread>0` 일 때만 `emitDelta`(`:167~172`) |
+
+---
+
+### 0. 전제 및 안전 규칙 (최우선 — 위반 시 해당 항목 자체를 폐기)
+
+1. **실사용자 계정·데이터 무접촉.** 테스트 계정 `<test-user-a>` / `<test-user-b>` / `<admin-email>` 만 사용한다. 실사용자 대화·공지·별·트랙은 **열람/집계 조회만**.
+2. **실제 전체발송 절대 금지.** `POST /api/admin/cs/broadcast` 를 **어떤 항목에서도 200 으로 성립시키지 않는다.** 발송 계열은 **모달 열림 / 검증 400 / 인가 401·403 / 503 / 429 락 / `window.confirm` 취소** 경로까지만. 200 이 필요해 보이는 상황이 생기면 **즉시 중단하고 planner 승인 요청**(§5).
+3. **기존 실공지 읽기 전용.** `notices` 컬렉션에 사용자가 실제로 발송한 공지가 존재한다. **수정·삭제·재발송 금지.** ②의 읽음 수 증가 e2e(RT-E2E-02)는 **이 기존 공지의 미읽음 수신자인 테스트 계정으로 열람**하여 수행한다(공지 자체는 건드리지 않는다).
+4. **우회 금지 3종**: `mark_read` 의 pending no-op 가드(`dm_service.py:587~594`) / `_serialize_message` 화이트리스트 / `ensure_dm_indexes` — 테스트를 위해 **수정·몽키패치·우회하지 않는다**(가드를 끄고 통과시키는 테스트는 그 자체가 FAIL).
+5. **크리덴셜 위생**: 산출물에 API 키·시크릿·실계정 비밀번호·토큰 **실값 기재 금지**. 전부 플레이스홀더 — `<TEST_ADMIN_TOKEN>`, `<TEST_USER_A_TOKEN>`, `<TEST_USER_B_TOKEN>`, `<cid>`, `<notice-id>`, `<official-id>`.
+6. **개인정보·본문 위생**: 공지 본문 원문·닉네임 원문·생년월일·성별·이메일을 TESTPLAN·REPORT·로그 인용에 **옮겨 적지 않는다**. **길이(`text_len`)·건수·필드 존재 여부·불리언**으로만 기재한다.
+7. **인프라 무조작**: docker-compose·포트·ES·MinIO 조작 금지. **MinIO 9100 차단 금지.** 컨테이너 재시작이 필요해 보이면 planner 확인 후.
+8. **쓰기 허용 총량**: ① 테스트 계정 간 DM 대화 1건 + 메시지 수 건 ② 테스트 계정 간 pending 요청 2건(수락 1·거절 1) ③ `POST /api/admin/cs/send` 지정발송 **테스트 계정 1명 대상 최대 1건**(G1 회귀용) ④ Redis 락 키 1개 수동 선점(RT-API-09, TTL 자연 해제, **승인 필요**). **그 외 쓰기 0건.**
+9. **선행 절차**(v187~v194 승계): 프론트 `[unit]`·`[e2e]` 착수 전 사용자 앱(4000)·관리자 앱(4001) **하드 새로고침 + 빌드 표기 기록**. 백엔드 `[unit]` 은 9005 실행 환경에서 순수 함수 직접 호출(pytest 임시 파일 또는 `python -c`) — **임시 테스트 파일은 사용 후 삭제**(레포 커밋 금지).
+10. 기준 URL: 9005 = `http://localhost:9005`, 9004 = `http://localhost:9004`, 사용자 앱 = `http://localhost:4000`, 관리자 앱 = `http://localhost:4001`.
+11. **DEV 로그 전제**: `[Header]`·`[AdminNotices]`·`[CsUnreadBus]`·`[AdminLayout]`·`[AdminCs]` 콘솔 라인은 전부 `import.meta.env.DEV` 가드 안에 있다. **개발 서버(dev)로 띄운 상태**에서만 관측 가능 — 프로덕션 빌드로 검증하면 로그 부재를 FAIL 로 오판한다.
+
+**즉시 중단 조건 (하나라도 FAIL → 이후 항목 진행 금지, planner 즉시 보고)**
+- **RT-UNIT-01** (본인 이벤트 타입이 `unread` 가 아님 → 거짓 읽음표시 버그, R1)
+- **RT-UNIT-16 / RT-API-05** (pending 프라이버시 가드 훼손, R2)
+- **RT-E2E-07** (내가 읽었을 때 내 메시지에 읽음표시가 켜짐 — R1 의 화면 발현)
+- `POST /api/admin/cs/broadcast` 가 **예기치 않게 200** 을 반환
+- 공지 본문 원문·개인정보가 로그/콘솔/응답에 노출
+
+---
+
+### 1. `[unit]` 시나리오 — 20건
+
+> 실행 방식: 백엔드는 9005 파이썬 환경에서 `dm_service` 를 import 해 `publish_to_user` / mongo 를 **목킹**하고 직접 호출(DB 불필요). 프론트는 dev 서버 + 브라우저 콘솔 + 정적 코드 검사(`grep`/`diff`) 조합. **프로덕션 코드를 수정하지 않는다.**
+
+#### RT-UNIT-01. 본인 대상 이벤트 타입이 **정확히 `"unread"`** `[unit]` — 핵심 / 즉시 중단 조건 (①, R1)
+- **사전조건**: `dm_service.publish_to_user` 를 호출 인자 기록용 스텁으로 교체. `_get_conv` 가 `{_id:<cid>, participants:[me,peer], status:"accepted", unread:{me:3}}` 를 반환하도록 mongo 목킹. `dm_messages.update_many` 는 `modified_count=2` 반환.
+- **Given** 미읽음 3건이 있는 accepted 대화, **When** `await mark_read(mongo, <cid>, me)` 를 호출하면, **Then** `publish_to_user` 호출 인자 중 `uid == me` 인 건의 이벤트가 **`{"type": "unread", "conversation_id": <cid>}`** 이다.
+- **기대결과**: 본인 이벤트 `event["type"] == "unread"`. **`"read"` 이면 FAIL**(DmInboxPage 가 "상대가 내 메시지를 읽음"으로 해석 → 거짓 읽음표시).
+- **확인할 로그 라인**: `[dm] mark_read self-unread published conv=%s me=%s prev_unread=%d marked=%d`
+- **PASS/FAIL**: 타입 문자열 정확 일치 → PASS. 다른 값·본인 호출 자체 부재 → **FAIL + 즉시 중단**.
+- **실패 시 의심**: `backend_9005/app/services/dm_service.py:616` (self publish 의 `"type"` 리터럴).
+
+#### RT-UNIT-02. 본인 이벤트 페이로드에 **`count` 키 부재** `[unit]` (①)
+- **사전조건**: RT-UNIT-01 과 동일 목킹.
+- **Given** 동일 대화, **When** `mark_read` 호출 후 본인 이벤트 dict 의 키 집합을 조사하면, **Then** 키 집합이 **정확히 `{"type", "conversation_id"}`** 이다.
+- **기대결과**: `"count" not in event` 가 참. `count`·`requests`·`unread` 등 추가 키 0개. (근거: `GET /unread-count` 만이 `{count, requests}` 를 함께 계산하는 단일 진실원천이며, count 동봉은 official 계정의 전량 스캔 비용을 클릭마다 유발)
+- **확인할 로그 라인**: `[dm] mark_read self-unread published ...` (페이로드 자체는 로그에 없으므로 스텁 기록으로 단언)
+- **PASS/FAIL**: 키 2개 정확 일치 → PASS. `count` 존재 또는 키 초과 → FAIL.
+- **실패 시 의심**: `dm_service.py:616`.
+
+#### RT-UNIT-03. peer `read` 발행 유지 + **순서 peer → self** `[unit]` (①, R4)
+- **사전조건**: RT-UNIT-01 목킹 + `publish_to_user` 스텁이 **호출 순서를 리스트로 보존**.
+- **Given** peer 가 존재하는 accepted 대화, **When** `mark_read` 호출, **Then** 호출 기록이 `[(peer, {"type":"read","conversation_id":cid}), (me, {"type":"unread","conversation_id":cid})]` 순이다.
+- **기대결과**: 총 2회 호출. 1번째 = peer + `read`, 2번째 = me + `unread`. peer 이벤트 페이로드도 **v194 이전과 동일**(`{type, conversation_id}` 2키).
+- **확인할 로그 라인**: `[dm] mark_read self-unread published conv=%s me=%s prev_unread=%d marked=%d`
+- **PASS/FAIL**: 순서·대상·타입 모두 일치 → PASS. peer 발행 누락/변형 → FAIL(읽음표시 동기화 회귀).
+- **실패 시 의심**: `dm_service.py:606~609` (peer 블록), `:610~625` (self 블록 위치).
+
+#### RT-UNIT-04. `prev_unread==0 && modified_count==0` → 본인 발행 **skip** `[unit]` (①, R5)
+- **사전조건**: `unread:{me:0}` 인 accepted 대화, `update_many` 가 `modified_count=0` 반환하도록 목킹.
+- **Given** 이미 다 읽은 대화, **When** `mark_read` 를 다시 호출하면, **Then** `publish_to_user` 는 **peer 1회만**(read) 호출되고 **본인 호출 0회**.
+- **기대결과**: 반환값은 정상 `{conversation_id, read, marked:0}`. 본인 대상 발행 0건.
+- **확인할 로그 라인**: `[dm] mark_read self-unread skipped (nothing to clear) conv=%s me=%s` (published 라인이 **나오면 FAIL**)
+- **PASS/FAIL**: skipped 로그 + 본인 발행 0 → PASS. published 로그 출력 → FAIL(불필요 이벤트 폭주 — `DmInboxPage:385` 가 활성 대화 수신마다 `markDmRead` 를 호출한다).
+- **실패 시 의심**: `dm_service.py:615` (`if prev_unread > 0 or result.modified_count > 0`).
+
+#### RT-UNIT-05. `prev_unread>0` → **반드시 발행** `[unit]` (①, R5)
+- **사전조건**: `unread:{me:1}`, `update_many` 가 `modified_count=0` 반환(메시지는 이미 read 지만 카운터만 남은 경계 케이스).
+- **Given** 카운터만 1 남은 대화, **When** `mark_read` 호출, **Then** 본인 대상 `unread` 이벤트가 **발행된다**(가드가 `or` 이므로 한쪽만 참이어도 통과).
+- **기대결과**: 본인 발행 1회, 로그 `prev_unread=1 marked=0`.
+- **확인할 로그 라인**: `[dm] mark_read self-unread published conv=%s me=%s prev_unread=1 marked=0`
+- **PASS/FAIL**: 발행됨 → PASS. skip 되면 FAIL(뱃지가 안 줄어드는 원래 증상 재발).
+- **실패 시 의심**: `dm_service.py:615` 가드가 `and` 로 잘못 작성됐는지, `:597` prev_unread 캡처가 unread=0 업데이트 **뒤**로 밀렸는지.
+
+#### RT-UNIT-06. 발행 실패(Redis 예외)가 `mark_read` 반환값·상태변경을 깨지 않음 `[unit]` (①)
+- **사전조건**: `get_redis()` 가 `publish` 시 예외를 던지는 더블 반환(또는 `None` 반환 경로). `publish_to_user` 는 **몽키패치하지 않는다**(실제 예외 흡수 경로를 타야 함).
+- **Given** Redis 장애, **When** `mark_read` 호출, **Then** 예외가 밖으로 새지 않고 `{conversation_id, read:True, marked:N}` 를 정상 반환하며 `dm_conversations.update_one`·`dm_messages.update_many` 는 **정상 호출**된다.
+- **기대결과**: 호출자에게 예외 전파 0. 상태 변경(unread=0, read=true) 그대로.
+- **확인할 로그 라인**: `[dm] publish failed uid=%s` (traceback 동반) + `[dm] mark_read self-unread published ...`
+- **PASS/FAIL**: 예외 전파 없음 + 반환 정상 → PASS. `HTTPException`/500 발생 → FAIL.
+- **실패 시 의심**: `dm_service.py:328~336` (`publish_to_user` 의 `try/except`).
+
+#### RT-UNIT-07. `loadNotices(page, {silent:true})` 가 `setLoading`/`setError` **미호출** `[unit]` (②, R8)
+- **사전조건**: 관리자 앱 dev 서버, 공지 관리 페이지 진입 후 목록 로드 완료(표 렌더).
+- **Given** 이미 렌더된 목록, **When** 폴링 tick 이 `loadNotices(pageNum, {silent:true})` 를 호출하면, **Then** 화면이 `로딩 중...` 으로 교체되지 않고 에러 배너도 뜨지 않는다.
+- **기대결과**: 정적 확인 — `loadNotices` 안의 `setLoading(true)`/`setError('')` 가 **`if (!silent)` 블록 내부**에만 존재(`AdminNoticesPage.jsx:90~93`), `finally` 의 `setLoading(false)` 도 `if (!silent)` 로 가드(`:135`). 런타임 확인 — 20초 tick 시 표 DOM 이 제거/재생성되지 않음(개발자도구 Elements 에서 `<tbody>` 노드 유지).
+- **확인할 로그 라인**: `[AdminNotices] poll tick` → `[AdminNotices] poll merged` (그 사이 `[AdminNotices] list loaded` 는 **나오면 안 됨** — silent 분기 미탐)
+- **PASS/FAIL**: 두 가드 모두 존재 + tick 시 `로딩 중...` 미노출 → PASS.
+- **실패 시 의심**: `AdminNoticesPage.jsx:90~93`, `:133~136`.
+
+#### RT-UNIT-08. 폴링 중단 조건 3종 각각에서 요청 미발생 `[unit]` (②, R9)
+- **사전조건**: 공지 관리 페이지 dev, Network 탭 필터 `notices`.
+- **Given/When/Then** 3분기를 각각 재현:
+  | 분기 | 재현 방법 | 기대 로그 | 기대 네트워크 |
+  |---|---|---|---|
+  | modal | "공지 발송" 버튼으로 모달 열고 20초 이상 대기 (**보내지 않는다 — §0-2**) | `[AdminNotices] poll skipped {reason:'modal'}` | `GET /admin/notices` **0건** |
+  | hidden | 다른 탭으로 전환해 `document.hidden===true` 로 만들고 25초 대기 | `[AdminNotices] poll skipped {reason:'hidden'}` | 0건 |
+  | inflight | 네트워크를 Slow 3G 로 스로틀해 응답이 20초를 넘기게 한 뒤 다음 tick 관찰 | `[AdminNotices] poll skipped {reason:'inflight'}` | 중복 요청 0건 |
+- **기대결과**: 세 분기 모두 skip 로그 + 신규 요청 0. 조건 해제 시 다음 tick 부터 정상 재개.
+- **확인할 로그 라인**: `[AdminNotices] poll skipped` (reason 3종) / 해제 후 `[AdminNotices] poll tick`
+- **PASS/FAIL**: 3분기 전부 skip → PASS. 1분기라도 요청이 나가면 FAIL.
+- **실패 시 의심**: `AdminNoticesPage.jsx:176~187` (skip 3분기), `:84` `inFlightRef` 선언, `:134` `finally` 의 `inFlightRef.current=false`.
+
+#### RT-UNIT-09. 응답의 요청 페이지 ≠ 현재 페이지 → **상태 미반영(레이스 폐기)** `[unit]` (②, R10)
+- **사전조건**: 공지 2페이지 이상 존재. Network 를 Slow 3G 로 스로틀.
+- **Given** 1페이지에서 폴링 tick 이 발사되어 응답 대기 중, **When** 응답 도착 전에 "다음" 버튼으로 2페이지로 이동하면, **Then** 1페이지 응답이 도착해도 `setNotices`/`setTotalPages` 가 호출되지 않고 화면은 2페이지 데이터를 유지한다.
+- **기대결과**: 표에 1페이지 행이 섞여 들어오지 않음. 페이지 표시(`n / m`)가 2 유지. **비-silent 초기 로드는 이 가드를 타지 않음**(`silent &&` 조건) — 사용자가 직접 넘긴 로드는 정상 반영되어야 한다.
+- **확인할 로그 라인**: `[AdminNotices] poll response discarded (page changed)` `{requested:1, current:2}`
+- **PASS/FAIL**: discard 로그 + 화면 유지 → PASS. 1페이지 데이터가 렌더되면 FAIL.
+- **실패 시 의심**: `AdminNoticesPage.jsx:99~104` (레이스 가드), `:78~79` (`pageRef` 동기화 이펙트).
+
+#### RT-UNIT-10. silent 상세 재조회가 `loading:true` 미설정 + 실패 시 기존 `data` 보존 `[unit]` (②, R7/R8)
+- **사전조건**: 공지 1건의 행을 펼쳐 본문이 표시된 상태(`detailState[id].data` 존재).
+- **Given** 펼친 행, **When** ① 정상 tick 20초 경과 ② 상세 API 를 일시적으로 실패시키는 상황(오프라인 토글) 을 각각 겪으면, **Then** ① `본문 불러오는 중...` 문구가 **한 프레임도 뜨지 않고** 본문이 갱신되며 ② 실패해도 본문이 **에러 화면으로 바뀌지 않고 기존 내용 유지**.
+- **기대결과**: 정적 확인 — `fetchDetail` 의 `setDetailState({loading:true})` 가 `else`(비-silent) 분기에만 존재(`:150~154`), `catch` 에서 `if (silent) return;` 로 조기 반환(`:166`). 런타임 확인 — 본문 DOM 텍스트 길이가 0 이 되는 순간 없음.
+- **확인할 로그 라인**: `[AdminNotices] detail silent refresh` `{notice:<8자>}` / 실패 시 `[AdminNotices] getAdminNoticeDetail failed {silent:true, ...}` (**본문 원문 미출력** 확인)
+- **PASS/FAIL**: 깜빡임 0 + 실패 시 보존 → PASS.
+- **실패 시 의심**: `AdminNoticesPage.jsx:148~154`, `:162~167`.
+
+#### RT-UNIT-11. `csUnreadBus.emitDelta(-3)` 전달 + unsubscribe 후 미전달 `[unit]` (③)
+- **사전조건**: 관리자 앱 dev 콘솔에서 모듈 직접 검증(또는 임시 vitest — 사용 후 삭제).
+- **Given** `const off = subscribe(fn)`, **When** `emitDelta(-3)` → `off()` → `emitDelta(-1)`, **Then** `fn` 은 **`-3` 으로 1회만** 호출된다.
+- **기대결과**: 호출 기록 `[-3]`. 추가로 `emitDelta(0)`·`emitDelta(NaN)`·`emitDelta(undefined)`·`emitDelta('x')` 는 **전부 no-op**(가드 `!Number.isFinite(n) || n === 0`), 이 경우 `[CsUnreadBus] delta` 로그도 남지 않아야 한다.
+- **확인할 로그 라인**: `[CsUnreadBus] delta` `{delta:-3}` 1회 (0/NaN 케이스에서는 **미출력**)
+- **PASS/FAIL**: 정확 1회 + no-op 4종 → PASS. unsubscribe 후에도 호출되면 FAIL(누수).
+- **실패 시 의심**: `frontend_admin/src/utils/csUnreadBus.js:17~20`(Set 삭제), `:26~29`(가드).
+
+#### RT-UNIT-12. 구독자 예외가 다른 구독자·호출측으로 전파되지 않음 `[unit]` (③)
+- **사전조건**: 구독자 2개 등록 — 첫 번째는 즉시 `throw new Error('boom')`, 두 번째는 호출 기록.
+- **Given** 예외를 던지는 구독자가 먼저 등록됨, **When** `emitDelta(-2)` 를 호출하면, **Then** 두 번째 구독자도 `-2` 를 받고 `emitDelta` 자체는 예외를 던지지 않는다.
+- **기대결과**: 두 번째 구독자 호출 1회. 호출측 `try/catch` 불필요. 에러는 콘솔로만 보고되며 **에러 메시지에 대화 내용·개인정보 없음**(`{message}` 만).
+- **확인할 로그 라인**: `[CsUnreadBus] handler error` `{message:'boom'}` + `[CsUnreadBus] delta` `{delta:-2}`
+- **PASS/FAIL**: 전파 0 + 두 번째 수신 → PASS.
+- **실패 시 의심**: `csUnreadBus.js:30~36` (`forEach` 내부 `try/catch`).
+
+#### RT-UNIT-13. `AdminLayout` 델타 적용이 **음수로 내려가지 않음** `[unit]` (③, R12)
+- **사전조건**: 관리자 앱 dev, 사이드바 CS 뱃지의 현재값 확인(예: 2).
+- **Given** `csUnread === 2`, **When** 콘솔에서 `csUnreadBus.emitDelta(-5)` 를 강제 발행하면(또는 unread 5인 대화를 여는 실사용 시나리오), **Then** 뱃지 상태값이 **0** 이 되고 음수·`-3` 표기가 나타나지 않는다.
+- **기대결과**: `setCsUnread((v) => Math.max(0, v + delta))` 하한 동작. 뱃지는 0 일 때 미표시(기존 렌더 규칙 유지).
+- **확인할 로그 라인**: `[AdminLayout] csUnread delta applied` `{delta:-5}`
+- **PASS/FAIL**: 0 하한 → PASS. 음수 표기 → FAIL.
+- **실패 시 의심**: `frontend_admin/src/components/AdminLayout.jsx:56`.
+
+#### RT-UNIT-14. `openConversation` 이 `markCsRead` **성공 시에만**, `unread>0` 일 때만 emit `[unit]` (③, R12/R13)
+- **사전조건**: CS 관리 페이지. 대화 3종 준비 — (a) `unread=2` (b) `unread=0` (c) `markCsRead` 가 실패하도록 오프라인 토글한 상태의 `unread=1`.
+- **Given/When/Then**:
+  | 케이스 | 대화 클릭 | 기대 emit | 기대 로그 |
+  |---|---|---|---|
+  | a | `unread=2` | `-2` **1회** | `[AdminCs] csUnread signal {cid:<8자>, delta:-2}` → `[CsUnreadBus] delta` → `[AdminLayout] csUnread delta applied` |
+  | b | `unread=0` | **0회** | signal 로그 **미출력**(뱃지 불변) |
+  | c | 실패(오프라인) | **0회** | `[AdminCs] markCsRead failed` 만, signal 로그 미출력 |
+  | a′ | a 를 **다시 클릭**(이미 0) | **0회** | signal 미출력 |
+- **기대결과**: 정적 확인 — `prevUnread` 캡처가 `markCsRead` **이전**(`:154`)이고 emit 은 `try` 블록 안 `markCsRead` **성공 뒤**(`:167~172`). 액션당 1회 emit(렌더/updater 내부 호출 아님 → StrictMode 이중 적용 없음).
+- **확인할 로그 라인**: `[AdminCs] csUnread signal` / `[CsUnreadBus] delta` / `[AdminLayout] csUnread delta applied`
+- **PASS/FAIL**: 4케이스 전부 일치 → PASS. b·c 에서 emit 발생 → FAIL(드리프트 유발).
+- **실패 시 의심**: `frontend_admin/src/pages/AdminCsPage.jsx:153~155`(캡처 위치), `:167~172`(emit 조건).
+
+#### RT-UNIT-15. 본인 `unread` 이벤트가 `DmInboxPage` 읽음표시 경로를 타지 않음 `[unit]` — 핵심 (G3, R1)
+- **사전조건**: 사용자 앱 소스 정적 검사 + dev 콘솔.
+- **Given** `DmInboxPage.jsx` 의 WS 구독 목록, **When** `grep -n "dmSocket.on" frontend/src/pages/DmInboxPage.jsx` 를 실행하면, **Then** 구독은 `onMessage`(`:368`) / `onAccepted`(`:434`) / `onRead`(`:443`) **3종뿐**이고 **`onUnread` 구독이 0건**이다.
+- **기대결과**: `onUnread` 0건 확인. 추가로 `onRead` 핸들러(`:443~452`)가 `String(m.sender_id) === String(currentUserId)` 인 메시지를 `read:true` 로 칠하는 코드임을 확인 → **이 경로에 본인 이벤트가 도달할 수 없음**이 타입 분리로 보장됨을 문서화. 런타임 확인 — 내가 대화를 열었을 때 콘솔에 `[Header] ws unread event {hasCount:false}` 는 뜨지만 DmInboxPage 발 목록 재조회 요청은 추가로 발생하지 않는다.
+- **확인할 로그 라인**: `[Header] ws unread event` `{hasCount:false}`
+- **PASS/FAIL**: `onUnread` 구독 0건 + 중복 리페치 0 → PASS. `DmInboxPage` 에 `onUnread` 가 추가되어 있으면 **FAIL**(PLAN §5 범위 밖 위반, 깜빡임 유발).
+- **실패 시 의심**: `frontend/src/pages/DmInboxPage.jsx:443~452`, `frontend/src/utils/dmSocket.js` 디스패치 테이블.
+
+#### RT-UNIT-16. pending no-op 시 **peer `read` 미발행 + 본인 `unread` 미발행** `[unit]` — 즉시 중단 조건 (G4, R2)
+- **사전조건**: `_get_conv` 가 `{status:"pending", requester_id:<peer>, participants:[me,peer], unread:{me:1}}` 를 반환하도록 목킹. `publish_to_user` 는 호출 기록 스텁.
+- **Given** 내가 **수신자**인 pending 요청, **When** `mark_read(mongo, cid, me)` 호출, **Then** 함수는 **조기 return** 하여 `{"conversation_id":cid, "read":False, "marked":0}` 를 반환하고 `publish_to_user` 호출 **0회**, `dm_conversations.update_one`·`dm_messages.update_many` 호출 **0회**.
+- **기대결과**: unread 보존(요청 열람 사실을 발신자에게 노출하지 않는 프라이버시 설계). **본인 대상 `unread` 도 금지** — 이 분기에서는 뱃지가 줄지 않는 것이 정상이다.
+- **확인할 로그 라인**: `[dm] mark_read skipped (pending request) conv=%s me=%s` (published/skipped(nothing to clear) 라인은 **둘 다 미출력**)
+- **PASS/FAIL**: 발행 0 + DB 쓰기 0 + 반환 정확 → PASS. 하나라도 어긋나면 **FAIL + 즉시 중단**.
+- **실패 시 의심**: `dm_service.py:587~594` (pending 가드가 `prev_unread` 캡처(`:597`)보다 **위**에 있어야 한다).
+
+#### RT-UNIT-17. 관리자 폴링 2종 **존치** — `AdminCsPage` 12초 / `AdminLayout` 30초 `[unit]` (G10, R11)
+- **사전조건**: 관리자 앱 소스 + dev 실행.
+- **Given** v195 변경 후 소스, **When** `grep -n "POLL_MS\|setInterval" frontend_admin/src/pages/AdminCsPage.jsx frontend_admin/src/components/AdminLayout.jsx` 를 실행하면, **Then** `AdminCsPage.jsx:20 POLL_MS = 12000` + `:210~214 setInterval` 이 **존재**하고 `AdminLayout.jsx:10 CS_UNREAD_POLL_MS = 30000` + `:47 setInterval(fetchUnread, ...)` 도 **존재**한다.
+- **기대결과**: 두 인터벌 모두 살아 있고 실제로 동작(Network 탭에서 12초 주기 CS 목록 요청, 30초 주기 `GET /admin/cs/unread-count` 관찰). **델타 버스는 폴링을 대체하지 않는 보완 경로**임을 확인.
+- **확인할 로그 라인**: 30초 tick 후 `[AdminLayout] csUnread delta applied` 없이 뱃지가 권위값으로 교정되는지(델타 로그 없이 값 변동 = 폴링 동작)
+- **PASS/FAIL**: 두 인터벌 존재 + 네트워크 주기 관찰 → PASS. 제거·주기 변경 → FAIL.
+- **실패 시 의심**: `AdminCsPage.jsx:20`, `:210`; `AdminLayout.jsx:10`, `:47`.
+
+#### RT-UNIT-18. 공지 폴링이 `expandedId`·`page`·`modal` 을 건드리지 않음 `[unit]` (G11, R7/R9/R10)
+- **사전조건**: 공지 관리 페이지, 2페이지로 이동 + 임의 행 1개 펼침.
+- **Given** `page=2`, `expandedId=<notice-id>`, 모달 닫힘, **When** 폴링이 3회(60초) tick 하면, **Then** 세 상태가 모두 불변이다.
+- **기대결과**: 정적 확인 — 폴링 이펙트(`AdminNoticesPage.jsx:174~197`) 안에 `setExpandedId`/`setPage`/`setModal` **호출 0건**(ref 읽기만: `pageRef.current`, `expandedIdRef.current`, `modalOpenRef.current`). `setExpandedId(null)` 은 `[page, reloadKey]` 이펙트(`:139~144`) 전용으로 유지. 폴링 이펙트 의존성 배열이 `[loadNotices, fetchDetail]`(둘 다 `useCallback([])` → 불변)이라 **인터벌 재시작이 발생하지 않음**도 확인.
+- **확인할 로그 라인**: `[AdminNotices] poll tick {page:2}` ×3 (page 가 1로 바뀌면 FAIL) + `[AdminNotices] detail silent refresh` ×3
+- **PASS/FAIL**: 3상태 불변 + tick 로그의 page 유지 → PASS.
+- **실패 시 의심**: `AdminNoticesPage.jsx:174~197`, 의존성 배열 `:197`.
+
+#### RT-UNIT-19. **9004 미러** — `diff -q` 5개 파일 무출력 `[unit]` (G12, R15)
+- **사전조건**: 메인 체크아웃 `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music`.
+- **Given** v195 변경 후, **When** 아래를 실행하면
+  ```
+  for f in app/services/dm_service.py app/routes/dm.py app/routes/admin_cs.py \
+           app/routes/admin_notices.py app/services/notice_service.py; do
+    diff -q backend_9005/$f backend_9004/$f
+  done
+  ```
+  **Then** **출력이 전혀 없다**(5개 전부 byte-identical).
+- **기대결과**: 이번 변경 대상인 `dm_service.py` 포함 5개 무출력. 보조 확인 — `grep -n 'publish_to_user(me_id' backend_9004/app/services/dm_service.py` 가 **`:616`** 을 반환(9005 와 동일 라인).
+- **확인할 로그 라인**: (정적 검사 — 로그 없음). 대신 `grep -c 'self-unread' backend_9004/app/services/dm_service.py` == `grep -c 'self-unread' backend_9005/app/services/dm_service.py`
+- **PASS/FAIL**: 무출력 → PASS. 1줄이라도 출력 → FAIL(미러 누락).
+- **실패 시 의심**: `backend_9004/app/services/dm_service.py:596~626`.
+
+#### RT-UNIT-20. **신규 로그에 본문·닉네임 원문 없음** (정적 grep) `[unit]` (G13, R17)
+- **사전조건**: 소스 정적 검사.
+- **Given** v195 에서 추가·수정된 로그 라인 전부, **When** 아래를 확인하면, **Then** 어떤 라인도 원문 문자열을 담지 않는다.
+  - `dm_service.py:610~625` — `_short(cid)`·`_short(me_id)`·정수 2개만. 메시지 `text` 참조 0.
+  - `Header.jsx:203~205` — `{hasCount: boolean}` 만. `conversation_id`·`count` 값·본문 참조 0.
+  - `AdminNoticesPage.jsx` 신규 로그 — `poll tick{page,silent}` / `poll skipped{reason}` / `poll merged{page,count,read_total}` / `poll response discarded{requested,current}` / `detail silent refresh{notice:8자}`. **`text`·`text_preview`·`admin_nickname` 참조 0.**
+  - `csUnreadBus.js:29`,`:34` — `{delta}` / `{message}` 만.
+  - `AdminLayout.jsx:55` — `{delta}` 만. `AdminCsPage.jsx:169` — `{cid: 앞8자, delta}` 만.
+- **기대결과**: `grep -n "console\.\(info\|warn\|error\)" <대상 5파일>` 결과에서 `text`·`nickname`·`email`·`birth`·`gender` 를 실어 나르는 신규 라인 **0건**.
+- **확인할 로그 라인**: 위 6종 문자열 자체가 검사 대상.
+- **PASS/FAIL**: 0건 → PASS. 1건이라도 원문 노출 → FAIL + 즉시 보고.
+- **실패 시 의심**: `AdminNoticesPage.jsx:116~118`(`poll merged` 집계부 — `read_total` 은 숫자 합산이어야 한다).
+
+---
+
+### 2. `[api]` 시나리오 — 16건
+
+> 실행 방식: 9005 에 직접 HTTP 호출(`curl`/HTTPie). 토큰은 플레이스홀더. **`POST /api/admin/cs/broadcast` 는 200 을 만들지 않는다.**
+
+#### RT-API-01. `POST /api/dm/conversations/{cid}/read` 응답 스키마 **불변** `[api]` (①)
+- **사전조건**: `<test-user-a>` 로 로그인, `<test-user-b>` 와의 accepted 대화 `<cid>` 에 미읽음 2건.
+- **Given** 미읽음 있는 대화, **When** `POST /api/dm/conversations/<cid>/read` (`Authorization: Bearer <TEST_USER_A_TOKEN>`), **Then** 200 + 응답 키 집합이 **정확히 `{conversation_id, read, marked}`**.
+- **기대결과**: `read == true`, `marked == 2`, `conversation_id == <cid>`. **키 추가·삭제 0**(v194 이전과 동일 — v195 는 API 계약 변경 0). 두 번째 호출은 `{read:true, marked:0}`.
+- **확인할 로그 라인**: `[dm] mark_read self-unread published conv=.. me=.. prev_unread=2 marked=2` → `[dm-pubsub] fanout uid=.. sent=N type=unread` (peer 쪽 `type=read` 도 함께)
+- **PASS/FAIL**: 3키 정확 일치 → PASS. 키 변동 → FAIL(계약 파괴).
+- **실패 시 의심**: `backend_9005/app/routes/dm.py:217~229`, `dm_service.py:626~628`.
+
+#### RT-API-02. `GET /api/dm/unread-count` 가 열람 후 감소 반영 `[api]` (①)
+- **사전조건**: `<test-user-a>` 에 미읽음 총 N(≥2), pending 요청 R건.
+- **Given** 열람 전 `GET /api/dm/unread-count` → `{count:N, requests:R}`, **When** `POST .../read` 로 미읽음 2건 대화를 읽고 다시 조회하면, **Then** `{count:N-2, requests:R}`.
+- **기대결과**: `count` 만 감소, `requests` **불변**(pending 은 read 대상 아님). 응답 키 2개 고정.
+- **확인할 로그 라인**: `[dm] mark_read self-unread published ...` 직후 `[dm] unread_count ...`(요청 로그) — count 값은 응답으로 판정.
+- **PASS/FAIL**: 정확히 −2 → PASS. `requests` 가 변하면 FAIL.
+- **실패 시 의심**: `dm.py:232~248`, `dm_service.py:633~` `unread_total`.
+
+#### RT-API-03. `GET /api/admin/notices?page=1&limit=20` **연속 2회 계약 동일** `[api]` (②)
+- **사전조건**: `<TEST_ADMIN_TOKEN>`. 기존 실공지 존재(읽기 전용).
+- **Given** 폴링이 같은 요청을 20초마다 반복한다는 전제, **When** 동일 요청을 **연속 2회**(간격 ~20초) 보내면, **Then** 두 응답의 **키 집합·타입이 완전히 동일**하다.
+- **기대결과**: 각 행 17키 = `{id, text_preview, text_len, audience, status, stale, targets, sent, failed, delivered, read_count, read_rate, admin_id, admin_nickname, admin_code, created_at, finished_at}`. `pagination` = `{page, limit, total, pages}`. 값 중 **`read_count`·`read_rate` 만 변동 허용**(다른 필드 변동 시 원인 규명 필요). `read_rate` 타입은 `float`, `stale` 은 `bool`. 응답에 **본문 전문(`text`) 미포함**.
+- **확인할 로그 라인**: 서버 `[admin-notices] list admin=.. page=1 limit=20 audience=-` ×2 + `[admin-notices] list done admin=.. total=.. returned=..` ×2 / 클라이언트 `[AdminNotices] poll merged {page:1, count:N, read_total:M}`
+- **PASS/FAIL**: 키 집합·타입 동일 → PASS. 필드 누락/추가 → FAIL.
+- **실패 시 의심**: `backend_9005/app/services/notice_service.py:136~172` (`_serialize_notice`), `app/routes/admin_notices.py:43~94`.
+
+#### RT-API-04. 기존 DM 송수신 + `before` 커서 과거 로드 `[api]` (G1)
+- **사전조건**: `<test-user-a>`↔`<test-user-b>` accepted 대화 `<cid>`, 메시지 ≥ 25건(부족하면 테스트 계정끼리 채운다 — §0-8 허용 범위).
+- **Given** 기존 대화, **When** ① `POST /api/dm/conversations/<cid>/messages` (본문 짧은 테스트 문자열) ② `GET /api/dm/conversations/<cid>/messages?limit=20` ③ ②의 최상단 id 로 `GET ...?before=<id>&limit=20`, **Then** ① 201/200 + 생성 메시지 반환 ② 20건 + `has_more:true` ③ 그 이전 구간이 **중복 없이** 반환.
+- **기대결과**: 메시지 직렬화 키 집합이 v194 와 동일(`_serialize_message` 화이트리스트 불변 — 개인정보 필드 0). `before` 페이지네이션 정상.
+- **확인할 로그 라인**: `[dm] message sent conv=.. me=.. peer=.. len=N notice=-` (본문 대신 **길이만** 기록되는지 확인)
+- **PASS/FAIL**: 3단계 정상 + 중복 0 → PASS.
+- **실패 시 의심**: `dm_service.py:493~569` (`send_message`), `dm.py:179~215`.
+
+#### RT-API-05. pending no-op — 반환·unread 보존·뱃지 불변 `[api]` — 즉시 중단 조건 (G4, R2)
+- **사전조건**: `<test-user-b>` → `<test-user-a>` 로 **서로 팔로우하지 않는 상태**의 메시지 요청 1건 생성(pending 대화 `<cid>`, `<test-user-a>` 미읽음 1).
+- **Given** `<test-user-a>` 가 수신자인 pending 대화, **When** `<TEST_USER_A_TOKEN>` 으로 `POST /api/dm/conversations/<cid>/read`, **Then** 200 + **`{conversation_id, read:false, marked:0}`**.
+- **기대결과**: 호출 전후 `GET /api/dm/unread-count` 의 `requests` **불변**, `count` **불변**. DB 상 `unread.<a>` 보존. **`[dm-pubsub] fanout ... type=read` 도 `type=unread` 도 발생하지 않음**(요청자에게 열람 사실 미노출).
+- **확인할 로그 라인**: `[dm] mark_read skipped (pending request) conv=%s me=%s` **만** 출력. `[dm] mark_read self-unread published` / `self-unread skipped (nothing to clear)` / `[dm-pubsub] fanout ... type=read` 는 **전부 미출력**.
+- **PASS/FAIL**: 반환·불변·무발행 3조건 → PASS. 하나라도 어긋나면 **FAIL + 즉시 중단**.
+- **실패 시 의심**: `dm_service.py:587~594`.
+
+#### RT-API-06. 메시지 요청함 — `/requests` / accept / decline / `accepted` 이벤트 `[api]` (G5)
+- **사전조건**: 테스트 계정 간 pending 요청 2건(수락용 1, 거절용 1).
+- **Given** pending 2건, **When** ① `GET /api/dm/requests` ② `POST /api/dm/conversations/<cid1>/accept` ③ `DELETE /api/dm/conversations/<cid2>` , **Then** ① 요청 목록에 2건 + 개인정보 필드 0 ② 200 + `status:"accepted"` ③ 200/204 + 목록에서 제거.
+- **기대결과**: accept 시 **요청자(peer)에게 `{"type":"accepted"}` 이벤트 발행**. 수락 후 `GET /unread-count` 의 `requests` 가 −1, `count` 는 해당 대화 unread 만큼 증가(pending 동안 보존됐던 값이 산입).
+- **확인할 로그 라인**: `[dm-pubsub] fanout uid=.. sent=N type=accepted`
+- **PASS/FAIL**: 3단계 정상 + accepted 이벤트 관측 → PASS.
+- **실패 시 의심**: `dm_service.py:694~710` (`accept_request`), `dm.py:295~340`.
+
+#### RT-API-07. CS 전체발송 — audience 화이트리스트 **400 또는 422** `[api]` — ⚠️ 200 성립 금지 (G6)
+> **기대값 정정 (v195 tester 실측 반영)**: 최초 기대값은 "4건 전부 400" 이었으나, `null`(및 키 누락·숫자)은 `BroadcastCsBody.audience: str`(non-Optional, `admin_cs.py:42~44`)에 걸려 **Pydantic 이 핸들러 진입 전에 422 로 거절**한다. 이는 FastAPI 표준 동작이며 `admin_cs.py` 는 v195 에서 **미변경**이다. 판정 기준을 **"400 또는 422 — 단 2xx 는 절대 불가"** 로 정정한다. 본질은 상태코드가 아니라 **발송 미성립**이다.
+
+- **사전조건**: `<TEST_ADMIN_TOKEN>`.
+- **Given** 화이트리스트 `{all, users, customers}`, **When** `POST /api/admin/cs/broadcast` 에 `audience` = `admins` / `""` / `null` / `ALL`(대문자) 를 각각 담아 보내면, **Then** 타입이 맞는 값(`admins`·`""`·`ALL`)은 **400**, 타입이 틀린 값(`null`)은 **422**.
+- **기대결과**: 4건 모두 **2xx 아님**. **어떤 경우에도 발송이 시작되지 않는다** — 응답에 `notice_id`·`targets` 가 실려 있으면 발송이 성립한 것이므로 **즉시 중단·planner 보고**. `notices` 컬렉션 건수가 호출 전후 **동일**함을 `GET /api/admin/notices?page=1` 의 `pagination.total` 로 확인.
+- **확인할 로그 라인**: 서버 경고 라인 확인 + `[notice] ...` 신규 생성 로그가 **없음**을 확인
+- **PASS/FAIL**: 4건 전부 400 또는 422 + `total` 불변 → PASS. 하나라도 2xx → **FAIL + 즉시 중단**.
+- **실패 시 의심**: `backend_9005/app/routes/admin_cs.py:271~` 의 audience 검증 위치(400 경로) / `:42~44` `BroadcastCsBody` 타입 선언(422 경로).
+
+#### RT-API-08. CS 전체발송 — 인가 **401 / 403** `[api]` — ⚠️ 200 성립 금지 (G6)
+- **사전조건**: 토큰 없음 / 일반 사용자 토큰 `<TEST_USER_A_TOKEN>`.
+- **Given** 관리자 전용 엔드포인트, **When** ① 토큰 없이 ② 일반 사용자 토큰으로 `POST /api/admin/cs/broadcast` (body 는 **유효한 audience 를 쓰지 않는다** — 인가가 먼저 걸리더라도 이중 안전), **Then** ① **401** ② **403**.
+- **기대결과**: 인가 실패가 **audience 검증보다 먼저** 걸린다(의존성 순서). `notices.total` 불변.
+- **확인할 로그 라인**: `[admin-cs] ...` 요청 로그가 남지 않거나 인가 거절만 기록됨
+- **PASS/FAIL**: 401·403 정확 → PASS. 2xx → **FAIL + 즉시 중단**.
+- **실패 시 의심**: `admin_cs.py:271` 의 `Depends(get_admin_user)`.
+
+#### RT-API-09. CS 전체발송 — official 미시드 **503** / 중복 락 **429** `[api]` — ⚠️ 200 성립 금지 / **planner 승인 필요** (G6)
+- **사전조건**: **① 503 분기는 관찰만**(official 계정을 삭제·변조하지 **않는다** — 현재 시드되어 있으므로 재현 불가 시 `SKIP(재현 불가 — 코드 경로 정적 확인으로 대체)`). ② 429 는 **Redis 브로드캐스트 락 키 1개를 수동 선점**해야 하며 **planner 승인 전 실행 금지**.
+- **Given** 락이 이미 잡힌 상태, **When** `POST /api/admin/cs/broadcast` 를 유효 audience 로 호출하면, **Then** **429** 로 즉시 거절되고 발송이 **시작되지 않는다**.
+- **기대결과**: 429 + `notices.total` 불변. 락은 TTL 로 자연 해제(수동 삭제 금지). 503 분기는 `_resolve_official` 실패 경로를 코드 리뷰로 확인하고 `SKIP` 기록.
+- **확인할 로그 라인**: 락 충돌 경고 라인 + `[notice]` 신규 생성 로그 **없음**
+- **PASS/FAIL**: 429 + total 불변 → PASS. 200 → **FAIL + 즉시 중단**.
+- **실패 시 의심**: `admin_cs.py:271~` 락 획득부, `_resolve_official`.
+- **⚠️ 승인 사유**: Redis 키 선점은 §0-8 의 쓰기 항목이며 락 유효시간 동안 **관리자의 정상 발송을 막는다.**
+
+#### RT-API-10. 구버전 `POST /api/dm/broadcast` → **410** `[api]` (G7)
+- **사전조건**: `<TEST_USER_A_TOKEN>` (일반 사용자 토큰으로도 410 이어야 한다).
+- **Given** v194 에서 폐기된 경로, **When** `POST /api/dm/broadcast` 를 body 유무 관계없이 호출하면, **Then** **410 Gone** + `{"error": "지원하지 않는 경로입니다. ..."}`.
+- **기대결과**: 어떤 경우에도 발송 0. 9004 에서도 동일 410.
+- **확인할 로그 라인**: `[dm-broadcast] gone (deprecated endpoint) me=%s`
+- **PASS/FAIL**: 410 → PASS. 2xx/404/500 → FAIL.
+- **실패 시 의심**: `backend_9005/app/routes/dm.py:281~293`.
+
+#### RT-API-11. 공지 목록 17키 + 상세 +2키 계약 `[api]` (G8)
+- **사전조건**: `<TEST_ADMIN_TOKEN>`, 기존 공지 `<notice-id>`(읽기 전용).
+- **Given** 목록·상세 API, **When** ① `GET /api/admin/notices?page=1&limit=20` ② `GET /api/admin/notices/<notice-id>`, **Then** ① 각 행 키 집합이 **정확히 17키**(RT-API-03 목록) ② 상세는 목록 행 + **`text`, `official_id`** = **19키**.
+- **기대결과**: 상세에만 본문 전문 존재(목록에는 `text_preview`(≤60자)·`text_len` 만). `text_preview` 길이 ≤ 60 이고 **말줄임 기호 미부착**. `text_len` == 원문 전체 길이(preview 길이와 다를 수 있음). **본문 원문은 산출물에 기재하지 않고 `text_len` 값만 기록.**
+- **확인할 로그 라인**: `[admin-notices] detail admin=%s notice=%s` (notice 는 앞 8자)
+- **PASS/FAIL**: 17/19키 정확 → PASS. 필드 증감 → FAIL(v195 는 백엔드 공지 무수정이므로 변동 자체가 회귀).
+- **실패 시 의심**: `notice_service.py:136~172`, `admin_notices.py:101~`.
+
+#### RT-API-12. 공지 API 에러 코드 — audience 400 / 잘못된 id 400 / 미존재 404 `[api]` (G8)
+- **사전조건**: `<TEST_ADMIN_TOKEN>`.
+- **Given/When/Then**:
+  | 요청 | 기대 |
+  |---|---|
+  | `GET /api/admin/notices?audience=admins` | **400** `{"error":"발송 대상이 올바르지 않습니다."}` |
+  | `GET /api/admin/notices?audience=users` | **200** (화이트리스트 통과) |
+  | `GET /api/admin/notices/not-an-objectid` | **400** `{"error":"잘못된 공지 ID 입니다."}` |
+  | `GET /api/admin/notices/<존재하지 않는 24자리 ObjectId>` | **404** |
+  | `GET /api/admin/notices?page=0&limit=9999` | **200** + `pagination.page==1`, `limit` 이 `MAX_LIST_LIMIT` 로 클램프 |
+- **기대결과**: 표대로. 500 이 나오면 FAIL.
+- **확인할 로그 라인**: `[admin-notices] list admin=.. audience=admins` / `[admin-notices] detail admin=.. notice=..`
+- **PASS/FAIL**: 5행 전부 일치 → PASS.
+- **실패 시 의심**: `admin_notices.py:58~76`(클램프), `:76~78`(audience 400), `:110~`(id 400/404).
+
+#### RT-API-13. 시각 **UTC `+00:00` 표기** `[api]` (G9)
+- **사전조건**: `<TEST_ADMIN_TOKEN>`.
+- **Given** 공지 목록·상세 응답의 `created_at`·`finished_at`, **When** 값을 검사하면, **Then** 전부 **`+00:00`(또는 명시적 오프셋) 접미가 붙은 ISO 8601** 이며 오프셋 없는 naive 문자열이 **0건**이다.
+- **기대결과**: 정적 보강 — `grep -n "isoformat()" backend_9005/app/routes/admin_notices.py backend_9005/app/services/notice_service.py` 결과에서 **`_iso` 정의부 외 직접 호출 0건**. `finished_at` 이 `null` 인 행(발송중)은 허용.
+- **확인할 로그 라인**: (계약 검사 — 응답 값으로 판정)
+- **PASS/FAIL**: 오프셋 누락 0 + 직접 호출 0 → PASS.
+- **실패 시 의심**: `notice_service.py` 의 `_iso` 정의부.
+
+#### RT-API-14. 응답 **개인정보 미노출** `[api]` (G13)
+- **사전조건**: `<TEST_ADMIN_TOKEN>`, `<TEST_USER_A_TOKEN>`.
+- **Given** v195 이후 응답들, **When** 아래 6개 응답 본문에서 `birth`/`birthday`/`birth_date`/`gender`/`sex`/`email` 키를 재귀 탐색하면, **Then** **전부 0건**:
+  `GET /api/admin/notices` · `GET /api/admin/notices/<notice-id>` · `GET /api/admin/cs/conversations` · `GET /api/admin/cs/conversations/<cid>/messages` · `GET /api/dm/conversations` · `GET /api/dm/conversations/<cid>/messages`
+- **기대결과**: 위 키 0건. 관리자 하이드레이션은 `admin_nickname`·`admin_code` 만. **관측된 실제 값은 산출물에 옮겨 적지 않고 "키 0건" 만 기록.**
+- **확인할 로그 라인**: 서버 로그 grep — `grep -nE "birth|gender|email" <9005 로그 tail>` 결과에서 v195 신규 라인(`self-unread`) 매칭 **0건**
+- **PASS/FAIL**: 키 0건 + 로그 매칭 0건 → PASS. 1건이라도 → **FAIL + 즉시 보고**.
+- **실패 시 의심**: `notice_service.py:163~165`(하이드레이션 화이트리스트), `dm_service._serialize_message`.
+
+#### RT-API-15. official 계정 무해성 — `fanout ... sent=0 type=unread` `[api]` (G14, R6)
+- **사전조건**: `<TEST_ADMIN_TOKEN>`, 미읽음이 있는 CS 대화 `<cid>`(테스트 계정이 official 에게 보낸 것). 9005 로그 tail 준비.
+- **Given** 관리자 앱에 WS 사용처가 0건이므로 official 의 수신 소켓이 없다, **When** `POST /api/admin/cs/conversations/<cid>/read` 를 호출하면, **Then** 정상 200 + `{conversation_id, read, marked}` 이고 pubsub 로그에 **`sent=0`** 이 남는다.
+- **기대결과**: `[dm-pubsub] fanout uid=<official 앞8자> sent=0 type=unread` — **`sent` 가 0 이 아니면** 관리자 세션이 사용자 WS 에 붙어 있다는 뜻이므로 원인 규명 필요. 관리자 앱 동작·화면 **무변화**(에러·리렌더 폭주 0). 이벤트 페이로드에 `conversation_id` 외 필드 없음.
+- **확인할 로그 라인**: `[admin-cs] cid=.. admin=.. read` → `[dm] mark_read self-unread published conv=.. me=.. prev_unread=N marked=M` → `[dm-pubsub] fanout uid=.. sent=0 type=unread` (peer=테스트 계정 쪽은 `type=read`, `sent` 는 접속 여부에 따름)
+- **PASS/FAIL**: 200 + `sent=0` + 관리자 앱 무변화 → PASS.
+- **실패 시 의심**: `admin_cs.py:187~205`, `dm.py:460~475`(fanout 로그), `dm.py:55~91`(`ConnectionManager`).
+
+#### RT-API-16. **9004 런타임 동등성** — 동일 요청·동일 응답·동일 신규 로그 `[api]` (G12 보완, R15)
+- **사전조건**: 9004 가 기동 중이고 9005 와 동일 Mongo/Redis 를 바라보는지 먼저 확인(다르면 `SKIP` + planner 보고 — 인프라 조작 금지).
+- **Given** RT-UNIT-19 로 파일 동일성이 확인된 상태, **When** 9004 에 `POST /api/dm/conversations/<cid>/read` 와 `GET /api/dm/unread-count` 를 보내면, **Then** 9005 와 **응답 키 집합·상태코드가 동일**하고 9004 로그에도 `self-unread` 라인이 남는다.
+- **기대결과**: `{conversation_id, read, marked}` / `{count, requests}` 동일. 9004 로그에 `[dm] mark_read self-unread published ...` 또는 `... skipped (nothing to clear) ...` 출현.
+- **확인할 로그 라인**: `[dm] mark_read self-unread published conv=%s me=%s prev_unread=%d marked=%d` (9004 로그)
+- **PASS/FAIL**: 응답 동일 + 로그 출현 → PASS. 9004 에만 500/구버전 응답 → FAIL(미러 반영 누락).
+- **실패 시 의심**: `backend_9004/app/services/dm_service.py:596~626`, 9004 프로세스 재기동 여부(핫리로드 미적용 가능성).
+
+---
+
+### 3. `[e2e]` 시나리오 — 8건
+
+> 실행 방식: 브라우저 2창/2탭. **dev 서버**로 띄운 상태(§0-11). 시간 판정은 스톱워치 + 콘솔 타임스탬프.
+
+#### RT-E2E-01. 두 탭 동시 로그인 → 한 탭 열람 → **다른 탭 뱃지가 폴링(30s) 전에 0** `[e2e]` (①)
+- **사전조건**: `<test-user-a>` 로 **탭1·탭2** 동시 로그인(4000). 본인인증 완료 계정(미인증이면 봉투 비활성이라 시나리오 불성립). 미읽음 ≥ 1 인 대화 존재. 두 탭 모두 헤더 뱃지에 동일 숫자 표시. 두 탭 콘솔 열어 둠.
+- **Given** 탭1·탭2 뱃지 = N(≥1), **When** **탭1** 에서 해당 대화를 열어 읽으면, **Then** **탭2** 의 헤더 뱃지가 **5초 이내**(30초 폴링 주기 이전)에 감소한다.
+- **기대결과**: 탭2 콘솔에 `[Header] ws unread event {hasCount:false}` → 이어서 `GET /api/dm/unread-count` 1회 → 뱃지 갱신. 판정 기준은 **"30초 폴링 tick 이 오기 전에 값이 바뀌었는가"** — 스톱워치로 5초 이내 확인. 탭2 의 DM 목록 화면이 열려 있어도 **깜빡임·중복 재조회 없음**(DmInboxPage 는 `onUnread` 미구독).
+- **확인할 로그 라인**: 탭2 `[Header] ws unread event {hasCount:false}` / 서버 `[dm] mark_read self-unread published conv=.. me=.. prev_unread=N marked=M` → `[dm-pubsub] fanout uid=.. sent=2 type=unread` (**`sent=2`** = 두 탭 소켓)
+- **PASS/FAIL**: 5초 이내 감소 + `sent≥2` → PASS. 30초 뒤에야 바뀌면 FAIL(WS 미도달 — 원래 증상).
+- **실패 시 의심**: `dm_service.py:616`, `dm.py:55~91`(멀티탭 소켓 집합), `frontend/src/components/Header.jsx:201~209`, `frontend/src/utils/dmSocket.js`(재연결 상태).
+
+#### RT-E2E-02. 4000 에서 공지 DM 열람 → 4001 공지 읽음 수 **20~25초 내 +1**(새로고침 없이) `[e2e]` (②)
+- **사전조건**: **기존 실공지 1건**(§0-3, 읽기 전용)의 **미읽음 수신자가 테스트 계정**인지 먼저 확인. 4001 공지 관리 페이지를 열어 그 공지 행의 `read_count`·`read_rate` 를 **스크린샷/메모로 기록**(본문은 기록하지 않는다). 4001 탭은 **포그라운드 유지**(`document.hidden=false`), 모달 닫힘.
+- **Given** 4001 에 공지 목록이 떠 있고 `read_count = M`, **When** 4000 에서 테스트 계정으로 그 공지 DM 을 열어 읽으면, **Then** 4001 에서 **새로고침 없이 20~25초 이내** `read_count` 가 **M+1** 로 바뀌고 `read_rate` 도 재계산된다.
+- **기대결과**: 페이지 스크롤 위치·페이지 번호·펼침 상태 불변. 표가 `로딩 중...` 으로 교체되지 않음. **공지 자체는 수정·재발송하지 않는다.**
+- **확인할 로그 라인**: 4001 콘솔 `[AdminNotices] poll tick {page:1, silent:true}` → `[AdminNotices] poll merged {page:1, count:N, read_total:M+1}` / 4000 서버 `[dm] mark_read self-unread published ...`
+- **PASS/FAIL**: 25초 이내 +1 → PASS. 새로고침해야 바뀌면 FAIL(원래 증상).
+- **실패 시 의심**: `AdminNoticesPage.jsx:174~197`(폴링 이펙트), `notice_service.py:269~300`(`_read_stats` 집계 — `notice_id` sparse 인덱스), `dm_service.py:599~605`(`read=true` 일괄 갱신).
+
+#### RT-E2E-03. 행 펼친 상태로 60초 → **접히지 않음 + 표 미깜빡임** `[e2e]` (②, R7/R8)
+- **사전조건**: 4001 공지 관리 페이지, 임의 행 1개 클릭해 본문 확장. 콘솔 열어 둠. 화면 녹화 권장.
+- **Given** 확장된 행 1개, **When** 60초(폴링 3 tick) 동안 아무 조작 없이 관찰하면, **Then** 행이 접히지 않고 본문이 계속 표시되며 `로딩 중...`·`본문 불러오는 중...` 이 **한 번도** 나타나지 않는다.
+- **기대결과**: `poll tick` ×3 + `detail silent refresh` ×3. 표 `<tbody>` DOM 노드 유지(스크롤 위치 튐 0). 확장행 본문 텍스트가 공백으로 바뀌는 프레임 0.
+- **확인할 로그 라인**: `[AdminNotices] poll tick` ×3 / `[AdminNotices] poll merged` ×3 / `[AdminNotices] detail silent refresh {notice:<8자>}` ×3 — **`[AdminNotices] list loaded` 는 0회**여야 한다.
+- **PASS/FAIL**: 접힘 0 + 깜빡임 0 → PASS.
+- **실패 시 의심**: `AdminNoticesPage.jsx:139~144`(`setExpandedId(null)` 이 폴링 경로를 타는지), `:148~154`.
+
+#### RT-E2E-04. CS 대화 클릭 → 사이드바 뱃지 **즉시 감소** + 30초 폴링 후 **값 유지** `[e2e]` (③, R13)
+- **사전조건**: 4001 로그인, 사이드바 CS 뱃지 값 T(≥2). 미읽음 `u`(≥1)인 CS 대화 존재.
+- **Given** 뱃지 = T, 대화 미읽음 = u, **When** 그 대화를 클릭해 읽음 처리하면, **Then** 뱃지가 **1초 이내 `T-u`** 로 감소하고, **30초 폴링 tick 이후에도 `T-u` 를 유지**한다(드리프트 0).
+- **기대결과**: 폴링이 권위값을 가져와도 값이 되돌아가거나 튀지 않음. 같은 대화를 **다시 클릭**해도 뱃지 불변(`unread=0` → emit 없음). 뱃지가 0 이 되면 미표시.
+- **확인할 로그 라인**: `[AdminCs] marked read {cid:<8자>}` → `[AdminCs] csUnread signal {cid:<8자>, delta:-u}` → `[CsUnreadBus] delta {delta:-u}` → `[AdminLayout] csUnread delta applied {delta:-u}` / 30초 뒤 `GET /admin/cs/unread-count` 응답이 `T-u`
+- **PASS/FAIL**: 즉시 감소 + 30초 후 동일 → PASS. 폴링 후 되돌아가면 FAIL(서버 읽음 처리 실패 또는 델타 과다).
+- **실패 시 의심**: `AdminCsPage.jsx:153~172`, `AdminLayout.jsx:51~59`, `admin_cs.py:187~205`.
+
+#### RT-E2E-05. 기존 DM 송수신 화면 회귀 — 낙관적 추가·롤백·과거 로드 `[e2e]` (G1)
+- **사전조건**: `<test-user-a>`(창1) ↔ `<test-user-b>`(창2), 메시지 ≥ 25건인 대화.
+- **Given** DM 화면, **When** ① A 가 메시지 전송 ② 네트워크 오프라인 상태에서 전송 ③ 스크롤 상단까지 올려 과거 로드, **Then** ① 즉시 화면에 붙고 서버 응답으로 확정 + 창2 에 실시간 도착 ② **낙관적 말풍선이 롤백**되고 에러 안내 ③ 이전 20건이 중복 없이 위로 붙고 스크롤 점프 없음.
+- **기대결과**: v195 이전과 **동일 동작**. 본인 `unread` 이벤트로 인한 목록 깜빡임·중복 재조회 0.
+- **확인할 로그 라인**: `[DmInbox] loading older messages {before:<8자>}` / 서버 `[dm] message sent conv=.. len=N notice=-`
+- **PASS/FAIL**: 3동작 정상 → PASS.
+- **실패 시 의심**: `frontend/src/pages/DmInboxPage.jsx:298~314`(과거 로드), `:368~`(onMessage).
+
+#### RT-E2E-06. 받을 때 즉시 뱃지 — A→B 전송 시 B 헤더 뱃지가 **폴링 전에 +1** `[e2e]` (G2, R3)
+- **사전조건**: A(창1)·B(창2) 각각 4000 로그인. B 는 **DM 화면이 아닌 다른 페이지**(홈)에 있어야 한다(활성 대화면 자동 읽음 처리됨). B 헤더 뱃지 = N.
+- **Given** B 뱃지 = N, **When** A 가 B 에게 메시지 1건을 보내면, **Then** B 뱃지가 **5초 이내 N+1**.
+- **기대결과**: `send_message` 의 peer 발행(무수정)이 그대로 동작. B 콘솔에는 `[Header] ws unread event` 가 **아니라** `onMessage` 경로가 타므로 `unread event` 로그는 안 나오는 것이 정상.
+- **확인할 로그 라인**: 서버 `[dm] message sent conv=.. me=.. peer=.. len=N notice=-` → `[dm-pubsub] fanout uid=<B> sent=1 type=message`
+- **PASS/FAIL**: 5초 이내 +1 → PASS. 30초 뒤에야 뜨면 FAIL(v195 가 peer 발행을 깼을 가능성).
+- **실패 시 의심**: `dm_service.py:552~563`(`send_message` peer 발행), `Header.jsx:201`(onMessage 핸들러).
+
+#### RT-E2E-07. 읽음표시 동기화 — 상대가 읽으면 ON / **내가 읽었을 때 내 메시지가 read 로 칠해지면 FAIL** `[e2e]` — 즉시 중단 조건 (G3, R1)
+- **사전조건**: A(창1)·B(창2) 모두 해당 **대화 화면을 연 상태**. A 가 보낸 미읽음 메시지가 있고, B 가 보낸 미읽음 메시지도 있는 양방향 상태.
+- **Given** 양쪽 대화 화면, **When** ① **B 가** 대화를 열어 읽으면 ② **A 가** (B 의 메시지를) 읽으면, **Then** ① **A 화면의 A 메시지**에 읽음표시가 켜진다 ② **A 화면의 A 메시지 읽음표시는 변하지 않는다**(B 가 아직 안 읽은 메시지가 갑자기 읽음으로 바뀌면 안 됨).
+- **기대결과**: ②가 핵심 — 본인 대상 이벤트 타입이 `unread` 이므로 `DmInboxPage:443` 의 `onRead` 가 **호출되지 않는다**. A 화면에서 A 메시지의 읽음표시 개수가 ② 전후로 **동일**해야 한다. A 헤더 뱃지는 ②에서 감소하는 것이 정상.
+- **확인할 로그 라인**: ① 서버 `[dm-pubsub] fanout uid=<A> sent=1 type=read` ② 서버 `[dm-pubsub] fanout uid=<A> sent=1 type=unread` (**②에서 `type=read` 가 A 에게 가면 FAIL**) / A 콘솔 ②에서 `[Header] ws unread event {hasCount:false}`
+- **PASS/FAIL**: ① ON + ② 불변 → PASS. ②에서 A 메시지가 읽음으로 바뀌면 **FAIL + 즉시 중단**(R1 발현).
+- **실패 시 의심**: `dm_service.py:616`(타입), `frontend/src/pages/DmInboxPage.jsx:443~452`(onRead 핸들러).
+
+#### RT-E2E-08. 시각 표기 — 화면 **KST 9시간 밀림 없음** `[e2e]` (G9)
+- **사전조건**: 4001 공지 관리 페이지 + 4001 CS 페이지. 브라우저 타임존 = Asia/Seoul. RT-API-13 에서 확인한 `created_at` 의 UTC 원값을 메모.
+- **Given** API 가 `+00:00` 오프셋을 붙여 내려준다, **When** 화면의 공지 발송 시각·CS 메시지 시각을 UTC 원값과 대조하면, **Then** 화면 표기 = UTC + 9시간(정확히 KST)이며 **18시간 차·9시간 추가 밀림이 없다**.
+- **기대결과**: 최근 발송 공지의 화면 시각이 실제 발송 시점과 일치. `finished_at` 이 `null` 인 행은 빈칸/`-` 표기(‘1970-01-01’·`Invalid Date` 노출 0).
+- **확인할 로그 라인**: (화면 검증 — 로그 없음). 대조 근거는 RT-API-13 의 응답 값.
+- **PASS/FAIL**: 9시간 정확 + 이상 표기 0 → PASS.
+- **실패 시 의심**: `frontend_admin/src/utils/format.js` `formatDate`, `notice_service.py` `_iso`.
+
+---
+
+### 4. 추적 매트릭스 (요구 항목 → 케이스)
+
+| 요구 | 케이스 |
+|---|---|
+| ① 본인 대상 unread 이벤트 | RT-UNIT-01·02·03·04·05·06 / RT-API-01·02 / RT-E2E-01 |
+| ② 공지 읽음 수 자동 갱신 | RT-UNIT-07·08·09·10 / RT-API-03 / RT-E2E-02·03 |
+| ③ 사이드바 CS 뱃지 | RT-UNIT-11·12·13·14 / RT-E2E-04 |
+| G1 기존 DM 송수신 | RT-API-04 / RT-E2E-05 |
+| G2 받을 때 즉시 뱃지 | RT-E2E-06 |
+| G3 읽음표시 동기화 + 거짓 읽음표시 금지 | RT-UNIT-15 / RT-E2E-07 |
+| G4 pending no-op 프라이버시 가드 | RT-UNIT-16 / RT-API-05 |
+| G5 메시지 요청함 | RT-API-06 |
+| G6 CS 전체발송 검증 분기 (200 금지) | RT-API-07·08·09 |
+| G7 구버전 `/api/dm/broadcast` 410 | RT-API-10 |
+| G8 공지 목록/상세 계약 | RT-API-11·12 |
+| G9 시각 UTC 표기 | RT-API-13 / RT-E2E-08 |
+| G10 관리자 CS 폴링 유지 | RT-UNIT-17 |
+| G11 공지 목록 상태 보존 | RT-UNIT-18 |
+| G12 9004 미러 | RT-UNIT-19 / RT-API-16 |
+| G13 개인정보 미노출 | RT-UNIT-20 / RT-API-14 |
+| G14 official 계정 무해성 | RT-API-15 |
+
+---
+
+### 5. planner 승인이 필요한 항목 (승인 전 실행 금지 — `SKIP(승인 대기)` 로 기록)
+
+| # | 항목 | 사유 | 승인 없이 진행 시 대안 |
+|---|---|---|---|
+| A1 | **RT-API-09 의 429 락 분기** — Redis 브로드캐스트 락 키 1개 수동 선점 | §0-8 쓰기 항목. 락 TTL 동안 **관리자의 정상 발송을 차단**한다 | `SKIP` + 락 획득 코드 경로 정적 리뷰로 대체 |
+| A2 | **RT-API-09 의 503 분기**(official 미시드) | 재현하려면 official 계정을 변조해야 하며 **CS 전체가 마비**된다 → **재현 시도 자체를 금지** 권고 | 코드 리뷰만으로 `SKIP(재현 불가)` 확정 |
+| A3 | **RT-API-04 의 지정발송 1건**(`POST /api/admin/cs/send`, 테스트 계정 1명) | 실제 DM 이 생성되는 쓰기. 테스트 계정 한정이지만 CS 대화 이력이 남는다 | 테스트 계정끼리의 일반 DM 으로 대체 가능(그 경우 승인 불필요) |
+| A4 | **RT-API-16 의 9004 호출** | 9004 가 9005 와 동일 DB 를 바라보는지 미확인. 별도 DB 면 데이터 오염 우려, 프로세스 재기동이 필요하면 인프라 조작에 해당 | DB 동일성 미확인 시 `SKIP` + RT-UNIT-19(파일 diff)로만 미러 판정 |
+| A5 | **RT-UNIT-08 의 `inflight` 분기 재현**(네트워크 Slow 3G 스로틀) | 브라우저 devtools 한정이라 무해하나, 관리자 앱 실사용 세션에 영향이 있으면 안 됨 | 별도 브라우저 프로필/시크릿 창에서 수행 |
+| A6 | **RT-E2E-02 의 대상 공지 선정** | 기존 실공지의 **미읽음 수신자가 테스트 계정인지** 확인이 선행돼야 한다. 아니면 시나리오 자체가 성립하지 않으며, 성립시키려 발송하면 §0-2 위반 | 조건 불성립 시 `BLOCKED` 로 기록하고 planner 에 대상 공지 지정 요청 |
+
+**승인 없이도 진행 가능**: RT-UNIT 전 20건, RT-API-01·02·03·05·06·07·08·10·11·12·13·14·15, RT-E2E-01·03·04·05·06·07·08 (= 41건). 승인 대기로 인해 부분 `SKIP` 가능한 것은 RT-API-09(전체)·RT-API-16(전체)·RT-API-04(지정발송 대체 시 무영향)·RT-E2E-02(대상 공지 선정 결과에 따름).
+
+---
+
+### 6. v195 시나리오 집계
+
+| 태그 | 건수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **20** | **45.5%** | ≥ 40% | ✅ 충족 |
+| `[api]` | **16** | **36.4%** | ≥ 35% | ✅ 충족 |
+| `[e2e]` | **8** | **18.2%** | ≤ 25% | ✅ 충족 |
+| **합계** | **44** | 100% | — | — |
+
+- **승인 대기로 인한 최대 제외 시나리오**(RT-API-09·16 두 건 SKIP): `[unit]` 20 / `[api]` 14 / `[e2e]` 8 = 42건 → 47.6% / 33.3% / 19.0% → **`[api]` 가 35% 미달**. 이 경우 RT-API-04 의 `before` 커서 케이스를 **역방향 커서 1건으로 분리**해 `[api]` 15건(35.7%)으로 복구한다(대체 규칙 사전 확정).
+- **쓰기 총량**(승인 전 기준): 테스트 계정 간 DM 메시지 수 건 · pending 요청 2건(수락 1·거절 1) · `POST .../read` 호출 다수(멱등). **전체발송 0건** · 기존 공지 수정/삭제/재발송 0건 · 인덱스 조작 0 · 컨테이너/볼륨/포트 조작 0 · MinIO·ES 무접촉 · 실사용자 데이터 열람만.
+- **즉시 중단 조건**: RT-UNIT-01 / RT-UNIT-16 / RT-API-05 / RT-E2E-07 FAIL, `POST /api/admin/cs/broadcast` 가 예기치 않게 200 반환, 공지 본문·개인정보가 응답·로그·콘솔에 노출.
+- **커버리지 공백(의도적)**: 관리자 앱 WS 신설·`unread` 이벤트 count 동봉·`DmInboxPage` 의 `onUnread` 구독은 **PLAN §5 범위 밖**이므로 시나리오를 두지 않는다. 다만 RT-UNIT-15 가 "`onUnread` 구독이 추가되지 않았음"을 **역방향으로 감시**한다.
+
+## 개정 이력 (v195)
+
+- 2026-08-19 초판 작성 (44건) — PLAN v195 §2 실측·§3 B1~B3/F1~F8·§4 R1~R17 전 항목 시나리오화. 최대 함정인 **본인 대상 이벤트 타입 고정**(`unread` ≠ `read`)을 RT-UNIT-01(즉시 중단 조건)·RT-UNIT-15(정적 감시)·RT-E2E-07(화면 발현) **3중으로** 배치. 발송 계열은 검증 400·인가 401/403·410·429(승인 대기)로만 설계하고 **200 을 만드는 항목 0건**. 기존 실공지는 **읽기 전용 관측 대상**으로만 사용(RT-E2E-02). 태그 균형은 정적 grep·`diff` 검사와 프론트 상태 검증을 unit 으로 배치해 45.5 / 36.4 / 18.2 확보. 작성 시점에 B1~B3·F1·F4~F8 구현분이 워킹트리에 **전부 착지**하여 라인 번호·로그 문자열·가드 조건을 **실측으로 고정**함(예: 폴링 skip 3분기 `AdminNoticesPage.jsx:176~187`, 레이스 가드 `:99~104`, emit 조건 `AdminCsPage.jsx:167~172`, self publish `dm_service.py:616`). planner 승인 대기 6건(§5). planner 검토 후 확정 예정.

@@ -569,7 +569,13 @@ async def send_message(conn, mongo, me_id, conversation_id, text, notice_id=None
 
 
 async def mark_read(mongo, conversation_id, me_id) -> dict:
-    """내 unread=0 + 상대발신 미읽음 메시지 read=true 일괄. 상대에게 read 이벤트 발행."""
+    """내 unread=0 + 상대발신 미읽음 메시지 read=true 일괄.
+
+    v195: 상대에게는 `read`(읽음표시 동기화), 본인에게는 `unread`(헤더 뱃지/다른 탭
+    즉시 동기화, count 미동봉 — 프론트가 GET /unread-count 로 재조회한다).
+    본인에게 `read` 를 발행하면 안 된다 — DmInboxPage 가 "상대가 내 메시지를 읽음"
+    으로 해석해 거짓 읽음표시를 켠다.
+    """
     me_id = str(me_id)
     conv = await _get_conv(mongo, conversation_id)
     if not conv:
@@ -587,6 +593,9 @@ async def mark_read(mongo, conversation_id, me_id) -> dict:
         )
         return {"conversation_id": cid, "read": False, "marked": 0}
 
+    # v195: 뱃지가 실제로 줄어드는 경우에만 본인 대상 이벤트를 발행하기 위해 직전값 캡처.
+    prev_unread = int((conv.get("unread") or {}).get(me_id, 0) or 0)
+
     await mongo.dm_conversations.update_one(
         {"_id": conv["_id"]}, {"$set": {f"unread.{me_id}": 0}}
     )
@@ -598,6 +607,22 @@ async def mark_read(mongo, conversation_id, me_id) -> dict:
     if peer_id:
         # 상대에게 "읽음" 알림 (읽음표시 동기화)
         await publish_to_user(peer_id, {"type": "read", "conversation_id": cid})
+    # v195: 본인의 헤더 뱃지/다른 탭 즉시 동기화.
+    # 타입은 반드시 "unread" — "read" 를 본인에게 보내면 DmInboxPage 가
+    # "상대가 내 메시지를 읽음" 으로 해석해 거짓 읽음표시를 켠다.
+    # count 는 동봉하지 않는다 — 프론트가 GET /unread-count 로 재조회하며
+    # 그 응답만이 {count, requests} 를 함께 갖는 단일 진실원천이다.
+    if prev_unread > 0 or result.modified_count > 0:
+        await publish_to_user(me_id, {"type": "unread", "conversation_id": cid})
+        logger.info(
+            "[dm] mark_read self-unread published conv=%s me=%s prev_unread=%d marked=%d",
+            _short(cid), _short(me_id), prev_unread, result.modified_count,
+        )
+    else:
+        logger.info(
+            "[dm] mark_read self-unread skipped (nothing to clear) conv=%s me=%s",
+            _short(cid), _short(me_id),
+        )
     logger.info(
         "[dm] mark_read conv=%s me=%s marked=%d",
         _short(cid), _short(me_id), result.modified_count,

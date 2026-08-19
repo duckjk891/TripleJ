@@ -10,6 +10,7 @@ import {
   replyCs,
   markCsRead,
 } from '../api';
+import csUnreadBus from '../utils/csUnreadBus';
 import './AdminCsPage.css';
 
 // CS 문의 대응 — 사용자 오류신고가 maidol_official 로 도착한 DM 대화를 관리자가 처리.
@@ -80,6 +81,12 @@ export default function AdminCsPage() {
   const activeCidRef = useRef(activeCid);
   useEffect(() => { activeCidRef.current = activeCid; }, [activeCid]);
 
+  // v195 — 읽음 처리 직전의 미읽음 수를 액션 핸들러에서 읽기 위한 최신 목록 참조.
+  // openConversation 의 deps 에 conversations 를 넣으면 폴링 갱신마다 콜백이 재생성돼
+  // cid 쿼리 이펙트가 다시 도는 것을 피하려는 것 — 참조만 하고 쓰지 않는다.
+  const conversationsRef = useRef(conversations);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+
   // v185 — /cs?cid= 진입 시 해당 대화 초기 선택 (1회. 쿼리 없으면 기존 동작 불변)
   const [searchParams] = useSearchParams();
   const pendingCidRef = useRef(searchParams.get('cid') || null);
@@ -143,6 +150,9 @@ export default function AdminCsPage() {
   // ── 대화 열기 (메시지 로드 + 읽음 처리) ───────────
   const openConversation = useCallback(async (cid) => {
     if (!cid) return;
+    // v195 — 읽음 처리로 사라질 미읽음 수를 열기 **전에** 캡처(사이드바 뱃지 델타용).
+    const prevUnread =
+      Number(conversationsRef.current.find((c) => String(c.conversation_id) === String(cid))?.unread) || 0;
     setActiveCid(cid);
     setMessages([]);
     setMsgError('');
@@ -152,6 +162,14 @@ export default function AdminCsPage() {
       await markCsRead(cid);
       setConversations((prev) => prev.map((c) => (c.conversation_id === cid ? { ...c, unread: 0 } : c)));
       if (import.meta.env.DEV) console.info('[AdminCs] marked read', { cid: String(cid).slice(0, 8) });
+      // 사이드바 뱃지 즉시 반영 — 액션당 1회만 emit(렌더/updater 안에서 부르면 StrictMode 이중 적용).
+      // 이미 0 이면 신호 없음(뱃지 불변). 드리프트는 AdminLayout 30초 폴링이 교정한다.
+      if (prevUnread > 0) {
+        if (import.meta.env.DEV) {
+          console.info('[AdminCs] csUnread signal', { cid: String(cid).slice(0, 8), delta: -prevUnread });
+        }
+        csUnreadBus.emitDelta(-prevUnread);
+      }
     } catch (err) {
       console.error('[AdminCs] markCsRead failed', { status: err?.response?.status, message: err?.message });
     }

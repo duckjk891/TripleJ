@@ -15601,3 +15601,78 @@ ES 에 비트코인 몸값 요구 인덱스(`read_me`)가 존재하는 침해 �
 
 ### 9. 특이사항 — 동시 세션 커밋 충돌
 다른 세션이 같은 브랜치 `admin` 에서 19:40~19:50 사이 v191~v193 을 커밋했고, 그 중 v192 가 본 작업 중이던 `backend_9005/app/main.py` 를 함께 스윕했다. 기능 영향은 없으나 **깨끗한 체크아웃에서 `0f5476b` 를 받으면 미추적 모듈 import 로 9005 기동이 실패**하는 상태였다(본 커밋으로 해소). 동시 세션 운용 시 추가 스윕 가능성은 잔존 위험으로 남는다.
+
+
+## v195 — 2026-08-19 — 미읽음 뱃지 실시간 반영 + 공지 읽음 수 자동 갱신 [MAIDOL-RealtimeSquad]
+
+### 1. 요청 작업
+사용자 원문: "읽은사람의 숫자가 새로고침하기전까진 안움직이네? … 이거 실시간으로 바뀌게 안돼? / 그리고 더해서, 4000포트에도 메세지온거 확인하면 그 순간에 제일 위에 메시지1개 왔다는 빨간색숫자 표시말이야. 그거 바로 없애야하는데, 일정시간 지나면 확인해서 없애는거네? 이것도 실시간으로 바꿀 수 없어?"
+
+조사 보고 후 사용자가 **"①은 실시간, ②는 자동갱신"** 으로 확정.
+
+### 2. 원인 (조사 결과)
+- **① 사용자 앱 뱃지**: `mark_read`(`dm_service.py`)가 `publish_to_user(**peer_id**, {"type":"read"})` — **상대에게만** 발행하고 **본인에게는 아무것도 발행하지 않았다.** 받을 때는 `send_message` 가 peer 에게 발행하므로 즉시 떴고(사용자 관찰과 일치), 읽을 때만 헤더의 **30초 폴링**을 기다렸다.
+- **② 관리자 공지 읽음 수**: `AdminNoticesPage` 에 `setInterval` **0건** — 마운트 시 1회 로드뿐. 게다가 **`frontend_admin` 전체에 WebSocket 사용처 0건**(폴링 전용 앱)이라 서버 push 로는 해결 불가 → 사용자 결정에 따라 자동 갱신(폴링)으로 진행.
+- **③ 관리자 사이드바 CS 뱃지**(v194 D5): ①과 **증상만 같고 메커니즘이 다르다.** 관리자 앱에 WS 가 없으므로 서버 publish 로 못 고친다 → 프론트 로컬 신호로 해결.
+
+### 3. 설계상 최대 함정 (계획 단계에서 선제 차단)
+본인에게 `{"type":"read"}` 를 발행하면 `DmInboxPage.jsx:443~452` 의 `onRead` 가 **"상대가 내 메시지를 읽었다"** 로 해석해 **내가 보낸 메시지에 거짓 읽음표시**를 켠다. → 본인 대상 타입은 반드시 **`unread`**. 이 위험을 `RT-UNIT-01` / `RT-UNIT-15` / `RT-E2E-07` 3중으로 감시했고 전부 회피 실증.
+
+부수 결정 2건:
+- **`count` 미동봉** — `unread_total` 은 `dm_conversations` 전량 순회인데 브로드캐스트가 official 의 대화 수를 전체 사용자 수로 키운다. 관리자가 대화를 열 때마다 전체 스캔이 붙고, `GET /unread-count` 가 `{count, requests}` 를 함께 계산하므로 count 만 실으면 split-brain. → 프론트가 재조회하게 둔다(`Header.onUnread` 에 폴백이 **이미 구현돼 있었다** — 여태 서버가 이 이벤트를 한 번도 안 보내 죽은 코드였다).
+- **발행 가드** `prev_unread > 0 or modified_count > 0` — `DmInboxPage:305`(활성 대화 수신마다 markRead)·`AdminCsPage:152`(같은 대화 재오픈)가 무변화 호출을 반복하므로 없으면 REST 왕복이 낭비된다.
+
+### 4. 수행 결과
+
+**백엔드** (`dm_service.py` 단 1파일 — 9004 byte-identical 미러)
+- `mark_read`: pending 가드 뒤 `prev_unread` 캡처 → 기존 unread=0 / read=true / **peer `read` 발행 전부 유지** → 그 뒤 본인 대상 `{"type":"unread","conversation_id":cid}` 발행(가드 적용)
+- 신규 로그 `[dm] mark_read self-unread published|skipped` (id 앞 8자, 본문 미출력). 기존 로그 유지
+- **pending no-op 프라이버시 가드 무수정** — 이 분기에서는 본인 대상 발행도 하지 않는다(unread 보존이 설계)
+
+**관리자 앱**
+- `AdminNoticesPage.jsx` — `NOTICE_POLL_MS = 20000`(CS 12s보다 느리게: 읽음 집계 스캔량이 사용자 수에 선형 증가 / 사이드바 30s보다 빠르게), `loadNotices(page,{silent})`·`fetchDetail(id,{silent})`, **폴링 중단 3분기**(모달 열림 / `document.hidden` / 인플라이트), **페이지 레이스 폐기**(silent 한정), 확장행 1건만 silent 상세 재조회. `expandedId`/`page`/`modal`/`reloadKey` 무터치
+- 신규 `utils/csUnreadBus.js` — 모듈 싱글턴 `subscribe/emitDelta`, Set 기반, 핸들러 예외 흡수, `delta===0`·비유한값 무시. 권위값은 `AdminLayout` 30초 폴링(드리프트 교정자)
+- `AdminLayout.jsx` — 버스 구독 + `Math.max(0, v+delta)` 하한. **30초 폴링 유지**
+- `AdminCsPage.jsx` — `markCsRead` **성공 후** `prevUnread>0` 일 때만 `emitDelta(-prevUnread)` 1회(액션 핸들러 내부 — StrictMode 이중 적용 방지)
+
+**사용자 앱** — 실코드 변경 **1줄**(DEV 로그). `git diff --stat` = `Header.jsx | 3 +++`. `dmSocket.js`·`DmInboxPage.jsx` 무수정. 기존 폴링 3종(헤더 30s / CS 12s / 사이드바 30s) 전부 존치
+
+### 5. 테스트 결과 — 44건 중 **PASS 42 / SKIP 1 / FAIL 1(경미)**
+`[unit]` 20(PASS 19·SKIP 1) / `[api]` 16(PASS 15·FAIL 1) / `[e2e]` 8(PASS 8). **즉시 중단 조건 0건 발생.**
+
+**체감 개선 실측**
+| 항목 | 이전 | v195 |
+|---|---|---|
+| 다른 탭 헤더 뱃지 | 최대 30초(폴링) | **522ms** |
+| 관리자 공지 읽음 수 | 새로고침 전까지 무한 | **14.0초** |
+| 관리자 사이드바 CS 뱃지 | 최대 30초(폴링) | **163ms** |
+
+**함정 회피 실증(RT-E2E-07)**: ① 상대가 읽음 → `read` 1건 수신 ② **내가 읽음 → `read` 0건 / `unread` 1건**, 뱃지 2→0. 거짓 읽음표시 미발생.
+
+**회귀 무결**: 받을 때 즉시 뱃지(241ms) / pending no-op(publish 0·DB쓰기 0·`{read:false,marked:0}`) / 메시지 요청함 accept·decline / 공지 목록 17키·상세 19키 / 시각 12개 전부 `+00:00` / PII 키 0건 / 폴링 3종 존치 / 9004 `diff -q` 5파일 무출력(착수·완료 2회).
+
+**미검증 4건**: 503 official 미시드 분기(planner **A2 불허** — 재현하려면 official 계정 변조 → CS 전면 마비. 코드 리뷰로 갈음: `_resolve_official` 이 핸들러 최상단이라 발송 미성립 구조 확인) / RT-UNIT-09 2페이지 레이스 런타임(공지 1페이지뿐, 추가 생성은 전체발송 필요 → 정적 가드 확인) / RT-API-16 9004 런타임 로그(A4 준수 + 아래 F2) / RT-E2E-05 과거 로드(대화 메시지 <30건 → `RT-API-04b` 커서 검증으로 갈음).
+
+### 6. 발견 사항 3건 (전부 v195 회귀 아님)
+- **F1 [경미] `audience: null` → 400 이 아닌 422.** `BroadcastCsBody.audience: str`(non-Optional, `admin_cs.py:42~44`)에 걸려 Pydantic 이 핸들러 진입 전 거절 — FastAPI 표준 동작이며 `admin_cs.py` 는 v195 **미변경**. 안전 속성 완전 유지(발송 미성립·`notices.total` 불변·응답에 `notice_id` 없음). → **앱 버그 아님, TESTPLAN 기대값을 "400 또는 422 — 2xx 절대 불가"로 정정**(본질은 상태코드가 아니라 발송 미성립).
+- **F2 [운영] 실행 중인 9004 프로세스가 v195 이전 코드 적재.** 파일 mtime 21:19 vs 프로세스 기동 19:57, `--reload` 없음. **소스는 정상**(diff 무출력, AST 로 `:616` 발행 확인, `import app.main` 성공). planner A4(재기동 금지) 준수로 미재기동 — **다음 9004 재기동 시 자동 반영**.
+- **F3 [관측·에스컬레이션] DM 화면에 읽음표시 UI 자체가 없다.** `DmChatView.jsx:14` props 주석에 `read` 가 있으나 `:196~218` 렌더에서 미사용. 따라서 "읽음표시 동기화"는 현재 **화면 발현이 없고**, 거짓 읽음표시 위험도 React state 수준의 잠재 위험에 머문다. **읽음표시 UI 를 추가하는 순간 v195 의 타입 분리(self=`unread`)가 유일한 방어선이 된다** — 향후 작업 시 필수 전제.
+
+### 7. 환경 제약 (다음 버전 대비)
+테스트 계정 `bcUsr`/`bcUsr2` 가 **둘 다 `is_verified=false`** → `assert_can_dm` 게이트로 사용자↔사용자 DM 불가, `Header.jsx` 도 조기 return 하여 봉투·뱃지·WS 미표시. 검증된 테스트 계정이 `bcAdm` 하나뿐이라 모든 헤더 뱃지 e2e 를 `bcAdm ↔ maidol_official` 로 수행했다(peer 발행 경로가 동일해 WS 팬아웃·멀티탭·읽음 동기화 검증에는 영향 없음). **사용자↔사용자 시나리오가 필요하면 검증 완료 테스트 계정 2개 확보가 선행돼야 한다.**
+
+### 8. 안전 준수 실측
+- **실제 전체발송 0회** — 400·401·403·410·422·429 분기만. 사용자가 이미 보낸 **실공지 5건은 읽기 전용**, `read_count` 전부 무변동
+- 합성 문서 7건 삽입 → 검증 → **전량 삭제**: `notices` 5→6→**5**, `notice_id` 보유 `dm_messages` 685→691→**685**, 전체 `dm_messages` 1018→1024→**1018**, `dm_conversations` 148→148→**148**. `_synthetic` 마커 잔존 0. 쓰기는 본인 삽입 `_id` + 마커 이중 조건으로만
+- Redis `DBSIZE` 126 → (락 1개 `SET NX EX 10`) → `DEL` → **126**. `FLUSHDB`/`FLUSHALL` 미사용
+- 인프라 무조작(docker-compose·포트·ES·MinIO, 9004 재기동 없음). 산출물에 크리덴셜·개인정보 실값·공지 본문 원문 0건
+
+### 9. 범위 밖
+관리자 앱 WebSocket 신설(공지 1건에 읽음 이벤트가 대상 수만큼 폭주 → 디바운스 장치까지 필요, 비용 대비 이득 낮음) · DM 읽음표시 UI 신설(F3) · 미검증 테스트 계정 정비
+
+### 10. 변경 파일 (커밋 대상 9)
+- 백엔드 2: `backend_900{4,5}/app/services/dm_service.py`
+- 관리자 앱 4: `frontend_admin/src/utils/csUnreadBus.js`(신규) · `pages/AdminNoticesPage.jsx` · `pages/AdminCsPage.jsx` · `components/AdminLayout.jsx`
+- 사용자 앱 1: `frontend/src/components/Header.jsx` (DEV 로그 1줄 + 주석 2줄)
+- 산출물 3 중 2: `claude_skills_outputs/team-dev/PLAN.md` · `TESTPLAN.md` (+ 본 `REPORT.md`)
+- 무변경 확인: `dmSocket.js` · `DmInboxPage.jsx` · `admin_cs.py` · `admin_notices.py` · `notice_service.py` · docker-compose · `.env`

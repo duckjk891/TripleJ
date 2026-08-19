@@ -27572,3 +27572,158 @@ _run_cs_broadcast(official_id, audience, text, notice_id)
 4. 개인정보(생년월일·성별·이메일) 응답·화면·로그·콘솔 노출 금지. `dm_service.py` 프라이버시 가드(`assert_can_dm` 게이트, `_GENERIC_DENY`, `search_users` 빈 q 가드) **불변**.
 5. 공지 본문은 저장하되 **사적 DM 본문은 여전히 미저장** — §2 경계 불변 조건 4개 준수.
 6. 인프라 무조작.
+
+---
+
+## v195 — 2026-08-19 — 미읽음 뱃지 실시간 반영 + 공지 읽음 수 자동 갱신 [MAIDOL-RealtimeSquad]
+
+### 0. 채번 확인
+`git log --oneline -5` 실측 결과 HEAD = `e356a70` (v194 공지 관리 페이지). **v195 는 미선점** — 그대로 사용한다. (타 세션이 v191~v193 을 커밋했으나 v195 충돌 없음. 커밋 직전 재확인 필요.)
+
+### 1. 사용자 원본 요청 (원문 보존)
+> "읽은사람의 숫자가 새로고침하기전까진 안움직이네? 발송보내놓고, 일반사용자로 4000포트에서 확인했는데, 4001포트에서 새로고침하기전까진 1명이 읽음처리되는게 안바뀌네? 이거 실시간으로 바뀌게 안돼?
+> 그리고 더해서, 4000포트에도 메세지온거 확인하면 그 순간에 제일 위에 메시지1개 왔다는 빨간색숫자 표시말이야. 그거 바로 없애야하는데, 일정시간 지나면 확인해서 없애는거네? 이것도 실시간으로 바꿀 수 없어?"
+
+확정 방침: **① 사용자 앱 뱃지 = 실시간(WS)** / **② 관리자 공지 읽음 수 = 자동 갱신(폴링)**.
+
+---
+
+### 2. Plan verification findings (0단계 — 파일 직접 확인)
+
+#### 2-1. ① 사용자 앱(4000) 미읽음 뱃지
+| 위치 | 현재 동작 (실측) |
+|---|---|
+| `frontend/src/components/Header.jsx:167~217` | `getDmEligibility()` 통과 → `refreshUnread()` 1회 + `setInterval(refreshUnread, 30000)` + `dmSocket.connect()`. 핸들러 3종: `onMessage(()=>refreshUnread())`, `onUnread(p => typeof p?.count==='number' ? setDmUnread(p.count) : refreshUnread())`, `onRead(()=>refreshUnread())` |
+| `frontend/src/utils/dmSocket.js` | 전역 싱글턴 WS 매니저. 이벤트 4종 디스패치(`message`/`unread`/`read`/`accepted`) + `pong` 무시 + 미지 타입 DEV 로그. 자동 재연결(1s→30s 백오프), 25s ping, 4401 시 재연결 중단 |
+| `backend_9005/app/services/dm_service.py:568~603` `mark_read` | pending no-op 가드(`:578~585`) → `unread.{me}=0` → 상대발신 미읽음 `read=true` → **`publish_to_user(peer_id, {"type":"read", ...})` 만**. **본인(me_id) 대상 발행 없음** |
+| `dm_service.py:328~336` `publish_to_user(uid, event)` | Redis `dm:user:{uid}` publish, 예외 흡수 |
+| `backend_9005/app/routes/dm.py:55~91` `ConnectionManager` | `user_id → set[WebSocket]` (멀티탭). `send_to_user` 는 로컬 소켓 수 반환 |
+| `dm.py:434~` `dm_pubsub_listener` | `psubscribe("dm:user:*")` → uid 파싱 → `manager.send_to_user(uid, event)` → `[dm-pubsub] fanout uid=.. sent=N type=..` 로그. 소켓 0개여도 정상(sent=0) |
+| `dm.py:217~230` `POST /conversations/{cid}/read` | `dm_service.mark_read(get_mongo(), cid, me)` |
+| `backend_9005/app/routes/admin_cs.py:187~205` `POST /cs/conversations/{cid}/read` | official 해석 → 참여 검증 → `dm_service.mark_read(mongo, cid, official_id)` |
+
+**근본 원인 확정**: 읽은 **본인** 에게는 어떤 이벤트도 가지 않는다. 받을 때는 `send_message`(`:559`)가 peer 에게 `message` 를 발행하므로 즉시 뜨고, 읽은 뒤 사라지는 것만 30초 폴링에 걸린다 — 사용자 관찰과 정확히 일치.
+
+**신규 실측 (중요)**
+- **`{"type":"unread"}` 를 발행하는 서버 코드는 현재 0건** (`grep '"type": *"unread"' backend_9005/app` → 없음). `Header.onUnread` 는 **오늘까지 죽은 코드**였고 v195 가 이를 활성화한다.
+- **`DmInboxPage.jsx` 는 `onUnread` 를 구독하지 않는다** (`:368 onMessage` / `:434 onAccepted` / `:443 onRead` 3종만). → 본인 대상 `unread` 이벤트로 **DmInboxPage 의 중복 리페치·깜빡임은 발생하지 않는다.** Header 단독 처리.
+- **`read` 타입을 본인에게 보내면 안 된다 (설계 제약)**: `DmInboxPage.jsx:443~452` 의 `onRead` 는 "상대가 내 메시지를 읽었다" 로 해석해 **내가 보낸 메시지를 `read:true` 로 칠한다.** 본인에게 `read` 를 발행하면 상대가 읽지 않았는데 읽음표시가 켜지는 **거짓 읽음표시 버그**가 된다. → 본인 대상 이벤트 타입은 **반드시 `unread`**.
+- **`count` 동봉 여부 판단 → 동봉하지 않는다(`{"type":"unread","conversation_id":cid}`)**. 근거 3가지:
+  1. **비용**: `unread_total(mongo, me_id)`(`dm_service.py:605~614`)은 `dm_conversations.find({participants: me, status:{$ne:"pending"}}, {unread:1})` **커서 전량 순회** 다. `broadcast_message`(`:784~`)가 대상 전원과 1:1 대화를 만들기 때문에 **official 계정의 대화 수 = 전체 사용자 수** 로 자란다. `admin_cs.py:200` 의 read 는 관리자가 대화를 열 때마다 호출되므로, count 를 실으면 **클릭마다 전체 사용자 수 규모의 스캔**이 붙는다. 지금 official 의 `unread_total` 은 30초 폴링에서만 돈다 — 그 비용 프로필을 악화시키지 않는다.
+  2. **단일 진실원천**: `GET /api/dm/unread-count` 는 `{count, requests}` 를 **함께** 계산한다(`dm.py:233~248`). 이벤트에 `count` 만 실으면 `requests` 는 갱신되지 않아 split-brain 이 생긴다.
+  3. **프론트 변경 0**: `Header.onUnread` 가 count 부재 시 자동으로 `refreshUnread()` 하도록 **이미** 구현돼 있다. 즉 **①은 백엔드 1줄 + 가드로 끝나고 프론트 무수정**이다.
+- **무의미 발행 억제 가드 필요**: `DmInboxPage.jsx:305~307` 은 활성 대화에 메시지가 올 때마다 `api.markDmRead(cid)` 를 호출한다. 또 `AdminCsPage.openConversation`(`:144~164`)은 같은 대화를 다시 열 때도 `markCsRead` 를 호출한다. → **직전 unread 가 0 이고 `modified_count == 0` 이면 본인 대상 발행을 skip** 한다(불필요한 REST 왕복 제거). 실제로 뱃지가 줄어야 하는 경우(직전 unread ≥ 1)에는 반드시 발행된다.
+- **official 계정 부작용 점검**: `admin_cs.py:200` 경로에서 official 에게 `unread` 이벤트가 나가지만, **관리자 앱에 WS 사용처는 0건**이므로 수신자 소켓이 없다. `send_to_user` 가 `0` 을 반환하고 `[dm-pubsub] fanout uid=.. sent=0 type=unread` 로그만 남는다 — **무해**. 페이로드는 `conversation_id` 뿐이라 개인정보·본문 유출 경로 없음.
+
+#### 2-2. ② 관리자 앱(4001) 공지 읽음 수
+| 위치 | 현재 동작 (실측) |
+|---|---|
+| `frontend_admin/src/pages/AdminNoticesPage.jsx` | `setInterval` **0건**. `useEffect(..., [page, reloadKey, loadNotices])` 마운트/페이지전환/발송성공 시에만 로드 |
+| 같은 파일 `loadNotices`(`:69~93`) | **`setLoading(true)` 로 시작** → 화면이 `로딩 중...` 로 통째 교체(`:190`). 폴링에 그대로 재사용하면 **표가 주기적으로 사라진다** |
+| 같은 파일 `useEffect`(`:95~100`) | **`setExpandedId(null)`** — 펼친 행을 접는다. 폴링이 이 이펙트를 타면 안 됨 |
+| 같은 파일 상태 | `notices/loading/error/page/totalPages/reloadKey/expandedId/detailState/modal` |
+| `frontend_admin/src/components/AdminBroadcastModal.jsx` (모달) | `AdminNoticesPage:184` 에서 `open={modal.open}` 로 상시 마운트. `initialText/initialAudience` 는 **열 때만** 주입되는 계약 |
+| `frontend_admin` 전체 | **WebSocket 사용처 0건**. 폴링 전용 앱. 관행: `AdminCsPage.jsx:20 POLL_MS=12000`, `AdminLayout.jsx:9 CS_UNREAD_POLL_MS=30000` |
+| `AdminCsPage.jsx:94~120 / :122~141` | **`{ silent: true }` 옵션 패턴이 이미 관행** — silent 면 `loading`/`error` 를 건드리지 않고 데이터만 교체 |
+
+**서버 집계 비용 (폴링 주기 판단 근거)**
+`notice_service.list_notices`(`:307~355`) 1회 = ① `notices.count_documents` ② `notices.find().sort().skip().limit(20)` ③ `_read_stats`(`:269~300`) = `dm_messages` 에 대한 `$in` **단일 aggregation** (`[(notice_id,1),(read,1)]` sparse 인덱스) ④ `_hydrate_admins` PG 조회 1회.
+③ 이 지배적이며 스캔량 ≈ **(페이지 공지 수 20) × (공지당 수신자 수 = 사용자 수)**. 현재 규모(사용자 ~10² )에서는 수천 건으로 저렴하지만 **사용자 수에 선형 증가**한다.
+
+**→ 폴링 주기 결정: `NOTICE_POLL_MS = 20000` (20초)**
+- CS 목록(12초)보다 **느리게**: 공지 집계는 CS 대화 목록보다 무겁고 사용자 수에 비례해 자란다.
+- 사이드바(30초)보다 **빠르게**: 사용자 불만이 "새로고침 전까지 안 움직인다" 이므로 체감 지연을 절반 이하로 줄인다.
+- 동시 시청자가 사실상 1~2명(관리자 전용 페이지)이라 20초면 서버 부담이 무시할 수준.
+- 추가 완화 3종을 **함께** 넣는다: **(a) 모달 열림 중 폴링 중단**, **(b) `document.hidden` 이면 폴링 skip**, **(c) 인플라이트 가드(이전 요청 진행 중이면 skip)**.
+
+#### 2-3. ③ 관리자 사이드바 CS 뱃지 (v194 테스터 D5)
+| 위치 | 현재 동작 (실측) |
+|---|---|
+| `AdminLayout.jsx:31~48` | `csUnread` 를 **AdminLayout 이 소유**. `getCsUnreadCount()` 30초 폴링. props 는 `children` 만 받는다 |
+| `AdminCsPage.jsx:279` | **AdminCsPage 가 `<AdminLayout>` 을 렌더한다** (레이아웃이 부모 트리이지만 소유자는 페이지) |
+| `AdminCsPage.jsx:151~157` | `markCsRead(cid)` 성공 → 해당 대화 `unread:0` 로컬 반영. **사이드바에는 아무 신호도 가지 않음** |
+
+**정정 (사용자/테스터 가정 보정)**: ③은 ①과 증상만 같고 **메커니즘이 다르다.** 관리자 앱에 WS 가 없으므로 서버 publish 로는 못 고친다. 프론트 로컬 신호로만 해결한다.
+
+**신호 전달 방식 결정 → 모듈 레벨 초경량 이미터 `frontend_admin/src/utils/csUnreadBus.js` 신설**
+- 관행 근거: 사용자 앱의 `dmSocket` 이 이미 **모듈 싱글턴 + `on…() → unsubscribe` 반환** 형태로 Header/DmInboxPage 간 신호를 나른다. 동일 패턴을 관리자 앱에 최소 크기로 옮긴다.
+- **탈락시킨 대안 ①(props)**: `AdminCsPage → AdminLayout` 로 `{seq, delta}` 를 내리는 방식. StrictMode 이중 이펙트에서 **delta 이중 적용** 위험이 있어 `lastAppliedSeq` ref 부기가 필요 → 이미터보다 오히려 복잡하고 취약.
+- **탈락시킨 대안 ②(window CustomEvent)**: 관리자 앱에 전례 없음(`document.addEventListener` 는 모달 outside-click 용도뿐). 전역 이름공간 오염.
+- **탈락시킨 대안 ③(Context)**: `AuthContext` 하나뿐인 앱에 프로바이더를 추가하는 것은 이 크기의 문제에 과함.
+- **재조회가 아니라 델타로 내린다**: `getCsUnreadCount()` 재호출은 official 의 `unread_total` 전량 스캔(2-1 참조)을 대화 클릭마다 유발한다. `AdminCsPage` 는 방금 연 대화의 `unread` 값을 **이미 알고 있으므로** `emit(-openedUnread)` 로 충분하다. 드리프트는 기존 30초 폴링이 **권위값으로 자동 교정**한다.
+
+---
+
+### 3. 변경 매트릭스 (파일별 변경 + 디버깅 로그/추적자)
+
+#### 백엔드 (9005 선구현 → 9004 byte-identical 미러)
+| # | 파일 | 변경 | 심을 디버깅 로그 (추적자) |
+|---|---|---|---|
+| B1 | `backend_9005/app/services/dm_service.py` `mark_read` | pending 가드 **뒤**, unread=0 업데이트 **전** 에 직전 unread 를 읽어둔다(`prev_unread = int((conv.get("unread") or {}).get(me_id,0) or 0)`). 기존 peer `read` 발행 **유지**. 그 뒤에 **본인 대상** `publish_to_user(me_id, {"type":"unread","conversation_id":cid})` 추가. 단 `prev_unread == 0 and result.modified_count == 0` 이면 skip | `logger.info("[dm] mark_read self-unread published conv=%s me=%s prev_unread=%d marked=%d", _short(cid), _short(me_id), prev_unread, result.modified_count)` / skip 시 `logger.info("[dm] mark_read self-unread skipped (nothing to clear) conv=%s me=%s", ...)`. 기존 `[dm] mark_read ...` 라인 **유지** |
+| B2 | `dm_service.py` 모듈/함수 docstring | `mark_read` docstring 에 "본인에게는 `unread`(count 미동봉), 상대에게는 `read` — 본인에게 `read` 를 보내면 DmInboxPage 가 거짓 읽음표시를 켠다" 를 명시. pending 가드 주석 **원문 유지** | — |
+| B3 | `backend_9004/app/services/dm_service.py` | B1·B2 를 **byte-identical** 미러 | 동일 |
+
+**절대 하지 말 것 (B 계열)**: pending no-op 분기(`:578~585`)의 조기 return·이벤트 미발행 **불변**(이 분기에서는 본인 대상 발행도 **금지** — unread 보존이 설계다). `_serialize_message` 화이트리스트 불변. `ensure_dm_indexes` 무수정. `send_message` 의 peer 발행 무수정. **API 계약 변경 0** (응답 스키마 그대로).
+
+#### 프론트엔드 — 사용자 앱(4000)
+| # | 파일 | 변경 |
+|---|---|---|
+| F1 | `frontend/src/components/Header.jsx` | **코드 변경 없음.** `onUnread` 가 이미 count 부재 시 `refreshUnread()` 로 폴백 → 서버 이벤트만으로 동작. 단 검증 편의를 위해 DEV 한정 로그 1줄 추가는 허용: `if (import.meta.env.DEV) console.info('[Header] ws unread event', { hasCount: typeof p?.count === 'number' })` (대화 id·본문 미출력) |
+| F2 | `frontend/src/utils/dmSocket.js` | **무수정.** `unread` 디스패치 경로가 이미 있다 |
+| F3 | `frontend/src/pages/DmInboxPage.jsx` | **무수정.** `onUnread` 미구독 — 중복 리페치 없음. **여기에 `onUnread` 를 새로 붙이지 말 것**(목록 재조회가 겹쳐 깜빡임 유발) |
+
+#### 프론트엔드 — 관리자 앱(4001)
+| # | 파일 | 변경 | 심을 디버깅 로그 (추적자) |
+|---|---|---|---|
+| F4 | `frontend_admin/src/pages/AdminNoticesPage.jsx` | `loadNotices(pageNum, { silent = false })` 로 확장 — silent 면 `setLoading`/`setError` **미터치**, 성공 시에만 `setNotices`/`setTotalPages` 교체. `NOTICE_POLL_MS = 20000` 폴링 이펙트 추가. **중단 조건**: `modal.open === true` / `document.hidden` / 인플라이트. **응답 도착 시 `pageRef.current !== 요청한 page` 면 폐기**(페이지 전환 레이스). `expandedId`·`page`·`modal` **절대 미터치** | `if (import.meta.env.DEV) console.info('[AdminNotices] poll tick', { page, silent: true })` / `'[AdminNotices] poll skipped'`, `{ reason: 'modal'|'hidden'|'inflight' }` / `'[AdminNotices] poll merged'`, `{ page, count, read_total }` / 페이지 레이스 폐기 시 `'[AdminNotices] poll response discarded (page changed)'`, `{ requested, current }`. **공지 본문·관리자 닉네임 원문 콘솔 출력 금지** — 건수·길이·상태만 |
+| F5 | `AdminNoticesPage.jsx` (확장행) | 폴링 tick 때 `expandedId` 가 있으면 **그 1건만** 상세도 silent 재조회. **`loading:true` 로 만들지 말 것**(`본문 불러오는 중...` 깜빡임), 실패 시 기존 `data` **보존**(에러로 덮지 않음) | `console.info('[AdminNotices] detail silent refresh', { notice: shortId(id) })` (본문 미출력) |
+| F6 | `frontend_admin/src/utils/csUnreadBus.js` **(신규)** | 20~30줄 모듈 싱글턴: `subscribe(fn) → unsubscribe`, `emitDelta(n)`. 핸들러 예외는 흡수(구독자 1명이 죽어도 전파 금지) | `if (import.meta.env.DEV) console.info('[CsUnreadBus] delta', { delta })` |
+| F7 | `frontend_admin/src/components/AdminLayout.jsx` | `csUnreadBus.subscribe` 로 델타 적용: `setCsUnread(v => Math.max(0, v + delta))`. 기존 30초 폴링 **유지**(권위값 교정자). 구독 해제 cleanup 필수 | `console.info('[AdminLayout] csUnread delta applied', { delta })` (DEV) |
+| F8 | `frontend_admin/src/pages/AdminCsPage.jsx` | `openConversation` 의 `markCsRead` **성공 직후**, 열기 전 그 대화의 `unread` 값(>0 일 때만) 만큼 `csUnreadBus.emitDelta(-prevUnread)` | `console.info('[AdminCs] csUnread signal', { cid: 앞8자, delta })` (DEV) |
+
+---
+
+### 4. 회귀 위험 목록
+
+| # | 위험 | 방어 |
+|---|---|---|
+| R1 | **본인 대상 `read` 오발행 → 거짓 읽음표시** (`DmInboxPage:443` 가 내 메시지를 read:true 로 칠함) | 본인 이벤트 타입은 **`unread` 고정**. 코드리뷰·유닛테스트로 타입 고정 검증 |
+| R2 | **pending 프라이버시 가드 훼손** | `mark_read` 의 pending 분기는 **early return 그대로**. 이 분기에서 본인 발행도 없음을 유닛테스트로 못박음 |
+| R3 | **받을 때 즉시 표시(기존 실시간)가 깨짐** | `send_message` 의 peer 발행 무수정. 회귀 테스트 필수 |
+| R4 | **읽음표시 동기화(상대 read) 회귀** | 기존 `publish_to_user(peer_id, {"type":"read"})` 무수정. 순서: peer read → self unread |
+| R5 | **불필요 이벤트 폭주** (WS 메시지마다 markDmRead → 이벤트 → REST 왕복) | `prev_unread==0 && modified_count==0` skip 가드. 폭주 여부는 `[dm-pubsub] fanout ... type=unread` 로그 카운트로 확인 |
+| R6 | **official 계정 이벤트 부작용** | 수신 소켓 0 → `sent=0` 로그만. 페이로드에 개인정보·본문 없음 |
+| R7 | **공지 폴링이 펼친 행을 접음** | 폴링 경로는 `expandedId` 미터치. `setExpandedId(null)` 은 `[page, reloadKey]` 이펙트 전용 유지 |
+| R8 | **공지 폴링이 표를 `로딩 중...` 으로 깜빡이게 함** | `{silent:true}` 에서 `setLoading` 미호출 (AdminCsPage 관행 승계) |
+| R9 | **발송 모달 입력 중 리렌더 방해** | `modal.open` 이면 폴링 중단. 모달은 상시 마운트이므로 재마운트/prefill 재주입이 없음을 확인 |
+| R10 | **페이지네이션 위치 튐** | 폴링은 `setPage` 미호출. 응답의 요청 페이지 ≠ 현재 페이지면 **폐기** |
+| R11 | **관리자 CS 폴링(12s)·사이드바 폴링(30s) 회귀** | 두 `setInterval` 모두 **유지**. 델타는 폴링을 대체하지 않고 보완 |
+| R12 | **CS 뱃지 델타 이중 적용 / 음수** | 이미터는 액션당 1회 emit(렌더당 아님) → StrictMode 무영향. `Math.max(0, …)` 하한 |
+| R13 | **CS 뱃지 델타 드리프트** | 30초 폴링이 권위값으로 교정. 델타는 "체감 즉시성" 용도임을 주석에 명시 |
+| R14 | **공지 목록/상세 API 계약 변경** | 백엔드 공지 관련 **무수정**. 계약 스냅샷 회귀 테스트 |
+| R15 | **9004 미러 누락** | 착수 전 `diff -q` 로 5개 파일 동일 확인 완료. 작업 후 `dm_service.py` 재확인 + REPORT 기재 |
+| R16 | **실전체발송 사고** | `POST /api/admin/cs/broadcast` 200 금지. 기존 `notices` 실데이터 **읽기 전용** |
+| R17 | **개인정보·본문 로그 유출** | 신규 로그는 id 앞 8자·건수·길이·불리언만. 공지 본문/닉네임 원문 콘솔 금지 |
+
+---
+
+### 5. 범위 밖 (착수 금지)
+- **관리자 앱 WebSocket 신설** — 공지 1건의 읽음 이벤트가 대상 수만큼 폭주해 디바운스 장치까지 필요. 비용 대비 이득 낮음. 사용자 확정 방침 = 폴링.
+- 사용자 앱 `DmInboxPage` 에 `onUnread` 구독 추가 (중복 리페치·깜빡임 유발)
+- `unread` 이벤트에 `count` 동봉 (§2-1 근거 3가지)
+- 헤더 30초 폴링 제거 (WS 단절 시 폴백이 사라짐 — **유지**)
+- `accept_request`/`decline`/차단 경로의 본인 대상 이벤트 확장
+- 공지 개인별 읽음 목록, 예약 발송, 공지 수정/삭제/회수
+- `ensure_dm_indexes` 개편, DM 스키마 마이그레이션
+- 인프라 조작(docker-compose·포트·ES·MinIO) — v190 규율 승계
+
+---
+
+### 6. 절대 준수
+1. 실사용자 계정/데이터 무접촉. 테스트 계정만.
+2. **실제 전체발송 금지** — 개발·테스트 중 `POST /api/admin/cs/broadcast` 를 200 으로 성립시키지 말 것. 화면 노출·`window.confirm` 취소까지만. 기존 `notices` 실데이터는 **읽기만**(수정·삭제 금지).
+3. `mark_read` pending no-op 프라이버시 가드 불변 / `_serialize_message` 화이트리스트 불변 / `ensure_dm_indexes` 무수정.
+4. 개인정보(생년월일·성별·이메일) 응답·화면·로그·콘솔 노출 금지. 공지 본문 원문 로그 금지.
+5. 산출물에 API 키·시크릿·실계정 크리덴셜 실값 금지 → 플레이스홀더.
+6. 인프라 무조작. **MinIO 9100 차단 금지.**
+7. **9005 선구현 → 9004 byte-identical 미러** 필수.

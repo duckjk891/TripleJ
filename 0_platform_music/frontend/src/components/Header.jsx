@@ -201,6 +201,9 @@ export default function Header() {
         // WS 이벤트가 오면 배지 즉시 재동기화(정확도는 서버 카운트에 위임)
         offMessage = dmSocket.onMessage(() => refreshUnread());
         offUnread = dmSocket.onUnread((p) => {
+          // v195 — 서버가 본인 대상 {"type":"unread"} 를 발행한다(count 미동봉).
+          // count 부재 폴백(refreshUnread)이 실제 경로 — 대화 id·본문은 로그에 남기지 않는다.
+          if (import.meta.env.DEV) console.info('[Header] ws unread event', { hasCount: typeof p?.count === 'number' });
           if (typeof p?.count === 'number') setDmUnread(p.count);
           else refreshUnread();
         });

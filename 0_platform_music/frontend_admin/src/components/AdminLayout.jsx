@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { FiGrid, FiUsers, FiMusic, FiLogOut, FiFlag, FiMessageSquare, FiFileText, FiStar, FiShoppingBag, FiAlertCircle, FiBell } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { getCsUnreadCount } from '../api';
+import csUnreadBus from '../utils/csUnreadBus';
 import './AdminLayout.css';
 
 const CS_UNREAD_POLL_MS = 30000;
@@ -45,6 +46,16 @@ export default function AdminLayout({ children }) {
     fetchUnread();
     const timer = setInterval(fetchUnread, CS_UNREAD_POLL_MS);
     return () => { alive = false; clearInterval(timer); };
+  }, []);
+
+  // v195 — 대화를 열어 읽음 처리한 순간 뱃지를 즉시 깎는다(관리자 앱에 WS 가 없어 로컬 신호로 처리).
+  // 위 30초 폴링이 권위값이며 델타 드리프트를 자동 교정한다 — 폴링을 대체하지 않는 보완 경로다.
+  useEffect(() => {
+    const off = csUnreadBus.subscribe((delta) => {
+      if (import.meta.env.DEV) console.info('[AdminLayout] csUnread delta applied', { delta });
+      setCsUnread((v) => Math.max(0, v + delta));
+    });
+    return off;
   }, []);
 
   const handleLogout = () => {
