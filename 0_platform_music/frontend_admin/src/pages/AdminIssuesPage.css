@@ -239,6 +239,11 @@
   white-space: nowrap;
 }
 
+/* v186 마이크로픽스 — 처리 메모: 재확인 자동 기록 1회 = 1줄(개행 렌더). 한 줄 메모엔 무해 */
+.admin-issues__memo {
+  white-space: pre-line;
+}
+
 .admin-issues__link {
   color: var(--color-text);
   text-decoration: none;

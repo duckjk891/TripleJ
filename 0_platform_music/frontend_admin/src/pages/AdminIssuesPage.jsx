@@ -89,6 +89,27 @@ function summarize(text, n = 60) {
   return t.length > n ? `${t.slice(0, n)}…` : t;
 }
 
+// v186 마이크로픽스 — UA 간단 파서(라이브러리 금지, 정규식). "Chrome 151 · Windows 10" 형식,
+// 파싱 실패 시 빈 문자열(호출측 원문 폴백). 원문은 title 툴팁으로 유지.
+function parseUserAgent(ua) {
+  if (!ua || typeof ua !== 'string') return '';
+  let m;
+  let browser = '';
+  if ((m = ua.match(/Edg\/(\d+)/))) browser = `Edge ${m[1]}`; // Edge UA 에 Chrome 토큰 포함 — 선판정
+  else if ((m = ua.match(/Chrome\/(\d+)/))) browser = `Chrome ${m[1]}`;
+  else if ((m = ua.match(/Firefox\/(\d+)/))) browser = `Firefox ${m[1]}`;
+  else if ((m = ua.match(/Version\/(\d+)[^)]*Safari/))) browser = `Safari ${m[1]}`;
+  let os = '';
+  if (/Windows NT 10\.0/.test(ua)) os = 'Windows 10';
+  else if ((m = ua.match(/Windows NT ([\d.]+)/))) os = `Windows (NT ${m[1]})`;
+  else if (/iPhone|iPad/.test(ua)) os = 'iOS'; // iOS UA 에 "like Mac OS X" 포함 — macOS 보다 선판정
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/Mac OS X/.test(ua)) os = 'macOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  if (!browser && !os) return '';
+  return [browser, os].filter(Boolean).join(' · ');
+}
+
 export default function AdminIssuesPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox'); // inbox | errors
@@ -485,8 +506,8 @@ export default function AdminIssuesPage() {
                                         </dd>
                                       </div>
                                       <div><dt>페이지</dt><dd>{issue.page_url || '-'}</dd></div>
-                                      <div><dt>브라우저</dt><dd className="admin-issues__ua" title={issue.user_agent || undefined}>{issue.user_agent || '-'}</dd></div>
-                                      {issue.admin_note && <div><dt>처리 메모</dt><dd>{issue.admin_note}</dd></div>}
+                                      <div><dt>브라우저</dt><dd className="admin-issues__ua" title={issue.user_agent || undefined}>{parseUserAgent(issue.user_agent) || issue.user_agent || '-'}</dd></div>
+                                      {issue.admin_note && <div><dt>처리 메모</dt><dd className="admin-issues__memo">{issue.admin_note}</dd></div>}
                                       {issue.handled_at && <div><dt>처리 시각</dt><dd>{formatDate(issue.handled_at)}</dd></div>}
                                     </dl>
                                     <div className="admin-issues__detail-actions">
