@@ -12,7 +12,7 @@ import LoginStartButton from './LoginStartButton';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
-export type ReportTargetType = 'track' | 'feed' | 'comment';
+export type ReportTargetType = 'track' | 'feed' | 'comment' | 'dm_message';
 
 const REASONS: { code: string; label: string }[] = [
   { code: 'portrait', label: '초상권 침해' },

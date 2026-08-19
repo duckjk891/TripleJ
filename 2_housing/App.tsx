@@ -30,6 +30,8 @@ import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
 import { useAuthStore } from './stores/authStore';
+import DmInboxScreen from './screens/DmInboxScreen';
+import DmChatScreen from './screens/DmChatScreen';
 import { useUiStore } from './stores/uiStore';
 import { usePointsStore } from './stores/pointsStore';
 import api from './services/api';
@@ -94,6 +96,8 @@ export type RootStackParamList = {
   MainTabs: undefined;
   Settings: undefined;
   Player: { track: any };
+  DmInbox: undefined;
+  DmChat: { conversation: any };
   UserChannel: { authorId: string; name?: string };
   ArtistDetail: { artistId: string; artistName?: string };
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
@@ -389,6 +393,8 @@ export default function App() {
           >
             <RootStack.Screen name="Splash" component={SplashScreen} />
             <RootStack.Screen name="MainTabs" component={MainTabs} />
+            <RootStack.Screen name="DmInbox" component={DmInboxScreen} />
+            <RootStack.Screen name="DmChat" component={DmChatScreen} />
             <RootStack.Screen
               name="Player"
               component={PlayerScreen}

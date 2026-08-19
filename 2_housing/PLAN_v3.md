@@ -7,6 +7,27 @@
 
 ---
 
+## v3.46 — 2026-08-19 — 피드 인스타식 + 댓글/답글 + DM(#태그) + 알림·서버 답변
+
+### 요청
+① 피드 인스타/페북식 ② 댓글+대댓글 ③ 업로드 알림 확인 ④ DM 이식(#고유번호) ⑤ WSL 서버 .env 접근 ⑥ 가이드 파일명.
+
+### Plan verification findings
+- 피드 카드 통계 표시 전용(액션 불가). 댓글 API 존재하나 parent_id 없음(대댓글 백엔드 미지원, MAIDOL도 없음). 알림 시스템 부재(라우터·발행 없음). DM 15 API 완비(본인인증 게이트, #태그=referral_code 4자리). 서버 UTC 타임스탬프 무표기 → 로컬 파싱 9시간 오차.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/feed/FeedCard.tsx (신규) | 인스타식 카드+좋아요 토글+댓글/답글(@멘션)+공유+⋯메뉴+신고 | `[FeedCard] like/댓글` |
+| screens/FeedScreen.tsx | renderPost→FeedCard | 기존 유지 |
+| screens/DmInboxScreen.tsx (신규) | 목록/요청 탭+새 메시지(#태그 검색·내 태그)+인증 게이트 | `[DmInbox] …` |
+| screens/DmChatScreen.tsx (신규) | 말풍선+8s 폴링+요청 수락/거절/차단+신고 | `[DmChat] …` |
+| components/HomeHeaderActions.tsx | 봉투 아이콘+미읽음 뱃지(30s 폴링) | `[HomeHeaderActions] dm unread` |
+| App.tsx / components/ReportModal.tsx | 라우트 2종 / dm_message 타입 | — |
+| (공통) | UTC 'Z' 보정 parseUtc | — |
+
+---
+
 ## v3.45 — 2026-08-19 — 회사 정보 링크 + 문구 정리 + 설정 여백 통일
 
 ### 요청

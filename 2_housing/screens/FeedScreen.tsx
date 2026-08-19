@@ -11,6 +11,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
+import FeedCard from '../components/feed/FeedCard';
 
 interface FeedTrack {
   id: string;
@@ -120,47 +121,36 @@ export default function FeedScreen() {
     );
   };
 
+  // 인스타/페북식 카드(FeedCard) — 좋아요 토글·댓글/답글·공유·⋯메뉴 포함. 본문 블록 렌더는 기존 로직 재사용.
+  const requireLogin = (): boolean => {
+    if (!user) { setCtaVisible(true); return false; }
+    return true;
+  };
+
   const renderPost = ({ item }: { item: FeedPost }) => {
     const author = item.author_nickname || item.author_name || item.nickname || '익명';
     const blocks = item.blocks || [];
     const textBlocks = blocks.filter((b) => b.type === 'text' && b.text);
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
-    const card = (
-      <Card variant="filled" style={styles.card}>
-        <TouchableOpacity
-          style={styles.head}
-          activeOpacity={0.7}
-          onPress={() => {
-            if (!user) { setCtaVisible(true); return; } // 비로그인: 팔로워 클릭 → 로그인 CTA 노출
-            if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: author });
-          }}
-          accessibilityLabel={`${author} 채널`}
-        >
-          <Avatar name={author} size={36} />
-          <View style={styles.headText}>
-            <AppText variant="bodyStrong" numberOfLines={1}>{author}</AppText>
-            {item.created_at ? (
-              <AppText variant="caption" tone="muted">
-                {new Date(item.created_at).toLocaleDateString('ko-KR')}
-              </AppText>
-            ) : null}
+    return (
+      <FeedCard
+        feed={item}
+        requireLogin={requireLogin}
+        onPressAuthor={() => {
+          if (!user) { setCtaVisible(true); return; }
+          if (item.author_id) navigation.navigate('UserChannel', { authorId: item.author_id, name: author });
+        }}
+        onDeleted={() => fetchFeed()}
+        renderBlocks={() => (
+          <View>
+            {textBlocks.map((b, i) => (
+              <AppText key={`t${i}`} variant="body" tone="secondary" style={styles.body}>{b.text}</AppText>
+            ))}
+            {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
           </View>
-          {item.author_id ? <Feather name="chevron-right" size={18} color={colors.text.muted} /> : null}
-        </TouchableOpacity>
-
-        {item.title ? <AppText variant="bodyLg" style={styles.title}>{item.title}</AppText> : null}
-        {textBlocks.map((b, i) => (
-          <AppText key={`t${i}`} variant="body" tone="secondary" style={styles.body}>{b.text}</AppText>
-        ))}
-        {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
-
-        <View style={styles.footer}>
-          <View style={styles.stat}><Feather name="heart" size={14} color={colors.text.muted} /><AppText variant="caption" tone="muted">{item.like_count ?? 0}</AppText></View>
-          <View style={styles.stat}><Feather name="message-circle" size={14} color={colors.text.muted} /><AppText variant="caption" tone="muted">{item.comment_count ?? 0}</AppText></View>
-        </View>
-      </Card>
+        )}
+      />
     );
-    return card;
   };
 
   return (
