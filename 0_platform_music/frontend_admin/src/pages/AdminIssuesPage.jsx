@@ -110,6 +110,24 @@ function parseUserAgent(ua) {
   return [browser, os].filter(Boolean).join(' · ');
 }
 
+// v186 마이크로픽스 — 상태코드 쉬운 말 병기. 미등록 코드('network' 포함)는 코드만.
+const STATUS_CODE_LABELS = {
+  200: '정상',
+  400: '잘못된 요청',
+  401: '로그인 필요',
+  403: '권한 없음',
+  404: '찾을 수 없음',
+  429: '요청 과다',
+  500: '서버 오류',
+  502: '서버 응답 불가',
+  503: '서버 응답 불가',
+};
+
+function statusLabel(code) {
+  const label = STATUS_CODE_LABELS[code];
+  return label ? `${code}(${label})` : `${code}`;
+}
+
 export default function AdminIssuesPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('inbox'); // inbox | errors
@@ -295,7 +313,7 @@ export default function AdminIssuesPage() {
       const v = verdictMeta(data?.verdict, !!data?.auth_required);
       if (import.meta.env.DEV) console.info('[AdminIssues] related probe done', { status: data?.status, verdict: data?.verdict });
       // 메모 자동 기록 — 기존 메모 뒤에 append, 500자 초과 시 뒤(최신)를 보존
-      const line = `재확인 ${formatDate(data?.probed_at || new Date().toISOString())}: ${data?.status} — ${v.label}`;
+      const line = `재확인 ${formatDate(data?.probed_at || new Date().toISOString())}: ${statusLabel(data?.status)} — ${v.label}`;
       const combined = issue.admin_note ? `${issue.admin_note}\n${line}` : line;
       await patchAdminIssueStatus(issue.id, undefined, combined.slice(-500));
       // 상세 재조회(단건) → 행 갱신
@@ -567,7 +585,10 @@ export default function AdminIssuesPage() {
                                                 <span className="admin-issues__nowrap">{formatDate(ev.created_at)}</span>
                                                 <span className="admin-issues__history-msg" title={ev.message || undefined}>{summarize(ev.message, 90)}</span>
                                                 {ev.api ? (
-                                                  <span className="admin-issues__api-meta">{ev.api.method} {ev.api.url} → {ev.api.status}</span>
+                                                  <span className="admin-issues__api-meta">
+                                                    {ev.api.method} {ev.api.url} → {statusLabel(ev.api.status)}
+                                                    {ev.page ? ` · ${ev.page}에서` : ''}
+                                                  </span>
                                                 ) : (
                                                   <span className="admin-issues__api-meta admin-issues__api-meta--none">{ev.page || '-'}</span>
                                                 )}
@@ -718,7 +739,7 @@ export default function AdminIssuesPage() {
                                     </button>
                                     {probe.last && (
                                       <span className={`admin-badge ${verdictMeta(probe.last.verdict, probe.last.auth_required).badge}`}>
-                                        방금 확인: {probe.last.status} — {verdictMeta(probe.last.verdict, probe.last.auth_required).label}
+                                        방금 확인: {statusLabel(probe.last.status)} — {verdictMeta(probe.last.verdict, probe.last.auth_required).label}
                                       </span>
                                     )}
                                     {probe.notice && <span className="admin-issues__probe-notice">{probe.notice}</span>}
@@ -729,7 +750,7 @@ export default function AdminIssuesPage() {
                                     {probe.log.map((p, i) => (
                                       <li key={`${p.probed_at}-${i}`} className="admin-issues__history-row">
                                         <span className="admin-issues__nowrap">{formatDate(p.probed_at)}</span>
-                                        <span className="admin-issues__history-msg">확인 결과 {p.status}</span>
+                                        <span className="admin-issues__history-msg">확인 결과 {statusLabel(p.status)}</span>
                                         <span className={`admin-badge ${verdictMeta(p.verdict, p.auth_required).badge}`}>{verdictMeta(p.verdict, p.auth_required).label}</span>
                                       </li>
                                     ))}
@@ -747,7 +768,7 @@ export default function AdminIssuesPage() {
                                         <span className="admin-issues__history-msg" title={ev.message || undefined}>{summarize(ev.message, 100)}</span>
                                         {ev.api ? (
                                           <span className="admin-issues__api-meta">
-                                            {ev.api.method} {ev.api.url} → {ev.api.status}
+                                            {ev.api.method} {ev.api.url} → {statusLabel(ev.api.status)}
                                           </span>
                                         ) : (
                                           <span className="admin-issues__api-meta admin-issues__api-meta--none">{ev.page || '-'}</span>
