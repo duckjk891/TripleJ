@@ -7,6 +7,22 @@
 
 ---
 
+## v3.45 — 2026-08-19 — 회사 정보 링크 + 문구 정리 + 설정 여백 통일
+
+### 요청
+① 푸터에 이용약관/개인정보처리방침/고객센터 링크 ② 통신판매업 면제 라인 제거 ③ 회사명 "주식회사 로터스에이아이" ④ 설정 가로 여백 통일.
+
+### Plan verification findings
+- CompanyFooter에 링크 3종 누락(MAIDOL Footer엔 존재). 통신판매업 면제 표기는 의무 아님. settingRow가 marginHorizontal 없는 풀블리드 → 꽉 찬 느낌.
+
+### 변경 매트릭스
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/PolicySheet.tsx | CompanyFooter 링크 3종(onOpenPolicy/mailto), 문구 정리, 회사명 변경 | `[CompanyFooter] 메일 열기 실패` |
+| screens/SettingsScreen.tsx | settingRow marginHorizontal 20, 비로그인 분기 PolicySheet, 푸터 패딩 래퍼 | 기존 유지 |
+
+---
+
 ## v3.44 — 2026-08-19 — 회사 정보·약관 + 생년월일 UI + 인증 헤더 + OAuth 준비
 
 ### 요청

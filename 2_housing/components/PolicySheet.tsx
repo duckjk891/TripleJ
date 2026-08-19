@@ -1,6 +1,6 @@
 // [PolicySheet] 이용약관/개인정보 처리방침 등 정책 문서 전문 표시 모달.
 // 문서 원문은 constants/consentTexts.ts(가입 동의 문구와 단일 출처)에서 가져와 불일치를 방지한다.
-import { Modal, View, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, ScrollView, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
@@ -31,15 +31,31 @@ export default function PolicySheet({ visible, title, body, onClose }: Props) {
   );
 }
 
-// 사업자 정보(전자상거래법 표기) — MAIDOL Footer와 동일 내용, 설정 하단·로그인 하단에 공용 표기
-export function CompanyFooter() {
+// 사업자 정보(전자상거래법 표기) — MAIDOL Footer 구성(정보 + 이용약관/개인정보처리방침/고객센터 링크).
+// 설정 하단·로그인 하단에 공용 표기. 통신판매업 신고 면제 문구는 표시 의무 아님 → 미표기.
+export function CompanyFooter({ onOpenPolicy }: { onOpenPolicy?: (key: 'terms' | 'privacy') => void }) {
+  const openMail = () => {
+    Linking.openURL('mailto:kimpearl@lotusai.co.kr').catch((err) =>
+      console.error('[CompanyFooter] 고객센터 메일 열기 실패', { message: err?.message }));
+  };
   return (
     <View style={styles.companyBox}>
+      {/* 정책·고객센터 링크 — MAIDOL Footer와 동일 구성 */}
+      <View style={styles.companyLinks}>
+        <TouchableOpacity onPress={() => onOpenPolicy?.('terms')} accessibilityLabel="이용약관">
+          <AppText variant="caption" tone="secondary" style={styles.companyLink}>이용약관</AppText>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onOpenPolicy?.('privacy')} accessibilityLabel="개인정보처리방침">
+          <AppText variant="caption" tone="secondary" style={styles.companyLink}>개인정보처리방침</AppText>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={openMail} accessibilityLabel="고객센터">
+          <AppText variant="caption" tone="secondary" style={styles.companyLink}>고객센터</AppText>
+        </TouchableOpacity>
+      </View>
       <AppText variant="caption" tone="muted" style={styles.companyText}>
         AIDOL | My AI Idol{'\n'}
         AI로 만든 음악을 공유하는 플랫폼{'\n'}
-        (주)Lotus AI | 대표 이재규 | 사업자등록번호 334-87-04045{'\n'}
-        통신판매업 신고 면제 (자본금 1억원 미만){'\n'}
+        주식회사 로터스에이아이 | 대표 이재규 | 사업자등록번호 334-87-04045{'\n'}
         서울시 중구 퇴계로36길 2, 10층 16호·18호{'\n'}
         대표전화 02-2272-8952 | 이메일 kimpearl@lotusai.co.kr{'\n'}
         개인정보보호책임자 김진주{'\n'}
@@ -63,4 +79,6 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
   },
   companyText: { lineHeight: 18 },
+  companyLinks: { flexDirection: 'row', gap: spacing.lg, marginBottom: spacing.md },
+  companyLink: { textDecorationLine: 'underline' },
 });

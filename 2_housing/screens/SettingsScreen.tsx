@@ -272,7 +272,9 @@ export default function SettingsScreen({ navigation }: any) {
         </Modal>
 
         {/* 사업자 정보 표기 + 정책 문서 */}
-        <CompanyFooter />
+        <View style={{ paddingHorizontal: 20 }}>
+          <CompanyFooter onOpenPolicy={setPolicy} />
+        </View>
         <PolicySheet
           visible={!!policy}
           title={policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
@@ -292,7 +294,13 @@ export default function SettingsScreen({ navigation }: any) {
           onSuccess={() => navigation.goBack()}
           onModeChange={(m) => setAuthTitle(m === 'login' ? '로그인' : '회원가입')}
         />
-        <CompanyFooter />
+        <CompanyFooter onOpenPolicy={setPolicy} />
+        <PolicySheet
+          visible={!!policy}
+          title={policy === 'terms' ? '이용약관' : '개인정보 처리방침'}
+          body={policy ? (CONSENTS as any)[policy].body : ''}
+          onClose={() => setPolicy(null)}
+        />
       </View>
     </ScrollView>
   );
@@ -376,6 +384,7 @@ const styles = StyleSheet.create({
   },
   settingRow: {
     backgroundColor: colors.bg.surface1,
+    marginHorizontal: 20, // 다른 화면과 동일하게 좌우 여백(풀블리드 해소)
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
