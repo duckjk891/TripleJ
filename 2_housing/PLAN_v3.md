@@ -7,6 +7,28 @@
 
 ---
 
+## v3.44 — 2026-08-19 — 회사 정보·약관 + 생년월일 UI + 인증 헤더 + OAuth 준비
+
+### 요청
+① 회사 정보/처리방침 위치+구현 ② 생년월일 '일' 칸 잘림 ③ 헤더 '설정'→로그인/회원가입 ④ 본인인증 자문 ⑤ OAuth 서버 설정(가능한 만큼).
+
+### Plan verification findings
+- '일' 칸 잘림 = 웹 input 고유폭으로 flex 축소 불가(min-width:auto) → minWidth:0 필요.
+- TitleRow '설정' 고정. 약관 메뉴는 "준비 중" Alert. 회사 정보 표기 관행 = 설정 최하단 + 문서 페이지.
+- OAuth: 서버 .env 로딩(기동 시). SSH 2222 publickey 거부(키 미등록) + 클라이언트 키는 콘솔 발급 필요 → 서버 측은 가이드 문서로 대체, 프론트 콜백 수신은 선구현.
+
+### 변경 매트릭스 (추적자: prefix)
+| 파일 | 변경 | 로그 |
+|---|---|---|
+| components/auth/AuthPanel.tsx | birthInput minWidth:0, onModeChange, 내부 타이틀 제거 | 기존 유지 |
+| screens/SettingsScreen.tsx | 헤더 타이틀 분기, 약관 메뉴→PolicySheet, CompanyFooter 2곳 | 기존 유지 |
+| components/PolicySheet.tsx (신규) | 정책 문서 모달 + 사업자 정보 푸터 | — |
+| stores/authStore.ts | loginWithToken(소셜 콜백) | `[authStore] loginWithToken 실패` |
+| App.tsx | 웹 #token= 콜백 훅(URL 즉시 정리) | `[App] OAuth 콜백` |
+| docs/OAUTH_SETUP.md (신규) | 서버 설정 가이드(플레이스홀더만) | — |
+
+---
+
 ## v3.43 — 2026-08-18 — 마이뮤직 정렬 + 하단바 아이콘 + 로그인·회원가입 MAIDOL 이식
 
 ### 요청

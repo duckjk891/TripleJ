@@ -352,7 +352,28 @@ function GlobalModals() {
   );
 }
 
+// [App] 웹 전용 — 소셜 로그인 콜백 수신: 백엔드가 `{frontend_url}/oauth/callback#token=JWT`로
+// 리다이렉트하면 해시에서 토큰을 꺼내 세션을 연다(해시라 서버로그/Referer에 남지 않음).
+function useOAuthCallback() {
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    try {
+      const hash = (globalThis as any)?.location?.hash || '';
+      const m = hash.match(/[#&]token=([^&]+)/);
+      if (!m) return;
+      const token = decodeURIComponent(m[1]);
+      // URL에서 토큰 즉시 제거(히스토리 노출 방지)
+      try { (globalThis as any).history?.replaceState?.(null, '', (globalThis as any).location.pathname); } catch {}
+      if (__DEV__) console.info('[App] OAuth 콜백 토큰 수신 — 세션 열기');
+      useAuthStore.getState().loginWithToken(token);
+    } catch (err: any) {
+      console.error('[App] OAuth 콜백 처리 실패', { message: err?.message });
+    }
+  }, []);
+}
+
 export default function App() {
+  useOAuthCallback();
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />

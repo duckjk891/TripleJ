@@ -24,9 +24,19 @@ const normalizeCompany = (v: string) => {
 
 const REFERRAL_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
 
-export default function AuthPanel({ onSuccess }: { onSuccess?: () => void }) {
+interface AuthPanelProps {
+  onSuccess?: () => void;
+  /** 헤더 타이틀 연동용 — 로그인/가입 화면 전환 통지 */
+  onModeChange?: (mode: 'login' | 'register') => void;
+}
+
+export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const { isLoading, error, login, register, clearError } = useAuthStore();
-  const [mode, setMode] = useState<Mode>('login');
+  const [mode, setModeRaw] = useState<Mode>('login');
+  const setMode = (m: Mode) => {
+    setModeRaw(m);
+    onModeChange?.(m === 'login' ? 'login' : 'register');
+  };
   const [localError, setLocalError] = useState('');
 
   // 공통 필드
@@ -140,7 +150,6 @@ export default function AuthPanel({ onSuccess }: { onSuccess?: () => void }) {
   if (mode === 'login') {
     return (
       <View>
-        <AppText variant="title2" style={styles.title}>로그인</AppText>
         {showError ? <AppText variant="footnote" style={styles.error}>{showError}</AppText> : null}
         <Label>이메일</Label>
         <TextInput style={styles.input} placeholder="이메일을 입력하세요" placeholderTextColor={colors.text.muted}
@@ -164,7 +173,6 @@ export default function AuthPanel({ onSuccess }: { onSuccess?: () => void }) {
   if (mode === 'blocked') {
     return (
       <View>
-        <AppText variant="title2" style={styles.title}>회원가입</AppText>
         <AppText variant="bodyStrong" style={{ marginBottom: spacing.sm }}>만 14세 미만 가입은 보호자 동의 절차 준비 중입니다.</AppText>
         <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.xl }}>
           만 14세 미만은 법정대리인(보호자)의 동의가 있어야 가입할 수 있습니다. 서비스 준비가 완료되면 보호자 동의 후 가입이 가능합니다.
@@ -178,8 +186,7 @@ export default function AuthPanel({ onSuccess }: { onSuccess?: () => void }) {
   if (mode === 'gate') {
     return (
       <View>
-        <AppText variant="title2" style={styles.title}>회원가입</AppText>
-        <AppText variant="footnote" tone="secondary" style={{ marginBottom: spacing.lg }}>
+          <AppText variant="footnote" tone="secondary" style={{ marginBottom: spacing.lg }}>
           가입 전에 생년월일과 내/외국인 여부를 확인합니다.
         </AppText>
         {showError ? <AppText variant="footnote" style={styles.error}>{showError}</AppText> : null}
@@ -221,7 +228,6 @@ export default function AuthPanel({ onSuccess }: { onSuccess?: () => void }) {
   // ── 가입: 본 폼 ──
   return (
     <View>
-      <AppText variant="title2" style={styles.title}>회원가입</AppText>
 
       {/* 게이트 요약 + 수정 */}
       <View style={styles.gateSummary}>
@@ -306,7 +312,8 @@ const styles = StyleSheet.create({
   error: { color: colors.status.error, marginBottom: spacing.sm },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.lg, marginBottom: spacing.md },
   birthRow: { flexDirection: 'row', gap: spacing.sm },
-  birthInput: { flex: 1 },
+  // minWidth:0 필수 — 웹 input은 고유 최소폭(size 속성)이 있어 flex 축소가 막혀 '일' 칸이 화면 밖으로 밀린다
+  birthInput: { flex: 1, minWidth: 0 },
   radioRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
   radio: {
     paddingVertical: spacing.sm, paddingHorizontal: spacing.lg,

@@ -16,6 +16,8 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
+  /** 소셜 로그인 콜백용 — JWT를 직접 받아 세션을 연다(OAuth 리다이렉트 `#token=` 수신 경로) */
+  loginWithToken: (token: string) => Promise<boolean>;
   register: (
     email: string,
     password: string,
@@ -46,6 +48,23 @@ export const useAuthStore = create<AuthState>((set) => ({
       return true;
     } catch (err: any) {
       set({ error: err.response?.data?.error || err.response?.data?.detail || '로그인에 실패했습니다.', isLoading: false });
+      return false;
+    }
+  },
+  loginWithToken: async (token) => {
+    set({ isLoading: true, error: null });
+    try {
+      setAuthToken(token);
+      const res = await api.get('/auth/me'); // user 객체 최상위 응답
+      const user = res.data?.user ?? res.data;
+      if (!user?.id) throw new Error('invalid user payload');
+      set({ token, user, isLoading: false });
+      try { usePlayerStore.getState().restoreQueueFor(String(user.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(social)', { err }); }
+      return true;
+    } catch (err: any) {
+      console.error('[authStore] loginWithToken 실패', { status: err?.response?.status });
+      setAuthToken(null);
+      set({ error: '소셜 로그인에 실패했습니다. 다시 시도해주세요.', isLoading: false, token: null, user: null });
       return false;
     }
   },
