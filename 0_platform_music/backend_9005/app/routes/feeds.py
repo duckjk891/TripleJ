@@ -59,6 +59,8 @@ class FeedBody(BaseModel):
 
 class CommentBody(BaseModel):
     text: str
+    # v191: 대댓글 — 같은 피드 내 부모 댓글 id (None=최상위 댓글)
+    parent_id: str | None = None
 
 
 def _track_view(doc: dict) -> dict:
@@ -718,11 +720,25 @@ async def add_feed_comment(feed_id: str, body: CommentBody, current_user=Depends
     if err:
         return err
 
+    # v191: 대댓글 부모 검증 — 같은 피드의 실존 댓글이어야 하고, 대댓글의 대댓글은 1단으로 평탄화
+    parent_id = (body.parent_id or "").strip() or None
+    if parent_id:
+        if not ObjectId.is_valid(parent_id):
+            return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        parent = await mongo.feed_comments.find_one({"_id": ObjectId(parent_id), "feed_id": feed_id})
+        if not parent:
+            logger.warning("[feed] comment_add parent_missing feed=%s parent=%s", _short(feed_id), _short(parent_id))
+            return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        if parent.get("parent_id"):
+            parent_id = parent["parent_id"]  # 2단 이상은 부모의 부모로 평탄화(인스타 방식)
+        logger.info("[feed] comment_add reply feed=%s parent=%s", _short(feed_id), _short(parent_id))
+
     comment = {
         "feed_id": feed_id,
         "author_id": user_id,
         "author_nickname": current_user.get("nickname"),
         "text": text,
+        "parent_id": parent_id,
         "created_at": datetime.utcnow(),
     }
     result = await mongo.feed_comments.insert_one(comment)
