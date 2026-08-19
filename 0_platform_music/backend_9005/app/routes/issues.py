@@ -13,7 +13,7 @@ dm_conversation_id 는 선택 — DM 대화 생성 실패 시에도 접수가 �
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Request
@@ -34,6 +34,11 @@ MAX_PAGE_URL_LEN = 500
 MAX_APP_VERSION_LEN = 40
 MAX_UA_LEN = 400
 
+# v188 직전 동선(A) — 클라이언트가 보낸 값은 신뢰하지 않고 서버가 재검증한다.
+MAX_RECENT_PAGES = 5
+MAX_RECENT_PATH_LEN = 200
+MAX_RECENT_AT_LEN = 40
+
 
 class IssueCreate(BaseModel):
     reason: str = ""
@@ -41,6 +46,35 @@ class IssueCreate(BaseModel):
     page_url: Optional[str] = None
     app_version: Optional[str] = None
     dm_conversation_id: Optional[str] = None
+    # 직전 동선 — [{path, at}] 최대 5개(최신순). 타입 자유 수용 후 서버 재검증.
+    recent_pages: Optional[Any] = None
+
+
+def _sanitize_recent_pages(raw) -> list:
+    """recent_pages 재검증 — [{path(≤200), at(str)}] 최대 5개.
+
+    비정상 입력(문자열·숫자·null·항목 타입 불일치·path 부재)은 **조용히 무시**
+    하고 접수는 성공시킨다(v185 DM 실패 격리 원칙 승계). 개수 초과는 앞에서부터
+    5개만(최신순 전제), path·at 은 길이 절단. 경로 원문은 로그 금지.
+    """
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if len(out) >= MAX_RECENT_PAGES:
+            break
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str):
+            continue
+        path = path.strip()[:MAX_RECENT_PATH_LEN]
+        if not path:
+            continue
+        at = item.get("at")
+        at = at.strip()[:MAX_RECENT_AT_LEN] if isinstance(at, str) else None
+        out.append({"path": path, "at": at})
+    return out
 
 
 @router.post("", status_code=201)
@@ -76,11 +110,14 @@ async def create_issue(
             logger.info("[issues] invalid cid dropped user=%s", user_tag)
             cid = None
 
+        recent_pages = _sanitize_recent_pages(body.recent_pages)
+
         doc = {
             "user_id": user_id,
             "reason": reason,
             "text": text,
             "page_url": (body.page_url or "")[:MAX_PAGE_URL_LEN] or None,
+            "recent_pages": recent_pages,
             "user_agent": (request.headers.get("user-agent") or "")[:MAX_UA_LEN] or None,
             "app_version": (body.app_version or "")[:MAX_APP_VERSION_LEN] or None,
             "status": "received",
@@ -93,7 +130,8 @@ async def create_issue(
         result = await get_mongo().issue_reports.insert_one(doc)
         issue_id = str(result.inserted_id)
         logger.info(
-            "[issues] create done user=%s issue=%s reason=%s", user_tag, issue_id, reason
+            "[issues] create done user=%s issue=%s reason=%s recent_pages=%d",
+            user_tag, issue_id, reason, len(recent_pages),
         )
         return {"id": issue_id}
     except Exception:

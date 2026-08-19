@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiAlertCircle, FiX } from 'react-icons/fi';
 import * as api from '../api';
+import { getRecentPages } from '../utils/recentPages';
 import './ReportIssueModal.css';
 
 /**
@@ -75,6 +76,15 @@ export default function ReportIssueModal({ onClose }) {
       });
     }
 
+    // v188 — 직전 동선 동봉(선택 필드). 수집이 비어 있으면 필드 자체를 생략해
+    // v185 계약과 완전히 같은 body 로 접수된다 — 수집 실패가 접수를 막지 않는다(실패 격리 승계).
+    let recentPages = [];
+    try {
+      recentPages = getRecentPages();
+    } catch (err) {
+      console.error('[ReportIssue] getRecentPages failed (isolated)', { message: err?.message });
+    }
+
     // ② 전용 접수 — 이것이 실패하면 접수 실패로 처리(모달 유지)
     try {
       const pageUrl = `${window.location.pathname}${window.location.search}`;
@@ -83,8 +93,10 @@ export default function ReportIssueModal({ onClose }) {
         text: trimmed,
         page_url: pageUrl,
         ...(cid ? { dm_conversation_id: cid } : {}),
+        ...(recentPages.length ? { recent_pages: recentPages } : {}),
       });
-      if (import.meta.env.DEV) console.info('[ReportIssue] issue filed', { has_dm: !!cid });
+      // 경로 원문은 출력하지 않는다 — 개수만
+      if (import.meta.env.DEV) console.info('[ReportIssue] issue filed', { has_dm: !!cid, recent_pages: recentPages.length });
     } catch (err) {
       console.error('[ReportIssue] reportIssue failed', {
         status: err?.response?.status,

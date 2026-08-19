@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { PlayerProvider } from './contexts/PlayerContext';
 import { useAuth } from './contexts/AuthContext';
@@ -27,7 +28,20 @@ import BusinessPage from './pages/BusinessPage';
 import ItemSelectPage from './pages/ItemSelectPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
+import { recordPage } from './utils/recentPages';
 import './App.css';
+
+// v188 — 오류신고 "직전 동선" 수집기. 라우트가 바뀔 때만 sessionStorage 링버퍼에 1건 기록한다.
+// null 렌더 컴포넌트로 분리한 이유: AppContent 가 직접 useLocation 을 쓰면 이동할 때마다
+// Header/Footer/MusicPlayer 까지 리렌더된다(재생 중 불필요 렌더). 이 컴포넌트만 리렌더되게 격리.
+// 상태를 만들지 않으므로 렌더 비용은 사실상 0.
+function RecentPageTracker() {
+  const { pathname, search } = useLocation();
+  useEffect(() => {
+    recordPage(`${pathname}${search}`);
+  }, [pathname, search]);
+  return null;
+}
 
 function BusinessRoute({ children }) {
   const { user, loading } = useAuth();
@@ -43,6 +57,7 @@ function BusinessRoute({ children }) {
 function AppContent() {
   return (
     <div className="app">
+      <RecentPageTracker />
       <Header />
       <Routes>
         <Route path="/" element={<MainPage />} />

@@ -11,7 +11,7 @@ import {
   probeAdminIssueError,
   getAdminIssueRelatedErrors,
 } from '../api';
-import { formatDate } from '../utils/format';
+import { formatDate, formatPagePath } from '../utils/format';
 import './AdminIssuesPage.css';
 
 // 오류 신고 (v185) — 탭① 신고 인박스(요약 4·사유 필터·검색·목록·상세 패널·상태 변경·CS 대화 열기)
@@ -539,11 +539,35 @@ export default function AdminIssuesPage() {
                                           ) : '-'}
                                         </dd>
                                       </div>
-                                      <div><dt>페이지</dt><dd>{issue.page_url || '-'}</dd></div>
+                                      {/* v188 — "페이지"는 제출 화면인지 오류 발생 화면인지 모호해 라벨만 정정(값 불변) */}
+                                      <div><dt>신고한 화면</dt><dd>{issue.page_url || '-'}</dd></div>
                                       <div><dt>브라우저</dt><dd className="admin-issues__ua" title={issue.user_agent || undefined}>{parseUserAgent(issue.user_agent) || issue.user_agent || '-'}</dd></div>
                                       {issue.admin_note && <div><dt>처리 메모</dt><dd className="admin-issues__memo">{issue.admin_note}</dd></div>}
                                       {issue.handled_at && <div><dt>처리 시각</dt><dd>{formatDate(issue.handled_at)}</dd></div>}
                                     </dl>
+
+                                    {/* v188 — 직전 동선: 사용자 앱이 동봉한 신고 직전 방문 경로(최신순 최대 5).
+                                        구버전 접수분은 서버가 [] 로 정규화해 내려주며, 그 경우 **블록 자체를 렌더하지 않는다**
+                                        (planner 확정 — "기록 없음" 문구는 노이즈).
+                                        at 은 서버 방어 정책상 null 일 수 있어 있을 때만 시각을 렌더한다(널 안전). */}
+                                    {Array.isArray(issue.recent_pages) && issue.recent_pages.length > 0 && (
+                                      <div className="admin-issues__trail">
+                                        <h4 className="admin-issues__related-title">
+                                          직전 동선
+                                          <span className="admin-issues__related-hint">신고 직전 방문 경로 · 최신순 최대 5</span>
+                                        </h4>
+                                        <ol className="admin-issues__trail-list">
+                                          {issue.recent_pages.map((p, i) => (
+                                            <li key={`${p?.path || 'x'}-${i}`} className="admin-issues__trail-row">
+                                              {/* flex li 는 list-item 마커가 사라지므로 순번을 직접 렌더 */}
+                                              <span className="admin-issues__trail-idx">{i === 0 ? '직전' : `${i + 1}`}</span>
+                                              <span className="admin-issues__page-cell" title={p?.path || undefined}>{formatPagePath(p?.path)}</span>
+                                              {p?.at && <span className="admin-issues__nowrap admin-issues__trail-at">{formatDate(p.at)}</span>}
+                                            </li>
+                                          ))}
+                                        </ol>
+                                      </div>
+                                    )}
                                     <div className="admin-issues__detail-actions">
                                       <select
                                         className="admin-issues__select"
@@ -603,10 +627,10 @@ export default function AdminIssuesPage() {
                                                 {ev.api ? (
                                                   <span className="admin-issues__api-meta">
                                                     {ev.api.method} {ev.api.url} → {statusLabel(ev.api.status)}
-                                                    {ev.page ? ` · ${ev.page}에서` : ''}
+                                                    {ev.page ? ` · ${formatPagePath(ev.page)}에서` : ''}
                                                   </span>
                                                 ) : (
-                                                  <span className="admin-issues__api-meta admin-issues__api-meta--none">{ev.page || '-'}</span>
+                                                  <span className="admin-issues__api-meta admin-issues__api-meta--none" title={ev.page || undefined}>{formatPagePath(ev.page)}</span>
                                                 )}
                                               </li>
                                             ))}
@@ -685,7 +709,8 @@ export default function AdminIssuesPage() {
               <p className="admin-loading">로딩 중...</p>
             ) : (
               <div className="admin-table-wrap">
-                <table className="admin-table--full">
+                {/* v188 — 7열 전부를 1259px 창에 담기 위한 폭 조정은 이 표에만 적용(탭① 인박스 폭 불변) */}
+                <table className="admin-table--full admin-issues__err-table">
                   <thead>
                     <tr>
                       <th>에러 요약</th><th>발생 수</th><th>영향 사용자</th><th>최근 발생</th><th>페이지</th><th>지속 여부</th><th>이력</th>
@@ -719,7 +744,8 @@ export default function AdminIssuesPage() {
                             <td>{(g.count ?? 0).toLocaleString()}</td>
                             <td>{(g.users ?? 0).toLocaleString()}</td>
                             <td className="admin-issues__nowrap">{formatDate(g.last_seen)}</td>
-                            <td className="admin-issues__nowrap">{g.page || '-'}</td>
+                            {/* v188 — 경로만 표시(+말줄임), 원문 URL 은 title 툴팁 */}
+                            <td className="admin-issues__page-cell" title={g.page || undefined}>{formatPagePath(g.page)}</td>
                             <td className="admin-issues__nowrap">
                               {lastProbe ? (
                                 <>
@@ -804,7 +830,7 @@ export default function AdminIssuesPage() {
                                             {ev.api.method} {ev.api.url} → {statusLabel(ev.api.status)}
                                           </span>
                                         ) : (
-                                          <span className="admin-issues__api-meta admin-issues__api-meta--none">{ev.page || '-'}</span>
+                                          <span className="admin-issues__api-meta admin-issues__api-meta--none" title={ev.page || undefined}>{formatPagePath(ev.page)}</span>
                                         )}
                                       </li>
                                     ))}

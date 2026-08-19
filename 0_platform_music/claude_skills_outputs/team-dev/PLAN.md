@@ -27138,3 +27138,85 @@ E2E (실발송 금지):
 - **§2 A-① 문안 정정 — `<tr>` 의 `role="button"` 제거**(tabIndex/aria-expanded/onClick/onKeyDown 유지). 근거: ① `role="button"` 은 행의 row 시맨틱(행 위치·열 연관)을 파괴하는데, 행 안에 이미 접근 가능한 실제 버튼("발생 이력 ▼")이 있어 AT 사용자 경로가 확보돼 있음 — 중복 role 로 손해만 남음 ② `aria-expanded` 는 role=row 에서 유효(확장 행 패턴) ③ eslint 설정에 jsx-a11y 플러그인 부재 실측 — 제거해도 신규 lint 오류 없음. frontend-dev 1속성 제거 + 스모크(행 클릭·Enter/Space·버튼 이중 토글 없음) 후 tester 착수.
 - **`histReady` 가드 — 승인**(지시서 미기재 판단): repApi 가 이력 응답 파생이라 로딩 중 null → 가드 없으면 api 보유 그룹에도 "API 정보 없음" 오안내가 순간 노출. 오안내 방지가 A-② 취지(부재 사유의 정확한 설명)와 정합.
 - **키보드 포커스 시 테이블 가로 스크롤 — 수용**(기존 테이블 폭 조건에서 발생, 기능 영향 0 — 비고 처리).
+
+---
+
+# v188 — 시각 9시간 밀림 픽스 + 탭② 열 가시성 + 신고 위치 추적(A+B) (2026-08-19 16:00)
+
+## 0. 사전 코드 분석 (planner 직접 실측 — 오케스트레이터 진단 재검증)
+
+### ① 시각 밀림 — 원인·선례·영향 범위 확정
+- `admin_issues.py:104` `_iso(dt) = dt.isoformat()` — **naive 그대로 직렬화**(tz 미표기) 실측. Mongo 는 UTC 를 naive 로 반환하므로 프론트 `new Date()` 가 KST 로 오해석 → **정확히 9시간 밀림**.
+- **선례 실측**: `dm_service.py:104-110 _iso` — `if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)` 후 isoformat, 주석에 "v156.1 시간표시 픽스" 경위 기재. **동일 방식 복제가 검증된 해법**.
+- **영향 범위 확대 실측**: 사설 `_iso` 정의가 4곳 — `admin_issues.py:104`(버그)·**`admin_ads.py:74`(동일 버그 — v184 광고 화면 시각도 9시간 밀림 중)**·`dm_service.py:104`(정상)·`character.py:1216`(지역 함수, 범위 외). → **admin_issues + admin_ads 2파일 수정 확정**.
+- 저장 측 점검 결과: `_logs.py`·`issues.py` 는 `datetime.now(timezone.utc)` **aware 저장**(정상) — 문제는 조회 직렬화 단계뿐. 저장 마이그레이션 불요.
+
+### ② 탭② 열 가시성 — 원인 확정
+- `_logs.py:254 _page_path` 는 **쿼리만 제거하고 스킴·호스트는 보존**(`http://100.83.210.58:4000/artist/...`) → 저장값 자체가 길다.
+- 프론트 `AdminIssuesPage.jsx:722` `<td className="admin-issues__nowrap">{g.page || '-'}</td>` — nowrap + 전체 URL → 표 폭 폭증(1259px 창에서 scrollWidth 1654, 지속 여부/이력 열 화면 밖). 동일 패턴이 `:609`·`:807`(이력·관련 에러 행)에도 존재.
+- → **표시 측 변환**(경로만+말줄임+title 원문)으로 해결 — 저장 데이터 변경·마이그레이션 없음.
+
+### ③ 신고 위치 — 현행·변경 지점
+- `ReportIssueModal.jsx:80` `page_url = pathname + search`(제출 순간) → `issues.py:83` 저장(≤MAX_PAGE_URL_LEN). 신고 상세 라벨이 "페이지"라 **제출 화면**임이 드러나지 않음.
+- 사용자 앱에 라우트 이동 이력 보관 로직 **부재** — 신설 필요. `remoteLogger.maskSensitiveUrl`(v185) 재사용 가능.
+
+## 1. planner 판정 3건 (오케스트레이터 보고 사항)
+
+1. **`_iso` 공용화 — 하지 않음(복제 + 선례 주석).** 대상 2파일(admin_issues·admin_ads)에 dm_service 선례 방식을 복제하고 주석에 "v156.1 선례·v188 확대적용"을 명기. 근거: ① 공용 util 신설은 v184 검증 코드(admin_ads)·dm_service(대규모 소비처)까지 import 를 건드려 회귀 표면이 이득보다 큼 ② 3파일 사설 함수 통합은 이번 버그와 무관한 리팩터 ③ 팀 선례(`_sum_points_by_user` 중복 허용 후 공통화 후보 등재)와 일관. **공용화는 후속 후보로 등재**.
+2. **`recent_pages` 스키마·상한 확정**: `[{path: str(≤200), at: ISO8601}]` **최대 5개**(최신순), **sessionStorage 백업 링버퍼**(탭 단위·탭 종료 시 소멸 — 오류 후 새로고침해도 직전 동선 보존이 A 의 핵심 가치). path 는 **`maskSensitiveUrl` 통과 후 pathname+마스킹 쿼리**, 서버가 재검증(개수 5 절단·길이 200 절단·타입 불일치 무시). 신고 접수 body 에 선택 필드로 포함 — **부재해도 접수 성공**(v185 실패 격리 원칙 승계).
+3. **페이지 표시 정책 — 관리자 앱 전역 통일**: 탭② 목록·이력 행·관련 에러 행·신고 상세 모두 **경로만 표시 + `max-width`+ellipsis + title 원문**. 공용 헬퍼 `formatPagePath(url)` 1개를 AdminIssuesPage 내부(또는 utils)에서 정의해 3~4 지점 공유 — 저장값·API 응답은 불변(표시 전용).
+
+## 2. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| ① 픽스 | `admin_issues.py`·`admin_ads.py` 의 `_iso` 를 **naive→UTC 명시 후 isoformat** 으로 교체(dm_service 선례 복제+주석). 응답 필드명·구조 불변(값의 tz 표기만 추가) | 검증된 해법·최소 diff |
+| ① 검증 축 | 응답 문자열이 `...+00:00`(또는 Z) 로 끝나고, **화면 표시 = 실제 KST 시각**(±1분) — 신고 created_at·에러 last_seen/created_at·probe probed_at·광고 created_at 4계열 | 사용자 보고 직접 해소 |
+| ② 표시 | `formatPagePath(url)` = 스킴·호스트 제거 → pathname(+마스킹 쿼리 있으면 유지), 빈 값 `-`. 셀에 `admin-issues__page-cell`(max-width 220px·ellipsis·title 원문). **nowrap 유지**(줄바꿈 대신 말줄임) | 폭 폭증 제거·원문 접근성 유지 |
+| ② 목표 | **창 폭 1259px 에서 7열 전부 가시**(scrollWidth ≤ clientWidth) — tester 실측 항목 | 사용자 환경 재현 |
+| ③A 수집 | 사용자 앱 신규 `frontend/src/utils/recentPages.js`: `recordPage(path)`(라우터 이동 시 호출)·`getRecentPages()` — sessionStorage 키 1개, 링버퍼 5, 중복 연속 경로는 갱신만(시각 최신화), `maskSensitiveUrl` 적용. `App.jsx`(또는 라우터 루트)에서 `useLocation` 변화 시 record | 상한·마스킹·탭 스코프(판정 1-2) |
+| ③A 전송·저장 | 모달 제출 시 `recent_pages` 포함 → `issues.py` 가 **재검증 후 저장**(list 아니면 무시, 5 절단, 각 항목 path≤200·at 파싱 실패 시 제외). 필드 부재 허용 | 실패 격리 |
+| ③A 표시 | 신고 상세에 **"직전 동선"** 블록(최신순 경로+시각, 경로는 ②의 formatPagePath 적용). 값 없으면 "기록 없음(구버전 앱에서 접수)" | 진단 가치 노출 |
+| ③B 라벨 | 신고 상세의 기존 "페이지" → **"신고한 화면"**(값 불변). 목록·탭②의 page 열 라벨은 그대로 | 오해 제거 |
+| 미러 | 9005→9004: `admin_issues.py`·`admin_ads.py`·`issues.py` 3파일 | 관례 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_issues.py` | `_iso` tz 명시 | `[admin-issues]` |
+| `backend_9005/app/routes/admin_ads.py` | `_iso` tz 명시 | `[admin-ads]` |
+| `backend_9005/app/routes/issues.py` | `recent_pages` 수신·재검증·저장 + 상세 응답 포함 | `[issues]` |
+| `backend_9004/...` 동일 3파일 | 미러 byte-identical | - |
+| `frontend/src/utils/recentPages.js` | **신설** — 링버퍼·마스킹 | `[RecentPages]` |
+| `frontend/src/App.jsx`(라우터 루트 — 실측 위치) | 라우트 변화 시 record | - |
+| `frontend/src/components/ReportIssueModal.jsx` | `recent_pages` 전송 | 기존 `[ReportIssue]` |
+| `frontend_admin/src/pages/AdminIssuesPage.jsx/.css` | formatPagePath 적용(3~4 지점)·page 셀 스타일·"직전 동선" 블록·"신고한 화면" 라벨 | `[AdminIssues]` |
+| **무변경** | `_logs.py`(저장 정상)·dm_service·admin_cs/points·package.json | - |
+
+## 4. 작업 분담 (병렬)
+- **backend-dev**: ① `_iso` 2파일 픽스(dm_service 선례 복제·주석에 v156.1/v188 경위, **응답 구조 불변** 자가 증빙) ② issues.py `recent_pages` 재검증 저장(상한·타입 방어, **본문·경로 원문 서버 로그 금지 — 개수만**) + 관리자 상세 응답에 포함(admin_issues 조회부가 저장 문서를 그대로 직렬화하는지 실측 후 필요 시 additive) ③ 9004 미러 3파일.
+- **frontend-dev**: ① 사용자 앱 — recentPages 유틸 신설(sessionStorage·상한 5·마스킹 재사용·용량 방어 try/catch)·라우터 훅 연결·모달 전송(부재 시 접수 성공 유지) ② 관리자 앱 — formatPagePath 공용화·page 셀 ellipsis/title·**1259px 가시성 자가 실측**·"직전 동선" 블록·"신고한 화면" 라벨. eslint 신규 0, package.json 무변경.
+- **test-designer**: §5.
+
+## 5. 테스트 항목 (test-designer)
+안전 제약: v187 승계 — §0 선행 절차(하드 새로고침+빌드 표기 기록) 필수, 신고 접수는 **테스트 계정+`[v188-test]` 표식**, 실사용자 대화·신고 수정 금지, 프로브 클릭 0건.
+1. ① API: 신고 목록·상세·errors 묶음·이력·probe·**광고(admin_ads) 대표 응답**의 시각 필드가 **tz 표기 포함**(`+00:00`/Z), 값이 UTC 기준으로 정확. 회귀: 응답 키 집합·구조 불변.
+2. ① UI: 관리자 화면 표시 시각 == 실제 KST(±1분) — 신고 접수 직후 상세/목록, 탭② 최근 발생, 프로브 "방금 확인" 시각, 광고 화면 1지점. **9시간 밀림 해소 실증**.
+3. ② 레이아웃: **창 폭 1259px 에서 탭② 7열 전부 가시**(scrollWidth ≤ clientWidth 실측), page 셀 경로만+말줄임+title 원문, 이력·관련 에러 행도 동일 정책. 좁은 창(1024px)에서 가로 스크롤은 허용하되 열 손실 없음 확인.
+3-1. ② 회귀: v187 행 클릭 확장·버튼·안내 문구 정상.
+4. ③A: 사용자 앱에서 3~5개 경로 이동 후 신고 접수 → 저장 문서 `recent_pages` 최신순·**5개 상한**·**마스킹 적용**(민감 쿼리 값 부재)·중복 연속 경로 미중복. 새로고침 후에도 직전 동선 보존(sessionStorage). 관리자 상세에 "직전 동선" 렌더.
+5. ③A 방어: recent_pages 미포함 접수 성공(구버전 앱 시뮬 — body 생략), 비정상 타입(문자열·6개 초과·초장문 path) 전송 시 **서버 절단·무시로 200**(500 없음).
+6. ③B: 신고 상세 라벨 "신고한 화면" 렌더, 값 == 제출 시점 경로(기존 동작 불변).
+7. 회귀·위생: v185~187 대표(접수·인박스·파일 로그 계약·CS cid 열기)·9004 미러 3파일 diff 0·package.json 무변경·콘솔/서버 로그에 신고 본문·경로 원문·이메일 0건(개수·상태만).
+
+## 6. 리스크 / 강행 금지
+- **강행 금지**: ① `_iso` 수정은 **tz 명시만** — 응답 필드·구조·형식(ISO8601) 변경 금지 ② `_logs.py` 저장 계약 무접촉(저장은 이미 정상) ③ recent_pages 에 **쿼리 원문·토큰 저장 금지**(마스킹 필수)·상한 초과 저장 금지 ④ 사용자 앱은 이번 범위 3파일만(수집기·기타 무접촉) ⑤ 실사용자 신고·대화 수정 금지 ⑥ 라이브러리 추가 금지 ⑦ v177~187 승계.
+- sessionStorage 용량·비활성(사파리 프라이빗 등) 환경 — try/catch 로 흡수, 실패 시 recent_pages 없이 접수(기능 저하만).
+- ② 는 표시 전용 변환 — 기존 저장값에 스킴·호스트가 남아 있어도 화면만 경로. fp 는 저장값 기준이라 **묶음 영향 없음**(회귀 확인 항목).
+- admin_ads `_iso` 수정은 v184 검증 코드 변경 — 응답 구조 불변이나 tester 가 광고 화면 1지점 회귀 확인.
+- 공용화 후보 등재: `_iso` 3중복(admin_issues·admin_ads·dm_service), `formatPagePath` 관리자 전역화.
+
+## 7. v188 정정 (planner, 2026-08-19)
+- **§2 ③A 표시 문안 정정**: "값 없으면 '기록 없음(구버전 앱에서 접수)'" → **데이터가 있을 때만 "직전 동선" 블록 렌더(미보유 시 블록 자체 미표시)**. 근거: 구버전 앱 접수 건(대다수 과거 신고)에 안내 문구가 상시 노출되면 상세 화면 노이즈가 되고, 진단 가치도 없음. TESTPLAN §4 판정 3 과 동기화.
+- **§2 ③A 저장 규칙 정정(계약 편차 수용)**: "at 파싱 실패 시 항목 제외" → **`at` 이 문자열이 아니면 항목을 버리지 않고 `at: null` 로 저장**(구현 쪽 관대 규칙 채택). 근거: ① 진단 가치의 본체는 **경로**이고 시각은 보조 — 시각이 없다고 동선을 통째로 버리면 A 의 목적(이탈 후 신고에도 위치 추적)이 훼손됨 ② 배열이 최신순으로 정렬돼 오므로 `at` 부재가 순서 판독을 깨지 않음 ③ 서버는 여전히 개수 5·path 200자 절단·타입 방어를 강제. **프론트 요구 추가**: `at` null 항목은 시각 표기 없이 경로만 렌더(널 안전 — TESTPLAN 검증 항목에 포함).

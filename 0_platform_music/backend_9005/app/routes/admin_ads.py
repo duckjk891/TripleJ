@@ -72,7 +72,15 @@ def _parse_user_uuid(user_id: str) -> str:
 
 
 def _iso(dt) -> Optional[str]:
-    return dt.isoformat() if isinstance(dt, datetime) else dt
+    # Mongo 는 UTC 를 naive 로 돌려줌 — tz 미표기 시 프론트 new Date() 가
+    # 로컬(KST)로 오해석해 9시간 밀림 → UTC 명시 후 직렬화.
+    # (dm_service._iso v156.1 선례 방식 복제 — v188 확대적용. 값의 tz 표기만
+    #  추가되며 응답 필드·구조·ISO8601 형식은 불변)
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    return dt
 
 
 async def _counts_by_item(collection, item_ids: list, since: Optional[datetime]) -> dict:

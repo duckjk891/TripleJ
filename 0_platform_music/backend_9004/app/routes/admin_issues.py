@@ -102,7 +102,15 @@ def _validate_probe_url(url) -> str:
 
 
 def _iso(dt) -> Optional[str]:
-    return dt.isoformat() if isinstance(dt, datetime) else dt
+    # Mongo 는 UTC 를 naive 로 돌려줌 — tz 미표기 시 프론트 new Date() 가
+    # 로컬(KST)로 오해석해 9시간 밀림 → UTC 명시 후 직렬화.
+    # (dm_service._iso v156.1 선례 방식 복제 — v188 확대적용. 값의 tz 표기만
+    #  추가되며 응답 필드·구조·ISO8601 형식은 불변)
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    return dt
 
 
 def _parse_error_days(days) -> int:
@@ -124,6 +132,8 @@ def _serialize_issue(doc: dict, user_info: Optional[dict] = None) -> dict:
         "reason": doc.get("reason"),
         "text": doc.get("text", ""),
         "page_url": doc.get("page_url"),
+        # v188 직전 동선 — additive. 구버전 접수 문서엔 필드 부재 → [] 로 정규화
+        "recent_pages": doc.get("recent_pages") or [],
         "user_agent": doc.get("user_agent"),
         "app_version": doc.get("app_version"),
         "status": doc.get("status", "received"),

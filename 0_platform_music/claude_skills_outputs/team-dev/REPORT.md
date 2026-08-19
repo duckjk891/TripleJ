@@ -15389,3 +15389,46 @@ v185 예약분 2단계: ① 프로브 재확인(탭②·신고 상세 [지금 �
 - 산출물 2: `claude_skills_outputs/team-dev/PLAN.md`(§7 정정 포함) `TESTPLAN.md`
 - 본 REPORT: `claude_skills_outputs/team-dev/REPORT.md` (v187 append)
 - 무변경 확인: 백엔드 전체·사용자 앱 전체·package.json — git status 실측, 하니스 잔재 0건. (B 백엔드는 a479669 에서 기 커밋·미러 완료 — 이번 diff 에 없음이 정상.)
+
+---
+
+# v188 — 시각 9시간 밀림 픽스 + 탭② 열 가시성 + 신고 위치 추적(A+B) (2026-08-19 16:30)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+사용자 E2E 보고 3건: ① 관리자 화면 시각이 9시간 밀림 ② 탭②의 "지속 여부"·"이력" 열이 화면 밖 ③ 신고의 "페이지" 값이 제출 시점 주소라 진단 가치 없음 → **A) 최근 방문 경로(직전 동선) 기록·표시 + B) 라벨 정정** 동시 채택.
+
+## 2. 설계 결정 (0단계 실측 + planner 판정)
+- **① 원인·선례**: `admin_issues.py:104 _iso` 가 naive 그대로 직렬화 → Mongo 가 UTC 를 naive 로 반환하므로 프론트 `new Date()` 가 KST 로 오해석해 정확히 9시간 밀림. 해법은 **`dm_service.py:104-110`(v156.1 픽스) 선례 복제**(naive → UTC 명시 후 isoformat).
+- **영향 범위 확대(planner 0단계 추가 발견)**: 사설 `_iso` 4곳 중 **`admin_ads.py:74`(v184 광고 화면)에도 동일 버그** — 사용자 미보고분까지 같은 버전에서 수정. 저장 측(`_logs.py`·`issues.py`)은 `datetime.now(timezone.utc)` **aware 저장 정상** → 조회 직렬화만 수정, 마이그레이션 없음.
+- **판정 ① `_iso` 공용화 안 함**: 대상 2파일에 선례 복제+주석(v156.1/v188 경위). 공용 util 신설은 v184 검증 코드·dm_service 대규모 소비처 import 까지 건드려 회귀 표면이 이득 초과 — **공용화는 후속 후보 등재**(팀 선례 `_sum_points_by_user` 와 일관).
+- **② 원인**: `_logs.py:254 _page_path` 가 쿼리만 제거하고 **스킴·호스트는 보존** → 저장값이 길고, 프론트가 nowrap 전체 URL 렌더 → 표 폭 폭증. **표시 전용 변환**으로 해결(저장·API·fp 무영향). 판정 ③ 로 관리자 전역 통일: `formatPagePath()` 공용 헬퍼 4지점(탭② page 셀·이력·관련 에러·직전 동선)+ellipsis+title 원문.
+- **1259px 달성 경위**: 경로 단축만으로는 1096px 로 부족 → **탭② 전용 표 클래스**(패딩·열 폭·지속 여부 2줄 배치)로 **1654 → 953** 달성. **탭① 인박스 표는 공용 클래스 불변**(회귀 표면 최소화).
+- **③A 스키마(판정)**: `recent_pages = [{path≤200, at}]` **최대 5·최신순**, **sessionStorage 링버퍼**(탭 스코프 — 오류 후 새로고침에도 동선 보존이 A 의 핵심 가치), `maskSensitiveUrl`(v185) 통과, 서버 재검증(개수·길이 절단·타입 방어), **부재해도 접수 성공**(v185 실패 격리 승계). 프론트는 `RecentPageTracker`(null 렌더 컴포넌트)로 격리해 라우트 이동 시 Header/Player 리렌더 회피.
+- **③A 계약 편차 채택(planner 판정)**: `at` 비문자열 시 **항목 제외 대신 `at: null` 저장**(구현 관대 규칙). 근거 — 진단 가치의 본체는 **경로**이고 시각은 보조라 시각 파손으로 동선을 통째로 버리면 목적이 훼손됨 / 배열이 최신순 전달이라 순서 판독 불변 / 개수·길이·타입 방어는 그대로. **연동 요구**: `at` null 항목은 **시각 표기 없이 경로만 렌더**(널 안전).
+- **③A 표시 정정(planner 판정)**: 미보유 시 "기록 없음" 문구 대신 **블록 자체 미표시**(구버전 접수 건 대다수에 상시 문구는 노이즈).
+- **③B**: 신고 상세 라벨 "페이지" → **"신고한 화면"**(값 불변).
+
+## 3. 테스트 결과 — 11/11 PASS (api 5 / unit 4 / e2e 2), 픽스 루프 0회
+- **① tz**: 4계열(신고·에러·프로브·admin_ads) 전 시각 필드 tz 표기 완비, **Mongo 저장 UTC 와 동일 순간**(시각부 문자열 동일 — 시프트 0), 응답 키 불변.
+- **① KST 실증 4지점(±1분)**: 신고 16:23=07:23+9 / 탭② 16:05=07:05+9 / 프로브 16:16=07:16+9 / **광고 화면 2026-04-10 20:54=11:54+9** → **9시간 밀림 해소**.
+- **② 레이아웃**: 1259px 에서 **scrollWidth 953 ≤ clientWidth 953**, 7열 전부 right ≤ 1259(지속 여부 1117·이력 1226), page 셀 경로만+ellipsis+title 원문, **1024px 에서도 열 손실 0**.
+- **③ recent_pages**: ≤5·최신순·경로만·**마스킹 실증**(`?token=v188secret` → `/points?normal=1`), 방어 8케이스 전부 201(절단·무시·at null 널 안전 렌더 포함).
+- **③ E2E 핵심 가치 실증**: 오류 페이지 A 방문 → A 이탈 후 메인에서 신고 → 상세 동선에 **A 보존**(신고한 화면 `/` 와 구분) + F5 후에도 보존.
+- 회귀·위생: v185~187 대표 불변·미러 3파일 byte-identical·git diff 매트릭스 정확 일치(_logs.py·package.json 부재)·fp 무영향·서버 로그 `recent_pages=0` 개수만(경로 원문 0건)·콘솔 0·eslint 0·쓰기 요청 0·프로브 클릭 0.
+- planner 판정 6건(TESTPLAN §4): Mongo UTC 직접 대조+DB 읽기 승인 / 로컬 TZ KST 실측 / 직전 동선 미보유 블록 미표시 / 광고 회귀 지점 items created_at / 직접 POST 7케이스 승인 / 프로브 0건·기적재 이력 사용.
+
+## 4. 특이사항
+- **admin_ads(v184) 시각 버그 동시 수정**: planner 0단계 추가 발견분 — 사용자 미보고였으나 동일 결함이라 함께 픽스, **광고 화면 회귀 스모크 통과**(응답 키·items 건수 동일).
+- **tester 비고 2건(사양 확인)**: ① 6개 이상 전송 시 **앞 5개 유지(서버 정렬 미수행)** — 클라이언트가 최신순 전송하는 규약이라 실사용 결과 동일 ② `recent_pages` 필드 미포함 접수 시 저장값 `[]`(구버전 앱 호환·프론트 블록 미표시와 정합).
+- **잔존물(delete 0)**: `[v188-test]` 신고 18건 + 방어 케이스 문서 + frontend_errors 유발분 — 전부 테스트 계정·표식 보유.
+- **별건(v188 무관)**: 레거시 `backend/`·`backend_9001~9003` 259파일 삭제가 워킹트리에 나타났던 건 — frontend-dev 가 격리(커밋 미포함) 조치 후 사용자 확인을 거쳐 **별도 커밋 `f0ea421`** 로 정리 완료. 9004/9005 무사, v188 변경분과 분리 확인.
+- 승계 후속 후보(10건): **`_iso` 공용화(admin_issues·admin_ads·dm_service 3중복)**·**`formatPagePath` 관리자 전역 유틸화** 신규 2건 + 기존 8건(스크린샷 3단계 재평가 / signup_bonus day 백필·분기 / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채 / `_sum_points_by_user` 공통화, "열람=읽음 처리" 사전 고지 포함).
+
+## 5. 변경 파일 (커밋 대상 14)
+- 백엔드 6: `backend_9005/app/routes/admin_issues.py` `admin_ads.py` `issues.py` + 9004 동일 3파일(미러 byte-identical 최종 실측)
+- 사용자 앱 3: `frontend/src/utils/recentPages.js`(신설) `frontend/src/App.jsx` `frontend/src/components/ReportIssueModal.jsx`
+- 관리자 앱 3: `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` `frontend_admin/src/utils/format.js`
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md`(§7 정정 2건 포함) `TESTPLAN.md` `REPORT.md` (v188 append)
+- 무변경 확인: `_logs.py`·dm_service·admin_cs/points·package.json — git status 실측, 하니스 잔재 0건. **삭제(D) 항목 0**(레거시 정리는 `f0ea421` 에서 종결).

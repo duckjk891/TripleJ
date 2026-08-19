@@ -463,6 +463,78 @@
   outline-offset: -2px;
 }
 
+/* ── v188 — 페이지 경로 셀 + 직전 동선 ─────────────── */
+
+/* 경로만 표시하되 그래도 긴 값(긴 slug·쿼리)이 폭을 밀지 않도록 말줄임. 원문은 title 툴팁 */
+.admin-issues__page-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* td 는 기본이 table-cell 이라 max-width+ellipsis 가 먹지만, 인라인 span 자리에서는 block 화가 필요 */
+span.admin-issues__page-cell {
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* 탭② 표 전용 폭 조정 — 목표: 창 폭 1259px(표 컨테이너 ≈953px)에서 7열 전부 가시.
+   경로 단축만으로는 1096px 이 남아 3열이 잘렸다. 아래 4가지를 이 표에만 적용해 컨테이너 안으로 넣는다
+   (탭① 인박스 표는 기존 폭 그대로 — 공용 클래스를 건드리지 않으려고 스코프를 나눴다). */
+.admin-issues__err-table th,
+.admin-issues__err-table td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.admin-issues__err-table .admin-issues__summary-cell {
+  max-width: 260px; /* 원문은 title 툴팁 + summarize(80자) 로 이미 보존 */
+}
+
+.admin-issues__err-table .admin-issues__page-cell {
+  max-width: 170px;
+}
+
+/* "지속 여부" 는 배지+시각이 한 줄이라 185px 를 먹었다 — 시각을 아랫줄로 내려 폭을 줄인다 */
+.admin-issues__err-table .admin-issues__probe-time {
+  display: block;
+  margin-left: 0;
+}
+
+.admin-issues__trail {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.admin-issues__trail-list {
+  list-style: none; /* 순번은 flex li 안에서 직접 렌더 */
+  margin: 0;
+  padding: 0;
+}
+
+.admin-issues__trail-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 0.84rem;
+  color: var(--color-text);
+}
+
+.admin-issues__trail-idx {
+  flex: 0 0 auto;
+  min-width: 34px;
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+}
+
+.admin-issues__trail-at {
+  font-size: 0.76rem;
+  color: var(--color-text-sub);
+}
+
 .admin-issues__probe-na {
   padding: 6px 4px 10px;
   font-size: 0.82rem;
