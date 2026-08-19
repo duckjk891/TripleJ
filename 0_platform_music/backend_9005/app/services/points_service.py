@@ -29,6 +29,8 @@ POINT_COSTS = {
     "cover": 5,         # 커버 이미지 (upload.py, 기존 2 → 5)
     "character": 10,    # 캐릭터 시트 (character.py, 기존 2 → 10)
     "fatigue_skip": 5,  # 디렉터 피로 쿨다운 30분 스킵 (fatigue.py)
+    "hire_director": 10,  # v193 AIDOL — 디렉터 영입 (points.py /spend)
+    "extra_slot": 15,     # v193 AIDOL — 추가 아티스트 슬롯 개방 (points.py /spend)
 }
 
 _indexes_ready = False

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -643,7 +643,7 @@ async def purge_track_document(doc: dict, conn) -> dict:
     # Redis 캐시 (legacy v1 + current v2) + playcount 버퍼
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
-    await redis.delete(f"cache:track:v2:{track_id}")
+    await redis.delete(f"cache:track:v3:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # 차트 캐시(TTL 300s) 즉시 무효화 — 삭제 곡 차트 잔존 방지
@@ -758,7 +758,7 @@ async def update_track(
     # Clear Redis cache (both legacy v1 and current v2 keys)
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
-    await redis.delete(f"cache:track:v2:{track_id}")
+    await redis.delete(f"cache:track:v3:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # Fetch and return updated document
@@ -901,6 +901,7 @@ async def retry_track_beats(
 @router.get("/stream-proxy/{track_id}")
 async def stream_track_proxy(
     track_id: str,
+    request: Request,
     token: Optional[str] = Query(None),
     current_user=Depends(get_current_user_optional),
 ):
@@ -936,10 +937,6 @@ async def stream_track_proxy(
 
     minio_client = get_minio()
     try:
-        response = minio_client.get_object(
-            bucket_name=settings.minio_bucket_music,
-            object_name=doc["audio_url"],
-        )
         content_type = "audio/mpeg"
         if doc["audio_url"].endswith(".wav"):
             content_type = "audio/wav"
@@ -950,10 +947,46 @@ async def stream_track_proxy(
         elif doc["audio_url"].endswith(".m4a"):
             content_type = "audio/mp4"
 
+        # v193: HTTP Range 지원 — 모바일/웹 오디오 시크 안정화 (기존: Accept-Ranges 만 선언하고 미구현)
+        range_header = (request.headers.get("range") or "").strip()
+        stat = minio_client.stat_object(settings.minio_bucket_music, doc["audio_url"])
+        total = stat.size
+        if range_header.startswith("bytes="):
+            try:
+                spec = range_header[6:].split(",")[0].strip()
+                start_s, _, end_s = spec.partition("-")
+                start = int(start_s) if start_s else 0
+                end = int(end_s) if end_s else total - 1
+                end = min(end, total - 1)
+                if start > end or start >= total:
+                    return JSONResponse(status_code=416, content={"error": "요청 범위가 올바르지 않습니다."},
+                                        headers={"Content-Range": f"bytes */{total}"})
+                length = end - start + 1
+                response = minio_client.get_object(
+                    bucket_name=settings.minio_bucket_music,
+                    object_name=doc["audio_url"],
+                    offset=start, length=length,
+                )
+                logger.info("[track] stream_proxy range track=%s %d-%d/%d", track_id[:8], start, end, total)
+                return StreamingResponse(
+                    response, status_code=206, media_type=content_type,
+                    headers={
+                        "Accept-Ranges": "bytes",
+                        "Content-Range": f"bytes {start}-{end}/{total}",
+                        "Content-Length": str(length),
+                    },
+                )
+            except ValueError:
+                logger.warning("[track] stream_proxy bad range track=%s header=%s", track_id[:8], range_header[:40])
+
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=doc["audio_url"],
+        )
         return StreamingResponse(
             response,
             media_type=content_type,
-            headers={"Accept-Ranges": "bytes"},
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(total)},
         )
     except Exception:
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
@@ -1124,7 +1157,7 @@ async def get_track(
     mongo = get_mongo()
 
     # Check Redis cache (v2: schema bumped to include cover_character)
-    cached = await redis.get(f"cache:track:v2:{track_id}")
+    cached = await redis.get(f"cache:track:v3:{track_id}")
     if cached:
         track = json.loads(cached)
         # v138 직링크 가드 — 캐시 히트 경로에도 동일 적용 (캐시 데이터는 전체
@@ -1148,6 +1181,25 @@ async def get_track(
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     track = _serialize_track(doc)
+
+    # v193: 곡 생성 프롬프트 파라미터 병합 — 보컬/스타일/악기 등은 generations 에만 있어
+    # 소유자 전용 API 로만 보였음 → 공개 필드만 추려 트랙 응답에 동봉(모든 사용자 열람 가능).
+    try:
+        gen_id = track.get("generation_id")
+        if gen_id and ObjectId.is_valid(str(gen_id)):
+            gen = await mongo.generations.find_one(
+                {"_id": ObjectId(str(gen_id))},
+                {"vocal": 1, "style": 1, "instruments": 1, "reference_style": 1,
+                 "negative_tags": 1, "style_weight": 1, "weirdness": 1,
+                 "audio_weight": 1, "persona_model": 1, "bpm": 1, "key": 1},
+            )
+            if gen:
+                params = {k: v for k, v in gen.items() if k != "_id" and v not in (None, "", [])}
+                if params:
+                    track["generation_params"] = params
+                    logger.info("[track] generation_params attached track=%s keys=%d", track_id[:8], len(params))
+    except Exception:
+        logger.exception("[track] generation_params merge failed track=%s", track_id[:8])
 
     # Look up linked completed mv_job once; reuse for both music_video and cover_character.
     mv_job = None
@@ -1220,7 +1272,7 @@ async def get_track(
     await redis.incr(f"playcount:buffer:{track_id}")
 
     # Cache for 10 minutes (v2 key)
-    await redis.setex(f"cache:track:v2:{track_id}", 600, json.dumps(track, default=str))
+    await redis.setex(f"cache:track:v3:{track_id}", 600, json.dumps(track, default=str))
 
     # uploader_profile_image 는 캐시에 넣지 않고 매 요청 fresh 첨부
     await _attach_uploader_profiles([track], pg)
