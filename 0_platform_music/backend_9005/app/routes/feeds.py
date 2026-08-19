@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from ..auth import get_current_user, get_current_user_optional
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
+from .notifications import push_notification, push_notifications_bulk
 
 router = APIRouter(prefix="/api/feeds", tags=["Feeds"])
 
@@ -291,6 +292,20 @@ async def create_feed(body: FeedBody, current_user=Depends(get_current_user), co
         _short(feed_id), _short(user_id), body.kind, len(normalized["blocks"]),
         normalized["text_len"], bool(normalized["bgm_track_id"]),
     )
+
+    # v192: 공개 피드 업로드 → 팔로워 전원에게 알림 팬아웃
+    if doc.get("is_public", True):
+        try:
+            rows = await conn.fetch("SELECT follower_id FROM follows WHERE followee_id = $1", uuid.UUID(user_id))
+            follower_ids = [str(r["follower_id"]) for r in rows]
+            if follower_ids:
+                await push_notifications_bulk(
+                    mongo, user_ids=follower_ids, ntype="feed",
+                    actor_id=user_id, actor_nickname=current_user.get("nickname"),
+                    target_id=feed_id, preview=doc.get("title") or normalized.get("text_preview"),
+                )
+        except Exception:
+            logger.exception("[feed] create notify fanout failed feed=%s", _short(feed_id))
 
     feed = _serialize_feed(doc)
     await _hydrate_feeds(mongo, conn, [feed], current_user)
@@ -627,6 +642,12 @@ async def like_feed(feed_id: str, current_user=Depends(get_current_user), conn=D
     inserted = result == "INSERT 0 1"
     if inserted:
         await mongo.feeds.update_one({"_id": doc["_id"]}, {"$inc": {"like_count": 1}})
+        # v192: 좋아요 알림(중복 좋아요는 미발행)
+        await push_notification(
+            mongo, user_id=doc.get("author_id"), ntype="like",
+            actor_id=user_id, actor_nickname=current_user.get("nickname"),
+            target_id=feed_id, preview=doc.get("title"),
+        )
     logger.info("[feed] like %s feed=%s user=%s", "ok" if inserted else "noop", _short(feed_id), _short(user_id))
 
     updated = await mongo.feeds.find_one({"_id": doc["_id"]}, {"like_count": 1})
@@ -743,6 +764,20 @@ async def add_feed_comment(feed_id: str, body: CommentBody, current_user=Depends
     }
     result = await mongo.feed_comments.insert_one(comment)
     await mongo.feeds.update_one({"_id": doc["_id"]}, {"$inc": {"comment_count": 1}})
+    # v192: 알림 — 피드 소유자에게 comment, 답글이면 부모 댓글 작성자에게 reply
+    await push_notification(
+        mongo, user_id=doc.get("author_id"), ntype="comment",
+        actor_id=user_id, actor_nickname=current_user.get("nickname"),
+        target_id=feed_id, preview=text,
+    )
+    if parent_id:
+        parent_doc = await mongo.feed_comments.find_one({"_id": ObjectId(parent_id)}, {"author_id": 1})
+        if parent_doc and str(parent_doc.get("author_id")) != str(doc.get("author_id")):
+            await push_notification(
+                mongo, user_id=parent_doc.get("author_id"), ntype="reply",
+                actor_id=user_id, actor_nickname=current_user.get("nickname"),
+                target_id=feed_id, preview=text,
+            )
     logger.info(
         "[feed] comment_add ok feed=%s user=%s comment=%s text_len=%d",
         _short(feed_id), _short(user_id), _short(result.inserted_id), len(text),

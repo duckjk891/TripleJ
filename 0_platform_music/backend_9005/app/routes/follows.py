@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from ..auth import get_current_user, get_current_user_optional
 from ..database.postgres import get_pg
 from ..services.official import get_official_id
+from ..database.mongodb import get_mongo
+from .notifications import push_notification
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,12 @@ async def follow_user(user_id: str, current_user=Depends(get_current_user), conn
     await conn.execute(
         "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)",
         follower_uuid, followee_uuid,
+    )
+
+    # v192: 팔로우 알림 발행(실패해도 본 동작 무영향)
+    await push_notification(
+        get_mongo(), user_id=user_id, ntype="follow",
+        actor_id=current_user["id"], actor_nickname=current_user.get("nickname"),
     )
 
     return {"message": "팔로우했습니다."}

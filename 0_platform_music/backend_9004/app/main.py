@@ -648,6 +648,8 @@ app.include_router(admin_points.router)
 app.include_router(admin_ads.router)
 app.include_router(admin_issues.router)
 app.include_router(issues.router)
+from .routes import notifications as _notifications  # v192 인앱 알림
+app.include_router(_notifications.router)
 app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 
 
