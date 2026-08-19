@@ -7,6 +7,21 @@
 
 ---
 
+## v3.50 — 2026-08-19 — 피드 카드 톤 다운(라벤더 틴트+투명도)
+
+### 요청
+피드카드 배경이 너무 밝아 안 어울림 — 투명도/색감 조정으로 자연스럽게.
+
+### Plan verification findings
+- v3.49에서 카드 색을 `feedCardLight` 팔레트(components/feed/FeedCard.tsx)로 중앙화 — FeedCard 전체와 FeedScreen 본문 블록이 공유하므로 **팔레트 6색 값만 수정하면 전면 반영**. 구조 변경 불필요.
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| components/feed/FeedCard.tsx | 팔레트 조정: bg 순백→rgba(226,221,240,0.90)(라벤더+10% 투명 — 배경 보라가 비침), 텍스트 3톤 보라 틴트 잉크로, line/field 반투명화 |
+
+---
+
 ## v3.49 — 2026-08-19 — Now playing 시트 간소화 · 기획사 채널 개편(MAIDOL 동일) · 피드 폭/라이트 카드
 
 ### 요청 원문 요약

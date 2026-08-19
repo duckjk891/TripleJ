@@ -14,14 +14,16 @@ import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 
 // v3.49: 피드 카드 라이트 팔레트 — 어두운 앱 배경 위에 밝은 카드가 나열되는 인스타 무드.
+// v3.50: 순백이 앱 다크 배경과 붕 떠서 톤 다운 — 라벤더 틴트 + 약한 투명도로
+//        뒤 배경 보라가 살짝 스며들어 자연스럽게 어울리도록 조정.
 // FeedScreen의 본문 블록 렌더에서도 같은 팔레트를 쓰도록 export.
 export const feedCardLight = {
-  bg: '#FFFFFF',
-  text: '#1B1B22',      // 제목·닉네임
-  sub: '#4A4A55',       // 본문·아이콘
-  muted: '#8B8B96',     // 시간·보조
-  line: '#E8E8EF',      // 구분선·테두리
-  field: '#F2F2F7',     // 입력창·칩 배경
+  bg: 'rgba(226, 221, 240, 0.90)', // 라이트 라벤더 + 10% 투명(배경 보라가 은은히 비침)
+  text: '#232030',                 // 제목·닉네임 (보라 틴트 잉크)
+  sub: '#4A4658',                  // 본문·아이콘
+  muted: '#7B7690',                // 시간·보조
+  line: 'rgba(60, 50, 90, 0.16)',  // 구분선·테두리
+  field: 'rgba(255, 255, 255, 0.55)', // 입력창·칩 배경 — 카드보다 살짝 밝게
 };
 
 export interface FeedComment {
