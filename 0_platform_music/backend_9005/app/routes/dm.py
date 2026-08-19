@@ -26,7 +26,6 @@ import jwt
 import redis.exceptions as redis_exceptions
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     HTTPException,
     WebSocket,
@@ -101,11 +100,6 @@ class CreateConversationBody(BaseModel):
 
 
 class SendMessageBody(BaseModel):
-    text: str
-
-
-class BroadcastBody(BaseModel):
-    audience: str
     text: str
 
 
@@ -277,95 +271,25 @@ async def search_dm_users(
 
 
 # ---------------------------------------------------------------------------
-# 관리자 대상별 전체발송 (broadcast)
+# 관리자 대상별 전체발송 (broadcast) — v194 폐기(410 Gone)
 # ---------------------------------------------------------------------------
-async def _run_broadcast(me_id: str, audience: str, text: str) -> None:
-    """BackgroundTasks 진입점 — 요청 스코프(get_pg) 커넥션은 응답 종료 시 이미
-    반환됐으므로, 풀에서 **새 커넥션**을 획득해 broadcast_message 를 실행한다.
-    Mongo 는 전역 getter(get_mongo) 라 재사용. text 원문 미로그."""
-    from ..database import postgres as _pg
-
-    try:
-        async with _pg._pool.acquire() as conn:
-            await dm_service.broadcast_message(conn, get_mongo(), me_id, audience, text)
-    except Exception:
-        logger.exception(
-            "[dm-broadcast] background run failed admin=%s audience=%s",
-            _short(me_id), audience,
-        )
-
-
-# deprecated(v174): 관리자 앱은 /api/admin/cs/broadcast 사용 — 이 엔드포인트는 호환 유지용
+# v194: 발송 경로를 `POST /api/admin/cs/broadcast` 하나로 강제한다. 이 경로로
+# 나간 발송은 공지 이력(notices)·감사 로그에 남지 않아 "무엇을 언제 누구에게
+# 고지했는가" 가 유실되므로 구조적으로 차단한다(프론트 사용처 실측 0건 —
+# 사용자 앱/관리자 앱 양쪽 grep). 인증(get_current_user)은 유지 — 무인증
+# 스캐너에 경로 존재를 알리지 않는다. 본문(body) 파싱조차 하지 않는다.
 @router.post("/broadcast")
-async def broadcast(
-    body: BroadcastBody,
-    background_tasks: BackgroundTasks,
-    current_user=Depends(get_current_user),
-    conn=Depends(get_pg),
-):
-    """관리자 대상별 전체발송 — admin 게이트 후 대상 수 선계산 → 백그라운드 fan-out.
+async def broadcast(current_user=Depends(get_current_user)):
+    """**폐기됨(410 Gone).** 전체발송은 `POST /api/admin/cs/broadcast` 를 사용한다.
 
-    body: {audience: all|users|customers, text}. 대상 수만 미리 세어 즉시
-    `{queued, audience}` 반환하고, 실제 발송은 BackgroundTasks 에서 새 풀 커넥션
-    으로 수행. text 원문 미로그(길이만)."""
+    해당 엔드포인트만이 공지 이력(notices)·읽음 통계·감사 로그를 남긴다.
+    """
     me = current_user["id"]
-    audience = (body.audience or "").strip()
-    text = (body.text or "").strip()
-    logger.info(
-        "[dm-broadcast] req admin=%s audience=%s text_len=%d",
-        _short(me), audience, len(text),
+    logger.warning("[dm-broadcast] gone (deprecated endpoint) me=%s", _short(me))
+    return JSONResponse(
+        status_code=410,
+        content={"error": "지원하지 않는 경로입니다. 공지 발송은 관리자 공지 관리에서 이용해주세요."},
     )
-
-    # 관리자 게이트
-    if current_user.get("role") != "admin":
-        logger.info("[dm-broadcast] denied (not admin) me=%s", _short(me))
-        return JSONResponse(status_code=403, content={"error": "관리자만 사용할 수 있습니다."})
-
-    # audience 화이트리스트
-    if audience not in dm_service.BROADCAST_AUDIENCES:
-        logger.info("[dm-broadcast] denied (bad audience) me=%s", _short(me))
-        return JSONResponse(status_code=400, content={"error": "발송 대상이 올바르지 않습니다."})
-
-    # text 검증
-    if not text or len(text) > dm_service.MAX_TEXT_LEN:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"메시지는 1~{dm_service.MAX_TEXT_LEN}자여야 합니다."},
-        )
-
-    try:
-        targets = await dm_service.count_broadcast_targets(conn, me, audience)
-    except Exception:
-        logger.exception(
-            "[dm-broadcast] count failed me=%s audience=%s", _short(me), audience
-        )
-        return JSONResponse(status_code=500, content={"error": "발송을 준비할 수 없습니다."})
-
-    # v170 — 중복발송 방지: 검증을 모두 통과한 뒤(오타 요청이 잠금을 잡지 않게),
-    # 큐잉 직전 admin별 Redis 잠금(SET NX, TTL 30초). 더블클릭/네트워크 재시도로
-    # 같은 공지가 전원에게 2번 나가는 사고 차단. Redis 불가 시 잠금 없이 진행
-    # (기능 자체를 막지 않음 — best-effort 안전장치).
-    try:
-        redis = get_redis()
-        if redis is not None:
-            acquired = await redis.set(
-                f"dm:broadcast:lock:{me}", "1", nx=True, ex=30
-            )
-            if not acquired:
-                logger.info("[dm-broadcast] denied (duplicate, locked) me=%s", _short(me))
-                return JSONResponse(
-                    status_code=429,
-                    content={"error": "방금 발송한 건이 처리 중입니다. 잠시 후 다시 시도해주세요."},
-                )
-    except redis_exceptions.RedisError:
-        logger.warning("[dm-broadcast] lock skipped (redis unavailable) me=%s", _short(me))
-
-    background_tasks.add_task(_run_broadcast, str(me), audience, text)
-    logger.info(
-        "[dm-broadcast] queued admin=%s audience=%s targets=%d",
-        _short(me), audience, targets,
-    )
-    return {"queued": targets, "audience": audience}
 
 
 @router.get("/requests")

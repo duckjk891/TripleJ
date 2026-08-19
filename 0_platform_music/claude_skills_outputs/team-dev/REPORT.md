@@ -15529,3 +15529,75 @@ ES 에 비트코인 몸값 요구 인덱스(`read_me`)가 존재하는 침해 �
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v190 append)
 - **커밋 제외**: `scratchpad/v190_snapshot/`(대조 스냅샷 — 저장소 밖), `.env`(무변경·미추적)
 - 무변경 확인: MinIO·ES compose 블록, 앱 코드 전체, `.env`, package.json — git status 실측, 삭제(D) 항목 0, 하니스 잔재 0건.
+
+
+## v194 — 2026-08-19 — 공지 관리 페이지(B안: 읽음 통계 포함) [MAIDOL-NoticeSquad]
+
+> **채번 정정**: 착수 시 v191 로 채번했으나, 동시 진행 중이던 **다른 세션이 같은 브랜치 `admin` 에서 v191(피드 댓글 대댓글 `d19af4b`) · v192(인앱 알림 `905f2c9`) · v193(별 차감 API `0f5476b`)을 선점 커밋**하여 v194 로 정정. PLAN·TESTPLAN·코드 주석 전부 v194 로 통일(`feeds.py` 의 v191 주석 4곳은 **타 세션 실작업**이라 의도적 보존).
+
+### 1. 요청 작업
+사용자 원문: "공지올리는 페이지를 구현해야해. 공지는 그냥 CS문의에서 전체발송으로 DM보내는것처럼 DM으로 보낼꺼야. 근데, CS문의에서 이걸 하다보면, 관리자가 어떤 공지들을 보냈었는지 따로 보기가 쉽지않잖아. 그래서 공지DM보냈던것들만 따로보는 페이지가 있었으면 좋겠어. 그 페이지에서 CS문의페이지의 전체발송버튼 같은 게 있어서 직접 공지DM을 보낼 수 있으면 좋겠고."
+
+설계 보고 후 사용자가 **B안(읽음 통계 1단계 포함)** 확정.
+
+### 2. 수행 결과
+
+**핵심 제약과 해결** — 기존 시스템은 개인정보 정책상 DM 본문을 어디에도 저장하지 않아, 감사 로그에 `text_len` 만 남고 "무슨 공지를 보냈는지" 조회가 불가능했다. 공지는 사적 DM 이 아닌 **운영 기록**이라는 근거로 전용 저장소를 신설하되, "사적 DM 본문 미저장" 경계는 불변 조건 4개로 못박았다(`notices.text` 는 관리자 작성 공지만 / `admin_logs` 는 여전히 `text_len` 만 / 로그·콘솔 본문 금지 / `_serialize_message` 불변).
+
+**백엔드 (9005 선구현 → 9004 byte-identical 미러)**
+- 신규 `app/services/notice_service.py` — `notices` 컬렉션 CRUD, 읽음 집계(`$in` **단일 aggregation** — 행별 count 금지), `read_rate` 서버 계산(분모 = done·sent>0 이면 `sent`, 아니면 `delivered`, 0 분모 → `0.0`), `stale` 표시 전용 플래그(sending & 30분 초과, 엄격 부등호), `_iso` tz 명시(v188 회귀 방지), lazy 인덱스
+- 신규 `app/routes/admin_notices.py` — `GET /api/admin/notices`(목록 17키 + 페이지네이션), `GET /api/admin/notices/{id}`(본문 전문 + `official_id`). **발송용 신규 엔드포인트 미신설** — 기존 `POST /api/admin/cs/broadcast` 단일 경로 유지가 설계 핵심
+- `app/services/dm_service.py` — `send_message`/`_deliver_official_message`/`broadcast_message` 에 **맨 끝 optional `notice_id`** 추가(`if notice_id:` 가드 — 값 없으면 저장 doc 이 기존과 완전 동일). `mark_read`·`_serialize_message`·`ensure_dm_indexes`·pending 승격 블록 **diff 0줄**
+- `app/routes/admin_cs.py` — Redis 락 획득 **후** `create_notice` → `add_task(..., notice_id)` → 감사 details `notice_id` 추가 → 응답 `notice_id`(additive). notice 생성 실패 시 **500 + 발송 미실행**(이력 없는 발송 방지). 백그라운드에서 `finish_notice`/`fail_notice` 로 실제 `sent`/`failed` 확정 — 종전에는 이 값이 로그만 찍히고 버려졌다
+- `app/routes/dm.py` — deprecated `POST /broadcast` **410 Gone**(인증 유지, body 파싱 없음). 감사 로그를 남기지 않아 공지 이력에서 누락되던 경로. 프론트 사용처 0건·서버 로그 호출 0건 실측 후 차단
+- `app/main.py` — `admin_notices` 라우터 등록
+- Mongo 인덱스: `notices.created_at_1`, `dm_messages.notice_id_1_read_1 (**sparse**)` — explain 실측 `PROJECTION_COVERED → IXSCAN`(full scan 아님)
+
+**프론트엔드 (`frontend_admin` 만)**
+- 신규 `pages/AdminNoticesPage.jsx`/`.css` — 7열 목록(발송시각·발송 관리자·대상·발송수·성공/실패·읽음·상태) + Fragment 행 확장 상세(본문 전문 `white-space: pre-line`) + "이 공지 재발송" + 페이지네이션. 표 min-content 폭 **779px**(1259px 창에서 가로 스크롤 0 — v188 회귀 방지)
+- `components/AdminBroadcastModal.jsx` — props `initialText`/`initialAudience`/`title` **순수 additive**(open false→true 1회 seed). `AdminCsPage.jsx` 호출부 **무수정**
+- `api.js` `getAdminNotices`/`getAdminNoticeDetail` 추가(컴포넌트 직접 fetch 0건), `App.jsx` `/notices` 라우트, `AdminLayout.jsx` `FiBell` NavLink
+
+### 3. 테스트 결과 — **41건 FAIL 0** (`[unit]` 17 / `[api]` 17 / `[e2e]` 7)
+- 1차 게이트(unit+api 34건) 통과 후 planner 사전 승인으로 E2E 7건 진행 → 전부 PASS
+- 결함 4건 발견 → 픽스 → **재검증 전부 PASS, 신규 결함 0**
+  - **D1** [중] HEAD 가 미추적 모듈을 import — 타 세션 v192 커밋이 `backend_9005/app/main.py` 를 스윕한 결과. **본 커밋에 신규 2파일 + 9004 `main.py` 포함으로 해소**
+  - **D2** [경] 읽음률 `50.0` 이 화면에 `50%` 로 표시(JS 문자열화가 `.0` 탈락) → 표시 전용 `rate()`(`Number.isFinite` 가드 + `toFixed(1)`). **서버 값 재계산 없음**
+  - **D3** [경] `sending` 행에서 `완료 시각` 항목 자체가 생략 → 상시 렌더 + 값 없으면 `-`(기존 `formatDate` 의 `if (!dateStr) return '-'` 경로 활용, `format.js` 무수정)
+  - **D4** [경] 코드 주석 채번 `v191` 잔존 → 10파일 34곳 `v194` 교체(동작 문자열 무변경)
+- **미해소로 기록만**: D5 사이드바 CS 미읽음 뱃지가 폴링 주기까지 유지(**사전 존재 동작, v194 표면 밖**) / D6 `finish_notice` 가 계약 외 `error: None` 도 `$set`(값이 이미 None 이라 무해)
+
+### 4. 안전 준수 실측
+- **실제 전체발송 0회** — 전 회차에서 `[admin-cs] broadcast queued` / `[notice] created` / `[dm-broadcast] start` 로그 **각 0건**, 브라우저 broadcast POST **0건**. 발송 버튼은 `window.confirm` 노출 확인 후 **취소**까지만. 2000자 정확(허용 상한) 시도 없음
+- **격리 실발송은 planner REJECTED** — 대상을 테스트 계정으로 좁히려면 실사용자의 `role`/`is_banned`/`account_status` 변경이 필요(무접촉 원칙 위반). 실측 대상 수 **137명**(users 126 / customers 11)으로 격리 불가 확인. **합성 문서 대체 검증**으로 갈음: 삽입 → 검증 → 전량 삭제, 삭제 후 `notices` 0 / `notice_id` 보유 0 / `dm_messages` 310 / `dm_conversations` 140 **삽입 전과 완전 일치**. 기존 문서 수정·삭제 **0건**
+- Redis 락 429 검증은 `SET NX EX 10` 단일 키 → 즉시 `DEL`, `DBSIZE` 102 → 102(delta 0). `FLUSHDB`/`FLUSHALL` 미사용
+- 인프라 무조작(docker-compose·포트·ES·MinIO 무접촉). 산출물에 크리덴셜·개인정보 실값·공지 본문 원문 **0건**
+- 프라이버시 경계 실측: 일반 DM 응답 raw 에 `notice_id` **0회**, 저장 doc 6키 유지, `admin_logs.details` 에 `text` 키 부재, 응답·로그 개인정보 키 **0건**
+
+### 5. 미검증 항목 (사유 명시)
+| 항목 | 사유 |
+|---|---|
+| **실발송 기반 읽음 통계** | 격리 불가(137명) → 합성 데이터로만 검증. **"실발송 미검증"** |
+| 발송 성공 로그 체인 7단계 | 실발송 없이 원리적으로 확인 불가(정적 포맷 + 실패 경로 로그만 확인) |
+| v194 이후 `cs_broadcast.details.notice_id` 실행 | 실발송 없이 행 생성 불가(정적 확인으로 갈음) |
+| pending 여정 6항목 / 사용자 앱 봉투 뱃지 | 테스트 계정이 `is_verified=false` → DM 게이트 403·봉투 disabled. **사전 존재 환경 제약, v194 무관** |
+
+### 6. 알려진 한계
+- **서버 재기동 시 BackgroundTasks 유실 → `status:"sending"` 고착.** 자동 복구 워커 없음(범위 밖). `stale=true` → 화면 `중단됨(확인 필요)` 표시로만 대응. 이는 FAIL 이 아닌 **기대 동작**이며, `status` 가 자동으로 `failed` 로 바뀌면 오히려 스펙 위반
+- 공지에 사용자가 답장하면 **CS 문의함으로 유입**된다(공지도 결국 DM). 설계상 자연스러운 흐름이나 공지 발송 후 CS 유입 증가를 감안해야 함
+
+### 7. 범위 밖 (이번에 하지 않음)
+예약 발송 · 임시저장/초안 · 사용자 앱의 공지 전용 UI/배지/푸시/알림센터 · 공식 계정 배지 · `sending` 고착 자동 복구 워커
+
+### 8. 변경 파일 (커밋 대상 20)
+- 백엔드 신규 4: `backend_900{4,5}/app/services/notice_service.py`, `backend_900{4,5}/app/routes/admin_notices.py`
+- 백엔드 수정 7: `backend_900{4,5}/app/{routes/admin_cs.py, routes/dm.py, services/dm_service.py}` + `backend_9004/app/main.py`
+  - **`backend_9005/app/main.py` 는 타 세션 v192 커밋(`905f2c9`)에 이미 포함됨** — 본 커밋에서 9004 측을 넣어 정합성 회복
+- 프론트 신규 2: `frontend_admin/src/pages/AdminNoticesPage.{jsx,css}`
+- 프론트 수정 4: `frontend_admin/src/{api.js, App.jsx, components/AdminBroadcastModal.jsx, components/AdminLayout.jsx}`
+- 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`
+- **커밋 제외**: 스크래치패드 전량(테스터 드라이버·스크린샷·합성 데이터 스크립트 — 저장소 밖)
+- 무변경 확인: `AdminCsPage.jsx` · `AdminLogsPage.jsx` · 사용자 앱 `frontend/` 전체 · `utils/format.js` · docker-compose · `.env`
+
+### 9. 특이사항 — 동시 세션 커밋 충돌
+다른 세션이 같은 브랜치 `admin` 에서 19:40~19:50 사이 v191~v193 을 커밋했고, 그 중 v192 가 본 작업 중이던 `backend_9005/app/main.py` 를 함께 스윕했다. 기능 영향은 없으나 **깨끗한 체크아웃에서 `0f5476b` 를 받으면 미추적 모듈 import 로 9005 기동이 실패**하는 상태였다(본 커밋으로 해소). 동시 세션 운용 시 추가 스윕 가능성은 잔존 위험으로 남는다.

@@ -235,6 +235,19 @@ export const getAdminIssueErrors = (days) => API.get('/admin/issues/errors', { p
 export const getAdminIssueErrorHistory = (fingerprint, params) =>
   API.get(`/admin/issues/errors/${fingerprint}`, { params });
 
+// 공지 관리 (v194 — /notices 공지 이력 + 읽음 통계)
+// 목록 — page/limit/audience('all'|'users'|'customers') → { notices: [{id, text_preview, text_len,
+//   audience, status('sending'|'done'|'failed'), stale, targets, sent, failed, delivered,
+//   read_count, read_rate, admin_id, admin_nickname, admin_code, created_at, finished_at}], pagination }
+// 401 무토큰 / 403 비관리자 / 400 잘못된 audience.
+// read_rate·stale 은 서버 계산값 — 프론트에서 재계산하지 않는다(표기 불일치 방지).
+// 공지 본문 원문은 콘솔에 출력하지 않는다(길이·건수만).
+export const getAdminNotices = (params) => API.get('/admin/notices', { params });
+// 상세 — 목록 행 + text(본문 전문, 재발송 prefill 용) + official_id. 404 미존재 / 400 잘못된 id.
+// 본문 원문은 콘솔에 출력하지 않는다.
+export const getAdminNoticeDetail = (id) => API.get(`/admin/notices/${id}`);
+// 발송·재발송은 신규 엔드포인트 없이 기존 broadcastCs(:126) 를 그대로 재사용한다(발송 경로 단일화).
+
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
 export const coverPreviewUrl = (objectName) => {
   const token = localStorage.getItem('token');

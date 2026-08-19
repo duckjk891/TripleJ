@@ -27342,3 +27342,233 @@ E2E (실발송 금지):
 - **다른 기기에서의 DB 직결이 있으면 끊긴다** — 현재 그런 구성 증거는 없으나(앱은 전부 localhost), 사용자 워크플로 확인 전까지는 REPORT 고지 사항으로 남긴다. 필요 시 SSH 터널·테일스케일 ACL 권고.
 - redis·minio 의 legacy compose 라벨(부재 파일 참조)은 이번에 redis 만 정정됨 — minio 라벨 고아 상태는 **의도적 잔존**(무접촉 우선), 후속 후보로 등재.
 - 재생성 중 순단 발생(수 초) — 백엔드 커넥션 풀이 재연결하는지 확인, 실패 시 백엔드 재기동으로 해소.
+
+
+## v194 — 2026-08-19 — 공지 관리 페이지(B안: 읽음 통계 포함) [MAIDOL-NoticeSquad]
+
+> **채번 정정**: 착수 시 v191 로 채번했으나, 동시 진행 중이던 **다른 세션이 같은 브랜치 `admin` 에서 v191(피드 댓글 대댓글 `d19af4b`) · v192(인앱 알림 `905f2c9`) · v193(별 차감 API `0f5476b`)을 선점 커밋**하여 v194 로 정정했다. 부수 영향: 그 세션의 v192 커밋이 작업 중이던 `backend_9005/app/main.py` 를 함께 스윕해 9005 측 `admin_notices` 등록 2줄만 먼저 HEAD 에 들어갔다(9004 측은 이번 커밋에 포함해 정합성 회복). 동시 커밋으로 인한 추가 스윕 가능성은 잔존 위험으로 기록한다.
+
+### 0. 사용자 원본 요청 (원문 보존)
+> "공지올리는 페이지를 구현해야해. 공지는 그냥 CS문의에서 전체발송으로 DM보내는것처럼 DM으로 보낼꺼야. 근데, CS문의에서 이걸 하다보면, 관리자가 어떤 공지들을 보냈었는지 따로 보기가 쉽지않잖아. 그래서 공지DM보냈던것들만 따로보는 페이지가 있었으면 좋겠어. 그 페이지에서 CS문의페이지의 전체발송버튼 같은 게 있어서 직접 공지DM을 보낼 수 있으면 좋겠고."
+
+설계 보고 후 사용자가 **B안(읽음 통계 포함)** 으로 최종 확정. 이번 버전 = v194.
+
+---
+
+### 1. Plan verification findings (0단계 실측 — 파일 직접 열람, 추정 없음)
+
+#### 1-1. 발송 경로 (현행)
+| 위치 | 실측 내용 |
+|---|---|
+| `backend_9005/app/routes/admin_cs.py:255-347` `broadcast_cs` | admin 게이트(`get_admin_user`) → `_resolve_official`(미시드 503, :52-57) → audience 화이트리스트(:277-282, 400) → text 1~`MAX_TEXT_LEN`(:285-289, 400) → `count_broadcast_targets`(:292) → Redis 락 `dm:broadcast:lock:{official_id}` NX EX 30(:303-322, 중복 429) → `background_tasks.add_task(_run_cs_broadcast, official_id, audience, text)`(:324) → 감사로그 `_log_admin_action(conn, admin_id, "cs_broadcast", "broadcast", audience, {"targets", "text_len"})`(:331-345, best-effort) → `{"queued": targets, "audience": audience}` 반환(:347). |
+| `backend_9005/app/routes/admin_cs.py:227-252` `_run_cs_broadcast` | BackgroundTasks 진입점. `_pg._pool.acquire()` 로 **새 커넥션** 획득 후 `dm_service.broadcast_message(...)`. **반환 result 를 `logger.info` 로만 찍고 버린다(:243-247)** — sent/failed 가 어디에도 영속되지 않음. ← 저장 훅을 걸 지점 확정. |
+| `backend_9005/app/services/dm_service.py:708-712` | `BROADCAST_AUDIENCES = {all:(user,customer), users:(user,), customers:(customer,)}` — admin role 은 어느 audience 에도 없어 자연 제외. |
+| `dm_service.py:723-741` `count_broadcast_targets` | `role = ANY($1) AND NOT is_banned AND account_status='active' AND id <> $2` COUNT. |
+| `dm_service.py:769-821` `broadcast_message` | 동일 필터로 대상 id 조회 → per-target `try/except` 로 `_deliver_official_message` → `{"audience","targets","sent","failed"}` 반환. text 원문 미로그(길이만). |
+| `dm_service.py:744-766` `_deliver_official_message` | `get_or_create_conversation`(=`assert_can_dm` 풀 게이트, 우회 없음) → **pending 인 경우에만** accepted 승격(:756-765) → `send_message(conn, mongo, me_id, conv_id, text)`(:766). |
+| `dm_service.py:493-558` `send_message` | 참여자 검증 → pending 수신자 답장 차단(:510-514) → 게이트 재검사 → `dm_messages.insert_one({conversation_id, sender_id, text, created_at, read:False})`(:521-529) → conversation `last_*` 갱신 + `unread.{peer}+1`(:531-542) → `publish_to_user` → `_serialize_message` 반환. |
+| `backend_9005/app/routes/dm.py:298-378` (deprecated v174) `POST /api/dm/broadcast` | admin 게이트를 `current_user.get("role") != "admin"` 로 자체 판정(:320-322). audience/text 검증·`count_broadcast_targets`·Redis 락(`dm:broadcast:lock:{me}`)·`background_tasks.add_task(_run_broadcast,...)` 까지 admin_cs 와 유사하나 **`_log_admin_action` 호출이 단 한 줄도 없다** → 이 경로로 나간 공지는 감사 로그에도, (v194 이후) 공지 이력에도 남지 않는다. `_run_broadcast`(:282-295)는 `broadcast_message` 반환값을 **아예 받지도 않는다**. |
+
+#### 1-2. 읽음(`read`) 갱신 경로 — B안의 핵심 전제, 실측 완료
+- **`read` 를 갱신하는 코드 지점은 `dm_service.mark_read`(`dm_service.py:561-595`) 단 1곳**:
+  `dm_messages.update_many({"conversation_id": cid, "sender_id": {"$ne": me_id}, "read": False}, {"$set": {"read": True}})` (:583-586). 그 외 어떤 파일에서도 `read` 를 True 로 쓰지 않는다.
+- 호출부는 정확히 2곳: `dm.py:230`(사용자 앱 `POST /api/dm/conversations/{cid}/read`), `admin_cs.py:200`(관리자측 CS 읽음).
+- 사용자 앱 호출 시점 3곳: `frontend/src/pages/DmInboxPage.jsx:280`(대화 열람), `:385`(WS 수신 중 해당 대화 열려있을 때), `:516`(요청 수락 직후).
+- **pending 예외**(`dm_service.py:573-578`): pending 대화의 수신자 열람은 no-op. 단 브로드캐스트는 발송 직전 pending→accepted 승격(`dm_service.py:756-765`)을 거치므로 **공지 DM 은 항상 accepted 대화에 꽂히고, 수신자가 DM 을 열면 read=True 가 된다**. → 읽음 통계는 실제로 의미를 가진다(B안 성립).
+- `decline_request`(`dm_service.py:684-701`)는 대화+메시지 hard delete 를 하지만 **pending 일 때만 가능**(`_assert_request_receiver` :651-653) → 공지 메시지는 accepted 상태라 이 경로로 지워지지 않는다.
+
+#### 1-3. `dm_messages` 스키마 실물 / 인덱스 현황
+- 문서 필드(생성 지점 `dm_service.py:521-527` 하나뿐): `{_id, conversation_id(str), sender_id(str), text(str), created_at(datetime, naive UTC), read(bool)}`. **그 외 필드 없음** → `notice_id` 는 완전한 신규 필드(충돌 0).
+- 인덱스(`ensure_dm_indexes`, `dm_service.py:66-81`): `dm_conversations.pair_key(unique)`, `participants`, `last_at`, `dm_messages [(conversation_id,1),(created_at,1)]`, `dm_messages.conversation_id`, `dm_blocks [(blocker_id,1),(blocked_id,1)] unique`. **`read` 및 `notice_id` 인덱스는 없음** → 공지별 집계용 인덱스 신설 필요.
+- Mongo 초기화는 `app/database/mongodb.py` 의 motor 단순 래퍼. 컬렉션 사전 정의/마이그레이션 개념 없음 → 새 컬렉션 `notices` 는 첫 insert 로 생성됨(스키마 마이그레이션 불필요).
+- 컬렉션명 `notices` / 필드명 `notice_id` 는 백엔드·프론트 전역 grep 결과 **미사용(0건)** — 이름 충돌 없음.
+
+#### 1-4. 감사 로그
+- `_log_admin_action(conn, admin_id: str, action: str, target_type: str, target_id: str, details: Optional[dict] = None)` — `backend_9005/app/routes/admin.py:58-74`. `INSERT INTO admin_logs (admin_id, action, target_type, target_id, details) VALUES (...)`, details 는 `json.dumps`.
+- 조회 `GET /api/admin/logs` — `admin.py:1223-1294`. action/target_type exact 필터, `created_at DESC` 페이지네이션, `details` 는 `json.loads` 후 그대로 반환.
+- `admin_logs.created_at` 직렬화는 `r["created_at"].isoformat()`(`admin.py:1275`) — PG timestamptz 라 tz 포함(Mongo naive 문제와 무관).
+- 프론트 `ACTION_META`(`frontend_admin/src/pages/AdminLogsPage.jsx:9-30`)에 `cs_broadcast: '전체 발송'`, `cs_send: '지정 발송'` 이미 등록. `TARGET_TYPE_LABELS`(:32-42)에 `broadcast: '브로드캐스트'` 등록. `summarizeDetails`(:46-53)는 details 를 key: value 로 **일반 나열** → details 에 키가 추가돼도 프론트 수정 없이 표시된다.
+
+#### 1-5. 프론트(관리자 앱) 현황
+- `frontend_admin/src/App.jsx:1-50` — 라우트 13개, `/issues`(:43)가 마지막 기능 라우트, `*` → `/` 리다이렉트(:44).
+- `frontend_admin/src/components/AdminLayout.jsx:65-96` — 사이드바 NavLink 8개(대시보드/사용자/트랙/신고/CS문의(+미읽음 뱃지)/감사로그/별/광고주/오류신고). 아이콘은 `react-icons/fi`(:4).
+- `frontend_admin/src/components/AdminBroadcastModal.jsx` — props `{open, onClose, onSuccess}` 3개(:26). 내부 state `audience`/`text`/`sending`/`notice`, `broadcastCs(audience, trimmed)` 호출(:70), `window.confirm` 최종 확인(:63-66), 429/403/400/503 분기 처리(:83-95), 성공 시 `alert('N명에게 발송 예약되었습니다.')` + `reset()` + `onSuccess(data)` + `onClose()`. **초기값 주입 수단(props) 이 없다.**
+- `frontend_admin/src/pages/AdminCsPage.jsx:284-297` — 헤더 "📢 전체 발송" 버튼 → `setBroadcastOpen(true)` → `<AdminBroadcastModal open onClose onSuccess={handleBroadcastSuccess}/>`.
+- `frontend_admin/src/api.js` — **모든 API 는 이 파일 하나에 함수로 정의**(axios 인스턴스 `API`, JWT 인터셉터 :10-16, 401/토큰만료 리다이렉트 :21-56). `broadcastCs(audience, text) → POST /admin/cs/broadcast`(:126-127). **컴포넌트에서 fetch/axios 직접 호출 사례 0건** → 신규 API 도 반드시 여기에 추가.
+- 목록+행 확장 최신 패턴: `frontend_admin/src/pages/AdminIssuesPage.jsx`(860줄) — `Fragment` 로 행 + 확장행, `STATUS_META`/`REASON_LABELS` 상수 맵, `formatDate`(`utils/format.js`), 페이지 CSS 파일 동반(`AdminIssuesPage.css`).
+- `frontend_admin/src/utils/format.js` — `formatDate(dateStr)` 는 `new Date(dateStr)` 후 **로컬 시각**으로 `YYYY-MM-DD HH:mm` 포맷. → 서버가 tz 를 안 붙이면 9시간 밀린다(v188 회귀 재현 조건).
+
+#### 1-6. 구버전 발송 경로 사용처 실측 (차단 가능 여부)
+- `grep -rn "broadcast" frontend/src frontend_admin/src` 결과: `frontend_admin/src/api.js:126`(`/admin/cs/broadcast`), `AdminBroadcastModal.jsx`, `AdminCsPage.jsx`, `AdminLogsPage.jsx:23`(라벨) **뿐**. 사용자 앱 `frontend/` 는 0건.
+- **`POST /api/dm/broadcast` 를 호출하는 프론트 코드는 양쪽 앱 어디에도 없다** → 차단해도 화면 회귀 없음. (외부 스크립트/포스트맨 사용 가능성만 REPORT 고지)
+- `BroadcastBody` 모델은 `dm.py:107` 정의, `dm.py:301` 한 곳에서만 사용.
+
+#### 1-7. 9004 미러 현황
+`diff -q backend_9005/{app/routes/dm.py, app/routes/admin_cs.py, app/services/dm_service.py, app/routes/admin.py, app/main.py} backend_9004/...` → **전부 차이 없음(byte-identical)**. v194 도 동일 규율 유지.
+
+---
+
+### 2. 사용자 요청 ↔ 현재 코드의 갭 / 잘못된 가정 정정
+
+**갭 (요청은 있으나 코드에 없는 것)**
+1. **공지 본문이 어디에도 남지 않는다.** 감사 로그 details 는 `{targets, text_len}`(admin_cs.py:338) 뿐 → "어떤 공지를 보냈는지" 를 사후에 볼 수 없다. dm_messages 에는 본문이 있으나 수신자별 사본이라 "공지 1건" 단위로 묶을 키가 없다.
+2. **발송 결과(sent/failed)가 유실된다.** `broadcast_message` 가 반환하지만 `_run_cs_broadcast` 가 로그로만 찍고 버림(admin_cs.py:243-247). "성공/실패" 컬럼의 데이터 소스가 현재 존재하지 않는다.
+3. **공지 1건을 식별할 키가 없다.** dm_messages 에 `notice_id` 류 필드가 전무 → 읽음 집계 불가(B안 성립 불가). 이번에 이 키를 심는 것이 B안의 유일한 전제.
+4. **관리자 앱에 `/notices` 라우트·페이지·사이드바 항목이 없다.**
+5. **재발송 수단이 없다.** 지난 공지 본문을 불러올 API 도, 모달에 본문을 주입할 수단(props)도 없다.
+
+**잘못된/보완이 필요한 가정 정정**
+- (요청서) "`AdminBroadcastModal` 은 props 3개뿐인 독립 컴포넌트라 **그대로 재사용 가능**" → 헤더 "공지 발송" 버튼에는 맞다. 그러나 **재발송(본문 불러와 대상만 바꿔 보내기)에는 초기값 주입이 필요**하므로 `initialText`/`initialAudience` **props 추가가 불가피**하다. 기존 호출부(AdminCsPage)는 props 미전달 시 현재와 동일하게 동작해야 한다(순수 additive).
+- (요청서) "구버전 `POST /api/dm/broadcast` 는 감사 로그를 남기지 않아 공지 이력에서 누락" → **사실 확인됨.** 다만 근본 원인은 "감사 로그 유무" 가 아니라 **발송 경로가 2개인 것** 이다. v194 은 감사 로그를 추가하는 게 아니라 **경로를 하나(`POST /api/admin/cs/broadcast`)로 강제**해서 이력 누락 가능성을 구조적으로 없앤다.
+- (요청서) "공지 발송 관리자" 표기 → **`broadcast_message`/`_run_cs_broadcast` 는 official_id 만 알고 로그인 관리자(admin) 를 모른다**(`_run_cs_broadcast(official_id, audience, text)` 시그니처, admin_cs.py:227). 따라서 **공지 문서 생성은 반드시 라우트(`broadcast_cs`) 안에서** 해야 하고, 백그라운드는 결과만 갱신해야 한다. (백그라운드에서 만들면 admin_id 를 넘기는 시그니처 변경이 추가로 필요 + 큐잉 실패 시 문서 자체가 안 생김)
+- (요청서) "읽음 N명 (X%)" 의 분모 → `targets`(선계산, 발송 전 스냅샷)와 `sent`(실제 성공)는 다를 수 있다(게이트 거부·차단·미성년 비팔로우로 failed 발생 가능). **분모는 `sent`(완료 시) / 미완료면 실제 delivered 메시지 수** 로 정의한다. 서버가 계산해 내려준다(프론트 계산 금지 — 표기 불일치 방지).
+- (요청서) "공지 저장소에 상태(발송중/완료/실패)" → BackgroundTasks 는 프로세스 재기동 시 유실된다. 재기동으로 `sending` 에 고착된 문서를 자동 복구하는 로직은 **넣지 않는다**(추가 워커/스케줄러는 범위 밖). 대신 **표시 전용 `stale` 플래그**(status=sending && created_at < now-30분)만 응답에 담아 "중단됨(확인 필요)" 로 보이게 한다. 쓰기 없음.
+
+**공지 본문 저장의 정당성 (프라이버시 경계 — 반드시 유지)**
+- 현행 "DM 본문 미저장" 정책은 **사적 1:1 DM 본문을 감사 로그·서버 로그에 남기지 않는다**는 정책이다(`dm_service.py:21` 모듈 docstring, admin_cs.py 각 엔드포인트 "text 원문 미로그").
+- 공지는 (a) 발신자가 사용자 개인이 아니라 **운영 주체(공식 계정)**, (b) 내용이 **불특정 다수에게 동일하게 배포되는 공개 고지**, (c) 사후 분쟁 시 "무엇을 언제 누구에게 고지했는가" 를 증명해야 하는 **운영 기록** → 보관이 정당하고 필요하다.
+- **경계 불변 조건**: ① `notices.text` 에는 **관리자가 작성한 공지 본문만** 저장한다. 사용자가 보낸 DM 본문은 `dm_messages` 정본 외 어디에도 복제하지 않는다. ② PG `admin_logs.details` 에는 **여전히 `text_len` 만**(+ `notice_id` 포인터) 저장 — 본문은 PG 로 넘어가지 않는다. ③ 서버 로그·브라우저 콘솔에 공지 본문 원문 출력 **금지**(길이만). ④ `_serialize_message`(dm_service.py:120-128)는 **불변** — `notice_id` 를 사용자 응답에 노출하지 않는다.
+
+---
+
+### 3. 설계 (확정안)
+
+#### 3-1. 공지 저장소 — Mongo 신규 컬렉션 `notices`
+```
+{
+  _id:         ObjectId,          # = notice_id (전 로그의 추적자)
+  text:        str,               # 공지 본문 전문 (1~2000)
+  audience:    "all"|"users"|"customers",
+  status:      "sending"|"done"|"failed",
+  targets:     int,               # 라우트에서 선계산한 대상 수
+  sent:        int,               # 완료 후 갱신 (초기 0)
+  failed:      int,               # 완료 후 갱신 (초기 0)
+  admin_id:    str(uuid),         # 발송을 지시한 로그인 관리자
+  official_id: str(uuid),         # 실제 DM 발신자(공식 계정)
+  created_at:  datetime(UTC),     # 발송 지시 시각
+  finished_at: datetime(UTC)|None,
+  error:       str|None           # 실패 시 예외 타입명만 (원문/스택 금지)
+}
+```
+- **Mongo 를 선택한 이유**: 읽음 집계 대상인 `dm_messages` 가 Mongo 라, 공지 문서가 PG 에 있으면 집계 시 크로스 DB 조인이 된다. 같은 DB 안에 두어 단일 aggregation 으로 끝낸다.
+- PG `admin_logs` 는 **감사 요약**(누가/언제/무엇을 했나)으로 계속 유지하고, `details.notice_id` 로 상세를 가리킨다. 두 저장소의 역할이 겹치지 않는다.
+
+#### 3-2. 읽음 통계 — `dm_messages.notice_id` (최소 침습)
+- `send_message` 에 **optional keyword** `notice_id: Optional[str] = None` 추가. 값이 있을 때만 doc 에 `"notice_id": str(notice_id)` 를 넣는다(없으면 **현재와 완전히 동일한 doc**).
+- `_deliver_official_message(..., notice_id=None)` → `broadcast_message(..., notice_id=None)` 로 pass-through.
+- **`send_to_users`(지정발송, v177)에는 붙이지 않는다** — 공지 이력은 전체발송 전용(사용자 요청 = "전체발송으로 DM"). 지정발송은 CS 개별 응대이므로 공지가 아니다.
+- **`_serialize_message` 불변** → DM/CS 응답 스키마 무변경, 사용자에게 내부 id 미노출.
+- 집계는 **단일 aggregation**(행마다 count 하는 N+1 금지):
+  `$match {notice_id: {$in: [...]}} → $group {_id: "$notice_id", delivered: {$sum: 1}, read_count: {$sum: {$cond: ["$read", 1, 0]}}}`
+- 표시값: `read_rate = round(read_count / (sent if status=="done" and sent>0 else delivered or 1) * 100, 1)`. 분모 0 이면 `read_rate = 0.0`.
+
+#### 3-3. 인덱스
+`backend_9005/app/services/notice_service.py` 안에 `ensure_notice_indexes()`(dm_service 의 `_indexes_ready` lazy 패턴 복제):
+- `notices.created_at` (목록 정렬)
+- `dm_messages [("notice_id", 1), ("read", 1)] sparse=True`
+  - **sparse 필수**: 사적 DM 문서에는 `notice_id` 가 없으므로 인덱스에 포함되지 않는다 → 인덱스 크기·일반 DM insert 비용 증가를 0 에 가깝게 유지.
+  - `dm_service.ensure_dm_indexes`(dm_service.py:66-81) **는 건드리지 않는다** — dm_service 변경 표면을 `send_message` optional kwarg 하나로 최소화.
+- 대량 공지(수천 명) 시 집계는 이 인덱스만 타면 index-only 스캔 수준. 인덱스 없이 배포하면 `dm_messages` full scan 이 되므로 **인덱스 생성 확인이 릴리스 게이트**.
+
+#### 3-4. API (신규 라우터 `backend_9005/app/routes/admin_notices.py`, prefix `/api/admin/notices`)
+| 메서드 | 경로 | 응답 |
+|---|---|---|
+| GET | `/api/admin/notices?page=1&limit=20&audience=` | `{notices: [...], pagination: {page, limit, total, pages}}` |
+| GET | `/api/admin/notices/{notice_id}` | `{notice: {... , text: 전문}}` |
+
+목록 행 필드: `{id, text_preview(60자), text_len, audience, status, stale, targets, sent, failed, delivered, read_count, read_rate, admin_id, admin_nickname, admin_code, created_at, finished_at}`
+상세 = 목록 행 + `text`(전문) + `official_id`.
+- `admin_nickname/admin_code` 는 `dm_service.hydrate_users`(dm_service.py:269-301) 로 일괄 하이드레이션(admin.py:1287 선례). 개인정보(생년월일·성별·이메일)는 **절대 포함 금지**.
+- 전 엔드포인트 `Depends(get_admin_user)`.
+- **발송/재발송은 신규 엔드포인트를 만들지 않고 기존 `POST /api/admin/cs/broadcast` 를 그대로 쓴다** — 발송 경로 단일화가 이번 버전의 핵심(§2 갭 5). 재발송은 "상세에서 본문을 읽어와 모달에 넣고 기존 발송 API 호출" 로 성립한다.
+
+#### 3-5. 발송 흐름 (변경 후)
+```
+POST /api/admin/cs/broadcast
+  → (기존 그대로) official 해석 → audience/text 검증 → count_broadcast_targets → Redis 락
+  → [신규] notices.insert_one({status:"sending", targets, text, audience, admin_id, official_id, created_at})  ← notice_id 확정
+  → background_tasks.add_task(_run_cs_broadcast, official_id, audience, text, notice_id)
+  → 감사로그 cs_broadcast details = {targets, text_len, notice_id}   ← notice_id 추가(본문 아님)
+  → 응답 {queued, audience, notice_id}                              ← additive
+
+_run_cs_broadcast(official_id, audience, text, notice_id)
+  → broadcast_message(conn, mongo, official_id, audience, text, notice_id=notice_id)
+  → [신규] notices.update_one({_id}, {$set: {status:"done", sent, failed, finished_at}})
+  → 예외 시 {$set: {status:"failed", finished_at, error: type(e).__name__}}
+```
+- notice 문서 생성 실패 시: **발송을 진행하지 않고 500 반환**(이력 없는 발송을 만들지 않는다 — 이번 버전의 목적). 감사 로그 적재 실패는 기존대로 best-effort(발송 유지).
+- Redis 락 획득 **후** 에 notice 를 만든다 → 429 로 튕긴 중복 요청이 유령 공지 문서를 만들지 않는다.
+
+#### 3-6. 구버전 경로 차단
+`POST /api/dm/broadcast` (`dm.py:298-378`) → **410 Gone 즉시 반환**으로 교체. 사용처 0건 실측(§1-6). 인증(`get_current_user`)은 유지(무인증 스캐너에 경로 존재를 알리지 않음). 이로써 dead code 가 되는 `_run_broadcast`(:282-295), `BroadcastBody`(:107) 제거 + **그로 인해 미사용이 되는 import 는 dm.py 내 다른 사용처를 grep 으로 확인한 뒤에만** 정리(`BackgroundTasks`, `get_redis`, `redis_exceptions` 등 — 다른 라우트가 쓰고 있으면 남긴다).
+
+---
+
+### 4. 변경 매트릭스 (파일별 · 디버깅 로그 포함)
+
+**로그 규율(전 파일 공통)**: 이번에 추가/수정하는 **모든 로그 라인에 추적자 `notice=%s`(notice_id 앞 8자)를 포함**한다. 공지 본문 원문은 서버 로그·콘솔 어디에도 출력 금지(길이만). user_id 는 기존 관행대로 앞 8자(`_short`).
+
+| # | 파일 | 변경 | 심을 디버깅 로그 (전부 `notice=` 포함) |
+|---|---|---|---|
+| B1 | `backend_9005/app/services/notice_service.py` **(신규)** | 모듈 docstring(보관 정당성 §2 명시) / `ensure_notice_indexes()` / `create_notice(mongo, ...) -> str` / `finish_notice(mongo, notice_id, sent, failed)` / `fail_notice(mongo, notice_id, error_type)` / `list_notices(conn, mongo, page, limit, audience)` / `get_notice(conn, mongo, notice_id)` / `_read_stats(mongo, notice_ids) -> {nid: {delivered, read_count}}` / `_iso()` (tz 명시판) | `[notice] indexes ensured` / `[notice] created notice=%s admin=%s audience=%s targets=%d text_len=%d` / `[notice] finished notice=%s sent=%d failed=%d` / `[notice] failed notice=%s error=%s` / `[notice] list admin=%s page=%d limit=%d audience=%s returned=%d` / `[notice] read stats notice_count=%d delivered=%d read=%d` / `[notice] detail notice=%s found=%s` |
+| B2 | `backend_9005/app/services/dm_service.py` | ① `send_message(conn, mongo, me_id, conversation_id, text, notice_id=None)` — 값 있을 때만 doc 에 `notice_id` 추가 ② `_deliver_official_message(..., notice_id=None)` pass-through ③ `broadcast_message(..., notice_id=None)` pass-through. **`_serialize_message`·`ensure_dm_indexes`·`mark_read`·`send_to_users` 무변경** | 기존 `[dm] message sent conv=%s me=%s peer=%s len=%d` 에 `notice=%s`(없으면 `-`) 추가 / `[dm-broadcast] start ... notice=%s` / `[dm-broadcast] done ... notice=%s` / `[dm-broadcast] target failed ... notice=%s` |
+| B3 | `backend_9005/app/routes/admin_cs.py` | ① `_run_cs_broadcast(official_id, audience, text, notice_id)` 시그니처 확장 + 완료/실패 시 notice 갱신 ② `broadcast_cs` 에서 Redis 락 획득 후 `create_notice` → `add_task(..., notice_id)` → 감사 details 에 `notice_id` 추가 → 응답에 `notice_id` additive | `[admin-cs] broadcast enter admin=%s audience=%s text_len=%d` (기존) → 이후 전 라인에 `notice=%s`: `[admin-cs] broadcast notice created notice=%s admin=%s targets=%d` / `[admin-cs] broadcast queued admin=%s official=%s audience=%s targets=%d notice=%s` / `[admin-cs] broadcast background start notice=%s ...` / `[admin-cs] broadcast background done notice=%s sent=%d failed=%d` / `[admin-cs] broadcast background failed notice=%s` / `[admin-cs] broadcast audit log failed ... notice=%s` / `[admin-cs] broadcast denied (notice create failed) admin=%s` |
+| B4 | `backend_9005/app/routes/admin_notices.py` **(신규)** | `GET ""` 목록 / `GET "/{notice_id}"` 상세. 전부 `Depends(get_admin_user)`. page/limit 클램프(limit ≤ 100), audience 화이트리스트(400), 잘못된 ObjectId 400, 미존재 404, 예외 500 JSONResponse — `admin_issues.py` 관행 그대로 | `[admin-notices] list admin=%s page=%d limit=%d audience=%s` / `[admin-notices] list done admin=%s total=%d returned=%d` / `[admin-notices] detail admin=%s notice=%s` / `[admin-notices] detail not found admin=%s notice=%s` / `[admin-notices] list failed admin=%s` (exception) |
+| B5 | `backend_9005/app/main.py` | `from .routes import ... admin_notices` + `app.include_router(admin_notices.router)` (`admin_issues.router` 다음 줄) | 없음 |
+| B6 | `backend_9005/app/routes/dm.py` | `POST /broadcast` 본문을 410 반환으로 교체, `_run_broadcast`·`BroadcastBody` 제거, 미사용 import 정리(사용처 확인 후) | `[dm-broadcast] gone (deprecated endpoint) me=%s` (warning) |
+| B7 | `backend_9004/**` | 위 B1~B6 **byte-identical 미러**. 허용되는 유일한 차이는 로그 prefix 의 포트 문자열(현재 해당 파일들에는 그런 문자열 없음 → 사실상 완전 동일). `diff -q` 로 6개 파일 전부 "차이 없음" 확인 필수 | 동일 |
+| F1 | `frontend_admin/src/api.js` | `getAdminNotices(params)` → `GET /admin/notices`, `getAdminNoticeDetail(id)` → `GET /admin/notices/{id}` 추가. 주석에 응답 형태·에러 코드·"본문 원문 콘솔 미출력" 명시. **`broadcastCs` 는 무변경 재사용** | (api.js 는 로그 없음 — 기존 관행) |
+| F2 | `frontend_admin/src/pages/AdminNoticesPage.jsx` **(신규)** | 목록(발송시각·관리자·대상·발송수·성공/실패·읽음 N(X%)·상태) + `Fragment` 행 클릭 확장 상세(본문 전문·재발송 버튼) + 헤더 "📢 공지 발송" 버튼 + 페이지네이션. `AdminIssuesPage.jsx` 패턴 준수 | prefix `[AdminNotices]`: `console.info('[AdminNotices] list loaded', {page, count})` / `console.info('[AdminNotices] row expanded', {notice: id.slice(0,8)})` / `console.info('[AdminNotices] resend prefill', {notice: id.slice(0,8), text_len})` / `console.error('[AdminNotices] getAdminNotices failed', {status, message})` — **본문 원문·닉네임 원문 출력 금지** |
+| F3 | `frontend_admin/src/pages/AdminNoticesPage.css` **(신규)** | `AdminIssuesPage.css` 톤 맞춤. 기존 공용 클래스(`admin-page-title`, `admin-badge--*`) 재사용 | — |
+| F4 | `frontend_admin/src/components/AdminBroadcastModal.jsx` | **additive props** `initialText=''`, `initialAudience=''`, `title='📢 전체 발송'`. `open` 이 false→true 로 바뀔 때만 state 를 초기값으로 seed 하는 `useEffect`. props 미전달 시 **현재 동작과 100% 동일**(AdminCsPage 호출부 무변경) | `console.info('[AdminBroadcast] opened', {audience: initialAudience \|\| '(none)', text_len: initialText.length})` (DEV only). 기존 로그 전부 유지 |
+| F5 | `frontend_admin/src/App.jsx` | `import AdminNoticesPage` + `<Route path="/notices" .../>` (`/issues` 다음 줄) | 없음 |
+| F6 | `frontend_admin/src/components/AdminLayout.jsx` | NavLink `/notices` "📢 공지 관리" (`/issues` 다음). 아이콘 `FiBell` (`react-icons/fi` 기존 import 줄에 추가) | 없음 |
+| — | `frontend_admin/src/pages/AdminLogsPage.jsx` | **변경 없음** — 신규 action 코드를 만들지 않고 기존 `cs_broadcast` 를 재사용하므로 `ACTION_META` 추가 불필요. details 에 늘어난 `notice_id` 는 `summarizeDetails`(:46-53) 가 일반 나열로 이미 표시한다 | — |
+| — | `frontend/` (사용자 앱) | **변경 없음** | — |
+
+#### 4-1. 시각(tz) 규율 — v188 회귀 재발 방지 (못박음)
+- `notices.created_at` / `finished_at` 은 Mongo 에서 **naive UTC** 로 돌아온다. `frontend_admin/src/utils/format.js:formatDate` 는 `new Date(문자열)` 을 로컬(KST)로 해석하므로, tz 미표기 ISO 를 내려보내면 **9시간 밀린다**.
+- **필수**: `admin_notices.py`(또는 `notice_service.py`)에 `_iso(dt)` 를 두고 — `admin_issues.py:104-113` 와 동일하게 `dt.tzinfo is None → dt.replace(tzinfo=timezone.utc)` 후 `isoformat()` — **신규 응답의 모든 시각 필드(`created_at`, `finished_at`)를 예외 없이 이 헬퍼로 통과**시킨다. 새 응답 필드에 `.isoformat()` 을 직접 부르는 코드가 한 줄이라도 있으면 리뷰에서 반려.
+
+---
+
+### 5. 회귀 위험 지점 (DM 공통 경로 수정 관련 — 집중 감시)
+
+| # | 위험 | 완화 / 확인 방법 |
+|---|---|---|
+| R1 | **`send_message` 시그니처 변경이 기존 DM 전송을 깬다** — 호출부 3곳: `dm.py:214`(사용자 전송), `admin_cs.py:177`(CS 답장), `dm_service.py:766`(공식 전달) | 새 파라미터는 **맨 끝 optional keyword**. 기존 호출은 전부 positional 4개 + text 라 무영향. `grep -rn "send_message(" backend_9005 backend_9004` 로 호출부 전수 확인 후 착수 |
+| R2 | **`dm_messages` 에 필드가 생겨 기존 쿼리/직렬화가 흔들린다** | `get_messages` 쿼리는 `{"conversation_id": cid}` 뿐, `mark_read` 는 `$set {read:True}` 뿐 → 필드 추가 무영향. `_serialize_message` 는 **명시적 화이트리스트 방식**이라 새 필드가 응답에 새지 않는다(그래서 불변 유지가 중요) |
+| R3 | **읽음 표시(사용자·CS 양쪽)가 깨진다** | `mark_read` 는 이번에 **한 글자도 수정하지 않는다**. 회귀 테스트로 사용자 DM 읽음/CS 읽음/미읽음 뱃지 3종 실증 |
+| R4 | **pending 승격 로직 훼손** — `_deliver_official_message` 수정 시 :756-765 조건부 승격을 건드리면 기존 accepted 대화 status 가 오염된다 | 이 블록은 **무수정**. notice_id 는 마지막 `send_message` 호출에만 전달 |
+| R5 | **인덱스 미생성 상태로 배포 → 대량 공지 집계가 full scan** | `ensure_notice_indexes()` 를 목록/상세/발송 진입 시 lazy 호출. 배포 후 `db.dm_messages.getIndexes()` 로 sparse 인덱스 존재 실측 |
+| R6 | **읽음 집계 N+1** (행마다 count_documents) | 단일 `$in` aggregation 강제. 코드 리뷰 항목 |
+| R7 | **감사 로그 details 확장이 로그 페이지를 깬다** | `summarizeDetails` 는 generic — 확인만. 신규 action 코드 없음 |
+| R8 | **`AdminBroadcastModal` props 추가로 CS 페이지 전체발송이 바뀐다** | props 기본값으로 현재 동작 보존. 회귀 테스트: CS 페이지에서 모달 열기 → 닫기 → 재열기 시 입력값이 남지 않을 것(현행과 동일) |
+| R9 | **`/api/dm/broadcast` 410 차단이 외부 사용처를 깬다** | 프론트 실측 0건. 서버 액세스 로그에서 최근 해당 경로 호출 여부를 backend-dev 가 확인해 REPORT 에 기재 |
+| R10 | **BackgroundTasks 유실로 `sending` 고착** | 자동 복구 없음. `stale` 표시 전용 플래그로만 대응하고 REPORT 에 알려진 한계로 기재 |
+| R11 | **notice 문서 생성 실패 시 유령 발송** | 생성 실패 = 500 반환 + 발송 미실행(락은 TTL 30초로 자연 해제) |
+| R12 | **시각 9시간 밀림 재발** | §4-1 규율. TESTPLAN 에 UTC/KST 대조 항목 필수 |
+| R13 | **9004 미러 누락** | `diff -q` 6개 파일 전부 확인 + REPORT 에 결과 기재 |
+| R14 | **개인정보 노출** | notices 응답에 생년월일·성별·이메일 필드가 **없음**을 리뷰에서 확인. admin 하이드레이션은 nickname/code 만 |
+
+---
+
+### 6. 범위 밖 (이번에 하지 않음 — 착수 금지)
+- 예약 발송(스케줄링), 임시저장/초안
+- 사용자 앱의 공지 전용 UI·배지·푸시 알림
+- 공지 수정/삭제/회수(발송 후 취소)
+- 지정발송(`cs_send`, v177)의 공지 이력 편입 — 공지 이력은 전체발송 전용
+- "누가 읽었는지" 개인별 읽음 목록 — 이번엔 집계(N명, X%)만
+- `sending` 고착 문서의 자동 복구 워커/스케줄러
+- `dm_service.ensure_dm_indexes` 개편, DM 스키마 마이그레이션
+- 인프라 조작(docker-compose·포트 바인딩) — v190 규율 승계
+
+---
+
+### 7. 절대 준수 (승계 + 이번 버전 추가)
+1. 실사용자 계정/데이터 무접촉. 테스트 계정만.
+2. **전체발송은 되돌릴 수 없는 실액션** — 개발·테스트 중 실제 전체발송 **금지**. 화면 노출/모달 열림/`window.confirm` 취소까지만. 실발송 검증이 필요하면 **테스트 계정 1~2개만 대상이 되는 격리 조건을 별도 설계해 planner 승인**을 받을 것.
+3. 산출물에 API 키·시크릿·실계정 크리덴셜·비밀번호 실값 금지 → 플레이스홀더.
+4. 개인정보(생년월일·성별·이메일) 응답·화면·로그·콘솔 노출 금지. `dm_service.py` 프라이버시 가드(`assert_can_dm` 게이트, `_GENERIC_DENY`, `search_users` 빈 q 가드) **불변**.
+5. 공지 본문은 저장하되 **사적 DM 본문은 여전히 미저장** — §2 경계 불변 조건 4개 준수.
+6. 인프라 무조작.

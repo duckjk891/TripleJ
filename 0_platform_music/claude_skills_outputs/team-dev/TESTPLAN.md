@@ -3038,3 +3038,583 @@ BASE_REV: **7d85229**(코디네이터 지정 — git diff 기준)
 ## 개정 이력 (v190)
 
 - 2026-08-19 초판 작성 (9건) — 코디네이터 필수 6축 전부 시나리오화(1→DB-API-01, 2→DB-API-02, 3→DB-API-03, 4→DB-API-04·DB-E2E-01, 5→DB-API-05, 6→DB-API-06·DB-UNIT-01·02). 데이터 무손실을 **최우선 실행·불일치 시 즉시 중단** 항목으로 배치하고, MinIO/ES 는 "차단되지 않았음"을 FAIL 조건으로 명문화. BASE_REV=7d85229 반영. 스냅샷 형식·DB 직접 조회 승인·외부 검증 위치·Redis 대표 경로·신고 1건 승인·다른 기기 직결 고지 6건 planner 회신 대기(§4). planner 검토 후 확정 예정.
+
+
+## v194 — 공지 관리 페이지(B안: 읽음 통계 포함)
+
+팀: MAIDOL-NoticeSquad / test-designer 작성 (초안 — **실행 전**, planner 검토 대기)
+근거: PLAN.md v194 §1 실측(발송 경로·read 갱신 1지점·dm_messages 스키마/인덱스·감사로그·프론트 현황·미러 현황), §2 갭/정정(분모 정의·stale·프라이버시 경계 4조건), §3 설계(notices 컬렉션·notice_id·인덱스·API 2종·발송 흐름·410 차단), §4 변경 매트릭스 B1~B7/F1~F6 + §4-1 tz 규율, §5 회귀 위험 R1~R14, §6 범위 밖, §7 절대 준수
+대상: `notice_service.py`(신규)·`admin_notices.py`(신규)·`dm_service.py`(optional kwarg 3곳)·`admin_cs.py`(broadcast/_run_cs_broadcast)·`dm.py`(410)·`main.py` + `frontend_admin`(api.js·AdminNoticesPage·AdminBroadcastModal props·App·AdminLayout) + 9004 미러
+BASE_REV: **d19af4b** (git diff 기준 — 코디네이터 확정 시 갱신)
+
+### 0. 전제 및 안전 규칙 (최우선 — 위반 시 해당 테스트 항목 자체를 폐기)
+
+- **실제 전체발송 절대 금지 (되돌릴 수 없는 실액션).** 발송 관련 항목은 **모달 열림 / 검증 분기(400) / 인가(401·403) / `window.confirm` 취소 / 429 락 / 503** 경로까지만 설계·실행한다. `POST /api/admin/cs/broadcast` 가 **200 을 반환하는 호출은 이 TESTPLAN 의 어떤 항목에서도 수행하지 않는다** — 단, §5 planner 승인을 받은 격리 항목(NT-API-16·17)은 예외.
+- **격리 실발송 조건(승인 대기)**: 실발송이 불가피한 항목(읽음 통계 산출·로그 추적 체인)은 **audience 필터가 테스트 계정 1~2개만 매칭하는 상태**를 별도로 구성한 뒤에만 수행한다. 구성 요건은 §5-A 에 설계서로 제출하며, **planner 승인 전 실행 금지**. 승인 전에는 해당 항목을 `SKIP(승인 대기)` 로 기록한다.
+- **실사용자 계정·데이터 무접촉.** 테스트 계정(`<test-user-a>`, `<test-user-b>`, `<admin-email>`)만 사용. 실사용자 대화·공지·별·트랙은 **열람/집계 조회만**.
+- **쓰기 허용 범위**(승인 전 기준): ① 테스트 계정 간 DM 대화 1건 + 메시지 수 건(회귀 1·2·5 확인용) ② 테스트 계정 간 pending 요청 1건(수락/거절 각 1) ③ `POST /api/admin/cs/send` 지정발송 **테스트 계정 1명 대상 1건**(회귀 4) ④ Redis 락 키 1개 수동 선점(NT-API-06, TTL 30초 자연 해제). **그 외 쓰기 0건** — 전체발송·인덱스 생성/삭제·컨테이너/볼륨 조작·compose 실행 전부 금지(인덱스는 앱 lazy 생성분을 **관찰만**).
+- **크리덴셜 위생**: 산출물(TESTPLAN·REPORT·로그 인용)에 API 키·시크릿·실계정 비밀번호·토큰 **실값 기재 금지**. 전부 플레이스홀더 — `YOUR_TOKEN`, `<admin-email>`, `<test-user-a>`, `<official-id>`, `<notice-id>`, `<cid>`.
+- **개인정보 위생**: 생년월일·성별·이메일이 응답/화면/로그/콘솔에 노출되지 않는지 **확인은 하되, 관측된 실제 값은 산출물에 옮겨 적지 않는다**(필드 존재 여부·개수만 기재). 공지 본문 원문도 로그·콘솔 인용 금지(길이만).
+- **선행 절차**(v187~190 승계): `[unit]`(프론트)·`[e2e]` 착수 전 관리자 앱 하드 새로고침 + 빌드 표기 기록. 백엔드 `[unit]` 은 9005 실행 환경에서 순수 함수 직접 호출(pytest 임시 파일 또는 `python -c`) — **테스트 파일은 임시 사용 후 삭제**(레포 커밋 금지).
+- 기준 URL: 9005 = `http://localhost:9005`, 9004 = `http://localhost:9004`, 관리자 앱 = `http://localhost:4001`, 사용자 앱 = `http://localhost:4000`.
+- **중단 규칙**: NT-API-08(프라이버시 경계)·NT-UNIT-07(기존 DM doc 필드 집합)·NT-API-09(`notice_id` 응답 유출) 중 **하나라도 FAIL 이면 즉시 중단·planner 보고**(이후 항목 진행 금지).
+
+---
+
+### 1. `[unit]` 시나리오 — 17건 (순수 함수·계약·정적 검사)
+
+> 실행 방식: 9005 파이썬 환경에서 `notice_service` 를 import 해 **DB 없이** 호출 가능한 함수를 직접 검증. DB 가 필요한 항목(`_read_stats`)은 **읽기 전용 aggregation** 만 수행. 정적 검사 항목은 `grep`/`diff`/코드 리뷰.
+
+#### NT-UNIT-01. `read_rate` 분모 규칙 — done → sent, 미완료 → delivered `[unit]` — 핵심
+- Given: `notice_service` 의 read_rate 계산 함수(또는 목록 직렬화 헬퍼), PLAN §3-2 정의
+- When: 다음 입력으로 계산하면
+  | # | status | sent | delivered | read_count | 기대 read_rate |
+  |---|---|---|---|---|---|
+  | a | done | 100 | 100 | 50 | 50.0 |
+  | b | done | 80 | 100 | 40 | **50.0** (분모=sent=80 → 40/80) |
+  | c | sending | 0 | 40 | 10 | **25.0** (분모=delivered=40) |
+  | d | failed | 0 | 12 | 3 | **25.0** (분모=delivered) |
+- Then: 표의 기대값과 **정확히 일치**. 특히 (b) 는 분모가 `delivered(100)` 가 아니라 `sent(80)` 여야 하고, (c)(d) 는 `sent` 가 0 이므로 `delivered` 로 폴백해야 한다.
+- PASS/FAIL: 4행 전부 일치 → PASS. 1행이라도 불일치 → FAIL(분모 정의 위반 — 화면 표기 신뢰 불가).
+
+#### NT-UNIT-02. `read_rate` 0 분모 · 반올림 1자리 `[unit]`
+- Given: 동일 함수
+- When: ① `status=done, sent=0, delivered=0, read_count=0` ② `status=sending, sent=0, delivered=0, read_count=0` ③ `sent=3, read_count=1` ④ `sent=7, read_count=2` ⑤ `sent=6, read_count=1` 을 계산하면
+- Then: ①② **`0.0`** (ZeroDivisionError·`None`·`NaN`·`inf` 발생 시 즉시 FAIL) ③ `33.3` ④ `28.6` ⑤ `16.7` — **소수 1자리 반올림**, 반환 타입은 `float`
+- PASS/FAIL: 5건 전부 일치 + 예외 0건 → PASS.
+
+#### NT-UNIT-03. `stale` 판정 경계 — sending & 30분, done/failed 는 항상 false `[unit]` — 핵심
+- Given: stale 판정 헬퍼(PLAN §2: `status=="sending" and created_at < now-30분`), 기준시각 `now`
+- When: 다음 조합을 판정하면
+  | # | status | created_at | 기대 stale |
+  |---|---|---|---|
+  | a | sending | now − 29분 | **false** |
+  | b | sending | now − 30분 정각 | **false** (구현 실측 확정: `_is_stale` 는 `dt < now - timedelta(minutes=30)` 엄격 부등호 — 정각은 아직 stale 아님) |
+  | c | sending | now − 31분 | **true** |
+  | d | done | now − 10시간 | **false** |
+  | e | failed | now − 10시간 | **false** |
+  | f | sending | created_at 이 naive UTC | (c) 와 동일 판정 — **tz 혼용으로 인한 9시간 오판 없음** |
+- Then: 표대로. (f) 가 어긋나면 naive/aware 비교 버그(TypeError 또는 9시간 오차) → FAIL.
+- PASS/FAIL: a·c·d·e·f 정확 일치 + b 일관 → PASS. 판정 중 예외 발생 시 FAIL.
+
+#### NT-UNIT-04. `text_preview` 60자 절단 · `text_len` `[unit]`
+- Given: 목록 행 직렬화 헬퍼
+- When: text 길이 ① 0자(이론상 미발생 — 방어) ② 59자 ③ 60자 ④ 61자 ⑤ 2000자 ⑥ 개행·이모지 혼합 60자 초과 를 입력하면
+- Then: ② `text_preview` == 원문(절단 없음), ③ 원문 그대로(60자), ④⑤ **정확히 60자로 절단**(구현 실측 확정: `text[:TEXT_PREVIEW_LEN]`, `TEXT_PREVIEW_LEN=60` — **말줄임 기호 미부착**이므로 preview 길이가 61자 이상이거나 `…`/`...` 가 붙어 있으면 FAIL. 말줄임 표기는 CSS 몫), ⑥ **중간 잘림으로 인한 인코딩 깨짐 없음**(파이썬 str 슬라이싱 기준 — 결합 이모지 분리 허용, 예외·`UnicodeDecodeError` 0). 전 케이스 `text_len` == **원문 전체 길이**(절단값 아님).
+- PASS/FAIL: `text_len` 이 preview 길이와 같아진 케이스가 있으면 FAIL.
+
+#### NT-UNIT-05. audience 라벨 매핑 `[unit]`
+- Given: 백엔드 화이트리스트 `{all, users, customers}`(dm_service.BROADCAST_AUDIENCES) + 프론트 라벨 맵
+- When: `all`/`users`/`customers`/미지의 값(`admins`·빈문자열·`None`) 을 라벨로 변환하면
+- Then: 구현 실측 확정 라벨 — `all → 전체`, `users → 일반 사용자`, `customers → 고객`. **미지의 값은 크래시 없이 `원문 || '-'` 로 폴백**(`AUDIENCE_LABELS[value] || value || '-'` — 빈 화면·`undefined` 문자열 노출 금지). 백엔드 화이트리스트 3종(`BROADCAST_AUDIENCES`)과 프론트 `AUDIENCE_LABELS` 키 집합이 **정확히 일치**(누락·초과 0). 추가로 `AdminNoticesPage.AUDIENCE_LABELS` 와 `AdminBroadcastModal.AUDIENCES` 의 **값·라벨이 동일**한지 대조(표기 일원화 — 어긋나면 FAIL).
+- PASS/FAIL: 키 집합 불일치 또는 폴백 시 예외 → FAIL.
+
+#### NT-UNIT-06. `_iso()` tz 명시 — naive→`+00:00`, aware 보존 `[unit]` — 핵심 (v188 회귀 방지)
+- Given: `notice_service._iso`(또는 `admin_notices._iso`) — `admin_issues.py:104-113` 방식
+- When: ① `datetime(2026,8,19,6,12,0)`(naive) ② `datetime(2026,8,19,6,12,0,tzinfo=timezone.utc)` ③ `datetime(2026,8,19,15,12,0,tzinfo=KST)` ④ `None` ⑤ 문자열 `"x"` 를 통과시키면
+- Then: ① `"2026-08-19T06:12:00+00:00"` — **`+00:00` 접미 필수**(없으면 FAIL) ② 동일 문자열(변형 없음) ③ **`+09:00` 유지**(UTC 로 강제 변환하지 않음 — 값 보존) ④ `None` ⑤ 입력 그대로 반환(예외 0)
+- 추가 정적 확인: `grep -n "isoformat()" backend_9005/app/routes/admin_notices.py backend_9005/app/services/notice_service.py` → **`_iso` 정의부 외의 직접 `.isoformat()` 호출 0건**(PLAN §4-1: 1줄이라도 있으면 리뷰 반려 → FAIL).
+- PASS/FAIL: ①의 `+00:00` 부재 또는 직접 호출 잔존 → FAIL.
+
+#### NT-UNIT-07. `send_message(notice_id=None)` → 생성 doc 필드 집합 **완전 동일** `[unit]` — 핵심 (중단 규칙)
+- Given: `dm_service.send_message` 변경분, 기존 필드 집합 `{_id, conversation_id, sender_id, text, created_at, read}`(PLAN §1-3 실측)
+- When: ① 정적: 변경된 insert 블록 코드 리뷰 — doc 리터럴이 기존 6키 그대로이고 `notice_id` 는 **조건부(값이 있을 때만) 추가**인지 ② 실측: 테스트 계정 간 일반 DM 1건 전송 후 Mongo 에서 해당 doc 의 **키 집합**을 확인하면
+- Then: ① doc 리터럴 6키 불변 + `if notice_id:` 류 가드 존재(무조건 `notice_id: None` 삽입이면 **FAIL** — 기존 doc 과 달라짐) ② 실측 키 집합 == `{_id, conversation_id, sender_id, text, created_at, read}` — **`notice_id` 키가 존재하지 않을 것**(`None` 값으로도 존재하면 FAIL)
+- PASS/FAIL: 키 1개라도 증감 → FAIL → **즉시 중단·planner 보고**.
+
+#### NT-UNIT-08. `send_message(notice_id="...")` → `notice_id` 만 additive · str 캐스팅 `[unit]`
+- Given: 동일 함수
+- When: ① 정적 코드 리뷰 — 삽입값이 `str(notice_id)` 인지(ObjectId 원본 저장 시 `$in` 매칭 타입 불일치로 집계 0 이 됨) ② (승인 후 NT-API-16 수행 시) 공지 메시지 doc 1건의 키 집합·타입을 확인하면
+- Then: ① `str(...)` 캐스팅 확인 ② 키 집합 == 기존 6키 + `notice_id` **1개뿐**, `notice_id` 타입 **문자열**, 값 == 해당 공지의 24자 hex id
+- 함께 확인: `_deliver_official_message`·`broadcast_message` 가 **pass-through 만** 하고 pending→accepted 승격 블록(dm_service.py:756-765)을 **한 글자도 건드리지 않았는지** diff 리뷰(R4)
+- PASS/FAIL: 승격 블록 변경 발견 또는 ObjectId 원본 저장 → FAIL. ②는 승인 전 SKIP 가능(①만으로 부분 PASS 기록).
+
+#### NT-UNIT-09. `_read_stats` 안전성 — 빈 입력·미존재 id·N+1 부재 `[unit]`
+- Given: `notice_service._read_stats(mongo, notice_ids)` (읽기 전용)
+- When: ① `[]` ② `[None]`/`[""]` ③ 존재하지 않는 24자 hex id 1개 ④ 존재 id + 미존재 id 혼합(승인 후) ⑤ 코드 리뷰: aggregation 호출 횟수 를 확인하면
+- Then: ① **`{}` 반환 + Mongo 왕복 0회**(early return — 빈 `$in` 으로 컬렉션 스캔하지 않을 것) ② 예외 없이 안전 처리(`{}` 또는 해당 키 부재) ③ **`{}` 또는 해당 id 키 부재** — 예외·`KeyError` 0 ④ 존재분만 채워지고 미존재분은 호출부에서 `delivered=0, read_count=0` 으로 안전 폴백(→ NT-UNIT-02 의 0 분모 규칙과 연결) ⑤ **`$in` 단일 aggregation 1회**(행마다 `count_documents` 호출 = N+1 이면 FAIL — R6)
+- PASS/FAIL: 예외 발생·N+1 발견 → FAIL.
+
+#### NT-UNIT-10. 목록/상세 응답 필드 계약 — 화이트리스트·개인정보 부재 `[unit]` — 핵심
+- Given: `notice_service.list_notices`/`get_notice` 직렬화 코드
+- When: 반환 dict 의 키 집합을 코드에서 열거하면
+- Then: 목록 행 == `{id, text_preview, text_len, audience, status, stale, targets, sent, failed, delivered, read_count, read_rate, admin_id, admin_nickname, admin_code, created_at, finished_at}`(PLAN §3-4), 상세 == 목록 행 + `{text, official_id}`. **다음 키가 어디에도 없을 것**: `birth`/`birthday`/`birth_date`/`gender`/`email`/`phone`/`password`. 하이드레이션은 **`nickname`/`code` 만**(구현 실측 확정: `_hydrate_admins` → `admin_nickname`/`admin_code` 2키. `profile_image` 도 응답에 **없음** — 새로 추가돼 있으면 계약 위반으로 기록).
+- 함께 확인: Mongo doc 을 **통째로 `dict(doc)` 로 흘려보내는 코드가 없을 것**(화이트리스트 명시 방식일 것)
+- PASS/FAIL: 금지 키 1개라도 존재 또는 doc 통과 방식 → FAIL → **즉시 중단**.
+
+#### NT-UNIT-11. `notices` 문서 스키마 계약 — create/finish/fail 필드 `[unit]`
+- Given: `create_notice`/`finish_notice`/`fail_notice` 코드, PLAN §3-1 스키마
+- When: 각 함수가 쓰는 필드를 코드에서 열거하면
+- Then: ① `create_notice` insert doc == `{text, audience, status:"sending", targets, sent:0, failed:0, admin_id, official_id, created_at, finished_at:None, error:None}`(+`_id` 자동) — **초기 status 는 반드시 `"sending"`**, sent/failed 초기값 0 ② `finish_notice` 는 `{status:"done", sent, failed, finished_at}` 만 `$set` ③ `fail_notice` 는 `{status:"failed", finished_at, error:<예외 타입명>}` 만 `$set` — **`error` 에 예외 메시지 원문·스택트레이스·공지 본문이 들어가지 않을 것**(`type(e).__name__` 만) ④ 세 함수 어디에도 사용자 DM 본문을 읽어 오는 코드 없음
+- PASS/FAIL: `error` 에 원문/스택 저장 발견 → FAIL(프라이버시 경계 위반).
+
+#### NT-UNIT-12. `_serialize_message`·`ensure_dm_indexes`·`mark_read`·`send_to_users` 무변경 `[unit]` — 핵심 (R2·R3)
+- Given: BASE_REV `d19af4b`
+- When: `git diff d19af4b..HEAD -- backend_9005/app/services/dm_service.py` 를 검토하면
+- Then: 변경이 **`send_message` 시그니처+조건부 doc 필드 / `_deliver_official_message` pass-through / `broadcast_message` pass-through / 로그 라인 `notice=` 추가** 로 한정. 다음 4개는 **diff 0줄**:
+  - `_serialize_message`(dm_service.py:120-128) — 화이트리스트 6필드 그대로(`notice_id` 미노출)
+  - `ensure_dm_indexes`(:66-81) — 기존 인덱스 6종 그대로
+  - `mark_read`(:561-595) — pending no-op 분기 포함 전부
+  - `send_to_users`(지정발송) — `notice_id` 미부착
+- 추가: `grep -rn "send_message(" backend_9005 backend_9004` 로 호출부 3곳(dm.py:214·admin_cs.py:177·dm_service.py:766)이 전부 **기존 positional 인자 그대로**인지 확인(R1)
+- PASS/FAIL: 4함수 중 1줄이라도 변경 → FAIL.
+
+#### NT-UNIT-13. `AdminBroadcastModal` props additive — 미전달 시 현행 100% 동일 `[unit]` (R8)
+- Given: `frontend_admin/src/components/AdminBroadcastModal.jsx` diff
+- When: ① 신규 props(`initialText=''`, `initialAudience=''`, `title='📢 전체 발송'`) **기본값 존재** 확인 ② `open` 이 false→true 로 전이할 때만 seed 하는 `useEffect` 의존성 배열 확인 ③ 기존 검증·`window.confirm`·429/403/400/503 분기·`reset()` 코드 diff 확인 하면
+- Then: ① 3개 props 전부 기본값 보유 — 미전달 호출(AdminCsPage)에서 `undefined` 참조 0 ② seed 가 **열릴 때 1회**만 동작(매 렌더 seed → 사용자 입력 덮어쓰기면 FAIL) ③ **기존 로직 diff 0**(발송 확인 절차가 약화되지 않았을 것 — `window.confirm` 제거·조건부화 시 즉시 FAIL)
+- 함께 확인: `AdminCsPage.jsx` 호출부가 **무변경**(PLAN §4 F4)
+- PASS/FAIL: `window.confirm` 약화 또는 호출부 변경 → FAIL.
+
+#### NT-UNIT-14. 로그 규율 정적 검사 — `notice=` 추적자 · 본문 원문 미출력 `[unit]` — 핵심
+- Given: PLAN §4 로그 규율(추가/수정 로그 전부 `notice=%s` 포함, 본문 원문 금지)
+- When: ① `grep -n "logger\.\(info\|warning\|error\|exception\)" backend_9005/app/services/notice_service.py backend_9005/app/routes/admin_notices.py` 로 신규 로그 전수 열거 ② `admin_cs.py`·`dm_service.py` 의 **변경된 로그 라인** diff 열거 ③ 각 라인의 포맷 인자에 `text`(원문 변수)가 전달되는지 검사 ④ 프론트 `grep -n "console\." frontend_admin/src/pages/AdminNoticesPage.jsx` 하면
+- Then: ① 백엔드 신규 로그 전부에 `notice=` 토큰 존재(인덱스 생성 로그 등 notice 무관 라인은 예외로 기록) ② 변경 라인 전부 `notice=` 포함(값 없으면 `-`) ③ **포맷 인자에 본문 문자열이 전달되는 라인 0건** — `len(text)`/`text_len` 만 허용 ④ 프론트 콘솔 로그가 `{page, count}`·`{notice: id.slice(0,8)}`·`{text_len}` 수준 — **본문·닉네임 원문 출력 0건**
+- PASS/FAIL: 본문 전달 라인 1개라도 발견 → FAIL(프라이버시 경계 §2-③ 위반).
+
+#### NT-UNIT-15. 9004 미러 정적 동일성 — 대상 6파일 `diff -q` `[unit]` (R13)
+- Given: 변경 대상 6파일
+- When: 아래를 실행하면
+  ```bash
+  for f in app/services/notice_service.py app/routes/admin_notices.py \
+           app/services/dm_service.py app/routes/admin_cs.py \
+           app/routes/dm.py app/main.py; do
+    diff -q "backend_9005/$f" "backend_9004/$f"
+  done
+  ```
+- Then: **6개 전부 출력 없음(바이트 동일)**. 9004 에만 있는 `_logs.py` 파일명 예외는 이번 대상 밖(변경 대상 아님 — 변경됐으면 FAIL).
+- PASS/FAIL: 차이 1건이라도 출력 → FAIL.
+
+#### NT-UNIT-16. 관리자 앱 정적 위생 — 라우트·네비·eslint·빌드 `[unit]`
+- Given: 관리자 앱 소스, 선행 절차(하드 새로고침·빌드 표기 기록) 완료
+- When: ① `App.jsx` 에 `/notices` 라우트 1개 추가(`*` 리다이렉트 이후가 아닌 **앞**에 위치) ② `AdminLayout.jsx` NavLink 9개(기존 8 + 공지 관리) ③ `api.js` 에 `getAdminNotices`/`getAdminNoticeDetail` 추가 + **컴포넌트 직접 fetch/axios 호출 0건**(`grep -rn "axios\|fetch(" frontend_admin/src/pages/AdminNoticesPage.jsx`) ④ `npx eslint` ⑤ 빌드 표기 하면
+- Then: ①② 정확히 1개씩 additive(기존 라우트 13개·NavLink 8개 **무삭제·무순서변경**) ③ 직접 호출 0건 ④ **신규 eslint 경고/에러 0** ⑤ 빌드 표기 갱신 확인
+- PASS/FAIL: 기존 항목 삭제·순서 파괴 또는 신규 lint 오류 → FAIL.
+
+#### NT-UNIT-17. notice 생성 실패 → 500 + 발송 미실행 분기 `[unit]` (R11)
+- Given: `broadcast_cs` 변경분 코드
+- When: 코드 경로를 리뷰하면
+- Then: ① `create_notice` 는 **Redis 락 획득 이후**에 호출(429 로 튕긴 요청이 유령 공지 문서를 만들지 않음 — PLAN §3-5) ② `create_notice` 예외 시 **`background_tasks.add_task` 미호출 + 500 반환** ③ 감사 로그 적재 실패는 **best-effort**(발송 유지 — 기존 동작 보존) ④ `_run_cs_broadcast` 는 예외 시 `fail_notice` 를 부르고 **재발송을 시도하지 않음**
+- PASS/FAIL: 순서 역전(락 전 생성) 또는 생성 실패인데 add_task 진행 → FAIL.
+
+---
+
+### 2. `[api]` 시나리오 — 17건
+
+> **공통 안전**: 아래 어떤 curl 도 `POST /api/admin/cs/broadcast` 를 **200 으로 성립시키지 않는다**(NT-API-16·17 승인분 제외). 토큰은 전부 플레이스홀더.
+
+#### NT-API-01. `GET /api/admin/notices` 200 · 필드 계약 · 정렬 · 페이지네이션 `[api]` — 핵심
+- Given: `ADMIN_TOKEN`(테스트 관리자), 기존 공지 문서 0건 이상
+- When:
+  ```bash
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices?page=1&limit=20"
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices?page=2&limit=5"
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices?audience=users"
+  ```
+- Then: ① **200** + 최상위 `{notices: [...], pagination: {page, limit, total, pages}}` ② 각 행 키 집합 == NT-UNIT-10 목록 계약 17키(초과·누락 0) ③ `created_at` 이 **내림차순**(연속 쌍 비교로 검증 — 1건 이하면 "정렬 검증 불가"로 기록) ④ page=2&limit=5 의 첫 행이 page=1&limit=5 의 6번째 행과 동일(중복·누락 0), `pages == ceil(total/limit)` ⑤ `audience=users` 필터 시 결과 전부 `audience=="users"` ⑥ 공지 0건이어도 `{notices: [], pagination:{total:0,...}}` 로 **200**(500·null 금지)
+- PASS/FAIL: 상기 6항 전부 충족 → PASS.
+
+#### NT-API-02. 목록 검증·인가 — audience 400 · limit 클램프 · 401 · 403 `[api]`
+- Given: `ADMIN_TOKEN`, `USER_TOKEN`(비관리자 테스트 계정)
+- When: ① `?audience=admins` ② `?audience=%20` ③ `?limit=1000` ④ `?limit=0` / `?page=0` / `?page=-1` ⑤ **Authorization 헤더 없이** ⑥ `USER_TOKEN` 으로 호출하면
+- Then: ①② **400**(`{"error": ...}` — 한국어 안내, 스택트레이스·내부 경로 미노출) ③ **limit 100 으로 클램프**(200, `pagination.limit == 100`) ④ page/limit 최소 1 로 클램프(200) — 500·음수 offset 금지 ⑤ **401** ⑥ **403**
+- PASS/FAIL: 500 발생·403 대신 200 → FAIL(인가 우회 = 즉시 중단·보고).
+
+#### NT-API-03. `GET /api/admin/notices/{id}` — 200(text 전문)·400·404·인가 `[api]` — 핵심
+- Given: `ADMIN_TOKEN`, 유효 `<notice-id>`(없으면 승인 후 NT-API-16 이후 수행 — 그전까지 400/404/인가만 검증)
+- When:
+  ```bash
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices/<notice-id>"
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices/not-an-objectid"
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices/000000000000000000000000"
+  curl -s "http://localhost:9005/api/admin/notices/<notice-id>"          # 무토큰
+  ```
+- Then: ① 200 + `{notice: {...}}` 에 **`text` 전문 포함**(목록의 `text_preview` 와 달리 절단 없음, `text_len` 과 실제 `len(text)` 일치) + `official_id` 포함 ② `not-an-objectid` → **400**(500 아님 — `InvalidId` 가 새면 FAIL) ③ 형식은 맞지만 미존재 → **404** ④ 무토큰 **401**, `USER_TOKEN` **403**
+- PASS/FAIL: ②가 500 이면 FAIL(예외 누출).
+
+#### NT-API-04. 응답 시각 tz — 전 시각 필드 `+00:00` `[api]` — 핵심 (R12·v188 회귀 방지)
+- Given: NT-API-01·03 응답 전문
+- When: 응답 JSON 의 `created_at`·`finished_at` 값을 전수 검사하면
+- Then: ① **모든 non-null 시각 값이 `+00:00`(또는 `Z`) 로 끝남** — tz 미표기 ISO 문자열이 **0건** ② `finished_at` 은 `status=="sending"` 행에서 `null` 허용(빈 문자열·`"None"` 문자열이면 FAIL) ③ 값을 `datetime.fromisoformat` 으로 파싱했을 때 `tzinfo` 가 **not None** ④ 동일 공지의 `finished_at >= created_at`
+- 검증 보조:
+  ```bash
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/notices" \
+    | grep -o '"\(created_at\|finished_at\)":"[^"]*"' | grep -v '+00:00' | grep -v 'null'
+  # 기대: 출력 0줄
+  ```
+- PASS/FAIL: tz 미표기 1건이라도 → FAIL(화면 9시간 밀림 확정 — NT-E2E-05 와 교차).
+
+#### NT-API-05. `POST /api/admin/cs/broadcast` 검증·인가 분기 — **실발송 0** `[api]` — 핵심 (회귀 3)
+- Given: `ADMIN_TOKEN`, `USER_TOKEN`. **모든 케이스가 200 이 아닌 응답으로 끝나야 한다**
+- When:
+  ```bash
+  # a) 빈 text → 400
+  curl -s -X POST -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+    -d '{"audience":"users","text":"   "}' http://localhost:9005/api/admin/cs/broadcast
+  # b) 2001자 → 400
+  curl -s -X POST -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"audience\":\"users\",\"text\":\"$(python3 -c 'print("A"*2001)')\"}" \
+    http://localhost:9005/api/admin/cs/broadcast
+  # c) 잘못된 audience → 400 (text 는 유효하게 두어 audience 분기만 확인)
+  curl -s -X POST -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+    -d '{"audience":"admins","text":"[v194-test] validation only"}' \
+    http://localhost:9005/api/admin/cs/broadcast
+  # d) 비관리자 → 403 / e) 무토큰 → 401
+  ```
+- Then: (a)(b)(c) **400** + 한국어 안내(`메시지는 1~2000자여야 합니다.` / `발송 대상이 올바르지 않습니다.`) (d) **403** (e) **401**. **전 케이스에서**: ① `notices` 컬렉션 문서 수 **증가 0**(락 획득 전 검증 단계에서 반려 — PLAN §3-5 순서) ② `dm_messages` 문서 수 증가 0 ③ `admin_logs` 에 신규 `cs_broadcast` 행 0 ④ 서버 로그에 `[admin-cs] broadcast queued` **0건**
+- 경계 확인: **2000자 정확(허용 상한)은 시도하지 않는다** — 성공하면 실발송이므로 금지. 상한 준수는 NT-UNIT-04 와 코드 리뷰로 갈음.
+- PASS/FAIL: 어느 케이스든 200 반환 시 **즉시 중단·planner 보고**(실발송 발생 가능성 — 대상 수·로그 즉시 확인).
+
+#### NT-API-06. 중복 락 429 — Redis 락 수동 선점(실발송 0) `[api]` (회귀 3) — **§5-B 승인 필요**
+- Given: `<official-id>`(공식 계정 uuid — 관리자 조회 API 또는 dev 제공), Redis 접근
+- When: ① Redis 에 락 키를 **직접 선점**
+  ```bash
+  redis-cli SET "dm:broadcast:lock:<official-id>" 1 NX EX 30
+  ```
+  ② 즉시 유효한 body 로 broadcast 호출(`{"audience":"users","text":"[v194-test] lock path"}`) ③ 30초 후 키 자연 만료 확인(`redis-cli TTL`) 하면
+- Then: ② **429** + `방금 발송한 건이 처리 중입니다...` 안내 ③ 락 키가 TTL 로 자연 소멸(수동 DEL 불필요). **부수효과 0**: `notices` 증가 0(락 실패 시 create_notice 미도달 — PLAN §3-5), `dm_messages` 증가 0, `admin_logs` 신규 0, `[admin-cs] broadcast queued` 로그 0건. 서버 로그에 `[admin-cs] broadcast denied (duplicate, locked)` 1건
+- 안전: **실발송을 먼저 일으켜 락을 만드는 방식 금지.** 락을 수동 선점하는 이 방식만 허용하며, 30초 동안 실제 전체발송이 차단되는 것은 **의도된 안전 부작용**.
+- PASS/FAIL: 429 미반환 또는 notices/dm_messages 증가 → FAIL.
+
+#### NT-API-07. `POST /api/dm/broadcast` → **410 Gone**, 무토큰 401 유지 `[api]` — 핵심
+- Given: `ADMIN_TOKEN`, `USER_TOKEN`
+- When:
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+    -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+    -d '{"audience":"users","text":"[v194-test] deprecated path"}' \
+    http://localhost:9005/api/dm/broadcast
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Content-Type: application/json" \
+    -d '{"audience":"users","text":"x"}' http://localhost:9005/api/dm/broadcast   # 무토큰
+  ```
+- Then: ① 관리자 토큰 **410**(+ 대체 경로 안내 메시지) ② 비관리자 토큰도 **410**(인증은 통과하되 경로 자체가 소멸 — 403/200 이면 FAIL) ③ **무토큰은 401 유지**(410 을 먼저 반환해 무인증 스캐너에 경로 존재를 알리지 않을 것 — PLAN §3-6) ④ **부수효과 0**: dm_messages·notices·admin_logs 증가 0 ⑤ 서버 로그 `[dm-broadcast] gone (deprecated endpoint) me=...` 1건, **본문 원문 미출력**
+- PASS/FAIL: 무토큰이 410 을 받으면 FAIL(정보 노출), 200 이면 즉시 중단(실발송 위험).
+
+#### NT-API-08. 프라이버시 경계 — 본문 저장 범위·개인정보 부재 `[api]` — 핵심 (회귀 10, 중단 규칙)
+- Given: `ADMIN_TOKEN`, Mongo/PG 읽기 접근
+- When: ① `notices` 컬렉션의 **모든 문서의 `admin_id`·`official_id` 가 관리자/공식 계정 uuid 인지**, 문서 수가 "관리자가 지시한 전체발송 건수"와 일치하는지 ② 사용자↔사용자 DM 을 1건 보낸 뒤 `notices` 문서 수 **증가 0** 인지 ③ `admin_logs` 의 `cs_broadcast` 행 `details` 키 집합 확인 ④ NT-API-01·03 응답 전문에 개인정보 키 검색 ⑤ 서버 로그·브라우저 콘솔 grep 하면
+- Then: ① `notices.text` 가 **관리자 작성 공지 전용** — 사용자 DM 본문 유입 0 ② 사용자 DM 전송이 `notices` 에 아무 것도 만들지 않음 ③ `details` 키 == `{targets, text_len, notice_id}` — **`text` 키 부재**(본문이 PG 로 넘어가지 않음) ④ 응답에 `birth*`/`gender`/`email`/`phone` **0건** ⑤ 로그·콘솔에 공지 본문 원문·이메일·생년월일 **0건**
+- 기록 규칙: 관측된 개인정보 실제 값은 **산출물에 옮겨 적지 않는다** — "해당 키 0건" 형태로만 기재.
+- PASS/FAIL: 1항이라도 위반 → FAIL → **즉시 중단·planner 보고**.
+
+#### NT-API-09. 기존 DM 송수신 무회귀 + `notice_id` 응답 미노출 `[api]` — 핵심 (회귀 1, 중단 규칙)
+- Given: 테스트 계정 A/B(`<test-user-a>`/`<test-user-b>`), 각 토큰
+- When: ① A→B 대화 생성 `POST /api/dm/conversations` ② A 가 메시지 2건 전송 `POST /api/dm/conversations/<cid>/messages` ③ B 가 조회 `GET /api/dm/conversations/<cid>/messages` ④ B 가 답장 1건 ⑤ 목록 `GET /api/dm/conversations` ⑥ Mongo 에서 해당 메시지 doc 키 집합 확인 하면
+- Then: ①~⑤ 전부 **200** + 기존 동작 그대로(순서·본문·읽음 플래그) ③ 각 메시지 객체 키 집합 == `{id, conversation_id, sender_id, text, created_at, read}` — **`notice_id` 키 부재**(`_serialize_message` 불변 증명, R2) ⑥ Mongo doc 키 집합 == 기존 6키(NT-UNIT-07 실측과 동일 결론) ⑦ `created_at` 이 `+00:00` 표기 유지(기존 `dm_service._iso` 동작)
+- 검증 보조:
+  ```bash
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/dm/conversations/<cid>/messages" | grep -c 'notice_id'
+  # 기대: 0
+  ```
+- PASS/FAIL: `notice_id` 노출 1건 → FAIL → **즉시 중단**.
+
+#### NT-API-10. 메시지 요청함(pending) 무회귀 `[api]` (회귀 2)
+- Given: 테스트 계정 A/B(서로 미팔로우 등 pending 유발 조건), 각 토큰
+- When: ① A→B 최초 메시지로 **pending 대화 생성** ② B 가 `GET /api/dm/requests` 로 확인 ③ **pending 상태에서 B 가 답장 시도** ④ B 가 `POST /api/dm/conversations/<cid>/accept` ⑤ 수락 후 B 답장 ⑥ 별도 pending 대화를 만들어 B 가 `DELETE /api/dm/conversations/<cid>` (거절) ⑦ 거절 후 Mongo 에서 대화·메시지 잔존 확인 하면
+- Then: ① 201/200 + `status=="pending"` ② 요청 목록에 1건 ③ **403**(pending 수신자 답장 차단 — dm_service.py:510-514) ④ 200 + `status=="accepted"` ⑤ **200**(수락 후엔 답장 가능) ⑥ 200 ⑦ **hard delete** — 대화 doc 0건 + 해당 `conversation_id` 의 `dm_messages` 0건
+- PASS/FAIL: ③이 200 이면 FAIL(게이트 붕괴), ⑦에 잔존 문서 있으면 FAIL.
+
+#### NT-API-11. 읽음 표시·미읽음 뱃지·pending no-op `[api]` — 핵심 (회귀 5)
+- Given: NT-API-09 의 대화 `<cid>`, NT-API-10 의 pending 대화 `<pending-cid>`, CS 대화 `<cs-cid>`(테스트 계정 ↔ 공식 계정)
+- When: ① B 토큰으로 `POST /api/dm/conversations/<cid>/read` ② 직후 `GET /api/dm/unread-count`(B) ③ A 토큰으로 `GET /api/dm/conversations/<cid>/messages` 재조회(상대 읽음 동기화) ④ 관리자 토큰으로 `POST /api/admin/cs/conversations/<cs-cid>/read` ⑤ `GET /api/admin/cs/unread-count` ⑥ **pending 수신자**(B)가 `POST /api/dm/conversations/<pending-cid>/read` 하면
+- Then: ① **200** + `{"read": true, "marked": N>0}` ② B 의 unread 합계가 해당 대화분만큼 **감소**(0 이면 0) ③ A 가 보낸 메시지들의 `read == true`(읽음 표시 동기화 — WS `read` 이벤트 경로는 NT-E2E-06 에서 화면 확인) ④ 200 + `marked` 반영, 해당 CS 대화 unread 0 ⑤ 200 + 관리자 미읽음 총합이 ④ 반영값 ⑥ **200 + `{"read": false, "marked": 0}`**(pending no-op 유지 — dm_service.py:573-578). 전 항목에서 `mark_read` 코드 무변경(NT-UNIT-12)과 교차 정합.
+- PASS/FAIL: ⑥이 `marked > 0` 이면 FAIL(요청 열람 사실이 발신자에게 노출 — 프라이버시 회귀).
+
+#### NT-API-12. CS 지정발송(v177) 무회귀 + 공지 이력 미편입 `[api]` — 핵심 (회귀 4)
+- Given: `ADMIN_TOKEN`, 테스트 계정 1명(`<test-user-a>`), 사전 `GET /api/admin/notices` 의 `pagination.total` 값 기록
+- When: ①
+  ```bash
+  curl -s -X POST -H "Authorization: Bearer YOUR_TOKEN" -H "Content-Type: application/json" \
+    -d '{"user_ids":["<test-user-a>"],"text":"[v194-test] 지정발송 무회귀 확인"}' \
+    http://localhost:9005/api/admin/cs/send
+  ```
+  ② 직후 `GET /api/admin/notices` 재조회 ③ 해당 메시지 doc 확인 ④ 검증 분기(빈 user_ids 400 / 21명 400 / 잘못된 uuid 400 / 빈 text 400) 하면
+- Then: ① **200** + `{requested:1, sent:1, failed:0, failed_ids:[]}`(v177 응답 형식 불변) ② **`pagination.total` 증가 0** + 목록 최상단이 사전 조회와 동일(공지 이력에 편입되지 않음 — PLAN §3-2·§6) ③ 해당 `dm_messages` doc 에 **`notice_id` 키 부재**(`send_to_users` 무변경 — NT-UNIT-12) ④ 4개 케이스 전부 400 + 기존 안내 문구
+- 안전: 지정발송 대상은 **테스트 계정 1명뿐**. 실사용자 uuid 사용 금지.
+- PASS/FAIL: ②에서 공지 행이 생기면 FAIL(범위 위반), ③에 `notice_id` 있으면 FAIL.
+
+#### NT-API-13. 관리자 로그 — `cs_broadcast` details additive `[api]` (회귀 6)
+- Given: `ADMIN_TOKEN`, v190 이전에 적재된 기존 `cs_broadcast` 행(있으면) + v194 이후 행(승인 후 NT-API-16 로 생성)
+- When:
+  ```bash
+  curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+    "http://localhost:9005/api/admin/logs?action=cs_broadcast&limit=20"
+  ```
+- Then: ① **200** + 기존 응답 스키마 불변(`{logs:[{id, admin_id, admin_nickname, action, target_type, target_id, details, created_at, target_nickname, target_code}], pagination:{...}}`) ② **v194 이후 행**의 `details` == `{targets, text_len, notice_id}` — `targets`·`text_len` **유지**(제거·개명 시 FAIL), `notice_id` **추가** ③ **`details.text` 부재**(본문 미저장) ④ **구버전 행**(details 에 `notice_id` 없음)도 200 으로 정상 반환되고 프론트가 깨지지 않을 것(하위호환) ⑤ `created_at` tz 표기 유지 ⑥ `action=cs_send` 필터도 기존대로 동작
+- PASS/FAIL: ②③ 위반 → FAIL. ②는 승인 전이면 `SKIP(승인 대기)` + ①③④⑤⑥만 판정.
+
+#### NT-API-14. 인덱스 실측 — `(notice_id, read)` sparse · `notices.created_at` · 기존 6종 유지 `[api]` (회귀 8·R5)
+- Given: Mongo 읽기 접근. **인덱스 생성은 앱의 `ensure_notice_indexes()` lazy 호출에 맡기고 tester 는 생성/삭제하지 않는다**
+- When: ① `GET /api/admin/notices` 를 1회 호출해 lazy 생성 트리거 ② `db.dm_messages.getIndexes()` ③ `db.notices.getIndexes()` ④ `db.dm_conversations.getIndexes()` / `db.dm_blocks.getIndexes()` 하면
+- Then: ② `dm_messages` 에 **`[("notice_id",1),("read",1)]` 존재 + `sparse: true`**(sparse 누락 시 FAIL — 사적 DM 전량이 인덱스에 유입) + 기존 `[(conversation_id,1),(created_at,1)]`·`conversation_id` **유지** ③ `notices` 에 **`created_at` 인덱스 존재**(+ 기본 `_id_`) ④ 기존 DM 인덱스 **6종 전부 유지**(`dm_conversations.pair_key unique`·`participants`·`last_at`·`dm_messages` 2종·`dm_blocks` 복합 unique) — 삭제·옵션 변경 0
+- 참고: 인덱스 미생성 상태 배포 시 대량 공지 집계가 full scan(R5) → **본 항목은 릴리스 게이트**.
+- PASS/FAIL: sparse 누락 또는 기존 인덱스 감소 → FAIL.
+
+#### NT-API-15. 9004 런타임 동일 `[api]` (회귀 9·R13)
+- Given: 9004 기동 상태, `ADMIN_TOKEN`
+- When: ① `GET http://localhost:9004/api/admin/notices` ② `POST http://localhost:9004/api/dm/broadcast`(관리자 토큰) ③ 무토큰 동일 호출 ④ `GET http://localhost:9004/api/admin/notices/not-an-objectid` 하면
+- Then: ① **200** + 9005 와 **동일한 필드 계약**(키 집합 동일 — 데이터 내용은 동일 DB 이므로 총건수도 일치해야 함) ② **410** ③ **401** ④ **400**. NT-UNIT-15 의 `diff -q` 결과와 교차 정합.
+- PASS/FAIL: 응답 코드/키 집합 불일치 → FAIL.
+
+#### NT-API-16. 격리 실발송 1건 — 읽음 통계 산출 E2E `[api]` — **§5-A 승인 필요 · 승인 전 실행 금지**
+- Given: **planner 승인 완료**(§5-A) + 격리 조건 구성 완료 — `audience` 필터(`role = ANY(...) AND NOT is_banned AND account_status='active' AND id <> official`)가 **테스트 계정 1~2개만 매칭**하는 상태. 착수 직전 `GET`/`count_broadcast_targets` 상당 값으로 **대상 수가 1~2 임을 재확인**하고, 3 이상이면 **중단**
+- When: ① 관리자 앱 또는 curl 로 전체발송 1건(`text = "[v194-test] 읽음 통계 검증 <타임스탬프>"`) ② `GET /api/admin/notices` 최상단 행 확인 ③ 배경 완료 후(수 초) 재조회 ④ 테스트 수신 계정으로 DM 열람 + `POST /api/dm/conversations/<cid>/read` ⑤ `GET /api/admin/notices/<notice-id>` 재조회 하면
+- Then: ① 200 `{queued: 1~2, audience, notice_id}` — **`notice_id` additive 필드 존재** ② 즉시 `status=="sending"`, `targets==queued`, `sent==0`, `failed==0`, `delivered` 는 진행 중 값, `stale==false`, `finished_at==null` ③ `status=="done"`, `sent + failed == targets`, `finished_at` non-null 이며 `+00:00` 표기 ④ 200 `marked>=1` ⑤ **`read_count` 가 1 증가**하고 `read_rate == round(read_count/sent*100, 1)` — NT-UNIT-01·02 규칙과 **수치 일치** ⑥ 전 과정에서 **실사용자 계정에 DM 이 가지 않았을 것**(대상 계정 목록을 발송 전 스냅샷으로 확보해 대조)
+- 안전: 대상 수 3 이상이면 즉시 중단. 발송 후 `dm_messages` 증가분이 `queued` 와 정확히 일치하는지 확인(초과 시 격리 실패 → 즉시 보고).
+- PASS/FAIL: 승인 전 = `SKIP(승인 대기)`. 승인 후 ①~⑥ 전부 충족 → PASS.
+
+#### NT-API-17. 디버깅 로그 추적 체인 — 동일 `notice=` 값 `[api]` — **§5-A 승인 필요(NT-API-16 과 동시 수행)**
+- Given: NT-API-16 의 발송 1건, 그 `<notice-id>` 앞 8자 = `<n8>`, 백엔드 9005 로그
+- When: `docker logs`(또는 로그 파일)에서 `grep "notice=<n8>"` 하면
+- Then: **동일 `notice=<n8>` 값으로 아래 체인이 시간순으로 전부 추적**될 것
+  1. `[admin-cs] broadcast notice created notice=<n8> admin=... targets=...`
+  2. `[admin-cs] broadcast queued admin=... audience=... targets=... notice=<n8>`
+  3. `[admin-cs] broadcast background start notice=<n8> ...`
+  4. `[dm-broadcast] start ... notice=<n8>`
+  5. `[dm] message sent conv=... me=... peer=... len=... notice=<n8>` (대상 수만큼)
+  6. `[dm-broadcast] done ... notice=<n8>`
+  7. `[admin-cs] broadcast background done notice=<n8> sent=... failed=...`
+  - 추가: `[notice] created ...` / `[notice] finished notice=<n8> sent=.. failed=..` 도 동일 값
+  - **본문 원문이 어떤 라인에도 없을 것**(길이만 — `grep "<발송 본문 일부>"` 결과 0줄)
+  - 같은 시간대의 **일반 DM 로그는 `notice=-`**(공지와 섞이지 않음)
+- 판정 보조: 7단계 중 누락 단계가 있으면 그 단계명을 기록(로그 규율 미흡 — FAIL 사유), 값이 단계별로 다르면 추적자 불일치 → FAIL
+- PASS/FAIL: 승인 전 = `SKIP(승인 대기)`. 승인 후 7단계 전부 동일 값 + 본문 0건 → PASS. **정적 포맷 검증(라인 존재·`notice=` 토큰 포함)은 승인과 무관하게 NT-UNIT-14 로 선행 수행**.
+
+---
+
+### 3. `[e2e]` 시나리오 — 7건 (사람이 화면에서만 확인 가능한 것에 한정 · 행동 수준 초안)
+
+> 셀렉터·내부 state 이름에 의존하지 않는다. "무엇을 보고 무엇을 눌렀는가" 수준으로 기술한다. **어떤 시나리오도 실제 발송을 완료하지 않는다.**
+
+#### NT-E2E-01. `/notices` 진입 · 사이드바 노출 · 목록 렌더 `[e2e]` — 핵심
+- Given: 관리자 계정(`<admin-email>`)으로 관리자 앱 로그인, 하드 새로고침 + 빌드 표기 기록 완료
+- When: ① 사이드바를 본다 ② "공지 관리" 항목을 클릭한다 ③ 목록 화면을 확인한다 ④ (공지 0건인 경우) 빈 상태 문구를 확인한다 ⑤ 페이지네이션이 있으면 2페이지로 이동한다
+- Then: ① 기존 8개 메뉴가 **그대로 있고** 그 아래(감사로그/오류신고 인접 위치)에 "공지 관리" 1개가 추가돼 보인다 — 기존 메뉴 사라짐·순서 뒤바뀜 0 ② URL 이 `/notices` 로 바뀌고 화면이 뜬다(빈 화면·리다이렉트·404 없음) ③ 목록에 **발송시각 / 관리자 / 대상 / 발송수 / 성공·실패 / 읽음 N명 (X%) / 상태** 가 보인다. `읽음` 표기는 `N명 (X%)` 형태로 소수 1자리, 분모 0 인 행은 `0명 (0.0%)` 로 표시되고 `NaN`·`undefined`·`Infinity` 문구가 **어디에도 없다** ④ 빈 상태에서 에러 배너·무한 로딩 없이 안내 문구가 뜬다 ⑤ 2페이지 이동 시 목록이 바뀌고 중복 행이 없다
+- 확인: 브라우저 콘솔 신규 에러 **0건**, 콘솔에 공지 본문 원문·닉네임 원문·이메일 **0건**
+- 증적: 목록 화면 스크린샷(빌드 표기 포함, 실사용자 개인정보 미노출 상태로)
+
+#### NT-E2E-02. 행 클릭 확장 → 본문 전문 표시 `[e2e]`
+- Given: NT-E2E-01 의 목록 화면, 공지 1건 이상(없으면 NT-API-16 승인 후 수행)
+- When: ① 목록의 한 행을 클릭한다 ② 확장된 영역을 읽는다 ③ 같은 행을 다시 클릭한다 ④ 다른 행을 클릭한다 ⑤ 텍스트를 드래그 선택해 본다
+- Then: ① 행 아래로 상세가 펼쳐진다(페이지 이동 없음) ② **공지 본문 전문**이 보인다 — 목록의 60자 미리보기와 달리 절단되지 않고, 개행이 보존돼 읽을 수 있다 ③ 다시 접힌다(토글) ④ 이전 행 처리 방식(닫힘/동시 열림)이 **일관**되게 동작한다 ⑤ 드래그 선택이 행 토글을 유발하지 않는다(AdminIssuesPage 의 드래그 가드 관행 승계 — 미구현이면 개선 제안으로 기록, FAIL 아님)
+- 확인: 확장/축소 반복 5회에 레이아웃 붕괴·콘솔 에러 0
+
+#### NT-E2E-03. "이 공지 재발송" → 모달 prefill 확인 후 **`window.confirm` 취소** `[e2e]` — 핵심 (실발송 0)
+- Given: NT-E2E-02 의 확장된 상세, 해당 공지의 본문·대상을 **서버 응답값으로 미리 확보**
+- When: ① "이 공지 재발송" 버튼을 누른다 ② 열린 모달의 본문 입력란과 대상 선택 상태를 확인한다 ③ 대상을 다른 값으로 바꿔 본다 ④ 발송 버튼을 누른다 ⑤ 브라우저 확인창에서 **"취소"** 를 누른다 ⑥ 모달을 닫는다 ⑦ 목록을 새로고침한다
+- Then: ① 모달이 열린다 ② **본문이 원문 그대로 채워져 있고**(글자 수 카운터가 `text_len` 과 일치) **대상이 원 공지의 대상으로 선택돼 있다** ③ 대상 변경이 자유롭게 된다(본문은 유지) ④ **브라우저 확인창이 반드시 뜬다**(안 뜨고 바로 발송되면 **즉시 중단·planner 보고**) ⑤ 취소 후 **아무 것도 발송되지 않는다** ⑥ 모달이 닫힌다 ⑦ **목록에 새 행이 생기지 않는다**(`pagination.total` 불변)
+- 확인(필수): 서버 로그에 `[admin-cs] broadcast queued` **0건**, `notices` 문서 수 증가 **0**, `dm_messages` 증가 **0**
+- 안전: **④에서 확인창의 "확인"을 누르는 것은 이 시나리오에서 금지**(NT-API-16 승인 항목에서만 허용)
+
+#### NT-E2E-04. 발송 모달 두 진입점 — 열기→취소→재열기 잔존 없음 `[e2e]` (회귀 7·R8)
+- Given: 관리자 앱, `/notices` 와 `/cs` 두 화면
+- When: **`/notices` 에서** ① 헤더 "공지 발송" 버튼을 누른다 ② 본문에 아무 글자를 입력하고 대상을 고른다 ③ 모달을 **취소/닫기** 한다 ④ 다시 연다 / **`/cs` 에서** ⑤ 헤더 "전체 발송" 버튼을 누른다 ⑥ 대상을 고르지 않고 발송을 시도한다 ⑦ 2000자를 넘겨 입력해 본다 ⑧ 입력 후 닫았다가 다시 연다
+- Then: ① 모달이 **빈 상태**로 열린다(재발송과 달리 prefill 없음) ③④ **재열기 시 이전 입력이 남아 있지 않다** ⑤ CS 페이지 모달이 **기존과 동일하게** 열린다(props 추가에도 호출부 무변경 — 제목·레이아웃·문구 그대로) ⑥ **대상 미선택 안내 문구**가 뜨고 발송이 진행되지 않는다 ⑦ **2000자 카운터**가 동작하고 초과 입력이 막히거나 초과 경고가 뜬다 ⑧ 입력 잔존 없음(현행과 동일)
+- 확인: 전 과정에서 확인창의 "확인"을 누르지 않는다 — `[admin-cs] broadcast queued` 로그 **0건**
+- 판정: ⑤⑥⑦⑧ 중 하나라도 v190 대비 달라지면 **FAIL**(CS 전체발송 회귀)
+
+#### NT-E2E-05. 발송시각 표기 — **9시간 밀림 없음** `[e2e]` — 핵심 (R12·v188 회귀 방지)
+- Given: 공지 1건 이상, 해당 공지의 **서버 원본값**을 API 응답에서 미리 확보(예: `created_at = 2026-08-19T06:12:00+00:00`)
+- When: ① `/notices` 목록의 발송시각 셀을 읽는다 ② 행을 펼쳐 상세의 시각(완료시각 포함)을 읽는다 ③ `/logs` 화면의 같은 건 시각과 대조한다 ④ (있으면) `/issues` 의 시각 표기 방식과 비교한다
+- Then: ① 화면값이 **서버 원본 UTC + 9시간(KST)** 과 정확히 일치 — 위 예시라면 `2026-08-19 15:12`. **`06:12`(UTC 그대로 표기)** 나 **`2026-08-18 21:12`(9시간 더 밀림)** 이 보이면 **FAIL** ② 완료시각도 동일 규칙, `status=="sending"` 행은 완료시각이 `-`(빈칸/`Invalid Date`/`1970-01-01` 금지) ③④ 다른 관리자 화면들과 **동일 시각 체계**로 보인다(v188 픽스 결과와 정합)
+- 교차: NT-API-04(`+00:00` 표기)와 반드시 함께 판정 — API 가 tz 를 붙였는데도 화면이 밀리면 프론트 `formatDate` 문제로 분리 보고
+- 증적: 서버 응답값과 화면 캡처를 나란히 기록(시각만, 개인정보 미포함)
+
+#### NT-E2E-06. 사용자 DM 여정 무회귀 — 송수신 + 읽음 표시 동기화 `[e2e]` (회귀 1·5)
+- Given: 사용자 앱 2개 세션(테스트 계정 A/B)
+- When: ① A 가 B 에게 DM 을 보낸다 ② B 앱 헤더의 **미읽음 뱃지**를 본다 ③ B 가 대화를 연다 ④ A 화면의 해당 메시지 **읽음 표시**를 본다 ⑤ B 가 답장한다 ⑥ A 가 대화를 연 채로 B 가 추가 메시지를 보낸다 ⑦ 관리자 앱 `/cs` 에서 CS 대화를 열고 미읽음 뱃지 변화를 본다
+- Then: ① 전송 즉시 A 화면에 반영 ② 뱃지 숫자가 **1 증가** ③ 대화 열람과 동시에 뱃지가 **감소/0** ④ A 화면에서 **"읽음"으로 바뀐다**(실시간 동기화 — WS `read` 이벤트) ⑤ 답장 정상 ⑥ 대화가 열려 있는 상태에서 수신 시 **즉시 읽음 처리**(기존 동작 유지) ⑦ 관리자 미읽음 뱃지가 열람 후 감소
+- 판정: v190 대비 어떤 단계라도 동작·표기가 달라지면 **FAIL**(공통 DM 경로 회귀 — R1·R3)
+- 안전: 테스트 계정 간 대화만. 실사용자 대화는 열지 않는다.
+
+#### NT-E2E-07. `/logs` 화면 — `cs_broadcast` details 표시 무회귀 `[e2e]` (회귀 6·R7)
+- Given: 관리자 앱 `/logs`, `cs_broadcast` 행 1건 이상(구버전 행이라도 가능)
+- When: ① `action` 필터로 "전체 발송" 을 고른다 ② 행의 상세(details) 표기를 읽는다 ③ v194 이후 행이 있으면 그 표기를 읽는다 ④ "지정 발송" 필터도 확인한다
+- Then: ① 필터가 기존대로 동작 ② details 가 `key: value` 로 **깨짐 없이** 나열된다(`[object Object]`·빈칸·JSON 원문 덤프 없음) ③ v194 이후 행에는 `targets`·`text_len` 에 더해 **`notice_id` 가 자연스럽게 한 줄 더** 표시된다(`summarizeDetails` generic 나열 — 프론트 수정 없이 동작) — **본문(text)은 표시되지 않는다** ④ 지정 발송 표기 무회귀
+- 확인: 화면·콘솔에 공지 본문 원문 **0건**
+- 판정: ③에서 본문이 보이면 **즉시 중단·planner 보고**(프라이버시 경계 위반)
+
+---
+
+### 4. 태그 균형 집계표 (아이스크림콘 방지 — 요구 충족 증명)
+
+| 태그 | 개수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **17** | **41.5%** | ≥ 40% | ✅ 충족 |
+| `[api]` | **17** | **41.5%** | ≥ 35% | ✅ 충족 |
+| `[e2e]` | **7** | **17.1%** | ≤ 25% | ✅ 충족 |
+| **합계** | **41** | 100% | — | — |
+
+- 계산: unit 17/41 = 41.46%, api 17/41 = 41.46%, e2e 7/41 = 17.07%
+- **E2E 를 7건으로 묶은 근거**(사람이 화면에서만 확인 가능한 것에 한정): 라우트 진입·사이드바 노출(01), 행 확장 렌더(02), 모달 prefill + `window.confirm` 취소(03), 모달 상태 잔존(04), **시각 표기 KST 대조**(05), 실시간 읽음 표시 동기화(06), details 화면 나열(07). 그 외 검증 가능한 모든 것은 unit/api 로 내렸다.
+- **승인 대기 2건(NT-API-16·17)을 제외한 즉시 실행 가능 건수**: 39건 — unit 17(43.6%) / api 15(38.5%) / e2e 7(17.9%) → **제외 후에도 요구 비율 전부 충족**.
+
+---
+
+### 5. planner 승인 필요 항목 (승인 전 실행 금지)
+
+#### 5-A. 격리 실발송 1건 — NT-API-16 · NT-API-17 (**승인 대기**)
+- **목적**: 읽음 통계(`delivered`/`read_count`/`read_rate`) 산출 검증 + `notice=` 로그 추적 체인 검증. 실발송 없이는 원리적으로 확인 불가.
+- **격리 조건 설계**(승인 대상):
+  1. 발송 대상 필터는 `role = ANY(audience 매핑) AND NOT is_banned AND account_status='active' AND id <> official_id` (dm_service.py:723-741). 이 필터가 **테스트 계정 1~2개만 매칭**하도록 구성한다.
+  2. 구성 방법은 **planner/backend-dev 가 지정**한다. 후보: (a) 테스트 전용 DB/스테이징에서 수행 (b) 실사용자 계정이 존재하지 않는 audience 를 사용 (c) 일시적으로 대상 계정 범위를 좁히는 조치. **tester 가 실사용자 계정 상태(role·is_banned·account_status)를 임의로 변경하는 방식은 제안하지 않으며 승인되더라도 tester 는 수행하지 않는다.**
+  3. 착수 직전 **대상 수를 재측정**해 1~2 임을 확인. **3 이상이면 즉시 중단**.
+  4. 발송 전 **대상 계정 목록 스냅샷**을 확보하고 발송 후 `dm_messages` 증가분이 스냅샷과 정확히 일치함을 대조(초과 시 격리 실패 → 즉시 보고).
+  5. 본문은 `[v194-test]` 접두 + 타임스탬프. 발송 후 공지 문서·메시지는 **잔존**시키고 REPORT 에 id 를 기재(회수 기능은 범위 밖 — PLAN §6).
+- **승인 없으면**: NT-API-16·17 = `SKIP(승인 대기)`, NT-API-13 ②·NT-UNIT-08 ② = 부분 SKIP. 나머지 39건은 그대로 실행 가능.
+
+#### 5-B. Redis 락 키 수동 선점 — NT-API-06 (**승인 대기**)
+- `redis-cli SET dm:broadcast:lock:<official-id> 1 NX EX 30` 1건. 30초 동안 실제 전체발송이 차단되는 부작용(안전 방향). tester 의 Redis 쓰기 1건 승인 여부 회신 요청. **불허 시 대안 없음 → NT-API-06 = `SKIP`** (실발송으로 락을 만드는 방식은 금지이므로 대체 불가).
+
+#### 5-C. 회신 요청 사항
+1. **격리 조건 구성 주체·방식 확정**(§5-A 2번) — tester 는 구성하지 않고 dev/planner 구성 완료 보고 후 검증만 수행하는 것이 초안 전제.
+2. **Redis 락 선점 승인**(§5-B).
+3. **Mongo/PG 직접 조회 승인** — NT-UNIT-07·NT-API-08·12·14 는 컬렉션 키 집합·인덱스·문서 수 확인을 위해 읽기 전용 DB 직결이 필요(v182~183·v190 승인 관행 준용 확인 요청). 불허 시 dev 가 실행한 결과를 tester 가 교차 검토하는 방식으로 대체.
+4. ~~`stale` 30분 경계 부등호~~ **해소** — 구현 실측으로 확정(엄격 `<`, 30분 정각은 false). NT-UNIT-03 (b) 기대값 고정 완료. 스펙상 `<=` 여야 한다면 회신 요청(그 경우 코드 수정 대상).
+5. ~~`text_preview` 말줄임 기호 정책~~ **해소** — 구현 실측으로 확정(`text[:60]`, 기호 미부착 / 말줄임은 CSS). NT-UNIT-04 기대값 고정 완료.
+6. **9004 실발송 금지 확인** — NT-API-15 는 9004 에서 **410·401·400·목록 200 만** 확인하고 발송 계열은 일절 호출하지 않는 것이 초안 전제(9004·9005 가 동일 DB 를 보므로 9004 발송도 실발송임).
+7. **BASE_REV 확정** — 초안은 `d19af4b`. 코디네이터 지정값이 다르면 회신.
+
+---
+
+### 6. 알려진 한계 (FAIL 이 아닌 **기대 동작** — 판정 기준 명문화)
+
+| # | 현상 | 판정 |
+|---|---|---|
+| L1 | **서버 재기동 시 BackgroundTasks 유실** → 해당 공지가 `status:"sending"` 에 **고착**된다. 자동 복구 로직은 **없다**(PLAN §2·§6 — 워커/스케줄러는 범위 밖) | **FAIL 아님 — 기대 동작.** 30분 경과 후 `stale=true` 로 표시되어 "중단됨(확인 필요)" 로 보이면 **PASS**. 재현: 승인된 격리 발송 중 재기동은 **수행하지 않는다**(자연 발생 시에만 관측·기록) |
+| L2 | `stale` 은 **표시 전용 플래그**로 Mongo 에 쓰기를 하지 않는다 — DB 의 `status` 는 계속 `"sending"` | 기대 동작. `status` 가 자동으로 `failed` 로 바뀌면 오히려 스펙 위반(FAIL) |
+| L3 | 공지 **수정·삭제·회수** 기능 없음(PLAN §6) | 화면에 해당 버튼이 없는 것이 정상. 있으면 범위 위반(FAIL) |
+| L4 | **개인별 읽음 목록**("누가 읽었는지") 없음 — 집계(N명, X%)만 | 기대 동작. 개인별 목록이 노출되면 프라이버시 위반(FAIL) |
+| L5 | `POST /api/dm/broadcast` 410 차단으로 **외부 스크립트/포스트맨 사용처가 끊길 수 있음**(프론트 사용처 0건 실측) | 기대 동작. backend-dev 의 액세스 로그 확인 결과를 REPORT 특이사항에 기재(R9) |
+| L6 | 지정발송(`cs_send`)은 공지 이력에 **편입되지 않음** | 기대 동작 — NT-API-12 ②의 판정 기준 자체 |
+| L7 | 사용자 앱에는 공지 전용 UI·배지·푸시가 **없다**(일반 DM 으로 도착) | 기대 동작(PLAN §6) |
+
+---
+
+### 7. 실행 순서 권고 (tester 참고)
+
+1. **선행**: backend-dev/frontend-dev 완료 보고 접수 → BASE_REV 확정 → 하드 새로고침·빌드 표기 기록
+2. **정적 게이트 먼저**(코드가 안전 조건을 지키는지 확인 후에만 런타임 진행): NT-UNIT-12(공통 DM 함수 무변경) → NT-UNIT-07(doc 필드 집합) → NT-UNIT-14(로그 규율) → NT-UNIT-06(`_iso`) → NT-UNIT-15(9004 diff) → NT-UNIT-17(생성 실패 분기)
+3. **순수 함수**: NT-UNIT-01·02·03·04·05·09·10·11
+4. **프론트 정적**: NT-UNIT-13·16
+5. **읽기 API**: NT-API-01 → 02 → 03 → 04 → 14(인덱스) → 15(9004)
+6. **회귀 API(쓰기 최소)**: NT-API-09 → 10 → 11 → 12 → 13(부분) → 08(프라이버시 — **FAIL 시 즉시 중단**)
+7. **발송 안전 경로**: NT-API-05(검증 분기) → NT-API-07(410) → NT-API-06(락 429 — §5-B 승인 시)
+8. **E2E**: NT-E2E-01 → 02 → 05(시각) → 03(재발송 취소) → 04(모달 두 진입점) → 07(로그 화면) → 06(사용자 DM 여정)
+9. **승인분(있을 때만)**: NT-API-16 → 17 → NT-API-13 ② 재판정 → NT-UNIT-08 ② 재판정
+10. **종료**: REPORT — 태그별 결과 집계, 실발송 0건 증명(`[admin-cs] broadcast queued` 로그 건수·`notices`/`dm_messages` 증감), 인덱스 실측 출력, 9004 diff 결과, 승인 대기로 SKIP 한 항목 목록, L1~L7 관측 여부. **크리덴셜·개인정보 실값·공지 본문 원문 기재 금지**
+
+---
+
+### 8. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| NT-UNIT-01 | unit | | read_rate 분모 4행(done→sent / 미완료→delivered) |
+| NT-UNIT-02 | unit | | 0 분모 → 0.0, 반올림 1자리 5건 |
+| NT-UNIT-03 | unit | | stale 경계 29/30/31분·done/failed false·naive tz |
+| NT-UNIT-04 | unit | | text_preview 60자·text_len 원문 길이 |
+| NT-UNIT-05 | unit | | audience 라벨 3종·폴백 |
+| NT-UNIT-06 | unit | | `_iso` naive→+00:00 / aware 보존 / 직접 isoformat 0건 |
+| NT-UNIT-07 | unit | | notice_id=None doc 필드 집합 동일 — **FAIL 시 중단** |
+| NT-UNIT-08 | unit | | notice_id 부착 시 additive 1키·str 캐스팅·승격 블록 무변경 |
+| NT-UNIT-09 | unit | | `_read_stats` 빈 입력/미존재/단일 aggregation |
+| NT-UNIT-10 | unit | | 응답 필드 화이트리스트·개인정보 키 0 — **FAIL 시 중단** |
+| NT-UNIT-11 | unit | | notices 문서 스키마·error 는 타입명만 |
+| NT-UNIT-12 | unit | | `_serialize_message`/`ensure_dm_indexes`/`mark_read`/`send_to_users` diff 0 |
+| NT-UNIT-13 | unit | | 모달 props 기본값·seed 1회·confirm 유지 |
+| NT-UNIT-14 | unit | | 로그 `notice=` 전수·본문 전달 0건 |
+| NT-UNIT-15 | unit | | 9004 미러 6파일 `diff -q` |
+| NT-UNIT-16 | unit | | 라우트/NavLink additive·api.js 경유·eslint 신규 0 |
+| NT-UNIT-17 | unit | | 락 후 생성·생성 실패 시 500+미발송 |
+| NT-API-01 | api | | 목록 200·필드 계약·DESC·페이지네이션 |
+| NT-API-02 | api | | audience 400·limit 클램프·401·403 |
+| NT-API-03 | api | | 상세 200(text 전문)·400·404·인가 |
+| NT-API-04 | api | | 전 시각 필드 `+00:00` |
+| NT-API-05 | api | | broadcast 검증 분기 400/401/403 — **실발송 0 증명** |
+| NT-API-06 | api | | 락 429(§5-B 승인 필요) |
+| NT-API-07 | api | | `/api/dm/broadcast` 410 · 무토큰 401 |
+| NT-API-08 | api | | 프라이버시 경계 — **FAIL 시 중단** |
+| NT-API-09 | api | | DM 송수신 + `notice_id` 미노출 — **FAIL 시 중단** |
+| NT-API-10 | api | | pending 생성/수락/거절/403/hard delete |
+| NT-API-11 | api | | 읽음 3종 + 뱃지 2종 + pending marked:0 |
+| NT-API-12 | api | | 지정발송 무회귀 + 공지 목록 미편입 |
+| NT-API-13 | api | | 로그 details additive·본문 부재 |
+| NT-API-14 | api | | `(notice_id,read)` sparse·notices.created_at·기존 6종 |
+| NT-API-15 | api | | 9004 런타임 200/410/401/400 |
+| NT-API-16 | api | | **승인 대기** — 격리 실발송 1건·읽음 통계 |
+| NT-API-17 | api | | **승인 대기** — `notice=` 추적 체인 7단계 |
+| NT-E2E-01 | e2e | | `/notices` 진입·사이드바·목록 렌더 |
+| NT-E2E-02 | e2e | | 행 확장 → 본문 전문 |
+| NT-E2E-03 | e2e | | 재발송 prefill → confirm **취소** |
+| NT-E2E-04 | e2e | | 모달 두 진입점·잔존 없음·CS 무회귀 |
+| NT-E2E-05 | e2e | | 발송시각 KST 대조 — 9시간 밀림 0 |
+| NT-E2E-06 | e2e | | 사용자 DM 여정·읽음 동기화 |
+| NT-E2E-07 | e2e | | `/logs` details 나열·본문 미표시 |
+
+---
+
+### 9. 요구 축 ↔ 시나리오 매핑 (누락 검증)
+
+**신규 기능(v194)**
+
+| 요구 | 시나리오 |
+|---|---|
+| `read_rate` 분모/0분모/반올림 | NT-UNIT-01·02 |
+| `stale` 경계 | NT-UNIT-03 |
+| `text_preview`·`text_len` | NT-UNIT-04 |
+| audience 라벨 매핑 | NT-UNIT-05 |
+| `_iso` naive/aware | NT-UNIT-06 |
+| `send_message(notice_id=None)` doc 동일 | NT-UNIT-07 (+08) |
+| `_read_stats` 안전성 | NT-UNIT-09 |
+| 목록 200·계약·DESC·페이지네이션 | NT-API-01 |
+| audience 400 / 401 / 403 | NT-API-02 |
+| 상세 200(전문)·400·404 | NT-API-03 |
+| broadcast 검증 분기·429 | NT-API-05·06 |
+| `/api/dm/broadcast` 410·401 | NT-API-07 |
+| 시각 `+00:00` | NT-API-04 |
+| 응답 개인정보 부재 | NT-UNIT-10·NT-API-08 |
+| `/notices` 진입·사이드바·목록 | NT-E2E-01 |
+| 행 확장 본문 | NT-E2E-02 |
+| 재발송 prefill·confirm 취소 | NT-E2E-03 |
+| 헤더 발송 버튼·모달 취소 | NT-E2E-04 |
+| 발송시각 9시간 밀림 | NT-E2E-05 (+NT-API-04) |
+
+**회귀 10축**
+
+| # | 요구 | 시나리오 |
+|---|---|---|
+| 1 | 기존 DM 송수신·`notice_id` 부재·doc 필드 집합 | NT-API-09 · NT-UNIT-07 · NT-E2E-06 |
+| 2 | 요청함 pending | NT-API-10 |
+| 3 | CS 전체발송 경로(검증·락·응답, 실발송 금지) | NT-API-05 · NT-API-06 |
+| 4 | CS 지정발송(v177) 무회귀·이력 미편입 | NT-API-12 |
+| 5 | 읽음 표시 4종 | NT-API-11 · NT-E2E-06 |
+| 6 | 관리자 로그 details·`/logs` 화면 | NT-API-13 · NT-E2E-07 |
+| 7 | CS 페이지 모달 무회귀 | NT-E2E-04 · NT-UNIT-13 |
+| 8 | 인덱스 실측 | NT-API-14 |
+| 9 | 9004 미러 | NT-UNIT-15(정적) · NT-API-15(런타임) |
+| 10 | 프라이버시 경계 | NT-API-08 · NT-UNIT-10·11·14 |
+| 추가 | 디버깅 로그 `notice=` 추적 | NT-UNIT-14(정적) · NT-API-17(체인, 승인 대기) |
+| 추가 | 알려진 한계(재기동 → sending 고착) | §6 L1·L2 |
+
+---
+
+## v194 시나리오 집계
+
+- 총 **41건** — `[unit]` 17(41.5%) / `[api]` 17(41.5%) / `[e2e]` 7(17.1%) → 태그 요구(unit ≥40% · api ≥35% · e2e ≤25%) **전부 충족**
+- **승인 대기 2건**: NT-API-16(격리 실발송 1건 — 읽음 통계) · NT-API-17(로그 추적 체인). 추가로 NT-API-06 은 Redis 락 선점 승인 필요(§5-B)
+- **쓰기 총량**(승인 전 기준): 테스트 계정 간 DM 수 건 · pending 요청 2건(수락/거절) · 지정발송 1건(테스트 계정 1명) · Redis 락 키 1개(TTL 30초, 승인 시). **전체발송 0건** · 인덱스 조작 0 · 컨테이너/볼륨 조작 0 · 실사용자 데이터 무접촉
+- **즉시 중단 조건**: NT-UNIT-07 / NT-UNIT-10 / NT-API-08 / NT-API-09 FAIL, `POST /api/admin/cs/broadcast` 가 예기치 않게 200 을 반환, `/logs`·목록에 공지 본문이 노출되는 경우
+
+## 개정 이력 (v194)
+
+- 2026-08-19 초판 작성 (41건) — PLAN v194 §1~§7 전 항목 시나리오화. 안전 제약(**실발송 금지**)을 §0 불변식으로 두고 발송 계열을 **검증 분기·인가·429 락(수동 선점)·`window.confirm` 취소·410** 경로로만 설계. 실발송이 원리적으로 필요한 2건(NT-API-16·17)은 **격리 조건 설계서(§5-A)와 함께 승인 대기**로 분리. 태그 균형은 정적 검사·순수 함수 검증을 unit 으로 끌어올려 unit 41.5% / api 41.5% / e2e 17.1% 로 확보(승인 대기 2건 제외 시에도 43.6/38.5/17.9 로 충족). BASE_REV=d19af4b 초안 반영. planner 회신 대기 7건(§5-C). planner 검토 후 확정 예정.
+- 2026-08-19 실측 반영(설계 중 구현분 착지) — 작성 중 backend-dev/frontend-dev 산출물(`notice_service.py`·`admin_notices.py`·`AdminNoticesPage.jsx`·`AdminBroadcastModal` props)이 워킹트리에 착지해, "구현 확정값 관측" 으로 열어 두었던 3건의 기대값을 **실측으로 고정**: ① `_is_stale` 엄격 부등호(`dt < now-30분`) → 30분 정각 **false**(NT-UNIT-03 b) ② `text_preview = text[:60]` **말줄임 기호 미부착**(NT-UNIT-04) ③ audience 라벨 `all=전체 / users=일반 사용자 / customers=고객` + `|| value || '-'` 폴백, 모달과 값·라벨 일원화 대조 추가(NT-UNIT-05) ④ 목록 행 17키·상세 +2키가 PLAN §3-4 계약과 일치하고 `profile_image` 미포함(NT-UNIT-10). §5-C 4·5번 회신 항목 **해소**(잔여 회신 5건). **시나리오 개수·태그 비율은 불변**(41건 / 17·17·7).

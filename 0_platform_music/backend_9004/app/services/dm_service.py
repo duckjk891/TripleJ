@@ -490,9 +490,15 @@ async def get_messages(mongo, conversation_id, me_id, before=None, limit=DEFAULT
     return [_serialize_message(d) for d in docs]
 
 
-async def send_message(conn, mongo, me_id, conversation_id, text) -> dict:
+async def send_message(conn, mongo, me_id, conversation_id, text, notice_id=None) -> dict:
     """메시지 전송 — 참여자 검증 + 게이트 재검사(대화존재 시 관계 skip) + 저장 +
-    conversation last_* 갱신 + 상대 unread+1 + Redis publish `dm:user:{peer}`."""
+    conversation last_* 갱신 + 상대 unread+1 + Redis publish `dm:user:{peer}`.
+
+    v194 `notice_id`(optional, 맨 끝 keyword): 공지(전체발송)로 배포된 사본만
+    `notice_id` 필드를 갖는다 — 읽음 집계(notice_service._read_stats)의 유일한
+    묶음 키. **값이 없으면 저장 문서는 기존과 완전히 동일**(사적 DM 무영향).
+    `_serialize_message` 는 명시적 화이트리스트라 응답 스키마도 불변 —
+    내부 식별자를 사용자에게 노출하지 않는다."""
     me_id = str(me_id)
     text = (text or "").strip()
     if not text or len(text) > MAX_TEXT_LEN:
@@ -525,6 +531,9 @@ async def send_message(conn, mongo, me_id, conversation_id, text) -> dict:
         "created_at": now,
         "read": False,
     }
+    # v194: 공지 배포 사본만 묶음 키를 갖는다(sparse) — 값 없으면 doc 불변
+    if notice_id:
+        doc["notice_id"] = str(notice_id)
     res = await mongo.dm_messages.insert_one(doc)
     doc["_id"] = res.inserted_id
 
@@ -552,8 +561,9 @@ async def send_message(conn, mongo, me_id, conversation_id, text) -> dict:
     # 상대에게 실시간 push (본인은 REST 응답으로 echo)
     await publish_to_user(peer_id, event)
     logger.info(
-        "[dm] message sent conv=%s me=%s peer=%s len=%d",
+        "[dm] message sent conv=%s me=%s peer=%s len=%d notice=%s",
         _short(cid), _short(me_id), _short(peer_id), len(text),
+        _short(notice_id) if notice_id else "-",
     )
     return message
 
@@ -741,12 +751,17 @@ async def count_broadcast_targets(conn, me_id, audience: str) -> int:
     return int(row["n"]) if row else 0
 
 
-async def _deliver_official_message(conn, mongo, me_id, target_id, text, log_prefix="[dm-broadcast]"):
+async def _deliver_official_message(
+    conn, mongo, me_id, target_id, text, log_prefix="[dm-broadcast]", notice_id=None
+):
     """공식 발신 1건 전달 — broadcast_message per-target 루프 본문의 순수 추출(v177).
 
     get_or_create_conversation(assert_can_dm 풀 게이트 — 우회 없음) → pending 인
     경우만 accepted 승격(기존 accepted 대화 status 훼손 방지) → send_message.
     실패 시 예외 전파 — sent/failed 집계(try/except)는 호출측 책임.
+
+    v194 `notice_id`: 마지막 send_message 로만 pass-through(pending 승격 블록
+    무수정). 지정발송(send_to_users)은 전달하지 않는다 — 공지 이력은 전체발송 전용.
     """
     conv = await get_or_create_conversation(conn, mongo, me_id, target_id)
     conv_id = conv.get("conversation_id") or conv.get("_id")
@@ -763,10 +778,10 @@ async def _deliver_official_message(conn, mongo, me_id, target_id, text, log_pre
             "%s promote pending->accepted conv=%s target=%s",
             log_prefix, _short(conv_id), _short(target_id),
         )
-    await send_message(conn, mongo, me_id, str(conv_id), text)
+    await send_message(conn, mongo, me_id, str(conv_id), text, notice_id=notice_id)
 
 
-async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
+async def broadcast_message(conn, mongo, me_id, audience, text, notice_id=None) -> dict:
     """관리자 대상별 전체발송 — 대상 각각 1:1 대화 확보(accepted 보장) 후 전송.
 
     audience: all|users|customers (그 외 ValueError→라우트 400). text 는 strip 후
@@ -774,8 +789,12 @@ async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
     비밴/active 만. best-effort per target(try/except 로 1명 실패가 전체를 막지
     않게 sent/failed 집계). 반환 {audience, targets, sent, failed}.
     text 원문 미로그(길이만).
+
+    v194 `notice_id`: 배포되는 모든 사본에 묶음 키로 심어 읽음 집계를 가능하게
+    한다(pass-through only). 반환값은 불변 — 영속화는 호출측(admin_cs) 책임.
     """
     me_id = str(me_id)
+    notice_tag = _short(notice_id) if notice_id else "-"
     roles = _broadcast_roles(audience)  # ValueError → 라우트 400
     text = (text or "").strip()
     if not text or len(text) > MAX_TEXT_LEN:
@@ -798,25 +817,27 @@ async def broadcast_message(conn, mongo, me_id, audience, text) -> dict:
     )
     targets = [str(r["id"]) for r in rows]
     logger.info(
-        "[dm-broadcast] start admin=%s audience=%s targets=%d",
-        _short(me_id), audience, len(targets),
+        "[dm-broadcast] start admin=%s audience=%s targets=%d notice=%s",
+        _short(me_id), audience, len(targets), notice_tag,
     )
 
     sent, failed = 0, 0
     for target_id in targets:
         try:
-            await _deliver_official_message(conn, mongo, me_id, target_id, text)
+            await _deliver_official_message(
+                conn, mongo, me_id, target_id, text, notice_id=notice_id
+            )
             sent += 1
         except Exception:
             failed += 1
             logger.exception(
-                "[dm-broadcast] target failed admin=%s target=%s",
-                _short(me_id), _short(target_id),
+                "[dm-broadcast] target failed admin=%s target=%s notice=%s",
+                _short(me_id), _short(target_id), notice_tag,
             )
 
     logger.info(
-        "[dm-broadcast] done admin=%s audience=%s sent=%d failed=%d",
-        _short(me_id), audience, sent, failed,
+        "[dm-broadcast] done admin=%s audience=%s sent=%d failed=%d notice=%s",
+        _short(me_id), audience, sent, failed, notice_tag,
     )
     return {"audience": audience, "targets": len(targets), "sent": sent, "failed": failed}
 

@@ -20,7 +20,7 @@ from ..auth import get_admin_user
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
 from ..database.redis import get_redis
-from ..services import dm_service
+from ..services import dm_service, notice_service
 from ..services.dm_service import _get_conv, _short
 from ..services.official import get_official_id
 from .admin import _log_admin_action
@@ -224,32 +224,48 @@ async def cs_unread_count(current_user=Depends(get_admin_user), conn=Depends(get
 # ---------------------------------------------------------------------------
 # 대상별 전체발송 (broadcast) — 발신자=공식 계정(official)
 # ---------------------------------------------------------------------------
-async def _run_cs_broadcast(official_id: str, audience: str, text: str) -> None:
-    """BackgroundTasks 진입점 — dm.py `_run_broadcast` 와 동일 패턴. 요청 스코프
+async def _run_cs_broadcast(official_id: str, audience: str, text: str, notice_id: str) -> None:
+    """BackgroundTasks 진입점 — 요청 스코프
     (get_pg) 커넥션은 응답 종료 시 이미 반환됐으므로, 풀에서 **새 커넥션**을
     획득해 broadcast_message 를 실행한다. Mongo 는 전역 getter(get_mongo) 재사용.
-    text 원문 미로그."""
+    text 원문 미로그.
+
+    v194: notice_id 를 fan-out 에 전달(사본 묶음 키)하고, 종료 시 공지 문서에
+    결과(sent/failed)를 영속화한다 — 실패 시 예외 **타입명만** 기록(원문/스택 금지).
+    """
     from ..database import postgres as _pg
 
+    notice_tag = str(notice_id)[:8] if notice_id else "-"
     logger.info(
-        "[admin-cs] broadcast background start official=%s audience=%s",
-        _short(official_id), audience,
+        "[admin-cs] broadcast background start official=%s audience=%s notice=%s",
+        _short(official_id), audience, notice_tag,
     )
+    mongo = get_mongo()
     try:
         async with _pg._pool.acquire() as conn:
             result = await dm_service.broadcast_message(
-                conn, get_mongo(), official_id, audience, text
+                conn, mongo, official_id, audience, text, notice_id=notice_id
             )
+        sent = int(result.get("sent", 0))
+        failed = int(result.get("failed", 0))
+        await notice_service.finish_notice(mongo, notice_id, sent, failed)
         logger.info(
-            "[admin-cs] broadcast background done official=%s audience=%s sent=%d failed=%d",
-            _short(official_id), audience,
-            int(result.get("sent", 0)), int(result.get("failed", 0)),
+            "[admin-cs] broadcast background done official=%s audience=%s sent=%d failed=%d notice=%s",
+            _short(official_id), audience, sent, failed, notice_tag,
         )
-    except Exception:
+    except Exception as e:
         logger.exception(
-            "[admin-cs] broadcast background failed official=%s audience=%s",
-            _short(official_id), audience,
+            "[admin-cs] broadcast background failed official=%s audience=%s notice=%s",
+            _short(official_id), audience, notice_tag,
         )
+        try:
+            await notice_service.fail_notice(mongo, notice_id, type(e).__name__)
+        except Exception:
+            logger.warning(
+                "[admin-cs] broadcast notice fail-mark failed official=%s notice=%s",
+                _short(official_id), notice_tag,
+                exc_info=True,
+            )
 
 
 @router.post("/broadcast")
@@ -261,8 +277,13 @@ async def broadcast_cs(
 ):
     """대상별 전체발송 — 발신자=공식 계정(official). admin 게이트(get_admin_user)
     → official 해석(미시드 503) → audience/text 검증(400) → 대상 수 선계산 →
-    중복발송 잠금(429) → BackgroundTasks 로 fan-out. 응답 `{queued, audience}`
-    (dm.py `/dm/broadcast` 와 동일 형식). text 원문 미로그(길이만)."""
+    중복발송 잠금(429) → **공지 이력 생성(notices)** → BackgroundTasks 로 fan-out.
+    응답 `{queued, audience, notice_id}`(v194 additive). text 원문 미로그(길이만).
+
+    v194: 발송 경로 단일화 — 공지 관리 페이지도 이 엔드포인트를 그대로 쓴다
+    (발송/재발송 전용 신규 엔드포인트 없음). 공지 문서 생성 실패 시 **발송을
+    진행하지 않고 500** — 이력 없는 발송을 만들지 않는다. 락 획득 **후**에
+    생성하므로 429 로 튕긴 중복 요청이 유령 공지를 만들지 않는다."""
     admin_tag = str(current_user["id"])[:8]
     audience = (body.audience or "").strip()
     text = (body.text or "").strip()
@@ -321,13 +342,35 @@ async def broadcast_cs(
             admin_tag, _short(official_id),
         )
 
-    background_tasks.add_task(_run_cs_broadcast, str(official_id), audience, text)
+    # v194 공지 이력 생성 — 락 획득 후, 큐잉 전. 실패 시 발송 미실행(500).
+    # (락은 TTL 30초로 자연 해제되므로 별도 해제 없음)
+    try:
+        notice_id = await notice_service.create_notice(
+            get_mongo(),
+            text=text,
+            audience=audience,
+            targets=targets,
+            admin_id=str(current_user["id"]),
+            official_id=str(official_id),
+        )
+    except Exception:
+        logger.exception("[admin-cs] broadcast denied (notice create failed) admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "발송 이력을 만들 수 없어 발송을 중단했습니다."})
+
+    notice_tag = str(notice_id)[:8]
     logger.info(
-        "[admin-cs] broadcast queued admin=%s official=%s audience=%s targets=%d",
-        admin_tag, _short(official_id), audience, targets,
+        "[admin-cs] broadcast notice created notice=%s admin=%s targets=%d",
+        notice_tag, admin_tag, targets,
     )
 
-    # 감사 로그 적재 (best-effort) — text 원문 미저장(길이만), 실패해도 발송은 유지
+    background_tasks.add_task(_run_cs_broadcast, str(official_id), audience, text, notice_id)
+    logger.info(
+        "[admin-cs] broadcast queued admin=%s official=%s audience=%s targets=%d notice=%s",
+        admin_tag, _short(official_id), audience, targets, notice_tag,
+    )
+
+    # 감사 로그 적재 (best-effort) — text 원문 미저장(길이만 + notice_id 포인터),
+    # 실패해도 발송은 유지. 본문은 notices 컬렉션에만 존재(PG 로 넘기지 않음).
     try:
         await _log_admin_action(
             conn,
@@ -335,16 +378,16 @@ async def broadcast_cs(
             "cs_broadcast",
             "broadcast",
             audience,
-            {"targets": targets, "text_len": len(text)},
+            {"targets": targets, "text_len": len(text), "notice_id": notice_id},
         )
     except Exception:
         logger.warning(
-            "[admin-cs] broadcast audit log failed admin=%s audience=%s targets=%d",
-            admin_tag, audience, targets,
+            "[admin-cs] broadcast audit log failed admin=%s audience=%s targets=%d notice=%s",
+            admin_tag, audience, targets, notice_tag,
             exc_info=True,
         )
 
-    return {"queued": targets, "audience": audience}
+    return {"queued": targets, "audience": audience, "notice_id": notice_id}
 
 
 # ---------------------------------------------------------------------------

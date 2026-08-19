@@ -1,10 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { broadcastCs } from '../api';
 import './AdminBroadcastModal.css';
 
 // 전체 발송 모달 — CS 페이지 헤더 "📢 전체 발송" 버튼으로 오픈.
 // audience(전체/일반 사용자/고객) + textarea(최대 2000자) → window.confirm 최종 확인 → POST /admin/cs/broadcast.
 // 로그 prefix `[AdminBroadcast]`. 메시지 text 원문은 콘솔에 출력하지 않는다(대상/길이만).
+//
+// v194 — 공지 재발송 prefill 용 props 3개(initialText/initialAudience/title)를 **순수 additive** 로 추가.
+// 미전달 시 기본값이 현행과 동일한 빈 상태/제목이라 기존 호출부(AdminCsPage)는 한 줄도 바뀌지 않는다.
 
 const MAX_LEN = 2000;
 
@@ -23,11 +26,36 @@ function audienceLabel(value) {
   return found.label;
 }
 
-export default function AdminBroadcastModal({ open, onClose, onSuccess }) {
+export default function AdminBroadcastModal({
+  open,
+  onClose,
+  onSuccess,
+  initialText = '',
+  initialAudience = '',
+  title = '📢 전체 발송',
+}) {
   const [audience, setAudience] = useState('');
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState(''); // 인라인 안내(검증/에러)
+  const prevOpenRef = useRef(false);
+
+  // v194 — 초기값 seed 는 **열릴 때(false→true) 단 한 번**. 열려 있는 동안 props 가 바뀌어도
+  // 관리자가 편집 중인 입력을 덮어쓰지 않는다. 닫을 때는 기존 reset() 이 그대로 비운다.
+  useEffect(() => {
+    if (open && !prevOpenRef.current) {
+      setAudience(initialAudience);
+      setText(initialText);
+      setNotice('');
+      if (import.meta.env.DEV) {
+        console.info('[AdminBroadcast] opened', {
+          audience: initialAudience || '(none)',
+          text_len: initialText.length,
+        });
+      }
+    }
+    prevOpenRef.current = open;
+  }, [open, initialAudience, initialText]);
 
   const reset = useCallback(() => {
     setAudience('');
@@ -106,7 +134,7 @@ export default function AdminBroadcastModal({ open, onClose, onSuccess }) {
     <div className="admin-broadcast__overlay" onClick={handleClose}>
       <div className="admin-broadcast" onClick={(e) => e.stopPropagation()}>
         <div className="admin-broadcast__head">
-          <h3 className="admin-broadcast__title">📢 전체 발송</h3>
+          <h3 className="admin-broadcast__title">{title}</h3>
           <button className="admin-broadcast__close" onClick={handleClose} aria-label="닫기">×</button>
         </div>
 

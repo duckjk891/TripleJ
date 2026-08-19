@@ -12,6 +12,7 @@ import AdminPointsPage from './pages/AdminPointsPage';
 import AdminAdvertisersPage from './pages/AdminAdvertisersPage';
 import AdminAdvertiserDetailPage from './pages/AdminAdvertiserDetailPage';
 import AdminIssuesPage from './pages/AdminIssuesPage';
+import AdminNoticesPage from './pages/AdminNoticesPage';
 
 // v162 — 관리자 독립 앱: /login 이 유일한 공개 라우트.
 // 미로그인/비관리자는 항상 /login 으로 리다이렉트한다.
@@ -41,6 +42,8 @@ function App() {
         <Route path="/advertisers" element={<AdminRoute><AdminAdvertisersPage /></AdminRoute>} />
         <Route path="/advertisers/:id" element={<AdminRoute><AdminAdvertiserDetailPage /></AdminRoute>} />
         <Route path="/issues" element={<AdminRoute><AdminIssuesPage /></AdminRoute>} />
+        {/* v194 — 공지 관리(전체발송 공지 이력 + 읽음 통계) */}
+        <Route path="/notices" element={<AdminRoute><AdminNoticesPage /></AdminRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthProvider>

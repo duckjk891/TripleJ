@@ -1,0 +1,277 @@
+/* AdminNoticesPage — 공지 관리 (v194). AdminIssuesPage.css 톤 승계(standalone 관행:
+   공용 클래스도 페이지 CSS 안에 함께 둔다 — 페이지 CSS 는 페이지 컴포넌트에서만 import 되므로
+   /notices 로 직접 진입해도 스타일이 비지 않는다). */
+
+.admin-notices {
+  max-width: 1100px;
+}
+
+.admin-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--color-text);
+}
+
+.admin-loading,
+.admin-error {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--color-text-sub);
+}
+
+.admin-error {
+  color: var(--color-danger);
+}
+
+.admin-error .admin-btn {
+  margin-top: 12px;
+}
+
+/* ── 헤더 ────────────────────────────────────────────── */
+
+.admin-notices__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.admin-notices__header .admin-page-title {
+  margin-bottom: 0;
+}
+
+/* CS 페이지 "전체 발송"(주 버튼)과 동일 톤 — 같은 실액션이라 시각적으로 같아야 한다 */
+.admin-notices__send-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.admin-notices__send-btn:hover {
+  background: var(--color-primary-dark);
+}
+
+/* ── 목록 ────────────────────────────────────────────── */
+
+/* 7열을 1259px 창(표 컨테이너 ≈953px)에 가로 스크롤 없이 담기 위한 폭 규율(v188 회귀 방지):
+   좌우 패딩 축소 + 관리자 셀 말줄임 + 숫자열 우측 정렬. */
+.admin-notices__table th,
+.admin-notices__table td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.admin-notices__row {
+  cursor: pointer;
+}
+
+.admin-notices__row:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.admin-notices__row--selected > td {
+  background: var(--color-hover);
+}
+
+.admin-notices__nowrap {
+  white-space: nowrap;
+}
+
+.admin-notices__num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 긴 닉네임이 표 폭을 밀지 않게 말줄임(원문은 title 툴팁) */
+.admin-notices__admin-cell {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-notices__failed {
+  color: var(--color-danger, #ef4444);
+  font-weight: 600;
+}
+
+/* ── 확장 상세 ───────────────────────────────────────── */
+
+.admin-notices__detail-row > td {
+  background: var(--color-bg);
+}
+
+.admin-notices__detail {
+  padding: 6px 4px;
+}
+
+/* 공지 본문 — 관리자가 입력한 줄바꿈을 보존해 보여준다(v184 선례) */
+.admin-notices__text {
+  white-space: pre-line;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.admin-notices__meta {
+  margin: 0 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.admin-notices__meta > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.admin-notices__meta dt {
+  font-size: 0.8rem;
+  color: var(--color-text-sub);
+}
+
+.admin-notices__meta dd {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--color-text);
+}
+
+.admin-notices__detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-notices__hint {
+  font-size: 0.76rem;
+  color: var(--color-text-sub);
+}
+
+.admin-notices__panel-status {
+  padding: 10px 4px;
+  font-size: 0.85rem;
+  color: var(--color-text-sub);
+}
+
+/* ── standalone 공용(테이블/뱃지/버튼/페이지네이션) ──── */
+
+.admin-table-wrap {
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.admin-table--full {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.admin-table--full th {
+  text-align: left;
+  padding: 12px 14px;
+  color: var(--color-text-sub);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.admin-table--full td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-table--full tbody tr:hover {
+  background: var(--color-hover);
+}
+
+.admin-table--full tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-badge--green {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.admin-badge--gray {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.admin-badge--red {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.admin-badge--yellow {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.admin-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.admin-btn:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.admin-btn--small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-empty {
+  text-align: center;
+  color: var(--color-text-sub) !important;
+  padding: 20px 14px !important;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.admin-pagination__info {
+  font-size: 0.9rem;
+  color: var(--color-text-sub);
+}
