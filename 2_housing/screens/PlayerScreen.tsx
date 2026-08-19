@@ -15,7 +15,7 @@ import {
   FlatList,
   Platform,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import { Audio, Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
@@ -90,6 +90,8 @@ interface TrackData {
   created_at?: string;
   // 9004: 곡 만들 때 아티스트가 착용한 의상 스냅샷
   cover_character?: CoverCharacter | null;
+  has_music_video?: boolean;
+  music_video_url?: string | null;
 }
 
 function formatTime(millis: number): string {
@@ -183,7 +185,9 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 프롬프트 탭에 보여줄 파라미터 — 트랙 필드 + (내 곡이면) 생성 설정(genDetail)을 합친다.
   // 값이 없는 항목은 아예 노출하지 않는다(빈 '-' 나열 방지).
   const promptParams = (() => {
-    const g: any = genDetail || {};
+    // v193: 트랙 응답에 동봉되는 generation_params(공개) 우선, 내 곡이면 genDetail로 보강
+    const gp: any = (track as any)?.generation_params || {};
+    const g: any = { ...gp, ...(genDetail || {}) };
     const t: any = track || {};
     const join = (v: any) => Array.isArray(v) ? v.join(', ') : v;
     const secs = t.duration_sec ? `${Math.floor(t.duration_sec / 60)}:${String(t.duration_sec % 60).padStart(2, '0')}` : null;
@@ -369,6 +373,10 @@ export default function PlayerScreen({ route, navigation }: any) {
   // 동영상 탭 열기 — 가사 싱크(lyrics-timeline) 로드(트랙당 1회)
   const openVideoTab = async () => {
     setMediaTab('video');
+    // v3.48(B5): MV가 있으면 자체 오디오와 겹치지 않게 곡을 일시정지
+    if ((fullTrack as any)?.music_video_url && soundRef.current) {
+      try { await soundRef.current.pauseAsync(); setIsPlaying(false); playerStore.setIsPlaying(false); } catch {}
+    }
     const tid = usePlayerStore.getState().track?.id || currentId;
     if (!tid || lyricsFetchedRef.current === tid) return;
     lyricsFetchedRef.current = tid;
@@ -632,7 +640,16 @@ export default function PlayerScreen({ route, navigation }: any) {
       {/* Cover Art / 동영상(가사 싱크) */}
       <View style={styles.coverWrapper}>
         {mediaTab === 'video' ? (
-          lyricsTimeline.length > 0 ? (
+          (fullTrack as any)?.music_video_url ? (
+            // v3.48(B5): 뮤직비디오 실재생 — MV 자체 오디오가 있어 곡 오디오와 병행 금지(진입 시 일시정지는 openVideoTab에서)
+            <Video
+              source={{ uri: (fullTrack as any).music_video_url }}
+              style={styles.coverArt}
+              useNativeControls
+              resizeMode={ResizeMode.CONTAIN}
+              onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
+            />
+          ) : lyricsTimeline.length > 0 ? (
             <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={210} />
           ) : (
             <View style={[styles.coverArt, styles.coverPlaceholder]}>
@@ -898,9 +915,9 @@ export default function PlayerScreen({ route, navigation }: any) {
                           </View>
                         ))}
                       </View>
-                      {!genDetail && (fullTrack as any)?.generation_id ? (
+                      {!genDetail && !(fullTrack as any)?.generation_params && (fullTrack as any)?.generation_id ? (
                         <AppText style={styles.detailHelperText}>
-                          보컬·스타일·실험성 등 생성 당시 설정값은 곡을 만든 본인에게만 표시돼요.
+                          이 곡은 생성 설정 정보가 제공되지 않아요.
                         </AppText>
                       ) : null}
                     </View>

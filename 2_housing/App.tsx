@@ -29,9 +29,11 @@ import HomeHeaderActions from './components/HomeHeaderActions';
 import AttendanceModal from './components/AttendanceModal';
 import AppShareModal from './components/AppShareModal';
 import StarGuideModal from './components/StarGuideModal';
-import { useAuthStore } from './stores/authStore';
+import { useAuthStore, restoreSession } from './stores/authStore';
 import DmInboxScreen from './screens/DmInboxScreen';
 import DmChatScreen from './screens/DmChatScreen';
+import NotificationsScreen from './screens/NotificationsScreen';
+import MyReportsScreen from './screens/MyReportsScreen';
 import { useUiStore } from './stores/uiStore';
 import { usePointsStore } from './stores/pointsStore';
 import api from './services/api';
@@ -97,6 +99,8 @@ export type RootStackParamList = {
   Settings: undefined;
   Player: { track: any };
   DmInbox: undefined;
+  Notifications: undefined;
+  MyReports: undefined;
   DmChat: { conversation: any };
   UserChannel: { authorId: string; name?: string };
   ArtistDetail: { artistId: string; artistName?: string };
@@ -378,6 +382,8 @@ function useOAuthCallback() {
 
 export default function App() {
   useOAuthCallback();
+  // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
+  useEffect(() => { restoreSession(); }, []);
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
@@ -394,6 +400,8 @@ export default function App() {
             <RootStack.Screen name="Splash" component={SplashScreen} />
             <RootStack.Screen name="MainTabs" component={MainTabs} />
             <RootStack.Screen name="DmInbox" component={DmInboxScreen} />
+            <RootStack.Screen name="Notifications" component={NotificationsScreen} />
+            <RootStack.Screen name="MyReports" component={MyReportsScreen} />
             <RootStack.Screen name="DmChat" component={DmChatScreen} />
             <RootStack.Screen
               name="Player"

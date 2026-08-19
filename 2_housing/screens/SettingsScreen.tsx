@@ -139,10 +139,17 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.settingRow, styles.settingRowLast]}
+          style={styles.settingRow}
           onPress={() => navigation.navigate('Royalty' as never)}
         >
           <AppText style={styles.settingLabel}>💸 내 정산</AppText>
+          <AppText style={styles.settingArrow}>{'>'}</AppText>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowLast]}
+          onPress={() => navigation.navigate('MyReports' as never)}
+        >
+          <AppText style={styles.settingLabel}>내 신고 내역</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 

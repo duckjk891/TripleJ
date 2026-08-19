@@ -43,9 +43,11 @@ interface Props {
   liked?: boolean;
   onPress: () => void;
   onMore?: () => void;
+  /** 행 하단 부가 정보(장르 태그·공개상태 등 — 마이뮤직) */
+  footer?: ReactNode;
 }
 
-export default function TrackRow({ track, left, liked, onPress, onMore }: Props) {
+export default function TrackRow({ track, left, liked, onPress, onMore, footer }: Props) {
   return (
     <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={onPress}>
       {left}
@@ -55,6 +57,7 @@ export default function TrackRow({ track, left, liked, onPress, onMore }: Props)
         <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
           {track.artist_name || '알 수 없는 아티스트'}
         </AppText>
+        {footer ?? null}
       </View>
       {/* 재생수 · 좋아요수 — 좋아요 실행은 ⋮ 액션시트에서 */}
       <View style={styles.statCol}>

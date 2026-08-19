@@ -5,6 +5,17 @@
 
 ---
 
+## v3.48 — 2026-08-19 — A+B 일괄 검증
+
+- [unit] tsc 0.
+- [api/라이브] parent_id 저장·응답 / 알림 follow·feed 팬아웃·comment 실수신 + read-all 2→0 / spend 차감·402·400 / generation_params 남의 곡 수신 / stream-proxy Range=206.
+- [e2e] 벨 뱃지+알림함 표시, parent_id·레거시 답글 공존 스레드(마커 미노출), 새로고침 후 로그인 유지(B1), 설정→내 신고 내역 화면(B3).
+- [api] WS 핸드셰이크 CONNECTED (websockets 설치 후 — 설치 전 404 재현·원인 확정 포함).
+- [regression] 차트/피드/댓글/좋아요/DM 게이트/재생 정상, 콘솔 에러 0.
+- [미검증] WS 실이벤트(본인인증 계정), MV 실재생(MV 보유 곡), B6 네이티브 저장(실기기).
+
+---
+
 ## v3.47 — 2026-08-19 — 스레드·팔로우 메뉴·여백 검증
 
 - [unit] tsc --noEmit → 에러 0.

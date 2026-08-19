@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import api, { setAuthToken } from '../services/api';
 import { usePlayerStore } from './playerStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface AuthUser {
   id: string;
@@ -9,6 +10,8 @@ interface AuthUser {
   company_name?: string | null;
   display_title?: string | null;
 }
+
+const TOKEN_KEY = 'auth-token-v1';
 
 interface AuthState {
   token: string | null;
@@ -42,6 +45,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await api.post('/auth/login', { email, password });
       const { token, user } = res.data;
       setAuthToken(token);
+      AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {}); // 세션 영속화(앱 재시작 유지)
       set({ token, user, isLoading: false });
       // 로그인: 이 계정이 쓰던 재생목록을 복원해서 보여준다(보관 목록이 없으면 담아둔 목록 승계)
       try { usePlayerStore.getState().restoreQueueFor(String(user?.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(login)', { err }); }
@@ -58,6 +62,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await api.get('/auth/me'); // user 객체 최상위 응답
       const user = res.data?.user ?? res.data;
       if (!user?.id) throw new Error('invalid user payload');
+      AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
       set({ token, user, isLoading: false });
       try { usePlayerStore.getState().restoreQueueFor(String(user.id)); } catch (err) { console.error('[authStore] restoreQueueFor 실패(social)', { err }); }
       return true;
@@ -77,6 +82,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await api.post('/auth/register', body);
       const { token, user } = res.data;
       setAuthToken(token);
+      AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
       set({ token, user, isLoading: false });
       // 회원가입: 가입 직전까지 비회원으로 담아둔 재생목록을 그대로 새 계정에 승계(보존)
       try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(register)', { err }); }
@@ -110,9 +116,26 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   logout: () => {
     setAuthToken(null);
+    AsyncStorage.removeItem(TOKEN_KEY).catch(() => {});
     set({ token: null, user: null });
     // 내 재생목록(큐)은 로그인 사용자 기능 → 로그아웃 시 초기화(재진입 시 비회원에겐 아무것도 남기지 않음)
     try { usePlayerStore.getState().resetOnLogout(); } catch (err) { console.error('[authStore] resetOnLogout 실패', { err }); }
   },
   clearError: () => set({ error: null }),
 }));
+
+// 앱 부팅 시 저장된 토큰으로 세션 복원(JWT 7일) — App.tsx에서 1회 호출.
+// 유효하면 자동 로그인 + 계정 재생목록 복원, 만료/무효면 조용히 로그아웃 상태 유지.
+export async function restoreSession(): Promise<boolean> {
+  try {
+    const token = await AsyncStorage.getItem(TOKEN_KEY);
+    if (!token) return false;
+    if (__DEV__) console.info('[authStore] restoreSession — 저장 토큰으로 복원 시도');
+    const ok = await useAuthStore.getState().loginWithToken(token);
+    if (!ok) AsyncStorage.removeItem(TOKEN_KEY).catch(() => {});
+    return ok;
+  } catch (err: any) {
+    console.error('[authStore] restoreSession 실패', { message: err?.message });
+    return false;
+  }
+}

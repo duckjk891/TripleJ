@@ -12,6 +12,8 @@ import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DIRECTOR_CATALOG, DirectorCatalog } from '../data/directors';
 import { useDirectorsStore } from '../stores/directorsStore';
+import api from '../services/api';
+import { usePointsStore } from '../stores/pointsStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -60,20 +62,31 @@ export default function DirectorLineupScreen({ navigation }: any) {
       .map((k) => ({ category: k, list: map[k].sort((a, b) => a.hireCost - b.hireCost) }));
   }, []);
 
-  const handleHire = (d: DirectorCatalog) => {
+  const handleHire = async (d: DirectorCatalog) => {
     if (isHired(d.id)) {
       // 영입된 경우 → 선택 (현재 카테고리의 기본으로)
       selectForCategory(d.category, d.id);
       Alert.alert('선택 완료', `${d.name}님을 ${CATEGORY_LABEL[d.category]}로 지정했어요.`);
       return;
     }
-    // 다이아(캐시) 제거 — 모든 디렉터는 무료로 영입 (별 경제 통일, 백엔드 별 차감 엔드포인트 부재)
-    if (__DEV__) console.info('[DirectorLineup] hire', { id: d.id });
+    // v193: 유료 디렉터(hireCost>0)는 별 10⭐ 차감(POST /points/spend) — 기본 디렉터는 무료 유지
+    if (__DEV__) console.info('[DirectorLineup] hire', { id: d.id, paid: d.hireCost > 0 });
+    if (d.hireCost > 0) {
+      try {
+        const res = await api.post('/points/spend', { action: 'hire_director', ref: `hire:${d.id}` });
+        usePointsStore.getState().fetchBalance();
+        hire(d.id);
+        useCompanyStore.getState().addExp(20, 'hire');
+        Alert.alert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요! (⭐10 사용, 잔액 ${res.data?.balance ?? '-'})`);
+      } catch (err: any) {
+        const status = err?.response?.status;
+        console.error('[DirectorLineup] hire spend 실패', { id: d.id, status });
+        Alert.alert('알림', status === 402 ? '별이 부족합니다. 음악을 듣거나 출석체크로 별을 모아보세요!' : '영입에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
+      return;
+    }
     hire(d.id);
     useCompanyStore.getState().addExp(20, 'hire');
-    if (d.hireCost > 0) {
-      Alert.alert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요!`);
-    }
   };
 
   if (!user) {

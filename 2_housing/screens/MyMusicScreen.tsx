@@ -237,6 +237,18 @@ export default function MyMusicScreen({ navigation }: any) {
       liked={!!likedMap[String(item.id)]}
       onPress={() => navigation.getParent()?.navigate('Player', { track: item })}
       onMore={() => setActionTrack(item)}
+      footer={
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3, alignItems: 'center' }}>
+          {[...(item.genre || []).slice(0, 2), ...(item.mood || []).slice(0, 1)].map((t, i) => (
+            <View key={i} style={{ backgroundColor: colors.bg.surface2, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+              <AppText style={{ fontSize: 10, color: colors.text.secondary }}>{t}</AppText>
+            </View>
+          ))}
+          {item.is_public ? (
+            <AppText style={{ fontSize: 10, color: colors.status.success, fontWeight: '600' }}>차트 스트리밍 중</AppText>
+          ) : null}
+        </View>
+      }
     />
   );
 

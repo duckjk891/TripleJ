@@ -13,6 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
+import { usePointsStore } from '../stores/pointsStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -187,20 +188,26 @@ export default function ArtistInputScreen({ navigation }: any) {
     setChat((prev) => [...prev, { type: 'user' as const, text }]);
 
   const handlePurchaseExtraSlot = () => {
-    // 다이아 제거 — 추가 아티스트 슬롯 무료 개방 (별 경제 통일)
-    if (__DEV__) console.info('[ArtistInput] unlock extra artist slot (free)');
+    // v193: 추가 아티스트 슬롯 = ⭐15 차감(POST /points/spend)
+    if (__DEV__) console.info('[ArtistInput] unlock extra artist slot (15⭐)');
     Alert.alert(
       '추가 아티스트 만들기',
-      '새로운 아티스트를 만들까요?\n(현재 아티스트는 그대로 유지돼요)',
+      '⭐15를 사용해 새로운 아티스트 슬롯을 열까요?\n(현재 아티스트는 그대로 유지돼요)',
       [
         { text: '취소', style: 'cancel' },
         {
-          text: '만들기',
-          onPress: () => {
-            setExtraUnlocked(true);
-            pushDirector(
-              '슬롯을 열었어요! 새 아티스트의 사진을 올려주세요.'
-            );
+          text: '만들기 (⭐15)',
+          onPress: async () => {
+            try {
+              await api.post('/points/spend', { action: 'extra_slot' });
+              usePointsStore.getState().fetchBalance();
+              setExtraUnlocked(true);
+              pushDirector('슬롯을 열었어요! 새 아티스트의 사진을 올려주세요.');
+            } catch (err: any) {
+              const status = err?.response?.status;
+              console.error('[ArtistInput] extra_slot spend 실패', { status });
+              Alert.alert('알림', status === 402 ? '별이 부족합니다. 음악을 듣거나 출석체크로 별을 모아보세요!' : '슬롯 개방에 실패했습니다. 잠시 후 다시 시도해주세요.');
+            }
           },
         },
       ]

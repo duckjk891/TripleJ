@@ -7,6 +7,34 @@
 
 ---
 
+## v3.48 — 2026-08-19 — A그룹(백엔드 원격) + B그룹(프론트) 일괄
+
+### 요청
+"A작업 끝나면 B작업까지 다 해" — A1 대댓글 / A2 알림 / A3 별 차감 / A4 프롬프트 공개 / A5 Range + B1 세션 / B2 env / B3 신고내역 / B4 WS·배지 / B5 MV / B6 저장.
+
+### Plan verification findings
+- 서버: /mnt/d/.../0_platform_music (admin, v190) — 9004·9005 미러, reload 없음(setsid 재시작). spend_points 서비스는 기존재(라우트만 부재). WS 라우트 존재하나 **websockets 라이브러리 미설치로 404**(신규 발견). 댓글 serializer는 doc 전체 반환이라 parent_id 추가만으로 응답 포함.
+
+### 변경 매트릭스
+| 위치 | 파일 | 변경 |
+|---|---|---|
+| 서버 v191 | feeds.py(9004/9005) | CommentBody.parent_id + 검증 + 평탄화 |
+| 서버 v192 | notifications.py(신규)·follows.py·feeds.py·main.py | 알림 라우터 + 발행 훅 4종 + 팬아웃 |
+| 서버 v193 | points.py·points_service.py·tracks.py | /spend + 단가 2종 / generation_params 병합(캐시 v3) / Range 206 |
+| 서버 | venv×2 | websockets 설치 |
+| 프론트 | FeedCard | parent_id 전송·트리(마커 폴백) |
+| 프론트 | NotificationsScreen(신규)·HomeHeaderActions·App | 알림함+벨 뱃지+라우트 |
+| 프론트 | DirectorLineup·ArtistInput | 별 차감 연동(402 안내) |
+| 프론트 | PlayerScreen | generation_params 병합·MV Video 재생(진입 시 곡 일시정지) |
+| 프론트 | authStore·App | 토큰 영속+restoreSession |
+| 프론트 | services/api | EXPO_PUBLIC_API_URL |
+| 프론트 | MyReportsScreen(신규)·SettingsScreen | 신고 내역 |
+| 프론트 | services/dmSocket(신규)·HomeHeaderActions·DmChatScreen | WS 실시간(폴링 폴백 유지) |
+| 프론트 | TrackRow·MyMusicScreen | footer 슬롯·배지 복원 |
+| 프론트 | TrackShareDownloadSheet(+expo-sharing) | 네이티브 기기 저장 |
+
+---
+
 ## v3.47 — 2026-08-19 — 댓글 중첩 스레드 + ⋯ 팔로우 메뉴 + 여백
 
 ### 요청

@@ -1,9 +1,8 @@
 // [FeedCard] 인스타/페북식 피드 카드 — MAIDOL FeedPostCard 이식(RN).
 // 헤더(아바타·이름·시간·⋯메뉴) / 제목·본문 블록 / 액션바(♥ 좋아요 토글 · 💬 댓글 · 공유) / 인라인 댓글.
-// 댓글: 목록·작성·삭제 + 중첩 답글 스레드.
-//   백엔드 comments에 parent_id가 없어, 답글은 text 선두에 구조화 마커 `[reply:{부모id}] `를 저장하고
-//   클라가 파싱해 부모 아래 중첩 렌더(마커는 화면에서 숨김). 부모가 삭제되면 최상위로 폴백.
-//   ⚠ 서버 parent_id 도입 시 이 마커 방식에서 마이그레이션 예정.
+// 댓글: 목록·작성·삭제 + 중첩 답글 스레드 (백엔드 v191 parent_id 정식 지원).
+//   신규 답글은 parent_id 필드로 저장. 구버전(마커 `[reply:{id}] `) 댓글은 레거시 폴백으로 계속 파싱해
+//   동일하게 중첩 렌더(하위호환). 부모가 삭제되면 최상위로 폴백.
 import { useState } from 'react';
 import { View, TouchableOpacity, TextInput, Alert, ActivityIndicator, Share, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -19,6 +18,7 @@ export interface FeedComment {
   author_id: string;
   author_nickname: string;
   text: string;
+  parent_id?: string | null; // v191+ 대댓글 부모
   created_at?: string;
 }
 
@@ -102,10 +102,12 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     const text = commentText.trim();
     if (!text || posting) return;
     setPosting(true);
-    const payloadText = replyTarget ? `[reply:${replyTarget.id}] ${text}` : text;
     if (__DEV__) console.info('[FeedCard] 댓글 등록', { feedId: feed.id, len: text.length, reply: !!replyTarget });
     try {
-      const res = await api.post(`/feeds/${feed.id}/comments`, { text: payloadText });
+      const res = await api.post(`/feeds/${feed.id}/comments`, {
+        text,
+        ...(replyTarget ? { parent_id: replyTarget.id } : {}),
+      });
       const c = res.data?.comment;
       if (c) setComments((prev) => [...prev, c]);
       setCommentCount((n: number) => n + 1);
@@ -199,18 +201,19 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     ? `${BACKEND_BASE_URL}/api/auth/profile-image/${feed.author_profile_image}`
     : null;
 
-  // [reply:{id}] 마커 파싱 — 중첩 스레드 구성(부모 삭제 시 최상위 폴백)
+  // 중첩 스레드 구성 — parent_id 필드 우선(v191+), 구버전 마커 [reply:{id}]는 레거시 폴백 파싱
   const REPLY_RE = /^\[reply:([A-Za-z0-9]+)\]\s?/;
-  const parseReply = (text: string) => {
-    const m = text.match(REPLY_RE);
-    return { parentId: m ? m[1] : null, body: m ? text.slice(m[0].length) : text };
+  const parseReply = (c: FeedComment) => {
+    if (c.parent_id) return { parentId: String(c.parent_id), body: c.text };
+    const m = c.text.match(REPLY_RE);
+    return { parentId: m ? m[1] : null, body: m ? c.text.slice(m[0].length) : c.text };
   };
   const thread = (() => {
     const roots: { c: FeedComment; body: string; replies: { c: FeedComment; body: string }[] }[] = [];
     const byId: Record<string, number> = {};
     const orphans: { c: FeedComment; body: string; parentId: string }[] = [];
     comments.forEach((c) => {
-      const { parentId, body } = parseReply(c.text);
+      const { parentId, body } = parseReply(c);
       if (!parentId) {
         byId[c.id] = roots.length;
         roots.push({ c, body, replies: [] });

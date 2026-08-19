@@ -4,6 +4,49 @@
 
 ---
 
+## v3.48 (A그룹: 서버 원격 작업 — 대댓글 정식화·알림 시스템·별 차감·프롬프트 공개·Range 시크 / B그룹: 세션·env·신고내역·WS·MV·저장) — 2026-08-19
+
+### 요청 작업
+SSH 등록 완료 후 "A작업 끝나면 B작업까지 다 해" — 백로그 A1~A5(백엔드 필요) + B1~B6(프론트) 전체.
+
+### 서버 작업 방식 (최초 확립)
+`duckjk89@100.127.225.55:2222` SSH — 코드 `/mnt/d/.../0_platform_music`(git admin 브랜치), 9004(AIDOL)·9005(MAIDOL 웹) 미러 패치, `--reload` 없어 setsid 스크립트로 재시작(순단 수 초), 서버 git에 team-dev 커밋. **서버 git 커밋 3건: v191(d19af4b)·v192(905f2c9)·v193(0f5476b)**.
+
+### A그룹 수행 결과 (백엔드 = 서버 라이브 반영 완료)
+- **A1 대댓글 정식화 (서버 v191)**: `CommentBody.parent_id` + 부모 실존검증(같은 피드, 400) + 2단 이상 평탄화(인스타 방식). 프론트는 parent_id 필드로 전송·트리 구성(구 마커 `[reply:]` 댓글은 레거시 폴백 파싱 — 하위호환). **라이브 검증: parent_id 저장·응답 확인, 레거시+신규 답글 공존 렌더.**
+- **A2 알림 시스템 (서버 v192, 신규)**: `notifications` 라우터(목록/unread-count/read-all) + 발행 훅 — 팔로우, 댓글(피드 소유자), 답글(부모 댓글 작성자), 좋아요(중복 미발행), **피드 업로드 → 팔로워 전원 팬아웃**(PG follows 조회). 발행 실패는 본 동작 무영향. 프론트: 헤더 벨 아이콘+미읽음 뱃지(30초 폴링), 알림함 화면(진입 시 read-all, 팔로우→채널/기타→피드 이동). **라이브 검증: 2계정으로 follow/feed 팬아웃/comment 실수신, read-all 2→0, 웹 E2E 뱃지 '1'+알림함 표시.**
+- **A3 별 차감 (서버 v193)**: `POST /api/points/spend {action}` — 단가는 서버 POINT_COSTS 단일 소스(클라 금액 지정 불가), 원자적 차감, 부족 시 402, 무효 액션 400. 신규 단가 `hire_director: 10⭐`, `extra_slot: 15⭐`(기존 스케일 기준 임의 책정 — **조정 원하면 서버 상수 1줄 수정**). 프론트: 유료 디렉터 영입(⭐10)·추가 아티스트 슬롯(⭐15) 실차감 + 402 안내 + 잔액 갱신. **라이브 검증: 51→41 차감, 402/400 응답.**
+- **A4 프롬프트 정보 전체 공개 (서버 v193)**: `GET /tracks/{id}` 응답에 `generation_params`(보컬·스타일·악기·참조/제외·강도·실험성·오디오 영향도·페르소나·BPM·키) 병합 — **남의 곡도 열람 가능**(기존: 소유자 전용 403). 캐시 스키마 v2→v3 승격. 프론트: 프롬프트 탭이 generation_params 우선 사용, "본인에게만" 안내 제거. **라이브 검증: 남의 곡에서 style·persona_model 수신.**
+- **A5 stream-proxy Range (서버 v193)**: HTTP Range 파싱 → MinIO offset/length 부분 조회 → **206 + Content-Range**(무효 범위 416). 네이티브 시크 안정화. **라이브 검증: Range 요청 206 응답.**
+
+### B그룹 수행 결과 (프론트)
+- **B1 세션 영속화**: 로그인/가입/소셜 토큰을 AsyncStorage 저장, 앱 부팅 시 `restoreSession()`(/auth/me 검증) — **재시작해도 로그인 유지**(만료 시 조용히 로그아웃). 큐 정책과 정합(복원 시 계정 재생목록 복원). **E2E: 새로고침 후 로그인 유지 확인.**
+- **B2 서버 주소 env화**: `BACKEND_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 기존값` — AWS 이전 시 재빌드만으로 전환.
+- **B3 내 신고 내역**: 설정 > 계정 관리에 메뉴 신설 + `MyReportsScreen`(GET /reports/my — 유형/사유/상태 칩/날짜). 신고 완료 안내 문구의 목적지 실존화. **E2E: 메뉴→화면 진입·빈 상태 확인.**
+- **B4 DM WebSocket + 마이뮤직 배지**: `services/dmSocket.ts`(싱글턴, 지수 백오프 재연결 1s→30s, 25s ping, 4401 시 중단) — 헤더 unread 즉시 갱신 + 대화방 message/read/accepted 즉시 반영(폴링은 폴백 유지). **서버 이슈 발견·해결: venv에 websockets 미설치라 WS가 404였음(MAIDOL 웹도 여태 폴링만 동작) → 양쪽 venv 설치 후 핸드셰이크 CONNECTED 확인.** 마이뮤직: TrackRow `footer` 슬롯 신설 → 장르/무드 태그·"차트 스트리밍 중" 배지 복원(v3.41에서 소실).
+- **B5 MV 재생**: 플레이어 동영상 탭에서 `music_video_url` 있으면 expo-av `Video` 실재생(네이티브 컨트롤, 진입 시 곡 오디오 자동 일시정지 — 이중 재생 방지), 없으면 기존 가사 싱크 유지.
+- **B6 파일 저장 개선**: `expo-sharing` 설치. 네이티브에서 영상/음원 다운로드 = 기기 저장(FileSystem.downloadAsync) → OS 공유/저장 시트(실패 시 브라우저 폴백). 웹은 기존 동작 유지.
+
+### 테스트 (tester)
+| 게이트 | 결과 |
+|---|---|
+| [unit] tsc --noEmit | 에러 0 |
+| [api/라이브] A1 parent_id 저장·응답 / A2 알림 4종 실수신+read-all / A3 차감·402·400 / A4 generation_params / A5 Range 206 | 전부 PASS |
+| [e2e] 벨 뱃지 '1' → 알림함 "새 피드를 올렸어요"+미리보기 | PASS (`/tmp/v348_notifications.png`) |
+| [e2e] 스레드: 레거시 마커 + parent_id 답글 공존, 마커 미노출 | PASS (`/tmp/v348_thread.png`) |
+| [e2e] **B1 새로고침 후 로그인 유지** | PASS (`/tmp/v348b_session.png`) |
+| [e2e] B3 내 신고 내역 메뉴·화면 | PASS (`/tmp/v348b_reports.png`) |
+| [api] B4 WS 핸드셰이크 CONNECTED(websockets 설치 후) | PASS |
+| 콘솔 에러(내 코드) | 0 |
+
+### 특이사항
+- **별 단가는 임의 책정**(hire_director 10⭐/extra_slot 15⭐ — 기존 작곡 15⭐ 스케일 참조). 정책 확정되면 서버 `points_service.POINT_COSTS` 한 줄 수정으로 반영.
+- 미검증(계정/기기 한계): DM WS 실이벤트 수신(본인인증 계정 필요), MV 실재생(music_video_url 보유 곡 필요), B6 네이티브 저장(실기기), 알림함 '탭 이동' 세부 동선.
+- 서버 재시작 중 수 초 순단 3회 발생(패치 반영 필수 — reload 미사용 구조).
+- 테스트 부산물: 테스트 계정 1개(v348수신자)·테스트 피드 1건 생성(실사용자 무영향).
+
+---
+
 ## v3.47 (댓글 중첩 스레드 + 피드 ⋯ 팔로우 메뉴 + 여백 + 팔로우 알림 답변) — 2026-08-19
 
 ### 요청 작업

@@ -6,6 +6,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { View, FlatList, TouchableOpacity, TextInput, Alert, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { dmSocketSubscribe } from '../services/dmSocket';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar } from '../components/ui';
 import ReportModal from '../components/ReportModal';
@@ -62,11 +63,14 @@ export default function DmChatScreen() {
     }
   }, [cid]);
 
-  // 포커스 중 8초 폴링
+  // 포커스 중 8초 폴링 + WS 이벤트 즉시 반영
   useFocusEffect(useCallback(() => {
     load();
     const t = setInterval(load, 8000);
-    return () => clearInterval(t);
+    const unsub = dmSocketSubscribe((ev) => {
+      if (ev.type === 'message' || ev.type === 'read' || ev.type === 'accepted') load();
+    });
+    return () => { clearInterval(t); unsub(); };
   }, [load]));
 
   useEffect(() => {

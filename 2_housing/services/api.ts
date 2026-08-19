@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// 백엔드 서버 (Tailscale 내부망 — MAC 100.106.9.84, 서버 100.127.225.55)
+// 백엔드 서버 — 기본값은 Tailscale 내부망(개발), 배포/AWS 이전 시 EXPO_PUBLIC_API_URL 로 교체(재빌드만으로 전환)
 // 포트 9004: image_model 선택 + upload-original-photo + used_items 영속화 지원
-export const BACKEND_BASE_URL = 'http://100.127.225.55:9004';
+export const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://100.127.225.55:9004';
 
 const baseURL = `${BACKEND_BASE_URL}/api`;
 console.log('[API] Base URL:', baseURL);

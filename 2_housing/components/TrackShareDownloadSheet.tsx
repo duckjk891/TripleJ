@@ -4,6 +4,8 @@
 // 영상은 서버가 ffmpeg로 만들며 최초 1~2분 걸린다(캐시되면 즉시).
 import { useState } from 'react';
 import { Modal, View, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -87,6 +89,28 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     }
   };
 
+  // v3.48(B6): 네이티브는 기기에 내려받아 OS 공유/저장 시트로 — 브라우저 이탈 없이 저장 가능
+  const saveToDevice = async (url: string, filename: string) => {
+    if (Platform.OS === 'web') {
+      await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 다운로드 열기 실패', { err }));
+      return;
+    }
+    try {
+      const dest = `${FileSystem.cacheDirectory}${filename}`;
+      if (__DEV__) console.info('[TrackShareDownloadSheet] 기기 저장 시작', { filename });
+      const res = await FileSystem.downloadAsync(url, dest);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(res.uri);
+      } else {
+        Alert.alert('저장 완료', '파일이 저장되었습니다.');
+      }
+    } catch (err: any) {
+      console.error('[TrackShareDownloadSheet] 기기 저장 실패', { message: err?.message });
+      // 폴백: 브라우저 열기
+      await Linking.openURL(url).catch(() => {});
+    }
+  };
+
   const handleDownloadVideo = async (format: 'sns' | 'wide' | 'kakao') => {
     if (!track) return;
     setBusy(format);
@@ -94,8 +118,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     setBusy(null);
     if (!url) return;
     onClose();
-    // 파일 엔드포인트는 attachment로 내려온다 → 브라우저/OS가 저장 처리
-    await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 다운로드 열기 실패', { err }));
+    await saveToDevice(url, `aidol_${format}.mp4`);
   };
 
   const handleDownloadMp3 = async () => {
@@ -108,7 +131,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
       const url = data?.download_url;
       if (!url) { Alert.alert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
       onClose();
-      await Linking.openURL(url);
+      await saveToDevice(url, data?.filename || `${track.title}.mp3`);
     } catch (err: any) {
       console.error('[TrackShareDownloadSheet] mp3 다운로드 실패', { status: err?.response?.status });
       Alert.alert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
