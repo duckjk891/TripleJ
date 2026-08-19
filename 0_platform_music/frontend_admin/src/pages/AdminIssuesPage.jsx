@@ -8,6 +8,8 @@ import {
   patchAdminIssueStatus,
   getAdminIssueErrors,
   getAdminIssueErrorHistory,
+  probeAdminIssueError,
+  getAdminIssueRelatedErrors,
 } from '../api';
 import { formatDate } from '../utils/format';
 import './AdminIssuesPage.css';
@@ -35,6 +37,48 @@ const REASON_LABELS = {
 const ERROR_DAY_OPTIONS = [7, 30, 90]; // 백엔드 화이트리스트(7·30·90)
 const LIST_LIMIT = 20;
 const DEBOUNCE_MS = 300;
+
+// v186 — 프로브 verdict 라벨(확정 계약 4종 + 미확인). indeterminate 는 auth_required 시 "(인증 필요)" 병기.
+const VERDICT_META = {
+  persisting: { label: '지속중', badge: 'admin-badge--red' },
+  resolved: { label: '해소됨', badge: 'admin-badge--green' },
+  indeterminate: { label: '판정 불가', badge: 'admin-badge--gray' },
+  unreachable: { label: '확인 실패', badge: 'admin-badge--yellow' },
+};
+
+function verdictMeta(verdict, authRequired) {
+  const meta = VERDICT_META[verdict];
+  if (!meta) return { label: verdict || '미확인', badge: 'admin-badge--gray' };
+  if (verdict === 'indeterminate' && authRequired) {
+    return { ...meta, label: '판정 불가(인증 필요)' };
+  }
+  return meta;
+}
+
+// v186 — 재현 curl 생성(비 GET 이벤트용). 실토큰·실호스트 절대 미포함 — 플레이스홀더만.
+function buildReproCurl(method, url) {
+  return `curl -X ${String(method || 'GET').toUpperCase()} 'https://<서비스-호스트>${url}' -H 'Authorization: Bearer YOUR_TOKEN'`;
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // 폴백 — 구형/비보안 컨텍스트
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
 
 function statusMeta(status) {
   return STATUS_META[status] || { label: status || '-', badge: 'admin-badge--gray' };
@@ -71,6 +115,12 @@ export default function AdminIssuesPage() {
   const [errError, setErrError] = useState('');
   const [expandedFp, setExpandedFp] = useState(null);
   const [historyState, setHistoryState] = useState({}); // fp → {loading, error, data}
+  // v186 — 프로브: fp → {probing, notice, last:{status, verdict, probed_at}, log:[{probed_at, status, verdict}]}
+  const [probeState, setProbeState] = useState({});
+  const [copiedFp, setCopiedFp] = useState(null); // curl 복사 피드백
+  // v186 — 신고 상세: 관련 자동 수집 에러 + 관련 API 재확인
+  const [relatedState, setRelatedState] = useState({ loading: false, errors: null, failed: false });
+  const [issueProbing, setIssueProbing] = useState(false);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -171,6 +221,75 @@ export default function AdminIssuesPage() {
     if (!cached || cached.error) fetchHistory(fp);
   };
 
+  // v186 — 그룹 프로브 재확인(api 필드 보유 + GET 한정 — 호출측 분기 보장)
+  const handleProbeGroup = useCallback(async (fp, repApi) => {
+    if (probeState[fp]?.probing) return;
+    setProbeState((m) => ({ ...m, [fp]: { ...(m[fp] || {}), probing: true, notice: '' } }));
+    if (import.meta.env.DEV) console.info('[AdminIssues] probing group', { fp: String(fp).slice(0, 8) });
+    try {
+      const { data } = await probeAdminIssueError(repApi.url, { fingerprint: fp, orig_status: repApi.status });
+      if (import.meta.env.DEV) console.info('[AdminIssues] probe done', { fp: String(fp).slice(0, 8), status: data?.status, verdict: data?.verdict });
+      setProbeState((m) => {
+        const prev = m[fp] || {};
+        const entry = {
+          probed_at: data?.probed_at || new Date().toISOString(),
+          status: data?.status,
+          verdict: data?.verdict,
+          auth_required: !!data?.auth_required,
+        };
+        return { ...m, [fp]: { probing: false, notice: '', last: entry, log: [entry, ...(prev.log || [])] } };
+      });
+    } catch (err) {
+      const status = err?.response?.status;
+      console.error('[AdminIssues] probeAdminIssueError failed', { status, message: err?.message });
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setProbeState((m) => ({
+        ...m,
+        [fp]: {
+          ...(m[fp] || {}),
+          probing: false,
+          notice: status === 429 ? '잠시 후 다시 확인해주세요.' : detail || '재확인에 실패했습니다.',
+        },
+      }));
+    }
+  }, [probeState]);
+
+  // v186 — 재현 curl 복사(비 GET) — 실토큰 미포함(플레이스홀더)
+  const handleCopyCurl = useCallback(async (fp, apiMeta) => {
+    const ok = await copyToClipboard(buildReproCurl(apiMeta.method, apiMeta.url));
+    if (import.meta.env.DEV) console.info('[AdminIssues] repro curl copy', { fp: String(fp).slice(0, 8), ok });
+    if (ok) {
+      setCopiedFp(fp);
+      setTimeout(() => setCopiedFp((cur) => (cur === fp ? null : cur)), 2000);
+    }
+  }, []);
+
+  // v186 — 신고 상세: 관련 API 재확인 → 처리 메모 자동 append(메모 단독 PATCH) → 상세 재조회
+  const handleProbeRelated = useCallback(async (issue, apiMeta) => {
+    if (issueProbing) return;
+    setIssueProbing(true);
+    if (import.meta.env.DEV) console.info('[AdminIssues] probing related api', { issue: String(issue.id).slice(0, 8) });
+    try {
+      const { data } = await probeAdminIssueError(apiMeta.url, { issue_id: issue.id, orig_status: apiMeta.status });
+      const v = verdictMeta(data?.verdict, !!data?.auth_required);
+      if (import.meta.env.DEV) console.info('[AdminIssues] related probe done', { status: data?.status, verdict: data?.verdict });
+      // 메모 자동 기록 — 기존 메모 뒤에 append, 500자 초과 시 뒤(최신)를 보존
+      const line = `재확인 ${formatDate(data?.probed_at || new Date().toISOString())}: ${data?.status} — ${v.label}`;
+      const combined = issue.admin_note ? `${issue.admin_note}\n${line}` : line;
+      await patchAdminIssueStatus(issue.id, undefined, combined.slice(-500));
+      // 상세 재조회(단건) → 행 갱신
+      const { data: fresh } = await getAdminIssueDetail(issue.id);
+      if (fresh?.id) setIssues((prev) => prev.map((it) => (it.id === fresh.id ? { ...it, ...fresh } : it)));
+    } catch (err) {
+      const status = err?.response?.status;
+      console.error('[AdminIssues] related probe failed', { status, message: err?.message });
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      alert(status === 429 ? '잠시 후 다시 확인해주세요.' : detail || '재확인에 실패했습니다.');
+    } finally {
+      setIssueProbing(false);
+    }
+  }, [issueProbing]);
+
   const selected = issues.find((i) => i.id === selectedId) || null;
 
   const handleSelect = (issue) => {
@@ -187,6 +306,21 @@ export default function AdminIssuesPage() {
         })
         .catch((err) => {
           console.error('[AdminIssues] getAdminIssueDetail failed', { status: err?.response?.status, message: err?.message });
+        });
+      // v186 — 관련 자동 수집 에러(신고자 본인 ∧ ±30분) 병치 로드
+      setRelatedState({ loading: true, errors: null, failed: false });
+      getAdminIssueRelatedErrors(issue.id)
+        .then(({ data }) => {
+          const list = Array.isArray(data?.errors) ? data.errors : [];
+          setRelatedState({
+            loading: false, errors: list, failed: false,
+            windowMinutes: typeof data?.window_minutes === 'number' ? data.window_minutes : 30,
+          });
+          if (import.meta.env.DEV) console.info('[AdminIssues] related errors loaded', { count: list.length });
+        })
+        .catch((err) => {
+          console.error('[AdminIssues] getAdminIssueRelatedErrors failed', { status: err?.response?.status, message: err?.message });
+          setRelatedState({ loading: false, errors: null, failed: true });
         });
     }
   };
@@ -391,6 +525,57 @@ export default function AdminIssuesPage() {
                                         </button>
                                       )}
                                     </div>
+
+                                    {/* v186 — 관련 자동 수집 에러 병치 ("기계 관측") */}
+                                    <div className="admin-issues__related">
+                                      <h4 className="admin-issues__related-title">
+                                        관련 자동 수집 에러
+                                        <span className="admin-issues__related-hint">신고 시각 ±{relatedState.windowMinutes || 30}분 · 신고자 본인 발생분</span>
+                                      </h4>
+                                      {relatedState.loading ? (
+                                        <p className="admin-issues__panel-status">불러오는 중...</p>
+                                      ) : relatedState.failed ? (
+                                        <p className="admin-issues__panel-status">관련 에러를 불러오지 못했습니다.</p>
+                                      ) : !relatedState.errors || relatedState.errors.length === 0 ? (
+                                        <p className="admin-issues__panel-status">같은 시간대의 자동 수집 에러가 없습니다.</p>
+                                      ) : (
+                                        <>
+                                          <ul className="admin-issues__history">
+                                            {relatedState.errors.map((ev, i) => (
+                                              <li key={ev.id || i} className="admin-issues__history-row">
+                                                <span className="admin-issues__nowrap">{formatDate(ev.created_at)}</span>
+                                                <span className="admin-issues__history-msg" title={ev.message || undefined}>{summarize(ev.message, 90)}</span>
+                                                {ev.api ? (
+                                                  <span className="admin-issues__api-meta">{ev.api.method} {ev.api.url} → {ev.api.status}</span>
+                                                ) : (
+                                                  <span className="admin-issues__api-meta admin-issues__api-meta--none">{ev.page || '-'}</span>
+                                                )}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                          {(() => {
+                                            const probeTarget = relatedState.errors.find(
+                                              (ev) => ev.api && String(ev.api.method || '').toUpperCase() === 'GET'
+                                            );
+                                            if (!probeTarget) return null;
+                                            return (
+                                              <div className="admin-issues__related-probe">
+                                                <button
+                                                  className="admin-btn admin-btn--small"
+                                                  onClick={() => handleProbeRelated(issue, probeTarget.api)}
+                                                  disabled={issueProbing}
+                                                >
+                                                  {issueProbing ? '확인 중...' : '관련 API 재확인'}
+                                                </button>
+                                                <span className="admin-issues__related-hint">
+                                                  결과는 처리 메모에 자동 기록됩니다 ({probeTarget.api.method} {probeTarget.api.url})
+                                                </span>
+                                              </div>
+                                            );
+                                          })()}
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                               </tr>
@@ -445,13 +630,19 @@ export default function AdminIssuesPage() {
                 <table className="admin-table--full">
                   <thead>
                     <tr>
-                      <th>에러 요약</th><th>발생 수</th><th>영향 사용자</th><th>최근 발생</th><th>페이지</th><th>이력</th>
+                      <th>에러 요약</th><th>발생 수</th><th>영향 사용자</th><th>최근 발생</th><th>페이지</th><th>지속 여부</th><th>이력</th>
                     </tr>
                   </thead>
                   <tbody>
                     {errGroups.map((g) => {
                       const expanded = expandedFp === g.fingerprint;
                       const hist = historyState[g.fingerprint];
+                      const probe = probeState[g.fingerprint] || {};
+                      // 세션 내 프로브 결과가 있으면 우선, 없으면 서버 last_probe(additive)
+                      const lastProbe = probe.last || g.last_probe || null;
+                      // 행 확장 이력에서 api 보유 대표 이벤트(재확인/curl 분기 기준)
+                      const repApi = (hist?.data?.events || []).find((ev) => ev.api)?.api || null;
+                      const repIsGet = repApi && String(repApi.method || '').toUpperCase() === 'GET';
                       return (
                         <Fragment key={g.fingerprint}>
                           <tr>
@@ -460,6 +651,18 @@ export default function AdminIssuesPage() {
                             <td>{(g.users ?? 0).toLocaleString()}</td>
                             <td className="admin-issues__nowrap">{formatDate(g.last_seen)}</td>
                             <td className="admin-issues__nowrap">{g.page || '-'}</td>
+                            <td className="admin-issues__nowrap">
+                              {lastProbe ? (
+                                <>
+                                  <span className={`admin-badge ${verdictMeta(lastProbe.verdict, lastProbe.auth_required).badge}`}>
+                                    {verdictMeta(lastProbe.verdict, lastProbe.auth_required).label}
+                                  </span>
+                                  <span className="admin-issues__probe-time">
+                                    {formatDate(lastProbe.probed_at || lastProbe.created_at)}
+                                  </span>
+                                </>
+                              ) : '—'}
+                            </td>
                             <td>
                               <button
                                 className="admin-btn admin-btn--small"
@@ -472,7 +675,45 @@ export default function AdminIssuesPage() {
                           </tr>
                           {expanded && (
                             <tr className="admin-issues__detail-row">
-                              <td colSpan={6}>
+                              <td colSpan={7}>
+                                {/* v186 — 프로브 재확인(GET) / 재현 명령 복사(비 GET) */}
+                                {repApi && (
+                                  <div className="admin-issues__probe-bar">
+                                    {/* planner 판정 — GET 행은 [지금 재확인]+[재현 명령 복사] 병행, 비 GET 은 복사만 */}
+                                    {repIsGet && (
+                                      <button
+                                        className="admin-btn admin-btn--small"
+                                        onClick={() => handleProbeGroup(g.fingerprint, repApi)}
+                                        disabled={!!probe.probing}
+                                      >
+                                        {probe.probing ? '확인 중...' : '지금 재확인'}
+                                      </button>
+                                    )}
+                                    <button
+                                      className="admin-btn admin-btn--small"
+                                      onClick={() => handleCopyCurl(g.fingerprint, repApi)}
+                                    >
+                                      {copiedFp === g.fingerprint ? '복사됨 ✓' : '재현 명령 복사'}
+                                    </button>
+                                    {probe.last && (
+                                      <span className={`admin-badge ${verdictMeta(probe.last.verdict, probe.last.auth_required).badge}`}>
+                                        방금 확인: {probe.last.status} — {verdictMeta(probe.last.verdict, probe.last.auth_required).label}
+                                      </span>
+                                    )}
+                                    {probe.notice && <span className="admin-issues__probe-notice">{probe.notice}</span>}
+                                  </div>
+                                )}
+                                {(probe.log || []).length > 0 && (
+                                  <ul className="admin-issues__history admin-issues__probe-log">
+                                    {probe.log.map((p, i) => (
+                                      <li key={`${p.probed_at}-${i}`} className="admin-issues__history-row">
+                                        <span className="admin-issues__nowrap">{formatDate(p.probed_at)}</span>
+                                        <span className="admin-issues__history-msg">확인 결과 {p.status}</span>
+                                        <span className={`admin-badge ${verdictMeta(p.verdict, p.auth_required).badge}`}>{verdictMeta(p.verdict, p.auth_required).label}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                                 {!hist || hist.loading ? (
                                   <p className="admin-issues__panel-status">이력 로딩 중...</p>
                                 ) : hist.error ? (
@@ -504,7 +745,7 @@ export default function AdminIssuesPage() {
                       );
                     })}
                     {errGroups.length === 0 && (
-                      <tr><td colSpan={6} className="admin-empty">수집된 에러가 없습니다</td></tr>
+                      <tr><td colSpan={7} className="admin-empty">수집된 에러가 없습니다</td></tr>
                     )}
                   </tbody>
                 </table>

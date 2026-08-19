@@ -27002,3 +27002,72 @@ E2E (실발송 금지):
 - fingerprint 정규화는 휴리스틱 — 과소/과대 묶음 가능(1단계 수용, 2단계 판정 로직과 함께 개선 후보).
 - 사용자 앱 파일(frontend/) 은 미러 대상 아님(단일) — 4000 재빌드/재기동 절차는 dev 가 기존 관행 확인.
 - AdminCsPage cid 쿼리 추가는 소폭 — 기존 진입(쿼리 없음) 동작 불변이 회귀 조건.
+
+---
+
+# v186 — 기능오류 신고 시스템 2단계 (프로브 재확인·curl 복사·신고↔에러 연결·fp 개선) (2026-08-19 11:24)
+
+## 0. 사전 코드 분석 (planner 직접 실측 — v185 랜딩 코드·live Mongo 집계)
+
+- `admin_issues.py` 6 엔드포인트(목록/summary/errors/errors/{fp}/{issue_id}/PATCH status — `/summary`·`/errors` 선선언 구조) — 2단계 추가 지점.
+- `_logs.py:261 _make_fingerprint(message, url)` = 정규화(message)+정규화(page 경로) — **fp v2 분기 삽입 지점**. `_store_frontend_errors` 가 context.api 를 구조화 승격 저장(2단계 데이터 기반 — v185 설계 의도 그대로).
+- **frontend_errors 실측**: total 20 / **api 필드 13건(65%) — 전부 GET** / distinct fp 10 / **api.url 은 상대 경로(`/api/...`) + 마스킹된 쿼리** — 프로브 대상 형식이 이미 상대 경로라 SSRF 방어(상대 경로 강제)와 자연 정합.
+- issue_reports 9건(cid 연결 3) — 신고↔에러 연결(±30분) 검증용 데이터 실재.
+- PATCH `/{issue_id}/status` 는 status 중심 — **admin_note 단독 변경 가능 여부 dev 실측 후 additive 확장 필요**(검증 결과 자동 기록용).
+
+## 1. planner 판정 3건 (오케스트레이터 보고 사항)
+
+1. **스크린샷 첨부 — 재차 차기 이관(미포함).** 사유: ① 이번 범위(프로브+SSRF 방어+연결+검증)가 이미 보안 요구 포함 대형 ② 2단계의 목적인 "재현 확인"을 프로브가 직접 제공 — 스크린샷의 한계 효용이 1단계 시점보다 오히려 하락 ③ 업로드 인프라 비용 불변. 신고 텍스트+환경정보+연결된 자동 에러+프로브로 재현 판정이 성립하는지 운영해 보고, 부족 사례가 확인되면 3단계에서.
+2. **fp 기존 데이터 — 신규부터 적용, 재계산 백필 기각.** 사유: ① 백필은 기존 fp 와 프로브 이력·관측 연속성의 연결을 끊음 ② dev 20건이라 이득 미미 ③ 전 문서 재계산 쓰기 리스크. **`fp_version: 2` 필드 병기**로 신구 구분, 구 fp 묶음은 시간 경과로 자연 비활성(탭② 기간 필터).
+3. **프로브 인증 — 무인증 기본 채택.** 근거: ① 401/403 도 유의미한 판정 신호(엔드포인트 생존 — 5xx/timeout 과 구분) ② 서버가 테스트 계정 토큰을 보관·사용하면 크리덴셜 표면 증가 + 인증 GET 의 사용자 상태 부작용 위험(무인증이면 게이트에서 원천 차단) ③ 구현 단순. 인증 필수 API 의 프로브 결과는 "판정 불가(인증 필요)" 로 정직 표기(§2 verdict 규칙).
+
+## 2. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 프로브 API | `POST /api/admin/issues/probe` body `{url, fingerprint?, issue_id?}` — **SSRF 원천 차단**: url 은 `/api/` 시작 상대 경로 강제(`://`·`..`·`//` 포함 400·화이트리스트 프리픽스), httpx 로 `http://127.0.0.1:{자기 포트}` GET 재발사(timeout 5s·redirect 미추적), **X-Admin-Probe: 1 헤더 부여**. 응답 `{status, latency_ms, verdict, probed_at}` | 강행 금지 요구. api.url 이 상대 경로 실측이라 자연 정합 |
+| verdict 규칙 | `2xx → resolved(해소됨)` / `프로브 status == 원 오류 status → persisting(지속중)` / 그 외(401/403 등 상이) → `indeterminate(판정 불가 — 상태 상이 N)` — 원 status 는 body 로 전달(`orig_status?`) | 무인증 프로브 한계의 정직 표기(판정 1-3) |
+| GET 한정 | **GET 외 메서드 재발사 금지(서버도 400)** — 프론트는 쓰기 메서드 행에 [재확인] 대신 **[curl 복사]만** 표시. curl 은 프론트 생성(백엔드 불요): `curl -X {METHOD} '{호스트}{url}' -H 'Authorization: Bearer <YOUR_TOKEN>'` — 크리덴셜 플레이스홀더 | 업계 규칙(중복 실행·부작용 방지) |
+| 중복 실행 방지 | 동일 url 프로브 **쿨다운 10초** — probe_history 최근 조회로 판정(무상태·Redis 불요), 위반 429 | 소규모 적정. 더블클릭·연타 방어 |
+| 이력 저장 | Mongo `probe_history`: `{target_url, method:"GET", status, latency_ms, verdict, fingerprint?, issue_id?, admin_id, created_at}` + 인덱스 `(fingerprint, created_at DESC)`·`(created_at DESC)`. 탭② 목록 **"지속 여부" 열** = fp 별 최신 프로브 verdict fold(미확인 "—") | 요구 1. errors 목록 응답에 last_probe 필드 additive |
+| **프로브 감사** | **적재 채택** — 서버가 요청을 발사하는 능동 액션. action `issue_probe`(target_type `issue_report`(issue 연계 시)/`error_group`(fp 연계 시 — TARGET_TYPE 라벨 추가), details `{url, status, verdict}`) + **AdminLogsPage ACTION_META `issue_probe: '오류 재확인'` 짝 항목** | 감사 일관성(v176 체계) |
+| 신고↔에러 연결 | `GET /api/admin/issues/{issue_id}/related-errors` — 신고자 user_id ∧ created_at ±30분 frontend_errors(최대 20건, 시각순). 신고 상세에 자동 표시("기계 관측" 병치) — **해당 신고자 본인 것만**(개인정보: 타 사용자 에러 미혼입) | 요구 3 |
+| 신고 검증 | 신고 상세: related-errors 의 api 보유 행에서 **관련 API 후보 추천** → [재확인](GET 만) → 결과를 **admin_note 에 자동 append**(`[재확인 {시각}] GET {url} → {status} — 재현됨/재현 안 됨/판정 불가`) — 기존 PATCH 재사용, **admin_note 단독 변경 허용으로 additive 확장**(status 선택화 — 기존 호출 불변) | 요구 4. 백엔드 신규 최소 |
+| fp v2 | `_make_fingerprint` 분기: **api ctx 있으면 `api|{METHOD}|{정규화 api.url}`**(page 제외 — 페이지 무관 묶음), 없으면 기존 방식 불변. 저장 문서에 `fp_version: 2`(api 경로)/1 병기 | 요구 5 + 판정 2. 비-api 이벤트 무영향 |
+| 부작용 GET 방어 | X-Admin-Probe 헤더 부여(표식) + **backend-dev 가 GET 부작용 엔드포인트 실측**(포인트 적립 훅 등) 후 존재 시 프로브 차단 경로 목록(deny-list) 추가 보고 — 수신측 스킵 로직 도입은 범위 외 | 안전 요구. 실측 기반 최소 방어 |
+| 프론트 | AdminIssuesPage: 탭② 지속 여부 열+[재확인]/[curl 복사]+프로브 결과 배지("방금 확인: {status} — {라벨}")+확인 이력(행 확장 내), 신고 상세: 관련 에러 병치+API 추천+[재확인]+메모 자동 기록. api.js 래퍼 2(probe·relatedErrors). 짝 항목 2(ACTION_META `issue_probe`+TARGET_TYPE `error_group`) | 승인 목업 |
+| 미러 | 9005→9004: admin_issues.py·_logs.py(포트 예외)·main.py(인덱스) | 관례 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| `backend_9005/app/routes/admin_issues.py` | probe·related-errors 2 엔드포인트 + errors 목록 last_probe additive + PATCH note 단독 허용 확장 | `[admin-issues]` |
+| `backend_9005/app/routes/_logs.py` | `_make_fingerprint` api 분기+fp_version — **파일 로그 계약 라인 무접촉**(Mongo 저장 내부 로직만, v185 additive-only 원칙의 보호 대상은 파일 계약) | `[_logs]` |
+| `backend_9005/app/main.py` | probe_history 인덱스 idempotent | - |
+| `backend_9004/...` 동일 3파일 | 미러(_logs 포트 예외) | - |
+| `frontend_admin/src/pages/AdminIssuesPage.jsx/.css` | 지속 여부 열·재확인·curl 복사·관련 에러 병치·메모 자동 기록 | `[AdminIssues]` |
+| `frontend_admin/src/api.js` | 래퍼 2 | - |
+| `frontend_admin/src/pages/AdminLogsPage.jsx` | 짝 항목 2(issue_probe 라벨+error_group 타입) | `[AdminLogs]` |
+| **무변경** | issues.py·사용자 앱 전체·AdminCsPage·package.json(httpx 는 기존 의존 확인 — dev 실측) | - |
+
+## 4. 작업 분담 (병렬)
+- **backend-dev**: ① probe(상대 경로 검증 4중: `/api/` prefix·`://` 거부·`..` 거부·제어문자 거부 — 검증 로직 단위 케이스 자가 증빙, 쿨다운 429, X-Admin-Probe, verdict 규칙, 감사 best-effort) ② related-errors(신고자 본인 한정) ③ PATCH note 단독 additive(기존 status 호출 불변) ④ fp v2 분기(비-api 경로 불변·파일 계약 라인 무접촉 diff 증빙) ⑤ **GET 부작용 엔드포인트 실측 보고**(deny-list 필요 여부) ⑥ httpx 의존 실재 확인(신규 설치 금지 — 부재 시 대안 보고) ⑦ main.py 인덱스 ⑧ 9004 미러 3파일.
+- **frontend-dev**: 탭② 열·배지·버튼 분기(GET=재확인+curl / 비GET=curl 만)·이력 표시, 신고 상세 병치+추천+자동 메모(PATCH note 재사용), curl 생성(플레이스홀더 — 실토큰 절대 미포함), api.js 2·짝 항목 2. 콘솔 위생(url 은 마스킹된 값이라 출력 허용 — 단 건수/상태 위주). eslint 신규 0.
+- **test-designer**: §5.
+
+## 5. 테스트 항목 (test-designer)
+안전 제약: 프로브 대상은 **자기 백엔드 무해 GET 만**(v185 테스트 fp 의 `/api/test/...` 404 계열 재사용 + 실재 공개 GET 1건). 신고 검증은 `[v185-test]`/`[v186-test]` 신고만. 쓰기 = 프로브 이력·감사·메모 append(테스트 신고 한정).
+1. probe: 정상(404 지속중 판정 — 원 status 일치)·2xx resolved(실재 GET)·**SSRF 차단 4케이스 전부 400**(절대 URL·`..`·`//`·비 /api/)·쿨다운 429·GET 외 400·401/403(관리자 게이트)·X-Admin-Probe 헤더 발신 실측(수신 로그)·감사 `issue_probe` 적재.
+2. related-errors: 신고자 ±30분 창 정확(경계 밖 미포함)·**타 사용자 에러 미혼입(개인정보 핵심)**·빈 결과 안전.
+3. PATCH note 단독: 메모만 변경 성공+기존 status 변경 호출 회귀 불변. 자동 기록 포맷 검증.
+4. fp v2: api_failure 를 서로 다른 page 에서 2회 유발 → **동일 fp(v2) 1묶음**(v185 관측의 해소 실증) + 비-api 에러는 기존 fp 방식 유지 + fp_version 필드. 기존(v1) 데이터 무변(백필 없음 — count 불변).
+5. UI: 탭② 지속 여부 열(미확인 —/프로브 후 배지 갱신)·재확인 버튼 여정("방금 확인: ...")·curl 복사(클립보드 내용에 **실토큰 부재·플레이스홀더 확인**)·비GET 행 버튼 분기·신고 상세 병치+추천+자동 메모·/logs 짝 항목("오류 재확인").
+6. 회귀: v185 14건 대표(접수·인박스·파일 계약·묶음)·admin_issues 기존 6 엔드포인트 불변·9004 미러(_logs 포트 예외)·package.json 무변경(httpx 신규 설치 없음).
+7. 위생: 프로브가 frontend_errors/카운터 미오염(프로브 실행 후 fp count 불변 — X-Admin-Probe 는 표식일 뿐이나 프로브는 서버간 호출이라 remoteLogger 경로 자체 미경유 — 구조 확인)·감사 details 에 토큰류 부재.
+
+## 6. 리스크 / 강행 금지
+- **강행 금지**: ① **임의 외부 URL 재발사 절대 불가**(상대 경로 4중 검증 — 우회 발견 시 즉시 중단) ② GET 외 자동 재발사 금지(curl 복사만) ③ curl 문자열에 실토큰·실크리덴셜 포함 금지(플레이스홀더) ④ 프로브에 테스트 계정 토큰 사용 금지(무인증 — 판정 1-3) ⑤ fp 재계산 백필 금지(판정 1-2) ⑥ 스크린샷 구현 금지(판정 1-1) ⑦ 파일 로그 계약 라인 무접촉 ⑧ httpx 신규 설치 금지(기존 의존 확인, 부재 시 보고 후 판단) ⑨ v177~185 승계.
+- 무인증 프로브의 판정 한계(인증 필수 API → indeterminate) — verdict 규칙으로 정직 표기, 운영 피드백 후 3단계 재평가.
+- GET 부작용 deny-list 는 dev 실측 결과에 따라 증분 — 실측 전 미확정임을 명시.
+- fp v1/v2 혼재기 — 탭② 에 버전 병기 불요(fold 는 fp 문자열 기준 — 자연 분리), REPORT 에 전환 시점 기재.

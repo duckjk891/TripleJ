@@ -212,9 +212,20 @@ export const getAdminIssuesSummary = () => API.get('/admin/issues/summary');
 // 단건 조회 — 목록 행 동일형 (상세 패널 열 때 최신본 갱신용)
 export const getAdminIssueDetail = (issueId) => API.get(`/admin/issues/${issueId}`);
 // 상태 전이 — status 화이트리스트 400 / 미존재 404. note ≤500(감사에는 길이만 적재).
+// v186 — status 선택화(additive): status 생략 + note 만 전달하면 메모 단독 변경(재확인 자동 기록용).
 // 신고 본문·메모 원문은 콘솔에 출력하지 않는다.
 export const patchAdminIssueStatus = (issueId, status, note) =>
-  API.patch(`/admin/issues/${issueId}/status`, { status, ...(note ? { note } : {}) });
+  API.patch(`/admin/issues/${issueId}/status`, {
+    ...(status ? { status } : {}),
+    ...(note ? { note } : {}),
+  });
+// 프로브 재확인 (v186) — url 은 /api/ 상대 경로만(서버 4중 검증), GET 한정(그 외 400), 쿨다운 10초(429).
+// orig_status 로 지속/해소/판정 불가 verdict 산출 → { status, latency_ms, verdict, probed_at }
+export const probeAdminIssueError = (url, extra) =>
+  API.post('/admin/issues/probe', { url, ...(extra || {}) });
+// 신고 관련 자동 수집 에러 (v186) — 신고자 본인 ∧ 신고 시각 ±30분 → { errors: [...] }
+export const getAdminIssueRelatedErrors = (issueId) =>
+  API.get(`/admin/issues/${issueId}/related-errors`);
 // 자동 수집 에러 묶음 — days 7|30|90 → { errors: [{fingerprint, count, users, last_seen, message, page}], days }
 export const getAdminIssueErrors = (days) => API.get('/admin/issues/errors', { params: { days } });
 // 묶음 발생 이력 → { events: [{id, message, page, api{method,url,status}, stack, created_at}], pagination }

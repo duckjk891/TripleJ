@@ -426,3 +426,58 @@
   font-size: 0.9rem;
   color: var(--color-text-sub);
 }
+
+/* ── v186 — 프로브 재확인/관련 에러 ─────────────────── */
+
+.admin-issues__probe-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 4px 10px;
+}
+
+.admin-issues__probe-notice {
+  font-size: 0.82rem;
+  color: var(--color-danger);
+}
+
+.admin-issues__probe-time {
+  margin-left: 6px;
+  font-size: 0.74rem;
+  color: var(--color-text-sub);
+}
+
+.admin-issues__probe-log {
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--color-border);
+  margin-bottom: 8px;
+}
+
+.admin-issues__related {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.admin-issues__related-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.admin-issues__related-hint {
+  margin-left: 8px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--color-text-sub);
+}
+
+.admin-issues__related-probe {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}

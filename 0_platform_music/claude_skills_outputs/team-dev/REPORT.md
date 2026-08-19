@@ -15315,3 +15315,40 @@ ALL MRR@10 **0.855** / Recall@10 **1.000** (artist 1.0, title_exact 1.0, mood 0.
 - 관리자 앱 7: 신설 2 — `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` / 수정 5 — `frontend_admin/src/App.jsx` `frontend_admin/src/api.js` `frontend_admin/src/components/AdminLayout.jsx` `frontend_admin/src/pages/AdminCsPage.jsx`(cid 쿼리) `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목)
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v185 append)
 - 무변경 확인: AdminCsSendModal·admin.py·admin_points.py·admin_ads.py·points 계열·package.json — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v186 — 기능오류 신고 시스템 2단계 (프로브 재확인·curl 복사·신고↔에러 연결·fp 개선) (2026-08-19 12:01)
+
+팀: platform-music-cs-send (planner/backend-dev/frontend-dev/test-designer+tester)
+
+## 1. 요청 작업
+v185 예약분 2단계: ① 프로브 재확인(탭②·신고 상세 [지금 재확인] — 상태·지연·지속 여부+이력) ② GET 한정 재발사+재현용 curl 복사 ③ 신고↔자동 에러 연결(±30분 병치) ④ 신고 사실 검증(관련 API 추천→재확인→메모 자동 기록) ⑤ fp 개선(api_failure 는 api.url 기준). 9005→9004 미러(_logs 포트 예외).
+
+## 2. 설계 결정 (0단계 실측 + planner 판정 3건)
+- **판정 ① 스크린샷 — 재차 차기 이관**: 2단계 목적(재현 확인)을 프로브가 직접 제공 — 한계 효용 하락. 운영 후 부족 사례 시 3단계 재평가(승계 후속).
+- **판정 ② fp 기존 데이터 — 신규부터(백필 기각)**: 이력 연속성 절단·dev 20건 이득 미미·전 문서 재계산 리스크. `fp_version` 병기.
+- **판정 ③ 프로브 인증 — 무인증**: 401/403 도 생존 신호, 서버 토큰 보관은 크리덴셜 표면 증가+인증 GET 부작용 위험(게이트 원천 차단), 한계는 verdict 정직 표기.
+- **SSRF 원천 차단**: `_validate_probe_url` — 지시 4중(`/api/` 강제·`://`·`..`·`//`)에 **공백·제어문자·백슬래시·길이 상한 초과 달성** + 쿼리 분리 후 deny-list. 실측 매트릭스 10케이스 400·**발사 0(이력 불변 — 실행 전 차단 증명)**. 프로브는 `request.scope["server"]` 자기 포트 도출(하드코딩 없음 — 미러 byte-identical 성립)·httpx 기존 의존(신규 설치 0)·redirect 미추적·5s 타임아웃·X-Admin-Probe 헤더·쿨다운 10초(429)·`probe_history` 이력·감사 `issue_probe`(details 경로만)+짝 항목 2.
+- **verdict 5값 확장 경위**: 설계 3종(resolved/persisting/indeterminate)에서 dev 가 **auth_required/unreachable 분리** — 무인증 한계·네트워크 실패의 정직 표기 강화(additive, planner 수용).
+- **deny-list 실측**: GET 부작용 전수 실측 결과 `/api/rewards/admob-callback` 1건만 차단 필요(그 외 인증 게이트 401 원천 차단) — 수신측 스킵 로직 불요 판정.
+- **fp v2**: `_make_api_fingerprint` = `api|{METHOD}|{정규화 api 경로}`(page 무관 묶음 — v185 관측 해소), 비-api 이벤트 v1 불변, **파일 로그 계약 라인 무접촉**(diff 삭제 2줄 전부 Mongo 저장 함수 내부).
+- **소픽스 경위(GET 행 curl 병행)**: 구현 초기 GET=재확인만/비GET=curl만 분기 — planner 판정으로 **GET 행에도 [curl 복사] 병행**(TESTPLAN 원안 정합): auth_required 케이스에서 관리자가 자기 인증 컨텍스트로 재현할 유일한 수단 = curl — 무인증 프로브 한계의 정확한 보완재. 목업 "쓰기는 curl"은 쓰기 제약이지 GET 금지가 아님.
+- related-errors: 신고자 user_id 쿼리 고정(구조적 혼입 불가)·±30분·최대 20. 검증 자동 기록은 기존 PATCH 의 **status 선택화 additive**(note 단독 변경 — 감사 미적재, 기존 호출 불변).
+
+## 3. 테스트 결과 — 12/12 PASS (api 8 / unit 3 / e2e 1), 소픽스 1회
+- 핵심 증적: 프로브 verdict 실측(404 지속중·2xx 해소·auth_required 병기) / **SSRF 4+deny-list+비GET 전부 400·발사 0** / 쿨다운 429 / **related-errors 계정2 혼입 0(USER2 실증)+응답 user_id 미노출+±30분 자연 경과 경계** / note 단독 변경+감사 미적재+기존 status 회귀 불변 / **fp v2 실증(타 page 2회 유발→단일 fp·fp_version 2)+백필 없음(v1 데이터 불변)** / 파일 로그 계약 불변 / curl 클립보드 실토큰 0(플레이스홀더) / 9004 미러(2파일 byte-identical+_logs 포트 예외) / E2E 풀 여정(재확인 배지→429 안내→curl→상세 병치→관련 API 재확인→메모 자동 append→"오류 재확인" 라벨) — 즉시 중단 3항목 무위반·실사용자 fp 미조작·send/broadcast/adjust POST 0.
+- **소픽스 1회**: GET 행 버튼 분기 완화 1줄(상기 경위) — 스모크(병행 렌더+실토큰 0) 재검증 통과. E2E 콘솔 에러 2건은 429 연타 스텝 자체 유발분(쿨다운 정상 처리 — 크래시·무한재시도 없음, 예상외 신규 0).
+- planner 판정(TESTPLAN §4 블록): BASE_REV `c846923` / GET 외 400 계약 후속 고정 / ±30분 기본안 / USER2 승인 / 비GET POST 404 승인 / deny-list 조건부 증분.
+
+## 4. 특이사항
+- **잔존물(delete 0 — 전부 테스트 유래)**: probe_history 15 / 감사 `issue_probe` 15행 / frontend_errors 유발 11건(fp 목록 tester 보고분) / 테스트 신고 3건 resolved 종결.
+- **admin 계정 pw 이슈 — 미재현 종결**: backend-dev 관측(로그인 불가)이 tester 착수 시점 3계정 전부 정상 — 해소된 상태였던 것으로 판명(스왑 산출물 추정 경위만 기록, 비버그).
+- 9004 구프로세스 점유 탐지·해소(재기동 절차 중 — 비버그).
+- 승계 후속 후보(8건): **스크린샷 첨부 3단계 재평가** / signup_bonus day 백필·분기(제품 판단) / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채(기존) / `_sum_points_by_user` 공통화. (api_failure fp 개선은 이번에 완료 — 목록에서 제거.)
+
+## 5. 변경 파일 (커밋 대상 13)
+- 백엔드 6: `backend_9005/app/routes/admin_issues.py` `backend_9005/app/routes/_logs.py` `backend_9005/app/main.py` + 9004 동일 3파일(미러 — admin_issues·main byte-identical, _logs 포트 문자열 예외)
+- 관리자 앱 4: `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` `frontend_admin/src/api.js` `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목 2)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v186 append)
+- 무변경 확인: issues.py·사용자 앱 전체·AdminCsPage·package.json(httpx 기존 의존) — git status 실측, 하니스 잔재 0건.

@@ -399,6 +399,10 @@ async def lifespan(app: FastAPI):
         await _issues_mongo.issue_reports.create_index("user_id")
         await _issues_mongo.frontend_errors.create_index([("fingerprint", 1), ("created_at", -1)])
         await _issues_mongo.frontend_errors.create_index([("created_at", -1)])
+        # IssueDesk(v186) — 프로브 이력 (지속 여부 fold + 쿨다운 조회)
+        await _issues_mongo.probe_history.create_index([("fingerprint", 1), ("created_at", -1)])
+        await _issues_mongo.probe_history.create_index([("url", 1), ("created_at", -1)])
+        await _issues_mongo.probe_history.create_index([("created_at", -1)])
         print("[migration] issue indexes ensured")
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] issue indexes ensure failed: %s", _e)

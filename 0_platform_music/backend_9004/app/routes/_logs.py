@@ -263,6 +263,16 @@ def _make_fingerprint(message: Any, url: Any) -> str:
     return hashlib.sha1(norm.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _make_api_fingerprint(method: Any, api_url: Any) -> str:
+    """v186 fp v2 — api_failure 이벤트는 page 와 무관하게 API 자체로 묶는다.
+
+    키 = `api|{METHOD}|{정규화 api 경로}` (uuid/숫자 → '#', 쿼리스트링 제거).
+    같은 API 실패가 여러 페이지에서 발생해도 1묶음(v185 관측 분산의 해소).
+    """
+    norm = f"api|{str(method or 'GET').strip().upper()}|{_fp_normalize(_page_path(api_url))}"
+    return hashlib.sha1(norm.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 async def _store_frontend_errors(user_id: Any, events: List[FrontendLogEvent]) -> None:
     """level=error 이벤트만 Mongo frontend_errors 병행 insert.
 
@@ -277,18 +287,27 @@ async def _store_frontend_errors(user_id: Any, events: List[FrontendLogEvent]) -
             if _normalize_level(ev.level) != "error":
                 continue
             ctx = ev.context if isinstance(ev.context, dict) else {}
+            api_ctx = ctx.get("api") if isinstance(ctx.get("api"), dict) else None
+            # v186 fp v2: api 이벤트는 METHOD+api 경로 기준(페이지 무관 묶음),
+            # 비-api 이벤트는 기존(v1) 방식 불변. 기존 데이터 백필 없음.
+            if api_ctx:
+                fingerprint = _make_api_fingerprint(api_ctx.get("method"), api_ctx.get("url"))
+                fp_version = 2
+            else:
+                fingerprint = _make_fingerprint(ev.message, ev.url)
+                fp_version = 1
             doc: Dict[str, Any] = {
                 "user_id": str(user_id),
                 "message": _sanitize_message(ev.message or ""),
                 "page": _page_path(ev.url),
                 "context": ctx,
-                "fingerprint": _make_fingerprint(ev.message, ev.url),
+                "fingerprint": fingerprint,
+                "fp_version": fp_version,
                 "created_at": now_utc,
             }
             stack = _sanitize_stack(ev.stack)
             if stack:
                 doc["stack"] = stack
-            api_ctx = ctx.get("api") if isinstance(ctx.get("api"), dict) else None
             if api_ctx:
                 doc["api"] = {
                     "method": str(api_ctx.get("method") or "")[:16],

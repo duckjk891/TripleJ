@@ -2378,3 +2378,150 @@
 - 2026-08-18 초판 작성 (14건) — 코디네이터 필수 7축 전부 시나리오화(1→IS-API-01·02, 2→IS-API-03·IS-UNIT-01, 3→IS-API-04, 4→IS-API-05·06·07, 5→IS-E2E-01, 6→IS-UNIT-04(_logs 포트 치환 sed diff 절차 명기), 7→IS-API-08) + PLAN §5 잔여(짝 항목·cs 회귀 → IS-UNIT-03, 기존 회귀 → IS-API-09) 반영. 테스트 유래 레코드는 [v185-test] 표식+종결 상태 정리+잔존/REPORT 방침으로 설계(삭제는 §5-2 위임). BASE_REV·정리 방식·격리 2건 갈음·유발 에러 잔존·DB 읽기·batch 한도 기준 6건 planner 회신 대기(§5). planner 검토 후 확정 예정.
 - 2026-08-18 planner 판정 반영 — §5 판정 블록 6건 확정(BASE_REV `3d05227` — 마이크로픽스 포함 HEAD / 테스트 레코드 잔존·delete 불허 — 감사 target 고아화 방지 / 격리 2건 코드 리뷰 갈음 승인 / 유발 에러 잔존+fp 명기 / DB 읽기 승인 / batch 한도 = 전부 422 거절 코드 실측 — body·빈배치·51건 3경로). §0 문안 1곳 고정. 보류 0건 — dev 구현 완료·재기동 후 tester 착수 가능.
 - 2026-08-18 planner E2E 확정 (1차 게이트 13/13 PASS 접수 후) — ① 마스킹 픽스 1줄(`?&` 잔존 정리 — 코스메틱, 민감값 제거는 게이트에서 완전 확인)은 IS-E2E-01 판정 요소(접수·인박스·상태 변경·cid 선택·탭②)와 무관 판정 — E2E 문안 갱신 불요, 스모크 재실행 통과를 전제로 그대로 확정. Given 의 "IS-API-03 유발분 존재"는 게이트 잔존 fp 재사용으로 충족(v184 형 전제 소멸 없음). ② fingerprint 의 page 포함으로 동일 URL 오류가 발생 page 별로 분리되는 관측(artists 사례) — PLAN §2 설계 사양 동작이자 §6 기지 리스크(과소 묶음) 범위로 **1단계 수용 확정**. 2단계 개선 후보 구체화: api_failure 이벤트는 page 대신 api.url 기준 fp 가 적합(REPORT 후속 후보 예약).
+
+# v186 — 기능오류 신고 시스템 2단계 (프로브 재확인·curl 복사·신고↔에러 연결·fp 개선) (2026-08-19 11:27)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전, planner 검토 대기)
+근거: PLAN.md v186 §0 실측(frontend_errors 20건·api 13건 전부 GET·상대 경로 저장), §1 판정 3건(스크린샷 차기·fp 백필 기각·무인증 프로브), §2 설계, §5 테스트 항목 1~7, §6 강행 금지 9항
+대상: backend_9005 `admin_issues.py` probe·related-errors 2 엔드포인트+errors last_probe additive+PATCH note 단독 확장 / `_logs.py` fp v2 분기(**파일 로그 계약 라인 무접촉**) / main.py probe_history 인덱스(9004 미러 3파일) / frontend_admin AdminIssuesPage 지속 여부 열·재확인·curl 복사·관련 에러 병치·자동 메모+api.js 2래퍼+짝 항목 2. **issues.py·사용자 앱·AdminCsPage·package.json 무변경**이 검증 대상
+
+## 0. 전제 및 안전 규칙
+
+- **프로브 대상은 자기 백엔드 무해 GET 만**: ① v185 테스트 fp 의 미존재 경로(`/api/...` 404 계열 — 표식 경로 재사용) ② 실재 공개 GET 1건(예: `GET /api/points/costs` — 읽기 전용) ③ 인증 필수 GET 1건(indeterminate 판정용 — 무인증 프로브라 게이트에서 차단, 부작용 0). **쓰기 메서드 재발사·외부 URL 시도 결과가 400 이 아니면 즉시 중단·보고**(강행 금지 ①②).
+- **신고 검증은 `[v185-test]`/`[v186-test]` 표식 신고만** — 신규 유발 데이터는 전부 `[v186-test]` 계열 표식(신고 본문·유발 URL 경로 패턴). 쓰기 = probe_history·감사·테스트 신고 admin_note append 한정. **Mongo delete 불허 관행** — 테스트 유래 문서 잔존+REPORT id/표식 기재.
+- **크리덴셜 플레이스홀더**: `ADMIN_TOKEN` / `USER_TOKEN`(테스트 계정 1) / `USER2_TOKEN`(테스트 계정 2 — 교차 계정 실증용, §4-4) / `TEST_ISSUE_ID`. `BASE_REV` = v185 종료 커밋(planner 확정 예정 — 확정 전 diff 판정 보류).
+- curl 복사 검증 기준: 클립보드 문자열에 **실토큰·실크리덴셜 0건**(`Bearer <YOUR_TOKEN>` 플레이스홀더 — 세션 localStorage 실토큰 값과 대조 0건).
+- GET 부작용 deny-list **확정(backend-dev 실측 접수)**: `/api/rewards/admob-callback` 1건(무인증 도달+쓰기 부작용 — 심층 방어 등재) — PB-API-02 ⑥ 400 케이스로 반영, **프로브 대상 금지 목록에도 등재**(테스트 중 이 경로를 정상 프로브 대상으로 사용 금지). 그 외 부작용 GET 은 전부 인증 게이트 — 무인증 프로브가 401 로 원천 차단(수신측 스킵 불요 판정, REPORT 비고 기재).
+- 환경: 9005·9004, Mongo, 사용자 앱 4000(유발용)·관리자 앱 4001. 추적자 `[admin-issues]`·`[_logs]`·`[AdminIssues]`·`[AdminLogs]`.
+
+## 1. [api] 시나리오 — 프로브·연결·fp (기본 대상 9005)
+
+### PB-API-01. 프로브 core — verdict 3종·이력·감사·헤더 [api] — 핵심
+- Given: `ADMIN_TOKEN`. 대상 3종(§0): 404 경로(원 오류 status 404 — v185 테스트 fp 연계)·실재 공개 GET·인증 필수 GET
+- When: ① `POST /api/admin/issues/probe` `{url: 404경로, fingerprint: 테스트fp, orig_status: 404}` ② `{url: 공개 GET}` ③ `{url: 인증 GET, orig_status: 500}`(원 status 상이 케이스) 각각 호출하면
+- Then:
+  - ① 200 `{status: 404, latency_ms(양수), verdict: "persisting", probed_at}` — **원 오류 status 일치 → 지속중**
+  - ② `status 2xx → verdict "resolved"`(해소됨)
+  - ③ 프로브 status 401/403(무인증 게이트) ≠ 원 status → **`indeterminate`("판정 불가 — 인증 필요/상태 상이" 정직 표기)** — 판정 1-3 정합. verdict 명명은 `indeterminate` 확정(inconclusive 아님 — backend 계약)
+  - 비고(정보성): 스펙 외 `unreachable`(네트워크 실패) verdict 실재 — 판정 항목 아님, 발생 시 관측값만 결과표 비고에 기록
+  - probe_history 3건 저장 `{target_url, method:"GET", status, latency_ms, verdict, fingerprint?, admin_id, created_at}` + 감사 `issue_probe` 적재(target_type=error_group(fp 연계)·details `{url, status, verdict}` — **토큰류·크리덴셜 부재**) + **X-Admin-Probe: 1 발신 실측**(수신측 서버 로그에서 헤더 확인) + redirect 미추적·timeout 5s 사양은 코드 리뷰 병행
+
+### PB-API-02. SSRF 차단 4케이스 + GET 외 400 [api] — 핵심 (위반 시 즉시 중단)
+- Given: `ADMIN_TOKEN`. probe_history count 사전 기록
+- When: ① `url: "http://evil.example/x"`(`://` 절대 URL) ② `"/api/../etc/passwd"`(`..`) ③ `"//evil.example/x"`(`//`) ④ `"/admin/users"`(비 `/api/` prefix) ⑤ body `{url: 무해 GET 경로, method: "POST"}`(GET 외 메서드 명시 — backend 계약 확정 형식) ⑥ `url: "/api/rewards/admob-callback"`(**deny-list 등재 경로** — 무인증 도달·쓰기 부작용 심층 방어) ⑦ 무토큰/`USER_TOKEN` 하면
+- Then: ①~④ 전부 **400 + probe_history 미증가(발사 전 차단 — count 불변)** — 상대 경로 4중 검증 실증. ⑤ **400 + 에러 메시지에 "curl 복사를 이용하세요" 포함**(GET 한정 서버 계약) ⑥ **400 + 발사 0**(deny-list — probe_history 미증가) ⑦ 401/403(관리자 게이트 — 발사 0). **어떤 케이스든 외부로 요청이 나가는 우회가 관찰되면 즉시 중단·planner 보고**(강행 금지 ①). 보조(여력 시 1케이스 스팟): 공백·제어문자·백슬래시 포함 url 도 400(backend 차단 매트릭스 실측 정보).
+
+### PB-API-03. 쿨다운 10초 — 429 [api]
+- Given: `ADMIN_TOKEN`
+- When: ① 동일 url 프로브 직후 즉시 재요청 ② 그 사이 **타 url** 프로브 ③ 10초 경과 후 동일 url 재요청 하면
+- Then: ① **429**(쿨다운 — probe_history 미증가·감사 미적재) ② 정상 200(대상별 독립) ③ 정상 200(쿨다운 해제). 429 응답에 내부 정보 미노출.
+
+### PB-API-04. related-errors — 본인 한정·±30분 경계 [api] — 핵심 (개인정보, 위반 시 즉시 중단)
+- Given: `ADMIN_TOKEN`. 준비: 테스트 신고 A(`USER_TOKEN` 계정1, `[v186-test]` 표식) 접수 직전후 **계정1 에러 2건 + 계정2(`USER2_TOKEN`) 에러 1건** 을 ±30분 창 내 유발(교차 계정 실증 데이터)
+- When: ① `GET /api/admin/issues/{A}/related-errors` ② 에러 없는 테스트 신고 B 로 동일 호출 ③ 무토큰/`USER_TOKEN` 하면
+- Then:
+  - ① 계정1 에러 2건만 반환(시각순·최대 20) — **계정2 에러 혼입 0건**(신고자 본인 user_id 한정 실증 — 개인정보 핵심). **시간 경계**: 창 밖(±30분 초과) 기존 frontend_errors 문서(계정1 소유·오래된 것)가 미포함 — 해당 문서 부재 시 경계 조건 코드 리뷰 갈음(§4-3)
+  - ② 빈 배열 안전(500 없음) ③ 401/403
+
+### PB-API-05. PATCH note 단독 + 기존 status 회귀 + 자동 기록 포맷 [api]
+- Given: `ADMIN_TOKEN`, `TEST_ISSUE_ID`(테스트 신고만)
+- When: ① `PATCH /{id}` `{admin_note: "[v186-test] 메모 단독"}`(status 생략) ② 기존 방식 `{status:"in_progress", admin_note}` ③ 자동 기록 형식 문자열(`[재확인 {시각}] GET {url} → {status} — 재현됨`) append 하면
+- Then: ① 200 — **메모만 갱신·status 불변**(additive 확장) ② v185 IS-API-06 판정 그대로(기존 호출 불변 — status 전이+감사) ③ append 수용·기존 메모 보존(전문 확인). 감사 details 에 메모 원문 부재(note_len 만 — v185 규약 유지).
+
+### PB-API-06. fp v2 실증 — page 무관 묶음·비-api 불변·백필 없음 [api] — 핵심
+- Given: 4000 테스트 계정 세션. 사전: 기존 frontend_errors 전체 스냅샷(count·fp 목록 — v185 유래 v1 문서 포함)
+- When: ① **같은 api.url 실패를 서로 다른 page 2곳**에서 각 1회 유발(`[v186-test]` 표식 경로) ② 비-api 에러(console.error) 1회 유발 ③ 스냅샷 재대조 하면
+- Then:
+  - ① 2건이 **동일 fingerprint 1묶음**(`api|GET|{정규화 url}` — page 상이해도 동일, v185 과대 분리 관측의 해소 실증) + **`fp_version: 2`** 병기 + 탭② 묶음 count 2
+  - ② 기존 fp 방식(message+page)·`fp_version: 1` — 비-api 경로 무영향
+  - ③ **기존 v185 문서 전부 무변경**(fp·fp_version·count 불변 — 재계산 백필 없음, 강행 금지 ⑤)
+
+### PB-API-07. 회귀 — v185 대표·admin_issues 6 엔드포인트·미오염·diff [api] — 회귀 핵심
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, `BASE_REV`(확정 후). 프로브 실행 완료 상태
+- When: ① v185 대표 재실행 — 접수 201·인박스 목록/summary·**파일 로그 계약**(frontend.log 포맷·응답 불변 — _logs.py 변경이 Mongo 내부 로직만임을 재검증)·errors 묶음 ② admin_issues 기존 6 엔드포인트 대표(errors 목록은 **last_probe additive 만** — 기존 필드 불변) ③ **프로브 미오염**: 프로브 실행 전후 frontend_errors count·대상 fp count 불변(프로브는 서버간 호출 — remoteLogger 미경유 구조 확인) ④ `git diff {BASE_REV}..HEAD --name-only` + **package.json/lock 부재**(httpx 기존 의존 — 신규 설치 없음, requirements 계열 diff 도 확인) 하면
+- Then: ①② 전부 기존 TESTPLAN 판정 기준 PASS ③ count 불변 + 감사 details·probe_history 에 토큰류 부재(§5-7 위생) ④ 변경 파일 == PLAN §3 매트릭스 정확 일치(issues.py·사용자 앱·AdminCsPage 부재). 초과 파일 시 즉시 중단.
+
+### PB-API-08. 9004 미러 — 3파일 + 대표 케이스 [api] — 미러 규칙
+- Given: 9004 기동
+- When: ① admin_issues.py·main.py 9005↔9004 diff + **_logs.py sed 포트 치환 후 diff 0**(v185 IS-UNIT-04 절차 재사용) ② **9004** probe 무토큰 401 + SSRF 1케이스 400(발사 없는 케이스만 — 9004 에서 프로브 성공 실행은 하지 않음) 하면
+- Then: ① 2파일 byte-identical + _logs.py 치환 diff **0** ② 9005 와 동일 판정.
+
+## 2. [unit] 시나리오 — AdminIssuesPage (브라우저 하니스, 4001 dev)
+
+### PB-UNIT-01. 탭② — 지속 여부 열·재확인 여정·429 안내 [unit] — 핵심
+- Given: 관리자 로그인, `/issues` 탭②(테스트 fp 행 존재 — 프로브 미실행 상태 확보 가능 시)
+- When: ① 지속 여부 열 확인 ② 테스트 fp 행(무해 404 경로) **[재확인]** 클릭 ③ 직후 연타 ④ 행 확장 하면
+- Then: ① 미확인 행 **"—"** 표시, 프로브 이력 있는 행은 최신 verdict 배지 ② 결과 배지 **"방금 확인: {status} — {라벨}"**(지속중/해소됨/판정 불가) + 열 갱신 ③ **429 안내 표시**(크래시·무한 재시도 없음) ④ 확장 내 **확인 이력**(probe_history) 표시. 재확인은 테스트 fp 행에서만 실행(실사용자 유래 fp 행 클릭 금지 — 무해 GET 이지만 이력 오염 방지).
+
+### PB-UNIT-02. curl 복사 — 실토큰 부재·버튼 분기 [unit] — 핵심
+- Given: 탭② 에 GET 행 + **비GET 행**(부재 시 4000 에서 미존재 경로 무해 POST 404 실패 1회 유발로 생성 — §4-5)
+- When: ① 비GET 행 버튼 확인 ② [curl 복사] 클릭 후 클립보드 검사 ③ GET 행 버튼 확인 하면
+- Then: ① 비GET 행은 **[재확인] 없음·[curl 복사]만**(자동 재발사 금지 분기) ② 클립보드 == `curl -X {METHOD} '{호스트}{url}' -H 'Authorization: Bearer <YOUR_TOKEN>'` 형식 — **실토큰 0건**(localStorage 토큰 값 대조)·url 은 마스킹된 값 그대로 ③ GET 행은 [재확인]+[curl 복사] 병행. 콘솔에 토큰·curl 전문 미출력.
+
+### PB-UNIT-03. 신고 상세 병치·자동 메모·/logs 짝 항목·콘솔·eslint [unit] — 핵심
+- Given: 테스트 신고 상세(PB-API-04 의 A — 관련 에러 존재), `/logs`
+- When: ① 상세의 관련 에러 병치("기계 관측") ② API 후보 추천 → **[재확인]** → 결과 확인 ③ admin_note 확인 ④ `/logs` 에서 issue_probe 행 ⑤ 콘솔 검색·eslint 하면
+- Then: ① 신고자 본인 에러만 병치(±30분 — API-04 와 일치) ② 프로브 결과 표시 ③ **메모에 자동 append**(`[재확인 {시각}] GET {url} → {status} — {판정 문구}` — 기존 메모 보존) ④ **"오류 재확인" 라벨+배지 + target "error_group" 한글 라벨**(짝 항목 2종 — gray fallback 아님) ⑤ 콘솔에 본문·메모·토큰 0건(마스킹된 url·건수/status 는 허용)·eslint 신규 0. v185 인박스·탭 전환 스모크 병행(회귀).
+
+## 3. [e2e] 시나리오 — 1건 (관리자 여정)
+
+### PB-E2E-01. 풀 여정 — 탭② 재확인→429→curl→신고 상세 검증→감사 [e2e] — 핵심
+- Given: 관리자 로그인. 테스트 fp(404 경로)·테스트 신고(`[v186-test]`)·관련 에러 준비 완료(PB-API-04·06 데이터 재사용)
+- When: `/issues` 탭② → 지속 여부 열("—") → 테스트 fp 행 **[재확인]** → 배지·열 갱신 → 연타 → 429 안내 → 비GET 행 **[curl 복사]** → 클립보드 실토큰 부재 확인 → 탭① → 테스트 신고 상세 → 관련 에러 병치 확인 → 추천 API **[재확인]** → **메모 자동 기록** 확인 → `/logs` → "오류 재확인" 라벨 → 인박스 복귀(v185 여정 무손상) 하면
+- Then: 전 단계 정상 전이·콘솔 신규 에러 0건·프로브 대상은 무해 GET 만(실사용자 fp 행 미조작)·**네트워크에 send/broadcast/adjust POST 0건**. 감사 로그에 issue_probe 행 잔존(REPORT 기재).
+- 증적: 지속 여부 열·재확인 배지·429 안내·클립보드 내용(토큰 플레이스홀더)·상세 병치·자동 메모·감사 라벨 스크린샷.
+
+## 4. planner 확인 필요 사항
+
+1. **BASE_REV**: v185 종료 커밋 = **`c846923` 확정**(§4 판정 1 — 보류 해제).
+2. **GET 외 400 의 요청 형식**: probe body 에 method 전달 방식이 설계상 미확정(GET 한정 서버 구현) — 구현 확정 후 PB-API-02 ⑤ 문안 고정.
+3. **±30분 시간 경계 실측**: 창 밖 에러 문서는 시각 조작 곤란 — 계정1 소유의 기존(30분+ 경과) frontend_errors 문서 활용을 기본안으로, 부재 시 **경계 조건 코드 리뷰 갈음** 승인.
+4. **USER2_TOKEN(테스트 계정 2) 사용 승인**: 교차 계정 혼입 0 실증(PB-API-04)에 계정 2 세션의 에러 유발 필요 — bcast 테스트 계정 풀 내 2번째 계정 사용 확인.
+5. **비GET 행 생성 방법**: 4000 에서 미존재 경로 무해 POST(404) 실패 1회 유발 — 부작용 0 전제 승인(불허 시 curl 분기·문자열은 코드 리뷰 갈음).
+6. **deny-list 증분**: backend-dev 의 GET 부작용 실측 보고 접수 시 PB-API-02 에 차단 경로 400 케이스를 추가하는 조건부 문안 — 보고 결과 공유 요청(부작용 GET 존재 시 해당 경로는 프로브 대상 금지 목록에도 반영).
+
+### planner 판정 (2026-08-19, 6건 전부 확정 — 해당 문안 반영 완료)
+
+1. **BASE_REV = `c846923`** (v185 커밋 — planner git log 실측: 현재 HEAD, v186 워킹트리 미커밋). PB-API-07 ④ 는 `git diff c846923 --name-only` 워킹트리 기준 — 보류 해제.
+2. **GET 외 400 요청 형식 — backend-dev 구현 확정 후 문안 고정 채택**(오케스트레이터 중계 방식 동의). PB-API-02 ⑤ 는 계약 접수 전 임시 보류(나머지 케이스는 실행 가능 — 부분 보류가 전체 게이트를 막지 않음).
+3. **±30분 경계 — 기본안 채택 + 코드 리뷰 갈음 승인.** 계정1 소유 30분+ 경과 기존 문서(v185 잔존분 실재 — 시각상 자연 경과) 활용이 1순위, 부재 시 경계 비교 연산(`$gte/$lte`) 코드 리뷰 갈음(FAIL 아님·비고).
+4. **USER2_TOKEN 승인** — 교차 계정 혼입 0 실증은 이 버전 개인정보 검증의 핵심(실측 가치 > 계정 추가 비용). bcast 테스트 계정 풀 2번째 사용, 크리덴셜 플레이스홀더·에러 유발은 무해 GET 404 계열만. 계정 2 생성이 필요하면 v177 관례(신설 기록 REPORT 기재) 준용.
+5. **비GET 유발 — 무해 POST 404 1회 승인**(미존재 경로·부작용 0·인증 게이트 앞 404/401 어느 쪽이든 수집기 캡처만 확인). 불허 조건 소멸 — curl 분기 실측 우선, 코드 리뷰 갈음은 유발 실패 시 폴백.
+6. **deny-list 증분 — 조건부 문안 채택**(중계 방식 동의). backend-dev 실측 보고 접수 시 PB-API-02 에 차단 400 케이스 추가 + 프로브 금지 목록 반영. 부작용 GET 부재 판명 시 증분 없음(비고만).
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. 데이터 준비: 테스트 신고 A/B 접수(`[v186-test]`)+계정1·2 에러 유발+비GET 이벤트(§4-5) → 기존 frontend_errors 스냅샷(PB-API-06 용)
+2. PB-API-02 (SSRF — 발사 0 확인 선행) → PB-API-01 (core 3종) → PB-API-03 (쿨다운) → PB-API-04 (related — 교차 계정) → PB-API-05 (note) → PB-API-06 (fp v2 — 스냅샷 대조) → PB-API-07 (회귀+diff — BASE_REV 확정 후) → PB-API-08 (9004)
+3. PB-UNIT-01→02→03 (같은 세션 콘솔 마감)
+4. PB-E2E-01 (준비 데이터 재사용)
+5. 종료: REPORT — probe_history·감사 issue_probe·테스트 신고/에러 표식 목록 기재(Mongo delete 없음), deny-list 실측 결과 반영 여부 명기
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| PB-API-01 | api | | verdict 3종·이력·감사·X-Admin-Probe 실측 |
+| PB-API-02 | api | | SSRF 4케이스+deny-list 경로 400·발사 0·method:"POST" 400(curl 안내 메시지) — 우회 시 즉시 중단 |
+| PB-API-03 | api | | 동일 url 429·타 url 통과·10초 해제 |
+| PB-API-04 | api | | 본인 한정(계정2 혼입 0)·±30분 경계·빈 결과 |
+| PB-API-05 | api | | note 단독 + 기존 status 회귀 + append 포맷 |
+| PB-API-06 | api | | page 상이 2회 → 1묶음(v2)·비-api v1 유지·백필 없음 |
+| PB-API-07 | api | | v185 대표·파일 계약·미오염·diff·package.json 0 |
+| PB-API-08 | api | | 9004 2파일 identical + _logs 치환 diff 0 |
+| PB-UNIT-01 | unit | | 지속 여부 열·배지·이력·429 안내 |
+| PB-UNIT-02 | unit | | 버튼 분기·클립보드 실토큰 0건 |
+| PB-UNIT-03 | unit | | 병치·자동 메모·짝 항목 2·콘솔·eslint |
+| PB-E2E-01 | e2e | | 풀 여정 — 무해 GET 만·감사 잔존 기재 |
+
+## v186 시나리오 집계
+
+- 총 **12건** — [api] 8 / [unit] 3 / [e2e] 1 (보류 없음 — planner 확인 6건은 §4)
+- 쓰기: probe_history·감사 issue_probe·테스트 신고 admin_note append·테스트 유발 에러 문서(`[v186-test]` 표식)뿐 — 전부 테스트 유래·잔존+REPORT(Mongo delete 불허 관행). 프로브는 무해 GET 3종 한정(쓰기 재발사·외부 URL 은 400 검증 대상이며 우회 관찰 시 즉시 중단). curl 실토큰 부재·related-errors 타 사용자 혼입 0 을 핵심 보안·개인정보 판정으로 승격. CS 발송·points 조정·광고 조작 0건.
+
+## 개정 이력 (v186)
+
+- 2026-08-19 초판 작성 (12건) — 코디네이터 필수 7축 전부 시나리오화(1→PB-API-01, 2→PB-API-02, 3→PB-API-03, 4→PB-API-04, 5→PB-API-05, 6→PB-API-06, 7→PB-UNIT-01~03·PB-E2E-01·PB-API-07(회귀)·PB-API-08(미러)). SSRF 우회·타 사용자 혼입을 즉시 중단 항목으로 지정, fp v2 는 기존 스냅샷 대조로 백필 부재까지 검증. BASE_REV·GET 외 형식·경계 실측·USER2_TOKEN·비GET 유발·deny-list 증분 6건 planner 회신 대기(§4). planner 검토 후 확정 예정.
+- 2026-08-19 planner 판정 반영 — §4 판정 블록 6건 확정(BASE_REV `c846923` / GET 외 400 형식은 backend 계약 접수 후 고정 — PB-API-02 ⑤ 부분 보류 / ±30분 기본안+코드 리뷰 갈음 / USER2_TOKEN 승인 — 교차 혼입 0 실증 핵심 / 비GET 무해 POST 404 승인 / deny-list 조건부 증분). 보류: PB-API-02 ⑤ 1건(backend 계약 대기 — 전체 게이트 비차단). dev 구현 완료·재기동 후 tester 착수 가능.
+- 2026-08-19 backend 계약 접수 반영 (코디네이터 중계, test-designer 문안 고정) — ① PB-API-02 ⑤ 확정: body `{url, method:"POST"}` → 400 + "curl 복사를 이용하세요" 메시지(공백·제어문자·백슬래시 400 은 보조 스팟 비고) ② deny-list 확정 1건 `/api/rewards/admob-callback` → PB-API-02 ⑥ 400 케이스 추가+§0 프로브 대상 금지 목록 등재(그 외 부작용 GET 은 인증 게이트 401 원천 차단 — 수신측 스킵 불요 비고) ③ PB-API-01 verdict 명명 정합 확인(`indeterminate` 확정, 스펙 외 `unreachable` 은 정보성 비고). **§4 보류 0건 — 전 항목 확정.** tester 착수 시 테스트 admin 계정 pw 상태 확인 선행 권고(backend 전달 사항 — 문안 영향 없음).
+- 2026-08-19 planner 중간확인·편차 판정 (1차 게이트 11/11 PASS 접수 후) — ① 버튼 분기 편차: **소픽스 채택**(GET 행 = [재확인]+[curl 복사] 병행 — TESTPLAN 원안대로 구현을 정정). 근거: auth_required(무인증 프로브의 판정 한계 지점)에서 관리자가 자기 인증 컨텍스트로 재현할 유일한 수단이 curl — 프로브 한계의 정확한 보완재(§4 판정의 무인증 채택과 설계 일관). 승인 목업의 "쓰기는 curl"은 쓰기 제약이지 GET 의 curl 금지가 아님(초과 제공 무해). frontend-dev 1줄 분기 완화 + tester 스모크(GET 행 병행 렌더+클립보드 실토큰 0 재확인) 후 E2E. ② PB-E2E-01 문안 유효 확정 — 게이트 중 코드 변경 0·잔존물 미종결 유지(재사용 설계 성립), 병행 문안 기준이라 소픽스 랜딩 후 오히려 완전 정합. ③ admin 계정 pw 이슈 재현 안 됨(3계정 정상) — 해소 상태 판명, REPORT 경위 기재만.
