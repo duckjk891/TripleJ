@@ -740,7 +740,11 @@ def index_track_es_in_background(track_id: str) -> None:
                 logger.warning("[tracks.index.es] track_id=%s doc not found, skip", track_id)
                 return
 
-            es_local = AsyncElasticsearch(hosts=[settings.es_url], request_timeout=30)
+            # v189: ES 인증 — basic_auth None 이면 기존 동작(미전달)
+            es_local = AsyncElasticsearch(
+                hosts=[settings.es_url], request_timeout=30,
+                basic_auth=settings.es_basic_auth,
+            )
             body = _track_to_doc(doc)
             await es_local.index(index=ES_TRACKS_INDEX, id=track_id, document=body)
             logger.info("[tracks.index.es] track_id=%s indexing done", track_id)

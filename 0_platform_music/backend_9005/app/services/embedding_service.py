@@ -301,7 +301,11 @@ def enrich_and_index_track_in_background(track_id: str) -> None:
 
             # 3) ES mirror (carries the new `keywords` field)
             try:
-                es_local = AsyncElasticsearch(hosts=[settings.es_url], request_timeout=30)
+                # v189: ES 인증 — basic_auth None 이면 기존 동작(미전달)
+                es_local = AsyncElasticsearch(
+                    hosts=[settings.es_url], request_timeout=30,
+                    basic_auth=settings.es_basic_auth,
+                )
                 await es_local.index(index=ES_TRACKS_INDEX, id=track_id, document=_track_to_doc(doc))
             except Exception as e:
                 logger.error("[tracks.index.kw] track_id=%s es step failed: %s", track_id, e)

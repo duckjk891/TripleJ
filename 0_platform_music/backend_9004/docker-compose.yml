@@ -66,15 +66,19 @@ services:
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      # v189 보안 강화: 인증 활성 + 루프백 바인딩(외부 도달 차단).
+      # ELASTIC_PASSWORD 는 .env 의 ES_PASSWORD 주입(실값 커밋 금지 — gitignore 대상).
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ES_PASSWORD}
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - cluster.name=aimu-cluster
     ports:
-      - "${ES_PORT:-9200}:9200"
+      - "127.0.0.1:${ES_PORT:-9200}:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      # 인증 활성 후 무인증 curl 은 401 → healthcheck 도 인증 포함으로 갱신(v189)
+      test: ["CMD-SHELL", "curl -f -u elastic:${ES_PASSWORD} http://localhost:9200/_cluster/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5

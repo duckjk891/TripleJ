@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Elasticsearch (2단계)
     es_host: str = "localhost"
     es_port: int = 9200
+    # v189 — ES 인증(xpack.security). 미설정 시 basic_auth=None 으로 기존 동작 유지.
+    es_user: str = "elastic"
+    es_password: str = ""
 
     # HybridSearch — weighted RRF fusion of pgvector (semantic) + ES (BM25).
     # es weight > vec weight boosts rare-keyword BM25 hits (e.g. "어머니" → lyrics)
@@ -203,6 +206,18 @@ class Settings(BaseSettings):
     def es_url(self) -> str:
         """HybridSearch — Elasticsearch HTTP URL built from ES_HOST/ES_PORT."""
         return f"http://{self.es_host}:{self.es_port}"
+
+    @property
+    def es_basic_auth(self):
+        """v189 — ES basic auth 튜플 (user, password). 미설정 시 None.
+
+        URL 에 크리덴셜을 박는 방식(`http://user:pass@host`)은 로그·예외 메시지에
+        비밀번호가 노출되므로 금지 — 클라이언트 생성 시 `basic_auth=` 로만 전달한다.
+        None 이면 인증 미전달(= 기존 동작) 이라 개발 환경 하위호환.
+        """
+        if not self.es_password:
+            return None
+        return (self.es_user, self.es_password)
 
     @property
     def postgres_dsn(self) -> str:

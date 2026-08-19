@@ -27220,3 +27220,67 @@ E2E (실발송 금지):
 ## 7. v188 정정 (planner, 2026-08-19)
 - **§2 ③A 표시 문안 정정**: "값 없으면 '기록 없음(구버전 앱에서 접수)'" → **데이터가 있을 때만 "직전 동선" 블록 렌더(미보유 시 블록 자체 미표시)**. 근거: 구버전 앱 접수 건(대다수 과거 신고)에 안내 문구가 상시 노출되면 상세 화면 노이즈가 되고, 진단 가치도 없음. TESTPLAN §4 판정 3 과 동기화.
 - **§2 ③A 저장 규칙 정정(계약 편차 수용)**: "at 파싱 실패 시 항목 제외" → **`at` 이 문자열이 아니면 항목을 버리지 않고 `at: null` 로 저장**(구현 쪽 관대 규칙 채택). 근거: ① 진단 가치의 본체는 **경로**이고 시각은 보조 — 시각이 없다고 동선을 통째로 버리면 A 의 목적(이탈 후 신고에도 위치 추적)이 훼손됨 ② 배열이 최신순으로 정렬돼 오므로 `at` 부재가 순서 판독을 깨지 않음 ③ 서버는 여전히 개수 5·path 200자 절단·타입 방어를 강제. **프론트 요구 추가**: `at` null 항목은 시각 표기 없이 경로만 렌더(널 안전 — TESTPLAN 검증 항목에 포함).
+
+---
+
+# v189 — Elasticsearch 보안 강화 (인증 활성화·바인딩 차단·랜섬 인덱스 제거) (2026-08-19 16:48)
+
+## 0. 사전 실측 (planner 직접 — 오케스트레이터 침해 조사 재검증)
+
+- **침해 벡터 확정**: `backend_9005/docker-compose.yml:69` `xpack.security.enabled=false` + `:72-73` `"${ES_PORT:-9200}:9200"`(= 0.0.0.0 바인딩). `ss -tlnp` 실측 — **9200·5432·27017·6379·9100 전부 `*:PORT`(모든 인터페이스)**. ES 만 무인증이라 실제 침해가 ES 에 발생(PG/Mongo/Redis 는 compose 에서 비밀번호 설정 실측 — `POSTGRES_PASSWORD`/`MONGO_INITDB_ROOT_*`/`redis-server --requirepass`).
+- **ES 클라이언트 3지점 확정**: `app/database/elasticsearch.py:14`(`init_elasticsearch(url)` — main.py:416 에서 `settings.es_url` 로 호출)·`services/embedding_service.py:304`·`services/search_service.py:743`(둘 다 `AsyncElasticsearch(hosts=[settings.es_url])` 로컬 인스턴스). **URL 조립은 `config.py:204-205 es_url = f"http://{es_host}:{es_port}"` 단일 지점** — 인증 주입을 여기에 모으면 3지점 수정 최소화 가능(§1 판정).
+- **`.env` 실측**: `ES_HOST=localhost`·`ES_PORT=9200` 만 존재 — `ES_USER`/`ES_PASSWORD` **부재(신설 필요)**. PG/Mongo/Redis 도 `localhost` 접속(백엔드가 호스트에서 uvicorn 으로 기동 → 퍼블리시된 포트에 접속) → **127.0.0.1 바인딩으로 바꿔도 앱 접속 경로 불변**.
+- **MinIO 외부 접근 필요성 — 실측 확인(차단 금지)**: `media_urls.py:119 browser_video_url` 은 **항상 public_presign**, `.env:32 MINIO_PUBLIC_HOST=<공인/테일스케일 IP>` → **브라우저가 9100 에 직접 접속**. 여기를 막으면 영상 재생이 깨진다 — **이번 범위에서 제외 확정**(오케스트레이터 경고와 일치).
+- **네트워크 성격**: 호스트에 `100.x` 대역 인터페이스 1개 실측(테일스케일 CGNAT 대역) — 노출면이 사설 오버레이일 가능성이 있으나, **랜섬 인덱스 실재가 실제 도달 가능성을 증명**하므로 완화 근거로 삼지 않는다.
+- compose 는 9004/9005 **바이트 동일** 실측 — 이번 수정도 동일 유지.
+
+## 1. planner 판정 3건 (오케스트레이터 보고 사항)
+
+1. **env 명명·인증 주입 방식**: `ES_USER`(기본 `elastic`)·`ES_PASSWORD` 신설. **주입은 `config.py` 단일 지점**에 `es_basic_auth` 프로퍼티(`(user, password)` 튜플 또는 None) 를 추가하고 **3지점이 `basic_auth=settings.es_basic_auth` 를 전달**하는 방식 — url 에 크리덴셜을 박는 `http://user:pass@host`(로그·예외 메시지에 노출 위험) 방식은 **금지**. 비밀번호 미설정 시 `None` 반환으로 **기존 동작 유지**(개발 환경 하위호환).
+2. **바인딩 범위 — ES 만 이번 적용, PG/Mongo/Redis 는 분리 보고**: ES 는 `127.0.0.1:${ES_PORT}:9200` 으로 즉시 차단(침해 당사자·앱은 localhost 접속 실측). PG/Mongo/Redis 도 기술적으로는 동일 안전 판정이나, **WSL2 환경에서 Windows 측 도구(DB 클라이언트 등)가 127.0.0.1 바인딩에 접근 가능한지는 환경 의존**이라 서비스·운영 도구 중단 위험이 0 이 아님 → **사용자 확인 후 별도 버전**으로 권고(비밀번호가 이미 걸려 있어 즉시 위험도 ES 보다 낮음). **MinIO 는 차단 금지**(§0).
+3. **ES 비밀번호 관리**: `.env` 에만 저장(9005·9004 각각), **산출물·로그·커밋에 실값 금지**(플레이스홀더 `<ES_PASSWORD>`). `.gitignore` 에 `.env` 포함 여부를 backend-dev 가 실측 확인 후 보고 — 미포함 시 **즉시 보고(커밋 차단)**. 비밀번호 생성은 32자 랜덤(영숫자) 권고, **기존 스토어 크리덴셜 로테이션은 이번 범위 아님**(후속 권고).
+
+## 2. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 증거 보존(선행) | `read_me` 인덱스 전 문서를 **스크래치패드 JSON 으로 원문 저장**(지갑주소·이메일 포함, 신고·기록용) + 인덱스 메타(생성시각·docs.count) 기록. **저장 확인 후에만 삭제** | 침해 기록 보전 |
+| 삭제 범위 | `DELETE /read_me` **1개만**. `tracks` 및 타 인덱스·타 스토어 무접촉 | 강행 금지 |
+| ES 인증 | compose `xpack.security.enabled=true` + `ELASTIC_PASSWORD=${ES_PASSWORD}` 환경변수, healthcheck 를 **인증 포함 curl**(`-u elastic:${ES_PASSWORD}`)로 갱신 | 인증 없으면 healthcheck 가 401 로 실패 — 동반 수정 필수 |
+| 바인딩 | ES 포트 `"127.0.0.1:${ES_PORT:-9200}:9200"` | 외부 도달 차단 |
+| 앱 클라이언트 | `config.py` 에 `es_user`/`es_password` + `es_basic_auth` 프로퍼티 → `elasticsearch.py:14`·`embedding_service.py:304`·`search_service.py:743` 에 `basic_auth=` 전달(값 None 이면 미전달과 동일 동작) | 3지점 최소 수정·크리덴셜 URL 미노출 |
+| 순서 | ①증거 보존 → ②compose·.env·코드 수정(9005→9004 미러) → ③ES 재기동(보안 활성) → ④`read_me` 삭제(인증 사용) → ⑤백엔드 2대 재기동 → ⑥검증 | 재기동 전 삭제 시도는 무인증 경로 유지 필요 — 인증 후 삭제로 통일 |
+| 미러 | `docker-compose.yml`·`.env`(값은 각 환경)·`config.py`·`database/elasticsearch.py`·`services/embedding_service.py`·`services/search_service.py` 9005→9004. compose 는 **바이트 동일 유지** | 관례 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 | 비고 |
+|---|---|---|
+| `backend_9005/docker-compose.yml` | security=true·ELASTIC_PASSWORD·127.0.0.1 바인딩·healthcheck 인증 | 9004 바이트 동일 |
+| `backend_9005/.env` | `ES_USER`·`ES_PASSWORD` 추가 | **커밋 제외**(gitignore 확인) |
+| `backend_9005/app/config.py` | `es_user`/`es_password`/`es_basic_auth` | - |
+| `backend_9005/app/database/elasticsearch.py` | `basic_auth` 전달 | - |
+| `backend_9005/app/services/embedding_service.py` | `basic_auth` 전달 | :304 |
+| `backend_9005/app/services/search_service.py` | `basic_auth` 전달 | :743 |
+| `backend_9004/...` 동일 6파일 | 미러 | - |
+| **무접촉** | MinIO·PG·Mongo·Redis 설정, tracks 인덱스, 앱 기능 코드 | 강행 금지 |
+
+## 4. 작업 분담
+- **backend-dev**: ① **증거 보존 선행**(read_me 전문 JSON 저장·경로 보고) ② compose/.env/코드 6파일 수정(+9004 미러) ③ `.gitignore` 의 `.env` 포함 여부 실측 보고 ④ ES 재기동→`read_me` 삭제→백엔드 2대 재기동 ⑤ 무인증 401·인증 200·바인딩 `127.0.0.1:9200` (`ss -tlnp`) 자가 확인 후 보고. **tracks 무접촉·비밀번호 실값 산출물 금지.**
+- **frontend-dev**: **작업 없음**(프론트 무관).
+- **test-designer**: §5.
+
+## 5. 테스트 항목 (test-designer)
+1. **무인증 `curl :9200` → 401**(현재 200), 인증 포함 → 200. `_cat/indices` 도 동일.
+2. **바인딩**: `ss -tlnp` 에서 9200 이 `127.0.0.1:9200`(`*:9200` 부재), **외부 인터페이스(100.x) 로 9200 접속 실패**(타임아웃/거부) 실측.
+3. **인덱스 상태**: `read_me` **부재**, `tracks` **21건 유지**(count 실측), 기타 인덱스 손실 0.
+4. **앱 검색 정상(9005·9004 양쪽)**: 트랙 검색 API 200+결과, 색인 경로(업로드/삭제 시 ES 반영)는 테스트 계정 트랙 1건으로 확인 — 불가 시 코드 리뷰 갈음.
+5. **MinIO 회귀(차단 안 함 확인)**: 9100 바인딩 불변·영상 presign URL 발급 200·재생 경로 정상.
+6. **회귀**: v185~188 대표(신고 접수·인박스·탭②·CS cid·시각 표기)·미러 diff 0(6파일)·`.env` 커밋 미포함 확인.
+7. **위생**: 비밀번호가 로그·산출물·응답에 노출 0(플레이스홀더만), 증거 JSON 은 스크래치패드에만 존재.
+
+## 6. 리스크 / 강행 금지
+- **강행 금지**: ① **MinIO(9100) 바인딩·설정 변경 금지**(영상 재생 파손) ② PG/Mongo/Redis 바인딩 변경 금지(이번 범위 밖 — 별도 승인) ③ `tracks` 등 업무 인덱스·타 스토어 데이터 삭제·수정 금지(`read_me` 1개만) ④ **비밀번호 실값을 산출물·로그·커밋에 기재 금지**(`.env` 만) ⑤ 크리덴셜 로테이션·방화벽 정책 변경은 이번 범위 아님 ⑥ 증거 보존 없이 삭제 금지 ⑦ v177~188 승계.
+- ES 재기동 중 검색 일시 중단(사용자 승인). 백엔드 2대 재기동 필요 — 재기동 실패 시 즉시 롤백(compose 원복) 후 보고.
+- security=true 첫 기동 시 기존 데이터 볼륨과의 호환: 8.12 는 볼륨 유지로 부팅 가능하나, **실패 시 대안은 데이터 재색인**(tracks 는 앱 자동 백필로 복구 가능 — 6/30 사례로 실증됨).
+- 후속 권고(범위 밖): 전 스토어 크리덴셜 로테이션, PG/Mongo/Redis 127.0.0.1 바인딩, 오버레이 네트워크 방화벽 점검, 침해 신고 여부 판단.

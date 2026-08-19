@@ -2794,3 +2794,130 @@ BASE_REV: **28679d0**(코디네이터 지정 — git diff 기준)
 - 2026-08-19 초판 작성 (11건) — 코디네이터 필수 7축 전부 시나리오화(1→TZ-API-01, 2→TZ-E2E-02, 3→TZ-UNIT-01·02, 4→TZ-API-02·TZ-E2E-01, 5→TZ-API-03, 6→TZ-UNIT-03, 7→TZ-API-04·05·TZ-UNIT-04). 시각 판정은 **Mongo 저장 UTC 대조 + 화면 KST ±1분**, 레이아웃은 **innerWidth 1259px 에서 th right ≤ innerWidth** 로 측정 가능하게 고정. recent_pages 는 정상·방어·여정(이탈 후 보존·새로고침 보존) 3층으로 분리. BASE_REV=28679d0 반영. 스냅샷 대조 방식·로컬 TZ·미보유 표시 규칙·광고 회귀 지점·직접 POST 승인·프로브 미실행 6건 planner 회신 대기(§4). planner 검토 후 확정 예정.
 - 2026-08-19 planner 판정 반영 — §4 판정 블록 6건 확정(Mongo UTC 직접 대조+DB 읽기 승인 / 로컬 TZ KST 실측 확정 / **직전 동선 미보유 = 블록 미표시로 PLAN 문안 정정** / 광고 회귀 지점 items created_at / 직접 POST 7케이스 승인 / 프로브 0건·기적재 이력 사용). 보류 0건 — dev 구현 완료·재기동 후 tester 착수 가능(§0 선행 절차 유지).
 - 2026-08-19 planner 계약 편차 판정 — `recent_pages[].at` 비문자열 시 **항목 제외 대신 `at: null` 저장**(구현 관대 규칙 채택, PLAN §7 정정). TZ-API-03 기대값을 이 규칙으로 고정(비정상 at 포함 항목도 path 보존·200), TZ-UNIT-03/TZ-E2E-01 에 **`at` null 항목은 시각 없이 경로만 렌더(널 안전·크래시 0)** 판정 추가.
+
+# v189 — Elasticsearch 보안 강화 (인증 활성화·바인딩 차단·랜섬 인덱스 제거) (2026-08-19 16:50)
+
+팀: platform-music-cs-send / test-designer 작성 (초안 — 실행 전, planner 검토 대기)
+근거: PLAN.md v189 §0 실측(`xpack.security.enabled=false`+0.0.0.0 바인딩·ES 클라이언트 3지점·`es_url` 단일 조립·`.env` 에 ES_USER/PASSWORD 부재·**MinIO 는 브라우저 직접 접속이라 차단 금지**), §1 판정 3건(basic_auth 주입·ES 만 바인딩 차단·비밀번호 .env 한정), §2 설계, §5 테스트 항목 1~7, §6 강행 금지 7항
+대상: `docker-compose.yml`(security=true·ELASTIC_PASSWORD·127.0.0.1 바인딩·healthcheck 인증)·`.env`(ES_USER/ES_PASSWORD)·`config.py`(`es_basic_auth`)·`database/elasticsearch.py`·`services/embedding_service.py`·`services/search_service.py` 9005 및 9004 미러 6파일. **MinIO·PG·Mongo·Redis 설정·tracks 인덱스·앱 기능 코드 무접촉**이 검증 대상
+BASE_REV: **758485b**(코디네이터 지정 — git diff 기준)
+
+## 0. 전제 및 안전 규칙
+
+- **크리덴셜 위생(최우선)**: ES 비밀번호 **실값을 TESTPLAN·REPORT·로그·명령 기록 어디에도 기재 금지** — 전부 `<ES_PASSWORD>` 플레이스홀더. 검증 명령은 `-u "$ES_USER:$ES_PASSWORD"` 처럼 **환경변수 참조 형태**로 실행하고, 실행 기록에 실값이 남는 형태(히스토리 평문·산출물 붙여넣기)를 만들지 않는다. `ES_USER` 는 기본 `elastic`.
+- **인덱스 무접촉(강행 금지 ③)**: 이번 검증에서 tester 는 **어떤 인덱스도 삭제·수정하지 않는다**(`read_me` 삭제는 backend-dev 작업 — tester 는 **부재 확인만**). ES 쓰기 요청(PUT/POST/DELETE) 금지 — 조회(`GET /_cat/indices`, `GET /{index}/_count`)만. 앱 경유 색인 검증(ES-API-05)은 **테스트 계정 트랙 1건** 한정.
+- **MinIO·타 스토어 무접촉**: 9100 바인딩·설정 확인은 **읽기 관찰만**(`ss -tlnp`·presign 발급 조회). PG/Mongo/Redis 설정 변경·바인딩 변경 금지(범위 밖 — §1 판정 2).
+- **증거 파일**: `read_me` 원문 JSON 은 스크래치패드에 보존됨 — tester 는 **경로 존재·크기만 확인**하고 **내용(지갑주소·이메일 등)을 REPORT·로그·화면에 옮기지 않는다**(§4-2).
+- **실사용자 데이터 무접촉**: 검색·재생 검증은 조회만. 신고·CS·광고 회귀는 v185~188 방침 승계(열람·읽기 전용, `[v189-test]` 표식이 필요한 쓰기는 신고 접수 1건 이내).
+- **재기동 승인**: ES·백엔드 2대 재기동으로 검색 일시 중단은 승인됨 — 검증은 재기동 완료 후 수행. 재기동 실패 시 즉시 중단·롤백 보고(§6).
+- 환경/플레이스홀더: `ES_HOST`(localhost)·`ES_PORT`(9200)·`EXT_IP`(외부 인터페이스 IP — 테일스케일 100.x 또는 공인 IP, REPORT 에는 `100.x.x.x` 형태로 마스킹 기재)·`ADMIN_TOKEN`/`USER_TOKEN`/`TEST_TRACK_ID`.
+
+## 1. [api] 시나리오 — ES 보안 상태
+
+### ES-API-01. 인증 강제 — 무인증 401 / 인증 200 [api] — 핵심
+- Given: ES 재기동 완료(보안 활성), `ES_USER`/`ES_PASSWORD` 는 환경변수로만 참조(§0)
+- When: ① `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9200` ② `curl ... http://127.0.0.1:9200/_cat/indices` (무인증) ③ 인증 포함 `-u "$ES_USER:$ES_PASSWORD"` 로 `/`·`/_cluster/health`·`/_cat/indices` ④ **잘못된 비밀번호** 1회 하면
+- Then: ①② **401**(수정 전 200 이었음 — 무인증 접근 차단 실증) ③ **200** + `/_cluster/health` 의 `status`(green/yellow) 조회 가능·`_cat/indices` 목록 반환 ④ 401. 응답 본문·헤더에 비밀번호 반향 0건.
+
+### ES-API-02. 외부 노출 차단 — 바인딩·외부 IP 도달 실패 [api] — 핵심
+- Given: 호스트 셸 접근, `EXT_IP` 확인(`ip -4 addr` 등 읽기)
+- When: ① `ss -tlnp | grep 9200` ② `curl --max-time 5 http://{EXT_IP}:9200`(외부 인터페이스 경유) ③ 참고: 동일 명령을 `127.0.0.1` 로 하면
+- Then: ① **`127.0.0.1:9200` 바인딩만 존재 — `*:9200`(0.0.0.0) 부재** ② **접속 실패**(connection refused 또는 타임아웃 — 도달 불가) ③ 정상 도달(401/200 — ES-API-01 과 일치). ①의 출력에서 PID/프로세스 정보는 기록하되 **다른 포트(9100·5432·27017·6379)는 관찰만 하고 변경하지 않음**(ES-API-06 에서 MinIO 불변 확인에 재사용).
+
+### ES-API-03. 침해 산출물 — read_me 부재·tracks 21건·증거 파일 [api] — 핵심
+- Given: 인증 크리덴셜, 삭제 전 인덱스 스냅샷(backend-dev 보고값 — tracks 문서 수 기준 21)
+- When: ① 인증 `GET /_cat/indices?v` ② `GET /read_me/_count`(또는 `_cat/indices` 내 존재 여부) ③ `GET /tracks/_count` ④ 증거 JSON 파일 경로 `ls -l` 하면
+- Then: ① 인덱스 목록에 **`read_me` 부재**, 기타 인덱스 손실 0(삭제 전 목록 대비 `read_me` 만 감소) ② 404(인덱스 없음) ③ **count == 21**(삭제 전후 동일 — tracks 무접촉 실증) ④ **파일 존재·크기 > 0**(경로만 REPORT 기재, **내용 미열람·미인용** — §0). 이 시나리오에서 tester 는 어떤 삭제·쓰기도 수행하지 않음.
+
+### ES-API-04. 앱 기능 — 9005·9004 양쪽 health·검색·하이브리드 [api] — 핵심
+- Given: 백엔드 2대 재기동 완료, `USER_TOKEN`
+- When: 각 포트(9005·9004)에 대해 ① health 엔드포인트 ② 트랙 검색 API(키워드 — 기존 시드 트랙이 걸리는 질의) ③ **하이브리드 검색**(ES+pgvector 경로 — 의미 검색/추천 질의) 하면
+- Then: **양쪽 모두** ① 200(ES 연결 정상 — 인증 주입 후에도 클라이언트 초기화 성공) ② 200 + **결과 ≥1건**(tracks 21건 대상 매칭) ③ 200 + 결과 반환(ES·pgvector 양측 정상 — 한쪽 실패 시 빈 결과/500 이면 FAIL). 응답·서버 로그에 인증 실패(401) 흔적 0건, 시작 로그에 ES 연결 오류 0건.
+
+### ES-API-05. 색인/삭제 경로 — 테스트 트랙 1건 (조건부) [api]
+- Given: `USER_TOKEN`(테스트 계정), 테스트 트랙 1건 업로드 가능 환경(§4-3 승인 시)
+- When: ① 테스트 트랙 1건 생성(제목 `[v189-test]` 표식) → ② 검색으로 **색인 반영 확인**(잠시 후 조회) → ③ 해당 트랙 **삭제** → ④ 재검색 하면
+- Then: ② 신규 트랙이 검색 결과에 등장(ES 색인 경로 정상 — 인증 후에도 쓰기 경로 동작) ④ 결과에서 사라짐(삭제 연동 정상) + `GET /tracks/_count` 가 **21 로 복귀**(순변화 0). **승인 불가/환경 제약 시 SKIP** — `embedding_service.py`·`search_service.py`·`elasticsearch.py` 3지점의 `basic_auth` 전달 코드 리뷰로 갈음(§4-3).
+
+### ES-API-06. MinIO 회귀 — 차단하지 않았음 확인 [api] — 회귀 핵심
+- Given: `USER_TOKEN`/`ADMIN_TOKEN`
+- When: ① `ss -tlnp | grep 9100` ② 영상 트랙의 **presign URL 발급** API 호출 ③ 발급된 URL 로 HEAD/GET(브라우저 직접 접속 경로 모사 — `MINIO_PUBLIC_HOST` 기준) ④ 관리자 **이미지 프록시** 1건 하면
+- Then: ① **`*:9100` 바인딩 불변**(127.0.0.1 로 바뀌지 않음 — 차단 금지 준수, 강행 금지 ①) ② presign URL 발급 200(`public_presign` 경로) ③ **200/206 도달**(외부 접속 유지 — 영상 재생 파손 없음) ④ 프록시 정상. PG/Mongo/Redis 포트 바인딩도 **변경 없음** 관찰 기록(§1 판정 2 — 이번 범위 밖).
+
+### ES-API-07. 회귀 — v185~188 대표 + 미러 + git diff [api] — 회귀 마감
+- Given: `ADMIN_TOKEN`·`USER_TOKEN`, BASE_REV `758485b`
+- When: ① v185~188 대표: 신고 접수(`[v189-test]` 1건)·인박스 목록/상세·탭② errors 묶음·프로브 이력 조회(클릭 실행 0)·CS 단건 조회(`/conversations/{cid}`)·**시각 tz 표기**(`+00:00`)·**직전 동선** 필드 ② `diff` 9005↔9004 — docker-compose.yml·config.py·database/elasticsearch.py·services/embedding_service.py·services/search_service.py ③ `git diff 758485b..HEAD --name-only` 하면
+- Then: ① 전부 기존 TESTPLAN 판정 기준 PASS(ES 보안 변경이 앱 기능·표시 계약에 무영향) ② **compose 포함 5파일 diff 0**(바이트 동일 — `.env` 는 환경별 값이라 diff 대상 제외, 존재·키 구성만 확인) ③ 변경 파일 == PLAN §3 매트릭스 정확 일치 — **`.env` 부재**(gitignore — ES-UNIT-01)·MinIO/PG/Mongo/Redis 설정 파일 부재·**package.json/lock 부재**. 초과 파일 시 즉시 중단·보고.
+
+## 2. [unit] 시나리오 — 크리덴셜 위생 (정적 검사)
+
+### ES-UNIT-01. `.env` 커밋 차단 + 실값 노출 0건 [unit] — 핵심 (위반 시 즉시 중단)
+- Given: 저장소(9005·9004), 서버 로그·이번 버전 산출물(PLAN·TESTPLAN·REPORT 초안)
+- When: ① `git check-ignore -v backend_9005/.env` / `backend_9004/.env` + `git ls-files | grep -c '\.env$'` ② `git log --all --name-only | grep '\.env'`(과거 커밋 유입 여부 스팟) ③ 서버 로그·앱 로그 grep — 비밀번호 실값·`elastic:` 형태 크리덴셜·`http://.*:.*@` URL 패턴 ④ 산출물(PLAN/TESTPLAN/REPORT) grep — 동일 패턴 ⑤ 앱 응답(health·검색·오류 응답) 검사 하면
+- Then: ① **gitignore 매칭 또는 미추적**(추적 파일 목록에 `.env` 0건) ② 과거 커밋에도 유입 없음(발견 시 **즉시 중단·planner 보고** — 이력 정리는 별도 판단) ③④⑤ **비밀번호 실값 0건** + **ES URL 에 크리덴셜 미포함**(`http://host:port` 형태만 — `basic_auth` 주입 방식 실증, §1 판정 1). 위반 1건이라도 발견 시 즉시 중단.
+
+### ES-UNIT-02. 설정 코드 리뷰 — 인증 주입·healthcheck·바인딩 [unit]
+- Given: 수정된 6파일
+- When: ① `config.py` 의 `es_user`/`es_password`/`es_basic_auth`(미설정 시 None 반환) ② 3지점(`elasticsearch.py`·`embedding_service.py`·`search_service.py`)의 `basic_auth=settings.es_basic_auth` 전달 ③ compose 의 `xpack.security.enabled=true`·`ELASTIC_PASSWORD=${ES_PASSWORD}`·`127.0.0.1:${ES_PORT:-9200}:9200`·**인증 포함 healthcheck** ④ MinIO/PG/Mongo/Redis 블록 하면
+- Then: ①② URL 문자열에 크리덴셜을 넣지 않고 `basic_auth` 파라미터로만 전달(강행 금지 ④ 구조적 준수) — 미설정 시 None 으로 기존 동작 유지 ③ 4항목 전부 반영 + healthcheck 가 401 로 실패하지 않음(컨테이너 healthy 상태 실측 — `docker ps` 또는 compose ps) ④ **무변경**(MinIO 바인딩·타 스토어 설정 라인 diff 0 — ES-API-07 ③ 겸측).
+
+## 3. [e2e] 시나리오 — 1건
+
+### ES-E2E-01. 사용자 검색 여정 + 관리자 화면 스모크 [e2e] (읽기 전용)
+- Given: 사용자 앱(4000)·관리자 앱(4001), 테스트 계정 로그인. §0/v187 선행 절차(하드 새로고침·빌드 표기 기록)
+- When: ① 사용자 앱에서 **트랙 검색**(키워드) → 결과 목록 → 상세 진입 → **영상 재생 1건**(presign 경로 — MinIO 회귀) ② 관리자 앱에서 `/issues` 탭①·탭②·`/advertisers` 1지점·`/cs` 무쿼리 진입 하면
+- Then: ① 검색 결과 정상 렌더(ES 경로 — 인증 활성 후에도 사용자 체감 무변화)·**영상 재생 정상**(9100 직접 접속 유지) ② 관리자 화면 v185~188 렌더 정상(시각 KST·페이지 경로 표시·행 클릭 확장)·콘솔 신규 에러 0건·**ES 401 관련 오류 배너 0건**.
+- 안전: 조회·재생만(업로드·삭제·발송·조정 0건). 실사용자 콘텐츠는 열람만.
+- 증적: 검색 결과·영상 재생·관리자 2화면 스크린샷(빌드 표기 포함, 크리덴셜 화면 노출 없음).
+
+## 4. planner 확인 필요 사항
+
+1. **외부 IP 도달 실패 검증 위치**: `EXT_IP` 로의 접속 시도를 **동일 호스트에서** 수행하면 라우팅상 도달할 수 있어(로컬 인터페이스) 판정이 약해질 수 있음 — (a) 동일 호스트에서 `curl http://{EXT_IP}:9200` 실패로 판정(초안) (b) 외부 단말(테일스케일 피어 등)에서 검증 가능하면 그쪽 우선. 환경 가능 여부 회신 요청.
+2. **증거 파일 확인 범위**: 경로·크기만 확인하고 **내용 미열람** 방침(지갑주소·이메일 등 침해자 데이터) — 파일 존재만으로 충분한지, 문서 수 등 메타 확인이 필요한지 회신.
+3. **ES-API-05 색인 경로 실측 승인**: 테스트 트랙 1건 업로드→검색 확인→삭제(순변화 0, `[v189-test]` 표식) 승인 여부. 불허/환경 제약 시 3지점 코드 리뷰 갈음 + SKIP 기록(초안 기본값은 승인 시 실측).
+4. **`.env` 과거 커밋 유입 스팟(ES-UNIT-01 ②)**: `git log --all` 스캔 수행 여부 — 발견 시 이력 정리는 범위 밖(즉시 보고만) 확인.
+5. **tracks 21건 기준값 출처**: backend-dev 의 삭제 전 스냅샷 값 사용 — 재기동/재색인으로 값이 달라질 가능성이 있으면 기준값을 backend-dev 보고서에서 확정해 전달 요청.
+6. **PG/Mongo/Redis 바인딩 관찰 기록**: 이번 범위 밖이나 `ss -tlnp` 출력에 함께 잡힘 — REPORT 에 **현황만 기재**(변경 없음 확인용)하는 것이 맞는지, 노출 현황 기재 자체를 피할지 판정 요청(보안 문서 취급).
+
+### planner 판정 (2026-08-19, 6건 전부 확정 — v189)
+
+1. **외부 도달 실패 검증 = `ss -tlnp` 바인딩이 1차 근거, curl 은 보조**(오케스트레이터 의견 채택). 판정식: `127.0.0.1:9200` **단독 LISTEN** + `*:9200` 부재가 PASS 조건. 동일 호스트에서 자기 외부 IP 로의 curl 은 라우팅상 판정이 애매할 수 있으므로 **보조 관측(비고)** 으로만 기록. **테일스케일 피어에서의 원격 검증은 필수화하지 않음**(환경 확보 불확실 — 가능하면 보너스 증적).
+2. **증거 파일 = 경로·크기·문서 수 메타만 확인, 내용 비인용 확정.** 랜섬 문구·지갑주소·연락처는 **TESTPLAN·REPORT 어디에도 전재 금지**(스크래치패드 원본에만 존재).
+3. **ES-API-05 색인 실측 → 코드 리뷰 갈음 확정**(의견 채택). 근거: 트랙 업로드는 MinIO 쓰기·별 소비 등 **부수효과가 큰 쓰기 경로**이고, 읽기 경로는 ES-API-04(검색 200+결과)가 이미 커버. 갈음 내용 = **3지점 `basic_auth` 전달 코드 리뷰 + 서버 로그에 ES 401/AuthenticationException 부재 확인**(재기동 후 색인·검색 호출이 실제로 인증 통과 중임을 로그로 입증).
+4. **`.env` 과거 커밋 스캔 — planner 가 선실측 완료, 결과 공유**: 루트 `.gitignore:21-23` 에 `.env`·`.env.local`·`*.env` 실재, `git check-ignore -v` 로 `backend_9005/.env` 가 **`*.env` 규칙에 매칭됨** 확인. `git ls-files` 에 tracked `.env` **0건**(`.env.example` 2개만 tracked — 정상), `git log --all -- "*backend_9005/.env"` **빈 결과 = 과거에도 커밋된 적 없음**. → tester 는 **이 결과를 재확인(3 명령)만** 하고, 신규 발견 시에만 보고. 이력 정리는 범위 밖(불필요 확정).
+5. **tracks 기준값** — backend-dev 의 삭제 전 스냅샷을 오케스트레이터가 전달(현 실측 21건). 판정은 **스냅샷 == 사후 count** 동일성.
+6. **타 스토어 바인딩 현황 REPORT 기재 확정**(의견 채택) — 포트·바인딩 형태(`*:PORT` vs `127.0.0.1:PORT`)·인증 유무까지 기재, **EXT_IP 는 마스킹**. 사용자가 다음 결정(PG/Mongo/Redis 차단 여부)을 내리려면 현황이 문서에 있어야 한다.
+
+## 5. 실행 순서 권고 (tester 참고)
+
+1. 선행: backend-dev 완료 보고(재기동·삭제 완료·tracks 기준값·증거 경로) 접수 확인 → ES-UNIT-01(크리덴셜 위생 — 위반 시 즉시 중단) → ES-UNIT-02(설정 리뷰)
+2. ES-API-01 → ES-API-02 → ES-API-03 (보안 3축 — 조회만)
+3. ES-API-04 (9005·9004 앱 기능) → ES-API-05 (§4-3 승인 시) → ES-API-06 (MinIO 회귀)
+4. ES-API-07 (v185~188 회귀·미러·diff — BASE 758485b)
+5. ES-E2E-01 (사용자 검색·재생·관리자 스모크)
+6. 종료: REPORT — 401/200 관측·바인딩 출력(마스킹)·인덱스 count·증거 파일 경로(내용 미기재)·미러 diff·`[v189-test]` 산출물 정리 내역. **비밀번호 실값·증거 내용·EXT_IP 원문 기재 금지**(마스킹)
+
+## 6. 결과 기록 표 (tester 작성용)
+
+| ID | 레벨 | 결과(PASS/FAIL/SKIP) | 비고 |
+|---|---|---|---|
+| ES-API-01 | api | | 무인증 401·인증 200·health 조회·오답 401 |
+| ES-API-02 | api | | 127.0.0.1:9200 단독 바인딩·외부 IP 도달 실패 |
+| ES-API-03 | api | | read_me 부재·tracks 21·타 인덱스 손실 0·증거 파일 존재(경로만) |
+| ES-API-04 | api | | 9005·9004 health·검색·하이브리드 200 |
+| ES-API-05 | api | | 색인/삭제 경로(테스트 트랙 1건, 순변화 0) — 미승인 시 SKIP |
+| ES-API-06 | api | | MinIO *:9100 불변·presign 200·직접 접속·프록시 정상 |
+| ES-API-07 | api | | v185~188 대표·미러 5파일 diff 0·diff 매트릭스 |
+| ES-UNIT-01 | unit | | .env 미추적·실값 0건·URL 크리덴셜 미포함 — 위반 시 중단 |
+| ES-UNIT-02 | unit | | basic_auth 주입·compose 4항목·healthcheck healthy·타 스토어 무변경 |
+| ES-E2E-01 | e2e | | 검색·영상 재생·관리자 스모크 — 읽기 전용 |
+
+## v189 시나리오 집계
+
+- 총 **10건** — [api] 7 / [unit] 2 / [e2e] 1 (보류 없음 — planner 확인 6건은 §4)
+- 쓰기: **원칙 0건** — tester 는 ES 조회만(삭제·색인 요청 금지), 인덱스 무접촉. 예외는 ES-API-05(승인 시 테스트 트랙 1건 업로드→삭제, 순변화 0)와 ES-API-07 의 `[v189-test]` 신고 접수 1건. MinIO·PG·Mongo·Redis 설정 무접촉(관찰만), 실사용자 데이터 열람·조회만. 크리덴셜은 전 구간 플레이스홀더·환경변수 참조, 증거 파일은 경로만 확인(내용 비인용) — 위반 시 즉시 중단.
+
+## 개정 이력 (v189)
+
+- 2026-08-19 초판 작성 (10건) — 코디네이터 필수 7축 전부 시나리오화(1→ES-API-01, 2→ES-API-02, 3→ES-API-03, 4→ES-API-04·05·ES-E2E-01, 5→ES-API-06, 6→ES-API-07·ES-UNIT-02, 7→ES-UNIT-01). 보안 검증 특성상 **tester 쓰기 0건 원칙**(인덱스 무접촉·조회만)과 **크리덴셜/증거 비인용 규칙**을 §0 불변식으로 명문화. BASE_REV=758485b 반영. 외부 IP 검증 위치·증거 확인 범위·색인 실측 승인·과거 커밋 스캔·tracks 기준값·타 스토어 현황 기재 6건 planner 회신 대기(§4). planner 검토 후 확정 예정.
+- 2026-08-19 planner 판정 반영(v189) — 6건 확정(바인딩 1차·curl 보조 / 증거 메타만 · 내용 전재 금지 / 색인 코드 리뷰+ES 401 부재 로그 갈음 / **.env 미추적·미커밋·`*.env` ignore 매칭 planner 선실측 완료 — tester 는 재확인만** / tracks 스냅샷 대조 / 타 스토어 바인딩 현황 기재·EXT_IP 마스킹). 보류 0건 — backend-dev 작업 완료·재기동 후 tester 착수 가능(쓰기 0건 원칙 유지).

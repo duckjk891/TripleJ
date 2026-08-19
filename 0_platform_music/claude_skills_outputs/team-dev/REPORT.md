@@ -15432,3 +15432,55 @@ v185 예약분 2단계: ① 프로브 재확인(탭②·신고 상세 [지금 �
 - 관리자 앱 3: `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` `frontend_admin/src/utils/format.js`
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md`(§7 정정 2건 포함) `TESTPLAN.md` `REPORT.md` (v188 append)
 - 무변경 확인: `_logs.py`·dm_service·admin_cs/points·package.json — git status 실측, 하니스 잔재 0건. **삭제(D) 항목 0**(레거시 정리는 `f0ea421` 에서 종결).
+
+---
+
+# v189 — Elasticsearch 보안 강화 (인증 활성화·바인딩 차단·랜섬 인덱스 제거) (2026-08-19 17:04)
+
+팀: platform-music-cs-send (planner/backend-dev/test-designer+tester — frontend-dev 무작업)
+
+## 1. 요청 작업 (침해 대응)
+ES 에 비트코인 몸값 요구 인덱스(`read_me`)가 존재하는 침해 확인 → 사용자 승인 3건: ① **ES 인증 활성화**(앱 클라이언트 3지점 갱신) ② **외부 노출 차단**(루프백 바인딩) ③ **`read_me` 인덱스 삭제**(증거 보존 후). 9005 선구현 → 9004 미러.
+
+## 2. 침해 경위 (실측 확정 — 협박문 내용은 전재 금지)
+- **침해 시각 2026-06-30 18:42:36 KST**(인덱스 생성 시각), **삭제형 공격**(데이터 삭제 후 몸값 요구).
+- **벡터**: `docker-compose.yml` 의 `xpack.security.enabled=false` + `0.0.0.0:9200` 바인딩 → 무인증 외부 접근 가능. `ss -tlnp` 실측상 ES 만 무인증(PG/Mongo/Redis 는 비밀번호 보유)이라 침해가 ES 에 국한.
+- **피해 범위**: ES 는 **파생 저장소**(정본은 PG/Mongo)라 삭제된 `tracks` 가 앱 자동 백필로 복구됨(2026-08-11 재생성, 현재 21건 정상). ES 저장 필드에 **회원 개인정보·크리덴셜 없음**(artist/genre/lyrics/title/track_id 등). 타 스토어(PG 17테이블·Mongo 33컬렉션·MinIO 6버킷·Redis) 침해 흔적 없음.
+- **증거 보존**: `scratchpad/v189_evidence/` 에 협박문 원문·문서 ID·인덱스 UUID·삭제 전 인덱스 목록 3종 저장(삭제 전 선행). **내용은 산출물에 전재하지 않음** — 신고·기록용 원본은 스크래치패드에만 존재.
+
+## 3. 수정 내역 (4항목)
+1. **인증 활성**: compose `xpack.security.enabled=true` + `ELASTIC_PASSWORD=${ES_PASSWORD}`(실값은 `.env` — 커밋 제외).
+2. **노출 차단**: ES 포트 `"127.0.0.1:${ES_PORT:-9200}:9200"`.
+3. **healthcheck 동반 갱신**: 인증 활성 시 무인증 curl 이 401 로 죽으므로 `-u elastic:${ES_PASSWORD}` 포함(미수정 시 컨테이너 unhealthy).
+4. **앱 클라이언트 3지점**: `config.py` 에 `es_user`/`es_password` + **`es_basic_auth` 프로퍼티 단일 주입점**(미설정 시 `None` → 기존 동작 하위호환), `database/elasticsearch.py`·`services/embedding_service.py:304`·`services/search_service.py:743` 에 `basic_auth=` 전달. **URL 크리덴셜 방식(`http://user:pass@host`) 금지**(로그·예외 노출 위험) — planner 판정.
+- 실행 순서: 증거 보존 → 수정(+미러) → ES 재기동 → `read_me` 삭제(인증 경로) → 백엔드 2대 재기동 → 검증. **첫 기동 성공** — 롤백·재색인 불필요.
+
+## 4. 테스트 결과 — 10/10 PASS (api 7 / unit 2 / e2e 1), 픽스 루프 0회
+- **인증 강제**: 무인증 `/`·`_cat/indices` **401**(수정 전 200), 인증 200+cluster health, 오답 비밀번호 401.
+- **노출 차단**: `ss -tlnp` **`127.0.0.1:9200` 단독**·`*:9200` 0건(1차 근거), 외부 IP curl 도달 실패(보조).
+- **침해 산출물 제거**: `read_me` 부재(`_count` 404), **`tracks` 21건 == 기준값**, 증거 파일 3종 경로·크기만 확인(내용 미열람).
+- **앱 정상**: 9005·9004 health 200, 검색 200·5건(하이브리드 포함), 로그 `[search.es] hits=17/13`·`es=21 mongo=21 in sync`, **ES 401 로그 0건**(색인 경로는 확정대로 3지점 코드 리뷰+401 부재 로그 갈음).
+- **MinIO 회귀(차단 안 함이 정상)**: `*:9100`·`*:9101` 불변, presign 200 + **직접 GET 206**(재생 경로 유지), 프록시 200.
+- 회귀·위생: v185~188 대표 정상(tz·직전 동선·탭②·CS 단건), **미러 5파일 diff 0**, git diff = ES 관련 10파일+산출물뿐(`.env`·타 스토어 설정·package.json 부재), 비밀번호 실값 0건·ES URL 크리덴셜 0.
+- planner 판정 6건(TESTPLAN): 바인딩 1차·curl 보조 / 증거 메타만·내용 전재 금지 / 색인 코드 리뷰 갈음 / `.env` 재확인만 / tracks 21건 / 타 스토어 현황 기재.
+
+## 5. 타 스토어 바인딩 현황 (사용자 결정 근거 — EXT_IP 마스킹)
+| 스토어 | 포트 | 바인딩 | 인증 | 상태 |
+|---|---|---|---|---|
+| Elasticsearch | 9200 | **127.0.0.1** | **활성(basic auth)** | ✅ 이번 조치 완료 |
+| MinIO API/Console | 9100 / 9101 | 0.0.0.0 | 액세스 키 | **유지 필수**(브라우저가 presign 으로 직접 접근 — 차단 시 영상 재생 파손) |
+| PostgreSQL | 5432 | 0.0.0.0 | 비밀번호 | 미조치(후속 판단 대상) |
+| MongoDB | 27017 | 0.0.0.0 | 계정 | 미조치(후속 판단 대상) |
+| Redis | 6379 | 0.0.0.0 | requirepass | 미조치(후속 판단 대상) |
+
+## 6. 특이사항 / 후속 권고
+- **`.env` 유출 우려 해소(확정)**: 루트 `.gitignore` 가 `.env`·`*.env` **이중 커버**, `git ls-files` tracked 0건(`.env.example` 2개만 정상), `git log --all -- "*/.env"` **빈 결과 = 과거에도 커밋된 적 없음**. 세션 초기의 "`.env` tracked" 우려는 **사실이 아님**이 실측 확정됐다.
+- **후속 권고 3건(이번 범위 밖 — 사용자 결정 필요)**: ① **전 스토어 크리덴셜 로테이션**(ES 침해 기간 중 동일 호스트의 타 스토어 비밀번호가 유출됐을 가능성은 낮으나 배제 불가 — 침해 사실이 확인된 이상 로테이션 권고) ② **PG/Mongo/Redis 루프백 바인딩**(앱은 localhost 접속 실측이라 기술적으로 안전하나, WSL2 환경에서 Windows 측 운영 도구 접근성이 환경 의존 → 사용자 확인 후 별도 버전) ③ **침해 신고 여부 판단**(증거 보존 완료 — 개인정보 유출은 미확인이나 침해 사실 자체는 확정).
+- tester 비고 2건: ① E2E 에서 UI 재생 트리거 셀렉터 미발견 → **MinIO 회귀는 API 레벨로 실증**(presign 200+직접 GET 206) ② ES cluster health **yellow 는 단일 노드 replica 미할당**(기존 상태 — 보안 변경과 무관).
+- 승계 후속 후보(10건 유지): `_iso` 공용화 / `formatPagePath` 유틸화 / 스크린샷 3단계 재평가 / signup_bonus day 백필·분기 / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채 / `_sum_points_by_user` 공통화.
+
+## 7. 변경 파일 (커밋 대상 13 — `.env` 제외)
+- 백엔드 10: `backend_9005/docker-compose.yml` `app/config.py` `app/database/elasticsearch.py` `app/services/embedding_service.py` `app/services/search_service.py` + `backend_9004/` 동일 5파일(미러 byte-identical 최종 실측)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v189 append)
+- **커밋 제외**: `backend_9005/.env`·`backend_9004/.env`(비밀번호 실값 — `.gitignore` 커버·미추적 확정), `scratchpad/v189_evidence/`(증거 원본 — 저장소 밖)
+- 무변경 확인: MinIO·PG·Mongo·Redis 설정, tracks 인덱스, 앱 기능 코드, package.json — git status 실측, 하니스 잔재 0건.
