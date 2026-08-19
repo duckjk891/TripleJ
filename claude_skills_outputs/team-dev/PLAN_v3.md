@@ -7,6 +7,24 @@
 
 ---
 
+## v3.51 — 2026-08-19 — 피드 카드 → 2D 게임창(픽셀 윈도우) 스타일
+
+### 요청 원문
+"이러지말고 아예 약간 2D 형태의 게임창(픽셀느낌)처럼 피드창을 만들면 어때?" (라이트 카드 톤 조정 중단 → 방향 전환)
+
+### Plan verification findings
+- v3.49~50에서 카드 색이 `feedCardLight` 팔레트로 중앙화(FeedCard+FeedScreen 공유) — 팔레트 교체 + 카드 크롬(테두리/그림자/타이틀바) 구조 추가로 전환 가능. 직전 미커밋 톤다운 값은 폐기하고 픽셀 팔레트로 대체.
+- RN에는 CSS pixelated border-image가 없음 → **각진 모서리(radius 2) + 2px 밝은 테두리 + 우하단 4px 오프셋 솔리드 그림자 + 타이틀바(작성자 줄 분리)**로 레트로 RPG 창을 표현.
+- 픽셀 폰트(Neo둥근모 등)는 폰트 에셋 로딩이 필요해 이번 범위 제외 — 특이사항에 후속 옵션으로 기록.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| components/feed/FeedCard.tsx | `feedCardLight`→`feedPixel` 팔레트(다크 창 배경·밝은 테두리·픽셀 그림자·인셋 필드), 카드 래퍼 3중 구조(cardWrap/cardShadow/card), 헤더를 타이틀바로 | [FeedCard] |
+| screens/FeedScreen.tsx | import·참조 교체, 트랙 칩 인셋(각진 모서리+1px 테두리) | [FeedScreen] |
+
+---
+
 ## v3.50 — 2026-08-19 — 피드 카드 톤 다운(라벤더 틴트+투명도)
 
 ### 요청
