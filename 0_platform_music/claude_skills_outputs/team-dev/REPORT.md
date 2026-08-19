@@ -15484,3 +15484,48 @@ ES 에 비트코인 몸값 요구 인덱스(`read_me`)가 존재하는 침해 �
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v189 append)
 - **커밋 제외**: `backend_9005/.env`·`backend_9004/.env`(비밀번호 실값 — `.gitignore` 커버·미추적 확정), `scratchpad/v189_evidence/`(증거 원본 — 저장소 밖)
 - 무변경 확인: MinIO·PG·Mongo·Redis 설정, tracks 인덱스, 앱 기능 코드, package.json — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v190 — DB 포트 외부 노출 차단 (PG·Mongo·Redis 루프백 바인딩) (2026-08-19 18:03)
+
+팀: platform-music-cs-send (planner/backend-dev/test-designer+tester — frontend-dev 무작업)
+
+## 1. 요청 작업
+사용자 지시("나머지 DB포트도 다 노출막는게 맞지않아?") — v189(ES) 에 이어 **PostgreSQL·MongoDB·Redis 3서비스를 루프백 바인딩으로 전환**. MinIO 는 브라우저 presign 직결 구조라 **의도적 유지**, ES 는 v189 완료분으로 무접촉.
+
+## 2. 설계 결정 (0단계 실측 기반 + planner 판정 2건)
+- **판정 ① Windows 도구 접근성 — 진행 가능(사용자 확인 불요)**: Docker Desktop 은 포트를 Windows 호스트 쪽 프록시로 발행하므로 `127.0.0.1` 바인딩이어도 **이 PC 의 `localhost:PORT` 접속은 유지**되고, 끊기는 것은 **다른 머신(LAN·테일스케일 피어)** 경로. 롤백은 compose 1줄. 앱 경로는 v189 ES 선례로 실증.
+- **판정 ② 재생성 방식 — 서비스 3개 명시 실행 확정**: `docker compose -f backend_9005/docker-compose.yml -p backend up -d postgres mongodb redis`. 바 `up -d` 금지(우리 compose 가 minio·ES 까지 정의 → 무관 서비스 재생성 위험), `down -v` 절대 금지.
+- **0단계 중요 발견 — 컨테이너 출처 불일치**: `docker inspect` 라벨상 **redis·minio 는 이미 부재한 legacy compose**(`1_oneCompany/.../backend/docker-compose.yml`) 출처, postgres·mongodb·ES 만 우리 파일 출처(전부 프로젝트명 `backend` 공유). → 무관 서비스 재생성 위험이 실재했고, **3서비스 명시 실행으로 회피**. redis 는 이번 재생성으로 라벨이 현존 파일로 정정됨(부수 개선), minio 라벨 고아 상태는 무접촉 원칙상 잔존.
+- **볼륨 parity 선실측(데이터 손실 판정의 근거)**: 실행 중 마운트가 `backend_postgres_data`·`backend_mongo_data`·`backend_redis_data` → 우리 compose 정의가 동일 프로젝트 스코프로 같은 볼륨에 재연결됨을 사전 확인(v189 ES 재생성 시 tracks 21건 유지로 이미 실증) → **재생성해도 데이터 유지** 예측, 사후 대조로 확정.
+
+## 3. 테스트 결과 — 9/9 PASS, 픽스 루프 0회
+- **데이터 무손실 확정(최우선 실행)**: PG **17테이블·1,182행 완전 일치**, Mongo 33컬렉션 일치, Redis 손실 0. **감소·소실 항목 0** — 증가분은 tester 유발분만(`issue_reports` +1 `[v190-test]`, `search_logs` +9, Redis 세션 +2).
+- **바인딩**: 5432·27017·6379 **`127.0.0.1` 단독**(`*`/`0.0.0.0`/`[::]` 0건), ES `127.0.0.1:9200` 불변, **MinIO `*:9100`·`*:9101` 불변**(PASS 조건 충족). `docker ps` 교차 일치. 외부 도달(보조): 3포트 전부 실패, 9100 만 성립(기대값).
+- **앱 기능(9005·9004 양쪽)**: health / PG(로그인·목록) / Mongo(잔액·신고 조회+접수 201) / **Redis(토큰 재사용 인증 200 + 차트 캐시 200)** / ES(검색 5건) — **커넥션 오류 0건**. MinIO presign 200 + **직접 GET 206** + 프록시 200.
+- **순단 0**: 백엔드 **재기동 불요**(커넥션 풀 자동 재연결), UI 에 무한 로딩·500 배너 등 순단 흔적 0, 콘솔 0. E2E: 로그인→검색→**재생 presign(readyState 1·duration 238s)**→새로고침 후 세션 유지(Redis 재연결 실증).
+- 회귀: v185~189 대표 전부 정상(tz·직전 동선·탭②·CS 단건·**ES 무인증 401·read_me 404·tracks 21**), compose 2파일 `diff -q` 동일, git diff = compose 2파일+산출물뿐.
+
+## 4. 최종 바인딩 현황표 (v189+v190 합산)
+| 스토어 | 포트 | 바인딩 | 인증 | 상태 |
+|---|---|---|---|---|
+| PostgreSQL | 5432 | **127.0.0.1** | 비밀번호 | ✅ v190 차단 |
+| MongoDB | 27017 | **127.0.0.1** | 계정 | ✅ v190 차단 |
+| Redis | 6379 | **127.0.0.1** | requirepass | ✅ v190 차단 |
+| Elasticsearch | 9200 | **127.0.0.1** | **basic auth** | ✅ v189 차단+인증 |
+| MinIO API/Console | 9100 / 9101 | 0.0.0.0 | 액세스 키 | **의도적 유지** — 브라우저 presign 직결(재생 GET 206 실증). 차단 시 영상 재생 파손 |
+
+**총평: v189(ES)+v190(PG·Mongo·Redis) 합산으로 DB 4종의 외부 노출이 전부 해소**됐다. 남은 외부 개방은 MinIO 2포트뿐이며, 이는 서비스 구조상 필수(액세스 키 보호 + presign 만료 의존).
+
+## 5. 사용자 고지 / 특이사항
+- **다른 기기에서의 DB 직결 워크플로가 있었다면 끊긴다**(DBeaver·Compass·redis-cli 원격 접속, 타 서버 배치 작업, 원격 백업 등). **이 PC 의 Windows localhost 접속은 유지**되고, **앱·영상 재생은 영향 없음**. 대안은 **SSH 터널 또는 테일스케일 경유** — 포트 재개방은 보안 조치 원복이라 비권장. **사용자 회신 대기 중이며, 회신 도착 시 본 항목을 갱신**한다.
+- 순단 0 확인으로 백엔드 재기동은 수행하지 않았다(불필요).
+- 후속 후보 2건: ① **크리덴셜 로테이션**(사용자 판단으로 AWS 이전 시점으로 연기) ② **minio 컨테이너의 legacy compose 라벨 고아 정정**(현재 부재 파일 참조 — 기능 영향 0, 무접촉 원칙으로 이번 미조치).
+- 승계 후속 후보(기존 10건 유지): `_iso` 공용화 / `formatPagePath` 유틸화 / 스크린샷 3단계 재평가 / signup_bonus day 백필·분기 / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채 / `_sum_points_by_user` 공통화.
+
+## 6. 변경 파일 (커밋 대상 5)
+- 백엔드 2: `backend_9005/docker-compose.yml` `backend_9004/docker-compose.yml`(3서비스 ports 3줄씩 + 경위 주석, **바이트 동일 최종 실측**)
+- 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v190 append)
+- **커밋 제외**: `scratchpad/v190_snapshot/`(대조 스냅샷 — 저장소 밖), `.env`(무변경·미추적)
+- 무변경 확인: MinIO·ES compose 블록, 앱 코드 전체, `.env`, package.json — git status 실측, 삭제(D) 항목 0, 하니스 잔재 0건.

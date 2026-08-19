@@ -27284,3 +27284,61 @@ E2E (실발송 금지):
 - ES 재기동 중 검색 일시 중단(사용자 승인). 백엔드 2대 재기동 필요 — 재기동 실패 시 즉시 롤백(compose 원복) 후 보고.
 - security=true 첫 기동 시 기존 데이터 볼륨과의 호환: 8.12 는 볼륨 유지로 부팅 가능하나, **실패 시 대안은 데이터 재색인**(tracks 는 앱 자동 백필로 복구 가능 — 6/30 사례로 실증됨).
 - 후속 권고(범위 밖): 전 스토어 크리덴셜 로테이션, PG/Mongo/Redis 127.0.0.1 바인딩, 오버레이 네트워크 방화벽 점검, 침해 신고 여부 판단.
+
+---
+
+# v190 — DB 포트 외부 노출 차단 (PG·Mongo·Redis 루프백 바인딩) (2026-08-19 17:50)
+
+## 0. 사전 실측 (planner 직접)
+
+- **현재 바인딩**: `ss -tlnp` — `*:5432`·`*:27017`·`*:6379`·`*:9100`·`*:9101`(모든 인터페이스) / **`127.0.0.1:9200`(ES — v189 완료)**. `docker ps` 포트 매핑도 동일(`0.0.0.0` + `[::]`).
+- **앱 접속 경로**: 9005·9004 `.env` 모두 `POSTGRES_HOST=localhost`·`MONGO_HOST=localhost`·`REDIS_HOST=localhost` — 백엔드는 호스트(WSL) uvicorn 이라 루프백 발행으로 충분. **v189 ES 선례로 실증**(127.0.0.1 전환 후 검색·색인 정상).
+- **compose 외 포트 개방 경로 없음**: `run.sh`·`scripts/*.sh` 에 포트 발행 없음, compose 파일은 9004/9005 2개뿐(바이트 동일 실측).
+- **⚠ 중요 발견 — 컨테이너 출처 불일치**: `docker inspect` 라벨 실측 결과 **redis·minio 는 이미 존재하지 않는 legacy compose**(`/mnt/d/1_projects/0_myProjects/1_oneCompany/0_platform_music/backend/docker-compose.yml` — **파일 부재 확인**)에서 생성됨. postgres·mongodb·elasticsearch 만 `backend_9005/docker-compose.yml` 출처. 전부 동일 프로젝트명 `backend`.
+- **볼륨 parity 실측(데이터 손실 위험 판정의 핵심)**: 실행 중 컨테이너 마운트 = `backend_postgres_data`·`backend_mongo_data`·`backend_redis_data`·`backend_minio_data`·`backend_es_data` — **우리 compose 의 `postgres_data`/`mongo_data`/`redis_data` 가 동일 프로젝트(`backend`) 스코프로 해석되면 같은 볼륨에 그대로 재연결**. 즉 재생성해도 **데이터 유지**(v189 ES 재생성 시 tracks 21건 유지로 이미 실증). 잔여 `aimu_redis_data` 볼륨 1개는 과거 프로젝트명 잔재(미사용·무해).
+
+## 1. planner 판정 2건 (오케스트레이터 보고 사항)
+
+1. **Windows 측 DB 도구 접근성 — 진행 가능(사용자 확인 불요) 판정.** 근거: ① Docker Desktop 은 컨테이너 포트를 **Windows 호스트 쪽에서 프록시로 발행**하므로 `127.0.0.1:PORT` 바인딩이어도 **Windows 의 `localhost:PORT` 접속은 유지**되고, 차단되는 것은 **다른 머신(LAN·테일스케일 피어)** 에서의 접근이다 ② 앱 경로는 v189 ES 선례로 실증 ③ 되돌리기가 **compose 1줄 원복 + 컨테이너 재생성**으로 즉시 가능. **단, 사용자가 "이 PC 가 아닌 다른 기기"에서 DBeaver/Compass 등으로 붙는 구성이면 그 경로만 끊긴다** — 해당 사용 여부는 REPORT 특이사항으로 고지하고, 필요 시 SSH 터널·테일스케일 ACL 로 대체 권고.
+2. **재생성 방식 — 서비스 3개 명시 실행 확정**: `docker compose -f backend_9005/docker-compose.yml -p backend up -d postgres mongodb redis`. **바 `up -d`(서비스 미지정) 금지** — 우리 compose 가 minio·elasticsearch 까지 정의하고 있어 무관 서비스가 재생성될 수 있고, **minio 는 legacy 출처 컨테이너라 무접촉 원칙 대상**(§0). `--force-recreate` 불요(포트 변경분은 compose 가 자동 재생성), **`down -v` 절대 금지**.
+   - 부수효과(무해·정합): redis 를 우리 파일로 재생성하면 compose 라벨이 **현존 파일로 정정**된다(현재는 부재 파일 참조 — 오히려 개선). minio 는 라벨 고아 상태 유지(무접촉).
+
+## 2. 설계 결정
+
+| 결정 | 내용 | 근거 |
+|---|---|---|
+| 변경 대상 | compose 2파일의 **postgres·mongodb·redis 3서비스 ports 만** `127.0.0.1:` 접두 추가 | 오더 범위 |
+| MinIO | **무접촉**(`*:9100`·`*:9101` 유지) — 브라우저가 presign 으로 직접 접근(v189 확정) | 강행 금지 |
+| ES | **무접촉**(v189 완료분) | - |
+| 바이트 동일 | 9005 수정 후 9004 에 동일 반영 — `diff -q` 로 동일 확인 | 관례 |
+| 실행 | §1 판정 2 의 3서비스 명시 명령 1회, 볼륨 무삭제 | 데이터 보존 |
+| 사전 스냅샷 | 재생성 **전** 데이터 기준값 수집: PG 테이블 수·핵심 행수(users 등), Mongo 컬렉션 수·핵심 문서수(play_logs 등), Redis `DBSIZE` — 사후 대조용 | 무손실 입증 |
+| 백엔드 | 접속 URL 불변(localhost)이라 재기동 불요 — 단 커넥션 풀 재연결 확인 후 필요 시 재기동 | 최소 개입 |
+
+## 3. 변경 매트릭스
+
+| 파일 | 변경 |
+|---|---|
+| `backend_9005/docker-compose.yml` | postgres·mongodb·redis ports 3줄 `127.0.0.1:` 접두 |
+| `backend_9004/docker-compose.yml` | 동일(바이트 동일 유지) |
+| **무변경** | minio·elasticsearch 블록, .env, 앱 코드 전부 |
+
+## 4. 작업 분담
+- **backend-dev**: ① **사전 스냅샷 수집**(PG/Mongo/Redis 기준값 — 산출물에 수치만) ② compose 2파일 3줄씩 수정 + `diff -q` 동일 확인 ③ **3서비스 명시 재생성**(§1-2 명령 그대로, `down -v` 금지) ④ `ss -tlnp` 즉시 실측(5432·27017·6379 `127.0.0.1` 단독 / MinIO `*:9100`·`*:9101` 불변 / ES `127.0.0.1:9200` 불변) ⑤ 데이터 사후 대조(스냅샷 동일) ⑥ 백엔드 2대 health + 각 DB 경유 API 1건씩 자가 확인 ⑦ 이상 시 **즉시 롤백**(compose 원복→3서비스 재생성) 후 보고.
+- **frontend-dev**: 작업 없음.
+- **test-designer**: §5.
+
+## 5. 테스트 항목 (test-designer)
+안전 제약: **tester 쓰기 최소** — 컨테이너 조작·볼륨 접근 금지(backend-dev 몫), 데이터는 읽기 대조만. 실사용자 데이터 무접촉.
+1. 바인딩: `ss -tlnp` **5432·27017·6379 = `127.0.0.1` 단독**(`*:PORT` 0건) / **MinIO `*:9100`·`*:9101` 불변**(변경됐다면 FAIL) / ES `127.0.0.1:9200` 불변. `docker ps` 포트 매핑 교차 확인.
+2. 외부 도달(보조): 외부 인터페이스 IP 로 3포트 접속 실패(1차 근거는 §1 관례대로 바인딩 실측).
+3. **데이터 무손실**: PG 테이블 수·행수(users 등), Mongo 컬렉션 수·문서수(play_logs 등), Redis 키 수 — **backend-dev 사전 스냅샷과 정확 일치**.
+4. 앱 기능(9005·9004 양쪽): health 200 / **로그인(PG)** / 트랙 목록·검색(Mongo+ES) / 별 잔액(Mongo) / 신고 접수 조회(Mongo) / 세션·잠금(Redis 경유 경로 1건) — 각 DB 경유 1건 이상 200.
+5. **MinIO 회귀**: presign 발급 200 + 직접 GET 206(v189 방식) — 재생 경로 유지 실증.
+6. 회귀: v185~189 대표(신고·탭②·CS cid·시각 표기·ES 인증 401/200)·**compose 2파일 `diff -q` 동일**·git diff = compose 2파일+산출물뿐.
+
+## 6. 리스크 / 강행 금지
+- **강행 금지**: ① **MinIO·ES 블록 무접촉**(재생성 대상에서도 제외 — 서비스 3개 명시 실행 필수) ② **`down -v`·볼륨 삭제 금지** ③ 비밀번호·크리덴셜 변경 금지(로테이션 별건) ④ 실사용자 데이터 무접촉 ⑤ compose 2파일 바이트 동일 유지 ⑥ 앱 코드·.env 무변경 ⑦ v177~189 승계.
+- **다른 기기에서의 DB 직결이 있으면 끊긴다** — 현재 그런 구성 증거는 없으나(앱은 전부 localhost), 사용자 워크플로 확인 전까지는 REPORT 고지 사항으로 남긴다. 필요 시 SSH 터널·테일스케일 ACL 권고.
+- redis·minio 의 legacy compose 라벨(부재 파일 참조)은 이번에 redis 만 정정됨 — minio 라벨 고아 상태는 **의도적 잔존**(무접촉 우선), 후속 후보로 등재.
+- 재생성 중 순단 발생(수 초) — 백엔드 커넥션 풀이 재연결하는지 확인, 실패 시 백엔드 재기동으로 해소.
