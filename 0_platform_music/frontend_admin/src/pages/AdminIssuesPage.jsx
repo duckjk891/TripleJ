@@ -260,6 +260,22 @@ export default function AdminIssuesPage() {
     if (!cached || cached.error) fetchHistory(fp);
   };
 
+  // v187 — 행 아무데나 클릭해도 확장 토글. 단, 드래그로 텍스트를 선택한 뒤의 클릭은 무시한다
+  // (관리자가 에러 메시지를 드래그해 복사하는 도중 행이 접히는 것 방지).
+  const handleRowToggle = (fp) => {
+    const selected = window.getSelection?.().toString() || '';
+    if (selected) return;
+    handleToggleGroup(fp);
+  };
+
+  // v187 — 키보드 접근성(Enter/Space). 행 내부 버튼에서 올라온 키 이벤트는 버튼이 자체 처리하므로 무시(이중 토글 방지).
+  const handleRowKeyDown = (e, fp) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault(); // Space 페이지 스크롤 방지
+    handleToggleGroup(fp);
+  };
+
   // v186 — 그룹 프로브 재확인(api 필드 보유 + GET 한정 — 호출측 분기 보장)
   const handleProbeGroup = useCallback(async (fp, repApi) => {
     if (probeState[fp]?.probing) return;
@@ -685,9 +701,20 @@ export default function AdminIssuesPage() {
                       // 행 확장 이력에서 api 보유 대표 이벤트(재확인/curl 분기 기준)
                       const repApi = (hist?.data?.events || []).find((ev) => ev.api)?.api || null;
                       const repIsGet = repApi && String(repApi.method || '').toUpperCase() === 'GET';
+                      // 이력 로딩 전에는 repApi 판정이 확정되지 않으므로 "api 없음" 안내를 띄우지 않는다(오안내 방지)
+                      const histReady = !!hist && !hist.loading && !hist.error;
                       return (
                         <Fragment key={g.fingerprint}>
-                          <tr>
+                          {/* v187 — 행 전체 클릭 확장(기존 [발생 이력] 버튼은 유지). tabIndex/aria-expanded/키보드 병행.
+                              role="button" 은 두지 않는다 — table row 시맨틱(행 위치·열 연관)이 깨지는 데다
+                              행 안의 실제 [발생 이력] 버튼이 이미 보조기술 경로를 제공하므로 중복 role 은 손해만 크다. */}
+                          <tr
+                            className="admin-issues__err-row"
+                            tabIndex={0}
+                            aria-expanded={expanded}
+                            onClick={() => handleRowToggle(g.fingerprint)}
+                            onKeyDown={(e) => handleRowKeyDown(e, g.fingerprint)}
+                          >
                             <td className="admin-issues__summary-cell" title={g.message || undefined}>{summarize(g.message, 80)}</td>
                             <td>{(g.count ?? 0).toLocaleString()}</td>
                             <td>{(g.users ?? 0).toLocaleString()}</td>
@@ -708,7 +735,8 @@ export default function AdminIssuesPage() {
                             <td>
                               <button
                                 className="admin-btn admin-btn--small"
-                                onClick={() => handleToggleGroup(g.fingerprint)}
+                                // v187 — 행 클릭 토글과 겹쳐 즉시 되접히는 이중 토글 방지
+                                onClick={(e) => { e.stopPropagation(); handleToggleGroup(g.fingerprint); }}
                                 aria-expanded={expanded}
                               >
                                 발생 이력 {expanded ? '▲' : '▼'}
@@ -719,7 +747,8 @@ export default function AdminIssuesPage() {
                             <tr className="admin-issues__detail-row">
                               <td colSpan={7}>
                                 {/* v186 — 프로브 재확인(GET) / 재현 명령 복사(비 GET) */}
-                                {repApi && (
+                                {/* v187 — api 정보가 없는 그룹은 버튼 부재 사유를 안내(빈 자리 방치 금지) */}
+                                {repApi ? (
                                   <div className="admin-issues__probe-bar">
                                     {/* planner 판정 — GET 행은 [지금 재확인]+[재현 명령 복사] 병행, 비 GET 은 복사만 */}
                                     {repIsGet && (
@@ -744,7 +773,11 @@ export default function AdminIssuesPage() {
                                     )}
                                     {probe.notice && <span className="admin-issues__probe-notice">{probe.notice}</span>}
                                   </div>
-                                )}
+                                ) : histReady ? (
+                                  <p className="admin-issues__probe-na">
+                                    재호출할 API 정보가 없는 에러입니다(콘솔·소켓 오류 등) — 재확인·재현 명령을 제공할 수 없습니다.
+                                  </p>
+                                ) : null}
                                 {(probe.log || []).length > 0 && (
                                   <ul className="admin-issues__history admin-issues__probe-log">
                                     {probe.log.map((p, i) => (

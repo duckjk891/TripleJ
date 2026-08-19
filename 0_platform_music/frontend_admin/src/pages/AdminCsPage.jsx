@@ -83,7 +83,7 @@ export default function AdminCsPage() {
   // v185 — /cs?cid= 진입 시 해당 대화 초기 선택 (1회. 쿼리 없으면 기존 동작 불변)
   const [searchParams] = useSearchParams();
   const pendingCidRef = useRef(searchParams.get('cid') || null);
-  // v186 픽스 — 목록 밖 대화(미전송 pending 은 목록 제외 정책) 단건 합류분.
+  // v186 픽스 — 목록 밖 대화(원인은 페이지네이션: 아래 목록 로드가 page:1·limit:30 만 가져오는데 서버 total 은 133) 단건 합류분.
   // 폴링 재로드가 덮어쓰지 않게 ref 로 유지, 서버 목록에 나타나면 주입 종료.
   const injectedConvRef = useRef(null);
   const scrollActiveRef = useRef(false); // cid 진입으로 연 대화만 1회 스크롤
@@ -170,7 +170,8 @@ export default function AdminCsPage() {
   }, [loadConversations]);
 
   // v185 — cid 쿼리 초기 선택 (1회). v186 — 목록에 없으면 단건 조회로 합류시켜 연다:
-  // 사용자가 먼저 만든 pending 대화는 공식 계정 목록에서 제외되므로 목록 검색만으로는 못 찾는다.
+  // v187 정정 — 실원인은 페이지네이션이다. 목록은 첫 30건만 로드하므로(서버 total 133 실측)
+  // 그 밖 순번의 대화는 목록 검색만으로 못 찾는다("pending 은 목록 제외 정책"은 초기 가설 오기였다).
   useEffect(() => {
     const cid = pendingCidRef.current;
     if (!cid || !convsLoadedOnce) return;

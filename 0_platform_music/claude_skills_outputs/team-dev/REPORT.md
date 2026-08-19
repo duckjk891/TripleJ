@@ -15352,3 +15352,40 @@ v185 예약분 2단계: ① 프로브 재확인(탭②·신고 상세 [지금 �
 - 관리자 앱 4: `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` `frontend_admin/src/api.js` `frontend_admin/src/pages/AdminLogsPage.jsx`(짝 항목 2)
 - 산출물 3: `claude_skills_outputs/team-dev/PLAN.md` `TESTPLAN.md` `REPORT.md` (v186 append)
 - 무변경 확인: issues.py·사용자 앱 전체·AdminCsPage·package.json(httpx 기존 의존) — git status 실측, 하니스 잔재 0건.
+
+---
+
+# v187 — 탭② 행 확장 UX 개선 + CS 대화 열기 픽스 정식 편입 (2026-08-19 15:34)
+
+팀: platform-music-cs-send (planner/frontend-dev/test-designer+tester — backend-dev 무작업)
+
+## 1. 요청 작업
+사용자 E2E 보고 2건: **A** 탭②에 "지속 여부" 열이 없고 행을 클릭해도 안 펼쳐져 [지금 재확인]을 확인 못 함 / **B** "CS 대화 열기"가 해당 대화를 바로 열어야 하는데 안 됨(오케스트레이터가 solo 로 선픽스한 a479669 를 team-dev 규율로 정식 재검증). 프론트 전용 — 백엔드 변경 없음.
+
+## 2. 설계 결정 (0단계 실측 기반)
+- **A 원인 규명 — "코드 정상·구번들" + 진짜 결함 2건**: 헤더 7열은 `AdminIssuesPage.jsx:675` 에서 **무조건 렌더**(조건부 아님), 확장 트리거는 우측 전용 버튼(`<tr>` onClick 부재) — 사용자 5열 스크린샷은 **구번들** 판정(헤드리스 7열·확장 버튼 22개 증적과 배치). 다만 실사용 관점 결함 2건 확정: ① **행 클릭 트리거 부재**(사용자 관찰이 정확) ② `{repApi && ...}` 로 **api 정보 없는 그룹은 프로브 바 자체가 미렌더 + 사유 안내도 없음**("버튼 확인도 못 한다"의 직접 원인).
+- **A-① 행 클릭 토글**: 기존 버튼 유지(명시적 어포던스)+행 onClick, 버튼 `stopPropagation`(이중 토글 방지), Enter/Space 키보드(`e.target !== e.currentTarget` 로 버튼 위 키 이벤트 차단), **`getSelection` 가드**(드래그로 에러 메시지 복사 중 행이 접히는 것 방지).
+- **A-② 안내**: `{repApi ? 프로브바 : histReady ? 안내 : null}` — "재호출할 API 정보가 없는 에러입니다(콘솔·소켓 오류 등)". **`histReady` 가드는 dev 판단(planner 승인)**: repApi 가 이력 응답 파생이라 로딩 중 null → 가드 없으면 api 보유 그룹에도 오안내가 순간 노출.
+- **A-③ 빌드 표기 도입 경위(구번들 오판 재발 방지)**: 이번 사고의 실비용은 "사용자와 팀이 서로 다른 화면을 보고 논쟁한 시간" — 화면에 빌드 시각이 있으면 1초 판별로 진단 비용이 0 에 수렴. `vite.config.js` define + 사이드바 푸터 `빌드 MM-DD HH:mm`(title 에 Ctrl+Shift+R 안내), 주입 실패는 표기 생략으로 흡수. **dev 서버에서는 이 값이 "vite 프로세스 기동 시각" 의미**(define 은 빌드 타임 상수 — HMR 로 갱신되지 않음). **dev 캐시 정책은 변경하지 않음**(Vite dev 는 이미 no-cache — 사용자 브라우저 캐시는 서버 정책으로 못 막음, 과설계 기각).
+- **planner 스팟체크 정정 1건**: `<tr role="button">` **제거**(tabIndex/aria-expanded/onClick/onKeyDown 유지) — role 이 row 시맨틱(행 위치·열 연관)을 파괴하는데 행 내부에 접근 가능한 실제 버튼이 이미 있어 AT 경로가 확보돼 있고, `aria-expanded` 는 role=row 에서 유효, eslint 에 jsx-a11y 부재 실측으로 신규 오류도 없음.
+- **B 소급 편입 + 원인 정정**: a479669(백엔드 `GET /admin/cs/conversations/{cid}` 신설·9004 미러 + 프론트 단건 합류·폴링 유지·scrollIntoView)를 매트릭스에 소급 기록. **실원인은 "pending 목록 제외 정책"이 아니라 페이지네이션** — 프론트가 `page:1, limit:30`(AdminCsPage.jsx:98)만 로드하는데 서버 total 133(planner 실측). 초기 가설이 남은 주석을 **주석 3줄 정정**(로직 무변경 — 해법은 두 원인 모두 덮음).
+
+## 3. 테스트 결과 — 8/8 PASS (unit 4 / api 3 / e2e 1), 픽스 루프 0회
+- **§0 선행 절차 준수**: 하드 새로고침 후 빌드 표기(`08-19 15:17`) 기록 → 헤더 7열 교차 확인(구번들 아님 확정) 후 전 판정 수행 — 이번 사고의 재발을 테스트 프로토콜로 봉인.
+- 핵심 증적: 행 클릭 토글·버튼 1회 반응·Enter/Space·**드래그 선택 가드 실증**(선택 상태 클릭 시 토글 무시) / api 부재 그룹 안내+버튼 부재, api 보유 그룹 v186 회귀(재확인+curl 병행) / 빌드 표기 재기동 후 `15:32` 갱신·4000 무영향 / 신규 단건 조회 **401·403·404·200**(200 은 목록 키 집합 완전 일치)·비공식 403·9004 diff 0 / CS 열기 5종(목록 밖 열림·폴링 유지·스크롤 1회·잘못된 cid 무시·무쿼리 회귀) / 개인정보 3면 0건 / git diff = 프론트 6파일+산출물뿐(백엔드·사용자 앱·package.json 부재), AdminCsPage 주석 3줄만.
+- planner 판정 6건(TESTPLAN §4): FAR_CID (a) 우선·(b) 열람 전용 승인 / 캡처 범위·본문 미기재 / api 부재 그룹 기존 재사용 / **비공식 대화 404·403 코드 실측 고정** / 빌드 표기 dev 재기동 기본안 / 프로브 실행 0건.
+
+## 4. 특이사항 (정직 보고)
+- **`/read` POST 2건 부수효과**: 대화 열람 시 앱이 자동 호출하는 **읽음 표시**(v185 이전부터의 기존 동작 — 이번 변경과 무관). 발신·상태 변경은 아니나 **열람한 대화 2건의 unread 가 0 이 됨**(실사용자 대화 1건 포함 — cid 앞 8자만 기재). 열람 전용 원칙의 경계 사례로 기록하며, 차기 검증 시 "열람 자체가 읽음 처리를 유발"함을 사전 고지 항목으로 승계.
+- **콘솔 404 2건**: 잘못된 cid 시나리오가 **의도적으로 유발**한 것(UI 무시·크래시 0 — 정상 판정).
+- **TESTPLAN 문안의 `role="button"` 실재 확인 항목은 소멸**: planner 스팟체크 정정으로 role 을 제거했으므로 해당 문안은 무효(비고 처리 — 판정 영향 없음).
+- **FAR_CID**: 승인된 (b) 경로 사용 — 실사용자 대화 1건 **열람 전용**(발신·상태 변경 0, 본문·닉네임 미기재).
+- **a479669 소급 편입 경위**: 오케스트레이터 solo 픽스(PLAN/TESTPLAN 미기록·게이트 미실시)를 이번 버전에서 매트릭스 소급 기록 + 시나리오 정식 편성 + tester 실행으로 team-dev 규율 사후 충족. 원인 정정(페이지네이션) 포함.
+- 잔존물: 없음(쓰기 0건 — 프로브·발신·상태 변경·신고 생성 전무). 4001 은 vite define 반영 위해 재기동된 상태.
+- 승계 후속 후보(8건 유지): 스크린샷 첨부 3단계 재평가 / signup_bonus day 백필·분기 / point_events day 인덱스 / CS 모달 드롭다운 통합 / nickname tie 결정화 / search_users↔브라우즈 필터 동기화 / eslint 부채(AdminCsPage:169 기존 1건 포함) / `_sum_points_by_user` 공통화. **신규 승계: "열람 = 읽음 처리" 사전 고지 항목**.
+
+## 5. 변경 파일 (커밋 대상 8)
+- 관리자 앱 6: `frontend_admin/src/pages/AdminIssuesPage.jsx` `.css` `frontend_admin/src/components/AdminLayout.jsx` `AdminLayout.css` `frontend_admin/vite.config.js` `frontend_admin/src/pages/AdminCsPage.jsx`(주석 3줄만)
+- 산출물 2: `claude_skills_outputs/team-dev/PLAN.md`(§7 정정 포함) `TESTPLAN.md`
+- 본 REPORT: `claude_skills_outputs/team-dev/REPORT.md` (v187 append)
+- 무변경 확인: 백엔드 전체·사용자 앱 전체·package.json — git status 실측, 하니스 잔재 0건. (B 백엔드는 a479669 에서 기 커밋·미러 완료 — 이번 diff 에 없음이 정상.)

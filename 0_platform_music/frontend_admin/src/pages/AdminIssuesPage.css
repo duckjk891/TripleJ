@@ -447,6 +447,28 @@
   color: var(--color-danger);
 }
 
+/* ── v187 — 행 클릭 확장 + api 부재 안내 ─────────────── */
+
+/* 자동 수집 에러 행: 행 아무데나 클릭해 확장 (버튼도 병행 유지) */
+.admin-issues__err-row {
+  cursor: pointer;
+}
+
+.admin-issues__err-row:hover > td {
+  background: var(--color-hover);
+}
+
+.admin-issues__err-row:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.admin-issues__probe-na {
+  padding: 6px 4px 10px;
+  font-size: 0.82rem;
+  color: var(--color-text-sub);
+}
+
 .admin-issues__probe-time {
   margin-left: 6px;
   font-size: 0.74rem;

@@ -89,6 +89,16 @@
   justify-content: center;
 }
 
+/* v187 — 사이드바 푸터 빌드 표기(구번들 오인 1초 판별용). nav 가 flex:1 이라 하단 고정 */
+.admin-sidebar__build {
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  color: var(--color-text-sub);
+  letter-spacing: 0.02em;
+  cursor: default;
+}
+
 .admin-content {
   margin-left: 240px;
   flex: 1;

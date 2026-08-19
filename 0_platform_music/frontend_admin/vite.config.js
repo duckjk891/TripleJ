@@ -27,6 +27,12 @@ function resolveCertDir() {
 const certDir = resolveCertDir()
 const useHttps = !!certDir
 
+// v187 — 구번들 오인 방지(관리자 앱 한정): 번들 생성 시각을 상수로 주입한다.
+// define 은 "빌드 타임 상수" 치환이므로 dev 서버에서는 HMR 로 갱신되지 않는다
+// → dev 에서 이 값의 의미는 "vite dev 프로세스 기동 시각"(사이드바 툴팁에 하드 새로고침 안내 병기).
+// 라이브러리 추가 없음 / dev 캐시 정책 무변경.
+const BUILD_TIME = new Date().toISOString()
+
 if (useHttps) {
   console.info(`[vite] HTTPS enabled (mkcert cert at ${certDir})`)
 } else {
@@ -35,6 +41,9 @@ if (useHttps) {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __BUILD_TIME__: JSON.stringify(BUILD_TIME),
+  },
   server: {
     port: 4001,
     host: '0.0.0.0',

@@ -1,3 +1,4 @@
+/* global __BUILD_TIME__ */
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { FiGrid, FiUsers, FiMusic, FiLogOut, FiFlag, FiMessageSquare, FiFileText, FiStar, FiShoppingBag, FiAlertCircle } from 'react-icons/fi';
@@ -6,6 +7,21 @@ import { getCsUnreadCount } from '../api';
 import './AdminLayout.css';
 
 const CS_UNREAD_POLL_MS = 30000;
+
+// v187 — 구번들 오인 방지: vite.config.js 의 define 으로 주입된 번들 생성 시각(ISO).
+// define 은 빌드 타임 상수 치환이라 HMR 로 갱신되지 않는다
+// → dev 서버에서는 이 값이 "vite dev 프로세스 기동 시각"을 의미한다(빌드 산출물에서는 실제 빌드 시각).
+// 표기 실패는 화면을 막지 않도록 빈 문자열로 흡수(주입 누락·파싱 실패 대비).
+const BUILD_LABEL = (() => {
+  try {
+    const d = new Date(__BUILD_TIME__);
+    if (Number.isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch {
+    return '';
+  }
+})();
 
 // v162 — 관리자 독립 앱: 라우트 루트 승격(/, /users, /tracks, /reports).
 // "메인으로" 백링크는 삭제(사용자 앱 origin 이 환경별로 달라 하드코딩 부적절) → 로그아웃 버튼.
@@ -78,6 +94,11 @@ export default function AdminLayout({ children }) {
             <FiAlertCircle /> 오류 신고
           </NavLink>
         </nav>
+        {BUILD_LABEL && (
+          <div className="admin-sidebar__build" title="화면이 최신이 아니면 Ctrl+Shift+R">
+            빌드 {BUILD_LABEL}
+          </div>
+        )}
       </aside>
       <main className="admin-content">
         {children}
