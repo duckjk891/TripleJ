@@ -106,6 +106,9 @@ export const adminPurge = (reportId, targets) =>
 // 대화 목록 → { conversations:[{conversation_id, peer:{id,nickname,profile_image,code},
 //   last_message_text, last_at, unread}], pagination }
 export const getCsConversations = (params) => API.get('/admin/cs/conversations', { params });
+// 단건 대화 조회 (v186 — /cs?cid= 진입 시 목록 밖 대화 합류용. 미전송 pending 대화 포함,
+// official 참여 검증 404/403) → { conversation: {conversation_id, peer, last_message_text, last_at, unread} }
+export const getCsConversation = (cid) => API.get(`/admin/cs/conversations/${cid}`);
 // 대화 메시지 (before 커서 페이지네이션) → { messages:[{id, sender_id, text, created_at, read}], ... }
 export const getCsMessages = (cid, params) =>
   API.get(`/admin/cs/conversations/${cid}/messages`, { params });

@@ -110,6 +110,32 @@ async def list_cs_conversations(
         return JSONResponse(status_code=500, content={"error": "대화 목록을 불러올 수 없습니다."})
 
 
+@router.get("/conversations/{cid}")
+async def get_cs_conversation(
+    cid: str,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """단건 대화 조회 — 목록(list_conversations)에 안 잡히는 대화 합류용.
+
+    사용자가 먼저 만든 pending(메시지 요청) 대화는 공식 계정 목록에서 제외되므로
+    `/cs?cid=` 진입 시 좌측 목록에서 찾을 수 없다. 목록과 동일한 형태로 단건을
+    반환해 프론트가 선택 상태로 렌더할 수 있게 한다. 공식 참여 검증은 동일.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    logger.info("[admin-cs] cid=%s admin=%s get conversation", _short(cid), admin_tag)
+    try:
+        official_id = await _resolve_official(conn)
+        conv = await _assert_official_conversation(get_mongo(), cid, official_id, admin_tag)
+        items = await dm_service._hydrate_conversation_list(conn, [conv], official_id)
+        return {"conversation": items[0]}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-cs] get conversation failed cid=%s admin=%s", _short(cid), admin_tag)
+        return JSONResponse(status_code=500, content={"error": "대화를 불러올 수 없습니다."})
+
+
 @router.get("/conversations/{cid}/messages")
 async def get_cs_messages(
     cid: str,

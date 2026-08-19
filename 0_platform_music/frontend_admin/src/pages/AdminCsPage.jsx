@@ -5,6 +5,7 @@ import AdminBroadcastModal from '../components/AdminBroadcastModal';
 import AdminCsSendModal from '../components/AdminCsSendModal';
 import {
   getCsConversations,
+  getCsConversation,
   getCsMessages,
   replyCs,
   markCsRead,
@@ -79,9 +80,14 @@ export default function AdminCsPage() {
   const activeCidRef = useRef(activeCid);
   useEffect(() => { activeCidRef.current = activeCid; }, [activeCid]);
 
-  // v185 — /cs?cid= 진입 시 해당 대화 초기 선택 (1회, 목록에 없으면 무시. 쿼리 없으면 기존 동작 불변)
+  // v185 — /cs?cid= 진입 시 해당 대화 초기 선택 (1회. 쿼리 없으면 기존 동작 불변)
   const [searchParams] = useSearchParams();
   const pendingCidRef = useRef(searchParams.get('cid') || null);
+  // v186 픽스 — 목록 밖 대화(미전송 pending 은 목록 제외 정책) 단건 합류분.
+  // 폴링 재로드가 덮어쓰지 않게 ref 로 유지, 서버 목록에 나타나면 주입 종료.
+  const injectedConvRef = useRef(null);
+  const scrollActiveRef = useRef(false); // cid 진입으로 연 대화만 1회 스크롤
+  const [convsLoadedOnce, setConvsLoadedOnce] = useState(false);
 
   // ── 대화 목록 로드 ───────────────────────────────
   const loadConversations = useCallback(async (opts = {}) => {
@@ -91,7 +97,17 @@ export default function AdminCsPage() {
     try {
       const { data } = await getCsConversations({ page: 1, limit: 30 });
       const list = Array.isArray(data?.conversations) ? data.conversations : [];
-      setConversations(list);
+      // v186 — 단건 합류분은 서버 목록에 나타날 때까지 유지 (폴링이 덮어쓰지 않게)
+      const injected = injectedConvRef.current;
+      let merged = list;
+      if (injected) {
+        if (list.some((c) => String(c.conversation_id) === String(injected.conversation_id))) {
+          injectedConvRef.current = null;
+        } else {
+          merged = [injected, ...list];
+        }
+      }
+      setConversations(merged);
       setConvError('');
       if (import.meta.env.DEV) console.info('[AdminCs] conversations loaded', { count: list.length });
     } catch (err) {
@@ -99,6 +115,7 @@ export default function AdminCsPage() {
       if (!silent) setConvError('대화 목록을 불러오지 못했습니다.');
     } finally {
       if (!silent) setConvLoading(false);
+      setConvsLoadedOnce(true);
     }
   }, []);
 
@@ -138,6 +155,13 @@ export default function AdminCsPage() {
     } catch (err) {
       console.error('[AdminCs] markCsRead failed', { status: err?.response?.status, message: err?.message });
     }
+    // v186 — cid 쿼리로 연 대화는 목록 깊숙이(last_at 정렬) 있을 수 있어 보이게 스크롤
+    if (scrollActiveRef.current) {
+      scrollActiveRef.current = false;
+      requestAnimationFrame(() => {
+        document.querySelector('.admin-cs__conv--active')?.scrollIntoView({ block: 'center' });
+      });
+    }
   }, [loadMessages]);
 
   // 최초 목록 로드
@@ -145,18 +169,40 @@ export default function AdminCsPage() {
     loadConversations();
   }, [loadConversations]);
 
-  // v185 — cid 쿼리 초기 선택: 목록 도착 후 1회 시도, 목록에 없으면 조용히 무시
+  // v185 — cid 쿼리 초기 선택 (1회). v186 — 목록에 없으면 단건 조회로 합류시켜 연다:
+  // 사용자가 먼저 만든 pending 대화는 공식 계정 목록에서 제외되므로 목록 검색만으로는 못 찾는다.
   useEffect(() => {
     const cid = pendingCidRef.current;
-    if (!cid || conversations.length === 0) return;
+    if (!cid || !convsLoadedOnce) return;
     pendingCidRef.current = null; // 1회만
+    scrollActiveRef.current = true;
     if (conversations.some((c) => String(c.conversation_id) === String(cid))) {
       if (import.meta.env.DEV) console.info('[AdminCs] opening conversation from cid query', { cid: String(cid).slice(0, 8) });
       openConversation(cid);
-    } else if (import.meta.env.DEV) {
-      console.info('[AdminCs] cid query not in conversation list — ignored', { cid: String(cid).slice(0, 8) });
+      return;
     }
-  }, [conversations, openConversation]);
+    (async () => {
+      try {
+        const { data } = await getCsConversation(cid);
+        const conv = data?.conversation;
+        if (!conv?.conversation_id) return;
+        injectedConvRef.current = conv;
+        setConversations((prev) =>
+          prev.some((c) => String(c.conversation_id) === String(conv.conversation_id)) ? prev : [conv, ...prev]
+        );
+        if (import.meta.env.DEV) console.info('[AdminCs] injected conversation from cid query', { cid: String(cid).slice(0, 8) });
+        openConversation(conv.conversation_id);
+      } catch (err) {
+        const status = err?.response?.status;
+        // 404/403(없거나 공식 대화 아님) → 기존대로 조용히 무시
+        if (status === 404 || status === 403) {
+          if (import.meta.env.DEV) console.info('[AdminCs] cid query not accessible — ignored', { cid: String(cid).slice(0, 8), status });
+        } else {
+          console.error('[AdminCs] getCsConversation failed', { status, message: err?.message });
+        }
+      }
+    })();
+  }, [conversations, convsLoadedOnce, openConversation]);
 
   // 폴링 — 목록 + 열린 대화 메시지 (silent 갱신)
   useEffect(() => {
