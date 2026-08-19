@@ -1,7 +1,9 @@
 // [FeedCard] 인스타/페북식 피드 카드 — MAIDOL FeedPostCard 이식(RN).
 // 헤더(아바타·이름·시간·⋯메뉴) / 제목·본문 블록 / 액션바(♥ 좋아요 토글 · 💬 댓글 · 공유) / 인라인 댓글.
-// 댓글: 목록·작성·삭제 + '답글'(@멘션 프리필 — 백엔드 parent_id 미지원이라 인스타식 멘션 관례로 표현,
-//        @멘션으로 시작하는 댓글은 들여쓰기 렌더).
+// 댓글: 목록·작성·삭제 + 중첩 답글 스레드.
+//   백엔드 comments에 parent_id가 없어, 답글은 text 선두에 구조화 마커 `[reply:{부모id}] `를 저장하고
+//   클라가 파싱해 부모 아래 중첩 렌더(마커는 화면에서 숨김). 부모가 삭제되면 최상위로 폴백.
+//   ⚠ 서버 parent_id 도입 시 이 마커 방식에서 마이그레이션 예정.
 import { useState } from 'react';
 import { View, TouchableOpacity, TextInput, Alert, ActivityIndicator, Share, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -51,6 +53,8 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
   const [commentCount, setCommentCount] = useState(feed.comment_count ?? 0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [isFollowing, setIsFollowing] = useState<boolean | null>(null); // ⋯ 메뉴용(열 때 조회)
+  const [followBusy, setFollowBusy] = useState(false);
 
   // 댓글
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -98,13 +102,15 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     const text = commentText.trim();
     if (!text || posting) return;
     setPosting(true);
-    if (__DEV__) console.info('[FeedCard] 댓글 등록', { feedId: feed.id, len: text.length });
+    const payloadText = replyTarget ? `[reply:${replyTarget.id}] ${text}` : text;
+    if (__DEV__) console.info('[FeedCard] 댓글 등록', { feedId: feed.id, len: text.length, reply: !!replyTarget });
     try {
-      const res = await api.post(`/feeds/${feed.id}/comments`, { text });
+      const res = await api.post(`/feeds/${feed.id}/comments`, { text: payloadText });
       const c = res.data?.comment;
       if (c) setComments((prev) => [...prev, c]);
       setCommentCount((n: number) => n + 1);
       setCommentText('');
+      setReplyTarget(null);
     } catch (err: any) {
       console.error('[FeedCard] 댓글 등록 실패', { feedId: feed.id, status: err?.response?.status });
       Alert.alert('오류', '댓글 등록에 실패했습니다.');
@@ -129,10 +135,11 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     ]);
   };
 
-  // 답글 — 백엔드가 parent_id를 지원하지 않아 인스타식 @멘션 관례로 표현
-  const replyTo = (nickname: string) => {
+  // 답글 대상 — 제출 시 [reply:{부모id}] 마커를 붙여 저장(중첩 스레드)
+  const [replyTarget, setReplyTarget] = useState<FeedComment | null>(null);
+  const replyTo = (c: FeedComment) => {
     if (!requireLogin()) return;
-    setCommentText((t) => (t.startsWith(`@${nickname} `) ? t : `@${nickname} ${t}`));
+    setReplyTarget(c);
   };
 
   const deleteFeed = () => {
@@ -150,6 +157,36 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     ]);
   };
 
+  // ⋯ 메뉴 열기 — 남의 피드면 팔로우 상태를 함께 조회
+  const openMenu = async () => {
+    const next = !menuOpen;
+    setMenuOpen(next);
+    if (next && !isMine && feed.author_id && isFollowing === null && user) {
+      try {
+        const res = await api.get(`/follows/summary/${feed.author_id}`);
+        setIsFollowing(!!res.data?.is_following);
+      } catch (err: any) {
+        console.error('[FeedCard] 팔로우 상태 조회 실패', { authorId: feed.author_id, status: err?.response?.status });
+      }
+    }
+  };
+
+  const toggleFollow = async () => {
+    if (!requireLogin() || followBusy || !feed.author_id) return;
+    const next = !isFollowing;
+    setFollowBusy(true);
+    if (__DEV__) console.info('[FeedCard] follow 토글', { authorId: feed.author_id, next });
+    try {
+      if (next) await api.post(`/follows/${feed.author_id}`);
+      else await api.delete(`/follows/${feed.author_id}`);
+      setIsFollowing(next);
+    } catch (err: any) {
+      console.error('[FeedCard] follow 실패', { authorId: feed.author_id, status: err?.response?.status });
+    } finally {
+      setFollowBusy(false);
+    }
+  };
+
   const shareFeed = async () => {
     try {
       await Share.share({ message: `AIDOL 피드 "${feed.title || '게시물'}"\n${BACKEND_BASE_URL}/feed/${feed.id}` });
@@ -162,8 +199,34 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
     ? `${BACKEND_BASE_URL}/api/auth/profile-image/${feed.author_profile_image}`
     : null;
 
-  // @멘션으로 시작하면 답글로 간주해 들여쓰기
-  const isReply = (text: string) => /^@\S+\s/.test(text);
+  // [reply:{id}] 마커 파싱 — 중첩 스레드 구성(부모 삭제 시 최상위 폴백)
+  const REPLY_RE = /^\[reply:([A-Za-z0-9]+)\]\s?/;
+  const parseReply = (text: string) => {
+    const m = text.match(REPLY_RE);
+    return { parentId: m ? m[1] : null, body: m ? text.slice(m[0].length) : text };
+  };
+  const thread = (() => {
+    const roots: { c: FeedComment; body: string; replies: { c: FeedComment; body: string }[] }[] = [];
+    const byId: Record<string, number> = {};
+    const orphans: { c: FeedComment; body: string; parentId: string }[] = [];
+    comments.forEach((c) => {
+      const { parentId, body } = parseReply(c.text);
+      if (!parentId) {
+        byId[c.id] = roots.length;
+        roots.push({ c, body, replies: [] });
+      } else if (byId[parentId] !== undefined) {
+        roots[byId[parentId]].replies.push({ c, body });
+      } else {
+        orphans.push({ c, body, parentId });
+      }
+    });
+    // 부모보다 먼저 온/삭제된 답글: 부모가 있으면 붙이고, 없으면 최상위로
+    orphans.forEach((o) => {
+      if (byId[o.parentId] !== undefined) roots[byId[o.parentId]].replies.push({ c: o.c, body: o.body });
+      else { byId[o.c.id] = roots.length; roots.push({ c: o.c, body: o.body, replies: [] }); }
+    });
+    return roots;
+  })();
 
   return (
     <View style={styles.card}>
@@ -176,7 +239,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
             <AppText variant="caption" tone="muted">{fmtTime(feed.created_at)}</AppText>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setMenuOpen((v) => !v)} style={styles.moreBtn} accessibilityLabel="피드 더보기">
+        <TouchableOpacity onPress={openMenu} style={styles.moreBtn} accessibilityLabel="피드 더보기">
           <Feather name="more-horizontal" size={20} color={colors.text.muted} />
         </TouchableOpacity>
       </View>
@@ -190,10 +253,21 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
               <AppText variant="footnote" style={{ color: colors.status.error }}>삭제</AppText>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); setReportOpen(true); }}>
-              <Feather name="flag" size={16} color={colors.text.secondary} />
-              <AppText variant="footnote" tone="secondary">신고</AppText>
-            </TouchableOpacity>
+            <>
+              {user && feed.author_id ? (
+                <TouchableOpacity style={styles.menuItem} disabled={followBusy || isFollowing === null} onPress={toggleFollow}>
+                  <Feather name={isFollowing ? 'user-check' : 'user-plus'} size={16}
+                    color={isFollowing ? colors.accent.primary : colors.text.secondary} />
+                  <AppText variant="footnote" tone={isFollowing ? 'accent' : 'secondary'}>
+                    {isFollowing === null ? '확인 중...' : isFollowing ? '팔로우 중' : '팔로우'}
+                  </AppText>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); setReportOpen(true); }}>
+                <Feather name="flag" size={16} color={colors.text.secondary} />
+                <AppText variant="footnote" tone="secondary">신고</AppText>
+              </TouchableOpacity>
+            </>
           )}
         </View>
       ) : null}
@@ -225,44 +299,64 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           ) : comments.length === 0 ? (
             <AppText variant="footnote" tone="muted" style={{ marginVertical: spacing.sm }}>첫 댓글을 남겨보세요.</AppText>
           ) : (
-            comments.map((c) => {
-              const canDelete = !!user && (String(c.author_id) === String(user.id) || isMine);
-              return (
-                <View key={c.id} style={[styles.commentRow, isReply(c.text) && styles.commentReply]}>
-                  <Avatar name={c.author_nickname || '?'} size={26} />
-                  <View style={{ flex: 1, marginLeft: spacing.sm }}>
-                    <View style={styles.commentHead}>
-                      <AppText variant="caption" tone="primary" style={{ fontWeight: '600' }}>{c.author_nickname}</AppText>
-                      <AppText variant="caption" tone="muted"> · {fmtTime(c.created_at)}</AppText>
-                    </View>
-                    <AppText variant="footnote" tone="secondary">{c.text}</AppText>
-                    <View style={styles.commentActions}>
-                      <TouchableOpacity onPress={() => replyTo(c.author_nickname)} accessibilityLabel="답글">
-                        <AppText variant="caption" tone="muted">답글</AppText>
-                      </TouchableOpacity>
-                      {!canDelete && user ? (
-                        <TouchableOpacity onPress={() => setCommentReport(c.id)} accessibilityLabel="댓글 신고">
-                          <AppText variant="caption" tone="muted">신고</AppText>
+            thread.map(({ c, body, replies }) => {
+              const renderOne = (cc: FeedComment, cbody: string, nested: boolean) => {
+                const canDelete = !!user && (String(cc.author_id) === String(user.id) || isMine);
+                return (
+                  <View key={cc.id} style={[styles.commentRow, nested && styles.commentReply]}>
+                    <Avatar name={cc.author_nickname || '?'} size={nested ? 22 : 26} />
+                    <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                      <View style={styles.commentHead}>
+                        <AppText variant="caption" tone="primary" style={{ fontWeight: '600' }}>{cc.author_nickname}</AppText>
+                        <AppText variant="caption" tone="muted"> · {fmtTime(cc.created_at)}</AppText>
+                      </View>
+                      <AppText variant="footnote" tone="secondary">{cbody}</AppText>
+                      <View style={styles.commentActions}>
+                        <TouchableOpacity onPress={() => replyTo(cc)} accessibilityLabel="답글">
+                          <AppText variant="caption" tone="muted">답글</AppText>
                         </TouchableOpacity>
-                      ) : null}
+                        {!canDelete && user ? (
+                          <TouchableOpacity onPress={() => setCommentReport(cc.id)} accessibilityLabel="댓글 신고">
+                            <AppText variant="caption" tone="muted">신고</AppText>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
                     </View>
+                    {canDelete ? (
+                      <TouchableOpacity onPress={() => deleteComment(cc.id)} style={{ padding: 4 }} accessibilityLabel="댓글 삭제">
+                        <Feather name="x" size={14} color={colors.text.muted} />
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
-                  {canDelete ? (
-                    <TouchableOpacity onPress={() => deleteComment(c.id)} style={{ padding: 4 }} accessibilityLabel="댓글 삭제">
-                      <Feather name="x" size={14} color={colors.text.muted} />
-                    </TouchableOpacity>
-                  ) : null}
+                );
+              };
+              return (
+                <View key={c.id}>
+                  {renderOne(c, body, false)}
+                  {replies.map((r) => renderOne(r.c, r.body, true))}
                 </View>
               );
             })
           )}
+
+          {/* 답글 대상 배너 */}
+          {replyTarget ? (
+            <View style={styles.replyBanner}>
+              <AppText variant="caption" tone="secondary" style={{ flex: 1 }}>
+                {replyTarget.author_nickname}님에게 답글 남기는 중
+              </AppText>
+              <TouchableOpacity onPress={() => setReplyTarget(null)} accessibilityLabel="답글 취소">
+                <Feather name="x" size={14} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {/* 입력 */}
           {user ? (
             <View style={styles.commentInputRow}>
               <TextInput
                 style={styles.commentInput}
-                placeholder="댓글을 입력하세요"
+                placeholder={replyTarget ? "답글을 입력하세요" : "댓글을 입력하세요"}
                 placeholderTextColor={colors.text.muted}
                 value={commentText}
                 onChangeText={setCommentText}
@@ -289,7 +383,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.bg.surface1, borderRadius: radius.lg,
-    padding: spacing.lg, marginHorizontal: spacing.lg, marginBottom: spacing.md,
+    padding: spacing.lg, marginHorizontal: spacing.xl, marginBottom: spacing.md, // 좌우 여백 20 — 설정 등 다른 카드 화면과 동일
   },
   header: { flexDirection: 'row', alignItems: 'center' },
   headerMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
@@ -308,7 +402,15 @@ const styles = StyleSheet.create({
   action: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   comments: { marginTop: spacing.md },
   commentRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.md },
-  commentReply: { marginLeft: spacing.xl }, // @멘션 답글 들여쓰기
+  commentReply: {
+    marginLeft: spacing.xl, paddingLeft: spacing.md,
+    borderLeftWidth: 2, borderLeftColor: colors.border.subtle, // 스레드 연결선
+  },
+  replyBanner: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.bg.deepest, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 6, marginBottom: spacing.xs,
+  },
   commentHead: { flexDirection: 'row', alignItems: 'center' },
   commentActions: { flexDirection: 'row', gap: spacing.md, marginTop: 3 },
   commentInputRow: {
