@@ -162,7 +162,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
   const [showDetails, setShowDetails] = useState(false);
-  const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit' | 'info'>('lyrics');
+  const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit'>('lyrics'); // v3.49: 상세정보 탭 제거
   const [fullTrack, setFullTrack] = useState<TrackData | null>(null);
   const [genDetail, setGenDetail] = useState<any | null>(null); // 곡 생성 설정(내 곡만 조회 가능)
   const [ads, setAds] = useState<AdItem[]>([]);
@@ -675,10 +675,15 @@ export default function PlayerScreen({ route, navigation }: any) {
             const nickname = track?.uploader_nickname || track?.artist_name;
             const uploaderId = track?.uploader_id;
             if (!nickname) return;
-            navigation.navigate('AgencyProfile', {
-              uploaderNickname: nickname,
-              uploaderId,
-            });
+            // v3.49: 팔로우·곡·앨범·피드·커뮤니티가 있는 채널로 이동(MAIDOL ArtistDetail 동일).
+            // uploader_id가 없는 구형 데이터만 기존 검색 기반 화면으로 폴백.
+            if (uploaderId) {
+              if (__DEV__) console.info('[Player] 기획사 → UserChannel', { uploaderId });
+              navigation.navigate('UserChannel', { authorId: uploaderId, name: nickname });
+            } else {
+              if (__DEV__) console.info('[Player] 기획사 → AgencyProfile 폴백(구형: uploader_id 없음)');
+              navigation.navigate('AgencyProfile', { uploaderNickname: nickname, uploaderId });
+            }
           }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
@@ -848,10 +853,10 @@ export default function PlayerScreen({ route, navigation }: any) {
       <TouchableOpacity
         style={styles.swipeUpButton}
         onPress={() => setShowDetails(true)}
-        accessibilityLabel="가사 상세정보"
+        accessibilityLabel="가사 프롬프트 착장"
       >
         <View style={styles.swipeUpHandle} />
-        <AppText variant="footnote" tone="secondary">가사 · 상세정보</AppText>
+        <AppText variant="footnote" tone="secondary">가사 · 프롬프트 · 착장</AppText>
       </TouchableOpacity>
 
       {/* Bottom Sheet Modal (YouTube Music style) */}
@@ -878,8 +883,8 @@ export default function PlayerScreen({ route, navigation }: any) {
 
             {/* Tab bar */}
             <View style={styles.sheetTabBar}>
-              {(['lyrics', 'prompt', 'outfit', 'info'] as const).map((tab) => {
-                const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장', info: '상세 정보' };
+              {(['lyrics', 'prompt', 'outfit'] as const).map((tab) => {
+                const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장' };
                 return (
                   <Tag key={tab} label={labels[tab]} selected={detailTab === tab} onPress={() => setDetailTab(tab)} />
                 );
@@ -980,34 +985,6 @@ export default function PlayerScreen({ route, navigation }: any) {
                 ) : (
                   <AppText style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</AppText>
                 )
-              )}
-              {detailTab === 'info' && (
-                <View>
-                  {track?.title ? <AppText style={styles.detailText}>제목: {track.title}</AppText> : null}
-                  {(track?.artist_name || track?.uploader_nickname) ? (
-                    <AppText style={styles.detailText}>아티스트: {track.artist_name || track.uploader_nickname}</AppText>
-                  ) : null}
-                  {track?.genre ? (
-                    <AppText style={styles.detailText}>장르: {Array.isArray(track.genre) ? track.genre.join(', ') : track.genre}</AppText>
-                  ) : null}
-                  {track?.mood ? (
-                    <AppText style={styles.detailText}>분위기: {Array.isArray(track.mood) ? track.mood.join(', ') : track.mood}</AppText>
-                  ) : null}
-                  {track?.tags && track.tags.length > 0 ? (
-                    <AppText style={styles.detailText}>태그: {track.tags.join(', ')}</AppText>
-                  ) : null}
-                  {track?.bpm ? <AppText style={styles.detailText}>BPM: {track.bpm}</AppText> : null}
-                  {track?.key ? <AppText style={styles.detailText}>키: {track.key}</AppText> : null}
-                  {track?.ai_model ? <AppText style={styles.detailText}>AI 모델: {track.ai_model}</AppText> : null}
-                  {track?.duration_sec ? (
-                    <AppText style={styles.detailText}>길이: {Math.floor(track.duration_sec / 60)}분 {track.duration_sec % 60}초</AppText>
-                  ) : null}
-                  {track?.play_count != null ? <AppText style={styles.detailText}>재생수: {track.play_count.toLocaleString()}</AppText> : null}
-                  {track?.like_count != null ? <AppText style={styles.detailText}>좋아요: {track.like_count.toLocaleString()}</AppText> : null}
-                  {track?.created_at ? (
-                    <AppText style={styles.detailText}>생성일: {new Date(track.created_at).toLocaleDateString('ko-KR')}</AppText>
-                  ) : null}
-                </View>
               )}
               <View style={{ height: 40 }} />
             </ScrollView>

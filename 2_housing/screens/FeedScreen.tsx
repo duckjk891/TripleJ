@@ -11,7 +11,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
-import FeedCard from '../components/feed/FeedCard';
+import FeedCard, { feedCardLight } from '../components/feed/FeedCard';
 
 interface FeedTrack {
   id: string;
@@ -107,12 +107,12 @@ export default function FeedScreen() {
       <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => (user ? handlePlayTrack(track) : setCtaVisible(true))} accessibilityLabel={`재생 ${track.title || ''}`}>
         <View style={styles.trackCover}>
           {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
-            : <AppText variant="title3" tone="muted">♪</AppText>}
-          <View style={styles.playBadge}><Feather name="play" size={14} color={colors.text.inverse} /></View>
+            : <AppText variant="title3" style={{ color: feedCardLight.muted }}>♪</AppText>}
+          <View style={styles.playBadge}><Feather name="play" size={14} color="#FFFFFF" /></View>
         </View>
         <View style={styles.trackMeta}>
-          <AppText variant="bodyStrong" numberOfLines={1}>{track.title || '제목 없음'}</AppText>
-          <AppText variant="caption" tone="muted" numberOfLines={1}>
+          <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedCardLight.text }}>{track.title || '제목 없음'}</AppText>
+          <AppText variant="caption" numberOfLines={1} style={{ color: feedCardLight.muted }}>
             {track.artist_name || '아티스트'}{fmtDuration(track.duration_sec) ? ` · ${fmtDuration(track.duration_sec)}` : ''}
           </AppText>
         </View>
@@ -144,7 +144,7 @@ export default function FeedScreen() {
         renderBlocks={() => (
           <View>
             {textBlocks.map((b, i) => (
-              <AppText key={`t${i}`} variant="body" tone="secondary" style={styles.body}>{b.text}</AppText>
+              <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedCardLight.sub }]}>{b.text}</AppText>
             ))}
             {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
           </View>
@@ -211,7 +211,8 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   spinner: { marginTop: spacing.huge },
-  list: { padding: spacing.lg, paddingBottom: 100 },
+  // v3.49: 가로 패딩 16→12 + FeedCard 자체 margin 제거 — 카드가 화면을 거의 꽉 채우도록(이중 여백 해소)
+  list: { paddingVertical: spacing.lg, paddingHorizontal: spacing.md, paddingBottom: 100 },
   card: { marginBottom: spacing.md },
   head: { flexDirection: 'row', alignItems: 'center' },
   headText: { marginLeft: spacing.md, flex: 1 },
@@ -220,11 +221,11 @@ const styles = StyleSheet.create({
   trackRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     marginTop: spacing.md, padding: spacing.sm,
-    backgroundColor: colors.bg.deepest, borderRadius: radius.lg,
+    backgroundColor: feedCardLight.field, borderRadius: radius.lg, // 라이트 카드 내부 트랙 칩
   },
   trackCover: {
     width: 52, height: 52, borderRadius: radius.md, overflow: 'hidden',
-    backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: feedCardLight.line, alignItems: 'center', justifyContent: 'center',
   },
   trackCoverImg: { width: '100%', height: '100%' },
   playBadge: {

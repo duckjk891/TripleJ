@@ -1,6 +1,7 @@
-// [UserChannelScreen] 유저 채널 페이지 — MAIDOL ArtistDetailPage 이식.
-// 프로필 + 팔로워 수 + 팔로우 토글 + 탭(음악/피드/공지사항).
-// 계약: GET /artists/{id}, /follows/summary/{id}(+POST/DELETE), /artists/{id}/tracks, /feeds/user/{id}?kind=feed|community
+// [UserChannelScreen] 유저(기획사) 채널 페이지 — MAIDOL ArtistDetailPage 이식.
+// 프로필 + 통계(앨범/트랙/팔로워) + 팔로우 토글 + 탭(곡·앨범/피드/커뮤니티) — v3.49 MAIDOL 동일 구성.
+// 계약: GET /artists/{id}, /follows/summary/{id}(+POST/DELETE), /artists/{id}/tracks, /artists/{id}/albums,
+//       /albums/{album_id}(트랙 포함), /feeds/user/{id}?kind=feed|community
 import { useState, useEffect, useCallback } from 'react';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { View, ScrollView, FlatList, Image, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
@@ -31,6 +32,8 @@ export default function UserChannelScreen() {
   const [followBusy, setFollowBusy] = useState(false);
   const [tab, setTab] = useState<Tab>('music');
   const [tracks, setTracks] = useState<any[]>([]);
+  const [albums, setAlbums] = useState<any[]>([]);
+  const [albumBusy, setAlbumBusy] = useState<string | null>(null); // 트랙 로딩 중인 앨범 id
   const [feeds, setFeeds] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,15 +46,17 @@ export default function UserChannelScreen() {
     (async () => {
       setLoading(true);
       try {
-        const [pRes, sRes, tRes, fRes, cRes] = await Promise.allSettled([
+        const [pRes, sRes, tRes, aRes, fRes, cRes] = await Promise.allSettled([
           api.get(`/artists/${authorId}`),
           api.get(`/follows/summary/${authorId}`),
           api.get(`/artists/${authorId}/tracks`, { params: { limit: 30 } }),
+          api.get(`/artists/${authorId}/albums`), // v3.49: 앨범 통계·목록
           api.get(`/feeds/user/${authorId}`, { params: { kind: 'feed', limit: 20 } }),
           api.get(`/feeds/user/${authorId}`, { params: { kind: 'community', limit: 20 } }),
         ]);
         if (!alive) return;
         if (pRes.status === 'fulfilled') setProfile(pRes.value.data);
+        if (aRes.status === 'fulfilled') setAlbums(Array.isArray(aRes.value.data) ? aRes.value.data : (aRes.value.data?.albums || []));
         if (sRes.status === 'fulfilled') {
           setFollowerCount(sRes.value.data?.follower_count ?? 0);
           setIsFollowing(!!sRes.value.data?.is_following);
@@ -90,6 +95,31 @@ export default function UserChannelScreen() {
     if (!track?.id) return;
     playerStore.setQueue(queue.length ? queue : [track]);
     navigation.navigate('Player', { track });
+  };
+
+  // v3.49: 앨범 탭 → 앨범 상세(트랙 포함) 조회 후 앨범 전체를 큐로 재생
+  const openAlbum = async (album: any) => {
+    if (albumBusy) return;
+    setAlbumBusy(String(album.id));
+    if (__DEV__) console.info('[UserChannel] 앨범 열기', { albumId: album.id });
+    try {
+      const res = await api.get(`/albums/${album.id}`);
+      const albumTracks = res.data?.tracks || [];
+      if (albumTracks.length) playTrack(albumTracks[0], albumTracks);
+      else if (__DEV__) console.warn('[UserChannel] 빈 앨범', { albumId: album.id });
+    } catch (err: any) {
+      console.error('[UserChannel] 앨범 조회 실패', { albumId: album.id, status: err?.response?.status });
+    } finally {
+      setAlbumBusy(null);
+    }
+  };
+
+  // 앨범 cover_image는 '/api/...' 풀경로로 옴 — 절대 URL로 보정
+  const albumCoverUri = (img?: string | null): string | null => {
+    if (!img) return null;
+    if (img.startsWith('http')) return img;
+    if (img.startsWith('/')) return `${BACKEND_BASE_URL}${img}`;
+    return mediaUri(img);
   };
 
   const displayName = profile?.name || name || '채널';
@@ -138,10 +168,11 @@ export default function UserChannelScreen() {
     return <View style={styles.center}><ActivityIndicator size="large" color={colors.accent.primary} /></View>;
   }
 
+  // v3.49: MAIDOL 동일 탭명 — 곡·앨범 / 피드 / 커뮤니티
   const TABS: { key: Tab; label: string; count: number }[] = [
-    { key: 'music', label: '음악', count: tracks.length },
+    { key: 'music', label: '곡·앨범', count: tracks.length + albums.length },
     { key: 'feed', label: '피드', count: feeds.length },
-    { key: 'community', label: '공지사항', count: notices.length },
+    { key: 'community', label: '커뮤니티', count: notices.length },
   ];
 
   return (
@@ -152,12 +183,13 @@ export default function UserChannelScreen() {
         <AppText variant="title2" style={{ marginTop: spacing.md }}>{displayName}</AppText>
         {profile?.bio ? <AppText variant="footnote" tone="secondary" center style={{ marginTop: 4 }}>{profile.bio}</AppText> : null}
 
+        {/* v3.49: MAIDOL과 동일한 통계 3종 — 앨범 / 트랙 / 팔로워 */}
         <View style={styles.stats}>
+          <View style={styles.stat}><AppText variant="title3" tone="accent">{albums.length}</AppText><AppText variant="caption" tone="muted">앨범</AppText></View>
+          <View style={styles.statDivider} />
           <View style={styles.stat}><AppText variant="title3" tone="accent">{profile?.track_count ?? tracks.length}</AppText><AppText variant="caption" tone="muted">트랙</AppText></View>
           <View style={styles.statDivider} />
           <View style={styles.stat}><AppText variant="title3" tone="accent">{followerCount}</AppText><AppText variant="caption" tone="muted">팔로워</AppText></View>
-          <View style={styles.statDivider} />
-          <View style={styles.stat}><AppText variant="title3" tone="accent">{profile?.total_plays ?? 0}</AppText><AppText variant="caption" tone="muted">재생</AppText></View>
         </View>
 
         {!isSelf ? (
@@ -185,8 +217,38 @@ export default function UserChannelScreen() {
       {/* 탭 내용 */}
       <View style={styles.tabContent}>
         {tab === 'music' && (
-          tracks.length ? tracks.map((t) => <TrackRow key={t.id} item={t} queue={tracks} />)
-            : <EmptyState icon="🎵" title="아직 만든 음악이 없어요" />
+          (tracks.length || albums.length) ? (
+            <>
+              {tracks.length ? (
+                <>
+                  <AppText variant="footnote" tone="secondary" style={styles.sectionLabel}>인기 트랙</AppText>
+                  {tracks.map((t) => <TrackRow key={t.id} item={t} queue={tracks} />)}
+                </>
+              ) : null}
+              {albums.length ? (
+                <>
+                  <AppText variant="footnote" tone="secondary" style={[styles.sectionLabel, tracks.length ? { marginTop: spacing.lg } : null]}>앨범</AppText>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.albumRow}>
+                    {albums.map((a) => (
+                      <TouchableOpacity key={a.id} style={styles.albumCard} activeOpacity={0.75}
+                        onPress={() => openAlbum(a)} accessibilityLabel={`앨범 ${a.title}`}>
+                        <View style={styles.albumCover}>
+                          {albumCoverUri(a.cover_image)
+                            ? <Image source={{ uri: albumCoverUri(a.cover_image)! }} style={styles.albumCoverImg} />
+                            : <AppText variant="title2" tone="muted">♪</AppText>}
+                          {albumBusy === String(a.id) ? (
+                            <View style={styles.albumLoading}><ActivityIndicator size="small" color={colors.accent.primary} /></View>
+                          ) : null}
+                        </View>
+                        <AppText variant="footnote" numberOfLines={1} style={{ marginTop: 6 }}>{a.title}</AppText>
+                        <AppText variant="caption" tone="muted">{a.track_count ?? 0}곡</AppText>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </>
+              ) : null}
+            </>
+          ) : <EmptyState icon="🎵" title="아직 만든 음악이 없어요" />
         )}
         {tab === 'feed' && (
           feeds.length ? feeds.map((f, i) => <FeedCard key={f.id ?? i} item={f} />)
@@ -213,6 +275,18 @@ const styles = StyleSheet.create({
   tabActive: { borderBottomColor: colors.accent.primary },
   tabContent: { padding: spacing.lg, gap: spacing.sm },
   card: { marginBottom: spacing.md },
+  sectionLabel: { fontWeight: '700', letterSpacing: 0.3 },
+  albumRow: { gap: spacing.md, paddingVertical: spacing.xs },
+  albumCard: { width: 120 },
+  albumCover: {
+    width: 120, height: 120, borderRadius: radius.lg, overflow: 'hidden',
+    backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
+  },
+  albumCoverImg: { width: '100%', height: '100%' },
+  albumLoading: {
+    ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
   trackRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     paddingVertical: spacing.sm, marginTop: spacing.xs,

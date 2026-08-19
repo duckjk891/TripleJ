@@ -13,6 +13,17 @@ import ReportModal from '../ReportModal';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 
+// v3.49: 피드 카드 라이트 팔레트 — 어두운 앱 배경 위에 밝은 카드가 나열되는 인스타 무드.
+// FeedScreen의 본문 블록 렌더에서도 같은 팔레트를 쓰도록 export.
+export const feedCardLight = {
+  bg: '#FFFFFF',
+  text: '#1B1B22',      // 제목·닉네임
+  sub: '#4A4A55',       // 본문·아이콘
+  muted: '#8B8B96',     // 시간·보조
+  line: '#E8E8EF',      // 구분선·테두리
+  field: '#F2F2F7',     // 입력창·칩 배경
+};
+
 export interface FeedComment {
   id: string;
   author_id: string;
@@ -238,12 +249,12 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
         <TouchableOpacity style={styles.headerMain} onPress={onPressAuthor} activeOpacity={0.7}>
           <Avatar name={feed.author_nickname || '?'} uri={profileUri} size={36} />
           <View style={{ marginLeft: spacing.sm, flex: 1 }}>
-            <AppText variant="bodyStrong" numberOfLines={1}>{feed.author_nickname || '알 수 없음'}</AppText>
-            <AppText variant="caption" tone="muted">{fmtTime(feed.created_at)}</AppText>
+            <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedCardLight.text }}>{feed.author_nickname || '알 수 없음'}</AppText>
+            <AppText variant="caption" style={{ color: feedCardLight.muted }}>{fmtTime(feed.created_at)}</AppText>
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={openMenu} style={styles.moreBtn} accessibilityLabel="피드 더보기">
-          <Feather name="more-horizontal" size={20} color={colors.text.muted} />
+          <Feather name="more-horizontal" size={20} color={feedCardLight.muted} />
         </TouchableOpacity>
       </View>
 
@@ -260,15 +271,15 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
               {user && feed.author_id ? (
                 <TouchableOpacity style={styles.menuItem} disabled={followBusy || isFollowing === null} onPress={toggleFollow}>
                   <Feather name={isFollowing ? 'user-check' : 'user-plus'} size={16}
-                    color={isFollowing ? colors.accent.primary : colors.text.secondary} />
-                  <AppText variant="footnote" tone={isFollowing ? 'accent' : 'secondary'}>
+                    color={isFollowing ? colors.accent.primary : feedCardLight.sub} />
+                  <AppText variant="footnote" style={{ color: isFollowing ? colors.accent.primary : feedCardLight.sub }}>
                     {isFollowing === null ? '확인 중...' : isFollowing ? '팔로우 중' : '팔로우'}
                   </AppText>
                 </TouchableOpacity>
               ) : null}
               <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); setReportOpen(true); }}>
-                <Feather name="flag" size={16} color={colors.text.secondary} />
-                <AppText variant="footnote" tone="secondary">신고</AppText>
+                <Feather name="flag" size={16} color={feedCardLight.sub} />
+                <AppText variant="footnote" style={{ color: feedCardLight.sub }}>신고</AppText>
               </TouchableOpacity>
             </>
           )}
@@ -276,21 +287,21 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
       ) : null}
 
       {/* 제목 + 본문 블록 */}
-      {feed.title ? <AppText variant="bodyStrong" style={styles.title}>{feed.title}</AppText> : null}
+      {feed.title ? <AppText variant="bodyStrong" style={[styles.title, { color: feedCardLight.text }]}>{feed.title}</AppText> : null}
       {renderBlocks()}
 
       {/* 액션바 — ♥ / 💬 / 공유 */}
       <View style={styles.actionBar}>
         <TouchableOpacity style={styles.action} onPress={toggleLike} accessibilityLabel="좋아요">
-          <Feather name="heart" size={20} color={liked ? colors.accent.primary : colors.text.secondary} />
-          <AppText variant="footnote" tone={liked ? 'accent' : 'secondary'}>{likeCount}</AppText>
+          <Feather name="heart" size={20} color={liked ? colors.accent.primary : feedCardLight.sub} />
+          <AppText variant="footnote" style={{ color: liked ? colors.accent.primary : feedCardLight.sub }}>{likeCount}</AppText>
         </TouchableOpacity>
         <TouchableOpacity style={styles.action} onPress={openComments} accessibilityLabel="댓글">
-          <Feather name="message-circle" size={20} color={commentsOpen ? colors.accent.primary : colors.text.secondary} />
-          <AppText variant="footnote" tone={commentsOpen ? 'accent' : 'secondary'}>{commentCount}</AppText>
+          <Feather name="message-circle" size={20} color={commentsOpen ? colors.accent.primary : feedCardLight.sub} />
+          <AppText variant="footnote" style={{ color: commentsOpen ? colors.accent.primary : feedCardLight.sub }}>{commentCount}</AppText>
         </TouchableOpacity>
         <TouchableOpacity style={styles.action} onPress={shareFeed} accessibilityLabel="피드 공유">
-          <Feather name="share-2" size={19} color={colors.text.secondary} />
+          <Feather name="share-2" size={19} color={feedCardLight.sub} />
         </TouchableOpacity>
       </View>
 
@@ -300,7 +311,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           {commentsLoading ? (
             <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: spacing.md }} />
           ) : comments.length === 0 ? (
-            <AppText variant="footnote" tone="muted" style={{ marginVertical: spacing.sm }}>첫 댓글을 남겨보세요.</AppText>
+            <AppText variant="footnote" style={{ marginVertical: spacing.sm, color: feedCardLight.muted }}>첫 댓글을 남겨보세요.</AppText>
           ) : (
             thread.map(({ c, body, replies }) => {
               const renderOne = (cc: FeedComment, cbody: string, nested: boolean) => {
@@ -310,24 +321,24 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
                     <Avatar name={cc.author_nickname || '?'} size={nested ? 22 : 26} />
                     <View style={{ flex: 1, marginLeft: spacing.sm }}>
                       <View style={styles.commentHead}>
-                        <AppText variant="caption" tone="primary" style={{ fontWeight: '600' }}>{cc.author_nickname}</AppText>
-                        <AppText variant="caption" tone="muted"> · {fmtTime(cc.created_at)}</AppText>
+                        <AppText variant="caption" style={{ fontWeight: '600', color: feedCardLight.text }}>{cc.author_nickname}</AppText>
+                        <AppText variant="caption" style={{ color: feedCardLight.muted }}> · {fmtTime(cc.created_at)}</AppText>
                       </View>
-                      <AppText variant="footnote" tone="secondary">{cbody}</AppText>
+                      <AppText variant="footnote" style={{ color: feedCardLight.sub }}>{cbody}</AppText>
                       <View style={styles.commentActions}>
                         <TouchableOpacity onPress={() => replyTo(cc)} accessibilityLabel="답글">
-                          <AppText variant="caption" tone="muted">답글</AppText>
+                          <AppText variant="caption" style={{ color: feedCardLight.muted }}>답글</AppText>
                         </TouchableOpacity>
                         {!canDelete && user ? (
                           <TouchableOpacity onPress={() => setCommentReport(cc.id)} accessibilityLabel="댓글 신고">
-                            <AppText variant="caption" tone="muted">신고</AppText>
+                            <AppText variant="caption" style={{ color: feedCardLight.muted }}>신고</AppText>
                           </TouchableOpacity>
                         ) : null}
                       </View>
                     </View>
                     {canDelete ? (
                       <TouchableOpacity onPress={() => deleteComment(cc.id)} style={{ padding: 4 }} accessibilityLabel="댓글 삭제">
-                        <Feather name="x" size={14} color={colors.text.muted} />
+                        <Feather name="x" size={14} color={feedCardLight.muted} />
                       </TouchableOpacity>
                     ) : null}
                   </View>
@@ -345,11 +356,11 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           {/* 답글 대상 배너 */}
           {replyTarget ? (
             <View style={styles.replyBanner}>
-              <AppText variant="caption" tone="secondary" style={{ flex: 1 }}>
+              <AppText variant="caption" style={{ flex: 1, color: feedCardLight.sub }}>
                 {replyTarget.author_nickname}님에게 답글 남기는 중
               </AppText>
               <TouchableOpacity onPress={() => setReplyTarget(null)} accessibilityLabel="답글 취소">
-                <Feather name="x" size={14} color={colors.text.muted} />
+                <Feather name="x" size={14} color={feedCardLight.muted} />
               </TouchableOpacity>
             </View>
           ) : null}
@@ -360,18 +371,18 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
               <TextInput
                 style={styles.commentInput}
                 placeholder={replyTarget ? "답글을 입력하세요" : "댓글을 입력하세요"}
-                placeholderTextColor={colors.text.muted}
+                placeholderTextColor={feedCardLight.muted}
                 value={commentText}
                 onChangeText={setCommentText}
                 maxLength={1000}
                 multiline
               />
               <TouchableOpacity onPress={submitComment} disabled={posting || !commentText.trim()} accessibilityLabel="댓글 등록">
-                <AppText variant="footnote" tone={commentText.trim() ? 'accent' : 'muted'}>{posting ? '...' : '등록'}</AppText>
+                <AppText variant="footnote" style={{ color: commentText.trim() ? colors.accent.primary : feedCardLight.muted }}>{posting ? '...' : '등록'}</AppText>
               </TouchableOpacity>
             </View>
           ) : (
-            <AppText variant="caption" tone="muted" style={{ marginTop: spacing.sm }}>로그인 후 댓글을 남길 수 있습니다.</AppText>
+            <AppText variant="caption" style={{ marginTop: spacing.sm, color: feedCardLight.muted }}>로그인 후 댓글을 남길 수 있습니다.</AppText>
           )}
         </View>
       ) : null}
@@ -385,42 +396,44 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.bg.surface1, borderRadius: radius.lg,
-    padding: spacing.lg, marginHorizontal: spacing.xl, marginBottom: spacing.md, // 좌우 여백 20 — 설정 등 다른 카드 화면과 동일
+    backgroundColor: feedCardLight.bg, borderRadius: radius.lg,
+    padding: spacing.lg, marginBottom: spacing.md,
+    // v3.49: 좌우 여백은 FeedScreen 리스트 패딩(12)만 사용 — 카드 자체 margin 제거로 이중 여백(36px/쪽) 해소
   },
   header: { flexDirection: 'row', alignItems: 'center' },
   headerMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   moreBtn: { padding: 6 },
   menu: {
-    alignSelf: 'flex-end', backgroundColor: colors.bg.surface2, borderRadius: radius.md,
+    alignSelf: 'flex-end', backgroundColor: feedCardLight.field, borderRadius: radius.md,
     paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, marginTop: 4,
+    borderWidth: 1, borderColor: feedCardLight.line,
   },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 4 },
   title: { marginTop: spacing.md },
   actionBar: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.xl,
     marginTop: spacing.md, paddingTop: spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: feedCardLight.line,
   },
   action: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   comments: { marginTop: spacing.md },
   commentRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.md },
   commentReply: {
     marginLeft: spacing.xl, paddingLeft: spacing.md,
-    borderLeftWidth: 2, borderLeftColor: colors.border.subtle, // 스레드 연결선
+    borderLeftWidth: 2, borderLeftColor: feedCardLight.line, // 스레드 연결선
   },
   replyBanner: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: colors.bg.deepest, borderRadius: radius.sm,
+    backgroundColor: feedCardLight.field, borderRadius: radius.sm,
     paddingHorizontal: spacing.md, paddingVertical: 6, marginBottom: spacing.xs,
   },
   commentHead: { flexDirection: 'row', alignItems: 'center' },
   commentActions: { flexDirection: 'row', gap: spacing.md, marginTop: 3 },
   commentInputRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: spacing.xs,
-    backgroundColor: colors.bg.deepest, borderRadius: radius.md,
+    backgroundColor: feedCardLight.field, borderRadius: radius.md,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderWidth: 1, borderColor: colors.border.subtle,
+    borderWidth: 1, borderColor: feedCardLight.line,
   },
-  commentInput: { flex: 1, color: colors.text.primary, maxHeight: 90, padding: 0 },
+  commentInput: { flex: 1, color: feedCardLight.text, maxHeight: 90, padding: 0 },
 });

@@ -7,6 +7,30 @@
 
 ---
 
+## v3.49 — 2026-08-19 — Now playing 시트 간소화 · 기획사 채널 개편(MAIDOL 동일) · 피드 폭/라이트 카드
+
+### 요청 원문 요약
+① Now playing 하단 토글 시트: 상세정보 불필요 — 가사·프롬프트·착장만. ② 기획사 클릭 → MAIDOL처럼 팔로우 버튼 + 앨범/트랙/팔로워 통계 + 곡·앨범/피드/커뮤니티 탭. ③ 피드 가로 길이 아직도 짧음. ④ 피드를 밝은 색 카드 나열로.
+
+### Plan verification findings (0단계)
+- PlayerScreen.tsx:165,881 — 시트 탭 4종 `lyrics/prompt/outfit/info`. info 블록 984~1011. 토글 라벨 "가사 · 상세정보"(854).
+- PlayerScreen.tsx:678 — 기획사 클릭이 **AgencyProfile**(검색 기반 구형: 팔로우·탭 없음)로 이동. 반면 **UserChannelScreen**(팔로우 토글+음악/피드/공지 탭)이 이미 존재하나 피드/알림에서만 진입됨.
+- MAIDOL ArtistDetailPage.jsx — 통계 앨범/트랙/팔로워, 탭 곡·앨범/피드/커뮤니티(v131·v133). API 검증: `/artists/{id}/albums`(cover_image=풀경로, track_count), `/albums/{id}`(tracks 포함) 라이브 확인.
+- **피드 폭 원인 확정**: FeedScreen `list{padding:16}` + FeedCard `card{marginHorizontal:20}` **이중 여백 36px/쪽** — v3.47 조정이 카드 쪽만 보고 리스트 패딩을 놓침.
+- FeedCard는 FeedScreen 전용(UserChannel은 자체 경량 카드) — 라이트 전환 영향 범위 격리 확인. AppText는 style이 tone보다 후순위 병합(AppText.tsx:28) → 색 오버라이드 가능.
+
+### 변경 매트릭스
+| 파일 | 변경 | 로그 추적자 |
+|---|---|---|
+| PlayerScreen.tsx | info 탭 제거(3탭), 토글 라벨 "가사 · 프롬프트 · 착장", 기획사 클릭 → uploader_id 있으면 UserChannel(없으면 구형 폴백) | [Player] |
+| UserChannelScreen.tsx | 앨범 fetch 추가, 통계 앨범/트랙/팔로워, 탭명 곡·앨범/피드/커뮤니티, 곡·앨범 탭에 앨범 카드(탭→앨범 트랙 재생) | [UserChannel] |
+| components/feed/FeedCard.tsx | 라이트 팔레트 `feedCardLight` 정의·적용(흰 카드+어두운 텍스트), marginHorizontal 제거(폭 픽스 절반) | [FeedCard] |
+| FeedScreen.tsx | 리스트 가로 패딩 16→12(폭 픽스 나머지), 본문/트랙칩 라이트 색 적용 | [FeedScreen] |
+
+백엔드 변경 없음(기존 API로 충족). 팀 역할: planner+frontend-dev 주도, tester는 tsc+Playwright(Expo Web 8081).
+
+---
+
 ## v3.48 — 2026-08-19 — A그룹(백엔드 원격) + B그룹(프론트) 일괄
 
 ### 요청
