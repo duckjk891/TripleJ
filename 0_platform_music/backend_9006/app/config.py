@@ -146,7 +146,7 @@ class Settings(BaseSettings):
     naver_client_secret: str = ""
 
     # provider 가 인가코드를 돌려보낼 우리 콜백의 베이스 URL.
-    oauth_callback_base: str = "http://localhost:9005"
+    oauth_callback_base: str = "http://localhost:9006"
     # 최종 JWT 를 fragment 로 전달할 프론트엔드 URL.
     frontend_url: str = "https://localhost:4000"
 

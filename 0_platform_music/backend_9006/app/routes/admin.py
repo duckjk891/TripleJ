@@ -503,6 +503,9 @@ async def delete_track(
     # Clear cache
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
+    # 2026-08-20: 상세 조회 캐시가 v3 키로 승격됐는데(tracks.py:1160/1275) 여기서
+    # 지우지 않아 삭제된 트랙이 최대 600초 계속 조회되던 버그 수정.
+    await redis.delete(f"cache:track:v3:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # v171 — 검색 인덱스 동기화 (best-effort): 관리자 삭제도 사용자 삭제와 동일하게
@@ -554,6 +557,8 @@ async def toggle_visibility(
     # Clear cache
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
+    # 2026-08-20: v3 키 누락 시 비공개 전환이 최대 600초 미반영되던 버그 수정.
+    await redis.delete(f"cache:track:v3:{track_id}")
 
     await _log_admin_action(
         conn, current_admin["id"], "change_visibility", "track", track_id,
@@ -851,10 +856,13 @@ async def handle_report(
         )
 
     async def _invalidate_track_caches(track_oid_str: str):
-        """트랙 캐시(v1/v2) + 차트 캐시 무효화 (blind/restore 공용)."""
+        """트랙 캐시(v1/v2/v3) + 차트 캐시 무효화 (blind/restore 공용)."""
         redis = get_redis()
         await redis.delete(f"cache:track:{track_oid_str}")
         await redis.delete(f"cache:track:v2:{track_oid_str}")
+        # 2026-08-20: 상세 조회가 v3 키를 읽는데(tracks.py:1160) v2 까지만 지워
+        # 신고 블라인드된 트랙이 최대 600초 계속 노출되던 버그 수정.
+        await redis.delete(f"cache:track:v3:{track_oid_str}")
         # v137 BUG-3 — 차트 캐시(TTL 300s)도 즉시 무효화
         try:
             chart_keys = [k async for k in redis.scan_iter(match="cache:chart:*")]

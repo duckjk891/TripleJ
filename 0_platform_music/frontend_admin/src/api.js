@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // v162 — 관리자 독립 앱 슬림 API 클라이언트.
-// vite proxy 가 /api → backend (9005) 로 forward (사용자 앱과 동일 패턴).
+// vite proxy 가 /api → backend (9006) 로 forward (사용자 앱과 동일 패턴).
 const API = axios.create({
   baseURL: '/api',
 });

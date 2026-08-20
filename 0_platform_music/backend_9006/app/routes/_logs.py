@@ -1,12 +1,12 @@
 """
 로그 파일 조회 / 수신 API (앱팀 디버깅 전용).
 
-- 서버 실행 시 `run.sh`가 stdout/stderr 로그를 `backend_9004/logs/server.log`에
+- 서버 실행 시 `run.sh`가 stdout/stderr 로그를 `backend_9006/logs/server.log`에
   타임스탬프와 함께 기록한다. 본 라우터는 해당 파일을 안전하게 조회/다운로드하기
   위한 토큰 기반 GET API 3종(`/tail`, `/download`, `/info`)을 제공한다.
 - v46-pre: 프론트엔드 콘솔 로그 원격 수집을 위해 POST `/frontend` 엔드포인트 추가.
   브라우저에서 발생한 console.error / window.onerror / unhandledrejection 등을
-  배치로 받아 `backend_9004/logs/frontend.log` 에 1 이벤트 = 1 라인 형식으로 기록.
+  배치로 받아 `backend_9006/logs/frontend.log` 에 1 이벤트 = 1 라인 형식으로 기록.
 - GET 계열은 `LOG_ACCESS_TOKEN` 으로 보호 (앱팀 운영용).
 - POST `/frontend` 는 일반 사용자 JWT(`get_current_user`) 로 보호 — 로그인한
   사용자라면 누구나 자기 브라우저의 로그를 송신할 수 있고, 익명은 401.
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# backend_9004/app/routes/_logs.py → backend_9004/logs/{server,frontend}.log
+# backend_9006/app/routes/_logs.py → backend_9006/logs/{server,frontend}.log
 _LOG_DIR: Path = Path(__file__).resolve().parent.parent.parent / "logs"
 LOG_FILE_PATH: Path = _LOG_DIR / "server.log"
 FRONTEND_LOG_FILE_PATH: Path = _LOG_DIR / "frontend.log"
@@ -111,7 +111,7 @@ async def download_log(
         content=data,
         media_type="text/plain; charset=utf-8",
         headers={
-            "Content-Disposition": 'attachment; filename="server_9005.log"',
+            "Content-Disposition": 'attachment; filename="server_9006.log"',
             "Cache-Control": "no-store",
         },
     )
@@ -361,7 +361,7 @@ async def receive_frontend_logs(
 
     - 인증: JWT (axios 인터셉터가 자동 첨부; sendBeacon 은 ?token=<jwt> 폴백 사용)
     - 검증: events 1~50개, body ≤256KB, message ≤8KB, stack ≤16KB
-    - 저장: backend_9004/logs/frontend.log 에 1 이벤트 1 라인
+    - 저장: backend_9006/logs/frontend.log 에 1 이벤트 1 라인
     - 응답: {"received": <int>}
     """
     user_id = current_user.get("id") or current_user.get("user_id") or "unknown"

@@ -2,7 +2,7 @@ import axios from 'axios';
 // v185 — 실패 API 구조화 수집. remoteLogger 는 flush 시점에만 ../api 를 사용(지연 바인딩)이라 순환 안전.
 import { logApiFailure } from '../utils/remoteLogger';
 
-// vite proxy 가 /api → backend (9005) 로 forward
+// vite proxy 가 /api → backend (9006) 로 forward
 const API = axios.create({
   baseURL: '/api',
 });
