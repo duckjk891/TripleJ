@@ -15676,3 +15676,85 @@ ES 에 비트코인 몸값 요구 인덱스(`read_me`)가 존재하는 침해 �
 - 사용자 앱 1: `frontend/src/components/Header.jsx` (DEV 로그 1줄 + 주석 2줄)
 - 산출물 3 중 2: `claude_skills_outputs/team-dev/PLAN.md` · `TESTPLAN.md` (+ 본 `REPORT.md`)
 - 무변경 확인: `dmSocket.js` · `DmInboxPage.jsx` · `admin_cs.py` · `admin_notices.py` · `notice_service.py` · docker-compose · `.env`
+
+
+## v196 — 2026-08-20 — 검증 발견 결함 5건 수정 [MAIDOL-HardeningSquad]
+
+> **작업 환경 변경**: 이 버전부터 **백엔드는 `backend_9006` 하나뿐**이며 **미러링은 전면 폐기**됐다. `backend_9004`·`backend_9005` 에 sync 하지 않고, `diff -q` 파리티 검증 항목도 승계하지 않는다(v195 `RT-UNIT-19`·`RT-API-16` 미승계). 브랜치는 `backend`(구 `admin` 은 fast-forward 병합 후 삭제).
+
+### 1. 요청 작업
+9006 전환 검증(무료 쓰기 경로)에서 나온 결함 5건 수정. 사용자 지시: "1~5번 전부 고쳐줘".
+**5건 전부 9006 전환과 무관한 선재 결함**이다 — 이번 전환이 만든 회귀는 0건이었다.
+
+### 2. 계획 단계에서 확장된 범위 (0단계 실측)
+초기 인식은 "재생목록 1파일"이었으나 `mongo.tracks` 를 내보내는 **전 지점 감사** 결과 **3파일 5경로**로 확대됐다.
+
+| 위치 | 문제 | 공격 경로 |
+|---|---|---|
+| `playlists.py` | 가드 0 + 전 필드 덤프 | 내 재생목록에 피해자 비공개 곡 id 추가(201) → GET 으로 전 필드 열람. 재생목록을 공개로 바꾸면 제3자 전원 열람 |
+| `likes.py` | **글자 그대로 동일한 코드** | `POST /api/likes/{피해자곡}` → `GET /api/likes/`. 재생목록조차 불필요, 더 짧음 |
+| `tracks.py` `download` | v138 가드 누락 | presigned **오디오 URL** 획득. 형제 `stream`·`stream-proxy` 는 가드 보유 — download 만 빠짐 |
+| `tracks.py` `music-video` | **인증 자체 없음** | 비로그인으로 비공개 곡 presigned **MV URL** |
+| `tracks.py` `lyrics-timeline` | **인증 자체 없음** | 비로그인으로 비공개 곡 **가사 전문+타이밍** |
+
+**도입 시점**: `add_track` 은 2026-06-01(`ee81985`), 피드 쪽 동일 가드는 2026-08-03(`c81b79d`) 추가 — **재생목록·좋아요만 빠진 채 약 2개월 반 노출**.
+
+### 3. 설계상 최대 함정 — feeds 가드를 복사하면 회귀한다
+`feeds.py:175` 는 `not doc.get("is_public")` — **`is_public` 키가 없는 레거시 문서를 비공개로 판정**한다. 반면 `tracks.py:49~54` 는 정반대를 명시한다(레거시는 공개로 취급, 회귀 방지 최우선).
+재생목록·좋아요는 **레거시 곡을 이미 담고 있는 저장소**라, feeds 식을 채택하면 **기존 레거시 공개곡이 전부 사라지고 추가도 400** 이 된다.
+→ **`tracks.py` 규약 채택**: `hidden = (doc.get("is_public") is False) or bool(doc.get("report_blinded"))`
+
+### 4. 수행 결과 (백엔드 5파일 + 템플릿 1 + 문서 1, **프론트 0**)
+- **`playlists.py`·`likes.py`** — `_TRACK_PROJECTION`·`_is_hidden_track` 신설, `_serialize_track` **화이트리스트 전면 교체**(종전: Mongo 문서 통째 반환), 담기 시 `hidden and not mine` → **400**, 목록/상세에서 숨김 곡 **배열 제외**. 본인 비공개 곡은 본인에게 계속 노출
+- **`tracks.py`** — `download_track` 에 v138 가드(**Redis 다운로드 집계보다 앞** — 차단분이 차트에 계상되지 않도록), `music-video`·`lyrics-timeline` 에 **`get_current_user_optional`**(필수 인증을 쓰면 비로그인 공개 재생이 401 로 파손) + 가드 → **404**(존재 은닉). 가사 엔드포인트는 가드를 광역 `try` **바깥**으로 옮겨 404 가 `{"has_timestamps":false}` 200 으로 삼켜지지 않게 함
+- **`feeds.py`** — ③ 평탄화 **전** `reply_target_author_id` 캡처(저장 `parent_id` 는 평탄화 값 그대로 = **v191 트리 계약 불변**), 알림 블록의 중복 `find_one` 제거. ④ `purge_feed_document` 에 best-effort 알림 정리(`type` 화이트리스트로 `follow` 오삭제 방어)
+- **`dm_service.py`** — ⑤ peer `read` 에 `result.modified_count > 0` **단독** 가드. 본인 `unread` 가드(v195)·pending 프라이버시 가드(v155)·발행 순서·반환 스키마 전부 불변
+- **`.env.example`·`backendAPI정리.md`** — 콜백 주소 9006 정정 + **각 제공자 콘솔 Redirect URI 변경은 사용자가 직접 해야 하며 문서 수정만으로는 로그인이 동작하지 않음** 안내 블록 신설
+
+### 5. 테스트 결과 — **46건 전부 PASS, 제품 결함 0건**
+`[unit]` 21 / `[api]` 17 / `[e2e]` 8. 즉시 중단 조건 S1~S8 **전부 미발생**.
+- 비공개·블라인드 곡 담기/좋아요 **400**, 목록에서 제외(`hidden_skipped` 로그 실측)
+- download **404** + **Redis 8지표·`download_count`·`download_logs` 전부 불변**(차단분 미계상 실증)
+- MV·가사 비로그인 **404**, 소유자는 정상. **공개 곡 비로그인 접근 200 유지**(최대 회귀 위험 통과)
+- **레거시 곡(`is_public` 키 부재) 추가·조회 정상**(R2 통과 — 대량 소실 없음)
+- 답글 알림: 실제 상대 B **1건**, 무관한 A **0건**, 저장 `parent_id`=최상위(v191 계약 유지). 1단 답글 정상(과교정 없음), 부모==피드주인 중복 미발송
+- 피드 삭제 시 알림 **25→20(정확히 −5)**, 무관 피드·follow 알림 **불변**
+- peer `read`: `modified_count==0` → 발행 0회, `prev_unread>0 & modified==0` 경계에서 **peer 0 / 본인 1**(v195 동작 보존)
+- E2E: 재생목록 **아티스트명 4/4 표시**(선재 "빈칸" 버그 해소), 실제 재생 0:00→0:03, 숨김 곡 제외 시 **번호 연속**(구멍 없음)
+- 테스트 데이터 22개 지표 **전부 차이 0**, `v196t` 마커 잔여 0건
+
+### 6. 앱팀 고지 필수 — 응답 필드 변경
+`GET /api/playlists/{id}` 의 `tracks[]`, `GET /api/likes/` 의 `likes[]` 가 전 필드 덤프 → 화이트리스트로 전환.
+- **신규 추가**: `artist_id`, `artist_name`, `cover_image` (별칭 — 이 덕분에 재생목록 재생 시 아티스트명 공백 버그 해소)
+- **유지**: `id, title, uploader_id, uploader_nickname, cover_image_url, duration_sec, is_public` + `position`(playlists) / `liked_at`(likes)
+- **제거**: `audio_url, lyrics, prompt, generation_id, user_character_snapshot, search_keywords, waveform_data, beats*, tempo, bpm, key, genre, mood, tags, categories, language, ai_model*, variant_index, play_count, like_count, comment_count, download_count, report_blinded, created_at, updated_at`
+- 오디오·상세는 종전대로 `/api/tracks/stream/{id}`·`/api/tracks/{id}` 재조회 경로가 살아 있다. **웹 프론트 소비 필드 전수 조사 결과 영향 0**(재생목록 상세 소비자는 `PlaylistDetailPage.jsx:24` 1곳뿐, 오디오는 재생 시점 재조회)
+- 또한 `download`·`music-video`·`lyrics-timeline` 이 타인 비공개·블라인드 곡에 **404** 를 반환한다
+
+### 7. ⚠️ 미해결 — 9004 에 동일 취약점이 열려 있음 (사용자 결정으로 유보)
+**앱팀이 사내망(Tailscale)으로 `backend_9004` 를 실사용 중**이다 — 최근 요청 289건이 외부 IP `100.83.210.58` 에서 유입(광고·커버·트랙 조회 등 실사용 패턴). 그런데
+- `backend_9004` 의 `playlists.py`·`likes.py` 에 v196 가드 **0건**(미러링 폐기로 미반영)
+- **9004 와 9006 은 `.env` 의 PG·Mongo 접속 설정이 동일 — 같은 실데이터를 본다.** 테스트 데이터가 아니다
+- `backendAPI정리.md` 의 사내망 안내도 9004 로 남아 있다(9006 단일 백엔드 문구와 같은 표 안에서 충돌)
+
+**사용자 판단(2026-08-20): 옵션 B — 9004 는 그대로 두고 앱팀 이전을 기다린다.** 근거: 앱팀이 앱 프론트 작업을 마친 뒤 9006 으로 붙을 예정이며, 사내망 한정이라 실질 위험이 낮고, 여러 곳을 동시에 손대는 것이 오히려 사고를 유발해 왔다(v192 커밋 스윕 사고 선례).
+**잔존 위험**: 앱팀 이전이 지연되는 만큼 노출 기간이 늘어난다. **앱팀이 9006 으로 이전하는 시점에 이 항목을 닫을 것.**
+
+### 8. 범위 밖 / 후속 과제
+- 🔴 **`upload.py:151~156` 커버 이미지 IDOR** — `type=cover&id=<임의 트랙 id>` 로 소유권 검사 없이 `cover_image_url` 을 덮어씀. **인증된 아무나 타인 곡 커버 변조 가능.** 유출(읽기)이 아닌 변조(쓰기)라 결함 종류가 달라 v196 제외 — **후속 과제 등록**
+- `delete_feed_comment` 시 알림 정리 — `comment`/`reply` 알림이 `target_id=feed_id`(댓글 id 아님)라 특정 댓글의 알림을 **식별할 수단이 없음**. 지우면 그 피드 알림 전부 오삭제 → 구조적 불가, 범위 밖 확정
+- `notifications` 컬렉션 **인덱스 0개**(어디에도 `ensure_*_indexes` 없음)
+- `GET /api/likes/` 의 `pagination.total` 이 숨김 곡을 포함해 셈 — `returned` 와 어긋날 수 있음(설계 확인 필요)
+- `playlists.py` 의 **선재** `[playlists] create/update` 로그가 user id 전체 UUID 를 찍음(v196 신설 라인은 전부 8자) — 한 파일 내 규약 불일치
+- `PlayerPage.jsx:112` 가 `generation_id` 보유 트랙 진입 시 `GET /api/generate/{id}` 를 자동 발사(403 거절, 과금 0) — 동작 확인 권고
+- **곡 업로드 경로 전체 미검증** — `POST /api/tracks/upload` 가 끄는 스위치 없이 유료 AI 2회(gpt-4o-mini 키워드 + 임베딩)를 호출하고, `GET /api/tracks/search` 도 유료라 **검증 행위 자체가 과금**. 스위치 신설 또는 소액 과금 승인 필요
+
+### 9. 안전 준수 실측
+유료 API 호출 **0건**(`POST /api/tracks/upload`·`GET /api/tracks/search`·`/api/generate`·`/api/mv`·`/api/character`·`/api/voice-*` 각 0). 별 차감 0. 전체발송 200 성립 0. 실사용자 데이터 무접촉. **`backend_9004`·`backend_9005` 읽기조차 하지 않음**(미러링 폐기 준수, `git status` 변경 0건). 테스트 데이터 전량 삭제·22지표 카운트 원복. 산출물에 크리덴셜·개인정보 실값 0건.
+
+### 10. 변경 파일 (커밋 대상 9)
+- 백엔드 5: `backend_9006/app/routes/{playlists,likes,tracks,feeds}.py`, `app/services/dm_service.py`
+- 템플릿 1: `backend_9006/.env.example`
+- 문서 1: `backendAPI정리.md`
+- 산출물 3 중 2: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN}.md` (+ 본 `REPORT.md`)
+- **무변경 확인**: `backend_9004`·`backend_9005` 전체, `frontend/`·`frontend_admin/` 전체, `.env` 실값

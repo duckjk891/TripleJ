@@ -27727,3 +27727,518 @@ _run_cs_broadcast(official_id, audience, text, notice_id)
 5. 산출물에 API 키·시크릿·실계정 크리덴셜 실값 금지 → 플레이스홀더.
 6. 인프라 무조작. **MinIO 9100 차단 금지.**
 7. **9005 선구현 → 9004 byte-identical 미러** 필수.
+
+## v196 — 2026-08-20 — 검증 발견 결함 5건 수정 [MAIDOL-HardeningSquad]
+
+### 0. 채번 확인
+
+착수 전 `git log --oneline -5` 재확인 (앱팀 동일 브랜치 직접 커밋 대비):
+
+```
+45c7783 feat: 9006 단일 백엔드 전환 — 프론트 4000·4001 연결 이전 + 전환 검증에서 나온 결함 3건 수정
+857f672 chore: backend_9006 신설 — 9004(앱팀)·9005(웹) 병합 작업용 예비 백엔드
+ad23e04 feat: v195 미읽음 뱃지 실시간 반영 + 공지 읽음 수 자동 갱신 (9004 미러) (team-dev)
+```
+
+- `PLAN.md`/`TESTPLAN.md`/`REPORT.md` 전문 `grep "v196"` → **0건**. 커밋 로그에도 v196 없음 → **v196 선점 없음, 그대로 사용**.
+- 브랜치: `backend` (main checkout `HEAD=45c7783`).
+
+#### 0-1. ⚠️ 작업 트리 경고 (착수 전 필독)
+
+`git worktree list` 결과, 현재 세션의 워크트리
+`0_platform_music/.claude/worktrees/e2e-test-search-cs-admin-1db925` 는 **구 커밋 `c4d160e`** 에 있고
+**`backend_9006` 디렉터리 자체가 존재하지 않는다**(`ls .../0_platform_music/backend_900*` → No such file or directory).
+
+- **모든 코드 수정은 메인 체크아웃에서 한다**: `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`, `45c7783`).
+- 대상 절대경로: `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006/...`
+- 워크트리 안의 `0_platform_music/` 을 편집하면 **9006 이전의 낡은 파일**을 고치게 된다 — 금지.
+
+#### 0-2. 🚫 미러링 폐기 (v194·v195 규칙 무효)
+
+- 백엔드는 **`backend_9006` 하나뿐**. `backend_9004`·`backend_9005` 로 **복사·sync 금지**, `diff -q` 일치 확인 절차 **폐기**.
+- v195 의 `RT-UNIT-19`(9004 미러 `diff -q`)·`RT-API-16`(9004 런타임 동등성)은 **v196 에서 승계하지 않는다**.
+- `backend_9004`·`backend_9005` 는 과거 폴더 — 참고 대조가 꼭 필요할 때만 **읽기 전용**.
+
+---
+
+### 1. 사용자 원본 요청 (원문 보존)
+
+> 이번 버전은 **v196 — 검증에서 나온 결함 5건 수정** 입니다.
+> ① 비공개 곡이 재생목록을 통해 유출됨 ② 소셜 로그인 콜백 주소 표기가 9005로 잔존
+> ③ 답글(대댓글) 알림이 엉뚱한 사람에게 발송됨 ④ 피드 삭제 시 알림이 정리되지 않음
+> ⑤ DM 읽음 신호가 상대에게 중복 발송
+
+---
+
+### 2. Plan verification findings (0단계 — 파일 직접 확인)
+
+**모든 항목 파일 직접 열람으로 확정. 추정 없음.** 5건 전부 **실재 확인**, 추가로 **동급 취약점 1건(likes.py)** 을 신규 발견.
+
+#### 2-1. ① 비공개 곡 유출 — 확인 + **범위 확대 필요**
+
+`backend_9006/app/routes/playlists.py` (전체 238줄)
+
+| 위치 | 현재 동작 (실측) |
+|---|---|
+| `_serialize_track` `:19~26` | `doc["id"]=str(doc.pop("_id"))` + `created_at`/`updated_at` ISO 변환 **뿐**. 필드 화이트리스트 **없음** → **Mongo 문서 전 필드 그대로 반환** |
+| `add_track` `:172~205` | 재생목록 소유권(`WHERE id=$1 AND user_id=$2`) + `ObjectId.is_valid` + `tracks.find_one({"_id":...})` 실존만 확인. **`is_public`·`uploader_id`·`report_blinded` 검사 0건**. 프로젝션 없이 `find_one` |
+| `get_playlist` `:77~120` | 재생목록 자체는 `if not row["is_public"] and row["user_id"] != user_id → 403` 로 보호됨. 그러나 **담긴 트랙은 `tracks.find({"_id":{"$in":...}})` 로 필터·프로젝션 없이 조회** 후 `_serialize_track` 전량 반환 |
+
+**실증된 공격 경로 2가지** (둘 다 인증된 일반 사용자면 성립):
+
+1. 공격자가 **자기** 재생목록 생성 → `POST /api/playlists/{내것}/tracks` 로 **피해자의 비공개 곡 id** 추가(가드 없음, 201) → `GET /api/playlists/{내것}` 로 **전 필드 열람**.
+2. 위 재생목록을 `is_public=true` 로 바꾸면(`update_playlist` 는 is_public 자유 변경 허용) **제3자 누구나** 피해자 비공개 곡 전 필드 열람.
+
+**유출되는 실제 필드** — `tracks` 문서 삽입부 `tracks.py:1352~1389`(수동 업로드)·`:1614~1645`(생성물 업로드) 기준:
+`audio_url`(MinIO 원본 오브젝트 키 — presign·`_is_hidden_track` 가드 우회), `lyrics`, `prompt`, `recognized_timestamps`/`recognized_at`, `generation_id`(소유자 전용 `/api/generations` 로 피벗 가능), `user_character_snapshot`, `search_keywords`, `waveform_data`/`beats`/`downbeats`/`tempo`/`beats_*`, `report_blinded`, `ai_model_version`, `variant_index`, `language` 등.
+
+##### 🔴 신규 발견 — `likes.py` 에 **동일 취약점**(더 짧은 공격 경로)
+
+`backend_9006/app/routes/likes.py`
+
+| 위치 | 현재 동작 (실측) |
+|---|---|
+| `_serialize_track` `:16~23` | `playlists.py` 와 **글자 그대로 동일한 전 필드 덤프** |
+| `like_track` `:82~91` | `POST /api/likes/{track_id}` — `ObjectId.is_valid` + `find_one` **실존만** 확인. `is_public`·`uploader_id` 검사 **0건** |
+| `list_likes` `:61~69` | `GET /api/likes/` — `tracks.find({"_id":{"$in":track_ids}})` **프로젝션·가시성 필터 없이** `_serialize_track` 반환 |
+
+→ 공격 경로: `POST /api/likes/{피해자_비공개_track_id}` (201) → `GET /api/likes/` → **전 필드 열람**. 재생목록 생성조차 불필요.
+**판단: ① 의 범위에 `likes.py` 를 포함한다.** playlists 만 고치면 동일한 문을 열어둔 채 끝난다.
+
+##### 정답 구현(재사용 대상) — 옆 파일에 이미 있음
+
+- `feeds.py:38~45` `_TRACK_PROJECTION` = `{title, uploader_id, uploader_nickname, cover_image_url, duration_sec, is_public}`
+- `feeds.py:67~78` `_track_view(doc)` → `{id, title, artist_id, artist_name(기본 "AI"), cover_image, duration_sec, is_public}`
+- `feeds.py:171~177` 가드 → `if doc.get("uploader_id") != user_id and not doc.get("is_public"): 400 "다른 사용자의 비공개 곡은 사용할 수 없습니다."`
+
+##### ⚠️ 그런데 feeds 가드를 **그대로 복사하면 회귀**한다 (핵심 발견)
+
+`tracks.py:49~54` 가 명시적으로 다른 규약을 쓴다:
+
+```python
+def _is_hidden_track(t: dict) -> bool:
+    """v138 직링크 가드 — 명시적 비공개(is_public=False) 또는 신고 블라인드.
+    is_public 필드가 없는 레거시 도큐먼트는 공개로 취급(회귀 방지 —
+    기존 공개 곡 비로그인 200 불변이 최우선)."""
+    return (t.get("is_public") is False) or bool(t.get("report_blinded"))
+```
+
+- feeds 식 `not doc.get("is_public")` → `is_public` **키가 없는 레거시 문서를 비공개로 판정**.
+- tracks 식 `is_public is False` → 레거시 문서를 **공개로 판정**(의도적, 회귀 방지 주석 명시).
+- 재생목록·좋아요는 **레거시 곡을 이미 담고 있을 수 있는** 저장소다. feeds 식을 쓰면 **기존에 담긴 레거시 공개곡이 갑자기 사라지고 추가도 400** 이 된다.
+
+**→ ① 은 `tracks.py` 의 `_is_hidden_track` 규약(`is_public is False` + `report_blinded`)을 채택한다. feeds 식 `not is_public` 금지.**
+부수 효과로 `report_blinded`(신고 블라인드) 곡도 함께 차단되어 `tracks.py` 직링크 가드와 정책이 일치한다.
+
+##### 프론트 회귀 범위 — 전수 확인 결과 **깨지는 화면 0개**
+
+`GET /api/playlists/{id}` 의 **유일한 소비자**:
+- 헬퍼: `frontend/src/api/index.js:254~255` `getPlaylist = (id) => API.get(`/playlists/${id}`)` (axios `baseURL='/api'` — 그래서 `"api/playlists"` 문자열 grep 은 0건이 나온다. 주의)
+- 호출: `frontend/src/pages/PlaylistDetailPage.jsx:24` **1곳뿐**
+- `frontend_admin/src` 는 playlist 참조 **0건** (트리 전체 grep 확인)
+- `AddToPlaylistModal.jsx` 는 `getPlaylists`(목록)·`createPlaylist`·`addSongToPlaylist` 만 사용 — 상세 payload 미사용
+
+`tracks[]` 원소에서 **실제로 읽는 속성 전수**:
+
+| 속성 | 읽는 위치 |
+|---|---|
+| `id` | PlaylistDetailPage.jsx:28,:123,:128 / SongItem.jsx:31,:44,:58,:104,:105,:109 / PlayerContext.jsx:67,:80,:84,:144,:168,:182,:186,:269,:276 / MusicPlayer.jsx:48 / PlayerPage.jsx:47,:90,:187,:188,:238,:243,:578,:597,:600,:619 |
+| `title` | SongItem.jsx:73,:104,:105 / MusicPlayer.jsx:57 / PlayerPage.jsx:238,:243,:358,:591,:597 |
+| `cover_image` | SongItem.jsx:58,:61,:62 / MusicPlayer.jsx:48,:50,:51 / PlayerPage.jsx:289,:290,:584,:585 |
+| `cover_image_url` | (SongItem 폴백 경로) |
+| `artist_id` / `uploader_id` | SongItem.jsx:76 (`artist_id` 우선, `uploader_id` 폴백) |
+| `artist_name` / `uploader_nickname` | SongItem.jsx:76 (폴백 있음) / MusicPlayer.jsx:58 · PlayerPage.jsx:365,:592 (**폴백 없음**) |
+| `album_id` | SongItem.jsx:58,:82 / MusicPlayer.jsx:48 (그라데이션 시드) |
+| `album_title` | SongItem.jsx:80,:83 |
+| `duration` | PlayerContext.jsx:21 (`audioDuration \|\| currentSong?.duration \|\| 240`) |
+| `position` | **어디서도 읽지 않음** — 행 번호는 PlaylistDetailPage.jsx:125 에서 `idx+1` 로 자체 계산 |
+
+**오디오 URL 은 이 payload 에서 안 쓴다 (결정적)** — `PlayerContext.jsx:135~156` 이 재생 시점에 **id 로 재조회**한다:
+```js
+API.get(`/tracks/stream/${song.id}`).then((res) => { audio.src = res.data.stream_url; ... })
+```
+서버측 `tracks.py:1682~1714` 가 `{audio_url, uploader_id, is_public, report_blinded}` 프로젝션 + `_is_hidden_track`/`_can_view_hidden_track` 가드 후 `{"stream_url": url}` 만 반환.
+가사·프롬프트·BPM·재생수 등 상세도 `PlayerPage.jsx:90` 의 `api.getTrackDetail(id)`(`/api/tracks/{id}`)로 **별도 재조회**.
+→ **`audio_url`·`lyrics`·`prompt`·`waveform_data`·`beats*`·`generation_id`·`user_character_snapshot` 전부 제거해도 프론트 영향 0.**
+
+**부수 발견 — 화이트리스트가 기존 버그를 고친다**: `playlists.py::_serialize_track` 은 다른 직렬화기들이 다 붙이는 별칭(`artist_name`/`cover_image`/`artist_id`)을 안 붙인다. `SongItem` 은 폴백이 있어 살아있지만 `MusicPlayer.jsx:58`·`PlayerPage.jsx:365,:592` 는 폴백이 없어 **재생목록에서 재생 시 아티스트명이 공백**으로 뜬다. `_track_view` 규약 채택 시 이 선재 버그도 함께 해소된다.
+
+**`album_id`/`album_title`**: SongItem 이 읽지만 Mongo `tracks` 문서에 **애초에 없는 필드** — 오늘도 dead. 화이트리스트에서 제외해도 동작 불변.
+
+##### 동종 취약점 수색 결과 (전 라우트 — `mongo.tracks` 를 읽어 클라이언트로 내보내는 지점 전수)
+
+`tracks.py` 는 **대부분** 가드되어 있으나 **3개 엔드포인트가 v138 가드에서 누락**된 것을 확인(전부 직접 열람 검증):
+
+| file:line | 라우트 | 가드 | 프로젝션 | 판정 |
+|---|---|---|---|---|
+| **`playlists.py:193`** | POST `/api/playlists/{id}/tracks` | **없음**(실존만) | 없음 | 🔴 **VULNERABLE** |
+| **`playlists.py:103`** | GET `/api/playlists/{id}` | **없음** | 없음(전 필드) | 🔴 **VULNERABLE** |
+| **`likes.py:89`** | POST `/api/likes/{track_id}` | **없음**(실존만) | 없음 | 🔴 **VULNERABLE** |
+| **`likes.py:61`** | GET `/api/likes/` | **없음** | 없음(전 필드) | 🔴 **VULNERABLE** |
+| **`tracks.py:1717~1727`** | POST `/api/tracks/download/{id}` | **없음** | `{audio_url,title}` | 🔴 **VULNERABLE** — presigned **오디오 URL** 반환 |
+| **`tracks.py:770~788`** | GET `/api/tracks/{id}/music-video` | **없음 (인증 자체 없음)** | `{generation_id}` | 🔴 **VULNERABLE** — presigned **MV URL** 반환 |
+| **`tracks.py:795~825`** | GET `/api/tracks/{id}/lyrics-timeline` | **없음 (인증 자체 없음)** | 없음(전 문서 조회) | 🔴 **VULNERABLE** — **가사** 유출 |
+| `albums.py:114` `_load_tracks_ordered` | GET `/api/albums/{id}` 외 | 없음 | 없음 | 🟡 LOW — `_verify_tracks_owned`(`:120`)로 **타인 id 주입 불가**. 공개 앨범 수록 후 본인이 비공개 전환한 경우만 노출 |
+| `reports.py:303` | GET `/api/reports/my`·`/my-affected` | 없음 | `{title,cover_image_url}` | 🟡 LOW — 프로젝션이 좁음 |
+| `feeds.py:201` `_hydrate_feeds` | GET `/api/feeds/*` | 쓰기 시점만(`:168`) | `_TRACK_PROJECTION` | 🟡 LOW — 프로젝션 제한됨, 읽기 시점 재확인 부재 |
+| `tracks.py:1692` `/stream/{id}` | — | `_is_hidden_track`+`_can_view_hidden_track` | 있음 | SAFE (**정답 구현**) |
+| `tracks.py:917` `/stream-proxy/{id}` | — | 동일 v138 가드 | 있음 | SAFE |
+| `tracks.py:1174` `/{track_id}` | — | 캐시·Mongo 양 경로 v138 가드 | — | SAFE |
+| `tracks.py:852,873,711,734,765,556,1933` | beats·수정·삭제·my 등 | owner check | — | SAFE |
+| `tracks.py:157,225,360,1032,1824` | 목록·검색·related·share-video | `is_public:True` 쿼리 / `:1829` 가드 | — | SAFE |
+| `albums.py:171,196,782` / `artists.py:145` / `charts.py:114,241,274,488` | — | `is_public` 필터 | — | SAFE |
+| `business.py`·`search_service`·`embedding_service`·`beat_extraction`·`mv_pipeline` | — | 권한 게이트 / 배경작업 | — | SAFE |
+| `admin.py:93,239,458,487,550,628,878,1106` / `admin_moderation.py:216` | `/api/admin/*` | `Depends(get_admin_user)` | — | ADMIN-ONLY (정상) |
+
+**`tracks.py` 3건 상세(직접 검증):**
+- `download_track` `:1717~1727` — `find_one(..., {"audio_url":1,"title":1})` 후 **바로 presign**. 30줄 위 형제 `get_track_stream` `:1692~1702` 는 `{audio_url, uploader_id, is_public, report_blinded}` 프로젝션 + `_is_hidden_track`/`_can_view_hidden_track` 가드를 **정확히 갖고 있다**. v138 이 stream·stream-proxy 에만 적용되고 **download 만 누락**된 명백한 실수.
+- `get_track_music_video` `:770~788` — 함수 시그니처에 **인증 의존성 자체가 없음**. 비공개 곡의 재생 가능한 presigned MV URL 을 **비로그인 상태로** 획득 가능.
+- `get_track_lyrics_timeline` `:795~825` — 인증 없음 + `find_one` 프로젝션 없음. 비공개·블라인드 곡의 **가사 전문+타이밍** 유출. docstring 이 "unauthenticated, public playback" 이라 **공개 곡 대상 무인증은 의도된 설계** — 따라서 `get_current_user_optional`(이미 `:1685` 에서 쓰는 패턴) 기반 가드가 정답이며, 공개 곡 무인증 접근은 그대로 보존된다.
+
+**→ ① 의 v196 범위: `playlists.py` + `likes.py` + `tracks.py` 3개 엔드포인트 = 3파일.**
+`albums.py`·`reports.py`·`feeds.py` LOW 3건은 **범위 밖**(§6-2 근거).
+
+##### 🔴 별건 발견 — `upload.py` 커버 이미지 IDOR (쓰기, 다른 결함 종류)
+
+`backend_9006/app/routes/upload.py:151~156` `upload_image(type="cover", id=<track_id>)`:
+```python
+object_name = f"covers/{current_user['id']}/{id}{ext}"
+...
+await mongo.tracks.update_one({"_id": ObjectId(id)}, {"$set": {"cover_image_url": object_name}})
+```
+`ObjectId.is_valid(id)` 만 확인하고 **소유권 검사가 전혀 없다** → **인증된 아무 사용자나 타인 곡의 커버 아트를 임의 이미지로 덮어쓸 수 있다**(직접 열람 검증 완료).
+
+**v196 범위 밖** — ①은 "비공개 곡 **유출**(읽기)" 이고 이것은 **무단 변조(쓰기)** 로 결함 종류가 다르다. 별도 버전으로 처리 권고. REPORT 에 기록하고 후속 과제로 등록한다.
+
+##### 도입 시점
+
+`backend_9006` 은 `857f672` 에서 폴더째 신설돼 blame 이 평탄화됨(`git log -L` 이 전부 857f672 로 수렴). 9005 이력 기준 실측값: `add_track` 2026-06-01(`ee81985`), 피드 가드 2026-08-03(`c81b79d`) — **피드에만 가드가 들어가고 재생목록·좋아요는 누락**. 9006 전환 이전부터의 선재 결함.
+
+#### 2-2. ② 콜백 주소 9005 잔존 — 확인 (동작 영향 없음, 문서·템플릿만)
+
+| 위치 | 현재 값 |
+|---|---|
+| `backend_9006/.env.example:64` | `OAUTH_CALLBACK_BASE=http://localhost:9005` |
+| `backendAPI정리.md:559` | `OAUTH_CALLBACK_BASE=http://localhost:9005        # provider 가 돌아올 우리 콜백 베이스` |
+| `backendAPI정리.md:565` | `- Google Cloud Console: `http://localhost:9005/api/auth/oauth/google/callback`` |
+| `backendAPI정리.md:566` | `- Kakao Developers:      `http://localhost:9005/api/auth/oauth/kakao/callback`` |
+| `backendAPI정리.md:567` | `- Naver Developers:      `http://localhost:9005/api/auth/oauth/naver/callback`` |
+
+- **실행 중 서버는 무영향 확인**: `backend_9006/.env` 의 `OAUTH_CALLBACK_BASE` 실값 포트는 **9006** (값 자체는 산출물에 기재하지 않음 — 포트만 확인). `.env.example` 은 템플릿이라 런타임 미사용.
+- `.env.example:65` `FRONTEND_URL=https://localhost:4000` 은 **정상**(사용자 앱 포트 불변) — 건드리지 말 것.
+- `claude_skills_outputs/team-dev/REPORT.md:13014` 에도 9005 Redirect URI 안내가 있으나 **과거 버전의 "다음 단계" 기록** → **수정 금지**(이력 보존). 실제 열람해 과거 산출물임을 확인함.
+
+##### 문서 내 나머지 9005 언급 — 분류
+
+`backendAPI정리.md` 의 9005 언급은 총 19곳. ② 의 5곳 외:
+
+- **정정 권고(계획자 판단, 승인 필요)** — 9006 단일 전환으로 **사실과 다름**, 앱팀이 접속 주소로 읽는 곳:
+  - `:3` `> 백엔드 서버: http://localhost:9005 (메인 작업 라인) — http://localhost:9004 는 ... 미러`
+  - `:6` `> 기준 버전: 9005 백엔드 (backend_9005) — 9004 는 byte-identical 미러`
+  - `:8` `... backend_9005/app/routes/ 의 실제 코드를 기준으로 작성`
+  - `:4782` 접속 주소 표 `http://localhost:9005 또는 http://localhost:9004`
+- **범위 밖(이력·버전 표기 — 보존)**: `:808,:865,:1387,:1405,:2020,:2112`("v77, 9005" 버전 마커), `:4714,:4716,:4718`("9005 기준 전면 검증 (2026-08-03)" 검증 이력 제목), `:699`(`backend_9005/scripts/backfill_snapshot_sheets.py` 실제 과거 스크립트 경로), `:5073`.
+- **판단 보류(기본: 범위 밖)**: `:4552,:4578,:4615` 로그 파일 경로/다운로드 파일명(`backend_9005/logs/server.log`, `server_9005.log`). 실제 코드가 만드는 파일명과 대조가 필요하므로 v196 에서는 손대지 않는다.
+
+#### 2-3. ③ 답글 알림 오발송 — 확인
+
+`backend_9006/app/routes/feeds.py` `add_feed_comment` `:729~789`
+
+```python
+parent_id = (body.parent_id or "").strip() or None          # :745
+if parent_id:
+    parent = await mongo.feed_comments.find_one({"_id": ObjectId(parent_id), "feed_id": feed_id})   # :750
+    ...
+    if parent.get("parent_id"):
+        parent_id = parent["parent_id"]      # :753~754  ← 변수 덮어씀(평탄화)
+...
+if parent_id:
+    parent_doc = await mongo.feed_comments.find_one({"_id": ObjectId(parent_id)}, {"author_id": 1})  # :773 ← 덮어써진 값
+    if parent_doc and str(parent_doc.get("author_id")) != str(doc.get("author_id")):                 # :774
+        await push_notification(..., user_id=parent_doc.get("author_id"), ntype="reply", target_id=feed_id, ...)  # :776
+```
+
+- `:753~754` 의 평탄화가 **저장용 `parent_id`(v191 트리 계약)와 알림 대상 산정을 같은 변수로 겸용**하는 것이 근본 원인.
+- 재현(실측): C 피드 → A 최상위 댓글 → B 가 A 에게 답글 → C 가 B 에게 답글. `parent`=B 댓글, `parent.parent_id`=A 댓글 id → `parent_id` 가 A 로 덮어써짐 → `:773` 이 **A** 를 조회 → **B 알림 0건, 무관한 A 수신**.
+- `:774` 조건의 의도: 부모 댓글 작성자 == 피드 주인이면 `:768` 에서 이미 `comment` 알림을 받았으므로 **중복 방지**. 의도 유지, 대상 산정만 교정.
+- `push_notification` (`notifications.py:32~52`) 은 `if not user_id or str(user_id)==str(actor_id): return` 로 **self-skip 내장** → 자기 답글에는 자동 미발송. 별도 처리 불필요.
+- **부수 개선 가능**: 평탄화 전 `parent` 문서를 이미 손에 들고 있으므로 `:773` 의 `find_one` **1회 왕복 제거 가능**.
+
+#### 2-4. ④ 피드 삭제 시 알림 미정리 — 확인 + **댓글 삭제는 구조적으로 불가**
+
+`backend_9006/app/routes/feeds.py` `purge_feed_document` `:582~605`
+```
+feeds.delete_one → feed_comments.delete_many({"feed_id": feed_id}) → PG DELETE feed_likes
+```
+**`notifications` 컬렉션 미정리.** 프로젝트 전체 `notifications.delete*` **0건**(`grep` 확인) — 알림은 한 번 쌓이면 영구 잔존.
+
+**`target_id` 로 지우는 것이 안전한가 — 타입별 실측:**
+
+| 타입 | 발행 위치 | `target_id` |
+|---|---|---|
+| `follow` | `follows.py:98~101` | **인자 미전달 → `None`** |
+| `feed` | `feeds.py:302~306` | `feed_id` |
+| `like` | `feeds.py:646~650` | `feed_id` |
+| `comment` | `feeds.py:768~772` | `feed_id` |
+| `reply` | `feeds.py:776~780` | `feed_id` |
+
+- `VALID_TYPES = {"follow","comment","reply","like","feed"}` (`notifications.py:24`) — 5종이 전부.
+- **`follow` 만 `target_id=None`** → 피드 id 와 **충돌 불가**. 나머지 4종은 전부 피드 id.
+- → `{"target_id": feed_id}` 삭제는 **안전**. 다만 방어적으로 `type` 화이트리스트를 함께 걸어 향후 타입 추가 시 오삭제를 막는다.
+
+**댓글 개별 삭제(`delete_feed_comment` `:789~826`)는 정리 불가 — 스키마 한계:**
+- `comment`·`reply` 알림 모두 `target_id = feed_id` 를 저장한다(**댓글 id 아님**).
+- 따라서 "이 댓글에 해당하는 알림"을 **식별할 수단이 없다**. `target_id=feed_id` 로 지우면 그 피드의 좋아요·다른 댓글 알림까지 **전부 오삭제**된다.
+- **결정: 댓글 개별 삭제는 v196 범위 밖.** 근본 해결은 알림 스키마에 `comment_id` 를 추가하는 별건(계약 변경) — 후속 과제로 기록.
+
+**인덱스**: `notifications` 컬렉션에 대한 `ensure_*_indexes` 가 **어디에도 없음**(`app/database/`·`main.py` grep 0건). `target_id` 삭제는 컬렉션 스캔이 된다. 개발 환경 볼륨에서는 무시 가능 — **인덱스 추가는 v196 범위 밖**(스키마/인프라 변경). 후속 과제로 기록.
+
+**프론트 소비자 부재(중요)**: `frontend/src`·`frontend_admin/src` 전체에서 `notifications` API 호출 **0건**. 즉 v192 인앱 알림의 소비자는 **앱팀 클라이언트뿐**이고, "알림 클릭 시 404 빈 화면" 증상도 앱팀 화면에서 발생한다. → ③④ 는 **웹 프론트 변경 불필요**, 웹 회귀면도 없음.
+
+#### 2-5. ⑤ DM 읽음 신호 중복 발송 — 확인
+
+`backend_9006/app/services/dm_service.py` `mark_read` `:571~630`
+
+```python
+if conv.get("status") == "pending" and me_id != conv.get("requester_id"):   # :589  ← v155 프라이버시 가드(불변)
+    return {...}
+prev_unread = int((conv.get("unread") or {}).get(me_id, 0) or 0)            # :597
+await mongo.dm_conversations.update_one(...)                                # :599
+result = await mongo.dm_messages.update_many(                               # :602
+    {"conversation_id": cid, "sender_id": {"$ne": me_id}, "read": False}, {"$set": {"read": True}})
+peer_id = _peer_of(conv, me_id)
+if peer_id:
+    await publish_to_user(peer_id, {"type": "read", "conversation_id": cid})   # :607~609 ← 가드 없음
+if prev_unread > 0 or result.modified_count > 0:                               # :615 ← v195 본인 가드(불변)
+    await publish_to_user(me_id, {"type": "unread", "conversation_id": cid})
+```
+
+- **peer `read` 발행에만 가드 부재** 확인. 읽을 것이 0이어도 매번 발행.
+- 호출부 2곳: `dm.py:224` `read_conversation`(사용자), `admin_cs.py:200` `read_cs_conversation`(관리자 CS, `me=official`). 둘 다 `mark_read` 반환값을 **그대로 응답**하므로 **반환 스키마 불변이면 부작용 없음**.
+- **영향이 실측상 "WS 트래픽"보다 조금 큼**: peer 의 `Header.jsx:210` 이 `dmSocket.onRead(() => refreshUnread())` 라서, 헛 이벤트 1건마다 peer 클라이언트가 **`GET /api/dm/unread-count` HTTP 요청을 1회 더** 쏜다. `DmInboxPage.jsx:443` 도 해당 대화 unread=0 재설정 + 활성 대화면 자기 발신 메시지 `read:true` 재적용(값이 이미 같아 화면 변화 없음).
+- **화면 오동작은 없음** 재확인 → **우선순위 최하 유지**.
+
+##### ⚠️ v195 테스트 2건과 정면 충돌 (반드시 승계 처리)
+
+- `TESTPLAN.md` v195 **RT-UNIT-03**: "peer `read` 발행 **유지** + 순서 peer → self ... peer 발행 누락/변형 → FAIL"
+- `TESTPLAN.md` v195 **RT-UNIT-04**: "`prev_unread==0 && modified_count==0` → ... `publish_to_user` 는 **peer 1회만(read)** 호출"
+
+→ v196 이 바꾸는 동작을 v195 테스트가 명시적으로 못박고 있다. **두 케이스는 v196 에서 supersede** 되며, TESTPLAN v196 에 대체 케이스를 신규 번호로 기재한다(v195 문단은 이력 보존 — 수정 금지).
+
+##### 가드 조건 설계 주의 (backend-dev 오작성 위험 지점)
+
+- 본인 `unread` 가드 `prev_unread > 0 or result.modified_count > 0` 를 **peer 에 그대로 복사하면 안 된다.**
+- peer `read` 의 의미는 "**네가 보낸 메시지를 내가 읽었다**" → 대응하는 조건은 **`result.modified_count > 0` 단독**.
+- `prev_unread` 는 **내 뱃지 카운터**일 뿐 peer 의 읽음표시와 무관하다. 카운터만 남고 실제 미읽음 메시지가 없는 경계(v195 RT-UNIT-05 케이스)에서 peer 에게 `read` 를 보내는 것은 **의미상 오발송**이다.
+
+---
+
+### 3. 수정 설계 (5건)
+
+#### ① 비공개 곡 유출 차단 — `playlists.py` + `likes.py` + `tracks.py`(3 엔드포인트)
+
+**설계 판단 4종 결정:**
+
+1. **담을 때 차단**: `add_track`(playlists)·`like_track`(likes) 에서 타인 숨김 곡이면 **400** + 메시지는 feeds 문구 재사용 `"다른 사용자의 비공개 곡은 사용할 수 없습니다."`
+2. **이미 담긴 곡의 조회 처리 = 숨김(배열에서 제외)**. 마스킹 대신 제외를 택한 근거:
+   - 프론트에 마스킹 행을 그릴 UI 계약이 없다(신규 계약 = 회귀 위험).
+   - 행 번호는 `PlaylistDetailPage.jsx:125` 가 `idx+1` 로 자체 계산 → **빈 번호가 생기지 않는다**.
+   - `get_playlist` 응답에 `track_count` 필드가 없어 개수 불일치 노출도 없다.
+3. **본인 곡은 비공개여도 본인 재생목록/좋아요에서 보인다** — 가드는 `uploader_id != 요청자` 일 때만 적용.
+4. **화이트리스트**: `feeds.py:67~78` `_track_view` 규약 채택 + **원본 키 병행 유지**(아래).
+
+**가드 규약(재확인)**: feeds 식 `not is_public` **금지**. `tracks.py:49~54` 식 채택 —
+`hidden = (doc.get("is_public") is False) or bool(doc.get("report_blinded"))`, `본인 = doc.get("uploader_id") == user_id`.
+레거시(`is_public` 키 부재) 문서는 **공개 취급**.
+
+**응답 필드 화이트리스트(확정)** — 별칭 + 원본 키 **둘 다** 내보내 SongItem 폴백 경로까지 무손상(엄격 가산 변경):
+
+| 키 | 출처 | 근거 |
+|---|---|---|
+| `id` | `str(_id)` | 전 화면 |
+| `title` | `title` | 전 화면 |
+| `artist_id` | `uploader_id` | SongItem.jsx:76 |
+| `artist_name` | `uploader_nickname` (기본 `"AI"`) | MusicPlayer.jsx:58·PlayerPage.jsx:365,:592 (**폴백 없음 — 선재 공백 버그 해소**) |
+| `cover_image` | `cover_image_url` | SongItem·MusicPlayer·PlayerPage |
+| `uploader_id` / `uploader_nickname` / `cover_image_url` | 원본 | SongItem.jsx:76 폴백 경로 무손상 |
+| `duration_sec` | `duration_sec` | feeds 계약 parity |
+| `is_public` | `is_public` | 소유자 화면 상태 표기 |
+| `position` | PG 주입 (playlists 만) | 기존 응답 계약 유지 |
+| `liked_at` | PG 주입 (likes 만) | 기존 응답 계약 유지 |
+
+**제외(유출 차단)**: `audio_url`, `lyrics`, `prompt`, `recognized_timestamps`, `recognized_at`, `generation_id`, `user_character_snapshot`, `search_keywords`, `waveform_data`, `beats`, `downbeats`, `tempo`, `beats_status`, `beats_started_at`, `beats_completed_at`, `beats_error`, `report_blinded`, `ai_model`, `ai_model_version`, `variant_index`, `language`, `genre`, `mood`, `tags`, `categories`, `bpm`, `key`, `play_count`, `like_count`, `comment_count`, `download_count`, `created_at`, `updated_at` 등 나머지 전부.
+`album_id`/`album_title` 은 Mongo 트랙 문서에 부재(오늘도 dead) → 제외.
+
+**Mongo 프로젝션도 함께 적용**(전송량·메모리): 조회 시 `{title, uploader_id, uploader_nickname, cover_image_url, duration_sec, is_public, report_blinded}` 만 가져온다. `report_blinded` 는 가드 판정용으로 조회하되 **응답에는 넣지 않는다**.
+
+##### ①-C `tracks.py` 3개 엔드포인트 — 기존 v138 가드를 그대로 이식
+
+**신규 로직을 만들지 않는다.** 같은 파일 `:1692~1702`(`get_track_stream`)의 패턴을 **복사**한다.
+
+1. **`download_track` `:1717~1727`** (인증 있음 — `Depends(get_current_user)`)
+   - 프로젝션을 `{audio_url:1, title:1}` → `{audio_url:1, title:1, uploader_id:1, is_public:1, report_blinded:1}` 로 확장
+   - `if _is_hidden_track(doc) and not _can_view_hidden_track(doc, user): return 404 _TRACK_NOT_FOUND`
+   - **차트 집계(Redis 다운로드 카운트)보다 앞에** 둘 것 — 차단된 요청이 차트를 오염시키면 안 됨
+2. **`get_track_music_video` `:770~788`** (인증 없음 → `get_current_user_optional` 추가)
+   - 프로젝션 `{generation_id:1}` → `+ {uploader_id:1, is_public:1, report_blinded:1}`
+   - 동일 가드 후 404. **공개 곡의 비로그인 접근은 그대로 200 유지**
+3. **`get_track_lyrics_timeline` `:795~825`** (인증 없음 → `get_current_user_optional` 추가)
+   - 동일 가드 후 404. 전 문서 `find_one` 은 `_fetch_lyric_segments(mongo, doc)` 가 문서를 통째로 요구하므로 **프로젝션 축소는 하지 않는다**(연쇄 회귀 방지) — 가드만 추가
+   - 기존 `except` 블록이 예외를 삼켜 `{"has_timestamps": false, ...}` 를 반환하므로, **가드의 404 JSONResponse 가 `try` 안에서 삼켜지지 않도록** 반환 경로 확인 필수
+
+**차단 시 404 통일**(`_TRACK_NOT_FOUND`) — 존재 여부 자체를 숨기는 기존 v138 정책과 일치. ①-A/①-B(담기)의 400 과 의미가 다르다: 담기는 "당신이 지정한 곡을 쓸 수 없다"(행위 거부), 직링크는 "그런 곡 없다"(존재 은닉).
+
+#### ② 콜백 주소 표기 정정
+
+- `backend_9006/.env.example:64` → `OAUTH_CALLBACK_BASE=http://localhost:9006`
+- `backendAPI정리.md:559,565,566,567` → `9005` → `9006` (4줄)
+- **사용자 안내 문구를 문서에 명시 추가**: 각 제공자 개발자 콘솔(Google Cloud Console / Kakao Developers / Naver Developers)의 Redirect URI 등록 변경은 **사용자가 직접 수행**해야 하며, 문서·`.env.example` 수정만으로는 실제 로그인이 동작하지 않는다.
+- `:3,:6,:8,:4782` 정정은 **승인 후** 진행(2-2 분류 참조).
+
+#### ③ 답글 알림 대상 교정
+
+평탄화 **전에** 실제 답글 대상 작성자를 별도 변수로 보존한다. 저장되는 `parent_id`(평탄화 값)는 **불변**.
+
+```
+reply_target_author_id = parent.get("author_id")   # 평탄화 전 — 실제 답글 대상
+if parent.get("parent_id"):
+    parent_id = parent["parent_id"]                # 저장용(v191 계약) — 그대로 유지
+...
+if reply_target_author_id and str(reply_target_author_id) != str(doc.get("author_id")):
+    await push_notification(..., user_id=reply_target_author_id, ntype="reply", target_id=feed_id, ...)
+```
+
+- `:774` 의 "피드 주인과 같으면 중복 방지" 의도 **유지**(비교 대상만 새 변수로 교체).
+- `:773` 의 `find_one` **제거**(이미 `parent` 를 들고 있음) → DB 왕복 1회 감소.
+- `push_notification` self-skip 이 자기 답글을 자동 차단(별도 코드 불필요).
+- `target_id` 는 **`feed_id` 유지**(기존 계약 불변 — 앱팀 클라이언트 라우팅 영향 없음).
+
+#### ④ 피드 삭제 시 알림 정리
+
+`purge_feed_document` 에 **best-effort** 정리 추가 (실패해도 삭제 응답·반환 스키마 불변):
+
+```
+try:
+    n = await mongo.notifications.delete_many(
+        {"target_id": feed_id, "type": {"$in": ["feed", "like", "comment", "reply"]}})
+    → 로그
+except Exception:
+    → logger.error, 삼킴
+```
+
+- `type` 화이트리스트로 `follow`(target_id=None) 및 향후 신규 타입 오삭제 차단.
+- PG `feed_likes` 정리와 **동일한 best-effort 패턴**(`:593~596`) 준수.
+- 반환 dict 에 `notifications_removed` 키 **추가 가능**(내부 함수 — 라우트 응답은 `{"message": ...}` 고정이라 외부 계약 불변). 소유자 DELETE 라우트와 admin `confirm_delete` 양쪽이 자동으로 혜택.
+- **댓글 개별 삭제는 범위 밖**(2-4 근거).
+
+#### ⑤ DM peer `read` 중복 발송 가드
+
+```
+if peer_id and result.modified_count > 0:
+    await publish_to_user(peer_id, {"type": "read", "conversation_id": cid})
+    logger.info("[dm] mark_read peer-read published conv=%s me=%s marked=%d", ...)
+else:
+    logger.info("[dm] mark_read peer-read skipped (nothing marked) conv=%s me=%s", ...)
+```
+
+- 조건은 **`result.modified_count > 0` 단독** (3-⑤ 주의 참조).
+- `:589` pending no-op 프라이버시 가드 **무수정**.
+- `:615` v195 본인 `unread` 가드 **무수정**.
+- 발행 순서 **peer → self 유지**.
+- 반환 스키마 `{conversation_id, read, marked}` **불변**.
+
+---
+
+### 4. 변경 매트릭스 (파일별 변경 + 로그·추적자)
+
+**공통 로그 규칙**: 기존 관행 준수 — `[playlists]`/`[likes]`/`[feed]`/`[dm]` 프리픽스, id 는 **앞 8자만**(`_short()` 또는 `[:8]`), 본문·닉네임·가사·프롬프트 **원문 금지**, 개인정보(생년월일·성별·이메일) 금지.
+
+| # | 파일 (모두 `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/` 기준) | 변경 | 심을 로그 / 추적자 |
+|---|---|---|---|
+| ① | `backend_9006/app/routes/playlists.py` | `_TRACK_PROJECTION`·`_is_hidden`·`_track_view` 도입; `_serialize_track` → 화이트리스트; `add_track` 가드 400; `get_playlist` 프로젝션 + 숨김 제외 | `[playlists] add_track private_denied user=%s track=%s` / `[playlists] detail id=%s user=%s tracks=%d hidden_skipped=%d` |
+| ① | `backend_9006/app/routes/likes.py` | 동일 3종 도입; `_serialize_track` → 화이트리스트; `like_track` 가드 400; `list_likes` 프로젝션 + 숨김 제외 | `[likes] like private_denied user=%s track=%s` / `[likes] list user=%s returned=%d hidden_skipped=%d` |
+| ① | `backend_9006/app/routes/tracks.py` `:770,:795,:1717` | 3개 엔드포인트에 **기존** `_is_hidden_track`/`_can_view_hidden_track` 가드 이식 + 프로젝션 확장; MV·가사는 `get_current_user_optional` 추가 | `[report] track download_denied track=%s` / `[report] track mv_denied track=%s` / `[report] track lyrics_denied track=%s` (기존 `stream_denied` 라인 형식 준수, id 8자) |
+| ② | `backend_9006/.env.example` `:64` | `9005` → `9006` (1줄) | 없음 (템플릿) |
+| ② | `backendAPI정리.md` `:559,:565,:566,:567` | `9005` → `9006` (4줄) + 콘솔 등록은 사용자 몫 안내 문구 추가 | 없음 (문서) |
+| ③ | `backend_9006/app/routes/feeds.py` `:750~780` | 평탄화 전 `reply_target_author_id` 보존; `:773` `find_one` 제거; `:774` 비교 대상 교체 | `[feed] comment_add reply feed=%s parent_stored=%s notify_to=%s` (전부 8자) |
+| ④ | `backend_9006/app/routes/feeds.py` `:582~605` | `purge_feed_document` 에 best-effort `notifications.delete_many` 추가 | `[feed] purge ok feed=%s author=%s comments_removed=%d notifications_removed=%d` (기존 라인 확장) / 실패 시 `[feed] purge notifications_cleanup_failed feed=%s err=%s` |
+| ⑤ | `backend_9006/app/services/dm_service.py` `:606~609` | peer `read` 발행에 `result.modified_count > 0` 가드 + else 로그 | `[dm] mark_read peer-read published conv=%s me=%s marked=%d` / `[dm] mark_read peer-read skipped (nothing marked) conv=%s me=%s` |
+
+**변경 파일 총계: 백엔드 5개(`playlists.py`, `likes.py`, `tracks.py`, `feeds.py`, `dm_service.py`) + 템플릿 1개(`.env.example`) + 문서 1개(`backendAPI정리.md`). 프론트 0개.**
+
+#### 프론트엔드 변경 불필요 — 근거
+
+frontend-dev 지시서를 발행하지 않는다. 파일 전수 확인 결과:
+
+1. **①**: `GET /api/playlists/{id}` 소비자는 `PlaylistDetailPage.jsx:24` **1곳뿐**, `GET /api/likes/` 소비자도 마이페이지 좋아요 목록 계열. 신설 화이트리스트는 프론트가 읽는 **모든 키의 가산 상위집합**(별칭 + 원본 키 병행). 오디오 URL·가사·프롬프트는 프론트가 **이 payload 에서 안 읽고** id 로 재조회(`PlayerContext.jsx:135~156`, `PlayerPage.jsx:90`) → 제거해도 무영향. `position` 은 프론트가 아예 안 읽음. `frontend_admin` 은 playlist 참조 0건.
+2. **②**: 템플릿·문서만. 프론트 코드 무관.
+3. **③④**: `frontend/src`·`frontend_admin/src` 에 `notifications` API 호출 **0건** — 인앱 알림 UI 자체가 웹에 없다. 소비자는 앱팀 클라이언트뿐.
+4. **⑤**: 이벤트가 **줄어들 뿐** 계약 변경 없음. 소비자 `Header.jsx:210`(`refreshUnread()`)·`DmInboxPage.jsx:443` 모두 "바뀐 게 없을 때" 호출되던 **무의미 경로**가 사라지는 것 → 화면 동작 불변.
+
+→ 프론트는 **회귀 검증 대상**일 뿐 **수정 대상 아님**. 검증은 test-designer 가 담당.
+
+---
+
+### 5. 회귀 위험 목록
+
+| ID | 위험 | 근거 / 완화 |
+|---|---|---|
+| **R1** | 🔴 **① 화이트리스트로 프론트 깨짐** | 최대 위험. 완화: 별칭(`artist_id`/`artist_name`/`cover_image`)과 **원본 키**(`uploader_id`/`uploader_nickname`/`cover_image_url`)를 **둘 다** 내보내 SongItem 폴백까지 무손상. 소비자 전수 확인 완료(§2-1). **필수 검증**: 재생목록 상세 렌더 + 전체재생 + 행 재생 + 좋아요 목록 |
+| **R2** | 🔴 **① 레거시 문서 오차단** | feeds 식 `not is_public` 을 복사하면 `is_public` 키 없는 **레거시 공개곡이 전부 숨겨지고 추가도 400**. 반드시 `tracks.py:49~54` 식 `is_public is False` 채택. **검증: `is_public` 키 자체가 없는 문서로 추가·조회 성공 확인** |
+| **R3** | ① 본인 비공개 곡이 본인 목록에서 사라짐 | 가드는 `uploader_id != 요청자` 일 때만. 본인 비공개 곡 담기·보이기 **정상 동작 검증 필수** |
+| **R4** | ① `report_blinded` 동시 차단의 파급 | 기존에 담긴 신고 블라인드 곡이 소유자 외 화면에서 사라진다. `tracks.py` 직링크 정책과 **일치**시키는 의도된 변경 — 소유자 본인에게는 계속 보임 |
+| **R5** | ① 별칭 신설이 앱팀 클라이언트 계약을 바꿈 | 원본 키 병행 유지로 **가산 변경**. 제거되는 키(`audio_url` 등)를 앱팀이 쓰고 있을 가능성은 남음 → REPORT 에 **제거 필드 목록 명시**하여 앱팀 고지 |
+| **R5a** | 🔴 **①-C 공개 곡 무인증 접근 파손** | `music-video`·`lyrics-timeline` 은 현재 **인증 없이** 공개 곡을 서비스한다(의도된 설계). `get_current_user_optional` 이 아닌 `get_current_user` 를 붙이면 **비로그인 공개 재생이 전부 401** 로 깨진다. **검증: 비로그인 상태에서 공개 곡 MV·가사 200 유지** |
+| **R5b** | ①-C `lyrics-timeline` 의 광역 `except` | `:820~825` 의 `except Exception` 이 가드의 404 반환을 삼켜 `{"has_timestamps":false}` 200 으로 바꿔버릴 수 있다. 가드는 `try` 진입 전 또는 반환 경로를 명시적으로 분리 |
+| **R5c** | ①-C `download_track` 차트 오염 | 가드를 Redis 다운로드 집계 **뒤**에 두면 차단된 다운로드가 차트에 계상된다. 반드시 집계 **앞** |
+| **R6** | 🔴 **③ v191 트리 구조 계약 파손** | 저장되는 `parent_id` 는 **평탄화 값 그대로**여야 한다. 새 변수는 **알림 대상 산정 전용**. 검증: 3단 답글 후 `feed_comments` 문서의 `parent_id` 가 **최상위 댓글 id** 인지 직접 확인 |
+| **R7** | ③ 알림 누락(과교정) | 정상 케이스(1단 답글)에서 부모 작성자 알림이 **계속 가야** 한다. 검증: A 최상위 → B 답글 시 **A 수신 1건** |
+| **R8** | ③ 중복 알림 부활 | 부모 작성자 == 피드 주인일 때 `comment`+`reply` 이중 발송 금지. `:774` 의도 유지 검증 |
+| **R9** | 🔴 **④ 알림 오삭제** | `follow` 는 `target_id=None` 이라 충돌 불가하나, `type` 화이트리스트로 이중 방어. 검증: 피드 삭제 후 **무관한 피드의 알림·팔로우 알림 건수 불변** |
+| **R10** | ④ 삭제 실패가 피드 삭제를 깨뜨림 | best-effort `try/except` 필수. Mongo 예외 주입 시에도 `{"message":"피드가 삭제되었습니다."}` 200 유지 검증 |
+| **R11** | ④ 인덱스 부재로 인한 지연 | `notifications` 인덱스 0개 → 컬렉션 스캔. 개발 볼륨에서 무시 가능, **인덱스 추가는 범위 밖** — 후속 과제 기록 |
+| **R12** | ⑤ 읽음표시 회귀 | 실제로 읽은 게 있을 때는 **반드시** peer 에게 `read` 가 가야 함. `modified_count>0` 케이스 발행 검증 필수 |
+| **R13** | ⑤ 가드 조건 오작성 | `prev_unread` 를 peer 조건에 섞으면 안 됨(§2-5). `and`/`or` 오작성 검증 |
+| **R14** | ⑤ v195 테스트와 충돌 | RT-UNIT-03·RT-UNIT-04 supersede 처리 누락 시 테스터가 정상 동작을 FAIL 판정. TESTPLAN v196 에 명시 |
+| **R15** | ⑤ 관리자 CS 경로 부작용 | `admin_cs.py:200` 은 `me=official`. 반환 스키마 불변이므로 무영향 — CS 대화 읽음 처리 회귀 검증 |
+| **R16** | ② 실런타임 오손 | `.env`(실값) 는 **건드리지 않는다**. `.env.example` 만 수정. `FRONTEND_URL=...4000` 은 정상값이므로 불변 |
+| **R17** | ② 이력 산출물 훼손 | `REPORT.md:13014` 등 과거 산출물 **수정 금지** |
+| **R18** | 신규 로그의 정보 노출 | 신설 로그 전량 정적 grep 으로 원문·개인정보 부재 확인 |
+
+---
+
+### 6. 범위 밖 (착수 금지)
+
+1. **미러링 일체** — `backend_9004`·`backend_9005` 복사·sync·`diff` 금지. 두 폴더 **쓰기 금지**.
+2. **댓글 개별 삭제 시 알림 정리** — 스키마상 식별 불가(§2-4). 별건.
+3. **`notifications` 스키마에 `comment_id` 추가 / 인덱스 생성** — 계약·인프라 변경. 후속 과제.
+4. **알림 UI 신설**(웹 프론트에 알림 화면 만들기) — v196 은 결함 수정만.
+5. **`albums.py:114`·`reports.py:303`·`feeds.py:201` 의 LOW 3건** — 근거: (a) `albums.py` 는 `_verify_tracks_owned`(`:120`)로 **타인 트랙 id 주입이 불가**하여 공격 경로가 없고, 본인이 수록 후 비공개로 전환한 경우만 노출되는 다른 형태다. (b) `reports.py` 는 프로젝션이 `{title, cover_image_url}` 로 좁아 음원·가사 유출이 없다. (c) `feeds.py:201` 은 이미 `_TRACK_PROJECTION` 으로 제한돼 있다. 셋 다 v196 의 "**전 필드 덤프 + 임의 id 주입**" 조합과 성격이 다르므로 후속 과제로 분리. 무접촉.
+6. **`upload.py:151~156` 커버 이미지 IDOR(쓰기)** — 실재 확인됐으나 **결함 종류가 다름**(유출 아닌 변조). 별도 버전. v196 에서 착수 금지.
+7. **`tracks.py` 의 SAFE 판정 엔드포인트**(`stream`·`stream-proxy`·`{track_id}`·beats·검색·목록 등) 및 `artists.py`·`charts.py` 가시성 로직 — 무접촉.
+8. **`backendAPI정리.md` 의 버전 마커·검증 이력·스크립트 경로 9005 표기**(§2-2 분류) — 이력 보존.
+9. **`:3,:6,:8,:4782` 문서 헤더 정정** — 승인 전 착수 금지.
+10. **`.env` 실값**, 인프라(포트·바인딩·MinIO·ES·Redis) 무조작.
+11. `_serialize_message`·`ensure_dm_indexes`·v155 pending 가드·v195 본인 `unread` 가드 무수정.
+
+#### 후속 과제 등록 (v196 이후)
+
+| 항목 | 근거 |
+|---|---|
+| `upload.py` 커버 IDOR(쓰기) 차단 | §2-1 별건 발견 — 실재 확인 |
+| `notifications` 스키마에 `comment_id` 추가 + 인덱스 | §2-4 — 댓글 단위 알림 정리의 전제 |
+| `albums.py`·`reports.py`·`feeds.py` LOW 3건 | §6-5 |
+| `backendAPI정리.md` 9006 전면 정합(헤더·접속표·로그 경로) | §2-2 |
+
+---
+
+### 7. 절대 준수
+
+1. **유료 외부 API 호출 금지** — 곡 생성·MV·캐릭터·보이스 클론·번역/LLM. `/api/generate`·`/api/mv`·`/api/character`·`/api/voice-*` 호출 자체 금지.
+2. **`POST /api/tracks/upload` 호출 금지**(내부 유료 AI 2회 강제: gpt-4o-mini 키워드 + 임베딩). **`GET /api/tracks/search` 도 유료 호출 유발 — 남용 금지**.
+3. **별 차감 금지**, **전체발송 200 금지**.
+4. 실사용자 계정·데이터 무접촉. 테스트 데이터는 **`v196t` 마커** + 종료 시 **전량 삭제·카운트 대조**.
+5. 개인정보(생년월일·성별·이메일) 응답·화면·로그·산출물 노출 금지. 크리덴셜 **실값** 금지 → 플레이스홀더.
+6. 인프라 무조작.
+7. 작업 트리는 **메인 체크아웃**(`/mnt/d/1_projects/0_myProjects/1_tripleJ`, branch `backend`) — 워크트리 편집 금지(§0-1).
+8. 서버 재기동: `cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006 && setsid ./run.sh > /dev/null 2>&1 &` (`--reload` 없음 — 코드 변경 시 **수동 재기동 필수**).

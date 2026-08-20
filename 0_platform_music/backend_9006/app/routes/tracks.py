@@ -767,15 +767,27 @@ async def update_track(
 
 
 @router.get("/{track_id}/music-video")
-async def get_track_music_video(track_id: str):
+async def get_track_music_video(
+    track_id: str,
+    current_user=Depends(get_current_user_optional),
+):
     """Return presigned URL for the track's music video, or 404 if none exists."""
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"generation_id": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"generation_id": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+    )
     if not doc:
         return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+    # v196 ① 직링크 가드 — 비공개·블라인드 트랙 MV 는 소유자(또는 admin) 외 404.
+    # 인증은 optional 이므로 공개 곡의 비로그인 접근은 그대로 200 유지.
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
+        logger.info("[report] track mv_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     mv_job = await _find_completed_mv(mongo, doc.get("generation_id"))
     if not mv_job:
@@ -792,21 +804,32 @@ async def get_track_music_video(track_id: str):
 # Reuses share_video._fetch_lyric_segments (single source of truth) so the
 # playback timing matches the SNS/download burn-in video exactly.
 @router.get("/{track_id}/lyrics-timeline")
-async def get_track_lyrics_timeline(track_id: str):
+async def get_track_lyrics_timeline(
+    track_id: str,
+    current_user=Depends(get_current_user_optional),
+):
     """Return line-level lyric segments for a track (unauthenticated, public playback).
 
     Response: {"has_timestamps": bool, "segments": [{"text","start","end"}], "source": str}
     """
     logger.info("[lyrics-timeline] track=%s", track_id[:8] if track_id else "?")
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    # v196: _fetch_lyric_segments 가 문서 전체를 요구하므로 프로젝션은 축소하지 않는다.
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+    # v196 ① 직링크 가드 — 광역 except 진입 **전에** 배치한다.
+    # (아래 try 안에 두면 404 응답이 삼켜져 200 {"has_timestamps": false} 로 바뀔 수 있다)
+    # 인증은 optional 이므로 공개 곡의 비로그인 접근은 그대로 200 유지.
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
+        logger.info("[report] track lyrics_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
+
     try:
-        if not ObjectId.is_valid(track_id):
-            return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
-
-        mongo = get_mongo()
-        doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
-        if not doc:
-            return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
-
         from ..services.share_video import _fetch_lyric_segments
 
         segments = await _fetch_lyric_segments(mongo, doc)
@@ -1721,9 +1744,18 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"audio_url": 1, "title": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"audio_url": 1, "title": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+    )
     if not doc or not doc.get("audio_url"):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    # v196 ① 직링크 가드 — 비공개·블라인드 트랙 다운로드는 소유자(또는 admin) 외 404.
+    # 반드시 아래 Redis 차트 집계보다 **앞**에 둔다(차단된 다운로드가 차트에 계상되면 안 됨).
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, user):
+        logger.info("[report] track download_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     # Record download for charts
     redis = get_redis()

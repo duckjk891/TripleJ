@@ -4124,3 +4124,819 @@ BASE_REV: **e356a70**(v194) + 워킹트리 v195 구현분(미커밋)
 ## 개정 이력 (v195)
 
 - 2026-08-19 초판 작성 (44건) — PLAN v195 §2 실측·§3 B1~B3/F1~F8·§4 R1~R17 전 항목 시나리오화. 최대 함정인 **본인 대상 이벤트 타입 고정**(`unread` ≠ `read`)을 RT-UNIT-01(즉시 중단 조건)·RT-UNIT-15(정적 감시)·RT-E2E-07(화면 발현) **3중으로** 배치. 발송 계열은 검증 400·인가 401/403·410·429(승인 대기)로만 설계하고 **200 을 만드는 항목 0건**. 기존 실공지는 **읽기 전용 관측 대상**으로만 사용(RT-E2E-02). 태그 균형은 정적 grep·`diff` 검사와 프론트 상태 검증을 unit 으로 배치해 45.5 / 36.4 / 18.2 확보. 작성 시점에 B1~B3·F1·F4~F8 구현분이 워킹트리에 **전부 착지**하여 라인 번호·로그 문자열·가드 조건을 **실측으로 고정**함(예: 폴링 skip 3분기 `AdminNoticesPage.jsx:176~187`, 레이스 가드 `:99~104`, emit 조건 `AdminCsPage.jsx:167~172`, self publish `dm_service.py:616`). planner 승인 대기 6건(§5). planner 검토 후 확정 예정.
+
+## v196 — 2026-08-20 — 검증 발견 결함 5건 수정
+
+팀: MAIDOL-HardeningSquad / test-designer 작성 (**설계 산출물 — 본 문서는 실행하지 않는다. 실행은 tester 담당**)
+근거: PLAN.md v196 §2 실측(①비공개 곡 유출 — playlists·likes·tracks 3파일 / ②콜백 9005 잔존 / ③답글 알림 평탄화 변수 겸용 / ④피드 삭제 알림 미정리 / ⑤DM peer `read` 무가드), §3 수정 설계, §4 변경 매트릭스, §5 회귀 위험 R1~R18, §6 범위 밖, §7 절대 준수
+BASE_REV: **45c7783**(메인 체크아웃, branch `backend`) + 워킹트리 v196 구현분(**작성 완료 시점 기준 7개 대상 전부 착지** — 아래 표는 착지 후 재실측값)
+
+**⚠️ 작업 위치**: 모든 검증은 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ` 기준. 세션 워크트리
+`0_platform_music/.claude/worktrees/e2e-test-search-cs-admin-1db925` 에는 **`backend_9006` 이 존재하지 않는다**(구 커밋 `c4d160e`).
+워크트리 안의 `0_platform_music/` 을 열람·검증 대상으로 삼으면 **9006 이전의 낡은 파일**을 보게 된다 — 금지.
+
+**대상 파일 (착지 후 재실측 — 라인 번호는 이후에도 이동할 수 있으므로 *심볼명이 1차 앵커*, 라인은 보조)**
+
+> ⚠️ 본 시나리오는 구현 착지 **전**에 설계되었고, 작성 완료 직후 7개 대상이 **전부 착지**했다. 아래 표와 각 케이스의 "실패 시 의심" 라인은 **착지 후 값으로 갱신**했다.
+> 단, 본문 일부 케이스에는 착지 **전** 라인이 남아 있을 수 있다 — **불일치 시 심볼명을 우선**한다.
+
+| # | 파일 | 착지 후 실측 앵커 |
+|---|---|---|
+| ① | `backend_9006/app/routes/playlists.py` | ✅ 착지 — `_TRACK_PROJECTION`(`:20`), `_short`(`:31`), `_is_hidden_track`(`:36`), 화이트리스트 `_serialize_track`(`:45`), `get_playlist` 숨김 제외 + `[playlists] detail … hidden_skipped`(`:162`), `add_track` 가드 + `private_denied` 로그(`:253`) |
+| ① | `backend_9006/app/routes/likes.py` | ✅ 착지 — `_TRACK_PROJECTION`(`:20`), `_is_hidden_track`(`:36`), `_serialize_track`(`:44`), `[likes] list … hidden_skipped`(`:122`), `[likes] like private_denied`(`:151`) |
+| ① | `backend_9006/app/routes/tracks.py` | ✅ 착지 — `get_track_music_video`(`:770`, `get_current_user_optional` `:772`, `mv_denied` `:789`), `get_track_lyrics_timeline`(`:807`, optional auth `:809`, `lyrics_denied` `:829`), `download_track`(`:1741`, **인증 필수 `get_current_user` 유지**, `download_denied` `:1757` — Redis 집계 앞). **정답 구현 `_is_hidden_track`(`:49`)·`_can_view_hidden_track`(`:57`)·`_TRACK_NOT_FOUND`(`:67`)·`get_track_stream`(`:1705`) 무변경** |
+| ② | `backend_9006/.env.example:64` | ✅ 착지 — `OAUTH_CALLBACK_BASE=http://localhost:9006`, 파일 내 9005 **0건** |
+| ② | `backendAPI정리.md` | ✅ 착지 — 콜백 4줄(`:559,:565,:566,:567`) 9006, 사용자 안내 문구 신설(`:570~573`). **🔴 승인 대기였던 `:3,:6,:8,:4782→:4788` 헤더·접속표도 함께 정정됨**(§5 A2 참조) |
+| ③ | `backend_9006/app/routes/feeds.py` `add_feed_comment`(`:743`) | ✅ 착지 — `reply_target_author_id` 초기화(`:762`) / **평탄화 전 캡처**(`:770`) / `[feed] comment_add reply … parent_stored … notify_to`(`:774~775`) / 알림 분기(`:797~807`, 구 `find_one` **제거됨**) |
+| ④ | `backend_9006/app/routes/feeds.py` `purge_feed_document`(`:582`) | ✅ 착지 — `notifications.delete_many`(`:604`), `notifications_removed`(`:602,:607,:618`), 실패 로그 `[feed] purge notifications_cleanup_failed`(`:609`), `purge ok … notifications_removed=%d`(`:611`) |
+| ⑤ | `backend_9006/app/services/dm_service.py` `mark_read`(`:571`) | ✅ 착지 — **peer 가드 `if peer_id and result.modified_count > 0:`(`:610`)**, `peer-read published`(`:614`), `peer-read skipped`(`:619`). v155 pending·v195 self `unread` 블록 무변경 |
+| 참조 | `frontend/src/pages/PlaylistDetailPage.jsx:24,:106,:121~131` · `components/SongItem.jsx:58,:61,:76` · `components/MusicPlayer.jsx:48,:57~58` · `contexts/PlayerContext.jsx:135~156` | 수정 대상 아님 — **회귀 검증 대상**. 프론트 변경 0건 |
+
+---
+
+### 0. 전제 및 안전 규칙 (최우선 — 위반 시 해당 항목 자체를 폐기)
+
+1. 🚫 **유료 외부 API 호출 전면 금지** — 곡 생성·MV·캐릭터·보이스 클론·번역/LLM. `/api/generate`·`/api/mv`·`/api/character`·`/api/voice-*` 는 **호출 자체를 금지**한다. 시나리오 어디에도 이 경로가 등장하지 않는다.
+2. 🚫 **`POST /api/tracks/upload` 호출 금지**(내부 유료 AI 2회 강제 — gpt-4o-mini 키워드 + 임베딩). 🚫 **`GET /api/tracks/search` 남용 금지**(유료 호출 유발).
+   → **테스트 트랙은 업로드 API 가 아니라 `mongo.tracks` 직접 삽입으로 준비한다**(§0-A 픽스처). 모든 삽입 문서는 `v196t` 마커 보유.
+3. 🚫 **별 차감 금지.** 🚫 **`POST /api/admin/cs/broadcast` 를 어떤 항목에서도 200 으로 성립시키지 않는다.**
+4. **실사용자 계정·데이터 무접촉.** 테스트 계정 `<test-user-a>`(A) / `<test-user-b>`(B) / `<test-user-c>`(C) / `<admin-email>` 만 사용. 실사용자 트랙·재생목록·피드·DM 은 **열람/집계 조회만**.
+   테스트로 만든 데이터는 전량 `v196t` 마커(트랙 `title` 접두 `v196t-`, 재생목록 `title` 접두 `v196t-`, 피드 `title` 접두 `v196t-`, 댓글 본문 접두 `v196t-`) + **종료 시 삭제 후 컬렉션/테이블 카운트 대조**(§0-C).
+5. **개인정보 위생**: 생년월일·성별·이메일을 응답·화면·로그·본 문서·REPORT 에 **옮겨 적지 않는다**. 크리덴셜은 전부 플레이스홀더 — `<TEST_USER_A_TOKEN>`, `<TEST_USER_B_TOKEN>`, `<TEST_USER_C_TOKEN>`, `<TEST_ADMIN_TOKEN>`, `<MONGO_URI>`, `<PG_DSN>`. 가사·프롬프트·댓글 본문 **원문 인용 금지** → 길이·건수·키 존재 여부·불리언으로만 기재.
+6. **인프라 무조작**: docker-compose·포트·바인딩·MinIO·ES·Redis 설정 조작 금지. **MinIO 9100 차단 금지.** Mongo/PG **인덱스 생성·삭제 금지**.
+7. 🚫 **미러링 검증 항목 없음** — 백엔드는 `backend_9006` **하나뿐**. v195 `RT-UNIT-19`(9004 `diff -q`)·`RT-API-16`(9004 런타임 동등성)은 **승계하지 않는다**. `backend_9004`·`backend_9005` 는 **읽기 전용 참고 폴더**이며 어떤 시나리오도 이 둘에 쓰지 않는다.
+8. **백엔드 `[unit]` 실행 방식**: 9006 파이썬 환경에서 대상 모듈을 import 해 **순수 함수를 직접 호출**하고 `publish_to_user`/`mongo`/`push_notification` 은 **스텁**으로 대체. **프로덕션 코드를 수정·몽키패치해 가드를 끄지 않는다**(가드를 우회해 통과시키는 테스트는 그 자체가 FAIL). **임시 테스트 파일은 사용 후 삭제**(레포 커밋 금지 — `git status` 로 untracked 0건 확인).
+9. **프론트 `[e2e]` 선행 절차**: 착수 전 사용자 앱(4000)·관리자 앱(4001) **하드 새로고침(Ctrl+Shift+R) + 빌드 표기 기록**. DEV 콘솔 로그(`[SongItem] openAddToPlaylist` 등)는 `import.meta.env.DEV` 가드 안이므로 **dev 서버 상태에서만** 관측 가능 — 프로덕션 빌드로 검증하면 로그 부재를 FAIL 로 오판한다.
+10. **서버에 `--reload` 가 없다.** 백엔드 코드 변경 후 **수동 재기동**이 선행되지 않으면 모든 `[api]` 결과가 무효다. 각 `[api]` 블록 착수 전 §0-B 선행 절차를 반드시 수행한다.
+11. 기준 URL: 백엔드 = `http://localhost:9006`, 사용자 앱 = `http://localhost:4000`, 관리자 앱 = `http://localhost:4001`.
+
+#### 0-A. 픽스처 준비 — `mongo.tracks` 직접 삽입 (업로드 API 미사용)
+
+> 목적: 유료 경로를 타지 않고 "전 필드가 채워진 비공개 곡"을 만들어 **유출 여부를 키 단위로 단언**할 수 있게 한다.
+> 삽입은 `mongo` 셸 또는 9006 파이썬 환경의 motor 스크립트로 수행하고, 스크립트는 **사용 후 삭제**한다.
+
+| 픽스처 | uploader_id | 핵심 필드 | 용도 |
+|---|---|---|---|
+| `TRK-PRIV-B` | B | `is_public: False`, `title:"v196t-priv-b"`, **`audio_url`·`lyrics`·`prompt`·`generation_id`·`user_character_snapshot`·`search_keywords`·`waveform_data`·`beats`·`downbeats`·`tempo`·`beats_status`·`recognized_timestamps`(3줄) 전부 채움** | ① 유출 차단 본체 |
+| `TRK-PUB-B` | B | `is_public: True`, `title:"v196t-pub-b"`, `recognized_timestamps`(3줄), `generation_id` 없음 | R5a 공개 곡 무인증 접근 |
+| `TRK-LEGACY-B` | B | **`is_public` 키 자체 없음**, `title:"v196t-legacy-b"` | 🔴 R2 레거시 회귀 |
+| `TRK-PRIV-A` | A | `is_public: False`, `title:"v196t-priv-a"` | R3 본인 비공개 곡 |
+| `TRK-BLIND-B` | B | `is_public: True`, **`report_blinded: True`**, `title:"v196t-blind-b"` | R4 블라인드 동시 차단 |
+
+- `audio_url` 은 **MinIO 에 실제로 존재하지 않는 더미 오브젝트 키**(`v196t/nonexistent.mp3`)를 넣는다. presign 은 오브젝트 존재를 검증하지 않으므로 200 경로 판정에는 영향이 없고, 만에 하나 URL 이 유출돼도 **재생 가능한 실파일이 아니다**(2차 피해 차단).
+- `recognized_timestamps` 는 `_filter_segments`(`app/services/share_video.py:96~126`) 통과 형태 `[{"text":"v196t line 1","start":0.0,"end":2.0}, ...]` 3줄. **가사 원문이 아닌 마커 문자열**만 사용.
+- 별도 `mv_jobs` 문서는 **만들지 않는다** — MV 200 판정은 §API-08 의 **404 본문 구분**으로 대체한다(아래 R5a 설계 노트).
+
+#### 0-B. 각 `[api]` 블록 선행 절차 (`--reload` 부재 대응 — 생략 시 전 결과 무효)
+
+1. `cd /mnt/d/1_projects/0_myProjects/1_tripleJ && git status --short` → 대상 파일 착지 확인.
+2. 서버 재기동: `cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006 && setsid ./run.sh > /dev/null 2>&1 &`
+3. 재기동 확인: `GET http://localhost:9006/health`(또는 `/docs`) 200 + **서버 로그의 startup 타임스탬프가 재기동 이후**인지 확인.
+4. 스모크: `GET /api/playlists/` 200(`<TEST_USER_A_TOKEN>`).
+5. **위 4단계 기록 없이 판정된 `[api]` 케이스는 무효로 간주하고 재실행한다.**
+
+#### 0-C. 종료 시 정리 및 카운트 대조 (필수)
+
+착수 **전** / 종료 **후** 두 시점에 아래를 집계해 **차이 0** 을 확인한다. 차이가 남으면 잔여 데이터를 지목해 삭제하고 재대조한다.
+
+| 대상 | 집계 쿼리 |
+|---|---|
+| `mongo.tracks` | 전체 `count_documents({})` + `count_documents({"title": {"$regex": "^v196t-"}})` |
+| `mongo.feeds` | 전체 + `{"title": {"$regex": "^v196t-"}}` |
+| `mongo.feed_comments` | 전체 + `{"text": {"$regex": "^v196t-"}}` |
+| `mongo.notifications` | 전체 + 타입별 5종 각각 |
+| `mongo.dm_conversations` / `dm_messages` | 전체 |
+| PG `playlists` / `playlist_tracks` / `likes` / `feed_likes` | `SELECT count(*)` |
+| Redis | `chart:downloads:*`·`chart:dl_tracks:*` 중 `v196t` 트랙 id 를 포함한 키 목록 (§API-05 전용) |
+
+---
+
+### 0-D. ⚠️ v195 테스트 2건 supersede (필수 — 승계하지 않으면 정상 동작을 FAIL 판정한다)
+
+v196 ⑤ 가 바꾸는 동작을 v195 케이스가 명시적으로 못박고 있다. **아래 2건은 v196 에서 폐기**하고, 신규 번호의 대체 케이스로 대신한다.
+**v195 문단(TESTPLAN 상단)은 이력 보존 — 수정 금지.**
+
+| v195 케이스 | v195 기대 (폐기) | v196 대체 | v196 기대 |
+|---|---|---|---|
+| **RT-UNIT-03** | "peer `read` 발행 **유지** + 순서 peer→self … peer 발행 누락/변형 → FAIL" | **V196-UNIT-15** | `modified_count > 0` 일 때만 peer 발행. 순서 peer→self 는 그대로 유지 |
+| **RT-UNIT-04** | "`prev_unread==0 && modified_count==0` → `publish_to_user` 는 **peer 1회만**(read) 호출" | **V196-UNIT-14** | 같은 조건에서 **peer 호출도 0회**가 정상. peer 발행이 있으면 FAIL |
+
+> v195 `RT-UNIT-05`(`prev_unread>0 && modified_count==0` → **본인** 발행 필수)는 **폐기하지 않는다**. 그 경계에서 **본인 `unread` 는 계속 발행**되고 **peer `read` 만 사라지는** 것이 v196 의 정확한 동작이며, 이 구분을 **V196-UNIT-16** 이 단독으로 감시한다(R13).
+> v195 `RT-UNIT-19`·`RT-API-16`(9004 미러) 2건도 **승계하지 않는다** — 백엔드는 `backend_9006` 하나뿐(§0-7).
+
+---
+
+### 0-E. 🛑 즉시 중단 조건 (하나라도 발생 → 이후 항목 진행 금지, planner 즉시 보고)
+
+| # | 조건 | 감시 케이스 |
+|---|---|---|
+| S1 | **비공개 곡의 금지 필드가 하나라도 응답에 남음** (`audio_url`·`lyrics`·`prompt`·`generation_id`·`user_character_snapshot`·`search_keywords`·`waveform_data`·`beats*` 중 1개라도) | V196-UNIT-05·06, V196-API-03·04 |
+| S2 | **레거시 문서(`is_public` 키 부재)가 차단됨** (R2) — 추가 400 또는 목록에서 사라짐 | V196-UNIT-01, V196-API-09 |
+| S3 | **저장된 `parent_id` 가 평탄화 값이 아님** (R6 — v191 트리 계약 파손) | V196-UNIT-11, V196-API-10 |
+| S4 | **무관한 알림이 삭제됨** (R9) — 다른 피드의 알림 또는 `follow` 알림 건수 감소 | V196-API-14 |
+| S5 | **공개 곡 비로그인 접근이 401/404 로 파손** (R5a) | V196-API-08 |
+| S6 | **유료 API 가 1회라도 호출됨** — `/api/generate`·`/api/mv`·`/api/character`·`/api/voice-*`·`/api/tracks/upload`·`/api/tracks/search` 접근 로그 발견 | 전 항목 (서버 로그 상시 감시) |
+| S7 | `POST /api/admin/cs/broadcast` 가 예기치 않게 200 반환 | 전 항목 |
+| S8 | 개인정보(생년월일·성별·이메일)·가사/프롬프트/댓글 원문이 응답·로그·콘솔에 노출 | V196-UNIT-21 |
+
+---
+
+### 1. `[unit]` 시나리오 — 21건
+
+> 실행: 9006 파이썬 환경에서 대상 모듈 import → 순수 함수 직접 호출(DB 불필요, 목킹). 정적 항목은 `grep`/`git diff`. **프로덕션 코드 무수정.**
+
+#### V196-UNIT-01. `_is_hidden_track` — `is_public` **키 부재** → **공개 판정** `[unit]` — 🔴 핵심 / 즉시 중단 조건 S2 (①, R2)
+- **사전조건**: `from app.routes.playlists import _is_hidden_track` (9006 파이썬 환경).
+- **Given** `is_public` 키가 **아예 없는** 레거시 문서 `{"_id": <oid>, "title": "v196t-legacy-b", "uploader_id": "<B>"}`, **When** `_is_hidden_track(doc)` 를 호출하면, **Then** 반환값이 **`False`**(= 공개 취급)이다.
+- **기대결과**: `False`. 구현이 `not doc.get("is_public")`(feeds 식)이면 `True` 가 되어 **레거시 공개곡이 전량 숨겨지고 추가도 400** 이 된다.
+- **확인할 로그 라인**: 없음(순수 함수). 대신 정적으로 함수 본문이 `(t.get("is_public") is False) or bool(t.get("report_blinded"))` 형태인지 확인 — `not t.get("is_public")` 이 등장하면 **즉시 FAIL**.
+- **PASS/FAIL**: `False` + 본문이 `is` 비교 → PASS. `True` 또는 `not` 식 사용 → **FAIL + 즉시 중단(S2)**.
+- **실패 시 의심**: `backend_9006/app/routes/playlists.py:36` (`_is_hidden_track` 본문), 참조 규약 `backend_9006/app/routes/tracks.py:49`.
+
+#### V196-UNIT-02. `_is_hidden_track` 진리표 3분기 `[unit]` (①, R4)
+- **사전조건**: V196-UNIT-01 과 동일 import.
+- **Given/When/Then** 아래 표대로 각각 호출한다.
+  | 입력 | 기대 |
+  |---|---|
+  | `{"is_public": False}` | `True` (숨김) |
+  | `{"is_public": True, "report_blinded": True}` | `True` (숨김 — R4 의도된 확장) |
+  | `{"is_public": True}` | `False` (공개) |
+  | `{"is_public": True, "report_blinded": False}` | `False` |
+  | `{"report_blinded": True}` (is_public 키 없음) | `True` |
+- **기대결과**: 5행 전부 일치. `report_blinded` 가 truthy 이면 `is_public:True` 여도 숨김.
+- **확인할 로그 라인**: 없음.
+- **PASS/FAIL**: 5행 전부 일치 → PASS. 1행이라도 불일치 → FAIL.
+- **실패 시 의심**: `playlists.py:36`.
+
+#### V196-UNIT-03. `likes._is_hidden_track` 이 `playlists` 와 **동일 규약** `[unit]` (①, R2)
+- **사전조건**: `from app.routes.likes import _is_hidden_track as likes_hidden` / `from app.routes.playlists import _is_hidden_track as pl_hidden`.
+- **Given** V196-UNIT-01·02 의 전체 입력 집합(6종), **When** 두 함수에 같은 입력을 주면, **Then** 모든 입력에서 반환값이 **동일**하다.
+- **기대결과**: 6/6 일치. 특히 레거시 문서에서 양쪽 모두 `False`.
+- **확인할 로그 라인**: 없음. 정적 보조 — `grep -n "not doc.get(\"is_public\")\|not t.get(\"is_public\")" backend_9006/app/routes/likes.py` → **0건**.
+- **PASS/FAIL**: 전 입력 동치 → PASS. 한쪽만 feeds 식이면 → **FAIL + 즉시 중단(S2)**.
+- **실패 시 의심**: `backend_9006/app/routes/likes.py:36`(`_is_hidden_track`), `:44`(`_serialize_track`).
+
+#### V196-UNIT-04. 소유자 예외 — `uploader_id == 요청자` 면 숨김이어도 **항상 통과** `[unit]` (①, R3)
+- **사전조건**: `get_playlist` / `list_likes` 내부 판정식을 그대로 재현한 헬퍼를 호출하거나, 해당 라인의 조건식을 정적으로 대조.
+- **Given** `doc = {"is_public": False, "report_blinded": True, "uploader_id": "<A>"}`, `viewer_id = "<A>"`, **When** 결합 조건 `_is_hidden_track(doc) and doc.get("uploader_id") != viewer_id` 를 평가하면, **Then** **`False`**(= 제외하지 않음)이다. `viewer_id = "<B>"` 이면 **`True`**(= 제외).
+- **기대결과**: 소유자 본인 → 노출 유지. 타인 → 제외. **가드가 `uploader_id` 비교 없이 `_is_hidden_track` 단독**이면 본인 비공개 곡이 본인 목록에서 사라진다(R3 파손).
+- **확인할 로그 라인**: 없음. 정적 — `playlists.py:154` 가 `if _is_hidden_track(doc) and doc.get("uploader_id") != viewer_id:` 형태인지, `likes.py` 의 대응 라인도 동일한지 확인.
+- **PASS/FAIL**: 두 방향 모두 기대치 일치 → PASS.
+- **실패 시 의심**: `playlists.py` `get_playlist` 제외 루프, `likes.py` `list_likes` 제외 루프.
+
+#### V196-UNIT-05. `playlists._serialize_track` 가 **정확히 지정된 키 집합만** 반환 `[unit]` — 즉시 중단 조건 S1 (①)
+- **사전조건**: `from app.routes.playlists import _serialize_track`. 입력은 §0-A `TRK-PRIV-B` 와 동일 형태의 **전 필드 dict**(`_id` 포함).
+- **Given** 전 필드가 채워진 트랙 문서, **When** `_serialize_track(doc)` 를 호출하면, **Then** 반환 dict 의 키 집합이 **정확히**
+  `{"id","title","artist_id","artist_name","cover_image","uploader_id","uploader_nickname","cover_image_url","duration_sec","is_public"}` (10키)이다.
+- **기대결과**: `set(result.keys()) == 위 10키`. 그리고 **금지 키 8종이 하나도 없다**:
+  `audio_url`, `lyrics`, `prompt`, `generation_id`, `user_character_snapshot`, `search_keywords`, `waveform_data`, `beats`(+`downbeats`·`tempo`·`beats_status`·`beats_*`).
+  추가로 `report_blinded`·`recognized_timestamps`·`created_at`·`updated_at`·`play_count`·`like_count`·`ai_model`·`language`·`genre`·`mood`·`tags`·`categories`·`bpm`·`key` **부재**.
+  값 매핑: `artist_id == doc["uploader_id"]`, `cover_image == doc["cover_image_url"]`, 원본 키 `uploader_id`/`uploader_nickname`/`cover_image_url` **병행 존재**(R1 폴백 무손상).
+  **입력 dict 가 변형되지 않는다**(구 구현의 `doc.pop("_id")` 부작용 제거 확인 — 호출 후 `"_id" in doc` 이 여전히 참).
+- **확인할 로그 라인**: 없음(순수 함수).
+- **PASS/FAIL**: 키 집합 정확 일치 + 금지 키 0 + 입력 무변형 → PASS. 금지 키 1개라도 존재 → **FAIL + 즉시 중단(S1)**. 키가 부족(예: `uploader_nickname` 누락) → FAIL(R1).
+- **실패 시 의심**: `backend_9006/app/routes/playlists.py:45`.
+
+#### V196-UNIT-06. `likes._serialize_track` 화이트리스트 + `liked_at` 주입 후 11키 `[unit]` — 즉시 중단 조건 S1 (①)
+- **사전조건**: `from app.routes.likes import _serialize_track`.
+- **Given** V196-UNIT-05 와 동일 입력, **When** `_serialize_track(doc)` 후 호출부가 `t["liked_at"] = ...` 를 주입하면, **Then** 최종 키 집합이 **정확히 11키**(UNIT-05 의 10키 + `liked_at`)이다.
+- **기대결과**: 금지 키 8종 부재. `position` **부재**(playlists 전용 키가 likes 응답에 섞이면 FAIL). 값 매핑은 UNIT-05 와 동일.
+- **확인할 로그 라인**: 없음.
+- **PASS/FAIL**: 11키 정확 일치 + 금지 키 0 → PASS. 그 외 → **FAIL + 즉시 중단(S1)**.
+- **실패 시 의심**: `backend_9006/app/routes/likes.py:44`, `list_likes` `:122` 주변.
+
+#### V196-UNIT-07. `_TRACK_PROJECTION` — 조회 필드 최소화 + `report_blinded` **응답 미포함** `[unit]` (①)
+- **사전조건**: `from app.routes.playlists import _TRACK_PROJECTION` (및 likes 측 동명 상수).
+- **Given** 두 모듈의 상수, **When** 키 집합을 조사하면, **Then** 정확히
+  `{"title","uploader_id","uploader_nickname","cover_image_url","duration_sec","is_public","report_blinded"}` (7키)이며 값은 전부 `1`이다.
+- **기대결과**: `audio_url`·`lyrics`·`prompt`·`generation_id` 등이 프로젝션에 **없다**(전송량·메모리 + 심층 방어). `report_blinded` 는 **조회는 하되 `_serialize_track` 반환에는 없다**(V196-UNIT-05 와 교차 확인 — 가드 판정 전용).
+- **확인할 로그 라인**: 없음. 정적 보조 — `grep -n "find(" backend_9006/app/routes/playlists.py backend_9006/app/routes/likes.py` 결과의 `mongo.tracks.find(...)` 호출이 **전부 2번째 인자로 `_TRACK_PROJECTION` 을 넘기는지** 확인(프로젝션 없는 `find` 잔존 0건).
+- **PASS/FAIL**: 7키 일치 + 전 호출부 프로젝션 적용 → PASS.
+- **실패 시 의심**: `playlists.py:20`·`get_playlist` 조회부; `likes.py:20`·`list_likes` 조회부.
+
+#### V196-UNIT-08. 레거시·결측 문서 직렬화 기본값 `[unit]` (①, R1/R2)
+- **사전조건**: V196-UNIT-05 와 동일 import.
+- **Given** `{"_id": <oid>, "title": "v196t-legacy-b", "uploader_id": "<B>"}` (닉네임·커버·`is_public`·`duration_sec` 전부 결측), **When** `_serialize_track(doc)`, **Then**
+  `artist_name == "AI"`(기본값), `cover_image is None`, `cover_image_url is None`, `duration_sec is None`, `is_public is False`(직렬화 기본값), `id == str(_id)`.
+- **기대결과**: 예외 없이 10키 반환. **`artist_name` 이 `None` 이면 FAIL** — `MusicPlayer.jsx:58`·`PlayerPage.jsx:365,:592` 는 폴백이 없어 화면이 공백이 된다(선재 버그 해소 요건).
+- **주의**: `is_public` 이 직렬화에서 `False` 로 나오는 것은 **표시용 기본값**일 뿐이며, **가시성 판정은 `_is_hidden_track`(V196-UNIT-01)이 담당**한다. 두 값이 다른 것은 정상 — 여기서 `is_public:False` 를 보고 "숨김이어야 한다"고 판단하면 오판이다.
+- **확인할 로그 라인**: 없음.
+- **PASS/FAIL**: 6개 단언 전부 일치 → PASS.
+- **실패 시 의심**: `playlists.py:45~64`(`doc.get("uploader_nickname", "AI")` 의 기본값 처리 — 키가 존재하고 값이 `None` 이면 `.get` 기본값이 먹지 않는 점 주의).
+
+#### V196-UNIT-09. ② `.env.example` 콜백 베이스 정적 grep `[unit]` (②, R16)
+- **사전조건**: 메인 체크아웃 기준 경로 `0_platform_music/backend_9006/.env.example`.
+- **Given/When/Then**:
+  | 검사 | 명령 | 기대 |
+  |---|---|---|
+  | 9005 잔존 | `grep -n "9005" backend_9006/.env.example` | **0건** |
+  | 9006 존재 | `grep -n "OAUTH_CALLBACK_BASE=http://localhost:9006" backend_9006/.env.example` | **1건** (`:64`) |
+  | 프론트 URL 불변 | `grep -n "FRONTEND_URL" backend_9006/.env.example` | `https://localhost:4000` 유지 (`:65`) |
+  | 실값 무접촉 | `cd /mnt/d/.../1_tripleJ && git status --short -- 0_platform_music/backend_9006/.env` | **출력 0줄** (`.env` 는 gitignore 대상일 수 있으므로 파일 `mtime` 도 착수 전 값과 대조) |
+- **기대결과**: 4행 전부 일치. `.env`(실값)는 **읽지도 쓰지도 않는다** — 포트 확인이 필요하면 `grep -c "9006" .env` 처럼 **값을 출력하지 않는 형태**로만.
+- **확인할 로그 라인**: 없음(정적).
+- **PASS/FAIL**: 4행 일치 → PASS. `.env` 가 변경됐으면 → FAIL(R16).
+- **실패 시 의심**: `backend_9006/.env.example:64~65`.
+
+#### V196-UNIT-10. ② `backendAPI정리.md` 콜백 4줄 정정 + **이력 보존** 정적 grep `[unit]` (②, R17)
+- **사전조건**: 착수 **전** `grep -c "9005" 0_platform_music/backendAPI정리.md` 기준값 **22** 를 기록.
+- **Given/When/Then**:
+  | 검사 | 기대 |
+  |---|---|
+  | 콜백 4줄 | `sed -n '559p;565p;566p;567p' backendAPI정리.md` → **9005 0건 / 9006 4건** |
+  | 안내 문구 추가 | 해당 절에 "각 제공자 개발자 콘솔의 Redirect URI 등록 변경은 **사용자가 직접** 수행해야 한다"는 취지의 문장이 **1건 이상** 존재 |
+  | 총량 대조 | `grep -c "9005" backendAPI정리.md` → **18** (착지 후 실측 확인값. **18 미만이면 이력 마커까지 손댄 것 → FAIL**) |
+  | 범위 밖 보존 | 버전 마커(`v77, 9005`) 5곳 · 검증 이력 제목(`9005 기준 전면 검증 (2026-08-03)`) 및 그 본문 · 과거 스크립트 경로(`backend_9005/scripts/backfill_snapshot_sheets.py`) · 로그 경로 3곳(`backend_9005/logs/…`, `server_9005.log`) · Suno 콜백 설명 1곳 에 **9005 잔존** |
+  | 🔴 승인 대기 라인 | `:3,:6,:8,:4788` — **착지 시점 실측 결과 이 4곳이 이미 9006 으로 정정되었다**(§5 A2 는 "미승인 시 미변경"을 기대했으나 실제로는 변경됨). tester 는 **FAIL 로 판정하지 말고 `OBSERVED` 로 기록**하고 planner 에 사후 승인 여부를 확인한다. 정정 내용 자체는 사실 관계상 옳다(9006 단일 백엔드) |
+  | 과거 산출물 불변 | `git diff --stat -- claude_skills_outputs/team-dev/REPORT.md` → **출력 0줄**, `sed -n '13014p' REPORT.md` 내용이 착수 전과 동일 |
+- **기대결과**: 6행 중 5행 일치 + 3행째(승인 대기)는 `OBSERVED` 기록.
+- **확인할 로그 라인**: 없음(정적).
+- **PASS/FAIL**: 콜백 4줄·안내 문구·총량 18·범위 밖 보존·REPORT 불변 → PASS. 총량이 18 미만 → **FAIL(R17 이력 훼손)**. REPORT.md 가 변경됐으면 → **FAIL(R17)**.
+- **실패 시 의심**: `0_platform_music/backendAPI정리.md:559,565,566,567,570~573` / 승인 범위 이슈는 `:3,:6,:8,:4788`.
+
+#### V196-UNIT-11. ③ 저장되는 `parent_id` 가 **평탄화 값(최상위 댓글 id)** 유지 `[unit]` — 🔴 즉시 중단 조건 S3 (③, R6 — v191 계약)
+- **사전조건**: `feeds.add_feed_comment` 를 호출하되 `mongo` 를 **인메모리 더블**로 목킹 — `feed_comments.find_one` 은 요청 id 에 따라 ①최상위 댓글 `CA = {_id:<ca>, feed_id:<f>, author_id:<A>, parent_id:None}` ②1단 답글 `CB = {_id:<cb>, feed_id:<f>, author_id:<B>, parent_id:<ca>}` 를 반환. `feeds.find_one` 은 `{_id:<f>, author_id:<C>}`. `push_notification` 은 호출 인자 기록 스텁. `insert_one` 은 삽입 문서를 그대로 보존.
+- **Given** C 의 피드에 A 최상위(`CA`) → B 답글(`CB`) 이 있는 상태, **When** C 가 `parent_id=<cb>`(= B 의 1단 답글)로 댓글을 추가하면, **Then** `feed_comments.insert_one` 에 전달된 문서의 **`parent_id == <ca>`**(= 최상위 A 댓글 id)이다.
+- **기대결과**: 저장 `parent_id` 는 **평탄화 값 그대로**. `<cb>` 로 저장되면 v191 트리 계약(2단 이상 1단 평탄화)이 파손된다.
+- **확인할 로그 라인**: `[feed] comment_add reply feed=%s parent_stored=%s notify_to=%s` — `parent_stored` 가 `<ca>[:8]`, `notify_to` 가 `<B>[:8]` 여야 한다(둘 다 8자).
+- **PASS/FAIL**: 저장값이 `<ca>` → PASS. `<cb>` 또는 `None` → **FAIL + 즉시 중단(S3)**.
+- **실패 시 의심**: `backend_9006/app/routes/feeds.py:770`(평탄화 전 캡처)·`:771~772`(평탄화)·문서 조립부(`"parent_id": parent_id`), 신설 `reply_target_author_id` 가 실수로 `parent_id` 변수를 덮어썼는지.
+
+#### V196-UNIT-12. ③ 자기 답글 → self-skip 으로 `reply` 알림 **0건** `[unit]` (③)
+- **사전조건**: V196-UNIT-11 과 동일 목킹. **단 `push_notification` 은 스텁이 아니라 실제 함수**를 쓰고, `mongo.notifications.insert_one` 만 기록 스텁(= self-skip 가드가 실제로 동작하는 경로를 타야 함).
+- **Given** B 가 작성한 댓글 `CB` 에 **B 본인이** 답글을 달면, **When** `add_feed_comment` 호출, **Then** `ntype="reply"` 인 `notifications.insert_one` 호출이 **0건**이다.
+- **기대결과**: `reply` 삽입 0건. (피드 주인 C 에게 가는 `comment` 알림은 **1건 발행되는 것이 정상** — 그건 자기 자신이 아니다.)
+- **확인할 로그 라인**: `[notify] push ok type=comment to=%s actor=%s` 1건 / `type=reply` 라인 **0건**.
+- **PASS/FAIL**: reply 0건 + comment 1건 → PASS. reply 가 발행되면 FAIL(자기 알림).
+- **실패 시 의심**: `backend_9006/app/routes/notifications.py:35`(`if not user_id or str(user_id) == str(actor_id): return`), `feeds.py:773~780`(가드를 우회하는 직접 insert 를 새로 넣었는지).
+
+#### V196-UNIT-13. ③ 알림 대상 산정이 **평탄화 전 `parent`** 를 쓰고, `find_one` 이 제거됨 `[unit]` — 정적 (③, R6)
+- **사전조건**: `backend_9006/app/routes/feeds.py` 정적 열람.
+- **Given/When/Then** `add_feed_comment` 본문에 대해:
+  | 검사 | 기대 |
+  |---|---|
+  | 캡처 순서 | `reply_target_author_id = parent.get("author_id")` 가 **`if parent.get("parent_id"): parent_id = parent["parent_id"]` 보다 앞 줄**에 있다 |
+  | 왕복 제거 | 알림 블록(구 `:773~780`)에 `feed_comments.find_one` 이 **없다**. `grep -c "feed_comments.find_one" ` 결과가 **1**(부모 검증용 `:749` 1곳만) |
+  | 비교 대상 | `if reply_target_author_id and str(reply_target_author_id) != str(doc.get("author_id")):` — 비교 우변이 **피드 주인**(`doc["author_id"]`) 그대로 유지(R8 의도 보존) |
+  | 알림 인자 | `push_notification(..., user_id=reply_target_author_id, ntype="reply", target_id=feed_id, ...)` — **`target_id` 는 `feed_id` 유지**(계약 불변) |
+- **기대결과**: 4행 전부 일치.
+- **확인할 로그 라인**: 없음(정적). 보조로 `[feed] comment_add reply ... notify_to=` 라인이 신설됐는지 확인.
+- **PASS/FAIL**: 4행 일치 → PASS. 캡처가 평탄화 **뒤**면 → **FAIL + 즉시 중단(S3 인접 — 결함 미수정)**. `target_id` 가 댓글 id 로 바뀌었으면 FAIL(앱팀 라우팅 계약 파손).
+- **실패 시 의심**: `backend_9006/app/routes/feeds.py:757~807`.
+
+#### V196-UNIT-14. ⑤ `modified_count == 0` → **peer 발행 0회** `[unit]` — **v195 RT-UNIT-04 supersede** (⑤, R12)
+- **사전조건**: `dm_service.publish_to_user` 를 호출 인자·순서 기록 스텁으로 교체. `_get_conv` 가 `{_id:<cid>, participants:[me,peer], status:"accepted", unread:{me:0}}` 반환. `dm_messages.update_many` 가 **`modified_count=0`** 반환.
+- **Given** 이미 다 읽은 accepted 대화, **When** `await mark_read(mongo, <cid>, me)`, **Then** `publish_to_user` 호출 기록에 **`uid == peer` 인 건이 0회**이고, `uid == me` 인 건도 0회(v195 RT-UNIT-04 의 본인 skip 은 유지)이다. **총 호출 0회.**
+- **기대결과**: 반환값은 정상 `{"conversation_id": <cid>, "read": True, "marked": 0}` (**스키마 불변**).
+  ⚠️ **v195 RT-UNIT-04 는 여기서 "peer 1회" 를 기대했다 — v196 에서는 그 기대가 폐기된다.** peer 발행이 1회라도 있으면 **FAIL**.
+- **확인할 로그 라인**: `[dm] mark_read peer-read skipped (nothing marked) conv=%s me=%s` (**published 라인이 나오면 FAIL**) + `[dm] mark_read self-unread skipped (nothing to clear) conv=%s me=%s` + `[dm] mark_read conv=%s me=%s marked=0`
+- **PASS/FAIL**: 총 발행 0회 + skipped 로그 2줄 + 반환 스키마 3키 → PASS.
+- **실패 시 의심**: `backend_9006/app/services/dm_service.py:610`(`if peer_id and result.modified_count > 0:` — 착지 확인됨).
+
+#### V196-UNIT-15. ⑤ `modified_count > 0` → **peer `read` 1회** + 순서 peer → self `[unit]` — **v195 RT-UNIT-03 supersede** (⑤, R12)
+- **사전조건**: V196-UNIT-14 목킹에서 `unread:{me:3}`, `update_many` 가 **`modified_count=2`** 반환. 스텁이 **호출 순서를 리스트로 보존**.
+- **Given** 실제로 읽을 메시지가 있는 대화, **When** `mark_read` 호출, **Then** 호출 기록이 정확히
+  `[(peer, {"type":"read","conversation_id":<cid>}), (me, {"type":"unread","conversation_id":<cid>})]` 2건이다.
+- **기대결과**: peer 이벤트 키 집합이 **정확히 `{"type","conversation_id"}`**(v194 이전 페이로드 불변). 순서 **peer → self** 유지. 반환 `{"conversation_id","read":True,"marked":2}`.
+  ⚠️ v195 RT-UNIT-03 의 "peer 발행 무조건 유지" 는 폐기되고, **조건부 유지**로 대체된다. 이 케이스가 "읽을 게 있을 때는 반드시 간다"를 보장한다(R12).
+- **확인할 로그 라인**: `[dm] mark_read peer-read published conv=%s me=%s marked=2` → `[dm] mark_read self-unread published conv=%s me=%s prev_unread=3 marked=2`
+- **PASS/FAIL**: 2건·순서·타입·키집합 전부 일치 → PASS. peer 누락 → **FAIL(읽음표시 동기화 회귀 — R12)**. 순서가 self→peer 로 바뀌면 FAIL.
+- **실패 시 의심**: `dm_service.py:610`(가드 조건), 이어지는 self 블록 위치.
+
+#### V196-UNIT-16. ⑤ 🔴 `prev_unread > 0 && modified_count == 0` → **peer 미발행 + 본인 발행** `[unit]` — 핵심 경계 (⑤, R13)
+- **사전조건**: `unread:{me:1}` (카운터만 남음), `update_many` 가 **`modified_count=0`** 반환. 스텁 순서 보존.
+- **Given** 메시지는 이미 전부 read 인데 **내 뱃지 카운터만 1 남은** 경계(= v195 RT-UNIT-05 와 동일 입력), **When** `mark_read` 호출, **Then**
+  ① `uid == peer` 발행 **0회** (v196 신규 가드)
+  ② `uid == me` 로 `{"type":"unread", ...}` 발행 **1회** (v195 RT-UNIT-05 불변 — 폐기하지 않음)
+- **기대결과**: 총 발행 1회, 대상은 **본인만**. 이 케이스가 **v195 RT-UNIT-05 경계와 v196 ⑤ 를 구분하는 유일한 지점**이다.
+  - peer 조건에 `prev_unread` 를 섞으면(`if peer_id and (prev_unread > 0 or result.modified_count > 0)`) 여기서 peer 가 발행돼 **FAIL**.
+  - 반대로 본인 가드까지 `modified_count` 단독으로 바꾸면 본인 발행이 사라져 **FAIL**(뱃지가 안 줄어드는 v195 원증상 재발).
+- **확인할 로그 라인**: `[dm] mark_read peer-read skipped (nothing marked) conv=%s me=%s` **그리고** `[dm] mark_read self-unread published conv=%s me=%s prev_unread=1 marked=0` — **두 줄이 동시에** 나와야 한다.
+- **PASS/FAIL**: peer 0 + self 1 + 로그 2줄 동시 → PASS. 하나라도 어긋나면 FAIL(R13).
+- **실패 시 의심**: `dm_service.py:610`(peer 가드에 `prev_unread` 혼입 여부), 본인 가드가 `or` 에서 바뀌었는지, `prev_unread` 캡처가 `unread=0` 업데이트 뒤로 밀렸는지.
+
+#### V196-UNIT-17. ⑤ pending no-op → peer·본인 **양쪽 미발행** (v155 가드 불변) `[unit]` (⑤, R2 계열)
+- **사전조건**: `_get_conv` 가 `{_id:<cid>, participants:[me,peer], status:"pending", requester_id:<peer>, unread:{me:2}}` 반환(= 내가 **수신자**). 스텁 기록.
+- **Given** 요청함(pending) 대화를 **수신자**가 여는 상황, **When** `mark_read` 호출, **Then**
+  ① `publish_to_user` 호출 **0회**(peer·본인 모두)
+  ② `dm_conversations.update_one`·`dm_messages.update_many` **미호출**(unread 보존)
+  ③ 반환값이 **정확히 `{"conversation_id": <cid>, "read": False, "marked": 0}`**
+- **기대결과**: v155 프라이버시 계약 완전 불변. v196 의 peer 가드가 이 조기 반환보다 **앞으로 이동하면 안 된다**.
+- **확인할 로그 라인**: `[dm] mark_read skipped (pending request) conv=%s me=%s` 1줄. `peer-read published`·`peer-read skipped`·`self-unread` 라인 **전부 미출력**(신설 skipped 로그가 pending 경로에서도 나오면 조기 반환이 깨진 것 → FAIL).
+- **PASS/FAIL**: 3개 단언 + 로그 1줄 단독 → PASS.
+- **실패 시 의심**: `dm_service.py` pending 조기 반환 블록, v196 신설 `peer-read skipped` 로그(`:619`)가 이 위로 올라갔는지.
+
+#### V196-UNIT-18. ④ `purge_feed_document` — Mongo 예외 주입에도 **삭제 성공 유지** `[unit]` (④, R10)
+- **사전조건**: `feeds.purge_feed_document` 를 목킹 mongo/conn 으로 직접 호출. `mongo.notifications.delete_many` 가 **`Exception("v196t injected")`** 을 던지도록 설정. `feeds.delete_one`·`feed_comments.delete_many`(→ `deleted_count=2`)·`conn.execute` 는 정상.
+- **Given** 알림 정리만 실패하는 상황, **When** `await purge_feed_document(mongo, conn, doc)`, **Then**
+  ① 예외가 **호출자에게 전파되지 않는다**
+  ② 반환 dict 에 `feed_id`·`owner_id`·`comments_removed`(=2) 가 **그대로** 있다(기존 계약 불변)
+  ③ `feeds.delete_one`·`feed_comments.delete_many`·PG `DELETE FROM feed_likes` 는 **정상 호출**됐다
+- **기대결과**: best-effort 패턴 준수(PG `feed_likes` 정리 `:593~596` 와 동일). `notifications_removed` 키가 추가되었다면 **실패 시 `0`**(또는 미포함) — 어느 쪽이든 라우트 응답은 `{"message":"피드가 삭제되었습니다."}` 로 고정이므로 외부 계약 불변.
+- **확인할 로그 라인**: `[feed] purge notifications_cleanup_failed feed=%s err=%s` (err 에 **본문·닉네임 원문이 섞이지 않는지** 동시 확인) + `[feed] purge ok feed=%s author=%s comments_removed=2 notifications_removed=0`
+- **PASS/FAIL**: 예외 미전파 + 반환 계약 유지 + 3개 삭제 호출 → PASS. 예외가 새면 → **FAIL(R10 — 알림 정리 실패가 피드 삭제를 깨뜨림)**.
+- **실패 시 의심**: `backend_9006/app/routes/feeds.py:602~612`(신설 `try/except` 범위가 `feeds.delete_one`·`feed_comments.delete_many` 까지 감싸버렸는지).
+
+#### V196-UNIT-19. ④ 알림 삭제 필터 정적 검증 — `type` 화이트리스트에 **`follow` 미포함** `[unit]` — 정적, S4 정적 방어 (④, R9)
+- **사전조건**: `feeds.py` 정적 열람 + V196-UNIT-18 목킹의 `delete_many` **호출 인자 캡처**.
+- **Given/When/Then**:
+  | 검사 | 기대 |
+  |---|---|
+  | 필터 형태 | 캡처된 인자가 `{"target_id": <feed_id>, "type": {"$in": [...]}}` |
+  | 화이트리스트 | `$in` 리스트가 정확히 `{"feed","like","comment","reply"}` (순서 무관, 집합 동일) |
+  | `follow` 배제 | `"follow" not in $in` — **`follow` 은 `target_id=None` 이라 충돌 불가하지만 이중 방어** |
+  | `target_id` 타입 | `str(feed_id)` — `ObjectId` 를 그대로 넘기면 `push_notification:45` 가 `str()` 로 저장하므로 **매칭 0건**이 되어 조용히 무효화된다 |
+  | 전역 안전 | `grep -rn "notifications.delete" backend_9006/app/` → **1건(이 호출)만** 존재. 무조건 삭제(`delete_many({})`·`delete_many({"user_id":...})`) 형태 **0건** |
+- **기대결과**: 5행 전부 일치.
+- **확인할 로그 라인**: `[feed] purge ok ... notifications_removed=%d`
+- **PASS/FAIL**: 5행 일치 → PASS. `follow` 포함 또는 `type` 필터 부재 → **FAIL + 즉시 중단(S4)**. `target_id` 가 `ObjectId` → FAIL(정리가 조용히 무효).
+- **실패 시 의심**: `feeds.py:582~605`.
+
+#### V196-UNIT-20. v138 직링크 가드 블록 **무변경** 정적 확인 `[unit]` — 회귀 (§6-7 무접촉)
+- **사전조건**: `git diff -- 0_platform_music/backend_9006/app/routes/tracks.py` (메인 체크아웃).
+- **Given/When/Then**:
+  | 검사 | 기대 |
+  |---|---|
+  | `_is_hidden_track`(`:49~54`) | diff **없음** — 규약 원본은 손대지 않는다 |
+  | `_can_view_hidden_track`(`:57~64`) | diff **없음** |
+  | `_TRACK_NOT_FOUND`(`:67`) | diff **없음** |
+  | `get_track_stream`(`:1682~1714`) | diff **없음** (정답 구현 — 복사 대상이지 수정 대상이 아님) |
+  | `/stream-proxy/{id}`(`:906~`) · `/{track_id}`(`:1151~`) | diff **없음** |
+  | 변경 허용 범위 | diff 가 `get_track_music_video`·`get_track_lyrics_timeline`·`download_track` **3개 함수 블록에만** 국한 |
+  | 범위 밖 파일 무접촉 | `git status --short` 에 `albums.py`·`reports.py`·`upload.py`·`backend_9004/`·`backend_9005/` **0줄** |
+- **기대결과**: 7행 전부 일치.
+- **확인할 로그 라인**: 없음(정적).
+- **PASS/FAIL**: 7행 일치 → PASS. `backend_9004`/`backend_9005` 에 변경이 있으면 → **FAIL(§0-7 미러링 폐기 위반)**.
+- **실패 시 의심**: `backend_9006/app/routes/tracks.py`, `git status`.
+
+#### V196-UNIT-21. 신규 로그 위생 정적 grep `[unit]` — 즉시 중단 조건 S8 (R18)
+- **사전조건**: 변경 5파일(`playlists.py`·`likes.py`·`tracks.py`·`feeds.py`·`dm_service.py`)의 **신규 로그 라인 전량**을 diff 에서 추출.
+- **Given/When/Then**:
+  | 검사 | 기대 |
+  |---|---|
+  | 원문 인자 부재 | 신규 `logger.*` 호출 인자에 `text`·`body.text`·`preview`·`lyrics`·`prompt`·`title`(트랙/피드 제목 원문)·`nickname`·`author_nickname` **직접 전달 0건** (길이·건수·bool 만 허용) |
+  | id 8자 | id 를 찍는 인자는 전부 `_short(...)` 또는 `[:8]` 경유. `grep -n "logger.info" | grep -v "_short\|\[:8\]\|=%d\|len("` 로 **예외 라인 목록화** 후 육안 확인 |
+  | 개인정보 부재 | 신규 로그에 `email`·`birth`·`gender`·`phone` 토큰 **0건** |
+  | 프리픽스 관행 | 신규 라인이 `[playlists]`·`[likes]`·`[report]`·`[feed]`·`[dm]` 중 하나로 시작 |
+  | 예외 문자열 | `[feed] purge notifications_cleanup_failed ... err=%s` 의 `err` 가 **예외 메시지만**이고 문서 내용을 담지 않음 |
+  | 런타임 확인 | 전 `[api]` 케이스 수행 후 서버 로그를 `grep -iE "lyrics|prompt|birth|gender|@"` → **v196 신규 라인 매치 0건** |
+- **기대결과**: 6행 전부 일치.
+- **확인할 로그 라인**: 위 grep 결과 자체가 산출물. **매치된 원문은 본 문서·REPORT 에 옮겨 적지 않고 파일:라인만 기재**한다.
+- **PASS/FAIL**: 6행 일치 → PASS. 1건이라도 원문/개인정보 노출 → **FAIL + 즉시 중단(S8)**.
+- **실패 시 의심**: `playlists.py:162`, `likes.py:122,:151`, `tracks.py` `*_denied` 3줄, `feeds.py:609,:611`·reply 로그 `:774~775`, `dm_service.py:614,:619`.
+
+---
+
+### 2. `[api]` 시나리오 — 17건
+
+> 실행: `curl`/HTTP 클라이언트. **각 블록 착수 전 §0-B 선행 절차 필수.** 모든 요청은 `http://localhost:9006` 기준.
+> 🚫 이 절의 어떤 케이스도 `/api/tracks/upload`·`/api/tracks/search`·`/api/generate`·`/api/mv`·`/api/character`·`/api/voice-*` 를 호출하지 않는다.
+
+#### V196-API-01. ① `POST /api/playlists/{내것}/tracks` 에 **타인 비공개 곡** → **400** `[api]` — 공격 경로 1 차단 (①)
+- **사전조건**: A 로 재생목록 `PL-A`(`title:"v196t-pl-a"`) 생성. §0-A `TRK-PRIV-B`(B 소유, `is_public:False`) 준비.
+- **Given** A 의 재생목록과 B 의 비공개 곡, **When** `POST /api/playlists/<PL-A>/tracks` `{"track_id":"<TRK-PRIV-B>"}` (`<TEST_USER_A_TOKEN>`), **Then** **`400`** 이고 본문이 **`{"error":"다른 사용자의 비공개 곡은 사용할 수 없습니다."}`** 이다(문구 정확 일치).
+- **기대결과**: PG `playlist_tracks` 에 행이 **삽입되지 않는다**(`SELECT count(*) FROM playlist_tracks WHERE playlist_id=<PL-A>` 가 호출 전후 동일). `TRK-BLIND-B`(`report_blinded:True`)로 반복해도 **동일하게 400**(R4).
+- **확인할 로그 라인**: `[playlists] add_track private_denied user=%s track=%s` (양쪽 8자)
+- **PASS/FAIL**: 400 + 문구 정확 일치 + 미삽입 → PASS. **201 이면 FAIL(결함 미수정 — 공격 경로 1 생존)**. 403/404 면 FAIL(설계는 400 — "행위 거부" 의미).
+- **실패 시 의심**: `backend_9006/app/routes/playlists.py` `add_track` 가드 + `private_denied` 로그(`:253`).
+
+#### V196-API-02. ① `POST /api/likes/{타인 비공개 곡}` → **400** `[api]` — 최단 공격 경로 차단 (①, 신규 발견분)
+- **사전조건**: `TRK-PRIV-B` 준비. A 는 해당 곡을 좋아요한 적 없음.
+- **Given** B 의 비공개 곡, **When** `POST /api/likes/<TRK-PRIV-B>` (`<TEST_USER_A_TOKEN>`), **Then** **`400`** + **`{"error":"다른 사용자의 비공개 곡은 사용할 수 없습니다."}`**.
+- **기대결과**: PG `likes` 미삽입. **Mongo `tracks.like_count` 미증가**(`likes.py:110~113` 의 `$inc` 가 가드 앞에 있으면 카운트가 오염된다 — 가드는 반드시 `$inc` **앞**). `TRK-BLIND-B` 로 반복해도 400.
+- **확인할 로그 라인**: `[likes] like private_denied user=%s track=%s`
+- **PASS/FAIL**: 400 + 문구 + `likes` 미삽입 + `like_count` 불변 → PASS. 201 이면 **FAIL(재생목록 없이도 유출 가능한 최단 경로 생존)**.
+- **실패 시 의심**: `backend_9006/app/routes/likes.py:151`(`private_denied` 로그 지점 — 가드가 `like_count` `$inc` 보다 앞인지 확인).
+
+#### V196-API-03. ① `GET /api/playlists/{id}` — **금지 키 부재** + 타인 숨김 곡 **배열 제외** `[api]` — 즉시 중단 조건 S1 (①)
+- **사전조건**: 🔴 **가드 착지 전에** PG `playlist_tracks` 에 **직접 INSERT** 하여 `PL-A` 에 `TRK-PRIV-B`·`TRK-BLIND-B`·`TRK-PUB-B`·`TRK-LEGACY-B`·`TRK-PRIV-A` 5곡을 담아 둔다(이미 담긴 곡의 조회 처리를 검증하는 것이 목적이므로 **API-01 의 400 을 우회하기 위해 DB 직접 삽입**한다 — 프로덕션 가드는 건드리지 않는다).
+- **Given** 5곡이 담긴 A 의 재생목록, **When** `GET /api/playlists/<PL-A>` (`<TEST_USER_A_TOKEN>`), **Then**
+  ① `tracks` 배열 길이 **3** — `TRK-PUB-B`·`TRK-LEGACY-B`·`TRK-PRIV-A` 만 남는다(`TRK-PRIV-B`·`TRK-BLIND-B` 제외)
+  ② 남은 각 원소의 **키 집합이 정확히 11키**(V196-UNIT-05 의 10키 + `position`)
+  ③ **금지 키 존재 자체를 assert** — 각 원소에 대해 `"audio_url" not in t`, `"lyrics" not in t`, `"prompt" not in t`, `"generation_id" not in t`, `"user_character_snapshot" not in t`, `"search_keywords" not in t`, `"waveform_data" not in t`, `"beats" not in t`, `"downbeats" not in t`, `"tempo" not in t`, `"beats_status" not in t`, `"report_blinded" not in t`
+- **기대결과**: 위 3항 전부. 최상위 응답 키는 `{id,user_id,title,description,is_public,created_at,tracks}` **불변**(`track_count` 는 원래 없음 — 개수 불일치 노출 없음). `position` 값은 원본 PG 값 유지(연속성은 프론트가 `idx+1` 로 재계산하므로 빈 번호가 생기지 않는다).
+- **확인할 로그 라인**: `[playlists] detail id=%s user=%s tracks=3 hidden_skipped=2`
+- **PASS/FAIL**: 3항 전부 일치 → PASS. 금지 키 1개라도 존재 → **FAIL + 즉시 중단(S1)**. `TRK-LEGACY-B` 가 사라지면 → **FAIL + 즉시 중단(S2)**. `TRK-PRIV-A`(본인 비공개)가 사라지면 FAIL(R3).
+- **실패 시 의심**: `playlists.py:45`(직렬화), `:162` 주변(프로젝션·제외 루프·로그), 소유자 예외 조건.
+
+#### V196-API-04. ① `GET /api/likes/` — **금지 키 부재** + 숨김 제외 + 페이지네이션 계약 불변 `[api]` — 즉시 중단 조건 S1 (①)
+- **사전조건**: 🔴 가드 착지 전에 PG `likes` 에 A → (`TRK-PRIV-B`, `TRK-BLIND-B`, `TRK-PUB-B`, `TRK-LEGACY-B`, `TRK-PRIV-A`) 5행 직접 INSERT.
+- **Given** 5건을 좋아요한 A, **When** `GET /api/likes/?page=1&limit=20` (`<TEST_USER_A_TOKEN>`), **Then**
+  ① `likes` 배열 길이 **3**(`TRK-PRIV-B`·`TRK-BLIND-B` 제외)
+  ② 각 원소 키 집합이 정확히 **11키**(10키 + `liked_at`), `position` **부재**
+  ③ 금지 키 12종 **존재 자체 부재**(API-03 ③ 과 동일 목록)
+  ④ `pagination` 이 `{page,limit,total,totalPages}` **4키 불변**
+- **기대결과**: 위 4항. **`pagination.total` 은 PG `likes` 기준 5 를 유지**하는 것이 정상(숨김 제외는 하이드레이션 단계에서 일어나며 PG 카운트를 바꾸지 않는다). 배열 길이(3)와 `total`(5)의 불일치는 **설계상 허용** — 이 케이스에서 `total==3` 을 기대하면 오판이다.
+- **확인할 로그 라인**: `[likes] list user=%s returned=3 hidden_skipped=2`
+- **PASS/FAIL**: 4항 일치 → PASS. 금지 키 존재 → **FAIL + 즉시 중단(S1)**. `TRK-LEGACY-B` 누락 → **FAIL(S2)**.
+- **실패 시 의심**: `likes.py:44`(직렬화), `:122`(제외 루프·로그), `list_likes` 의 `pagination` 블록(불변).
+
+#### V196-API-05. ①-C `POST /api/tracks/download/{타인 비공개 곡}` → **404** + **Redis 차트 미증가** `[api]` (①-C, R5c)
+- **사전조건**: §0-C 의 Redis 집계를 **호출 직전에** 스냅샷 — `SCARD chart:downloads:hourly:<YYYYMMDDHH>:<TRK-PRIV-B>`, `SCARD chart:downloads:daily:…`, `SISMEMBER chart:dl_tracks:hourly:<YYYYMMDDHH> <TRK-PRIV-B>`, Mongo `download_logs.count_documents({"track_id":"<TRK-PRIV-B>"})`, `tracks.download_count`.
+- **Given** B 의 비공개 곡, **When** `POST /api/tracks/download/<TRK-PRIV-B>` (`<TEST_USER_A_TOKEN>`), **Then** **`404`** + 본문 **`{"error":"트랙을 찾을 수 없습니다."}`**(`_TRACK_NOT_FOUND` — 존재 은닉 정책).
+- **기대결과**: 응답에 `download_url`·`filename` **부재**. 그리고 **호출 후 스냅샷이 전부 호출 전과 동일**:
+  `SCARD` 4종 불변 · `SISMEMBER` 여전히 0 · `download_logs` 카운트 불변 · `tracks.download_count` 불변.
+  ⚠️ 가드가 Redis 파이프라인(`tracks.py:1742~1765`) **뒤**에 있으면 404 를 받아도 **차트가 이미 오염**된다 — 응답 코드만 보고 PASS 판정하면 R5c 를 놓친다.
+- **확인할 로그 라인**: `[report] track download_denied track=%s` (8자)
+- **PASS/FAIL**: 404 + `_TRACK_NOT_FOUND` 문구 + 5종 스냅샷 전부 불변 → PASS. 스냅샷이 하나라도 증가 → **FAIL(R5c)**.
+- **실패 시 의심**: `backend_9006/app/routes/tracks.py:1741`(`download_track` — 인증 필수 `get_current_user` 유지) · `:1757`(`download_denied` — 반드시 Redis 집계 **앞**).
+
+#### V196-API-06. ①-C `GET /api/tracks/{타인 비공개 곡}/music-video` **비로그인** → **404** `[api]` (①-C)
+- **사전조건**: `TRK-PRIV-B`. **Authorization 헤더 없이** 호출.
+- **Given** B 의 비공개 곡, **When** `GET /api/tracks/<TRK-PRIV-B>/music-video` (헤더 없음), **Then** **`404`** + 본문 **`{"error":"트랙을 찾을 수 없습니다."}`**.
+- **기대결과**: `music_video_url`·`has_music_video` 키 **부재**. `<TEST_USER_A_TOKEN>`(타인 로그인)으로 반복해도 **동일 404**. `<TEST_USER_B_TOKEN>`(소유자)으로 호출하면 가드를 통과해 **MV 미존재 404 = `{"error":"뮤직비디오를 찾을 수 없습니다."}`** 로 **본문이 달라진다** — 이 본문 차이가 "가드가 정확히 작동했다"의 증거다.
+- **확인할 로그 라인**: `[report] track mv_denied track=%s`
+- **PASS/FAIL**: 비로그인·타인 → `트랙을 찾을 수 없습니다.` / 소유자 → `뮤직비디오를 찾을 수 없습니다.` 로 **본문 구분** → PASS. 소유자에게도 `트랙을…` 이 나오면 FAIL(소유자 차단 — 과교정).
+- **실패 시 의심**: `tracks.py:770~789`(`get_track_music_video` — optional auth `:772`, `mv_denied` `:789`).
+
+#### V196-API-07. ①-C `GET /api/tracks/{타인 비공개 곡}/lyrics-timeline` **비로그인** → **404** `[api]` — 광역 except 함정 (①-C, R5b)
+- **사전조건**: `TRK-PRIV-B` 에 `recognized_timestamps` 3줄이 시드되어 있어야 한다(가드가 없으면 **가사가 실제로 나오는** 상태여야 유출 재현이 성립).
+- **Given** 가사 타임스탬프가 있는 B 의 비공개 곡, **When** `GET /api/tracks/<TRK-PRIV-B>/lyrics-timeline` (헤더 없음), **Then** **HTTP `404`** + **`{"error":"트랙을 찾을 수 없습니다."}`**.
+- **기대결과**: ⚠️ **`200 {"has_timestamps": false, "segments": [], "source": "none"}` 이 오면 FAIL** — 이는 가드가 던진 404 를 `:820~824` 의 `except Exception` 이 **삼킨** 신호다(R5b). `segments` 배열이 비어 있어도 **상태 코드가 200 이면 FAIL**.
+  `<TEST_USER_A_TOKEN>`(타인)으로 반복해도 404. `<TEST_USER_B_TOKEN>`(소유자)이면 **200 + `has_timestamps:true` + `segments` 3개 + `source:"recognized"`**.
+- **확인할 로그 라인**: `[report] track lyrics_denied track=%s` — **`[lyrics-timeline] failed track=%s` traceback 이 함께 나오면 FAIL**(가드 반환이 예외로 취급된 것).
+- **PASS/FAIL**: 404 + 본문 + traceback 부재 → PASS. 200 응답 또는 traceback → **FAIL(R5b)**.
+- **실패 시 의심**: `tracks.py:807~829`(`get_track_lyrics_timeline` — optional auth `:809`, `lyrics_denied` `:829`). 가드가 `try` **진입 전**인지, `JSONResponse` 반환이 광역 `except` 에 삼켜지지 않는 경로인지 확인.
+
+#### V196-API-08. 🔴 회귀: **공개 곡 비로그인** MV·가사 접근 **파손 없음** `[api]` — 즉시 중단 조건 S5 (R5a)
+- **사전조건**: `TRK-PUB-B`(`is_public:True`, `recognized_timestamps` 3줄, `generation_id` 없음). **Authorization 헤더 없이** 호출.
+- **Given/When/Then**:
+  | 요청(비로그인) | 기대 상태 | 기대 본문 |
+  |---|---|---|
+  | `GET /api/tracks/<TRK-PUB-B>/lyrics-timeline` | **200** | `{"has_timestamps": true, "segments":[3건], "source":"recognized"}` |
+  | `GET /api/tracks/<TRK-PUB-B>/music-video` | **404** | **`{"error":"뮤직비디오를 찾을 수 없습니다."}`** ← MV 미존재 404 이지 가드 404 가 **아니어야** 한다 |
+  | `GET /api/tracks/stream/<TRK-PUB-B>` | 200 또는 404(오디오 파일 없음) | **401 이면 FAIL** |
+  | `GET /api/tracks/<TRK-PUB-B>/lyrics-timeline` + 임의 만료 토큰 | 200 | optional auth 가 잘못된 토큰에 401 을 던지지 않는지 |
+- **기대결과**: **어떤 행에서도 `401` 이 나오지 않는다.** MV 행의 본문이 `트랙을 찾을 수 없습니다.` 이면 가드가 **공개 곡에도 발동**한 것 → FAIL.
+  > 설계 노트: MV 200 을 만들려면 완료된 MV 작업물이 필요하지만 **MV 생성은 유료 API** 라 금지다(§0-1). 따라서 R5a 는 **404 본문 구분**으로 검증한다 — 가드 404(`_TRACK_NOT_FOUND`)와 MV 미존재 404(`뮤직비디오를…`)는 문자열이 다르므로 판별 가능하다. 실 MV 보유 곡으로 200 을 확인하려면 **실사용자 데이터 열람**이 되므로 planner 승인 항목(§5 A1)으로 분리한다.
+- **확인할 로그 라인**: `[lyrics-timeline] track=%s has=True count=3` / `*_denied` 라인 **미출력**
+- **PASS/FAIL**: 4행 전부 기대치 → PASS. 401 발생 또는 가드 404 문구 → **FAIL + 즉시 중단(S5)**.
+- **실패 시 의심**: `tracks.py:772`·`:809` 의 의존성이 `get_current_user`(필수)로 잘못 붙었는지 — 반드시 `get_current_user_optional`(`app/auth.py:51`).
+
+#### V196-API-09. 🔴 회귀: **레거시 곡(R2) + 본인 비공개 곡(R3)** 정상 동작 `[api]` — 즉시 중단 조건 S2 (R2, R3)
+- **사전조건**: `TRK-LEGACY-B`(`is_public` **키 자체 없음**, B 소유), `TRK-PRIV-A`(A 소유 비공개). A 의 새 재생목록 `PL-A2`.
+- **Given/When/Then**:
+  | 시나리오 | 요청 | 기대 |
+  |---|---|---|
+  | R2-추가 | A 가 `POST /api/playlists/<PL-A2>/tracks` `{"track_id":"<TRK-LEGACY-B>"}` | **201** `{"message":"트랙이 추가되었습니다."}` |
+  | R2-좋아요 | A 가 `POST /api/likes/<TRK-LEGACY-B>` | **201** |
+  | R2-조회 | `GET /api/playlists/<PL-A2>` | `tracks` 에 `TRK-LEGACY-B` **포함**, `is_public:false`(직렬화 기본값)로 표기되지만 **노출은 됨** |
+  | R3-추가 | A 가 `POST /api/playlists/<PL-A2>/tracks` `{"track_id":"<TRK-PRIV-A>"}` | **201**(본인 비공개 곡) |
+  | R3-조회 | `GET /api/playlists/<PL-A2>` (A 토큰) | `TRK-PRIV-A` **포함** |
+  | R3-타인조회 | `PL-A2` 를 `is_public:true` 로 바꾼 뒤 B 가 `GET /api/playlists/<PL-A2>` | `TRK-PRIV-A` **제외**, `TRK-LEGACY-B` **포함** |
+  | R3-좋아요목록 | A 가 `POST /api/likes/<TRK-PRIV-A>` → `GET /api/likes/` | 201 + 목록에 **포함** |
+- **기대결과**: 7행 전부. 특히 **R2 행이 400/제외로 나오면 즉시 중단(S2)** — feeds 식 `not is_public` 을 복사한 것이며 실서비스의 레거시 공개곡이 전부 사라진다.
+- **확인할 로그 라인**: `[playlists] detail id=%s user=%s tracks=%d hidden_skipped=0`(A 조회 시) / `hidden_skipped=1`(B 조회 시)
+- **PASS/FAIL**: 7행 일치 → PASS. R2 행 실패 → **FAIL + 즉시 중단(S2)**. R3 행 실패 → FAIL(R3).
+- **실패 시 의심**: `playlists.py:36`(`is` 비교)·소유자 예외 조건, `likes.py:36` 대응분.
+
+#### V196-API-10. ③ 3단 답글 알림 대상 교정 — **B 수신 1건, A 수신 0건** + `parent_id` 직접 확인 `[api]` — 즉시 중단 조건 S3 (③, R6)
+- **사전조건**: C 가 피드 `F`(`title:"v196t-feed-c"`) 작성. 착수 전 각 계정의 `GET /api/notifications/?limit=100` 스냅샷(타입별 건수) 기록. A·B·C 는 서로 팔로우하지 않은 상태(팔로우 알림 혼입 방지).
+- **Given/When/Then** 순서대로:
+  1. A 가 `POST /api/feeds/<F>/comments` `{"text":"v196t-c1"}` → 최상위 댓글 `CA` 생성 (201)
+  2. B 가 `POST /api/feeds/<F>/comments` `{"text":"v196t-c2","parent_id":"<CA>"}` → 1단 답글 `CB`
+  3. **C 가** `POST /api/feeds/<F>/comments` `{"text":"v196t-c3","parent_id":"<CB>"}` → 2단(평탄화 대상)
+  **Then** 3번 호출 직후:
+  | 대상 | 검사 | 기대 |
+  |---|---|---|
+  | B | `GET /api/notifications/` 의 `type=="reply" && actor_id==<C> && target_id==<F>` | **1건** |
+  | A | 동일 조건 | **0건** (스냅샷 대비 `reply` 증가 0) |
+  | C | `type=="comment"` | **0건** — 피드 주인이 C 본인이므로 self-skip |
+  | Mongo | `feed_comments.find_one({"_id": <CC>})["parent_id"]` | 🔴 **`<CA>`**(최상위 댓글 id) — `<CB>` 면 v191 계약 파손 |
+- **기대결과**: 4행 전부. 수정 전 동작(= 결함)은 **B 0건 / A 1건** 이었다.
+- **확인할 로그 라인**: `[feed] comment_add reply feed=%s parent_stored=<CA 8자> notify_to=<B 8자>` + `[notify] push ok type=reply to=<B 8자> actor=<C 8자>`
+- **PASS/FAIL**: 4행 일치 → PASS. Mongo `parent_id != <CA>` → **FAIL + 즉시 중단(S3)**. A 가 수신하면 FAIL(결함 미수정).
+- **실패 시 의심**: `feeds.py:770`(평탄화 전 캡처)·`:797~807`(알림 분기).
+
+#### V196-API-11. ③ 회귀: 1단 답글 정상 케이스 — **A 수신 1건** `[api]` — 과교정 방지 (③, R7)
+- **사전조건**: C 의 새 피드 `F2`. 알림 스냅샷 기록.
+- **Given** A 가 `F2` 에 최상위 댓글 `CA2` 작성, **When** B 가 `POST /api/feeds/<F2>/comments` `{"text":"v196t-r1","parent_id":"<CA2>"}`, **Then**
+  ① A 의 `reply` 알림 **+1**(`actor_id==<B>`, `target_id==<F2>`)
+  ② C(피드 주인)의 `comment` 알림 **+1**
+  ③ B 자신의 알림 **증가 0**
+  ④ 저장된 `parent_id == <CA2>`(평탄화 대상 아님 — 원본 유지)
+- **기대결과**: 4행 전부. **A 가 0건이면 과교정** — 새 변수가 평탄화 값을 참조하도록 잘못 배선된 것.
+- **확인할 로그 라인**: `[feed] comment_add reply feed=%s parent_stored=<CA2 8자> notify_to=<A 8자>` + `[notify] push ok type=reply to=<A 8자>` + `[notify] push ok type=comment to=<C 8자>`
+- **PASS/FAIL**: 4행 일치 → PASS. A 미수신 → **FAIL(R7)**.
+- **실패 시 의심**: `feeds.py:797~807`(`reply_target_author_id` 배선).
+
+#### V196-API-12. ③ 회귀: 부모 작성자 == 피드 주인 → **`comment`+`reply` 이중 발송 없음** `[api]` (③, R8)
+- **사전조건**: **C 자신의 피드 `F3` 에 C 가 최상위 댓글 `CC3` 을 단다**(부모 작성자 = 피드 주인 = C). 알림 스냅샷 기록.
+- **Given** 위 상태, **When** A 가 `POST /api/feeds/<F3>/comments` `{"text":"v196t-dup","parent_id":"<CC3>"}`, **Then**
+  ① C 의 `comment` 알림 **+1**
+  ② C 의 `reply` 알림 **+0** — `:775` 의 "부모 작성자 == 피드 주인이면 중복 방지" 의도 유지
+  ③ C 의 총 알림 증가가 **정확히 1건**
+- **기대결과**: 3행 전부. **+2 이면 R8 회귀**(한 행위로 알림 2개 — 앱팀 화면에 중복 표시).
+- **확인할 로그 라인**: `[notify] push ok type=comment to=<C 8자> actor=<A 8자>` **1줄만**. `type=reply` 라인 **미출력**.
+- **PASS/FAIL**: 총 증가 1건 → PASS. 2건 → **FAIL(R8)**.
+- **실패 시 의심**: `feeds.py:798`(비교 우변이 `doc.get("author_id")` 로 유지됐는지 — 새 변수로 바꿔치기하면 조건이 무력화된다).
+
+#### V196-API-13. ④ 피드 삭제 후 해당 `target_id` 알림 **0건** `[api]` (④)
+- **사전조건**: C 의 피드 `F4` 에 대해 **알림 4종을 전부 발생**시킨다 — ① C 가 `F4` 업로드(팔로워가 있으면 `feed`; 없으면 이 행은 0으로 두고 나머지 3종만) ② A 가 좋아요(`like`) ③ A 가 댓글(`comment`) ④ B 가 A 댓글에 답글(`reply`). 삭제 **직전** `notifications.count_documents({"target_id":"<F4>"})` = **N(≥3)** 을 기록.
+- **Given** 알림 N 건이 달린 피드, **When** C 가 `DELETE /api/feeds/<F4>` (`<TEST_USER_C_TOKEN>`), **Then**
+  ① 응답 **200** `{"message":"피드가 삭제되었습니다."}`
+  ② `notifications.count_documents({"target_id":"<F4>"})` == **0**
+  ③ `feeds.find_one({"_id":<F4>})` is None, `feed_comments.count_documents({"feed_id":"<F4>"})` == 0, PG `feed_likes WHERE feed_id='<F4>'` == 0 (기존 파기 계약 불변)
+- **기대결과**: 3항 전부. 수정 전에는 ② 가 **N 건 그대로** 잔존했다.
+- **확인할 로그 라인**: `[feed] purge ok feed=%s author=%s comments_removed=%d notifications_removed=<N>`
+- **PASS/FAIL**: 3항 일치 + `notifications_removed == N` → PASS.
+- **실패 시 의심**: `feeds.py:604`(`delete_many`), `target_id` 를 `str()` 로 넘겼는지(V196-UNIT-19).
+
+#### V196-API-14. ④ 🔴 **무관한 알림 전수 불변** `[api]` — 즉시 중단 조건 S4 (④, R9)
+- **사전조건**: V196-API-13 과 **같은 세션**에서 수행. 삭제 대상 `F4` 외에 ① C 의 **다른 피드 `F5`** 에도 좋아요·댓글 알림을 만들어 두고 ② **A → C 팔로우**로 `follow` 알림 1건(`target_id=None`)을 만들어 둔다.
+- **Given/When/Then**: `DELETE /api/feeds/<F4>` **직전·직후** 아래를 전수 집계해 대조한다.
+  | 집계 | 삭제 전 | 삭제 후 기대 |
+  |---|---|---|
+  | `notifications.count_documents({})` | `T` | **`T − N`** (정확히 N 감소, 그 이상 감소하면 오삭제) |
+  | `count({"target_id":"<F5>"})` | `M` | **`M`** (불변) |
+  | `count({"type":"follow"})` | `Kf` | **`Kf`** (불변) |
+  | `count({"target_id": None})` | `Kn` | **`Kn`** (불변 — `follow` 는 전부 여기) |
+  | 타입별 5종 각각 `count({"type": t})` | 기록 | `F4` 귀속분만 감소, `F5`·`follow` 귀속분 **불변** |
+  | 다른 사용자(실사용자 포함) 수신 알림 총계 | 기록 | **불변** |
+- **기대결과**: 6행 전부. `T − N` 보다 더 줄면 **광역 삭제**가 일어난 것.
+- **확인할 로그 라인**: `[feed] purge ok ... notifications_removed=<N>` — 이 값이 사전 기록한 N 과 **정확히 일치**해야 한다.
+- **PASS/FAIL**: 6행 일치 → PASS. 무관 알림 1건이라도 감소 → **FAIL + 즉시 중단(S4)**.
+- **실패 시 의심**: `feeds.py:604~607`(`type` 화이트리스트 누락 시 `follow` 의 `target_id=None` 이 `feed_id` 와 매칭되지는 않지만, 필터에서 `target_id` 를 빠뜨리면 **전량 삭제**된다).
+
+#### V196-API-15. ④ 범위 밖 확인: **댓글 개별 삭제 시 알림 불변** + 댓글 트리 회귀 `[api]` (④ §2-4, 회귀)
+- **사전조건**: C 의 피드 `F6` + A 최상위 `CA6` + B 답글 `CB6`(1단) + C 답글 `CC6`(2단→평탄화). 각 계정 알림 스냅샷.
+- **Given/When/Then**:
+  | 검사 | 요청 | 기대 |
+  |---|---|---|
+  | 알림 불변(범위 밖) | A 가 `DELETE /api/feeds/comments/<CA6>` | 200 + `notifications.count({"target_id":"<F6>"})` **불변**(§2-4: 스키마상 식별 불가 — 정리하지 않는 것이 **정상**) |
+  | `comment_count` 감소 | 위 삭제 후 `GET /api/feeds/<F6>` | `comment_count` **−1** |
+  | 음수 방지 | `comment_count` 를 0 으로 만든 뒤 추가 삭제 시도 | 0 미만으로 내려가지 않음 |
+  | 삭제 권한 | B 가 `DELETE /api/feeds/comments/<CC6>`(C 의 댓글, B 는 피드 주인 아님) | **403** `{"error":"댓글을 삭제할 권한이 없습니다."}` |
+  | 피드 주인 권한 | C 가 `DELETE /api/feeds/comments/<CB6>`(B 의 댓글, C 는 피드 주인) | **200** |
+  | 트리 저장 구조 | `GET /api/feeds/<F6>/comments?page=1&limit=20` | `parent_id` 가 `None`(최상위) / `<CA6>`(1단·평탄화 2단) 3종만 등장. **2단 값 없음** |
+  | 정렬·페이지네이션 | `limit=2` 로 2페이지 조회 | `created_at` 오름차순, `pagination` `{page,limit,total,totalPages}` 4키 불변, 중복·누락 0 |
+- **기대결과**: 7행 전부.
+- **확인할 로그 라인**: `[feed] comment_delete ok comment=%s feed=%s user=%s by=author|feed_owner` / `[feed] comments_list ok feed=%s returned=%d total=%d`
+- **PASS/FAIL**: 7행 일치 → PASS. 댓글 삭제 시 알림이 줄면 → **FAIL(범위를 넘어선 구현 — §6-2 위반, 오삭제 위험)**.
+- **실패 시 의심**: `feeds.py:788~826`(무수정이어야 함 — `git diff` 로 이 블록 diff 0 확인).
+
+#### V196-API-16. 회귀: 재생목록 기존 동작 전수 + 좋아요 기존 동작 전수 `[api]` (R1 계약면)
+- **사전조건**: A 계정, `TRK-PUB-B` 등 공개 픽스처.
+- **Given/When/Then** — 재생목록:
+  | 검사 | 기대 |
+  |---|---|
+  | 생성 | `POST /api/playlists/` `{"title":"v196t-reg"}` → **201**, 응답 6키 `{id,user_id,title,description,is_public,created_at}` |
+  | 제목 누락 | `POST` `{"title":""}` → **400** `{"error":"플레이리스트 제목은 필수입니다."}` |
+  | 수정 | `PUT /api/playlists/{id}` `{"title":"v196t-reg2","is_public":true}` → 200, 6키 불변 |
+  | 삭제 | `DELETE /api/playlists/{id}` → 200 `{"message":"플레이리스트가 삭제되었습니다."}` |
+  | 트랙 추가 | `POST /{id}/tracks` 공개 곡 → **201** `{"message":"트랙이 추가되었습니다."}` |
+  | 중복 추가 | 같은 곡 재추가 → **409** `{"error":"이미 추가된 트랙입니다."}` |
+  | 트랙 제거 | `DELETE /{id}/tracks/{track_id}` → 200 / 없는 곡 → **404** |
+  | 비공개 재생목록 타인 조회 | B 가 A 의 비공개 `PL` 조회 → **403** `{"error":"비공개 플레이리스트입니다."}` |
+  | 공개 재생목록 타인 조회 | B 가 A 의 공개 `PL` 조회 → **200** |
+  | 목록 `track_count` | `GET /api/playlists/` → 각 원소 7키 + `track_count` 가 **PG `playlist_tracks` 실제 행 수**(숨김 제외와 무관 — 목록은 PG 카운트 그대로) |
+  | 잘못된 id | `GET /api/playlists/not-a-uuid` → **400** / 존재하지 않는 uuid → **404** |
+- **Given/When/Then** — 좋아요:
+  | 검사 | 기대 |
+  |---|---|
+  | 좋아요 | `POST /api/likes/<TRK-PUB-B>` → **201** `{"message":"좋아요가 추가되었습니다."}`, Mongo `like_count` +1 |
+  | 중복 | 재호출 → **409** `{"error":"이미 좋아요한 트랙입니다."}`, `like_count` **불변** |
+  | 취소 | `DELETE /api/likes/<TRK-PUB-B>` → 200, `like_count` −1(0 미만 방지) |
+  | 미좋아요 취소 | 재호출 → **404** `{"error":"좋아요하지 않은 트랙입니다."}` |
+  | check | `GET /api/likes/check?song_ids=a,b,c` → `{"liked_ids":[...]}` 1키 불변, 빈 입력 → `{"liked_ids":[]}` |
+  | 페이지네이션 | `GET /api/likes/?page=2&limit=1` → `pagination` 4키, `liked_at` **ISO 문자열 유지**, 정렬 `created_at DESC` |
+  | 잘못된 id | `POST /api/likes/notanoid` → **400** |
+- **기대결과**: 18행 전부 v195 이전과 동일.
+- **확인할 로그 라인**: `[playlists] create user=%s title_len=%d desc_len=%d` / `[playlists] update id=%s user=%s title_len=%d desc_len=%d` / `[playlists] detail ...` — **제목 원문이 아니라 길이**로 찍히는지 동시 확인(R18).
+- **PASS/FAIL**: 18행 일치 → PASS.
+- **실패 시 의심**: `playlists.py` 전역, `likes.py` 전역.
+
+#### V196-API-17. 회귀: 트랙 직링크 가드 + 알림 5종 계약 + DM/pending/관리자 CS `[api]` (v138 불변, R15)
+- **사전조건**: `TRK-PRIV-B`·`TRK-PUB-B`. A·B 간 accepted DM 대화 1건 + A·C 간 pending 요청 1건. `<TEST_ADMIN_TOKEN>`.
+- **Given/When/Then** — 직링크 가드 불변(v138):
+  | 요청 | 기대 |
+  |---|---|
+  | 비로그인 `GET /api/tracks/stream/<TRK-PRIV-B>` | **404** `_TRACK_NOT_FOUND` + 로그 `[report] track stream_denied track=%s` |
+  | 소유자 B `GET /api/tracks/stream/<TRK-PRIV-B>` | 가드 통과(오디오 미존재로 404 가능 — **문구가 `오디오 파일을 찾을 수 없습니다.`** 여야 함) |
+  | 비로그인 `GET /api/tracks/stream-proxy/<TRK-PRIV-B>` | 차단 유지(기존 동작 불변) |
+  | 비로그인 `GET /api/tracks/<TRK-PRIV-B>` | 차단 유지 |
+  | 비로그인 `GET /api/tracks/stream/<TRK-PUB-B>` | **401 아님** |
+- **Given/When/Then** — 알림 계약 불변:
+  | 요청 | 기대 |
+  |---|---|
+  | `GET /api/notifications/?page=1&limit=30` | 최상위 3키 `{notifications,unread,pagination}`, 원소에 `{id,user_id,type,actor_id,actor_nickname,target_id,preview,read,created_at}`, 정렬 `created_at DESC` |
+  | `GET /api/notifications/unread-count` | `{"count": <int>}` 1키 |
+  | `POST /api/notifications/read-all` | `{"marked": <int>}` 1키, 이후 `unread-count` 가 **0** |
+  | 5종 발행 | `follow`(팔로우 시, `target_id` **null**) / `comment` / `reply` / `like` / `feed` 가 각각 1건씩 생성됨 |
+- **Given/When/Then** — DM·pending·관리자 CS:
+  | 요청 | 기대 |
+  |---|---|
+  | A→B 메시지 전송 후 B 가 `POST /api/dm/conversations/<cid>/read` | **200** `{"conversation_id","read":true,"marked":<n>}` **3키 불변** |
+  | 곧바로 재호출(읽을 것 0) | **200** `{"...","read":true,"marked":0}` — **스키마 동일**, peer 이벤트만 사라짐 |
+  | `GET /api/dm/conversations/<cid>/messages?before=<msg_id>` | 커서 페이지네이션 정상, 중복·누락 0 |
+  | 🔴 pending 수신자 C 가 `POST /api/dm/conversations/<pending-cid>/read` | **200** `{"read": false, "marked": 0}` + Mongo `unread.<C>` **보존**(0으로 리셋되지 않음) + 발신자 A 에게 이벤트 0건 |
+  | 🔴 관리자 `POST /api/admin/cs/conversations/<cs-cid>/read` (`<TEST_ADMIN_TOKEN>`) | **200** + 반환 **3키 스키마 불변**(R15) — `mark_read` 를 그대로 반환하므로 ⑤ 변경의 영향이 없음을 확인 |
+  | 비참여자 접근 | `POST /api/dm/conversations/<cid>/read`(제3자) → **403** |
+- **기대결과**: 16행 전부.
+- **확인할 로그 라인**: `[report] track stream_denied track=%s` / `[notify] read_all user=%s marked=%d` / `[dm] mark_read conv=%s me=%s marked=%d` / `[dm] mark_read skipped (pending request) conv=%s me=%s` / `[admin-cs] cid=%s admin=%s read`
+- **PASS/FAIL**: 16행 일치 → PASS. 공개 곡 stream 이 401 → **FAIL + 즉시 중단(S5)**. 관리자 CS 반환 스키마 변형 → FAIL(R15).
+- **실패 시 의심**: `tracks.py:1705`(`get_track_stream`)·stream-proxy·`/{track_id}`, `notifications.py:83~123`, `dm_service.py:571~630`, `dm.py:217~229`, `admin_cs.py:190~205`.
+
+---
+
+### 3. `[e2e]` 시나리오 — 8건
+
+> 선행: 4000·4001 **하드 새로고침 + 빌드 표기 기록**(§0-9). DevTools Console·Network 를 열고 시작한다. **Network 에 `/api/generate`·`/api/mv`·`/api/character`·`/api/voice-*`·`/api/tracks/upload`·`/api/tracks/search` 요청이 뜨면 즉시 중단(S6)** — 화면 조작 중 실수로 유료 경로를 밟는 것을 상시 감시한다.
+
+#### V196-E2E-01. 재생목록 상세 렌더 — **아티스트명·커버 표시** `[e2e]` — 🔴 최대 회귀 위험 (R1)
+- **사전조건**: A 로 4000 로그인. `PL-A`(공개 곡 2곡 + `TRK-LEGACY-B` 1곡 포함). 착수 전 하드 새로고침.
+- **Given** `/playlist/<PL-A>` 진입, **When** 목록이 렌더되면, **Then**
+  ① 헤더에 제목·설명·**`N곡 · 날짜`**(`PlaylistDetailPage.jsx:106`) 표시 — N 은 **응답 `tracks` 길이**
+  ② 각 행에 **커버 이미지 또는 그라데이션 폴백**이 뜬다(`SongItem.jsx:58,:61~62` — `cover_image` 또는 `album_id||id` 시드)
+  ③ 각 행의 **아티스트명이 공백이 아니다**(`SongItem.jsx:76` — `artist_name || uploader_nickname || 'AI'`)
+  ④ 아티스트 링크 `href` 가 `/artist/<uploader_id>` 로 채워진다(`artist_id` 별칭 또는 `uploader_id` 폴백)
+  ⑤ 행 번호가 **1..N 연속**(`:125` `idx+1`)
+  ⑥ **Console 에러 0건**(특히 `Cannot read properties of undefined`)
+- **기대결과**: 6항 전부. Network 탭에서 `GET /api/playlists/<PL-A>` 응답 payload 에 `audio_url`·`lyrics` 등이 **없는데도** 화면이 정상인 것을 함께 확인(제거가 프론트에 무영향임을 실증).
+- **확인할 로그 라인**: 서버 `[playlists] detail id=%s user=%s tracks=%d hidden_skipped=%d` / 브라우저 콘솔 에러 0
+- **PASS/FAIL**: 6항 전부 → PASS. 아티스트명 공백 → **FAIL(R1 — 화이트리스트가 `uploader_nickname`/`artist_name` 을 빠뜨림)**. 커버 미표시 → FAIL(`cover_image`/`cover_image_url` 누락).
+- **실패 시 의심**: `playlists.py:45`(별칭·원본 키 병행), `frontend/src/components/SongItem.jsx:58,:61~62,:76`.
+
+#### V196-E2E-02. 전체 재생 → `/tracks/stream/{id}` 200 → **실제 재생** `[e2e]` (R1)
+- **사전조건**: V196-E2E-01 상태. Network 필터 `stream`.
+- **Given** 재생목록 상세, **When** **"전체 재생"** 버튼(`PlaylistDetailPage.jsx:109~111`) 클릭, **Then**
+  ① `PlayerContext.jsx:135~156` 이 `GET /api/tracks/stream/<첫 곡 id>` 를 발사하고 **200 `{stream_url}`** 수신
+  ② `audio.src` 가 설정되고 **재생이 시작**된다(재생 시간이 증가)
+  ③ 하단 플레이어 바에 **제목**(`MusicPlayer.jsx:57`)과 **아티스트명**(`:58` — **폴백 없음**)이 **둘 다 공백이 아니게** 표시된다
+  ④ 커버 썸네일 또는 그라데이션 표시(`:48,:50~51`)
+  ⑤ 큐가 재생목록 전체로 설정되어 다음 곡 이동이 동작한다(`play(tracks[0], tracks)` `:42`)
+- **기대결과**: 5항 전부. **③ 이 v196 의 부수 개선 지점** — 기존 `playlists.py::_serialize_track` 은 별칭을 안 붙여 여기가 공백이었다.
+- **확인할 로그 라인**: 서버 `[playlists] detail ...` 이후 `/api/tracks/stream/` 200. `[report] track stream_denied` 라인 **미출력**.
+- **PASS/FAIL**: 5항 전부 → PASS. ③ 이 공백이면 FAIL(별칭 누락). stream 이 404 면 FAIL(가드 과교정 — 공개 곡을 막았거나 오디오 파일 부재 픽스처를 잘못 고름).
+- **실패 시 의심**: `playlists.py:45`(직렬화), `frontend/src/contexts/PlayerContext.jsx:135~156`, `components/MusicPlayer.jsx:57~58`.
+
+#### V196-E2E-03. 행 재생 → `/player` 상세 화면 `[e2e]` (R1)
+- **사전조건**: V196-E2E-01 상태.
+- **Given** 재생목록 상세, **When** 임의 행의 제목 또는 커버를 클릭해 재생하고 플레이어 바를 눌러 `/player` 로 이동하면, **Then**
+  ① 곡이 바뀌고 새 `GET /api/tracks/stream/<해당 id>` 200
+  ② `/player` 상단에 **제목·아티스트명 둘 다 표시**(`PlayerPage.jsx:358,:365`,`:591~592` — 아티스트는 폴백 없음)
+  ③ 커버 표시(`:289~290,:584~585`)
+  ④ `/player` 가 `api.getTrackDetail(id)`(`:90`, `GET /api/tracks/{id}`)로 **가사·프롬프트·BPM 을 별도 재조회**하는 것을 Network 에서 확인 — **재생목록 payload 에서 오는 게 아님을 실증**
+  ⑤ Console 에러 0건
+- **기대결과**: 5항 전부.
+- **확인할 로그 라인**: `/api/tracks/stream/` 200 + `/api/tracks/<id>` 200
+- **PASS/FAIL**: 5항 전부 → PASS. ② 공백 → FAIL(R1).
+- **실패 시 의심**: `frontend/src/pages/PlayerPage.jsx:90,:358,:365,:591~592`.
+
+#### V196-E2E-04. 타인 비공개 곡이 담긴 재생목록 — **조용히 사라지고 화면은 정상** `[e2e]` (①, R1)
+- **사전조건**: §V196-API-03 의 `PL-A`(5곡 중 2곡이 타인 숨김). A 로 로그인.
+- **Given** `/playlist/<PL-A>` 진입, **When** 렌더 완료, **Then**
+  ① 행이 **3개**만 보이고 행 번호가 **1,2,3 연속**(빈 번호·건너뛴 번호 없음 — `idx+1` 재계산)
+  ② 헤더의 `N곡` 표기가 **3곡** (응답 배열 길이 기준 — `track_count` 를 쓰지 않으므로 불일치 노출 없음)
+  ③ 빈 자리·깨진 카드·"삭제된 곡" 같은 **마스킹 UI 가 나타나지 않는다**(신규 UI 계약 없음이 설계)
+  ④ Console 에러 0건, 렌더 경고 0건
+  ⑤ `checkLikes` 호출(`PlaylistDetailPage.jsx:28`)이 **남은 3곡 id 로만** 발사된다
+- **기대결과**: 5항 전부.
+- **확인할 로그 라인**: 서버 `[playlists] detail id=%s user=%s tracks=3 hidden_skipped=2`
+- **PASS/FAIL**: 5항 전부 → PASS. 번호가 끊기면 FAIL. 빈 카드가 뜨면 FAIL(설계 위반).
+- **실패 시 의심**: `playlists.py` `get_playlist` 제외 루프, `frontend/src/pages/PlaylistDetailPage.jsx:106,:121~131`.
+
+#### V196-E2E-05. **본인 비공개 곡**이 본인 재생목록에 보인다 `[e2e]` (R3)
+- **사전조건**: A 로 로그인. `PL-A2` 에 `TRK-PRIV-A`(A 소유 비공개) 포함.
+- **Given** `/playlist/<PL-A2>` 진입, **When** 렌더, **Then**
+  ① `TRK-PRIV-A` 행이 **표시**된다
+  ② 해당 행 재생 시 `GET /api/tracks/stream/<TRK-PRIV-A>` 가 **404 가 아니다**(소유자 통과 — `_can_view_hidden_track`)
+  ③ 같은 재생목록을 공개로 바꾼 뒤 **B 계정(다른 브라우저 프로필/시크릿 창)** 으로 열면 그 행이 **보이지 않는다**
+- **기대결과**: 3항 전부. ①②가 실패하면 사용자가 자기 비공개 곡을 자기 목록에서 못 듣게 되는 심각 회귀(R3).
+- **확인할 로그 라인**: A 조회 시 `hidden_skipped=0`, B 조회 시 `hidden_skipped=1`
+- **PASS/FAIL**: 3항 전부 → PASS.
+- **실패 시 의심**: `playlists.py` 소유자 예외 조건, `tracks.py:57`(`_can_view_hidden_track`).
+
+#### V196-E2E-06. 곡 추가 모달 — 타인 비공개 곡 차단이 화면에 반영 `[e2e]` (①)
+- **사전조건**: A 로 로그인. `TRK-PRIV-B` 를 **화면에서 만날 수 있는 지점**(예: 직접 URL `/player`?)이 없다면, 이 케이스는 `AddToPlaylistModal` 의 **정상 경로만** 수행하고 400 경로는 §V196-API-01 로 대체한다(**대체 시 `BLOCKED` 가 아니라 `PARTIAL` 로 기록**).
+- **Given** 임의 곡의 "재생목록에 저장" 버튼 클릭 → 모달 오픈, **When**
+  ① 공개 곡을 기존 재생목록에 추가 → **성공 메시지**
+  ② 같은 곡 재추가 → **`이미 추가된 곡입니다`**(409 분기, `AddToPlaylistModal.jsx:36`)
+  ③ (가능한 경우) 타인 비공개 곡 추가 → **`추가에 실패했습니다`**(`:38` 일반 400 분기)
+  **Then** 모달이 닫히거나 메시지가 뜨고 **Console 에러 0건**.
+- **기대결과**: ③ 의 화면 문구는 **일반 문구**다 — 서버의 `"다른 사용자의 비공개 곡은 사용할 수 없습니다."` 는 **Network 응답 본문에서만** 확인한다(프론트가 400 을 세분화하지 않음). 문구가 다르다고 FAIL 로 판정하지 말 것.
+- **확인할 로그 라인**: DEV 콘솔 `[SongItem] openAddToPlaylist {track: <id>}` / 서버 `[playlists] add_track private_denied ...`(③ 수행 시)
+- **PASS/FAIL**: ①② 정상 + Console 에러 0 → PASS(③ 미수행 시 PARTIAL).
+- **실패 시 의심**: `frontend/src/components/AddToPlaylistModal.jsx:31~38`.
+
+#### V196-E2E-07. ⑤ DM 읽음표시·헤더 뱃지·다른 탭 동기화 **불변** `[e2e]` (R12, v195 회귀)
+- **사전조건**: 브라우저 프로필 2개(또는 시크릿 창) — A 창 2개(탭1·탭2), B 창 1개. A·B accepted 대화. B 가 A 에게 메시지 2건 전송(A 미읽음 2).
+- **Given** A 헤더 뱃지에 미읽음이 표시된 상태, **When** A 탭1 에서 해당 대화를 연다, **Then**
+  ① A 헤더 뱃지가 **감소**(`Header.jsx` `onUnread` → `refreshUnread()`)
+  ② A **탭2** 의 뱃지도 동기화되어 감소(다른 탭 동기화 — v195 계약)
+  ③ **B 화면**의 자기 발신 메시지에 **읽음표시가 켜진다**(peer `read` 이벤트 — `modified_count>0` 이므로 **반드시 발행**되어야 함, R12)
+  ④ B 의 대화 목록에서 해당 대화가 정상 갱신
+- **기대결과**: 4항 전부. **③ 이 실패하면 R12 회귀** — 가드 조건이 과하게 좁아 실제 읽음도 안 알린 것.
+- **확인할 로그 라인**: `[dm] mark_read peer-read published conv=%s me=%s marked=2` + `[dm] mark_read self-unread published conv=%s me=%s prev_unread=2 marked=2`
+- **PASS/FAIL**: 4항 전부 → PASS. ③ 실패 → **FAIL(R12)**.
+- **실패 시 의심**: `dm_service.py:610~620`, `frontend/src/utils/dmSocket.js`, `components/Header.jsx:201~210`, `pages/DmInboxPage.jsx:443`.
+
+#### V196-E2E-08. ⑤ 효과 발현 — **읽을 것이 0일 때 peer 의 헛 요청이 사라짐** `[e2e]` (⑤ 본체)
+- **사전조건**: V196-E2E-07 직후 상태(A 가 이미 다 읽음). **B 창의 DevTools Network 를 열고 필터 `unread-count`**, 요청 카운터를 0 으로 리셋.
+- **Given** 더 이상 읽을 메시지가 없는 대화, **When** **A 가 같은 대화를 3회 반복 클릭/재진입**한다(`DmInboxPage:385` 가 활성 대화 수신마다 `markDmRead` 호출 → `POST /api/dm/conversations/<cid>/read` 가 3회 발사됨), **Then**
+  ① A 측 `POST .../read` 는 **3회 200**(멱등, 스키마 `{conversation_id,read,marked:0}`)
+  ② **B 창의 `GET /api/dm/unread-count` 추가 요청이 0건** — 수정 전에는 A 의 클릭 1회마다 B 가 1회씩 쐈다
+  ③ B 화면에 **변화가 없다**(읽음표시·목록·뱃지 모두 그대로 — 원래도 화면 오동작은 없었으므로 **불변이 정상**)
+  ④ A 자신의 화면도 변화 없음
+- **기대결과**: 4항 전부. ② 가 이 결함 수정의 **유일한 관측 가능한 효과**다.
+- **확인할 로그 라인**: `[dm] mark_read peer-read skipped (nothing marked) conv=%s me=%s` **3줄** + `[dm] mark_read self-unread skipped (nothing to clear) conv=%s me=%s` 3줄 (첫 진입이 아니므로 `prev_unread=0`)
+- **PASS/FAIL**: ②가 0건 + skipped 로그 → PASS. B 가 `unread-count` 를 쏘면 → **FAIL(가드 미작동)**. ③에서 B 의 읽음표시가 **꺼지면** FAIL(peer 미발행이 기존 표시를 되돌리는 부작용 — 설계상 발생하면 안 됨).
+- **실패 시 의심**: `dm_service.py:610~620`, `frontend/src/components/Header.jsx:210`(`onRead` → `refreshUnread`), `pages/DmInboxPage.jsx:443`.
+
+---
+
+### 4. 커버리지 매핑 (PLAN §5 회귀 위험 → 시나리오)
+
+| 위험 | 시나리오 |
+|---|---|
+| **R1** 화이트리스트로 프론트 깨짐 | V196-UNIT-05·06·08 / V196-API-03·04·16 / **V196-E2E-01·02·03** |
+| **R2** 🔴 레거시 문서 오차단 | **V196-UNIT-01**(즉시중단) · UNIT-03 · **V196-API-09**(즉시중단) |
+| **R3** 본인 비공개 곡 소실 | V196-UNIT-04 / V196-API-03·09 / **V196-E2E-05** |
+| **R4** `report_blinded` 동시 차단 | V196-UNIT-02 / V196-API-01·02·03 |
+| **R5** 앱팀 계약 변경(제거 필드) | V196-UNIT-05·06 (제거 키 목록을 REPORT 에 명시하도록 산출) |
+| **R5a** 🔴 공개 곡 무인증 파손 | **V196-API-08**(즉시중단) · API-17 |
+| **R5b** lyrics 광역 except | **V196-API-07** |
+| **R5c** download 차트 오염 | **V196-API-05** |
+| **R6** 🔴 v191 트리 계약 파손 | **V196-UNIT-11**(즉시중단) · UNIT-13 · **V196-API-10**(즉시중단) · API-15 |
+| **R7** 답글 알림 과교정 | **V196-API-11** |
+| **R8** 중복 알림 부활 | **V196-API-12** · UNIT-13 |
+| **R9** 🔴 알림 오삭제 | **V196-UNIT-19**(정적) · **V196-API-14**(즉시중단) |
+| **R10** 삭제 실패가 피드 삭제를 깨뜨림 | **V196-UNIT-18** |
+| **R11** 인덱스 부재 지연 | 시나리오 없음 — **범위 밖**(§6-3). 다만 V196-API-13·14 수행 시 `DELETE /api/feeds/{id}` 응답 시간을 기록해 REPORT 에 남긴다 |
+| **R12** 읽음표시 회귀 | **V196-UNIT-15** · **V196-E2E-07** |
+| **R13** ⑤ 가드 조건 오작성 | **V196-UNIT-16** |
+| **R14** v195 테스트 충돌 | **§0-D supersede 표** (UNIT-14·15 가 대체) |
+| **R15** 관리자 CS 부작용 | **V196-API-17** |
+| **R16** ② 실런타임 오손 | **V196-UNIT-09** |
+| **R17** ② 이력 산출물 훼손 | **V196-UNIT-10** |
+| **R18** 신규 로그 정보 노출 | **V196-UNIT-21** · API-16(길이 로깅 확인) |
+
+**의도적 커버리지 공백**(PLAN §6 범위 밖 — 시나리오를 두지 않는다):
+`upload.py` 커버 이미지 IDOR(쓰기) / `notifications` 스키마 `comment_id` 추가·인덱스 / `albums.py`·`reports.py`·`feeds.py` LOW 3건 / 알림 UI 신설 / `backendAPI정리.md` `:3,:6,:8,:4782` 헤더 정정(승인 대기) / **9004·9005 미러 검증**.
+다만 **V196-UNIT-20** 이 "범위 밖 파일에 변경이 없음"을 **역방향으로 감시**하고, **V196-API-15** 가 "댓글 개별 삭제 시 알림을 건드리지 않음"을 감시한다.
+
+---
+
+### 5. planner 승인 필요 항목
+
+| # | 항목 | 사유 | 승인 없이 진행 시 대안 |
+|---|---|---|---|
+| **A1** | **V196-API-08 의 MV 200 확인을 실 MV 보유 공개 곡으로 수행** | 실사용자 트랙 열람이 필요. MV 를 새로 만드는 것은 **유료 API 라 절대 금지**(§0-1) | 승인 없이는 **404 본문 구분**(`뮤직비디오를 찾을 수 없습니다.` vs `트랙을 찾을 수 없습니다.`)으로만 판정 — 현재 설계 기본값. R5a 는 이것으로 충분히 감시된다 |
+| **A2** | 🔴 **`backendAPI정리.md` `:3,:6,:8,:4782→:4788` 헤더·접속표 정정 — 이미 실행됨(사후 승인 필요)** | PLAN §3-② 와 §6-9 는 이 4곳을 "**승인 전 착수 금지**"로 유보했으나, 착지 실측 결과 **이미 9006 으로 정정되어 있다**. 정정 내용 자체는 사실 관계상 옳다(9006 단일 백엔드 전환 완료) | tester 는 이를 **FAIL 이 아니라 `OBSERVED`** 로 기록한다(V196-UNIT-10). planner 가 ① 사후 승인하거나 ② 되돌릴지 결정해야 하며, 되돌리는 경우 `:3,:6,:8` 이 **사실과 다른 9005 안내로 회귀**한다는 점을 함께 고려한다. 총량 기대치는 **18 로 확정**(승인 여부와 무관 — 정정된 4곳도 "9005 미러 폐기" 설명 문구로 9005 를 여전히 포함) |
+| **A3** | **PG `playlist_tracks`·`likes` 직접 INSERT**(V196-API-03·04 의 사전조건) | 가드 착지 후에는 API 로 숨김 곡을 담을 수 없으므로 **DB 직접 쓰기**가 불가피. 테스트 계정 소유 재생목록 한정이고 `v196t` 마커 + 종료 시 삭제 | 미승인 시 **가드 착지 *전*에 API 로 담아두고**(현 결함 상태에서는 201 이 된다) 착지 후 조회만 수행 — 순서 제약이 생기므로 tester 일정에 반영 필요 |
+| **A4** | **V196-UNIT-18 의 Mongo 예외 주입** | 목킹 더블 한정이라 실 DB 무영향이나, 주입 코드가 실수로 프로덕션 모듈을 패치하면 위험 | 미승인 시 `try/except` 존재만 **정적 확인**으로 대체(`SKIP(정적)`) — R10 커버리지가 약해짐을 REPORT 에 명시 |
+| **A5** | **V196-API-13·14 의 피드 삭제 실행** | 되돌릴 수 없는 삭제(쓰기). 단 **테스트 계정 C 가 이번에 만든 `v196t` 피드 한정** | 승인 불필요 판단이지만, 실사용자 피드를 대상으로 삼는 순간 **즉시 중단**. 대상 선정 결과를 REPORT 에 피드 id 8자로 기록 |
+| **A6** | **V196-E2E-06 의 ③ 분기**(타인 비공개 곡을 화면에서 만나는 경로) | 웹 UI 에 타인 비공개 곡이 노출되는 지점이 원래 없어야 정상 — 재현 경로 자체가 없을 가능성 | 없으면 `PARTIAL` 로 기록하고 400 경로는 V196-API-01 로 대체(이미 설계에 반영) |
+
+**승인 없이도 진행 가능**: `[unit]` 21건 중 20건(A4 제외), `[api]` 17건 중 15건(A1·A3 조건부), `[e2e]` 8건 중 7건(A6 조건부) = **42건**.
+
+---
+
+### 6. v196 시나리오 집계
+
+| 태그 | 건수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **21** | **45.7%** | ≥ 40% | ✅ 충족 |
+| `[api]` | **17** | **37.0%** | ≥ 35% | ✅ 충족 |
+| `[e2e]` | **8** | **17.4%** | ≤ 25% | ✅ 충족 |
+| **합계** | **46** | 100% | — | — |
+
+**결함별 배분**
+
+| 결함 | unit | api | e2e | 계 |
+|---|---|---|---|---|
+| ① 비공개 곡 유출 (playlists·likes·tracks) | 8 (UNIT-01~08) | 9 (API-01~09) | 4 (E2E-01·04·05·06) | **21** |
+| ② 콜백 주소 | 2 (UNIT-09·10) | 0 | 0 | **2** |
+| ③ 답글 알림 | 3 (UNIT-11~13) | 3 (API-10~12) | 0 | **6** |
+| ④ 피드 삭제 알림 정리 | 2 (UNIT-18·19) | 3 (API-13~15) | 0 | **5** |
+| ⑤ DM peer read | 4 (UNIT-14~17) | 0 | 2 (E2E-07·08) | **6** |
+| 회귀·위생 공통 | 2 (UNIT-20·21) | 2 (API-16·17) | 2 (E2E-02·03) | **6** |
+
+- **승인 대기로 인한 최대 제외 시 비율**: A1·A3·A4·A6 이 전부 미승인이어도 케이스는 **대체 절차로 수행**되며 **삭제되지 않는다**(A1→404 본문 구분, A3→순서 조정, A4→정적 확인, A6→PARTIAL). 따라서 **46건·45.7/37.0/17.4 비율은 승인 결과와 무관하게 유지**된다. v195 처럼 SKIP 으로 비율이 깨질 위험이 없다.
+- **쓰기 총량**: Mongo `tracks` 픽스처 5건(직접 삽입) · PG `playlists` 3~4건 + `playlist_tracks` 다수 + `likes` 다수 · Mongo `feeds` 6건(F~F6) + `feed_comments` 다수 + `notifications` 다수(부수 발생) · 테스트 계정 간 DM 메시지 수 건 + pending 1건 · 피드 삭제 1건(A5). **전부 `v196t` 마커 + §0-C 카운트 대조로 회수.**
+  **유료 API 호출 0건** · `POST /api/tracks/upload` 0건 · `GET /api/tracks/search` 0건 · 별 차감 0건 · 전체발송 0건 · 인덱스 조작 0 · 컨테이너/포트/MinIO/ES 조작 0 · `backend_9004`·`backend_9005` 접근 0(읽기조차 불요) · 실사용자 데이터 **열람만**.
+- **즉시 중단 조건**: §0-E 의 S1~S8. 감시 케이스는 V196-UNIT-01·05·06·11·19·21 / V196-API-03·04·08·10·14 / 전 항목의 유료 경로 상시 감시.
+- **v195 승계 처리**: `RT-UNIT-03`·`RT-UNIT-04` **supersede**(→ V196-UNIT-15·14), `RT-UNIT-19`·`RT-API-16`(9004 미러) **미승계**. `RT-UNIT-05`(prev_unread>0 → 본인 발행)는 **유효 유지**하며 V196-UNIT-16 이 그 경계를 v196 기준으로 재확인한다.
+- **구현 착지 상태(작성 완료 시점 재실측)**: 7개 대상 **전부 착지**. 라인 참조는 착지 후 값으로 갱신했으며, tester 는 **심볼명(함수/상수 이름)을 1차 앵커**로 삼고 라인은 보조 참조로만 사용한다. 착지 후 라인이 다시 이동해도 시나리오는 유효하다.
+- **착지분 사전 정적 대조 결과(설계 ↔ 구현 일치 확인)** — 아래 5개 앵커가 설계대로 들어간 것을 **정적으로만** 확인했다(테스트 실행 아님). 시나리오는 그대로 유효하다.
+  | 앵커 | 실측 | 대응 시나리오 |
+  |---|---|---|
+  | `dm_service.py:610` | `if peer_id and result.modified_count > 0:` — **`prev_unread` 혼입 없음** | V196-UNIT-14·15·16 (R13) |
+  | `feeds.py:770` | `reply_target_author_id = parent.get("author_id")` 가 평탄화(`:771~772`) **앞** | V196-UNIT-13 (R6) |
+  | `feeds.py:797~807` | 알림 분기에서 구 `feed_comments.find_one` **제거됨**, 비교 우변 `doc.get("author_id")` 유지 | V196-UNIT-13, V196-API-12 (R8) |
+  | `tracks.py:772`·`:809` | MV·가사 타임라인에 **`get_current_user_optional`** — 필수 인증 아님 | V196-API-08 (R5a) |
+  | `tracks.py:1741`·`:1757` | `download_track` 는 **`get_current_user`(필수) 유지** + `download_denied` 가 Redis 집계 **앞** | V196-API-05 (R5c) |
+  ⚠️ 위는 **정적 대조일 뿐 PASS 판정이 아니다.** 동작 검증은 tester 가 §0-B 재기동 후 각 케이스를 실행해 판정한다.
+- **🔴 planner 확인 필요(사후)**: PLAN §6-9 가 승인 전 착수를 금지한 `backendAPI정리.md` `:3,:6,:8,:4782→:4788` 이 **이미 정정되어 있다**. §5 A2 참조 — tester 는 `OBSERVED` 로 기록하고 FAIL 로 판정하지 않는다.
+
+## 개정 이력 (v196)
+
+- 2026-08-20 초판 작성 (46건) — PLAN v196 §2 실측·§3 수정 설계·§4 변경 매트릭스·§5 R1~R18 전 항목 시나리오화.
+  최대 위험인 **① 비공개 곡 유출**에 21건(45.7%)을 집중 배치하고, 그중 **금지 키 존재 자체를 assert** 하는 케이스를 unit(UNIT-05·06)·api(API-03·04) **4중**으로 두었다.
+  두 번째 함정인 **R2 레거시 오차단**은 UNIT-01(정적+동적)·UNIT-03(동치)·API-09(7행 매트릭스) **3중**으로 감시하며 전부 즉시 중단 조건(S2)에 연결했다.
+  **R5b**(광역 except 가 404 를 삼킴)는 "200 `{has_timestamps:false}` 이면 FAIL" 을 명문화해 오판을 차단했고, **R5a**(공개 곡 무인증 200 유지)는 유료 MV 생성 없이 **404 본문 문자열 구분**으로 검증하도록 설계해 §0-1 을 위반하지 않는다.
+  **⑤** 는 v195 `RT-UNIT-03`·`RT-UNIT-04` 를 §0-D 표로 명시 supersede 하고(미처리 시 정상 동작을 FAIL 판정), `RT-UNIT-05` 경계와의 차이를 **UNIT-16 단독 케이스**로 분리했다.
+  **미러링 검증 0건** — 백엔드는 `backend_9006` 하나뿐이며, UNIT-20 이 9004·9005 무접촉을 역방향 감시한다.
+  테스트 트랙은 **업로드 API 를 쓰지 않고 Mongo 직접 삽입**(§0-A)하며, `audio_url` 은 존재하지 않는 더미 키를 넣어 만일의 유출 시에도 재생 불가하도록 했다.
+  `--reload` 부재에 대응해 **§0-B 재기동 선행 절차**를 두고, 이를 기록하지 않은 `[api]` 결과는 무효로 규정했다.
+  태그 균형은 정적 grep·순수 함수 호출을 unit 으로, 화면 발현을 e2e 로 배치해 **45.7 / 37.0 / 17.4** 확보. planner 승인 대기 6건(§5) — 전부 **대체 절차가 있어 비율이 깨지지 않는다**. planner 검토 후 확정 예정.

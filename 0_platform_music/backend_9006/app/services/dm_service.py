@@ -604,9 +604,21 @@ async def mark_read(mongo, conversation_id, me_id) -> dict:
         {"$set": {"read": True}},
     )
     peer_id = _peer_of(conv, me_id)
-    if peer_id:
+    # v196 ⑤: 실제로 읽음 처리된 상대 발신 메시지가 있을 때만 발행한다.
+    # 조건은 반드시 `result.modified_count > 0` 단독 — prev_unread(내 뱃지 카운터)는
+    # peer 의 읽음표시와 무관하므로 아래 self-unread 가드를 복사하면 안 된다.
+    if peer_id and result.modified_count > 0:
         # 상대에게 "읽음" 알림 (읽음표시 동기화)
         await publish_to_user(peer_id, {"type": "read", "conversation_id": cid})
+        logger.info(
+            "[dm] mark_read peer-read published conv=%s me=%s marked=%d",
+            _short(cid), _short(me_id), result.modified_count,
+        )
+    else:
+        logger.info(
+            "[dm] mark_read peer-read skipped (nothing marked) conv=%s me=%s",
+            _short(cid), _short(me_id),
+        )
     # v195: 본인의 헤더 뱃지/다른 탭 즉시 동기화.
     # 타입은 반드시 "unread" — "read" 를 본인에게 보내면 DmInboxPage 가
     # "상대가 내 메시지를 읽음" 으로 해석해 거짓 읽음표시를 켠다.

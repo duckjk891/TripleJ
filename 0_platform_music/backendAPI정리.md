@@ -1,11 +1,11 @@
 # AIMU 백엔드 API 문서
 
-> 백엔드 서버: `http://localhost:9005` (메인 작업 라인) — `http://localhost:9004` 는 9005 와 동일한 미러 (앱팀은 9004 사용 가능)
+> 백엔드 서버: `http://localhost:9006` — **단일 백엔드**. (v196 정정: 기존 9005/9004 미러 운영은 폐기되었습니다)
 > 모든 API 경로 접두사: `/api`
 > 작성일: 2026-05-25 / **최종 검증일: 2026-08-10**
-> 기준 버전: **9005 백엔드 (backend_9005)** — 9004 는 byte-identical 미러(`_logs` 파일명만 상이)
+> 기준 버전: **9006 백엔드 (backend_9006)** — 미러 없음(`backend_9004`·`backend_9005` 는 과거 폴더)
 
-본 문서는 백엔드의 모든 REST API 를 앱팀이 바로 연동할 수 있도록 정리한 레퍼런스입니다. 모든 항목은 `backend_9005/app/routes/` 의 실제 코드를 기준으로 작성되었습니다.
+본 문서는 백엔드의 모든 REST API 를 앱팀이 바로 연동할 수 있도록 정리한 레퍼런스입니다. 모든 항목은 `backend_9006/app/routes/` 의 실제 코드를 기준으로 작성되었습니다.
 
 ---
 
@@ -556,15 +556,21 @@ provider 가 호출하는 경로(프론트가 직접 호출하지 않음). 백�
 GOOGLE_CLIENT_ID=        GOOGLE_CLIENT_SECRET=
 KAKAO_CLIENT_ID=         KAKAO_CLIENT_SECRET=    # KAKAO_CLIENT_ID 는 REST API 키
 NAVER_CLIENT_ID=         NAVER_CLIENT_SECRET=
-OAUTH_CALLBACK_BASE=http://localhost:9005        # provider 가 돌아올 우리 콜백 베이스
+OAUTH_CALLBACK_BASE=http://localhost:9006        # provider 가 돌아올 우리 콜백 베이스
 FRONTEND_URL=https://localhost:4000              # 최종 토큰 전달 대상
 ```
 
 **각 콘솔에 등록할 Redirect URI** (`{OAUTH_CALLBACK_BASE}/api/auth/oauth/{provider}/callback`):
 
-- Google Cloud Console: `http://localhost:9005/api/auth/oauth/google/callback`
-- Kakao Developers:      `http://localhost:9005/api/auth/oauth/kakao/callback`
-- Naver Developers:      `http://localhost:9005/api/auth/oauth/naver/callback`
+- Google Cloud Console: `http://localhost:9006/api/auth/oauth/google/callback`
+- Kakao Developers:      `http://localhost:9006/api/auth/oauth/kakao/callback`
+- Naver Developers:      `http://localhost:9006/api/auth/oauth/naver/callback`
+
+> ⚠️ **콘솔 등록값 변경은 사용자가 직접 수행해야 합니다** (v196).
+> 위 문서와 `.env.example` 의 포트를 9006 으로 바꾸는 것만으로는 **소셜 로그인이 동작하지 않습니다**.
+> 각 제공자 개발자 콘솔(Google Cloud Console / Kakao Developers / Naver Developers)에 접속해
+> 등록된 Redirect URI 를 위 9006 주소로 **직접 수정·저장**해야 합니다.
+> 콘솔 등록값이 구 포트(9005)로 남아 있으면 provider 가 `redirect_uri_mismatch` 로 인가를 거부합니다.
 
 #### 앱팀 참고사항
 
@@ -4779,7 +4785,7 @@ GET /api/health
 
 | 환경 | URL | 비고 |
 |------|-----|------|
-| 로컬 (백엔드 동일 머신) | `http://localhost:9005` 또는 `http://localhost:9004` | 9005 가 메인 작업 라인, 9004 는 동일 미러 — 어느 쪽이든 API 동일 |
+| 로컬 (백엔드 동일 머신) | `http://localhost:9006` | v196 정정 — **단일 백엔드**. 기존 9005/9004 미러 운영은 폐기 |
 | **사내 (Tailscale)** | **`http://100.127.225.55:9004`** | 앱팀이 tailnet 가입돼 있으면 이걸로 호출. 현재 운영 중인 dev 서버 |
 | Staging | _미구성_ | 추후 별도 공지 |
 | Production | _미구성_ | 추후 별도 공지 |
