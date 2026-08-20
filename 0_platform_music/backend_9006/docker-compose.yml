@@ -1,0 +1,113 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aimu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aimu}
+      POSTGRES_USER: ${POSTGRES_USER:-aimu_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_postgres_password}
+    ports:
+      # v190 보안: 루프백 바인딩 — 외부 도달 차단(앱은 localhost 접속)
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/init_postgres.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aimu_user} -d ${POSTGRES_DB:-aimu}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7
+    container_name: aimu-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-aimu_user}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-your_mongo_password}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-aimu}
+    ports:
+      # v190 보안: 루프백 바인딩 — 외부 도달 차단(앱은 localhost 접속)
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./infra/init_mongo.js:/docker-entrypoint-initdb.d/01_init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: aimu-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-your_redis_password} --appendonly yes
+    ports:
+      # v190 보안: 루프백 바인딩 — 외부 도달 차단(앱은 localhost 접속)
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-your_redis_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  elasticsearch:
+    # Custom image: 8.12.0 + analysis-nori (Korean morphology). See
+    # infra/elasticsearch.Dockerfile. Rebuild after changes:
+    #   docker compose -p backend build elasticsearch
+    build:
+      context: .
+      dockerfile: infra/elasticsearch.Dockerfile
+    image: aimu-elasticsearch-nori:8.12.0
+    container_name: aimu-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      # v189 보안 강화: 인증 활성 + 루프백 바인딩(외부 도달 차단).
+      # ELASTIC_PASSWORD 는 .env 의 ES_PASSWORD 주입(실값 커밋 금지 — gitignore 대상).
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ES_PASSWORD}
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - cluster.name=aimu-cluster
+    ports:
+      - "127.0.0.1:${ES_PORT:-9200}:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      # 인증 활성 후 무인증 curl 은 401 → healthcheck 도 인증 포함으로 갱신(v189)
+      test: ["CMD-SHELL", "curl -f -u elastic:${ES_PASSWORD} http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: aimu-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-aimu_minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-your_minio_password}
+    ports:
+      - "${MINIO_API_PORT:-9100}:9000"
+      - "${MINIO_CONSOLE_PORT:-9101}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
+  es_data:
+  minio_data:

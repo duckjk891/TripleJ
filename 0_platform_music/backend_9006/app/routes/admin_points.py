@@ -1,0 +1,976 @@
+"""StarAdmin(v180) — 4001 어드민 별(재화) 관리 API.
+
+prefix `/api/admin/points`. 전 엔드포인트 admin-role 필수(get_admin_user).
+points_service 의 기존 함수(credit_points/spend_points/get_balance)만 재사용 —
+balance 직접 $inc/$set 금지(원자성·멱등 게이트 우회 금지), 서비스 파일 무접촉.
+
+- GET /summary                    유통 잔액·누적/오늘 적립·소진 집계
+- GET /users/{user_id}/balance    대상 유저 잔액 (get_balance 위임)
+- GET /users/{user_id}/events     대상 유저 원장 (자체 쿼리 — 페이지네이션+필터)
+- POST /adjust                    관리자 지급/차감 (action=admin_adjust)
+
+관리자 조정 원장 기록: 지급=credit_points → action `admin_adjust`/+n,
+차감=spend_points → action `spend:admin_adjust`/−n (서비스가 접두 자동 부여).
+ref=`adm:{uuid8}:{사유≤40자}` — uuid8 로 시도별 유니크(멱등 충돌 회피),
+사유 전문은 감사 로그(points_adjust) details 에 저장.
+
+로그 prefix [admin-points] — admin/target id 앞 8자만, 사유 원문 미로그(길이만).
+"""
+
+import logging
+import math
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from ..auth import get_admin_user
+from ..database.mongodb import get_mongo
+from ..database.postgres import get_pg
+from ..models.user import age_years
+from ..services import dm_service, points_service as svc
+from .admin import _log_admin_action
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/admin/points", tags=["admin-points"])
+
+# 관리자 조정 1회 수량 상한 (오입력 방지 — v180 확정)
+MAX_ADJUST_AMOUNT = 10_000
+MAX_REASON_LEN = 200
+REF_REASON_LEN = 40  # ref 임베드 사유 절단 길이(전문은 감사 details)
+
+MAX_EVENTS_LIMIT = 100
+DEFAULT_EVENTS_LIMIT = 20
+
+
+class AdjustBody(BaseModel):
+    user_id: str = ""
+    direction: str = ""
+    # 수동 검증으로 400 반환(pydantic 422 회피 — 비정수도 400 계약)
+    amount: Any = None
+    reason: str = ""
+
+
+async def _require_user(conn, user_id: str) -> str:
+    """user_id 검증 — 비 uuid 400, users 미실재 404. 정규화된 str(uuid) 반환."""
+    try:
+        user_uuid = uuid.UUID(str(user_id or "").strip())
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="잘못된 사용자 ID 형식입니다.")
+    row = await conn.fetchrow("SELECT 1 FROM users WHERE id = $1", user_uuid)
+    if not row:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    return str(user_uuid)
+
+
+# ---------------------------------------------------------------------------
+# 1. GET /summary — 유통 요약 (4카드)
+# ---------------------------------------------------------------------------
+@router.get("/summary")
+async def points_summary(current_user=Depends(get_admin_user)):
+    """유통 잔액 합계 + 누적/오늘(KST day) 적립·소진 집계.
+
+    point_balances $group 1회 + point_events $facet 1회 (왕복 2회).
+    소진(total_spent/today_spent)은 절대값(양수) 로 반환. 빈 컬렉션은 전부 0.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    logger.info("[admin-points] summary admin=%s", admin_tag)
+    try:
+        mongo = get_mongo()
+
+        total_balance = 0
+        async for doc in mongo.point_balances.aggregate(
+            [{"$group": {"_id": None, "total": {"$sum": "$balance"}}}]
+        ):
+            total_balance = int(doc.get("total") or 0)
+
+        group_stage = {
+            "$group": {
+                "_id": None,
+                "earned": {"$sum": {"$cond": [{"$gt": ["$amount", 0]}, "$amount", 0]}},
+                "spent": {
+                    "$sum": {"$cond": [{"$lt": ["$amount", 0]}, {"$abs": "$amount"}, 0]}
+                },
+            }
+        }
+        facet = {
+            "$facet": {
+                "cumulative": [group_stage],
+                # day 단독 인덱스 없음 — 오늘 집계는 스캔(현 볼륨 수용, §5 리스크)
+                "today": [{"$match": {"day": svc._kst_day()}}, group_stage],
+            }
+        }
+        cumulative = {"earned": 0, "spent": 0}
+        today = {"earned": 0, "spent": 0}
+        async for doc in mongo.point_events.aggregate([facet]):
+            if doc.get("cumulative"):
+                cumulative = doc["cumulative"][0]
+            if doc.get("today"):
+                today = doc["today"][0]
+
+        return {
+            "total_balance": total_balance,
+            "total_earned": int(cumulative.get("earned") or 0),
+            "total_spent": int(cumulative.get("spent") or 0),
+            "today_earned": int(today.get("earned") or 0),
+            "today_spent": int(today.get("spent") or 0),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-points] summary failed admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "집계를 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 2. GET /users/{user_id}/balance — 대상 유저 잔액
+# ---------------------------------------------------------------------------
+@router.get("/users/{user_id}/balance")
+async def user_point_balance(
+    user_id: str,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """대상 유저 잔액 — 비 uuid 400, 미실재 404, points_service.get_balance 재사용."""
+    admin_tag = str(current_user["id"])[:8]
+    logger.info(
+        "[admin-points] balance admin=%s target=%s", admin_tag, str(user_id)[:8]
+    )
+    try:
+        uid = await _require_user(conn, user_id)
+        balance = await svc.get_balance(uid)
+        return {"balance": balance}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] balance failed admin=%s target=%s",
+            admin_tag, str(user_id)[:8],
+        )
+        return JSONResponse(status_code=500, content={"error": "잔액을 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 3. GET /users/{user_id}/events — 대상 유저 원장 (자체 쿼리)
+# ---------------------------------------------------------------------------
+# filter → Mongo 조건 매핑 (v180 §1):
+#   earn   = amount>0, refund: 접두 제외, admin_adjust 제외(관리자조정 필터 소관)
+#   spend  = spend: 접두, 단 spend:admin_adjust 제외
+#   refund = refund: 접두
+#   admin  = admin_adjust + spend:admin_adjust
+_EVENT_FILTERS = {
+    "earn": {
+        "amount": {"$gt": 0},
+        "action": {"$not": {"$regex": "^refund:"}, "$ne": "admin_adjust"},
+    },
+    "spend": {"action": {"$regex": "^spend:", "$ne": "spend:admin_adjust"}},
+    "refund": {"action": {"$regex": "^refund:"}},
+    "admin": {"action": {"$in": ["admin_adjust", "spend:admin_adjust"]}},
+}
+
+
+@router.get("/users/{user_id}/events")
+async def user_point_events(
+    user_id: str,
+    page: int = 1,
+    limit: int = DEFAULT_EVENTS_LIMIT,
+    filter: Optional[str] = None,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """대상 유저 원장 — created_at DESC, count+skip/limit 페이지네이션(v176 형식).
+
+    get_history 는 skip/총계 미지원이라 자체 쿼리. 행 `{action, amount, ref, day,
+    created_at}` (ref=point_events.track_id). filter ∈ earn|spend|refund|admin.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        page = max(int(page), 1)
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        limit = max(1, min(int(limit), MAX_EVENTS_LIMIT))
+    except (ValueError, TypeError):
+        limit = DEFAULT_EVENTS_LIMIT
+    logger.info(
+        "[admin-points] events admin=%s target=%s page=%d limit=%d filter=%s",
+        admin_tag, str(user_id)[:8], page, limit, filter,
+    )
+    try:
+        uid = await _require_user(conn, user_id)
+
+        query: dict = {"user_id": uid}
+        if filter:
+            cond = _EVENT_FILTERS.get(filter)
+            if cond is None:
+                return JSONResponse(
+                    status_code=400, content={"error": "지원하지 않는 필터입니다."}
+                )
+            query.update(cond)
+
+        mongo = get_mongo()
+        total = await mongo.point_events.count_documents(query)
+        cursor = (
+            mongo.point_events.find(query)
+            .sort("created_at", -1)
+            .skip((page - 1) * limit)
+            .limit(limit)
+        )
+        events = []
+        async for doc in cursor:
+            created = doc.get("created_at")
+            events.append(
+                {
+                    "action": doc.get("action"),
+                    "amount": doc.get("amount", 1),
+                    "ref": doc.get("track_id"),
+                    "day": doc.get("day"),
+                    "created_at": created.isoformat() if created is not None and hasattr(created, "isoformat") else created,
+                }
+            )
+        return {
+            "events": events,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": (total + limit - 1) // limit if limit else 0,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] events failed admin=%s target=%s",
+            admin_tag, str(user_id)[:8],
+        )
+        return JSONResponse(status_code=500, content={"error": "원장을 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 4. POST /adjust — 관리자 지급/차감 (action=admin_adjust)
+# ---------------------------------------------------------------------------
+@router.post("/adjust")
+async def adjust_points(
+    body: AdjustBody,
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """관리자 별 지급/차감 — 기존 credit/spend 함수만 사용(잔액 직접 조작 금지).
+
+    검증 순서: uuid 400 → 실재 404 → direction 400 → amount(정수 1~10,000) 400 →
+    reason(trim 1~200자) 400. 지급=credit_points(False→500 — uuid8 ref 라 멱등
+    충돌 사실상 불가, 잔액 무접촉이므로 재시도 안전) / 차감=spend_points
+    (False→400 잔액 부족 — 원자 차감으로 마이너스 원천 불가).
+    성공 시 감사 적재 points_adjust(best-effort) 후 `{balance, event_ref}` 반환.
+    사유 원문은 서버 로그 미출력(길이만) — 감사 details 에만 전문 저장.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    direction = (body.direction or "").strip()
+    reason = (body.reason or "").strip()
+    logger.info(
+        "[admin-points] adjust enter admin=%s target=%s direction=%s amount=%s reason_len=%d",
+        admin_tag, str(body.user_id)[:8], direction, body.amount, len(reason),
+    )
+    try:
+        uid = await _require_user(conn, body.user_id)  # 400 / 404
+
+        if direction not in ("grant", "deduct"):
+            return JSONResponse(
+                status_code=400, content={"error": "direction 은 grant 또는 deduct 여야 합니다."}
+            )
+
+        amount = body.amount
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, int)
+            or amount < 1
+            or amount > MAX_ADJUST_AMOUNT
+        ):
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"수량은 1~{MAX_ADJUST_AMOUNT:,} 사이의 정수여야 합니다."},
+            )
+
+        if not reason or len(reason) > MAX_REASON_LEN:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"사유는 1~{MAX_REASON_LEN}자로 입력해주세요."},
+            )
+
+        # ref — 시도별 유니크(uuid8) + 사유 요약 가시화(전문은 감사 details)
+        ref = f"adm:{uuid.uuid4().hex[:8]}:{reason[:REF_REASON_LEN]}"
+
+        if direction == "grant":
+            ok = await svc.credit_points(uid, "admin_adjust", amount, ref)
+            if not ok:
+                # 멱등 충돌(사실상 불가) 또는 내부 오류 — 잔액 무접촉, 재시도 안전
+                logger.warning(
+                    "[admin-points] adjust grant failed admin=%s target=%s amount=%d",
+                    admin_tag, uid[:8], amount,
+                )
+                return JSONResponse(
+                    status_code=500, content={"error": "지급에 실패했습니다. 다시 시도해주세요."}
+                )
+        else:
+            ok = await svc.spend_points(uid, "admin_adjust", amount, ref)
+            if not ok:
+                logger.info(
+                    "[admin-points] adjust denied (insufficient) admin=%s target=%s amount=%d",
+                    admin_tag, uid[:8], amount,
+                )
+                return JSONResponse(
+                    status_code=400, content={"error": "잔액이 부족하여 차감할 수 없습니다."}
+                )
+
+        balance = await svc.get_balance(uid)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] adjust failed admin=%s target=%s direction=%s",
+            admin_tag, str(body.user_id)[:8], direction,
+        )
+        return JSONResponse(status_code=500, content={"error": "조정을 처리할 수 없습니다."})
+
+    # 감사 로그 적재 (best-effort) — 사유 전문·ref·조정 후 잔액. 실패해도 조정 유지.
+    try:
+        await _log_admin_action(
+            conn,
+            str(current_user["id"]),
+            "points_adjust",
+            "user",
+            uid,
+            {
+                "direction": direction,
+                "amount": amount,
+                "reason": reason,
+                "ref": ref,
+                "balance_after": balance,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "[admin-points] adjust audit log failed admin=%s target=%s",
+            admin_tag, uid[:8],
+            exc_info=True,
+        )
+
+    logger.info(
+        "[admin-points] adjust done admin=%s target=%s direction=%s amount=%d balance=%d",
+        admin_tag, uid[:8], direction, amount, balance,
+    )
+    return {"balance": balance, "event_ref": ref}
+
+
+# ---------------------------------------------------------------------------
+# 5. 분석 대시보드 (v181) — GET /analytics/{daily|breakdown|demographics}
+# ---------------------------------------------------------------------------
+# day 는 KST %Y%m%d 고정폭 문자열 — 사전순 비교 == 날짜순이라 $gte 범위 매치 유효.
+# day 단독 인덱스 부재(스캔 — 현 볼륨 수용, v180 §5 리스크 승계).
+#
+# 개인정보 비노출 절대 규칙: 응답·로그에 user_id/birth_date/gender 개별값 금지 —
+# demographics 의 원시 속성은 버킷 합산 직후 서버 내부에서 소멸(버킷 집계만 반환).
+
+_ANALYTICS_DAYS = {7, 30, 90}
+_DEMOGRAPHICS_MODES = {"earn", "spend"}
+_AGE_BUCKETS = ("10대", "20대", "30대", "40대+", "미상")
+
+
+def _parse_analytics_days(days) -> int:
+    """days 화이트리스트 {7,30,90} — 그 외(비정수 포함) 400."""
+    try:
+        d = int(days)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="기간은 7·30·90일 중 하나여야 합니다.")
+    if d not in _ANALYTICS_DAYS:
+        raise HTTPException(status_code=400, detail="기간은 7·30·90일 중 하나여야 합니다.")
+    return d
+
+
+def _kst_day_range(days: int) -> list:
+    """KST 오늘 포함 최근 days 일의 %Y%m%d 문자열 리스트(과거→오늘, 연속)."""
+    now = datetime.now(svc.KST)
+    return [(now - timedelta(days=days - 1 - i)).strftime("%Y%m%d") for i in range(days)]
+
+
+@router.get("/analytics/daily")
+async def analytics_daily(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+):
+    """일별 적립/소진 추이 — day 범위 $match + $group. 누락일 0 채움 연속 range.
+
+    응답 {days: [{day, earned, spent}]} — 배열 길이 == 기간 일수 고정(과거→오늘).
+    소진(spent)은 절대값(양수).
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        day_range = _kst_day_range(n_days)
+        logger.info("[admin-points] analytics daily admin=%s days=%d", admin_tag, n_days)
+
+        mongo = get_mongo()
+        by_day = {}
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": day_range[0]}}},
+            {
+                "$group": {
+                    "_id": "$day",
+                    "earned": {"$sum": {"$cond": [{"$gt": ["$amount", 0]}, "$amount", 0]}},
+                    "spent": {
+                        "$sum": {"$cond": [{"$lt": ["$amount", 0]}, {"$abs": "$amount"}, 0]}
+                    },
+                }
+            },
+        ]):
+            by_day[doc["_id"]] = doc
+
+        out = [
+            {
+                "day": d,
+                "earned": int((by_day.get(d) or {}).get("earned") or 0),
+                "spent": int((by_day.get(d) or {}).get("spent") or 0),
+            }
+            for d in day_range
+        ]
+        return {"days": out}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-points] analytics daily failed admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "추이를 불러올 수 없습니다."})
+
+
+@router.get("/analytics/breakdown")
+async def analytics_breakdown(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+):
+    """기간 내 액션별 획득/소비 분포 — $facet 2패널, total DESC.
+
+    응답 {earn: [{action, total}], spend: [{action, total}]} — action 은 원장
+    원문 그대로(라벨링은 프론트 actionLabel 단일 소스). total 은 양수.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics breakdown admin=%s days=%d", admin_tag, n_days
+        )
+
+        mongo = get_mongo()
+        earn, spend = [], []
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": start_day}}},
+            {
+                "$facet": {
+                    "earn": [
+                        {"$match": {"amount": {"$gt": 0}}},
+                        {"$group": {"_id": "$action", "total": {"$sum": "$amount"}}},
+                        {"$sort": {"total": -1, "_id": 1}},
+                    ],
+                    "spend": [
+                        {"$match": {"amount": {"$lt": 0}}},
+                        {"$group": {"_id": "$action", "total": {"$sum": {"$abs": "$amount"}}}},
+                        {"$sort": {"total": -1, "_id": 1}},
+                    ],
+                }
+            },
+        ]):
+            earn = doc.get("earn") or []
+            spend = doc.get("spend") or []
+
+        def _panel(rows):
+            return [
+                {"action": r["_id"], "total": int(r.get("total") or 0)} for r in rows
+            ]
+
+        return {"earn": _panel(earn), "spend": _panel(spend)}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[admin-points] analytics breakdown failed admin=%s", admin_tag)
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+def _age_bucket(birth_date) -> str:
+    """만 나이 → 버킷. birth_date NULL(미입력·탈퇴 파기·유저 미실재)은 '미상'."""
+    if birth_date is None:
+        return "미상"
+    age = age_years(birth_date)
+    if age < 20:
+        return "10대"
+    if age < 30:
+        return "20대"
+    if age < 40:
+        return "30대"
+    return "40대+"
+
+
+@router.get("/analytics/demographics")
+async def analytics_demographics(
+    days: str = "30",
+    mode: str = "earn",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """기간 내 연령대×성별 별 유통 분포 — mode=earn|spend(그 외 400).
+
+    Mongo user_id별 Σ → PG `ANY($1::uuid[])` 일괄 조회(비 uuid skip) →
+    age_years 버킷 × 성별(male/female/unknown=NULL+other+미실재) 합산.
+    응답 {rows: [{bucket, male, female, unknown, total}](5행 고정), total} —
+    **버킷 합산값만**(개별 user_id·birth_date·gender 미포함·미로그).
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        if mode not in _DEMOGRAPHICS_MODES:
+            return JSONResponse(
+                status_code=400, content={"error": "mode 는 earn 또는 spend 여야 합니다."}
+            )
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics demographics admin=%s days=%d mode=%s",
+            admin_tag, n_days, mode,
+        )
+
+        if mode == "earn":
+            amount_match = {"$gt": 0}
+            sum_expr = "$amount"
+        else:
+            amount_match = {"$lt": 0}
+            sum_expr = {"$abs": "$amount"}
+
+        mongo = get_mongo()
+        per_user = {}
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": start_day}, "amount": amount_match}},
+            {"$group": {"_id": "$user_id", "total": {"$sum": sum_expr}}},
+        ]):
+            per_user[str(doc["_id"])] = int(doc.get("total") or 0)
+
+        # PG 속성 일괄 조회 (hydrate 관행 — 비 uuid 안전 skip)
+        uuids = []
+        for uid in per_user:
+            try:
+                uuids.append(uuid.UUID(uid))
+            except (ValueError, TypeError):
+                continue
+        attrs = {}
+        if uuids:
+            rows = await conn.fetch(
+                "SELECT id, birth_date, gender FROM users WHERE id = ANY($1::uuid[])",
+                uuids,
+            )
+            attrs = {str(r["id"]): (r["birth_date"], r["gender"]) for r in rows}
+
+        # 버킷 합산 — 개별 속성은 이 루프 안에서 소멸(응답·로그 미출력)
+        table = {b: {"male": 0, "female": 0, "unknown": 0} for b in _AGE_BUCKETS}
+        for uid, total in per_user.items():
+            birth_date, gender = attrs.get(uid, (None, None))
+            bucket = _age_bucket(birth_date)
+            col = gender if gender in ("male", "female") else "unknown"
+            table[bucket][col] += total
+
+        out_rows = []
+        grand_total = 0
+        for b in _AGE_BUCKETS:
+            row = table[b]
+            row_total = row["male"] + row["female"] + row["unknown"]
+            grand_total += row_total
+            out_rows.append(
+                {
+                    "bucket": b,
+                    "male": row["male"],
+                    "female": row["female"],
+                    "unknown": row["unknown"],
+                    "total": row_total,
+                }
+            )
+
+        logger.info(
+            "[admin-points] analytics demographics done admin=%s days=%d mode=%s users=%d",
+            admin_tag, n_days, mode, len(per_user),
+        )
+        return {"rows": out_rows, "total": grand_total}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics demographics failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 6. 경제 건전성 지표 (v182) — GET /analytics/{top-spenders|balance-distribution}
+# ---------------------------------------------------------------------------
+# 소비 행(spend_points)은 항상 day=_kst_day() 세팅 — day 비일자(`-`) 행은 전부
+# 적립 계열이라 amount<0 + day 범위 필터는 안전(v182 §0 실측).
+# 개인정보: 티어 응답은 user_id·닉네임#code 까지만(관리자 화면 표준 — v177 동급),
+# 이메일·생년월일·성별 금지. 서버 로그에는 닉네임·id 등 개인값 미출력(건수만).
+
+TOP_SPENDERS_LIMIT = 10
+WHALE_TOP_RATIO = 0.1  # 상위 10% = max(1, ceil(0.1×N)) 명
+
+# 잔액 히스토그램 5구간 — $bucket boundaries [0,1,11,51,101) + default "101+"
+_BALANCE_BUCKET_BOUNDARIES = [0, 1, 11, 51, 101]
+_BALANCE_BUCKET_LABELS = {0: "0", 1: "1~10", 11: "11~50", 51: "51~100", "101+": "101+"}
+_BALANCE_BUCKET_ORDER = ("0", "1~10", "11~50", "51~100", "101+")
+
+
+@router.get("/analytics/top-spenders")
+async def analytics_top_spenders(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """기간 내 소비 상위 사용자 + whale(상위 10%) 점유 지표.
+
+    day 범위+amount<0 → user_id별 Σ|−| DESC. top 은 상위 10명에
+    dm_service.hydrate_users 로 닉네임#code 부착(미해석 null — 프론트 fallback).
+    whale = 상위 max(1, ceil(0.1×spenders)) 명의 소비합·전체 대비 %(반올림 1자리).
+    소비자 0명이면 top []·whale null. 응답에 이메일·생년월일 미포함.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics top-spenders admin=%s days=%d", admin_tag, n_days
+        )
+
+        mongo = get_mongo()
+        rows = []  # [(user_id, total)] — Σ|−| DESC
+        async for doc in mongo.point_events.aggregate([
+            {"$match": {"day": {"$gte": start_day}, "amount": {"$lt": 0}}},
+            {"$group": {"_id": "$user_id", "total": {"$sum": {"$abs": "$amount"}}}},
+            {"$sort": {"total": -1, "_id": 1}},
+        ]):
+            rows.append((str(doc["_id"]), int(doc.get("total") or 0)))
+
+        spenders = len(rows)
+        if spenders == 0:
+            return {"top": [], "whale": None, "spenders": 0}
+
+        top_rows = rows[:TOP_SPENDERS_LIMIT]
+        hydrated = {}
+        try:
+            hydrated = await dm_service.hydrate_users(conn, [uid for uid, _ in top_rows])
+        except Exception:
+            logger.warning(
+                "[admin-points] top-spenders hydrate failed admin=%s", admin_tag,
+                exc_info=True,
+            )
+        top = [
+            {
+                "user_id": uid,
+                "nickname": (hydrated.get(uid) or {}).get("nickname"),
+                "code": (hydrated.get(uid) or {}).get("code"),
+                "total": total,
+            }
+            for uid, total in top_rows
+        ]
+
+        all_total = sum(total for _, total in rows)
+        top_count = max(1, math.ceil(WHALE_TOP_RATIO * spenders))
+        top_total = sum(total for _, total in rows[:top_count])
+        share_pct = round(top_total / all_total * 100, 1) if all_total else 0.0
+        whale = {
+            "top_count": top_count,
+            "top_total": top_total,
+            "all_total": all_total,
+            "share_pct": share_pct,
+        }
+
+        logger.info(
+            "[admin-points] analytics top-spenders done admin=%s days=%d spenders=%d",
+            admin_tag, n_days, spenders,
+        )
+        return {"top": top, "whale": whale, "spenders": spenders}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics top-spenders failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "지표를 불러올 수 없습니다."})
+
+
+@router.get("/analytics/balance-distribution")
+async def analytics_balance_distribution(current_user=Depends(get_admin_user)):
+    """잔액 분포 히스토그램 — 현재 스냅샷(기간 파라미터 없음).
+
+    point_balances $bucket 5구간(0 / 1~10 / 11~50 / 51~100 / 101+) + 합계 2종.
+    모수는 잔액 문서 보유자 기준(적립 이력 없는 유저는 문서 자체가 없음 —
+    프론트 각주 소관). 빈 컬렉션은 전부 0. 버킷 집계만(개인값 미포함).
+    """
+    admin_tag = str(current_user["id"])[:8]
+    logger.info("[admin-points] analytics balance-dist admin=%s", admin_tag)
+    try:
+        mongo = get_mongo()
+        counts = {label: 0 for label in _BALANCE_BUCKET_ORDER}
+        total_users = 0
+        total_balance = 0
+        async for doc in mongo.point_balances.aggregate([
+            {
+                "$facet": {
+                    "hist": [
+                        {
+                            "$bucket": {
+                                "groupBy": "$balance",
+                                "boundaries": _BALANCE_BUCKET_BOUNDARIES,
+                                "default": "101+",
+                                "output": {"count": {"$sum": 1}},
+                            }
+                        }
+                    ],
+                    "totals": [
+                        {
+                            "$group": {
+                                "_id": None,
+                                "total_users": {"$sum": 1},
+                                "total_balance": {"$sum": "$balance"},
+                            }
+                        }
+                    ],
+                }
+            }
+        ]):
+            for b in doc.get("hist") or []:
+                label = _BALANCE_BUCKET_LABELS.get(b.get("_id"))
+                if label:
+                    counts[label] = int(b.get("count") or 0)
+            totals = doc.get("totals") or []
+            if totals:
+                total_users = int(totals[0].get("total_users") or 0)
+                total_balance = int(totals[0].get("total_balance") or 0)
+
+        logger.info(
+            "[admin-points] analytics balance-dist done admin=%s users=%d",
+            admin_tag, total_users,
+        )
+        return {
+            "buckets": [{"label": l, "count": counts[l]} for l in _BALANCE_BUCKET_ORDER],
+            "total_users": total_users,
+            "total_balance": total_balance,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics balance-dist failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+# ---------------------------------------------------------------------------
+# 7. 세그먼트 2종 (v183) — GET /analytics/{segments|cohorts}
+# ---------------------------------------------------------------------------
+# 개인정보: v181 원칙 그대로 — plan/role/가입월 개별값은 서버 내부에서 소멸,
+# 응답·로그는 버킷 집계만(로그: admin_tag/days/mode/행·유저 수).
+
+_PLAN_BUCKETS = ("free", "premium", "미상")
+_ROLE_BUCKETS = ("user", "customer", "admin", "미상")
+
+
+async def _sum_points_by_user(mongo, start_day: str, mode: str) -> dict:
+    """기간 내 user_id별 별 합계 — {user_id: {"earned": int, "spent": int}}.
+
+    v181 demographics 파이프라인(day범위+부호 match → user_id Σ)과 동일 로직의
+    **사설 복제** — 기존 demographics 함수는 무변경(검증 코드 보호)이라 리팩터
+    하지 않음. 중복은 의도적, 공통화 추출은 후속 후보(v183 §0).
+
+    mode: "earn"(양수만 match)|"spend"(음수만)|"both"(부호 무필터 — 양측 동시 Σ).
+    spent 는 절대값(양수) 규약.
+    """
+    match: dict = {"day": {"$gte": start_day}}
+    if mode == "earn":
+        match["amount"] = {"$gt": 0}
+    elif mode == "spend":
+        match["amount"] = {"$lt": 0}
+    out = {}
+    async for doc in mongo.point_events.aggregate([
+        {"$match": match},
+        {
+            "$group": {
+                "_id": "$user_id",
+                "earned": {"$sum": {"$cond": [{"$gt": ["$amount", 0]}, "$amount", 0]}},
+                "spent": {
+                    "$sum": {"$cond": [{"$lt": ["$amount", 0]}, {"$abs": "$amount"}, 0]}
+                },
+            }
+        },
+    ]):
+        out[str(doc["_id"])] = {
+            "earned": int(doc.get("earned") or 0),
+            "spent": int(doc.get("spent") or 0),
+        }
+    return out
+
+
+async def _fetch_user_attrs(conn, user_ids, columns: str) -> dict:
+    """PG 속성 일괄 조회(hydrate 관행 — 비 uuid 안전 skip) → {user_id: Record}."""
+    uuids = []
+    for uid in user_ids:
+        try:
+            uuids.append(uuid.UUID(uid))
+        except (ValueError, TypeError):
+            continue
+    if not uuids:
+        return {}
+    rows = await conn.fetch(
+        f"SELECT id, {columns} FROM users WHERE id = ANY($1::uuid[])", uuids
+    )
+    return {str(r["id"]): r for r in rows}
+
+
+@router.get("/analytics/segments")
+async def analytics_segments(
+    days: str = "30",
+    mode: str = "earn",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """기간 내 플랜·역할별 별 유통 분포 — mode=earn|spend(그 외 400).
+
+    user별 Σ 1회 → PG `id, plan, role` ANY 일괄 → 두 축 동시 매핑(1왕복).
+    응답 {plan_rows: [{bucket, users, total}](free/premium/미상 고정 3행)],
+    role_rows: [(user/customer/admin/미상 고정 4행)], users, total} — 빈 버킷 0.
+    미상 = NULL·미등록 값·유저 미실재(비 uuid 포함). admin 포함(role 행으로
+    분리 가시화 — 제외 시 3면 정합 검산 붕괴, v183 §0). 버킷 집계값만 응답.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        if mode not in _DEMOGRAPHICS_MODES:
+            return JSONResponse(
+                status_code=400, content={"error": "mode 는 earn 또는 spend 여야 합니다."}
+            )
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics segments admin=%s days=%d mode=%s",
+            admin_tag, n_days, mode,
+        )
+
+        per_user = await _sum_points_by_user(get_mongo(), start_day, mode)
+        value_key = "earned" if mode == "earn" else "spent"
+
+        attrs = await _fetch_user_attrs(conn, per_user.keys(), "plan, role")
+
+        plan_table = {b: {"users": 0, "total": 0} for b in _PLAN_BUCKETS}
+        role_table = {b: {"users": 0, "total": 0} for b in _ROLE_BUCKETS}
+        grand_total = 0
+        for uid, sums in per_user.items():
+            value = sums[value_key]
+            row = attrs.get(uid)
+            plan = row["plan"] if row else None
+            role = row["role"] if row else None
+            plan_bucket = plan if plan in ("free", "premium") else "미상"
+            role_bucket = role if role in ("user", "customer", "admin") else "미상"
+            plan_table[plan_bucket]["users"] += 1
+            plan_table[plan_bucket]["total"] += value
+            role_table[role_bucket]["users"] += 1
+            role_table[role_bucket]["total"] += value
+            grand_total += value
+
+        logger.info(
+            "[admin-points] analytics segments done admin=%s days=%d mode=%s users=%d",
+            admin_tag, n_days, mode, len(per_user),
+        )
+        return {
+            "plan_rows": [
+                {"bucket": b, "users": plan_table[b]["users"], "total": plan_table[b]["total"]}
+                for b in _PLAN_BUCKETS
+            ],
+            "role_rows": [
+                {"bucket": b, "users": role_table[b]["users"], "total": role_table[b]["total"]}
+                for b in _ROLE_BUCKETS
+            ],
+            "users": len(per_user),
+            "total": grand_total,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics segments failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "분포를 불러올 수 없습니다."})
+
+
+@router.get("/analytics/cohorts")
+async def analytics_cohorts(
+    days: str = "30",
+    current_user=Depends(get_admin_user),
+    conn=Depends(get_pg),
+):
+    """가입월 코호트 — 인원은 가입월 전체(기간 직교), 별 활동만 days 필터.
+
+    rows = PG 전체 가입월(`to_char(created_at,'YYYY-MM')` group — 활동 0 월도
+    행 유지 → 인원 합 == users 전체 검산 축) + 기간 내 user별 earned/spent Σ 를
+    가입월에 매핑. 유저 미실재(비 uuid 포함) 활동은 미상 행(month null, 월 뒤,
+    활동 있을 때만). 응답 {rows: [{month "YYYY-MM"|null, users, earned, spent}],
+    total_users}. earned/spent 양수($abs 규약). 버킷 집계값만 응답.
+    """
+    admin_tag = str(current_user["id"])[:8]
+    try:
+        n_days = _parse_analytics_days(days)
+        start_day = _kst_day_range(n_days)[0]
+        logger.info(
+            "[admin-points] analytics cohorts admin=%s days=%d", admin_tag, n_days
+        )
+
+        # 코호트 축 — 전체 가입월(기간 직교). created_at NULL 방어는 미상 합류.
+        axis_rows = await conn.fetch(
+            """SELECT to_char(created_at, 'YYYY-MM') AS month, COUNT(*) AS n
+               FROM users GROUP BY 1 ORDER BY 1"""
+        )
+        months = {}  # month(str) -> {"users", "earned", "spent"}
+        unknown = {"users": 0, "earned": 0, "spent": 0}
+        for r in axis_rows:
+            if r["month"]:
+                months[r["month"]] = {"users": int(r["n"]), "earned": 0, "spent": 0}
+            else:
+                unknown["users"] += int(r["n"])
+
+        # 기간 내 활동 → 가입월 매핑
+        per_user = await _sum_points_by_user(get_mongo(), start_day, "both")
+        attrs = await _fetch_user_attrs(
+            conn, per_user.keys(), "to_char(created_at, 'YYYY-MM') AS month"
+        )
+        for uid, sums in per_user.items():
+            row = attrs.get(uid)
+            month = row["month"] if row else None
+            target = months.get(month) if month else None
+            if target is None:
+                target = unknown
+            target["earned"] += sums["earned"]
+            target["spent"] += sums["spent"]
+
+        rows = [
+            {"month": m, "users": v["users"], "earned": v["earned"], "spent": v["spent"]}
+            for m, v in sorted(months.items())
+        ]
+        if unknown["users"] or unknown["earned"] or unknown["spent"]:
+            rows.append({"month": None, **unknown})
+        total_users = sum(r["users"] for r in rows)
+
+        logger.info(
+            "[admin-points] analytics cohorts done admin=%s days=%d months=%d users=%d",
+            admin_tag, n_days, len(rows), total_users,
+        )
+        return {"rows": rows, "total_users": total_users}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "[admin-points] analytics cohorts failed admin=%s", admin_tag
+        )
+        return JSONResponse(status_code=500, content={"error": "코호트를 불러올 수 없습니다."})

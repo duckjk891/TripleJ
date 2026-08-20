@@ -1,0 +1,485 @@
+"""Suno API music generation service."""
+import asyncio
+import io
+import logging
+from datetime import datetime, timezone
+
+import httpx
+
+from ..config import settings
+from ..database.minio import get_minio
+
+logger = logging.getLogger(__name__)
+
+SUNO_GENERATE_URL = "{base}/api/v1/generate"
+SUNO_UPLOAD_COVER_URL = "{base}/api/v1/generate/upload-cover"
+SUNO_STATUS_URL = "{base}/api/v1/generate/record-info"
+
+# Suno 폴링 종료(실패) 상태 집합. "FAILED" 외에 *_FAILED/*_ERROR/*_EXCEPTION 류가 실제 terminal 에러로 도착한다.
+SUNO_TERMINAL_ERROR_STATUSES = {
+    "FAILED",
+    "CREATE_TASK_FAILED",
+    "GENERATE_AUDIO_FAILED",
+    "CALLBACK_EXCEPTION",
+    "SENSITIVE_WORD_ERROR",
+}
+
+SUNO_VOCAL_MAP = {
+    "male_warm": {"style": "soft male vocal, warm, smooth", "gender": "m"},
+    "male_powerful": {"style": "powerful male vocal, belted, strong", "gender": "m"},
+    "male_husky": {"style": "raspy male vocal, husky, gritty", "gender": "m"},
+    "male_soft": {"style": "gentle male vocal, soft, intimate", "gender": "m"},
+    "female_warm": {"style": "soft female vocal, breathy, warm", "gender": "f"},
+    "female_powerful": {"style": "powerful female vocal, belted, strong", "gender": "f"},
+    "female_husky": {"style": "raspy female vocal, husky, sultry", "gender": "f"},
+    "female_sweet": {"style": "sweet female vocal, melodic, warm", "gender": "f"},
+}
+
+
+def _ensure_lyrics_structure(lyrics: str) -> str:
+    """가사에 [Verse]/[Chorus] 같은 구조 태그가 없으면 자동 추가."""
+    if not lyrics or not lyrics.strip():
+        return lyrics
+    tags = ['[verse', '[chorus', '[bridge', '[intro', '[outro', '[pre-chorus', '[hook']
+    if any(tag in lyrics.lower() for tag in tags):
+        return lyrics  # 이미 있음
+    lines = [l for l in lyrics.strip().split('\n') if l.strip()]
+    if len(lines) <= 4:
+        return f"[Verse]\n{lyrics.strip()}"
+    # 4줄씩 verse, 그 다음 4줄 chorus 반복
+    structured = []
+    section = 0
+    for i, line in enumerate(lines):
+        if i % 4 == 0:
+            tag = "[Verse]" if section % 2 == 0 else "[Chorus]"
+            structured.append(f"\n{tag}")
+            section += 1
+        structured.append(line)
+    return '\n'.join(structured).strip()
+
+
+async def generate_music_suno(
+    generation_id: str,
+    lyrics: str = None,
+    genre: str = None,
+    mood: str = None,
+    style: str = None,
+    vocal: str = None,
+    title: str = None,
+    prompt: str = None,
+    mongo_db=None,
+    persona_id: str = None,
+    negative_tags: str = None,
+    style_weight: float = None,
+    weirdness: float = None,
+    audio_weight: float = None,
+    persona_model: str = None,
+    bpm: int = None,
+    key: str = None,
+    reference_audio_url: str = None,
+    duet_main_vocal_style: str = None,
+    duet_sub_vocal_style: str = None,
+    suno_model: str = None,
+) -> dict:
+    """Generate music using Suno API."""
+
+    if not settings.suno_api_key:
+        raise ValueError("SUNO_API_KEY가 설정되지 않았습니다.")
+
+    base_url = settings.suno_api_url.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {settings.suno_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    # Build style string (구조화된 값만 사용, 자연어 prompt는 제외)
+    style_parts = []
+    if genre:
+        style_parts.append(genre)
+    if mood:
+        style_parts.append(mood)
+    if style:
+        style_parts.append(style)
+
+    # Vocal style from SUNO_VOCAL_MAP
+    vocal_info = SUNO_VOCAL_MAP.get(vocal) if vocal else None
+    if vocal_info:
+        style_parts.append(vocal_info["style"])
+    elif vocal and vocal.lower() != "instrumental":
+        style_parts.append("vocal")
+
+    # 듀엣 보컬 스타일을 style에 추가
+    if duet_main_vocal_style:
+        main_gender = "male" if vocal and vocal.lower() in ("m", "male_warm", "male_powerful", "male_soft") else "female"
+        style_parts.append(f"{duet_main_vocal_style} {main_gender} vocal")
+    if duet_sub_vocal_style:
+        sub_gender = "female" if vocal and vocal.lower() in ("m", "male_warm", "male_powerful", "male_soft") else "male"
+        style_parts.append(f"{duet_sub_vocal_style} {sub_gender} vocal")
+
+    if bpm:
+        style_parts.append(f"{bpm} BPM")
+    if key:
+        style_parts.append(f"{key}")
+
+    style_str = ", ".join(style_parts) if style_parts else "pop"
+    logger.info("Suno style string: %s", style_str)
+
+    # Determine if instrumental
+    is_instrumental = bool(vocal and vocal.lower() == "instrumental")
+
+    # Build prompt - if custom mode with lyrics, include them
+    use_custom = bool(lyrics and lyrics.strip())
+    prompt_text = _ensure_lyrics_structure(lyrics.strip()) if use_custom else (title or "A beautiful song")
+
+    # Determine whether to use upload-cover endpoint (reference audio)
+    use_upload_cover = bool(reference_audio_url)
+
+    # v76.10: 호출자 명시 suno_model 우선 (voice clone 은 V5_5 필요).
+    # 미명시 시 기존 로직 — upload-cover 면 V5_5, 아니면 V5
+    resolved_model = (suno_model or "").strip() or ("V5_5" if use_upload_cover else "V5")
+    logger.info("[suno] generation_id=%s resolved_model=%s (suno_model_in=%s use_upload_cover=%s)", generation_id, resolved_model, suno_model, use_upload_cover)
+
+    # Request body
+    body = {
+        "prompt": prompt_text,
+        "model": resolved_model,
+        "customMode": use_custom,
+        "instrumental": is_instrumental,
+        "style": style_str[:1000],  # V5 limit
+        "callBackUrl": "https://localhost/callback",  # Required by API, unused (we poll instead)
+    }
+
+    # Add uploadUrl for reference audio (upload-cover endpoint)
+    if use_upload_cover:
+        body["uploadUrl"] = reference_audio_url
+
+    if title and use_custom:
+        body["title"] = title[:80]
+    if vocal_info:
+        body["vocalGender"] = vocal_info["gender"]
+
+    # If a Suno Voice Persona is selected, include it in the request
+    if persona_id:
+        body["personaId"] = persona_id
+
+    # Add optional advanced parameters
+    if negative_tags:
+        body["negativeTags"] = negative_tags
+    if style_weight is not None:
+        body["styleWeight"] = style_weight
+    if weirdness is not None:
+        body["weirdnessConstraint"] = weirdness
+    if audio_weight is not None:
+        body["audioWeight"] = audio_weight
+    if persona_model:
+        body["personaModel"] = persona_model
+
+    # Update progress: starting
+    await _update_progress(mongo_db, generation_id, 10, "processing")
+
+    # Step 1: Submit generation request
+    generate_endpoint = (
+        f"{base_url}/api/v1/generate/upload-cover"
+        if use_upload_cover
+        else f"{base_url}/api/v1/generate"
+    )
+    logger.info(
+        "Suno: using %s endpoint for generation %s (reference_audio=%s)",
+        "upload-cover" if use_upload_cover else "generate",
+        generation_id,
+        bool(reference_audio_url),
+    )
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            generate_endpoint,
+            headers=headers,
+            json=body,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+    if result.get("code") != 200:
+        raise ValueError(f"Suno API 오류: {result.get('msg', 'Unknown error')}")
+
+    task_id = result["data"]["taskId"]
+    logger.info("Suno: generation %s started, taskId=%s", generation_id, task_id)
+
+    # Update progress: submitted
+    await _update_progress(mongo_db, generation_id, 20, "processing")
+
+    # Step 2: Poll for completion
+    # v76.11: voice clone (persona_model=voice_persona) 는 일반보다 학습/생성 오래 걸림 → timeout 12분.
+    # 일반은 기존 5분 유지. 매 poll 마다 status 로그 추가 (이전엔 status 안 찍혀서 진단 불가).
+    is_voice_clone = (persona_model or "").strip().lower() == "voice_persona"
+    max_polls = 240 if is_voice_clone else 60  # 240*5s=20min, 60*5s=5min — voice clone 은 보수적 마진
+    logger.info(
+        "[suno] gen_id=%s poll loop start max_polls=%d (~%dmin) is_voice_clone=%s",
+        generation_id, max_polls, max_polls * 5 // 60, is_voice_clone,
+    )
+    audio_url = None
+    suno_data = None
+    status_data = None
+
+    for poll_attempt in range(max_polls):
+        await asyncio.sleep(5)
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            status_resp = await client.get(
+                f"{base_url}/api/v1/generate/record-info",
+                headers=headers,
+                params={"taskId": task_id},
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+
+        data_obj = status_data.get("data") or {}
+        status = data_obj.get("status", "")
+        err_code = data_obj.get("errorCode")
+        err_msg = data_obj.get("errorMessage") or ""
+        if poll_attempt % 6 == 0 or status not in ("PENDING", ""):  # 매 30초 또는 status 변화 시
+            logger.info(
+                "[suno] gen_id=%s poll attempt=%d/%d status=%s err_code=%s err_msg=%s",
+                generation_id, poll_attempt, max_polls, status or "?", err_code, (err_msg or "")[:120],
+            )
+
+        if status in SUNO_TERMINAL_ERROR_STATUSES or status.endswith(("_FAILED", "_ERROR", "_EXCEPTION")):
+            logger.warning(
+                "[suno] gen_id=%s terminal error status=%s err_code=%s err_msg=%s -> fail",
+                generation_id, status, err_code, (err_msg or "")[:200],
+            )
+            _msg_lower = (err_msg or "").lower()
+            if "expired" in _msg_lower or (status == "SENSITIVE_WORD_ERROR" and "voice" in _msg_lower):
+                user_msg = "선택한 보이스가 만료되었습니다. 목소리를 다시 학습시키거나 다른 보컬을 선택해 주세요."
+                # 만료된 클론을 자동으로 status='expired' 로 플래그 (이 루프의 motor client 사용).
+                if persona_id:
+                    try:
+                        res = await mongo_db.voice_clones.update_many(
+                            {"$or": [{"voice_id": persona_id}, {"generate_task_id": persona_id}], "status": {"$ne": "expired"}},
+                            {"$set": {"status": "expired", "expired_at": datetime.now(timezone.utc), "expired_reason": (err_msg or "")[:200]}},
+                        )
+                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d", generation_id, persona_id, res.modified_count)
+                    except Exception as _flag_exc:
+                        logger.warning("[suno] gen_id=%s voice-clone expire-flag failed: %s", generation_id, _flag_exc)
+            else:
+                user_msg = f"Suno 음악 생성에 실패했습니다{': ' + err_msg if err_msg else ''}"
+            raise ValueError(user_msg)
+
+        # Update progress based on status
+        if status == "TEXT_SUCCESS":
+            await _update_progress(mongo_db, generation_id, 40, "processing")
+        elif status == "FIRST_SUCCESS":
+            await _update_progress(mongo_db, generation_id, 70, "processing")
+        elif status == "SUCCESS":
+            suno_songs = status_data["data"]["response"]["sunoData"]
+            if suno_songs:
+                suno_data = suno_songs[0]  # Use first of 2 generated songs (BC)
+                audio_url = suno_data.get("audioUrl")
+            logger.info(
+                "[SunoVariants] gen_id=%s polled SUCCESS suno_songs_count=%d",
+                generation_id, len(suno_songs) if suno_songs else 0,
+            )
+            break
+        else:
+            # PENDING or other - gradually increase progress
+            progress = min(20 + poll_attempt, 60)
+            await _update_progress(mongo_db, generation_id, progress, "processing")
+
+    if not audio_url:
+        # 마지막 본 status 도 같이 표시
+        last_status = (status_data or {}).get("data", {}).get("status", "?") if status_data else "?"
+        raise ValueError(f"Suno 음악 생성 시간이 초과되었습니다 (last_status={last_status}, polls={max_polls}, ~{max_polls*5//60}min).")
+
+    # Step 3: Download audio and upload to MinIO
+    await _update_progress(mongo_db, generation_id, 85, "processing")
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        audio_resp = await client.get(audio_url)
+        audio_resp.raise_for_status()
+        audio_bytes = audio_resp.content
+
+    # Upload to MinIO
+    minio_client = get_minio()
+    object_name = f"generated/{generation_id}/suno_output.mp3"
+
+    minio_client.put_object(
+        bucket_name=settings.minio_bucket_music,
+        object_name=object_name,
+        data=io.BytesIO(audio_bytes),
+        length=len(audio_bytes),
+        content_type="audio/mpeg",
+    )
+
+    # v74 — Collect all variants (both songs if available) and persist each
+    # variant's audio_url + suno_audio_id + lyrics timestamps.
+    # Hierarchy: variants[0] mirrors result_audio_url / suno_audio_id for BC.
+    output_files = [object_name]
+    variants: list[dict] = [{
+        "index": 0,
+        "audio_url": object_name,
+        "suno_audio_id": suno_data.get("id", ""),
+        "timestamps": [],
+    }]
+
+    all_suno_songs = status_data["data"]["response"].get("sunoData", [])
+    if len(all_suno_songs) > 1:
+        second = all_suno_songs[1]
+        second_url = second.get("audioUrl")
+        second_audio_id = second.get("id", "")
+        if second_url:
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    audio2_resp = await client.get(second_url)
+                    audio2_resp.raise_for_status()
+                second_object = f"generated/{generation_id}/suno_output_2.mp3"
+                minio_client.put_object(
+                    bucket_name=settings.minio_bucket_music,
+                    object_name=second_object,
+                    data=io.BytesIO(audio2_resp.content),
+                    length=len(audio2_resp.content),
+                    content_type="audio/mpeg",
+                )
+                output_files.append(second_object)
+                variants.append({
+                    "index": 1,
+                    "audio_url": second_object,
+                    "suno_audio_id": second_audio_id,
+                    "timestamps": [],
+                })
+                logger.info(
+                    "[SunoVariants] gen_id=%s variant=1 stored object=%s audio_id_len=%d",
+                    generation_id, second_object, len(second_audio_id),
+                )
+            except Exception as e:
+                logger.warning(
+                    "[SunoVariants] gen_id=%s variant=1 download/store failed: %s",
+                    generation_id, e,
+                )
+        else:
+            logger.warning(
+                "[SunoVariants] gen_id=%s variant=1 missing audioUrl in suno response",
+                generation_id,
+            )
+    else:
+        logger.info(
+            "[SunoVariants] gen_id=%s only 1 variant returned by Suno",
+            generation_id,
+        )
+
+    # v74 — Fetch lyrics timestamps for each variant in parallel.
+    # Individual failures yield empty list (do not block completion).
+    try:
+        from .suno_timestamp_service import get_suno_timestamps
+
+        async def _fetch_one(v_audio_id: str) -> list[dict]:
+            if not v_audio_id:
+                return []
+            try:
+                return await get_suno_timestamps(task_id, v_audio_id) or []
+            except Exception as _ts_exc:
+                logger.warning(
+                    "[SunoVariants] gen_id=%s timestamps fetch failed for audio_id_len=%d: %s",
+                    generation_id, len(v_audio_id), _ts_exc,
+                )
+                return []
+
+        ts_results = await asyncio.gather(
+            *[_fetch_one(v["suno_audio_id"]) for v in variants],
+            return_exceptions=False,
+        )
+        for v, segs in zip(variants, ts_results):
+            v["timestamps"] = segs or []
+
+        logger.info(
+            "[SunoVariants] gen_id=%s variant_count=%d timestamps_lens=%s",
+            generation_id,
+            len(variants),
+            [len(v["timestamps"]) for v in variants],
+        )
+    except Exception as _gather_exc:
+        logger.warning(
+            "[SunoVariants] gen_id=%s timestamps gather failed: %s",
+            generation_id, _gather_exc,
+        )
+
+    # Update MongoDB (variants is new; result_audio_url/output_files/suno_audio_id remain BC)
+    await _update_progress(mongo_db, generation_id, 100, "completed", {
+        "result_audio_url": object_name,
+        "output_files": output_files,
+        "variants": variants,
+        "completed_at": datetime.utcnow(),
+        "suno_task_id": task_id,
+        "suno_audio_id": suno_data.get("id", ""),
+        "beats_status": "pending",
+    })
+
+    logger.info("Suno: generation %s completed, object=%s", generation_id, object_name)
+
+    # StarEcon(v158) — 완성 리베이트 +1 제거(v1.2 표에 없음) → 디렉터 피로
+    # 완성 훅으로 교체: 그날 완성 카운트 +1 + 사다리 쿨다운 시작. best-effort
+    # (생성 완료 흐름에 절대 영향 없음). 이 코루틴은 배경 루프에서 돌므로
+    # 반드시 루프-로컬 mongo_db 를 주입한다 (메인 루프 get_mongo() 금지).
+    try:
+        from bson import ObjectId as _OID
+        from .fatigue_service import on_generation_completed
+
+        _gen_doc = await mongo_db.generations.find_one(
+            {"_id": _OID(generation_id)}, {"user_id": 1}
+        )
+        _gen_user_id = (_gen_doc or {}).get("user_id")
+        if _gen_user_id:
+            await on_generation_completed(_gen_user_id, db=mongo_db)
+            logger.info(
+                "[fatigue] completion hook ok gen_id=%s user=%s",
+                generation_id, _gen_user_id[:8],
+            )
+    except Exception as _ftg_exc:
+        logger.warning(
+            "[fatigue] completion hook failed gen_id=%s: %s", generation_id, _ftg_exc
+        )
+
+    # v44 — Background beat extraction (same loop, await to keep wrapper-loop
+    # alive until completion). The user-facing generation status is already
+    # "completed" so a polling client can use the audio URL immediately;
+    # `beats_status` is a separate field tracked via /generate/{id}/beats.
+    # We pass the loop-local motor `mongo_db` through so updates land in DB.
+    try:
+        from .beat_extraction import detect_beats_for_generation_with_db
+
+        await detect_beats_for_generation_with_db(generation_id, mongo_db)
+    except Exception as _be:
+        logger.warning(
+            "Suno: post-completion beat extraction failed for %s: %s",
+            generation_id, _be,
+        )
+
+    return {
+        "result_audio_url": object_name,
+        "output_files": output_files,
+        "variants": variants,
+    }
+
+
+async def _update_progress(mongo_db, generation_id: str, progress: int, status: str, extra: dict = None):
+    """Update generation progress in MongoDB."""
+    from bson import ObjectId
+    update = {
+        "progress": progress,
+        "status": status,
+        "updated_at": datetime.utcnow(),
+    }
+    if extra:
+        update.update(extra)
+    await mongo_db.generations.update_one(
+        {"_id": ObjectId(generation_id)},
+        {"$set": update},
+    )
+
+
+# v76: Suno V5_5 voice cloning endpoints (separate from old voice_persona flow)
+SUNO_VOICE_VALIDATE_URL = "{base}/api/v1/voice/validate"
+SUNO_VOICE_VALIDATE_INFO_URL = "{base}/api/v1/voice/validate-info"  # v76.2: validate phrase 폴링용
+SUNO_VOICE_REGENERATE_URL = "{base}/api/v1/voice/regenerate"
+SUNO_VOICE_GENERATE_URL = "{base}/api/v1/voice/generate"
+SUNO_VOICE_RECORD_INFO_URL = "{base}/api/v1/voice/record-info"
+SUNO_VOICE_CHECK_URL = "{base}/api/v1/voice/check-voice"
