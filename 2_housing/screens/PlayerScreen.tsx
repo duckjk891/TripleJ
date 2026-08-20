@@ -26,7 +26,6 @@ import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import ReportModal from '../components/ReportModal';
-import TrackShareDownloadSheet from '../components/TrackShareDownloadSheet';
 import { useArtistStore } from '../stores/artistStore';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
@@ -148,7 +147,6 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [showQueue, setShowQueue] = useState(!!route.params?.openQueue); // 미니플레이어에서 재생목록 바로열기
   const [showGuestNotice, setShowGuestNotice] = useState(false); // 비회원 담기 안내 팝업
   const [showReport, setShowReport] = useState(false);           // 신고 모달
-  const [showShare, setShowShare] = useState(false);             // 공유 선택지 시트
   const user = useAuthStore((s) => s.user);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -163,6 +161,14 @@ export default function PlayerScreen({ route, navigation }: any) {
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
   const [showDetails, setShowDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit'>('lyrics'); // v3.49: 상세정보 탭 제거
+  // v3.55: 착장 가로 레일 화살표 내비 — 스크롤 위치/크기를 추적해 좌우 화살표 노출 판단
+  const outfitScrollRef = useRef<ScrollView>(null);
+  const [outfitScroll, setOutfitScroll] = useState({ x: 0, contentW: 0, visibleW: 0 });
+  const outfitScrollBy = (dir: 1 | -1) => {
+    const next = Math.max(0, outfitScroll.x + dir * 190); // 카드(168)+간격 약 1장씩
+    if (__DEV__) console.info('[PlayerScreen] 착장 레일 이동', { dir, next });
+    outfitScrollRef.current?.scrollTo({ x: next, animated: true });
+  };
   const [fullTrack, setFullTrack] = useState<TrackData | null>(null);
   const [genDetail, setGenDetail] = useState<any | null>(null); // 곡 생성 설정(내 곡만 조회 가능)
   const [ads, setAds] = useState<AdItem[]>([]);
@@ -772,11 +778,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>재생목록</AppText>
         </TouchableOpacity>
 
-        {/* 공유 — 쇼츠/릴스/틱톡/링크 복사 */}
-        <TouchableOpacity style={styles.actionBtn} onPress={() => setShowShare(true)} accessibilityLabel="공유">
-          <Feather name="share-2" size={22} color={colors.text.muted} />
-          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>공유</AppText>
-        </TouchableOpacity>
+        {/* v3.55: 공유 버튼 제거 — 공유는 마이뮤직(내 곡)에서만 제공한다는 정책 */}
 
         {/* 신고 — 본인 곡에는 표시하지 않는다 */}
         {!isMyTrack ? (
@@ -797,14 +799,6 @@ export default function PlayerScreen({ route, navigation }: any) {
           addCurrentToQueue();
         }}
         onClose={() => setShowGuestNotice(false)}
-      />
-
-      {/* 공유 선택지 (쇼츠/릴스/틱톡/링크 복사) */}
-      <TrackShareDownloadSheet
-        visible={showShare}
-        mode="share"
-        track={track ? { id: track.id, title: track.title } : null}
-        onClose={() => setShowShare(false)}
       />
 
       {/* 콘텐츠 신고 (본인 곡 제외) */}
@@ -943,11 +937,22 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <View>
                     <AppText style={styles.detailSectionTitle}>이 곡 아티스트의 착장</AppText>
                     <AppText style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다. 옆으로 넘겨보세요.</AppText>
-                    {/* v3.54: 세로 랩 그리드 → 가로 스크롤 카드(제품 사진 확대) — 아이템이 많아도 세로 스크롤 부담 없음 */}
+                    {/* v3.54: 세로 랩 그리드 → 가로 스크롤 카드(제품 사진 확대) — 아이템이 많아도 세로 스크롤 부담 없음
+                        v3.55: 좌우 화살표 버튼 — 넘길 수 있다는 걸 명확히 */}
+                    <View>
                     <ScrollView
+                      ref={outfitScrollRef}
                       horizontal
                       showsHorizontalScrollIndicator={false}
                       contentContainerStyle={{ gap: 12, paddingVertical: 10, paddingRight: 8 }}
+                      scrollEventThrottle={16}
+                      onScroll={(e) => setOutfitScroll({
+                        x: e.nativeEvent.contentOffset.x,
+                        contentW: e.nativeEvent.contentSize.width,
+                        visibleW: e.nativeEvent.layoutMeasurement.width,
+                      })}
+                      onContentSizeChange={(w) => setOutfitScroll((s) => ({ ...s, contentW: w }))}
+                      onLayout={(e) => { const w = e.nativeEvent.layout.width; setOutfitScroll((s) => ({ ...s, visibleW: w })); }}
                     >
                       {track.cover_character.used_items.map((item, i) => {
                         const img = item.image_object_name
@@ -984,6 +989,18 @@ export default function PlayerScreen({ route, navigation }: any) {
                         );
                       })}
                     </ScrollView>
+                    {/* 좌우 화살표 — 시작/끝에서는 해당 방향 숨김 */}
+                    {outfitScroll.x > 5 ? (
+                      <TouchableOpacity style={[styles.outfitArrow, styles.outfitArrowLeft]} onPress={() => outfitScrollBy(-1)} accessibilityLabel="착장 이전">
+                        <Feather name="chevron-left" size={22} color={colors.text.primary} />
+                      </TouchableOpacity>
+                    ) : null}
+                    {outfitScroll.contentW > outfitScroll.visibleW && outfitScroll.x < outfitScroll.contentW - outfitScroll.visibleW - 5 ? (
+                      <TouchableOpacity style={[styles.outfitArrow, styles.outfitArrowRight]} onPress={() => outfitScrollBy(1)} accessibilityLabel="착장 다음">
+                        <Feather name="chevron-right" size={22} color={colors.text.primary} />
+                      </TouchableOpacity>
+                    ) : null}
+                    </View>
                   </View>
                 ) : fullTrack === null ? (
                   <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
@@ -1343,6 +1360,16 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
   },
   outfitItemImg: { width: 150, height: 150, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  // v3.55: 레일 좌우 화살표 — 이미지 세로 중앙 부근에 반투명 원형 버튼
+  outfitArrow: {
+    position: 'absolute', top: 78,
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(14, 11, 30, 0.72)',
+    borderWidth: 1, borderColor: colors.border.subtle,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  outfitArrowLeft: { left: 2 },
+  outfitArrowRight: { right: 2 },
   outfitItemImgPh: { justifyContent: 'center', alignItems: 'center' },
   outfitItemCat: { fontSize: 10, color: colors.accent.primary, fontWeight: '700', marginTop: 6, letterSpacing: 0.3 },
   outfitItemName: { fontSize: 11, color: colors.text.primary, textAlign: 'center', marginTop: 2, marginBottom: 8 },

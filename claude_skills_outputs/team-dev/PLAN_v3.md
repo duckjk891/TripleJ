@@ -7,6 +7,22 @@
 
 ---
 
+## v3.55 — 2026-08-20 — 착장 레일 화살표 + Now playing 공유 제거
+
+### 요청
+"화살표 버튼이 있어야 넘기는 줄 안다 + Now playing에 공유 금지(공유는 마이뮤직 내 곡 전용)."
+
+### Plan verification findings
+- 공유 시트(TrackShareDownloadSheet) 사용처 2곳: PlayerScreen(제거 대상), MyMusicScreen(⋮ 메뉴 — 내 곡 전용, 유지). 마이뮤직에 링크 공유(Share.share)도 기존재 → Player 쪽만 걷어내면 정책 충족.
+- 착장 레일(v3.54)은 스크롤 힌트가 잘린 카드뿐 — 화살표 내비 부재.
+
+### 변경
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| PlayerScreen.tsx | 공유 버튼·showShare 상태·TrackShareDownloadSheet 사용/임포트 제거(액션 4개: 좋아요·담기·재생목록·신고) / 착장 레일에 좌우 화살표(스크롤 위치 추적, 시작·끝에서 해당 방향 숨김, 190px씩 이동) | [PlayerScreen] |
+
+---
+
 ## v3.54 — 2026-08-20 — 착장 탭 가로 스크롤 + 제품 사진 확대
 
 ### 요청
