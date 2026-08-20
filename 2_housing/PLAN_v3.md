@@ -7,6 +7,22 @@
 
 ---
 
+## v3.53 — 2026-08-20 — Now playing 액션 아이콘 잘림 + 시트 가로 오버플로 픽스
+
+### 요청
+"좋아요, 담기, 재생목록 순서로 아이콘 원복 + 하단 토글의 프롬프트·착장이 화면 가로를 넘지 않게."
+
+### Plan verification findings
+- 코드상 순서는 이미 좋아요→담기→재생목록→공유→신고였으나, **actionsRow의 고정 gap 48 + 버튼 minWidth 60×5 = 492px > 화면 390px** → 행이 중앙정렬로 넘치면서 '좋아요'가 좌측 화면 밖으로 잘림(사용자에겐 담기부터 보여 순서가 바뀐 것처럼 인지). 이 오버플로가 페이지 scrollWidth 441을 만들어 시트의 프롬프트·착장도 "가로 스크롤"처럼 보였음 — 단일 원인.
+- Playwright 실측: 오버플로 요소 4건, scrollW 441/innerW 390.
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| PlayerScreen.tsx | actionsRow: 고정 gap → width 100% + space-evenly, actionBtn flex:1(minWidth 제거) / promptChip maxWidth 100%·값 flexShrink(긴 값 방어) |
+
+---
+
 ## v3.52 — 2026-08-20 — 피드 2D 게임창 2단계: 픽셀 폰트 라이브러리 도입
 
 ### 요청

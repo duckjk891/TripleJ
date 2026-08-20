@@ -5,6 +5,15 @@
 
 ---
 
+## v3.53 — 2026-08-20 — 액션 행·시트 오버플로
+
+- [unit] tsc 0.
+- [e2e] 액션 아이콘 좌→우 실측 순서 = 좋아요·담기·재생목록·공유·신고, '좋아요' x≥0(잘림 해소) — PASS (`/tmp/v353_player.png`).
+- [e2e] 시트 프롬프트 탭 연 상태에서 화면 가로 오버플로 요소 0건, scrollWidth 390 = viewport 390 — PASS (`/tmp/v353_prompt.png`).
+- [regression] 재생/시트 탭 전환/픽셀 피드 무영향(스타일만 변경).
+
+---
+
 ## v3.52 — 2026-08-20 — 픽셀 폰트(Neo둥근모) 적용
 
 - [unit] tsc 0. neodgm.ttf 유효 TrueType 확인(651KB).

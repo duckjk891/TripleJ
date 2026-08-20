@@ -1181,10 +1181,14 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.text.primary,
     marginLeft: 4,
   },
+  // v3.53: 고정 gap 48로 5버튼(492px)이 화면(390px)을 넘어 '좋아요'가 좌측으로 잘렸던 문제 —
+  // 화면 폭 기준 균등 배치로 변경(어떤 기기 폭에서도 안 넘침)
   actionsRow: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 48,
+    justifyContent: 'space-evenly',
+    alignSelf: 'stretch',
+    width: '100%',
+    paddingHorizontal: 8,
     marginTop: 20,
     marginBottom: 8,
   },
@@ -1204,7 +1208,8 @@ const styles = StyleSheet.create({
   actionBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 60,
+    flex: 1,
+    minWidth: 0, // 폭 균등 분할 — 고정 minWidth가 오버플로 원인이었음
   },
   actionIcon: {
     fontSize: 24,
@@ -1374,6 +1379,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     minWidth: 80,
+    maxWidth: '100%', // v3.53: 긴 값이 있어도 시트 폭을 넘지 않게
   },
   promptChipLabel: {
     fontSize: 10,
@@ -1384,6 +1390,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text.primary,
     fontWeight: '600',
+    flexShrink: 1, // 칩 안에서 줄바꿈 허용
   },
   adsSection: {
     width: '100%',
