@@ -7,6 +7,27 @@
 
 ---
 
+## v3.52 — 2026-08-20 — 피드 2D 게임창 2단계: 픽셀 폰트 라이브러리 도입
+
+### 요청
+"피드페이지 2D형태 수정, 라이브러리부터 다시 작업" — v3.51 특이사항으로 남긴 픽셀 폰트 적용. 백엔드는 수정 금지(AWS 이전 대비 동결).
+
+### Plan verification findings
+- Expo SDK 54, expo-font 미설치, 앱에 커스텀 폰트 로딩 없음(시스템 폰트만).
+- @expo-google-fonts에 Neo둥근모 패키지 부재(E404) → **TTF 에셋 번들 방식** 채택: neodgm.ttf(Neo둥근모, 원저작 public domain + MIT 배포) GitHub 공식 릴리스에서 다운로드 → `assets/fonts/neodgm.ttf`(651KB).
+- 적용 범위는 피드 카드 한정(v3.51 게임창 크롬과 세트) — 전앱 폰트 교체 아님. AppText는 style 후순위 병합이라 fontFamily 오버라이드 가능.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| assets/fonts/neodgm.ttf | 신규 에셋 | - |
+| package.json | expo-font 설치 | - |
+| App.tsx | useFonts로 NeoDGM 로드(비차단 — 로드 전엔 시스템 폰트 폴백) | [App] |
+| components/feed/FeedCard.tsx | PIXEL_FONT 상수 + PText 래퍼, 카드 내 전 텍스트·댓글 입력창에 적용 | [FeedCard] |
+| screens/FeedScreen.tsx | 본문 블록·트랙 칩 텍스트에 fontFamily 적용 | [FeedScreen] |
+
+---
+
 ## v3.51 — 2026-08-19 — 피드 카드 → 2D 게임창(픽셀 윈도우) 스타일
 
 ### 요청 원문

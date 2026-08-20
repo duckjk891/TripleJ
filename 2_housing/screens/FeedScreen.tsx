@@ -11,7 +11,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
-import FeedCard, { feedPixel } from '../components/feed/FeedCard';
+import FeedCard, { feedPixel, PIXEL_FONT } from '../components/feed/FeedCard';
 
 interface FeedTrack {
   id: string;
@@ -111,8 +111,8 @@ export default function FeedScreen() {
           <View style={styles.playBadge}><Feather name="play" size={14} color="#FFFFFF" /></View>
         </View>
         <View style={styles.trackMeta}>
-          <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedPixel.text }}>{track.title || '제목 없음'}</AppText>
-          <AppText variant="caption" numberOfLines={1} style={{ color: feedPixel.muted }}>
+          <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedPixel.text, fontFamily: PIXEL_FONT }}>{track.title || '제목 없음'}</AppText>
+          <AppText variant="caption" numberOfLines={1} style={{ color: feedPixel.muted, fontFamily: PIXEL_FONT }}>
             {track.artist_name || '아티스트'}{fmtDuration(track.duration_sec) ? ` · ${fmtDuration(track.duration_sec)}` : ''}
           </AppText>
         </View>
@@ -144,7 +144,7 @@ export default function FeedScreen() {
         renderBlocks={() => (
           <View>
             {textBlocks.map((b, i) => (
-              <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedPixel.sub }]}>{b.text}</AppText>
+              <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedPixel.sub, fontFamily: PIXEL_FONT }]}>{b.text}</AppText>
             ))}
             {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
           </View>

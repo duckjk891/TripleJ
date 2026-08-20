@@ -68,6 +68,7 @@ import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import UserChannelScreen from './screens/UserChannelScreen';
 import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
+import { useFonts } from 'expo-font';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -382,6 +383,8 @@ function useOAuthCallback() {
 
 export default function App() {
   useOAuthCallback();
+  // v3.52: 피드 게임창용 픽셀 폰트(Neo둥근모) — 비차단 로드(로드 전엔 시스템 폰트 폴백)
+  useFonts({ NeoDGM: require('./assets/fonts/neodgm.ttf') });
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
   useEffect(() => { restoreSession(); }, []);
   return (

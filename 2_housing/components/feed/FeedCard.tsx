@@ -28,6 +28,12 @@ export const feedPixel = {
   field: '#1A1630',                 // 입력창·칩(인셋)
 };
 
+// v3.52: 픽셀 폰트(Neo둥근모, App.tsx에서 'NeoDGM'으로 로드) — 게임창 콘셉트의 절반은 폰트.
+// 피드 카드 한정 적용(전앱 폰트 교체 아님). 로드 전엔 시스템 폰트로 자연 폴백.
+export const PIXEL_FONT = 'NeoDGM';
+// FeedCard 내부 전용 AppText 래퍼 — 픽셀 폰트를 기본 적용(style로 색 등 추가 오버라이드 가능)
+const PText = ({ style, ...rest }: any) => <AppText {...rest} style={[{ fontFamily: PIXEL_FONT }, style]} />;
+
 export interface FeedComment {
   id: string;
   author_id: string;
@@ -256,8 +262,8 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
         <TouchableOpacity style={styles.headerMain} onPress={onPressAuthor} activeOpacity={0.7}>
           <Avatar name={feed.author_nickname || '?'} uri={profileUri} size={36} />
           <View style={{ marginLeft: spacing.sm, flex: 1 }}>
-            <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedPixel.text }}>{feed.author_nickname || '알 수 없음'}</AppText>
-            <AppText variant="caption" style={{ color: feedPixel.muted }}>{fmtTime(feed.created_at)}</AppText>
+            <PText variant="bodyStrong" numberOfLines={1} style={{ color: feedPixel.text }}>{feed.author_nickname || '알 수 없음'}</PText>
+            <PText variant="caption" style={{ color: feedPixel.muted }}>{fmtTime(feed.created_at)}</PText>
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={openMenu} style={styles.moreBtn} accessibilityLabel="피드 더보기">
@@ -271,7 +277,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           {isMine ? (
             <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); deleteFeed(); }}>
               <Feather name="trash-2" size={16} color={colors.status.error} />
-              <AppText variant="footnote" style={{ color: colors.status.error }}>삭제</AppText>
+              <PText variant="footnote" style={{ color: colors.status.error }}>삭제</PText>
             </TouchableOpacity>
           ) : (
             <>
@@ -279,14 +285,14 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
                 <TouchableOpacity style={styles.menuItem} disabled={followBusy || isFollowing === null} onPress={toggleFollow}>
                   <Feather name={isFollowing ? 'user-check' : 'user-plus'} size={16}
                     color={isFollowing ? colors.accent.primary : feedPixel.sub} />
-                  <AppText variant="footnote" style={{ color: isFollowing ? colors.accent.primary : feedPixel.sub }}>
+                  <PText variant="footnote" style={{ color: isFollowing ? colors.accent.primary : feedPixel.sub }}>
                     {isFollowing === null ? '확인 중...' : isFollowing ? '팔로우 중' : '팔로우'}
-                  </AppText>
+                  </PText>
                 </TouchableOpacity>
               ) : null}
               <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuOpen(false); setReportOpen(true); }}>
                 <Feather name="flag" size={16} color={feedPixel.sub} />
-                <AppText variant="footnote" style={{ color: feedPixel.sub }}>신고</AppText>
+                <PText variant="footnote" style={{ color: feedPixel.sub }}>신고</PText>
               </TouchableOpacity>
             </>
           )}
@@ -294,18 +300,18 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
       ) : null}
 
       {/* 제목 + 본문 블록 */}
-      {feed.title ? <AppText variant="bodyStrong" style={[styles.title, { color: feedPixel.text }]}>{feed.title}</AppText> : null}
+      {feed.title ? <PText variant="bodyStrong" style={[styles.title, { color: feedPixel.text }]}>{feed.title}</PText> : null}
       {renderBlocks()}
 
       {/* 액션바 — ♥ / 💬 / 공유 */}
       <View style={styles.actionBar}>
         <TouchableOpacity style={styles.action} onPress={toggleLike} accessibilityLabel="좋아요">
           <Feather name="heart" size={20} color={liked ? colors.accent.primary : feedPixel.sub} />
-          <AppText variant="footnote" style={{ color: liked ? colors.accent.primary : feedPixel.sub }}>{likeCount}</AppText>
+          <PText variant="footnote" style={{ color: liked ? colors.accent.primary : feedPixel.sub }}>{likeCount}</PText>
         </TouchableOpacity>
         <TouchableOpacity style={styles.action} onPress={openComments} accessibilityLabel="댓글">
           <Feather name="message-circle" size={20} color={commentsOpen ? colors.accent.primary : feedPixel.sub} />
-          <AppText variant="footnote" style={{ color: commentsOpen ? colors.accent.primary : feedPixel.sub }}>{commentCount}</AppText>
+          <PText variant="footnote" style={{ color: commentsOpen ? colors.accent.primary : feedPixel.sub }}>{commentCount}</PText>
         </TouchableOpacity>
         <TouchableOpacity style={styles.action} onPress={shareFeed} accessibilityLabel="피드 공유">
           <Feather name="share-2" size={19} color={feedPixel.sub} />
@@ -318,7 +324,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           {commentsLoading ? (
             <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: spacing.md }} />
           ) : comments.length === 0 ? (
-            <AppText variant="footnote" style={{ marginVertical: spacing.sm, color: feedPixel.muted }}>첫 댓글을 남겨보세요.</AppText>
+            <PText variant="footnote" style={{ marginVertical: spacing.sm, color: feedPixel.muted }}>첫 댓글을 남겨보세요.</PText>
           ) : (
             thread.map(({ c, body, replies }) => {
               const renderOne = (cc: FeedComment, cbody: string, nested: boolean) => {
@@ -328,17 +334,17 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
                     <Avatar name={cc.author_nickname || '?'} size={nested ? 22 : 26} />
                     <View style={{ flex: 1, marginLeft: spacing.sm }}>
                       <View style={styles.commentHead}>
-                        <AppText variant="caption" style={{ fontWeight: '600', color: feedPixel.text }}>{cc.author_nickname}</AppText>
-                        <AppText variant="caption" style={{ color: feedPixel.muted }}> · {fmtTime(cc.created_at)}</AppText>
+                        <PText variant="caption" style={{ fontWeight: '600', color: feedPixel.text }}>{cc.author_nickname}</PText>
+                        <PText variant="caption" style={{ color: feedPixel.muted }}> · {fmtTime(cc.created_at)}</PText>
                       </View>
-                      <AppText variant="footnote" style={{ color: feedPixel.sub }}>{cbody}</AppText>
+                      <PText variant="footnote" style={{ color: feedPixel.sub }}>{cbody}</PText>
                       <View style={styles.commentActions}>
                         <TouchableOpacity onPress={() => replyTo(cc)} accessibilityLabel="답글">
-                          <AppText variant="caption" style={{ color: feedPixel.muted }}>답글</AppText>
+                          <PText variant="caption" style={{ color: feedPixel.muted }}>답글</PText>
                         </TouchableOpacity>
                         {!canDelete && user ? (
                           <TouchableOpacity onPress={() => setCommentReport(cc.id)} accessibilityLabel="댓글 신고">
-                            <AppText variant="caption" style={{ color: feedPixel.muted }}>신고</AppText>
+                            <PText variant="caption" style={{ color: feedPixel.muted }}>신고</PText>
                           </TouchableOpacity>
                         ) : null}
                       </View>
@@ -363,9 +369,9 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           {/* 답글 대상 배너 */}
           {replyTarget ? (
             <View style={styles.replyBanner}>
-              <AppText variant="caption" style={{ flex: 1, color: feedPixel.sub }}>
+              <PText variant="caption" style={{ flex: 1, color: feedPixel.sub }}>
                 {replyTarget.author_nickname}님에게 답글 남기는 중
-              </AppText>
+              </PText>
               <TouchableOpacity onPress={() => setReplyTarget(null)} accessibilityLabel="답글 취소">
                 <Feather name="x" size={14} color={feedPixel.muted} />
               </TouchableOpacity>
@@ -385,11 +391,11 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
                 multiline
               />
               <TouchableOpacity onPress={submitComment} disabled={posting || !commentText.trim()} accessibilityLabel="댓글 등록">
-                <AppText variant="footnote" style={{ color: commentText.trim() ? colors.accent.primary : feedPixel.muted }}>{posting ? '...' : '등록'}</AppText>
+                <PText variant="footnote" style={{ color: commentText.trim() ? colors.accent.primary : feedPixel.muted }}>{posting ? '...' : '등록'}</PText>
               </TouchableOpacity>
             </View>
           ) : (
-            <AppText variant="caption" style={{ marginTop: spacing.sm, color: feedPixel.muted }}>로그인 후 댓글을 남길 수 있습니다.</AppText>
+            <PText variant="caption" style={{ marginTop: spacing.sm, color: feedPixel.muted }}>로그인 후 댓글을 남길 수 있습니다.</PText>
           )}
         </View>
       ) : null}
@@ -457,5 +463,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     borderWidth: 1, borderColor: feedPixel.line,
   },
-  commentInput: { flex: 1, color: feedPixel.text, maxHeight: 90, padding: 0 },
+  commentInput: { flex: 1, color: feedPixel.text, maxHeight: 90, padding: 0, fontFamily: PIXEL_FONT },
 });
