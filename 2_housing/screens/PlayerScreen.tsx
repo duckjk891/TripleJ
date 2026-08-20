@@ -942,8 +942,13 @@ export default function PlayerScreen({ route, navigation }: any) {
                 track?.cover_character?.used_items && track.cover_character.used_items.length > 0 ? (
                   <View>
                     <AppText style={styles.detailSectionTitle}>이 곡 아티스트의 착장</AppText>
-                    <AppText style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다.</AppText>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+                    <AppText style={styles.detailHelperText}>곡 발매 시점에 아티스트가 입었던 의상입니다. 옆으로 넘겨보세요.</AppText>
+                    {/* v3.54: 세로 랩 그리드 → 가로 스크롤 카드(제품 사진 확대) — 아이템이 많아도 세로 스크롤 부담 없음 */}
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ gap: 12, paddingVertical: 10, paddingRight: 8 }}
+                    >
                       {track.cover_character.used_items.map((item, i) => {
                         const img = item.image_object_name
                           ? `${BACKEND_BASE_URL}/api/character/preview/${item.image_object_name}`
@@ -978,7 +983,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                           </View>
                         );
                       })}
-                    </View>
+                    </ScrollView>
                   </View>
                 ) : fullTrack === null ? (
                   <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
@@ -1330,13 +1335,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 18,
   },
+  // v3.54: 가로 스크롤 카드 — 제품 사진 확대(88→150)
   outfitItem: {
-    width: 108, alignItems: 'center',
+    width: 168, alignItems: 'center',
     padding: 8, borderRadius: 10,
     backgroundColor: colors.bg.surface1,
     borderWidth: 1, borderColor: colors.border.subtle,
   },
-  outfitItemImg: { width: 88, height: 88, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  outfitItemImg: { width: 150, height: 150, borderRadius: 8, backgroundColor: colors.bg.surface2 },
   outfitItemImgPh: { justifyContent: 'center', alignItems: 'center' },
   outfitItemCat: { fontSize: 10, color: colors.accent.primary, fontWeight: '700', marginTop: 6, letterSpacing: 0.3 },
   outfitItemName: { fontSize: 11, color: colors.text.primary, textAlign: 'center', marginTop: 2, marginBottom: 8 },
