@@ -82,17 +82,9 @@ services:
 
     # 8GB RAM 호스트에서 DB 5종과 동거하는 경우의 상한 예시.
     # v198 에서는 강제하지 않는다 — 배치(같은 호스트냐 RDS 분리냐)가 정해진 뒤에
-    # 실측으로 정할 값이다. demucs 추론 중 피크를 반드시 측정하고 넣을 것.
+    # 실측으로 정할 값이다. v199 에서 demucs/torch 가 빠졌으므로 이제 피크는
+    # MV 파이프라인(librosa/madmom 비트 분석 + ffmpeg)에서 측정한다.
     # deploy:
     #   resources:
     #     limits:
     #       memory: 4g
-
-    # 에어갭 VPC 라면 htdemucs 가중치 캐시를 미리 채워 마운트한다.
-    # 그렇지 않으면 첫 /api/vocal-repair 요청이 외부에서 체크포인트를 받는다.
-    # environment 에 TORCH_HOME=/var/cache/torch 를 함께 넣어야 한다.
-    # volumes:
-    #   - torch_cache:/var/cache/torch
-
-# volumes:
-#   torch_cache:

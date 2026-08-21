@@ -1,5 +1,5 @@
 # =============================================================================
-# MAIDOL backend (backend_9006) application image — v198, 2026-08-21
+# MAIDOL backend (backend_9006) application image — v199, 2026-08-21
 # =============================================================================
 # WHAT
 #   Two-stage image for the FastAPI backend that serves port 9006. Stage 1
@@ -9,11 +9,11 @@
 #   invalidate the expensive dependency layers.
 #
 # HOW TO BUILD  (build context is backend_9006/)
-#   cd backend_9006 && docker build -t maidol-backend:v198 .
+#   cd backend_9006 && docker build -t maidol-backend:v199 .
 #
 # HOW TO RUN    (secrets are injected at runtime — never baked into the image)
 #   docker run --rm -p 9006:9006 --env-file /etc/maidol/backend.env \
-#     maidol-backend:v198
+#     maidol-backend:v199
 #
 # WHY python:3.11-slim-bookworm AND NOT ubuntu:24.04 (deliberate deviation)
 #   The migration request recommended Ubuntu 24.04. We deviate for three
@@ -34,15 +34,13 @@
 #     3. The container base OS is independent of the EC2 host OS — only the
 #        kernel is shared. Target is t3.large, x86_64, glibc; identical here.
 #
-# NOTE — htdemucs model weights are NOT baked in.
-#   demucs_service.py calls get_model("htdemucs"), which loads from the torch
-#   hub cache. The cache is empty in this image, so the FIRST /api/vocal-repair
-#   request downloads the checkpoint from dl.fbaipublicfiles.com. That is fine
-#   on a VPC with egress; in an air-gapped VPC, mount a pre-populated cache and
-#   point $TORCH_HOME at it, e.g.
-#     -e TORCH_HOME=/var/cache/torch -v maidol-torch-cache:/var/cache/torch
-#   Baking the weights in was rejected: +300-400MB and it would make the build
-#   depend on an external download, defeating build reproducibility.
+# NOTE — v199: no torch in this image at all.
+#   Until v198 the image carried torch/torchaudio because demucs pulled them in
+#   (and htdemucs weights were fetched at first /api/vocal-repair request). The
+#   「내 목소리로 변환」(Kits.AI) / 「보컬 다듬기」 / Demucs features were removed
+#   from the code, so torch, the +cpu wheel index and constraints-cpu.txt are all
+#   gone (~880MB). librosa/madmom stay — the MV beat analysis needs them and they
+#   do not depend on torch.
 #
 # NOTE — logging differs from run.sh on purpose.
 #   run.sh pipes uvicorn through awk|tee into logs/server.log. In a container
@@ -78,7 +76,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Dependency manifests only — copied BEFORE the application code so that
 # editing a route does not invalidate the (very expensive) install layers.
-COPY requirements.lock constraints-cpu.txt requirements.txt ./
+COPY requirements.lock requirements.txt ./
 
 # --- madmom, in three deliberately separate layers ---------------------------
 # (1) Build prerequisites first. madmom's setup.py does `import numpy` and
@@ -100,10 +98,9 @@ RUN pip install "Cython==3.2.5" "numpy==2.4.6"
 RUN pip install --no-build-isolation \
     "madmom @ git+https://github.com/CPJKU/madmom.git@27f032e8947204902c675e5e341a3faf5dc86dae"
 
-# (3) Everything else, fully pinned. The lock file carries
-#     `--extra-index-url https://download.pytorch.org/whl/cpu` at the top and
-#     pins torch/torchaudio to +cpu builds, so no CUDA runtime enters the image
-#     (~3.4GB saved). madmom is already satisfied by step (2).
+# (3) Everything else, fully pinned. v199: the lock no longer contains torch or
+#     the PyTorch wheel index, so nothing here can drag a CUDA runtime in.
+#     madmom is already satisfied by step (2).
 RUN pip install -r requirements.lock
 
 # -----------------------------------------------------------------------------
@@ -154,16 +151,17 @@ COPY app/ ./app/
 COPY infra/ ./infra/
 COPY scripts/ ./scripts/
 COPY seed_item_store.py ./
-COPY requirements.txt requirements.lock constraints-cpu.txt ./
+COPY requirements.txt requirements.lock ./
 
 # --- Build-time self-check ---------------------------------------------------
 # If any of these fails, no image is produced. This is the defence line for the
 # three silent-degradation risks: a missing ffmpeg filter (rubberband/ass have
 # NO fallback in the code — they hard-fail at request time), a missing Korean
-# font (renders blank, no error), and a CUDA torch sneaking back in.
+# font (renders blank, no error), and torch sneaking back into the image.
 #
-# The final assert is the CPU-only regression guard: if someone reverts the
-# lock file to plain PyPI torch wheels, this build breaks loudly.
+# v199: torch is no longer installed, so the old `assert '+cpu' in
+# torch.__version__` guard is inverted — the build now fails loudly if anything
+# reintroduces torch (i.e. re-adds demucs or a torch-dependent package).
 RUN set -eux; \
     command -v ffmpeg; \
     command -v ffprobe; \
@@ -172,7 +170,8 @@ RUN set -eux; \
     ffmpeg -hide_banner -encoders | grep -qw libmp3lame; \
     ffmpeg -hide_banner -encoders | grep -qw libx264; \
     fc-list | grep -qi nanum; \
-    python -c "import madmom, torch, librosa, soundfile, numpy; print('madmom', madmom.__version__); print('torch', torch.__version__); print('numpy', numpy.__version__); assert '+cpu' in torch.__version__, 'CUDA torch leaked into image'"
+    python -c "import madmom, librosa, soundfile, numpy; print('madmom', madmom.__version__); print('librosa', librosa.__version__); print('numpy', numpy.__version__)"; \
+    python -c "import importlib.util, sys; sys.exit(0) if importlib.util.find_spec('torch') is None else sys.exit('torch leaked back into image (v199 removed it)')"
 
 # --- Non-root ----------------------------------------------------------------
 # Nothing is written to the image filesystem at runtime: every temporary file

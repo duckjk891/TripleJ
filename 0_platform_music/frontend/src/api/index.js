@@ -536,56 +536,6 @@ export const regenerateVoiceClonePhrase = (id) => API.post('/voice-clone/' + id 
 export const checkVoiceCloneAvailability = () => API.post('/voice-clone/check-availability');
 export const cleanupExpiredVoiceClones = () => API.post('/voice-clone/cleanup-expired');
 
-// Vocal Repair (Dolby.io)
-export const uploadVoiceForRepair = (formData) =>
-  API.post('/vocal-repair/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000,
-  });
-export const startVocalEnhance = (repairId, method = 'both') =>
-  API.post(`/vocal-repair/${repairId}/enhance`, { method });
-export const getVocalRepairStatus = (repairId) =>
-  API.get(`/vocal-repair/${repairId}/status`);
-export const vocalRepairOriginalStreamUrl = (repairId) =>
-  `${API.defaults.baseURL}/vocal-repair/${repairId}/original/stream`;
-export const vocalRepairEnhancedStreamUrl = (repairId, method) =>
-  `${API.defaults.baseURL}/vocal-repair/${repairId}/enhanced/stream?method=${method}`;
-export const vocalRepairOriginalDownloadUrl = (repairId) =>
-  `${API.defaults.baseURL}/vocal-repair/${repairId}/original/download`;
-export const vocalRepairEnhancedDownloadUrl = (repairId, method) =>
-  `${API.defaults.baseURL}/vocal-repair/${repairId}/enhanced/download?method=${method}`;
-export const getVocalRepairList = () => API.get('/vocal-repair/list');
-
-// Voice Conversion (Kits.AI)
-export const startVoiceConvert = (generationId, data) =>
-  API.post(`/voice-convert/${generationId}`, data);
-export const getVoiceConvertStatus = (generationId) =>
-  API.get(`/voice-convert/${generationId}/status`);
-export const getKitsVoiceModels = () => API.get('/kits/voice-models');
-export const voiceConvertStreamUrl = (generationId) => {
-  const token = localStorage.getItem('token');
-  return `${API.defaults.baseURL}/voice-convert/${generationId}/stream?token=${encodeURIComponent(token)}`;
-};
-export const voiceConvertDownloadUrl = (generationId) => {
-  const token = localStorage.getItem('token');
-  return `${API.defaults.baseURL}/voice-convert/${generationId}/download?token=${encodeURIComponent(token)}`;
-};
-
-// Voice Conversion - MR Pitch Adjust & Merge
-export const streamConvertedVocal = (generationId) =>
-  `${API.defaults.baseURL}/voice-convert/${generationId}/converted-vocal/stream`;
-export const streamBacking = (generationId) =>
-  `${API.defaults.baseURL}/voice-convert/${generationId}/backing/stream`;
-export const mergeVoiceConversion = (generationId, data) =>
-  API.post(`/voice-convert/${generationId}/merge`, data);
-
-// Voice Conversion - MR Pitch Preview (server-side rubberband)
-export const previewMrPitched = (generationId, pitchShift) =>
-  API.post(`/voice-convert/${generationId}/preview-mr`,
-    { pitch_shift: pitchShift },
-    { responseType: 'arraybuffer', timeout: 30000 }
-  );
-
 // Wondera Test
 export const wonderaUploadVocal = (formData) =>
   API.post('/wondera/upload-vocal', formData, {
@@ -669,28 +619,6 @@ export const fetchAudioBuffer = (url) =>
 // Fetch a full URL as blob (for images/files already constructed via API helpers)
 export const fetchAsBlob = (fullUrl) =>
   axios.get(fullUrl, { responseType: 'blob' });
-
-// Fetch vocal repair streams
-export const fetchVocalRepairOriginal = (repairId) =>
-  API.get(`/vocal-repair/${repairId}/original/stream`, { responseType: 'arraybuffer' });
-
-export const fetchVocalRepairEnhanced = (repairId, method) =>
-  API.get(`/vocal-repair/${repairId}/enhanced/stream`, { params: { method }, responseType: 'arraybuffer' });
-
-// Fetch voice convert streams
-export const fetchConvertedVocal = (generationId, config = {}) =>
-  API.get(`/voice-convert/${generationId}/converted-vocal/stream`, { responseType: 'arraybuffer', ...config });
-
-export const fetchBacking = (generationId, config = {}) =>
-  API.get(`/voice-convert/${generationId}/backing/stream`, { responseType: 'arraybuffer', ...config });
-
-// Download vocal repair
-export const downloadVocalRepair = (repairId, type, method) => {
-  const endpoint = type === 'original'
-    ? `/vocal-repair/${repairId}/original/download`
-    : `/vocal-repair/${repairId}/enhanced/download`;
-  return API.get(endpoint, { params: method ? { method } : {}, responseType: 'blob' });
-};
 
 // Download voice persona
 export const downloadVoicePersona = (personaId, type) =>

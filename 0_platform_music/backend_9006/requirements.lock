@@ -1,5 +1,5 @@
 # =============================================================================
-# requirements.lock  — v198 (2026-08-21) / MAIDOL backend_9006
+# requirements.lock  — v199 (2026-08-21) / MAIDOL backend_9006
 # =============================================================================
 # 생성물입니다. 손으로 고치지 마세요. 최상위 선언은 requirements.txt 를 보세요.
 #
@@ -8,27 +8,32 @@
 #   목록입니다. Dockerfile 이 설치하는 것은 requirements.txt 가 아니라 이 파일이며,
 #   그래서 "지금 돌아가는 조합"이 언제 빌드해도 그대로 재현됩니다.
 #
+# v199 변경 — torch 계열 전면 제거:
+#   「내 목소리로 변환」(Kits.AI) · 「보컬 다듬기」 · Demucs 를 코드에서 삭제하면서
+#   torch 를 요구하는 것이 하나도 남지 않았다. 그래서 아래를 함께 걷어냈다.
+#     demucs, dora_search, julius, openunmix   (Demucs 본체와 그 전용 의존)
+#     lameenc, einops, treetable, submitit,
+#     retrying, omegaconf, antlr4-python3-runtime, cloudpickle
+#                                              (demucs/dora_search 전용 전이 의존)
+#     torch, torchaudio                        (요구자가 사라짐)
+#     sympy, mpmath, networkx, filelock, fsspec(torch 전용 전이 의존)
+#     --extra-index-url https://download.pytorch.org/whl/cpu
+#                                              (torch CPU 휠 전용 인덱스, 불필요)
+#   v198 의 constraints-cpu.txt 도 같은 이유로 삭제됐다.
+#
+#   librosa / madmom / numba / llvmlite / scipy / scikit-learn / pyloudnorm 등은
+#   그대로 남는다 — MV 비트 분석(audio_utils.py, beat_extraction.py, mv_pipeline.py)
+#   이 쓴다. torch 와 무관한 계열이다.
+#
 # 갱신 절차 (의존성을 바꾼 뒤에만):
 #   1) requirements.txt 를 먼저 수정하고 개발 venv 에 반영한다.
 #   2) cd backend_9006 && ./venv/bin/pip freeze > requirements.lock
-#   3) 최상단의 이 주석 블록과 아래 --extra-index-url 줄을 다시 넣는다.
-#   4) nvidia-* / triton / cuda-* 줄을 전부 지운다.
-#      (개발 venv 는 CUDA 링크 torch 를 쓰고 있어 freeze 하면 다시 딸려 나온다.)
-#   5) torch / torchaudio 를 `+cpu` 로컬 버전으로 바꾼다.
-#      예: torch==2.12.0  →  torch==2.12.0+cpu
-#   6) madmom 줄이 `@main` 이 아니라 커밋 해시인지 확인한다.
-#   7) docker build 로 자기검증 RUN 이 통과하는지 확인한다.
-#
-# CPU 전용인 이유:
-#   코드가 GPU 를 쓰지 않는다(demucs_service.py:92 가 device="cpu" 하드코딩,
-#   저장소 전체에서 .cuda() 사용 0건). 타깃 EC2 t3.large 에는 GPU 가 없다.
-#   기본 PyPI 휠은 CUDA 링크 빌드라 이미지에 약 3.4GB 의 CUDA 런타임이 딸려온다.
-#
-# --index-url 이 아니라 --extra-index-url 인 이유:
-#   PyTorch 인덱스에는 torch/torchaudio 등 몇 개뿐이라, 완전 대체하면 나머지
-#   패키지들을 찾지 못해 설치가 실패한다.
+#   3) 최상단의 이 주석 블록을 다시 넣는다.
+#   4) torch / torchaudio / demucs 계열이 다시 나타났다면 무엇이 끌고 왔는지
+#      먼저 밝힌다. v199 기준으로는 어떤 코드도 torch 를 import 하지 않는다.
+#   5) madmom 줄이 `@main` 이 아니라 커밋 해시인지 확인한다.
+#   6) docker build 로 자기검증 RUN 이 통과하는지 확인한다.
 # =============================================================================
---extra-index-url https://download.pytorch.org/whl/cpu
 
 aiohappyeyeballs==2.6.2
 aiohttp==3.13.5
@@ -36,7 +41,6 @@ aiosignal==1.4.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anthropic==0.105.2
-antlr4-python3-runtime==4.9.3
 anyio==4.13.0
 APScheduler==3.11.2
 argon2-cffi==25.1.0
@@ -51,22 +55,16 @@ certifi==2026.5.20
 cffi==2.0.0
 charset-normalizer==3.4.7
 click==8.4.1
-cloudpickle==3.1.2
 cryptography==48.0.0
 Cython==3.2.5
 decorator==5.3.1
-demucs==4.0.1
 distro==1.9.0
 dnspython==2.8.0
 docstring_parser==0.18.0
-dora_search==0.1.12
-einops==0.8.2
 elastic-transport==8.17.1
 elasticsearch==8.19.3
 fastapi==0.136.3
-filelock==3.29.0
 frozenlist==1.8.0
-fsspec==2026.4.0
 greenlet==3.5.1
 h11==0.16.0
 hiredis==3.3.1
@@ -78,8 +76,6 @@ Jinja2==3.1.6
 jiter==0.15.0
 jmespath==1.1.0
 joblib==1.5.3
-julius==0.2.7
-lameenc==1.8.2
 lazy-loader==0.5
 librosa==0.11.0
 llvmlite==0.47.0
@@ -88,16 +84,12 @@ MarkupSafe==3.0.3
 mido==1.3.3
 minio==7.2.20
 motor==3.7.1
-mpmath==1.3.0
 msgpack==1.1.2
 multidict==6.7.1
 mutagen==1.47.0
-networkx==3.6.1
 numba==0.65.1
 numpy==2.4.6
-omegaconf==2.3.0
 openai==2.38.0
-openunmix==1.3.0
 packaging==26.2
 pillow==12.2.0
 platformdirs==4.10.0
@@ -117,7 +109,6 @@ python-multipart==0.0.29
 PyYAML==6.0.3
 redis==8.0.0
 requests==2.34.2
-retrying==1.4.2
 s3transfer==0.19.2
 scikit-learn==1.8.0
 scipy==1.17.1
@@ -127,13 +118,8 @@ soundfile==0.13.1
 soxr==1.1.0
 SQLAlchemy==2.0.50
 starlette==1.2.0
-submitit==1.5.4
-sympy==1.14.0
 threadpoolctl==3.6.0
-torch==2.12.0+cpu
-torchaudio==2.11.0+cpu
 tqdm==4.67.3
-treetable==0.2.6
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzlocal==5.3.1

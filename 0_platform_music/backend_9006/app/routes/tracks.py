@@ -1445,7 +1445,6 @@ class UploadFromGenerationBody(BaseModel):
     cover_object_name: Optional[str] = None
     mv_object_name: Optional[str] = None
     ai_model: Optional[str] = "Suno"
-    use_voice_converted: Optional[bool] = False
     # v71: MV 안 만들고 cover 만 만든 곡도 cover_character 노출 가능하도록
     # publish 시점의 사용자 캐릭터 snapshot 을 트랙 도큐먼트에 박음.
     # 구조는 mv_jobs.user_character_snapshot 와 동일.
@@ -1478,50 +1477,40 @@ async def upload_from_generation(
     if not gen_doc.get("result_audio_url"):
         return JSONResponse(status_code=400, content={"error": "생성된 오디오 파일이 없습니다."})
 
-    # v74 — Determine audio source: voice converted or specific variant
+    # v74 — Determine audio source: specific variant
+    # v199: 「내 목소리로 변환」 기능 제거에 따라 보이스 변환 분기를 삭제했다.
     import logging as _logging
     _log = _logging.getLogger(__name__)
     variant_index = body.variant_index or 0
     if variant_index < 0:
         return JSONResponse(status_code=400, content={"error": "variant_index는 0 이상이어야 합니다."})
-    if variant_index > 0 and body.use_voice_converted:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "보이스 변환은 첫 번째 클립(variant 0)에만 사용할 수 있습니다."},
-        )
 
-    if body.use_voice_converted:
-        vc_url = gen_doc.get("voice_converted_url")
-        if not vc_url:
-            return JSONResponse(status_code=400, content={"error": "보이스 변환된 오디오 파일이 없습니다."})
-        source_object_name = vc_url
-    else:
-        gen_variants = gen_doc.get("variants") or []
-        if variant_index == 0:
-            if gen_variants and len(gen_variants) > 0:
-                source_object_name = gen_variants[0].get("audio_url") or gen_doc["result_audio_url"]
-            else:
-                source_object_name = gen_doc["result_audio_url"]
+    gen_variants = gen_doc.get("variants") or []
+    if variant_index == 0:
+        if gen_variants and len(gen_variants) > 0:
+            source_object_name = gen_variants[0].get("audio_url") or gen_doc["result_audio_url"]
         else:
-            if not gen_variants or variant_index >= len(gen_variants):
-                _log.warning(
-                    "[UploadVariant] gen=%s variant=%d out of range (have=%d)",
-                    body.generation_id, variant_index, len(gen_variants),
-                )
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"variant {variant_index} 범위를 벗어났습니다."},
-                )
-            source_object_name = gen_variants[variant_index].get("audio_url")
-            if not source_object_name:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "선택한 variant에 오디오가 없습니다."},
-                )
+            source_object_name = gen_doc["result_audio_url"]
+    else:
+        if not gen_variants or variant_index >= len(gen_variants):
+            _log.warning(
+                "[UploadVariant] gen=%s variant=%d out of range (have=%d)",
+                body.generation_id, variant_index, len(gen_variants),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"variant {variant_index} 범위를 벗어났습니다."},
+            )
+        source_object_name = gen_variants[variant_index].get("audio_url")
+        if not source_object_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "선택한 variant에 오디오가 없습니다."},
+            )
 
     _log.info(
-        "[UploadVariant] gen=%s variant=%d source=%s use_vc=%s",
-        body.generation_id, variant_index, source_object_name, bool(body.use_voice_converted),
+        "[UploadVariant] gen=%s variant=%d source=%s",
+        body.generation_id, variant_index, source_object_name,
     )
 
     track_id = ObjectId()

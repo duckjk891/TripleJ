@@ -1,10 +1,10 @@
 # =============================================================================
 # requirements.txt — 사람이 읽고 고치는 최상위 의존성 선언
 # =============================================================================
-# v198 — 파일 3종의 역할 구분:
+# v199 — 파일 2종의 역할 구분:
 #   requirements.txt   ← 이 파일. 사람이 편집한다. 최상위 선언만 담는다.
 #   requirements.lock  ← 생성물. `pip freeze` 전량 고정. Dockerfile 이 설치하는 건 이쪽.
-#   constraints-cpu.txt← torch 계열 CPU 휠 강제용 제약(개발 venv 재구축 시).
+#   (v198 의 constraints-cpu.txt 는 torch 제거와 함께 삭제됐다.)
 #
 # 의존성을 바꾼 뒤에는 requirements.lock 을 반드시 다시 뜨세요.
 # 절차는 requirements.lock 최상단 주석에 있습니다.
@@ -39,7 +39,6 @@ cryptography
 # google-genai is used via REST API (httpx) since system Python 3.8 doesn't support the SDK
 pyloudnorm
 soundfile
-demucs
 librosa>=0.10
 # v43: madmom for true downbeat detection (Python 3.11 compat — install from git main).
 # Build deps (Cython, numpy) must precede madmom; pip auto-resolves but --no-build-isolation may be needed.
@@ -52,13 +51,11 @@ Pillow
 # v135: FaceGuardSquad — AWS Rekognition CompareFaces/Face Liveness (얼굴 인증)
 boto3
 
-# v198 — torch 계열 CPU 전용 고정. 지금까지는 demucs 의 전이 의존이라 제어점이 없어
-# 기본 PyPI 의 CUDA 링크 휠이 설치됐다(venv 5.5GB 중 3.4GB 가 CUDA).
-# 코드는 GPU 를 쓰지 않는다: demucs_service.py:92 가 device="cpu" 하드코딩이고
-# 저장소 전체에서 .cuda() 사용 0건. 타깃 EC2 t3.large 에는 GPU 가 없다.
-# --index-url(완전 대체) 이 아니라 --extra-index-url 인 이유: PyTorch 인덱스에는
-# torch/torchaudio 등 소수만 있어 나머지 패키지를 찾지 못한다.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.12.0+cpu
-torchaudio==2.11.0+cpu
+# v199 — torch/torchaudio/demucs 제거. v198 까지는 demucs 의 전이 의존으로 torch 가
+# 딸려와 CPU 휠 강제(--extra-index-url + constraints-cpu.txt)가 필요했으나,
+# 「내 목소리로 변환」(Kits.AI)·「보컬 다듬기」·Demucs 를 전부 걷어내면서 torch 를
+# 요구하는 코드가 0건이 되어 선언 자체를 삭제했다(설치 용량 약 880MB 감소).
+# constraints-cpu.txt 도 존재 이유가 사라져 같은 커밋에서 삭제.
+# 주의: librosa / madmom 은 남는다 — MV 비트 분석(audio_utils.py, beat_extraction.py,
+# mv_pipeline.py)이 사용한다. torch 와 무관하다.
 

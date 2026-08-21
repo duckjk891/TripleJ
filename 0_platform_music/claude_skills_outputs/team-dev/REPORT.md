@@ -15925,3 +15925,139 @@ v196 후속 논의에서 나온 커버 이미지 관련 2건. 사용자 지시: 
 - 백엔드 수정 4: `requirements.txt`, `app/services/audio_normalize.py`, `app/services/kits_service.py`, `.env.example`
 - 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`
 - **무변경 확인**: `backend_9004`·`backend_9005` 전체, `frontend/`·`frontend_admin/` 전체, `app/main.py`, `docker-compose.yml`, `run.sh`
+
+---
+
+## v199 — 2026-08-21 — 「내 목소리로 변환」·「보컬 다듬기」·Demucs 제거 [MAIDOL-VoiceStripSquad]
+
+> 백엔드 `backend_9006` + `frontend`. **미러링 폐기 유지** — `backend_9004`·`backend_9005` 쓰기 **0건**(실측).
+> 착수 시 HEAD `f0f70e2`(v198 Dockerfile).
+
+### 1. 요청 작업
+사용자 지시: 「내 목소리로 변환」(Kits.AI) · 「보컬 다듬기」 · Demucs 는 **연구용으로 만들었다가 안 쓰는 기능**인데 무거운 의존성을 지고 있어 AWS 이전에 부담이다. **화면·서버·라이브러리 3층을 전부 걷어낸다.**
+
+### 2. 🔴 0단계 실측이 착수 메모의 오류 3건 + 위험 1건을 잡았다
+
+착수 전 기록해 둔 범위를 그대로 실행했으면 **기능 2개가 부서졌다**.
+
+| # | 메모의 기록 | 실측 | 결과 |
+|---|---|---|---|
+| ① | UI 는 `StudioTab2.jsx` 뿐 | `UploadPage.jsx` **17개 지점**이 결합 | 놓쳤으면 **곡 업로드 화면 파손** |
+| ② | 서버는 4파일 | `tracks.py` 4곳 + `main.py` 3곳 + `api/index.js` export 22개 추가 | 놓쳤으면 `upload-from-generation` **500** |
+| ③ | 절감 "1GB 안팎" | `llvmlite`(162M)·`scipy`(111M)·`numba`(33M) 는 **`librosa` 몫이라 유지 대상** | 같이 뺐으면 **MV 비트 분석 파손** |
+| ④ | `:834` 「내 목소리 버전」이 제거 대상 | 그 라인은 **Wondera 테스트 섹션** | 라인 번호를 믿었으면 **Wondera 파손** |
+
+역의존은 `dist-info/METADATA` 의 `Requires-Dist` 를 역방향 맵으로 만들어 판정했다.
+`torch` ← `demucs`·`dora_search`·`julius`·`openunmix` (전부 제거 대상) / `llvmlite` ← `numba` ← **`librosa`**(유지) / `scipy` ← `librosa`·`madmom`·`sklearn`·`pyloudnorm`(유지).
+`librosa`·`madmom` 사용처는 `audio_utils.py`·`beat_extraction.py`·`mv_pipeline.py` = **MV 비트 분석**.
+
+**정정된 추정 ≈ 880MB** → 실측 결과 venv 1.686GiB → **799MiB (−887MiB)** 로 추정과 일치했다.
+
+#### 2-1. 🔴 모달 안에 유지 대상이 섞여 있었다 — 사용자 확인 후 진행
+
+「내 목소리로 변환」 모달은 **두 경로**를 담고 있었다:
+- **"── 우회 방식 ──"** → `api.createGeneration({model:'suno', persona_id})` + **⭐-15 차감** = 사용자가 "놔둬" 라고 한 **Suno 보이스 클로닝**
+- **"── Kits.AI ──"** + 슬라이더 3개 = 제거 대상
+
+실측으로 **Suno 페르소나가 작곡 폼에도 이미 있음**(`StudioTab2.jsx` 보컬 선택, 전송 지점 4곳)을 확인해 "모달을 지워도 기능 자체는 안 없어지고 바로가기만 없어진다"는 사실과 함께 사용자에게 제시했다.
+→ **사용자 결정: 버튼·모달 통째로 삭제.**
+
+#### 2-2. 🚫 이름이 비슷해 오폭 위험이 컸던 유지 대상 3종 (독립성 실측 확인)
+
+| 대상 | 혼동 원인 | 판정 근거 |
+|---|---|---|
+| `WonderaTestSection` | "내 목소리 업로드/생성/버전" 문구가 **동일** | `wondera.py` 는 kits·demucs·voice_convert 결합 **0건** |
+| `MyVoiceCloneSection.jsx` | grep `clone` 에 걸림 | Suno `/voice-clone`. voice-convert 와 무관 |
+| `voice_persona.py` | 모달 우회 방식이 이 데이터를 씀 | 8개 엔드포인트 전부 존치. kits 결합 0건 |
+
+→ dev 에이전트들에게 **문구 기반 grep 금지, CSS 클래스 prefix(`s2__vc-*`·`mr-pitch__*`)와 state 이름(`vc*`) 기준으로 판단**하도록 지시했다.
+
+### 3. 수행 결과 — 삭제 6 · 수정 14 (**−3,040줄 / +1,645줄**)
+
+**삭제된 파일 6개**
+| 파일 | 줄 | 비고 |
+|---|---|---|
+| `app/routes/voice_convert.py` | 455 | Kits.AI 변환 라우터 |
+| `app/routes/vocal_repair.py` | 343 | 보컬 다듬기 라우터 |
+| `app/services/demucs_service.py` | 111 | **유일한 `import torch` 보유처** |
+| `app/services/kits_service.py` | 454 | |
+| `app/services/lalal_service.py` | 112 | 🆕 보컬 다듬기의 **LALAL.AI 방식** |
+| `constraints-cpu.txt` | 33 | torch CPU 휠 강제용, 존재 이유 소멸 |
+
+**백엔드 수정 9** — `main.py`(import 2 + `include_router` 2줄) / `tracks.py`(`use_voice_converted` 필드·400 분기·소스 분기·로그 인자) / `config.py`(`kits_api_key`·`kits_api_url`·`lalal_api_key` 3개) / `requirements.txt` / `requirements.lock` / `Dockerfile` / `.dockerignore` / `.env.example` / `infra/docker-compose.app.yml.example`
+
+**프런트 수정 5** — `StudioTab2.jsx` **3,799→3,124** / `StudioTab2.css` **2,584→2,034** / `UploadPage.jsx` 4,389→4,346 / `UploadPage.css` −52 / `api/index.js` export **259→237**
+
+**제거된 엔드포인트 17개** — voice-convert 8 + kits 1 + vocal-repair 8
+
+### 4. 핵심 설계 결정
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| `tracks.py` 개조 방식 | `use_voice_converted` **만** 걷어내고 `variant_index` 분기는 **들여쓰기만 변경** | 이 엔드포인트는 곡 업로드의 핵심. 실측 검증: 공백 무시 대조에서 **21줄 완전 동일** |
+| `generate.py:91` | **무수정** | `_serialize` 가 문서 전체를 반환하므로 `voice_conversion_completed_at` 를 튜플에서 빼면 **레거시 문서의 `datetime` 이 변환 없이 흘러간다**. 남기는 비용 0, 빼는 위험 실재 |
+| Mongo 데이터 | **마이그레이션 없음** | 읽는 쪽이 사라지므로 무해. 사용자 미요청 |
+| `config.py` 필드 제거 | 안전 | `model_config` 가 `"extra": "ignore"` 라 실 `.env` 에 키가 남아도 기동 무영향(실측 확인) |
+| `Jinja2`·`MarkupSafe` | **존치** | torch 가 요구했으나 `fastapi`·`starlette`·`elasticsearch`·`fsspec` 의 extra 에도 걸려 있어 되살아나는 조합이 불확실. 용량이 작고 잘못 빼면 런타임이 깨진다 |
+| `Dockerfile` 자기검증 | `assert '+cpu' in torch.__version__` → `find_spec('torch') is None` | 🔴 **무수정이면 재빌드가 100% 실패**. torch 가 **없어야** 통과하도록 뒤집어 회귀 가드 성격 유지 |
+| lock 갱신 방식 | `pip freeze` 재생성이 아닌 **수동 필터링** | 실행 중 호스트 venv 무접촉 제약. 실제 설치 검증은 재빌드에서 수행 |
+
+### 5. 테스트 결과 — 43건 **0 FAIL / 즉시중단 0건**
+`[unit]` 22(51.2%) / `[api]` 16(37.2%) / `[e2e]` 5(11.6%) — 요구 전부 충족.
+증명 축 배분: **"사라졌는가" 15건 : "남은 것이 무손상인가" 28건(65.1%)** — 이번 작업의 진짜 위험은 덜 지우는 것이 아니라 **옆엣것까지 지우는 것**이므로 후자에 무게를 뒀다.
+**픽스 루프 0회** — dev 재작업이 한 번도 필요하지 않았다.
+
+**결정적 실측**
+- **openapi `paths` 282 → 265.** 사라진 것이 **정확히 그 17개**이고 **ADDED 0 / METHOD-CHANGED 0**. 존치 라우트 대조: voice-clone 9/9 · voice-persona 7/7 · wondera 4/4 · tracks 18/18 · mv 29/29 · generate 11/11 · upload 10/10 · character 15/15
+  > 🔴 이 판정의 기준선(`openapi_before.json`)은 **재기동 전에만 확보 가능**해서 planner 가 tester 투입 전에 선점 캡처했다. 덕분에 tester 가 재기동 전 404 프로브를 칠 이유가 사라졌다 — 쳤으면 `POST /api/voice-convert/{gid}`·`GET /api/kits/voice-models` 가 **실제 Kits.AI 유료 호출**로 나갔다
+- `UploadFromGenerationBody` 프로퍼티 14→13, **제거된 것은 `use_voice_converted` 하나뿐**, `variant_index` 스키마 **바이트 동일**(`anyOf[integer,null], default 0`)
+- 이미지 안: `import torch`·`demucs`·`torchaudio` → **ModuleNotFoundError(기대값)**, site-packages torch 계열 디렉터리 **0개**
+- 이미지 안: `librosa 0.11.0`·`madmom 0.17.dev0`·`scipy 1.17.1`·`numba 0.65.1`·`llvmlite 0.47.0`·`soundfile 0.13.1` **전부 정상 import**, torch 경고 0
+- 이미지 안 ffmpeg: `rubberband` 1 · `ass` 1 · `libmp3lame` 1 · `libx264` 2 · **나눔 폰트 12개**
+- 🔴 **`WonderaTestSection` 함수 본문 253↔253줄, diff 0** — 라인 번호를 배제하고 `awk` 로 내용 기준 추출해 `f0f70e2` 와 대조
+- `MyVoiceCloneSection.jsx` sha256 **완전 일치**
+- `generate.py` diff **0줄**
+
+### 6. 🎯 3단계(도커 재빌드) 결과 — v198 의 FAIL 이 해소됐다
+
+| 지표 | v198 | v199 | 변화 |
+|---|---|---|---|
+| `/opt/venv` | 1.686 GiB (**예산 초과 FAIL**) | **799 MiB** | **−887 MiB** ✅ 예산 1.6GiB 충족 |
+| 이미지(`docker images`) | 3.24 GB | **2.09 GB** | **−1.15 GB** |
+| lock 핀 | 111 | **92** (20개 제거) | |
+
+**제거된 20개**: 앵커 9개(`demucs`·`torch`·`torchaudio`·`sympy`·`networkx`·`dora_search`·`julius`·`openunmix` + `--extra-index-url`) + demucs/torch 전용 전이 11개(`lameenc`·`einops`·`treetable`·`submitit`·`retrying`·`omegaconf`·`antlr4-python3-runtime`·`cloudpickle`·`mpmath`·`filelock`·`fsspec`).
+**lock 안의 어떤 패키지도 이들을 요구하지 않음**을 tester 가 재검증했다.
+
+### 7. 안전 원장
+유료 호출 **0** · ⭐ 차감 **0**(잔액 sha 동일) · `9004`/`9005`/admin 쓰기 **0** ·
+`pip freeze` sha256 **`969c8d9d…ba57` 전후 동일** · Mongo `generations` 69→69, `tracks` 23→23 ·
+인프라 컨테이너 이름·포트 동일, **재기동 0건** · 검증 태그 `v199t-verify` 제거 완료 ·
+호스트 9006 200, vite 4000 200.
+
+E2E 드라이버의 라우트 가드가 유료 요청 **1건**(`POST /api/generate/` — `handleConfirmLyrics` 내부의 부수적 초안 저장)을 **브라우저 밖으로 나가기 전에 차단**했다.
+
+### 8. 기록 사항 (결함 아님)
+
+- **에이전트가 잡은 실결함 2건 — 지시서에 없던 것**
+  1. `UploadPage.jsx` 「취소」 버튼의 `setUseVoiceConverted`/`setHasVoiceConverted` **잔존 호출**. 번들러가 잡지 못하는 자리(첫 빌드도 통과했다)라 방치했으면 **런타임 ReferenceError**
+  2. `Dockerfile` 자기검증의 torch assert (§4)
+- **PARTIAL/SKIP 5건은 전부 같은 뿌리** — 테스트 계정이 **오디오가 있는 완료된 생성**과 **완료된 Suno 페르소나**를 갖고 있지 않다. 만들려면 `POST /api/generate`(⭐-15)가 필요해 금지 대상이다. 각 항목은 정적 대조로 대체 증명했다(예: E01 의 `<h4>내 목소리 버전</h4>` 는 U09 의 diff-0 이 커버)
+- **TESTPLAN 앵커 오기 1건**: `MyVoiceCloneSection` 은 `MyMusicPage.jsx` 에서 렌더된다(`StudioTab2.jsx` 아님). 판정 결과에는 영향 없음
+- `api/index.js` export 이름 3개가 지시서와 달랐다(`startVocalEnhance`·`streamConvertedVocal`·`streamBacking`) — 실제 코드 기준으로 처리
+- `mv.py`·`mv_pipeline.py` 의 대문자 `Demucs 제거` 이력 주석은 **존치**(v43 시절 기록)
+- `Dockerfile:38` 의 `Until v198 …` 는 과거 사실 서술이라 v198 그대로 유지
+
+### 9. 범위 밖 / 후속 과제
+- 🔴 **신규 보안 발견(선재 결함, v199 무관)**: `GET /api/upload/cover-preview/…?token=<JWT>` 가 **전체 JWT 를 `logs/server.log` 에 기록**한다(짧은 E2E 세션에서 50줄). `upload.py` 는 v199 에서 손대지 않았다. AWS P0 의 "로그 JWT 유출 86건" 과 같은 계열 — **별도 처리 필요**
+- **테스트 픽스처 공백**: 위 PARTIAL 5건을 실증하려면 "완료된 생성 + 완료된 페르소나"를 가진 **준비된 픽스처 계정** 1개가 가장 싼 해법이다(테스트 케이스 추가보다)
+- MinIO 에 남은 변환 산출물 오브젝트 정리 미수행
+- lock 수동 필터링의 경계선 — 재빌드가 통과했으므로 검증됐으나, 향후 의존성 추가 시 `fsspec`·`filelock`·`cloudpickle` 이 재등장할 수 있음
+- **AWS P0 잔여 9건** 유효 (v198 REPORT §7)
+- ⚠️ **v196·v197·v199 미반영 상태의 `backend_9004`** — 앱팀이 사내망으로 사용 중이며 같은 실데이터를 참조. 앱팀의 9006 이전 시점까지 유보
+
+### 10. 변경 파일 (커밋 대상 22)
+- 백엔드 삭제 6 / 수정 9
+- 프런트 수정 5: `StudioTab2.jsx`·`StudioTab2.css`·`UploadPage.jsx`·`UploadPage.css`·`api/index.js`
+- 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`
+- **무변경 확인**: `backend_9004`·`backend_9005` 전체, `frontend_admin/` 전체, `MyVoiceCloneSection.jsx`, `generate.py`, `wondera.py`, `voice_persona.py`, `voice_clone.py`

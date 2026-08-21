@@ -6604,3 +6604,1301 @@ htdemucs 가중치 베이크 / uv·poetry 도입 / `/docs` 노출(4-7) / CORS(4-
   유료 호출 **0건**, 테스트 데이터 생성 **0건**, 9004·9005 접근 **0건**.
   태그 균형은 **55.6 / 38.9 / 5.6** 으로 세 요구(≥40 / ≥35 / ≤25)를 전부 충족.
   planner 확인 대기 6건(§5) — **전부 대안이 있어 36건·비율이 깨지지 않는다.**
+
+---
+
+## v199 — 2026-08-21 — 「내 목소리로 변환」·「보컬 다듬기」·Demucs 제거 [MAIDOL-VoiceStripSquad]
+
+> 대상: **`backend_9006` + `frontend`**. 🚫 `backend_9004`·`backend_9005` 쓰기 0건.
+> 근거 문서: `PLAN.md` `## v199`(29435행~) 전체 — 특히 **§0(실측 정정 3건)**, **§2(A1~A10·B1~B11)**, **§3(회귀 위험 8건)**, **§5(재빌드 판정)**.
+> 이 문서는 **설계**다. 실행·판정은 tester 가 한다.
+
+🔴 **이번 버전은 삭제가 주된 작업이라 테스트의 축이 평소와 다르다.** 두 가지를 **동시에** 증명해야 한다.
+
+| 축 | 증명 대상 | 배정 |
+|---|---|---|
+| **축 1 — 사라졌는가** | 17개 엔드포인트 404 · UI 요소 부재 · 4파일 부재 · `import torch` 0건 · lock 의 torch 체인 소멸 | 15건 |
+| 🔴 **축 2 — 남은 것이 무손상인가** | Wondera · `MyVoiceCloneSection` · 작곡 폼 Suno 페르소나 · `variant_index` 0/N · `librosa`/`madmom` 체인 · `ffmpeg` · `generate.py:91` | **28건** |
+
+> 🔴 **이번 작업의 진짜 위험은 "덜 지우는 것"이 아니라 "옆엣것까지 지우는 것"이다.**
+> 축 1 의 실패는 눈에 띈다(404 가 안 나면 바로 보인다). 축 2 의 실패는 **조용하다** —
+> Wondera 탭이 통째로 날아가도 `npm run build` 는 통과한다. 그래서 배정이 15 : 28 이다.
+
+---
+
+### 0. 실행 전 필수 사항
+
+#### 0-A. 작업 위치 (⚠️ 워크트리 아님)
+
+| 이름 | 절대경로 |
+|---|---|
+| `REPO` | `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`, 착수 시 HEAD `f0f70e2`) |
+| `B6` | `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006` |
+| `FE` | `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend` |
+| `IMG199` | `maidol-backend:v199` (3단계 재빌드 산출물 — §4 에서만 사용) |
+| 작업본 | 호스트 9006 = `http://127.0.0.1:9006` · 프론트 dev = `http://127.0.0.1:4000` (vite, `vite.config.js:22` 실측) |
+
+⚠️ **`.claude/worktrees/*` 에는 `backend_9006`·`frontend` 가 없다.** 모든 명령은 위 절대경로로 실행한다.
+⚠️ **`StudioTab2.jsx` 는 `src/components/` 에 있다** — `src/pages/` 아님(실측). `UploadPage.jsx` 만 `src/pages/`.
+
+#### 0-B. 🚫 tester 절대 준수 (v199 안전 규칙 8조)
+
+1. 🚫 **유료 외부 API 호출 0건** — `POST /api/generate` · `/api/mv/**` · `POST /api/character/**`(생성 계열) ·
+   `/api/voice-clone/**`(생성 계열) · `/api/voice-convert/**` · `generate-cover` · `refine-cover` ·
+   `POST /api/tracks/upload` · `GET /api/tracks/search`.
+   → **⭐ 차감은 0 이어야 한다.** 특히 `api.createGeneration` = **⭐-15**.
+   🔴 **이번 버전 고유의 함정**: 제거 대상인 `POST /api/voice-convert/{gid}` 와 `GET /api/kits/voice-models` 는
+   **삭제·재기동 전에는 아직 살아 있고 실제로 Kits.AI 를 때린다.** 그러므로
+   **404 확인용 호출은 반드시 "삭제 반영 + 재기동 이후"에만 한다.**
+   착수 전 `before` 스냅샷은 🔴 **`/openapi.json` 문서만** 뜬다 — 엔드포인트를 실제로 호출하지 않는다.
+2. 🚫 **실사용자 계정·데이터 무접촉.** 테스트 계정(`TEST_USER_EMAIL` / `TEST_USER_PW` — 실값은 산출물에 쓰지 않는다)만 사용.
+   되돌릴 수 없는 실액션(생성·업로드·결제)은 **화면 노출 확인까지만**. 버튼을 누르지 않는다.
+3. 🚫 **인프라 무조작** — PG·Mongo·Redis·ES·MinIO 컨테이너 **재기동/중지/rm 금지**.
+   **MinIO 9100 차단 금지**. DB 포트 바인딩 변경 금지. 🚫 `docker system prune -a` 금지.
+4. 🚫 **`backend_9004`·`backend_9005` 쓰기 0건** — 읽기조차 불요. `frontend_admin/` 도 범위 밖.
+5. 🚫 **개인정보(생년월일·성별·이메일) 화면·로그·REPORT 노출 금지** → `<REDACTED>`.
+   API 키·시크릿·실계정 크리덴셜 동일.
+6. 🔴 **호스트 9006 재기동 규칙** — §0-D. **재기동 없이 낸 404 판정은 무효다.**
+7. 작업 트리는 **메인 체크아웃** `REPO`. 워크트리 아님.
+8. E2E 는 **Playwright**(실측 설치됨 — `node_modules/.bin/playwright`, **v1.62.1**).
+   WSL 라이브러리 문제로 chromium 이 뜨지 않으면 **headless shell 폴백**을 시도한다.
+   🔴 **조용히 스킵 금지** — 불가 시 REPORT 에 **사유 + 미검증 항목**을 반드시 명시한다.
+
+#### 0-C. 실행 위치 2종
+
+| 표기 | 의미 | 실행 방법 |
+|---|---|---|
+| **호스트** | WSL2 개발 머신 + 실행 중인 9006 프로세스 + `$B6/venv` + vite 4000 | 직접 실행 / `curl 127.0.0.1:9006` / `npx playwright` |
+| **컨테이너** | `IMG199` 로 띄운 일회성 컨테이너 | `docker run --rm --network none --entrypoint sh $IMG199 -c '…'` |
+
+→ 🔴 **모든 케이스에 `[태그]` + `(호스트|컨테이너)` + `재기동(전·후·무관)` 을 반드시 병기해 기록한다.**
+§4(3단계 재빌드) 4건만 **컨테이너**, 나머지 39건은 전부 **호스트**다.
+
+#### 0-D. 🔴 호스트 재기동 규칙 (404 판정 유효성의 전제)
+
+`main.py` 의 `include_router` 는 **모듈 로드 시점**에 라우트를 등록한다.
+`run.sh` 에 `--reload` 가 없으므로(v198 §0-D 실측) **재기동 없이는 파일 삭제가 반영되지 않는다.**
+
+```bash
+cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006
+pkill -f 'uvicorn app.main:app --host 0.0.0.0 --port 9006'   # 기존 프로세스만
+setsid ./run.sh > /dev/null 2>&1 &
+# 기동 확인: logs/server.log 에 아래 두 줄이 나올 때까지 대기(최대 180s)
+#   "All database connections established."
+#   "Uvicorn running on http://0.0.0.0:9006"
+```
+
+- 🚫 **`--reload` 를 붙이지 않는다** (drvfs + venv 10만 파일 감시로 기동 불가).
+- 재기동 실패 → 🔴 **즉시 중단 S7**.
+- 🔴 **설계 시점 실측: 9006 은 아직 재기동되지 않았다.** `/openapi.json` 에 17개 라우트가 **그대로 살아 있다**.
+  → **`before` 스냅샷을 지금 뜰 수 있다.** 이건 시간 민감하다(§0-E).
+
+#### 0-E. 🔴 `/openapi.json` 전/후 스냅샷 절차 (A02 의 근거 — **가장 중요한 케이스**)
+
+착수 전 / 재기동 후 두 번 뜬다. 저장 위치는 **저장소 밖** `/tmp/v199t/`, 종료 시 삭제.
+
+```bash
+mkdir -p /tmp/v199t
+# BEFORE — 🔴 삭제 반영 재기동 전에 반드시 확보. 놓치면 A02 를 git 리비전 복원으로 재구성해야 한다.
+curl -sS http://127.0.0.1:9006/openapi.json > /tmp/v199t/openapi_before.json
+# AFTER — 재기동 후
+curl -sS http://127.0.0.1:9006/openapi.json > /tmp/v199t/openapi_after.json
+
+python3 - <<'PY'
+import json
+b=json.load(open('/tmp/v199t/openapi_before.json'))['paths']
+a=json.load(open('/tmp/v199t/openapi_after.json'))['paths']
+gone   = sorted(set(b) - set(a))
+added  = sorted(set(a) - set(b))
+print('before paths:', len(b), ' after paths:', len(a))
+print('GONE  :', len(gone));  [print('  -', p) for p in gone]
+print('ADDED :', len(added)); [print('  +', p) for p in added]
+# 남은 경로의 method 집합까지 동일한가
+diff = [p for p in set(a)&set(b) if set(a[p])!=set(b[p])]
+print('METHOD-CHANGED:', len(diff), diff)
+PY
+```
+
+🔴 **"정확히 17개" 의 정의**
+
+| 비교 | 기대 | 위반 시 |
+|---|---|---|
+| `before paths` | **282** (설계 시 실측) | 베이스라인이 다른 시점 → 재확보 |
+| `after paths` | **265** (= 282 − 17) | — |
+| `GONE` 집합 | **§0-F 의 17개와 바이트 단위로 일치** | 초과 소실 → 🔴 **즉시 중단 S9** |
+| `ADDED` | **0** | 의도치 않은 라우트 추가 → planner 보고 |
+| `METHOD-CHANGED` | **0** | 남은 라우트의 method 가 변함 → FAIL |
+
+> 🔴 **`GONE` 이 17개보다 **적은** 것보다 **많은** 것이 훨씬 위험하다.** 적으면 "덜 지웠다"(재작업),
+> 많으면 "옆엣것을 지웠다"(회귀). tester 는 **초과분 1건이라도 발견하면 그 자리에서 멈춘다.**
+
+#### 0-F. 🔴 제거 대상 17개 엔드포인트 (설계 시 `/openapi.json` 실측 — **개별 나열**)
+
+**`voice_convert.py` — 9개** (prefix 없이 데코레이터에 풀 경로)
+
+| # | Method | Path |
+|---|---|---|
+| 1 | `POST` | `/api/voice-convert/{generation_id}` |
+| 2 | `GET` | `/api/voice-convert/{generation_id}/status` |
+| 3 | `GET` | `/api/voice-convert/{generation_id}/stream` |
+| 4 | `GET` | `/api/voice-convert/{generation_id}/download` |
+| 5 | `GET` | `/api/voice-convert/{generation_id}/converted-vocal/stream` |
+| 6 | `GET` | `/api/voice-convert/{generation_id}/backing/stream` |
+| 7 | `POST` | `/api/voice-convert/{generation_id}/preview-mr` |
+| 8 | `POST` | `/api/voice-convert/{generation_id}/merge` |
+| 9 | `GET` | `/api/kits/voice-models` |
+
+**`vocal_repair.py` — 8개** (`prefix="/api/vocal-repair"`)
+
+| # | Method | Path |
+|---|---|---|
+| 10 | `POST` | `/api/vocal-repair/upload` |
+| 11 | `POST` | `/api/vocal-repair/{repair_id}/enhance` |
+| 12 | `GET` | `/api/vocal-repair/{repair_id}/status` |
+| 13 | `GET` | `/api/vocal-repair/{repair_id}/original/stream` |
+| 14 | `GET` | `/api/vocal-repair/{repair_id}/enhanced/stream` |
+| 15 | `GET` | `/api/vocal-repair/{repair_id}/original/download` |
+| 16 | `GET` | `/api/vocal-repair/{repair_id}/enhanced/download` |
+| 17 | `GET` | `/api/vocal-repair/list` |
+
+> 🔴 **1번과 9번은 유료 경로다**(Kits.AI). **재기동 전에는 절대 호출하지 않는다**(0-B-1).
+> 재기동 후 404 확인은 안전하다 — 라우트가 없으면 핸들러에 도달하지 않는다.
+> 그래도 tester 는 **404 를 관측한 즉시 그 URL 에 대한 추가 호출을 중단**한다.
+
+#### 0-G. 🔴 오폭 위험 지점 — **유지 대상 7종** (planner 실측 + 설계 시 재확인)
+
+| # | 유지 대상 | 위치 (설계 시 실측) | 오폭 위험 이유 | 감시 케이스 |
+|---|---|---|---|---|
+| **K1** | **Wondera 테스트 섹션** | `StudioTab2.jsx:598` `function WonderaTestSection()` ~ `:900`, 렌더 `:3466` | `:730` "① 내 목소리 업로드", `:804` "🎤 내 목소리로 생성", 🔴 `:834` `<h4>내 목소리 버전</h4>` — **문구가 제거 대상과 동일** | **U09 · E01** (S1) |
+| **K2** | **`MyVoiceCloneSection`** | `src/components/MyVoiceCloneSection.jsx` + `.css` | grep `"clone"` 에 걸림. Suno 보이스 클로닝이라 voice-convert 와 무관 | **U10 · E05** (S3) |
+| **K3** | **작곡 폼 Suno 페르소나** | state `:859 selectedPersonaId` / UI `:2741-2742 s2__vocal-btn--persona` / 전송 `:1632`·`:1649`·`:1675`·`:1693` | 제거되는 모달도 `persona_id` 를 쓴다(`:1979`). state 는 **`selectedPersonaId`(유지)** vs **`vcSelectedModel`(제거)** — **별개** | **U11 · E02** (S2) |
+| **K4** | **`variant_index` 업로드 분기** | `tracks.py:1454`(필드) / `:1484-1504`(분기) / `:1602` / `:1652` | `use_voice_converted` 와 **상호배타 검사로 얽혀** 있었다. variant 0/N 동작이 **바이트 단위로 동일**해야 함 | **U04 · A09 · A10 · A11** (S10) |
+| **K5** | **`librosa`·`madmom` 체인** | `requirements.lock:84 librosa==0.11.0` · `:85 llvmlite==0.47.0` · `:86 madmom @ git+…@27f032e8` · `:96 numba==0.65.1` · `:123 scipy==1.17.1` | demucs 몫으로 오인해 같이 뺄 위험. **MV 비트 분석**(`audio_utils.py`·`beat_extraction.py`·`mv_pipeline.py`)이 사용 | **U06 · U20** (S4) |
+| **K6** | **`ffmpeg`** | `Dockerfile:127 ffmpeg` · `:128 fonts-nanum` · `:129 fontconfig` · `:167-173` 자기검증 RUN | 공유 영상·MV 가 사용. 🔴 **절대 제거 금지** | **U08 · U21** (S5) |
+| **K7** | **`generate.py:91`** | `_serialize` 의 datetime 변환 튜플 | `voice_conversion_completed_at` 키를 빼면 **레거시 문서 직렬화가 깨진다**. **무수정이 정답** | **U17 · A13** |
+
+#### 0-H. 🔴 즉시 중단 조건 S1~S11 (하나라도 관측되면 그 자리에서 멈추고 planner 에 보고)
+
+| # | 조건 | 관측 케이스 | 왜 즉시 중단인가 |
+|---|---|---|---|
+| **S1** | **Wondera 섹션이 사라졌거나 렌더에 실패한다** | U09 · E01 | 0-G K1. 되돌리려면 삭제 커밋을 부분 revert 해야 한다 — 늦게 발견할수록 비싸다 |
+| **S2** | **작곡 폼의 Suno 페르소나 선택이 사라졌다** | U11 · E02 | 0-G K3. **유료 기능의 유일한 잔여 진입로**(PLAN §0-4). 사라지면 사용자가 페르소나를 못 쓴다 |
+| **S3** | **`MyVoiceCloneSection` 에 diff 가 있다** | U10 · E05 | 0-G K2. 범위 밖 파일이 변했다 = grep 삭제가 번졌다는 신호 |
+| **S4** | **`requirements.lock` 에서 `librosa`·`madmom`·`llvmlite`·`numba`·`scipy` 중 하나라도 사라졌다** | U06 | 0-G K5. MV 비트 분석이 죽는다. 재빌드까지 가면 발견이 늦다 |
+| **S5** | **`Dockerfile` 의 `ffmpeg`·`fonts-nanum`·`fontconfig` apt 항목이 사라졌거나, ffmpeg 자기검증 RUN 이 사라졌다** | U08 | 0-G K6 + PLAN §6-7. 공유 영상·MV 전멸 |
+| **S6** | **`backend_9004`·`backend_9005` 에 쓰기가 발생했다** | U18 | PLAN §4·§6-5 위반 |
+| **S7** | **호스트 9006 이 재기동 후 뜨지 않거나 `/api/health` 가 200 이 아니다** | A01 | v199 DoD 10 위반. 실서비스 중단 |
+| **S8** | **유료 API 호출이 1건이라도 발생했다 / ⭐ 잔액이 줄었다** | A16 | 0-B-1 위반. `api.createGeneration` = ⭐-15 |
+| **S9** | **`/openapi.json` 에서 17개 **외** 라우트가 1개라도 사라졌다** | A02 | 0-E. "옆엣것을 지웠다"의 가장 직접적인 증거 |
+| **S10** | **`variant_index` 의 0/N 분기 동작이 바뀌었다** (필드 소실·기본값 변경·범위검사 소실) | U04 · A09 · A10 · A11 | 0-G K4. 곡 업로드가 조용히 깨진다 |
+| **S11** | **크리덴셜 실값·개인정보(생년월일·성별·이메일)가 화면·로그·REPORT 에 보인다** | 전 케이스 | 0-B-5 위반. 유출 |
+
+#### 0-I. 🔴 설계 시 실측한 앵커 (tester 의 기대값 — 2026-08-21, HEAD `f0f70e2`)
+
+| 앵커 | 실측값 | 쓰이는 케이스 |
+|---|---|---|
+| `/openapi.json` `paths` 수 (**삭제 반영 전 = 재기동 전**) | **282** | A02 |
+| 재기동 후 기대 `paths` 수 | **265** | A02 |
+| 제거 대상 path 수 | **17** (voice-convert 8 + kits 1 + vocal-repair 8) | A02·A03·A04 |
+| `git show f0f70e2:…voice_convert.py \| wc -l` | **455** | U01 |
+| `…vocal_repair.py` | **343** | U01 |
+| `…demucs_service.py` | **111** | U01 |
+| `…kits_service.py` | **454** | U01 |
+| `…constraints-cpu.txt` | **33** | U07 |
+| `grep -rn "import torch" $B6/app \| wc -l` | **0** (착수 시점 이미 0 — A1~A7 착지 완료) | U02 |
+| `requirements.lock` 총 줄 수 | **143** | U06 |
+| lock 의 torch 체인 (제거 대상) | `:31 --extra-index-url …/whl/cpu` · `:58 demucs==4.0.1` · `:62 dora_search==0.1.12` · `:81 julius==0.2.7` · `:95 networkx==3.6.1` · `:100 openunmix==1.3.0` · `:131 sympy==1.14.0` · `:133 torch==2.12.0+cpu` · `:134 torchaudio==2.11.0+cpu` = **9줄** | U06 |
+| lock 의 유지 체인 (K5) | `:84 librosa==0.11.0` · `:85 llvmlite==0.47.0` · `:86 madmom @ git+…@27f032e8947204902c675e5e341a3faf5dc86dae` · `:96 numba==0.65.1` · `:123 scipy==1.17.1` | U06 (S4) |
+| `Dockerfile` 의 `constraints-cpu.txt` 참조 | 🔴 **`:81` · `:157` 두 줄에 `COPY` 로 남아 있다** | **U07** |
+| `Dockerfile` apt 목록 | `:127 ffmpeg` · `:128 fonts-nanum` · `:129 fontconfig` | U08 (S5) |
+| `Dockerfile` 자기검증 RUN | `:167 set -eux` ~ `:173`, `rubberband`(`:170`) · `ass V->V`(`:171`) · `libmp3lame`(`:172`) · `libx264`(`:173`) | U08 (S5) |
+| `StudioTab2.jsx` 총 줄 수 | **3799** | U09·U12 |
+| `WonderaTestSection` 정의 / 렌더 | `:598` / `:3466` | U09 (S1) |
+| 🔴 Wondera 의 `<h4>내 목소리 버전</h4>` | `:834` — **유지** | U09 (S1) |
+| 🔴 제거 대상의 `내 목소리 버전` | `:3645` `<span className="s2__vc-label">` — **삭제** | U12 |
+| `MrPitchAdjustPanel` | `:195` ~ `:~560` | U12 |
+| VC 심볼 총 히트 (`vcSelectedModel\|vcSelectedType\|vcStrength\|vcVolumeMix\|vcPitchShift\|vcModalGenId\|vcSubmitting\|vcPlayingId\|kitsModels`) | **41줄** | U12 |
+| 작곡 폼 페르소나 앵커 | `:859 selectedPersonaId` · `:2741-2742` · 전송 `:1632`·`:1649`·`:1675`·`:1693` | U11 (S2) |
+| `StudioTab2.css` 총 줄 수 / `s2__vc-` / `mr-pitch__` | **2584** / **25** / **41** | U13 |
+| `s2__vc-`·`mr-pitch__` 를 쓰는 파일 | **`StudioTab2.css` 단 1개** (다른 CSS 0건) | U13 |
+| `UploadPage.jsx` 총 줄 수 / 결합 지점 | **4389** / `:97`·`:98`·`:240`·`:696-697`·`:1405`·`:1509`·`:1528`·`:1709`·`:1715`·`:1722`·`:1725`·`:1732`·`:1736-1737`·`:1743`·`:1795-1796`·`:4105` | U14 |
+| `api/index.js` 총 줄 수 / 총 `export` | **995** / **259** | U15 |
+| 🔴 제거 대상 export | **22개** — `:539-587` 에 **17개**, `:672-694` 에 **5개** (**PLAN §0-2 의 "25개" 는 실측과 다르다 → §6 P2**) | U15 |
+| 유지 대상 export (`voiceClone\|voicePersona\|wondera`) | **9줄** | U15 (S3) |
+| `MyVoiceCloneSection.jsx` sha256 | `eecaceadb7a0319000131e8c5318efc9b39aed172a61ddaa2a6168f60aeaeced` | U10 (S3) |
+| `MyVoiceCloneSection.css` sha256 | `e644c93d5df2624094142bf5daf784b9b562e1d207230ea9cc9d4be98970b9b9` | U10 (S3) |
+| Playwright | **설치됨 v1.62.1** (`$FE/node_modules/.bin/playwright`) | E01~E05 |
+| vite dev 포트 | **4000** (`vite.config.js:22`), 프로세스 실행 중 | E01~E05 |
+| `venv` 예산 (v198 FAIL) | **1.686 GiB** → v199 후 **1.6 GiB 미만** 이어야 함 | U22 |
+
+#### 0-J. 🔴 착수 시점 착지 상태 (설계 시 `git status` 실측) — **tester 의 진입 조건**
+
+| 작업 | 상태 |
+|---|---|
+| **A1~A4** (4파일 삭제) | ✅ 착지 (`D` 스테이지됨) |
+| **A5** (`main.py`) | ✅ 착지 (`voice_convert\|vocal_repair` grep **0건**) |
+| **A6** (`tracks.py`) | ✅ 착지 (`use_voice_converted` **0건**, `:1481` 에 v199 주석) |
+| **A7** (`requirements.txt`) | ✅ 착지 |
+| **A8** (`requirements.lock`) | 🔴 **미착지** — torch 체인 9줄 **그대로 있음** |
+| **A9** (`constraints-cpu.txt` 삭제) | ✅ 착지 |
+| **A10** (`Dockerfile` 동기화) | 🔴 **미착지** — **A9 와 어긋난 상태**(§6 P1) |
+| **B1~B11** (frontend 전부) | 🔴 **미착수** |
+| **호스트 9006 재기동** | 🔴 **미수행** — 17개 라우트가 아직 살아 있다 |
+
+→ 🔴 **tester 는 지금 즉시 `openapi_before.json` 을 확보한 뒤**, A8·A10·B1~B11 착지를 기다린다.
+→ 착지 전에도 실행 가능한 것: **U01~U08(백엔드 정적) · A02 의 before 절반**.
+→ 착지 전에는 **실행 불가**: U09~U16(프론트) · A01·A03~A16(재기동 필요) · E01~E05 · §4 전체.
+
+---
+
+### 1. `[unit]` 시나리오 (22건) — 정적 검증
+
+> 🔴 **정적 검증(파일 부재·grep·구문 파싱·lock 파싱·빌드)은 전부 `[unit]` 이다.**
+> 서버를 띄우지 않고, HTTP 를 타지 않으며, 외부 호출이 **구조적으로 0** 이다.
+> V199-UNIT-19~22 만 **컨테이너**(§4), 나머지 18건은 **호스트**.
+
+#### V199-UNIT-01 · `[unit]` · **호스트** · 재기동 무관 · 삭제 대상 4파일 부재 (A1~A4 / DoD 4)
+
+- **Given** HEAD `f0f70e2` 에는 4파일이 각각 455·343·111·454줄로 존재했다.
+- **When**
+  ```bash
+  cd $B6
+  ls app/routes/voice_convert.py app/routes/vocal_repair.py \
+     app/services/demucs_service.py app/services/kits_service.py 2>&1
+  cd $REPO && git status --short -- 0_platform_music/backend_9006 | grep -E '^D '
+  ```
+- **Then** ① 4개 모두 `No such file or directory`, ② `git status` 에 **`D` 4줄**(+`constraints-cpu.txt` 로 5줄),
+  ③ `git show f0f70e2:<path> | wc -l` 이 **455 / 343 / 111 / 454** 와 일치(= 지운 것이 맞는 파일이었다는 증명).
+- **PASS** ①②③. **FAIL** 하나라도 남아 있음 → 재작업. ③ 불일치 → 🔴 **다른 파일을 지웠다** → 즉시 중단(planner 보고).
+
+#### V199-UNIT-02 · `[unit]` · **호스트** · 재기동 무관 · `import torch` 0건 + torch 심볼 잔재 0건 (DoD 5)
+
+- **Given** PLAN §0-7: `import torch` 는 `demucs_service.py:8` 단 1건이었다.
+- **When**
+  ```bash
+  cd $B6
+  grep -rn "import torch" app | wc -l
+  grep -rniE "\btorch\b|torchaudio|demucs|openunmix|julius|dora_search" app \
+    | grep -v "^Binary" | grep -viE "# *v[0-9]+:|Demucs 제거|Demucs 보컬 분리 제거"
+  grep -rniE "kits_service|kits\.ai|arpeggi" app | grep -v "^Binary"
+  ```
+- **Then** ① `import torch` **0건**, ② 주석을 제외한 실코드 torch 계열 참조 **0건**,
+  ③ 🔴 **주석은 남아 있어도 FAIL 이 아니다** — `mv.py:2979`·`mv_pipeline.py:1197,2900,2948` 의
+  "v43: Demucs 제거" 는 **v43 시점의 이력 주석**이며 v199 범위 밖(실측).
+  ④ `kits` 실코드 참조 **0건**, 단 `config.py:116-118` 의 `kits_api_key`·`kits_api_url` 설정 필드는
+  **잔존한다** → 🔴 **FAIL 아님 · `OBSERVED` 로 기록**(§6 P3).
+- **PASS** ①②④. **FAIL** ① ≠ 0.
+
+#### V199-UNIT-03 · `[unit]` · **호스트** · 재기동 무관 · `main.py` 잔재 0건 + 구문 파싱 (A5)
+
+- **Given** `main.py:54` import, `:631`·`:632` `include_router` 2줄이 제거 대상이었다.
+- **When**
+  ```bash
+  cd $B6
+  grep -n "voice_convert\|vocal_repair" app/main.py | wc -l
+  ./venv/bin/python -m py_compile app/main.py app/routes/tracks.py && echo COMPILE_OK
+  ./venv/bin/python - <<'PY'
+  import ast, pathlib
+  t = ast.parse(pathlib.Path('app/main.py').read_text())
+  names=[a.name for n in ast.walk(t) if isinstance(n,ast.ImportFrom) for a in n.names]
+  print('voice_convert' in names, 'vocal_repair' in names)
+  print('router_calls', sum(1 for n in ast.walk(t)
+        if isinstance(n,ast.Call) and getattr(n.func,'attr','')=='include_router'))
+  PY
+  ```
+- **Then** ① grep **0건**, ② `COMPILE_OK`(구문 오류 0 — 삭제 과정에서 줄이 깨지지 않았다),
+  ③ AST 상 두 이름 모두 `False`, ④ `include_router` 호출 수가 **착수 전 대비 정확히 −2**.
+- **PASS** ①~④. **FAIL** ② 실패 → 🔴 재기동이 아예 불가하므로 즉시 중단(S7 선행).
+- **주의**: `py_compile` 은 **호스트 venv 로만** 실행한다. 🚫 `pip install` 금지.
+
+#### V199-UNIT-04 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `tracks.py` A6 — `variant_index` 무손상 정적 대조 (K4 / S10)
+
+- **Given** `use_voice_converted` 는 `:1487` 에서 `variant_index > 0` 과 **상호배타 검사로 얽혀** 있었다.
+  걷어내면서 `variant_index` 의 0/N 분기가 **바이트 단위로 동일**해야 한다.
+- **When** 🔴 **실행이 아니라 리비전 대조**로 판정한다(유료 업로드 금지).
+  ```bash
+  cd $REPO
+  git show f0f70e2:0_platform_music/backend_9006/app/routes/tracks.py > /tmp/v199t/tracks_before.py
+  # ① use_voice_converted 전멸
+  grep -c "use_voice_converted" 0_platform_music/backend_9006/app/routes/tracks.py
+  # ② variant_index 관련 줄만 뽑아 before/after 대조
+  for f in /tmp/v199t/tracks_before.py 0_platform_music/backend_9006/app/routes/tracks.py; do
+    grep -n "variant_index" "$f" | sed 's/^[0-9]*://' | sed 's/[[:space:]]\+/ /g' > "$f.vi"
+  done
+  diff /tmp/v199t/tracks_before.py.vi \
+       0_platform_music/backend_9006/app/routes/tracks.py.vi
+  # ③ 400 분기 문구
+  grep -n "variant_index는 0 이상\|범위를 벗어났습니다" 0_platform_music/backend_9006/app/routes/tracks.py
+  # ④ [UploadVariant] 로그 생존 + use_vc 소멸
+  grep -n "\[UploadVariant\]" 0_platform_music/backend_9006/app/routes/tracks.py
+  grep -c "use_vc" 0_platform_music/backend_9006/app/routes/tracks.py
+  ```
+- **Then**
+  ① `use_voice_converted` **0건**(주석 `:1481` 의 v199 설명 줄은 grep `use_voice_converted` 에 걸리므로 **1건 허용** — 내용을 눈으로 확인),
+  ② 🔴 `variant_index` 줄 집합의 diff 가 **`use_voice_converted` 를 포함한 줄의 삭제 외에는 0** —
+     즉 `variant_index = body.variant_index or 0` / `if variant_index < 0` / `if variant_index == 0` /
+     `variant_index >= len(gen_variants)` / `gen_variants[variant_index].get("audio_url")` /
+     `"variant_index": variant_index` 가 **전부 그대로**,
+  ③ 400 문구 2종 존재(`variant_index는 0 이상이어야 합니다.` / `variant {n} 범위를 벗어났습니다.`),
+  ④ `[UploadVariant]` 로그 **생존**, `use_vc` **0건**(PLAN §2-3).
+- **PASS** ①~④. **FAIL** ② 에 `use_voice_converted` 무관한 변경이 1줄이라도 있음 → 🔴 **즉시 중단 S10**.
+- 🔴 **이 케이스가 K4 의 1차 방어선이다.** A09~A11 은 스키마 레벨 확인일 뿐, **분기 로직의 동일성은 여기서만 본다.**
+
+#### V199-UNIT-05 · `[unit]` · **호스트** · 재기동 무관 · `requirements.txt` (A7 / DoD 6)
+
+- **Given** `:42 demucs`, `:61 --extra-index-url`, `:62 torch`, `:63 torchaudio` 가 제거 대상이었다.
+- **When**
+  ```bash
+  cd $B6
+  grep -icE '^\s*(demucs|torch|torchaudio)\b' requirements.txt
+  grep -icE '^\s*--(extra-)?index-url' requirements.txt
+  grep -icE '^\s*(librosa|madmom|soundfile|numpy|scipy)' requirements.txt
+  grep -n "constraints-cpu" requirements.txt
+  ```
+- **Then** ① `demucs`·`torch`·`torchaudio` 요구사항 줄 **0건**, ② `--extra-index-url` **0건**,
+  ③ 🔴 `librosa`·`madmom` 등 유지 대상 **≥1**, ④ `constraints-cpu` 언급은 **주석 안에서만**(실측 `:7`·`:55`·`:58`) —
+  요구사항 줄이 아니므로 **FAIL 아님**.
+- **PASS** ①~④.
+
+#### V199-UNIT-06 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `requirements.lock` — torch 체인 제거 + **K5 생존** (A8 / S4)
+
+- **Given** lock 은 착수 시점 **143줄**, torch 체인 9줄이 그대로 있었다(§0-J).
+  🔴 `llvmlite`(162M)·`scipy`(111M)·`numba`(33M) 은 **`librosa` 몫**이지 demucs 몫이 아니다(PLAN §0-6).
+- **When**
+  ```bash
+  cd $B6
+  echo "--- 제거되어야 할 9종 ---"
+  grep -inE '^(torch|torchaudio|sympy|networkx|demucs|dora_search|julius|openunmix)==|^--extra-index-url' requirements.lock
+  echo "--- 🔴 반드시 남아야 할 5종 ---"
+  for p in librosa llvmlite madmom numba scipy; do
+    printf '%-10s ' "$p"; grep -icE "^${p}([=@ ]|$)" requirements.lock
+  done
+  echo "--- 고정 누락 검사 ---"
+  grep -vE '^\s*(#|--|$)' requirements.lock | grep -vcE '(==|@ git\+)'
+  grep -icE '^(nvidia|triton|cuda)' requirements.lock
+  ```
+- **Then** ① 제거 대상 **0줄**, ② 🔴 유지 대상 **5종 전부 ≥1**,
+  ③ `madmom` 커밋 해시가 **`27f032e8947204902c675e5e341a3faf5dc86dae`** 그대로,
+  ④ 고정 안 된 줄 **0**, ⑤ `nvidia|triton|cuda` **0**,
+  ⑥ 총 줄 수가 **143 − 9 = 134 근방**(주석 정리분만큼 더 줄 수 있음 — 값 자체는 판정 대상 아님).
+- **PASS** ①~⑤. **FAIL** ② 중 하나라도 **0** → 🔴 **즉시 중단 S4**.
+- 🔴 **이 케이스는 "덜 지웠나"(①)와 "더 지웠나"(②)를 한 화면에서 본다.** ② 가 본체다.
+
+#### V199-UNIT-07 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `constraints-cpu.txt` ↔ `Dockerfile` 동기화 (A9 ↔ A10)
+
+- **Given** A9 로 `constraints-cpu.txt`(33줄)가 삭제됐다. 🔴 **설계 시 실측: `Dockerfile:81`·`:157` 이
+  아직 이 파일을 `COPY` 하고 있다.** COPY 대상이 없으면 **빌드가 그 레이어에서 죽는다.**
+- **When**
+  ```bash
+  cd $B6
+  ls constraints-cpu.txt 2>&1
+  grep -n "constraints-cpu" Dockerfile
+  grep -rn "constraints-cpu" . --include='*.yml' --include='*.yaml' --include='*.sh' \
+       --include='*.example' 2>/dev/null | grep -v '^./venv'
+  ```
+- **Then** 🔴 **아래 둘 중 하나로 일관되어야 한다.**
+
+  | 선택 | `constraints-cpu.txt` | `Dockerfile` |
+  |---|---|---|
+  | **(a) 삭제** | 없음 | `COPY` 인자·`-c` 참조에서 **완전 제거** (`grep -c constraints-cpu Dockerfile` = **0**, 주석 언급은 허용) |
+  | **(b) 비우기** | 빈 파일 존재 | `COPY` 유지 가능 |
+
+  ① 위 (a)/(b) 중 하나에 **정확히** 부합, ② compose·`run.sh`·`*.example` 어디에도 **깨진 참조 0건**.
+- **PASS** ①②. **FAIL** 현재 상태(파일 없음 + `Dockerfile:81`·`:157` COPY 잔존) 그대로 →
+  **3단계 재빌드가 반드시 실패한다.** planner·backend-dev 에 즉시 보고(§6 P1). §4 는 **BLOCKED** 로 기록.
+- 🔴 **§4(재빌드) 4건은 이 케이스가 PASS 하기 전에는 실행 자체가 무의미하다.**
+
+#### V199-UNIT-08 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `Dockerfile` 무수정 영역 생존 (A10 / K6 / S5)
+
+- **Given** A10 은 **"`constraints-cpu.txt` 동기화만"** 이다. 그 외 구조·apt 목록·ffmpeg 자기검증 RUN 은 **무수정**.
+- **When**
+  ```bash
+  cd $REPO
+  git diff -- 0_platform_music/backend_9006/Dockerfile | grep -E '^[+-]' | grep -v '^[+-][+-]'
+  cd $B6
+  grep -cE '^\s+ffmpeg \\?$' Dockerfile
+  grep -cE '^\s+fonts-nanum \\?$' Dockerfile
+  grep -cE '^\s+fontconfig \\?$' Dockerfile
+  grep -n 'ffmpeg -hide_banner -filters | grep -qw rubberband' Dockerfile
+  grep -n "grep -q ' ass  *V->V'" Dockerfile
+  grep -n 'libmp3lame\|libx264' Dockerfile
+  ```
+- **Then** ① 🔴 diff 의 `+`/`-` 줄이 **`constraints-cpu.txt` 관련 줄에만** 나타난다(그 외 0줄),
+  ② `ffmpeg`·`fonts-nanum`·`fontconfig` apt 항목 **각 1건 생존**(실측 `:127`·`:128`·`:129`),
+  ③ 자기검증 RUN 의 `rubberband`·`ass V->V`·`libmp3lame`·`libx264` **4단언 전부 생존**(실측 `:170`~`:173`),
+  ④ `command -v ffmpeg` / `command -v ffprobe` **생존**(`:168`·`:169`).
+- **PASS** ①~④. **FAIL** ②③④ 중 하나라도 소실 → 🔴 **즉시 중단 S5**.
+- 🔴 **ffmpeg 는 공유 영상·MV 가 쓴다. "torch 를 지우니 ffmpeg 도 필요 없겠지" 는 이번 버전에서 가장 하기 쉬운 오판이다.**
+
+#### V199-UNIT-09 · `[unit]` · **호스트** · 재기동 무관 · 🔴 **Wondera 섹션 무손상** (K1 / S1)
+
+- **Given** `WonderaTestSection` 은 `StudioTab2.jsx:598` 에 있고 `:730`·`:804`·`:834` 에
+  **제거 대상과 완전히 같은 한국어 문구**를 쓴다. B1~B7 이 이 파일을 대폭 삭제하므로 **라인 번호는 반드시 이동한다.**
+- **When** 🔴 **라인 번호로 판정하지 말 것.** 함수 본문을 **내용 기준으로 잘라내** 대조한다.
+  ```bash
+  cd $REPO
+  extract() {  # $1 = 파일경로 → WonderaTestSection 본문만 표준출력
+    awk '/^function WonderaTestSection\(\)/{f=1} f{print} f&&/^}$/{exit}' "$1"
+  }
+  git show f0f70e2:0_platform_music/frontend/src/components/StudioTab2.jsx \
+    > /tmp/v199t/studio_before.jsx
+  extract /tmp/v199t/studio_before.jsx > /tmp/v199t/wondera_before.txt
+  extract 0_platform_music/frontend/src/components/StudioTab2.jsx > /tmp/v199t/wondera_after.txt
+  wc -l /tmp/v199t/wondera_before.txt /tmp/v199t/wondera_after.txt
+  diff /tmp/v199t/wondera_before.txt /tmp/v199t/wondera_after.txt && echo WONDERA_IDENTICAL
+  grep -c "<WonderaTestSection />" 0_platform_music/frontend/src/components/StudioTab2.jsx
+  grep -c "wondera" 0_platform_music/frontend/src/api/index.js
+  ```
+- **Then** ① 🔴 `WONDERA_IDENTICAL` — 본문 diff **0줄**,
+  ② `<WonderaTestSection />` 렌더 호출 **1건 생존**(실측 `:3466`),
+  ③ 본문 안에 `① 내 목소리 업로드` · `🎤 내 목소리로 생성` · `<h4>내 목소리 버전</h4>` **3문구 전부 생존**,
+  ④ `api/index.js` 의 `wondera` export **생존**.
+- **PASS** ①~④. **FAIL** 하나라도 위반 → 🔴 **즉시 중단 S1**.
+- 🔴 **PLAN §0-5 의 경고 그대로다**: 초판 메모의 "`:834` 「내 목소리 버전」" 은 **Wondera 라인**이었고,
+  실제 제거 대상은 `:3645`(`s2__vc-label`)다. **라인 참조를 믿고 지우면 Wondera 가 부서진다.**
+
+#### V199-UNIT-10 · `[unit]` · **호스트** · 재기동 무관 · 🔴 **`MyVoiceCloneSection` 무 diff** (K2 / S3)
+
+- **Given** grep `"clone"` 에 걸리지만 Suno 보이스 클로닝이라 voice-convert 와 **무관**.
+- **When**
+  ```bash
+  cd $REPO
+  git status --short -- 0_platform_music/frontend/src/components/MyVoiceCloneSection.jsx \
+                        0_platform_music/frontend/src/components/MyVoiceCloneSection.css \
+                        0_platform_music/frontend/src/components/VoiceCloneWizard.jsx \
+                        0_platform_music/frontend/src/components/VoiceCloneWizard.css
+  sha256sum 0_platform_music/frontend/src/components/MyVoiceCloneSection.jsx \
+            0_platform_music/frontend/src/components/MyVoiceCloneSection.css
+  grep -c "MyVoiceCloneSection" 0_platform_music/frontend/src/components/StudioTab2.jsx
+  ```
+- **Then** ① `git status` **0줄**(4파일 전부 무변경),
+  ② sha256 이 §0-I 앵커와 **완전 일치**
+     (`.jsx` = `eecacead…aeaeced`, `.css` = `e644c93d…970b9b9`),
+  ③ `StudioTab2.jsx` 안의 `MyVoiceCloneSection` import·렌더 **생존**.
+- **PASS** ①②③. **FAIL** 하나라도 위반 → 🔴 **즉시 중단 S3**.
+
+#### V199-UNIT-11 · `[unit]` · **호스트** · 재기동 무관 · 🔴 **작곡 폼 Suno 페르소나 무손상** (K3 / S2)
+
+- **Given** 제거되는 모달도 `persona_id` 를 쓴다(`:1979` `persona_id: vcSelectedModel`).
+  state 는 **`selectedPersonaId`(작곡 폼 · 유지)** vs **`vcSelectedModel`(모달 · 제거)** — **별개**.
+- **When**
+  ```bash
+  cd $REPO/0_platform_music/frontend/src/components
+  grep -n "selectedPersonaId\|setSelectedPersonaId" StudioTab2.jsx
+  grep -n "s2__vocal-btn--persona" StudioTab2.jsx
+  grep -n "persona_id" StudioTab2.jsx
+  grep -c "vcSelectedModel\|vcSelectedType" StudioTab2.jsx
+  ```
+- **Then**
+  ① `useState` 선언 `const [selectedPersonaId, setSelectedPersonaId] = useState(null);` **생존**(착수 시 `:859`),
+  ② `s2__vocal-btn--persona` 버튼 **생존** — 착수 시 `:2741`(페르소나) + `:2771`(보이스 클론) **2건**,
+  ③ 🔴 `persona_id` 전송 지점 **4건 생존** — 착수 시 `:1632`·`:1649`(`clone.voice_id`)·`:1675`·`:1693`,
+  ④ 🔴 모달 몫이던 `:1979 persona_id: vcSelectedModel` 은 **소멸**,
+  ⑤ `vcSelectedModel|vcSelectedType` **0건**,
+  ⑥ 페르소나 목록 로딩(`:1104` `data.personas` 필터) **생존**.
+- **PASS** ①~⑥. **FAIL** ①②③⑥ 중 하나라도 소실 → 🔴 **즉시 중단 S2**.
+- 🔴 **③ 이 4건에서 2건으로 줄면 "작곡은 되는데 페르소나만 안 실린다"** 는 조용한 회귀다.
+  빌드도 통과하고 화면도 뜬다. **grep 으로만 잡힌다.**
+
+#### V199-UNIT-12 · `[unit]` · **호스트** · 재기동 무관 · `StudioTab2.jsx` VC 심볼 전멸 (B1~B7 / DoD 1)
+
+- **Given** 착수 시 VC 심볼 **41줄**, `MrPitchAdjustPanel` `:195~560`, VC 모달 `:3690-3799`.
+- **When**
+  ```bash
+  cd $REPO/0_platform_music/frontend/src/components
+  grep -cE "vcSelectedModel|vcSelectedType|vcStrength|vcVolumeMix|vcPitchShift|vcModalGenId|vcSubmitting|vcPlayingId|kitsModels|kitsModelsLoaded" StudioTab2.jsx
+  grep -c "MrPitchAdjustPanel" StudioTab2.jsx
+  grep -cE "openVcModal|handleStartVoiceConvert|handlePlayVc|handleDownloadVc|vcStatusLabel" StudioTab2.jsx
+  grep -c "voice_conversion_status" StudioTab2.jsx
+  grep -c "hasVoiceConverted" StudioTab2.jsx
+  grep -cE "s2__vc-|mr-pitch__" StudioTab2.jsx
+  grep -cE "startVoiceConvert|getVoiceConvertStatus|getKitsVoiceModels|mergeVoiceConversion|previewMrPitched|streamConvertedVocal|streamBacking" StudioTab2.jsx
+  grep -c "내 목소리로 변환" StudioTab2.jsx
+  ```
+- **Then** ①~⑧ **전부 0**. 특히 ④ `voice_conversion_status` 0 = B7 폴링 조건 정리 완료,
+  ⑤ `hasVoiceConverted` 0 = B4 의 `:3575` 전달 삭제 완료.
+- **PASS** 8항 전부 0. **FAIL** 잔재 존재 → 재작업(회귀 아님).
+- 🔴 **주의**: `내 목소리로 생성`(Wondera `:804`)·`내 목소리 버전`(Wondera `:834`) 은 **다른 문구다.**
+  ⑧ 은 정확히 **`내 목소리로 변환`** 만 센다. `내 목소리` 로 세면 Wondera 를 오탐한다.
+
+#### V199-UNIT-13 · `[unit]` · **호스트** · 재기동 무관 · `StudioTab2.css` 규칙 삭제 + 타 CSS 무영향 (B8 / §0-9)
+
+- **Given** 착수 시 `StudioTab2.css` **2584줄**, `s2__vc-` **25건**, `mr-pitch__` **41건**.
+  이 두 클래스는 **`StudioTab2.css` 에만** 있다(실측 — 타 CSS 0건).
+- **When**
+  ```bash
+  cd $REPO/0_platform_music/frontend/src
+  grep -c "s2__vc-" components/StudioTab2.css
+  grep -c "mr-pitch__" components/StudioTab2.css
+  grep -rl "s2__vc-\|mr-pitch__" . || echo NONE
+  grep -c "s2__vocal-btn" components/StudioTab2.css        # 🔴 유지 대상 (K3 의 페르소나 버튼)
+  grep -c "wondera-test__" components/StudioTab2.css       # 🔴 유지 대상 (K1)
+  cd $REPO && git diff --stat -- 0_platform_music/frontend/src/components/StudioTab2.css
+  ```
+- **Then** ① `s2__vc-` **0**, ② `mr-pitch__` **0**, ③ 전체 `src/` 에서 두 클래스 **0건**(`NONE`),
+  ④ 🔴 `s2__vocal-btn` 규칙 **생존 ≥1**, ⑤ 🔴 `wondera-test__` 규칙 **생존 ≥1**,
+  ⑥ diff 의 삭제 줄 수가 **대략 66줄(25+41) 언저리** — 수백 줄이 지워졌다면 오폭 의심.
+- **PASS** ①~⑤. **FAIL** ④⑤ 소실 → 🔴 **S1/S2 승격**. ⑥ 이상 → planner 보고.
+- 🔴 **`s2__vc-` 를 `s2__v` 나 `s2__vc` 로 느슨하게 grep 하면 `s2__vocal-btn` 이 함께 지워진다** — 이게 ④ 를 둔 이유다.
+
+#### V199-UNIT-14 · `[unit]` · **호스트** · 재기동 무관 · `UploadPage.jsx` 17지점 정리 + 로그 생존 (B9 / DoD 2)
+
+- **Given** 착수 시 **4389줄**, 결합 17지점(§0-I). 🔴 `:1405`·`:696` 은 **업로드 오디오 오브젝트 선택 분기**다.
+- **When**
+  ```bash
+  cd $REPO/0_platform_music/frontend/src/pages
+  grep -cE "hasVoiceConverted|useVoiceConverted|setUseVoiceConverted|setHasVoiceConverted" UploadPage.jsx
+  grep -c "voiceConvertStreamUrl" UploadPage.jsx
+  grep -c "use_voice_converted" UploadPage.jsx
+  grep -c "내 목소리 버전" UploadPage.jsx
+  grep -c "upload-card__audio-source-btn" UploadPage.jsx
+  echo "--- 🔴 유지 확인 ---"
+  grep -c "AI 생성 오디오 연결됨" UploadPage.jsx
+  grep -c "variantIndex" UploadPage.jsx
+  grep -c "console.error" UploadPage.jsx
+  ```
+- **Then** ①~⑤ **전부 0**,
+  ⑥ 🔴 `AI 생성 오디오 연결됨` **생존**(`:4105` 의 삼항이 접히면 이쪽만 남아야 한다 — 문구 자체가 사라지면 FAIL),
+  ⑦ 🔴 `variantIndex` **생존**(`:1732` 의 `original-v${variantIndex}` key 등 — variant 경로가 유일 경로가 된다),
+  ⑧ 🔴 `console.error` 개수가 **착수 전과 동일**(PLAN §2-3 — 삭제 과정에서 컴포넌트 prefix 로그를 함께 지우지 않았다).
+- **PASS** ①~⑧. **FAIL** ⑥⑦ 소실 → 업로드 화면 파손. ⑧ 감소 → planner 보고(로그 규칙 위반).
+- 🔴 **⑦ 이 이번 파일의 핵심이다.** `useVoiceConverted` 를 지우면서 `:1405`·`:696`·`:1736`·`:1795` 의
+  **삼항 전체**를 지우면 오디오 소스 자체가 사라진다. **조건만 접고 원본(variant) 가지를 남겨야 한다.**
+
+#### V199-UNIT-15 · `[unit]` · **호스트** · 재기동 무관 · `api/index.js` export 22개 삭제 + **유지 9건 생존** (B10)
+
+- **Given** 착수 시 **995줄 / `export` 259건**. 제거 대상은 **22개**(`:539-587` 17개 + `:672-694` 5개) —
+  🔴 **PLAN §0-2 의 "25개" 는 실측과 다르다**(§6 P2).
+- **When**
+  ```bash
+  cd $REPO/0_platform_music/frontend/src/api
+  echo "--- 제거 대상 22종 ---"
+  for n in uploadVoiceForRepair startVocalEnhance getVocalRepairStatus \
+           vocalRepairOriginalStreamUrl vocalRepairEnhancedStreamUrl \
+           vocalRepairOriginalDownloadUrl vocalRepairEnhancedDownloadUrl getVocalRepairList \
+           startVoiceConvert getVoiceConvertStatus getKitsVoiceModels \
+           voiceConvertStreamUrl voiceConvertDownloadUrl streamConvertedVocal streamBacking \
+           mergeVoiceConversion previewMrPitched \
+           fetchVocalRepairOriginal fetchVocalRepairEnhanced fetchConvertedVocal fetchBacking \
+           downloadVocalRepair ; do
+    printf '%-32s %s\n' "$n" "$(grep -c "export const $n" index.js)"
+  done
+  grep -cE "'/vocal-repair|/voice-convert|/kits/" index.js
+  echo "--- 🔴 유지 대상 ---"
+  grep -cE "voiceClone|voicePersona|wondera" index.js
+  grep -c "^export " index.js
+  ```
+- **Then** ① 22개 전부 **0**, ② `'/vocal-repair`·`/voice-convert`·`/kits/` 경로 문자열 **0건**,
+  ③ 🔴 `voiceClone|voicePersona|wondera` **9줄 생존**(착수 시 실측과 동일),
+  ④ 총 `export` 수가 **259 − 22 = 237**.
+- **PASS** ①~④. **FAIL** ③ 감소 → 🔴 **S3 승격**(voice-clone/persona/wondera 오폭).
+  ④ 가 237 보다 **작으면** 초과 삭제 → planner 보고.
+- 🔴 **④ 의 산수가 이 케이스의 오폭 탐지기다.** 개수가 맞지 않으면 이름을 몰라도 "더 지웠다"를 안다.
+
+#### V199-UNIT-16 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `frontend` 빌드 통과 + **미해결 import 0건** (DoD 9)
+
+- **Given** 삭제가 주된 작업이라 **끊긴 import** 가 가장 흔한 실패 형태다.
+- **When**
+  ```bash
+  cd $FE
+  npm run build 2>&1 | tee /tmp/v199t/build.log
+  echo "rc=$?"
+  grep -icE "could not resolve|failed to resolve|is not exported by|rollup failed|error during build" /tmp/v199t/build.log
+  grep -icE "\"(MrPitchAdjustPanel|startVoiceConvert|getKitsVoiceModels|voiceConvertStreamUrl)\"" /tmp/v199t/build.log
+  ls -la dist/index.html
+  ```
+- **Then** ① 빌드 **rc=0**, ② 미해결 import·미export 에러 **0건**,
+  ③ 삭제된 심볼명이 에러 메시지에 **0건**, ④ `dist/index.html` 생성됨.
+- **PASS** ①~④. **FAIL** 어느 하나 → backend-dev/frontend-dev 재작업. **판정 자체는 회귀 아님.**
+- 🚫 빌드 산출물 `dist/` 는 저장소에 커밋하지 않는다. 종료 시 원 상태 확인.
+- 🔴 **빌드 통과는 축 2 의 증거가 아니다.** Wondera 를 통째로 지워도 빌드는 통과한다 → U09 가 필요한 이유.
+
+#### V199-UNIT-17 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `generate.py:91` **무수정** (K7 / PLAN §0-8)
+
+- **Given** `_serialize` 가 문서 전체를 그대로 반환하므로, `voice_conversion_completed_at` 을 튜플에서
+  빼면 **레거시 문서의 `datetime` 이 변환되지 않은 채** 응답 경로로 흘러간다. **무수정이 정답이다.**
+- **When**
+  ```bash
+  cd $REPO
+  git diff -- 0_platform_music/backend_9006/app/routes/generate.py | wc -l
+  grep -n 'voice_conversion_completed_at' 0_platform_music/backend_9006/app/routes/generate.py
+  sed -n '88,94p' 0_platform_music/backend_9006/app/routes/generate.py
+  ```
+- **Then** ① 🔴 `generate.py` diff **0줄**,
+  ② 튜플에 `"created_at", "updated_at", "completed_at", "voice_conversion_completed_at"` **4개 전부** 존재,
+  ③ 코드 형태가 착수 전과 동일.
+- **PASS** ①②③. **FAIL** ① ≠ 0 → 🔴 **범위 이탈** — planner 보고 후 revert 권고.
+- 🔴 **"안 쓰는 키니까 지우자" 가 여기서는 오답이다.** 남겨두는 비용은 0, 빼는 위험은 실재한다.
+
+#### V199-UNIT-18 · `[unit]` · **호스트** · 재기동 무관 · 🔴 범위 이탈 감시 — 9004·9005·admin 무접촉 (S6)
+
+- **When**
+  ```bash
+  cd $REPO
+  git status --short | grep -E '0_platform_music/(backend_9004|backend_9005|frontend_admin)/' | wc -l
+  git diff --stat -- 0_platform_music/backend_9004 0_platform_music/backend_9005 \
+                     0_platform_music/frontend_admin | wc -l
+  echo "--- 변경 파일 전수 ---"
+  git status --short
+  ```
+- **Then** ① 9004·9005·`frontend_admin` 변경 **0줄**,
+  ② 🔴 변경 파일 목록이 **PLAN §2 의 A1~A10·B1~B11 대상 파일 집합의 부분집합**이다 —
+     허용 목록: `backend_9006/{app/main.py, app/routes/tracks.py, app/routes/voice_convert.py(D),
+     app/routes/vocal_repair.py(D), app/services/demucs_service.py(D), app/services/kits_service.py(D),
+     constraints-cpu.txt(D), requirements.txt, requirements.lock, Dockerfile}` +
+     `frontend/src/{components/StudioTab2.jsx, components/StudioTab2.css, pages/UploadPage.jsx, api/index.js}` +
+     `claude_skills_outputs/team-dev/*.md`,
+  ③ 목록 밖 파일이 **1개라도** 있으면 그 파일명을 REPORT 에 적고 planner 확인.
+- **PASS** ①②. **FAIL** ① ≠ 0 → 🔴 **즉시 중단 S6**.
+- 🔴 **② 가 오폭의 최종 그물이다.** U09~U15 가 놓친 파일도 여기서 이름이 뜬다.
+
+---
+
+### 2. `[api]` 시나리오 (16건) — 라우트 소멸/생존
+
+> 🔴 **전 케이스 `재기동: 후`.** §0-D 를 지키지 않은 판정은 무효다.
+> 🔴 **호출 전에 §0-B-1 을 다시 읽는다** — 17개 중 1번·9번은 삭제 전이면 유료다.
+
+#### V199-API-01 · `[api]` · **호스트** · 재기동 **후** · 🔴 9006 생존 확인 (DoD 10 / S7)
+
+- **Given** 코드 삭제가 모듈 로드 시점에 반영되므로 재기동이 필수다. 재기동은 **실서비스 중단 위험**을 동반한다.
+- **When**
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://127.0.0.1:9006/api/health
+  tail -n 80 $B6/logs/server.log
+  grep -icE "ModuleNotFoundError|ImportError|Traceback" $B6/logs/server.log | tail -1
+  ```
+- **Then** ① `/api/health` **200**, ② 로그에 `All database connections established.` +
+  `Uvicorn running on http://0.0.0.0:9006`, ③ 🔴 **재기동 이후 구간**에 `ModuleNotFoundError`·`ImportError` **0건**
+  (특히 `No module named 'app.routes.voice_convert'` / `'torch'` / `'demucs'`).
+- **PASS** ①②③. **FAIL** → 🔴 **즉시 중단 S7**. 롤백 판단은 planner.
+- 🔴 **이 케이스가 §2 의 전제다.** 실패하면 API-02~16 은 전부 **BLOCKED**.
+
+#### V199-API-02 · `[api]` · **호스트** · 재기동 **전+후** · 🔴🔴 **`/openapi.json` 라우트 집합 전/후 diff** — 이번 버전 최중요
+
+- **Given** §0-E 절차. 착수 전 **282 paths**, 제거 대상 **17**.
+- **When** §0-E 의 스크립트를 그대로 실행.
+- **Then**
+
+  | 단언 | 기대 | 위반 |
+  |---|---|---|
+  | ① `before paths` | **282** | 베이스라인 재확보 |
+  | ② `after paths` | **265** | — |
+  | ③ `GONE` 개수 | **정확히 17** | — |
+  | ④ 🔴 `GONE` 집합 | **§0-F 표의 17개와 완전 일치** | **초과 1건이라도 → 즉시 중단 S9** |
+  | ⑤ `ADDED` | **0** | planner 보고 |
+  | ⑥ `METHOD-CHANGED` | **0** | FAIL |
+  | ⑦ 유지 라우트 표본 | `/api/voice-clone/**` · `/api/voice-persona/**` · `/api/wondera/**` · `/api/tracks/**` · `/api/mv/**` · `/api/generations/**` **전부 `after` 에 존재** | S1/S2/S3 승격 |
+
+- **PASS** ①~⑦. **FAIL** ④ 초과 → 🔴 **즉시 중단 S9**, `GONE` 초과분 목록을 그대로 planner 에 전달.
+- 🔴 **"사라진 것이 정확히 17개이고, 그 외 라우트는 1개도 안 사라졌다"** 를 한 번에 증명하는 유일한 케이스다.
+  개별 404 (API-03·04) 는 ③ 을 보강할 뿐, **④ 를 대체하지 못한다.**
+
+#### V199-API-03 · `[api]` · **호스트** · 재기동 **후** · `voice_convert` **9개 엔드포인트 404** (①~⑨ 개별)
+
+- **Given** §0-F 의 1~9번. 🔴 삭제·재기동 **후**에만 호출한다.
+- **When** `GID=000000000000000000000000` (존재하지 않는 24자 ObjectId — 실데이터 무접촉)
+  ```bash
+  B=http://127.0.0.1:9006; GID=000000000000000000000000
+  probe(){ printf '%-58s %s\n' "$1 $2" "$(curl -s -o /dev/null -w '%{http_code}' -X "$1" --max-time 10 "$B$2")"; }
+  probe POST "/api/voice-convert/$GID"
+  probe GET  "/api/voice-convert/$GID/status"
+  probe GET  "/api/voice-convert/$GID/stream"
+  probe GET  "/api/voice-convert/$GID/download"
+  probe GET  "/api/voice-convert/$GID/converted-vocal/stream"
+  probe GET  "/api/voice-convert/$GID/backing/stream"
+  probe POST "/api/voice-convert/$GID/preview-mr"
+  probe POST "/api/voice-convert/$GID/merge"
+  probe GET  "/api/kits/voice-models"
+  ```
+- **Then** ①~⑨ **전부 `404`**. 응답 본문은 FastAPI 기본 `{"detail":"Not Found"}`.
+- **PASS** 9/9 = 404. **FAIL** 하나라도 200/401/403/405/422/500 → 라우트가 살아 있다 → 재작업.
+- 🔴 **401·403 은 FAIL 이다.** 인증 미들웨어가 라우트보다 먼저 걸린다는 뜻이며, **라우트가 아직 등록돼 있다**는 신호다.
+- 🔴 **404 를 관측한 즉시 해당 URL 에 추가 호출을 하지 않는다**(0-B-1).
+
+#### V199-API-04 · `[api]` · **호스트** · 재기동 **후** · `vocal_repair` **8개 엔드포인트 404** (⑩~⑰ 개별)
+
+- **Given** §0-F 의 10~17번. `vocal_repair` 는 UI 연결 0건인 **완전한 죽은 코드**였다(PLAN §0-10).
+- **When** `RID=000000000000000000000000`
+  ```bash
+  B=http://127.0.0.1:9006; RID=000000000000000000000000
+  probe POST "/api/vocal-repair/upload"
+  probe POST "/api/vocal-repair/$RID/enhance"
+  probe GET  "/api/vocal-repair/$RID/status"
+  probe GET  "/api/vocal-repair/$RID/original/stream"
+  probe GET  "/api/vocal-repair/$RID/enhanced/stream"
+  probe GET  "/api/vocal-repair/$RID/original/download"
+  probe GET  "/api/vocal-repair/$RID/enhanced/download"
+  probe GET  "/api/vocal-repair/list"
+  ```
+- **Then** ⑩~⑰ **전부 `404`**.
+- **PASS** 8/8. **FAIL** 동상.
+- 🔴 `POST /api/vocal-repair/upload` 는 **본문 없이** 호출한다. 라우트가 살아 있으면 422 가 나므로
+  **422 도 FAIL 이다**(= 라우트 생존의 증거).
+
+#### V199-API-05 · `[api]` · **호스트** · 재기동 **후** · 🔴 404 의 **정체성** 검증 + `/api/kits/*` 오폭 확인
+
+- **Given** 404 는 "라우트 없음" 뿐 아니라 "리소스 없음" 으로도 난다. 구분이 필요하다.
+  또 9번(`/api/kits/voice-models`)은 `/api/kits` 네임스페이스라 **다른 kits 라우트를 함께 죽였을 가능성**이 있다.
+- **When**
+  ```bash
+  B=http://127.0.0.1:9006
+  # 라우트 없음의 지문: OPTIONS 도 404, 임의 method 도 404
+  curl -s -o /dev/null -w 'OPTIONS %{http_code}\n' -X OPTIONS "$B/api/voice-convert/x"
+  curl -s -o /dev/null -w 'DELETE  %{http_code}\n' -X DELETE  "$B/api/vocal-repair/list"
+  # 대조군: 살아 있는 라우트에 잘못된 method → 405 가 나와야 정상
+  curl -s -o /dev/null -w 'CTRL-405 %{http_code}\n' -X DELETE "$B/api/health"
+  # /api/kits 네임스페이스 잔존 여부
+  curl -s "$B/openapi.json" | python3 -c "import json,sys;p=json.load(sys.stdin)['paths'];print([k for k in p if k.startswith('/api/kits')])"
+  ```
+- **Then** ① 제거된 경로는 **method 를 바꿔도 404**(405 가 안 나온다 = 라우트 자체가 없다),
+  ② 🔴 대조군 `/api/health` 에 `DELETE` → **405**(서버가 405 를 낼 능력이 있음을 증명 — ① 의 의미가 살아난다),
+  ③ `/api/kits` 로 시작하는 path 가 **`before` 에도 `voice-models` 1개뿐이었다면 `after` 는 `[]`**,
+     **다른 `/api/kits/*` 가 있었다면 그것은 반드시 생존**해야 한다(→ 없으면 S9).
+- **PASS** ①②③. **FAIL** ② 가 405 가 아니면 이 케이스 전체가 무의미 → 판정 보류·planner 보고.
+- 🔴 **② 가 없으면 ① 은 아무것도 증명하지 못한다.** 대조군을 반드시 함께 기록한다.
+
+#### V199-API-06 · `[api]` · **호스트** · 재기동 **후** · 🔴 `voice_persona` 8개 엔드포인트 **생존** (PLAN §0-5)
+
+- **Given** 모달의 "우회 방식" 이 이 데이터를 썼다. 모달은 사라지지만 **라우트는 전부 존치**한다.
+- **When**
+  ```bash
+  curl -s http://127.0.0.1:9006/openapi.json \
+   | python3 -c "import json,sys;p=json.load(sys.stdin)['paths'];ks=sorted(k for k in p if 'persona' in k);print(len(ks));[print(' ',k) for k in ks]"
+  curl -s -o /dev/null -w 'LIST %{http_code}\n' --max-time 10 http://127.0.0.1:9006/api/voice-persona/list
+  ```
+- **Then** ① persona 관련 path 수가 **`before` 와 동일**(PLAN §0-5 기준 **8개**),
+  ② 목록 조회는 **401 또는 200**(미인증 401 은 **정상 — 라우트 생존의 증거**), 🔴 **404 는 FAIL**.
+- **PASS** ①②. **FAIL** ① 감소 또는 ② 404 → 🔴 **즉시 중단 S2**.
+- 🚫 **생성 계열(페르소나 학습·생성)은 호출하지 않는다.** 목록/스키마까지만.
+
+#### V199-API-07 · `[api]` · **호스트** · 재기동 **후** · 🔴 `voice_clone` 라우트 **생존** (K2 / S3)
+
+- **When**
+  ```bash
+  curl -s http://127.0.0.1:9006/openapi.json \
+   | python3 -c "import json,sys;p=json.load(sys.stdin)['paths'];ks=sorted(k for k in p if 'voice-clone' in k);print(len(ks));[print(' ',k) for k in ks]"
+  ```
+- **Then** ① `voice-clone` path 수가 **`before` 와 완전 일치**, ② `GONE` 집합에 **0건 포함**.
+- **PASS** ①②. **FAIL** → 🔴 **즉시 중단 S3**.
+- 🚫 `POST /api/voice-clone/**`(생성 계열) 호출 금지 — **유료**(0-B-1). openapi 문서 확인까지만.
+
+#### V199-API-08 · `[api]` · **호스트** · 재기동 **후** · 🔴 `wondera` 라우트 **생존** (K1 / S1)
+
+- **Given** PLAN §0-5 실측: `wondera.py` 는 kits·demucs·voice_convert 결합 **0건**.
+- **When**
+  ```bash
+  curl -s http://127.0.0.1:9006/openapi.json \
+   | python3 -c "import json,sys;p=json.load(sys.stdin)['paths'];ks=sorted(k for k in p if 'wondera' in k);print(len(ks));[print(' ',k) for k in ks]"
+  ```
+- **Then** ① `wondera` path 수가 **`before` 와 완전 일치**, ② `GONE` 에 0건.
+- **PASS** ①②. **FAIL** → 🔴 **즉시 중단 S1**.
+- 🚫 Wondera **생성** 호출 금지 — 화면·스키마 확인까지만(E01 도 동일).
+
+#### V199-API-09 · `[api]` · **호스트** · 재기동 **후** · `upload-from-generation` 스키마에서 `use_voice_converted` **소멸** (A6 / DoD 2)
+
+- **When**
+  ```bash
+  curl -s http://127.0.0.1:9006/openapi.json | python3 - <<'PY'
+  import json,sys
+  d=json.load(sys.stdin)
+  # 스키마 이름은 UploadFromGenerationBody
+  s=d['components']['schemas'].get('UploadFromGenerationBody')
+  print('schema_found', s is not None)
+  print('props', sorted((s or {}).get('properties',{})))
+  print('use_voice_converted' in (s or {}).get('properties',{}))
+  PY
+  ```
+- **Then** ① 스키마 **존재**(라우트가 살아 있다), ② `use_voice_converted` 프로퍼티 **부재**,
+  ③ 🔴 나머지 프로퍼티 집합이 **`before` 스냅샷에서 `use_voice_converted` 하나만 뺀 것과 정확히 일치**.
+- **PASS** ①②③. **FAIL** ③ 에 추가 소실 → 🔴 **즉시 중단 S10**.
+
+#### V199-API-10 · `[api]` · **호스트** · 재기동 **후** · 🔴 `variant_index` 필드·기본값 **무손상** (K4 / S10)
+
+- **When**
+  ```bash
+  curl -s http://127.0.0.1:9006/openapi.json | python3 - <<'PY'
+  import json,sys
+  d=json.load(sys.stdin)
+  s=d['components']['schemas']['UploadFromGenerationBody']
+  vi=s['properties'].get('variant_index')
+  print(json.dumps(vi, ensure_ascii=False))
+  print('required', s.get('required'))
+  PY
+  ```
+- **Then** ① `variant_index` 프로퍼티 **존재**,
+  ② 기본값 **0**(`tracks.py:1454 variant_index: Optional[int] = 0` 실측),
+  ③ 타입이 **`integer` nullable**(= `Optional[int]`) — `before` 스냅샷과 **완전 일치**,
+  ④ `required` 목록이 `before` 와 동일(= `variant_index` 가 필수로 승격되지 않았다).
+- **PASS** ①~④. **FAIL** → 🔴 **즉시 중단 S10**.
+- 🔴 **기본값이 `0` 에서 사라지면 기존 클라이언트의 무인자 업로드가 깨진다.** 화면으로는 안 보인다.
+
+#### V199-API-11 · `[api]` · **호스트** · 재기동 **후** · 🔴 variant **0 / N / 범위초과 400** 3케이스 — **정적 대조 + 스키마 검증 중심**
+
+- **Given** 🚫 **실제 유료 업로드(`POST /api/tracks/upload`, `upload-from-generation` 성공 경로)는 금지**(0-B-1).
+  그러므로 이 3케이스는 **실행이 아니라 코드 경로 대조**로 증명한다.
+- **When**
+
+  | 케이스 | 검증 방법 | 실행 여부 |
+  |---|---|---|
+  | **variant 0** | `tracks.py:1489` `if variant_index == 0:` 블록이 `before` 와 **바이트 동일**(U04 ② 재확인) + `:1602` 의 `variant_index == 0` 조건 생존 | 🚫 미실행 (정적) |
+  | **variant N** | `:1495` 범위검사 → `:1504 gen_variants[variant_index].get("audio_url")` 경로가 `before` 와 **바이트 동일** + `:1652` `"variant_index": variant_index` 저장 생존 | 🚫 미실행 (정적) |
+  | **범위초과 400** | 🔴 **실행 가능** — 인증만 통과하면 **소스 선택·유료 호출 이전**(`:1495-1502`)에서 반환된다 | **조건부 실행** |
+
+  ```bash
+  # 범위초과 400 — 🔴 planner 승인 시에만(§6 P4). 테스트 계정 토큰 사용.
+  curl -s -o /tmp/v199t/oob.json -w '%{http_code}\n' -X POST \
+    -H "Authorization: Bearer $TEST_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"generation_id":"<TEST_GEN_ID>","variant_index":9999,"title":"v199t"}' \
+    --max-time 15 http://127.0.0.1:9006/api/tracks/upload-from-generation
+  cat /tmp/v199t/oob.json
+  # 음수 400
+  ... -d '{"generation_id":"<TEST_GEN_ID>","variant_index":-1,"title":"v199t"}'
+  ```
+- **Then** ① variant 0 · variant N 블록 diff **0줄**,
+  ② 범위초과 → **400** + 본문에 `범위를 벗어났습니다`, ③ 음수 → **400** + `variant_index는 0 이상이어야 합니다.`,
+  ④ 🔴 **DB 에 신규 track 문서 0건 · MinIO 객체 0건 · ⭐ 차감 0** (400 이므로 구조적으로 보장되지만 A16 에서 재확인).
+- **PASS** ① + (②③ 실행 시 통과 / 미승인 시 `SKIP` + 사유). **FAIL** ① ≠ 0 → 🔴 **S10**.
+- 🔴 **②③ 은 400 을 "받아내는" 케이스라 부작용이 없다.** 그래도 `<TEST_GEN_ID>` 는 **테스트 계정 소유 생성물**이어야 하며,
+  실사용자 생성물 id 를 넣지 않는다(0-B-2). 🚫 성공 경로(유효 variant)는 **절대 호출하지 않는다.**
+
+#### V199-API-12 · `[api]` · **호스트** · 재기동 **후** · 조회 라우트 응답 **구조** 전/후 동일 (무영향 증명)
+
+- **Given** v199 는 조회 API 를 건드리지 않았다. 값은 실트래픽으로 변하므로 **구조로 판정**한다(v198 §0-E 규칙 승계).
+- **When** `before`/`after` 두 시점에 아래를 수집·비교.
+  ```bash
+  for p in /api/health /api/charts/top100?limit=10 /api/charts/hot100?limit=10 \
+           /api/charts/categories /api/artists/ /api/albums/ /api/albums/latest \
+           /api/character/style-samples ; do ... ; done
+  ```
+- **Then** ① HTTP status **완전 일치**, ② `content-type` **완전 일치**, ③ 최상위 key 집합 **완전 일치**,
+  ④ 배열 항목 수 **완전 일치**, ⑤ 각 항목 key 집합(합집합) **완전 일치**,
+  ⑥ `/api/character/style-samples` 본문 **바이트 완전 일치**(정적 데이터).
+  🔴 **차트·아티스트·앨범의 값은 판정 대상이 아니다** — 변동 정상. REPORT 에 명기.
+- **PASS** ①~⑥. **FAIL** ③⑤ 불일치 → 삭제가 조회 경로에 번졌다 → planner 보고.
+- 🚫 응답 본문의 개인정보(이메일·생년월일·성별)는 **REPORT 에 남기지 않는다** — key 집합·개수만 기록(S11).
+
+#### V199-API-13 · `[api]` · **호스트** · 재기동 **후** · 🔴 **레거시 문서 직렬화 무손상** (K7 / PLAN §0-8)
+
+- **Given** 기존 `generations` 문서에는 `voice_conversion_status`·`voice_converted_url`·
+  `voice_conversion_completed_at` 이 **그대로 남아 있다**(마이그레이션 안 함). 읽는 쪽은 사라졌지만
+  `_serialize` 는 **문서 전체를 반환**하므로 이 키들이 응답에 실려 나온다.
+- **When** 테스트 계정의 기존 생성 목록을 **조회만** 한다.
+  ```bash
+  curl -s -H "Authorization: Bearer $TEST_TOKEN" --max-time 15 \
+       'http://127.0.0.1:9006/api/generations?limit=5' > /tmp/v199t/gens.json
+  python3 - <<'PY'
+  import json
+  d=json.load(open('/tmp/v199t/gens.json'))
+  items = d if isinstance(d,list) else d.get('items') or d.get('generations') or []
+  print('count', len(items))
+  for g in items:
+      leftovers = {k:type(v).__name__ for k,v in g.items() if k.startswith('voice_conversion')}
+      print(leftovers)
+  PY
+  ```
+- **Then** ① HTTP **200** (🔴 **500 이면 직렬화가 깨진 것 — `generate.py:91` 을 건드렸다는 증거**),
+  ② `voice_conversion_completed_at` 이 있는 문서에서 그 값이 **`str`(ISO8601)** — `datetime` 객체가 아님,
+  ③ 🔴 `voice_conversion_*` 키가 **남아 있어도 FAIL 아님**(PLAN §0-8 — 마이그레이션은 범위 밖).
+- **PASS** ①②. **FAIL** ① 500 또는 ② 직렬화 실패 → **U17 과 함께 planner 보고**(K7 위반).
+- 🚫 조회만. 생성·삭제 금지. 개인정보 키는 REPORT 에 값 없이 이름만.
+
+#### V199-API-14 · `[api]` · **호스트** · 재기동 **후** · MV·비트분석 경로 무영향 (`torch` 제거 부작용 / PLAN §3)
+
+- **Given** `librosa`·`madmom` 은 **MV 비트 분석**이 쓴다. torch 제거가 이 체인을 건드렸는지 본다.
+- **When** 🚫 **MV 생성은 유료다 — 호출 금지.** 조회·스키마·모듈 임포트까지만.
+  ```bash
+  curl -s http://127.0.0.1:9006/openapi.json \
+   | python3 -c "import json,sys;p=json.load(sys.stdin)['paths'];print(len([k for k in p if k.startswith('/api/mv')]))"
+  cd $B6 && ./venv/bin/python -c "
+  import librosa, madmom, scipy, numba, llvmlite
+  print('librosa', librosa.__version__); print('madmom', madmom.__version__)
+  print('scipy', scipy.__version__); print('numba', numba.__version__)
+  import app.services.beat_extraction as be; print('beat_extraction OK')
+  import app.utils.audio_utils as au; print('audio_utils OK')
+  "
+  ```
+- **Then** ① `/api/mv*` path 수가 **`before` 와 동일**,
+  ② 🔴 `librosa`·`madmom`·`scipy`·`numba`·`llvmlite` **전부 import 성공**,
+  ③ `beat_extraction`·`audio_utils` 모듈 import 성공(= torch 제거가 이 모듈들을 깨지 않았다),
+  ④ import 과정에서 `torch` 관련 `ModuleNotFoundError` **0건**.
+- **PASS** ①~④. **FAIL** ②③ → 🔴 **S4 승격**.
+- 🔴 **모듈 경로가 다르면 실제 경로로 조정**하되, **파일을 찾지 못했다는 이유로 스킵하지 않는다**(0-B-8).
+
+#### V199-API-15 · `[api]` · **호스트** · 재기동 **후** · 서버 로그 스모크 — 삭제 부작용 탐지
+
+- **When**
+  ```bash
+  cd $B6
+  # 재기동 시각 이후 구간만
+  awk '/Uvicorn running on/{seen=1} seen' logs/server.log > /tmp/v199t/log_after.txt
+  grep -icE "ModuleNotFoundError|ImportError|AttributeError|NameError" /tmp/v199t/log_after.txt
+  grep -inE "voice_convert|vocal_repair|kits|demucs|torch" /tmp/v199t/log_after.txt | head -20
+  grep -c "\[UploadVariant\]" /tmp/v199t/log_after.txt
+  ```
+- **Then** ① 예외 4종 **0건**, ② 삭제 대상 이름이 로그에 **0건**,
+  ③ 🔴 `[UploadVariant]` 로그 포맷이 살아 있고 **`use_vc=` 항이 없다**(로그가 발생한 경우에 한해 확인 —
+     0건이어도 FAIL 아님. 업로드를 일으키지 않으므로 정상),
+  ④ 로그에 개인정보·토큰·크리덴셜 **0건**(S11).
+- **PASS** ①②④. **FAIL** ①② → planner 보고. ④ 위반 → 🔴 **즉시 중단 S11**.
+
+#### V199-API-16 · `[api]` · **호스트** · 재기동 **전+후** · 🔴 **유료 호출 0건 · ⭐ 차감 0 증명** (S8)
+
+- **Given** 이 TESTPLAN 의 43건 중 유료 엔드포인트를 성공 경로로 때리는 케이스는 **0건**이다.
+  그래도 **실측으로 증명**한다 — E2E 는 클릭 한 번으로 ⭐-15 를 날릴 수 있다.
+- **When** 테스트 계정 기준, **테스트 시작 전**과 **전 케이스 종료 후** 두 번.
+  ```bash
+  curl -s -H "Authorization: Bearer $TEST_TOKEN" --max-time 10 \
+       http://127.0.0.1:9006/api/users/me \
+   | python3 -c "import json,sys;d=json.load(sys.stdin);print('stars', d.get('stars') or d.get('star_balance'))"
+  # 서버 액세스 로그에서 유료 경로 히트 수
+  grep -cE "POST /api/generate|/api/mv/|POST /api/character|POST /api/voice-clone|generate-cover|refine-cover|POST /api/tracks/upload( |\?)|GET /api/tracks/search" \
+       /tmp/v199t/log_after.txt
+  ```
+- **Then** ① 🔴 ⭐ 잔액이 **테스트 전후 완전 동일**,
+  ② 액세스 로그의 유료 경로 히트 **0건**(`upload-from-generation` 의 **400 응답 2건은 예외로 허용** — API-11),
+  ③ MinIO 신규 객체 0 · 신규 track 문서 0(API-11 ④ 와 이중 확인).
+- **PASS** ①②③. **FAIL** ① 감소 또는 ② > 0 → 🔴 **즉시 중단 S8**, 어느 케이스에서 발생했는지 즉시 특정.
+- 🚫 ⭐ 값·계정 식별자는 REPORT 에 **"전후 동일" 여부만** 적는다. 실수치·이메일 미기재(S11).
+
+---
+
+### 3. `[e2e]` 시나리오 (5건) — 사용자 행동 수준 초안
+
+> Playwright(v1.62.1, 설치 확인됨) · 대상 `http://127.0.0.1:4000` · 테스트 계정 `TEST_USER_EMAIL` 로 로그인.
+> 🔴 **셀렉터 디테일에 붙지 않는다.** 아래는 **행동 초안**이며, tester 가 실제 DOM 을 보고 확정한다.
+> 🚫 **되돌릴 수 없는 실액션(생성·업로드·결제)은 화면 노출 확인까지만.** 버튼을 누르지 않는다.
+> 🔴 WSL 라이브러리 문제로 chromium 이 뜨지 않으면 **headless shell 폴백**을 시도하고,
+> 그래도 불가하면 **사유 + 미검증 항목을 REPORT 에 명시**한다. **조용한 스킵 금지.**
+
+#### V199-E2E-01 · `[e2e]` · **호스트** · 🔴 **Wondera 테스트 섹션이 그대로 뜬다** (K1 / S1)
+
+- **Given** 테스트 계정으로 로그인해 스튜디오(작곡) 화면에 있다.
+- **When** Wondera 테스트 섹션이 있는 탭까지 이동한다.
+- **Then**
+  ① 섹션이 **렌더된다**(빈 화면·에러 바운더리 아님),
+  ② `① 내 목소리 업로드` 라벨이 보인다,
+  ③ `🎤 내 목소리로 생성` 버튼이 보인다 — 🚫 **누르지 않는다**,
+  ④ `내 목소리 버전` 제목 영역이 보인다,
+  ⑤ 브라우저 콘솔에 **에러 0건**(특히 `is not defined` / `Cannot read properties of undefined`).
+- **PASS** ①~⑤. **FAIL** 하나라도 → 🔴 **즉시 중단 S1**.
+- 🔴 **U09(정적 diff 0) 가 PASS 여도 이 케이스는 필요하다.** 함수 본문이 그대로여도
+  **호출부(`:3466`)가 지워지면** 화면에서 사라진다. 두 케이스가 서로 다른 실패 모드를 잡는다.
+
+#### V199-E2E-02 · `[e2e]` · **호스트** · 🔴 **작곡 폼에서 Suno 페르소나를 고를 수 있다** (K3 / S2)
+
+- **Given** 스튜디오 작곡 폼(가사·장르·보컬 선택)이 열려 있다.
+- **When** 보컬 선택 영역을 연다.
+- **Then**
+  ① 기본 보컬 옵션들이 보인다,
+  ② 🔴 **내 페르소나 목록이 별도 그룹으로 보인다**(계정에 완료된 페르소나가 있는 경우),
+  ③ 페르소나 항목을 **클릭하면 선택 상태가 된다**(활성 스타일 적용, 기본 보컬 선택은 해제),
+  ④ 🚫 **여기서 멈춘다 — 「생성」 버튼을 절대 누르지 않는다**(`api.createGeneration` = **⭐-15**),
+  ⑤ 콘솔 에러 0건.
+- **PASS** ①③⑤ + (계정에 페르소나가 있으면 ②). **FAIL** ②③ 실패 → 🔴 **즉시 중단 S2**.
+- 🔴 **테스트 계정에 완료된 페르소나가 없으면** ② 는 `SKIP` 이 아니라 **`PARTIAL`** 로 기록하고,
+  대신 **U11 의 grep 근거 + 목록 API(API-06) 응답**을 대체 증거로 남긴다. **조용히 넘어가지 않는다.**
+- 🔴 **모달이 사라졌다고 페르소나가 사라진 게 아니다** — 잃는 것은 "기존 곡을 페르소나로 재생성하는 바로가기"
+  하나뿐이고, **기능 자체는 이 화면에 남는다**(PLAN §0-4). 이 케이스가 그 약속을 검증한다.
+
+#### V199-E2E-03 · `[e2e]` · **호스트** · 「내 목소리로 변환」 UI **부재** (B4~B6 / DoD 1)
+
+- **Given** 스튜디오의 생성된 곡 카드 목록이 보인다.
+- **When** 곡 카드의 액션 영역을 살펴본다.
+- **Then**
+  ① 🔴 **「내 목소리로 변환」 버튼이 없다**,
+  ② 카드 어디에도 **MR 음정 조절 슬라이더 패널**(`MR 음정 조절` / `보컬 볼륨` / `MR 볼륨`)이 없다,
+  ③ **변환 진행바·실패 배너·변환 결과 플레이어**가 없다,
+  ④ 🔴 **유지 확인** — 곡 카드의 **재생 / 다운로드 / 업로드하기** 는 **그대로 동작**한다
+     (재생은 실제로 눌러 확인 — 무료. 업로드하기는 **화면 전환까지만**),
+  ⑤ 콘솔 에러 0건.
+- **PASS** ①~⑤. **FAIL** ④ 손상 → 카드 액션 오폭 → planner 보고(S 승격 검토).
+- 🔴 **④ 가 이 케이스의 무게중심이다.** ①②③ 은 U12 가 이미 grep 으로 증명한다.
+  **E2E 가 아니면 알 수 없는 것은 "옆 버튼이 아직 눌리는가" 다.**
+
+#### V199-E2E-04 · `[e2e]` · **호스트** · 업로드 화면에 「원본 / 내 목소리 버전」 토글 **부재** + 원본 경로 생존 (B9 / DoD 2)
+
+- **Given** 곡 카드에서 **「업로드하기」** 로 업로드 화면에 진입했다(생성물 prefill 상태).
+- **When** 오디오 소스 영역을 본다.
+- **Then**
+  ① 🔴 **「원본 / 내 목소리 버전」 토글이 없다**,
+  ② 🔴 **AI 생성 오디오가 정상적으로 연결돼 있다** — `AI 생성 오디오 연결됨` 표시가 보이고
+     **오디오 플레이어가 재생 가능하다**(재생만. 무료),
+  ③ variant 가 여러 개인 생성물이면 **variant 선택이 이전과 같이 동작**한다,
+  ④ 🚫 **최종 「업로드」 버튼은 누르지 않는다**(`POST /api/tracks/upload` = 유료·비가역),
+  ⑤ 콘솔 에러 0건 + 네트워크 탭에 `voice-convert` 요청 **0건**.
+- **PASS** ①~⑤. **FAIL** ②③ 실패 → 🔴 **업로드 경로 파손 · S10 승격**.
+- 🔴 **②③ 이 K4 의 화면 쪽 증거다.** U04·API-10 이 서버·스키마를 보고, 여기서 **사용자가 실제로 보는 것**을 본다.
+
+#### V199-E2E-05 · `[e2e]` · **호스트** · 🔴 Suno 보이스 클로닝 섹션 정상 (K2 / S3)
+
+- **Given** 스튜디오에서 `MyVoiceCloneSection` 이 렌더되는 위치로 이동한다.
+- **When** 섹션을 연다.
+- **Then**
+  ① 섹션이 **렌더된다**, ② 기존 보이스 클론 목록이 **조회된다**(0건이어도 목록 UI 는 떠야 한다),
+  ③ 🚫 **새 클론 생성 시작 버튼은 누르지 않는다**(유료·비가역) — 노출 확인까지만,
+  ④ 콘솔 에러 0건, ⑤ 네트워크 탭에 `voice-convert`·`vocal-repair`·`kits` 요청 **0건**.
+- **PASS** ①~⑤. **FAIL** ①② → 🔴 **즉시 중단 S3**.
+
+---
+
+### 4. 🔴 3단계(도커 재빌드) 판정 기준 — `[unit]` · **컨테이너** 4건
+
+> 🔴 **진입 조건: V199-UNIT-07(A9↔A10 동기화)이 PASS 여야 한다.**
+> 설계 시점 실측으로는 **`constraints-cpu.txt` 가 없는데 `Dockerfile:81`·`:157` 이 아직 COPY 한다** →
+> **현 상태 그대로면 빌드가 반드시 실패**하므로 §4 는 **BLOCKED** 로 기록하고 planner 에 보고한다(§6 P1).
+> 빌드 명령·태그(`IMG199 = maidol-backend:v199`)는 backend-dev 산출물을 따른다.
+> 🚫 `docker system prune -a` 금지. 🚫 인프라 컨테이너 무조작. `docker run --rm --network none` 사용.
+
+#### V199-UNIT-19 · `[unit]` · **컨테이너** · 🔴 이미지 안 `import torch` → **ModuleNotFoundError 가 정상**
+
+- **When**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG199 -c \
+    'python -c "import torch" 2>&1 | tail -1;
+     python -c "import demucs" 2>&1 | tail -1;
+     python -c "import torchaudio" 2>&1 | tail -1;
+     ls /opt/venv/lib/python*/site-packages | grep -icE "^(torch|torchaudio|demucs|openunmix|julius|dora_search|sympy|networkx|nvidia|triton)"'
+  ```
+- **Then** ① `import torch` → **`ModuleNotFoundError: No module named 'torch'`** (🔴 **이게 PASS 다**),
+  ② `demucs`·`torchaudio` 동일, ③ site-packages 에 torch 체인 디렉터리 **0개**.
+- **PASS** ①②③. **FAIL** import 가 **성공**하면 → lock 정리가 반영되지 않은 이미지다(A8 미착지 의심).
+- 🔴 **기대값이 "에러"인 케이스다. exit 0 을 PASS 로 오독하지 말 것.**
+
+#### V199-UNIT-20 · `[unit]` · **컨테이너** · 🔴 `librosa`·`madmom` **정상 import** (K5 / S4)
+
+- **When**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG199 -c \
+    'python -c "
+import librosa, madmom, numpy, scipy, numba, llvmlite, soundfile
+print(\"librosa\", librosa.__version__)
+print(\"madmom\", madmom.__version__)
+print(\"scipy\", scipy.__version__, \"numba\", numba.__version__)
+"'
+  ```
+- **Then** ① 6개 모듈 **전부 import 성공**(예외 0), ② `madmom.__version__` = **`0.17.dev0`**,
+  ③ `librosa` = **0.11.0**, `scipy` = **1.17.1**, `numba` = **0.65.1**(lock 앵커와 일치),
+  ④ 🔴 import 중 **`torch` 를 찾는 경고·에러 0건**(= `librosa` 체인이 torch 와 무관함의 실증).
+- **PASS** ①~④. **FAIL** 하나라도 → 🔴 **즉시 중단 S4**. **MV 비트 분석이 죽는다.**
+- 🔴 **PLAN §0-6 의 정정이 옳았는지를 최종 확정하는 케이스다** — `llvmlite`·`numba`·`scipy` 는
+  demucs 몫이 아니라 `librosa` 몫이었다.
+
+#### V199-UNIT-21 · `[unit]` · **컨테이너** · 🔴 `ffmpeg -filters` 에 `rubberband`·`ass` **존재** (K6 / S5)
+
+- **When**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG199 -c \
+    'command -v ffmpeg; command -v ffprobe;
+     ffmpeg -hide_banner -filters | grep -w rubberband;
+     ffmpeg -hide_banner -filters | grep -E " ass +V->V";
+     ffmpeg -hide_banner -encoders | grep -w libmp3lame;
+     ffmpeg -hide_banner -encoders | grep -w libx264;
+     fc-list | grep -ic nanum'
+  ```
+- **Then** ① `ffmpeg`·`ffprobe` 경로 출력(`/usr/bin/...`),
+  ② 🔴 `rubberband` 필터 **≥1**, ③ 🔴 `ass` 필터 **≥1**,
+  ④ `libmp3lame`·`libx264` 인코더 **각 ≥1**, ⑤ 한글 폰트(`nanum`) **≥1**.
+- **PASS** ①~⑤. **FAIL** 하나라도 → 🔴 **즉시 중단 S5**. **공유 영상·MV 전멸.**
+- 🔴 **v198 의 자기검증 RUN 이 살아 있다면 이 케이스는 빌드 시점에 이미 걸렸어야 한다**(U08 ③).
+  여기서 실패하면 **U08 이 놓쳤다는 뜻**이므로 둘을 함께 읽는다.
+
+#### V199-UNIT-22 · `[unit]` · **컨테이너** · 🔴 `venv` **1.6GiB 미만** — v198 FAIL 해소 확인 (PLAN §5)
+
+- **Given** v198 시점 `/opt/venv` = **1.686 GiB** → **FAIL**(예산 1.6G). torch 체인 ~880MB 제거로 해소되어야 한다.
+- **When**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG199 -c 'du -sh /opt/venv; du -sb /opt/venv'
+  docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep maidol-backend
+  ```
+- **Then** ① 🔴 `/opt/venv` **< 1.6 GiB**(= `du -sb` 값 **< 1717986918 bytes**),
+  ② PLAN §0-6 추정(venv 1.686GiB → **약 810MB**)과 **자릿수가 맞는다** — 1.5GiB 대가 나오면
+     **torch 가 아직 들어 있다**는 뜻이므로 U19 와 교차 확인,
+  ③ 이미지 전체 크기가 v198(**2.408GB**) 대비 **감소**(PLAN 추정 **약 1.5GB**),
+  ④ v198 의 예산 단언(S6, 1.6G)이 **이번엔 PASS**.
+- **PASS** ①④. **FAIL** ① → v198 FAIL 미해소 → planner 보고(롤백 아님, 재작업).
+- 🔴 **② 를 반드시 함께 본다.** ① 만 보면 "왜 줄었는지" 를 모른 채 통과시킬 수 있다.
+
+---
+
+### 5. 커버리지 대조표 — PLAN v199 요구 ↔ 시나리오
+
+#### 5-1. DoD 10항
+
+| DoD | 내용 | 케이스 |
+|---|---|---|
+| 1 | 「내 목소리로 변환」 버튼·모달·슬라이더·패널 소멸 | **U12 · U13 · E2E-03** |
+| 2 | 업로드 화면 토글 소멸 · AI 생성 오디오 경로만 | **U14 · E2E-04** |
+| 3 | 17개 엔드포인트 404 | **A02 · A03 · A04 · A05** |
+| 4 | 4파일 부재 | **U01** |
+| 5 | `import torch` 0건 | **U02 · U19** |
+| 6 | `requirements.txt` 에 demucs·torch·torchaudio 0건 | **U05** (+ lock 은 **U06**) |
+| 7 | 🔴 유지 대상 무손상 (8종) | **U04·U09·U10·U11·U13④⑤·U14⑥⑦·U15③ · A06·A07·A08·A10·A12·A13·A14 · E2E-01·02·03④·04②③·05** |
+| 8 | `ffmpeg` 무제거 | **U08 · U21** |
+| 9 | `frontend` 빌드 통과 · 미해결 import 0 | **U16** |
+| 10 | 호스트 9006 재기동 후 정상 기동 | **A01** |
+
+#### 5-2. 작업분해 A1~A10 · B1~B11
+
+| 작업 | 케이스 | 작업 | 케이스 |
+|---|---|---|---|
+| A1~A4 | U01 | B1 | U12 ② |
+| A5 | U03 · A01 ③ | B2 | U12 ① |
+| A6 | 🔴 **U04** · A09 · A10 · A11 | B3 | U12 ③ |
+| A7 | U05 | B4 | U12 ⑤ · E2E-03 ① |
+| A8 | 🔴 **U06** · U19 · U20 | B5 | U12 ⑥ · E2E-03 ②③ |
+| A9 | U07 | B6 | U12 ⑧ · E2E-03 ① |
+| A10 | 🔴 **U07 · U08** | B7 | U12 ④ |
+| — | — | B8 | U13 |
+| — | — | B9 | U14 · E2E-04 |
+| — | — | B10 | U15 |
+| — | — | 🔴 **B11**(무수정) | **U09 · U10 · U11 · E2E-01 · E2E-02 · E2E-05** |
+
+#### 5-3. PLAN §3 회귀 위험 8건 ↔ 감시 케이스
+
+| 위험 | 등급 | 감시 케이스 | 즉시중단 |
+|---|---|---|---|
+| **Wondera 오폭** | 🔴 상 | **U09**(내용 diff) · **E2E-01**(렌더) · **A08**(라우트) · U13 ⑤ | **S1** |
+| **Suno 페르소나 오폭** | 🔴 상 | **U11**(state·전송 4곳) · **E2E-02**(클릭) · **A06**(라우트) · U13 ④ | **S2** |
+| **`variant_index` 파손** | 🔴 상 | **U04**(바이트 대조) · **A09·A10**(스키마) · **A11**(3케이스) · **E2E-04** | **S10** |
+| **`torch` 제거로 타 기능 파손** | 🟡 중 | **U02** · **A14**(MV·비트분석 import) · **U19** | — |
+| **`librosa` 체인 오제거** | 🟡 중 | **U06 ②**(lock 잔존) · **U20**(컨테이너 import) | **S4** |
+| **Dockerfile / constraints 불일치** | 🟡 중 | **U07**(동기화) · **U08**(무수정 영역) · §4 진입조건 | **S5** |
+| **레거시 문서 직렬화** | 🟢 하 | **U17**(무수정) · **A13**(200 + ISO 문자열) | — |
+| **CSS 잔재** | 🟢 하 | **U13** | — |
+| (추가) **`MyVoiceCloneSection` 오폭** | 🔴 상 | **U10**(sha256) · **E2E-05** | **S3** |
+| (추가) **범위 이탈** | 🔴 상 | **U18**(허용 목록) | **S6** |
+
+#### 5-4. 🚫 의도적 커버리지 공백 (범위 밖 — 시나리오를 두지 않는다)
+
+`backend_9004`·`backend_9005` 미러 검증 / `frontend_admin/` / Mongo 데이터 마이그레이션(PLAN §0-8) /
+MinIO 잔여 변환 산출물 정리 / AWS P0 잔여 9건 / `docker-compose` 통합 기동 /
+`voice_clone`·`voice_persona`·`wondera` 의 **기능 자체**(유료 — 존재 확인까지만) /
+`config.py` 의 사문화된 `kits_api_key`·`kits_api_url`·`lalal_api_key` 정리(§6 P3).
+→ 이 중 **9004·9005·admin 무접촉**은 **U18** 이 **역방향으로 감시**한다.
+
+---
+
+### 6. planner 확인 필요 항목
+
+| # | 항목 | 사유 | 미승인 시 대안 (건수·비율 영향) |
+|---|---|---|---|
+| **P1** | 🔴🔴 **A9 ↔ A10 불일치 — 지금 상태로는 도커 빌드가 반드시 실패한다.** `constraints-cpu.txt` 는 삭제됐는데(A9 착지) **`Dockerfile:81`·`:157` 이 여전히 `COPY requirements.lock constraints-cpu.txt requirements.txt ./` / `COPY requirements.txt requirements.lock constraints-cpu.txt ./` 를 한다**(설계 시 실측) | COPY 대상이 없으면 그 레이어에서 빌드가 죽는다. PLAN §2-1 A10 이 "Dockerfile 과 반드시 동기화" 라고 못박은 바로 그 지점 | backend-dev 가 A10 을 착지할 때까지 **§4 4건은 `BLOCKED`**. U07 은 그 자체로 **FAIL 을 기록**한다. **건수·비율 영향 0** |
+| **P2** | 🟡 **PLAN §0-2 의 "export 25개" 는 실측과 다르다 — 실제 22개** (`api/index.js:539-587` **17개** + `:672-694` **5개**, 이름 전량 U15 에 나열) | 25 를 기대값으로 두면 **정상 완료를 미완으로 오판**한다. 반대로 3개를 더 찾아 지우면 **오폭**이다 | tester 는 **22개 + 총 export 259→237** 로 판정하고 REPORT 에 델타 명기. planner 는 ① 정정 승인 또는 ② 누락 3건의 실체 제시. **건수·비율 영향 0** |
+| **P3** | 🟡 **`config.py:116-118` 의 `kits_api_key`·`kits_api_url`(+`:121 lalal_api_key`)이 사문화된 채 남는다** — PLAN A1~A10 에 정리 항목이 없다(누락) | 코드 참조 0건이라 **동작에는 무해**하지만, `.env` 에 남은 키가 계속 로드된다 | 기본은 **범위 밖 유지** — U02 ④ 가 `OBSERVED` 로만 기록. planner 가 v200 후속 과제로 뺄지 결정. **건수·비율 영향 0** |
+| **P4** | 🟡 **API-11 의 "범위초과 400" 2건 실행 승인** — 테스트 계정 토큰으로 `upload-from-generation` 에 `variant_index=9999` / `-1` 을 보낸다 | 400 은 **소스 선택·유료 호출 이전**에 반환되므로 부작용이 없다고 판단했으나, 유료 엔드포인트 계열이라 명시 승인을 받는다 | 미승인 시 API-11 은 **정적 대조(①)만** 수행하고 ②③ 은 `SKIP` + 사유. **K4 의 런타임 증거가 약해지므로** REPORT 에 명시. **건수 유지(1건)** |
+| **P5** | 🟡 **E2E-02 의 ② 는 테스트 계정에 완료된 Suno 페르소나가 있어야 관측된다** | 없으면 페르소나 그룹 자체가 렌더되지 않아 **"사라진 것"과 구분이 안 된다** | 없으면 **`PARTIAL`** 기록 + 대체 증거(U11 grep · API-06 목록 응답). 🚫 **페르소나를 새로 만들지 않는다**(유료). planner 가 계정 준비 여부 회신. **건수 유지** |
+| **P6** | 🟡 **§4(재빌드) 4건의 빌드 주체** — tester 가 직접 빌드할지, backend-dev 산출물 `IMG199` 를 받을지 | 디스크·시간 소모. 또 P1 미해소 상태면 빌드 자체가 불가 | 기본은 **backend-dev 산출물 사용**. 없으면 §4 4건 `BLOCKED` + 사유. **건수 유지(BLOCKED 도 집계)** |
+
+**승인 없이도 진행 가능**: `[unit]` **22건 중 18건**(§4 4건은 P1·P6 조건부) /
+`[api]` **16건 중 16건**(API-11 은 축소 실행) / `[e2e]` **5건 전부**(E2E-02 는 PARTIAL 가능).
+→ 🔴 **P1~P6 이 전부 미승인·미해소여도 43건 중 43건이 기록되며(BLOCKED·PARTIAL·SKIP 포함) 삭제되는 케이스는 0건이다.**
+비율(51.2 / 37.2 / 11.6)은 승인 결과와 **무관하게 유지**된다.
+
+---
+
+### 7. v199 시나리오 집계
+
+| 태그 | 건수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **22** | **51.2%** | ≥ 40% | ✅ 충족 (+11.2%p) |
+| `[api]` | **16** | **37.2%** | ≥ 35% | ✅ 충족 (+2.2%p) |
+| `[e2e]` | **5** | **11.6%** | ≤ 25% | ✅ 충족 (−13.4%p) |
+| **합계** | **43** | 100% | — | — |
+
+#### 7-1. 실행 위치별 분포
+
+| 실행위치 | unit | api | e2e | 계 |
+|---|---|---|---|---|
+| **호스트** | **18** (U01~U18) | **16** (A01~A16) | **5** (E01~E05) | **39** |
+| **컨테이너** | **4** (U19~U22) | 0 | 0 | **4** |
+| **합계** | 22 | 16 | 5 | **43** |
+
+#### 7-2. 🔴 증명 축별 분포 — 이 표가 이번 버전의 설계 의도다
+
+| 축 | unit | api | e2e | 계 | 비율 |
+|---|---|---|---|---|---|
+| **축 1 — 사라졌는가** | U01·U02·U03·U05·U06①·U07·U12·U13①②③·U19 = **10** | A02③·A03·A04·A05·A09 = **4** | E03①②③ = **1** | **15** | 34.9% |
+| 🔴 **축 2 — 남은 것이 무손상인가** | U04·U06②·U08·U09·U10·U11·U13④⑤·U14·U15③·U16·U17·U18·U20·U21·U22 = **12** | A01·A02④⑦·A06·A07·A08·A10·A11·A12·A13·A14·A15·A16 = **12** | E01·E02·E04·E05 = **4** | **28** | 65.1% |
+
+> 🔴 **28 : 15 로 축 2 에 기울인 것이 의도다.** 삭제 작업에서 "덜 지웠다" 는 재작업이지만,
+> **"옆엣것을 지웠다" 는 회귀이고 조용하다.** Wondera 를 통째로 날려도 `npm run build` 는 통과하고,
+> 페르소나 전송을 4곳 중 2곳만 남겨도 화면은 정상으로 보인다.
+
+#### 7-3. 설계 근거
+
+- **`[unit]` 을 22건(51.2%)으로 잡은 이유**: v199 의 산출물은 **삭제된 4파일 · 편집된 6파일**이다.
+  삭제의 진위는 **파일 부재 · grep 0건 · lock 파싱 · AST 파싱 · 빌드 통과**로 결정되며, 이건 **정의상 unit** 이다.
+  더 중요한 건 🔴 **오폭 탐지의 절대다수가 정적으로만 잡힌다**는 점이다 —
+  `selectedPersonaId` 의 전송 지점이 4곳에서 2곳으로 줄어든 것(U11 ③),
+  `export` 총수가 237 이 아니라 231 인 것(U15 ④),
+  `s2__vocal-btn` 규칙이 `s2__vc-` 와 함께 지워진 것(U13 ④) —
+  **이 셋은 API 층·E2E 층 어디서도 관측되지 않는다.** 화면은 뜨고, 빌드는 통과하기 때문이다.
+- **`[api]` 을 16건(37.2%)으로 유지한 이유**: 요구 하한(35%)을 넘기면서 **소멸 4건**(A02~A05)과
+  **생존 12건**(A01·A06~A16)의 **비대칭 배정**을 만들었다. 17개 404 를 개별로 두드리는 것(A03·A04)은
+  쉽지만, **정말 중요한 건 A02 의 집합 diff** 다 — "17개가 사라졌다" 와
+  **"17개만 사라졌다"** 는 다른 명제이고, 후자는 개별 404 로는 절대 증명되지 않는다.
+  A05 의 **405 대조군**도 같은 이유로 넣었다 — 대조군 없는 404 는 아무것도 말하지 않는다.
+- **`[e2e]` 를 5건(11.6%)으로 묶은 이유**: 삭제 검증은 grep 이 훨씬 정확하고 싸다.
+  E2E 를 쓴 곳은 **정적 검증이 원리적으로 답할 수 없는 4가지** 뿐이다 —
+  ① 함수는 남았는데 **호출부가 지워졌는가**(E01), ② 페르소나 버튼이 **실제로 눌리는가**(E02),
+  ③ 옆 버튼(재생·다운로드·업로드하기)이 **아직 동작하는가**(E03 ④),
+  ④ 업로드 화면의 **오디오가 실제로 물려 있는가**(E04 ②).
+  더 늘리면 **유료 엔드포인트에 닿을 위험만 커지고 얻는 정보가 없다.**
+- **유료 호출 총량(기대치)**: `POST /api/generate` **0** · `/api/mv/**` **0** · `POST /api/character/**` **0** ·
+  `/api/voice-clone/**`(생성) **0** · `/api/voice-convert/**` **0**(재기동 후 404 프로브만) ·
+  `generate-cover`·`refine-cover` **0** · `POST /api/tracks/upload` **0** · `GET /api/tracks/search` **0** ·
+  `upload-from-generation` **성공 경로 0**(P4 승인 시 **400 응답 2건만**).
+  → 🔴 **⭐ 차감 합계 0.** A16 이 잔액 전후 동일로 실측 증명한다.
+- **테스트 데이터 생성**: 🔴 **0건**. DB(PG/Mongo/Redis/ES) 쓰기 0, MinIO 객체 생성 0,
+  실사용자 문서 열람 0(A12·A13 은 **키 집합·개수만** 기록하고 값은 남기지 않는다).
+  생성물은 전부 **호스트 `/tmp/v199t/`**(저장소 밖) 와 **`--rm` 컨테이너 내부**이며 종료 시 삭제한다.
+- **정리(cleanup) 체크리스트** — 종료 시 tester 가 확인:
+  ① `rm -rf /tmp/v199t`, ② `$FE/dist` 를 착수 전 상태로(빌드 산출물 커밋 금지),
+  ③ `docker ps -a --filter name=v199t` → **0건**,
+  ④ `docker ps` 인프라 컨테이너 상태·포트가 **착수 전 스냅샷과 동일**,
+  ⑤ `git status --short` 가 **U18 ② 의 허용 목록과 동일**(신규 untracked 0건),
+  ⑥ 🔴 호스트 9006 `/api/health` **200**(마지막 확인), ⑦ vite 4000 정상.
+- **즉시 중단 조건**: §0-H 의 **S1~S11**. 핵심 감시 케이스는
+  **U09·E01**(S1 — Wondera), **U11·E02**(S2 — 페르소나), **U10·E05**(S3 — MyVoiceClone),
+  **U06·U20**(S4 — librosa 체인), **U08·U21**(S5 — ffmpeg), **U18**(S6 — 9004/9005),
+  **A01**(S7 — 9006 생존), **A16**(S8 — ⭐), **A02**(S9 — 초과 소실), **U04·A10**(S10 — variant_index).
+- **판정 기록 양식**(케이스마다 필수):
+  `ID / 태그 / 실행위치(호스트·컨테이너) / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·PARTIAL·OBSERVED·BLOCKED`
+  — **SKIP 은 사유 필수**, **PARTIAL·OBSERVED·BLOCKED 는 근거 필수**.
+- **착지 상태(작성 시점 실측)**: §0-J 표 — **A1~A7·A9 착지 / A8·A10 미착지 / B1~B11 미착수 / 9006 미재기동**.
+  → 🔴 **tester 는 가장 먼저 `openapi_before.json` 을 확보한다.** 9006 이 재기동되는 순간
+  베이스라인을 잃고, A02(이번 버전 최중요 케이스)를 git 리비전에서 재구성해야 한다.
+
+---
+
+### 개정 이력 (v199)
+
+- 2026-08-21 초판 작성 (43건) — PLAN v199 §0(실측 정정 3건 + 혼동 주의 3종)·§1(DoD 10)·
+  §2(A1~A10 · B1~B11)·§3(회귀 위험 8건)·§5(재빌드 판정 4항)·§6(절대 준수 8조)을 전 항목 시나리오화.
+  🔴 **이번 버전은 삭제가 주된 작업이라 설계의 축을 평소와 다르게 잡았다.**
+  ① **"사라졌는가"(15건) 보다 "남은 것이 무손상인가"(28건) 에 무게를 실었다** —
+  덜 지운 것은 404 가 안 나오면 바로 보이지만, **옆엣것을 지운 것은 조용하다.**
+  Wondera 를 통째로 날려도 `npm run build` 는 통과하고, `persona_id` 전송을 4곳 중 2곳만 남겨도
+  화면은 정상으로 보인다. 그래서 오폭 탐지를 **grep 개수·sha256·export 총수 산수**로 못박았다
+  (U11 ③ 전송 4곳 / U15 ④ 259→237 / U13 ④ `s2__vocal-btn` 생존 / U10 sha256 2종).
+  ② **A02(`/openapi.json` 집합 diff)를 이번 버전 최중요 케이스로 두었다** — 개별 404 17건(A03·A04)은
+  "17개가 사라졌다" 까지만 말할 뿐 **"17개만 사라졌다"** 를 증명하지 못한다. `GONE` 초과 1건이
+  곧 즉시 중단 **S9** 다. 여기에 **A05 의 405 대조군**을 붙여 "404 가 라우트 부재의 404 인지"까지 갈랐다.
+  ③ **Wondera 검증에서 라인 번호를 전면 배제**했다 — B1~B7 이 `StudioTab2.jsx` 를 대폭 삭제하므로
+  `:598`·`:834` 는 반드시 이동한다. `awk` 로 **함수 본문을 내용 기준으로 잘라내 `f0f70e2` 와 diff** 하는
+  방식으로 바꿨다(U09). PLAN §0-5 가 경고한 그대로, **라인 참조를 믿는 순간 Wondera 가 부서진다.**
+  ④ **유료 함정을 시간축으로 분리**했다 — 제거 대상 17개 중 `POST /api/voice-convert/{gid}` 와
+  `GET /api/kits/voice-models` 는 **삭제·재기동 전에는 살아 있고 실제로 Kits.AI 를 때린다.**
+  그래서 `before` 스냅샷은 **`/openapi.json` 문서만** 뜨게 하고, 404 프로브는 **재기동 후로만** 못박았다(0-B-1).
+  ⑤ **variant 0/N/범위초과 3케이스는 "실행하지 않는 설계"로 풀었다** — 성공 경로가 유료·비가역이므로
+  variant 0·N 은 **`f0f70e2` 와의 바이트 대조**로, 범위초과만 **400 을 받아내는 안전한 호출**로 배치했다(U04·A11).
+  설계 중 **PLAN 의 오류·누락 3건**을 확인해 §6 에 올렸다 —
+  🔴 **P1: A9 는 착지했는데 A10 이 미착지라 `Dockerfile:81`·`:157` 이 없는 `constraints-cpu.txt` 를 아직 COPY 한다
+  (= 지금 재빌드하면 반드시 실패)**, **P2: `api/index.js` 제거 대상 export 는 25개가 아니라 22개**,
+  **P3: `config.py:116-118` 의 `kits_api_key`·`kits_api_url` 정리가 작업분해에서 누락**.
+  또 **9006 이 아직 재기동되지 않아 `openapi_before.json` 을 지금 확보할 수 있다**는 시간 민감 조건을
+  §0-J 에 명시했다 — 놓치면 최중요 케이스 A02 를 git 리비전에서 재구성해야 한다.
+  유료 호출 **0건**(⭐ 차감 0 · A16 이 실측 증명), 테스트 데이터 생성 **0건**, 9004·9005 접근 **0건**.
+  태그 균형은 **51.2 / 37.2 / 11.6** 으로 세 요구(≥40 / ≥35 / ≤25)를 전부 충족.
+  planner 확인 대기 6건(§6) — **전부 대안이 있어 43건·비율이 깨지지 않는다.**

@@ -94,8 +94,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
   const [imageFile, setImageFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [fromGeneration, setFromGeneration] = useState(null);
-  const [hasVoiceConverted, setHasVoiceConverted] = useState(false);
-  const [useVoiceConverted, setUseVoiceConverted] = useState(false);
   // v74 — variant 선택 + 도큐먼트 캐시 (가사 타임스탬프 노출용)
   const [variantIndex, setVariantIndex] = useState(0);
   const [generationDoc, setGenerationDoc] = useState(null);
@@ -237,8 +235,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       setLyrics(generationPrefill.lyrics || '');
       setFromGeneration(generationPrefill.generationId);
       setVariantIndex(Number.isFinite(generationPrefill.variantIndex) ? generationPrefill.variantIndex : 0); // v74
-      setHasVoiceConverted(!!generationPrefill.hasVoiceConverted);
-      setUseVoiceConverted(false);
       setAiTool('Suno');
       if (import.meta.env.DEV) {
         console.info('[UploadPage] prefill from generation', {
@@ -693,9 +689,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           return;
         }
         // Fallback: create temp Audio
-        const streamUrl = useVoiceConverted
-          ? api.voiceConvertStreamUrl(fromGeneration)
-          : api.generationStreamUrl(fromGeneration);
+        const streamUrl = api.generationStreamUrl(fromGeneration);
         const tmpAudio = new Audio(streamUrl);
         tmpAudio.addEventListener('loadedmetadata', () => resolve(tmpAudio.duration));
         tmpAudio.addEventListener('error', () => resolve(null));
@@ -1402,9 +1396,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
     if (fromGeneration) {
       try {
         const genRes = await api.getGeneration(fromGeneration);
-        audioObjName = useVoiceConverted
-          ? genRes.data.voice_converted_url
-          : genRes.data.result_audio_url;
+        audioObjName = genRes.data.result_audio_url;
       } catch {
         alert('오디오 정보를 가져올 수 없습니다.');
         return;
@@ -1506,7 +1498,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           console.info('[UploadPage] uploadFromGeneration', {
             genId: fromGeneration,
             variantIndex,
-            useVoiceConverted,
           });
         }
         const { data } = await api.uploadFromGeneration({
@@ -1525,7 +1516,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
           ai_model: aiTool || undefined,
           cover_object_name: aiCoverObjectName || undefined,
           mv_object_name: mvMusicVideoObjectName || mvObjectName || undefined,
-          use_voice_converted: useVoiceConverted || undefined,
           // v71: cover 에 '내 캐릭터 포함' 켰으면 그 시점의 캐릭터 snapshot 박음.
           // MV 안 만든 곡도 트랙 디테일에서 cover_character 노출 가능하게.
           // v75: 스냅샷은 "커버에 실제 쓴 캐릭터" 기준 — 선택 variant(실사/가상)의 시트/아이템 사용.
@@ -1695,8 +1685,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                     className="upload-card__gen-badge-cancel"
                     onClick={() => {
                       setFromGeneration(null);
-                      setHasVoiceConverted(false);
-                      setUseVoiceConverted(false);
                       setVariantIndex(0);
                       setGenerationDoc(null);
                     }}
@@ -1705,42 +1693,15 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                   </button>
                 </div>
 
-                {/* Voice converted version selector */}
-                {hasVoiceConverted && (
-                  <div className="upload-card__audio-source-selector">
-                    <label className="upload-card__audio-source-label">오디오 소스 선택</label>
-                    <div className="upload-card__audio-source-options">
-                      <button
-                        type="button"
-                        className={`upload-card__audio-source-btn ${!useVoiceConverted ? 'upload-card__audio-source-btn--active' : ''}`}
-                        onClick={() => setUseVoiceConverted(false)}
-                      >
-                        <FiMusic /> 원본 (AI 보컬)
-                      </button>
-                      <button
-                        type="button"
-                        className={`upload-card__audio-source-btn ${useVoiceConverted ? 'upload-card__audio-source-btn--active' : ''}`}
-                        onClick={() => setUseVoiceConverted(true)}
-                      >
-                        <FiRefreshCw /> 내 목소리 버전
-                      </button>
-                    </div>
-                  </div>
-                )}
-
                 <audio
-                  key={useVoiceConverted ? 'vc' : `original-v${variantIndex}`}
+                  key={`original-v${variantIndex}`}
                   controls
                   className="upload-card__gen-player"
-                  src={
-                    useVoiceConverted
-                      ? api.voiceConvertStreamUrl(fromGeneration)
-                      : api.generationStreamUrl(fromGeneration, variantIndex)
-                  }
+                  src={api.generationStreamUrl(fromGeneration, variantIndex)}
                 />
 
                 {/* v74 — 가사 타임스탬프 토글 (디폴트 접힘) */}
-                {!useVoiceConverted && generationDoc && (() => {
+                {generationDoc && (() => {
                   const variants = Array.isArray(generationDoc.variants) ? generationDoc.variants : [];
                   const v = variants[variantIndex];
                   const segs = v?.timestamps || [];
@@ -1791,11 +1752,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
             <BeatTrackView
               sourceType="generation"
               sourceId={fromGeneration}
-              audioUrl={
-                useVoiceConverted
-                  ? api.voiceConvertStreamUrl(fromGeneration)
-                  : api.generationStreamUrl(fromGeneration, 0)
-              }
+              audioUrl={api.generationStreamUrl(fromGeneration, 0)}
             />
           )}
 
@@ -4102,7 +4059,7 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
                       {fromGeneration ? (
                         <div className="upload-mv-merge-audio-badge">
                           <FiMusic />
-                          <span>{useVoiceConverted ? '내 목소리 버전 오디오 연결됨' : 'AI 생성 오디오 연결됨'}</span>
+                          <span>AI 생성 오디오 연결됨</span>
                         </div>
                       ) : audioFile ? (
                         <div className="upload-mv-merge-audio-badge">

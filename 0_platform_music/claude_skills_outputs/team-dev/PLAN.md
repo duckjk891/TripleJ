@@ -29429,3 +29429,256 @@ RUN set -eux; \
    (`cd .../backend_9006 && setsid ./run.sh > /dev/null 2>&1 &`) — `--reload` 없음.
    단 v198 의 코드 변경(C6·C7)은 **모듈 로드 시점 상수**라 재기동 없이는 반영되지 않는다.
 
+
+---
+
+## v199 — 2026-08-21 — 「내 목소리로 변환」·「보컬 다듬기」·Demucs 제거 [MAIDOL-VoiceStripSquad]
+
+사용자 지시: 연구용으로 만들었다가 **안 쓰는 기능**. 이걸 위해 무거운 의존성을 지고 있어
+AWS 이전에 부담이므로 **화면·서버·라이브러리 3층을 전부 걷어낸다**.
+선행 완료: v198 Dockerfile 커밋 `f0f70e2`.
+
+작업 대상은 **`backend_9006` + `frontend`** . 🚫 `backend_9004`·`backend_9005` 쓰기 0건.
+작업 트리는 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`,
+착수 시 HEAD `f0f70e2`).
+
+---
+
+### 0. Plan verification findings (파일:라인 + 실측)
+
+착수 전 메모에 적어둔 범위가 **3건 틀렸다**. 아래 0-1·0-2·0-6 참조. 전부 실측으로 정정했다.
+
+#### 0-1. ⚠️ **정정 1 — UI 는 `StudioTab2.jsx` 만이 아니다**
+
+`frontend/src/pages/UploadPage.jsx` 가 **17개 지점**에서 결합돼 있다. 빠뜨리면 **곡 업로드 화면이 깨진다**.
+
+| 라인 | 내용 |
+|---|---|
+| `:97`·`:98` | `hasVoiceConverted` / `useVoiceConverted` state |
+| `:240` | `generationPrefill.hasVoiceConverted` 수신 |
+| `:696-697`·`:1736-1737`·`:1795-1796` | `api.voiceConvertStreamUrl(fromGeneration)` (3곳) |
+| `:1405` | 업로드 소스 오브젝트 선택 분기 |
+| `:1509`·`:1528` | 로그 + `use_voice_converted` 전송 |
+| `:1709-1732` | 「원본 / 내 목소리 버전」 오디오 소스 토글 UI |
+| `:1743` | `!useVoiceConverted` 가드 |
+| `:4105` | "내 목소리 버전 오디오 연결됨" 표시 |
+
+전달 경로: `StudioTab2.jsx:3575` 의 `onSendToUpload({ hasVoiceConverted })` → `UploadPage:240`.
+
+#### 0-2. ⚠️ **정정 2 — 서버는 4파일이 아니다**
+
+| 위치 | 결합 |
+|---|---|
+| `routes/tracks.py:1448` | `UploadFromGenerationBody.use_voice_converted` 필드 |
+| `routes/tracks.py:1487` | `variant_index > 0 and use_voice_converted` → 400 |
+| `routes/tracks.py:1493-1494` | `gen_doc.get("voice_converted_url")` 소스 선택 |
+| `routes/tracks.py:1524` | `[UploadVariant] ... use_vc=%s` 로그 |
+| `main.py:54` | `from .routes import ... voice_convert, vocal_repair` |
+| `main.py:631`·`:632` | `include_router` 2줄 |
+| `frontend/src/api/index.js` | `:540-586`(Vocal Repair + Voice Convert 블록), `:673-693`(fetch/download 헬퍼) — **export 25개** |
+
+#### 0-3. 제거되는 엔드포인트 **17개** (실측)
+
+- `voice_convert.py` — `APIRouter(tags=["VoiceConvert"])`, 경로를 데코레이터에 **풀로 박는 방식** (prefix 없음). 9개:
+  `POST /api/voice-convert/{gid}` · `GET …/status` · `GET …/stream` · `GET …/download` ·
+  `GET …/converted-vocal/stream` · `GET …/backing/stream` · `POST …/preview-mr` ·
+  `POST …/merge` · `GET /api/kits/voice-models`
+- `vocal_repair.py` — `APIRouter(prefix="/api/vocal-repair")`. 8개:
+  `POST /upload` · `POST /{id}/enhance` · `GET /{id}/status` · `GET /{id}/original|enhanced/stream` ·
+  `GET /{id}/original|enhanced/download` · `GET /list`
+
+#### 0-4. 🔴 **모달 안에 유지 대상이 섞여 있었다 — 사용자 결정 완료**
+
+`StudioTab2.jsx` 의 「내 목소리로 변환」 모달은 **두 경로**를 담고 있다:
+- **"── 우회 방식 ──"** (`:3706-3707`) → `vcSelectedType='suno_persona'` →
+  `handleStartVoiceConvert` 의 `:1960-1995` 분기가 `api.createGeneration({model:'suno', persona_id})`
+  호출 + **⭐-15 차감**. = 사용자가 "놔둬" 라고 한 **Suno 보이스 클로닝**
+- **"── Kits.AI ──"** (`:3719` 부근) + 슬라이더 3개 → `api.startVoiceConvert()` = **제거 대상**
+
+**실측**: Suno 페르소나는 **작곡 폼에도 이미 있다**(`:2741-2742` `s2__vocal-btn--persona` →
+`:1632`·`:1675` 에서 `persona_id` 전송). 즉 모달의 우회 방식은 *기존 곡의 프롬프트·가사를
+복사해 페르소나로 재생성해주는 **바로가기***일 뿐, 유일 진입로가 아니다.
+
+→ **사용자 결정: 버튼·모달 통째로 삭제.** 잃는 것은 바로가기 하나뿐이고 Suno 페르소나
+기능 자체는 작곡 폼에 그대로 남는다.
+
+#### 0-5. 🚫 **혼동 주의 — 이름만 비슷하고 범위 밖인 것 3가지** (실측으로 독립 확인)
+
+| 대상 | 왜 헷갈리나 | 판정 |
+|---|---|---|
+| `MyVoiceCloneSection.jsx` | grep 이 "clone" 으로 걸림 | **유지** — Suno 보이스 클로닝(`/voice-clone`). voice-convert 와 무관 |
+| `WonderaTestSection` (`StudioTab2.jsx:598~`) | "① 내 목소리 업로드", "🎤 내 목소리로 생성", `<h4>내 목소리 버전</h4>`(`:834`) 문구가 동일 | **유지** — `wondera.py` 는 kits·demucs·voice_convert 결합 **0건**(실측) |
+| `routes/voice_persona.py` | 모달의 "우회 방식" 이 여기 데이터를 씀 | **유지** — 8개 엔드포인트 전부 존치. kits·demucs 결합 **0건** |
+
+> 초판 메모의 `:834` 「내 목소리 버전」은 **Wondera 섹션 라인**이었다. 실제 제거 대상 패널은
+> `:3645` 부근(`s2__vc-player`)이다. 라인 참조를 그대로 믿고 지웠으면 **Wondera 를 부쉈다**.
+
+#### 0-6. ⚠️ **정정 3 — 절감량 "1GB 안팎" 은 틀렸다**
+
+`dist-info/METADATA` 의 `Requires-Dist` 역추적 실측:
+
+| 패키지 | 용량(호스트) | 요구하는 쪽 | 판정 |
+|---|---|---|---|
+| `torch` | 1.2G (이미지 CPU 휠 771M) | `demucs`·`dora_search`·`julius`·`openunmix` | ❌ 제거 |
+| `sympy` | 78M | `networkx`·`torch` | ❌ 제거 |
+| `networkx` | 18M | **`torch` 만** (코드 직접 import 0건) | ❌ 제거 |
+| `torchaudio` | 9.8M | `demucs` | ❌ 제거 |
+| `demucs`+`dora_search`+`julius`+`openunmix` | ~1M | — | ❌ 제거 |
+| **`llvmlite`** | **162M** | `numba` ← **`librosa`** | ✅ **유지** |
+| **`scipy`** | **111M** | **`librosa`**·`madmom`·`sklearn`·`pyloudnorm` | ✅ **유지** |
+| **`numba`** | **33M** | **`librosa`** | ✅ **유지** |
+| **`madmom`** | **39M** | 직접 의존 | ✅ **유지** |
+
+`librosa`·`madmom` 사용처: `audio_utils.py`·`beat_extraction.py`·`mv_pipeline.py` = **MV 비트 분석**.
+→ `llvmlite`·`scipy`·`numba` 를 demucs 몫으로 계산한 것이 오류.
+
+**정정된 추정**: 제거량 ≈ **880MB**. venv 1.686GiB → **약 810MB**,
+이미지 rootfs 2.408GB → **약 1.5GB** (1GB 아님).
+
+#### 0-7. `torch` 는 완전 제거 가능
+
+`grep -rn "import torch" backend_9006/app` → **`demucs_service.py:8` 단 1건**.
+`.cuda()`·`device="cuda"` 0건(v198 §0-4 에서 이미 확인).
+
+#### 0-8. 남는 데이터 — **건드리지 않는다**
+
+`generations` 문서의 `voice_conversion_status`·`voice_converted_url`·
+`voice_conversion_completed_at` 등은 **기존 문서에 그대로 남는다**. 마이그레이션은
+사용자가 요청하지 않았고, 읽는 쪽이 사라지므로 무해하다.
+
+🔴 단, **`generate.py:91` 은 손대지 않는다**:
+```python
+for key in ("created_at", "updated_at", "completed_at", "voice_conversion_completed_at"):
+    if key in doc and isinstance(doc[key], datetime):
+        doc[key] = doc[key].isoformat()
+```
+`_serialize` 가 **문서 전체를 그대로 반환**하므로, 이 키를 튜플에서 빼면 **레거시 문서의
+`datetime` 이 변환되지 않은 채** 응답 경로로 흘러간다. 남겨두는 비용은 0이고 빼는 위험은 실재한다.
+
+#### 0-9. CSS
+
+`frontend/src/components/StudioTab2.css` 에 `s2__vc-*` / `mr-pitch__*` 클래스 존재.
+다른 CSS 파일에는 없음(실측).
+
+#### 0-10. `vocal_repair` 는 UI 연결이 **0건**
+
+`grep -rn "vocalRepair\|vocal-repair" frontend/src --include=*.jsx` → **0건**.
+`api/index.js` 에만 export 가 남아 있는 **완전한 죽은 코드**. (`api/index.js:539` 주석은
+"Vocal Repair (Dolby.io)" — Dolby.io + demucs 두 method 를 가진 실험 코드)
+
+---
+
+### 1. 목표 / 완료 정의(DoD)
+
+1. 「내 목소리로 변환」 버튼·모달·슬라이더·변환 후 패널이 **화면에서 사라진다**.
+2. 곡 업로드 화면의 「원본 / 내 목소리 버전」 토글이 사라지고 **AI 생성 오디오 경로만 남는다**.
+3. `voice_convert`·`vocal_repair` **17개 엔드포인트가 404** 가 된다.
+4. `voice_convert.py`·`vocal_repair.py`·`demucs_service.py`·`kits_service.py` **4파일이 없다**.
+5. `grep -rn "import torch" backend_9006/app` → **0건**.
+6. `requirements.txt` 에 `demucs`·`torch`·`torchaudio` **0건**.
+7. 🔴 **유지 대상 무손상**: Suno 음악 생성 · Suno 보이스 클로닝(`MyVoiceCloneSection`) ·
+   Suno 페르소나(작곡 폼 보컬 선택) · Wondera 테스트 탭 · 공유 영상 · MV · 가사 타임스탬프 ·
+   곡 카드 재생/다운로드/업로드하기 — **전부 이전과 동일하게 동작**.
+8. `ffmpeg` 는 Dockerfile·코드 어디에서도 제거되지 않는다.
+9. `frontend` 빌드가 **에러·미해결 import 0건**으로 통과한다.
+10. 실행 중인 호스트 9006 이 재기동 후 정상 기동한다.
+
+---
+
+### 2. 작업 분해
+
+#### 2-1. backend-dev (A 시리즈)
+
+| # | 작업 |
+|---|---|
+| A1 | `routes/voice_convert.py` **파일 삭제** (455줄) |
+| A2 | `routes/vocal_repair.py` **파일 삭제** (343줄) |
+| A3 | `services/demucs_service.py` **파일 삭제** (111줄) |
+| A4 | `services/kits_service.py` **파일 삭제** (454줄) |
+| A5 | `main.py:54` import 목록에서 `voice_convert, vocal_repair` 제거 + `:631`·`:632` `include_router` 2줄 제거 |
+| A6 | `tracks.py` — `:1448` 필드 삭제 / `:1487` 400 분기 삭제 / `:1493-1494` 분기 삭제(→ `variant_index` 경로만) / `:1524` 로그에서 `use_vc` 제거. **`variant_index` 동작은 절대 바꾸지 말 것** |
+| A7 | `requirements.txt` — `:42 demucs`, `:61 --extra-index-url`, `:62 torch`, `:63 torchaudio` 및 v198 주석 블록(`:55-60`) 정리 |
+| A8 | `requirements.lock` — torch 체인 제거(`torch`·`torchaudio`·`sympy`·`networkx`·`demucs`·`dora_search`·`julius`·`openunmix`·`--extra-index-url`) |
+| A9 | `constraints-cpu.txt` — torch 핀이 무의미해지므로 **파일 삭제 또는 내용 비우기**. Dockerfile 이 참조하므로 **Dockerfile 과 반드시 동기화** |
+| A10 | 🔴 **`Dockerfile` 은 최소 수정만** — `constraints-cpu.txt` COPY·참조가 A9 와 어긋나지 않게. **그 외 구조·apt 목록·ffmpeg 자기검증 RUN 은 무수정** |
+
+> 🔴 A6 주의: `use_voice_converted` 는 `variant_index` 와 얽혀 있다(`:1487` 상호배타 검사).
+> `use_voice_converted` 만 걷어내고 **`variant_index` 의 0/N 분기는 그대로 보존**해야 한다.
+
+#### 2-2. frontend-dev (B 시리즈)
+
+| # | 작업 |
+|---|---|
+| B1 | `StudioTab2.jsx` — `MrPitchAdjustPanel` 컴포넌트 전체(`:195-~560`) 삭제 |
+| B2 | `StudioTab2.jsx` — VC state 블록(`:968-975` 부근 `kitsModels`·`kitsModelsLoaded`·`vcStrength`·`vcVolumeMix`·`vcPitchShift`·`vcSelectedModel`·`vcSelectedType`·`vcModalGenId`·`vcSubmitting`·`vcPlayingId`) 삭제 |
+| B3 | `StudioTab2.jsx` — `openVcModal`·`handleStartVoiceConvert`·`handlePlayVc`·`handleDownloadVc`·`vcStatusLabel` 및 관련 `useEffect` 삭제 |
+| B4 | `StudioTab2.jsx:3582-3589` 「내 목소리로 변환」 버튼 삭제 / `:3575` `hasVoiceConverted` 전달 삭제 |
+| B5 | `StudioTab2.jsx:3613-3665` 부근 — `MrPitchAdjustPanel` 렌더·변환 진행바·실패 배너·`s2__vc-player` 패널 삭제 |
+| B6 | `StudioTab2.jsx:3690-3799` VC 모달 전체 삭제 (**0-4 결정에 따라 우회 방식 포함 통째로**) |
+| B7 | `StudioTab2.jsx:1166` 폴링 조건에서 `voice_conversion_status` 항 제거 |
+| B8 | `StudioTab2.css` — `s2__vc-*` / `mr-pitch__*` 규칙 삭제 |
+| B9 | `UploadPage.jsx` — 0-1 표의 17개 지점 정리. `useVoiceConverted` 를 **항상 false 로 접어** 원본 경로만 남긴다 |
+| B10 | `api/index.js` — `:540-586`·`:673-693` 의 vocal-repair / voice-convert export 25개 삭제. **`voice-clone`·`voice-persona`·`wondera` export 는 손대지 말 것** |
+| B11 | 🔴 **Wondera 섹션(`:598~900`)·`MyVoiceCloneSection`·작곡 폼 페르소나 선택(`:2741`)은 무수정** |
+
+> 🔴 B9 주의: `:1405` 와 `:696` 은 **업로드되는 오디오 오브젝트를 고르는 분기**다.
+> 조건만 지우고 **원본(variant) 경로가 그대로 선택되도록** 해야 한다.
+
+#### 2-3. 로그 규칙 (스킬 필수 규칙 재강조)
+
+이번 버전은 **삭제가 주**라 신규 로그는 거의 없다. 다만:
+- `tracks.py:1524` `[UploadVariant]` 로그는 **유지하되** `use_vc` 항만 제거 — 업로드 소스 추적자는 계속 필요하다.
+- `UploadPage.jsx` 의 남는 `console.error` 는 유지. 삭제 과정에서 **컴포넌트 prefix 로그를 함께 지우지 않도록** 주의.
+
+---
+
+### 3. 회귀 위험
+
+| 위험 | 수준 | 방어 |
+|---|---|---|
+| **Wondera 오폭** — 문구가 동일해 grep 삭제 시 같이 지워짐 | 🔴 상 | 0-5 명시. 테스트에서 Wondera 탭 렌더 확인 |
+| **Suno 페르소나 오폭** — 모달과 작곡 폼이 같은 state 이름을 쓸 수 있음 | 🔴 상 | `vcSelectedModel`(모달) vs `selectedPersonaId`(작곡 폼) — **별개 state**임을 실측 확인. 테스트에서 작곡 폼 페르소나 선택 확인 |
+| **`variant_index` 파손** — `use_voice_converted` 와 얽힌 분기 | 🔴 상 | A6. variant 0/N 업로드 회귀 테스트 |
+| **`torch` 제거로 다른 기능 파손** | 🟡 중 | 0-7 에서 import 1건 확인. 그래도 MV·비트분석 스모크 필요 |
+| **`librosa` 체인 오제거** | 🟡 중 | 0-6. 락파일에서 `llvmlite`·`numba`·`scipy` **잔존 확인**이 판정 항목 |
+| **`Dockerfile` / `constraints-cpu.txt` 불일치로 빌드 깨짐** | 🟡 중 | A9·A10 동기화. 재빌드가 3단계이므로 여기서 깨지면 즉시 드러남 |
+| **레거시 문서 직렬화** | 🟢 하 | 0-8 — `generate.py:91` 무수정 |
+| **CSS 잔재** | 🟢 하 | B8. 기능 무영향 |
+
+---
+
+### 4. 범위 밖 (명시적으로 손대지 않음)
+
+- `backend_9004`·`backend_9005` — 미러링 폐기
+- `frontend_admin/` 전체
+- Mongo 데이터 마이그레이션 (0-8)
+- MinIO 에 남은 변환 산출물 오브젝트 정리
+- `generate.py:91` 직렬화 튜플 (0-8)
+- AWS P0 잔여 9건 (v198 REPORT §7)
+- `voice_clone`·`voice_persona`·`wondera` 라우트 및 그 UI
+
+---
+
+### 5. 3단계(도커 재빌드)와의 관계
+
+v199 코드 제거가 끝나야 재빌드 의미가 있다. Dockerfile 은 **레시피 무수정**,
+`requirements*` 만 바뀐다. 재빌드 판정 기준:
+- 이미지 안 `import torch` → **ModuleNotFoundError 가 정상**
+- `librosa`·`madmom` → **정상 import 되어야 함**
+- `ffmpeg -filters` 에 `rubberband`·`ass` **여전히 존재**
+- venv 예산: v198 FAIL 이던 1.686GiB → **1.6G 미만**으로 해소되어야 함
+
+---
+
+### 6. 절대 준수 (v199 재확인)
+
+1. 🚫 유료 외부 API 호출 금지 — `/api/generate`·`/api/mv/**`·`/api/character`·`/api/voice-*`·
+   `generate-cover`·`refine-cover`·`POST /api/tracks/upload`·`GET /api/tracks/search`.
+   특히 **`api.createGeneration` 은 ⭐-15 차감**이므로 E2E 에서 절대 실행 금지 — **화면 노출 확인까지만**.
+2. 🚫 실사용자 데이터 무접촉. 테스트 계정만.
+3. 🚫 인프라 무조작 — 컨테이너 재기동/중지 금지, **MinIO 9100 차단 금지**.
+4. 🚫 `.env` 실값·크리덴셜·개인정보 산출물 노출 금지.
+5. 🚫 미러링 금지 — `backend_9004`·`backend_9005` 쓰기 0건.
+6. 🚫 `git add -A` 금지. 커밋 전 시크릿 검사. **푸시는 지시 시에만**.
+7. 🚫 **`ffmpeg` 제거 금지** — 공유 영상·MV 가 사용.
+8. 작업 트리는 메인 체크아웃 `/mnt/d/1_projects/0_myProjects/1_tripleJ`.

@@ -113,12 +113,8 @@ class Settings(BaseSettings):
     kling_access_key: str = ""
     kling_secret_key: str = ""
 
-    # Kits.AI Voice Conversion
-    kits_api_key: str = ""
-    kits_api_url: str = "https://arpeggi.io/api/kits/v1"
-
-    # LALAL.AI Vocal Enhancement
-    lalal_api_key: str = ""
+    # v199: 「내 목소리로 변환」·「보컬 다듬기」 외부 API 설정 3종 제거 — 기능 삭제됨.
+    #       실 .env 에 해당 키가 남아 있어도 model_config 의 extra="ignore" 로 무시된다.
 
     # Wondera AI Music Generation
     wondera_api_key: str = ""
