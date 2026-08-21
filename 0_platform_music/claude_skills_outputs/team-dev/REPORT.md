@@ -15827,3 +15827,101 @@ v196 후속 논의에서 나온 커버 이미지 관련 2건. 사용자 지시: 
 - 프론트 1: `frontend/src/pages/UploadPage.jsx`
 - 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`
 - **무변경 확인**: `backend_9004`·`backend_9005` 전체, `frontend_admin/` 전체, `frontend/src/api/index.js`, `tracks.py`, `mv.py`
+
+---
+
+## v198 — 2026-08-21 — 앱용 Dockerfile 신설 + 빌드 재현성 확보 [MAIDOL-DockerSquad]
+
+> 백엔드는 `backend_9006` 단일. **미러링 폐기 상태 유지** — `backend_9004`·`backend_9005` 쓰기 **0건**(`git status` 실측).
+> 작업 트리는 메인 체크아웃 `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`, 착수 시 HEAD `547e0c6`).
+
+### 1. 요청 작업
+사용자 지시: **"Dockerfile부터 진행해줘"**. AWS 이전 2차 요청서의 **[4]-8(빌드 재현성)** + **[4]-9(Dockerfile 작성)** 대응 — 이전 P0 항목 10건 중 나머지 9건의 **선행 전제**다. 착수 시점 저장소에는 앱 이미지를 만들 수단이 전무했다(Dockerfile 은 ES 용 8줄짜리 1개뿐).
+대상 서버: EC2 t3.large (**x86_64**, 2 vCPU / **8GB RAM**, Ubuntu 24.04, 서울).
+
+### 2. 0단계 실측에서 드러난 사실 (지시서 전제 정정 2건 + 신규 발견 2건)
+
+| # | 항목 | 실측 |
+|---|---|---|
+| 0-1 | 의존성 고정 실태 | `requirements.txt` 비주석 30줄 중 **`==` 완전 고정 0줄**. 락파일·`pyproject.toml` 전부 **부재** → 지금 `pip install -r` 을 다시 돌리면 **재현되지 않는다** |
+| 0-2 | ⚠️ **지시서 정정** | "`websockets` 가 requirements 에 없다" → **틀렸다**. `requirements.txt:5` 에 `websockets>=12,<18` 로 명시돼 있고 설치본 `17.0.1` 이 제약을 만족. **결함 아님** (9004/9005 기준의 오래된 관찰로 추정) |
+| 0-4 | venv 5.5GB 의 정체 | `nvidia` 2.7G + `torch` 1.2G + `triton` 699M + `cuda` 25M = **CUDA 귀속 ≈ 3.42GB**. 그런데 `demucs_service.py:92` 가 `device="cpu"` **하드코딩**이고 저장소 전체에 `.cuda()` **0건** → **쓰지도 않는 3.4GB** |
+| 0-5 | madmom 고정값 확정 | `direct_url.json` 에서 커밋 `27f032e8947204902c675e5e341a3faf5dc86dae` 회수. 모델 가중치(28MB)를 패키지에 동봉하므로 **런타임 다운로드 없음** — 컨테이너에 유리 |
+| 0-7(a) | 🔴 **신규** | 호스트 ffmpeg 8.0 에 **`librubberband` 가 없다**(`ffmpeg -filters \| grep rubberband` → rc=1). `voice_convert.py:361`·`kits_service.py:400` 은 폴백이 없어 **현재 100% 실패 중**. → v198 은 이 기능을 "유지"하는 게 아니라 **처음으로 동작하게 만드는** 변경 = 회귀가 아니라 **거동 변화** |
+| 0-7(b) | 🔴 **신규** | `mv_pipeline.py` 3곳 + `mv.py:2231` 은 `fontsdir` 를 넘기지 않고 fontconfig 기본 조회에 의존. slim 베이스는 **폰트 0개** → 놓쳤으면 MV 자막이 **두부(tofu)로 나오는 무성 회귀**. `fonts-nanum` + `fontconfig` 설치 필수 (지시서에 없던 항목) |
+| 0-9 | ⚠️ **지시서 정정** | `.dockerignore` 제외 후보로 거론된 `infra/style_samples/` 는 **런타임에 읽는다** → 제외 금지 |
+
+**부수 발견**: 호스트에 `fc-list` 미설치 → `fontsdir` 없는 ASS 번인은 **호스트에서도 이미 한글을 못 그린다**.
+
+### 3. 핵심 설계 결정
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 락 도구 | **`pip freeze` 2파일 방식** (uv·poetry 도입 안 함) | v198 의 최우선은 **현 동작 보존**. `uv.lock` 생성은 의존성 **재해결**을 일으켜 현 설치본과 다른 조합이 나올 수 있다. pip freeze 는 "지금 돌아가는 조합"이 곧 정답임이 이미 입증된 상태를 그대로 박제 |
+| torch CPU 전환 | `--extra-index-url` + `torch==2.12.0+cpu` / `torchaudio==2.11.0+cpu` | 🔴 `--index-url`(완전 대체)이 **아닌** 이유: PyTorch 인덱스에는 torch 계열 소수만 있어 나머지 패키지를 못 찾는다. `torch` 는 requirements 에 없고 `demucs` 의 전이 의존이라 **제어점 자체가 없었다** → 명시 추가로 제어점 확보 |
+| 스테이지 | **2스테이지** (builder / runtime) | builder 에만 `build-essential python3-dev git`. runtime 은 `/opt/venv` 만 받아 컴파일러가 이미지에 남지 않음 |
+| madmom 빌드 | `--no-build-isolation` | `setup.py` 가 최상위에서 numpy/Cython 을 import 하므로 격리 빌드가 깨진다 |
+| 앱 루트 | **`/srv/app`** (`/app` 아님) | 파이썬 패키지 `app/` 과 경로가 겹치면 import 모호성이 생긴다 |
+| 실행 사용자 | **비루트** `app` (uid 10001) | 요청서 보안 항목 |
+| HEALTHCHECK | `--start-period=90s` | 기동 시 madmom/torch 로드가 길어 짧으면 **정상 컨테이너를 unhealthy 로 오판**한다 |
+| CMD | exec form, **`--workers` 없음** | 8GB RAM 에 torch 를 올린 워커를 복수로 띄우면 OOM. 워커 수는 배포 단계 몫 |
+| `.env` | **이미지에 절대 굽지 않음**. `.env.example` 은 **키 이름만** | 요청서 보안 항목 |
+
+### 4. 수행 결과 (신규 5 + 수정 4)
+
+**신규**
+- **`backend_9006/Dockerfile`** — 2스테이지. builder(`build-essential python3-dev git`) → runtime(`ffmpeg fonts-nanum fontconfig curl`). `WORKDIR /srv/app`, `USER app`, `EXPOSE 9006`, HEALTHCHECK, exec-form CMD. **빌드 시점 자기검증 RUN** 포함 — `ffmpeg -filters` 에 `rubberband`·`ass` 가 없으면 **빌드가 깨지게** 했다(0-6 의 imageio-ffmpeg 조용한 폴백 차단)
+- **`backend_9006/.dockerignore`** — `venv/` 최우선 제외(실측 5.5GB). 0-9 를 반영해 `infra/style_samples/` 는 **포함**
+- **`backend_9006/requirements.lock`** — **110개 `==` 고정**. `nvidia-*`·`triton`·`cuda-*` 항목 **0건**(주석 설명 1줄 제외), `torch`/`torchaudio` `+cpu`
+- **`backend_9006/constraints-cpu.txt`** — CPU 휠 강제용 제약(개발 venv 재구축 시)
+- **`backend_9006/infra/docker-compose.app.yml.example`** — 앱 서비스 정의 초안 (**비활성**, 다음 단계 인계용)
+
+**수정**
+- **`requirements.txt`** (+25/−4) — madmom 커밋 `27f032e8` 고정, torch·torchaudio 명시 추가, 락파일 관계 주석
+- **`app/services/audio_normalize.py`** (+9/−3) — `/home/duckjk89` 폴백 제거 → `FFMPEG_BIN` env → PATH. 🔴 최종 폴백을 `None` 이 아니라 **문자열** `"ffmpeg"` 으로 둔 이유: `None` 이면 `subprocess` 가 `TypeError` 로 죽지만 문자열이면 `FileNotFoundError` 가 나서 **기존 try/except 경고 경로를 정상적으로 탄다**
+- **`app/services/kits_service.py`** (+11/−4) — miniconda 폴백 삭제, `FFMPEG_BIN` 우선. imageio-ffmpeg 폴백은 **유지**(호출부가 `None` 을 명시 처리)
+- **`.env.example`** (+51) — 누락 24개 키 **이름만** 추가(값 전부 빈칸)
+
+**결과**: `grep -rn "/home/duckjk89" backend_9006/app` → **0건** (DoD 8 충족)
+
+### 5. 테스트 결과 — 36건 중 **31 PASS / 2 FAIL / 2 SKIP / 1 PARTIAL**
+`[unit]` 20(55.6%) / `[api]` 14(38.9%) / `[e2e]` 2(5.6%) — 요구(≥40 / ≥35 / ≤25) 전부 충족.
+
+**설계의 중심축은 "exit 0 인데 실제로는 열화된 상태"를 잡는 것**이었다. libass 는 폰트가 없어도 성공하고 빈 화면을 내기 때문이다:
+- **한글 번인 픽셀 검사(UNIT-09)** — 비배경 픽셀 비율 **ko=0.007057 / en=0.004796, 비율 1.471**(허용 0.3~3.0). PNG 육안으로도 "안녕하세요 MAIDOL" 이 **두부가 아닌 정상 글자**로 렌더됨을 확인
+- **madmom(UNIT-14)** — 반환값이 정상이어도 `audio_utils.py:90-99` 가 librosa 로 조용히 폴백하므로 **폴백 경고 0건**을 판정 실체로 삼음 → 0건
+- **ffmpeg 경로(UNIT-12)** — `_get_ffmpeg_path()` 결과가 **imageio 번들 경로와 다름**을 명시 단언 → 통과
+
+**CPU 전환 실증(UNIT-15)**: 이미지 안에서 `nvidia`·`triton`·`cuda` 디렉터리 **0개**, `torch 2.12.0+cpu`, `torch.cuda.is_available()` → **False**.
+
+**🔴 호스트 무영향(§3-1, 13건)**:
+- `pip freeze` sha256 **`969c8d9d…6bba57` 착수 전/후 완전 동일**, 130줄, `cmp` 바이트 일치 → 실행 중인 venv 무접촉
+- `docker build` **진행 중** 호스트 9006 `/api/health` **30/30 → 200**, 평균 **2.0ms**
+- 재기동 후 `/openapi.json` 라우트 집합 **동일**, character 정적 응답 **바이트 완전 일치** → 프론트 무변경 근거
+
+**FAIL 2건 — 동일 원인 1개**: 이미지 안 `/opt/venv` 가 **1.686 GiB** 로 예산 `<1.6G` 를 **+5.4%** 초과. **CUDA 누수가 아님**은 위 UNIT-15 로 확정. 상위 기여자는 `torch` 771MB / `llvmlite` 166MB / `scipy` 115MB / `sympy` 81MB / `imageio_ffmpeg` 78MB — **전부 `demucs` 계열**이라 **v199 의 Demucs 제거로 해소된다**(§7).
+
+**이미지 크기 수치 정정**: `docker images` 의 **3.24GB 는 containerd 디스크 사용량**(압축 콘텐츠 772MB + 스냅샷)이고, **실 rootfs 는 2.408GB** 로 목표 `<2.5GB` **충족**.
+
+**SKIP 2건**: `API-14` 전체 기동 스모크는 **설계 단계에서 SKIP 으로 확정**된 항목이다 — 공식계정 시드 + 전체 유저 맞팔 백필이 **실 DB 쓰기**를 일으키기 때문(즉시중단 S8). 사유 4가지 + 대체 커버리지 표를 TESTPLAN §5 P4 에 명문화했고, 대신 `API-13` 이 **lifespan 없는 최소 FastAPI 에 `character.router` 만 마운트해 `TestClient`** 로 검증해 실 DB 무접촉을 유지했다.
+
+**PARTIAL 1건**: `E2E-02`(UI 무변경 최소 스모크) — 호스트에 브라우저 런타임이 없어 **콘솔 에러 수집분 미검증**. 다만 v198 은 프론트 코드를 **1줄도 건드리지 않았고**(diff 0), 라우트 집합 동일까지 확인돼 실질 위험은 없다.
+
+**유료 호출 0건 / 테스트 데이터 생성 0건 / 9004·9005 접근 0건.** `docker system df` 착수 전후 동일, 검증용 태그 `v198t-verify` 제거 완료.
+
+### 6. 기록 사항 (결함 아님)
+- **TESTPLAN 문서 오기 1건**: 앱 루트를 `/app` 으로 기술했으나 실제는 **`/srv/app`**(§3 결정 참조). 구현과 무관한 문서 오기
+- **지시서 기대값 오류 2건**을 설계 단계에서 선검출: H6 의 `logger.warning` → 실제는 `logger.exception` / `TypeError` 단언 불성립
+- `run.sh` 의 `tee` 가 재기동마다 `server.log` 를 절단 — v197 §6 건의 유효
+
+### 7. 범위 밖 / 후속 과제
+- 🔜 **v199 에서 해소 예정(합의 완료)**: `demucs` 제거 → venv 예산 초과(§5 FAIL) 해소 + 이미지 **1GB 안팎** 예상. 함께 제거: 「내 목소리로 변환」 UI 3층 · `voice_convert.py` · `vocal_repair.py` · `demucs_service.py` · `kits_service.py`. 🚫 **`ffmpeg` 자체는 유지**(공유 영상이 사용) — v198 의 Dockerfile 은 그대로 재사용하고 **재빌드만** 한다
+- **AWS P0 잔여 9건**: presign region 하드코딩 `us-east-1`(`media_urls.py:75`) / S3 `secure=False`(`minio.py:18`) / CORS `allow_origins=["*"]`(`main.py:609`) / `/docs` 노출(`main.py:605`) / 로그 JWT 유출 86건 / health check 스텁(`main.py:657-659`) / 도메인 주입 / presign 헬퍼 통합
+- **피치 시프트 거동 변화 안내 필요**: 컨테이너 배포 시점부터 「MR 피치 조절」이 **처음으로 동작**한다. 지금까지 항상 실패하던 기능이라 사용자 체감 변화가 생긴다
+- ⚠️ **v196·v197 §7 미해결 항목 유효**: 앱팀이 사내망으로 쓰는 `backend_9004` 에는 v196·v197 수정이 전부 미반영(같은 실데이터 참조). 앱팀의 9006 이전 시점까지 유보
+
+### 8. 변경 파일 (커밋 대상 12)
+- 백엔드 신규 5: `Dockerfile`, `.dockerignore`, `requirements.lock`, `constraints-cpu.txt`, `infra/docker-compose.app.yml.example`
+- 백엔드 수정 4: `requirements.txt`, `app/services/audio_normalize.py`, `app/services/kits_service.py`, `.env.example`
+- 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`
+- **무변경 확인**: `backend_9004`·`backend_9005` 전체, `frontend/`·`frontend_admin/` 전체, `app/main.py`, `docker-compose.yml`, `run.sh`

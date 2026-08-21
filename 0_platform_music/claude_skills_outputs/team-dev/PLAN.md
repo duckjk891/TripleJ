@@ -28592,3 +28592,840 @@ if job.get("user_id") != current_user["id"]:
 8. 인프라 무조작(docker-compose·포트·MinIO·Redis·ES·인덱스).
 9. 작업 트리는 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ` (§0-1).
 10. 서버 재기동: `cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006 && setsid ./run.sh > /dev/null 2>&1 &` — **`--reload` 없음, 코드 변경 시 수동 재기동 필수**. 재기동 없이 판정한 `[api]` 결과는 무효.
+
+---
+
+## v198 — 2026-08-21 — 앱용 Dockerfile 신설 + 빌드 재현성 확보 [MAIDOL-DockerSquad]
+
+AWS 이전 요청서 **[4]-8(빌드 재현성)** + **[4]-9(Dockerfile 작성)** 대응. 대상 서버는
+EC2 t3.large(**x86_64**, 2 vCPU / **8GB RAM**, Ubuntu 24.04, 서울). 현재 이 저장소에는
+앱 이미지를 만들 수단이 전혀 없다(Dockerfile 은 ES 용 1개뿐).
+
+작업 대상은 **`backend_9006` 단독**. 🚫 `backend_9004`·`backend_9005` 쓰기 0건(읽기만).
+작업 트리는 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`,
+착수 시 HEAD `547e0c6`). 워크트리 `.claude/worktrees/*` 에는 `backend_9006` 이 없다.
+
+---
+
+### 0. Plan verification findings (파일:라인 + 실측값)
+
+착수 지시서의 전제 중 **2건이 실측과 달랐다**. 아래 0-2, 0-9 참조.
+
+#### 0-1. 의존성 고정 실태 — `backend_9006/requirements.txt` (41줄, 비주석 30줄)
+
+| 항목 | 실측 |
+|---|---|
+| 비주석 요구사항 줄 | 30 |
+| `==` 완전 고정 | **0줄** |
+| `>=` 하한만 있는 줄 | **4줄** — `websockets>=12,<18`(L5), `elasticsearch[async]>=8.12,<9`(L21), `anthropic>=0.105`(L24), `librosa>=0.10`(L31) |
+| VCS 소스 | **1줄** — `madmom @ git+https://github.com/CPJKU/madmom.git@main` (L36) |
+| 락파일 | **없음** (`pyproject.toml`·`poetry.lock`·`uv.lock`·`requirements.lock` 전부 부재) |
+| 빌드 설정 파일 | **없음** (`pyproject.toml`/`setup.cfg`/`pytest.ini`/`conftest.py` 모두 부재) |
+
+→ 지시서의 "30줄 전부 버전 미고정" 은 **`==` 기준으로는 정확**하나, 4줄은 하한/상한
+제약이 있으므로 "완전 무고정"은 아니다. 그래도 `pip install -r requirements.txt` 를
+지금 다시 돌리면 **재현되지 않는다**(30줄 중 26줄이 최신 버전을 그대로 집어옴).
+
+#### 0-2. ⚠️ 지시서 전제 정정 — `websockets` 는 requirements 에 **있다**
+
+지시서: "`websockets` 는 requirements 에 없는데 설치돼 있음(앱팀이 수동 설치)".
+실측: `requirements.txt:5` 에 `websockets>=12,<18` 로 **명시돼 있다**(v152 DmSquad 주석 포함).
+설치본은 `websockets==17.0.1` 로 제약을 만족한다. → 이 항목은 결함이 아니다. 아마 9004/9005
+기준의 오래된 관찰로 보인다. **v198 에서 별도 조치 불필요**(핀 고정 대상에는 포함).
+
+#### 0-3. `torch` 는 requirements 에 없음 — `demucs` 가 끌고 온다 (지시서 전제 일치)
+
+`requirements.txt:30` 의 `demucs` → `torch`/`torchaudio` 전이 의존. requirements 에
+`torch` 문자열 0건(실측). 그래서 **index-url 제어 지점이 없어** 기본 PyPI 의 CUDA 빌드가
+설치된다.
+
+#### 0-4. venv 실측 — CUDA 가 대부분임이 확인됨
+
+```
+venv                                     5.5G
+  site-packages/nvidia                   2.7G   ← 전부 CUDA 런타임
+  site-packages/torch                    1.2G   ← CUDA 링크 빌드
+  site-packages/triton                   699M   ← GPU 커널 컴파일러
+  site-packages/cuda                      25M
+  site-packages/llvmlite                 162M
+  site-packages/scipy                    111M
+  site-packages/sympy                     78M
+  site-packages/imageio_ffmpeg            77M   ← 번들 ffmpeg 바이너리
+  site-packages/sklearn                   47M
+  site-packages/numpy                     43M
+  site-packages/madmom                    39M   (models/ 28M — 런타임 다운로드 없음)
+site-packages 하위 디렉터리 273개 / `pip list` 패키지 133개
+```
+
+**CUDA 귀속 용량 ≈ 3.42GB**(nvidia 2.7G + triton 699M + cuda 25M). 여기에 `torch` 자체가
+CUDA 링크 빌드라 1.2G → CPU 휠은 통상 0.4~0.5G 대. **CPU 전용 전환 시 절감 추정 ≈ 4.1GB**.
+
+코드가 GPU 를 쓰지 않는다는 근거: `app/services/demucs_service.py:92`
+`sources = apply_model(model, waveform, device="cpu")` — **하드코딩**. 저장소 전체에서
+`device="cuda"`/`.cuda()` 사용 0건. t3.large 에는 GPU 자체가 없다.
+
+#### 0-5. madmom 커밋 해시 — **확정**
+
+`venv/lib/python3.11/site-packages/madmom-0.17.dev0.dist-info/direct_url.json`:
+
+```json
+{"url":"https://github.com/CPJKU/madmom.git",
+ "vcs_info":{"commit_id":"27f032e8947204902c675e5e341a3faf5dc86dae",
+             "requested_revision":"main","vcs":"git"}}
+```
+
+→ 고정할 값: `madmom @ git+https://github.com/CPJKU/madmom.git@27f032e8947204902c675e5e341a3faf5dc86dae`
+버전 문자열은 `0.17.dev0`. madmom 은 **모델 가중치를 패키지에 동봉**(`madmom/models` 28MB)
+하므로 런타임 네트워크 다운로드가 없다 — 컨테이너에 유리.
+
+#### 0-6. ffmpeg 의존 기능 전수 — 13개 파일, **바이너리 해석 방식이 3가지로 갈림**
+
+ffmpeg/ffprobe 를 호출하는 파일: `app/routes/{mv,upload,voice_clone,voice_convert}.py`,
+`app/services/{audio_normalize,audio_utils,demucs_service,kits_service,mv_generator,mv_pipeline,share_video,sync_labs_service,watermark}.py`.
+
+해석 방식 3종:
+
+| 방식 | 지점 | 컨테이너 영향 |
+|---|---|---|
+| **A. 리터럴 `"ffmpeg"`/`"ffprobe"`** (폴백 없음) | `mv.py:2236,2248,2852,2856`, `voice_convert.py:361`, `audio_utils.py:26,69`, `demucs_service.py:41,70`, `sync_labs_service.py:121,129,263,425,474`, `mv_pipeline.py:1220` | PATH 에 있으면 OK |
+| **B. `shutil.which` + 개발자 홈 폴백** | `audio_normalize.py:32-33`, `kits_service.py:32-43` | **제거 대상** (0-8) |
+| **C. `shutil.which` + imageio-ffmpeg 폴백** | `audio_utils.py:111-117`, `kits_service.py:41-43`, `mv_generator.py:1020-1027` | **위험** — 아래 |
+
+**C 방식의 위험**: `imageio_ffmpeg.get_ffmpeg_exe()` 가 반환하는 번들 바이너리는
+libass/librubberband 를 포함하지 않는 최소 빌드다. 시스템 ffmpeg 설치가 실패한 이미지에서도
+`which` 가 없으면 **조용히 이 빈약한 바이너리로 폴백**해 자막 번인·피치 시프트가
+런타임에 실패한다. → Dockerfile 검증 단계에서 시스템 ffmpeg 존재를 **빌드 시점에 강제**해야 한다.
+
+**rubberband(pitch shift) 실사용 지점 — 폴백 없음, 실패 시 하드 에러**
+
+- `app/routes/voice_convert.py:359-372` — `-af rubberband=pitch={ratio}`.
+  실패 시 `500 {"error":"MR 피치 변환 실패: ..."}` 반환. **대체 경로 없음.**
+- `app/services/kits_service.py:395-423` — `filter_complex` 안에 `rubberband=pitch=..,volume=..`.
+  실패 시 `RuntimeError("ffmpeg merge failed: ...")`. **대체 경로 없음.**
+  (`mr_pitch_shift == 0` 이면 `volume=` 만 써서 rubberband 를 타지 않음 — L397-402)
+
+**ass(자막 번인) 실사용 지점**
+
+- `app/services/share_video.py:480-503` — `ass='{path}':fontsdir='{FONTS_DIR}'`
+  → **fontsdir 명시**. `FONTS_DIR = app/assets/fonts` (`share_video.py:39-40`),
+  `NanumGothic-Regular.ttf` 2.0MB + `OFL.txt` 동봉. ASS Style 의 Fontname 은
+  `NanumGothic` (L206, L278).
+- `app/services/mv_pipeline.py:2333-2345`, `3077-3086`, `3379-3395` — `-vf ass={path}`,
+  **fontsdir 없음**
+- `app/routes/mv.py:2231-2239` — `-vf ass={path}`, **fontsdir 없음**
+
+#### 0-7. 🔴 신규 발견 (지시서 미예상 2건)
+
+**(a) 호스트 ffmpeg 에 rubberband 가 아예 없다 — 지금 피치 시프트는 깨져 있다**
+
+```
+$ /home/duckjk89/.local/bin/ffmpeg -version
+ffmpeg version 8.0 ... built with gcc 14.3.0 (conda-forge ...)
+enable-libass enable-libfontconfig enable-libfreetype enable-libmp3lame
+enable-libx264 enable-libx265 ... (librubberband 없음)
+$ ffmpeg -filters | grep -iw rubberband
+(출력 없음, rc=1)
+```
+
+→ `voice_convert.py:361` 과 `kits_service.py:400` 경로는 **현재 호스트에서 100% 실패**한다
+(폴백 없음, 0-6 참조). 즉 v198 의 Dockerfile 은 이 기능을 "유지"하는 게 아니라
+**처음으로 동작하게 만드는** 변경이다. 회귀 위험이 아니라 **거동 변화**로 다뤄야 한다(§7).
+
+**(b) slim 베이스에는 한글 폰트가 없다 → `fontsdir` 없는 ASS 번인이 두부(tofu)로 렌더된다**
+
+0-6 에서 확인했듯 `mv_pipeline.py` 3곳 + `mv.py` 1곳은 `fontsdir` 를 넘기지 않고
+libass 의 fontconfig 기본 조회에 의존한다. `python:*-slim` / `ubuntu:24.04` 기본 이미지에는
+폰트가 0개다. → **이미지에 `fonts-nanum` + `fontconfig` 설치 필수**. 지시서에 없던 항목이며,
+빠뜨리면 MV 자막이 빈칸으로 나오는 무성 회귀가 된다.
+
+#### 0-8. 홈 경로 하드코딩 실측 — 2개 파일 3줄, **전부 폴백(주 경로 아님)**
+
+`grep -rn "/home/duckjk89" backend_9006/app` → 3 hits.
+
+| 위치 | 코드 | 성격 | 제거 시 대체 동작 |
+|---|---|---|---|
+| `app/services/audio_normalize.py:32` | `_FFMPEG = shutil.which("ffmpeg") or "/home/duckjk89/.local/bin/ffmpeg"` | 폴백 | `which` 가 주 경로. 컨테이너는 항상 `which` 히트 |
+| `app/services/audio_normalize.py:33` | `_FFPROBE = shutil.which("ffprobe") or "/home/duckjk89/.local/bin/ffprobe"` | 폴백 | 동일 |
+| `app/services/kits_service.py:38` | `miniconda_path = "/home/duckjk89/miniconda3/bin/ffmpeg"` (L37-39 `if os.path.isfile(...)` 가드 안) | 폴백 2순위 | `which`(1순위) → imageio-ffmpeg(3순위, L41-43)로 축약 |
+
+→ **셋 다 주 경로가 아니므로 제거해도 현재 호스트 동작이 바뀌지 않는다**
+(호스트에서도 `which ffmpeg` 가 `/home/duckjk89/.local/bin/ffmpeg` 를 이미 히트).
+`audio_normalize` 는 `which` 실패 시 `None` 이 되면 `subprocess` 가 `TypeError` 를 내므로
+**환경변수 오버라이드 + 명시적 에러**로 바꾸는 게 안전하다(§4).
+
+#### 0-9. ⚠️ 지시서 전제 정정 — `infra/style_samples/` 는 **런타임 의존**, 제외하면 안 된다
+
+지시서는 `.dockerignore` 후보로 `infra/style_samples/` 를 거론했으나, 실측 결과
+**런타임에 읽는다**:
+
+- `app/routes/character.py:74-80` — `STYLE_SAMPLES_DIR = <repo_root>/infra/style_samples`
+- `app/routes/character.py:66-72` — `STYLE_PRESETS` 가 `webtoon.png`/`anime.png`/`manga90.png` 참조
+- `app/routes/character.py:516` — `GET /api/character/style-samples` 엔드포인트가 목록 제공
+- 실측 크기 **7.9MB** (README.md + PNG 3장)
+
+→ **`.dockerignore` 제외 금지. 이미지에 COPY 필수.**
+
+#### 0-10. 런타임 필수 요소
+
+- **엔트리포인트**: `run.sh` (L8) `exec ./venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9006`.
+  `--reload` **없음**(L5-7 주석: drvfs + venv 10만 파일 감시 불가). 로그는 `awk` 로 타임스탬프
+  붙여 `tee logs/server.log`. → **컨테이너에서는 이 파이프라인이 안티패턴**(PID 1 이 awk 가 되고
+  stdout 로깅 드라이버와 충돌). 컨테이너 엔트리포인트는 uvicorn 직접 exec 로 간다(§4).
+- **앱 정의**: `app/main.py:605` `app = FastAPI(title="MAIDOL Platform API v2", lifespan=lifespan)`.
+  `docs_url` 미지정 → `/docs` 열림(**4-7 범위 밖**, 건드리지 않음).
+- **CORS**: `app/main.py:607-613` `allow_origins=["*"]` + `allow_credentials=True`
+  (**4-5 범위 밖**, 건드리지 않음).
+- **헬스체크**: `app/main.py:657-659` `GET /api/health` → `{"status":"ok","timestamp":...}`.
+  DB 상태를 보지 않는 **프로세스 생존 확인 수준** (**4-10 범위 밖** — §8 참조).
+- **lifespan 이 기동 시 요구하는 것**(`app/main.py:57-604`):
+  - **필수(실패 시 기동 중단)**: `init_postgres` / `init_mongodb` / `init_redis` / `init_minio`
+    (L60-63, try 밖 → 예외 시 기동 실패)
+  - **선택(try/except 로 감싸 실패해도 계속)**: 40여 개 idempotent 마이그레이션(L66~),
+    `init_elasticsearch`(L416, ES 다운이어도 계속), 얼굴인증 startup check(L505),
+    chart recovery, `start_playcount_scheduler`(L536), `mv_assets.cleanup_loop`(L541),
+    공식계정 시드
+  - **디렉터리 생성 코드 없음** — `os.makedirs`/`Path.mkdir` 저장소 내 0건.
+    모든 임시 작업은 `tempfile.TemporaryDirectory()`. → 컨테이너에 쓰기 가능한 `/tmp` 만 있으면 됨.
+    (영구 볼륨 불필요 — 산출물은 전부 MinIO 로 감)
+  - `logs/` 는 `run.sh` 의 `tee` 가 만드는 것이지 앱이 만들지 않음
+- **설정**: `app/config.py:8` `class Settings(BaseSettings)` — pydantic-settings. 필드 약 60개,
+  전부 기본값 보유(=미주입 시 기동은 되나 localhost 를 봄). `app/main.py:46` `load_dotenv()`.
+- **htdemucs 가중치**: `demucs_service.py:62` `get_model("htdemucs")` — torch hub 캐시에서
+  로드. 실측 `~/.cache/torch` = **28K**(CUDA nvrtc 커널 1개뿐, 체크포인트 없음)
+  → **한 번도 받은 적 없음**. 컨테이너 첫 `/api/vocal-repair` 호출 때
+  `dl.fbaipublicfiles.com` 에서 다운로드가 발생한다. §4-6 에서 처리.
+
+#### 0-11. 기존 Dockerfile 작성 관행 — `backend_9006/infra/elasticsearch.Dockerfile` (8줄)
+
+```
+# Custom Elasticsearch image: base 8.12.0 + Korean morphological analyzer (nori).
+# The analysis-nori plugin must be baked into the image because plugins live
+# outside the `es_data` volume — installing it at runtime would not survive a
+# container recreate. Build via:
+#   docker compose -p backend build elasticsearch
+FROM docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+RUN bin/elasticsearch-plugin install --batch analysis-nori
+```
+
+관행: ① 파일 최상단에 **영문 블록 주석**으로 "무엇을/왜/어떻게 빌드" 3점 명시,
+② 베이스 이미지 태그를 **정확히 고정**(`:latest` 미사용), ③ 빌드 명령을 주석에 적어둠,
+④ 위치는 `infra/`, 이름은 `<대상>.Dockerfile`.
+→ v198 도 이 관행을 따른다. 단 앱 Dockerfile 은 build context 가 repo root 이므로
+**파일은 `backend_9006/Dockerfile`** 에 두는 편이 `docker build .` 관용에 맞다(§4 결정).
+
+#### 0-12. compose 와의 관계 — `backend_9006/docker-compose.yml` (113줄)
+
+정의된 서비스: `postgres`(pgvector/pgvector:pg16) / `mongodb`(mongo:7) / `redis`(redis:7-alpine) /
+`elasticsearch`(로컬 빌드 `aimu-elasticsearch-nori:8.12.0`) / `minio`(minio/minio:latest).
+**앱 서비스 없음** — 앱은 호스트에서 `run.sh` 로 뜬다.
+v190 에서 PG·Mongo·Redis·ES 는 `127.0.0.1:` 루프백 바인딩으로 잠갔고 MinIO 만
+`${MINIO_API_PORT:-9100}:9000` 로 열려 있다(L98).
+
+→ **판단: v198 범위에 compose 수정을 넣지 않는다.** 근거 3가지:
+1. 앱을 compose 서비스로 올리면 앱 컨테이너에서 DB 주소가 `localhost` 가 아니라
+   서비스명(`postgres`/`mongodb`/…)이 되어야 한다. 이는 `.env` 의 `*_HOST` 값 전면 변경이며,
+   **실행 중인 9006 호스트 프로세스와 동시에 성립할 수 없다**.
+2. 루프백 바인딩(v190) 때문에 앱 컨테이너는 호스트 `127.0.0.1` 에 닿지 못한다.
+   해결하려면 네트워크 구조를 바꿔야 하고, 이는 **실행 중 컨테이너 재생성**을 요구 →
+   "인프라 무조작" 제약 위반.
+3. 요청서 [4]-9 의 요구는 "① 백엔드 Dockerfile ② `.dockerignore`" 두 개다. compose 통합은
+   AWS 이전 본 작업(별도 버전)에서 `*_HOST` 전환과 함께 묶는 게 맞다.
+
+→ 대신 **`infra/docker-compose.app.yml.example`(비활성 예시 파일)** 로 앱 서비스 정의 초안만
+남겨 다음 단계가 바로 쓸 수 있게 한다. 기존 `docker-compose.yml` 은 **1바이트도 수정 안 함**.
+
+#### 0-13. 빌드 검증 가능 여부 — **가능** (실측 완료)
+
+```
+docker --version   → Docker version 29.2.1, build a5c7197
+docker info        → 29.2.1 / Docker Desktop / x86_64      ← 타깃 EC2 와 동일 아키텍처
+uname -m           → x86_64
+df -h /            → 251G total, 177G avail (26% used)
+df -h /mnt/d       → 1.9T total, 1.4T avail (29% used)
+```
+
+→ `docker build` 실행 가능. 디스크 여유 충분(177G). 아키텍처가 타깃과 같아
+**에뮬레이션 없이 실제 빌드/실행 검증 가능**. §9 에 검증 계획.
+
+#### 0-14. 베이스 이미지 후보 실측 비교 (컨테이너 안에서 직접 확인)
+
+지시서는 "Ubuntu 24.04 계열 권장"이었다. 두 후보를 **실제로 띄워 확인**했다.
+
+| | `ubuntu:24.04` | `python:3.11-slim-bookworm` |
+|---|---|---|
+| 기본 python3 | **없음** (`apt-cache policy python3` → `Installed: (none)`, 아카이브 후보는 3.12) | **Python 3.11.16** (프로젝트 `.python-version` = 3.11.15) |
+| `python3.11` 패키지 | **아카이브에 없음** (`apt-cache policy python3.11` 결과 공백) | 해당 없음(기본 제공) |
+| `apt install ffmpeg` 버전 | 6.1.1-3ubuntu5 | 5.1.9-0+deb12u1 |
+| `rubberband` 필터 | ✅ `..C rubberband  A->A` | ✅ `..C rubberband  A->A` |
+| `ass` 필터 | ✅ `... ass  V->V ... libass` | ✅ `... ass  V->V ... libass` |
+| 빌드 플래그 | — | `enable-libass enable-libfontconfig enable-libfreetype enable-libmp3lame enable-librubberband enable-libx264` |
+
+**결정: `python:3.11-slim-bookworm` 을 베이스로 채택(지시서 권장에서 의도적 이탈).**
+
+근거:
+1. 요청서가 Ubuntu 24.04 를 권장한 **유일한 실질 이유는 "apt ffmpeg 가 librubberband·libass 를
+   포함한다"** 였다. Debian 12(bookworm)의 apt ffmpeg 도 **동일하게 둘 다 포함**함을
+   위 실측으로 확인했다 → 권장 사유가 그대로 충족된다.
+2. Ubuntu 24.04 에는 **Python 3.11 이 아카이브에 없다**(기본 3.12). 이 프로젝트는
+   `.python-version` 3.11.15, venv 3.11.15 이고 `requirements.txt:32` 주석이
+   "madmom … Python 3.11 compat — install from git main" 이라고 못박고 있다.
+   3.12 로 올리면 **madmom(Cython 소스 빌드) + numba/llvmlite 조합의 재검증**이 필요해
+   v198 의 목표(재현성 확보)와 정면 충돌한다.
+3. Ubuntu 24.04 에서 3.11 을 쓰려면 deadsnakes PPA 또는 소스 빌드가 필요 →
+   **재현성 목적의 작업에 외부 PPA 의존을 추가**하는 자기모순.
+4. 타깃 EC2 의 호스트 OS 가 Ubuntu 24.04 인 것과 **컨테이너 베이스 OS 는 무관**하다
+   (커널만 공유). x86_64 glibc 로 동일.
+
+→ Dockerfile 최상단 주석에 이 이탈 사유를 명시한다.
+
+---
+
+### 1. 목표 / 완료 정의(DoD)
+
+1. `pip install` 이 **언제 돌려도 같은 결과**를 내는 락파일이 존재한다.
+2. torch 계열이 **CPU 전용 휠**로 고정되어 CUDA 라이브러리가 이미지에 들어가지 않는다.
+3. `madmom` 이 **커밋 해시**로 고정되어 upstream `main` 이 움직여도 빌드가 흔들리지 않는다.
+4. `docker build` 로 **앱 이미지가 실제로 만들어진다**.
+5. 그 이미지 안에서 `ffmpeg -filters` 에 **`rubberband` 와 `ass` 가 둘 다 보인다**.
+6. 그 이미지 안에서 **한글 폰트로 ASS 자막이 렌더된다**(0-7(b)).
+7. `.dockerignore` 로 build context 가 **venv 5.5GB 를 포함하지 않는다**(목표 < 30MB).
+8. `/home/duckjk89` 가 `backend_9006/app` 에서 **0건**이다.
+9. `.env` 실값이 **이미지 레이어에 존재하지 않는다**.
+10. **실행 중인 9006 호스트 프로세스가 계속 정상 동작한다**(v198 은 실행 환경을 건드리지 않는다).
+
+---
+
+### 2. 의존성 고정 전략
+
+#### 2-1. 도구 선택 — **`pip freeze` 기반 2파일 방식** (uv/poetry 도입 안 함)
+
+| 후보 | 채택 | 사유 |
+|---|---|---|
+| **pip freeze → `requirements.lock`** | ✅ | 추가 도구 0개. 현 venv 상태를 그대로 박제 → **지금 돌아가는 조합이 곧 정답**임이 이미 입증됨. Dockerfile 이 `pip install -r` 한 줄로 끝남 |
+| `uv` | ❌ | 재현성은 더 좋으나 `uv.lock` 생성 시 **의존성 재해결**이 일어나 현 설치본과 다른 조합이 나올 수 있다. v198 은 "현 동작 보존"이 최우선 |
+| `poetry` | ❌ | `pyproject.toml` 신설 + 전체 의존성 재선언 필요. 변경면이 지나치게 넓고 madmom VCS·CPU index-url 표현이 까다롭다 |
+| `pip-tools` | ❌ | `.in` → `.txt` 재해결이 uv 와 같은 문제. 이득 대비 도입 비용 |
+
+→ **uv/poetry 는 AWS 이전 완료 후 별도 버전에서 재검토**(범위 밖, §8).
+
+#### 2-2. 파일 구성 — 기존 1파일을 3파일로
+
+| 파일 | 역할 | 편집 주체 |
+|---|---|---|
+| `requirements.txt` | **사람이 읽고 고치는 최상위 선언**. 기존 30줄 유지 + madmom 커밋 해시 고정 + torch/torchaudio 명시 추가 | 사람 |
+| `requirements.lock` | **`pip freeze` 산출물**(133개 전량, `==` 고정). Dockerfile 이 이걸 설치 | 생성물 — 손으로 고치지 않음 |
+| `constraints-cpu.txt` | torch/torchaudio CPU 휠 강제용 `--extra-index-url` + 핀 | 사람 |
+
+> `requirements.lock` 갱신 절차를 파일 상단 주석에 못박는다:
+> `venv/bin/pip freeze > requirements.lock` 후 **madmom 줄만 커밋 해시 URL 로 수동 치환**
+> (pip freeze 는 VCS 패키지를 `madmom @ git+...@<hash>` 로 이미 해시 박아서 뱉지만 검증 필요).
+
+#### 2-3. CPU 전용 torch 고정
+
+`requirements.txt` 에 torch 를 **명시적으로 추가**한다(현재는 demucs 전이 의존이라 제어점이 없음).
+
+```
+# v198 — CPU 전용 고정. 코드가 GPU 를 쓰지 않음(demucs_service.py:92 device="cpu").
+# 기본 PyPI 휠은 CUDA 링크(venv 실측 5.5GB 중 3.4GB 가 CUDA) → CPU index 사용.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0+cpu
+torchaudio==2.11.0+cpu
+```
+
+**가용성 실측 완료** — `pip index versions --index-url https://download.pytorch.org/whl/cpu`:
+- `torch`: `2.13.0+cpu, 2.12.1+cpu, **2.12.0+cpu**, 2.11.0+cpu, …` (설치본 2.12.0 과 **동일 버전 존재**)
+- `torchaudio`: `**2.11.0+cpu**, 2.10.0+cpu, …` (설치본 2.11.0 과 **동일 버전 존재**)
+
+→ **버전을 바꾸지 않고 CUDA 만 떼어낼 수 있다.** 이게 회귀 위험을 최소화하는 핵심.
+
+`--extra-index-url`(not `--index-url`) 을 쓰는 이유: `--index-url` 로 완전 대체하면 fastapi·
+motor 등 나머지 132개 패키지를 PyTorch 인덱스에서 찾다 실패한다. PyTorch 인덱스에는
+`torch`/`torchaudio`/`triton` 등만 있다.
+
+**triton 배제**: `triton` 은 GPU 커널 컴파일러(699MB). CPU 휠은 triton 을 의존하지 않으므로
+자동 제외된다. `requirements.lock` 생성 시 **triton·nvidia-\* 줄이 남아 있으면 반드시 제거**
+(freeze 를 현 CUDA venv 에서 뜨면 남는다 — §4-1 절차 참조).
+
+#### 2-4. madmom 고정
+
+```
+# v198 — upstream main 이동에 따른 빌드 비재현성 차단. 설치본 실측 해시.
+madmom @ git+https://github.com/CPJKU/madmom.git@27f032e8947204902c675e5e341a3faf5dc86dae
+```
+
+빌드 순서 의존: madmom `setup.py` 가 import 시점에 `numpy`·`Cython` 을 요구한다.
+현 requirements 는 `Cython`(L34) 을 madmom(L36) 앞에 두어 순서로 해결하고 있으나
+**pip 는 requirements 파일 순서를 보장하지 않는다**. → Dockerfile 에서
+**빌드 전제 패키지를 별도 `pip install` 단계로 먼저 깔고**, madmom 은
+`--no-build-isolation` 으로 설치한다(§3-4).
+
+---
+
+### 3. Dockerfile 설계
+
+파일 위치: **`backend_9006/Dockerfile`** (build context = `backend_9006/`).
+`infra/elasticsearch.Dockerfile` 은 ES 전용이라 그대로 둔다.
+
+#### 3-1. 스테이지 구성 — **2 스테이지(builder / runtime)**
+
+```
+Stage 1  builder   FROM python:3.11-slim-bookworm
+                   ├ apt: build-essential, git, python3-dev  (madmom Cython 컴파일용)
+                   ├ python -m venv /opt/venv
+                   ├ pip install Cython numpy            (madmom 빌드 전제)
+                   └ pip install -r requirements.lock    (CPU index 포함)
+Stage 2  runtime   FROM python:3.11-slim-bookworm
+                   ├ apt: ffmpeg, fonts-nanum, fontconfig, curl  (런타임만)
+                   ├ COPY --from=builder /opt/venv /opt/venv
+                   ├ COPY app/ infra/style_samples/ …
+                   └ USER app / EXPOSE 9006 / CMD uvicorn
+```
+
+**멀티스테이지를 쓰는 이유(실측 근거)**: builder 에만 필요한
+`build-essential`(gcc/g++/make/libc-dev ≈ 250MB) + `python3-dev` + `git` 이
+runtime 에 남지 않는다. madmom 은 **Cython 소스 컴파일**이 필수라 이 도구들을 뺄 수 없고,
+반대로 런타임에는 전혀 쓰이지 않는다. 절감 추정 ≈ 300MB.
+
+#### 3-2. 레이어 순서와 근거 (캐시 효율 = 변경 빈도 역순)
+
+| # | 레이어 | 변경 빈도 | 근거 |
+|---|---|---|---|
+| 1 | `FROM python:3.11-slim-bookworm` | 거의 없음 | 다이제스트까지 고정 권장 |
+| 2 | `apt install` (빌드 도구 / 런타임 도구) | 낮음 | 앱 코드 수정과 무관하게 캐시 유지 |
+| 3 | `COPY requirements.lock constraints-cpu.txt` | 낮음 | **의존성 파일만 먼저** 복사 — 앱 코드가 바뀌어도 4번이 재실행되지 않음 |
+| 4 | `pip install -r requirements.lock` | 낮음 | **가장 비싼 단계**(수 GB 다운로드 + madmom 컴파일). 3번과 붙여 캐시 극대화 |
+| 5 | `COPY app/ infra/ scripts/ …` | **매우 높음** | 앱 코드. 여기서만 캐시가 깨지도록 마지막에 배치 |
+| 6 | `USER` / `EXPOSE` / `HEALTHCHECK` / `CMD` | 낮음 | 메타데이터, 비용 0 |
+
+→ 흔한 안티패턴인 "`COPY . .` 먼저 → `pip install`" 을 피한다. 그렇게 하면 앱 코드 한 줄
+고칠 때마다 madmom 을 다시 컴파일하게 된다.
+
+#### 3-3. apt 패키지 목록과 각각의 근거
+
+**runtime 스테이지**
+
+| 패키지 | 근거 (파일:라인) |
+|---|---|
+| `ffmpeg` | 13개 파일이 호출(0-6). librubberband·libass·libmp3lame·libx264 포함 확인(0-14) |
+| `fonts-nanum` | **0-7(b)** — `mv_pipeline.py:2345,3086,3395`·`mv.py:2239` 가 `fontsdir` 없이 ASS 렌더. ASS Style Fontname 이 `NanumGothic`(`share_video.py:206,278`) |
+| `fontconfig` | libass 가 폰트를 이름으로 조회하려면 필요. slim 에 미포함 |
+| `curl` | Docker `HEALTHCHECK` 가 `/api/health` 를 때리는 용도(§3-6) |
+| `ca-certificates` | httpx/boto3/minio 의 TLS. slim 에 있으나 명시 |
+
+`--no-install-recommends` 사용 + `rm -rf /var/lib/apt/lists/*` 로 apt 캐시 제거.
+
+**builder 스테이지**: `build-essential`, `python3-dev`, `git`(madmom VCS 설치용).
+`git` 이 없으면 `madmom @ git+…` 이 실패한다 — 자주 놓치는 지점.
+
+#### 3-4. madmom 빌드 취약성 대응
+
+madmom 은 v198 Dockerfile 에서 **유일하게 소스 컴파일되는 패키지**이며 실패 확률이 가장 높다.
+
+1. **`--no-build-isolation` 사용**. 이유: madmom `setup.py` 는 top-level 에서
+   `import numpy`/`Cython` 을 한다. 빌드 격리가 켜져 있으면 격리 환경에 numpy 가 없어
+   `ModuleNotFoundError` 로 죽거나, 격리 환경이 **numpy 최신본을 새로 받아** 런타임
+   numpy 2.4.6 과 **ABI 가 어긋난 확장 모듈**이 만들어진다.
+2. 그래서 **선행 단계에서 numpy/Cython 을 먼저 설치**하고, madmom 을 별도 RUN 으로 설치한다:
+   ```
+   RUN pip install --no-cache-dir "Cython==3.2.5" "numpy==2.4.6"
+   RUN pip install --no-cache-dir --no-build-isolation \
+       "madmom @ git+https://github.com/CPJKU/madmom.git@27f032e...dae"
+   RUN pip install --no-cache-dir -r requirements.lock   # madmom 은 이미 만족됨
+   ```
+3. **커밋 해시 고정** 자체가 최대의 안정화 장치다(upstream main 이 깨져도 무관).
+4. 빌드 실패 시 진단이 쉽도록 이 RUN 을 **독립 레이어**로 유지(합치지 않는다).
+
+#### 3-5. 이미지 크기 추정
+
+| | 현재 venv 기준 | v198 CPU 전용 |
+|---|---|---|
+| python:3.11-slim-bookworm 베이스 | ~130MB | ~130MB |
+| apt(ffmpeg+fonts+fontconfig) | — | ~500MB |
+| site-packages | **5.5GB** | **≈1.4GB** |
+| └ nvidia | 2.7GB | **0** |
+| └ triton | 699MB | **0** |
+| └ cuda | 25MB | **0** |
+| └ torch | 1.2GB | ~0.45GB |
+| └ 나머지(llvmlite/scipy/madmom/…) | ~0.9GB | ~0.9GB |
+| 앱 코드 + style_samples + 폰트 | — | ~18MB |
+| **합계(추정)** | ~6.2GB | **≈2.0~2.2GB** |
+
+→ **약 4GB 감소.** 8GB RAM EC2 에서 `docker pull` / 디스크 압박이 실질적으로 완화된다.
+(추정치이며 §9 에서 `docker images` 실측으로 대체할 것)
+
+#### 3-6. 헬스체크 — **지금은 프로세스 생존 확인 수준만** (4-10 선점 금지)
+
+```
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:9006/api/health || exit 1
+```
+
+- 현 `/api/health`(`main.py:657-659`)는 **DB 를 보지 않는다**. 그대로 사용한다 —
+  **엔드포인트 코드를 v198 에서 수정하지 않는다**(4-10 의 몫).
+- `--start-period=90s`: lifespan 이 40여 개 마이그레이션 + ES 인덱스 보장 + 백필 스케줄을
+  돌리므로 기동이 느리다(0-10). 짧게 잡으면 기동 중 unhealthy 로 오판된다.
+- 4-10 에서 의존성 포함 헬스체크(`/api/health/ready` 등)를 만들면 **이 지시어의 URL 만
+  갈아끼우면 되도록** 설계 — 구조를 선점하지 않는다.
+
+#### 3-7. `.env` 취급 — **이미지에 절대 굽지 않는다**
+
+1. `.dockerignore` 에 `.env`, `.env.*`, `*.env` 를 넣어 **build context 자체에서 제외**
+   (레이어에 안 들어갈 뿐 아니라 빌드 로그·캐시에도 남지 않는다).
+2. Dockerfile 에 `ENV` 로 비밀값을 쓰지 않는다. `ARG` 도 쓰지 않는다
+   (`docker history` 에 노출됨).
+3. 런타임 주입 방식(둘 다 지원, 문서화):
+   - `docker run --env-file /etc/maidol/backend.env …`
+   - compose 라면 `env_file:` + AWS 에서는 SSM Parameter Store / Secrets Manager →
+     엔트리포인트에서 export (다음 단계 몫)
+4. `app/main.py:46` `load_dotenv()` 는 파일이 없으면 조용히 no-op 이므로
+   환경변수 주입만으로 정상 동작한다. pydantic-settings 가 환경변수를 직접 읽는다.
+5. **부수 정리**: `.env.example` 이 실제 `.env` 대비 **24개 키가 누락**돼 있다(실측).
+   누락 키(이름만): `ANTHROPIC_API_KEY, ES_USER, ES_PASSWORD, FAL_API_KEY, GOOGLE_API_KEY,
+   KITS_API_KEY, KITS_API_URL, KLING_ACCESS_KEY, KLING_SECRET_KEY, LALAL_API_KEY,
+   LOG_ACCESS_TOKEN, MEDIA_URL_MODE, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_API_PORT,
+   MINIO_BUCKET_IMAGES, MINIO_BUCKET_MUSIC, MINIO_PUBLIC_HOST, MINIO_PUBLIC_SECURE,
+   SUNO_API_KEY, SUNO_API_URL, SYNC_API_KEY, WONDERA_API_KEY, XAI_API_KEY`.
+   → 컨테이너 배포 시 "무엇을 주입해야 하는지" 문서가 불완전하다는 뜻.
+   **`.env.example` 에 키 이름 + 빈 값 + 주석만 추가**(실값 절대 금지).
+
+#### 3-8. 비루트 실행 / PID 1
+
+- `useradd -u 10001 -m app` → `USER app`. 8GB RAM·단일 프로세스 환경에서 root 로 돌 이유가 없다.
+- `CMD ["python","-m","uvicorn","app.main:app","--host","0.0.0.0","--port","9006"]`
+  — **exec form**. `run.sh` 의 `| awk | tee` 파이프라인은 **쓰지 않는다**:
+  파이프를 쓰면 PID 1 이 shell 이 되어 SIGTERM 이 uvicorn 에 전달되지 않고(graceful
+  shutdown 실패 → lifespan 의 `close_postgres` 등이 안 돌음), Docker 로깅 드라이버가
+  이미 타임스탬프를 붙인다.
+- `--workers` 를 주지 않는다: 2 vCPU / 8GB 에서 uvicorn 워커를 늘리면 각 워커가
+  torch+numpy 를 따로 로드해 메모리가 배로 든다(§6).
+- `ENV PYTHONUNBUFFERED=1` — 로그가 버퍼에 갇히지 않게.
+
+---
+
+### 4. `.dockerignore` 설계
+
+파일: `backend_9006/.dockerignore`.
+목표: build context **5.5GB+ → 30MB 미만**.
+
+| 패턴 | 실측 크기 | 제외 근거 |
+|---|---|---|
+| `venv/` | **5.5G** | ★최우선. 호스트 3.11 venv 를 이미지에 넣으면 안 되고(경로·ABI 다름) context 전송만으로 빌드가 사실상 불가 |
+| `.env`, `.env.*`, `*.env`, `.env.bak_9006port` | 3.7K×2 | **크리덴셜 실값**. §3-7 |
+| `logs/` | **1.1M** | 런타임 산출물. `frontend.log` 630K 등 무관한 로그 포함 |
+| `__pycache__/`, `**/__pycache__/`, `*.pyc`, `*.pyo` | — | 호스트 3.11 바이트코드. 스테일 캐시가 이미지에 섞이면 디버깅이 꼬임 |
+| `.pytest_cache/` | 20K | 테스트 산출물 |
+| `tests/` | **680K** | 런타임 미사용. 이미지 슬림화 + 테스트 픽스처가 프로덕션 이미지에 남지 않게 |
+| `_t2_test.py`, `_t2c_live.py`, `_t2c_probe.py` | ~5K | 루트 임시 진단 스크립트. 런타임 미참조 |
+| `.git/`, `.gitignore` | — | context 팽창 + 이력 노출 |
+| `docker-compose.yml`, `Dockerfile`, `.dockerignore` | — | 이미지 안에서 불필요 |
+| `*.md`, `README*` | — | 문서 |
+| `.python-version` | 8B | pyenv 용, 컨테이너 무관 |
+
+**⚠️ 제외하면 안 되는 것 (0-9)**
+
+| 유지 | 크기 | 근거 |
+|---|---|---|
+| `infra/style_samples/` | **7.9M** | `character.py:74-80,516` 런타임 읽기. 지시서의 제외 후보였으나 **오판** |
+| `app/assets/fonts/` | **2.0M** | `share_video.py:39-40` `fontsdir` 로 직접 지정 |
+| `infra/__init__.py`, `infra/init_*.{sql,js,py}`, `infra/seed_data.py` | — | 초기화·시드용. 이미지에 두면 EC2 초회 부트스트랩에 바로 쓸 수 있다 |
+| `scripts/` | 132K | 백필 스크립트(`backfill_es.py` 등). 운영 중 `docker exec` 로 실행할 일이 있다 |
+| `requirements.txt`, `requirements.lock`, `constraints-cpu.txt` | — | 빌드 입력 |
+
+→ 예상 context ≈ **18MB** (repo excl. venv 실측 18M 에서 logs/tests/pycache 제외).
+
+---
+
+### 5. 홈 경로 제거 설계
+
+원칙: **폴백을 지우되 "조용한 실패"를 만들지 않는다.** 셋 다 폴백이므로 현 호스트 동작은
+바뀌지 않는다(0-8).
+
+#### 5-1. `app/services/audio_normalize.py:31-33`
+
+```python
+# 현재
+_FFMPEG  = shutil.which("ffmpeg")  or "/home/duckjk89/.local/bin/ffmpeg"
+_FFPROBE = shutil.which("ffprobe") or "/home/duckjk89/.local/bin/ffprobe"
+```
+
+→ 개발자 홈 대신 **환경변수 오버라이드 + 표준 경로**:
+
+```python
+# v198 — 개발자 홈 하드코딩 제거. 우선순위: 환경변수 → PATH.
+# 컨테이너/EC2 에서는 apt ffmpeg 가 /usr/bin 에 있어 PATH 로 해결된다.
+_FFMPEG  = os.environ.get("FFMPEG_BIN")  or shutil.which("ffmpeg")  or "ffmpeg"
+_FFPROBE = os.environ.get("FFPROBE_BIN") or shutil.which("ffprobe") or "ffprobe"
+```
+
+- 최종 폴백을 `None` 이 아니라 문자열 `"ffmpeg"` 로 두는 이유: 현재 코드가
+  `subprocess.run([_FFPROBE, ...])` 를 하는데 `None` 이면 `TypeError` 로 죽는다.
+  문자열이면 `FileNotFoundError` 가 나고 이미 `try/except` 로 감싸져 있어
+  기존 `logger.warning` 경로를 탄다(L41-57).
+- `os` 는 L23 에 이미 import 되어 있다 — 추가 import 불필요.
+
+#### 5-2. `app/services/kits_service.py:32-43`
+
+```python
+# 현재: PATH → /home/duckjk89/miniconda3/bin/ffmpeg → imageio-ffmpeg
+```
+
+→ miniconda 분기(L37-39) **삭제**, 환경변수 우선을 추가:
+
+```python
+def _get_ffmpeg_path():
+    """Resolve ffmpeg: FFMPEG_BIN env → PATH → imageio-ffmpeg bundle."""
+    # v198 — 개발자 홈(miniconda) 폴백 제거.
+    env_bin = os.environ.get("FFMPEG_BIN")
+    if env_bin and os.path.isfile(env_bin):
+        return env_bin
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return None
+```
+
+- imageio-ffmpeg 폴백은 **남긴다**(호출부 `L385-387` 이 `None` 을 명시적으로 처리:
+  `raise RuntimeError("ffmpeg가 설치되어 있지 않습니다.")`). 단 이 폴백 바이너리는
+  rubberband 가 없어 피치 시프트가 실패하므로, Dockerfile 검증(§9)에서
+  **시스템 ffmpeg 존재를 빌드 시점에 강제**해 컨테이너에서는 이 경로를 타지 않게 한다.
+- `mv_generator.py:1020-1027`, `audio_utils.py:110-117` 의 imageio 폴백도 동일 이유로 유지
+  (홈 경로 없음 → 이번 수정 대상 아님).
+
+#### 5-3. 검증
+
+`grep -rn "/home/duckjk89" backend_9006/app` → **0건** 이 DoD.
+(`backend_9006/` 전체로 넓히면 `logs/*.log` 에 남아 있을 수 있으나 로그는 대상 아님)
+
+---
+
+### 6. 8GB RAM 제약 대응 (런타임)
+
+요청서 명시 사양: t3.large = 2 vCPU / **8GB RAM**.
+
+| 항목 | 판단 |
+|---|---|
+| uvicorn `--workers` | **주지 않는다(=1)**. 워커마다 torch·numpy·numba 를 별도 로드 → RSS 가 배수로 증가. 현 `run.sh` 도 워커 미지정이라 **동작 동일** |
+| CPU torch 의 스레드 | torch 는 기본으로 코어 수만큼 intra-op 스레드를 띄운다. 2 vCPU 라 폭주 위험은 낮으나, demucs 추론 중 메모리 스파이크를 줄이려면 `ENV OMP_NUM_THREADS=2`, `MKL_NUM_THREADS=2` 를 명시 |
+| 빌드 시점 메모리 | madmom Cython 컴파일이 피크. **빌드는 이 개발 머신에서 수행**하고 EC2 는 이미지를 pull 만 한다(권장). EC2 에서 직접 빌드해야 한다면 swap 필요 — 배포 문서에 주기 |
+| 이미지 크기 감소의 실효 | 6.2GB→2.1GB 는 **디스크**·pull 시간 이득이지 RSS 이득은 아니다. 다만 CUDA 심볼 로딩이 사라져 `import torch` 시 RSS 가 수백 MB 줄어든다 |
+| `HEALTHCHECK` 주기 | 30s. curl 1회는 무시할 수준 |
+| 컨테이너 메모리 한도 | v198 에서 `mem_limit` 를 강제하지 않는다 — DB 5종이 같은 호스트에 있으면 총합이 8GB 를 넘길 수 있어, **배치 결정과 함께 다음 단계에서** 정한다(§8) |
+
+---
+
+### 7. 회귀 위험
+
+#### 7-1. 🔴 상 — **버전 고정으로 인한 동작 변화는 "없어야 정상"** (설계로 방어)
+
+`requirements.lock` 은 **현재 실행 중인 venv 의 pip freeze** 다. 즉 고정 대상 버전이
+**지금 돌아가고 있는 바로 그 버전**이다. torch/torchaudio 도 `2.12.0+cpu`/`2.11.0+cpu` 로
+**버전 번호가 동일**(0-4, 2-3 실측). → 이론적 변화면은 "CUDA 링크 여부" 하나로 좁혀진다.
+
+남는 위험:
+- **CPU 휠과 CUDA 휠의 수치 결과가 미세하게 다를 수 있다** (다른 BLAS 커널 선택).
+  영향처는 `demucs_service.py` 의 htdemucs 보컬 분리 1곳뿐이고, 이미 `device="cpu"` 로
+  실행되므로 연산 경로가 사실상 같다. → **[unit] 로 분리 출력의 형상/dtype/길이를 검증**.
+- `numba`/`llvmlite`(librosa 경유)는 CPU 전용이라 무관.
+
+**🚫 절대 금지: 실행 중인 9006 호스트 venv 에 `pip install` 을 하지 않는다.**
+v198 은 락파일·Dockerfile 을 **만들 뿐** 호스트 환경을 재설치하지 않는다.
+(요청서 4-8 이 요구한 건 "재현성 확보"이지 "실행 환경 재구축"이 아니다)
+
+#### 7-2. 🔴 상 — ffmpeg 필터 누락
+
+| 필터 | 위험 | 방어 |
+|---|---|---|
+| `rubberband` | 없으면 `voice_convert.py:361` 500 에러, `kits_service.py:400` RuntimeError. **폴백 없음** | ① 베이스 실측 확인 완료(0-14) ② **빌드 시점 RUN 검증**(§9-1) — 없으면 빌드를 실패시킨다 |
+| `ass` / libass | 없으면 MV 자막 번인 실패 | 동일 |
+| **한글 폰트** | 있어도 폰트가 없으면 **에러 없이 빈칸/두부로 렌더**(가장 위험한 형태) | `fonts-nanum` 설치 + 빌드 시 `fc-list \| grep -i nanum` 검증 |
+| `libmp3lame` | `kits_service.py:414` `-codec:a libmp3lame`, `audio_normalize` mp3 출력 | 베이스에 포함 확인(0-14). 빌드 시 `-encoders` 검증 |
+| `libx264` | MV 인코딩 | 포함 확인(0-14) |
+
+#### 7-3. 🟡 중 — **거동 변화(회귀 아님): 피치 시프트가 "새로 동작하게 된다"**
+
+0-7(a) 실측: 현 호스트 ffmpeg 8.0(conda-forge)에는 rubberband 가 없어
+`POST /api/voice-convert/{id}/preview-mr`(pitch≠0) 과 kits merge(pitch≠0)가
+**지금 실패하고 있다**. 컨테이너에서는 성공한다.
+
+→ 회귀가 아니라 **개선**이지만, 프론트가 "이 기능은 늘 500 이더라" 를 전제로 만들어졌을
+가능성을 확인해야 한다. **tester 가 확인**: 실패를 전제한 UI 분기 존재 여부.
+또한 이 차이 때문에 **호스트 테스트 결과와 컨테이너 테스트 결과가 다를 수 있다** —
+tester 는 두 환경을 구분해 기록해야 한다.
+
+#### 7-4. 🟡 중 — madmom 빌드 실패
+
+- 원인 후보: git clone 실패(네트워크/`git` 미설치), numpy 2.x ABI, `--no-build-isolation`
+  누락, gcc 부재.
+- 방어: §3-4 의 3단계 설치 + 커밋 해시 고정 + 독립 레이어.
+- 실패 시 영향: `audio_utils.detect_beats()` 가 **librosa 폴백**으로 내려간다
+  (`audio_utils.py:90-99` 주석 명시). 즉 빌드가 통과했는데 madmom import 만 깨지면
+  **조용히 품질이 떨어진다** → 빌드 시 `python -c "import madmom"` 검증 필수(§9-1).
+
+#### 7-5. 🟡 중 — imageio-ffmpeg 조용한 폴백
+
+시스템 ffmpeg 설치가 어떤 이유로 빠지면 `audio_utils.py:114`, `kits_service.py:42`,
+`mv_generator.py:1026` 이 번들 바이너리로 폴백해 **에러 없이 기능이 열화**된다.
+→ §9-1 빌드 검증에서 `which ffmpeg` 를 강제.
+
+#### 7-6. 🟡 중 — htdemucs 가중치 런타임 다운로드
+
+0-10 실측: `~/.cache/torch` 28K = 체크포인트 없음. 컨테이너 첫 `/api/vocal-repair`
+호출 시 외부 다운로드가 일어나고, 네트워크가 막힌 VPC 라면 **런타임 실패**한다.
+
+**결정: v198 에서는 "베이크하지 않는다"**. 근거 — ① 이미지가 300~400MB 더 커진다,
+② 빌드 시 외부 다운로드 의존이 생겨 "빌드 재현성" 목표와 상충, ③ 현재 호스트에도 없어
+동작 차이가 없다. **대신 Dockerfile 주석 + 배포 노트에 "첫 호출 시 외부 다운로드 발생,
+필요 시 `TORCH_HOME` 볼륨 마운트" 를 명시**하고 다음 단계 과제로 넘긴다(§8).
+
+#### 7-7. 🟢 하 — `run.sh` 와 컨테이너 CMD 의 로그 포맷 차이
+
+호스트는 `[YYYY-MM-DD HH:MM:SS]` 접두가 붙고 `logs/server.log` 에 남는다.
+컨테이너는 접두 없이 stdout. → `_logs.py`(`/api/_logs/tail`, `_logs.py:64`)가
+`logs/server.log` 를 읽는다면 컨테이너에서 빈 응답이 된다. **`run.sh` 는 수정하지 않으므로
+호스트 동작은 그대로**이고, 컨테이너 로그 조회는 `docker logs` 로 대체된다는 점을
+배포 노트에 적는다. (`/api/_logs` 개선은 범위 밖)
+
+#### 7-8. 🟢 하 — `.dockerignore` 과잉 제외
+
+`infra/style_samples/`(0-9) 를 실수로 넣으면 `GET /api/character/style-sample/{key}` 가
+404 가 된다. → §9-2 스모크에 포함.
+
+---
+
+### 8. 범위 밖 (명시적으로 손대지 않음)
+
+| 항목 | 이유 |
+|---|---|
+| **4-1 presign 리전 / 4-2 S3 secure** | 별도 P0. `config.py` 의 `minio_public_*` 를 건드리지 않는다 |
+| **4-5 CORS** | `main.py:607-613` `allow_origins=["*"]` **그대로 둔다**. Dockerfile 은 CORS 에 영향 없음 |
+| **4-6 로그 JWT** | `_logs.py` / `log_access_token` 미변경 |
+| **4-7 `/docs` 노출** | `main.py:605` `FastAPI(...)` 에 `docs_url=None` 을 **넣지 않는다**. Dockerfile 이 선점하지 않음 |
+| **4-10 헬스체크 강화** | `/api/health` 코드 **미변경**. Docker `HEALTHCHECK` 는 프로세스 생존 확인 수준으로만 두고 URL 교체가 쉽게 되도록 설계(§3-6) |
+| `docker-compose.yml` 수정 | 0-12 근거. 예시 파일만 추가 |
+| `run.sh` 수정 | 호스트 운영 방식 유지. 컨테이너는 별도 CMD |
+| 호스트 venv 재설치 | 7-1. **실행 중 서버를 깨뜨릴 수 있어 금지** |
+| uv/poetry 도입 | 2-1. 재해결 리스크 |
+| htdemucs 가중치 베이크 | 7-6 |
+| 프론트엔드 변경 | **없음** — 근거: v198 의 산출물은 `Dockerfile`/`.dockerignore`/락파일/ffmpeg 경로 상수 3줄뿐이고, **HTTP API 의 경로·요청·응답 스키마가 하나도 바뀌지 않는다**. `frontend/`·`frontend_admin/` 에서 참조하는 엔드포인트 목록·필드명·상태코드가 전부 그대로다. 유일한 관측 가능 변화는 7-3(피치 시프트가 컨테이너에서 성공)인데, 이는 **기존에 500 을 반환하던 요청이 200 을 반환하게 되는 방향**이라 프론트의 에러 처리 분기를 깨지 않는다 |
+| 멀티아키(arm64) 빌드 | 타깃이 t3.large **x86_64**(요청서 명시), 빌드 머신도 x86_64(0-13). `--platform` 불필요 |
+
+---
+
+### 9. 빌드 검증 계획
+
+**빌드 검증 가능 — Docker 29.2.1 / x86_64 / 디스크 177G 여유 (0-13 실측).**
+타깃 EC2 와 아키텍처가 같아 에뮬레이션 없이 실제 검증이 가능하다.
+→ "빌드 미검증" 으로 남길 이유가 없다. **실제 `docker build` + 컨테이너 내부 검증을 필수**로 한다.
+
+#### 9-1. 빌드 시점 자기검증 (Dockerfile 안의 RUN — 실패하면 빌드가 깨지게)
+
+runtime 스테이지 마지막에 검증 RUN 을 둔다. 이게 §7-2·7-4·7-5 의 방어선이다.
+
+```dockerfile
+# v198 build-time self-check — 아래 중 하나라도 없으면 이미지를 만들지 않는다.
+RUN set -eux; \
+    command -v ffmpeg; command -v ffprobe; \
+    ffmpeg -hide_banner -filters | grep -qw rubberband; \
+    ffmpeg -hide_banner -filters | grep -qE '^\s*\S+\s+ass\s'; \
+    ffmpeg -hide_banner -encoders | grep -qw libmp3lame; \
+    ffmpeg -hide_banner -encoders | grep -qw libx264; \
+    fc-list | grep -qi nanum; \
+    python -c "import madmom, torch, librosa, soundfile, numpy; \
+               print('madmom', madmom.__version__); \
+               print('torch', torch.__version__); \
+               assert '+cpu' in torch.__version__, 'CUDA torch leaked into image'"
+```
+
+마지막 `assert` 가 **CPU 전용 고정의 회귀 방지 장치**다 — 누군가 락파일을 되돌리면 빌드가 깨진다.
+
+#### 9-2. 빌드 후 정적 검증 (호스트에서, 컨테이너 기동 없이)
+
+| # | 명령 | 합격 기준 |
+|---|---|---|
+| V1 | `docker build -t maidol-backend:v198 .` | exit 0 |
+| V2 | `docker build` 출력의 `transferring context` | **< 30MB** (venv 제외 확인) |
+| V3 | `docker images maidol-backend:v198` | **< 2.5GB** |
+| V4 | `docker run --rm --entrypoint sh maidol-backend:v198 -c 'ls /opt/venv/lib/python3.11/site-packages \| grep -cE "^(nvidia\|triton\|cuda)$"'` | **0** |
+| V5 | `docker run --rm --entrypoint sh maidol-backend:v198 -c 'du -sh /opt/venv'` | **< 1.6G** |
+| V6 | `docker run --rm --entrypoint sh maidol-backend:v198 -c 'find / -name ".env" -not -path "*/site-packages/*" 2>/dev/null'` | **출력 없음** |
+| V7 | `docker history maidol-backend:v198 --no-trunc \| grep -iE 'SECRET\|PASSWORD\|API_KEY\|TOKEN'` | **출력 없음** |
+| V8 | `docker run --rm --entrypoint sh maidol-backend:v198 -c 'ls infra/style_samples/'` | `anime.png manga90.png webtoon.png` |
+| V9 | `docker run --rm --entrypoint sh maidol-backend:v198 -c 'ls app/assets/fonts/'` | `NanumGothic-Regular.ttf` |
+| V10 | `docker run --rm --entrypoint sh maidol-backend:v198 -c 'id -u'` | **≠ 0** (비루트) |
+
+#### 9-3. 오프라인 기능 검증 (컨테이너 안, 외부 API·DB 무접촉)
+
+컨테이너를 **DB 없이** 띄워 ffmpeg 파이프라인만 검증한다. 합성 신호를 ffmpeg 로 생성하므로
+**실사용자 데이터·유료 API 무접촉**.
+
+| # | 검증 | 명령 요지 |
+|---|---|---|
+| F1 | rubberband 피치 시프트 | `ffmpeg -f lavfi -i sine=f=440:d=2 -af rubberband=pitch=1.0595 out.wav` → exit 0 & 파일 생성 |
+| F2 | ASS 자막 번인 + **한글 렌더** | `Style: Default,NanumGothic,...` + `Dialogue: ...,안녕하세요 테스트` 로 `.ass` 작성 → `-vf ass=` 로 번인 → 출력 프레임에서 **비배경 픽셀 비율 > 0** 확인(두부/빈칸 판별) |
+| F3 | ASS + `fontsdir` 경로 | `share_video.py` 와 동일하게 `ass=...:fontsdir=app/assets/fonts` → exit 0 |
+| F4 | libmp3lame 인코딩 | `-codec:a libmp3lame -b:a 192k` → exit 0 |
+| F5 | `audio_normalize` 경로 | `python -c "from app.services.audio_normalize import _FFMPEG,_FFPROBE; print(_FFMPEG,_FFPROBE)"` → **`/usr/bin/...` 이고 `/home/duckjk89` 아님** |
+| F6 | `kits_service` 경로 | `python -c "from app.services.kits_service import _get_ffmpeg_path; print(_get_ffmpeg_path())"` → `/usr/bin/ffmpeg` |
+| F7 | madmom 실동작 | 합성 wav → `detect_beats()` → `tempo`/`beats` 키 존재 (librosa 폴백이 아님을 로그로 확인) |
+| F8 | CPU torch 추론 | `torch.nn.Conv1d` 소형 forward → exit 0 (CUDA 미탑재 확인) |
+
+#### 9-4. 대체 검증 (만약 빌드가 불가능해질 경우 — 현재는 해당 없음)
+
+디스크 부족/네트워크 차단으로 V1 이 불가하면: ① `hadolint` 급 정적 린트 대신
+`docker build --dry-run` 부재하므로 **Dockerfile 문법 리뷰 + 각 RUN 을 base 이미지에서
+개별 실행**으로 대체, ② 그 경우 REPORT 에 **"빌드 미검증"** 을 명시. 현재 실측상
+**해당 없음**.
+
+#### 9-5. 빌드 캐시 관리
+
+- 착수 전 `docker system df` 로 현황 기록.
+- 반복 빌드로 캐시가 누적되면 `docker builder prune --filter until=24h` (선택적).
+- 🚫 `docker system prune -a` **금지** — 실행 중인 PG/Mongo/Redis/ES/MinIO 이미지와
+  `aimu-elasticsearch-nori:8.12.0`(로컬 빌드본, 재빌드 비용 큼)를 날릴 수 있다.
+- 🚫 실행 중 컨테이너 stop/restart/rm **금지**. MinIO 9100 차단 금지.
+
+---
+
+### 10. 변경 매트릭스
+
+| # | 파일 | 종류 | 변경 | 근거 | 위험 |
+|---|---|---|---|---|---|
+| C1 | `backend_9006/Dockerfile` | **신규** | 2스테이지 앱 이미지 (§3) | 요청서 4-9 | 중 |
+| C2 | `backend_9006/.dockerignore` | **신규** | venv 5.5G 외 제외 (§4) | 요청서 4-9 | 하 |
+| C3 | `backend_9006/requirements.lock` | **신규** | `pip freeze` 133개 `==` 고정, nvidia/triton 제거, torch `+cpu` (§2) | 요청서 4-8 | 중 |
+| C4 | `backend_9006/constraints-cpu.txt` | **신규** | `--extra-index-url` + torch/torchaudio `+cpu` 핀 (§2-3) | 요청서 4-8 | 중 |
+| C5 | `backend_9006/requirements.txt` | 수정 | L36 madmom → 커밋 `27f032e8` 고정 / torch·torchaudio 명시 추가 / 상단에 락파일 관계 주석 | 요청서 4-8 | 중 |
+| C6 | `app/services/audio_normalize.py` | 수정 | L31-33 홈 경로 → env→PATH (§5-1) | 요청서 4-9 | 하 |
+| C7 | `app/services/kits_service.py` | 수정 | L32-43 miniconda 분기 삭제 + env 우선 (§5-2) | 요청서 4-9 | 하 |
+| C8 | `backend_9006/.env.example` | 수정 | 누락 24개 키 **이름만** 추가 (§3-7-5) | 컨테이너 주입 문서화 | 하 |
+| C9 | `backend_9006/infra/docker-compose.app.yml.example` | **신규(비활성)** | 앱 서비스 정의 초안 (§0-12) | 다음 단계 인계 | 하 |
+| — | `backend_9006/docker-compose.yml` | **무변경** | — | §0-12 | — |
+| — | `backend_9006/run.sh` | **무변경** | — | §8 | — |
+| — | `app/main.py` | **무변경** | CORS·/docs·health 전부 4-x 몫 | §8 | — |
+| — | `frontend/`, `frontend_admin/` | **무변경** | API 스키마 불변 | §8 | — |
+| — | `backend_9004/`, `backend_9005/` | **무변경** | 미러링 폐기 | 지시 | — |
+
+---
+
+### 11. 절대 준수 (v198 재확인)
+
+1. 🚫 **유료 외부 API 호출 금지**: `/api/generate`·`/api/mv/**`·`/api/character`·
+   `/api/voice-*`·`generate-cover`·`refine-cover`·`POST /api/tracks/upload`·
+   `GET /api/tracks/search`. → §9-3 은 **합성 신호 + 로컬 ffmpeg/madmom 만** 사용하며
+   HTTP 요청을 보내지 않는다.
+2. 🚫 실사용자 데이터 무접촉. 별 차감·전체발송 금지.
+3. 🚫 **인프라 무조작** — PG·Mongo·Redis·ES·MinIO 컨테이너 재기동/중지 금지.
+   **MinIO 9100 차단 금지**. `docker system prune -a` 금지(§9-5).
+4. 🚫 `.env` 실값·크리덴셜·개인정보 산출물 노출 금지. 락파일·Dockerfile·REPORT 어디에도
+   비밀값을 쓰지 않는다. `.env.example` 은 **키 이름만**.
+5. 🚫 **미러링 금지** — `backend_9004`·`backend_9005` 쓰기 0건.
+6. 🚫 **실행 중 9006 호스트 venv 에 `pip install` 금지**(§7-1).
+7. 작업 트리는 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ`.
+8. 코드 변경 후 `[api]` 판정이 필요하면 서버 수동 재기동
+   (`cd .../backend_9006 && setsid ./run.sh > /dev/null 2>&1 &`) — `--reload` 없음.
+   단 v198 의 코드 변경(C6·C7)은 **모듈 로드 시점 상수**라 재기동 없이는 반영되지 않는다.
+

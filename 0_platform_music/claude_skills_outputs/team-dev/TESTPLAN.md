@@ -5423,3 +5423,1184 @@ BASE_REV: **b1f05cd**(메인 체크아웃, branch `backend`) + 워킹트리 v197
   **가드 우회 금지(S1)** 를 명문화해, 스텁 허용 범위를 `get_mongo`·`get_minio`·`get_redis` **3개 인프라 접근점**으로 못박고 "가드를 꺼서 얻은 PASS 는 FAIL" 을 판정 규칙으로 세웠다.
   미러링 검증 **0건**(백엔드는 `backend_9006` 하나뿐), 실사용자 트랙 **변조·열람 0**(RT-06 집계 1회만, 승인 항목 A5).
   태그 균형은 순수 함수·가드 분기를 unit 으로, 화면 발현만 e2e 로 배치해 **40.0 / 35.0 / 25.0** 정확히 확보. planner 승인 대기 5건(§5) — **전부 대안 절차가 있어 20건·비율이 깨지지 않는다.** planner 검토 후 확정 예정.
+
+---
+
+## v198 — 2026-08-21 — 앱용 Dockerfile 신설 + 빌드 재현성 확보
+
+> 대상: **`backend_9006` 단독**. 🚫 `backend_9004`·`backend_9005` 무접촉(읽기조차 불요).
+> 근거 문서: `PLAN.md` `## v198`(28598행~) 전체 — 특히 **§0-7(신규 발견 2건)**, **§7(회귀 위험)**, **§9(검증 계획)**.
+> 이 문서는 **설계**다. 실행·판정은 tester 가 한다.
+
+### 0. 실행 전 필수 사항
+
+#### 0-A. 작업 위치 (⚠️ 워크트리 아님)
+
+| 이름 | 절대경로 |
+|---|---|
+| `REPO` | `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`, 착수 시 HEAD `547e0c6`) |
+| `B6` | `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006` |
+| `IMG` | `maidol-backend:v198` (backend-dev 가 빌드한 이미지 태그) |
+
+⚠️ **`.claude/worktrees/*` 에는 `backend_9006` 이 없다.** 모든 명령은 위 절대경로로 실행한다.
+
+#### 0-B. 🚫 절대 금지 (v198 재확인)
+
+1. **유료 호출 0건** — `POST /api/generate` · `/api/mv/**` · `POST /api/character/**`(생성 계열) ·
+   `/api/voice-clone/**` · `/api/voice-convert/**`(실 Kits 경로) · `generate-cover` · `refine-cover` ·
+   `POST /api/tracks/upload` · `GET /api/tracks/search`.
+   → **이 TESTPLAN 의 36건 중 위 엔드포인트를 때리는 케이스는 0건이다.**
+   ffmpeg 의존 기능은 **API 를 타지 않고** 합성 신호(`-f lavfi -i sine=…` / `-i color=…`)로만 검증한다.
+2. 실사용자 데이터 무접촉. 별 차감 0. 전체발송 0. DB 쓰기 0.
+3. **인프라 무조작** — PG·Mongo·Redis·ES·MinIO 컨테이너 **재기동/중지/rm 금지**.
+   **MinIO 9100 차단 금지**. **DB 컨테이너 포트 바인딩 변경 금지**.
+   🚫 `docker system prune -a` **금지**(실행 중 인프라 이미지 + 로컬 빌드본
+   `aimu-elasticsearch-nori:8.12.0` 을 날린다).
+4. 🚫 **호스트 venv 에 `pip install` 금지** — v198 은 실행 환경을 재설치하지 않는다(PLAN §7-1).
+   **UNIT-01 이 이걸 증명하는 케이스다.**
+5. 🚫 크리덴셜 실값을 TESTPLAN·REPORT 어디에도 쓰지 않는다 → `<REDACTED>` 플레이스홀더.
+6. 🚫 `backend_9004`·`backend_9005`·`frontend*` 쓰기 0건.
+
+#### 0-C. 🔴 실행 위치 2종 — **기대값이 서로 반대인 항목이 있다**
+
+| 표기 | 의미 | 실행 방법 |
+|---|---|---|
+| **호스트** | WSL2 위 개발 머신 + 실행 중인 9006 프로세스 + `venv`(conda-forge ffmpeg 8.0) | 직접 실행 / `curl localhost:9006` / `$B6/venv/bin/python` |
+| **컨테이너** | `IMG` 로 띄운 일회성 컨테이너 (`docker run --rm`) | `docker run --rm --network none --entrypoint sh $IMG -c '…'` |
+
+🔴 **PLAN §0-7(a)·§7-3 때문에 아래 3항목은 두 환경의 기대값이 정반대다.**
+
+| 항목 | 호스트 기대값 | 컨테이너 기대값 | 판정 규칙 |
+|---|---|---|---|
+| `ffmpeg -filters` 의 `rubberband` | **없음** (설계 시 실측 rc=1) | **있음** | 호스트의 "없음"을 🚫 **회귀로 기록하지 말 것** — v198 이전부터의 기존 상태 |
+| `fc-list` / 한글 폰트 | **`fc-list` 자체가 미설치**(설계 시 실측 `command -v fc-list` → 없음) | `fc-list \| grep -i nanum` **≥1** | 동일 — 호스트 부재는 기존 상태 |
+| `ffmpeg` 경로 | `/home/duckjk89/.local/bin/ffmpeg` (`which` 히트) | `/usr/bin/ffmpeg` | **둘 다 정상**. C6·C7 은 `which` 를 1순위로 두므로 호스트 값이 **변경 전과 같아야** 정상 |
+
+→ 🔴 **모든 케이스에 `[태그]` + `(호스트|컨테이너)` 를 반드시 병기해 기록한다.**
+
+#### 0-D. 🔴 호스트 재기동 규칙 (판정 유효성의 전제)
+
+C6(`audio_normalize.py:31-33`)·C7(`kits_service.py:32-43`)은 **모듈 로드 시점 상수/함수**다.
+`run.sh` 에 `--reload` 가 없으므로(설계 시 실측) **재기동 없이는 코드 변경이 반영되지 않는다.**
+
+```bash
+# 재기동 (tester 수행)
+cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006
+pkill -f 'uvicorn app.main:app --host 0.0.0.0 --port 9006'   # 기존 프로세스만
+setsid ./run.sh > /dev/null 2>&1 &
+# 기동 확인: logs/server.log 에 아래 두 줄이 나올 때까지 대기(최대 180s)
+#   "All database connections established."
+#   "Uvicorn running on http://0.0.0.0:9006"
+```
+
+- 🔴 **재기동 없이 낸 `[api]` 판정은 무효다.** 케이스마다 `재기동: 전 / 후` 를 명기한다.
+- 재기동 실패 시 → **즉시 중단 조건 S1**(§0-F).
+- 🚫 `--reload` 를 붙이지 않는다(drvfs + venv 10만 파일 감시로 기동 불가).
+
+#### 0-E. 베이스라인 스냅샷 절차 (`[api]` 전/후 대조의 근거)
+
+작업 **착수 전**(= C1~C9 반영 전 또는 재기동 전) 아래를 `$SNAP_BEFORE/` 에 저장하고,
+**재기동 후** 같은 것을 `$SNAP_AFTER/` 에 저장해 비교한다. 저장 위치는 **저장소 밖**
+(`/tmp/v198t/`)으로 하고 종료 시 삭제한다 — 저장소에 산출물을 만들지 않는다.
+
+```bash
+SNAP=/tmp/v198t/before   # 후에는 /tmp/v198t/after
+mkdir -p "$SNAP"
+for p in /api/health \
+         /api/charts/top100?limit=10 /api/charts/hot100?limit=10 \
+         /api/charts/daily?limit=10 /api/charts/weekly?limit=10 /api/charts/monthly?limit=10 \
+         /api/charts/categories \
+         /api/artists/ /api/albums/ /api/albums/latest \
+         /api/character/style-samples /openapi.json ; do
+  f=$(echo "$p" | tr '/?=&' '_')
+  curl -sS -o "$SNAP/$f.json" -w '%{http_code} %{content_type}\n' "http://127.0.0.1:9006$p" \
+    >> "$SNAP/_status.txt"
+done
+curl -sS -o "$SNAP/style_sample_webtoon.png" -w '%{http_code} %{content_type} %{size_download}\n' \
+  "http://127.0.0.1:9006/api/character/style-sample/webtoon" >> "$SNAP/_status.txt"
+```
+
+🔴 **"응답 동일" 의 정의** — 차트·아티스트·앨범은 **실 트래픽으로 값이 계속 변한다**.
+따라서 값 비교가 아니라 **구조 비교**로 판정한다:
+
+| 비교 대상 | 판정 |
+|---|---|
+| HTTP status | **완전 일치** |
+| `content-type` | **완전 일치** |
+| 최상위 key 집합 | **완전 일치** |
+| 배열 항목 수 | **완전 일치** |
+| 각 항목의 key 집합(합집합) | **완전 일치** |
+| `/api/character/style-samples` 본문 | 🔴 **바이트 완전 일치**(정적 데이터라 변할 이유가 없다) |
+| `style-sample/webtoon` 바이트 크기 + sha256 | 🔴 **완전 일치**(정적 PNG) |
+| `/openapi.json` 의 `paths` 키 집합 | 🔴 **완전 일치**(라우트 추가·삭제 0) |
+| 차트/아티스트/앨범의 **값** | 비교 대상 아님 — 변동 정상. REPORT 에 "값 변동은 판정 제외" 명기 |
+
+#### 0-F. 🔴 즉시 중단 조건 (하나라도 관측되면 그 자리에서 멈추고 planner 에 보고)
+
+| # | 조건 | 왜 즉시 중단인가 |
+|---|---|---|
+| **S1** | **호스트 9006 이 재기동 후 뜨지 않거나 `/api/health` 가 200 이 아니다** | v198 DoD 10 위반. 실서비스 중단 |
+| **S2** | **UNIT-01 의 `pip freeze` 해시가 달라졌다** | 누군가 호스트 venv 에 `pip install` 을 했다는 뜻 = 0-B-4 위반. 되돌리기 어렵다 |
+| **S3** | 유료 엔드포인트 요청이 **1건이라도** 관측 | 0-B-1 위반 |
+| **S4** | 인프라 컨테이너(PG/Mongo/Redis/ES/MinIO)의 상태·포트가 변했다 (`docker ps` 전/후 대조) | 0-B-3 위반 |
+| **S5** | **이미지·`docker history`·락파일·REPORT 에 크리덴셜 실값이 보인다** | 0-B-5 위반. 유출 |
+| **S6** | **컨테이너의 `torch.__version__` 에 `+cpu` 가 없다** / site-packages 에 `nvidia\|triton\|cuda` 가 1개라도 있다 | CPU 전용 고정 실패 = v198 DoD 2 실패. 빌드 self-check(PLAN §9-1)가 뚫렸다는 뜻이라 더 심각 |
+| **S7** | **F2 의 한글 픽셀 비율이 0** (= 폰트 없이 빈 화면) | PLAN §0-7(b) 의 무성 회귀. exit 0 만 보면 놓친다 |
+| **S8** | 컨테이너 기동 스모크가 **실 DB 에 쓰기를 일으켰다**(공식계정 시드·맞팔 백필 로그 관측) | §5-2 를 skip 하기로 한 이유 그 자체. 실사용자 데이터 오염 |
+| **S9** | `git status --short` 에 **`backend_9004`·`backend_9005`·`frontend*` 변경**이 보인다 | 0-B-6 위반 |
+
+#### 0-G. 설계 시 실측한 값 (tester 의 기대값 앵커 — 지시서와의 델타 포함)
+
+| 앵커 | 설계 시 실측값 (2026-08-21, HEAD `547e0c6`) | 쓰이는 케이스 |
+|---|---|---|
+| 호스트 `venv/bin/pip freeze` 줄 수 | **130** | UNIT-01 |
+| 호스트 `pip freeze \| sha256sum` | **`969c8d9d4d660197be695b2318b7cc03b84fc221bd639b5b290c4768786bba57`** | UNIT-01 |
+| 호스트 freeze 의 `nvidia\|triton\|cuda` 줄 | **19** | UNIT-01·02 |
+| `venv/lib/python3.11/site-packages` 항목 수 | **273** | UNIT-01 |
+| `requirements.lock` 비주석 줄 수 | **111** (= 130 − 19 ✅ 정합) | UNIT-02 |
+| `requirements.lock` 의 `nvidia\|triton\|cuda` | **0** | UNIT-02 |
+| `requirements.lock:133-134` | `torch==2.12.0+cpu` / `torchaudio==2.11.0+cpu` | UNIT-02 |
+| `requirements.lock:86` madmom | `git+https://github.com/CPJKU/madmom.git@27f032e8947204902c675e5e341a3faf5dc86dae` | UNIT-02 |
+| 호스트 `which ffmpeg` | `/home/duckjk89/.local/bin/ffmpeg` (ffmpeg **8.0**) | UNIT-05 |
+| 호스트 `ffmpeg -filters \| grep -w rubberband` | **0건 (rc=1)** | UNIT-06 |
+| 호스트 `command -v fc-list` | **미설치** | UNIT-06 |
+| 락파일 내 `pillow`/`numpy`/`soundfile` | 12.2.0 / 2.4.6 / 0.13.1 — **픽셀 검사에 쓸 수 있다** | UNIT-09·10 |
+| 착수 시점 산출물 존재 여부 | `requirements.lock`·`constraints-cpu.txt` **이미 존재**, `Dockerfile`·`.dockerignore` **미존재** | 전 케이스 전제 |
+
+**🔴 지시서 기대값 정정 2건 (planner 확인 요망 — §5 P1·P2)**
+
+1. **H6 의 로그 레벨** — 지시서는 "`{}` + `logger.warning`" 이라 했으나, 실제 코드
+   `audio_normalize.py:85-87` 은 **`except Exception: logger.exception(...) ; return {}`** 이다.
+   → 기대값을 **`logger.exception("[audio_norm] ffprobe failed path=%s")`(ERROR 레벨 + 트레이스백)** 로 정정.
+   (`logger.warning` 은 `proc.returncode != 0` 인 **다른 분기**(`:61`)의 것이다.)
+2. **H6 의 `TypeError` 판별** — 수정 전 코드도 `_FFPROBE` 가 `None` 이 되는 경로가 없어
+   `TypeError` 가 나지 않는다. 게다가 `except Exception` 이 `TypeError` 도 삼킨다.
+   → 단언을 **"반환값이 `{}`"** 만으로 두면 수정 전후를 구분하지 못한다.
+   **트레이스백 안의 예외 타입이 `FileNotFoundError` 이고 `TypeError` 가 아닐 것**을
+   함께 단언해야 §5-1 설계(문자열 폴백)를 실제로 검증한다 → UNIT-13 에 반영.
+
+**🟡 부수 발견 (v198 회귀 아님 — 후속 과제 후보)**
+
+- 호스트에 **`fc-list`(fontconfig) 가 없다**. 즉 `mv_pipeline.py:2345,3086,3395`·`mv.py:2239`
+  의 **`fontsdir` 없는 ASS 번인은 호스트에서도 한글을 못 그리고 있을 가능성이 높다**.
+  컨테이너는 `fonts-nanum` + `fontconfig` 로 이를 **처음 고치는** 변경이다(PLAN §0-7(b) 와 같은 성격).
+  → **회귀가 아니라 거동 변화**로 기록한다. UNIT-06 이 현 상태를 문서화한다.
+
+---
+
+### 1. `[unit]` 시나리오 (20건)
+
+> 공통 컨테이너 실행형: `docker run --rm --network none --entrypoint sh $IMG -c '…'`
+> `--network none` 은 **외부 호출 0건을 구조적으로 보장**한다(0-B-1).
+> 예외는 **UNIT-16(demucs)** 단 1건 — htdemucs 가중치 다운로드가 필요해 기본 네트워크를 쓴다(무료).
+
+#### V198-UNIT-01 · `[unit]` · **호스트** · 🔴 호스트 venv 무변경 증명 (§3-1 핵심 / S2)
+
+- **명령**
+  ```bash
+  cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006
+  ./venv/bin/pip freeze | tee /tmp/v198t/freeze_after.txt | wc -l
+  ./venv/bin/pip freeze | sha256sum
+  grep -icE '^(nvidia|triton|cuda)' /tmp/v198t/freeze_after.txt
+  ls -1 venv/lib/python3.11/site-packages | wc -l
+  ```
+- **기대** ① 줄 수 **130**, ② sha256 **`969c8d9d4d660197be695b2318b7cc03b84fc221bd639b5b290c4768786bba57`**,
+  ③ `nvidia|triton|cuda` **19줄**(호스트는 여전히 CUDA venv — **정상**. CPU 전환은 *이미지 안에서만* 일어난다),
+  ④ site-packages 항목 **273**.
+- **PASS** ①~④ 전부 일치. **FAIL** ② 불일치 → 🔴 **즉시 중단 S2**.
+- 🔴 **③ 을 FAIL 로 오독하지 말 것.** 호스트에 CUDA 가 남아 있는 것이 v198 의 **설계된 결과**다
+  (PLAN §7-1: "호스트 환경을 재설치하지 않는다").
+- **재기동**: 무관(전·후 아무 때나. 단 **작업 전/후 2회** 측정해 대조).
+- **실패 시 의심**: 누가 `pip install` 을 돌렸는가 — `venv/pyvenv.cfg` mtime, `logs/` 타임스탬프 확인.
+
+#### V198-UNIT-02 · `[unit]` · **호스트** · 락파일 정적 파싱 (C3·C4·C5)
+
+- **명령**(순수 파일 파싱 — 설치 0)
+  ```bash
+  cd $B6
+  grep -cvE '^\s*(#|--|$)' requirements.lock                 # 비주석 요구사항 줄
+  grep -vE '^\s*(#|--|$)' requirements.lock | grep -vcE '(==|@ git\+)'   # 고정되지 않은 줄
+  grep -icE '^(nvidia|triton|cuda)' requirements.lock
+  grep -inE '^torch(audio)?==' requirements.lock
+  grep -n 'madmom @ git' requirements.lock requirements.txt
+  python3 -c "import json;print(json.load(open('venv/lib/python3.11/site-packages/madmom-0.17.dev0.dist-info/direct_url.json'))['vcs_info']['commit_id'])"
+  grep -c 'extra-index-url' constraints-cpu.txt
+  ```
+- **기대** ① 비주석 **111**줄, ② 고정 안 된 줄 **0**, ③ `nvidia|triton|cuda` **0**,
+  ④ `torch==2.12.0+cpu` / `torchaudio==2.11.0+cpu`,
+  ⑤ 🔴 `requirements.lock` 과 `requirements.txt` 의 madmom **커밋 해시가 서로 같고**,
+  ⑥ 🔴 그 해시가 `direct_url.json` 의 **`27f032e8947204902c675e5e341a3faf5dc86dae` 와 같다**
+  (= "지금 돌아가는 그 커밋"을 고정했다는 증명),
+  ⑦ `constraints-cpu.txt` 에 `--extra-index-url` **1줄**(`--index-url` **0줄** — PLAN §2-3),
+  ⑧ 🔴 세 파일 어디에도 크리덴셜·URL 토큰·`@`+비밀문자열 **0건**.
+- **정합 교차검증**: `130(호스트 freeze) − 19(CUDA 줄) = 111(락파일)`. 세 수가 어긋나면
+  **락파일이 다른 시점의 freeze** 라는 뜻 → FAIL.
+- **PASS** ①~⑧. **FAIL** ⑥ 불일치(=upstream `main` 이 이미 움직였는데 해시를 안 맞췄다) / ⑧ 위반(S5).
+
+#### V198-UNIT-03 · `[unit]` · **호스트** · `.dockerignore` 패턴 시뮬레이션 (C2 / §3-7 과잉 제외 방지)
+
+- **명령**: 실제 빌드 전에 **패턴만으로** 판정한다. Docker 의 `.dockerignore` 는 Go `filepath.Match`
+  기반이므로 `git check-ignore` 로 대체하지 말고 **아래 스크립트**로 시뮬레이션한다.
+  ```bash
+  cd $B6
+  python3 - <<'PY'
+  import fnmatch, pathlib
+  pats=[l.strip() for l in open('.dockerignore') if l.strip() and not l.startswith('#')]
+  def ignored(p):
+      for pat in pats:
+          neg = pat.startswith('!'); q = pat[1:] if neg else pat
+          if fnmatch.fnmatch(p, q) or fnmatch.fnmatch(p, q.rstrip('/')) \
+             or p.startswith(q.rstrip('/')+'/'):
+              if neg: return False
+              return True
+      return False
+  MUST_EXCLUDE=['venv/lib/python3.11/site-packages/torch/__init__.py','.env','.env.bak_9006port',
+      'logs/server.log','app/__pycache__/main.cpython-311.pyc','tests/test_x.py','.git/config',
+      '.pytest_cache/CACHEDIR.TAG','docker-compose.yml','README.md','.python-version']
+  MUST_KEEP=['app/main.py','app/services/share_video.py','app/assets/fonts/NanumGothic-Regular.ttf',
+      'infra/style_samples/webtoon.png','infra/style_samples/anime.png','infra/style_samples/manga90.png',
+      'infra/__init__.py','infra/seed_data.py','scripts/backfill_es.py',
+      'requirements.txt','requirements.lock','constraints-cpu.txt']
+  for p in MUST_EXCLUDE: print('EXCL', p, ignored(p))
+  for p in MUST_KEEP:    print('KEEP', p, ignored(p))
+  PY
+  ```
+- **기대** ① `MUST_EXCLUDE` 전부 `True`, ② 🔴 `MUST_KEEP` 전부 `False`.
+- **PASS** ①②. **FAIL** ② 중 하나라도 `True` → PLAN §0-9·§7-8 의 **과잉 제외 회귀**.
+  특히 `infra/style_samples/`(7.9MB, 지시서의 제외 후보였으나 **런타임 의존**) 와
+  `app/assets/fonts/`(`share_video.py:39-40` `fontsdir`) 는 즉시 FAIL 사유.
+- **부속 단언**: `.dockerignore` 에 `.env`·`.env.*`·`*.env` **3패턴 전부** 존재(PLAN §3-7-1).
+- **주의**: 이 시뮬레이션은 **근사**다 — 최종 진위는 **UNIT-17**(이미지 안의 실제 파일 존재)과
+  **UNIT-19**(context 크기)가 확정한다. 셋을 함께 읽는다.
+
+#### V198-UNIT-04 · `[unit]` · **호스트** · H1 홈 경로 0건 + 무접촉 증명 (C6·C7 / S9)
+
+- **명령**
+  ```bash
+  cd $REPO
+  grep -rn "/home/duckjk89" 0_platform_music/backend_9006/app | wc -l
+  grep -rn "miniconda" 0_platform_music/backend_9006/app | wc -l
+  git status --short | grep -E '(backend_9004|backend_9005|frontend/|frontend_admin/)' | wc -l
+  git diff --stat -- 0_platform_music/backend_9004 0_platform_music/backend_9005 \
+                     0_platform_music/frontend 0_platform_music/frontend_admin | wc -l
+  git diff --stat -- 0_platform_music/backend_9006/docker-compose.yml \
+                     0_platform_music/backend_9006/run.sh \
+                     0_platform_music/backend_9006/app/main.py | wc -l
+  ```
+- **기대** ① `/home/duckjk89` **0건**(DoD 8), ② `miniconda` **0건**,
+  ③④ 9004·9005·frontend 변경 **0줄**(PLAN §10 무변경 행),
+  ⑤ 🔴 `docker-compose.yml`·`run.sh`·`app/main.py` 변경 **0줄**(PLAN §0-12·§8 — CORS·`/docs`·health 는 4-x 몫).
+- **PASS** ①~⑤. **FAIL** ③④ → 🔴 **즉시 중단 S9**. ⑤ → 범위 이탈(planner 보고).
+- **보조**: `logs/*.log` 안의 `/home/duckjk89` 는 **대상 아님**(PLAN §5-3 단서).
+
+#### V198-UNIT-05 · `[unit]` · **호스트** · 🔴 H2 `_FFMPEG`/`_FFPROBE` 가 변경 전과 **같은 값**
+
+- **재기동: 후** (C6 은 모듈 로드 시점 상수 — 0-D)
+- **명령**
+  ```bash
+  cd $B6
+  ./venv/bin/python -c "from app.services.audio_normalize import _FFMPEG,_FFPROBE; print(_FFMPEG); print(_FFPROBE)"
+  ./venv/bin/python -c "from app.services.kits_service import _get_ffmpeg_path as g; print(g())"
+  which ffmpeg; which ffprobe
+  ```
+- **기대** ① `_FFMPEG` == `which ffmpeg` 출력 == **`/home/duckjk89/.local/bin/ffmpeg`**,
+  ② `_FFPROBE` == `which ffprobe` == `/home/duckjk89/.local/bin/ffprobe`,
+  ③ `_get_ffmpeg_path()` == `/home/duckjk89/.local/bin/ffmpeg`,
+  ④ 🔴 세 값 모두 **변경 전과 동일**(PLAN §0-8: 홈 경로는 전부 *폴백*이었고 `which` 가 주 경로였다).
+- **PASS** ①~④. **FAIL** 값이 바뀜 → 호스트 동작 회귀(C6·C7 설계 위반).
+- 🔴 **함정**: 값이 `/home/duckjk89/.local/bin/ffmpeg` 로 나오는 것은 **하드코딩이 남았다는 뜻이 아니다** —
+  `which` 가 그 경로를 히트하기 때문이다. 하드코딩 잔존 여부는 **UNIT-04** 가 판정한다.
+
+#### V198-UNIT-06 · `[unit]` · **호스트** · 🟡 §3-4 현 상태 문서화 (rubberband·한글폰트 부재)
+
+- **명령**
+  ```bash
+  ffmpeg -hide_banner -version | head -1
+  ffmpeg -hide_banner -filters | grep -w rubberband | wc -l ; echo "rc=$?"
+  ffmpeg -hide_banner -filters | grep -cE '^\s*\S+\s+ass\s'
+  ffmpeg -hide_banner -encoders | grep -cw libmp3lame
+  ffmpeg -hide_banner -encoders | grep -cw libx264
+  command -v fc-list || echo "fc-list NOT INSTALLED"
+  ```
+- **기대** ① ffmpeg **8.0**(conda-forge), ② `rubberband` **0건**, ③ `ass` **1건**,
+  ④ `libmp3lame` **1**, ⑤ `libx264` **1**, ⑥ `fc-list` **미설치**.
+- **PASS** = 위와 같음 → **"현 호스트에서 피치 시프트는 100% 실패 중"** 을 문서화했다는 뜻.
+- 🔴 **이 케이스의 결과를 회귀(FAIL)로 기록하지 말 것.** v198 이전부터의 기존 상태이며
+  §3-4·PLAN §7-3 의 **거동 변화 기준선**이다.
+- **연결**: ②가 **UNIT-07 의 컨테이너 결과와 반대여야** 정상이다.
+
+#### V198-UNIT-07 · `[unit]` · **컨테이너** · 🔴 ffmpeg 기능 인벤토리 (F6 + §3-4 반대편)
+
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    set -e
+    ffmpeg -hide_banner -version | head -1
+    ffmpeg -hide_banner -filters  | grep -w rubberband
+    ffmpeg -hide_banner -filters  | grep -E "^\s*\S+\s+ass\s"
+    ffmpeg -hide_banner -encoders | grep -w libmp3lame
+    ffmpeg -hide_banner -encoders | grep -w libx264
+    fc-list | grep -ci nanum
+    fc-list : family | sort -u | head -20
+  '
+  ```
+- **기대** ① `rubberband` **≥1**, ② `ass`(libass) **≥1**, ③ `libmp3lame` **≥1**,
+  ④ `libx264` **≥1**, ⑤ 🔴 `fc-list | grep -i nanum` **≥1**(F6).
+- **PASS** ①~⑤ 전부. **FAIL** 어느 하나라도 0 → PLAN §7-2 회귀. ⑤ 실패는 §0-7(b) 의 무성 회귀 직전 신호.
+- **주의**: 이 케이스는 **존재만** 본다. 실동작은 UNIT-08~11 이 본다 —
+  **필터 목록에 있는데 실행이 깨지는 경우**가 있어 둘을 분리한다.
+
+#### V198-UNIT-08 · `[unit]` · **컨테이너** · F1 rubberband 피치 시프트 **실동작**
+
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    set -e
+    cd /tmp
+    ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=f=440:d=2 in.wav
+    ffmpeg -hide_banner -loglevel error -y -i in.wav -af rubberband=pitch=1.0595 out.wav
+    echo "exit=$?"; ls -l out.wav
+    ffprobe -v error -show_entries format=duration -of csv=p=0 out.wav
+  '
+  ```
+- **기대** ① exit **0**, ② `out.wav` **크기 > 0**, ③ duration ≈ **2.0s ±0.2**(rubberband 는 템포를 보존).
+- **PASS** ①②③. **FAIL** exit≠0 → `voice_convert.py:359-372`(500)·`kits_service.py:395-423`(RuntimeError)이
+  컨테이너에서도 계속 깨진다는 뜻 = v198 DoD 5 실패.
+- 🚫 **`/api/voice-convert/**` 는 호출하지 않는다** — 같은 필터를 합성 신호로 직접 검증한다(0-B-1).
+- **입력 근거**: `pitch=1.0595` = `2^(1/12)` = 반음 1개(= `voice_convert.py:357` 의 `math.pow(2, pitch_shift/12)`, `pitch_shift=1`).
+
+#### V198-UNIT-09 · `[unit]` · **컨테이너** · 🔴 F2 ASS 한글 번인 + **픽셀 검사** (S7 / PLAN §0-7(b))
+
+- **왜 exit 0 로 부족한가**: 폰트가 없어도 libass 는 **경고만 내고 성공**하며 **빈 화면**을 낸다.
+  → 🔴 **프레임 픽셀을 실제로 세야 한다.**
+- **명령**(`fontsdir` **없이** — `mv_pipeline.py:2345,3086,3395`·`mv.py:2239` 와 동형)
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    set -e; cd /tmp
+    mk() { cat > "$1" <<EOF
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,Bold,Alignment,MarginV,Encoding
+Style: Default,NanumGothic,48,&H00FFFFFF,0,2,40,1
+[Events]
+Format: Layer,Start,End,Style,Text
+Dialogue: 0,0:00:00.00,0:00:02.00,Default,$2
+EOF
+    }
+    mk ko.ass "안녕하세요"
+    mk en.ass "ABCDE"
+    for L in ko en; do
+      ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=black:s=640x360:d=1 \
+        -vf "ass=/tmp/$L.ass" -frames:v 1 /tmp/$L.png
+    done
+    /opt/venv/bin/python - <<PY
+from PIL import Image
+import numpy as np
+r={}
+for L in ("ko","en"):
+    a=np.asarray(Image.open(f"/tmp/{L}.png").convert("L"))
+    r[L]=float((a>128).sum())/a.size
+    print(L,"nonbg_ratio=%.6f"%r[L])
+print("ratio_ko_over_en=%.3f"%(r["ko"]/r["en"] if r["en"] else -1))
+PY
+  '
+  ```
+- **기대**
+  ① 두 ffmpeg 호출 exit **0**,
+  ② 🔴 **`ko` 의 비배경 픽셀 비율 > 0**(엄밀히 `> 0.001`),
+  ③ 🔴 `en` 비율도 > 0,
+  ④ 🔴 **`ko/en` 비율이 0.3 ~ 3.0 범위**.
+- **④ 의 의미**: 라틴은 렌더되는데 한글만 안 되는(= 한글 글리프 없는 폴백 폰트) 상황을 잡는다.
+  값이 0 에 가까우면 **한글이 빈칸**, 비정상적으로 크면 **두부(tofu) 박스**가 의심된다.
+- **PASS** ①~④. **FAIL** ② 가 0 → 🔴 **즉시 중단 S7**(PLAN §0-7(b) 무성 회귀).
+- **④ 가 범위 밖일 때**: FAIL 로 단정하지 말고 `ko.png` 를 **호스트로 꺼내(`docker cp` 대신 stdout base64)
+  육안 확인** 후 판정. 판정 근거를 REPORT 에 남긴다.
+
+#### V198-UNIT-10 · `[unit]` · **컨테이너** · F3 `fontsdir` 명시 경로 (share_video.py:503 동형) + 픽셀 검사
+
+- **명령**: UNIT-09 와 동일하되 필터를 **`share_video.py:503` 과 같은 형태**로 바꾼다.
+  ```bash
+  -vf "ass='/tmp/ko.ass':fontsdir='/app/app/assets/fonts'"
+  ```
+  (경로는 `share_video.py:39-40` `FONTS_DIR = <app 디렉터리>/assets/fonts` 를 컨테이너 레이아웃에 대응시킨 값.
+  실제 값은 컨테이너에서
+  `/opt/venv/bin/python -c "from app.services.share_video import FONTS_DIR; print(FONTS_DIR)"` 로 **먼저 확인**하고 그 값을 쓴다.)
+- **기대** ① `FONTS_DIR` 이 실재하고 그 안에 **`NanumGothic-Regular.ttf`** 존재,
+  ② ffmpeg exit **0**, ③ 🔴 비배경 픽셀 비율 **> 0.001**,
+  ④ 🔴 **UNIT-09 의 `ko` 비율과 근사**(±30%) — 두 경로가 같은 폰트를 그린다는 뜻.
+- **PASS** ①~④. **FAIL** ③ 0 → 번들 폰트가 이미지에서 빠졌거나 `fontsdir` 경로가 어긋났다
+  (= `.dockerignore` 과잉 제외 의심 → UNIT-03·17 과 함께 판정).
+- **의의**: F2 는 **apt `fonts-nanum`** 을, F3 는 **저장소 번들 폰트**를 검증한다. **둘은 다른 자산이다.**
+
+#### V198-UNIT-11 · `[unit]` · **컨테이너** · F4 libmp3lame 192k + F5 libx264 **실인코딩**
+
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    set -e; cd /tmp
+    ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=f=440:d=2 \
+      -codec:a libmp3lame -b:a 192k out.mp3
+    ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,bit_rate -of csv=p=0 out.mp3
+    ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=s=320x240:d=1 \
+      -c:v libx264 -pix_fmt yuv420p out.mp4
+    ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 out.mp4
+    ls -l out.mp3 out.mp4
+  '
+  ```
+- **기대** ① mp3 exit 0 + `codec_name=mp3` + `bit_rate` ≈ **192000**(±10%),
+  ② mp4 exit 0 + `codec_name=h264`, ③ 두 파일 **크기 > 0**.
+- **근거**: `kits_service.py:414` `-codec:a libmp3lame -b:a 192k`(실제 사용 파라미터 그대로), MV 인코딩은 libx264.
+- **PASS** ①②③. **FAIL** → PLAN §7-2.
+
+#### V198-UNIT-12 · `[unit]` · **컨테이너** · H3+H4 ffmpeg 경로 해석 (imageio 번들이 **아님**)
+
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    command -v ffmpeg; command -v ffprobe
+    /opt/venv/bin/python -c "from app.services.audio_normalize import _FFMPEG,_FFPROBE; print(_FFMPEG); print(_FFPROBE)"
+    /opt/venv/bin/python -c "from app.services.kits_service import _get_ffmpeg_path as g; print(g())"
+    /opt/venv/bin/python -c "import imageio_ffmpeg; print(\"imageio:\", imageio_ffmpeg.get_ffmpeg_exe())"
+  '
+  ```
+- **기대** ① `_FFMPEG` == **`/usr/bin/ffmpeg`**, ② `_FFPROBE` == **`/usr/bin/ffprobe`**(H3),
+  ③ 🔴 `_get_ffmpeg_path()` == **`/usr/bin/ffmpeg`**(H4),
+  ④ 🔴 ③ 이 **imageio 번들 경로와 다르다**(보통 `/opt/venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/…`),
+  ⑤ `/home/duckjk89` 문자열 **0건**.
+- **PASS** ①~⑤. **FAIL** ③④ → PLAN §7-5 **조용한 열화**(번들 ffmpeg 는 rubberband·libass 없음).
+- **의의**: 이 케이스가 §0-6 "C 방식(imageio 폴백)" 의 유일한 직접 감시다.
+
+#### V198-UNIT-13 · `[unit]` · **컨테이너** · 🔴 H5 env override 폴백 + H6 PATH 가림 시 문자열 폴백
+
+- **H5 명령**
+  ```bash
+  docker run --rm --network none -e FFMPEG_BIN=/nonexistent --entrypoint sh $IMG -c '
+    /opt/venv/bin/python -c "from app.services.kits_service import _get_ffmpeg_path as g; print(g())"
+    /opt/venv/bin/python -c "import importlib,os; import app.services.audio_normalize as m; importlib.reload(m); print(m._FFMPEG)"
+  '
+  ```
+  **기대**: 🔴 두 값 모두 **`/usr/bin/ffmpeg`**(존재하지 않는 override 는 무시하고 `which` 폴백).
+  근거 — `kits_service._get_ffmpeg_path()` 는 `if env_bin and os.path.isfile(env_bin)` 가드(PLAN §5-2),
+  `audio_normalize` 는 `os.environ.get("FFMPEG_BIN") or shutil.which(...)`.
+  ⚠️ **설계 델타 주의**: `audio_normalize` 쪽 설계에는 `isfile` 가드가 **없다** → `/nonexistent` 가
+  그대로 반환될 수 있다. **그 경우 FAIL 이 아니라 `OBSERVED` 로 기록**하고 §5 **P3** 로 planner 에 올린다
+  (두 파일의 override 시맨틱이 다르다는 사실 자체가 보고 대상).
+- **H6 명령** — PATH 에서 ffmpeg/ffprobe 를 가린 채 `_ffprobe_meta()` 호출
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    mkdir -p /tmp/empty
+    /opt/venv/bin/python - <<PY
+import logging, sys, io
+logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
+import os
+os.environ["PATH"]="/tmp/empty"
+os.environ.pop("FFPROBE_BIN", None); os.environ.pop("FFMPEG_BIN", None)
+import importlib, app.services.audio_normalize as m
+importlib.reload(m)
+print("RESOLVED:", repr(m._FFPROBE))
+r = m._ffprobe_meta("/tmp/does_not_matter.wav")
+print("RETURN:", repr(r), type(r).__name__)
+PY
+  '
+  ```
+- **기대**
+  ① 🔴 `_FFPROBE` 가 **`None` 이 아니라 문자열 `"ffprobe"`**(§5-1 설계의 핵심),
+  ② 🔴 반환값 **`{}`**(빈 dict) — 예외가 밖으로 나가지 않는다,
+  ③ 🔴 로그에 **`[audio_norm] ffprobe failed path=`** 가 찍히고 트레이스백 예외 타입이 **`FileNotFoundError`**,
+  ④ 🔴 트레이스백에 **`TypeError` 문자열이 없을 것**.
+- 🔴 **기대값 정정(§0-G-1·2)**: 지시서의 "`logger.warning`" 은 `audio_normalize.py:61`(rc≠0 분기)의 것이고,
+  이 경로는 **`:85-87` 의 `except Exception: logger.exception(...)`** 이다 → **ERROR 레벨 + 트레이스백**이 정상.
+  ②만 단언하면 수정 전후를 구분하지 못하므로 **③④가 판정의 실체**다.
+- **PASS** ①~④. **FAIL** ② 가 예외 전파 / ④ 에 `TypeError` → §5-1 설계 미착지.
+
+#### V198-UNIT-14 · `[unit]` · **컨테이너** · 🟡 §3-5 madmom 무결성 (조용한 열화 탐지)
+
+- **왜 필요한가**: `audio_utils.py:90-99` 는 madmom 실패 시 **librosa 로 조용히 폴백**한다.
+  빌드가 통과했는데 madmom import 만 깨지면 **에러 없이 비트 검출 품질이 떨어진다**(PLAN §7-4).
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    /opt/venv/bin/python -c "import madmom; print(madmom.__version__)"
+    /opt/venv/bin/python -c "import json,glob;p=glob.glob(\"/opt/venv/lib/python3.11/site-packages/madmom-*.dist-info/direct_url.json\")[0];print(json.load(open(p))[\"vcs_info\"][\"commit_id\"])"
+    /opt/venv/bin/python -c "import madmom,os;print(len(os.listdir(os.path.join(os.path.dirname(madmom.__file__),\"models\"))))"
+    cd /app && /opt/venv/bin/python - <<PY
+import asyncio, io, logging, subprocess, sys
+logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, format="%(levelname)s %(name)s %(message)s")
+subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-f","lavfi",
+  "-i","sine=f=220:d=8","-ar","44100","-ac","2","/tmp/beat.wav"], check=True)
+raw = open("/tmp/beat.wav","rb").read()
+from app.services.audio_utils import detect_beats
+r = asyncio.run(detect_beats(raw))
+print("KEYS:", sorted(r.keys()))
+print("TEMPO:", r.get("tempo"), "NBEATS:", len(r.get("beats") or []), "NDOWN:", len(r.get("downbeats") or []))
+PY
+  '
+  ```
+- **기대**
+  ① `madmom.__version__` == **`0.17.dev0`**,
+  ② 🔴 커밋 해시 == **`27f032e8947204902c675e5e341a3faf5dc86dae`**(UNIT-02 ⑥ 과 동일 값),
+  ③ `madmom/models` 항목 수 **> 0**(패키지 동봉 = 런타임 다운로드 없음, PLAN §0-5),
+  ④ 반환 dict 에 **`tempo` / `beats` / `downbeats` 키 전부 존재**, `beats` 길이 **> 0**,
+  ⑤ 🔴 **로그에 librosa 폴백 경고가 없을 것** — `audio_utils.py:90-99` 의 폴백 진입 로그
+  (구현 문자열은 tester 가 `grep -n "librosa" app/services/audio_utils.py` 로 **실측 확인 후 고정**)가 **0건**.
+- **PASS** ①~⑤. **FAIL** ⑤ 위반 → madmom 경로를 안 탄 것이며 **④가 통과해도 FAIL**
+  (이게 이 케이스의 존재 이유다 — 반환값만 보면 폴백을 구분할 수 없다).
+- **주의**: 정현파는 비트가 뚜렷하지 않아 `tempo` 값 자체는 무의미하다 → **값이 아니라 키·경로**만 본다.
+  ④의 `beats` 길이가 0 이면 입력을 `sine` 대신 **클릭 트랙**
+  (`-f lavfi -i "sine=f=880:d=0.05" ... aevalsrc` 또는 8초 메트로놈 합성)으로 바꿔 1회 재시도하고,
+  재시도 사실을 REPORT 에 남긴다.
+
+#### V198-UNIT-15 · `[unit]` · **컨테이너** · 🔴 §3-6 CPU torch 전환 (S6)
+
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    /opt/venv/bin/python - <<PY
+import torch, sys
+print("VER:", torch.__version__)
+assert "+cpu" in torch.__version__, "CUDA torch leaked"
+print("CUDA_AVAILABLE:", torch.cuda.is_available())
+import torch.nn as nn
+x = torch.randn(1, 4, 128)
+y = nn.Conv1d(4, 8, kernel_size=3, padding=1)(x)
+print("CONV_OUT:", tuple(y.shape), y.dtype)
+PY
+    ls /opt/venv/lib/python3.11/site-packages | grep -cE "^(nvidia|triton|cuda)" || echo 0
+    du -sh /opt/venv
+  '
+  ```
+- **기대**
+  ① `torch.__version__` 에 **`+cpu`** 포함 (설계 시 락파일 값 `2.12.0+cpu`),
+  ② 🔴 `torch.cuda.is_available()` → **`False`**, **예외 없이**(CUDA 미탑재 이미지에서 예외가 나면 FAIL),
+  ③ 🔴 site-packages 의 `nvidia|triton|cuda` **0개**(PLAN §9-2 V4),
+  ④ `Conv1d` forward → shape `(1, 8, 128)`, dtype `torch.float32`,
+  ⑤ `/opt/venv` **< 1.6G**(S6 / PLAN §9-2 V5).
+- **PASS** ①~⑤. **FAIL** ①③ → 🔴 **즉시 중단 S6**
+  (빌드 self-check `assert '+cpu' in torch.__version__`(PLAN §9-1)이 뚫렸다는 뜻이라 더 심각).
+
+#### V198-UNIT-16 · `[unit]` · **컨테이너(네트워크 허용)** · 🔴 demucs 분리 출력 형상·dtype·길이 정합 (§7-1 수치 차이 방어)
+
+- ⚠️ **이 케이스만 `--network none` 을 쓰지 않는다.** `demucs_service.py:62` `get_model("htdemucs")` 가
+  `dl.fbaipublicfiles.com` 에서 가중치를 받는다(**무료**, PLAN §0-10·§7-6). 유료 API 아님.
+- **명령**
+  ```bash
+  docker run --rm --entrypoint sh $IMG -c '
+    cd /app
+    timeout 900 /opt/venv/bin/python - <<PY
+import subprocess, torch, torchaudio, time
+subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-f","lavfi",
+  "-i","sine=f=440:d=5","-ar","44100","-ac","2","/tmp/d.wav"], check=True)
+wav, sr = torchaudio.load("/tmp/d.wav")
+print("IN:", tuple(wav.shape), wav.dtype, sr)
+t0=time.time()
+from demucs.pretrained import get_model
+from demucs.apply import apply_model
+m = get_model("htdemucs")
+print("SOURCES:", m.sources, "LOAD_S=%.1f"%(time.time()-t0))
+t1=time.time()
+out = apply_model(m, wav[None], device="cpu")
+print("OUT:", tuple(out.shape), out.dtype, "APPLY_S=%.1f"%(time.time()-t1))
+assert out.shape[0] == 1
+assert out.shape[1] == len(m.sources)
+assert out.shape[2] == wav.shape[0]
+assert abs(out.shape[3] - wav.shape[1]) <= sr * 0.05
+assert out.dtype == torch.float32
+assert torch.isfinite(out).all()
+print("OK")
+PY
+  '
+  ```
+- **기대** ① `m.sources` == `['drums','bass','other','vocals']`, ② `out.shape` == `(1, 4, 2, ≈220500)`,
+  ③ dtype `torch.float32`, ④ 🔴 **길이 오차 ≤ 5%**(= 입력 길이 정합), ⑤ 🔴 NaN/Inf **0**.
+- **PASS** ①~⑤. **FAIL** → CPU 휠 전환이 demucs 경로를 깨뜨렸다는 뜻(PLAN §7-1 의 유일한 실질 위험).
+- **SKIP 허용** — 아래 중 하나면 SKIP 하고 **사유를 반드시 기록**:
+  (a) 가중치 다운로드가 **15분 초과**, (b) 네트워크 차단, (c) 메모리 부족(OOM).
+  SKIP 시 **대체 최소 검증**: 다운로드 없이 가능한 `import demucs; demucs.__version__` (기대 `4.0.1`) +
+  `from demucs.apply import apply_model` import 성공 + UNIT-15 ④(Conv1d forward) 로 **형상 검증만** 유지.
+- 🚫 **`/api/vocal-repair` 는 호출하지 않는다** — 서비스 함수를 직접 부른다(0-B-1 대체 전략).
+
+#### V198-UNIT-17 · `[unit]` · **컨테이너** · 🟢 §3-7 `.dockerignore` 과잉 제외 방지 — 자산 실재 확인
+
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    set -x
+    ls -l /app/app/assets/fonts/NanumGothic-Regular.ttf
+    ls -l /app/app/assets/fonts/OFL.txt
+    ls -1 /app/infra/style_samples/
+    ls -l /app/scripts/backfill_es.py
+    ls -1 /app/scripts | wc -l
+    ls -1 /app/infra | grep -E "^(init_|seed_data|__init__)" | wc -l
+    ls -d /app/venv 2>/dev/null && echo "VENV_LEAKED" || echo "no venv (ok)"
+    ls -d /app/tests /app/logs /app/.git 2>/dev/null && echo "EXCLUDE_MISS" || echo "excluded (ok)"
+    find /app -name "__pycache__" -maxdepth 4 | head
+  '
+  ```
+- **기대**
+  ① `NanumGothic-Regular.ttf`(≈2.0MB) + `OFL.txt` 존재,
+  ② `style_samples/` 에 **`anime.png` `manga90.png` `webtoon.png` 3장**(PLAN §0-9 — 지시서의 제외 후보였으나 **런타임 의존**),
+  ③ `scripts/backfill_es.py` 존재,
+  ④ `infra/` 에 `__init__.py`·`init_*`·`seed_data.py` 존재,
+  ⑤ 🔴 `/app/venv` **부재**, `/app/tests`·`/app/logs`·`/app/.git` **부재**,
+  ⑥ `__pycache__` **0건**(호스트 바이트코드 미유입).
+- **PASS** ①~⑥. **FAIL** ①~④ 누락 → PLAN §7-8 과잉 제외. ⑤ 위반 → context 팽창·크리덴셜 유입 위험.
+
+#### V198-UNIT-18 · `[unit]` · **호스트+컨테이너** · 🔴 §4 이미지 위생 S1~S6
+
+| 하위 | 명령 | 기대 |
+|---|---|---|
+| **S1** `.env` 부재 | `docker run --rm --network none --entrypoint sh $IMG -c 'find / -name ".env" -not -path "*/site-packages/*" 2>/dev/null; find / -name ".env.*" -not -path "*/site-packages/*" 2>/dev/null'` | **출력 없음** |
+| **S2** history 무비밀 | `docker history $IMG --no-trunc \| grep -icE 'SECRET\|PASSWORD\|API_KEY\|TOKEN\|ACCESS_KEY'` | **0** |
+| **S3** 비루트 | `docker run --rm --network none --entrypoint sh $IMG -c 'id -u; id -un; touch /app/x 2>&1 \|\| echo "app RO (ok)"; touch /tmp/x && echo "tmp RW (ok)"'` | `id -u` **≠ 0**(설계상 10001), `/tmp` 쓰기 **가능**(PLAN §0-10 — 모든 임시 작업이 `tempfile`) |
+| **S4** context 크기 | 빌드 출력의 `transferring context: … B` 를 캡처 (UNIT-19 와 공유) | **< 30MB** |
+| **S5** 이미지 크기 | `docker images --format '{{.Size}}' $IMG` | **< 2.5GB** |
+| **S6** venv 크기 | `docker run --rm --network none --entrypoint sh $IMG -c 'du -sh /opt/venv'` | **< 1.6G** (UNIT-15 ⑤ 와 동일 단언 — 이중 기록) |
+
+- **PASS** S1~S6 전부. **FAIL** S1·S2 → 🔴 **즉시 중단 S5**(크리덴셜 유출).
+- 🚫 **S2 에서 매칭된 줄의 실값을 REPORT 에 옮기지 않는다.** 건수와 레이어 인덱스만 기록하고
+  값은 `<REDACTED>` 로 남긴다.
+- **보조 단언**: `docker inspect $IMG --format '{{json .Config.Env}}'` 에 **비밀값 0건**
+  (`PATH`·`PYTHONUNBUFFERED`·`OMP_NUM_THREADS`·`MKL_NUM_THREADS` 정도만 보여야 정상 — PLAN §3-8·§6).
+
+#### V198-UNIT-19 · `[unit]` · **호스트** · 빌드 재현성 + context 크기 (V1·V2 / DoD 4·7)
+
+- **전제**: 착수 전 `docker system df` 와 `docker ps --format '{{.Names}}\t{{.Ports}}\t{{.Status}}'` 를 **기록**해 둔다(S4 대조용).
+- **명령**
+  ```bash
+  cd $B6
+  docker build --progress=plain -t maidol-backend:v198t-verify . 2>&1 | tee /tmp/v198t/build.log
+  grep -E 'transferring context' /tmp/v198t/build.log
+  docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep maidol-backend
+  ```
+- **기대**
+  ① exit **0**(DoD 4),
+  ② 🔴 `transferring context` **< 30MB**(예상 ≈ 18MB — PLAN §4),
+  ③ 🔴 빌드 로그에 **PLAN §9-1 self-check RUN 의 출력**(`madmom 0.17.dev0`, `torch 2.12.0+cpu`)이 보임
+     — 즉 **검증 RUN 이 실제로 이미지에 들어 있다**,
+  ④ 이미지 크기 **< 2.5GB**,
+  ⑤ 🔴 **backend-dev 의 `$IMG` 와 tester 재빌드본의 크기가 근사**(±5%) = 재현성.
+- **캐시 히트 확인**: ⑤ 가 성립하면 대부분 캐시 히트라 수 분 내 끝난다. 처음부터 다시 받는다면
+  `--no-cache` 를 **쓰지 말고** 그대로 진행(디스크·시간 절약).
+- **정리**: 종료 시 `docker rmi maidol-backend:v198t-verify` **(tester 가 만든 태그만)**.
+  🚫 `$IMG` 삭제 금지. 🚫 `docker system prune -a` 금지. 캐시가 부담되면
+  `docker builder prune --filter until=24h` 만 **선택적**으로.
+- **PASS** ①~⑤. **FAIL** ② → `.dockerignore` 미착지/오류(UNIT-03 과 연동). ③ → self-check 누락(PLAN §7-2·7-4 방어선 부재).
+
+#### V198-UNIT-20 · `[unit]` · **컨테이너** · §5-1 DB 없이 기동 → **실패가 정상 기대값**
+
+- **근거**: `main.py:60-63` 의 `init_postgres`/`init_mongodb`/`init_redis`/`init_minio` 는 **try 밖**이라
+  실패 시 기동이 중단된다. v190 루프백 바인딩 때문에 앱 컨테이너는 호스트 DB 에 기본 접근 불가(PLAN §0-12).
+- **명령**
+  ```bash
+  timeout 120 docker run --rm --network none --name v198t-boot1 $IMG > /tmp/v198t/boot1.log 2>&1
+  echo "exit=$?"
+  tail -40 /tmp/v198t/boot1.log
+  docker ps -a --filter name=v198t-boot1     # 잔존 확인
+  ```
+- **기대**
+  ① 🔴 프로세스가 **비정상 종료**(exit ≠ 0) — **이것이 PASS 다**,
+  ② 로그에 **`init_postgres` 계열 연결 실패 트레이스백**이 보이고,
+  ③ 🔴 로그에 **`All database connections established.` 가 없을 것**,
+  ④ 🔴 로그에 **공식계정 시드·맞팔 백필 관련 줄이 없을 것**(= lifespan 이 그 지점까지 못 갔다 → 쓰기 0),
+  ⑤ `--rm` 으로 컨테이너 **잔존 0건**, ⑥ 포트 매핑 **0개**(`-p` 미사용 — 9006 호스트 프로세스와 충돌 없음).
+- **PASS** ①~⑥. **FAIL** ③④ 가 보임 → 🔴 **즉시 중단 S8**(실 DB 쓰기 발생).
+- 🚫 **`-p 9006:9006` 을 절대 붙이지 않는다** — 실행 중 호스트 프로세스와 충돌한다.
+- **의의**: 이 케이스는 "기동이 안 된다"를 확인하는 게 목적이 아니라, **§5-2 를 skip 해도
+  Dockerfile 의 CMD·USER·PYTHONPATH 가 옳다는 것**(= 앱 코드까지 도달했다)을 로그로 증명하는 데 있다.
+  로그에 `uvicorn`·`lifespan`·`app.main` 문자열이 보이면 그 부분은 정상이다.
+
+---
+
+### 2. `[api]` 시나리오 (14건)
+
+> 🚫 **이 14건 중 유료 엔드포인트를 때리는 것은 0건이다.** 전부 **무료 읽기** 또는 **컨테이너 스모크**다.
+> API-01~06 은 **재기동 전(before)**, API-08~12 는 **재기동 후(after)** 로 짝을 이룬다(0-E).
+
+#### V198-API-01 · `[api]` · **호스트** · 재기동 **전** `/api/health` 200 (§3-1 기준선)
+
+- **명령** `curl -sS -w '\n%{http_code}\n' http://127.0.0.1:9006/api/health`
+- **기대** ① **200**, ② 본문에 `"status":"ok"` + ISO8601 `timestamp`(`main.py:657-659`),
+  ③ 🔴 프로세스가 실제로 살아 있음: `pgrep -af 'uvicorn app.main:app.*9006'` **1건 이상**.
+- **재기동: 전**. **PASS** ①②③. **FAIL** → 🔴 **즉시 중단 S1**(착수 전부터 죽어 있었다면 v198 과 무관 — 그 사실을 먼저 기록).
+- **부속**: 착수 전 `docker ps` 스냅샷을 함께 저장(S4 대조).
+
+#### V198-API-02 · `[api]` · **호스트** · 재기동 **전** 차트 스냅샷 (5종 + categories)
+
+- **명령** 0-E 의 `/api/charts/{top100,hot100,daily,weekly,monthly}?limit=10` + `/api/charts/categories`
+- **기대** ① 전부 **200**, ② `content-type: application/json`, ③ JSON 파싱 성공, ④ 항목 수 기록.
+- **부속 경계**: `curl -sS -w '%{http_code}' 'http://127.0.0.1:9006/api/charts/nonexistent'` → **400**
+  + 본문에 `chart_type은 daily, hot100, monthly, top100, weekly 중 하나여야 합니다.`(`charts.py:288-299`)
+- **재기동: 전**. **PASS** ①~④ + 부속 400. 값은 저장만 하고 판정하지 않는다(0-E).
+
+#### V198-API-03 · `[api]` · **호스트** · 재기동 **전** 아티스트 스냅샷
+
+- **명령** `/api/artists/` → 응답에서 **첫 항목의 id 1개**를 뽑아 `/api/artists/{id}`, `/api/artists/{id}/tracks`, `/api/artists/{id}/albums`
+- **기대** ① 전부 **200**, ② 스키마 키 집합 기록.
+- 🚫 **실사용자 데이터를 REPORT 에 옮기지 않는다** — **키 집합·항목 수만** 기록하고 아티스트명·트랙명은 남기지 않는다.
+- **재기동: 전**.
+
+#### V198-API-04 · `[api]` · **호스트** · 재기동 **전** 앨범 스냅샷
+
+- **명령** `/api/albums/`, `/api/albums/latest`
+- **기대** 200 + 키 집합 기록. 🚫 `/api/albums/my` 는 **인증 필요**라 제외(무료 읽기 범위 밖).
+- **재기동: 전**.
+
+#### V198-API-05 · `[api]` · **호스트** · 재기동 **전** `/api/character/style-samples` + 정적 PNG (§3-7 대조군)
+
+- **명령**
+  ```bash
+  curl -sS -w '\n%{http_code} %{content_type}\n' http://127.0.0.1:9006/api/character/style-samples
+  curl -sS -o /tmp/v198t/before/webtoon.png -w '%{http_code} %{content_type} %{size_download}\n' \
+    http://127.0.0.1:9006/api/character/style-sample/webtoon
+  sha256sum /tmp/v198t/before/webtoon.png
+  ```
+- **기대** ① 200, ② `samples` 배열 **3개**(`webtoon`/`anime`/`manga90` — `character.py:69-73,515-527`),
+  ③ 각 항목에 `key`·`label`·`art_style`·`preview_url` 키, ④ PNG **200 / `image/png` / size>0** + sha256 기록.
+- 🚫 **`POST /api/character/**`(생성 계열) 는 호출하지 않는다.** 이 두 개는 **GET·무료·인증 없음**(실측 확인).
+- **재기동: 전**. 이 케이스가 **API-11 의 바이트 완전 일치 대조군**이다.
+
+#### V198-API-06 · `[api]` · **호스트** · 재기동 **전** `/openapi.json` 라우트 목록 스냅샷
+
+- **명령** `curl -sS http://127.0.0.1:9006/openapi.json | python3 -c "import json,sys;d=json.load(sys.stdin);print(len(d['paths']));print('\n'.join(sorted(d['paths'])))" > /tmp/v198t/before/routes.txt`
+- **기대** 200 + 경로 목록 저장. **재기동: 전**.
+- **의의**: v198 은 **HTTP 스키마를 1건도 바꾸지 않는다**(PLAN §8 프론트엔드 무변경 근거). API-12 가 이를 증명한다.
+
+#### V198-API-07 · `[api]` · **호스트** · 🔴 `docker build` **진행 중** 호스트 9006 무영향
+
+- **명령**: UNIT-19 의 빌드가 도는 동안 **별도 셸**에서 20초 간격으로 30회
+  ```bash
+  for i in $(seq 1 30); do
+    curl -sS -m 5 -o /dev/null -w "%{http_code} %{time_total}\n" http://127.0.0.1:9006/api/health
+    sleep 20
+  done
+  ```
+- **기대** ① 🔴 **30/30 이 200**, ② `time_total` 이 **평시 대비 5배 이내**,
+  ③ 빌드 중·후 `docker ps` 의 인프라 컨테이너 상태·포트가 **착수 전 스냅샷과 동일**(S4).
+- **PASS** ①②③. **FAIL** ① → 빌드가 호스트 서비스를 밀어냈다(디스크·메모리 압박) → 즉시 중단 S1.
+- **재기동: 전(빌드 중)**. **의의**: DoD 10 "실행 중 9006 이 계속 정상" 의 **가장 가혹한 구간**이 빌드 중이다.
+
+#### V198-API-08 · `[api]` · **호스트** · 🔴 재기동 **후** `/api/health` 200 (H7 + §3-1 C6·C7 반영 확인)
+
+- **절차** 0-D 의 재기동 → 로그 대기 → 판정
+- **기대**
+  ① `logs/server.log` 에 **`All database connections established.`** 출현,
+  ② `Uvicorn running on http://0.0.0.0:9006` 출현,
+  ③ `/api/health` **200**,
+  ④ 🔴 기동 로그에 **`Traceback` / `ERROR` 0건**(선택 마이그레이션의 경고는 허용 — 착수 전 로그와 **동일 패턴**인지 대조),
+  ⑤ 🔴 UNIT-05 를 **이 재기동 후에** 실행해 `_FFMPEG` 가 변경 전과 같은 값임을 확인.
+- **재기동: 후**. 🔴 **이 케이스가 통과하기 전에 낸 다른 `[api]` "후" 판정은 전부 무효다.**
+- **PASS** ①~⑤. **FAIL** → 🔴 **즉시 중단 S1**. 되돌리기: C6·C7 을 `git checkout` 으로 원복 후 재기동해 서비스부터 복구.
+
+#### V198-API-09 · `[api]` · **호스트** · 재기동 **후** 차트 전/후 구조 동일 (API-02 대조)
+
+- **명령** 0-E 를 `after` 로 1회 더 수행 후 구조 비교 스크립트
+  ```bash
+  python3 - <<'PY'
+  import json, pathlib
+  def sig(p):
+      d=json.load(open(p))
+      if isinstance(d,dict):
+          out={"__keys":sorted(d)}
+          for k,v in d.items():
+              if isinstance(v,list):
+                  out[k]={"n":len(v),"itemkeys":sorted({kk for it in v if isinstance(it,dict) for kk in it})}
+          return out
+      return {"__list_n":len(d),"itemkeys":sorted({kk for it in d if isinstance(it,dict) for kk in it})}
+  for f in sorted(pathlib.Path('/tmp/v198t/before').glob('*charts*.json')):
+      a=sig(f); b=sig('/tmp/v198t/after/'+f.name)
+      print(f.name, "SAME" if a==b else "DIFF", "" if a==b else (a,b))
+  PY
+  ```
+- **기대** 🔴 전부 **SAME**(status·키 집합·항목 수·항목 키 집합). 값 차이는 **판정 제외**(0-E).
+- **재기동: 후**. **FAIL** DIFF → C6·C7 이 예상 밖 영향을 냈거나 재기동 중 마이그레이션이 스키마를 바꿨다.
+
+#### V198-API-10 · `[api]` · **호스트** · 재기동 **후** 아티스트·앨범 전/후 구조 동일 (API-03·04 대조)
+
+- **명령** API-09 와 같은 `sig()` 비교를 `artists`·`albums` 파일에 적용.
+- **기대** 🔴 전부 **SAME**. **재기동: 후**.
+- **주의**: `/api/artists/{id}` 는 **API-03 에서 뽑은 그 id 를 그대로** 재사용한다(다른 id 를 쓰면 비교가 무의미).
+
+#### V198-API-11 · `[api]` · **호스트** · 🔴 재기동 **후** character 정적 응답 **바이트 완전 일치** (API-05 대조)
+
+- **기대**
+  ① `/api/character/style-samples` 본문이 **before 와 바이트 단위로 동일**(`cmp` / `sha256sum`),
+  ② `/api/character/style-sample/webtoon` 의 **sha256 이 before 와 동일**,
+  ③ `content-type`·`size_download` 동일.
+- **왜 이것만 바이트 비교인가**: 이 두 응답은 **정적 번들 자산**(`infra/style_samples/`)이라
+  값이 변할 이유가 없다 → 차트와 달리 **가장 엄격한 회귀 감시점**이 된다.
+- **재기동: 후**. **FAIL** → `.dockerignore`/경로 상수 변경이 호스트 경로 해석까지 건드렸다는 신호
+  (`character.py:74-80` `STYLE_SAMPLES_DIR`) → 즉시 planner 보고.
+
+#### V198-API-12 · `[api]` · **호스트** · 🔴 재기동 **후** `/openapi.json` 라우트 집합 동일 (API-06 대조 / 프론트 무변경 근거)
+
+- **명령** `diff /tmp/v198t/before/routes.txt /tmp/v198t/after/routes.txt`
+- **기대** 🔴 **diff 0줄** — 경로 **추가·삭제·변경 0건**.
+- **재기동: 후**. **의의**: PLAN §8 "프론트엔드 변경 없음(API 스키마 불변)" 을 **런타임으로 증명**한다.
+  E2E 를 2건으로 줄일 수 있는 근거가 바로 이 케이스다.
+- **FAIL** → v198 이 범위를 벗어나 라우트를 건드렸다는 뜻(§8 위반) → planner 보고.
+
+#### V198-API-13 · `[api]` · **컨테이너** · 🔴 §3-7 이미지 안에서 character 무료 GET 2건 (DB 없이)
+
+- **문제**: 컨테이너 앱은 **DB 없이 기동할 수 없다**(UNIT-20). 그래서 `docker run -p …` 로 띄워 `curl` 하는
+  통상 방식은 쓸 수 없다. → **lifespan 없는 최소 앱에 `character.router` 만 마운트**해 `TestClient` 로 때린다.
+  가용성 확인: 이미지에 `fastapi 0.136.3` / `starlette 1.2.0` / `httpx 0.28.1` 포함(락파일 실측).
+- **명령**
+  ```bash
+  docker run --rm --network none --entrypoint sh $IMG -c '
+    cd /app && /opt/venv/bin/python - <<PY
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from app.routes import character
+a = FastAPI()                      # lifespan 없음 → DB 초기화 0
+a.include_router(character.router)
+c = TestClient(a)
+r = c.get("/api/character/style-samples")
+print("S1", r.status_code, r.headers.get("content-type"))
+j = r.json(); print("N", len(j["samples"]), sorted(s["key"] for s in j["samples"]))
+print("KEYS", sorted(j["samples"][0]))
+p = c.get("/api/character/style-sample/webtoon")
+print("S2", p.status_code, p.headers.get("content-type"), len(p.content), p.content[:8])
+q = c.get("/api/character/style-sample/nope")
+print("S3", q.status_code)
+PY
+  '
+  ```
+- **기대**
+  ① `S1` **200 / application/json**, ② `N` == **3**, key 집합 == `['anime','manga90','webtoon']`,
+  ③ 항목 키 == `['art_style','key','label','preview_url']`,
+  ④ `S2` **200 / image/png**, 길이 **> 0**, 매직바이트 `\x89PNG`,
+  ⑤ `S3` **404**(`character.py:538-542`),
+  ⑥ 🔴 요청이 **`--network none` 안에서 처리**됨 = 외부 호출 0건.
+- **PASS** ①~⑥. **FAIL** ②④ → `.dockerignore` 가 `infra/style_samples/` 를 삼켰다(PLAN §0-9·§7-8).
+- **대안 절차**(TestClient import 가 실패할 경우 — 예: `httpx` 미포함/버전 불일치):
+  라우터 함수를 **직접 호출**로 대체한다 —
+  `python -c "import asyncio; from app.routes.character import list_style_samples,_load_style_preset_bytes; print(asyncio.run(list_style_samples())); print(len(_load_style_preset_bytes('webtoon')))"`.
+  대안 사용 시 **태그를 `[api]` 로 유지하되 REPORT 에 "TestClient 불가 → 함수 직접 호출로 대체" 를 명기**한다.
+
+#### V198-API-14 · `[api]` · **컨테이너** · 🔴 §5-2 전체 기동 스모크 — **SKIP (권장)**
+
+- **판정: `SKIP`**
+- **🔴 SKIP 사유(필수 기록)**
+  1. `main.py` lifespan 이 **공식계정 시드** + **전체 유저 맞팔 백필**을 실행한다 → **실사용 DB 에 쓰기가 발생**한다.
+     이는 0-B-2(실사용자 데이터 무접촉)와 정면 충돌하며, 되돌릴 수 없다(즉시 중단 조건 **S8** 그 자체).
+  2. v190 루프백 바인딩으로 앱 컨테이너는 호스트 `127.0.0.1` DB 에 **기본 접근 불가**.
+     닿게 하려면 네트워크 구조 변경 또는 **DB 컨테이너 포트 바인딩 변경**이 필요한데 이는 **0-B-3 위반**이다.
+  3. `.env` 의 `*_HOST` 전면 변경이 필요하고, 이는 **실행 중 9006 호스트 프로세스와 동시에 성립할 수 없다**(PLAN §0-12-1).
+  4. v198 의 DoD 어디에도 "앱 컨테이너가 실 DB 에 붙어 뜬다" 가 없다 — 그것은 **AWS 이전 본 작업의 몫**(PLAN §8).
+- **대체 커버리지**(이 SKIP 으로 잃는 것을 메우는 케이스)
+  | 잃는 것 | 대체 |
+  |---|---|
+  | CMD·USER·PYTHONPATH·엔트리포인트 정당성 | **UNIT-20**(앱 코드까지 도달 로그) + **UNIT-18 S3**(비루트) |
+  | 앱 라우터가 이미지 안에서 응답하는가 | **API-13**(TestClient, DB 없이) |
+  | `/api/health` 정상성 | **API-08**(호스트, 재기동 후) |
+  | 이미지의 런타임 의존(ffmpeg·폰트·madmom·torch) | **UNIT-07~17** 11건 |
+- **⚠️ 그럼에도 planner 가 수행을 지시할 경우의 조건**(§5 **P4** — 승인 필수)
+  1. 🔴 포트를 **`-p 19006:9006`** 으로 매핑(9006 호스트 프로세스와 **절대 충돌 금지**),
+  2. 🔴 **DB 컨테이너의 포트 바인딩은 변경하지 않는다** — 대신 `--add-host` / `--network host` 검토는
+     **planner 승인 후에만**,
+  3. 🔴 종료 시 **`docker rm -f`** 필수(고아 컨테이너 0건),
+  4. 🔴 실행 **전후로 `users`·`follows` 카운트를 대조**해 쓰기가 없었음을 증명 —
+     차이가 1이라도 나면 즉시 중단 S8 + planner 보고,
+  5. 컨테이너 이름은 **`v198t-boot2`**(마커) 로 고정.
+
+---
+
+### 3. `[e2e]` 시나리오 (2건)
+
+> **v198 은 UI 를 1픽셀도 바꾸지 않는다.** API 스키마 불변은 **API-12** 가 런타임으로 증명하므로,
+> e2e 는 §3-4 가 명시적으로 요구한 **코드 리뷰 1건** + **최소 렌더 회귀 1건** 으로 제한한다.
+
+#### V198-E2E-01 · `[e2e]` · **호스트(정적 코드 리뷰 — 브라우저 조작 없음)** · 🟡 §3-4 "항상 실패" 전제 UI 분기 조사
+
+- **대상 파일**: `frontend/src/components/StudioTab2.jsx`, `frontend/src/api/index.js`
+- **절차**(읽기만 — 🚫 `/api/voice-convert/**` 호출 0건)
+  1. `handlePreviewPitch`(`StudioTab2.jsx:329-343`) 의 **성공 경로**와 **실패 경로**를 읽는다.
+  2. `handleMerge`(`:344~`) 가 `mr_pitch_shift` 를 그대로 보내는지 확인한다.
+  3. `api.previewMrPitched`(`index.js:583-587`) 의 `responseType`·`timeout` 을 확인한다.
+  4. "이 기능은 늘 실패한다" 를 **전제로 한 하드코딩**(영구 disable / 기능 숨김 / 실패 문구 고정 /
+     피치 UI 자체 제거)이 있는지 **전수 확인**한다.
+- **설계 시 사전 조사 결과(tester 는 재확인만)**
+  | 관찰 | 값 |
+  |---|---|
+  | 실패 처리 | `catch { alert('MR 피치 변환 실패: ' + …) }` — **일반 에러 경로**이지 "항상 실패" 전제 아님 |
+  | 버튼 disable 조건 | `disabled={loadingPreview \|\| mrPitch === 0}` — **실패 여부와 무관**. 기능은 살아 있다 |
+  | 성공 경로 | `ctx.decodeAudioData(data)` → `setPitchedMrBuffer` → 🔴 **지금까지 한 번도 실행된 적 없는 코드**(호스트에 rubberband 부재, UNIT-06) |
+  | `handleMerge` | `mr_pitch_shift: mrPitch` 를 그대로 전송 → `kits_service.py:395-423` 의 rubberband 경로 |
+  | `responseType` | `'arraybuffer'`, `timeout: 30000` — 서버 `subprocess timeout=30`(`voice_convert.py:364`)과 **같은 값** |
+- **기대 / 판정**
+  ① "항상 실패" 전제 하드코딩 **0건** → **PASS**,
+  ② 🔴 **후속 과제로 기록**: 성공 경로(`decodeAudioData` → 버퍼 재생)가 **미검증 코드**다.
+     컨테이너/EC2 배포 후 이 기능이 **처음 200 을 반환하기 시작**하면 그때가 초회 실행이다.
+     프론트 `timeout:30000` 과 서버 `timeout=30` 이 **같아서** 긴 MR 에서 클라이언트 타임아웃이
+     먼저 날 수 있다는 점도 함께 기록,
+  ③ 🚫 **실제 호출로 확인하지 않는다** — `/api/voice-convert/**` 는 유료·금지 목록(0-B-1).
+- **FAIL 조건**: "항상 실패" 전제 하드코딩이 **발견되면** FAIL 이 아니라 **`OBSERVED` + 후속 과제 등록**
+  (v198 이 만든 결함이 아니다). 발견 위치와 코드를 REPORT 에 기록한다.
+
+#### V198-E2E-02 · `[e2e]` · **호스트** · 🟢 UI 무변경 회귀 최소 스모크 (재기동 후)
+
+- **절차**(브라우저 1회, 읽기 전용)
+  1. 4000(사용자 앱) 하드 새로고침 → 홈/차트 화면 진입,
+  2. 4001(관리자 앱) 하드 새로고침 → 로그인 → 임의의 **읽기 전용** 화면 1개 진입.
+- **기대**
+  ① 두 앱 모두 **정상 렌더**, ② Console 에러 **0건**,
+  ③ 🔴 Network 탭에 **유료 엔드포인트 요청 0건**(`/api/generate`·`/api/mv/**`·`/api/tracks/upload`·
+     `/api/tracks/search`·`generate-cover`·`refine-cover`·`/api/voice-*`),
+  ④ 🔴 `git diff --stat -- 0_platform_music/frontend 0_platform_music/frontend_admin` → **0줄**(UNIT-04 ③④ 재확인).
+- **재기동: 후**. **PASS** ①~④.
+- 🚫 **쓰기 조작 금지** — 전체발송·별 지급·공지 발행·회원 상태 변경 등 관리자 기능은 **열지도 않는다**.
+- **의의**: v198 은 프론트 파일을 건드리지 않으므로 이 케이스는 **"정말 안 건드렸다"** 의 육안 확인이다.
+  1건이면 충분하고, 더 늘리면 e2e 비율만 올라가고 얻는 정보가 없다.
+
+---
+
+### 4. 회귀 항목 ↔ 케이스 대응표 (지시 §3~§5 전 항목 — 빠짐 0)
+
+#### 4-1. §3-1 실행 중 9006 호스트 정상성
+
+| 요구 | 케이스 | 실행위치 | 재기동 |
+|---|---|---|---|
+| 작업 전/후 `/api/health` 200 | **API-01**(전) · **API-08**(후) | 호스트 | 전 / 후 |
+| 무료 읽기 스모크 전/후 응답 동일 | **API-02·03·04·05**(전) ↔ **API-09·10·11**(후) | 호스트 | 전 / 후 |
+| 🔴 `pip freeze` 해시 동일 = venv 무변경 | **UNIT-01** | 호스트 | 무관(전·후 2회) |
+| 🔴 C6·C7 은 재기동 후에만 반영 · lifespan 로그 확인 | **API-08 ①②⑤** + **UNIT-05** | 호스트 | **후** |
+| (추가) 빌드 중에도 호스트 정상 | **API-07** | 호스트 | 전(빌드 중) |
+| (추가) 라우트 집합 불변 | **API-06** ↔ **API-12** | 호스트 | 전 / 후 |
+
+#### 4-2. §3-2 ffmpeg 기능 F1~F6 (전부 컨테이너)
+
+| F | 내용 | 케이스 |
+|---|---|---|
+| **F1** | rubberband 피치 → exit 0 & 파일 > 0 | **UNIT-08** |
+| **F2** | 🔴 ASS 한글 번인 → **비배경 픽셀 비율 > 0** (exit 0 만으로 불충분) | **UNIT-09** |
+| **F3** | `fontsdir` 명시(`share_video.py:503` 동형) → exit 0 + 픽셀 검사 | **UNIT-10** |
+| **F4** | libmp3lame 192k | **UNIT-11 ①** |
+| **F5** | libx264 | **UNIT-11 ②** |
+| **F6** | `fc-list \| grep -i nanum` ≥1 | **UNIT-07 ⑤** |
+
+#### 4-3. §3-3 홈 경로 제거 후 동작 H1~H7
+
+| H | 내용 | 케이스 | 실행위치 |
+|---|---|---|---|
+| **H1** | `grep -rn "/home/duckjk89" backend_9006/app` → 0건 | **UNIT-04 ①** | 호스트 |
+| **H2** | `_FFMPEG`/`_FFPROBE` → `which` 히트 경로, **변경 전과 동일** | **UNIT-05** | 호스트(재기동 후) |
+| **H3** | → `/usr/bin/ffmpeg`, `/usr/bin/ffprobe` | **UNIT-12 ①②** | 컨테이너 |
+| **H4** | `kits_service._get_ffmpeg_path()` → `/usr/bin/ffmpeg`(imageio **아님**) | **UNIT-12 ③④** | 컨테이너 |
+| **H5** | `FFMPEG_BIN=/nonexistent` → `which` 폴백 | **UNIT-13(H5)** | 컨테이너 |
+| **H6** | 🔴 PATH 가림 → `TypeError` 아니라 `{}` + 로그 | **UNIT-13(H6)** | 컨테이너 |
+| **H7** | 재기동 후 `/api/health` 200 | **API-08 ③** | 호스트 |
+
+#### 4-4. §3-4 거동 변화(회귀 아님) — 피치 시프트가 새로 동작
+
+| 요구 | 케이스 | 기대값 |
+|---|---|---|
+| 호스트 `rubberband` **없음**(현 상태 문서화) | **UNIT-06 ②** | 0건 — 🔴 **FAIL 아님** |
+| 컨테이너 `rubberband` **있음** | **UNIT-07 ①** | ≥1 |
+| 프론트 "항상 실패" 전제 코드 리뷰 | **E2E-01** | 하드코딩 0건 + 후속 과제 기록 |
+| (추가) 호스트 한글 폰트 부재도 같은 성격 | **UNIT-06 ⑥** ↔ **UNIT-07 ⑤** | 호스트 미설치 / 컨테이너 ≥1 |
+
+🔴 **두 환경의 기대값이 반대다. 호스트 실패를 회귀로 기록하지 말 것.**
+
+#### 4-5. §3-5 madmom 무결성 (조용한 열화 탐지)
+
+| 요구 | 케이스 |
+|---|---|
+| `madmom.__version__` → `0.17.dev0` | **UNIT-14 ①** |
+| 합성 wav → `detect_beats()` → `tempo`/`beats`/`downbeats` 키 존재 | **UNIT-14 ④** |
+| 🔴 librosa 폴백 경고 **없을 것** | **UNIT-14 ⑤** — 🔴 ④가 통과해도 ⑤ 위반이면 **FAIL** |
+| (추가) 커밋 해시가 락파일과 일치 | **UNIT-14 ②** ↔ **UNIT-02 ⑥** |
+
+#### 4-6. §3-6 CPU torch 전환
+
+| 요구 | 케이스 |
+|---|---|
+| `torch.__version__` 에 `+cpu` | **UNIT-15 ①** (즉시 중단 **S6**) |
+| `cuda.is_available()` False, **예외 없이** | **UNIT-15 ②** |
+| site-packages `nvidia\|triton\|cuda` **0개** | **UNIT-15 ③** (S6) |
+| Conv1d forward | **UNIT-15 ④** |
+| 🔴 demucs 분리 출력 형상·dtype·길이 정합 | **UNIT-16** (SKIP 시 사유 + 형상 검증만) |
+
+#### 4-7. §3-7 `.dockerignore` 과잉 제외 방지
+
+| 요구 | 케이스 |
+|---|---|
+| 컨테이너 `GET /api/character/style-samples` → 3 preset | **API-13 ②** |
+| 컨테이너 `GET /api/character/style-sample/webtoon` → 200 image/png | **API-13 ④** |
+| `/app/app/assets/fonts/NanumGothic-Regular.ttf` 존재 | **UNIT-17 ①** |
+| `/app/scripts/backfill_es.py` 존재 | **UNIT-17 ③** |
+| (선행) 패턴 시뮬레이션 | **UNIT-03** |
+| (사후) 호스트 정적 응답 바이트 동일 | **API-11** |
+
+#### 4-8. §4 이미지 위생 S1~S6
+
+| S | 내용 | 케이스 |
+|---|---|---|
+| **S1** | 이미지 내 `.env` 부재 | **UNIT-18 S1** |
+| **S2** | `docker history` 에 SECRET·PASSWORD·API_KEY·TOKEN 없음 | **UNIT-18 S2** (+`Config.Env` 보조) |
+| **S3** | `id -u` ≠ 0 | **UNIT-18 S3** |
+| **S4** | build context < 30MB | **UNIT-19 ②** |
+| **S5** | 이미지 < 2.5GB | **UNIT-19 ④** |
+| **S6** | `/opt/venv` < 1.6G | **UNIT-18 S6** ↔ **UNIT-15 ⑤**(이중) |
+
+🚫 크리덴셜 실값은 산출물에 쓰지 않는다 → `<REDACTED>`.
+
+#### 4-9. §5 컨테이너 기동 스모크
+
+| 차수 | 태그 | 케이스 | 판정 |
+|---|---|---|---|
+| 1차 (DB 없이) | `[unit]` | **UNIT-20** | 🔴 **실패가 정상 기대값** — 로그만 확인 |
+| 2차 (전체 기동) | `[api]` | **API-14** | 🔴 **SKIP** — 사유 4가지 명문화 + 대체 커버리지 표 + planner 승인 조건(P4) |
+
+#### 4-10. PLAN §7 회귀 위험 ↔ 감시 케이스
+
+| 위험 | 등급 | 감시 |
+|---|---|---|
+| **7-1** 버전 고정으로 인한 동작 변화 | 🔴 상 | **UNIT-01**(호스트 무변경) · **UNIT-02**(락파일 정합) · **UNIT-16**(demucs 수치 정합) |
+| **7-2** ffmpeg 필터 누락 | 🔴 상 | **UNIT-07**(존재) + **UNIT-08~11**(실동작) + **UNIT-19 ③**(빌드 self-check 실재) |
+| **7-3** 거동 변화(피치 새로 동작) | 🟡 중 | **UNIT-06 ↔ UNIT-07** · **E2E-01** |
+| **7-4** madmom 빌드 실패 → 조용한 librosa 폴백 | 🟡 중 | **UNIT-14 ⑤**(핵심) · UNIT-02 ⑥ |
+| **7-5** imageio-ffmpeg 조용한 폴백 | 🟡 중 | **UNIT-12 ③④** |
+| **7-6** htdemucs 런타임 다운로드 | 🟡 중 | **UNIT-16**(다운로드 발생을 실측·기록. 베이크는 범위 밖 — 배포 노트 확인) |
+| **7-7** 로그 포맷 차이(`_logs.py` ↔ `docker logs`) | 🟢 하 | **UNIT-04 ⑤**(`run.sh` 무변경) — 컨테이너 `/api/_logs` 는 범위 밖, REPORT 기록만 |
+| **7-8** `.dockerignore` 과잉 제외 | 🟢 하 | **UNIT-03 ②** · **UNIT-17** · **API-13** (3중) |
+
+#### 4-11. 🚫 의도적 커버리지 공백 (범위 밖 — 시나리오를 두지 않는다)
+
+`docker-compose.yml` 통합 / `*_HOST` 서비스명 전환 / `mem_limit` / arm64 멀티아키 /
+htdemucs 가중치 베이크 / uv·poetry 도입 / `/docs` 노출(4-7) / CORS(4-5) / 로그 JWT(4-6) /
+헬스체크 강화(4-10) / presign 리전(4-1)·S3 secure(4-2) / **9004·9005 미러 검증**(대상 아님) /
+`infra/docker-compose.app.yml.example`(C9)의 **실제 기동**(비활성 예시 파일이므로 문법 리뷰만).
+→ 이 중 **9004·9005 무접촉**은 **UNIT-04 ③④** 가, **compose·run.sh·main.py 무변경**은
+**UNIT-04 ⑤** 가 **역방향으로 감시**한다.
+
+---
+
+### 5. planner 승인·확인 필요 항목
+
+| # | 항목 | 사유 | 미승인 시 대안 (건수·비율 영향) |
+|---|---|---|---|
+| **P1** | 🔴 **H6 기대값 정정 승인** — 지시서 "`{}` + `logger.warning`" → 실제 코드는 **`except Exception: logger.exception(...)`**(`audio_normalize.py:85-87`). `logger.warning` 은 `:61`(rc≠0)의 **다른 분기** | 기대값이 틀린 채로 실행하면 **정상 동작을 FAIL 로 오판**한다 | tester 는 **정정된 기대값(ERROR + 트레이스백)** 으로 판정하고 REPORT 에 델타를 명기한다. planner 는 ① 정정 승인 또는 ② 지시 문구 수정. **건수·비율 영향 0** |
+| **P2** | 🔴 **H6 판정 강화 승인** — "반환값 `{}`" 만 단언하면 **수정 전후를 구분하지 못한다**(`except Exception` 이 `TypeError` 도 삼키므로). **트레이스백 예외 타입 = `FileNotFoundError` / `TypeError` 부재** 를 추가 단언 | 단언이 약하면 §5-1 설계(문자열 폴백)를 실제로 검증하지 못한다 | 미승인 시 UNIT-13(H6)은 `{}` 만 확인하고 **`PARTIAL`** 로 기록. **건수·비율 영향 0** |
+| **P3** | 🟡 **`FFMPEG_BIN` override 시맨틱 델타** — `kits_service` 는 `isfile` 가드가 **있고**(PLAN §5-2), `audio_normalize` 는 **없다**(§5-1). 존재하지 않는 경로를 줬을 때 **두 파일의 결과가 갈린다** | H5 의 기대값이 파일마다 달라진다 | tester 는 **FAIL 이 아니라 `OBSERVED`** 로 기록. planner 가 ① 현행 유지(문서화) 또는 ② `audio_normalize` 에도 `isfile` 가드 추가(C6 보강)를 결정. **건수·비율 영향 0** |
+| **P4** | 🔴 **API-14(컨테이너 전체 기동 스모크) 수행 여부** — 기본 설계는 **SKIP** | 수행 시 lifespan 이 **실 DB 에 공식계정 시드 + 전체 유저 맞팔 백필 쓰기**를 일으킨다(즉시 중단 **S8**) | **기본은 SKIP**(사유 4가지 §2 API-14 에 명문화). 승인 시 조건 5가지(포트 19006 / DB 포트 바인딩 불변 / `docker rm -f` / `users`·`follows` 카운트 전후 대조 / 이름 `v198t-boot2`) 준수. **어느 쪽이든 36건 유지 — SKIP 도 1건으로 집계** |
+| **P5** | 🟡 **UNIT-16 의 외부 다운로드 허용** — htdemucs 가중치(수백 MB, `dl.fbaipublicfiles.com`, **무료**) | 이 케이스만 `--network none` 을 못 쓴다. 유료 API 는 아니지만 "외부 호출 0건" 원칙의 유일한 예외 | 미승인 시 **SKIP + 대체 최소 검증**(`import demucs` + `apply_model` import + UNIT-15 ④ 형상 검증). PLAN §7-1 의 "CPU 휠 수치 차이" 감시가 약해지므로 REPORT 에 명시. **건수 유지(SKIP 도 집계)** |
+| **P6** | 🟡 **tester 의 재빌드 1회** (`maidol-backend:v198t-verify`) | 디스크·시간 소모. 다만 캐시 히트면 수 분 | 미승인 시 UNIT-19 를 **backend-dev 의 빌드 로그 검토 + `$IMG` 메타데이터 확인**으로 축소하고 `PARTIAL` 기록. **재현성(⑤) 단언만 손실. 건수 유지** |
+
+**승인 없이도 진행 가능**: `[unit]` **20건 중 18건**(UNIT-16 은 P5, UNIT-19 는 P6 조건부 — 둘 다 축소 실행 가능) /
+`[api]` **14건 중 13건**(API-14 는 기본 SKIP) / `[e2e]` **2건 전부**.
+→ 🔴 **P1~P6 이 전부 미승인이어도 36건 중 36건이 기록되며(축소·SKIP 포함) 삭제되는 케이스는 0건이다.**
+비율(55.6 / 38.9 / 5.6)은 승인 결과와 **무관하게 유지**된다.
+
+---
+
+### 6. v198 시나리오 집계
+
+| 태그 | 건수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **20** | **55.6%** | ≥ 40% | ✅ 충족 (+15.6%p) |
+| `[api]` | **14** | **38.9%** | ≥ 35% | ✅ 충족 (+3.9%p) |
+| `[e2e]` | **2** | **5.6%** | ≤ 25% | ✅ 충족 (−19.4%p) |
+| **합계** | **36** | 100% | — | — |
+
+#### 6-1. 실행 위치별 분포 (🔴 기대값 반전 때문에 별도 집계)
+
+| 실행위치 | unit | api | e2e | 계 |
+|---|---|---|---|---|
+| **호스트** | **7** (UNIT-01~06, 19) | **12** (API-01~12) | **2** | **21** |
+| **컨테이너** | **13** (UNIT-07~18, 20) | **2** (API-13·14) | **0** | **15** |
+| **합계** | 20 | 14 | 2 | **36** |
+
+> UNIT-18 은 호스트 CLI(`docker history`·`docker images`)와 컨테이너 실행을 함께 쓴다 → **컨테이너**로 집계.
+> UNIT-19 는 호스트에서 빌드 → **호스트**로 집계.
+
+#### 6-2. 요구 항목별 배분
+
+| 대상 | unit | api | e2e | 계 |
+|---|---|---|---|---|
+| §3-1 호스트 정상성 | 1 (U01) | 12 (A01~12) | 0 | **13** |
+| §3-2 ffmpeg F1~F6 | 5 (U07~11) | 0 | 0 | **5** |
+| §3-3 홈 경로 H1~H7 | 4 (U04·05·12·13) | 1 (A08 ③) | 0 | **5** |
+| §3-4 거동 변화 | 1 (U06) | 0 | 1 (E01) | **2** |
+| §3-5 madmom | 1 (U14) | 0 | 0 | **1** |
+| §3-6 CPU torch | 2 (U15·16) | 0 | 0 | **2** |
+| §3-7 `.dockerignore` | 2 (U03·17) | 1 (A13) | 0 | **3** |
+| §4 이미지 위생 | 2 (U18·19) | 0 | 0 | **2** |
+| §5 기동 스모크 | 1 (U20) | 1 (A14, SKIP) | 0 | **2** |
+| UI 무변경 회귀 | 0 | 0 | 1 (E02) | **1** |
+
+> 합이 36 을 넘는 것은 **API-08 이 §3-1·§3-3(H7) 양쪽에 잡히기** 때문이다(중복 1건). 실 건수는 36.
+
+#### 6-3. 설계 근거
+
+- **`[unit]` 을 20건(55.6%)으로 잡은 이유**: v198 의 산출물은 **`Dockerfile` / `.dockerignore` / 락파일 2개 /
+  경로 상수 3줄**이다. HTTP 스키마가 **하나도 바뀌지 않으므로**(API-12 가 증명) API 층에서 볼 것이
+  구조적으로 적다. 반대로 **"필터가 있는가", "폰트가 실제로 그려지는가", "madmom 이 폴백을 타지 않는가",
+  "site-packages 에 CUDA 가 남았는가"** 는 전부 **컨테이너 안에서 직접 확인해야만** 알 수 있고,
+  이건 정의상 unit 이다. **F2·UNIT-14 ⑤·UNIT-12 ④ 세 건은 `[api]` 층에서는 관측 자체가 불가능하다** —
+  전부 "exit 0 인데 실제로는 열화" 형태이기 때문이다.
+- **`[api]` 을 14건(38.9%)으로 유지한 이유**: 요구 하한(35%)을 넘기면서, **전/후 짝**(A01↔A08,
+  A02↔A09, A03·04↔A10, A05↔A11, A06↔A12)을 **온전히** 만들었다. 짝을 깨면 "전/후 동일" 이라는
+  §3-1 의 요구 자체를 검증할 수 없다. 여기에 **빌드 중 무영향(A07)**, **컨테이너 라우터 응답(A13)**,
+  **SKIP 사유 명문화(A14)** 를 더해 14건.
+- **`[e2e]` 를 2건(5.6%)으로 묶은 이유**: **UI 변경이 0** 이고 API 스키마 불변이 API-12 로 증명된다.
+  §3-4 가 명시적으로 요구한 코드 리뷰 1건 + 육안 회귀 1건이면 충분하며, 더 늘리면
+  **유료 엔드포인트에 닿을 위험만 커지고 얻는 정보가 없다**.
+- **유료 호출 총량(기대치)**: `POST /api/generate` **0** · `/api/mv/**` **0** ·
+  `POST /api/character/**` **0** · `/api/voice-clone/**` **0** · `/api/voice-convert/**` **0** ·
+  `generate-cover`·`refine-cover` **0** · `POST /api/tracks/upload` **0** · `GET /api/tracks/search` **0**.
+  → 🔴 **합계 0원.** ffmpeg 의존 기능은 전부 **합성 신호 + 컨테이너 내 직접 실행**으로 대체했다.
+- **테스트 데이터 생성**: 🔴 **0건**. DB(PG/Mongo/Redis/ES) 쓰기 0, MinIO 객체 생성 0, 별 차감 0,
+  실사용자 문서 열람 0(API-03 은 **키 집합·항목 수만** 기록하고 값은 남기지 않는다).
+  생성물은 전부 **`--rm` 컨테이너 안의 `/tmp`** 또는 **호스트 `/tmp/v198t/`**(저장소 밖) 이며
+  종료 시 삭제한다. 이미지 태그는 tester 재빌드분에 한해 **`v198t-verify`** 마커, 컨테이너 이름은
+  **`v198t-boot1`**(P4 승인 시 `v198t-boot2`).
+- **정리(cleanup) 체크리스트** — 종료 시 tester 가 확인:
+  ① `rm -rf /tmp/v198t`, ② `docker rmi maidol-backend:v198t-verify`(🚫 `$IMG` 는 남긴다),
+  ③ `docker ps -a --filter name=v198t` → **0건**,
+  ④ `docker ps` 인프라 컨테이너 상태·포트가 **착수 전 스냅샷과 동일**,
+  ⑤ `git status --short` 에 **저장소 내 신규 untracked 0건**(C1~C9 이외),
+  ⑥ 🔴 호스트 9006 `/api/health` **200**(마지막 확인).
+- **즉시 중단 조건**: §0-F 의 **S1~S9**. 핵심 감시 케이스는
+  **UNIT-01**(S2 — venv 무변경), **UNIT-09**(S7 — 한글 픽셀 0),
+  **UNIT-15**(S6 — CUDA 유출), **UNIT-18**(S5 — 크리덴셜),
+  **UNIT-20**(S8 — 실 DB 쓰기), **API-01·07·08**(S1 — 호스트 생존), **UNIT-04**(S9 — 9004/9005).
+- **판정 기록 양식**(케이스마다 필수):
+  `ID / 태그 / 실행위치(호스트·컨테이너) / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·PARTIAL·OBSERVED`
+  — **SKIP 은 사유 필수**, **PARTIAL·OBSERVED 는 근거 필수**.
+- **착지 상태(작성 시점 실측)**: **C3(`requirements.lock`)·C4(`constraints-cpu.txt`) 착지 완료**,
+  **C1(`Dockerfile`)·C2(`.dockerignore`) 미착지**, C5~C9 미확인.
+  → 🔴 **tester 는 C1·C2 착지 후에 착수한다.** 미착지 상태에서 컨테이너 계열 15건은 실행 불가다.
+  단 **호스트 계열 21건 중 UNIT-01·02·04·05·06 + API-01~06** 은 **지금도 베이스라인 수집이 가능**하며,
+  🔴 **API-01~06 의 `before` 스냅샷은 C5~C7 이 반영되기 전에 떠 두는 것이 가장 정확하다**.
+
+---
+
+### 개정 이력 (v198)
+
+- 2026-08-21 초판 작성 (36건) — PLAN v198 §0(실측 14항목)·§3(Dockerfile 설계)·§4(`.dockerignore`)·
+  §5(홈 경로)·§7(회귀 위험 8건)·§9(검증 계획)을 전 항목 시나리오화.
+  설계의 중심축은 **"exit 0 인데 실제로는 열화된 상태"를 잡아내는 단언**에 두었다.
+  ① **F2/F3 는 exit 0 을 신뢰하지 않는다** — libass 는 폰트가 없어도 성공하고 빈 화면을 내므로
+  **프레임의 비배경 픽셀을 직접 세고**, 나아가 **한글/라틴 두 렌더의 비율(0.3~3.0)** 까지 비교해
+  "라틴은 되는데 한글만 빈칸" 과 "두부 박스" 를 구분한다(UNIT-09·10, 즉시 중단 S7).
+  ② **madmom 은 반환값이 정상이어도 FAIL 일 수 있다** — `audio_utils.py:90-99` 가 librosa 로
+  조용히 폴백하기 때문이다. 그래서 **폴백 경고 0건**을 판정의 실체로 삼았다(UNIT-14 ⑤).
+  ③ **imageio-ffmpeg 폴백**도 같은 성격이라 `_get_ffmpeg_path()` 결과가 **imageio 번들 경로와 다름**을
+  명시적으로 단언한다(UNIT-12 ④).
+  가장 까다로운 제약이었던 **"컨테이너 앱은 DB 없이 뜨지 않는다"** 는 **API-13 에서 lifespan 없는
+  최소 FastAPI 에 `character.router` 만 마운트해 `TestClient` 로** 해결했다 — 덕분에
+  **실 DB 무접촉·유료 0건**을 유지하면서 `.dockerignore` 과잉 제외를 **런타임으로** 잡는다.
+  §5-2 전체 기동 스모크는 **SKIP** 으로 확정하고(공식계정 시드 + 전체 유저 맞팔 백필 쓰기 = S8),
+  사유 4가지 + 대체 커버리지 표 + 승인 조건 5가지를 명문화했다(P4).
+  🔴 **두 환경의 기대값 반전**(rubberband·한글폰트·ffmpeg 경로)을 §0-C 표로 못박고,
+  **케이스마다 실행위치와 재기동 여부를 병기**하게 했다 — 호스트의 rubberband 부재를
+  회귀로 오기록하는 것이 이번 버전에서 가장 하기 쉬운 실수다.
+  설계 중 **지시서 기대값 2건의 오류**(H6 의 `logger.warning` → 실제 `logger.exception` /
+  `TypeError` 단언 불성립)와 **부수 발견 1건**(호스트에 `fc-list` 미설치 → `fontsdir` 없는
+  ASS 번인은 호스트에서도 이미 한글을 못 그린다)을 확인해 P1·P2 와 §0-G 에 기록했다.
+  유료 호출 **0건**, 테스트 데이터 생성 **0건**, 9004·9005 접근 **0건**.
+  태그 균형은 **55.6 / 38.9 / 5.6** 으로 세 요구(≥40 / ≥35 / ≤25)를 전부 충족.
+  planner 확인 대기 6건(§5) — **전부 대안이 있어 36건·비율이 깨지지 않는다.**

@@ -1,0 +1,98 @@
+# =============================================================================
+# docker-compose.app.yml.example — v198 (2026-08-21) / MAIDOL backend_9006
+# =============================================================================
+# ⚠️ 아직 사용하지 않는 초안입니다. 파일 이름이 `.example` 로 끝나므로 compose 가
+#    자동으로 읽지 않습니다. v198 은 앱 이미지를 만드는 것까지가 범위이고,
+#    앱을 compose 서비스로 올리는 것은 AWS 이전 본 작업의 몫입니다.
+#
+# 기존 docker-compose.yml 은 v198 에서 1바이트도 수정하지 않았습니다.
+#
+# -----------------------------------------------------------------------------
+# 활성화하려면 아래 3가지를 먼저 정리해야 합니다
+# -----------------------------------------------------------------------------
+# 1) *_HOST 값을 서비스명으로 바꿔야 한다.
+#    앱이 호스트 프로세스일 때는 POSTGRES_HOST=localhost 가 맞지만, 앱이 컨테이너가
+#    되면 postgres / mongodb / redis / elasticsearch / minio 라는 서비스명이 되어야
+#    한다. 즉 .env 의 *_HOST 를 전면 교체하는 변경이며, 지금 호스트에서 돌고 있는
+#    9006 프로세스와 동시에 성립할 수 없다. 전환 시점을 정해서 한 번에 바꿔야 한다.
+#
+# 2) v190 루프백 바인딩과 충돌한다.
+#    docker-compose.yml 의 PG/Mongo/Redis/ES 는 "127.0.0.1:PORT:PORT" 로 잠겨 있다.
+#    이건 호스트에서만 접근하라는 뜻이고, 앱 컨테이너는 호스트의 127.0.0.1 에
+#    닿지 못한다. 다만 같은 compose 네트워크에 올리면 포트 매핑을 통하지 않고
+#    서비스명으로 직접 붙으므로, 루프백 바인딩은 그대로 두는 것이 오히려 맞다
+#    (외부 노출은 계속 막힌 채 앱만 내부망으로 붙는다). 이 파일을 기존 compose 와
+#    합칠 때 네트워크가 같은지 반드시 확인할 것.
+#
+# 3) 비밀값은 env_file 로 주입하고, 이미지에는 절대 굽지 않는다.
+#    Dockerfile 에 ARG/ENV 로 비밀값을 넣으면 docker history 에 그대로 남는다.
+#    .dockerignore 가 .env 를 build context 에서 아예 제외하고 있으므로, 런타임에
+#    env_file 또는 AWS SSM Parameter Store / Secrets Manager 로 넣는다.
+#
+# 사용 예:
+#   docker compose -p backend -f docker-compose.yml -f infra/docker-compose.app.yml up -d
+# =============================================================================
+
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maidol-backend:v198
+    container_name: aimu-backend
+    restart: unless-stopped
+
+    # 비밀값 주입 — 이미지에 굽지 않는다.
+    env_file:
+      - .env
+
+    # env_file 로 들어온 값을 덮어쓴다. 앱이 컨테이너가 되는 순간 localhost 는
+    # 자기 자신을 가리키므로 반드시 서비스명으로 바꿔야 한다.
+    environment:
+      POSTGRES_HOST: postgres
+      MONGO_HOST: mongodb
+      REDIS_HOST: redis
+      ES_HOST: elasticsearch
+      MINIO_HOST: minio
+      MINIO_PORT: "9000"
+      # MINIO_PUBLIC_HOST 는 브라우저가 보는 주소이므로 서비스명이 아니라
+      # 공개 도메인이어야 한다 — .env 값을 그대로 쓴다(여기서 덮지 않는다).
+
+    ports:
+      - "${BACKEND_PORT:-9006}:9006"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      # elasticsearch 는 없어도 기동된다(lifespan 이 try/except 로 감쌈).
+      # 검색 품질만 떨어지므로 started 로 충분하다.
+      elasticsearch:
+        condition: service_started
+
+    # HEALTHCHECK 는 Dockerfile 에 정의돼 있다(/api/health, start-period 90s).
+    # 여기서 재정의하지 않는다.
+
+    # 8GB RAM 호스트에서 DB 5종과 동거하는 경우의 상한 예시.
+    # v198 에서는 강제하지 않는다 — 배치(같은 호스트냐 RDS 분리냐)가 정해진 뒤에
+    # 실측으로 정할 값이다. demucs 추론 중 피크를 반드시 측정하고 넣을 것.
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4g
+
+    # 에어갭 VPC 라면 htdemucs 가중치 캐시를 미리 채워 마운트한다.
+    # 그렇지 않으면 첫 /api/vocal-repair 요청이 외부에서 체크포인트를 받는다.
+    # environment 에 TORCH_HOME=/var/cache/torch 를 함께 넣어야 한다.
+    # volumes:
+    #   - torch_cache:/var/cache/torch
+
+# volumes:
+#   torch_cache:

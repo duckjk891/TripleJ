@@ -30,14 +30,19 @@ logger = logging.getLogger(__name__)
 
 
 def _get_ffmpeg_path():
-    """Get ffmpeg binary path. Checks PATH, miniconda fallback, then imageio-ffmpeg."""
+    """Resolve ffmpeg: FFMPEG_BIN env → PATH → imageio-ffmpeg bundle.
+
+    v198: 개발자 홈(miniconda) 폴백 제거. imageio-ffmpeg 폴백은 남긴다 —
+    호출부(L385 부근)가 None 을 명시적으로 처리한다. 다만 번들 바이너리에는
+    librubberband 가 없어 피치 시프트가 실패하므로, 컨테이너에서는 이 경로를
+    타지 않도록 Dockerfile 이 빌드 시점에 시스템 ffmpeg 존재를 강제한다.
+    """
+    env_bin = os.environ.get("FFMPEG_BIN")
+    if env_bin and os.path.isfile(env_bin):
+        return env_bin
     path = shutil.which("ffmpeg")
     if path:
         return path
-    # Miniconda fallback
-    miniconda_path = "/home/duckjk89/miniconda3/bin/ffmpeg"
-    if os.path.isfile(miniconda_path):
-        return miniconda_path
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()

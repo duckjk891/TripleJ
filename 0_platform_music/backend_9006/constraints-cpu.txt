@@ -1,0 +1,33 @@
+# =============================================================================
+# constraints-cpu.txt — v198 (2026-08-21) / MAIDOL backend_9006
+# =============================================================================
+# torch 계열을 CPU 전용 휠로 강제하는 제약 파일.
+#
+# 쓰는 법:
+#   pip install -r requirements.txt -c constraints-cpu.txt
+#
+# requirements.lock 은 이미 +cpu 로 고정돼 있으므로 Dockerfile 은 이 파일을
+# 쓰지 않는다. 이 파일은 "requirements.txt 로 개발 환경을 새로 만들 때"
+# CUDA 휠이 딸려오는 것을 막는 용도다.
+#
+# 왜 필요한가:
+#   requirements.txt 의 demucs 가 torch/torchaudio 를 전이 의존으로 끌고 오는데,
+#   기본 PyPI 의 torch 휠은 CUDA 링크 빌드라 nvidia-* 약 2.7GB + triton 699MB 가
+#   함께 설치된다. 코드는 GPU 를 전혀 쓰지 않는다
+#   (demucs_service.py:92 device="cpu" 하드코딩, 저장소 전체 .cuda() 0건).
+#   타깃 EC2 t3.large 에는 GPU 자체가 없다.
+#
+# --index-url 이 아니라 --extra-index-url 인 이유:
+#   PyTorch 인덱스에는 torch/torchaudio/triton 등 소수 패키지만 있다.
+#   --index-url 로 완전 대체하면 fastapi·motor 등 나머지 패키지를 찾지 못해
+#   설치가 통째로 실패한다. 기본 PyPI 를 남겨두고 추가 인덱스로 얹어야 한다.
+#
+# 버전 선택 근거:
+#   현재 동작 중인 venv 의 torch 2.12.0 / torchaudio 2.11.0 과 **같은 버전**이
+#   CPU 인덱스에 존재한다(실측). 즉 버전을 올리거나 내리지 않고 CUDA 링크만
+#   떼어내므로 동작 변화면이 최소다.
+# =============================================================================
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.12.0+cpu
+torchaudio==2.11.0+cpu

@@ -1,3 +1,15 @@
+# =============================================================================
+# requirements.txt — 사람이 읽고 고치는 최상위 의존성 선언
+# =============================================================================
+# v198 — 파일 3종의 역할 구분:
+#   requirements.txt   ← 이 파일. 사람이 편집한다. 최상위 선언만 담는다.
+#   requirements.lock  ← 생성물. `pip freeze` 전량 고정. Dockerfile 이 설치하는 건 이쪽.
+#   constraints-cpu.txt← torch 계열 CPU 휠 강제용 제약(개발 venv 재구축 시).
+#
+# 의존성을 바꾼 뒤에는 requirements.lock 을 반드시 다시 뜨세요.
+# 절차는 requirements.lock 최상단 주석에 있습니다.
+# =============================================================================
+
 # 기존 유지
 fastapi
 uvicorn
@@ -33,9 +45,20 @@ librosa>=0.10
 # Build deps (Cython, numpy) must precede madmom; pip auto-resolves but --no-build-isolation may be needed.
 Cython
 imageio-ffmpeg
-madmom @ git+https://github.com/CPJKU/madmom.git@main
+# v198 — upstream main 이동에 따른 빌드 비재현성 차단. 현재 설치본의 실측 커밋.
+madmom @ git+https://github.com/CPJKU/madmom.git@27f032e8947204902c675e5e341a3faf5dc86dae
 # v60: Phase 2.5 multimodal 첨부 이미지 압축용 (Claude 5MB base64 제한 우회)
 Pillow
 # v135: FaceGuardSquad — AWS Rekognition CompareFaces/Face Liveness (얼굴 인증)
 boto3
+
+# v198 — torch 계열 CPU 전용 고정. 지금까지는 demucs 의 전이 의존이라 제어점이 없어
+# 기본 PyPI 의 CUDA 링크 휠이 설치됐다(venv 5.5GB 중 3.4GB 가 CUDA).
+# 코드는 GPU 를 쓰지 않는다: demucs_service.py:92 가 device="cpu" 하드코딩이고
+# 저장소 전체에서 .cuda() 사용 0건. 타깃 EC2 t3.large 에는 GPU 가 없다.
+# --index-url(완전 대체) 이 아니라 --extra-index-url 인 이유: PyTorch 인덱스에는
+# torch/torchaudio 등 소수만 있어 나머지 패키지를 찾지 못한다.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0+cpu
+torchaudio==2.11.0+cpu
 
