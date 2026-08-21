@@ -4940,3 +4940,486 @@ v196 ⑤ 가 바꾸는 동작을 v195 케이스가 명시적으로 못박고 있
   테스트 트랙은 **업로드 API 를 쓰지 않고 Mongo 직접 삽입**(§0-A)하며, `audio_url` 은 존재하지 않는 더미 키를 넣어 만일의 유출 시에도 재생 불가하도록 했다.
   `--reload` 부재에 대응해 **§0-B 재기동 선행 절차**를 두고, 이를 기록하지 않은 `[api]` 결과는 무효로 규정했다.
   태그 균형은 정적 grep·순수 함수 호출을 unit 으로, 화면 발현을 e2e 로 배치해 **45.7 / 37.0 / 17.4** 확보. planner 승인 대기 6건(§5) — 전부 **대체 절차가 있어 비율이 깨지지 않는다**. planner 검토 후 확정 예정.
+
+---
+
+## v197 — 2026-08-21 — 커버 이미지 저장 실패 + 소유권 미검사 수정
+
+팀: MAIDOL-CoverFixSquad / test-designer 작성 (**설계 산출물 — 본 문서는 실행하지 않는다. 실행은 tester 담당**)
+근거: PLAN.md v197 §2 실측(①`type=track`↔`cover|profile` 불일치 400 + 프론트 `.catch(()=>{})` 삼킴 / ②커버 변경 소유권 미검사 / ③`/upload/mv-status` 인가 부재 / ④커버 변경 후 Redis 캐시 미무효화 / ⑤`type=profile` 레거시 중복 경로), §3 수정 설계, §4 변경 매트릭스 A1~A6·F1, §5 회귀 위험 R1~R11, §6 범위 밖, §7 절대 준수
+BASE_REV: **b1f05cd**(메인 체크아웃, branch `backend`) + 워킹트리 v197 구현분(**작성 시점 기준 A1~A6·F1 7개 대상 전부 착지** — 아래 앵커표는 착지 후 재실측값)
+
+**⚠️ 작업 위치**: 모든 검증은 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ` 기준.
+세션 워크트리 `0_platform_music/.claude/worktrees/e2e-test-search-cs-admin-1db925` 는 **구 커밋 `c4d160e`** 이며 **`backend_9006` 이 존재하지 않는다**. 워크트리 안의 `0_platform_music/` 을 열람·검증 대상으로 삼으면 9006 이전의 낡은 파일을 보게 된다 — 금지.
+
+### 💰 예상 유료 호출 횟수 (착수 전 planner 고지 — 초과 시 즉시 중단)
+
+| 경로 | 예상 | 상한 | 소비 케이스 |
+|---|---|---|---|
+| `POST /api/tracks/upload` (내부 gpt-4o-mini 키워드 + 임베딩, 회당 약 0.2원) | **1회** | **2회** | **V197-E2E-01 1회**. 나머지 1회는 **E2E-01 실패 시 재시도 여유** 전용 |
+| `GET /api/tracks/search` | **0회** | 0회 | 없음 |
+| `/api/generate`·`/api/mv/**`·`/api/character`·`/api/voice-*`·`/upload/generate-cover`·`/upload/refine-cover` | **0회** | **0회 (금지)** | **어떤 케이스에도 등장하지 않음** |
+| 별 차감(`POINT_COSTS`) | **0회** | 0회 | 없음 |
+| `POST /api/admin/cs/broadcast` 200 | **0회** | 0회 | 없음 |
+
+> **V197-E2E-03 은 `/api/tracks/upload` 를 소비하지 않는다.** 브라우저 네트워크 인터셉트로 `POST /api/tracks/upload` 를 합성 200 으로 대체하기 때문이다(§E2E-03 사전조건). 이 설계 덕에 상한 2회 중 **1회가 재시도 예비로 온전히 남는다.**
+
+**대상 파일 (착지 후 실측 — *심볼명이 1차 앵커*, 라인은 보조. A1~A6 삽입으로 `upload.py` 라인이 전부 밀렸다)**
+
+| # | 파일 | 착지 후 실측 앵커 |
+|---|---|---|
+| A1 | `backend_9006/app/routes/upload.py` | ✅ 착지 — `ALLOWED_UPLOAD_IMAGE_TYPES`(`:89`), `DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES`(`:90`), **`_normalize_upload_image_type`**(`:93`, `_normalize_vocal_gender` 아래) |
+| A2 | `backend_9006/app/routes/upload.py` | ✅ 착지 — `upload_image`(`:128`) 진입부 `norm_type, used_alias = _normalize_upload_image_type(type)`(`:136`), `type_invalid` 로그(`:139`), **400 본문·코드 불변**(`:142`), `type_alias_deprecated` 로그(`:144`) |
+| A3 | `backend_9006/app/routes/upload.py` | ✅ 착지 — `if norm_type == "cover":`(`:161`) 분기, **`put_object` 이전** `find_one({"uploader_id":1})`(`:169`) → 404(`:172`) → 403(`:175`) |
+| A4 | `backend_9006/app/routes/upload.py` | ✅ 착지 — `result = await mongo.tracks.update_one(...)`(`:189`), `try: get_redis(); delete("cache:track:{id}"); delete("cache:track:v3:{id}") except: warning`(`:196~202`), `cover_ok … matched=%d`(`:203`) |
+| A5 | `backend_9006/app/routes/upload.py` | ✅ 착지 — `else:`(profile) 분기 진입 `profile_legacy_route` 로그(`:212`). **그 아래 동작 무변경** |
+| A6 | `backend_9006/app/routes/upload.py` | ✅ 착지 — `mv_status`(`:895`), `find_one`(`:908`) 직후 403 가드(`:917~919`) |
+| F1 | `frontend/src/pages/UploadPage.jsx` | ✅ 착지 — `handleSubmit`(`:1490`) 커버 블록(`:1563~1574`): `append('type','cover')`(`:1566`), `try { await api.uploadImage(...) } catch`(`:1568~1574`), `console.error('[UploadPage] cover image upload failed', …)`(`:1571`), `setError('곡은 업로드되었지만 …')`(`:1572`), `return;`(`:1573`). **`finally { setUploading(false); }`(`:1587`) 무변경 — R6 재활성 보장** |
+| 참조 | `frontend/src/api/index.js:299` `uploadImage` | **무변경** — 회귀 검증 대상 |
+| 참조 | `backend_9006/app/routes/tracks.py:43`(`cover_image` 매핑)·`:1183`/`:1298`(`cache:track:v3:` 읽기/`setex 600`)·`:1656`(AI 커버 쓰기) | **무변경** — 회귀 검증 대상 |
+| 참조 | `backend_9006/app/routes/mv.py` | **무변경** — RT-07 diff 감시 대상 |
+| 참조 | `frontend_admin/**` | **무변경** — `/upload/image` 호출 0건(PLAN §2-1 실측). RT-08 스모크 |
+| 참조 | `backend_9004`·`backend_9005` | **무변경 · 무접촉** — 미러링 폐기(PLAN §0-2). 🚫 검증 항목 없음 |
+
+---
+
+### 0. 전제 및 안전 규칙 (최우선 — 위반 시 해당 항목 자체를 폐기)
+
+1. 🚫 **유료 외부 API 전면 금지** — `/api/generate`·`/api/mv/**`·`/api/character`·`/api/voice-*`·`/upload/generate-cover`·`/upload/refine-cover`. **본 문서 어디에도 이 경로가 등장하지 않으며**, tester 는 이를 호출하는 어떤 대체 절차도 만들지 않는다.
+2. **`POST /api/tracks/upload` 예산 = 최대 2회.** 실사용 흐름 1회(E2E-01) + 재시도 여유 1회. 3회째는 **즉시 중단(S2)**.
+3. 🚫 **`GET /api/tracks/search` 남용 금지**(유료 호출 유발). 본 문서 사용 0회.
+4. **`[unit]`·`[api]` 픽스처는 전부 `mongo.tracks` 직접 삽입**(v196 §0-A 관행 승계). `/upload/image` 는 `uploader_id` 만 읽고 `cover_image_url` 만 쓰므로 직접 삽입 문서로 **완전히 검증된다** — 업로드 API 로 픽스처를 만들 이유가 없다.
+5. 🚫 **별 차감 금지.** 🚫 `POST /api/admin/cs/broadcast` 를 어떤 항목에서도 200 으로 성립시키지 않는다.
+6. **실사용자 데이터 무접촉.** 소유권 증명은 **테스트 계정 A·B 소유의 `v197t` 트랙 사이에서만** 수행한다. 실사용자 트랙은 **조회도 하지 않는다** — 유일한 예외는 RT-06 의 **집계 카운트 1회**(문서 본문을 읽지 않고 `count_documents` 만).
+7. **테스트 데이터 마커**: 트랙 `title` 접두 **`v197t-`**, `mv_jobs` 는 `result_video_url` 접두 `v197t/`. 종료 시 삭제 후 §0-C 카운트 대조.
+8. **개인정보 위생**: 생년월일·성별·이메일·파일명 원문을 응답·화면·로그·본 문서·REPORT 에 옮겨 적지 않는다. 크리덴셜은 전부 플레이스홀더 — `<TEST_USER_A_TOKEN>`, `<TEST_USER_B_TOKEN>`, `<A>`(계정 A uuid), `<B>`(계정 B uuid), `<MONGO_URI>`, `<PG_DSN>`, `<MINIO_KEY>`.
+9. **백엔드 `[unit]` 실행 방식**: 9006 파이썬 환경에서 `app.routes.upload` 를 import 해 **대상 함수를 직접 호출**하고 `get_mongo`/`get_minio`/`get_redis` 만 **모듈 네임스페이스 스텁**으로 대체한다.
+   🚫 **가드 자체를 몽키패치·주석처리·우회해 통과시키지 않는다 — 그런 테스트는 그 자체가 FAIL.** 스텁은 인프라 접근점(`get_*`)에만 허용되며, `_normalize_upload_image_type`·소유권 `if` 문·`try/except` 블록은 **원본 그대로** 실행되어야 한다.
+   임시 테스트 파일은 **사용 후 삭제**(`git status --short` 로 untracked 0건 확인).
+10. **서버에 `--reload` 가 없다.** 각 `[api]` 블록 착수 전 §0-B 를 수행하고 **그 기록을 REPORT 에 남긴다.** 기록 없는 `[api]` 결과는 **무효**이며 재실행 대상이다.
+11. 🚫 **미러링 검증 항목 없음.** `backend_9004`·`backend_9005` 는 읽기 전용 참고 폴더이며 본 문서의 어떤 케이스도 두 폴더에 접근하지 않는다(읽기조차 불요).
+12. **인프라 무조작**: docker-compose·포트·바인딩·MinIO·Redis·ES 설정 조작 금지. Mongo/PG **인덱스 생성·삭제 금지**.
+13. 기준 URL: 백엔드 `http://localhost:9006`, 사용자 앱 `http://localhost:4000`, 관리자 앱 `http://localhost:4001`. MinIO 버킷: 커버 = **`aimu-images`**.
+
+#### 0-A. 픽스처 준비 — `mongo.tracks` / `mongo.mv_jobs` 직접 삽입 (업로드 API 미사용)
+
+> 삽입은 9006 파이썬 환경의 motor 스크립트로 수행하고 **스크립트는 사용 후 삭제**한다.
+> 모든 트랙은 `is_public: True`, `created_at`/`updated_at` 현재시각, `uploader_nickname: "v197t"` 를 함께 넣는다(상세 조회 경로가 `_is_hidden_track` 에서 걸리지 않게).
+
+| 이름 | 컬렉션 | uploader_id | 핵심 필드 | 용도 |
+|---|---|---|---|---|
+| **`TRK-A`** | `tracks` | **`<A>`** | `title:"v197t-a"`, **`cover_image_url` 키 없음** | API-01·02·06 본체 (저장 성공 + 캐시 무효화) |
+| **`TRK-B`** | `tracks` | **`<B>`** | `title:"v197t-b"`, `cover_image_url:"covers/<B>/v197t-b-original.jpg"` | 🔴 API-03 교체 시도 대상 (무변경 단언) |
+| **`TRK-NOOWNER`** | `tracks` | **(키 자체 없음)** | `title:"v197t-noowner"` | RT-06 레거시 회귀(R3) |
+| **`TRK-GONE`** | — | — | **삽입하지 않는다.** 유효한 형식의 ObjectId 문자열만 준비 | API-04 404 판정 |
+| **`TRK-AICOVER`** | `tracks` | `<A>` | `title:"v197t-aicover"`, `cover_image_url` = **E2E-01 이 만든 실존 객체 키**(`covers/<A>/<TRK-A>.jpg`) | E2E-04 AI 커버 렌더 회귀 |
+| **`MVJOB-B`** | `mv_jobs` | `user_id:"<B>"` | `status:"completed"`, `progress:100`, `total_scenes:2`, `completed_scenes:2`, `scene_thumbnails:["v197t/nonexistent-thumb-1.jpg","v197t/nonexistent-thumb-2.jpg"]`, **`result_video_url:"v197t/nonexistent.mp4"`** | 🔴 API-07 A6 가드 |
+
+- **`v197t/nonexistent.mp4`·`v197t/nonexistent-thumb-*.jpg` 는 MinIO 에 실제로 존재하지 않는 더미 키**다. presign/proxy URL 생성은 객체 존재를 검증하지 않으므로 200 경로 판정에는 영향이 없고, **만에 하나 URL 이 유출돼도 재생 가능한 실파일이 아니다**(v196 §0-A 관행 승계 — 2차 피해 차단).
+- `TRK-B.cover_image_url` 은 **B 폴더 아래의, 역시 존재하지 않는 더미 키**다. API-03 의 단언 대상은 "이 문자열이 그대로 남아 있는가" 이므로 실파일이 필요 없다.
+- **`TRK-AICOVER` 는 E2E-01 이후에 삽입한다**(실존 객체 키를 재사용하기 위함). `/upload/generate-cover` 는 **호출하지 않는다**.
+- 픽스처 트랙의 `_id` 8자 절단값을 REPORT 에 기록해 두면 로그 대조가 쉬워진다(전체 id 는 기록하지 않아도 무방).
+
+#### 0-B. 각 `[api]` 블록 선행 절차 (`--reload` 부재 대응 — 생략 시 해당 블록 전 결과 무효)
+
+1. `cd /mnt/d/1_projects/0_myProjects/1_tripleJ && git status --short` → **A1~A6 착지 확인**(`0_platform_music/backend_9006/app/routes/upload.py` 가 `M` 로 보일 것). 출력을 REPORT 에 붙인다.
+2. 서버 재기동: `cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006 && setsid ./run.sh > /dev/null 2>&1 &`
+3. 재기동 확인: **`GET http://localhost:9006/api/health` → 200**(`app/main.py:657`) **AND** `server.log` 의 **startup 타임스탬프가 2번 실행 시각 이후**임을 확인. 두 조건을 **둘 다** 기록한다.
+4. 스모크: `GET /api/tracks/{TRK-A}` 200(`<TEST_USER_A_TOKEN>`) — 픽스처 가시성 확인.
+5. **위 4단계 기록 없이 판정된 `[api]` 케이스는 무효로 간주하고 재실행한다.**
+
+#### 0-C. 종료 시 정리 및 카운트 대조 (필수)
+
+착수 **전** / 종료 **후** 두 시점에 아래를 집계해 **차이 0** 을 확인한다. 차이가 남으면 잔여 항목을 **지목 삭제**하고 **재대조**한다.
+
+| 대상 | 집계 |
+|---|---|
+| `mongo.tracks` | 전체 `count_documents({})` **+** `count_documents({"title": {"$regex": "^v197t-"}})` |
+| `mongo.mv_jobs` | 전체 `count_documents({})` |
+| MinIO `aimu-images` — `covers/<A>/` | `v197t` 관련 객체 키 목록(= 픽스처 트랙 id 를 파일명으로 갖는 객체 + E2E-01 산출물) |
+| MinIO `aimu-images` — `covers/<B>/` | 동일. **API-03 성공 시 이 목록은 착수 전과 완전히 동일해야 한다** |
+| MinIO `aimu-images` — `profiles/<A>.*` | RT-04(§API-02 부속)·E2E-05 수행 시에만. **수행 전 기존 객체 유무·PG `users.profile_image` 원래 값을 기록해 두고 종료 시 원복** |
+| Redis | `cache:track:v3:<TRK-A>`·`cache:track:<TRK-A>` 잔여 키 (API-06 전용, 종료 시 삭제) |
+
+- **삭제 순서**: ① `mongo.tracks` 의 `^v197t-` 문서 → ② `mongo.mv_jobs` 의 `result_video_url` 접두 `v197t/` 문서 → ③ MinIO `covers/<A>/`·`covers/<B>/` 의 v197t 객체 → ④ Redis 잔여 캐시 키 → ⑤ PG `users.profile_image` 원복(수행했다면).
+- **실사용자 데이터는 어떤 삭제 대상에도 포함되지 않는다.** 삭제 필터는 전부 `v197t` 마커 기반이며, 실행 전 `find` 로 **대상 건수와 title 목록을 먼저 출력해 눈으로 확인**한 뒤 `delete_many` 를 돌린다.
+
+---
+
+### 0-D. 🛑 즉시 중단 조건 (하나라도 발생 → 이후 항목 진행 금지, planner 즉시 보고)
+
+| # | 조건 | 감시 케이스 |
+|---|---|---|
+| **S1** | 🔴 **가드 우회로 통과시킴** — `[unit]` 에서 `_normalize_upload_image_type`·소유권 `if`·`try/except` 를 몽키패치/주석처리/치환해 PASS 를 만든 정황. **통과했다는 사실 자체가 FAIL** | V197-UNIT-06·07·08 (§0-9) |
+| **S2** | 🔴 **유료 API 가 1회라도 호출됨** — `/api/generate`·`/api/mv/**`·`/api/character`·`/api/voice-*`·`/upload/generate-cover`·`/upload/refine-cover` 접근 로그 발견, **또는 `POST /api/tracks/upload` 가 3회째 호출됨** | 전 항목 (server.log 상시 감시) |
+| **S3** | 🔴 **실사용자 트랙이 변조됨** — `v197t` 마커가 없는 `tracks` 문서의 `cover_image_url` 이 변경되거나 삭제됨 | 전 항목 (§0-C 전체 카운트 + API-03) |
+| **S4** | 🔴 **소유권 가드가 뚫림** — A 토큰으로 `TRK-B` 에 대해 201 이 반환되거나, `TRK-B.cover_image_url` 이 바뀌거나, **`covers/<A>/<TRK-B>.*` 객체가 MinIO 에 생김** | **V197-API-03** |
+| **S5** | 🔴 **`/upload/mv-status` 가 타인에게 `result_video_url`·`scene_thumbnails` 를 반환** | **V197-API-07** |
+| **S6** | **Redis 장애가 커버 업로드를 500 으로 바꿈**(R4) — `cache_invalidate_failed` 경로에서 예외가 밖으로 새어나옴 | **V197-UNIT-06** |
+| **S7** | 개인정보(생년월일·성별·이메일)·파일명 원문·크리덴셜 실값이 응답·로그·콘솔·산출물에 노출 | 전 항목 |
+| **S8** | 별 차감 발생 또는 `POST /api/admin/cs/broadcast` 가 200 반환 | 전 항목 |
+
+---
+
+### 1. `[unit]` 시나리오 — 8건
+
+> 실행: 9006 파이썬 환경에서 `import app.routes.upload as U`. **DB·서버 불필요.**
+> 공통 스텁(UNIT-06·07·08): `U.get_mongo`/`U.get_minio`/`U.get_redis` 만 페이크로 교체하고 **원복**한다. 페이크 업로드 파일은 `class FakeUpload: filename="v197t-cover.jpg"; async def read(self): return b"\x00"*16` 형태.
+> ⚠️ `upload_image` 를 직접 호출하면 **FastAPI 데코레이터의 `status_code=201` 은 적용되지 않는다** — 성공 시 반환값은 **평문 `dict`**, 실패 시 **`JSONResponse`** 다. "201" 자체의 단언은 `[api]` 층(§API-01)에서 한다. `[unit]` 은 **"dict 반환 + 키 존재"** 로 판정한다(이 구분을 혼동해 FAIL 판정하지 말 것).
+
+#### V197-UNIT-01. `_normalize_upload_image_type("cover")` → `("cover", False)` `[unit]` (A1)
+- **사전조건**: `from app.routes.upload import _normalize_upload_image_type as N`.
+- **Given** 정식 값 `"cover"`, **When** `N("cover")` 를 호출하면, **Then** 반환값이 **정확히 튜플 `("cover", False)`** 이다.
+- **기대결과**: `("cover", False)`. 두 번째 원소가 `True` 면 정식 값이 별칭으로 오분류된 것이고, A2 가 매 요청 `type_alias_deprecated` 로그를 쏟아 **계측이 무의미해진다**(R10 악화).
+- **확인할 로그 라인**: 없음(순수 함수). 대신 정적으로 `ALLOWED_UPLOAD_IMAGE_TYPES == {"cover","profile"}` 임을 확인.
+- **PASS/FAIL**: 튜플 동치 → PASS. 문자열만 반환하거나 `True` → FAIL.
+- **실패 시 의심**: `upload.py` `_normalize_upload_image_type`(`:93`), `ALLOWED_UPLOAD_IMAGE_TYPES`(`:89`).
+
+#### V197-UNIT-02. `_normalize_upload_image_type("profile")` → `("profile", False)` `[unit]` — **RT-04 1차 감시** (A1, R-A2)
+- **사전조건**: UNIT-01 과 동일.
+- **Given** `"profile"`, **When** `N("profile")`, **Then** `("profile", False)`.
+- **기대결과**: `("profile", False)`. 🔴 **`("cover", ...)` 가 나오면 별칭 도입이 profile 분기를 삼킨 것**이며, 프로필 업로드가 트랙 커버 코드로 흘러 **엉뚱한 Mongo 문서를 건드린다**.
+- **확인할 로그 라인**: 없음. 추가로 **정적 검사**: `grep -n 'if type == "cover"' backend_9006/app/routes/upload.py` → **0건**(A2 의 `norm_type` 교체 누락 검출), `grep -n 'if norm_type == "cover"' …` → **1건**.
+- **PASS/FAIL**: `("profile", False)` + 정적 검사 2건 모두 충족 → PASS. 하나라도 어긋나면 FAIL.
+- **실패 시 의심**: `_normalize_upload_image_type`(`:93`) 의 `ALLOWED_UPLOAD_IMAGE_TYPES` 검사 순서, `upload_image` 분기문(`:161`).
+
+#### V197-UNIT-03. 🔴 별칭 — `_normalize_upload_image_type("track")` → `("cover", True)` `[unit]` (A1, ① 본체)
+- **사전조건**: UNIT-01 과 동일.
+- **Given** 구 클라이언트가 보내던 값 `"track"`, **When** `N("track")`, **Then** **`("cover", True)`**.
+- **기대결과**: `("cover", True)`. 이 한 줄이 **v197 ①의 서버 측 본체**다. `(None, False)` 면 400 이 그대로 남아 **버그가 전혀 고쳐지지 않은 것**이고, `("cover", False)` 면 별칭 계측이 죽어 **앱팀 사용량을 영원히 알 수 없다**(PLAN §3-1 옵션 ③의 목적 상실).
+- **확인할 로그 라인**: 없음. 정적으로 `DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES == {"track": "cover"}` 확인.
+- **PASS/FAIL**: `("cover", True)` 정확 일치 → PASS. 그 외 전부 FAIL.
+- **실패 시 의심**: `DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES`(`:90`), `_normalize_upload_image_type` 두 번째 `if`(`:98~99`).
+
+#### V197-UNIT-04. 알 수 없는 값 4종 → 전부 `(None, False)` `[unit]` (A1, 400 계약 유지)
+- **사전조건**: UNIT-01 과 동일.
+- **Given** `""`, `None`, `"banner"`, `"track_cover"`, **When** 각각 `N(x)`, **Then** **4건 모두 `(None, False)`**.
+- **기대결과**: 전건 `(None, False)`. `None` 입력이 예외를 던지면 라우트가 **400 이 아니라 500** 이 된다(`(raw or "")` 방어 확인). `"track_cover"` 가 통과하면 별칭 매칭이 **접두/부분일치로 잘못 구현**된 것이다.
+- **확인할 로그 라인**: 없음.
+- **PASS/FAIL**: 4/4 `(None, False)` + 예외 0건 → PASS. 1건이라도 다르면 FAIL.
+- **실패 시 의심**: `_normalize_upload_image_type` 의 `v = (raw or "").strip().lower()`(`:96`) 와 마지막 `return None, False`(`:100`).
+
+#### V197-UNIT-05. R5 관용 확대가 **의도대로만** 넓어졌는지 `[unit]` (A1, R5)
+- **사전조건**: UNIT-01 과 동일.
+- **Given** `" Cover "`(앞뒤 공백 + 대문자)와 `"TRACK"`(전부 대문자), **When** 각각 `N(x)`, **Then** `" Cover "` → **`("cover", False)`**, `"TRACK"` → **`("cover", True)`**.
+- **기대결과**: 위 2건. 이는 v197 이 **의도적으로 도입한 완화**(PLAN §3-1 ⚠️, R5)이며 기존에는 둘 다 400 이었다. 동시에 **허용 집합은 여전히 닫혀 있어야 한다** — 같은 실행에서 `"cover2"`, `" "`, `"co ver"` 가 **전부 `(None, False)`** 임을 함께 단언한다(관용이 부분일치로 새지 않았는지).
+- **확인할 로그 라인**: 없음.
+- **PASS/FAIL**: 관용 2건 통과 **AND** 비허용 3건 차단 → PASS. 관용이 안 되면 R5 미구현으로 FAIL(REPORT 에 "설계와 불일치"), **비허용이 통과하면 즉시 FAIL**(계약 파손).
+- **실패 시 의심**: `.strip().lower()`(`:96`).
+
+#### V197-UNIT-06. 🔴 A4 회귀 — **Redis 예외가 커버 저장을 깨뜨리지 않는다** `[unit]` — 즉시 중단 조건 S6 (A4, R4)
+- **사전조건**: `import app.routes.upload as U`. 스텁 3종을 **모듈 네임스페이스에만** 설치(원본 가드 코드 무수정):
+  - `U.get_mongo` → 페이크. `tracks.find_one(...)` → `{"_id": <oid>, "uploader_id": "<A>"}`, `tracks.update_one(...)` → `matched_count=1` 을 갖는 객체.
+  - `U.get_minio` → 페이크. `put_object` 는 **호출 횟수만 기록**하고 아무것도 하지 않음.
+  - **`U.get_redis` → 호출 시 `delete` 가 `RuntimeError("stub redis down")` 를 던지는 객체를 반환.**
+  - 로깅 캡처 핸들러를 `app.routes.upload` 로거에 부착.
+- **Given** 위 상태에서, **When** `await U.upload_image(file=FakeUpload(), type="cover", id=str(<TRK-A oid>), current_user={"id":"<A>"}, conn=None)` 를 호출하면, **Then**
+  ① **예외가 밖으로 새어나오지 않고**, ② 반환값이 **`JSONResponse` 가 아닌 `dict`** 이며 **`object_name` 키를 포함**하고(값 = `covers/<A>/<TRK-A>.jpg`), ③ `file_url` 키도 존재하고, ④ **`put_object` 호출 1회**, ⑤ `update_one` 호출 1회다.
+- **기대결과**: 위 5건 전부. 예외가 새면 **운영에서 Redis 장애 시 커버 업로드가 500** 이 되어 v197 이 새 장애를 만든 것이다(R4). 캐시 삭제 실패는 **최대 600초 표시 지연**일 뿐 데이터 손실이 아니므로 삼키는 것이 정답이다.
+- **확인할 로그 라인**: **`[upload] image cover cache_invalidate_failed track=<8자>` WARNING 정확히 1건** + `[upload] image cover_ok track=<8자> obj=covers/<A>/<TRK-A>.jpg matched=1` INFO 1건. 두 로그의 track 값은 **8자 절단**이어야 한다(전체 id 가 찍히면 §0-8 위반 → REPORT 기재).
+- **PASS/FAIL**: ①~⑤ + 로그 2건 → PASS. 예외 전파 또는 `cache_invalidate_failed` 부재 → **FAIL + 즉시 중단(S6)**. `try/except` 를 지우고 통과시킨 정황 → **FAIL(S1)**.
+- **실패 시 의심**: `upload.py` `upload_image` 의 `try: redis = get_redis() … except Exception:` 블록(`:196~202`), `cover_ok` 로그(`:203`), `..database.redis.get_redis` import(`:20`).
+  ℹ️ 참고: 운영에서 `init_redis` 전이면 `get_redis()` 가 `None` 을 반환해 `await None.delete()` 가 `AttributeError` 를 낸다 — 이 역시 같은 `except Exception` 이 잡아야 정상이다. 여유가 되면 `U.get_redis → lambda: None` 변형으로 1회 더 확인한다(같은 케이스 내 부속 단언).
+
+#### V197-UNIT-07. 🔴 A3 소유권 가드 3분기 + **put_object 미도달 증명** `[unit]` (A3, ②)
+- **사전조건**: UNIT-06 과 동일한 스텁 구성. 단 `U.get_redis` 는 정상 동작 페이크(`delete` no-op). `put_object` 호출 카운터를 **분기마다 0 으로 리셋**한다.
+- **Given/When/Then** — 같은 함수를 3회 호출하며 `find_one` 반환만 바꾼다:
+
+| 분기 | `find_one` 반환 | 호출 | 기대 반환 | **`put_object` 호출 수** |
+|---|---|---|---|---|
+| a | **`None`** | `type="cover"`, `id=<유효 oid>`, `current_user={"id":"<A>"}` | `JSONResponse` **404**, 본문 `{"error": "트랙을 찾을 수 없습니다."}` | **0** |
+| b | `{"uploader_id": "<B>"}` | 동일 | `JSONResponse` **403**, 본문 `{"error": "자신의 트랙만 수정할 수 있습니다."}` | **0** |
+| c | `{"uploader_id": "<A>"}` | 동일 | **`dict`** (`object_name`·`file_url` 포함) | **1** |
+
+- **기대결과**: 표 그대로. **403·404 분기에서 `put_object` 호출이 0 이라는 것이 이 케이스의 핵심 단언**이다 — 가드가 `put_object` **뒤**에 있으면 반환 코드는 똑같이 403 이면서도 **MinIO 에 객체가 이미 생겨** 저장소 오염·대역 낭비가 발생한다(PLAN §3-3 ③). 상태코드만 보는 테스트로는 이 결함을 잡지 못한다.
+  본문 자구는 `tracks.py update_track`(`:736`/`:738`)과 **완전히 동일**해야 한다 — 신규 문구가 나오면 FAIL(관행 이탈).
+  분기 b 에서 **404 가 아니라 403** 인 것도 단언한다(PLAN §3-3 ②: 노출된 식별자 → 404/403 2단계).
+- **확인할 로그 라인**: a → `[upload] image cover_not_found track=<8자>` 1건 / b → `[upload] image cover_denied track=<8자> user=<8자>` 1건 / c → `[upload] image cover_ok track=… obj=… matched=1` 1건. **a·b 에서 `cover_ok` 가 함께 찍히면 FAIL**(가드 뒤로 흐름이 샌 것).
+- **PASS/FAIL**: 3분기 전부 반환·본문·put 카운트 일치 → PASS. put 카운트가 0 이 아닌 분기가 있으면 **FAIL + 즉시 중단(S4 예비)**. 가드를 스텁으로 무력화했다면 **FAIL(S1)**.
+- **실패 시 의심**: `upload.py` `upload_image` 의 `doc = await mongo.tracks.find_one({"_id": ObjectId(id)}, {"uploader_id": 1})`(`:169`) 위치가 `object_name = f"covers/…"` / `minio_client.put_object`(`:180~186`) **앞**인지, 404 블록(`:171~173`), 403 블록(`:174~176`).
+
+#### V197-UNIT-08. A6 `mv_status` 소유권 가드 2분기 `[unit]` (A6, ③)
+- **사전조건**: `U.get_mongo` 만 스텁(`mv_jobs.find_one` 반환값 제어). `browser_image_url`/`browser_video_url` 은 `MEDIA_URL_MODE=proxy` 기본값에서 MinIO 접근이 없으므로 그대로 둔다.
+- **Given/When/Then**:
+
+| 분기 | `mv_jobs.find_one` 반환 | 호출 | 기대 |
+|---|---|---|---|
+| a | `{"user_id": "<B>", "status": "completed", "result_video_url": "v197t/nonexistent.mp4", "scene_thumbnails": [...]}` | `await U.mv_status(job_id=str(<MVJOB-B oid>), current_user={"id":"<A>"})` | `JSONResponse` **403**, 본문 `{"error": "이 작업에 접근할 권한이 없습니다."}`. **직렬화된 본문에 `result_video_url`·`scene_thumbnails` 키가 없다** |
+| b | 동일 | `current_user={"id":"<B>"}` | **`dict`**, `status=="completed"`, `result_video_url` 비어있지 않음, `scene_thumbnails` 길이 2 |
+
+- **기대결과**: 표 그대로. 403 본문이 **`{"error": ...}`** 형태여야 한다 — `mv.py` 헬퍼를 그대로 import 했다면 `HTTPException` → `{"detail": ...}` 가 되어 `upload.py` 의 응답 관행이 깨진다(PLAN §3-4). 문구는 `mv.py:207` 과 **자구 동일**.
+- **확인할 로그 라인**: a → `[upload] mv_status denied job=<8자> user=<8자>` INFO 1건. b → 없음(+ `[media-url] mode=proxy kind=image obj=v197t/…` 정보 로그는 무관).
+- **PASS/FAIL**: 2분기 일치 + 403 본문에 유출 키 부재 → PASS. 403 인데 본문에 URL 이 들어있거나 `{"detail":...}` 형태 → FAIL.
+- **실패 시 의심**: `upload.py` `mv_status`(`:895`) 의 `if job.get("user_id") != current_user["id"]:`(`:917`) 가 `find_one`(`:908`) **직후**·`scene_thumbnail_urls` 조립(`:921~923`) **앞**에 있는지.
+
+---
+
+### 2. `[api]` 시나리오 — 7건
+
+> 전제: §0-B 선행 절차 완료(기록 필수). 픽스처는 §0-A 직접 삽입분. **`POST /api/tracks/upload` 호출 0회.**
+> 공통 요청 형태: `POST http://localhost:9006/api/upload/image`, `multipart/form-data`, 헤더 `Authorization: Bearer <TEST_USER_A_TOKEN>`(또는 B), 파트 `file`(작은 `.jpg`, 수 KB) · `type` · `id`.
+> 🚫 응답·로그를 REPORT 에 옮길 때 **파일명·전체 id·토큰 실값은 기재하지 않는다**(8자 절단·플레이스홀더).
+
+#### V197-API-01. A 토큰 · `type=cover` · `id=TRK-A` → **201 + Mongo 반영** `[api]` — ① 완결 (A2·A3·A4)
+- **사전조건**: §0-B 완료. `TRK-A` 삽입 완료(`cover_image_url` 키 없음). MinIO `covers/<A>/` 에 `<TRK-A>` 관련 객체 **없음**을 사전 확인.
+- **Given** A 소유 트랙 `TRK-A`, **When** A 토큰으로 `type=cover`, `id=<TRK-A>` 로 이미지를 올리면, **Then**
+  ① HTTP **201**, ② 본문이 **정확히 `{file_url, object_name}` 2키**(스키마 무변경 — PLAN §4 "변경하지 않는 것"), ③ `object_name == "covers/<A>/<TRK-A>.jpg"`, ④ `mongo.tracks` 의 `TRK-A.cover_image_url` 이 **③과 동일 문자열**로 저장됨, ⑤ MinIO `aimu-images` 에 그 키의 객체가 **실제로 존재**함.
+- **기대결과**: ①~⑤ 전부. ④가 없으면 ① 결함이 그대로다. 상태코드가 200 이면 `status_code=201` 데코레이터가 훼손된 것(계약 파손).
+- **확인할 로그 라인**: `[upload] image cover_ok track=<8자> obj=covers/<A>/<TRK-A>.jpg matched=1` INFO **1건**.
+  🚫 `type_alias_deprecated`·`type_invalid`·`cover_denied`·`cover_not_found`·`profile_legacy_route` 는 **0건**이어야 한다.
+  ℹ️ **설계 대비 구현 델타(무해, 승인 항목 A1)**: PLAN §3-5 는 `cover_ok track=%s obj=%s` 로 적었으나 구현은 **`matched=%d` 가 추가**되어 있다. tester 는 이를 FAIL 이 아니라 `OBSERVED` 로 기록한다 — 오히려 경합 시 no-op update 를 관측할 수 있어 유익하다(PLAN §3-3 "중복 조회 안 함" 주석과 정합).
+- **PASS/FAIL**: ①~⑤ + 로그 1건 → PASS. ④ 미반영 또는 400 → **FAIL(① 미수정)**.
+- **실패 시 의심**: `upload_image`(`:128`) → `norm_type` 분기(`:161`) → `update_one`(`:189`) → `cover_ok`(`:203`).
+
+#### V197-API-02. A 토큰 · **`type=track`**(별칭) → **201 + 별칭 로그** `[api]` — 하위호환 (A2, R1) / **RT-04 부속 절차 포함**
+- **사전조건**: API-01 직후(같은 서버 세션). `TRK-A` 재사용 가능(같은 키로 덮어써도 무방 — 확장자 동일).
+- **Given** 구 클라이언트가 보내던 값, **When** A 토큰으로 `type=track`, `id=<TRK-A>` 로 올리면, **Then** ① **201**, ② 본문 `{file_url, object_name}`, ③ `object_name` 이 **`covers/…` 접두**(= cover 분기로 정규화됨. `profiles/…` 면 별칭이 profile 분기로 샌 것 → 🔴), ④ `TRK-A.cover_image_url` 갱신.
+- **기대결과**: ①~④. **400 이 나오면 별칭이 동작하지 않는 것**이고, 앱팀 클라이언트가 계속 고장난 채 남는다(PLAN §3-1 옵션 ③ 채택 이유의 핵심).
+- **확인할 로그 라인**: **`[upload] image type_alias_deprecated raw=track→cover user=<8자>` INFO 정확히 1건** + `[upload] image cover_ok …` 1건. `raw=` 값이 **32자 이내로 절단**되는지도 확인.
+- **PASS/FAIL**: ①~④ + 별칭 로그 1건 → PASS. `object_name` 이 `profiles/` 로 시작 → **FAIL(RT-04 위반 — A2 의 `norm_type` 교체 누락)**.
+- **실패 시 의심**: `_normalize_upload_image_type`(`:93`), `used_alias` 로그(`:143~145`), 분기문 `if norm_type == "cover":`(`:161`).
+- **📎 부속 절차 (RT-04 실동작 확인 — planner 승인 항목 A2)**: 같은 세션에서 `type=profile`, `id=<A>` 로 **1회** 올려 **201** 과 `object_name == "profiles/<A>.jpg"` 를 확인하고, `[upload] image profile_legacy_route user=<8자>` INFO 1건을 확인한다.
+  ⚠️ 이 호출은 **PG `users.profile_image` 를 쓰고 MinIO `profiles/<A>.jpg` 를 생성/덮어쓴다.** 착수 전 A 계정의 기존 `profile_image` 값과 객체 유무를 기록하고, **종료 시 원복**한다(§0-C). 승인이 없으면 이 부속 절차는 **생략**하고 RT-04 는 **UNIT-02(정규화) + API-02 ③(별칭이 profile 로 새지 않음) + 정적 diff(A5 가 로그만 추가)** 3중으로만 감시한다 — 커버리지 손실은 "레거시 profile 분기의 런타임 201 미확인" 하나뿐이며 REPORT 에 명시한다.
+
+#### V197-API-03. 🔴 A 토큰 · `type=cover` · **`id=TRK-B`(타인 트랙)** → **403 + 무흔적** `[api]` — 즉시 중단 조건 S4 (A3, ② 본체)
+- **사전조건**: §0-B 완료. `TRK-B`(uploader `<B>`, `cover_image_url:"covers/<B>/v197t-b-original.jpg"`) 삽입 완료.
+  **직전에 다음 2개를 기록**: ⓐ `TRK-B.cover_image_url` 현재 값, ⓑ MinIO `aimu-images` 의 `covers/<A>/` 객체 키 **전체 목록**.
+- **Given** B 소유 트랙, **When** **A 토큰**으로 `type=cover`, `id=<TRK-B>` 를 올리면, **Then**
+  ① HTTP **403**, ② 본문 **`{"error": "자신의 트랙만 수정할 수 있습니다."}`**(자구 동일 — `tracks.py:738`), ③ **`TRK-B.cover_image_url` 이 ⓐ 와 완전히 동일**(무변경), ④ **🔴 MinIO `covers/<A>/<TRK-B>.jpg` 객체가 존재하지 않음** — 즉 `covers/<A>/` 목록이 ⓑ 와 **완전히 동일**.
+- **기대결과**: ①~④ 전부. **④ 가 이 케이스의 핵심 단언**이다. 가드가 `put_object` 뒤에 있으면 ①②③ 은 똑같이 통과하면서 ④ 만 깨진다 — **403 만 확인하는 테스트는 이 결함을 놓친다.** 객체가 생겼다면 v197 은 "인가는 막았지만 저장소 오염은 그대로" 인 반쪽 수정이다(PLAN §3-3 ③).
+- **확인할 로그 라인**: **`[upload] image cover_denied track=<TRK-B 8자> user=<A 8자>` INFO 정확히 1건.**
+  🚫 `cover_ok` **0건**, `cache_invalidate_failed` **0건**(캐시 삭제 지점에 도달조차 하면 안 됨).
+- **PASS/FAIL**: ①~④ + 로그 → PASS. **①이 201/200 이거나 ③④ 중 하나라도 깨지면 FAIL + 즉시 중단(S4)** 후 planner 보고. 403 이지만 ④ 만 깨진 경우도 **FAIL(즉시 중단)** — 부분 수정으로 종결하지 않는다.
+- **실패 시 의심**: `upload_image` 의 `find_one`(`:169`)·403 블록(`:174~176`) 이 `minio_client.put_object`(`:181`) **앞**인지. `doc.get("uploader_id") != current_user["id"]` 의 **타입 불일치**(ObjectId vs str) 가능성도 함께 확인 — 양쪽 다 문자열이어야 한다.
+
+#### V197-API-04. `id=TRK-GONE`(존재하지 않는 유효 ObjectId) → **404** `[api]` (A3, PLAN §3-3 ②)
+- **사전조건**: §0-B 완료. **삽입하지 않은** 유효 형식 ObjectId 문자열 1개 준비(`TRK-GONE`). 사전에 `mongo.tracks.find_one({"_id": ObjectId(TRK-GONE)})` → `None` 확인.
+- **Given** DB 에 없는 트랙 id, **When** A 토큰으로 `type=cover`, `id=<TRK-GONE>` 을 올리면, **Then** ① HTTP **404**(**403 아님**), ② 본문 **`{"error": "트랙을 찾을 수 없습니다."}`**(`tracks.py:736` 자구 동일).
+- **기대결과**: ①②. **403 이 나오면 코드베이스 관행 위반**이다 — 트랙 계열은 일관되게 404→403 2단계이고(`tracks.py:713`·`:736`, `mv.py:205`), 트랙 id 는 차트·목록·URL 로 이미 공개되어 존재 은닉의 실익이 없다(PLAN §3-3 ②). 반대로 400 이 나오면 `ObjectId.is_valid` 앞단에서 걸린 것이므로 **준비한 id 형식이 잘못된 것** — 케이스 자체를 재구성한다(구현 결함 아님).
+- **확인할 로그 라인**: **`[upload] image cover_not_found track=<8자>` INFO 1건.** 🚫 `cover_denied`·`cover_ok` 0건.
+- **PASS/FAIL**: 404 + 본문 자구 일치 → PASS. 403/400/500 → FAIL.
+- **실패 시 의심**: 404 블록(`:171~173`), `if not doc:` 조건이 `if doc is None:` 이 아닌지(빈 dict 오판 여지 — 프로젝션 결과는 항상 `_id` 를 포함하므로 실무상 동일하나 기록).
+
+#### V197-API-05. `type=banner`(알 수 없는 값) → **400 본문 불변 + 계측 로그** `[api]` (A2, R1)
+- **사전조건**: §0-B 완료.
+- **Given** 허용 집합·별칭 어디에도 없는 값, **When** A 토큰으로 `type=banner`, `id=<TRK-A>` 를 올리면, **Then** ① HTTP **400**, ② 본문 **`{"error": "type은 'cover' 또는 'profile'이어야 합니다."}`** — **v197 이전과 자구·코드가 완전히 동일**(계약 무변경), ③ MinIO 에 새 객체 **0건**, ④ Mongo 무변경.
+- **기대결과**: ①~④. 문구가 바뀌었다면 클라이언트 에러 처리에 대한 **미고지 계약 변경**이므로 FAIL.
+- **확인할 로그 라인**: **`[upload] image type_invalid raw=banner user=<8자>` INFO 1건.**
+  이 로그가 R1(앱팀이 제3의 값을 보낼 가능성) 대응의 **유일한 회수 수단**이다 — 없으면 배포 후 어떤 값이 오는지 영원히 알 수 없다. 부재 시 FAIL.
+- **PASS/FAIL**: ①~④ + 로그 1건 → PASS. 로그만 없으면 **FAIL(R1 미대응)**.
+- **실패 시 의심**: `type_invalid` 로그(`:138~140`), 400 반환(`:142`).
+
+#### V197-API-06. 🔴 A4 — **커버 교체 후 트랙 상세가 즉시 새 커버를 반환** `[api]` (A4, §2-5, R11)
+- **사전조건**: §0-B 완료. **`TRK-A` 를 커버 없는 초기 상태로 되돌린다**(`$unset: {cover_image_url: ""}`) 후 Redis 에서 `cache:track:v3:<TRK-A>`·`cache:track:<TRK-A>` 를 **삭제해 깨끗한 상태**로 시작.
+- **Given/When/Then** — 순서가 이 케이스의 전부다. **반드시 아래 순서대로** 수행한다:
+  1. **When** `GET /api/tracks/<TRK-A>`(A 토큰) → **Then** 200, `cover_image` 가 **`null`**. → 이 호출이 `tracks.py:1298` 의 `setex(cache:track:v3:<TRK-A>, 600, …)` 로 **캐시를 적재**한다.
+  2. **확인**: `redis exists cache:track:v3:<TRK-A>` → **1**(적재 성공. 0 이면 이 케이스는 성립하지 않으므로 1단계를 재수행).
+  3. **When** API-01 과 동일하게 `type=cover`, `id=<TRK-A>` 커버 업로드 → **Then** 201.
+  4. **확인**: `redis exists cache:track:v3:<TRK-A>` → **0**, `redis exists cache:track:<TRK-A>` → **0**.
+  5. **When** 즉시(600초 대기 없이) `GET /api/tracks/<TRK-A>` 재조회 → **Then** 200 이고 **`cover_image == "covers/<A>/<TRK-A>.jpg"`**(3단계 응답의 `object_name` 과 동일 문자열. `tracks.py:43` 이 `cover_image_url` 을 그대로 매핑한다).
+- **기대결과**: 1~5 전부. **5단계에서 `null` 이 그대로면 A4 미구현**이며, ①을 고쳐 커버가 실제로 저장돼도 **최대 600초 동안 사용자에게는 아무 변화가 없다** — "저장은 됐는데 안 보인다" 는 원래 증상과 구별되지 않는 재발이다.
+- **확인할 로그 라인**: 3단계에서 `[upload] image cover_ok track=<8자> obj=… matched=1` 1건. 🚫 **`cache_invalidate_failed` 0건**(Redis 정상 상태이므로 이 경고가 뜨면 삭제가 실패한 것 → 4·5단계가 깨진다).
+- **PASS/FAIL**: 4단계 두 키 모두 0 **AND** 5단계 새 값 → PASS. 4 는 0 인데 5 가 `null` → **FAIL(다른 캐시 계층 의심)**. 4 가 1 → **FAIL(A4 미착지)**.
+- **실패 시 의심**: `upload.py` `redis.delete(f"cache:track:{id}")`/`delete(f"cache:track:v3:{id}")`(`:198~199`) 의 **키 문자열**, `tracks.py` 읽기 키(`:1183`)·쓰기 키(`:1298`) 와의 일치. R11(`cache:track:v2:` 계열 누락) 여부는 `admin.py:862` 와 대조해 **REPORT 에 기록만**(현행 읽기 경로는 `v3` 뿐이므로 FAIL 사유 아님).
+
+#### V197-API-07. 🔴 A6 — `/upload/mv-status` 타인 접근 차단 `[api]` — 즉시 중단 조건 S5 (A6, ③, R8)
+- **사전조건**: §0-B 완료. `MVJOB-B`(`mv_jobs`, `user_id:"<B>"`, `status:"completed"`, `result_video_url:"v197t/nonexistent.mp4"`, `scene_thumbnails` 2건) 삽입 완료.
+- **Given** B 소유 MV 작업, **When/Then** 2회 호출:
+
+| 호출 | 토큰 | 기대 |
+|---|---|---|
+| a | **`<TEST_USER_A_TOKEN>`** | HTTP **403**, 본문 `{"error": "이 작업에 접근할 권한이 없습니다."}`. 🔴 **본문에 `result_video_url`·`scene_thumbnails`·`object_name` 키가 하나도 없음**(응답 원문을 키 단위로 검사) |
+| b | `<TEST_USER_B_TOKEN>` | HTTP **200**, `status=="completed"`, `scene_thumbnails` 길이 2, `result_video_url` 비어있지 않음, `object_name == "v197t/nonexistent.mp4"` |
+
+- **기대결과**: 표 그대로. **a 의 키 부재 단언이 핵심**이다 — 이 결함의 실제 피해는 "상태 코드" 가 아니라 **타인의 미공개 MV 썸네일 URL 과 최종 영상 presigned URL 유출**(유료 생성물 사전 유출)이기 때문이다.
+  **b 는 R8(정상 폴링 파손) 회귀 감시**다. b 가 403/404 면 소유자 본인의 폴링이 깨진 것으로 **FAIL**.
+- **확인할 로그 라인**: a → **`[upload] mv_status denied job=<8자> user=<8자>` INFO 1건.** b → denied 로그 **0건**.
+- **PASS/FAIL**: a·b 전부 일치 → PASS. **a 가 200 이거나 403 본문에 URL 키가 하나라도 있으면 FAIL + 즉시 중단(S5).**
+- **실패 시 의심**: `mv_status`(`:895`) 의 403 가드(`:917~919`) 가 `find_one`(`:908`) 직후·`scene_thumbnail_urls` 조립(`:921`) 앞인지. `job.get("user_id")` 저장 타입(문자열)과 `current_user["id"]` 타입 일치 여부.
+
+---
+
+### 3. `[e2e]` 시나리오 — 5건
+
+> 공통 선행: 사용자 앱 `http://localhost:4000` **하드 새로고침(Ctrl+Shift+R)** + 빌드 표기 기록. dev 서버 상태에서 수행(프로덕션 빌드로 검증하면 `import.meta.env.DEV` 가드 로그 부재를 FAIL 로 오판한다).
+> **`POST /api/tracks/upload` 는 E2E-01 에서 1회만 발생한다**(E2E-03 은 인터셉트로 0회, E2E-02·04·05 는 0회).
+
+#### V197-E2E-01. 🔴 **유료 1회** — 직접 첨부 커버가 실제로 저장·표시된다 `[e2e]` (F1 + A2·A3·A4, ① 완결, R7)
+- **사전조건**: 4000 하드 새로고침. 테스트 계정 **A** 로그인. DevTools **Network 탭 열고 기록 시작** + Console 탭 동시 관찰. 오디오 파일 1개(짧은 것) + 커버 이미지 1개(`.jpg`, 수백 KB) 준비. 곡 제목은 **`v197t-e2e-01`** 로 입력(마커 필수).
+  ⚠️ **이 케이스가 v197 유일한 `/api/tracks/upload` 소비처다. 실패 시 재시도는 1회만 허용**(§0-2). 2회째도 실패하면 진행을 멈추고 planner 에 보고한다.
+- **Given** 업로드 화면에서 AI 커버를 **쓰지 않고**(`aiCoverObjectName` 미설정) **커버 이미지를 직접 첨부**한 상태, **When** 업로드를 실행하면, **Then**
+  ① 화면에 **"업로드가 완료되었습니다!"** 노출 후 약 1.5초 뒤 홈(`/`)으로 자동 이동,
+  ② **Network 탭에 `POST /api/upload/image` 요청이 1건** 있고 **요청 payload 의 `type` 파트 값이 `cover`**(🔴 `track` 이면 F1 미배포 — 하드 새로고침 재수행 후 재확인),
+  ③ 그 요청의 응답이 **201**이고 본문에 `object_name: "covers/<A>/<새 트랙 id>.jpg"`,
+  ④ Console 에 **`[UploadPage] cover image upload failed` 가 없음**,
+  ⑤ 홈/내 음악 **목록**에서 해당 곡의 썸네일에 **첨부한 이미지가 실제로 보임**(회색 placeholder 아님),
+  ⑥ **곡 상세** 화면에서도 커버가 보이고 **레이아웃이 무너지지 않음**(R7 — 지금까지 커버 없이 렌더되던 화면에 처음으로 이미지가 들어가는 경로).
+- **기대결과**: ①~⑥ 전부. ②가 `track` 이면 F1 이 브라우저에 반영되지 않은 것이고, ③이 400 이면 A2 미착지, 403/404 면 A3 오작동(본인 곡인데 막힘 → **심각**), ⑤가 placeholder 면 A4 캐시 문제 또는 `cover_image` 매핑 문제다.
+- **확인할 로그 라인**: 서버 `[upload] image cover_ok track=<8자> obj=… matched=1` 1건. 🚫 `type_alias_deprecated` **0건**(프론트가 정정됐으므로 웹에서 별칭이 나오면 안 된다 — 나온다면 R1 계측이 웹 트래픽으로 오염된다). Console 에 `[UploadPage] cover image upload failed` **0건**.
+- **PASS/FAIL**: ①~⑥ + 로그 조건 → PASS. ② 또는 ③ 실패 → **FAIL(① 미수정)**. ⑤⑥ 만 실패 → FAIL 이되 원인을 렌더/캐시로 분리해 기록.
+- **실패 시 의심**: `UploadPage.jsx` `handleSubmit`(`:1490`) 커버 블록(`:1563~1574`), `api/index.js:299 uploadImage`, `upload.py upload_image`(`:128`), `tracks.py:43` `cover_image` 매핑.
+- **정리**: 이 곡(`v197t-e2e-01`)과 그 커버 객체는 §0-C 대상. 단 **E2E-02·04 가 이 곡/객체를 재사용**하므로 **삭제는 전 케이스 종료 후**에 한다.
+
+#### V197-E2E-02. 커버 노출 화면 2곳 렌더 회귀 `[e2e]` (R7)
+- **사전조건**: E2E-01 성공. 추가 업로드 없음(**유료 호출 0회**).
+- **Given** E2E-01 로 커버가 붙은 곡, **When** ⓐ 곡 **상세 페이지**, ⓑ **목록형 화면**(홈 또는 내 음악의 곡 리스트) 2곳을 각각 열면, **Then** 두 화면 모두 ① 커버 이미지가 **깨짐 아이콘 없이** 표시되고, ② **주변 요소가 밀리거나 겹치지 않으며**(제목·아티스트·재생 버튼 위치 정상), ③ Console 에 이미지 로드 실패(4xx/`ERR_`) 에러 **0건**.
+- **기대결과**: ①~③ 두 화면 모두. R7 은 "지금까지 커버가 **없어서** 안 보이던 자리에 처음으로 이미지가 들어간다" 는 위험이며, AI 커버 경로로 이미 이미지가 들어오던 렌더 경로와 **동일한 컴포넌트**를 타므로 문제 가능성은 낮다 — 그래서 2곳 육안 확인으로 한정한다(PLAN §5 R7).
+- **확인할 로그 라인**: 브라우저 Console 에러 0건. Network 탭에서 커버 이미지 요청(`/api/upload/cover-preview/…`, `MEDIA_URL_MODE=proxy` 기본) 응답 **200**.
+- **PASS/FAIL**: 두 화면 ①~③ → PASS. 깨짐/붕괴 1건이라도 → FAIL(스크린샷 첨부).
+- **실패 시 의심**: `media_urls.browser_image_url`(`app/services/media_urls.py:95`) 의 모드 분기, `upload.py cover_preview`(`:417` 계열, v197 무변경), 목록 컴포넌트의 썸네일 스타일.
+
+#### V197-E2E-03. 🔴 F1 — **커버 실패가 사용자에게 정직하게 노출된다** `[e2e]` (F1, R6)
+- **사전조건**: 4000 하드 새로고침, 계정 A 로그인, DevTools 열기.
+  **네트워크 인터셉트 2건을 설치한다(🚫 서버 코드·설정 무수정, 브라우저 계층에서만):**
+  1. **`POST **/api/tracks/upload` → 서버로 보내지 않고 합성 200 응답으로 fulfill**: 본문 `{"id": "<TRK-A>", "title": "v197t-e2e-03", "cover_image": null}`.
+     → **이 인터셉트가 `/api/tracks/upload` 유료 호출을 0회로 만든다**(§예산표). 프론트는 `track.id` 만 사용하므로(`UploadPage.jsx:1565·1567`) 합성 응답으로 충분하다.
+  2. **`POST **/api/upload/image` → 합성 403 응답으로 fulfill**: 본문 `{"error": "자신의 트랙만 수정할 수 있습니다."}`.
+  파일 입력에는 오디오 1개 + **커버 이미지 1개를 반드시 첨부**한다(커버 블록 진입 조건 `imageFile && !aiCoverObjectName && track?.id`).
+- **Given** 곡 업로드는 성공하고 커버 업로드만 실패하는 상황, **When** 업로드를 실행하면, **Then**
+  ① 화면에 **"곡은 업로드되었지만 커버 이미지 저장에 실패했습니다. 내 음악에서 커버를 다시 등록해 주세요."** 가 **에러로 노출**되고,
+  ② **"업로드가 완료되었습니다!" 는 노출되지 않으며**(`setSuccess` 미도달),
+  ③ **1.5초 후 홈으로 자동 이동하지 않는다**(같은 화면에 머무름 — 최소 5초 관찰),
+  ④ Console 에 **`[UploadPage] cover image upload failed`** 가 **정확히 1건**(객체 인자에 `trackId` 포함),
+  ⑤ 🔴 **업로드 버튼이 다시 활성화된다**(`disabled` 해제 — `finally { setUploading(false) }`, `UploadPage.jsx:1586~1588`).
+- **기대결과**: ①~⑤ 전부. ①이 이 결함의 본질에 대한 답이다 — 원래 해악은 400 자체가 아니라 **"완료되었습니다" 라는 거짓 보고**였다(PLAN §3-2).
+  **①의 문구에 "곡은 업로드되었지만" 이 반드시 남아 있어야 한다** — R6 대응이며, 이 말이 없으면 사용자가 실패로 오인해 **곡을 중복 업로드**한다.
+  ⑤가 깨지면 `return` 이 `finally` 를 건너뛴 것이 되어(문법상 불가하지만 코드 구조 변경 시 가능) 사용자는 **버튼이 죽은 화면**에 갇힌다.
+- **확인할 로그 라인**: Console `[UploadPage] cover image upload failed` 1건. 🚫 서버 `server.log` 에 **`[upload] image …` 계열 로그 0건**(인터셉트로 서버에 도달하지 않았음의 증거) **AND `/api/tracks/upload` 접근 로그 0건**(예산 미소비 증명 — REPORT 에 필수 기재).
+- **PASS/FAIL**: ①~⑤ → PASS. ②③ 중 하나라도 깨지면(성공 메시지가 뜨거나 자동 이동) **FAIL — 거짓 성공 보고가 그대로 남은 것**.
+- **대안 절차(인터셉트 1 이 불가한 경우)**: 인터셉트 2(`/upload/image` → 403)만 걸고 **실제 곡 업로드를 수행**한다. 이 경우 **`/api/tracks/upload` 예비 1회를 소비**하므로, ⓐ E2E-01 이 1회에 성공했음을 먼저 확인하고, ⓑ **planner 에 사전 보고**한 뒤 진행한다(승인 항목 A3). 생성된 곡은 `v197t-e2e-03` 마커로 §0-C 정리 대상.
+- **실패 시 의심**: `UploadPage.jsx` `try/catch`(`:1568~1574`), `setError`(`:1572`), `return`(`:1573`), `setSuccess`(`:1576`), `finally`(`:1586~1588`).
+
+#### V197-E2E-04. 회귀 — **AI 커버 경로가 `/upload/image` 를 타지 않는다** `[e2e]` — RT-01 (PLAN §2-1, R-무영향)
+- **사전조건**: 🚫 **`/upload/generate-cover`·`/upload/refine-cover` 호출 절대 금지.**
+  대신 §0-A 의 **`TRK-AICOVER` 를 Mongo 직접 삽입**한다 — `uploader_id:"<A>"`, `title:"v197t-aicover"`, `cover_image_url` = **E2E-01 이 만든 실존 객체 키**(`covers/<A>/<E2E-01 트랙 id>.jpg`). 이렇게 하면 유료 생성 없이 "AI 커버가 이미 박힌 트랙"(`tracks.py:1656` 이 만드는 것과 **같은 형태의 문서**)을 재현할 수 있다.
+  4000 하드 새로고침 + **Network 탭 기록 시작(필터: `upload/image`)**.
+- **Given** `cover_object_name` 경로로 커버가 박힌 트랙, **When** 내 음악 목록과 그 곡의 **상세 페이지**를 열면, **Then**
+  ① 커버가 정상 렌더되고, ② 🔴 **관찰 구간 전체에서 `/api/upload/image` 요청이 0건**이며, ③ Console 에러 0건.
+- **기대결과**: ①~③. ②가 이 케이스의 단언이다 — AI 커버는 트랙 **생성 시점**에 `cover_image_url` 로 직접 박히므로(`tracks.py:1656`) `/upload/image` 를 **구조적으로 타지 않는다**. v197 의 A2·A3 변경이 이 경로에 **어떤 영향도 주지 않았음**을 요청 부재로 증명한다.
+- **확인할 로그 라인**: 서버 `[upload] image …` 계열 **0건**. 🚫 `/upload/generate-cover` 접근 로그 **0건**(있으면 즉시 중단 S2).
+- **PASS/FAIL**: ①~③ → PASS. `/upload/image` 요청이 1건이라도 있으면 FAIL(경로 혼선 — 프론트가 AI 커버를 재업로드하고 있다는 뜻).
+- **실패 시 의심**: `UploadPage.jsx:1563` 의 `!aiCoverObjectName` 가드(AI 커버와 직접 첨부의 상호 배타성), `tracks.py:1656`.
+- **정적 보강(RT-01)**: `git diff b1f05cd -- 0_platform_music/backend_9006/app/routes/tracks.py` → **변경 0줄** 확인(특히 `:1656` 라인 무변경).
+
+#### V197-E2E-05. 회귀 — **프로필 이미지는 `/auth/me/profile-image` 로 나간다** `[e2e]` — RT-02 (PLAN §2-4)
+- **사전조건**: 4000 하드 새로고침, 계정 A 로그인, Network 탭 기록 시작.
+  **착수 전 A 의 현재 `profile_image` 값과 MinIO `profiles/<A>.*` 객체 유무를 기록**(§0-C — 종료 시 원복 대상).
+- **Given** 프로필 편집 화면, **When** 프로필 이미지를 1장 변경·저장하면, **Then**
+  ① Network 탭에 **`POST /api/auth/me/profile-image` 요청 1건**이 있고 **응답 200**,
+  ② 🔴 같은 구간에 **`POST /api/upload/image` 요청 0건**(레거시 경로로 새지 않음),
+  ③ 저장된 이미지가 **512×512 로 크롭**되어 있음(`auth.py:825 _process_profile_image` — 응답/재조회 URL 의 이미지 실측 또는 MinIO 객체 크기·해상도 확인),
+  ④ **헤더 아바타가 즉시 갱신**됨(새로고침 없이 — `_update_session_profile_image`, `auth.py:854`/`:909`).
+- **기대결과**: ①~④. ②가 단언의 핵심이다. A5 는 `type=profile` 분기에 **로그 한 줄만** 추가했으므로 웹 프로필 흐름은 **아무것도 달라지지 않아야 한다**.
+- **확인할 로그 라인**: 🚫 서버 **`[upload] image profile_legacy_route user=…` 0건**(웹은 이 경로를 쓰지 않는다 — 1건이라도 나오면 프론트가 레거시 경로를 타는 것이고, 그 경우 §2-4 표의 3가지 처리(크롭·이전 이미지 정리·세션 갱신)를 잃는다). 🚫 `[upload] image …` 계열 전부 0건.
+- **PASS/FAIL**: ①~④ → PASS. ② 위반 또는 `profile_legacy_route` 관측 → FAIL(경로 회귀).
+- **실패 시 의심**: `frontend/src/api/index.js:140~146 uploadProfileImage`, `auth.py:865~912`(`/me/profile-image`), `upload.py` A5 로그(`:212`).
+- **정리**: 종료 시 A 의 `profile_image` 를 착수 전 값으로 **원복**한다. 원복 불가하면 REPORT 에 명시.
+- **정적 보강(RT-02)**: `git diff b1f05cd -- …/upload.py` 의 `else:`(profile) 분기 hunk 가 **`logger.info("[upload] image profile_legacy_route …")` 한 줄 추가뿐**이고 `object_name`·`put_object`·PG `UPDATE` 는 무변경임을 확인.
+
+---
+
+### 4. 회귀 항목 (RT-01 ~ RT-08)
+
+> 별도 케이스 번호를 부여하지 않는다 — 위 20건과 정적 diff 로 커버되며, tester 는 **이 표 자체를 체크리스트로** 사용해 8건 전부에 PASS/FAIL 을 남긴다.
+
+| # | 회귀 대상 | 검증 수단 | PASS 조건 | 🚫 금지 |
+|---|---|---|---|---|
+| **RT-01** | **AI 커버 생성 경로 무영향** | **V197-E2E-04** + `git diff b1f05cd -- backend_9006/app/routes/tracks.py` | E2E-04 ①~③ 전부 통과 **AND** `tracks.py` 변경 **0줄**(특히 `:1656` `"cover_image_url": body.cover_object_name`) | 🚫 `/upload/generate-cover` 호출 |
+| **RT-02** | **프로필 업로드 무영향** | **V197-E2E-05** + `upload.py` profile 분기 diff | E2E-05 ①~④ 통과 **AND** diff 가 **로그 1줄 추가뿐**(`object_name`·`put_object`·PG `UPDATE users SET profile_image` 무변경) | — |
+| **RT-03** | **곡 업로드 전체 흐름 무영향 (커버 미선택)** | **수동 1회** — 4000 에서 **커버를 고르지 않고** 업로드 화면을 채운 뒤 제출. ⚠️ **유료 예산상 실제 제출은 하지 않는다**: E2E-03 의 인터셉트 1(`/api/tracks/upload` → 합성 200)을 **재사용**해 커버 미첨부 상태로 제출한다 | ① Network 탭 **`/api/upload/image` 요청 0건**(`imageFile` 이 없어 블록 미진입), ② **"업로드가 완료되었습니다!" 정상 노출**, ③ 홈 자동 이동 정상, ④ Console 에러 0건 | 🚫 추가 `/api/tracks/upload` 실호출 |
+| **RT-04** | **`type=profile` 이 여전히 201** (별칭이 profile 분기를 삼키지 않았는지 — A2 `norm_type` 교체 누락 검출) | **V197-UNIT-02**(정규화) + **V197-API-02 ③**(별칭 결과가 `covers/` 접두) + **정적** `grep 'if type == "cover"'` → 0건 + **(승인 시) API-02 부속 절차**의 런타임 201 | 3중(승인 시 4중) 전부 통과. 승인 미취득 시 **런타임 201 미확인**을 REPORT 에 명시 | ⚠️ 부속 절차는 PG·MinIO 쓰기 — 승인 필요(A2), 종료 시 원복 |
+| **RT-05** | **`refine-cover`·`revert-cover`·`cover-history` 무변경** | **`git diff b1f05cd -- backend_9006/app/routes/upload.py`** 에서 `refine_cover`·`revert_cover`·`cover_history`·`_load_cover_session` 심볼이 **hunk 에 등장하지 않음** 확인 | 4개 심볼 관련 변경 **0줄**(라인 이동은 무관 — diff hunk 기준) | 🚫 **호출 금지**(유료 + 포인트 차감). diff 확인으로 **대체** |
+| **RT-06** | **`uploader_id` 부재 레거시 트랙 → 403 이 정상**(R3) | **`TRK-NOOWNER`** 에 A 토큰으로 `type=cover` 업로드 시도(API 블록에 부속) + **집계 1회** | ① **403 `"자신의 트랙만 수정할 수 있습니다."`** 반환(= `delete_track`·`update_track` 기존 정책과 **동일** — v197 이 새로 만드는 breakage 가 아니다), ② `cover_denied` 로그 1건, ③ **실 DB 의 `uploader_id` 부재 문서 건수**를 `count_documents({"uploader_id": {"$exists": False}})` 로 **집계만** 기록 | 🚫 집계 외 **실사용자 문서 열람·수정 금지**(본문·title 을 REPORT 에 옮기지 않는다. **건수만**) |
+| **RT-07** | **`mv.py` 무영향** | **`git diff b1f05cd -- backend_9006/app/routes/mv.py`** | 변경 **0줄**(`_get_job_with_ownership`(`:202~208`) 포함 전 파일) | 🚫 `/api/mv/**` **호출 금지** — diff 로만 확인 |
+| **RT-08** | **`frontend_admin`(4001) 무영향** | **스모크 1회** — 4001 하드 새로고침 → 로그인 → 임의의 관리자 화면 1개 진입 | ① 정상 렌더, ② Console 에러 0건, ③ Network 탭 **`/api/upload/image` 요청 0건**(PLAN §2-1 실측: 관리자 앱은 이 엔드포인트를 전혀 쓰지 않는다), ④ `git diff b1f05cd -- 0_platform_music/frontend_admin/` **변경 0줄** | 🚫 전체발송·별 지급 등 쓰기 조작 금지 |
+
+**회귀 위험(R1~R11) ↔ 감시 케이스 대응표**
+
+| 위험 | 감시 |
+|---|---|
+| **R1** 앱팀이 제3의 값 전송 | **V197-API-05**(`type_invalid` 로그 회수) · UNIT-04 |
+| **R2** 타인 커버 변경의 정당한 유스케이스 존재 | 시나리오 없음 — PLAN §5 R2 에서 **정적 전수 조사로 "존재하지 않음" 확정**(어드민 커버 변경 미구현). **RT-08 ③**(관리자 앱 `/upload/image` 요청 0건)이 역방향 감시 |
+| **R3** 레거시 `uploader_id` 부재 문서 403 | **RT-06** |
+| **R4** 🔴 Redis 장애 → 500 | **V197-UNIT-06**(즉시 중단 S6) |
+| **R5** `.strip().lower()` 관용 확대 | **V197-UNIT-05**(관용 2건 + 비허용 3건 양방향) |
+| **R6** 🔴 `return` 으로 화면에 갇힘·중복 업로드 유도 | **V197-E2E-03 ①⑤**(문구에 "곡은 업로드되었지만" + 버튼 재활성) |
+| **R7** 커버가 처음 들어가며 레이아웃 붕괴 | **V197-E2E-01 ⑥** · **V197-E2E-02** |
+| **R8** `/mv-status` 403 이 정상 폴링 파손 | **V197-API-07 b**(B 토큰 200) · UNIT-08 b |
+| **R9** `find_one` 추가로 Mongo 왕복 1회 증가 | 시나리오 없음 — **무시 등급**. 다만 API-01·03 응답 시간을 기록해 REPORT 에 남긴다(403 은 `put_object` 를 건너뛰어 **더 빨라야** 정상) |
+| **R10** 별칭 로그 볼륨 | **V197-E2E-01**(웹에서 `type_alias_deprecated` **0건** — 프론트 정정 후 웹 트래픽이 로그를 오염시키지 않음) · API-02(1요청 1줄) |
+| **R11** 캐시 키 누락(`v2` 계열) | **V197-API-06 4·5단계**. `v2` 는 현행 읽기 경로에 없으므로 **기록만**, FAIL 사유 아님 |
+
+**의도적 커버리지 공백**(PLAN §6 범위 밖 — 시나리오를 두지 않는다):
+`type=profile` → `/auth/me/profile-image` 통합 / 무인증 프록시 `cover-preview`·`mv-preview`(특히 **`mv-preview` 의 `..` 차단 부재 — 별도 보안 항목으로 승계 권고**) / 확장자 변경 시 고아 객체 / `StudioTab2.jsx:1616` cleanup catch / 커버 변경 이력·되돌리기 / 커버 변경 알림 / **9004·9005 미러 검증** / ES 색인·차트 캐시의 커버 필드.
+다만 **RT-05·RT-07** 이 "범위 밖 파일·심볼에 변경이 없음" 을 **역방향으로 감시**한다.
+
+---
+
+### 5. planner 승인 필요 항목
+
+| # | 항목 | 사유 | 승인 없이 진행 시 대안 |
+|---|---|---|---|
+| **A1** | **`cover_ok` 로그 포맷의 설계↔구현 델타 사후 승인** | PLAN §3-5 는 `[upload] image cover_ok track=%s obj=%s`, 구현은 **`matched=%d` 가 추가**되어 있다(`upload.py:203`). 내용상 유익한 추가(경합 시 no-op update 관측)이나 **설계 문서와 문자열이 다르다** | tester 는 **FAIL 이 아니라 `OBSERVED`** 로 기록하고 진행한다(V197-API-01). planner 가 ① 사후 승인하거나 ② PLAN §3-5 를 구현에 맞춰 정정한다. **어느 쪽이든 시나리오·건수는 영향 없음** |
+| **A2** | 🔴 **RT-04 부속 절차의 `type=profile` 실호출** (V197-API-02 부속) | **PG `users.profile_image` 쓰기 + MinIO `profiles/<A>.jpg` 생성/덮어쓰기**가 발생한다. 테스트 계정 A 한정이고 종료 시 원복하지만, **원복 실패 시 계정 A 의 프로필 이미지가 바뀐 채 남는다** | 미승인 시 **부속 절차 생략**. RT-04 는 UNIT-02 + API-02 ③ + 정적 grep **3중**으로 유지된다. 손실은 "레거시 profile 분기의 런타임 201 미확인" 1건뿐이며 REPORT 에 명시. **건수·비율 불변** |
+| **A3** | **V197-E2E-03 의 대안 절차 발동**(인터셉트 1 불가 시 `/api/tracks/upload` 실호출) | **유료 예비 1회를 소비**한다. 이 경우 E2E-01 재시도 여유가 사라진다 | 기본 설계는 **인터셉트로 0회** 소비이므로 통상 발동하지 않는다. 발동이 필요하면 **사전 보고 후** 진행하고, E2E-01 이 1회에 성공했음을 먼저 확인한다. **미승인 시 E2E-03 을 `PARTIAL`** 로 기록(①②③④는 인터셉트 2 만으로도 관측 가능, ⑤만 조건부) — 건수는 유지 |
+| **A4** | **`[unit]` 의 인프라 스텁 주입**(UNIT-06·07·08 의 `U.get_mongo`/`get_minio`/`get_redis` 교체) | 실 DB·MinIO 무영향이나, 스텁 코드가 실수로 **프로덕션 모듈 상태를 원복하지 않으면** 같은 프로세스의 후속 테스트가 오염된다 | 미승인 시 A3·A4·A6 가드의 **존재만 정적 확인**으로 대체(`SKIP(정적)`) — **R4·A3 put 미도달 커버리지가 크게 약해지므로 비권장**. 승인 시 조건: ① 별도 임시 파일에서만 수행, ② `try/finally` 로 원본 속성 **반드시 원복**, ③ 실행 후 파일 삭제 + `git status --short` untracked 0건 확인 |
+| **A5** | **RT-06 의 실 DB 집계 쿼리 1회**(`tracks.count_documents({"uploader_id": {"$exists": False}})`) | 실사용자 데이터 영역에 대한 **읽기**다(§0-6 은 "조회도 하지 않는다" 를 명시) | **건수만** 반환하는 집계이므로 문서 내용 노출이 없다 — 승인 없이 진행 가능하다고 판단하나, planner 가 불허하면 **RT-06 을 `TRK-NOOWNER` 픽스처 403 확인만으로 축소**하고 "실 DB 내 레거시 문서 존재 여부 미확인" 을 REPORT 에 명시 |
+
+**승인 없이도 진행 가능**: `[unit]` 8건 중 **5건**(UNIT-01~05) — A4 미승인 시 UNIT-06·07·08 은 정적 대체 / `[api]` **7건 전부**(A2 는 부속 절차만 영향) / `[e2e]` **5건 전부**(A3 미승인 시 E2E-03 만 `PARTIAL`).
+→ **A1~A5 가 전부 미승인이어도 20건 중 20건이 수행되며 삭제되는 케이스는 없다.** 비율(40/35/25)은 승인 결과와 **무관하게 유지**된다.
+
+---
+
+### 6. v197 시나리오 집계
+
+| 태그 | 건수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **8** | **40.0%** | 40% (하한) | ✅ 충족 |
+| `[api]` | **7** | **35.0%** | 35% | ✅ 충족 |
+| `[e2e]` | **5** | **25.0%** | ≤ 25% (상한) | ✅ 충족 |
+| **합계** | **20** | 100% | — | — |
+
+**결함·변경 항목별 배분**
+
+| 대상 | unit | api | e2e | 계 |
+|---|---|---|---|---|
+| ① `type` 불일치 — 서버 별칭 (A1·A2) | 5 (UNIT-01~05) | 2 (API-02·05) | 0 | **7** |
+| ①-b 프론트 정정 + 실패 노출 (F1) | 0 | 0 | 2 (E2E-01·03) | **2** |
+| ② 커버 소유권 (A3) | 1 (UNIT-07) | 2 (API-03·04) | 0 | **3** |
+| ②-b Redis 캐시 무효화 (A4) | 1 (UNIT-06) | 1 (API-06) | 0 | **2** |
+| ③ `/mv-status` 인가 (A6) | 1 (UNIT-08) | 1 (API-07) | 0 | **2** |
+| 회귀·렌더·경로 무영향 (A5 · RT 계열) | 0 | 1 (API-01, ① 완결 겸용) | 3 (E2E-02·04·05) | **4** |
+
+- **`[unit]` 을 8건(40%)으로 잡은 근거**: v197 변경의 **절반 이상이 순수 함수 1개(A1)와 3개의 조기 반환 가드(A3·A4·A6)** 에 있다. 이 넷은 전부 **DB·서버 없이 직접 호출로 분기를 전수 확인**할 수 있고, 특히 **"403·404 시 `put_object` 호출 0회"(UNIT-07)** 와 **"Redis 예외를 삼킨다"(UNIT-06)** 는 `[api]` 층에서 관측하기 번거롭거나(전자) 재현 자체가 어렵다(후자 — 실 Redis 를 죽여야 한다). 유닛에 배치하는 편이 **더 확실하고 더 싸다**.
+- **`[e2e]` 를 5건(상한)으로 묶은 근거**: 화면 발현이 반드시 필요한 것은 **F1 의 2건(성공 경로·실패 경로)** 과 **렌더 회귀 3건**뿐이다. 나머지를 e2e 로 올리면 `/api/tracks/upload` 예산(2회)을 초과한다. 그래서 **E2E-03 은 인터셉트로 유료 호출 0회**, **E2E-04 는 Mongo 직접 삽입 + E2E-01 산출 객체 재사용**, **E2E-02·05 는 추가 업로드 0회**로 설계했다.
+- **쓰기 총량**: Mongo `tracks` 픽스처 **4건**(`TRK-A`·`TRK-B`·`TRK-NOOWNER`·`TRK-AICOVER`) + E2E-01 실업로드 트랙 **1건**(+대안 절차 발동 시 E2E-03 트랙 1건) · Mongo `mv_jobs` **1건**(`MVJOB-B`) · MinIO `covers/<A>/` 객체 **1~2개** · (승인 시) PG `users.profile_image` **1행 갱신 + 원복** · MinIO `profiles/<A>.jpg` **1개(원복 대상)** · Redis 캐시 키 임시 생성·삭제.
+  **전부 `v197t` 마커 + §0-C 카운트 대조로 회수.**
+- **금지 항목 실적(기대치)**: 유료 외부 API **0건** · `POST /api/tracks/upload` **1회(상한 2)** · `GET /api/tracks/search` **0회** · 별 차감 **0** · 전체발송 **0** · 인덱스 조작 **0** · 컨테이너/포트/MinIO/Redis/ES 설정 조작 **0** · `backend_9004`·`backend_9005` 접근 **0**(읽기조차 불요) · 실사용자 트랙 **변조 0 · 열람 0**(RT-06 의 **집계 1회** 예외, 승인 항목 A5).
+- **즉시 중단 조건**: §0-D 의 **S1~S8**. 핵심 감시 케이스는 **V197-API-03**(S4 — 403 + MinIO 무흔적), **V197-API-07**(S5 — MV URL 유출), **V197-UNIT-06**(S6 — Redis 예외), 그리고 **전 항목 상시**(S2 유료 호출 / S3 실사용자 변조 / S1 가드 우회).
+- **가드 우회 금지의 재확인(S1)**: `[unit]` 스텁은 **`get_mongo`·`get_minio`·`get_redis` 세 개의 인프라 접근점에만** 허용된다. `_normalize_upload_image_type` 을 교체하거나, 소유권 `if` 를 `False` 로 만들거나, `try/except` 를 제거해 얻은 PASS 는 **PASS 가 아니라 FAIL** 이다.
+- **구현 착지 상태(작성 시점 재실측)**: **A1~A6·F1 7개 전부 착지.** 라인 참조는 착지 후 값이며, tester 는 **심볼명(함수·상수·로그 문자열)을 1차 앵커**로 삼고 라인은 보조로만 쓴다(A1~A6 삽입으로 `upload.py` 라인이 전부 밀렸다 — 이후 추가 이동에도 시나리오는 유효).
+- **착지분 사전 정적 대조 결과(설계 ↔ 구현 일치 — 테스트 실행 아님)**:
+
+  | 앵커 | 실측 | 대응 시나리오 |
+  |---|---|---|
+  | `upload.py:93` | `_normalize_upload_image_type` — `(raw or "").strip().lower()`, 허용 집합 → 별칭 → `None` 3단 | UNIT-01~05 |
+  | `upload.py:169~176` | `find_one({"uploader_id":1})` → 404 → 403 이 **`object_name=` / `put_object`(`:180~186`) 앞** | UNIT-07, **API-03**(S4) |
+  | `upload.py:196~202` | 캐시 삭제가 **`try/except Exception`** 으로 감싸짐, 키는 `cache:track:{id}` + `cache:track:v3:{id}`(= `update_track` 과 동일) | **UNIT-06**(S6), API-06 |
+  | `upload.py:212` | profile 분기는 **로그 1줄만** 추가, 이하 무변경 | E2E-05, RT-02 |
+  | `upload.py:917~919` | `mv_status` 403 이 `find_one`(`:908`) 직후 · 썸네일 조립(`:921`) 앞 | UNIT-08, **API-07**(S5) |
+  | `UploadPage.jsx:1566·1568~1574` | `type='cover'`, `try/catch` + `console.error` + `setError` + `return`. **`finally { setUploading(false) }`(`:1586~1588`) 무변경** | E2E-01, **E2E-03**(R6) |
+
+  ⚠️ 위는 **정적 대조일 뿐 PASS 판정이 아니다.** 동작 검증은 tester 가 §0-B 재기동 후 각 케이스를 실행해 판정한다.
+- **🔴 planner 확인 필요**: §5 의 **A1**(로그 포맷 델타 — 사후 승인 또는 PLAN 정정)과 **A2**(RT-04 실호출로 인한 PG·MinIO 쓰기) 2건이 실질 판단을 요한다. A3~A5 는 조건부이며 대안 절차가 준비되어 있다.
+
+## 개정 이력 (v197)
+
+- 2026-08-21 초판 작성 (20건) — PLAN v197 §2 실측·§3 수정 설계·§4 매트릭스 A1~A6·F1·§5 R1~R11 전 항목 시나리오화.
+  설계의 중심축은 **"상태코드만 보면 통과하지만 실제로는 반쪽인 수정"을 잡아내는 단언**에 두었다.
+  ② 소유권의 경우 403 만 확인하면 가드를 `put_object` **뒤**에 둔 구현도 통과하므로, **V197-API-03 ④(MinIO `covers/<A>/<TRK-B>.*` 객체 부재)** 와 **V197-UNIT-07(403·404 분기의 `put_object` 호출 0회)** 을 **2중 배치**하고 둘 다 즉시 중단 조건(S4)에 연결했다.
+  ①은 서버 별칭만으로는 "사용자가 실제로 커버를 본다" 까지 가지 못한다 — **V197-API-06** 이 캐시 적재→업로드→즉시 재조회 **5단계 순서**로 A4 를 감시해, 저장은 됐는데 최대 600초 안 보이는 재발(원증상과 구별되지 않는다)을 차단한다.
+  가장 값비싼 제약인 **`/api/tracks/upload` 2회 예산**은 **V197-E2E-03 에서 `POST /api/tracks/upload` 자체를 브라우저 인터셉트로 합성 200 처리**해 해결했다 — 덕분에 e2e 5건을 유지하면서도 유료 호출은 **1회(예비 1회 온전)** 에 머문다. E2E-04 도 `/upload/generate-cover` 대신 **Mongo 직접 삽입 + E2E-01 산출 객체 재사용**으로 유료 경로를 우회했다.
+  R4(Redis 신규 의존)는 실 Redis 를 죽이지 않고 **UNIT-06 의 예외 던지는 스텁**으로 재현하며, `get_redis()` 가 `None` 을 반환하는 실운영 초기 상태까지 부속 단언으로 덮었다.
+  **가드 우회 금지(S1)** 를 명문화해, 스텁 허용 범위를 `get_mongo`·`get_minio`·`get_redis` **3개 인프라 접근점**으로 못박고 "가드를 꺼서 얻은 PASS 는 FAIL" 을 판정 규칙으로 세웠다.
+  미러링 검증 **0건**(백엔드는 `backend_9006` 하나뿐), 실사용자 트랙 **변조·열람 0**(RT-06 집계 1회만, 승인 항목 A5).
+  태그 균형은 순수 함수·가드 분기를 unit 으로, 화면 발현만 e2e 로 배치해 **40.0 / 35.0 / 25.0** 정확히 확보. planner 승인 대기 5건(§5) — **전부 대안 절차가 있어 20건·비율이 깨지지 않는다.** planner 검토 후 확정 예정.

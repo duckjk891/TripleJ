@@ -28242,3 +28242,353 @@ frontend-dev 지시서를 발행하지 않는다. 파일 전수 확인 결과:
 6. 인프라 무조작.
 7. 작업 트리는 **메인 체크아웃**(`/mnt/d/1_projects/0_myProjects/1_tripleJ`, branch `backend`) — 워크트리 편집 금지(§0-1).
 8. 서버 재기동: `cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006 && setsid ./run.sh > /dev/null 2>&1 &` (`--reload` 없음 — 코드 변경 시 **수동 재기동 필수**).
+
+---
+
+## v197 — 2026-08-21 — 커버 이미지 저장 실패 + 소유권 미검사 수정 [MAIDOL-CoverFixSquad]
+
+### 0. 채번 확인
+
+착수 전 `git log --oneline -5` (앱팀 동일 브랜치 직접 커밋 대비):
+
+```
+b1f05cd fix: v196 비공개 곡 유출 차단 외 결함 5건 — 재생목록·좋아요·다운로드·MV·가사 가드 (9006 단독, 미러링 없음) (team-dev)
+45c7783 feat: 9006 단일 백엔드 전환 — 프론트 4000·4001 연결 이전 + 전환 검증에서 나온 결함 3건 수정
+857f672 chore: backend_9006 신설 — 9004(앱팀)·9005(웹) 병합 작업용 예비 백엔드
+ad23e04 feat: v195 미읽음 뱃지 실시간 반영 + 공지 읽음 수 자동 갱신 (9004 미러) (team-dev)
+e356a70 feat: v194 공지 관리 페이지(B안) …
+```
+
+- `PLAN.md`/`TESTPLAN.md`/`REPORT.md` 전문 `grep "v197"` → **0건**. 커밋 로그에도 v197 없음 → **v197 선점 없음**.
+- 브랜치: `backend` (메인 체크아웃 `HEAD=b1f05cd`).
+
+#### 0-1. ⚠️ 작업 트리 (v196 §0-1 계속 유효)
+
+세션 워크트리 `0_platform_music/.claude/worktrees/e2e-test-search-cs-admin-1db925` 는 **구 커밋 `c4d160e`** 이고
+**`backend_9006` 이 존재하지 않는다**(실측 확인). **모든 수정은 메인 체크아웃**
+`/mnt/d/1_projects/0_myProjects/1_tripleJ` 에서 한다.
+
+#### 0-2. 🚫 미러링 폐기 (v196 §0-2 승계)
+
+백엔드는 **`backend_9006` 하나뿐**. `backend_9004`·`backend_9005` 는 **읽기 전용 참고 폴더** — 쓰기·sync·`diff -q` 파리티 항목 **없음**.
+
+---
+
+### 1. 사용자 원본 요청 (원문 보존)
+
+> 이번 버전은 **v197 — 커버 이미지 저장 실패 + 소유권 미검사 수정** 입니다.
+> ① 직접 첨부한 커버 이미지가 저장되지 않음(프론트 `type=track` ↔ 서버 `cover|profile` 불일치 → 400, 프론트가 조용히 삼킴)
+> ② 커버 변경에 소유권 검사가 없어 남의 곡 커버를 교체할 수 있음
+
+---
+
+### 2. Plan verification findings (0단계 — 파일 직접 확인, 추정 없음)
+
+**전 항목 파일 직접 열람 + 무인증 라우트 응답 실측으로 확정.** 지시받은 2건 전부 **실재 확인**, 추가로 **동급 소유권 결함 1건(`/upload/mv-status`)** 과 **부수 결함 1건(커버 변경 시 Redis 캐시 미무효화)** 을 신규 발견.
+
+#### 2-1. ① 커버 이미지 저장 실패 — 확인 (원인은 단일 값 불일치)
+
+| 위치 | 실측 |
+|---|---|
+| `frontend/src/pages/UploadPage.jsx:1563~1568` | `if (imageFile && !aiCoverObjectName && track?.id)` → `imgFormData.append('type', 'track')` (`:1566`) / `append('id', track.id)` (`:1567`) / `await api.uploadImage(imgFormData).catch(() => {})` (`:1568`) |
+| `frontend/src/api/index.js:299~302` | `uploadImage(formData)` → `POST /upload/image`, `multipart/form-data`. **웹 프론트 전체에서 이 함수를 부르는 곳은 `UploadPage.jsx:1568` 단 1곳** |
+| `backend_9006/app/routes/upload.py:113~121` | `@router.post("/image", status_code=201)`, `type: str = Form(...)`, `if type not in ("cover", "profile"): → 400 {"error": "type은 'cover' 또는 'profile'이어야 합니다."}` |
+
+- **`type` 값 전수 조사**(`grep -rn "upload/image\|uploadImage" frontend/src frontend_admin/src`, `grep -rn "append('type'" …`):
+  - `frontend/src` → **1곳**(`UploadPage.jsx:1566`, 값 `'track'`)
+  - `frontend_admin/src` → **0건**. 관리자 앱은 이 엔드포인트를 전혀 쓰지 않는다.
+  - 즉 **웹 프론트 어디에서도 `'cover'` 를 보내는 곳이 없다.** `type=cover` 분기는 현재 웹 기준 **도달 불가 코드**이고, `type=profile` 분기도 아래 2-4 처럼 **웹 기준 사문화**되어 있다.
+- 라우트 실측(무인증): `POST /api/upload/image -F type=track` → **`401 {"detail":"인증 토큰이 필요합니다."}`** — `Depends(get_current_user)` 가 `type` 검증보다 먼저 돈다(인증 후에 400 이 나온다는 오케스트레이터 실측과 정합).
+- **삼킴 확인**: `.catch(() => {})` 로 400 이 버려지고, 바로 다음 줄 `setSuccess('업로드가 완료되었습니다!')` → `setTimeout(() => navigate('/'), 1500)` 이 무조건 실행된다. **사용자에게도, 콘솔에도 실패 흔적이 남지 않는다.**
+- **AI 커버 경로는 무관·정상**: `aiCoverObjectName` 은 `formData.append('cover_object_name', …)`(`UploadPage.jsx:1552`) 또는 `uploadFromGeneration` 바디(`:1526`)로 가고, 서버는 `tracks.py:1656` `"cover_image_url": body.cover_object_name` 으로 **트랙 생성 시점에 직접 박는다**. `/upload/image` 를 타지 않는다. 게다가 프론트 가드가 `!aiCoverObjectName` 이므로 **AI 커버와 직접 첨부는 상호 배타**다. → **영향 범위는 "직접 파일을 고른 사용자" 로 한정**되며, 그 경우 표지가 100% 누락된다.
+
+#### 2-2. ② 커버 변경 소유권 미검사 — 확인
+
+`backend_9006/app/routes/upload.py` `upload_image` `type == "cover"` 분기:
+
+```
+:138   if not ObjectId.is_valid(id): → 400 "유효하지 않은 트랙 ID입니다."
+:143   object_name = f"covers/{current_user['id']}/{id}{ext}"
+:144   minio_client.put_object(...)            ← 소유권 검사 전에 객체가 이미 생성됨
+:154~157 await mongo.tracks.update_one({"_id": ObjectId(id)}, {"$set": {"cover_image_url": object_name}})
+```
+
+- `upload.py` 922줄 전문에서 `uploader_id` 참조 **0건**(`grep -n "uploader_id"` → no match). `mongo.tracks` 쓰기는 **`:154` 단 1곳**이며 소유자 비교 **0건**.
+- **대조군(정답 구현)**: `tracks.py:700 delete_track` / `:723 update_track` 이 동일 패턴을 이미 갖고 있다 —
+  `400`(`ObjectId.is_valid`) → `find_one` → **`404 "트랙을 찾을 수 없습니다."`**(`:713`,`:736`) → **`403 "자신의 트랙만 삭제/수정할 수 있습니다."`**(`:715`,`:738`).
+- 🚫 실사용자 곡 변조 금지 지시에 따라 **동적 증명은 하지 않았다.** 위 정적 근거(쓰기 1곳 / 소유자 비교 0건 / 대조군 존재)로 확정.
+- **경로가 요청자 id 기준(`covers/{current_user['id']}/{id}{ext}`)이라는 점의 함의** — 단순한 미관 문제가 아니다:
+  1. 피해 트랙의 `cover_image_url` 이 **공격자 폴더 아래 키**로 바뀐다 → MinIO 경로만 봐서는 "이 곡은 이 사람 것" 이라는 추정이 깨지고, **경로 기반 감사·소유권 추론이 오염**된다.
+  2. 피해자의 **원본 커버 객체(`covers/{victim}/{id}.ext`)는 어디서도 지워지지 않고 고아로 남는다.** `purge_track_document`(`tracks.py:613~621`)는 **현재 `cover_image_url` 하나만** `remove_object` 하므로, 피해자가 곡을 삭제해도 지워지는 것은 **공격자 폴더의 객체**이고 피해자 원본은 영구 잔존한다.
+  3. 복구 수단이 없다 — 서버는 이전 `cover_image_url` 을 보존하지 않는다(`$set` 단일 필드 덮어쓰기, 이력 없음). 피해자는 **직접 재업로드** 외에 방법이 없고, **알림도 가지 않는다**.
+  4. 확장자가 다르면 같은 소유자여도 키가 달라져(`{id}.jpg` → `{id}.png`) 이전 객체가 고아로 남는다. **이건 v197 이전부터 있던 스토리지 누수**로, 범위 밖(§6-3)에 기록한다.
+
+#### 2-3. 🆕 [신규 발견] `/upload/mv-status` 도 동일 계열 — 남의 MV 작업물 열람 가능
+
+`backend_9006/app/routes/upload.py:848~858`
+
+```
+@router.get("/mv-status/{job_id}")
+async def mv_status(job_id: str, current_user=Depends(get_current_user)):
+    ...
+    job = await mongo.mv_jobs.find_one({"_id": ObjectId(job_id)})   # ← user_id 대조 없음
+    if not job: → 404
+    ... return { scene_thumbnails: [브라우저 이미지 URL], result_video_url: presign, object_name: ... }
+```
+
+- `generate_mv`(`:813`)는 job 문서에 `"user_id": current_user["id"]` 를 **분명히 저장한다**. 즉 소유자 정보는 있는데 **읽을 때 대조를 안 한다**.
+- **대조군(정답 구현)**: 같은 `mv_jobs` 컬렉션을 쓰는 `backend_9006/app/routes/mv.py:202~208` 에 이미
+  `_get_job_with_ownership(...)` → `404 "작업을 찾을 수 없습니다."` / `403 "이 작업에 접근할 권한이 없습니다."` 헬퍼가 존재하고, `mv.py:2671`·`:2926` 등에서도 `if str(job.get("user_id","")) != str(current_user["id"]):` 로 막고 있다.
+  **`upload.py` 의 `/mv-status` 만 빠져 있다.**
+- **악용 시**: 로그인한 아무 사용자나 job id 를 대입해 **타인의 미공개 MV 진행 상황 + 씬 썸네일 URL + 최종 영상 presigned URL** 을 얻는다. 유료 생성물의 **사전 유출**이다.
+- 무인증 실측: `GET /api/upload/mv-status/000000000000000000000000` → `401` (인증은 걸려 있음. 결함은 "인증은 되나 인가가 없음").
+- **v196 선례**(재생목록 1건인 줄 알았다가 5경로로 확대)에 따라 **v197 범위에 포함**한다. 변경량 4줄, `mv.py` 의 기존 문구를 그대로 재사용하므로 신규 관행이 생기지 않는다.
+
+#### 2-4. 🆕 [신규 발견] `type=profile` 분기는 안전하지만 **레거시 중복 경로**
+
+`upload.py:164~182` — `object_name = f"profiles/{current_user['id']}{ext}"`, PG `UPDATE users SET profile_image = $1 WHERE id = $2` 에 `user_uuid = UUID(current_user["id"])`.
+→ **경로·대상 모두 요청자 본인 id 로만 만들어진다. 타인 조작 불가 — 소유권 결함 없음(확인 완료).**
+
+그러나 **웹 프론트는 이 분기를 쓰지 않는다.** 프로필 이미지는 `frontend/src/api/index.js:140~146` `uploadProfileImage` → **`POST /auth/me/profile-image`** 로 가고, 그 라우트(`auth.py:865~912`)는 `/upload/image` 에 **없는 처리 3가지**를 한다:
+
+| 처리 | `auth.py /me/profile-image` | `upload.py /image (type=profile)` |
+|---|---|---|
+| 512×512 자동 크롭 | ✅ `_process_profile_image`(`:825`) | ❌ 원본 그대로 |
+| 이전 이미지 정리 | ✅ `old_image` 조회 후 삭제(`:892`) | ❌ 확장자 다르면 고아 |
+| Redis 세션 `profile_image` 갱신 | ✅ `_update_session_profile_image`(`:854`,`:909`) | ❌ 세션 stale |
+
+→ 앱팀이 아직 `/upload/image?type=profile` 을 쓰고 있다면 **크롭 없는 프로필 + stale 세션**을 겪는다. **v197 에서 동작은 바꾸지 않고**(앱팀 의존 가능성) **레거시 사용 계측 로그만 심는다**(§3-4). 통합 여부는 로그로 사용량을 확인한 뒤 별도 버전에서 판단.
+
+#### 2-5. 🆕 [신규 발견] 커버 변경 후 Redis 트랙 캐시가 무효화되지 않는다 — **①의 완결에 필요**
+
+- `GET /api/tracks/{id}` 는 `tracks.py:1183` 에서 `cache:track:v3:{track_id}` 를 읽고 `:1298` 에서 **`setex(..., 600, ...)`** 로 10분 캐싱한다.
+- 트랙을 수정하는 다른 경로는 전부 캐시를 지운다 — `update_track`(`tracks.py:758~761`), `purge_track_document`(`:645~647`), `admin.py:505,:559,:861`.
+- **`upload.py:154~157` 커버 변경만 캐시를 지우지 않는다.** → ①을 고쳐 커버가 실제로 저장돼도, 그 트랙 상세가 이미 캐시돼 있으면 **최대 600초 동안 예전 커버(또는 커버 없음)가 계속 보인다.**
+- 신규 업로드 직후 흐름에서는 캐시가 없어 대부분 즉시 보이지만, **기존 곡의 커버 교체**나 **업로드 직후 누군가 상세를 먼저 조회한 경우**에는 재현된다. ① 을 "사용자가 실제로 커버를 본다" 까지 완결시키려면 필요하다 → **v197 범위 포함**(3줄).
+
+#### 2-6. `.catch(() => {})` 전수 조사 — 유해한 곳은 1곳뿐
+
+`grep -rn "catch(() => {})" frontend/src frontend_admin/src` → 13곳. 분류:
+
+| 성격 | 위치 | 판정 |
+|---|---|---|
+| 광고 계측 fire-and-forget | `ItemSelectModal.jsx:127,:354` · `ItemSelectPage.jsx:45,:247` · `MyMusicPage.jsx:772` | **정상** — 실패해도 사용자 행위 결과가 아님 |
+| 선택적 데이터 선로드(실패 시 UI 가 빈 상태로 정상 동작) | `UploadPage.jsx:293`(`getMyCharacter`) · `MyMusicPage.jsx:218`(`getMyCharacter`) · `StudioTab2.jsx:1107` · `PlayerContext.jsx:45` · `useFeedAudio.js:56` | **정상** — 삼켜도 되는 부가 조회 |
+| 브라우저 API | `metronome.js:65`(`ctx.resume()`) | **정상** |
+| 정리(cleanup) | `StudioTab2.jsx:1616`(`deleteGeneration(draftId)`) | 허용 — 다만 실패 시 draft 잔존. 범위 밖(§6-4) |
+| 🔴 **사용자 행위 결과를 버림** | **`UploadPage.jsx:1568`(`uploadImage`)** | **유일한 유해 사례 — v197 대상** |
+
+→ "`.catch(() => {})` 를 전부 없애라" 가 아니라 **"사용자 행위의 성공/실패를 결정하는 호출만 삼키지 말라"** 가 결론. v197 은 `:1568` 1곳만 고친다.
+
+#### 2-7. `upload.py` 전 엔드포인트 소유권 감사 (전수)
+
+| 라인 | 엔드포인트 | 인가 | 판정 |
+|---|---|---|---|
+| `:113` | `POST /image` (`type=cover`) | **없음** | 🔴 **v197 대상 ②** |
+| `:113` | `POST /image` (`type=profile`) | 요청자 id 로만 경로 구성 | ✅ 안전 (§2-4 레거시 이슈만) |
+| `:185` | `GET /presigned-url` | 인증만. `faces/`·`evidence/` 접두 차단(v135/v138) | 범위 밖 — v173 의 의도된 설계 |
+| `:209` | `POST /generate-cover` | 트랙을 건드리지 않음(`cover_sessions` 신규 생성) + 스트라이크 게이트 + 포인트 선차감 | ✅ 해당 없음 |
+| `:417` | `GET /cover-preview/{obj}` | **무인증**(의도적, v173 비로그인 홈 커버) + `faces/`·`evidence/`·`..` 차단 | 범위 밖(§6-2) |
+| `:493` | `POST /refine-cover` | ✅ `_load_cover_session`(`:481`) 이 `doc.get("user_id") != user_id → None → 404` | ✅ 정상 |
+| `:667` | `POST /revert-cover` | ✅ 동일 헬퍼(`:680`) | ✅ 정상 |
+| `:728` | `GET /cover-history/{sid}` | ✅ 동일 헬퍼(`:735`) | ✅ 정상 |
+| `:759` | `POST /generate-mv` | 트랙 미참조. job 생성 시 `user_id` 기록 | ✅ 해당 없음 |
+| `:848` | `GET /mv-status/{job_id}` | **없음** | 🔴 **v197 대상 ③(신규)** |
+| `:893` | `GET /mv-preview/{obj}` | **무인증** 프록시. `faces/`·`evidence/` 차단은 있으나 **`cover-preview` 에 있는 `..` 차단이 없다** | 범위 밖(§6-2) — 비대칭만 기록 |
+
+→ **소유권 결함은 `/image(cover)` 와 `/mv-status` 두 곳으로 확정.** `refine`/`revert`/`history` 는 이미 올바르다(오케스트레이터 우려 해소).
+
+---
+
+### 3. 수정 설계 (선택한 옵션과 근거)
+
+#### 3-1. ① `type` 불일치 — **옵션 ③ 둘 다(서버 하위호환 별칭 + 프론트 정정)** 채택
+
+**선택**: 서버는 `track` 을 **`cover` 의 폐기예정(deprecated) 별칭**으로 정규화해 수용하고, 프론트는 `'cover'` 로 고친다.
+
+**근거 (다른 두 옵션을 버린 이유)**:
+
+| 옵션 | 버린 이유 |
+|---|---|
+| ① 프론트만 `'cover'` 로 수정 | **앱팀 클라이언트가 무엇을 보내는지 확인 불가**(앱팀 코드가 이 PC 에 없음). 앱팀도 `track` 을 보내고 있다면 앱은 계속 고장난 채 남고, 우리는 "고쳤다" 고 오판한다. 앱은 배포 주기가 길어 서버 한 번에 따라오지 못한다 |
+| ② 서버만 `track` 수용 | 웹 프론트에 **틀린 값이 영구 고착**된다. 별칭이 정식 이름이 되어 다음 사람이 또 헷갈린다. 또 "누가 아직 옛 값을 쓰는가" 를 영원히 알 수 없다 |
+| **③ 둘 다** ✅ | 앱팀을 깨뜨리지 않으면서(수용) 웹의 정본을 바로잡고(정정), **별칭 사용을 로그로 계측**해 "프론트를 고친 뒤에도 남는 `track` = 앱팀 클라이언트" 라는 **관측 가능한 신호**를 만든다. 별칭 제거 시점을 추측이 아니라 데이터로 정한다 |
+
+**구현 방향** — 파일의 기존 관행(`_normalize_image_model` `:31`, `_normalize_vocal_gender` `:68` — v55/v57 선례)을 그대로 따라 **순수 함수로 분리**한다. 라우트에 인라인 `if` 를 늘리지 않고, `[unit]` 로 서버 없이 검증 가능해진다.
+
+```
+ALLOWED_UPLOAD_IMAGE_TYPES = {"cover", "profile"}
+DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES = {"track": "cover"}   # v197 — 구 클라이언트 하위호환
+
+def _normalize_upload_image_type(raw) -> tuple[str | None, bool]:
+    """(정규화된 type, 별칭_사용_여부). 알 수 없는 값 → (None, False) → 라우트에서 400."""
+    v = (raw or "").strip().lower()
+    if v in ALLOWED_UPLOAD_IMAGE_TYPES:
+        return v, False
+    if v in DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES:
+        return DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES[v], True
+    return None, False
+```
+
+- 라우트 `:121` 의 `if type not in ("cover","profile")` 을 이 함수 호출로 교체. **400 응답 본문·상태코드는 그대로 유지**(`"type은 'cover' 또는 'profile'이어야 합니다."`) — 알 수 없는 값에 대한 계약을 바꾸지 않는다.
+- ⚠️ `.strip().lower()` 는 **추가 관용**이다. 기존에는 `" cover"`·`"Cover"` 가 400 이었다. 이 완화가 회귀 위험 R9(§5)로 등재된다. 판단: 대소문자·공백 차이로 커버가 조용히 사라지는 것보다 수용이 낫고, 허용 집합은 여전히 닫혀 있다.
+
+#### 3-2. ①-b 프론트 — 값 정정 + **실패를 사용자에게 알림**
+
+`frontend/src/pages/UploadPage.jsx:1563~1570`
+
+- `:1566` `'track'` → **`'cover'`**.
+- `:1568` `.catch(() => {})` **제거**. 곡 업로드 자체는 이미 성공한 상태이므로 전체를 실패로 뒤집지 않고, **부분 실패를 정직하게 알린다**:
+
+```
+if (imageFile && !aiCoverObjectName && track?.id) {
+  const imgFormData = new FormData();
+  imgFormData.append('file', imageFile);
+  imgFormData.append('type', 'cover');          // v197: 서버 계약값
+  imgFormData.append('id', track.id);
+  try {
+    await api.uploadImage(imgFormData);
+  } catch (e) {
+    console.error('[UploadPage] cover image upload failed', { trackId: track.id, e });
+    setError('곡은 업로드되었지만 커버 이미지 저장에 실패했습니다. 내 음악에서 커버를 다시 등록해 주세요.');
+    return;                                      // 거짓 성공 메시지·자동 이동 차단
+  }
+}
+setSuccess('업로드가 완료되었습니다!');
+```
+
+**근거**: 현재 UX 의 진짜 해악은 400 자체가 아니라 **"완료되었습니다" 라는 거짓 보고**다. 실패를 알리면 사용자는 재시도할 수 있고, 우리는 사용자 제보로 결함을 인지할 수 있었다. `return` 으로 `setSuccess` + `navigate('/')` 를 건너뛰어 **사용자를 결과 화면에 붙잡아 둔다**(곡은 이미 올라갔으므로 재업로드 유도가 아니라 커버 재등록 유도 문구를 쓴다).
+**단, 곡 업로드는 성공했다는 사실이 문구에 반드시 남아야 한다** — 그래야 사용자가 곡을 중복 업로드하지 않는다.
+
+#### 3-3. ② 커버 소유권 검사 — `tracks.py update_track` 패턴 **그대로** 이식
+
+`upload.py` `type == "cover"` 분기, **`minio_client.put_object` 앞**:
+
+```
+mongo = get_mongo()
+doc = await mongo.tracks.find_one({"_id": ObjectId(id)}, {"uploader_id": 1})
+if not doc:
+    logger.info("[upload] image cover_not_found track=%s", id[:8])
+    return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+if doc.get("uploader_id") != current_user["id"]:
+    logger.info("[upload] image cover_denied track=%s user=%s", id[:8], current_user["id"][:8])
+    return JSONResponse(status_code=403, content={"error": "자신의 트랙만 수정할 수 있습니다."})
+# ── 여기서부터 put_object ──
+```
+
+**설계 판단 4건에 대한 답**:
+
+| 질문 | 결정 | 근거 |
+|---|---|---|
+| ① 403 문구 | **`"자신의 트랙만 수정할 수 있습니다."`** | `tracks.py:738 update_track` 과 **자구 동일**. 커버 변경은 "삭제"(`:715`)가 아니라 트랙 **수정**이다. 신규 문구를 만들지 않는다 |
+| ② 존재하지 않는 곡 id → **404 vs 403** | **404 `"트랙을 찾을 수 없습니다."`** | 이 코드베이스의 **트랙 계열은 일관되게 "존재 은닉 안 함"** 이다: `tracks.py:713`·`:736`, `mv.py:205` 전부 404→403 2단계. 게다가 **트랙 id 는 차트·목록·URL 로 이미 공개**되어 존재 은닉이 실익이 없다. 반대로 `_load_cover_session`(`upload.py:481~491`)은 404 로 통일하는데, 그건 `cover_session_id` 가 **어디에도 노출되지 않는 사적 식별자**라 위협 모델이 다르다. **노출된 식별자 → 404/403 2단계, 비노출 식별자 → 404 단일** 이라는 기존 구분을 그대로 따른다 |
+| ③ 검사 위치 | **`put_object` 이전** | 현재는 인가 실패해도 MinIO 에 **객체가 먼저 생성**된다. 앞에 두면 (a) 무단 스토리지 소비 0, (b) 남의 곡 id 로 객체를 심어두는 **저장소 오염 자체가 불가능**, (c) 10MB 업로드 대역이 낭비되지 않는다. `generate_cover` 가 포인트 선차감 **전에** 스트라이크 게이트를 두는 것(`:249~253`)과 같은 "비싼 부수효과 앞에 게이트" 관행 |
+| ④ `profile` 분기 안전성 | **안전 확인 완료 — 변경 없음** | `:165` `f"profiles/{current_user['id']}{ext}"`, `:174` `UUID(current_user["id"])`. **입력 `id` 를 아예 쓰지 않는다.** 타인 조작 경로 없음. (별개의 레거시 이슈는 §2-4 / §3-4) |
+
+**중복 조회 안 함**: `find_one` 을 한 번만 하고 그 결과로 인가를 끝낸 뒤, 아래 `update_one` 은 그대로 둔다(경합 시 최악은 방금 삭제된 곡에 대한 no-op update — `matched_count` 로그로 관측).
+
+#### 3-3b. ②-b 커버 변경 후 Redis 캐시 무효화 (§2-5)
+
+`update_one` 직후, `tracks.py:758~761` 과 동일하게:
+
+```
+try:
+    redis = get_redis()
+    await redis.delete(f"cache:track:{id}")
+    await redis.delete(f"cache:track:v3:{id}")
+except Exception:
+    logger.warning("[upload] image cover cache_invalidate_failed track=%s", id[:8])
+```
+
+⚠️ **반드시 `try/except` 로 감싼다.** 이 라우트에는 지금까지 Redis 의존이 **없었다**. 감싸지 않으면 Redis 장애가 **기존에 성공하던 커버 업로드를 500 으로 바꾼다**(회귀 위험 R6). 커버는 이미 MinIO·Mongo 에 반영된 뒤이므로 캐시 삭제 실패는 **최대 600초 지연**일 뿐 데이터 손실이 아니다 → 삼키되 **로그는 남긴다**. `purge_track_document` 의 차트 캐시 무효화(`tracks.py:653~658`)가 같은 방식이다.
+`playcount:buffer` 는 커버와 무관하므로 **지우지 않는다**(삭제하면 재생수 유실).
+
+#### 3-4. ③ `/mv-status` 소유권 검사 (신규 범위)
+
+`upload.py:858` `find_one` 직후:
+
+```
+if job.get("user_id") != current_user["id"]:
+    logger.info("[upload] mv_status denied job=%s user=%s", job_id[:8], current_user["id"][:8])
+    return JSONResponse(status_code=403, content={"error": "이 작업에 접근할 권한이 없습니다."})
+```
+
+- 문구·상태코드 모두 **`mv.py:207` `_get_job_with_ownership` 과 동일**. 400(`:851`)·404(`:861`)는 이미 있으므로 403 한 단계만 추가한다.
+- `mv.py` 헬퍼를 import 하지 않는 이유: 그 헬퍼는 `HTTPException` 을 raise 하는데 `upload.py` 는 전부 `JSONResponse` 반환 관행이다. **응답 형태를 섞지 않는다**(`{"detail":...}` vs `{"error":...}`).
+
+#### 3-5. 레거시 계측 로그 (동작 무변경 — 관측만)
+
+| 로그 | 위치 | 목적 |
+|---|---|---|
+| `[upload] image type_alias_deprecated raw=track→cover user=%s` (INFO) | 별칭 정규화 시 | **프론트 정정 배포 후에도 남는 건수 = 앱팀 클라이언트 사용량.** 별칭 제거 시점 결정 근거 |
+| `[upload] image profile_legacy_route user=%s` (INFO) | `type=profile` 분기 진입 시 | §2-4 — `/auth/me/profile-image` 로 통합할지 판단할 사용량 근거 |
+| `[upload] image cover_ok track=%s obj=%s` (INFO) | 커버 저장 성공 시 | ① 수정이 실제로 동작하는지 운영에서 확인 |
+
+**개인정보 위생**: user id·track id 는 기존 관행대로 **`[:8]` 절단**(`tracks.py:744`, `playlists.py:253` 등). 파일명·이미지 바이트·이메일은 로그에 넣지 않는다.
+
+---
+
+### 4. 변경 매트릭스
+
+| # | 파일 | 심볼 (1차 앵커) | 변경 | 로그·추적자 |
+|---|---|---|---|---|
+| A1 | `backend_9006/app/routes/upload.py` | 모듈 상수 + `_normalize_upload_image_type` (신규, `_normalize_vocal_gender` 아래) | `ALLOWED_UPLOAD_IMAGE_TYPES`, `DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES`, 순수 함수 신설 | — (순수 함수, `[unit]` 대상) |
+| A2 | `backend_9006/app/routes/upload.py` | `upload_image` 진입부(현 `:121`) | 인라인 `if type not in (...)` → `_normalize_upload_image_type` 호출. **400 본문·코드 불변** | `[upload] image type_alias_deprecated raw=%s→%s user=%s` |
+| A3 | `backend_9006/app/routes/upload.py` | `upload_image` `type=="cover"` 분기, **`put_object` 이전** | 404/403 소유권 가드 신설 | `[upload] image cover_not_found track=%s` / `[upload] image cover_denied track=%s user=%s` |
+| A4 | `backend_9006/app/routes/upload.py` | `upload_image` cover 분기, `update_one` 직후 | `cache:track:{id}` + `cache:track:v3:{id}` 삭제, **`try/except` 필수** | `[upload] image cover_ok track=%s obj=%s` / `[upload] image cover cache_invalidate_failed track=%s` |
+| A5 | `backend_9006/app/routes/upload.py` | `upload_image` `else`(profile) 분기 진입 | 로그만 추가. **동작 무변경** | `[upload] image profile_legacy_route user=%s` |
+| A6 | `backend_9006/app/routes/upload.py` | `mv_status` (현 `:848`), `find_one` 직후 | 403 소유권 가드 신설 | `[upload] mv_status denied job=%s user=%s` |
+| F1 | `frontend/src/pages/UploadPage.jsx` | 업로드 핸들러 커버 블록(현 `:1563~1568`) | `'track'`→`'cover'`; `.catch(()=>{})` → `try/catch` + `setError` + `return` | `console.error('[UploadPage] cover image upload failed', …)` |
+| — | `frontend/src/api/index.js:299` `uploadImage` | — | **무변경** (formData 그대로 전달) | — |
+| — | `frontend_admin/**` | — | **무변경** — `/upload/image` 호출 0건(실측) | — |
+| — | `backend_9004`·`backend_9005` | — | **무변경** (미러링 폐기) | — |
+
+**프론트 변경이 필요한 이유(요구사항 3의 판단)**: 필요하다. 서버 별칭만으로 400 은 사라지지만 (a) 웹 프론트에 서버 계약에 없는 값이 영구 고착되고, (b) **별칭 사용량 계측이 오염**되어(웹+앱이 섞여 로그에 잡힘) 별칭을 언제 제거해도 되는지 영원히 판단할 수 없다. 또 (c) `.catch(()=>{})` 는 서버 수정으로 해결되지 않는 **독립 결함**이다 — 이번 400 이 6개 버전 넘게 발견되지 않은 직접 원인이 이것이므로, 재발 방지 차원에서 반드시 고친다.
+
+**변경하지 않는 것**: 400 응답 본문/코드, `type=profile` 의 동작, `/upload/image` 의 201 상태코드, 응답 스키마(`{file_url, object_name}`), `cover_object_name`(AI 커버) 경로, `refine`/`revert`/`history`.
+
+---
+
+### 5. 회귀 위험
+
+| # | 위험 | 심각도 | 대응·판정 근거 |
+|---|---|---|---|
+| **R1** | 🔴 **앱팀 클라이언트가 `track`·`cover` 가 아닌 제3의 값을 보낸다** | 높음 | **이 PC 에 앱팀 코드가 없어 검증 불가 — "확인 불가" 로 기록한다.** 별칭은 `track` 만 커버한다. 완화: 400 반환 시에도 `[upload] image type_invalid raw=%s` 를 남겨 **실제로 어떤 값이 오는지 운영 로그에서 회수**할 수 있게 한다(A2 에 포함). 배포 후 이 로그를 확인해 필요하면 별칭을 추가한다 |
+| **R2** | 🔴 앱팀이 **남의 곡 커버를 바꾸는 정당한 기능**(예: 관리자 대행)에 이 라우트를 쓰고 있었다면 403 으로 깨진다 | 중간 | `cover_image_url` 쓰기 지점 전수 조사(`grep -rn cover_image_url backend_9006/app`) 결과 **쓰기는 `upload.py:156` 과 `tracks.py:1656`(본인 트랙 생성) 둘뿐**. 어드민 커버 변경 기능은 **구현되어 있지 않다**(`admin*.py` 에 쓰기 0건). → 정당한 타인-커버-변경 유스케이스는 **존재하지 않음**. 위험 낮음 |
+| **R3** | `uploader_id` 가 없는 **레거시 트랙 문서**의 소유자가 커버를 못 바꾼다(403) | 낮음 | `delete_track`·`update_track` 이 **이미 같은 조건으로 동작 중** — v197 이 새로 만드는 breakage 가 아니라 기존 정책과의 정합이다. 다만 그런 문서가 실재하는지 `[api]` 픽스처로 1건 확인(§TESTPLAN 회귀 항목) |
+| **R4** | 🔴 **Redis 장애 시 커버 업로드가 500 으로 바뀜**(신규 의존) | 중간 | A4 를 **`try/except` 로 감싸는 것이 필수 요건**. 감싸지 않은 구현은 리뷰에서 반려. `[unit]` 로 "redis.delete 가 예외를 던져도 200 + `object_name` 반환" 을 단언 |
+| **R5** | `.strip().lower()` 관용 확대로 이전에 400 이던 `" Cover"` 가 이제 통과 | 낮음 | 허용 집합은 여전히 닫힘. 400 계약은 **알 수 없는 값**에 대해 유지. 의도된 완화로 기록 |
+| **R6** | 프론트 `return` 추가로 **커버 실패 시 `navigate('/')` 가 실행되지 않음** → 사용자가 같은 화면에 남아 **곡을 중복 업로드**할 수 있다 | 중간 | 문구에 **"곡은 업로드되었지만"** 을 반드시 넣는다(§3-2). `[e2e]` 로 문구 노출 + 중복 업로드 유도가 아님을 확인 |
+| **R7** | 커버 저장이 이제 **실제로 성공**하므로, 지금까지 커버 없이 렌더되던 화면에 처음으로 이미지가 들어간다 → 레이아웃 깨짐 가능 | 낮음 | 홈/차트/상세/플레이어는 AI 커버로 이미 이미지가 들어오는 경로가 있어 렌더 경로는 검증되어 있음. `[e2e]` 로 상세·목록 2곳만 육안 확인 |
+| **R8** | `/mv-status` 403 이 **정상 폴링을 깨뜨림** | 낮음 | `checkMVStatus`(`api/index.js:355`) 호출자는 자신이 만든 job 만 폴링. `mv.py` 는 이미 동일 가드로 운영 중이며 문제 보고 없음 |
+| **R9** | `find_one` 추가로 커버 업로드 경로에 Mongo 왕복 1회 증가 | 무시 | 프로젝션 `{"uploader_id":1}` 단일 필드, `_id` 조회. 10MB 업로드 대비 무시 가능. 오히려 인가 실패 시 **MinIO put 을 건너뛰어 순이득** |
+| **R10** | 별칭 로그가 **모든 앱 요청마다 INFO** 로 쌓여 로그 볼륨 증가 | 낮음 | 요청당 1줄, id 는 8자 절단. 볼륨 문제 시 샘플링은 후속 |
+| **R11** | 캐시 키 누락 — `cache:track:v2:` 계열 | 낮음 | `admin.py:862` 만 `v2` 를 지운다. 현행 읽기/쓰기는 `v3`(`tracks.py:1183`,`:1298`), `update_track` 도 `v1`+`v3` 만 지운다 → **`update_track` 과 동일하게 `v1`+`v3`** 로 맞춘다(관행 일치 우선) |
+
+---
+
+### 6. 범위 밖 (명시적 제외 — 발견했으나 v197 에서 고치지 않음)
+
+1. **`type=profile` → `/auth/me/profile-image` 통합**(§2-4). 앱팀 의존 가능성이 있어 **동작 변경 없이 계측 로그만** 심는다. 사용량 확인 후 별도 버전.
+2. **무인증 프록시 `cover-preview`·`mv-preview`**(`:417`,`:893`). v173 의 의도된 설계(비로그인 홈 커버 노출). 다만 **`mv-preview` 에는 `cover-preview` 가 v173 에서 얻은 `..` 경로 탈출 차단이 없다** — 비대칭을 기록만 하고 v197 에서 손대지 않는다(별도 보안 항목으로 승계 권고).
+3. **커버 교체 시 고아 객체**(§2-2-4). 확장자가 바뀌면 이전 객체가 남는다. v197 이전부터 존재하던 스토리지 누수이며, 소유권 가드가 들어가면 **타인에 의한** 오염은 사라진다. 고아 정리는 별도 배치 작업 주제.
+4. **`StudioTab2.jsx:1616` `deleteGeneration(draftId).catch(()=>{})`** — 실패 시 draft 잔존. 사용자 행위 결과를 뒤집지 않아 유해도가 낮다(§2-6).
+5. **커버 변경 이력·되돌리기.** `$set` 단일 필드라 이전 값이 보존되지 않는다. 소유권 가드로 무단 변경이 막히면 우선순위가 떨어진다.
+6. **커버 변경 시 곡 주인에게 알림.** 소유자 본인만 바꿀 수 있게 되므로 불필요해진다.
+7. `backend_9004`·`backend_9005` 동기화 — 미러링 폐기(§0-2).
+8. ES 색인·차트 캐시의 커버 필드 갱신 — `cover_image` 는 상세 조회 시 Mongo 원본에서 매핑되므로(`tracks.py:43`) 별도 재색인 불필요.
+
+---
+
+### 7. 절대 준수 (v197)
+
+1. 🚫 **유료 외부 API 금지** — `/api/generate`·`/api/mv/**`·`/api/character`·`/api/voice-*`·`/upload/generate-cover`·`/upload/refine-cover` **호출 자체 금지**.
+2. **`POST /api/tracks/upload` 예산 = 최대 2회**(내부 gpt-4o-mini 키워드 + 임베딩 2회 호출, 회당 약 0.2원). `[e2e]` 실사용 흐름 1회 + 재시도 여유 1회. **`[unit]`·`[api]` 픽스처는 전부 `mongo.tracks` 직접 삽입**(v196 §0-A 관행 승계) — `/upload/image` 는 `uploader_id` 만 읽고 `cover_image_url` 만 쓰므로 직접 삽입 문서로 완전히 검증된다.
+3. 🚫 **`GET /api/tracks/search` 남용 금지**(유료).
+4. 🚫 **별 차감 금지**(`/upload/generate-cover` 는 `POINT_COSTS["cover"]` 선차감 — 호출 금지 사유 중 하나). 🚫 전체발송 200 금지.
+5. 🚫 **실사용자 곡·데이터 변조 금지.** 소유권 취약점 증명은 **테스트 계정 A/B 소유의 `v197t` 트랙 사이에서만**. 실사용자 트랙은 **조회도 하지 않는다**.
+6. 테스트 데이터 전량 **`v197t` 마커**(트랙 `title` 접두 `v197t-`) + 종료 시 삭제·카운트 대조.
+7. 개인정보(생년월일·성별·이메일) 응답·화면·로그·산출물 노출 금지. 크리덴셜 실값 금지 → `<TEST_USER_A_TOKEN>` 등 플레이스홀더.
+8. 인프라 무조작(docker-compose·포트·MinIO·Redis·ES·인덱스).
+9. 작업 트리는 **메인 체크아웃** `/mnt/d/1_projects/0_myProjects/1_tripleJ` (§0-1).
+10. 서버 재기동: `cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006 && setsid ./run.sh > /dev/null 2>&1 &` — **`--reload` 없음, 코드 변경 시 수동 재기동 필수**. 재기동 없이 판정한 `[api]` 결과는 무효.

@@ -17,6 +17,7 @@ from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
+from ..database.redis import get_redis
 from ..services.media_urls import browser_image_url, browser_video_url, public_presign
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,22 @@ def _normalize_vocal_gender(raw):
     return _INVALID_VOCAL_GENDER
 
 
+# v197: /upload/image 의 type 정규화.
+# 'track' 은 구 클라이언트(웹 UploadPage, 앱팀 가능성) 하위호환 별칭 — 폐기 예정.
+ALLOWED_UPLOAD_IMAGE_TYPES = {"cover", "profile"}
+DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES = {"track": "cover"}
+
+
+def _normalize_upload_image_type(raw):
+    """(정규화된 type, 별칭_사용_여부) 반환. 알 수 없는 값 → (None, False)."""
+    v = (raw or "").strip().lower()
+    if v in ALLOWED_UPLOAD_IMAGE_TYPES:
+        return v, False
+    if v in DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES:
+        return DEPRECATED_UPLOAD_IMAGE_TYPE_ALIASES[v], True
+    return None, False
+
+
 class GenerateCoverRequest(BaseModel):
     title: str
     genre: Optional[str] = None
@@ -118,8 +135,16 @@ async def upload_image(
     current_user=Depends(get_current_user),
     conn=Depends(get_pg),
 ):
-    if type not in ("cover", "profile"):
+    # v197: 구 클라이언트 별칭('track') 수용 + 알 수 없는 값 계측
+    norm_type, used_alias = _normalize_upload_image_type(type)
+    if norm_type is None:
+        # v197: 실제로 어떤 값이 오는지 회수 — 앱팀 클라이언트 값 파악용 (R1)
+        logger.info("[upload] image type_invalid raw=%s user=%s",
+                    (type or "")[:32], current_user["id"][:8])
         return JSONResponse(status_code=400, content={"error": "type은 'cover' 또는 'profile'이어야 합니다."})
+    if used_alias:
+        logger.info("[upload] image type_alias_deprecated raw=%s→%s user=%s",
+                    (type or "")[:32], norm_type, current_user["id"][:8])
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_IMAGE_EXT:
@@ -135,10 +160,21 @@ async def upload_image(
     minio_client = get_minio()
     content_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
 
-    if type == "cover":
+    if norm_type == "cover":
         # Track cover image -> stored in images bucket
         if not ObjectId.is_valid(id):
             return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+        # v197: 소유권 가드 — put_object 이전에 둔다.
+        # 뒤에 두면 인가 실패한 요청이 MinIO 에 객체를 남긴다(저장소 오염 + 대역 낭비).
+        mongo = get_mongo()
+        doc = await mongo.tracks.find_one({"_id": ObjectId(id)}, {"uploader_id": 1})
+        if not doc:
+            logger.info("[upload] image cover_not_found track=%s", id[:8])
+            return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+        if doc.get("uploader_id") != current_user["id"]:
+            logger.info("[upload] image cover_denied track=%s user=%s", id[:8], current_user["id"][:8])
+            return JSONResponse(status_code=403, content={"error": "자신의 트랙만 수정할 수 있습니다."})
 
         object_name = f"covers/{current_user['id']}/{id}{ext}"
         minio_client.put_object(
@@ -150,17 +186,30 @@ async def upload_image(
         )
 
         # Update MongoDB track's cover_image_url
-        mongo = get_mongo()
-        await mongo.tracks.update_one(
+        result = await mongo.tracks.update_one(
             {"_id": ObjectId(id)},
             {"$set": {"cover_image_url": object_name}},
         )
+        # v197: update_track(tracks.py:758~761) 과 동일 키. Redis 장애가 커버 업로드를
+        # 500 으로 바꾸면 안 되므로 반드시 삼킨다 — 최악은 최대 600초 표시 지연.
+        # playcount:buffer 는 재생수 유실 방지를 위해 지우지 않는다.
+        try:
+            redis = get_redis()
+            await redis.delete(f"cache:track:{id}")
+            await redis.delete(f"cache:track:v3:{id}")
+        except Exception:
+            logger.warning("[upload] image cover cache_invalidate_failed track=%s", id[:8])
+        logger.info("[upload] image cover_ok track=%s obj=%s matched=%d",
+                    id[:8], object_name, result.matched_count)
 
         # v173: 즉시 표시용 브라우저 URL — 중앙 헬퍼 (proxy/presign 모드)
         url = browser_image_url(object_name)
         return {"file_url": url, "object_name": object_name}
 
     else:
+        # v197: 정식 경로는 /auth/me/profile-image (크롭·이전 이미지 정리·세션 갱신 포함).
+        # 여기는 그 셋이 없는 레거시 경로 — 동작은 그대로 두고 사용량만 계측한다.
+        logger.info("[upload] image profile_legacy_route user=%s", current_user["id"][:8])
         # Profile image -> update PostgreSQL users.profile_image
         object_name = f"profiles/{current_user['id']}{ext}"
         minio_client.put_object(
@@ -865,6 +914,11 @@ async def mv_status(
             status_code=404,
             content={"error": "작업을 찾을 수 없습니다."},
         )
+
+    # v197: 소유권 가드 — mv.py:207 과 동일 문구. (upload.py 는 JSONResponse 관행 유지)
+    if job.get("user_id") != current_user["id"]:
+        logger.info("[upload] mv_status denied job=%s user=%s", job_id[:8], current_user["id"][:8])
+        return JSONResponse(status_code=403, content={"error": "이 작업에 접근할 권한이 없습니다."})
 
     # v173: scene thumbnail 은 브라우저 노출 이미지 — 중앙 헬퍼 (proxy/presign 모드)
     scene_thumbnail_urls = []

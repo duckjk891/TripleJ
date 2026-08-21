@@ -1563,9 +1563,15 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       if (imageFile && !aiCoverObjectName && track?.id) {
         const imgFormData = new FormData();
         imgFormData.append('file', imageFile);
-        imgFormData.append('type', 'track');
+        imgFormData.append('type', 'cover');   // v197: 서버 계약값 ('track' 은 400 이었음)
         imgFormData.append('id', track.id);
-        await api.uploadImage(imgFormData).catch(() => {});
+        try {
+          await api.uploadImage(imgFormData);
+        } catch (e) {
+          console.error('[UploadPage] cover image upload failed', { trackId: track.id, e });
+          setError('곡은 업로드되었지만 커버 이미지 저장에 실패했습니다. 내 음악에서 커버를 다시 등록해 주세요.');
+          return;   // 거짓 성공 메시지 + 자동 이동 차단
+        }
       }
 
       setSuccess('업로드가 완료되었습니다!');
