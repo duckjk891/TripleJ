@@ -24580,7 +24580,7 @@ A(분쟁 중): 활동 무차단 + 신고 접수 시 자동 증거 스냅샷 + �
 - **데이터**: `item_images/{플랫폼}/{플랫폼}_목록.csv` (utf-8-sig, 컬럼: 구분,성별,부위,순위,브랜드,아이템명,색상,이미지경로,이미지URL,디테일페이지URL). 총 449행. 로컬 이미지 292 / 원격전용 157(크림120·에이블리7·29cm30, CSV가 `(이미지 미포함)` 표기). 원격 3종 다운로드 테스트 전부 200.
 - **필드 완전성**: 아이템명 공백 = 에이블리 7건뿐(브랜드/URL/색상/부위는 완전). 나머지 442건 완전. gender 100% 판별(성별 컬럼 or 부위 접두). category 100% 상의/하의/신발. 공용 없음.
 - **ad_items 스키마**: v147 에서 brand/product_name/color 추가 완료. 등록만 하면 드릴다운/패싯 자동 동작.
-- **계정**: users(PG) — email/nickname NOT NULL, password_hash bcrypt, role 기본 'user'(→'customer' 지정 필요), account_status 'active'. 무신사 계정 기존(musinsa@aimu.com, nick 무신사). gucci 별도.
+- **계정**: users(PG) — email/nickname NOT NULL, password_hash bcrypt, role 기본 'user'(→'customer' 지정 필요), account_status 'active'. 무신사 계정 기존(TEST_ACCOUNT_EMAIL, nick 무신사). gucci 별도.
 - **이미지 서빙**: business.py `ad_image_proxy` 는 `ads/` prefix 객체만 허용 → 업로드 object_name 은 `ads/{user_id}/{uuid}.{ext}` 필수.
 
 ### 계정 생성 (5개, role=customer, pw bcrypt('123456'), account_status active, company_name=플랫폼명)
@@ -29682,3 +29682,150 @@ v199 코드 제거가 끝나야 재빌드 의미가 있다. Dockerfile 은 **레
 6. 🚫 `git add -A` 금지. 커밋 전 시크릿 검사. **푸시는 지시 시에만**.
 7. 🚫 **`ffmpeg` 제거 금지** — 공유 영상·MV 가 사용.
 8. 작업 트리는 메인 체크아웃 `/mnt/d/1_projects/0_myProjects/1_tripleJ`.
+
+---
+
+## v200 — 2026-08-22 — 구버전 Voice Persona 제거 + 커버 URL 토큰 제거 + 미검증 3건 실증 [MAIDOL-PersonaStripSquad]
+
+사용자 지시 3건을 한 사이클로 묶는다.
+착수 시 HEAD `76e5030`(v199). 대상: `backend_9006` + `frontend` + **`frontend_admin`**(C2 한정).
+
+---
+
+### 0. Plan verification findings
+
+#### 0-1. 페르소나는 **구버전 잔재**다 — 코드가 두 곳에서 스스로 그렇게 말한다
+
+```
+voice_clone.py:14          기존 routes/voice_persona.py 와는 무관 (구버전 워크플로). 컬렉션: voice_clones.
+voice_clone_service.py:17  기존 routes/voice_persona.py + services/voice_persona_service.py 는 무관 (구버전).
+```
+
+`voice_persona_service.py:1-7` 의 4단계 워크플로:
+```
+1. Upload user's voice file to Suno file storage
+2. upload-cover API: generate AI cover song reflecting user's voice tone
+3. vocal-removal API: extract vocal stem from the cover
+4. generate-persona API: create Suno Persona from extracted vocal
+```
+→ Suno 페르소나는 **Suno 가 만든 곡에서만** 뽑을 수 있으므로, 내 목소리로 페르소나를 만들려고 **커버곡 생성 → 보컬 분리** 2단계를 앞에 끼운 **우회 구현**이다. v76 에서 Suno V5_5 가 목소리 파일을 직접 받게 되면서 `voice_clone` 으로 대체됐다.
+
+**DB 실측**: `voice_personas` 컬렉션 **존재하지 않음**(전체 사용자 0건). `voice_clones` 는 3건/완료 0건.
+
+#### 0-2. 🔴 **`persona_model = "voice_persona"` 는 Suno API 파라미터 값이다 — 제거 대상 아님**
+
+| 위치 | 코드 | 성격 |
+|---|---|---|
+| `StudioTab2.jsx:1269`·`:1313` | `body.persona_model = 'voice_persona';` | **보이스 클론** 경로가 세팅 |
+| `StudioTab2.jsx:1268`·`:1312` | `body.persona_id = clone.voice_id;` | 클론 id 를 persona_id 로 전달 |
+| `suno_generator.py:214` | `is_voice_clone = (persona_model or "").lower() == "voice_persona"` | 타임아웃 12분 분기 |
+| `suno_generator.py:162-175` | `body["personaId"]`·`body["personaModel"]` | Suno 요청 본문 |
+| `generate.py:76` | `persona_model: Optional[str]  # "style_persona" or "voice_persona"` | 스키마 |
+
+→ 우리가 지우는 `routes/voice_persona.py` 와 **이름만 같고 완전히 다른 것**이다.
+이걸 같이 지우면 **보이스 클론 생성이 통째로 깨진다.** v199 의 Wondera 함정과 동형.
+
+#### 0-3. 🔴 CSS 는 **전부 클론 섹션과 공유** — 한 줄도 지우면 안 된다
+
+| 클래스 | 페르소나 | 클론 |
+|---|---|---|
+| `s2__persona-section` | `:2226` | **`:2254`** |
+| `s2__label--persona` | `:2227` | **`:2255`** |
+| `s2__persona-note` | `:2245` | **`:2282`** |
+| `s2__vocal-btn--persona` | `:2236` | **`:2266`** |
+
+→ `StudioTab2.css` **무수정**.
+
+#### 0-4. `persona_id` 전송 라인 처리
+
+`:1251`·`:1294` 의 `persona_id: selectedPersonaId || null,` 은 제거한다. 클론 선택 시
+`:1268`·`:1312` 이 **나중에 덮어쓰므로** 키가 처음에 없어도 무해하다
+(`generate.py` 의 `persona_id: Optional[str] = None`).
+
+#### 0-5. 커버 토큰 — 헬퍼 **2개**만 고치면 전부 반영된다
+
+| 파일 | 정의 | 호출처 |
+|---|---|---|
+| `frontend/src/api/index.js:592-595` | `coverPreviewUrl` | 9개 컴포넌트 |
+| **`frontend_admin/src/api.js:252-255`** | `coverPreviewUrl` | AdminReportsPage |
+
+서버측 `upload.py:466 async def cover_preview(object_name: str)` 는 **토큰 인자가 없고 인증 의존성도 없다**(주석: "v173: 무인증 유지(비로그인 홈 커버 노출)"). 즉 **읽히지 않는 값**이므로 제거해도 동작 변화 0.
+
+⚠️ `auth.py:21-22` 의 `?token=` 폴백은 **다른 엔드포인트가 실제로 쓰므로 무수정**(음원 재생·sendBeacon 로그·DM WebSocket 은 브라우저가 헤더를 못 붙임).
+
+#### 0-6. `frontend_admin` 에 voice-persona 참조 **0건**(실측).
+
+---
+
+### 1. 완료 정의(DoD)
+
+1. 작곡 화면에서 「내 목소리 (Voice Persona)」 그룹이 사라진다.
+2. `/api/voice-persona/*` **8개 엔드포인트가 404**.
+3. `voice_persona.py`·`voice_persona_service.py` 두 파일이 없다.
+4. 🔴 **보이스 클론 무손상** — 클론 버튼 그룹·`persona_id`·`persona_model='voice_persona'`·타임아웃 분기 전부 이전과 동일.
+5. 커버 이미지 URL 에 `?token=` 이 **양쪽 앱 모두 0건**.
+6. 커버 이미지가 **여전히 정상 표시**된다(비로그인 포함).
+7. `frontend`·`frontend_admin` 빌드 에러 0건.
+8. musinsa 계정으로 v199 미검증 3건 실증.
+
+---
+
+### 2. 작업 분해
+
+#### 2-1. backend-dev (A)
+| # | 작업 |
+|---|---|
+| A1 | `app/routes/voice_persona.py` **삭제**(410줄) |
+| A2 | `app/services/voice_persona_service.py` **삭제**(389줄) |
+| A3 | `main.py:54` import 목록에서 `voice_persona,` 제거 + `:629` `include_router` 삭제 |
+| A4 | 🚫 **`suno_generator.py`·`generate.py`·`voice_clone*` 무수정** |
+
+#### 2-2. frontend-dev (B·C)
+| # | 작업 |
+|---|---|
+| B1 | `StudioTab2.jsx:491` `myPersonas`·`:492` `selectedPersonaId` state 삭제 |
+| B2 | `:720-728` `getVoicePersonas` useEffect 삭제 |
+| B3 | `:1251`·`:1294` `persona_id: selectedPersonaId \|\| null,` 삭제 (0-4) |
+| B4 | `:2216` 조건에서 `&& !selectedPersonaId` 제거 |
+| B5 | `:2224-2250` 페르소나 버튼 그룹 블록 삭제 (`{/* My Voice Personas (Suno only) */}` ~ 닫는 `)}`) |
+| B6 | `api/index.js:515-527` voice-persona export **8개** 삭제 |
+| B7 | 🚫 `StudioTab2.css` **무수정** (0-3) |
+| C1 | `api/index.js` `coverPreviewUrl` 에서 `?token=` 및 `localStorage.getItem('token')` 제거 |
+| C2 | `frontend_admin/src/api.js:252-255` 동일 |
+
+#### 2-3. tester (D) — v199 미검증분 실증
+계정 **`TEST_ACCOUNT_EMAIL`**(완료+오디오 9건, variants 2개 이상 4건).
+`A11②③`(variant 범위초과 400) · `E03④`(곡카드 재생·다운로드) · `E04②③`(업로드 화면 표시).
+🚫 `E02②`(페르소나 선택)는 **본 버전에서 기능 자체를 제거**하므로 영구 폐기.
+
+---
+
+### 3. 회귀 위험
+
+| 위험 | 수준 | 방어 |
+|---|---|---|
+| **`persona_model='voice_persona'` 오폭 → 클론 생성 파손** | 🔴 상 | 0-2. grep 으로 잔존 확인이 판정 항목 |
+| **CSS 오폭 → 클론 버튼 스타일 소실** | 🔴 상 | 0-3. `StudioTab2.css` diff **0줄**이 판정 항목 |
+| 커버 이미지 미표시 | 🟡 중 | 서버가 토큰을 안 읽음(0-5). 비로그인 포함 실렌더 확인 |
+| `frontend_admin` 누락 | 🟡 중 | C2. 양쪽 grep 0건 |
+| `persona_id` 키 부재로 클론 전송 실패 | 🟡 중 | 0-4. 클론 경로가 나중에 덮어씀 |
+
+---
+
+### 4. 범위 밖
+- `auth.py` 의 `?token=` 폴백 (다른 3곳이 실제 사용 — AWS 이전 때 일괄)
+- 액세스 로그 마스킹 필터 (AWS 이전 때)
+- **보이스 클론이 3건 시도/완료 0건인 원인 조사** — 별건
+- `backend_9004`·`backend_9005`
+- AWS P0 잔여 9건
+
+---
+
+### 5. 절대 준수
+1. 🚫 유료 외부 API 0건 — `/api/generate`·`/api/mv/**`·`/api/character`·`/api/voice-*`·`generate-cover`·`refine-cover`·`POST /api/tracks/upload`·`upload-from-generation`(성공 경로)·`GET /api/tracks/search`. **⭐ 차감 0**
+2. 🚫 실사용자 데이터 무접촉 — **단, `TEST_ACCOUNT_EMAIL` 은 사용자가 명시 지정**. 읽기 + 400 응답 경로만. 되돌릴 수 없는 실액션 금지
+3. 🚫 인프라 무조작. **MinIO 9100 차단 금지**
+4. 🚫 `backend_9004`·`backend_9005` 쓰기 0건
+5. 🚫 크리덴셜·개인정보 산출물 노출 금지 (플레이스홀더)
+6. 🚫 `git add -A` 금지. 커밋 전 시크릿 검사. **푸시는 지시 시에만**
+7. 작업 트리는 메인 체크아웃 `/mnt/d/1_projects/0_myProjects/1_tripleJ`

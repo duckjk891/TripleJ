@@ -7902,3 +7902,1189 @@ MinIO 잔여 변환 산출물 정리 / AWS P0 잔여 9건 / `docker-compose` 통
   유료 호출 **0건**(⭐ 차감 0 · A16 이 실측 증명), 테스트 데이터 생성 **0건**, 9004·9005 접근 **0건**.
   태그 균형은 **51.2 / 37.2 / 11.6** 으로 세 요구(≥40 / ≥35 / ≤25)를 전부 충족.
   planner 확인 대기 6건(§6) — **전부 대안이 있어 43건·비율이 깨지지 않는다.**
+
+---
+
+## v200 — 2026-08-22 — 구버전 Voice Persona 제거 + 커버 URL 토큰 제거 + 미검증 3건 실증 [MAIDOL-PersonaStripSquad]
+
+> 대상: **`backend_9006` + `frontend` + `frontend_admin`**. 🚫 `backend_9004`·`backend_9005` 쓰기 0건.
+> 근거 문서: `PLAN.md` `## v200`(29688행~) 전체 — 특히 **§0-2(persona_model 오폭)**, **§0-3(CSS 공유)**,
+> **§0-5(커버 토큰)**, **§2(A1~A3 · B1~B7 · C1~C2 · D)**, **§3(회귀 위험 5건)**.
+> planner 정정 2건 반영: **라우트는 8개가 아니라 7 path**(GET·DELETE 가 `{persona_id}` 공유) / **제거 후 258**(257 아님).
+> 이 문서는 **설계**다. 실행·판정은 tester 가 한다.
+
+🔴 **v199 와 같은 "삭제 검증"이지만, 이번이 더 위험하다.** v199 의 함정은 *비슷한 이름*(Wondera 의 「내 목소리」)이었다.
+이번 함정은 **완전히 같은 이름**이다 — 지워야 할 `routes/voice_persona.py` 와, **절대 지우면 안 되는 Suno API 파라미터 값
+`persona_model = 'voice_persona'`** 가 같은 문자열을 쓴다. `grep -r voice_persona` 로 지우면 **보이스 클론 생성이 통째로 죽는다.**
+
+| 축 | 증명 대상 | 배정 |
+|---|---|---|
+| **축 1 — 사라졌는가** | 7 path / 8 operation 404 · 2파일 부재 · 페르소나 UI 부재 · `?token=` 소멸(양쪽 앱) | **11건** |
+| 🔴 **축 2 — 남은 것이 무손상인가** | `'voice_persona'` 문자열 · CSS 4클래스 · 클론 버튼 그룹 · voice-clone 9라우트 · `?token=` 유지 4곳 · `auth.py` 폴백 · 커버 실렌더 | **24건** |
+| **축 3 — v199 미검증 3건 실증(D)** | variant 범위초과 400 · 곡카드 재생/다운로드 · 업로드 화면 prefill | **4건** |
+
+> 🔴 **축 2 가 24건(61.5%)인 이유**: 이번 오폭은 **빌드가 통과한다.** `persona_model = 'voice_persona'` 를 지워도
+> `npm run build` 는 성공하고 화면도 뜬다. **⭐-15 를 태우고 Suno 에 요청을 보낸 뒤에야** 클론이 안 걸렸다는 걸 안다.
+> 그래서 검증을 **grep 히트 수 · diff 0줄 · sha256** 으로 못박았다.
+
+---
+
+### 0. 실행 전 필수 사항
+
+#### 0-A. 작업 위치 (⚠️ 워크트리 아님)
+
+| 이름 | 절대경로 |
+|---|---|
+| `REPO` | `/mnt/d/1_projects/0_myProjects/1_tripleJ` (branch `backend`, 착수 시 HEAD **`76e5030`**) |
+| `B6` | `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006` |
+| `FE` | `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend` |
+| **`FA`** | `/mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/frontend_admin` ← **v200 신규 대상** |
+| 작업본 | 호스트 9006 = `http://127.0.0.1:9006` · 사용자앱 dev = **4000** · 관리자앱 dev = **4001**(실측 `vite.config.js:48`) |
+| 임시 산출물 | `/tmp/v200t/` (저장소 밖. 종료 시 삭제) |
+| **기준선(planner 확보)** | `/tmp/claude-1000/v200_base/openapi_before.json` · `paths_before.txt` |
+
+⚠️ **`.claude/worktrees/*` 에는 `backend_9006`·`frontend`·`frontend_admin` 이 없다.** 모든 명령은 위 절대경로로 실행한다.
+⚠️ `StudioTab2.jsx` 는 **`$FE/src/components/`** 에 있다(v199 실측 승계).
+
+#### 0-B. 🚫 tester 절대 준수 (v200 안전 규칙 7조)
+
+1. 🚫 **유료 외부 API 호출 0건** — `POST /api/generate`(및 `/api/generate/{id}/start/`) · `/api/mv/**` ·
+   `POST /api/character/**` · `/api/voice-*`(생성 계열) · `/api/upload/generate-cover` · `refine-cover` ·
+   `POST /api/tracks/upload` · **`POST /api/tracks/upload-from-generation` 의 성공 경로** · `GET /api/tracks/search`.
+   → 🔴 **⭐ 차감 합계 0.** A13 이 잔액 전후 동일로 실측 증명한다.
+   🔴 **v199 와 달리 이번엔 "삭제 전에는 유료였던 라우트"가 없다** — `/api/voice-persona/**` 8 operation 은
+   전부 **조회·삭제·스트림**이고, 유일한 유료 경로 `POST /create` 는 **어차피 호출 대상이 아니다**(404 프로브만).
+   그래도 **404 프로브는 재기동 후에만** 한다(0-D).
+2. 🚫 **실사용자 데이터 무접촉 — 단 하나의 예외**: `TEST_ACCOUNT_EMAIL`
+   (**사용자가 명시 지정한 계정**. 실값은 planner→tester 직접 전달, **산출물에 쓰지 않는다**).
+   이 계정에 대해 허용되는 것은 **① 로그인 ② 읽기 조회 ③ 400 을 받아내는 호출** 뿐이다.
+   🚫 **「업로드하기」는 화면 진입까지만 — 최종 제출 버튼을 누르지 않는다.**
+   🚫 **생성·변환·커버생성 버튼을 누르지 않는다.** 🚫 삭제(`DELETE`) 호출 0건.
+3. 🚫 **인프라 무조작** — PG·Mongo·Redis·ES·MinIO 컨테이너 재기동/중지/rm 금지.
+   🔴 **MinIO 9100 차단 금지** — 이번 버전은 **커버 이미지가 실제로 떠야 PASS** 다. 차단하면 자기 발등을 찍는다.
+   🚫 `docker system prune -a` 금지.
+4. 🚫 **개인정보 노출 금지** — 생년월일·성별·이메일·실명은 화면 캡처·로그·REPORT 어디에도 남기지 않는다 → `<REDACTED>`.
+   API 키·시크릿·JWT 실값 동일. 계정은 **`TEST_ACCOUNT_EMAIL`** 플레이스홀더로만 적는다.
+   🔴 **A11·A15·E03·E04 는 실계정 데이터를 다룬다** — 생성물 id 는 `<GEN_ID_1>` 형태로 치환해 기록한다.
+5. 🔴 **호스트 9006 재기동 규칙** — §0-D. **재기동 없이 낸 404 판정은 무효다.**
+6. 🚫 **`backend_9004`·`backend_9005` 쓰기 0건** — 읽기조차 불요.
+7. **E2E 는 Playwright**(실측 설치됨 `$FE/node_modules/.bin/playwright`, **v1.62.1**).
+   dev 서버가 **자체서명 HTTPS** 이므로 컨텍스트에 **`ignoreHTTPSErrors: true`** 를 반드시 준다.
+   WSL 라이브러리 문제로 chromium 이 뜨지 않으면 **headless shell 폴백**을 시도한다.
+   🔴 **조용한 스킵 금지** — 불가 시 REPORT 에 **사유 + 미검증 항목**을 반드시 명시한다.
+
+#### 0-C. 실행 위치 2종
+
+| 표기 | 의미 | 실행 방법 |
+|---|---|---|
+| **호스트** | WSL2 개발 머신 + 실행 중인 9006 + `$B6/venv` + vite 4000·4001 | 직접 실행 / `curl 127.0.0.1:9006` |
+| **브라우저** | Playwright 로 띄운 chromium (`ignoreHTTPSErrors: true`) | `npx playwright` (E01~E06) |
+
+→ 🔴 **모든 케이스에 `[태그]` + `(호스트|브라우저)` + `재기동(전·후·무관)` 을 병기해 기록한다.**
+`[unit]` 18건은 전부 **호스트**, `[api]` 15건도 전부 **호스트**, `[e2e]` 6건만 **브라우저**다.
+
+#### 0-D. 🔴 호스트 9006 재기동 규칙 (404 판정 유효성의 전제)
+
+`main.py` 의 `include_router` 는 **모듈 로드 시점**에 라우트를 등록한다.
+`run.sh` 에 **`--reload` 가 없다**(실측 — drvfs + venv 감시로 기동 불가하여 2026-08-20 제거).
+따라서 **재기동 없이는 A1~A3 이 반영되지 않는다.**
+
+```bash
+cd /mnt/d/1_projects/0_myProjects/1_tripleJ/0_platform_music/backend_9006
+pkill -f 'uvicorn app.main:app --host 0.0.0.0 --port 9006'   # 기존 프로세스만
+setsid ./run.sh > /dev/null 2>&1 &
+# 기동 확인: logs/server.log 에 아래 두 줄이 나올 때까지 대기(최대 180s)
+#   "All database connections established."
+#   "Uvicorn running on http://0.0.0.0:9006"
+```
+
+- 🚫 **`--reload` 를 붙이지 않는다.**
+- 재기동 실패 → 🔴 **즉시 중단 S9**.
+- ✅ **기준선은 이미 확보돼 있다**(0-E). v199 처럼 "재기동 전에 서둘러 캡처" 할 필요가 **없다.**
+
+#### 0-E. 🔴 `/openapi.json` 전/후 diff 절차 (A02 의 근거 — 이번 버전 최중요)
+
+**`before` 는 planner 가 재기동 전 상태에서 이미 캡처했다.** tester 는 **`after` 만** 뜬다.
+
+```bash
+mkdir -p /tmp/v200t
+BASE=/tmp/claude-1000/v200_base            # planner 확보 (재기동 전)
+# AFTER — 🔴 §0-D 재기동 완료 후에만
+curl -sS http://127.0.0.1:9006/openapi.json > /tmp/v200t/openapi_after.json
+
+python3 - <<'PY'
+import json
+b=json.load(open('/tmp/claude-1000/v200_base/openapi_before.json'))['paths']
+a=json.load(open('/tmp/v200t/openapi_after.json'))['paths']
+gone  = sorted(set(b)-set(a)); added = sorted(set(a)-set(b))
+print('before paths:', len(b), ' after paths:', len(a))
+print('GONE  :', len(gone));  [print('  -', p, sorted(b[p])) for p in gone]
+print('ADDED :', len(added)); [print('  +', p) for p in added]
+diff=[p for p in set(a)&set(b) if set(a[p])!=set(b[p])]
+print('METHOD-CHANGED:', len(diff), diff)
+# 유지 확인 — voice-clone 9개
+print('voice-clone after:', len([p for p in a if p.startswith('/api/voice-clone')]))
+PY
+```
+
+🔴 **"정확히 7 path" 의 정의**
+
+| 비교 | 기대 | 위반 시 |
+|---|---|---|
+| `before paths` | **265** (planner·설계자 이중 실측) | 베이스라인 불일치 → planner 보고 |
+| `after paths` | **258** (= 265 − 7) | — |
+| `GONE` 집합 | **§0-F 의 7개와 바이트 단위로 일치** | 초과 소실 → 🔴 **즉시 중단 S8** |
+| `ADDED` | **0** | planner 보고 |
+| `METHOD-CHANGED` | **0** | FAIL |
+| `voice-clone after` | 🔴 **9** (전과 동일) | → 🔴 **즉시 중단 S4** |
+
+> 🔴 **개수만 맞추는 판정은 안 된다.** "7개 사라지고 다른 7개가 새로 생긴" 경우를 놓친다.
+> **집합**으로 비교하고 **`ADDED`=0** 을 함께 단언한다(v199 A02 와 동형).
+
+#### 0-F. 🔴 제거 대상 — **7 path / 8 operation** (설계 시 `openapi_before.json` 실측)
+
+| # | Path | Operations |
+|---|---|---|
+| 1 | `/api/voice-persona/create` | `POST` |
+| 2 | `/api/voice-persona/list` | `GET` |
+| 3 | `/api/voice-persona/{persona_id}` | 🔴 **`GET` + `DELETE`** (2 operation, 1 path) |
+| 4 | `/api/voice-persona/{persona_id}/cover/download` | `GET` |
+| 5 | `/api/voice-persona/{persona_id}/cover/stream` | `GET` |
+| 6 | `/api/voice-persona/{persona_id}/vocal/download` | `GET` |
+| 7 | `/api/voice-persona/{persona_id}/vocal/stream` | `GET` |
+
+> 🔴 **A02(집합 diff)는 7, A03(404 프로브)는 8** — 숫자가 다른 이유가 3번이다.
+> `GET`·`DELETE` 를 **각각** 두드려야 operation 2개가 다 사라진 것이 증명된다. 이 델타를 REPORT 에 명시한다(§6 P6).
+
+#### 0-G. 🔴 오폭 위험 지점 — **유지 대상 6종** (설계 시 전량 재실측)
+
+| # | 유지 대상 | 위치 (설계 시 실측 · HEAD `76e5030` + 착지분) | 오폭 위험 이유 | 감시 케이스 |
+|---|---|---|---|---|
+| 🔴 **K1** | **`persona_model = 'voice_persona'` (Suno API 파라미터)** | `StudioTab2.jsx:1253-1254`·`:1296-1297`(`body.persona_id = clone.voice_id` / `body.persona_model = 'voice_persona'`) · `:1034` 프롬프트 문구 · `:2475` `<option value="voice_persona">` · `suno_generator.py:214` `is_voice_clone` 12분 타임아웃 분기 · `:162-175` `body["personaId"]`·`body["personaModel"]` · `generate.py:76` 스키마 주석 | 🔴 **문자열이 제거 대상과 완전히 동일.** `grep -r voice_persona` 삭제 시 **보이스 클론이 통째로 죽는다.** 게다가 **빌드가 통과한다** | **U03 · U04 · A06** (S1·S3) |
+| 🔴 **K2** | **CSS 4개 클래스 — 클론 섹션이 공유** | `StudioTab2.css:1037 .s2__persona-section` · `:1043 .s2__label--persona` · `:1048`·`:1054 .s2__vocal-btn--persona` · `:1061 .s2__persona-note`(+`:1070 --warning`, `:1083 .s2__persona-header`) — 클론 섹션(`jsx:2209`·`:2210`·`:2221`·`:2236`)이 **전부 사용** | 이름에 `persona` 가 들어가 grep 에 걸린다. 지우면 **클론 버튼 스타일이 전멸** | **U05** (S2) |
+| 🔴 **K3** | **클론 버튼 그룹** | `jsx:490-491` `myClones`·`selectedVoiceCloneId` state · 렌더 `:2199~2240` · 심볼 총 **11히트** | B4·B5 가 **바로 옆 블록**을 지운다. 한 줄만 밀려도 클론 그룹이 같이 날아간다 | **U06 · E02** (S4) |
+| 🔴 **K4** | **`?token=` 유지 4곳** — 🔴 **planner 브리핑 정정** | **FE 2곳**: `api/index.js:589 generationStreamUrl` · `utils/dmSocket.js:25` / **FA 2곳**: `api.js:90 adminEvidenceUrl` · `utils/media.js:19 adminMediaSrc` | 🔴 **"`frontend_admin` 에서 `?token=` 0건" 을 그대로 기준으로 삼으면 오폭한다** — FA 의 2곳은 **인증 필요 엔드포인트**라 토큰이 반드시 있어야 한다(§6 P1) | **U11** (S6) |
+| 🔴 **K5** | **`auth.py` 의 `?token=` 폴백** | `$B6/app/auth.py:20-22` `else: raw_token = request.query_params.get("token")` | 커버에서 토큰을 뺐으니 서버 폴백도 지우고 싶어진다. 지우면 **음원 스트림·DM WS·어드민 증거 이미지가 전부 401** | **U12 · A15** (S6) |
+| 🔴 **K6** | **커버 프리뷰 서버 시그니처** | `upload.py:466 @router.get("/cover-preview/{object_name:path}")` / `:467 async def cover_preview(object_name: str)` — **토큰 인자 없음 · 인증 의존성 없음** (`:470` 주석 "v173: 무인증 유지") + `:474` `faces/`·`evidence/` 차단 | C(토큰 제거)의 **전제 그 자체**. 여기에 인증을 붙이면 비로그인 홈 커버가 전멸 | **U18 · A08 · A10** (S5) |
+
+#### 0-H. 🔴 즉시 중단 조건 S1~S12 (하나라도 관측되면 그 자리에서 멈추고 planner 에 보고)
+
+| # | 조건 | 관측 케이스 | 왜 즉시 중단인가 |
+|---|---|---|---|
+| 🔴 **S1** | **`suno_generator.py` / `generate.py` / `voice_clone*.py` 에 diff 가 1줄이라도 발생** | **U03** | 0-G K1. 이 4파일은 **무수정이 정답**(PLAN A4). diff 자체가 오폭의 증거 |
+| 🔴 **S2** | **`StudioTab2.css` 에 diff 가 1줄이라도 발생** | **U05** | 0-G K2. 클론 버튼 스타일 전멸 |
+| 🔴 **S3** | **문자열 `'voice_persona'` 가 `StudioTab2.jsx` 에서 소실** | **U04** | 0-G K1. **보이스 클론 생성이 죽는데 빌드는 통과한다** — 가장 조용한 실패 |
+| 🔴 **S4** | **클론 버튼 그룹(`myClones`/`selectedVoiceCloneId`) 소실 · `/api/voice-clone/**` 라우트가 9개 미만** | **U06 · A05 · E02** | 0-G K3. 유료 기능의 유일한 진입로 |
+| 🔴 **S5** | **커버 이미지가 404/403 이 되거나 화면에서 깨진다** | **A07 · A08 · E05 · E06** | C 의 DoD 6 위반. 홈·차트·플레이어 전 화면의 썸네일이 죽는다 |
+| 🔴 **S6** | **`auth.py` 의 `?token=` 폴백 소실 · K4 의 유지 4곳 중 하나라도 소실** | **U11 · U12 · A15** | 0-G K4·K5. 음원 스트림·DM·어드민 증거 이미지가 401 |
+| **S7** | **`backend_9004`·`backend_9005` 에 쓰기가 발생** | **U15** | PLAN §4·§5-4 위반 |
+| 🔴 **S8** | **`/openapi.json` 에서 voice-persona **7 path 외** 라우트가 1개라도 사라졌다 / `ADDED` > 0** | **A02** | 0-E. "옆엣것을 지웠다"의 가장 직접적인 증거 |
+| **S9** | **호스트 9006 이 재기동 후 뜨지 않거나 `/api/health` 가 200 이 아니다** | **A01** | 실서비스 중단. §2 전체가 BLOCKED |
+| 🔴 **S10** | **유료 API 호출이 1건이라도 발생 / ⭐ 잔액이 줄었다** | **A13** | 0-B-1 위반 |
+| 🔴 **S11** | **`TEST_ACCOUNT_EMAIL` 계정에 비가역 실액션이 발생**(트랙 생성·업로드 성공·삭제) | **A11 · E03 · E04** | 0-B-2 위반. **사용자 실계정이다** |
+| **S12** | **크리덴셜 실값·개인정보(생년월일·성별·이메일·실명)가 화면·로그·REPORT 에 보인다** | 전 케이스 | 0-B-4 위반 |
+
+#### 0-I. 🔴 설계 시 실측 앵커 (tester 의 기대값 — 2026-08-22, HEAD `76e5030` + 착지분)
+
+| 앵커 | 실측값 | 쓰이는 케이스 |
+|---|---|---|
+| `/openapi.json` `paths` 수 (**재기동 전 = 현재**) | **265** | A02 |
+| 재기동 후 기대 `paths` 수 | **258** | A02 |
+| 제거 대상 | **7 path / 8 operation** | A02·A03 |
+| 🔴 `voice-clone` path 수 (전·후 동일) | **9** | A05 (S4) |
+| `git show 76e5030:…routes/voice_persona.py \| wc -l` | **410** | U01 |
+| `git show 76e5030:…services/voice_persona_service.py \| wc -l` | **389** | U01 |
+| `main.py` `voice_persona` 잔재 | **0건**(import `:54` · `include_router` `:629` 삭제 확인) | U02 |
+| `StudioTab2.jsx` 총 줄 수 | **3078** (v200 착지 후 · 착수 전 3124, `+2/−48`) | U04·U07 |
+| 🔴 `'voice_persona'` 문자열 히트 (jsx) | **4줄** — `:1034`(프롬프트 문구) · `:1254`·`:1297`(`body.persona_model`) · `:2475`(`<option>`) | **U04** (S3) |
+| 🔴 `persona_id` 히트 (jsx) | **2줄** — `:1253`·`:1296` (`body.persona_id = clone.voice_id`). 🔴 **`selectedPersonaId` 전송 2줄은 삭제됨** | U04·U07 |
+| 🔴 `myClones\|selectedVoiceCloneId` 히트 (jsx) | **11줄** | **U06** (S4) |
+| `myPersonas\|selectedPersonaId\|getVoicePersonas` 히트 (jsx) | **0줄** | U07 |
+| 🔴 `StudioTab2.css` 총 줄 수 / diff | **2034** / **0줄** | **U05** (S2) |
+| `s2__persona-section`·`s2__label--persona`·`s2__persona-note`·`s2__vocal-btn--persona` 규칙 | `:1037`·`:1043`·`:1061`·`:1048`+`:1054` **전부 생존** | U05 |
+| 🔴 `api/index.js` 삭제 대상 export | **9개** — `:515-527` 8개 + `:609-611` `downloadVoicePersona` 1개 (🔴 **PLAN §2-2 B6 의 "8개" 는 실측과 다르다** → §6 P7) | U08 |
+| `FE coverPreviewUrl` | `api/index.js:580-581` — 토큰 없음, 1줄 arrow | U09 |
+| `FE coverPreviewUrl` 호출 파일 수 | **10개** | U09·E05 |
+| `FA coverPreviewUrl` | `api.js:254-255` — 토큰 없음 | U10 |
+| `FA coverPreviewUrl` 호출처 | 🔴 **`utils/media.js:9 coverSrc` 경유** (PLAN §0-5 의 "AdminReportsPage" 는 v175 에 `utils` 로 이사 → §6 P4) | U10 |
+| 🔴 `?token=` 유지 4곳 | FE `api/index.js:589` · FE `utils/dmSocket.js:25` · FA `api.js:90` · FA `utils/media.js:19` | **U11** (S6) |
+| 🔴 remoteLogger 의 `?token=` | **실제로는 없다** — `api/index.js:903 frontendLogsBeaconUrl` 은 토큰 없는 순수 URL. 주석만 그렇게 말한다(→ §6 P2·P3) | U11 |
+| `auth.py` `?token=` 폴백 | `:20-22` — 무수정이어야 함 | U12 (S6) |
+| `upload.py` 커버 프리뷰 | `:466` 데코레이터 / `:467 async def cover_preview(object_name: str)` — **인증 의존성 0** / `:474` `faces/`·`evidence/` 차단 | U18·A08·A10 |
+| `tracks.py` variant 범위검사 | `:1484` `variant_index = body.variant_index or 0` · `:1485-1486` 음수 400 · `:1495-1502` 범위초과 400 · 🔴 **`:1470-1477` 소유권/완료 검사가 그보다 **먼저**** | U17·A11 |
+| 범위초과 400 본문 | `{"error": "variant {n} 범위를 벗어났습니다."}` | A11 |
+| 음수 400 본문 | `{"error": "variant_index는 0 이상이어야 합니다."}` | A11 |
+| 생성물 목록 API (무료·읽기) | `GET /api/generate/` (`api/index.js:566 getGenerations`) | A11·E03·E04 |
+| `TEST_ACCOUNT_EMAIL` 보유량 (planner 실측) | 완료+오디오 **9건** · variants 2개 이상 **4건** | A11·E03·E04 |
+| Playwright | **설치됨 v1.62.1** (`$FE/node_modules/.bin/playwright`) | E01~E06 |
+| vite dev 포트 | 사용자앱 **4000**(`$FE/vite.config.js:22`) · 관리자앱 **4001**(`$FA/vite.config.js:48`) | E01~E06 |
+| dev 서버 프로토콜 | **자체서명 HTTPS**(`resolveCertDir()` 로 cert 존재 시 https) → `ignoreHTTPSErrors: true` **필수** | E01~E06 |
+
+#### 0-J. 🔴 착수 시점 착지 상태 (설계 시 `git status`·`git diff` 실측) — **tester 의 진입 조건**
+
+| 작업 | 상태 | 근거 |
+|---|---|---|
+| **A1·A2** (2파일 삭제) | ✅ **착지** | `git status` 에 `D` 2줄 |
+| **A3** (`main.py`) | ✅ **착지** | import·`include_router` 각 1줄 삭제 diff 확인 |
+| **A4** (`suno_generator`·`generate`·`voice_clone*` 무수정) | ✅ **준수** | `git status` 에 해당 파일 **부재** |
+| **B1~B5** (`StudioTab2.jsx`) | ✅ **착지** | −50줄. state·useEffect·전송 2줄·조건·UI 블록 삭제 확인 |
+| **B6** (`api/index.js` export) | ✅ **착지** | 9개 삭제(8+1) |
+| **B7** (`StudioTab2.css` 무수정) | ✅ **준수** | `git diff --stat` **빈 출력** |
+| **C1** (FE `coverPreviewUrl`) | ✅ **착지** | 토큰 제거 + 사유 주석 2줄 |
+| **C2** (FA `coverPreviewUrl`) | ✅ **착지** | 동일 |
+| 🔴 **호스트 9006 재기동** | 🔴 **미수행** | 설계 시점 `/openapi.json` = **265 paths · voice-persona 7개 생존** |
+| **기준선 캡처** | ✅ **완료**(planner) | `/tmp/claude-1000/v200_base/` |
+
+→ 🔴 **A·B·C 는 전부 착지했다. tester 는 전 39건을 즉시 실행할 수 있다.**
+→ **재기동 전에 실행 가능**: `[unit]` 18건 전부.
+→ **재기동 후에만 유효**: `[api]` 15건 · `[e2e]` 6건.
+
+---
+
+### 1. `[unit]` 시나리오 (18건) — 정적 검증
+
+> 🔴 **정적 검증(파일 부재·grep 히트 수·diff 0줄·구문 파싱·빌드)은 전부 `[unit]` 이다.**
+> 서버를 띄우지 않고, HTTP 를 타지 않으며, 외부 호출이 **구조적으로 0** 이다.
+> 18건 전부 **호스트 · 재기동 무관** — 재기동을 기다리지 않고 지금 실행할 수 있다.
+> 공통 전제: `REPO`·`B6`·`FE`·`FA` 는 §0-A, 비교 기준 리비전은 **`76e5030`**.
+
+#### V200-UNIT-01 · `[unit]` · **호스트** · 재기동 무관 · 삭제 대상 2파일 부재 + 줄 수 대조 (A1·A2 / DoD 3)
+
+- **Given** `76e5030` 에는 `voice_persona.py` **410줄**, `voice_persona_service.py` **389줄** 이 존재했다.
+- **When**
+  ```bash
+  ls $B6/app/routes/voice_persona.py $B6/app/services/voice_persona_service.py 2>&1
+  cd $REPO && git status --short -- 0_platform_music/backend_9006 | grep -E '^D '
+  git show 76e5030:0_platform_music/backend_9006/app/routes/voice_persona.py | wc -l
+  git show 76e5030:0_platform_music/backend_9006/app/services/voice_persona_service.py | wc -l
+  ```
+- **Then** ① 둘 다 `No such file or directory`, ② `git status` 에 **`D` 정확히 2줄**(그 이상이면 다른 파일도 지워졌다는 뜻),
+  ③ 줄 수가 **410 / 389** 와 일치 = 지운 것이 맞는 파일이었다는 증명.
+- **PASS** ①②③. **FAIL** 파일 잔존 → 재작업. ③ 불일치 또는 ② `D` 3줄 이상 → 🔴 **다른 파일을 지웠다** → 즉시 중단(planner 보고).
+
+#### V200-UNIT-02 · `[unit]` · **호스트** · 재기동 무관 · `main.py` 잔재 0건 + 구문 파싱 (A3)
+
+- **Given** `main.py:54` import 목록의 `voice_persona,` 와 `:629` `include_router(voice_persona.router)` 가 제거 대상이었다.
+- **When**
+  ```bash
+  grep -n "voice_persona" $B6/app/main.py | wc -l
+  cd $REPO && git diff -- 0_platform_music/backend_9006/app/main.py | grep -c '^[-+]'
+  $B6/venv/bin/python -m py_compile $B6/app/main.py && echo COMPILE_OK
+  grep -n "voice_clone" $B6/app/main.py       # 🔴 유지 확인
+  ```
+- **Then** ① `voice_persona` 히트 **0건**, ② `main.py` 의 변경 라인이 **삭제 2줄 + 수정된 import 1줄 쌍**만 (그 외 라인 변경 0),
+  ③ `COMPILE_OK`, ④ 🔴 **`voice_clone` 은 import·`include_router` 둘 다 생존**.
+- **PASS** ①~④. **FAIL** ④ 소실 → 🔴 **즉시 중단 S4**.
+
+#### V200-UNIT-03 · `[unit]` · **호스트** · 재기동 무관 · 🔴🔴 **`suno_generator.py`·`generate.py`·`voice_clone*` diff 0줄** (A4 / K1 / **S1**)
+
+- **Given** PLAN A4 는 이 파일들을 **무수정**으로 못박았다. `persona_model='voice_persona'` 처리·12분 타임아웃 분기가 여기 있다.
+- **When**
+  ```bash
+  cd $REPO
+  for f in 0_platform_music/backend_9006/app/services/suno_generator.py \
+           0_platform_music/backend_9006/app/routes/generate.py \
+           0_platform_music/backend_9006/app/routes/voice_clone.py \
+           0_platform_music/backend_9006/app/services/voice_clone_service.py; do
+    echo "== $f"; git diff --stat -- "$f"; git diff -- "$f" | wc -l
+  done
+  # 내용 앵커 재확인
+  grep -n 'voice_persona' 0_platform_music/backend_9006/app/services/suno_generator.py
+  grep -n 'personaId\|personaModel' 0_platform_music/backend_9006/app/services/suno_generator.py
+  grep -n 'persona_model' 0_platform_music/backend_9006/app/routes/generate.py
+  ```
+- **Then** ① 4파일 모두 `git diff` **빈 출력 · 0줄**, ② `suno_generator.py:214` 의
+  `is_voice_clone = (persona_model or "").lower() == "voice_persona"` **생존**,
+  ③ `:162-175` 의 `body["personaId"]`·`body["personaModel"]` **생존**, ④ `generate.py:76` 스키마의
+  `persona_model` / `persona_id` 필드 **생존**.
+- **PASS** ①~④. **FAIL** ① ≠ 0줄 → 🔴 **즉시 중단 S1**. 변경 내용을 그대로 planner 에 전달한다.
+- 🔴 **이 케이스는 "무언가를 확인하는" 것이 아니라 "아무 일도 없었음을 확인하는" 케이스다.**
+  `git diff` 가 **빈 출력**이어야 PASS 다. 한 줄이라도 나오면 그 자체가 오폭이다.
+
+#### V200-UNIT-04 · `[unit]` · **호스트** · 재기동 무관 · 🔴🔴 **`'voice_persona'` 문자열 생존** (K1 / **S3**)
+
+- **Given** 🔴 **이번 버전 최대의 함정.** 제거 대상 모듈명과 **완전히 같은 문자열**이 Suno API 파라미터 값으로 쓰인다.
+- **When**
+  ```bash
+  cd $FE/src/components
+  grep -n "voice_persona" StudioTab2.jsx
+  grep -n "persona_model\|persona_id" StudioTab2.jsx
+  grep -c "voice_persona" StudioTab2.jsx
+  ```
+- **Then**
+
+  | 앵커 | 기대 | 성격 |
+  |---|---|---|
+  | `'voice_persona'` 총 히트 | 🔴 **4줄** | — |
+  | `:1034` | 프롬프트 문구 `personaModelVal === 'voice_persona' ? 'Voice Persona' : 'Style Persona'` | 생존 |
+  | `:1254` · `:1297` | 🔴 `body.persona_model = 'voice_persona';` **2줄** | **생존 — 클론 경로의 심장** |
+  | `:1253` · `:1296` | 🔴 `body.persona_id = clone.voice_id;` **2줄** | **생존** |
+  | `:2475` | `<option value="voice_persona">Voice Persona (목소리까지)</option>` | 생존 |
+  | `persona_id: selectedPersonaId \|\| null,` | **0건** (B3 로 삭제됨) | 삭제 확인 |
+
+- **PASS** 위 6행 전부. **FAIL** `'voice_persona'` 히트 < 4 또는 `:1253-1254`·`:1296-1297` 중 하나라도 소실
+  → 🔴 **즉시 중단 S3**.
+- 🔴 **이 실패는 빌드·화면·API 어디에도 나타나지 않는다.** 사용자가 클론을 골라 ⭐-15 를 태우고
+  생성 결과를 들어본 뒤에야 "내 목소리가 아니네" 라고 알게 된다. **정적 grep 이 유일한 탐지 수단이다.**
+
+#### V200-UNIT-05 · `[unit]` · **호스트** · 재기동 무관 · 🔴🔴 **`StudioTab2.css` diff 0줄 + 공유 4클래스 생존** (B7 / K2 / **S2**)
+
+- **Given** PLAN §0-3: 4개 클래스를 **클론 섹션이 그대로 쓴다**. CSS 는 **무수정이 정답**이다.
+- **When**
+  ```bash
+  cd $REPO
+  git diff --stat -- 0_platform_music/frontend/src/components/StudioTab2.css
+  git diff -- 0_platform_music/frontend/src/components/StudioTab2.css | wc -l
+  wc -l 0_platform_music/frontend/src/components/StudioTab2.css
+  grep -n "s2__persona-section\|s2__label--persona\|s2__persona-note\|s2__vocal-btn--persona\|s2__persona-header" \
+    0_platform_music/frontend/src/components/StudioTab2.css
+  # 사용처(클론 섹션)가 실제로 참조하는가
+  grep -n "s2__persona-section\|s2__label--persona\|s2__persona-note\|s2__vocal-btn--persona" \
+    0_platform_music/frontend/src/components/StudioTab2.jsx
+  ```
+- **Then** ① 🔴 `git diff` **빈 출력 · 0줄**, ② 총 줄 수 **2034** (변동 없음),
+  ③ 규칙 `:1037`·`:1043`·`:1048`·`:1054`·`:1061`(+`:1070`·`:1083`) **전부 생존**,
+  ④ jsx 쪽 참조가 **클론 섹션 4곳**(`:2209`·`:2210`·`:2221`·`:2236`)에 남아 있다 = 죽은 CSS 가 아니다.
+- **PASS** ①~④. **FAIL** ① ≠ 0줄 → 🔴 **즉시 중단 S2**.
+- 🔴 **③ 만 보면 안 된다.** 클래스를 지우고 새로 비슷하게 써 넣어도 ③ 은 통과한다. **①(diff 0줄)이 판정의 본체다.**
+
+#### V200-UNIT-06 · `[unit]` · **호스트** · 재기동 무관 · 🔴 **클론 버튼 그룹 생존** (K3 / **S4**)
+
+- **Given** B4·B5 가 지운 페르소나 블록(`{/* My Voice Personas (Suno only) */}` ~ `)}`)의 **바로 다음 형제**가
+  클론 블록(`{/* v76 — My Voice (Voice Clone, Suno V5_5) */}`)이다. 한 줄만 밀려도 함께 날아간다.
+- **When**
+  ```bash
+  cd $FE/src/components
+  grep -c "myClones\|selectedVoiceCloneId" StudioTab2.jsx
+  grep -n "const \[myClones\|const \[selectedVoiceCloneId" StudioTab2.jsx
+  grep -n "v76 — My Voice (Voice Clone" StudioTab2.jsx
+  grep -n "getVoiceClones\|voice-clone" StudioTab2.jsx | head
+  node --check /dev/null 2>/dev/null; # 구문은 U13 빌드로 판정
+  ```
+- **Then** ① `myClones|selectedVoiceCloneId` 히트 🔴 **11줄**, ② state 선언 2줄(`:490`·`:491` 부근) 생존,
+  ③ 클론 렌더 블록 주석 생존, ④ 클론 목록 조회 호출 생존,
+  ⑤ 🔴 **`setSelectedPersonaId(null)` 이 클론 `onClick` 에서 제거됐지만 `setSelectedVoiceCloneId(cid)`·`setVocal('')` 은 남아 있다.**
+- **PASS** ①~⑤. **FAIL** ①이 11 미만 또는 ②③ 소실 → 🔴 **즉시 중단 S4**.
+
+#### V200-UNIT-07 · `[unit]` · **호스트** · 재기동 무관 · `StudioTab2.jsx` 페르소나 심볼 전멸 (B1~B5 / DoD 1)
+
+- **Given** B1(state 2개) · B2(useEffect) · B3(전송 2줄) · B4(조건) · B5(UI 블록) 이 대상.
+- **When**
+  ```bash
+  cd $FE/src/components
+  grep -n "myPersonas\|selectedPersonaId\|setSelectedPersonaId\|getVoicePersonas\|My Voice Personas" StudioTab2.jsx | wc -l
+  grep -n "내 목소리 (Voice Persona)" StudioTab2.jsx | wc -l
+  wc -l StudioTab2.jsx
+  cd $REPO && git diff --stat -- 0_platform_music/frontend/src/components/StudioTab2.jsx
+  ```
+- **Then** ① 페르소나 심볼 히트 **0건**, ② 라벨 문구 `내 목소리 (Voice Persona)` **0건**,
+  ③ 총 줄 수 **3078** (착수 전 **3124** `+2 / −48`), ④ `git diff --numstat` 이 **`2  48`** 이고 **다른 파일이 섞여 있지 않다**.
+- **PASS** ①~④. **FAIL** ① ≠ 0 → 재작업. ③ 이 크게 벗어남 → 🔴 초과 삭제 의심 → U04·U06 을 먼저 확인.
+
+#### V200-UNIT-08 · `[unit]` · **호스트** · 재기동 무관 · `api/index.js` voice-persona export **9개** 삭제 (B6)
+
+- **Given** 🔴 **PLAN §2-2 B6 은 "8개" 라고 했으나 실측은 9개다** — `:515-527` 블록 8개 +
+  `:609-611` `downloadVoicePersona` 1개가 **떨어져 있다**(§6 P7).
+- **When**
+  ```bash
+  cd $FE/src/api
+  grep -n "VoicePersona\|voice-persona" index.js | wc -l
+  cd $REPO && git diff -- 0_platform_music/frontend/src/api/index.js | grep -c '^-export const'
+  grep -rn "VoicePersona\|voice-persona" $FE/src | wc -l   # 전역 잔재
+  grep -c "^export " $FE/src/api/index.js
+  # 🔴 유지 확인
+  grep -n "createVoiceClone\|getVoiceClones\|submitVoiceCloneVerify" $FE/src/api/index.js
+  ```
+- **Then** ① `index.js` 내 voice-persona 히트 **0건**, ② 삭제된 `export const` **9개**,
+  ③ `$FE/src` 전역 잔재 **0건**, ④ 총 `export ` 시작 줄 수가 **237 → 228 (정확히 −9)**, `git diff --numstat` 은 **`4	22`**,
+  ⑤ 🔴 **voice-clone export 는 전부 생존**.
+- **PASS** ①~⑤. **FAIL** ⑤ 소실 → 🔴 **즉시 중단 S4**. ② ≠ 9 → 델타를 planner 에 보고(§6 P7).
+
+#### V200-UNIT-09 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `frontend` 커버 URL `?token=` 제거 (C1 / DoD 5)
+
+- **Given** 서버 `cover_preview` 는 토큰을 **읽지 않는다**(K6). 붙여봐야 액세스 로그·Referer 에 JWT 만 남는다.
+- **When**
+  ```bash
+  grep -n -A3 "export const coverPreviewUrl" $FE/src/api/index.js
+  grep -n "coverPreviewUrl" $FE/src/api/index.js | wc -l
+  sed -n '576,582p' $FE/src/api/index.js | grep -c "token"
+  grep -rln "coverPreviewUrl" $FE/src | wc -l
+  # 호출부가 직접 토큰을 덧붙이지는 않는가
+  grep -rn "cover-preview" $FE/src | grep -i "token"
+  ```
+- **Then** ① `coverPreviewUrl` 본문에 `?token=` **0건** · `localStorage.getItem('token')` **0건**,
+  ② 함수가 **1줄 arrow** 로 축약되고 `encodeURIComponent(objectName)` 은 **유지**,
+  ③ 호출 파일 **10개** 전부 시그니처 변경 없이 그대로 동작(인자 1개 유지),
+  ④ 🔴 **호출부 어디에도 `cover-preview` + `token` 조합이 없다**(헬퍼를 우회해 토큰을 붙이는 곳이 없다).
+- **PASS** ①~④. **FAIL** ① 잔존 → 재작업. ② 인자 시그니처가 바뀌었으면 → 호출 10곳 파손 → planner 보고.
+
+#### V200-UNIT-10 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `frontend_admin` 커버 URL `?token=` 제거 (C2 / DoD 5)
+
+- **Given** 🔴 **v200 에서 새로 범위에 들어온 앱이다.** PLAN §0-6: FA 에 voice-persona 참조는 0건이므로 **C2 만** 대상.
+- **When**
+  ```bash
+  grep -n -A3 "export const coverPreviewUrl" $FA/src/api.js
+  sed -n '250,256p' $FA/src/api.js | grep -c "token"
+  grep -rn "coverPreviewUrl" $FA/src
+  grep -rn "voice-persona\|voicePersona" $FA/src | wc -l
+  cd $REPO && git diff --stat -- 0_platform_music/frontend_admin
+  ```
+- **Then** ① FA `coverPreviewUrl` 본문에 `?token=`·`localStorage` **0건**,
+  ② 호출처가 🔴 **`utils/media.js:9 coverSrc` 경유**로 확인된다(PLAN 의 "AdminReportsPage" 는 v175 에 이사 → §6 P4),
+  ③ FA 의 voice-persona 참조 **0건**(원래 0건 — 변화 없음),
+  ④ 🔴 **FA 변경 파일이 `src/api.js` 단 1개** — 다른 FA 파일에 diff 가 있으면 범위 이탈.
+- **PASS** ①~④. **FAIL** ④ 위반 → planner 보고(범위 이탈).
+
+#### V200-UNIT-11 · `[unit]` · **호스트** · 재기동 무관 · 🔴🔴 **`?token=` 유지 4곳 생존** (K4 / **S6**)
+
+- **Given** 🔴 **planner 브리핑 정정 사항.** 브리핑은 "`frontend_admin` 도 `?token=` 0건" 과
+  "나머지 3곳(generate stream · remoteLogger sendBeacon · dmSocket) 유지" 를 말했으나, 실측은 다르다:
+  **① `frontend_admin` 에는 반드시 남아야 할 `?token=` 이 2곳 있다**(인증 필요 엔드포인트),
+  **② `remoteLogger` 에는 애초에 `?token=` 이 없다**(주석만 그렇게 말한다). → §6 **P1·P2**.
+- **When**
+  ```bash
+  echo "--- FE ---"; grep -rn "?token=" $FE/src --include=*.js --include=*.jsx | grep -v '^\s*//' 
+  echo "--- FA ---"; grep -rn "token=" $FA/src --include=*.js --include=*.jsx | grep -v "^\s*//"
+  ```
+- **Then** 🔴 **아래 4곳이 전부 살아 있어야 한다**
+
+  | # | 앱 | 위치 | 대상 | 왜 필요한가 |
+  |---|---|---|---|---|
+  | 1 | FE | `api/index.js:589` `generationStreamUrl` | `/generate/{id}/stream/?token=` | `<audio src>` 는 헤더를 못 붙인다 |
+  | 2 | FE | `utils/dmSocket.js:25` | `/api/dm/ws?token=` | WebSocket 은 헤더를 못 붙인다 |
+  | 3 | **FA** | `api.js:90` `adminEvidenceUrl` | `/admin/reports/{id}/evidence/{idx}?token=` | 🔴 **인증 필요** — `<img src>` 경로 |
+  | 4 | **FA** | `utils/media.js:19` `adminMediaSrc` | `/api/admin/**?token=` | 🔴 **인증 필요** — `<img src>` 경로 |
+
+  ⑤ 그리고 **`cover-preview` 와 결합된 `?token=` 은 양쪽 앱 모두 0건**.
+  ⑥ `remoteLogger.js` 에 `?token=` **실코드 0건**은 🔴 **FAIL 이 아니라 `OBSERVED`** — 원래 없었다(§6 P2).
+- **PASS** 1~4 전부 생존 + ⑤. **FAIL** 1~4 중 하나라도 소실 → 🔴 **즉시 중단 S6**.
+- 🔴 **"`?token=` 0건" 을 앱 전체에 적용하면 이 케이스가 FAIL 한다.** 기준은 **`coverPreviewUrl` 한정 0건**이다.
+  3·4 를 지우면 **어드민 신고 증거 이미지가 전부 깨진다** — 실제 회귀다.
+
+#### V200-UNIT-12 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `auth.py` `?token=` 폴백 무수정 (K5 / **S6**)
+
+- **Given** PLAN §0-5 ⚠️ 와 §4(범위 밖): `auth.py:20-22` 의 쿼리 파라미터 폴백은 **다른 3계열이 실제로 쓴다.**
+- **When**
+  ```bash
+  cd $REPO
+  git diff --stat -- 0_platform_music/backend_9006/app/auth.py
+  git diff -- 0_platform_music/backend_9006/app/auth.py | wc -l
+  sed -n '17,23p' 0_platform_music/backend_9006/app/auth.py
+  grep -rn 'query_params.get("token")' 0_platform_music/backend_9006/app | wc -l
+  ```
+- **Then** ① `auth.py` diff **빈 출력 · 0줄**, ② `:20-22` 의
+  `else:` / `# Fallback: read token from query parameter` / `raw_token = request.query_params.get("token")` **원문 그대로**,
+  ③ `query_params.get("token")` 히트가 착수 전과 동일.
+- **PASS** ①②③. **FAIL** ① ≠ 0줄 → 🔴 **즉시 중단 S6**.
+
+#### V200-UNIT-13 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `frontend` 빌드 통과 + 미해결 import 0건 (DoD 7)
+
+- **Given** B1~B6 이 state·useEffect·export 를 지웠다. **참조가 하나라도 남으면 빌드가 죽는다.**
+- **When**
+  ```bash
+  cd $FE && npm run build 2>&1 | tee /tmp/v200t/fe_build.log | tail -30
+  grep -icE "error|failed|is not exported|Could not resolve" /tmp/v200t/fe_build.log
+  grep -icE "myPersonas|selectedPersonaId|getVoicePersonas" /tmp/v200t/fe_build.log
+  ```
+- **Then** ① 빌드 **성공 종료(exit 0)**, ② 로그에 `is not exported` / `Could not resolve` **0건**,
+  ③ 페르소나 심볼 관련 에러 **0건**, ④ 🔴 **경고 수가 착수 전 대비 늘지 않았다**.
+- **PASS** ①~④. **FAIL** ① 실패 → 재작업(에러 원문 planner 전달).
+- 🔴 **빌드 통과는 "안 지웠다" 를 증명하지 못한다.** `'voice_persona'` 를 지워도 빌드는 통과한다(U04 참고).
+  이 케이스는 **"너무 지워서 참조가 끊겼는가"** 만 본다.
+- 🔴 **정리**: 판정 후 `$FE/dist` 를 착수 전 상태로 되돌린다(빌드 산출물 커밋 금지).
+
+#### V200-UNIT-14 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `frontend_admin` 빌드 통과 (C2 / DoD 7)
+
+- **Given** 🔴 **v200 에서 새로 추가된 판정.** FA 는 v199 까지 "범위 밖" 이었으므로 빌드를 돌린 적이 없다.
+- **When**
+  ```bash
+  cd $FA && npm run build 2>&1 | tee /tmp/v200t/fa_build.log | tail -30
+  grep -icE "error|failed|is not exported|Could not resolve" /tmp/v200t/fa_build.log
+  ```
+- **Then** ① 빌드 **성공(exit 0)**, ② `is not exported` / `Could not resolve` **0건**,
+  ③ 🔴 `coverPreviewUrl` 를 쓰는 `utils/media.js` 가 정상 번들된다.
+- **PASS** ①②③. **FAIL** → 재작업.
+- 🔴 **FA 는 `node_modules` 설치 여부가 다를 수 있다.** 없으면 `npm ci` 가 필요한데 이는 시간·네트워크를 쓴다 →
+  불가 시 **`BLOCKED` + 사유 명시**(조용한 스킵 금지). 대체 증거로 U10 ④ 를 남긴다.
+
+#### V200-UNIT-15 · `[unit]` · **호스트** · 재기동 무관 · 🔴 범위 이탈 감시 — 변경 파일 허용 목록 (**S7**)
+
+- **Given** v200 의 정당한 변경은 **정확히 7개 경로**다.
+- **When**
+  ```bash
+  cd $REPO && git status --short
+  git status --short | grep -E "backend_900[45]" | wc -l
+  ls -la --time-style=+%F 0_platform_music/backend_9004 0_platform_music/backend_9005 2>/dev/null | head -3
+  ```
+- **Then** ① 변경 목록이 **아래와 정확히 일치**(그 외 항목 0건)
+
+  | 상태 | 경로 |
+  |---|---|
+  | `M` | `backend_9006/app/main.py` |
+  | `D` | `backend_9006/app/routes/voice_persona.py` |
+  | `D` | `backend_9006/app/services/voice_persona_service.py` |
+  | `M` | `frontend/src/api/index.js` |
+  | `M` | `frontend/src/components/StudioTab2.jsx` |
+  | `M` | `frontend_admin/src/api.js` |
+  | `M` | `claude_skills_outputs/team-dev/PLAN.md` (+ `TESTPLAN.md`·`REPORT.md` — 팀 산출물) |
+
+  ② 🔴 `backend_9004`·`backend_9005` 항목 **0건**, ③ 신규 untracked **0건**(빌드 산출물·임시파일 포함).
+- **PASS** ①②③. **FAIL** ② ≠ 0 → 🔴 **즉시 중단 S7**. ③ 위반 → 정리 후 재확인.
+
+#### V200-UNIT-16 · `[unit]` · **호스트** · 재기동 무관 · voice-persona 전역 잔재 0건 — 🔴 **K1 제외 정밀 grep** (DoD 2·3)
+
+- **Given** 🔴 **단순 `grep -r voice_persona` 는 K1(유지 대상)을 함께 잡는다.** 그래서 **모듈·라우트·심볼 형태**만 센다.
+- **When**
+  ```bash
+  # ① 백엔드 — 모듈/라우트 참조
+  grep -rn "routes.voice_persona\|voice_persona_service\|from .services.voice_persona\|/voice-persona" $B6/app | grep -v "^Binary"
+  # ② 프런트 — API 심볼/경로
+  grep -rn "VoicePersona\|voice-persona" $FE/src $FA/src
+  # ③ 🔴 대조군 — K1 은 살아 있어야 한다
+  grep -rn "'voice_persona'\|\"voice_persona\"" $FE/src $B6/app | wc -l
+  ```
+- **Then** ① 백엔드 모듈·라우트 참조 **0건**, ② 프런트 심볼·경로 **0건**,
+  ③ 🔴 **대조군은 0 이 아니다** — `'voice_persona'` 리터럴이 FE 4줄 + BE(`suno_generator.py:214`·`generate.py:76`) 에 **생존**.
+- **PASS** ①②③. **FAIL** ③ 이 0 → 🔴 **즉시 중단 S3**(K1 오폭).
+- 🔴 **③ 이 이 케이스의 핵심이다.** ①②만 보면 "많이 지울수록 좋다" 는 잘못된 신호를 준다.
+  **③ 은 반대 방향으로 감시한다** — 0 이 되면 실패다.
+
+#### V200-UNIT-17 · `[unit]` · **호스트** · 재기동 무관 · 🔴 `tracks.py` variant 범위검사 무수정 (D / A11 의 정적 근거)
+
+- **Given** A11(범위초과 400)의 안전성은 **"400 이 유료 호출·트랙 생성 이전에 반환된다"** 는 코드 순서에 달려 있다.
+- **When**
+  ```bash
+  cd $REPO
+  git diff --stat -- 0_platform_music/backend_9006/app/routes/tracks.py
+  sed -n '1464,1505p' 0_platform_music/backend_9006/app/routes/tracks.py
+  ```
+- **Then** ① `tracks.py` diff **0줄**(v200 은 이 파일을 건드리지 않는다),
+  ② 🔴 **순서 확인** — `:1464` ObjectId 검증 → `:1470` 생성물 조회 → `:1473` **소유권 403** →
+  `:1475` 완료 검사 → `:1484` `variant_index` → `:1485-1486` **음수 400** → `:1495-1502` **범위초과 400**
+  → **그 뒤에야** 소스 선택·업로드,
+  ③ 400 본문 문구가 `variant {n} 범위를 벗어났습니다.` / `variant_index는 0 이상이어야 합니다.` 로 확인된다.
+- **PASS** ①②③. **FAIL** ② 순서가 다르면 → 🔴 **A11 을 실행하지 않는다**(부작용 가능성) → planner 보고.
+- 🔴 **A11 의 실행 승인은 이 케이스의 PASS 가 전제다.** 순서가 보장돼야 400 프로브가 안전하다.
+
+#### V200-UNIT-18 · `[unit]` · **호스트** · 재기동 무관 · 🔴 커버 프리뷰 서버 시그니처 무수정 (K6 / C 의 전제)
+
+- **Given** C(토큰 제거)가 성립하는 유일한 근거는 **서버가 토큰을 읽지 않는다**는 사실이다. 이것이 흔들리면 C 전체가 무효다.
+- **When**
+  ```bash
+  cd $REPO
+  git diff --stat -- 0_platform_music/backend_9006/app/routes/upload.py
+  sed -n '466,476p' 0_platform_music/backend_9006/app/routes/upload.py
+  grep -n "cover_preview" 0_platform_music/backend_9006/app/routes/upload.py
+  ```
+- **Then** ① `upload.py` diff **0줄**,
+  ② `:467 async def cover_preview(object_name: str)` — 🔴 **`token` 인자 없음 · `Depends(get_current_user)` 없음**,
+  ③ `:470` 주석 "v173: 무인증 유지(비로그인 홈 커버 노출)" 생존,
+  ④ 🔴 `:474` `faces/`·`evidence/` 차단 분기 **생존**.
+- **PASS** ①~④. **FAIL** ② 에 인증 의존성이 붙었다 → 🔴 **즉시 중단 S5**(비로그인 커버 전멸).
+  ④ 소실 → 🔴 **보안 회귀** → 즉시 planner 보고.
+
+---
+
+### 2. `[api]` 시나리오 (15건) — 라우트 소멸/생존 + 커버 무인증 + D(400)
+
+> 🔴 **전 케이스 `재기동: 후`**(A02 의 `before` 절반만 예외 — planner 가 이미 확보). §0-D 를 지키지 않은 판정은 무효다.
+> 🔴 **호출 전 §0-B-1 을 다시 읽는다.** 이번엔 삭제 전 유료 라우트가 없지만, `TEST_ACCOUNT_EMAIL` 은 **사용자 실계정**이다(S11).
+> 공통: `H="Authorization: Bearer $TEST_TOKEN"` (로그인으로 발급. 🚫 토큰 실값을 REPORT 에 쓰지 않는다).
+
+#### V200-API-01 · `[api]` · **호스트** · 재기동 **후** · 🔴 9006 생존 확인 (DoD / **S9**)
+
+- **Given** A1~A3 은 모듈 로드 시점에만 반영된다. 재기동은 **실서비스 중단 위험**을 동반한다.
+- **When**
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://127.0.0.1:9006/api/health
+  tail -n 80 $B6/logs/server.log
+  grep -cE "ModuleNotFoundError|ImportError|Traceback" $B6/logs/server.log
+  ```
+- **Then** ① `/api/health` **200**, ② 로그에 `All database connections established.` + `Uvicorn running on http://0.0.0.0:9006`,
+  ③ 🔴 **재기동 이후 구간**에 `ModuleNotFoundError`·`ImportError` **0건** — 특히
+  `No module named 'app.routes.voice_persona'` / `'app.services.voice_persona_service'`
+  (= `main.py` 에서 import 를 못 지웠거나 다른 모듈이 서비스를 참조하고 있다는 뜻).
+- **PASS** ①②③. **FAIL** → 🔴 **즉시 중단 S9**. 롤백 판단은 planner.
+- 🔴 **이 케이스가 §2·§3 전체의 전제다.** 실패하면 A02~A15·E01~E06 은 전부 **BLOCKED**.
+
+#### V200-API-02 · `[api]` · **호스트** · 재기동 **전+후** · 🔴🔴 **`/openapi.json` 라우트 집합 diff** — 이번 버전 최중요
+
+- **Given** §0-E 절차. `before` = **265 paths**(planner 확보, 재기동 전), 제거 대상 **7 path**.
+- **When** §0-E 의 스크립트를 그대로 실행.
+- **Then**
+
+  | 단언 | 기대 | 위반 |
+  |---|---|---|
+  | ① `before paths` | **265** | 베이스라인 불일치 → planner 보고 |
+  | ② `after paths` | **258** | — |
+  | ③ `GONE` 개수 | **정확히 7** | — |
+  | ④ 🔴 `GONE` 집합 | **§0-F 표의 7개와 완전 일치** | **초과 1건이라도 → 즉시 중단 S8** |
+  | ⑤ `ADDED` | **0** | 🔴 **개수만 맞고 집합이 다른 경우를 잡는 단언** → planner 보고 |
+  | ⑥ `METHOD-CHANGED` | **0** | FAIL |
+  | ⑦ 🔴 `voice-clone` path 수 | **9** (전과 동일) | → **즉시 중단 S4** |
+  | ⑧ 유지 라우트 표본 | `/api/generate/` · `/api/tracks/**` · `/api/mv/**` · `/api/upload/cover-preview/{object_name}` · `/api/dm/**` · `/api/admin/reports/**` 전부 `after` 에 존재 | S5/S6 승격 |
+
+- **PASS** ①~⑧. **FAIL** ④ 초과 → 🔴 **즉시 중단 S8**, `GONE` 초과분 목록을 그대로 planner 에 전달.
+- 🔴 **"7개가 사라졌다" 와 "7개만 사라졌다" 는 다른 명제다.** 후자는 개별 404(A03)로는 증명되지 않는다.
+  ⑤(`ADDED`=0)를 함께 단언해야 **"7개 사라지고 다른 7개가 생긴"** 경우까지 걸린다.
+
+#### V200-API-03 · `[api]` · **호스트** · 재기동 **후** · voice-persona **8 operation 404** (①~⑧ 개별) (DoD 2)
+
+- **Given** §0-F 의 7 path / 8 operation. 🔴 `PID=000000000000000000000000` (존재하지 않는 24자 ObjectId — 실데이터 무접촉).
+- **When**
+  ```bash
+  PID=000000000000000000000000; B=http://127.0.0.1:9006
+  probe(){ curl -s -o /dev/null -w "$1 $2 -> %{http_code}\n" -X "$1" -H "$H" --max-time 10 "$B$2"; }
+  probe POST   /api/voice-persona/create
+  probe GET    /api/voice-persona/list
+  probe GET    /api/voice-persona/$PID
+  probe DELETE /api/voice-persona/$PID
+  probe GET    /api/voice-persona/$PID/cover/download
+  probe GET    /api/voice-persona/$PID/cover/stream
+  probe GET    /api/voice-persona/$PID/vocal/download
+  probe GET    /api/voice-persona/$PID/vocal/stream
+  ```
+- **Then** 🔴 **8개 전부 404**. 특히 ③`GET {persona_id}` 와 ④`DELETE {persona_id}` 를 **각각** 확인해야
+  같은 path 의 operation 2개가 다 사라진 것이 증명된다.
+- **PASS** 8/8 404. **FAIL** 하나라도 200/401/403/422 → 라우트 잔존 → 재작업(재기동 여부부터 재확인).
+- 🚫 **404 를 관측한 즉시 그 URL 에 대한 추가 호출을 중단한다.**
+- 🔴 **`POST /create` 는 원래 유료 경로였다**(Suno 커버 생성 4단계). 재기동 후 라우트가 없으므로 핸들러에 도달하지 않는다.
+  **재기동 전에는 절대 호출하지 않는다.**
+
+#### V200-API-04 · `[api]` · **호스트** · 재기동 **후** · 🔴 404 의 **정체성** 검증 (405 대조군)
+
+- **Given** 404 는 "라우트 없음" 일 수도, "핸들러가 리소스를 못 찾음" 일 수도 있다. **대조군 없는 404 는 아무것도 말하지 않는다.**
+- **When**
+  ```bash
+  # ① 살아 있는 라우트에 잘못된 method → 405 가 나와야 한다(= 라우터가 path 를 안다)
+  curl -s -o /dev/null -w 'clone-list PUT -> %{http_code}\n' -X PUT -H "$H" http://127.0.0.1:9006/api/voice-clone/list
+  # ② 삭제된 라우트에 잘못된 method → 405 가 아니라 404 여야 한다(= 라우터가 path 를 모른다)
+  curl -s -o /dev/null -w 'persona-list PUT -> %{http_code}\n' -X PUT -H "$H" http://127.0.0.1:9006/api/voice-persona/list
+  # ③ 완전 미존재 경로 대조군
+  curl -s -o /dev/null -w 'nonsense -> %{http_code}\n' -H "$H" http://127.0.0.1:9006/api/zzz-nonexistent-v200
+  ```
+- **Then** ① `/api/voice-clone/list` PUT → **405**(라우트 생존의 방증),
+  ② `/api/voice-persona/list` PUT → 🔴 **404**(405 가 나오면 라우트가 아직 등록돼 있다는 뜻),
+  ③ 미존재 경로 → **404** (② 와 동일 형태).
+- **PASS** ①②③. **FAIL** ② 가 405 → 🔴 라우트 잔존. ① 이 404 → 🔴 **즉시 중단 S4**.
+
+#### V200-API-05 · `[api]` · **호스트** · 재기동 **후** · 🔴 `voice-clone` **9 라우트 생존** (K3 / **S4**)
+
+- **Given** planner 실측: 착수 전 `voice-clone` path **9개**. 제거 후에도 **9개 그대로**여야 한다.
+- **When**
+  ```bash
+  python3 - <<'PY'
+  import json
+  a=json.load(open('/tmp/v200t/openapi_after.json'))['paths']
+  b=json.load(open('/tmp/claude-1000/v200_base/openapi_before.json'))['paths']
+  ca=sorted(p for p in a if p.startswith('/api/voice-clone'))
+  cb=sorted(p for p in b if p.startswith('/api/voice-clone'))
+  print('after',len(ca)); [print(' ',p,sorted(a[p])) for p in ca]
+  print('SAME SET:', ca==cb, ' SAME OPS:', all(sorted(a[p])==sorted(b[p]) for p in ca))
+  PY
+  curl -s -o /dev/null -w 'clone-list -> %{http_code}\n' -H "$H" http://127.0.0.1:9006/api/voice-clone/list
+  ```
+- **Then** ① path **9개**, ② 🔴 `SAME SET: True` · `SAME OPS: True`,
+  ③ `GET /api/voice-clone/list` 가 **200**(목록 0건이어도 200) — 🚫 **`create`·`verify`·`regenerate-phrase` 는 호출 금지**(유료).
+- **PASS** ①②③. **FAIL** ①② 위반 → 🔴 **즉시 중단 S4**.
+
+#### V200-API-06 · `[api]` · **호스트** · 재기동 **후** · 🔴 `/api/generate/` 스키마에 `persona_id`·`persona_model` 생존 (K1 / **S1**)
+
+- **Given** `generate.py:76` 의 스키마 필드는 **클론 경로가 실제로 채워 보내는 값**이다. 🚫 **호출하지 않고 스키마만 본다**(⭐-15).
+- **When**
+  ```bash
+  python3 - <<'PY'
+  import json
+  d=json.load(open('/tmp/v200t/openapi_after.json'))
+  op=d['paths']['/api/generate/']['post']
+  ref=op['requestBody']['content']['application/json']['schema']['$ref'].split('/')[-1]
+  props=d['components']['schemas'][ref]['properties']
+  for k in ('persona_id','persona_model'):
+      print(k, 'PRESENT' if k in props else '🔴 MISSING')
+  PY
+  ```
+- **Then** ① `persona_id` **PRESENT**, ② `persona_model` **PRESENT**,
+  ③ 🚫 **`POST /api/generate/` 를 호출하지 않았다**(⭐ 차감 0 — A13 이 재확인).
+- **PASS** ①②③. **FAIL** ①② MISSING → 🔴 **즉시 중단 S1**(클론이 페르소나 파라미터를 못 보낸다).
+
+#### V200-API-07 · `[api]` · **호스트** · 재기동 **후** · 커버 프리뷰 **200**(로그인 상태) (C / DoD 6 / **S5**)
+
+- **Given** 실제 객체명이 필요하다. 🔴 **실사용자 커버를 임의로 뒤지지 않는다** — 공개 차트에서 노출된 것만 쓴다.
+- **When**
+  ```bash
+  # 공개 차트에서 커버 object_name 확보 (무료·읽기)
+  curl -s --max-time 15 "http://127.0.0.1:9006/api/charts/top100?limit=5" > /tmp/v200t/top100.json
+  python3 -c "
+  import json;d=json.load(open('/tmp/v200t/top100.json'))
+  items=d if isinstance(d,list) else (d.get('items') or d.get('tracks') or [])
+  print('\n'.join(str(t.get('cover_url') or t.get('cover_image')) for t in items[:5]))" > /tmp/v200t/covers.txt
+  OBJ=$(head -1 /tmp/v200t/covers.txt)
+  curl -s -o /dev/null -w 'cover(auth) -> %{http_code} %{content_type} %{size_download}\n' \
+    -H "$H" --max-time 15 "http://127.0.0.1:9006/api/upload/cover-preview/$OBJ"
+  ```
+- **Then** ① **200**, ② `content_type` 이 `image/*`(`png`/`jpeg`/`webp` — 확장자 기반 guess 가 동작),
+  ③ `size_download` > 0.
+- **PASS** ①②③. **FAIL** 404/403/500 → 🔴 **즉시 중단 S5**.
+- 🔴 커버 객체명이 이미 절대 URL(`http…`)이면 프록시 대상이 아니다 → 상대 경로 항목을 골라 쓴다.
+  하나도 없으면 `PARTIAL` + 사유(조용한 스킵 금지).
+
+#### V200-API-08 · `[api]` · **호스트** · 재기동 **후** · 🔴🔴 커버 프리뷰 **비로그인 200** — C 의 핵심 (K6 / **S5**)
+
+- **Given** PLAN §0-5: 서버는 토큰을 **읽지 않고 인증 의존성도 없다**(v173 "비로그인 홈 커버 노출").
+  🔴 **토큰을 뺀 것이 안전하다는 주장의 유일한 실증이 이 케이스다.**
+- **When**
+  ```bash
+  OBJ=$(head -1 /tmp/v200t/covers.txt)
+  # 🔴 Authorization 헤더 없음 · 쿠키 없음 · ?token= 없음
+  curl -s -o /tmp/v200t/cover_anon.bin -w 'cover(anon) -> %{http_code} %{content_type} %{size_download}\n' \
+    --max-time 15 "http://127.0.0.1:9006/api/upload/cover-preview/$OBJ"
+  file /tmp/v200t/cover_anon.bin
+  ```
+- **Then** ① 🔴 **200**(401·403 이면 C 의 전제가 무너진 것), ② `content_type` `image/*`,
+  ③ `file` 이 실제 이미지로 식별(`PNG image data` / `JPEG image data` / `Web/P`),
+  ④ 🔴 **A07(로그인)과 바이트 크기가 동일** — 토큰 유무가 응답을 바꾸지 않는다는 증명.
+- **PASS** ①~④. **FAIL** → 🔴 **즉시 중단 S5**. C 롤백 판단은 planner.
+- 🔴 **④ 가 이 케이스의 무게중심이다.** "비로그인도 200" 만으로는 부족하다.
+  **"토큰이 있든 없든 같은 바이트"** 여야 "토큰은 읽히지 않았다" 가 증명된다.
+
+#### V200-API-09 · `[api]` · **호스트** · 재기동 **후** · 🔴 `?token=` 을 붙여도 여전히 200 — **구번들 하위호환**
+
+- **Given** 사용자 브라우저에 **캐시된 구버전 번들**이 남아 있으면 당분간 `?token=` 이 붙은 요청이 계속 온다.
+  서버가 그걸 거부하면 **배포 직후 커버가 깨진다.**
+- **When**
+  ```bash
+  OBJ=$(head -1 /tmp/v200t/covers.txt)
+  curl -s -o /tmp/v200t/cover_tok.bin -w 'cover(?token=) -> %{http_code} %{size_download}\n' \
+    --max-time 15 "http://127.0.0.1:9006/api/upload/cover-preview/$OBJ?token=dummy-not-a-real-jwt"
+  cmp /tmp/v200t/cover_anon.bin /tmp/v200t/cover_tok.bin && echo IDENTICAL
+  ```
+- **Then** ① **200**, ② `IDENTICAL` — 무시되는 쿼리이므로 응답이 동일,
+  ③ 🔴 **가짜 토큰인데도 200** = 인증 검사가 없다는 재확인(K6).
+- **PASS** ①②③. **FAIL** 401/403 → 🔴 **배포 직후 캐시 구번들 사용자 전원 커버 깨짐** → 즉시 planner 보고(S5 승격).
+- 🔴 **이 케이스는 "제거해도 안전한가" 가 아니라 "제거하는 동안 안전한가" 를 본다.** 배포 과도기 위험은 다른 문제다.
+
+#### V200-API-10 · `[api]` · **호스트** · 재기동 **후** · 🔴 `faces/`·`evidence/` 차단 유지 (K6 / 보안 회귀 감시)
+
+- **Given** `upload.py:474` 는 백엔드 전용 경로를 프록시로 노출하지 않는다(v135·v138).
+  🔴 **토큰을 뺀 지금, 이 차단이 유일한 방어선이다.**
+- **When**
+  ```bash
+  for p in "faces/dummy.png" "evidence/dummy.png" "../app/main.py" "faces%2Fdummy.png"; do
+    curl -s -o /dev/null -w "$p -> %{http_code}\n" --max-time 10 \
+      "http://127.0.0.1:9006/api/upload/cover-preview/$p"
+  done
+  ```
+- **Then** ① `faces/…` **404**, ② `evidence/…` **404**, ③ `..` 경로 **404**(디렉터리 탈출 차단),
+  ④ URL 인코딩 우회도 **404**(200 이면 🔴 **보안 회귀**).
+- **PASS** ①~④. **FAIL** 어느 하나라도 200 → 🔴 **즉시 planner 보고 · 보안 이슈 승격**(S5 계열).
+- 🔴 **이건 v200 이 만든 문제가 아니라 v200 이 **드러낼 수 있는** 문제다.** 토큰이 있던 시절엔 눈에 덜 띄었다.
+
+#### V200-API-11 · `[api]` · **호스트** · 재기동 **후** · 🔴🔴 **D — variant 범위초과 400 / 음수 400** (v199 A11②③ 미검증분 / **S11**)
+
+- **Given** 🔴 **v199 에서 픽스처 부족으로 못 했던 3건 중 첫 번째.**
+  `TEST_ACCOUNT_EMAIL` 은 완료+오디오 **9건**, variants 2개 이상 **4건** 을 보유한다(planner 실측).
+  🚫 **성공 경로(유효 variant → 201) 는 절대 호출하지 않는다** — 트랙 생성 + 유료 임베딩이 일어난다.
+  ✅ **400 은 U17 ② 로 확인된 대로 소스 선택·업로드 이전에 반환**되므로 부작용이 없다.
+- **When**
+  ```bash
+  # ① 본인 소유 완료 생성물 id 확보 (무료·읽기)
+  curl -s -H "$H" --max-time 15 "http://127.0.0.1:9006/api/generate/?limit=20" > /tmp/v200t/gens.json
+  python3 -c "
+  import json;d=json.load(open('/tmp/v200t/gens.json'))
+  items=d if isinstance(d,list) else (d.get('items') or d.get('generations') or [])
+  ok=[g for g in items if g.get('status')=='completed' and g.get('result_audio_url')]
+  print('completed+audio:',len(ok))
+  print('GEN_ID_1=',ok[0]['id'] if ok else 'NONE')"   # 🔴 실제 id 는 REPORT 에 <GEN_ID_1> 로 치환
+  # ② 범위초과 400
+  curl -s -o /tmp/v200t/oob.json -w '%{http_code}\n' -X POST -H "$H" -H 'Content-Type: application/json' \
+    -d '{"generation_id":"<GEN_ID_1>","variant_index":9999,"title":"v200t"}' \
+    --max-time 15 http://127.0.0.1:9006/api/tracks/upload-from-generation
+  # ③ 음수 400
+  curl -s -o /tmp/v200t/neg.json -w '%{http_code}\n' -X POST -H "$H" -H 'Content-Type: application/json' \
+    -d '{"generation_id":"<GEN_ID_1>","variant_index":-1,"title":"v200t"}' \
+    --max-time 15 http://127.0.0.1:9006/api/tracks/upload-from-generation
+  cat /tmp/v200t/oob.json /tmp/v200t/neg.json
+  ```
+- **Then** ① 완료+오디오 생성물이 **9건** 관측(planner 실측과 일치 — 픽스처 확보 증명),
+  ② 범위초과 → 🔴 **400** + 본문 `variant 9999 범위를 벗어났습니다.`,
+  ③ 음수 → 🔴 **400** + 본문 `variant_index는 0 이상이어야 합니다.`,
+  ④ 🔴 **부작용 0** — 호출 전후로 `GET /api/tracks/?…`(본인 트랙 수)가 **동일**, ⭐ 잔액 **동일**(A13),
+  ⑤ 🚫 **유효 variant(0 또는 1)로는 단 한 번도 호출하지 않았다** — 네트워크 로그로 증명.
+- **PASS** ①~⑤. **FAIL** ②③ 이 400 이 아니면 → 범위검사 파손(U17 재확인 후 planner 보고).
+  ④ 위반(트랙이 생겼다) → 🔴 **즉시 중단 S11** — 사용자 실계정에 비가역 액션이 발생했다.
+- 🔴 **`<GEN_ID_1>` 은 반드시 `TEST_ACCOUNT_EMAIL` 소유여야 한다.** 남의 id 를 넣으면 403 이 나와
+  **400 을 검증하지 못한 채 "실패" 로 오판**한다. ①에서 자기 목록으로부터만 뽑는다.
+- 🔴 `title` 은 400 에 도달하지 못하므로 저장되지 않지만, 혹시 몰라 `v200t` 접두를 붙여 식별 가능하게 둔다.
+
+#### V200-API-12 · `[api]` · **호스트** · 재기동 **후** · 조회 라우트 응답 **구조** 전/후 동일 (무영향 증명)
+
+- **Given** v200 은 조회 API 를 건드리지 않았다. 값은 실트래픽으로 변하므로 **키 집합(구조)으로 판정**한다(v198·v199 규칙 승계).
+- **When**
+  ```bash
+  for p in "/api/health" "/api/charts/top100?limit=10" "/api/charts/hot100?limit=10" \
+           "/api/tracks/?limit=10" "/api/generate/models/"; do
+    curl -s --max-time 20 "http://127.0.0.1:9006$p" \
+      | python3 -c "import json,sys;d=json.load(sys.stdin);
+  print('$p', type(d).__name__, sorted(d.keys()) if isinstance(d,dict) else (sorted(d[0].keys()) if d else 'EMPTY'))"
+  done
+  ```
+- **Then** ① 5개 전부 **200 + 파싱 성공**, ② 키 집합이 v199 REPORT 의 기록과 **동일**,
+  ③ 🔴 응답에 **개인정보(생년월일·성별·이메일)가 없다** — 있으면 `<REDACTED>` 처리 후 planner 보고(S12).
+- **PASS** ①②③. **FAIL** 구조 변화 → 삭제 부작용 → planner 보고.
+
+#### V200-API-13 · `[api]` · **호스트** · 재기동 **전+후** · 🔴 **유료 호출 0건 · ⭐ 차감 0 증명** (**S10**)
+
+- **Given** 0-B-1. 이번엔 `TEST_ACCOUNT_EMAIL` 이 **사용자 실계정**이라 더 엄격하다.
+- **When**
+  ```bash
+  # 착수 시점과 종료 시점 두 번
+  curl -s -H "$H" --max-time 10 http://127.0.0.1:9006/api/points/balance \
+    | python3 -c "import json,sys;d=json.load(sys.stdin);print('BAL', d.get('balance') or d.get('stars') or d)"
+  # 서버 로그에서 유료 경로 접근 흔적
+  grep -cE "POST /api/generate/|/api/mv/|/api/character/generate|voice-clone/create|generate-cover|refine-cover|POST /api/tracks/upload( |$)|tracks/search" \
+    $B6/logs/server.log
+  ```
+- **Then** ① 🔴 **잔액 전후 동일**(차이 0),
+  ② 재기동 이후 로그 구간에 유료 경로 **POST 0건**
+  (🔴 `upload-from-generation` 은 **400 응답 2건만** 존재해야 하고 **201/200 은 0건**),
+  ③ Mongo `tracks` 신규 문서 0건 · MinIO 신규 객체 0건(A11 ④ 로 대체 확인 가능).
+- **PASS** ①②③. **FAIL** 어느 하나라도 → 🔴 **즉시 중단 S10**.
+- 🔴 **잔액 조회 자체는 무료다.** 값은 REPORT 에 **차이(=0)만** 쓰고 절대값은 쓰지 않는다(S12).
+
+#### V200-API-14 · `[api]` · **호스트** · 재기동 **후** · 서버 로그 스모크 — 삭제 부작용 탐지
+
+- **Given** 라우트를 지우면 **다른 모듈이 그 서비스를 import 하고 있었을 때** 런타임에서만 터진다.
+- **When**
+  ```bash
+  # E2E(§3) 를 한 바퀴 돈 뒤 실행
+  grep -nE "voice_persona|voice-persona" $B6/logs/server.log | tail -20
+  grep -cE "Traceback|ERROR|CRITICAL" $B6/logs/server.log
+  grep -nE "404 Not Found" $B6/logs/server.log | grep -c "voice-persona"
+  ```
+- **Then** ① 재기동 이후 구간에 `voice_persona` **모듈 관련 예외 0건**,
+  ② 신규 `Traceback`·`CRITICAL` **0건**(기존 이력 제외),
+  ③ 🔴 **404 로그가 A03 프로브 8건 외에는 없다** — 프런트가 아직 삭제된 API 를 호출하고 있으면 여기서 드러난다.
+- **PASS** ①②③. **FAIL** ③ 초과 → **프런트에 잔재 호출이 있다** → U08·U16 재확인 후 재작업.
+- 🔴 **③ 이 U08(정적 grep)로는 못 잡는 것을 잡는다** — 동적으로 조립된 URL 은 grep 에 안 걸린다.
+
+#### V200-API-15 · `[api]` · **호스트** · 재기동 **후** · 🔴 **`?token=` 폴백 런타임 생존** (K5 / **S6**)
+
+- **Given** U12 는 `auth.py` 가 **안 바뀐 것**만 본다. 이 케이스는 **실제로 동작하는지**를 본다.
+- **When**
+  ```bash
+  # 🔴 본인 소유 완료 생성물 <GEN_ID_1> (A11 ① 에서 확보). 스트림은 무료.
+  B=http://127.0.0.1:9006
+  # ① 헤더 인증
+  curl -s -o /dev/null -w 'stream(header) -> %{http_code}\n' -H "$H" --max-time 20 -r 0-1023 "$B/api/generate/<GEN_ID_1>/stream/"
+  # ② 🔴 쿼리 토큰 폴백 (auth.py:20-22 가 살아 있어야 200)
+  curl -s -o /dev/null -w 'stream(?token=) -> %{http_code}\n' --max-time 20 -r 0-1023 "$B/api/generate/<GEN_ID_1>/stream/?token=$TEST_TOKEN"
+  # ③ 무인증 대조군
+  curl -s -o /dev/null -w 'stream(none) -> %{http_code}\n' --max-time 20 -r 0-1023 "$B/api/generate/<GEN_ID_1>/stream/"
+  ```
+- **Then** ① 헤더 인증 **200/206**, ② 🔴 **쿼리 토큰도 200/206**(= 폴백 생존),
+  ③ 무인증 **401** (대조군 — 폴백이 인증을 무력화한 게 아님을 확인),
+  ④ 🚫 **토큰 실값을 REPORT·로그 캡처에 남기지 않는다** → `?token=<REDACTED>`.
+- **PASS** ①②③④. **FAIL** ② 가 401 → 🔴 **즉시 중단 S6**(음원 재생·DM·어드민 증거 이미지 전멸).
+- 🔴 **③ 을 반드시 함께 본다.** ②만 200 이면 "폴백이 산다" 는 알지만 "인증이 산다" 는 모른다.
+  액세스 로그에 JWT 가 남는 문제는 **범위 밖**(AWS 이전 시 마스킹 필터) — `OBSERVED` 로만 기록한다.
+
+---
+
+### 3. `[e2e]` 시나리오 (6건) — 사용자 행동 수준 초안
+
+> Playwright(v1.62.1, 설치 확인) · 사용자앱 **4000** / 관리자앱 **4001** · 🔴 **`ignoreHTTPSErrors: true` 필수**(자체서명).
+> 로그인은 `TEST_ACCOUNT_EMAIL` — 🔴 **사용자 실계정**이다. 0-B-2 를 다시 읽는다.
+> 🔴 **셀렉터 디테일에 붙지 않는다.** 아래는 **행동 초안**이며 tester 가 실제 DOM 을 보고 확정한다.
+> 🚫 **비가역 실액션(생성·변환·업로드 제출·삭제)은 화면 노출 확인까지만.** 버튼을 누르지 않는다.
+> 🔴 chromium 이 안 뜨면 headless shell 폴백 → 그래도 불가하면 **사유 + 미검증 항목을 REPORT 에 명시**. **조용한 스킵 금지.**
+
+#### V200-E2E-01 · `[e2e]` · **브라우저** · 🔴 **「내 목소리 (Voice Persona)」 그룹이 화면에서 사라졌다** (DoD 1 / v199 E02② 대체)
+
+- **Given** 🔴 **v199 E02②(페르소나 선택 가능)는 v200 에서 기능 자체가 제거되므로 폐기됐다.**
+  그 자리를 **반대 방향 시나리오**가 대신한다.
+  로그인 후 스튜디오 작곡 폼(가사·장르·보컬 선택)에서 Suno 모델이 선택돼 있다.
+- **When** 보컬 선택 영역을 끝까지 스크롤한다.
+- **Then**
+  ① 🔴 라벨 **「내 목소리 (Voice Persona)」 가 없다**,
+  ② 페르소나 버튼 그룹(`s2__vocal-btn--persona` 중 페르소나 항목)과 안내 문구
+     "내 Voice Persona가 선택되었습니다…" 가 **없다**,
+  ③ 🔴 **유지 확인** — 기본 보컬 버튼들이 그대로 있고 **클릭하면 선택 상태가 된다**,
+  ④ 네트워크 탭에 **`/api/voice-persona/list` 요청 0건**(useEffect 가 지워졌으므로 화면 진입 시 호출이 없어야 한다),
+  ⑤ 콘솔 에러 **0건**(특히 `myPersonas is not defined`).
+- **PASS** ①~⑤. **FAIL** ④ 에 요청이 보이면 → 프런트 잔재 → 재작업. ③ 파손 → 보컬 선택 오폭 → planner 보고.
+- 🔴 **④ 가 이 케이스에서 정적 검증이 못 하는 부분이다.** grep 은 "코드가 없다" 를 말하지만
+  **캐시된 번들이 여전히 호출하는지**는 네트워크 탭만 안다.
+
+#### V200-E2E-02 · `[e2e]` · **브라우저** · 🔴🔴 **클론 버튼 그룹이 그대로 뜨고 선택된다** (K3 / **S4**)
+
+- **Given** E01 과 **같은 화면, 바로 아래 블록**이다. B4·B5 가 지운 것의 **다음 형제**가 이것이다.
+- **When** 보컬 선택 영역에서 클론 그룹을 찾는다(계정에 완료된 클론이 있는 경우).
+- **Then**
+  ① 🔴 클론 섹션이 **렌더된다**(제목·버튼 그리드),
+  ② 🔴 **CSS 가 살아 있다** — 버튼이 스타일 없는 맨 텍스트가 아니라 **페르소나 섹션 스타일(테두리·배경)로 그려진다**
+     (= `s2__persona-section`·`s2__vocal-btn--persona` 가 적용됐다는 화면 증거 · U05 의 시각적 확인),
+  ③ 클론 항목을 **클릭하면 활성 상태가 되고** 기본 보컬 선택이 해제된다,
+  ④ 🚫 **여기서 멈춘다 — 「생성」 버튼을 절대 누르지 않는다**(⭐-15 · S10),
+  ⑤ 콘솔 에러 0건.
+- **PASS** ①②③⑤. **FAIL** ①②③ 실패 → 🔴 **즉시 중단 S4**.
+- 🔴 **계정에 완료된 클론이 0건이면** `myClones.length > 0` 조건 때문에 섹션이 아예 안 뜬다 →
+  이때는 **`PARTIAL`** 로 기록하고 대체 증거로 **U06(심볼 11줄) + A05(라우트 9개) + `GET /api/voice-clone/list` 200** 을 남긴다.
+  🚫 **클론을 새로 만들지 않는다**(유료·비가역). **조용히 넘어가지 않는다.**
+- 🔴 **② 는 U05(CSS diff 0줄)가 화면에서 참인지 확인하는 유일한 지점이다.** diff 가 0줄이어도
+  빌드 파이프라인이 규칙을 떨어뜨릴 수 있다.
+
+#### V200-E2E-03 · `[e2e]` · **브라우저** · 🔴 **D — 곡카드 재생·다운로드 동작** (v199 E03④ 미검증분)
+
+- **Given** 🔴 **v199 에서 픽스처(완료 생성물) 부족으로 못 했던 두 번째.**
+  `TEST_ACCOUNT_EMAIL` 은 완료+오디오 **9건** 을 보유한다. 스튜디오의 생성 결과 카드 목록이 보인다.
+- **When** 완료된 곡 카드 하나의 액션 영역을 조작한다.
+- **Then**
+  ① 🔴 **재생 버튼을 실제로 누른다** → 오디오가 **재생 상태로 전환**되고(`<audio>` `paused=false` 또는 진행바 이동),
+     네트워크에 `/api/generate/{id}/stream/` 요청이 **200/206** 으로 뜬다 — **무료 경로**,
+  ② 🔴 **다운로드 버튼이 존재하고 클릭 시 다운로드가 시작된다**
+     (Playwright `page.waitForEvent('download')` 로 **파일명·크기만** 확인. 🔴 **저장 파일은 즉시 삭제**),
+  ③ 🔴 **v199 잔재 부재 재확인** — 「내 목소리로 변환」 버튼·MR 음정 조절 패널이 **없다**,
+  ④ 🚫 **「업로드하기」는 이 케이스에서 누르지 않는다**(E04 가 담당),
+  ⑤ 콘솔 에러 0건 · 네트워크에 `voice-convert`·`vocal-repair`·`voice-persona` 요청 **0건**.
+- **PASS** ①~⑤. **FAIL** ①② 파손 → 곡카드 액션 오폭 → planner 보고(S 승격 검토).
+- 🔴 **v199 는 이 케이스를 "픽스처 없음" 으로 미검증 처리했다.** 이번엔 9건이 있으므로 **변명이 없다.**
+  그래도 카드가 안 보이면 `BLOCKED` + 화면 캡처(개인정보 마스킹)로 사유를 남긴다.
+- 🔴 **② 의 다운로드는 무료다**(MinIO 프록시). 그래도 파일을 저장소 안에 남기지 않는다 → `/tmp/v200t/dl/`.
+
+#### V200-E2E-04 · `[e2e]` · **브라우저** · 🔴 **D — 업로드 화면의 생성 prefill 표시** (v199 E04②③ 미검증분 / **S11**)
+
+- **Given** 🔴 **v199 미검증 세 번째.** variants 2개 이상인 생성물이 **4건** 있다(planner 실측).
+- **When** 곡 카드에서 **「업로드하기」** 를 눌러 업로드 화면에 진입한다(생성물 prefill 상태).
+- **Then**
+  ① 🔴 **AI 생성 오디오가 정상 연결돼 있다** — `AI 생성 오디오 연결됨` 류의 표시가 보이고
+     **오디오 플레이어가 재생 가능하다**(재생만. 무료),
+  ② 🔴 **variant 가 2개 이상인 생성물에서 variant 선택 UI 가 뜨고 전환된다**
+     (선택만. 🚫 **제출하지 않는다**),
+  ③ 🔴 **커버 이미지가 화면에 뜬다** — `?token=` 없는 URL 로 로드된다(E05 와 교차 확인),
+  ④ 🔴 **v199 잔재 부재** — 「원본 / 내 목소리 버전」 토글이 **없다**,
+  ⑤ 🚫🔴 **최종 「업로드」 버튼을 절대 누르지 않는다** — `POST /api/tracks/upload` 는 유료·비가역이고
+     **사용자 실계정에 곡이 실제로 올라간다**(S11),
+  ⑥ 콘솔 에러 0건.
+- **PASS** ①~④⑥ + ⑤ 준수. **FAIL** ①② 실패 → 🔴 **업로드 경로 파손** → planner 보고.
+  ⑤ 위반 → 🔴 **즉시 중단 S11**.
+- 🔴 **① 이 A11 의 화면 쪽 짝이다.** A11 은 400(실패 경로)만 본다. 성공 경로를 못 누르므로
+  **"화면까지는 정상으로 조립된다"** 를 여기서 대신 증명한다.
+- 🔴 **「업로드하기」 진입 자체는 화면 전환일 뿐 서버 호출이 아니다** — 안전하다.
+  위험한 것은 그 화면의 **마지막 버튼** 하나뿐이다. tester 는 **그 버튼의 위치를 먼저 확인하고 시작한다.**
+
+#### V200-E2E-05 · `[e2e]` · **브라우저** · 🔴 **커버 이미지 실렌더(로그인) + `?token=` 0건** (C / DoD 6 / **S5**)
+
+- **Given** 커버 URL 헬퍼가 10개 컴포넌트에서 쓰인다. **한 곳이라도 깨지면 사용자에게 보인다.**
+- **When** 로그인 상태에서 **홈 → 차트 → 플레이어(또는 곡 상세)** 3개 화면을 돈다.
+- **Then**
+  ① 🔴 각 화면의 커버 썸네일이 **실제로 렌더된다**
+     (`img.naturalWidth > 0` 로 판정 — `src` 만 붙고 로드 실패한 경우를 걸러낸다),
+  ② 🔴 네트워크 탭의 `cover-preview` 요청이 **전부 200** 이고 **`?token=` 이 붙은 것이 0건**,
+  ③ 🔴 **깨진 이미지 아이콘 0개** — `document.querySelectorAll('img')` 중 `complete && naturalWidth===0` 이 0,
+  ④ 콘솔에 404/403 관련 에러 0건.
+- **PASS** ①~④. **FAIL** → 🔴 **즉시 중단 S5**.
+- 🔴 **① 의 판정을 `src` 존재로 하면 안 된다.** URL 이 바뀐 게 이번 변경의 본체이므로
+  **실제 로드 성공(`naturalWidth`)** 만이 유효한 증거다.
+
+#### V200-E2E-06 · `[e2e]` · **브라우저** · 🔴 **커버 이미지 비로그인 실렌더** (C / K6 / **S5**)
+
+- **Given** PLAN §0-5: `cover_preview` 는 **원래 비로그인 홈 커버 노출용**이다.
+  토큰을 붙이던 시절에도 서버는 그걸 안 읽었으므로 **비로그인에서도 떴어야** 한다.
+- **When** 🔴 **새 브라우저 컨텍스트**(쿠키·localStorage 비움 — 즉 `token` 없음)로 **홈·차트** 를 연다.
+- **Then**
+  ① 🔴 커버 썸네일이 **비로그인에서도 렌더된다**(`naturalWidth > 0`),
+  ② `cover-preview` 요청이 **200** 이고 요청 헤더에 `Authorization` 이 **없다**,
+  ③ `localStorage.getItem('token')` 이 **null** 인 상태였음을 확인(= 정말 비로그인),
+  ④ 콘솔 에러 0건.
+- **PASS** ①~④. **FAIL** ① 실패 → 🔴 **즉시 중단 S5** — **비로그인 방문자에게 커버가 안 보인다는 뜻**이다.
+- 🔴 **A08(curl 비로그인 200) 이 PASS 여도 이 케이스는 필요하다.** curl 은 서버만 본다.
+  브라우저는 **CORS·Referrer-Policy·mixed-content** 까지 통과해야 그림이 뜬다.
+  🔴 **비로그인 홈은 신규 유입의 첫 화면이다** — 여기가 깨지면 가장 비싼 회귀다.
+
+---
+
+### 4. 커버리지 대조표 — PLAN v200 요구 ↔ 시나리오 (빠짐 0)
+
+| PLAN 항목 | 요구 | 시나리오 |
+|---|---|---|
+| **A1** `voice_persona.py` 삭제 | 파일 부재 + 410줄 대조 | **U01** |
+| **A2** `voice_persona_service.py` 삭제 | 파일 부재 + 389줄 대조 | **U01** |
+| **A3** `main.py` import·`include_router` 제거 | 잔재 0건 + 컴파일 + voice_clone 생존 | **U02 · A01** |
+| 🔴 **A4** `suno_generator`·`generate`·`voice_clone*` 무수정 | **diff 0줄** | **U03 · A06** (S1) |
+| **B1** state 2개 삭제 | 심볼 0건 | **U07** |
+| **B2** `getVoicePersonas` useEffect 삭제 | 심볼 0건 + **네트워크 요청 0건** | **U07 · E01④** |
+| **B3** `persona_id: selectedPersonaId` 전송 2줄 삭제 | 0건 + 🔴 클론 전송 2줄 생존 | **U04 · U07** |
+| **B4** 조건에서 `&& !selectedPersonaId` 제거 | 심볼 0건 + 보컬 버튼 동작 | **U07 · E01③** |
+| **B5** 페르소나 UI 블록 삭제 | 라벨 문구 0건 + 화면 부재 | **U07 · E01①②** |
+| **B6** `api/index.js` export 삭제 | 🔴 **9개**(PLAN 은 8개 — P7) + 총 export 237→228 | **U08** |
+| 🔴 **B7** `StudioTab2.css` 무수정 | **diff 0줄** + 클래스 생존 + 화면 스타일 | **U05 · E02②** (S2) |
+| **C1** FE `coverPreviewUrl` 토큰 제거 | `?token=` 0건 + 호출 10곳 무영향 | **U09 · E05** |
+| **C2** FA `coverPreviewUrl` 토큰 제거 | `?token=` 0건 + FA 빌드 | **U10 · U14** |
+| **D** v199 미검증 3건 | 400 · 재생/다운로드 · prefill | **A11 · E03 · E04** (+ 정적 근거 **U17**) |
+| **DoD 1** 페르소나 그룹 소멸 | 화면 부재 | **E01** |
+| **DoD 2** `/api/voice-persona/*` 404 | 8 operation 404 | **A03 · A04** |
+| **DoD 3** 2파일 부재 | — | **U01** |
+| 🔴 **DoD 4** 보이스 클론 무손상 | 문자열·CSS·버튼·라우트·스키마 5중 감시 | **U03 · U04 · U05 · U06 · A05 · A06 · E02** |
+| **DoD 5** `?token=` 양쪽 0건 | + 🔴 **유지 4곳 생존** | **U09 · U10 · U11** |
+| **DoD 6** 커버 정상 표시(비로그인 포함) | 200 · 바이트 동일 · 실렌더 | **A07 · A08 · A09 · E05 · E06** |
+| **DoD 7** 양쪽 빌드 0에러 | — | **U13 · U14** |
+| **DoD 8** 미검증 3건 실증 | — | **A11 · E03 · E04** |
+| **회귀위험 1** persona_model 오폭 | grep 히트 수 | **U04 · U16③** (S1·S3) |
+| **회귀위험 2** CSS 오폭 | diff 0줄 | **U05** (S2) |
+| **회귀위험 3** 커버 미표시 | 비로그인 실렌더 | **A08 · E06** (S5) |
+| **회귀위험 4** `frontend_admin` 누락 | 양쪽 grep | **U10 · U14** |
+| **회귀위험 5** `persona_id` 키 부재로 클론 전송 실패 | 클론 경로 2줄 생존 + 스키마 필드 생존 | **U04 · A06** |
+| **범위 밖** `auth.py` 폴백 유지 | diff 0줄 + 런타임 200 | **U12 · A15** (S6) |
+| **범위 밖** 9004·9005 | 변경 0건 | **U15** (S7) |
+| **절대준수 1** 유료 0건 · ⭐ 0 | 잔액 전후 동일 | **A13** (S10) |
+| **절대준수 2** 실계정 안전 | 400 경로만 · 제출 금지 | **A11④ · E03④ · E04⑤** (S11) |
+| **절대준수 3** 인프라 무조작 | MinIO 차단 금지 | **A07·A08 전제** |
+| **절대준수 5** 개인정보 미노출 | `<REDACTED>` | 전 케이스 (S12) |
+
+---
+
+### 5. planner 확인·정정 필요 항목
+
+| # | 항목 | 사유 | 미승인 시 대안 (건수·비율 영향) |
+|---|---|---|---|
+| 🔴🔴 **P1** | **「`frontend_admin` 도 `?token=` 0건」 기준은 틀렸다 — 정정 필요.** FA 에는 **반드시 남아야 할 `?token=` 이 2곳** 있다: `api.js:90 adminEvidenceUrl`(신고 증거 이미지) · `utils/media.js:19 adminMediaSrc`(어드민 전용 미디어). 둘 다 **인증 필요 엔드포인트**이고 `<img src>` 라 헤더를 못 붙인다 | 브리핑 문구를 그대로 판정 기준으로 쓰면 **정상 상태를 FAIL 로 오판**하고, 최악의 경우 **어드민 증거 이미지를 전부 깨뜨리는 "수정"** 을 유발한다 | tester 는 **「`coverPreviewUrl` 한정 `?token=` 0건」** 으로 판정한다(U09·U10). 유지 4곳은 U11 이 감시. **건수·비율 영향 0** |
+| 🔴 **P2** | **「나머지 3곳(generate stream · remoteLogger sendBeacon · dmSocket) 유지」 중 remoteLogger 는 사실이 아니다.** `api/index.js:903 frontendLogsBeaconUrl` 은 **토큰이 없는 순수 URL** 이다. `remoteLogger.js:8` 의 **주석만** "sendBeacon 은 ?token= 쿼리" 라고 말한다 | 존재하지 않는 것을 "유지 확인" 하면 tester 가 **찾다 못 찾고 "소실됐다" 고 오판**해 S6 을 잘못 발동한다 | 유지 대상을 **FE 2곳 + FA 2곳 = 4곳** 으로 확정(U11). remoteLogger 는 **`OBSERVED`** 로만 기록. **건수·비율 영향 0** |
+| 🔴 **P3** | **설계 중 발견한 기존 버그(v200 범위 밖).** `api/index.js:903` 은 **문자열 상수**인데 `remoteLogger.js:146` 이 `frontendLogsBeaconUrl()` 로 **함수처럼 호출**한다 → `TypeError: ... is not a function`. 바깥 `try/catch` 가 삼켜서 **무증상으로 pagehide 배치 로그가 유실**된다 | 프런트 오류 원격 수집의 **마지막 flush 경로가 죽어 있다.** v199·v200 의 콘솔 에러 판정에도 영향(수집이 안 되면 "에러 0건" 이 거짓 안심이 된다) | **v200 범위 밖 — 별건 등록.** tester 는 REPORT 에 `OBSERVED` 로만 남기고 **고치지 않는다**. **건수·비율 영향 0** |
+| 🟡 **P4** | **PLAN §0-5 의 FA `coverPreviewUrl` 호출처 "AdminReportsPage" 는 현재 구조와 다르다.** v175 에 `utils/media.js:6 coverSrc` 로 공용화됐고, `AdminReportsPage`·`RecentContentPane` 이 그걸 경유한다 | 검증할 화면을 잘못 잡으면 "확인했다" 가 헛것이 된다 | tester 는 **`utils/media.js` 를 기준으로 추적**(U10②). FA E2E 는 이번에 배정하지 않았다 — U14(빌드) + U10(정적)로 대체. **건수·비율 영향 0** |
+| 🟡 **P5** | **`TEST_ACCOUNT_EMAIL` 로그인·토큰 발급 승인.** A11·A13·A15·E03·E04 가 필요로 한다 | **사용자 실계정**이다. 로그인 자체는 무해하나 세션·로그가 남는다. 실값은 산출물에 쓰지 않는다(S12) | 미승인 시 **A11·A15 는 `SKIP`(사유 명시), E03·E04 는 `BLOCKED`** — 🔴 **D 3건이 이번에도 미검증으로 남는다.** 건수는 유지(SKIP·BLOCKED 도 집계), 비율 불변 |
+| 🟡 **P6** | **A02(집합 diff)는 7, A03(404 프로브)는 8 — 숫자가 다르다.** `/{persona_id}` 가 `GET`+`DELETE` 2 operation 을 한 path 에 담기 때문 | REPORT 를 읽는 사람이 "7이야 8이야" 로 혼란을 겪는다. planner 브리핑도 처음엔 8로 나갔다 | tester 는 **양쪽 다 기록하고 §0-F 표로 델타를 설명**한다. **건수·비율 영향 0** |
+| 🟡 **P7** | **PLAN §2-2 B6 의 "voice-persona export 8개" 는 실측과 다르다 — 실제 9개.** `:515-527` 블록 8개 + `:609-611` `downloadVoicePersona` **1개가 떨어져 있었다** | 8 을 기대값으로 두면 **정상 완료를 미완으로 오판**한다 | tester 는 **9개 + 총 export 237→228** 로 판정(U08). planner 는 정정 승인. 🔴 **실측 결과 9개 전부 이미 삭제 착지됨** — 재작업 불요. **건수·비율 영향 0** |
+
+**승인 없이도 진행 가능**: `[unit]` **18건 전부** / `[api]` **15건 중 12건**(A11·A13·A15 는 P5 조건부) /
+`[e2e]` **6건 중 4건**(E03·E04 는 P5 조건부, E02 는 클론 0건 시 PARTIAL).
+→ 🔴 **P1~P7 이 전부 미해소여도 39건 중 39건이 기록되며(BLOCKED·PARTIAL·SKIP·OBSERVED 포함) 삭제되는 케이스는 0건이다.**
+비율(46.2 / 38.5 / 15.3)은 승인 결과와 **무관하게 유지**된다.
+
+---
+
+### 6. v200 시나리오 집계
+
+| 태그 | 건수 | 비율 | 요구 | 판정 |
+|---|---|---|---|---|
+| `[unit]` | **18** | **46.2%** | ≥ 40% | ✅ 충족 (+6.2%p) |
+| `[api]` | **15** | **38.5%** | ≥ 35% | ✅ 충족 (+3.5%p) |
+| `[e2e]` | **6** | **15.3%** | ≤ 25% | ✅ 충족 (−9.7%p) |
+| **합계** | **39** | 100% | — | — |
+
+#### 6-1. 실행 위치별 분포
+
+| 실행위치 | unit | api | e2e | 계 |
+|---|---|---|---|---|
+| **호스트** | **18** (U01~U18) | **15** (A01~A15) | 0 | **33** |
+| **브라우저** | 0 | 0 | **6** (E01~E06) | **6** |
+| **합계** | 18 | 15 | 6 | **39** |
+
+#### 6-2. 재기동 기준 분포
+
+| 재기동 | 건수 | 케이스 |
+|---|---|---|
+| **무관** | **18** | U01~U18 (전부 정적) |
+| **후** | **21** | A01~A15 · E01~E06 |
+| **전+후** | 2 (A02·A13 — `before` 는 planner 확보분 재사용) | — |
+
+#### 6-3. 🔴 증명 축별 분포 — 이 표가 이번 버전의 설계 의도다
+
+| 축 | unit | api | e2e | 계 | 비율 |
+|---|---|---|---|---|---|
+| **축 1 — 사라졌는가** | U01·U02·U07·U08·U09·U10·U16 = **7** | A02·A03·A04 = **3** | E01 = **1** | **11** | 28.2% |
+| 🔴 **축 2 — 남은 것이 무손상인가** | U03·U04·U05·U06·U11·U12·U13·U14·U15·U18 = **10** | A01·A05·A06·A07·A08·A09·A10·A12·A13·A14·A15 = **11** | E02·E05·E06 = **3** | **24** | **61.5%** |
+| **축 3 — D(v199 미검증 3건)** | U17 = **1** | A11 = **1** | E03·E04 = **2** | **4** | 10.3% |
+
+> 🔴 **24 : 11 로 축 2 에 기울인 것이 의도다.** v199 는 28:15 였고 v200 은 24:11 — **비율이 더 커졌다.**
+> 이유는 하나다. v199 의 오폭은 *비슷한 이름*(Wondera 의 「내 목소리」)을 지우는 것이었지만,
+> **v200 의 오폭은 완전히 같은 문자열(`voice_persona`)을 지우는 것**이다.
+> `grep -r voice_persona | xargs sed -i` 한 줄이면 클론이 죽는다. 그리고 **빌드도 화면도 아무 말을 하지 않는다.**
+
+#### 6-4. 설계 근거
+
+- **`[unit]` 을 18건(46.2%)으로 잡은 이유**: v200 산출물은 **삭제 2파일 · 편집 4파일**이고,
+  🔴 **오폭 탐지의 결정적 증거가 전부 정적이다.**
+  `'voice_persona'` 히트 **4줄**(U04) · `StudioTab2.css` **diff 0줄**(U05) ·
+  `myClones|selectedVoiceCloneId` **11줄**(U06) · `?token=` **유지 4곳**(U11) —
+  **이 넷은 API 층·E2E 층 어디서도 관측되지 않는다.** 화면은 뜨고 빌드는 통과하기 때문이다.
+  특히 U03·U05·U12 는 **"`git diff` 가 빈 출력이어야 PASS"** 라는 형태다 —
+  무언가를 확인하는 게 아니라 **아무 일도 없었음을 확인**한다.
+- **`[api]` 를 15건(38.5%)으로 유지한 이유**: 하한(35%)을 넘기면서 **소멸 3건**(A02~A04)과
+  **생존 11건 + D 1건**의 **비대칭 배정**을 만들었다. 8개 404 를 개별로 두드리는 건 쉽지만,
+  **중요한 건 A02 의 집합 diff** 다 — "7개가 사라졌다" 와 **"7개만 사라졌다"** 는 다른 명제고,
+  후자는 개별 404 로는 증명되지 않는다. planner 지적대로 **`ADDED`=0** 을 함께 단언해
+  "7개 사라지고 다른 7개가 생긴" 경우까지 막았다. **A04 의 405 대조군**도 같은 이유다 —
+  대조군 없는 404 는 아무것도 말하지 않는다.
+  🔴 **커버 검증을 A07·A08·A09 세 겹으로 쪼갠 것**도 의도다: 로그인 200(A07) → **비로그인 200 + 바이트 동일**(A08) →
+  **가짜 토큰도 200**(A09). A08 이 "제거해도 안전한가", A09 가 **"제거하는 동안(캐시 구번들) 안전한가"** 를 본다.
+- **`[e2e]` 를 6건(15.3%)으로 묶은 이유**: 삭제 검증은 grep 이 더 정확하고 싸다.
+  E2E 를 쓴 곳은 **정적 검증이 원리적으로 답할 수 없는 5가지** 뿐이다 —
+  ① 캐시 번들이 아직 삭제된 API 를 **호출하는가**(E01④), ② CSS 규칙이 **화면에 실제로 먹는가**(E02②),
+  ③ 곡카드의 옆 버튼이 **아직 눌리는가**(E03), ④ 업로드 화면이 **실제로 조립되는가**(E04 — 성공 경로를 못 누르므로 유일한 증거),
+  ⑤ 커버가 **브라우저에서 진짜 그려지는가**(E05·E06 — `naturalWidth > 0`).
+  더 늘리면 **실계정 비가역 액션에 닿을 위험만 커진다.**
+- **유료 호출 총량(기대치)**: `POST /api/generate/` **0** · `/api/mv/**` **0** · `/api/character/**` **0** ·
+  `/api/voice-clone/**`(생성) **0** · `generate-cover`·`refine-cover` **0** · `POST /api/tracks/upload` **0** ·
+  `GET /api/tracks/search` **0** · `upload-from-generation` **성공 경로 0**(P5 승인 시 **400 응답 2건만**).
+  → 🔴 **⭐ 차감 합계 0.** A13 이 잔액 전후 동일로 실측 증명한다.
+- **테스트 데이터 생성**: 🔴 **0건**. Mongo `tracks` 신규 0 · MinIO 객체 생성 0 · 삭제(`DELETE`) 호출 0.
+  E03 의 다운로드 파일은 `/tmp/v200t/dl/`(저장소 밖), 종료 시 삭제.
+- **🔴 실계정 취급**: `TEST_ACCOUNT_EMAIL` 은 **사용자가 명시 지정**했지만 **실사용자 계정**이다.
+  허용은 **로그인 · 읽기 · 400 을 받아내는 호출** 뿐이고, 「업로드하기」는 **화면 진입까지**,
+  「업로드」·「생성」·「변환」 버튼은 **누르지 않는다**(S11). 생성물 id·이메일·잔액 절대값은
+  **REPORT 에 쓰지 않는다** — `<GEN_ID_1>` · `TEST_ACCOUNT_EMAIL` · "차이 0" 으로만 기록(S12).
+- **정리(cleanup) 체크리스트** — 종료 시 tester 가 확인:
+  ① `rm -rf /tmp/v200t`(🔴 **`/tmp/claude-1000/v200_base` 는 planner 소유 — 지우지 않는다**),
+  ② `$FE/dist`·`$FA/dist` 를 착수 전 상태로(빌드 산출물 커밋 금지),
+  ③ `git status --short` 가 **U15 ① 의 허용 목록과 동일**(신규 untracked 0건),
+  ④ `docker ps` 인프라 컨테이너 상태·포트가 **착수 전과 동일**(🔴 MinIO 9100 정상),
+  ⑤ 🔴 호스트 9006 `/api/health` **200**(마지막 확인), ⑥ vite 4000·4001 정상,
+  ⑦ 브라우저 다운로드 임시파일 0건.
+- **즉시 중단 조건**: §0-H 의 **S1~S12**. 핵심 감시 케이스는
+  **U03**(S1 — 4파일 diff 0), **U05**(S2 — CSS diff 0), **U04·U16③**(S3 — `'voice_persona'` 생존),
+  **U06·A05·E02**(S4 — 클론), **A08·E06**(S5 — 비로그인 커버), **U11·U12·A15**(S6 — `?token=` 유지),
+  **U15**(S7 — 9004/9005), **A02**(S8 — 초과 소실), **A01**(S9 — 9006 생존),
+  **A13**(S10 — ⭐), **A11·E04**(S11 — 실계정 비가역), 전 케이스(S12 — 개인정보).
+- **판정 기록 양식**(케이스마다 필수):
+  `ID / 태그 / 실행위치(호스트·브라우저) / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·PARTIAL·OBSERVED·BLOCKED`
+  — **SKIP 은 사유 필수**, **PARTIAL·OBSERVED·BLOCKED 는 근거 필수**. 🚫 **조용한 스킵 금지.**
+- **착지 상태(설계 시점 실측)**: §0-J 표 — 🔴 **A1~A3 · B1~B7 · C1~C2 전부 착지, 9006 만 미재기동.**
+  기준선은 planner 가 이미 확보했다(`/tmp/claude-1000/v200_base/`) → v199 처럼 **"서둘러 캡처" 할 시간 제약이 없다.**
+  tester 는 **U01~U18 을 먼저 돌리고**(재기동 불필요), 그다음 §0-D 로 재기동한 뒤 A·E 를 진행한다.
+
+---
+
+### 개정 이력 (v200)
+
+- 2026-08-22 초판 작성 (39건) — PLAN v200 §0(실측 6항)·§1(DoD 8)·§2(A1~A3 · B1~B7 · C1~C2 · D)·
+  §3(회귀 위험 5건)·§5(절대 준수 7조)을 전 항목 시나리오화. planner 정정 2건(7 path / 258) 반영.
+  🔴 **v199 와 같은 삭제 검증이지만 함정의 성질이 다르다.** v199 의 함정은 *비슷한 이름*이었고,
+  v200 의 함정은 **완전히 같은 문자열**이다 — 지워야 할 `routes/voice_persona.py` 와
+  절대 지우면 안 되는 Suno 파라미터 값 `persona_model = 'voice_persona'` 가 같은 글자를 쓴다.
+  그래서 설계를 이렇게 잡았다.
+  ① **축 2(무손상)를 24건 / 61.5% 로 올렸다**(v199 는 65.1% 였지만 모수가 달라 절대 배정은 비슷하다).
+  오폭이 **빌드·화면·API 어디에도 나타나지 않기 때문**이다 — `'voice_persona'` 를 지워도
+  `npm run build` 는 통과하고 화면도 뜨고 404 도 안 난다. **⭐-15 를 태우고 결과를 들어본 뒤에야** 안다.
+  ② **"diff 가 빈 출력이어야 PASS" 형태의 케이스를 3건 세웠다**(U03 4파일 · U05 CSS · U12 `auth.py`).
+  무언가를 확인하는 게 아니라 **아무 일도 없었음을 확인**하는 케이스다.
+  ③ **U16 에 "반대 방향 대조군" 을 넣었다** — 잔재 grep(①②)만 두면 "많이 지울수록 좋다" 는 잘못된 신호를 준다.
+  ③번 단언(`'voice_persona'` 리터럴이 **0 이면 FAIL**)이 그 방향을 막는다.
+  ④ **커버 검증을 3겹으로 쪼갰다** — 로그인 200(A07) / 🔴 **비로그인 200 + 바이트 동일**(A08) /
+  🔴 **가짜 토큰도 200**(A09). A08 이 "제거해도 안전한가", A09 가 **"배포 과도기(캐시 구번들)에도 안전한가"** 를 본다.
+  그리고 **A10 으로 `faces/`·`evidence/` 차단을 재확인**했다 — 토큰이 사라진 지금 그것이 유일한 방어선이다.
+  ⑤ **D(v199 미검증 3건)를 "성공 경로를 누르지 않고" 푸는 설계를 짰다** —
+  A11 은 **400 만 받아내고**(U17 로 코드 순서를 먼저 증명), E04 는 **업로드 화면 조립까지만** 본다.
+  🔴 `TEST_ACCOUNT_EMAIL` 이 **사용자 실계정**이라 v199 때보다 규칙을 한 단계 더 조였다(S11 신설).
+  설계 중 **PLAN·브리핑의 오류·누락 4건**을 확인해 §5 에 올렸다 —
+  🔴 **P1: 「`frontend_admin` 도 `?token=` 0건」 은 틀렸다.** FA 에는 **반드시 남아야 할 `?token=` 이 2곳**
+  (`adminEvidenceUrl` · `adminMediaSrc`) 있고 둘 다 **인증 필요 엔드포인트**다. 이 기준을 그대로 쓰면
+  **정상을 FAIL 로 오판**하거나 **어드민 증거 이미지를 전부 깨뜨리는 "수정"** 을 부른다.
+  🔴 **P2: 「remoteLogger sendBeacon 의 `?token=` 유지」 도 사실이 아니다** — 코드엔 없고 주석에만 있다.
+  유지 대상은 **FE 2곳 + FA 2곳 = 4곳**으로 확정했다.
+  🔴 **P3(별건): `frontendLogsBeaconUrl` 은 문자열인데 `remoteLogger.js:146` 이 함수로 호출한다** →
+  `TypeError` 가 `catch` 에 삼켜져 **pagehide 배치 로그가 무증상 유실**된다. v200 범위 밖이라 고치지 않고 기록만 한다.
+  🟡 **P7: `api/index.js` 삭제 대상 export 는 8개가 아니라 9개**(`downloadVoicePersona` 가 `:609` 에 떨어져 있었다) —
+  실측 결과 **9개 전부 이미 착지**돼 재작업은 불요다.
+  유료 호출 **0건**(⭐ 차감 0 · A13 이 실측 증명), 테스트 데이터 생성 **0건**, 9004·9005 접근 **0건**,
+  실계정 비가역 액션 **0건**. 태그 균형은 **46.2 / 38.5 / 15.3** 으로 세 요구(≥40 / ≥35 / ≤25)를 전부 충족.
+  planner 확인 대기 7건(§5) — **전부 대안이 있어 39건·비율이 깨지지 않는다.**

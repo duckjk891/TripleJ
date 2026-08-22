@@ -5679,7 +5679,7 @@ v30에서 추가한 VARIABLE REFERENCES 가이드와 lipsync 가이드 사이에
 
 ### 특이사항
 - **Vite dev 캐시**: 초기 `curl /src/pages/RegisterPage.jsx` 요청에서 vite dev 서버가 구버전 transform 캐시를 반환하는 현상 관찰. `?t=<timestamp>` 캐시버스터 요청 시 신버전 서빙 확인. 실제 브라우저는 HMR로 이미 최신 반영되어 **실사용 영향 없음** — vite dev-only 캐시 동작일 뿐.
-- **기존 NULL 사용자 비번**: 복원된 시드 3명(`test@test.com`, `duckjk89@hanmail.net`, `kimpearl3599@gmail.com`)의 비밀번호가 `password123`이 아니어서 Tester 환경에서는 login 불가. 테스트용 신규 NULL 유저를 만들어 T23/T24 수행. 실사용자가 웹에서 직접 로그인 시에는 본인 비번으로 로그인 후 "없음" 표시 E2E 확인 가능.
+- **기존 NULL 사용자 비번**: 복원된 시드 3명(`test@test.com`, `TEST_ACCOUNT_EMAIL`, `TEST_ACCOUNT_EMAIL_2`)의 비밀번호가 `password123`이 아니어서 Tester 환경에서는 login 불가. 테스트용 신규 NULL 유저를 만들어 T23/T24 수행. 실사용자가 웹에서 직접 로그인 시에는 본인 비번으로 로그인 후 "없음" 표시 E2E 확인 가능.
 - **MyMusicPage line 1951 `character` undefined-reference**: 이번 작업 범위가 아닌 기존 버그. 본 수정에서는 건드리지 않음.
 - **9003 재기동**: `--reload` 옵션 덕에 `app/routes/auth.py`, `app/models/user.py` 변경이 자동 반영됨. Tester의 실서버 API 테스트가 모두 신버전 응답으로 PASS했으므로 사용자가 별도 Ctrl+C/재기동할 필요 없음 (원한다면 깔끔한 재기동도 OK).
 - **API 키/비밀번호 노출 없음**: Pydantic 모델, SQL INSERT, 응답 어디에도 `password_hash` 평문 노출 없음. Tester 보고에도 비밀번호 마스킹 유지.
@@ -13928,7 +13928,7 @@ canonical transform 전수(스테일 발견→vite 재시작 후 8파일 재검)
 - 후속 안내: AWS 이전 시 액세스 키 → EC2 IAM 역할 전환 예정(키 폐기).
 
 ## v139 추기2 — 얼굴 인증 실물 E2E 테스트 (AWS 실호출) — 2026-07-28
-- 사용자 실기기 테스트(musinsa@aimu.com 수동 승격, 9005 스위치 임시 ON): **본인 사진 → 실시간 촬영 대조 통과 → 캐릭터 생성 진행 / 타인 사진 → 차단+재인증 유도** — AWS CompareFaces 실연동 정상 확인.
+- 사용자 실기기 테스트(TEST_ACCOUNT_EMAIL 수동 승격, 9005 스위치 임시 ON): **본인 사진 → 실시간 촬영 대조 통과 → 캐릭터 생성 진행 / 타인 사진 → 차단+재인증 유도** — AWS CompareFaces 실연동 정상 확인.
 - FACE_DATA_KEY(Fernet) 생성·양 서버 .env 적용(공유 저장소라 동일 키 필수). 테스트 후 스위치 OFF 원복(enabled=False mode=aws 기동 확인). musinsa 계정 승격은 유지(향후 테스트용, verify_provider='manual_test').
 - 잔여: FE 라이브니스(Amplify FaceLivenessDetector — "고개 돌리기" UI) 통합 + Cognito 설정 → A-5c. 사용자가 라이브니스 부재를 실물서 확인("정면 촬영만 하네") — 예정된 다음 단계임을 안내.
 
@@ -16061,3 +16061,104 @@ E2E 드라이버의 라우트 가드가 유료 요청 **1건**(`POST /api/genera
 - 프런트 수정 5: `StudioTab2.jsx`·`StudioTab2.css`·`UploadPage.jsx`·`UploadPage.css`·`api/index.js`
 - 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`
 - **무변경 확인**: `backend_9004`·`backend_9005` 전체, `frontend_admin/` 전체, `MyVoiceCloneSection.jsx`, `generate.py`, `wondera.py`, `voice_persona.py`, `voice_clone.py`
+
+---
+
+## v200 — 2026-08-22 — 구버전 Voice Persona 제거 + 커버 URL 토큰 제거 [MAIDOL-PersonaStripSquad]
+
+> `backend_9006` + `frontend` + `frontend_admin`. **9004·9005 쓰기 0건**(실측). 착수 시 HEAD `76e5030`.
+
+### 1. 요청 작업
+사용자 지시 3건을 한 사이클로 묶었다.
+① 구버전 Voice Persona 를 **코드·화면에서 통째로 제거** ② 커버 이미지 URL 의 **쓰이지 않는 토큰 제거** ③ v199 에서 픽스처 부족으로 못 한 **미검증 3건 실증**.
+
+### 2. 왜 제거가 맞았나 — 코드가 스스로 "구버전"이라고 말하고 있었다
+
+```
+voice_clone.py:14          기존 routes/voice_persona.py 와는 무관 (구버전 워크플로)
+voice_clone_service.py:17  기존 voice_persona.py + voice_persona_service.py 는 무관 (구버전)
+```
+
+`voice_persona_service.py:1-7` 의 4단계:
+```
+1. 내 목소리 파일을 Suno 에 업로드
+2. upload-cover     — 내 톤을 반영한 AI 커버곡 생성
+3. vocal-removal    — 그 곡에서 보컬만 분리
+4. generate-persona — 그 보컬로 Suno 페르소나 생성
+```
+Suno 페르소나는 **Suno 가 만든 곡에서만** 뽑을 수 있어서, 내 목소리로 페르소나를 만들려고 2·3단계를 앞에 끼운 **우회 구현**이었다. v76 에서 Suno V5_5 가 목소리 파일을 직접 받게 되면서 `voice_clone` 으로 대체됐다.
+**DB 실측**: `voice_personas` 컬렉션 **존재조차 하지 않음**(전체 사용자 0건).
+
+> 이것이 v199 에서 제거한 모달의 **"── 우회 방식 ──"** 라는 이름의 정체이기도 하다.
+
+### 3. 🔴 0단계가 잡은 오폭 함정 2건 — v199 의 Wondera 함정과 동형
+
+| # | 함정 | 지웠으면 |
+|---|---|---|
+| ① | `persona_model = 'voice_persona'` 는 **Suno API 파라미터 값**이고 **보이스 클론이 쓴다**(`StudioTab2.jsx:1254`·`:1297`, `suno_generator.py:214` 타임아웃 12분 분기) | **보이스 클론 생성이 통째로 파손** |
+| ② | CSS 4개 클래스(`s2__persona-section`·`s2__label--persona`·`s2__persona-note`·`s2__vocal-btn--persona`)를 **클론 섹션이 공유** | 클론 버튼 스타일 소실 |
+
+→ dev 에게 **문구 기반 grep 금지, 클래스 prefix·state 이름 기준 판단**을 실측 근거와 함께 지시했고, `StudioTab2.css` **diff 0줄**을 판정 항목으로 못박았다.
+
+### 4. 수행 결과 — 삭제 2 · 수정 4 (**−876줄 / +12줄**)
+
+**삭제**: `app/routes/voice_persona.py`(410) · `app/services/voice_persona_service.py`(389)
+**수정**:
+- `main.py` — import 목록에서 `voice_persona,` + `include_router` 1줄
+- `StudioTab2.jsx` **3,124→3,078** — state 2개 / `getVoicePersonas` useEffect / `persona_id: selectedPersonaId` 2줄 / `:2216` 조건 / 렌더 블록 / **잔여 setter 3곳**
+- `api/index.js` export **237→228** — voice-persona **9개** 삭제 + `coverPreviewUrl` 토큰 제거
+- `frontend_admin/src/api.js` — `coverPreviewUrl` 토큰 제거 + 인접 주석 정정
+
+**커버 토큰 제거의 근거**: `upload.py:466 async def cover_preview(object_name: str)` — **토큰 인자도 인증 의존성도 없다**(주석 "v173: 무인증 유지(비로그인 홈 커버 노출)"). 프런트가 습관적으로 세션 JWT 를 붙이고 있었고, 서버는 읽지 않으면서 **액세스 로그에만 JWT 가 남고 있었다**.
+
+### 5. 테스트 결과 — 39건 **29 PASS / 5 PARTIAL / 5 BLOCKED / FAIL 0 / 즉시중단 0건**
+`[unit]` 18(46.2%) / `[api]` 15(38.5%) / `[e2e]` 6(15.3%). 증명 축: 사라졌는가 11 : **무손상 24(61.5%)**. **픽스 루프 0회.**
+
+**결정적 실측**
+- **openapi `paths` 265 → 258.** 사라진 것이 **정확히 그 7 path(8 operation)**, **ADDED 0 / METHOD-CHANGED 0**
+- **`voice-clone` 9 path — `SAME SET: True`, `SAME OPS: True`**
+- 보호 대상 diff **전부 0줄**: `StudioTab2.css`(2,034줄) · `suno_generator.py` · `generate.py` · `voice_clone.py` · `voice_clone_service.py` · `auth.py` · `tracks.py` · `upload.py`
+- `'voice_persona'` 리터럴 **6건 생존**, 클론 심볼 **11줄 생존**
+- 🔴 **커버 이미지: 익명 / `Authorization` 헤더 / `?token=dummy` 3종의 sha256 이 완전 동일**(200, image/png, 6,857,823B) → 서버가 토큰을 읽지 않음이 **실증**됨
+- 브라우저 비로그인 순회: cover-preview **33요청 전부 200**, `?token=` **0건**, **깨진 이미지 0개**
+- `/api/voice-persona/*` 404 가 **정확히 9건**(테스트 프로브 수) = **프런트 잔재 호출 0**
+
+**A15 의 우회 증명 — 크리덴셜 없이 `auth.py` 폴백의 런타임 생존을 입증**
+`?token=not-a-jwt` → **403 "유효하지 않은 토큰입니다."** (무토큰은 401). **401 이 아니라 403** 이라는 것은 쿼리 토큰이 **JWT 디코더까지 실제로 도달했다**는 뜻이다. 정적 diff 0 에 더해 런타임 동작까지 확보했다.
+
+### 6. 🔴 BLOCKED 5건 — 비밀번호 미전달
+`A11`(variant 범위초과 400) · `E01`~`E04`. 사용자가 `TEST_ACCOUNT_EMAIL` 을 지정했으나 **비밀번호가 전달되지 않았다.**
+프로젝트 내 재사용 가능한 크리덴셜·저장 세션 없음(`seed_item_store.py:38` 은 "기존 계정 재사용"만 기록, `.env` 에 테스트 비밀번호 없음).
+🚫 **JWT 자가서명·Redis 세션 신규 기록은 금지 규칙에 따라 미수행** — 실사용자 계정에 대한 세션 위조이기 때문.
+→ **v199 미검증 D 3건은 이번에도 미검증으로 남는다.** 비밀번호 전달 시 즉시 재개 가능.
+
+### 7. 기록 사항 (결함 아님)
+
+- **🔴 planner 브리핑 오류 2건을 test-designer 가 선검출**
+  1. 「`frontend_admin` 도 `?token=` 0건」은 **틀렸다**. FA 에는 반드시 살아야 하는 `?token=` 이 2곳 있다 — `api.js:90 adminEvidenceUrl`(신고 증거, **인증 필요**), `utils/media.js:18 adminMediaSrc`. 이 기준을 그대로 썼으면 **어드민 증거 이미지를 전부 깨뜨리는 "수정"** 을 부를 수 있었다. 판정 기준을 **`coverPreviewUrl` 한정 0건**으로 정정
+  2. 유지 대상 `?token=` 은 3곳이 아니라 **FE 2 + FA 2 = 4곳**. `remoteLogger` 는 주석에만 언급되고 실제 토큰이 없다
+- **planner 기대값 오류 1건(자체 정정)**: 라우트 데코레이터는 8개지만 `GET /{persona_id}` 와 `DELETE /{persona_id}` 가 같은 path 를 공유해 openapi `paths` 기준은 **7개**. 제거 후 257 이 아니라 **258**
+- **dev 가 잡은 실결함 2건 — 지시서에 없던 것**
+  1. `setSelectedPersonaId` **잔여 호출 3곳**(`:2217` 프리셋 버튼, `:2270` **클론 버튼 안**, `:1342` 폼 리셋). 방치했으면 **런타임 ReferenceError**. v199 의 `setUseVoiceConverted` 와 **동일 유형이 2회 연속** — **Vite 빌드는 이 계열을 잡지 못한다**는 것이 재확인됐다
+  2. export 는 8개가 아니라 **9개**(`downloadVoicePersona` 가 블록에서 떨어진 위치에 있었음)
+- `personaModelOn`·`personaModelVal`·`<option value="voice_persona">` 는 Suno 고급 파라미터라 정확히 **제외**됨
+- **E2E 실행 환경**: WSL 에 GTK 계열 라이브러리 부재 + sudo 불가로 리눅스 chromium 기동 불가(`npm install`·`apt` 금지 준수). **Windows 측 Chrome + 저장소 `node_modules/playwright`** 로 WSL 의 4000/4001 에 접속해 실행. 임시 파일·프로필 전부 삭제
+
+### 8. 안전 원장
+유료 호출 **0** · ⭐ 차감 유발 엔드포인트 호출 **0**(로그 증명) · `9004`/`9005` 쓰기 **0** ·
+인프라 컨테이너 재기동 **0** · `POST /api/generate/` **0** · `upload-from-generation` **0** ·
+개인정보 필드 노출 **0** · 산출물 크리덴셜 실값 **0**(플레이스홀더).
+
+### 9. 범위 밖 / 후속 과제
+- 🔴 **신규 발견(선재 결함)**: `api/index.js:903 frontendLogsBeaconUrl` 은 **문자열 상수**인데 `remoteLogger.js:146` 이 `frontendLogsBeaconUrl()` 로 **함수 호출** → `TypeError` 가 `catch` 에 삼켜져 **pagehide 배치 로그가 무증상 유실**. **괄호 2글자 삭제로 해결.** v200 범위 밖이라 미수정
+- `voice_clone.py:14`·`voice_clone_service.py:17` 의 주석이 **삭제된 `routes/voice_persona.py`** 를 가리킨다. 기능 영향 0. 두 파일은 이번 검증의 "diff 0" 앵커여서 의도적으로 손대지 않았다 — 다음 사이클에서 정리 권고
+- **보이스 클론이 3건 시도/완료 0건인 원인 조사** — 「내 목소리로 노래」 경로가 이제 클론 하나뿐이므로 우선순위 있음
+- `auth.py` 의 `?token=` 폴백 + 액세스 로그 `token=` 마스킹 — **AWS 이전 때 일괄**(음원 재생·DM WebSocket 이 실제 사용)
+- **AWS P0 잔여 9건** 유효
+- ⚠️ v196·v197·v199·v200 미반영 상태의 `backend_9004` — 앱팀 이전 시점까지 유보
+
+### 10. 변경 파일 (커밋 대상 8)
+- 백엔드 삭제 2 / 수정 1(`main.py`)
+- 프런트 수정 2(`StudioTab2.jsx`, `api/index.js`) / 어드민 1(`api.js`)
+- 산출물 3
+- **무변경 확인**: `StudioTab2.css`, `suno_generator.py`, `generate.py`, `voice_clone.py`, `voice_clone_service.py`, `auth.py`, `tracks.py`, `upload.py`, `backend_9004`, `backend_9005`

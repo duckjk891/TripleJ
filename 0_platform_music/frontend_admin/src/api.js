@@ -84,7 +84,7 @@ export const actionAdminReport = (reportId, action) =>
   API.post(`/admin/reports/${reportId}/action`, { action });
 
 // v138 — 신고 집행 패키지 (양면 뷰·확정 삭제·복원·인물 수색 몰수)
-// 어드민 전용 증거 프록시 URL (img src 용) — coverPreviewUrl 의 ?token= 패턴.
+// 어드민 전용 증거 프록시 URL (img src 용) — 인증 필요 엔드포인트라 ?token= 폴백을 쓴다(img 는 헤더 못 붙임).
 export const adminEvidenceUrl = (reportId, idx) => {
   const token = localStorage.getItem('token');
   return `${API.defaults.baseURL}/admin/reports/${reportId}/evidence/${idx}?token=${encodeURIComponent(token || '')}`;
@@ -249,9 +249,9 @@ export const getAdminNoticeDetail = (id) => API.get(`/admin/notices/${id}`);
 // 발송·재발송은 신규 엔드포인트 없이 기존 broadcastCs(:126) 를 그대로 재사용한다(발송 경로 단일화).
 
 // Cover preview URL helper (AdminReportsPage 트랙 커버 썸네일)
-export const coverPreviewUrl = (objectName) => {
-  const token = localStorage.getItem('token');
-  return `${API.defaults.baseURL}/upload/cover-preview/${encodeURIComponent(objectName)}?token=${encodeURIComponent(token || '')}`;
-};
+// 토큰 미첨부: 서버 cover_preview 는 무인증 엔드포인트라 ?token= 을 읽지 않는다.
+// 붙여봐야 액세스 로그·Referer 에 JWT 만 남으므로 제거한다.
+export const coverPreviewUrl = (objectName) =>
+  `${API.defaults.baseURL}/upload/cover-preview/${encodeURIComponent(objectName)}`;
 
 export default API;

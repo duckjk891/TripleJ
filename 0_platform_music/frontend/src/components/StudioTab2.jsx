@@ -487,10 +487,6 @@ export default function StudioTab2({ onSendToUpload }) {
   const [mode, setMode] = useState('custom');
   const [selectedModel, setSelectedModel] = useState('suno');
 
-  // ─── Voice Persona state ───
-  const [myPersonas, setMyPersonas] = useState([]);
-  const [selectedPersonaId, setSelectedPersonaId] = useState(null);
-
   // ─── Voice Clone state (v76 — Suno V5_5 voice cloning) ───
   const [myClones, setMyClones] = useState([]);
   const [selectedVoiceCloneId, setSelectedVoiceCloneId] = useState(null);
@@ -716,16 +712,6 @@ export default function StudioTab2({ onSendToUpload }) {
     }
     return null;
   };
-
-  // Fetch voice personas for "My Voice" option
-  useEffect(() => {
-    api.getVoicePersonas()
-      .then(({ data }) => {
-        const completed = (data.personas || []).filter((p) => p.status === 'completed' && p.persona_id);
-        setMyPersonas(completed);
-      })
-      .catch(() => {});
-  }, []);
 
   // 느낌 카테고리 고정 10종 로드 (편집 토글 UI 용). 하드코딩 금지, 실패 시 빈 배열 폴백.
   useEffect(() => {
@@ -1248,7 +1234,6 @@ export default function StudioTab2({ onSendToUpload }) {
           reference_style: referenceText.trim() || null,
           start_music_gen: true,
           model: selectedModel,
-          persona_id: selectedPersonaId || null,
           negative_tags: negativeTagsOn ? negativeTagsVal.trim() || null : null,
           style_weight: styleWeightOn ? parseFloat(styleWeightVal) || null : null,
           weirdness: weirdnessOn ? parseFloat(weirdnessVal) || null : null,
@@ -1291,7 +1276,6 @@ export default function StudioTab2({ onSendToUpload }) {
           reference_style: referenceText.trim() || null,
           start_music_gen: true,
           model: selectedModel,
-          persona_id: selectedPersonaId || null,
           negative_tags: negativeTagsOn ? negativeTagsVal.trim() || null : null,
           style_weight: styleWeightOn ? parseFloat(styleWeightVal) || null : null,
           weirdness: weirdnessOn ? parseFloat(weirdnessVal) || null : null,
@@ -1339,7 +1323,6 @@ export default function StudioTab2({ onSendToUpload }) {
       setDuetSubStyle('');
       setStyleText('');
       setVocal('');
-      setSelectedPersonaId(null);
       setIsInstrumental(false);
       setBpm('');
       setMusicalKey('');
@@ -2213,41 +2196,13 @@ export default function StudioTab2({ onSendToUpload }) {
                   <button
                     key={v.value}
                     type="button"
-                    className={`s2__vocal-btn ${vocal === v.value && !selectedPersonaId && !selectedVoiceCloneId ? 's2__vocal-btn--active' : ''}`}
-                    onClick={() => { setVocal(v.value); setSelectedPersonaId(null); setSelectedVoiceCloneId(null); }}
+                    className={`s2__vocal-btn ${vocal === v.value && !selectedVoiceCloneId ? 's2__vocal-btn--active' : ''}`}
+                    onClick={() => { setVocal(v.value); setSelectedVoiceCloneId(null); }}
                   >
                     {v.label}
                   </button>
                 ))}
               </div>
-
-              {/* My Voice Personas (Suno only) */}
-              {selectedModel === 'suno' && myPersonas.length > 0 && (
-                <div className="s2__persona-section">
-                  <label className="s2__label s2__label--persona">
-                    <FiMic className="s2__label-icon--inline" />
-                    내 목소리 (Voice Persona)
-                  </label>
-                  <div className="s2__vocal-grid">
-                    {myPersonas.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className={`s2__vocal-btn s2__vocal-btn--persona ${selectedPersonaId === p.persona_id ? 's2__vocal-btn--active' : ''}`}
-                        onClick={() => { setSelectedPersonaId(p.persona_id); setVocal(''); setSelectedVoiceCloneId(null); }}
-                      >
-                        <FiMic style={{ marginRight: 4 }} />
-                        {p.name}
-                      </button>
-                    ))}
-                  </div>
-                  {selectedPersonaId && (
-                    <div className="s2__persona-note">
-                      내 Voice Persona가 선택되었습니다. Suno가 이 목소리 톤으로 노래를 생성합니다.
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* v76 — My Voice (Voice Clone, Suno V5_5) */}
               {selectedModel === 'suno' && myClones.length > 0 && (
@@ -2267,7 +2222,6 @@ export default function StudioTab2({ onSendToUpload }) {
                           onClick={() => {
                             if (import.meta.env.DEV) console.info('[StudioTab2] voice clone selected', { clone_id: cid });
                             setSelectedVoiceCloneId(cid);
-                            setSelectedPersonaId(null);
                             setVocal('');
                           }}
                           title={c.description || ''}

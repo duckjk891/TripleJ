@@ -512,20 +512,6 @@ export const verifyFace = (photoFile, { selfieFile, sessionId } = {}) => {
 // 동의 철회 — 저장 얼굴 정보·검증 기록 파기 → {withdrawn:true}
 export const withdrawFaceVerify = () => API.delete('/face-verify');
 
-// Voice Persona
-export const createVoicePersona = (formData) =>
-  API.post('/voice-persona/create', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000,
-  });
-export const getVoicePersonas = () => API.get('/voice-persona/list');
-export const getVoicePersona = (id) => API.get(`/voice-persona/${id}`);
-export const deleteVoicePersona = (id) => API.delete(`/voice-persona/${id}`);
-export const streamVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-persona/${id}/vocal/stream`;
-export const streamVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/stream`;
-export const downloadVoicePersonaVocal = (id) => `${API.defaults.baseURL}/voice-persona/${id}/vocal/download`;
-export const downloadVoicePersonaCover = (id) => `${API.defaults.baseURL}/voice-persona/${id}/cover/download`;
-
 // Voice Clone (v76 — Suno V5_5 Voice Cloning)
 export const createVoiceClone = (formData) => API.post('/voice-clone/create', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
 export const submitVoiceCloneVerify = (cloneId, formData) => API.post('/voice-clone/' + cloneId + '/verify', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
@@ -589,10 +575,10 @@ export const getGenerationModels = () => API.get('/generate/models/');
 // v162 — Admin 전용 API 는 독립 앱(frontend_admin/src/api.js)으로 완전 이사.
 
 // Cover preview URL helper (공용 — MusicPlayer/SongItem/feed/ChartPage/PlayerPage/UploadPage)
-export const coverPreviewUrl = (objectName) => {
-  const token = localStorage.getItem('token');
-  return `${API.defaults.baseURL}/upload/cover-preview/${encodeURIComponent(objectName)}?token=${encodeURIComponent(token || '')}`;
-};
+// 토큰 미첨부: 서버 cover_preview 는 무인증 엔드포인트라 ?token= 을 읽지 않는다.
+// 붙여봐야 액세스 로그·Referer 에 JWT 만 남으므로 제거한다.
+export const coverPreviewUrl = (objectName) =>
+  `${API.defaults.baseURL}/upload/cover-preview/${encodeURIComponent(objectName)}`;
 
 // Generation stream URL helper
 // v74 — supports variantIndex (0 = first clip, BC; >=1 = second clip)
@@ -619,10 +605,6 @@ export const fetchAudioBuffer = (url) =>
 // Fetch a full URL as blob (for images/files already constructed via API helpers)
 export const fetchAsBlob = (fullUrl) =>
   axios.get(fullUrl, { responseType: 'blob' });
-
-// Download voice persona
-export const downloadVoicePersona = (personaId, type) =>
-  API.get(`/voice-persona/${personaId}/${type}/download`, { responseType: 'blob' });
 
 // Business (고객사 광고 시스템)
 export const getBusinessProfile = () => API.get('/business/profile');
