@@ -1,12 +1,12 @@
 // [Fab] 화면 우하단 공용 플로팅 버튼 — 차트(+)·피드(글쓰기) 위치·크기·그림자 통일(v3.62).
-// v3.66: 미니플레이어와 무관하게 **하단바 기준 6px 위 고정**(사용자 확정 스펙).
-//        재생 중엔 미니플레이어가 이 자리를 덮으므로 버튼은 자연히 가려진다(의도된 동작).
+// v3.67 확정 스펙: 하단바 위 12px 고정, 미니플레이어(재생 중)가 있으면 숨김(원래 차트 동작).
 import { ReactNode } from 'react';
 import { TouchableOpacity, StyleSheet } from 'react-native';
+import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
-const GAP_ABOVE_BAR = 6; // 하단바 위 간격
+const GAP_ABOVE_BAR = 12; // 하단바 위 간격
 
 interface Props {
   onPress: () => void;
@@ -15,6 +15,8 @@ interface Props {
 }
 
 export default function Fab({ onPress, children, accessibilityLabel }: Props) {
+  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
+  if (hasMiniPlayer) return null; // 재생 중엔 숨김 — 미니플레이어 영역과 겹치지 않게
   return (
     <TouchableOpacity style={styles.fab} onPress={onPress} activeOpacity={0.85} accessibilityLabel={accessibilityLabel}>
       {children}
