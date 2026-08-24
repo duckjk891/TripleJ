@@ -7,6 +7,26 @@
 
 ---
 
+## v3.69 — 2026-08-24 — 피드 트랙 블록=차트 TrackRow(재생수·좋아요·⋮) + 인라인 재생 토글 + 가사 불러오기
+
+### 요청 원문 요약
+① 피드에서 노래 클릭 시 "피드 내에서 재생"(재생/일시정지 토글) ② 트랙 표시를 차트와 동일하게 — 좋아요·재생수·⋮(세로점) ③ 피드 작성 시 내가 만든 가사를 복사해 사용.
+
+### Plan verification findings
+- v3.61의 '차트와 동일'을 곡 선택 화면으로 해석했으나 실제 의도는 **피드에 표시되는 트랙 블록** — 공용 TrackRow(커버·재생수·좋아요·⋮)로 교체 대상.
+- timeline 응답의 track 확장에 play_count/like_count **없음**(id/title/artist/cover/duration/is_public) — 백엔드 동결이라 프론트에서 GET /tracks/{id} 병합으로 보강(피드당 트랙 수 소량, 고유 id만·상한 20).
+- ⋮ 액션은 차트가 쓰는 공용 TrackActionSheet(track/onClose/onPlay/onLikeChanged) 재사용 가능.
+- 재생 토글: playerStore(track·sound·isPlaying) + playback.ts — 현재 곡이면 pause/resume, 아니면 playTrackNow(미니플레이어 동반은 유지 — 전역 컨트롤).
+- 가사: GET /tracks/{id}에 lyrics 포함(PlayerScreen 가사 탭이 사용) — FeedCompose에서 내 곡 선택→가사 본문 삽입 가능.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/FeedScreen.tsx | 트랙 블록 → 공용 TrackRow(재생수·좋아요·⋮), 스탯 병합 로드, 인라인 재생/일시정지 토글(left 슬롯 ▶/⏸ 표시), TrackActionSheet 연결 | [FeedScreen] |
+| screens/FeedComposeScreen.tsx | '가사 불러오기' 버튼 — 내 곡 피커 재사용 → 선택 곡 가사를 본문에 삽입 | [FeedCompose] |
+
+---
+
 ## v3.68 — 2026-08-24 — FAB 숨김 판정 픽스(track→track+sound)
 
 로그인 시 재생목록 복원으로 track만 세팅된 상태(미니플레이어 미표시)에서도 버튼이 숨던 버그 — 미니플레이어 실제 표시 조건(track && sound)과 판정 일치.

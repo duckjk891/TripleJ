@@ -14,6 +14,9 @@ import LoginPrompt from '../components/LoginPrompt';
 import FeedCard, { feedTheme } from '../components/feed/FeedCard';
 import { playTrackNow } from '../services/playback';
 import Fab from '../components/Fab';
+import TrackRow, { RowTrack } from '../components/TrackRow';
+import TrackActionSheet from '../components/TrackActionSheet';
+import { useLikesStore } from '../stores/likesStore';
 
 interface FeedTrack {
   id: string;
@@ -21,6 +24,8 @@ interface FeedTrack {
   artist_name?: string;
   cover_image?: string;
   duration_sec?: number;
+  play_count?: number;   // v3.69: timeline엔 없음 — /tracks/{id} 병합으로 보강
+  like_count?: number;
 }
 interface FeedBlock {
   type: string; // 'text' | 'track'
@@ -60,6 +65,13 @@ export default function FeedScreen() {
   const [refreshing, setRefreshing] = useState(false);
   // 비로그인: 스크롤/팔로워 클릭 시 나타나는 로그인 CTA (고정 아님)
   const [ctaVisible, setCtaVisible] = useState(false);
+  // v3.69: 트랙 스탯(재생수·좋아요) 병합 캐시 + ⋮ 액션시트 대상
+  const [trackStats, setTrackStats] = useState<Record<string, { play_count?: number; like_count?: number }>>({});
+  const [actionTrack, setActionTrack] = useState<RowTrack | null>(null);
+  const likedMap = useLikesStore((s) => s.liked);
+  const syncLikes = useLikesStore((s) => s.sync);
+  const nowId = usePlayerStore((s) => s.track?.id);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
 
   const fetchFeed = useCallback(async () => {
     // 피드는 비로그인도 우선 노출(공개 타임라인). 스크롤/클릭 시 로그인 CTA를 띄운다.
@@ -72,6 +84,19 @@ export default function FeedScreen() {
         : (res.data?.feeds || res.data?.items || res.data?.posts || []);
       if (__DEV__) console.info('[FeedScreen] fetchFeed 응답', { count: data.length });
       setPosts(data);
+      // v3.69: timeline엔 재생수·좋아요가 없어 고유 트랙(최대 20곡)의 상세를 병합
+      const ids = [...new Set(data.flatMap((p) => (p.blocks || [])
+        .filter((b) => b.type === 'track' && b.track?.id).map((b) => String(b.track!.id))))].slice(0, 20);
+      if (ids.length) {
+        if (__DEV__) console.info('[FeedScreen] 트랙 스탯 병합', { count: ids.length });
+        if (useAuthStore.getState().user) syncLikes(ids);
+        const results = await Promise.allSettled(ids.map((id) => api.get(`/tracks/${id}`)));
+        const next: Record<string, { play_count?: number; like_count?: number }> = {};
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') next[ids[i]] = { play_count: r.value.data?.play_count, like_count: r.value.data?.like_count };
+        });
+        setTrackStats((prev) => ({ ...prev, ...next }));
+      }
     } catch (err: any) {
       console.error('[FeedScreen] fetchFeed 실패', { status: err?.response?.status });
     } finally {
@@ -93,32 +118,43 @@ export default function FeedScreen() {
     return out;
   }, [posts]);
 
-  // v3.61: 플레이어 화면으로 이동하지 않고 피드에서 즉시 재생(미니플레이어 등장)
-  const handlePlayTrack = (track: FeedTrack) => {
+  // v3.69: 피드 내 재생 토글 — 현재 곡이면 일시정지/재개, 아니면 그 곡부터 재생(화면 유지)
+  const handleTrackTap = async (track: FeedTrack) => {
     if (!track?.id) return;
+    const s = usePlayerStore.getState();
+    if (String(s.track?.id) === String(track.id) && s.sound) {
+      if (__DEV__) console.info('[FeedScreen] 트랙 토글', { id: track.id, pause: s.isPlaying });
+      try {
+        if (s.isPlaying) { await s.sound.pauseAsync(); s.setIsPlaying(false); }
+        else { await s.sound.playAsync(); s.setIsPlaying(true); }
+      } catch (err: any) {
+        console.error('[FeedScreen] 토글 실패', { id: track.id, message: err?.message });
+      }
+      return;
+    }
     if (__DEV__) console.info('[FeedScreen] play track inline', { id: track.id });
     playTrackNow(track, allTracks());
   };
 
   const goLogin = () => navigation.navigate('Settings');
 
+  // v3.69: 트랙 블록 = 차트와 동일한 공용 TrackRow(커버·재생수·좋아요·⋮) + 재생 상태 표시
   const renderTrackBlock = (track: FeedTrack, key: string) => {
-    const uri = coverUri(track.cover_image);
+    const stats = trackStats[String(track.id)] || {};
+    const rowTrack: RowTrack = { ...track, ...stats } as RowTrack;
+    const isCurrent = String(nowId) === String(track.id);
     return (
-      <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => (user ? handlePlayTrack(track) : setCtaVisible(true))} accessibilityLabel={`재생 ${track.title || ''}`}>
-        <View style={styles.trackCover}>
-          {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
-            : <AppText variant="title3" style={{ color: feedTheme.muted }}>♪</AppText>}
-          <View style={styles.playBadge}><Feather name="play" size={14} color="#FFFFFF" /></View>
-        </View>
-        <View style={styles.trackMeta}>
-          <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedTheme.text }}>{track.title || '제목 없음'}</AppText>
-          <AppText variant="caption" numberOfLines={1} style={{ color: feedTheme.muted }}>
-            {track.artist_name || '아티스트'}{fmtDuration(track.duration_sec) ? ` · ${fmtDuration(track.duration_sec)}` : ''}
-          </AppText>
-        </View>
-        <Feather name="play-circle" size={26} color={colors.accent.primary} />
-      </TouchableOpacity>
+      <View key={key} style={styles.trackBlockWrap}>
+        <TrackRow
+          track={rowTrack}
+          liked={!!likedMap[String(track.id)]}
+          left={isCurrent
+            ? <View style={styles.nowIcon}><Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.accent.primary} /></View>
+            : undefined}
+          onPress={() => (user ? handleTrackTap(track) : setCtaVisible(true))}
+          onMore={() => (user ? setActionTrack(rowTrack) : setCtaVisible(true))}
+        />
+      </View>
     );
   };
 
@@ -193,6 +229,17 @@ export default function FeedScreen() {
         />
       )}
 
+      {/* v3.69: ⋮ 액션 시트 — 차트와 동일(재생/좋아요/재생목록/플레이리스트) */}
+      <TrackActionSheet
+        track={actionTrack}
+        onClose={() => setActionTrack(null)}
+        onPlay={(t) => handleTrackTap(t as FeedTrack)}
+        onLikeChanged={(trackId, delta) => setTrackStats((prev) => ({
+          ...prev,
+          [trackId]: { ...prev[trackId], like_count: Math.max(0, (prev[trackId]?.like_count ?? 0) + delta) },
+        }))}
+      />
+
       {/* v3.62 공용 Fab → v3.63: 재생 중에도 항상 노출(미니플레이어 위로 자동 상승) */}
       {user ? (
         <Fab onPress={() => navigation.navigate('FeedCompose')} accessibilityLabel="피드 작성">
@@ -226,21 +273,12 @@ const styles = StyleSheet.create({
   headText: { marginLeft: spacing.md, flex: 1 },
   title: { marginTop: spacing.md },
   body: { marginTop: spacing.sm },
-  trackRow: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    marginTop: spacing.md, padding: spacing.sm,
-    backgroundColor: feedTheme.field, borderRadius: radius.lg, // v3.60: 무난한 다크 칩 복귀
+  // v3.69: 트랙 블록 래퍼 — 카드 안 인셋 배경 위에 공용 TrackRow를 얹는다
+  trackBlockWrap: {
+    marginTop: spacing.md, backgroundColor: feedTheme.field,
+    borderRadius: radius.lg, overflow: 'hidden',
   },
-  trackCover: {
-    width: 52, height: 52, borderRadius: radius.md, overflow: 'hidden',
-    backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
-  },
-  trackCoverImg: { width: '100%', height: '100%' },
-  playBadge: {
-    position: 'absolute', right: 2, bottom: 2,
-    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill, padding: 2,
-  },
-  trackMeta: { flex: 1 },
+  nowIcon: { width: 20, alignItems: 'center' },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   // 작업실(MapScreen) 로그인 오버레이와 동일 스펙 — 까만 반투명 전체화면 + 중앙 텍스트

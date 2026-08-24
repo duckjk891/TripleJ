@@ -21,10 +21,31 @@ export default function FeedComposeScreen({ navigation }: any) {
   const [attached, setAttached] = useState<RowTrack | null>(null);
   const [posting, setPosting] = useState(false);
 
-  // 음악 첨부 — 내 곡 목록(공용 TrackRow, 차트와 동일 디자인)
+  // 음악 첨부/가사 불러오기 — 내 곡 목록(공용 TrackRow, 차트와 동일 디자인) 피커 공유
+  // v3.69: pickerMode 'attach'=곡 첨부, 'lyrics'=선택 곡의 가사를 본문에 삽입
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'attach' | 'lyrics'>('attach');
   const [myTracks, setMyTracks] = useState<RowTrack[]>([]);
   const [tracksLoading, setTracksLoading] = useState(false);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+
+  // 선택 곡의 가사를 본문에 삽입
+  const insertLyrics = async (track: RowTrack) => {
+    setLyricsLoading(true);
+    if (__DEV__) console.info('[FeedCompose] 가사 불러오기', { id: track.id });
+    try {
+      const res = await api.get(`/tracks/${track.id}`);
+      const lyrics = (res.data?.lyrics || '').trim();
+      if (!lyrics) { Alert.alert('알림', '이 곡에는 저장된 가사가 없어요.'); return; }
+      setBody((prev) => (prev.trim() ? `${prev}\n\n` : '') + `🎤 ${track.title}\n${lyrics}`);
+      setPickerOpen(false);
+    } catch (err: any) {
+      console.error('[FeedCompose] 가사 조회 실패', { id: track.id, status: err?.response?.status });
+      Alert.alert('오류', '가사를 불러오지 못했어요.');
+    } finally {
+      setLyricsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!pickerOpen || myTracks.length) return;
@@ -123,11 +144,17 @@ export default function FeedComposeScreen({ navigation }: any) {
             <TrackRow track={attached} onPress={() => {}} />
           </View>
         ) : (
-          <TouchableOpacity style={styles.attachBtn} onPress={() => setPickerOpen(true)} accessibilityLabel="음악 첨부">
+          <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('attach'); setPickerOpen(true); }} accessibilityLabel="음악 첨부">
             <Feather name="music" size={18} color={colors.accent.primary} />
             <AppText variant="body" tone="accent">음악 첨부</AppText>
           </TouchableOpacity>
         )}
+
+        {/* v3.69: 내가 만든 곡의 가사를 본문에 삽입 */}
+        <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('lyrics'); setPickerOpen(true); }} accessibilityLabel="가사 불러오기">
+          <Feather name="file-text" size={18} color={colors.accent.primary} />
+          <AppText variant="body" tone="accent">내 가사 불러오기</AppText>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}
@@ -137,8 +164,8 @@ export default function FeedComposeScreen({ navigation }: any) {
             <TouchableOpacity onPress={() => setPickerOpen(false)} accessibilityLabel="곡 선택 닫기" style={{ padding: 4 }}>
               <Feather name="arrow-left" size={22} color={colors.text.primary} />
             </TouchableOpacity>
-            <AppText variant="title3">내 곡에서 선택</AppText>
-            <View style={{ width: 30 }} />
+            <AppText variant="title3">{pickerMode === 'lyrics' ? '가사 가져올 곡 선택' : '내 곡에서 선택'}</AppText>
+            <View style={{ width: 30 }}>{lyricsLoading ? <ActivityIndicator size="small" color={colors.accent.primary} /> : null}</View>
           </View>
           {tracksLoading ? (
             <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
@@ -155,6 +182,7 @@ export default function FeedComposeScreen({ navigation }: any) {
                 <TrackRow
                   track={item}
                   onPress={() => {
+                    if (pickerMode === 'lyrics') { insertLyrics(item); return; }
                     if (__DEV__) console.info('[FeedCompose] 곡 첨부', { id: item.id });
                     setAttached(item);
                     setPickerOpen(false);
