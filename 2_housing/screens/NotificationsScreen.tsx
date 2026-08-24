@@ -134,12 +134,7 @@ export default function NotificationsScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="뒤로가기" style={{ padding: 4 }}>
-          <Feather name="arrow-left" size={22} color={colors.text.primary} />
-        </TouchableOpacity>
-        <AppText variant="title3" style={{ marginLeft: spacing.sm }}>알림</AppText>
-      </View>
+      {/* v3.71: 타이틀·뒤로가기는 네이티브 헤더(App.tsx stackHeader)로 이동 — 본문 헤더 제거 */}
       {loading ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
       ) : items.length === 0 ? (
@@ -157,12 +152,7 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
-  header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
-  },
+  container: { flex: 1, backgroundColor: colors.bg.deepest },
   row: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,

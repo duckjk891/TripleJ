@@ -32,6 +32,9 @@ export default function FeedComposeScreen({ navigation }: any) {
   // 아이템 선택 2단계(곡 → 그 곡의 착장 아이템)와 첨부된 아이템(마커 블록으로 저장)
   const [itemChoices, setItemChoices] = useState<any[] | null>(null);
   const [attachedItems, setAttachedItems] = useState<{ name: string; category?: string; url?: string; img?: string }[]>([]);
+  // v3.71: 착장 유무는 곡 상세에만 있어 병렬 조회로 판별 — trackId → used_items 캐시(null=미조회)
+  const [itemTrackMap, setItemTrackMap] = useState<Record<string, any[]> | null>(null);
+  const [itemFilterLoading, setItemFilterLoading] = useState(false);
 
   // v3.70: 선택 곡의 가사를 클립보드에 복사(본문 삽입 아님 — 원하는 위치에 붙여넣기)
   const copyLyrics = async (track: RowTrack) => {
@@ -52,8 +55,10 @@ export default function FeedComposeScreen({ navigation }: any) {
     }
   };
 
-  // v3.70: 곡 선택 → 그 곡의 착장 아이템 목록 로드(2단계)
+  // v3.70: 곡 선택 → 그 곡의 착장 아이템 목록 로드(2단계). v3.71: 필터 단계 캐시를 우선 사용.
   const loadItemsOf = async (track: RowTrack) => {
+    const cached = itemTrackMap?.[String(track.id)];
+    if (cached?.length) { setItemChoices(cached); return; }
     setLyricsLoading(true);
     if (__DEV__) console.info('[FeedCompose] 착장 아이템 조회', { id: track.id });
     try {
@@ -87,6 +92,31 @@ export default function FeedComposeScreen({ navigation }: any) {
     })();
     return () => { alive = false; };
   }, [pickerOpen, myTracks.length]);
+
+  // v3.71: 아이템 모드 — 착장 아이템이 있는 곡만 보이도록 곡 상세를 병렬 조회해 필터(1회 캐시)
+  useEffect(() => {
+    if (!pickerOpen || pickerMode !== 'item' || itemTrackMap || !myTracks.length) return;
+    let alive = true;
+    (async () => {
+      setItemFilterLoading(true);
+      if (__DEV__) console.info('[FeedCompose] 착장 보유 곡 필터 조회', { count: myTracks.length });
+      try {
+        const results = await Promise.allSettled(myTracks.map((t) => api.get(`/tracks/${t.id}`)));
+        if (!alive) return;
+        const map: Record<string, any[]> = {};
+        results.forEach((r, i) => {
+          if (r.status !== 'fulfilled') return;
+          const items = r.value.data?.cover_character?.used_items || [];
+          if (items.length) map[String(myTracks[i].id)] = items;
+        });
+        if (__DEV__) console.info('[FeedCompose] 착장 보유 곡', { count: Object.keys(map).length });
+        setItemTrackMap(map);
+      } finally {
+        if (alive) setItemFilterLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [pickerOpen, pickerMode, myTracks.length, itemTrackMap]);
 
   const submit = async () => {
     const text = body.trim();
@@ -246,16 +276,20 @@ export default function FeedComposeScreen({ navigation }: any) {
               )}
               contentContainerStyle={{ padding: spacing.lg, paddingBottom: 40 }}
             />
-          ) : tracksLoading ? (
+          ) : tracksLoading || (pickerMode === 'item' && itemFilterLoading) ? (
             <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 60 }} />
           ) : myTracks.length === 0 ? (
             <View style={{ marginTop: 60, alignItems: 'center', gap: spacing.md }}>
               <AppText tone="secondary">아직 발매한 곡이 없어요</AppText>
               <Button label="작업실에서 만들기" variant="tonal" onPress={() => { setPickerOpen(false); navigation.goBack(); }} />
             </View>
+          ) : pickerMode === 'item' && itemTrackMap && Object.keys(itemTrackMap).length === 0 ? (
+            <View style={{ marginTop: 60, alignItems: 'center', gap: spacing.md }}>
+              <AppText tone="secondary">착장 아이템이 있는 곡이 없어요</AppText>
+            </View>
           ) : (
             <FlatList
-              data={myTracks}
+              data={pickerMode === 'item' && itemTrackMap ? myTracks.filter((t) => itemTrackMap[String(t.id)]) : myTracks}
               keyExtractor={(t) => String(t.id)}
               renderItem={({ item }) => (
                 <TrackRow

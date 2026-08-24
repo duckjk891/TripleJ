@@ -223,6 +223,21 @@ const pageHeader = (navigation: any, title: string) => ({
   headerRight: () => <MyPageIcon navigation={navigation} />,
 });
 
+// v3.71: 스택 페이지 헤더 — 알림/메시지 등 RootStack 화면도 플레이리스트처럼 상단바에 타이틀이 뜨도록.
+// pageHeader와 달리 뒤로가기는 goBack(진입 지점으로 복귀).
+const stackHeader = (navigation: any, title: string) => ({
+  headerShown: true,
+  headerTitle: () => <AppText variant="subtitle">{title}</AppText>,
+  headerStyle: { backgroundColor: colors.bg.deepest },
+  headerTintColor: colors.text.primary,
+  headerShadowVisible: false,
+  headerLeft: () => (
+    <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
+      <Feather name="arrow-left" size={22} color={colors.text.primary} />
+    </TouchableOpacity>
+  ),
+});
+
 function MainTabs() {
   return (
     <Tab.Navigator
@@ -409,8 +424,8 @@ export default function App() {
           >
             <RootStack.Screen name="Splash" component={SplashScreen} />
             <RootStack.Screen name="MainTabs" component={MainTabs} />
-            <RootStack.Screen name="DmInbox" component={DmInboxScreen} />
-            <RootStack.Screen name="Notifications" component={NotificationsScreen} />
+            <RootStack.Screen name="DmInbox" component={DmInboxScreen} options={({ navigation }) => stackHeader(navigation, '메시지')} />
+            <RootStack.Screen name="Notifications" component={NotificationsScreen} options={({ navigation }) => stackHeader(navigation, '알림')} />
             <RootStack.Screen name="MyReports" component={MyReportsScreen} />
             <RootStack.Screen name="DmChat" component={DmChatScreen} />
             <RootStack.Screen

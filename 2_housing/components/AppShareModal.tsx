@@ -11,10 +11,11 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from './ui';
 
 // 공유 타깃 라벨 — MAIDOL과 동일 구성. RN에서는 세 소셜 모두 네이티브 공유 시트로 위임.
+// v3.71: 이모지 전부 제거(사용자 요청)
 const SHARE_BUTTONS: { key: string; label: string }[] = [
-  { key: 'kakao', label: '💬 카카오톡' },
-  { key: 'instagram', label: '📸 인스타그램' },
-  { key: 'facebook', label: '📘 페이스북' },
+  { key: 'kakao', label: '카카오톡' },
+  { key: 'instagram', label: '인스타그램' },
+  { key: 'facebook', label: '페이스북' },
 ];
 
 export default function AppShareModal() {
@@ -48,7 +49,7 @@ export default function AppShareModal() {
   const inviteUrl = code ? `${BACKEND_BASE_URL}/invite/${code}` : '';
   // v160 — URL 중복 방지: 네이티브 시트엔 base 메시지, 복사엔 URL 포함 full.
   // v3.58 — 베타 이벤트 문구 삽입(공유 메시지에 이벤트가 함께 전달되도록)
-  const shareTextBase = `AIDOL — AI가 만든 음악의 새로운 세계 🎵\n🎁 베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: ${code}`;
+  const shareTextBase = `AIDOL — AI가 만든 음악의 새로운 세계\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: ${code}`;
   const shareTextFull = `${shareTextBase}\n${inviteUrl}`;
 
   const showMsg = (m: string) => { setMessage(m); setTimeout(() => setMessage(''), 4000); };
@@ -76,7 +77,7 @@ export default function AppShareModal() {
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={close}>
         <TouchableOpacity style={styles.modal} activeOpacity={1} onPress={() => {}}>
           <View style={styles.head}>
-            <AppText variant="title2">📢 AIDOL 추천하기</AppText>
+            <AppText variant="title2">AIDOL 추천하기</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
               <AppText variant="title3" tone="muted">✕</AppText>
             </TouchableOpacity>
@@ -89,13 +90,13 @@ export default function AppShareModal() {
           ) : (
             <>
               <AppText variant="footnote" tone="secondary" center style={styles.desc}>
-                친구가 내 추천코드로 가입하면 두 사람 모두 스타 50을 받아요!{'\n'}🎁 베타 테스트 기간엔 가입만 해도 스타 50 추가 증정!
+                친구가 내 추천코드로 가입하면{'\n'}두 사람 모두 스타 50을 받아요!{'\n'}베타 테스트 기간엔 가입만 해도 스타 50 추가 증정!
               </AppText>
 
               <View style={styles.codeBox}>
                 <AppText variant="headline" tone="accent">{code || '—'}</AppText>
                 <TouchableOpacity onPress={handleCopyCode} accessibilityLabel="추천코드 복사" style={styles.copyBtn}>
-                  <AppText variant="footnote" tone="accent">📋 복사</AppText>
+                  <AppText variant="footnote" tone="accent">복사</AppText>
                 </TouchableOpacity>
               </View>
 
@@ -106,7 +107,7 @@ export default function AppShareModal() {
                   </View>
                 ))}
                 <View style={styles.btnCell}>
-                  <Button label="🔗 링크 복사" variant="tonal" fullWidth onPress={handleCopyLink} />
+                  <Button label="링크 복사" variant="tonal" fullWidth onPress={handleCopyLink} />
                 </View>
               </View>
 

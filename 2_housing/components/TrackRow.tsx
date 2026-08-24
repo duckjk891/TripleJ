@@ -110,9 +110,9 @@ const styles = StyleSheet.create({
   info: { flex: 1, marginRight: spacing.sm },
   artist: { marginTop: 3 },
   statCol: { alignItems: 'flex-end', gap: 3, marginRight: spacing.xs, minWidth: 44 },
-  // v3.70: 커버 우하단 재생 배지
+  // v3.70 커버 우하단 재생 배지 → v3.71: 커버의 marginHorizontal(12)을 보정해 이미지 '내부' 우하단에 오도록
   playBadge: {
-    position: 'absolute', right: 2, bottom: 2,
+    position: 'absolute', right: spacing.md + 2, bottom: 2,
     width: 18, height: 18, borderRadius: 9,
     backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center',
   },

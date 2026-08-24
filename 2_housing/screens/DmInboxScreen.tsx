@@ -1,7 +1,7 @@
 // [DmInbox] 다이렉트 메시지함 — MAIDOL DmInboxPage 이식(RN).
 // 탭: 메시지/요청. 새 메시지: 닉네임 또는 #태그 검색(#태그=추천코드 4자리, 전역 유일 '배틀태그').
 // 게이트: 본인인증(is_verified) 회원만 — 미인증은 안내 화면.
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -89,6 +89,17 @@ export default function DmInboxScreen() {
     }
   };
 
+  // v3.71: 새 메시지 버튼을 네이티브 헤더 우측에 배치(본문 헤더는 제거됨)
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={openCompose} accessibilityLabel="새 메시지" style={{ marginRight: 12, padding: 4 }}>
+          <Feather name="edit" size={20} color={colors.text.primary} />
+        </TouchableOpacity>
+      ),
+    });
+  });
+
   // 닉네임/#태그 검색 — 300ms 디바운스 (MAIDOL 동일)
   const onQueryChange = (q: string) => {
     setQuery(q);
@@ -168,17 +179,7 @@ export default function DmInboxScreen() {
 
   return (
     <View style={styles.container}>
-      {/* 헤더: 메시지 + 새 메시지 */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="뒤로가기" style={{ padding: 4 }}>
-          <Feather name="arrow-left" size={22} color={colors.text.primary} />
-        </TouchableOpacity>
-        <AppText variant="title3" style={{ flex: 1, marginLeft: spacing.sm }}>메시지</AppText>
-        <TouchableOpacity onPress={openCompose} accessibilityLabel="새 메시지" style={{ padding: 4 }}>
-          <Feather name="edit" size={20} color={colors.text.primary} />
-        </TouchableOpacity>
-      </View>
-
+      {/* v3.71: 타이틀·뒤로가기는 네이티브 헤더(App.tsx stackHeader)로 이동, 새 메시지는 headerRight */}
       {/* 탭: 메시지 / 요청 */}
       <View style={styles.tabs}>
         {(['messages', 'requests'] as const).map((t) => (
@@ -202,7 +203,7 @@ export default function DmInboxScreen() {
 
       {/* 새 메시지 모달 */}
       <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
-        <View style={styles.container}>
+        <View style={styles.modalContainer}>
           <View style={styles.header}>
             <AppText variant="title3" style={{ flex: 1 }}>새 메시지</AppText>
             <TouchableOpacity onPress={() => setComposeOpen(false)} accessibilityLabel="닫기" style={{ padding: 4 }}>
@@ -254,7 +255,9 @@ export default function DmInboxScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  container: { flex: 1, backgroundColor: colors.bg.deepest },
+  // 새 메시지 모달(네이티브 헤더 없는 풀스크린)만 상단 여백 유지
+  modalContainer: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.lg, paddingBottom: spacing.md,

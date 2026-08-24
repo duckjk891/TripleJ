@@ -7,6 +7,29 @@
 
 ---
 
+## v3.71 — 2026-08-24 — 추천 모달 이모지 제거·개행 · 알림/메시지 네이티브 헤더 · 재생 배지 위치 · 아이템 곡 필터
+
+### 요청(원문 요약)
+① 추천하기 모달의 이모지 전부 제거 ② '가입하면'에서 개행 ③ 알림·메시지 화면 타이틀이 상단바 영역이 아닌 그 아래에 보임(플레이리스트처럼 상단바에 떠야 함) ④ 피드 트랙 재생 배지를 커버 이미지 내부 우하단으로 ⑤ 아이템 첨부 곡 선택에 착장 없는 곡도 뜸 → 있는 곡만.
+
+### Plan verification findings
+- `components/AppShareModal.tsx:14-18,51,79,92,98,109` — 공유 버튼 라벨(💬📸📘🔗)·타이틀(📢)·본문(🎁)·공유 문구(🎵🎁)·복사(📋)에 이모지. 92행 '가입하면 두 사람 모두...' 한 줄.
+- `App.tsx:404-414` — RootStack `headerShown:false` 전역 → DmInbox/Notifications는 자체 헤더를 본문에 그림(NotificationsScreen:136-142, DmInboxScreen:170-180, 둘 다 `paddingTop:50`). 플레이리스트는 탭 네비 `pageHeader`(네이티브 헤더)라 상단바에 타이틀이 뜸 — 이 차이가 원인.
+- `components/TrackRow.tsx:106,114-118` — 커버에 `marginHorizontal: spacing.md(12)`가 있는데 배지 absolute `right:2`는 마진 포함 래퍼 기준 → 배지가 커버 오른쪽 여백에 걸침. `right: spacing.md+2`로 보정하면 커버 내부 우하단.
+- `screens/FeedComposeScreen.tsx:256-273` — item 모드도 `myTracks` 전체를 보여줌. 착장 유무는 `GET /tracks/{id}` → `cover_character.used_items`로만 판별 가능(목록 API에 없음) → 상세 병렬 조회로 필터 + 결과 캐시(재조회 방지).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| components/AppShareModal.tsx | 이모지 제거·'가입하면' 뒤 개행 | [AppShareModal] |
+| App.tsx | stackHeader 헬퍼 + DmInbox/Notifications 네이티브 헤더 | — |
+| screens/NotificationsScreen.tsx | 본문 헤더 제거·paddingTop 정리 | [Notifications] |
+| screens/DmInboxScreen.tsx | 본문 헤더 제거·새 메시지 버튼 headerRight 이동 | [DmInbox] |
+| components/TrackRow.tsx | playBadge right 보정(커버 내부 우하단) | — |
+| screens/FeedComposeScreen.tsx | item 모드 착장 보유 곡 필터(상세 병렬 조회+캐시) | [FeedCompose] |
+
+---
+
 ## v3.70 — 2026-08-24 — 커버 재생배지 · 가사 복사 · 착장 아이템 첨부(공구) · 유령 재생 버그픽스
 
 ### 요청 원문 요약
