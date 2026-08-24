@@ -16336,3 +16336,61 @@ planner 도 별도 케이스로 독립 재현(access args 튜플 경로 포함).
 
 ### 8. 변경 파일 (커밋 대상 6)
 `app/main.py` · `app/routes/_logs.py` · `docker-compose.yml` + 산출물 3. 무변경: 실 `.env` · 프런트 · 9004/9005.
+
+---
+
+## v204 — 2026-08-24 — CORS 화이트리스트(4-5) + /docs 스위치(4-7) + readiness(4-10) [MAIDOL-GateSquad]
+
+> AWS 요청서 P0 의 마지막 코드 묶음. `backend_9006` 단독. 착수 HEAD `814d3fd`.
+> **이로써 P0 10건 중 코드로 완결 가능한 9건이 전부 완료** — 잔여는 4-4(앱팀 딥링크 값 대기) 하나.
+
+### 1. 요청 작업
+① 4-5: `allow_origins=["*"]` → 운영 화이트리스트 ② 4-7: Swagger(/docs) 운영 차단 ③ 4-10: DB 5종을 실제로 점검하는 readiness 분리.
+
+### 2. 설계 — 3건 모두 `.env` 스위치 (로컬 무변경 원칙)
+| 설정 | 로컬 기본 | EC2 `.env` |
+|---|---|---|
+| `CORS_ORIGINS` | `*` (현행 보존) | `https://www.maidol.ai.kr,https://admin.maidol.ai.kr` |
+| `DOCS_ENABLED` | `true` | `false` → /docs·/redoc·/openapi.json 404 |
+| `/api/ready` 🆕 | 활성 (무인증, LB 용) | 동일 |
+
+로컬 기본을 `*` 로 두는 근거: 개발 Origin 이 유동 IP(인증서 SAN 6호스트×2포트)라 고정 명단 불가 +
+**공인 IP 를 코드에 커밋하지 않기 위함**. 운영 화이트리스트는 EC2 배포 체크리스트 필수 항목으로 명기.
+`/api/health` 는 무수정 — Dockerfile HEALTHCHECK 가 쓰는 값싼 생존 신호로 존치.
+
+### 3. 수행 결과 (4파일 +103 상당)
+- `config.py` — `cors_origins`·`docs_enabled` 신설
+- `main.py` — `_parse_cors_origins`(:619) / FastAPI 생성부 docs 분기 / **`/api/ready`**: 모듈 수준 체크 함수 5종 + `_READY_CHECKS` 레지스트리(:725) + 호출 시점 딕셔너리 순회(:747·:750), 각 2s `wait_for` 병렬 gather, 200/503 동일 구조, 에러 원문·호스트·비밀값은 응답 미포함(로그만)
+- `database/postgres.py` — `ping_pg()` (SELECT 1)
+- `.env.example` — 키 이름 2종
+
+**dev 가 스스로 막은 함정**: `.env.example` 복사 시 `CORS_ORIGINS=` 빈 값이 들어가면 순정 파서는
+빈 명단(=전면 차단 사고)이 됨 → 빈 문자열도 `*` 로 취급하는 방어를 파서에 내장.
+
+### 4. 픽스 루프 성격의 리팩터 1회 — 검증 가능성 확보
+1차 구현이 체크 5종을 엔드포인트 인라인으로 짜서 **실패 경로(503) 검증 수단이 없었다**
+(🚫 인프라 컨테이너 kill 금지 → 몽키패치가 유일한데 인라인은 패치 불가).
+→ 모듈 함수 + `_READY_CHECKS` 딕셔너리로 리팩터, 엔드포인트는 호출 시점 순회.
+test-designer 의 P4 요구가 구현 구조를 바꾼 사례 — **"검증할 수 없는 구현은 미완성"**.
+
+### 5. 테스트 — 12/12 PASS, 즉시중단 0
+`[unit]` 6(50%) / `[api]` 6(50%) / e2e 0.
+
+**결정적 실측**
+- **로컬 회귀 0**: 재기동 전후 CORS 응답 헤더 셋 **diff 0**(Origin echo·credentials·vary·preflight 메서드·max-age 전부 동일) / docs 200 유지 / health 구조 무변형
+- **화이트리스트 시뮬**: 허용 Origin → ACAO 존재 / 비허용 → ACAO 부재 + preflight 400
+- **실서버 `/api/ready`**: **200 + 5키 전부 true, 0.006~0.023s**, 무인증 동작
+- **고장 주입**: `_READY_CHECKS` 항목 교체만으로 503 + 해당 키 false + 심은 가짜 문자열 응답 0건 / `sleep(10)` 스텁 → **정확히 2.00s 에 차단**(타임아웃 실증)
+- **실 `.env` 54개 값 대조** → ready 응답 내 유출 0
+- 시뮬 전 구간 socket connect **0건**(스파이 계측 — lifespan 전 무연결 실증)
+
+### 6. 안전 원장
+인프라 컨테이너 조작 0(5종 running 유지, 503 재현 전부 시뮬) · 유료 0 · 실 `.env` mtime·sha 동일 ·
+9004/9005 0 · 재기동 1회(PID 지정) · 크리덴셜 실값 산출물 0.
+
+### 7. 범위 밖 / 후속
+- **EC2 배포 체크리스트**: `CORS_ORIGINS`·`DOCS_ENABLED=false` 필수 설정 + Dockerfile HEALTHCHECK 를 `/api/ready` 로 전환할지 배포 라운드에서 판단
+- 4-4(공인 도메인 주입)는 앱팀 딥링크 확정값 대기 — P0 중 유일 잔여
+
+### 8. 변경 파일 (커밋 대상 7)
+`app/main.py` · `app/config.py` · `app/database/postgres.py` · `.env.example` + 산출물 3.

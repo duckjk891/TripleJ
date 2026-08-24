@@ -30003,3 +30003,48 @@ CloudWatch 적재 설정(P1) / 로그 로테이션 / 과거 로그 파일 소급
 ### 5. 절대 준수
 유료 0 · 9004/9005 쓰기 0 · **인프라 무조작(compose up/restart/stop 금지, MinIO 9100 차단 금지)** ·
 실 `.env` 무접촉 · 9006 앱 재기동만 허용(PID kill→run.sh) · 커밋 전 시크릿 검사 · 푸시 없음
+
+---
+
+## v204 — 2026-08-24 — CORS 화이트리스트(4-5) + /docs 스위치(4-7) + readiness(4-10) [MAIDOL-GateSquad]
+
+AWS 요청서 P0 마지막 코드 묶음(4-4 제외 — 앱팀 값 대기). 착수 HEAD `814d3fd`. `backend_9006` 단독.
+
+### 0. Plan verification findings
+- CORS: `main.py:617-619` `allow_origins=["*"]` (+`allow_credentials=True`). 우리 인증은 쿠키가 아닌 Authorization 헤더라 지금 조합이 동작해 온 것
+- FastAPI 생성 `main.py:605` — `docs_url` 미지정 = `/docs`·`/redoc`·`/openapi.json` 전부 기본 노출
+- `/api/health` `main.py:664-666` — 타임스탬프만 반환하는 스텁
+- DB 인터페이스 실측: PG `_pool.acquire()` / Mongo `get_mongo()` / Redis `get_redis().ping()` / ES `get_es().ping()` / MinIO `get_minio().bucket_exists()` — readiness 에 필요한 5종 전부 확보
+- 🔴 **로컬 Origin 은 고정 불가**: 프런트 인증서 SAN = localhost·aimu.local·127.0.0.1·**LAN/테일넷/공인 IP 3종** × 포트 4000/4001. 이걸 코드 기본값 화이트리스트로 박으면 ① 공인 IP 가 저장소에 노출되고 ② IP 변동 시마다 코드 수정 필요
+
+### 1. 설계 — 전부 `.env` 스위치 (4-1·4-2 와 동일 철학: 로컬 무변경)
+| 설정 | 기본값(로컬) | EC2 `.env` |
+|---|---|---|
+| `CORS_ORIGINS` (쉼표 구분) | `*` — **현행 보존** | `https://www.maidol.ai.kr,https://admin.maidol.ai.kr` |
+| `DOCS_ENABLED` | `true` — 로컬 /docs·/openapi.json 유지 (테스트 스위트가 openapi 사용) | `false` → 셋 다 404 |
+| `/api/ready` 🆕 | 항상 활성 (무인증 — LB 용) | 동일 |
+
+- 로컬 기본을 `*` 로 두는 근거: 개발 Origin 이 유동 IP 라 고정 명단 불가 + 공인 IP 커밋 회피. **EC2 배포 체크리스트에 `CORS_ORIGINS` 필수 설정을 명기**하는 것으로 요청서 취지(운영 화이트리스트) 충족
+- `/api/health` 는 **무수정** (Dockerfile HEALTHCHECK·기존 모니터링이 사용하는 값싼 생존 신호)
+- readiness: 5종 각각 `asyncio.wait_for(…, 2s)` + 병렬 gather. 전부 OK → 200 `{"status":"ready","checks":{...}}`, 하나라도 실패 → **503** + 실패 컴포넌트 표기(에러 원문·호스트·비밀값은 응답에 넣지 않음 — 로그에만)
+
+### 2. 작업 분해 (backend-dev)
+A1 `config.py`: `cors_origins: str = "*"`·`docs_enabled: bool = True` (+주석)
+A2 `main.py`: FastAPI 생성부 — `docs_enabled` false 면 `docs_url/redoc_url/openapi_url=None` / CORS 블록 — `cors_origins` 파싱("*" 면 현행, 아니면 명단; 공백 트림, 빈 항목 제거)
+A3 `main.py`: `/api/ready` 신설 (§1 사양. `[ready]` 로그 추적자, 실패 컴포넌트 warning)
+A4 `.env.example`: `CORS_ORIGINS=`·`DOCS_ENABLED=` 이름만
+A5 무변경: `/api/health` · Dockerfile · 프런트
+
+### 3. 회귀 위험
+| 위험 | 방어 |
+|---|---|
+| CORS 파싱 버그로 로컬 프런트 차단 | 기본 `*` 경로는 코드 분기상 현행과 동일 리스트 → 시뮬로 ACAO 헤더 전후 비교 |
+| readiness 가 DB 커넥션 풀 고갈 유발 | PG 는 acquire 즉시 반환, 각 체크 2s 타임아웃, gather 1회성 |
+| openapi 끄면 로컬 테스트 파손 | 기본 true — off 는 시뮬(TestClient)로만 검증 |
+| ES ping 이 인증 실패로 False | v189 `basic_auth` 이미 적용된 클라이언트 재사용 |
+
+### 4. 범위 밖
+Dockerfile HEALTHCHECK 를 /ready 로 전환할지(배포 라운드 판단) / 4-4(앱팀 값) / nginx·TLS
+
+### 5. 절대 준수
+유료 0 · 9004/9005 0 · **인프라 무조작(컨테이너 kill 로 503 재현 금지 — off 시뮬은 프로세스 내 몽키패치/TestClient 로만)** · 실 `.env` 무접촉 · 재기동은 9006 앱만 · 푸시 없음

@@ -9508,3 +9508,142 @@ working tree 반영(미커밋)** — tester 는 dev 커밋 해시 확정 후 착
   grep 이중으로 증명하되, `tokenizer`/`protokol` 류 비훼손을 unit·api 양쪽에서 대조. compose 는
   `config` 렌더(현행 성공/scratch 필수 에러) 만으로 판정하고 `docker ps` 전후 동일을 별도 케이스(A06)로
   못 박음. 재기동 1회, 유료 0, 토큰 전부 가짜, 일회용 계정은 가입→사용→탈퇴 원복 내장.
+
+## v204 — 2026-08-24 — CORS 화이트리스트(4-5) + /docs 스위치(4-7) + readiness(4-10) [MAIDOL-GateSquad]
+
+**대상**: `backend_9006` 단독 (`$B = 0_platform_music/backend_9006`). 프런트 무변경 → **e2e 0건**.
+**총 12건**: `[unit]` 6건(50.0%) / `[api]` 6건(50.0%) / `[e2e]` 0건 — 요구(≥40 / ≥35 / 0 허용) 충족.
+**착수 기준**: PLAN 착수 HEAD `814d3fd`. 설계 시점 실측: **A1(config.py)만 working tree 반영(미커밋)** —
+main.py 는 아직 `allow_origins=["*"]` 하드코딩(:619)·`/api/ready` 부재. tester 는 **dev 커밋 해시 확정 후** 착수.
+라인 번호는 시프트 가능 — 패턴 판정.
+
+### 0. 실행 전제 (안전 규칙 명문화)
+
+- **유료 0건**: 본 플랜의 실서버 호출은 `/api/health`·`/api/ready`·`/docs`·`/openapi.json` 무료 GET/OPTIONS 뿐.
+  인증·가입·⭐ 차감 0건.
+- **인프라 무조작**: 🚫 **컨테이너 kill/stop/restart 절대 금지** — 503 재현은 **몽키패치+TestClient 로만**(U04·U05).
+  `docker ps` 전후 동일이 판정 항목(A06).
+- **시뮬 서브프로세스 규칙**: `$B` 를 sys.path 에 얹어 별도 서브프로세스에서 `app.main` import(v203 동일 —
+  logging force=True 부작용 격리). **TestClient 는 lifespan 이 실 DB 에 붙으므로, 생성 전에
+  `app.router.lifespan_context` 를 no-op async contextmanager 로 치환** → 시뮬 중 실 인프라 연결 0.
+  env 스위치(`CORS_ORIGINS`·`DOCS_ENABLED`)는 서브프로세스 env 로만 주입 — 실 `.env` 무접촉(mtime 전후 동일).
+- **재기동은 9006 앱만**: 기존 프로세스 **PID 지정 kill**(`pkill` 금지) → `setsid ./run.sh`. 총 1회(A02).
+- ⚠️ **실서버는 기본값(`*`·docs on) 상태** — 화이트리스트/docs-off 판정을 실서버로 하지 말 것(시뮬 전용).
+- **크리덴셜 실값 금지**: 산출물·로그 인용에 호스트 실값·비번 기재 금지(존재 여부만 기록).
+
+### 1. [unit] — 스크래치 서브프로세스, 재기동 무관 (6건)
+
+**U01 [unit] CORS 파싱 헬퍼 케이스 표** — 실행: 스크래치 서브프로세스
+- Given: dev 구현의 파싱 헬퍼 import (이름·위치는 커밋 후 실측 — §5-P2)
+- When/Then (입력 → 기대):
+  | 입력 | 기대 |
+  |---|---|
+  | `"*"` | 현행 분기(`["*"]` 상당 — 와일드카드 경로) |
+  | `"https://a.example, https://b.example"` | 2건, 공백 트림 |
+  | `" https://a.example ,, , "` | 1건 — 빈 항목·공백 항목 제거 |
+  | `"https://only.example"` | 단일 항목 리스트 |
+
+**U02 [unit] 화이트리스트 모드 시뮬 — 허용 ACAO 존재 / 비허용 ACAO 부재** — 실행: 서브프로세스, env `CORS_ORIGINS=https://allowed.example`
+- When: lifespan no-op TestClient 로 ① `GET /api/health` + `Origin: https://allowed.example`
+  ② 동일 GET + `Origin: https://evil.example` ③ preflight `OPTIONS /api/health` (Origin 허용값 +
+  `Access-Control-Request-Method: GET`)
+- Then: ① `access-control-allow-origin: https://allowed.example` **존재** ② ACAO 헤더 **부재**
+  (본문 상태코드는 판정 외 — 차단은 브라우저 몫, §5-P3) ③ preflight 200 + ACAO 허용값.
+  ⚠️ 실서버 기본값이 `*` 이므로 이 케이스를 실서버로 판정 금지.
+
+**U03 [unit] docs off 시뮬 — 3종 전부 404** — 실행: 서브프로세스, env `DOCS_ENABLED=false`
+- When: lifespan no-op TestClient 로 `GET /docs`·`/redoc`·`/openapi.json`
+- Then: **셋 다 404**. 대조: 같은 스크립트에서 env 미주입 서브프로세스(기본 true)로 `/openapi.json` 200 —
+  스위치 외 요인 배제.
+
+**U04 [unit] ready 실패 경로 — 몽키패치 503 + 응답 위생 (컨테이너 kill 금지)** — 실행: 서브프로세스
+- Given: 5종 체크 함수(경로는 dev 구현 실측 — §5-P4) 중 4종을 즉시-True 스텁, **1종(예: redis)을
+  예외 발생 스텁**으로 몽키패치. lifespan no-op TestClient
+- When: `GET /api/ready`
+- Then: ① **503** ② `checks.redis=false`, 나머지 4키 true ③ 응답 원문에 호스트·포트·비번·
+  **예외 메시지 원문 부재**(`grep`: 스텁 예외에 심은 고유 문자열 `fake-secret-host-9x` 가 응답에 0건) —
+  로그에만 기록되는지는 판정 외.
+
+**U05 [unit] ready 타임아웃 경로 — 2s wait_for 발동, hang 없음** — 실행: U04 동일 스크립트
+- Given: 1종을 `asyncio.sleep(10)` 스텁, 나머지 4종 즉시-True
+- When: `GET /api/ready` + 소요 시간 측정
+- Then: ① 503 + 해당 키 false ② **총 소요 2s대(<5s)** — `wait_for(…, 2s)` 가 개별 hang 을 끊음 실증.
+
+**U06 [unit] config 기본값 + .env.example 이름 존재** — 실행: 서브프로세스 + 호스트
+- When: ① env 무주입 `Settings()` — `cors_origins`·`docs_enabled` 기본값 ② env `DOCS_ENABLED=false`/`0` 파싱
+  ③ `grep -c '^CORS_ORIGINS\|^DOCS_ENABLED' $B/.env.example`
+- Then: ① `"*"` / `True` — **로컬 무변경 원칙의 코드 근거** ② bool False 로 강제 ③ 두 키 이름 존재
+  (**값은 비어 있음** — 실값 커밋 금지, A4 사양).
+
+### 2. [api] — 호스트 curl, 재기동 축 명시 (6건)
+
+**A01 [api] 사전 캡처 — 인프라·.env·현행 CORS/docs/health 기준선** — 실행: 호스트, 재기동 전
+- When: ① `docker ps --format '{{.Names}}\t{{.State}}'` 정렬 캡처 ② `stat -c %y $B/.env` 캡처
+  ③ `GET /api/health` + `Origin: https://cors-base.example` — **ACAO 값·헤더 셋 캡처**
+  ④ preflight `OPTIONS /api/health`(동일 Origin + ACRM: GET) — 상태·ACAO·allow-methods 캡처
+  ⑤ `/docs`·`/openapi.json` 상태코드 캡처(200 예상) ⑥ `/api/health` 응답 본문 구조 캡처
+- Then: 캡처 완료 — A03·A04·A06 의 비교 기준.
+
+**A02 [api] 재기동 + 헬스 — 유일한 재기동 지점** — 실행: 호스트
+- Given: dev 커밋 해시 확정·기록
+- When: 9006 프로세스 **PID 지정 kill** → `setsid ./run.sh` → `/api/health` 폴링(최대 60s)
+- Then: 200 복귀. 미복귀 시 §3-S1 즉시중단(로그 첨부 후 dev 회부).
+
+**A03 [api] CORS 기본값 회귀 0 — ACAO·preflight 전후 동일** — 실행: 호스트 curl, 재기동 후
+- When: A01-③·④ 와 **동일 요청** 재실행 (임의 Origin GET + preflight OPTIONS)
+- Then: ① GET 의 `access-control-allow-origin` 이 A01 캡처와 **완전 동일**(로컬 회귀 0)
+  ② preflight 상태·ACAO·allow-methods 동일. 상이하면 §3-S2 즉시중단.
+
+**A04 [api] docs 기본값 회귀 0 — /docs·/openapi.json 200** — 실행: 호스트 curl, 재기동 후
+- When: `GET /docs` · `GET /openapi.json`
+- Then: 둘 다 **200** (A01-⑤ 와 동일 — v199~202 검증 스위트가 openapi 를 쓰므로 회귀 0 필수).
+  404 발생 시 §3-S2 즉시중단.
+
+**A05 [api] `/api/ready` 실서버 — 200 + 5키 true + 위생 + 응답시간** — 실행: 호스트 curl, 재기동 후
+- When: `curl -w '%{time_total}'` 로 **무인증** `GET /api/ready` ×3회
+- Then: ① **200** + `checks` 5키(postgres·mongodb·redis·elasticsearch·minio) **전부 true**
+  — 503 이면 §3-S3 즉시중단 ② 응답 원문에 호스트·포트·비번·에러 원문 **부재**
+  (실 `.env` 의 호스트·비번 값이 응답에 0건 — 값 자체는 산출물에 기재 금지) ③ 5종 병렬이므로
+  정상 시 ~수백 ms — **상한 <5s** ④ Authorization 없이 200(LB 용 무인증 확인).
+
+**A06 [api] 사후 판정 — 인프라 무변화 + `/api/health` 무변형** — 실행: 호스트, 전 케이스 종료 후
+- When: ① `docker ps` 정렬 재캡처 → A01-① diff ② `stat -c %y $B/.env` → A01-② 비교
+  ③ `GET /api/health` 본문 → A01-⑥ 구조 비교
+- Then: ① **diff 0** — 상이하면 §3-S5 ② mtime 동일 ③ **기존 응답 구조 그대로**
+  (Dockerfile HEALTHCHECK·기존 모니터링 의존 — 필드 추가/삭제도 FAIL).
+
+### 3. 즉시중단 조건 (v204)
+
+- **S1**: 재기동 실패 — `/api/health` 200 미복귀 (A02)
+- **S2**: 기본값 상태에서 CORS(A03) 또는 docs(A04) 현행 동작 변화 — 로컬 회귀
+- **S3**: `/api/ready` 가 **실서버에서 503** (A05 — 인프라 이상 또는 체크 버그, 즉시 dev·planner 보고)
+- **S4**: 유료·⭐ 차감 유발 호출 발생
+- **S5**: 9004/9005 쓰기 / 컨테이너 상태 변화(`docker ps` 전후 상이) / 실 `.env` 변경 감지(mtime 상이)
+
+### 4. 판정 기록 양식
+
+`ID / 태그 / 실행위치 / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED` — SKIP 사유 필수.
+정리: 스크래치 임시 스크립트 삭제. 산출물 위생 — ACAO 캡처의 Origin 은 더미(`cors-base.example` 류)만,
+실 `.env` 값·호스트 실값 인용 금지(존재/부재 여부만 기록).
+
+### 5. planner 확인 필요 (설계 중 발견)
+
+- **P1**: 설계 시점 실측 — **A1(config.py `cors_origins`/`docs_enabled`)만 working tree 반영(미커밋)**.
+  main.py 는 `allow_origins=["*"]` 하드코딩 그대로·`/api/ready` 부재 = **A2·A3 미구현**. tester 는
+  dev 커밋 해시 확정 후 착수(커밋 전 검증 시작 금지 — v203 P1 과 동일 규율).
+- **P2**: CORS **파싱 헬퍼의 이름·위치 미확정**(main.py 함수 vs config property). dev 커밋 후 실측해
+  U01 import 경로 기입. 헬퍼가 분리되지 않고 인라인이면 U01 을 U02 시뮬 축(env 주입 결과 판정)으로
+  갈음할지 승인 요청.
+- **P3**: 화이트리스트 모드에서 비허용 Origin 의 simple GET 은 Starlette CORSMiddleware 특성상
+  **응답 자체는 통과하고 ACAO 헤더만 부재**(차단은 브라우저 몫) — U02 판정 기준을 "ACAO 부재"로
+  한정함을 확인 바람. 또한 `allow_credentials=True` + 명시 명단 조합은 허용 Origin echo 동작.
+- **P4**: U04·U05 몽키패치가 성립하려면 **5종 체크가 패치 가능한 모듈 수준 함수**여야 함 — dev 가
+  인라인 클로저로 구현하면 패치 불가. 함수 분리(또는 체크 맵 주입) 형태로 구현 요청.
+
+### 개정 이력 (v204)
+
+- 2026-08-24 초판 (12건: unit 6 / api 6 / e2e 0). 급소는 **"기본값 경로 회귀 0, 스위치는 시뮬로만"** —
+  실서버는 기본값(`*`·docs on)이므로 화이트리스트/docs-off/503 은 전부 서브프로세스 시뮬
+  (lifespan no-op + TestClient + 몽키패치)로 판정하고, 실서버에서는 전후 캡처 비교(ACAO·preflight·
+  docs 200·health 구조)로 현행 보존만 증명. ready 는 200+5키+위생+<5s 를 실서버로, 503/타임아웃을
+  시뮬로 분리. 재기동 1회, 컨테이너 무조작, 실 `.env` 무접촉.

@@ -612,11 +612,30 @@ async def lifespan(app: FastAPI):
     print("All database connections closed.")
 
 
-app = FastAPI(title="MAIDOL Platform API v2", lifespan=lifespan)
+# v204: CORS 허용 Origin 파서 — "*" 면 현행과 동일한 전체 허용(["*"]),
+# 아니면 쉼표 분리 + 공백 트림 + 빈 항목 제거한 명단을 돌려준다.
+# 빈 문자열(.env 에 CORS_ORIGINS= 만 있고 값이 없는 경우)도 "*" 로 취급 —
+# .env.example 을 그대로 복사해도 CORS 가 전부 막히는 사고 방지.
+def _parse_cors_origins(raw: str) -> list:
+    raw = raw.strip()
+    if raw in ("", "*"):
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+# v204: DOCS_ENABLED=false(운영) 면 /docs·/redoc·/openapi.json 전부 비활성.
+# True(기본) 면 kwargs 를 아예 넘기지 않아 현행 기본 경로 그대로.
+_docs_kwargs = (
+    {}
+    if settings.docs_enabled
+    else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+)
+
+app = FastAPI(title="MAIDOL Platform API v2", lifespan=lifespan, **_docs_kwargs)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_parse_cors_origins(settings.cors_origins),  # v204: .env CORS_ORIGINS
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -664,6 +683,90 @@ app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+# v204: /api/ready 의 5종 체크 — 모듈 수준 async 함수로 분리 (P4).
+# tester 가 인프라 컨테이너를 건드리지 않고 _READY_CHECKS 항목 교체(몽키패치)로
+# 실패 경로(503)를 주입할 수 있어야 하므로 엔드포인트 안 클로저 금지.
+async def _ready_check_postgres():
+    from .database.postgres import ping_pg
+    await ping_pg()
+
+
+async def _ready_check_mongodb():
+    from .database.mongodb import get_mongo
+    await get_mongo().command("ping")
+
+
+async def _ready_check_redis():
+    from .database.redis import get_redis
+    await get_redis().ping()
+
+
+async def _ready_check_elasticsearch():
+    # AsyncElasticsearch.ping() 은 실패 시 False 를 반환(예외 미발생) — 명시 격상
+    if not await get_es().ping():
+        raise RuntimeError("es ping returned False")
+
+
+async def _ready_check_minio():
+    import asyncio as _asyncio
+    from .database.minio import get_minio
+    # MinIO SDK 는 동기 — 이벤트루프 블로킹 방지 위해 스레드로
+    exists = await _asyncio.to_thread(
+        get_minio().bucket_exists, settings.minio_bucket_images
+    )
+    if not exists:
+        raise RuntimeError("images bucket missing")
+
+
+# v204(P4): 체크 레지스트리 — 키 이름은 TESTPLAN 과 일치(고정).
+# 엔드포인트는 반드시 이 딕셔너리를 순회한다 (직접 호출 금지 — 패치 무력화됨).
+_READY_CHECKS = {
+    "postgres": _ready_check_postgres,
+    "mongodb": _ready_check_mongodb,
+    "redis": _ready_check_redis,
+    "elasticsearch": _ready_check_elasticsearch,
+    "minio": _ready_check_minio,
+}
+
+
+@app.get("/api/ready")
+async def ready():
+    """v204: LB readiness probe — PG/Mongo/Redis/ES/MinIO 5종 병렬 체크.
+
+    각 체크는 2초 타임아웃(asyncio.wait_for), 전체는 gather 병렬. 전부 OK 면
+    200 / 하나라도 실패면 503, 동일 구조 {"status","checks","timestamp"}.
+    무인증(LB 헬스체크용). 에러 원문·호스트·비밀값은 응답에 절대 싣지 않고
+    `[ready]` 태그로 서버 로그에만 남긴다.
+    """
+    import asyncio as _asyncio
+
+    # P4/R1: 반드시 _READY_CHECKS 딕셔너리를 순회 — tester 가 항목 교체(몽키패치)로
+    # 실패를 주입할 수 있어야 하므로 체크 함수 직접 호출 금지.
+    items = list(_READY_CHECKS.items())
+    names = [name for name, _ in items]
+    results = await _asyncio.gather(
+        *(_asyncio.wait_for(check(), timeout=2.0) for _, check in items),
+        return_exceptions=True,
+    )
+
+    checks = {}
+    for name, res in zip(names, results):
+        ok = not isinstance(res, BaseException)
+        if not ok:
+            logging.getLogger(__name__).warning("[ready] %s check failed: %s", name, res)
+        checks[name] = ok
+
+    all_ok = all(checks.values())
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={
+            "status": "ready" if all_ok else "not_ready",
+            "checks": checks,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
 
 @app.exception_handler(Exception)

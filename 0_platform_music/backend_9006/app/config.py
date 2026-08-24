@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     # v202: presign SigV4 리전 (bucket location 조회 생략용). 로컬 MinIO 기본값 유지.
     s3_region: str = "us-east-1"
 
+    # v204: 운영 하드닝 — CORS 허용 Origin / API 문서 노출 스위치
+    cors_origins: str = "*"       # v204: 쉼표 구분 허용 Origin 명단. "*"=전부 허용(로컬 개발 기본).
+                                  # 운영(EC2)은 .env 로 https://www.maidol.ai.kr,https://admin.maidol.ai.kr
+    docs_enabled: bool = True     # v204: false 면 /docs·/redoc·/openapi.json 전부 비활성(운영)
+
     # JWT
     jwt_secret: str = "music-platform-secret-key-2024"
     jwt_algorithm: str = "HS256"
