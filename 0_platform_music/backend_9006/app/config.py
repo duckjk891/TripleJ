@@ -93,6 +93,10 @@ class Settings(BaseSettings):
                                   # 운영(EC2)은 .env 로 https://www.maidol.ai.kr,https://admin.maidol.ai.kr
     docs_enabled: bool = True     # v204: false 면 /docs·/redoc·/openapi.json 전부 비활성(운영)
 
+    # v205: 무거운 백그라운드 작업(박자 분석·공유영상 생성) 동시 실행 상한.
+    #       env HEAVY_JOB_CONCURRENCY — 러시 관측 시 숫자만 조정 (services/heavy_jobs.py)
+    heavy_job_concurrency: int = 2
+
     # JWT
     jwt_secret: str = "music-platform-secret-key-2024"
     jwt_algorithm: str = "HS256"

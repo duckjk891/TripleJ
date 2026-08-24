@@ -16394,3 +16394,58 @@ test-designer 의 P4 요구가 구현 구조를 바꾼 사례 — **"검증할 �
 
 ### 8. 변경 파일 (커밋 대상 7)
 `app/main.py` · `app/config.py` · `app/database/postgres.py` · `.env.example` + 산출물 3.
+
+---
+
+## v205 — 2026-08-24 — 무거운 백그라운드 작업 세마포어(대기표) [MAIDOL-ThrottleSquad]
+
+> 발단: 김진주 실장 지적("프록시 뒤 process 상한 계산됐나") → 실측 결과 **무거운 하청 작업에 동시 상한 전무**(Semaphore 0건) 확인. 착수 HEAD `14252f1`. `backend_9006` 단독.
+
+### 1. 설계 (0단계 실측이 결정)
+무거운 작업들의 실행 모델이 세 갈래(스레드별 자기 이벤트 루프 / 메인 루프 async / to_thread)라
+**`asyncio.Semaphore` 는 작동 불능** → **`threading.BoundedSemaphore`**(프로세스 전역) 채택.
+안전 수칙: **블로킹 acquire 는 워커 스레드 안에서만** — 메인 루프에서 대기하면 서버 전체 정지.
+
+- 신규 `services/heavy_jobs.py` — `heavy_job_slot(name, job_id)` 컨텍스트 매니저.
+  `[heavy] wait/start/done` 로그(대기·점유 시간, active 수) — **대기 발생 자체가 증설 판단 지표**
+- `heavy_job_concurrency: int = 2` (`.env HEAVY_JOB_CONCURRENCY` — 코드 수정 없이 조정)
+- 적용: 박자 분석 3개 진입 경로 + 공유영상 생성. **MV 캐스케이드는 의도적 제외**
+  (외부 API 대기가 대부분 — 전체를 슬롯으로 감싸면 수십 분 독점으로 오히려 해악)
+
+### 2. 🔴 보너스 — 서버 정지급 선재 결함 1건을 함께 해결
+`tracks.py:919` 박자 수동 재추출이 **madmom CPU 추론(수십 초)을 메인 이벤트 루프에서 직접**
+돌리고 있었다(`audio_utils.detect_beats` 가 async 시그니처지만 몸통 전부 동기 — 오프로딩 0건).
+그동안 전체 API 무응답. → `create_task(asyncio.to_thread(기존 sync 래퍼))` 로 교체해
+결함 해소 + 슬롯 적용을 한 번에. **같은 패턴이 `main.py:520·529`·`generate.py:885` 에 잔존**
+— 추천 작업 칩 발행(v206 후보).
+
+### 3. 테스트 — 12/12 PASS, 즉시중단 0, 픽스 루프 0회
+`[unit]` 6(50%) / `[api]` 6(50%).
+
+**실서버 실측이 백미** — 병렬 3건 공유영상 생성의 `[heavy]` 로그 타임라인:
+```
+3건 진입 → 2건 즉시 start(waited=0.0s) → 3번째 wait(active=2)
+→ 첫 done(held=8.8s) 직후에야 3번째 start(waited=8.8s) → 최종 wait:start:done = 7:7:7 (누수 0)
+```
+- **메인 루프 무정지 이중 실증**: 123초 ffmpeg 생성 내내 **81회 폴링 전부 200 (p95 9.7ms, 최악 40ms)** + 단위 레벨 틱 간격 최대 10.9ms
+- 캐시 재요청 **0.009s** 즉시 반환, `[heavy]` 0건 (캐시는 슬롯 안 탐)
+- `HEAVY_JOB_CONCURRENCY=1` 주입 시 직렬화 실증(설정값 동작)
+- 예외 시 release, active=0 복원 / 블로킹 acquire 는 `heavy_jobs.py` 유일(전 app grep)
+
+### 4. 용량 결론 (김실장 질문에 대한 최종 수치)
+박자 분석 곡당 ~30초 × 동시 2 = **시간당 ~240곡 가공 용량** — 베타 가정치(가입 1,000·DAU 100)
+하루 업로드의 100배 이상. 러시 10곡 동시에도 마지막 곡 ~2.5분 내, 사용자 응답은 항상 즉시.
++ 기존 디렉터 피로 사다리가 사용자당 연속 생성을 구조적으로 억제(이중 완충).
+
+### 5. 안전 원장
+유료 0(로그 전수 grep — generate/upload/mv/character 0건, ⭐ 차감 0) · docker ps 전후 diff 0 ·
+실 `.env` sha 동일 · 9004/9005 0 · 실데이터 쓰기는 공유영상 캐시 6건(공개곡 파생물, 허용 범위) ·
+재기동 1회.
+
+### 6. 범위 밖 기록
+- 메인 루프 madmom 직행 잔존 2곳(§2) — 칩 발행됨
+- `share_video_exists` 의 광역 except 가 MinIO 장애를 캐시 미스로 오인해 불필요 재생성 유발 가능(선재 특성) — 후속 후보
+- suno 캐스케이드의 박자 분석은 자체 스레드라 정지 위험 없음, 슬롯 미적용(의도된 범위)
+
+### 7. 변경 파일 (커밋 대상 9)
+신규 1(`heavy_jobs.py`) + 수정 5(`config.py`·`beat_extraction.py`·`tracks.py`·`share_video.py`·`.env.example`) + 산출물 3.

@@ -219,17 +219,25 @@ def run_track_beat_extraction_in_background(track_id: str):
     Wrapper for FastAPI BackgroundTasks. Spins up its own event loop
     and runs detect_beats_for_track_with_db to completion. Mirrors the
     pattern used by routes/generate.py:_run_music_generation.
+
+    v205: 몸통 전체가 heavy_job_slot 안에서 돈다 — BackgroundTasks 는
+    이 sync 함수를 스레드풀 워커 스레드에서 실행하므로 블로킹 acquire 안전.
+    (routes/tracks.py 의 수동 재추출 경로도 asyncio.to_thread 로 이
+    래퍼를 태워 같은 슬롯을 쓴다.)
     """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        import motor.motor_asyncio
+    from .heavy_jobs import heavy_job_slot
 
-        client = motor.motor_asyncio.AsyncIOMotorClient(settings.computed_mongo_url)
-        db = client[settings.mongo_db]
+    with heavy_job_slot("beat_extraction", track_id):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            import motor.motor_asyncio
 
-        loop.run_until_complete(detect_beats_for_track_with_db(track_id, db))
-    except Exception as e:  # pragma: no cover
-        logger.warning("run_track_beat_extraction_in_background(%s): %s", track_id, e)
-    finally:
-        loop.close()
+            client = motor.motor_asyncio.AsyncIOMotorClient(settings.computed_mongo_url)
+            db = client[settings.mongo_db]
+
+            loop.run_until_complete(detect_beats_for_track_with_db(track_id, db))
+        except Exception as e:  # pragma: no cover
+            logger.warning("run_track_beat_extraction_in_background(%s): %s", track_id, e)
+        finally:
+            loop.close()

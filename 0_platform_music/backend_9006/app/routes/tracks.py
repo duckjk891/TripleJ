@@ -915,8 +915,14 @@ async def retry_track_beats(
     )
 
     import asyncio as _asyncio
-    from ..services.beat_extraction import detect_beats_for_track
-    _asyncio.create_task(detect_beats_for_track(track_id))
+    from ..services.beat_extraction import run_track_beat_extraction_in_background
+    # v205: 기존 create_task(detect_beats_for_track(...)) 는 madmom CPU 작업을
+    # 메인 이벤트 루프에서 직접 돌리는 선재 결함(detect_beats 내부에 스레드
+    # 오프로딩 없음 — audio_utils.py 실측). 전체를 to_thread 로 워커 스레드에
+    # 옮기고, 그 안(sync 래퍼)에서 heavy_job_slot 을 획득한다.
+    _asyncio.create_task(
+        _asyncio.to_thread(run_track_beat_extraction_in_background, track_id)
+    )
 
     return {"message": "비트 재추출이 시작되었습니다.", "status": "pending"}
 

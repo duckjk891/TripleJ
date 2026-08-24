@@ -415,7 +415,25 @@ def generate_share_video(
     segments(v128): 가사 타임스탬프 목록 — 있으면 ASS 자막 burn-in(-r 10).
     fmt(v129): sns(9:16 전체) / wide(16:9 블러배경) / kakao(1080x2340 15s 클립).
     Returns: 생성된 mp4 크기(bytes). 실패 시 ShareVideoError.
+
+    v205: heavy_job_slot 안에서 실행 (동시 상한). 이 함수는 blocking 이라
+    호출자는 반드시 asyncio.to_thread 등 워커 스레드로 태워야 하며
+    (routes/tracks.py 가 그렇게 함), 슬롯 acquire 도 그 스레드 안에서 일어난다.
+    슬롯은 대기 무제한, 실행은 기존 SHARE_VIDEO_TIMEOUT 유지 — 중첩 변화 없음.
     """
+    from .heavy_jobs import heavy_job_slot
+
+    with heavy_job_slot("share_video", f"{track_id}:{fmt}"):
+        return _generate_share_video_impl(track_id, cover_image_url, audio_url, segments, fmt)
+
+
+def _generate_share_video_impl(
+    track_id: str,
+    cover_image_url: str,
+    audio_url: str,
+    segments: list | None = None,
+    fmt: str = "sns",
+) -> int:
     ffmpeg = _get_ffmpeg_path()
     if not ffmpeg:
         raise ShareVideoError("ffmpeg not available")

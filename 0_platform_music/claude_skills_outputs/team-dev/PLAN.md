@@ -30048,3 +30048,42 @@ Dockerfile HEALTHCHECK 를 /ready 로 전환할지(배포 라운드 판단) / 4-
 
 ### 5. 절대 준수
 유료 0 · 9004/9005 0 · **인프라 무조작(컨테이너 kill 로 503 재현 금지 — off 시뮬은 프로세스 내 몽키패치/TestClient 로만)** · 실 `.env` 무접촉 · 재기동은 9006 앱만 · 푸시 없음
+
+---
+
+## v205 — 2026-08-24 — 무거운 백그라운드 작업 세마포어(대기표) [MAIDOL-ThrottleSquad]
+
+김진주 실장 지적("process 상한 계산됐나")에서 실측으로 확인된 공백: **무거운 하청 작업에 동시 상한이 전혀 없음**(Semaphore 계열 0건). t3.large(2 vCPU) 러시 시 전 작업 저하 위험. 착수 HEAD `14252f1`(푸시 완료 상태).
+
+### 0. Plan verification findings — 실행 모델이 두 갈래라 세마포어 종류가 결정됨
+
+| 무거운 작업 | 진입점 | 실행 모델 (실측) |
+|---|---|---|
+| 박자 분석 | `tracks.py:1426`·`:1684` `background_tasks.add_task(run_track_beat_extraction_in_background)` | **sync 래퍼가 스레드풀 스레드에서 자기 이벤트 루프를 새로 만들어** 실행 (`beat_extraction.py:217-229`) |
+| 박자 분석(수동 재추출) | `tracks.py:919` `create_task(detect_beats_for_track)` | **메인 루프의 async 태스크** — 내부 CPU 작업의 스레드 오프로딩 여부는 dev 가 실측 |
+| 공유영상 생성 | `tracks.py:1861` 부근 | `await asyncio.to_thread(generate_share_video, …)` — **이미 스레드 오프로딩** (subprocess.run + 자체 타임아웃 `:540`) |
+| MV 캐스케이드 | `mv.py` add_task 5곳 | **범위 밖** (아래 §3) |
+
+🔴 **핵심 설계 결정**: 작업들이 **서로 다른 이벤트 루프/스레드**에서 돌므로 `asyncio.Semaphore` 는 **작동 불능**(루프 귀속). → **`threading.BoundedSemaphore`**(프로세스 전역) 채택.
+🔴 **안전 수칙**: 블로킹 acquire 는 **워커 스레드 안에서만** 호출한다 — 메인 이벤트 루프에서 호출하면 서버 전체가 멈춘다. `:919` async 경로는 dev 가 내부 스레드 구간을 실측해 그 안에 슬롯을 배치(또는 전체를 to_thread 로).
+
+### 1. 설계
+- 신규 `app/services/heavy_jobs.py`: `threading.BoundedSemaphore(settings.heavy_job_concurrency)` + 컨텍스트 매니저 `heavy_job_slot(name, job_id)`
+  - 로그 추적자 `[heavy]`: 대기 시작(현재 점유 수)/획득(대기 시간)/해제. 대기 발생 자체가 관측 지표
+- `config.py`: `heavy_job_concurrency: int = 2` (env `HEAVY_JOB_CONCURRENCY` — 러시 관측 시 숫자만 조정)
+- 적용 지점: **박자 분석 3개 진입 경로 전부 + 공유영상 생성** (슬롯은 위 안전 수칙 위치에)
+
+### 2. 회귀 위험
+| 위험 | 방어 |
+|---|---|
+| 🔴 메인 루프에서 블로킹 acquire → 서버 정지 | §0 안전 수칙. tester 가 "대기 중에도 API 응답 정상" 판정 |
+| 슬롯 누수(예외 시 미해제) → 영구 잠김 | 컨텍스트 매니저 필수 + 예외 경로 단위검증 |
+| share_video 자체 타임아웃과 중첩 | 슬롯은 대기 무제한, 실행은 기존 타임아웃 유지 — 변화 없음 |
+| 대기 중 업로드 응답 지연 | 없음 — 슬롯은 백그라운드 스레드에서 대기, 사용자 응답은 이미 반환됨 |
+
+### 3. 범위 밖 (명시)
+- **MV 캐스케이드**: 유료·저빈도인 데다 외부 API 대기가 대부분이라 **전체를 슬롯으로 감싸면 수십 분 슬롯 독점** — 오히려 해악. 내부 ffmpeg 구간별 적용은 대수술이라 후속(스케일 신호 시)
+- 정식 작업 큐(Celery 류) — 현 규모 과설계 판정 유지
+
+### 4. 절대 준수
+유료 0 · 실사용자 데이터 무접촉(공유영상 캐시 생성은 공개곡 파생물로 허용) · 인프라 무조작 · 9006 재기동만 · 푸시 없음 · `git add -A` 금지
