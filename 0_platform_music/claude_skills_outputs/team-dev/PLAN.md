@@ -29939,3 +29939,67 @@ faces 3번째 버킷 분리(3-2), boto3 전환(3-3 — IamAwsProvider 로 불요
 ### 5. 절대 준수
 유료 0(차트·헬스·스트림은 무료) · 9004/9005 쓰기 0 · 인프라 무조작 · MinIO 9100 차단 금지 ·
 실 `.env` 무접촉(.env.example 만) · `git add -A` 금지 · 푸시 없음 · 작업 트리 메인 체크아웃
+
+---
+
+## v203 — 2026-08-24 — 로그 토큰 마스킹 확장(4-6) + compose 약한 기본값 제거(1-8) [MAIDOL-LogHygieneSquad]
+
+AWS 요청서 4-6 잔여분 + 1-8. 착수 HEAD `f23978d`. `backend_9006` 단독, 프런트 무변경.
+
+### 0. Plan verification findings
+
+#### 0-1. 현행 마스킹의 커버리지 (main.py:27-45 실측)
+`_GuardianTokenMaskFilter` — 패턴이 `(/api/auth/guardian-consent/)[^/\s"?]+` **하나뿐**.
+`uvicorn.access` 로거에만 부착. → `?token=` 쿼리는 **전 경로 무방비** (v200 에서 커버 이미지
+발생원은 제거했으나 음원 스트림·generate 스트림·DM WS 등 정당한 사용처가 남아 있음).
+
+#### 0-2. `_logs.py` 프런트 로그 위생 (`:191-208` 실측)
+`_sanitize_message`/`_sanitize_stack` — **길이 절단 + 개행 치환만**. 토큰 정규식 치환 없음
+(요청서 4-6 의 "frontend.log 에 Authorization: Bearer 3건" 원인).
+참고: `_make_fingerprint(:262)` 가 sanitize 결과를 쓰므로, sanitize 안에 마스킹을 넣으면
+같은 메시지·다른 토큰이 **같은 지문**이 됨 — 중복집계 개선이라 오히려 이득.
+
+#### 0-3. compose 폴백 17건 전수 분류 (실측)
+| 분류 | 건 | 라인 | 처리 |
+|---|---|---|---|
+| 🔴 **약한 비밀번호** | 5 | `:11` PG / `:30` Mongo / `:48`·`:55` Redis(커맨드+헬스체크) / `:96` MinIO secret | **`${VAR:?...}` 필수화** |
+| 사용자명·DB명·포트 | 12 | `:9,10,14,19,29,31,34,51,79,95,98,99` | **유지** (비밀 아님, 편의 기본값) |
+| (참고) ES | — | `:76` `${ES_PASSWORD}` 폴백 없음(v189) — 단 미설정 시 **빈 값으로 조용히 기동** | `:?` 로 승격 (동계열 마감) |
+
+**실 `.env` 에 5+1 키 전부 존재 확인** → `:?` 필수화가 현행 렌더링에 무영향.
+
+#### 0-4. 🔴 안전 제약 — compose 파일 수정은 실행 중 컨테이너에 무영향이나, **재기동 검증은 금지**
+파일 수정만으로는 아무 일도 안 생긴다(다음 `docker compose up` 때 반영). 검증은
+`docker compose config`(렌더링만, 데몬 무접촉)로 하고, **실패 경로는 scratch 복사본**(.env 없는
+디렉터리)에서 `config` 가 필수 변수 에러를 내는지로 판정한다. 🚫 `up`/`restart` 절대 금지.
+
+### 1. DoD
+1. 액세스 로그: `?token=<실값>` 요청이 **`token=<masked>`** 로 기록된다 (전 경로)
+2. guardian 경로 마스킹은 **기존 그대로** 동작
+3. 프런트 로그 수신(`/api/_logs/frontend`): message/stack 안의 `Bearer <jwt>`·`token=…`·생 JWT(`eyJ…`) 가 마스킹돼 저장
+4. compose: 비밀 6종이 `:?` 필수 — `.env` 없는 환경에서 `config` 가 **명시적 에러**
+5. 실 `.env` 있는 현 환경에서 `config` 렌더링 **성공** (현행 무영향)
+6. 🚫 인프라 컨테이너 상태 무변화 (`docker ps` 전후 동일)
+
+### 2. 작업 분해 (backend-dev)
+| # | 파일 | 작업 |
+|---|---|---|
+| A1 | `app/main.py` | 필터 확장: guardian 패턴 유지 + `([?&]token=)[^&\s"']+` → `\1<masked>` 추가. 클래스명은 일반화(`_TokenMaskFilter` 류) 하되 기존 주석 보존 |
+| A2 | `app/routes/_logs.py` | `_sanitize_message`·`_sanitize_stack` 에 마스킹 3종 추가: ①`(?i)(bearer\s+)[A-Za-z0-9._-]+` ②`([?&]token=)[^&\s]+` ③생 JWT `eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}` — 전부 `<masked>` 로. 컴파일된 모듈 상수로 |
+| A3 | `docker-compose.yml` | 0-3 표의 6곳 `:?` 필수화 (에러 메시지에 키 이름 포함, 예: `${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (.env)}`) . 나머지 12건 무수정 |
+| A4 | 무변경 확인 | `.env` 실파일 · 프런트 · 나머지 백엔드 |
+
+### 3. 회귀 위험
+| 위험 | 방어 |
+|---|---|
+| 마스킹 패턴 과탐 — 정상 로그 내용 훼손 | 패턴을 `token=`·`Bearer `·JWT 3형태로 한정. "tokenizer" 같은 단어 비훼손 판정 항목 |
+| access 필터 예외로 로깅 자체 중단 | 기존 try/except 골격 유지 |
+| 지문(fingerprint) 변화 | 0-2 — 개선으로 판정, FAIL 아님 |
+| compose 필수화가 현 운영 방해 | 0-4 — 파일만 수정, config 렌더 검증, up 금지 |
+
+### 4. 범위 밖
+CloudWatch 적재 설정(P1) / 로그 로테이션 / 과거 로그 파일 소급 정리(별건 — 기존 server.log 에 남은 과거 토큰 라인은 재기동 시 tee 절단으로 자연 소멸) / 4-4·4-5·4-7·4-10
+
+### 5. 절대 준수
+유료 0 · 9004/9005 쓰기 0 · **인프라 무조작(compose up/restart/stop 금지, MinIO 9100 차단 금지)** ·
+실 `.env` 무접촉 · 9006 앱 재기동만 허용(PID kill→run.sh) · 커밋 전 시크릿 검사 · 푸시 없음

@@ -188,10 +188,29 @@ class FrontendLogBatch(BaseModel):
     events: List[FrontendLogEvent]
 
 
+# v203: 프론트 로그 메시지/스택에 섞여 들어오는 토큰류 마스킹.
+# 길이 절단 전에 적용해야 절단 경계에 토큰 조각이 남지 않는다.
+# _make_fingerprint 가 sanitize 결과를 쓰므로 같은 메시지·다른 토큰이
+# 같은 지문으로 묶이는 것은 의도된 개선.
+_MASK_PATTERNS = [
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]+"), r"\1<masked>"),
+    (re.compile(r"([?&]token=)[^&\s]+"), r"\1<masked>"),
+    (re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"), "<masked-jwt>"),
+]
+
+
+def _mask_secrets(text: str) -> str:
+    """v203: _MASK_PATTERNS 순차 적용."""
+    for pattern, repl in _MASK_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
+
 def _sanitize_message(msg: str) -> str:
     """메시지 길이 제한 + 개행 한 줄로 압축."""
     if not isinstance(msg, str):
         msg = str(msg)
+    msg = _mask_secrets(msg)  # v203: 절단 전 토큰 마스킹
     if len(msg) > _MAX_MESSAGE_LEN:
         msg = msg[:_MAX_MESSAGE_LEN] + "...[truncated]"
     # 한 줄 형식 유지를 위해 개행 치환
@@ -203,6 +222,7 @@ def _sanitize_stack(stack: Optional[str]) -> Optional[str]:
         return None
     if not isinstance(stack, str):
         stack = str(stack)
+    stack = _mask_secrets(stack)  # v203: 절단 전 토큰 마스킹
     if len(stack) > _MAX_STACK_LEN:
         stack = stack[:_MAX_STACK_LEN] + "...[truncated]"
     return stack.replace("\r\n", " ⏎ ").replace("\n", " ⏎ ").replace("\r", " ⏎ ")

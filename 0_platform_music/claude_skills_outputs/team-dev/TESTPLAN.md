@@ -9365,3 +9365,146 @@ PY
   → A01(기준선 선캡처) → A03(재기동 후 필드 비교 + Range 1KB 실 GET) 3단으로 동일성을 증명한다.
   S3 축은 IamAwsProvider 분기(U04/U05)·캐시 키 모드 반영(U06)·설정화 grep(U01/U02) 의 정적+단위까지만 —
   실접속은 범위 밖 명문화. 유료 0건, 재기동 1회, 스트림 실 GET ≤2회(Range 1KB), 실 `.env`·인프라 무접촉.
+
+---
+
+## v203 — 2026-08-24 — 로그 토큰 마스킹 확장(4-6) + compose 약한 기본값 제거(1-8) [MAIDOL-LogHygieneSquad]
+
+**대상**: `backend_9006` 단독 (`$B = 0_platform_music/backend_9006`). 프런트 무변경 → **e2e 0건**.
+**총 12건**: `[unit]` 6건(50.0%) / `[api]` 6건(50.0%) / `[e2e]` 0건 — 요구(≥40 / ≥35 / 0 허용) 충족.
+**착수 기준**: PLAN 착수 HEAD `f23978d`. 설계 시점 실측: **A1(main.py)·A2(_logs.py)·A3(compose) 전부
+working tree 반영(미커밋)** — tester 는 dev 커밋 해시 확정 후 착수. 라인 번호는 시프트 가능 — 패턴 판정.
+
+### 0. 실행 전제 (안전 규칙 명문화)
+
+- **유료 0건**: 본 플랜의 API 는 `/api/health`·`/api/charts/top100`(무료 GET)·`/api/auth` 가입/로그인/탈퇴·
+  `/api/_logs/frontend` 뿐. ⭐ 차감 0건.
+- **9004/9005 쓰기 0건** · **인프라 무조작**: 🚫 `docker compose up`/`restart`/`stop` **절대 금지**,
+  MinIO 9100 차단 금지. compose 검증은 `config`(렌더링만, 데몬 무접촉) 한정. **`docker ps` 전후 동일이 판정 항목(A06)**.
+- **실 `.env` 무접촉**: 읽기 전용(compose config 가 참조)만 허용. `stat -c %y $B/.env` 를 시작 시 캡처, 종료 시 동일 확인.
+- **재기동은 9006 앱만**: 기존 프로세스 **PID 지정 kill**(`pkill` 금지) → `setsid ./run.sh`. 총 1회(A02).
+- **토큰은 전부 가짜 문자열**: 실 JWT·실 크리덴셜 사용 금지. 마스킹 검증용 고정 더미 —
+  `dummy-jwt-value` / `Bearer eyJhbGciOiJIUzI1NiJ9.eyJmYWtlLXBheWxvYWQtMTIzNCJ9.ZmFrZS1zaWduYXR1cmUtMTIz`(3분절 각 10자+).
+  산출물(로그 인용 포함)에 크리덴셜 실값 기재 금지.
+- **지문(fingerprint) 변화는 의도된 개선**(PLAN 0-2 — sanitize 가 지문 입력이므로 마스킹 후 같은
+  메시지·다른 토큰이 같은 지문으로 수렴 = 중복집계 개선) — **FAIL 기준 아님** (U05 에서 명시 판정).
+- **단위 실행 위치**: 스크래치패드 임시 스크립트(레포 파일 생성 금지) — `$B` 를 sys.path 에 얹어 import.
+  `app.main` import 는 logging 재구성(force=True) 부작용이 있으므로 **반드시 별도 서브프로세스**에서.
+
+### 1. [unit] — 호스트, 재기동 무관 (6건)
+
+**U01 [unit] `_TokenMaskFilter` 직접 케이스 표 — 마스킹 3계열 + guardian 유지** — 실행: 스크래치 서브프로세스
+- Given: `from app.main import _TokenMaskFilter` (서브프로세스). LogRecord 를 직접 만들어 `filter()` 통과
+- When/Then (입력 → 기대 출력):
+  | 입력 | 기대 |
+  |---|---|
+  | `GET /api/tracks/stream/abc?token=dummy-jwt-value HTTP/1.1` | `?token=<masked>` |
+  | `...?limit=3&token=dummy-jwt-value&x=1` | `&token=<masked>&x=1` (뒤 파라미터 보존) |
+  | `/api/auth/guardian-consent/fake-token-abc123` | `/api/auth/guardian-consent/<masked>` (기존 동작 유지) |
+  | `record.args` 튜플 내 문자열에 토큰 | args 도 마스킹 (v203 filter 가 args 순회) |
+- 예외 없이 `filter()` 가 항상 True 반환(로깅 중단 없음 — try/except 골격).
+
+**U02 [unit] `_TokenMaskFilter` 과탐 방지 — 정상 텍스트 비훼손** — 실행: U01 과 동일 스크립트
+- When/Then: ① `?tokenizer=abc` → **무변형**(`token=` 아님) ② `"protokol"`·`protokol=xyz` → 무변형
+  ③ `GET /api/charts/top100?limit=3` → 무변형 ④ `access_token_count=5` 류 단어 중간 `token` → 무변형.
+- 하나라도 훼손되면 FAIL(정상 로그 판독성 회귀).
+
+**U03 [unit] `_sanitize_message`/`_sanitize_stack` 마스킹 3종 + 기존 동작 보존** — 실행: 스크래치 스크립트
+- Given: `from app.routes._logs import _sanitize_message, _sanitize_stack, _MASK_PATTERNS`
+- When/Then: ① `Bearer <가짜JWT>` → `Bearer <masked>` (대소문자 무관 — `bearer` 도) ② `url?token=fake123` →
+  `token=<masked>` ③ 생 가짜 JWT 단독(`eyJ…`.`…`.`…` 각 분절 10자+) → `<masked-jwt>` ④ 기존 동작 유지:
+  개행 → `⏎` 치환·`_MAX_MESSAGE_LEN` 초과 시 `...[truncated]` 여전히 동작 ⑤ `_sanitize_stack(None)` → None.
+- 과탐 방지: `tokenizer=abc`·`protokol`·짧은 `eyJab.cd.ef`(분절 10자 미만) → **무변형**.
+
+**U04 [unit] 지문 개선 판정 — 같은 메시지·다른 토큰 = 같은 지문 (FAIL 아님)** — 실행: 스크래치 스크립트
+- Given: `_make_fingerprint` 가 sanitize 결과를 입력으로 사용(PLAN 0-2)
+- When: 동일 메시지 골격에 서로 다른 가짜 토큰 2종을 넣어 sanitize → fingerprint 각각 산출
+- Then: **두 지문 동일**(마스킹으로 수렴 — 의도된 개선으로 PASS 기록). 과거 지문값과 달라지는 것은
+  **FAIL 기준 아님**을 판정 로그에 명시. 토큰 무관 상이 메시지는 지문 상이(구분력 유지) 확인.
+
+**U05 [unit] compose diff 정밀 검사 — 정확히 6곳(비밀만), 12건 무수정** — 실행: 호스트 `$B`
+- When: ① `git diff <base>..<dev커밋> -- docker-compose.yml` (또는 HEAD 대비) ② `grep -c ':?' docker-compose.yml`
+  ③ `grep -c 'your_.*_password' docker-compose.yml` ④ PLAN 0-3 표의 유지 12건 라인(사용자명·DB명·포트) 무변경 육안
+- Then: ① 변경 라인이 **`:11` PG / `:30` Mongo / `:48`·`:55` Redis / `:75` ES / `:96` MinIO — 6곳뿐**
+  ② `:?` 정확히 6건 + 각 에러 메시지에 키 이름 포함 ③ `your_*_password` 리터럴 **0건** ④ 12건 무수정.
+  (참고: `:84` ES 헬스체크의 플레인 `${ES_PASSWORD}` 는 대상 외 — `:75` 필수화로 커버됨.)
+
+**U06 [unit] compose config 렌더 — 현 환경 성공 / scratch(.env 없음) 필수 변수 에러** — 실행: 호스트
+- When: ① `$B` 에서 `docker compose config --quiet` (렌더링만 — 데몬·컨테이너 무접촉) ② compose 파일만
+  스크래치패드 새 디렉터리에 복사(.env 미복사) → 그 디렉터리 cwd 로 `docker compose -f <복사본> config` 실행
+- Then: ① exit 0 — 실 `.env` 6키 존재로 현행 렌더 **무영향**(DoD 5) ② **비0 exit + `required` 류 명시 에러** —
+  에러에 걸린 **첫 키 이름을 기록**(DoD 4). 🚫 어느 단계에서도 `up`/`restart`/`stop` 없음.
+
+### 2. [api] — 호스트 curl, 재기동 축 명시 (6건)
+
+**A01 [api] 사전 캡처 — 인프라·로그·.env 기준선** — 실행: 호스트, 재기동 전
+- When: ① `docker ps --format '{{.Names}}\t{{.State}}'` 정렬 캡처 ② `stat -c %y $B/.env` 캡처
+  ③ `wc -l $B/logs/server.log`·`wc -l $B/logs/frontend.log` 캡처(이후 케이스는 이 지점 이후 라인만 grep)
+- Then: 캡처 완료. 이 값들이 A06·U06·A05 의 비교 기준.
+
+**A02 [api] 재기동 + 헬스 — 유일한 재기동 지점** — 실행: 호스트
+- Given: dev 커밋 해시 확정·기록
+- When: 9006 프로세스 **PID 지정 kill** → `setsid ./run.sh` → `/api/health` 폴링(최대 60s)
+- Then: 200 복귀. 미복귀 시 §3-S2 즉시중단(로그 첨부 후 dev 회부).
+
+**A03 [api] 🔴 액세스 로그 마스킹 실증 — `?token=` + guardian 경로** — 실행: 호스트 curl, 재기동 후
+- When: ① `GET /api/health?token=dummy-jwt-value` ② `GET /api/auth/guardian-consent/fake-guardian-tok-999`
+  (404여도 무방 — access 라인은 기록됨) ③ `logs/server.log` 의 A01-③ 이후 라인 grep
+- Then: ① 액세스 라인이 `token=<masked>` — `dummy-jwt-value` 문자열이 **server.log 에 0건** (DoD 1)
+  ② guardian 경로가 `<masked>` — `fake-guardian-tok-999` 0건 (DoD 2) ③ 두 요청 모두 액세스 라인 자체는
+  **존재**(라인 소실 = §3-S1). 상태코드는 판정 대상 아님(마스킹만 판정).
+
+**A04 [api] 정상 요청 무변형 + 과탐 방지 실증** — 실행: 호스트 curl, 재기동 후
+- When: ① `GET /api/charts/top100?limit=3`(무료) ② `GET /api/health?tokenizer=abc` ③ server.log 해당 라인 확인
+- Then: ① 액세스 라인에 `limit=3` 원문 그대로 + `<masked>` 부재 (DoD — 정상 라인 무변형)
+  ② `tokenizer=abc` **원문 유지**(`token=` 과탐 없음 — U02 의 런타임 재확인).
+
+**A05 [api] frontend.log 마스킹 — 일회용 가입 계정 생성→사용→탈퇴 원복** — 실행: 호스트 curl, 재기동 후
+- Given: `/api/_logs/frontend` 는 JWT 필수. **일회용 계정 절차 내장**(v202 A06 계열 — 실사용자 계정 사용 불가):
+  ⓐ `POST /api/auth/register` — 고유 이메일(`loghygiene-v203-<epoch>@test.invalid`)·규정 통과 비밀번호·
+  고유 닉네임·gender·**필수 동의 4종**(terms/privacy/overseas/age14 — version 값은 `validate_signup_consents`
+  상수 실측 후 기입, §5-P2) → 201 ⓑ `POST /api/auth/login` → JWT 획득
+- When: `POST /api/_logs/frontend` (Bearer 인증) — events 배치에 가짜 토큰 3종 포함:
+  message=`"auth fail Bearer eyJhbGciOiJIUzI1NiJ9.eyJmYWtlLXBheWxvYWQtMTIzNCJ9.ZmFrZS1zaWduYXR1cmUtMTIz url=/x?token=fake-tok-1"`,
+  stack 에 생 가짜 JWT 1건 + 과탐 대조용 `tokenizer=abc` 이벤트 1건
+- Then: ① 200 `{"received": N}` ② `logs/frontend.log` 저장분: `Bearer <masked>`·`token=<masked>`·`<masked-jwt>`
+  — 가짜 토큰 원문 **0건** (DoD 3) ③ `tokenizer=abc` 는 원문 유지 ④ **원복**: `DELETE /api/auth/me`(비밀번호 본문)
+  → 200, 이후 해당 계정 로그인 401 확인. 원복 실패 시 사유 기록 + planner 보고(조용한 방치 금지).
+
+**A06 [api] 인프라 무변화 사후 판정 — `docker ps` 전후 동일** — 실행: 호스트, 전 케이스 종료 후
+- When: ① `docker ps --format '{{.Names}}\t{{.State}}'` 정렬 재캡처 → A01-① 과 diff ② `stat -c %y $B/.env`
+  → A01-② 와 비교
+- Then: ① **이름·상태 완전 동일**(diff 0) — 상이하면 §3-S3 (이미 발생한 사고로 즉시 보고) ② `.env` mtime 동일.
+
+### 3. 즉시중단 조건 (v203)
+
+- **S1**: 액세스 로그 기록 자체가 멈춤 — A03/A04 요청 후 server.log 에 액세스 라인 미생성 (필터 예외 의심)
+- **S2**: 재기동 실패 — `/api/health` 200 미복귀 (A02)
+- **S3**: compose 작업으로 컨테이너 상태 변화 — `docker ps` 전후 상이 (A06 또는 수시 감지)
+- **S4**: 유료·⭐ 차감 유발 호출 발생
+- **S5**: 9004/9005 쓰기 발생 / 실 `.env` 변경 감지 (mtime 상이)
+
+### 4. 판정 기록 양식
+
+`ID / 태그 / 실행위치 / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED` — SKIP 사유 필수.
+정리: 스크래치 임시 스크립트·compose 복사본 삭제, A05 일회용 계정 탈퇴 확인, 로그 인용 시 가짜 토큰이라도
+전문 대신 앞 8자+`…` 표기(산출물 위생). 지문 변화 관찰 시 "의도된 개선" 으로 주석.
+
+### 5. planner 확인 필요 (설계 중 발견)
+
+- **P1**: 설계 시점 실측 — **A1~A3 전부 working tree 반영 완료(미커밋)**: main.py `_TokenMaskFilter` 2패턴,
+  `_logs.py` `_MASK_PATTERNS` 3종, compose `:?` 6건·`your_*_password` 0건. PLAN 의 "착수 전" 서술과 달리
+  구현이 선행돼 있음 — tester 는 **dev 커밋 해시 확정 후** 착수(커밋 전 검증 시작 금지).
+- **P2**: A05 가입에 필요한 **동의 4종 version 실값** 미확정 — `validate_signup_consents` 상수 실측 후 기입.
+  register 400 이 반복되면(정책 변경 등) 기존 QA 계정 대체 사용 승인 요청.
+- **P3 (경미)**: PLAN 0-3 표의 ES 라인 `:76` 은 실측 `:75` — 라인 드리프트일 뿐 내용 일치, PLAN 수정 불요.
+- **P4**: A03-② guardian 회귀를 "가짜 토큰 경로 GET(404 허용, access 라인만 판정)" 방식으로 검증 —
+  실 동의 플로우 미개입이라 안전하나, 이 방식으로 DoD 2 갈음함을 확인 바람.
+
+### 개정 이력 (v203)
+
+- 2026-08-24 초판 (12건: unit 6 / api 6 / e2e 0). 급소는 **"마스킹은 넓게, 과탐은 0"** — 3계열
+  (access `?token=`·guardian 경로·frontend Bearer/token=/생JWT) 을 unit 케이스 표 + 재기동 후 실로그
+  grep 이중으로 증명하되, `tokenizer`/`protokol` 류 비훼손을 unit·api 양쪽에서 대조. compose 는
+  `config` 렌더(현행 성공/scratch 필수 에러) 만으로 판정하고 `docker ps` 전후 동일을 별도 케이스(A06)로
+  못 박음. 재기동 1회, 유료 0, 토큰 전부 가짜, 일회용 계정은 가입→사용→탈퇴 원복 내장.

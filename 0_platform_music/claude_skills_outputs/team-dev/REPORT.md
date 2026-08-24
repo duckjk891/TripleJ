@@ -16285,3 +16285,54 @@ Range GET **206 · 1024B · audio/mpeg · Content-Range bytes 0-1023/5529885**. 
 ### 9. 변경 파일 (커밋 대상 8)
 백엔드 5(`config.py`·`database/minio.py`·`services/media_urls.py`·`routes/tracks.py`·`.env.example`) + 산출물 3.
 무변경 확인: `app/main.py`·`seed_item_store.py`·프런트 전체·`backend_9004/9005`.
+
+---
+
+## v203 — 2026-08-24 — 로그 토큰 마스킹 확장(4-6) + compose 약한 기본값 제거(1-8) [MAIDOL-LogHygieneSquad]
+
+> AWS 요청서 4-6 잔여 + 1-8. `backend_9006` 단독, 프런트 무변경. 착수 HEAD `f23978d`.
+
+### 1. 요청 작업
+① 액세스 로그·프런트 수신 로그에 남는 JWT 를 마스킹 (AWS 에선 CloudWatch 로 이관되므로 이사 전 필수)
+② `docker-compose.yml` 의 약한 비밀번호 폴백 제거 — `.env` 누락 시 조용히 기본 비번으로 잠기는 함정을 "설치 거부"로 전환
+
+### 2. 0단계 실측
+- 현행 필터는 guardian-consent 경로 **하나만** 마스킹(`main.py:27-45`), `?token=` 전 경로 무방비. `_logs.py` sanitize 는 길이 절단뿐
+- compose 폴백 17건 전수 분류: 🔴 약한 비번 **5곳** + ES 의 "빈 값 조용 기동" 1곳 = 필수화 대상 6곳 / 나머지 12곳(사용자명·포트·DB명)은 무해한 편의 기본값 → 유지
+- 실 `.env` 에 6개 키 전부 존재 → 필수화가 현 환경 무영향
+
+### 3. 수행 결과 (3파일 +52/−11)
+- **`main.py`** — `_TokenMaskFilter` 로 일반화: guardian 패턴 유지 + `([?&]token=)[^&\s"']+` 추가, 패턴 리스트 순차 적용
+- **`_logs.py`** — `_MASK_PATTERNS` 3종(Bearer / `?token=` / 생 JWT→`<masked-jwt>`) 을 `_sanitize_message`·`_sanitize_stack` 절단 앞에 적용. 부수 이득: 같은 메시지·다른 토큰이 **같은 지문**으로 수렴(중복 집계 개선 — 실측 `5bec5a13…` 동일 확인)
+- **`docker-compose.yml`** — 비밀 6곳 `${VAR:?VAR is required (.env)}` 필수화 (`:11` PG / `:30` Mongo / `:48`·`:55` Redis / `:75` ES / `:96` MinIO). 12곳 무수정
+
+### 4. 테스트 — 12/12 PASS, 픽스 루프 0회
+`[unit]` 6(50%) / `[api]` 6(50%) / e2e 0. 즉시중단 0.
+
+**실전 재현이 핵심 증거**:
+```
+"GET /api/health?token=<masked> HTTP/1.1" 200          ← 가짜 토큰이 가려져 기록됨
+"GET /api/auth/guardian-consent/<masked> HTTP/1.1" 404 ← 기존 마스킹 회귀 없음
+"GET /api/charts/top100?limit=3 HTTP/1.1" 200          ← 과탐 0 (limit·tokenizer 원문 유지)
+```
+frontend.log 저장분도 Bearer·token=·생 JWT 3종 마스킹 + `tokenizer=abc` 무훼손.
+compose: 현행 렌더 exit 0 / scratch(.env 없음) 는 `required variable MINIO_SECRET_KEY is missing…` **명시적 에러**.
+planner 도 별도 케이스로 독립 재현(access args 튜플 경로 포함).
+
+### 5. 안전 원장
+**인프라 컨테이너 조작 0회** — `docker ps` 전후 diff 0(5컨테이너 running 유지), 검증은 `config` 렌더와 scratch 복사본만.
+마스킹 검증 토큰 전부 가짜 · 유료 0 · ⭐ 순증 0(가입 보너스는 탈퇴로 원복) · 실 `.env` mtime 불변 ·
+일회용 계정 탈퇴 원복(재로그인 401) · 9004/9005 무접촉.
+
+### 6. 기록
+- 생 JWT 표기를 PLAN 의 `<masked>` 가 아닌 dev 구현 `<masked-jwt>` 로 채택 — 기능 동등 + 로그 조사 시 정보량 우위
+- PLAN 의 ES 라인 `:76` 은 실측 `:75` (드리프트, 내용 일치)
+- 동의 version 은 상수가 아니라 자유 문자열(≤20자)임을 tester 가 실측 — 가입 레시피 갱신
+- compose `version` obsolete 경고는 기존 사항 — 범위 밖 유지
+
+### 7. 범위 밖 / 후속
+- 과거 로그 파일에 남은 토큰 라인 — 재기동 시 tee 절단으로 자연 소멸 (AWS 이관 전 최종 재기동으로 정리됨)
+- CloudWatch 적재·로그 로테이션(P1) / 4-4·4-5·4-7·4-10 잔여
+
+### 8. 변경 파일 (커밋 대상 6)
+`app/main.py` · `app/routes/_logs.py` · `docker-compose.yml` + 산출물 3. 무변경: 실 `.env` · 프런트 · 9004/9005.

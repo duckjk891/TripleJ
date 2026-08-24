@@ -24,24 +24,34 @@ logging.basicConfig(
 # GuardSquad — uvicorn access 로그의 요청 라인에 보호자 동의 토큰(URL 경로)이
 # 그대로 남지 않도록 마스킹. 앱 로거는 토큰 앞 8자만 쓰지만 access 로그는
 # 경로 전체를 기록하므로 여기서 걸러야 함.
-class _GuardianTokenMaskFilter(logging.Filter):
-    _pattern = re.compile(r"(/api/auth/guardian-consent/)[^/\s\"?]+")
+# v203: guardian-consent 전용 필터를 일반 토큰 마스킹 필터로 확장 —
+# 쿼리스트링 `?token=...` / `&token=...` 값도 access 로그에서 마스킹.
+class _TokenMaskFilter(logging.Filter):
+    _patterns = [
+        re.compile(r"(/api/auth/guardian-consent/)[^/\s\"?]+"),
+        re.compile(r"([?&]token=)[^&\s\"']+"),  # v203
+    ]
+
+    def _mask(self, text: str) -> str:
+        for pattern in self._patterns:
+            text = pattern.sub(r"\1<masked>", text)
+        return text
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             if record.args:
                 record.args = tuple(
-                    self._pattern.sub(r"\1<masked>", a) if isinstance(a, str) else a
+                    self._mask(a) if isinstance(a, str) else a
                     for a in record.args
                 )
             if isinstance(record.msg, str):
-                record.msg = self._pattern.sub(r"\1<masked>", record.msg)
+                record.msg = self._mask(record.msg)
         except Exception:
             pass
         return True
 
 
-logging.getLogger("uvicorn.access").addFilter(_GuardianTokenMaskFilter())
+logging.getLogger("uvicorn.access").addFilter(_TokenMaskFilter())
 
 load_dotenv()
 
