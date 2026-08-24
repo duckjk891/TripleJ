@@ -193,8 +193,8 @@ export default function FeedScreen() {
         />
       )}
 
-      {/* v3.61 피드 작성 FAB → v3.62: 차트 +와 동일 위치·스펙·조건(미니플레이어 시 숨김)의 공용 Fab */}
-      {user && !playerStore.track ? (
+      {/* v3.62 공용 Fab → v3.63: 재생 중에도 항상 노출(미니플레이어 위로 자동 상승) */}
+      {user ? (
         <Fab onPress={() => navigation.navigate('FeedCompose')} accessibilityLabel="피드 작성">
           <Feather name="edit-3" size={22} color="#fff" />
         </Fab>

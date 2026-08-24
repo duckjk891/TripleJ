@@ -236,11 +236,10 @@ export default function ChartScreen() {
           : <EmptyState icon="📊" title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />;
       })()}
 
-      {!playerStore.track && (
-        <Fab onPress={() => navigation.navigate('MyMusic')} accessibilityLabel="곡 추가">
-          <AppText variant="headline" tone="primary" style={styles.fabIcon}>+</AppText>
-        </Fab>
-      )}
+      {/* v3.63: 재생 중에도 항상 노출 — Fab이 스스로 미니플레이어 위로 올라감 */}
+      <Fab onPress={() => navigation.navigate('MyMusic')} accessibilityLabel="곡 추가">
+        <AppText variant="headline" tone="primary" style={styles.fabIcon}>+</AppText>
+      </Fab>
 
       {/* 검색 모달 */}
       <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
