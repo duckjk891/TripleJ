@@ -7,6 +7,25 @@
 
 ---
 
+## v3.56 — 2026-08-24 — 알림함 팔로우 알림에 '맞팔하기' 인라인 버튼
+
+### 요청 원문
+DM 요청/팔로우 구조 논의 후: "(팔로우 알림에 맞팔 버튼 바로 넣기) 그렇게 해줘."
+
+### Plan verification findings
+- NotificationsScreen.tsx — follow 알림은 탭하면 채널로 이동만 함(맞팔은 채널 가서 버튼 눌러야). 알림 항목에 팔로우 상태 표시·액션 없음.
+- 팔로우는 승인 개념 없음(POST /follows/{id} 즉시) → 버튼 1탭으로 완결. 상태 조회는 GET /follows/summary/{id}(is_following).
+- DM pending 판정은 "수신자가 발신자를 팔로우 중인가"(dm_service.py:359) → 맞팔하면 상대 DM이 요청함을 안 거침. 이 버튼이 DM 흐름 개선과 직결.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/NotificationsScreen.tsx | follow 알림 로드 후 고유 actor들의 팔로우 상태 일괄 조회 → 항목 우측에 '맞팔하기'/'팔로잉 ✓' 버튼(낙관적 갱신, 중복탭 방지, 행 탭과 이벤트 분리) | [Notifications] |
+
+백엔드 변경 없음(동결 유지).
+
+---
+
 ## v3.55 — 2026-08-20 — 착장 레일 화살표 + Now playing 공유 제거
 
 ### 요청

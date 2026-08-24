@@ -5,6 +5,16 @@
 
 ---
 
+## v3.56 — 2026-08-24 — 알림함 인라인 맞팔 버튼
+
+- [unit] tsc 0.
+- [api] 사전 상태 확인: 수신 계정에 follow 알림 존재 + is_following=false.
+- [e2e] 알림함에서 팔로우 알림 항목 우측 '맞팔하기' 노출 → 클릭 → '팔로잉 ✓' 전환 — PASS (`/tmp/v356_noti.png`, `/tmp/v356_after.png`).
+- [api] 클릭 후 GET /follows/summary → is_following=true, follower_count 1→2 — 서버 반영 확인.
+- [regression] 비팔로우 알림(댓글)은 기존처럼 시간 표시 유지, 행 탭(채널 이동)과 버튼 탭 이벤트 분리 동작.
+
+---
+
 ## v3.55 — 2026-08-20 — 착장 화살표·공유 제거
 
 - [unit] tsc 0.

@@ -43,20 +43,55 @@ export default function NotificationsScreen() {
   const [items, setItems] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // v3.56: 팔로우 알림 인라인 맞팔 — actor별 팔로우 상태(undefined=조회 중)와 요청 중 표시
+  const [following, setFollowing] = useState<Record<string, boolean>>({});
+  const [followBusy, setFollowBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (__DEV__) console.info('[Notifications] 목록 조회');
     try {
       const res = await api.get('/notifications/', { params: { limit: 50 } });
-      setItems(res.data?.notifications || []);
+      const list: Notification[] = res.data?.notifications || [];
+      setItems(list);
       // 진입 시 전체 읽음 처리(뱃지 해소)
       if ((res.data?.unread ?? 0) > 0) api.post('/notifications/read-all').catch(() => {});
+      // v3.56: follow 알림의 고유 actor들 팔로우 상태 일괄 조회 → 맞팔 버튼 표시용
+      const actorIds = [...new Set(list.filter((n) => n.type === 'follow' && n.actor_id).map((n) => n.actor_id))];
+      if (actorIds.length) {
+        if (__DEV__) console.info('[Notifications] 맞팔 상태 조회', { actors: actorIds.length });
+        const results = await Promise.allSettled(actorIds.map((id) => api.get(`/follows/summary/${id}`)));
+        const next: Record<string, boolean> = {};
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') next[actorIds[i]] = !!r.value.data?.is_following;
+        });
+        setFollowing((prev) => ({ ...prev, ...next }));
+      }
     } catch (err: any) {
       console.error('[Notifications] 조회 실패', { status: err?.response?.status });
     } finally {
       setLoading(false); setRefreshing(false);
     }
   }, []);
+
+  // 맞팔하기 — 팔로우는 승인 절차가 없어 1탭으로 완결(낙관적 갱신, 실패 시 롤백)
+  const followBack = async (actorId: string) => {
+    if (followBusy === actorId || following[actorId]) return;
+    setFollowBusy(actorId);
+    setFollowing((prev) => ({ ...prev, [actorId]: true }));
+    if (__DEV__) console.info('[Notifications] 맞팔하기', { actorId });
+    try {
+      await api.post(`/follows/${actorId}`);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      // 이미 팔로우 중(중복) 응답은 성공으로 간주, 그 외엔 롤백
+      if (status !== 400 && status !== 409) {
+        setFollowing((prev) => ({ ...prev, [actorId]: false }));
+        console.error('[Notifications] 맞팔 실패', { actorId, status });
+      }
+    } finally {
+      setFollowBusy(null);
+    }
+  };
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -67,6 +102,8 @@ export default function NotificationsScreen() {
 
   const renderItem = ({ item }: { item: Notification }) => {
     const meta = TYPE_META[item.type] || TYPE_META.feed;
+    const isFollow = item.type === 'follow' && !!item.actor_id;
+    const followed = following[item.actor_id];
     return (
       <TouchableOpacity style={[styles.row, !item.read && styles.rowUnread]} onPress={() => open(item)} activeOpacity={0.7}>
         <View style={styles.iconWrap}>
@@ -76,7 +113,21 @@ export default function NotificationsScreen() {
           <AppText variant="footnote">{meta.label(item)}</AppText>
           {item.preview ? <AppText variant="caption" tone="muted" numberOfLines={1}>{item.preview}</AppText> : null}
         </View>
-        <AppText variant="caption" tone="muted">{fmtTime(item.created_at)}</AppText>
+        {isFollow ? (
+          // v3.56: 인라인 맞팔 버튼 — 행 탭(채널 이동)과 분리
+          <TouchableOpacity
+            style={[styles.followBtn, followed && styles.followBtnDone]}
+            disabled={!!followed || followBusy === item.actor_id}
+            onPress={(e) => { e.stopPropagation?.(); followBack(item.actor_id); }}
+            accessibilityLabel={followed ? '팔로잉' : '맞팔하기'}
+          >
+            <AppText variant="caption" style={{ color: followed ? colors.text.muted : '#fff', fontWeight: '700' }}>
+              {followBusy === item.actor_id ? '...' : followed ? '팔로잉 ✓' : '맞팔하기'}
+            </AppText>
+          </TouchableOpacity>
+        ) : (
+          <AppText variant="caption" tone="muted">{fmtTime(item.created_at)}</AppText>
+        )}
       </TouchableOpacity>
     );
   };
@@ -121,5 +172,14 @@ const styles = StyleSheet.create({
   iconWrap: {
     width: 32, height: 32, borderRadius: 16, backgroundColor: colors.bg.surface2,
     justifyContent: 'center', alignItems: 'center',
+  },
+  // v3.56: 맞팔 버튼 — 미팔로우는 액센트 채움, 팔로우 완료는 무채 아웃라인
+  followBtn: {
+    paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: 14,
+    backgroundColor: colors.accent.primary, marginLeft: spacing.sm,
+  },
+  followBtnDone: {
+    backgroundColor: 'transparent',
+    borderWidth: 1, borderColor: colors.border.subtle,
   },
 });
