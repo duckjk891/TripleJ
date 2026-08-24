@@ -66,21 +66,21 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 3,
               backgroundColor: colors.bg.surface2, borderRadius: radius.pill,
-              paddingHorizontal: 10, paddingVertical: 4, marginRight: spacing.xs,
+              paddingHorizontal: 8, paddingVertical: 4, marginRight: spacing.xs,
             }}
           >
             <AppText variant="footnote">⭐</AppText>
             <AppText variant="footnote" tone="accent">{balance ?? 0}</AppText>
           </TouchableOpacity>
-          <TouchableOpacity onPress={openAttendance} style={{ paddingHorizontal: 8 }} accessibilityLabel="출석체크">
-            <Feather name="calendar" size={20} color={colors.text.primary} />
+          <TouchableOpacity onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크">
+            <Feather name="calendar" size={18} color={colors.text.primary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 8 }} accessibilityLabel="친구초대">
-            <Feather name="share" size={20} color={colors.text.primary} />
+          <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 6 }} accessibilityLabel="친구초대">
+            <Feather name="share" size={18} color={colors.text.primary} />
           </TouchableOpacity>
           {/* 알림(벨) — v192 인앱 알림함 */}
-          <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={{ paddingHorizontal: 8 }} accessibilityLabel="알림">
-            <Feather name="bell" size={20} color={colors.text.primary} />
+          <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={{ paddingHorizontal: 6 }} accessibilityLabel="알림">
+            <Feather name="bell" size={18} color={colors.text.primary} />
             {notiUnread > 0 ? (
               <View style={{
                 position: 'absolute', top: -4, right: 0, minWidth: 16, height: 16, borderRadius: 8,
@@ -91,8 +91,8 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
             ) : null}
           </TouchableOpacity>
           {/* DM(메시지) — MAIDOL 봉투 아이콘 위치 대응 */}
-          <TouchableOpacity onPress={() => navigation.navigate('DmInbox')} style={{ paddingHorizontal: 8 }} accessibilityLabel="메시지">
-            <Feather name="mail" size={20} color={colors.text.primary} />
+          <TouchableOpacity onPress={() => navigation.navigate('DmInbox')} style={{ paddingHorizontal: 6 }} accessibilityLabel="메시지">
+            <Feather name="mail" size={18} color={colors.text.primary} />
             {dmUnread > 0 ? (
               <View style={{
                 position: 'absolute', top: -4, right: 0, minWidth: 16, height: 16, borderRadius: 8,
@@ -104,8 +104,8 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
           </TouchableOpacity>
         </>
       ) : null}
-      <TouchableOpacity onPress={() => navigation.navigate('MyMusic')} style={{ paddingHorizontal: 8 }} accessibilityLabel="마이페이지">
-        <Feather name="user" size={22} color={colors.text.primary} />
+      <TouchableOpacity onPress={() => navigation.navigate('MyMusic')} style={{ paddingHorizontal: 6 }} accessibilityLabel="마이페이지">
+        <Feather name="user" size={20} color={colors.text.primary} />
       </TouchableOpacity>
     </View>
   );

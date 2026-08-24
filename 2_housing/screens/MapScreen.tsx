@@ -18,6 +18,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import Character, { DirectorType } from '../components/Character';
+import HomeHeaderActions from '../components/HomeHeaderActions';
 import { useTimerStore, DIRECTOR_STAGES } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { useDirectorsStore } from '../stores/directorsStore';
@@ -316,42 +317,10 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       ),
       headerLeft: undefined,
-      headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
-          {user && (
-            <>
-              {/* 별 배지 — 클릭 시 별 안내 팝업 */}
-              <TouchableOpacity
-                onPress={openStarGuide}
-                accessibilityLabel="스타 안내"
-                style={styles.starPill}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              >
-                <AppText variant="footnote">⭐</AppText>
-                <AppText variant="footnote" tone="accent">{starBalance ?? 0}</AppText>
-              </TouchableOpacity>
-              {/* 출석체크 */}
-              <TouchableOpacity onPress={openAttendance} style={{ paddingHorizontal: 6 }} accessibilityLabel="출석체크" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Feather name="calendar" size={19} color={colors.text.primary} />
-              </TouchableOpacity>
-              {/* 친구초대(공유) — 화살표형 공유 아이콘 */}
-              <TouchableOpacity onPress={openInvite} style={{ paddingHorizontal: 6 }} accessibilityLabel="친구초대" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Feather name="share" size={19} color={colors.text.primary} />
-              </TouchableOpacity>
-            </>
-          )}
-          <TouchableOpacity
-            onPress={() => parent.navigate('MyMusic' as never)}
-            style={{ paddingHorizontal: 8, paddingVertical: 4 }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="마이페이지"
-          >
-            <Feather name="user" size={22} color={colors.text.primary} />
-          </TouchableOpacity>
-        </View>
-      ),
+      // v3.75: 우측 액션은 차트와 동일한 공용 컴포넌트(별·출석·초대·알림·메시지·마이페이지)로 통일
+      headerRight: () => <HomeHeaderActions navigation={parent} />,
     });
-  }, [navigation, user?.company_name, user, showTutorial, starBalance]);
+  }, [navigation, user?.company_name, user, showTutorial]);
 
   // 다음 액션 디렉터 펄스 애니메이션
   useEffect(() => {

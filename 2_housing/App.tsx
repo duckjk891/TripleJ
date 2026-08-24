@@ -206,7 +206,16 @@ const homeHeader = (navigation: any) => ({
   headerRight: () => <HomeHeaderActions navigation={navigation} />,
 });
 
-// v3.74: 탭 페이지 헤더는 모두 homeHeader(차트와 동일)로 통일 — pageHeader 제거됨
+// v3.75: 탭 헤더 = 좌측 페이지명 텍스트 + 우측은 차트와 동일한 액션(HomeHeaderActions).
+// 차트만 좌측이 AIDOL 로고, 작업실은 MapScreen이 기획사명+ⓘ로 headerTitle을 덮는다.
+const titleHeader = (navigation: any, title: string) => ({
+  headerShown: true,
+  headerTitle: () => <AppText variant="subtitle">{title}</AppText>,
+  headerTitleAlign: 'left' as const,
+  headerStyle: { backgroundColor: colors.bg.deepest },
+  headerTintColor: colors.text.primary,
+  headerRight: () => <HomeHeaderActions navigation={navigation} />,
+});
 
 // v3.71: 스택 페이지 헤더 — 알림/메시지 등 RootStack 화면도 플레이리스트처럼 상단바에 타이틀이 뜨도록.
 // pageHeader와 달리 뒤로가기는 goBack(진입 지점으로 복귀).
@@ -260,7 +269,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="play-circle" size={size - 2} color={color} />
           ),
-          ...homeHeader(navigation), // v3.74: 모든 탭 상단바를 차트와 동일하게
+          ...titleHeader(navigation, '플레이리스트'), // v3.75: 좌측 페이지명 + 우측 차트와 동일 액션
         })}
       />
       <Tab.Screen
@@ -271,7 +280,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="edit-3" size={size - 2} color={color} />
           ),
-          ...homeHeader(navigation),
+          ...titleHeader(navigation, '피드'),
         })}
       />
       <Tab.Screen
@@ -282,7 +291,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="search" size={size - 2} color={color} />
           ),
-          ...homeHeader(navigation),
+          ...titleHeader(navigation, '검색'),
         })}
       />
       <Tab.Screen
@@ -299,7 +308,8 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="music" size={size - 2} color={color} />
           ),
-          ...homeHeader(navigation),
+          // v3.75: 기본은 '작업실' — MapScreen이 setOptions로 기획사명+ⓘ 타이틀로 덮는다
+          ...titleHeader(navigation, '작업실'),
         })}
       />
       {/* 마이뮤직=마이페이지: 하단바에서 숨김(상단 👤로 진입). 설정은 이 화면 헤더 ⚙️로 진입. */}
