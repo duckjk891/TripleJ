@@ -5,6 +5,17 @@
 
 ---
 
+## v3.76 — 2026-08-24 — 아티스트 디렉터 MAIDOL 이식 1차
+
+- [unit] tsc 0.
+- [api] 9004 실측: /points/costs {character:10} · generate-sheet-async·/character/job/{id}·style-samples(3종)·face-verify(enabled) 존재 확인.
+- [e2e] ArtistInput에 '사진 없이 만들기' 버튼 노출 + 텍스트-only 진입 → 질문 진행(1/6→2/6 실측) PASS.
+- [e2e] 텍스트-only에서 6문답 전부 생략 시 가드 동작(설명 필요 안내 + 질문 재시작) 실관찰 PASS.
+- [e2e] ArtistCody 확정 버튼 '이 옷으로 만들기 ⭐10'(costs 연동) 노출 PASS (`scratchpad/v376_3_cody.png`).
+- [미검증] 비동기 job 폴링 실생성(⭐10 차감·수 분 소요 — 실기기/사장님 계정 1회 생성 권장), 402/403 실분기(잔액 조작 필요), 사진 확약 Alert(RN-web Alert 버튼 제약 — 네이티브에서 확인 권장).
+
+---
+
 ## v3.75 — 2026-08-24 — 탭 헤더 좌측 타이틀 정정
 
 - [unit] tsc 0.

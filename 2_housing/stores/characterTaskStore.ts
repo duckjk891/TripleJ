@@ -22,9 +22,11 @@ interface CharacterTaskState {
   outfitDesc: string | null;     // outfit 모드: 옷 설명
   /** 9004: 백엔드 영구저장된 원본 사진의 MinIO object name. 옷 입히기 시 /preview로 fetch해서 generate-sheet에 첨부 */
   originalPhotoObjectName: string | null;
+  /** v3.76(MAIDOL v137): 사진 확약 — 본인 사진이거나 인물 동의를 받았음을 확인. 사진 첨부 시 필수 */
+  portraitConfirmed: boolean;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -45,6 +47,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   refineRequest: null,
   outfitDesc: null,
   originalPhotoObjectName: null,
+  portraitConfirmed: false,
 
   startTask: (mode) =>
     set({
@@ -75,5 +78,6 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       refineRequest: null,
       outfitDesc: null,
       originalPhotoObjectName: null,
+      portraitConfirmed: false,
     }),
 }));

@@ -18,6 +18,7 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { useTimerStore } from '../stores/timerStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
+import { usePointsStore } from '../stores/pointsStore';
 import { colors } from '../theme/colors';
 
 const MINIPLAYER_HEIGHT = 70;
@@ -130,6 +131,23 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   // 'sheet' = 초기 캐릭터 생성 흐름 (시트 없음, 옷 함께 만들기) / 'outfit' = 기존 캐릭터 꾸미기
   const isSheetMode = route?.params?.mode === 'sheet';
 
+  // v3.76(MAIDOL v158): 캐릭터 생성 비용 — /points/costs 단일 소스(실패 시 10 폴백)
+  const [characterCost, setCharacterCost] = useState(10);
+  const balance = usePointsStore((s) => s.balance);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        if (alive && res.data?.costs?.character != null) setCharacterCost(res.data.costs.character);
+      } catch (err: any) {
+        console.error('[ArtistCody] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    usePointsStore.getState().fetchBalance();
+    return () => { alive = false; };
+  }, []);
+
   // 카테고리별 선택된 아이템 (단일 선택)
   const [selected, setSelected] = useState<Partial<Record<Cat, AdItem>>>({});
   // 카테고리별 옵션 (핏/기장 등)
@@ -192,6 +210,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     }
     if (!isSheetMode && selectedEntries.length === 0) {
       Alert.alert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
+      return;
+    }
+    // v3.76: 잔액 사전 체크 — 대기열 소진 후 402로 실패하는 낭패 방지
+    const bal = usePointsStore.getState().balance;
+    if (bal != null && bal < characterCost) {
+      if (__DEV__) console.info('[ArtistCody] 별 부족 사전 차단', { bal, cost: characterCost });
+      Alert.alert('별이 부족해요', `캐릭터 시트 생성에는 ⭐${characterCost}개가 필요해요.\n현재 보유: ⭐${bal}`);
       return;
     }
     // 카테고리별로 분류 — 의상류는 "기존 제거 후 새로 입힘", 헤어/문신은 "명시된 것만 변경"
@@ -461,7 +486,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
             disabled={!isSheetMode && selectedEntries.length === 0}
           >
             <AppText style={styles.applyBtnText}>
-              {isSheetMode ? '이 옷으로 만들기 (대기 필요)' : '이 옷으로 입히기 (대기 필요)'}
+              {isSheetMode ? `이 옷으로 만들기 ⭐${characterCost}` : `이 옷으로 입히기 ⭐${characterCost}`}
             </AppText>
           </TouchableOpacity>
         </View>

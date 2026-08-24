@@ -214,24 +214,55 @@ export default function ArtistInputScreen({ navigation }: any) {
     );
   };
 
-  // ── Photo pick → 6단계 질문 시작 ─────────────────────────────
+  // 질문 단계 공통 진입
+  const startQuestioning = () => {
+    pushDirector(QUESTIONS[0].question);
+    setQIndex(0);
+    setStyleAnswers(EMPTY_ANSWERS);
+    setCurrentInput('');
+    setStep('questioning');
+  };
+
+  // ── Photo pick → 사진 확약(MAIDOL v137) → 6단계 질문 시작 ─────
   const handlePickPhoto = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
       if (!res.canceled && res.assets && res.assets[0]) {
         const file = res.assets[0];
-        setPhotoUri(file.uri);
-        setPhotoName(file.name);
-        pushUser(`사진 선택: ${file.name}`);
-        pushDirector(QUESTIONS[0].question);
-        setQIndex(0);
-        setStyleAnswers(EMPTY_ANSWERS);
-        setCurrentInput('');
-        setStep('questioning');
+        // v3.76: 사진 확약 — 본인/동의 확인 + 보관·비학습 고지. 미확인 시 진행 불가.
+        Alert.alert(
+          '사진 확인',
+          '이 사진은 본인이거나, 사진 속 인물의 동의를 받았음을 확인해주세요.\n\n사진은 캐릭터 생성에만 사용되며 AI 학습에 쓰이지 않아요.',
+          [
+            { text: '취소', style: 'cancel' },
+            {
+              text: '확인했어요',
+              onPress: () => {
+                if (__DEV__) console.info('[ArtistInput] 사진 확약 완료', { name: file.name });
+                setPhotoUri(file.uri);
+                setPhotoName(file.name);
+                taskStore.setInput({ portraitConfirmed: true });
+                pushUser(`사진 선택: ${file.name}`);
+                startQuestioning();
+              },
+            },
+          ]
+        );
       }
     } catch {
       Alert.alert('오류', '사진을 선택하지 못했어요.');
     }
+  };
+
+  // ── v3.76(MAIDOL v161): 사진 없이 텍스트만으로 생성 ─────
+  const handleTextOnly = () => {
+    if (__DEV__) console.info('[ArtistInput] 텍스트-only 경로 시작');
+    setPhotoUri(null);
+    setPhotoName('');
+    taskStore.setInput({ portraitConfirmed: false });
+    pushUser('사진 없이 만들게요');
+    pushDirector('좋아요! 설명만 듣고 상상해서 만들어드릴게요. 대신 조금 더 자세히 알려주세요!');
+    setTimeout(() => startQuestioning(), 400);
   };
 
   const handleChipTap = (chip: string) => {
@@ -267,11 +298,13 @@ export default function ArtistInputScreen({ navigation }: any) {
   // ── 컨셉 입력 완료 → 옷 선택 화면으로 ─────
   // (기본 착장 프롬프트 제거. 옷은 ArtistCody에서 선택, 미선택 시 디폴트 fallback)
   const handleStartGeneration = (answers: StyleAnswers) => {
-    if (!photoUri) {
-      Alert.alert('오류', '사진을 먼저 올려주세요.');
+    const userInput = buildFinalText(answers);
+    // v3.76: 텍스트-only 경로(사진 없음)에서는 설명이 최소 하나는 필요
+    if (!photoUri && !userInput.trim()) {
+      Alert.alert('알림', '사진이 없으면 설명이 필요해요. 질문에 하나 이상 답해주세요.');
+      startQuestioning();
       return;
     }
-    const userInput = buildFinalText(answers);
     // 캐릭터 컨셉 텍스트만 저장. 의상은 다음 화면에서 결정.
     const conceptText = userInput || '특별한 컨셉 없음 — 자연스러운 느낌으로';
 
@@ -350,6 +383,11 @@ export default function ArtistInputScreen({ navigation }: any) {
           <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
             <AppText style={styles.primaryBtnText}>📷 사진 올리기</AppText>
           </TouchableOpacity>
+          {/* v3.76(MAIDOL v161): 텍스트-only 경로 — 사진 없이 설명만으로 가상 인물 생성 */}
+          <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
+            <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
+          </TouchableOpacity>
+          <AppText style={styles.textOnlyHint}>사진 없이 설명만으로 가상 인물을 만들 수도 있어요.</AppText>
         </View>
       );
     }
@@ -529,6 +567,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center', marginBottom: 8,
   },
   primaryBtnText: { color: colors.text.primary, fontWeight: '700', fontSize: 15 },
+  // v3.76: 텍스트-only 경로 버튼(보조 스타일) + 힌트
+  textOnlyBtn: {
+    borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 14,
+    paddingVertical: 12, alignItems: 'center', marginBottom: 6,
+  },
+  textOnlyBtnText: { color: colors.text.secondary, fontWeight: '600', fontSize: 14 },
+  textOnlyHint: { color: colors.text.muted, fontSize: 11, textAlign: 'center' },
 
   qProgress: { marginBottom: 8 },
   qProgressText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },

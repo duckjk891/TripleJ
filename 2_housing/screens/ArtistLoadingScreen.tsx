@@ -16,6 +16,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/characterTaskStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
+import { usePointsStore } from '../stores/pointsStore';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
@@ -44,6 +45,42 @@ async function appendFileToForm(form: FormData, field: string, uri: string, name
 function inferMimeType(filename: string): string {
   const ext = (filename.split('.').pop() || 'jpg').toLowerCase();
   return `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+}
+
+// v3.76(MAIDOL 이식): 비동기 생성 잡 폴링 — 5초 간격, 최대 180틱(15분), 연속 오류 3회 허용.
+// done → job 데이터 반환, failed/타임아웃 → throw. isCancelled()로 언마운트 시 중단.
+async function pollCharacterJob(jobId: string, isCancelled: () => boolean): Promise<any> {
+  let consecutiveErrors = 0;
+  for (let tick = 0; tick < 180; tick++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    if (isCancelled()) throw new Error('cancelled');
+    try {
+      const res = await api.get(`/character/job/${jobId}`);
+      consecutiveErrors = 0;
+      const status = res.data?.status;
+      if (__DEV__ && tick % 6 === 0) console.info('[ArtistLoading] job poll', { jobId, tick, status });
+      if (status === 'done') return res.data;
+      if (status === 'failed') {
+        throw new Error(res.data?.error || '캐릭터 시트 생성에 실패했습니다. 사용된 별은 자동으로 환불됩니다.');
+      }
+    } catch (err: any) {
+      if (err?.message === 'cancelled' || err?.message?.includes('환불')) throw err;
+      consecutiveErrors++;
+      console.error('[ArtistLoading] job poll 오류', { jobId, tick, consecutiveErrors, message: err?.message });
+      if (consecutiveErrors >= 3) throw new Error('생성 상태 확인에 실패했어요. 잠시 후 내 아티스트에서 확인해주세요.');
+    }
+  }
+  throw new Error('생성이 너무 오래 걸려요. 잠시 후 다시 확인해주세요. 실패 시 별은 자동 환불됩니다.');
+}
+
+// v3.76: 코디 선택분(상의/하의/신발)을 서버 정식 계약(object_name 필드)으로 전송.
+// 기존 방식(이미지 재다운로드 후 top_image 첨부)보다 단순하고 서버가 원본 화질로 처리.
+function appendOutfitObjectNames(form: FormData, items: AppliedItem[]) {
+  const fieldByCat: Record<string, string> = { 상의: 'top_object_name', 하의: 'bottom_object_name', 신발: 'shoes_object_name' };
+  for (const [cat, field] of Object.entries(fieldByCat)) {
+    const item = items.find((it) => it.cat === cat && it.imageObjectName);
+    if (item?.imageObjectName) form.append(field, item.imageObjectName);
+  }
 }
 
 // 9004: 백엔드 MinIO에 영구 저장된 이미지(object_name)를 fetch해서 form에 첨부.
@@ -120,50 +157,50 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         const photoName = taskStore.photoName;
 
         if (mode === 'sheet') {
-          // ── 신규 캐릭터 시트 생성 (옷까지 함께 입혀서 한 번에) ──
-          if (!photoUri) throw new Error('사진이 없습니다.');
+          // ── 신규 캐릭터 시트 생성 — v3.76: 비동기(job) + 텍스트-only 허용(MAIDOL v161) ──
+          const hasPhoto = !!photoUri;
+          if (!hasPhoto && !(taskStore.userText || '').trim()) throw new Error('사진 또는 컨셉 설명이 필요해요.');
           const form = new FormData();
-          const nameFromUri = photoName || (photoUri.split('/').pop() ?? 'photo.jpg');
+          const nameFromUri = photoName || (photoUri?.split('/').pop() ?? 'photo.jpg');
           const mime = inferMimeType(nameFromUri);
-          await appendFileToForm(form, 'file', photoUri, nameFromUri, mime);
+          if (hasPhoto) {
+            await appendFileToForm(form, 'file', photoUri!, nameFromUri, mime);
+            // v3.76(MAIDOL v137): 사진 확약 — ArtistInput에서 확인받은 값
+            if (taskStore.portraitConfirmed) form.append('portrait_confirmed', 'true');
+          }
 
-          // 9004 신규 흐름: ArtistCody에서 선택한 옷을 photo와 함께 첨부 → 옷 정확도 ↑
+          // v3.76: 코디 선택분은 서버 정식 계약(object_name)으로 전송
           const items: AppliedItem[] = useOutfitStore.getState().items;
-          const topItem = items.find((it) => it.cat === '상의' && it.imageObjectName);
-          const bottomItem = items.find((it) => it.cat === '하의' && it.imageObjectName);
-          const shoesItem = items.find((it) => it.cat === '신발' && it.imageObjectName);
-          if (topItem?.imageObjectName) {
-            await appendMinioImageToForm(form, 'top_image', topItem.imageObjectName);
-          }
-          if (bottomItem?.imageObjectName) {
-            await appendMinioImageToForm(form, 'bottom_image', bottomItem.imageObjectName);
-          }
-          if (shoesItem?.imageObjectName) {
-            await appendMinioImageToForm(form, 'shoes_image', shoesItem.imageObjectName);
-          }
+          appendOutfitObjectNames(form, items);
 
           form.append('user_text', taskStore.userText || '');
           form.append('image_model', 'gpt_image_2');
-          const res = await api.post('/character/generate-sheet', form, {
+          if (__DEV__) console.info('[ArtistLoading] generate-sheet-async 요청', { hasPhoto, items: items.length });
+          const startRes = await api.post('/character/generate-sheet-async', form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
-            timeout: 600000,
+            timeout: 120000,
           });
           if (cancelled) return;
+          const job = await pollCharacterJob(startRes.data?.job_id, () => cancelled);
+          if (cancelled) return;
+          const res = { data: job } as any;
 
-          // 9004: 원본 사진을 영구 위치에 업로드 (이후 옷 갈아입기 시 재사용)
+          // 9004: 원본 사진을 영구 위치에 업로드 (이후 옷 갈아입기 시 재사용) — 사진 경로에서만
           let originalObjectName: string | null = null;
-          try {
-            const photoForm = new FormData();
-            await appendFileToForm(photoForm, 'file', photoUri, nameFromUri, mime);
-            const upRes = await api.post('/character/upload-original-photo', photoForm, {
-              // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
-              headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
-              timeout: 60000,
-            });
-            originalObjectName = upRes.data?.object_name || null;
-          } catch (uploadErr) {
-            console.warn('[Artist] upload-original-photo 실패:', uploadErr);
+          if (hasPhoto) {
+            try {
+              const photoForm = new FormData();
+              await appendFileToForm(photoForm, 'file', photoUri!, nameFromUri, mime);
+              const upRes = await api.post('/character/upload-original-photo', photoForm, {
+                // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
+                headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
+                timeout: 60000,
+              });
+              originalObjectName = upRes.data?.object_name || null;
+            } catch (uploadErr) {
+              console.warn('[Artist] upload-original-photo 실패:', uploadErr);
+            }
           }
           if (cancelled) return;
 
@@ -196,6 +233,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             taskStore.setInput({ originalPhotoObjectName: originalObjectName });
           }
           taskStore.clearMode();
+          usePointsStore.getState().fetchBalance(); // v3.76: ⭐10 차감 반영
           navigation.replace('ArtistResult');
         } else if (mode === 'outfit') {
           // ── 9004 옷 입히기 = refine 폐기, generate-sheet 재호출 ──
@@ -219,33 +257,26 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             throw new Error('원본 사진이 없어요. 캐릭터를 다시 만들어주세요.');
           }
 
-          // 2) 코디에서 선택한 아이템 (cat별 첫 번째만 사용 — 백엔드는 카테고리당 1개)
+          // 2) 코디 선택분 — v3.76: 서버 정식 계약(object_name 필드)으로 전송
           const items: AppliedItem[] = useOutfitStore.getState().items;
-          const topItem = items.find((it) => it.cat === '상의' && it.imageObjectName);
-          const bottomItem = items.find((it) => it.cat === '하의' && it.imageObjectName);
-          const shoesItem = items.find((it) => it.cat === '신발' && it.imageObjectName);
 
-          // 3) FormData 구성: photo + cat별 옷 이미지
+          // 3) FormData 구성: photo(원본 영구본) + 옷 object_name
           const form = new FormData();
           await appendMinioImageToForm(form, 'file', origObjectName);
-          if (topItem?.imageObjectName) {
-            await appendMinioImageToForm(form, 'top_image', topItem.imageObjectName);
-          }
-          if (bottomItem?.imageObjectName) {
-            await appendMinioImageToForm(form, 'bottom_image', bottomItem.imageObjectName);
-          }
-          if (shoesItem?.imageObjectName) {
-            await appendMinioImageToForm(form, 'shoes_image', shoesItem.imageObjectName);
-          }
+          appendOutfitObjectNames(form, items);
           form.append('user_text', taskStore.outfitDesc || '');
           form.append('image_model', 'gpt_image_2');
 
-          const res = await api.post('/character/generate-sheet', form, {
+          if (__DEV__) console.info('[ArtistLoading] outfit generate-sheet-async 요청', { items: items.length });
+          const startRes = await api.post('/character/generate-sheet-async', form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
-            timeout: 600000,
+            timeout: 120000,
           });
           if (cancelled) return;
+          const job = await pollCharacterJob(startRes.data?.job_id, () => cancelled);
+          if (cancelled) return;
+          const res = { data: job } as any;
 
           // 4) used_items 영구 저장 (UsedItemPayload 형식)
           const usedItems = items
@@ -271,6 +302,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             object_name: res.data.object_name,
           });
           taskStore.clearMode();
+          usePointsStore.getState().fetchBalance(); // v3.76: ⭐ 차감 반영
           navigation.replace('ArtistResult');
         } else {
           // ── refine: 얼굴/체형 미세조정 (옷 입히기 아님). 기존 /character/refine 흐름 유지 ──
@@ -320,7 +352,21 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         const detailStr = Array.isArray(detail)
           ? detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join('; ')
           : typeof detail === 'string' ? detail : null;
-        const msg = err.response?.data?.error || detailStr || err.message || '실패했어요.';
+        // v3.76(MAIDOL v158/v139): 별 부족(402)·생성 제한(403) 전용 안내
+        const status = err?.response?.status;
+        let msg: string;
+        if (status === 402) {
+          msg = '별이 부족해요. 캐릭터 시트 생성에는 ⭐10개가 필요합니다.';
+        } else if (status === 403 && err.response?.data?.error === 'generation_restricted') {
+          msg = '신고 누적으로 생성 기능이 일시 제한되었어요. 잠시 후 다시 시도해주세요.';
+        } else {
+          msg = err.response?.data?.error || detailStr || err.message || '실패했어요.';
+          // 생성 도중 실패는 서버가 별을 자동 환불(비동기 잡 실패 경로)
+          if (!msg.includes('환불') && (mode === 'sheet' || mode === 'outfit')) {
+            msg += '\n사용된 별은 자동으로 환불됩니다.';
+          }
+        }
+        usePointsStore.getState().fetchBalance(); // 차감/환불 반영
         taskStore.failApi(msg);
         navigation.goBack();
         setTimeout(() => {

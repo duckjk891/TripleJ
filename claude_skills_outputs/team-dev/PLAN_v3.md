@@ -7,6 +7,36 @@
 
 ---
 
+## v3.76 — 2026-08-24 — 아티스트 디렉터 MAIDOL 최신 기능 이식 1차(비동기·별 비용·사진확약·텍스트-only)
+
+### 요청(원문)
+"아티스트 디렉터에 많은 변화가 있었어. 분석해서 MAIDOL 프론트를 참고해서 작업해볼래?"
+
+### Plan verification findings (MAIDOL 원본 vs AIDOL 현재 — 양측 전수 분석 완료)
+- MAIDOL(내 캐릭터 탭) 최신 기능: ①비동기 생성(generate-sheet-async + /character/job/{id} 폴링 5s·15분 상한, 실패 시 별 자동환불 안내) ②⭐비용(/points/costs character:10, 버튼 ⭐N, 402 별부족, 403 generation_restricted) ③사진 확약 portrait_confirmed(v137) ④photo_ai 동의 게이트(v125) ⑤텍스트-only 생성(v161, 사진 없이 user_text만) ⑥가상화(카툰) 슬롯+화풍 갤러리(style-samples 3종 실서빙 확인) ⑦얼굴인증 FaceVerifyFlow(AWS Liveness, 9004 enabled:true) ⑧아이템 5단계 드릴다운+위시리스트(9004 /wishlist 존재) ⑨커버 variant 선택.
+- AIDOL 현재: 동기 generate-sheet(600s), 사진 필수, 비용 표시·402/403 처리 없음, 확약·동의 게이트 없음, 의상은 이미지 재다운로드 첨부(top_image) — 서버 정식 계약은 top/bottom/shoes_object_name.
+- 9004 실측: /points/costs {character:10}, /character/job/{job_id}·generate-sheet-async 존재, style-samples 3종, face-verify enabled(aws). photo_ai 동의는 9004엔 auth/me/consents(약관 5종만) — photo_ai 키 기록은 확약 체크로 갈음(후속 검토).
+
+### v3.76 범위 (백엔드 무변경)
+1. **비동기 전환**: ArtistLoading sheet/outfit → generate-sheet-async + job 폴링(5s, 최대 15분, 연속오류 3회 허용). 실패 메시지에 '사용된 별은 자동으로 환불됩니다' 포함.
+2. **⭐ 비용 연동**: /points/costs 1회 조회(캐시), ArtistCody 확정 버튼에 '⭐10' 배지 + 시작 전 잔액 사전 체크(부족 시 즉시 안내 — 대기열 소진 후 402 방지). 402/403(generation_restricted) 분기 처리 + pointsStore.fetchBalance() 갱신.
+3. **사진 확약**: ArtistInput 사진 선택 직후 확약 체크(본인/동의 확인 + 보관·비학습 고지) → portrait_confirmed 전송. 미확인 시 진행 불가.
+4. **텍스트-only 경로**: 사진 없이도 6문답만으로 생성 가능 — '사진 없이 만들기' 버튼(확약·사진 불필요, MAIDOL v161 동일).
+5. **착장 정식 계약**: 상의/하의/신발을 이미지 재다운로드 대신 top/bottom/shoes_object_name 필드로 전송(프롬프트 조립은 유지 — 비의류 카테고리용).
+
+### 후속 제안(이번 미포함, REPORT에 명시)
+- 가상화(그림) 모드+화풍 갤러리(v3.77 후보) · 아이템 위시리스트/드릴다운 · 얼굴인증(EAS 네이티브 빌드 필요) · 커버 생성 variant 선택 · refine(미세조정) UI 복원.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/ArtistLoadingScreen.tsx | async+폴링, object_name 전송, 402/403/환불 분기 | [ArtistLoading] job_id |
+| screens/ArtistInputScreen.tsx | 사진 확약 게이트·텍스트-only 버튼 | [ArtistInput] |
+| screens/ArtistCodyScreen.tsx | ⭐비용 배지·잔액 사전 체크 | [ArtistCody] |
+| stores/characterTaskStore.ts | portraitConfirmed·textOnly 필드 | — |
+
+---
+
 ## v3.75 — 2026-08-24 — 탭 헤더 좌측=페이지명(작업실=기획사명), 우측=차트와 동일 액션 (v3.74 정정)
 
 ### 요청(원문)
