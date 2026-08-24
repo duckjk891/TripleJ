@@ -11188,7 +11188,7 @@ v64 후에도 일부 씬 (6/15/20) 이 Seedance partner_validation_failed 로 �
 - `[Grok] downloaded N bytes`
 
 ### 알려진 잠재 이슈 (사용자 검증 시 발견 가능)
-- xAI 가 image.url 로 우리 MinIO 호스트 (100.127.225.55:9100) 접근해야 함.
+- xAI 가 image.url 로 우리 MinIO 호스트 (<내부-endpoint-마스킹>:9100) 접근해야 함.
   Tailscale 환경 단독이면 도달 불가 → 공개 도메인 노출 또는 임시 호스팅 필요.
   → 실제 호출 실패 시 보고 + base64 data URI 대안 / 임시 hosting 등 검토.
 
@@ -16207,3 +16207,81 @@ v201 본체(캐시 키에 limit 포함)는 올바르나, **무검증 limit 이 �
 
 ### 5. 변경 파일 (커밋 대상 4)
 `backend_9006/app/routes/charts.py`(+6) · 산출물 3종. 무변경 확인: genre/category 핸들러 · `chart_recovery.py` · `admin.py` · `tracks.py`
+
+---
+
+## v202 — 2026-08-24 — S3/presign 묶음: 4-1 리전 설정화 + 4-2 접속 스위치 + 4-3 우회 통합 [MAIDOL-S3PresignSquad]
+
+> AWS 요청서 P0 4-1·4-2·4-3. `backend_9006` 단독, 프런트 무변경. 착수 HEAD `3824f83`.
+> **전제 완성**: 당일 오전 콘솔 실측·조치로 IAM 역할에 S3 최소권한 정책 부착 + `api.maidol.ai.kr` A 레코드 생성 완료.
+
+### 1. 요청 작업
+로컬 MinIO ↔ AWS S3(서울) 를 **`.env` 값만으로 전환하는 스위치** 구현.
+① 4-1: presign 리전 `us-east-1` 하드코딩 제거 ② 4-2: `secure=False` 제거 + IAM 역할 자격증명 ③ 4-3: 중앙 헬퍼 우회 presign 통합(요청서 3곳 중 v200 삭제로 2곳 잔존).
+
+### 2. 0단계 발견 — 요청서를 그대로 따르면 로컬이 깨질 뻔했다
+`media_urls.py:73-75` 의 `region="us-east-1"` 은 오타가 아니라 **v173 의 의도적 최적화**
+(버킷 위치 네트워크 조회 생략 — hairpin NAT 블로킹 방지)였다. → "삭제"가 아니라
+**설정화 + 로컬 기본값 유지**(`s3_region` 기본 `us-east-1` = MinIO 기본)로 설계 변경.
+`minio==7.2.20` 에 `IamAwsProvider` 존재를 실측 확인 → **boto3 전환(요청서 3-3) 불요 판정**.
+
+### 3. 수행 결과 (수정 5파일 +135/−21 상당)
+| 파일 | 내용 |
+|---|---|
+| `config.py` | `minio_secure`(기본 False)·`s3_region`(기본 us-east-1) 신설 — 로컬 현행과 동일 기본값 |
+| `database/minio.py` | `init_minio`/`get_public_minio` — secure·region 설정화. **키 빈 값 → `IamAwsProvider` 자동 전환**(지연 import, 로컬 비용 0). 캐시 키에 자격증명 모드 포함 |
+| `services/media_urls.py` | `:75` → `settings.s3_region`. 🆕 **`internal_presign` 신설**(§5 픽스) |
+| `routes/tracks.py` | 스트림 `:1718`·다운로드 `:1802` → `internal_presign` 으로 중앙화. 404 문구 바이트 보존 |
+| `.env.example` | `MINIO_SECURE=`·`S3_REGION=` 키 이름만 |
+
+**스위치표** (코드 한 벌, `.env` 만 다름):
+| 설정 | 로컬(무변경) | EC2 |
+|---|---|---|
+| endpoint | localhost MinIO | `s3.ap-northeast-2.amazonaws.com` |
+| `MINIO_SECURE` | False | true |
+| `S3_REGION` | us-east-1 | ap-northeast-2 |
+| 키 | 실키 | **빈 값 → IAM 역할** |
+
+### 4. 테스트 — 14건 최종 **13 PASS / 1 SKIP(승인 대체) / FAIL 0**, 픽스 루프 **1회**
+`[unit]` 8(57.1%) / `[api]` 6(42.9%) / e2e 0(UI 무변경).
+
+### 5. 🔴 픽스 루프 1회차 — tester 가 실회귀를 잡았다 (이번 사이클의 핵심 기록)
+
+**1라운드 A03 FAIL**: tracks 2곳을 `public_presign` 으로 교체하자 presign host 가
+내부 endpoint → `MINIO_PUBLIC_HOST`(공개 IP) 로 바뀌었고, 그 주소는 내부망에서
+hairpin NAT 로 도달 불가 → 신 URL Range GET **타임아웃**, 기준선 URL 은 **206 정상**
+— 순수 host 문제로 격리.
+
+**원인은 planner 전제 오류**: "로컬 `.env` 는 `minio_public_host` 빈 값" 가정이
+실측과 달랐다(공개 IP 설정돼 있었음). planner 의 스위치 시뮬도 기본 settings 기준이라
+같은 함정을 통과 못 잡았다. **실 `.env` 조건에서 실제 GET 까지 때린 tester 만 잡았다.**
+
+**픽스 설계**: 요청서 4-3 의 목적은 "presign 이 4-1·4-2 **스위치를 타게 하라**"는 것이지
+host 를 공개로 바꾸라는 게 아니다 → `internal_presign` 신설: 종전처럼 **내부 endpoint 서명**을
+유지하되 발급을 중앙 모듈로 (스위치는 `init_minio` 반영으로 충족).
+**S3 모드에선 `minio_endpoint` 자체가 공개 S3 endpoint 라 두 헬퍼가 수렴**한다.
+
+**재검**: host `<내부-endpoint-마스킹>:9100` 복원 — Date/Signature 제외 **기준선과 전 필드 일치**,
+Range GET **206 · 1024B · audio/mpeg · Content-Range bytes 0-1023/5529885**. U07 을
+실 `.env` 조건으로 재판정해 조건부 → 확정.
+
+### 6. 그 외 결정적 실측
+- 스위치 양방향 시뮬: 로컬 http·us-east-1·키 / S3모드 https·ap-northeast-2·**IamAwsProvider** / 원복 정상
+- `IamAwsProvider` 는 생성 시 네트워크 무접촉(retrieve 시 IMDS) — 로컬 오설정에도 안전
+- 커버 이미지: 200 · 6,857,823B 기준선과 **바이트 일치** — `init_minio` 변경분에도 내부 클라이언트 경로 무손상
+- **A06 실증**: 일회용 계정 가입(201) → 프로필 이미지 업로드 200(put_object 경로 생존) → 삭제 → **회원탈퇴 → 재로그인 401** 3중 원복
+- grep: `secure=False` **0건** / `presigned_get_object` media_urls 밖 **0건** / `us-east-1` 리터럴 config 기본값 1건뿐
+- `init_minio` 호출부가 planner 실측(1곳)보다 많은 2곳(`seed_item_store.py:133`)이었으나 dev 의 시그니처 유지안이 커버
+
+### 7. 안전 원장
+유료 0 · ⭐ 차감 0 · 다운로드 POST 0(실곡 카운트 오염 방지, P2 승인 SKIP) ·
+스트림 실 GET 총 3회(Range 1KB) · 9004/9005 접촉 0 · 실 `.env` sha256 전후 동일 ·
+테스트 계정 완전 소멸(재로그인 401) · 크리덴셜·presign URL 산출물 0.
+
+### 8. 범위 밖 / 후속 (EC2 배포 검증 라운드로 승계)
+- **S3 실접속 검증은 EC2 위에서만 가능** — ap-northeast-2 실서명, IAM 역할 자격증명 fetch(IMDS), `internal_presign`/`public_presign` 수렴 전제의 실측
+- faces 3번째 버킷 분리(3-2) / 프록시 9곳 presign 전환(P1) / 4-4~4-10 잔여
+
+### 9. 변경 파일 (커밋 대상 8)
+백엔드 5(`config.py`·`database/minio.py`·`services/media_urls.py`·`routes/tracks.py`·`.env.example`) + 산출물 3.
+무변경 확인: `app/main.py`·`seed_item_store.py`·프런트 전체·`backend_9004/9005`.

@@ -29868,3 +29868,74 @@ voice_clone_service.py:17  기존 routes/voice_persona.py + services/voice_perso
 
 ### 3. 절대 준수 (기존과 동일)
 유료 0건(차트는 무료 GET) · 9004/9005 쓰기 0건 · 인프라 무조작 · 실계정 무접촉 · 커밋 전 시크릿 검사 · 푸시 없음
+
+---
+
+## v202 — 2026-08-24 — S3/presign 묶음: 4-1 리전 + 4-2 접속 설정 + 4-3 우회 통합 [MAIDOL-S3PresignSquad]
+
+AWS 요청서 P0 의 4-1·4-2·4-3. 착수 HEAD `3824f83`. 대상 `backend_9006` 단독.
+**전제 완성 확인**: 오늘 오전 콘솔 실측·조치로 IAM 역할 `maidol-ec2` 에 S3 최소권한 정책 부착 완료,
+`api.maidol.ai.kr` A 레코드 생성 완료 (aws이전준비.md §7).
+
+### 0. Plan verification findings
+
+#### 0-1. 4-1 의 `us-east-1` 은 오타가 아니라 **v173 의 의도적 최적화**다
+`media_urls.py:73-75` 주석 실측: "region 지정 → bucket location 네트워크 조회 생략 (public host 는
+서버 자신에게 도달 불가할 수 있음 — presign 블로킹 방지). MinIO 기본 리전."
+→ 지우면 로컬에서 presign 마다 버킷 위치 조회가 발생해 hairpin NAT 환경에서 **블로킹**된다.
+**수정 방향은 "삭제"가 아니라 "설정화 + 로컬 기본값 유지"**: `settings.s3_region` 신규
+(기본 `"us-east-1"` = MinIO 기본 → **로컬 무변경**), EC2 `.env` 에서만 `ap-northeast-2`.
+
+#### 0-2. 4-2 실측 — `minio.py` 의 3중 하드코딩
+- `init_minio()` `:19` — `secure=False` 하드코딩, region 미전달
+- 자격증명이 **키 필수** 시그니처 — IAM 역할 모드(키 없음) 수용 불가
+- `minio==7.2.20` 에 **`IamAwsProvider` 존재 확인**(import 실측 OK) → boto3 전환 없이 해결 가능
+- endpoint 는 이미 설정 기반(`minio_host:minio_api_port`) → S3 는 `.env` 값으로 전환 가능
+
+#### 0-3. 4-3 실측 — 우회 presign 은 정확히 2곳 (전수 grep)
+`tracks.py:1718`(스트림)·`:1806`(다운로드) — 요청서의 3곳 중 `voice_persona.py:46` 은 v200 삭제로 소멸.
+둘 다 **내부 클라이언트**(`get_minio`) + music 버킷 + `expires=1h`.
+`media_urls.public_presign` 은 `bucket`·`expires` 인자를 **이미 지원** → 그대로 교체 가능.
+🔴 **로컬 동작 보존 근거**: 로컬은 `minio_public_host` 빈 값 → `_public_endpoint()` 가
+내부 endpoint 로 폴백 + secure/region 동일 → **교체 전후 URL 이 사실상 동일**해야 한다(판정 항목).
+
+#### 0-4. 로컬/AWS 이중 모드 설계 (스위치)
+| 설정 | 로컬 기본값 (무변경) | EC2 .env |
+|---|---|---|
+| `MINIO_HOST`/`MINIO_API_PORT` | localhost/9100(.env) | `s3.ap-northeast-2.amazonaws.com`/443 |
+| `MINIO_SECURE` 🆕 | `False` | `true` |
+| `S3_REGION` 🆕 | `us-east-1` | `ap-northeast-2` |
+| `MINIO_ACCESS_KEY`/`SECRET` | 실키(.env) | **빈 값** → `IamAwsProvider` 자동 전환 |
+
+### 1. DoD
+1. `grep -rn "us-east-1" app` → **리터럴 0건** (설정 기본값 제외)
+2. `secure=False` 하드코딩 0건 — 내부·public 클라이언트 모두 설정 기반
+3. 키가 빈 값이면 `IamAwsProvider` 로 자동 전환 (코드 경로 존재 + 단위 검증)
+4. `presigned_get_object` 직접 호출이 `media_urls.py` 밖에 **0건**
+5. 🔴 **로컬 회귀 0**: 재기동 후 스트림·다운로드·커버 presign 이 이전과 동일 동작 (콕 집어 tracks 2곳)
+6. `.env.example` 에 신규 키 이름만 추가
+
+### 2. 작업 분해 (backend-dev 단독 — 프런트 무변경)
+| # | 파일 | 작업 |
+|---|---|---|
+| A1 | `config.py` | `s3_region: str = "us-east-1"` · `minio_secure: bool = False` 신규 (env 로 오버라이드) |
+| A2 | `database/minio.py` | `init_minio`/`get_public_minio` — secure·region 설정화, 키 빈 값 시 `IamAwsProvider` 사용. 캐시 키에 자격증명 모드 포함 |
+| A3 | `services/media_urls.py:75` | `region="us-east-1"` → `region=settings.s3_region` |
+| A4 | `routes/tracks.py:1718`·`:1806` | `media_urls.public_presign(obj, bucket=music, expires=1h)` 로 교체. 404 폴백 동작 유지(None 반환 시) |
+| A5 | `.env.example` | `MINIO_SECURE=`·`S3_REGION=` 키 이름 추가 |
+| A6 | `main.py:63` | `init_minio` 호출 시그니처 변화 반영 (있다면) |
+
+### 3. 회귀 위험
+| 위험 | 방어 |
+|---|---|
+| 🔴 tracks 교체로 서명 host 변화 → 재생·다운로드 파손 | 0-3 근거 + 재기동 후 실스트림 200 판정 |
+| IamAwsProvider 분기가 로컬(키 있음)에서 오작동 | 키 존재 시 기존 경로 그대로 — 분기 단위검증 |
+| public 클라이언트 캐시가 자격증명 모드 변화를 못 봄 | A2 캐시 키 확장 |
+| MV·업로드 등 `get_minio()` 사용 121곳 | put/get 은 시그니처 무변경 — init 만 바뀜. 스모크로 업로드 경로 1건 |
+
+### 4. 범위 밖
+faces 3번째 버킷 분리(3-2), boto3 전환(3-3 — IamAwsProvider 로 불요 판정), 프록시 9곳 presign 전환(P1), 4-4~4-10.
+
+### 5. 절대 준수
+유료 0(차트·헬스·스트림은 무료) · 9004/9005 쓰기 0 · 인프라 무조작 · MinIO 9100 차단 금지 ·
+실 `.env` 무접촉(.env.example 만) · `git add -A` 금지 · 푸시 없음 · 작업 트리 메인 체크아웃

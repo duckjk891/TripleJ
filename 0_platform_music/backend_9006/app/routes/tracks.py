@@ -19,7 +19,7 @@ from ..database.mongodb import get_mongo
 from ..database.redis import get_redis
 from ..database.minio import get_minio
 from ..database.postgres import get_pg
-from ..services.media_urls import browser_video_url
+from ..services.media_urls import browser_video_url, internal_presign
 
 router = APIRouter(prefix="/api/tracks")
 
@@ -1713,14 +1713,10 @@ async def stream_track(
         logger.info("[report] track stream_denied track=%s", track_id[:8])
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
-    minio_client = get_minio()
-    try:
-        url = minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_music,
-            object_name=doc["audio_url"],
-            expires=timedelta(hours=1),
-        )
-    except Exception:
+    # v202-r: 중앙 헬퍼 internal_presign — 내부 endpoint 서명 유지(종전 동작),
+    # secure/region/자격증명 스위치만 중앙 반영. (public host 는 hairpin NAT 로 회귀 유발)
+    url = internal_presign(doc["audio_url"], bucket=settings.minio_bucket_music, expires=timedelta(hours=1))
+    if not url:
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     return {"stream_url": url}
@@ -1801,14 +1797,10 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
     )
 
     # Get presigned URL for download
-    minio_client = get_minio()
-    try:
-        url = minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_music,
-            object_name=doc["audio_url"],
-            expires=timedelta(hours=1),
-        )
-    except Exception:
+    # v202-r: 중앙 헬퍼 internal_presign — 내부 endpoint 서명 유지(종전 동작),
+    # secure/region/자격증명 스위치만 중앙 반영. (public host 는 hairpin NAT 로 회귀 유발)
+    url = internal_presign(doc["audio_url"], bucket=settings.minio_bucket_music, expires=timedelta(hours=1))
+    if not url:
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     title = doc.get("title", "track")

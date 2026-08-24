@@ -9210,3 +9210,158 @@ PY
   이번 건의 급소는 **"클램프가 어디에 있느냐"** — 값이 맞아도 cache_key 조립 **뒤**면 키 폭발이 그대로라
   U01 을 순서 판정으로 세웠고, **"같은 실효값 = 같은 키"** 를 캐시 히트(바이트 동일 + 키 증가 0)로 증명하는
   A03 을 두었다. UI 무관이므로 e2e 0건, 유료 0건, 실계정 0건, 재기동 1회(A07 기준선 선캡처 후).
+
+## v202 — 2026-08-24 — S3/presign 묶음: 리전 설정화 + 접속 설정화 + tracks 우회 통합 [MAIDOL-S3PresignSquad]
+
+**대상**: `backend_9006` 단독 (`$B = 0_platform_music/backend_9006`). 프런트·UI 무변경 → **e2e 0건**.
+**총 14건**: `[unit]` 8건(57.1%) / `[api]` 6건(42.9%) / `[e2e]` 0건 — 요구(≥40 / ≥35 / ≤25) 충족.
+**착수 기준**: PLAN 착수 HEAD `3824f83`. 설계 시점 실측상 **dev 미착수**(working tree 에 A1~A6 흔적 0건)
+— tester 는 dev 커밋 해시 확정 후 착수. **A01(기준선)은 dev 반영 재기동 전, 구코드 서버에서 선캡처.**
+
+### 0. 실행 전제 (안전 규칙 명문화)
+
+- **증명 축 2개**: ① 로컬 회귀 0 — `.env` 무변경 상태에서 presign·업로드·스트림이 이전과 동일(주력, 실행 판정)
+  ② S3 모드 코드 경로 실재 — IamAwsProvider 분기·secure/region 설정화의 정적+단위 검증까지만.
+  **🚫 S3 실접속 검증(EC2·IAM 역할 `maidol-ec2`·ap-northeast-2 실서명)은 본 플랜 범위 밖** — 배포 시 별도 검증.
+- **유료 API 0건**: `/api/generate`·`tracks/upload`·`GET /api/tracks/search` 등 기존 금지 목록 동일.
+  본 플랜의 API 는 차트 GET(무료)·stream/download presign·cover-preview·프로필 이미지(무료)뿐. ⭐ 차감 0건.
+- **9004·9005 쓰기 0건**(읽기 포함 불요) · **인프라 무조작**(MinIO 9100 컨테이너 stop/차단 금지 — S3 모드는 단위로만 증명).
+- **실 `.env` 무접촉**(.env.example 만 판정 대상) · **크리덴셜 실값 금지**(단위 테스트 더미는 `"test"` 류만).
+- **실사용자 데이터**: 기존 공개 곡의 스트림 GET 은 읽기라 허용하되 **총 1~2회로 제한**(Range 1KB 로 최소화).
+  다운로드 POST 는 `download_count` +1 쓰기 발생 → §5-P2 승인 전 실사용자 곡에 실행 금지.
+- **재기동**: `setsid ./run.sh`, 종료는 **PID 지정 kill**(`pkill` 금지). 재기동 총 1회(A02).
+- **단위 실행 위치**: 스크래치패드 임시 스크립트(레포에 파일 생성 금지) — `$B` 를 sys.path 에 얹어 import.
+
+### 1. [unit] — 호스트, 재기동 무관 (8건)
+
+**U01 [unit] 리전 설정화 정적 판정 — `us-east-1` 리터럴은 config 기본값 1건뿐** — 실행: 호스트 `$B`
+- Given: dev 커밋 착지 상태
+- When: ① `grep -n "settings.s3_region" app/services/media_urls.py` ② `grep -n "s3_region" app/config.py`
+  ③ `grep -rn '"us-east-1"' app --include='*.py'`
+- Then: ① `public_presign` 내 `region=settings.s3_region` (기존 `:75` 리터럴 소멸) ② `s3_region: str = "us-east-1"`
+  기본값 존재 ③ 문자열 리터럴은 **config.py 기본값 1건뿐** (`minio.py:40` 류 주석·독스트링 언급은 판정 제외).
+
+**U02 [unit] secure 설정화 정적 판정 — `secure=False` 하드코딩 0건** — 실행: 호스트 `$B`
+- Given: `minio.py:19` 의 기존 `secure=False` 하드코딩(실측)이 교체 대상
+- When: `grep -rn "secure=False" app --include='*.py'` + `Minio(` 생성 호출부 전수 육안(minio.py 한정)
+- Then: **클라이언트 생성 호출 인자로서의 리터럴 0건** — `init_minio`·`get_public_minio` 모두 설정값
+  (`settings.minio_secure`/전달 인자) 관통. 함수 시그니처의 기본 인자는 허용하되 호출부가 전부 설정 경유인지 확인.
+
+**U03 [unit] tracks 2곳 교체 정적 판정 + 404 폴백 문구 불변** — 실행: 호스트 `$B`
+- Given: 실측 기준 `tracks.py:1718`(스트림)·`:1806`(다운로드)의 `get_minio().presigned_get_object` 직접 호출
+- When: ① `grep -rln "presigned_get_object" app --include='*.py'` ② 두 핸들러 diff 육안
+- Then: ① **`services/media_urls.py` 단 1개 파일** ② 두 곳 모두
+  `media_urls.public_presign(doc["audio_url"], bucket=settings.minio_bucket_music, expires=timedelta(hours=1))`
+  형태 + **None 반환 시 404 `{"error": "오디오 파일을 찾을 수 없습니다."}` 문구·상태코드 불변**
+  (기존 try/except 등가 — public_presign 은 예외를 삼키고 None 반환하므로 None 분기가 반드시 있어야 함).
+
+**U04 [unit] IamAwsProvider 분기 — 키 빈 값 → IAM 경로 (네트워크 0)** — 실행: 호스트, 서버 불요
+- Given: `minio==7.2.20` 에 `from minio.credentials import IamAwsProvider` import 가능(PLAN 0-2 실측)
+- When: 스크래치패드 스크립트로 access_key `""`·secret_key `""` 조건에서 신 `init_minio`(또는 분기 함수) 호출
+  → 생성된 클라이언트의 credentials provider 타입 검사. **클라이언트/Provider 인스턴스 생성까지만**
+  (IamAwsProvider() 생성은 네트워크 안 탐 — 자격증명 fetch 는 실서명 시점이므로 발생 안 함)
+- Then: import OK + 키 빈 값 시 `IamAwsProvider` 경로 선택. 실 AWS 호출 0건.
+
+**U05 [unit] 분기 반대편 — 키 있음 → 기존 정적 자격증명 경로** — 실행: 호스트, 서버 불요
+- Given: U04 와 동일 스크립트
+- When: 더미 키(`"test"`/`"test"` — 실값 금지)로 동일 호출
+- Then: IamAwsProvider **미사용**, 정적 자격증명 경로 그대로 — 로컬(키 있음) 오작동 없음(PLAN §3 위험 방어).
+
+**U06 [unit] public 클라이언트 캐시 키가 자격증명 모드를 반영** — 실행: 호스트, 서버 불요
+- Given: 기존 캐시 키는 `(endpoint, secure, region)` 튜플(minio.py 실측) — A2 는 자격증명 모드 확장 요구
+- When: 같은 endpoint/secure/region 에서 ① 키 있음 → `get_public_minio` ② 키 빈 값(모드 전환) → 재호출
+  ③ 다시 키 있음 → 재호출
+- Then: ①≠②(새 인스턴스 생성 — stale 방지), ①과 ③ 도 **①의 인스턴스 재사용이 아니어도 무방하나
+  같은 모드 연속 2회는 동일 인스턴스**(캐싱 자체는 유지). 모드 변화 무시(①==②) 면 FAIL.
+
+**U07 [unit] 🔴 로컬 폴백 동등성 — 교체 전후 presign URL 사실상 동일 (사전 등가 증명)** — 실행: 호스트, 서버 불요
+- Given: 로컬 `.env` 는 `minio_public_host` 빈 값 → `_public_endpoint()` 가 내부 endpoint 폴백(PLAN 0-3)
+- When: 동일 더미 오브젝트명으로 ① 구방식: 내부 클라이언트 `presigned_get_object(music, 1h)`
+  (내부 클라이언트는 region 미지정 → bucket location 조회로 localhost MinIO 읽기 1회 발생 — 허용)
+  ② 신방식: `media_urls.public_presign(obj, bucket=music, expires=1h)` — 두 URL 파싱 비교
+- Then: scheme·host:port·경로(bucket/object)·`X-Amz-Expires=3600`·`X-Amz-Algorithm`·Credential 의
+  region 요소 **전부 동일** (`X-Amz-Date`·`Signature` 는 시각 의존이라 제외). 상이하면 A03 전에 조기 FAIL.
+
+**U08 [unit] .env.example 키 추가 + 시그니처 정합 + 실 .env 무접촉** — 실행: 호스트 `$B`
+- Given: A5(.env.example)·A6(main.py:63 — 현재 `init_minio(settings.minio_endpoint, settings.minio_user, settings.minio_password)`)
+- When: ① `grep -n "MINIO_SECURE\|S3_REGION" .env.example` ② main.py 호출 인자 ↔ 신 `init_minio` 시그니처 대조
+  ③ `git status --short` 에 `.env` 부재 + `stat -c %y .env` 가 작업 전 캡처값과 동일
+- Then: ① 키 **이름만** 존재(실값 0) ② 인자 수·의미 일치(불일치 = 기동 크래시 예고 → dev 회부) ③ 실 `.env` 무접촉.
+
+### 2. [api] — 호스트 curl, 재기동 축 명시 (6건)
+
+**A01 [api] 기준선 선캡처 — dev 반영 재기동 전(구코드 서버)** — 실행: 호스트 curl
+- Given: 9006 이 구코드로 기동 중 (`/api/health` 200)
+- When: ① `GET /api/charts/top100?limit=3`(무료)로 공개 곡 track_id 1개 선정
+  ② `GET /api/tracks/stream/{id}`(무토큰 — optional auth) → `stream_url` 전문 캡처
+  ③ 기존 커버 오브젝트로 `GET /api/upload/cover-preview/{obj}` 무토큰 → 상태코드+Content-Length 캡처
+- Then: ② 200 + URL 의 host:port·bucket·object·`X-Amz-Expires` 기록(A03 비교 기준) ③ 200 기록(A05 기준).
+  **이 단계에서 presign URL 실 GET 은 하지 않음**(스트림 GET 횟수 절약).
+
+**A02 [api] 재기동 + 헬스 — 유일한 재기동 지점** — 실행: 호스트
+- Given: dev 커밋 반영 완료 확인(해시 기록)
+- When: 기존 프로세스 **PID 지정 kill** → `setsid ./run.sh` → `/api/health` 폴링
+- Then: 200 복귀. 미복귀 시 §3-S4 즉시중단(로그 첨부 후 dev 회부).
+
+**A03 [api] 🔴 스트림 presign 교체 전후 동등성 + 실 GET 오디오 바이트** — 실행: 호스트 curl, 재기동 후
+- Given: A01 의 동일 track_id·기준선 URL
+- When: ① `GET /api/tracks/stream/{id}` → 신 `stream_url` ② A01 기준선과 필드 비교
+  ③ `curl -s -D - -o /dev/null -r 0-1023 "{stream_url}"` — **실 GET 1회, Range 1KB**
+- Then: ① 200 ② scheme·host:port·bucket·object·`X-Amz-Expires=3600` **전부 동일**(Date/Signature 제외 —
+  "사실상 동일" 판정) ③ **200/206 + Content-Type audio/\*(또는 octet-stream+바이트>0)** — 재생 경로 생존.
+  존재하지 않는 track_id 로 404 문구 확인은 U03 정적 판정으로 갈음(불필요 호출 억제).
+
+**A04 [api] 다운로드 presign — 발급 동등성 (⚠ §5-P2 승인 조건부)** — 실행: 호스트 curl, 재기동 후
+- Given: `POST /api/tracks/download/{id}` 는 인증 필수 + **`download_count` +1·download_logs insert 쓰기 발생**
+- When: P2 승인된 대상 곡(테스트 계정 소유 곡 우선)으로 **정확히 1회** POST
+- Then: 200 + `download_url` 이 A03 의 stream_url 과 동일 서명 형태(host·bucket·object 동일 규칙,
+  Expires 3600) + `filename` 필드 형식 유지. **실 GET 생략**(A03 과 동일 서명 경로 — 중복 회피).
+  P2 불허 시: SKIP 처리하고 U03+U07 로 대체 증명(사유 기록 — 조용한 스킵 금지).
+
+**A05 [api] 커버 이미지 회귀 — v200 무토큰 200 유지** — 실행: 호스트 curl, 재기동 후
+- Given: A01-③ 의 동일 오브젝트
+- When: `GET /api/upload/cover-preview/{obj}` 무토큰 재호출
+- Then: 200 + Content-Type image/* + Content-Length 가 A01 캡처값과 동일 — presign/프록시 경로 회귀 0.
+
+**A06 [api] 업로드 계열 스모크 — 프로필 이미지 (무료) + 원복** — 실행: 호스트 curl, 재기동 후
+- Given: 테스트 계정 로그인 토큰(§5-P4). 🚫 유료 업로드(`tracks/upload`) 금지 → 무료 경로 택1 원칙
+- When: ① 1×1 PNG 를 임시 생성해 `POST /api/auth/me/profile-image` ② 응답 `profile_image` 오브젝트명 확인
+  ③ **원복**: `DELETE /api/auth/me/profile-image` → 200
+- Then: ① 200 — `get_minio()` put_object 경로(내부 클라이언트 init 변경분) 생존 증명 ③ 원복 완료.
+  500/예외 시 §3-S3 즉시중단(init_minio 변경이 121곳 사용처를 깬 신호).
+
+### 3. 즉시중단 조건 (v202)
+
+- **S1**: 스트림/다운로드 presign 이 404·403 화 (기존 공개 곡 기준 — A03·A04)
+- **S2**: 커버 이미지 깨짐 (A05 비200 또는 콘텐츠 상이)
+- **S3**: `get_minio()` 사용처(프로필 업로드 등)에서 예외/500 (A06)
+- **S4**: 재기동 실패 — `/api/health` 200 미복귀 (A02)
+- **S5**: 유료·⭐ 차감 유발 호출 발생
+- **S6**: 9004·9005 쓰기 발생 / 실 `.env` 변경 감지 (U08-③)
+
+### 4. 판정 기록 양식
+
+`ID / 태그 / 실행위치 / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED` — SKIP 사유 필수.
+정리: 스크래치패드 임시 스크립트·1×1 PNG 삭제, A06 원복(DELETE) 확인, 스트림 실 GET 총횟수(≤2) 보고서 명기.
+
+### 5. planner 확인 필요 (설계 중 발견)
+
+- **P1**: 설계 시점 실측상 **dev 미착수** — `s3_region`/`minio_secure`/`IamAwsProvider` grep 0건, working tree
+  clean(HEAD `3824f83`). tester 는 dev 커밋 해시 확정 후 착수. U01~U03·U08 의 라인 번호는 시프트 가능 — 패턴 판정.
+- **P2 (승인 필요)**: A04 다운로드 POST 는 `download_logs` insert + `download_count` +1 **실 데이터 쓰기**.
+  테스트 계정 소유 곡 존재 여부 확인·지정 바람. 불가 시 A04 를 SKIP + U03/U07 정적·단위 대체로 승인해 주세요
+  (스트림과 동일 서명 경로라 증명력 손실은 제한적).
+- **P3**: PLAN A6 관련 — 현재 `main.py:63` 은 `init_minio(settings.minio_endpoint, settings.minio_user,
+  settings.minio_password)` 3인자. dev 가 secure/region/자격증명 모드를 **인자 확장**으로 받을지 **settings 직접
+  참조**로 할지 미확정 — U04~U06·U08-② 의 호출 형태는 dev 구현 확정 후 스크립트 조정 필요.
+- **P4**: A06 에 쓸 테스트 계정(기존 QA 계정 유무·크리덴셜 전달 방식) 지정 필요 — 실사용자 계정 사용 불가.
+- **P5 (범위 확인)**: "S3 실접속 검증은 본 플랜 범위 밖" 을 §0 에 명문화했고, EC2 배포 시
+  ap-northeast-2 실서명·IAM 역할 fetch 검증이 **별도 필요**함을 REPORT 에도 승계 기재하겠습니다.
+
+### 개정 이력 (v202)
+
+- 2026-08-24 초판 (14건: unit 8 / api 6 / e2e 0). 급소는 **"스위치를 달아도 로컬 손잡이는 그대로"** —
+  로컬은 `minio_public_host` 빈 값 폴백으로 교체 전후 presign 이 사실상 동일해야 하므로, U07(사전 등가)
+  → A01(기준선 선캡처) → A03(재기동 후 필드 비교 + Range 1KB 실 GET) 3단으로 동일성을 증명한다.
+  S3 축은 IamAwsProvider 분기(U04/U05)·캐시 키 모드 반영(U06)·설정화 grep(U01/U02) 의 정적+단위까지만 —
+  실접속은 범위 밖 명문화. 유료 0건, 재기동 1회, 스트림 실 GET ≤2회(Range 1KB), 실 `.env`·인프라 무접촉.

@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     minio_secret_key: str = "your_minio_password"
     minio_bucket_music: str = "aimu-music"
     minio_bucket_images: str = "aimu-images"
+    # v202: S3 전환 스위치 — 기본값은 로컬 MinIO 현행과 동일. EC2 는 .env 로
+    # MINIO_SECURE=true(S3 는 HTTPS 필수) / S3_REGION=ap-northeast-2 지정.
+    minio_secure: bool = False
+    # v202: presign SigV4 리전 (bucket location 조회 생략용). 로컬 MinIO 기본값 유지.
+    s3_region: str = "us-east-1"
 
     # JWT
     jwt_secret: str = "music-platform-secret-key-2024"
