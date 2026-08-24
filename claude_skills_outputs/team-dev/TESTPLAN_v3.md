@@ -5,6 +5,14 @@
 
 ---
 
+## v3.60 — 2026-08-24 — 피드 무난화
+
+- [unit] tsc 0. PIXEL_FONT·PText·게임창 스타일(2px 테두리·오프셋 그림자·타이틀바) 잔여 0건(grep).
+- [e2e] 피드: 시스템 폰트 렌더(computed fontFamily = system), surface1 둥근 카드 — 타 화면과 동일 톤 확인 (`docs/screenshots/feed_plain_design.png`).
+- [regression] 카드 폭(v3.49) 유지, 좋아요/댓글 스레드/공유(스타 이벤트 문구)/신고 무변.
+
+---
+
 ## v3.59 — 2026-08-24 — '스타' 확정 반영
 
 - [unit] tsc 0. 잔여 '루미/LUMI' 리터럴 0건(grep 전수).

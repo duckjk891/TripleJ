@@ -11,7 +11,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
-import FeedCard, { feedPixel, PIXEL_FONT } from '../components/feed/FeedCard';
+import FeedCard, { feedTheme } from '../components/feed/FeedCard';
 
 interface FeedTrack {
   id: string;
@@ -107,12 +107,12 @@ export default function FeedScreen() {
       <TouchableOpacity key={key} style={styles.trackRow} activeOpacity={0.75} onPress={() => (user ? handlePlayTrack(track) : setCtaVisible(true))} accessibilityLabel={`재생 ${track.title || ''}`}>
         <View style={styles.trackCover}>
           {uri ? <Image source={{ uri }} style={styles.trackCoverImg} />
-            : <AppText variant="title3" style={{ color: feedPixel.muted }}>♪</AppText>}
+            : <AppText variant="title3" style={{ color: feedTheme.muted }}>♪</AppText>}
           <View style={styles.playBadge}><Feather name="play" size={14} color="#FFFFFF" /></View>
         </View>
         <View style={styles.trackMeta}>
-          <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedPixel.text, fontFamily: PIXEL_FONT }}>{track.title || '제목 없음'}</AppText>
-          <AppText variant="caption" numberOfLines={1} style={{ color: feedPixel.muted, fontFamily: PIXEL_FONT }}>
+          <AppText variant="bodyStrong" numberOfLines={1} style={{ color: feedTheme.text }}>{track.title || '제목 없음'}</AppText>
+          <AppText variant="caption" numberOfLines={1} style={{ color: feedTheme.muted }}>
             {track.artist_name || '아티스트'}{fmtDuration(track.duration_sec) ? ` · ${fmtDuration(track.duration_sec)}` : ''}
           </AppText>
         </View>
@@ -144,7 +144,7 @@ export default function FeedScreen() {
         renderBlocks={() => (
           <View>
             {textBlocks.map((b, i) => (
-              <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedPixel.sub, fontFamily: PIXEL_FONT }]}>{b.text}</AppText>
+              <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
             ))}
             {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
           </View>
@@ -221,12 +221,11 @@ const styles = StyleSheet.create({
   trackRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     marginTop: spacing.md, padding: spacing.sm,
-    backgroundColor: feedPixel.field, borderRadius: 2, // v3.51: 게임창 내부 인셋 칩(각진 모서리)
-    borderWidth: 1, borderColor: feedPixel.line,
+    backgroundColor: feedTheme.field, borderRadius: radius.lg, // v3.60: 무난한 다크 칩 복귀
   },
   trackCover: {
-    width: 52, height: 52, borderRadius: 2, overflow: 'hidden',
-    backgroundColor: feedPixel.line, alignItems: 'center', justifyContent: 'center',
+    width: 52, height: 52, borderRadius: radius.md, overflow: 'hidden',
+    backgroundColor: colors.bg.surface2, alignItems: 'center', justifyContent: 'center',
   },
   trackCoverImg: { width: '100%', height: '100%' },
   playBadge: {

@@ -68,7 +68,6 @@ import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import UserChannelScreen from './screens/UserChannelScreen';
 import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
-import { useFonts } from 'expo-font';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -387,8 +386,7 @@ const HIDE_MINIPLAYER_ROUTES = ['Settings'];
 
 export default function App() {
   useOAuthCallback();
-  // v3.52: 피드 게임창용 픽셀 폰트(Neo둥근모) — 비차단 로드(로드 전엔 시스템 폰트 폴백)
-  useFonts({ NeoDGM: require('./assets/fonts/neodgm.ttf') });
+  // v3.60: 픽셀 피드 콘셉트 철회로 폰트 로드 제거(에셋 assets/fonts/neodgm.ttf 는 재사용 대비 보존)
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
   useEffect(() => { restoreSession(); }, []);
   // v3.57: 현재 라우트 추적 — 설정(모달) 위에서 미니플레이어 숨김용

@@ -7,6 +7,25 @@
 
 ---
 
+## v3.60 — 2026-08-24 — 피드 디자인 무난화(픽셀 게임창 콘셉트 철회)
+
+### 요청
+"피드가 우리 컨셉이랑 많이 안 어울려서 무난하게" — v3.51(게임창 크롬)·v3.52(픽셀 폰트) 철회, 앱 기본 다크 톤으로 통일.
+
+### Plan verification findings
+- FeedCard: feedPixel 팔레트(다크 보라 창·밝은 테두리·오프셋 그림자·타이틀바) + PText(NeoDGM) 래퍼 17곳. FeedScreen이 feedPixel·PIXEL_FONT import(본문·트랙 칩 3곳 fontFamily).
+- App.tsx useFonts로 neodgm.ttf 로드(사용처는 피드뿐 → 로드 제거 대상, 에셋 파일·expo-font는 보존해 재사용 여지 유지).
+- 유지할 것: v3.49 폭 개선(카드 마진 제거+리스트 패딩 12), 좋아요/댓글 스레드/공유(이벤트 문구)/신고 기능 전부.
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| components/feed/FeedCard.tsx | 팔레트를 앱 테마 매핑(feedTheme)으로 교체, PText→AppText(픽셀 폰트 제거), 게임창 크롬(그림자·2px 테두리·타이틀바) 제거 → surface1 일반 카드 |
+| screens/FeedScreen.tsx | PIXEL_FONT 제거, feedTheme 참조, 트랙 칩 다크 복귀 |
+| App.tsx | 폰트 로드 제거(에셋은 보존) |
+
+---
+
 ## v3.59 — 2026-08-24 — 재화명 '스타' 확정 반영
 
 ### 요청
