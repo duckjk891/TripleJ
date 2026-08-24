@@ -439,7 +439,20 @@ export default function App() {
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen name="UserChannel" component={UserChannelScreen} options={{ headerShown: true, headerTitle: '채널', headerStyle: { backgroundColor: colors.bg.deepest }, headerTintColor: colors.text.primary, headerShadowVisible: false }} />
-            <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            {/* v3.73: 피드작성도 다른 페이지처럼 상단바에 타이틀 — X(취소)는 좌측, 등록은 화면에서 headerRight로 주입 */}
+            <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={({ navigation }) => ({
+              presentation: 'modal', animation: 'slide_from_bottom',
+              headerShown: true,
+              headerTitle: () => <AppText variant="subtitle">피드 작성</AppText>,
+              headerStyle: { backgroundColor: colors.bg.deepest },
+              headerTintColor: colors.text.primary,
+              headerShadowVisible: false,
+              headerLeft: () => (
+                <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginLeft: 12 }} accessibilityLabel="작성 취소">
+                  <Feather name="x" size={22} color={colors.text.primary} />
+                </TouchableOpacity>
+              ),
+            })} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />

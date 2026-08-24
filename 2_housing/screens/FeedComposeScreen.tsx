@@ -1,12 +1,13 @@
 // [FeedCompose] 피드 작성 — v3.61 신설(기존엔 작성 UI 부재, 읽기·댓글만 가능했음).
 // 제목(선택)·내용 입력 + 음악 첨부(내 곡 목록 — 차트와 동일한 공용 TrackRow 디자인) → POST /feeds/.
 // 계약: POST /api/feeds/ { title?, blocks:[{type:'text',text}|{type:'track',track_id}], is_public, kind:'feed' }
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
   ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -17,6 +18,8 @@ import { spacing, radius } from '../theme/spacing';
 
 export default function FeedComposeScreen({ navigation }: any) {
   const user = useAuthStore((s) => s.user);
+  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
+  const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [attached, setAttached] = useState<RowTrack | null>(null);
@@ -145,6 +148,17 @@ export default function FeedComposeScreen({ navigation }: any) {
     }
   };
 
+  // v3.73: 타이틀·취소는 네이티브 상단바(App.tsx)로 이동, 등록 버튼은 headerRight로 주입
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel="피드 등록" style={{ marginRight: 12 }}>
+          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? '등록 중…' : '등록'}</AppText>
+        </TouchableOpacity>
+      ),
+    });
+  });
+
   if (!user) {
     return (
       <View style={styles.container}>
@@ -155,17 +169,6 @@ export default function FeedComposeScreen({ navigation }: any) {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {/* 헤더 */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="작성 취소" style={{ padding: 4 }}>
-          <Feather name="x" size={22} color={colors.text.primary} />
-        </TouchableOpacity>
-        <AppText variant="title3">피드 작성</AppText>
-        <TouchableOpacity onPress={submit} disabled={posting} accessibilityLabel="피드 등록">
-          <AppText variant="bodyStrong" tone={posting ? 'muted' : 'accent'}>{posting ? '등록 중…' : '등록'}</AppText>
-        </TouchableOpacity>
-      </View>
-
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
         <TextInput
           style={styles.titleInput}
@@ -233,7 +236,7 @@ export default function FeedComposeScreen({ navigation }: any) {
 
       {/* 곡 선택 — 내 곡 목록(차트와 동일 디자인) */}
       <Modal visible={pickerOpen} animationType="slide" onRequestClose={() => setPickerOpen(false)}>
-        <View style={styles.pickerContainer}>
+        <View style={[styles.pickerContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => setPickerOpen(false)} accessibilityLabel="곡 선택 닫기" style={{ padding: 4 }}>
               <Feather name="arrow-left" size={22} color={colors.text.primary} />
@@ -313,10 +316,11 @@ export default function FeedComposeScreen({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  container: { flex: 1, backgroundColor: colors.bg.deepest },
+  // v3.73: (곡 선택 모달 전용) 네이티브 상단바와 동일 규격 — 높이 56, 최상단 배치
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
+    height: 56, paddingHorizontal: spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   titleInput: {
@@ -341,7 +345,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
-  pickerContainer: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  pickerContainer: { flex: 1, backgroundColor: colors.bg.deepest },
   // v3.70: 착장 아이템 행(선택 목록·첨부 미리보기 공용)
   itemPreview: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,

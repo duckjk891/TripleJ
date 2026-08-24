@@ -5,6 +5,17 @@
 
 ---
 
+## v3.73 — 2026-08-24 — 피드작성·새 메시지 타이틀 상단바 위치
+
+- [unit] tsc 0.
+- [e2e] 피드작성: 네이티브 상단바에 ✕·'피드 작성'·등록 배치, 타이틀 y=20(다른 페이지 헤더와 동일 위치) PASS (`scratchpad/v373_compose.png`).
+- [e2e] 새 메시지 모달: 타이틀 y=14, 높이 56 상단바 규격 헤더 최상단 배치 PASS (`v373_newdm.png`).
+- [api] v348b is_verified=false 복구 확인(GET /dm/eligibility → true 전환) — DM 게이트로 모달 진입 불가했던 원인.
+- [회귀] 피드작성 버튼 3종(음악 첨부·내 가사 복사·착장 아이템 첨부) 노출 유지 확인(스크린샷).
+- [미검증] DmChat·MyReports·차트 검색·PolicySheet의 safe-area 전환 실기기(iOS 노치) 렌더.
+
+---
+
 ## v3.72 — 2026-08-24 — 왼쪽 재생 아이콘 제거
 
 - [unit] tsc 0.

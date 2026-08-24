@@ -3,6 +3,7 @@ import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api from '../services/api';
 import { AppText, EmptyState } from '../components/ui';
 import { colors } from '../theme/colors';
@@ -19,6 +20,8 @@ const STATUS_LABEL: Record<string, string> = {
 const parseUtc = (iso: string) => new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z');
 
 export default function MyReportsScreen() {
+  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +41,7 @@ export default function MyReportsScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="뒤로가기" style={{ padding: 4 }}>
           <Feather name="arrow-left" size={22} color={colors.text.primary} />
@@ -78,7 +81,7 @@ export default function MyReportsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  container: { flex: 1, backgroundColor: colors.bg.deepest },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.lg, paddingBottom: spacing.md,

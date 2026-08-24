@@ -2,6 +2,7 @@
 // 문서 원문은 constants/consentTexts.ts(가입 동의 문구와 단일 출처)에서 가져와 불일치를 방지한다.
 import { Modal, View, TouchableOpacity, ScrollView, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -14,9 +15,11 @@ interface Props {
 }
 
 export default function PolicySheet({ visible, title, body, onClose }: Props) {
+  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.header}>
           <AppText variant="title3">{title}</AppText>
           <TouchableOpacity onPress={onClose} accessibilityLabel="닫기" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -66,7 +69,7 @@ export function CompanyFooter({ onOpenPolicy }: { onOpenPolicy?: (key: 'terms' |
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  container: { flex: 1, backgroundColor: colors.bg.deepest },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: spacing.xl, paddingBottom: spacing.md,

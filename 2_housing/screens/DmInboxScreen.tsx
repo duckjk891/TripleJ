@@ -5,6 +5,7 @@ import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { View, FlatList, TouchableOpacity, TextInput, Modal, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Avatar, EmptyState, Button } from '../components/ui';
@@ -37,6 +38,8 @@ const fmtTime = (iso?: string | null): string => {
 };
 
 export default function DmInboxScreen() {
+  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const user = useAuthStore((s) => s.user);
   const [eligible, setEligible] = useState<boolean | null>(null);
@@ -203,7 +206,7 @@ export default function DmInboxScreen() {
 
       {/* 새 메시지 모달 */}
       <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
-        <View style={styles.modalContainer}>
+        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <AppText variant="title3" style={{ flex: 1 }}>새 메시지</AppText>
             <TouchableOpacity onPress={() => setComposeOpen(false)} accessibilityLabel="닫기" style={{ padding: 4 }}>
@@ -257,10 +260,11 @@ export default function DmInboxScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
   // 새 메시지 모달(네이티브 헤더 없는 풀스크린)만 상단 여백 유지
-  modalContainer: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  modalContainer: { flex: 1, backgroundColor: colors.bg.deepest },
+  // v3.73: (새 메시지 모달 전용) 네이티브 상단바와 동일 규격 — 높이 56, 최상단 배치
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
+    height: 56, paddingHorizontal: spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   tabs: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },

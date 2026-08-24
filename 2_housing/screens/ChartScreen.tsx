@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { useLikesStore } from '../stores/likesStore';
@@ -51,6 +52,8 @@ const RANK_COLORS: Record<number, string> = {
 };
 
 export default function ChartScreen() {
+  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<ChartTab>('top100');
@@ -243,7 +246,7 @@ export default function ChartScreen() {
 
       {/* 검색 모달 */}
       <Modal visible={showSearchModal} animationType="slide" onRequestClose={closeSearchModal}>
-        <View style={styles.searchModal}>
+        <View style={[styles.searchModal, { paddingTop: insets.top }]}>
           <View style={styles.searchHeader}>
             <TouchableOpacity onPress={closeSearchModal} style={styles.searchBack}>
               <AppText variant="title2">{'←'}</AppText>
@@ -343,7 +346,7 @@ const styles = StyleSheet.create({
   actionSheetItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
   fabIcon: { marginTop: -2 },
   // search modal
-  searchModal: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  searchModal: { flex: 1, backgroundColor: colors.bg.deepest },
   searchHeader: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,

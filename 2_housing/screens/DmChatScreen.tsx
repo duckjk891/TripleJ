@@ -5,6 +5,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { View, FlatList, TouchableOpacity, TextInput, Alert, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { dmSocketSubscribe } from '../services/dmSocket';
 import { useAuthStore } from '../stores/authStore';
@@ -30,6 +31,8 @@ const fmtClock = (iso: string) => {
 };
 
 export default function DmChatScreen() {
+  // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const user = useAuthStore((s) => s.user);
@@ -150,7 +153,7 @@ export default function DmChatScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={[styles.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* 헤더 */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} accessibilityLabel="목록으로" style={{ padding: 4 }}>
@@ -233,7 +236,7 @@ export default function DmChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },
+  container: { flex: 1, backgroundColor: colors.bg.deepest },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     paddingHorizontal: spacing.lg, paddingBottom: spacing.md,
