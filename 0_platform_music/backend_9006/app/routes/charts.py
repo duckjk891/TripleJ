@@ -297,6 +297,12 @@ async def get_chart(chart_type: str, limit: int = 100):
             content={"error": f"chart_type은 {', '.join(sorted(VALID_CHART_TYPES))} 중 하나여야 합니다."},
         )
 
+    # v201-r: limit 클램프 — 422 거부가 아닌 클램프인 이유: 기존 호출자 무영향 +
+    # 앱팀 클라이언트가 임의 값을 보내도 안 깨짐. v201 이후 limit 가 캐시 키에
+    # 들어가므로 무검증 상태면 ?limit=999999999 류로 Redis 키 무한 생성,
+    # 음수 limit 는 음수 슬라이스 오동작. 클램프로 키 공간이 5종×100=최대 500개로 유한.
+    limit = max(1, min(limit, 100))
+
     redis = get_redis()
 
     # --- Check cache ---

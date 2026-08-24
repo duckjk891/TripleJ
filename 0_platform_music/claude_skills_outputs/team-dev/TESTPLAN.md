@@ -9088,3 +9088,125 @@ PY
   유료 호출 **0건**(⭐ 차감 0 · A13 이 실측 증명), 테스트 데이터 생성 **0건**, 9004·9005 접근 **0건**,
   실계정 비가역 액션 **0건**. 태그 균형은 **46.2 / 38.5 / 15.3** 으로 세 요구(≥40 / ≥35 / ≤25)를 전부 충족.
   planner 확인 대기 7건(§5) — **전부 대안이 있어 39건·비율이 깨지지 않는다.**
+
+---
+
+## v201-r — 2026-08-24 — v201 차트 캐시(limit 키 분리) 사후 재검토 + limit 클램프 보완 [MAIDOL-ChartCacheReview]
+
+**대상**: `backend_9006` 단독 (`$B = 0_platform_music/backend_9006`). UI 무관 → **e2e 0건**.
+**총 13건**: `[unit]` 6건(46.2%) / `[api]` 7건(53.8%) / `[e2e]` 0건 — 요구(≥40 / ≥35 / ≤25) 충족.
+**참조 커밋**: v201 본체 = `03264b2`. v201-r 클램프는 설계 시점 실측상 **working tree 에 이미 반영**
+(`charts.py:304` `limit = max(1, min(limit, 100))`, 주석 포함) — tester 는 **dev 커밋 해시 확정 후** 착수.
+
+### 0. 실행 전제
+
+- **재기동 필수**: 클램프는 코드 로드 시점 반영. **U01~U06 은 재기동 무관**(정적/로컬),
+  **A01~A06 은 9006 재기동 후** 판정. **A07 의 기준선(baseline)은 재기동 전에 캡처**.
+- **유료 호출 0건 명문화**: 차트는 무료 GET(`GET /api/charts/*`). 금지 목록은 기존과 동일 —
+  `GET /api/tracks/search` 등 유료·과금 유발 엔드포인트 일절 금지. ⭐ 차감 유발 액션 0건.
+- **9004·9005 접근 0건**(읽기 포함 불요). 프론트 4000·4001 무관.
+- **크리덴셜 실값 금지**: 차트 GET 은 비인증. 인증이 필요해지는 순간 설계 오류 → 중단·보고.
+- **Redis 접근**: 키 확인은 `redis-cli`(호스트 또는 `docker exec <redis컨테이너>`) — 컨테이너명은
+  tester 가 `docker ps` 로 확인. **쓰기는 `cache:chart:*` 네임스페이스 한정**(TTL 300s 캐시 전용,
+  admin 무효화 플로우와 동일 효과) — 그 외 키(`chart:dl_tracks:*` 등 원본 데이터) **절대 불가침**.
+- **캐시 위생**: 0단계 실측 때 생긴 오염 키(`:999999999`·`:-5`)는 TTL 300s 로 이미 소멸했을 것.
+  각 A 케이스 착수 전 `redis-cli --scan --pattern 'cache:chart:*'` 로 현황 캡처 후 판정.
+- **곡 수 기준**: PLAN 실측 "21곡" 은 설계 시점 값 — 하드코딩 판정 금지.
+  판정식은 `limit=3 결과 3곡` vs `limit=100 결과 = 전체 트랙 수(>3)` 의 **상대 비교**.
+
+### 1. [unit] — 호스트, 재기동 무관 (6건)
+
+**U01 [unit] 클램프 위치 정적 검증 — cache_key 조립 앞** — 실행: 호스트 `$B`
+- Given: dev 커밋 착지 상태의 `app/routes/charts.py`
+- When: `grep -n "chart_type not in VALID_CHART_TYPES\|max(1, min(limit, 100))\|cache_key = f\"cache:chart:" app/routes/charts.py`
+- Then: 세 라인이 **화이트리스트 검증(:294) < 클램프(:304) < cache_key 조립(:313)** 순서
+  (라인 번호는 시프트 가능 — **순서**만 판정). 클램프가 cache_key 뒤면 FAIL(무의미한 클램프).
+
+**U02 [unit] 클램프 산식 경계값 표 — 파이썬 단독** — 실행: 호스트, 서버 불요
+- Given: 산식 `max(1, min(x, 100))`
+- When: `python3 -c "f=lambda x:max(1,min(x,100)); print([f(x) for x in [-5,0,1,2,99,100,101,200,999999999]])"`
+- Then: `[1, 1, 1, 2, 99, 100, 100, 100, 100]` — −5→1, 0→1, 999999999→100, 200 과 100 이 동일 실효값.
+
+**U03 [unit] 키 형식 ↔ 무효화 패턴 호환 — fnmatch 교차검증** — 실행: 호스트, 서버 불요
+- Given: 키 형식 `cache:chart:{type}:{limit}`(charts.py:313), 무효화 패턴 `cache:chart:*`
+- When: python 으로 5종 chart_type × limit∈{1,100} 의 키 10개를 조립해 `fnmatch(key, "cache:chart:*")` 전건 검사
+- Then: 10/10 매칭. 구형식 키 `cache:chart:top100`(limit 없음)도 매칭됨을 부기(과도기 잔존 키도 무효화가 잡음).
+
+**U04 [unit] chart_recovery 패턴 삭제 — redis-cli 로 키 심고 SCAN 검증** — 실행: 호스트(redis-cli)
+- Given: 센티널 키 `redis-cli set cache:chart:daily:7 SENTINEL EX 60` (cache:chart:* 한정 쓰기)
+- When: `redis-cli --scan --pattern 'cache:chart:*'` — chart_recovery.py:123 의 `scan_iter(match="cache:chart:*")` 와 동일 패턴
+- Then: 센티널이 목록에 나타남 = 패턴 삭제가 실제 키를 잡음. 종료 시 `redis-cli del cache:chart:daily:7`.
+
+**U05 [unit] 무효화 3곳 패턴 일치 + 정확 키 삭제 잔재 0건** — 실행: 호스트 `$B`
+- Given: admin.py:868 · tracks.py:651 · chart_recovery.py:123
+- When: ① `grep -n 'scan_iter(match="cache:chart:\*")' app/routes/admin.py app/routes/tracks.py app/services/chart_recovery.py` ② `grep -rn 'delete("cache:chart:\|delete(f"cache:chart:' app/` (정확 키 delete 잔재)
+- Then: ① 3곳 전부 동일 패턴 ② 0건 — 하나라도 정확 키 삭제가 남아 있으면 no-op 연쇄 재발 → FAIL.
+
+**U06 [unit] genre/category 핸들러 diff 0 — 범위 밖 무손상** — 실행: 호스트 `$B`
+- Given: v201 본체 커밋 `03264b2`
+- When: `git diff 03264b2 -- app/routes/charts.py` 출력에서 `genre_chart` · `list_categories` · `category_chart` 함수 구간 확인
+- Then: 해당 구간 변경 **0줄**(클램프·주석은 `get_chart` 내부에만). genre/category 에 diff 발견 시 **즉시중단 S4**.
+
+### 2. [api] — 9006 실호출, A07 기준선만 재기동 전 (7건)
+
+**A07 [api] 기준선 선캡처 → genre/category 회귀 diff 0** — 실행: 호스트 curl, **재기동 전·후 2회**
+- Given: 재기동 **전** `curl -s "http://localhost:9006/api/charts/genre/<실존장르>"` · `/api/charts/categories` 응답을 `/tmp/claude-1000/v201r/base_*.json` 에 저장 (실존 장르는 categories 응답에서 선택)
+- When: 재기동 **후** 동일 호출을 재캡처해 diff
+- Then: **diff 0**. diff 발생 시 **즉시중단**(범위 밖 오염). ※ 이 케이스만 번호와 무관하게 **가장 먼저 전반부 캡처**.
+
+**A01 [api] limit=−5 · limit=0 → 1 로 클램프, 오염 키 미생성** — 실행: 호스트 curl+redis-cli, 재기동 후
+- Given: `cache:chart:top100:*` 현황 캡처(위생 규칙)
+- When: `curl -s "http://localhost:9006/api/charts/top100?limit=-5"` → 곡 수·응답 확인, 이어서 `?limit=0`
+- Then: 두 호출 모두 200 + **1곡**(음수 슬라이스 오동작 아님), `redis-cli --scan --pattern 'cache:chart:top100:*'` 에 **`:-5`·`:0` 부재**, **`:1` 존재**.
+
+**A02 [api] limit=999999999 → 100 클램프, 키 폭발 차단** — 실행: 호스트 curl+redis-cli, 재기동 후
+- Given: A01 이후 상태
+- When: `curl -s "http://localhost:9006/api/charts/top100?limit=999999999"`
+- Then: 200 + 곡 수 = 전체(≤100), `:999999999` 키 **미생성**, `:100` 키 **존재**(생성 또는 재사용).
+
+**A03 [api] limit=200 과 limit=100 이 같은 키 — 캐시 히트 증명** — 실행: 호스트 curl+redis-cli, 재기동 후
+- Given: `cache:chart:top100:*` 를 정리(`redis-cli` 로 top100 네임스페이스만 DEL — 위생 규칙 준수) 후 키 0건 확인
+- When: ① `?limit=200` 호출 → 키 목록 캡처 ② `?limit=100` 호출 → 키 목록 재캡처 + 두 응답 바이트 비교
+- Then: ①② 모두 **키는 `cache:chart:top100:100` 단 1개**(신규 키 증가 0), 두 응답 **바이트 동일**(② 가 ① 의 캐시를 히트).
+
+**A04 [api] v201 본체 — limit=3 선점 후 limit=100 오염 없음** — 실행: 호스트 curl+redis-cli, 재기동 후
+- Given: A03 과 동일하게 top100 캐시 정리
+- When: ① `?limit=3` → 3곡 확인 ② 즉시 `?limit=100` → 곡 수 확인
+- Then: ② 가 **3곡이 아니라 전체 트랙 수(>3)** — 선점 오염 없음. 키는 `:3` 과 `:100` **2개 병존**.
+
+**A05 [api] 기본 호출(limit 미지정) 동작 불변** — 실행: 호스트 curl+redis-cli, 재기동 후
+- Given: A04 직후 상태(`:100` 캐시 존재)
+- When: `curl -s "http://localhost:9006/api/charts/top100"` (쿼리 없음)
+- Then: 200 + `?limit=100` 응답과 **바이트 동일**(기본값 100 → 같은 키 히트), 신규 키 0 — 프런트(`api/index.js:225`, limit 미지정 호출) 실효 무영향 증명.
+
+**A06 [api] chart_type 검증 회귀 — 5종 200 + 밖은 400** — 실행: 호스트 curl, 재기동 후
+- Given: 9006 기동 상태
+- When: ① top100·hot100·daily·weekly·monthly 5종 GET ② `curl -s -o /dev/null -w "%{http_code}" ".../api/charts/top1000?limit=5"`
+- Then: ① 5종 전부 **200** ② **400**(화이트리스트가 클램프보다 앞이므로 `:top1000` 류 키 **미생성** — redis-cli 로 확인).
+
+### 3. 즉시중단 조건 (v201-r)
+
+- **S1**: 유료·과금 유발 호출 발생(⭐ 차감 포함) — 차트는 전부 무료 GET, 위반 즉시 중단
+- **S2**: 9004·9005 에 읽기 외 접근(쓰기·sync) 발생
+- **S3**: 9006 재기동 실패 후 복구 불가(`/api/health` 200 미복귀)
+- **S4**: genre/category 응답에 diff(A07) 또는 핸들러 코드 diff(U06)
+- ※ `:-5`·`:999999999` 키가 재기동 후에도 생성되면 **중단이 아니라 FAIL**(클램프 미적용) → dev 재작업 회부
+
+### 4. 판정 기록 양식
+
+`ID / 태그 / 실행위치 / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED` — SKIP 사유 필수, 조용한 스킵 금지.
+정리: 종료 시 `/tmp/claude-1000/v201r/` 삭제, U04 센티널 키 DEL 확인, `redis-cli --scan --pattern 'cache:chart:*'` 잔존 키는 TTL 300s 자연소멸 확인만.
+
+### 5. planner 확인 필요 (설계 중 발견)
+
+- **P1**: v201-r 클램프가 설계 시점에 **이미 working tree 반영**(charts.py:304) — dev 커밋 완료 여부·해시를 확정해 주세요. tester 는 커밋 해시 기준으로 착수해야 합니다.
+- **P2 (PLAN 라인 시프트, 오류 아님)**: PLAN 0-1 의 "charts.py:307 cache_key" 는 클램프 삽입 후 **:313** 으로 밀렸습니다(클램프 :304). 본 플랜은 순서 판정(U01)이라 영향 없음.
+- **P3**: A03·A04 의 사전 정리로 `cache:chart:top100:*` 키 DEL 을 씁니다 — TTL 300s 캐시 전용이고 admin 무효화와 동일 효과라 안전 판단했으나, redis 쓰기 0건 원칙과의 관계를 승인해 주세요(불허 시 TTL 300s 대기로 대체 가능, 소요 +10분).
+- **P4**: redis-cli 실행 경로(호스트 직결 vs `docker exec`)가 미확정 — tester 가 `docker ps` 로 확인 후 기록.
+
+### 개정 이력 (v201-r)
+
+- 2026-08-24 초판 (13건). PLAN v201-r §0(실측 3항)·§1(클램프 설계)·§2(회귀 위험 2건)·§3(절대 준수)을 전 항목 시나리오화.
+  이번 건의 급소는 **"클램프가 어디에 있느냐"** — 값이 맞아도 cache_key 조립 **뒤**면 키 폭발이 그대로라
+  U01 을 순서 판정으로 세웠고, **"같은 실효값 = 같은 키"** 를 캐시 히트(바이트 동일 + 키 증가 0)로 증명하는
+  A03 을 두었다. UI 무관이므로 e2e 0건, 유료 0건, 실계정 0건, 재기동 1회(A07 기준선 선캡처 후).
