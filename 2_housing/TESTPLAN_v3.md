@@ -5,6 +5,18 @@
 
 ---
 
+## v3.61 — 2026-08-24 — 피드 작성 신설 + 인라인 재생
+
+- [unit] tsc 0.
+- [e2e] FAB(연필) → 작성 화면(제목/내용/음악 첨부) 진입 — PASS (`/tmp/v361_compose.png`).
+- [e2e] 음악 첨부 → '내 곡에서 선택'(공용 TrackRow=차트 디자인) 모달 + 발매곡 0 계정의 빈 상태("작업실에서 만들기") — PASS (`/tmp/v361_picker.png`).
+- [api/e2e] 텍스트 피드 실제 등록 → 목록 최상단 반영("v361 작성 기능 테스트") — PASS (`/tmp/v361_posted.png`).
+- [e2e] 피드 트랙 블록 탭 → **화면 이동 없이 즉시 재생, 미니플레이어 등장** — PASS (`/tmp/v361_inline.png`).
+- [regression] MiniPlayer next/prev·곡 종료 자동 다음곡은 승격된 공용 loadAndPlayTrack 경유(로직 동일 이동, tsc·수동 경로 확인).
+- [미검증] 음악 첨부→트랙 블록 포함 등록(발매곡 보유 계정 필요 — 코드 경로는 blocks에 track_id 추가로 단순), 첨부 곡의 서버측 track 확장 응답.
+
+---
+
 ## v3.60 — 2026-08-24 — 피드 무난화
 
 - [unit] tsc 0. PIXEL_FONT·PText·게임창 스타일(2px 테두리·오프셋 그림자·타이틀바) 잔여 0건(grep).

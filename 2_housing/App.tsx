@@ -66,6 +66,7 @@ import ArtistResultScreen from './screens/ArtistResultScreen';
 import ArtistCodyScreen from './screens/ArtistCodyScreen';
 import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import UserChannelScreen from './screens/UserChannelScreen';
+import FeedComposeScreen from './screens/FeedComposeScreen';
 import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
 
@@ -103,6 +104,7 @@ export type RootStackParamList = {
   MyReports: undefined;
   DmChat: { conversation: any };
   UserChannel: { authorId: string; name?: string };
+  FeedCompose: undefined;
   ArtistDetail: { artistId: string; artistName?: string };
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
@@ -422,6 +424,7 @@ export default function App() {
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <RootStack.Screen name="UserChannel" component={UserChannelScreen} options={{ headerShown: true, headerTitle: '채널', headerStyle: { backgroundColor: colors.bg.deepest }, headerTintColor: colors.text.primary, headerShadowVisible: false }} />
+            <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />

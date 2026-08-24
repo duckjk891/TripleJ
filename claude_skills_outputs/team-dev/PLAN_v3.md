@@ -7,6 +7,28 @@
 
 ---
 
+## v3.61 — 2026-08-24 — 피드 작성 신설(음악 첨부=차트 디자인) + 피드 인라인 즉시 재생
+
+### 요청
+"피드 작성 시 음악 첨부 화면을 차트랑 동일하게 + 피드에서 바로 재생."
+
+### Plan verification findings
+- **앱에 피드 작성 UI가 아예 없음**(POST /feeds 호출 화면 0건 — 읽기·댓글·좋아요만 구현). 요청의 전제가 되는 화면부터 신설 필요.
+- POST /api/feeds/ 스키마(라이브): required=[blocks], props: title?/blocks/bgm_track_id?/is_public/kind. blocks는 timeline 응답과 동일 형태({type:'text',text}·{type:'track',track_id}). 내 곡: GET /tracks/my.
+- 곡 목록 공용 디자인 = components/TrackRow.tsx(차트·검색·마이뮤직 공용, v3.40에서 통일) — 이걸 곡 선택 화면에 그대로 사용하면 "차트와 동일" 충족.
+- 피드 트랙 탭 시 현재 navigate('Player') — 즉시 재생하려면 사운드 로드 로직 필요. 로드 로직이 MiniPlayer 내부 함수(loadAndPlayTrack)에 갇혀 있음 → **services/playback.ts로 승격**해 MiniPlayer·FeedScreen이 공유(중복 제거).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| services/playback.ts(신규) | loadAndPlayTrack(사운드 로드+didJustFinish 자동 다음곡)·playTrackNow(큐 세팅+즉시 재생) | [playback] |
+| components/MiniPlayer.tsx | 자체 로드 로직 제거 → playback.ts 사용 | [MiniPlayer] |
+| screens/FeedComposeScreen.tsx(신규) | 제목/내용 입력 + 음악 첨부(내 곡 목록 모달 — 공용 TrackRow) + POST /feeds/ | [FeedCompose] |
+| App.tsx | FeedCompose 라우트(모달) 등록 | - |
+| screens/FeedScreen.tsx | 로그인 시 작성 FAB(연필) → FeedCompose / 트랙 블록 탭 → playTrackNow(화면 이동 없이 재생, 미니플레이어 등장) | [FeedScreen] |
+
+---
+
 ## v3.60 — 2026-08-24 — 피드 디자인 무난화(픽셀 게임창 콘셉트 철회)
 
 ### 요청

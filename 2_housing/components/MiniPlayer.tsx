@@ -1,10 +1,9 @@
 import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
 import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from '../services/api';
-import { applyPlaybackAudioMode } from '../services/audioMode';
+import { loadAndPlayTrack } from '../services/playback'; // v3.61: 로드 로직 공용화
 import { colors } from '../theme/colors';
 
 function getCoverUrl(img: string): string {
@@ -33,43 +32,6 @@ export default function MiniPlayer() {
 
   const handlePress = () => {
     navigation.navigate('Player', { track, fromMiniPlayer: true });
-  };
-
-  const loadAndPlayTrack = async (newTrack: any) => {
-    // 기존 사운드 정리
-    if (sound) {
-      try { await sound.unloadAsync(); } catch {}
-    }
-    try {
-      const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${newTrack.id}`;
-      await applyPlaybackAudioMode(); // v3.57: 타 앱 오디오 중단·백그라운드 재생 공통화
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: audioUrl },
-        { shouldPlay: true },
-        (status: any) => {
-          if (status.isLoaded) {
-            setIsPlaying(status.isPlaying);
-            usePlayerStore.getState().setPosition(status.positionMillis || 0);
-            usePlayerStore.getState().setDuration(status.durationMillis || 0);
-            if (status.didJustFinish) {
-              // 자동 다음곡 재생 — 셔플/반복 모드 반영
-              const store = usePlayerStore.getState();
-              const nextIdx = store.getNextIndex();
-              if (nextIdx >= 0 && store.queue[nextIdx]) {
-                store.playTrackAtIndex(nextIdx);
-                loadAndPlayTrack(store.queue[nextIdx]);
-              } else {
-                setIsPlaying(false);
-              }
-            }
-          }
-        }
-      );
-      usePlayerStore.getState().setSound(newSound);
-      setIsPlaying(true);
-    } catch (err) {
-      console.error('[MiniPlayer] 곡 로드 실패:', err);
-    }
   };
 
   const handlePrev = async () => {

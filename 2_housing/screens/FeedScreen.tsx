@@ -12,6 +12,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import FeedCard, { feedTheme } from '../components/feed/FeedCard';
+import { playTrackNow } from '../services/playback';
 
 interface FeedTrack {
   id: string;
@@ -91,12 +92,11 @@ export default function FeedScreen() {
     return out;
   }, [posts]);
 
+  // v3.61: 플레이어 화면으로 이동하지 않고 피드에서 즉시 재생(미니플레이어 등장)
   const handlePlayTrack = (track: FeedTrack) => {
     if (!track?.id) return;
-    if (__DEV__) console.info('[FeedScreen] play track', { id: track.id });
-    const queue = allTracks();
-    playerStore.setQueue(queue.length ? queue : [track]);
-    navigation.navigate('Player', { track });
+    if (__DEV__) console.info('[FeedScreen] play track inline', { id: track.id });
+    playTrackNow(track, allTracks());
   };
 
   const goLogin = () => navigation.navigate('Settings');
@@ -192,6 +192,18 @@ export default function FeedScreen() {
         />
       )}
 
+      {/* v3.61: 피드 작성 FAB(로그인 시) — 신설된 FeedCompose로 이동 */}
+      {user ? (
+        <TouchableOpacity
+          style={styles.composeFab}
+          onPress={() => navigation.navigate('FeedCompose')}
+          accessibilityLabel="피드 작성"
+          activeOpacity={0.85}
+        >
+          <Feather name="edit-3" size={22} color="#fff" />
+        </TouchableOpacity>
+      ) : null}
+
       {/* 비로그인: 스크롤/팔로워 클릭 시 뜨는 전체화면 로그인 오버레이 (작업실과 동일 — 까만 반투명 배경 + 중앙 텍스트) */}
       {!user && ctaVisible ? (
         <TouchableOpacity
@@ -233,6 +245,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill, padding: 2,
   },
   trackMeta: { flex: 1 },
+  // v3.61: 피드 작성 FAB — 미니플레이어(70)+탭바 위에 뜨도록 여유 있게
+  composeFab: {
+    position: 'absolute', right: spacing.lg, bottom: 96,
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: colors.accent.primary,
+    justifyContent: 'center', alignItems: 'center',
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+  },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   // 작업실(MapScreen) 로그인 오버레이와 동일 스펙 — 까만 반투명 전체화면 + 중앙 텍스트
