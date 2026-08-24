@@ -21,6 +21,7 @@ import Svg, { Path } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
+import { applyPlaybackAudioMode, updateMediaSession } from '../services/audioMode';
 import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 import DraggableQueue from '../components/DraggableQueue';
@@ -330,10 +331,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       const audioUrl = await getAudioUri(target.id);
       if (__DEV__) console.info('[PlayerScreen] loadAndPlay', { id: target.id });
 
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-      });
+      // v3.57: 타 앱 오디오 중단(DoNotMix)·백그라운드 재생 — 공통 헬퍼
+      await applyPlaybackAudioMode();
 
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
@@ -348,6 +347,19 @@ export default function PlayerScreen({ route, navigation }: any) {
       playerStore.setIsPlaying(true);
       setIsPlaying(true);
       setPosition(0);
+      // v3.57: 웹 미디어 세션 — 브라우저/OS 미디어 컨트롤에 곡 정보·재생 버튼 노출
+      const img = target?.cover_image || target?.cover_image_url;
+      updateMediaSession(
+        {
+          title: target?.title || 'AIDOL',
+          artist: target?.artist_name || target?.uploader_nickname,
+          artworkUrl: img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null,
+        },
+        {
+          play: () => { usePlayerStore.getState().sound?.playAsync().catch(() => {}); },
+          pause: () => { usePlayerStore.getState().sound?.pauseAsync().catch(() => {}); },
+        },
+      );
     } catch (err) {
       console.error('Audio load error:', err);
     }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Text, TouchableOpacity, View, Platform, LogBox } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -381,16 +381,23 @@ function useOAuthCallback() {
   }, []);
 }
 
+// v3.57: 이 라우트들 위에서는 미니플레이어 UI를 숨긴다(모달과 겹쳐 어색). 사운드는
+// playerStore 전역 소유라 UI를 숨겨도 재생은 계속된다.
+const HIDE_MINIPLAYER_ROUTES = ['Settings'];
+
 export default function App() {
   useOAuthCallback();
   // v3.52: 피드 게임창용 픽셀 폰트(Neo둥근모) — 비차단 로드(로드 전엔 시스템 폰트 폴백)
   useFonts({ NeoDGM: require('./assets/fonts/neodgm.ttf') });
   // 세션 영속화(B1) — 저장된 토큰으로 자동 로그인(앱 재시작 시 로그아웃되던 문제 해소)
   useEffect(() => { restoreSession(); }, []);
+  // v3.57: 현재 라우트 추적 — 설정(모달) 위에서 미니플레이어 숨김용
+  const [currentRoute, setCurrentRoute] = useState<string | undefined>(undefined);
+  const syncRoute = () => setCurrentRoute(navigationRef.getCurrentRoute()?.name);
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <NavigationContainer ref={navigationRef}>
+      <NavigationContainer ref={navigationRef} onReady={syncRoute} onStateChange={syncRoute}>
         <View style={{ flex: 1 }}>
           <RootStack.Navigator
             initialRouteName="Splash"
@@ -422,8 +429,8 @@ export default function App() {
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             <RootStack.Screen name="Royalty" component={RoyaltyScreen} />
           </RootStack.Navigator>
-          {/* 미니 플레이어 - 탭 바 위에 absolute 배치 */}
-          <MiniPlayerWrapper />
+          {/* 미니 플레이어 - 탭 바 위에 absolute 배치. 설정 등 모달 라우트에선 숨김(재생은 유지) */}
+          {!HIDE_MINIPLAYER_ROUTES.includes(currentRoute ?? '') ? <MiniPlayerWrapper /> : null}
           {/* 레벨업 토스트 - 전역 표시 (모든 화면 위에 떠오름) */}
           <LevelUpModal />
           {/* 출석체크·초대 모달 + 최초 로그인 자동 출석 팝업 */}

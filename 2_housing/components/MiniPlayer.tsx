@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from '../services/api';
+import { applyPlaybackAudioMode } from '../services/audioMode';
 import { colors } from '../theme/colors';
 
 function getCoverUrl(img: string): string {
@@ -41,7 +42,7 @@ export default function MiniPlayer() {
     }
     try {
       const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${newTrack.id}`;
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: true });
+      await applyPlaybackAudioMode(); // v3.57: 타 앱 오디오 중단·백그라운드 재생 공통화
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
         { shouldPlay: true },

@@ -7,6 +7,28 @@
 
 ---
 
+## v3.57 — 2026-08-24 — 헤더 벨 확인 · 픽셀 피드 확인자료 · 설정 미니플레이어 숨김 · 오디오 포커스/미디어 세션
+
+### 요청 원문 요약
+① 상단바 알림(벨) 왜 있나 — DM·요청으로 통합된 거 아닌가, 필요없으면 삭제 ② 피드 바꾼 디자인(픽셀 라이브러리) 아직 못 봤다 ③ 설정 창에서 미니플레이어가 UI에 이상하게 남음 — 노래는 계속 재생돼야 함 ④ 재생 시 타 앱(유튜브 등) 소리를 끊고, 폰 상단바(알림 영역)에 미디어 컨트롤 표시.
+
+### Plan verification findings
+- ① 벨(알림함)과 메일(DM)은 **별개 시스템** — 알림함=팔로우·댓글·답글·좋아요·피드 팬아웃(Mongo notifications), DM함=대화·메시지 요청. DM함에는 소셜 알림이 없고, v3.56 맞팔 버튼도 알림함에 있음 → **삭제하면 안 됨(유지 판정)**. 통합하려면 별도 기획 필요.
+- ② 픽셀 게임창(v3.51)+Neo둥근모(v3.52)는 **이미 적용·커밋·푸시됨** — E2E에서 computed fontFamily 'NeoDGM' 실측까지 완료. 사용자가 아직 앱을 리로드 안 했거나 스크린샷 파일을 못 본 것 → 확인 자료를 프로젝트 폴더(docs/screenshots/)에 저장.
+- ③ Settings는 `presentation: 'modal'`(App.tsx)인데 MiniPlayerWrapper가 NavigationContainer 레벨 절대배치(zIndex 999)라 모달 위에 어색하게 겹침. **사운드 객체는 playerStore 전역 소유**(MiniPlayer는 순수 UI) → 특정 라우트에서 UI만 숨겨도 재생 유지 확실.
+- ④ 현재 setAudioModeAsync가 4곳에 산재하고 interruption 모드 미지정 → 타 앱과 믹스될 수 있음. expo-av `InterruptionModeIOS/Android.DoNotMix`로 **재생 시작 시 타 앱 오디오 포커스 탈취 가능(JS-only)**. iOS 백그라운드 재생은 app.json `UIBackgroundModes:["audio"]` 필요. **폰 상단바 미디어 컨트롤(잠금화면 포함)은 expo-av 미지원** — react-native-track-player 등 네이티브 모듈 + EAS 빌드 필요(Expo Go 불가) → 이번엔 웹 Media Session(브라우저/안드로이드 크롬 알림)까지만 구현하고 네이티브는 빌드 단계 과제로 보고.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| services/audioMode.ts(신규) | 재생용 오디오 모드 헬퍼(DoNotMix·백그라운드) + 웹 Media Session 메타/핸들러 | [audioMode] |
+| screens/PlayerScreen.tsx 외 재생 3곳·MiniPlayer | setAudioModeAsync → 공통 헬퍼로 통일, PlayerScreen에서 Media Session 메타 갱신 | [PlayerScreen] |
+| App.tsx | navigationRef로 현재 라우트 추적 → Settings에서 MiniPlayerWrapper 숨김(재생 유지) | [App] |
+| app.json | ios.infoPlist.UIBackgroundModes:["audio"] | - |
+| docs/screenshots/ | 픽셀 피드 확인용 스크린샷 저장 | - |
+
+---
+
 ## v3.56 — 2026-08-24 — 알림함 팔로우 알림에 '맞팔하기' 인라인 버튼
 
 ### 요청 원문

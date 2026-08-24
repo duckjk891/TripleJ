@@ -12,6 +12,7 @@ import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
+import { applyPlaybackAudioMode } from '../services/audioMode';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -94,10 +95,7 @@ export default function MusicResultScreen({ navigation }: Props) {
       console.log('[MusicResult] Loading audio from:', audioUrl);
 
       try {
-        await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-        });
+        await applyPlaybackAudioMode(); // v3.57: 재생 오디오 정책 공통화(타 앱 중단 포함)
 
         const { sound: newSound } = await Audio.Sound.createAsync(
           {
