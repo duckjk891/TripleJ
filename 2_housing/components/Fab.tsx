@@ -8,7 +8,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 
 const MINI_PLAYER_HEIGHT = 70;
-const GAP_ABOVE_BAR = 12; // 하단바(또는 미니플레이어) 위 간격 — "살짝" 스펙
+const GAP_ABOVE_BAR = 6; // 하단바(또는 미니플레이어) 위 간격 — v3.65: 12→6, 더 붙게
 
 interface Props {
   onPress: () => void;
