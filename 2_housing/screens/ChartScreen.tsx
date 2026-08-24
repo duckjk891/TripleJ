@@ -16,6 +16,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui';
 import TrackRow, { trackRowStyles } from '../components/TrackRow';
+import Fab from '../components/Fab';
 import TrackActionSheet from '../components/TrackActionSheet';
 
 interface ChartTrack {
@@ -236,9 +237,9 @@ export default function ChartScreen() {
       })()}
 
       {!playerStore.track && (
-        <TouchableOpacity style={styles.fab} onPress={() => navigation.navigate('MyMusic')} activeOpacity={0.85}>
+        <Fab onPress={() => navigation.navigate('MyMusic')} accessibilityLabel="곡 추가">
           <AppText variant="headline" tone="primary" style={styles.fabIcon}>+</AppText>
-        </TouchableOpacity>
+        </Fab>
       )}
 
       {/* 검색 모달 */}
@@ -341,11 +342,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
   },
   actionSheetItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
-  fab: {
-    position: 'absolute', bottom: spacing.xl, right: spacing.xl, width: 56, height: 56, borderRadius: radius.pill,
-    backgroundColor: colors.accent.primary, justifyContent: 'center', alignItems: 'center',
-    shadowColor: colors.accent.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 8,
-  },
   fabIcon: { marginTop: -2 },
   // search modal
   searchModal: { flex: 1, backgroundColor: colors.bg.deepest, paddingTop: 50 },

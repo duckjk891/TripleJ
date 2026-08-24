@@ -7,6 +7,24 @@
 
 ---
 
+## v3.62 — 2026-08-24 — FAB 위치 통일(차트 + / 피드 글쓰기)
+
+### 요청
+"차트 + 버튼이랑 피드 글쓰기 버튼이 동일한 위치에."
+
+### Plan verification findings
+- ChartScreen fab: bottom/right spacing.xl, 56×56, 보라 그림자. FeedScreen composeFab: bottom 96/right spacing.lg, 52×52, 검정 그림자 — 위치·크기·그림자 전부 상이.
+- 통일 기준 = 기존 차트 FAB(사용자에게 익숙한 위치).
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| components/Fab.tsx(신규) | 공용 우하단 플로팅 버튼(차트 스펙: 56×56·bottom/right xl·보라 그림자) |
+| screens/ChartScreen.tsx | 자체 fab → 공용 Fab |
+| screens/FeedScreen.tsx | composeFab → 공용 Fab(연필) |
+
+---
+
 ## v3.61 — 2026-08-24 — 피드 작성 신설(음악 첨부=차트 디자인) + 피드 인라인 즉시 재생
 
 ### 요청
