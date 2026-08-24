@@ -300,7 +300,11 @@ async def get_chart(chart_type: str, limit: int = 100):
     redis = get_redis()
 
     # --- Check cache ---
-    cache_key = f"cache:chart:{chart_type}"
+    # v201: limit 를 키에 포함 — 빠지면 먼저 온 요청의 limit 로 잘린 목록이
+    # TTL(300s) 동안 다른 limit 요청에도 그대로 서빙된다 (limit=10 이 캐시를
+    # 선점하면 limit=100 사용자가 10곡만 받음). 무효화 2곳(admin.py:868,
+    # tracks.py:651)은 cache:chart:* 패턴 삭제라 새 형식도 잡는다.
+    cache_key = f"cache:chart:{chart_type}:{limit}"
     cached = await redis.get(cache_key)
     if cached:
         return json.loads(cached)

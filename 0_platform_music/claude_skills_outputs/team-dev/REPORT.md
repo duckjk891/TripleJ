@@ -16162,3 +16162,17 @@ Suno 페르소나는 **Suno 가 만든 곡에서만** 뽑을 수 있어서, 내 
 - 프런트 수정 2(`StudioTab2.jsx`, `api/index.js`) / 어드민 1(`api.js`)
 - 산출물 3
 - **무변경 확인**: `StudioTab2.css`, `suno_generator.py`, `generate.py`, `voice_clone.py`, `voice_clone_service.py`, `auth.py`, `tracks.py`, `upload.py`, `backend_9004`, `backend_9005`
+
+---
+
+## v201 — 2026-08-24 — 차트 캐시 키에 limit 미포함 수정 (단독 픽스, team-dev 아님)
+
+v196 검증 때 후속 과제로 남았던 건. 사용자 화면의 추천 작업 칩으로 재부상해 직접 처리.
+
+**결함**: `charts.py:303` `cache_key = f"cache:chart:{chart_type}"` — `limit` 파라미터가 키에 없어, 먼저 온 요청의 limit 로 잘린 목록이 TTL(300초) 동안 다른 limit 요청에 그대로 서빙됐다 (limit=10 이 선점하면 limit=100 사용자가 10곡만 받음).
+
+**수정 2파일**
+- `charts.py:303` → `cache:chart:{chart_type}:{limit}`
+- `chart_recovery.py:122` — 정확 키 삭제(`delete(f"cache:chart:{ct}")`)가 새 키 형식에서 **no-op** 이 되므로 `scan_iter("cache:chart:*")` 패턴 삭제로 전환. 무효화 나머지 2곳(`admin.py:868`, `tracks.py:651`)은 이미 패턴 삭제라 무수정.
+
+**검증(실호출)**: 재기동 후 limit=3 선호출 → 3곡 캐시(`cache:chart:top100:3`) → 직후 limit=100 → **21곡**(수정 전이면 3곡). Redis 키 2개 분리 실측. 유료 호출 0(차트는 무료 GET).
