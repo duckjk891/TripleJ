@@ -153,13 +153,11 @@ export default function FeedScreen() {
     const isCurrent = String(nowId) === String(track.id);
     return (
       <View key={key} style={styles.trackBlockWrap}>
+        {/* v3.72: 재생 상태 표시는 커버 배지 하나로 통일(왼쪽 중복 아이콘 제거) */}
         <TrackRow
           track={rowTrack}
           liked={!!likedMap[String(track.id)]}
           playBadge={isCurrent && isPlaying ? 'pause' : 'play'}
-          left={isCurrent
-            ? <View style={styles.nowIcon}><Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.accent.primary} /></View>
-            : undefined}
           onPress={() => (user ? handleTrackTap(track) : setCtaVisible(true))}
           onMore={() => (user ? setActionTrack(rowTrack) : setCtaVisible(true))}
         />
@@ -319,7 +317,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.md, backgroundColor: feedTheme.field,
     borderRadius: radius.lg, overflow: 'hidden',
   },
-  nowIcon: { width: 20, alignItems: 'center' },
   // v3.70: 착장 아이템 카드(공구 광고) — 트랙 블록과 같은 인셋 배경
   itemCard: {
     marginTop: spacing.md, backgroundColor: feedTheme.field,
