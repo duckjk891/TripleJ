@@ -15,8 +15,10 @@ interface Props {
 }
 
 export default function Fab({ onPress, children, accessibilityLabel }: Props) {
-  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
-  if (hasMiniPlayer) return null; // 재생 중엔 숨김 — 미니플레이어 영역과 겹치지 않게
+  // v3.68: 미니플레이어의 실제 표시 조건(track && sound)과 동일하게 판정 —
+  // 로그인 시 재생목록만 복원되고 사운드는 미로드인 상태에서 버튼이 사라지던 버그 픽스.
+  const miniPlayerVisible = usePlayerStore((s) => !!(s.track && s.sound));
+  if (miniPlayerVisible) return null; // 미니플레이어가 떠 있을 때만 숨김
   return (
     <TouchableOpacity style={styles.fab} onPress={onPress} activeOpacity={0.85} accessibilityLabel={accessibilityLabel}>
       {children}
