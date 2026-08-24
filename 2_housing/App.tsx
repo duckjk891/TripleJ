@@ -189,13 +189,6 @@ function LogoTitle() {
   return <AppText variant="title2" tone="accent" style={{ letterSpacing: 1 }}>AIDOL</AppText>;
 }
 
-// 마이페이지(user) 아이콘 → MyMusic
-const MyPageIcon = ({ navigation }: any) => (
-  <TouchableOpacity onPress={() => navigation.navigate('MyMusic')} style={{ marginRight: 16 }} accessibilityLabel="마이페이지">
-    <Feather name="user" size={22} color={colors.text.primary} />
-  </TouchableOpacity>
-);
-
 // 이전으로 돌아가기(←) → 홈(차트)
 const BackIcon = ({ navigation }: any) => (
   <TouchableOpacity onPress={() => navigation.navigate('Chart')} style={{ marginLeft: 12 }} accessibilityLabel="뒤로">
@@ -213,15 +206,7 @@ const homeHeader = (navigation: any) => ({
   headerRight: () => <HomeHeaderActions navigation={navigation} />,
 });
 
-// 일반 페이지 헤더: 좌 뒤로가기 + 페이지명 + 우 마이페이지
-const pageHeader = (navigation: any, title: string) => ({
-  headerShown: true,
-  headerTitle: () => <AppText variant="subtitle">{title}</AppText>,
-  headerStyle: { backgroundColor: colors.bg.deepest },
-  headerTintColor: colors.text.primary,
-  headerLeft: () => <BackIcon navigation={navigation} />,
-  headerRight: () => <MyPageIcon navigation={navigation} />,
-});
+// v3.74: 탭 페이지 헤더는 모두 homeHeader(차트와 동일)로 통일 — pageHeader 제거됨
 
 // v3.71: 스택 페이지 헤더 — 알림/메시지 등 RootStack 화면도 플레이리스트처럼 상단바에 타이틀이 뜨도록.
 // pageHeader와 달리 뒤로가기는 goBack(진입 지점으로 복귀).
@@ -275,7 +260,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="play-circle" size={size - 2} color={color} />
           ),
-          ...pageHeader(navigation, '플레이리스트'),
+          ...homeHeader(navigation), // v3.74: 모든 탭 상단바를 차트와 동일하게
         })}
       />
       <Tab.Screen
@@ -286,7 +271,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="edit-3" size={size - 2} color={color} />
           ),
-          ...pageHeader(navigation, '피드'),
+          ...homeHeader(navigation),
         })}
       />
       <Tab.Screen
@@ -297,7 +282,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="search" size={size - 2} color={color} />
           ),
-          ...pageHeader(navigation, '검색'),
+          ...homeHeader(navigation),
         })}
       />
       <Tab.Screen
@@ -314,7 +299,7 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => (
             <Feather name="music" size={size - 2} color={color} />
           ),
-          ...pageHeader(navigation, '작업실'),
+          ...homeHeader(navigation),
         })}
       />
       {/* 마이뮤직=마이페이지: 하단바에서 숨김(상단 👤로 진입). 설정은 이 화면 헤더 ⚙️로 진입. */}
