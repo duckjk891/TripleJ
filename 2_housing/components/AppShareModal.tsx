@@ -48,7 +48,7 @@ export default function AppShareModal() {
   const inviteUrl = code ? `${BACKEND_BASE_URL}/invite/${code}` : '';
   // v160 — URL 중복 방지: 네이티브 시트엔 base 메시지, 복사엔 URL 포함 full.
   // v3.58 — 베타 이벤트 문구 삽입(공유 메시지에 이벤트가 함께 전달되도록)
-  const shareTextBase = `AIDOL — AI가 만든 음악의 새로운 세계 🎵\n🎁 베타 테스트 기간 가입 시 루미 50 추가 증정!\n추천코드: ${code}`;
+  const shareTextBase = `AIDOL — AI가 만든 음악의 새로운 세계 🎵\n🎁 베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: ${code}`;
   const shareTextFull = `${shareTextBase}\n${inviteUrl}`;
 
   const showMsg = (m: string) => { setMessage(m); setTimeout(() => setMessage(''), 4000); };
@@ -89,7 +89,7 @@ export default function AppShareModal() {
           ) : (
             <>
               <AppText variant="footnote" tone="secondary" center style={styles.desc}>
-                친구가 내 추천코드로 가입하면 두 사람 모두 루미 50을 받아요!{'\n'}🎁 베타 테스트 기간엔 가입만 해도 루미 50 추가 증정!
+                친구가 내 추천코드로 가입하면 두 사람 모두 스타 50을 받아요!{'\n'}🎁 베타 테스트 기간엔 가입만 해도 스타 50 추가 증정!
               </AppText>
 
               <View style={styles.codeBox}>

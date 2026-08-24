@@ -1,4 +1,4 @@
-// [StarGuideModal] 루미(⭐) 안내 — 헤더 배지 클릭 시 팝업. v3.58: 재화명 '별'→'루미' 리브랜딩,
+// [StarGuideModal] 스타(⭐) 안내 — 헤더 배지 클릭 시 팝업. v3.58: 재화명 '별'→'스타' 리브랜딩,
 // '모으는 법'·'내 별' 문구 제거(사용자 지시). 각 항목 클릭 시 해당 기능으로 이동/실행.
 import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';

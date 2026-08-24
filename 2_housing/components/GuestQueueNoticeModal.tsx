@@ -22,8 +22,8 @@ export default function GuestQueueNoticeModal({ visible, onLogin, onContinue, on
           <AppText variant="title3" center style={styles.title}>재생목록에 담을까요?</AppText>
           <AppText variant="body" tone="secondary" center style={styles.desc}>
             로그인하지 않으면 다음 접속 시 재생목록이 사라져요.{'\n'}
-            음악을 들으면 받는 <AppText variant="bodyStrong" tone="accent">루미(⭐)</AppText>도 쌓이지 않아요.{'\n'}
-            루미를 모으면 작업실에서 나만의 음악을 만들 수 있어요.
+            음악을 들으면 받는 <AppText variant="bodyStrong" tone="accent">스타(⭐)</AppText>도 쌓이지 않아요.{'\n'}
+            스타를 모으면 작업실에서 나만의 음악을 만들 수 있어요.
           </AppText>
 
           <LoginStartButton onPress={onLogin} />

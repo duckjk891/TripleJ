@@ -7,6 +7,24 @@
 
 ---
 
+## v3.59 — 2026-08-24 — 재화명 '스타' 확정 반영
+
+### 요청
+후보 논의 끝에 **'스타(STAR)' 확정** — 루미(v3.58 임시 적용)를 스타로 교체.
+
+### Plan verification findings
+- v3.58에서 재화명을 `constants/currency.ts`로 중앙화 + 일부 문구는 리터럴 '루미' — 상수 1곳 + 리터럴 교체로 완결. ⭐ 아이콘·백엔드 별 정책(+50 등)·402 처리 로직은 무변(이름만 변경).
+- OG 배너(assets/og/beta-event-og.png)에 '루미 50' 각인 — 재생성 필요.
+
+### 변경
+| 파일 | 변경 |
+|---|---|
+| constants/currency.ts | CURRENCY '루미'→'스타', EN 'LUMI'→'STAR' |
+| ChartScreen·GuestQueueNoticeModal·AttendanceModal·DirectorLineup·ArtistInput·AppShareModal·MyMusicScreen·FeedCard·HomeHeaderActions·MapScreen | 리터럴 '루미' → '스타'(문구·라벨) |
+| assets/og/beta-event-og.png | "스타 50 추가 증정"으로 재생성 |
+
+---
+
 ## v3.58 — 2026-08-24 — 재화명 리브랜딩('루미') + 베타 이벤트 공유(OG) 준비
 
 ### 요청 원문 요약

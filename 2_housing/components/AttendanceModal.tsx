@@ -134,7 +134,7 @@ export default function AttendanceModal() {
                     ? '오늘 출석 완료 ✅'
                     : claiming
                       ? '처리 중…'
-                      : `⭐ 오늘 출석하고 루미 받기${status?.today_reward ? ` (⭐${status.today_reward})` : ''}`}
+                      : `⭐ 오늘 출석하고 스타 받기${status?.today_reward ? ` (⭐${status.today_reward})` : ''}`}
                   fullWidth
                   disabled={checkedToday || claiming}
                   onPress={handleCheckIn}

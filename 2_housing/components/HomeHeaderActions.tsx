@@ -62,7 +62,7 @@ export default function HomeHeaderActions({ navigation }: { navigation: any }) {
           {/* 별 배지 — 클릭 시 별 안내(모으는/쓰는 법) 팝업 */}
           <TouchableOpacity
             onPress={openStarGuide}
-            accessibilityLabel="루미 안내"
+            accessibilityLabel="스타 안내"
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 3,
               backgroundColor: colors.bg.surface2, borderRadius: radius.pill,
