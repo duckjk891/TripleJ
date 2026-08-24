@@ -7,6 +7,28 @@
 
 ---
 
+## v3.70 — 2026-08-24 — 커버 재생배지 · 가사 복사 · 착장 아이템 첨부(공구) · 유령 재생 버그픽스
+
+### 요청 원문 요약
+① 피드 트랙 커버에 작은 재생 아이콘 ② 미니플레이어 자동 표시 의도 확인(→의도 맞음: 전역 컨트롤) ③ 가사 '불러오기'→'복사' ④ 아티스트 착장 아이템을 공구 광고 형식으로 피드에 첨부 ⑤ 미니플레이어 닫아도 백그라운드 재생 지속 버그.
+
+### Plan verification findings
+- ⑤ 원인: MiniPlayer 닫기→cleanup(unload)하지만 **loadAndPlayTrack의 createAsync가 진행 중이면 완료 후 새 사운드를 세팅·재생**(race) — 유령 재생. cleanup 자체는 정상(unload+상태 초기화).
+- ④ 서버 feeds.py 블록 화이트리스트 = text|track 뿐 → 'item' 블록 400. **텍스트 블록에 `[item]{JSON}` 마커**(대댓글 [reply:] 마커와 동일 기법)로 우회 — 렌더 시 파싱해 아이템 카드로 표시. 동결 해제 시 정식 item 블록 승격 권장.
+- 아이템 소스: 곡의 cover_character.used_items(GET /tracks/{id}) — 내 곡 선택→그 곡 착장에서 고르는 UX.
+- ① TrackRow에 playBadge prop(커버 우하단 소형 ▶/⏸ 배지) — 피드에서 사용, 차트는 무변.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| services/playback.ts | 세대 토큰(loadGen)+invalidatePlayback — 닫기/전환 중 완료된 로드는 즉시 폐기 | [playback] |
+| components/MiniPlayer.tsx | 닫기 시 invalidatePlayback+cleanup | [MiniPlayer] |
+| components/TrackRow.tsx | playBadge prop(커버 위 소형 재생/일시정지 배지) | - |
+| screens/FeedScreen.tsx | 트랙 커버 배지 연결, 텍스트 블록 `[item]` 마커 → 아이템 카드(이미지·이름·자세히 보기) 렌더 | [FeedScreen] |
+| screens/FeedComposeScreen.tsx | '내 가사 복사'(클립보드), '아이템 첨부'(내 곡→착장 선택→마커 블록, 미리보기·제거) | [FeedCompose] |
+
+---
+
 ## v3.69 — 2026-08-24 — 피드 트랙 블록=차트 TrackRow(재생수·좋아요·⋮) + 인라인 재생 토글 + 가사 불러오기
 
 ### 요청 원문 요약

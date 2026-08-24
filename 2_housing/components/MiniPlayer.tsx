@@ -3,7 +3,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from '../services/api';
-import { loadAndPlayTrack } from '../services/playback'; // v3.61: 로드 로직 공용화
+import { loadAndPlayTrack, invalidatePlayback } from '../services/playback'; // v3.61 공용화, v3.70 유령재생 방지
 import { colors } from '../theme/colors';
 
 function getCoverUrl(img: string): string {
@@ -51,6 +51,8 @@ export default function MiniPlayer() {
   };
 
   const handleClose = async () => {
+    // v3.70: 로딩 중 닫기 race 방지 — 진행 중 로드를 무효화한 뒤 정리
+    invalidatePlayback();
     await cleanup();
   };
 

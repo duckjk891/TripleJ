@@ -6,15 +6,26 @@ import { usePlayerStore } from '../stores/playerStore';
 import { BACKEND_BASE_URL } from './api';
 import { applyPlaybackAudioMode } from './audioMode';
 
+// v3.70: 로드 세대 토큰 — 로딩 도중 사용자가 플레이어를 닫거나 다른 곡으로 전환하면
+// 늦게 완료된 createAsync 결과(유령 사운드)를 즉시 폐기한다.
+let loadGen = 0;
+
+/** 진행 중인 로드를 무효화(닫기·정지 시 호출) — 이후 완료되는 로드는 재생되지 않고 폐기됨 */
+export function invalidatePlayback(): void {
+  loadGen++;
+  if (__DEV__) console.info('[playback] invalidate', { gen: loadGen });
+}
+
 /** 트랙 사운드 로드+재생. didJustFinish 시 셔플/반복 반영해 자동 다음곡. */
 export async function loadAndPlayTrack(newTrack: any): Promise<void> {
+  const gen = ++loadGen; // 이 로드의 세대 — 도중에 invalidate/새 로드가 오면 스스로 폐기
   const store = usePlayerStore.getState();
   if (store.sound) {
     try { await store.sound.unloadAsync(); } catch {}
   }
   try {
     const audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${newTrack.id}`;
-    if (__DEV__) console.info('[playback] load', { id: newTrack.id });
+    if (__DEV__) console.info('[playback] load', { id: newTrack.id, gen });
     await applyPlaybackAudioMode(); // 타 앱 오디오 중단·백그라운드 재생
     const { sound: newSound } = await Audio.Sound.createAsync(
       { uri: audioUrl },
@@ -37,6 +48,12 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
         }
       }
     );
+    if (gen !== loadGen) {
+      // 로딩 도중 닫힘/전환됨 — 유령 재생 방지: 방금 만든 사운드를 폐기
+      if (__DEV__) console.info('[playback] 늦은 로드 폐기', { id: newTrack.id, gen, current: loadGen });
+      try { await newSound.unloadAsync(); } catch {}
+      return;
+    }
     usePlayerStore.getState().setSound(newSound);
     usePlayerStore.getState().setIsPlaying(true);
   } catch (err: any) {

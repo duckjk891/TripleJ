@@ -45,13 +45,22 @@ interface Props {
   onMore?: () => void;
   /** 행 하단 부가 정보(장르 태그·공개상태 등 — 마이뮤직) */
   footer?: ReactNode;
+  /** v3.70: 커버 우하단 소형 재생 배지 — 탭하면 재생됨을 시각화(피드 등). 'pause'=재생 중 표시 */
+  playBadge?: 'play' | 'pause';
 }
 
-export default function TrackRow({ track, left, liked, onPress, onMore, footer }: Props) {
+export default function TrackRow({ track, left, liked, onPress, onMore, footer, playBadge }: Props) {
   return (
     <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={onPress}>
       {left}
-      <TrackCover track={track} left={!left} />
+      <View>
+        <TrackCover track={track} left={!left} />
+        {playBadge ? (
+          <View style={styles.playBadge}>
+            <Feather name={playBadge} size={11} color="#fff" />
+          </View>
+        ) : null}
+      </View>
       <View style={styles.info}>
         <Marquee text={track.title} variant="bodyStrong" tone="primary" />
         <AppText variant="footnote" tone="secondary" numberOfLines={1} style={styles.artist}>
@@ -101,6 +110,12 @@ const styles = StyleSheet.create({
   info: { flex: 1, marginRight: spacing.sm },
   artist: { marginTop: 3 },
   statCol: { alignItems: 'flex-end', gap: 3, marginRight: spacing.xs, minWidth: 44 },
+  // v3.70: 커버 우하단 재생 배지
+  playBadge: {
+    position: 'absolute', right: 2, bottom: 2,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center',
+  },
   statLine: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   action: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
 });

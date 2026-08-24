@@ -5,6 +5,18 @@
 
 ---
 
+## v3.70 — 2026-08-24 — 커버 재생배지 · 가사 복사 · 착장 아이템 첨부 · 유령 재생 픽스
+
+- [unit] tsc 0 (Image 미임포트 1건 발견→수정 후 통과).
+- [e2e] 커버 우하단 18px 재생 배지 렌더 확인(재생 중 ⏸, 정지 ▶ 전환 스크린샷) (`scratchpad/v370_1_feed.png`, `v370_3_closed.png`).
+- [e2e] **유령 재생 race 재현 테스트**: 트랙 탭 → 로드 중 300ms 시점에 미니플레이어 ✕ → 6초 대기 후 재생 중 미디어 0개 = PASS. 콘솔에 `[playback] load gen:1` → `invalidate gen:2` 시퀀스 확인(세대 토큰 동작 실증).
+- [e2e] 작성 화면 버튼 3종 노출: '음악 첨부'·'내 가사 복사'·'착장 아이템 첨부' ✓. 아이템 피커 열림('착장이 있는 곡 선택' 타이틀) ✓ (`v370_4_compose.png`, `v370_5_itempicker.png`).
+- [e2e] 콘솔 에러·4xx/5xx 0건.
+- [api] GET /tracks/{id} → cover_character.used_items[] (name/category/image_object_name/product_url) 스키마 확인(아이템 소스).
+- [미검증] 가사 클립보드 실복사·아이템 실첨부→피드 카드 렌더(발매곡+착장 보유 계정 필요 — 사장님 계정 실사용 확인 권장), 네이티브(iOS/Android) Clipboard 동작.
+
+---
+
 ## v3.69 — 2026-08-24 — 피드 트랙 TrackRow·인라인 토글·가사 불러오기
 
 - [unit] tsc 0.

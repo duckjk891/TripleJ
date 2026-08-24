@@ -2,7 +2,7 @@
 // 비로그인은 피드 우선 노출 후, 스크롤/팔로워 클릭 시 로그인 CTA가 나타남(고정 아님).
 import { useState, useCallback } from 'react';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet } from 'react-native';
+import { View, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, Image, Dimensions, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -45,6 +45,14 @@ interface FeedPost {
   comment_count?: number;
   created_at?: string;
 }
+
+// v3.70: 착장 아이템 첨부(공구 광고) — 서버 블록 화이트리스트가 text|track뿐이라
+// 텍스트 블록에 [item]{JSON} 마커로 실어 보낸다(작성 화면과 짝). 파싱 실패 시 일반 텍스트로 폴백.
+interface FeedItemAttach { name?: string; category?: string; url?: string; img?: string }
+const parseItemMarker = (text?: string): FeedItemAttach | null => {
+  if (!text || !text.startsWith('[item]')) return null;
+  try { return JSON.parse(text.slice(6)); } catch { return null; }
+};
 
 const coverUri = (img?: string): string | null =>
   img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
@@ -148,6 +156,7 @@ export default function FeedScreen() {
         <TrackRow
           track={rowTrack}
           liked={!!likedMap[String(track.id)]}
+          playBadge={isCurrent && isPlaying ? 'pause' : 'play'}
           left={isCurrent
             ? <View style={styles.nowIcon}><Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.accent.primary} /></View>
             : undefined}
@@ -164,10 +173,41 @@ export default function FeedScreen() {
     return true;
   };
 
+  // v3.70: [item] 마커 → 아이템 카드(공구 광고). 링크 있으면 '자세히 보기'로 이동.
+  const renderItemBlock = (it: FeedItemAttach, key: string) => (
+    <TouchableOpacity
+      key={key}
+      style={styles.itemCard}
+      activeOpacity={it.url ? 0.7 : 1}
+      accessibilityLabel={`아이템 ${it.name || ''}`}
+      onPress={() => {
+        if (!it.url) return;
+        if (__DEV__) console.info('[FeedScreen] 아이템 링크 열기', { name: it.name });
+        Linking.openURL(it.url).catch((err) => console.error('[FeedScreen] 아이템 링크 실패', { url: it.url, message: err?.message }));
+      }}
+    >
+      {it.img
+        ? <Image source={{ uri: `${BACKEND_BASE_URL}/api/character/preview/${it.img}` }} style={styles.itemImg} />
+        : <View style={[styles.itemImg, styles.itemImgEmpty]}><Feather name="shopping-bag" size={18} color={feedTheme.sub} /></View>}
+      <View style={{ flex: 1 }}>
+        <AppText variant="caption" tone="accent">{it.category || '아이템'}</AppText>
+        <AppText variant="footnote" numberOfLines={2} style={{ color: feedTheme.sub }}>{it.name || ''}</AppText>
+      </View>
+      {it.url ? (
+        <View style={styles.itemLink}>
+          <AppText variant="caption" tone="accent">자세히 보기</AppText>
+          <Feather name="external-link" size={12} color={colors.accent.primary} />
+        </View>
+      ) : null}
+    </TouchableOpacity>
+  );
+
   const renderPost = ({ item }: { item: FeedPost }) => {
     const author = item.author_nickname || item.author_name || item.nickname || '익명';
     const blocks = item.blocks || [];
-    const textBlocks = blocks.filter((b) => b.type === 'text' && b.text);
+    const rawText = blocks.filter((b) => b.type === 'text' && b.text);
+    const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
+    const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
     return (
       <FeedCard
@@ -184,6 +224,7 @@ export default function FeedScreen() {
               <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
             ))}
             {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
+            {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
           </View>
         )}
       />
@@ -279,6 +320,15 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg, overflow: 'hidden',
   },
   nowIcon: { width: 20, alignItems: 'center' },
+  // v3.70: 착장 아이템 카드(공구 광고) — 트랙 블록과 같은 인셋 배경
+  itemCard: {
+    marginTop: spacing.md, backgroundColor: feedTheme.field,
+    borderRadius: radius.lg, flexDirection: 'row', alignItems: 'center',
+    gap: spacing.md, padding: spacing.md,
+  },
+  itemImg: { width: 48, height: 48, borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.06)' },
+  itemImgEmpty: { alignItems: 'center', justifyContent: 'center' },
+  itemLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   footer: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
   stat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   // 작업실(MapScreen) 로그인 오버레이와 동일 스펙 — 까만 반투명 전체화면 + 중앙 텍스트
