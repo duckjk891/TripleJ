@@ -186,7 +186,7 @@ export default function MyMusicScreen({ navigation }: any) {
     const link = `${BACKEND_BASE_URL}/track/${track.id}`;
     if (__DEV__) console.info('[MyMusic] share', { id: track.id });
     try {
-      await Share.share({ message: `AIDOL에서 내가 만든 곡 "${track.title}" 들어보세요! 🎵\n${link}` });
+      await Share.share({ message: `AIDOL에서 내가 만든 곡 "${track.title}" 들어보세요! 🎵\n🎁 베타 테스트 기간 가입 시 루미 50 추가 증정!\n${link}` });
     } catch (err: any) {
       console.error('[MyMusic] share 실패', { message: err?.message });
     }

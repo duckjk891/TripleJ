@@ -206,7 +206,7 @@ export default function ArtistInputScreen({ navigation }: any) {
             } catch (err: any) {
               const status = err?.response?.status;
               console.error('[ArtistInput] extra_slot spend 실패', { status });
-              Alert.alert('알림', status === 402 ? '별이 부족합니다. 음악을 듣거나 출석체크로 별을 모아보세요!' : '슬롯 개방에 실패했습니다. 잠시 후 다시 시도해주세요.');
+              Alert.alert('알림', status === 402 ? '루미가 부족해요. 음악을 듣거나 출석체크로 루미를 모아보세요!' : '슬롯 개방에 실패했습니다. 잠시 후 다시 시도해주세요.');
             }
           },
         },

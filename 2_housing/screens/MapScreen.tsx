@@ -323,7 +323,7 @@ export default function MapScreen({ navigation }: Props) {
               {/* 별 배지 — 클릭 시 별 안내 팝업 */}
               <TouchableOpacity
                 onPress={openStarGuide}
-                accessibilityLabel="별 안내"
+                accessibilityLabel="루미 안내"
                 style={styles.starPill}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               >

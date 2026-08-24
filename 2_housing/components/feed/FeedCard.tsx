@@ -212,7 +212,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
 
   const shareFeed = async () => {
     try {
-      await Share.share({ message: `AIDOL 피드 "${feed.title || '게시물'}"\n${BACKEND_BASE_URL}/feed/${feed.id}` });
+      await Share.share({ message: `AIDOL 피드 "${feed.title || '게시물'}"\n🎁 베타 테스트 기간 가입 시 루미 50 추가 증정!\n${BACKEND_BASE_URL}/feed/${feed.id}` });
     } catch (err: any) {
       console.error('[FeedCard] 공유 실패', { message: err?.message });
     }

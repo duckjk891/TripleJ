@@ -7,6 +7,32 @@
 
 ---
 
+## v3.58 — 2026-08-24 — 재화명 리브랜딩('루미') + 베타 이벤트 공유(OG) 준비
+
+### 요청 원문 요약
+① 앱 공유 시 대표 이미지로 "베타 테스트 기간 가입 시 50스타 추가 증정" 이벤트가 보이게 ② '스타 모으는 법' 텍스트 제거, '내 별' 단어 제거 — 우리만의 재화 이름(단순·부르기 쉬운)을 만들어 적용.
+
+### Plan verification findings
+- 재화 문구 사용처: StarGuideModal(제목 '별 모으는 법'·'내 별'), ChartScreen 로그인 CTA, GuestQueueNoticeModal, DirectorLineup/ArtistInput 402 문구, AttendanceModal, AppShareModal(⭐50 안내) — 전부 하드코딩 문자열. 중앙 상수 부재.
+- 공유 링크(초대/피드/곡)는 전부 백엔드 도메인 URL — **링크 미리보기(OG) 이미지는 그 URL의 HTML이 서빙해야 하므로 백엔드 작업 필요(동결)**. 프론트에서 가능한 것: OG 이미지 에셋 제작 + 공유 메시지에 이벤트 문구 삽입. Expo(app.json web)는 OG meta 커스텀 미지원.
+
+### 결정: 재화명 = 루미(LUMI)
+단순·2음절·발음 쉬움, 빛/응원봉(라이트스틱) 연상으로 기존 ⭐ 아이콘과 자연스럽게 연결, "루미 50 증정" 어감 좋음. 후보 비교(픽/샤인/블링)는 REPORT에 기록. `constants/currency.ts` 한 곳만 바꾸면 전체 스왑되도록 상수화.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| constants/currency.ts(신규) | CURRENCY='루미'·CURRENCY_EN·아이콘 상수 | - |
+| StarGuideModal | 제목 '별 모으는 법' 제거→'⭐ 루미', '내 별'→'보유 루미', 상수 사용 | [StarGuideModal] |
+| ChartScreen·GuestQueueNoticeModal·AttendanceModal·DirectorLineup·ArtistInput | '별' 문구 → 루미(402 안내 포함) | 각 화면 prefix |
+| AppShareModal·MyMusicScreen·FeedCard | 공유 메시지에 "🎁 베타 기간 가입 시 루미 50 추가 증정" 이벤트 라인 | [AppShareModal] 등 |
+| HomeHeaderActions·MapScreen | accessibilityLabel '별 안내'→'루미 안내' | - |
+| assets/og/beta-event-og.png(신규) | 1200×630 베타 이벤트 OG 배너(픽셀 게임창 무드) — HTML 렌더→스크린샷 제작 | - |
+
+백엔드 무변경. OG 태그 서빙은 동결 해제 후 백엔드 5분 작업(이미지·문구는 이번에 완성).
+
+---
+
 ## v3.57 — 2026-08-24 — 헤더 벨 확인 · 픽셀 피드 확인자료 · 설정 미니플레이어 숨김 · 오디오 포커스/미디어 세션
 
 ### 요청 원문 요약

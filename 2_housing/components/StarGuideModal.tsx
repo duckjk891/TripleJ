@@ -1,5 +1,5 @@
-// [StarGuideModal] 별(⭐) 안내 — 헤더 별 배지 클릭 시 "별 모으는 법" 팝업(별정책.txt 기반).
-// 각 항목 클릭 시 해당 기능으로 이동/실행: 친구초대→공유, 출석체크→출석팝업, 남곡듣기→차트, 내곡발매→작업실.
+// [StarGuideModal] 루미(⭐) 안내 — 헤더 배지 클릭 시 팝업. v3.58: 재화명 '별'→'루미' 리브랜딩,
+// '모으는 법'·'내 별' 문구 제거(사용자 지시). 각 항목 클릭 시 해당 기능으로 이동/실행.
 import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useUiStore } from '../stores/uiStore';
@@ -8,6 +8,7 @@ import { navigateGlobal } from '../services/navigationRef';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText } from './ui';
+import { CURRENCY, CURRENCY_ICON } from '../constants/currency';
 
 // 버는 곳 — 별정책.txt (첫가입 보너스 ~ 내곡 발매). action 이 있으면 클릭 가능.
 type EarnAction = 'invite' | 'attendance' | 'chart' | 'studio';
@@ -44,16 +45,16 @@ export default function StarGuideModal() {
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={close}>
         <TouchableOpacity style={styles.modal} activeOpacity={1} onPress={() => {}}>
           <View style={styles.head}>
-            <AppText variant="title2">⭐ 별 모으는 법</AppText>
+            <AppText variant="title2">{CURRENCY_ICON} {CURRENCY}</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
               <AppText variant="title3" tone="muted">✕</AppText>
             </TouchableOpacity>
           </View>
 
-          {/* 내 별 잔액 */}
+          {/* 보유 잔액 */}
           <View style={styles.balanceBox}>
-            <AppText variant="footnote" tone="secondary">내 별</AppText>
-            <AppText variant="title1" tone="accent">⭐ {balance ?? 0}</AppText>
+            <AppText variant="footnote" tone="secondary">보유 {CURRENCY}</AppText>
+            <AppText variant="title1" tone="accent">{CURRENCY_ICON} {balance ?? 0}</AppText>
           </View>
 
           {EARN_ROWS.map((r) => {
