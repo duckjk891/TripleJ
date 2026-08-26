@@ -8,10 +8,10 @@ import {
   Modal,
   FlatList,
   ActivityIndicator,
-  Alert,
   ScrollView,
 } from 'react-native';
 import { AppText } from '../components/ui';
+import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
@@ -205,18 +205,18 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const handleApply = () => {
     // sheet 모드: 시트 없어도 진행 (옷+사진으로 처음부터 만듦). 옷 미선택은 디폴트 fallback.
     if (!isSheetMode && !apiResult) {
-      Alert.alert('오류', '먼저 캐릭터 시트가 필요해요.');
+      showAlert('오류', '먼저 캐릭터 시트가 필요해요.');
       return;
     }
     if (!isSheetMode && selectedEntries.length === 0) {
-      Alert.alert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
+      showAlert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
       return;
     }
     // v3.76: 잔액 사전 체크 — 대기열 소진 후 402로 실패하는 낭패 방지
     const bal = usePointsStore.getState().balance;
     if (bal != null && bal < characterCost) {
       if (__DEV__) console.info('[ArtistCody] 별 부족 사전 차단', { bal, cost: characterCost });
-      Alert.alert('별이 부족해요', `캐릭터 시트 생성에는 ⭐${characterCost}개가 필요해요.\n현재 보유: ⭐${bal}`);
+      showAlert('별이 부족해요', `캐릭터 시트 생성에는 ⭐${characterCost}개가 필요해요.\n현재 보유: ⭐${bal}`);
       return;
     }
     // 카테고리별로 분류 — 의상류는 "기존 제거 후 새로 입힘", 헤어/문신은 "명시된 것만 변경"

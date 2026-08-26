@@ -5,6 +5,36 @@
 
 ---
 
+## v3.77 — 2026-08-26 — 가상화 캐릭터 모드 + 커버 variant & v3.76 미검증 실테스트
+
+### Track 1 — v3.76 미검증 실테스트 (⭐ 실비용 허용, 테스트 계정 전용) — 실행 완료
+- [e2e] **실생성**: Given 테스트 계정(⭐≥10) When 텍스트-only 생성→코디 확정 Then job 폴링 실관찰(≤15분)·완료 화면·⭐ 잔액 −10 실측 → **PASS** (⭐60→50 실측, job 3분 10초, 5초 폴링 정확, 무신사 착장 object_name 영속 확인. 증적 scratchpad/v376_retest_01~11)
+- [e2e] **402/사전체크**: Given 잔액 <10(⭐5 계정) When 코디 확정 Then 시작 전 차단 → **기능 PASS / 웹 안내 FAIL**(버그#2) + 서버 402 직접 확인
+- [e2e] **사진 확약 웹 Alert** → **FAIL**(버그#1: RN-web Alert no-op으로 사진 경로 데드엔드)
+- [e2e] 콘솔 로그 3종 실출력 → **PASS**
+- [미검증 잔존] 생성 실패 시 별 자동 환불 실측(성공해버려 실패 경로 미발생), ArtistLoading 실패 Alert 웹 표시(동일 사유)
+
+### Track 1-fix — 웹 Alert 폴백 픽스 스모크 (재검증 완료)
+- [unit] tsc 0 → **PASS**
+- [e2e] 별 부족: window.alert("별이 부족해요…⭐5") 발생·차단 유지·POST 0건 → **PASS**
+- [e2e] 사진 확약: window.confirm 발생, 거부 시 미진행 / 수락 시 채팅 추가+질문 1/6 진입 → **PASS** (dismiss/accept 양쪽)
+- [e2e] 회귀: 콘솔 에러·4xx/5xx 0건 → **PASS** (증적 scratchpad/v376fix_01~07, v376fix_smoke.log)
+- [unit] ⭐15 껍데기 과금 차단: 교체 확인 confirm으로 대체, /points/spend 호출 제거 — 코드 확인(tsc 0)
+
+### Track 2 — v3.77 구현 검증
+- [unit] tsc 에러 0 (전 파일).
+- [unit] characterTaskStore: 신규 4필드 setInput 수용·reset 초기화·기존 화이트리스트 불변.
+- [unit] 화풍 상호 배타: preset 선택→styleImage 해제, 역방향 동일.
+- [unit] 커버 자동 보정: (real만)→real, (virtual만)→virtual, (둘 다)→선택 카드, (없음)→null.
+- [api] style-samples 200·3종·preview 3키 image/png.
+- [api] cartoon-async: (텍스트+preset)/(사진+확약+preset)/(사진+style_image) 접수→job done 시 object_name·art_style 확인. style 없이 전송 시 서버 거동 기록.
+- [api] save {variant:'virtual', art_style} → /me에 virtual_* 반영 + 실사 필드 무손상. variant:'x' → 400.
+- [e2e] 가상 풀 플로우: 가상 진입→텍스트-only→화풍 웹툰→Cody ⭐N→Loading 폴링→Result 가상 탭+화풍 라벨→자동 저장.
+- [e2e] 커버 variant: 둘 다 보유 시 선택 카드→재진입 생성 시 선택 슬롯 object_name 전송(`[Cover]` 로그 확인), 한쪽만이면 카드 생략·자동 선택, 미보유 시 스텝 미등장, "아티스트 빼고" 시 미전송, 완료 후 다음 커버에 잔존 없음(회귀).
+- [e2e] 회귀: 실사 기존 플로우(v3.76) — 사진 확약·402 문구·자동환불 안내 무변화.
+
+---
+
 ## v3.76 — 2026-08-24 — 아티스트 디렉터 MAIDOL 이식 1차
 
 - [unit] tsc 0.

@@ -7,6 +7,50 @@
 
 ---
 
+## v3.77 — 2026-08-26 — 가상화(그림) 캐릭터 모드 + 커버 variant 선택 (MAIDOL 이식 2차) & v3.76 미검증 실테스트
+
+### 요청(원문)
+"여기서 실제 앱을볼 수있는 페이지 띄울 수 있지? 비용이 들어도 테스트를 해봐야되. 테스트안해본게 있다면 해보고. 다음 작업 쭉 진행해줘"
+
+### 트랙 구성
+- **Track 1 (실테스트)**: v3.76 미검증 항목 — 테스트 계정(⭐ 실차감 허용)으로 텍스트-only 실생성 job 폴링·잔액 차감/환불 실측, 402/사전체크 분기, 사진 확약 웹 Alert 동작. 앱은 기존 Expo Web(localhost:8081) 그대로 사용.
+- **Track 2 (구현)**: 2차 후보 ① 가상화 캐릭터 모드 + ② 커버 variant 선택.
+
+### Plan verification findings (MAIDOL 원본·서버 실측 — 요점)
+- MAIDOL `MyMusicPage.jsx`: 실사/가상 2슬롯 탭, 가상 전용 state는 `v` prefix, 착장은 공통. 화풍 갤러리 = `GET /character/style-samples`(무인증 200, webtoon/anime/manga90 3종 + preview 실서빙) + 직접 업로드(**샘플↔업로드 상호 배타**). 생성 = `POST /character/generate-sheet-cartoon-async` (기존 필드 + `style_preset` XOR `style_image`) → 공용 `job/{id}` 폴링 재사용. 저장 = `POST /character/save {variant:'virtual', art_style}` (서버가 `virtual_*` 필드만 갱신, 실사 무손상). ⭐비용은 실사와 같은 `costs.character` 공용. 가상 경로는 얼굴인증 게이트 미적용.
+- **커버 variant 확정**: API에 variant 필드 없음 — `UploadPage.jsx`가 선택 슬롯의 object_name을 `POST /upload/generate-cover`의 `character_object_name`에 넣는 방식. 한쪽 슬롯만 있으면 자동 보정. (`/albums/cover/generate`는 MAIDOL도 variant 미구현 — 범위 밖)
+- **AIDOL 기존 버그 발견**: `CoverGenerationScreen.tsx`의 `includeArtist/characterObjectName`이 로컬 state인데 실제 생성은 popToTop 후 재진입 mount에서 실행 → 재진입 시 초기화되어 **`character_object_name`이 항상 미전송(아티스트 포함 선택 유실)**. v3.77에서 musicStore 영속으로 근본 해소.
+- `ArtistDetailScreen`은 캐릭터가 아니라 공개 음악 아티스트 페이지 — 2슬롯 표시는 `ArtistResultScreen`이 대상.
+
+### v3.77 범위 (백엔드 무변경)
+1. **가상화 생성 경로**: characterTaskStore에 `characterKind/stylePreset/styleImageUri/styleImageName` 추가. ArtistInput에 [가상화(그림) 캐릭터 만들기] 진입 + 화풍 갤러리 스텝(3종+직접 업로드, 상호 배타, 미선택 차단). ArtistLoading에서 cartoon-async 분기 + style 필드 첨부 + save에 `variant:'virtual', art_style`(fallback: custom/preset 키).
+2. **2슬롯 표시**: ArtistResult에 실사/가상 슬롯 탭(있는 슬롯만 활성, 화풍 라벨 배지), 가상 탭은 꾸미기 숨김(outfit 미지원 명시), 삭제 경고에 "실사·가상 모두 삭제" 명시.
+3. **커버 variant**: musicStore `coverCharacterObjectName` 영속(재진입 버그 픽스), 둘 다 보유 시 step1.5 실사/가상 선택 카드, 한쪽만이면 자동 보정, 완료/실패 시 리셋.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| stores/characterTaskStore.ts | characterKind·style 3필드 + setInput 화이트리스트·reset | — |
+| screens/ArtistInputScreen.tsx | 가상 진입 버튼·화풍 갤러리 스텝·기존캐릭터 판정 확장(`sheet ‖ virtual_sheet`) | [ArtistInput] |
+| screens/ArtistCodyScreen.tsx | sheet 프롬프트 1단계 가상 분기(화풍은 서버 처리 — 프롬프트 중복 주입 금지) | [ArtistCody] |
+| screens/ArtistLoadingScreen.tsx | cartoon-async 분기·style_preset XOR style_image·save variant/art_style | [ArtistLoading] job_id |
+| screens/ArtistResultScreen.tsx | 슬롯 탭·화풍 라벨·가상 저장 페이로드·하이드레이션 분기 | [ArtistResult] |
+| stores/musicStore.ts | coverCharacterObjectName + setter | — |
+| screens/CoverGenerationScreen.tsx | virtual 필드 확보·variant 카드·자동 보정·doGenerate store 사용(버그 픽스) | [Cover] |
+
+### 리스크·회귀 지점
+`pollCharacterJob` 무수정 원칙(공용 job 엔드포인트) · ⭐비용 키 신설 금지(costs.character 공용) · 가상+텍스트-only 조합에서 설명 0개 가드·확약 로직 유지 · 실사 save 페이로드에 variant 오염 금지 · 커버 완료/실패 시 object_name 리셋 누락 시 유령 포함 회귀 · outfit 진입 시 잔존 characterKind 무시.
+
+### 후속(이번 미포함)
+아이템 위시리스트·5단계 드릴다운(v3.78 후보) · refine UI 복원 · 얼굴인증(EAS 네이티브 빌드 필요) · MV `character_variant`.
+
+### 경과 (2026-08-26 확정)
+- Track 1 실테스트 완료(REPORT v3.77) — 실생성 PASS, 웹 Alert 버그 3건 발견 → appAlert 폴백으로 픽스.
+- Track 2(가상화 구현)는 사용자 후속 요청 "아티스트 여러 명·자산 독립 관리 검증"과의 충돌 검토를 위해 **보류** → 검증 결과 직교 확인(가상화="한 아티스트의 표현 variant"). 문구를 "내 아티스트의 가상 버전"으로 조정해 추후 진행.
+- 검증 중 발견한 ⭐15 껍데기 과금(추가 슬롯)을 이번 버전에서 차단(교체 안내로 대체). 상세 검증 결과·Phase 1/2 로드맵은 REPORT v3.77 참조.
+
+---
+
 ## v3.76 — 2026-08-24 — 아티스트 디렉터 MAIDOL 최신 기능 이식 1차(비동기·별 비용·사진확약·텍스트-only)
 
 ### 요청(원문)

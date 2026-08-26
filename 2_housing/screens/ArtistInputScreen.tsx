@@ -7,12 +7,12 @@ import {
   Image,
   ScrollView,
   ActivityIndicator,
-  Alert,
   TextInput,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
+import { showAlert } from '../utils/appAlert';
 import { usePointsStore } from '../stores/pointsStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -188,26 +188,19 @@ export default function ArtistInputScreen({ navigation }: any) {
     setChat((prev) => [...prev, { type: 'user' as const, text }]);
 
   const handlePurchaseExtraSlot = () => {
-    // v193: 추가 아티스트 슬롯 = ⭐15 차감(POST /points/spend)
-    if (__DEV__) console.info('[ArtistInput] unlock extra artist slot (15⭐)');
-    Alert.alert(
-      '추가 아티스트 만들기',
-      '⭐15를 사용해 새로운 아티스트 슬롯을 열까요?\n(현재 아티스트는 그대로 유지돼요)',
+    // 서버가 계정당 캐릭터 1명(user_id 단일 문서) 구조라 슬롯이 실제로 늘지 않음 —
+    // 다중 슬롯 백엔드 지원 전까지 ⭐15 과금 중단, "기존 아티스트 교체"로 정직하게 안내
+    if (__DEV__) console.info('[ArtistInput] 새 아티스트(교체) 진입');
+    showAlert(
+      '새 아티스트 만들기',
+      '지금은 아티스트를 한 명만 보유할 수 있어요.\n새로 만들면 기존 아티스트가 교체돼요. 계속할까요?',
       [
         { text: '취소', style: 'cancel' },
         {
-          text: '만들기 (⭐15)',
-          onPress: async () => {
-            try {
-              await api.post('/points/spend', { action: 'extra_slot' });
-              usePointsStore.getState().fetchBalance();
-              setExtraUnlocked(true);
-              pushDirector('슬롯을 열었어요! 새 아티스트의 사진을 올려주세요.');
-            } catch (err: any) {
-              const status = err?.response?.status;
-              console.error('[ArtistInput] extra_slot spend 실패', { status });
-              Alert.alert('알림', status === 402 ? '스타가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!' : '슬롯 개방에 실패했습니다. 잠시 후 다시 시도해주세요.');
-            }
+          text: '교체하고 만들기',
+          onPress: () => {
+            setExtraUnlocked(true);
+            pushDirector('좋아요! 새 아티스트의 사진을 올리거나, 사진 없이 시작해주세요. (완성하면 기존 아티스트와 교체돼요)');
           },
         },
       ]
@@ -230,7 +223,7 @@ export default function ArtistInputScreen({ navigation }: any) {
       if (!res.canceled && res.assets && res.assets[0]) {
         const file = res.assets[0];
         // v3.76: 사진 확약 — 본인/동의 확인 + 보관·비학습 고지. 미확인 시 진행 불가.
-        Alert.alert(
+        showAlert(
           '사진 확인',
           '이 사진은 본인이거나, 사진 속 인물의 동의를 받았음을 확인해주세요.\n\n사진은 캐릭터 생성에만 사용되며 AI 학습에 쓰이지 않아요.',
           [
@@ -250,7 +243,7 @@ export default function ArtistInputScreen({ navigation }: any) {
         );
       }
     } catch {
-      Alert.alert('오류', '사진을 선택하지 못했어요.');
+      showAlert('오류', '사진을 선택하지 못했어요.');
     }
   };
 
@@ -301,7 +294,7 @@ export default function ArtistInputScreen({ navigation }: any) {
     const userInput = buildFinalText(answers);
     // v3.76: 텍스트-only 경로(사진 없음)에서는 설명이 최소 하나는 필요
     if (!photoUri && !userInput.trim()) {
-      Alert.alert('알림', '사진이 없으면 설명이 필요해요. 질문에 하나 이상 답해주세요.');
+      showAlert('알림', '사진이 없으면 설명이 필요해요. 질문에 하나 이상 답해주세요.');
       startQuestioning();
       return;
     }
@@ -356,7 +349,7 @@ export default function ArtistInputScreen({ navigation }: any) {
 
   const renderInputArea = () => {
     if (step === 'welcome') {
-      // 이미 아티스트가 있고 추가 슬롯 결제 안 했으면 차단
+      // 이미 아티스트가 있으면 교체 확인 게이트 (다중 슬롯은 백엔드 지원 후)
       if (myCharacter && !extraUnlocked) {
         return (
           <View style={styles.inputArea}>
@@ -364,7 +357,7 @@ export default function ArtistInputScreen({ navigation }: any) {
               <AppText style={styles.lockNoticeIcon}>🔒</AppText>
               <AppText style={styles.lockNoticeTitle}>이미 아티스트가 있어요</AppText>
               <AppText style={styles.lockNoticeDesc}>
-                새로운 아티스트를 추가로 만들 수 있어요.
+                새로 만들면 기존 아티스트가 교체돼요.
               </AppText>
             </View>
             <TouchableOpacity
@@ -372,7 +365,7 @@ export default function ArtistInputScreen({ navigation }: any) {
               onPress={handlePurchaseExtraSlot}
             >
               <AppText style={styles.primaryBtnText}>
-                추가 아티스트 만들기
+                새 아티스트 만들기
               </AppText>
             </TouchableOpacity>
           </View>

@@ -7,10 +7,10 @@ import {
   Animated,
   Easing,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import { AppText } from '../components/ui';
+import { showAlert } from '../utils/appAlert';
 // expo-file-system v19+ : 신 API에서는 cacheDirectory/downloadAsync가 빠짐 → legacy 사용
 import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -182,6 +182,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             timeout: 120000,
           });
           if (cancelled) return;
+          usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
           const job = await pollCharacterJob(startRes.data?.job_id, () => cancelled);
           if (cancelled) return;
           const res = { data: job } as any;
@@ -274,6 +275,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             timeout: 120000,
           });
           if (cancelled) return;
+          usePointsStore.getState().fetchBalance(); // 접수 즉시 서버가 ⭐ 차감 → 로딩 중에도 배지 반영
           const job = await pollCharacterJob(startRes.data?.job_id, () => cancelled);
           if (cancelled) return;
           const res = { data: job } as any;
@@ -370,7 +372,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
         taskStore.failApi(msg);
         navigation.goBack();
         setTimeout(() => {
-          Alert.alert('오류', msg);
+          showAlert('오류', msg);
         }, 100);
       }
     };

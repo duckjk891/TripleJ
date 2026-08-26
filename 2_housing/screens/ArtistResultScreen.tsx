@@ -6,7 +6,6 @@ import {
   Text,
   Image,
   TouchableOpacity,
-  Alert,
   ScrollView,
   ActivityIndicator,
   Modal,
@@ -17,6 +16,7 @@ import {
   Linking,
 } from 'react-native';
 import { AppText } from '../components/ui';
+import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -151,7 +151,7 @@ export default function ArtistResultScreen({ navigation }: any) {
       await api.post('/character/save', {
         sheet_object_name: apiResult.object_name,
       });
-      Alert.alert('저장 완료', '아티스트 캐릭터를 저장했어요.', [
+      showAlert('저장 완료', '아티스트 캐릭터를 저장했어요.', [
         {
           text: '확인',
           onPress: () => {
@@ -165,7 +165,7 @@ export default function ArtistResultScreen({ navigation }: any) {
         },
       ]);
     } catch (err: any) {
-      Alert.alert('오류', err.response?.data?.error || '저장에 실패했습니다.');
+      showAlert('오류', err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
       setSaving(false);
     }
@@ -289,7 +289,7 @@ export default function ArtistResultScreen({ navigation }: any) {
                     <TouchableOpacity
                       style={styles.outfitLinkBtn}
                       onPress={() => Linking.openURL(it.productUrl!).catch(() => {
-                        Alert.alert('링크 열기 실패', '브라우저로 열 수 없는 링크예요.');
+                        showAlert('링크 열기 실패', '브라우저로 열 수 없는 링크예요.');
                       })}
                     >
                       <AppText style={styles.outfitLinkBtnText}>🛒 보러가기</AppText>
