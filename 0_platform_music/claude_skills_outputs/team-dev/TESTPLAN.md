@@ -10524,3 +10524,283 @@ v205 §4 동일(ID/태그/실행위치/명령/기대/실제/PASS·FAIL·SKIP·BL
   ④ T12 픽스처 ⑤ lyrics 부재 트랙 추가 + T13(c) 가사 없는 곡 허용 UX 판정 신설(D8 소급 한계)
   ⑤ T18(c) 임시저장 탭 라벨은 현행 '임시저장' 기준. 시나리오 총수·태그 분포 불변(18건 —
   케이스 분리는 T06 내부 확장).
+
+## v210 — 이월 별건 2건: 업로드 산출물 저장 누락 + MV 소스 가드·좀비 job 정리 검증 (2026-08-27 01:11)
+
+### 0. 전제·공통 절차
+
+- **대상**: PLAN.md v210(:30395~). 백엔드 — /tracks/upload `cover_object_name` Form 신설+검증
+  헬퍼(`_validate_cover_object_name_for_create`)+분기 A(:1736) 동일 검증(D1·D2), mv create 소스
+  부재 400 가드(D4), `scripts/mv_cleanup_report.py` read-only 신설(D5). 프론트 —
+  MVProductionSection saveDraftInternal create body에 audio_generation_id(F1) + handleCreateScenes
+  사전 가드(F2). UploadPage 무변경(분기 B :425 배선 기존 실측 — 회귀 판정만).
+- **서버·계정·원복**: v209 확정판 §0 전면 승계 — 9006 단독+프론트 4000, 9004/9005 접촉 금지,
+  재기동은 PID kill→setsid ./run.sh. 계정 `TEST_ACCOUNT_EMAIL`(A)·`TEST_ACCOUNT_EMAIL_B`(B)
+  일회용 가입→탈퇴. 생성 데이터(트랙·draft·job·mongo 직삽 픽스처)는 시나리오 말미 **명시적
+  삭제**(cascade 비의존, 삽입·삭제 id 기록).
+- **유료 0 — v209 확정판 3계층 승계 + 이번 사이클 특례·명문화**:
+  1. **인터셉트(서버 미도달)**: 작사·작곡 시작 2계열·커버 생성/refine·MV 이미지/영상/씬/합치기·
+     Suno·Wondera — e2e 전면 `page.route()`.
+     **[신규 명문화 — v209 인시던트 1 후속]** `**/translate-tags**`(서버 경유 외부 LLM 실과금)를
+     **e2e 공통 인터셉트 목록에 정식 편입** — 모든 e2e 시나리오는 라우트 등록 단계에서
+     translate-tags 를 기본 abort 로 깐다(누락 = 세팅 불량으로 즉시 중단). 아울러 e2e 착수 전
+     **부수 외부 호출 전수 grep**(frontend/src/api/index.js 에서 서버 경유 외부 API 함수 목록
+     재확인)으로 차단 목록 폐쇄를 1회 확인하고 결과를 기록한다.
+  2. **실패 경로 실호출**: 무효/타인/부재 입력으로 400/403/404 종료(v209 확정 코드 체계 승계).
+     **mv create 는 400 케이스만 실호출** — 2xx 는 :662 run_phase1_and_phase2 무조건 발동(외부
+     유료 파이프라인)이므로 절대 금지. 만에 하나 2xx 수신 시 즉시 해당 job
+     `DELETE /mv/jobs/{id}` 후 ABORT 보고.
+  3. **무과금 실호출 허용**: v209 목록(draft CRUD·GET 계열·costs) +
+     **[이번 특례] `POST /tracks/upload`·`POST /tracks/upload-from-generation` 은 외부 유료 API 를
+     호출하지 않는 내부 경로(서버+MinIO)로 실측 확인** → 테스트 계정 + 실호출 + **생성 트랙 즉시
+     DELETE 원복** 으로 성공 경로 검증 허용(MinIO 에는 테스트 파일만 올리고 함께 정리). 발매보상
+     ⭐+5 등 잔액 **증가**는 기록만(계정 탈퇴로 소멸) — 잔액 **감소** 감지는 즉시 ABORT.
+- **mongo 직삽 픽스처 관행**(v209 T05(c) 확정 방식 승계): cover_sessions 픽스처(계정 소유
+  세션+cover_object_name/refine_history)·completed generation 픽스처 — 직삽 → 사용 → **즉시
+  삭제**, 삽입 id 전수 기록. 실사용자 문서 무접촉(테스트 계정 user_id 소유 문서만 생성).
+- **read-only 서약 대상**: `aimu.mv_jobs`·MinIO `music-platform-images/mv/` — 이번 사이클 어떤
+  시나리오도 이 두 저장소에 **쓰기 0**(C1 이 전후 무변조를 계측으로 증명). 좀비 실삭제는 ▲차기
+  승인 항목 — 수행 금지.
+- **금지 목록**: v209 §0 승계 + translate-tags(상기) + mv create 2xx. 실 .env 무접촉, 시크릿·실이메일
+  산출물 금지(U 계열 로그 판정 시 cover_object_name 값이 로그 본문에 미출력임을 함께 확인).
+- **단계 게이트**: 단계0(backend B1-B3) 완료 후 = U1-U4·M1·C1·R3 / 단계1(frontend F1-F3) 완료 후 =
+  M2·M3·R1·R2·R4.
+
+### 1. 시나리오
+
+#### U1 `[api]` /tracks/upload cover_object_name — 본인 세션 산출물 통과·저장
+
+- **Given**: 계정 A 토큰. mongo `cover_sessions` 직삽 픽스처 2건(스키마는 실 문서 실측) —
+  (i) user_id=A·`cover_object_name: "covers/v210test-<난수>.png"`,
+  (ii) user_id=A·해당 값이 `cover_refine_history[].object_name` 에만 있는 케이스(헬퍼의 두 일치
+  분기 각각 검증). **cover 픽스처 값은 MinIO 비실존 이름 유지**(planner 확정 — 트랙 DELETE 가
+  purge_track_document 로 커버 오브젝트까지 best-effort 삭제하므로 실존 오브젝트를 가리키면 오삭제
+  위험; 서버 검증은 세션 대조뿐이라 실존 불요). 소형 테스트 오디오 파일(스크래치).
+- **When**: `POST /tracks/upload` FormData = file+필수 메타+`cover_object_name`=(i) → 1회,
+  (ii) 값으로 → 1회.
+- **Then**: 각 2xx + 트랙 doc 의 `cover_image_url` == 전송 값(GET /tracks/my 또는 mongo 조회로
+  확인 — v210 이전엔 서버 드롭으로 None 이던 것이 저장됨 = 수정 본체 증명). 9006 로그
+  `[tracks] upload cover accepted src=session`. 검증이 **MinIO put 이전** 수행(D1)은 U2 에서 판정.
+- **정리**: 생성 트랙 2건 `DELETE /tracks/{id}`(= purge_track_document — doc+오디오+커버 오브젝트
+  best-effort 일괄, planner Q1 확정) → GET 재조회 부재 + MinIO 오디오 오브젝트 소멸 = **자동 정리
+  확인**(수동 삭제 불요, 잔존 발견 시에만 기록·수동 삭제) → cover_sessions 픽스처 2건 삭제.
+- **유료 0 근거**: §0 특례 — 외부 유료 API 미호출 내부 경로 실측. ⭐잔액 증감 기록(감소 시 ABORT).
+- **실행가능**: 단계0.
+
+#### U2 `[api]` cover_object_name 거부 4종 — 400 + 트랙 미생성 + MinIO 미생성
+
+- **Given**: 계정 A 토큰 + 계정 B 소유 cover_sessions 직삽 픽스처 1건(타인 세션용). 착수 전
+  기준선: A 의 트랙 수(GET /tracks/my)·업로드 대상 MinIO 버킷/prefix 오브젝트 수(read-only 계측).
+- **When**: /tracks/upload 를 4회, cover_object_name 만 바꿔 —
+  (a) `faces/anything.png` (b) `covers/../evidence/x.png`(`..` 경유) (c) `http://evil/x.png`
+  (d) B 소유 세션의 object_name(타인 세션).
+- **Then**: 4건 전부 **400** + 응답에 커버 검증 실패 취지 메시지. 전후 대조 — A 트랙 수 불변·MinIO
+  오브젝트 수 불변(**검증이 MinIO put 이전임을 계측으로 증명** — D1). 9006 로그
+  `[tracks] upload cover rejected user=... reason=...` 존재 + **로그 본문에 거부된 값 미출력**
+  (§0 시크릿 관행). 보너스(기록만): `evidence/x.png` 직접 값도 400.
+- **정리**: B 픽스처 삭제. (트랙 미생성이므로 삭제 대상 없음 — 그 자체가 판정.)
+- **유료 0 근거**: 전건 400 종료 — MinIO 쓰기·외부 호출 0.
+- **실행가능**: 단계0.
+
+#### U3 `[api]` cover 미전송 분기 B — 기존 동작 불변(None 저장)
+
+- **Given**: 계정 A 토큰, 테스트 오디오.
+- **When**: cover_object_name **필드 자체를 미전송**으로 /tracks/upload.
+- **Then**: 2xx + `cover_image_url` **None**(기존 동일 — 미전송은 400 아님, D1·D2 계약) + lyrics 등
+  v209 봉합 필드(:1482) 정상 저장. imageFile 직접 커버의 **사후 업로드 경로**(UploadPage :434-440)
+  는 프론트 영역 → R1(B) 에서 교차 판정.
+- **정리**: 트랙 `DELETE /tracks/{id}`(purge 일괄 — 자동 정리 확인).
+- **유료 0 근거**: §0 특례 경로.
+- **실행가능**: 단계0.
+
+#### U4 `[api]` 분기 A(upload-from-generation) 검증 적용 — 통과/400/미전송
+
+- **Given**: 계정 A. mongo 직삽 픽스처 — completed generation(user_id=A·status:"completed"·
+  result_audio_url 은 tester 가 MinIO 테스트 경로에 올린 소형 오디오 오브젝트를 가리키게 구성,
+  실 스키마 실측) + U1 의 cover_sessions 픽스처 재사용.
+- **When**: `POST /tracks/upload-from-generation` 3회 —
+  (a) cover_object_name = 본인 세션 산출물 (b) cover_object_name = 임의 문자열
+  `"not-a-session-object.png"` (c) cover_object_name 미전송.
+- **Then**: (a) 2xx + cover_image_url == 전송 값(무검증 저장 :1736 → 검증 후 저장으로 교정 증명).
+  (b) **400** + 트랙 미생성(v207 계열 구멍 봉합 — D2). (c) 2xx + None(하위호환 — D2 계약).
+  발매보상 ⭐+5·result_track_id 역기록 등 기존 부수효과는 기록만.
+- **정리**: 생성 트랙(a)(c) `DELETE /tracks/{id}`(purge 일괄 — 자동 정리 확인; (a)의 cover 값은
+  비실존 이름이라 purge 의 best-effort 커버 삭제 무해) → generation 픽스처·MinIO 테스트 오디오·
+  세션 픽스처 삭제.
+- **유료 0 근거**: 내부 복사 경로(외부 API 0 — backend-dev B1 산출 교차 확인), (b)는 400 종료.
+- **실행가능**: 단계0.
+
+#### M1 `[api]` mv create 소스 부재 400 — job 미생성·파이프라인 미발동
+
+- **Given**: 계정 A 토큰. body = title+image_model+cover_object_name = **임의 비공백 문자열**
+  (planner Q3 확정 — create 의 cover 체크(:404)는 truthiness 만). 착수 전 `aimu.mv_jobs` count
+  기록(read-only).
+- **When**: `POST /mv/create` 에 audio_generation_id·track_id **둘 다 미전송/null** 로 호출
+  (2케이스: 필드 생략 / 명시적 null).
+- **Then**: **400** + 메시지 "곡 소스가 필요합니다…"(D4 문구) + `[CreateMV] rejected no-source`
+  로그. **mv_jobs count 전후 불변**(job 미생성) + 9006 로그에 phase0/phase1/phase2 시작 흔적
+  0건(run_phase1_and_phase2 미발동 — 가드가 mongo 접근 전·:662 이전임의 계측 증명). 대조군:
+  기존 소스 있는 경로는 R2 인터셉트 body 로만 확인(2xx 실호출 금지).
+- **유료 0 근거**: 400 종료 — 파이프라인(외부 LLM·이미지 API) 미진입, mv_jobs 쓰기 0. 2xx 수신 시
+  §0 절차(즉시 job DELETE + ABORT).
+- **실행가능**: 단계0.
+
+#### M2 `[e2e]` saveDraftInternal — generation 소스 임시저장 create body 에 audio_generation_id
+
+- **Given**: Playwright 계정 A, MV촬영실. 공통 차단망(§0 — translate-tags 포함) + getGenerations
+  인터셉트 fulfill 로 completed·미발매 픽스처(커버는 커버 스텝 통과 가능하게 구성 — v209 T12/T13
+  방식), `**/mv/create**` 인터셉트(캡처 후 가짜 fulfill 또는 abort), saveMVDraft 계열 인터셉트(캡처).
+- **When**: generation 소스 곡 선택 → 커버 확인 스텝 통과 → **임시저장** 실행.
+- **Then**: 캡처된 create body 에 **`audio_generation_id` == 픽스처 generation id**(F1 수정 증명 —
+  v210 이전엔 누락·사후 부착), track_id 는 null/부재. DEV 로그
+  `[MVStudio] create body {has_gen:true, has_track:false}`. saveMVDraft 캡처와 소스 필드 정합.
+- **유료 0 근거**: mv 계열 전면 인터셉트 — 서버 미도달. translate-tags abort 등록 확인을 선행
+  체크리스트로 기록(v209 인시던트 재발 방지).
+- **실행가능**: 단계1.
+
+#### M3 `[e2e]` handleCreateScenes 소스 없는 draft 복원 — 클라 alert·서버 미도달
+
+- **Given**: `**/mv/jobs**` 목록·상세 인터셉트 fulfill — **sourceless job 픽스처**(audio_generation_id·
+  track_id 둘 다 null, draft/초기 status — 0-2 의 이론 경로 재현). `**/mv/create**`·씬 생성 계열
+  인터셉트(요청 감시용), dialog 핸들러 등록.
+- **When**: 임시저장 목록에서 해당 job 불러오기 → 씬 생성 시도.
+- **Then** (planner 조정 반영 — 판정 우선순위):
+  - **1순위**: 씬 생성 버튼 **disabled** + create/씬 요청 **네트워크 발생 0건**(클라 사전 가드가
+    서버 400 백스톱 이전에 차단 — F2 증명).
+  - **2순위**(disabled 를 우회해 핸들러를 실행시킬 수 있는 경우에만): alert 캡처 — **실구현 문구
+    "곡 소스가 연결되어 있지 않습니다. 작곡실 완성곡 또는 내 트랙을 선택한 뒤 씬을 생성해주세요."**
+    기준 판정. 우회 불가하면 핸들러 내 가드는 **정적 diff 판정으로 대체**(코드에 가드+해당 문구
+    존재 확인 — SKIP 아님).
+  - 다른 곡 선택으로 소스 연결 시 가드 해제(버튼 활성·진행 가능 상태 전환)도 확인.
+- **유료 0 근거**: 요청 자체 미발생 + 전면 인터셉트 이중망.
+- **실행가능**: 단계1.
+
+#### C1 `[unit]` mv_cleanup_report.py — read-only 증명 + 실측 정합
+
+- **Given**: backend_9006 venv. 실행 전 기준선(스크립트와 **독립된 도구**로 계측, read-only):
+  ① mongo `aimu.mv_jobs` 총 count·status별 count ② MinIO `music-platform-images/mv/` object
+  count·총 용량 ③ 대표 job doc 3건의 updated_at 스냅샷. **정적 선행 검사**: 스크립트 소스 grep —
+  delete/remove/drop/put/upload 계열 쓰기 호출 0건(read-only 코드 증명), 접속정보가 기존 settings
+  경유이며 stdout 에 시크릿 미출력.
+- **When**: `python scripts/mv_cleanup_report.py` 실행(2회 — 출력 안정성 확인).
+- **Then**:
+  - (a) **정합**: 출력 표의 총계가 독립 계측치와 일치 — 기준(PLAN 실측): 67 jobs / 8.5GiB·1,413
+    objects / status 분포(images_ready 33·failed 13·videos_ready 8·completed 6·paused 5·
+    video_ready 2) / **후보 59건 ≈3.1GiB**(failed 13 + paused 5 + stale images_ready·videos_ready
+    41) / 고아 prefix 0. 판정 본질은 "스크립트 값 == 실행 시점 독립 재계측 값"(그 사이 DB 변동
+    시 절대치가 아닌 상호 일치로 판정) — completed 3.78GiB·video_ready final·thumbnails/generated
+    이 후보에서 **제외**돼 있는지 명시 확인.
+  - (b) **무변조**: 실행 후 ①②③ 재계측 — 전부 실행 전과 동일(count·용량·updated_at 불변).
+  - (c) 출력에 시크릿·접속정보 미포함(id 전체 출력은 허용 — dev 데이터).
+- **유료 0 근거**: read-only 스크립트 + read-only 계측 — 외부 API·쓰기 0.
+- **실행가능**: 단계0.
+
+#### R1 `[e2e]` v209 업로드 분기 A/B 회귀 + 분기 B cover 배선 실증 (v209 T16 방식)
+
+- **Given**: 공통 차단망 + `**/upload-from-generation**`·`**/tracks/upload**` 인터셉트(캡처 후
+  종료 — 서버 미도달), `**/generate-cover**` 인터셉트 가짜 세션 fulfill(v209 T15 방식,
+  cover_session_id `v210test-e2e-session`).
+- **When**: (A) fromGeneration 프리필 상태에서 제출. (B-1) 파일 업로드 + AI 커버 상태(가짜 세션)
+  에서 제출. (B-2) 파일 업로드 + imageFile 직접 커버 첨부 제출.
+- **Then**: (A) 캡처 body 에 generation_id·variant_index + cover_object_name(세션 값) — v209 캡처
+  대비 **cover 관련 추가분 외 diff 0**. (B-1) FormData 에 `cover_object_name` 포함(:425 배선 —
+  U1 서버 수신과 합쳐 end-to-end 봉합 완성 증명). (B-2) FormData 에 cover_object_name 부재 +
+  제출 후 직접커버 사후 업로드 요청 순서(v209 T16(B) 동일 — U3 교차). 세 경우 모두 mv_object_name
+  부재(D3 — 파라미터 미신설 확인).
+- **유료 0 근거**: 제출·커버 전면 인터셉트 — 서버 미도달.
+- **실행가능**: 단계1.
+
+#### R2 `[e2e]` MV촬영실 임시저장 왕복 — track/generation 양 소스 관통 (v209 T14/T17 방식)
+
+- **Given**: 공통 차단망. tracks/my·getGenerations 인터셉트 픽스처(track 소스 1·generation 소스
+  1 — M2 픽스처 재사용), `**/mv/create**`·saveMVDraft·`**/mv/jobs**` 목록/상세 인터셉트. 착수 전
+  `aimu.mv_jobs` count 기록.
+- **When**: ① track 소스 곡 선택 → 임시저장 → create·saveMVDraft 캡처 → 캡처 내용으로 job 픽스처
+  구성해 목록/상세 인터셉트에 주입 → 불러오기 복원. ② generation 소스 동일 왕복(M2 연계).
+- **Then**: ① create body `track_id` 실림(`{has_gen:false, has_track:true}` 로그) → 복원 후 소스
+  유지(씬 생성 시도 시 M3 의 사전 가드 **미발동** = 소스 관통 증명, 요청은 인터셉트 캡처로 확인
+  후 종료). ② audio_generation_id 동일 왕복. 종료 후 **mv_jobs count 불변**(성공 경로 금지 유지
+  — 왕복은 전부 인터셉트 픽스처, 실 job 부수 생성 0 을 mongo 로 판정).
+- **유료 0 근거**: mv 계열 전면 인터셉트 — 서버 미도달·mongo 쓰기 0.
+- **실행가능**: 단계1.
+
+#### R3 `[unit]+[api]` v207 커버 검증(update_track)·헬퍼 추출 회귀 + v208 접점 정적
+
+- **Given**: 단계0 커밋 diff.
+- **When/Then**:
+  - [unit] 정적: tracks.py 에서 `_validate_cover_image_url`(:543-601 상당)의 **기존 가드 판정표
+    무변**(revert/file/session 허용 3분기·faces/·evidence/·`..`·http 차단) — 헬퍼
+    `_validate_cover_object_name_for_create` 추출이 update_track 경로 로직을 변경하지 않음(diff
+    목검: 신설 헬퍼는 session 소유 분기만 재사용). :1537 데드 필드는 제거 아닌 **유지+주석**(D3).
+    upload.py(refine 경로) 는 diff 무변경 확인(v208 접점 — 변경 발견 시에만 v209 T15(b) 인터셉트
+    재실행, 기본 정적으로 종결).
+  - [api] 실호출: U1 이 만든 본인 트랙(삭제 전 재사용)에 update_track 으로 (a) `faces/x.png` →
+    **400**(v207 가드 생존) (b) 정상 세션 값 → 2xx(기존 허용 경로 생존). 완료 후 U1 정리 절차
+    진행.
+- **유료 0 근거**: 정적 + 무과금 수정 경로 실호출(400/내부 저장만).
+- **실행가능**: 단계0 ([api] 는 U1 과 연계 실행).
+
+#### R4 `[e2e]` v208 refine 회귀 (조건부 아님 — 지정 회귀)
+
+- **Given**: R1 세션 연속. `**/generate-cover**` 가짜 세션 fulfill 상태, `**/refine-cover**`
+  인터셉트(캡처).
+- **When**: refine 실행.
+- **Then**: 캡처 body 에 `refine_prompt` 키 존재 + 문자 인덱스 키 부재 + status 로그 콘솔 확인
+  (v209 T15(b)(d) 동일 판정).
+- **유료 0 근거**: 전면 인터셉트 — 서버 미도달.
+- **실행가능**: 단계1.
+
+### 2. 실행 순서·단계 게이트·중단 기준
+
+| 게이트 | 실행 순서 | 비고 |
+|---|---|---|
+| 단계0 완료(backend B1-B3) | R3[unit] → C1 → U2 → U3 → U1 → R3[api] → U4 → M1 | C1 을 U 계열보다 먼저(기준선 오염 방지 — U 계열은 mv_jobs·mv/ prefix 무접촉이지만 보수적으로 선행). U1 트랙은 R3[api] 재사용 후 정리 |
+| 단계1 완료(frontend F1-F3) | M2 → M3 → R2 → R1 → R4 | 브라우저 1세션 — 시작 시 공통 차단망(translate-tags 포함) 등록을 체크리스트 1번으로 기록 |
+
+- **원복**: U 계열 트랙·mongo 픽스처(cover_sessions·generation)·MinIO 테스트 오브젝트 즉시 삭제,
+  최종 계정 A·B 탈퇴. mv_jobs·`mv/` prefix 는 전 과정 쓰기 0(C1·M1·R2 의 count 대조가 증빙).
+- **ABORT 기준**(v209 승계 + 추가): ① 금지 엔드포인트 실서버 도달 흔적 — **translate-tags 실서버
+  요청 1건이라도 발견 시 즉시 중단**(v209 인시던트 재발 = 세팅 불량) ② mv create 2xx 수신 → 즉시
+  해당 job DELETE 후 중단 보고 ③ ⭐잔액 감소 ④ C1 전후 계측 불일치(read-only 위반 징후) ⑤ 실패
+  경로에서 기대 외 2xx.
+
+### 3. 판정 기록 양식
+
+v205 §4 동일(ID/태그/실행위치/명령/기대/실제/PASS·FAIL·SKIP·BLOCKED).
+- 캡처 body 원문 첨부: M2(create)·R1(제출 3종)·R2(왕복 2종)·R4(refine).
+- 계측 대조표 첨부: C1(전/후 mongo·MinIO·스크립트 출력 3자 대조), M1·R2(mv_jobs count), U2(트랙
+  수·MinIO 오브젝트 수).
+- 원복 증빙: 픽스처 삽입/삭제 id 목록, 트랙 DELETE 응답, 계정 A·B 탈퇴 확인.
+- 마스킹: 타인/실사용자 식별자 및 cover_object_name 로그 미출력 확인 결과 기재. 시크릿·실이메일 0.
+
+### 4. planner/tester 확인 필요 (2026-08-27 01:18 planner 회신으로 전항 해소)
+
+- **Q1 [해소]**: 트랙 삭제 = `DELETE /tracks/{id}` → **purge_track_document 일괄**(doc+오디오+커버
+  오브젝트 best-effort). U1/U3/U4 정리는 "자동 정리 확인" 절차로 반영(본문).
+- **Q2 [해소]**: 픽스처 계약 스키마 확정 — cover_sessions `{user_id, cover_object_name}` 또는
+  `cover_refine_history: [{object_name}]` / generation 은 **completed + 실존 result_audio_url**
+  (U4 — MinIO 테스트 오디오를 가리키게 구성).
+- **Q3 [해소]**: mv create 의 cover_object_name 체크는 **truthiness 만** → M1 은 임의 비공백
+  문자열 사용(본문 반영).
+- **Q4 [해소]**: C1 MinIO 독립 계측 = **docker exec mc du**(자격증명은 컨테이너 env 참조, 출력에
+  시크릿 0) — 사용 명령을 판정 기록에 남길 것.
+
+### 개정 이력 (v210)
+
+- 2026-08-27 초판 12건: **[api] 5(U1-U4·M1) / [unit] 2(C1·R3 — R3 는 [api] 겸) / [e2e] 5(M2·M3·
+  R1·R2·R4)** — PLAN §4 신규 U1-U4/M1-M3/C1 + 회귀 3군(R1-R3) + v208 refine 지정 회귀(R4) 전수
+  매핑. 급소 = ①cover_object_name 서버 수신+검증 4종(U1-U3)과 분기 A 봉합(U4) ②mv create 소스
+  가드 3면(서버 400 M1·body 봉합 M2·클라 가드 M3) ③cleanup read-only 증명(C1 3자 대조).
+  유료 0 = v209 확정판 승계 + **translate-tags 공통 인터셉트 §0 정식 명문화(v209 인시던트 1
+  후속, 미등록 시 즉시 ABORT)** + tracks/upload 계열 내부 경로 특례(실호출+즉시 삭제 원복) +
+  mv create 400 케이스만 실호출(2xx 절대 금지·수신 시 즉시 DELETE+ABORT). 단계 게이트: 단계0
+  후 8건(R3[unit]·C1·U1-U4·R3[api]·M1) / 단계1 후 5건(M2·M3·R2·R1·R4). mv_jobs·MinIO mv/ 는
+  전 과정 쓰기 0(read-only 서약 — 좀비 실삭제는 ▲차기 승인 항목).
+- 2026-08-27 01:18 **확정판(planner 승인 + 조정 3건 — tester 실행 기준 정합)**:
+  ① M3 판정 재편 — 1순위 버튼 disabled+네트워크 0건, 2순위(우회 가능 시) alert 실구현 문구
+  "곡 소스가 연결되어 있지 않습니다. 작곡실 완성곡 또는 내 트랙을 선택한 뒤 씬을 생성해주세요."
+  기준, 우회 불가 시 핸들러 가드 정적 diff 대체(SKIP 아님) ② U계열 — DELETE /tracks/{id} =
+  purge_track_document 일괄(자동 정리 확인), cover 픽스처 값은 MinIO 비실존 이름 유지 명기(purge
+  best-effort 커버 삭제로 인한 오삭제 방지) ③ §4 Q1-Q4 전항 해소(purge 일괄 / 픽스처 계약 스키마 /
+  mv create cover truthiness — M1 임의 비공백 문자열 / docker exec mc du 계측). 시나리오 수·태그
+  분포 불변(12건).

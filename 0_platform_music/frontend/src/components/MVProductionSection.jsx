@@ -382,6 +382,12 @@ const MVProductionSection = forwardRef(function MVProductionSection({
       alert('곡 제목을 입력해주세요.');
       return;
     }
+    // v210 F2: 곡 소스(generation/track) 부재 시 호출 전 차단 — 서버 400(B2) 사후 의존 금지.
+    // draft 복원 곡이 양 소스 null 인 이론 경로도 여기서 함께 막힌다 (버튼 게이트와 이중 방어).
+    if (!fromGeneration && !trackId) {
+      alert('곡 소스가 연결되어 있지 않습니다. 작곡실 완성곡 또는 내 트랙을 선택한 뒤 씬을 생성해주세요.');
+      return;
+    }
     setMvStep(1);
     setMvProgressPct(0);
     try {
@@ -1115,12 +1121,16 @@ const MVProductionSection = forwardRef(function MVProductionSection({
       let currentJobId = mvJobId;
       if (!currentJobId) {
         // Create a job first if none exists
+        if (import.meta.env?.DEV) console.info('[MVStudio] create body', { has_gen: !!fromGeneration, has_track: !!trackId });
         const { data } = await api.createMVJob({
           title: title.trim() || '제목 없음',
           genre: genre || null,
           mood: mood || null,
           lyrics: lyrics.trim() || null,
           cover_object_name: aiCoverObjectName || null,
+          // v210 F1: generation 소스도 create body 에 직접 부착 — 종전엔 사후 saveMVDraft 로만
+          // 부착해 소스 없는 create 가 발생했고, 서버의 소스 부재 400 가드(B2)와 충돌한다.
+          audio_generation_id: fromGeneration || null,
           // v209 픽스: track 소스 컨텍스트를 임시저장 job 생성 경로에도 보존 —
           // 누락 시 불러오기 후 씬 생성/merge-audio 에서 곡 연결이 유실된다 (tester 실증).
           track_id: trackId || null,
@@ -1642,10 +1652,14 @@ const MVProductionSection = forwardRef(function MVProductionSection({
                         type="button"
                         className="upload-mv-ai-btn"
                         onClick={handleCreateScenes}
-                        disabled={!aiCoverObjectName || scenarioModels.length === 0 || promptModels.length === 0}
+                        disabled={(!fromGeneration && !trackId) || !aiCoverObjectName || scenarioModels.length === 0 || promptModels.length === 0}
                       >
                         씬 생성하기
                       </button>
+                      {/* v210 F2: 곡 소스 부재 가드 — 커버 게이트와 동일 패턴 (버튼 비활성 + 힌트) */}
+                      {!fromGeneration && !trackId && (
+                        <div className="upload-mv-hint">곡 소스가 연결되지 않았습니다 — 작곡실 완성곡 또는 내 트랙을 선택해주세요</div>
+                      )}
                       {!aiCoverObjectName && (
                         <div className="upload-mv-hint">커버 이미지를 먼저 생성해주세요</div>
                       )}

@@ -30391,3 +30391,117 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
 - 인시던트: T10 1차 translate-tags 실서버 도달→OpenAI 실호출 3건(유료 0 위반, 즉시 차단·이후 0건). TESTPLAN §0에 translate-tags 명문화 + api/index.js 부수 외부 호출 전수 grep으로 차단 목록 닫기 지시. REPORT 기록.
 - duet: backend create 대칭 저장 완료 → 3단계에 handleResumeDraft duet 복원(doc.duet ?? false) 포함(§10 "미복원 승계"의 전제 변경으로 갱신).
 - 3단계 지시 범위 확정: MV촬영실 신설+UploadPage MV 제거+편차 2건+duet 복원+임시저장 리타겟+가사 없는 곡 허용 UX(D8)+커버 object name 직전달(§7).
+
+## v210 — 이월 별건 2건: 업로드 산출물 저장 누락 + MV 소스 가드·좀비 job 정리 (2026-08-27 01:07)
+
+### 0. Plan verification findings (파일:라인·DB 실측)
+
+**0-1. 과제1 — /tracks/upload 저장 누락 (현재 코드 재실측)**
+- `tracks.py:1394-1409` Form 파라미터 전수: file/title/genre/mood/tags/categories/ai_model/prompt/bpm/key/language/lyrics/is_public — **cover_object_name·mv_object_name 없음**. lyrics는 v209 봉합 확인(:1482), doc.cover_image_url은 None 고정(:1484)
+- **프론트 분기 B는 지금도 보냄**: UploadPage.jsx(1119줄) :425 `if (aiCoverObjectName) formData.append('cover_object_name', ...)` → 서버 드롭 실증. 즉 "AI 커버(⭐5) 생성 → 파일 업로드 제출" 시 커버 유실이 현행 버그. **배선 복구 불요 — 서버 파라미터 추가만 필요**
+- 분기 A(upload-from-generation): :401 cover_object_name 전달, 서버 :1736 `"cover_image_url": body.cover_object_name` **무검증 저장** — v207이 update_track에서 막은 구멍(임의 문자열→faces/·타인 오브젝트 노출)과 동일 계열이 생성 경로에 열려 있음
+- **mv_object_name 현황**: UploadPage 내 0건(v209 제거 확정). UploadFromGenerationBody :1537에 선언만 있고 doc 어디에도 미사용(데드 필드). MVProductionSection `onMvObjectNameChange` 콜백(:71,:101,:1219)의 소비자 0건(MVStudioTab 미배선). tracks 23건 중 mv 필드 보유 0건(DB 실측). → **완성 MV→트랙 연결 경로는 현존 0 — 서버 파라미터 추가 불필요, 연결 기능은 별도 설계 항목으로 이월**
+- `_validate_cover_image_url` :543-601 — 허용 3분기(revert/file/session)·차단(faces/·evidence/·`..`·http). 업로드 시점엔 track doc이 아직 없어 revert·file 분기 부적용 → **session 소유 검증만 유효 분기**
+
+**0-2. 과제2 — 소스 없는 create 호출부 전수 (프론트 createMVJob 2곳뿐)**
+- `/mv/create`(mv.py :354-668): 필수 = title(:398)·cover_object_name(:404 400)·image_model. **소스 무요구, :662 run_phase1_and_phase2 무조건 발동** — phase0 시나리오 LLM + phase2 씬 이미지 전량 자동(외부 유료 API)
+- 호출부 ①handleCreateScenes(MVProductionSection :391): :403-405 audio_generation_id·track_id 둘 다 전송. 단 **draftData 복원 곡(source:'draft')은 둘 다 null 가능**(MVStudioTab :149-159) — 이론 경로(DB상 sourceless job 0건이라 실데이터 없음)
+- 호출부 ②saveDraftInternal(:1114-1142): track_id는 실음(:1126) — **audio_generation_id는 create body에 누락**(saveMVDraft :1149로 사후 부착). generation 소스 곡 임시저장 시 소스 없는 create+파이프라인 발동이 매번 발생, saveMVDraft 실패 시 sourceless job 잔존. → **"호출부 0" 아님: 잔존 1(실경로) + 1(이론)**
+- merge 단계: MergeAudioRequest.audio_object_name pydantic 필수(:137-138) + 프론트 3중 가드(:1063-1087) → 이미 사실상 가드. (단 임의 object name 소유권 무검증 — §5 별건)
+
+**0-3. 좀비 job·산출물 실측 (mongo aimu.mv_jobs + MinIO, read-only)**
+- **67 jobs**: images_ready 33 / failed 13 / videos_ready 8 / completed 6 / paused 5 / video_ready 2. **전건 updated_at ≤ 2026-05-25 (90일+ stale — 서비스 미오픈 dev 데이터)**. sourceless(양 소스 부재) 0건
+- **MinIO `music-platform-images/mv/` = 8.5GiB·1,413 objects** (v198 "8.66GB"와 정합). status별 용량: completed 3.78GiB(6) / images_ready 2.11GiB(33) / video_ready 1.48GiB(2·final 보유) / videos_ready 0.88GiB(8) / paused 0.11GiB(5) / failed 0GiB(13건 문서만). 비 job 경로: mv/generated 82MiB·mv/thumbnails 14MiB
+- 고아 prefix **0건**(54 prefix 전부 job doc 존재), 로컬 잔해 0(mv_merge_ tempdir 청소 확인, logs 1.4MB)
+- 정리 도구 현황: `DELETE /mv/jobs/{id}`(:2660) 기존 존재 — doc+MinIO prefix 일괄 삭제(소유자 한정). 관리자 일괄 도구는 부재
+
+### 1. 설계 결정 (근거 포함)
+
+**D1. /tracks/upload에 `cover_object_name: str = Form(None)` 추가 + 서버 검증 후 저장**
+- 검증 = v207 규칙의 유효 분기 재사용: 공용 헬퍼 `_validate_cover_object_name_for_create(mongo, value, user_id)` 추출 — faces/·evidence/·`..`·http(s) 차단 + **본인 cover_sessions 소유**(cover_object_name 또는 cover_refine_history[].object_name 일치)만 통과. 업로드 시점 저장이 v207 검증을 우회하지 않음(소유·세션 증명 가능한 값만 수용)
+- 실패 시 **400** (silent drop 기각 — ⭐5 지불 커버가 조용히 유실되는 현행 증상을 재생산하지 않기 위해). 검증은 MinIO put 이전 수행(불필요 업로드 방지)
+- 프론트 배선은 이미 존재(:425 실측) — 프론트 무작업
+
+**D2. 분기 A(upload-from-generation :1736) 무검증 저장에 동일 헬퍼 적용**
+- 동일 엔드포인트 계열의 동일 구멍 — 정상 흐름(UploadPage aiCoverObjectName=세션 산출물)은 전부 통과라 하위호환 무손상. cover_object_name 미전송(None)은 기존대로 None 저장(400 아님)
+
+**D3. mv_object_name — 서버 파라미터 추가 안 함 (실측 근거)**
+- 프론트 미전송 + 완성 MV→트랙 연결 경로 전무(0-1) → 지금 추가하면 죽은 코드. UploadFromGenerationBody의 데드 필드는 유지+주석(제거는 API 계약 변화라 미도입). "MV촬영실 완성 MV를 트랙에 연결"(예: update_track 확장 + MVStudioTab 완료 화면에 [트랙에 연결])은 **별도 설계 항목으로 이월** — v209 §5 ▲B0-3과 병합
+
+**D4. 과제2 가드 = 택지 (a) 채택: create에서 둘 다 부재 시 400 + 프론트 보강 2건**
+- 근거: ① DB sourceless job 0건 — 파손될 실데이터 없음 ② 잔존 호출부 1건(saveDraftInternal generation 경로)은 그 자체가 버그 — create body에 audio_generation_id 1줄 추가로 근본 해소(소스 사후 부착 창·saveMVDraft 실패 시 잔존 경로 동시 소멸) ③ (b) 파이프라인만 차단은 job이 draft로 잠겨 UI 폴링 무한 0%(더 나쁜 UX) + sourceless job 계속 적립 ④ (c) 후속 단계 가드는 merge가 이미 가드돼 실익 없고 create 방치 시 phase1/2 외부 API 낭비 지속
+- 구현: mv.py cover 400(:404-408) 직후·mongo 접근 전 `if not body.audio_generation_id and not body.track_id: 400 "곡 소스가 필요합니다. 곡을 선택한 뒤 다시 시도해주세요."` / 프론트 ①saveDraftInternal create body에 `audio_generation_id: fromGeneration || null` 추가 ②handleCreateScenes 둘 다 null 시 사전 alert("곡 소스가 연결되어 있지 않습니다 — 다른 곡 선택으로 곡을 연결해주세요")+서버 400 백스톱
+
+**D5. 좀비 정리 = 이번 사이클 read-only 목록화 스크립트까지만 (실삭제·인프라 무조작)**
+- `scripts/mv_cleanup_report.py` 신설: mv_jobs×MinIO mv/ prefix 대조, 후보 기준 = `status∈(failed,paused)` 또는 `updated_at < now-90d AND 최종 산출물 부재(completed·result_music_video_url 보유 제외)`. 출력 = job별 {id, status, updated_at, MinIO size/objects} 표 + 합계 + 고아 prefix(현재 0). **삭제 코드 미포함(read-only)** — 실삭제는 사용자 승인 후 기존 owner DELETE API(:2660) 또는 차기 사이클 도구로
+- 관리자 API 미도입 근거: 전건 90일+ dev 데이터(실사용자 0)·기존 DELETE API 존재 — 지금 관리자 화면까지 만드는 건 과대 설계. 예상 회수 가능량(후보군): failed 13(0GiB)+paused 5(0.11GiB)+stale images_ready/videos_ready 41(2.99GiB) ≈ **3.1GiB/59건** (completed 3.78GiB·video_ready final 1.48GiB·thumbnails/generated은 보존)
+
+### 2. 변경 매트릭스
+
+| 파일 | 구분 | 내용 | 디버깅 로그 추적자 |
+|---|---|---|---|
+| `backend_9006/app/routes/tracks.py` | 수정 | 헬퍼 `_validate_cover_object_name_for_create` 추출 + /upload에 cover_object_name Form+검증+doc 반영 + 분기 A(:1736) 동일 검증 + :1537 데드 필드 주석 | `[tracks] upload cover accepted src=session` / `[tracks] upload cover rejected user=... reason=...`(값 본문 미출력) |
+| `backend_9006/app/routes/mv.py` | 수정 | create 소스 부재 400 가드(cover 400 직후) | `[CreateMV] rejected no-source user=...` |
+| `frontend/src/components/MVProductionSection.jsx` | 수정 | saveDraftInternal create body에 audio_generation_id + handleCreateScenes 사전 가드 | `[MVStudio] create body {has_gen, has_track}` DEV 1줄 |
+| `backend_9006/scripts/mv_cleanup_report.py` | 신설 | read-only 좀비 목록화(§1 D5 기준) — mongo/MinIO 쓰기 0 | stdout 표 (id는 전체 출력 가능 — dev 데이터·시크릿 아님) |
+| `frontend/src/pages/UploadPage.jsx` | 무변경 | 분기 B 배선 이미 존재(:425 실측) — 회귀 판정만 | — |
+
+규모: 수정 3 + 신설 1 — 40% 미만, 사용자 사전 확인 불요.
+
+### 3. dev 업무 분할 (단계별 — 완료 보고 후 다음 단계)
+
+**단계 0 — backend-dev**
+- B1: cover 검증 헬퍼 추출 + /upload 파라미터·검증·저장 + 분기 A 적용 (검증은 MinIO put 이전)
+- B2: mv create 소스 부재 400 (기존 소스 있는 경로 diff 0 확인)
+- B3: scripts/mv_cleanup_report.py (read-only — mongo 읽기·MinIO stat만, 접속정보는 기존 settings 경유·산출물에 시크릿 금지)
+- 재기동 9006만: PID kill → setsid ./run.sh (pkill 금지)
+
+**단계 1 — frontend-dev**
+- F1: saveDraftInternal audio_generation_id 추가 / F2: handleCreateScenes 사전 가드 / F3: 분기 B cover 배선 확인만(무수정)
+
+**단계 2 — test-designer 검증** (아래 §4)
+
+### 4. test-designer 테스트 항목
+
+**신규**
+| # | 항목 | 방법 |
+|---|---|---|
+| U1 | /tracks/upload cover_object_name: 본인 세션 산출물 통과→doc.cover_image_url 저장 | 테스트 계정 + mongo cover_sessions 직삽 픽스처 + 실호출(외부 API 아님) → 트랙 즉시 DELETE 원복 |
+| U2 | 거부 4종: 타인 세션·faces/…·`..`·http:// → 400 + 트랙 미생성 | 실호출 400 (MinIO 오브젝트 미생성 판정 포함) |
+| U3 | cover 미전송 분기 B: 기존과 동일 cover_image_url None + imageFile 사후 업로드 경로(:434-440) 불변 | 실호출+원복 |
+| U4 | 분기 A 검증: 정상 세션 값 통과·임의 문자열 400 | upload-from-generation은 completed generation 필요 — mongo 직삽 픽스처(v209 T07 관행)+원복 |
+| M1 | mv create 소스 부재 400 (양 소스 null) — job 미생성·파이프라인 미발동 판정 | 실호출 400(유료 미도달), mv_jobs count 불변 |
+| M2 | saveDraftInternal create body에 audio_generation_id 포함 (generation 소스 곡 임시저장) | /mv/create 인터셉트 body 검사(2xx 성공 경로 금지 유지) |
+| M3 | handleCreateScenes 소스 없는 draft 복원 곡: 클라 alert + 서버 미도달 | UI 판정 |
+| C1 | cleanup 스크립트: 산출 목록이 본 사이클 실측치(67/8.5GiB/후보 59건)와 정합 + 실행 전후 mongo·MinIO 무변조 | dry-run 실행 + count/du 전후 대조 |
+
+**회귀 (지정 3군)**
+| # | 항목 | 방법 |
+|---|---|---|
+| R1 | v209 업로드 분기 A/B: FormData·payload 필드 보존(cover_object_name 추가분 외 diff 0) | 인터셉트 body 검사 (v209 R3 방식) |
+| R2 | v209 MV촬영실 임시저장: track 소스·generation 소스 저장→불러오기 왕복, 소스 관통(audio_track_id/audio_generation_id) | 인터셉트+mongo 판정 (v209 T14/T17 방식) |
+| R3 | v207 커버 검증(update_track 경로): 헬퍼 추출 후 기존 가드 판정표 무변 | 정적 대조 + 무효 값 400 실호출 |
+
+**금지(성공 경로)**: v209 §4 목록 승계 + translate-tags 포함 외부 LLM 인터셉트. mv create 2xx 실호출 금지(파이프라인 발동) — 400 케이스만 실호출. tracks/upload는 외부 API 아님 — 테스트 계정+즉시 삭제 원복으로 실호출 허용(MinIO는 테스트 파일만). 실삭제·인프라 무조작.
+
+### 5. 리스크·별건 (▲=사용자 확인/차기)
+- ▲ 완성 MV→트랙 연결 기능 설계 (D3 이월 — update_track 확장+MVStudioTab 완료 화면, v209 B0-3 병합)
+- ▲ 좀비 실삭제 실행: 후보 59건/≈3.1GiB — 목록 확인 후 승인 시 별도 사이클(기존 DELETE API 재사용)
+- 별건 후보(보안): merge-audio audio_object_name 임의 값 무검증(타인 오디오 병합 가능) + create audio_generation_id 소유권 무검증 — 이번 범위 밖, 기록
+- cover_sessions 문서 수명 의존은 v207 update 경로와 동일 특성(신규 리스크 아님)
+- D2로 분기 A에 400 신설 — 이론상 세션 외 값을 보내던 외부 클라이언트가 있다면 파손이나, 호출부는 UploadPage 분기 A뿐(실측)
+
+### 6. 절대 준수
+유료 성공 경로 0 · 실사용자 데이터·실 .env 무접촉(mongo/MinIO 조회는 read-only, 시크릿은 컨테이너 내부 env로만 사용·산출물 미기재) · 인프라 무조작(9006 재기동만 PID kill→setsid ./run.sh) · 9004/9005 접근 0 · 산출물 시크릿·실이메일 금지
+
+### 7. v210 추가 결정 — dev 완료 검수 + TESTPLAN 승인(조정 3건) + Q1-Q4 선답 (2026-08-27 01:22)
+- dev 검수 PASS: 헬퍼(:604-639) session 분기 유일 통과 = PLAN 0-1 결론 일치, 분기 A 검증(:1678-1694) MinIO 복사 이전, mv 가드(:414-417) cover 400 뒤·mongo 접근 전, F1(:1132)·F2(disabled+핸들러 :388) 확인.
+- TESTPLAN v210 승인 — 조정 3건:
+  ① **M3 문구·판정 정정**: 실구현 alert = "곡 소스가 연결되어 있지 않습니다. 작곡실 완성곡 또는 내 트랙을 선택한 뒤 씬을 생성해주세요."(MVProductionSection :388 — 초안 문구는 PLAN 예시문). F2가 버튼 disabled 선행이므로 1순위 판정 = 버튼 disabled + 네트워크 0건; alert 는 disabled 우회 가능 경로가 있을 때만, 불가하면 핸들러 선두 가드는 정적 diff 로 판정(SKIP 아님 — 판정 방식 대체).
+  ② **U1/U3/U4 정리 주의 명기**: 트랙 DELETE 는 purge_track_document(:675) 가 cover_image_url 오브젝트도 best-effort 삭제 시도(:713-721) → cover 픽스처 값은 반드시 **비실존 object name**(초안 "covers/v210test-<난수>.png" 그대로 충족). 오디오(music 버킷)도 자동 삭제 — U1 "잔존 시 수동 삭제"는 사실상 자동 정리 확인 절차.
+  ③ U1 refine_history 분기 2회 검증 유지(헬퍼 $or 두 분기 — 누락·과잉 아님). R계열 3+1 충분 판정: R1 이 분기 A/B + mv_object_name 부재(D3)까지, R2/R3/R4 가 v209 T14/T17·v207·v208 접점 전부 커버 — 공백·과잉 없음. 12건 규모 승인.
+- Q1-Q4 선답 확정(tester 위임 해제):
+  **Q1**: DELETE /tracks/{track_id}(:799, 타 소유 403) → purge_track_document(:675) — MinIO 오디오(music)+커버(images·object name 저장분)+share/v3 캐시, mongo doc, redis, ES, PG(embeddings·likes), 앨범 카스케이드까지 일괄(각 단계 best-effort). 트랙 DELETE 1회로 업로드 부산물 자동 정리.
+  **Q2**: 픽스처 최소 스키마 계약 확정 — cover_sessions `{user_id, cover_object_name}` 또는 `{user_id, cover_refine_history:[{object_name}]}`(헬퍼 쿼리 :626-635 가 이 키만 조회) / generations `{user_id, status:"completed", result_audio_url:<실존 music 버킷 테스트 오브젝트>, created_at, updated_at}` — 나머지 전부 .get() 관대(variants 생략 시 result_audio_url 사용 :1649-1653). 실 문서 열람 불요.
+  **Q3**: mv create cover 체크 = truthiness 만(:404-408, 값 검증 0) — M1 은 임의 비공백 문자열(예: "covers/v210test-m1.png")로 충분, 세션 픽스처 불요. 가드가 cover 400 뒤(:414)이므로 body 에 cover 필수(초안 반영 확인).
+  **Q4**: MinIO 계측 명령 확정 — `docker exec aimu-minio sh -c 'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; mc du --depth 2 local/music-platform-images/mv'` (자격증명 = 컨테이너 내부 env 참조, 출력·산출물 시크릿 0). mongo 동일 패턴(docker exec aimu-mongodb + `$MONGO_INITDB_ROOT_USERNAME`/`$MONGO_INITDB_ROOT_PASSWORD`, countDocuments/aggregate read-only). 판정 기록에는 명령 원문(env 변수 표기 그대로)을 남긴다.

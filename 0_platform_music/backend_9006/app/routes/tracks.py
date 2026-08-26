@@ -601,6 +601,44 @@ async def _validate_cover_image_url(mongo, value: str, doc: dict, user_id: str):
     return False, None
 
 
+async def _validate_cover_object_name_for_create(mongo, value: str, user_id: str):
+    """v210 — 생성 경로(/upload · /upload-from-generation) cover_object_name 검증.
+
+    v207 `_validate_cover_image_url` 의 유효 분기 재사용판: 업로드(생성) 시점엔
+    track doc 이 아직 없어 revert/file 분기가 성립하지 않으므로,
+    **session 분기(본인 cover_sessions 산출물 증명)만** 허용한다.
+
+    허용 (True, "session"): 본인 소유 cover_sessions 의 cover_object_name
+      또는 cover_refine_history[].object_name 과 일치.
+    차단 (False, None): faces/·evidence/ 접두(백엔드 전용 경로) · `..` 경로
+      탈출 · http(s):// 외부 URL · 빈 값 · 타인 세션 산출물·임의 문자열.
+    """
+    value = value or ""
+    if value.startswith(("faces/", "evidence/")):
+        return False, None
+    if ".." in value:
+        return False, None
+    if value.startswith(("http://", "https://")):
+        return False, None
+    if not value:
+        return False, None
+
+    sess = await mongo.cover_sessions.find_one(
+        {
+            "user_id": user_id,
+            "$or": [
+                {"cover_object_name": value},
+                {"cover_refine_history.object_name": value},
+            ],
+        },
+        {"_id": 1},
+    )
+    if sess:
+        return True, "session"
+
+    return False, None
+
+
 @router.get("/my")
 async def get_my_tracks(
     page: int = 1,
@@ -1406,6 +1444,9 @@ async def upload_track(
     key: str = Form(None),
     language: str = Form(None),
     lyrics: str = Form(None),
+    # v210: AI 커버 산출물 — 프론트는 이미 전송 중(UploadPage :425)이었으나 서버가
+    # 드롭하던 갭 봉합. 본인 cover_sessions 산출물 증명 실패 시 400 (silent drop 금지).
+    cover_object_name: str = Form(None),
     is_public: bool = Form(True),
     current_user=Depends(get_current_user),
 ):
@@ -1419,6 +1460,30 @@ async def upload_track(
     contents = await file.read()
     if len(contents) > MAX_AUDIO_SIZE:
         return JSONResponse(status_code=400, content={"error": "파일 크기는 50MB 이하여야 합니다."})
+
+    # v210: cover_object_name 검증 — MinIO put/doc insert **이전** 수행 (실패 400,
+    # 불필요 업로드 방지). 미전송(None)은 기존과 동일하게 cover_image_url=None.
+    validated_cover = None
+    if cover_object_name:
+        _mongo_for_cover = get_mongo()
+        cover_ok, cover_src = await _validate_cover_object_name_for_create(
+            _mongo_for_cover, cover_object_name, current_user["id"],
+        )
+        if not cover_ok:
+            # 값 본문은 로그 미출력 (길이만) — 임의 문자열/경로 주입 시도 가능성.
+            logger.warning(
+                "[tracks] upload cover rejected user=%s len=%d",
+                current_user["id"][:8], len(cover_object_name),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "유효하지 않은 커버 이미지입니다."},
+            )
+        validated_cover = cover_object_name
+        logger.info(
+            "[tracks] upload cover accepted src=%s user=%s",
+            cover_src, current_user["id"][:8],
+        )
 
     # Generate track ID
     track_id = ObjectId()
@@ -1481,7 +1546,8 @@ async def upload_track(
         # upload-from-generation(:1731 "lyrics": body.lyrics) 관행과 동일하게 원값 그대로(None 허용).
         "lyrics": lyrics,
         "audio_url": object_name,
-        "cover_image_url": None,
+        # v210: 검증 통과한 AI 커버 산출물 (미전송 시 None — 기존 동작 동일).
+        "cover_image_url": validated_cover,
         "waveform_data": [],
         "play_count": 0,
         "like_count": 0,
@@ -1534,6 +1600,9 @@ class UploadFromGenerationBody(BaseModel):
     prompt: Optional[str] = None
     lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None
+    # v210 실측: 데드 필드 — 프론트 전송 0건(UploadPage 내 mv 배선 v209 제거),
+    # doc 반영 코드도 없음. 제거는 API 계약 변화라 미도입 — 완성 MV→트랙 연결
+    # 기능 설계(v210 §5 이월 항목)에서 거취 결정.
     mv_object_name: Optional[str] = None
     ai_model: Optional[str] = "Suno"
     # v71: MV 안 만들고 cover 만 만든 곡도 cover_character 노출 가능하도록
@@ -1603,6 +1672,26 @@ async def upload_from_generation(
         "[UploadVariant] gen=%s variant=%d source=%s",
         body.generation_id, variant_index, source_object_name,
     )
+
+    # v210: cover_object_name 무검증 저장 구멍 봉합 — /upload(분기 B)와 동일 헬퍼.
+    # MinIO 복사/doc insert 이전 검증. 미전송(None)은 기존대로 None 저장 (400 아님).
+    if body.cover_object_name:
+        cover_ok, cover_src = await _validate_cover_object_name_for_create(
+            mongo, body.cover_object_name, current_user["id"],
+        )
+        if not cover_ok:
+            logger.warning(
+                "[tracks] upload cover rejected user=%s len=%d (from-generation)",
+                current_user["id"][:8], len(body.cover_object_name),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "유효하지 않은 커버 이미지입니다."},
+            )
+        logger.info(
+            "[tracks] upload cover accepted src=%s user=%s (from-generation)",
+            cover_src, current_user["id"][:8],
+        )
 
     track_id = ObjectId()
     uploader_id = current_user["id"]

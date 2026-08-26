@@ -407,6 +407,16 @@ async def create_mv(
             content={"error": "커버 이미지가 필요합니다. 먼저 커버를 생성해주세요."},
         )
 
+    # v210: 곡 소스 부재 가드 — 소스 없는 job 은 phase1/2 (외부 유료 API) 를
+    # 무의미하게 발동시키고 오디오 해석 단계에서 반드시 실패한다 (D4 택지 (a)).
+    # DB sourceless job 0건 실측 — 기존 정상 경로 diff 0.
+    if not body.audio_generation_id and not body.track_id:
+        logger.warning("[CreateMV] rejected no-source user=%s", current_user["id"])
+        return JSONResponse(
+            status_code=400,
+            content={"error": "곡 소스가 필요합니다. 곡을 선택한 뒤 다시 시도해주세요."},
+        )
+
     mongo = get_mongo()
 
     # ── v209: track_id 곡 소스 (MV촬영실 — 내 트랙에서 MV 만들기) ──────────
