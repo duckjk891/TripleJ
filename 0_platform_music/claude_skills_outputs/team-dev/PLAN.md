@@ -30155,3 +30155,46 @@ v205 dev 발견 사항의 잔여분. 착수 HEAD `f861150`. `backend_9006` 단�
 
 ### 3. 절대 준수
 유료 주의: **generate-cover 는 실제 ⭐5 차감 + 외부 이미지 API 과금** — tester 는 실호출 금지(금지 목록 기존과 동일), 검증은 모킹·정적·무료 경로(파일 첨부)로. 실사용자 데이터 무접촉(테스트 계정 신규 생성 절차 v202 A06 방식). 9004/9005 0 · 인프라 무조작 · 푸시 없음
+
+---
+
+## v208 — 업로드 화면 커버 refine 422 버그 수정 [MAIDOL-CoverEditSquad] (2026-08-26 19:32)
+
+v207 중 tester 가 칩으로 발행한 별건. 증상: UploadPage 에서 AI 커버 생성 후 [추가 수정](refine) 재요청 시 422.
+
+### 0. Plan verification findings — 원인 100% 확정 (추정과 일치, 세부 메커니즘 보강)
+- **API 클라이언트 시그니처** (`frontend/src/api/index.js:797-798`): `refineCover = (coverSessionId, payload) => API.post('/upload/refine-cover', { cover_session_id: coverSessionId, ...payload })` — 두 번째 인자를 **객체로 스프레드**하는 계약
+- **버그 지점** (`frontend/src/pages/UploadPage.jsx:550`): `api.refineCover(coverSessionId, rp)` — `rp` 는 **문자열**. `{...문자열}` 스프레드는 `{0:'ㄱ',1:'ㄴ',…}` 문자 인덱스 키로 전개 → body 에 `refine_prompt` 필드 자체가 없음
+- **백엔드 계약** (`backend_9006/app/routes/upload.py:511-513`): `RefineCoverRequest(BaseModel)` — `cover_session_id: str`, `refine_prompt: str` **둘 다 필수** → `refine_prompt` 누락 시 FastAPI 가 핸들러 진입 전 **Pydantic 검증 단계에서 422** (field required). 증상과 정확히 일치
+- **정상 대조본** (`frontend/src/components/CoverEditModal.jsx:217`, v207 산출물): `api.refineCover(sessionId, { refine_prompt: rp })` — 객체로 전달, 16/16 검증 완료. 갭 = UploadPage 만 문자열 전달
+- **사용처 전수** (frontend 전체 `refineCover` grep): 호출부는 **딱 2곳** — UploadPage:550(버그)·CoverEditModal:217(정상). revertCover 는 별도 시그니처(문제 없음). **백엔드 수정 불필요** — 프런트 1줄 수정으로 완결
+- **refine-cover 라우트 실행 순서 실측** (`upload.py:542-629`) — 안전 검증 설계의 근거:
+  1. Pydantic 파싱(422) → 2. 빈 prompt/500자 초과(400) → 3. `_load_cover_session`: 무효 ObjectId·미존재·타인 소유 → **404** (`upload.py:530-539`) → 4. API 키 가드(503) → 5. MinIO 로드 → 6. **외부 이미지 API 호출**(`upload.py:627`)
+  - 즉 **인증된 테스트 계정 + 존재하지 않는 cover_session_id + 올바른 refine_prompt** 로 호출하면 3단계 404 에서 안전하게 멈춤 — 외부 과금 경로 도달 불가
+- **⭐ 차감 실측**: refine-cover 에는 포인트 차감 코드 **없음** (spend_points 는 generate-cover `upload.py:304-313` 에만 존재). 단 외부 이미지 API(Google/OpenAI) 실과금은 있으므로 성공 경로 실행 금지는 동일 적용
+- **원격 로깅**: `frontend/src/utils/remoteLogger.js` 존재 확인 — 기존 console 훅 경유 frontend.log 수집 체계 그대로 활용, 신규 배선 불요. `[UploadPage]` prefix 로그가 자동 수집됨
+
+### 1. 변경 매트릭스
+| 파일 | 수정 | 심을 로그 |
+|---|---|---|
+| `frontend/src/pages/UploadPage.jsx:550` | `api.refineCover(coverSessionId, rp)` → `api.refineCover(coverSessionId, { refine_prompt: rp })` + CoverEditModal:216 관행대로 계약 주석 1줄 | 기존 `:548` `[UploadPage] refine cover` info 로그에 payload 형태 확인용 필드 추가 없이 유지(len 이미 있음). 실패 로그 `:563` 에 `status: err?.response?.status` 추가 — 422/404/400 구분 추적 |
+| 백엔드 | **수정 없음** (계약 정상, CoverEditModal 로 증명됨) | — |
+
+### 2. dev 할당안
+- **frontend-dev**: 위 1줄 수정 + 실패 로그 status 필드 보강. UploadPage refine 패널 전후 흐름(생성→미리보기→refine→history 갱신) diff 최소 원칙 — 550 라인 외 로직 무변경
+- **backend-dev**: 코드 수정 없음. 대신 검증 보조 1건 — Pydantic 단위 파싱 테스트(아래 T2) 작성 지원 및 9006 로그에서 `[RefineCover] session=... not_found` 라인 확인
+- 재기동 불필요(프런트만 수정, Vite HMR). 필요 시 9006 재기동은 PID kill → `setsid ./run.sh` 만
+
+### 3. test-designer 테스트 항목 (유료 API 회피 전략 포함)
+| # | 항목 | 방법 (외부 과금 0 보장) |
+|---|---|---|
+| T1 | **버그 재현 확인(수정 전)**: 문자열 스프레드 body 에 refine_prompt 없음 | E2E(Playwright) 요청 인터셉트 — `/upload/refine-cover` route 를 **abort/fulfill 로 가로채** 서버 미도달 상태에서 request body JSON 검사. 실서버 불필요 |
+| T2 | 백엔드 계약 고정: `RefineCoverRequest` 파싱 | Pydantic 모델 단위 테스트 — `{cover_session_id, refine_prompt}` 통과 / `refine_prompt` 누락·문자 인덱스 키 body 는 ValidationError. 서버 기동조차 불필요 |
+| T3 | **수정 후 스키마 통과 실증**: 422 → 404 전환 | 테스트 계정 로그인 + 무효(랜덤 유효 ObjectId) cover_session_id 로 실호출 → **404 "커버 세션을 찾을 수 없습니다"** 수신 = Pydantic 통과·외부 호출 전 차단(§0 실행 순서 3단계). 422 가 아니면 합격 |
+| T4 | 빈/500자 초과 prompt → 400 (프런트 가드 + 서버 이중) | T3 과 동일 방식, 외부 도달 불가(2단계 차단) |
+| T5 | **회귀: CoverEditModal 무영향** | api.refineCover 시그니처 무변경이므로 CoverEditModal:217 호출 형태 정적 대조 + v207 16/16 시나리오 중 refine 1건 인터셉트 재확인 |
+| T6 | 회귀: UploadPage revert/history 플로 무변경 | diff 가 550·563 두 지점뿐임을 판정 (git diff 라인 검사) |
+| 금지 | refine-cover·generate-cover **성공 경로**(실 AI 생성) 실행 | 절대 금지 — 유효 세션으로 refine 을 완주시키지 말 것. 유효 cover_session 생성 자체가 generate-cover(⭐5+과금) 를 요구하므로 시도 불가 |
+
+### 4. 절대 준수
+유료 0 (성공 경로 미도달 설계 §0 실측 근거로 보장) · 테스트 계정만(v202 A06 방식) · 실 .env 무접촉 · 인프라 무조작 · 9004/9005 접근 0 · 산출물 시크릿/실이메일 금지 · 푸시 없음

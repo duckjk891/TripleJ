@@ -16517,3 +16517,50 @@ warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속
 
 ### 5. 변경 파일 (커밋 대상 10)
 백엔드 1: `tracks.py`(+82) / 프런트 6: `CoverEditModal.jsx`·`.css`(신설), `MyMusicPage.jsx`·`.css`, `SongItem.jsx`, `ArtistDetailPage.jsx` / 산출물 3. 무변경: `UploadPage`(diff 0)·`upload.py`·frontend_admin·9004/9005.
+
+---
+
+## v208 — 업로드 화면 커버 refine 422 버그 수정 [MAIDOL-CoverEditSquad] (2026-08-26 19:48)
+
+> 배경: v207 tester 가 발견해 칩으로 발행한 별건 — UploadPage 에서 AI 커버 생성 후 [추가 수정](refine) 재요청 시 422. v207 신규 모달(CoverEditModal)은 정상이었고 업로드 화면 기존 코드만 결함.
+
+### 1. 원인 기전 (0단계 실측으로 100% 확정)
+- `api/index.js:797-798` `refineCover(coverSessionId, payload)` 는 payload 를 `{ cover_session_id, ...payload }` 로 **객체 스프레드**하는 계약
+- `UploadPage.jsx:550`(구) 이 **문자열** 을 전달 → `{...문자열}` 은 `{0:'ㄱ',1:'ㄴ',…}` 문자 인덱스 키로 전개 → body 에 `refine_prompt` 필드 증발
+- 백엔드 `RefineCoverRequest`(upload.py:511-513) 는 `refine_prompt: str` 필수 → 핸들러 진입 전 Pydantic 검증에서 **422** (T2a 단위 테스트로 "missing refine_prompt 단일 에러" 확정)
+- 관측성 공백 부수 원인: catch 의 console.error 가 `import.meta.env?.DEV` 가드 안 → 프로덕션 422 가 remoteLogger 에 안 잡힘
+
+### 2. 수정 내용 (UploadPage.jsx 단일 파일, 10줄 diff — 백엔드 diff 0)
+| 위치 | 전 | 후 |
+|---|---|---|
+| `:550-551` | `api.refineCover(coverSessionId, rp)` | `api.refineCover(coverSessionId, { refine_prompt: rp })` + 계약 주석 1줄("문자열 전달 시 422") |
+| catch(`:562-566`) | `if (DEV) console.error(..., { err })` | 가드 제거 + `{ status: err?.response?.status, err: err?.message }` |
+
+**dev 재량 승인 이력**: DEV 가드 제거는 dev 재량 → planner 실측 승인 — `CoverEditModal.jsx:229` 의 console.error 가 무가드 프로덕션 노출인 것이 v207 검증 완료된 팀 관행이며, 이번 버그의 관측성 공백이 바로 그 가드 때문. 성공 경로 console.info 는 DEV 가드 유지(로그 볼륨 절제).
+
+### 3. 테스트 결과 — 10/10 PASS (unit 3 · api 5 · e2e 1 + 회귀 1), 픽스 루프 0
+**1단계 (9항목)**
+| # | 항목 | 결과 |
+|---|---|---|
+| T2a/b | Pydantic 파싱 — refine_prompt 누락 시 단일 missing 에러 / 정상 body 통과 | PASS |
+| T3a | (수정 전 형태) 실호출 422 재현 | PASS |
+| T3b | 무효 세션 ID → **404** "커버 세션을 찾을 수 없습니다" = **422→404 전이 = 수정 유효 증명** | PASS |
+| T3c | 유효 ObjectId·DB 미존재 분기 → 404 (planner 권장 추가분) | PASS |
+| T4a/b | 빈 prompt 400 / 501자 400 "수정 요청은 500자 이하여야 합니다" | PASS |
+| T5 | api/index.js·CoverEditModal 무변경 정적 대조 | PASS |
+| T6 | diff = UploadPage.jsx 단일 10줄 판정 | PASS |
+
+**2단계 E2E T1** (Playwright, Windows Chrome 경유 — v207 선례 환경): 인터셉트 캡처 body = `{"cover_session_id":"...","refine_prompt":"..."}` — **키 정확히 2개, 문자 인덱스 키 부재**. 콘솔 증적 `[UploadPage] refine cover failed {status: 404, ...}` 로 가드 제거분 프로덕션 경로 동작 확인. generate-cover·refine-cover·cover-preview 전건 인터셉트 fulfill(마커 헤더, leak 0), 서버 로그 grep 0건, 트랙 업로드 미완주. 스크린샷 6장 스크래치 보존.
+
+**서버 증적**: server.log 에 refine-cover 5건(422/404/404/400/400)뿐 — 라우트 실행 순서상(§PLAN v208 0단계) 전건 외부 호출 전 차단 확인.
+
+### 4. 안전 준수
+외부 이미지 API 호출 0 · ⭐ 차감 0 · 일회용 테스트 계정 가입→탈퇴 원복 2회(재로그인 401 확인) · 실사용자/실 .env 무접촉 · 인프라 무조작 · 서버 재기동 0 · 9004/9005 접근 0
+
+### 5. 특이사항
+- 프론트 4000 은 https(mkcert) — E2E 는 Windows Chrome 경유로 수행 (v207 동일)
+- refine-cover 라우트 자체에는 ⭐ 차감 코드 없음(선차감은 generate-cover 만) — 단 외부 이미지 API 실과금이 있어 성공 경로 금지 규칙은 유지됨
+- v207 관찰 기록(커버 오브젝트 수명/고아 문제)은 본 건과 무관 — 별건 승계 유지
+
+### 6. 변경 파일 (커밋 대상 4)
+프런트 1: `frontend/src/pages/UploadPage.jsx` / 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`. 무변경: `api/index.js`·`CoverEditModal.jsx`·백엔드 전체·9004/9005.

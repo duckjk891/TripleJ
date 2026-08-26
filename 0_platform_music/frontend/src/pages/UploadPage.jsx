@@ -547,7 +547,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
       if (import.meta.env?.DEV) {
         console.info('[UploadPage] refine cover', { cover_session_id: coverSessionId, len: rp.length });
       }
-      const { data } = await api.refineCover(coverSessionId, rp);
+      // api.refineCover는 payload를 객체로 스프레드하므로 반드시 { refine_prompt } 객체로 전달해야 한다 (문자열 전달 시 422).
+      const { data } = await api.refineCover(coverSessionId, { refine_prompt: rp });
       const newObjectName = data.cover_object_name;
       setAiCoverObjectName(newObjectName);
       setAiCoverPreview(api.coverPreviewUrl(newObjectName));
@@ -559,9 +560,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill, draftDat
         setScenesInvalidated(true);
       }
     } catch (err) {
-      if (import.meta.env?.DEV) {
-        console.error('[UploadPage] refine cover failed', { err: err?.message });
-      }
+      console.error('[UploadPage] refine cover failed', {
+        status: err?.response?.status,
+        err: err?.message,
+      });
       alert(err.response?.data?.error || '커버 수정에 실패했습니다.');
     } finally {
       setRefiningCover(false);

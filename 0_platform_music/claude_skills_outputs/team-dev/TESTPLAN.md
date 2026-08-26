@@ -10022,3 +10022,136 @@ U01 은 7행 케이스 표 결과 전체 첨부. A06 원복 3종(문서·오브�
   실제로 막는가(U01 표 + A04·A05 실서버) + 공용 SongItem 파급 0(U02 + E03)"**. AI 경로는 전면
   정적·모킹 갈음(⭐5·외부 과금 실호출 0), 실 E2E 는 무료 파일 첨부만. 픽스처는 Mongo 직삽 + MinIO 1×1
   png(§0 명문 절차, `v207test` 마커, 3중 원복). 재기동 1회, 유료 0, 9006 단독.
+
+
+---
+
+## v208 — 업로드 화면 커버 refine 422 버그 수정 (2026-08-26 19:34)
+
+### 0. 전제·공통 절차
+
+- **버그 요지**: `frontend/src/pages/UploadPage.jsx:550` 이 `api.refineCover(coverSessionId, rp)` 로
+  **문자열**을 넘겨 `frontend/src/api/index.js:797-798` 의 스프레드에서 `refine_prompt` 키가 증발 →
+  백엔드 Pydantic 검증에서 **422**. 수정안은 `{ refine_prompt: rp }` 객체 전달 + catch 로그 status 보강.
+  **diff 는 UploadPage.jsx 단일 파일 한정** (planner 확정).
+- **백엔드 검증 순서**(`backend_9006/app/routes/upload.py:511-513` `RefineCoverRequest` 기준, planner 실측):
+  ① Pydantic 파싱(422) → ② prompt 길이 검증(400: 빈값/초과) → ③ 세션 조회(무효/타인 = **404**, :530-539)
+  → ④ API 키 가드(503) → ⑤ MinIO → ⑥ 외부 이미지 API 호출(:627, **실과금**).
+- **유료 0 대원칙**: refine-cover 에 ⭐ 차감은 없으나 ⑥ 외부 이미지 API 실과금이 존재한다.
+  **어떤 시나리오도 ⑥에 도달하지 않는다** — e2e 는 Playwright 라우트 인터셉트로 서버 미도달,
+  api 실호출은 ②(400) 또는 ③(404) 단계에서 구조적으로 차단되는 입력만 사용, unit 은 네트워크 자체가 없다.
+  각 시나리오에 차단 단계를 명시한다.
+- **서버**: 백엔드 9006 · 프론트 4000 이미 기동 전제 (tester 가 health 확인만, 재기동 불필요). 9004/9005 접촉 금지.
+- **테스트 계정**: `TEST_ACCOUNT_EMAIL` (플레이스홀더). 절차 = **일회용 가입 → 로그인 토큰 확보 → T1·T3·T4
+  사용 → 회원 탈퇴(계정·부속 데이터 삭제 확인)로 원복**. 실사용자 계정·데이터 무접촉. 이번 사이클은
+  DB 직삽·MinIO 쓰기 픽스처가 **불필요**(존재하지 않는 세션 id 로 404 를 받는 것이 목적이므로) — 원복
+  대상은 테스트 계정 하나뿐이다.
+- **존재하지 않는 세션 id 규약**: `v208test-nonexistent-<난수>` — cover_sessions 에 실존할 수 없는 형태로,
+  세션 조회 단계(③)에서 반드시 404 로 끊긴다.
+
+### 1. 시나리오
+
+#### T1 `[e2e]` UploadPage refine 요청 body 에 `refine_prompt` 키 존재 (수정 검증 본체)
+
+- **Given**: 프론트 4000, Playwright 로 `TEST_ACCOUNT_EMAIL` 로그인. 업로드 화면 진입 후 refine UI 가
+  활성화되는 상태를 만들되, **커버 생성(generate-cover)은 실호출하지 않는다** — Playwright
+  `page.route()` 로 `**/generate-cover` 요청을 인터셉트해 가짜 세션 응답(`cover_session_id:
+  "v208test-e2e-session"` + 더미 이미지 URL)으로 fulfill 하여 UploadPage 의 `coverSessionId` 상태만 세팅.
+  동시에 `**/refine-cover` 라우트도 인터셉트 등록(요청 캡처 후 가짜 200 fulfill 또는 abort — 서버 미도달).
+- **When**: refine 입력창에 프롬프트 문자열(예: `v208 refine test`) 입력 후 refine 실행.
+- **Then**: 인터셉트에 캡처된 요청 body(JSON)에
+  - `refine_prompt` 키가 존재하고 값이 입력 문자열과 일치,
+  - `cover_session_id` 키가 존재,
+  - 문자 인덱스 키(`"0"`, `"1"`, …)가 **존재하지 않음** (수정 전 스프레드 증상 부재).
+- **유료 0 근거**: generate-cover·refine-cover 모두 라우트 인터셉트에서 fulfill/abort — **요청이 백엔드
+  9006 에 도달하지 않음**(①단계 이전 차단). 외부 API 는 물론 백엔드 코드도 실행되지 않는다.
+
+#### T2 `[unit]` RefineCoverRequest Pydantic 파싱 — 422 원인 재현/해소 증명
+
+- **Given**: `backend_9006/app/routes/upload.py` 의 `RefineCoverRequest`(:511-513) 를 파이썬에서 직접
+  import (서버 프로세스·네트워크 무관, backend_9006 venv 에서 실행).
+- **When**: 두 입력을 파싱한다.
+  - (a) **수정 전 형태 모사**: 문자열 스프레드 결과 dict — `{"cover_session_id": "x", "0": "h", "1": "i"}`
+    (`refine_prompt` 부재)
+  - (b) **수정 후 형태**: `{"cover_session_id": "x", "refine_prompt": "hi"}`
+- **Then**: (a) → `ValidationError` (missing `refine_prompt`) — 프론트 버그가 422 를 만드는 기전 확정.
+  (b) → 모델 인스턴스 생성 성공.
+- **유료 0 근거**: 순수 인메모리 파싱. HTTP·DB·외부 호출 일절 없음.
+
+#### T3 `[api]` 실서버 대조 실호출 — 수정 전 422 vs 수정 후 404 (422 해소 증명)
+
+- **Given**: `TEST_ACCOUNT_EMAIL` 로그인 토큰. 대상 `POST http://localhost:9006/.../refine-cover`
+  (정확한 경로는 upload.py 라우터 prefix 실측, tester 확인). `cover_session_id` 는
+  `v208test-nonexistent-<난수>` (실존 불가).
+- **When**: 동일 세션 id 로 두 형태의 body 를 각각 전송한다.
+  - (a) 수정 전 형태 모사: `{"cover_session_id": "<불가id>", "0": "h", "1": "i"}` (`refine_prompt` 없음)
+  - (b) 수정 후 형태: `{"cover_session_id": "<불가id>", "refine_prompt": "v208 test prompt"}`
+- **Then**: (a) → **422** (①Pydantic 단계 — 버그 증상 서버측 재현).
+  (b) → **404** (③세션 조회 단계 도달 = 422 가 해소되어 파이프라인이 세션 검증까지 전진했음을 증명).
+  404 응답 바디에 세션 무효 취지 메시지(:530-539 구현 기준) 확인.
+- **유료 0 근거**: (a)는 ①에서, (b)는 ③에서 종료 — 존재할 수 없는 세션 id 이므로 **④ API 키 가드·⑤
+  MinIO·⑥ 외부 호출(:627)에 구조적으로 도달 불가**. 성공 경로 완주 없음.
+
+#### T4 `[api]` prompt 길이 검증 — 빈값/초과 → 400
+
+- **Given**: T3 과 동일 토큰·엔드포인트. `cover_session_id` 는 역시 `v208test-nonexistent-<난수>`
+  (이중 안전장치 — 만에 하나 길이 검증을 통과해도 ③에서 404 로 끊김).
+- **When**: 수정 후 형태 body 로 두 케이스 전송.
+  - (a) `refine_prompt: ""` (빈값)
+  - (b) `refine_prompt: "A"*<한도+1>` (초과 길이 — 한도값은 upload.py 길이 검증 코드에서 tester 가 실측해
+    기록 후 +1 로 구성)
+- **Then**: 두 케이스 모두 **400** (②길이 검증 단계). 422 가 아님을 함께 확인(Pydantic 은 통과했다는 뜻
+  — 수정 후 body 형태가 올바름의 방증).
+- **유료 0 근거**: ②에서 종료. 이중 안전장치로 세션 id 도 실존 불가값 — ③ 이후 진행 자체가 불가능.
+
+#### T5 `[unit]`(+조건부 `[e2e]`) CoverEditModal 회귀 — 정상 대조본 무변경
+
+- **Given**: v207 에서 검증 완료된 정상 호출부 `frontend/src/components/CoverEditModal.jsx:217`
+  (같은 `api.refineCover` 를 **객체**로 정상 호출).
+- **When**: 정적 대조 — `git diff` 에 CoverEditModal.jsx 가 없음을 확인(T6 과 연동)하고, grep 으로
+  `:217` 부근 호출이 객체 인자 형태(`refine_prompt` 키 포함) 그대로인지 확인. 공용 레이어
+  `api/index.js` 도 diff 무변경 확인.
+- **Then**: CoverEditModal 호출 형태 불변 + 공용 api 레이어 불변 → 회귀 없음 판정.
+- **조건부 e2e**: 위 정적 대조에서 **api/index.js 또는 CoverEditModal.jsx 에 변경이 발견된 경우에만**
+  T1 과 동일한 라우트 인터셉트 방식으로 CoverEditModal 경로의 refine 요청 body 를 확인한다
+  (기본적으로는 실행하지 않음 — E2E 남발 금지). 실행 시 유료 0 근거는 T1 과 동일(서버 미도달).
+- **유료 0 근거**: 기본 경로는 grep/diff 정적 검사 — 실행 자체가 없음.
+
+#### T6 `[unit]` diff 범위 판정 — UploadPage.jsx 단일 파일
+
+- **Given**: frontend-dev 커밋(또는 워킹트리) 기준.
+- **When**: `git diff --name-only <기준>` (기준 커밋은 tester 가 dev 브랜치 상황에서 확정 — 수정 직전
+  커밋 대비).
+- **Then**: 변경 파일 목록이 정확히 `frontend/src/pages/UploadPage.jsx` **한 개**. 그 외 파일이 있으면
+  FAIL → planner 에스컬레이션(범위 이탈). diff 내용에 `{ refine_prompt: rp }` 객체 전달 + catch 로그
+  status 보강 두 가지만 있는지 목검.
+- **유료 0 근거**: git 로컬 명령만 사용.
+
+### 2. 실행 순서·중단 기준
+
+1. T6(diff 범위) → T5 정적(회귀 grep) → T2(unit 파싱) — 로컬·무실행 계열 먼저.
+2. 테스트 계정 일회용 가입 → T3 → T4 → (탈퇴 보류) → T1(e2e, 같은 계정 재사용) → **계정 탈퇴 원복**.
+3. **즉시 중단(ABORT) 기준**: 어느 호출에서든 응답이 400/404/422 가 아닌 **200 계열**이 나오면
+   성공 경로 진입 가능성 → 즉시 중단하고 원인 보고(외부 과금 리스크). T1 인터셉트가 미등록 상태로
+   실서버에 refine 요청이 나간 흔적(9006 로그) 발견 시에도 동일.
+
+### 3. 판정 기록 양식
+
+v205 §4 와 동일 (`ID / 태그 / 실행위치 / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED`).
+T3 은 (a)·(b) 상태코드와 응답 바디를 나란히 첨부. T1 은 캡처된 요청 body JSON 원문 첨부.
+원복 증빙: 테스트 계정 탈퇴 전후 확인(계정 조회 404 등). 정리: 스크래치 임시 스크립트 삭제.
+
+### 4. planner 확인 필요
+
+- **Q1**: T3/T4 의 정확한 엔드포인트 경로(라우터 prefix)와 T4 길이 한도값은 tester 가 upload.py 에서
+  실측해 기록 — 설계 고정값 아님.
+- **Q2**: T1 에서 refine UI 활성화 전제(generate-cover 인터셉트 fulfill 로 상태 세팅)가 UploadPage 구현상
+  성립하는지 — 세션 id 를 서버 응답 외 경로로 검증하는 로직이 있으면 tester 가 fulfill 응답 스키마를
+  실 응답 형태에 맞춰 조정.
+
+### 개정 이력 (v208)
+
+- 2026-08-26 초판 (6건: unit 3 / api 2 / e2e 1 + 조건부 e2e 1). 급소는 **"T1 body 에 refine_prompt 실존 +
+  T3 422→404 전이(파이프라인 전진 증명)"**. 유료 0 전략 = e2e 전면 인터셉트(서버 미도달) + api 는
+  실존 불가 세션 id 로 ③단계(404) 이전 차단 + 길이 검증 케이스는 ②단계(400) 차단 — 외부 이미지 API(:627)
+  도달 경로 0. 픽스처 직삽 없음, 일회용 계정 가입→탈퇴 원복, 9006 단독, 재기동 불필요.
