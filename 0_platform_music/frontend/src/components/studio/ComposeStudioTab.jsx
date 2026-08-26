@@ -3,230 +3,17 @@ import {
   FiZap, FiMusic, FiMic, FiChevronDown, FiChevronUp,
   FiClock, FiTrash2, FiRefreshCw, FiEdit3, FiSliders,
   FiCheck, FiArrowLeft, FiArrowRight, FiLoader,
-  FiToggleLeft, FiToggleRight, FiPlay, FiPause, FiDownload,
-  FiUploadCloud,
+  FiPlay, FiPause, FiDownload, FiUploadCloud,
 } from 'react-icons/fi';
-import * as api from '../api';
-import LyricsTimestampToggle from './LyricsTimestampToggle';
-import './StudioTab2.css';
-
-const LYRICS_MODELS = [
-  { id: 'gpt-4o-mini', name: 'GPT-4o-mini', color: '#00d4aa', inPrice: '$0.15/M', outPrice: '$0.60/M', perCall: '$0.003', perCallKRW: '≈4원' },
-  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', color: '#a855f7', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.10', perCallKRW: '≈140원' },
-  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', color: '#3b82f6', inPrice: '$3.00/M', outPrice: '$15.00/M', perCall: '$0.06', perCallKRW: '≈84원' },
-  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', color: '#f59e0b', inPrice: '$1.00/M', outPrice: '$5.00/M', perCall: '$0.02', perCallKRW: '≈28원' },
-  { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', color: '#10b981', inPrice: '$0.75/M', outPrice: '$4.50/M', perCall: '$0.015', perCallKRW: '≈21원' },
-  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.10', perCallKRW: '≈140원' },
-];
-
-// 장르: 음악의 카테고리 (어떤 종류의 음악인지)
-const GENRE_PRESETS = [
-  { label: '팝', value: 'Pop' },
-  { label: '케이팝', value: 'K-Pop' },
-  { label: '시티팝', value: 'City-Pop' },
-  { label: '힙합', value: 'Hip-hop' },
-  { label: '알앤비', value: 'R&B' },
-  { label: '록', value: 'Rock' },
-  { label: '일렉트로닉', value: 'Electronic' },
-  { label: '이디엠', value: 'EDM' },
-  { label: '하우스', value: 'House' },
-  { label: '테크노', value: 'Techno' },
-  { label: '트랜스', value: 'Trance' },
-  { label: '덥스텝', value: 'Dubstep' },
-  { label: '드럼앤베이스', value: 'Drum and Bass' },
-  { label: '트랩', value: 'Trap' },
-  { label: '로파이', value: 'Lo-fi' },
-  { label: '재즈', value: 'Jazz' },
-  { label: '블루스', value: 'Blues' },
-  { label: '클래식', value: 'Classical' },
-  { label: '오페라', value: 'Opera' },
-  { label: '앰비언트', value: 'Ambient' },
-  { label: '시네마틱', value: 'Cinematic' },
-  { label: '포크', value: 'Folk' },
-  { label: '컨트리', value: 'Country' },
-  { label: '레게', value: 'Reggae' },
-  { label: '레게톤', value: 'Reggaeton' },
-  { label: '메탈', value: 'Metal' },
-  { label: '펑크', value: 'Punk' },
-  { label: '그런지', value: 'Grunge' },
-  { label: '소울', value: 'Soul' },
-  { label: '펑크(Funk)', value: 'Funk' },
-  { label: '가스펠', value: 'Gospel' },
-  { label: '아프로비트', value: 'Afrobeat' },
-  { label: '보사노바', value: 'Bossa Nova' },
-  { label: '살사', value: 'Salsa' },
-  { label: '신스웨이브', value: 'Synthwave' },
-  { label: '발라드', value: 'Ballad' },
-  { label: '댄스', value: 'Dance' },
-  { label: '인디', value: 'Indie' },
-  { label: '트로트', value: 'Trot' },
-];
-
-// 분위기: 음악이 주는 감정/느낌 (어떤 기분의 음악인지)
-const MOOD_PRESETS = [
-  { label: '에너지틱', value: 'Energetic' },
-  { label: '칠', value: 'Chill' },
-  { label: '다크', value: 'Dark' },
-  { label: '행복', value: 'Happy' },
-  { label: '슬픔', value: 'Sad' },
-  { label: '서사적', value: 'Epic' },
-  { label: '로맨틱', value: 'Romantic' },
-  { label: '몽환적', value: 'Dreamy' },
-  { label: '공격적', value: 'Aggressive' },
-  { label: '평화로운', value: 'Peaceful' },
-  { label: '향수', value: 'Nostalgic' },
-  { label: '펑키', value: 'Funky' },
-  { label: '우울', value: 'Melancholic' },
-  { label: '유포릭', value: 'Euphoric' },
-  { label: '으스스한', value: 'Haunting' },
-  { label: '기쁨', value: 'Joyful' },
-  { label: '강렬', value: 'Intense' },
-  { label: '희망적', value: 'Uplifting' },
-  { label: '미스터리', value: 'Mysterious' },
-  { label: '친밀한', value: 'Intimate' },
-  { label: '승리감', value: 'Triumphant' },
-  { label: '장난스러운', value: 'Playful' },
-];
-
-// 스타일: 음악의 질감/프로덕션 (어떤 느낌으로 만들지)
-const STYLE_PRESETS = [
-  { label: '로파이', value: 'Lo-fi' },
-  { label: '세련된', value: 'Polished' },
-  { label: '거친', value: 'Gritty' },
-  { label: '날것', value: 'Raw' },
-  { label: '따뜻한', value: 'Warm' },
-  { label: '선명한', value: 'Crisp' },
-  { label: '빈티지', value: 'Vintage' },
-  { label: '모던', value: 'Modern' },
-  { label: '몽환적', value: 'Atmospheric' },
-  { label: '미니멀', value: 'Minimal' },
-  { label: '풍성한', value: 'Lush' },
-  { label: '어쿠스틱', value: 'Acoustic' },
-  { label: '시네마틱', value: 'Cinematic' },
-  { label: '오케스트라', value: 'Orchestral' },
-  { label: '펀치감', value: 'Punchy' },
-  { label: '밝은', value: 'Bright' },
-  { label: '절제된', value: 'Sparse' },
-];
-
-// value(영어)로부터 한글 label을 찾는 헬퍼 (직접 입력 값은 그대로 반환)
-const _genreLabelMap = Object.fromEntries(GENRE_PRESETS.map((p) => [p.value, p.label]));
-const _moodLabelMap = Object.fromEntries(MOOD_PRESETS.map((p) => [p.value, p.label]));
-const _styleLabelMap = Object.fromEntries(STYLE_PRESETS.map((p) => [p.value, p.label]));
-const getGenreLabel = (v) => _genreLabelMap[v] || v;
-const getMoodLabel = (v) => _moodLabelMap[v] || v;
-const getStyleLabel = (v) => _styleLabelMap[v] || v;
-
-// v158 — 별 경제 v1.2 소비 가격 기본값 (GET /points/costs 로드 실패 시 폴백)
-const DEFAULT_POINT_COSTS = { lyrics: 5, compose: 15, cover: 5, character: 10, fatigue_skip: 5 };
-// v158 — 디렉터 피로 사다리 기본값(시간) — status.ladder 부재 시 폴백 (1곡째 2h/2곡째 4h/3곡째 8h/4곡째+ 12h)
-const DEFAULT_FATIGUE_LADDER_HOURS = [2, 4, 8, 12];
-
-// v158 — 쿨다운 남은 시간 포맷: 1시간 미만 mm:ss, 이상 h:mm:ss
-const formatCooldown = (sec) => {
-  const s = Math.max(0, Math.floor(Number(sec) || 0));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, '0');
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${String(m).padStart(2, '0')}:${ss}`;
-};
-
-// v158 — status.ladder 를 시간(hours) 배열로 정규화.
-// BE 확정 스펙: {"1":2,"2":4,"3":8,"4+":12} (키 = n곡째, "+" 접미 허용). 숫자 배열도 수용.
-const normalizeLadderHours = (ladder) => {
-  if (Array.isArray(ladder) && ladder.length > 0) {
-    const hours = ladder.filter((v) => typeof v === 'number' && v > 0);
-    if (hours.length > 0) return hours;
-  }
-  if (ladder && typeof ladder === 'object') {
-    const entries = Object.entries(ladder)
-      .map(([k, v]) => [parseInt(String(k).replace('+', ''), 10), Number(v)])
-      .filter(([n, h]) => Number.isFinite(n) && Number.isFinite(h) && h > 0)
-      .sort((a, b) => a[0] - b[0]);
-    if (entries.length > 0) return entries.map(([, h]) => h);
-  }
-  return DEFAULT_FATIGUE_LADDER_HOURS;
-};
-
-// 직접 입력된 태그를 프리셋 value로 매칭 (label 또는 value 대소문자 무시)
-const resolveCustomTag = (input, presets) => {
-  const lower = input.toLowerCase();
-  const byLabel = presets.find((p) => p.label.toLowerCase() === lower);
-  if (byLabel) return byLabel.value;
-  const byValue = presets.find((p) => p.value.toLowerCase() === lower);
-  if (byValue) return byValue.value;
-  return null; // 매칭 안 됨 → 번역 필요
-};
-
-// 선택된 값 중 프리셋에 없는 커스텀 태그를 번역하여 최종 문자열 반환
-const getTranslatedValues = async (selected, presets) => {
-  if (selected.length === 0) return null;
-  const presetValues = new Set(presets.map((p) => p.value));
-  const preset = selected.filter((v) => presetValues.has(v));
-  const custom = selected.filter((v) => !presetValues.has(v));
-
-  if (custom.length === 0) return selected.join(', ') || null;
-
-  try {
-    const { data } = await api.translateTags(custom);
-    return [...preset, ...(data.translated || custom)].join(', ') || null;
-  } catch {
-    return selected.join(', ') || null; // 번역 실패 시 원본 유지
-  }
-};
-
-const VOCAL_PRESETS = [
-  { value: '', label: '자동 선택' },
-  { value: 'male_warm', label: '남성 - 따뜻한' },
-  { value: 'male_powerful', label: '남성 - 파워풀' },
-  { value: 'male_soft', label: '남성 - 부드러운' },
-  { value: 'female_sweet', label: '여성 - 감미로운' },
-  { value: 'female_powerful', label: '여성 - 파워풀' },
-  { value: 'female_husky', label: '여성 - 허스키' },
-];
-
-const MODEL_OPTIONS = [
-  { id: 'suno', name: 'Suno', desc: 'AI 음악 생성 서비스 (고품질 보컬 + 반주)' },
-  { id: 'wondera', name: 'Wondera', desc: 'AI 음악 코파일럿 (다양한 참조 옵션)' },
-];
-
-const STRUCTURE_TAGS = ['[Verse]', '[Chorus]', '[Bridge]', '[Outro]', '[Intro]', '[Pre-Chorus]', '[Instrumental]'];
-
-const DEFAULT_LYRICS = `[Verse]
-새벽 공기를 마시며 걸어가는 이 길
-어제의 나를 두고 오늘을 시작해
-흐릿한 가로등 아래 긴 그림자 하나
-조용히 나를 따라와
-
-[Chorus]
-괜찮아 천천히 가도 돼
-멈춰도 돼 쉬어가도 돼
-이 길의 끝에 뭐가 있든
-지금 이 한 걸음이면 돼
-
-[Verse]
-창문 너머로 보이는 하늘은 여전히
-어제와 같은 색인데
-내 마음만 달라져 있어
-작은 용기 하나 품고서
-
-[Chorus]
-괜찮아 천천히 가도 돼
-멈춰도 돼 쉬어가도 돼
-이 길의 끝에 뭐가 있든
-지금 이 한 걸음이면 돼
-
-[Outro]
-한 걸음 또 한 걸음
-나는 걸어가고 있어`;
-
-const WONDERA_MODELS = [
-  { value: 'auto', label: 'Auto (자동 선택)' },
-  { value: 'wondera-2.1', label: 'Wondera 2.1' },
-  { value: 'wondera-2.2', label: 'Wondera 2.2' },
-  { value: 'wondera-o1', label: 'Wondera O1' },
-  { value: 'wondera-o2', label: 'Wondera O2' },
-];
+import * as api from '../../api';
+import LyricsTimestampToggle from '../LyricsTimestampToggle';
+import {
+  DEFAULT_POINT_COSTS, formatCooldown, normalizeLadderHours,
+  GENRE_PRESETS, MOOD_PRESETS, STYLE_PRESETS, getTranslatedValues,
+  MODEL_OPTIONS, DEFAULT_LYRICS, WONDERA_MODELS, VOCAL_PRESETS,
+  buildPromptPreview, formatDuration, formatDate, isLyricsDraft,
+} from './studioShared';
+import '../StudioTab2.css';
 
 function WonderaTestSection() {
   // Upload state
@@ -290,7 +77,7 @@ function WonderaTestSection() {
           return;
         }
       } catch (err) {
-        console.error('Poll error:', err);
+        console.error('[ComposeStudioTab] Poll error:', err);
       }
     }
     setStatus('failed');
@@ -482,41 +269,36 @@ function WonderaTestSection() {
   );
 }
 
-export default function StudioTab2({ onSendToUpload }) {
+// v209 2단계 — 「작곡실」: StudioTab2 의 작곡 계열(파라미터·프리뷰·생성/기록·피로 게이지·간편 모드·Wondera) 이식.
+// 작사(구 step1-2)는 LyricsStudioTab(작사실) 소관 — 이 탭은 작사 draft 를 골라 작곡한다.
+// props: onSendToUpload(기존 StudioTab2 계약 그대로) / prefillDraft(작사실 [작곡하기→] 인계 draft doc) / onClearPrefill
+export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClearPrefill }) {
   // ─── Mode: 'simple' or 'custom' ───
   const [mode, setMode] = useState('custom');
   const [selectedModel, setSelectedModel] = useState('suno');
-
   // ─── Voice Clone state (v76 — Suno V5_5 voice cloning) ───
   const [myClones, setMyClones] = useState([]);
   const [selectedVoiceCloneId, setSelectedVoiceCloneId] = useState(null);
 
-  // ─── Step state: 1=prompt, 2=lyrics confirm, 3=params, 4=prompt preview ───
-  const [step, setStep] = useState(1);
-
+  // ─── Step state: 3=params, 4=prompt preview (구 StudioTab2 번호 유지 — 1·2(작사)는 작사실로 분리) ───
+  const [step, setStep] = useState(3);
   // Simple mode
   const [simplePrompt, setSimplePrompt] = useState('');
   const [simpleSubmitting, setSimpleSubmitting] = useState(false);
 
-  // Step 1: Prompt
+  // 작곡 대상 가사·메타 — 작사 draft(handleResumeDraft) 로드로 채워짐
   const [description, setDescription] = useState('');
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [selectedMoods, setSelectedMoods] = useState([]);
   const [selectedStyles, setSelectedStyles] = useState([]);
-  const [durationMinutes, setDurationMinutes] = useState(2);
   const [isDuet, setIsDuet] = useState(false);
   const [duetMainGender, setDuetMainGender] = useState('m');
   const [duetMainStyle, setDuetMainStyle] = useState('');
   const [duetSubStyle, setDuetSubStyle] = useState('');
-
-  // Step 2: Lyrics (from ChatGPT)
   const [title, setTitle] = useState('');
   const [lyrics, setLyrics] = useState('');
-  const [generatingLyrics, setGeneratingLyrics] = useState(false);
   // 느낌 카테고리 (가사 생성 결과로 받은 깨끗한 문자열 배열 — 생성/발행 시 관통)
   const [categories, setCategories] = useState([]);
-  // 고정 10종 느낌 카테고리 (백엔드 GET /charts/categories 로드, 편집 토글 UI 용)
-  const [allCategories, setAllCategories] = useState([]);
 
   // Step 3: Music settings
   const [styleText, setStyleText] = useState('');
@@ -562,12 +344,8 @@ export default function StudioTab2({ onSendToUpload }) {
   // Draft (임시저장)
   const [draftId, setDraftId] = useState(null);
 
-  // AI 모델 선택 (가사 생성)
-  const [lyricsModels, setLyricsModels] = useState(['gpt-4o-mini']);
-  const [lyricsResults, setLyricsResults] = useState(null);
-  const [showLyricsCompare, setShowLyricsCompare] = useState(false);
-
-  // 번역 캐시 state (handleGenerateLyrics에서 1회 번역 후 저장)
+  // 번역 캐시 state — v209: 작사실 인계 draft 에는 번역 캐시가 없어 초기 [] → 첫 생성 시
+  // handleGenerateMusic 의 stale 체크가 재번역 폴백을 타고 이후 캐시 (기존 재번역 경로 그대로)
   const [translatedGenre, setTranslatedGenre] = useState(null);
   const [translatedMood, setTranslatedMood] = useState(null);
   const [translatedStyle, setTranslatedStyle] = useState(null);
@@ -590,13 +368,8 @@ export default function StudioTab2({ onSendToUpload }) {
   // Audio playback for generated music
   const [playingId, setPlayingId] = useState(null);
   const genAudioRef = useRef(null);
-  const customGenreRef = useRef(null);
-  const customMoodRef = useRef(null);
-  const customStyleRef = useRef(null);
-
   // Polling for active generations
   const pollRef = useRef(null);
-  const lyricsRef = useRef(null);
 
   // ─── v158: 별 경제 v1.2 + 디렉터 피로 ───
   const [pointCosts, setPointCosts] = useState(DEFAULT_POINT_COSTS);
@@ -614,11 +387,11 @@ export default function StudioTab2({ onSendToUpload }) {
         const costs = data?.costs;
         if (costs && typeof costs === 'object') {
           setPointCosts((prev) => ({ ...prev, ...costs }));
-          if (import.meta.env.DEV) console.info('[StudioTab2] point costs loaded', costs);
+          if (import.meta.env.DEV) console.info('[ComposeStudioTab] point costs loaded', costs);
         }
       })
       .catch((err) => {
-        console.error('[StudioTab2] getPointCosts failed (fallback defaults)', { status: err?.response?.status, message: err?.message });
+        console.error('[ComposeStudioTab] getPointCosts failed (fallback defaults)', { status: err?.response?.status, message: err?.message });
       });
   }, []);
 
@@ -630,7 +403,7 @@ export default function StudioTab2({ onSendToUpload }) {
       setFatigue(data);
       setFatigueRemainSec(Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0)));
       if (import.meta.env.DEV) {
-        console.info('[StudioTab2] [fatigue-ui] status', {
+        console.info('[ComposeStudioTab] [fatigue-ui] status', {
           today_completed: data?.today_completed,
           cooldown_active: data?.cooldown_active,
           cooldown_remaining_sec: data?.cooldown_remaining_sec,
@@ -638,7 +411,7 @@ export default function StudioTab2({ onSendToUpload }) {
         });
       }
     } catch (err) {
-      console.error('[StudioTab2] [fatigue-ui] getFatigueStatus failed', { status: err?.response?.status, message: err?.message });
+      console.error('[ComposeStudioTab] [fatigue-ui] getFatigueStatus failed', { status: err?.response?.status, message: err?.message });
     }
   };
 
@@ -664,7 +437,7 @@ export default function StudioTab2({ onSendToUpload }) {
     setFatigueSkipping(method);
     try {
       const { data } = await api.skipFatigue(method);
-      if (import.meta.env.DEV) console.info('[StudioTab2] [fatigue-ui] skip ok', { method, skipped_minutes: data?.skipped_minutes });
+      if (import.meta.env.DEV) console.info('[ComposeStudioTab] [fatigue-ui] skip ok', { method, skipped_minutes: data?.skipped_minutes });
       api.notifyPointsRefresh(); // ⭐/광고권 변동 → 헤더 배지 갱신
       if (data && typeof data === 'object' && 'cooldown_remaining_sec' in data) {
         // 응답이 최신 status payload — 즉시 반영
@@ -677,7 +450,7 @@ export default function StudioTab2({ onSendToUpload }) {
         alert('쿨다운이 이미 해제되어 있었어요. 바로 작곡을 지시할 수 있습니다.');
       }
     } catch (err) {
-      console.error('[StudioTab2] [fatigue-ui] skip failed', { method, status: err?.response?.status, error: err?.response?.data?.error });
+      console.error('[ComposeStudioTab] [fatigue-ui] skip failed', { method, status: err?.response?.status, error: err?.response?.data?.error });
       if (api.isInsufficientPoints(err)) {
         alert(method === 'ad' || err?.response?.data?.error === 'no_skip_tickets'
           ? '사용할 수 있는 광고 시청권이 없어요. 앱에서 광고를 시청하면 충전돼요.'
@@ -713,44 +486,19 @@ export default function StudioTab2({ onSendToUpload }) {
     return null;
   };
 
-  // 느낌 카테고리 고정 10종 로드 (편집 토글 UI 용). 하드코딩 금지, 실패 시 빈 배열 폴백.
-  useEffect(() => {
-    if (import.meta.env.DEV) console.info('[LyricsCategoryEdit] loading fixed categories');
-    api.getCategories()
-      .then(({ data }) => {
-        const list = Array.isArray(data?.categories) ? data.categories : [];
-        setAllCategories(list);
-        if (import.meta.env.DEV) console.info('[LyricsCategoryEdit] categories loaded', { count: list.length });
-      })
-      .catch((err) => {
-        setAllCategories([]);
-        console.warn('[LyricsCategoryEdit] getCategories failed, fallback to empty', { status: err?.response?.status, message: err?.message });
-      });
-  }, []);
-
-  // 칩 클릭 → 선택 카테고리(categories state) 추가/삭제 토글
-  const toggleCategory = useCallback((cat) => {
-    setCategories((prev) => {
-      const list = Array.isArray(prev) ? prev : [];
-      const selected = list.includes(cat);
-      if (import.meta.env.DEV) console.info('[LyricsCategoryEdit] toggle', { cat, selected: !selected });
-      return selected ? list.filter((c) => c !== cat) : [...list, cat];
-    });
-  }, []);
-
   // v76 — Fetch voice clones (ready only) for Suno V5_5 cloning
   const fetchVoiceClones = useCallback(async () => {
-    if (import.meta.env.DEV) console.info('[StudioTab2] fetching voice clones');
+    if (import.meta.env.DEV) console.info('[ComposeStudioTab] fetching voice clones');
     try {
       const { data } = await api.getVoiceClones();
       const ready = (data?.clones || data?.items || []).filter(
         (c) => c?.status === 'ready' && c?.voice_id
       );
       setMyClones(ready);
-      if (import.meta.env.DEV) console.info('[StudioTab2] voice clones loaded', { count: ready.length });
+      if (import.meta.env.DEV) console.info('[ComposeStudioTab] voice clones loaded', { count: ready.length });
       return ready;
     } catch (err) {
-      console.error('[StudioTab2] getVoiceClones failed', { status: err?.response?.status, message: err?.message });
+      console.error('[ComposeStudioTab] getVoiceClones failed', { status: err?.response?.status, message: err?.message });
       return [];
     }
   }, []);
@@ -787,46 +535,9 @@ export default function StudioTab2({ onSendToUpload }) {
       const { data } = await api.getGenerations({ limit: 50 });
       setGenerations(data.generations || []);
     } catch (err) {
-      console.error('Failed to fetch generations:', err);
+      console.error('[ComposeStudioTab] Failed to fetch generations:', err);
     } finally {
       setLoadingHistory(false);
-    }
-  };
-
-  const toggleGenre = (g) => {
-    setSelectedGenres((prev) =>
-      prev.includes(g) ? prev.filter((x) => x !== g) : [...prev, g]
-    );
-  };
-
-  const toggleMood = (m) => {
-    setSelectedMoods((prev) =>
-      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
-    );
-  };
-
-  const toggleStyle = (s) => {
-    setSelectedStyles((prev) =>
-      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
-    );
-  };
-
-  // 직접입력 필드에 남아있는 값을 자동으로 칩에 추가
-  const flushCustomInputs = () => {
-    if (customGenreRef.current && customGenreRef.current.value.trim()) {
-      const val = resolveCustomTag(customGenreRef.current.value.trim(), GENRE_PRESETS) || customGenreRef.current.value.trim();
-      if (!selectedGenres.includes(val)) setSelectedGenres((prev) => [...prev, val]);
-      customGenreRef.current.value = '';
-    }
-    if (customMoodRef.current && customMoodRef.current.value.trim()) {
-      const val = resolveCustomTag(customMoodRef.current.value.trim(), MOOD_PRESETS) || customMoodRef.current.value.trim();
-      if (!selectedMoods.includes(val)) setSelectedMoods((prev) => [...prev, val]);
-      customMoodRef.current.value = '';
-    }
-    if (customStyleRef.current && customStyleRef.current.value.trim()) {
-      const val = resolveCustomTag(customStyleRef.current.value.trim(), STYLE_PRESETS) || customStyleRef.current.value.trim();
-      if (!selectedStyles.includes(val)) setSelectedStyles((prev) => [...prev, val]);
-      customStyleRef.current.value = '';
     }
   };
 
@@ -835,240 +546,6 @@ export default function StudioTab2({ onSendToUpload }) {
     if (selectedStyles.length > 0) parts.push(selectedStyles.join(', '));
     if (styleText.trim()) parts.push(styleText.trim());
     return parts.join(', ') || null;
-  };
-
-  const insertTag = (tag) => {
-    const ta = lyricsRef.current;
-    if (!ta) return;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    const before = lyrics.substring(0, start);
-    const after = lyrics.substring(end);
-    setLyrics(before + tag + '\n' + after);
-    setTimeout(() => {
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = start + tag.length + 1;
-    }, 0);
-  };
-
-  // ─── Step 1 → 2: Generate Lyrics ───
-  const handleGenerateLyrics = async () => {
-    flushCustomInputs();
-    setError('');
-    if (!description.trim()) {
-      setError('어떤 음악을 만들고 싶은지 설명해주세요.');
-      return;
-    }
-
-    setGeneratingLyrics(true);
-    try {
-      // 커스텀 태그 번역 (프리셋에 없는 값만 번역 API 호출) — 1회만 호출 후 state에 캐시
-      const [genreStr, moodStr, translatedStyles] = await Promise.all([
-        getTranslatedValues(selectedGenres, GENRE_PRESETS),
-        getTranslatedValues(selectedMoods, MOOD_PRESETS),
-        getTranslatedValues(selectedStyles, STYLE_PRESETS),
-      ]);
-      const styleParts = [];
-      if (translatedStyles) styleParts.push(translatedStyles);
-      if (styleText.trim()) styleParts.push(styleText.trim());
-      const styleStr = styleParts.join(', ') || null;
-
-      // 번역 결과를 state에 저장 (이후 단계에서 재사용)
-      setTranslatedGenre(genreStr);
-      setTranslatedMood(moodStr);
-      setTranslatedStyle(styleStr);
-      setTranslatedGenreSource([...selectedGenres]);
-      setTranslatedMoodSource([...selectedMoods]);
-      setTranslatedStyleSource([...selectedStyles]);
-      setTranslatedStyleTextSource(styleText);
-
-      const { data } = await api.generateLyrics({
-        prompt: description.trim(),
-        genre: genreStr,
-        mood: moodStr,
-        style: styleStr,
-        duration_minutes: durationMinutes,
-        language: 'ko',
-        duet: isDuet,
-        duet_main_vocal_style: isDuet ? duetMainStyle.trim() || null : null,
-        duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
-        models: lyricsModels,
-      });
-      api.notifyPointsRefresh(); // v158 — 작사 ⭐ 차감 즉시 헤더 배지 갱신
-      if (data.results && Array.isArray(data.results)) {
-        // 듀얼 모델 결과 → 비교 UI 표시 (categories 는 각 result 에 포함, 선택 시 반영)
-        setLyricsResults(data.results);
-        setShowLyricsCompare(true);
-      } else {
-        setTitle(data.title || '');
-        setLyrics(data.lyrics || '');
-        setCategories(Array.isArray(data.categories) ? data.categories : []);
-        if (import.meta.env.DEV) {
-          console.info('[LyricsResult] lyrics generated', { categories: data.categories || [] });
-        }
-        setShowLyricsCompare(false);
-        setLyricsResults(null);
-        setStep(2);
-      }
-    } catch (err) {
-      // v158 — 작사 -5 별 부족(402) 분기
-      if (api.isInsufficientPoints(err)) {
-        api.notifyPointsRefresh();
-        setError(`별이 부족해요. AI 작사에는 ⭐${pointCosts.lyrics}개가 필요합니다.`);
-      } else {
-        const msg = err.response?.data?.error || '가사 생성에 실패했습니다.';
-        setError(msg);
-      }
-    } finally {
-      setGeneratingLyrics(false);
-    }
-  };
-
-  // ─── Step 2 → 3: Confirm Lyrics (+ 임시저장) ───
-  const handleConfirmLyrics = async () => {
-    if (!lyrics.trim()) {
-      setError('가사를 입력해주세요.');
-      return;
-    }
-    setError('');
-    setStep(3);
-
-    // 임시저장: draftId가 없을 때만 저장 (부가 기능이므로 실패해도 무시)
-    // 번역된 값은 handleGenerateLyrics에서 캐시된 state 사용
-    if (!draftId) {
-      try {
-        const body = {
-          prompt: description.trim(),
-          title: title.trim() || null,
-          lyrics: lyrics.trim(),
-          genre: translatedGenre,
-          mood: translatedMood,
-          style: translatedStyle,
-          vocal: vocal || null,
-          model: selectedModel,
-          start_music_gen: false,
-          duet: isDuet,
-          categories: Array.isArray(categories) ? categories : [],
-        };
-        const { data } = await api.createGeneration(body);
-        if (data?.id) {
-          setDraftId(data.id);
-          fetchHistory();
-        }
-      } catch (err) {
-        console.warn('임시저장 실패 (무시):', err);
-      }
-    }
-  };
-
-  // ─── Build Prompt Preview ───
-  const buildPromptPreview = (model, params) => {
-    const lines = [];
-
-    if (model === 'suno') {
-      // First sentence: genre + mood + vocal
-      const genreStr = params.genre || '';
-      const moodStr = params.mood || '';
-      const vocalLabel = (() => {
-        if (params.isInstrumental) return null;
-        const preset = VOCAL_PRESETS.find((v) => v.value === params.vocal);
-        return preset && preset.value ? preset.label : null;
-      })();
-
-      let firstSentence = '';
-      const parts = [];
-      if (genreStr) parts.push(`${genreStr} 장르의`);
-      if (moodStr) parts.push(`${moodStr}한 분위기로,`);
-
-      if (params.isInstrumental) {
-        if (parts.length > 0) {
-          firstSentence = `${parts.join(' ')} 연주곡(Instrumental)을 생성합니다.`;
-        } else {
-          firstSentence = '연주곡(Instrumental)을 생성합니다.';
-        }
-      } else if (vocalLabel) {
-        if (parts.length > 0) {
-          firstSentence = `${parts.join(' ')} ${vocalLabel} 보컬이 부르는 곡을 생성합니다.`;
-        } else {
-          firstSentence = `${vocalLabel} 보컬이 부르는 곡을 생성합니다.`;
-        }
-      } else {
-        if (parts.length > 0) {
-          firstSentence = `${parts.join(' ')} 곡을 생성합니다.`;
-        } else {
-          firstSentence = '곡을 생성합니다.';
-        }
-      }
-      lines.push(firstSentence);
-
-      if (params.isDuet) {
-        const mainGenderLabel = params.duetMainGender === 'm' ? '남성' : '여성';
-        const subGenderLabel = params.duetMainGender === 'm' ? '여성' : '남성';
-        let duetLine = '남녀 혼성 듀엣 곡으로 생성합니다.';
-        if (params.duetMainStyle || params.duetSubStyle) {
-          const mainPart = params.duetMainStyle ? `주 보컬(${mainGenderLabel}): ${params.duetMainStyle}` : '';
-          const subPart = params.duetSubStyle ? `상대 보컬(${subGenderLabel}): ${params.duetSubStyle}` : '';
-          const styleParts = [mainPart, subPart].filter(Boolean).join(' / ');
-          duetLine = `남녀 혼성 듀엣 곡으로 생성합니다. ${styleParts}`;
-        }
-        lines.push(duetLine);
-      }
-
-      // BPM + Key line
-      const bpmValue = model === 'suno' ? (params.bpmOn ? params.bpmVal : null) : params.bpm;
-      const keyValue = model === 'suno' ? (params.keyOn ? params.keyVal : null) : params.musicalKey;
-      if (bpmValue && keyValue) {
-        lines.push(`템포는 ${bpmValue} BPM, 키는 ${keyValue}입니다.`);
-      } else if (bpmValue) {
-        lines.push(`템포는 ${bpmValue} BPM입니다.`);
-      } else if (keyValue) {
-        lines.push(`키는 ${keyValue}입니다.`);
-      }
-
-      // Model-specific info
-      if (model === 'suno') {
-        if (params.negativeTagsOn && params.negativeTagsVal) lines.push(`제외할 스타일로 ${params.negativeTagsVal}이(가) 지정되어 있습니다.`);
-        if (params.styleWeightOn && params.styleWeightVal) lines.push(`스타일 가중치는 ${params.styleWeightVal}로 설정되어 있습니다.`);
-        if (params.weirdnessOn && params.weirdnessVal) lines.push(`창의성(Weirdness)은 ${params.weirdnessVal}로 설정되어 있습니다.`);
-        if (params.audioWeightOn && params.audioWeightVal) lines.push(`오디오 가중치는 ${params.audioWeightVal}로 설정되어 있습니다.`);
-        if (params.personaModelOn && params.personaModelVal) lines.push(`페르소나 모델은 ${params.personaModelVal === 'voice_persona' ? 'Voice Persona' : 'Style Persona'}로 설정되어 있습니다.`);
-      }
-
-      if (params.style) {
-        lines.push(`추가 스타일 설명으로 "${params.style}"이(가) 포함되어 있습니다.`);
-      }
-      if (params.referenceText) {
-        lines.push(`참고할 스타일로 "${params.referenceText}"이(가) 지정되어 있습니다.`);
-      }
-      if (params.referenceData) {
-        lines.push(`업로드한 참고 음악(${params.referenceData.filename}, ${Math.round(params.referenceData.duration_sec)}초)의 스타일을 참고하여 생성합니다.`);
-      }
-    } else if (model === 'wondera') {
-      const modelLabel = WONDERA_MODELS.find((m) => m.value === params.wonderaModel)?.label || params.wonderaModel;
-      lines.push(`Wondera ${modelLabel} 모델로 ${params.wonderaNumber || 2}곡을 생성합니다.`);
-      if (params.wonderaPrompt && !params.wonderaReferenceData && !params.wonderaMelodyData) {
-        lines.push(`추가 스타일 설명으로 "${params.wonderaPrompt}"이(가) 포함되어 있습니다.`);
-      }
-      if (params.wonderaReferenceData) {
-        lines.push(`업로드한 참고 음악(${params.wonderaReferenceData.name || params.wonderaReferenceData.filename || '파일'})의 스타일을 참고하여 생성합니다.`);
-      }
-      if (params.wonderaVocalData) {
-        lines.push(`업로드한 참고 보컬(${params.wonderaVocalData.name || params.wonderaVocalData.filename || '파일'})이 적용됩니다.`);
-      }
-      if (params.wonderaMelodyData) {
-        lines.push(`업로드한 참고 멜로디(${params.wonderaMelodyData.name || params.wonderaMelodyData.filename || '파일'})가 적용됩니다.`);
-      }
-      if (params.wonderaEnableStream) {
-        lines.push('실시간 스트리밍이 활성화되어 있습니다.');
-      }
-    } else {
-      lines.push(`${model} 모델로 곡을 생성합니다.`);
-      if (params.style) {
-        lines.push(`추가 스타일 설명으로 "${params.style}"이(가) 포함되어 있습니다.`);
-      }
-    }
-
-    return lines.join('\n');
   };
 
   const getPreviewLyrics = () => {
@@ -1137,13 +614,6 @@ export default function StudioTab2({ onSendToUpload }) {
     } finally {
       setWonderaUploading(null);
     }
-  };
-
-  const formatDuration = (sec) => {
-    if (!sec) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   // ─── Step 3: Generate Music ───
@@ -1254,7 +724,7 @@ export default function StudioTab2({ onSendToUpload }) {
             body.persona_model = 'voice_persona';
             body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
             if (import.meta.env.DEV) {
-              console.info('[StudioTab2] applying voice_clone override (draft path)', { clone_id: clone.clone_id || clone.id });
+              console.info('[ComposeStudioTab] applying voice_clone override (draft path)', { clone_id: clone.clone_id || clone.id });
             }
           }
         }
@@ -1297,7 +767,7 @@ export default function StudioTab2({ onSendToUpload }) {
             body.persona_model = 'voice_persona';
             body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
             if (import.meta.env.DEV) {
-              console.info('[StudioTab2] applying voice_clone override (suno path)', { clone_id: clone.clone_id || clone.id });
+              console.info('[ComposeStudioTab] applying voice_clone override (suno path)', { clone_id: clone.clone_id || clone.id });
             }
           }
         }
@@ -1308,7 +778,7 @@ export default function StudioTab2({ onSendToUpload }) {
 
       // Common reset
       setDraftId(null);
-      setStep(1);
+      setStep(3);  // v209: 가사 상태 초기화로 lyricsLoaded=false → 작사 선택 화면 복귀
       setDescription('');
       setTitle('');
       setLyrics('');
@@ -1316,7 +786,6 @@ export default function StudioTab2({ onSendToUpload }) {
       setSelectedGenres([]);
       setSelectedMoods([]);
       setSelectedStyles([]);
-      setDurationMinutes(2);
       setIsDuet(false);
       setDuetMainGender('m');
       setDuetMainStyle('');
@@ -1391,9 +860,8 @@ export default function StudioTab2({ onSendToUpload }) {
     }
   };
 
-  // ─── Draft 판별 헬퍼 ───
-  const isDraft = (gen) =>
-    gen.status === 'pending' && !gen.result_audio_url && (gen.progress === 0 || !gen.progress);
+  // ─── Draft 판별 — v209: 서버 확정 시그니처(point_ref) 기반 studioShared.isLyricsDraft 로 교체 ───
+  const isDraft = isLyricsDraft;
 
   // ─── 이어서 작업: draft → Step 3 복원 ───
   const handleResumeDraft = (gen) => {
@@ -1406,19 +874,41 @@ export default function StudioTab2({ onSendToUpload }) {
     setVocal(gen.vocal || '');
     setSelectedModel(gen.model || 'suno');
     setCategories(Array.isArray(gen.categories) ? gen.categories : []);
+    // v209 3단계: duet 복원 — 작사실 draft 의 duet 플래그가 vocal 산정(듀엣 시 주 보컬 성별)에 반영되도록
+    setIsDuet(gen.duet ?? false);
+    setDuetMainStyle(gen.duet_main_vocal_style || '');
+    setDuetSubStyle(gen.duet_sub_vocal_style || '');
     setDraftId(gen.id);
     setError('');
     setSuccessMsg('');
     setStep(3);
   };
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    const d = new Date(dateStr);
-    return d.toLocaleString('ko-KR', {
-      timeZone: 'Asia/Seoul',
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-    });
+  // v209 — 작사실 [작곡하기 →] 인계 수신: draft doc 을 파라미터 단계로 복원 (기존 handleResumeDraft 재사용).
+  useEffect(() => {
+    if (prefillDraft) {
+      handleResumeDraft(prefillDraft);
+      setMode('custom');
+      if (import.meta.env.DEV) console.info('[ComposeStudioTab] prefill draft received', { id: prefillDraft.id });
+      if (onClearPrefill) onClearPrefill();
+    }
+  }, [prefillDraft]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // v209 — 로드된 가사 해제 → 작사 선택 화면으로
+  const handleUnloadDraft = () => {
+    setDraftId(null);
+    setDescription('');
+    setTitle('');
+    setLyrics('');
+    setCategories([]);
+    setSelectedGenres([]);
+    setSelectedMoods([]);
+    setSelectedStyles([]);
+    setStyleText('');
+    setVocal('');
+    setError('');
+    setSuccessMsg('');
+    setStep(3);
   };
 
   // ─── Simple Mode: One-click generation ───
@@ -1483,7 +973,7 @@ export default function StudioTab2({ onSendToUpload }) {
   const handlePlayGeneration = (genId, variantIndex = 0) => {
     const key = playKey(genId, variantIndex);
     if (import.meta.env.DEV) {
-      console.info('[StudioTab2] play', { genId, variantIndex, key, currentlyPlaying: playingId });
+      console.info('[ComposeStudioTab] play', { genId, variantIndex, key, currentlyPlaying: playingId });
     }
 
     // If already playing this one, pause it
@@ -1501,7 +991,7 @@ export default function StudioTab2({ onSendToUpload }) {
     const audio = new Audio(getStreamUrl(genId, variantIndex));
     audio.onended = () => setPlayingId(null);
     audio.onerror = (e) => {
-      console.error('[StudioTab2] audio play failed', { genId, variantIndex, err: e });
+      console.error('[ComposeStudioTab] audio play failed', { genId, variantIndex, err: e });
       setPlayingId(null);
       alert('오디오 재생에 실패했습니다.');
     };
@@ -1519,7 +1009,7 @@ export default function StudioTab2({ onSendToUpload }) {
       vi = _titleOrVariant;
     }
     if (import.meta.env.DEV) {
-      console.info('[StudioTab2] download', { genId, variantIndex: vi });
+      console.info('[ComposeStudioTab] download', { genId, variantIndex: vi });
     }
     window.location.href = getStreamUrl(genId, vi);
   };
@@ -1620,6 +1110,11 @@ export default function StudioTab2({ onSendToUpload }) {
     );
   };
 
+  // v209 — 작사 draft(선택 화면용) / 생성 기록(작사 draft 제외 — 작사실 소관) 분리
+  const lyricsDrafts = generations.filter((g) => isLyricsDraft(g));
+  const historyGenerations = generations.filter((g) => !isLyricsDraft(g));
+  const lyricsLoaded = !!draftId || !!lyrics.trim();
+
   return (
     <div className="s2">
       {/* ─── Mode Toggle ─── */}
@@ -1703,435 +1198,69 @@ export default function StudioTab2({ onSendToUpload }) {
         </div>
       )}
 
-      {/* ─── Custom Mode ─── */}
-      {mode === 'custom' && (<>
+      {/* ─── Custom Mode: 작사 선택 → 파라미터(3) → 프리뷰(4) — v209 ─── */}
+      {mode === 'custom' && !lyricsLoaded && (
+        <div className="s2__form">
+          <div className="s2__section">
+            <label className="s2__main-label">
+              <FiEdit3 className="s2__label-icon" />
+              작곡할 가사 선택
+            </label>
+            <p className="s2__hint">작사실에서 저장한 「내 작사」 중 하나를 골라 작곡을 시작하세요. 새 가사는 작사실 탭에서 만들 수 있어요.</p>
+          </div>
+          {loadingHistory && lyricsDrafts.length === 0 ? (
+            <div className="s2__history-empty">로딩 중...</div>
+          ) : lyricsDrafts.length === 0 ? (
+            <div className="s2__history-empty">아직 저장된 작사가 없습니다. 작사실에서 가사를 만들어 [작곡하기 →]를 눌러주세요.</div>
+          ) : (
+            <div className="s2__history-list">
+              {lyricsDrafts.map((gen) => (
+                <div key={gen.id} className="s2__gen-card">
+                  <div className="s2__gen-top">
+                    <div className="s2__gen-info">
+                      {gen.title && <div className="s2__gen-title">{gen.title}</div>}
+                      <div className="s2__gen-prompt">{gen.prompt}</div>
+                    </div>
+                    <span className="s2__gen-status s2__draft-badge">📝 내 작사</span>
+                  </div>
+                  <div className="s2__gen-meta">
+                    {gen.genre && <span className="s2__gen-tag">{gen.genre}</span>}
+                    {gen.mood && <span className="s2__gen-tag">{gen.mood}</span>}
+                    {gen.style && <span className="s2__gen-tag s2__gen-tag--style">{gen.style}</span>}
+                  </div>
+                  <div className="s2__gen-player">
+                    <button
+                      className="s2__draft-resume"
+                      onClick={() => {
+                        if (import.meta.env.DEV) console.info('[ComposeStudioTab] draft selected', { id: gen.id });
+                        handleResumeDraft(gen);
+                      }}
+                    >
+                      <FiMusic /> 이 가사로 작곡
+                    </button>
+                  </div>
+                  <div className="s2__gen-bottom">
+                    <span className="s2__gen-date">{formatDate(gen.created_at)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'custom' && lyricsLoaded && (<>
       <div className="s2__steps">
-        <div className={`s2__step ${step >= 1 ? 's2__step--active' : ''} ${step > 1 ? 's2__step--done' : ''}`}>
-          <span className="s2__step-num">1</span>
-          <span className="s2__step-label">프롬프트 입력</span>
-        </div>
-        <div className="s2__step-line" />
-        <div className={`s2__step ${step >= 2 ? 's2__step--active' : ''} ${step > 2 ? 's2__step--done' : ''}`}>
-          <span className="s2__step-num">2</span>
-          <span className="s2__step-label">가사 확인</span>
-        </div>
-        <div className="s2__step-line" />
         <div className={`s2__step ${step >= 3 ? 's2__step--active' : ''} ${step > 3 ? 's2__step--done' : ''}`}>
-          <span className="s2__step-num">3</span>
+          <span className="s2__step-num">1</span>
           <span className="s2__step-label">파라미터 설정</span>
         </div>
         <div className="s2__step-line" />
         <div className={`s2__step ${step >= 4 ? 's2__step--active' : ''}`}>
-          <span className="s2__step-num">4</span>
+          <span className="s2__step-num">2</span>
           <span className="s2__step-label">프롬프트 확인</span>
         </div>
       </div>
-
-      {/* ─── Step 1: Prompt Input ─── */}
-      {step === 1 && (
-        <div className="s2__form">
-          <div className="s2__section">
-            <label className="s2__main-label">
-              <FiZap className="s2__label-icon" />
-              어떤 음악을 만들고 싶나요?
-            </label>
-            <textarea
-              className="s2__textarea s2__textarea--large"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="예: 비 오는 새벽에 듣기 좋은 감성적인 재즈 발라드, 피아노와 색소폰이 어우러진 로맨틱한 분위기"
-              rows={4}
-              maxLength={1000}
-            />
-            <div className="s2__char-count">{description.length} / 1,000</div>
-          </div>
-
-          <div className="s2__section">
-            <label className="s2__label">장르 — 어떤 종류의 음악인지 (선택)</label>
-            <div className="s2__chips">
-              {selectedGenres.map((g) => (
-                <button
-                  key={g}
-                  type="button"
-                  className="s2__chip s2__chip--active"
-                  onClick={() => toggleGenre(g)}
-                >
-                  {getGenreLabel(g)} ×
-                </button>
-              ))}
-              {GENRE_PRESETS.filter(({ value }) => !selectedGenres.includes(value)).map(({ label, value }) => (
-                <button
-                  key={value}
-                  type="button"
-                  className="s2__chip"
-                  onClick={() => toggleGenre(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <input
-              ref={customGenreRef}
-              className="s2__custom-input"
-              type="text"
-              placeholder="직접 입력 후 Enter"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && e.target.value.trim()) {
-                  const val = resolveCustomTag(e.target.value.trim(), GENRE_PRESETS) || e.target.value.trim();
-                  if (!selectedGenres.includes(val)) setSelectedGenres((prev) => [...prev, val]);
-                  e.target.value = '';
-                  e.preventDefault();
-                }
-              }}
-            />
-          </div>
-
-          <div className="s2__section">
-            <label className="s2__label">분위기 — 어떤 감정/느낌의 음악인지 (선택)</label>
-            <div className="s2__chips">
-              {selectedMoods.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className="s2__chip s2__chip--active"
-                  onClick={() => toggleMood(m)}
-                >
-                  {getMoodLabel(m)} ×
-                </button>
-              ))}
-              {MOOD_PRESETS.filter(({ value }) => !selectedMoods.includes(value)).map(({ label, value }) => (
-                <button
-                  key={value}
-                  type="button"
-                  className="s2__chip"
-                  onClick={() => toggleMood(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <input
-              ref={customMoodRef}
-              className="s2__custom-input"
-              type="text"
-              placeholder="직접 입력 후 Enter"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && e.target.value.trim()) {
-                  const val = resolveCustomTag(e.target.value.trim(), MOOD_PRESETS) || e.target.value.trim();
-                  if (!selectedMoods.includes(val)) setSelectedMoods((prev) => [...prev, val]);
-                  e.target.value = '';
-                  e.preventDefault();
-                }
-              }}
-            />
-          </div>
-
-          <div className="s2__section">
-            <label className="s2__label">스타일 — 음악의 질감/프로덕션 느낌 (선택)</label>
-            <div className="s2__chips">
-              {selectedStyles.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="s2__chip s2__chip--active"
-                  onClick={() => toggleStyle(s)}
-                >
-                  {getStyleLabel(s)} ×
-                </button>
-              ))}
-              {STYLE_PRESETS.filter(({ value }) => !selectedStyles.includes(value)).map(({ label, value }) => (
-                <button
-                  key={value}
-                  type="button"
-                  className="s2__chip"
-                  onClick={() => toggleStyle(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <input
-              ref={customStyleRef}
-              className="s2__custom-input"
-              type="text"
-              placeholder="직접 입력 후 Enter"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && e.target.value.trim()) {
-                  const val = resolveCustomTag(e.target.value.trim(), STYLE_PRESETS) || e.target.value.trim();
-                  if (!selectedStyles.includes(val)) setSelectedStyles((prev) => [...prev, val]);
-                  e.target.value = '';
-                  e.preventDefault();
-                }
-              }}
-            />
-          </div>
-
-          <div className="s2__section">
-            <label className="s2__label">음악 길이 — 가사 분량 기준</label>
-            <div className="s2__chips">
-              {[1, 2, 3].map((min) => (
-                <button
-                  key={min}
-                  type="button"
-                  className={`s2__chip ${durationMinutes === min ? 's2__chip--active' : ''}`}
-                  onClick={() => setDurationMinutes(min)}
-                >
-                  {min}분
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="s2__section">
-            <label className="s2__label">곡 형식</label>
-            <div className="s2__chips">
-              <button type="button" className={`s2__chip ${!isDuet ? 's2__chip--active' : ''}`} onClick={() => setIsDuet(false)}>솔로</button>
-              <button type="button" className={`s2__chip ${isDuet ? 's2__chip--active' : ''}`} onClick={() => setIsDuet(true)}>듀엣</button>
-            </div>
-            {isDuet && (
-              <div className="s2__duet-settings">
-                <div className="s2__duet-row">
-                  <label className="s2__label">주 보컬 성별</label>
-                  <select
-                    className="s2__select"
-                    value={duetMainGender}
-                    onChange={(e) => setDuetMainGender(e.target.value)}
-                  >
-                    <option value="m">남성</option>
-                    <option value="f">여성</option>
-                  </select>
-                </div>
-                <div className="s2__duet-row">
-                  <label className="s2__label">주 보컬 느낌 ({duetMainGender === 'm' ? '남성' : '여성'})</label>
-                  <input
-                    type="text"
-                    className="s2__input"
-                    value={duetMainStyle}
-                    onChange={(e) => setDuetMainStyle(e.target.value)}
-                    placeholder="예: warm, deep, powerful"
-                  />
-                </div>
-                <div className="s2__duet-row">
-                  <label className="s2__label">상대 보컬 느낌 ({duetMainGender === 'm' ? '여성' : '남성'})</label>
-                  <input
-                    type="text"
-                    className="s2__input"
-                    value={duetSubStyle}
-                    onChange={(e) => setDuetSubStyle(e.target.value)}
-                    placeholder="예: soft, sweet, breathy"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {error && <div className="s2__msg s2__msg--error">{error}</div>}
-          {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
-
-          {/* AI 모델 선택 */}
-          <div className="model-select-section" style={{ marginBottom: '12px' }}>
-            <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>AI 모델 선택</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              {LYRICS_MODELS.map(model => (
-                <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '10px 14px', borderRadius: '8px', border: lyricsModels.includes(model.id) ? `2px solid ${model.color}` : '2px solid #333', background: lyricsModels.includes(model.id) ? `${model.color}15` : '#1a1a1a', fontSize: '13px', color: '#ddd', minWidth: '180px' }}>
-                  <input type="checkbox" checked={lyricsModels.includes(model.id)} onChange={() => {
-                    setLyricsModels(prev => prev.includes(model.id) ? prev.filter(m => m !== model.id) : [...prev, model.id]);
-                  }} style={{ accentColor: model.color, marginTop: '2px' }} />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span style={{ fontWeight: 600 }}>{model.name}</span>
-                    <span style={{ color: '#666', fontSize: '11px' }}>in {model.inPrice}  out {model.outPrice}</span>
-                    <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
-                  </div>
-                </label>
-              ))}
-            </div>
-            {lyricsModels.length === 0 && <p style={{ color: '#ff6b6b', fontSize: '12px', marginTop: '4px' }}>최소 1개 모델을 선택하세요</p>}
-          </div>
-
-          <button
-            className="s2__submit"
-            onClick={handleGenerateLyrics}
-            disabled={generatingLyrics || lyricsModels.length === 0}
-          >
-            {generatingLyrics ? (
-              <>
-                <FiLoader className="s2__spin" />
-                AI가 가사를 작성하고 있습니다...
-              </>
-            ) : (
-              <>
-                <FiEdit3 />
-                AI 가사 생성하기 <span className="s2__cost-badge">⭐{pointCosts.lyrics}</span>
-              </>
-            )}
-          </button>
-
-          {/* 모델 비교 뷰 */}
-          {showLyricsCompare && lyricsResults && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px', marginTop: '16px' }}>
-              {lyricsResults.map((result, idx) => {
-                const modelInfo = LYRICS_MODELS.find(m => m.id === result.model) || { name: result.model, color: '#888' };
-                return (
-                  <div key={idx} style={{ background: '#1a1a1a', borderRadius: '12px', padding: '16px', border: `1px solid ${modelInfo.color}33`, borderTop: `3px solid ${modelInfo.color}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: modelInfo.color }}>
-                        {modelInfo.name}
-                      </span>
-                    </div>
-                    <h4 style={{ color: '#fff', marginBottom: '8px' }}>{result.title}</h4>
-                    {Array.isArray(result.categories) && result.categories.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-                        {result.categories.map((cat) => (
-                          <span key={cat} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '999px', background: `${modelInfo.color}22`, color: modelInfo.color, border: `1px solid ${modelInfo.color}55` }}>
-                            #{cat}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <pre style={{ color: '#ccc', fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: '300px', overflow: 'auto', lineHeight: 1.6 }}>{result.lyrics}</pre>
-                    <button onClick={() => {
-                      setTitle(result.title);
-                      setLyrics(result.lyrics);
-                      setCategories(Array.isArray(result.categories) ? result.categories : []);
-                      if (import.meta.env.DEV) {
-                        console.info('[LyricsResult] compare result selected', { model: result.model, categories: result.categories || [] });
-                      }
-                      setShowLyricsCompare(false);
-                      setLyricsResults(null);
-                      setStep(2);
-                    }} style={{ marginTop: '12px', width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: modelInfo.color, color: '#000', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}>
-                      이걸로 선택
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Or skip to manual lyrics */}
-          <button
-            className="s2__skip-btn"
-            onClick={() => setStep(2)}
-          >
-            직접 가사 작성하기 →
-          </button>
-        </div>
-      )}
-
-      {/* ─── Step 2: Lyrics Confirm/Edit ─── */}
-      {step === 2 && (
-        <div className="s2__form">
-          <div className="s2__section">
-            <label className="s2__label">제목</label>
-            <input
-              className="s2__input"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="곡 제목"
-              maxLength={100}
-            />
-          </div>
-
-          {/* 느낌 카테고리 (고정 10종 토글 편집 — 항상 노출) */}
-          <div className="s2__section">
-            <label className="s2__label">느낌 카테고리</label>
-            <p className="s2__hint">칩을 눌러 직접 추가/삭제할 수 있어요</p>
-            <div className="s2__chips">
-              {(Array.isArray(allCategories) ? allCategories : []).map((cat) => {
-                const active = Array.isArray(categories) && categories.includes(cat);
-                return (
-                  <button
-                    key={cat}
-                    type="button"
-                    className={`s2__chip ${active ? 's2__chip--active' : ''}`}
-                    onClick={() => toggleCategory(cat)}
-                    aria-pressed={active}
-                  >
-                    #{cat}
-                  </button>
-                );
-              })}
-              {/* 폴백: 로드 실패로 10종이 비었는데 LLM 선택값이 있으면 그 값만이라도 보여주고 해제 가능 */}
-              {Array.isArray(allCategories) && allCategories.length === 0 &&
-                (Array.isArray(categories) ? categories : []).map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    className="s2__chip s2__chip--active"
-                    onClick={() => toggleCategory(cat)}
-                    aria-pressed={true}
-                  >
-                    #{cat}
-                  </button>
-                ))}
-            </div>
-          </div>
-
-          <div className="s2__section">
-            <div className="s2__label-row">
-              <label className="s2__main-label">
-                <FiEdit3 className="s2__label-icon" />
-                가사 편집
-              </label>
-              <button
-                type="button"
-                className={`s2__toggle ${isInstrumental ? 's2__toggle--on' : ''}`}
-                onClick={() => setIsInstrumental(!isInstrumental)}
-              >
-                {isInstrumental ? <FiToggleRight /> : <FiToggleLeft />}
-                {isInstrumental ? 'Instrumental' : 'Vocal'}
-              </button>
-            </div>
-
-            {!isInstrumental && (
-              <>
-                <div className="s2__tag-bar">
-                  {STRUCTURE_TAGS.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className="s2__tag-btn"
-                      onClick={() => insertTag(tag)}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                <textarea
-                  ref={lyricsRef}
-                  className="s2__textarea s2__textarea--lyrics"
-                  value={lyrics}
-                  onChange={(e) => setLyrics(e.target.value)}
-                  placeholder={`[Verse]\n밤하늘에 별이 쏟아지면\n너와 걸었던 그 길이 떠올라\n\n[Chorus]\n우리의 노래가 울려 퍼져\n이 밤을 채우는 멜로디`}
-                  rows={10}
-                  maxLength={3000}
-                />
-                <div className="s2__char-count">{lyrics.length} / 3,000</div>
-              </>
-            )}
-          </div>
-
-          {error && <div className="s2__msg s2__msg--error">{error}</div>}
-
-          <div className="s2__btn-row">
-            <button className="s2__btn-back" onClick={() => { setDraftId(null); setStep(1); }}>
-              <FiArrowLeft /> 이전
-            </button>
-            <button
-              className="s2__btn-regen"
-              onClick={handleGenerateLyrics}
-              disabled={generatingLyrics}
-            >
-              <FiRefreshCw className={generatingLyrics ? 's2__spin' : ''} />
-              가사 재생성 <span className="s2__cost-badge">⭐{pointCosts.lyrics}</span>
-            </button>
-            <button className="s2__submit s2__submit--next" onClick={handleConfirmLyrics}>
-              가사 확정 <FiArrowRight />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ─── Step 3: Music Generation Settings ─── */}
       {step === 3 && (
@@ -2143,9 +1272,7 @@ export default function StudioTab2({ onSendToUpload }) {
           <div className="s2__preview">
             <div className="s2__preview-header">
               <h3 className="s2__preview-title">{title || '무제'}</h3>
-              <button className="s2__preview-edit" onClick={() => setStep(2)}>
-                <FiEdit3 /> 가사 수정
-              </button>
+              <span className="s2__hint">{/* v209: 가사 수정은 작사실 탭에서 */}가사 수정은 작사실에서</span>
             </div>
             <pre className="s2__preview-lyrics">{lyrics || '(Instrumental)'}</pre>
           </div>
@@ -2220,7 +1347,7 @@ export default function StudioTab2({ onSendToUpload }) {
                           type="button"
                           className={`s2__vocal-btn s2__vocal-btn--persona ${selectedVoiceCloneId === cid ? 's2__vocal-btn--active' : ''}`}
                           onClick={() => {
-                            if (import.meta.env.DEV) console.info('[StudioTab2] voice clone selected', { clone_id: cid });
+                            if (import.meta.env.DEV) console.info('[ComposeStudioTab] voice clone selected', { clone_id: cid });
                             setSelectedVoiceCloneId(cid);
                             setVocal('');
                           }}
@@ -2794,12 +1921,12 @@ export default function StudioTab2({ onSendToUpload }) {
           {successMsg && <div className="s2__msg s2__msg--success">{successMsg}</div>}
 
           <div className="s2__btn-row">
-            <button className="s2__btn-back" onClick={() => setStep(2)}>
-              <FiArrowLeft /> 이전
+            <button className="s2__btn-back" onClick={handleUnloadDraft}>
+              <FiArrowLeft /> 다른 작사 선택
             </button>
             <button
               className="s2__submit"
-              onClick={() => { flushCustomInputs(); setStep(4); }}
+              onClick={() => setStep(4)}
             >
               <FiCheck /> 프롬프트 확인 <FiArrowRight />
             </button>
@@ -2926,13 +2053,13 @@ export default function StudioTab2({ onSendToUpload }) {
           </button>
         </div>
 
-        {loadingHistory && generations.length === 0 ? (
+        {loadingHistory && historyGenerations.length === 0 ? (
           <div className="s2__history-empty">로딩 중...</div>
-        ) : generations.length === 0 ? (
+        ) : historyGenerations.length === 0 ? (
           <div className="s2__history-empty">아직 생성 기록이 없습니다.</div>
         ) : (
           <div className="s2__history-list">
-            {generations.map((gen) => (
+            {historyGenerations.map((gen) => (
               <div key={gen.id} className="s2__gen-card">
                 <div className="s2__gen-top">
                   <div className="s2__gen-info">
@@ -2957,17 +2084,6 @@ export default function StudioTab2({ onSendToUpload }) {
                   )}
                   {gen.duration && <span className="s2__gen-tag">{gen.duration}초</span>}
                 </div>
-                {/* Draft: 이어서 작업 버튼 */}
-                {isDraft(gen) && (
-                  <div className="s2__gen-player">
-                    <button
-                      className="s2__draft-resume"
-                      onClick={() => handleResumeDraft(gen)}
-                    >
-                      <FiEdit3 /> 이어서 작업
-                    </button>
-                  </div>
-                )}
 
                 {/* Play/Download for completed generations — v74: 2 variants side-by-side */}
                 {gen.status === 'completed' && (() => {
@@ -3011,7 +2127,7 @@ export default function StudioTab2({ onSendToUpload }) {
                                   className="s2__gen-upload"
                                   onClick={() => {
                                     if (import.meta.env.DEV) {
-                                      console.info('[StudioTab2] sendToUpload', { genId: gen.id, variantIndex: vIndex });
+                                      console.info('[ComposeStudioTab] sendToUpload', { genId: gen.id, variantIndex: vIndex });
                                     }
                                     onSendToUpload({
                                       generationId: gen.id,
@@ -3034,7 +2150,7 @@ export default function StudioTab2({ onSendToUpload }) {
                               variantIndex={vIndex}
                               onRefetched={(updatedDoc) => {
                                 if (import.meta.env.DEV) {
-                                  console.info('[StudioTab2] ts refetched', { genId: updatedDoc?.id });
+                                  console.info('[ComposeStudioTab] ts refetched', { genId: updatedDoc?.id });
                                 }
                                 if (!updatedDoc?.id) return;
                                 setGenerations((prev) =>

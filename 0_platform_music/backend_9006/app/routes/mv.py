@@ -61,6 +61,10 @@ class CreateMVRequest(BaseModel):
     character_variant: Optional[str] = "real"
     video_model: Optional[str] = "veo"  # "veo", "kling", "seedance", or "grok" (v66)
     audio_generation_id: Optional[str] = None
+    # v209: MV촬영실 — 이미 발매된 「내 트랙」(파일 업로드 트랙 포함)을 곡 소스로 지정.
+    # 본인 소유(uploader_id) 검증 필수 — 실패 시 403. report_blinded 트랙 차단.
+    # audio 해석은 mv_pipeline._resolve_audio_object_name 의 tracks 폴백이 담당.
+    track_id: Optional[str] = None
     scenario_models: Optional[List[str]] = None  # for scenario generation (e.g. ["gpt-4o-mini", "claude-opus-4-6"])
     prompt_models: Optional[List[str]] = None    # for image prompt generation (e.g. ["gpt-4o-mini", "gpt-5.4"])
     video_prompt_model: Optional[str] = None     # for video prompt generation (e.g. "claude-opus-4-7")
@@ -120,6 +124,8 @@ class GenerateVideosRequest(BaseModel):
 
 class SaveDraftRequest(BaseModel):
     audio_generation_id: Optional[str] = None
+    # v209: 「내 트랙」 곡 소스 임시저장 — 검증 통과 시 job.audio_track_id 로 저장.
+    track_id: Optional[str] = None
     audio_file_name: Optional[str] = None
     genre: Optional[str] = None
     mood: Optional[str] = None
@@ -302,6 +308,47 @@ def _scene_to_dict(scene: dict) -> dict:
     return result
 
 
+# ── v209: track 곡 소스 공용 검증 (create_mv / save_draft 재사용) ────────────
+
+async def _validate_user_track_source(mongo, raw_track_id, current_user, ctx: str):
+    """「내 트랙」 곡 소스 track_id 검증 — (error_response, audio_track_id, duration_sec) 반환.
+
+    분기: ObjectId 무효 400 / 미존재 404 / 타인 소유 403 / report_blinded 403 /
+    audio_url 부재 400. 통과 시 (None, track_id 문자열, duration_sec|None).
+    ctx 는 로그 표기용 ("create" | "save-draft").
+    """
+    raw = (raw_track_id or "").strip()
+    if not ObjectId.is_valid(raw):
+        logger.warning("[MV] %s invalid track_id=%r user=%s", ctx, raw_track_id, current_user["id"])
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."}), None, None
+    track_doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(raw)},
+        {"uploader_id": 1, "audio_url": 1, "report_blinded": 1, "duration_sec": 1, "duration": 1},
+    )
+    if not track_doc:
+        logger.warning("[MV] %s track not found track_id=%s user=%s", ctx, raw, current_user["id"])
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."}), None, None
+    owner_ok = track_doc.get("uploader_id") == current_user["id"]
+    logger.info("[MV] %s track_id=%s owner_ok=%s user=%s", ctx, raw, owner_ok, current_user["id"])
+    if not owner_ok:
+        return JSONResponse(status_code=403, content={"error": "본인 트랙만 MV로 만들 수 있습니다."}), None, None
+    if track_doc.get("report_blinded"):
+        logger.warning("[MV] %s track blinded track_id=%s user=%s", ctx, raw, current_user["id"])
+        return JSONResponse(
+            status_code=403,
+            content={"error": "신고 처리로 숨겨진 트랙은 MV를 만들 수 없습니다."},
+        ), None, None
+    if not track_doc.get("audio_url"):
+        logger.warning("[MV] %s track has no audio_url track_id=%s", ctx, raw)
+        return JSONResponse(status_code=400, content={"error": "트랙에 오디오 파일이 없습니다."}), None, None
+    try:
+        _raw_dur = track_doc.get("duration_sec") or track_doc.get("duration")
+        duration_sec = float(_raw_dur) if _raw_dur else None
+    except (TypeError, ValueError):
+        duration_sec = None
+    return None, raw, duration_sec
+
+
 # ── POST /api/mv/create ─────────────────────────────────────────────────────
 
 @router.post("/create")
@@ -361,6 +408,18 @@ async def create_mv(
         )
 
     mongo = get_mongo()
+
+    # ── v209: track_id 곡 소스 (MV촬영실 — 내 트랙에서 MV 만들기) ──────────
+    # 검증은 _validate_user_track_source 공용 헬퍼 (save_draft 와 재사용).
+    # 기존 audio_generation_id 경로는 완전 불변 — track_id 미전송 시 아래 블록 전체 무동작.
+    audio_track_id: Optional[str] = None
+    track_duration_sec: Optional[float] = None
+    if body.track_id:
+        _track_err, audio_track_id, track_duration_sec = await _validate_user_track_source(
+            mongo, body.track_id, current_user, "create",
+        )
+        if _track_err is not None:
+            return _track_err
 
     # Validate video model (must come before scene count calculation)
     video_model = body.video_model or "veo"
@@ -457,8 +516,16 @@ async def create_mv(
         SCENE_CLIP_DURATION = 10
     else:
         SCENE_CLIP_DURATION = 8  # veo default
-    if body.audio_duration_sec and body.audio_duration_sec > 0:
-        scene_count = math.ceil(body.audio_duration_sec / SCENE_CLIP_DURATION)
+    # v209: 클라 미전송 시 track 실측 duration_sec 폴백 (generation 경로 기존 동작 불변).
+    effective_audio_duration_sec = body.audio_duration_sec
+    if (not effective_audio_duration_sec or effective_audio_duration_sec <= 0) and track_duration_sec:
+        effective_audio_duration_sec = track_duration_sec
+        logger.info(
+            "[CreateMV] audio_duration_sec fallback from track_id=%s duration=%.1f",
+            audio_track_id, track_duration_sec,
+        )
+    if effective_audio_duration_sec and effective_audio_duration_sec > 0:
+        scene_count = math.ceil(effective_audio_duration_sec / SCENE_CLIP_DURATION)
         scene_count = max(5, min(scene_count, 60))
     else:
         scene_count = 20
@@ -537,11 +604,13 @@ async def create_mv(
         "lyrics": body.lyrics,
         "cover_object_name": body.cover_object_name,
         "scene_count": scene_count,
-        "audio_duration_sec": body.audio_duration_sec,
+        "audio_duration_sec": effective_audio_duration_sec,
         "scene_prompt": body.scene_prompt,
         "character_object_name": body.character_object_name,
         "video_model": video_model,
         "audio_generation_id": body.audio_generation_id,
+        # v209: 「내 트랙」 곡 소스 — mv_pipeline 오디오/duration 폴백이 읽는다.
+        "audio_track_id": audio_track_id,
         "scenario_models": body.scenario_models,
         "prompt_models": body.prompt_models,
         "video_prompt_model": body.video_prompt_model,
@@ -855,6 +924,8 @@ async def get_mv_job(
         ),
         # Draft form fields (for restoring the upload page)
         "audio_generation_id": job.get("audio_generation_id"),
+        # v209: 「내 트랙」 곡 소스 복원 관통 (handleLoadDraft → MV촬영실)
+        "audio_track_id": job.get("audio_track_id"),
         "audio_file_name": job.get("audio_file_name"),
         "tags": job.get("tags"),
         "prompt": job.get("prompt"),
@@ -2528,6 +2599,16 @@ async def save_draft(
         val = getattr(body, field, None)
         if val is not None:
             update_fields[field] = val
+
+    # v209: track 곡 소스 임시저장 — create_mv 와 동일 기준 검증 후 audio_track_id 로 반영.
+    # (tester 실증 버그: track_id 가 조용히 폐기되어 불러오기 시 오디오 해석 실패)
+    if body.track_id:
+        _track_err, _valid_track_id, _ = await _validate_user_track_source(
+            mongo, body.track_id, current_user, "save-draft",
+        )
+        if _track_err is not None:
+            return _track_err
+        update_fields["audio_track_id"] = _valid_track_id
 
     await mongo.mv_jobs.update_one(
         {"_id": oid},

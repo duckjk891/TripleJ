@@ -1477,6 +1477,9 @@ async def upload_track(
         "key": key,
         "duration_sec": duration_sec,
         "language": language,
+        # v209: Form 으로 받던 lyrics 가 doc 에 저장되지 않던 갭 봉합 —
+        # upload-from-generation(:1731 "lyrics": body.lyrics) 관행과 동일하게 원값 그대로(None 허용).
+        "lyrics": lyrics,
         "audio_url": object_name,
         "cover_image_url": None,
         "waveform_data": [],

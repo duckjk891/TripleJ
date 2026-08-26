@@ -6,7 +6,10 @@ import { usePlayer } from '../contexts/PlayerContext';
 import * as api from '../api';
 import UploadPage from './UploadPage';
 import StudioTab from '../components/StudioTab';
-import StudioTab2 from '../components/StudioTab2';
+// v209 — StudioTab2(작업실2)를 작사실/작곡실로 분할(2단계), MV촬영실 신설 + StudioTab2.jsx 삭제(3단계).
+import LyricsStudioTab from '../components/studio/LyricsStudioTab';
+import ComposeStudioTab from '../components/studio/ComposeStudioTab';
+import MVStudioTab from '../components/studio/MVStudioTab';
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import ItemSelectModal from '../components/ItemSelectModal';
 import MyVoiceCloneSection from '../components/MyVoiceCloneSection';
@@ -1562,6 +1565,14 @@ export default function MyMusicPage() {
     setActiveTab('upload');
   };
 
+  // v209 — 작사실 [작곡하기 →] 인계 (handleSendToUpload 동형 패턴)
+  const [composePrefill, setComposePrefill] = useState(null);
+  const handleSendToCompose = (draftDoc) => {
+    if (import.meta.env.DEV) console.info('[MyMusic] sendToCompose', { id: draftDoc?.id });
+    setComposePrefill(draftDoc);
+    setActiveTab('compose');
+  };
+
   const handleLoadDraft = async (jobId) => {
     try {
       const { data } = await api.getMVJobDetail(jobId);
@@ -1575,8 +1586,11 @@ export default function MyMusicPage() {
         tags: data.tags || '',
         ai_model: data.ai_model || '',
         audio_generation_id: data.audio_generation_id || null,
+        // v209 픽스: track 소스 MV 드래프트 복원 관통 (GET /mv/jobs/{id} 응답 필드 계약)
+        audio_track_id: data.audio_track_id || null,
       });
-      setActiveTab('upload');
+      // v209 3단계: MV 임시저장 [불러오기] 타겟을 새 업로드 → MV촬영실로 리타겟
+      setActiveTab('mvstudio');
     } catch (err) {
       alert(err.response?.data?.error || '초안을 불러오는데 실패했습니다.');
     }
@@ -1732,11 +1746,24 @@ export default function MyMusicPage() {
           >
             작업실
           </button>
+          {/* v209: 'studio2' 키 유지(외부 location.state {tab:'studio2'} 호환) — 라벨·렌더만 작사실로 */}
           <button
             className={`mymusic-tab ${activeTab === 'studio2' ? 'mymusic-tab--active' : ''}`}
             onClick={() => setActiveTab('studio2')}
           >
-            작업실2
+            작사실
+          </button>
+          <button
+            className={`mymusic-tab ${activeTab === 'compose' ? 'mymusic-tab--active' : ''}`}
+            onClick={() => setActiveTab('compose')}
+          >
+            작곡실
+          </button>
+          <button
+            className={`mymusic-tab ${activeTab === 'mvstudio' ? 'mymusic-tab--active' : ''}`}
+            onClick={() => setActiveTab('mvstudio')}
+          >
+            MV촬영실
           </button>
           <button
             className={`mymusic-tab ${activeTab === 'character' ? 'mymusic-tab--active' : ''}`}
@@ -1895,11 +1922,10 @@ export default function MyMusicPage() {
         {/* Tab 2: Upload */}
         {activeTab === 'upload' && (
           <div className="mymusic-upload-tab">
+            {/* v209 3단계: draftData(MV 임시저장)는 MV촬영실 소관으로 이동 — UploadPage prop 소멸 */}
             <UploadPage
               generationPrefill={generationPrefill}
               onClearPrefill={() => setGenerationPrefill(null)}
-              draftData={draftData}
-              onClearDraft={() => setDraftData(null)}
             />
           </div>
         )}
@@ -1911,7 +1937,22 @@ export default function MyMusicPage() {
 
         {/* Tab 4: Studio2 */}
         {activeTab === 'studio2' && (
-          <StudioTab2 onSendToUpload={handleSendToUpload} />
+          <LyricsStudioTab onSendToCompose={handleSendToCompose} />
+        )}
+
+        {activeTab === 'compose' && (
+          <ComposeStudioTab
+            onSendToUpload={handleSendToUpload}
+            prefillDraft={composePrefill}
+            onClearPrefill={() => setComposePrefill(null)}
+          />
+        )}
+
+        {activeTab === 'mvstudio' && (
+          <MVStudioTab
+            draftData={draftData}
+            onClearDraft={() => setDraftData(null)}
+          />
         )}
 
         {/* Tab 6: Character */}

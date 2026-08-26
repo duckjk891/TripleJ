@@ -80,6 +80,33 @@ class GenerateRequest(BaseModel):
     duet_main_vocal_style: Optional[str] = None     # 듀엣 주 보컬 느낌
     duet_sub_vocal_style: Optional[str] = None      # 듀엣 상대 보컬 느낌
     categories: Optional[List[str]] = None          # v77: 고정 10종 화이트리스트 카테고리
+    # v209+: 솔로/듀엣 여부 — draft 저장 시 보존해 작곡실 인계 유실 방지 (PATCH duet 과 대칭).
+    duet: Optional[bool] = None
+
+
+class UpdateGenerationRequest(BaseModel):
+    """v209 — PATCH /api/generate/{gen_id} (draft 전용 수정) 화이트리스트.
+
+    작사실 「내 작사 리스트」 수정용. draft 시그니처(pending && point_ref==None
+    && result_audio_url==None)인 doc 만 수정 허용 — 완료곡/진행곡은 409.
+    화이트리스트 외 필드는 Pydantic 기본(extra ignore)으로 조용히 무시된다.
+    duration 은 generations doc 실측 필드명(초 단위) 그대로 사용.
+    """
+    title: Optional[str] = None
+    lyrics: Optional[str] = None
+    prompt: Optional[str] = None
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    style: Optional[str] = None
+    categories: Optional[List[str]] = None
+    vocal: Optional[str] = None
+    duration: Optional[int] = None
+    # v209+: 솔로↔듀엣 전환 저장 (작사실 수정 비대칭 해소 — planner 승인).
+    # 주의: GenerateRequest/create doc 에는 duet 필드가 없어(LyricsRequest 에만 존재)
+    # 최초 draft 생성 시엔 미저장 — PATCH 로 설정되면 doc 에 키가 생긴다.
+    duet: Optional[bool] = None
+    duet_main_vocal_style: Optional[str] = None
+    duet_sub_vocal_style: Optional[str] = None
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -489,6 +516,8 @@ async def create_generation(
         "reference_audio_duration": body.reference_audio_duration,
         "duet_main_vocal_style": body.duet_main_vocal_style,
         "duet_sub_vocal_style": body.duet_sub_vocal_style,
+        # v209+: 솔로/듀엣 여부 보존 (draft → 작곡실 인계 유실 방지, PATCH duet 과 대칭).
+        "duet": body.duet,
         "status": "pending",
         "progress": 0,
         "result_track_id": None,
@@ -691,6 +720,81 @@ async def get_generation(
         return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
 
     return _serialize(doc)
+
+
+@router.patch("/{gen_id}")
+async def update_generation(
+    gen_id: str,
+    body: UpdateGenerationRequest,
+    current_user=Depends(get_current_user),
+):
+    """v209 — draft(작사 임시저장) 수정 전용 PATCH.
+
+    가드: 본인 소유(403) + draft 시그니처만 허용(409):
+    status=="pending" && point_ref 없음 && result_audio_url 없음
+    (draft 시그니처 근거는 create_generation 의 StarEcon 주석 — 미시작
+    draft 는 point_ref=None). 응답은 GET /{gen_id} 와 동일 직렬화.
+    """
+    if not ObjectId.is_valid(gen_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 ID입니다."})
+
+    mongo = get_mongo()
+    doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+    if not doc:
+        logger.warning("[Generate] patch draft id=%s not found", gen_id)
+        return JSONResponse(status_code=404, content={"error": "생성 요청을 찾을 수 없습니다."})
+    if doc.get("user_id") != current_user["id"]:
+        logger.warning("[Generate] patch draft id=%s denied (not owner)", gen_id)
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."})
+
+    is_draft = (
+        doc.get("status") == "pending"
+        and not doc.get("point_ref")
+        and not doc.get("result_audio_url")
+    )
+    if not is_draft:
+        logger.warning(
+            "[Generate] patch draft id=%s rejected: not a draft (status=%s point_ref=%s has_audio=%s)",
+            gen_id, doc.get("status"), bool(doc.get("point_ref")), bool(doc.get("result_audio_url")),
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"error": "임시저장(draft) 상태의 생성물만 수정할 수 있습니다."},
+        )
+
+    # 보낸 필드만 반영 (exclude_unset) — 화이트리스트 외 필드는 모델 단계에서 무시됨.
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        return JSONResponse(status_code=400, content={"error": "수정할 필드가 없습니다."})
+
+    # prompt 는 create 와 동일하게 공백만은 불허 (명시 전송 시).
+    if "prompt" in updates:
+        _p = (updates["prompt"] or "").strip()
+        if not _p:
+            return JSONResponse(status_code=400, content={"error": "프롬프트를 입력해주세요."})
+        updates["prompt"] = _p
+
+    # categories 는 create 와 동일한 화이트리스트 필터 통과.
+    if "categories" in updates:
+        from ..constants.categories import filter_categories
+        updates["categories"] = filter_categories(updates["categories"])
+
+    updates["updated_at"] = datetime.now(timezone.utc)
+    logger.info(
+        "[Generate] patch draft id=%s fields=%s user=%s",
+        gen_id, sorted(k for k in updates if k != "updated_at"), current_user["id"][:8],
+    )
+
+    try:
+        await mongo.generations.update_one(
+            {"_id": ObjectId(gen_id)},
+            {"$set": updates},
+        )
+        updated_doc = await mongo.generations.find_one({"_id": ObjectId(gen_id)})
+        return _serialize(updated_doc)
+    except Exception as e:
+        logger.error("[Generate] patch draft id=%s failed: %s", gen_id, e)
+        return JSONResponse(status_code=500, content={"error": "수정 중 오류가 발생했습니다."})
 
 
 @router.post("/{gen_id}/timestamps/refetch")

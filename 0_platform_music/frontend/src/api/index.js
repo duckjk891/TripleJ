@@ -356,12 +356,15 @@ export const checkMVStatus = (jobId) => API.get(`/upload/mv-status/${jobId}`);
 
 // MV Draft System
 // PLAN v30 구현1: scenario_style / vocal_gender / relationship 필드를 명시적으로 포함
+// v209: track_id(「내 트랙」 곡 소스, MV촬영실) 지원 — 명시 필드로 통과시킨다.
+//       미전송 시 null 정규화(서버 Optional) — 기존 generation 경로·호출부 시그니처 완전 하위호환.
 export const createMVJob = (data) =>
   API.post('/mv/create', {
     ...data,
     scenario_style: data?.scenario_style ?? 'drama',
     vocal_gender: data?.vocal_gender ?? null,
     relationship: data?.relationship ?? null,
+    track_id: data?.track_id ?? null,
   });
 export const getMVJobs = () => API.get('/mv/jobs');
 export const getMVJobDetail = (jobId) => API.get(`/mv/jobs/${jobId}`);
@@ -567,6 +570,9 @@ export const getGenerations = (params) => API.get('/generate/', { params });
 export const getGeneration = (id) => API.get(`/generate/${id}`);
 export const refetchGenerationTimestamps = (genId, force = false) =>
   API.post(`/generate/${genId}/timestamps/refetch`, null, { params: { force } });
+// v209: draft(작사 임시저장) 전용 수정 — 서버가 본인 소유(403)+draft 여부(409) 가드,
+// 화이트리스트(title/lyrics/prompt/genre/mood/style/categories/vocal/duration/duet 계열)만 반영.
+export const updateGeneration = (id, payload) => API.patch(`/generate/${id}`, payload);
 export const deleteGeneration = (id) => API.delete(`/generate/${id}`);
 export const streamGeneration = (id) => API.get(`/generate/${id}/stream/`);
 export const uploadFromGeneration = (data) => API.post('/tracks/upload-from-generation', data);

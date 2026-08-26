@@ -16564,3 +16564,55 @@ warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속
 
 ### 6. 변경 파일 (커밋 대상 4)
 프런트 1: `frontend/src/pages/UploadPage.jsx` / 산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`. 무변경: `api/index.js`·`CoverEditModal.jsx`·백엔드 전체·9004/9005.
+
+---
+
+## v209 — 「내 음악」 작업 탭 재편: 작사실·작곡실·MV촬영실 분리 (2026-08-26 22:10)
+
+### 1. 요청 요지 (그림 합의 확정 사양)
+「내 음악」 탭 재편: ① 「작업실2」→**「작사실」** 개명·작사 전용화 — AI 작사(⭐) 또는 직접 작성 → 저장, 작업 영역 바로 아래 내 작사 리스트(보기·수정·삭제) ② **「작곡실」** 신설 — 작사 리스트에서 1개 땡겨오기 → 파라미터 → 곡 생성(⭐), 완료 리스트에 가사 연결 표시 + 곡별 [업로드→](새 업로드로 프리필 이동) ③ **「MV촬영실」** 신설 — 곡 풀 = 작곡실 미업로드 완성곡 + 내 트랙 공개 + 비공개 통합 목록, 곡 선택 시 가사·커버 자동 땡김 → 씬→이미지→영상→합치기 ④ 구 「작업실」 유지 ⑤ UploadPage 내장 MV 흐름은 MV촬영실로 이전 후 제거.
+
+### 2. 설계 결정 (PLAN v209 §1·§7~§12)
+- **D1** 작사/작곡 분할선 = StudioTab2 `handleConfirmLyrics`(:927-962). 작사실=step1-2+직접작성, 작곡실=step3-4+생성기록+피로게이지+Wondera+기존 onSendToUpload 재사용
+- **D2** 내 작사 저장소 = 기존 draft(generations, start_music_gen:false 무과금) 재활용 + `PATCH /generate/{id}` 신설(신규 컬렉션·삭제후재생성 기각). 작사 ⭐5 유실 창은 생성 즉시 자동 영속으로 봉합
+- **D3** MV 곡 소스 갭 = mv create `track_id` 확장 + 소유권 검증(프론트 역추적 기각 — 파일 업로드 트랙은 generation 부재)
+- **D4** 커버 필수 400 → MV촬영실 커버 확인 스텝 사전 가드(작곡실 완성곡은 전원 커버 부재 실측)
+- **D5** MV = 이동 우선: MVProductionSection 기계적 추출(결합 6지점 — 실측 5 + coverImageModel 복원 1 신규 발견 — 콜백/ref 배선) 후 MVStudioTab이 래핑
+- **D6** 임시저장 탭 유지 + 불러오기 타겟만 MV촬영실 리타겟(탭 제거는 ▲사용자 확인 대기)
+- **D7** 탭 구성: 내 트랙/내 앨범/새 업로드/작업실(무변경)/작사실('studio2' 키 유지)/작곡실('compose')/MV촬영실('mvstudio')/내 캐릭터/임시저장
+- **D8** 파일 업로드 트랙 lyrics 저장 누락 — lyrics 1필드만 이번 포함(tracks.py +3), cover/mv object name 파라미터는 별건 칩. 기존 저장분 소급 불가 → 가사 없는 곡 허용 UX 편성
+- **D9** 응답값 확정: 타인 track/draft 403, 무효 형식 400·미존재 404, PATCH 가드 400→404→403→409
+- 추가 판단: mv create "소스 둘 다 부재" 400 가드 **미도입**(임시저장 create가 소스 없이 호출되는 정상 경로 실측 — 도입 시 즉시 파손, §9) / PATCH·create `duet` 대칭 저장(11→12필드+create doc 2줄, §10-11) / persistDraft prompt 폴백 승인(직접 작성 저장 사양 충족, §10)
+
+### 3. 구현 이력 (단계별)
+| 단계 | 담당 | 내용 |
+|---|---|---|
+| 0 | backend-dev | mv.py: CreateMVRequest.track_id + 검증(무효400/미존재404/타인·blinded 403/무오디오400) + audio_track_id 저장·duration 보정, mv_pipeline 3단 폴백(tracks.audio_url). generate.py: PATCH /generate/{id}(가드 4종+화이트리스트 12필드·duet create 대칭 2줄). tracks.py: /tracks/upload doc에 lyrics 저장. api/index.js: updateGeneration 신설·createMVJob track_id 명시 통과(하위호환) |
+| 1 | frontend-dev | UploadPage 4348→(중간)·MVProductionSection 신설 기계적 추출, 결합 6지점 ref/콜백 배선, 모달 type="button" 5개, vite build 통과 — UploadPage가 계속 렌더(동작 불변) |
+| 2 | frontend-dev | studioShared(353)·LyricsStudioTab(905)·ComposeStudioTab(2194) 분할, 탭 배선(작사실 라벨/compose 신설), onSendToCompose(draftDoc)→composePrefill 인계, 작사 즉시 영속·리스트 CRUD(PATCH) |
+| 3 | frontend-dev | MVStudioTab(489) 신설 — 곡 풀 3소스 통합·커버 확인 스텝·MV 초안 리스트·draftData 복원, UploadPage MV 제거(→1119줄)·StudioTab2 삭제, 임시저장 리타겟('mvstudio'), 편차 2건 해소(querySelector 제거→오디오 props 계약·prefix [MVStudio] 통일), duet 복원, 가사 없는 곡 허용 UX, 커버 object name 직전달 |
+| 픽스 루프 1회 | backend+frontend | T14 발견 track_id 유실 — SaveDraftRequest+`_validate_user_track_source` 헬퍼 추출·GET 상세 audio_track_id 노출(서버) / 저장 body·복원 관통·getTrackDetail 재조회·blinded 필터(프론트) → 재검 PASS |
+
+### 4. 테스트 판정 — 전체 PASS (18건 + 재검, TESTPLAN v209 :10159~)
+| 게이트 | 시나리오 | 결과 |
+|---|---|---|
+| 단계0 | T04(모델 단위)·T05(PATCH 가드 5종+화이트리스트 주입 방어)·T06(track_id 가드 4종, 직삽 포함)·T07(draft 라이프사이클·무과금 실증) | PASS |
+| 단계1+2 | T01(추출 대조)·T03(불변 파일)·T08(작사실 CRUD·⭐5 표기)·T09(작사 즉시 영속 — 인터셉트 fulfill→자동 draft)·T10(작곡 인계·⭐15·2계열 인터셉트)·T11(완료 리스트·[업로드→] 프리필)·T15/T16(v207 커버·v208 refine·제출 A/B 스모크)·T18a | PASS (편차 2건 → 3단계 편입) |
+| 단계3+4 | T02(절단 최종 — querySelector 0건·prefix 통일 포함)·T12(곡 풀 3소스+가사 없는 트랙 ⑤)·T13(가사·커버 자동 인계·커버 스텝 가드·/mv/create body)·T14(MV 이관 동작 보존 — 픽스 1회 후 재검)·T17(임시저장 리타겟)·T18·T15/T16 재실행·save-draft 서버 검증 4종+성공 왕복(직삽 실호출) | PASS |
+- 안전 증빙: ⭐ 계정 A~E 전 구간 차감 0, 유료 엔드포인트 서버 도달 0(계획된 4xx 실호출 제외), 계정·mongo 직삽·임시파일 전량 원복(탈퇴 cascade 없음 실측 — 명시 DELETE 원칙), 9004/9005 무접촉, 9006 정상
+
+### 5. 인시던트·관찰·이월
+- **인시던트 1**(단계2 T10 1차): translate-tags 인터셉트 누락 → 실서버 경유 OpenAI 실호출 3건(⭐ 무관, 미세 외부 과금). 즉시 인터셉트 추가로 차단, 이후 0건. TESTPLAN §0에 translate-tags 명문화 + 부수 외부 호출 전수 grep으로 차단 목록 폐쇄
+- 관찰: generation 소스의 audio_duration_sec가 요청값 그대로 저장(서버 재검증 없음) — 별건 후보
+- 이월 별건: ① MV 오디오 소스 부재 merge 단계 사전 가드+좀비 job 정리(칩 등록됨) ② 파일 업로드 시 AI 커버·MV object name 파라미터 드롭(칩 등록됨) ③ 곡 풀 페이지네이션(현행 1페이지 로드) ④ MV촬영실 커버 확인 스텝의 캐릭터·장소 옵션 미지원(파일 첨부·기본 생성만) ⑤ uploadFromGeneration is_public=True 하드코딩(비공개 발행 요구 시)
+- ▲ 사용자 확인 대기: 임시저장 탭 제거 여부(현행 유지+리타겟) / 라벨 'MV 임시저장' 변경 여부
+- 해소됨: duet create 대칭(§11), querySelector 지뢰, prefix 혼재, T14 track_id 유실
+
+### 6. 안전 준수
+유료 성공 경로 실행 0(인시던트 1건 즉시 차단·기록) · 일회용 테스트 계정 가입→탈퇴 원복 · 실사용자 데이터·실 .env 무접촉 · 인프라 무조작(9006 재기동만 PID kill→setsid ./run.sh) · 9004/9005 접근 0 · 산출물 시크릿·실이메일 0
+
+### 7. 변경 파일 (커밋 대상 16)
+신설 5: `frontend/src/components/MVProductionSection.jsx`(3279) · `frontend/src/components/studio/MVStudioTab.jsx`(489) · `frontend/src/components/studio/LyricsStudioTab.jsx`(905) · `frontend/src/components/studio/ComposeStudioTab.jsx`(2194) · `frontend/src/components/studio/studioShared.js`(353)
+수정 7: `frontend/src/pages/UploadPage.jsx`(→1119) · `frontend/src/pages/MyMusicPage.jsx` · `frontend/src/api/index.js`(+6, 전량 v209 확인) · `backend_9006/app/routes/generate.py`(+104) · `backend_9006/app/routes/mv.py`(±87) · `backend_9006/app/routes/tracks.py`(+3) · `backend_9006/app/services/mv_pipeline.py`(+24)
+삭제 1: `frontend/src/components/StudioTab2.jsx`(-3078)
+산출물 3: `claude_skills_outputs/team-dev/{PLAN,TESTPLAN,REPORT}.md`

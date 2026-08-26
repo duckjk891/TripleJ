@@ -10155,3 +10155,372 @@ T3 은 (a)·(b) 상태코드와 응답 바디를 나란히 첨부. T1 은 캡처
   T3 422→404 전이(파이프라인 전진 증명)"**. 유료 0 전략 = e2e 전면 인터셉트(서버 미도달) + api 는
   실존 불가 세션 id 로 ③단계(404) 이전 차단 + 길이 검증 케이스는 ②단계(400) 차단 — 외부 이미지 API(:627)
   도달 경로 0. 픽스처 직삽 없음, 일회용 계정 가입→탈퇴 원복, 9006 단독, 재기동 불필요.
+
+## v209 — 「내 음악」 탭 재편: 작사실·작곡실·MV촬영실 + UploadPage MV 이관 검증 (2026-08-26 20:55)
+
+### 0. 전제·공통 절차
+
+- **대상**: PLAN.md v209(:30204~). 백엔드 신설 2건(`PATCH /generate/{id}` draft 전용, mv create
+  `track_id` 확장) + 프론트 재편(LyricsStudioTab/ComposeStudioTab/MVStudioTab/MVProductionSection 신설,
+  StudioTab2 분해·삭제, UploadPage ≈3169줄 MV 블록 이관 후 ≈1180줄 잔존).
+- **서버**: 백엔드 9006 단독 + 프론트 4000. 9004/9005 접촉 금지. 재기동 필요 시 9006 만
+  (PID kill → setsid ./run.sh, pkill 금지). 실 .env 무접촉.
+- **계정**: `TEST_ACCOUNT_EMAIL`(계정 A)·`TEST_ACCOUNT_EMAIL_B`(계정 B, 타인 소유권 검증 전용) —
+  플레이스홀더, 각각 일회용 가입 → 토큰 확보 → 사용 → 탈퇴 원복.
+- **생성 데이터 원복 원칙**: 시나리오가 만든 draft(generations)·mv_job 은 시나리오 말미에 **명시적
+  DELETE**(deleteGeneration / DELETE /mv/jobs/{id}) — 탈퇴 cascade 에 의존하지 않는다. 탈퇴 시 부속
+  데이터 자동 삭제 여부는 T07 말미에 실측해 기록만 한다(확인 불가여도 명시 DELETE 로 이미 원복 완료).
+- **유료 0 대원칙 — 3계층 차단** (v208 선례 승계, 각 시나리오에 차단 근거 명시):
+  1. **인터셉트(서버 미도달)**: 작사(⭐5 lyrics)·작곡 시작(⭐15 compose)·커버 생성/refine(⭐5)·MV
+     이미지/영상/합치기·Suno·Wondera — e2e 는 전부 Playwright `page.route()` fulfill/abort 로 백엔드
+     9006 에 요청이 도달하지 않는다.
+  2. **실패 경로 실호출**: 무효 id·타인 소유 id 로 400/403/404/409 에서 구조적 종료 — 파이프라인·외부
+     API 진입 자체가 불가능한 입력만 사용.
+  3. **무과금 실호출 허용 경로**(서버 실측 — POINT_COSTS 에 부재·무게이트, PLAN v209 §0-4 근거):
+     `POST /generate/` start_music_gen:false(draft 생성) · `PATCH /generate/{id}`(신설) ·
+     `GET /generate/` · `DELETE /generate/{id}` · `GET /tracks/my` · `GET /mv/jobs` ·
+     `GET /points/costs` — 이들은 실서버 검증 가능.
+  - **mv create 특칙**: job 생성까지는 무과금이나 후속 파이프라인 오발동 위험 → **실호출은 소유권
+    403·무효 track 404 등 실패 경로만**. 성공 경로 검증이 꼭 필요한 경우에 한해 create 200 직후
+    **즉시 `DELETE /mv/jobs/{id}`** 로 정리하고 이미지/영상/씬 생성은 절대 호출하지 않는다(T06(d)).
+- **성공 경로 금지 목록**(PLAN §4): /generate/lyrics/ · /generate/ start_music_gen:true ·
+  startMusicGeneration · Suno · Wondera · MV 이미지/영상/합치기 · generate-cover · refine-cover ·
+  tracks/upload · upload-from-generation · tracks/search.
+- **무효 id 규약** (planner 확정 반영): **형식불량** = `v209test-nonexistent-<난수>` / **형식유효·미존재**
+  = `000000000000000000000000`(실존 불가 ObjectId). mv create 는 두 케이스를 분리 검증(400/404 —
+  T06(a1)(a2)), 그 외 엔드포인트는 실측 코드를 기록.
+- **⭐ 무과금 증빙**: api 계열·인터셉트 검증 시나리오는 착수 전/후 포인트 잔액 조회를 판정에 포함
+  (차감 0 이어야 PASS — T05·T07·T09·T10).
+- **단계 게이트**: dev 가 4단계 순차 진행(PLAN §3) → 각 시나리오에 `실행가능: 단계N` 표기.
+  단계0=백엔드 / 단계1=MV 기계적 추출(동작 불변, UploadPage 가 섹션을 계속 렌더) / 단계2=작사·작곡
+  분할 / 단계3=MV촬영실 신설+UploadPage 정리 / 단계4=총괄.
+
+### 1. 시나리오
+
+#### T01 `[unit]` MV 기계적 추출 코드 대조 — 단계1 스모크 (검증축2)
+
+- **Given**: 단계1 완료 시점 워킹트리.
+- **When**: grep/diff 정적 검사 —
+  (a) `frontend/src/components/mv/MVProductionSection.jsx` 존재 + **UploadPage 가 이 섹션을 그대로
+  렌더**(단계1 은 제거가 아님, import·JSX 배선 확인).
+  (b) MV 핸들러 계열(createMVJob·generateMVImages·generateMVVideos·loadMvJobDetail·폴링 :614-682
+  상당·handleSaveDraft)이 UploadPage 본문에서 MVProductionSection 으로 이동.
+  (c) `document.querySelector('.upload-card__gen-player')` 의존(구 :688) — MVProductionSection 포함
+  전체 grep 0건, fallback(generationStreamUrl) 경로는 유지.
+  (d) 폴링 cleanup(구 :623-678 의 clearInterval/unmount 처리)이 추출본에 승계.
+  (e) 로그 prefix `[MV]`→`[MVStudio]` 통일, 구 무prefix 4개(:1272/:1294/:1297/:1312 이었던 로그) 정비.
+- **Then**: 각 항목 판정. **커버 결합 5지점 배선**: scenesInvalidated 4곳(구 :496/:559/:587/:609)이
+  콜백/`coverVersion` prop 감지로 치환, loadMvJobDetail 의 커버 역주입(구 :355-361)이
+  `onCoverAdopted(objectName, url)` 콜백으로 치환됐는지 코드 확인.
+- **유료 0 근거**: git/grep 로컬 정적 검사 — 실행·네트워크 없음.
+- **실행가능**: 단계1 (최종 확정은 단계3 후 T02).
+
+#### T02 `[unit]` UploadPage 절단 최종 판정 — 단계3 이후 (검증축2)
+
+- **Given**: 단계3 완료 워킹트리.
+- **When**: (a) UploadPage.jsx 에서 MV 핸들러·state·JSX 부재 grep — createMVJob·generateMVImages·
+  generateMVVideos·mvJob·씬/영상 모달(구 :4154-4274) 계열 0건. 단 제출 필드 `mv_object_name`
+  (구 :1520/:1545-1546 상당)은 **잔존 허용**(값 undefined 허용 — 기존 동일).
+  (b) `wc -l` ≈1180±10%. (c) draftData prop 수신(구 :320-340) 제거. (d) 라이트박스(구 :4276-4307,
+  커버·MV 공용이었음)는 커버용으로 **잔존** 확인. (e) MVStudioTab.jsx 가 MVProductionSection·커버
+  확인 스텝·초안 리스트를 배선. (f) 죽은 import·미사용 CSS 클래스 스팟 체크.
+- **Then**: 전 항목 충족 + v207 커버(:438-612·:1804-2249 상당)·v208 refine(:531-571 상당)·제출
+  (:1484-1580 상당)·프리필(:229-247 상당) 블록이 diff 상 **이동/절단 외 무변경**임을 목검.
+- **유료 0 근거**: 정적 검사만.
+- **실행가능**: 단계3.
+
+#### T03 `[unit]` 불변 파일 정적 대조 — StudioTab·CoverEditModal·api 표면 (R5·R7)
+
+- **Given**: 사이클 기준 커밋(단계0 착수 직전) 대비 `git diff --name-only`.
+- **When**: (a) `StudioTab.jsx`·`CoverEditModal.jsx` 가 변경 목록에 **없음**(있으면 내용 목검 후
+  planner 에스컬레이션). (b) CoverEditModal :217 의 `refineCover` **객체 인자** 호출 형태 grep 유지
+  (v208 회귀 지점). (c) `api/index.js` 는 변경 예정 파일 — diff 내용이 `updateGeneration` 신설
+  (+필요 시 createMVJob payload 통과 유지)에 국한되고 기존 30개 MV 함수·refineCover 시그니처
+  무변경인지 목검. (d) `StudioTab2.jsx` 삭제 여부 기록 — ▲PLAN §5 사용자 확인 항목이므로 미삭제여도
+  FAIL 아님(상태만 기록).
+- **Then**: (a)(b)(c) 충족 시 회귀 없음 판정.
+- **유료 0 근거**: 정적 검사만.
+- **실행가능**: 단계2 이후 (단계3·4 에서 재확인).
+
+#### T04 `[unit]` 백엔드 신설 모델 단위 — CreateMVRequest·PATCH 화이트리스트
+
+- **Given**: backend_9006 venv 에서 해당 Pydantic 모델 직접 import(서버 프로세스·네트워크 무관).
+- **When**: (a) `CreateMVRequest` — track_id 만 / audio_generation_id 만 / 둘 다 부재 / 둘 다 존재
+  4케이스 파싱. (b) PATCH 요청 모델(또는 화이트리스트 상수) — 허용 필드(title/lyrics/prompt/genre/
+  mood/style/categories/duet 계열) 수용, 비허용 필드(status·point_ref·result_audio_url·user_id)
+  거부/무시 정책 실측.
+- **Then**: 파싱 결과가 설계(track_id Optional 추가·화이트리스트)와 일치. "둘 다 부재/둘 다 존재"의
+  서버 정책(400 예상)은 T06(c) 실호출과 교차 검증.
+- **유료 0 근거**: 순수 인메모리 파싱 — HTTP·DB·외부 호출 없음.
+- **실행가능**: 단계0.
+
+#### T05 `[api]` PATCH /generate/{id} 가드 4종 + 정상 수정 (N3, 검증축1)
+
+- **Given**: 계정 A·B 가입·토큰 확보. A 로 draft 생성 — `POST /generate/` start_music_gen:false
+  (무과금·무게이트 실측 경로, 제목·가사 포함) → `id_A` 확보. 착수 전 A·B ⭐잔액 기록.
+- **When/Then**:
+  - (a) **타인**: B 토큰으로 PATCH id_A → **403 고정**(planner 구현 확정 — 403 외 코드는 FAIL).
+  - (b) **무효 id**: `v209test-nonexistent-<난수>`(또는 불가 ObjectId) → 404.
+  - (c) **비draft(409/400)**: 테스트 계정에 완료곡·point_ref 있는 문서가 없고, 만들려면 유료 성공
+    경로가 필요하므로 **실호출 생성 금지** → **mongo 직삽+원복 방식으로 확정**(planner Q1 회신:
+    pytest 없음): tester 가 mongo 에 테스트 문서(계정 A user_id 소유·status:"completed"·point_ref
+    더미) 직삽 → PATCH → 409/400 확인 → **문서 즉시 삭제**(원복 필수, 삽입·삭제 id 기록).
+  - (d) **화이트리스트 외 필드**: `{"status":"completed","point_ref":"x","title":"ok-v209"}` →
+    400 거부 또는 무시 후 title 만 반영(정책 실측 기록). **GET 재조회로 status·point_ref 불변 확정**
+    (이게 실질 판정 — draft 가 완료곡으로 둔갑하지 않음).
+  - (e) **정상 수정**: A 토큰으로 title·lyrics 변경 → 200 + GET 재조회 반영.
+- **정리**: id_A DELETE → GET 목록 부재 확인.
+- **유료 0 근거**: 전 경로가 §0 허용 목록(무과금) + 가드는 4xx 종료. ⭐잔액 전후 동일 판정 포함.
+- **실행가능**: 단계0 (스모크).
+
+#### T06 `[api]` mv create track_id — 실패 경로 실호출 + 조건부 성공 즉시 정리 (N8, 검증축1)
+
+- **Given**: 계정 A 토큰. 타인 track id 는 **공개 트랙 목록 GET(읽기 전용, 무과금)에서 1건 취득 —
+  planner Q2 확정(허용)**. 실존·타인 소유이며 create 가 403 으로 끊기므로 해당 트랙에 어떤 영향도
+  없음. **산출물(리포트·로그 첨부)에는 취득한 타인 track id 마스킹**(예: 앞 4자+`…`).
+- **가드 응답 확정(planner)**: 형식불량 400 / 형식유효·미존재 404 / 타인·report_blinded 403 /
+  오디오없음 400 — 이 코드가 판정 기준(다른 코드는 FAIL).
+- **When/Then**: `POST /mv/create`(정확 경로는 mv.py 라우터 prefix 실측) body 에 track_id 를 넣어 —
+  - (a1) **형식불량 track_id**(`v209test-nonexistent-<난수>`) → **400**.
+  - (a2) **형식유효·미존재 track_id**(`000000000000000000000000`) → **404**.
+  - (b) **타인 소유 track_id** → **403 고정**(2xx 면 FAIL·즉시 ABORT).
+  - (c) **track_id·audio_generation_id 둘 다 부재 / 둘 다 존재** → 400 계열 정책 실측(T04(a) 교차).
+    참고: **오디오없음 400** 가드는 본인 소유 무오디오 track 이 필요해 이번 사이클 [api] 실호출로는
+    구성 불가 → 기본 SKIP 기록(backend-dev 단위 검증 영역).
+  - (d) **조건부 성공 경로 — 기본 SKIP**: 계정 A 소유 track 이 없고(tracks/upload 금지) 필요성도
+    프론트 e2e(T13 인터셉트)로 대체되므로 기본 수행하지 않는다. planner 가 서버측 성공 검증을 명시
+    요구할 때만: A 소유 track 확보 방안 협의 후 → create 200 → job_id 기록 → **즉시
+    DELETE /mv/jobs/{job_id}** → GET /mv/jobs 부재 확인. 씬/이미지/영상 생성 API 절대 미호출.
+- **유료 0 근거**: (a1)(a2)(b)(c) 는 소유권/검증 단계 4xx 종료 — 파이프라인
+  (_resolve_audio_object_name 이후)·외부 API 미진입. (d) 는 job 문서 생성만(무과금 실측)+즉시 삭제,
+  후속 생성 호출 0.
+- **실행가능**: 단계0 (스모크).
+
+#### T07 `[api]` draft 라이프사이클 + 무과금·원복 증빙 (N1 의 api 축)
+
+- **Given**: 계정 A. `GET /points/costs`(인증 불요)로 lyrics 5 / compose 15 고시 확인. 착수 전
+  ⭐잔액 기록.
+- **When**: POST /generate/ start_music_gen:false(제목·가사 포함) → GET /generate/ 목록에서 해당 id 가
+  **pending + result_audio_url 부재**(클라 isDraft 시그니처)로 조회됨 → PATCH 로 lyrics 수정 → GET
+  재확인 → DELETE → GET 목록 부재.
+- **Then**: 전 단계 기대 응답 + **⭐잔액 전후 동일(차감 0)** — draft 경로 무과금 실증(작사실 설계
+  전제 확정). 말미: 탈퇴 cascade 실측 — 탈퇴 직전 draft 1건을 남기고 계정 B(먼저 역할 종료한 쪽)를
+  탈퇴 → mongo 읽기 가능하면 잔존 여부 확인·기록, 불가하면 "확인 불가" 기록. **어느 경우든 표준
+  절차는 명시 DELETE 후 탈퇴**(이 실측은 기록 목적).
+- **유료 0 근거**: §0 허용 목록 경로만 사용.
+- **실행가능**: 단계0 (스모크).
+
+#### T08 `[e2e]` 작사실 — 개명·리스트 표시·수정·삭제·⭐5 표기 (N1, 검증축3)
+
+- **Given**: Playwright, 프론트 4000, 계정 A 로그인. `**/generate/lyrics/**` 라우트 인터셉트 등록
+  (**abort** — 오클릭 방어). 사전 draft 1건은 T07 방식 실생성 또는 본 시나리오의 직접작성으로 마련.
+- **When**: 내 음악 진입 → 탭 라벨이 「작업실2」→**「작사실」** 로 개명 확인(구 작업실 탭은 별도
+  존재) + `location.state {tab:'studio2'}` 딥링크 진입도 작사실로 열림(activeTab 키 호환, PLAN D7)
+  → 직접작성으로 가사 입력 → [저장] → 리스트 갱신 → 항목 [수정] 진입, 가사 변경 저장(PATCH) →
+  항목 [삭제].
+- **Then**: 내 작사 리스트가 작업영역 바로 아래 표시(제목·draft 성격 배지), 수정이 PATCH 실호출
+  200 후 리스트 반영, 삭제 후 목록 제거. AI 작사 버튼에 **⭐5 표기** 존재(클릭은 T09 로 위임 —
+  여기선 미클릭). 네트워크 캡처에 /generate/lyrics 요청 0건.
+- **유료 0 근거**: 저장(POST start:false)·수정(PATCH)·삭제(DELETE)·목록(GET) 전부 §0 무과금 허용
+  경로 실호출. 작사 API 는 인터셉트 등록 + 미클릭 이중 차단.
+- **실행가능**: 단계2.
+
+#### T09 `[e2e]` 작사 즉시 영속 — generateLyrics mock → 자동 draft 생성 (N2)
+
+- **Given**: T08 세션 연장. `**/generate/lyrics/**` 인터셉트를 **fulfill**(가짜 가사 응답 — 응답
+  스키마는 generate.py 의 실 응답 형태를 tester 가 실측해 맞춤)로 전환. ⭐잔액 사전 기록.
+- **When**: AI 작사 실행(⭐5 버튼 클릭 — 요청은 인터셉트에서 종료).
+- **Then**: fulfill 직후 프론트가 **`POST /generate/` 를 자동 호출**(⭐5 유실 창 봉합 — PLAN D2) —
+  네트워크 캡처 body 에 start_music_gen:false + mock 가사 포함 판정(이 호출은 실서버 허용) → 내 작사
+  리스트에 신규 draft 등장. ⭐잔액 불변(lyrics 5 미차감 — 서버 미도달 방증). 정리: 해당 draft DELETE.
+- **유료 0 근거**: lyrics 는 인터셉트 fulfill 로 백엔드 미도달(선차감 로직 자체가 실행 안 됨),
+  영속 호출은 무과금 허용 경로. ⭐잔액 대조로 이중 증빙.
+- **실행가능**: 단계2.
+
+#### T10 `[e2e]` 작곡실 — 작사 땡겨오기 인계·⭐15 표기·생성 body 검증 (N4, 검증축3)
+
+- **Given**: T08 세션, 작사실 리스트에 draft 1건(제목·가사·카테고리·(가능하면) 번역캐시 유발 태그
+  지정). **조건부 라우팅** 등록 — 작곡 시작 **2계열 모두 인터셉트(planner Q4 확정)**:
+  ① `POST /generate/` 중 body `start_music_gen:true` ② `POST /generate/{id}/start`
+  (startMusicGeneration). 각각 캡처 후 가짜 202 fulfill 또는 abort. `start_music_gen:false`
+  draft 저장·GET 은 통과(요청 body 검사로 분기).
+- **When**: 작사실 항목의 [작곡실로 보내기] → 작곡실 탭 자동 전환 → 파라미터(장르·무드·duration·
+  duet 등) 설정 → 생성 버튼(**⭐15 표기** 확인) 클릭.
+- **Then**: (a) 인계 state 정합 — 제목·가사·카테고리·장르/무드/스타일·isInstrumental·(있다면)
+  번역캐시가 작곡실 폼에 반영(PLAN D1 의 step2→3 인계 집합). (b) 인터셉트 캡처 body 에 가사·
+  파라미터가 온전히 실림 + 시작 플래그/경로 확인. (c) 서버 미도달 — ⭐잔액 불변 + 9006 로그에 시작
+  요청 흔적 없음. (d) 피로게이지·Wondera 섹션이 작곡실에 렌더(존재 확인만, 실행 금지).
+- **유료 0 근거**: 작곡 시작 계열 전면 인터셉트(⭐15 선차감 로직 미실행). 조건부 라우팅 미스 대비
+  §2 ABORT 기준 적용.
+- **실행가능**: 단계2.
+
+#### T11 `[e2e]` 작곡실 완료 리스트·[업로드→] 프리필 (N5+R4)
+
+- **Given**: 테스트 계정에 completed generation 이 없으므로(유료 성공 경로 금지) `**/generate/**`
+  GET 목록 인터셉트 **fulfill** 로 completed 픽스처 1건 주입 — id·title·genre·mood·lyrics·
+  result_audio_url·variants 포함, result_track_id **부재**(미발매). 스키마는 실 GET 응답 1회
+  캡처(무과금)로 실측해 구성(§4 Q3).
+- **When**: 작곡실 진입 → 완료 리스트에 픽스처 곡 표시 확인(가사 연결 표시 포함) → variant 카드의
+  **[업로드→]** 클릭.
+- **Then**: **새 업로드 탭으로 전환** + UploadPage 프리필 수신(구 :229-247 경로) — 제목·가사·
+  fromGeneration(generationId)·variantIndex 가 폼에 반영. 네트워크 불요(UI 상태 판정) — 제출은
+  하지 않는다(제출 회귀는 T16).
+- **유료 0 근거**: GET 인터셉트 fulfill — 목록 호출조차 픽스처로 대체 가능(실호출해도 무과금 GET).
+  업로드 제출 미수행.
+- **실행가능**: 단계2.
+
+#### T12 `[e2e]` MV촬영실 곡 풀 3소스·뱃지 (N6, 검증축3)
+
+- **Given**: `**/generate/**` GET·`**/tracks/my**` 인터셉트 fulfill 픽스처 —
+  ① completed + result_track_id 부재(작곡실 미발매 완성곡) ② completed + result_track_id 존재
+  (발매됨 — 제외 판정용) ③ 공개 트랙(is_public:true 또는 필드 부재) ④ 비공개 트랙(is_public:false)
+  ⑤ **lyrics 부재 트랙**(기존 파일 업로드 트랙 모사 — D8 소급 한계, T13(c) 판정용).
+  (계정에 실데이터가 있으면 실호출 병행 — 둘 다 무과금 GET.)
+- **When**: MV촬영실 탭 진입.
+- **Then**: 통합 목록에 ①③④⑤ 표시 + 소스/공개여부 뱃지 구분, **② 는 소스① 필터에서 제외**(발매곡은
+  트랙 소스로만). ⑤ 가 가사 없음을 이유로 목록에서 배제되지 않음. 하단(또는 진입 화면)에 MV 초안 리스트 영역 렌더 — `GET /mv/jobs` 실호출(무과금)
+  로 빈 목록 정상 + 인터셉트 픽스처 주입 시 목록 표시.
+- **유료 0 근거**: 전부 GET(§0 허용) 또는 인터셉트 — 생성 액션 없음.
+- **실행가능**: 단계3.
+
+#### T13 `[e2e]` 곡 선택 → 가사·커버 자동 인계·커버 확인 스텝·/mv/create body (N7+N8 e2e, 검증축3)
+
+- **Given**: T12 픽스처 상태. `**/mv/create**` 인터셉트(캡처 후 abort 또는 가짜 fulfill — 서버
+  미도달). MV 이미지/영상/씬 생성 계열 엔드포인트도 **방어적 인터셉트(abort)** 일괄 등록.
+- **When**: (a) 커버 있는 트랙(③) 선택 → MV 제작 진행 → job 생성 액션. (b) 커버 없는 작곡실
+  완성곡(①, generations 는 커버 필드 자체가 없음 — PLAN D4) 선택. (c) **가사 없는 트랙(⑤)** 선택.
+- **Then**:
+  - (a) 가사·커버 자동 인계(가사 폼·커버 미리보기 반영) → MVProductionSection UI 렌더 → 인터셉트
+    캡처 body 에 track_id(트랙 소스)·lyrics·cover_object_name 존재. generation 소스 곡이면
+    audio_generation_id 로 실리는지 대조.
+  - (b) **커버 확인 스텝** 표출 — 진행 게이트(씬/생성 버튼 비활성 — 구 :2649 게이트 승계), 파일
+    첨부(무료) 대안 UI 존재, AI 커버(⭐5) 유도 버튼은 **표기만 확인·미클릭**. 커버 없이 create
+    요청이 발사되지 않음(서버 400 "커버 이미지가 필요합니다" 사전 차단의 프론트 증명).
+  - (c) **가사 없는 곡 허용 UX**(신설 판정 — D8 소급 한계: 기존 파일 업로드 트랙은 가사 없음):
+    ⑤ 선택 시 가사 부재를 이유로 **진행이 차단되지 않음** — 가사 빈 값 허용(빈 상태로 진행 또는
+    가사 직접 입력 대안 UI 제공) 및 인터셉트 캡처 body 에서 lyrics 빈 문자열/생략이 정상 구성됨.
+    커버 게이트(b)와 독립으로 판정(⑤ 픽스처에 커버는 부여해 가사 축만 분리).
+- **유료 0 근거**: /mv/create·커버 생성·MV 생성 계열 전면 인터셉트/미클릭 — 서버 미도달.
+- **실행가능**: 단계3.
+
+#### T14 `[e2e]` MV 이관 동작 보존 — 씬 편집·캐스케이드·초안 저장/복원 (N9)
+
+- **Given**: `**/mv/jobs**` 목록·상세·씬/시나리오 패치·캐스케이드·saveMVDraft 계열 전부 인터셉트 —
+  중간 status(예: scenario_generated)의 mv_job 픽스처(씬 배열 포함, 스키마는 getMVJobs/
+  getMVJobDetail 실 응답 실측). 픽스처 커버 object_name 포함.
+- **When**: MV촬영실에서 초안 불러오기 → 씬 텍스트 편집 → 캐스케이드 패치 액션 → 임시저장.
+- **Then**: (a) 씬 편집 UI·패치 요청 body 스키마가 구 UploadPage 내장판과 동일(요청 캡처 대조).
+  (b) saveMVDraft 캡처 body 에 job 상태 스냅샷. (c) loadMvJobDetail 의 커버 역주입이
+  `onCoverAdopted` 콜백 경유로 커버 미리보기 갱신(PLAN D5 배선 동작 증명). (d) 씬·영상 모달 렌더.
+- **유료 0 근거**: 전면 인터셉트 — 픽스처 job 은 실존하지 않아 실호출돼도 404 로 무해하나, 원칙상
+  전부 fulfill/abort 로 서버 미도달.
+- **실행가능**: 단계3.
+
+#### T15 `[e2e]` UploadPage 회귀 — v207 커버·v208 refine (R1·R2, 검증축4)
+
+- **Given**: 새 업로드 탭(또는 /upload). v208 T1 방식 — `**/generate-cover**` 인터셉트(가짜 세션
+  fulfill: cover_session_id `v209test-e2e-session` + 더미 이미지), `**/refine-cover**` 인터셉트(캡처).
+- **When**: 커버 생성 실행 → refine 실행. 이어 402/403 분기: generate-cover 인터셉트 응답을
+  402(포인트 부족)·403 으로 각각 재설정해 재실행.
+- **Then**: (a) generate-cover 캡처 body 의 **9필드**(구 :459-470 — 정확 목록은 tester 가 현행 코드
+  실측) 유지. (b) refine 캡처 body 에 `refine_prompt` 키 존재 + 문자 인덱스 키 부재(v208 회귀).
+  (c) 402/403 각각의 UI 분기 문구(구 :499-510). (d) refine status 로그(구 :562-567) 콘솔 확인.
+  (e) 커버 이력·되돌리기 UI 동작(되돌리기 서버 검증 필요 시 무효 세션 404 실호출만).
+- **유료 0 근거**: 커버·refine 전면 인터셉트 — 서버 미도달(⭐5·외부 이미지 API 실행 0). 되돌리기
+  실호출은 무효 세션 404 종료.
+- **실행가능**: 단계1(스모크 — 추출 후 동작 불변 판정) + **단계3 후 재실행**(MV 제거 후 동일 판정).
+
+#### T16 `[e2e]` 업로드 제출 분기 A/B·직접커버 사후 업로드 (R3, 검증축4)
+
+- **Given**: `**/upload-from-generation**`·`**/tracks/upload**`·직접커버 사후 업로드 엔드포인트
+  인터셉트(캡처 후 abort, 또는 사후 업로드 순서 판정에 필요하면 가짜 성공 fulfill 후 즉시 종료 —
+  어느 쪽이든 서버 미도달). 분기 A 용으로 T11 픽스처 프리필 상태, 분기 B 용으로 로컬 소형 오디오
+  픽스처 파일 + 커버 이미지 파일.
+- **When**: (A) fromGeneration 프리필 상태에서 제출 → (B) 파일 직접 업로드 + 직접커버 첨부로 제출.
+- **Then**: (A) 캡처가 upload-from-generation 경로로, generation_id·variant_index 포함.
+  (B) tracks/upload FormData 에 파일·메타 + 제출 후 직접커버 **사후 업로드** 요청(구 :1555-1567)
+  발생 순서 캡처. 양쪽 모두 mv_object_name 은 부재/undefined 허용(기존 동일 — MV 제거의 제출 영향
+  0 증명).
+- **유료 0 근거**: 제출 계열 전면 인터셉트 — 서버 미도달(발매보상 ⭐+5 포함 서버 부수효과 0).
+- **실행가능**: 단계1(스모크) + 단계3 후 재실행.
+
+#### T17 `[e2e]` 임시저장 탭 리타겟 — 불러오기 → MV촬영실 (R6)
+
+- **Given**: 계정 A. 1차: `GET /mv/jobs` **실호출**(무과금) — 실 job 없음 → 빈 목록 정상 렌더.
+  2차: `**/mv/jobs**` 인터셉트 fulfill 로 초안 픽스처 1건 주입.
+- **When**: 임시저장 탭 진입 → 픽스처 항목 [불러오기] 클릭. (삭제 버튼은 인터셉트 상에서 요청
+  캡처만.)
+- **Then**: **activeTab 이 'mvstudio'(MV촬영실)로 전환** — 구 'upload' 리타겟 아님(handleLoadDraft
+  변경 지점, PLAN D6) + draftData 가 MVStudioTab 으로 전달돼 복원 UI 표시. 목록·삭제 요청 경로 기존
+  동일.
+- **유료 0 근거**: GET 허용 경로 + 인터셉트 — 생성 액션 없음.
+- **실행가능**: 단계3.
+
+#### T18 `[e2e]` 잔여 스모크 — /upload 직접 라우트·구 작업실 렌더 (R8+R5 렌더)
+
+- **Given**: 로그인 상태. 방어적으로 §0 금지 목록 전 엔드포인트 인터셉트(abort) 일괄 등록.
+- **When**: (a) `/upload` 직접 진입(App.jsx:74 — props 없음). (b) 내 음악 → 「작업실」(구 StudioTab)
+  탭 진입. (c) 탭 바 전체 스크린샷 — 최종 구성(내 트랙/내 앨범/새 업로드/작업실/작사실/작곡실/
+  MV촬영실/내 캐릭터/임시저장, PLAN D7) 기록.
+- **Then**: (a) 콘솔 에러 없이 업로드 폼 렌더(프리필 없음 상태 정상). (b) 구 작업실 UI 렌더
+  스크린샷 기록 — T03 diff 0 과 교차해 무변화 판정. (c) 탭 9종 라벨 일치 — 임시저장 탭 라벨은
+  **현행 '임시저장' 그대로**를 기준으로 판정(planner 확정 — 'MV 임시저장' 개명은 PLAN §5 미결
+  항목으로 이번 사이클 미적용, 개명돼 있으면 FAIL 아닌 편차 기록 후 에스컬레이션).
+- **유료 0 근거**: 렌더·스크린샷만 — 생성 액션 미클릭 + 전면 abort 방어망.
+- **실행가능**: 단계3 ((a)는 단계1 후에도 수행 가능).
+
+### 2. 실행 순서·단계 게이트·중단 기준
+
+| 게이트 | 실행 시나리오 | 성격 |
+|---|---|---|
+| 단계0 완료 | T04 → T05 → T06 → T07 | 백엔드 스모크(계정 A·B 가입, B 는 역할 종료 즉시 탈퇴) |
+| 단계1 완료 | T01 → T15(스모크) → T16(스모크) → T18(a) | 추출 동작 불변 판정 |
+| 단계2 완료 | T03 → T08 → T09 → T10 → T11 | 작사·작곡 분할 (한 브라우저 세션으로 연속 수행) |
+| 단계3 완료 | T02 → T12 → T13 → T14 → T17 → T18 → T15·T16 재실행 | MV촬영실 + UploadPage 최종 회귀 |
+| 단계4 | 전 결과 취합 + 로그 추적자 grep(`[LyricsStudio]`/`[ComposeStudio]`/`[MVStudio]`/`[MyMusic] tab route`) + T03 재확인 | 총괄 |
+
+- **원복**: 시나리오별 생성 draft·mv_job 은 해당 시나리오 말미 즉시 DELETE → 전체 종료 시 계정 A·B
+  탈퇴(§0 원칙 — cascade 비의존). mongo 직삽분(T05(c) 대체 경로 수행 시)은 삽입 id 기록·즉시 삭제.
+- **즉시 중단(ABORT) 기준**: ① 금지 목록 엔드포인트로 실서버 요청이 나간 흔적(인터셉트 미스 —
+  9006 로그/Playwright 네트워크 캡처로 교차 확인) ② 실패 경로 실호출에서 4xx 아닌 2xx 수신
+  ③ ⭐잔액 감소 감지 ④ T06 에서 타인/무효 track_id 로 2xx 수신 — 즉시 중단·원인 보고 후 planner
+  에스컬레이션.
+
+### 3. 판정 기록 양식
+
+v205 §4 동일(ID/태그/실행위치/명령/기대/실제/PASS·FAIL·SKIP·BLOCKED).
+- 인터셉트 캡처 body JSON 원문 첨부: T10(작곡 시작)·T13(/mv/create)·T15(커버 9필드·refine)·T16(제출).
+- ⭐잔액 전후 표 첨부: T05·T07·T09·T10.
+- 원복 증빙: draft·job DELETE 응답 + 계정 A·B 탈퇴 확인 + (직삽 수행 시) mongo 문서 삭제 확인.
+- 정리: 스크래치 임시 스크립트·픽스처 오디오/이미지 파일 삭제.
+
+### 4. planner/tester 확인 필요 (2026-08-26 21:01 planner 조정 회신으로 Q1·Q2·Q4·Q5 해소)
+
+- **Q1 [해소]**: pytest 없음 확정 → T05(c)는 **mongo 직삽+원복** 방식으로 확정(본문 반영).
+- **Q2 [해소]**: 타인 track id 는 공개 트랙 목록 GET 취득 **허용** — 산출물엔 id 마스킹(본문 반영).
+- **Q3 [유지]**: 인터셉트 픽스처 스키마(getGenerations/getMyTracks/getMVJobs/getMVJobDetail/
+  generateLyrics 응답)는 tester 가 무과금 GET·실코드 실측으로 구성 — 본 설계의 필드 목록은 고정값
+  아님.
+- **Q4 [해소]**: 작곡 시작은 **2계열 모두 인터셉트** — createGeneration(start_music_gen:true) +
+  `POST /generate/{id}/start`(T10 반영). draft 저장(start:false) 오탐 금지 조건 유지.
+- **Q5 [해소]**: mv create 가드 응답 확정 — 형식불량 400 / 형식유효·미존재 404 / 타인·report_blinded
+  403 / 오디오없음 400(T06 반영). 확정 코드 외 응답은 FAIL.
+
+### 개정 이력 (v209)
+
+- 2026-08-26 초판 18건: **unit 4(T01-T04) / api 3(T05-T07) / e2e 11(T08-T18)** — 회귀 R1-R8·신규
+  N1-N10 전수 매핑. e2e 비중은 탭 재편(UI 이동) 사이클 특성이며 브라우저 세션 3회(단계1/2/3 게이트)
+  로 묶어 실행. 급소 = ①PATCH 가드·mv track_id 실패 경로(T05·T06) ②MV 추출 코드 대조(T01·T02)
+  ③탭 재편 여정(T08-T14) ④UploadPage 회귀(T15·T16). 유료 0 전략 = 유료·외부 API 전면 인터셉트
+  (서버 미도달) + 실패 경로 4xx 실호출 + 무과금 허용 7경로(draft CRUD·목록 GET·costs)만 실서버 검증,
+  mv create 성공 경로 기본 SKIP(수행 시 즉시 DELETE 정리). 단계 게이트: 0단계 4건 / 1단계 4건 /
+  2단계 5건 / 3단계 7건(재실행 포함) / 4단계 총괄. 일회용 계정 A·B 가입→탈퇴, 생성 데이터 명시
+  DELETE 원칙, 9006 단독.
+- 2026-08-26 21:01 **확정판(planner 조건부 승인 + 조정 5건 반영 — tester 실행 기준)**:
+  ① T05(a)·T06(b) 타인 소유 **403 고정**, T06(a) 무효 id 를 형식불량 400 / 형식유효·미존재 404
+  두 케이스로 분리(가드 응답 확정표 수록, §0 무효 id 규약 갱신) ② T05(c) 비draft 409 는 mongo
+  직삽+원복 확정(Q1 해소) ③ 타인 track id 공개 목록 GET 취득 허용·산출물 마스킹(Q2 해소), 작곡
+  시작 2계열(createGeneration start:true + POST /generate/{id}/start) 모두 인터셉트(Q4 해소)
+  ④ T12 픽스처 ⑤ lyrics 부재 트랙 추가 + T13(c) 가사 없는 곡 허용 UX 판정 신설(D8 소급 한계)
+  ⑤ T18(c) 임시저장 탭 라벨은 현행 '임시저장' 기준. 시나리오 총수·태그 분포 불변(18건 —
+  케이스 분리는 T06 내부 확장).
