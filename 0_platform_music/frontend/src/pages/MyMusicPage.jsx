@@ -14,6 +14,7 @@ import ConsentGateModal from '../components/ConsentGateModal';
 import FaceVerifyFlow from '../components/FaceVerifyFlow';
 import TrackShareButton from '../components/TrackShareButton';
 import AppealModal from '../components/AppealModal';
+import CoverEditModal from '../components/CoverEditModal';
 import { hasConsentCached, checkConsent } from '../utils/consent';
 import './MyMusicPage.css';
 
@@ -1590,6 +1591,8 @@ export default function MyMusicPage() {
   // v139 — 소명: blinded 트랙 ↔ my-affected 매칭 맵({ [trackId]: item }) + 소명 모달 대상 트랙
   const [affectedMap, setAffectedMap] = useState({});
   const [appealTrackId, setAppealTrackId] = useState(null);
+  // v207 — 커버 수정 모달 대상 트랙
+  const [coverEditTrack, setCoverEditTrack] = useState(null);
 
   // v139 — blinded 트랙이 있을 때만 my-affected 조회 (has_appeal 로 버튼 상태 결정)
   useEffect(() => {
@@ -1836,6 +1839,14 @@ export default function MyMusicPage() {
                           )
                         )}
                         <TrackShareButton track={{ id: track.id, title: track.title }} size={14} />
+                        {/* v207 — 커버 수정 (공유·삭제 사이) */}
+                        <button
+                          className="mymusic-track-card__cover-btn"
+                          onClick={() => setCoverEditTrack(track)}
+                          title="커버 수정"
+                        >
+                          <FiImage /> 커버 수정
+                        </button>
                         <button
                           className="mymusic-track-card__delete"
                           onClick={() => handleDelete(track.id, track.title)}
@@ -1914,6 +1925,19 @@ export default function MyMusicPage() {
         {/* Tab 7: Drafts */}
         {activeTab === 'drafts' && (
           <DraftsSection onLoadDraft={handleLoadDraft} />
+        )}
+
+        {/* v207 — 커버 수정 모달 (내 트랙 진입점) */}
+        {coverEditTrack && (
+          <CoverEditModal
+            track={coverEditTrack}
+            onClose={() => setCoverEditTrack(null)}
+            onUpdated={(newCoverUrl) => {
+              setTracks((prev) => prev.map((t) => (
+                t.id === coverEditTrack.id ? { ...t, cover_image_url: newCoverUrl } : t
+              )));
+            }}
+          />
         )}
 
         {/* v139 — 소명 제출 모달 (blinded 트랙) */}

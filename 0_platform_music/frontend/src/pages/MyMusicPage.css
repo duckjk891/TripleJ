@@ -259,8 +259,30 @@
   color: var(--color-danger);
 }
 
-.mymusic-track-card__delete {
+/* v207 — 커버 수정 버튼 (공유·삭제 사이) */
+.mymusic-track-card__cover-btn {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #bbb);
+  background: transparent;
+  border: 1px solid var(--color-border, #444);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mymusic-track-card__cover-btn:hover {
+  color: #fff;
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.mymusic-track-card__delete {
+  margin-left: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -880,7 +902,8 @@
     gap: 8px;
   }
 
-  .mymusic-track-card__delete {
+  .mymusic-track-card__delete,
+  .mymusic-track-card__cover-btn {
     margin-left: 0;
   }
 

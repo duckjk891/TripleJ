@@ -30119,3 +30119,39 @@ v205 dev 발견 사항의 잔여분. 착수 HEAD `f861150`. `backend_9006` 단�
 
 ### 3. 절대 준수
 유료 0 · 실데이터 쓰기 금지(재추출 API 실호출 금지 — pending 리셋 유발, 정적 대조 갈음) · 인프라 무조작 · 재기동은 9006 만 · 푸시 없음
+
+---
+
+## v207 — 기존 곡 커버 이미지 수정 기능 (내 트랙·내 채널 진입) [MAIDOL-CoverEditSquad] (2026-08-26 18:42)
+
+사용자 확정: 그림(진입점 2 + 공용 모달)대로, AI 재생성 비용 ⭐5(업로드 동일가). 착수 HEAD `050b2e1`.
+
+### 0. Plan verification findings
+- **진입점 실측**: ① 「내 음악」›「내 트랙」 곡 카드(MyMusicPage `:1782~` — 재생·제목·재생수·공개뱃지·공유·삭제, 수정 계열 없음) ② 「내 채널」(/artist/:id, ArtistDetailPage)›「곡·앨범」 탭 — 곡 행은 **공용 SongItem**(차트 등과 공유, `song-item__actions` 존재). `useAuth().user` 로 본인 판별 가능
+- **generate-cover 는 곡 비종속** (`upload.py:258~`): title·prompt·image_model·vocal_gender 등으로 cover_sessions 문서 + `covers/generated/…` 오브젝트 생성 → **기존 곡용 재사용 가능**. ⭐5 차감·refine·revert·history 전부 세션 기반으로 기존재
+- **update_track 이 `cover_image_url` 을 이미 수용** (`tracks.py:540`, 403 소유권 가드 v197)
+- 🔴 **보안 실측 필요(백엔드 dev 0-1 지시)**: update_track 이 cover_image_url 을 **검증 없이 문자열 그대로 저장하는지** 확인. 그렇다면 v197급 결함 — 타인 오브젝트/faces·evidence 경로/외부 URL 을 커버로 지정 가능(표시 유출 + 삭제 연쇄 오염). **이번에 서버측 검증을 신설**한다
+- 파일 첨부 경로는 `POST /upload/image (type=cover)` — v197 소유권 가드·캐시 무효화 완비, 그대로 사용
+
+### 1. 설계
+**백엔드 (A)**
+- A1 🔴 update_track `cover_image_url` 서버 검증: 허용 = ① 본인 소유 cover_session 산출물(`cover_sessions` 대조) ② 기존 자기 커버 경로(revert 용). 차단 = faces/·evidence/ 접두, http(s) 외부, 타인 세션. 위반 400 + `[cover-edit]` 로그
+- A2 적용 시 **캐시 무효화**(`cache:track:v3:{id}`) — /upload/image 와 동일 수준으로 update_track 커버 변경 경로에도 보장(기존 여부 실측 후 없으면 추가)
+- A3 (신설 최소화 원칙) 새 엔드포인트는 만들지 않는다 — 기존 3종(generate-cover / upload/image / update_track) 조합으로 완결
+**프런트 (B)**
+- B1 공용 모달 `CoverEditModal` 신설: 현재커버→새커버 미리보기 / 탭 3(파일 첨부·내 캐릭터 AI ⭐5·프롬프트 AI ⭐5) / 다시 생성·이전 커버로 되돌리기 / [이 커버로 교체]. AI 탭은 UploadPage 의 기존 api 함수(generateCover·refineCover·coverHistory) 재사용, 적용은 파일탭=uploadImage(cover), AI탭=updateTrack(cover_image_url=세션 산출물)
+- B2 「내 트랙」 곡 카드에 「커버 수정」 버튼 (공유·삭제 사이)
+- B3 SongItem 에 **옵션 prop**(예: onEditCover) — ArtistDetailPage 가 본인 채널일 때만 전달. 🔴 다른 사용처(차트·플레이리스트 등) 렌더 무변화가 판정 항목
+- B4 교체 성공 시 로컬 상태 갱신(내 트랙 목록·채널 목록) + 성공 토스트. 콘솔 로그 `[CoverEditModal]` 관행
+**비용**: AI 생성은 기존 generate-cover 의 ⭐5 차감을 그대로 탐 — 프런트에 비용 표기
+
+### 2. 회귀 위험
+| 위험 | 방어 |
+|---|---|
+| 🔴 SongItem 공용 변경 → 차트 등 전 화면 파급 | 옵션 prop + 미전달 시 렌더 동일(스냅샷 대조) |
+| update_track 검증 신설 → 기존 정상 사용처 파손 | 기존 호출처 전수 실측(0-1) 후 허용 규칙에 포함 |
+| AI 세션 산출물 경로를 커버로 직접 저장 → 삭제 연쇄(v197 §7 고아 문제) | A1 검증 + purge 경로 영향 실측을 test-designer 항목화 |
+| 업로드 화면 커버 플로 회귀 | 무수정 원칙 — UploadPage diff 0 판정 |
+
+### 3. 절대 준수
+유료 주의: **generate-cover 는 실제 ⭐5 차감 + 외부 이미지 API 과금** — tester 는 실호출 금지(금지 목록 기존과 동일), 검증은 모킹·정적·무료 경로(파일 첨부)로. 실사용자 데이터 무접촉(테스트 계정 신규 생성 절차 v202 A06 방식). 9004/9005 0 · 인프라 무조작 · 푸시 없음

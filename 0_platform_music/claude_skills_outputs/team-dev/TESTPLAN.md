@@ -9856,3 +9856,169 @@ v205 §4 와 동일 (`ID / 태그 / 실행위치 / 재기동(전·후·무관) /
   올리지 않으면서, 복구가 기동을 1초도 잡지 않는다"** — 전자는 정적 3중(U01 미러·U04 직행 0건·U05 단일
   데몬 스레드), 후자는 재기동 직후 health 즉시 응답(A01)로 실증. pending 0 시점이라 재추출 API·실데이터
   경로는 전면 정적 갈음, 실호출은 무해 캐시 히트(A03) 1건뿐. 재기동 1회, 유료 0, 9006 단독.
+
+## v207 — 2026-08-26 18:44 — 기존 곡 커버 수정(진입점 2 + 공용 모달) + update_track cover 검증 신설 [MAIDOL-CoverEditSquad]
+
+### 0. 전제·안전 규칙 (명문)
+
+- 대상: `backend_9006` 단독 (9004·9005 접촉 = 즉시중단 S7). **dev 커밋 해시 확정 후 착수.** 프런트 4000/4001 → 9006.
+- ⚠️ **AI 생성 경로(generate-cover·refine)는 실호출 절대 금지** — 실제 ⭐5 차감 + 외부 이미지 API 과금.
+  AI 경로 커버리지는 **정적·모킹·단위로만**(U04·U05·U01), 실 E2E/API 는 **무료 경로(파일 첨부)만**.
+- 실사용자 데이터 무접촉. **허용 절차(이번 신설, 테스트 데이터 한정)**: 🚫 유료 업로드 금지라 실곡 생성이
+  불가하므로, ① 일회용 계정 생성(v202 A06 계열 — register/login, `coveredit-v207-<epoch>@test.invalid`)
+  ② **Mongo `tracks` 에 테스트 트랙 문서 직접 삽입**(uploader_id=일회용 계정, title 에 `v207test` 마커)
+  ③ 커버 오브젝트는 **MinIO images 버킷에 1×1 png 직접 put**(`covers/v207test-…` 명명). 종료 시
+  **3중 원복 필수**: 트랙 문서 삭제 + MinIO 오브젝트 삭제(교체로 생긴 신규분 포함) + 계정 탈퇴(A06).
+  같은 요령으로 `cover_sessions` 테스트 세션 문서 삽입-검증-삭제(U01) 허용. 실사용자 문서 접촉 = S5.
+- 재기동은 **PID 지정 kill → 재기동** 총 1회(A01). 인프라 무조작 · 실 `.env` 무접촉 · 푸시 없음 ·
+  크리덴셜 산출물 기재 금지.
+- unit 은 서브프로세스(pytest/단발 스크립트) 또는 정적(grep·AST·git diff·스냅샷) — 실서버 무접촉.
+
+### 1. 케이스 (16건: unit 7 / api 6 / e2e 3)
+
+**U01 [unit] 🔴 update_track cover_image_url 검증 함수 — 케이스 표 (주력)**
+- Given: dev 가 신설한 검증 함수(명칭 §5-P2 확정 후)를 서브프로세스에서 **직접 호출**. 사전에
+  `cover_sessions` 에 테스트 세션 문서 삽입(본인 uid 소유 1건 + 타인 uid 소유 1건, `v207test` 마커) —
+  종료 시 삭제 원복(§0)
+- When/Then 케이스 표 (7행):
+  | 입력 | 기대 |
+  |---|---|
+  | 본인 세션 산출물 경로(`covers/generated/…`, 본인 cover_session 대조 일치) | **허용** |
+  | `faces/…` 접두 | **400 차단** |
+  | `evidence/…` 접두 | **400 차단** |
+  | 타인 세션 산출물 경로 | **400 차단** |
+  | 임의 문자열(`http://evil.example/x.png`, `../../etc`, 랜덤) | **400 차단** |
+  | None(필드 생략) | **무시**(검증 미개입, 기존값 유지) |
+  | 기존 자기 커버 경로 그대로(revert) | **허용** |
+- 부가: 차단 시 `[cover-edit]` 로그 존재. 하나라도 차단 실패 = S2 계열(즉시 dev 회부).
+
+**U02 [unit] 🔴 SongItem 옵션 prop 미전달 시 렌더 동일 — 차트 파급 0**
+- When: `SongItem.jsx` 를 prop(onEditCover 계열) **미전달**로 렌더한 출력(스냅샷/정적 AST)과 착수
+  HEAD `050b2e1` 시점 렌더 대조. 사용처 전수(`MainPage`(차트)·`SearchPage`·`PlaylistDetailPage`·
+  `AlbumDetailPage`·`FeedTrackCard`) grep — prop 전달 추가는 `ArtistDetailPage` 본인 분기뿐인지
+- Then: ① 미전달 시 DOM/출력 완전 동일 ② 타 사용처 diff 0 ③ prop 은 옵션(기본 undefined) — 위반 = S3.
+
+**U03 [unit] UploadPage 회귀 — diff 0 정적**
+- When: `git diff 050b2e1..<dev 커밋> -- frontend/src/pages/UploadPage.jsx`(및 업로드 커버 플로 관련 CSS)
+- Then: **diff 0**(업로드 화면 커버 플로 무변경 원칙). api 함수 재사용을 위한 export 추가 등이 불가피하면
+  `api/index.js` 쪽 diff 로 한정되어야 함 — UploadPage 본체 변경 발견 시 planner 회부.
+
+**U04 [unit] CoverEditModal AI 탭 정적 — 실호출 없이 구조 판정**
+- When: `CoverEditModal.jsx` 정적 판독
+- Then: ① 탭 3종(파일 첨부 / 내 캐릭터 AI / 프롬프트 AI) ② AI 탭에 **⭐5 비용 표기** 존재
+  ③ AI 함수는 UploadPage 기존 api(generateCover·refineCover·coverHistory) **재사용**(신규 중복 구현 0)
+  ④ 다시 생성·이전 커버로 되돌리기 UI 존재 ⑤ 현재커버→새커버 미리보기 구조 ⑥ `[CoverEditModal]` 콘솔 로그 관행.
+
+**U05 [unit] 적용 경로 호출 형태 — 코드 정적**
+- When: 모달의 [이 커버로 교체] 핸들러 + `api/index.js` 정적 판독
+- Then: ① 파일탭 = `uploadImage(type=cover, id=track_id)` 호출 형태 ② AI탭 = `updateTrack(track_id,
+  {cover_image_url: <세션 산출물 object name>})` 형태 ③ 성공 시 로컬 상태 갱신+토스트 코드 존재
+  ④ 어느 탭도 신규 엔드포인트 호출 없음(A3 원칙 — 기존 3종 조합).
+
+**U06 [unit] purge 연쇄 영향 — 정적 (PLAN §2 위험)**
+- When: `tracks.py` `purge_track_document`(`:575~`) 판독 — AI 세션 산출물(`covers/generated/…`)이
+  `cover_image_url` 로 저장된 트랙을 삭제할 때의 커버 오브젝트 삭제 경로 대조 + `cover_sessions` purge 유무
+- Then: ① 트랙 삭제 시 해당 커버 object 삭제가 안전(타 곡/세션 공유 오브젝트 오삭제 없음) ② 고아
+  오브젝트가 생기는 조합이 있으면 FAIL 아닌 **관찰 기록**으로 planner 회부(v197 §7 고아 문제 후속).
+
+**U07 [unit] 「내 트랙」 카드 버튼 배치 — 정적**
+- When: `MyMusicPage`(`:1782~` 곡 카드) diff 판독
+- Then: ① 「커버 수정」 버튼이 **공유·삭제 사이** ② 기존 액션(재생·공유·삭제 등) 및 공개뱃지 마크업 무변경
+  ③ 버튼 클릭 → CoverEditModal open 연결.
+
+**A01 [api] 재기동 + health — 유일한 재기동 지점**
+- When: dev 커밋 해시 확정·기록 → 9006 PID 지정 kill → 재기동 → `/api/health` 폴링(최대 60s)
+- Then: 200 복귀 + 기동 로그 오류 0. 미복귀 = S6 즉시중단.
+
+**A02 [api] 테스트 픽스처 구축 — 일회용 계정 + 트랙 직삽 + MinIO put (§0 절차)**
+- When: ① 일회용 계정 A(주계정)·B(타인 역할) 2개 register/login → JWT ② MinIO images 버킷에 1×1 png
+  put(`covers/v207test-a.png`) ③ Mongo `tracks` 에 A 소유 테스트 트랙 문서 직삽(title=`v207test-track`,
+  cover_image_url=위 오브젝트, 필수 필드는 §5-P3 스키마) ④ `GET /api/tracks/{id}` 로 정상 serialize 확인
+- Then: 상세 200 + cover 필드 정상. **프로필 이미지 계정 아님 주의** — 곡 픽스처가 목적. 이후 A03~A05·E01~E03 의 기반.
+
+**A03 [api] 파일 첨부 교체 전 과정 + 캐시 무효화 즉시성**
+- When: A 계정 JWT 로 `POST /api/upload/image (type=cover, id=<테스트 트랙>)` 새 1×1 png 첨부 → 200 →
+  **즉시** `GET /api/tracks/{id}` 재조회
+- Then: ① 200 + 응답에 새 object ② 재조회가 **즉시 새 값**(600초 TTL 대기 없이 — 캐시 무효화 실증)
+  ③ 구 오브젝트/신 오브젝트 정리 대상 목록에 기록(A06 원복용).
+
+**A04 [api] 🔴 타 계정 곡 커버 변경 시도 → 403 (v197 가드 회귀)**
+- When: B 계정 JWT 로 A 소유 테스트 트랙에 ① `PUT /api/tracks/{id}` (cover_image_url 포함) ②
+  `POST /api/upload/image (type=cover)` 각 1회
+- Then: **양쪽 모두 403** + 문서·오브젝트 무변경(재조회 대조). 하나라도 성공 = **S1 즉시중단**.
+
+**A05 [api] 🔴 본인 곡 + 부정 값 → 400 (신설 검증 실서버 실증)**
+- When: A 계정 JWT 로 본인 테스트 트랙 `PUT /api/tracks/{id}` — ① `cover_image_url="faces/whatever.png"`
+  ② 타인(B) 세션 산출물 경로(사전에 B 소유 `cover_sessions` 테스트 문서 삽입, §0) ③ 외부 URL 문자열
+- Then: **3건 전부 400** + `[cover-edit]` 로그 + 문서 무변경. 아울러 ④ cover 생략 + `title="v207test-r"` 만
+  → 200 · title 만 변경(타 필드 수정 경로 무영향 회귀). 저장 성공 케이스 발견 = **S2 즉시중단**.
+
+**A06 [api] 사후 결산 + 3중 원복**
+- When: 전 케이스 종료 후 ① 테스트 트랙 문서 삭제 ② MinIO `covers/v207test-*` + 교체 신규 오브젝트 전부
+  삭제 ③ `cover_sessions` `v207test` 문서 삭제 ④ 계정 A·B 탈퇴 ⑤ health·차트 GET
+- Then: ① `v207test` 마커 잔존 0건(Mongo·MinIO 재검색) ② health·차트 200 ③ **⭐ 차감·유료 호출 0건**
+  (generate-cover 호출 기록 0) ④ 9004/9005 접근 0 ⑤ 실사용자 문서 접촉 0.
+
+**E01 [e2e] 무료 경로 전 과정 — 내 트랙 → 모달 → 파일 첨부 → 교체 → 썸네일 갱신**
+- When: A 계정 로그인(4000) → 「내 음악」›「내 트랙」 → `v207test-track` 카드 「커버 수정」 → 모달 →
+  **파일 첨부 탭**에서 1×1 png 첨부 → 미리보기 확인 → [이 커버로 교체]
+- Then: ① 성공 토스트 ② 모달 닫힘/갱신 ③ **목록 썸네일 즉시 갱신**(새로고침 없이 로컬 상태) ④ 새로고침
+  후에도 새 커버 유지 ⑤ AI 탭은 **열람만**(⭐5 표기 확인) — 생성 버튼 클릭 금지.
+
+**E02 [e2e] 내 채널(본인) 진입점 — SongItem 버튼 노출 + 모달 열림**
+- When: A 계정 로그인 상태로 자신의 채널(`/artist/<A-id>`)›「곡·앨범」 탭 → `v207test-track` 행
+- Then: ① 곡 행(`song-item__actions`)에 커버 수정 버튼 **노출** ② 클릭 → 동일 CoverEditModal 열림
+  ③ 현재 커버 미리보기 표시.
+
+**E03 [e2e] 타인 채널 버튼 미노출 + 공용 화면 렌더 회귀 (시각)**
+- When: ① A 계정으로 **타인 채널**(실사용자 아닌 B 계정 채널, 곡 0 이면 임의 공개 아티스트 열람만) 접근
+  ② 비로그인/로그인으로 메인 차트·검색 결과 열람(읽기만)
+- Then: ① 타인 채널 곡 행에 커버 수정 버튼 **미노출** ② 차트·검색의 SongItem 렌더가 기존과 동일
+  (레이아웃 흐트러짐·에러 콘솔 0 — U02 의 시각적 이중 확인) ③ 콘솔 오류 0. 차트 렌더 변화 = S3.
+
+### 2. 태그 비율
+
+unit 7 (44%) / api 6 (37%) / e2e 3 (19%) — 기준(unit ≥40% · api ≥35% · e2e ≤25%) 충족.
+
+### 3. 즉시중단 조건 (v207)
+
+- **S1**: 타 계정 곡 커버 변경이 성공 — 403 미발동 (A04)
+- **S2**: faces/·evidence/·타인 세션·임의 문자열 값이 **저장됨** (U01·A05)
+- **S3**: SongItem 파급으로 차트 등 기존 화면 렌더 변화 (U02·E03)
+- **S4**: 유료 호출 발생 — generate-cover/refine 실호출·⭐ 차감 감지
+- **S5**: 실사용자 데이터 변경 — `v207test` 마커 밖 문서·오브젝트 접촉
+- **S6**: 재기동 실패 — health 200 미복귀 (A01)
+- **S7**: 9004/9005 접촉
+
+### 4. 판정 기록 양식
+
+v205 §4 와 동일 (`ID / 태그 / 실행위치 / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED`).
+U01 은 7행 케이스 표 결과 전체 첨부. A06 원복 3종(문서·오브젝트·계정) 각각 증빙(삭제 전후 계수) 기록.
+정리: 스크래치 임시 png/스크립트 삭제.
+
+### 5. planner 확인 필요 (설계 중 발견)
+
+- **P1**: 설계 시점 실측 — `update_track`(`tracks.py:724`, 모델 `:532~540`)이 cover_image_url 을 **검증
+  없이 $set 저장**함을 확인. PLAN 0 의 "실측 필요"는 **구멍 실존**으로 확정 — A1 신설 필요성 성립.
+  또한 **캐시 무효화는 update_track 에 이미 존재**(`cache:track:{id}`·`v3`·`playcount` delete, `:760~`) —
+  PLAN A2 의 "없으면 추가"는 **불필요**, 회귀 유지(A03 즉시성 판정)만 하면 됨. 그 외 PLAN 라인 참조
+  (upload.py:258 generate-cover·cover_sessions, SongItem 공용 사용처) 전부 실측 일치 — **PLAN 오류 없음**.
+- **P2**: dev 검증 함수 명칭/시그니처·400 에러 바디 포맷·`[cover-edit]` 로그 포맷 미확정 — dev 커밋 후
+  U01·A05 기대값 고정.
+- **P3**: **Mongo 트랙 직삽 절차**(§0)의 최종 승인 바람 — 실 DB 쓰기이나 `v207test` 마커 한정·3중 원복.
+  직삽 문서의 필수 필드 스키마(`_serialize_track` 가 요구하는 최소 필드 — uploader_id·title·cover_image_url·
+  audio_url·is_public·created_at 등)는 dev 실측본으로 확정 필요(serialize 오류 시 A02 BLOCKED).
+- **P4**: U01 "본인 세션 산출물 OK" 는 실 generate-cover 호출 불가(유료) → **cover_sessions 테스트 문서
+  직삽**으로 대체. 검증 함수가 세션 상태 필드(status 등)까지 대조한다면 문서 형태를 dev 와 동기화 필요.
+- **P5**: E01·A03 파일 첨부는 실 MinIO 쓰기 발생(테스트 계정 소유 곡 한정) — 교체로 생기는 신규 오브젝트
+  명명이 추적 가능한지(원복 목록 작성 가능 여부) dev 구현 실측 후 확인. 구 커버를 교체 시 서버가 즉시
+  삭제하는 구현이라면 A06 원복 목록이 달라짐.
+- **P6**: E03 "타인 채널" 은 실사용자 채널 **열람만**(읽기) 허용 전제 — 버튼 미노출 확인은 읽기 전용이라
+  무해하나, 원칙 확인 바람. 불허 시 B 계정 채널(곡 0)로 한정하고 곡 행 판정은 U02 정적으로 갈음.
+
+### 개정 이력 (v207)
+
+- 2026-08-26 초판 (16건: unit 7 / api 6 / e2e 3). 급소는 **"update_track cover 검증 신설이 v197급 구멍을
+  실제로 막는가(U01 표 + A04·A05 실서버) + 공용 SongItem 파급 0(U02 + E03)"**. AI 경로는 전면
+  정적·모킹 갈음(⭐5·외부 과금 실호출 0), 실 E2E 는 무료 파일 첨부만. 픽스처는 Mongo 직삽 + MinIO 1×1
+  png(§0 명문 절차, `v207test` 마커, 3중 원복). 재기동 1회, 유료 0, 9006 단독.

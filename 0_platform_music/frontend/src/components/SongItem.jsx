@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FiPlay, FiHeart, FiPlus, FiBookmark } from 'react-icons/fi';
+import { FiPlay, FiHeart, FiPlus, FiBookmark, FiImage } from 'react-icons/fi';
 import { usePlayer } from '../contexts/PlayerContext';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
@@ -10,7 +10,9 @@ import TrackShareButton from './TrackShareButton';
 import TrackDownloadButton from './TrackDownloadButton';
 import './SongItem.css';
 
-export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false, onPlay }) {
+// v207 — onEditCover: 옵션 prop. 전달된 경우에만 「커버 수정」 버튼 렌더 (내 채널 본인 전용).
+// 미전달 시 렌더 결과는 기존과 완전 동일 — 차트·플레이리스트 등 다른 사용처 무영향.
+export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false, onPlay, onEditCover }) {
   const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -103,6 +105,16 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         {/* v129 — 다운로드: 자막 영상 4옵션 팝업 */}
         <TrackDownloadButton track={{ id: song.id, title: song.title }} />
         <TrackShareButton track={{ id: song.id, title: song.title }} />
+        {/* v207 — 커버 수정 (onEditCover 전달 시에만 — 본인 채널 전용) */}
+        {onEditCover && (
+          <button
+            className="song-item__action-btn"
+            onClick={() => onEditCover(song)}
+            title="커버 수정"
+          >
+            <FiImage />
+          </button>
+        )}
       </div>
 
       {showAddModal && (

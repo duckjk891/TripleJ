@@ -540,6 +540,67 @@ class TrackUpdateBody(BaseModel):
     cover_image_url: Optional[str] = None
 
 
+async def _validate_cover_image_url(mongo, value: str, doc: dict, user_id: str):
+    """v207 — update_track `cover_image_url` 서버측 검증.
+
+    기존 곡 커버 수정(CoverEditModal)에서 AI 세션 산출물을 커버로 지정하는
+    경로가 열리면서, 임의 문자열이 그대로 저장되던 구멍(타인 오브젝트·
+    faces/·evidence/ 백엔드 전용 경로·외부 URL 지정 가능)을 막는다.
+
+    허용 (반환 (True, src)):
+      - "revert": 현 track.cover_image_url 과 동일 값 — 되돌리기/유지.
+        (레거시 http(s) 전체 URL 저장분도 "기존 값 유지"로만 통과 —
+        2026-08-26 실측 기준 http 저장분 0건이지만 방어적으로 유지)
+      - "file":   본인 파일 업로드 커버 `covers/{user_id}/{track_id}.{ext}`
+        (/upload/image type=cover 의 결정적 경로 — 파일 커버로 되돌리기용)
+      - "session": 본인 소유 cover_sessions 산출물 (user_id 일치 +
+        cover_object_name 또는 cover_refine_history[].object_name 에 포함)
+
+    차단 (반환 (False, None)) — 호출측에서 400 + [cover-edit] warning:
+      - faces/·evidence/ 접두 (백엔드 전용 경로 — 무조건, 동일값이어도)
+      - `..` 경로 탈출 (cover-preview v173 관행과 정합)
+      - http(s):// 외부 URL (동일 기존값 제외)
+      - 타인 세션 산출물·그 외 임의 문자열
+    """
+    value = value or ""
+    # 백엔드 전용 경로 — 기존값과 동일해도 무조건 차단.
+    if value.startswith(("faces/", "evidence/")):
+        return False, None
+    if ".." in value:
+        return False, None
+
+    # 되돌리기/유지 — 현 커버와 동일 값 (레거시 http 저장분 포함 유일 통로).
+    current = doc.get("cover_image_url")
+    if current and value == current:
+        return True, "revert"
+
+    if value.startswith(("http://", "https://")):
+        return False, None
+    if not value:
+        return False, None
+
+    # 본인 파일 업로드 커버 — /upload/image 가 쓰는 결정적 object name.
+    track_id = str(doc["_id"])
+    if value.startswith(f"covers/{user_id}/{track_id}."):
+        return True, "file"
+
+    # 본인 소유 cover_sessions 산출물 (현재본 + refine 이력 전체).
+    sess = await mongo.cover_sessions.find_one(
+        {
+            "user_id": user_id,
+            "$or": [
+                {"cover_object_name": value},
+                {"cover_refine_history.object_name": value},
+            ],
+        },
+        {"_id": 1},
+    )
+    if sess:
+        return True, "session"
+
+    return False, None
+
+
 @router.get("/my")
 async def get_my_tracks(
     page: int = 1,
@@ -742,6 +803,27 @@ async def update_track(
     if body.is_public is True and doc.get("report_blinded"):
         logger.info("[report] track republish_blocked track=%s owner=%s", track_id[:8], current_user["id"][:8])
         return JSONResponse(status_code=400, content={"error": "신고 처리로 제한된 콘텐츠입니다."})
+
+    # v207 — cover_image_url 서버 검증 (body 에 없으면(None) 기존대로 무시 —
+    # 다른 필드만 수정하는 기존 사용처 무영향).
+    if body.cover_image_url is not None:
+        cover_ok, cover_src = await _validate_cover_image_url(
+            mongo, body.cover_image_url, doc, current_user["id"]
+        )
+        if not cover_ok:
+            logger.warning(
+                "[cover-edit] rejected track=%s user=%s value=%s",
+                track_id[:8], current_user["id"][:8],
+                str(body.cover_image_url)[:120],
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "유효하지 않은 커버 이미지입니다."},
+            )
+        logger.info(
+            "[cover-edit] track=%s user=%s src=%s",
+            track_id[:8], current_user["id"][:8], cover_src,
+        )
 
     # Build update dict from non-None fields
     update_data = {k: v for k, v in body.dict().items() if v is not None}

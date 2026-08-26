@@ -5,6 +5,7 @@ import SongItem from '../components/SongItem';
 import AlbumCard from '../components/AlbumCard';
 import Avatar from '../components/Avatar';
 import FeedList from '../components/feed/FeedList';
+import CoverEditModal from '../components/CoverEditModal';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import './ArtistDetailPage.css';
@@ -23,6 +24,8 @@ export default function ArtistDetailPage() {
   const [followBusy, setFollowBusy] = useState(false);
   // v131 — 채널 탭: 'music'(곡·앨범, 기존 콘텐츠) | 'feed'(음악 피드) | v133 'community'(공지)
   const [tab, setTab] = useState('music');
+  // v207 — 커버 수정 모달 대상 곡 (본인 채널에서만 진입)
+  const [editCoverSong, setEditCoverSong] = useState(null);
 
   // 본인 페이지 여부 (id 는 URL 파라미터 문자열 — 타입 불일치 방지 위해 String 비교)
   const isSelf = !!user && String(user.id) === String(id);
@@ -248,6 +251,7 @@ export default function ArtistDetailPage() {
                   songs={songs}
                   isLiked={likedIds.has(song.id)}
                   onToggleLike={handleToggleLike}
+                  onEditCover={isSelf ? setEditCoverSong : undefined}
                 />
               ))}
             </div>
@@ -266,6 +270,19 @@ export default function ArtistDetailPage() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* v207 — 커버 수정 모달 (내 채널 진입점, 본인만) */}
+        {editCoverSong && isSelf && (
+          <CoverEditModal
+            track={editCoverSong}
+            onClose={() => setEditCoverSong(null)}
+            onUpdated={(newCoverUrl) => {
+              setSongs((prev) => prev.map((s) => (
+                s.id === editCoverSong.id ? { ...s, cover_image: newCoverUrl } : s
+              )));
+            }}
+          />
         )}
       </div>
     </div>
