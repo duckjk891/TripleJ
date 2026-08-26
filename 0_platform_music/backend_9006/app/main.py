@@ -63,6 +63,44 @@ from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
 from .routes import admin, admin_ads, admin_cs, admin_issues, admin_notices, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_clone, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, issues, _logs
 
+logger = logging.getLogger(__name__)
+
+
+def _run_beat_recovery(gen_ids: list, track_ids: list):
+    """
+    v206: pending 박자분석 복구 — 단일 데몬 스레드에서 순차 실행.
+    각 sync 래퍼가 자체 이벤트 루프 + 자체 motor + heavy_job_slot 을 쓰므로
+    메인 FastAPI 루프/anyio 스레드풀을 건드리지 않는다.
+    ⚠️ to_thread × N 으로 바꾸지 말 것 — 슬롯 대기자가 anyio 스레드풀(기본 40)을
+    고갈시켜 share_video·ready 등 다른 to_thread 사용자가 굶는다 (PLAN v206 §0).
+    복구는 살림이지 급무가 아니다 — 순차로 돌려 라이브 사용자용 슬롯 여유를 남긴다.
+    """
+    from .services.beat_extraction import (
+        run_generation_beat_extraction_in_background,
+        run_track_beat_extraction_in_background,
+    )
+
+    logger.info(
+        "[beat-recover] start: generations=%d tracks=%d", len(gen_ids), len(track_ids)
+    )
+    # v206-r: 건별 방탄 — 래퍼는 자체 try/except 이지만, 만에 하나 래퍼 밖에서
+    # 예외가 새면 복구 스레드가 죽어 잔여 건이 통째로 유실된다 (tester 실측 권고).
+    for i, gid in enumerate(gen_ids, 1):
+        logger.info("[beat-recover] generation %d/%d id=%s", i, len(gen_ids), gid)
+        try:
+            run_generation_beat_extraction_in_background(gid)
+        except Exception as e:
+            logger.warning("[beat-recover] generation id=%s failed: %s", gid, e)
+    for i, tid in enumerate(track_ids, 1):
+        logger.info("[beat-recover] track %d/%d id=%s", i, len(track_ids), tid)
+        try:
+            run_track_beat_extraction_in_background(tid)
+        except Exception as e:
+            logger.warning("[beat-recover] track id=%s failed: %s", tid, e)
+    logger.info(
+        "[beat-recover] done: generations=%d tracks=%d", len(gen_ids), len(track_ids)
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -484,9 +522,10 @@ async def lifespan(app: FastAPI):
         print(f"[migration] character_jobs stale recovery failed: {e}")
 
     # v44 — Recover stuck beat extractions (running → pending) and re-trigger
+    # v206: lifespan 은 pending 목록 조회까지만. 처리는 단일 데몬 스레드가
+    # 순차로 sync 래퍼들을 호출한다 (_run_beat_recovery 참조).
     try:
         from .database.mongodb import get_mongo
-        import asyncio as _asyncio
         mongo = get_mongo()
 
         # Reset stuck "running" rows back to pending
@@ -499,15 +538,15 @@ async def lifespan(app: FastAPI):
             {"$set": {"beats_status": "pending"}},
         )
         if gen_reset.modified_count or track_reset.modified_count:
-            print(
-                f"Recovered stuck beat extractions: generations={gen_reset.modified_count}, tracks={track_reset.modified_count} → pending"
+            logger.info(
+                "[beat-recover] recovered stuck beat extractions: generations=%d tracks=%d → pending",
+                gen_reset.modified_count,
+                track_reset.modified_count,
             )
 
-        # Re-trigger pending extractions for completed generations
-        from .services.beat_extraction import (
-            detect_beats_for_generation,
-            detect_beats_for_track,
-        )
+        # Re-trigger pending extractions for completed generations.
+        # v206: 여기(async lifespan)서는 목록 조회만 하고, madmom 실행은
+        # 데몬 스레드에 위임 — 메인 이벤트 루프에 CPU 작업을 걸지 않는다.
         pending_gens = await mongo.generations.find(
             {
                 "beats_status": "pending",
@@ -516,21 +555,26 @@ async def lifespan(app: FastAPI):
             },
             {"_id": 1},
         ).to_list(length=200)
-        for g in pending_gens:
-            _asyncio.create_task(detect_beats_for_generation(str(g["_id"])))
-        if pending_gens:
-            print(f"Re-triggered beat extraction for {len(pending_gens)} pending generations")
 
         pending_tracks = await mongo.tracks.find(
             {"beats_status": "pending", "audio_url": {"$ne": None}},
             {"_id": 1},
         ).to_list(length=200)
-        for t in pending_tracks:
-            _asyncio.create_task(detect_beats_for_track(str(t["_id"])))
-        if pending_tracks:
-            print(f"Re-triggered beat extraction for {len(pending_tracks)} pending tracks")
+
+        if pending_gens or pending_tracks:
+            import threading as _threading
+
+            _threading.Thread(
+                target=_run_beat_recovery,
+                args=(
+                    [str(g["_id"]) for g in pending_gens],
+                    [str(t["_id"]) for t in pending_tracks],
+                ),
+                daemon=True,
+                name="beat-recover",
+            ).start()
     except Exception as e:
-        print(f"Beat extraction recovery failed: {e}")
+        logger.warning("[beat-recover] beat extraction recovery failed: %s", e)
 
     # Recover Redis chart data from MongoDB
     try:

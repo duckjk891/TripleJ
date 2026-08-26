@@ -880,9 +880,15 @@ async def retry_generation_beats(
         }},
     )
 
-    # Fire-and-forget on the main FastAPI loop (this request runs there).
-    from ..services.beat_extraction import detect_beats_for_generation
-    asyncio.create_task(detect_beats_for_generation(gen_id))
+    # v206: 기존에는 detect_beats_for_generation 을 메인 루프 create_task 로
+    # 직접 걸어 madmom CPU 작업이 메인 이벤트 루프에서 돌던 결함(v205 트랙
+    # 재추출의 쌍둥이).
+    # 전체를 to_thread 로 워커 스레드에 옮기고, 그 안(sync 래퍼)에서
+    # heavy_job_slot 을 획득한다 — 더 이상 메인 루프 fire-and-forget 이 아님.
+    from ..services.beat_extraction import run_generation_beat_extraction_in_background
+    asyncio.create_task(
+        asyncio.to_thread(run_generation_beat_extraction_in_background, gen_id)
+    )
 
     return {"message": "비트 재추출이 시작되었습니다.", "status": "pending"}
 

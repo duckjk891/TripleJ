@@ -241,3 +241,28 @@ def run_track_beat_extraction_in_background(track_id: str):
             logger.warning("run_track_beat_extraction_in_background(%s): %s", track_id, e)
         finally:
             loop.close()
+
+
+def run_generation_beat_extraction_in_background(generation_id: str):
+    """
+    v206: generation 판 sync 래퍼 — run_track_beat_extraction_in_background 미러.
+    자체 이벤트 루프 + 자체 motor 클라이언트로 detect_beats_for_generation_with_db
+    를 완주시킨다. 몸통 전체가 heavy_job_slot 안에서 돌므로 워커 스레드
+    (asyncio.to_thread / 복구 데몬 스레드)에서만 호출할 것 — 블로킹 acquire.
+    """
+    from .heavy_jobs import heavy_job_slot
+
+    with heavy_job_slot("beat_extraction", f"gen:{generation_id}"):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            import motor.motor_asyncio
+
+            client = motor.motor_asyncio.AsyncIOMotorClient(settings.computed_mongo_url)
+            db = client[settings.mongo_db]
+
+            loop.run_until_complete(detect_beats_for_generation_with_db(generation_id, db))
+        except Exception as e:  # pragma: no cover
+            logger.warning("run_generation_beat_extraction_in_background(%s): %s", generation_id, e)
+        finally:
+            loop.close()

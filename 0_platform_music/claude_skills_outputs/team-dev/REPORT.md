@@ -16449,3 +16449,41 @@ test-designer 의 P4 요구가 구현 구조를 바꾼 사례 — **"검증할 �
 
 ### 7. 변경 파일 (커밋 대상 9)
 신규 1(`heavy_jobs.py`) + 수정 5(`config.py`·`beat_extraction.py`·`tracks.py`·`share_video.py`·`.env.example`) + 산출물 3.
+
+---
+
+## v206 — 메인 루프 madmom 직행 잔존 2곳 하청 전환 [MAIDOL-BeatOffloadSquad] (2026-08-26 17:32)
+
+> v205 dev 발견 사항의 잔여분 — "웨이터(메인 루프)가 직접 madmom 요리를 하러 들어가는" 마지막 2곳.
+> 착수 HEAD `f861150`. `backend_9006` 단독, 3파일 +91/−20.
+
+### 1. 대상과 조치
+| 대상 | 증상 | 조치 |
+|---|---|---|
+| `main.py` 기동 복구 블록 | pending 박자분석(최대 400건)을 **메인 루프에** 몰아 걺 — 기동 직후 전 API 정지 위험 (이사 첫 기동의 지뢰) | 목록 조회만 lifespan 에 남기고, **단일 데몬 스레드 `beat-recover`** 가 순차 처리 |
+| `generate.py` 비트 재추출 API | `create_task(detect_beats…)` 메인 루프 fire-and-forget (v205 에서 고친 트랙 재추출의 쌍둥이) | `to_thread(run_generation_…)` — v205 패턴 |
+| (전제) 생성물용 sync 래퍼 부재 | — | `run_generation_beat_extraction_in_background` 신설 — 트랙용 완전 미러(자체 루프·자체 motor·`heavy_job_slot("beat_extraction","gen:…")`) |
+
+**2차 함정 회피(설계 핵심)**: 복구를 `to_thread × 400` 으로 바꾸면 슬롯 대기자가 anyio 스레드풀(40)을
+고갈시켜 share_video·ready 가 굶는다 → **청소부 1명 순차** 채택. 복구는 살림이지 급무가 아니고,
+라이브 사용자용 슬롯(2) 여유를 남기는 것이 정답. 코드 docstring 에 금지 사유 명기.
+
+### 2. 테스트 — 9/9 PASS (U03 조건부 → 하드닝으로 해소), 즉시중단 0
+- **핵심 실측(A01)**: 재기동 후 "Uvicorn running" **41ms 뒤** health 첫 발사 → **5연타 전부 200 (6.2/2.4/2.3/2.3/2.3ms)** — 복구 스레드가 기동을 안 막음을 실증. 이사 첫날 지뢰 해제 확인
+- 신설 래퍼 = 트랙용 5요소 완전 미러(정적 대조) / 가짜 id 호출 → graceful no-op + `[heavy]` 1쌍 + **DB 무변화(69→69)**
+- `create_task(detect_beats` grep **0건** / `suno_generator.py` diff **0줄** / v205 회귀 0(캐시 공유영상 0.26s 즉시 반환, 슬롯 미경유)
+- pending 계수 전후 0→0, 유료 0, docker ps diff 0, `.env` sha 동일
+
+### 3. 픽스 성격의 하드닝 1건 (tester 권고 → 커밋 전 반영·재검증)
+tester 가 예외 stub 리터럴 재현으로 **복구 루프에 건별 try/except 부재** 시 스레드 사망 + 잔여 건
+유실을 실측(운영상 도달 불가 경로라 조건부 PASS 판정). → 건별 try/except + `[beat-recover] … failed`
+warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속 처리 + done 도달** (`calls=[g1,g2,t1,t2]`).
+
+### 4. 기록
+- 실행 중 서버는 하드닝 이전 코드 — 복구 경로는 기동 시에만 돌므로 **다음 재기동(=배포)부터 자동 적용**, 무해
+- 화면의 추천 작업 칩("메인 루프 madmom 직행 패턴 2곳 정리")은 본 버전으로 완료 — 사용자가 X 로 닫으면 됨
+- 이로써 **AWS 이사 전 정비 전체 완료** — 남은 것은 이사 실행(1'~7단계)뿐
+
+### 5. 변경 파일 (커밋 대상 6)
+`app/main.py` · `app/routes/generate.py` · `app/services/beat_extraction.py` + 산출물 3.
+무변경: `suno_generator.py` · 트랙용 래퍼 · 9004/9005.

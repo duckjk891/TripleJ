@@ -9762,3 +9762,97 @@ unit 6 (50%) / api 6 (50%) / e2e 0 — 기준(unit ≥40%·api ≥35%·e2e 0 허
   무정지는 unit(틱 간격 실측 U04)과 api(생성 도중 health 폴링 A02·A05) 이중 실증. 실경로는 유일한
   무료·무해 경로인 공유영상 생성만 사용하고, beats 쓰기가 있는 박자 경로는 정적 대조(U05)로 한정.
   누수 판정은 예외 경로(U02)+병렬 결산(A05)+사후 신규 획득(A06) 3중. 재기동 1회, 유료 0, 9006 단독.
+
+## v206 — 2026-08-26 17:20 — 메인 루프 madmom 직행 잔존 2곳 하청 전환 검증 [MAIDOL-BeatOffloadSquad]
+
+### 0. 전제·안전 규칙 (명문)
+
+- 대상: `backend_9006` 단독 (9004·9005 접촉 = 즉시중단 S5). **dev 커밋 해시 확정 후 착수.**
+- **유료 0 · ⭐ 차감 0.** **재추출 API 실호출 금지** — `beats_status` pending 리셋 + beats 실쓰기 유발.
+  검증은 **정적 대조로 갈음**(PLAN §3 명문, U04).
+- 실데이터 쓰기 0. 허용 예외: A03 은 **캐시 히트 경로만**(쓰기 0). 인프라 무조작 · 실 `.env` 무접촉 ·
+  재기동은 **PID kill → 재기동** 만 · 크리덴셜 산출물 기재 금지.
+- unit 은 서브프로세스(단발 스크립트/pytest) 또는 정적(grep·AST·git diff) — 실서버 무접촉.
+
+### 1. 케이스 (9건: unit 5 / api 4 / e2e 0)
+
+**U01 [unit] 신설 래퍼 = 트랙용 미러 — 정적 대조**
+- When: `beat_extraction.py` 의 `run_generation_beat_extraction_in_background`(`:246`) 본문을 트랙용(`:217`)과 구조 비교
+- Then: 5요소 일치 — ① sync def(async 아님) ② 자체 `new_event_loop`+`finally: loop.close()` ③ 자체 motor
+  클라이언트 ④ `heavy_job_slot("beat_extraction", "gen:"+id)` 가 **몸통 전체** 감쌈 ⑤ 예외 warning 처리 트랙용과 동형.
+
+**U02 [unit] 가짜 id graceful — no-op + `[heavy]` 로그**
+- When: 서브프로세스에서 신설 래퍼를 존재하지 않는 generation_id(24-hex 가짜)로 직접 호출
+- Then: ① 예외 미전파·정상 반환 ② `[heavy]` 획득/해제 쌍 1회 ③ DB 변화 0 (`_with_db` match 0 = no-op —
+  호출 전후 대상 컬렉션 판독 대조) ④ 프로세스 정상 종료(루프/클라이언트 정리 누수 없음).
+
+**U03 [unit] 복구 함수 순차 처리 + `[beat-recover]` 로그**
+- When: 복구 함수(명칭 dev 확정 후 §5-P2)를 대상으로 래퍼를 기록용 stub(슬립 ~0.2s)로 monkeypatch,
+  가짜 pending 3건 주입 후 데몬 스레드 가동
+- Then: ① 호출 **순차** — 실행 구간 겹침 0, 순서 = 목록 순서 ② `[beat-recover]` 시작(총 건수)/건별 진행/완료
+  로그 존재 ③ 1건 예외 주입 시에도 잔여 건 계속 처리 ④ `daemon=True` 확인.
+
+**U04 [unit] 잔존 직행 0건 — 정적 (재추출 API 실호출 갈음)**
+- When: `grep -n "create_task(detect_beats" app/main.py app/routes/generate.py` + 재추출 라우트 본문 판독
+- Then: ① 두 파일 합계 **0건** ② 재추출 경로는 `create_task(asyncio.to_thread(run_generation_beat_extraction_in_background, …))`
+  — v205 트랙 패턴(`tracks.py:919`)과 동형 ③ 이 정적 대조가 재추출 API 실호출을 갈음함(§0).
+
+**U05 [unit] 복구 블록 구조 + 회귀 diff — 정적**
+- When: main.py 복구 블록 판독 + `git diff <착수 HEAD f861150>..<dev 커밋>` — `suno_generator.py`·`beat_extraction.py`
+- Then: ① 복구는 **단일** `threading.Thread(daemon=True)` — `to_thread`/`create_task` ×N 패턴 0건(PLAN §0 2차 함정)
+  ② lifespan 은 pending 목록 조회 후 **즉시 반환**(join/await 없음) ③ `suno_generator.py` diff **0**(위반 = S3)
+  ④ 트랙용 래퍼(`:217`) 기존 본문 무변경 — 신설 함수 추가 외 diff 최소 ⑤ 복구 블록 print → logger 승격.
+
+**A01 [api] 재기동 + 기동 직후 health 즉시 응답** (핵심)
+- When: 기존 PID kill → 재기동 → **부팅 완료 로그 확인 즉시(수 초 내)** `GET /api/health` ×5 (1s 간격)
+- Then: ① 5회 전부 200, 각 < 2s — 복구 스레드의 기동 비차단 실증(무응답/지연 = S2 즉시중단) ② 기동 로그 오류 0.
+
+**A02 [api] `[beat-recover]` 기동 로그 판독 — pending 0 no-op**
+- When: A01 기동 로그에서 `[beat-recover]` 라인 전수 판독 (현재 pending 실측 0건 — PLAN §0)
+- Then: ① 시작 로그 총 **0건**(또는 no-op 명시) ② 건별 처리 로그 0 ③ 예외/트레이스백 0 ④ 크리덴셜 노출 0.
+  포맷 기대값은 dev 실측 후 확정(§5-P2).
+
+**A03 [api] v205 슬롯 경로 회귀 — 캐시 공유영상 즉시 반환**
+- When: 이미 캐시된 공개곡 track+format 으로 `POST /api/tracks/{id}/share-video?format=…` 1회
+- Then: ① cache hit — 즉시 응답(< 2s) + 기존 video_url 구조 ② 해당 구간 `[heavy]` wait/획득 0건 ③ ⭐ 차감 0.
+
+**A04 [api] 사후 결산**
+- When: 전 케이스 종료 후 health·차트 GET + 실행 기록/로그 결산 + pending 계수 재판독(읽기만)
+- Then: ① health·차트 200 ② 유료·⭐ 차감 호출 0건 ③ 재추출 API 실호출 0건 ④ 9004·9005 접근 0
+  ⑤ pending 계수 변화 0(리셋 유발 없음).
+
+### 2. 태그 비율
+
+unit 5 (56%) / api 4 (44%) / e2e 0 — 기준(unit ≥40%·api ≥35%·e2e 0 허용) 충족.
+
+### 3. 즉시중단 조건 (v206)
+
+- **S1**: 재기동 실패 — health 200 미복귀
+- **S2**: 기동 직후 health 무응답/지연 — 복구 스레드가 기동 차단 (A01)
+- **S3**: `suno_generator.py` diff 발생 (U05③)
+- **S4**: 유료·⭐ 차감 유발 호출 발생
+- **S5**: 9004/9005 접촉, 재추출 API 실호출, 또는 캐시 히트 외 실데이터 쓰기 감지
+
+### 4. 판정 기록 양식
+
+v205 §4 와 동일 (`ID / 태그 / 실행위치 / 재기동(전·후·무관) / 명령 / 기대 / 실제 / PASS·FAIL·SKIP·BLOCKED`).
+정리: 스크래치 임시 스크립트 삭제. U03 은 호출 타임스탬프 표 첨부.
+
+### 5. planner 확인 필요 (설계 중 발견)
+
+- **P1**: 설계 시점 코드 실측 — **A1·A2 는 이미 반영됨**(`beat_extraction.py:246` 신설 래퍼 확인,
+  `generate.py:888` to_thread 패턴 확인), **A3·A4 는 미구현**(`main.py:520`·`:529` `create_task(detect_beats` 잔존,
+  `[beat-recover]` 부재). tester 는 dev 커밋 해시 확정 후 착수. PLAN 라인 참조 전부 실측 일치 — **PLAN 오류 없음**
+  (사소: 재추출 create_task 는 현재 `:888`, PLAN 의 `:885` 는 착수 시점 표기 — 판정 영향 없음).
+- **P2**: 복구 함수 명칭/시그니처·`[beat-recover]` 로그 포맷 미확정 — dev 커밋 후 U03·A02 기대값 고정.
+- **P3**: pending 실측 0건이라 복구의 **건별 실처리**는 실데이터로 실증 불가 — U03 stub 단위검증 + A02 no-op
+  로그로 갈음함을 확인 바람. pending 인위 주입은 실데이터 쓰기 금지 위반이라 불채택.
+- **P4**: U02 가짜 id 검증은 실 Mongo **접속**(읽기 + match-0 update) 발생 — 쓰기 실질 0 이나 실 DB 접촉 허용
+  여부 확인 바람. 불허 시 mongomock 또는 미접속 URI 로 축소(단, graceful 판정 범위 좁아짐).
+
+### 개정 이력 (v206)
+
+- 2026-08-26 초판 (9건: unit 5 / api 4 / e2e 0). 급소는 **"복구·재추출 어느 쪽도 madmom 을 메인 루프에
+  올리지 않으면서, 복구가 기동을 1초도 잡지 않는다"** — 전자는 정적 3중(U01 미러·U04 직행 0건·U05 단일
+  데몬 스레드), 후자는 재기동 직후 health 즉시 응답(A01)로 실증. pending 0 시점이라 재추출 API·실데이터
+  경로는 전면 정적 갈음, 실호출은 무해 캐시 히트(A03) 1건뿐. 재기동 1회, 유료 0, 9006 단독.

@@ -30087,3 +30087,35 @@ Dockerfile HEALTHCHECK 를 /ready 로 전환할지(배포 라운드 판단) / 4-
 
 ### 4. 절대 준수
 유료 0 · 실사용자 데이터 무접촉(공유영상 캐시 생성은 공개곡 파생물로 허용) · 인프라 무조작 · 9006 재기동만 · 푸시 없음 · `git add -A` 금지
+
+---
+
+## v206 — 메인 루프 madmom 직행 잔존 2곳 하청 전환 [MAIDOL-BeatOffloadSquad] (2026-08-26 17:19)
+
+v205 dev 발견 사항의 잔여분. 착수 HEAD `f861150`. `backend_9006` 단독.
+
+### 0. Plan verification findings
+- **대상 ①** `main.py:520`·`:529` — lifespan 이 pending 박자분석(생성물 최대 200 + 트랙 최대 200)을 `create_task(detect_beats_for_*)` 로 **메인 루프에** 몰아 걺 → 기동 직후 madmom 이 홀에서 직접 돌아 전 API 정지 위험
+- **대상 ②** `generate.py:885` — 생성물 비트 재추출 API 가 `create_task(detect_beats_for_generation)` 를 메인 루프에 fire-and-forget (주석에 자인). v205 에서 고친 트랙 재추출(`tracks.py:919`)의 쌍둥이
+- **생성물용 sync 래퍼 부재**: `beat_extraction.py` 에 트랙용 `run_track_beat_extraction_in_background`(자체 루프+자체 motor+v205 슬롯)만 있고 생성물용은 없음 → **신설 필요**
+- **오폭 없음 확인**: suno 캐스케이드(`suno_generator.py:449`)는 `detect_beats_for_generation_with_db` 를 직접 호출 — 신설 래퍼와 무관
+- **pending 백로그 현재 0건** (실조회) — 구조만 잔존한 비활성 지뢰. 검증하기 안전한 시점
+- 🔴 **2차 함정**: ①을 단순히 `to_thread × 400` 으로 바꾸면 anyio 스레드풀(기본 40)이 슬롯 대기자로 고갈 — share_video·ready 등 다른 to_thread 사용자가 굶는다
+
+### 1. 설계
+| # | 작업 |
+|---|---|
+| A1 | `beat_extraction.py` 에 `run_generation_beat_extraction_in_background(generation_id)` **신설** — 트랙용 래퍼 미러(자체 루프 + 자체 motor + `heavy_job_slot("beat_extraction", "gen:"+id)`) |
+| A2 | `generate.py:885` → `create_task(asyncio.to_thread(run_generation_beat_extraction_in_background, gen_id))` (v205 트랙 패턴 그대로) |
+| A3 | `main.py` 복구 블록 → **단일 데몬 스레드**(`threading.Thread(daemon=True)`) 가 pending 목록을 **순차** 처리(래퍼 호출 → 슬롯 통과). ⚠️ to_thread ×N 금지(§0 2차 함정). 순차인 이유: 복구는 살림이지 급무가 아니고, 라이브 사용자용 슬롯(2) 여유를 남기는 것이 정답 |
+| A4 | 로그 추적자 `[beat-recover]` — 시작(총 건수)/건별 진행/완료. 기존 print 는 logger 로 승격 |
+
+### 2. 회귀 위험
+| 위험 | 방어 |
+|---|---|
+| 복구 스레드가 기동을 지연 | 데몬 스레드 즉시 분리 — lifespan 은 목록 조회만 하고 반환 |
+| 래퍼를 가짜/삭제된 id 로 호출 | 기존 `_with_db` 갱신이 match 0 무해(no-op) — 단위검증 |
+| suno 경로 변화 | §0 오폭 없음 — `suno_generator.py` diff 0 판정 항목 |
+
+### 3. 절대 준수
+유료 0 · 실데이터 쓰기 금지(재추출 API 실호출 금지 — pending 리셋 유발, 정적 대조 갈음) · 인프라 무조작 · 재기동은 9006 만 · 푸시 없음
