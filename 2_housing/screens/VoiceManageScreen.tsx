@@ -410,7 +410,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
           >
             <AppText style={styles.wizardBtnText}>내 목소리 만들기</AppText>
             <AppText style={styles.wizardBtnDesc}>
-              내 노래나 말 녹음으로 나만의 목소리를 만들어요.
+              내가 부른 노래로 나만의 목소리를 만들어요. 마지막에 짧은 문구를 따라 읽으면 완성돼요.
             </AppText>
           </TouchableOpacity>
         </View>

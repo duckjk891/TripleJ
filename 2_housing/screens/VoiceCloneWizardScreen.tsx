@@ -52,10 +52,6 @@ const SKILL_LEVELS = [
   { value: 'professional', label: '프로' },
 ];
 
-const STYLE_MODES = [
-  { value: 'sing', label: '노래' },
-  { value: 'speak', label: '말' },
-];
 
 type AudioSrc = { uri: string; name: string } | null;
 
@@ -77,7 +73,8 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const [sampleSrc, setSampleSrc] = useState<AudioSrc>(null);
   const [vocalStartS, setVocalStartS] = useState('0');
   const [vocalEndS, setVocalEndS] = useState('60');
-  const [styleMode, setStyleMode] = useState<'sing' | 'speak'>('sing');
+  // Suno 공식 플로우: 샘플=노래, 검증=문구 따라 말하기. style은 기본 'sing' 고정(선택 UI 제거 — 혼란 방지).
+  const styleMode = 'sing' as const;
 
   // STEP 2
   const [validateInfo, setValidateInfo] = useState<any>(null);
@@ -312,7 +309,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       return;
     }
     if (!sampleSrc) {
-      showAlert('입력 필요', '목소리 샘플을 녹음하거나 업로드해주세요.');
+      showAlert('입력 필요', '노래 샘플을 녹음하거나 업로드해주세요.');
       return;
     }
     const startS = parseInt(vocalStartS, 10);
@@ -466,10 +463,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     </View>
   );
 
-  const guidanceText =
-    styleMode === 'sing'
-      ? '1단계에서 샘플을 "노래"로 선택했어요. 이 문구도 노래로 불러주세요.'
-      : '1단계에서 샘플을 "말"로 선택했어요. 같은 톤으로 말로 읽어주세요.';
+  const guidanceText = '받은 문구를 또렷하게 말로 따라 읽어 녹음해주세요.';
 
   return (
     <View style={styles.container}>
@@ -514,9 +508,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 1 && (
             <View>
-              <AppText style={styles.stepTitle}>1. 목소리 샘플 입력</AppText>
+              <AppText style={styles.stepTitle}>1. 노래 샘플 입력</AppText>
               <AppText style={styles.stepHint}>
-                최소 15초 ~ 2분 길이의 깨끗한 음원이 필요해요. 노래도 좋고, 말해도 괜찮아요. 잡음이 적을수록 결과가 좋아져요.
+                최소 15초 ~ 2분 길이로 직접 부른 노래 음원이 필요해요. 잡음이 적을수록 결과가 좋아져요.
               </AppText>
 
               <AppText style={styles.fieldLabel}>목소리 이름 *</AppText>
@@ -529,25 +523,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 maxLength={40}
               />
 
-              <AppText style={styles.fieldLabel}>목소리 샘플 *</AppText>
+              <AppText style={styles.fieldLabel}>노래 샘플 *</AppText>
               {renderAudioPanel('sample', sampleSrc, () => setSampleSrc(null))}
 
-              <AppText style={styles.fieldLabel}>방금 넣은 샘플은 어떤 음성인가요? *</AppText>
-              <View style={styles.chipRow}>
-                {STYLE_MODES.map((m) => (
-                  <TouchableOpacity
-                    key={m.value}
-                    style={[styles.chip, styleMode === m.value && styles.chipSelected]}
-                    onPress={() => setStyleMode(m.value as 'sing' | 'speak')}
-                  >
-                    <AppText
-                      style={[styles.chipText, styleMode === m.value && styles.chipTextSelected]}
-                    >
-                      {m.label}
-                    </AppText>
-                  </TouchableOpacity>
-                ))}
-              </View>
 
               <AppText style={styles.fieldLabel}>보컬 구간 (초) *</AppText>
               <AppText style={styles.stepHint}>
@@ -626,7 +604,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
             <View>
               <AppText style={styles.stepTitle}>3. 검증 녹음</AppText>
               <AppText style={styles.stepHint}>
-                아래 문구를 {styleMode === 'sing' ? '노래로 불러' : '말로 읽어'} 녹음해주세요.
+                아래 문구를 말로 따라 읽어 녹음해주세요.
               </AppText>
               {renderPhraseBox(true)}
 
