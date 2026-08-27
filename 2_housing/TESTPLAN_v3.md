@@ -5,6 +5,21 @@
 
 ---
 
+## v3.78 — 2026-08-26 — "내 목소리" 파이프라인 UI 스모크 (실행 완료)
+
+- [unit] tsc 0 → **PASS**
+- [api] login→`GET /voice-persona/list` 200, `{personas:[]}` 구조 실측·파싱 일치 → **PASS**
+- [api] vocal/stream `?token=` 쿼리 인증 지원 실측(무토큰 401→쿼리 403 invalid) → **PASS**
+- [e2e] 작곡 흐름→persona 스텝(케이스12) 도달: 새 UI(내 목소리 만들기/관리·건너뛰기·적용) 렌더 + list 200 → **PASS** (`v378_smoke_03`)
+- [e2e] VoiceManage 진입/복귀: 만들기 폼(이름+파일+녹음)·빈 목록 렌더, 복귀 후 스텝 유지·재조회 → **PASS** (`v378_smoke_04·05`)
+- [e2e] 건너뛰기 회귀: persona 없이 최종 확인 스텝까지 정상 진행, 생성 확정 직전 정지(생성 POST 0건) → **PASS** (`v378_smoke_06`)
+- [e2e] ArtistResult "🎤 목소리 연결"→VoiceManage 선택모드 진입/복귀 → **PASS** (`v378_smoke_07·08`)
+- [e2e] 회귀: 콘솔 에러·pageerror·4xx/5xx·예상외 dialog 0건 → **PASS**
+- [미검증] persona 실생성(Suno 비용+보컬 음원 소스 부재)·미리듣기 실재생·적용 방식 토글(persona 보유 시에만 노출)·persona_id 실전송(정적 검증만) — persona 1개 실생성 허용되는 회차에서 커버 필요.
+- 기록: 스모크 중 작사 ⭐5 소모(persona 스텝 도달에 가사 필수) · VoiceManage 이중 뒤로가기 화살표(UX, ArtistResult 경유 시) · 가사 차감 후 헤더 ⭐배지 미갱신(리로드 시 반영) — 경미, 후속 정리 후보.
+
+---
+
 ## v3.77 — 2026-08-26 — 가상화 캐릭터 모드 + 커버 variant & v3.76 미검증 실테스트
 
 ### Track 1 — v3.76 미검증 실테스트 (⭐ 실비용 허용, 테스트 계정 전용) — 실행 완료

@@ -23,6 +23,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
+import { useVoiceStore } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { colors } from '../theme/colors';
 
@@ -39,6 +40,8 @@ export default function ArtistResultScreen({ navigation }: any) {
   // 방금 새로 만들거나 코디/미세조정한 시트는 저장 필요. mode === null이면 이미 저장된 상태.
   const isUnsaved = taskStore.mode !== null;
   const outfitItems = useOutfitStore((s) => s.items);
+  // v3.78: 아티스트에 연결된 내 목소리 (VoiceManage select 모드에서 설정)
+  const artistPersonaName = useVoiceStore((s) => s.artistPersonaName);
 
   const [saving, setSaving] = useState(false);
   const [hydrating, setHydrating] = useState(!apiResult); // apiResult가 비어 있으면 /character/me로 가져옴
@@ -300,6 +303,25 @@ export default function ArtistResultScreen({ navigation }: any) {
             })}
           </View>
         )}
+
+        {/* v3.78: 내 목소리 연결 — 작곡 시 이 목소리가 기본으로 제안됨 */}
+        <View style={styles.voiceBox}>
+          <AppText style={styles.voiceBoxLabel}>🎤 아티스트 목소리</AppText>
+          <AppText style={styles.voiceBoxDesc}>
+            {artistPersonaName
+              ? `"${artistPersonaName}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
+              : '내 노래 음원으로 만든 목소리를 아티스트에 연결하면, 작곡 시 그 목소리로 노래해요.'}
+          </AppText>
+          <TouchableOpacity
+            style={styles.voiceBtn}
+            onPress={() => navigation.navigate('VoiceManage', { select: 'artist' })}
+            activeOpacity={0.7}
+          >
+            <AppText style={styles.voiceBtnText}>
+              {artistPersonaName ? `🎤 목소리: ${artistPersonaName}` : '🎤 목소리 연결'}
+            </AppText>
+          </TouchableOpacity>
+        </View>
 
         {/* 캐릭터 다시 만들기 — destructive (스크롤 끝) */}
         <View style={styles.resetBox}>
@@ -679,6 +701,26 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   outfitLinkBtnText: { fontSize: 11, color: colors.accent.primary, fontWeight: '700' },
+
+  voiceBox: {
+    marginTop: 16, padding: 14, borderRadius: 12,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  voiceBoxLabel: {
+    color: colors.text.primary, fontSize: 13, fontWeight: '700',
+    marginBottom: 4,
+  },
+  voiceBoxDesc: {
+    color: colors.text.muted, fontSize: 11, lineHeight: 16,
+    marginBottom: 10,
+  },
+  voiceBtn: {
+    paddingVertical: 11, borderRadius: 10, alignItems: 'center',
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  voiceBtnText: { color: colors.accent.primary, fontSize: 13, fontWeight: '700' },
 
   resetBox: {
     marginTop: 32, padding: 14, borderRadius: 12,

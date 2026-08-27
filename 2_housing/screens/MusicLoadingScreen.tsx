@@ -111,7 +111,21 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           isDuet: lyricsStore.isDuet || undefined,
           subVocal: store.subVocal || undefined,
           subVocalStyle: store.subVocalStyle || undefined,
+          // BUG-2 픽스: 대화 스텝에서 설정한 상세 파라미터가 실제 생성 요청에 빠져 있었음
+          style: store.style || undefined,
+          referenceStyle: store.referenceStyle || undefined,
+          bpm: store.bpm || undefined,
+          musicalKey: store.musicalKey || undefined,
+          negativeTags: store.negativeTags || undefined,
+          personaModel: store.personaModel || undefined,
+          personaId: store.personaId || undefined,
         };
+        console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
+          model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,
+          vocal: params.vocal, style: params.style, referenceStyle: params.referenceStyle,
+          bpm: params.bpm, musicalKey: params.musicalKey, negativeTags: params.negativeTags,
+          personaModel: params.personaModel, personaId: params.personaId,
+        }));
 
         let result: any;
         if (store.selectedModel === 'suno') {

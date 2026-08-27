@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   View,
@@ -18,6 +19,7 @@ import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
+import { useVoiceStore } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useTimerStore } from '../stores/timerStore';
 import * as DocumentPicker from 'expo-document-picker';
@@ -46,7 +48,7 @@ const DIRECTOR_MESSAGES = [
   '참고 음원의 세기는 얼마만큼 반영할까요?',
   '템포(BPM)를 정해둘까요? 기본은 자동이에요.',
   '곡의 분위기 키(조성)를 골라주세요. 건너뛰면 자동이에요.',
-  '마지막으로, 페르소나 모델을 선택해주세요. 스타일을 따라할지, 보이스를 따라할지!',
+  '마지막으로, 곡에 입힐 내 목소리를 골라주세요! 만들어둔 목소리가 없다면 새로 만들거나 건너뛸 수 있어요.',
 ];
 
 interface ChatMessage {
@@ -89,8 +91,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [weirdnessOn, setWeirdnessOn] = useState(false);
   const [audioWeight, setAudioWeight] = useState(0.5);
   const [audioWeightOn, setAudioWeightOn] = useState(false);
-  const [personaModel, setPersonaModel] = useState<'' | 'style' | 'voice'>('');
+  // v3.78: 내 목소리 페르소나 — personaModel은 적용 방식('voice'=목소리까지, 'style'=스타일만)
+  const [personaModel, setPersonaModel] = useState<'' | 'style' | 'voice'>('voice');
   const [personaModelOn, setPersonaModelOn] = useState(false);
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
+  const personaDefaultAppliedRef = useRef(false);
   const [bpmValue, setBpmValue] = useState(120);
   const [bpmOn, setBpmOn] = useState(false);
   const [musicalKey, setMusicalKey] = useState('');
@@ -108,6 +113,34 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, [chatHistory, step]);
+
+  // v3.78: 내 목소리 페르소나 목록
+  const voicePersonas = useVoiceStore((s) => s.personas);
+  const voiceLoading = useVoiceStore((s) => s.loading);
+  const fetchPersonas = useVoiceStore((s) => s.fetchPersonas);
+  const artistPersonaId = useVoiceStore((s) => s.artistPersonaId);
+  const completedPersonas = voicePersonas.filter((p) => p.status === 'completed' && !!p.persona_id);
+  const artistPersona = artistPersonaId
+    ? completedPersonas.find((p) => p.persona_id === artistPersonaId)
+    : undefined;
+  const otherPersonas = artistPersona
+    ? completedPersonas.filter((p) => p.persona_id !== artistPersona.persona_id)
+    : completedPersonas;
+
+  // persona 스텝 진입 시(+VoiceManage에서 돌아왔을 때) 목록 갱신
+  useFocusEffect(
+    useCallback(() => {
+      if (step === 12) fetchPersonas();
+    }, [step, fetchPersonas])
+  );
+
+  // "내 아티스트 목소리"가 있으면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중)
+  useEffect(() => {
+    if (step === 12 && !personaDefaultAppliedRef.current && artistPersona) {
+      personaDefaultAppliedRef.current = true;
+      setSelectedPersonaId(artistPersona.persona_id);
+    }
+  }, [step, artistPersona]);
 
   const advanceStep = (userAnswer: string, nextStep: number) => {
     if (nextStep >= DIRECTOR_MESSAGES.length) {
@@ -258,10 +291,18 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setBpmOn(apply);
     advanceStep(apply ? `BPM ${Math.round(bpmValue)}` : '자동 템포', 11);
   };
+  // v3.78: 내 목소리 확정 — 선택한 persona와 적용 방식(목소리까지/스타일만)을 저장
   const handlePersonaConfirm = (apply: boolean) => {
-    setPersonaModelOn(apply && !!personaModel);
-    const label = personaModel === 'style' ? 'Style Persona' : personaModel === 'voice' ? 'Voice Persona' : '';
-    advanceStep(apply && label ? `페르소나: ${label}` : '자동', 13);
+    const usePersona = apply && !!selectedPersonaId;
+    setPersonaModelOn(usePersona);
+    if (usePersona) {
+      const p = completedPersonas.find((x) => x.persona_id === selectedPersonaId);
+      const modeLabel = personaModel === 'style' ? '스타일만' : '목소리까지';
+      console.log('[MusicGeneration] 내 목소리 적용:', selectedPersonaId, p?.name, personaModel);
+      advanceStep(`내 목소리: ${p?.name || '선택한 목소리'} (${modeLabel})`, 13);
+    } else {
+      advanceStep('건너뛰기', 13);
+    }
   };
 
   const handleKeyConfirm = (apply: boolean) => {
@@ -352,7 +393,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setBpm(bpmOn ? String(bpmValue) : '');
     musicStore.setMusicalKey(musicalKeyOn ? musicalKey : '');
     musicStore.setNegativeTags(negativeTagsOn ? negativeTags.trim() : '');
-    musicStore.setPersonaModel(personaModelOn ? personaModel : '');
+    musicStore.setPersonaModel(personaModelOn && personaModel ? personaModel : '');
+    musicStore.setPersonaId(personaModelOn && selectedPersonaId ? selectedPersonaId : null);
     musicStore.setSubVocal(subVocalGender);
     musicStore.setSubVocalStyle(subVocalStyle);
     setChatHistory((prev) => [
@@ -715,35 +757,96 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         );
 
       case 12:
-        // Persona Model (Style Persona / Voice Persona)
+        // v3.78: 내 목소리 페르소나 선택 (아티스트 목소리 기본 선택 + 적용 방식 토글)
         return (
           <View style={styles.inputArea}>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-              <TouchableOpacity
-                style={[styles.keyChip, { flex: 1 }, personaModel === 'style' && styles.keyChipSelected]}
-                onPress={() => setPersonaModel(personaModel === 'style' ? '' : 'style')}
-              >
-                <AppText style={[styles.keyChipText, personaModel === 'style' && styles.keyChipTextSelected]}>
-                  🎨 Style Persona
-                </AppText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.keyChip, { flex: 1 }, personaModel === 'voice' && styles.keyChipSelected]}
-                onPress={() => setPersonaModel(personaModel === 'voice' ? '' : 'voice')}
-              >
-                <AppText style={[styles.keyChipText, personaModel === 'voice' && styles.keyChipTextSelected]}>
-                  🎤 Voice Persona
-                </AppText>
-              </TouchableOpacity>
-            </View>
+            {voiceLoading && completedPersonas.length === 0 ? (
+              <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginBottom: 10 }} />
+            ) : (
+              <ScrollView style={{ maxHeight: 180 }} showsVerticalScrollIndicator={false}>
+                {artistPersona && (
+                  <TouchableOpacity
+                    style={[
+                      styles.personaChip,
+                      selectedPersonaId === artistPersona.persona_id && styles.personaChipSelected,
+                    ]}
+                    onPress={() =>
+                      setSelectedPersonaId(
+                        selectedPersonaId === artistPersona.persona_id ? null : artistPersona.persona_id
+                      )
+                    }
+                  >
+                    <AppText
+                      style={[
+                        styles.personaChipText,
+                        selectedPersonaId === artistPersona.persona_id && styles.personaChipTextSelected,
+                      ]}
+                    >
+                      🎤 내 아티스트 목소리 · {artistPersona.name}
+                    </AppText>
+                  </TouchableOpacity>
+                )}
+                {otherPersonas.map((p) => (
+                  <TouchableOpacity
+                    key={p.persona_id}
+                    style={[styles.personaChip, selectedPersonaId === p.persona_id && styles.personaChipSelected]}
+                    onPress={() =>
+                      setSelectedPersonaId(selectedPersonaId === p.persona_id ? null : p.persona_id)
+                    }
+                  >
+                    <AppText
+                      style={[
+                        styles.personaChipText,
+                        selectedPersonaId === p.persona_id && styles.personaChipTextSelected,
+                      ]}
+                    >
+                      🎙 {p.name}
+                    </AppText>
+                  </TouchableOpacity>
+                ))}
+                {completedPersonas.length === 0 && (
+                  <AppText style={styles.personaEmptyText}>
+                    아직 사용할 수 있는 내 목소리가 없어요. 새로 만들거나 건너뛸 수 있어요.
+                  </AppText>
+                )}
+                <TouchableOpacity
+                  style={styles.personaManageBtn}
+                  onPress={() => navigation.navigate('VoiceManage' as any)}
+                >
+                  <AppText style={styles.personaManageBtnText}>🎙 내 목소리 만들기/관리</AppText>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+
+            {!!selectedPersonaId && (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                <TouchableOpacity
+                  style={[styles.keyChip, { flex: 1 }, personaModel === 'voice' && styles.keyChipSelected]}
+                  onPress={() => setPersonaModel('voice')}
+                >
+                  <AppText style={[styles.keyChipText, personaModel === 'voice' && styles.keyChipTextSelected]}>
+                    🎤 목소리까지
+                  </AppText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.keyChip, { flex: 1 }, personaModel === 'style' && styles.keyChipSelected]}
+                  onPress={() => setPersonaModel('style')}
+                >
+                  <AppText style={[styles.keyChipText, personaModel === 'style' && styles.keyChipTextSelected]}>
+                    🎨 스타일만
+                  </AppText>
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.twoBtnRow}>
               <TouchableOpacity style={styles.skipBtn} onPress={() => handlePersonaConfirm(false)}>
-                <AppText style={styles.skipBtnText}>자동</AppText>
+                <AppText style={styles.skipBtnText}>건너뛰기</AppText>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.applyBtn, !personaModel && { opacity: 0.4 }]}
+                style={[styles.applyBtn, !selectedPersonaId && { opacity: 0.4 }]}
                 onPress={() => handlePersonaConfirm(true)}
-                disabled={!personaModel}
+                disabled={!selectedPersonaId}
               >
                 <AppText style={styles.applyBtnText}>적용</AppText>
               </TouchableOpacity>
@@ -1087,6 +1190,40 @@ const styles = StyleSheet.create({
   keyChipSelected: { backgroundColor: colors.accent.primary, borderColor: colors.accent.primary },
   keyChipText: { color: colors.text.secondary, fontSize: 12 },
   keyChipTextSelected: { color: colors.text.primary, fontWeight: 'bold' },
+  // v3.78: 내 목소리 페르소나 선택 (case 12)
+  personaChip: {
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 6,
+  },
+  personaChipSelected: {
+    borderColor: colors.accent.primary,
+    // 선택된 상태의 어두운 보라 배경 (choiceButtonSelected 관행)
+    backgroundColor: '#2a1020',
+  },
+  personaChipText: { color: colors.text.secondary, fontSize: 14 },
+  personaChipTextSelected: { color: colors.accent.primary, fontWeight: '700' },
+  personaEmptyText: {
+    color: colors.text.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  personaManageBtn: {
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center' as const,
+    marginBottom: 4,
+  },
+  personaManageBtnText: { color: colors.accent.primary, fontSize: 13, fontWeight: '700' as const },
   // Reference (step 8)
   refButtonRow: {
     flexDirection: 'row',

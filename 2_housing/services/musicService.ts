@@ -128,7 +128,11 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     bpm: params.bpm ? parseInt(params.bpm) : undefined,
     key: params.musicalKey || undefined,
     negative_tags: params.negativeTags || undefined,
-    persona_model: params.personaModel || undefined,
+    // 내 목소리 페르소나 — persona_id 있을 때만 서버 기대값('style_persona'|'voice_persona')으로 변환 전송
+    persona_id: params.personaId || undefined,
+    persona_model: params.personaId
+      ? (params.personaModel === 'style' ? 'style_persona' : 'voice_persona')
+      : undefined,
     model: 'suno',
     duration: 120,
     start_music_gen: true,

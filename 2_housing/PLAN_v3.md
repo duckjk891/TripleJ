@@ -7,6 +7,42 @@
 
 ---
 
+## v3.78 — 2026-08-26 — Phase 1: "내 목소리" 파이프라인 연결 (voice persona → 작곡)
+
+### 요청(원문)
+"백엔드 팀에 전달할 작업요청서 만들어주고, 프론트 작업 해줘" → 요청서는 `BACKEND_WORK_REQUEST_v1.md`(49b9277 커밋)로 완료. 프론트 = Phase 1 최우선 과제.
+
+### Plan verification findings (인라인 실측 — 절전으로 죽은 스펙 에이전트 대체)
+- 서버: `POST /api/voice-persona/create` multipart {file, name, description=""} / `GET /voice-persona/list` / `GET·DELETE /voice-persona/{id}` / `{id}/vocal/stream·download`, `{id}/cover/stream` 실존(openapi 실측). `POST /api/generate/`는 `persona_id`+`persona_model` 수용(generate.py:71-76,481-486). MAIDOL 계약: persona_model 값은 **'style_persona'|'voice_persona'**.
+- 앱 현재: MusicGenerationScreen **케이스 12에 persona 스텝이 이미 있으나 껍데기** — 'style'|'voice' 플래그만 선택(92-93, 261-263, 718-746행), persona ID 없음. musicService.ts:131이 `persona_model: params.personaModel`로 **잘못된 값('voice')**을 보내고 `persona_id`는 아예 미전송. 게다가 MusicLoadingScreen doGenerate params(287-299행)에 personaModel·style·referenceStyle·bpm·musicalKey·negativeTags **전부 누락**(BUG-2) — 현재 persona/상세옵션이 API에 전혀 안 감.
+- services/voiceService.ts는 dead code(존재하지 않는 /voice/upload 호출) — web/native FormData 분기 패턴만 재활용.
+- persist 관행: zustand persist+AsyncStorage(artistStore.ts:79 등). 신규 화면 등록은 App.tsx StudioStack. 알럿은 utils/appAlert.showAlert 사용(웹 폴백).
+
+### v3.78 범위 (백엔드 무변경)
+1. **voiceService.ts 재작성**: createVoicePersona(파일/녹음 업로드)·listVoicePersonas·deleteVoicePersona·personaVocalStreamUrl.
+2. **voiceStore 신설**(persist): personas 목록 + `artistPersonaId`(아티스트↔목소리 **로컬 매핑**, F-5 — 서버 매핑은 B-3 대기).
+3. **VoiceManageScreen 신설**: 내 목소리 목록/생성(파일 업로드+녹음)/미리듣기/삭제 + 선택 모드(아티스트 연결용). App.tsx 등록.
+4. **작곡 연결**: MusicGeneration 케이스12를 실 persona 선택으로 개편(내 아티스트 목소리 기본 표시, 없으면 만들기 진입) → musicStore에 `personaId` 추가 → MusicLoading params 보강(**BUG-2 동시 픽스**: personaId·personaModel·style·referenceStyle·bpm·musicalKey·negativeTags) → musicService에 `persona_id` 전송 + persona_model 값을 'voice_persona'/'style_persona'로 정정.
+5. **ArtistResult**: "🎤 목소리 연결" 진입점(선택 모드로 VoiceManage 이동, 연결된 목소리 이름 표시).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| services/voiceService.ts | persona CRUD API 함수(재작성) | [voiceService] |
+| stores/voiceStore.ts (신규) | personas·artistPersonaId(persist) | — |
+| stores/musicStore.ts | personaId + setter | — |
+| screens/VoiceManageScreen.tsx (신규) | 목록/생성/미리듣기/삭제/선택 모드 | [VoiceManage] |
+| screens/MusicGenerationScreen.tsx | 케이스12 실 persona 선택 개편 | [MusicGen] |
+| screens/MusicLoadingScreen.tsx | doGenerate params 보강(BUG-2) | [MusicLoading] |
+| services/musicService.ts | persona_id 전송·persona_model 값 정정 | [Suno] |
+| screens/ArtistResultScreen.tsx | 목소리 연결 진입점 | [ArtistResult] |
+| App.tsx | VoiceManage 등록 | — |
+
+### 리스크·회귀
+persona 미선택 시 기존 생성 경로 무변화(undefined 전송) 보장 · persona_model 값 정정이 기존엔 어차피 미전송이라 회귀 없음 · BUG-2 픽스로 style/bpm 등이 처음 실전송됨 — 프롬프트 중복 주입 여부 확인 · 곡 실생성은 ⭐비용 발생(테스트 시 판단) · 녹음은 expo-av(웹 제약 — 웹은 파일 업로드 우선, 녹음 불가 시 안내).
+
+---
+
 ## v3.77 — 2026-08-26 — 가상화(그림) 캐릭터 모드 + 커버 variant 선택 (MAIDOL 이식 2차) & v3.76 미검증 실테스트
 
 ### 요청(원문)

@@ -17,6 +17,7 @@ interface MusicState {
   musicalKey: string;
   negativeTags: string;
   personaModel: '' | 'style' | 'voice';
+  personaId: string | null;
   subVocal: string;
   subVocalStyle: string;
   coverTrackId: string | null;
@@ -42,6 +43,7 @@ interface MusicState {
   setMusicalKey: (musicalKey: string) => void;
   setNegativeTags: (negativeTags: string) => void;
   setPersonaModel: (v: '' | 'style' | 'voice') => void;
+  setPersonaId: (id: string | null) => void;
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
   setCoverTrackId: (v: string | null) => void;
@@ -72,6 +74,7 @@ const initialState = {
   musicalKey: '',
   negativeTags: '',
   personaModel: '' as const,
+  personaId: null,
   subVocal: '',
   subVocalStyle: '',
   coverTrackId: null,
@@ -102,6 +105,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setMusicalKey: (musicalKey) => set({ musicalKey }),
   setNegativeTags: (negativeTags) => set({ negativeTags }),
   setPersonaModel: (personaModel) => set({ personaModel }),
+  setPersonaId: (personaId) => set({ personaId }),
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),
   setCoverTrackId: (coverTrackId) => set({ coverTrackId }),

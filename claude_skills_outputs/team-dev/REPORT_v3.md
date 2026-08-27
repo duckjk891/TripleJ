@@ -4,6 +4,32 @@
 
 ---
 
+## v3.78 (Phase 1: "내 목소리" 파이프라인 연결 + 백엔드 작업요청서) — 2026-08-26
+
+### 요청 작업
+"백엔드 팀에 전달할 작업요청서 만들어주고, 프론트 작업 해줘" (+계속 진행)
+
+### 수행 결과
+- **백엔드 작업요청서**: `claude_skills_outputs/team-dev/BACKEND_WORK_REQUEST_v1.md` — B-1 다중 캐릭터(우선순위 1, ⭐15 슬롯 정식화 포함)·B-2 가사 자산·B-3 아티스트↔목소리 매핑·B-4 트랙 참조·B-5 커버 라이브러리. API 스펙·수용 기준·하위 호환 원칙 명시. 별도 커밋(49b9277) 완료.
+- **프론트 (v3.78)**: 서버에 완비돼 있으나 앱이 안 쓰던 voice-persona API를 연결 — 사용자 비전 "아티스트 목소리로 작곡" 고리 최초 성립.
+  - `services/voiceService.ts` 재작성(dead code→persona CRUD, 스트림 URL은 `?token=` 쿼리 인증 실측 반영), `stores/voiceStore.ts` 신설(persist는 아티스트↔목소리 로컬 매핑만 — 서버 매핑 B-3 전 임시).
+  - **VoiceManage 화면 신설**: 내 목소리 목록/만들기(파일 업로드+녹음, 웹은 업로드 안내)/미리듣기/삭제/선택 모드.
+  - **작곡 연결**: MusicGeneration 케이스12를 껍데기(플래그만)에서 실 persona 선택으로 개편(아티스트 목소리 기본 선택, 없으면 만들기 진입, 건너뛰기 유지). ArtistResult에 "🎤 목소리 연결" 진입점.
+  - **BUG-2 동시 픽스**: MusicLoading params에 personaId·personaModel·style·referenceStyle·bpm·musicalKey·negativeTags 추가(기존엔 전부 미전송) + persona_model 값을 서버 계약('voice_persona'/'style_persona')으로 정정, persona_id 최초 전송.
+
+### 테스트 (tester) — 전 시나리오 PASS
+tsc 0 · list 200 실측 · persona 스텝/VoiceManage/선택모드/건너뛰기 회귀/콘솔·HTTP 청정 모두 PASS (증적 scratchpad/v378_smoke_00~09). 곡/persona 실생성 0건(비용) — persona 실생성·미리듣기·실전송은 [미검증]으로 이월.
+
+### 특이사항
+- 스모크 중 작사 ⭐5 소모(persona 스텝 도달에 가사 필수 — 테스트 예산 참고).
+- 후속 정리 후보(경미): VoiceManage 이중 뒤로가기 화살표(ArtistResult 경유 시), 가사 차감 후 헤더 ⭐배지 미갱신.
+- 절전으로 백그라운드 에이전트 2회 중단 → caffeinate 상시 가동으로 해소.
+
+### 커밋
+`feat: v3.78 내 목소리(voice persona) 파이프라인 연결 — 관리 화면·아티스트 연결·작곡 전송(+파라미터 유실 픽스) (team-dev)`
+
+---
+
 ## v3.77 (v3.76 실테스트·자산구조 검증·웹 Alert 폴백·⭐15 과금 차단) — 2026-08-26
 
 ### 요청 작업

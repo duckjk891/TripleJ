@@ -49,6 +49,7 @@ export interface MusicParams {
   musicalKey?: string;
   negativeTags?: string;
   personaModel?: '' | 'style' | 'voice';
+  personaId?: string;
   isDuet?: boolean;
   subVocal?: string;
   subVocalStyle?: string;
