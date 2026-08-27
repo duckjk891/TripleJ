@@ -25,6 +25,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
 import { colors } from '../theme/colors';
 
 const MINIPLAYER_HEIGHT = 70;
@@ -52,6 +53,26 @@ export default function ArtistResultScreen({ navigation }: any) {
   // 앱 내부 디자인 다이얼로그 (시스템 Alert 대신)
   const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
+
+  // v3.80: 실사/가상 2슬롯 — /me 하이드레이션에서 각각 보관
+  const [realSheet, setRealSheet] = useState<{ objectName: string; url: string } | null>(null);
+  const [virtualSheet, setVirtualSheet] = useState<{ objectName: string; url: string; artStyle: string | null } | null>(null);
+  const [activeSlot, setActiveSlot] = useState<'real' | 'virtual'>(
+    taskStore.characterKind === 'virtual' ? 'virtual' : 'real'
+  );
+  const [styleSamples, setStyleSamples] = useState<StyleSample[] | null>(null);
+  const slotInitRef = useRef(false);
+
+  // 화풍 라벨 해석용 샘플 로드 (무인증·무비용, 실패해도 키 그대로 표시)
+  useEffect(() => {
+    let alive = true;
+    fetchStyleSamples()
+      .then((s) => { if (alive) setStyleSamples(s); })
+      .catch((err: any) => {
+        if (__DEV__) console.info('[ArtistResult] style-samples 로드 실패(라벨은 키로 표시)', { message: err?.message });
+      });
+    return () => { alive = false; };
+  }, []);
 
   // Tab 헤더 좌측에 ← 버튼 주입.
   // v3.79 UX-1: useLayoutEffect(마운트 기준)이면 VoiceManage 등 다음 화면을 push 해도
@@ -98,12 +119,30 @@ export default function ArtistResultScreen({ navigation }: any) {
           // 진단 로그: 어떤 필드가 비어있는지 한눈에
           console.log('[ArtistResult] /me 응답:', {
             sheet: !!ch?.sheet_object_name,
+            virtual_sheet: !!ch?.virtual_sheet_object_name,
+            virtual_art_style: ch?.virtual_art_style || '(없음)',
             name: ch?.name || '(없음)',
             original_photo: ch?.original_photo_object_name || '(없음)',
             used_items_count: Array.isArray(ch?.used_items) ? ch.used_items.length : 0,
             raw: JSON.stringify(ch),
           });
-          if (!ch?.sheet_object_name) {
+          // v3.80: 실사·가상 슬롯 각각 보관
+          const hasRealSheet = !!ch?.sheet_object_name;
+          const hasVirtualSheet = !!ch?.virtual_sheet_object_name;
+          setRealSheet(hasRealSheet
+            ? {
+                objectName: ch.sheet_object_name,
+                url: `${BACKEND_BASE_URL}/api/character/preview/${ch.sheet_object_name}?t=${Date.now()}`,
+              }
+            : null);
+          setVirtualSheet(hasVirtualSheet
+            ? {
+                objectName: ch.virtual_sheet_object_name,
+                url: `${BACKEND_BASE_URL}/api/character/preview/${ch.virtual_sheet_object_name}?t=${Date.now()}`,
+                artStyle: ch.virtual_art_style || null,
+              }
+            : null);
+          if (!hasRealSheet && !hasVirtualSheet) {
             // 백엔드에 저장된 캐릭터가 없음 (자동저장 실패 또는 v46 이전 캐릭터)
             // mode === null이고 cached apiResult가 있으면 일시적 오류일 수 있어 store는 건드리지 않음
             if (!hasCachedSheet) {
@@ -111,12 +150,26 @@ export default function ArtistResultScreen({ navigation }: any) {
             }
             return;
           }
+          // v3.80: 슬롯 초기 선택 — 방금 생성한 쪽(characterKind) 우선, 이후엔 사용자 선택 유지
+          if (!slotInitRef.current) {
+            slotInitRef.current = true;
+            const kind = useCharacterTaskStore.getState().characterKind;
+            setActiveSlot(kind === 'virtual' && hasVirtualSheet ? 'virtual' : hasRealSheet ? 'real' : 'virtual');
+          } else {
+            // 선택 중인 슬롯이 사라졌으면(삭제 등) 남은 슬롯으로 이동
+            setActiveSlot((cur) =>
+              cur === 'virtual' && !hasVirtualSheet ? 'real'
+              : cur === 'real' && !hasRealSheet && hasVirtualSheet ? 'virtual'
+              : cur);
+          }
           // 시트 URL (cache-buster: RN Image가 같은 URL이면 옛 이미지 보임)
+          // v3.80: 가상만 있는 계정도 "캐릭터 있음"으로 하이드레이션 (실사 우선, 없으면 가상 슬롯)
           if (!hasCachedSheet) {
-            const url = `${BACKEND_BASE_URL}/api/character/preview/${ch.sheet_object_name}?t=${Date.now()}`;
+            const hydrateObj = hasRealSheet ? ch.sheet_object_name : ch.virtual_sheet_object_name;
+            const url = `${BACKEND_BASE_URL}/api/character/preview/${hydrateObj}?t=${Date.now()}`;
             useCharacterTaskStore.getState().completeApi({
               preview_url: url,
-              object_name: ch.sheet_object_name,
+              object_name: hydrateObj,
             });
           }
           // 원본 사진 URL (있으면)
@@ -156,9 +209,21 @@ export default function ArtistResultScreen({ navigation }: any) {
     if (!apiResult) return;
     setSaving(true);
     try {
-      await api.post('/character/save', {
-        sheet_object_name: apiResult.object_name,
-      });
+      // v3.80: 방금 생성분이 가상이면 variant/art_style 포함 (실사 페이로드는 불변).
+      // outfit/refine은 실사 전용이므로 characterKind 잔존값에 속지 않도록 mode도 확인.
+      const isVirtualSave =
+        apiResult.object_name === virtualSheet?.objectName ||
+        (apiResult.object_name !== realSheet?.objectName &&
+          taskStore.characterKind === 'virtual' &&
+          taskStore.mode !== 'outfit' && taskStore.mode !== 'refine');
+      const saveBody: any = { sheet_object_name: apiResult.object_name };
+      if (isVirtualSave) {
+        saveBody.variant = 'virtual';
+        saveBody.art_style =
+          virtualSheet?.artStyle || (taskStore.styleImageUri ? 'custom' : taskStore.stylePreset) || undefined;
+      }
+      if (__DEV__) console.info('[ArtistResult] 수동 저장', { isVirtualSave, art_style: saveBody.art_style });
+      await api.post('/character/save', saveBody);
       showAlert('저장 완료', '아티스트 캐릭터를 저장했어요.', [
         {
           text: '확인',
@@ -230,6 +295,13 @@ export default function ArtistResultScreen({ navigation }: any) {
     );
   }
 
+  // v3.80: 슬롯별 표시 — 선택 슬롯 시트 우선, 하이드레이션 전엔 방금 생성분(apiResult) fallback
+  const activeSheet = activeSlot === 'virtual' ? virtualSheet : realSheet;
+  const displayUrl = activeSheet?.url || apiResult.preview_url;
+  const isVirtualTab = activeSlot === 'virtual';
+  const bothSlots = !!realSheet && !!virtualSheet;
+  const virtualStyleLabel = resolveArtStyleLabel(virtualSheet?.artStyle, styleSamples);
+
   return (
     <View style={styles.container}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -242,8 +314,39 @@ export default function ArtistResultScreen({ navigation }: any) {
             : '꾸미기로 옷·악세서리·헤어스타일·염색까지 모두 바꿀 수 있어요.'}
         </AppText>
 
-        {/* 9004: 캐릭터 생성 시 업로드한 원본 사진 표시 */}
-        {originalPhotoUrl && (
+        {/* v3.80: 실사화/가상화 슬롯 탭 — 있는 슬롯만 활성 */}
+        {(realSheet || virtualSheet) && (
+          <View style={styles.slotTabRow}>
+            <TouchableOpacity
+              style={[styles.slotTab, activeSlot === 'real' && styles.slotTabActive, !realSheet && styles.slotTabDisabled]}
+              disabled={!realSheet}
+              onPress={() => setActiveSlot('real')}
+              activeOpacity={0.7}
+            >
+              <AppText style={[styles.slotTabText, activeSlot === 'real' && styles.slotTabTextActive]}>
+                실사화
+              </AppText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.slotTab, activeSlot === 'virtual' && styles.slotTabActive, !virtualSheet && styles.slotTabDisabled]}
+              disabled={!virtualSheet}
+              onPress={() => setActiveSlot('virtual')}
+              activeOpacity={0.7}
+            >
+              <AppText style={[styles.slotTabText, activeSlot === 'virtual' && styles.slotTabTextActive]}>
+                가상화
+              </AppText>
+              {virtualSheet && virtualStyleLabel ? (
+                <View style={styles.slotBadge}>
+                  <AppText style={styles.slotBadgeText}>{virtualStyleLabel}</AppText>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* 9004: 캐릭터 생성 시 업로드한 원본 사진 표시 — 실사 슬롯 전용 */}
+        {!isVirtualTab && originalPhotoUrl && (
           <View style={styles.originalPhotoBox}>
             <View style={{ flex: 1 }}>
               <AppText style={styles.originalPhotoLabel}>📸 내가 올린 사진</AppText>
@@ -260,14 +363,14 @@ export default function ArtistResultScreen({ navigation }: any) {
           activeOpacity={0.85}
           onPress={() => setZoomVisible(true)}
         >
-          <Image source={{ uri: apiResult.preview_url }} style={styles.previewImg} />
+          <Image source={{ uri: displayUrl }} style={styles.previewImg} />
           <View style={styles.zoomHint}>
             <AppText style={styles.zoomHintText}>🔍 탭하여 확대 보기</AppText>
           </View>
         </TouchableOpacity>
 
-        {/* 착용 중인 제품 정보 */}
-        {outfitItems.length > 0 && (
+        {/* 착용 중인 제품 정보 — 실사 슬롯 전용(코디는 실사만) */}
+        {!isVirtualTab && outfitItems.length > 0 && (
           <View style={styles.outfitListBox}>
             <AppText style={styles.outfitListTitle}>👕 착용 중인 제품</AppText>
             {outfitItems.map((it, i) => {
@@ -328,7 +431,8 @@ export default function ArtistResultScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {/* 캐릭터 다시 만들기 — destructive (스크롤 끝) */}
+        {/* 캐릭터 다시 만들기 — destructive (스크롤 끝, 코디 안내라 실사 탭 전용) */}
+        {!isVirtualTab && (
         <View style={styles.resetBox}>
           <AppText style={styles.resetBoxLabel}>옷 갈아입히기가 잘 안 되시나요?</AppText>
           <AppText style={styles.resetBoxDesc}>
@@ -338,14 +442,18 @@ export default function ArtistResultScreen({ navigation }: any) {
             <AppText style={styles.resetBtnText}>🗑 캐릭터 다시 만들기</AppText>
           </TouchableOpacity>
         </View>
+        )}
       </ScrollView>
 
       <View style={[styles.bottomArea, { marginBottom: bottomLift }]}>
         {isUnsaved ? (
           <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-              <AppText style={styles.skipBtnText}>✨ 꾸미기</AppText>
-            </TouchableOpacity>
+            {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 탭에서는 숨김 */}
+            {!isVirtualTab && (
+              <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
+                <AppText style={styles.skipBtnText}>✨ 꾸미기</AppText>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[styles.applyBtn, saving && { opacity: 0.5 }]}
               onPress={handleSave}
@@ -357,22 +465,29 @@ export default function ArtistResultScreen({ navigation }: any) {
         ) : (
           <View style={styles.btnRow}>
             {/* 삭제는 스크롤 끝 안내 박스에만 있어 발견이 어려웠음 → 하단 상시 노출 */}
-            <TouchableOpacity style={styles.deleteBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={[styles.deleteBtn, isVirtualTab && { flex: 1 }]}
+              onPress={handleResetCharacter}
+              activeOpacity={0.7}
+            >
               <AppText style={styles.deleteBtnText}>🗑 삭제</AppText>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
-              onPress={handleGoCody}
-            >
-              <AppText
-                style={[
-                  styles.applyBtnText,
-                  { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
-                ]}
+            {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 탭에서는 숨김 */}
+            {!isVirtualTab && (
+              <TouchableOpacity
+                style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
+                onPress={handleGoCody}
               >
-                ✨ 아티스트 꾸미기
-              </AppText>
-            </TouchableOpacity>
+                <AppText
+                  style={[
+                    styles.applyBtnText,
+                    { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
+                  ]}
+                >
+                  ✨ 아티스트 꾸미기
+                </AppText>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -380,7 +495,7 @@ export default function ArtistResultScreen({ navigation }: any) {
       {/* 시트 확대 보기 — pinch zoom + pan */}
       <ZoomModal
         visible={zoomVisible}
-        uri={apiResult.preview_url}
+        uri={displayUrl}
         onClose={() => setZoomVisible(false)}
       />
 
@@ -388,7 +503,11 @@ export default function ArtistResultScreen({ navigation }: any) {
       <ConfirmDialog
         visible={resetConfirmVisible}
         title="캐릭터 다시 만들기"
-        message="현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요. 진행할까요?"
+        message={
+          bothSlots
+            ? '실사·가상 캐릭터가 모두 삭제됩니다(슬롯별 삭제는 지원되지 않아요). 모든 코디 기록도 함께 삭제돼요. 새로운 아티스트를 처음부터 만들 수 있어요. 진행할까요?'
+            : '현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요. 진행할까요?'
+        }
         confirmText="삭제하고 다시 만들기"
         destructive
         onConfirm={performResetCharacter}
@@ -570,6 +689,26 @@ const styles = StyleSheet.create({
 
   title: { color: colors.text.primary, fontSize: 18, fontWeight: '700', marginBottom: 4 },
   subtitle: { color: colors.text.secondary, fontSize: 13, marginBottom: 16, lineHeight: 19 },
+
+  // v3.80: 실사/가상 슬롯 탭
+  slotTabRow: {
+    flexDirection: 'row', gap: 8, marginBottom: 10,
+  },
+  slotTab: {
+    flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6,
+    paddingVertical: 10, borderRadius: 12,
+    backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  slotTabActive: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
+  slotTabDisabled: { opacity: 0.35 },
+  slotTabText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
+  slotTabTextActive: { color: colors.accent.primary, fontWeight: '700' },
+  slotBadge: {
+    backgroundColor: colors.bg.deepest, borderRadius: 8,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  slotBadgeText: { color: colors.text.muted, fontSize: 10, fontWeight: '600' },
 
   previewBox: {
     alignItems: 'center', padding: 12, marginBottom: 16,

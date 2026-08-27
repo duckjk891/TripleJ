@@ -21,6 +21,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
+import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
 import { colors } from '../theme/colors';
 
 const MINIPLAYER_HEIGHT = 70;
@@ -28,7 +29,9 @@ const MINIPLAYER_HEIGHT = 70;
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
 interface MyCharacter {
-  sheet_object_name: string;
+  sheet_object_name?: string;
+  // v3.80: 가상화(그림) 슬롯 — 가상만 있어도 "캐릭터 있음"으로 취급
+  virtual_sheet_object_name?: string;
 }
 
 interface ChatMessage {
@@ -36,7 +39,7 @@ interface ChatMessage {
   text: string;
 }
 
-type Step = 'welcome' | 'questioning';
+type Step = 'welcome' | 'questioning' | 'style';
 
 interface StyleAnswers {
   hair: string;
@@ -135,6 +138,17 @@ export default function ArtistInputScreen({ navigation }: any) {
   const [myCharacter, setMyCharacter] = useState<MyCharacter | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
+  // v3.80: 가상화(그림) 캐릭터 모드 + 화풍 선택 스텝
+  const [isVirtualMode, setIsVirtualMode] = useState(false);
+  const [styleSamples, setStyleSamples] = useState<StyleSample[]>([]);
+  const [styleLoading, setStyleLoading] = useState(false);
+  const [styleLoadError, setStyleLoadError] = useState(false);
+  const [selectedPresetKey, setSelectedPresetKey] = useState<string | null>(null);
+  const [styleUpload, setStyleUpload] = useState<{ uri: string; name: string } | null>(null);
+  const [styleImgLoaded, setStyleImgLoaded] = useState<Record<string, boolean>>({});
+  // 질문 완료 후 화풍 스텝을 거치는 동안 보관되는 컨셉 텍스트
+  const [pendingConceptText, setPendingConceptText] = useState('');
+
   // Tab 헤더 좌측에 ← 버튼 주입 (web/모바일 공통 — Map으로 복귀)
   useLayoutEffect(() => {
     const parent = navigation.getParent();
@@ -172,8 +186,10 @@ export default function ArtistInputScreen({ navigation }: any) {
     (async () => {
       try {
         const res = await api.get('/character/me');
-        if (res.data?.character) {
-          setMyCharacter(res.data.character);
+        const ch = res.data?.character;
+        // v3.80: 실사(sheet_object_name) 또는 가상(virtual_sheet_object_name)이 있으면 "캐릭터 있음"
+        if (ch && (ch.sheet_object_name || ch.virtual_sheet_object_name)) {
+          setMyCharacter(ch);
         }
       } catch {}
       finally {
@@ -231,10 +247,11 @@ export default function ArtistInputScreen({ navigation }: any) {
             {
               text: '확인했어요',
               onPress: () => {
-                if (__DEV__) console.info('[ArtistInput] 사진 확약 완료', { name: file.name });
+                if (__DEV__) console.info('[ArtistInput] 사진 확약 완료', { name: file.name, isVirtualMode });
                 setPhotoUri(file.uri);
                 setPhotoName(file.name);
-                taskStore.setInput({ portraitConfirmed: true });
+                // v3.80: 실사 진입 시 characterKind:'real' 명시 (가상 모드 잔존 방지)
+                taskStore.setInput({ portraitConfirmed: true, characterKind: isVirtualMode ? 'virtual' : 'real' });
                 pushUser(`사진 선택: ${file.name}`);
                 startQuestioning();
               },
@@ -249,13 +266,95 @@ export default function ArtistInputScreen({ navigation }: any) {
 
   // ── v3.76(MAIDOL v161): 사진 없이 텍스트만으로 생성 ─────
   const handleTextOnly = () => {
-    if (__DEV__) console.info('[ArtistInput] 텍스트-only 경로 시작');
+    if (__DEV__) console.info('[ArtistInput] 텍스트-only 경로 시작', { isVirtualMode });
     setPhotoUri(null);
     setPhotoName('');
-    taskStore.setInput({ portraitConfirmed: false });
+    // v3.80: 실사 진입 시 characterKind:'real' 명시 (가상 모드 잔존 방지)
+    taskStore.setInput({ portraitConfirmed: false, characterKind: isVirtualMode ? 'virtual' : 'real' });
     pushUser('사진 없이 만들게요');
     pushDirector('좋아요! 설명만 듣고 상상해서 만들어드릴게요. 대신 조금 더 자세히 알려주세요!');
     setTimeout(() => startQuestioning(), 400);
+  };
+
+  // ── v3.80: 가상화(그림) 캐릭터 모드 토글 ─────
+  const handleToggleVirtual = () => {
+    const next = !isVirtualMode;
+    if (__DEV__) console.info('[ArtistInput] 가상화 모드 토글', { next });
+    setIsVirtualMode(next);
+    taskStore.setInput({
+      characterKind: next ? 'virtual' : 'real',
+      stylePreset: null,
+      styleImageUri: null,
+      styleImageName: null,
+    });
+    if (next) {
+      pushUser('가상화(그림) 캐릭터로 만들게요');
+      pushDirector('좋아요! 그림체 캐릭터로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
+    } else {
+      pushUser('실사 캐릭터로 만들게요');
+      pushDirector('알겠어요! 실사 캐릭터로 진행할게요. 사진을 올리거나 사진 없이 시작해주세요.');
+    }
+  };
+
+  // ── v3.80: 화풍 샘플 로드 (무인증·무비용 GET) ─────
+  const loadStyleSamples = async () => {
+    setStyleLoading(true);
+    setStyleLoadError(false);
+    try {
+      const samples = await fetchStyleSamples();
+      setStyleSamples(samples);
+      if (samples.length === 0) setStyleLoadError(true);
+    } catch (err: any) {
+      console.error('[ArtistInput] style-samples 로드 실패', { status: err?.response?.status, message: err?.message });
+      setStyleLoadError(true);
+    } finally {
+      setStyleLoading(false);
+    }
+  };
+
+  // v3.80: 화풍 직접 업로드 — 샘플 선택과 상호 배타
+  const handlePickStyleImage = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const file = res.assets[0];
+        if (__DEV__) console.info('[ArtistInput] 화풍 이미지 업로드 선택', { name: file.name });
+        setStyleUpload({ uri: file.uri, name: file.name });
+        setSelectedPresetKey(null);
+      }
+    } catch {
+      showAlert('오류', '이미지를 선택하지 못했어요.');
+    }
+  };
+
+  // v3.80: 화풍 확정 → 코디 선택 화면으로 (기존 실사 흐름과 동일 진입점)
+  const handleStyleConfirm = () => {
+    if (!selectedPresetKey && !styleUpload) {
+      showAlert('알림', '화풍을 하나 골라주세요. 샘플 중에 고르거나 이미지를 직접 올릴 수 있어요.');
+      return;
+    }
+    if (__DEV__) console.info('[ArtistInput] 화풍 확정', { preset: selectedPresetKey, upload: styleUpload?.name });
+    pushUser(
+      styleUpload
+        ? `화풍 이미지: ${styleUpload.name}`
+        : `화풍: ${resolveArtStyleLabel(selectedPresetKey, styleSamples)}`
+    );
+    pushDirector('좋아요! 이제 어떤 옷을 입혀줄지 골라볼까요?');
+
+    // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
+    useOutfitStore.getState().clear();
+    taskStore.setInput({
+      photoUri,
+      photoName,
+      userText: pendingConceptText,
+      stylePreset: styleUpload ? null : selectedPresetKey,
+      styleImageUri: styleUpload?.uri ?? null,
+      styleImageName: styleUpload?.name ?? null,
+    });
+
+    setTimeout(() => {
+      navigation.replace('ArtistCody', { mode: 'sheet' });
+    }, 1000);
   };
 
   const handleChipTap = (chip: string) => {
@@ -301,6 +400,15 @@ export default function ArtistInputScreen({ navigation }: any) {
     // 캐릭터 컨셉 텍스트만 저장. 의상은 다음 화면에서 결정.
     const conceptText = userInput || '특별한 컨셉 없음 — 자연스러운 느낌으로';
 
+    // v3.80: 가상화 모드는 화풍 선택 스텝을 거친 뒤 ArtistCody로 (handleStyleConfirm에서 진행)
+    if (isVirtualMode) {
+      setPendingConceptText(conceptText);
+      pushDirector('어떤 그림체(화풍)로 그릴까요? 샘플 중에 고르거나 원하는 화풍 이미지를 직접 올려주세요.');
+      setStep('style');
+      loadStyleSamples();
+      return;
+    }
+
     pushDirector('좋아요! 이제 어떤 옷을 입혀줄지 골라볼까요?');
 
     // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
@@ -342,9 +450,10 @@ export default function ArtistInputScreen({ navigation }: any) {
     );
   }
 
-  // 기존 캐릭터 있으면 결과 화면으로 바로 이동 옵션 제공
-  const existingPreviewUrl = myCharacter?.sheet_object_name
-    ? `${BACKEND_BASE_URL}/api/character/preview/${myCharacter.sheet_object_name}`
+  // 기존 캐릭터 있으면 결과 화면으로 바로 이동 옵션 제공 (v3.80: 실사 없으면 가상 슬롯 미리보기)
+  const existingSheetObjectName = myCharacter?.sheet_object_name || myCharacter?.virtual_sheet_object_name;
+  const existingPreviewUrl = existingSheetObjectName
+    ? `${BACKEND_BASE_URL}/api/character/preview/${existingSheetObjectName}`
     : null;
 
   const renderInputArea = () => {
@@ -380,7 +489,92 @@ export default function ArtistInputScreen({ navigation }: any) {
           <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
             <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
           </TouchableOpacity>
-          <AppText style={styles.textOnlyHint}>사진 없이 설명만으로 가상 인물을 만들 수도 있어요.</AppText>
+          {/* v3.80: 가상화(그림) 캐릭터 모드 토글 — 이후 사진/텍스트-only 선택으로 동일하게 이어짐 */}
+          <TouchableOpacity
+            style={[styles.virtualBtn, isVirtualMode && styles.virtualBtnActive]}
+            onPress={handleToggleVirtual}
+          >
+            <AppText style={[styles.virtualBtnText, isVirtualMode && styles.virtualBtnTextActive]}>
+              {isVirtualMode ? '🎨 가상화(그림) 모드 선택됨 — 취소하려면 탭' : '🎨 가상화(그림) 캐릭터 만들기'}
+            </AppText>
+          </TouchableOpacity>
+          <AppText style={styles.textOnlyHint}>
+            {isVirtualMode
+              ? '가상화 모드: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
+              : '사진 없이 설명만으로 가상 인물을 만들 수도 있어요.'}
+          </AppText>
+        </View>
+      );
+    }
+    // v3.80: 가상화 모드 — 화풍 선택 스텝
+    if (step === 'style') {
+      return (
+        <View style={styles.inputArea}>
+          <View style={styles.qProgress}>
+            <AppText style={styles.qProgressText}>화풍 선택 · 그림체를 골라주세요</AppText>
+          </View>
+          {styleLoading ? (
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              <ActivityIndicator size="large" color={colors.accent.primary} />
+              <AppText style={styles.styleLoadingText}>화풍 샘플을 불러오는 중...</AppText>
+            </View>
+          ) : styleLoadError ? (
+            <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+              <AppText style={styles.styleErrorText}>화풍 샘플을 불러오지 못했어요.</AppText>
+              <TouchableOpacity style={styles.retryBtn} onPress={loadStyleSamples}>
+                <AppText style={styles.retryBtnText}>다시 시도</AppText>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              {styleSamples.map((s) => {
+                const sel = selectedPresetKey === s.key;
+                const loaded = !!styleImgLoaded[s.key];
+                return (
+                  <TouchableOpacity
+                    key={s.key}
+                    style={[styles.styleCard, sel && styles.styleCardSelected]}
+                    onPress={() => {
+                      // 샘플 선택 ↔ 직접 업로드 상호 배타
+                      setSelectedPresetKey(s.key);
+                      setStyleUpload(null);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.styleCardImgWrap}>
+                      <Image
+                        source={{ uri: `${BACKEND_BASE_URL}${s.preview_url}` }}
+                        style={styles.styleCardImg}
+                        onLoadEnd={() => setStyleImgLoaded((prev) => ({ ...prev, [s.key]: true }))}
+                      />
+                      {!loaded && (
+                        <View style={styles.styleCardImgLoading}>
+                          <ActivityIndicator size="small" color={colors.accent.primary} />
+                        </View>
+                      )}
+                    </View>
+                    <AppText style={[styles.styleCardLabel, sel && styles.styleCardLabelSelected]}>
+                      {s.label}
+                    </AppText>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+          <TouchableOpacity
+            style={[styles.styleUploadBtn, styleUpload && styles.styleUploadBtnActive]}
+            onPress={handlePickStyleImage}
+          >
+            <AppText style={[styles.styleUploadBtnText, styleUpload && styles.styleUploadBtnTextActive]}>
+              {styleUpload ? `🖼 업로드됨: ${styleUpload.name}` : '🖼 화풍 이미지 직접 업로드'}
+            </AppText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.applyBtn, { flex: 0 }, !selectedPresetKey && !styleUpload && { opacity: 0.5 }]}
+            onPress={handleStyleConfirm}
+          >
+            <AppText style={styles.applyBtnText}>이 화풍으로 만들기</AppText>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -567,6 +761,47 @@ const styles = StyleSheet.create({
   },
   textOnlyBtnText: { color: colors.text.secondary, fontWeight: '600', fontSize: 14 },
   textOnlyHint: { color: colors.text.muted, fontSize: 11, textAlign: 'center' },
+
+  // v3.80: 가상화(그림) 모드 버튼 + 화풍 선택 스텝
+  virtualBtn: {
+    borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,
+    paddingVertical: 12, alignItems: 'center', marginBottom: 6,
+  },
+  virtualBtnActive: { backgroundColor: colors.accent.primary },
+  virtualBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
+  virtualBtnTextActive: { color: colors.text.primary },
+  styleLoadingText: { color: colors.text.secondary, fontSize: 12, marginTop: 10 },
+  styleErrorText: { color: colors.text.secondary, fontSize: 13, marginBottom: 10, textAlign: 'center' },
+  retryBtn: {
+    paddingVertical: 10, paddingHorizontal: 24, borderRadius: 10,
+    backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  retryBtnText: { color: colors.accent.primary, fontSize: 13, fontWeight: '700' },
+  styleCard: {
+    width: 110, marginRight: 10, borderRadius: 12, padding: 6,
+    backgroundColor: colors.bg.surface1, borderWidth: 1.5, borderColor: colors.border.subtle,
+    alignItems: 'center',
+  },
+  styleCardSelected: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
+  styleCardImgWrap: {
+    width: 96, height: 120, borderRadius: 8, overflow: 'hidden',
+    backgroundColor: colors.bg.surface2, marginBottom: 6,
+  },
+  styleCardImg: { width: 96, height: 120, resizeMode: 'cover' },
+  styleCardImgLoading: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  styleCardLabel: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
+  styleCardLabelSelected: { color: colors.accent.primary, fontWeight: '700' },
+  styleUploadBtn: {
+    borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 12,
+    paddingVertical: 11, alignItems: 'center', marginBottom: 8,
+    backgroundColor: colors.bg.surface1,
+  },
+  styleUploadBtnActive: { borderColor: colors.accent.primary },
+  styleUploadBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
+  styleUploadBtnTextActive: { color: colors.accent.primary, fontWeight: '700' },
 
   qProgress: { marginBottom: 8 },
   qProgressText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },

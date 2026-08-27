@@ -251,9 +251,16 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     const bottomItem = selectedEntries.find(([cat]) => cat === '하의')?.[1];
     const bottomName = bottomItem ? `${bottomItem.advertiser_nickname || ''} ${bottomItem.name}`.trim() : '';
 
+    // v3.80: 가상화(그림) 모드 — "사진 기반" 지시문 대신 컨셉 기반 문구.
+    // 화풍 지시는 서버가 style_preset/style_image로 처리하므로 프롬프트에 넣지 않음(중복 주입 금지).
+    const isVirtualKind = isSheetMode && taskStore.characterKind === 'virtual';
     const parts: string[] = [];
     if (isSheetMode) {
-      parts.push('【1단계 — 신규 캐릭터 시트 생성】 첨부된 사용자 사진을 기반으로 새 캐릭터 시트를 처음부터 생성합니다. 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
+      if (isVirtualKind) {
+        parts.push('【1단계 — 신규 캐릭터 시트 생성】 설명된 컨셉을 바탕으로 새 캐릭터 시트를 처음부터 생성합니다. (사진이 첨부된 경우 인물의 인상만 참고). 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
+      } else {
+        parts.push('【1단계 — 신규 캐릭터 시트 생성】 첨부된 사용자 사진을 기반으로 새 캐릭터 시트를 처음부터 생성합니다. 시트 형태(정면 standing pose, 전신, 깨끗한 단색 배경).');
+      }
     } else {
       parts.push('【1단계 — 의상 완전 제거】 캐릭터가 현재 입고 있는 모든 의상(상의/하의/신발/모자/안경/악세서리)을 완전히 벗긴 깨끗한 빈 캔버스 상태로 리셋하세요. 특히 시트에 그려진 다리 옷(검정 레깅스/타이츠/스판/스키니/쫄바지 등 fitted한 다리 옷)을 모두 지워야 합니다. 절대 기존 옷을 그대로 두고 그 위에 새 옷을 겹쳐 그리지 마세요.');
     }
@@ -293,7 +300,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     }
 
     if (isSheetMode) {
-      parts.push('【필수 유지】 얼굴 인상·체형은 첨부된 사용자 사진을 따라 그리세요. standing pose 자세 유지.');
+      if (isVirtualKind) {
+        parts.push('【필수 유지】 설명된 컨셉의 얼굴 인상·체형을 일관되게 유지하세요. standing pose 자세 유지.');
+      } else {
+        parts.push('【필수 유지】 얼굴 인상·체형은 첨부된 사용자 사진을 따라 그리세요. standing pose 자세 유지.');
+      }
     } else {
       parts.push('【필수 유지】 캐릭터의 얼굴 인상·체형·standing pose는 반드시 유지.');
     }

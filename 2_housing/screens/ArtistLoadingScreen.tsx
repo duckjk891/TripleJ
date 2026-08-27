@@ -158,6 +158,8 @@ export default function ArtistLoadingScreen({ navigation }: any) {
 
         if (mode === 'sheet') {
           // ── 신규 캐릭터 시트 생성 — v3.76: 비동기(job) + 텍스트-only 허용(MAIDOL v161) ──
+          // v3.80: 가상화(그림) 모드 — cartoon 엔드포인트 + style_preset XOR style_image
+          const isVirtual = taskStore.characterKind === 'virtual';
           const hasPhoto = !!photoUri;
           if (!hasPhoto && !(taskStore.userText || '').trim()) throw new Error('사진 또는 컨셉 설명이 필요해요.');
           const form = new FormData();
@@ -175,8 +177,23 @@ export default function ArtistLoadingScreen({ navigation }: any) {
 
           form.append('user_text', taskStore.userText || '');
           form.append('image_model', 'gpt_image_2');
-          if (__DEV__) console.info('[ArtistLoading] generate-sheet-async 요청', { hasPhoto, items: items.length });
-          const startRes = await api.post('/character/generate-sheet-async', form, {
+          if (isVirtual) {
+            // style_image XOR style_preset — 둘 중 하나만
+            if (taskStore.styleImageUri) {
+              const styleName = taskStore.styleImageName || (taskStore.styleImageUri.split('/').pop() ?? 'style.jpg');
+              await appendFileToForm(form, 'style_image', taskStore.styleImageUri, styleName, inferMimeType(styleName));
+            } else if (taskStore.stylePreset) {
+              form.append('style_preset', taskStore.stylePreset);
+            } else {
+              throw new Error('화풍 정보가 없어요. 아티스트 만들기부터 다시 시도해주세요.');
+            }
+          }
+          const endpoint = isVirtual ? '/character/generate-sheet-cartoon-async' : '/character/generate-sheet-async';
+          if (__DEV__) console.info('[ArtistLoading] generate-sheet 요청', {
+            endpoint, hasPhoto, items: items.length, isVirtual,
+            stylePreset: taskStore.stylePreset, hasStyleImage: !!taskStore.styleImageUri,
+          });
+          const startRes = await api.post(endpoint, form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
             timeout: 120000,
@@ -220,6 +237,12 @@ export default function ArtistLoadingScreen({ navigation }: any) {
               used_items: usedItems,
             };
             if (originalObjectName) saveBody.original_photo_object_name = originalObjectName;
+            // v3.80: 가상 슬롯 저장 — 서버가 virtual_* 필드만 갱신(실사 무손상).
+            // 실사 경로에는 variant를 절대 넣지 않음(기존 페이로드 불변).
+            if (isVirtual) {
+              saveBody.variant = 'virtual';
+              saveBody.art_style = res.data.art_style || (taskStore.styleImageUri ? 'custom' : taskStore.stylePreset);
+            }
             await api.post('/character/save', saveBody);
           } catch (saveErr) {
             console.warn('[Artist] auto-save sheet failed:', saveErr);

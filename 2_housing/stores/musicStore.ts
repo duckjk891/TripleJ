@@ -23,6 +23,9 @@ interface MusicState {
   coverTrackId: string | null;
   coverTrackTitle: string | null;
   coverStyle: string | null;
+  /** v3.80: 커버에 포함할 캐릭터 슬롯(실사/가상)의 object_name. null=미포함.
+   *  로컬 state 대신 store에 두어 대기 후 재진입 시에도 "아티스트 포함" 선택이 유지됨. */
+  coverCharacterObjectName: string | null;
   generationId: string | null;
   savedTrackId: string | null;
   status: GenerationStatus;
@@ -49,6 +52,7 @@ interface MusicState {
   setCoverTrackId: (v: string | null) => void;
   setCoverTrackTitle: (v: string | null) => void;
   setCoverStyle: (v: string | null) => void;
+  setCoverCharacterObjectName: (v: string | null) => void;
   setGenerationId: (id: string | null) => void;
   setSavedTrackId: (id: string | null) => void;
   setStatus: (status: GenerationStatus) => void;
@@ -80,6 +84,7 @@ const initialState = {
   coverTrackId: null,
   coverTrackTitle: null,
   coverStyle: null,
+  coverCharacterObjectName: null,
   generationId: null,
   savedTrackId: null,
   status: 'idle' as GenerationStatus,
@@ -111,6 +116,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setCoverTrackId: (coverTrackId) => set({ coverTrackId }),
   setCoverTrackTitle: (coverTrackTitle) => set({ coverTrackTitle }),
   setCoverStyle: (coverStyle) => set({ coverStyle }),
+  setCoverCharacterObjectName: (coverCharacterObjectName) => set({ coverCharacterObjectName }),
   setGenerationId: (generationId) => set({ generationId }),
   setSavedTrackId: (savedTrackId) => set({ savedTrackId }),
   setStatus: (status) => set({ status }),

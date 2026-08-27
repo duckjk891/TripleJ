@@ -22,6 +22,7 @@ import { useTimerStore } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { fetchStyleSamples, resolveArtStyleLabel } from '../utils/artStyle';
 import { colors } from '../theme/colors';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
@@ -64,10 +65,13 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   const [selectedTrack, setSelectedTrack] = useState<MyTrack | null>(null);
   const [styleInput, setStyleInput] = useState('');
   const [trackLoading, setTrackLoading] = useState(!hasPendingGeneration);
-  // 9004: 커버에 아티스트(캐릭터 시트) 포함 여부 + 백엔드가 받는 object_name
-  const [includeArtist, setIncludeArtist] = useState<boolean | null>(null);
-  const [characterObjectName, setCharacterObjectName] = useState<string | null>(null);
-  const [hasMyCharacter, setHasMyCharacter] = useState<boolean | null>(null);
+  // v3.80: 커버에 포함할 캐릭터 — 실사/가상 슬롯 object_name (선택 결과는 musicStore에 저장:
+  // 대기 후 재진입 시 로컬 state가 초기화돼 "아티스트 포함"이 유실되던 버그의 근본 픽스)
+  const [realObjName, setRealObjName] = useState<string | null>(null);
+  const [virtualObjName, setVirtualObjName] = useState<string | null>(null);
+  const [virtualStyleLabel, setVirtualStyleLabel] = useState<string>('');
+  // 재생성 시 슬롯 선택 유지용 (doGenerate 정리부에서 store가 비워진 뒤 복원)
+  const lastCharObjRef = useRef<string | null>(null);
 
   // 로딩/결과 관련
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
@@ -122,6 +126,10 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     }
     setMode('loading');
     setErrorMsg(null);
+    // v3.80: 로컬 state 대신 musicStore에서 읽음 — 대기 후 재진입해도 "아티스트 포함" 유지.
+    // 재생성 시 선택 유지를 위해 ref에 백업 (handleStyleConfirm에서 복원).
+    const charObjectName = useMusicStore.getState().coverCharacterObjectName;
+    lastCharObjRef.current = charObjectName;
     try {
       let genre = '', mood = '';
       try {
@@ -136,8 +144,8 @@ export default function CoverGenerationScreen({ navigation }: Props) {
         mood: mood || undefined,
         style: style || undefined,
         user_prompt: style || undefined,
-        // 9004: 아티스트 포함 선택 시에만 캐릭터 시트 object_name 전송
-        character_object_name: includeArtist && characterObjectName ? characterObjectName : undefined,
+        // v3.80: 선택한 슬롯(실사/가상)의 object_name — 미포함이면 undefined
+        character_object_name: charObjectName || undefined,
         image_model: 'gpt_image_2',
       };
       console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
@@ -162,6 +170,8 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       musicStore.setCoverTrackId(null);
       musicStore.setCoverTrackTitle(null);
       musicStore.setCoverStyle(null);
+      // v3.80: 다음 커버에 유령처럼 포함되지 않게 정리 (재생성은 lastCharObjRef로 복원)
+      musicStore.setCoverCharacterObjectName(null);
     }
   };
 
@@ -173,20 +183,32 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       { type: 'user', text: `"${track.title}"` },
     ]);
 
-    // 9004: /character/me 조회. 캐릭터 시트 있으면 "아티스트 포함?" 질문, 없으면 바로 스타일로
+    // v3.80: /character/me 조회 — 실사·가상 시트 모두 확보. 하나라도 있으면 "아티스트 포함?" 질문
     try {
       const res = await api.get('/character/me');
       const ch = res.data?.character;
-      if (ch?.sheet_object_name) {
-        setCharacterObjectName(ch.sheet_object_name);
-        setHasMyCharacter(true);
+      const realObj: string | null = ch?.sheet_object_name || null;
+      const virtualObj: string | null = ch?.virtual_sheet_object_name || null;
+      setRealObjName(realObj);
+      setVirtualObjName(virtualObj);
+      if (virtualObj) {
+        // 화풍 라벨 해석 (style-samples 실패 시 art_style 키 그대로)
+        try {
+          const samples = await fetchStyleSamples();
+          setVirtualStyleLabel(resolveArtStyleLabel(ch?.virtual_art_style, samples));
+        } catch {
+          setVirtualStyleLabel(ch?.virtual_art_style || '');
+        }
+      }
+      if (__DEV__) console.info('[Cover] 캐릭터 슬롯 확인', { hasReal: !!realObj, hasVirtual: !!virtualObj });
+      if (realObj || virtualObj) {
         setChatHistory((prev) => [
           ...prev,
           { type: 'director', text: '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?' },
         ]);
         setStep(1); // 아티스트 포함 여부 단계
       } else {
-        setHasMyCharacter(false);
+        musicStore.setCoverCharacterObjectName(null);
         setChatHistory((prev) => [
           ...prev,
           { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌을 설명해주세요.' },
@@ -195,7 +217,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       }
     } catch (err) {
       console.warn('[Cover] /character/me 조회 실패, 캐릭터 없이 진행:', err);
-      setHasMyCharacter(false);
+      musicStore.setCoverCharacterObjectName(null);
       setChatHistory((prev) => [
         ...prev,
         { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌을 설명해주세요.' },
@@ -204,18 +226,49 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     }
   };
 
-  // 대화: 아티스트 포함 여부 선택 → 스타일 단계로
+  // 대화: 아티스트 포함 여부 선택 → (둘 다 있으면 슬롯 선택) → 스타일 단계로
   const handleArtistChoice = (include: boolean) => {
-    setIncludeArtist(include);
+    if (!include) {
+      musicStore.setCoverCharacterObjectName(null);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: '아티스트 빼고' },
+        { type: 'director', text: '알겠습니다. 원하시는 커버 이미지의 느낌을 설명해주세요.' },
+      ]);
+      setStep(2);
+      return;
+    }
+    // v3.80: 실사·가상 둘 다 있으면 슬롯 선택(step 1.5), 한쪽만 있으면 자동 선택
+    if (realObjName && virtualObjName) {
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: '아티스트 포함' },
+        { type: 'director', text: '실사화·가상화 캐릭터가 둘 다 있네요! 어떤 모습으로 커버에 넣을까요?' },
+      ]);
+      setStep(1.5);
+      return;
+    }
+    const obj = realObjName || virtualObjName;
+    musicStore.setCoverCharacterObjectName(obj);
+    if (__DEV__) console.info('[Cover] 캐릭터 슬롯 자동 선택', { slot: realObjName ? 'real' : 'virtual', obj });
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: include ? '아티스트 포함' : '아티스트 빼고' },
-      {
-        type: 'director',
-        text: include
-          ? '좋아요! 아티스트가 들어간 커버로 만들게요. 원하시는 느낌이나 스타일을 설명해주세요.'
-          : '알겠습니다. 원하시는 커버 이미지의 느낌을 설명해주세요.',
-      },
+      { type: 'user', text: '아티스트 포함' },
+      { type: 'director', text: '좋아요! 아티스트가 들어간 커버로 만들게요. 원하시는 느낌이나 스타일을 설명해주세요.' },
+    ]);
+    setStep(2);
+  };
+
+  // v3.80: step 1.5 — 실사화/가상화 슬롯 선택
+  const handleSlotSelect = (slot: 'real' | 'virtual') => {
+    const obj = slot === 'real' ? realObjName : virtualObjName;
+    if (!obj) return;
+    musicStore.setCoverCharacterObjectName(obj);
+    if (__DEV__) console.info('[Cover] 캐릭터 슬롯 선택', { slot, obj });
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: slot === 'real' ? '실사화로' : `가상화로${virtualStyleLabel ? ` (${virtualStyleLabel})` : ''}` },
+      { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌이나 스타일을 설명해주세요.' },
     ]);
     setStep(2);
   };
@@ -233,6 +286,11 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     musicStore.setCoverTrackId(trackId);
     musicStore.setCoverTrackTitle(trackTitle || '');
     musicStore.setCoverStyle(style);
+    // v3.80: 재생성 경로 — doGenerate 정리부에서 비워진 슬롯 선택을 복원 (재생성은 선택 유지)
+    if (useMusicStore.getState().coverCharacterObjectName == null && lastCharObjRef.current) {
+      if (__DEV__) console.info('[Cover] 재생성: 캐릭터 슬롯 선택 복원', { obj: lastCharObjRef.current });
+      musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
+    }
     timerStore.startTask('image', '커버 생성');
     setChatHistory((prev) => [
       ...prev,
@@ -427,6 +485,30 @@ export default function CoverGenerationScreen({ navigation }: Props) {
               <AppText style={styles.choiceChipTextAlt}>아니요, 빼고</AppText>
             </TouchableOpacity>
           </View>
+        ) : step === 1.5 ? (
+          // v3.80: 실사화/가상화 슬롯 선택 카드 (둘 다 있을 때만 진입)
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('real')} activeOpacity={0.8}>
+              {realObjName ? (
+                <Image
+                  source={{ uri: `${BACKEND_BASE_URL}/api/character/preview/${realObjName}` }}
+                  style={styles.slotCardImg}
+                />
+              ) : null}
+              <AppText style={styles.slotCardLabel}>실사화</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('virtual')} activeOpacity={0.8}>
+              {virtualObjName ? (
+                <Image
+                  source={{ uri: `${BACKEND_BASE_URL}/api/character/preview/${virtualObjName}` }}
+                  style={styles.slotCardImg}
+                />
+              ) : null}
+              <AppText style={styles.slotCardLabel}>
+                가상화{virtualStyleLabel ? ` · ${virtualStyleLabel}` : ''}
+              </AppText>
+            </TouchableOpacity>
+          </View>
         ) : step === 2 ? (
           <>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
@@ -509,6 +591,16 @@ const styles = StyleSheet.create({
   choiceChipText: { color: colors.text.primary, fontSize: 14, fontWeight: '700' },
   choiceChipAlt: { backgroundColor: colors.bg.surface2, borderColor: colors.border.subtle },
   choiceChipTextAlt: { color: colors.text.secondary, fontSize: 14, fontWeight: '600' },
+  // v3.80: 실사/가상 슬롯 선택 카드
+  slotCard: {
+    flex: 1, alignItems: 'center', padding: 10, borderRadius: 12,
+    backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  slotCardImg: {
+    width: 96, height: 120, borderRadius: 8, marginBottom: 8,
+    backgroundColor: colors.bg.surface2, resizeMode: 'cover',
+  },
+  slotCardLabel: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
   chipTextSelected: { color: colors.text.primary, fontWeight: 'bold' },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   textInput: { flex: 1, backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, color: colors.text.primary, fontSize: 14 },

@@ -24,9 +24,15 @@ interface CharacterTaskState {
   originalPhotoObjectName: string | null;
   /** v3.76(MAIDOL v137): 사진 확약 — 본인 사진이거나 인물 동의를 받았음을 확인. 사진 첨부 시 필수 */
   portraitConfirmed: boolean;
+  /** v3.80: 실사('real') vs 가상화 그림('virtual') 캐릭터 모드 */
+  characterKind: 'real' | 'virtual';
+  /** v3.80: 가상화 화풍 — 샘플 키(stylePreset) XOR 직접 업로드 이미지(styleImageUri/Name) */
+  stylePreset: string | null;
+  styleImageUri: string | null;
+  styleImageName: string | null;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -48,6 +54,10 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   outfitDesc: null,
   originalPhotoObjectName: null,
   portraitConfirmed: false,
+  characterKind: 'real',
+  stylePreset: null,
+  styleImageUri: null,
+  styleImageName: null,
 
   startTask: (mode) =>
     set({
@@ -79,5 +89,9 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       outfitDesc: null,
       originalPhotoObjectName: null,
       portraitConfirmed: false,
+      characterKind: 'real',
+      stylePreset: null,
+      styleImageUri: null,
+      styleImageName: null,
     }),
 }));
