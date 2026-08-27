@@ -5,6 +5,15 @@
 
 ---
 
+## v3.88 — 2026-08-27 — 내 목소리 만들기 실생성 E2E 진단 (근본 원인 확정)
+
+- [e2e] 실클론 생성: 서버 생성곡("쉬었음 청년" 5.5MB 보컬 MP3)로 위저드 전 과정 실행 — create 200(5초) → Suno validate 1차+자동재시도 모두 "Internal Error" → +374초 실패 팝업→1단계 복귀·자동 삭제(v3.87.4 플로우 실전 PASS), 지연 안내 +71초 노출 PASS, ⭐40 불변. 대표 2회 실패와 동일 패턴 → **샘플 무관 확정**.
+- [api] **근본 원인**: presigned URL 호스트 `MINIO_PUBLIC_HOST`(.env)가 **구 공인 IP로 잔존** — 현 서버 공인 IP와 불일치. 구 주소 외부 접속 타임아웃, 신 IP 9100도 연결 거부(포트포워딩 소실). Suno가 샘플 다운로드 불가 → generic Internal Error. MinIO 자체는 localhost 정상(200).
+- 조치 필요(서버·사용자): ①공유기 9100 포트포워딩 재설정 ②.env MINIO_PUBLIC_HOST 신 IP(또는 DDNS)로 수정 ③9004 재시작 ④외부에서 /minio/health/live 200 확인 후 재시도. (.env 원격 수정은 권한 정책상 차단 — 사용자 조치)
+- 증적: scratchpad/v388_e2e.log, v388_e2e_00~06b.png
+
+---
+
 ## v3.87 — 2026-08-27 — 위저드 문구·배치 스모크 (전 항목 PASS, 지출 0)
 
 - [unit] tsc 0 → PASS
