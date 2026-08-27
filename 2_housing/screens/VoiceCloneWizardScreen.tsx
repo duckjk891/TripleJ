@@ -312,7 +312,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       return;
     }
     if (!sampleSrc) {
-      showAlert('입력 필요', '노래 샘플을 녹음하거나 업로드해주세요.');
+      showAlert('입력 필요', '목소리 샘플을 녹음하거나 업로드해주세요.');
       return;
     }
     const startS = parseInt(vocalStartS, 10);
@@ -514,9 +514,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 1 && (
             <View>
-              <AppText style={styles.stepTitle}>1. 노래 샘플 입력</AppText>
+              <AppText style={styles.stepTitle}>1. 목소리 샘플 입력</AppText>
               <AppText style={styles.stepHint}>
-                최소 15초 ~ 2분 길이의 깨끗한 음원이 필요해요. 잡음이 적을수록 결과가 좋아져요.
+                최소 15초 ~ 2분 길이의 깨끗한 음원이 필요해요. 노래도 좋고, 말해도 괜찮아요. 잡음이 적을수록 결과가 좋아져요.
               </AppText>
 
               <AppText style={styles.fieldLabel}>목소리 이름 *</AppText>
@@ -529,7 +529,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 maxLength={40}
               />
 
-              <AppText style={styles.fieldLabel}>노래 샘플 *</AppText>
+              <AppText style={styles.fieldLabel}>목소리 샘플 *</AppText>
               {renderAudioPanel('sample', sampleSrc, () => setSampleSrc(null))}
 
               <AppText style={styles.fieldLabel}>방금 넣은 샘플은 어떤 음성인가요? *</AppText>
