@@ -327,7 +327,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         <View style={styles.createBox}>
           <AppText style={styles.sectionTitle}>아티스트 목소리 만들기</AppText>
           <AppText style={styles.sectionDesc}>
-            간편 목소리(스타일 프리셋)와 내 목소리(클로닝) 중 하나만 아티스트 목소리로 쓸 수 있어요.
+            간편 목소리(스타일 프리셋)와 내 목소리 중 하나만 아티스트 목소리로 쓸 수 있어요.
           </AppText>
 
           {/* v3.84: 간편 만들기 — 성별+보컬 스타일 프리셋 (서버 호출 없음) */}
@@ -408,9 +408,9 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
               navigation.navigate('VoiceCloneWizard' as any);
             }}
           >
-            <AppText style={styles.wizardBtnText}>내 목소리 만들기 (노래+문장낭독)</AppText>
+            <AppText style={styles.wizardBtnText}>내 목소리 만들기</AppText>
             <AppText style={styles.wizardBtnDesc}>
-              노래 샘플과 문장 낭독 검증으로 내 목소리를 클로닝해요.
+              내가 부른 노래로 나만의 목소리를 만들어요.
             </AppText>
           </TouchableOpacity>
         </View>

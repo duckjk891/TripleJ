@@ -53,8 +53,8 @@ const SKILL_LEVELS = [
 ];
 
 const STYLE_MODES = [
-  { value: 'sing', label: '노래로 부름' },
-  { value: 'speak', label: '말로 함' },
+  { value: 'sing', label: '노래' },
+  { value: 'speak', label: '말' },
 ];
 
 type AudioSrc = { uri: string; name: string } | null;
@@ -121,7 +121,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         console.log('[VoiceCloneWizard] resume 상태:', clone.status, 'phrase=', hasPhrase);
       } catch (err: any) {
         console.error('[VoiceCloneWizard] resume 실패:', resumeCloneId, err?.response?.status, err?.message);
-        showAlert('불러오기 실패', '진행 중인 클로닝 정보를 불러오지 못했어요.', [
+        showAlert('불러오기 실패', '진행 중인 목소리 정보를 불러오지 못했어요.', [
           { text: '확인', onPress: () => navigation.goBack() },
         ]);
       } finally {
@@ -343,7 +343,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       const detail =
         err?.response?.data?.detail || err?.response?.data?.error || err?.message || '알 수 없는 오류';
       console.error('[VoiceCloneWizard] step1 실패:', err?.response?.status, detail);
-      showAlert('클로닝 시작 실패', `샘플 등록에 실패했어요.\n${detail}`);
+      showAlert('만들기 시작 실패', `샘플 등록에 실패했어요.\n${detail}`);
     } finally {
       setBusy(false);
     }
@@ -468,8 +468,8 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
   const guidanceText =
     styleMode === 'sing'
-      ? '1단계에서 "노래로 부름"을 선택했어요. 이 문구도 노래로 불러주세요.'
-      : '1단계에서 "말로 함"을 선택했어요. 같은 톤으로 말로 읽어주세요.';
+      ? '1단계에서 샘플을 "노래"로 선택했어요. 이 문구도 노래로 불러주세요.'
+      : '1단계에서 샘플을 "말"로 선택했어요. 같은 톤으로 말로 읽어주세요.';
 
   return (
     <View style={styles.container}>
@@ -482,7 +482,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         >
           <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <AppText style={styles.headerTitle}>정식 클로닝</AppText>
+        <AppText style={styles.headerTitle}>내 목소리 만들기</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -516,7 +516,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
             <View>
               <AppText style={styles.stepTitle}>1. 노래 샘플 입력</AppText>
               <AppText style={styles.stepHint}>
-                10초~2분 사이의 깨끗한 노래 음원을 권장해요. 잡음이 적을수록 결과가 좋아져요.
+                최소 15초 ~ 2분 길이의 깨끗한 음원이 필요해요. 잡음이 적을수록 결과가 좋아져요.
               </AppText>
 
               <AppText style={styles.fieldLabel}>목소리 이름 *</AppText>
@@ -531,6 +531,23 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
               <AppText style={styles.fieldLabel}>노래 샘플 *</AppText>
               {renderAudioPanel('sample', sampleSrc, () => setSampleSrc(null))}
+
+              <AppText style={styles.fieldLabel}>방금 넣은 샘플은 어떤 음성인가요? *</AppText>
+              <View style={styles.chipRow}>
+                {STYLE_MODES.map((m) => (
+                  <TouchableOpacity
+                    key={m.value}
+                    style={[styles.chip, styleMode === m.value && styles.chipSelected]}
+                    onPress={() => setStyleMode(m.value as 'sing' | 'speak')}
+                  >
+                    <AppText
+                      style={[styles.chipText, styleMode === m.value && styles.chipTextSelected]}
+                    >
+                      {m.label}
+                    </AppText>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <AppText style={styles.fieldLabel}>보컬 구간 (초) *</AppText>
               <AppText style={styles.stepHint}>
@@ -561,22 +578,6 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 </View>
               </View>
 
-              <AppText style={styles.fieldLabel}>샘플 방식</AppText>
-              <View style={styles.chipRow}>
-                {STYLE_MODES.map((m) => (
-                  <TouchableOpacity
-                    key={m.value}
-                    style={[styles.chip, styleMode === m.value && styles.chipSelected]}
-                    onPress={() => setStyleMode(m.value as 'sing' | 'speak')}
-                  >
-                    <AppText
-                      style={[styles.chipText, styleMode === m.value && styles.chipTextSelected]}
-                    >
-                      {m.label}
-                    </AppText>
-                  </TouchableOpacity>
-                ))}
-              </View>
 
               <TouchableOpacity
                 style={[
@@ -590,7 +591,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 {busy ? (
                   <ActivityIndicator size="small" color={colors.text.primary} />
                 ) : (
-                  <AppText style={styles.primaryBtnText}>다음: 클로닝 시작</AppText>
+                  <AppText style={styles.primaryBtnText}>다음: 만들기 시작</AppText>
                 )}
               </TouchableOpacity>
               {busy && (
