@@ -219,7 +219,15 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+        <TouchableOpacity
+          style={styles.logoutButton}
+          onPress={() =>
+            showAlert('로그아웃', '정말 로그아웃할까요?', [
+              { text: '취소', style: 'cancel' },
+              { text: '로그아웃', style: 'destructive', onPress: logout },
+            ])
+          }
+        >
           <AppText style={styles.logoutText}>로그아웃</AppText>
         </TouchableOpacity>
 
