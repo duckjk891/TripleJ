@@ -30,9 +30,11 @@ interface CharacterTaskState {
   stylePreset: string | null;
   styleImageUri: string | null;
   styleImageName: string | null;
+  /** v3.82: 질문 흐름에서 답한 성별 — 생성 성공 시 artistProfileStore에 슬롯별로 기록 */
+  pendingGender: string | null;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -58,6 +60,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   stylePreset: null,
   styleImageUri: null,
   styleImageName: null,
+  pendingGender: null,
 
   startTask: (mode) =>
     set({
@@ -93,5 +96,6 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       stylePreset: null,
       styleImageUri: null,
       styleImageName: null,
+      pendingGender: null,
     }),
 }));

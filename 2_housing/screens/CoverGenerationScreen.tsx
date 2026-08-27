@@ -22,7 +22,6 @@ import { useTimerStore } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
-import { fetchStyleSamples, resolveArtStyleLabel } from '../utils/artStyle';
 import { colors } from '../theme/colors';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
@@ -69,7 +68,6 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   // 대기 후 재진입 시 로컬 state가 초기화돼 "아티스트 포함"이 유실되던 버그의 근본 픽스)
   const [realObjName, setRealObjName] = useState<string | null>(null);
   const [virtualObjName, setVirtualObjName] = useState<string | null>(null);
-  const [virtualStyleLabel, setVirtualStyleLabel] = useState<string>('');
   // 재생성 시 슬롯 선택 유지용 (doGenerate 정리부에서 store가 비워진 뒤 복원)
   const lastCharObjRef = useRef<string | null>(null);
 
@@ -191,15 +189,6 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       const virtualObj: string | null = ch?.virtual_sheet_object_name || null;
       setRealObjName(realObj);
       setVirtualObjName(virtualObj);
-      if (virtualObj) {
-        // 화풍 라벨 해석 (style-samples 실패 시 art_style 키 그대로)
-        try {
-          const samples = await fetchStyleSamples();
-          setVirtualStyleLabel(resolveArtStyleLabel(ch?.virtual_art_style, samples));
-        } catch {
-          setVirtualStyleLabel(ch?.virtual_art_style || '');
-        }
-      }
       if (__DEV__) console.info('[Cover] 캐릭터 슬롯 확인', { hasReal: !!realObj, hasVirtual: !!virtualObj });
       if (realObj || virtualObj) {
         setChatHistory((prev) => [
@@ -267,7 +256,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 선택', { slot, obj });
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: slot === 'real' ? '아티스트①(실사)로' : `아티스트②(가상${virtualStyleLabel ? ` · ${virtualStyleLabel}` : ''})로` },
+      { type: 'user', text: slot === 'real' ? '아티스트①로' : '아티스트②로' },
       { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌이나 스타일을 설명해주세요.' },
     ]);
     setStep(2);
@@ -486,7 +475,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
             </TouchableOpacity>
           </View>
         ) : step === 1.5 ? (
-          // v3.81: 아티스트 선택 카드 (두 명 있을 때만 진입) — ①실사 / ②가상(화풍)
+          // v3.81: 아티스트 선택 카드 (두 명 있을 때만 진입) — v3.82: kind 병기 제거, 썸네일로 구분
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('real')} activeOpacity={0.8}>
               {realObjName ? (
@@ -495,7 +484,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                   style={styles.slotCardImg}
                 />
               ) : null}
-              <AppText style={styles.slotCardLabel}>아티스트① 실사</AppText>
+              <AppText style={styles.slotCardLabel}>아티스트①</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('virtual')} activeOpacity={0.8}>
               {virtualObjName ? (
@@ -504,9 +493,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                   style={styles.slotCardImg}
                 />
               ) : null}
-              <AppText style={styles.slotCardLabel}>
-                아티스트② 가상{virtualStyleLabel ? `(${virtualStyleLabel})` : ''}
-              </AppText>
+              <AppText style={styles.slotCardLabel}>아티스트②</AppText>
             </TouchableOpacity>
           </View>
         ) : step === 2 ? (

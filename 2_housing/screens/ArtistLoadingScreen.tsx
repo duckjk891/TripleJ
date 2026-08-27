@@ -15,6 +15,7 @@ import { showAlert } from '../utils/appAlert';
 import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/characterTaskStore';
+import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import AppScreenLayout from '../components/AppScreenLayout';
@@ -248,6 +249,14 @@ export default function ArtistLoadingScreen({ navigation }: any) {
             console.warn('[Artist] auto-save sheet failed:', saveErr);
           }
           if (cancelled) return;
+
+          // v3.82: 생성 확정 — 질문 흐름에서 답한 성별을 슬롯별 로컬 프로필에 기록
+          // (서버 /me에는 gender 필드가 없어 로컬 persist로 표시용 보관)
+          const pendingGender = useCharacterTaskStore.getState().pendingGender;
+          if (pendingGender) {
+            if (__DEV__) console.info('[ArtistLoading] 성별 기록', { slot: isVirtual ? 'virtual' : 'real', gender: pendingGender });
+            useArtistProfileStore.getState().setProfile(isVirtual ? 'virtual' : 'real', { gender: pendingGender });
+          }
 
           taskStore.completeApi({
             preview_url: characterPreviewUrl(res.data.preview_url),

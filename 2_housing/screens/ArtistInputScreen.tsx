@@ -41,6 +41,7 @@ interface ChatMessage {
 type Step = 'welcome' | 'questioning' | 'style';
 
 interface StyleAnswers {
+  gender: string;
   hair: string;
   face: string;
   skin: string;
@@ -50,7 +51,7 @@ interface StyleAnswers {
 }
 
 const EMPTY_ANSWERS: StyleAnswers = {
-  hair: '', face: '', skin: '', body: '', height: '', mood: '',
+  gender: '', hair: '', face: '', skin: '', body: '', height: '', mood: '',
 };
 
 interface QuestionDef {
@@ -62,9 +63,17 @@ interface QuestionDef {
 }
 
 const QUESTIONS: QuestionDef[] = [
+  // v3.82: 성별 질문 — 답변은 user_text에 포함(생성 품질)되고,
+  // 생성 성공 시 artistProfileStore에 기록되어 상세 화면에 표시된다.
+  {
+    key: 'gender', short: '성별',
+    question: '먼저, 우리 아티스트의 성별은 어떻게 할까요?',
+    chips: ['남성', '여성'],
+    placeholder: '예: 여성',
+  },
   {
     key: 'hair', short: '머리',
-    question: '먼저, 머리 스타일과 색은 어떤 느낌이 좋을까요?',
+    question: '머리 스타일과 색은 어떤 느낌이 좋을까요?',
     chips: ['긴 생머리', '단발', '컬리', '짧은컷', '검정', '갈색', '밝은톤'],
     placeholder: '예: 어두운 갈색 웨이브',
   },
@@ -102,6 +111,7 @@ const QUESTIONS: QuestionDef[] = [
 
 function buildFinalText(answers: StyleAnswers): string {
   const parts: string[] = [];
+  if (answers.gender) parts.push(`성별은 ${answers.gender}`);
   if (answers.hair) parts.push(`머리는 ${answers.hair}`);
   if (answers.face) parts.push(`얼굴은 ${answers.face}`);
   if (answers.skin) parts.push(`피부는 ${answers.skin}`);
@@ -123,21 +133,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   const scrollRef = useRef<ScrollView>(null);
   const [step, setStep] = useState<Step>('welcome');
-  const [chat, setChat] = useState<ChatMessage[]>(() => {
-    const msgs: ChatMessage[] = [
-      {
-        type: 'director',
-        text: `안녕하세요 ${titleLabel}님! 우리 아티스트의 얼굴 사진을 한 장 올려주세요.`,
-      },
-    ];
-    if (forceKind) {
-      msgs.push({
-        type: 'director',
-        text: `이번 아티스트는 ${forceKind === 'virtual' ? '가상(그림)' : '실사'} 캐릭터로 만들어져요.`,
-      });
-    }
-    return msgs;
-  });
+  // v3.82: forceKind 진입이어도 kind 언급 문구는 표시하지 않음(내부 로직만 유지)
+  const [chat, setChat] = useState<ChatMessage[]>(() => [
+    {
+      type: 'director',
+      text: `안녕하세요 ${titleLabel}님! 우리 아티스트의 얼굴 사진을 한 장 올려주세요.`,
+    },
+  ]);
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoName, setPhotoName] = useState<string>('');
@@ -279,11 +281,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       styleImageName: null,
     });
     if (next) {
-      pushUser('가상화(그림) 캐릭터로 만들게요');
-      pushDirector('좋아요! 그림체 캐릭터로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
+      pushUser('그림 스타일로 만들게요');
+      pushDirector('좋아요! 그림 스타일로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
     } else {
-      pushUser('실사 캐릭터로 만들게요');
-      pushDirector('알겠어요! 실사 캐릭터로 진행할게요. 사진을 올리거나 사진 없이 시작해주세요.');
+      pushUser('그림 스타일 없이 만들게요');
+      pushDirector('알겠어요! 사진을 올리거나 사진 없이 시작해주세요.');
     }
   };
 
@@ -391,6 +393,9 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // 캐릭터 컨셉 텍스트만 저장. 의상은 다음 화면에서 결정.
     const conceptText = userInput || '특별한 컨셉 없음 — 자연스러운 느낌으로';
 
+    // v3.82: 성별 답변 보관 — 생성 성공 시(ArtistLoading) 슬롯별 프로필에 기록
+    taskStore.setInput({ pendingGender: answers.gender.trim() || null });
+
     // v3.80: 가상화 모드는 화풍 선택 스텝을 거친 뒤 ArtistCody로 (handleStyleConfirm에서 진행)
     if (isVirtualMode) {
       setPendingConceptText(conceptText);
@@ -460,23 +465,22 @@ export default function ArtistInputScreen({ navigation, route }: any) {
           <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
             <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
           </TouchableOpacity>
-          {/* v3.80: 가상화(그림) 캐릭터 모드 토글 — v3.81: forceKind 진입 시 숨김(kind 강제 위반 방지) */}
+          {/* v3.80: 그림 스타일 토글 — v3.81: forceKind 진입 시 숨김(kind 강제 위반 방지)
+              v3.82: 라벨은 실사/가상 대비가 아닌 "그림 스타일" 중립 표현 */}
           {!forceKind && (
             <TouchableOpacity
               style={[styles.virtualBtn, isVirtualMode && styles.virtualBtnActive]}
               onPress={handleToggleVirtual}
             >
               <AppText style={[styles.virtualBtnText, isVirtualMode && styles.virtualBtnTextActive]}>
-                {isVirtualMode ? '🎨 가상화(그림) 모드 선택됨 — 취소하려면 탭' : '🎨 가상화(그림) 캐릭터 만들기'}
+                {isVirtualMode ? '🎨 그림 스타일 선택됨 — 취소하려면 탭' : '🎨 그림 스타일로 만들기'}
               </AppText>
             </TouchableOpacity>
           )}
           <AppText style={styles.textOnlyHint}>
-            {forceKind
-              ? `이번 아티스트는 ${forceKind === 'virtual' ? '가상(그림)' : '실사'} 캐릭터로 만들어져요.`
-              : isVirtualMode
-                ? '가상화 모드: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
-                : '사진 없이 설명만으로 가상 인물을 만들 수도 있어요.'}
+            {isVirtualMode
+              ? '그림 스타일: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
+              : '사진 없이 설명만으로 아티스트를 만들 수도 있어요.'}
           </AppText>
         </View>
       );

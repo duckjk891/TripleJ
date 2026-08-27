@@ -24,7 +24,7 @@
 **아티스트 1명 = 슬롯 1개.** 실사/가상은 아티스트의 **종류(kind)**일 뿐이며, 한 아티스트가 실사+가상 두 시트를 갖지 않는다. 즉 현행 "한 문서에 sheet + virtual_sheet 이중 필드" 구조는 **폐기 대상**이고, 가상 캐릭터는 실사 캐릭터와 동급의 **별도 아티스트 문서**다.
 
 ### 요구 사항
-1. characters 컬렉션을 **아티스트 단위 복수 문서**로 재구성: `{user_id, character_id(신규), kind: 'real'|'virtual', name?, sheet_object_name, art_style?(kind='virtual'일 때), used_items, original_photo_object_name?(kind='real'일 때), is_default, created_at, ...}`. `virtual_*` 이중 필드는 신규 모델에서 제거.
+1. characters 컬렉션을 **아티스트 단위 복수 문서**로 재구성: `{user_id, character_id(신규), kind: 'real'|'virtual', name?, gender?('male'|'female'|'other' — 아티스트 프로필 표시용, save/PATCH로 설정), sheet_object_name, art_style?(kind='virtual'일 때), used_items, original_photo_object_name?(kind='real'일 때), is_default, created_at, ...}`. `virtual_*` 이중 필드는 신규 모델에서 제거. (선행 가능: 현행 단일 문서에도 gender 필드+save 수용을 먼저 추가해주면 프론트가 즉시 사용)
 2. 신규 엔드포인트:
    - `GET /api/character/list` → `{characters: [{character_id, kind, name, sheet_url, art_style?, is_default, created_at, ...}]}`
    - `GET /api/character/{character_id}` / `DELETE /api/character/{character_id}` (**아티스트 단위 삭제** — 현재는 전체 삭제뿐)

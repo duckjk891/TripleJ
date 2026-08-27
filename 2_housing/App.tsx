@@ -35,6 +35,7 @@ import DmChatScreen from './screens/DmChatScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import MyReportsScreen from './screens/MyReportsScreen';
 import { useUiStore } from './stores/uiStore';
+import { usePlayerStore } from './stores/playerStore';
 import { usePointsStore } from './stores/pointsStore';
 import api from './services/api';
 
@@ -185,8 +186,11 @@ function StudioNavigator() {
 
 function MiniPlayerWrapper() {
   const insets = require('react-native-safe-area-context').useSafeAreaInsets();
+  // v3.82: 화면 단위 숨김(ArtistResult 등) — 렌더만 막고 오디오 재생은 유지
+  const miniHidden = usePlayerStore((s) => s.miniHidden);
   // 탭 바 높이: 49(기본) + safeArea bottom
   const tabBarHeight = 49 + insets.bottom;
+  if (miniHidden) return null;
   return (
     <View style={{ position: 'absolute', bottom: tabBarHeight, left: 0, right: 0, zIndex: 999 }}>
       <MiniPlayer />

@@ -16,7 +16,7 @@ import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
-import { fetchStyleSamples, resolveArtStyleLabel } from '../utils/artStyle';
+import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { colors } from '../theme/colors';
 
 // ── v3.81: 내 아티스트 목록 ────────────────────────────────────────────────────
@@ -27,22 +27,22 @@ import { colors } from '../theme/colors';
 
 type SlotKind = 'real' | 'virtual';
 
+// v3.82: 목록 카드에서 실사/가상 표기 전면 제거 — 카드 = 시트 썸네일 + 이름만.
+// slot은 내부 라우팅·forceKind 계산용으로만 유지(서버 제약: 같은 kind 생성=기존 덮어씀).
 interface ArtistEntry {
   slot: SlotKind;
-  kindLabel: string;      // '실사' | '가상(그림)'
   sheetUrl: string;       // /api/character/preview/{obj} + cache-buster
   name: string;           // 서버 이름은 계정 공유 — 두 카드에 동일 표시 허용
-  artStyleLabel?: string; // 가상만
 }
 
 const MAX_SLOTS = 2; // 서버 이중 필드 제약 (B-1 후 확장)
 const EXTRA_SLOT_COST_FALLBACK = 15;
 
-const kindLabelOf = (slot: SlotKind) => (slot === 'real' ? '실사' : '가상(그림)');
-
 export default function MyArtistsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  // v3.82: 로컬 프로필(이름·성별) — 서버 name이 비어있을 때 이름 폴백
+  const profiles = useArtistProfileStore((s) => s.profiles);
 
   const [loading, setLoading] = useState(true);
   const [artists, setArtists] = useState<ArtistEntry[]>([]);
@@ -72,10 +72,9 @@ export default function MyArtistsScreen({ navigation }: any) {
       setLoading(true);
       (async () => {
         try {
-          // 캐릭터 + 화풍 라벨 + 과금 정보 병렬 로드 (모두 조회성 — 과금 없음)
-          const [meRes, samples, costsRes, historyRes] = await Promise.all([
+          // 캐릭터 + 과금 정보 병렬 로드 (모두 조회성 — 과금 없음)
+          const [meRes, costsRes, historyRes] = await Promise.all([
             api.get('/character/me'),
-            fetchStyleSamples().catch(() => null),
             api.get('/points/costs').catch(() => null),
             api.get('/points/history').catch(() => null),
           ]);
@@ -86,7 +85,6 @@ export default function MyArtistsScreen({ navigation }: any) {
           if (ch?.sheet_object_name) {
             list.push({
               slot: 'real',
-              kindLabel: '실사',
               sheetUrl: `${BACKEND_BASE_URL}/api/character/preview/${ch.sheet_object_name}?t=${Date.now()}`,
               name: ch.name || '',
             });
@@ -94,10 +92,8 @@ export default function MyArtistsScreen({ navigation }: any) {
           if (ch?.virtual_sheet_object_name) {
             list.push({
               slot: 'virtual',
-              kindLabel: '가상(그림)',
               sheetUrl: `${BACKEND_BASE_URL}/api/character/preview/${ch.virtual_sheet_object_name}?t=${Date.now()}`,
               name: ch.name || '',
-              artStyleLabel: resolveArtStyleLabel(ch.virtual_art_style, samples) || undefined,
             });
           }
           setArtists(list);
@@ -257,22 +253,10 @@ export default function MyArtistsScreen({ navigation }: any) {
             >
               <Image source={{ uri: a.sheetUrl }} style={styles.cardImg} />
               <View style={styles.cardBody}>
-                <View style={styles.badgeRow}>
-                  <View style={styles.kindBadge}>
-                    <AppText style={styles.kindBadgeText}>
-                      {a.slot === 'real' ? '📷 실사' : '🎨 가상(그림)'}
-                    </AppText>
-                  </View>
-                  {a.artStyleLabel ? (
-                    <View style={styles.styleBadge}>
-                      <AppText style={styles.styleBadgeText}>{a.artStyleLabel}</AppText>
-                    </View>
-                  ) : null}
-                </View>
+                {/* v3.82: 카드 = 시트 썸네일 + 이름만 (실사/가상 배지·화풍 라벨 제거) */}
                 <AppText style={styles.cardName} numberOfLines={1}>
-                  {a.name || '이름 없는 아티스트'}
+                  {a.name || profiles[a.slot]?.name || '이름 없는 아티스트'}
                 </AppText>
-                <AppText style={styles.cardHint}>탭하여 관리 · 꾸미기</AppText>
               </View>
               <AppText style={styles.cardChevron}>›</AppText>
             </TouchableOpacity>
@@ -305,17 +289,17 @@ export default function MyArtistsScreen({ navigation }: any) {
           </TouchableOpacity>
           {slotsFull && (
             <AppText style={styles.fullHint}>
-              지금은 실사 1명 + 가상 1명, 최대 2명까지 만들 수 있어요.
+              지금은 최대 2명까지 만들 수 있어요.
             </AppText>
           )}
         </ScrollView>
       )}
 
-      {/* 슬롯 추가 과금 confirm */}
+      {/* 슬롯 추가 과금 confirm — v3.82: kind 언급 없이 비용만 안내(forceKind는 내부 로직으로만 전달) */}
       <ConfirmDialog
         visible={!!slotConfirm}
         title="아티스트 슬롯 추가"
-        message={`⭐${extraSlotCost}를 사용해 아티스트 슬롯을 추가할까요?\n새 아티스트는 ${slotConfirm ? kindLabelOf(slotConfirm.kind) : ''} 캐릭터로 만들어져요.`}
+        message={`⭐${extraSlotCost}를 사용해 아티스트 슬롯을 추가할까요?`}
         confirmText={`⭐${extraSlotCost} 사용하기`}
         onConfirm={performSlotPurchase}
         onCancel={() => setSlotConfirm(null)}
@@ -355,21 +339,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface2,
   },
   cardBody: { flex: 1 },
-  badgeRow: { flexDirection: 'row', gap: 6, marginBottom: 6, flexWrap: 'wrap' },
-  kindBadge: {
-    backgroundColor: colors.bg.surface2, borderRadius: 8,
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderWidth: 1, borderColor: colors.accent.primary,
-  },
-  kindBadgeText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700' },
-  styleBadge: {
-    backgroundColor: colors.bg.deepest, borderRadius: 8,
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  styleBadgeText: { color: colors.text.muted, fontSize: 11, fontWeight: '600' },
-  cardName: { color: colors.text.primary, fontSize: 15, fontWeight: '700', marginBottom: 3 },
-  cardHint: { color: colors.text.muted, fontSize: 11 },
+  cardName: { color: colors.text.primary, fontSize: 15, fontWeight: '700' },
   cardChevron: { color: colors.text.muted, fontSize: 24, fontWeight: '300', paddingHorizontal: 2 },
 
   addCard: {

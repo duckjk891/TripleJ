@@ -25,10 +25,8 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
+import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { colors } from '../theme/colors';
-
-const MINIPLAYER_HEIGHT = 70;
 
 export default function ArtistResultScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
@@ -38,9 +36,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const slotParam: 'real' | 'virtual' | undefined = route?.params?.slot;
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
-  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
-  // 미니플레이어가 탭바 위에 absolute로 떠있어서 그만큼 bottomArea를 위로 올림
-  const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
+  // v3.82: 로컬 프로필(이름·성별) — 서버 /me에 gender가 없어 로컬 persist에서 표시
+  const profiles = useArtistProfileStore((s) => s.profiles);
   // 방금 새로 만들거나 코디/미세조정한 시트는 저장 필요. mode === null이면 이미 저장된 상태.
   const isUnsaved = taskStore.mode !== null;
   const outfitItems = useOutfitStore((s) => s.items);
@@ -64,19 +61,20 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const [activeSlot, setActiveSlot] = useState<'real' | 'virtual'>(
     slotParam ?? (taskStore.characterKind === 'virtual' ? 'virtual' : 'real')
   );
-  const [styleSamples, setStyleSamples] = useState<StyleSample[] | null>(null);
   const slotInitRef = useRef(false);
 
-  // 화풍 라벨 해석용 샘플 로드 (무인증·무비용, 실패해도 키 그대로 표시)
-  useEffect(() => {
-    let alive = true;
-    fetchStyleSamples()
-      .then((s) => { if (alive) setStyleSamples(s); })
-      .catch((err: any) => {
-        if (__DEV__) console.info('[ArtistResult] style-samples 로드 실패(라벨은 키로 표시)', { message: err?.message });
-      });
-    return () => { alive = false; };
-  }, []);
+  // v3.82: 이 화면에서는 미니플레이어 UI 숨김(오디오 재생은 유지 — playerStore 전역 소유)
+  // → bottomArea(꾸미기/저장)가 탭바 바로 위에 고정된다. blur 시 반드시 복원.
+  useFocusEffect(
+    useCallback(() => {
+      usePlayerStore.getState().setMiniHidden(true);
+      if (__DEV__) console.info('[ArtistResult] 미니플레이어 숨김(focus)');
+      return () => {
+        usePlayerStore.getState().setMiniHidden(false);
+        if (__DEV__) console.info('[ArtistResult] 미니플레이어 복원(blur)');
+      };
+    }, [])
+  );
 
   // Tab 헤더 좌측에 ← 버튼 주입.
   // v3.79 UX-1: useLayoutEffect(마운트 기준)이면 VoiceManage 등 다음 화면을 push 해도
@@ -282,6 +280,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       console.log('[ArtistResult] 캐릭터 삭제 성공:', res.status);
       taskStore.reset();
       useOutfitStore.getState().clear();
+      // v3.82: 서버 전체 삭제와 함께 로컬 프로필(이름·성별)도 정리
+      useArtistProfileStore.getState().clearAll();
       // v3.81: 삭제 후엔 목록으로 (목록이 포커스 시 재로드 → 빈 상태 + 추가 버튼)
       navigation.navigate('MyArtists');
     } catch (err: any) {
@@ -322,7 +322,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const displayUrl = activeSheet?.url || apiResult.preview_url;
   const isVirtualTab = activeSlot === 'virtual';
   const bothSlots = !!realSheet && !!virtualSheet;
-  const virtualStyleLabel = resolveArtStyleLabel(virtualSheet?.artStyle, styleSamples);
+  // v3.82: kind 배지 대신 이름·성별 — 이름은 서버 name 우선, 없으면 로컬 프로필
+  const profile = profiles[activeSlot];
+  const displayName = meeName || profile?.name || '이름 없는 아티스트';
+  const displayGender = profile?.gender || null;
 
   return (
     <View style={styles.container}>
@@ -336,13 +339,11 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             : '꾸미기로 옷·악세서리·헤어스타일·염색까지 모두 바꿀 수 있어요.'}
         </AppText>
 
-        {/* v3.81: 탭 제거 — 이 화면은 아티스트 1명만 표시. 카드 상단에 kind 배지 */}
+        {/* v3.82: kind 배지·화풍 라벨 제거 — 이름 · 성별만 표시(성별 미상이면 이름만) */}
         <View style={styles.kindRow}>
           <View style={styles.kindBadge}>
             <AppText style={styles.kindBadgeText}>
-              {isVirtualTab
-                ? `🎨 가상(그림)${virtualStyleLabel ? ` · ${virtualStyleLabel}` : ''}`
-                : '📷 실사'}
+              {displayGender ? `${displayName} · ${displayGender}` : displayName}
             </AppText>
           </View>
         </View>
@@ -433,24 +434,26 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           </TouchableOpacity>
         </View>
 
-        {/* 캐릭터 다시 만들기 — destructive (스크롤 끝, 코디 안내라 실사 탭 전용) */}
-        {!isVirtualTab && (
+        {/* v3.82: 캐릭터 다시 만들기 — 하단 [🗑 삭제] 버튼 제거 후 유일한 삭제 진입점.
+            트러블슈팅 문구 대신 일반 문구, 모든 슬롯에서 노출(발견성 유지) */}
         <View style={styles.resetBox}>
-          <AppText style={styles.resetBoxLabel}>옷 갈아입히기가 잘 안 되시나요?</AppText>
+          <AppText style={styles.resetBoxLabel}>처음부터 다시 만들고 싶나요?</AppText>
           <AppText style={styles.resetBoxDesc}>
-            현재 캐릭터의 베이스 의상이 코디 적용을 방해할 수 있어요. 처음부터 다시 만들면 코디가 잘 적용됩니다. (현재 캐릭터와 코디 기록은 모두 삭제돼요)
+            아티스트를 삭제하고 처음부터 다시 만듭니다. (현재 아티스트와 코디 기록은 모두 삭제돼요)
           </AppText>
           <TouchableOpacity style={styles.resetBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
             <AppText style={styles.resetBtnText}>🗑 캐릭터 다시 만들기</AppText>
           </TouchableOpacity>
         </View>
-        )}
       </ScrollView>
 
-      <View style={[styles.bottomArea, { marginBottom: bottomLift }]}>
+      {/* v3.82: 미니플레이어를 숨기므로 bottomLift 제거 — bottomArea는 탭바 바로 위 고정.
+          저장된 가상 슬롯은 남는 버튼이 없어(꾸미기=실사 전용) bottomArea 자체를 숨김 */}
+      {(isUnsaved || !isVirtualTab) && (
+      <View style={styles.bottomArea}>
         {isUnsaved ? (
           <View style={styles.btnRow}>
-            {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 탭에서는 숨김 */}
+            {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 슬롯에서는 숨김 */}
             {!isVirtualTab && (
               <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
                 <AppText style={styles.skipBtnText}>✨ 꾸미기</AppText>
@@ -466,33 +469,24 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           </View>
         ) : (
           <View style={styles.btnRow}>
-            {/* 삭제는 스크롤 끝 안내 박스에만 있어 발견이 어려웠음 → 하단 상시 노출 */}
+            {/* v3.82: [🗑 삭제] 제거 — "캐릭터 다시 만들기"(스크롤 끝)와 동일 기능(DELETE /character/me) 중복 */}
             <TouchableOpacity
-              style={[styles.deleteBtn, isVirtualTab && { flex: 1 }]}
-              onPress={handleResetCharacter}
-              activeOpacity={0.7}
+              style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
+              onPress={handleGoCody}
             >
-              <AppText style={styles.deleteBtnText}>🗑 삭제</AppText>
-            </TouchableOpacity>
-            {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 탭에서는 숨김 */}
-            {!isVirtualTab && (
-              <TouchableOpacity
-                style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
-                onPress={handleGoCody}
+              <AppText
+                style={[
+                  styles.applyBtnText,
+                  { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
+                ]}
               >
-                <AppText
-                  style={[
-                    styles.applyBtnText,
-                    { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
-                  ]}
-                >
-                  ✨ 아티스트 꾸미기
-                </AppText>
-              </TouchableOpacity>
-            )}
+                ✨ 아티스트 꾸미기
+              </AppText>
+            </TouchableOpacity>
           </View>
         )}
       </View>
+      )}
 
       {/* 시트 확대 보기 — pinch zoom + pan */}
       <ZoomModal
@@ -879,11 +873,4 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#a04444',
   },
   resetBtnText: { color: '#cc6868', fontSize: 13, fontWeight: '700' },
-  deleteBtn: {
-    paddingVertical: 11, paddingHorizontal: 16, borderRadius: 10,
-    alignItems: 'center', justifyContent: 'center', minHeight: 44,
-    backgroundColor: 'transparent',
-    borderWidth: 1, borderColor: '#a04444',
-  },
-  deleteBtnText: { color: '#cc6868', fontSize: 13, fontWeight: '700' },
 });

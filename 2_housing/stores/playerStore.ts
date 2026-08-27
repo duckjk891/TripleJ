@@ -22,6 +22,9 @@ interface PlayerState {
   savedQueues: Record<string, { queue: any[]; currentIndex: number; track: any | null }>;
   /** 비회원 담기 안내 팝업을 이미 확인했는지(영속) — 한 번 '계속 담기'를 고르면 다시 뜨지 않는다 */
   guestNoticeAck: boolean;
+  /** v3.82: 미니플레이어 UI 숨김(렌더만 제어 — 오디오 재생은 유지). ArtistResult 등 화면별 focus/blur로 토글. 비영속. */
+  miniHidden: boolean;
+  setMiniHidden: (v: boolean) => void;
   setSound: (sound: Audio.Sound | null) => void;
   setTrack: (track: any | null) => void;
   setIsPlaying: (v: boolean) => void;
@@ -73,6 +76,7 @@ export const usePlayerStore = create<PlayerState>()(
       queueOwnerId: null,
       savedQueues: {},
       guestNoticeAck: false,
+      miniHidden: false,
       shuffle: false,
       repeat: 'off' as RepeatMode,
       setSound: (sound) => set({ sound }),
@@ -154,6 +158,7 @@ export const usePlayerStore = create<PlayerState>()(
         return false;
       },
       setGuestNoticeAck: (guestNoticeAck) => set({ guestNoticeAck }),
+      setMiniHidden: (miniHidden) => set({ miniHidden }),
       setCurrentIndex: (currentIndex) => { set({ currentIndex }); saveOwnerQueue(); },
       setPlayerScreenOpen: (isPlayerScreenOpen) => set({ isPlayerScreenOpen }),
       toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
