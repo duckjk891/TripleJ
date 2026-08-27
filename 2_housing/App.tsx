@@ -66,6 +66,7 @@ import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
 import MyArtistsScreen from './screens/MyArtistsScreen';
 import VoiceManageScreen from './screens/VoiceManageScreen';
+import VoiceCloneWizardScreen from './screens/VoiceCloneWizardScreen';
 import LyricsBookScreen from './screens/LyricsBookScreen';
 import ArtistCodyScreen from './screens/ArtistCodyScreen';
 import ArtistDetailScreen from './screens/ArtistDetailScreen';
@@ -99,6 +100,8 @@ export type StudioStackParamList = {
   MyArtists: undefined;
   ArtistCody: undefined;
   VoiceManage: { select?: 'artist' } | undefined;
+  // v3.83: 정식 보이스 클로닝(노래+문장낭독) 4단계 위저드 — resumeCloneId로 2/3단계 재개
+  VoiceCloneWizard: { resumeCloneId?: string } | undefined;
   LyricsBook: undefined;
 };
 
@@ -179,6 +182,7 @@ function StudioNavigator() {
       <StudioStack.Screen name="MyArtists" component={MyArtistsScreen} />
       <StudioStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
       <StudioStack.Screen name="VoiceManage" component={VoiceManageScreen} />
+      <StudioStack.Screen name="VoiceCloneWizard" component={VoiceCloneWizardScreen} />
       <StudioStack.Screen name="LyricsBook" component={LyricsBookScreen} />
     </StudioStack.Navigator>
   );

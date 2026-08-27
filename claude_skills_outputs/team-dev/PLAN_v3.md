@@ -7,6 +7,37 @@
 
 ---
 
+## v3.83 — 2026-08-27 — Voice Clone(노래+문장낭독) 위저드 이식 (MAIDOL 파리티)
+
+### 요청(원문 요지)
+"내 목소리 만들기는 노래+문장낭독(Suno 정식 클로닝)으로 가야 해. 앞으로 다른 작업들도 모두 MAIDOL 이식 기준으로 진행."
+
+### Plan verification findings (기실측)
+- MAIDOL `components/VoiceCloneWizard.jsx` 4단계: ①노래 업로드/녹음+보컬 구간(vocal_start_s/end_s)+이름·스타일 → `POST /voice-clone/create` ②서버 낭독 문구 표시(validateInfo.phrase, `regenerate-phrase` 가능, 폴링) ③검증 녹음 필수(verify_file, singer_skill_level) → `POST /voice-clone/{id}/verify` ④완료. 상태 `awaiting_verify` 등 — 검증 전 사용 불가. 목록 관리 `MyVoiceCloneSection.jsx`.
+- 서버 API 전부 실존(openapi): create/list/{id}/delete/regenerate-phrase/verify/check-availability.
+- AIDOL: VoiceManageScreen(v3.78)은 persona(노래만)만 구현 — 클론 미이식. 작곡 전송 계약: 클론 선택 시 `persona_id=clone.voice_id`+`persona_model='voice_persona'`(MAIDOL StudioTab2:1649-1650).
+
+### 범위
+1. voiceService에 클론 API 함수군 추가(create·list·get·delete·regeneratePhrase·verify·checkAvailability — 스키마는 openapi 실측).
+2. **VoiceCloneWizardScreen 신설(4단계)**: 노래 업로드/녹음+구간 지정 → 문구 확인(재생성) → 따라 읽기 녹음 → 완료. 상태 폴링·에러 처리 MAIDOL 계약 이식. 이어하기(awaiting_verify 클론 재개) 지원.
+3. VoiceManageScreen: 목록에 클론 병합 표시(상태 배지: 처리 중/검증 대기/완료) + "정식 클로닝으로 만들기(노래+문장낭독)" 진입 + 검증 대기 항목 탭 시 위저드 3단계 재개. 선택 모드(아티스트 연결)는 완료된 클론도 선택 가능.
+4. 작곡(MusicGeneration 케이스12): 완료된 클론도 목소리 후보로 노출 — 선택 시 voice_id를 personaId로 전송.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| services/voiceService.ts | 클론 API 함수군 | [voiceService] |
+| screens/VoiceCloneWizardScreen.tsx (신규) | 4단계 위저드 | [VoiceCloneWizard] |
+| screens/VoiceManageScreen.tsx | 클론 목록 병합·진입·재개 | [VoiceManage] |
+| stores/voiceStore.ts | clones 목록·fetch | — |
+| screens/MusicGenerationScreen.tsx | 클론 후보 노출·voice_id 전송 | [MusicGen] |
+| App.tsx | VoiceCloneWizard 등록 | — |
+
+### 리스크·회귀
+클론 create는 Suno 실비용 가능 — dev/tester는 실생성 금지(UI·API 스키마 검증까지) · persona 경로(v3.78) 회귀 금지 · 웹 녹음 제약(파일 업로드 폴백 안내) · 오디오 구간 지정 UI는 RN 제약 고려해 초 단위 입력+미리듣기로 단순화 허용(MAIDOL 파형 UI 대체).
+
+---
+
 ## v3.82 — 2026-08-27 — 아티스트 UI 정리: kind 표기 제거·이름/성별 표시·삭제 버튼 정리·꾸미기 버튼 탭바 위
 
 ### 요청(원문 요지)

@@ -5,6 +5,19 @@
 
 ---
 
+## v3.83 — 2026-08-27 — Voice Clone 위저드 UI 스모크 (실행 완료 전체 PASS, 실비용 0)
+
+- [unit] tsc 0 → **PASS**
+- [api] `/voice-clone/list` 200 `{clones:[]}` · `/voice-persona/list` 200 병행 · create required={source_file,voice_name,vocal_start_s,vocal_end_s} · verify skill=beginner/intermediate/advanced/**professional**(MAIDOL의 'pro'는 서버 400 — 교정 이식) 실측 → **PASS**
+- [e2e] VoiceManage 만들기 2택([🎤 정식 클로닝 (노래+문장낭독)] + 간편 만들기 공존) → **PASS** (`v383_smoke_02`)
+- [e2e] 위저드 1단계: 렌더(이름·녹음/업로드·구간·스타일·단계 dot)·무음 wav 주입·미리듣기 재생·뒤로가기 복귀, create 호출 0건 → **PASS** (`03~07`)
+- [e2e] 작곡 케이스12 회귀: 가사 보관함 시드 재사용(비용 0)으로 도달, persona+clone 병행 조회 200, 건너뛰기→최종 스텝 확인 후 정지 → **PASS** (`10·11`)
+- [e2e] 회귀: 콘솔·pageerror·4xx/5xx 0, 생성계 POST 0, ⭐40→40 → **PASS**
+- 후속 픽스: 1단계 [다음] 버튼이 미충족 시 무반응(disabled)이던 것 → 탭 가능+누락 항목 showAlert 안내로 변경(tsc 0).
+- [미검증] create→문구 폴링→verify 실왕복(Suno 실비용 — 실사용 1회 확인 권장) · 네이티브 녹음 · 구간 시작≥끝 가드 알림(코드상 존재, 실클릭 미실행).
+
+---
+
 ## v3.82 — 2026-08-27 — 아티스트 UI 정리 스모크 (실행 완료 6/6 PASS, 과금·생성·삭제 0)
 
 - [unit] tsc 0 → **PASS**

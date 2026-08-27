@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
@@ -19,9 +20,21 @@ import { usePointsStore } from '../stores/pointsStore';
 import {
   createVoicePersona,
   deleteVoicePersona,
+  deleteVoiceClone,
   personaVocalStreamUrl,
   VoicePersona,
+  VoiceClone,
 } from '../services/voiceService';
+
+// v3.83: 클론 상태 배지 (MAIDOL MyVoiceCloneSection STATUS_BADGE 이식 — 기술 용어 최소화)
+const CLONE_STATUS_BADGE: Record<string, string> = {
+  validating: '분석 중',
+  awaiting_verify: '검증 대기',
+  generating: '학습 중',
+  ready: '사용 가능',
+  failed: '실패',
+  expired: '만료됨',
+};
 
 // ── 내 목소리 관리 화면 ────────────────────────────────────────────────────────
 // 노래 음원(파일 업로드/녹음)으로 Voice Persona를 만들고, 미리듣기·삭제한다.
@@ -36,6 +49,10 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
   const personas = useVoiceStore((s) => s.personas);
   const loading = useVoiceStore((s) => s.loading);
   const fetchPersonas = useVoiceStore((s) => s.fetchPersonas);
+  // v3.83: 정식 클로닝 목록 병합
+  const clones = useVoiceStore((s) => s.clones);
+  const clonesLoading = useVoiceStore((s) => s.clonesLoading);
+  const fetchClones = useVoiceStore((s) => s.fetchClones);
   const artistPersonaId = useVoiceStore((s) => s.artistPersonaId);
   const setArtistPersona = useVoiceStore((s) => s.setArtistPersona);
   const clearArtistPersona = useVoiceStore((s) => s.clearArtistPersona);
@@ -66,9 +83,16 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
     parent.setOptions({ headerLeft: undefined });
   }, [navigation]);
 
+  // v3.83: 위저드에서 돌아왔을 때도 최신 목록 반영 — focus 시 재조회
+  useFocusEffect(
+    useCallback(() => {
+      fetchPersonas();
+      fetchClones();
+    }, [fetchPersonas, fetchClones])
+  );
+
   useEffect(() => {
     console.log('[VoiceManage] 진입, selectMode=', selectMode);
-    fetchPersonas();
     return () => {
       // 화면 이탈 시 사운드/녹음/타이머 정리
       soundRef.current?.unloadAsync().catch(() => {});
@@ -244,6 +268,48 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
     ]);
   };
 
+  // ── v3.83: 클론 행 탭 — 검증 대기면 위저드 3단계 재개 / 선택 모드면 아티스트 연결 ──
+  const handleCloneTap = (c: VoiceClone) => {
+    if (c.status === 'awaiting_verify') {
+      console.log('[VoiceManage] 클론 검증 재개:', c.clone_id);
+      navigation.navigate('VoiceCloneWizard' as any, { resumeCloneId: c.clone_id });
+      return;
+    }
+    if (!selectMode) return;
+    if (c.status !== 'ready' || !c.voice_id) {
+      showAlert('아직 처리 중', '이 목소리는 아직 준비 중이에요. 처리가 끝난 후 선택해주세요.');
+      return;
+    }
+    // 작곡 전송 계약(MAIDOL StudioTab2): persona_id = clone.voice_id, persona_model = 'voice_persona'
+    console.log('[VoiceManage] 아티스트 목소리 연결(클론):', c.clone_id, 'voice_id=', c.voice_id);
+    setArtistPersona(c.voice_id, c.voice_name);
+    showAlert('연결 완료', `"${c.voice_name}" 목소리를 아티스트에 연결했어요.\n작곡 시 이 목소리가 기본으로 제안됩니다.`, [
+      { text: '확인', onPress: () => navigation.goBack() },
+    ]);
+  };
+
+  // ── v3.83: 클론 삭제 ──
+  const handleCloneDelete = (c: VoiceClone) => {
+    showAlert('목소리 삭제', `"${c.voice_name || '이 목소리'}"를 삭제할까요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            console.log('[VoiceManage] 클론 삭제:', c.clone_id);
+            await deleteVoiceClone(c.clone_id);
+            if (c.voice_id && artistPersonaId === c.voice_id) clearArtistPersona();
+            await fetchClones();
+          } catch (err: any) {
+            const msg = err?.response?.data?.detail || err?.response?.data?.error || err?.message || '알 수 없는 오류';
+            showAlert('삭제 실패', msg);
+          }
+        },
+      },
+    ]);
+  };
+
   return (
     <View style={styles.container}>
       {/* 헤더 (StudioStack headerShown:false → 화면 내부 헤더) */}
@@ -271,6 +337,24 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         {/* ── 만들기 ── */}
         <View style={styles.createBox}>
           <AppText style={styles.sectionTitle}>새 목소리 만들기</AppText>
+
+          {/* v3.83: 정식 클로닝(노래+문장낭독 검증) — 4단계 위저드 진입 */}
+          <TouchableOpacity
+            style={styles.wizardBtn}
+            onPress={() => {
+              console.log('[VoiceManage] 정식 클로닝 위저드 진입');
+              navigation.navigate('VoiceCloneWizard' as any);
+            }}
+          >
+            <AppText style={styles.wizardBtnText}>🎤 정식 클로닝 (노래+문장낭독)</AppText>
+            <AppText style={styles.wizardBtnDesc}>
+              노래 샘플과 문장 낭독 검증으로 더 정교한 목소리를 만들어요.
+            </AppText>
+          </TouchableOpacity>
+
+          <View style={styles.createDivider} />
+
+          <AppText style={styles.sectionSubTitle}>간편 만들기 (노래만)</AppText>
           <AppText style={styles.sectionDesc}>
             내 노래 음원을 올리면 AI가 목소리를 학습해 곡 생성에 사용할 수 있어요.
           </AppText>
@@ -325,9 +409,9 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         <AppText style={[styles.sectionTitle, { marginTop: 20, marginBottom: 8 }]}>
           내 목소리 목록
         </AppText>
-        {loading && personas.length === 0 ? (
+        {(loading || clonesLoading) && personas.length === 0 && clones.length === 0 ? (
           <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 16 }} />
-        ) : personas.length === 0 ? (
+        ) : personas.length === 0 && clones.length === 0 ? (
           <AppText style={styles.emptyText}>
             아직 만든 목소리가 없어요. 위에서 노래 음원으로 첫 목소리를 만들어보세요.
           </AppText>
@@ -386,6 +470,59 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
             );
           })
         )}
+
+        {/* ── v3.83: 정식 클로닝 목소리 (persona 목록에 이어 병합 렌더) ── */}
+        {clones.map((c) => {
+          const ready = c.status === 'ready' && !!c.voice_id;
+          const awaiting = c.status === 'awaiting_verify';
+          const inProgress = c.status === 'validating' || c.status === 'generating';
+          const isArtist = !!c.voice_id && artistPersonaId === c.voice_id;
+          const tappable = awaiting || (selectMode && ready);
+          return (
+            <TouchableOpacity
+              key={c.clone_id || c.voice_name}
+              style={[styles.personaRow, ((selectMode && ready) || awaiting) && styles.personaRowSelectable]}
+              activeOpacity={tappable ? 0.7 : 1}
+              onPress={() => handleCloneTap(c)}
+              disabled={!tappable}
+            >
+              <View style={{ flex: 1 }}>
+                <View style={styles.personaNameRow}>
+                  <AppText style={styles.personaName} numberOfLines={1}>{c.voice_name || '(이름 없음)'}</AppText>
+                  {isArtist && (
+                    <View style={styles.artistBadge}>
+                      <AppText style={styles.artistBadgeText}>아티스트 목소리</AppText>
+                    </View>
+                  )}
+                  {inProgress && (
+                    <View style={styles.pendingBadge}>
+                      <AppText style={styles.pendingBadgeText}>처리 중</AppText>
+                    </View>
+                  )}
+                  {awaiting && (
+                    <View style={styles.awaitingBadge}>
+                      <AppText style={styles.awaitingBadgeText}>검증 대기</AppText>
+                    </View>
+                  )}
+                </View>
+                {!!c.description && (
+                  <AppText style={styles.personaDesc} numberOfLines={1}>{c.description}</AppText>
+                )}
+                <AppText style={styles.personaStatus}>
+                  {CLONE_STATUS_BADGE[c.status] || `상태: ${c.status || '알 수 없음'}`}
+                  {awaiting ? ' — 탭해서 검증 녹음 마저 하기' : ''}
+                </AppText>
+              </View>
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={() => handleCloneDelete(c)}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <AppText style={styles.iconBtnText}>🗑</AppText>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -424,7 +561,24 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   sectionTitle: { color: colors.text.primary, fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  sectionSubTitle: { color: colors.text.secondary, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   sectionDesc: { color: colors.text.muted, fontSize: 11, lineHeight: 16, marginBottom: 10 },
+  // v3.83: 정식 클로닝 위저드 진입 버튼
+  wizardBtn: {
+    marginTop: 8,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    borderRadius: 12,
+    padding: 14,
+  },
+  wizardBtnText: { color: colors.accent.primary, fontSize: 14, fontWeight: '700' },
+  wizardBtnDesc: { color: colors.text.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  createDivider: {
+    height: 1,
+    backgroundColor: colors.border.subtle,
+    marginVertical: 14,
+  },
   nameInput: {
     backgroundColor: colors.bg.deepest,
     borderWidth: 1,
@@ -506,6 +660,16 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   pendingBadgeText: { color: colors.text.muted, fontSize: 10, fontWeight: '700' },
+  // v3.83: 검증 대기(awaiting_verify) 배지
+  awaitingBadge: {
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  awaitingBadgeText: { color: '#f59e0b', fontSize: 10, fontWeight: '700' },
   iconBtn: {
     width: 36,
     height: 36,

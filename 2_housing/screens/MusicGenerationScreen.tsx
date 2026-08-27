@@ -127,20 +127,37 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     ? completedPersonas.filter((p) => p.persona_id !== artistPersona.persona_id)
     : completedPersonas;
 
+  // v3.83: 정식 클로닝 목소리 — ready(voice_id 확보)만 후보에 포함.
+  // 선택 시 persona_id=voice_id, 적용 방식은 'voice' 고정(musicService가 'voice_persona'로 변환 — MAIDOL 계약).
+  const voiceClones = useVoiceStore((s) => s.clones);
+  const fetchClones = useVoiceStore((s) => s.fetchClones);
+  const readyClones = voiceClones.filter((c) => c.status === 'ready' && !!c.voice_id);
+  const artistClone = artistPersonaId
+    ? readyClones.find((c) => c.voice_id === artistPersonaId)
+    : undefined;
+  const otherClones = artistClone
+    ? readyClones.filter((c) => c.voice_id !== artistClone.voice_id)
+    : readyClones;
+  const isCloneSelected = !!selectedPersonaId && readyClones.some((c) => c.voice_id === selectedPersonaId);
+
   // persona 스텝 진입 시(+VoiceManage에서 돌아왔을 때) 목록 갱신
   useFocusEffect(
     useCallback(() => {
-      if (step === 12) fetchPersonas();
-    }, [step, fetchPersonas])
+      if (step === 12) {
+        fetchPersonas();
+        fetchClones(); // v3.83: 클론 목록 병행 조회
+      }
+    }, [step, fetchPersonas, fetchClones])
   );
 
   // "내 아티스트 목소리"가 있으면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중)
   useEffect(() => {
-    if (step === 12 && !personaDefaultAppliedRef.current && artistPersona) {
+    if (step === 12 && !personaDefaultAppliedRef.current && (artistPersona || artistClone)) {
       personaDefaultAppliedRef.current = true;
-      setSelectedPersonaId(artistPersona.persona_id);
+      setSelectedPersonaId(artistPersona?.persona_id ?? artistClone?.voice_id ?? null);
+      if (!artistPersona && artistClone) setPersonaModel('voice'); // 클론은 목소리 적용 고정
     }
-  }, [step, artistPersona]);
+  }, [step, artistPersona, artistClone]);
 
   const advanceStep = (userAnswer: string, nextStep: number) => {
     if (nextStep >= DIRECTOR_MESSAGES.length) {
@@ -297,9 +314,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setPersonaModelOn(usePersona);
     if (usePersona) {
       const p = completedPersonas.find((x) => x.persona_id === selectedPersonaId);
-      const modeLabel = personaModel === 'style' ? '스타일만' : '목소리까지';
-      console.log('[MusicGeneration] 내 목소리 적용:', selectedPersonaId, p?.name, personaModel);
-      advanceStep(`내 목소리: ${p?.name || '선택한 목소리'} (${modeLabel})`, 13);
+      const c = readyClones.find((x) => x.voice_id === selectedPersonaId); // v3.83: 클론 후보
+      const name = p?.name || c?.voice_name;
+      const modeLabel = !c && personaModel === 'style' ? '스타일만' : '목소리까지';
+      if (c) setPersonaModel('voice'); // 클론은 voice_persona 고정
+      console.log('[MusicGeneration] 내 목소리 적용:', selectedPersonaId, name, c ? 'voice(클론)' : personaModel);
+      advanceStep(`내 목소리: ${name || '선택한 목소리'} (${modeLabel})`, 13);
     } else {
       advanceStep('건너뛰기', 13);
     }
@@ -786,6 +806,28 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                     </AppText>
                   </TouchableOpacity>
                 )}
+                {artistClone && (
+                  <TouchableOpacity
+                    style={[
+                      styles.personaChip,
+                      selectedPersonaId === artistClone.voice_id && styles.personaChipSelected,
+                    ]}
+                    onPress={() => {
+                      const next = selectedPersonaId === artistClone.voice_id ? null : artistClone.voice_id;
+                      setSelectedPersonaId(next);
+                      if (next) setPersonaModel('voice');
+                    }}
+                  >
+                    <AppText
+                      style={[
+                        styles.personaChipText,
+                        selectedPersonaId === artistClone.voice_id && styles.personaChipTextSelected,
+                      ]}
+                    >
+                      🎤 내 아티스트 목소리 · {artistClone.voice_name}
+                    </AppText>
+                  </TouchableOpacity>
+                )}
                 {otherPersonas.map((p) => (
                   <TouchableOpacity
                     key={p.persona_id}
@@ -804,7 +846,28 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                     </AppText>
                   </TouchableOpacity>
                 ))}
-                {completedPersonas.length === 0 && (
+                {/* v3.83: 정식 클로닝(ready) 목소리 후보 — 선택 시 voice 적용 고정 */}
+                {otherClones.map((c) => (
+                  <TouchableOpacity
+                    key={c.voice_id ?? c.clone_id}
+                    style={[styles.personaChip, selectedPersonaId === c.voice_id && styles.personaChipSelected]}
+                    onPress={() => {
+                      const next = selectedPersonaId === c.voice_id ? null : c.voice_id;
+                      setSelectedPersonaId(next);
+                      if (next) setPersonaModel('voice');
+                    }}
+                  >
+                    <AppText
+                      style={[
+                        styles.personaChipText,
+                        selectedPersonaId === c.voice_id && styles.personaChipTextSelected,
+                      ]}
+                    >
+                      🎤 {c.voice_name}
+                    </AppText>
+                  </TouchableOpacity>
+                ))}
+                {completedPersonas.length === 0 && readyClones.length === 0 && (
                   <AppText style={styles.personaEmptyText}>
                     아직 사용할 수 있는 내 목소리가 없어요. 새로 만들거나 건너뛸 수 있어요.
                   </AppText>
@@ -818,7 +881,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               </ScrollView>
             )}
 
-            {!!selectedPersonaId && (
+            {/* v3.83: 클론 선택 시 적용 방식 토글 숨김 — 클론은 목소리(voice_persona) 고정 */}
+            {!!selectedPersonaId && !isCloneSelected && (
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                 <TouchableOpacity
                   style={[styles.keyChip, { flex: 1 }, personaModel === 'voice' && styles.keyChipSelected]}
