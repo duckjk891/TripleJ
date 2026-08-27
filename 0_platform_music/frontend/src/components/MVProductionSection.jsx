@@ -68,8 +68,7 @@ function RetryCountdown({ retryAt }) {
 //   (fromGeneration=generation id / trackId+audioObjectName+audioDurationSec=내 트랙 / audioFile=파일 첨부),
 //   커버(aiCoverObjectName/coverImageModel), 공유 파라미터(vocalGender/selectedLocationId/includeCharacter/characterVariant/selectedCharSheet),
 //   draftData(MV job 복원 — 곡 메타 복원과 onClearDraft 는 부모 탭 담당)
-// - out callbacks: onMvObjectNameChange(mvObjectName, mvMusicVideoObjectName) — 산출물 동기화(선택),
-//   onCoverAdopted(objectName, previewUrl) — 드래프트 복원 시 커버 역주입(부모 소유 state),
+// - out callbacks: onCoverAdopted(objectName, previewUrl) — 드래프트 복원 시 커버 역주입(부모 소유 state),
 //   onCoverImageModelRestore(model) — 드래프트의 cover_image_model 복원,
 //   onRequestLightbox({url,title,subtitle}) — 공용 이미지 라이트박스(부모 소유)
 // - ref: notifyCoverChanged({cleared}) — 커버 변경/제거 통지(scenesInvalidated 판단은 내부에서),
@@ -98,7 +97,6 @@ const MVProductionSection = forwardRef(function MVProductionSection({
   characterVariant,
   selectedCharSheet,
   draftData,
-  onMvObjectNameChange,
   onCoverAdopted,
   onCoverImageModelRestore,
   onRequestLightbox,
@@ -1224,10 +1222,67 @@ const MVProductionSection = forwardRef(function MVProductionSection({
     }
   };
 
-  // v209: MV 산출물 object_name 을 UploadPage(업로드 제출 mv_object_name)로 동기화.
-  useEffect(() => {
-    if (onMvObjectNameChange) onMvObjectNameChange(mvObjectName, mvMusicVideoObjectName);
-  }, [mvObjectName, mvMusicVideoObjectName]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // v211 D7: onMvObjectNameChange 동기화 effect 제거 — 구 UploadPage 제출용이었고 소비자 0(데드).
+  // MV↔곡 연결은 명시 부착(attach/detach API)으로 대체.
+
+  // ── v211 — MV 곡 연결(붙이기): 부착 대상 = 이 job 의 소스 곡 고정 (타겟 파라미터 없음) ──
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachMsg, setAttachMsg] = useState('');
+
+  const handleAttachMV = async (replace = false) => {
+    if (!mvJobId || attachBusy) return;
+    setAttachBusy(true);
+    setAttachMsg('');
+    try {
+      if (import.meta.env?.DEV) console.info('[MVStudio] attach', { jobId: mvJobId, replace });
+      const { data } = await api.attachMVJob(mvJobId, replace);
+      await loadMvJobDetail(mvJobId); // attached_* 반영
+      // v211 F-1: state 별 안내는 서버 응답 message 그대로 — track 소스(즉시 발매됨)에
+      // "(발매 시 자동 반영)" 고정 문구가 잘못 노출되던 것 교체
+      setAttachMsg('✅ ' + (data?.message || '곡에 붙었습니다.'));
+      setTimeout(() => setAttachMsg(''), 4000);
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 409 && !replace) {
+        // 곡당 1개 — 기존 부착 MV 존재: 교체 confirm 후 replace 재호출
+        const conflictTitle = err?.response?.data?.conflicting_title;
+        const ok = window.confirm(
+          conflictTitle
+            ? `이 곡에는 이미 다른 MV(「${conflictTitle}」 작업)가 붙어 있습니다. 이 MV로 교체할까요?`
+            : '이 곡에는 이미 다른 MV가 붙어 있습니다. 이 MV로 교체할까요?',
+        );
+        if (ok) {
+          setAttachBusy(false);
+          await handleAttachMV(true);
+          return;
+        }
+      } else {
+        console.error('[MVStudio] attach failed', { jobId: mvJobId, status, message: err?.message });
+        alert(err?.response?.data?.error || '곡에 붙이기에 실패했습니다.');
+      }
+    } finally {
+      setAttachBusy(false);
+    }
+  };
+
+  const handleDetachMV = async () => {
+    if (!mvJobId || attachBusy) return;
+    if (!window.confirm('이 MV를 곡에서 뗄까요? (곡 상세·플레이어에서 더 이상 재생되지 않습니다)')) return;
+    setAttachBusy(true);
+    setAttachMsg('');
+    try {
+      if (import.meta.env?.DEV) console.info('[MVStudio] detach', { jobId: mvJobId });
+      await api.detachMVJob(mvJobId);
+      await loadMvJobDetail(mvJobId);
+      setAttachMsg('곡에서 뗐습니다');
+      setTimeout(() => setAttachMsg(''), 3000);
+    } catch (err) {
+      console.error('[MVStudio] detach failed', { jobId: mvJobId, status: err?.response?.status, message: err?.message });
+      alert(err?.response?.data?.error || '떼기에 실패했습니다.');
+    } finally {
+      setAttachBusy(false);
+    }
+  };
 
   // v209: 부모(UploadPage) 커버 핸들러 4곳의 결합 지점을 ref 메서드로 재현.
   useImperativeHandle(ref, () => ({
@@ -1265,6 +1320,41 @@ const MVProductionSection = forwardRef(function MVProductionSection({
                 <div className="upload-mv-preview__badge">
                   <FiCheck /> 뮤직비디오 완성
                 </div>
+                {/* v211 — 곡 연결(명시 부착, 자동 연결 없음): 대상 = 이 MV를 만들 때 땡긴 곡 */}
+                {attachMsg && (
+                  <div style={{ margin: '8px 0', fontSize: '13px', color: '#9eff9e' }}>{attachMsg}</div>
+                )}
+                {(mvJob?.attached_track_id || mvJob?.attached_generation_id) ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '8px 0' }}>
+                    <span style={{ fontSize: '13px', color: '#ddd' }}>
+                      🔗 「{title || '연결된 곡'}」에 연결됨
+                      {mvJob?.attached_track_id ? (
+                        <span style={{ marginLeft: '6px', fontSize: '11px', color: '#9eff9e' }}>✅ 발매됨</span>
+                      ) : (
+                        <span style={{ marginLeft: '6px', fontSize: '11px', color: '#e8c87a' }}>🕓 발매 전 (발매 시 자동 반영)</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="upload-mv-remove"
+                      onClick={handleDetachMV}
+                      disabled={attachBusy}
+                    >
+                      {attachBusy ? '처리 중...' : '떼기'}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ margin: '8px 0' }}>
+                    <button
+                      type="button"
+                      className="upload-mv-ai-btn"
+                      onClick={() => handleAttachMV(false)}
+                      disabled={attachBusy || (!fromGeneration && !trackId && !mvJob?.audio_track_id && !mvJob?.audio_generation_id)}
+                    >
+                      {attachBusy ? '붙이는 중...' : `🔗 「${title || '곡'}」에 붙이기`}
+                    </button>
+                  </div>
+                )}
                 <div className="upload-mv-preview__actions">
                   <button type="button" className="upload-mv-regenerate" onClick={handleClearMV}>
                     다시 만들기

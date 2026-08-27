@@ -385,6 +385,12 @@ export const cancelMVJob = (jobId) => API.post(`/mv/jobs/${jobId}/cancel`);
 export const mergeAudioMV = (jobId, audioObjectName) =>
     API.post(`/mv/jobs/${jobId}/merge-audio`, { audio_object_name: audioObjectName });
 export const getMVModels = () => API.get('/mv/models');
+// v211 — MV 곡 부착 (전 구간 무과금 메타데이터). 타겟 파라미터 없음 — job 자신의
+// 소스 곡에만 부착. 409 {error, conflicting_job_id, conflicting_title} 수신 시
+// confirm 후 attachMVJob(jobId, true) 재호출 = 교체 UX.
+export const attachMVJob = (jobId, replace = false) =>
+  API.post(`/mv/jobs/${jobId}/attach`, { replace });
+export const detachMVJob = (jobId) => API.post(`/mv/jobs/${jobId}/detach`);
 export const retrySyncLabs = (jobId, sceneNumber) =>
   API.post(`/mv/jobs/${jobId}/scenes/${sceneNumber}/retry-sync`);
 export const separateVocal = (jobId, sceneNumber) =>

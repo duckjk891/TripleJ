@@ -67,12 +67,18 @@ def _can_view_hidden_track(t: dict, current_user) -> bool:
 _TRACK_NOT_FOUND = {"error": "트랙을 찾을 수 없습니다."}
 
 
-async def _find_completed_mv(mongo, generation_id: str) -> Optional[dict]:
-    """Find a completed MV job linked to the given generation_id."""
-    if not generation_id:
+async def _find_attached_mv(mongo, track_id) -> Optional[dict]:
+    """v211 — 트랙에 **명시 부착**된 완성 MV job 조회.
+
+    구 `_find_completed_mv`(generation_id 암묵 자동연결) 전면 대체 — "생성 완료
+    ≠ 마음에 드는 완성" 사양. 부착은 POST /mv/jobs/{id}/attach 로만 성립하며,
+    track 소스 MV(v209 audio_track_id) 노출 갭도 이 경로로 동시 해소.
+    main.py 시동 시 mv_jobs.attached_track_id 인덱스 보장 (플레이어 hot path).
+    """
+    if not track_id:
         return None
     mv_job = await mongo.mv_jobs.find_one({
-        "audio_generation_id": generation_id,
+        "attached_track_id": str(track_id),
         "status": "completed",
         "result_music_video_url": {"$exists": True, "$ne": None},
     })
@@ -909,7 +915,8 @@ async def get_track_music_video(
         logger.info("[report] track mv_denied track=%s", track_id[:8])
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
-    mv_job = await _find_completed_mv(mongo, doc.get("generation_id"))
+    # v211 — 명시 부착 기준 조회 (암묵 generation 링크 폐기)
+    mv_job = await _find_attached_mv(mongo, track_id)
     if not mv_job:
         return JSONResponse(status_code=404, content={"error": "뮤직비디오를 찾을 수 없습니다."})
 
@@ -1351,9 +1358,11 @@ async def get_track(
         logger.exception("[track] generation_params merge failed track=%s", track_id[:8])
 
     # Look up linked completed mv_job once; reuse for both music_video and cover_character.
+    # v211 — 명시 부착(attached_track_id) 기준으로 전환. cover_character 1순위
+    # 소스도 부착 job 기준 — 무부착 시 track snapshot 폴백은 현행 유지.
     mv_job = None
     try:
-        mv_job = await _find_completed_mv(mongo, track.get("generation_id"))
+        mv_job = await _find_attached_mv(mongo, track_id)
     except Exception:
         logger.exception("[TrackCoverChar] mv_job lookup failed track=%s", track_id)
         mv_job = None
@@ -1600,10 +1609,9 @@ class UploadFromGenerationBody(BaseModel):
     prompt: Optional[str] = None
     lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None
-    # v210 실측: 데드 필드 — 프론트 전송 0건(UploadPage 내 mv 배선 v209 제거),
-    # doc 반영 코드도 없음. 제거는 API 계약 변화라 미도입 — 완성 MV→트랙 연결
-    # 기능 설계(v210 §5 이월 항목)에서 거취 결정.
-    mv_object_name: Optional[str] = None
+    # v211: mv_object_name 데드 필드 제거 확정 (v210 유보 종결) — MV→트랙 연결은
+    # 부착 API(POST /mv/jobs/{id}/attach) 로 대체. pydantic extra 기본 ignore 라
+    # 구 클라이언트가 보내도 무해.
     ai_model: Optional[str] = "Suno"
     # v71: MV 안 만들고 cover 만 만든 곡도 cover_character 노출 가능하도록
     # publish 시점의 사용자 캐릭터 snapshot 을 트랙 도큐먼트에 박음.
@@ -1857,6 +1865,36 @@ async def upload_from_generation(
         {"_id": ObjectId(body.generation_id)},
         {"$set": {"result_track_id": str(track_id), "updated_at": now}},
     )
+
+    # v211 — MV 부착 발매 승계 (promote): 이 generation 에 부착된 MV job 을
+    # attached_track_id 로 승격 → 배지 🕓발매 전 → ✅발매됨 자동 전환.
+    # best-effort (발매보상 훅 관행 — 업로드는 절대 비실패). 같은 generation
+    # 재업로드(variant 포함)는 attached_track_id 기존재 조건으로 no-op.
+    try:
+        _promote = await mongo.mv_jobs.update_one(
+            {
+                "attached_generation_id": body.generation_id,
+                "$or": [
+                    {"attached_track_id": None},
+                    {"attached_track_id": {"$exists": False}},
+                ],
+            },
+            {"$set": {"attached_track_id": str(track_id), "updated_at": now}},
+        )
+        if _promote.modified_count:
+            logger.info(
+                "[MVAttach] promote gen=%s -> track=%s",
+                body.generation_id, str(track_id),
+            )
+            # 방어적 캐시 무효화 — 신생 트랙이라 캐시 無 예상(무해).
+            try:
+                _redis = get_redis()
+                await _redis.delete(f"cache:track:{str(track_id)}")
+                await _redis.delete(f"cache:track:v3:{str(track_id)}")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("[MVAttach] promote failed gen=%s: %s", body.generation_id, e)
 
     # v44 — Trigger background extraction only if we couldn't inherit
     if not inherit_beats:

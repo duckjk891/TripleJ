@@ -455,6 +455,14 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] issue indexes ensure failed: %s", _e)
 
+    # MVAttach(v211) — 부착 조회 hot path (tracks._find_attached_mv) 인덱스 (idempotent)
+    try:
+        from .database.mongodb import get_mongo as _mvatt_get_mongo
+        await _mvatt_get_mongo().mv_jobs.create_index("attached_track_id")
+        print("[migration] mv_jobs.attached_track_id index ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] mv_jobs attach index ensure failed: %s", _e)
+
     # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
     # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
     # if the ES index emptied/drifted across a restart, re-index public tracks from

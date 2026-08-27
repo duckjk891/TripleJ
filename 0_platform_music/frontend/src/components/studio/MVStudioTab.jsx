@@ -16,6 +16,10 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
   const [poolTracks, setPoolTracks] = useState([]);
   const [loadingPool, setLoadingPool] = useState(false);
 
+  // ── v211: 내 MV 리스트 (완성물 전용 — 진행 중 job 은 임시저장 탭 소관, 중복 편성 방지 D8) ──
+  const [myMvJobs, setMyMvJobs] = useState([]);
+  const [mvActionBusy, setMvActionBusy] = useState(null); // job_id 진행 중 표시
+
   // ── 선택된 곡 (null 이면 선택 화면) ──
   // { source:'generation'|'track'|'draft', id, title, genre, mood, lyrics, prompt, aiModel,
   //   audioGenerationId, trackId, audioObjectName, audioDurationSec }
@@ -45,17 +49,23 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
   const fetchPool = async () => {
     setLoadingPool(true);
     try {
-      const [genRes, trackRes] = await Promise.all([
+      const [genRes, trackRes, mvRes] = await Promise.all([
         api.getGenerations({ limit: 50 }),
         api.getMyTracks({ limit: 50 }),
+        api.getMVJobs(),
       ]);
       const completed = (genRes.data?.generations || []).filter((g) => g.status === 'completed');
       // v209 픽스: 신고 블라인드 트랙은 곡 풀에서 비노출 (서버 403 가드와 별개로 선택 자체 차단)
       const tracks = (trackRes.data?.tracks || []).filter((t) => !t.report_blinded);
+      // v211: 내 MV = 완성물(최종 합본 존재)만
+      const mvJobs = (mvRes.data?.jobs || []).filter(
+        (j) => j.status === 'completed' && j.result_music_video_url,
+      );
       setPoolGenerations(completed);
       setPoolTracks(tracks);
+      setMyMvJobs(mvJobs);
       if (import.meta.env.DEV) {
-        console.info('[MVStudio] pool loaded', { completed: completed.length, tracks: tracks.length });
+        console.info('[MVStudio] pool loaded', { completed: completed.length, tracks: tracks.length, mv_jobs: mvJobs.length });
       }
     } catch (err) {
       console.error('[MVStudio] fetch pool failed', { status: err?.response?.status, message: err?.message });
@@ -251,6 +261,68 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
     }
   };
 
+  // ── v211: MV 곡 연결 — attachment 요약 (D3 계약: 리스트 응답 attachment 우선, 부재 시 attached_* 폴백) ──
+  const mvAttachment = (job) => {
+    if (job.attachment && typeof job.attachment === 'object') return job.attachment;
+    if (job.attached_track_id) return { state: 'released', song_id: job.attached_track_id, song_title: null };
+    if (job.attached_generation_id) return { state: 'unreleased', song_id: job.attached_generation_id, song_title: null };
+    return { state: 'none', song_id: null, song_title: null };
+  };
+
+  const handleAttachJob = async (job, replace = false) => {
+    if (mvActionBusy) return;
+    setMvActionBusy(job.job_id);
+    try {
+      if (import.meta.env?.DEV) console.info('[MVStudio] attach', { jobId: job.job_id, replace });
+      await api.attachMVJob(job.job_id, replace);
+      await fetchPool(); // attachment 상태 재조회
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 409 && !replace) {
+        // 곡당 1개 충돌 — 교체 confirm 후 replace 재호출 (D8)
+        const t = err?.response?.data?.conflicting_title;
+        const ok = window.confirm(
+          t
+            ? `이 곡에는 이미 다른 MV(「${t}」 작업)가 붙어 있습니다. 이 MV로 교체할까요?`
+            : '이 곡에는 이미 다른 MV가 붙어 있습니다. 이 MV로 교체할까요?',
+        );
+        if (ok) {
+          setMvActionBusy(null);
+          await handleAttachJob(job, true);
+          return;
+        }
+      } else {
+        console.error('[MVStudio] attach failed', { jobId: job.job_id, status, message: err?.message });
+        alert(err?.response?.data?.error || '곡에 붙이기에 실패했습니다.');
+      }
+    } finally {
+      setMvActionBusy(null);
+    }
+  };
+
+  const handleDetachJob = async (job) => {
+    if (mvActionBusy) return;
+    if (!window.confirm('이 MV를 곡에서 뗄까요? (곡 상세·플레이어에서 더 이상 재생되지 않습니다)')) return;
+    setMvActionBusy(job.job_id);
+    try {
+      if (import.meta.env?.DEV) console.info('[MVStudio] detach', { jobId: job.job_id });
+      await api.detachMVJob(job.job_id);
+      await fetchPool();
+    } catch (err) {
+      console.error('[MVStudio] detach failed', { jobId: job.job_id, status: err?.response?.status, message: err?.message });
+      alert(err?.response?.data?.error || '떼기에 실패했습니다.');
+    } finally {
+      setMvActionBusy(null);
+    }
+  };
+
+  // [교체] = attach {replace:true} (전용 엔드포인트 없음 — D3). 확인 다이얼로그 필수.
+  const handleReplaceJob = (job) => {
+    if (mvActionBusy) return;
+    if (!window.confirm('이 MV를 곡에 강제 재부착(교체)할까요? 곡에 붙어 있던 다른 MV 연결은 해제됩니다.')) return;
+    handleAttachJob(job, true);
+  };
+
   // ── 곡 선택 풀 행 렌더 (한 목록 — 소스 뱃지) ──
   const renderPoolRow = (key, badge, badgeClass, title, subtitle, meta, onSelect, extraBadge) => (
     <div key={key} className="s2__gen-card">
@@ -324,6 +396,117 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
                     ),
                   ),
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* ── v211: 내 MV — 완성 뮤직비디오 리스트 + 곡 연결(붙이기/떼기/교체) ──
+              진행 중(미완성) job 관리는 임시저장 탭 현행 유지 (D8 — 완성물 전용, 중복 편성 방지) */}
+          <div className="s2__history">
+            <div className="s2__history-header">
+              <h3 className="s2__history-title">
+                <FiClock /> 내 MV
+              </h3>
+              <button className="s2__history-refresh" onClick={fetchPool} disabled={loadingPool}>
+                <FiRefreshCw className={loadingPool ? 's2__spin' : ''} />
+              </button>
+            </div>
+            <p className="s2__hint">
+              완성된 MV를 곡에 붙이면 곡 상세·플레이어 동영상 탭에서 재생됩니다. 붙이기 전에는 노출되지 않아요.
+            </p>
+            {myMvJobs.length === 0 ? (
+              <div className="s2__history-empty">아직 완성된 MV가 없습니다. 곡을 골라 MV를 만들어보세요.</div>
+            ) : (
+              <div className="s2__history-list">
+                {myMvJobs.map((job) => {
+                  const att = mvAttachment(job);
+                  const busy = mvActionBusy === job.job_id;
+                  const songLabel = att.song_title ? `「${att.song_title}」` : '연결된 곡';
+                  return (
+                    <div key={job.job_id} className="s2__gen-card">
+                      <div className="s2__gen-top">
+                        <div className="s2__gen-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          {job.thumbnail_url && (
+                            <img
+                              src={job.thumbnail_url}
+                              alt=""
+                              style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: '6px', background: '#111', flexShrink: 0 }}
+                            />
+                          )}
+                          <div>
+                            <div className="s2__gen-title">🎬 {job.title || '(제목 없음)'}</div>
+                            {att.state === 'released' && (
+                              <div style={{ fontSize: '12px', color: '#ddd', marginTop: '2px' }}>
+                                🔗 {songLabel} <span style={{ color: '#9eff9e', fontSize: '11px' }}>✅ 발매됨</span>
+                              </div>
+                            )}
+                            {att.state === 'unreleased' && (
+                              <div style={{ fontSize: '12px', color: '#ddd', marginTop: '2px' }}>
+                                🔗 {songLabel} <span style={{ color: '#e8c87a', fontSize: '11px' }}>🕓 발매 전 (발매 시 자동 반영)</span>
+                              </div>
+                            )}
+                            {att.state === 'broken' && (
+                              <div style={{ fontSize: '12px', color: '#f4a261', marginTop: '2px' }}>
+                                ⚠ 연결 곡 없음 (곡이 삭제됨) — [떼기]로 정리하세요
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <span className="s2__gen-status s2__gen-status--completed">완성</span>
+                      </div>
+                      {job.result_music_video_url && (
+                        <video
+                          src={job.result_music_video_url}
+                          controls
+                          preload="none"
+                          poster={job.thumbnail_url || undefined}
+                          style={{ width: '100%', maxHeight: '220px', borderRadius: '8px', background: '#000', marginTop: '8px' }}
+                        />
+                      )}
+                      <div className="s2__gen-player">
+                        {att.state === 'none' && (
+                          <button
+                            className="s2__draft-resume"
+                            onClick={() => handleAttachJob(job)}
+                            disabled={busy}
+                          >
+                            {busy ? '붙이는 중...' : '🔗 곡에 붙이기'}
+                          </button>
+                        )}
+                        {(att.state === 'released' || att.state === 'unreleased') && (
+                          <>
+                            <button
+                              className="s2__draft-resume"
+                              onClick={() => handleDetachJob(job)}
+                              disabled={busy}
+                            >
+                              {busy ? '처리 중...' : '떼기'}
+                            </button>
+                            <button
+                              className="s2__draft-resume"
+                              onClick={() => handleReplaceJob(job)}
+                              disabled={busy}
+                            >
+                              교체
+                            </button>
+                          </>
+                        )}
+                        {att.state === 'broken' && (
+                          <button
+                            className="s2__draft-resume"
+                            onClick={() => handleDetachJob(job)}
+                            disabled={busy}
+                          >
+                            {busy ? '처리 중...' : '떼기'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="s2__gen-bottom">
+                        <span className="s2__gen-date">{job.created_at ? new Date(job.created_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

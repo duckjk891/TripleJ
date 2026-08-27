@@ -16651,6 +16651,7 @@ warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속
 | cleanup | C1(read-only 3자 대조 — 67건/8.5GiB/**후보 59건·3.11GiB** 정합, 2회 실행 안정, 전후 무변조, 시크릿 미출력) | PASS |
 | 회귀 | R2(임시저장 왕복 양 소스 관통) · R3(v207 가드 판정표 무변+신설 헬퍼 정합·v208 접점 정적) · R4(refine body·로그) | PASS |
 - 안전 증빙: translate-tags 포함 공통 인터셉트 §0 명문화 이행(외부 호출 전수 grep으로 차단 목록 폐쇄), 금지 엔드포인트 실서버 누출 0, ⭐ 감소 0(발매보상 +25는 예정 부수효과 — 계정 탈퇴로 소멸), `mv_jobs`·MinIO `mv/` 전 과정 쓰기 0(계측 증빙), 픽스처·트랙·계정 원복 전량 완료, 9004/9005 무접촉.
+- [v211 정정 각주] 본 사이클 실업로드 특례의 "내부 경로 — 외부 유료 API 미호출" 명제는 부정확 — 업로드 성공 시 검색 인덱싱 훅(embedding_service)이 건당 OpenAI 2회(키워드 chat+임베딩) 실호출함(v211 인시던트 2 실측). 당시 발생분 소급 기록, 규약은 v211 §0 개정판 참조.
 
 ### 6. 이월·별건 (▲=사용자 확인/승인 대기)
 - ▲ **좀비 실삭제 실행**: 후보 **59건 ≈3.11GiB**(failed 13·paused 5·stale 미완성 41 — completed 3.78GiB·final 보유분·thumbnails/generated 보존) — 리포트 스크립트 준비됨, 목록 확인·승인 후 별도 사이클(기존 DELETE API 재사용).
@@ -16665,3 +16666,61 @@ warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속
 수정 5: `backend_9006/app/routes/tracks.py`(+91/-1) · `backend_9006/app/routes/mv.py`(+10) · `frontend/src/components/MVProductionSection.jsx`(+16/-1) · `claude_skills_outputs/team-dev/PLAN.md`(+114) · `claude_skills_outputs/team-dev/TESTPLAN.md`(+280)
 신설 1: `backend_9006/scripts/mv_cleanup_report.py`(178줄, read-only)
 산출물 1: `claude_skills_outputs/team-dev/REPORT.md`(본 섹션)
+
+## v211 — MV 곡 연결(붙이기) + 플레이어 동영상 탭 3순위 (2026-08-27 15:21)
+
+### 1. 요청 요지 (그림 합의 확정 사양 4항)
+① **[곡에 붙이기] 수동**: MV 완성 후 제작자가 눌러야 연결(자동 없음 — "생성 완료 ≠ 마음에 드는 완성"), 대상 = 그 MV를 만들 때 땡겨온 바로 그 곡(타곡 선택 불가) ② **발매 무관 붙이기**: 발매 전 곡(작곡실 완성곡)에도 부착 → 업로드 시 MV 자동 승계 ③ **내 MV 리스트**(MV촬영실): 부착 MV는 연결 곡+✅발매됨/🕓발매 전 배지(업로드 순간 자동 전환)+떼기/교체, 미부착은 [곡에 붙이기] ④ **플레이어 동영상 탭 3순위**: 부착 MV → 커버+가사 스크롤 → 커버 없으면 검은 화면+가사 스크롤.
+
+### 2. 핵심 발견 (PLAN v211 §0 실측)
+- **암묵 자동연결이 이미 존재**: tracks.py `_find_completed_mv`(:70-79) — `mv_jobs.audio_generation_id==track.generation_id·completed` 를 트랙 상세·music-video·business.py가 조회 → generation 소스 MV는 완성 즉시 자동 노출(사양 ①과 충돌). 반면 track 소스 MV(v209)는 조회 경로 0(노출 불가 갭). → v211에서 명시 부착으로 전면 대체
+- **완성물 필드 확정**: `result_video_url`=무음 합본 object name(video_ready) / `result_music_video_url`=음악 합쳐진 최종 MV object name(completed) — 부착·재생 대상은 후자. 재생 = browser_video_url public presign 24h 관행
+- **3순위 "구멍" 정정**: LyricSyncVideo에 커버 없음 분기 기존재(:114-118) — 단 ♪+테마 그라데이션이라 "검은 화면" 미달·라이트 테마 대비 열화가 실상. 타임스탬프 없는 곡 안내문은 사양 ② '현행 그대로' 범위로 유지
+- 과금 실측: mv.py 라우트 과금 코드 0건 — 붙이기/떼기/조회/재생 전 경로 무과금 구조
+
+### 3. 설계 결정 (PLAN §1 D1~D9 + §7·§8)
+- **D1** 저장소 = mv_jobs 참조형 단일 소스(`attached_track_id/attached_generation_id/attached_at`) — tracks/generations 측 참조·object name 복사 기각(job 삭제=부착 자동 소멸, 고아 0). 곡당 1개=가드 쿼리(409), MV당 1곡=필드 구조
+- **D2** 발매 승계 = upload-from-generation promote 훅(result_track_id set 직후, best-effort, 재업로드 no-op)
+- **D3** API 최소: `POST /mv/jobs/{id}/attach {replace}`(타겟 파라미터 없음 — job 자신의 소스 곡만)·`detach` + list/detail attachment 확장(교체=attach replace, 전용 엔드포인트 없음)
+- **D4** 플레이어 조회 명시 부착 전면 대체(`_find_attached_mv`) — 기존 암묵 노출은 read-only 백필 리포트 스크립트로만(실백필 ▲승인 대기), business.py 집계는 무변경(별건)
+- **D5** 캐시 무효(`cache:track:{id}`+`v3` — attach/detach/replace/promote/delete) + mv_jobs.attached_track_id 인덱스
+- **D6** 3순위 = LyricSyncVideo 커버 없음 분기 순흑(#000) 교체(프론트만) **D7** mv_object_name 데드 필드 제거 확정(v210 유보 종결) + onMvObjectNameChange 데드 콜백 제거 **D8** 내 MV 리스트=완성물 전용(임시저장 탭과 중복 편성 방지)·step6 붙이기는 자식 직호출(결합 최소화) **D9** 가드 서열 400→404→403→400(미완성)→400(소스 부재)→404/403(소스)→409→200
+- 검수 픽스 **F-1**(프론트 1건): attach 성공 안내 고정 문구 → 서버 state별 message 사용(released/unreleased 문구 분리)
+- Q1-Q4 선답 전건 적중: 재-attach 200 멱등+attached_at 재타각 / ko-en 3쌍 필드 확정 / 문구 실측 고정 / music-video optional 인증 유지
+
+### 4. 구현 (픽스 루프 = F-1 1건뿐)
+| 담당 | 내용 |
+|---|---|
+| backend-dev | mv.py +293/-9(AttachMVRequest·`_resolve_attach_target`(result_track_id 즉시 released 승격+트랙 실종 gen 폴백)·attach/detach·곡당 1개 $or 가드+replace·list 배치 조회 attachment{state,song_id,song_title}·상세 attached_* 3필드·delete 캐시 무효·`_invalidate_track_cache`), tracks.py +58/-10(`_find_attached_mv` 전면 대체 2소비처·promote 훅·mv_object_name 제거), main.py +8(인덱스), scripts/mv_attach_backfill_report.py 116줄(read-only), api/index.js +6(attach/detach) |
+| frontend-dev | MVStudioTab +187(「내 MV」 섹션 — completed+final 필터·배지 3종·409 confirm 교체·떼기·broken 수습·인라인 프리뷰), MVProductionSection +105/-15(mvStep 6 붙이기/배지/떼기+F-1+데드 콜백 제거), LyricSyncVideo jsx/css(커버 없음 순흑 — placeholder 삭제), PlayerPage 무변경(응답 스키마 동일 실측). vite build 통과 |
+| planner | 검수 backend PASS·F-1 지시, TESTPLAN 조정 4건, Q1-Q4 선답, 에스컬레이션 판단(§8) |
+
+### 5. 테스트 판정 — **전체 PASS** (TESTPLAN v211 :10808~, [api]6/[unit]1/[e2e]3/회귀4 + E3 선행)
+| 축 | 시나리오 | 결과 |
+|---|---|---|
+| attach 계약 | A1(D9 서열 전종+blinded 403 추가분) · A2(성공 3형 — track 즉시 released/gen 미발매/gen 기발매 승격+리스트·상세 확장 필드) · A3(detach·재부착·replace 교체·곡당 1개 409·재-attach 200 멱등 실측) | PASS |
+| 승계·노출 | A4(promote 자동 승격·재업로드 no-op·`[MVAttach] promote` 로그) · A5(부착 노출 200/비로그인 공개곡 200/비공개 404/캐시 즉시 무효/암묵 페어 미노출) | PASS |
+| 총괄·정적 | A6(⭐ 변동 0 — A4 발매보상 +5 외) · U1(a 정적 대조 — `_find_completed_mv` 0건·business.py 무변 / b 백필 리포트 read-only 2회 안정·암묵 페어 등장 정합) · R4(v210 소스 가드 400·커버 검증 판정표 무변) | PASS |
+| UI | E1(6축 — 필터·붙이기 배지 전환·409 confirm 문구 실측·교체·떼기·broken) · E2(step6 문구 2종 released/unreleased 실측 — F-1 반영) · E3(순흑 폴백 양 테마 #000+가사 스크롤·2순위 대조군 불변) | PASS |
+| 회귀 | R1(MV촬영실 v209 곡 풀·커버 스텝·임시저장 왕복+신설 섹션 무간섭) · R2(임시저장 탭 리스트/불러오기/삭제·보존 8건 무접촉) · R3(플레이어 노래 탭 무변+1순위 실MV presign·오디오 핸드오프) | PASS |
+- 안전 증빙: 보존 MV 8건 전후 스냅샷 무변조 최종 확정, ⭐ 변동 0(A4 +5 예정 부수효과 — 계정 탈퇴 소멸), lazy translate 발동 0(직삽 픽스처 ko/en 완비 선행 체크 전건 통과), 유료 엔드포인트 실서버 도달 0, 배치2 실업로드 0(직삽 대체), 픽스처·계정 원복 전량, 9004/9005 무접촉
+
+### 6. 인시던트 2 — 실업로드 검색 인덱싱 OpenAI 실호출 (전제 오류, 정직 기록·종결)
+- tester 실측: `/tracks/upload`·upload-from-generation **성공 시** embedding_service 훅이 건당 OpenAI 2회(키워드 보강 chat + embeddings) 실호출 — 본 사이클 배치1 7업로드=14회 발생, v210 U계열에서도 동일 발생했을 것(당시 특례 명제 "내부 경로 — 외부 유료 API 미호출" 부정확 → 본 REPORT v210 §5에 정정 각주 추가 완료)
+- 원인 = planner 전제 실측 누락(PLAN 0-6이 mv.py만 점검, 업로드 훅 미점검). 성격 = ⭐ 과금성 생성 API가 아닌 운영 부대비용(비용 미미)·기능 검증 유효 → ABORT 급 아님, "허용된 부수 비용"으로 소급 재규정하되 **원인은 허용 결정이 아니라 전제 오류임을 명기**
+- 조치: 배치2 즉시 직삽 대체(추가 발생 0 계측) + TESTPLAN §0 규약 개정(실업로드=OpenAI 2회 동반 명시 — 업로드 파이프라인 검증 목적일 때만·최소 횟수 사전 고지·A6 계상, 그 외 트랙 픽스처 직삽 기본) — 종결
+
+### 7. 이월·별건 (▲=사용자 확인/승인 대기)
+- ▲ **Cherry Blossom Day 경합 2건**: 암묵 페어 실측 결과 기존 노출 대상은 2건이고 둘 다 동일 트랙에 경합(곡당 1개 정책 실증) — 백필 실행 시 **남길 MV 택1** 또는 백필 포기, 사용자 결정 대기(백필 리포트 스크립트에 경합 표기, 본 사이클 쓰기 0)
+- ~~▲ 유지: v210 좀비 실삭제 59건 ≈3.11GiB 승인 대기~~ → **완료** (2026-08-27 v210~v211 사이 사용자 승인 후 실행: 59건/3.11GiB/972 objects 삭제, 보존 8건·thumbnails/generated 무손상 검증, 메타데이터 백업 `backend_9006/backups/mv_zombie_cleanup_2026-08-27.json` — 오케스트레이터 정정 기입)
+- 별건: business.py :660 노출 집계 암묵 링크 기준 잔존(부착 기준 정렬은 차기) / 검색 인덱싱 훅 테스트 스위치(env) 도입 검토 / merge-audio audio_object_name 무검증(기존 기록 유지) / 곡·generation 삭제 시 부착 잔존은 broken 표시+떼기 수습(자동 청소 미도입)
+- 유지 이월: 곡 풀 페이지네이션·커버 스텝 캐릭터/장소 옵션·is_public 하드코딩
+
+### 8. 안전 준수
+유료 성공 경로 실행 0(⭐ 과금 계열 — 인시던트 2의 인덱싱 부수 호출은 §6 기록·규약 개정으로 통제) · 일회용 테스트 계정 가입→탈퇴 · 실사용자 데이터·실 .env 무접촉 · 보존 MV 8건 read-only(스냅샷 증빙) · 9006 단독(재기동 허용 절차) · 9004/9005 접근 0 · 산출물 시크릿·실이메일 0
+
+### 9. 변경 파일 (커밋 대상 11)
+수정 8: `backend_9006/app/routes/mv.py`(+293/-9) · `backend_9006/app/routes/tracks.py`(+58/-10) · `backend_9006/app/main.py`(+8) · `frontend/src/api/index.js`(+6) · `frontend/src/components/MVProductionSection.jsx`(+105/-15) · `frontend/src/components/studio/MVStudioTab.jsx`(+187) · `frontend/src/components/LyricSyncVideo.jsx`(+4/-2) · `frontend/src/components/LyricSyncVideo.css`(+11/-1... 실측 +11/-8 상당)
+신설 1: `backend_9006/scripts/mv_attach_backfill_report.py`(116줄, read-only)
+산출물 3: `claude_skills_outputs/team-dev/{PLAN(+157),TESTPLAN(+326),REPORT}.md`
+커밋 제외: `backend_9006/backups/mv_zombie_cleanup_2026-08-27.json`(2.4MB DB 덤프 — 로컬 보관, 저장소 미포함)

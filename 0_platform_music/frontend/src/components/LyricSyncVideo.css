@@ -16,13 +16,10 @@
   object-fit: cover;
 }
 
-.lyric-sync__bg--placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 80px;
-  color: var(--color-text-sub);
-  background: linear-gradient(135deg, var(--color-border) 0%, var(--color-surface) 100%);
+/* v211 3순위: 커버 없음 = 순흑 배경 (테마 무관 고정 #000 — 흰 가사 최대 대비.
+   구 --placeholder(♪ + 테마 그라데이션)는 라이트 테마 대비 열화로 교체·소비자 0 → 삭제) */
+.lyric-sync__bg--black {
+  background: #000;
 }
 
 /* 가독성용 어두운 스크림 (테마 무관 고정 다크 → 흰 가사 대비 확보) */

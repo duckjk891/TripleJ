@@ -30505,3 +30505,160 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
   **Q2**: 픽스처 최소 스키마 계약 확정 — cover_sessions `{user_id, cover_object_name}` 또는 `{user_id, cover_refine_history:[{object_name}]}`(헬퍼 쿼리 :626-635 가 이 키만 조회) / generations `{user_id, status:"completed", result_audio_url:<실존 music 버킷 테스트 오브젝트>, created_at, updated_at}` — 나머지 전부 .get() 관대(variants 생략 시 result_audio_url 사용 :1649-1653). 실 문서 열람 불요.
   **Q3**: mv create cover 체크 = truthiness 만(:404-408, 값 검증 0) — M1 은 임의 비공백 문자열(예: "covers/v210test-m1.png")로 충분, 세션 픽스처 불요. 가드가 cover 400 뒤(:414)이므로 body 에 cover 필수(초안 반영 확인).
   **Q4**: MinIO 계측 명령 확정 — `docker exec aimu-minio sh -c 'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; mc du --depth 2 local/music-platform-images/mv'` (자격증명 = 컨테이너 내부 env 참조, 출력·산출물 시크릿 0). mongo 동일 패턴(docker exec aimu-mongodb + `$MONGO_INITDB_ROOT_USERNAME`/`$MONGO_INITDB_ROOT_PASSWORD`, countDocuments/aggregate read-only). 판정 기록에는 명령 원문(env 변수 표기 그대로)을 남긴다.
+
+## v211 — MV 곡 연결(붙이기) + 플레이어 동영상 탭 3순위 (2026-08-27 14:49)
+
+### 0. Plan verification findings (파일:라인 실측 — 현재 코드 기준)
+
+**0-1. mv_jobs 완성물 필드 (의미 확정)**
+- `result_video_url` = MinIO **object name** `mv/{job_id}/final.mp4` — Phase4 concatenate 산출(음악 미합침), status=video_ready (mv_pipeline.py :3295)
+- `result_music_video_url` = MinIO **object name** — Phase5 merge-audio 산출(음악 합쳐진 최종 MV), status=completed (:3467). **부착·플레이어 재생 대상은 이것 하나**
+- 재생 URL 발급 관행: `media_urls.browser_video_url(object_name)` = 항상 public presign 24h(비디오는 프록시 제외 — 메모리 부담). 소비처: list_mv_jobs(mv.py :725-726), get_mv_job(:868-871 — presign+object name 병행 노출), tracks._mv_presigned_url(:82-87). 신규 경로도 동일 관행 승계
+
+**0-2. ⚠ 핵심 실측 — 트랙→MV "암묵 자동연결"이 이미 존재 (사양 1과 충돌)**
+- tracks.py :70-79 `_find_completed_mv(generation_id)` = `mv_jobs{audio_generation_id==track.generation_id, status:'completed', result_music_video_url 존재}` find_one(**무정렬 — 복수 완성 시 임의 1건**)
+- 소비처 3곳: ①GET /tracks/{id} 상세 :1353-1367 (has_music_video/music_video_url 첨부 + :1379-1390 cover_character 1순위 소스) ②GET /tracks/{id}/music-video :889-920 (optional 인증 — 공개곡 비로그인 200, 비공개·블라인드 404 v196 가드) ③business.py :660-671 (고객 대시보드 캐릭터 노출 집계)
+- 즉 **generation 소스 MV는 완성 즉시 발매곡에 자동 노출되는 현행** — "생성 완료 ≠ 마음에 드는 완성" 사양과 정면 충돌 → 명시 부착으로 대체 필요
+- 반면 **track 소스 MV(v209 audio_track_id)는 조회 경로 0** — 현행 플레이어 노출 자체가 불가(갭)
+- 캐시: 상세는 has_music_video 포함 직렬화로 redis `cache:track:v3` 600s(:1424) → 부착/떼기 시 무효화 필수(관행: tracks.py :744-745, admin.py 3곳의 `cache:track:{id}`+`v3` delete)
+
+**0-3. tracks doc·upload-from-generation (승계 훅 지점)**
+- 데드 필드 `UploadFromGenerationBody.mv_object_name` :1606 (v210 유보) — 소비 0 재확인
+- upload-from-generation(:1617-1871): tracks doc에 `generation_id` 저장(:1831) → `generations.result_track_id` set(:1856-1859) → ⭐+5 발매보상(:1846-1853, 트랙당 멱등) · is_public=True 하드코딩(:1830). **:1856 직후가 발매 승계 훅 지점**. generations 리스트/상세는 doc 전체 직렬화(generate.py :114-122)라 result_track_id 기노출(MVStudioTab 곡 풀 '업로드됨' 배지 :308이 이미 사용)
+
+**0-4. MV촬영실·MVProductionSection·임시저장**
+- MVStudioTab.jsx(489줄) = 곡 풀(generation+트랙 공개/비공개)+커버 확인 스텝+MVProductionSection 래핑 — **내 MV 리스트 없음(신설 필요)**. 임시저장 탭(MyMusicPage :45-157, getMVJobs)은 전 상태 job 나열+불러오기/삭제 — 같은 GET /mv/jobs 소스
+- list_mv_jobs(mv.py :683-739): user 전 상태, 썸네일+result presign 포함하나 **audio_generation_id/audio_track_id 미포함** → 부착 표시용 확장 필요. get_mv_job 상세는 둘 다 기포함(:936-938)
+- MVProductionSection mvStep 6(:1262-1275): 완성 `<video>` 프리뷰+다시 만들기/제거 — **[곡에 붙이기] 배치 지점**. onMvObjectNameChange 콜백(:1228-1230) 소비자 0(데드) 재확인
+- delete_mv_job(:2670-2714): doc+MinIO prefix 삭제(ACTIVE 409) — 참조를 tracks 측에 두면 여기서 고아 발생
+
+**0-5. 플레이어 동영상 탭 (구멍의 정확한 모양 — 실측 정정)**
+- PlayerPage :176-233: mode = 실MV(mvData) > lyric-sync(timeline.has_timestamps) > none. 실MV만 오디오 pause+`<video>` 핸드오프(:207-228), lyric-sync는 무중단 오버레이. mvData 소스 = 트랙 상세(:102-106) 또는 GET music-video lazy(:187) → **서버 조회 로직만 바꾸면 프론트 재생 배선 무변경**
+- 렌더 :327-355: ①has_music_video→video ②has_timestamps→LyricSyncVideo(coverSrc,segments) ③else→"MV나 가사 싱크가 준비되면…" 안내
+- **정정**: 커버 없음 분기는 LyricSyncVideo :114-118에 **이미 존재** — 단 ♪ 글리프+테마 그라데이션(`lyric-sync__bg--placeholder`: border→surface — 라이트 테마에서 밝은 배경, 스크림 0.35~0.58로는 검지 않음). "처리 없는 구멍"이 아니라 **"검은 화면" 사양 미달 + 라이트 테마 대비 열화**가 실상 → 3순위 = 이 분기를 순흑 배경으로 교체(프론트만). 타임스탬프 없는 곡의 ③ 안내문은 사양 ②'현행 그대로' 범위로 유지
+- ⚠ GET /mv/jobs/{id}는 `_v56_lazy_translate_scenes` 발동(:844) — 씬 ko/en 결손 시 외부 LLM 실호출. **테스트 직삽 job은 씬 양언어 필드 완비 필수**(비용 0 경로)
+
+**0-6. 권한·과금**
+- MV 스트림 = public presign 24h(무인증 URL), 발급 게이트는 트랙 상세/music-video의 hidden 가드(공개곡 비로그인 200) — 부착 MV도 동일 관행이면 청취자(비로그인 포함) 재생 충족
+- mv.py 라우트 전체 과금 코드 0건(grep 실측) — 붙이기/떼기/리스트/재생 신규 경로 전부 무과금 구조. 유료는 MV촬영실 커버 생성 ⭐5(기존, 무변경)뿐
+
+### 1. 설계 결정 (근거 포함)
+
+**D1. 연결 저장소 = mv_jobs 참조형 단일 소스: `attached_track_id` / `attached_generation_id` / `attached_at`**
+- 기각 B(tracks.mv_job_id + generations.mv_job_id): 두 컬렉션 스키마 증설 이중화 + delete_mv_job 시 역방향 청소 없으면 고아 참조. mv_jobs 측 저장은 **job 삭제 = 부착 자동 소멸**(구조적 보장)
+- 기각 C(tracks에 object name 복사): 떼기/교체 시 트랙 doc 오염, job 삭제 후 죽은 object name 잔존, presign은 read 시점 발급이라 복사 이득 0
+- 4용도 충족: 배지 = attached_track_id ? ✅발매됨 : attached_generation_id ? 🕓발매 전 · 떼기/교체 = mv_jobs 1 update · 업로드 승계 = D2 훅 1 update · 플레이어 조회 = attached_track_id 1쿼리. **곡당 1개 = attach 가드 쿼리로, MV당 1곡 = 필드 구조상 보장**
+
+**D2. 발매 승계 = upload-from-generation promote 훅 (서버 1지점)**
+- :1856(result_track_id set) 직후: `mv_jobs.update_one({attached_generation_id: gen_id, attached_track_id: None}, {$set:{attached_track_id: str(track_id)}})` — best-effort try/except(발매보상 훅 관행 — 업로드는 절대 비실패). 배지 자동 전환 충족
+- 같은 generation 재업로드(variant 포함)는 attached_track_id 기존재 시 no-op(최초 발매 승계 — 이후 변경은 수동 교체)
+
+**D3. 신규 API 최소 = 2개 + 기존 확장 2개**
+- `POST /mv/jobs/{id}/attach` body `{replace: bool=false}` — **타겟 파라미터 없음**: 부착 대상 = job 자신의 audio_track_id/audio_generation_id(사양 1 "땡겨온 바로 그 곡" 그대로 — 타곡 지정 원천 불가)
+- 가드 서열(D9): 소유 400/404/403(기존 `_get_job_with_ownership`) → completed+result_music_video_url 아니면 400 → 소스 둘 다 부재 400 → 소스 재검증(track: `_validate_user_track_source` 재사용 — audio_url 조건 무해 통과 / generation: 실존+소유, **result_track_id 기존재·트랙 실존 시 즉시 track 부착=발매됨**) → 같은 타겟에 타 job 기부착 409 `{error, conflicting_job_id, conflicting_title}` → replace=true면 기존 job 클리어 후 부착 → 200 attachment 반환
+- `POST /mv/jobs/{id}/detach` — 부착 없으면 400, 있으면 3필드 클리어. **교체 = attach(replace:true)** (전용 엔드포인트 없음)
+- list_mv_jobs 확장: audio_track_id/audio_generation_id/attached_* + 요약 `attachment: {state:'released'|'unreleased'|'none'|'broken', song_id, song_title}` — tracks·generations 각 1회 `$in` 배치 조회(타겟 실종 시 'broken' — 떼기 유도)
+- get_mv_job 확장: attached_* 3필드 (mvStep 6 상태 표시)
+
+**D4. 플레이어 조회 = 명시 부착으로 전면 대체 (암묵 자동연결 폐기)**
+- `_find_completed_mv(generation_id)` → `_find_attached_mv(track_id)`: `mv_jobs{attached_track_id: str(track_id), status:'completed', result_music_video_url 존재}`. 소비처 2곳 교체(상세 :1356 / music-video :912). cover_character 1순위 소스도 부착 job 기준으로 자연 전환(무부착 시 track snapshot 폴백 :1388 현행 유지). **track 소스 MV 노출 갭도 동시 해소**
+- 하위호환: 기존 암묵 노출 completed 6건(전건 90일+ dev 데이터·서비스 미오픈)은 부착 전까지 비노출 전환 — 손실 수용. `scripts/mv_attach_backfill_report.py` 신설(**read-only** — 암묵 페어 generation→track 목록화만, 쓰기 0줄, v210 D5 관행) → 실백필은 ▲사용자 승인 후. v210 보존 8건 무수정 제약과 정합
+- business.py :660 집계는 이번 무변경(고객 통계 — 청취자 노출 아님) → §5 별건 기록
+
+**D5. 캐시·인덱스**
+- attach/detach(및 replace의 구 job)·delete_mv_job(attached_track_id 보유 시)에서 해당 track의 `cache:track:{id}`+`cache:track:v3:{id}` delete (mv.py에 `from ..database.redis import get_redis` 도입 — tracks.py :744-745 관행). promote 대상은 신생 트랙(캐시 無)이라 생략 가능하나 방어적 delete 포함(무해)
+- main.py 시동 인덱스 관행(:423 create_index best-effort)에 `mv_jobs.attached_track_id` 단일 인덱스 1줄(플레이어 상세 hot path)
+
+**D6. 3순위 폴백 = LyricSyncVideo 커버 없음 분기를 순흑으로 (프론트만)**
+- :114-118 placeholder 분기 → `.lyric-sync__bg--black`(background:#000, ♪ 글리프 제거)로 교체. 스크림·가사 트랙·글라이드 로직 무변경 = "검은 화면+가사 스크롤". 타임스탬프 없는 곡의 mv-empty 안내는 현행 유지(명시적 범위 제외)
+
+**D7. mv_object_name 데드 필드 = 제거 확정 (v210 유보 종결)**
+- 본 설계로 "object name 복사" 부활 없음 확정(부착은 별도 API) → UploadFromGenerationBody :1603-1606 필드+주석 삭제(pydantic extra 기본 ignore — 구 전송에도 무해). MVProductionSection onMvObjectNameChange 데드 콜백(:1228-1230, prop 소비자 0)도 동반 제거
+
+**D8. UI (내 MV 리스트 + mvStep 6)**
+- MV촬영실 곡 선택 화면에 「내 MV」 섹션 신설(곡 풀 아래): getMVJobs에서 `status==='completed' && result_music_video_url` 필터. 행 = 썸네일·제목·인라인 프리뷰(video controls, 기존 presign) + 우측: 미부착 → [곡에 붙이기] / 부착 → 연결 곡 제목+✅발매됨·🕓발매 전 배지+[떼기] / broken → "연결 곡 없음"+[떼기]. 409 응답 시 confirm("이 곡에는 이미 다른 MV가 붙어 있습니다. 교체할까요?") → replace 재호출(=교체 UX)
+- mvStep 6: MVProductionSection이 detail의 attached_*로 배지/버튼 직접 렌더 + api.attachMVJob/detachMVJob 직호출(부모 콜백 배선 없음 — v209 결합 지점 최소화 교훈). 부착 성공 시 "✅ 곡에 붙었습니다(발매 시 자동 반영)" 안내
+- 진행 중(미완성) job 관리는 임시저장 탭 현행 유지 — 내 MV 리스트는 완성물 전용(중복 편성 방지)
+
+**D9. 응답 계약**: attach 400(무효 id)→404(job)→403(타인)→400(미완성)→400(소스 부재)→404/403(소스 실종·소유 위반)→409(충돌)→200 / detach 400→404→403→400(무부착)→200 / 전 경로 ⭐ 변동 0
+
+### 2. 변경 매트릭스
+
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| backend_9006/app/routes/mv.py | attach/detach 엔드포인트 신설, list/detail attachment 확장, delete 캐시 무효화, get_redis import | `[MVAttach]` |
+| backend_9006/app/routes/tracks.py | `_find_attached_mv` 교체(상세·music-video 2소비처), upload-from-generation promote 훅, mv_object_name 필드 제거 | `[MVAttach] promote` |
+| backend_9006/app/main.py | mv_jobs.attached_track_id 인덱스 1줄 | — |
+| backend_9006/scripts/mv_attach_backfill_report.py | 신설(read-only 암묵 페어 리포트) | `[MVAttach] backfill-report` |
+| frontend/src/api/index.js | attachMVJob/detachMVJob 2함수 | — |
+| frontend/src/components/studio/MVStudioTab.jsx | 「내 MV」 리스트 섹션(배지·붙이기/떼기/교체 confirm) | `[MVStudio]` |
+| frontend/src/components/MVProductionSection.jsx | mvStep 6 붙이기/배지, onMvObjectNameChange 데드 콜백 제거 | `[MVStudio]` |
+| frontend/src/components/LyricSyncVideo.jsx + .css | 커버 없음 분기 순흑 배경 | `[LyricSyncVideo]` |
+
+### 3. dev 업무 분할 (단계별)
+
+| 단계 | 담당 | 내용 | 의존 |
+|---|---|---|---|
+| 1 | backend-dev | mv.py attach/detach+리스트/상세 확장+delete 캐시, tracks.py 조회 교체+promote 훅+데드 필드 제거, main.py 인덱스, backfill 리포트 스크립트, api/index.js 2함수(v209 관행) | — |
+| 2a | frontend-dev | LyricSyncVideo 3순위 폴백(백엔드 무의존 — 단계 1과 **병행 가능**) | — |
+| 2b | frontend-dev | MVStudioTab 내 MV 리스트, MVProductionSection step6 버튼/배지+데드 콜백 제거, vite build | 단계 1 응답 계약 |
+| 3 | test-designer→tester | §4 | 1·2 |
+
+### 4. test-designer 테스트 항목
+
+- [api] A1 attach 가드 서열 전종(D9 — 무효/타인/미완성/소스 부재/소스 실종/409) — **직삽 completed job 픽스처**(씬 ko/en 완비 = lazy translate 비용 0, **보존 8건 사용 금지**)
+- [api] A2 attach 성공 3형: track 소스(즉시 ✅) / generation 소스 미발매(🕓) / generation 소스+기발매(result_track_id → 즉시 track 부착 ✅)
+- [api] A3 detach·재부착·replace 교체·곡당 1개(동일 곡 2번째 job attach → 409, replace 후 구 job 클리어 확인)
+- [api] A4 promote: 부착 generation을 upload-from-generation → attached_track_id 자동 set·배지 전환·재업로드 no-op (⭐+5 발매보상은 기존 부수효과 — 계정 탈퇴 원복)
+- [api] A5 플레이어 조회 전환: 부착 → 상세 has_music_video true+music-video 200(presign)·비로그인 공개곡 200·비공개 404 / 떼기 → false·404 (**캐시 무효 검증**: 부착→상세→떼기→상세 600s 내 즉시 반영) / 암묵 페어만 있는 직삽 job(attached 無) → 미노출
+- [api] A6 무과금 계측: attach/detach/리스트/조회 전 구간 ⭐ 변동 0 + 유료 엔드포인트 서버 도달 0
+- [unit] U1 backfill 리포트 read-only: 2회 실행 안정·전후 mongo/MinIO 무변조·보존 8건 수정 0·시크릿 미출력
+- [e2e] E1 내 MV 리스트: 미부착 [곡에 붙이기]→배지 전환 / 떼기 / 409→confirm 교체 / broken 표시
+- [e2e] E2 mvStep 6 붙이기(직삽 completed job을 임시저장 [불러오기] 경유 — 유료 생성 경로 금지)
+- [e2e] E3 3순위: 커버 없는 곡+타임라인 직삽 → 순흑 배경+가사 스크롤(라이트/다크 양 테마) / 커버 있는 곡 2순위 현행 불변
+- [회귀] R1 MV촬영실 v209(곡 풀 3소스·커버 스텝 가드·임시저장 왕복 양 소스) R2 임시저장 탭 리스트/불러오기/삭제 R3 플레이어 노래 탭 무변+동영상 탭 1순위 실MV 재생(부착 픽스처) R4 v210 create 소스 가드 400·커버 검증 판정표 무변
+- 공통: 외부 LLM/유료 API 인터셉트(translate-tags 포함 §0 목록) — 단 본 사이클 신규 경로는 외부 호출 자체가 0 설계
+
+### 5. 리스크·별건 (▲=사용자 확인/차기)
+- ▲ 기존 암묵 노출 completed 6건 비노출 전환 — backfill 리포트 확인 후 실백필 승인 별도(보존 8건 제약 존중)
+- 별건: business.py :660 노출 집계가 암묵 링크 기준 잔존(고객 통계 — 부착 기준 정렬은 차기) / merge-audio audio_object_name 무검증(v210 기록 유지) / attach 충돌 가드는 쿼리-검사(비원자 — 단일 사용자 이중 클릭 수준, 유니크 partial 인덱스는 과대 설계로 기각) / 트랙·generation 삭제 시 부착 잔존은 'broken' 표시+떼기로 수습(자동 청소 미도입)
+- 유지 이월: 곡 풀 페이지네이션·커버 스텝 캐릭터/장소 옵션·is_public 하드코딩(promote와 무관)
+
+### 6. 절대 준수
+유료 외부 API 성공 경로 금지(부착 기능은 전 구간 무과금 메타데이터 — 0-6 실측) · GET /mv/jobs/{id} lazy translate 함정: 직삽 씬 양언어 완비 · 보존 MV 8건 read-only · 실사용자 데이터·실 .env 무접촉 · 9006만(재기동 허용 절차) · 산출물 시크릿·실이메일 금지
+
+### 7. v211 추가 결정 — dev 완료 검수 + TESTPLAN 승인(조정 4건+픽스 1건) + Q1-Q4 선답 (2026-08-27 14:57)
+
+**7-1. dev 검수 (코드 실측) — backend PASS / frontend 픽스 1건**
+- backend: attach(:2787-2884)·detach(:2886-2913) D9 서열·409 바디(conflicting_job_id/title :2830-2836)·replace 구 job 클리어+캐시 무효(:2838-2851)·`_resolve_attach_target`의 result_track_id 즉시 released 승격+트랙 실종 gen 폴백(:2765-2786)·promote 훅($or null/absent 조건 = 재업로드 no-op, best-effort, :1869-1897)·상세 attached_* 3필드(:1006-1008)·music-video optional 인증+hidden 가드 생존(조회만 교체) — **전부 설계 정합 PASS**. 곡당 1개 conflict 쿼리가 `_id: {$ne: oid}` 로 자기 제외(:2820) — Q1의 근거
+- **F-1 (frontend 1줄 픽스 지시)**: MVProductionSection :1240 attach 성공 안내가 고정 문구 `✅ 곡에 붙었습니다 (발매 시 자동 반영)` — track 소스(즉시 발매됨)에도 "발매 시 자동 반영" 노출(부정확). 서버가 state별 message 를 이미 반환(:2880-2882) → `const { data } = await api.attachMVJob(...)` 후 `setAttachMsg('✅ ' + (data?.message || '곡에 붙었습니다.'))` 로 교체. MVStudioTab 리스트 쪽은 배지 재조회 기반이라 무영향
+
+**7-2. TESTPLAN 승인 — 조정 4건 반영 조건부 즉시 투입**
+- ① A3(e) 기대값 확정: 동일 job 재-attach = **200 멱등**(자기 제외 쿼리 실측 — attached_at 갱신 허용, 409 아님)
+- ② A1 케이스 1건 추가: A 소유 completed·audio_track_id=**report_blinded 직삽 트랙** → **403**(`_validate_user_track_source` 재사용 경로 실증)
+- ③ E2 판정 문자열 = F-1 반영 후 **서버 message 기준**: released `곡에 붙었습니다.` / unreleased `곡에 붙었습니다. 발매 시 자동 반영됩니다.` (E2 픽스처는 generation 소스 → 후자)
+- ④ E1 문자열 실측 고정: confirm `이 곡에는 이미 다른 MV(「{title}」 작업)가 붙어 있습니다. 이 MV로 교체할까요?`(무제목 변형 병존, MVStudioTab :286-287) · 배지 `✅ 발매됨` / `🕓 발매 전 (발매 시 자동 반영)` / broken `⚠ 연결 곡 없음 (곡이 삭제됨) — [떼기]로 정리하세요` · A4 로그 `[MVAttach] promote gen=%s -> track=%s`
+
+**7-3. Q1-Q4 선답**
+- Q1: **200 멱등** (7-2①) — 실측 불요, 기대값 고정
+- Q2: ko/en 3쌍 확정 = `description_ko/description`·`image_prompt_ko/image_prompt`·`video_prompt_ko/video_prompt`(mv.py `_V56_KO_EN_PAIRS` :747-752). 픽스처는 6필드 전부 비공백 — "상세 GET 로그 무발동" 판정 기준 유지
+- Q3: 7-2③④로 문자열 고정(F-1 반영 후)
+- Q4: **유지 확정** — get_track_music_video 는 optional 인증+v196 hidden 가드 그대로, `_find_attached_mv` 교체만(:908-920 실측)
+
+**7-4. Cherry Blossom Day 경합 2건** — ▲REPORT 이월 확정: 백필 실행 시 곡당 1개 정책상 동일 트랙에 completed 2건 경합 → 사용자 **택1**(남길 MV 지정) 또는 백필 포기 결정 필요. 리포트 스크립트 출력에 경합 표기 유지, 본 사이클 쓰기 0 불변
+
+### 8. v211 에스컬레이션 판단 — 실업로드 외부 호출 전제 오류 + Q1/U1(b) 실측 반영 (2026-08-27 단계1 게이트 후)
+
+**8-1. 소급 평가 = 경미 인시던트로 기록 종결 (인시던트 2, v209 인시던트 1 관행)**
+- 실측 확인: embedding_service.py :21·:79-83 AsyncOpenAI(키워드 보강 chat + embeddings.create) — `/tracks/upload`·upload-from-generation 성공 시 background 훅(enrich_and_index_track_in_background) 건당 외부 2회. 플래너 실측 누락(0-6은 mv.py만 grep — 업로드 훅 미점검)이 원인
+- 성격 규정: 유료 0 원칙의 1급 대상(⭐ 과금성 생성 API — 커버·작곡·MV·LLM)이 아닌 **운영 부대비용(검색 인덱싱)** + 비용 미미 + 기능 검증 유효 → ABORT 급 아님. 단 "허용된 부수 비용"으로 **소급 재규정하되 원인은 '허용 결정'이 아니라 '전제 실측 누락'임을 정직 기록**(REPORT 인시던트 항목). v210 REPORT의 "내부 경로 — 외부 유료 API 미호출" 명제는 부정확 — 정정 각주 1줄 추가 지시
+- 이번 배치 기발생 14회 + v210 기발생분: 기록 종결(회수 불요·불가)
+
+**8-2. 향후 규약 = 특례 격하 문구 채택 (전면 직삽 대체 기각)**
+- TESTPLAN §0 특례 수정: "실업로드(트랙 생성 계열)는 **성공 시 OpenAI 인덱싱 2회(키워드 chat+임베딩) 동반** — ①업로드 파이프라인 자체 검증 목적일 때만 ②필요 최소 횟수 사전 산정·고지 ③건당 외부 2회를 A6급 총괄표에 계상. 그 외 트랙 픽스처는 mongo 직삽 기본"
+- 전면 인터셉트/직삽 기각 근거: 서버측 외부 호출 차단은 재기동+env 조작(실 .env 무접촉 제약 충돌) 필요, 실업로드 e2e는 promote 훅·beat 훅 등 서버 배선 회귀 가치 보유. 오케스트레이터의 배치2 직삽 대체 지시는 본 규약과 정합 — 승인
+- 별건 칩 후보(기록만): 테스트/개발 모드에서 인덱싱 훅 스위치(예: env SEARCH_INDEXING_DISABLED) 도입 검토 — 차기
+
+**8-3. Q1·U1(b) 실측 반영**
+- Q1 확정 기록 승격: 재-attach = **200 멱등 + attached_at 재타각(갱신)** — §7-2① 예측과 실측 일치, 판정 기준 "재타각 허용"→"재타각 확인"으로 조정
+- U1(b) 픽스처 계약 보완: 백필 리포트 암묵 페어 판정 키 = **mv_jobs.audio_generation_id ↔ tracks.generation_id 역링크** — 직삽 암묵 페어 픽스처는 트랙 doc에 `generation_id` 필드 세팅 필수(누락 시 리포트 미등장이 정상 동작임을 오판하지 않도록 명문화)

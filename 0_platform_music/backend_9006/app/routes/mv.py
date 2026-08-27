@@ -18,6 +18,7 @@ from ..auth import get_current_user
 from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
+from ..database.redis import get_redis
 from ..services.mv_pipeline import (
     run_phase1_and_phase2,
     run_phase2_images,
@@ -138,6 +139,13 @@ class MergeAudioRequest(BaseModel):
     audio_object_name: str
 
 
+class AttachMVRequest(BaseModel):
+    """v211 — 곡에 붙이기. 타겟 파라미터 없음: 부착 대상 = job 자신의 소스 곡
+    (audio_track_id / audio_generation_id) 뿐 — 타곡 지정 원천 불가.
+    replace=True 면 같은 곡에 기부착된 타 job 을 해제하고 교체."""
+    replace: Optional[bool] = False
+
+
 # ── v51: Scene edit + cascade request bodies ────────────────────────────────
 
 class PatchSceneRequest(BaseModel):
@@ -212,6 +220,22 @@ async def _get_job_with_ownership(mongo_db, oid: ObjectId, user_id: str) -> dict
     if job.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="이 작업에 접근할 권한이 없습니다.")
     return job
+
+
+async def _invalidate_track_cache(track_id) -> None:
+    """v211 — 부착/떼기/교체/삭제 시 트랙 상세 캐시 무효화 (tracks.py :744-745 관행).
+
+    상세 응답이 has_music_video 를 포함한 채 redis `cache:track:v3` 600s 캐시되므로
+    부착 상태 변화 시 즉시 반영을 위해 delete. best-effort — 실패해도 본 동작 유지.
+    """
+    if not track_id:
+        return
+    try:
+        redis = get_redis()
+        await redis.delete(f"cache:track:{track_id}")
+        await redis.delete(f"cache:track:v3:{track_id}")
+    except Exception as e:
+        logger.warning("[MVAttach] cache invalidate failed track=%s: %s", track_id, e)
 
 
 # v173: 로컬 _presign 제거 — 브라우저 노출 URL 은 중앙 헬퍼로 위임.
@@ -696,9 +720,48 @@ async def list_mv_jobs(
     cursor = mongo.mv_jobs.find(
         {"user_id": user_id},
     ).sort("created_at", -1).skip(skip).limit(limit)
+    raw_jobs = await cursor.to_list(length=limit)
+
+    # v211 — 부착 곡 정보 배치 조회 (tracks·generations 각 $in 1회, N+1 회피)
+    _att_tids = [
+        ObjectId(j["attached_track_id"]) for j in raw_jobs
+        if j.get("attached_track_id") and ObjectId.is_valid(j["attached_track_id"])
+    ]
+    _att_gids = [
+        ObjectId(j["attached_generation_id"]) for j in raw_jobs
+        if j.get("attached_generation_id") and ObjectId.is_valid(j["attached_generation_id"])
+    ]
+    _track_map: dict = {}
+    _gen_map: dict = {}
+    if _att_tids:
+        async for _t in mongo.tracks.find({"_id": {"$in": _att_tids}}, {"title": 1}):
+            _track_map[str(_t["_id"])] = _t
+    if _att_gids:
+        async for _g in mongo.generations.find({"_id": {"$in": _att_gids}}, {"title": 1}):
+            _gen_map[str(_g["_id"])] = _g
+
+    def _attachment_summary(job: dict) -> dict:
+        """state: released/unreleased/none + broken(타겟 실종 — 떼기 유도)."""
+        att_tid = job.get("attached_track_id")
+        att_gid = job.get("attached_generation_id")
+        if att_tid:
+            _trk = _track_map.get(att_tid)
+            return {
+                "state": "released" if _trk else "broken",
+                "song_id": att_tid,
+                "song_title": (_trk or {}).get("title") or "",
+            }
+        if att_gid:
+            _gen = _gen_map.get(att_gid)
+            return {
+                "state": "unreleased" if _gen else "broken",
+                "song_id": att_gid,
+                "song_title": (_gen or {}).get("title") or "",
+            }
+        return {"state": "none", "song_id": None, "song_title": None}
 
     jobs = []
-    async for job in cursor:
+    for job in raw_jobs:
         # Get first scene thumbnail
         thumbnail_url = None
         scenes = job.get("scenes", [])
@@ -725,6 +788,13 @@ async def list_mv_jobs(
             "result_video_url": browser_video_url(job.get("result_video_url")),
             "result_music_video_url": browser_video_url(job.get("result_music_video_url")),
             "error_message": job.get("error_message", ""),
+            # v211 — 소스 곡 + 부착 상태 (내 MV 리스트 배지/버튼 재료)
+            "audio_track_id": job.get("audio_track_id"),
+            "audio_generation_id": job.get("audio_generation_id"),
+            "attached_track_id": job.get("attached_track_id"),
+            "attached_generation_id": job.get("attached_generation_id"),
+            "attached_at": job.get("attached_at").isoformat() if job.get("attached_at") else None,
+            "attachment": _attachment_summary(job),
             "created_at": job.get("created_at", "").isoformat() if job.get("created_at") else None,
             "updated_at": job.get("updated_at", "").isoformat() if job.get("updated_at") else None,
         })
@@ -932,6 +1002,10 @@ async def get_mv_job(
             if job.get("has_subtitles") is not None
             else (job.get("lyric_timestamps") or job.get("whisper_segments"))
         ),
+        # v211 — 부착 상태 (mvStep 6 배지/버튼)
+        "attached_track_id": job.get("attached_track_id"),
+        "attached_generation_id": job.get("attached_generation_id"),
+        "attached_at": job.get("attached_at").isoformat() if job.get("attached_at") else None,
         # Draft form fields (for restoring the upload page)
         "audio_generation_id": job.get("audio_generation_id"),
         # v209: 「내 트랙」 곡 소스 복원 관통 (handleLoadDraft → MV촬영실)
@@ -2631,6 +2705,214 @@ async def save_draft(
     }
 
 
+# ── v211: MV 곡 부착 (attach / detach) ──────────────────────────────────────
+# 부착 = mv_jobs 참조형 단일 소스 (attached_track_id / attached_generation_id /
+# attached_at). 전 구간 무과금 메타데이터 — 외부 API 호출 0.
+
+async def _resolve_attach_target(mongo, job: dict, current_user):
+    """job 의 소스 곡 → 부착 타겟 확정.
+
+    Returns (error_response | None, target: dict | None)
+      target = {"track_id": str|None, "generation_id": str|None,
+                "song_title": str, "state": "released"|"unreleased"}
+    가드: 소스 부재 400 / track 소스 재검증(_validate_user_track_source 재사용) /
+    generation 실존 404·소유 403. generation 에 result_track_id 기존재·트랙
+    실존 시 즉시 track 부착(=발매됨) 으로 승격.
+    """
+    src_track_id = job.get("audio_track_id")
+    src_gen_id = job.get("audio_generation_id")
+    if not src_track_id and not src_gen_id:
+        logger.warning("[MVAttach] no-source job=%s", str(job["_id"]))
+        return JSONResponse(
+            status_code=400,
+            content={"error": "이 MV에는 연결할 소스 곡이 없습니다."},
+        ), None
+
+    if src_track_id:
+        # track 소스 — 소유/blinded 재검증 (v209 헬퍼 재사용; audio_url 조건은 무해 통과)
+        err, valid_track_id, _dur = await _validate_user_track_source(
+            mongo, src_track_id, current_user, "attach",
+        )
+        if err is not None:
+            return err, None
+        trk = await mongo.tracks.find_one(
+            {"_id": ObjectId(valid_track_id)}, {"title": 1},
+        )
+        return None, {
+            "track_id": valid_track_id,
+            "generation_id": None,
+            "song_title": (trk or {}).get("title") or "",
+            "state": "released",
+        }
+
+    # generation 소스
+    if not ObjectId.is_valid(src_gen_id):
+        logger.warning("[MVAttach] invalid source gen_id=%r job=%s", src_gen_id, str(job["_id"]))
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 생성 ID입니다."}), None
+    gen = await mongo.generations.find_one(
+        {"_id": ObjectId(src_gen_id)},
+        {"user_id": 1, "title": 1, "result_track_id": 1},
+    )
+    if not gen:
+        logger.warning("[MVAttach] source generation not found gen=%s job=%s", src_gen_id, str(job["_id"]))
+        return JSONResponse(status_code=404, content={"error": "소스 곡(생성물)을 찾을 수 없습니다."}), None
+    if gen.get("user_id") != current_user["id"]:
+        logger.warning("[MVAttach] source generation not owned gen=%s user=%s", src_gen_id, current_user["id"])
+        return JSONResponse(status_code=403, content={"error": "접근 권한이 없습니다."}), None
+
+    # 기발매 곡이면 즉시 track 부착 (배지 ✅발매됨) — 트랙 실종 시 generation 부착 폴백
+    result_track_id = gen.get("result_track_id")
+    if result_track_id and ObjectId.is_valid(str(result_track_id)):
+        trk = await mongo.tracks.find_one(
+            {"_id": ObjectId(str(result_track_id))}, {"title": 1},
+        )
+        if trk:
+            return None, {
+                "track_id": str(result_track_id),
+                "generation_id": src_gen_id,
+                "song_title": trk.get("title") or gen.get("title") or "",
+                "state": "released",
+            }
+        logger.warning(
+            "[MVAttach] result_track_id=%s missing — fallback to generation attach gen=%s",
+            result_track_id, src_gen_id,
+        )
+    return None, {
+        "track_id": None,
+        "generation_id": src_gen_id,
+        "song_title": gen.get("title") or "",
+        "state": "unreleased",
+    }
+
+
+@router.post("/jobs/{job_id}/attach")
+async def attach_mv_job(
+    job_id: str,
+    body: AttachMVRequest = AttachMVRequest(),
+    current_user=Depends(get_current_user),
+):
+    """v211 — 완성 MV 를 자신의 소스 곡에 붙인다 (곡당 MV 1개)."""
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    if job.get("status") != "completed" or not job.get("result_music_video_url"):
+        logger.warning(
+            "[MVAttach] rejected not-completed job=%s status=%s has_final=%s",
+            job_id, job.get("status"), bool(job.get("result_music_video_url")),
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": "완성된 MV만 곡에 붙일 수 있습니다."},
+        )
+
+    err, target = await _resolve_attach_target(mongo, job, current_user)
+    if err is not None:
+        return err
+
+    # 곡당 1개 가드 — 같은 곡(track 또는 그 generation)에 기부착된 타 job 검사.
+    song_ors = []
+    if target["track_id"]:
+        song_ors.append({"attached_track_id": target["track_id"]})
+    if target["generation_id"]:
+        song_ors.append({"attached_generation_id": target["generation_id"]})
+    conflict = await mongo.mv_jobs.find_one(
+        {"_id": {"$ne": oid}, "$or": song_ors},
+        {"title": 1, "attached_track_id": 1},
+    )
+    if conflict:
+        if not body.replace:
+            logger.info(
+                "[MVAttach] conflict job=%s conflicting_job=%s replace=false",
+                job_id, str(conflict["_id"]),
+            )
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "이 곡에는 이미 다른 MV가 붙어 있습니다.",
+                    "conflicting_job_id": str(conflict["_id"]),
+                    "conflicting_title": conflict.get("title") or "",
+                },
+            )
+        # replace — 기존 job 부착 해제 후 교체
+        await mongo.mv_jobs.update_one(
+            {"_id": conflict["_id"]},
+            {"$set": {
+                "attached_track_id": None,
+                "attached_generation_id": None,
+                "attached_at": None,
+                "updated_at": datetime.utcnow(),
+            }},
+        )
+        await _invalidate_track_cache(conflict.get("attached_track_id"))
+        logger.info(
+            "[MVAttach] replaced old attachment job=%s (cleared %s)",
+            job_id, str(conflict["_id"]),
+        )
+
+    now = datetime.utcnow()
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {"$set": {
+            "attached_track_id": target["track_id"],
+            "attached_generation_id": target["generation_id"],
+            "attached_at": now,
+            "updated_at": now,
+        }},
+    )
+    await _invalidate_track_cache(target["track_id"])
+    logger.info(
+        "[MVAttach] attached job=%s track=%s gen=%s state=%s user=%s",
+        job_id, target["track_id"], target["generation_id"], target["state"],
+        current_user["id"][:8],
+    )
+
+    return {
+        "job_id": job_id,
+        "attachment": {
+            "state": target["state"],
+            "song_id": target["track_id"] or target["generation_id"],
+            "song_title": target["song_title"],
+            "attached_track_id": target["track_id"],
+            "attached_generation_id": target["generation_id"],
+            "attached_at": now.isoformat(),
+        },
+        "message": "곡에 붙었습니다." if target["state"] == "released"
+                   else "곡에 붙었습니다. 발매 시 자동 반영됩니다.",
+    }
+
+
+@router.post("/jobs/{job_id}/detach")
+async def detach_mv_job(
+    job_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v211 — 부착 해제."""
+    mongo = get_mongo()
+    oid = _validate_object_id(job_id)
+    job = await _get_job_with_ownership(mongo, oid, current_user["id"])
+
+    if not job.get("attached_track_id") and not job.get("attached_generation_id"):
+        return JSONResponse(status_code=400, content={"error": "부착된 곡이 없습니다."})
+
+    prev_track_id = job.get("attached_track_id")
+    await mongo.mv_jobs.update_one(
+        {"_id": oid},
+        {"$set": {
+            "attached_track_id": None,
+            "attached_generation_id": None,
+            "attached_at": None,
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+    await _invalidate_track_cache(prev_track_id)
+    logger.info(
+        "[MVAttach] detached job=%s prev_track=%s prev_gen=%s user=%s",
+        job_id, prev_track_id, job.get("attached_generation_id"), current_user["id"][:8],
+    )
+    return {"job_id": job_id, "message": "부착이 해제되었습니다."}
+
+
 # ── POST /api/mv/jobs/{job_id}/cancel ──────────────────────────────────────────
 
 @router.post("/jobs/{job_id}/cancel")
@@ -2704,6 +2986,15 @@ async def delete_mv_job(
                 logger.warning("Failed to delete MinIO object: %s", err)
     except Exception as e:
         logger.warning("Failed to clean up MinIO objects for job %s: %s", job_id, e)
+
+    # v211 — 부착 중이던 job 삭제 = 부착 자동 소멸(참조형 저장의 구조적 보장).
+    # 트랙 상세 캐시(has_music_video 포함)만 즉시 무효화.
+    if job.get("attached_track_id"):
+        await _invalidate_track_cache(job.get("attached_track_id"))
+        logger.info(
+            "[MVAttach] job deleted while attached job=%s track=%s",
+            job_id, job.get("attached_track_id"),
+        )
 
     # Delete MongoDB document
     await mongo.mv_jobs.delete_one({"_id": oid})

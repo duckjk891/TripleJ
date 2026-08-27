@@ -114,7 +114,9 @@ export default function LyricSyncVideo({ coverSrc, segments }) {
       {coverSrc ? (
         <img src={coverSrc} alt="" className="lyric-sync__bg" />
       ) : (
-        <div className="lyric-sync__bg lyric-sync__bg--placeholder">♪</div>
+        /* v211 3순위: 커버 없음 = 순흑 배경 + 가사 스크롤 — 구 ♪ 글리프+테마 그라데이션은
+           라이트 테마에서 밝은 배경이 스크림(0.35~0.58)을 뚫어 흰 가사 대비가 열화됐다(실측). */
+        <div className="lyric-sync__bg lyric-sync__bg--black" />
       )}
       <div className="lyric-sync__scrim" />
       <div className="lyric-sync__lines" ref={containerRef}>
