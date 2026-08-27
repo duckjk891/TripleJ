@@ -236,7 +236,6 @@ export default function MyArtistsScreen({ navigation }: any) {
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
           {artists.length === 0 && (
             <View style={styles.emptyBox}>
-              <AppText style={styles.emptyIcon}>🎤</AppText>
               <AppText style={styles.emptyTitle}>아직 아티스트가 없어요</AppText>
               <AppText style={styles.emptyDesc}>
                 아티스트 디렉터와 함께 우리 기획사의 첫 아티스트를 만들어보세요. 첫 아티스트는 무료예요!

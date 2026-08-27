@@ -340,7 +340,7 @@ export default function MapScreen({ navigation }: Props) {
     if (result && result.plays > 0) {
       const dayLabel = result.daysApplied > 1 ? `${result.daysApplied}일치 ` : '';
       showAlert(
-        '📊 오늘의 청취 리포트',
+        '오늘의 청취 리포트',
         `${dayLabel}가상 팬덤이 너의 곡을 ${result.plays.toLocaleString()}회 재생했어요!\n인기도 EXP +${result.plays}`,
         [{ text: '확인' }]
       );
@@ -686,7 +686,7 @@ export default function MapScreen({ navigation }: Props) {
                               state === 'done' && styles.stageDotDone,
                             ]}
                           >
-                            <Text style={styles.stageDotIcon}>{state === 'done' ? '✓' : s.icon}</Text>
+                            <Text style={styles.stageDotIcon}>{state === 'done' ? '✓' : i + 1}</Text>
                           </View>
                           <Text
                             style={[
@@ -735,7 +735,7 @@ export default function MapScreen({ navigation }: Props) {
                           }
                         }}
                       >
-                        <Text style={styles.adButtonIcon}>🎉</Text>
+                        <Text style={styles.adButtonIcon}>✓</Text>
                         <Text style={styles.adButtonText}>결과 보기</Text>
                       </TouchableOpacity>
                       <Text style={styles.adHelperText}>
@@ -774,12 +774,10 @@ export default function MapScreen({ navigation }: Props) {
           <View style={styles.rewardContainer}>
             {rewardPopup && rewardPopup.amount === 0 ? (
               <>
-                <Text style={styles.rewardIcon}>{'⏳'}</Text>
                 <Text style={styles.rewardTitle}>광고 로딩 중...</Text>
               </>
             ) : rewardPopup ? (
               <>
-                <Text style={styles.rewardIcon}>{'🎉'}</Text>
                 <Text style={styles.rewardTitle}>단계가 앞당겨졌어요!</Text>
                 {rewardPopup.remaining > 0 && (
                   <Text style={styles.rewardHint}>디렉터가 다음 단계를 진행 중이에요</Text>
@@ -877,7 +875,7 @@ export default function MapScreen({ navigation }: Props) {
       <Modal visible={showTutorial} transparent animationType="fade" onRequestClose={() => setShowTutorial(false)}>
         <View style={styles.tutorialOverlay}>
           <View style={styles.tutorialBox}>
-            <Text style={styles.tutorialTitle}>👋 작업실에 오신 걸 환영해요!</Text>
+            <Text style={styles.tutorialTitle}>작업실에 오신 걸 환영해요!</Text>
             <View style={styles.tutorialItem}>
               <Text style={styles.tutorialNum}>1</Text>
               <Text style={styles.tutorialText}>각 디렉터를 탭해서 작업을 맡기세요</Text>

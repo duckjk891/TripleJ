@@ -230,7 +230,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
         <View style={styles.promptSection}>
           <AppText style={styles.sectionTitle}>② 작사 디렉터에 전달할 내용 (자동 생성됨)</AppText>
           <AppText style={styles.promptHelper}>
-            ✏ 직접 다듬으셔도 좋아요. 위 답변을 수정하면 자동으로 다시 생성돼요.
+            직접 다듬으셔도 좋아요. 위 답변을 수정하면 자동으로 다시 생성돼요.
           </AppText>
           <TextInput
             style={styles.promptInput}

@@ -42,12 +42,6 @@ const CAT_OPTIONS: Partial<Record<Cat, OptionGroup[]>> = {
   ],
 };
 
-const CAT_ICONS: Record<Cat, string> = {
-  '상의': '👕', '하의': '👖', '신발': '👟',
-  '헤어스타일': '💇', '헤어컬러': '🎨',
-  '악세서리': '💍', '안경': '👓', '문신': '🎭',
-};
-
 interface AdItem {
   id: string;
   name: string;
@@ -397,7 +391,6 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 onPress={() => openPicker(cat)}
                 onLongPress={() => sel && clearItem(cat)}
               >
-                <AppText style={styles.catIcon}>{CAT_ICONS[cat]}</AppText>
                 <AppText style={styles.catName}>{cat}</AppText>
                 <AppText style={styles.catSub} numberOfLines={1}>
                   {sel ? sel.name : '고르기'}
@@ -423,7 +416,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 const catOpts = itemOptions[cat as Cat] || {};
                 return (
                   <View key={cat} style={styles.optCatRow}>
-                    <AppText style={styles.optCatLabel}>{CAT_ICONS[cat as Cat]} {cat}</AppText>
+                    <AppText style={styles.optCatLabel}>{cat}</AppText>
                     {groups.map((group) => (
                       <View key={group.label} style={styles.optGroupRow}>
                         <AppText style={styles.optGroupLabel}>{group.label}</AppText>
@@ -458,7 +451,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               {selectedEntries.map(([cat, item]) => (
                 <View key={cat} style={styles.summaryChip}>
                   <AppText style={styles.summaryChipText}>
-                    {CAT_ICONS[cat as Cat]} {item!.name}
+                    {item!.name}
                   </AppText>
                   {item!.advertiser_nickname ? (
                     <AppText style={styles.summaryChipBrand}>
@@ -514,7 +507,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           <View style={styles.modalBox}>
             <View style={styles.modalHeader}>
               <AppText style={styles.modalTitle}>
-                {pickerCat ? `${CAT_ICONS[pickerCat]} ${pickerCat} 고르기` : ''}
+                {pickerCat ? `${pickerCat} 고르기` : ''}
               </AppText>
               <TouchableOpacity onPress={() => setPickerCat(null)}>
                 <AppText style={styles.modalClose}>✕</AppText>
@@ -547,7 +540,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                           <Image source={{ uri: url }} style={styles.itemImg} />
                         ) : (
                           <View style={[styles.itemImg, styles.itemImgFallback]}>
-                            <AppText style={{ fontSize: 28 }}>{pickerCat ? CAT_ICONS[pickerCat] : '?'}</AppText>
+                            <AppText style={{ fontSize: 28 }}>?</AppText>
                           </View>
                         )}
                         {/* 브랜드 배지 — 이미지 좌상단에 강조 */}

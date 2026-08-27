@@ -5,6 +5,17 @@
 
 ---
 
+## v3.86 — 2026-08-27 — 이모지 제거 스모크 (14개 화면 스캔, 최종 전부 PASS)
+
+- [unit] tsc 0 · 소스 재스캔 잔존 0(⭐·텍스트 딩뱃·비노출 문자열 제외) → **PASS**
+- [e2e] 렌더 텍스트 이모지 정규식 스캔(⭐ 제외): 작업실 맵·MyArtists·ArtistResult·VoiceManage(펼침 포함)·LyricsBook(확장 포함)·작곡 5스텝·마이페이지 = **매칭 0** / 설정 = 💸 1건 검출 → **즉시 픽스 후 0** → **PASS**
+- [e2e] ⭐ 배지 유지(맵 ⭐40 등) · 휴지통 벡터 아이콘(Feather trash-2) 렌더+탭→인앱 confirm→취소 정상 → **PASS** (`v386_smoke_08`)
+- [e2e] 회귀: 콘솔·pageerror·4xx/5xx 0, 브라우저 dialog 0(v3.85 유지), ⭐40→40 → **PASS**
+- 증적 scratchpad/v386_smoke_01~13.
+- 기록: 범위 밖 화면(UserChannel·Chart/Search/Playlist EmptyState·AgencyProfile·ArtistDetail·Feed·Player)에 이모지 잔존 — 후속 정리 후보. stores/timerStore.ts의 단계 이모지 데이터는 렌더에서 번호로 대체(데이터 자체는 범위 밖 잔존).
+
+---
+
 ## v3.85 — 2026-08-27 — 앱 내 다이얼로그 전면 전환 스모크 (실행 완료 전 시나리오 PASS, window dialog 0건)
 
 - [unit] tsc 0 · 정적 스윕: Alert.alert/window.alert/confirm 직접 호출 잔존 0, showAlert 120곳/29파일 일원화 → **PASS**

@@ -422,7 +422,6 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     return (
       <View style={styles.container}>
         <View style={styles.emptyBox}>
-          <AppText style={styles.emptyIcon}>🎤</AppText>
           <AppText style={styles.emptyTitle}>로그인이 필요해요</AppText>
           <AppText style={styles.emptyDesc}>아티스트 디렉터와 함께 나만의 아티스트를 만들어보세요!</AppText>
           <TouchableOpacity
@@ -459,7 +458,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       return (
         <View style={styles.inputArea}>
           <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
-            <AppText style={styles.primaryBtnText}>📷 사진 올리기</AppText>
+            <AppText style={styles.primaryBtnText}>사진 올리기</AppText>
           </TouchableOpacity>
           {/* v3.76(MAIDOL v161): 텍스트-only 경로 — 사진 없이 설명만으로 가상 인물 생성 */}
           <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
@@ -473,7 +472,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               onPress={handleToggleVirtual}
             >
               <AppText style={[styles.virtualBtnText, isVirtualMode && styles.virtualBtnTextActive]}>
-                {isVirtualMode ? '🎨 그림 스타일 선택됨 — 취소하려면 탭' : '🎨 그림 스타일로 만들기'}
+                {isVirtualMode ? '그림 스타일 선택됨 — 취소하려면 탭' : '그림 스타일로 만들기'}
               </AppText>
             </TouchableOpacity>
           )}
@@ -545,7 +544,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
             onPress={handlePickStyleImage}
           >
             <AppText style={[styles.styleUploadBtnText, styleUpload && styles.styleUploadBtnTextActive]}>
-              {styleUpload ? `🖼 업로드됨: ${styleUpload.name}` : '🖼 화풍 이미지 직접 업로드'}
+              {styleUpload ? `업로드됨: ${styleUpload.name}` : '화풍 이미지 직접 업로드'}
             </AppText>
           </TouchableOpacity>
           <TouchableOpacity
@@ -627,7 +626,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 style={[styles.applyBtn, { flex: 1 }]}
                 onPress={() => navigation.replace('ArtistResult')}
               >
-                <AppText style={styles.applyBtnText}>✨ 아티스트 꾸미기</AppText>
+                <AppText style={styles.applyBtnText}>아티스트 꾸미기</AppText>
               </TouchableOpacity>
             </View>
           </View>

@@ -163,7 +163,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
 
         <View style={styles.hintBox}>
           <AppText style={styles.hintText}>
-            💡 같은 카테고리 디렉터 중 <AppText style={{ color: colors.accent.secondary }}>한 명만</AppText> 작업에 투입돼요. 카드를 탭해 바꿀 수 있어요.
+            같은 카테고리 디렉터 중 <AppText style={{ color: colors.accent.secondary }}>한 명만</AppText> 작업에 투입돼요. 카드를 탭해 바꿀 수 있어요.
           </AppText>
         </View>
       </ScrollView>

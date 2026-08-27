@@ -6,6 +6,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
@@ -81,7 +82,7 @@ export default function LyricsBookScreen({ navigation }: Props) {
         >
           <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <AppText style={styles.headerTitle}>📓 가사 보관함</AppText>
+        <AppText style={styles.headerTitle}>가사 보관함</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -91,7 +92,7 @@ export default function LyricsBookScreen({ navigation }: Props) {
             <AppText style={styles.emptyTitle}>아직 저장한 가사가 없어요</AppText>
             <AppText style={styles.emptyText}>
               작사 디렉터와 가사를 만든 뒤, 결과 화면에서{'\n'}
-              "📓 보관함에 저장"을 누르면 여기에 쌓여요.
+              "보관함에 저장"을 누르면 여기에 쌓여요.
             </AppText>
           </View>
         ) : (
@@ -109,7 +110,7 @@ export default function LyricsBookScreen({ navigation }: Props) {
                       onPress={() => handleDelete(entry)}
                       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                     >
-                      <AppText style={styles.deleteBtnText}>🗑</AppText>
+                      <Feather name="trash-2" size={13} color={colors.text.primary} />
                     </TouchableOpacity>
                   </View>
                   {(entry.genre || entry.mood) && (
@@ -131,7 +132,7 @@ export default function LyricsBookScreen({ navigation }: Props) {
                     style={styles.composeBtn}
                     onPress={() => handleCompose(entry)}
                   >
-                    <AppText style={styles.composeBtnText}>🎵 이 가사로 작곡하기</AppText>
+                    <AppText style={styles.composeBtnText}>이 가사로 작곡하기</AppText>
                   </TouchableOpacity>
                 )}
               </View>

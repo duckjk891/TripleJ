@@ -795,7 +795,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           <View style={styles.inputArea}>
             {artistPreset && (
               <AppText style={styles.presetNotice}>
-                🎚 아티스트 목소리(간편: {artistVoiceLabel(artistPreset)})가 설정되어 있어요.
+                아티스트 목소리(간편: {artistVoiceLabel(artistPreset)})가 설정되어 있어요.
                 건너뛰면 그 스타일로 불러요.
               </AppText>
             )}
@@ -821,7 +821,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                         selectedPersonaId === artistPersona.persona_id && styles.personaChipTextSelected,
                       ]}
                     >
-                      🎤 내 아티스트 목소리 · {artistPersona.name}
+                      내 아티스트 목소리 · {artistPersona.name}
                     </AppText>
                   </TouchableOpacity>
                 )}
@@ -843,7 +843,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                         selectedPersonaId === artistClone.voice_id && styles.personaChipTextSelected,
                       ]}
                     >
-                      🎤 내 아티스트 목소리 · {artistClone.voice_name}
+                      내 아티스트 목소리 · {artistClone.voice_name}
                     </AppText>
                   </TouchableOpacity>
                 )}
@@ -861,7 +861,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                         selectedPersonaId === p.persona_id && styles.personaChipTextSelected,
                       ]}
                     >
-                      🎙 {p.name}
+                      {p.name}
                     </AppText>
                   </TouchableOpacity>
                 ))}
@@ -882,7 +882,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                         selectedPersonaId === c.voice_id && styles.personaChipTextSelected,
                       ]}
                     >
-                      🎤 {c.voice_name}
+                      {c.voice_name}
                     </AppText>
                   </TouchableOpacity>
                 ))}
@@ -895,7 +895,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   style={styles.personaManageBtn}
                   onPress={() => navigation.navigate('VoiceManage' as any)}
                 >
-                  <AppText style={styles.personaManageBtnText}>🎙 내 목소리 만들기/관리</AppText>
+                  <AppText style={styles.personaManageBtnText}>내 목소리 만들기/관리</AppText>
                 </TouchableOpacity>
               </ScrollView>
             )}
@@ -908,7 +908,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   onPress={() => setPersonaModel('voice')}
                 >
                   <AppText style={[styles.keyChipText, personaModel === 'voice' && styles.keyChipTextSelected]}>
-                    🎤 목소리까지
+                    목소리까지
                   </AppText>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -916,7 +916,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   onPress={() => setPersonaModel('style')}
                 >
                   <AppText style={[styles.keyChipText, personaModel === 'style' && styles.keyChipTextSelected]}>
-                    🎨 스타일만
+                    스타일만
                   </AppText>
                 </TouchableOpacity>
               </View>

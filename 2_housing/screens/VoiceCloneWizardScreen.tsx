@@ -417,7 +417,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.srcBtn} onPress={handleStartRecording} disabled={busy}>
-            <AppText style={styles.srcBtnText}>🎙 {src ? '다시 녹음' : '녹음하기'}</AppText>
+            <AppText style={styles.srcBtnText}>{src ? '다시 녹음' : '녹음하기'}</AppText>
           </TouchableOpacity>
         )}
         <TouchableOpacity
@@ -425,7 +425,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           onPress={() => handlePickFile(target)}
           disabled={isRecording || busy}
         >
-          <AppText style={styles.srcBtnText}>📁 파일 업로드</AppText>
+          <AppText style={styles.srcBtnText}>파일 업로드</AppText>
         </TouchableOpacity>
       </View>
       {src && (
@@ -482,7 +482,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         >
           <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <AppText style={styles.headerTitle}>🎤 정식 클로닝</AppText>
+        <AppText style={styles.headerTitle}>정식 클로닝</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -674,7 +674,6 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
             <View>
               <AppText style={styles.stepTitle}>4. 완료</AppText>
               <View style={styles.doneBox}>
-                <AppText style={styles.doneEmoji}>🎉</AppText>
                 <AppText style={styles.doneTitle}>검증이 접수됐어요</AppText>
                 <AppText style={styles.doneDesc}>
                   목소리 학습이 백그라운드에서 진행돼요.{'\n'}처리가 끝나면 목소리 목록에

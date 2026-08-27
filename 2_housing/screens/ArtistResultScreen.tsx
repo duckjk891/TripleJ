@@ -352,7 +352,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         {!isVirtualTab && originalPhotoUrl && (
           <View style={styles.originalPhotoBox}>
             <View style={{ flex: 1 }}>
-              <AppText style={styles.originalPhotoLabel}>📸 내가 올린 사진</AppText>
+              <AppText style={styles.originalPhotoLabel}>내가 올린 사진</AppText>
               <AppText style={styles.originalPhotoSub}>
                 이 사진을 바탕으로 캐릭터가 생성됐어요. 꾸미기 시에도 이 사진이 다시 사용돼요.
               </AppText>
@@ -368,14 +368,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         >
           <Image source={{ uri: displayUrl }} style={styles.previewImg} />
           <View style={styles.zoomHint}>
-            <AppText style={styles.zoomHintText}>🔍 탭하여 확대 보기</AppText>
+            <AppText style={styles.zoomHintText}>탭하여 확대 보기</AppText>
           </View>
         </TouchableOpacity>
 
         {/* 착용 중인 제품 정보 — 실사 슬롯 전용(코디는 실사만) */}
         {!isVirtualTab && outfitItems.length > 0 && (
           <View style={styles.outfitListBox}>
-            <AppText style={styles.outfitListTitle}>👕 착용 중인 제품</AppText>
+            <AppText style={styles.outfitListTitle}>착용 중인 제품</AppText>
             {outfitItems.map((it, i) => {
               const optStr = it.options && Object.keys(it.options).length > 0
                 ? Object.entries(it.options).map(([k, v]) => `${k}:${v}`).join(' · ')
@@ -389,7 +389,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                     />
                   ) : (
                     <View style={[styles.outfitThumb, styles.outfitThumbPh]}>
-                      <AppText style={{ fontSize: 18 }}>👕</AppText>
+                      <AppText style={{ fontSize: 18 }}>?</AppText>
                     </View>
                   )}
                   <View style={{ flex: 1 }}>
@@ -406,7 +406,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                         showAlert('링크 열기 실패', '브라우저로 열 수 없는 링크예요.');
                       })}
                     >
-                      <AppText style={styles.outfitLinkBtnText}>🛒 보러가기</AppText>
+                      <AppText style={styles.outfitLinkBtnText}>보러가기</AppText>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -417,7 +417,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
 
         {/* v3.84: 아티스트 목소리 — 간편(프리셋)/내 목소리(클론)/미설정 3분기 표기 */}
         <View style={styles.voiceBox}>
-          <AppText style={styles.voiceBoxLabel}>🎤 아티스트 목소리</AppText>
+          <AppText style={styles.voiceBoxLabel}>아티스트 목소리</AppText>
           <AppText style={styles.voiceBoxDesc}>
             {artistVoice?.type === 'preset'
               ? `간편 목소리(${artistVoiceLabel(artistVoice)})가 설정되어 있어요. 곡을 만들 때 이 스타일이 적용돼요.`
@@ -432,10 +432,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           >
             <AppText style={styles.voiceBtnText}>
               {artistVoice?.type === 'preset'
-                ? `🎚 간편 목소리: ${artistVoiceLabel(artistVoice)}`
+                ? `간편 목소리: ${artistVoiceLabel(artistVoice)}`
                 : artistVoice?.type === 'clone'
-                  ? `🎤 내 목소리: ${artistVoice.name}`
-                  : '🎤 목소리 설정'}
+                  ? `내 목소리: ${artistVoice.name}`
+                  : '목소리 설정'}
             </AppText>
           </TouchableOpacity>
         </View>
@@ -448,7 +448,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             아티스트를 삭제하고 처음부터 다시 만듭니다. (현재 아티스트와 코디 기록은 모두 삭제돼요)
           </AppText>
           <TouchableOpacity style={styles.resetBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
-            <AppText style={styles.resetBtnText}>🗑 캐릭터 다시 만들기</AppText>
+            <AppText style={styles.resetBtnText}>캐릭터 다시 만들기</AppText>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -462,7 +462,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 슬롯에서는 숨김 */}
             {!isVirtualTab && (
               <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-                <AppText style={styles.skipBtnText}>✨ 꾸미기</AppText>
+                <AppText style={styles.skipBtnText}>꾸미기</AppText>
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -470,7 +470,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               onPress={handleSave}
               disabled={saving}
             >
-              <AppText style={styles.applyBtnText}>{saving ? '저장 중...' : '💾 저장'}</AppText>
+              <AppText style={styles.applyBtnText}>{saving ? '저장 중...' : '저장'}</AppText>
             </TouchableOpacity>
           </View>
         ) : (
@@ -486,7 +486,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                   { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
                 ]}
               >
-                ✨ 아티스트 꾸미기
+                아티스트 꾸미기
               </AppText>
             </TouchableOpacity>
           </View>

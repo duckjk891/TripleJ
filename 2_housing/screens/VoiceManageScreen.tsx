@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
@@ -281,7 +282,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         >
           <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <AppText style={styles.headerTitle}>🎙 아티스트 목소리</AppText>
+        <AppText style={styles.headerTitle}>아티스트 목소리</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -302,8 +303,8 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
               <View style={styles.currentRow}>
                 <AppText style={styles.currentText} numberOfLines={1}>
                   {artistVoice.type === 'preset'
-                    ? `🎚 간편 목소리: ${artistVoiceLabel(artistVoice)}`
-                    : `🎤 내 목소리: ${artistVoice.name}`}
+                    ? `간편 목소리: ${artistVoiceLabel(artistVoice)}`
+                    : `내 목소리: ${artistVoice.name}`}
                 </AppText>
                 <TouchableOpacity
                   style={styles.clearBtn}
@@ -337,7 +338,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
               setPresetOpen((o) => !o);
             }}
           >
-            <AppText style={styles.wizardBtnText}>🎚 간편 만들기 {presetOpen ? '▲' : '▼'}</AppText>
+            <AppText style={styles.wizardBtnText}>간편 만들기 {presetOpen ? '▲' : '▼'}</AppText>
             <AppText style={styles.wizardBtnDesc}>
               성별과 보컬 스타일을 골라 바로 설정해요. 선택한 스타일은 곡을 만들 때 적용돼요.
             </AppText>
@@ -407,7 +408,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
               navigation.navigate('VoiceCloneWizard' as any);
             }}
           >
-            <AppText style={styles.wizardBtnText}>🎤 내 목소리 만들기 (노래+문장낭독)</AppText>
+            <AppText style={styles.wizardBtnText}>내 목소리 만들기 (노래+문장낭독)</AppText>
             <AppText style={styles.wizardBtnDesc}>
               노래 샘플과 문장 낭독 검증으로 내 목소리를 클로닝해요.
             </AppText>
@@ -475,7 +476,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
                   onPress={() => handleDelete(p)}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 >
-                  <AppText style={styles.iconBtnText}>🗑</AppText>
+                  <Feather name="trash-2" size={14} color={colors.text.primary} />
                 </TouchableOpacity>
               </TouchableOpacity>
             );
@@ -530,7 +531,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
                 onPress={() => handleCloneDelete(c)}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               >
-                <AppText style={styles.iconBtnText}>🗑</AppText>
+                <Feather name="trash-2" size={14} color={colors.text.primary} />
               </TouchableOpacity>
             </TouchableOpacity>
           );

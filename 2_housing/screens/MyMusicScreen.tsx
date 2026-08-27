@@ -186,7 +186,7 @@ export default function MyMusicScreen({ navigation }: any) {
     const link = `${BACKEND_BASE_URL}/track/${track.id}`;
     if (__DEV__) console.info('[MyMusic] share', { id: track.id });
     try {
-      await Share.share({ message: `AIDOL에서 내가 만든 곡 "${track.title}" 들어보세요! 🎵\n🎁 베타 테스트 기간 가입 시 스타 50 추가 증정!\n${link}` });
+      await Share.share({ message: `AIDOL에서 내가 만든 곡 "${track.title}" 들어보세요!\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n${link}` });
     } catch (err: any) {
       console.error('[MyMusic] share 실패', { message: err?.message });
     }
@@ -325,7 +325,6 @@ export default function MyMusicScreen({ navigation }: any) {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.artistEmpty} activeOpacity={0.85} onPress={handleCreateArtist}>
-            <AppText style={styles.artistEmptyIcon}>🎤</AppText>
             <View style={{ flex: 1 }}>
               <AppText style={styles.artistEmptyTitle}>아직 만든 아티스트가 없어요</AppText>
               <AppText style={styles.artistEmptyHint}>아티스트 디렉터에서 만들어보세요</AppText>
@@ -354,7 +353,7 @@ export default function MyMusicScreen({ navigation }: any) {
       {/* 작곡 탭 */}
       {activeTab === 'tracks' && (
         tracks.length === 0 ? (
-          <EmptyState icon="🎧" title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
+          <EmptyState title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
         ) : (
           <FlatList
             data={tracks}
@@ -440,7 +439,7 @@ export default function MyMusicScreen({ navigation }: any) {
 
           {/* 완성된 곡도 없고 작업 중도 없으면 빈 상태 */}
           {tracks.filter((t) => t.lyrics).length === 0 && !lyricsStore.generatedLyrics ? (
-            <EmptyState icon="📝" title="아직 작사한 기록이 없어요." hint="작업실에서 작사 디렉터와 대화해보세요!" />
+            <EmptyState title="아직 작사한 기록이 없어요." hint="작업실에서 작사 디렉터와 대화해보세요!" />
           ) : null}
         </ScrollView>
       )}

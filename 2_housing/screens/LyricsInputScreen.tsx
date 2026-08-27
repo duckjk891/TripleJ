@@ -251,7 +251,7 @@ export default function LyricsInputScreen({ navigation }: Props) {
               navigation.navigate('LyricsBook');
             }}
           >
-            <AppText style={styles.bookEntryText}>📓 가사 보관함</AppText>
+            <AppText style={styles.bookEntryText}>가사 보관함</AppText>
             <AppText style={styles.bookEntrySub}>저장해둔 가사 보기 · 바로 작곡하기</AppText>
           </TouchableOpacity>
         </View>

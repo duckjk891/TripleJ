@@ -142,7 +142,7 @@ export default function SettingsScreen({ navigation }: any) {
           style={styles.settingRow}
           onPress={() => navigation.navigate('Royalty' as never)}
         >
-          <AppText style={styles.settingLabel}>💸 내 정산</AppText>
+          <AppText style={styles.settingLabel}>내 정산</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
