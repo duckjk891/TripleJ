@@ -19,6 +19,7 @@ import { usePointsStore } from '../stores/pointsStore';
 import {
   createVoiceClone,
   getVoiceClone,
+  deleteVoiceClone,
   regenerateClonePhrase,
   verifyVoiceClone,
   cloneValidatePhrase,
@@ -141,6 +142,27 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     };
   }, []);
 
+
+  // 분석 실패/응답 초과 시: 앱 내 팝업 안내 후 1단계(샘플 입력)로 복귀. 실패 클론은 조용히 정리.
+  const failBackToStep1 = (title: string, message: string) => {
+    const staleId = cloneId;
+    showAlert(title, message, [
+      {
+        text: '확인',
+        onPress: () => {
+          if (staleId) {
+            deleteVoiceClone(staleId).catch(() => {});
+          }
+          setCloneId(null);
+          setValidateInfo(null);
+          setSampleSrc(null);
+          setErrText('');
+          setStep(1);
+        },
+      },
+    ]);
+  };
+
   // ── STEP 2: validate_info 폴링 (3.5초 간격, 최대 60회) ──
   useEffect(() => {
     if (step !== 2 || !cloneId || phrase) return;
@@ -167,7 +189,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           const msg = clone.error_message || '분석 단계에서 실패했어요.';
           console.warn('[VoiceCloneWizard] 폴링 중 failed, clone_id=', cloneId, msg);
           setPhrasePolling(false);
-          setErrText(`분석에 실패했어요. (${msg})\n[문구 다시 받기]로 재시도하거나 처음부터 다시 만들어주세요.`);
+          failBackToStep1('분석 실패', '샘플 분석에 실패했어요.\n음성 파일을 다시 등록해주세요.');
           return;
         }
       } catch (err: any) {
@@ -175,7 +197,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       }
       if (tries >= POLL_MAX_TRIES) {
         setPhrasePolling(false);
-        setErrText('문구를 받지 못했어요. [문구 다시 받기]를 눌러 다시 시도해주세요.');
+        failBackToStep1('응답 지연', '분석 응답이 오지 않았어요.\n음성 파일을 다시 등록해주세요.');
         return;
       }
       setTimeout(tick, POLL_INTERVAL_MS);
