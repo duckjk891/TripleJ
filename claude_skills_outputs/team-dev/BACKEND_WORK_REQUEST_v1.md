@@ -1,4 +1,6 @@
-# 백엔드 작업요청서 v1 — AIDOL 자산 독립화 (2026-08-26)
+# 백엔드 작업요청서 v1.1 — AIDOL 자산 독립화 (2026-08-26, v1.1 개정 2026-08-27)
+
+> **v1.1 개정**: B-1 모델 확정 — "한 아티스트에 실사/가상 2슬롯"이 아니라 **"아티스트 1명 = 슬롯 1개, kind('real'|'virtual')는 아티스트의 종류"**로 변경 (대표 지시). 기존 virtual_* 이중 필드 구조는 마이그레이션으로 분리.
 
 > 발신: aidol-parity 프론트 팀 (team-dev) / 수신: 백엔드 팀 (backend_9004, WSL·backend 브랜치)
 > 근거: 2026-08-26 자산 구조 전수 검증 (앱 코드 + backend_9004 소스 + openapi 실측). 상세는 `REPORT_v3.md` v3.77 항목.
@@ -18,21 +20,25 @@
 - 시트 저장 경로 고정: `characters/{user_id}/sheet.png` / `sheet_virtual.png` (`:1405-1407`) — 새 생성 시 기존 덮어씀.
 - 프론트의 "추가 아티스트 슬롯(⭐15, `POST /points/spend {action:'extra_slot'}`)"이 **슬롯 없이 과금만 되던 버그** → 프론트 v3.77에서 과금 임시 차단함. 백엔드 슬롯 구현 후 유료화 재개 예정.
 
+### 핵심 모델 (2026-08-27 확정 — 대표 지시)
+**아티스트 1명 = 슬롯 1개.** 실사/가상은 아티스트의 **종류(kind)**일 뿐이며, 한 아티스트가 실사+가상 두 시트를 갖지 않는다. 즉 현행 "한 문서에 sheet + virtual_sheet 이중 필드" 구조는 **폐기 대상**이고, 가상 캐릭터는 실사 캐릭터와 동급의 **별도 아티스트 문서**다.
+
 ### 요구 사항
-1. characters 컬렉션을 `{user_id, character_id(신규 ObjectId/uuid), name?, ...기존 필드}` **복수 문서** 구조로 확장.
+1. characters 컬렉션을 **아티스트 단위 복수 문서**로 재구성: `{user_id, character_id(신규), kind: 'real'|'virtual', name?, sheet_object_name, art_style?(kind='virtual'일 때), used_items, original_photo_object_name?(kind='real'일 때), is_default, created_at, ...}`. `virtual_*` 이중 필드는 신규 모델에서 제거.
 2. 신규 엔드포인트:
-   - `GET /api/character/list` → `{characters: [{character_id, name, sheet_url, virtual_sheet_url, is_default, created_at, ...}]}`
-   - `GET /api/character/{character_id}` / `DELETE /api/character/{character_id}` (슬롯 단위 삭제 — 현재는 전체 삭제뿐)
+   - `GET /api/character/list` → `{characters: [{character_id, kind, name, sheet_url, art_style?, is_default, created_at, ...}]}`
+   - `GET /api/character/{character_id}` / `DELETE /api/character/{character_id}` (**아티스트 단위 삭제** — 현재는 전체 삭제뿐)
    - `PATCH /api/character/{character_id}` (name 등 메타 수정, B-3 persona 연결 포함)
-3. 기존 계약 호환:
-   - `GET /api/character/me` = 기본(default) 캐릭터 반환 유지. `POST /character/save`에 `character_id?` 추가 — 미지정 시 기존 동작(기본 캐릭터 upsert).
-   - `generate-sheet(-async)`/`generate-sheet-cartoon(-async)`에 `character_id?` 추가 (미지정 = 기본 캐릭터 대상).
-4. 스토리지 경로: `characters/{user_id}/{character_id}/sheet.png` 등으로 분리. **기존 단일 경로 데이터 마이그레이션**(기존 문서 → character_id 부여 + is_default=true) 포함.
-5. 슬롯 정책: 기본 1슬롯, `POST /points/spend {action:'extra_slot'}` 성공 시 `max_slots` +1 (계정 필드로 영속 — 현재는 아무 효과 없음). 슬롯 초과 생성 시 409 등 명시 에러.
-6. real/virtual variant는 **캐릭터 문서당 필드**로 유지 (variant ≠ 별도 캐릭터. 프론트 v3.77 가상화 계획과 정합).
+3. 생성 계약:
+   - `generate-sheet(-async)` = kind='real' 아티스트, `generate-sheet-cartoon(-async)` = kind='virtual' 아티스트 생성. 두 API 모두 `character_id?` 추가 — 지정 시 해당 아티스트 재생성(같은 kind만 허용), 미지정 시 **신규 아티스트 생성(슬롯 한도 검사 → 초과 시 409)**.
+   - `POST /character/save`에 `character_id?` 추가. (기존 `variant` 파라미터는 구버전 앱 하위 호환용으로만 한시 유지 — 신규 계약은 kind/character_id 기준.)
+4. 기존 계약 호환: `GET /api/character/me` = 기본(is_default) 아티스트 반환 유지. **마이그레이션**: 기존 문서의 실사 시트 → 아티스트①(kind='real', is_default), `virtual_sheet_object_name` 존재 시 → **별도 아티스트②(kind='virtual', art_style 이전)로 분리**. 스토리지 경로 `characters/{user_id}/{character_id}/sheet.png`로 이전.
+5. 슬롯 정책: 기본 1슬롯(kind 무관 — 아티스트 수 기준), `POST /points/spend {action:'extra_slot'}` 성공 시 `max_slots` +1 (계정 필드로 영속 — 현재는 아무 효과 없음).
+6. 커버/MV 등 캐릭터 선택: `character_object_name`(또는 `character_id`)로 **아티스트를 선택** — "실사/가상 variant 선택" 개념 아님. `CreateMVRequest.character_variant`는 character_id 기반으로 대체 검토.
 
 ### 수용 기준
-- 계정에 캐릭터 2개 생성 → list에 2건, 각각 독립 시트 경로, 한쪽 삭제해도 다른 쪽 무손상.
+- 실사 아티스트 1 + 가상 아티스트 1 생성 → list에 kind가 다른 2건, 각각 독립 시트 경로·독립 삭제(한쪽 삭제해도 다른 쪽 무손상).
+- 기존 실사+가상 보유 계정이 마이그레이션 후 아티스트 2명으로 조회됨.
 - 구버전 앱(me/save만 사용)이 그대로 동작.
 - extra_slot 결제가 실제 슬롯 증가로 이어지고, 화면 이탈 후에도 유지.
 

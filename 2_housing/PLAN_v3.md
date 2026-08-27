@@ -15,6 +15,9 @@
 ### 근거
 구현 스펙·변경 매트릭스·리스크는 **v3.77 항목의 "v3.77 범위"·"변경 매트릭스"** 그대로 적용(가상화 생성 경로 characterKind 분기, ArtistInput 화풍 갤러리 스텝, ArtistLoading cartoon-async 분기+save variant/art_style, ArtistResult 2슬롯 탭, 커버 musicStore.coverCharacterObjectName 영속+variant 선택 카드+재진입 유실 버그 픽스). v3.78~79 변경분(appAlert·voiceBox·삭제 버튼·스냅샷)과의 충돌만 현재 코드 기준으로 조정.
 
+### 사후 개념 확정 (2026-08-27, 대표 지시)
+목표 모델은 **"아티스트 1명 = 슬롯 1개, 실사/가상은 아티스트의 kind"** — 한 아티스트가 실사+가상 두 벌을 갖는 구조가 아님. v3.80의 [실사화]/[가상화] 슬롯 탭은 **현 서버 구조(단일 문서 이중 필드)에 대응한 임시 UI**이며, 백엔드 B-1(v1.1 개정: kind 기반 복수 문서)이 반영되면 **아티스트 목록/선택 UI로 전환**한다. BACKEND_WORK_REQUEST v1.1 참조.
+
 ---
 
 ## v3.79 — 2026-08-26 — Phase 1 잔여: 가사 보관함·곡↔아티스트 스냅샷·발매보상 픽스·UX 정리
