@@ -463,6 +463,22 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] mv_jobs attach index ensure failed: %s", _e)
 
+    # ArtistV212 — 아티스트 다중화 인덱스 (idempotent). unique 는 partial —
+    # legacy 무character_id 문서 공존기 충돌 방지 (PLAN v212 D1).
+    try:
+        from .database.mongodb import get_mongo as _char_get_mongo
+        _char_mongo = _char_get_mongo()
+        await _char_mongo.characters.create_index("user_id")
+        await _char_mongo.characters.create_index(
+            [("user_id", 1), ("character_id", 1)],
+            unique=True,
+            partialFilterExpression={"character_id": {"$exists": True}},
+        )
+        await _char_mongo.user_slots.create_index("user_id", unique=True)
+        print("[migration] characters/user_slots indexes ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] characters indexes ensure failed: %s", _e)
+
     # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
     # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
     # if the ES index emptied/drifted across a restart, re-index public tracks from

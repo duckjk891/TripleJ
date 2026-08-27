@@ -168,19 +168,28 @@ async def _snapshot_evidence(report_id: str, target_type: str, target_id: str) -
             })
             # 커버 이미지 사본
             await _snapshot_image_item(items, report_id, "cover", doc.get("cover_image_url"))
-            # 업로더 characters 의 원본 사진·시트 사본 (user_id 당 1문서)
-            char = await mongo.characters.find_one(
+            # 업로더 characters 의 원본 사진·시트 사본
+            # v212 — 아티스트 다중화: 전 아티스트 doc 순회 (안전측 — 단일 문서 가정 제거).
+            # 첫 doc 라벨은 기존과 동일(original_photo/sheet/virtual_sheet — 원장 호환),
+            # 2번째 doc 부터 _{i} 접미. 중복 object 는 1회만 스냅샷.
+            chars = await mongo.characters.find(
                 {"user_id": owner_id},
                 {"original_photo_object_name": 1, "sheet_object_name": 1,
-                 "virtual_sheet_object_name": 1},
-            ) if owner_id else None
-            if char:
-                await _snapshot_image_item(
-                    items, report_id, "original_photo", char.get("original_photo_object_name"))
-                await _snapshot_image_item(
-                    items, report_id, "sheet", char.get("sheet_object_name"))
-                await _snapshot_image_item(
-                    items, report_id, "virtual_sheet", char.get("virtual_sheet_object_name"))
+                 "virtual_sheet_object_name": 1, "character_id": 1},
+            ).sort("updated_at", -1).to_list(length=None) if owner_id else []
+            _seen_objs = set()
+            for _ci, char in enumerate(chars):
+                for _label, _field in (
+                    ("original_photo", "original_photo_object_name"),
+                    ("sheet", "sheet_object_name"),
+                    ("virtual_sheet", "virtual_sheet_object_name"),
+                ):
+                    _obj = char.get(_field)
+                    if not _obj or _obj in _seen_objs:
+                        continue
+                    _seen_objs.add(_obj)
+                    _kind = _label if _ci == 0 else "{}_{}".format(_label, _ci)
+                    await _snapshot_image_item(items, report_id, _kind, _obj)
 
         elif target_type == "feed":
             doc = await mongo.feeds.find_one({"_id": ObjectId(target_id)})

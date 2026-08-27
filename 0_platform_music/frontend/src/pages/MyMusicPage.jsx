@@ -18,6 +18,7 @@ import FaceVerifyFlow from '../components/FaceVerifyFlow';
 import TrackShareButton from '../components/TrackShareButton';
 import AppealModal from '../components/AppealModal';
 import CoverEditModal from '../components/CoverEditModal';
+import { loadArtists } from '../components/ArtistPicker';
 import { hasConsentCached, checkConsent } from '../utils/consent';
 import './MyMusicPage.css';
 
@@ -162,9 +163,25 @@ function DraftsSection({ onLoadDraft }) {
 }
 
 function CharacterSection() {
-  const [character, setCharacter] = useState(null);
+  // v212 — 아티스트 다중화: 카드 목록 + 슬롯 바 + 생성 뷰 상태
+  const [artists, setArtists] = useState([]);
+  const [slots, setSlots] = useState(null); // {used,max} — list API 응답 (legacy 폴백이면 null)
+  const [artistsSource, setArtistsSource] = useState('legacy'); // 'list' | 'legacy'
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState('real'); // 'real' | 'virtual'
+  const [view, setView] = useState('list'); // 'list' | 'create'
+  const [createKind, setCreateKind] = useState(null); // null=종류 선택 | 'real' | 'virtual'
+  const [regenArtist, setRegenArtist] = useState(null); // [다시 만들기] 대상 — 재생성 character_id 배선
+  const [editArtist, setEditArtist] = useState(null); // [프로필 수정] 대상
+  // v212 F2 — 프로필 입력 폼 (생성 저장 동봉 + 기존 카드 수정 공용) — 입력 배선 유실 복원
+  const [pName, setPName] = useState('');
+  const [pAge, setPAge] = useState('');
+  const [pGender, setPGender] = useState('');
+  const [pTags, setPTags] = useState([]);
+  const [pText, setPText] = useState('');
+  const [pTagInput, setPTagInput] = useState('');
+  const [availableTags, setAvailableTags] = useState([]);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [slotBuying, setSlotBuying] = useState(false);
 
   // 착용 아이템 슬롯(실사·가상 공통) — 광고상품 {id,name,image_object_name,product_url,category}|null
   const [selectedTop, setSelectedTop] = useState(null);
@@ -216,16 +233,41 @@ function CharacterSection() {
   const vPhotoInputRef = useRef(null);
   const styleInputRef = useRef(null);
 
-  useEffect(() => {
-    api.getMyCharacter()
-      .then(({ data }) => setCharacter(data.character))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  // v212 — 아티스트 목록 로드 (list API + slots 우선, legacy 단건 폴백 — loadArtists 공용)
+  const fetchArtists = useCallback(async () => {
+    try {
+      const { artists: list, slots: s, source } = await loadArtists();
+      setArtists(list);
+      setSlots(s);
+      setArtistsSource(source);
+      if (import.meta.env.DEV) {
+        console.debug('[CharacterSection] artists loaded', { count: list.length, source, slots: s });
+      }
+    } catch (err) {
+      console.error('[CharacterSection] artists load failed', { status: err?.response?.status, message: err?.message });
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // 가상화 모드 진입 시 화풍 샘플 1회 로드
+  useEffect(() => { fetchArtists(); }, [fetchArtists]);
+
+  // v212 F2 — 성격 태그 고정 목록 (칩 선택식). F1(getPersonalityTags 래퍼) 배선 전엔 직접 입력만 동작.
   useEffect(() => {
-    if (mode !== 'virtual' || styleSamples.length > 0 || stylesLoading) return;
+    if (typeof api.getPersonalityTags !== 'function') {
+      if (import.meta.env.DEV) console.debug('[CharacterSection] getPersonalityTags not wired yet');
+      return;
+    }
+    api.getPersonalityTags()
+      .then(({ data }) => setAvailableTags(Array.isArray(data?.tags) ? data.tags : []))
+      .catch((err) => {
+        console.error('[CharacterSection] personality tags load failed', { status: err?.response?.status });
+      });
+  }, []);
+
+  // 가상화 생성 진입 시 화풍 샘플 1회 로드 (v212: mode → createKind)
+  useEffect(() => {
+    if (createKind !== 'virtual' || styleSamples.length > 0 || stylesLoading) return;
     setStylesLoading(true);
     api.getStyleSamples()
       .then(({ data }) => {
@@ -240,21 +282,18 @@ function CharacterSection() {
         setStyleSamples([]);
       })
       .finally(() => setStylesLoading(false));
-  }, [mode, styleSamples.length, stylesLoading]);
+  }, [createKind, styleSamples.length, stylesLoading]);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
       console.info('[MyMusic][CharacterSection]', {
-        empty: !character,
-        items: character?.used_items?.length ?? 0,
-        hasSheet: !!character?.sheet_url,
-        hasName: !!character?.name,
-        hasAge: !!character?.age,
-        tags: character?.personality_tags?.length ?? 0,
-        hasText: !!character?.personality_text,
+        count: artists.length,
+        source: artistsSource,
+        used: slots?.used ?? artists.length,
+        max: slots?.max ?? null,
       });
     }
-  }, [character]);
+  }, [artists, artistsSource, slots]);
 
   // v158 — 캐릭터 생성 비용 로드 (표기용 — 실패 시 기본값 10 유지)
   useEffect(() => {
@@ -457,10 +496,13 @@ function CharacterSection() {
       formData.append('image_model', imageModel);
       // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만 — 사진 첨부 시에만 의미)
       if (photoFile && portraitConfirmed) formData.append('portrait_confirmed', 'true');
+      // v212 D4 — 재생성이면 대상 아티스트 character_id 첨부 (슬롯 검사 없음), 신규면 미첨부(서버 슬롯 검사)
+      if (regenArtist?.character_id) formData.append('character_id', regenArtist.character_id);
       appendItemObjectNames(formData);
       if (import.meta.env.DEV) {
         console.info('[MyMusicPage] generate', {
           mode: 'real',
+          regen_character_id: regenArtist?.character_id || null,
           source: genSource(photoFile, userText),
           image_model: imageModel,
         });
@@ -488,6 +530,11 @@ function CharacterSection() {
     } catch (err) {
       console.error('[MyMusicPage] char job submit failed', err);
       setGenerating(false);
+      // v212 — 슬롯 만석 409 (⭐ 차감 전 거절 — D4)
+      if (err.response?.status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
+        alert(err.response.data.message || '아티스트 슬롯이 가득 찼습니다. ⭐15로 슬롯을 추가하세요.');
+        return;
+      }
       // v135 — BE 게이트 403 폴백: 얼굴 인증 플로우 모달을 띄우고 통과 시 재시도 (v161 — 사진 경로 전용)
       if (photoFile && err.response?.status === 403 && err.response?.data?.error === 'face_verification_required') {
         if (import.meta.env.DEV) console.info('[FaceVerifyFlow] 403 fallback — opening flow');
@@ -509,35 +556,172 @@ function CharacterSection() {
     }
   };
 
+  // v212 F2 — 프로필 폼 → save/PATCH 페이로드 (검증 상수는 입력단 maxLength 로 1차 방어)
+  const buildProfilePayload = () => ({
+    name: pName.trim(),
+    age: pAge.trim(),
+    gender: pGender.trim(),
+    personality_tags: pTags,
+    personality_text: pText.trim(),
+  });
+
+  const resetProfileForm = (artist = null) => {
+    setPName(artist?.name || '');
+    setPAge(artist?.age || '');
+    setPGender(artist?.gender || '');
+    setPTags(Array.isArray(artist?.personality_tags) ? artist.personality_tags.filter(Boolean) : []);
+    setPText(artist?.personality_text || '');
+    setPTagInput('');
+  };
+
+  const toggleProfileTag = (tag) => {
+    setPTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : (prev.length >= 20 ? prev : [...prev, tag])));
+  };
+
+  // 생성 플로우 종료 공통 (목록 복귀 + 상태 초기화)
+  const finishCreateFlow = () => {
+    setView('list');
+    setCreateKind(null);
+    setRegenArtist(null);
+    resetProfileForm(null);
+    setPortraitConfirmed(false);
+  };
+
   const handleSave = async () => {
     if (!previewObjectName) return;
     setSaving(true);
     try {
+      // v212 D4: 재생성 = character_id 지정(① 시트 교체+프로필 갱신) / 신규 = kind 지정(② 슬롯 검사+cid 발급)
       await api.saveCharacter({
         sheet_object_name: previewObjectName,
         used_items: buildUsedItems(),
+        ...buildProfilePayload(),
+        ...(regenArtist?.character_id
+          ? { character_id: regenArtist.character_id }
+          : { kind: 'real' }),
       });
-      const { data } = await api.getMyCharacter();
-      setCharacter(data.character);
+      await fetchArtists();
       setPreviewUrl(null);
       setPreviewObjectName(null);
       setPhotoFile(null);
       setRealFormOpen(false);
+      finishCreateFlow();
     } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
+        alert(err.response.data.message || '아티스트 슬롯이 가득 찼습니다. ⭐15로 슬롯을 추가하세요.');
+        return;
+      }
       alert(err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!window.confirm('캐릭터를 삭제하시겠습니까?')) return;
+  // v212 — 카드 개별 삭제. legacy 합성 카드(cid 없음)는 구 DELETE /me(전체 삭제)라 경고 문구 구분.
+  const handleDeleteArtist = async (artist) => {
+    const cid = artist?.character_id;
+    const canIndividual = !!cid && typeof api.deleteCharacter === 'function';
+    const msg = canIndividual
+      ? `아티스트 「${artist?.name || (artist?.kind === 'virtual' ? '가상 아티스트' : '실사 아티스트')}」를 삭제하시겠습니까?`
+      : '이 계정의 캐릭터 전체가 삭제됩니다(구 버전 데이터). 계속하시겠습니까?';
+    if (!window.confirm(msg)) return;
     try {
-      await api.deleteMyCharacter();
-      setCharacter(null);
+      if (canIndividual) {
+        await api.deleteCharacter(cid);
+        if (import.meta.env.DEV) console.debug('[CharacterSection] artist deleted', { cid });
+      } else {
+        await api.deleteMyCharacter();
+      }
+      await fetchArtists();
     } catch (err) {
+      console.error('[CharacterSection] delete failed', { cid, status: err?.response?.status });
       alert(err.response?.data?.error || '삭제에 실패했습니다.');
     }
+  };
+
+  // v212 — 기본(⭐) 지정: PATCH is_default (cid 필요 — legacy 카드는 마이그레이션 전이라 미지원)
+  const handleSetDefault = async (artist) => {
+    if (!artist?.character_id || typeof api.patchCharacter !== 'function') {
+      alert('기본 지정은 아티스트 마이그레이션 후 사용할 수 있어요.');
+      return;
+    }
+    try {
+      await api.patchCharacter(artist.character_id, { is_default: true });
+      if (import.meta.env.DEV) console.debug('[CharacterSection] set default', { cid: artist.character_id });
+      await fetchArtists();
+    } catch (err) {
+      alert(err.response?.data?.error || '기본 지정에 실패했습니다.');
+    }
+  };
+
+  // v212 — 프로필 수정 저장: cid → PATCH / legacy → 기존 시트 재저장으로 프로필만 갱신(구계약 ③)
+  const handleProfileEditSave = async () => {
+    if (!editArtist) return;
+    setProfileSaving(true);
+    try {
+      if (editArtist.character_id && typeof api.patchCharacter === 'function') {
+        await api.patchCharacter(editArtist.character_id, buildProfilePayload());
+      } else {
+        await api.saveCharacter({
+          sheet_object_name: editArtist.sheet_object_name,
+          used_items: Array.isArray(editArtist.used_items) ? editArtist.used_items : [],
+          ...(editArtist.kind === 'virtual'
+            ? { variant: 'virtual', art_style: editArtist.art_style || undefined }
+            : {}),
+          ...buildProfilePayload(),
+        });
+      }
+      if (import.meta.env.DEV) console.debug('[CharacterSection] profile saved', { cid: editArtist.character_id || null });
+      setEditArtist(null);
+      resetProfileForm(null);
+      await fetchArtists();
+    } catch (err) {
+      console.error('[CharacterSection] profile save failed', { status: err?.response?.status });
+      alert(err.response?.data?.error || '프로필 저장에 실패했습니다.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  // v212 — 슬롯 추가 구매 (⭐15 — POINT_COSTS.extra_slot, 402 분기)
+  const handleBuySlot = async () => {
+    if (typeof api.spendPoints !== 'function') {
+      alert('슬롯 추가 기능 준비 중입니다.');
+      return;
+    }
+    if (!window.confirm('⭐15를 사용해 아티스트 슬롯을 1개 추가할까요?')) return;
+    setSlotBuying(true);
+    try {
+      const { data } = await api.spendPoints('extra_slot');
+      api.notifyPointsRefresh();
+      if (import.meta.env.DEV) console.debug('[CharacterSection] slot purchased', { max_slots: data?.max_slots });
+      if (typeof data?.max_slots === 'number') {
+        setSlots((prev) => ({ used: prev?.used ?? artists.length, max: data.max_slots }));
+      }
+      await fetchArtists();
+    } catch (err) {
+      if (api.isInsufficientPoints(err)) {
+        api.notifyPointsRefresh();
+        alert('별이 부족해요. 슬롯 추가에는 ⭐15개가 필요합니다.');
+      } else {
+        console.error('[CharacterSection] slot purchase failed', { status: err?.response?.status });
+        alert(err.response?.data?.error || '슬롯 추가에 실패했습니다.');
+      }
+    } finally {
+      setSlotBuying(false);
+    }
+  };
+
+  // v212 — 새 아티스트 시작 / 재생성 시작
+  const startCreate = (kind, regenTarget = null) => {
+    setView('create');
+    setCreateKind(kind);
+    setRegenArtist(regenTarget);
+    resetProfileForm(regenTarget);
+    setPreviewUrl(null); setPreviewObjectName(null); setPhotoFile(null);
+    setVPreviewUrl(null); setVPreviewObjectName(null); setVPhotoFile(null);
+    setSelectedStyleKey(null); setCustomStyleFile(null);
+    if (import.meta.env.DEV) console.debug('[CharacterSection] start create', { kind, regen: regenTarget?.character_id || null });
   };
 
   const handleRegenerate = () => {
@@ -583,6 +767,8 @@ function CharacterSection() {
       formData.append('image_model', imageModel);
       // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만 — 사진 첨부 시에만 의미)
       if (vPhotoFile && portraitConfirmed) formData.append('portrait_confirmed', 'true');
+      // v212 D4 — 재생성이면 대상 아티스트 character_id 첨부
+      if (regenArtist?.character_id) formData.append('character_id', regenArtist.character_id);
       if (customStyleFile) {
         formData.append('style_image', customStyleFile);
       } else {
@@ -622,6 +808,11 @@ function CharacterSection() {
     } catch (err) {
       console.error('[MyMusicPage] cartoon gen submit failed', err);
       setVGenerating(false);
+      // v212 — 슬롯 만석 409 (⭐ 차감 전 거절 — D4)
+      if (err.response?.status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
+        alert(err.response.data.message || '아티스트 슬롯이 가득 찼습니다. ⭐15로 슬롯을 추가하세요.');
+        return;
+      }
       // v139 — 스트라이크 생성 제한 403 공통 처리
       if (api.isGenerationRestricted(err)) {
         api.alertGenerationRestricted(err);
@@ -641,22 +832,31 @@ function CharacterSection() {
     if (!vPreviewObjectName) return;
     setVSaving(true);
     try {
+      // v212 D4: 재생성 = character_id(① 시트 교체) / 신규 = kind 지정(② 슬롯 검사).
+      // variant 명시 전달 제거 — 래퍼가 legacy 폴백(cid/kind 미지정)에만 주입하는 계약.
       await api.saveCharacter({
         sheet_object_name: vPreviewObjectName,
-        variant: 'virtual',
         art_style: vArtStyle,
         used_items: buildUsedItems(),
+        ...buildProfilePayload(),
+        ...(regenArtist?.character_id
+          ? { character_id: regenArtist.character_id }
+          : { kind: 'virtual' }),
       });
-      const { data } = await api.getMyCharacter();
-      setCharacter(data.character);
+      await fetchArtists();
       setVPreviewUrl(null);
       setVPreviewObjectName(null);
       setVPhotoFile(null);
       setSelectedStyleKey(null);
       setCustomStyleFile(null);
       setVFormOpen(false);
+      finishCreateFlow();
     } catch (err) {
       console.error('[MyMusicPage] virtual save failed', err);
+      if (err.response?.status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
+        alert(err.response.data.message || '아티스트 슬롯이 가득 찼습니다. ⭐15로 슬롯을 추가하세요.');
+        return;
+      }
       alert(err.response?.data?.error || '가상화 캐릭터 저장에 실패했습니다.');
     } finally {
       setVSaving(false);
@@ -677,8 +877,6 @@ function CharacterSection() {
     return <div className="mymusic-loading">로딩 중...</div>;
   }
 
-  const hasReal = !!character?.sheet_url;
-  const hasVirtual = !!character?.virtual_sheet_object_name;
 
   // ── 착용 아이템 선택 슬롯(실사·가상 공통) ───────────────
   const renderItemSlots = () => {
@@ -737,181 +935,6 @@ function CharacterSection() {
     );
   };
 
-  // ── 실사(real) 저장본 표시 ──────────────────────────────
-  const renderRealSaved = () => {
-    const tags = Array.isArray(character?.personality_tags)
-      ? character.personality_tags.filter(Boolean)
-      : [];
-
-    const byCategory = {};
-    if (Array.isArray(character?.used_items)) {
-      for (const it of character.used_items) {
-        if (it?.category) byCategory[it.category] = it;
-      }
-    }
-    const outfitSlots = [
-      { label: '상의', data: byCategory['상의'] || null },
-      { label: '하의', data: byCategory['하의'] || null },
-      { label: '신발', data: byCategory['신발'] || null },
-    ];
-
-    const handleSheetError = (e) => {
-      if (e?.currentTarget) e.currentTarget.style.display = 'none';
-    };
-
-    const handleItemImgError = (slot) => () => {
-      console.warn('[MyMusic][CharacterSection] image load failed', {
-        kind: 'item',
-        object_name: slot?.data?.image_object_name ?? null,
-      });
-    };
-
-    const handleItemClick = (item) => (e) => {
-      if (!item?.product_url) return;
-      if (e && typeof e.preventDefault === 'function') e.preventDefault();
-      if (import.meta.env.DEV) {
-        console.info('[MyMusic][CharacterSection] adClick', { id: item.id ?? null });
-      }
-      if (item.id) {
-        api.recordAdClick(item.id).catch(() => {});
-      }
-      window.open(item.product_url, '_blank', 'noopener,noreferrer');
-    };
-
-    const hasProfile =
-      !!character?.name ||
-      !!character?.age ||
-      tags.length > 0 ||
-      !!character?.personality_text;
-
-    return (
-      <div className="mymusic-character__variant">
-        <div className="mymusic-character__sheet">
-          <img
-            src={api.characterPreviewUrl(character.sheet_url)}
-            alt="내 캐릭터 시트"
-            className="mymusic-character__sheet-img"
-            onError={handleSheetError}
-          />
-          <div className="mymusic-character__actions">
-            <button
-              className="mymusic-character__btn mymusic-character__btn--primary"
-              onClick={handleRegenerate}
-            >
-              <FiRefreshCw /> 다시 만들기
-            </button>
-            <button
-              className="mymusic-character__btn mymusic-character__btn--danger"
-              onClick={handleDelete}
-            >
-              <FiTrash2 /> 삭제
-            </button>
-          </div>
-        </div>
-
-        {hasProfile && (
-          <div className="mymusic-character__profile-row">
-            {(character?.name || character?.age) && (
-              <div className="mymusic-character__profile-line">
-                {character?.name && (
-                  <span className="mymusic-character__profile-name">{character.name}</span>
-                )}
-                {character?.age && (
-                  <span className="mymusic-character__profile-age">{character.age}세</span>
-                )}
-              </div>
-            )}
-            {tags.length > 0 && (
-              <div className="mymusic-character__chips">
-                {tags.map((tag, i) => (
-                  <span key={`${tag}-${i}`} className="mymusic-character__chip">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-            {character?.personality_text && (
-              <p className="mymusic-character__profile-text">{character.personality_text}</p>
-            )}
-          </div>
-        )}
-
-        <p className="mymusic-character__outfit-hint">착용 아이템</p>
-        <div className="mymusic-character__outfit-row">
-          {outfitSlots.map((slot) => {
-            const data = slot.data;
-            const hasImg = !!data?.image_object_name;
-            const hasUrl = !!data?.product_url;
-            return (
-              <div key={slot.label} className="mymusic-character__outfit-box">
-                {data ? (
-                  <>
-                    <div
-                      className={
-                        'mymusic-character__outfit-image' +
-                        (hasUrl ? ' mymusic-character__outfit-image--clickable' : '')
-                      }
-                      onClick={hasUrl ? handleItemClick(data) : undefined}
-                      role={hasUrl ? 'button' : undefined}
-                      tabIndex={hasUrl ? 0 : undefined}
-                      onKeyDown={
-                        hasUrl
-                          ? (e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                handleItemClick(data)(e);
-                              }
-                            }
-                          : undefined
-                      }
-                    >
-                      {hasImg ? (
-                        <img
-                          src={api.adImageUrl(data.image_object_name)}
-                          alt={data.name || slot.label}
-                          className="mymusic-character__outfit-preview"
-                          onError={handleItemImgError(slot)}
-                        />
-                      ) : (
-                        <div className="mymusic-character__outfit-empty">{slot.label} 미선택</div>
-                      )}
-                    </div>
-                    {data.name && (
-                      <div
-                        className={
-                          'mymusic-character__outfit-name' +
-                          (hasUrl ? ' mymusic-character__outfit-name--clickable' : '')
-                        }
-                        onClick={hasUrl ? handleItemClick(data) : undefined}
-                      >
-                        {data.name}
-                      </div>
-                    )}
-                    {hasUrl && (
-                      <a
-                        href={data.product_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mymusic-character__outfit-link"
-                        onClick={handleItemClick(data)}
-                      >
-                        쇼핑몰에서 보기 ▶
-                      </a>
-                    )}
-                  </>
-                ) : (
-                  <div className="mymusic-character__outfit-image">
-                    <div className="mymusic-character__outfit-empty">{slot.label} 미선택</div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   // ── 실사(real) 미리보기(생성됨·미저장) 표시 ──────────────
   const renderRealPreview = () => (
     <div className="mymusic-character__variant">
@@ -922,6 +945,8 @@ function CharacterSection() {
           alt="캐릭터 시트 미리보기"
           className="mymusic-character__sheet-img"
         />
+        {/* v212 F2 — 프로필 입력(저장 시 함께 저장됨) */}
+        {renderProfileForm()}
         <div className="mymusic-character__actions">
           <button
             className="mymusic-character__btn mymusic-character__btn--primary"
@@ -1086,39 +1111,6 @@ function CharacterSection() {
     </div>
   );
 
-  // ── 가상화(virtual) 저장본 표시 ─────────────────────────
-  const renderVirtualSaved = () => {
-    const handleSheetError = (e) => {
-      if (e?.currentTarget) e.currentTarget.style.display = 'none';
-    };
-    const styleLabel =
-      styleSamples.find((s) => s.key === character?.virtual_art_style)?.label ||
-      (character?.virtual_art_style === 'custom' ? '직접 업로드' : character?.virtual_art_style);
-    return (
-      <div className="mymusic-character__variant">
-        <div className="mymusic-character__sheet">
-          {styleLabel && (
-            <div className="mymusic-character__sheet-label">화풍: {styleLabel}</div>
-          )}
-          <img
-            src={api.characterPreviewUrl(character.virtual_sheet_object_name)}
-            alt="내 가상화 캐릭터 시트"
-            className="mymusic-character__sheet-img"
-            onError={handleSheetError}
-          />
-          <div className="mymusic-character__actions">
-            <button
-              className="mymusic-character__btn mymusic-character__btn--primary"
-              onClick={handleRegenerateVirtual}
-            >
-              <FiRefreshCw /> 다시 만들기
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   // ── 가상화(virtual) 미리보기(생성됨·미저장) 표시 ─────────
   const renderVirtualPreview = () => (
     <div className="mymusic-character__variant">
@@ -1129,6 +1121,8 @@ function CharacterSection() {
           alt="가상화 캐릭터 시트 미리보기"
           className="mymusic-character__sheet-img"
         />
+        {/* v212 F2 — 프로필 입력(저장 시 함께 저장됨) */}
+        {renderProfileForm()}
         <div className="mymusic-character__actions">
           <button
             className="mymusic-character__btn mymusic-character__btn--primary"
@@ -1317,43 +1311,255 @@ function CharacterSection() {
     </div>
   );
 
-  const renderReal = () => {
-    if (previewUrl) return renderRealPreview();
-    if (hasReal && !realFormOpen) return renderRealSaved();
-    return renderRealForm();
-  };
+  // ── v212 F2 — 프로필 입력 폼 (생성 저장 동봉 + 수정 패널 공용) ──
+  const renderProfileForm = () => (
+    <div className="mymusic-character__profile-form" style={{ textAlign: 'left', margin: '12px 0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <p className="mymusic-character__style-title">아티스트 프로필</p>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          value={pName}
+          onChange={(e) => setPName(e.target.value)}
+          placeholder="이름"
+          maxLength={50}
+          style={{ flex: '2 1 160px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #333', background: '#1a1a1a', color: '#ddd', fontSize: '13px' }}
+        />
+        <input
+          type="text"
+          value={pAge}
+          onChange={(e) => setPAge(e.target.value)}
+          placeholder="나이 (예: 22)"
+          maxLength={30}
+          style={{ flex: '1 1 90px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #333', background: '#1a1a1a', color: '#ddd', fontSize: '13px' }}
+        />
+        <input
+          type="text"
+          value={pGender}
+          onChange={(e) => setPGender(e.target.value)}
+          placeholder="성별 (예: 여성)"
+          maxLength={20}
+          style={{ flex: '1 1 90px', padding: '8px 10px', borderRadius: '8px', border: '1px solid #333', background: '#1a1a1a', color: '#ddd', fontSize: '13px' }}
+        />
+      </div>
+      <div>
+        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 6px' }}>성격 태그 (최대 20개)</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {pTags.map((tag) => (
+            <button
+              key={`sel-${tag}`}
+              type="button"
+              className="mymusic-character__chip"
+              style={{ cursor: 'pointer', border: '1px solid #7C3AED' }}
+              onClick={() => toggleProfileTag(tag)}
+            >
+              {tag} ×
+            </button>
+          ))}
+          {availableTags.filter((t) => !pTags.includes(t)).map((tag) => (
+            <button
+              key={`av-${tag}`}
+              type="button"
+              className="mymusic-character__chip"
+              style={{ cursor: 'pointer', opacity: 0.75 }}
+              onClick={() => toggleProfileTag(tag)}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          value={pTagInput}
+          onChange={(e) => setPTagInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && pTagInput.trim()) {
+              e.preventDefault();
+              const tag = pTagInput.trim().slice(0, 20);
+              if (!pTags.includes(tag)) toggleProfileTag(tag);
+              setPTagInput('');
+            }
+          }}
+          placeholder="직접 입력 후 Enter (20자 이내)"
+          maxLength={20}
+          style={{ marginTop: '6px', width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #333', background: '#1a1a1a', color: '#ddd', fontSize: '13px', boxSizing: 'border-box' }}
+        />
+      </div>
+      <textarea
+        value={pText}
+        onChange={(e) => setPText(e.target.value)}
+        placeholder="성격 설명 (선택, 500자 이내)"
+        rows={3}
+        maxLength={500}
+        style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #333', background: '#1a1a1a', color: '#ddd', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
+      />
+    </div>
+  );
 
-  const renderVirtual = () => {
-    if (vPreviewUrl) return renderVirtualPreview();
-    if (hasVirtual && !vFormOpen) return renderVirtualSaved();
-    return renderVirtualForm();
-  };
+  // ── v212 — 슬롯 바 (list 소스일 때만 used/max 표시 — legacy 는 마이그레이션 전 안내) ──
+  const renderSlotBar = () => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', padding: '10px 12px', border: '1px solid #333', borderRadius: '10px', background: '#1a1a1a', marginBottom: '14px' }}>
+      <span style={{ fontSize: '13px', color: '#ddd' }}>
+        🎤 아티스트 슬롯{' '}
+        {slots
+          ? <strong>{slots.used} / {slots.max}</strong>
+          : <span style={{ color: '#888', fontSize: '12px' }}>{artists.length}명 (슬롯 정보는 마이그레이션 후 표시)</span>}
+      </span>
+      <button
+        type="button"
+        className="mymusic-character__btn"
+        onClick={handleBuySlot}
+        disabled={slotBuying}
+      >
+        {slotBuying ? '구매 중...' : <>슬롯 추가 <span className="mymusic-character__cost-badge">⭐15</span></>}
+      </button>
+    </div>
+  );
+
+  // ── v212 — 프로필 수정 패널 (카드 [프로필 수정] → 인라인) ──
+  const renderProfileEditPanel = () => (
+    <div style={{ border: '1px solid #7C3AED', borderRadius: '10px', padding: '12px', marginBottom: '14px', background: '#161221' }}>
+      <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#cbb6ff', fontWeight: 600 }}>
+        「{editArtist?.name || (editArtist?.kind === 'virtual' ? '가상 아티스트' : '실사 아티스트')}」 프로필 수정
+      </p>
+      {renderProfileForm()}
+      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+        <button type="button" className="mymusic-character__btn" onClick={() => { setEditArtist(null); resetProfileForm(null); }} disabled={profileSaving}>
+          취소
+        </button>
+        <button type="button" className="mymusic-character__btn mymusic-character__btn--primary" onClick={handleProfileEditSave} disabled={profileSaving}>
+          {profileSaving ? '저장 중...' : '프로필 저장'}
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── v212 — 아티스트 카드 목록 ──
+  const renderArtistCards = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {artists.length === 0 && (
+        <div className="mymusic-character__empty">
+          <div className="mymusic-character__empty-icon"><FiUser /></div>
+          <p className="mymusic-character__empty-text">아직 아티스트가 없습니다. 첫 아티스트를 만들어보세요.</p>
+        </div>
+      )}
+      {artists.map((a) => {
+        const key = a.character_id || a.kind;
+        const tags = Array.isArray(a.personality_tags) ? a.personality_tags.filter(Boolean) : [];
+        return (
+          <div key={key} style={{ display: 'flex', gap: '12px', padding: '12px', border: '1px solid #333', borderRadius: '10px', background: '#1a1a1a', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <img
+              src={api.characterPreviewUrl(a.sheet_object_name)}
+              alt={a.name || 'artist'}
+              style={{ width: '84px', height: '84px', objectFit: 'cover', borderRadius: '8px', background: '#111', flexShrink: 0 }}
+              onError={(e) => { if (e?.currentTarget) e.currentTarget.style.visibility = 'hidden'; }}
+            />
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, color: '#fff', fontSize: '14px' }}>
+                  {a.name || (a.kind === 'virtual' ? '가상 아티스트' : '실사 아티스트')}
+                </span>
+                <span style={{ fontSize: '11px', color: '#888', border: '1px solid #333', borderRadius: '999px', padding: '1px 8px' }}>
+                  {a.kind === 'virtual' ? `🎨 가상${a.art_style ? ` · ${a.art_style}` : ''}` : '📷 실사'}
+                </span>
+                {a.is_default && (
+                  <span style={{ fontSize: '11px', color: '#fbbf24' }} title="기본 아티스트">⭐ 기본</span>
+                )}
+              </div>
+              <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>
+                {[a.age && `${a.age}세`, a.gender].filter(Boolean).join(' · ') || '프로필 미입력'}
+              </div>
+              {tags.length > 0 && (
+                <div className="mymusic-character__chips" style={{ marginTop: '6px' }}>
+                  {tags.map((tag, i) => (
+                    <span key={`${tag}-${i}`} className="mymusic-character__chip">{tag}</span>
+                  ))}
+                </div>
+              )}
+              {a.personality_text && (
+                <p style={{ fontSize: '12px', color: '#999', margin: '6px 0 0', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.personality_text}</p>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flexShrink: 0 }}>
+              {!a.is_default && (
+                <button type="button" className="mymusic-character__btn" onClick={() => handleSetDefault(a)}>
+                  ⭐ 기본 지정
+                </button>
+              )}
+              <button type="button" className="mymusic-character__btn" onClick={() => { setEditArtist(a); resetProfileForm(a); }}>
+                프로필 수정
+              </button>
+              <button type="button" className="mymusic-character__btn" onClick={() => startCreate(a.kind, a)}>
+                <FiRefreshCw /> 다시 만들기
+              </button>
+              <button type="button" className="mymusic-character__btn mymusic-character__btn--danger" onClick={() => handleDeleteArtist(a)}>
+                <FiTrash2 /> 삭제
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        className="mymusic-character__generate-btn"
+        onClick={() => {
+          if (slots && slots.used >= slots.max) {
+            alert(`아티스트 슬롯이 가득 찼습니다 (${slots.used}/${slots.max}). ⭐15로 슬롯을 추가하세요.`);
+            return;
+          }
+          startCreate(null);
+        }}
+      >
+        ＋ 새 아티스트 만들기
+      </button>
+    </div>
+  );
+
+  // ── v212 — 새 아티스트: 종류(kind) 선택 ──
+  const renderKindSelect = () => (
+    <div className="mymusic-character__empty">
+      <div className="mymusic-character__empty-icon"><FiUser /></div>
+      <p className="mymusic-character__empty-text">어떤 아티스트를 만들까요?</p>
+      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap', marginTop: '10px' }}>
+        <button type="button" className="mymusic-character__btn mymusic-character__btn--primary" onClick={() => setCreateKind('real')}>
+          📷 실사화 아티스트
+        </button>
+        <button type="button" className="mymusic-character__btn mymusic-character__btn--primary" onClick={() => setCreateKind('virtual')}>
+          🎨 가상화(그림) 아티스트
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="mymusic-character">
-      <div className="mymusic-character__mode-tabs">
-        <button
-          type="button"
-          className={
-            'mymusic-character__mode-tab' +
-            (mode === 'real' ? ' mymusic-character__mode-tab--active' : '')
-          }
-          onClick={() => setMode('real')}
-        >
-          실사화 캐릭터
-        </button>
-        <button
-          type="button"
-          className={
-            'mymusic-character__mode-tab' +
-            (mode === 'virtual' ? ' mymusic-character__mode-tab--active' : '')
-          }
-          onClick={() => setMode('virtual')}
-        >
-          가상화(그림) 캐릭터
-        </button>
-      </div>
-      {mode === 'real' ? renderReal() : renderVirtual()}
+      {/* v212 — 아티스트 목록(기본 뷰) / 생성 플로우(kind 선택 → 기존 real/virtual 폼 재사용) */}
+      {view === 'list' && (
+        <>
+          {renderSlotBar()}
+          {editArtist && renderProfileEditPanel()}
+          {renderArtistCards()}
+        </>
+      )}
+      {view === 'create' && (
+        <>
+          <button
+            type="button"
+            className="mymusic-character__btn"
+            style={{ marginBottom: '10px' }}
+            onClick={finishCreateFlow}
+          >
+            ← 아티스트 목록으로
+          </button>
+          {regenArtist && (
+            <p style={{ fontSize: '12px', color: '#cbb6ff', margin: '0 0 8px' }}>
+              「{regenArtist.name || (regenArtist.kind === 'virtual' ? '가상 아티스트' : '실사 아티스트')}」 다시 만들기 — 저장하면 이 아티스트의 시트가 교체됩니다.
+            </p>
+          )}
+          {createKind === null && renderKindSelect()}
+          {createKind === 'real' && (previewUrl ? renderRealPreview() : renderRealForm())}
+          {createKind === 'virtual' && (vPreviewUrl ? renderVirtualPreview() : renderVirtualForm())}
+        </>
+      )}
 
       {itemModalCategory && (
         <ItemSelectModal

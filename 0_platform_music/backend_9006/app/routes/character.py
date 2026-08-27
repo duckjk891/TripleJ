@@ -6,6 +6,7 @@ import io
 import logging
 import mimetypes
 import os
+import re
 import uuid as uuid_lib
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -106,6 +107,11 @@ AGE_MAX_LEN = 30
 PERSONALITY_TEXT_MAX_LEN = 500
 PERSONALITY_TAG_MAX_LEN = 20
 PERSONALITY_TAGS_MAX_COUNT = 20
+# v212 — 성별 자유 문자열 (enum 비강제, 빈값 허용)
+GENDER_MAX_LEN = 20
+
+# v212 — 아티스트 character_id 형식 (uuid4().hex — 32 lower hex)
+CID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class UsedItemPayload(BaseModel):
@@ -132,6 +138,202 @@ class SaveCharacterRequest(BaseModel):
     variant: Optional[str] = None
     # virtual 저장 시 사용된 화풍 라벨(예: "Korean webtoon style"). real 이면 무시.
     art_style: Optional[str] = None
+    # ── v212 아티스트 다중화 (PLAN D4 save 3-경로) ──────────────────────────
+    # ① character_id 지정: 해당 아티스트 시트 교체 + 프로필 전송분 갱신
+    # ② character_id 미지정 + kind 지정: 신규 아티스트 (슬롯 검사, 초과 409)
+    # ③ 둘 다 미지정: legacy 경로 (variant 정규화, 슬롯 검사 면제 — 구계약 보존)
+    character_id: Optional[str] = None
+    kind: Optional[str] = None       # 'real' | 'virtual'
+    gender: Optional[str] = None     # 자유 문자열 ≤20자, 빈값 허용
+
+
+# ── v212 아티스트 다중화 헬퍼 ────────────────────────────────────────────────
+
+
+def _serialize_artist(doc: dict) -> dict:
+    """cid 보유 아티스트 doc → /list·단건 응답용 직렬화."""
+    sheet = doc.get("sheet_object_name") or ""
+    return {
+        "character_id": doc.get("character_id"),
+        "kind": doc.get("kind") or "real",
+        "is_default": bool(doc.get("is_default")),
+        "name": doc.get("name") or "",
+        "age": doc.get("age") or "",
+        "gender": doc.get("gender") or "",
+        "personality_tags": doc.get("personality_tags") or [],
+        "personality_text": doc.get("personality_text") or "",
+        "sheet_object_name": sheet,
+        "sheet_url": "/api/character/preview/{}".format(sheet) if sheet else None,
+        "art_style": doc.get("art_style") or "",
+        "used_items": doc.get("used_items") or [],
+        "image_model": doc.get("image_model") or "nb_pro",
+        "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
+        "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
+    }
+
+
+def _normalize_legacy_real(doc: dict) -> Optional[dict]:
+    """legacy(무cid) doc 의 real 슬롯 → 정규화 뷰 (시트 없으면 None)."""
+    if not doc.get("sheet_object_name"):
+        return None
+    return {
+        "character_id": None,
+        "kind": "real",
+        "is_default": True,
+        "sheet_object_name": doc.get("sheet_object_name"),
+        "used_items": doc.get("used_items") or [],
+        "name": doc.get("name") or "",
+        "age": doc.get("age") or "",
+        "gender": doc.get("gender") or "",
+        "personality_tags": doc.get("personality_tags") or [],
+        "personality_text": doc.get("personality_text") or "",
+        "art_style": "",
+        "original_photo_object_name": doc.get("original_photo_object_name") or "",
+        "image_model": doc.get("image_model") or "nb_pro",
+        "_doc": doc,
+    }
+
+
+def _normalize_legacy_virtual(doc: dict) -> Optional[dict]:
+    """legacy(무cid) doc 의 virtual 슬롯 → 정규화 뷰 (시트 없으면 None)."""
+    if not doc.get("virtual_sheet_object_name"):
+        return None
+    return {
+        "character_id": None,
+        "kind": "virtual",
+        "is_default": False,
+        "sheet_object_name": doc.get("virtual_sheet_object_name"),
+        "used_items": doc.get("virtual_used_items") or [],
+        "name": doc.get("name") or "",
+        "age": doc.get("age") or "",
+        "gender": doc.get("gender") or "",
+        "personality_tags": doc.get("personality_tags") or [],
+        "personality_text": doc.get("personality_text") or "",
+        "art_style": doc.get("virtual_art_style") or "",
+        "original_photo_object_name": doc.get("original_photo_object_name") or "",
+        "image_model": doc.get("image_model") or "nb_pro",
+        "_doc": doc,
+    }
+
+
+def _normalize_cid_artist(doc: dict) -> dict:
+    """cid 보유 doc → 정규화 뷰 (kind 무관 동일 키)."""
+    return {
+        "character_id": doc.get("character_id"),
+        "kind": doc.get("kind") or "real",
+        "is_default": bool(doc.get("is_default")),
+        "sheet_object_name": doc.get("sheet_object_name") or "",
+        "used_items": doc.get("used_items") or [],
+        "name": doc.get("name") or "",
+        "age": doc.get("age") or "",
+        "gender": doc.get("gender") or "",
+        "personality_tags": doc.get("personality_tags") or [],
+        "personality_text": doc.get("personality_text") or "",
+        "art_style": doc.get("art_style") or "",
+        "original_photo_object_name": doc.get("original_photo_object_name") or "",
+        "image_model": doc.get("image_model") or "nb_pro",
+        "_doc": doc,
+    }
+
+
+async def resolve_representative_artists(mongo, user_id: str) -> dict:
+    """v212 공용 해석 (PLAN D4) — me/mv/albums/legacy-save 공유.
+
+    Returns {"real": 정규화뷰|None, "virtual": 정규화뷰|None}
+    - real 대표: is_default(kind=real) 우선 → kind=real 최신 → legacy real 슬롯
+    - virtual 대표: is_default(kind=virtual) 우선 → kind=virtual 최신 → legacy virtual 슬롯
+    """
+    docs = await mongo.characters.find({"user_id": user_id}).sort("updated_at", -1).to_list(length=None)
+    cid_docs = [d for d in docs if d.get("character_id")]
+    legacy_docs = [d for d in docs if not d.get("character_id")]
+
+    def _pick(kind: str):
+        of_kind = [d for d in cid_docs if (d.get("kind") or "real") == kind]
+        for d in of_kind:
+            if d.get("is_default"):
+                return _normalize_cid_artist(d)
+        if of_kind:
+            return _normalize_cid_artist(of_kind[0])  # updated_at 최신 (sort 기승계)
+        for d in legacy_docs:
+            norm = _normalize_legacy_real(d) if kind == "real" else _normalize_legacy_virtual(d)
+            if norm:
+                return norm
+        return None
+
+    return {"real": _pick("real"), "virtual": _pick("virtual")}
+
+
+async def _find_artist_by_cid(mongo, user_id: str, character_id: str) -> Optional[dict]:
+    """(user_id, character_id) 아티스트 doc — 형식 불일치/부재/타인은 None (호출측 404)."""
+    cid = (character_id or "").strip().lower()
+    if not CID_RE.match(cid):
+        return None
+    return await mongo.characters.find_one({"user_id": user_id, "character_id": cid})
+
+
+async def _gate_artist_generation(user_id: str, character_id: Optional[str], expected_kind: str):
+    """v212 generate 4종 공용 게이트 (⭐차감 전 — job 미생성 단계에서 호출).
+
+    Returns (error_response|None, normalized_cid|None)
+    - character_id 지정: 부재/타인/형식 불일치 404, kind 불일치 400, 통과 시 재생성(슬롯 무검사)
+    - 미지정: 슬롯 검사 — used >= max → 409 slot_limit_exceeded
+    """
+    mongo = get_mongo()
+    if character_id and character_id.strip():
+        doc = await _find_artist_by_cid(mongo, user_id, character_id)
+        if not doc:
+            logger.warning("[ArtistV212] generate cid not found user=%s cid=%s", user_id[:8], character_id[:36])
+            return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."}), None
+        if (doc.get("kind") or "real") != expected_kind:
+            logger.warning(
+                "[ArtistV212] generate kind mismatch user=%s cid=%s doc_kind=%s expected=%s",
+                user_id[:8], doc["character_id"], doc.get("kind"), expected_kind,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "아티스트 종류가 일치하지 않습니다. (재생성은 동일 종류 API 로만 가능합니다)"},
+            ), None
+        return None, doc["character_id"]
+
+    # 미지정 신규 — 슬롯 검사는 단일 관문(check_slot_available) 경유 (save ②형과 동일 409)
+    from ..services.slots_service import check_slot_available
+
+    err = await check_slot_available(user_id)
+    if err is not None:
+        return err, None
+    return None, None
+
+
+def _copy_sheet_to_permanent(minio_client, src_object: str, permanent_object: str) -> None:
+    """temp 시트 → 영구 경로 복사 (기존 save 인라인 로직 추출 — 동작 동일)."""
+    try:
+        from minio.commonconfig import CopySource
+
+        minio_client.copy_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=permanent_object,
+            source=CopySource(
+                bucket_name=settings.minio_bucket_images,
+                object_name=src_object,
+            ),
+        )
+    except Exception as e:
+        logger.warning("MinIO copy failed, fallback to download+upload: %s", e)
+        # Fallback: download and re-upload
+        resp = minio_client.get_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=src_object,
+        )
+        data = resp.read()
+        resp.close()
+        resp.release_conn()
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=permanent_object,
+            data=io.BytesIO(data),
+            length=len(data),
+            content_type="image/png",
+        )
 
 
 # ── GET /api/character/personality-tags ─────────────────────────────────────
@@ -364,6 +566,7 @@ async def generate_sheet(
     user_text: str = Form(""),
     image_model: str = Form("nb_pro"),
     portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
+    character_id: Optional[str] = Form(None),  # v212 — 지정=재생성, 미지정=신규(슬롯 검사)
     current_user=Depends(get_current_user),
 ):
     """Upload a reference photo and generate a photorealistic character sheet.
@@ -394,6 +597,12 @@ async def generate_sheet(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
+
+    # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
+    # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
+    _gate_err, norm_cid = await _gate_artist_generation(current_user["id"], character_id, "real")
+    if _gate_err is not None:
+        return _gate_err
 
     # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
     user_text_clean = (user_text or "").strip()
@@ -505,6 +714,7 @@ async def generate_sheet(
         "original_object_name": stored["original_object_name"],
         "preview_url": stored["preview_url"],
         "image_model": norm_image_model,  # v55 — echo back so client can persist
+        "character_id": norm_cid,  # v212 — 재생성 대상 echo (미지정 신규는 None)
         "message": "캐릭터 시트가 생성되었습니다.",
     }
 
@@ -560,6 +770,7 @@ async def generate_sheet_cartoon(
     portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
     style_preset: str = Form(""),
     style_image: Optional[UploadFile] = File(None),
+    character_id: Optional[str] = Form(None),  # v212 — 지정=재생성, 미지정=신규(슬롯 검사)
     current_user=Depends(get_current_user),
 ):
     """Generate a CARTOON / illustration-style character sheet (가상화).
@@ -591,6 +802,12 @@ async def generate_sheet_cartoon(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
+
+    # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
+    # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
+    _gate_err, norm_cid = await _gate_artist_generation(current_user["id"], character_id, "virtual")
+    if _gate_err is not None:
+        return _gate_err
 
     # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
     user_text_clean = (user_text or "").strip()
@@ -726,6 +943,7 @@ async def generate_sheet_cartoon(
         "image_model": norm_image_model,
         "art_style": art_style_label,
         "art_style_key": art_style_key,
+        "character_id": norm_cid,  # v212 — 재생성 대상 echo (미지정 신규는 None)
         "message": "가상화 캐릭터 시트가 생성되었습니다.",
     }
 
@@ -887,6 +1105,7 @@ async def generate_sheet_async(
     user_text: str = Form(""),
     image_model: str = Form("nb_pro"),
     portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
+    character_id: Optional[str] = Form(None),  # v212 — 지정=재생성, 미지정=신규(슬롯 검사)
     current_user=Depends(get_current_user),
 ):
     """Async variant of /generate-sheet — same form fields, returns a job_id
@@ -909,6 +1128,12 @@ async def generate_sheet_async(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
+
+    # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
+    # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
+    _gate_err, norm_cid = await _gate_artist_generation(current_user["id"], character_id, "real")
+    if _gate_err is not None:
+        return _gate_err
 
     # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
     user_text_clean = (user_text or "").strip()
@@ -984,6 +1209,7 @@ async def generate_sheet_async(
         "mode": "real",
         "status": "processing",
         "image_model": norm_image_model,
+        "character_id": norm_cid,  # v212 — 재생성 대상 (신규는 None)
         "point_ref": point_ref,
         "refunded": False,
         "created_at": now,
@@ -1034,6 +1260,7 @@ async def generate_sheet_cartoon_async(
     portrait_confirmed: Optional[str] = Form(None),  # v137 — FE 확약 체크 전달(로그용, 미전달 허용)
     style_preset: str = Form(""),
     style_image: Optional[UploadFile] = File(None),
+    character_id: Optional[str] = Form(None),  # v212 — 지정=재생성, 미지정=신규(슬롯 검사)
     current_user=Depends(get_current_user),
 ):
     """Async variant of /generate-sheet-cartoon — same form fields, returns a
@@ -1058,6 +1285,12 @@ async def generate_sheet_cartoon_async(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
+
+    # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
+    # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
+    _gate_err, norm_cid = await _gate_artist_generation(current_user["id"], character_id, "virtual")
+    if _gate_err is not None:
+        return _gate_err
 
     # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
     user_text_clean = (user_text or "").strip()
@@ -1149,6 +1382,7 @@ async def generate_sheet_cartoon_async(
         "image_model": norm_image_model,
         "art_style": art_style_label,
         "art_style_key": art_style_key,
+        "character_id": norm_cid,  # v212 — 재생성 대상 (신규는 None)
         "point_ref": point_ref,
         "refunded": False,
         "created_at": now,
@@ -1224,7 +1458,7 @@ async def get_character_job(
         "updated_at": _iso(job.get("updated_at")),
     }
     for key in ("object_name", "original_object_name", "preview_url",
-                "image_model", "art_style", "art_style_key", "error"):
+                "image_model", "art_style", "art_style_key", "character_id", "error"):
         if job.get(key) is not None:
             resp[key] = job[key]
     if job.get("completed_at") is not None:
@@ -1378,17 +1612,15 @@ async def save_character(
                 content={"error": "각 성격 태그는 {}자 이하여야 합니다.".format(PERSONALITY_TAG_MAX_LEN)},
             )
 
-    # 가상화 분리: variant='virtual' 이면 별도 슬롯(sheet_virtual.png)에 저장하고
-    # virtual_* 필드만 갱신 — 실사 슬롯(sheet_object_name 등)은 절대 건드리지 않는다.
-    variant = (body.variant or "real").strip().lower()
-    if variant not in ("real", "virtual"):
+    # v212 — 성별 (자유 문자열, 빈값 허용, enum 비강제)
+    gender_val = (body.gender or "").strip()
+    if len(gender_val) > GENDER_MAX_LEN:
         return JSONResponse(
             status_code=400,
-            content={"error": "variant 는 'real' 또는 'virtual' 이어야 합니다."},
+            content={"error": "성별은 {}자 이하여야 합니다.".format(GENDER_MAX_LEN)},
         )
-    is_virtual = variant == "virtual"
 
-    # Verify the temp sheet exists in MinIO
+    # Verify the temp sheet exists in MinIO (전 경로 공통 선행 검사)
     try:
         stat = minio_client.stat_object(
             bucket_name=settings.minio_bucket_images,
@@ -1400,44 +1632,215 @@ async def save_character(
             content={"error": "캐릭터 시트 이미지를 찾을 수 없습니다."},
         )
 
+    used_items_data = [item.model_dump() for item in (body.used_items or [])]
+
+    # v212 — kind 정규화 (지정 시에만 유효성 검사)
+    kind_val = (body.kind or "").strip().lower()
+    if kind_val and kind_val not in ("real", "virtual"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "kind 는 'real' 또는 'virtual' 이어야 합니다."},
+        )
+    cid_val = (body.character_id or "").strip().lower()
+
+    # ── v212 경로 ①: character_id 지정 — 해당 아티스트 시트 교체 + 프로필 전송분 갱신
+    if cid_val:
+        artist = await _find_artist_by_cid(mongo, user_id, cid_val)
+        if not artist:
+            logger.warning("[ArtistV212] save cid not found user=%s cid=%s", user_id[:8], cid_val[:36])
+            return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
+        if kind_val and kind_val != (artist.get("kind") or "real"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "아티스트 종류(kind)는 변경할 수 없습니다."},
+            )
+        permanent_object = "characters/{}/{}/sheet.png".format(user_id, artist["character_id"])
+        _copy_sheet_to_permanent(minio_client, body.sheet_object_name, permanent_object)
+
+        set_fields = {"sheet_object_name": permanent_object, "updated_at": datetime.utcnow()}
+        if body.used_items is not None:
+            set_fields["used_items"] = used_items_data
+        if body.name is not None:
+            set_fields["name"] = name_val
+        if body.age is not None:
+            set_fields["age"] = age_val
+        if body.gender is not None:
+            set_fields["gender"] = gender_val
+        if body.personality_tags is not None:
+            set_fields["personality_tags"] = personality_tags_val
+        if body.personality_text is not None:
+            set_fields["personality_text"] = personality_text_val
+        if body.art_style is not None and (artist.get("kind") or "real") == "virtual":
+            set_fields["art_style"] = (body.art_style or "").strip()
+        if body.original_photo_object_name and (artist.get("kind") or "real") == "real":
+            set_fields["original_photo_object_name"] = body.original_photo_object_name
+        if body.image_model:
+            _norm = _normalize_image_model(body.image_model)
+            if _norm:
+                set_fields["image_model"] = _norm
+
+        await mongo.characters.update_one({"_id": artist["_id"]}, {"$set": set_fields})
+        saved = await mongo.characters.find_one({"_id": artist["_id"]})
+        logger.info(
+            "[ArtistV212] save path=1(update) user=%s cid=%s kind=%s fields=%s",
+            user_id[:8], artist["character_id"], artist.get("kind"),
+            sorted(k for k in set_fields if k != "updated_at"),
+        )
+        resp = _serialize_artist(saved)
+        resp["message"] = "아티스트가 저장되었습니다."
+        return resp
+
+    # ── v212 경로 ②: kind 지정 (신규 아티스트) — 슬롯 검사 (초과 409)
+    if kind_val:
+        from ..services.slots_service import check_slot_available, get_slots
+
+        # 슬롯 검사는 단일 관문(check_slot_available) 경유 — generate 미지정과 동일 409
+        _slot_err = await check_slot_available(user_id)
+        if _slot_err is not None:
+            logger.info("[ArtistV212] save path=2 slot 409 user=%s", user_id[:8])
+            return _slot_err
+        used, mx = await get_slots(user_id)  # is_default 판정·로그용
+        new_cid = uuid_lib.uuid4().hex
+        permanent_object = "characters/{}/{}/sheet.png".format(user_id, new_cid)
+        _copy_sheet_to_permanent(minio_client, body.sheet_object_name, permanent_object)
+
+        now = datetime.utcnow()
+        new_doc = {
+            "user_id": user_id,
+            "character_id": new_cid,
+            "kind": kind_val,
+            "is_default": used == 0,  # 계정 첫 아티스트
+            "name": name_val,
+            "age": age_val,
+            "gender": gender_val,
+            "personality_tags": personality_tags_val,
+            "personality_text": personality_text_val,
+            "sheet_object_name": permanent_object,
+            "used_items": used_items_data,
+            "art_style": (body.art_style or "").strip() if kind_val == "virtual" else "",
+            "image_model": _normalize_image_model(body.image_model) or "nb_pro",
+            "original_photo_object_name": (body.original_photo_object_name or "") if kind_val == "real" else "",
+            "created_at": now,
+            "updated_at": now,
+        }
+        await mongo.characters.insert_one(new_doc)
+        logger.info(
+            "[ArtistV212] save path=2(create) user=%s cid=%s kind=%s is_default=%s used=%d/%d",
+            user_id[:8], new_cid, kind_val, new_doc["is_default"], used + 1, mx,
+        )
+        resp = _serialize_artist(new_doc)
+        resp["message"] = "아티스트가 저장되었습니다."
+        return resp
+
+    # ── 경로 ③: legacy (variant 계약 — 슬롯 검사 면제, 구계약 100% 보존) ──────
+    # 가상화 분리: variant='virtual' 이면 별도 슬롯(sheet_virtual.png)에 저장하고
+    # virtual_* 필드만 갱신 — 실사 슬롯(sheet_object_name 등)은 절대 건드리지 않는다.
+    variant = (body.variant or "real").strip().lower()
+    if variant not in ("real", "virtual"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "variant 는 'real' 또는 'virtual' 이어야 합니다."},
+        )
+    is_virtual = variant == "virtual"
+
+    # v212 — 마이그레이션 후 계정(cid 문서 보유): legacy 호출을 해당 kind 대표
+    # 아티스트로 라우팅 (없으면 신규 doc — 자연 상한 real1+virtual1, 슬롯 면제).
+    has_cid_docs = await mongo.characters.count_documents(
+        {"user_id": user_id, "character_id": {"$exists": True, "$ne": None}}
+    ) > 0
+    if has_cid_docs:
+        reps = await resolve_representative_artists(mongo, user_id)
+        rep = reps.get(variant)
+        rep_cid = rep.get("character_id") if rep else None
+        if rep_cid:
+            permanent_object = "characters/{}/{}/sheet.png".format(user_id, rep_cid)
+            _copy_sheet_to_permanent(minio_client, body.sheet_object_name, permanent_object)
+            set_fields = {
+                "sheet_object_name": permanent_object,
+                "used_items": used_items_data,
+                "updated_at": datetime.utcnow(),
+            }
+            if is_virtual:
+                set_fields["art_style"] = (body.art_style or "").strip()
+            else:
+                # legacy real semantics — 항상 set (현행과 동일)
+                set_fields.update({
+                    "name": name_val,
+                    "age": age_val,
+                    "personality_tags": personality_tags_val,
+                    "personality_text": personality_text_val,
+                })
+                if body.original_photo_object_name:
+                    set_fields["original_photo_object_name"] = body.original_photo_object_name
+            if body.image_model:
+                _norm = _normalize_image_model(body.image_model)
+                if _norm:
+                    set_fields["image_model"] = _norm
+            await mongo.characters.update_one(
+                {"user_id": user_id, "character_id": rep_cid}, {"$set": set_fields}
+            )
+            target_cid = rep_cid
+        else:
+            # 해당 kind 대표 없음 — 신규 doc 생성 (슬롯 면제)
+            target_cid = uuid_lib.uuid4().hex
+            permanent_object = "characters/{}/{}/sheet.png".format(user_id, target_cid)
+            _copy_sheet_to_permanent(minio_client, body.sheet_object_name, permanent_object)
+            has_default = await mongo.characters.count_documents(
+                {"user_id": user_id, "is_default": True}
+            ) > 0
+            now = datetime.utcnow()
+            await mongo.characters.insert_one({
+                "user_id": user_id,
+                "character_id": target_cid,
+                "kind": variant,
+                "is_default": not has_default,
+                "name": name_val if not is_virtual else "",
+                "age": age_val if not is_virtual else "",
+                "gender": gender_val,
+                "personality_tags": personality_tags_val if not is_virtual else [],
+                "personality_text": personality_text_val if not is_virtual else "",
+                "sheet_object_name": permanent_object,
+                "used_items": used_items_data,
+                "art_style": (body.art_style or "").strip() if is_virtual else "",
+                "image_model": _normalize_image_model(body.image_model) or "nb_pro",
+                "original_photo_object_name": (body.original_photo_object_name or "") if not is_virtual else "",
+                "created_at": now,
+                "updated_at": now,
+            })
+        logger.info(
+            "[ArtistV212] save path=3(legacy->cid) user=%s variant=%s cid=%s",
+            user_id[:8], variant, target_cid,
+        )
+        saved_doc = await mongo.characters.find_one({"user_id": user_id, "character_id": target_cid}) or {}
+        if is_virtual:
+            return {
+                "variant": "virtual",
+                "virtual_sheet_object_name": permanent_object,
+                "virtual_art_style": saved_doc.get("art_style") or "",
+                "sheet_object_name": (reps.get("real") or {}).get("sheet_object_name") or "",
+                "character_id": target_cid,
+                "message": "가상화 캐릭터가 저장되었습니다.",
+            }
+        return {
+            "variant": "real",
+            "sheet_object_name": permanent_object,
+            "name": saved_doc.get("name") or "",
+            "age": saved_doc.get("age") or "",
+            "personality_tags": saved_doc.get("personality_tags") or [],
+            "personality_text": saved_doc.get("personality_text") or "",
+            "original_photo_object_name": saved_doc.get("original_photo_object_name") or "",
+            "character_id": target_cid,
+            "message": "캐릭터가 저장되었습니다.",
+        }
+
+    # ── legacy 원형 (마이그레이션 전 계정 — 기존 코드 보존) ──────────────────
     # Copy to permanent location (separate slot for virtual).
     if is_virtual:
         permanent_object = "characters/{}/sheet_virtual.png".format(user_id)
     else:
         permanent_object = "characters/{}/sheet.png".format(user_id)
 
-    # Download from temp and re-upload to permanent (MinIO copy)
-    try:
-        from minio.commonconfig import CopySource
-
-        minio_client.copy_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=permanent_object,
-            source=CopySource(
-                bucket_name=settings.minio_bucket_images,
-                object_name=body.sheet_object_name,
-            ),
-        )
-    except Exception as e:
-        logger.warning("MinIO copy failed, fallback to download+upload: %s", e)
-        # Fallback: download and re-upload
-        resp = minio_client.get_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=body.sheet_object_name,
-        )
-        data = resp.read()
-        resp.close()
-        resp.release_conn()
-        minio_client.put_object(
-            bucket_name=settings.minio_bucket_images,
-            object_name=permanent_object,
-            data=io.BytesIO(data),
-            length=len(data),
-            content_type="image/png",
-        )
-
-    # Upsert in MongoDB
-    used_items_data = [item.model_dump() for item in (body.used_items or [])]
+    _copy_sheet_to_permanent(minio_client, body.sheet_object_name, permanent_object)
 
     if is_virtual:
         # virtual 슬롯: 실사 필드(sheet_object_name/used_items/name/age/...) 절대 미변경.
@@ -1497,6 +1900,7 @@ async def save_character(
             "virtual_art_style": set_fields["virtual_art_style"],
             # 실사 슬롯은 그대로 — 클라이언트 확인용으로 함께 반환.
             "sheet_object_name": saved.get("sheet_object_name") or "",
+            "character_id": saved.get("character_id"),  # v212 — legacy doc 은 None (무해 추가)
             "message": "가상화 캐릭터가 저장되었습니다.",
         }
 
@@ -1508,6 +1912,7 @@ async def save_character(
         "personality_tags": personality_tags_val,
         "personality_text": personality_text_val,
         "original_photo_object_name": saved.get("original_photo_object_name") or "",
+        "character_id": saved.get("character_id"),  # v212 — legacy doc 은 None (무해 추가)
         "message": "캐릭터가 저장되었습니다.",
     }
 
@@ -1519,42 +1924,64 @@ async def save_character(
 async def get_my_character(
     current_user=Depends(get_current_user),
 ):
-    """Get current user's saved character."""
-    mongo = get_mongo()
-    char = await mongo.characters.find_one({"user_id": current_user["id"]})
+    """Get current user's saved character.
 
-    if not char:
+    v212 — 아티스트 다중화 하위호환 조립 (PLAN D4): 대표 real 아티스트 →
+    top-level 필드, 대표 virtual 아티스트 → virtual_* 필드. 응답 shape 는
+    기존 100% 유지 + character_id / characters_count / gender 추가(무해).
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    reps = await resolve_representative_artists(mongo, user_id)
+    real = reps.get("real")
+    virtual = reps.get("virtual")
+
+    if not real and not virtual:
         return {"character": None}
 
-    sheet_url = None
-    if char.get("sheet_object_name"):
-        sheet_url = "/api/character/preview/{}".format(char["sheet_object_name"])
+    from ..services.slots_service import count_used_slots
 
-    virtual_sheet_object_name = char.get("virtual_sheet_object_name") or ""
-    virtual_sheet_url = None
-    if virtual_sheet_object_name:
-        virtual_sheet_url = "/api/character/preview/{}".format(virtual_sheet_object_name)
+    characters_count = await count_used_slots(user_id)
+
+    profile_src = real or virtual  # real 전무 시 virtual 프로필 폴백 (legacy 단일 doc 동작 동등)
+    meta_doc = (profile_src or {}).get("_doc") or {}
+
+    sheet_object_name = (real or {}).get("sheet_object_name") or None
+    sheet_url = "/api/character/preview/{}".format(sheet_object_name) if sheet_object_name else None
+
+    virtual_sheet_object_name = (virtual or {}).get("sheet_object_name") or ""
+    virtual_sheet_url = (
+        "/api/character/preview/{}".format(virtual_sheet_object_name)
+        if virtual_sheet_object_name else None
+    )
 
     return {
         "character": {
-            "sheet_object_name": char.get("sheet_object_name"),
+            # v212 픽스: 구 키 user_id 복원 (planner 판정 — 미러링 표면 보존)
+            "user_id": user_id,
+            "sheet_object_name": sheet_object_name,
             "sheet_url": sheet_url,
-            "used_items": char.get("used_items", []),
+            "used_items": (real or {}).get("used_items") or [],
             # 가상화(그림/만화 화풍) 슬롯 (없으면 빈값).
             "virtual_sheet_object_name": virtual_sheet_object_name,
             "virtual_sheet_url": virtual_sheet_url,
-            "virtual_art_style": char.get("virtual_art_style") or "",
-            "virtual_used_items": char.get("virtual_used_items", []),
-            "name": char.get("name") or "",
-            "age": char.get("age") or "",
-            "personality_tags": char.get("personality_tags") or [],
-            "personality_text": char.get("personality_text") or "",
+            "virtual_art_style": (virtual or {}).get("art_style") or "",
+            "virtual_used_items": (virtual or {}).get("used_items") or [],
+            "name": profile_src.get("name") or "",
+            "age": profile_src.get("age") or "",
+            "gender": profile_src.get("gender") or "",  # v212 신규 (무해 추가)
+            "personality_tags": profile_src.get("personality_tags") or [],
+            "personality_text": profile_src.get("personality_text") or "",
             # original photo object name (preserved for compatibility)
-            "original_photo_object_name": char.get("original_photo_object_name") or "",
+            "original_photo_object_name": profile_src.get("original_photo_object_name") or "",
             # v55: 마지막 사용한 이미지 생성 모델. 옛 도큐먼트는 기본 "nb_pro".
-            "image_model": char.get("image_model") or "nb_pro",
-            "created_at": char.get("created_at", "").isoformat() if char.get("created_at") else None,
-            "updated_at": char.get("updated_at", "").isoformat() if char.get("updated_at") else None,
+            "image_model": profile_src.get("image_model") or "nb_pro",
+            "created_at": meta_doc.get("created_at").isoformat() if meta_doc.get("created_at") else None,
+            "updated_at": meta_doc.get("updated_at").isoformat() if meta_doc.get("updated_at") else None,
+            # v212 — 대표 real 아티스트 id (legacy doc 은 None) + 보유 아티스트 수
+            "character_id": (real or {}).get("character_id"),
+            "virtual_character_id": (virtual or {}).get("character_id"),
+            "characters_count": characters_count,
         }
     }
 
@@ -1578,13 +2005,18 @@ async def delete_my_character(
     minio_client = get_minio()
 
     # v137 ②: 삭제 전 원본 사진 object name 확보 (doc 삭제 후엔 조회 불가).
-    char = await mongo.characters.find_one(
+    # v212 — 복수 아티스트 doc 전체에서 수집 (구계약 의미 보존: /me 삭제 = 전체 삭제).
+    original_photos = set()
+    async for _c in mongo.characters.find(
         {"user_id": user_id}, {"original_photo_object_name": 1}
-    )
-    original_photo = (char or {}).get("original_photo_object_name") or ""
+    ):
+        if _c.get("original_photo_object_name"):
+            original_photos.add(_c["original_photo_object_name"])
+    original_photo = next(iter(original_photos), "")
 
-    # Delete from MongoDB
-    result = await mongo.characters.delete_one({"user_id": user_id})
+    # Delete from MongoDB — v212: 전체 아티스트 삭제 (delete_one → delete_many)
+    result = await mongo.characters.delete_many({"user_id": user_id})
+    logger.info("[ArtistV212] delete /me user=%s docs=%d", user_id[:8], result.deleted_count)
 
     # Delete MinIO objects under characters/{user_id}/
     prefix = "characters/{}/".format(user_id)
@@ -1613,20 +2045,23 @@ async def delete_my_character(
         logger.warning("Failed to clean up MinIO objects for character: %s", e)
 
     # v137 ②: prefix 밖(temp 경로 등)에 저장된 원본 사진 명시 삭제.
-    if original_photo and not original_photo.startswith(prefix):
+    # v212 — 복수 doc 의 원본 전부 순회.
+    for _photo in original_photos:
+        if not _photo or _photo.startswith(prefix):
+            continue
         try:
             minio_client.remove_object(
                 bucket_name=settings.minio_bucket_images,
-                object_name=original_photo,
+                object_name=_photo,
             )
             logger.info(
                 "[character] original_photo_deleted user=%s object=%s (explicit)",
-                user_id, original_photo,
+                user_id, _photo,
             )
         except Exception as e:
             logger.warning(
                 "[character] original photo delete failed user=%s object=%s: %s",
-                user_id, original_photo, e,
+                user_id, _photo, e,
             )
 
     return {"message": "캐릭터가 삭제되었습니다."}
@@ -1846,3 +2281,221 @@ async def delete_user_location(
 
     await mongo.character_locations.delete_one({"_id": oid, "user_id": user_id})
     return {"message": "장소가 삭제되었습니다."}
+
+
+# ── v212: 아티스트 다중화 API (PLAN D3) ──────────────────────────────────────
+# 라우팅 가드: /{character_id} 계열은 파일 최말미 등록 — 기존 /me /list /job
+# /preview /locations /personality-tags /style-samples 가 항상 선행 매치된다.
+# 추가로 핸들러 진입 시 32-hex 정규식 불일치 → 404 (형식 위반 = 존재 비노출).
+
+
+@router.get("/list")
+async def list_artists(
+    current_user=Depends(get_current_user),
+):
+    """v212 — 내 아티스트 목록 (cid 보유 문서만, updated_at 최신순) + slots 동봉.
+
+    legacy 무cid 문서는 노출하지 않음 — 마이그레이션 전 계정은 /me 로만 접근.
+    """
+    from ..services.slots_service import get_slots
+
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    docs = await mongo.characters.find(
+        {"user_id": user_id, "character_id": {"$exists": True, "$ne": None}}
+    ).sort("updated_at", -1).to_list(length=None)
+
+    used, mx = await get_slots(user_id)
+    logger.info("[ArtistV212] list user=%s count=%d slots=%d/%d", user_id[:8], len(docs), used, mx)
+    return {
+        "characters": [_serialize_artist(d) for d in docs],
+        "slots": {"used": used, "max": mx},
+    }
+
+
+class PatchArtistRequest(BaseModel):
+    name: Optional[str] = None
+    age: Optional[str] = None
+    gender: Optional[str] = None
+    personality_tags: Optional[List[str]] = None
+    personality_text: Optional[str] = None
+    is_default: Optional[bool] = None
+
+
+@router.get("/{character_id}")
+async def get_artist(
+    character_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v212 — 아티스트 단건 (타인/부재/형식 불일치 전부 404 — 존재 비노출)."""
+    mongo = get_mongo()
+    doc = await _find_artist_by_cid(mongo, current_user["id"], character_id)
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
+    return _serialize_artist(doc)
+
+
+@router.patch("/{character_id}")
+async def patch_artist(
+    character_id: str,
+    body: PatchArtistRequest,
+    current_user=Depends(get_current_user),
+):
+    """v212 — 프로필 수정 (전송 필드만). kind·sheet 변경 불가 (화이트리스트 외 무시).
+
+    is_default:true → 본 아티스트 set 후 나머지 전부 false.
+    is_default:false 단독 → 400 (기본 아티스트 0명 금지).
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    doc = await _find_artist_by_cid(mongo, user_id, character_id)
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        return JSONResponse(status_code=400, content={"error": "수정할 필드가 없습니다."})
+
+    set_fields = {}
+    if "name" in updates:
+        v = (updates["name"] or "").strip()
+        if len(v) > NAME_MAX_LEN:
+            return JSONResponse(status_code=400, content={"error": "이름은 {}자 이하여야 합니다.".format(NAME_MAX_LEN)})
+        set_fields["name"] = v
+    if "age" in updates:
+        v = (updates["age"] or "").strip()
+        if len(v) > AGE_MAX_LEN:
+            return JSONResponse(status_code=400, content={"error": "나이는 {}자 이하여야 합니다.".format(AGE_MAX_LEN)})
+        set_fields["age"] = v
+    if "gender" in updates:
+        v = (updates["gender"] or "").strip()
+        if len(v) > GENDER_MAX_LEN:
+            return JSONResponse(status_code=400, content={"error": "성별은 {}자 이하여야 합니다.".format(GENDER_MAX_LEN)})
+        set_fields["gender"] = v
+    if "personality_tags" in updates:
+        tags = [t.strip() for t in (updates["personality_tags"] or []) if isinstance(t, str) and t.strip()]
+        if len(tags) > PERSONALITY_TAGS_MAX_COUNT:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "성격 태그는 최대 {}개까지 선택할 수 있습니다.".format(PERSONALITY_TAGS_MAX_COUNT)},
+            )
+        for tag in tags:
+            if len(tag) > PERSONALITY_TAG_MAX_LEN:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "각 성격 태그는 {}자 이하여야 합니다.".format(PERSONALITY_TAG_MAX_LEN)},
+                )
+        set_fields["personality_tags"] = tags
+    if "personality_text" in updates:
+        v = (updates["personality_text"] or "").strip()
+        if len(v) > PERSONALITY_TEXT_MAX_LEN:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "성격 설명은 {}자 이하여야 합니다.".format(PERSONALITY_TEXT_MAX_LEN)},
+            )
+        set_fields["personality_text"] = v
+
+    make_default = updates.get("is_default")
+    if make_default is False and "is_default" in updates:
+        # 기본 해제 단독 금지 — 기본 아티스트는 항상 정확히 1명.
+        return JSONResponse(
+            status_code=400,
+            content={"error": "기본 아티스트 해제는 다른 아티스트를 기본으로 지정해 수행하세요."},
+        )
+
+    if not set_fields and not make_default:
+        return JSONResponse(status_code=400, content={"error": "수정할 필드가 없습니다."})
+
+    set_fields["updated_at"] = datetime.utcnow()
+    if make_default:
+        set_fields["is_default"] = True
+    await mongo.characters.update_one({"_id": doc["_id"]}, {"$set": set_fields})
+    if make_default:
+        await mongo.characters.update_many(
+            {"user_id": user_id, "_id": {"$ne": doc["_id"]}},
+            {"$set": {"is_default": False}},
+        )
+    logger.info(
+        "[ArtistV212] patch user=%s cid=%s fields=%s default=%s",
+        user_id[:8], doc["character_id"],
+        sorted(k for k in set_fields if k != "updated_at"), bool(make_default),
+    )
+    updated = await mongo.characters.find_one({"_id": doc["_id"]})
+    return _serialize_artist(updated)
+
+
+@router.delete("/{character_id}")
+async def delete_artist(
+    character_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v212 — 아티스트 개별 삭제 (doc + characters/{uid}/{cid}/ prefix).
+
+    default 삭제 시 잔여 중 real 우선·updated_at 최신 순으로 is_default 승계.
+    마지막 아티스트 삭제 시 공유 원본 사진도 삭제 (/me v137② 로직 준용).
+    """
+    mongo = get_mongo()
+    minio_client = get_minio()
+    user_id = current_user["id"]
+    doc = await _find_artist_by_cid(mongo, user_id, character_id)
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
+
+    cid = doc["character_id"]
+    was_default = bool(doc.get("is_default"))
+    original_photo = doc.get("original_photo_object_name") or ""
+
+    await mongo.characters.delete_one({"_id": doc["_id"]})
+
+    # MinIO: characters/{uid}/{cid}/ prefix 삭제
+    prefix = "characters/{}/{}/".format(user_id, cid)
+    try:
+        objects = minio_client.list_objects(
+            bucket_name=settings.minio_bucket_images, prefix=prefix, recursive=True,
+        )
+        from minio.deleteobjects import DeleteObject
+
+        delete_list = [DeleteObject(obj.object_name) for obj in objects]
+        if delete_list:
+            errors = minio_client.remove_objects(
+                bucket_name=settings.minio_bucket_images, delete_object_list=delete_list,
+            )
+            for err in errors:
+                logger.warning("Failed to delete MinIO object: %s", err)
+    except Exception as e:
+        logger.warning("[ArtistV212] MinIO cleanup failed user=%s cid=%s: %s", user_id[:8], cid, e)
+
+    remaining = await mongo.characters.find({"user_id": user_id}).sort("updated_at", -1).to_list(length=None)
+
+    # default 승계 — real 우선, updated_at 최신
+    if was_default and remaining:
+        heir = None
+        for d in remaining:
+            if (d.get("kind") or "real") == "real":
+                heir = d
+                break
+        heir = heir or remaining[0]
+        await mongo.characters.update_one({"_id": heir["_id"]}, {"$set": {"is_default": True}})
+        logger.info(
+            "[ArtistV212] default inherited user=%s from=%s to=%s",
+            user_id[:8], cid, heir.get("character_id") or "(legacy)",
+        )
+
+    # 마지막 아티스트 삭제 — 공유 원본 사진 삭제 (v137② 준용)
+    if not remaining and original_photo:
+        try:
+            minio_client.remove_object(
+                bucket_name=settings.minio_bucket_images, object_name=original_photo,
+            )
+            logger.info(
+                "[character] original_photo_deleted user=%s object=%s (last artist)",
+                user_id, original_photo,
+            )
+        except Exception as e:
+            logger.warning(
+                "[character] original photo delete failed user=%s object=%s: %s",
+                user_id, original_photo, e,
+            )
+
+    logger.info("[ArtistV212] delete user=%s cid=%s remaining=%d", user_id[:8], cid, len(remaining))
+    return {"message": "아티스트가 삭제되었습니다.", "remaining": len(remaining)}

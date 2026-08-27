@@ -95,6 +95,9 @@ const MVProductionSection = forwardRef(function MVProductionSection({
   selectedLocationId,
   includeCharacter,
   characterVariant,
+  // v212 F5 — 선택 아티스트의 character_id (다중 아티스트). 지정 시 서버가 해당 아티스트로
+  // 스냅샷, 미지정(legacy 폴백 카드)이면 종전 character_variant 경로.
+  characterId,
   selectedCharSheet,
   draftData,
   onCoverAdopted,
@@ -401,8 +404,10 @@ const MVProductionSection = forwardRef(function MVProductionSection({
         audio_duration_sec: audioDuration || null,
         scene_prompt: scenePrompt.trim() || null,
         character_object_name: includeCharacter ? selectedCharSheet() : null,
-        // v75: 실사('real')/가상('virtual') 캐릭터 선택 — 백엔드 MV 파이프라인에 전달.
-        character_variant: includeCharacter ? characterVariant : null,
+        // v212 F5: 선택 아티스트 character_id 전송 (다중 아티스트 — 서버가 해당 doc 으로 스냅샷).
+        character_id: includeCharacter ? (characterId || null) : null,
+        // v75 legacy: character_id 없을 때만(구 단일 문서 계정) variant 경로 유지.
+        character_variant: includeCharacter && !characterId ? characterVariant : null,
         video_model: videoModel,
         audio_generation_id: fromGeneration || null,
         // v209 3단계: 「내 트랙」 곡 소스 — 서버가 track 소유권 검증 + audio 해석 폴백 (generation 과 택1)

@@ -11130,3 +11130,313 @@ attach/detach/replace/promote 전후 mongo 3필드), 캐시 무효 타임라인(
   U1(b) 암묵 페어 판정 키 명문화(`mv_jobs.audio_generation_id ↔ tracks.generation_id` 역링크 —
   직삽 트랙 픽스처 generation_id 세팅 필수). v210 REPORT 의 "내부 경로" 서술 정정 각주는 planner
   가 REPORT v211 에서 처리.
+
+## v212 — B-1 아티스트 다중화 + 프로필 입력 복원 검증 (2026-08-27 17:06)
+
+### 0. 전제·공통 절차
+
+- **대상**: PLAN v212(:30669~). 백엔드 — characters 복수 문서(D1: character_id 32-hex·kind·
+  is_default·gender 신설), user_slots + slots_service(D2: max = BASE 1 + extra_slots),
+  list/단건 GET/PATCH/DELETE 신설(D3), generate 4종 character_id + 슬롯 409·save 3-경로(D4),
+  migrate_characters_v212.py(D5), 소비처 7곳 전환(D6), mv CreateMVRequest.character_id additive.
+  프론트 — 카드 목록·슬롯 바·프로필 폼·ArtistPicker 3소비처 수렴(D7).
+- **서버·계정·원복**: v211 §0 승계 — 9006 단독+4000, 계정 `TEST_ACCOUNT_EMAIL`(A)·
+  `TEST_ACCOUNT_EMAIL_B`(B) 일회용 가입→탈퇴. mongo 직삽 픽스처(characters·user_slots·구형 legacy
+  doc)는 **테스트 계정 user_id 소유만** — 삽입/삭제 id 전수 기록·즉시 원복. MinIO 쓰기는
+  `characters/{테스트uid}/…` 테스트 오브젝트만(G7 sweep 판정용) — 종료 시 잔존 0 확인.
+- **보존 실데이터 read-only 서약**: mongo `characters` **실데이터 7건**(real 6·virtual 단독 1)
+  무접촉 — 착수 시 `_id`+`updated_at` 스냅샷 → 종료 시 재계측 동일(변동 = 즉시 ABORT). 마이그레이션
+  은 **테스트 계정 직삽 사본 + dry-run 만**(G15) — 실데이터 `--apply` 는 ▲사용자 승인 별건.
+- **유료 0 — 이번 사이클 규약**:
+  1. **시트 생성 4종(generate-sheet/-cartoon/-async/-cartoon-async) = ⭐10 + 외부 이미지 API —
+     성공 경로 금지.** 실호출은 **차감 전 거절 경로만**(슬롯 409·kind 불일치 400·character_id 부재
+     404·검증 단계 4xx — 전부 ⭐10 차감·job 생성·외부 도달 이전 종료, 각 케이스 후 원장 무변 확인).
+     e2e 는 전면 인터셉트. 커버(⭐5)·작사·작곡·MV 파이프라인 동일(기존 차단망).
+  2. **extra_slot(⭐15) = 내부 포인트 시스템(외부 API 0)** — 테스트 계정 **실호출 허용**. 단
+     **원장 대조 필수**: point_balances 차감액 ↔ point_events(action=extra_slot, ref) ↔
+     user_slots.extra_slots 증가가 1:1:1 정합. grant 실패 refund 경로는 실서버 유발 불가 —
+     backend 단위(모킹) 영역으로 위임(G13(f)).
+  3. 실업로드 = v211 개정 규약(OpenAI 인덱싱 2회/건) 승계 — **이번 사이클 실업로드 예정 0건**,
+     불가피 시 사전 산정·고지·계상.
+  4. 차단망 승계: translate-tags 포함 e2e 공통 인터셉트, mv_jobs 직삽 시 lazy translate 3쌍
+     6필드 규약(v211 §0).
+- **얼굴인증**: 실인증 절대 금지 — `face_verify_enabled` 기본 False 실측(config.py:173) 전제로
+  **게이트/모달 노출 판정까지만**(G5). 사진 업로드는 테스트 무의미 이미지만(도용 SHA 차단과 무관).
+- **me shape 100% 판정 규약**: 구계약 응답의 **키 집합·타입 보존**이 기준 — 신규 추가 허용분은
+  `character_id`·`characters_count`(me)·legacy save 응답의 `character_id` 동봉뿐(D4 계약). 기준
+  키 집합은 diff 이전 코드(SaveCharacterRequest·me 직렬화)에서 tester 가 실측 고정. **me 키셋
+  스냅샷 비교(user_id 포함 전량 존재 확인)는 이번 사이클부터 상비 회귀로 등재**(G1⑤ — 기준
+  키셋을 판정 기록에 원문 보존, 이후 사이클 재사용).
+- **단계 게이트**: B3 머지 후 = api·unit 계열(G1·G2·G6a·G7~G14) / B4~B8 후 = G4·G15 / F2~F5 후 =
+  e2e(G3·G5·G6b·G16).
+
+### 1. 시나리오 (G1~G7 회귀 = PLAN §4 1~7 / G8~G16 신규 = 8~16)
+
+#### G1 `[api]` 구계약 me/save 왕복 — shape 100% (구버전 앱 시뮬)
+
+- **Given**: 계정 A(아티스트 0 상태). **character_id/kind 미전송**(구버전 앱 시뮬 — me/save 만 사용).
+  sheet_object_name 은 `characters/{uid}/` 테스트 오브젝트(MinIO 실배치).
+- **When/Then**: ① save(variant 미전송=real 정규화) → 200 + 응답 shape 기존 동일(+character_id
+  동봉만 추가 — §0 규약) ② GET /me → top-level real 필드 조립 일치 ③ save(variant:'virtual'+
+  art_style) → virtual_* 조립 일치 ④ 재-save(같은 variant) → **upsert**(문서 수 불변 — mongo
+  count) ⑤ **me 응답 키셋 스냅샷 비교(planner 회귀 보강 — 이후 사이클 상비 회귀)**: diff 이전
+  코드에서 실측 고정한 구 계약 키 **전량(user_id 포함)** 이 응답에 존재 — 누락 1건이라도 FAIL
+  (키 제거가 조용히 통과 못 하게), 허용 추가분은 §0 규약 2키뿐. 기준 키셋 목록을 판정 기록에
+  원문 보존(차기 사이클이 스냅샷으로 재사용).
+- **정리**: DELETE /me(G7 과 연계) 또는 mongo 원복.
+- **유료 0**: save/me 무과금 CRUD.
+- **게이트**: B3 후.
+
+#### G2 `[api]` me 조립 3케이스 — real 만 / virtual 만 / 양쪽
+
+- **Given**: 직삽으로 신 스키마(cid 보유) 문서 구성 3상태 순차: (a) real 1 (b) virtual 1(실데이터형)
+  (c) real+virtual 각 1(is_default=real).
+- **When/Then**: 각 상태 GET /me — (a) top-level 채움·virtual_* 빈값 (b) top-level 시트 빈값·
+  virtual_* 채움 (c) 양쪽 채움 + characters_count=2. 대표 해석(D4: default-real 우선→kind 최신)
+  이 문서 updated_at 조작으로 검증.
+- **정리**: 직삽 문서 삭제.
+- **유료 0**: GET 만. **게이트**: B3 후.
+
+#### G3 `[e2e]` v207 커버 회귀 + 선택 아티스트 sheet 반영
+
+- **Given**: Playwright 계정 A, 공통 차단망. 아티스트 2건(직삽 — real/virtual, sheet_object_name
+  상이). `**/generate-cover**`·`**/refine-cover**` 인터셉트(v209 T15 방식).
+- **When/Then**: UploadPage 에서 ArtistPicker 로 아티스트 선택 → 커버 생성(캐릭터 포함) 실행 →
+  인터셉트 body 의 `character_object_name` == **선택 아티스트의 sheet_object_name**(다중화 이후
+  선택 반영 증명) + v207 9필드·402/403 분기·refine(refine_prompt) 기존 판정 유지. upload.py 무변경
+  (D6)은 diff 정적 교차. UploadPage snapshot 전송(:405-412 상당)에 **gender 포함** 선택 아티스트
+  필드 반영.
+- **유료 0**: 전면 인터셉트. **게이트**: F4 후.
+
+#### G4 `[unit]`(+조건부) MV 스냅샷 동등성·character_id additive
+
+- **Given**: backend venv. `resolve_representative_artists` 헬퍼 + mv.py 스냅샷 조립부를 직접
+  호출(직삽 아티스트 2건 상태, 서버 프로세스 무관).
+- **When/Then**: ① variant(구) 경로 — 헬퍼 해석 결과가 구 단일 문서 시절과 동등(name/age/
+  personality/sheet 스냅샷 필드 동일 구성 + SnapFix 사본 규약) ② character_id 지정 — 해당 아티스트
+  (kind 무관) 선택 ③ CreateMVRequest pydantic — character_id Optional additive(구 body 파싱 무변).
+- **job doc 검사 (planner Q1 해소 — 조건부 [api] 절차)**: 스냅샷은 **create 동기 구간
+  insert**(mv.py :571-618) 이므로 job doc 검사로 충분. 절차 —
+  ⓐ tester 가 **phase1 선두에서 오디오 해석이 외부 호출보다 먼저인지 1회 코드 실측**(선행 확정
+  조건). ⓑ 선행이면: create 를 **무효 오디오 참조**(비실존 result_audio_url 의 직삽 generation
+  등)로 실호출 → background 는 오디오 해석 단계에서 조기 실패(외부 미도달) → job doc 의 캐릭터
+  스냅샷(variant 경로/character_id 경로 각 1건) 검사 → **job 즉시 mongo 삭제 원복 + 외부 호출
+  흔적 0 로그 확인**. ⓒ 외부 호출이 먼저면: 실호출 금지 — **job doc 직삽 + 헬퍼 단위 검증으로
+  강등**(강등 사유 기록). e2e 측 배선(MVProductionSection character_id 전송)은 G16(e) 인터셉트로
+  판정.
+- **유료 0**: 인메모리/직접 호출. **게이트**: B4 후.
+
+#### G5 `[e2e]` 내 캐릭터 탭 기존 생성 플로우 회귀 — 게이트 노출까지
+
+- **Given**: 공통 차단망 + 생성 4종·job 폴링 엔드포인트 인터셉트(job 픽스처 fulfill — 폴링 UI 판정).
+- **When/Then**: ① real 생성 폼 — 사진 업로드 → 생성 버튼 → 요청이 인터셉트에서 종료(⭐10 표기
+  확인·서버 미도달) + 402(별 부족)·403(스트라이크) 분기 문구는 인터셉트 응답 조작으로 판정
+  ② **얼굴인증 게이트(FaceVerifyFlow)는 real 경로에서 모달 노출까지만 — 실인증 절대 금지**
+  ③ virtual 경로에 얼굴인증 미노출 ④ 잡 폴링 UI 가 픽스처 진행률 반영.
+- **유료 0**: 전면 인터셉트 + 실인증 0. **게이트**: F2 후.
+
+#### G6 `[api]+[e2e]` 소비처 회귀 — albums·admin 상세·PlayerPage
+
+- (a) `[api]` albums use_character: 직삽 real 아티스트 상태에서 앨범 생성(use_character:true —
+  내부 무과금 실측 확인 후 실호출, 외부 호출 감지 시 즉시 중단·인터셉트 전환) → 앨범 doc 에 대표
+  real 의 sheet_object_name 반영(헬퍼 경유 — D6) → 앨범 삭제 원복. admin 사용자 상세(planner Q2
+  해소): **이전 사이클 어드민 테스트 계정 재사용**, 부재 시 **테스트 계정 한정 PG role 세팅 허용**
+  (세팅·원복 SQL 기록 — 실사용자 계정 role 무접촉) → artists[] 추가+기존 필드 유지 판정.
+- (b) `[e2e]` PlayerPage CharacterCoverCard: 트랙 상세 인터셉트 fulfill(cover_character flat
+  스냅샷 — gender 포함형) → 카드 렌더 현행 무변.
+- **유료 0**: 내부 CRUD·인터셉트. **게이트**: (a) B5~B6 후 / (b) F 후.
+
+#### G7 `[api]` DELETE /me 전체 삭제 + 신·구 경로 sweep
+
+- **Given**: 계정 A — 직삽 신 스키마 2건 + legacy 무cid 1건, MinIO 테스트 오브젝트를 **구 경로**
+  (`characters/{uid}/sheet.png`·`sheet_virtual.png`)와 **신 경로**(`characters/{uid}/{cid}/sheet.png`)
+  + 공유 원본(`characters/{uid}/original.*`)에 실배치.
+- **When**: DELETE /character/me.
+- **Then**: characters 문서 **전건**(신+legacy) 삭제(구계약 "전체 삭제" 의미 보존 — D4) + MinIO
+  `characters/{uid}/` prefix 신·구·원본 전부 소멸(mc ls 계측) + me 200/빈 응답 정합.
+- **정리**: sweep 자체가 원복. **유료 0**: 무과금 CRUD·자기 소유 경로만. **게이트**: B3 후.
+
+#### G8 `[api]` GET /character/list — 2건·독립 경로·slots 동봉 (수용기준①)
+
+- **Given**: 직삽 real+virtual 각 1(cid 보유, sheet_object_name 이 `{uid}/{cid1}/`·`{uid}/{cid2}/`
+  로 상이) + **legacy 무cid 문서 1건 추가**.
+- **When/Then**: /list → characters 2건(updated_at 최신순·**cid 보유 문서만** — legacy 미노출) +
+  각 항목 D3 필드 전부(gender 포함)·sheet_url 발급 + `slots:{used,max}` 동봉. **used 산식(planner
+  Q4 확정)**: used = cid 문서 수 + legacy 무cid 문서의 (real 시트?1)+(virtual 시트?1) — 본 픽스처
+  기대값: cid 2 + legacy(real 시트 1) = **used 3**. 추가 케이스: legacy **양쪽 보유** 픽스처 단독
+  상태 → used 2 > max 1 **허용 상태**(초과 표시 정합 — 실계정 0건이라 픽스처로만). 타 계정(B)
+  문서 미혼입.
+- **유료 0**: GET. **게이트**: B3 후.
+
+#### G9 `[api]` 단건 GET/PATCH/DELETE — 가드·기본 승계·독립성
+
+- **Given**: G8 상태(real R=default·virtual V).
+- **When/Then**: ① GET 단건 — 본인 200 / B 토큰 404 / 부재 404 ② PATCH — 전달 필드만 갱신(name
+  만 보내면 age 불변), `is_default:true`(V) → V true·R false(update_many), **`is_default:false`
+  단독 400**, kind·sheet_object_name 변경 시도 무시/400(계약 실측 기록 — 불변이 본질) ③ DELETE V
+  → **R 무손상**(독립 삭제 — 다중 문서 축) + `{uid}/{cidV}/` prefix 만 삭제 ④ default(R) 삭제 시
+  잔여 승계 규칙(real 우선→최신) — 문서 재구성해 확인 ⑤ 마지막 아티스트 삭제 시 공유 원본 삭제.
+- **유료 0**: 무과금 CRUD. **게이트**: B3 후.
+
+#### G10 `[api]` 라우팅 가드 — 고정 경로 우선·비 32-hex 404
+
+- **When/Then**: `/character/list`·`/me`·`/job/...`·`/personality-tags`·`/style-samples`·
+  `/locations`·`/preview/...` 가 전부 기존 핸들러로 응답(단건 GET 에 잡히지 않음 — 각 200/기존
+  코드) + `/character/abc`·`/character/{31자}`·`/character/{33자}`·대문자 hex → **404**(정규식
+  가드). 정상 32-hex 소문자 단건 200 은 G9① 이 겸증. *(planner 재확인 회신: §4-10 요구 케이스
+  — /list·/me·/job 미포획 + 비 32-hex 404 — 본 시나리오에 전수 포함 확인, 보강분 = 정상 케이스
+  G9 교차 명시뿐.)*
+- **유료 0**: GET. **게이트**: B3 후.
+
+#### G11 `[api]` generate character_id·슬롯 409 — 차감 전 거절 전종
+
+- **Given**: 계정 A — real 아티스트 1(직삽)·슬롯 기본 1(만석). ⭐잔액 사전 기록.
+- **When/Then** (4종 대표로 sheet + cartoon-async 2종 실측, 나머지 2종은 코드 공통 구조 확인
+  기록):
+  - (a) character_id 지정·kind 불일치(real cid 를 cartoon API 로) → **400**
+  - (b) character_id 부재/타인 → **404**
+  - (c) 미지정·만석 → **409** `{"error":"slot_limit_exceeded","used":1,"max":1,...}` shape 일치
+  - (d) 각 케이스 후 **⭐ 미차감·character_jobs 미생성·point_events 무변**(원장 3면 대조 — 409 가
+    차감 전임의 증명, 수용기준 연동)
+  - 성공 경로(검증 통과→⭐10) 는 **절대 미진입**.
+- **유료 0**: 전건 차감 전 4xx 종료 + 원장 증빙. **게이트**: B3 후.
+
+#### G12 `[api]` save 신규 계약 슬롯 409 / legacy 면제 upsert
+
+- **Given**: G11 상태(만석 1/1).
+- **When/Then**: ① save ②형(kind:'virtual', cid 미지정) → **409**(동일 shape — save 도 슬롯 검사)
+  ② save ③형(legacy — kind·cid 미전송, variant:'virtual') → **200 면제**(구계약 보존 — 문서
+  upsert, 슬롯 초과 아님: 자연 상한 확인·문서 수 실측 기록) ③ save ①형(기존 cid 지정) → 슬롯
+  무관 200(재저장·시트 교체 경로, kind 동봉 불일치 400).
+- **유료 0**: save 무과금. **게이트**: B3 후.
+
+#### G13 `[api]`(+`[unit]`) extra_slot 전주기 — 구매·영속·원장·402 (수용기준④)
+
+- **Given**: 계정 A 만석(1/1·G12 연속). **잔액 전제(planner Q5 정정판)**: 신규 가입 잔액 =
+  **50(signup_bonus)** — 구매 1회(⭐15)에 충분, **충전 불요**(admin_adjust 충전은 잔액 부족 상황
+  발생 시 예비 수단으로만 — 사용 시 원장 대조에서 구분 계상). 원장 3면
+  (point_balances·point_events·user_slots) 사전 스냅샷(기준 잔액 50 실측 확인 포함).
+- **When/Then**:
+  - (a) save ②형 → 409(구매 전 재확인) → (b) `POST /points/spend {action:'extra_slot'}` **실호출**
+    → 200 + `max_slots:2` 동봉 + **원장 대조**: balances -15 == events(extra_slot·ref) 1건 ==
+    user_slots.extra_slots +1 (1:1:1)
+  - (c) save ②형 재시도 → **200**(2번째 아티스트 문서 생성 — "구매 후 2번째 생성 성공"의 무과금
+    등가 검증) + /list slots {used:2,max:2}
+  - (d) generate 미지정 재호출 → **409 아님**(슬롯 통과 — 단 의도적 무효 입력으로 검증 단계 4xx
+    에서 종료·⭐10 미차감 원장 확인: 슬롯 게이트 통과와 유료 미진입 동시 증명). **planner Q3
+    확정: 슬롯 검사는 핸들러 최선두(backend 구현 조건) — 무효 입력 프로브 유효**(409 여부만으로
+    슬롯 상태 판별 가능)
+  - (e) **영속**: 로그아웃→재로그인(세션 재발급) 후 /list → max=2 유지(user_slots 영속 — 수용기준)
+  - (f) `[unit]` grant 실패 refund: 실서버 유발 불가 — backend 단위(모킹: grant_extra_slot 예외
+    주입)로 refund_points 호출+500 검증, backend-dev 테스트 산출물 확인으로 판정(부재 시 mongo
+    직삽 검증 불가 사유와 함께 코드 경로 목검 기록 — SKIP 아닌 정적 판정)
+  - (g) **402**: 계정 B — 신규 잔액 **50**(Q5 정정) 이므로 **자연 소진으로 부족 상태 조성**:
+    extra_slot spend 3회 성공(50→35→20→5, 각 회 원장 3면 대조·slots +1 누적 판정 겸) → 잔액 5
+    상태에서 4번째 spend → **402** + user_slots·events **무변화**(돈-슬롯 양방향 무결 — 402 시
+    차감·grant 모두 0).
+- **정리**: A 의 문서·user_slots 직삽 원복(테스트 계정 한정), 계정 탈퇴.
+- **유료 0**: 내부 포인트 시스템(외부 API 0 — §0-2), 전 단계 원장 증빙. **게이트**: B3 후(B2 포함).
+
+#### G14 `[api]` 프로필 입력 왕복 + 검증 경계 (수용기준 프로필축)
+
+- **Given**: 계정 A 아티스트 1(직삽 또는 G12③ 산출).
+- **When/Then**: ① save 에 name/age/gender/personality_tags/personality_text 동봉 → me·list 양쪽
+  반영(**빈 문자열 0건이던 실데이터 증상의 역증명**) ② PATCH 로 수정 → 재반영 ③ 경계: NAME 50·
+  AGE 30·GENDER 20·TEXT 500·TAG 20자/20개 — 경계값 통과·+1 초과 400 각각 ④ 부분 갱신 semantics:
+  None(미전송)=유지 vs `""` 전송=명시 클리어 ⑤ gender 자유 문자열(enum 비강제) 확인.
+- **유료 0**: 무과금 CRUD. **게이트**: B3 후.
+
+#### G15 `[unit]` 마이그레이션 dry-run — 정합·멱등·무변조 (**--apply 실행 금지**)
+
+- **Given**: 테스트 계정 A 에 **구형(무cid) doc 직삽 3형**: (a) real 시트만 (b) virtual 단독
+  (실데이터형) (c) real+virtual 양쪽(grandfather 케이스). MinIO 구 경로 테스트 오브젝트 배치.
+  실데이터 7건 스냅샷(§0) 유효 상태.
+- **When**: `migrate_characters_v212.py --user-id <A>` **dry-run**(기본 모드) 2회 실행.
+- **Then**: ① 출력 판정 정합 — (a)→in-place real 승격 예고 (b)→virtual 전환 예고 (c)→real 승격+
+  virtual 분리 신규 doc+`extra_slots=1` grandfather 예고, 시트 **copy**(이동 아님) 계획 명시
+  ② 2회 출력 동일(멱등 — cid 보유 doc 스킵 규칙 포함) ③ **전후 무변조**: mongo characters(실데이터
+  7건 포함)·MinIO 계측 동일(dry-run 쓰기 0) ④ `--user-id` 필터가 실데이터를 대상에서 제외함을
+  출력으로 확인 ⑤ **`--apply` 는 본 사이클 실행 금지**(planner 지시) — 적용 검증(real→①·virtual→②
+  분리·경로 이전·me 동등성)은 ▲사용자 승인 후 별도 사이클로 이월 명기.
+- **정리**: 직삽 구형 doc·테스트 오브젝트 삭제.
+- **유료 0**: read-only 실행 + 로컬. **게이트**: B8 후.
+
+#### G16 `[e2e]` FE 신규 — 카드 목록·슬롯 바·새 아티스트·ArtistPicker·캐시
+
+- **Given**: Playwright 계정 A, 공통 차단망. 백엔드 실호출(무과금 CRUD·/list) + 생성 4종만 인터셉트.
+  아티스트 2건 상태(G8 방식 직삽 또는 UI 저장 경유).
+- **When/Then**:
+  - (a) 내 캐릭터 탭 — 카드 목록(kind 뱃지)·기본 지정(PATCH is_default 반영)·개별 삭제(카드 1개만
+    소멸) · 프로필 수정 폼(getPersonalityTags 칩 + 직접 입력) 저장 반영
+  - (b) 슬롯 바 used/max 표시 + [⭐15 슬롯 추가] → spendPoints 실호출 성공 시 max 갱신, 402 시
+    별 부족 안내(잔액 상태에 따라 실측 분기 — 402 케이스는 B 계정)
+  - (c) [＋새 아티스트] kind 선택 → 생성 폼 진입(mode-tabs 이동 확인), 생성 버튼은 인터셉트 종료
+  - (d) **ArtistPicker 3소비처**: UploadPage·CoverEditModal 라디오 대체 + MVStudioTab 캐릭터 옵션
+    활성화 여부 실측(계획상 하드 disabled 해제 접점 — 구현 시 판정, 미구현 시 현행 disabled 기록)
+  - (e) MVProductionSection — `**/mv/create**` 인터셉트 body 에 **character_id**(variant 폐기 —
+    F5), 캡처로 판정
+  - (f) **캐시 무효화**: 저장·삭제·PATCH·슬롯 구매 각각 후 `aimu:myCharacters:{uid}` sessionStorage
+    갱신/제거 → 목록 즉시 최신(5분 캐시 잔존 버그 없음).
+- **정리**: 문서·구매분 원복(§0)·계정 탈퇴.
+- **유료 0**: 생성·커버·MV 전면 인터셉트, CRUD·spend 는 무과금/내부(원장 대조 G13 준용).
+- **게이트**: F2~F5 후.
+
+### 2. 실행 순서·게이트·중단 기준
+
+| 게이트 | 순서 | 비고 |
+|---|---|---|
+| B3 머지 후 | 실데이터 7건 스냅샷 → G10 → G8 → G9 → G2 → G1 → G7 → G14 → G12 → G11 → G13 → G6a | 원장 스냅샷은 G11 전·G13 전후 필수 |
+| B4~B8 후 | G4 → G15 | G15 는 --apply 금지 |
+| F2~F5 후 | G5 → G3 → G16 → G6b | 브라우저 1세션·차단망 체크리스트 1번 |
+| 종료 | 실데이터 7건 재스냅샷 → 픽스처·테스트 오브젝트 잔존 0 → 계정 A·B 탈퇴 | |
+
+- **ABORT**: ① 실데이터 characters 7건 변동 ② 생성 4종에서 ⭐10 차감/character_jobs 생성/외부
+  이미지 API 도달 흔적 ③ extra_slot 원장 3면 불일치(과차감·이중 grant) ④ --apply 실행 흔적
+  ⑤ 얼굴인증 실인증 진입 ⑥ 차단망 미스(translate-tags 등 실서버 도달) — 즉시 중단·보고.
+
+### 3. 판정 기록 양식
+
+v205 §4 동일. 첨부: me shape 키 집합 대조표(G1), 원장 3면 대조표(G11·G13 — before/after), 슬롯
+전이표(1/1→409→구매→2/2→영속), dry-run 출력 원문+2회 diff(G15), 인터셉트 캡처(G3 커버 body·
+G16(e) character_id), 실데이터 7건 전후 스냅샷. 시크릿·실이메일 0.
+
+### 4. planner/tester 확인 필요 (2026-08-27 planner 회신으로 전건 해소)
+
+- **Q1 [해소]**: mv 스냅샷 = create **동기 구간 insert**(mv.py :571-618) — job doc 검사로 충분.
+  무효 오디오 참조로 background 조기 실패 유도하되 **phase1 선두의 오디오 해석 vs 외부 호출 선후를
+  tester 1회 실측 후 확정**(외부 선행이면 job doc 직삽 검증으로 강등) — G4 조건부 절차 ⓐⓑⓒ 반영.
+- **Q2 [해소]**: admin = **이전 사이클 어드민 테스트 계정 재사용**, 부재 시 테스트 계정 한정 PG
+  role 세팅 허용(원복 포함) — G6a·G13 충전에 공용.
+- **Q3 [해소]**: 슬롯 검사 **핸들러 최선두 확정**(backend 구현 조건) — G13(d) 무효 입력 프로브
+  유효.
+- **Q4 [해소]**: used = cid 문서 수 + legacy 무cid 의 (real?1)+(virtual?1). legacy 양쪽 보유는
+  used 2 > max 1 **허용 상태**(픽스처로만 — G8 반영).
+- **Q5 [해소·정정판]**: 신규 가입 잔액 = **50(signup_bonus)** — 최초 "0" 회신은 points.py:62
+  **스테일 주석 기인 선답 오류**(planner 정정). G13 반영: A 는 충전 불요(잔액 50 으로 ⭐15 충분),
+  402 케이스는 B 의 **자연 소진**(spend 3회 → 잔액 5)으로 조성 — 테스트 유효 판정 유지.
+  admin_adjust 충전은 예비 수단으로 격하(사용 시 원장 구분 계상).
+
+### 개정 이력 (v212)
+
+- 2026-08-27 초판 16건(PLAN §4 1:1 매핑 — 회귀 G1~G7·신규 G8~G16): **[api] 11(G1·G2·G6a·G7~G14)
+  / [unit] 2(G4·G15, G13(f) 겸) / [e2e] 4(G3·G5·G6b·G16)**. 급소 = ①슬롯 전주기(만석 409 →
+  ⭐15 구매 → 무과금 등가 생성 성공 → 재로그인 영속 → 원장 3면 1:1:1, G11~G13) ②me shape 100%
+  하위호환(G1·G2) ③다중 문서 독립성(G8·G9) ④프로필 왕복+경계(G14) ⑤dry-run 정합·멱등·무변조
+  (G15 — **--apply 금지**). 유료 0 = 시트 생성 4종 성공 경로 금지(차감 전 4xx 거절만 실호출·원장
+  증빙) + extra_slot 내부 실호출 허용(원장 대조 필수·refund 는 단위 모킹) + 실데이터 characters
+  7건 read-only 스냅샷 서약 + v211 차단망·실업로드 개정 규약 승계. 게이트: B3 후 12건 → B4~B8 후
+  2건 → F2~F5 후 4건.
+- 2026-08-27 **확정판(planner 승인 — Q1~Q5 전건 해소 반영)**: ① G4 조건부 [api] 절차 ⓐⓑⓒ —
+  동기 구간 insert 근거(mv.py :571-618)·무효 오디오 조기 실패 유도·선후 실측 조건·강등 규칙
+  ② G6a admin = 이전 사이클 어드민 계정 재사용/테스트 계정 한정 PG role 세팅 허용 ③ G13(d) 무효
+  입력 프로브 유효(슬롯 검사 최선두 — backend 구현 조건) ④ G8 used 산식 확정(cid 수 + legacy
+  real/virtual 각 1 환산, 양쪽 보유 used 2>max 1 허용 — 픽스처 기대값 used 3 명기) ⑤ G13 잔액
+  조성 = 신규 0 + admin_adjust 충전(원장 구분 계상)·402 는 B 무충전. G10 은 planner 우려(§4-10
+  누락)에 대해 전수 포함 재확인 — 보강분은 정상 32-hex 케이스의 G9 교차 명시뿐. 시나리오 수·태그
+  분포 불변(16건).
+- 2026-08-27 **정정판(planner 확정 정정 2건)**: ① Q5 서술 정정 — 신규 가입 잔액 = **50
+  (signup_bonus)**("0" 은 points.py:62 스테일 주석 기인 선답 오류). G13 반영: A 충전 불요(잔액
+  50), 402 조성 = B 자연 소진(spend 3회 50→5, 각 회 원장 대조 겸) 후 4번째 402 — 테스트 유효
+  판정 유지, admin_adjust 는 예비 수단 격하 ② 회귀 보강 — **me 응답 키셋 스냅샷 비교**(구 계약
+  키 전량·user_id 포함 존재, 누락 1건 FAIL)를 G1⑤ 강화 + §0 규약에 **이후 사이클 상비 회귀**로
+  등재(기준 키셋 판정 기록 원문 보존·재사용).

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { FiClock, FiRefreshCw, FiZap, FiImage, FiArrowLeft, FiCheck } from 'react-icons/fi';
 import * as api from '../../api';
 import MVProductionSection from '../MVProductionSection';
+import ArtistPicker, { artistKey } from '../ArtistPicker';
 import '../../pages/UploadPage.css';
 import '../StudioTab2.css';
 
@@ -31,6 +32,11 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
   const [generatingCover, setGeneratingCover] = useState(false);
   const [coverCost, setCoverCost] = useState(5);
   const [coverImageModel, setCoverImageModel] = useState('nb_pro');
+
+  // ── v212 F3: MV 아티스트 선택 — 구 하드 disabled(includeCharacter=false 고정) 해제.
+  //    ArtistPicker 자체 로드 모드 (list API 우선, legacy 폴백 내장) ──
+  const [includeArtist, setIncludeArtist] = useState(false);
+  const [selectedArtist, setSelectedArtist] = useState(null);
 
   // ── 공용 라이트박스 (MVProductionSection onRequestLightbox 소비처) ──
   const [selectedImage, setSelectedImage] = useState(null);
@@ -580,6 +586,28 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
                 </span>
               </div>
             </div>
+
+            {/* ── v212 F3: MV 아티스트 선택 — 구 하드 disabled 해제, 공용 ArtistPicker ── */}
+            <div className="upload-card__field" style={{ marginTop: '16px' }}>
+              <label className="upload-character-toggle">
+                <input
+                  type="checkbox"
+                  checked={includeArtist}
+                  onChange={(e) => {
+                    setIncludeArtist(e.target.checked);
+                    if (import.meta.env.DEV) console.debug('[MVStudio] [v212] include artist', { on: e.target.checked });
+                  }}
+                />
+                내 아티스트 포함하기 (MV 주인공 캐릭터)
+              </label>
+              {includeArtist && (
+                <ArtistPicker
+                  selectedKey={artistKey(selectedArtist)}
+                  onChange={setSelectedArtist}
+                  emptyHint="등록된 아티스트가 없습니다. 마이뮤직 → 내 캐릭터 탭에서 아티스트를 만들어주세요."
+                />
+              )}
+            </div>
           </div>
 
           {/* ── MV 제작 본체 — MVProductionSection 재사용 (1단계 계약 그대로 + 3단계 track 소스 확장) ── */}
@@ -602,9 +630,10 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
               coverImageModel={coverImageModel}
               vocalGender={'female'}
               selectedLocationId={null}
-              includeCharacter={false}
-              characterVariant={'real'}
-              selectedCharSheet={() => null}
+              includeCharacter={includeArtist && !!selectedArtist}
+              characterVariant={selectedArtist?.kind || 'real'}
+              characterId={selectedArtist?.character_id || null}
+              selectedCharSheet={() => (selectedArtist?.sheet_object_name || null)}
               draftData={mvDraft}
               onCoverAdopted={(objectName, previewUrl) => {
                 // MV 드래프트 복원의 커버 역주입 — 프록시 URL 폴백으로 미리보기 보장

@@ -1121,22 +1121,33 @@ async def get_user_recent_content(
         for d in docs
     ]
 
-    char = await mongo.characters.find_one(
+    # v212 — 아티스트 다중화: 대표 조립(기존 character shape 유지) + artists[] 확장
+    char_docs = await mongo.characters.find(
         {"user_id": user_id},
-        {"original_photo_object_name": 1, "sheet_object_name": 1,
-         "virtual_sheet_object_name": 1, "name": 1},
-    )
+        {"character_id": 1, "kind": 1, "is_default": 1, "name": 1,
+         "original_photo_object_name": 1, "sheet_object_name": 1,
+         "virtual_sheet_object_name": 1, "updated_at": 1},
+    ).sort("updated_at", -1).to_list(length=None)
 
     def _admin_path(object_name):
         return f"/api/admin/media/{object_name}" if object_name else None
 
     character = None
-    if char:
-        original_photo = char.get("original_photo_object_name") or None
-        sheet = char.get("sheet_object_name") or None
-        virtual_sheet = char.get("virtual_sheet_object_name") or None
+    artists = []
+    if char_docs:
+        from .character import resolve_representative_artists
+
+        reps = await resolve_representative_artists(mongo, user_id)
+        real = reps.get("real") or {}
+        virtual = reps.get("virtual") or {}
+        original_photo = (
+            real.get("original_photo_object_name")
+            or virtual.get("original_photo_object_name") or None
+        )
+        sheet = real.get("sheet_object_name") or None
+        virtual_sheet = virtual.get("sheet_object_name") or None
         character = {
-            "name": char.get("name"),
+            "name": real.get("name") or virtual.get("name") or None,
             "has_original_photo": bool(original_photo),
             "has_sheet": bool(sheet),
             "has_virtual_sheet": bool(virtual_sheet),
@@ -1144,12 +1155,35 @@ async def get_user_recent_content(
             "sheet_path": _admin_path(sheet),
             "virtual_sheet_path": _admin_path(virtual_sheet),
         }
+        for d in char_docs:
+            if d.get("character_id"):
+                artists.append({
+                    "character_id": d["character_id"],
+                    "kind": d.get("kind") or "real",
+                    "is_default": bool(d.get("is_default")),
+                    "name": d.get("name") or "",
+                    "sheet_path": _admin_path(d.get("sheet_object_name")),
+                })
+            else:
+                # legacy 무cid 문서 — real/virtual 슬롯 분해 표기
+                if d.get("sheet_object_name"):
+                    artists.append({
+                        "character_id": None, "kind": "real", "is_default": True,
+                        "name": d.get("name") or "",
+                        "sheet_path": _admin_path(d.get("sheet_object_name")),
+                    })
+                if d.get("virtual_sheet_object_name"):
+                    artists.append({
+                        "character_id": None, "kind": "virtual", "is_default": False,
+                        "name": d.get("name") or "",
+                        "sheet_path": _admin_path(d.get("virtual_sheet_object_name")),
+                    })
 
     logger.info(
-        "[admin-report] recent_content admin=%s user=%s tracks=%d character=%s",
-        _short(current_admin["id"]), _short(user_id), len(tracks), bool(character),
+        "[admin-report] recent_content admin=%s user=%s tracks=%d character=%s artists=%d",
+        _short(current_admin["id"]), _short(user_id), len(tracks), bool(character), len(artists),
     )
-    return {"user_id": user_id, "tracks": tracks, "character": character}
+    return {"user_id": user_id, "tracks": tracks, "character": character, "artists": artists}
 
 
 @router.get("/reports/{report_id}/evidence/{idx}")

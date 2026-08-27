@@ -43,8 +43,32 @@ async def points_spend(body: SpendBody, user: dict = Depends(get_current_user)):
     ok = await svc.spend_points(user_id, action, cost, ref)
     if not ok:
         return JSONResponse(status_code=402, content={"error": "별이 부족합니다."})
+
+    # v212 — extra_slot: 차감 성공 시 실제 슬롯 부여 (기존엔 부여 코드 0 = ⭐만
+    # 차감되는 먹튀 버그). grant 실패 시 refund + 500 — 역방향 재발 방지.
+    max_slots = None
+    if action == "extra_slot":
+        from ..services.slots_service import grant_extra_slot
+
+        try:
+            max_slots = await grant_extra_slot(user_id)
+            logger.info(
+                "[SlotGrant] spend ok user=%s ref=%s max_slots=%d",
+                user_id[:8], ref[:12], max_slots,
+            )
+        except Exception as e:
+            logger.error("[SlotGrant] grant failed user=%s ref=%s: %s — refunding", user_id[:8], ref[:12], e)
+            await svc.refund_points(user_id, action, cost, ref)
+            return JSONResponse(
+                status_code=500,
+                content={"error": "슬롯 부여에 실패했습니다. 별은 환불되었습니다."},
+            )
+
     balance = await svc.get_balance(user_id)
-    return {"ok": True, "action": action, "spent": cost, "balance": balance}
+    resp = {"ok": True, "action": action, "spent": cost, "balance": balance}
+    if max_slots is not None:
+        resp["max_slots"] = max_slots
+    return resp
 
 
 @router.get("/costs")

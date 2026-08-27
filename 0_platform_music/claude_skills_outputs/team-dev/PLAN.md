@@ -30662,3 +30662,169 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
 **8-3. Q1·U1(b) 실측 반영**
 - Q1 확정 기록 승격: 재-attach = **200 멱등 + attached_at 재타각(갱신)** — §7-2① 예측과 실측 일치, 판정 기준 "재타각 허용"→"재타각 확인"으로 조정
 - U1(b) 픽스처 계약 보완: 백필 리포트 암묵 페어 판정 키 = **mv_jobs.audio_generation_id ↔ tracks.generation_id 역링크** — 직삽 암묵 페어 픽스처는 트랙 doc에 `generation_id` 필드 세팅 필수(누락 시 리포트 미등장이 정상 동작임을 오판하지 않도록 명문화)
+
+
+---
+
+# PLAN v212 — 앱팀 요청 B-1: 아티스트 다중화 + 프로필 입력 복원 (2026-08-27 17:02 KST, planner)
+
+범위: backend_9006(:9006 단일 — 9004/9005 무접촉) + frontend(:4000). 앱팀 요청서 v1.1 + 사용자 확장분, §확정 사양 8항 변경 금지 전제.
+
+## 0. 실측 findings (0단계 — 전부 본 사이클 재확인 완료)
+
+### 0-1. 백엔드 (backend_9006)
+- **characters 단일 문서 모델 확정**: character.py save 업서트 `{"user_id"}` 필터(:1474-1483), me find_one(:1524), DELETE /me 문서 전체+`characters/{uid}/` prefix sweep(:1587-1613), 시트 고정 경로 `characters/{uid}/sheet.png`·`sheet_virtual.png`(:1404-1407). SaveCharacterRequest(:119-134)에 name/age/personality_tags/personality_text **기존재**, variant/art_style 는 v75 이중 필드용. GET /personality-tags(:140-143) 기존재. 검증 상수 NAME 50/AGE 30/TEXT 500/TAG 20자·20개(:104-108)
+- **생성 4종 공통 구조**: generate-sheet(:355)/-cartoon(:549)/-async(:877)/-cartoon-async(:1022) — 검증(도용 사진 SHA 차단 v138 → 스트라이크 게이트 v139 → real 한정 얼굴인증 v135 `face_verify_enabled`(config.py:173, 기본 False)) → **⭐character=10 선차감**(POINT_COSTS 단일 소스, 실패 시 환불·async는 refunded 플래그 1회 보장 :741-767) → temp 경로 저장(`characters/temp/{uid}/…`) → save 에서 영구화. 얼굴인증은 **사진 SHA 단위**라 아티스트 다중화와 직교(변경 불요)
+- **extra_slot 버그 실증**: points_service.py:33 `"extra_slot": 15` 정의 + points.py /spend(:29-47)는 spend_points 차감 후 잔액만 반환 — **`max_slots` 쓰기 코드 백엔드 전체 grep 0건**. 효과 0 확정. spend_points 는 point_balances 조건부 $inc 원자 차감 + point_events ref 로깅(points_service.py:132-190)
+- **계정 저장소**: 계정은 **PostgreSQL users 테이블**(auth.py routes — INSERT/SELECT users), 세션은 Redis(auth.py get_current_user — Mongo 무접촉). Mongo `users` 컬렉션은 0건(빈 껍데기). point_balances/characters 는 Mongo
+- **mongo.characters 소비처 전수 (7곳)**: ①character.py(핵심) ②mv.py:573(include_my_character 스냅샷 — variant 로 sheet/items 선택 후 name/age/personality 포함 snapshot, SnapFix 불변 사본 :594-606) ③albums.py:678(include_character→sheet_object_name, real 전용) ④admin.py:1124(사용자 상세 — 원본·양시트·name) ⑤admin_moderation.py:120·216(몰수 — doc `_id` 단위 삭제 + uid prefix sweep) ⑥reports.py:172(신고 증거 스냅샷 — 원본+양시트) ⑦face_search_service.py:206(얼굴 검색 — 문서 1건의 3필드 순회). **전부 find_one({user_id}) 단일 문서 가정**
+- **mv.py 계약**: CreateMVRequest.character_variant(:62, "real" 정규화 :569) + character_object_name(:59) + include_my_character(:76). 스냅샷이 프로필 필드까지 담으므로 아티스트 doc 치환이 깔끔히 맞음
+- **실데이터 (read-only 실측)**: characters **총 7건** — real 시트 6, virtual 단독 1, **양쪽 보유 0**, character_id 보유 0, `name` 비어있지 않은 문서 **0건**(5건에 필드는 있으나 전부 빈 문자열 — 입력 배선 유실의 DB측 물증). 인덱스 `_id` 뿐(user_id 인덱스도 없음). point_events extra_slot 0건(피해자 0), character_jobs 38건
+
+### 0-2. 프론트 (frontend — 전수 조사, 상세는 조사 전문 참조)
+- **API 표면**(src/api/index.js): saveCharacter(:460-465)가 `variant: data?.variant||'real'` 주입, getMyCharacter(:466-487) **5분 sessionStorage 캐시**(`aimu:myCharacter:{uid}`), deleteMyCharacter(:488-492) variant 없음(문서 전체). generateCharacterSheet/-Cartoon(sync)·refineCharacterSheet 는 **미사용 데드**. **personality-tags 래퍼·/points/spend 래퍼 부재**. getPointCosts(:764) `{costs:{…}}` 래핑
+- **입력 배선 유실 재확정**: saveCharacter 호출 2곳 — MyMusicPage :516-519(real: sheet_object_name+used_items 만), :644-649(virtual: +variant+art_style) — **name/age/personality 계열 0 전송**. 표시부(:812-837)와 CharacterCoverCard(:227-252)는 살아있는 read-only. UploadPage :405-412 user_character_snapshot 은 프로필 포함 전송(값이 빈 문자열일 뿐)
+- **내 캐릭터 탭**(MyMusicPage CharacterSection :164-1392): mode-tabs(:1334-1355)는 생성 모드 스위치(선택 아님), real/virtual 상태 이중화(v* prefix), 잡 폴링 단일 ref(5s×180틱), 삭제 버튼 real 저장 뷰에만(:803-808), FaceVerifyFlow 는 real 경로만(:1381-1390), 아이템 슬롯 양 variant 공유
+- **소비처**: UploadPage(:58-76 variant 상태·hasReal/hasVirtual·selectedCharSheet, 커버 생성은 character_object_name 만 전송 — variant 미전송), CoverEditModal(동일 로직 중복), MVProductionSection **:405 — character_variant 전송 유일 지점**, MVStudioTab :605-607 캐릭터 하드 disabled, AlbumCreateModal use_character boolean 만, PlayerPage→CharacterCoverCard 는 flat 스냅샷(sheet_preview_path) 소비 — 다중화 무풍
+- **중복/불일치**: selectedCharSheet 3벌(UploadPage:65/CoverEditModal:98/MVStudioTab:607 스텁), variant 라디오 카드 2벌(UploadPage:681-741/CoverEditModal:495-530), sheet_url(MyMusicPage) vs sheet_object_name(그 외) 동일 실체
+- **슬롯 UI 웹 전무**: extra_slot/max_slots grep 0. "v3.77 과금 차단"은 앱 전용 얘기 — 웹은 버전 상수 자체가 없음(신규 제작)
+
+## 1. 설계 결정
+
+### D1. 스키마 — characters 복수 문서 (아티스트 1명 = 문서 1개)
+```
+{ _id, user_id, character_id: uuid4().hex(32-hex, 신규),
+  kind: 'real'|'virtual', is_default: bool(계정당 kind 무관 정확히 1개),
+  name, age, gender(신규, 자유 문자열 ≤20자 — enum 비강제, 빈값 허용),
+  personality_tags[], personality_text,
+  sheet_object_name, used_items[],
+  art_style('' — virtual 만 의미), image_model,
+  original_photo_object_name('' — real 만 의미),
+  created_at, updated_at }
+```
+- 검증: 기존 상수 재사용 + `GENDER_MAX_LEN=20` 신설. legacy 필드(virtual_*)는 신규 문서에 미기록
+- **인덱스 신설**: `(user_id)` + `(user_id, character_id)` unique **partial**(character_id $exists — legacy doc 공존기 충돌 방지). 앱 기동 시 ensure (points_service ensure_indexes 패턴 준용)
+- 스토리지: 신규 저장 `characters/{uid}/{cid}/sheet.png`. preview 프록시는 path 기반이라 무변경. upload-original-photo 공유 경로(`characters/{uid}/original.*`) 유지(생성 재료 — 아티스트 귀속 아님)
+
+### D2. 슬롯 저장 — **Mongo 택1** (PG users 컬럼 기각)
+- 근거: ①검사 지점(character.py 생성 4종·save)이 PG 미배선 파일 — PG 택 시 asyncpg 신규 배선 ②소비 데이터(characters·point_balances·point_events) 전부 Mongo — 트랜잭션 경계 동일 ③PG users 는 신원 데이터 + 탈퇴 익명화 로직 보유 — ALTER TABLE + 익명화 영향 검토 비용 ④Mongo 는 스키마 마이그레이션 0
+- **`user_slots` 컬렉션**: `{user_id(unique), extra_slots(구매 누적), updated_at}`. **max_slots = BASE_SLOTS(1) + extra_slots** — 파생값 저장 안 함($inc 업서트 시 기본값 시드 충돌을 원천 회피, 기본 1 변경도 코드 1줄)
+- 신규 `services/slots_service.py`: `BASE_SLOTS=1`, `get_slots(user_id) -> (used, max)`(used=characters count — legacy 무cid 문서는 real/virtual 시트 보유 수로 환산), `grant_extra_slot(user_id)`($inc extra_slots:1 업서트, 성공 시 신규 max 반환)
+- points.py /spend: `action=='extra_slot'` 성공 차감 직후 grant_extra_slot — grant 예외 시 refund_points + 500(돈만 나가는 기존 버그 역방향 재발 방지). 응답에 `max_slots` 동봉. 타 action 무영향
+- 슬롯 전용 GET 엔드포인트는 만들지 않음 — **/character/list 응답에 slots:{used,max} 동봉** + /spend 응답 max_slots 로 충분
+
+### D3. 신규 API (character.py 말미 등록 — 라우팅 순서 주의)
+- `GET /character/list` → `{characters:[{character_id, kind, is_default, name, age, gender, personality_tags, personality_text, sheet_object_name, sheet_url, art_style, used_items, image_model, created_at, updated_at}], slots:{used, max}}` (updated_at 최신순, legacy 무cid 문서는 가상 분해해 노출하지 않음 — 마이그레이션 전 계정은 me 로만 접근, list 는 cid 보유 문서만. 단 마이그레이션 후엔 전 계정 일치)
+- `GET /character/{character_id}` → 단건 (타인/부재/형식 불일치 404)
+- `PATCH /character/{character_id}` body `{name?, age?, gender?, personality_tags?, personality_text?, is_default?}` — 전달 필드만 갱신(검증 save 동일). `is_default:true` → 대상 set 후 나머지 update_many false. `is_default:false` 단독은 400(기본 0명 금지). kind·sheet 변경 불가
+- `DELETE /character/{character_id}` — doc 삭제 + `characters/{uid}/{cid}/` prefix 삭제. default 삭제 시 잔여 중 (real 우선, updated_at 최신) is_default 승계. 마지막 아티스트 삭제 시 공유 원본 사진도 삭제(기존 /me v137② 로직 준용)
+- **라우팅 가드**: `/{character_id}` 는 파일 최말미 등록(기존 /me /list /job /preview /locations /personality-tags /style-samples 선행 유지) + 핸들러 진입 시 32-hex 정규식 불일치 → 404
+
+### D4. 생성·저장 계약
+- **generate 4종에 `character_id: Optional[str] = Form(None)` 추가** (kind 는 API 자체에 내재 — sheet=real, cartoon=virtual):
+  - 지정: (user_id, character_id) 조회 — 부재 404, **kind 불일치 400**(cartoon API 로 real 아티스트 재생성 불가·역방향 동일), 통과 시 재생성(슬롯 검사 없음). job doc 에 character_id 저장, sync/job 응답에 echo
+  - 미지정: **슬롯 검사 — used >= max → 409** `{"error":"slot_limit_exceeded","used":n,"max":m,"message":"아티스트 슬롯이 가득 찼습니다. ⭐15로 슬롯을 추가하세요."}` — **⭐10 차감 전·job 미생성**. 통과 시 기존과 동일 진행(문서 생성은 save 시점)
+- **save 3-경로** (SaveCharacterRequest 에 `character_id?`, `kind?`, `gender?` 추가):
+  - ① `character_id` 지정: 해당 doc 의 시트 교체(`characters/{uid}/{cid}/sheet.png`) + 프로필 필드 갱신(전송분만). kind 동봉 시 불일치 400
+  - ② 미지정 + `kind` 지정 (**신규 생성 계약**): 슬롯 검사(초과 409 — 동일 shape), cid 발급, is_default=(계정 첫 아티스트), 응답에 character_id
+  - ③ 미지정 + kind 미지정 (**legacy 경로 — 한시 유지**): variant 정규화(기본 real) → 해당 kind 의 legacy 대상(default 우선) upsert, 없으면 생성 — **슬롯 검사 면제**(구계약 보존, 자연 상한 real1+virtual1). 응답 shape 기존 그대로(variant/sheet_object_name/…) + character_id 추가 동봉(무해 추가)
+  - 프로필 필드 처리 ①②: name/age/gender/tags/text 전송분 갱신 — 미전송(None)은 기존값 유지(빈 문자열 전송은 명시적 클리어). legacy ③은 기존 semantics 유지(real 저장 시 항상 set — 현행과 동일)
+- **하위호환 조립**: `GET /me` = default-real 아티스트 → top-level 필드(부재 시 kind real 최신, real 전무 시 시트 빈값) + 대표 virtual(is_default 우선→최신) → virtual_* 필드. 응답 shape 100% 유지 + `character_id`/`characters_count` 추가 동봉. `DELETE /me` = **전체 아티스트 삭제**(구계약 의미 보존 — delete_many + uid prefix sweep + 원본 명시 삭제)
+- 공용 헬퍼 `resolve_representative_artists(mongo, user_id) -> {"real": doc|None, "virtual": doc|None}` — me/mv/albums/legacy-save 가 공유 (해석 분기 단일화)
+
+### D5. 마이그레이션 (7건 — 실행은 ▲승인 후)
+- 스크립트 `backend_9006/scripts/migrate_characters_v212.py`: **dry-run 기본**, `--apply`, `--user-id` 필터(리허설용), **멱등**(character_id 보유 doc 스킵)
+- 규칙: legacy doc 마다 — real 시트 존재 → **in-place 승격**(character_id 발급, kind='real', is_default=true, gender='' 시드, 시트 `characters/{uid}/sheet.png` → `characters/{uid}/{cid}/sheet.png` **copy**) / virtual_sheet 존재 → **별도 신규 doc**(kind='virtual', art_style←virtual_art_style, used_items←virtual_used_items, 시트 copy) 후 원 doc 의 virtual_* **unset**. real 없고 virtual 만(실측 1건) → in-place 를 virtual 아티스트로 전환(is_default=true)
+- 양쪽 보유 계정 → `user_slots.extra_slots=1` grandfather(초과 상태 방지) — **실측 0건이라 현재 데이터엔 미발동**(코드는 방어적으로 포함)
+- 구 경로 객체(sheet.png/sheet_virtual.png)는 **보존**(과거 참조 안전 — MV 스냅샷은 SnapFix 사본이라 무관하지만 방어적 유지). 청소는 후속 별건
+- 인덱스 생성 동반. 리허설: **테스트 계정 doc 사본으로만**(§3 테스트 항목), 실데이터 7건 `--apply` 는 ▲사용자 승인 항목
+
+### D6. 소비처 전환
+- mv.py: CreateMVRequest 에 `character_id?` 추가(앱팀 요청 6항 — **이번 사이클 포함** 판단: additive 1필드+해석 분기라 비용 극소, 스냅샷 구조가 아티스트 doc 과 1:1 이라 지금이 적기). 지정 시 해당 아티스트로 스냅샷(kind 무관), 미지정 시 기존 variant 경로(D4 헬퍼로 해석) — job doc 에 character_id 추적 저장
+- albums.py: include_character → 헬퍼의 real 대표 사용 (계약 무변경)
+- admin.py 사용자 상세: 아티스트 목록 반환으로 확장(기존 필드 유지 + artists[] 추가), reports.py 증거·face_search_service.py 스캔: **전 아티스트 시트 순회**(안전측 — 단일 doc 3필드 순회 → 다중 doc 순회로 치환)
+- admin_moderation.py 몰수: 신고 target 이 doc `_id` 단위라 자연 호환 — 삭제 sweep 만 `{uid}/{cid}/` 범위로 조정(무cid legacy doc 은 기존 uid 전체 sweep 유지)
+- upload.py 커버: **무변경**(FE 가 object_name 직접 전송 — 이미 아티스트 무관)
+
+### D7. 프론트 개편
+- api/index.js: `getCharacterList`(캐시 `aimu:myCharacters:{uid}` 5분 — 기존 단건 캐시 키 일괄 무효화 로직에 편입), `patchCharacter(cid, body)`, `deleteCharacter(cid)`, `getPersonalityTags`, `spendPoints(action)`(POST /points/spend), saveCharacter — 프로필 필드·character_id/kind 통과(variant 주입은 legacy 폴백으로만 유지), generate FormData 에 character_id 첨부 지원
+- MyMusicPage 「내 캐릭터」 탭: **아티스트 카드 목록**(kind 뱃지·기본 지정(PATCH is_default)·개별 삭제·프로필 수정 버튼) + **슬롯 바**(used/max + [⭐15 슬롯 추가] → spendPoints('extra_slot') → 402 시 별 부족 안내) + **[＋새 아티스트]**(kind 선택 → 기존 real/virtual 생성 폼 재사용 — mode-tabs 는 신규 생성 플로우 내부로 이동) + **프로필 입력 폼**(이름/나이/성별/성격태그 — getPersonalityTags 칩 선택+직접 입력/성격설명): 생성 저장 시 save 페이로드 동봉 + 기존 아티스트 수정 시 PATCH. 재생성은 character_id 로
+- **공용 ArtistPicker 컴포넌트 신설**: getCharacterList 기반 카드 선택(character_id·sheet_object_name·used_items 반환) — UploadPage 라디오(:681-741)·CoverEditModal 라디오(:495-530)·selectedCharSheet 3벌 수렴. UploadPage snapshot(:405-412)은 선택 아티스트 필드로, MVProductionSection :405 는 character_variant → character_id 전송으로 교체
+- 범위 밖(접점만 기록): MVStudioTab 하드 disabled 해제, AlbumCreateModal artist 선택화, 구 스토리지 청소
+
+## 2. 변경 매트릭스 + 로그 추적자
+
+| # | 파일 | 변경 | 담당 |
+|---|---|---|---|
+| B1 | backend_9006/app/services/slots_service.py (신규) | BASE_SLOTS/get_slots/grant_extra_slot | backend-dev |
+| B2 | app/routes/points.py | /spend extra_slot 훅 + max_slots 응답 + 실패 refund | backend-dev |
+| B3 | app/routes/character.py | 스키마 상수(gender)·SaveCharacterRequest 확장·save 3-경로·me 조립·DELETE /me 전체삭제·list/단건 GET·PATCH·DELETE(말미)·generate 4종 character_id+슬롯 409·인덱스 ensure·헬퍼 | backend-dev |
+| B4 | app/routes/mv.py | CreateMVRequest.character_id + 스냅샷 해석 교체(헬퍼) | backend-dev |
+| B5 | app/routes/albums.py :678 | 헬퍼 사용 | backend-dev |
+| B6 | app/routes/admin.py :1124 / reports.py :172 / services/face_search_service.py :206 | 다중 아티스트 순회 | backend-dev |
+| B7 | app/routes/admin_moderation.py | 몰수 sweep cid 범위화 | backend-dev |
+| B8 | scripts/migrate_characters_v212.py (신규) | D5 | backend-dev |
+| F1 | frontend/src/api/index.js | D7 API 계열 + 캐시 리스트화 | frontend-dev |
+| F2 | src/pages/MyMusicPage.jsx (CharacterSection) | 카드 목록·슬롯 바·새 아티스트·프로필 폼·재생성 cid 배선 | frontend-dev |
+| F3 | src/components/ArtistPicker.jsx (신규)+css | 공용 피커 | frontend-dev |
+| F4 | src/pages/UploadPage.jsx / src/components/CoverEditModal.jsx | 피커 교체·snapshot 아티스트화 | frontend-dev |
+| F5 | src/components/MVProductionSection.jsx | character_id 전송(variant 폐기) | frontend-dev |
+
+로그 추적자: 백엔드 `[ArtistV212]`(character.py CRUD·슬롯 검사·409), `[SlotGrant]`(points.py extra_slot — user·before/after max), `[ArtistMigrate]`(스크립트 — doc별 판정), 기존 `[CharJob]`/`[MVJob]`/`[SnapFix]` 유지. FE `console.debug('[v212] …')` (기존 DEV 로그 패턴 준용)
+
+## 3. dev 분할
+
+- **backend 선행**: B1→B2→B3(핵심·최대) → B4~B7(소비처) → B8. B3 완료가 FE 배선 게이트
+- **frontend 병렬 가능 범위**(B3 완료 전 착수 허용): F3 마크업/CSS·F2 프로필 폼/슬롯 바/카드 UI 골격(계약은 본 PLAN D3·D4 응답 shape 고정치 기준) — API 배선·왕복 검증은 B3 후
+- tester 는 B3 머지 시점부터 신규 API 계열 착수, FE 회귀는 F2~F5 후
+
+## 4. test-designer 항목
+
+세션 표준: **시트 생성 = ⭐10+외부 이미지 API — 성공 경로 금지**(무효 키/인터셉트, 409·402·400 등 차감 전 거절 경로는 실호출 가능), 커버·작사·작곡·MV 동일. **extra_slot spend 는 내부 시스템 — 테스트 계정 실호출 허용, 단 point_events/point_balances 원장 대조 필수**. 실사용자 7건 무접촉(리허설은 테스트 계정 사본). 실업로드 필요 시 v211 §0 인덱싱 2회 규약 준수.
+
+회귀:
+1. 구계약 me/save 왕복 — variant real/virtual 각각 (character_id/kind 미전송) → 응답 shape 기존 동일 + me 조립 일치
+2. me 조립 3케이스: real 만 / virtual 만(실데이터형) / 양쪽
+3. 커버 생성 character_object_name 경로(upload.py 무변경 확인 — 인터셉트), v207 커버 회귀
+4. MV include_my_character + variant(구) 경로 스냅샷 동등성(외부 차단 하 job doc 검사)
+5. 내 캐릭터 탭 기존 생성 플로우(잡 폴링·얼굴인증 모달 real 한정·402/403 분기 — 비용 차단 하)
+6. albums use_character / admin 사용자 상세 / PlayerPage cover_character 렌더
+7. DELETE /me 전체 삭제 + 스토리지 sweep(신·구 경로 모두)
+
+신규:
+8. GET /list — 2 아티스트 계정에서 2건·독립 경로·slots 동봉 (수용기준①)
+9. 단건 GET/PATCH/DELETE — 타인 404, is_default 승계, is_default:false 단독 400, kind 불변
+10. 라우팅: /list·/me·/job 이 /{character_id} 에 안 잡힘 + 비 32-hex 404
+11. generate character_id 지정 재생성(kind 불일치 400·404) / 미지정 슬롯 409 — **409 시 ⭐ 미차감·job 미생성 원장 확인**
+12. save 신규 계약(kind 지정) 슬롯 409 / legacy 경로 면제 확인
+13. extra_slot: 구매 → max+1 영속(user_slots)·재조회 유지·⭐15 원장 대조·잔액 부족 402 시 무변화 (수용기준④)
+14. 프로필 입력 왕복: 이름/나이/성별/태그/설명 save→me/list 반영→PATCH 수정→재반영, 검증 상수 경계(50/30/20/500·태그 20개)
+15. 마이그레이션 리허설(테스트 계정 doc 사본): dry-run 무변경 → --apply 후 real→①·virtual→② 분리·경로 이전·me 동등성 → 재실행 멱등 (수용기준②③)
+16. FE: 카드 목록/기본 지정/개별 삭제/슬롯 바/새 아티스트(kind 선택)/ArtistPicker 3소비처/캐시 무효화(저장·삭제·구매 후)
+
+## 5. ▲사용자 승인 분리 항목
+1. **실데이터 7건 마이그레이션 `--apply` 실행** — 리허설 결과 첨부 후 별도 승인
+2. 구 스토리지 객체(sheet.png/sheet_virtual.png) 청소 — 후속 별건
+3. (고지) **구버전 앱 generate(미지정) 경로가 슬롯 만석 시 409** — 확정 사양의 내재 결과(수용기준은 me/save 만 보장). 기존 1아티스트 계정이 구앱에서 "다시 만들기" 하면 409 발생 가능 → 앱팀에 리스크 전달 필요(웹 FE 는 항상 character_id 전송으로 무풍)
+
+## 6. 리스크·40% 판단
+
+**판단: 진행 (성공 확률 40% 이상 — 착수 승인)**. 근거: ①사양 고정 + 백/프론트 0단계 실측 100% 완료(추정 잔량 없음) ②실데이터 극소(7건·양쪽 보유 0)로 마이그레이션 최난도 케이스 부재 ③하위호환이 최대 리스크이나 조립 규칙(D4)·소비처 전수 매트릭스(7곳)·회귀 항목이 명시됨 ④extra_slot 은 원자 $inc + 실패 refund 로 기존 버그의 역방향까지 봉쇄.
+
+잔여 리스크: (R1) 구앱 generate 409 — 사양 내재, §5-3 고지로 관리 (R2) find_one 소비처 전환 누락 — 머지 게이트로 `grep -rn "characters.find_one({\"user_id\"" app/` 잔존 0 확인 (R3) FE 캐시 정합 — 저장/삭제/구매/PATCH 전부 캐시 무효화 경유 강제 (R4) B3 단일 파일 대형 변경 — legacy 경로를 기존 코드 보존 방향으로 분기(재작성 금지) 지시.
+
+### v212 보강 (planner, TESTPLAN 검토 회신 — 2026-08-27)
+- **D4-보강① 슬롯 검사 위치 확정**: generate 4종 미지정 경로의 슬롯 검사는 **image_model 검증 직후·payload(사진/텍스트) 검증 이전 최선두** 배치. 근거: 슬롯 초과는 payload 무관 계정 상태 오류 + 무과금 프로브(만석 시 무효 입력→409, 해제 시 동일 요청→400) 성립 조건. B3 구현 지시에 포함
+- **D4-보강② 슬롯 검사 단일 함수 강제**: generate 미지정·save ②형 모두 `slots_service.check_slot_available(user_id) -> Optional[JSONResponse(409)]` 단일 헬퍼 경유(409 shape 포함) — TESTPLAN "save ②형 등가 검증"의 전제를 구현으로 보장
+- **Q4 확정**: used 환산 = cid 보유 문서 수 + legacy 무cid 문서의 (real 시트?1:0)+(virtual 시트?1:0). 마이그레이션 전 양쪽 보유 legacy 계정은 used=2>max=1 허용 상태(§5-3 리스크와 정합, 실데이터 0건)
+- **Q5 확정**: 테스트 계정 ⭐ 충전 = admin_points `POST /adjust`(action=admin_adjust, 내부 원장 기록) — 원장 대조 시 admin_adjust 이벤트 구분 계상
+
+### v212 편차 판단 (planner — 백엔드 게이트 PASS 14/14 후)
+- **편차1 me 응답 `user_id` 키 제거 → (b) 복원 지시 채택**: "shape 100% 유지"는 추가 허용·제거 불허 의미로 엄수. 근거: 본 계약은 미러링으로 앱팀 전달 — openapi 밖 소비처(구버전 앱 파서) 부정 불가, 복원 비용 1줄 vs 리스크 비대칭. backend-dev 1줄 복원 + 회귀 1항(me 키셋 스냅샷 비교) 보강
+- **편차2 Q5 전제 정정 승인**: 신규 가입 잔액 50(signup_bonus) — planner 선답 "0"은 points.py :62 주석("0 at account creation") 근거였으나 주석이 실제와 불일치(스테일). TESTPLAN Q5 서술 정정 지시 + 주석 1줄 정정을 별건 칩 후보로 기록(본 사이클 쓰기 범위 밖). 테스트는 자연 소진 방식으로 유효 — 재실행 불요
+- G6a albums·G4 정적 강등 2건: TESTPLAN 허용 절차 내 — 기록만, 이의 없음
+
+### v212 편차1 사실관계 정정 (planner — backend-dev git HEAD 실측 반영)
+- 구 me 응답에 `user_id` 키는 **원래 부재** — tester "제거됨" 판정은 오검(mongo doc 키 ↔ 응답 키 혼동 추정). 따라서 반영된 픽스(character.py :1960-1961)는 복원이 아닌 **v212 신규 additive 키 추가**(무해·shape 문언과 무충돌). 위 "편차1 (b) 복원 지시" 기록은 이 정정으로 갈음
+- REPORT 기록 기준: **"user_id 는 v212 신규 키"** — 앱팀 미러링 회귀표에 '기존 키 복원'으로 오기 금지
+- me 키셋 스냅샷 회귀는 유지하되 **기준 키셋 = v212 HEAD 응답**(user_id·character_id·characters_count 포함)으로 확정 — 구버전 shape 대비 항목은 "구 키 전량 포함 + 신규 4종 추가"로 서술

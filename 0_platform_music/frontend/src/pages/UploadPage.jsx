@@ -4,6 +4,7 @@ import { FiUploadCloud, FiMusic, FiX, FiImage, FiZap } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import BeatTrackView from '../components/BeatTrackView';
+import ArtistPicker, { loadArtists, artistKey } from '../components/ArtistPicker';
 import LyricsTimestampToggle from '../components/LyricsTimestampToggle';
 import './UploadPage.css';
 
@@ -18,7 +19,8 @@ const COVER_PROMPT_MODELS = [
 ];
 
 // v209 3단계: MV 흐름(임시저장 draftData 포함)은 MV촬영실(MVStudioTab)로 완전 이관 — draftData/onClearDraft prop 소멸.
-export default function UploadPage({ generationPrefill, onClearPrefill, myCharacterFromParent }) {
+// v212: myCharacterFromParent prop 소멸 — 아티스트 목록은 loadArtists(공용)로 자체 로드.
+export default function UploadPage({ generationPrefill, onClearPrefill }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const audioInputRef = useRef(null);
@@ -54,26 +56,17 @@ export default function UploadPage({ generationPrefill, onClearPrefill, myCharac
   const [revertingVersion, setRevertingVersion] = useState(null);  // 진행 중 version 번호
   const [showRegenConfirm, setShowRegenConfirm] = useState(false);  // [다시 생성] 확인 다이얼로그
 
-  // Character & Scene Prompt
-  const [myCharacter, setMyCharacter] = useState(null);
+  // Character & Scene Prompt — v212: 다중 아티스트. 구 variant('real'|'virtual') 라디오를
+  // 공용 ArtistPicker(선택 결과 = 아티스트 doc)로 교체. artists 목록은 이 페이지가 소유
+  // (토글 disabled 판단), 카드 UI 는 ArtistPicker 주입 모드.
   const [includeCharacter, setIncludeCharacter] = useState(false);
-  // v75: 커버/MV/발행 스냅샷에 쓸 캐릭터 variant — 'real'(실사화) | 'virtual'(가상화). 기본 실사.
-  const [characterVariant, setCharacterVariant] = useState('real');
-  const hasReal = !!myCharacter?.sheet_object_name;
-  const hasVirtual = !!myCharacter?.virtual_sheet_object_name;
-  // 선택된 variant 의 시트 object_name (없으면 null → 기존과 동일하게 null 전송)
-  const selectedCharSheet = () => {
-    if (!myCharacter) return null;
-    return characterVariant === 'virtual'
-      ? (myCharacter.virtual_sheet_object_name || null)
-      : (myCharacter.sheet_object_name || null);
-  };
-  const selectedCharItems = () => {
-    if (!myCharacter) return [];
-    return characterVariant === 'virtual'
-      ? (myCharacter.virtual_used_items || [])
-      : (myCharacter.used_items || []);
-  };
+  const [artists, setArtists] = useState([]);
+  const [selectedArtist, setSelectedArtist] = useState(null);
+  const hasAnyArtist = artists.length > 0;
+  // 선택 아티스트의 시트 object_name (없으면 null → 기존과 동일하게 null 전송)
+  const selectedCharSheet = () => (selectedArtist?.sheet_object_name || null);
+  const selectedCharItems = () =>
+    (Array.isArray(selectedArtist?.used_items) ? selectedArtist.used_items : []);
   const [coverUserPrompt, setCoverUserPrompt] = useState('');
 
   // v42: location picker (선택적)
@@ -149,27 +142,25 @@ export default function UploadPage({ generationPrefill, onClearPrefill, myCharac
     return () => { cancelled = true; };
   }, [fromGeneration]);
 
-  // Load user's character — prefer parent-provided, fallback to own fetch
+  // v212: 아티스트 목록 로드 (list API 우선, legacy 단건 폴백 — loadArtists 내장) +
+  // 기본 아티스트 자동 선택 (구 v75 "한쪽만 있으면 그쪽 강제" 자동 보정 승계)
   useEffect(() => {
-    if (myCharacterFromParent) {
-      setMyCharacter(myCharacterFromParent);
-      return;
-    }
-    api.getMyCharacter()
-      .then(({ data }) => {
-        if (data.character) setMyCharacter(data.character);
+    let alive = true;
+    loadArtists()
+      .then(({ artists: list, source }) => {
+        if (!alive) return;
+        setArtists(list);
+        setSelectedArtist((prev) => {
+          if (prev && list.some((a) => artistKey(a) === artistKey(prev))) return prev;
+          return list.find((a) => a.is_default) || list[0] || null;
+        });
+        if (import.meta.env.DEV) console.debug('[UploadPage] [v212] artists loaded', { count: list.length, source });
       })
-      .catch(() => {});
-  }, [myCharacterFromParent]);
-
-  // v75: variant 자동 보정 — 한쪽 시트만 있으면 그쪽으로 강제. 둘 다 있으면 현재 선택 유지(기본 'real').
-  useEffect(() => {
-    if (hasReal && !hasVirtual) {
-      setCharacterVariant('real');
-    } else if (!hasReal && hasVirtual) {
-      setCharacterVariant('virtual');
-    }
-  }, [hasReal, hasVirtual]);
+      .catch((err) => {
+        if (import.meta.env.DEV) console.debug('[UploadPage] [v212] artists load failed', { status: err?.response?.status });
+      });
+    return () => { alive = false; };
+  }, []);
 
   // v42: load locations (best-effort, [] fallback)
   useEffect(() => {
@@ -214,10 +205,9 @@ export default function UploadPage({ generationPrefill, onClearPrefill, myCharac
         vocal_gender: vocalGender,
         image_model: coverImageModel,
         includeCharacter,
-        has_myCharacter: !!myCharacter,
-        character_variant: characterVariant,
-        has_real_sheet: hasReal,
-        has_virtual_sheet: hasVirtual,
+        artists_count: artists.length,
+        selected_artist: artistKey(selectedArtist),
+        selected_kind: selectedArtist?.kind || null,
         will_send_character_object_name: includeCharacter ? selectedCharSheet() : null,
       });
       const { data } = await api.generateCover({
@@ -402,11 +392,13 @@ export default function UploadPage({ generationPrefill, onClearPrefill, myCharac
           // v71: cover 에 '내 캐릭터 포함' 켰으면 그 시점의 캐릭터 snapshot 박음.
           // MV 안 만든 곡도 트랙 디테일에서 cover_character 노출 가능하게.
           // v75: 스냅샷은 "커버에 실제 쓴 캐릭터" 기준 — 선택 variant(실사/가상)의 시트/아이템 사용.
-          user_character_snapshot: includeCharacter && myCharacter ? {
-            name: myCharacter.name || '',
-            age: myCharacter.age || '',
-            personality_tags: myCharacter.personality_tags || [],
-            personality_text: myCharacter.personality_text || '',
+          // v212 F4: 스냅샷은 선택 아티스트 기준 + gender 포함 (CharacterCoverCard 는 스냅샷 기반이라 자동 추종)
+          user_character_snapshot: includeCharacter && selectedArtist ? {
+            name: selectedArtist.name || '',
+            age: selectedArtist.age || '',
+            gender: selectedArtist.gender || '',
+            personality_tags: selectedArtist.personality_tags || [],
+            personality_text: selectedArtist.personality_text || '',
             sheet_object_name: selectedCharSheet(),
             used_items: selectedCharItems(),
           } : null,
@@ -656,88 +648,34 @@ export default function UploadPage({ generationPrefill, onClearPrefill, myCharac
               </>
             )}
 
-            {/* Always visible - character toggle (disabled when no character sheet) */}
-            {/* v75: 실사/가상 중 하나라도 시트가 있으면 사용 가능 */}
+            {/* Always visible - character toggle (disabled when no artist) */}
+            {/* v212: 아티스트가 하나라도 있으면 사용 가능 */}
             <label
               className="upload-character-toggle"
-              style={!(hasReal || hasVirtual) ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
-              title={!(hasReal || hasVirtual) ? '먼저 마이뮤직 → 내 캐릭터 탭에서 캐릭터를 등록하세요.' : undefined}
+              style={!hasAnyArtist ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+              title={!hasAnyArtist ? '먼저 마이뮤직 → 내 캐릭터 탭에서 아티스트를 등록하세요.' : undefined}
             >
               <input
                 type="checkbox"
-                checked={includeCharacter && (hasReal || hasVirtual)}
-                disabled={!(hasReal || hasVirtual)}
+                checked={includeCharacter && hasAnyArtist}
+                disabled={!hasAnyArtist}
                 onChange={(e) => setIncludeCharacter(e.target.checked)}
               />
-              내 캐릭터 포함하기
-              {!(hasReal || hasVirtual) && (
+              내 아티스트 포함하기
+              {!hasAnyArtist && (
                 <span style={{ marginLeft: '8px', fontSize: '12px', color: '#888' }}>
-                  (캐릭터 미등록)
+                  (아티스트 미등록)
                 </span>
               )}
             </label>
 
-            {/* v75: 캐릭터 variant 선택 카드 — 실사화/가상화 중 택1 (있는 것만 표시) */}
-            {includeCharacter && (hasReal || hasVirtual) && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '8px', marginBottom: '4px' }}>
-                {[
-                  hasReal && {
-                    id: 'real',
-                    label: '실사화',
-                    subLabel: null,
-                    objectName: myCharacter.sheet_object_name,
-                    color: '#4a9eff',
-                  },
-                  hasVirtual && {
-                    id: 'virtual',
-                    label: '가상화',
-                    subLabel: myCharacter.virtual_art_style || null,
-                    objectName: myCharacter.virtual_sheet_object_name,
-                    color: '#b070ff',
-                  },
-                ].filter(Boolean).map((card) => {
-                  const selected = characterVariant === card.id;
-                  return (
-                    <label
-                      key={card.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        cursor: 'pointer',
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        border: selected ? `2px solid ${card.color}` : '2px solid #333',
-                        background: selected ? `${card.color}15` : '#1a1a1a',
-                        fontSize: '12px',
-                        color: '#ddd',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="characterVariant"
-                        checked={selected}
-                        onChange={() => {
-                          setCharacterVariant(card.id);
-                          if (import.meta.env.DEV) console.info('[UploadPage] char variant', { variant: card.id });
-                        }}
-                        style={{ accentColor: card.color }}
-                      />
-                      <img
-                        src={api.characterPreviewUrl(card.objectName)}
-                        alt={card.label}
-                        style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', background: '#111' }}
-                      />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span style={{ fontWeight: 600 }}>{card.label}</span>
-                        {card.subLabel && (
-                          <span style={{ color: '#666', fontSize: '11px' }}>{card.subLabel}</span>
-                        )}
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
+            {/* v212 F3: 아티스트 선택 — 구 variant 라디오를 공용 ArtistPicker 로 교체 (목록 주입 모드) */}
+            {includeCharacter && hasAnyArtist && (
+              <ArtistPicker
+                artists={artists}
+                selectedKey={artistKey(selectedArtist)}
+                onChange={setSelectedArtist}
+              />
             )}
 
             <div style={{ marginTop: '10px', marginBottom: '10px' }}>

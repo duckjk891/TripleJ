@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { FiX, FiUploadCloud, FiUser, FiEdit3, FiRotateCcw, FiArrowRight } from 'react-icons/fi';
 import * as api from '../api';
+import ArtistPicker, { loadArtists, artistKey } from './ArtistPicker';
 import './CoverEditModal.css';
 
 // v207 — 기존 곡 커버 이미지 수정 공용 모달 (진입점: 내 트랙 / 내 채널)
@@ -46,12 +47,11 @@ export default function CoverEditModal({ track, onClose, onUpdated }) {
   const [refineInput, setRefineInput] = useState('');
   const [refining, setRefining] = useState(false);
 
-  // 캐릭터 탭
-  const [myCharacter, setMyCharacter] = useState(null);
+  // 캐릭터 탭 — v212: 다중 아티스트 (공용 ArtistPicker, UploadPage 와 동일 패턴)
+  const [artists, setArtists] = useState([]);
+  const [selectedArtist, setSelectedArtist] = useState(null);
   const [charLoaded, setCharLoaded] = useState(false);
-  const [characterVariant, setCharacterVariant] = useState('real');
-  const hasReal = !!myCharacter?.sheet_object_name;
-  const hasVirtual = !!myCharacter?.virtual_sheet_object_name;
+  const hasAnyArtist = artists.length > 0;
 
   // 프롬프트 탭
   const [promptText, setPromptText] = useState('');
@@ -74,33 +74,24 @@ export default function CoverEditModal({ track, onClose, onUpdated }) {
       });
   }, []);
 
-  // 내 캐릭터 로드 (캐릭터 탭용, best-effort)
+  // v212: 아티스트 목록 로드 (list API 우선, legacy 폴백) + 기본 아티스트 자동 선택 (구 v75 자동 보정 승계)
   useEffect(() => {
-    api.getMyCharacter()
-      .then(({ data }) => {
-        if (data.character) setMyCharacter(data.character);
+    loadArtists()
+      .then(({ artists: list, source }) => {
+        setArtists(list);
+        setSelectedArtist(list.find((a) => a.is_default) || list[0] || null);
         setCharLoaded(true);
+        if (import.meta.env.DEV) console.debug('[CoverEditModal] [v212] artists loaded', { count: list.length, source });
       })
       .catch(() => setCharLoaded(true));
   }, []);
-
-  // variant 자동 보정 — 한쪽 시트만 있으면 그쪽으로 강제 (UploadPage v75 동일)
-  useEffect(() => {
-    if (hasReal && !hasVirtual) setCharacterVariant('real');
-    else if (!hasReal && hasVirtual) setCharacterVariant('virtual');
-  }, [hasReal, hasVirtual]);
 
   // objectURL 정리
   useEffect(() => () => {
     if (filePreviewRef.current) URL.revokeObjectURL(filePreviewRef.current);
   }, []);
 
-  const selectedCharSheet = () => {
-    if (!myCharacter) return null;
-    return characterVariant === 'virtual'
-      ? (myCharacter.virtual_sheet_object_name || null)
-      : (myCharacter.sheet_object_name || null);
-  };
+  const selectedCharSheet = () => (selectedArtist?.sheet_object_name || null);
 
   const handleFileSelect = (e) => {
     const f = e.target.files?.[0];
@@ -142,7 +133,8 @@ export default function CoverEditModal({ track, onClose, onUpdated }) {
           trackId,
           kind,
           image_model: imageModel,
-          character_variant: kind === 'character' ? characterVariant : null,
+          selected_artist: kind === 'character' ? artistKey(selectedArtist) : null,
+          selected_kind: kind === 'character' ? (selectedArtist?.kind || null) : null,
         });
       }
       const { data } = await api.generateCover({
@@ -485,49 +477,18 @@ export default function CoverEditModal({ track, onClose, onUpdated }) {
             <div className="cover-edit-modal__tab-panel">
               {!charLoaded ? (
                 <div className="cover-edit-modal__hint">캐릭터 정보를 불러오는 중...</div>
-              ) : !(hasReal || hasVirtual) ? (
+              ) : !hasAnyArtist ? (
                 <div className="cover-edit-modal__hint">
                   등록된 캐릭터가 없습니다. 마이뮤직 → 내 캐릭터 탭에서 먼저 캐릭터를 등록하세요.
                 </div>
               ) : (
                 <>
-                  {/* v75 관행 — 실사화/가상화 중 있는 것만 카드로 표시 */}
-                  <div className="cover-edit-modal__variant-row">
-                    {[
-                      hasReal && {
-                        id: 'real',
-                        label: '실사화',
-                        subLabel: null,
-                        objectName: myCharacter.sheet_object_name,
-                      },
-                      hasVirtual && {
-                        id: 'virtual',
-                        label: '가상화',
-                        subLabel: myCharacter.virtual_art_style || null,
-                        objectName: myCharacter.virtual_sheet_object_name,
-                      },
-                    ].filter(Boolean).map((card) => (
-                      <label
-                        key={card.id}
-                        className={`cover-edit-modal__variant-card ${card.id === 'virtual' ? 'cover-edit-modal__variant-card--virtual' : ''} ${characterVariant === card.id ? 'is-selected' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="coverEditCharVariant"
-                          checked={characterVariant === card.id}
-                          onChange={() => {
-                            setCharacterVariant(card.id);
-                            if (import.meta.env.DEV) console.info('[CoverEditModal] char variant', { variant: card.id });
-                          }}
-                        />
-                        <img src={api.characterPreviewUrl(card.objectName)} alt={card.label} />
-                        <span className="cover-edit-modal__variant-name">
-                          {card.label}
-                          {card.subLabel && <em>{card.subLabel}</em>}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+                  {/* v212 F3: 아티스트 선택 — 구 variant 카드 2벌을 공용 ArtistPicker 로 교체 */}
+                  <ArtistPicker
+                    artists={artists}
+                    selectedKey={artistKey(selectedArtist)}
+                    onChange={setSelectedArtist}
+                  />
                   {renderAiCommon()}
                   <button
                     type="button"

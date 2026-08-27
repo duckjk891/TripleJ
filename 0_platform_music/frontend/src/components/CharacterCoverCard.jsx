@@ -224,15 +224,19 @@ export default function CharacterCoverCard({ character, trackId = null }) {
       </div>
 
       {/* 프로필 요약 행 */}
-      {(character?.name || character?.age || tags.length > 0 || character?.personality_text) && (
+      {(character?.name || character?.age || character?.gender || tags.length > 0 || character?.personality_text) && (
         <div className="character-cover-card__profile-row">
-          {(character?.name || character?.age) && (
+          {(character?.name || character?.age || character?.gender) && (
             <div className="character-cover-card__profile-line">
               {character?.name && (
                 <span className="character-cover-card__profile-name">{character.name}</span>
               )}
               {character?.age && (
                 <span className="character-cover-card__profile-age">{character.age}세</span>
+              )}
+              {/* v212 F4 — 스냅샷 gender 표시 (자유 문자열 그대로, 있을 때만) */}
+              {character?.gender && (
+                <span className="character-cover-card__profile-age">{character.gender}</span>
               )}
             </div>
           )}

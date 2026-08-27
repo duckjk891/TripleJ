@@ -457,8 +457,11 @@ export function clearMyCharacterCache() {
 }
 
 // variant: 'real'(기본, 실사 슬롯) | 'virtual'(가상 슬롯). 호출부에서 'virtual' 지정 가능.
+// v212: character_id(기존 아티스트 시트 교체)·kind(신규 아티스트, 슬롯 409)·
+// gender/name/age/personality_* 프로필 필드 통과. variant 주입은 legacy 폴백만.
 export const saveCharacter = async (data) => {
-  const payload = { ...data, variant: data?.variant || 'real' };
+  const payload = { ...data };
+  if (!payload.character_id && !payload.kind) payload.variant = payload.variant || 'real';
   const resp = await API.post('/character/save', payload);
   clearMyCharacterCache();
   return resp;
@@ -488,6 +491,56 @@ export const getMyCharacter = async () => {
 export const deleteMyCharacter = async () => {
   const resp = await API.delete('/character/me');
   clearMyCharacterCache();
+  return resp;
+};
+
+// ── v212 아티스트 다중화 API ─────────────────────────────────────────────────
+// 목록 캐시 키는 'aimu:myCharacters:{uid}' — clearMyCharacterCache 의
+// 'aimu:myCharacter' prefix 매치로 단건 캐시와 함께 일괄 무효화된다.
+function myCharacterListCacheKey() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    return u?.id ? `aimu:myCharacters:${u.id}` : null;
+  } catch { return null; }
+}
+// GET /character/list → {characters:[...], slots:{used,max}} (5분 캐시)
+export const getCharacterList = async () => {
+  const cacheKey = myCharacterListCacheKey();
+  const TTL_MS = 5 * 60 * 1000;
+  if (cacheKey) {
+    try {
+      const raw = sessionStorage.getItem(cacheKey);
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (cached.ts && Date.now() - cached.ts < TTL_MS) return { data: cached.data };
+      }
+    } catch { /* ignore */ }
+  }
+  const resp = await API.get('/character/list');
+  if (cacheKey) {
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: resp.data }));
+    } catch { /* ignore */ }
+  }
+  return resp;
+};
+export const getCharacter = (characterId) => API.get(`/character/${characterId}`);
+// PATCH — {name?, age?, gender?, personality_tags?, personality_text?, is_default?}
+export const patchCharacter = async (characterId, body) => {
+  const resp = await API.patch(`/character/${characterId}`, body);
+  clearMyCharacterCache();
+  return resp;
+};
+export const deleteCharacter = async (characterId) => {
+  const resp = await API.delete(`/character/${characterId}`);
+  clearMyCharacterCache();
+  return resp;
+};
+export const getPersonalityTags = () => API.get('/character/personality-tags');
+// POST /points/spend — action='extra_slot' 시 응답에 max_slots 동봉 (402=별 부족)
+export const spendPoints = async (action, ref) => {
+  const resp = await API.post('/points/spend', ref ? { action, ref } : { action });
+  if (action === 'extra_slot') clearMyCharacterCache(); // slots.max 변동 → 리스트 캐시 무효화
   return resp;
 };
 export const refineCharacterSheet = (formData) =>

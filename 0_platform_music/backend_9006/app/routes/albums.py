@@ -675,8 +675,11 @@ async def generate_album_cover(
     # Optional character sheet bytes
     character_bytes: Optional[bytes] = None
     if body.include_character:
-        char_doc = await mongo.characters.find_one({"user_id": user_id})
-        sheet_obj = (char_doc or {}).get("sheet_object_name")
+        # v212 — 아티스트 다중화: 대표 real 아티스트 해석 (공용 헬퍼, 계약 무변경)
+        from .character import resolve_representative_artists
+
+        reps = await resolve_representative_artists(mongo, user_id)
+        sheet_obj = (reps.get("real") or {}).get("sheet_object_name")
         if sheet_obj:
             try:
                 resp = get_minio().get_object(

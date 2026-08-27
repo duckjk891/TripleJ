@@ -60,6 +60,9 @@ class CreateMVRequest(BaseModel):
     # v99+: 커버에 쓴 캐릭터 기준 통일 — "real"(실사, 기존) | "virtual"(가상화).
     # 미전송/그 외 값은 "real" 로 정규화 (하위호환: 기존 동작 100% 동일).
     character_variant: Optional[str] = "real"
+    # v212: 아티스트 다중화 — include_my_character 시 사용할 아티스트 지정 (kind 무관).
+    # 미지정이면 기존 variant 대표 해석 경로 (additive — 구 클라이언트 무영향).
+    character_id: Optional[str] = None
     video_model: Optional[str] = "veo"  # "veo", "kling", "seedance", or "grok" (v66)
     audio_generation_id: Optional[str] = None
     # v209: MV촬영실 — 이미 발매된 「내 트랙」(파일 업로드 트랙 포함)을 곡 소스로 지정.
@@ -570,23 +573,40 @@ async def create_mv(
 
     user_character_snapshot = None
     if bool(body.include_my_character):
-        char = await mongo.characters.find_one({"user_id": current_user["id"]})
-        if not char:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "저장된 내 캐릭터가 없습니다. 먼저 프로필을 설정해주세요."},
-            )
-        if character_variant == "virtual":
-            snapshot_sheet = char.get("virtual_sheet_object_name")
-            snapshot_items = char.get("virtual_used_items") or []
-            if not snapshot_sheet:
+        # v212 — 아티스트 다중화 (PLAN D6): character_id 지정 시 해당 아티스트
+        # (kind 무관), 미지정 시 기존 variant 경로를 공용 헬퍼로 해석 (동작 동등).
+        from .character import _find_artist_by_cid, resolve_representative_artists
+
+        if body.character_id and body.character_id.strip():
+            artist = await _find_artist_by_cid(mongo, current_user["id"], body.character_id)
+            if not artist:
                 logger.warning(
-                    "[MVJob] variant=virtual but no virtual_sheet_object_name for user=%s — snapshot sheet will be None",
+                    "[MVJob] character_id not found user=%s cid=%s",
+                    current_user["id"][:8], body.character_id[:36],
+                )
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "아티스트를 찾을 수 없습니다."},
+                )
+            snapshot_sheet = artist.get("sheet_object_name")
+            snapshot_items = artist.get("used_items") or []
+            snapshot_profile = artist
+        else:
+            reps = await resolve_representative_artists(mongo, current_user["id"])
+            rep = reps.get(character_variant)
+            if not rep and not reps.get("real") and not reps.get("virtual"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "저장된 내 캐릭터가 없습니다. 먼저 프로필을 설정해주세요."},
+                )
+            snapshot_sheet = (rep or {}).get("sheet_object_name") or None
+            snapshot_items = (rep or {}).get("used_items") or []
+            snapshot_profile = rep or reps.get("real") or reps.get("virtual") or {}
+            if character_variant == "virtual" and not snapshot_sheet:
+                logger.warning(
+                    "[MVJob] variant=virtual but no virtual sheet for user=%s — snapshot sheet will be None",
                     current_user["id"],
                 )
-        else:
-            snapshot_sheet = char.get("sheet_object_name")
-            snapshot_items = char.get("used_items") or []
         # SnapFix — 시트를 불변 경로(character_snapshots/)로 복사해 이후
         # 캐릭터 재생성/삭제로부터 격리 (best-effort, MV 생성은 절대 실패 X).
         _snapfix_copied = None
@@ -595,18 +615,22 @@ async def create_mv(
 
             _snapfix_copied = snapshot_sheet_copy(get_minio(), current_user["id"], snapshot_sheet)
         user_character_snapshot = {
-            "name": char.get("name") or "",
-            "age": char.get("age") or "",
-            "personality_tags": char.get("personality_tags") or [],
-            "personality_text": char.get("personality_text") or "",
+            "name": snapshot_profile.get("name") or "",
+            "age": snapshot_profile.get("age") or "",
+            "gender": snapshot_profile.get("gender") or "",  # v212 additive (무해)
+            "personality_tags": snapshot_profile.get("personality_tags") or [],
+            "personality_text": snapshot_profile.get("personality_text") or "",
             "sheet_object_name": _snapfix_copied or snapshot_sheet,
             "used_items": snapshot_items,
+            # v212 — 사용 아티스트 추적 (legacy 대표는 None)
+            "character_id": snapshot_profile.get("character_id"),
         }
         if _snapfix_copied:
             user_character_snapshot["sheet_object_name_origin"] = snapshot_sheet
         logger.info(
-            "[MVJob] snapshot variant=%s has_sheet=%s items=%d",
+            "[MVJob] snapshot variant=%s cid=%s has_sheet=%s items=%d",
             character_variant,
+            snapshot_profile.get("character_id") or "(legacy)",
             bool(snapshot_sheet),
             len(snapshot_items),
         )
@@ -655,6 +679,8 @@ async def create_mv(
         "include_my_character": bool(body.include_my_character),
         # 커버에 쓴 캐릭터 기준 통일: "real" | "virtual" (추적용, 미전송=real).
         "character_variant": character_variant,
+        # v212 — 사용 아티스트 추적 (미지정/legacy 는 None)
+        "character_id": (user_character_snapshot or {}).get("character_id"),
         "user_character_snapshot": user_character_snapshot,
         # v63: 커버 인물 자산화 흐름 — 기본 True. include_my_character=True 일 땐
         # Phase 0/1.5 가 자동으로 무력화 (user_character 가 1/2순위 우선).

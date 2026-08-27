@@ -119,7 +119,15 @@ async def _purge_character_document(mongo, char: dict) -> None:
 
     await mongo.characters.delete_one({"_id": char["_id"]})
 
-    prefix = "characters/{}/".format(user_id)
+    # v212 — 아티스트 다중화: cid 보유 doc 은 해당 아티스트 스토리지만 sweep
+    # (characters/{uid}/{cid}/), legacy 무cid doc 은 기존 uid 전체 sweep 유지.
+    # 원본 사진(공유 경로)은 아래 explicit 삭제가 커버 — 몰수는 사진 자체가
+    # 문제인 케이스라 잔여 아티스트 유무와 무관하게 삭제(v137 준용).
+    _cid = char.get("character_id")
+    if _cid:
+        prefix = "characters/{}/{}/".format(user_id, _cid)
+    else:
+        prefix = "characters/{}/".format(user_id)
 
     def _sweep():
         objects = minio_client.list_objects(

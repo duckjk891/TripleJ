@@ -16724,3 +16724,54 @@ warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속
 신설 1: `backend_9006/scripts/mv_attach_backfill_report.py`(116줄, read-only)
 산출물 3: `claude_skills_outputs/team-dev/{PLAN(+157),TESTPLAN(+326),REPORT}.md`
 커밋 제외: `backend_9006/backups/mv_zombie_cleanup_2026-08-27.json`(2.4MB DB 덤프 — 로컬 보관, 저장소 미포함)
+
+---
+
+# REPORT v212 — 앱팀 요청 B-1: 아티스트 다중화 + 프로필 입력 복원 (2026-08-27 17:52 KST, planner)
+
+**판정: PASS — 백엔드 게이트 14/14 + e2e 4/4, 픽스 루프 F-1급 2건 반영 완료, stuck 0.** 범위: backend_9006(:9006 단일) + frontend(:4000). 9004/9005 무접촉 — 미러링은 전 단계 완료 후 별도 사이클.
+
+## 1. 배경
+앱팀 요청서 B-1(v1.1) + 사용자 확장분. ①아티스트 다중화 — 한 문서에 sheet/virtual_sheet 이중 필드로 표현하던 실사·가상 캐릭터를 "아티스트 1명=문서 1개(kind: real|virtual)"로 전환, 목록·개별 CRUD·kind별 재생성 계약 신설 ②프로필 입력 복원 — 백엔드 저장·프론트 표시부는 살아있으나 saveCharacter 호출 2곳이 name/age/성격 필드를 전송하지 않아(DB 실측: name 값 있는 문서 0건) 전 화면 read-only 였던 입력 배선 복원 + 성별(gender) 서버 신규 필드 ③슬롯 — extra_slot ⭐15 결제가 차감만 되고 효과 0이던 버그(`max_slots` 쓰기 코드 부재 실증)를 슬롯 시스템 신설로 해소.
+
+## 2. 설계 결정 (PLAN v212 D1~D7 — 상세는 PLAN, 여기는 확정 요지)
+- **D1 스키마**: characters 복수 문서 `{character_id(uuid4 hex), kind, is_default(계정당 1), name, age, gender(자유 문자열 ≤20, 신규), personality_*, sheet_object_name, art_style, used_items, …}`. 인덱스 신설: (user_id) + (user_id, character_id) **partial unique**(legacy 공존기 충돌 방지) + user_slots(user_id unique) — main.py lifespan ensure(멱등)
+- **D2 슬롯 = Mongo 택1** (PG users 컬럼 기각 — 검사 지점·연관 데이터 전부 Mongo, PG는 신규 배선+익명화 영향): `user_slots.extra_slots`(구매 누적)만 저장, **max = BASE_SLOTS(1) + extra_slots**. points.py /spend가 extra_slot 차감 성공 시 grant, grant 실패 시 refund(역방향 버그 봉쇄), 응답 max_slots 동봉
+- **D3 신규 API**: GET /character/list(slots:{used,max} 동봉) · GET/PATCH/DELETE /character/{character_id}(파일 말미 등록 + 32-hex 가드, is_default 승계=real 우선·최신, is_default:false 단독 400)
+- **D4 생성·저장**: generate 4종 `character_id?`(지정=재생성·kind 불일치 400·404 / 미지정=슬롯 검사 409 — **⭐10 차감 전·최선두 배치**), save 3-경로(①cid 갱신 ②kind 신규+슬롯 검사 ③legacy variant 면제 upsert). 하위호환: me=대표 아티스트 조립(shape 유지+additive), DELETE /me=전체 삭제(구계약 의미). **검토 보강 2건**: 슬롯 검사 위치 최선두 확정(무과금 프로브 성립 조건) + generate·save 공용 단일 헬퍼 `slots_service.check_slot_available` 강제(TESTPLAN save ②형 등가 검증의 전제를 구현으로 보장)
+- **D5 마이그레이션**: `scripts/migrate_characters_v212.py` — dry-run 기본·`--apply`·`--user-id`·멱등. real→in-place 승격 / virtual→분리 doc / 양쪽 보유 grandfather(extra_slots=1 — 실데이터 0건 미발동). 구 경로 객체 보존(청소 별건). **실데이터 7건 --apply 미실행 — ▲승인 대기**
+- **D6 소비처**: mv.py CreateMVRequest.character_id(앱팀 6항 — 이번 포함 판단, variant 병존 하위호환) / albums·admin(artists[] 확장)·reports·face_search 전 아티스트 순회 / admin_moderation 몰수 sweep cid 범위화 / upload.py 커버 무변경(object_name 직접 수신 구조)
+- **D7 프론트**: 내 캐릭터 탭=아티스트 카드 목록(kind 뱃지·기본 지정·개별 삭제·프로필 수정)+슬롯 바(n/max·⭐15 추가)+[＋새 아티스트](kind 선택)+프로필 입력 폼(이름·나이·성별·성격태그[personality-tags API 최초 배선]·성격설명 — 생성 save 동봉+PATCH 수정), 공용 ArtistPicker 신설로 selectedCharSheet 3벌·variant 라디오 2벌 수렴, MVProductionSection character_variant→character_id 전환
+
+## 3. 구현·픽스 이력
+- diff: 백엔드 수정 9파일(main.py 인덱스 +16 / character.py 795줄 변동 / mv 64 / admin 58 / points 26 / reports 31 / admin_moderation 10 / albums 7 / face_search 8) + 신설 slots_service.py(92줄)·migrate_characters_v212.py(219줄). 프론트 수정 7파일(MyMusicPage 740줄 변동 / UploadPage 174 / CoverEditModal 81 / api index.js 55 / MVStudioTab 35 / MVProductionSection 9 / CharacterCoverCard 8) + 신설 ArtistPicker.jsx(164)+css(80)
+- 프론트 배선 계약 정합 검수: 전항 일치, 수정 1건(handleSaveVirtual 명시 variant 제거 — 신규 계약 kind 경로로 통일)
+- 픽스 루프(F-1급 2건, stuck 0): ①me 응답 user_id additive 추가(character.py :1960-1961 — §5 편차 정정 참조) ②CharacterCoverCard gender 표시 +5줄(MyMusicPage 카드는 기표시 확인)
+
+## 4. 테스트 판정 (총 20건 = 백엔드 14 + e2e 4 + 강등 2 — 증적 상세 TESTPLAN v212 :11134~)
+- **백엔드 14/14 PASS**: 슬롯 전주기(만석 409 시 ⭐ 미차감 — balances↔events↔user_slots 3면 1:1:1 대조 → extra_slot 실구매 → save ②형 무과금 등가 검증으로 "구매 후 2번째 생성 성공" 증명 → 재로그인 영속 → 잔액 부족 402 무변화), me shape 하위호환(키셋 스냅샷 회귀 상비화), 다중 문서 독립성(경로 prefix 격리·독립 삭제·real 우선 is_default 승계), 라우팅 가드(/list·/me·/job 비충돌·비 32-hex 404), 프로필 왕복+검증 경계 12종, 생성 게이트(kind 불일치 400·402/403·무과금 프로브), legacy save 면제 경로, dry-run 무변조·멱등
+- **e2e 4/4 PASS**: 카드 목록·새 아티스트·프로필 폼 왕복 / 슬롯 바 실측(2/3→⭐15 구매→2/5) / FaceVerify 실노출·폴링 UI(실인증 0·시트 생성 도달 0 — 인터셉트) / 소비처(커버 body의 선택 아티스트 sheet 일치·mv character_id 캡처·variant null 확인)
+- 강등 2건(TESTPLAN 허용 절차 내): G6a albums·G4 → 정적 검증 대체 — 기록
+- 픽스 후 재검: user_id 키셋·gender 표시 반영 확인 완료
+
+## 5. 편차 정정 이력 (정직 기록)
+1. **me `user_id` "제거" 오검 → additive 재규정**: tester가 "구 키 user_id 제거됨"으로 판정 → planner (b)복원 지시 → backend-dev git HEAD 실측 결과 **구 응답에 user_id 키는 원래 부재**(mongo doc 키↔응답 키 혼동 추정 오검). 반영된 픽스는 복원이 아닌 **v212 신규 additive 키**. 앱팀 미러링 회귀표 기재 기준: "user_id = v212 신규 키"(기존 키 복원 아님). 키셋 회귀 기준 = v212 HEAD 응답(user_id·character_id·characters_count 포함)
+2. **Q5 신규 가입 잔액 선답 오류**: planner 선답 "0"(points.py :62 주석 근거) → 실측 50(signup_bonus) — 주석 스테일이 원인. TESTPLAN Q5 서술 정정 완료, 테스트는 자연 소진 방식으로 유효(재실행 불요)
+
+## 6. ▲사용자 승인 대기 (본 사이클 미실행 — 명시 승인 후 별도 진행)
+1. **실데이터 마이그레이션 `--apply` 실행** (characters 7건 — real 6·virtual 단독 1·양쪽 0. dry-run·멱등·리허설 PASS 증적 확보 상태)
+2. 구 스토리지 객체(characters/{uid}/sheet.png·sheet_virtual.png) 청소 — 마이그레이션 안착 후 별건
+3. **앱팀 고지**: 구버전 앱의 character_id 미지정 generate가 슬롯 만석 시 409 — 확정 사양의 내재 결과(수용 기준 me/save는 보장). 마이그레이션 grandfather로 기존 양쪽 보유 계정 완화(현 데이터 0건)
+
+## 7. 기록 (차기/별건 후보)
+- photo_ai 동의 게이트 스팟 미확인(e2e 경로상 기동의 상태 계정 사용) — 차기 스팟 1건
+- points.py :62 스테일 주석("0 at account creation" — 실제 signup_bonus 50) 1줄 정정 — 별건 칩 후보
+- CoverEditModal e2e 진입 생략(정적+ArtistPicker 공용 코드 검증으로 갈음) — 차기 회귀 시 포함 권장
+- MVStudioTab 커버 캐릭터 하드 disabled 접점(:605-607 → ArtistPicker 연결) — 이번 범위 밖, 리팩터 접점 기록
+- 구버전 앱 generate 409 리스크(§6-3와 동일 건 — 고지 완료 여부 추적)
+
+## 8. 앱팀 계약서 축적분
+**B-1 계약 = 이번 확정본**: GET /character/list(slots 동봉 shape) / GET·PATCH·DELETE /character/{character_id}(32-hex, 404·400 규약) / generate 4종 character_id?(kind 불일치 400, 미지정 슬롯 409 `{"error":"slot_limit_exceeded","used","max"}` — ⭐차감 전) / save character_id?·kind?·gender?(3-경로, variant는 구버전 한시 유지) / me additive 키(user_id·character_id·characters_count — 구 키 전량 보존) / POST /points/spend extra_slot 응답 max_slots / DELETE /me=전체 삭제 의미 유지. 미러링 시 이 문단이 회귀표 기준.
+
+## 9. 안전 준수
+실사용자 데이터 무변조(characters 7건 최종 대조 일치), 외부 유료 API 도달 0(시트 생성 성공 경로 인터셉트·실인증 0), ⭐ 원장 이상 0(admin_adjust 충전 구분 계상), 테스트 계정·픽스처 전량 원복, 실 .env 무접촉, 9004/9005 무접촉, 재기동 절차 준수, 실데이터 마이그레이션 미실행(dry-run만).
