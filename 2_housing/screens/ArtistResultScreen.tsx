@@ -23,7 +23,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
-import { useVoiceStore } from '../stores/voiceStore';
+import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { colors } from '../theme/colors';
@@ -41,8 +41,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // 방금 새로 만들거나 코디/미세조정한 시트는 저장 필요. mode === null이면 이미 저장된 상태.
   const isUnsaved = taskStore.mode !== null;
   const outfitItems = useOutfitStore((s) => s.items);
-  // v3.78: 아티스트에 연결된 내 목소리 (VoiceManage select 모드에서 설정)
-  const artistPersonaName = useVoiceStore((s) => s.artistPersonaName);
+  // v3.84: 아티스트 목소리 (프리셋 XOR 클론 — VoiceManage에서 설정)
+  const artistVoice = useVoiceStore((s) => s.artistVoice);
 
   const [saving, setSaving] = useState(false);
   const [hydrating, setHydrating] = useState(!apiResult); // apiResult가 비어 있으면 /character/me로 가져옴
@@ -415,13 +415,15 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           </View>
         )}
 
-        {/* v3.78: 내 목소리 연결 — 작곡 시 이 목소리가 기본으로 제안됨 */}
+        {/* v3.84: 아티스트 목소리 — 간편(프리셋)/내 목소리(클론)/미설정 3분기 표기 */}
         <View style={styles.voiceBox}>
           <AppText style={styles.voiceBoxLabel}>🎤 아티스트 목소리</AppText>
           <AppText style={styles.voiceBoxDesc}>
-            {artistPersonaName
-              ? `"${artistPersonaName}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
-              : '내 노래 음원으로 만든 목소리를 아티스트에 연결하면, 작곡 시 그 목소리로 노래해요.'}
+            {artistVoice?.type === 'preset'
+              ? `간편 목소리(${artistVoiceLabel(artistVoice)})가 설정되어 있어요. 곡을 만들 때 이 스타일이 적용돼요.`
+              : artistVoice?.type === 'clone'
+                ? `"${artistVoice.name}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
+                : '간편 목소리(스타일 프리셋)를 고르거나 내 목소리를 클로닝해 아티스트에 연결해보세요.'}
           </AppText>
           <TouchableOpacity
             style={styles.voiceBtn}
@@ -429,7 +431,11 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             activeOpacity={0.7}
           >
             <AppText style={styles.voiceBtnText}>
-              {artistPersonaName ? `🎤 목소리: ${artistPersonaName}` : '🎤 목소리 연결'}
+              {artistVoice?.type === 'preset'
+                ? `🎚 간편 목소리: ${artistVoiceLabel(artistVoice)}`
+                : artistVoice?.type === 'clone'
+                  ? `🎤 내 목소리: ${artistVoice.name}`
+                  : '🎤 목소리 설정'}
             </AppText>
           </TouchableOpacity>
         </View>

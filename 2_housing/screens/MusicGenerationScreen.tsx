@@ -19,7 +19,7 @@ import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
-import { useVoiceStore } from '../stores/voiceStore';
+import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useTimerStore } from '../stores/timerStore';
 import * as DocumentPicker from 'expo-document-picker';
@@ -30,8 +30,9 @@ const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
 const GENRES = ['댄스', '발라드', '힙합', 'R&B', '트로트', '인디', '록', '포크', '인디팝', '시티팝', '재즈', 'EDM', '클래식', '가요', 'BGM', '팝', '일렉트로닉'];
 const MOODS = ['밝고 경쾌한', '슬프고 우울한', '몽환적·신비로운', '에너지틱·강렬한', '로맨틱·달콤한', '그리운·따뜻한', '잔잔하고 편안한', '흥겹고 신나는'];
-const VOCAL_STYLES = ['소프트', '파워풀', '위스퍼', '그루비', '클리어', '허스키'];
-const VOCAL_OPTIONS = ['남성', '여성'];
+// v3.84: 간편 목소리(프리셋) 화면에서도 동일 세팅을 쓰도록 export (VoiceManageScreen)
+export const VOCAL_STYLES = ['소프트', '파워풀', '위스퍼', '그루비', '클리어', '허스키'];
+export const VOCAL_OPTIONS = ['남성', '여성'];
 
 const KEY_OPTIONS = ['C major', 'D major', 'E major', 'F major', 'G major', 'A major', 'B major', 'C minor', 'D minor', 'E minor', 'F minor', 'G minor', 'A minor', 'B minor'];
 
@@ -64,6 +65,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const lyricsStore = useLyricsStore();
   const timerStore = useTimerStore();
 
+  // v3.84: 아티스트 목소리(프리셋 XOR 클론) — 프리셋이면 보컬 성별/스타일 기본 선택
+  const artistVoice = useVoiceStore((s) => s.artistVoice);
+  const artistPreset = artistVoice?.type === 'preset' ? artistVoice : null;
+
   const [step, setStep] = useState(0);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     { type: 'director', text: DIRECTOR_MESSAGES[0] },
@@ -75,8 +80,13 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [selectedGenre, setSelectedGenre] = useState(lyricsStore.genre || musicStore.genre || '');
   const [selectedMood, setSelectedMood] = useState(lyricsStore.mood || musicStore.mood || '');
   const [useVocal, setUseVocal] = useState(true);
-  const [selectedVocalStyle, setSelectedVocalStyle] = useState(musicStore.vocalStyle || '');
-  const [selectedVocalGender, setSelectedVocalGender] = useState('');
+  // v3.84: 프리셋 아티스트 목소리가 있으면 그 성별/스타일이 기본 선택(사용자 변경 가능)
+  const [selectedVocalStyle, setSelectedVocalStyle] = useState(
+    musicStore.vocalStyle || artistPreset?.style || ''
+  );
+  const [selectedVocalGender, setSelectedVocalGender] = useState(
+    artistPreset ? (artistPreset.gender === 'male' ? '남성' : '여성') : ''
+  );
   const [subVocalGender, setSubVocalGender] = useState('');
   const [subVocalStyle, setSubVocalStyle] = useState('');
   const [styleDesc, setStyleDesc] = useState('');
@@ -118,10 +128,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const voicePersonas = useVoiceStore((s) => s.personas);
   const voiceLoading = useVoiceStore((s) => s.loading);
   const fetchPersonas = useVoiceStore((s) => s.fetchPersonas);
-  const artistPersonaId = useVoiceStore((s) => s.artistPersonaId);
+  // v3.84: 클론형 아티스트 목소리일 때만 persona/clone 목록에서 매칭
+  const artistCloneVoiceId = artistVoice?.type === 'clone' ? artistVoice.personaId : null;
   const completedPersonas = voicePersonas.filter((p) => p.status === 'completed' && !!p.persona_id);
-  const artistPersona = artistPersonaId
-    ? completedPersonas.find((p) => p.persona_id === artistPersonaId)
+  const artistPersona = artistCloneVoiceId
+    ? completedPersonas.find((p) => p.persona_id === artistCloneVoiceId)
     : undefined;
   const otherPersonas = artistPersona
     ? completedPersonas.filter((p) => p.persona_id !== artistPersona.persona_id)
@@ -132,8 +143,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const voiceClones = useVoiceStore((s) => s.clones);
   const fetchClones = useVoiceStore((s) => s.fetchClones);
   const readyClones = voiceClones.filter((c) => c.status === 'ready' && !!c.voice_id);
-  const artistClone = artistPersonaId
-    ? readyClones.find((c) => c.voice_id === artistPersonaId)
+  const artistClone = artistCloneVoiceId
+    ? readyClones.find((c) => c.voice_id === artistCloneVoiceId)
     : undefined;
   const otherClones = artistClone
     ? readyClones.filter((c) => c.voice_id !== artistClone.voice_id)
@@ -150,7 +161,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }, [step, fetchPersonas, fetchClones])
   );
 
-  // "내 아티스트 목소리"가 있으면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중)
+  // v3.84: 아티스트 목소리가 "클론"이면 기본 선택 (최초 1회만 — 사용자가 해제하면 존중).
+  // "프리셋"이면 이 스텝은 건너뛰기 기본 — 스타일 태그는 성별/스타일 스텝에서 이미 반영됨.
   useEffect(() => {
     if (step === 12 && !personaDefaultAppliedRef.current && (artistPersona || artistClone)) {
       personaDefaultAppliedRef.current = true;
@@ -777,9 +789,16 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         );
 
       case 12:
-        // v3.78: 내 목소리 페르소나 선택 (아티스트 목소리 기본 선택 + 적용 방식 토글)
+        // v3.78: 내 목소리 페르소나 선택 (클론형 아티스트 목소리 기본 선택 + 적용 방식 토글)
+        // v3.84: 프리셋형이면 이 스텝은 건너뛰기 기본 — 안내만 표시
         return (
           <View style={styles.inputArea}>
+            {artistPreset && (
+              <AppText style={styles.presetNotice}>
+                🎚 아티스트 목소리(간편: {artistVoiceLabel(artistPreset)})가 설정되어 있어요.
+                건너뛰면 그 스타일로 불러요.
+              </AppText>
+            )}
             {voiceLoading && completedPersonas.length === 0 ? (
               <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginBottom: 10 }} />
             ) : (
@@ -1275,6 +1294,15 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
     fontSize: 12,
     lineHeight: 17,
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  // v3.84: 프리셋 아티스트 목소리 안내 (case 12)
+  presetNotice: {
+    color: colors.accent.primary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600' as const,
     marginBottom: 8,
     paddingHorizontal: 2,
   },

@@ -7,6 +7,29 @@
 
 ---
 
+## v3.84 — 2026-08-27 — 아티스트 목소리 2택 재편: 간편(프리셋 성별+스타일) vs 내 목소리(클로닝), 배타 선택
+
+### 요청(원문 요지)
+① "(사용 가능 상태만 선택돼요)" 문구 제거 ② **간편 만들기 = 프리셋 보컬 구성** — 아티스트 성별에 맞춰 성별 자동 선택 + 기존 세팅된 보컬 스타일(소프트·허스키 등) 지정 화면 ③ "내 목소리 만들기" = 보이스 클로닝(노래+문장낭독) ④ 간편/내 목소리는 **병행 불가 — 둘 중 하나 선택** ⑤ 프리셋 미리듣기/조정 가능? → 프리셋은 스타일 태그라 샘플 오디오 없음(미리듣기 불가)(요청서 추가 없이 답변으로 갈음).
+
+### Plan verification findings
+- 문구 위치: VoiceManageScreen.tsx:332. 기존 보컬 스타일 세팅값: MusicGenerationScreen.tsx:33 `VOCAL_STYLES = [소프트,파워풀,위스퍼,그루비,클리어,허스키]` + musicService.ts mapVocalKey(성별×스타일 → male_soft/female_husky 등) — 간편 만들기가 이 소스를 재사용.
+- 아티스트 성별: artistProfileStore(v3.82, 슬롯별 gender). 목소리 연결: voiceStore.artistPersonaId(클론/persona용).
+- 작곡 전송: 프리셋 = vocal/vocalStyle 필드(기존 경로), 클론 = persona_id+persona_model(v3.78 경로).
+
+### 범위
+1. 문구 제거(:332).
+2. **voiceStore 확장**: 아티스트 목소리를 단일 배타 구조로 — `artistVoice: { type:'preset', gender, style } | { type:'clone', personaId, name } | null` (기존 artistPersonaId 마이그레이션). 설정 시 반대 유형 자동 해제.
+3. **VoiceManage 재편(2택)**: [🎚 간편 만들기] = 성별(아티스트 프로필 gender 기본값, 변경 가능) + 스타일 칩(VOCAL_STYLES) 선택 → 아티스트 목소리로 저장(즉시, 서버 호출 없음) / [🎤 내 목소리 만들기] = 클로닝 위저드(기존 v3.83). persona(노래만) 만들기 UI 제거(기존 생성분 자산은 목록 유지·선택 가능). 현재 연결된 목소리 표시(프리셋이면 "여성·허스키", 클론이면 이름).
+4. **작곡 연동**: 아티스트 목소리가 preset이면 보컬 스텝에 자동 반영(vocal=성별, vocalStyle=스타일 기본 선택), clone이면 케이스12 기본 선택(기존). 케이스12 문구도 배타 구조 반영.
+5. ArtistResult "🎤 목소리" 표시: 프리셋/클론 공통 표기.
+
+
+### 리스크·회귀
+기존 artistPersonaId 저장분 마이그레이션(clone 타입으로 승계) · 작곡 보컬 스텝 기존 수동 선택과 충돌 금지(기본값 주입만, 사용자가 바꾸면 그 값 우선) · persona 경로 회귀 금지(만들기 UI만 제거, 재생·선택은 유지).
+
+---
+
 ## v3.83 — 2026-08-27 — Voice Clone(노래+문장낭독) 위저드 이식 (MAIDOL 파리티)
 
 ### 요청(원문 요지)
