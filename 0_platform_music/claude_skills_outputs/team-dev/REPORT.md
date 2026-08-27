@@ -16775,3 +16775,53 @@ warning 반영. 재검증: **전 건에 예외를 주입해도 잔여 건 계속
 
 ## 9. 안전 준수
 실사용자 데이터 무변조(characters 7건 최종 대조 일치), 외부 유료 API 도달 0(시트 생성 성공 경로 인터셉트·실인증 0), ⭐ 원장 이상 0(admin_adjust 충전 구분 계상), 테스트 계정·픽스처 전량 원복, 실 .env 무접촉, 9004/9005 무접촉, 재기동 절차 준수, 실데이터 마이그레이션 미실행(dry-run만).
+
+---
+
+# REPORT v213 — 앱팀 요청 B-3: 아티스트↔목소리(voice persona) 연결 (2026-08-27 19:29 KST, planner)
+
+**판정: PASS — 백엔드 게이트 8/8 + E2E 4/4, 픽스 루프 0회.** 기준: v212 완료(d84cc88) 위 소형 사이클. 범위: backend_9006 + frontend, 9004/9005 무접촉. 연결/해제 = 무과금 메타데이터.
+
+## 1. 배경·실측 요지
+앱팀 요청서 B-3. ⚠ 요청서의 voice_personas(voice_persona.py)는 9004 기준 — **9006 실체는 `voice_clones` 컬렉션**(voice_clone.py v76, clone_id=_id / voice_id=Suno persona[ready 후 부여] / voice_name / status). 삭제 경로 전수는 서비스 함수 2개로 수렴(`delete_voice_clone` — DELETE 라우트+check-availability 자동삭제 공용 / `cleanup_expired`). 곡 생성은 POST /generate/·/{id}/start 가 persona_id·persona_model 기수용이며 **소비하는 persona_id = Suno voice_id**(FE ComposeStudioTab이 clone→voice_id 변환 전송 — 실측 :720-724·:763-767). 실데이터: voice_clones 4건(ready 1)·characters 7건 read-only.
+
+## 2. 설계 결정 (V1~V5)
+- **V1 매핑**: `characters.persona_id` = **voice_clones.clone_id(로컬 자산 참조)**, `persona_model` 화이트리스트 {'voice_persona','style_persona'} 기본 'voice_persona'. 응답 파생 3필드 additive: `persona_name`·`persona_voice_id`(**곡 생성 주입용**)·`persona_status`(dangling='missing'). list 파생 resolve 는 유저 클론 1회 배치(N+1 금지). dangling 은 읽기 무쓰기
+- **V2**: 신규 엔드포인트 없음 — PATCH·save ①cid/②kind 경로 확장(③legacy 미수용). 규약: None=유지 / ""=해제($unset 동시) / 값=연결(소유·ready 검증, 부재·타인·비ready·모델 외 400 — 존재 은닉). 추적자 `[VoiceLink]`
+- **V3 삭제 훅**: voice_clone_service `_cleanup_artist_persona_links(user_id, clone_ids)` — update_many $unset, **best-effort never-raise**, 호출 2곳(delete_voice_clone 성공 직후 + cleanup_expired deleted_ids 벌크)으로 전 삭제 경로 커버
+- **V4 작곡실 우선순위**: **수동 클론 선택 > 아티스트 자동 주입 > personaModel 토글 > 없음**. ArtistPicker 접힘형 도입(미선택 시 기존 동작 100% 불변), ready+voice_id 보유 아티스트 선택 시 `🎤 「{persona_name}」로 작곡됩니다 (자동)` + body 주입(제출 2경로 공통 함수 수렴), [기본 보컬로] 해제 연동
+- **V5 카드**: 아티스트 카드 프로필 행 아래 🎤 행 — 미연결 `[목소리 연결하기 ▼]`(ready 클론 드롭다운)→patchCharacter, 연결 시 목소리명+해제, missing/expired 는 재연결 유도. legacy 무cid 카드는 기존 alert 관행
+
+## 3. 계약 확정본 — 앱팀 계약서 축적분 (미러링 회귀표 기준)
+**R1 필수 명시: `persona_id` = 9006 목소리 자산 id(= voice_clones.clone_id)이며 Suno persona id 가 아님. 곡 생성(POST /generate/) 주입용은 응답의 `persona_voice_id`.**
+
+persona 5키 × 3상태 (me·list·단건 전 응답면 공통, 키 생략 금지 — me 키셋 상비 회귀에 additive 편입):
+
+| 키 | 미연결 | 연결 | dangling(클론 소멸) |
+|---|---|---|---|
+| persona_id | "" | clone_id | 잔존값 |
+| persona_model | "" | 'voice_persona'\|'style_persona' | 잔존값 |
+| persona_name | "" | voice_name | "" |
+| persona_voice_id | null | Suno voice_id | null |
+| persona_status | null | 클론 status(ready 등) | 'missing' |
+
+설정/해제 = PATCH /character/{cid} 및 save ①②(body persona_id·persona_model — ""=해제, None=유지). 목소리 삭제 시(개별 삭제·만료 자동삭제·일괄 정리 전 경로) 참조 아티스트 필드 자동 $unset.
+
+## 4. 구현·테스트 판정
+- diff: character.py +248/-소량 · voice_clone_service.py +35 / ArtistPicker 7± · ComposeStudioTab 126± · MyMusicPage 124± (api/index.js 무변경 — 기존 patchCharacter/getVoiceClones 통과 확인)
+- **백엔드 8/8 PASS**: 계약 5키 3상태 전면 실증 / 검증 400 6케이스+존재 은닉 / 해제 $unset+키셋 빈값 잔존 / save ①②수용·③미수용 / 삭제 훅(벌크 unset modified=2·cleanup-expired 실호출·never-raise 단위) / dangling 무쓰기 3회 반복 / N+1 2면(정적+기능) / me 키셋 회귀(v212 additive 신규 키 기준 문언)
+- **E2E 4/4 PASS**: 카드 연결→표시→해제 / dangling UI 수습·복구 / 작곡실 우선순위 4단 전부 캡처 실증(**clone_id 저장 vs voice_id 주입 양면 캡처 방어** 내장)+기본 보컬 해제 연동 / 회귀 전 축 불변(콘솔 에러 0)
+- 안전: 작곡 시작 도달 0(인터셉트 6건+402 백스톱), 유료 외부 도달 0, 픽스처 전량 원복, 클론 픽스처 전량 직삽(생성 유료 회피), check-availability 미호출(공용 경유 정적 갈음)
+
+## 5. 실데이터 변동 건 — 정직 기록 (종결)
+테스트 창 중 **제3자 실사용자의 voice_clones validating 문서 1건 소멸(4→3)** 관측. 삭제 로그 grep 결과 해당 라인 부재 → **원인 미상의 외부 변동, 테스트 비인과 입증으로 종결**. 비인과 증적 5종: ①테스트 창 9006 voice-clone 쓰기 전량=픽스처 4건 ②cleanup_expired 쿼리 {user_id, status:'expired'} 한정(코드 실측 — validating·타유저 도달 불가) ③9004 로그 해당 id 0건 ④validating 자동 삭제 경로 서버 부재 ⑤핵심 보존 상태(ready 1·expired 2)·characters 7건 무변. **사용자 보고 사항.**
+→ **§0 상비 규약 승격(적용 완료)**: "실데이터 스냅샷 무변조 대조는 **안정 상태 문서 한정**(ready/expired/completed 등). 진행 중 상태(validating/generating/processing)는 제3자 활동·콜백으로 자연 변동 가능 — 존재·개수 기록만 남기고 무변조 판정 기준에서 제외." (본 건이 신설 근거 사례)
+
+## 6. 잔여 기록
+- R2 — ComposeStudioTab :753 계열(재시도/start 경로) UI 트리거 E2E 미재현: 제출 2경로가 공통 함수로 수렴됨 + 인터셉트 등록으로 커버(정적 보장). 차기 회귀에서 실트리거 1회 권장
+- me 키셋 문언 기준: user_id 는 "v212 additive 신규 키"(복원 아님) — 회귀표·미러링 문서 공통
+- v212 이월 ▲승인 대기 3건 불변(실데이터 마이그레이션 --apply · 구 스토리지 청소 · 앱팀 409 고지) — 본 사이클 범위 외
+- ArtistPicker 🎤 뱃지(F3 optional) 반영 완료(7±)
+
+## 7. 안전 준수
+실사용자 데이터 무변조(§5 외부 변동 1건은 비인과 입증·안정 상태 핵심 전량 보존), 유료 외부 API 도달 0, 실 .env 무접촉, 9004/9005 무접촉, 테스트 계정·픽스처 전량 원복, 재기동 절차 준수.

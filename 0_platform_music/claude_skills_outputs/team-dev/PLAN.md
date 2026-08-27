@@ -30828,3 +30828,81 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
 - 구 me 응답에 `user_id` 키는 **원래 부재** — tester "제거됨" 판정은 오검(mongo doc 키 ↔ 응답 키 혼동 추정). 따라서 반영된 픽스(character.py :1960-1961)는 복원이 아닌 **v212 신규 additive 키 추가**(무해·shape 문언과 무충돌). 위 "편차1 (b) 복원 지시" 기록은 이 정정으로 갈음
 - REPORT 기록 기준: **"user_id 는 v212 신규 키"** — 앱팀 미러링 회귀표에 '기존 키 복원'으로 오기 금지
 - me 키셋 스냅샷 회귀는 유지하되 **기준 키셋 = v212 HEAD 응답**(user_id·character_id·characters_count 포함)으로 확정 — 구버전 shape 대비 항목은 "구 키 전량 포함 + 신규 4종 추가"로 서술
+
+---
+
+# PLAN v213 — 앱팀 요청 B-3: 아티스트↔목소리(voice persona) 연결 (2026-08-27 18:01 KST, planner)
+
+기준: v212 완료(커밋 d84cc88). 범위: backend_9006 + frontend. 소형 사이클. 연결/해제 = 무과금 메타데이터 — 유료 성공 경로(보이스클론 생성·작곡·시트 생성) 금지 불변.
+
+## 0. 실측 findings
+
+### 0-1. 9006 목소리 시스템 실체 (⚠ 앱팀 요청서의 voice_personas 와 상이)
+- **voice_persona.py 는 9006 에 부재** — 목소리 실체는 `routes/voice_clone.py`(474줄, v76 Suno V5_5) + `services/voice_clone_service.py`, 컬렉션 **`voice_clones`** (voice_clone.py:14 주석이 "기존 voice_persona.py 와 무관(구버전 워크플로)" 명시)
+- 문서 스키마(실측 50건 샘플 키): `_id`(=클라이언트 clone_id), `user_id`, `voice_name`, `description`, `voice_id`(**Suno persona id — ready 후 부여**), `status`(validating/generating/ready/expired), `generate_task_id`, `source/verify_object_name`, `expired_at/reason` 등. `_serialize`(service:99-111)가 `_id`→`clone_id` 변환
+- 엔드포인트: POST /create·/{id}/verify, GET /list·/{id}, **DELETE /{clone_id}**(:372 — svc.delete_voice_clone), POST /{id}/regenerate-phrase, **POST /check-availability**(:397 — 만료 감지 시 **자동 영구삭제**, service:736 에서 delete_voice_clone 재사용), **POST /cleanup-expired**(service:921 cleanup_expired — expired delete_many), 콜백 2종
+- **삭제 경로 전수 = 서비스 함수 2개로 수렴**: ①`delete_voice_clone`(find_one_and_delete :887-913 — DELETE 라우트+check-availability 자동삭제 공용) ②`cleanup_expired`(delete_many :933, deleted_ids 수집 기존재) → orphan 정리 훅은 서비스 레벨 2곳이면 전 경로 커버
+- 실데이터(read-only): voice_clones **4건(ready 1)**, characters 의 persona 필드 보유 0건
+
+### 0-2. 곡 생성 persona 수용 현황
+- POST /generate/ body 에 `persona_id`(:71 — "Suno Voice Persona ID")·`persona_model`(:76 — 'style_persona'|'voice_persona') 기존재, generation doc 영속(:508-513) + /{id}/start 재사용(:557-562, :642-647) → suno_generator 가 `personaId`/`personaModel` 로 전달(:162-175), voice_persona 는 타임아웃 12분 특례(:212-214) + 만료 감지 시 voice_clones 를 `{$or:[{voice_id},{generate_task_id}]}` 로 역매칭 플래그(:255-261)
+- **FE 전송 실체(ComposeStudioTab)**: 선택 단위는 `selectedVoiceCloneId`(=clone_id, :281), ready&&voice_id 필터(:495), 제출 시 clone 을 찾아 **`body.persona_id = clone.voice_id`**(:720-724, :763-767 — 2경로) + persona_model='voice_persona'. 별도 고급 토글 personaModelOn(:341-342, :1584-1602)은 클론 선택 시 덮어써짐 → **기존 우선순위: 수동 클론 선택 > personaModel 토글**
+- ∴ **/generate 가 소비하는 persona_id = Suno voice_id** (clone_id 아님) — 매핑 설계의 핵심 전제
+
+### 0-3. v212 확장점
+- character.py: `_serialize_artist`(:153-172 — list/단건 공용), me 조립(:1960 계열), `PatchArtistRequest`(:2316-2322)+patch_artist(:2339~ — None=유지·빈 문자열=클리어 규약, is_default:false 단독 400), SaveCharacterRequest ①cid/②kind/③legacy 3-경로
+- FE: MyMusicPage renderArtistCards(:1437-1517 — 카드에 이름/뱃지/프로필/버튼 4종. **🎤 목소리 행 삽입 위치 = 프로필 행(:1468-1471) 아래**), legacy 무cid 카드 미지원 관행 기존재(:642-645 기본 지정 alert 패턴), MyVoiceCloneSection(:2168 내 캐릭터 탭 하단 — 삭제 UI :76-88 deleteVoiceClone / cleanup :108), ArtistPicker(공용 — legacy 합성 폴백 내장), api.patchCharacter·getVoiceClones(:580)·deleteVoiceClone(:582) 기존재
+
+## 1. 설계 결정
+
+### V1. persona 매핑 — **characters.persona_id = voice_clones.clone_id (로컬 자산 참조)**
+- 근거: ①선택 단위가 clone_id(FE·목록·삭제 전부) ②voice_id 는 ready 전 부재 + Suno 측 식별자라 만료·재발급 변동 가능 ③주입 시점에 어차피 상태 확인 조회 필요 — clone_id 저장 + 조회 시 voice_id 파생이 안전측 ④orphan 정리 훅 매칭이 정확(1:1)
+- `persona_model` = 화이트리스트 {'voice_persona','style_persona'}, 연결 시 미전송이면 'voice_persona' 기본 (9006 실체 — 클론 연결 = voice_persona)
+- **파생 필드(응답 전용, additive)**: `persona_name`(voice_name)·`persona_voice_id`(Suno — **/generate 주입용은 이 값**)·`persona_status`(clone status, dangling 시 'missing') — me·list·단건 모두 동봉. list 는 유저 클론 1회 조회 배치 매핑(N+1 금지)
+- dangling(정리 훅 실패·경합): persona_id 잔존 + 파생 null/'missing' — 읽기 경로 무쓰기(lazy cleanup 안 함), FE 는 미연결+재연결 유도 표시
+- **앱팀 계약 명시 필수**: "persona_id = 9006 목소리 자산 id(clone_id). 곡 생성 주입용은 응답의 persona_voice_id" — 앱이 persona_id 를 Suno id 로 오해하는 것이 본 사이클 최대 계약 리스크(§5 R3)
+
+### V2. 연결/해제 = PATCH(및 save ①②) 확장 — 신규 엔드포인트 없음
+- PatchArtistRequest + SaveCharacterRequest(①cid·②kind 경로만 — ③legacy 미수용)에 `persona_id?`·`persona_model?` 추가
+- 규약(v212 PATCH 규약 승계): **None(미전송)=유지 / 빈 문자열 ""=해제**(persona_id·persona_model 동시 $unset) / 값 존재=연결
+- 연결 검증: voice_clones {_id: ObjectId(persona_id), user_id} 조회 — 형식 오류·부재·타인 400 "연결할 목소리를 찾을 수 없습니다" / status!='ready' 400 "준비된 목소리만 연결할 수 있습니다" / persona_model 화이트리스트 외 400. persona_model 단독 전송은 기연결 시 갱신, 미연결 시 400
+- 로그 추적자 `[VoiceLink]` — link/unlink/cleanup 전부 (user·cid·clone_id)
+
+### V3. 삭제 자동 정리 훅 — 서비스 레벨 2곳 (전 경로 커버)
+- voice_clone_service 에 `_cleanup_artist_persona_links(user_id, clone_ids: list[str])` 신설: `characters.update_many({user_id, persona_id: {$in: clone_ids}}, {$unset: {persona_id, persona_model}})` — **best-effort·never raise**(본 삭제 흐름 무영향), modified>0 시 [VoiceLink] cleanup 로그
+- 호출: ①delete_voice_clone 성공 직후(단건 — DELETE 라우트+check-availability 자동삭제 공용 경유) ②cleanup_expired 의 deleted_ids(기수집)로 벌크
+
+### V4. 작곡실 자동 주입 — **우선순위: 수동 클론 선택 > 아티스트 자동 > personaModel 토글 > 없음** (기존 서열에 '아티스트 자동'을 수동 아래로 삽입)
+- ComposeStudioTab 에 ArtistPicker 도입(접힘형 선택 섹션 — 미선택 시 기존 동작 100% 불변). 아티스트 선택 && persona_status==='ready' && persona_voice_id 존재 시: `🎤 「{persona_name}」로 작곡됩니다 (자동)` 안내 + body `persona_id=artist.persona_voice_id`·`persona_model=artist.persona_model` 주입 (제출 2경로 :711-724·:753-767 모두)
+- 수동 selectedVoiceCloneId 지정 시 아티스트 주입 무시(기존 로직이 마지막에 덮어쓰는 구조 유지 — 코드 순서상 자연 보장, 안내 문구만 수동 우선으로 전환). [기본 보컬로] 해제 시 아티스트 주입도 해제(voiceSource 상태로 명시 관리). persona 미연결 아티스트 선택 = 주입 없음(안내 생략)
+- 아티스트 선택이 커버/성별 등 다른 파라미터에 영향 주지 않음(이번 범위 = 목소리만)
+
+### V5. 아티스트 카드 목소리 행 (MyMusicPage renderArtistCards)
+- 프로필 행 아래 `🎤 목소리: {persona_name} · 연결 해제` / 미연결 시 `🎤 목소리: 미연결 [목소리 연결하기 ▼]` — 드롭다운 = getVoiceClones ready 필터(voice_name 표시), 선택 → patchCharacter(cid, {persona_id: clone_id}) → 목록 재조회(캐시 무효화 경유). persona_status 'missing'/'expired' → "연결된 목소리가 삭제(만료)됨 — 다시 연결" 표시
+- legacy 무cid 카드: 기본 지정과 동일 관행 — "마이그레이션 후 사용 가능" alert (:642-645 패턴)
+- ArtistPicker 카드에도 🎤 persona_name 뱃지 소폭 추가(작곡실 시인성 — optional, 여력 시)
+
+## 2. 변경 매트릭스
+
+| # | 파일 | 변경 | 담당 |
+|---|---|---|---|
+| B1 | backend_9006/app/routes/character.py | Patch/SaveRequest persona 2필드 + 연결/해제 검증 헬퍼(공용) + _serialize_artist·me 조립·list 배치 resolve(파생 3필드) + [VoiceLink] | backend-dev |
+| B2 | backend_9006/app/services/voice_clone_service.py | _cleanup_artist_persona_links + delete_voice_clone/cleanup_expired 훅 | backend-dev |
+| F1 | frontend/src/pages/MyMusicPage.jsx | 카드 목소리 행+연결 드롭다운+해제 (V5) | frontend-dev |
+| F2 | frontend/src/components/studio/ComposeStudioTab.jsx | ArtistPicker 도입+자동 주입+우선순위+안내 (V4) | frontend-dev |
+| F3 | frontend/src/components/ArtistPicker.jsx | 🎤 뱃지 (optional) | frontend-dev |
+| — | frontend/src/api/index.js | 기존 patchCharacter/getVoiceClones body 통과 확인만 — 신규 함수 불요 예상 | frontend-dev |
+
+## 3. dev 분할
+- backend 선행 B1→B2 (반나절급 소형). FE F1/F2 골격(드롭다운·안내 UI)은 본 PLAN 계약 고정치로 병렬 착수 허용 — 배선·왕복은 B1 후
+- tester 는 B1+B2 머지 후 일괄 투입 (소형이라 단일 배치)
+
+## 4. test-designer 항목
+표준 제약: 연결/해제/조회 = 무과금 실호출 가능. **작곡 시작·보이스클론 생성·check-availability(Suno 외부 조회)는 외부 도달 금지** — 작곡은 body 캡처/402 경로, check-availability 훅 검증은 delete 경로 또는 서비스 단위로 갈음. voice_clones 실데이터 4건·characters 7건 read-only, 테스트 픽스처 원복.
+
+회귀: ①v212 전 축 스모크(list/PATCH 프로필/슬롯/me — **me 키셋 상비 회귀에 신규 5키 additive 반영**) ②작곡실 기존 수동 보이스클론 선택 경로(body.persona_id=voice_id 불변) + personaModel 토글 ③voice-clone list/delete/cleanup 기존 동작 ④아티스트 카드 v212 4버튼 불변
+
+신규: ⑤PATCH 연결 정상(ready 클론) → me/list/단건에 persona_id+파생 3필드 ⑥검증 4종(형식 오류/타인/비ready 400·모델 화이트리스트 400·model 단독 미연결 400) ⑦해제("" → unset) vs 미전송 유지 ⑧save ①② persona 수용·③legacy 미수용 ⑨삭제 훅: DELETE /{clone_id} → 참조 아티스트 필드 정리(다중 아티스트 동일 클론 연결 케이스 포함) / cleanup_expired 벌크(expired 픽스처) / never-raise(characters 접근 실패 모킹 — 단위) ⑩dangling 픽스처 → persona_status 'missing'+FE 재연결 표시 ⑪e2e: 카드 연결→표시→해제 / 작곡실 아티스트 선택 자동 주입 안내+body 캡처 → 수동 클론 오버라이드 → 기본 보컬 해제
+
+## 5. 리스크·판단
+**진행 (40% 이상 — 소형·additive·삭제 경로 수렴 확인됨).** R1: 앱팀 persona_id 의미 오해 — 계약서 축적분에 clone_id/persona_voice_id 구분 명시(§V1, REPORT 승계 필수). R2: list 파생 resolve N+1 — 배치 조회 구현 강제. R3: check-availability 자동삭제가 사용자 요청 중 발동 — 훅 best-effort 로 본 흐름 무영향 보장(⑨ never-raise 검증). R4: ComposeStudioTab 제출 2경로 — 주입 누락 방지 위해 body 구성 공통 함수화 권장(기존 중복 구조 존중, 최소 침습).

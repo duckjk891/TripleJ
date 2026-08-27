@@ -11440,3 +11440,223 @@ G16(e) character_id), 실데이터 7건 전후 스냅샷. 시크릿·실이메�
   판정 유지, admin_adjust 는 예비 수단 격하 ② 회귀 보강 — **me 응답 키셋 스냅샷 비교**(구 계약
   키 전량·user_id 포함 존재, 누락 1건 FAIL)를 G1⑤ 강화 + §0 규약에 **이후 사이클 상비 회귀**로
   등재(기준 키셋 판정 기록 원문 보존·재사용).
+
+## v213 — B-3 아티스트↔목소리(voice persona) 연결 검증 (2026-08-27 18:03)
+
+### 0. 전제·공통 절차
+
+- **대상**: PLAN v213(:30834~). 백엔드 — Patch/SaveRequest 에 `persona_id`·`persona_model` 추가
+  (V2: None=유지 / ""=해제 $unset / 값=연결+검증), 파생 3필드(persona_name·persona_voice_id·
+  persona_status — me/list/단건 additive, list 배치 resolve), 삭제 자동 정리 훅 2곳
+  (`_cleanup_artist_persona_links` — delete_voice_clone·cleanup_expired, best-effort never-raise,
+  V3). 프론트 — 아티스트 카드 목소리 행(V5), 작곡실 ArtistPicker 자동 주입(V4 — 우선순위:
+  수동 클론 > 아티스트 자동 > personaModel 토글 > 없음).
+- **핵심 전제(V1)**: `characters.persona_id` = **voice_clones.clone_id(로컬 자산)**, /generate
+  주입용은 파생 `persona_voice_id`(Suno) — 판정 전반에서 두 id 를 혼동하지 않는다(앱팀 계약
+  리스크 R3 의 테스트측 방어).
+- **서버·계정·원복**: v212 §0 승계 — 9006+4000, 계정 A/B 일회용, mongo 직삽 픽스처(characters·
+  voice_clones)는 테스트 계정 user_id 소유만·삽입/삭제 id 전수 기록·즉시 원복.
+- **read-only 서약**: 실데이터 **voice_clones 4건(ready 1)** + **characters 7건** — 착수/종료
+  `_id`+`updated_at`(voice_clones 는 status 포함) 스냅샷 대조, 변동 시 ABORT.
+  **POST /cleanup-expired 는 실호출 가능(planner Q2 확정 — 외부 도달 0 실측)**: expired 직삽 →
+  호출 → 벌크 훅 검증. 실데이터 4건 무변은 스냅샷 대조로 계속 증빙(만일의 변동 = ABORT).
+  **check-availability(Suno 외부 조회)만 금지 유지.**
+- **유료 0**: 연결/해제/조회/DELETE clone/cleanup = **무과금 내부 메타데이터 — 실호출 기본**.
+  금지: **보이스클론 생성(POST /create·verify — 유료·외부)** → 클론은 전부 mongo 직삽 픽스처
+  (ready = voice_id 보유 / 비ready = generating / expired / dangling), **작곡 시작 2계열**(v209
+  확정 — start_music_gen:true·/generate/{id}/start) 인터셉트, **check-availability(Suno 외부
+  조회) 호출 금지** — 그 훅 검증은 delete 경로·서비스 단위로 갈음(PLAN §4 명시). 기존 차단망
+  (translate-tags 등)·실업로드 개정 규약·시트 생성 금지 전부 승계.
+- **me 키셋 상비 회귀(v212 등재분)**: 기준 키셋 = v212 보존분 + **additive 5키**(persona_id·
+  persona_model·persona_name·persona_voice_id·persona_status) 반영해 갱신 — 구 키 전량(user_id
+  포함) 존재 + 신 5키 존재, 그 외 증감 0.
+- **persona 5키 표현 계약(planner Q3 확정 — 키 생략 금지, 3상태 고정값)**:
+  | 상태 | persona_id | persona_model | persona_name | persona_voice_id | persona_status |
+  |---|---|---|---|---|---|
+  | 미연결/해제 후 | `""` | `""` | `""` | `null` | `null` |
+  | dangling | 잔존 값 | 잔존 값 | `""` | `null` | `'missing'` |
+  | 연결(ready) | clone_id 실값 | 실값 | voice_name | Suno id | `'ready'` |
+  — me/list/단건 **어느 상태에서도 5키 생략 금지**(키 부재 = FAIL).
+- **단계 게이트**: B1+B2 머지 후 = api·unit 일괄(R1·R3·N1~N6a) / F1~F3 후 = e2e(R2·R4·N6b·N7).
+
+### 1. 시나리오 (회귀 R1~R4 = PLAN §4 ①~④ / 신규 N1~N7 = ⑤~⑪)
+
+#### R1 `[api]` v212 전 축 스모크 + me 키셋 additive 갱신 (①)
+
+- **Given**: 계정 A, 직삽 아티스트 2건(real default+virtual).
+- **When/Then**: /list(slots 동봉)·PATCH 프로필(부분 갱신 규약)·is_default 승계·me 조립이 v212
+  판정 그대로 + **me 키셋 상비 회귀**: 구 키 전량 존재 + 신규 5키 additive — 미연결 상태 값은
+  **§0 Q3 확정 계약대로**(`""×3 + null×2`, 키 생략 금지). 슬롯 검사(save ②형 409)는 스모크 1건.
+- **유료 0**: 무과금 CRUD. **게이트**: B 머지 후.
+
+#### R2 `[e2e]` 작곡실 수동 클론 경로 회귀 — 불변 (②)
+
+- **Given**: Playwright 계정 A, 공통 차단망 + 작곡 시작 2계열 인터셉트. ready 클론 직삽
+  (voice_id `v213-suno-A1`).
+- **When/Then**: ComposeStudioTab 에서 **아티스트 미선택 상태(기존 동작 100% 불변 전제)** 로 수동
+  보이스클론 선택(ready&&voice_id 필터 목록) → 생성 실행 → 캡처 body
+  `persona_id == "v213-suno-A1"`(= **clone 의 voice_id** — clone_id 아님)·persona_model=
+  'voice_persona'(제출 2경로 중 도달 경로 기록). personaModel 고급 토글 단독 사용 시 기존 반영·
+  클론 선택 시 덮어쓰기(기존 서열) 재확인.
+- **유료 0**: 시작 전면 인터셉트. **게이트**: F 후.
+
+#### R3 `[api]` voice-clone list/delete/cleanup 기존 동작 (③)
+
+- **Given**: 계정 A 에 직삽 클론 3건(ready/generating/expired).
+- **When/Then**: GET /list — 3건·`_serialize` 규약(clone_id 변환) / DELETE /{clone_id}(generating
+  1건) — 문서 삭제·재조회 부재 / POST /cleanup-expired — expired 만 delete(§0 실데이터 분기
+  적용). check-availability 는 **미호출**(외부 조회 금지 — 커버리지는 N5 의 delete 공용 경로로
+  갈음됨을 기록).
+- **유료 0**: 내부 CRUD·직삽 원복. **게이트**: B 머지 후.
+
+#### R4 `[e2e]` 아티스트 카드 v212 4버튼 불변 (④)
+
+- **Given**: N7 세션 겸용 — 아티스트 2건+목소리 행 추가된 카드.
+- **When/Then**: 기본 지정·개별 삭제·프로필 수정·(재생성 진입) 4버튼이 v212 동작 그대로(목소리
+  행 삽입이 기존 레이아웃·핸들러를 깨지 않음 — 콘솔 에러 0). legacy 무cid 카드의 "마이그레이션
+  후 사용 가능" alert 관행이 목소리 행에도 적용되는지 실측 기록.
+- **유료 0**: CRUD 실호출·생성 계열 인터셉트. **게이트**: F 후.
+
+#### N1 `[api]` PATCH 연결 정상 → 파생 3필드·list 배치 resolve (⑤)
+
+- **Given**: 계정 A — 아티스트 2건 + ready 클론 C1(voice_name·voice_id 보유) 직삽.
+- **When/Then**: ① PATCH {persona_id: C1.clone_id} → 200 + `[VoiceLink] link` 로그 ② me·list·
+  단건 **3곳 모두** persona_id(=clone_id)+파생 3필드(persona_name=voice_name·persona_voice_id=
+  Suno voice_id·persona_status='ready') 동봉 ③ persona_model 미전송 기본 'voice_persona'
+  ④ **N+1 금지 판정(planner Q1 확정 — Mongo 프로파일러 금지: 운영 DB 설정 무접촉)**: 대체 2면 —
+  ⓐ **코드 정적**: list 핸들러의 voice_clones 조회가 `$in` 배치 **1회**임을 diff 목검(루프 내
+  find 부재) ⓑ **기능**: 아티스트 3건+·클론 2건+ 연결 상태에서 /list 응답의 파생 필드가 **전원
+  정확**(각 아티스트가 자기 클론의 name/voice_id/status 와 1:1 일치).
+- **유료 0**: 무과금. **게이트**: B 머지 후.
+
+#### N2 `[api]` 연결 검증 — 400 전종 (⑥)
+
+- **Given**: A 아티스트 1 + A ready 클론 C1·A generating 클론 C2·**B 소유 ready 클론 C3** 직삽.
+- **When/Then** (전건 400 + 문구 실측):
+  - (a) persona_id 형식 오류(비 ObjectId 문자열) → 400 "연결할 목소리를 찾을 수 없습니다"
+  - (b) 부재(실존 불가 ObjectId) → 400 동일 / (c) **타인 C3** → 400 동일(존재 은닉 — 404 아님
+    계약 확인)
+  - (d) 비ready C2 → 400 "준비된 목소리만 연결할 수 있습니다"
+  - (e) persona_model 화이트리스트 외('x_persona') → 400
+  - (f) persona_model **단독 전송·미연결 상태** → 400 (기연결 상태에선 갱신 200 — N3 교차)
+  - 각 후 아티스트 doc 무변(persona 필드 미기록) 확인.
+- **유료 0**: 400 종료. **게이트**: B 머지 후.
+
+#### N3 `[api]` 해제("")·유지(None) 규약 (⑦)
+
+- **Given**: N1 연결 상태(C1).
+- **When/Then**: ① 다른 필드만 PATCH(name) — persona_id **유지**(None=미전송 규약) ② persona_model
+  단독 'style_persona' → 갱신 200(기연결) ③ `persona_id: ""` → 200 + persona_id·persona_model
+  **동시 $unset**(mongo 필드 부재 확인 — null 잔존 아님) + `[VoiceLink] unlink` 로그 +
+  **응답 키셋 판정(planner 확인 ②)**: 해제 후 me/list 에 persona **5키 빈값 잔존 — 생략 금지**
+  (§0 Q3 계약: `""·""·""·null·null` — doc 은 unset 이어도 직렬화가 키를 항상 동봉) ④ 해제 상태
+  재해제("") → 규약 실측(무해 200 예상 — 기록).
+- **유료 0**: 무과금. **게이트**: B 머지 후.
+
+#### N4 `[api]` save 3-경로 persona 수용 범위 (⑧)
+
+- **When/Then**: ① save ①형(cid 지정)에 persona_id 동봉 → 수용(연결·검증 N2 규약 동일 적용
+  확인 1건) ② save ②형(kind 신규)에 동봉 → 신규 문서에 연결 반영 ③ save **③형(legacy)** 에
+  동봉 → **미수용**(무시 — persona 필드 미기록, 응답 shape 도 구계약 유지: v212 G1 키셋과 교차).
+- **유료 0**: 무과금. **게이트**: B 머지 후.
+
+#### N5 `[api]`(+`[unit]`) 삭제 자동 정리 훅 — 2경로·never-raise (⑨)
+
+- **Given**: A — 아티스트 2건 **모두 같은 클론 C1 연결**(다중 참조 케이스) + 별도 아티스트 1건은
+  C4(expired 예정) 연결.
+- **When/Then**:
+  - (a) `DELETE /voice-clone/{C1}` 실호출 → 200 + **다중 참조 아티스트 전부** persona_id/
+    persona_model $unset(update_many 벌크 — mongo 확인, **modified≥2** — planner 확인 ① 명시
+    케이스) + `[VoiceLink] cleanup` 로그(modified 수 일치)
+  - (b) C4 를 expired 로 직삽 후 **POST /cleanup-expired 라우트 실호출**(planner Q2 확정 — 외부
+    도달 0) → deleted_ids 벌크로 해당 아티스트 unset + 실데이터 4건 무변(스냅샷)
+  - (c) check-availability 자동삭제 경로는 **미호출 갈음** — delete_voice_clone 공용 경유임을
+    코드 정적 확인(service :887-913 → 훅 호출 지점 diff 목검)으로 커버 판정
+  - (d) `[unit]` **never-raise**: characters 접근 실패 모킹(backend 단위 — mongo 객체 예외 주입)
+    → 본 삭제 흐름 정상 완료(클론은 삭제·예외 미전파), 로그만 경고. backend-dev 테스트 산출물
+    확인, 부재 시 코드 경로 목검(try/except 범위) 정적 판정.
+- **유료 0**: 내부 삭제·모킹. **게이트**: B 머지 후.
+
+#### N6 `[api]+[e2e]` dangling — 'missing' 읽기 무쓰기 (⑩)
+
+- (a) `[api]`: 아티스트에 persona_id = **비실존 clone_id** 직삽(정리 훅 실패 상황 재현) →
+  me/list/단건 → **§0 Q3 dangling 확정값**: persona_id·persona_model **잔존 값** +
+  persona_name `""` + persona_voice_id `null` + persona_status **'missing'**(5키 생략 금지) +
+  **읽기 경로 무쓰기**: 조회 3회 반복 후에도 doc 의 persona_id **잔존**(lazy cleanup 없음 —
+  updated_at 불변).
+- (b) `[e2e]`: 같은 상태 카드 → "연결된 목소리가 삭제(만료)됨 — 다시 연결" 표시 + 재연결
+  드롭다운 동작(ready 클론 선택 → 정상 연결 복구).
+- **유료 0**: 무과금. **게이트**: (a) B 후 / (b) F 후.
+
+#### N7 `[e2e]` 카드 연결/해제 왕복 + 작곡실 자동 주입·오버라이드 (⑪)
+
+- **Given**: Playwright 계정 A, 공통 차단망+작곡 시작 2계열 인터셉트. 아티스트 2건(A1 만 ready
+  클론 연결 예정)·ready 클론 C1 직삽.
+- **When/Then**:
+  - (a) **카드 왕복**: A1 카드 `🎤 목소리: 미연결 [목소리 연결하기 ▼]` → 드롭다운(ready 만·
+    voice_name 표시) → 선택 → `🎤 목소리: {voice_name} · 연결 해제` 표시(patchCharacter 실호출·
+    캐시 무효화 경유 목록 갱신) → [연결 해제] → 미연결 복귀.
+  - (b) **작곡실 자동 주입**: ComposeStudioTab ArtistPicker 에서 A1 선택 → 안내
+    `🎤 「{persona_name}」로 작곡됩니다 (자동)` → 생성 실행 → 캡처 body
+    **persona_id == A1.persona_voice_id(Suno id — clone_id 아님)**·persona_model 반영(제출
+    2경로 각 1회 — **planner Q4 확정: :711 = `POST /generate/` 신규 경로 / :753 =
+    `POST /generate/{id}/start` 경로**, 각 UI 트리거는 frontend F2 완료 보고 기준으로 재현).
+    **실생성 이중 차단(Q4)**: e2e 작곡 세션 계정은 **⭐잔액 <15 상태를 우선 조성**(compose 15
+    미달 — 인터셉트 미스 시에도 서버 402 백스톱) + 시작 2계열 인터셉트 병행.
+  - (c) **수동 오버라이드**: 수동 클론 선택 추가 → 안내 수동 우선 전환 + body 가 수동 클론
+    voice_id 로 덮어쓰기(우선순위 서열 증명).
+  - (d) **[기본 보컬로] 해제**: 아티스트 주입까지 해제(voiceSource 명시 관리) — body 에 persona_id
+    부재. (e) persona 미연결 아티스트(A2) 선택 → 주입·안내 없음 + 커버/성별 등 타 파라미터 무영향.
+- **유료 0**: 시작 전면 인터셉트·연결 실호출 무과금. **게이트**: F 후.
+
+### 2. 실행 순서·게이트·중단 기준
+
+| 게이트 | 순서 | 비고 |
+|---|---|---|
+| B1+B2 머지 후 | 실데이터(voice_clones 4·characters 7) 스냅샷 → R1 → N1 → N2 → N3 → N4 → N5 → N6a → R3 | 소형 단일 배치, N1④ 는 정적+기능 2면(프로파일러 금지) |
+| F1~F3 후 | N7 → R4(동일 세션) → N6b → R2 | 브라우저 1세션·차단망 체크리스트 1번 |
+| 종료 | 실데이터 재스냅샷 → 픽스처 잔존 0 → 계정 A·B 탈퇴 | |
+
+- **ABORT**: ① 실데이터 voice_clones 4건/characters 7건 변동 ② 보이스클론 생성·check-availability
+  실서버 도달 ③ 작곡 시작 인터셉트 미스(⭐15 위험) ④ cleanup 벌크가 실데이터를 건드린 흔적
+  ⑤ 차단망 미스 — 즉시 중단·보고.
+
+### 3. 판정 기록 양식
+
+v205 §4 동일. 첨부: me 키셋 대조표(구 전량+신 5키 — 갱신본을 상비 회귀 스냅샷으로 보존),
+N2 400 문구 실측표, N5 훅 전후 mongo 필드 대조(다중 참조 2건), N1④ 쿼리 계수 방법·수치,
+N7 캡처 body 3종(자동/수동 오버라이드/해제 — clone_id vs voice_id 구분 명기), 실데이터 전후
+스냅샷. 시크릿·실이메일 0.
+
+### 4. planner/tester 확인 필요 (2026-08-27 planner 회신으로 전건 해소)
+
+- **Q1 [해소]**: **Mongo 프로파일러 금지**(운영 DB 설정 무접촉) — 대체 = 코드 정적($in 배치 1회
+  조회 목검) + 기능(아티스트 3+·클론 2+ 파생 전원 정확) 2면 판정, N1④ 반영.
+- **Q2 [해소]**: `POST /cleanup-expired` **실호출 가능**(외부 도달 0 실측) — expired 직삽→호출→
+  벌크 훅 검증(§0·R3·N5(b) 반영). **check-availability 만 금지 유지**.
+- **Q3 [해소]**: persona 5키 표현 계약 확정 — **키 생략 금지**, 미연결 `""·""·""·null·null` /
+  dangling id·model 잔존+name ""+voice_id null+status 'missing' / 연결 실값(§0 표·R1·N3③·N6a
+  반영, me 키셋 상비 회귀 스냅샷에 편입).
+- **Q4 [해소]**: 제출 2경로 = **:711 `POST /generate/` 신규 / :753 `/{id}/start`** — UI 트리거는
+  frontend F2 완료 보고 기준 확정. **실생성 차단은 402 계정(⭐<15) 우선** + 인터셉트 병행(N7(b)
+  반영).
+
+### 개정 이력 (v213)
+
+- 2026-08-27 초판 11건(PLAN §4 ①~⑪ 1:1 — 회귀 R1~R4·신규 N1~N7): **[api] 7(R1·R3·N1~N5·N6a —
+  N5 는 [unit] 겸) / [unit] 1겸(N5(d) never-raise 모킹) / [e2e] 4(R2·R4·N6b·N7)**. 급소 =
+  ①clone_id(저장)↔voice_id(주입) 구분 판정 전반(V1 계약 방어 — R2·N1·N7 캡처에 명기) ②검증
+  4종+해제/유지 규약(N2·N3) ③삭제 훅 2경로·다중 참조·never-raise(N5) ④dangling 'missing' 읽기
+  무쓰기(N6) ⑤작곡실 우선순위 서열(수동>아티스트>토글>없음 — N7(b)(c)(d)). 유료 0 = 연결/해제/
+  삭제 무과금 실호출 기본 + 클론 생성·check-availability 외부 금지(픽스처 직삽·훅은 delete 경로
+  갈음) + 작곡 시작 2계열 인터셉트 + 실데이터 voice_clones 4·characters 7 read-only 스냅샷.
+  me 키셋 상비 회귀에 additive 5키 갱신. 게이트: B1+B2 후 8건(스냅샷·R1·N1~N6a·R3) → F1~F3 후
+  4건(N7·R4·N6b·R2).
+- 2026-08-27 **확정판(planner 승인 + 조정 반영)**: ① 확인 2건 명시 — N5(a) 다중 참조 삭제
+  **modified≥2** 케이스(기존재 확인·표기 강화), N3③ 해제 후 **5키 빈값 잔존(생략 금지)** 서브
+  판정 추가 ② Q1: 프로파일러 금지 → N1④ 정적($in 1회)+기능(파생 전원 정확) 2면 대체 ③ Q2:
+  cleanup-expired **라우트 실호출 허용**(외부 0 실측, §0 강등 분기 삭제 — check-availability 만
+  금지) ④ Q3: persona 5키 3상태 표현 계약 확정(§0 표 신설 — 미연결 ""×3+null×2 / dangling
+  잔존+""·null·'missing' / 연결 실값, R1·N6a 반영·상비 회귀 편입) ⑤ Q4: 2경로 = :711 신규
+  POST /generate/·:753 /{id}/start, UI 트리거 F2 보고 기준, **실생성 차단 402 계정(⭐<15) 우선** +
+  인터셉트 병행. 시나리오 수·태그 분포 불변(11건).

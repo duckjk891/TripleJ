@@ -113,6 +113,12 @@ GENDER_MAX_LEN = 20
 # v212 — 아티스트 character_id 형식 (uuid4().hex — 32 lower hex)
 CID_RE = re.compile(r"^[0-9a-f]{32}$")
 
+# v213 — 아티스트↔목소리 연결 (PLAN V1)
+# characters.persona_id = voice_clones 의 **clone_id** (Suno voice_id 아님 —
+# 곡 생성 주입용 Suno id 는 응답의 파생 필드 persona_voice_id 로만 노출).
+PERSONA_MODEL_WHITELIST = {"voice_persona", "style_persona"}
+PERSONA_MODEL_DEFAULT = "voice_persona"
+
 
 class UsedItemPayload(BaseModel):
     id: Optional[str] = None
@@ -145,15 +151,148 @@ class SaveCharacterRequest(BaseModel):
     character_id: Optional[str] = None
     kind: Optional[str] = None       # 'real' | 'virtual'
     gender: Optional[str] = None     # 자유 문자열 ≤20자, 빈값 허용
+    # ── v213 아티스트↔목소리 연결 (①cid·②kind 경로만 — ③legacy 미수용) ─────
+    # persona_id = voice_clones 의 clone_id. None=유지 / ""=해제 / 값=연결(ready 검증)
+    persona_id: Optional[str] = None
+    persona_model: Optional[str] = None  # 'voice_persona'(기본) | 'style_persona'
 
 
 # ── v212 아티스트 다중화 헬퍼 ────────────────────────────────────────────────
 
 
-def _serialize_artist(doc: dict) -> dict:
-    """cid 보유 아티스트 doc → /list·단건 응답용 직렬화."""
+def _persona_fields(doc: dict, clone: Optional[dict]) -> dict:
+    """v213 — 저장 2필드 + 파생 3필드 (additive). dangling → persona_status 'missing'.
+
+    persona_voice_id 가 /generate 주입용 Suno id — persona_id(clone_id)와 구분.
+    읽기 경로 무쓰기 — dangling 이어도 lazy cleanup 하지 않는다.
+
+    planner 확정 계약: **5키 생략 금지·항상 존재.**
+      미연결: persona_id ""·persona_model ""·persona_name ""(v212 문자열 관행)
+              ·persona_voice_id null·persona_status null
+      dangling: persona_id/persona_model 잔존값·persona_name ""·voice_id null·status 'missing'
+      연결: 클론 실값 + status 그대로.
+    """
+    pid = doc.get("persona_id") or None
+    if not pid:
+        return {
+            "persona_id": "",
+            "persona_model": "",
+            "persona_name": "",
+            "persona_voice_id": None,
+            "persona_status": None,
+        }
+    if not clone:
+        return {
+            "persona_id": pid,
+            "persona_model": doc.get("persona_model") or PERSONA_MODEL_DEFAULT,
+            "persona_name": "",
+            "persona_voice_id": None,
+            "persona_status": "missing",
+        }
+    return {
+        "persona_id": pid,
+        "persona_model": doc.get("persona_model") or PERSONA_MODEL_DEFAULT,
+        "persona_name": clone.get("voice_name") or "",
+        "persona_voice_id": clone.get("voice_id") or None,
+        "persona_status": clone.get("status") or "missing",
+    }
+
+
+async def _resolve_persona_clone(mongo, doc: dict) -> Optional[dict]:
+    """v213 — 단건 경로용 clone resolve (persona_id 없거나 무효/실종 시 None)."""
+    pid = doc.get("persona_id")
+    if not pid:
+        return None
+    try:
+        oid = ObjectId(pid)
+    except Exception:
+        return None
+    return await mongo.voice_clones.find_one(
+        {"_id": oid},
+        {"voice_name": 1, "voice_id": 1, "status": 1},
+    )
+
+
+async def _validate_persona_link(mongo, user_id: str, persona_id_raw, persona_model_raw,
+                                 currently_linked: bool):
+    """v213 — persona 연결/해제 판정 공용 헬퍼 (PATCH · save ①② 경로).
+
+    규약: None=유지 / ""=해제 / 값=연결 (본인 소유 + status ready 검증).
+    persona_model 단독 전송: 기연결 시 갱신, 미연결 시 400.
+
+    Returns (error_response|None, action, fields)
+      action ∈ {'none', 'unset', 'set'} — 'set' 은 fields 를 $set.
+    """
+    pid = persona_id_raw
+    pmodel = persona_model_raw
+
+    if pid is None and pmodel is None:
+        return None, "none", {}
+
+    # 해제 — persona_id 빈 문자열 (persona_model 은 동시 unset)
+    if pid is not None and not str(pid).strip():
+        return None, "unset", {}
+
+    # persona_model 정규화 (전송 시)
+    model_val = None
+    if pmodel is not None:
+        model_val = (pmodel or "").strip().lower()
+        if model_val not in PERSONA_MODEL_WHITELIST:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "persona_model 은 'voice_persona' 또는 'style_persona' 여야 합니다."},
+            ), None, None
+
+    if pid is None:
+        # model 단독 — 기연결 시 갱신, 미연결 시 400
+        if not currently_linked:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "먼저 목소리를 연결해주세요."},
+            ), None, None
+        return None, "set", {"persona_model": model_val}
+
+    # 연결 — 본인 소유 + ready 검증
+    pid_str = str(pid).strip()
+    try:
+        oid = ObjectId(pid_str)
+    except Exception:
+        logger.warning("[VoiceLink] invalid persona_id user=%s pid=%s", user_id[:8], pid_str[:36])
+        return JSONResponse(
+            status_code=400,
+            content={"error": "연결할 목소리를 찾을 수 없습니다."},
+        ), None, None
+    clone = await mongo.voice_clones.find_one({"_id": oid, "user_id": user_id}, {"status": 1})
+    if not clone:
+        logger.warning("[VoiceLink] clone not found/owned user=%s clone=%s", user_id[:8], pid_str)
+        return JSONResponse(
+            status_code=400,
+            content={"error": "연결할 목소리를 찾을 수 없습니다."},
+        ), None, None
+    if clone.get("status") != "ready":
+        logger.warning(
+            "[VoiceLink] clone not ready user=%s clone=%s status=%s",
+            user_id[:8], pid_str, clone.get("status"),
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": "준비된 목소리만 연결할 수 있습니다."},
+        ), None, None
+    return None, "set", {
+        "persona_id": pid_str,
+        "persona_model": model_val or PERSONA_MODEL_DEFAULT,
+    }
+
+
+def _serialize_artist(doc: dict, persona_clone: Optional[dict] = None) -> dict:
+    """cid 보유 아티스트 doc → /list·단건 응답용 직렬화.
+
+    v213: persona 저장 2필드+파생 3필드 동봉 — persona_id 보유 doc 은 호출측이
+    resolve 한 persona_clone 을 넘겨야 status 가 정확하다 (미전달 시 'missing').
+    """
     sheet = doc.get("sheet_object_name") or ""
     return {
+        **_persona_fields(doc, persona_clone),
         "character_id": doc.get("character_id"),
         "kind": doc.get("kind") or "real",
         "is_default": bool(doc.get("is_default")),
@@ -1679,14 +1818,35 @@ async def save_character(
             if _norm:
                 set_fields["image_model"] = _norm
 
-        await mongo.characters.update_one({"_id": artist["_id"]}, {"$set": set_fields})
+        # v213 — persona 연결/해제 (None=유지 / ""=해제 / clone_id=연결)
+        _p_err, _p_action, _p_set = await _validate_persona_link(
+            mongo, user_id, body.persona_id, body.persona_model,
+            currently_linked=bool(artist.get("persona_id")),
+        )
+        if _p_err is not None:
+            return _p_err
+        if _p_action == "set":
+            set_fields.update(_p_set)
+            logger.info(
+                "[VoiceLink] save link user=%s cid=%s clone=%s",
+                user_id[:8], artist["character_id"], _p_set.get("persona_id"),
+            )
+        _update_doc = {"$set": set_fields}
+        if _p_action == "unset":
+            _update_doc["$unset"] = {"persona_id": "", "persona_model": ""}
+            logger.info(
+                "[VoiceLink] save unlink user=%s cid=%s prev_clone=%s",
+                user_id[:8], artist["character_id"], artist.get("persona_id"),
+            )
+
+        await mongo.characters.update_one({"_id": artist["_id"]}, _update_doc)
         saved = await mongo.characters.find_one({"_id": artist["_id"]})
         logger.info(
             "[ArtistV212] save path=1(update) user=%s cid=%s kind=%s fields=%s",
             user_id[:8], artist["character_id"], artist.get("kind"),
             sorted(k for k in set_fields if k != "updated_at"),
         )
-        resp = _serialize_artist(saved)
+        resp = _serialize_artist(saved, await _resolve_persona_clone(mongo, saved))
         resp["message"] = "아티스트가 저장되었습니다."
         return resp
 
@@ -1700,6 +1860,16 @@ async def save_character(
             logger.info("[ArtistV212] save path=2 slot 409 user=%s", user_id[:8])
             return _slot_err
         used, mx = await get_slots(user_id)  # is_default 판정·로그용
+
+        # v213 — 신규 생성 시 persona 동시 연결 허용 (""/None 은 미연결,
+        # persona_model 단독은 미연결 상태라 400 — 헬퍼 공용 규약)
+        _p_err, _p_action, _p_set = await _validate_persona_link(
+            mongo, user_id, body.persona_id, body.persona_model,
+            currently_linked=False,
+        )
+        if _p_err is not None:
+            return _p_err
+
         new_cid = uuid_lib.uuid4().hex
         permanent_object = "characters/{}/{}/sheet.png".format(user_id, new_cid)
         _copy_sheet_to_permanent(minio_client, body.sheet_object_name, permanent_object)
@@ -1723,12 +1893,18 @@ async def save_character(
             "created_at": now,
             "updated_at": now,
         }
+        if _p_action == "set":
+            new_doc.update(_p_set)
+            logger.info(
+                "[VoiceLink] save link user=%s cid=%s clone=%s (create)",
+                user_id[:8], new_cid, _p_set.get("persona_id"),
+            )
         await mongo.characters.insert_one(new_doc)
         logger.info(
             "[ArtistV212] save path=2(create) user=%s cid=%s kind=%s is_default=%s used=%d/%d",
             user_id[:8], new_cid, kind_val, new_doc["is_default"], used + 1, mx,
         )
-        resp = _serialize_artist(new_doc)
+        resp = _serialize_artist(new_doc, await _resolve_persona_clone(mongo, new_doc))
         resp["message"] = "아티스트가 저장되었습니다."
         return resp
 
@@ -1982,6 +2158,9 @@ async def get_my_character(
             "character_id": (real or {}).get("character_id"),
             "virtual_character_id": (virtual or {}).get("character_id"),
             "characters_count": characters_count,
+            # v213 — 대표(profile_src) 아티스트의 목소리 연결 5키 (additive):
+            # persona_id(clone_id)/persona_model/persona_name/persona_voice_id/persona_status
+            **_persona_fields(meta_doc, await _resolve_persona_clone(mongo, meta_doc)),
         }
     }
 
@@ -2305,10 +2484,22 @@ async def list_artists(
         {"user_id": user_id, "character_id": {"$exists": True, "$ne": None}}
     ).sort("updated_at", -1).to_list(length=None)
 
+    # v213 — persona 파생 필드 배치 resolve: 유저 클론 1회 조회 (N+1 금지).
+    # 매칭 실패(dangling)는 _persona_fields 가 persona_status 'missing' 처리 — 무쓰기.
+    clone_map: dict = {}
+    if any(d.get("persona_id") for d in docs):
+        async for _cl in mongo.voice_clones.find(
+            {"user_id": user_id},
+            {"voice_name": 1, "voice_id": 1, "status": 1},
+        ):
+            clone_map[str(_cl["_id"])] = _cl
+
     used, mx = await get_slots(user_id)
     logger.info("[ArtistV212] list user=%s count=%d slots=%d/%d", user_id[:8], len(docs), used, mx)
     return {
-        "characters": [_serialize_artist(d) for d in docs],
+        "characters": [
+            _serialize_artist(d, clone_map.get(d.get("persona_id") or "")) for d in docs
+        ],
         "slots": {"used": used, "max": mx},
     }
 
@@ -2320,6 +2511,9 @@ class PatchArtistRequest(BaseModel):
     personality_tags: Optional[List[str]] = None
     personality_text: Optional[str] = None
     is_default: Optional[bool] = None
+    # v213 — 목소리 연결: None=유지 / ""=해제 / clone_id=연결 (본인 소유+ready)
+    persona_id: Optional[str] = None
+    persona_model: Optional[str] = None
 
 
 @router.get("/{character_id}")
@@ -2332,7 +2526,7 @@ async def get_artist(
     doc = await _find_artist_by_cid(mongo, current_user["id"], character_id)
     if not doc:
         return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
-    return _serialize_artist(doc)
+    return _serialize_artist(doc, await _resolve_persona_clone(mongo, doc))
 
 
 @router.patch("/{character_id}")
@@ -2395,6 +2589,19 @@ async def patch_artist(
             )
         set_fields["personality_text"] = v
 
+    # v213 — persona 연결/해제 (None=유지 / ""=해제 / clone_id=연결, ready 검증)
+    persona_action = "none"
+    persona_set = {}
+    if "persona_id" in updates or "persona_model" in updates:
+        _p_err, persona_action, persona_set = await _validate_persona_link(
+            mongo, user_id,
+            updates.get("persona_id"),
+            updates.get("persona_model"),
+            currently_linked=bool(doc.get("persona_id")),
+        )
+        if _p_err is not None:
+            return _p_err
+
     make_default = updates.get("is_default")
     if make_default is False and "is_default" in updates:
         # 기본 해제 단독 금지 — 기본 아티스트는 항상 정확히 1명.
@@ -2403,17 +2610,38 @@ async def patch_artist(
             content={"error": "기본 아티스트 해제는 다른 아티스트를 기본으로 지정해 수행하세요."},
         )
 
-    if not set_fields and not make_default:
+    if not set_fields and not make_default and persona_action == "none":
         return JSONResponse(status_code=400, content={"error": "수정할 필드가 없습니다."})
 
     set_fields["updated_at"] = datetime.utcnow()
     if make_default:
         set_fields["is_default"] = True
-    await mongo.characters.update_one({"_id": doc["_id"]}, {"$set": set_fields})
+    if persona_action == "set":
+        set_fields.update(persona_set)
+    update_doc = {"$set": set_fields}
+    if persona_action == "unset":
+        update_doc["$unset"] = {"persona_id": "", "persona_model": ""}
+    await mongo.characters.update_one({"_id": doc["_id"]}, update_doc)
     if make_default:
         await mongo.characters.update_many(
             {"user_id": user_id, "_id": {"$ne": doc["_id"]}},
             {"$set": {"is_default": False}},
+        )
+    if persona_action == "set" and persona_set.get("persona_id"):
+        logger.info(
+            "[VoiceLink] link user=%s cid=%s clone=%s model=%s",
+            user_id[:8], doc["character_id"], persona_set["persona_id"],
+            persona_set.get("persona_model"),
+        )
+    elif persona_action == "set":
+        logger.info(
+            "[VoiceLink] model update user=%s cid=%s model=%s",
+            user_id[:8], doc["character_id"], persona_set.get("persona_model"),
+        )
+    elif persona_action == "unset":
+        logger.info(
+            "[VoiceLink] unlink user=%s cid=%s prev_clone=%s",
+            user_id[:8], doc["character_id"], doc.get("persona_id"),
         )
     logger.info(
         "[ArtistV212] patch user=%s cid=%s fields=%s default=%s",
@@ -2421,7 +2649,7 @@ async def patch_artist(
         sorted(k for k in set_fields if k != "updated_at"), bool(make_default),
     )
     updated = await mongo.characters.find_one({"_id": doc["_id"]})
-    return _serialize_artist(updated)
+    return _serialize_artist(updated, await _resolve_persona_clone(mongo, updated))
 
 
 @router.delete("/{character_id}")

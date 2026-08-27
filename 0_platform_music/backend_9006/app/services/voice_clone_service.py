@@ -884,6 +884,33 @@ async def get_voice_clone(user_id: str, clone_id: str) -> Optional[dict]:
     return _serialize(doc)
 
 
+async def _cleanup_artist_persona_links(user_id: str, clone_ids: list) -> None:
+    """v213 — 삭제된 클론을 참조하는 아티스트(characters.persona_id) 정리.
+
+    delete_voice_clone(단건)·cleanup_expired(벌크) 공용 — 삭제 경로 전수가 이
+    두 함수로 수렴하므로 여기 2훅이면 orphan 전 경로 커버 (PLAN v213 V3).
+    best-effort **never raises** — check-availability 자동삭제 등 본 흐름 무영향.
+    """
+    if not clone_ids:
+        return
+    try:
+        mongo = get_mongo()
+        res = await mongo.characters.update_many(
+            {"user_id": user_id, "persona_id": {"$in": [str(c) for c in clone_ids]}},
+            {"$unset": {"persona_id": "", "persona_model": ""}},
+        )
+        if res.modified_count:
+            logger.info(
+                "[VoiceLink] cleanup user=%s clones=%s unlinked_artists=%d",
+                user_id[:8], [str(c) for c in clone_ids], res.modified_count,
+            )
+    except Exception as e:
+        logger.warning(
+            "[VoiceLink] cleanup failed user=%s clones=%s err=%s (best-effort — 삭제 흐름 무영향)",
+            user_id[:8], [str(c) for c in clone_ids], str(e)[:120],
+        )
+
+
 async def delete_voice_clone(user_id: str, clone_id: str) -> bool:
     mongo = get_mongo()
     try:
@@ -908,6 +935,10 @@ async def delete_voice_clone(user_id: str, clone_id: str) -> bool:
             logger.info("[voice_clone:%s] minio removed %s", clone_id, obj)
         except Exception as e:
             logger.warning("[voice_clone:%s] minio remove failed object=%s err=%s", clone_id, obj, e)
+
+    # v213 — 이 클론을 참조하던 아티스트 persona 필드 정리 (best-effort, never raises).
+    await _cleanup_artist_persona_links(user_id, [clone_id])
+
     logger.info("[voice_clone:%s] deleted user=%s", clone_id, user_id)
     return True
 
@@ -934,6 +965,10 @@ async def cleanup_expired(user_id: str) -> dict:
             {"user_id": user_id, "status": STATUS_EXPIRED}
         )
         deleted = int(res.deleted_count)
+
+        # v213 — 삭제된 클론들을 참조하던 아티스트 persona 필드 벌크 정리 (never raises).
+        await _cleanup_artist_persona_links(user_id, deleted_ids)
+
         logger.info("[voice_clone:cleanup] user=%s deleted=%d", user_id, deleted)
         return {"deleted": deleted, "deleted_ids": deleted_ids, "deleted_names": deleted_names}
     except Exception:

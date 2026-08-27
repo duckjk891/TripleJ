@@ -7,6 +7,7 @@ import {
 } from 'react-icons/fi';
 import * as api from '../../api';
 import LyricsTimestampToggle from '../LyricsTimestampToggle';
+import ArtistPicker, { artistKey } from '../ArtistPicker';
 import {
   DEFAULT_POINT_COSTS, formatCooldown, normalizeLadderHours,
   GENRE_PRESETS, MOOD_PRESETS, STYLE_PRESETS, getTranslatedValues,
@@ -279,6 +280,50 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
   // ─── Voice Clone state (v76 — Suno V5_5 voice cloning) ───
   const [myClones, setMyClones] = useState([]);
   const [selectedVoiceCloneId, setSelectedVoiceCloneId] = useState(null);
+
+  // ─── v213 F2 — 아티스트 선택(접힘형)·연결 목소리 자동 주입 ───
+  // 미선택 시 기존 동작 100% 불변 (ArtistPicker autoSelect=false — 여닫기만으로 무변화)
+  const [showArtistSection, setShowArtistSection] = useState(false);
+  const [composeArtist, setComposeArtist] = useState(null);
+  // [기본 보컬] 프리셋을 고르면 아티스트 자동 주입도 함께 해제 (voiceSource 명시 관리 — V4)
+  const [artistVoiceMuted, setArtistVoiceMuted] = useState(false);
+
+  // 주입 후보 = 연결 목소리가 ready 이고 Suno voice id(파생 persona_voice_id)가 있을 때만
+  const artistVoice = (!artistVoiceMuted
+    && composeArtist?.persona_voice_id
+    && composeArtist?.persona_status === 'ready')
+    ? {
+        voiceId: composeArtist.persona_voice_id,
+        model: composeArtist.persona_model || 'voice_persona',
+        name: composeArtist.persona_name || '연결된 목소리',
+      }
+    : null;
+
+  // v213 V4 — 목소리 주입 공통 함수 (제출 2경로 공용 — R4 주입 누락 방지).
+  // 우선순위: 수동 클론 선택 > 아티스트 자동 > personaModel 토글(body 조립 시 기반영) > 없음.
+  const applyVoiceOverride = (body, pathLabel) => {
+    if (selectedVoiceCloneId) {
+      const clone = myClones.find((c) => (c?.clone_id || c?.id) === selectedVoiceCloneId);
+      if (clone?.voice_id) {
+        body.persona_id = clone.voice_id;
+        body.persona_model = 'voice_persona';
+        body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
+        if (import.meta.env.DEV) {
+          console.info(`[ComposeStudioTab] applying voice_clone override (${pathLabel})`, { clone_id: clone.clone_id || clone.id });
+        }
+        return;
+      }
+    }
+    if (artistVoice) {
+      // 주입 값 = 파생 persona_voice_id (Suno id) — 기존 수동 경로 clone.voice_id 와 동일 결과 (V1 계약)
+      body.persona_id = artistVoice.voiceId;
+      body.persona_model = artistVoice.model;
+      if (artistVoice.model === 'voice_persona') body.suno_model = 'V5_5';
+      if (import.meta.env.DEV) {
+        console.info(`[ComposeStudioTab] applying artist voice (auto, ${pathLabel})`, { artist: artistKey(composeArtist) });
+      }
+    }
+  };
 
   // ─── Step state: 3=params, 4=prompt preview (구 StudioTab2 번호 유지 — 1·2(작사)는 작사실로 분리) ───
   const [step, setStep] = useState(3);
@@ -716,18 +761,8 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
           duet_sub_vocal_style: isDuet ? duetSubStyle.trim() || null : null,
           categories: Array.isArray(categories) ? categories : [],
         };
-        // v76 — voice clone override (Suno V5_5)
-        if (selectedVoiceCloneId) {
-          const clone = myClones.find((c) => (c?.clone_id || c?.id) === selectedVoiceCloneId);
-          if (clone?.voice_id) {
-            body.persona_id = clone.voice_id;
-            body.persona_model = 'voice_persona';
-            body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
-            if (import.meta.env.DEV) {
-              console.info('[ComposeStudioTab] applying voice_clone override (draft path)', { clone_id: clone.clone_id || clone.id });
-            }
-          }
-        }
+        // v213 V4 — 목소리 주입 공통 함수 (수동 클론 > 아티스트 자동 > 토글)
+        applyVoiceOverride(body, 'draft path');
         await api.createGeneration(body);
         setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
       } else {
@@ -759,18 +794,8 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
           categories: Array.isArray(categories) ? categories : [],
         };
 
-        // v76 — voice clone override (Suno V5_5)
-        if (selectedVoiceCloneId) {
-          const clone = myClones.find((c) => (c?.clone_id || c?.id) === selectedVoiceCloneId);
-          if (clone?.voice_id) {
-            body.persona_id = clone.voice_id;
-            body.persona_model = 'voice_persona';
-            body.suno_model = 'V5_5';  // v76.10: Suno 내부 모델 변형. provider model 은 'suno' 유지
-            if (import.meta.env.DEV) {
-              console.info('[ComposeStudioTab] applying voice_clone override (suno path)', { clone_id: clone.clone_id || clone.id });
-            }
-          }
-        }
+        // v213 V4 — 목소리 주입 공통 함수 (수동 클론 > 아티스트 자동 > 토글)
+        applyVoiceOverride(body, 'suno path');
 
         await api.createGeneration(body);
         setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
@@ -1324,7 +1349,7 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
                     key={v.value}
                     type="button"
                     className={`s2__vocal-btn ${vocal === v.value && !selectedVoiceCloneId ? 's2__vocal-btn--active' : ''}`}
-                    onClick={() => { setVocal(v.value); setSelectedVoiceCloneId(null); }}
+                    onClick={() => { setVocal(v.value); setSelectedVoiceCloneId(null); setArtistVoiceMuted(true); /* v213: 프리셋 선택 = 아티스트 자동 주입 해제 */ }}
                   >
                     {v.label}
                   </button>
@@ -1366,6 +1391,57 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
                   )}
                 </div>
               )}
+
+              {/* ─── v213 F2 — 아티스트로 작곡 (접힘형 — 미선택 시 기존 동작 불변) ─── */}
+              <div className="s2__persona-section">
+                <button
+                  type="button"
+                  className="s2__advanced-toggle"
+                  onClick={() => setShowArtistSection(!showArtistSection)}
+                >
+                  🎤 아티스트로 작곡{composeArtist ? ` — ${composeArtist.name || (composeArtist.kind === 'virtual' ? '가상 아티스트' : '실사 아티스트')}` : ' (선택)'} {showArtistSection ? <FiChevronUp /> : <FiChevronDown />}
+                </button>
+                {showArtistSection && (
+                  <>
+                    <ArtistPicker
+                      autoSelect={false}
+                      selectedKey={artistKey(composeArtist)}
+                      onChange={(a) => {
+                        setComposeArtist(a);
+                        setArtistVoiceMuted(false);
+                        if (import.meta.env.DEV) console.info('[ComposeStudioTab] artist selected', { key: artistKey(a), has_voice: !!a?.persona_voice_id });
+                      }}
+                      emptyHint="등록된 아티스트가 없습니다. 마이뮤직 → 내 캐릭터 탭에서 만들 수 있어요."
+                    />
+                    {composeArtist && (
+                      <button
+                        type="button"
+                        className="s2__vocal-btn"
+                        style={{ marginTop: '6px' }}
+                        onClick={() => { setComposeArtist(null); setArtistVoiceMuted(false); }}
+                      >
+                        아티스트 선택 해제
+                      </button>
+                    )}
+                  </>
+                )}
+                {/* 안내 — 우선순위 반영: 수동 클론 선택이 있으면 수동이 우선 */}
+                {selectedVoiceCloneId && composeArtist && (
+                  <div className="s2__persona-note">
+                    수동으로 고른 보이스 클론이 우선 적용됩니다 (아티스트 목소리 자동 주입은 무시).
+                  </div>
+                )}
+                {!selectedVoiceCloneId && artistVoice && (
+                  <div className="s2__persona-note">
+                    🎤 「{artistVoice.name}」로 작곡됩니다 (자동)
+                  </div>
+                )}
+                {!selectedVoiceCloneId && composeArtist && !artistVoice && !artistVoiceMuted && (
+                  <div className="s2__persona-note" style={{ opacity: 0.75 }}>
+                    이 아티스트에는 연결된 목소리가 없어요 — 내 캐릭터 탭에서 연결할 수 있습니다.
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

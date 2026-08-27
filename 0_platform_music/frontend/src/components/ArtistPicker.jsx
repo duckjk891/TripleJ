@@ -67,7 +67,9 @@ export async function loadArtists() {
 
 // artists prop 주입 시 자체 로드 생략(부모가 loadArtists 로 목록 소유 — 토글 disabled 판단 등),
 // 미주입 시 자체 로드 (MVStudioTab 등 단독 사용처).
-export default function ArtistPicker({ artists: externalArtists, selectedKey, onChange, disabled = false, emptyHint }) {
+// v213: autoSelect=false 면 기본 아티스트 자동 선택(onChange 통지)을 끈다 —
+// "여닫기만으로는 아무것도 바뀌지 않는" 접힘형 소비처(작곡실)용. 기본 true(기존 소비처 불변).
+export default function ArtistPicker({ artists: externalArtists, selectedKey, onChange, disabled = false, emptyHint, autoSelect = true }) {
   const external = Array.isArray(externalArtists);
   const [ownArtists, setOwnArtists] = useState([]);
   const [ownLoaded, setOwnLoaded] = useState(false);
@@ -99,6 +101,7 @@ export default function ArtistPicker({ artists: externalArtists, selectedKey, on
   // 자동 기본 선택 — 선택이 비었거나 목록에 없으면 기본(is_default 우선) 1회 통지
   // (구 variant 라디오의 "한쪽만 있으면 그쪽으로 강제" 자동 보정 동작 승계)
   useEffect(() => {
+    if (!autoSelect) return; // v213: 접힘형 소비처 — 자동 선택 없음(명시 클릭만)
     if (!loaded || autoSelectedRef.current || artists.length === 0) return;
     const valid = selectedKey && artists.some((a) => artistKey(a) === selectedKey);
     if (!valid) {
@@ -154,6 +157,8 @@ export default function ArtistPicker({ artists: externalArtists, selectedKey, on
               <span className="artist-picker__kind">
                 {kindLabel}
                 {a.kind === 'virtual' && a.art_style ? ` · ${a.art_style}` : ''}
+                {/* v213 F3 — 연결 목소리 뱃지 (있을 때만) */}
+                {a.persona_name ? ` · 🎤 ${a.persona_name}` : ''}
               </span>
             </span>
           </button>

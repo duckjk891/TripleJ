@@ -182,6 +182,10 @@ function CharacterSection() {
   const [availableTags, setAvailableTags] = useState([]);
   const [profileSaving, setProfileSaving] = useState(false);
   const [slotBuying, setSlotBuying] = useState(false);
+  // v213 F1 — 아티스트↔목소리 연결: ready 보이스클론 목록 + 카드별 드롭다운/진행 상태
+  const [readyClones, setReadyClones] = useState([]);
+  const [voiceMenuFor, setVoiceMenuFor] = useState(null); // 드롭다운 열린 카드 key(cid)
+  const [voiceLinking, setVoiceLinking] = useState(null); // PATCH 진행 중 카드 key(cid)
 
   // 착용 아이템 슬롯(실사·가상 공통) — 광고상품 {id,name,image_object_name,product_url,category}|null
   const [selectedTop, setSelectedTop] = useState(null);
@@ -264,6 +268,60 @@ function CharacterSection() {
         console.error('[CharacterSection] personality tags load failed', { status: err?.response?.status });
       });
   }, []);
+
+  // v213 F1 — 내 보이스클론 로드 (연결 후보 = status ready && voice_id 보유 — ComposeStudioTab 필터 관행)
+  useEffect(() => {
+    api.getVoiceClones()
+      .then(({ data }) => {
+        const ready = (data?.clones || data?.items || []).filter(
+          (c) => c?.status === 'ready' && c?.voice_id,
+        );
+        setReadyClones(ready);
+        if (import.meta.env.DEV) console.debug('[CharacterSection] ready clones loaded', { count: ready.length });
+      })
+      .catch((err) => {
+        console.error('[CharacterSection] getVoiceClones failed', { status: err?.response?.status, message: err?.message });
+      });
+  }, []);
+
+  // v213 F1 — 목소리 연결/해제 (PATCH persona_id: clone_id 저장, "" = 해제 — V2 규약. ready 검증은 서버 400)
+  const handleLinkVoice = async (artist, cloneId) => {
+    if (!artist?.character_id || typeof api.patchCharacter !== 'function') {
+      alert('목소리 연결은 아티스트 마이그레이션 후 사용할 수 있어요.');
+      return;
+    }
+    setVoiceLinking(artist.character_id);
+    try {
+      await api.patchCharacter(artist.character_id, { persona_id: cloneId });
+      if (import.meta.env.DEV) console.debug('[CharacterSection] voice linked', { cid: artist.character_id, clone_id: cloneId });
+      setVoiceMenuFor(null);
+      await fetchArtists(); // patchCharacter 가 캐시 무효화 → 재조회로 파생 필드(persona_name 등) 반영
+    } catch (err) {
+      console.error('[CharacterSection] voice link failed', { cid: artist.character_id, status: err?.response?.status });
+      alert(err.response?.data?.error || '목소리 연결에 실패했습니다.');
+    } finally {
+      setVoiceLinking(null);
+    }
+  };
+
+  const handleUnlinkVoice = async (artist) => {
+    if (!artist?.character_id || typeof api.patchCharacter !== 'function') {
+      alert('목소리 연결은 아티스트 마이그레이션 후 사용할 수 있어요.');
+      return;
+    }
+    if (!window.confirm('이 아티스트의 목소리 연결을 해제할까요?')) return;
+    setVoiceLinking(artist.character_id);
+    try {
+      await api.patchCharacter(artist.character_id, { persona_id: '' });
+      if (import.meta.env.DEV) console.debug('[CharacterSection] voice unlinked', { cid: artist.character_id });
+      await fetchArtists();
+    } catch (err) {
+      console.error('[CharacterSection] voice unlink failed', { cid: artist.character_id, status: err?.response?.status });
+      alert(err.response?.data?.error || '연결 해제에 실패했습니다.');
+    } finally {
+      setVoiceLinking(null);
+    }
+  };
 
   // 가상화 생성 진입 시 화풍 샘플 1회 로드 (v212: mode → createKind)
   useEffect(() => {
@@ -1468,6 +1526,72 @@ function CharacterSection() {
               <div style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>
                 {[a.age && `${a.age}세`, a.gender].filter(Boolean).join(' · ') || '프로필 미입력'}
               </div>
+              {/* v213 F1 — 목소리 연결 행 (persona_id = 보이스클론 clone_id, 표시 재료는 파생 persona_name/persona_status) */}
+              <div style={{ fontSize: '12px', color: '#aaa', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {a.persona_id ? (
+                  <>
+                    <span>
+                      🎤 목소리:{' '}
+                      {(a.persona_status === 'missing' || a.persona_status === 'expired') ? (
+                        <span style={{ color: '#f4a261' }}>⚠ 삭제(만료)된 목소리 — 해제하세요</span>
+                      ) : (
+                        <span style={{ color: '#ddd', fontWeight: 600 }}>{a.persona_name || '연결된 목소리'}</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleUnlinkVoice(a)}
+                      disabled={voiceLinking === a.character_id}
+                      style={{ fontSize: '11px', padding: '2px 8px', background: 'transparent', border: '1px solid #444', color: '#bbb', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      {voiceLinking === a.character_id ? '처리 중...' : '연결 해제'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span>🎤 목소리: 미연결</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // legacy 무cid 카드 — 기본 지정과 동일 관행 (마이그레이션 후 사용)
+                        if (!a.character_id) {
+                          alert('목소리 연결은 아티스트 마이그레이션 후 사용할 수 있어요.');
+                          return;
+                        }
+                        setVoiceMenuFor(voiceMenuFor === a.character_id ? null : a.character_id);
+                      }}
+                      disabled={voiceLinking === a.character_id}
+                      style={{ fontSize: '11px', padding: '2px 8px', background: 'transparent', border: '1px solid #444', color: '#bbb', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      목소리 연결하기 ▼
+                    </button>
+                  </>
+                )}
+              </div>
+              {!!a.character_id && voiceMenuFor === a.character_id && !a.persona_id && (
+                <div style={{ marginTop: '6px', padding: '8px', border: '1px solid #333', borderRadius: '8px', background: '#111', display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '280px' }}>
+                  {readyClones.length === 0 ? (
+                    <span style={{ fontSize: '12px', color: '#888' }}>
+                      준비된(ready) 보이스클론이 없습니다 — 아래 「내 목소리」 섹션에서 만들 수 있어요.
+                    </span>
+                  ) : (
+                    readyClones.map((c) => {
+                      const cloneId = c?.clone_id || c?.id;
+                      return (
+                        <button
+                          key={cloneId}
+                          type="button"
+                          onClick={() => handleLinkVoice(a, cloneId)}
+                          disabled={voiceLinking === a.character_id}
+                          style={{ fontSize: '12px', padding: '6px 8px', background: '#1a1a1a', border: '1px solid #333', color: '#ddd', borderRadius: '6px', cursor: 'pointer', textAlign: 'left' }}
+                        >
+                          🎤 {c.voice_name || c.name || '이름 없음'}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
               {tags.length > 0 && (
                 <div className="mymusic-character__chips" style={{ marginTop: '6px' }}>
                   {tags.map((tag, i) => (
