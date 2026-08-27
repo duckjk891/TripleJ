@@ -7,6 +7,39 @@
 
 ---
 
+## v3.81 — 2026-08-27 — "내 아티스트" 목록 개편: 아티스트 1명=슬롯 1개 + 추가 버튼(⭐15)
+
+### 요청(원문)
+"그렇다고 하면 지금 내 아티스트 보여지는 프론트 화면도 수정이 되어야해. 아티스트 하나당 하나로 수정이 되어야하고 아티스트 추가 버튼도 있어야하고(스타 소모)"
+
+### Plan verification findings
+- 확정 모델(요청서 v1.1): 아티스트 1명=슬롯 1개, kind('real'|'virtual'). 현 서버는 단일 문서 이중 필드 → **프론트 매핑**: 실사 시트=아티스트①, 가상 시트=아티스트②(최대 2명, B-1 후 N명·개별삭제 확장).
+- v3.80의 ArtistResult [실사화]/[가상화] 탭은 "한 아티스트의 두 버전" 표현이라 새 모델과 불일치 → 목록 개편으로 대체.
+- ⭐15 extra_slot: v3.77에서 껍데기라 과금 차단했음 → 이제 "두 번째 아티스트(빈 슬롯 kind) 추가"라는 실효가 생기므로 **과금 재개**(첫 아티스트는 무료). 중복 과금 방지 위해 구매 이력(points history의 spend:extra_slot) 확인, 이력 조회 불가 시 로컬 persist 폴백.
+- 개별 삭제는 서버 미지원(문서 전체 삭제만) — 삭제 경고에 명시 유지.
+
+### v3.81 범위 (백엔드 무변경)
+1. **MyArtistsScreen 신설(내 아티스트 목록)**: /me를 아티스트 배열로 매핑해 카드 목록(시트 썸네일·kind 배지·화풍 라벨·이름). 카드 탭 → ArtistResult(해당 아티스트 고정). [＋ 아티스트 추가] 카드: 0명이면 무료 진입, 1명이면 ⭐15 confirm→/points/spend(action:extra_slot)→빈 슬롯 kind 강제로 ArtistInput 진입(402 별부족 안내, 기구매 이력 있으면 무과금 진입), 2명이면 "슬롯 확장 준비 중"(B-1 대기).
+2. **진입 동선 교체**: Map 아티스트 디렉터 → 캐릭터 보유 시 ArtistResult 직행이던 것을 **MyArtists 목록 직행**으로. (스모크에서 지적된 "새 아티스트 만들기 동선 좁음"도 함께 해소)
+3. **ArtistResult 개편**: [실사화]/[가상화] 탭 제거 → route param `slot`으로 단일 아티스트 표시(뒤로가기=목록). 삭제 경고 "서버 제약으로 현재는 모든 아티스트가 함께 삭제됩니다" 유지.
+4. **ArtistInput 정리**: "이미 아티스트가 있어요" 교체 게이트 제거(진입 관리가 목록으로 이동), route param으로 kind 강제 시 가상 토글 잠금.
+5. **커버 선택 문구**: step1.5 카드를 "아티스트 선택" 개념으로(실사화/가상화 → 아티스트① ② + kind 배지).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| screens/MyArtistsScreen.tsx (신규) | 목록·추가(⭐15)·이력 확인 | [MyArtists] |
+| screens/ArtistResultScreen.tsx | 탭 제거·slot param 고정 | [ArtistResult] |
+| screens/ArtistInputScreen.tsx | 교체 게이트 제거·kind 강제 param | [ArtistInput] |
+| screens/MapScreen.tsx | 디렉터 진입 → MyArtists | [Map] |
+| screens/CoverGenerationScreen.tsx | 선택 카드 문구 | [Cover] |
+| App.tsx | MyArtists 등록 | — |
+
+### 리스크·회귀
+⭐15 과금 재개는 반드시 "빈 슬롯 있음+기존 1명+미구매" 조건에서만 · kind 강제 위반 시 기존 아티스트 덮어쓰기 위험(같은 kind 재생성은 상세의 "다시 만들기"만) · 생성 완료 후 ArtistResult 진입 경로(taskStore 기반)와 목록 경로(slot param) 공존 정리 · v3.80 스모크 통과 항목 회귀 확인.
+
+---
+
 ## v3.80 — 2026-08-26 — 가상화(그림) 캐릭터 모드 + 커버 실사/가상 선택 (v3.77 확정 스펙 실행)
 
 ### 요청(원문)

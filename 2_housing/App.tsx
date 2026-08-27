@@ -63,6 +63,7 @@ import RoyaltyScreen from './screens/RoyaltyScreen';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
+import MyArtistsScreen from './screens/MyArtistsScreen';
 import VoiceManageScreen from './screens/VoiceManageScreen';
 import LyricsBookScreen from './screens/LyricsBookScreen';
 import ArtistCodyScreen from './screens/ArtistCodyScreen';
@@ -90,9 +91,11 @@ export type StudioStackParamList = {
   MusicLoading: undefined;
   MusicResult: undefined;
   CoverGeneration: undefined;
-  ArtistInput: undefined;
+  // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
+  ArtistInput: { forceKind?: 'real' | 'virtual' } | undefined;
   ArtistLoading: undefined;
-  ArtistResult: undefined;
+  ArtistResult: { slot?: 'real' | 'virtual' } | undefined;
+  MyArtists: undefined;
   ArtistCody: undefined;
   VoiceManage: { select?: 'artist' } | undefined;
   LyricsBook: undefined;
@@ -172,6 +175,7 @@ function StudioNavigator() {
         options={{ gestureEnabled: false }}
       />
       <StudioStack.Screen name="ArtistResult" component={ArtistResultScreen} />
+      <StudioStack.Screen name="MyArtists" component={MyArtistsScreen} />
       <StudioStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
       <StudioStack.Screen name="VoiceManage" component={VoiceManageScreen} />
       <StudioStack.Screen name="LyricsBook" component={LyricsBookScreen} />

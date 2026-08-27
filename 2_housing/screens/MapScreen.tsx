@@ -30,7 +30,6 @@ import { DIRECTOR_CATALOG, getDirectorById } from '../data/directors';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
-import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import api from '../services/api';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -253,7 +252,9 @@ export default function MapScreen({ navigation }: Props) {
         try {
           const res = await api.get('/character/me');
           if (!cancelled) {
-            setHasArtistCharacter(!!res.data?.character?.sheet_object_name);
+            // v3.81: 실사 또는 가상 시트가 하나라도 있으면 "아티스트 보유" (가상만 있는 계정 포함)
+            const ch = res.data?.character;
+            setHasArtistCharacter(!!(ch?.sheet_object_name || ch?.virtual_sheet_object_name));
           }
         } catch {
           if (!cancelled) setHasArtistCharacter(false);
@@ -451,12 +452,11 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // 아티스트 디렉터: 이미 캐릭터가 있으면 관리 페이지(ArtistResult)로 직행, 없으면 Dialogue → ArtistInput
+    // 아티스트 디렉터: 이미 아티스트가 있으면 목록(MyArtists)으로, 없으면 Dialogue → ArtistInput
     if (type === 'artist') {
       if (hasArtistCharacter) {
-        // 신선한 데이터로 hydrate되도록 store 초기화 후 ArtistResult 진입
-        useCharacterTaskStore.getState().clearResult();
-        navigation.navigate('ArtistResult' as any);
+        // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록에서 카드 탭 시 상세(ArtistResult) 진입
+        navigation.navigate('MyArtists' as any);
         return;
       }
       const director = DIRECTORS.find((d) => d.type === 'artist');

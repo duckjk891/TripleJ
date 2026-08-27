@@ -238,12 +238,12 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       setStep(2);
       return;
     }
-    // v3.80: 실사·가상 둘 다 있으면 슬롯 선택(step 1.5), 한쪽만 있으면 자동 선택
+    // v3.81: 아티스트 1명=슬롯 1개 모델 — 두 명 있으면 아티스트 선택(step 1.5), 한 명이면 자동 선택
     if (realObjName && virtualObjName) {
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: '아티스트 포함' },
-        { type: 'director', text: '실사화·가상화 캐릭터가 둘 다 있네요! 어떤 모습으로 커버에 넣을까요?' },
+        { type: 'director', text: '아티스트가 두 명 있네요! 어느 아티스트로 넣을까요?' },
       ]);
       setStep(1.5);
       return;
@@ -267,7 +267,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 선택', { slot, obj });
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: slot === 'real' ? '실사화로' : `가상화로${virtualStyleLabel ? ` (${virtualStyleLabel})` : ''}` },
+      { type: 'user', text: slot === 'real' ? '아티스트①(실사)로' : `아티스트②(가상${virtualStyleLabel ? ` · ${virtualStyleLabel}` : ''})로` },
       { type: 'director', text: '좋아요! 원하시는 커버 이미지의 느낌이나 스타일을 설명해주세요.' },
     ]);
     setStep(2);
@@ -486,7 +486,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
             </TouchableOpacity>
           </View>
         ) : step === 1.5 ? (
-          // v3.80: 실사화/가상화 슬롯 선택 카드 (둘 다 있을 때만 진입)
+          // v3.81: 아티스트 선택 카드 (두 명 있을 때만 진입) — ①실사 / ②가상(화풍)
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('real')} activeOpacity={0.8}>
               {realObjName ? (
@@ -495,7 +495,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                   style={styles.slotCardImg}
                 />
               ) : null}
-              <AppText style={styles.slotCardLabel}>실사화</AppText>
+              <AppText style={styles.slotCardLabel}>아티스트① 실사</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.slotCard} onPress={() => handleSlotSelect('virtual')} activeOpacity={0.8}>
               {virtualObjName ? (
@@ -505,7 +505,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                 />
               ) : null}
               <AppText style={styles.slotCardLabel}>
-                가상화{virtualStyleLabel ? ` · ${virtualStyleLabel}` : ''}
+                아티스트② 가상{virtualStyleLabel ? `(${virtualStyleLabel})` : ''}
               </AppText>
             </TouchableOpacity>
           </View>

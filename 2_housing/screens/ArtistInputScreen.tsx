@@ -13,7 +13,6 @@ import {
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
-import { usePointsStore } from '../stores/pointsStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -112,20 +111,33 @@ function buildFinalText(answers: StyleAnswers): string {
   return parts.join(', ');
 }
 
-export default function ArtistInputScreen({ navigation }: any) {
+export default function ArtistInputScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const titleLabel = user?.display_title || '대표';
   const taskStore = useCharacterTaskStore();
 
+  // v3.81: MyArtists에서 슬롯 추가로 진입하면 kind 강제 — 같은 kind로 만들면
+  // 기존 아티스트를 덮어쓰는 서버 제약이 있어 위반 방지가 핵심(토글 숨김 + 초기값 고정).
+  const forceKind: 'real' | 'virtual' | undefined = route?.params?.forceKind;
+
   const scrollRef = useRef<ScrollView>(null);
   const [step, setStep] = useState<Step>('welcome');
-  const [chat, setChat] = useState<ChatMessage[]>([
-    {
-      type: 'director',
-      text: `안녕하세요 ${titleLabel}님! 우리 아티스트의 얼굴 사진을 한 장 올려주세요.`,
-    },
-  ]);
+  const [chat, setChat] = useState<ChatMessage[]>(() => {
+    const msgs: ChatMessage[] = [
+      {
+        type: 'director',
+        text: `안녕하세요 ${titleLabel}님! 우리 아티스트의 얼굴 사진을 한 장 올려주세요.`,
+      },
+    ];
+    if (forceKind) {
+      msgs.push({
+        type: 'director',
+        text: `이번 아티스트는 ${forceKind === 'virtual' ? '가상(그림)' : '실사'} 캐릭터로 만들어져요.`,
+      });
+    }
+    return msgs;
+  });
 
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoName, setPhotoName] = useState<string>('');
@@ -138,8 +150,8 @@ export default function ArtistInputScreen({ navigation }: any) {
   const [myCharacter, setMyCharacter] = useState<MyCharacter | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
-  // v3.80: 가상화(그림) 캐릭터 모드 + 화풍 선택 스텝
-  const [isVirtualMode, setIsVirtualMode] = useState(false);
+  // v3.80: 가상화(그림) 캐릭터 모드 + 화풍 선택 스텝 (v3.81: forceKind 진입 시 고정)
+  const [isVirtualMode, setIsVirtualMode] = useState(forceKind === 'virtual');
   const [styleSamples, setStyleSamples] = useState<StyleSample[]>([]);
   const [styleLoading, setStyleLoading] = useState(false);
   const [styleLoadError, setStyleLoadError] = useState(false);
@@ -168,8 +180,6 @@ export default function ArtistInputScreen({ navigation }: any) {
       parent.setOptions({ headerLeft: undefined });
     };
   }, [navigation]);
-  // 추가 아티스트 슬롯 개방 여부(무료)
-  const [extraUnlocked, setExtraUnlocked] = useState(false);
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
 
@@ -179,6 +189,7 @@ export default function ArtistInputScreen({ navigation }: any) {
 
   // 초기: 내 캐릭터 로드
   useEffect(() => {
+    if (__DEV__ && forceKind) console.info('[ArtistInput] forceKind 진입 — kind 고정', { forceKind });
     if (!user) {
       setInitialLoading(false);
       return;
@@ -202,26 +213,6 @@ export default function ArtistInputScreen({ navigation }: any) {
     setChat((prev) => [...prev, { type: 'director' as const, text }]);
   const pushUser = (text: string) =>
     setChat((prev) => [...prev, { type: 'user' as const, text }]);
-
-  const handlePurchaseExtraSlot = () => {
-    // 서버가 계정당 캐릭터 1명(user_id 단일 문서) 구조라 슬롯이 실제로 늘지 않음 —
-    // 다중 슬롯 백엔드 지원 전까지 ⭐15 과금 중단, "기존 아티스트 교체"로 정직하게 안내
-    if (__DEV__) console.info('[ArtistInput] 새 아티스트(교체) 진입');
-    showAlert(
-      '새 아티스트 만들기',
-      '지금은 아티스트를 한 명만 보유할 수 있어요.\n새로 만들면 기존 아티스트가 교체돼요. 계속할까요?',
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '교체하고 만들기',
-          onPress: () => {
-            setExtraUnlocked(true);
-            pushDirector('좋아요! 새 아티스트의 사진을 올리거나, 사진 없이 시작해주세요. (완성하면 기존 아티스트와 교체돼요)');
-          },
-        },
-      ]
-    );
-  };
 
   // 질문 단계 공통 진입
   const startQuestioning = () => {
@@ -458,28 +449,8 @@ export default function ArtistInputScreen({ navigation }: any) {
 
   const renderInputArea = () => {
     if (step === 'welcome') {
-      // 이미 아티스트가 있으면 교체 확인 게이트 (다중 슬롯은 백엔드 지원 후)
-      if (myCharacter && !extraUnlocked) {
-        return (
-          <View style={styles.inputArea}>
-            <View style={styles.lockNotice}>
-              <AppText style={styles.lockNoticeIcon}>🔒</AppText>
-              <AppText style={styles.lockNoticeTitle}>이미 아티스트가 있어요</AppText>
-              <AppText style={styles.lockNoticeDesc}>
-                새로 만들면 기존 아티스트가 교체돼요.
-              </AppText>
-            </View>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={handlePurchaseExtraSlot}
-            >
-              <AppText style={styles.primaryBtnText}>
-                새 아티스트 만들기
-              </AppText>
-            </TouchableOpacity>
-          </View>
-        );
-      }
+      // v3.81: "이미 아티스트가 있어요" 교체 게이트 제거 — 진입 관리는 MyArtists가 담당.
+      // 이 화면은 항상 생성 UI (Map 미보유 경로·MyArtists 경유 진입 모두 welcome부터).
       return (
         <View style={styles.inputArea}>
           <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
@@ -489,19 +460,23 @@ export default function ArtistInputScreen({ navigation }: any) {
           <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
             <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
           </TouchableOpacity>
-          {/* v3.80: 가상화(그림) 캐릭터 모드 토글 — 이후 사진/텍스트-only 선택으로 동일하게 이어짐 */}
-          <TouchableOpacity
-            style={[styles.virtualBtn, isVirtualMode && styles.virtualBtnActive]}
-            onPress={handleToggleVirtual}
-          >
-            <AppText style={[styles.virtualBtnText, isVirtualMode && styles.virtualBtnTextActive]}>
-              {isVirtualMode ? '🎨 가상화(그림) 모드 선택됨 — 취소하려면 탭' : '🎨 가상화(그림) 캐릭터 만들기'}
-            </AppText>
-          </TouchableOpacity>
+          {/* v3.80: 가상화(그림) 캐릭터 모드 토글 — v3.81: forceKind 진입 시 숨김(kind 강제 위반 방지) */}
+          {!forceKind && (
+            <TouchableOpacity
+              style={[styles.virtualBtn, isVirtualMode && styles.virtualBtnActive]}
+              onPress={handleToggleVirtual}
+            >
+              <AppText style={[styles.virtualBtnText, isVirtualMode && styles.virtualBtnTextActive]}>
+                {isVirtualMode ? '🎨 가상화(그림) 모드 선택됨 — 취소하려면 탭' : '🎨 가상화(그림) 캐릭터 만들기'}
+              </AppText>
+            </TouchableOpacity>
+          )}
           <AppText style={styles.textOnlyHint}>
-            {isVirtualMode
-              ? '가상화 모드: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
-              : '사진 없이 설명만으로 가상 인물을 만들 수도 있어요.'}
+            {forceKind
+              ? `이번 아티스트는 ${forceKind === 'virtual' ? '가상(그림)' : '실사'} 캐릭터로 만들어져요.`
+              : isVirtualMode
+                ? '가상화 모드: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
+                : '사진 없이 설명만으로 가상 인물을 만들 수도 있어요.'}
           </AppText>
         </View>
       );
@@ -702,25 +677,6 @@ const styles = StyleSheet.create({
   },
   myArtistLabel: { fontSize: 12, color: colors.accent.primary, fontWeight: '700', marginBottom: 10 },
   myArtistImg: { width: 160, height: 160, borderRadius: 12, marginBottom: 12 },
-
-  lockNotice: {
-    backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14,
-    marginBottom: 10, alignItems: 'center',
-    borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  lockNoticeIcon: { fontSize: 28, marginBottom: 6 },
-  lockNoticeTitle: {
-    fontSize: 14, fontWeight: '700', color: colors.text.primary,
-    marginBottom: 4, textAlign: 'center',
-  },
-  lockNoticeDesc: {
-    fontSize: 12, color: colors.text.secondary,
-    textAlign: 'center', lineHeight: 18,
-  },
-  lockNoticeBalance: {
-    fontSize: 12, fontWeight: '700', color: colors.accent.primary,
-    marginTop: 8,
-  },
 
   msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12 },
   dirRow: { justifyContent: 'flex-start', paddingRight: 40 },
