@@ -56,7 +56,7 @@ const SKILL_LEVELS = [
 type AudioSrc = { uri: string; name: string } | null;
 
 const POLL_INTERVAL_MS = 3500;
-const POLL_MAX_TRIES = 60;
+const POLL_MAX_TRIES = 120; // 첫 분석 실패→서버 자동 재시도 시나리오 감안(약 7분)
 
 export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
@@ -79,6 +79,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   // STEP 2
   const [validateInfo, setValidateInfo] = useState<any>(null);
   const [phrasePolling, setPhrasePolling] = useState(false);
+  const [slowWait, setSlowWait] = useState(false); // 1분 이상 지연 안내
 
   // STEP 3
   const [verifySrc, setVerifySrc] = useState<AudioSrc>(null);
@@ -146,10 +147,12 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     let cancelled = false;
     let tries = 0;
     setPhrasePolling(true);
+    setSlowWait(false);
     setErrText('');
     const tick = async () => {
       if (cancelled || pollCancelRef.current) return;
       tries += 1;
+      if (tries === 18) setSlowWait(true); // 약 1분 경과
       try {
         const clone = await getVoiceClone(cloneId);
         if (cancelled) return;
@@ -451,9 +454,16 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       {phrase ? (
         <AppText style={styles.phraseText}>{phrase}</AppText>
       ) : phrasePolling ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <ActivityIndicator size="small" color={colors.accent.primary} />
-          <AppText style={styles.phraseLoading}>문구 생성 중...</AppText>
+        <View style={{ gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ActivityIndicator size="small" color={colors.accent.primary} />
+            <AppText style={styles.phraseLoading}>문구 생성 중...</AppText>
+          </View>
+          {slowWait && (
+            <AppText style={styles.phraseLoading}>
+              분석이 조금 오래 걸리고 있어요. 이 화면을 나가도 계속 진행되고, 목소리 목록에서 이어서 할 수 있어요.
+            </AppText>
+          )}
         </View>
       ) : (
         <AppText style={styles.phraseLoading}>
