@@ -3,7 +3,8 @@
 // 갱신: 화면 포커스 중 8초 폴링(모바일 관용 — MAIDOL은 WS+30s 폴링, WS는 후속).
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { View, FlatList, TouchableOpacity, TextInput, Alert, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -94,7 +95,7 @@ export default function DmChatScreen() {
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[DmChat] 전송 실패', { cid, status });
-      Alert.alert('알림', err?.response?.data?.detail || err?.response?.data?.error || '메시지를 보낼 수 없습니다.');
+      showAlert('알림', err?.response?.data?.detail || err?.response?.data?.error || '메시지를 보낼 수 없습니다.');
     } finally {
       setSending(false);
     }
@@ -110,7 +111,7 @@ export default function DmChatScreen() {
   };
 
   const decline = () => {
-    Alert.alert('요청 거절', '요청을 거절하면 대화가 삭제됩니다. 신고가 필요하면 거절 전에 해주세요. 차단하지 않으면 다시 요청이 올 수 있어요.', [
+    showAlert('요청 거절', '요청을 거절하면 대화가 삭제됩니다. 신고가 필요하면 거절 전에 해주세요. 차단하지 않으면 다시 요청이 올 수 있어요.', [
       { text: '취소', style: 'cancel' },
       { text: '거절', style: 'destructive', onPress: async () => {
         try { await api.delete(`/dm/conversations/${cid}`); navigation.goBack(); }
@@ -120,13 +121,13 @@ export default function DmChatScreen() {
   };
 
   const block = () => {
-    Alert.alert('차단', `${peer.nickname}님을 차단할까요? 서로 메시지를 주고받을 수 없게 됩니다.`, [
+    showAlert('차단', `${peer.nickname}님을 차단할까요? 서로 메시지를 주고받을 수 없게 됩니다.`, [
       { text: '취소', style: 'cancel' },
       { text: '차단', style: 'destructive', onPress: async () => {
         try {
           await api.post(`/dm/blocks/${peer.id}`);
           if (isPendingReceived) await api.delete(`/dm/conversations/${cid}`).catch(() => {});
-          Alert.alert('완료', '차단했습니다.');
+          showAlert('완료', '차단했습니다.');
           navigation.goBack();
         } catch (err: any) { console.error('[DmChat] 차단 실패', { status: err?.response?.status }); }
       } },

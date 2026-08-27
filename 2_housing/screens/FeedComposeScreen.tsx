@@ -4,8 +4,9 @@
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
-  ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform,
+  ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -46,13 +47,13 @@ export default function FeedComposeScreen({ navigation }: any) {
     try {
       const res = await api.get(`/tracks/${track.id}`);
       const lyrics = (res.data?.lyrics || '').trim();
-      if (!lyrics) { Alert.alert('알림', '이 곡에는 저장된 가사가 없어요.'); return; }
+      if (!lyrics) { showAlert('알림', '이 곡에는 저장된 가사가 없어요.'); return; }
       await Clipboard.setStringAsync(lyrics);
       setPickerOpen(false);
-      Alert.alert('복사 완료', `"${track.title}" 가사가 복사되었어요.\n원하는 위치에 붙여넣기 하세요.`);
+      showAlert('복사 완료', `"${track.title}" 가사가 복사되었어요.\n원하는 위치에 붙여넣기 하세요.`);
     } catch (err: any) {
       console.error('[FeedCompose] 가사 복사 실패', { id: track.id, status: err?.response?.status });
-      Alert.alert('오류', '가사를 복사하지 못했어요.');
+      showAlert('오류', '가사를 복사하지 못했어요.');
     } finally {
       setLyricsLoading(false);
     }
@@ -67,11 +68,11 @@ export default function FeedComposeScreen({ navigation }: any) {
     try {
       const res = await api.get(`/tracks/${track.id}`);
       const items = res.data?.cover_character?.used_items || [];
-      if (!items.length) { Alert.alert('알림', '이 곡에는 착장 아이템이 없어요.'); return; }
+      if (!items.length) { showAlert('알림', '이 곡에는 착장 아이템이 없어요.'); return; }
       setItemChoices(items);
     } catch (err: any) {
       console.error('[FeedCompose] 아이템 조회 실패', { id: track.id, status: err?.response?.status });
-      Alert.alert('오류', '아이템을 불러오지 못했어요.');
+      showAlert('오류', '아이템을 불러오지 못했어요.');
     } finally {
       setLyricsLoading(false);
     }
@@ -123,7 +124,7 @@ export default function FeedComposeScreen({ navigation }: any) {
 
   const submit = async () => {
     const text = body.trim();
-    if (!text && !attached && !attachedItems.length) { Alert.alert('알림', '내용을 입력하거나 음악·아이템을 첨부해주세요.'); return; }
+    if (!text && !attached && !attachedItems.length) { showAlert('알림', '내용을 입력하거나 음악·아이템을 첨부해주세요.'); return; }
     if (posting) return;
     setPosting(true);
     const blocks: any[] = [];
@@ -142,7 +143,7 @@ export default function FeedComposeScreen({ navigation }: any) {
       navigation.goBack();
     } catch (err: any) {
       console.error('[FeedCompose] 등록 실패', { status: err?.response?.status });
-      Alert.alert('오류', '피드 등록에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      showAlert('오류', '피드 등록에 실패했습니다. 잠시 후 다시 시도해주세요.');
     } finally {
       setPosting(false);
     }

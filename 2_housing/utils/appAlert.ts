@@ -1,42 +1,16 @@
-import { Alert, Platform } from 'react-native';
+import { useDialogStore, type DialogButton } from '../stores/dialogStore';
 
-export type AppAlertButton = {
-  text?: string;
-  style?: 'default' | 'cancel' | 'destructive';
-  onPress?: () => void;
-};
+export type AppAlertButton = DialogButton;
 
 /**
- * RN Alert.alert 호환 래퍼.
- * react-native-web 의 Alert 는 no-op 이라 웹에서 onPress 가 절대 호출되지 않는다
- * (node_modules/react-native-web/dist/exports/Alert/index.js). 웹에서는 window.alert/confirm 으로 대체한다.
+ * RN Alert.alert 호환 시그니처의 앱 내 다이얼로그.
+ * v3.85: 시스템 팝업(네이티브 Alert.alert / 웹 window.alert·confirm) 전면 금지 방침에 따라
+ * 전역 dialogStore → AppDialogHost(App 루트) 렌더로 대체 — 웹/네이티브 동일한 앱 디자인 팝업.
+ * 버튼 3개 이상도 지원(세로 스택).
  */
 export function showAlert(title: string, message?: string, buttons?: AppAlertButton[]) {
   if (__DEV__) {
-    console.info('[appAlert] show', { title, web: Platform.OS === 'web', buttons: buttons?.length ?? 0 });
+    console.info('[appAlert] show', { title, buttons: buttons?.length ?? 0 });
   }
-
-  if (Platform.OS !== 'web') {
-    Alert.alert(title, message, buttons);
-    return;
-  }
-
-  const w = globalThis as any;
-  const body = message ? `${title}\n\n${message}` : title;
-  const list = buttons ?? [];
-
-  if (list.length <= 1) {
-    w.alert?.(body);
-    list[0]?.onPress?.();
-    return;
-  }
-
-  if (list.length > 2) {
-    console.warn('[appAlert] web supports 2 choices — using cancel + last action', { count: list.length });
-  }
-  const cancel = list.find((b) => b.style === 'cancel') ?? list[0];
-  const confirm = [...list].reverse().find((b) => b.style !== 'cancel') ?? list[list.length - 1];
-
-  const ok = w.confirm?.(`${body}\n\n확인 = ${confirm.text ?? '확인'} / 취소 = ${cancel.text ?? '취소'}`);
-  (ok ? confirm : cancel).onPress?.();
+  useDialogStore.getState().show(title, message, buttons);
 }

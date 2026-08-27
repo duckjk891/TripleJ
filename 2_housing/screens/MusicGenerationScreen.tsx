@@ -8,11 +8,11 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Slider from '@react-native-community/slider';
@@ -203,7 +203,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 편집한 가사를 lyricsStore와 musicStore 양쪽에 즉시 반영
   const handleLyricsConfirm = () => {
     if (!editedLyrics.trim()) {
-      Alert.alert('알림', '가사를 입력해주세요.');
+      showAlert('알림', '가사를 입력해주세요.');
       return;
     }
     lyricsStore.setGeneratedLyrics(editedLyrics.trim());
@@ -353,7 +353,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         advanceStep(`파일 업로드: ${file.name}`, 6);
       }
     } catch {
-      Alert.alert('오류', '파일 선택에 실패했습니다.');
+      showAlert('오류', '파일 선택에 실패했습니다.');
     }
   };
 
@@ -362,7 +362,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('권한 필요', '녹음을 위해 마이크 권한이 필요합니다.');
+        showAlert('권한 필요', '녹음을 위해 마이크 권한이 필요합니다.');
         return;
       }
       await Audio.setAudioModeAsync({
@@ -379,7 +379,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
     } catch {
-      Alert.alert('오류', '녹음을 시작할 수 없습니다.');
+      showAlert('오류', '녹음을 시작할 수 없습니다.');
     }
   };
 
@@ -398,7 +398,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         advanceStep(`녹음 완료: ${fileName}`, 9);
       }
     } catch {
-      Alert.alert('오류', '녹음 저장에 실패했습니다.');
+      showAlert('오류', '녹음 저장에 실패했습니다.');
     }
   };
 

@@ -1,4 +1,5 @@
-import { StyleSheet, View, Text, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoyaltyStore } from '../stores/royaltyStore';
@@ -26,7 +27,7 @@ export default function RoyaltyScreen({ navigation }: any) {
   const canPayout = availableKrw >= MIN_PAYOUT_KRW;
 
   const handlePayout = () => {
-    Alert.alert(
+    showAlert(
       '출금 신청 (준비 중)',
       `출금은 백엔드 정산 시스템 반영 후 활성화됩니다.\n\n현재 출금 가능 금액: ${formatKrw(availableKrw)}\n최소 출금: ${formatKrw(MIN_PAYOUT_KRW)} / 수수료: ${formatKrw(PAYOUT_FEE_KRW)}`,
       [{ text: '확인' }]

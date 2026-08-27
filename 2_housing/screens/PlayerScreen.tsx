@@ -5,7 +5,6 @@ import {
   Text,
   TouchableOpacity,
   Image,
-  Alert,
   Dimensions,
   ScrollView,
   Modal,
@@ -15,6 +14,7 @@ import {
   FlatList,
   Platform,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
@@ -462,7 +462,7 @@ export default function PlayerScreen({ route, navigation }: any) {
     api.post(`/business/ads/${item.id}/click`).catch(() => {});
     if (item.link_url) {
       const url = item.link_url.startsWith('http') ? item.link_url : `https://${item.link_url}`;
-      Linking.openURL(url).catch(() => Alert.alert('알림', '링크를 열 수 없어요'));
+      Linking.openURL(url).catch(() => showAlert('알림', '링크를 열 수 없어요'));
     }
   };
 
@@ -615,7 +615,7 @@ export default function PlayerScreen({ route, navigation }: any) {
     if (!track) return;
     const ok = playerStore.addToQueue(track);
     if (__DEV__) console.info('[PlayerScreen] 담기 → addToQueue', { id: track?.id, ok });
-    Alert.alert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
+    showAlert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
   };
 
   const handleAddToPlaylist = () => {
@@ -987,7 +987,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                                   const url = item.product_url!.startsWith('http')
                                     ? item.product_url!
                                     : `https://${item.product_url}`;
-                                  Linking.openURL(url).catch(() => Alert.alert('알림', '링크를 열 수 없어요'));
+                                  Linking.openURL(url).catch(() => showAlert('알림', '링크를 열 수 없어요'));
                                 }}
                               >
                                 <AppText style={styles.outfitDetailBtnText}>자세히 보기</AppText>

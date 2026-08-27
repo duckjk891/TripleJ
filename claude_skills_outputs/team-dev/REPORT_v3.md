@@ -4,6 +4,26 @@
 
 ---
 
+## v3.85 (모든 팝업 앱 내 다이얼로그 전환 — 시스템 팝업 전면 금지) — 2026-08-27
+
+### 요청 작업
+"모든 팝업은 시스템 팝업이 아니라 앱 내의 팝업 형태로 디자인 되어야해" (+중간 확인: "동일하게 alert 형태로 뜨는데?" — 당시 구현 전 상태였음을 인지하고 즉시 구현)
+
+### 수행 결과
+- **전역 다이얼로그 시스템 신설**: `stores/dialogStore.ts`(대기열) + `components/AppDialogHost.tsx`(기존 ConfirmDialog 디자인 계열 — 다크 카드·백드롭·cancel 좌측·destructive 스타일·**버튼 3개 이상 세로 스택 지원**) 를 App 루트에 마운트.
+- **showAlert 내부 교체**: 시그니처 유지한 채 네이티브 Alert.alert/웹 window.alert·confirm 위임(v3.77 폴백)을 dialogStore push로 대체 — 기존 호출부 전체가 무수정으로 앱 내 팝업화. 웹 confirm의 2택 제약도 해소.
+- **직접 Alert.alert 전수 치환**: 21개 파일 71건(Player·MyMusic·Settings·FeedCompose·Playlist·DmChat·공유시트·구매모달 등) showAlert로 교체, react-native Alert import 제거. Alert.prompt 0건 확인.
+- 방침을 메모리(app-popup-design-rule)에 영구 기록 — 이후 새 팝업은 showAlert만 사용.
+
+### 테스트 (tester) — 전 시나리오 PASS
+**window dialog 이벤트 전 과정 0건** — 별부족(단일 확인)·사진 확약(2버튼)·보관함 삭제(destructive)·설정 알림 모두 DOM 앱 다이얼로그로 렌더 실측, 기존 ConfirmDialog 회귀 없음, 콘솔/HTTP 청정, ⭐ 불변. 증적 scratchpad/v385_smoke_00~12.
+[관찰] Settings 로그아웃이 confirm 없음(즉시 실행) — 후속 후보. [미검증] 네이티브 실기기 렌더.
+
+### 커밋
+`feat: v3.85 모든 팝업 앱 내 다이얼로그 전환 — 전역 AppDialogHost·showAlert 재구현·Alert.alert 71건 치환 (team-dev)`
+
+---
+
 ## v3.84 (아티스트 목소리 2택 재편 — 간편=프리셋 성별+스타일 / 내 목소리=클로닝, 배타) — 2026-08-27
 
 ### 요청 작업

@@ -9,11 +9,11 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   ScrollView,
   Share,
   Linking,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -138,7 +138,7 @@ export default function MyMusicScreen({ navigation }: any) {
   };
 
   const handleDeleteTrack = (trackId: string, title: string) => {
-    Alert.alert(
+    showAlert(
       '곡 삭제',
       `"${title}"을(를) 삭제하시겠습니까?`,
       [
@@ -151,7 +151,7 @@ export default function MyMusicScreen({ navigation }: any) {
               await api.delete(`/tracks/${trackId}`);
               setTracks((prev) => prev.filter((t) => String(t.id) !== trackId));
             } catch {
-              Alert.alert('오류', '삭제에 실패했습니다.');
+              showAlert('오류', '삭제에 실패했습니다.');
             }
           },
         },
@@ -160,7 +160,7 @@ export default function MyMusicScreen({ navigation }: any) {
   };
 
   const handlePublishToChart = (trackId: string, title: string) => {
-    Alert.alert(
+    showAlert(
       '차트 업로드',
       `"${title}"을(를) 차트에 공개하시겠습니까?`,
       [
@@ -170,10 +170,10 @@ export default function MyMusicScreen({ navigation }: any) {
           onPress: async () => {
             try {
               await api.put(`/tracks/${trackId}`, { is_public: true });
-              Alert.alert('완료', '차트에 업로드되었습니다!');
+              showAlert('완료', '차트에 업로드되었습니다!');
               fetchTracks(true);
             } catch {
-              Alert.alert('오류', '업로드에 실패했습니다.');
+              showAlert('오류', '업로드에 실패했습니다.');
             }
           },
         },
@@ -198,11 +198,11 @@ export default function MyMusicScreen({ navigation }: any) {
     try {
       const { data } = await api.post(`/tracks/download/${track.id}`);
       const url = data?.download_url;
-      if (!url) { Alert.alert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
+      if (!url) { showAlert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
       await Linking.openURL(url);
     } catch (err: any) {
       console.error('[MyMusic] download 실패', { status: err?.response?.status });
-      Alert.alert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+      showAlert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
     }
   };
 

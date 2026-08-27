@@ -1,7 +1,8 @@
 // [PlaylistPickerSheet] 곡(들)을 플레이리스트에 담는 바텀시트 — 기존 목록 선택 또는 새로 만들어 담기.
 // 단일 곡·여러 곡(검색 결과 전체 담기) 모두 지원. trackIds 길이에 따라 문구만 달라진다.
 import { useEffect, useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, Alert, ActivityIndicator, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
 import { AppText, Button } from './ui';
 import { colors } from '../theme/colors';
@@ -53,7 +54,7 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
     const { added, failed } = await addAll(playlistId);
     setBusy(false);
     onClose();
-    Alert.alert(added > 0 ? '완료' : '알림',
+    showAlert(added > 0 ? '완료' : '알림',
       added > 0
         ? (many ? `${added}곡을 담았어요.${failed ? ` (${failed}곡은 이미 있거나 실패)` : ''}` : '플레이리스트에 추가되었습니다!')
         : '담지 못했어요. 이미 담긴 곡일 수 있어요.');
@@ -61,7 +62,7 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
 
   const handleCreate = async () => {
     const name = newName.trim();
-    if (!name) { Alert.alert('알림', '플레이리스트 이름을 입력해주세요.'); return; }
+    if (!name) { showAlert('알림', '플레이리스트 이름을 입력해주세요.'); return; }
     setBusy(true);
     try {
       const createRes = await api.post('/playlists/', { title: name });
@@ -69,13 +70,13 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
       setBusy(false);
       setNewName('');
       onClose();
-      Alert.alert('완료', many
+      showAlert('완료', many
         ? `"${name}"에 ${added}곡을 담았어요.${failed ? ` (${failed}곡 실패)` : ''}`
         : `"${name}"에 추가되었습니다!`);
     } catch (err: any) {
       setBusy(false);
       console.error('[PlaylistPickerSheet] 플레이리스트 생성 실패', { status: err?.response?.status });
-      Alert.alert('오류', err?.response?.data?.error || '생성에 실패했습니다.');
+      showAlert('오류', err?.response?.data?.error || '생성에 실패했습니다.');
     }
   };
 

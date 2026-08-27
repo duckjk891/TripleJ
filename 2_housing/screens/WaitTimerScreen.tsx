@@ -6,9 +6,9 @@ import {
   Image,
   TouchableOpacity,
   Animated,
-  Alert,
   Platform,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Character, { DirectorType } from '../components/Character';
 import AppScreenLayout from '../components/AppScreenLayout';
@@ -149,7 +149,7 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
       }
       return newTime;
     });
-    Alert.alert('보상 획득!', '30분이 단축되었습니다!');
+    showAlert('보상 획득!', '30분이 단축되었습니다!');
   }, [taskName, navigation]);
 
   const handleWatchAd = async () => {
@@ -210,13 +210,13 @@ export default function WaitTimerScreen({ route, navigation }: Props) {
             if (!earned && isWatchingAd) {
               try { unsubLoaded(); } catch {}
               setIsWatchingAd(false);
-              Alert.alert('오류', '광고를 불러올 수 없습니다. 다시 시도해주세요.');
+              showAlert('오류', '광고를 불러올 수 없습니다. 다시 시도해주세요.');
             }
           }, 10000);
         }
       } catch {
         setIsWatchingAd(false);
-        Alert.alert('오류', '광고를 불러올 수 없습니다.');
+        showAlert('오류', '광고를 불러올 수 없습니다.');
       }
     } else {
       // Mock (Expo Go) — 3초 대기 제거, 즉시 보상

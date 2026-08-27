@@ -6,7 +6,6 @@ import {
   Text,
   Image,
   ScrollView,
-  Alert,
   Platform,
   useWindowDimensions,
   Modal,
@@ -14,6 +13,7 @@ import {
   Animated,
   Easing,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -339,7 +339,7 @@ export default function MapScreen({ navigation }: Props) {
     const result = useFanSimulationStore.getState().runIfDue();
     if (result && result.plays > 0) {
       const dayLabel = result.daysApplied > 1 ? `${result.daysApplied}일치 ` : '';
-      Alert.alert(
+      showAlert(
         '📊 오늘의 청취 리포트',
         `${dayLabel}가상 팬덤이 너의 곡을 ${result.plays.toLocaleString()}회 재생했어요!\n인기도 EXP +${result.plays}`,
         [{ text: '확인' }]
@@ -448,7 +448,7 @@ export default function MapScreen({ navigation }: Props) {
 
     // 비디오 디렉터: 준비 중
     if (type === 'video') {
-      Alert.alert('안내', 'MV 제작 기능은 준비 중입니다.');
+      showAlert('안내', 'MV 제작 기능은 준비 중입니다.');
       return;
     }
 

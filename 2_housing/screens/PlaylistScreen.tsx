@@ -9,10 +9,10 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
-  Alert,
   Modal,
   TextInput,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -112,13 +112,13 @@ export default function PlaylistScreen({ navigation }: any) {
   };
 
   const handleDeletePlaylist = (playlist: Playlist) => {
-    Alert.alert('플레이리스트 삭제', `"${playlist.name || playlist.title}"을(를) 삭제하시겠습니까?`, [
+    showAlert('플레이리스트 삭제', `"${playlist.name || playlist.title}"을(를) 삭제하시겠습니까?`, [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: async () => {
         try {
           await api.delete(`/playlists/${playlist.id}`);
           setPlaylists((prev) => prev.filter((p) => p.id !== playlist.id));
-        } catch { Alert.alert('오류', '삭제에 실패했습니다.'); }
+        } catch { showAlert('오류', '삭제에 실패했습니다.'); }
       }},
     ]);
   };
@@ -130,18 +130,18 @@ export default function PlaylistScreen({ navigation }: any) {
       setSelectedPlaylist({ ...selectedPlaylist, name: renameText.trim(), title: renameText.trim() });
       setPlaylists((prev) => prev.map((p) => p.id === selectedPlaylist.id ? { ...p, name: renameText.trim(), title: renameText.trim() } : p));
       setShowRenameModal(false);
-    } catch { Alert.alert('오류', '이름 변경에 실패했습니다.'); }
+    } catch { showAlert('오류', '이름 변경에 실패했습니다.'); }
   };
 
   const handleRemoveTrackFromPlaylist = (trackId: string) => {
     if (!selectedPlaylist) return;
-    Alert.alert('곡 삭제', '이 곡을 플레이리스트에서 제거하시겠습니까?', [
+    showAlert('곡 삭제', '이 곡을 플레이리스트에서 제거하시겠습니까?', [
       { text: '취소', style: 'cancel' },
       { text: '제거', style: 'destructive', onPress: async () => {
         try {
           await api.delete(`/playlists/${selectedPlaylist.id}/tracks/${trackId}`);
           setPlaylistTracks((prev) => prev.filter((t: any) => String(t.id || t.track_id) !== trackId));
-        } catch { Alert.alert('오류', '제거에 실패했습니다.'); }
+        } catch { showAlert('오류', '제거에 실패했습니다.'); }
       }},
     ]);
   };

@@ -7,6 +7,27 @@
 
 ---
 
+## v3.85 — 2026-08-27 — 전 앱 팝업의 앱 내 다이얼로그 전환 (시스템 팝업 전면 금지)
+
+### 요청(원문)
+"모든 팝업은 시스템 팝업이 아니라 앱 내의 팝업 형태로 디자인 되어야해"
+
+### Plan verification findings
+- 현재 `utils/appAlert.showAlert`는 네이티브=시스템 Alert.alert, 웹=window.alert/confirm 위임(v3.77) — 둘 다 시스템 팝업이라 방침 위반.
+- 직접 `Alert.alert` 호출 잔존: 22개 파일(Player·ComposerSelect·Cover·FeedCompose·MyMusic·MusicGen·Chart·DmChat·LyricsPromptReview·Playlist·Settings·Map·DirectorLineup·Royalty·ArtistCody·WaitTimer 화면 + TrackShareDownloadSheet·PlaylistPicker·PurchaseModal·TrackActionSheet·FeedCard·SocialLoginButtons 컴포넌트).
+- 앱 내 다이얼로그 컴포넌트 기존재: `components/ConfirmDialog`(Modal 기반, 제목/본문/확인/취소/destructive — ArtistResult 등 사용 중, 디자인 기준).
+
+### 범위 (전부 프론트)
+1. **전역 다이얼로그 시스템**: `stores/dialogStore.ts`(대기열: {title, message, buttons[]}) + `components/AppDialogHost.tsx`(ConfirmDialog 디자인 재사용·확장, 버튼 N개 지원, destructive 스타일) — App.tsx 루트에 1회 마운트.
+2. **showAlert 내부 교체**: 시그니처(title, message?, buttons?) 유지한 채 내부를 dialogStore push로 — 기존 호출부 전체가 무수정으로 앱 내 팝업化. 3+ 버튼도 정식 지원(기존 웹 confirm 2택 제약 해소).
+3. **Alert.alert 전수 치환**: 22개 파일의 호출을 showAlert로 교체 + Alert import 제거. TextInput 프롬프트형(Alert.prompt류)이 있으면 개별 확인.
+4. 기존 화면 자체 ConfirmDialog 사용처는 유지(이미 앱 내 디자인).
+
+### 리스크·회귀
+버튼 onPress 시맨틱 보존(cancel/확인 순서·기본 닫기) · Alert 3버튼 케이스 누락 주의 · 다이얼로그 표시 중 화면 전환 시 정리 · 웹/네이티브 동일 렌더(Modal) · 기존 스모크 통과 플로우(사진 확약·별부족·보관함 저장 등)가 새 다이얼로그에서도 동작해야 함(테스터 셀렉터가 window dialog 대신 DOM 다이얼로그를 봐야 함).
+
+---
+
 ## v3.84 — 2026-08-27 — 아티스트 목소리 2택 재편: 간편(프리셋 성별+스타일) vs 내 목소리(클로닝), 배타 선택
 
 ### 요청(원문 요지)

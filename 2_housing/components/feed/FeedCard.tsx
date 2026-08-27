@@ -4,7 +4,8 @@
 //   신규 답글은 parent_id 필드로 저장. 구버전(마커 `[reply:{id}] `) 댓글은 레거시 폴백으로 계속 파싱해
 //   동일하게 중첩 렌더(하위호환). 부모가 삭제되면 최상위로 폴백.
 import { useState } from 'react';
-import { View, TouchableOpacity, TextInput, Alert, ActivityIndicator, Share, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, TextInput, ActivityIndicator, Share, StyleSheet } from 'react-native';
+import { showAlert } from '../../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
@@ -126,14 +127,14 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
       setReplyTarget(null);
     } catch (err: any) {
       console.error('[FeedCard] 댓글 등록 실패', { feedId: feed.id, status: err?.response?.status });
-      Alert.alert('오류', '댓글 등록에 실패했습니다.');
+      showAlert('오류', '댓글 등록에 실패했습니다.');
     } finally {
       setPosting(false);
     }
   };
 
   const deleteComment = (commentId: string) => {
-    Alert.alert('댓글 삭제', '댓글을 삭제할까요?', [
+    showAlert('댓글 삭제', '댓글을 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: async () => {
         try {
@@ -142,7 +143,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           setCommentCount((n: number) => Math.max(0, n - 1));
         } catch (err: any) {
           console.error('[FeedCard] 댓글 삭제 실패', { commentId, status: err?.response?.status });
-          Alert.alert('오류', '댓글 삭제에 실패했습니다.');
+          showAlert('오류', '댓글 삭제에 실패했습니다.');
         }
       } },
     ]);
@@ -156,7 +157,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
   };
 
   const deleteFeed = () => {
-    Alert.alert('피드 삭제', '이 피드를 삭제할까요?', [
+    showAlert('피드 삭제', '이 피드를 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       { text: '삭제', style: 'destructive', onPress: async () => {
         try {
@@ -164,7 +165,7 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
           onDeleted?.();
         } catch (err: any) {
           console.error('[FeedCard] 피드 삭제 실패', { feedId: feed.id, status: err?.response?.status });
-          Alert.alert('오류', '삭제에 실패했습니다.');
+          showAlert('오류', '삭제에 실패했습니다.');
         }
       } },
     ]);

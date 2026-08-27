@@ -2,7 +2,8 @@
 // 구분선 "또는" + 프로바이더 색상 버튼. SDK 미사용: 백엔드 /auth/oauth/{p}/login 리다이렉트 방식.
 // 서버에 OAuth 키가 미설정이면 503 → 서버 안내 문구를 그대로 보여준다(키 설정 시 자동 활성).
 import { useState } from 'react';
-import { View, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Linking } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Linking } from 'react-native';
+import { showAlert } from '../../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../../services/api';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
@@ -31,7 +32,7 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
       if (status === 503) {
         const msg = err?.response?.data?.detail || err?.response?.data?.error || '소셜 로그인은 현재 사용할 수 없습니다.';
         console.error(`[${logPrefix}] 소셜 로그인 비활성`, { provider, status });
-        Alert.alert('알림', msg);
+        showAlert('알림', msg);
       } else {
         // 302 리다이렉트를 axios가 따라가다 CORS 등으로 실패한 케이스 → 전체 페이지 이동으로 진행
         if (__DEV__) console.info(`[${logPrefix}] 리다이렉트 진행`, { provider, status });

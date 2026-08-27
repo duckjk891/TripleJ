@@ -5,8 +5,8 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TRACK_PRICE_KRW, splitRevenue, splitPlatformFee, formatKrw } from '../data/pricing';
 import { colors } from '../theme/colors';
@@ -26,11 +26,11 @@ export default function PurchaseModal({ visible, trackTitle, trackArtist, onClos
 
   const handlePay = () => {
     if (!licenseAgreed) {
-      Alert.alert('알림', '라이선스 약관에 동의해주세요.');
+      showAlert('알림', '라이선스 약관에 동의해주세요.');
       return;
     }
     // mock — 백엔드 결제 시스템 반영 후 실제 토스페이먼츠 호출로 교체
-    Alert.alert(
+    showAlert(
       '결제 시스템 준비 중',
       `다운로드 결제 기능은 백엔드 결제 인프라 반영 후 활성화됩니다.\n\n(예정 가격: ${formatKrw(TRACK_PRICE_KRW)} / Creator 받는 금액 ${formatKrw(split.creator)})`,
       [{ text: '확인', onPress: () => { onClose(); } }]

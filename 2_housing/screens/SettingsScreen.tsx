@@ -8,9 +8,9 @@ import {
   ActivityIndicator,
   ScrollView,
   Switch,
-  Alert,
   Modal,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
 import AuthPanel from '../components/auth/AuthPanel';
@@ -43,9 +43,9 @@ export default function SettingsScreen({ navigation }: any) {
     setEditSaving(false);
     if (ok) {
       setShowProfileEdit(false);
-      Alert.alert('완료', '프로필이 업데이트되었습니다.');
+      showAlert('완료', '프로필이 업데이트되었습니다.');
     } else {
-      Alert.alert('오류', '저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      showAlert('오류', '저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
     }
   };
   const [isRegister, setIsRegister] = useState(false);
@@ -126,14 +126,14 @@ export default function SettingsScreen({ navigation }: any) {
         <AppText variant="callout" style={styles.sectionTitle}>계정 관리</AppText>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowFirst]}
-          onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
+          onPress={() => showAlert('알림', '준비 중인 기능입니다')}
         >
           <AppText style={styles.settingLabel}>닉네임 변경</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.settingRow}
-          onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
+          onPress={() => showAlert('알림', '준비 중인 기능입니다')}
         >
           <AppText style={styles.settingLabel}>비밀번호 변경</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
@@ -196,7 +196,7 @@ export default function SettingsScreen({ navigation }: any) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
-          onPress={() => Alert.alert('알림', '준비 중인 기능입니다')}
+          onPress={() => showAlert('알림', '준비 중인 기능입니다')}
         >
           <AppText style={styles.settingLabel}>오픈소스 라이선스</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
@@ -206,14 +206,14 @@ export default function SettingsScreen({ navigation }: any) {
         <AppText variant="callout" style={styles.sectionTitle}>기타</AppText>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowFirst]}
-          onPress={() => Alert.alert('알림', '캐시가 삭제되었습니다')}
+          onPress={() => showAlert('알림', '캐시가 삭제되었습니다')}
         >
           <AppText style={styles.settingLabel}>캐시 삭제</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
-          onPress={() => Alert.alert('알림', 'triplej@support.com으로 문의해주세요')}
+          onPress={() => showAlert('알림', 'triplej@support.com으로 문의해주세요')}
         >
           <AppText style={styles.settingLabel}>문의하기</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>

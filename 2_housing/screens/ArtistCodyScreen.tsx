@@ -349,7 +349,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       taskStore.startTask('outfit');
       useTimerStore.getState().startTask('artist' as any, '코디', 'artist_outfit');
     }
-    // web에서 Alert.alert의 onPress 콜백이 호출 안 되므로 바로 navigate
+    // web에서 시스템 Alert의 onPress 콜백이 호출 안 되므로 바로 navigate
     // reset으로 Studio Stack을 Map만 남기는 상태로 초기화 → 작업실 탭 다시 눌러도 Map이 보임
     // (navigate('Map')은 ArtistCody가 stack에 남아서 작업실 재진입 시 Cody가 다시 표시되는 버그)
     navigation.reset({ index: 0, routes: [{ name: 'Map' }] });

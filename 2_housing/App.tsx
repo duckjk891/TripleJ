@@ -60,6 +60,7 @@ import MusicResultScreen from './screens/MusicResultScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
+import AppDialogHost from './components/AppDialogHost';
 import RoyaltyScreen from './screens/RoyaltyScreen';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
@@ -477,6 +478,8 @@ export default function App() {
           <LevelUpModal />
           {/* 출석체크·초대 모달 + 최초 로그인 자동 출석 팝업 */}
           <GlobalModals />
+          {/* v3.85: 전역 앱 내 다이얼로그 (showAlert → dialogStore) — 시스템 팝업 대체 */}
+          <AppDialogHost />
         </View>
       </NavigationContainer>
     </SafeAreaProvider>

@@ -10,9 +10,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
-  Alert,
   Switch,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -104,7 +104,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
 
   const handleDurationSelect = (value: number) => {
     if (value > 300) {
-      Alert.alert('알림', '5분 미만으로 입력해주세요.');
+      showAlert('알림', '5분 미만으로 입력해주세요.');
       return;
     }
     store.setDuration(value);

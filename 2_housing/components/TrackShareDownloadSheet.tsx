@@ -3,7 +3,8 @@
 // 다운로드: 일반 화질(16:9) / SNS용(9:16) / 카톡 프로필(15초) / 음원(mp3, 로그인 필요)
 // 영상은 서버가 ffmpeg로 만들며 최초 1~2분 걸린다(캐시되면 즉시).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
+import { Modal, View, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
@@ -55,7 +56,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[TrackShareDownloadSheet] share-video 실패', { trackId, format, status });
-      Alert.alert('오류',
+      showAlert('오류',
         status === 404 ? '공개된 곡만 공유할 수 있습니다.'
         : status === 400 ? '커버 이미지가 없어 공유 영상을 만들 수 없습니다.'
         : '영상 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
@@ -74,7 +75,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     await Linking.openURL(url).catch((err) => console.error('[TrackShareDownloadSheet] 영상 열기 실패', { err }));
     const fallback = SNS_UPLOAD_URLS[key];
     if (fallback) Linking.openURL(fallback).catch(() => {});
-    Alert.alert('공유 영상 준비 완료', '영상을 저장한 뒤 열린 페이지에서 업로드해주세요.');
+    showAlert('공유 영상 준비 완료', '영상을 저장한 뒤 열린 페이지에서 업로드해주세요.');
   };
 
   const handleCopyLink = async () => {
@@ -83,7 +84,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
     try {
       await Clipboard.setStringAsync(link);
       onClose();
-      Alert.alert('복사 완료', '링크가 복사되었습니다.');
+      showAlert('복사 완료', '링크가 복사되었습니다.');
     } catch (err: any) {
       console.error('[TrackShareDownloadSheet] 링크 복사 실패', { message: err?.message });
     }
@@ -102,7 +103,7 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(res.uri);
       } else {
-        Alert.alert('저장 완료', '파일이 저장되었습니다.');
+        showAlert('저장 완료', '파일이 저장되었습니다.');
       }
     } catch (err: any) {
       console.error('[TrackShareDownloadSheet] 기기 저장 실패', { message: err?.message });
@@ -123,18 +124,18 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
 
   const handleDownloadMp3 = async () => {
     if (!track) return;
-    if (!user) { onClose(); Alert.alert('로그인 필요', '음원 다운로드는 로그인 후 이용할 수 있어요.'); return; }
+    if (!user) { onClose(); showAlert('로그인 필요', '음원 다운로드는 로그인 후 이용할 수 있어요.'); return; }
     setBusy('mp3');
     if (__DEV__) console.info('[TrackShareDownloadSheet] mp3 다운로드', { trackId });
     try {
       const { data } = await api.post(`/tracks/download/${trackId}`);
       const url = data?.download_url;
-      if (!url) { Alert.alert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
+      if (!url) { showAlert('오류', '다운로드 링크를 가져오지 못했어요.'); return; }
       onClose();
       await saveToDevice(url, data?.filename || `${track.title}.mp3`);
     } catch (err: any) {
       console.error('[TrackShareDownloadSheet] mp3 다운로드 실패', { status: err?.response?.status });
-      Alert.alert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+      showAlert('오류', '다운로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
     } finally {
       setBusy(null);
     }

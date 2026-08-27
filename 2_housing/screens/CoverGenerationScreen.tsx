@@ -7,13 +7,13 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Animated,
   Easing,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -268,7 +268,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     const trackId = selectedTrack?.id || musicStore.coverTrackId;
     const trackTitle = selectedTrack?.title || musicStore.coverTrackTitle;
     if (!trackId) {
-      Alert.alert('오류', '곡을 먼저 선택해주세요.');
+      showAlert('오류', '곡을 먼저 선택해주세요.');
       setStep(0);
       return;
     }
@@ -301,7 +301,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       }
     }
     useGemsStore.getState().earn(GEM_REWARDS.TRACK_COVER_DONE, 'track_cover_done', String(trackId ?? ''));
-    Alert.alert('완료', '커버 이미지가 저장되었습니다!');
+    showAlert('완료', '커버 이미지가 저장되었습니다!');
     navigation.popToTop();
   };
 

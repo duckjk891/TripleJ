@@ -1,7 +1,8 @@
 // [TrackActionSheet] 곡 더보기(⋮) 액션 시트 — 재생 / 좋아요 / 재생목록에 추가 / 플레이리스트에 담기.
 // 차트·검색 등 곡 목록 화면이 같은 메뉴·동작을 쓰도록 공용화(플레이리스트 담기 시트, 비회원 담기 안내 포함).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, Alert, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
@@ -65,7 +66,7 @@ export default function TrackActionSheet({ track, onClose, onPlay, onLikeChanged
   const addToQueueNow = (t: RowTrack) => {
     const ok = playerStore.addToQueue(t);
     if (__DEV__) console.info('[TrackActionSheet] addToQueue', { id: t.id, ok });
-    Alert.alert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
+    showAlert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
   };
 
   const handleAddToQueue = (t: RowTrack) => {

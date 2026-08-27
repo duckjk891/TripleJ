@@ -7,8 +7,8 @@ import {
   TouchableOpacity,
   ScrollView,
   Animated,
-  Alert,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
@@ -70,7 +70,7 @@ export default function ComposerSelectScreen({ navigation }: Props) {
 
   const handleSelect = (composerId: 'suno' | 'wondera') => {
     if (!lyricsStore.generatedLyrics && !musicStore.lyrics) {
-      Alert.alert('작사 필요', '먼저 작사 디렉터에게 가사를 만들어주세요!');
+      showAlert('작사 필요', '먼저 작사 디렉터에게 가사를 만들어주세요!');
       return;
     }
     musicStore.setSelectedModel(composerId);

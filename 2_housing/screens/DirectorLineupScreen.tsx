@@ -5,9 +5,9 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Alert,
   Image,
 } from 'react-native';
+import { showAlert } from '../utils/appAlert';
 import { AppText } from '../components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DIRECTOR_CATALOG, DirectorCatalog } from '../data/directors';
@@ -66,7 +66,7 @@ export default function DirectorLineupScreen({ navigation }: any) {
     if (isHired(d.id)) {
       // 영입된 경우 → 선택 (현재 카테고리의 기본으로)
       selectForCategory(d.category, d.id);
-      Alert.alert('선택 완료', `${d.name}님을 ${CATEGORY_LABEL[d.category]}로 지정했어요.`);
+      showAlert('선택 완료', `${d.name}님을 ${CATEGORY_LABEL[d.category]}로 지정했어요.`);
       return;
     }
     // v193: 유료 디렉터(hireCost>0)는 별 10⭐ 차감(POST /points/spend) — 기본 디렉터는 무료 유지
@@ -77,11 +77,11 @@ export default function DirectorLineupScreen({ navigation }: any) {
         usePointsStore.getState().fetchBalance();
         hire(d.id);
         useCompanyStore.getState().addExp(20, 'hire');
-        Alert.alert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요! (⭐10 사용, 잔액 ${res.data?.balance ?? '-'})`);
+        showAlert('영입 완료', `${d.name}님이 우리 기획사에 합류했어요! (⭐10 사용, 잔액 ${res.data?.balance ?? '-'})`);
       } catch (err: any) {
         const status = err?.response?.status;
         console.error('[DirectorLineup] hire spend 실패', { id: d.id, status });
-        Alert.alert('알림', status === 402 ? '스타가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!' : '영입에 실패했습니다. 잠시 후 다시 시도해주세요.');
+        showAlert('알림', status === 402 ? '스타가 부족해요. 음악을 듣거나 출석체크로 스타를 모아보세요!' : '영입에 실패했습니다. 잠시 후 다시 시도해주세요.');
       }
       return;
     }

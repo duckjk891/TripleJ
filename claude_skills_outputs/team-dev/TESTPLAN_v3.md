@@ -5,6 +5,20 @@
 
 ---
 
+## v3.85 — 2026-08-27 — 앱 내 다이얼로그 전면 전환 스모크 (실행 완료 전 시나리오 PASS, window dialog 0건)
+
+- [unit] tsc 0 · 정적 스윕: Alert.alert/window.alert/confirm 직접 호출 잔존 0, showAlert 120곳/29파일 일원화 → **PASS**
+- [e2e] 별 부족 안내: DOM 다이얼로그(단일 [확인]) 렌더·닫힘 → **PASS** (`v385_smoke_05`)
+- [e2e] 사진 확약(2버튼·취소 좌측): 취소→미진행 / 확인→질문 진입 → **PASS** (`01`)
+- [e2e] 보관함 삭제 confirm(destructive 스타일) → **PASS** (`08`)
+- [e2e] 설정 캐시 삭제 알림 → **PASS** (`10`)
+- [e2e] 기존 ConfirmDialog 회귀(다시 만들기 confirm 1회 렌더, 충돌 없음) → **PASS** (`11`)
+- [e2e] 회귀: **window dialog 0건**·콘솔/pageerror/4xx·5xx 0·생성계 POST 0·⭐ 불변(40/5), [appAlert] 로그 1:1 대응 → **PASS**
+- 관찰(범위 밖 후보): Settings 로그아웃이 confirm 없이 즉시 실행(SettingsScreen.tsx:222) — 실수 방지 confirm 추가 검토.
+- [미검증] 네이티브(iOS/Android) 렌더 — Modal 기반이라 동일 예상, 실기기 확인 권장.
+
+---
+
 ## v3.84 — 2026-08-27 — 아티스트 목소리 2택 재편 스모크 (실행 완료 전 시나리오 PASS, 실비용 0)
 
 - [unit] tsc 0 · 구 필드(artistPersonaId 등) 잔존 참조 0(마이그레이션 코드 제외) → **PASS**

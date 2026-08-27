@@ -4,7 +4,7 @@ import { useState, useCallback, useLayoutEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, FlatList, TouchableOpacity, Image, ActivityIndicator,
-  RefreshControl, Alert, Modal, TextInput, ScrollView,
+  RefreshControl, Modal, TextInput, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
@@ -106,7 +106,7 @@ export default function ChartScreen() {
 
   const requireLogin = (): boolean => {
     if (!user) {
-      // 비로그인 → 로그인 화면으로 바로 이동 (Alert.alert 다중버튼은 웹에서 미동작 → 반응 없음 버그)
+      // 비로그인 → 로그인 화면으로 바로 이동 (시스템 Alert 다중버튼은 웹에서 미동작 → 반응 없음 버그)
       if (__DEV__) console.info('[ChartScreen] 비로그인 액션 → 로그인 화면 이동');
       navigation.navigate('Settings');
       return false;
