@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -53,25 +53,30 @@ export default function ArtistResultScreen({ navigation }: any) {
   const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
 
-  // Tab 헤더 좌측에 ← 버튼 주입
-  useLayoutEffect(() => {
-    const parent = navigation.getParent();
-    if (!parent) return;
-    parent.setOptions({
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.navigate('Map')}
-          style={{ paddingHorizontal: 12, paddingVertical: 6 }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <AppText style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</AppText>
-        </TouchableOpacity>
-      ),
-    });
-    return () => {
-      parent.setOptions({ headerLeft: undefined });
-    };
-  }, [navigation]);
+  // Tab 헤더 좌측에 ← 버튼 주입.
+  // v3.79 UX-1: useLayoutEffect(마운트 기준)이면 VoiceManage 등 다음 화면을 push 해도
+  // 주입이 남아 이중 뒤로가기 화살표(탭 헤더 ‹ + 화면 자체 ‹)가 생김 →
+  // useFocusEffect 로 전환해 blur 시 정리, 복귀(focus) 시 재주입.
+  useFocusEffect(
+    useCallback(() => {
+      const parent = navigation.getParent();
+      if (!parent) return;
+      parent.setOptions({
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Map')}
+            style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <AppText style={{ fontSize: 26, color: colors.text.primary, fontWeight: '300' }}>‹</AppText>
+          </TouchableOpacity>
+        ),
+      });
+      return () => {
+        parent.setOptions({ headerLeft: undefined });
+      };
+    }, [navigation])
+  );
 
   // 화면 포커스마다 /character/me로 최신화
   // 9004: 시트 + 원본 사진 + used_items 모두 백엔드 응답에서 가져옴
@@ -350,22 +355,25 @@ export default function ArtistResultScreen({ navigation }: any) {
             </TouchableOpacity>
           </View>
         ) : (
-          <TouchableOpacity
-            style={[
-              styles.applyBtn,
-              { flex: 0, alignSelf: 'stretch', justifyContent: 'center', minHeight: 44 },
-            ]}
-            onPress={handleGoCody}
-          >
-            <AppText
-              style={[
-                styles.applyBtnText,
-                { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
-              ]}
+          <View style={styles.btnRow}>
+            {/* 삭제는 스크롤 끝 안내 박스에만 있어 발견이 어려웠음 → 하단 상시 노출 */}
+            <TouchableOpacity style={styles.deleteBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
+              <AppText style={styles.deleteBtnText}>🗑 삭제</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
+              onPress={handleGoCody}
             >
-              ✨ 아티스트 꾸미기
-            </AppText>
-          </TouchableOpacity>
+              <AppText
+                style={[
+                  styles.applyBtnText,
+                  { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
+                ]}
+              >
+                ✨ 아티스트 꾸미기
+              </AppText>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -741,4 +749,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#a04444',
   },
   resetBtnText: { color: '#cc6868', fontSize: 13, fontWeight: '700' },
+  deleteBtn: {
+    paddingVertical: 11, paddingHorizontal: 16, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', minHeight: 44,
+    backgroundColor: 'transparent',
+    borderWidth: 1, borderColor: '#a04444',
+  },
+  deleteBtnText: { color: '#cc6868', fontSize: 13, fontWeight: '700' },
 });

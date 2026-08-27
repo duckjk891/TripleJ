@@ -6,7 +6,6 @@ import {
   Image,
   TouchableOpacity,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -17,7 +16,12 @@ import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { useGemsStore } from '../stores/gemsStore';
+import { useArtistStore } from '../stores/artistStore';
+import { useCompanyStore } from '../stores/companyStore';
+import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
@@ -48,6 +52,43 @@ function buildPromptSummary(music: any, lyrics: any): string | undefined {
   add('네거티브 태그', music.negativeTags);
   add('Persona Model', music.personaModel);
   return lines.length > 0 ? lines.join('\n') : undefined;
+}
+
+// BUG-3 픽스: 발매 보상(젬+EXP)은 폴링 완료가 아니라 트랙 "저장 성공" 시에만 지급.
+// 같은 generation 에 대한 재지급(저장 재시도·커버 경유 저장 등)은 모듈 레벨 Set 으로 가드.
+const rewardedGenerationIds = new Set<string>();
+function grantReleaseRewards(generationId: string, trackId?: string) {
+  if (rewardedGenerationIds.has(generationId)) {
+    if (__DEV__) console.log('[MusicResult] 발매 보상 이미 지급됨, 스킵:', generationId);
+    return;
+  }
+  rewardedGenerationIds.add(generationId);
+  useGemsStore.getState().earn(GEM_REWARDS.TRACK_MUSIC_DONE, 'track_music_done', trackId);
+  // 곡 발매 EXP — 아티스트 +50 / 기획사 +30 (기존 MusicLoadingScreen 지급 로직 이동)
+  useArtistStore.getState().addExp(50, 'release');
+  useCompanyStore.getState().addExp(30, 'release');
+  if (__DEV__) console.log('[MusicResult] 발매 보상 지급 완료:', generationId);
+}
+
+// MAIDOL 계약: 커버에 쓴 캐릭터 기준 { sheet_object_name, used_items } 스냅샷.
+// 실패/미보유 시 null — 저장 페이로드에서 생략(회귀 금지).
+async function fetchCharacterSnapshot(): Promise<
+  { sheet_object_name: string; used_items: any[] } | null
+> {
+  try {
+    const res = await api.get('/character/me');
+    const ch = res.data?.character;
+    if (ch?.sheet_object_name) {
+      return {
+        sheet_object_name: ch.sheet_object_name,
+        used_items: Array.isArray(ch.used_items) ? ch.used_items : [],
+      };
+    }
+    if (__DEV__) console.log('[MusicResult] 캐릭터 미보유 — snapshot 생략');
+  } catch (err: any) {
+    console.error('[MusicResult] /character/me 조회 실패 — snapshot 생략:', err?.response?.status, err?.message);
+  }
+  return null;
 }
 
 type Props = NativeStackScreenProps<any, 'MusicResult'>;
@@ -180,14 +221,17 @@ export default function MusicResultScreen({ navigation }: Props) {
         resultUrl: store.resultUrl,
         status: store.status,
       }));
-      Alert.alert('오류', '저장할 곡 정보가 없습니다.');
+      showAlert('오류', '저장할 곡 정보가 없습니다.');
       return;
     }
     if (isSaving || isSaved) return;
 
     setIsSaving(true);
+    // 저장 직전 캐릭터 스냅샷 시도 (실패/미보유 시 기존 페이로드 그대로)
+    const snapshot = await fetchCharacterSnapshot();
     const payload = {
       generation_id: store.generationId,
+      ...(snapshot ? { user_character_snapshot: snapshot } : {}),
       title: lyricsStore.generatedTitle
         || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
       genre: store.genre || undefined,
@@ -217,14 +261,16 @@ export default function MusicResultScreen({ navigation }: Props) {
 
       if (trackId) store.setSavedTrackId(trackId);
       setIsSaved(true);
+      // BUG-3 픽스: 발매 보상은 트랙 저장 성공 직후에만 지급 (같은 generation 재지급 가드)
+      grantReleaseRewards(String(payload.generation_id), trackId);
       lyricsStore.reset();
-      Alert.alert('저장 완료', '마이뮤직에서 확인할 수 있어요!');
+      showAlert('저장 완료', '마이뮤직에서 확인할 수 있어요!');
     } catch (err: any) {
       const status = err?.response?.status;
       const data = err?.response?.data;
       console.error('[Save] 저장 실패:', status, JSON.stringify(data));
       const msg = data?.error || err?.message || '저장에 실패했습니다.';
-      Alert.alert('저장 실패', `${msg}\n(상태: ${status || 'unknown'})`);
+      showAlert('저장 실패', `${msg}\n(상태: ${status || 'unknown'})`);
     } finally {
       setIsSaving(false);
     }
@@ -234,8 +280,11 @@ export default function MusicResultScreen({ navigation }: Props) {
     // 곡이 아직 저장 안 되었으면 먼저 저장
     if (!isSaved && store.generationId) {
       try {
+        // 저장 직전 캐릭터 스냅샷 시도 (실패/미보유 시 기존 페이로드 그대로)
+        const snapshot = await fetchCharacterSnapshot();
         const payload = {
           generation_id: store.generationId,
+          ...(snapshot ? { user_character_snapshot: snapshot } : {}),
           title: lyricsStore.generatedTitle
             || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
           genre: store.genre || undefined,
@@ -251,9 +300,12 @@ export default function MusicResultScreen({ navigation }: Props) {
           store.setSavedTrackId(trackId);
         }
         setIsSaved(true);
+        // BUG-3 픽스: 커버 경유 저장도 동일하게 저장 성공 직후 지급 (중복 가드 공유)
+        grantReleaseRewards(String(payload.generation_id), trackId);
         lyricsStore.reset();
       } catch (err: any) {
-        Alert.alert('저장 실패', err?.response?.data?.error || '곡 저장에 실패했습니다.');
+        console.error('[MusicResult] 커버 경유 저장 실패:', err?.response?.status, err?.message);
+        showAlert('저장 실패', err?.response?.data?.error || '곡 저장에 실패했습니다.');
         return;
       }
     }

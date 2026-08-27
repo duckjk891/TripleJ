@@ -13,6 +13,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { generateLyrics } from '../services/lyricsService';
 import { useGemsStore } from '../stores/gemsStore';
+import { usePointsStore } from '../stores/pointsStore';
 import { GEM_REWARDS } from '../data/directors';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
@@ -91,6 +92,8 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           store.setIsLoading(false);
           // 캐시 보상 지급
           useGemsStore.getState().earn(GEM_REWARDS.TRACK_LYRICS_DONE, 'track_lyrics_done');
+          // v3.79 UX-2: 가사 생성은 ⭐차감 — 헤더 별 배지 즉시 갱신
+          usePointsStore.getState().fetchBalance();
           navigation.replace('LyricsResult');
         }
       } catch (err: any) {

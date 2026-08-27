@@ -64,6 +64,7 @@ import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
 import VoiceManageScreen from './screens/VoiceManageScreen';
+import LyricsBookScreen from './screens/LyricsBookScreen';
 import ArtistCodyScreen from './screens/ArtistCodyScreen';
 import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import UserChannelScreen from './screens/UserChannelScreen';
@@ -94,6 +95,7 @@ export type StudioStackParamList = {
   ArtistResult: undefined;
   ArtistCody: undefined;
   VoiceManage: { select?: 'artist' } | undefined;
+  LyricsBook: undefined;
 };
 
 export type RootStackParamList = {
@@ -172,6 +174,7 @@ function StudioNavigator() {
       <StudioStack.Screen name="ArtistResult" component={ArtistResultScreen} />
       <StudioStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
       <StudioStack.Screen name="VoiceManage" component={VoiceManageScreen} />
+      <StudioStack.Screen name="LyricsBook" component={LyricsBookScreen} />
     </StudioStack.Navigator>
   );
 }

@@ -5,6 +5,21 @@
 
 ---
 
+## v3.79 — 2026-08-26 — 가사 보관함·스냅샷·보상픽스·UX 스모크 (실행 완료, 7/7 PASS)
+
+- [unit] tsc 0 → **PASS**
+- [e2e] 보관함 진입(빈 상태): LyricsInput 시작 화면 "📓 가사 보관함" 버튼 → LyricsBook 렌더(빈 문구·화살표 1개) → **PASS**
+- [e2e] 작사 1회(⭐5 허용)→저장: LyricsResult 도달, **⭐배지 45→40 무리로드 갱신(UX-2)**, "보관함에 저장" 성공 + 재탭 중복 가드 → **PASS**
+- [e2e] 재사용: 항목 확장→"이 가사로 작곡하기"→ComposerSelect→작곡 1단계 제목·2단계 가사 실림 확인 후 정지(생성 미실행) → **PASS**
+- [e2e] persist: 리로드 후 항목 유지(localStorage 'aidol-lyrics-book' 실측) → **PASS**
+- [e2e] 삭제: confirm→목록 제거·빈 상태 복귀 → **PASS**
+- [e2e] 이중 화살표 해소(UX-1): ArtistResult·VoiceManage 각 화살표 1개 실측, 복귀 경로 정상 → **PASS**
+- [e2e] 회귀: 콘솔 에러·pageerror·4xx/5xx 0, 지출은 허용된 작사 ⭐5 1건만 → **PASS**
+- 증적: scratchpad/v379_smoke_00~14.png, v379_smoke.log
+- [미검증] user_character_snapshot 실전송·발매 보상 이동 실지급(곡 실생성 필요 — 비용), 아티스트 삭제 버튼 실클릭(실캐릭터 삭제 회피 — 코드 경로는 기존 ConfirmDialog 재사용이라 위험 낮음).
+
+---
+
 ## v3.78 — 2026-08-26 — "내 목소리" 파이프라인 UI 스모크 (실행 완료)
 
 - [unit] tsc 0 → **PASS**

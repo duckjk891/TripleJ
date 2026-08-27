@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -15,6 +15,7 @@ import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 import { useVoiceStore } from '../stores/voiceStore';
+import { usePointsStore } from '../stores/pointsStore';
 import {
   createVoicePersona,
   deleteVoicePersona,
@@ -54,6 +55,16 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
   // 미리듣기
   const soundRef = useRef<Audio.Sound | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+
+  // v3.79 UX-1: ArtistResult 가 탭 헤더에 주입한 ‹ 가 남아 이중 화살표가 되지 않도록
+  // 진입 시 parent 헤더의 headerLeft 를 정리한다 (자체 헤더 ‹ 하나만 남김).
+  // ArtistResult 는 focus 시 재주입하므로 복귀하면 원래대로 돌아온다.
+  useLayoutEffect(() => {
+    const parent = navigation.getParent();
+    if (!parent) return;
+    if (__DEV__) console.log('[VoiceManage] parent headerLeft 정리 (이중 뒤로가기 방지)');
+    parent.setOptions({ headerLeft: undefined });
+  }, [navigation]);
 
   useEffect(() => {
     console.log('[VoiceManage] 진입, selectMode=', selectMode);
@@ -183,6 +194,8 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
       setFileUri(null);
       setFileName(null);
       await fetchPersonas();
+      // v3.79 UX-2: persona 생성은 ⭐차감 — 헤더 별 배지 즉시 갱신
+      usePointsStore.getState().fetchBalance();
       showAlert(
         '목소리 등록 완료',
         '목소리를 분석하고 있어요. 처리가 끝나면 목록에서 "사용 가능"으로 표시됩니다.'

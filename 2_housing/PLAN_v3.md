@@ -7,6 +7,42 @@
 
 ---
 
+## v3.79 — 2026-08-26 — Phase 1 잔여: 가사 보관함·곡↔아티스트 스냅샷·발매보상 픽스·UX 정리
+
+### 요청(원문)
+"일단, 백엔드 개발에는 시간이 조금 걸리니까 프론트부터 작업하자" — 백엔드 무변경으로 가능한 Phase 1 잔여분.
+
+### Plan verification findings (v3.77 검증에서 기실측)
+- lyricsStore: persist 없는 메모리 **단일 슬롯**(stores/lyricsStore.ts) — 앱 재시작·새 생성 시 소실, 곡 저장 성공 시 MusicResultScreen.tsx:220 `reset()`으로 삭제. 저장 가사 목록/재사용 UI 없음.
+- 곡 저장: MusicResultScreen.tsx:189-204 `POST /tracks/upload-from-generation` — 서버 스키마의 `user_character_snapshot` 필드를 **앱이 안 보냄**(MAIDOL은 UploadPage.jsx:1532-1540에서 {sheet_object_name, used_items} 동봉).
+- BUG-3: 발매 EXP/젬이 **트랙 저장 전** 폴링 완료 시점에 지급(MusicLoadingScreen.tsx:169-172) — 미저장 이탈·재생성 시 중복 지급.
+- UX: VoiceManage를 ArtistResult 경유 진입 시 이중 뒤로가기 화살표(v378 스모크 기록) · 작사 ⭐5 차감 후 헤더 배지 미갱신.
+- 작사→작곡 연결: LyricsResultScreen.tsx:38-47이 musicStore 주입 후 ComposerSelect 이동(제목 미전달·후속 화면 lyricsStore 직접 참조로 상태 이원화).
+
+### v3.79 범위 (백엔드 무변경)
+1. **가사 보관함(로컬 선행 — 서버 자산화는 B-2 대기)**: lyricsBookStore 신설(persist, 복수 슬롯 {id, title, lyrics, genre, mood, createdAt}, cap 50). 작사 결과 화면에 "보관함에 저장" + 보관함 화면(목록/보기/삭제/이 가사로 작곡하기 → musicStore 주입 후 ComposerSelect). 진입점은 작사 디렉터 흐름 내(0단계에서 dev가 위치 확정). 제목 전달 일원화.
+2. **user_character_snapshot 전송**: 곡 저장 시 /character/me의 {sheet_object_name, used_items} 동봉(캐릭터 없으면 생략) — B-4 전에도 곡↔아티스트 연결 기록 시작.
+3. **BUG-3 픽스**: EXP/젬 지급을 폴링 완료 → **트랙 저장 성공 시점**(MusicResult 저장 핸들러)으로 이동, generation_id 기준 중복 지급 가드.
+4. **UX**: VoiceManage 이중 헤더 정리 · 작사(및 persona 등 ⭐차감 액션) 후 pointsStore.fetchBalance() 호출.
+5. **아티스트 삭제 버튼 상시 노출 (사용자 지적 반영)**: 삭제는 기존재(ArtistResult 스크롤 끝 "🗑 캐릭터 다시 만들기" — 발견 불가 위치) → 하단 고정 버튼 영역에 [🗑 삭제]+[✨ 꾸미기] 나란히 상시 노출. 기존 ConfirmDialog·DELETE /character/me 흐름 재사용.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| stores/lyricsBookStore.ts (신규) | persist 보관함(복수 슬롯) | — |
+| screens/LyricsBookScreen.tsx (신규) | 목록/보기/삭제/작곡 연계 | [LyricsBook] |
+| screens/LyricsResultScreen.tsx | 보관함 저장 버튼·제목 전달 | [LyricsResult] |
+| screens/MusicResultScreen.tsx | snapshot 동봉·보상 지급 이동 | [MusicResult] |
+| screens/MusicLoadingScreen.tsx | 보상 지급 제거(이동) | [MusicLoading] |
+| screens/VoiceManageScreen.tsx | 이중 헤더 정리 | [VoiceManage] |
+| (작사 흐름 화면) | 보관함 진입점·fetchBalance | [LyricsInput 등] |
+| App.tsx | LyricsBook 등록 | — |
+
+### 리스크·회귀
+곡 저장 성공 시 lyricsStore.reset()은 유지하되 보관함 자산은 독립 보존 · 보상 이동 시 기존 사용자 체감(폴링 완료 축하 연출)과 지급 시점 분리 명확화 · snapshot은 optional 전송(캐릭터 미보유 회귀 금지) · persist 마이그레이션 불필요(신규 스토어).
+
+---
+
 ## v3.78 — 2026-08-26 — Phase 1: "내 목소리" 파이프라인 연결 (voice persona → 작곡)
 
 ### 요청(원문)

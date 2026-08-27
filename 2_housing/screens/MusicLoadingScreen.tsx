@@ -18,10 +18,6 @@ import {
   getGenerationStatus,
 } from '../services/musicService';
 import { BACKEND_BASE_URL } from '../services/api';
-import { useGemsStore } from '../stores/gemsStore';
-import { useArtistStore } from '../stores/artistStore';
-import { useCompanyStore } from '../stores/companyStore';
-import { GEM_REWARDS } from '../data/directors';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
@@ -180,10 +176,8 @@ export default function MusicLoadingScreen({ navigation }: Props) {
                 if (trackId) store.setGenerationId(trackId);
                 store.setStatus('completed');
                 store.setIsLoading(false);
-                useGemsStore.getState().earn(GEM_REWARDS.TRACK_MUSIC_DONE, 'track_music_done', trackId);
-                // 곡 발매 EXP — 아티스트 +50 / 기획사 +30
-                useArtistStore.getState().addExp(50, 'release');
-                useCompanyStore.getState().addExp(30, 'release');
+                // BUG-3 픽스: 발매 보상(젬+EXP)은 여기(폴링 완료)가 아니라
+                // MusicResultScreen 의 트랙 저장 성공 직후에 지급한다.
                 navigation.replace('MusicResult');
               } else if (status.status === 'failed' || status.status === 'error') {
                 if (pollInterval) clearInterval(pollInterval);
@@ -219,7 +213,7 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           if (trackId) store.setGenerationId(trackId);
           store.setStatus('completed');
           store.setIsLoading(false);
-          useGemsStore.getState().earn(GEM_REWARDS.TRACK_MUSIC_DONE, 'track_music_done', trackId);
+          // BUG-3 픽스: 발매 보상은 MusicResultScreen 의 트랙 저장 성공 직후에 지급.
           navigation.replace('MusicResult');
         }
       } catch (err: any) {

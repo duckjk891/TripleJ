@@ -241,6 +241,22 @@ export default function LyricsInputScreen({ navigation }: Props) {
         </View>
       </View>
 
+      {/* 가사 보관함 진입 (작사 시작 전에만 노출) */}
+      {!chatHistory.some((m) => m.type === 'user') && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, backgroundColor: colors.bg.deepest }}>
+          <TouchableOpacity
+            style={styles.bookEntryButton}
+            onPress={() => {
+              if (__DEV__) console.log('[LyricsBook] 보관함 진입 (LyricsInput)');
+              navigation.navigate('LyricsBook');
+            }}
+          >
+            <AppText style={styles.bookEntryText}>📓 가사 보관함</AppText>
+            <AppText style={styles.bookEntrySub}>저장해둔 가사 보기 · 바로 작곡하기</AppText>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* 안내 */}
       {chatHistory.some((m) => m.type === 'user') && (
         <View style={{ paddingHorizontal: 16, paddingBottom: 4, backgroundColor: colors.bg.deepest }}>
@@ -564,5 +580,25 @@ const styles = StyleSheet.create({
   reselectCloseText: {
     color: colors.text.secondary,
     fontSize: 14,
+  },
+  bookEntryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  bookEntryText: {
+    color: colors.text.primary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  bookEntrySub: {
+    color: colors.text.muted,
+    fontSize: 11,
   },
 });
