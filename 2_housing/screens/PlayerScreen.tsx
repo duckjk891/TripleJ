@@ -443,6 +443,9 @@ export default function PlayerScreen({ route, navigation }: any) {
   useEffect(() => {
     const gid = (fullTrack as any)?.generation_id;
     if (!gid) { setGenDetail(null); return; }
+    // 소유자 전용 API — 남의 곡이면 요청 자체를 스킵 (403 + 전역 [API Error] 콘솔 노이즈 방지)
+    const ownerId = (fullTrack as any)?.uploader_id;
+    if (!user || !ownerId || String(ownerId) !== String(user.id)) { setGenDetail(null); return; }
     let alive = true;
     (async () => {
       if (__DEV__) console.info('[PlayerScreen] generation 상세 조회', { gid });
