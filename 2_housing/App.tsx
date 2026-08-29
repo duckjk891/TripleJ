@@ -15,6 +15,9 @@ if (Platform.OS === 'android') {
   NavigationBar.setBackgroundColorAsync('#0a0a1a').catch(() => {});
   NavigationBar.setButtonStyleAsync('light').catch(() => {});
 }
+// v3.91: 콘솔/오류 이벤트를 백엔드 /_logs/frontend 로 배치 전송 (MAIDOL main.jsx 관행 — 모듈 초기화 시 1회)
+import { initRemoteLogger } from './utils/remoteLogger';
+initRemoteLogger();
 import { colors } from './theme/colors';
 import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';

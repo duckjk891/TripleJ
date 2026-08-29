@@ -53,6 +53,18 @@ export interface MusicParams {
   isDuet?: boolean;
   subVocal?: string;
   subVocalStyle?: string;
+  /** v3.91: 참고 음원 반영 세기(0.0~1.0) — 백엔드 GenerateRequest.audio_weight */
+  audioWeight?: number | null;
+  /** v3.91: 생성 직전 업로드된 참고 음악(upload-reference 응답) — reference_audio_* 필드로 전송 */
+  referenceData?: ReferenceUploadResult | null;
+}
+
+/** POST /generate/upload-reference/ 응답 (backend_9004 generate.py:305~310) */
+export interface ReferenceUploadResult {
+  upload_url: string;
+  object_name: string;
+  filename: string;
+  duration_sec: number;
 }
 
 export type GenerationStatus = 'idle' | 'pending' | 'processing' | 'completed' | 'failed';

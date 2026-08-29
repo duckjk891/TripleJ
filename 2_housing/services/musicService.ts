@@ -1,5 +1,6 @@
+import { Platform } from 'react-native';
 import api from './api';
-import { MusicParams } from '../types';
+import { MusicParams, ReferenceUploadResult } from '../types';
 
 // 한국어 장르 → Suno 영문 태그 (매핑 가능한 값)
 const GENRE_EN: Record<string, string> = {
@@ -69,6 +70,57 @@ function mapVocalKey(gender: string, style: string): string {
   return genderMap[style] || genderMap[''] || '';
 }
 
+// 파일 확장자 기반 mime 추정 — 백엔드 upload-reference는 확장자만 강제(.mp3/.wav/.m4a/.ogg/.flac)
+function guessAudioMime(fileName: string): string {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  const map: Record<string, string> = {
+    mp3: 'audio/mpeg',
+    wav: 'audio/wav',
+    m4a: 'audio/mp4',
+    ogg: 'audio/ogg',
+    flac: 'audio/flac',
+  };
+  return map[ext] || 'audio/mpeg';
+}
+
+/**
+ * v3.91: 참고 음악 업로드 — POST /generate/upload-reference/ (multipart 필드명 'file').
+ * 계약(backend_9004 generate.py:242 upload_reference_audio):
+ *   허용 확장자 .mp3/.wav/.m4a/.ogg/.flac, 최대 50MB, 최대 480초(8분) — 위반 시 400 { error }
+ *   응답: { upload_url(presigned 24h), object_name, filename, duration_sec }
+ * 생성 body에는 upload_url을 reference_audio_url로 전달한다(MAIDOL StudioTab2 관행).
+ * web/native FormData 분기는 voiceService.appendAudioFile 패턴 재사용.
+ */
+export const uploadReferenceAudio = async (
+  fileUri: string,
+  fileName: string
+): Promise<ReferenceUploadResult> => {
+  const formData = new FormData();
+  if (Platform.OS === 'web') {
+    // web: 표준 FormData는 Blob/File만 허용
+    const res = await fetch(fileUri);
+    const blob = await res.blob();
+    formData.append('file', blob, fileName);
+  } else {
+    // native: RN 확장 문법
+    formData.append('file', {
+      uri: fileUri,
+      name: fileName,
+      type: guessAudioMime(fileName),
+    } as any);
+  }
+  console.log('[Suno] 참고 음악 업로드 시작:', fileName);
+  const response = await api.post('/generate/upload-reference/', formData, {
+    headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  console.log('[Suno] 참고 음악 업로드 완료:', JSON.stringify({
+    object_name: response.data?.object_name,
+    duration_sec: response.data?.duration_sec,
+  }));
+  return response.data;
+};
+
 export const generateWithSuno = async (params: Partial<MusicParams>) => {
   const promptParts = [];
   if (params.genre) promptParts.push(`${params.genre} 장르의`);
@@ -84,9 +136,44 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
   const prompt = promptParts.join(' ');
 
   // 한국어 → 영문 매핑 (매핑 가능한 값)
-  const genreEn = toEnglish(params.genre || '', GENRE_EN);
-  const moodEn = toEnglish(params.mood || '', MOOD_EN);
-  const styleEn = toEnglish(params.style || '', STYLE_EN);
+  const en: Record<'genre' | 'mood' | 'style', string> = {
+    genre: toEnglish(params.genre || '', GENRE_EN),
+    mood: toEnglish(params.mood || '', MOOD_EN),
+    style: toEnglish(params.style || '', STYLE_EN),
+  };
+
+  // v3.91: 매핑 테이블에 없는 한글 잔존 태그만 모아 생성 직전 1회 번역.
+  // 계약(backend_9004 generate.py:312 translate_tags): POST /generate/translate-tags
+  //   요청 { tags: string[] } → 응답 { translated: string[] } (태그 1개가 여러 파트로 확장될 수 있음)
+  // 번역 실패가 생성을 막으면 안 됨 — 실패/불일치 시 기존 폴백(한국어 원문 그대로) 유지.
+  const unmappedKeys: Array<'genre' | 'mood' | 'style'> = [];
+  const unmappedValues: string[] = [];
+  if (params.genre && !GENRE_EN[params.genre]) { unmappedKeys.push('genre'); unmappedValues.push(params.genre); }
+  if (params.mood && !MOOD_EN[params.mood]) { unmappedKeys.push('mood'); unmappedValues.push(params.mood); }
+  if (params.style && !STYLE_EN[params.style]) { unmappedKeys.push('style'); unmappedValues.push(params.style); }
+  if (unmappedValues.length > 0) {
+    try {
+      console.log('[Suno] translate-tags 요청:', JSON.stringify(unmappedValues));
+      const res = await api.post('/generate/translate-tags', { tags: unmappedValues }, { timeout: 30000 });
+      const translated: string[] = Array.isArray(res.data?.translated) ? res.data.translated : [];
+      if (unmappedKeys.length === 1) {
+        // 태그 1개 → 확장된 파트 전부를 해당 필드에 반영 (예: "몽환적이고 신나는" → "Dreamy, Exciting")
+        const joined = translated.filter(Boolean).join(', ');
+        if (joined) en[unmappedKeys[0]] = joined;
+      } else if (translated.length === unmappedKeys.length) {
+        unmappedKeys.forEach((k, i) => { if (translated[i]) en[k] = translated[i]; });
+      } else {
+        console.warn('[Suno] translate-tags 결과 개수 불일치 — 원문 유지', JSON.stringify({ in: unmappedKeys.length, out: translated.length }));
+      }
+      console.log('[Suno] translate-tags 적용:', JSON.stringify(en));
+    } catch (err: any) {
+      console.warn('[Suno] translate-tags 실패 — 원문 유지:', err?.response?.status, err?.message);
+    }
+  }
+
+  const genreEn = en.genre;
+  const moodEn = en.mood;
+  const styleEn = en.style;
 
   // 보컬 처리
   const isDuet = params.isDuet || false;
@@ -136,8 +223,17 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     model: 'suno',
     duration: 120,
     start_music_gen: true,
+    // v3.91: 참고 음악(업로드 선행) — 백엔드 GenerateRequest 실필드
+    //   reference_audio_url / reference_audio_name / reference_audio_duration / audio_weight (generate.py:74~78)
+    audio_weight: params.audioWeight ?? undefined,
+    reference_audio_url: params.referenceData?.upload_url || undefined,
+    reference_audio_name: params.referenceData?.filename || undefined,
+    reference_audio_duration: params.referenceData?.duration_sec || undefined,
   };
-  console.log('[Suno] API 호출:', JSON.stringify({ title: body.title, genre: body.genre, mood: body.mood, vocal: body.vocal, style: body.style }));
+  console.log('[Suno] API 호출:', JSON.stringify({
+    title: body.title, genre: body.genre, mood: body.mood, vocal: body.vocal, style: body.style,
+    audio_weight: body.audio_weight, reference_audio_name: body.reference_audio_name,
+  }));
   const response = await api.post('/generate/', body);
   return response.data;
 };

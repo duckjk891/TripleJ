@@ -11,6 +11,8 @@ interface MusicState {
   vocalStyle: string;
   referenceFile: string | null;
   referenceFileName: string | null;
+  /** v3.91: 참고 음원 반영 세기(0.0~1.0). null=미적용(자동) — 생성 body의 audio_weight */
+  audioWeight: number | null;
   style: string;
   referenceStyle: string;
   bpm: string;
@@ -40,6 +42,7 @@ interface MusicState {
   setVocal: (vocal: string) => void;
   setVocalStyle: (style: string) => void;
   setReferenceFile: (uri: string | null, name: string | null) => void;
+  setAudioWeight: (v: number | null) => void;
   setStyle: (style: string) => void;
   setReferenceStyle: (referenceStyle: string) => void;
   setBpm: (bpm: string) => void;
@@ -72,6 +75,7 @@ const initialState = {
   vocalStyle: '',
   referenceFile: null,
   referenceFileName: null,
+  audioWeight: null,
   style: '',
   referenceStyle: '',
   bpm: '',
@@ -104,6 +108,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setVocalStyle: (vocalStyle) => set({ vocalStyle }),
   setReferenceFile: (referenceFile, referenceFileName) =>
     set({ referenceFile, referenceFileName }),
+  setAudioWeight: (audioWeight) => set({ audioWeight }),
   setStyle: (style) => set({ style }),
   setReferenceStyle: (referenceStyle) => set({ referenceStyle }),
   setBpm: (bpm) => set({ bpm }),

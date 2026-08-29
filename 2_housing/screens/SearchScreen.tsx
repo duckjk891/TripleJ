@@ -144,6 +144,13 @@ export default function SearchScreen() {
   }, [categories, query, activeCategory, submitted, loadCategory]);
 
   const handlePress = (t: Track) => {
+    // v3.91: 검색 결과 클릭 로깅(CTR 측정) — POST /tracks/search/click { q, track_id }
+    // (backend tracks.py:503 SearchClickBody — position 필드 없음, 인증 optional, best-effort)
+    // fire-and-forget: 실패해도 재생 흐름에 영향 없도록 무음 처리
+    const q = query.trim();
+    if (submitted && !activeCategory && q) {
+      api.post('/tracks/search/click', { q, track_id: t.id }).catch(() => {});
+    }
     const idx = results.findIndex((x) => x.id === t.id);
     playerStore.setQueue(results);
     playerStore.setCurrentIndex(idx >= 0 ? idx : 0);

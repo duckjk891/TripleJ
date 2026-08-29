@@ -36,6 +36,23 @@ VoiceManage 버튼·설명("내가 부른 노래로 나만의 목소리를 만�
 
 ---
 
+## v3.91 — 2026-08-29 — 파리티 Wave 1: 회원탈퇴 + 저비용 배선 픽스 5건 (서버 다운 중 코드 선행)
+
+### 요청(원문 요지)
+"감사 결과 순서대로 꼼꼼하게 진행. 서버 테스트 불가하니 미실행 테스트 로그(PENDING_TESTS.md)를 만들어 복구 즉시 일괄 테스트."
+
+### 범위 (PARITY_GAP_AUDIT_v1 권장 순서 1+긴급)
+1. **회원탈퇴**(A-15, 심사 필수): 설정에 진입점 + 확인 문구 입력 다이얼로그 → DELETE /auth/me → 로그아웃 처리 (MAIDOL Header.jsx:476~ 계약)
+2. **참고 음악 업로드 배선**(A-5): POST /generate/upload-reference/ 호출 + 생성 body 반영 + 8분 초과 거부 (현재 UI만 있고 미배선)
+3. 태그 한→영 번역(A-6): POST /generate/translate-tags — 미매핑 태그 서버 번역
+4. 관련곡 자동 이어듣기(A-11): GET /tracks/{id}/related → 큐 자동 보충
+5. 검색 클릭 로깅(A-12): POST /tracks/search/click
+6. 원격 프론트 로깅(A-23): MAIDOL utils/remoteLogger.js 계약 이식 → POST /_logs/frontend
+
+계약은 전부 로컬 MAIDOL 프론트+backend_9004 스냅샷 소스로 확정. tsc만 검증, 실행 테스트는 PENDING_TESTS에 등록.
+
+---
+
 ## v3.90 — 2026-08-29 — 아이템 위시리스트 + 5단계 드릴다운 이식 (서버 다운 중 코드 선행)
 
 ### 범위 (MAIDOL 파리티 — 계약은 로컬 원본 코드로 확정)

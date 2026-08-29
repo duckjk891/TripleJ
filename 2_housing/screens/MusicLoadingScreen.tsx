@@ -16,7 +16,10 @@ import {
   generateWithSuno,
   generateWithWondera,
   getGenerationStatus,
+  uploadReferenceAudio,
 } from '../services/musicService';
+import { ReferenceUploadResult } from '../types';
+import { showAlert } from '../utils/appAlert';
 import { BACKEND_BASE_URL } from '../services/api';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
@@ -89,10 +92,45 @@ export default function MusicLoadingScreen({ navigation }: Props) {
     let isMounted = true;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
 
+    // v3.91: 참고 음악 업로드 실패 시 사용자 확인 — true=참고 없이 진행, false=중단
+    const confirmProceedWithoutReference = () =>
+      new Promise<boolean>((resolve) => {
+        showAlert('참고 음악', '참고 음악 업로드에 실패했어요. 참고 없이 진행할까요?', [
+          { text: '중단', style: 'cancel', onPress: () => resolve(false) },
+          { text: '참고 없이 진행', onPress: () => resolve(true) },
+        ]);
+      });
+
     const doGenerate = async () => {
       store.setIsLoading(true);
       store.setError(null);
       store.setStatus('pending');
+
+      // v3.91: 참고 음악 배선 — 선택/녹음된 파일(musicStore.referenceFile)이 있으면
+      // 생성 직전 POST /generate/upload-reference/ 로 업로드하고, 응답의 upload_url 등을
+      // generate body(reference_audio_url/name/duration)로 전달한다. (Suno 경로 전용)
+      let referenceData: ReferenceUploadResult | null = null;
+      if (store.selectedModel === 'suno' && store.referenceFile) {
+        try {
+          referenceData = await uploadReferenceAudio(
+            store.referenceFile,
+            store.referenceFileName || 'reference.mp3'
+          );
+        } catch (err: any) {
+          console.error('[MusicLoading] 참고 음악 업로드 실패:', err?.response?.status, err?.response?.data?.error || err?.message);
+          if (!isMounted) return;
+          const proceed = await confirmProceedWithoutReference();
+          if (!isMounted) return;
+          if (!proceed) {
+            // 중단: 로딩 상태를 되돌리고 이전 화면으로 복귀(파일 교체 후 재시도 가능)
+            store.setIsLoading(false);
+            store.setStatus('idle');
+            navigation.goBack();
+            return;
+          }
+          referenceData = null; // 참고 없이 진행
+        }
+      }
 
       try {
         const params = {
@@ -115,12 +153,16 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           negativeTags: store.negativeTags || undefined,
           personaModel: store.personaModel || undefined,
           personaId: store.personaId || undefined,
+          // v3.91: 참고 음악(업로드 응답) + 참고음 세기 — generateWithSuno가 reference_audio_*/audio_weight로 전송
+          referenceData: referenceData || undefined,
+          audioWeight: store.audioWeight ?? undefined,
         };
         console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
           model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,
           vocal: params.vocal, style: params.style, referenceStyle: params.referenceStyle,
           bpm: params.bpm, musicalKey: params.musicalKey, negativeTags: params.negativeTags,
           personaModel: params.personaModel, personaId: params.personaId,
+          audioWeight: params.audioWeight, referenceUploaded: !!referenceData,
         }));
 
         let result: any;

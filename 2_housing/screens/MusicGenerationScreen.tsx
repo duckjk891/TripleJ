@@ -343,12 +343,34 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   };
   // 참고: handlePersonaConfirm은 위에 정의됨 (case 12에서 호출)
 
+  // v3.91: 선택 단계에서 참고 음악 길이 판독 — 백엔드 upload-reference 제한(480초=8분)을 선반영.
+  // 판독 실패(null)면 통과시키고 서버 검증(400)에 위임한다.
+  const probeAudioDurationSec = async (uri: string): Promise<number | null> => {
+    try {
+      const { sound, status } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false });
+      const durationMillis = status.isLoaded ? status.durationMillis : undefined;
+      try { await sound.unloadAsync(); } catch {}
+      return typeof durationMillis === 'number' && isFinite(durationMillis)
+        ? durationMillis / 1000
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
   // Step 6: Reference - file upload
   const handlePickReference = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*' });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
+        // v3.91: 8분(480초) 초과는 선택 단계에서 거부 (backend generate.py MAX_REFERENCE_DURATION=480)
+        const durationSec = await probeAudioDurationSec(file.uri);
+        if (durationSec != null && durationSec > 480) {
+          console.log('[MusicGeneration] 참고 음악 길이 초과 거부:', Math.round(durationSec), '초');
+          showAlert('참고 음악', '참고 음악은 최대 8분(480초)까지 사용할 수 있어요. 더 짧은 파일을 선택해주세요.');
+          return;
+        }
         musicStore.setReferenceFile(file.uri, file.name);
         advanceStep(`파일 업로드: ${file.name}`, 6);
       }
@@ -393,6 +415,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       const uri = recordingRef.current.getURI();
       recordingRef.current = null;
       if (uri) {
+        // v3.91: 녹음도 백엔드 참고 음악 제한(480초=8분)을 선택 단계에서 선반영
+        if (recordingDuration > 480) {
+          showAlert('참고 음악', '참고 음악은 최대 8분(480초)까지 사용할 수 있어요. 더 짧게 녹음해주세요.');
+          return;
+        }
         const fileName = `녹음_${new Date().toLocaleTimeString()}.m4a`;
         musicStore.setReferenceFile(uri, fileName);
         advanceStep(`녹음 완료: ${fileName}`, 9);
@@ -425,6 +452,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     musicStore.setBpm(bpmOn ? String(bpmValue) : '');
     musicStore.setMusicalKey(musicalKeyOn ? musicalKey : '');
     musicStore.setNegativeTags(negativeTagsOn ? negativeTags.trim() : '');
+    // v3.91: 참고음 세기(audio_weight) — "적용"을 골랐을 때만 body에 실림(자동=null)
+    musicStore.setAudioWeight(audioWeightOn ? audioWeight : null);
     musicStore.setPersonaModel(personaModelOn && personaModel ? personaModel : '');
     musicStore.setPersonaId(personaModelOn && selectedPersonaId ? selectedPersonaId : null);
     musicStore.setSubVocal(subVocalGender);

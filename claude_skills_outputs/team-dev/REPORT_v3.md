@@ -4,6 +4,24 @@
 
 ---
 
+## v3.91 (파리티 Wave 1 — 회원탈퇴+저비용 배선 6건, 서버 다운 중 코드 선행) — 2026-08-29
+
+**요청**: 파리티 감사 권장 순서대로 진행, 서버 테스트 불가하므로 미실행 테스트 로그(PENDING_TESTS.md) 유지.
+
+**수행** (계약은 전부 로컬 MAIDOL 프론트 + backend_9004 스냅샷 소스로 확정):
+1. **회원탈퇴(A-15, 심사 필수)**: SettingsScreen 로그아웃 아래 진입 → 확인 모달("회원탈퇴" 문구 일치 시에만 활성) → DELETE /auth/me(소프트 삭제) → voiceStore·artistProfileStore 정리+logout. 가사보관함은 유지(서버 미참조 로컬 창작 자산, MAIDOL 관행).
+2. **참고음악 업로드 배선(A-5, 숨은 버그 수리)**: uploadReferenceAudio 신규 → 생성 body에 reference_audio_url/name/duration+audio_weight 전송. audioWeight UI값 유실 버그도 수리. 8분 초과 선검증(expo-av), 업로드 실패 시 "참고 없이 진행할까요?" 분기.
+3. **태그 한→영 번역(A-6)**: 미매핑 한글 태그만 생성 직전 translate-tags 1회, 실패 시 원문 폴백(생성 비차단).
+4. **관련곡 자동 이어듣기(A-11)**: playback didJustFinish에서 큐 소진 시 related 1곡 append·이어재생(큐 전체 exclude, 수동 큐·repeat 우선).
+5. **검색 클릭 로깅(A-12)**: 결과 탭 시 fire-and-forget.
+6. **원격 프론트 로깅(A-23)**: utils/remoteLogger.ts 신규(MAIDOL 이식, RN 적응: ErrorUtils·AppState flush·sendBeacon), App.tsx 초기화. error/warn 상시, 배치 전송, 민감정보 drop, 재진입 가드.
+
+**검증**: `npx tsc --noEmit` 0 오류. **실행 테스트 0건(서버 다운)** — 전 항목 PENDING_TESTS.md §2 v3.91 등록, 서버 복구 후 일괄 실행 예정.
+
+**변경 파일**: SettingsScreen·MusicGenerationScreen·MusicLoadingScreen·SearchScreen, musicService·playback, musicStore, types/index.ts, App.tsx, utils/remoteLogger.ts(신규).
+
+---
+
 ## v3.90 (아이템 위시리스트·5단계 드릴다운 이식 — 서버 다운 중 코드 선행) — 2026-08-29
 
 ### 수행 결과

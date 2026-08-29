@@ -13,6 +13,9 @@ import {
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
+import { useVoiceStore } from '../stores/voiceStore';
+import { useArtistProfileStore } from '../stores/artistProfileStore';
+import api from '../services/api';
 import AuthPanel from '../components/auth/AuthPanel';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
 import { CONSENTS } from '../constants/consentTexts';
@@ -48,6 +51,67 @@ export default function SettingsScreen({ navigation }: any) {
       showAlert('오류', '저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
     }
   };
+  // v3.91: 회원탈퇴 — MAIDOL Header.jsx 확인 문구 입력식 흐름 이식.
+  // 계약(backend_9004 auth.py:962 withdraw_account): DELETE /auth/me body { confirm_text: "회원탈퇴" }
+  //   소프트 삭제(개인정보 익명화, 발행 곡은 '탈퇴한 사용자' 명의 유지). 불일치 400 { error }, 성공 { message }.
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [withdrawInput, setWithdrawInput] = useState('');
+  const [withdrawError, setWithdrawError] = useState('');
+  const [withdrawBusy, setWithdrawBusy] = useState(false);
+
+  const openWithdraw = () => {
+    if (__DEV__) console.info('[SettingsScreen] withdraw view open');
+    setWithdrawInput('');
+    setWithdrawError('');
+    setShowWithdraw(true);
+  };
+
+  const closeWithdraw = () => {
+    if (withdrawBusy) return;
+    if (__DEV__) console.info('[SettingsScreen] withdraw view cancel');
+    setShowWithdraw(false);
+    setWithdrawInput('');
+    setWithdrawError('');
+  };
+
+  // [탈퇴하기] — 확인 문구 일치 시에만 호출됨.
+  // 주의(MAIDOL 관행): 입력값 자체는 로그 금지(원격 로깅 대비) — 일치 여부 bool만 로깅.
+  const handleWithdraw = async () => {
+    const confirmText = withdrawInput.trim();
+    if (confirmText !== '회원탈퇴' || withdrawBusy) return;
+    setWithdrawError('');
+    setWithdrawBusy(true);
+    if (__DEV__) console.info('[SettingsScreen] withdrawAccount start', { confirmMatched: true });
+    try {
+      await api.delete('/auth/me', { data: { confirm_text: confirmText } });
+      console.info('[SettingsScreen] withdrawAccount success — 로컬 계정 상태 정리');
+      // ── 탈퇴 후 로컬 정리 방침 ─────────────────────────────────────────────
+      // · 계정 종속 데이터는 정리한다:
+      //   - voiceStore.artistVoice: 클론이면 서버 voice persona 참조(계정 소멸로 사용 불가),
+      //     프리셋도 "그 기획사의 아티스트 목소리" 정체성이라 함께 초기화.
+      //   - artistProfileStore: 서버 /character/me(계정 종속)의 로컬 보조 프로필 → 전체 삭제.
+      // · lyricsBook(가사 보관함)은 유지: 서버를 참조하지 않는 순수 로컬 창작 자산이고,
+      //   MAIDOL도 탈퇴 시 서버 콘텐츠를 '탈퇴한 사용자' 명의로 남길 뿐 로컬 저장물을
+      //   지우는 관행이 없다(Header.jsx handleWithdraw는 logout()만 수행).
+      try { useVoiceStore.getState().clearArtistVoice(); } catch {}
+      try { useArtistProfileStore.getState().clearAll(); } catch {}
+      setShowWithdraw(false);
+      setWithdrawBusy(false);
+      showAlert('회원탈퇴', '탈퇴가 완료되었습니다.');
+      // logout(): 토큰/유저 제거 + 재생목록 초기화 → user=null이 되며 이 화면이 로그인 화면으로 전환됨
+      logout();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.error('[SettingsScreen] withdrawAccount failed', { status, message: err?.message });
+      if (status === 400) {
+        setWithdrawError('확인 문구가 일치하지 않습니다.');
+      } else {
+        showAlert('오류', '탈퇴 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
+      setWithdrawBusy(false);
+    }
+  };
+
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -230,6 +294,76 @@ export default function SettingsScreen({ navigation }: any) {
         >
           <AppText style={styles.logoutText}>로그아웃</AppText>
         </TouchableOpacity>
+
+        {/* v3.91: 회원탈퇴 — 로그아웃 아래 작은 회색 텍스트 관행(심사 필수 항목) */}
+        <TouchableOpacity
+          style={styles.withdrawEntry}
+          onPress={openWithdraw}
+          hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}
+        >
+          <AppText style={styles.withdrawEntryText}>회원탈퇴</AppText>
+        </TouchableOpacity>
+
+        {/* 회원탈퇴 확인 모달 — 확인 문구("회원탈퇴") 일치 시에만 탈퇴 버튼 활성 */}
+        <Modal
+          visible={showWithdraw}
+          transparent
+          animationType="fade"
+          onRequestClose={closeWithdraw}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              <AppText style={styles.modalTitle}>회원탈퇴</AppText>
+              <View style={styles.withdrawWarnBox}>
+                <AppText style={styles.withdrawWarnTitle}>정말 탈퇴하시겠어요?</AppText>
+                <AppText style={styles.withdrawWarnText}>
+                  탈퇴 시 계정 정보가 삭제되며 복구할 수 없습니다. 회원님이 발행한 곡은
+                  '탈퇴한 사용자' 명의로 유지됩니다.
+                </AppText>
+              </View>
+              <AppText style={styles.withdrawGuide}>
+                계속하려면 아래에 "회원탈퇴" 를 정확히 입력하세요
+              </AppText>
+              <TextInput
+                style={styles.input}
+                placeholder="회원탈퇴"
+                placeholderTextColor={colors.text.muted}
+                value={withdrawInput}
+                onChangeText={(v) => { setWithdrawInput(v); if (withdrawError) setWithdrawError(''); }}
+                editable={!withdrawBusy}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {!!withdrawError && (
+                <AppText style={styles.withdrawErrorText}>{withdrawError}</AppText>
+              )}
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnCancel]}
+                  onPress={closeWithdraw}
+                  disabled={withdrawBusy}
+                >
+                  <AppText style={styles.modalBtnCancelText}>취소</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modalBtn,
+                    styles.withdrawConfirmBtn,
+                    (withdrawInput.trim() !== '회원탈퇴' || withdrawBusy) && { opacity: 0.4 },
+                  ]}
+                  onPress={handleWithdraw}
+                  disabled={withdrawInput.trim() !== '회원탈퇴' || withdrawBusy}
+                >
+                  {withdrawBusy ? (
+                    <ActivityIndicator color={colors.text.primary} />
+                  ) : (
+                    <AppText style={styles.withdrawConfirmBtnText}>탈퇴하기</AppText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* 프로필 편집 모달 */}
         <Modal
@@ -442,6 +576,57 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.accent.primary,
     fontWeight: '600',
+  },
+  // v3.91: 회원탈퇴 진입(작은 회색 텍스트) + 확인 모달 전용 스타일
+  withdrawEntry: {
+    alignSelf: 'center',
+    marginTop: -24, // logoutButton의 marginBottom(40) 내부로 살짝 끌어올림
+    marginBottom: 32,
+    paddingVertical: 6,
+  },
+  withdrawEntryText: {
+    fontSize: 12,
+    color: colors.text.muted,
+    textDecorationLine: 'underline',
+  },
+  withdrawWarnBox: {
+    backgroundColor: 'rgba(160, 68, 68, 0.12)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#a04444',
+    padding: 12,
+    marginBottom: 14,
+  },
+  withdrawWarnTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#cc6868',
+    marginBottom: 6,
+  },
+  withdrawWarnText: {
+    fontSize: 12,
+    color: colors.text.secondary,
+    lineHeight: 18,
+  },
+  withdrawGuide: {
+    fontSize: 12,
+    color: colors.text.secondary,
+    marginBottom: 8,
+  },
+  withdrawErrorText: {
+    fontSize: 12,
+    color: '#cc6868',
+    marginBottom: 8,
+  },
+  withdrawConfirmBtn: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#a04444',
+  },
+  withdrawConfirmBtnText: {
+    color: '#cc6868',
+    fontSize: 15,
+    fontWeight: '700',
   },
   formContainer: {
     marginHorizontal: 20,
