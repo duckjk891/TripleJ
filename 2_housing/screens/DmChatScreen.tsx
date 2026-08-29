@@ -42,7 +42,8 @@ export default function DmChatScreen() {
   const peer = conv?.peer || {};
   const [messages, setMessages] = useState<DmMessage[]>([]);
   const [loading, setLoading] = useState(true);
-  const [text, setText] = useState('');
+  // v3.95(A-14): CS 오류신고 진입 시 "[오류신고: 사유] " 프리필(자동 전송 X — 사용자가 이어 작성)
+  const [text, setText] = useState<string>(route.params?.prefill ?? '');
   const [sending, setSending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);

@@ -351,6 +351,43 @@ export default function SettingsScreen({ navigation }: any) {
     }
   };
 
+  // v3.95(A-14): CS 오류신고 — 사유 선택 → GET /dm/official → POST /dm/conversations →
+  // 기존 DM 채팅(DmChat)으로 "[오류신고: 사유] " 프리필 입장(자동 전송 X — MAIDOL ReportIssueModal 관행).
+  const CS_REASONS = ['재생 오류', '결제·별 오류', '계정 문제', '로그인·본인인증 문제', '기타'];
+  const startCsInquiry = async (reason: string) => {
+    if (__DEV__) console.info('[SettingsScreen] CS 문의 시작', { reason });
+    try {
+      // (a) 공식 계정 연락처 조회 — {official_id, nickname}
+      const { data: official } = await api.get('/dm/official');
+      const officialId = official?.official_id;
+      if (!officialId) throw new Error('official_id missing');
+      // (b) 공식 계정과 DM 대화 생성(기존 반환 포함)
+      const { data: conv } = await api.post('/dm/conversations', { peer_id: officialId });
+      const cid = conv?.conversation_id;
+      if (!cid) throw new Error('conversation_id missing');
+      if (__DEV__) console.info('[SettingsScreen] CS 대화 준비 완료', { cid: String(cid).slice(0, 8) });
+      // (c) 콜드 진입 시 peer가 비어 렌더가 깨지지 않게 최소 peer 구성
+      const conversation = conv?.peer
+        ? conv
+        : { ...conv, peer: { id: officialId, nickname: official?.nickname || '공식 계정' } };
+      navigation.navigate('DmChat', { conversation, prefill: `[오류신고: ${reason}] ` });
+    } catch (err: any) {
+      console.error('[SettingsScreen] CS 문의 시작 실패', { status: err?.response?.status, message: err?.message });
+      const detail = err?.response?.data?.error || err?.response?.data?.detail;
+      showAlert('알림', detail || '문의 채널을 여는 데 실패했습니다. 잠시 후 다시 시도해주세요.');
+    }
+  };
+  const openCsInquiry = () => {
+    if (!user) {
+      showAlert('알림', '로그인 후 문의할 수 있습니다.');
+      return;
+    }
+    showAlert('문의하기(오류 신고)', '어떤 문제가 있으셨나요? 사유를 선택하면 공식 계정과의 문의 대화가 열립니다.', [
+      ...CS_REASONS.map((r) => ({ text: r, onPress: () => startCsInquiry(r) })),
+      { text: '취소', style: 'cancel' as const },
+    ]);
+  };
+
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -546,9 +583,9 @@ export default function SettingsScreen({ navigation }: any) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
-          onPress={() => showAlert('알림', 'triplej@support.com으로 문의해주세요')}
+          onPress={openCsInquiry}
         >
-          <AppText style={styles.settingLabel}>문의하기</AppText>
+          <AppText style={styles.settingLabel}>문의하기(오류 신고)</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
 

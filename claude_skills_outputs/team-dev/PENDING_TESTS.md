@@ -75,3 +75,13 @@
 - [ ] [e2e] MusicLoading 429 레이스 → 다이얼로그, 돌아가기=복귀, 실패 화면 미진입·미차감
 - [ ] [e2e] 광고권 보유 시에만 광고권 버튼 노출·차감
 - [ ] 참고: Wondera 생성 경로는 서버 피로 게이트·과금 없음(파리티 사각) — A-7 작업 시 결정
+
+### v3.95 — 소명·CS 공식 DM·피드 딥링크 (코드만 완료, tsc 0)
+- [ ] [api] GET /reports/my-affected — 블라인드 콘텐츠+target 요약·has_appeal; POST appeal 201/재제출 409/2000자 초과 400
+- [ ] [api] GET /dm/official → POST /dm/conversations {peer_id} — 공식 계정 대화 생성/재사용
+- [ ] [api] GET /feeds/{id} — 공개 단건 / 비공개·삭제 404
+- [ ] [e2e] 설정>내 신고 내역>"블라인드된 내 콘텐츠" 탭→소명 작성·제출→"소명 제출됨" 배지, 재소명 차단
+- [ ] [e2e] 설정>문의하기(오류 신고)→사유 선택→DM 채팅 "[오류신고: 사유]" 프리필 진입→전송
+- [ ] [e2e] 웹 /feed/{id} 직접 진입 착지·상호작용; 공유 URL로 열기; (네이티브 빌드 후) aidol://feed/{id}
+- [ ] 회귀 [e2e] **linking 최초 활성화로 웹 URL 동기화 켜짐** — 기존 화면 전환·OAuth 콜백·새로고침 폴백 정상 확인 (중요)
+- [ ] 참고: aidol:// 스킴은 네이티브 빌드 후 유효(Expo Go는 exp:// 경로), https 유니버설 링크는 AASA/assetlinks 서버 배포 필요(미착수)

@@ -4,6 +4,18 @@
 
 ---
 
+## v3.95 (파리티 Wave 5 — 소명(Appeal)·CS 공식 DM·피드 딥링크) — 2026-08-29
+
+**수행** (계약: reports.py:341~463·dm.py:115~169·feeds.py:494~515 실측):
+1. **소명(A-13)**: MyReports에 "내가 한 신고/블라인드된 내 콘텐츠" 2탭 — 블라인드 목록(종류·사유·상태)→AppealModal(2000자, 신고당 1회, 409/400 분기)→"소명 제출됨" 배지.
+2. **CS DM(A-14)**: 설정 "문의하기" placeholder를 실동작으로 승격 — 사유 5종 앱 내 선택→/dm/official→대화 생성/재사용→DmChat에 "[오류신고: 사유]" 프리필(자동 전송 없음, MAIDOL 동일).
+3. **피드 딥링크(A-21)**: FeedDetailScreen 신규(FeedCard 재사용, 404 EmptyState) + app.json scheme "aidol" + expo-linking 설치 + NavigationContainer linking(feed/:feedId, 웹 URL 포함). 공유 URL은 이미 경로 일치. 유니버설 링크(https)·네이티브 스킴 활성화는 EAS 빌드/AASA 배포 필요로 문서화만.
+
+**검증**: tsc 0 오류. 실행 테스트 0건 — PENDING_TESTS §2 v3.95 등록(특히 linking 첫 활성화 회귀 항목).
+**변경**: AppealModal·FeedDetailScreen(신규), MyReportsScreen, SettingsScreen, DmChatScreen, App.tsx, app.json, package.json(+expo-linking).
+
+---
+
 ## v3.94 (파리티 Wave 4 — 디렉터 피로/쿨다운) — 2026-08-29
 
 **수행** (계약: fatigue_service.py·fatigue.py·generate.py 실측 — 사다리 1곡:2h/2곡:4h/3곡:8h/4곡+:12h, 곡 완성 시 시작, KST 자정 리셋, 스킵=⭐5 또는 광고권 1장당 30분 단축):

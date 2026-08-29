@@ -21,7 +21,8 @@ initRemoteLogger();
 import { colors } from './theme/colors';
 import { AppText } from './components/ui';
 import { Feather } from '@expo/vector-icons';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, LinkingOptions } from '@react-navigation/native';
+import * as Linking from 'expo-linking';
 import { navigationRef } from './services/navigationRef';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -40,7 +41,7 @@ import MyReportsScreen from './screens/MyReportsScreen';
 import { useUiStore } from './stores/uiStore';
 import { usePlayerStore } from './stores/playerStore';
 import { usePointsStore } from './stores/pointsStore';
-import api from './services/api';
+import api, { BACKEND_BASE_URL } from './services/api';
 
 import SplashScreen from './screens/SplashScreen';
 import ChartScreen from './screens/ChartScreen';
@@ -78,6 +79,7 @@ import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import UserChannelScreen from './screens/UserChannelScreen';
 import FeedComposeScreen from './screens/FeedComposeScreen';
 import AgencyProfileScreen from './screens/AgencyProfileScreen';
+import FeedDetailScreen from './screens/FeedDetailScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
 
 export type StudioStackParamList = {
@@ -122,9 +124,12 @@ export type RootStackParamList = {
   DmInbox: undefined;
   Notifications: undefined;
   MyReports: undefined;
-  DmChat: { conversation: any };
+  // v3.95(A-14): prefill — CS 오류신고 진입 시 입력창 프리필(자동 전송 X)
+  DmChat: { conversation: any; prefill?: string };
   UserChannel: { authorId: string; name?: string };
   FeedCompose: undefined;
+  // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)
+  FeedDetail: { feedId: string };
   ArtistDetail: { artistId: string; artistName?: string };
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
@@ -424,6 +429,20 @@ function useOAuthCallback() {
 // playerStore 전역 소유라 UI를 숨겨도 재생은 계속된다.
 const HIDE_MINIPLAYER_ROUTES = ['Settings'];
 
+// v3.95(A-21): 딥링크 — aidol://feed/{id} · {웹/공유 URL}/feed/{id} → FeedDetail 착지.
+// FeedCard 공유 URL(`${BACKEND_BASE_URL}/feed/{id}`)과 경로 형식 일치.
+// Linking.createURL('/')는 개발(Expo Go: exp://.../--/)과 빌드(aidol://)를 모두 커버.
+const linking: LinkingOptions<RootStackParamList> = {
+  prefixes: [Linking.createURL('/'), 'aidol://', BACKEND_BASE_URL],
+  config: {
+    // 콜드 스타트 딥링크에서도 뒤로가기(goBack)가 홈으로 떨어지도록 MainTabs를 밑에 깐다
+    initialRouteName: 'MainTabs',
+    screens: {
+      FeedDetail: 'feed/:feedId',
+    },
+  },
+};
+
 export default function App() {
   useOAuthCallback();
   // v3.60: 픽셀 피드 콘셉트 철회로 폰트 로드 제거(에셋 assets/fonts/neodgm.ttf 는 재사용 대비 보존)
@@ -435,7 +454,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <NavigationContainer ref={navigationRef} onReady={syncRoute} onStateChange={syncRoute}>
+      <NavigationContainer ref={navigationRef} linking={linking} onReady={syncRoute} onStateChange={syncRoute}>
         <View style={{ flex: 1 }}>
           <RootStack.Navigator
             initialRouteName="Splash"
@@ -476,6 +495,8 @@ export default function App() {
                 </TouchableOpacity>
               ),
             })} />
+            {/* v3.95(A-21): 피드 단건 착지 — 공유/딥링크(aidol://feed/{id}) 목적지 */}
+            <RootStack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ navigation }) => stackHeader(navigation, '피드')} />
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />

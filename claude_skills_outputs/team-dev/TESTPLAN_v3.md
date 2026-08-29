@@ -5,6 +5,16 @@
 
 ---
 
+## v3.95 — 2026-08-29 — 파리티 Wave 5: 소명·CS DM·피드 딥링크 (전 시나리오 미실행 — 서버 다운, PENDING_TESTS 이월)
+
+> 실행 테스트 0건(서버 다운). tsc 0 오류만 확인. 시나리오는 PENDING_TESTS.md §2 v3.95.
+
+- [api][미실행] my-affected/appeal(201·409·400), dm/official→conversations, feeds/{id}(404)
+- [e2e][미실행] 소명 탭 풀사이클, 문의하기 프리필 DM, 웹 /feed/{id} 착지
+- 회귀[미실행]: NavigationContainer linking 첫 활성화 — 웹 라우팅·OAuth 콜백 영향 확인 필수
+
+---
+
 ## v3.94 — 2026-08-29 — 파리티 Wave 4: 디렉터 피로/쿨다운 (전 시나리오 미실행 — 서버 다운, PENDING_TESTS 이월)
 
 > 실행 테스트 0건(서버 다운). tsc 0 오류만 확인. 시나리오는 PENDING_TESTS.md §2 v3.94.
