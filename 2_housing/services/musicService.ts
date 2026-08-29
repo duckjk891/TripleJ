@@ -1,6 +1,12 @@
 import { Platform } from 'react-native';
-import api from './api';
-import { MusicParams, ReferenceUploadResult } from '../types';
+import api, { BACKEND_BASE_URL } from './api';
+import { useAuthStore } from '../stores/authStore';
+import {
+  GenerationItem,
+  GenerationListResult,
+  MusicParams,
+  ReferenceUploadResult,
+} from '../types';
 
 // 한국어 장르 → Suno 영문 태그 (매핑 가능한 값)
 const GENRE_EN: Record<string, string> = {
@@ -262,6 +268,56 @@ export const getGenerationStatus = async (genId: string) => {
   const response = await api.get(`/generate/${genId}`);
   return response.data;
 };
+
+/**
+ * v3.93: 생성 이력 목록 — GET /generate/ (backend_9004 generate.py:649 list_generations)
+ * 쿼리: page(1~)/limit/status(옵션: pending|processing|completed|failed), created_at 내림차순 고정.
+ * 응답: { generations: [...], pagination: { page, limit, total, totalPages } }
+ */
+export const listGenerations = async (
+  page = 1,
+  limit = 20,
+  status?: string
+): Promise<GenerationListResult> => {
+  console.log('[musicService] 생성 이력 조회:', JSON.stringify({ page, limit, status }));
+  const response = await api.get('/generate/', {
+    params: { page, limit, ...(status ? { status } : {}) },
+  });
+  console.log('[musicService] 생성 이력 응답:', JSON.stringify({
+    count: response.data?.generations?.length,
+    total: response.data?.pagination?.total,
+  }));
+  return response.data;
+};
+
+/**
+ * v3.93: 생성 기록 삭제 — DELETE /generate/{id} (generate.py:801 delete_generation)
+ * 상태 제한 없음(진행중/완료/실패 모두 허용, 소유자 검사만). 응답: { message }
+ */
+export const deleteGeneration = async (genId: string) => {
+  console.log('[musicService] 생성 기록 삭제:', genId);
+  const response = await api.delete(`/generate/${genId}`);
+  console.log('[musicService] 생성 기록 삭제 완료:', genId);
+  return response.data;
+};
+
+/**
+ * v3.93: 생성물 클립 스트림 URL — GET /generate/{id}/stream/?variant=N (generate.py:893)
+ * variant 0 = 첫 클립(BC: result_audio_url 폴백), 1+ = variants[N].audio_url.
+ * expo-av/<audio>는 헤더를 못 붙이므로 ?token= 쿼리 인증(voiceService.personaVocalStreamUrl 관행).
+ */
+export const generationStreamUrl = (genId: string, variant = 0): string => {
+  const token = useAuthStore.getState().token;
+  const base = `${BACKEND_BASE_URL}/api/generate/${genId}/stream/`;
+  const parts: string[] = [];
+  if (variant > 0) parts.push(`variant=${variant}`);
+  if (token) parts.push(`token=${encodeURIComponent(token)}`);
+  return parts.length > 0 ? `${base}?${parts.join('&')}` : base;
+};
+
+/** v3.93: 이력 항목 상태 라벨/유형 판별 헬퍼 (화면 공용) */
+export const isGenerationInProgress = (g: Pick<GenerationItem, 'status'>): boolean =>
+  g.status === 'pending' || g.status === 'processing';
 
 export const getVoiceModels = async () => {
   const response = await api.get('/kits/voice-models');

@@ -600,6 +600,20 @@ export default function MapScreen({ navigation }: Props) {
         </View>
       </ScrollView>
 
+      {/* v3.93: 생성 이력 진입 — 앱 이탈 후에도 진행 중 생성 이어보기/완료 결과 확인 */}
+      {user && (
+        <TouchableOpacity
+          style={styles.historyEntryBtn}
+          activeOpacity={0.8}
+          onPress={() => {
+            console.log('[Map] 생성 이력 진입');
+            navigation.navigate('GenerationHistory' as any);
+          }}
+        >
+          <Text style={styles.historyEntryText}>생성 이력</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Non-logged-in touch overlay */}
       {!user && !showLoginOverlay && (
         <TouchableOpacity
@@ -909,6 +923,24 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  // v3.93: 생성 이력 진입 버튼 (맵 우상단 오버레이)
+  historyEntryBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 12,
+    zIndex: 30,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  historyEntryText: {
+    color: colors.text.primary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   // 디렉터 헤드 네임 (박스 없는 텍스트 전용, 굵은 그림자로 가독성 확보)
   nametagRole: {

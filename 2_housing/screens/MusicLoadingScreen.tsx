@@ -37,9 +37,11 @@ const LOADING_STEPS = [
   { label: '마무리', message: '마무리 중이에요...' },
 ];
 
-export default function MusicLoadingScreen({ navigation }: Props) {
+export default function MusicLoadingScreen({ navigation, route }: Props) {
   const store = useMusicStore();
   const lyricsStore = useLyricsStore();
+  // v3.93: 생성 이력에서 진행 중 생성을 이어볼 때 — 새 생성 시작 없이 폴링만 재개
+  const resumeGenerationId: string | undefined = route.params?.resumeGenerationId;
   const [messageIndex, setMessageIndex] = useState(0);
   const [progress, setProgress] = useState(0);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -100,6 +102,70 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           { text: '참고 없이 진행', onPress: () => resolve(true) },
         ]);
       });
+
+    // v3.93: 단건 폴링 1회 — 새 생성/이어보기 재개가 같은 로직을 공유 (GET /generate/{id})
+    const pollOnce = async (genId: string) => {
+      try {
+        const status = await getGenerationStatus(genId);
+        if (!isMounted) return;
+
+        if (status.progress) {
+          setProgress(status.progress);
+        }
+
+        if (status.status === 'completed' || status.status === 'complete') {
+          if (pollInterval) clearInterval(pollInterval);
+          const trackId = status.result_track_id || status.track_id;
+          const rawUrl =
+            status.audio_url ||
+            status.result_audio_url ||
+            status.result_url ||
+            status.url ||
+            status.output_url ||
+            '';
+          // Build playable URL
+          let url: string;
+          if (trackId) {
+            url = `${BACKEND_BASE_URL}/api/tracks/stream/${trackId}`;
+          } else if (rawUrl) {
+            // result_audio_url is a MinIO object name; use generation stream endpoint
+            url = `${BACKEND_BASE_URL}/api/generate/${genId}/stream/`;
+          } else {
+            url = '';
+          }
+          store.setResultUrl(url);
+          if (trackId) store.setGenerationId(trackId);
+          store.setStatus('completed');
+          store.setIsLoading(false);
+          // BUG-3 픽스: 발매 보상(젬+EXP)은 여기(폴링 완료)가 아니라
+          // MusicResultScreen 의 트랙 저장 성공 직후에 지급한다.
+          navigation.replace('MusicResult');
+        } else if (status.status === 'failed' || status.status === 'error') {
+          if (pollInterval) clearInterval(pollInterval);
+          store.setError(status.error_message || status.error || '음악 생성에 실패했습니다.');
+          store.setStatus('failed');
+          store.setIsLoading(false);
+          navigation.replace('MusicResult');
+        }
+      } catch (err: any) {
+        // v3.93: 기록이 사라졌거나 접근 불가(404/403/400)면 폴링을 멈추고 실패 처리.
+        // 그 외(네트워크 일시 오류)는 다음 폴링에서 재시도.
+        const st = err?.response?.status;
+        if (st === 404 || st === 403 || st === 400) {
+          console.error('[MusicLoading] 폴링 중단 — 상태 조회 실패:', st, err?.response?.data?.error);
+          if (pollInterval) clearInterval(pollInterval);
+          if (!isMounted) return;
+          store.setError(err?.response?.data?.error || '생성 정보를 찾을 수 없습니다.');
+          store.setStatus('failed');
+          store.setIsLoading(false);
+          navigation.replace('MusicResult');
+        }
+      }
+    };
+
+    const beginPolling = (genId: string) => {
+      pollInterval = setInterval(() => pollOnce(genId), 3000);
+    };
 
     const doGenerate = async () => {
       store.setIsLoading(true);
@@ -181,57 +247,8 @@ export default function MusicLoadingScreen({ navigation }: Props) {
           store.setGenerationId(genId);
           store.setStatus('processing');
 
-          // Poll for status
-          pollInterval = setInterval(async () => {
-            try {
-              const status = await getGenerationStatus(genId);
-              if (!isMounted) return;
-
-              if (status.progress) {
-                setProgress(status.progress);
-              }
-
-              if (
-                status.status === 'completed' ||
-                status.status === 'complete'
-              ) {
-                if (pollInterval) clearInterval(pollInterval);
-                const trackId = status.result_track_id || status.track_id;
-                const rawUrl =
-                  status.audio_url ||
-                  status.result_audio_url ||
-                  status.result_url ||
-                  status.url ||
-                  status.output_url ||
-                  '';
-                // Build playable URL
-                let url: string;
-                if (trackId) {
-                  url = `${BACKEND_BASE_URL}/api/tracks/stream/${trackId}`;
-                } else if (rawUrl) {
-                  // result_audio_url is a MinIO object name; use generation stream endpoint
-                  url = `${BACKEND_BASE_URL}/api/generate/${genId}/stream/`;
-                } else {
-                  url = '';
-                }
-                store.setResultUrl(url);
-                if (trackId) store.setGenerationId(trackId);
-                store.setStatus('completed');
-                store.setIsLoading(false);
-                // BUG-3 픽스: 발매 보상(젬+EXP)은 여기(폴링 완료)가 아니라
-                // MusicResultScreen 의 트랙 저장 성공 직후에 지급한다.
-                navigation.replace('MusicResult');
-              } else if (status.status === 'failed' || status.status === 'error') {
-                if (pollInterval) clearInterval(pollInterval);
-                store.setError(status.error || '음악 생성에 실패했습니다.');
-                store.setStatus('failed');
-                store.setIsLoading(false);
-                navigation.replace('MusicResult');
-              }
-            } catch {
-              // Poll error, keep trying
-            }
-          }, 3000);
+          // Poll for status (v3.93: 이어보기와 공유하는 pollOnce 재사용)
+          beginPolling(genId);
         } else {
           // Direct result (no polling needed)
           const trackId = result.result_track_id || result.track_id;
@@ -271,7 +288,18 @@ export default function MusicLoadingScreen({ navigation }: Props) {
       }
     };
 
-    doGenerate();
+    // v3.93: 이어보기 재개 모드 — 새 생성 시작(과금·참고음 업로드) 없이 기존 생성만 폴링
+    if (resumeGenerationId) {
+      console.log('[MusicLoading] 진행 중 생성 이어보기 재개:', resumeGenerationId);
+      store.setIsLoading(true);
+      store.setError(null);
+      store.setGenerationId(resumeGenerationId);
+      store.setStatus('processing');
+      pollOnce(resumeGenerationId); // 즉시 1회 확인 (이미 완료된 경우 바로 결과로)
+      beginPolling(resumeGenerationId);
+    } else {
+      doGenerate();
+    }
 
     return () => {
       isMounted = false;

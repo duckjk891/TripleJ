@@ -21,8 +21,12 @@ import { useArtistStore } from '../stores/artistStore';
 import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { getGenerationStatus, generationStreamUrl } from '../services/musicService';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
+
+// v3.93: 2-variant 클립 비교 라벨 (버전 A/버전 B — Suno는 요청당 2클립 반환)
+const VARIANT_LABELS = ['버전 A', '버전 B', '버전 C', '버전 D'];
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
@@ -93,7 +97,7 @@ async function fetchCharacterSnapshot(): Promise<
 
 type Props = NativeStackScreenProps<any, 'MusicResult'>;
 
-export default function MusicResultScreen({ navigation }: Props) {
+export default function MusicResultScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const store = useMusicStore();
   const { token } = useAuthStore();
@@ -101,15 +105,23 @@ export default function MusicResultScreen({ navigation }: Props) {
   const hasMiniPlayer = !!usePlayerStore((s) => s.track);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
+  // v3.93: 생성 이력에서 이미 트랙 확정(발매)된 생성으로 진입 시 재저장(중복 트랙) 방지
+  const [isSaved, setIsSaved] = useState(!!route.params?.alreadySaved);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  // v3.93: 2-variant 클립 비교 — GET /generate/{id}의 variants 배열(길이 2)이 있으면
+  // 트랙 확정 전 A/B 비교 청취를 제공하고, 저장 시 선택한 variant_index로 확정한다.
+  const [variantCount, setVariantCount] = useState(1);
+  const [selectedVariant, setSelectedVariant] = useState(0);
+  const pendingPlayRef = useRef(false); // variant 전환 직후 자동 재생 플래그
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
   const composerName = store.selectedModel === 'suno' ? 'Suno 작곡가' : 'Wondera 작곡가';
   const hasError = !!store.error;
   const hasResult = !!store.resultUrl;
+  // v3.93: 트랙 확정 전 + 클립 2개 이상일 때만 A/B 비교 노출 (확정/저장 후엔 단일 플레이어)
+  const showComparison = hasResult && variantCount > 1 && !isSaved && !store.savedTrackId;
 
   // Load audio
   useEffect(() => {
@@ -124,7 +136,8 @@ export default function MusicResultScreen({ navigation }: Props) {
       if (store.savedTrackId) {
         audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${store.savedTrackId}`;
       } else if (store.generationId) {
-        audioUrl = `${BACKEND_BASE_URL}/api/generate/${store.generationId}/stream/`;
+        // v3.93: variant별 스트림(?variant=N) + expo-av 헤더 미지원 대비 ?token= 쿼리 인증
+        audioUrl = generationStreamUrl(store.generationId, selectedVariant);
       } else {
         audioUrl = store.resultUrl as string;
         // 폴백: 동일 LAN 환경에서 MinIO 직접 접근용 (LTE에서는 작동 안 함)
@@ -158,12 +171,26 @@ export default function MusicResultScreen({ navigation }: Props) {
 
         if (mounted) {
           setSound(newSound);
+          // v3.93: variant 전환으로 재로드된 경우 — 전환 직전 재생 중이었다면 이어서 자동 재생
+          if (pendingPlayRef.current) {
+            pendingPlayRef.current = false;
+            try {
+              await newSound.playAsync();
+              setIsPlaying(true);
+            } catch (err: any) {
+              console.error('[MusicResult] variant 자동 재생 실패:', err?.message);
+            }
+          }
         }
       } catch {
         // Audio loading failed
       }
     };
 
+    // v3.93: variant 전환 시 이전 재생 정지 상태로 초기화 (이전 sound는 [sound] cleanup이 unload)
+    setIsPlaying(false);
+    setPosition(0);
+    setDuration(0);
     loadAudio();
 
     return () => {
@@ -172,7 +199,37 @@ export default function MusicResultScreen({ navigation }: Props) {
         sound.unloadAsync();
       }
     };
-  }, [store.resultUrl, store.generationId, store.savedTrackId]);
+  }, [store.resultUrl, store.generationId, store.savedTrackId, selectedVariant]);
+
+  // v3.93: 완료된 생성의 variants 조회 — 2개 이상이고 아직 트랙 미확정이면 A/B 비교 노출.
+  // 계약: GET /generate/{id} → { variants: [{audio_url, suno_audio_id, ...}], result_track_id }
+  // (backend_9004 suno_generator.py:317 variants[0]=result_audio_url 미러, 클립 2개 저장)
+  useEffect(() => {
+    let mounted = true;
+    const fetchVariants = async () => {
+      if (!store.generationId || store.savedTrackId || hasError || isSaved) return;
+      try {
+        console.log('[MusicResult] variants 조회:', store.generationId);
+        const doc = await getGenerationStatus(store.generationId);
+        if (!mounted) return;
+        if (doc?.result_track_id) {
+          // 이미 트랙 확정된 생성 — 비교 없이 단일 플레이어 유지
+          console.log('[MusicResult] 트랙 확정됨 — 비교 생략:', doc.result_track_id);
+          return;
+        }
+        const n = Array.isArray(doc?.variants) ? doc.variants.length : 0;
+        console.log('[MusicResult] variants 개수:', n);
+        if (n > 1) setVariantCount(Math.min(n, VARIANT_LABELS.length));
+      } catch (err: any) {
+        // 조회 실패는 기존 단일 클립 UI 유지 (구 데이터·트랙 id로 덮인 generationId 등)
+        console.warn('[MusicResult] variants 조회 실패 — 단일 클립 표시:', err?.response?.status, err?.message);
+      }
+    };
+    fetchVariants();
+    return () => {
+      mounted = false;
+    };
+  }, [store.generationId]);
 
   // Cleanup
   useEffect(() => {
@@ -193,6 +250,25 @@ export default function MusicResultScreen({ navigation }: Props) {
       await sound.playAsync();
       setIsPlaying(true);
     }
+  };
+
+  // v3.93: 비교 카드에서 재생 — 다른 버전이면 전환(기존 재생 정지·해제) 후 자동 재생
+  const handleVariantPlay = (index: number) => {
+    if (index === selectedVariant) {
+      togglePlay();
+      return;
+    }
+    console.log('[MusicResult] variant 미리듣기 전환:', selectedVariant, '->', index);
+    pendingPlayRef.current = true;
+    setSelectedVariant(index);
+  };
+
+  // v3.93: 비교 카드 탭 — 저장(확정)에 쓸 버전 선택. 재생 중이었다면 새 버전을 이어서 재생.
+  const handleVariantSelect = (index: number) => {
+    if (index === selectedVariant) return;
+    console.log('[MusicResult] variant 선택:', index);
+    pendingPlayRef.current = isPlaying;
+    setSelectedVariant(index);
   };
 
   const formatTime = (ms: number) => {
@@ -241,6 +317,8 @@ export default function MusicResultScreen({ navigation }: Props) {
       prompt: buildPromptSummary(store, lyricsStore),
       lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
       ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
+      // v3.93: 2-variant 확정 — 선택한 클립이 트랙이 됨 (tracks.py:1386 variant_index, 0=BC)
+      variant_index: selectedVariant,
     };
     console.log('[Save] 저장 요청:', JSON.stringify(payload));
 
@@ -292,6 +370,8 @@ export default function MusicResultScreen({ navigation }: Props) {
           prompt: store.lyrics || undefined,
           lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
           ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
+          // v3.93: 커버 경유 저장도 동일하게 선택 variant로 확정
+          variant_index: selectedVariant,
         };
         const res = await api.post('/tracks/upload-from-generation', payload);
         const trackId = res.data?.id;
@@ -351,8 +431,70 @@ export default function MusicResultScreen({ navigation }: Props) {
           </View>
         )}
 
+        {/* v3.93: 2-variant 클립 비교 — 트랙 확정 전 A/B 청취 후 선택 */}
+        {showComparison && (
+          <View style={styles.playerContainer}>
+            <View style={styles.compareBox}>
+              <AppText style={styles.trackTitle}>
+                {lyricsStore.generatedTitle || `${store.genre} - ${store.mood}`}
+              </AppText>
+              <AppText style={styles.compareHint}>
+                두 가지 버전이 만들어졌어요. 들어보고 마음에 드는 버전을 선택하세요.{'\n'}
+                선택한 버전이 트랙으로 저장돼요.
+              </AppText>
+              {Array.from({ length: variantCount }).map((_, i) => {
+                const active = i === selectedVariant;
+                return (
+                  <TouchableOpacity
+                    key={i}
+                    style={[styles.variantCard, active && styles.variantCardActive]}
+                    activeOpacity={0.8}
+                    onPress={() => handleVariantSelect(i)}
+                  >
+                    <View style={styles.variantTopRow}>
+                      <View style={{ flex: 1 }}>
+                        <AppText style={[styles.variantLabel, active && styles.variantLabelActive]}>
+                          {VARIANT_LABELS[i] || `버전 ${i + 1}`}
+                        </AppText>
+                        <AppText style={styles.variantSub}>
+                          {active ? '선택됨 - 이 버전이 트랙으로 저장돼요' : '탭해서 선택'}
+                        </AppText>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.variantPlayBtn, active && styles.variantPlayBtnActive]}
+                        onPress={() => handleVariantPlay(i)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <AppText style={styles.variantPlayText}>
+                          {active && isPlaying ? '일시정지' : '재생'}
+                        </AppText>
+                      </TouchableOpacity>
+                    </View>
+                    {active && (
+                      <View style={{ marginTop: 10 }}>
+                        <View style={styles.progressBar}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              { width: duration > 0 ? `${(position / duration) * 100}%` : '0%' },
+                            ]}
+                          />
+                        </View>
+                        <View style={styles.timeRow}>
+                          <AppText style={styles.timeText}>{formatTime(position)}</AppText>
+                          <AppText style={styles.timeText}>{formatTime(duration)}</AppText>
+                        </View>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
         {/* Audio player */}
-        {hasResult && (
+        {hasResult && !showComparison && (
           <View style={styles.playerContainer}>
             <View style={styles.playerCard}>
               {/* Album art placeholder */}
@@ -416,7 +558,13 @@ export default function MusicResultScreen({ navigation }: Props) {
               disabled={isSaving || isSaved}
             >
               <AppText style={styles.saveButtonText}>
-                {isSaved ? '저장 완료' : isSaving ? '저장 중...' : '저장하기'}
+                {isSaved
+                  ? '저장 완료'
+                  : isSaving
+                    ? '저장 중...'
+                    : showComparison
+                      ? `${VARIANT_LABELS[selectedVariant] || `버전 ${selectedVariant + 1}`}로 저장하기`
+                      : '저장하기'}
               </AppText>
             </TouchableOpacity>
           )}
@@ -521,6 +669,67 @@ const styles = StyleSheet.create({
   },
   playerContainer: {
     marginBottom: 24,
+  },
+  // v3.93: 2-variant 비교 카드
+  compareBox: {
+    backgroundColor: colors.bg.surface1,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: colors.accent.primary,
+    padding: 16,
+  },
+  compareHint: {
+    fontSize: 12,
+    color: colors.text.secondary,
+    lineHeight: 18,
+    marginTop: 6,
+    marginBottom: 14,
+  },
+  variantCard: {
+    backgroundColor: colors.bg.surface2,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.border.subtle,
+    padding: 14,
+    marginBottom: 10,
+  },
+  variantCardActive: {
+    borderColor: colors.accent.primary,
+  },
+  variantTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  variantLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text.secondary,
+  },
+  variantLabelActive: {
+    color: colors.accent.primary,
+  },
+  variantSub: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 3,
+  },
+  variantPlayBtn: {
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+  },
+  variantPlayBtnActive: {
+    backgroundColor: colors.accent.primary,
+    borderColor: colors.accent.primary,
+  },
+  variantPlayText: {
+    color: colors.text.primary,
+    fontSize: 13,
+    fontWeight: '700',
   },
   playerCard: {
     backgroundColor: colors.bg.surface1,

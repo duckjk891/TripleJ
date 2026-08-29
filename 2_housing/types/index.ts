@@ -69,6 +69,40 @@ export interface ReferenceUploadResult {
 
 export type GenerationStatus = 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
 
+/** v3.93: 생성물 클립(variant) — backend_9004 suno_generator.py:317~ (variants[0]=result_audio_url 미러) */
+export interface GenerationVariant {
+  audio_url?: string | null;
+  suno_audio_id?: string | null;
+  duration?: number | null;
+  timestamps?: any[];
+}
+
+/** v3.93: GET /generate/ 목록 항목 = GET /generate/{id} 단건 (generate.py:86 _serialize 동일 형태) */
+export interface GenerationItem {
+  id: string;
+  title?: string | null;
+  genre?: string | null;
+  mood?: string | null;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | string;
+  progress?: number;
+  lyrics?: string | null;
+  prompt?: string | null;
+  model?: string;
+  result_track_id?: string | null;
+  result_audio_url?: string | null;
+  variants?: GenerationVariant[];
+  error_message?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  completed_at?: string | null;
+}
+
+/** v3.93: GET /generate/ 응답 (generate.py:649 list_generations) */
+export interface GenerationListResult {
+  generations: GenerationItem[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}
+
 export interface GenerationResult {
   id: string;
   status: GenerationStatus;

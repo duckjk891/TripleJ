@@ -57,3 +57,11 @@
 - [ ] [e2e] 본인인증 계정(is_verified) 생년월일·성별 입력 비활성 + PATCH 페이로드 미포함
 - [ ] 회귀 [e2e] 기존 기획사 정보(회사명/직함/bio) 편집·저장, v3.91 회원탈퇴 모달 정상 동작
 
+### v3.93 — 생성 이력 + 2-variant 비교 (코드만 완료, tsc 0)
+- [ ] [api] GET /generate/?page=1&limit=20 — generations/pagination 형태·created_at desc
+- [ ] [api] DELETE /generate/{id} — processing 상태에서도 200
+- [ ] [api] GET /generate/{id}/stream/?variant=1&token=<jwt> — 헤더 없이 200 오디오
+- [ ] [api] POST /tracks/upload-from-generation variant_index=1 — 트랙 오디오=variants[1]·result_track_id 역기록
+- [ ] [e2e] 작곡 시작→앱 재시작→작업실 "생성 이력"→진행중 이어보기→완료→버전 A/B 각각 재생→B 선택 저장→마이뮤직에서 B 클립 재생
+- [ ] [e2e] 발매됨 항목 재진입 시 저장 버튼 "저장 완료" 고정(중복 트랙 방지) / 실패 항목 탭→사유 팝업(⭐ 환불 문구)→삭제
+- [ ] 회귀 [e2e] 신규 생성 정상 플로우(참고음악 포함 v3.91 경로), 커버 경유 저장에 variant_index 실림

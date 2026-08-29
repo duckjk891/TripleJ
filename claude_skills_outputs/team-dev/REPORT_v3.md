@@ -4,6 +4,18 @@
 
 ---
 
+## v3.93 (파리티 Wave 3 — 생성 이력·이어서 작업 + 2-variant 클립 비교) — 2026-08-29
+
+**수행** (계약: backend generate.py:649~/tracks.py:1386~ 실측):
+1. **생성 이력(A-4 전반)**: GenerationHistoryScreen 신규 — 목록(생성중%/완료/발매됨/실패 배지, 페이징·당겨새로고침), 삭제(앱 내 confirm, 진행중도 허용), 진행중 탭→MusicLoading 폴링 재개(resumeGenerationId — 재생성·과금 없음), 완료 탭→store 하이드레이션 후 결과 화면, 실패 탭→사유 팝업(⭐ 자동 환불 문구)+삭제. 진입점: 작업실 맵 우상단 "생성 이력" 버튼.
+2. **2-variant 비교(A-4 후반)**: 결과 화면에서 variants 2개면 "버전 A/버전 B" 비교 카드(전환 재생, 진행바), 확정은 서버 구조대로 기존 "저장하기"에 variant_index 통합(upload-from-generation — 별도 선택 API 없음, MAIDOL 동일). alreadySaved로 재저장 차단. 스트림 ?token= 쿼리 인증 전환.
+- 만료 정책 없음(영구), 실패 시 ⭐ 원자 환불 확인.
+
+**검증**: tsc 0 오류. 실행 테스트 0건(서버 다운) — PENDING_TESTS §2 v3.93 등록.
+**변경**: GenerationHistoryScreen(신규), MusicLoadingScreen, MusicResultScreen, MapScreen, musicService, types, App.tsx.
+
+---
+
 ## v3.92 (파리티 Wave 2 — 계정 위생: 프로필 이미지·마케팅 동의·인구통계 편집) — 2026-08-29
 
 **수행** (계약: MAIDOL auth.py 413~951 등 로컬 소스 실측):

@@ -60,6 +60,7 @@ import ComposerSelectScreen from './screens/ComposerSelectScreen';
 import MusicGenerationScreen from './screens/MusicGenerationScreen';
 import MusicLoadingScreen from './screens/MusicLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
+import GenerationHistoryScreen from './screens/GenerationHistoryScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
@@ -94,8 +95,12 @@ export type StudioStackParamList = {
   ComposerInput: undefined;
   ComposerSelect: undefined;
   MusicGeneration: undefined;
-  MusicLoading: undefined;
-  MusicResult: undefined;
+  // v3.93: resumeGenerationId — 생성 이력에서 진행 중 생성을 이어볼 때 폴링 재개 모드
+  MusicLoading: { resumeGenerationId?: string } | undefined;
+  // v3.93: alreadySaved — 이력에서 트랙 확정(발매)된 완료 생성으로 진입 시 재저장 방지
+  MusicResult: { alreadySaved?: boolean } | undefined;
+  // v3.93: 생성 이력 목록 (진행중 이어보기 / 완료 결과 / 실패 확인·삭제)
+  GenerationHistory: undefined;
   CoverGeneration: undefined;
   // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
   ArtistInput: { forceKind?: 'real' | 'virtual' } | undefined;
@@ -175,6 +180,7 @@ function StudioNavigator() {
         options={{ gestureEnabled: false }}
       />
       <StudioStack.Screen name="MusicResult" component={MusicResultScreen} />
+      <StudioStack.Screen name="GenerationHistory" component={GenerationHistoryScreen} />
       <StudioStack.Screen name="CoverGeneration" component={CoverGenerationScreen} />
       <StudioStack.Screen name="ArtistInput" component={ArtistInputScreen} />
       <StudioStack.Screen
