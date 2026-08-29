@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +20,8 @@ import { useTimerStore } from '../stores/timerStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
+import { useWishlistStore, type WishItem } from '../stores/wishlistStore';
+import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
 
 const MINIPLAYER_HEIGHT = 70;
@@ -48,7 +51,32 @@ interface AdItem {
   image_object_name?: string;
   product_url?: string;
   advertiser_nickname?: string;
+  // v3.90(MAIDOL v147/v148): 5단계 드릴다운용 패싯 필드 — ad_items 원본 그대로 내려옴
+  brand?: string;
+  gender?: string;        // '남성용' | '여성용' | '공용'
+  product_name?: string;
+  color?: string;
+  category?: string;
+  is_active?: boolean;
 }
+
+// v3.90: 5단계 드릴다운 — 플랫폼 › 브랜드 › 성별 › 제품 › 색상(leaf). MAIDOL ItemSelectModal 이식.
+type DrillLevel = 'platform' | 'brand' | 'gender' | 'product';
+type DrillState = Record<DrillLevel, string | null>;
+const EMPTY_DRILL: DrillState = { platform: null, brand: null, gender: null, product: null };
+
+const platformOf = (i: AdItem) => i.advertiser_nickname || '기타';
+const brandOf = (i: AdItem) => i.brand || i.advertiser_nickname || '기타';
+const productOf = (i: AdItem) => i.product_name || i.name || '기타';
+// 성별 멤버십: 공용(및 미지정)은 남/여 모두에 포함
+const genderMatches = (i: AdItem, g: string) => {
+  const ig = i.gender || '공용';
+  if (ig === '공용') return true;
+  if (g === '남') return ig === '남성용';
+  if (g === '여') return ig === '여성용';
+  return false;
+};
+const genderLabel = (g: string) => (g === '남' ? '남성' : '여성');
 
 // 광고 0개일 때 노출할 더미 샘플 (UX 데모용) — 카테고리당 5개
 // advertiser_nickname은 가상 브랜드명 (실제 광고주가 등록되면 그 브랜드명으로 자동 교체)
@@ -162,19 +190,52 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const [pickerCat, setPickerCat] = useState<Cat | null>(null);
   const [pickerItems, setPickerItems] = useState<AdItem[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  // v3.90: 전체 | 위시리스트 탭 + 5단계 드릴다운 상태
+  const [pickerTab, setPickerTab] = useState<'all' | 'wish'>('all');
+  const [drill, setDrill] = useState<DrillState>(EMPTY_DRILL);
+
+  const isLoggedIn = useAuthStore((s) => !!s.token);
+  const wished = useWishlistStore((s) => s.wished);
+  const wishBusy = useWishlistStore((s) => s.busy);
+  const wishItemsAll = useWishlistStore((s) => s.items);
+  const wishListLoaded = useWishlistStore((s) => s.listLoaded);
+  const wishListLoading = useWishlistStore((s) => s.listLoading);
+  const wishListError = useWishlistStore((s) => s.listError);
 
   const openPicker = async (cat: Cat) => {
     setPickerCat(cat);
+    setPickerTab('all');
+    setDrill(EMPTY_DRILL);
     setPickerLoading(true);
     try {
       const res = await api.get('/business/ads/active', { params: { category: cat } });
       const items: AdItem[] = res.data?.items || [];
       setPickerItems(items.length > 0 ? items : SAMPLE_ITEMS[cat]);
+      // 실아이템 위시 여부 일괄 조회 (샘플/미로그인은 store가 알아서 스킵)
+      if (isLoggedIn && items.length > 0) {
+        useWishlistStore.getState().sync(items.map((i) => i.id));
+      }
     } catch {
       setPickerItems(SAMPLE_ITEMS[cat]);
     } finally {
       setPickerLoading(false);
     }
+  };
+
+  // 위시리스트 탭 최초 진입 시 lazy 로드 (미로그인은 스킵 — 렌더에서 안내)
+  useEffect(() => {
+    if (pickerCat !== null && pickerTab === 'wish' && isLoggedIn) {
+      useWishlistStore.getState().fetchList();
+    }
+  }, [pickerCat, pickerTab, isLoggedIn]);
+
+  const handleWishToggle = (item: { id: string }) => {
+    if (!isLoggedIn) {
+      showAlert('알림', '로그인 후 이용할 수 있습니다.');
+      return;
+    }
+    if (__DEV__) console.info('[ArtistCody] wish toggle', { id: item.id });
+    useWishlistStore.getState().toggle(item.id);
   };
 
   const pickItem = (item: AdItem) => {
@@ -369,6 +430,71 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     };
   }, [navigation]);
 
+  // ── v3.90 5단계 드릴다운 파생값 (MAIDOL ItemSelectModal 이식) ──
+  const byPlatform = drill.platform ? pickerItems.filter((i) => platformOf(i) === drill.platform) : pickerItems;
+  const byBrand = drill.brand ? byPlatform.filter((i) => brandOf(i) === drill.brand) : byPlatform;
+  const drillGender = drill.gender;
+  const byGender = drillGender ? byBrand.filter((i) => genderMatches(i, drillGender)) : byBrand;
+  const byProduct = drill.product ? byGender.filter((i) => productOf(i) === drill.product) : byGender;
+
+  const currentLevel: DrillLevel | 'color' = !drill.platform
+    ? 'platform'
+    : !drill.brand
+      ? 'brand'
+      : !drill.gender
+        ? 'gender'
+        : !drill.product
+          ? 'product'
+          : 'color';
+
+  const facetOptions: string[] =
+    currentLevel === 'platform' ? [...new Set(pickerItems.map(platformOf))]
+    : currentLevel === 'brand' ? [...new Set(byPlatform.map(brandOf))]
+    : currentLevel === 'gender' ? ['남', '여'].filter((g) => byBrand.some((i) => genderMatches(i, g)))
+    : currentLevel === 'product' ? [...new Set(byGender.map(productOf))]
+    : [];
+  const facetLabel =
+    currentLevel === 'platform' ? '플랫폼'
+    : currentLevel === 'brand' ? '브랜드'
+    : currentLevel === 'gender' ? '성별'
+    : currentLevel === 'product' ? '제품'
+    : '';
+
+  const crumbs: { level: DrillLevel; label: string }[] = [];
+  if (drill.platform) crumbs.push({ level: 'platform', label: drill.platform });
+  if (drill.brand) crumbs.push({ level: 'brand', label: drill.brand });
+  if (drill.gender) crumbs.push({ level: 'gender', label: genderLabel(drill.gender) });
+  if (drill.product) crumbs.push({ level: 'product', label: drill.product });
+  const drillActive = crumbs.length > 0;
+
+  const selectLevel = (level: DrillLevel, value: string) => {
+    const next = { ...drill, [level]: value };
+    if (__DEV__) console.info('[ArtistCody] drill', next);
+    setDrill(next);
+  };
+
+  const jumpTo = (level: DrillLevel) => {
+    if (level === 'platform') setDrill(EMPTY_DRILL);
+    else if (level === 'brand') setDrill((d) => ({ ...d, brand: null, gender: null, product: null }));
+    else if (level === 'gender') setDrill((d) => ({ ...d, gender: null, product: null }));
+    else if (level === 'product') setDrill((d) => ({ ...d, product: null }));
+  };
+
+  const goBack = () => {
+    setDrill((d) => {
+      if (d.product) return { ...d, product: null };
+      if (d.gender) return { ...d, gender: null, product: null };
+      if (d.brand) return { ...d, brand: null, gender: null, product: null };
+      if (d.platform) return EMPTY_DRILL;
+      return d;
+    });
+  };
+
+  // 위시리스트 탭: 현재 카테고리의 내 찜 목록 (store엔 전 카테고리 보관)
+  const wishItemsForCat: WishItem[] = pickerCat
+    ? wishItemsAll.filter((it) => it.category === pickerCat)
+    : [];
+
   return (
     <View style={styles.container}>
       <AppText style={[styles.title, { paddingTop: 12 }]}>
@@ -513,7 +639,32 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 <AppText style={styles.modalClose}>✕</AppText>
               </TouchableOpacity>
             </View>
-            {pickerLoading ? (
+            {/* v3.90: 전체 | 위시리스트 탭 */}
+            <View style={styles.pickerTabs}>
+              <TouchableOpacity
+                style={[styles.pickerTab, pickerTab === 'all' && styles.pickerTabActive]}
+                onPress={() => setPickerTab('all')}
+              >
+                <AppText style={[styles.pickerTabText, pickerTab === 'all' && styles.pickerTabTextActive]}>
+                  전체
+                </AppText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pickerTab, pickerTab === 'wish' && styles.pickerTabActive]}
+                onPress={() => setPickerTab('wish')}
+              >
+                <Feather
+                  name="heart"
+                  size={12}
+                  color={pickerTab === 'wish' ? colors.accent.primary : colors.text.muted}
+                />
+                <AppText style={[styles.pickerTabText, pickerTab === 'wish' && styles.pickerTabTextActive]}>
+                  {' '}내 위시리스트{isLoggedIn && wishListLoaded && !wishListError ? ` (${wishItemsForCat.length})` : ''}
+                </AppText>
+              </TouchableOpacity>
+            </View>
+
+            {pickerTab === 'all' && (pickerLoading ? (
               <View style={{ padding: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={colors.accent.primary} />
               </View>
@@ -525,11 +676,56 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               </View>
             ) : (
               <FlatList
-                data={pickerItems}
+                data={byProduct}
                 keyExtractor={(item) => item.id}
                 numColumns={2}
+                ListHeaderComponent={
+                  <View>
+                    {/* 브레드크럼: 전체 › 플랫폼 › 브랜드 › 성별 › 제품 */}
+                    <View style={styles.crumbRow}>
+                      <TouchableOpacity onPress={() => jumpTo('platform')} disabled={!drillActive}>
+                        <AppText style={[styles.crumbText, !drillActive && styles.crumbTextMuted]}>전체</AppText>
+                      </TouchableOpacity>
+                      {crumbs.map((c) => (
+                        <View key={c.level} style={styles.crumbItem}>
+                          <AppText style={styles.crumbSep}>›</AppText>
+                          <TouchableOpacity onPress={() => jumpTo(c.level)}>
+                            <AppText style={styles.crumbText}>{c.label}</AppText>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                      {drillActive && (
+                        <TouchableOpacity style={styles.drillBackBtn} onPress={goBack}>
+                          <Feather name="chevron-left" size={13} color={colors.text.secondary} />
+                          <AppText style={styles.drillBackText}>뒤로</AppText>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {/* 현재 단계 패싯 타일 */}
+                    {currentLevel !== 'color' && facetOptions.length > 0 && (
+                      <View style={styles.facetBox}>
+                        <AppText style={styles.facetLabel}>{facetLabel} 선택</AppText>
+                        <View style={styles.facetTiles}>
+                          {facetOptions.map((opt) => (
+                            <TouchableOpacity
+                              key={opt}
+                              style={styles.facetTile}
+                              onPress={() => selectLevel(currentLevel as DrillLevel, opt)}
+                            >
+                              <AppText style={styles.facetTileText} numberOfLines={1}>
+                                {currentLevel === 'gender' ? genderLabel(opt) : opt}
+                              </AppText>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                }
                 renderItem={({ item }) => {
                   const url = adImageUrl(item.image_object_name);
+                  const isSample = item.id.startsWith('sample_');
                   return (
                     <TouchableOpacity
                       style={styles.itemCard}
@@ -551,13 +747,103 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                             </AppText>
                           </View>
                         ) : null}
+                        {/* 위시 하트 — 샘플 더미는 서버에 없어 담기 불가 → 숨김 */}
+                        {!isSample && (
+                          <TouchableOpacity
+                            style={styles.wishBtn}
+                            onPress={() => handleWishToggle(item)}
+                            disabled={!!wishBusy[item.id]}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          >
+                            <Feather
+                              name="heart"
+                              size={16}
+                              color={wished[item.id] ? colors.accent.primary : '#fff'}
+                            />
+                          </TouchableOpacity>
+                        )}
                       </View>
-                      <AppText style={styles.itemName} numberOfLines={2}>{item.name}</AppText>
+                      <AppText style={styles.itemName} numberOfLines={2}>
+                        {item.product_name || item.name}
+                      </AppText>
+                      {item.color ? (
+                        <AppText style={styles.itemBrand} numberOfLines={1}>{item.color}</AppText>
+                      ) : null}
                     </TouchableOpacity>
                   );
                 }}
                 contentContainerStyle={{ padding: 12 }}
               />
+            ))}
+
+            {pickerTab === 'wish' && (
+              !isLoggedIn ? (
+                <View style={{ padding: 40 }}>
+                  <AppText style={styles.emptyDesc}>로그인 후 이용할 수 있습니다.</AppText>
+                </View>
+              ) : wishListLoading || !wishListLoaded ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={colors.accent.primary} />
+                </View>
+              ) : wishListError ? (
+                <View style={{ padding: 40 }}>
+                  <AppText style={styles.emptyDesc}>위시리스트를 불러오지 못했습니다.</AppText>
+                </View>
+              ) : wishItemsForCat.length === 0 ? (
+                <View style={{ padding: 40 }}>
+                  <AppText style={styles.emptyDesc}>
+                    위시리스트에 담긴 {pickerCat} 아이템이 없어요.{'\n'}전체 탭에서 하트를 눌러 담아보세요.
+                  </AppText>
+                </View>
+              ) : (
+                <FlatList
+                  data={wishItemsForCat}
+                  keyExtractor={(item) => item.id}
+                  numColumns={2}
+                  renderItem={({ item }) => {
+                    const url = adImageUrl(item.image_object_name);
+                    const inactive = item.is_active === false;
+                    return (
+                      <TouchableOpacity
+                        style={[styles.itemCard, inactive && styles.itemCardInactive]}
+                        onPress={() => pickItem(item)}
+                        disabled={inactive}
+                      >
+                        <View style={styles.itemImgWrap}>
+                          {url ? (
+                            <Image source={{ uri: url }} style={styles.itemImg} />
+                          ) : (
+                            <View style={[styles.itemImg, styles.itemImgFallback]}>
+                              <AppText style={{ fontSize: 28 }}>?</AppText>
+                            </View>
+                          )}
+                          {inactive && (
+                            <View style={styles.inactiveBadge}>
+                              <AppText style={styles.inactiveBadgeText}>판매종료</AppText>
+                            </View>
+                          )}
+                          {/* 하트 = 위시 해제 */}
+                          <TouchableOpacity
+                            style={styles.wishBtn}
+                            onPress={() => handleWishToggle(item)}
+                            disabled={!!wishBusy[item.id]}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          >
+                            <Feather name="heart" size={16} color={colors.accent.primary} />
+                          </TouchableOpacity>
+                        </View>
+                        <AppText style={styles.itemName} numberOfLines={2}>{item.name}</AppText>
+                        {item.advertiser_nickname ? (
+                          <AppText style={styles.itemBrand} numberOfLines={1}>
+                            {item.advertiser_nickname}
+                          </AppText>
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  }}
+                  contentContainerStyle={{ padding: 12 }}
+                />
+              )
             )}
           </View>
         </View>
@@ -663,6 +949,70 @@ const styles = StyleSheet.create({
     minHeight: 34,
   },
   itemBrand: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
+  itemCardInactive: { opacity: 0.45 },
+
+  // v3.90: 전체 | 위시리스트 탭
+  pickerTabs: {
+    flexDirection: 'row',
+    borderBottomWidth: 1, borderBottomColor: colors.bg.surface1,
+  },
+  pickerTab: {
+    flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    paddingVertical: 11,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
+  },
+  pickerTabActive: { borderBottomColor: colors.accent.primary },
+  pickerTabText: { color: colors.text.muted, fontSize: 13, fontWeight: '600' },
+  pickerTabTextActive: { color: colors.text.primary, fontWeight: '700' },
+
+  // v3.90: 드릴다운 브레드크럼
+  crumbRow: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+    paddingHorizontal: 4, paddingBottom: 8, gap: 4,
+  },
+  crumbItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  crumbText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
+  crumbTextMuted: { color: colors.text.muted, fontWeight: '600' },
+  crumbSep: { color: colors.text.muted, fontSize: 12 },
+  drillBackBtn: {
+    flexDirection: 'row', alignItems: 'center', marginLeft: 'auto',
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    backgroundColor: colors.bg.surface2,
+  },
+  drillBackText: { color: colors.text.secondary, fontSize: 11, fontWeight: '600' },
+
+  // v3.90: 패싯 타일 (플랫폼/브랜드/성별/제품)
+  facetBox: {
+    marginBottom: 10, padding: 10, borderRadius: 12,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  facetLabel: {
+    color: colors.text.secondary, fontSize: 11, fontWeight: '700',
+    marginBottom: 8, letterSpacing: 0.3,
+  },
+  facetTiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  facetTile: {
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+    maxWidth: '100%',
+  },
+  facetTileText: { color: colors.text.primary, fontSize: 12, fontWeight: '600' },
+
+  // v3.90: 위시 하트 버튼 (이미지 우상단)
+  wishBtn: {
+    position: 'absolute', top: 6, right: 6,
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  inactiveBadge: {
+    position: 'absolute', bottom: 6, left: 6,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
+  },
+  inactiveBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
 
   catBrand: {
     color: colors.accent.primary, fontSize: 10, fontWeight: '700',
