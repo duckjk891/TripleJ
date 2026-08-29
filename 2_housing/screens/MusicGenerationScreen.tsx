@@ -25,6 +25,9 @@ import { useTimerStore } from '../stores/timerStore';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
+import { getFatigueStatus, formatCooldown } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { FatigueStatus } from '../types';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -123,6 +126,42 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, [chatHistory, step]);
+
+  // v3.94: 디렉터 피로/쿨다운 — GET /fatigue/status (사다리: 그날 1곡 2h/2곡 4h/3곡 8h/4곡+ 12h, 자정 리셋)
+  const [fatigue, setFatigue] = useState<FatigueStatus | null>(null);
+  const [fatigueRemainSec, setFatigueRemainSec] = useState(0);
+
+  const applyFatigueStatus = useCallback((data: FatigueStatus) => {
+    setFatigue(data);
+    setFatigueRemainSec(Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0)));
+  }, []);
+
+  const refreshFatigue = useCallback(async () => {
+    try {
+      const data = await getFatigueStatus();
+      applyFatigueStatus(data);
+    } catch (err: any) {
+      // 조회 실패는 게이트 오픈 — 서버 게이트(429)가 최종 방어 (fatigue_service.py:144 check_gate 동일 정책)
+      console.warn('[MusicGeneration] [fatigue] 상태 조회 실패:', err?.response?.status, err?.message);
+    }
+  }, [applyFatigueStatus]);
+
+  // 진입/복귀 시 상태 갱신 (곡 완성으로 쿨다운이 새로 시작됐을 수 있음)
+  useFocusEffect(
+    useCallback(() => {
+      refreshFatigue();
+    }, [refreshFatigue])
+  );
+
+  // 쿨다운 1초 카운트다운 — 0 도달 시 서버 상태 재확인(해제 반영, MAIDOL StudioTab2 관행)
+  useEffect(() => {
+    if (fatigueRemainSec <= 0) return undefined;
+    const timeout = setTimeout(() => {
+      setFatigueRemainSec((s) => Math.max(0, s - 1));
+      if (fatigueRemainSec === 1) refreshFatigue();
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [fatigueRemainSec, refreshFatigue]);
 
   // v3.78: 내 목소리 페르소나 목록
   const voicePersonas = useVoiceStore((s) => s.personas);
@@ -439,8 +478,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     return `${m}:${s}`;
   };
 
-  // Final generate
-  const handleGenerate = () => {
+  // Final generate — 실제 시작 처리 (v3.94: 피로 게이트 통과 후에만 호출)
+  const proceedGenerate = () => {
     musicStore.setLyrics(editedLyrics.trim());
     musicStore.setGenre(lyricsStore.genre || selectedGenre);
     musicStore.setMood(lyricsStore.mood || selectedMood);
@@ -465,6 +504,23 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     // Wondera 제거됨 — 항상 composer/suno
     timerStore.startTask('composer', '작곡', 'composer');
     setTimeout(() => navigation.navigate('Map' as any), 1500);
+  };
+
+  // v3.94: 생성 버튼 — 디렉터 쿨다운 중이면 앱 내 다이얼로그(남은 시간 + ⭐스킵/광고권/취소)로 게이트.
+  // 서버도 POST /generate/(start_music_gen=true)에서 429로 게이트하므로(과금 전 — generate.py:444)
+  // 레이스는 MusicLoadingScreen의 429 분기가 처리한다.
+  const handleGenerate = () => {
+    if (fatigueRemainSec > 0) {
+      console.log('[MusicGeneration] [fatigue] 게이트 — 남은', fatigueRemainSec, '초');
+      showFatigueCooldownDialog({
+        status: fatigue,
+        remainingSec: fatigueRemainSec,
+        onStatusUpdate: applyFatigueStatus,
+        onCleared: proceedGenerate,
+      });
+      return;
+    }
+    proceedGenerate();
   };
 
   const isComplete = step >= DIRECTOR_MESSAGES.length && step < 100;
@@ -995,6 +1051,28 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         </View>
       </View>
 
+      {/* v3.94: 디렉터 휴식(쿨다운) 배지 — 남은 시간 카운트다운, 탭하면 단축 다이얼로그 */}
+      {fatigueRemainSec > 0 && (
+        <TouchableOpacity
+          style={styles.fatigueBadge}
+          activeOpacity={0.8}
+          onPress={() =>
+            showFatigueCooldownDialog({
+              status: fatigue,
+              remainingSec: fatigueRemainSec,
+              onStatusUpdate: applyFatigueStatus,
+              onCleared: refreshFatigue, // 배지 경유는 해제만 반영 (자동 생성 시작 없음)
+            })
+          }
+        >
+          <AppText style={styles.fatigueBadgeText}>
+            디렉터 휴식 중 · 남은 시간 {formatCooldown(fatigueRemainSec)}
+            {fatigue ? ` · 오늘 완성 ${fatigue.today_completed}곡` : ''}
+          </AppText>
+          <AppText style={styles.fatigueBadgeAction}>단축</AppText>
+        </TouchableOpacity>
+      )}
+
       {/* Chat history */}
       <ScrollView
         ref={scrollRef}
@@ -1044,6 +1122,32 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,
+  },
+  // v3.94: 디렉터 휴식(쿨다운) 배지
+  fatigueBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+    backgroundColor: colors.bg.surface1,
+  },
+  fatigueBadgeText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.secondary,
+  },
+  fatigueBadgeAction: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accent.primary,
+    marginLeft: 8,
   },
   chatArea: {
     flex: 1,

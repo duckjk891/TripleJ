@@ -110,3 +110,24 @@ export interface GenerationResult {
   error?: string;
   progress?: number;
 }
+
+/**
+ * v3.94: GET /api/fatigue/status 응답 (backend_9004 fatigue.py:46 + fatigue_service.py:160 get_status)
+ * ladder = {"1":2,"2":4,"3":8,"4+":12} — 그날 n곡째 완성 시 쿨다운(시간). KST 자정 리셋.
+ * skip_wait_count = AdMob SSV 적립 광고권 잔량 (fatigue.py:33 _skip_wait_count).
+ */
+export interface FatigueStatus {
+  today_completed: number;
+  cooldown_active: boolean;
+  cooldown_until: string | null;
+  cooldown_remaining_sec: number;
+  skip_point_cost: number; // ⭐5 (points_service.py:31 POINT_COSTS.fatigue_skip)
+  skip_minutes: number; // 30
+  ladder: Record<string, number>;
+  skip_wait_count: number;
+}
+
+/** v3.94: POST /api/fatigue/skip 성공 응답 = status payload + skipped_minutes (fatigue.py:123-125) */
+export interface FatigueSkipResult extends FatigueStatus {
+  skipped_minutes: number;
+}

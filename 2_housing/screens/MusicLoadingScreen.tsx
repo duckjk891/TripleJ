@@ -18,7 +18,9 @@ import {
   getGenerationStatus,
   uploadReferenceAudio,
 } from '../services/musicService';
-import { ReferenceUploadResult } from '../types';
+import { ReferenceUploadResult, FatigueStatus } from '../types';
+import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { showAlert } from '../utils/appAlert';
 import { BACKEND_BASE_URL } from '../services/api';
 import AppScreenLayout from '../components/AppScreenLayout';
@@ -277,6 +279,33 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
         }
       } catch (err: any) {
         if (!isMounted) return;
+        // v3.94: 디렉터 피로 429(레이스 — 게이트 통과 후 다른 곡 완성 등) — 생성 실패로 처리하지
+        // 않는다. 서버는 ⭐ 차감 *전에* 게이트하므로 429 시 과금 없음 (generate.py:444-447, 573-577).
+        // 동일 다이얼로그로 남은 시간 + ⭐/광고권 스킵을 안내하고, 해제되면 생성을 재시도한다.
+        if (isDirectorFatigued(err)) {
+          const gateRemain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
+          console.log('[MusicLoading] [fatigue] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
+          store.setIsLoading(false);
+          store.setStatus('idle');
+          let fatigueStatus: FatigueStatus | null = null;
+          try {
+            fatigueStatus = await getFatigueStatus(); // 스킵 비용·광고권 잔량 표시용 (실패해도 기본값 안내)
+          } catch (statusErr: any) {
+            console.warn('[MusicLoading] [fatigue] 상태 조회 실패:', statusErr?.response?.status);
+          }
+          if (!isMounted) return;
+          showFatigueCooldownDialog({
+            status: fatigueStatus,
+            remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+            cancelText: '돌아가기',
+            onCancel: () => navigation.goBack(),
+            onCleared: () => {
+              // 스킵으로 쿨다운 해제 — 생성 재시도 (⭐ 작곡 비용은 이 재시도에서 정상 차감)
+              doGenerate();
+            },
+          });
+          return;
+        }
         const errorMsg =
           err?.response?.data?.detail ||
           err?.message ||

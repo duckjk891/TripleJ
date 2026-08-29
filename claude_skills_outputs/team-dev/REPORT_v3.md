@@ -4,6 +4,19 @@
 
 ---
 
+## v3.94 (파리티 Wave 4 — 디렉터 피로/쿨다운) — 2026-08-29
+
+**수행** (계약: fatigue_service.py·fatigue.py·generate.py 실측 — 사다리 1곡:2h/2곡:4h/3곡:8h/4곡+:12h, 곡 완성 시 시작, KST 자정 리셋, 스킵=⭐5 또는 광고권 1장당 30분 단축):
+- fatigueService(신규): 상태 조회·스킵. fatigueGate(신규): 공용 앱 내 다이얼로그 — 남은 시간·오늘 완성 곡수·"⭐5로 30분 단축"(반복 가능·해제 시 자동 진행)·광고권 보유 시에만 광고권 버튼, 409/402 분기.
+- MusicGenerationScreen: 진입 시 상태 조회 + 휴식 배지(1초 카운트다운, 탭=단축), 생성 버튼 선제 게이트.
+- MusicLoadingScreen: 429(director_fatigue) 분기 — 실패 처리 없이(무과금 확인) 다이얼로그 재사용, 해제 시 재시도. v3.93 이어보기는 게이트 불필요(무과금).
+- **판단**: 광고 시청→광고권 적립(SSV)은 서버 연동 전무라 보류, 보유 광고권 소비만 배선. Wondera 경로는 dead path 아님(실사용)이나 서버 게이트·과금 없음 — A-7 시 결정 필요.
+
+**검증**: tsc 0 오류. 실행 테스트 0건 — PENDING_TESTS §2 v3.94 등록.
+**변경**: fatigueService·fatigueGate(신규), MusicGenerationScreen, MusicLoadingScreen, types.
+
+---
+
 ## v3.93 (파리티 Wave 3 — 생성 이력·이어서 작업 + 2-variant 클립 비교) — 2026-08-29
 
 **수행** (계약: backend generate.py:649~/tracks.py:1386~ 실측):
