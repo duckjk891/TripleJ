@@ -48,3 +48,12 @@
 - [ ] **관련곡 이어듣기** [e2e] 큐 1곡 재생 완주(반복 off) → related 1곡 자동 append·이어재생, exclude로 중복 없음; repeat all/one·수동 큐 잔여 시 related 미호출
 - [ ] **검색 클릭 로깅** [api] `POST /tracks/search/click {q,track_id}` 후 서버측 기록 확인. [e2e] 검색 결과 탭(로그인/비로그인) — 실패해도 재생 무영향
 - [ ] **원격 로깅** [api] 로그인 상태 콘솔 error → `backend_9004/logs/frontend.log` 유입; 비로그인 시 요청 미발생; 토큰 문자열 포함 로그 drop 확인
+
+### v3.92 — 계정 위생: 프로필 이미지·마케팅 동의·인구통계 편집 (코드만 완료, tsc 0)
+- [ ] **프로필 이미지** [api] 정상 jpg 업로드 → profile_image 반영·즉시 렌더 / 6MB·비허용 타입 400 → showAlert / DELETE → 이니셜 폴백·재로그인 후에도 null 유지
+- [ ] **마케팅 동의** [api] 무이력 계정 GET → 스위치 off 노출; 토글 on → POST 후 재조회 agreed=true; 서버 오류 시 롤백+팝업
+- [ ] **인구통계 PATCH** [api] 생년월일 null 지우기·region '해외'·sns_links 5개 저장 후 GET /auth/me 일치; 6개째 URL 추가 버튼 숨김
+- [ ] [e2e] web/native: 설정→아바타 탭→사진 선택→스피너→반영; 편집 모달 월=2·일=30 인라인 에러로 저장 차단
+- [ ] [e2e] 본인인증 계정(is_verified) 생년월일·성별 입력 비활성 + PATCH 페이로드 미포함
+- [ ] 회귀 [e2e] 기존 기획사 정보(회사명/직함/bio) 편집·저장, v3.91 회원탈퇴 모달 정상 동작
+

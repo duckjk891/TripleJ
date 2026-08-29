@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
   Text,
+  Image,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
@@ -10,45 +11,283 @@ import {
   Switch,
   Modal,
 } from 'react-native';
-import { showAlert } from '../utils/appAlert';
+import * as DocumentPicker from 'expo-document-picker';
+import { showAlert, type AppAlertButton } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/authStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import api from '../services/api';
+import {
+  getMe,
+  getMyConsents,
+  recordConsents,
+  uploadProfileImage,
+  deleteProfileImage,
+  profileImageUrl,
+  PROFILE_IMAGE_TYPES,
+  PROFILE_IMAGE_MAX_BYTES,
+} from '../services/authService';
 import AuthPanel from '../components/auth/AuthPanel';
 import PolicySheet, { CompanyFooter } from '../components/PolicySheet';
-import { CONSENTS } from '../constants/consentTexts';
+import { CONSENTS, CONSENT_VERSION } from '../constants/consentTexts';
 import { colors } from '../theme/colors';
 import { AppText } from '../components/ui';
 
+// v3.92(A-18): 인구통계 선택지 — MAIDOL backend user.py GENDERS/REGIONS 계약값 그대로
+const GENDER_OPTIONS: Array<{ value: 'male' | 'female' | 'other' | null; label: string }> = [
+  { value: 'male', label: '남성' },
+  { value: 'female', label: '여성' },
+  { value: 'other', label: '기타' },
+  { value: null, label: '선택안함' },
+];
+const REGION_OPTIONS = [
+  '서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종',
+  '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남',
+  '제주', '해외',
+];
+const SNS_MAX = 5; // MAIDOL SNS_LINKS_MAX 계약값
+
+// 선택 칩(성별/지역 공용) — 앱 내 선택 UI, 시스템 드롭다운 금지 관행
+function Chip({
+  label,
+  selected,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.chip, selected && styles.chipSelected, disabled && { opacity: 0.4 }]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <AppText style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</AppText>
+    </TouchableOpacity>
+  );
+}
+
 export default function SettingsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
-  const { user, isLoading, error, login, register, logout, clearError, updateProfile } = useAuthStore();
+  const { user, isLoading, error, login, register, logout, clearError, updateProfile, setUser } = useAuthStore();
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [editCompany, setEditCompany] = useState('');
   const [editTitle, setEditTitle] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+  // v3.92(A-18): 인구통계 편집 상태 — 서버 계약: birth_date "YYYY-MM-DD" | gender male/female/other | region 17시·도+해외 | sns_links ≤5
+  const [editBirthY, setEditBirthY] = useState('');
+  const [editBirthM, setEditBirthM] = useState('');
+  const [editBirthD, setEditBirthD] = useState('');
+  const [editGender, setEditGender] = useState<'male' | 'female' | 'other' | null>(null);
+  const [editRegion, setEditRegion] = useState<string | null>(null);
+  const [editSns, setEditSns] = useState<string[]>([]);
+  const [editError, setEditError] = useState('');
+
+  // /auth/me 응답의 인구통계 값을 편집 상태로 반영 (값 자체 로그 금지 — 개인정보)
+  const applyDemoFromUser = (u: {
+    birth_date?: string | null;
+    gender?: string | null;
+    region?: string | null;
+    sns_links?: string[];
+  }) => {
+    const m = typeof u.birth_date === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(u.birth_date) : null;
+    setEditBirthY(m ? m[1] : '');
+    setEditBirthM(m ? String(parseInt(m[2], 10)) : '');
+    setEditBirthD(m ? String(parseInt(m[3], 10)) : '');
+    const g = u.gender;
+    setEditGender(g === 'male' || g === 'female' || g === 'other' ? g : null);
+    setEditRegion(u.region && REGION_OPTIONS.includes(u.region) ? u.region : null);
+    setEditSns(Array.isArray(u.sns_links) ? u.sns_links.filter((s) => typeof s === 'string') : []);
+  };
 
   const openProfileEdit = () => {
     if (!user) return;
+    if (__DEV__) console.info('[SettingsScreen] profile edit open');
     setEditCompany(user.company_name || '');
     setEditTitle(user.display_title || '대표');
+    applyDemoFromUser(user);
+    setEditError('');
     setShowProfileEdit(true);
+    // 로그인 응답에는 인구통계 필드가 없어 /auth/me로 최신값 보강(빠른 단건 조회)
+    (async () => {
+      try {
+        const me = await getMe();
+        setUser(me);
+        applyDemoFromUser(me);
+      } catch (err: any) {
+        // 보강 실패 시 스토어 값으로 계속 편집 가능 — 에러 팝업은 과잉이라 로그만
+        console.error('[SettingsScreen] getMe for edit failed', { status: err?.response?.status, message: err?.message });
+      }
+    })();
+  };
+
+  // 생년월일 조합 — 전부 비우면 null(지우기), 일부만 입력/무효 날짜면 에러 문자열 반환
+  const buildBirthDate = (): { value: string | null } | { error: string } => {
+    const y = editBirthY.trim();
+    const m = editBirthM.trim();
+    const d = editBirthD.trim();
+    if (!y && !m && !d) return { value: null };
+    if (!y || !m || !d) return { error: '생년월일은 연·월·일을 모두 입력하거나 모두 비워주세요.' };
+    const yy = parseInt(y, 10);
+    const mm = parseInt(m, 10);
+    const dd = parseInt(d, 10);
+    const dt = new Date(yy, mm - 1, dd);
+    const valid =
+      yy >= 1900 &&
+      mm >= 1 && mm <= 12 &&
+      dd >= 1 &&
+      dt.getFullYear() === yy && dt.getMonth() === mm - 1 && dt.getDate() === dd &&
+      dt.getTime() <= Date.now();
+    if (!valid) return { error: '생년월일을 올바르게 입력해주세요. (1900년 이후~오늘)' };
+    return { value: `${String(yy).padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}` };
   };
 
   const saveProfileEdit = async () => {
-    setEditSaving(true);
-    const ok = await updateProfile({
+    const birth = buildBirthDate();
+    if ('error' in birth) {
+      setEditError(birth.error);
+      return;
+    }
+    // SNS 채널 — 빈 행 제외 후 클라 검증(MAIDOL Header.jsx 관행). URL 값 자체는 로그 금지.
+    const snsLinks = editSns.map((u) => u.trim()).filter(Boolean);
+    if (snsLinks.some((u) => !/^https?:\/\//i.test(u))) {
+      setEditError('SNS 링크는 http:// 또는 https:// 로 시작하는 주소를 입력해주세요.');
+      return;
+    }
+    setEditError('');
+    // 본인인증 계정은 birth_date/gender 전송 금지(서버 400) — MAIDOL Header.jsx 관행
+    const verifiedLocked = !!user?.is_verified;
+    const patch: Parameters<typeof updateProfile>[0] = {
       company_name: editCompany.trim() || `${user!.nickname} 엔터테인먼트`,
       display_title: editTitle.trim() || '대표',
-    });
+      region: editRegion,
+      sns_links: snsLinks,
+    };
+    if (!verifiedLocked) {
+      patch.birth_date = birth.value;
+      patch.gender = editGender;
+    }
+    if (__DEV__) {
+      console.info('[SettingsScreen] profile save start', { snsCount: snsLinks.length, verifiedLocked });
+    }
+    setEditSaving(true);
+    const ok = await updateProfile(patch);
     setEditSaving(false);
     if (ok) {
+      console.info('[SettingsScreen] profile save success');
       setShowProfileEdit(false);
       showAlert('완료', '프로필이 업데이트되었습니다.');
     } else {
-      showAlert('오류', '저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      console.error('[SettingsScreen] profile save failed');
+      showAlert('오류', useAuthStore.getState().error || '저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    }
+  };
+
+  // ── v3.92(A-16): 프로필 이미지 업로드/삭제 ──────────────────────────────
+  // 계약(backend auth.py): POST /auth/me/profile-image (multipart `image`, jpeg/png/webp ≤5MB,
+  //   서버 512x512 크롭) → { profile_image }, DELETE /auth/me/profile-image → { profile_image: null }
+  const [avatarBusy, setAvatarBusy] = useState(false);
+
+  const pickAndUploadAvatar = async () => {
+    try {
+      // expo-image-picker 미설치 — 기존 이미지 선택 관행(ArtistInputScreen DocumentPicker image/*) 재사용
+      const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+      if (res.canceled || !res.assets || !res.assets[0]) return;
+      const file = res.assets[0];
+      const mime = file.mimeType || '';
+      if (mime && !PROFILE_IMAGE_TYPES.includes(mime)) {
+        showAlert('안내', '지원하지 않는 이미지 형식입니다. (jpeg/png/webp)');
+        return;
+      }
+      if (typeof file.size === 'number' && file.size > PROFILE_IMAGE_MAX_BYTES) {
+        showAlert('안내', '이미지 크기는 5MB 이하여야 합니다.');
+        return;
+      }
+      setAvatarBusy(true);
+      if (__DEV__) console.info('[SettingsScreen] profile image upload start', { size: file.size ?? -1 });
+      const data = await uploadProfileImage(file.uri, file.name || 'profile.jpg', mime || 'image/jpeg');
+      setUser({ profile_image: data.profile_image });
+      console.info('[SettingsScreen] profile image upload success');
+    } catch (err: any) {
+      console.error('[SettingsScreen] profile image upload failed', { status: err?.response?.status, message: err?.message });
+      showAlert('오류', err?.response?.data?.error || '사진 업로드에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const removeAvatar = async () => {
+    setAvatarBusy(true);
+    if (__DEV__) console.info('[SettingsScreen] profile image delete start');
+    try {
+      await deleteProfileImage();
+      setUser({ profile_image: null });
+      console.info('[SettingsScreen] profile image delete success');
+    } catch (err: any) {
+      console.error('[SettingsScreen] profile image delete failed', { status: err?.response?.status, message: err?.message });
+      showAlert('오류', '사진 삭제에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const handleAvatarPress = () => {
+    if (avatarBusy) return;
+    const buttons: AppAlertButton[] = [{ text: '사진 선택', onPress: pickAndUploadAvatar }];
+    if (user?.profile_image) buttons.push({ text: '기본 이미지로', onPress: removeAvatar });
+    buttons.push({ text: '취소', style: 'cancel' });
+    showAlert('프로필 사진', '프로필 사진을 변경할 수 있어요. 사진은 512x512로 잘려 저장돼요.', buttons);
+  };
+
+  // ── v3.92(A-17): 마케팅 정보 수신 동의 토글 ─────────────────────────────
+  // 계약: GET /auth/me/consents → { consents: { marketing: { agreed, .. } } },
+  //   변경은 POST /auth/me/consents [{ key:'marketing', agreed }] + CONSENT_VERSION (append 이력)
+  // MAIDOL Header.jsx 관행: 로드 성공 시에만 행 노출, 이력 목록 UI는 없음(미노출 동일).
+  const [marketingConsent, setMarketingConsent] = useState<boolean | null>(null);
+  const [marketingBusy, setMarketingBusy] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setMarketingConsent(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const consents = await getMyConsents();
+        if (cancelled) return;
+        const agreed = !!consents?.marketing?.agreed;
+        setMarketingConsent(agreed);
+        if (__DEV__) console.info('[SettingsScreen] marketing consent loaded', { agreed });
+      } catch (err: any) {
+        // 로드 실패 시 행 미노출(MAIDOL 관행) — 팝업 없이 로그만
+        console.error('[SettingsScreen] getMyConsents failed', { status: err?.response?.status, message: err?.message });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const handleMarketingToggle = async (next: boolean) => {
+    if (marketingConsent === null || marketingBusy) return;
+    const prev = marketingConsent;
+    setMarketingConsent(next); // 낙관 반영 — 실패 시 롤백
+    setMarketingBusy(true);
+    if (__DEV__) console.info('[SettingsScreen] marketing consent change', { agreed: next });
+    try {
+      await recordConsents([{ key: 'marketing', agreed: next }], CONSENT_VERSION);
+      console.info('[SettingsScreen] marketing consent recorded', { agreed: next });
+    } catch (err: any) {
+      console.error('[SettingsScreen] recordConsents failed', { status: err?.response?.status, message: err?.message });
+      setMarketingConsent(prev);
+      showAlert('오류', '동의 상태 변경에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setMarketingBusy(false);
     }
   };
   // v3.91: 회원탈퇴 — MAIDOL Header.jsx 확인 문구 입력식 흐름 이식.
@@ -171,9 +410,26 @@ export default function SettingsScreen({ navigation }: any) {
       <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent}>
         {TitleRow}
         <View style={styles.profileCard}>
-          <View style={styles.avatarCircle}>
-            <AppText style={styles.avatarText}>{user.nickname[0]}</AppText>
-          </View>
+          {/* v3.92(A-16): 아바타 탭 → 앱 내 선택지(사진 선택/기본 이미지로/취소) */}
+          <TouchableOpacity
+            style={styles.avatarWrap}
+            onPress={handleAvatarPress}
+            disabled={avatarBusy}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <View style={styles.avatarCircle}>
+              {avatarBusy ? (
+                <ActivityIndicator color={colors.text.primary} />
+              ) : user.profile_image ? (
+                <Image source={{ uri: profileImageUrl(user.profile_image)! }} style={styles.avatarImg} />
+              ) : (
+                <AppText style={styles.avatarText}>{user.nickname[0]}</AppText>
+              )}
+            </View>
+            <View style={styles.avatarEditBadge}>
+              <AppText style={styles.avatarEditBadgeText}>편집</AppText>
+            </View>
+          </TouchableOpacity>
           <AppText style={styles.companyText}>
             {user.company_name || `${user.nickname} 엔터테인먼트`}
           </AppText>
@@ -228,7 +484,7 @@ export default function SettingsScreen({ navigation }: any) {
             thumbColor={colors.text.primary}
           />
         </View>
-        <View style={[styles.settingRow, styles.settingRowLast]}>
+        <View style={[styles.settingRow, marketingConsent === null && styles.settingRowLast]}>
           <AppText style={styles.settingLabel}>새로운 차트 업데이트</AppText>
           <Switch
             value={notifyChartUpdate}
@@ -237,6 +493,19 @@ export default function SettingsScreen({ navigation }: any) {
             thumbColor={colors.text.primary}
           />
         </View>
+        {/* v3.92(A-17): 마케팅 수신 동의 — 현재 상태 로드 성공 시에만 표시(MAIDOL 관행) */}
+        {marketingConsent !== null && (
+          <View style={[styles.settingRow, styles.settingRowLast]}>
+            <AppText style={styles.settingLabel}>마케팅 정보 수신 동의</AppText>
+            <Switch
+              value={marketingConsent}
+              disabled={marketingBusy}
+              onValueChange={handleMarketingToggle}
+              trackColor={{ false: colors.border.subtle, true: colors.accent.primary }}
+              thumbColor={colors.text.primary}
+            />
+          </View>
+        )}
 
         {/* 앱 정보 */}
         <AppText variant="callout" style={styles.sectionTitle}>앱 정보</AppText>
@@ -375,27 +644,125 @@ export default function SettingsScreen({ navigation }: any) {
           <View style={styles.modalOverlay}>
             <View style={styles.modalBox}>
               <AppText style={styles.modalTitle}>기획사 정보 편집</AppText>
-              <AppText style={styles.modalLabel}>기획사명</AppText>
-              <TextInput
-                style={styles.input}
-                placeholder={`${user.nickname} 엔터테인먼트`}
-                placeholderTextColor={colors.text.muted}
-                value={editCompany}
-                onChangeText={setEditCompany}
-                maxLength={100}
-              />
-              <AppText style={styles.modalLabel}>호칭</AppText>
-              <TextInput
-                style={styles.input}
-                placeholder="대표"
-                placeholderTextColor={colors.text.muted}
-                value={editTitle}
-                onChangeText={setEditTitle}
-                maxLength={20}
-              />
-              <AppText style={styles.helperText}>
-                비워두면 기본값(닉네임 엔터테인먼트 / 대표)으로 저장돼요.
-              </AppText>
+              <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+                <AppText style={styles.modalLabel}>기획사명</AppText>
+                <TextInput
+                  style={styles.input}
+                  placeholder={`${user.nickname} 엔터테인먼트`}
+                  placeholderTextColor={colors.text.muted}
+                  value={editCompany}
+                  onChangeText={setEditCompany}
+                  maxLength={100}
+                />
+                <AppText style={styles.modalLabel}>호칭</AppText>
+                <TextInput
+                  style={styles.input}
+                  placeholder="대표"
+                  placeholderTextColor={colors.text.muted}
+                  value={editTitle}
+                  onChangeText={setEditTitle}
+                  maxLength={20}
+                />
+                <AppText style={styles.helperText}>
+                  비워두면 기본값(닉네임 엔터테인먼트 / 대표)으로 저장돼요.
+                </AppText>
+
+                {/* v3.92(A-18): 인구통계 — 전부 선택 입력, 미입력은 저장 시 지우기(null) */}
+                {user.is_verified && (
+                  <AppText style={styles.verifiedNotice}>
+                    본인인증 완료 계정은 생년월일·성별을 수정할 수 없습니다.
+                  </AppText>
+                )}
+                <AppText style={styles.modalLabel}>생년월일 (선택)</AppText>
+                <View style={styles.birthRow}>
+                  <TextInput
+                    style={[styles.input, styles.birthInput]}
+                    placeholder="연도(YYYY)"
+                    placeholderTextColor={colors.text.muted}
+                    value={editBirthY}
+                    onChangeText={(v) => setEditBirthY(v.replace(/\D/g, '').slice(0, 4))}
+                    keyboardType="number-pad"
+                    editable={!editSaving && !user.is_verified}
+                  />
+                  <TextInput
+                    style={[styles.input, styles.birthInput]}
+                    placeholder="월"
+                    placeholderTextColor={colors.text.muted}
+                    value={editBirthM}
+                    onChangeText={(v) => setEditBirthM(v.replace(/\D/g, '').slice(0, 2))}
+                    keyboardType="number-pad"
+                    editable={!editSaving && !user.is_verified}
+                  />
+                  <TextInput
+                    style={[styles.input, styles.birthInput]}
+                    placeholder="일"
+                    placeholderTextColor={colors.text.muted}
+                    value={editBirthD}
+                    onChangeText={(v) => setEditBirthD(v.replace(/\D/g, '').slice(0, 2))}
+                    keyboardType="number-pad"
+                    editable={!editSaving && !user.is_verified}
+                  />
+                </View>
+                <AppText style={styles.modalLabel}>성별 (선택)</AppText>
+                <View style={styles.chipWrap}>
+                  {GENDER_OPTIONS.map((opt) => (
+                    <Chip
+                      key={opt.label}
+                      label={opt.label}
+                      selected={editGender === opt.value}
+                      onPress={() => setEditGender(opt.value)}
+                      disabled={editSaving || !!user.is_verified}
+                    />
+                  ))}
+                </View>
+                <AppText style={styles.modalLabel}>지역 (선택)</AppText>
+                <View style={styles.chipWrap}>
+                  {REGION_OPTIONS.map((r) => (
+                    <Chip
+                      key={r}
+                      label={r}
+                      selected={editRegion === r}
+                      onPress={() => setEditRegion(editRegion === r ? null : r)}
+                      disabled={editSaving}
+                    />
+                  ))}
+                </View>
+                <AppText style={styles.modalLabel}>SNS 채널 (선택, 최대 {SNS_MAX}개)</AppText>
+                {editSns.map((url, idx) => (
+                  <View style={styles.snsRow} key={idx}>
+                    <TextInput
+                      style={[styles.input, styles.snsInput]}
+                      placeholder="https://..."
+                      placeholderTextColor={colors.text.muted}
+                      value={url}
+                      onChangeText={(v) =>
+                        setEditSns((rows) => rows.map((r, i) => (i === idx ? v : r)))
+                      }
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!editSaving}
+                    />
+                    <TouchableOpacity
+                      style={styles.snsRemoveBtn}
+                      onPress={() => setEditSns((rows) => rows.filter((_, i) => i !== idx))}
+                      disabled={editSaving}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <AppText style={styles.snsRemoveText}>✕</AppText>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {editSns.length < SNS_MAX && (
+                  <TouchableOpacity
+                    style={styles.snsAddBtn}
+                    onPress={() => setEditSns((rows) => [...rows, ''])}
+                    disabled={editSaving}
+                  >
+                    <AppText style={styles.snsAddText}>+ URL 추가</AppText>
+                  </TouchableOpacity>
+                )}
+                {!!editError && <AppText style={styles.editErrorText}>{editError}</AppText>}
+              </ScrollView>
               <View style={styles.modalBtnRow}>
                 <TouchableOpacity
                   style={[styles.modalBtn, styles.modalBtnCancel]}
@@ -503,7 +870,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    overflow: 'hidden', // v3.92: 이미지 원형 클리핑 (하단 여백은 avatarWrap이 담당)
   },
   avatarText: {
     fontSize: 28,
@@ -755,5 +1122,114 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: 15,
     fontWeight: '700',
+  },
+  // v3.92(A-16): 아바타 편집
+  avatarWrap: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  avatarImg: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.bg.surface2,
+  },
+  avatarEditBadge: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+  },
+  avatarEditBadgeText: {
+    fontSize: 11,
+    color: colors.text.secondary,
+    fontWeight: '600',
+  },
+  // v3.92(A-18): 인구통계 편집(모달 확장)
+  modalScroll: {
+    maxHeight: 440,
+  },
+  verifiedNotice: {
+    fontSize: 12,
+    color: colors.text.muted,
+    marginBottom: 8,
+  },
+  birthRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  birthInput: {
+    flex: 1,
+    minWidth: 0,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+  },
+  chipSelected: {
+    backgroundColor: colors.accent.primary,
+    borderColor: colors.accent.primary,
+  },
+  chipText: {
+    fontSize: 13,
+    color: colors.text.secondary,
+  },
+  chipTextSelected: {
+    color: colors.text.primary,
+    fontWeight: '600',
+  },
+  snsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  snsInput: {
+    flex: 1,
+    minWidth: 0,
+  },
+  snsRemoveBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.bg.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  snsRemoveText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  snsAddBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    marginBottom: 12,
+  },
+  snsAddText: {
+    fontSize: 13,
+    color: colors.accent.primary,
+    fontWeight: '600',
+  },
+  editErrorText: {
+    fontSize: 12,
+    color: '#cc6868',
+    marginBottom: 8,
   },
 });

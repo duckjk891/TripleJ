@@ -4,6 +4,19 @@
 
 ---
 
+## v3.92 (파리티 Wave 2 — 계정 위생: 프로필 이미지·마케팅 동의·인구통계 편집) — 2026-08-29
+
+**수행** (계약: MAIDOL auth.py 413~951 등 로컬 소스 실측):
+1. **프로필 이미지(A-16)**: services/authService.ts 신규(업로드 web/native 분기·삭제·프록시 URL). 설정 아바타 탭 → 앱 내 선택지(사진 선택/기본 이미지로/취소) → DocumentPicker(image/*, 기존 관행) → 클라 5MB·타입 선검증 → 업로드 즉시 반영. 서버가 512x512 크롭. DELETE 배선(이미지 있을 때만 노출).
+2. **마케팅 동의(A-17)**: 알림 설정 섹션 스위치 — GET 성공 시에만 노출, 낙관 토글+실패 롤백. 이력 목록은 MAIDOL도 미노출이라 생략(파리티).
+3. **인구통계(A-18)**: 기획사 정보 편집 모달 확장 — 생년월일 연/월/일 입력(1900~오늘 검증), 성별 칩, 지역 18개 칩, SNS URL 최대 5개. PATCH 1회(exclude_unset, null=지우기). is_verified 계정은 생년월일·성별 페이로드 제외(서버 400 방지).
+- authStore: AuthUser 필드 확장(profile_image·birth_date·gender·region·sns_links·is_verified 등)+setUser 액션.
+
+**검증**: tsc 0 오류. 실행 테스트 0건(서버 다운) — PENDING_TESTS §2 v3.92 등록.
+**변경**: services/authService.ts(신규), stores/authStore.ts, screens/SettingsScreen.tsx.
+
+---
+
 ## v3.91 (파리티 Wave 1 — 회원탈퇴+저비용 배선 6건, 서버 다운 중 코드 선행) — 2026-08-29
 
 **요청**: 파리티 감사 권장 순서대로 진행, 서버 테스트 불가하므로 미실행 테스트 로그(PENDING_TESTS.md) 유지.

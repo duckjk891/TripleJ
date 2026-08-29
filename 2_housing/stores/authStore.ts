@@ -9,6 +9,27 @@ interface AuthUser {
   nickname: string;
   company_name?: string | null;
   display_title?: string | null;
+  // v3.92 계정 위생 — /auth/me 응답 필드(로그인 응답엔 일부만 옴, 편집 진입 시 getMe로 보강)
+  profile_image?: string | null;
+  bio?: string | null;
+  birth_date?: string | null; // "YYYY-MM-DD"
+  gender?: string | null; // male | female | other
+  region?: string | null; // 17개 시·도 또는 '해외'
+  nationality?: string | null; // domestic | foreign
+  sns_links?: string[];
+  is_verified?: boolean; // 본인인증 계정은 birth_date/gender 수정 금지(서버 400)
+}
+
+/** PATCH /auth/me/profile 페이로드 — undefined=미전송, null=지우기 (백엔드 exclude_unset 계약) */
+export interface ProfilePatch {
+  company_name?: string;
+  display_title?: string;
+  bio?: string;
+  birth_date?: string | null;
+  gender?: string | null;
+  region?: string | null;
+  nationality?: string | null;
+  sns_links?: string[];
 }
 
 const TOKEN_KEY = 'auth-token-v1';
@@ -29,7 +50,9 @@ interface AuthState {
     displayTitle?: string,
     extra?: Record<string, any>  // birth_date/nationality/gender/region/consents/referral_code (현행 백엔드 필수 필드 포함)
   ) => Promise<boolean>;
-  updateProfile: (patch: { company_name?: string; display_title?: string; bio?: string }) => Promise<boolean>;
+  updateProfile: (patch: ProfilePatch) => Promise<boolean>;
+  /** v3.92: 서버 반영 후 로컬 user 부분 갱신(프로필 이미지·getMe 보강 등) */
+  setUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
   clearError: () => void;
 }
@@ -95,10 +118,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   updateProfile: async (patch) => {
     set({ isLoading: true, error: null });
     try {
-      const body: Record<string, string> = {};
-      if (patch.company_name !== undefined) body.company_name = patch.company_name;
-      if (patch.display_title !== undefined) body.display_title = patch.display_title;
-      if (patch.bio !== undefined) body.bio = patch.bio;
+      // undefined 필드만 제외 — null은 "지우기"로 그대로 전송(백엔드 PATCH exclude_unset 계약)
+      const body: Record<string, any> = {};
+      (Object.keys(patch) as Array<keyof ProfilePatch>).forEach((key) => {
+        if (patch[key] !== undefined) body[key] = patch[key];
+      });
       const res = await api.patch('/auth/me/profile', body);
       const updated = res.data?.user ?? res.data;
       set((state) => ({
@@ -114,6 +138,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       return false;
     }
   },
+  setUser: (patch) =>
+    set((state) => ({ user: state.user ? { ...state.user, ...patch } : state.user })),
   logout: () => {
     setAuthToken(null);
     AsyncStorage.removeItem(TOKEN_KEY).catch(() => {});
