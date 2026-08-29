@@ -5,6 +5,16 @@
 
 ---
 
+## v3.98 — 2026-08-29 — 파리티 Wave 8: Kits 음성 변환+MR 피치 (전 시나리오 미실행 — 서버 다운, PENDING_TESTS 이월)
+
+> 실행 테스트 0건(서버 다운). tsc 0 오류만 확인. 시나리오는 PENDING_TESTS.md §2 v3.98.
+
+- [api][미실행] voice-models 503 분기, 변환 시작 400/409
+- [e2e][미실행] 변환 폴링→MR 패널(2트랙 프리뷰·피치)→병합→변환본 발매, native wav 캐시 재생
+- 회귀[미실행]: 일반 발매 경로(use_voice_converted 미지정) 무영향, dead code getVoiceModels 제거 영향 없음
+
+---
+
 ## v3.97 — 2026-08-29 — 파리티 Wave 7: 비트뷰/메트로놈+차트 일간 (전 시나리오 미실행 — 서버 다운, PENDING_TESTS 이월)
 
 > 실행 테스트 0건(서버 다운). tsc 0 오류만 확인. 시나리오는 PENDING_TESTS.md §2 v3.97.

@@ -22,6 +22,7 @@ import {
   generationStreamUrl,
   isGenerationInProgress,
 } from '../services/musicService';
+import { vcStatusLabel } from '../services/voiceConvertService';
 import { GenerationItem } from '../types';
 
 // ── v3.93 생성 이력 화면 ─────────────────────────────────────────────────────
@@ -52,6 +53,15 @@ function statusLabel(g: GenerationItem): string {
   if (g.status === 'completed') return g.result_track_id ? '발매됨' : '완료';
   if (g.status === 'failed') return '실패';
   return g.status;
+}
+
+// v3.98(A-8): Kits 음성 변환 진입 라벨 — 변환 이력이 있으면 현재 상태를 보여준다
+// (상태 흐름은 voice_convert.py/kits_service.py: pending→converting→awaiting_merge→merging→completed/failed)
+function vcActionLabel(g: GenerationItem): string {
+  const s = g.voice_conversion_status;
+  if (!s || s === 'failed') return '내 목소리로 변환';
+  const label = vcStatusLabel(s);
+  return label ? `내 목소리: ${label}` : '내 목소리로 변환';
 }
 
 export default function GenerationHistoryScreen({ navigation }: Props) {
@@ -233,6 +243,20 @@ export default function GenerationHistoryScreen({ navigation }: Props) {
             {inProgress ? '이어보기' : item.status === 'completed' ? '결과 보기' : '자세히'}
           </AppText>
         </View>
+        {/* v3.98(A-8): Kits 음성 변환 진입 — 완료된 생성만 (voice_convert.py:108 completed 필수) */}
+        {item.status === 'completed' && (
+          <TouchableOpacity
+            style={styles.vcBtn}
+            onPress={() => {
+              console.log('[GenHistory] 음성 변환 진입:', JSON.stringify({ id: item.id, vc: item.voice_conversion_status || null }));
+              navigation.navigate('VoiceConvert', { generationId: item.id });
+            }}
+            hitSlop={{ top: 4, bottom: 4 }}
+          >
+            <Feather name="mic" size={12} color={colors.accent.primary} />
+            <AppText style={styles.vcBtnText}>{vcActionLabel(item)}</AppText>
+          </TouchableOpacity>
+        )}
       </TouchableOpacity>
     );
   };
@@ -376,4 +400,17 @@ const styles = StyleSheet.create({
   },
   cardDate: { color: colors.text.muted, fontSize: 11 },
   cardAction: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
+  // v3.98(A-8): 음성 변환 진입 버튼
+  vcBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.accent.primary,
+  },
+  vcBtnText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
 });

@@ -319,7 +319,5 @@ export const generationStreamUrl = (genId: string, variant = 0): string => {
 export const isGenerationInProgress = (g: Pick<GenerationItem, 'status'>): boolean =>
   g.status === 'pending' || g.status === 'processing';
 
-export const getVoiceModels = async () => {
-  const response = await api.get('/kits/voice-models');
-  return response.data;
-};
+// v3.98(A-8): 미사용이던 getVoiceModels(/kits/voice-models)는 실계약 주석과 함께
+// voiceConvertService.getKitsVoiceModels로 이전 — 여기서는 제거(중복 방지).

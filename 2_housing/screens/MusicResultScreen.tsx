@@ -22,6 +22,7 @@ import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { getGenerationStatus, generationStreamUrl } from '../services/musicService';
+import { voiceConvertStreamUrl } from '../services/voiceConvertService';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 
@@ -107,6 +108,10 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   // v3.93: 생성 이력에서 이미 트랙 확정(발매)된 생성으로 진입 시 재저장(중복 트랙) 방지
   const [isSaved, setIsSaved] = useState(!!route.params?.alreadySaved);
+  // v3.98(A-8): Kits 음성 변환본으로 발매 준비 — 미리듣기는 변환본 스트림,
+  // 저장은 use_voice_converted:true (tracks.py:1379). 변환은 variant 0 전용(tracks.py:1418)
+  // 이라 A/B 비교 없이 variant 0으로 확정한다.
+  const useVc = !!route.params?.useVoiceConverted;
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
@@ -121,7 +126,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const hasError = !!store.error;
   const hasResult = !!store.resultUrl;
   // v3.93: 트랙 확정 전 + 클립 2개 이상일 때만 A/B 비교 노출 (확정/저장 후엔 단일 플레이어)
-  const showComparison = hasResult && variantCount > 1 && !isSaved && !store.savedTrackId;
+  // v3.98(A-8): 음성 변환본 발매 준비 모드에선 비교 없이 변환본(variant 0) 단일 플레이어
+  const showComparison = hasResult && variantCount > 1 && !isSaved && !store.savedTrackId && !useVc;
 
   // Load audio
   useEffect(() => {
@@ -135,6 +141,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       let audioUrl: string;
       if (store.savedTrackId) {
         audioUrl = `${BACKEND_BASE_URL}/api/tracks/stream-proxy/${store.savedTrackId}`;
+      } else if (useVc && store.generationId) {
+        // v3.98(A-8): 변환본 미리듣기 — GET /voice-convert/{id}/stream (?token= 인증)
+        audioUrl = voiceConvertStreamUrl(store.generationId);
       } else if (store.generationId) {
         // v3.93: variant별 스트림(?variant=N) + expo-av 헤더 미지원 대비 ?token= 쿼리 인증
         audioUrl = generationStreamUrl(store.generationId, selectedVariant);
@@ -318,7 +327,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
       ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
       // v3.93: 2-variant 확정 — 선택한 클립이 트랙이 됨 (tracks.py:1386 variant_index, 0=BC)
-      variant_index: selectedVariant,
+      // v3.98(A-8): 음성 변환본 발매 — use_voice_converted:true는 variant 0 전용(tracks.py:1418)
+      variant_index: useVc ? 0 : selectedVariant,
+      ...(useVc ? { use_voice_converted: true } : {}),
     };
     console.log('[Save] 저장 요청:', JSON.stringify(payload));
 
@@ -371,7 +382,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
           ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
           // v3.93: 커버 경유 저장도 동일하게 선택 variant로 확정
-          variant_index: selectedVariant,
+          // v3.98(A-8): 변환본 발매 모드면 동일하게 use_voice_converted + variant 0
+          variant_index: useVc ? 0 : selectedVariant,
+          ...(useVc ? { use_voice_converted: true } : {}),
         };
         const res = await api.post('/tracks/upload-from-generation', payload);
         const trackId = res.data?.id;
@@ -508,6 +521,12 @@ export default function MusicResultScreen({ navigation, route }: Props) {
               <AppText style={styles.trackSubtitle}>
                 {composerName} | {store.tempo} 템포
               </AppText>
+              {/* v3.98(A-8): 음성 변환본 발매 준비 안내 */}
+              {useVc && !isSaved && (
+                <AppText style={styles.vcNotice}>
+                  내 목소리 버전 — 저장하면 이 오디오로 발매돼요
+                </AppText>
+              )}
 
               {/* Progress bar */}
               <View style={styles.progressContainer}>
@@ -769,6 +788,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text.secondary,
     marginBottom: 20,
+  },
+  // v3.98(A-8): 음성 변환본 발매 준비 안내
+  vcNotice: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.accent.primary,
+    marginTop: -12,
+    marginBottom: 16,
   },
   progressContainer: {
     width: '100%',

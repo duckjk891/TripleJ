@@ -95,6 +95,15 @@ export interface GenerationItem {
   created_at?: string;
   updated_at?: string;
   completed_at?: string | null;
+  // v3.98(A-8): Kits 음성 변환 필드 — generate.py:86 _serialize가 문서 전체를 통과시키고
+  // voice_convert.py·kits_service.py가 이 필드들을 기록한다.
+  voice_conversion_status?: string | null;
+  voice_conversion_progress?: number;
+  voice_conversion_error?: string | null;
+  voice_converted_url?: string | null;
+  voice_converted_vocal_url?: string | null;
+  voice_converted_backing_url?: string | null;
+  voice_model_id?: number | null;
 }
 
 /** v3.93: GET /generate/ 응답 (generate.py:649 list_generations) */

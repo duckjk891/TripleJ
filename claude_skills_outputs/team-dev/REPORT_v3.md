@@ -4,6 +4,19 @@
 
 ---
 
+## v3.98 (파리티 Wave 8 — Kits 음성 변환·MR 피치 프리뷰/병합) — 2026-08-29
+
+**수행** (계약: voice_convert.py·kits_service.py 실측 — 입력은 완료된 생성물 고정, ⭐ 과금 없음 확인):
+- voiceConvertService(신규): 모델 목록·변환 시작·폴링·MR 피치 프리뷰(wav→web blob/native 캐시 파일)·병합·스트림 3종(?token=).
+- VoiceConvertScreen(신규): 모델 선택+강도/믹스/피치 → 5초 폴링(타임아웃 팝업) → MR 패널(보컬/MR 2트랙 프리뷰, 피치·볼륨 실시간) → 병합 → 완료(변환본 발매 진입). 진입점: 생성 이력 완료 카드 "내 목소리로 변환"(MAIDOL 배치 등가).
+- MusicResultScreen: use_voice_converted 발매 경로(variant 0 고정). musicService의 dead code getVoiceModels 제거(감사 A-8 지적분).
+- **범위 조정**: 녹음/파일 업로드 소스는 서버에 없음(생성물 고정) — 껍데기 UI 미제작.
+
+**검증**: tsc 0 오류. 실행 테스트 0건 — PENDING_TESTS §2 v3.98 등록.
+**변경**: voiceConvertService·VoiceConvertScreen(신규), GenerationHistoryScreen, MusicResultScreen, musicService, types, App.tsx.
+
+---
+
 ## v3.97 (파리티 Wave 7 — 비트뷰/메트로놈·차트 일간 탭) — 2026-08-29
 
 **수행** (계약: tracks.py:848~/charts.py:285 실측):
