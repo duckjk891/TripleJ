@@ -37,10 +37,12 @@ interface ChartTrack {
   lyrics?: string;
 }
 
-type ChartTab = 'top100' | 'weekly' | 'monthly' | 'new' | 'queue';
+type ChartTab = 'top100' | 'daily' | 'weekly' | 'monthly' | 'new' | 'queue';
 
 const TABS: { key: ChartTab; label: string; endpoint: string }[] = [
   { key: 'top100', label: 'TOP 100', endpoint: '/charts/top100' },
+  // v3.97(B-3): 일간 차트 — backend charts.py VALID_CHART_TYPES('daily') / MAIDOL ChartPage 탭과 동일 순서(일간→주간→월간)
+  { key: 'daily', label: '일간', endpoint: '/charts/daily' },
   { key: 'weekly', label: '주간', endpoint: '/charts/weekly' },
   { key: 'monthly', label: '월간', endpoint: '/charts/monthly' },
   { key: 'new', label: '신곡', endpoint: '/tracks/?sort=created_at&limit=100' },

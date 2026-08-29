@@ -24,6 +24,8 @@ import { usePlayerStore } from '../stores/playerStore';
 import { applyPlaybackAudioMode, updateMediaSession } from '../services/audioMode';
 import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
+// v3.97(A-9): 비트뷰/메트로놈 — MAIDOL BeatTrackView 이식(RN View 시각화)
+import BeatTrackView from '../components/BeatTrackView';
 import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import ReportModal from '../components/ReportModal';
@@ -157,6 +159,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
   const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
   const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
+  const [showBeats, setShowBeats] = useState(false);                    // v3.97(A-9): 진행바 아래 비트 시각화 토글
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
@@ -730,8 +733,30 @@ export default function PlayerScreen({ route, navigation }: any) {
         />
         <View style={styles.timeRow}>
           <AppText variant="caption" tone="muted">{formatTime(isSeeking ? seekValue : position)}</AppText>
+          {/* v3.97(A-9): 비트뷰 토글 — 진행바 근처(MAIDOL은 생성 결과에 상시 노출, AIDOL은 토글로 자연스럽게) */}
+          <TouchableOpacity
+            style={[styles.beatToggleBtn, showBeats && styles.beatToggleBtnActive]}
+            onPress={() => {
+              if (__DEV__) console.info('[PlayerScreen] 비트뷰 토글', { open: !showBeats, id: track?.id });
+              setShowBeats((v) => !v);
+            }}
+            accessibilityLabel="비트 보기"
+          >
+            <Feather name="activity" size={12} color={showBeats ? colors.accent.primary : colors.text.muted} />
+            <AppText variant="caption" tone={showBeats ? 'accent' : 'muted'}>비트</AppText>
+          </TouchableOpacity>
           <AppText variant="caption" tone="muted">{formatTime(duration)}</AppText>
         </View>
+        {/* 토글 시에만 mount — 폴링/틱도 그때만 돈다(성능). key로 곡 전환 시 내부 상태 리셋 */}
+        {showBeats && track?.id ? (
+          <BeatTrackView
+            key={String(track.id)}
+            trackId={String(track.id)}
+            positionMillis={position}
+            isPlaying={isPlaying}
+            isOwner={isMyTrack}
+          />
+        ) : null}
       </View>
 
       {/* Controls — 유튜브 뮤직 패턴: 셔플 | 이전 | 재생 | 다음 | 반복 */}
@@ -1137,6 +1162,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.text.muted,
   },
+  // v3.97(A-9): 비트뷰 토글 버튼 — 시간 표시 가운데의 작은 칩
+  beatToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+  },
+  beatToggleBtnActive: { borderColor: colors.accent.primary },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',

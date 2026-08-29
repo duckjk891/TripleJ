@@ -4,6 +4,17 @@
 
 ---
 
+## v3.97 (파리티 Wave 7 — 비트뷰/메트로놈·차트 일간 탭) — 2026-08-29
+
+**수행** (계약: tracks.py:848~/charts.py:285 실측):
+- **비트뷰(A-9)**: beatsService(신규)+BeatTrackView(신규, RN View 기반 8초 창 렌더·10Hz 보간·다운비트 마디 강조) — 플레이어 진행바 옆 "비트" 토글로 마운트(OFF=비용 0). pending/running 3초 폴링, failed는 소유자만 재시도(서버 403 계약). 메트로놈은 MAIDOL과 동일한 WebAudio 합성이라 웹만 노출, 네이티브는 시각화만(구조상 불가).
+- **차트 일간(B-3)**: /charts/daily 탭 추가(TOP100 다음, MAIDOL 순서). v3.96 최신앨범 섹션(top100 한정) 무영향.
+
+**검증**: tsc 0 오류. 실행 테스트 0건 — PENDING_TESTS §2 v3.97 등록.
+**변경**: beatsService·metronome·BeatTrackView(신규), PlayerScreen, ChartScreen.
+
+---
+
 ## v3.96 (파리티 Wave 6 — 앨범 관리·홈 최신앨범) — 2026-08-29
 
 **수행** (계약: albums.py 실측 — 트랙 1개+본인 트랙만, 마지막 트랙 제거=앨범 자동삭제, 순서변경=집합 일치 필수, AI 커버 **무료** 확인):
