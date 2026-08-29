@@ -29,6 +29,9 @@ import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import TrackShareDownloadSheet, { SheetMode } from '../components/TrackShareDownloadSheet';
+// v3.96(A-2): 내 앨범 관리 — 앨범 탭 + 생성 모달, 상세/관리는 AlbumDetailScreen
+import AlbumCreateModal from '../components/AlbumCreateModal';
+import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
 
 interface Track {
   id: number;
@@ -46,7 +49,7 @@ interface Track {
   lyrics?: string;
 }
 
-type MyMusicTab = 'tracks' | 'lyrics';
+type MyMusicTab = 'tracks' | 'albums' | 'lyrics';
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
@@ -77,6 +80,10 @@ export default function MyMusicScreen({ navigation }: any) {
   const [sdTrack, setSdTrack] = useState<Track | null>(null);   // 공유/다운로드 선택지 대상
   const [sdMode, setSdMode] = useState<SheetMode>('share');
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
+  // v3.96(A-2): 내 앨범 탭
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [albumsLoading, setAlbumsLoading] = useState(false);
+  const [showAlbumCreate, setShowAlbumCreate] = useState(false);
 
   const fetchTracks = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -118,11 +125,25 @@ export default function MyMusicScreen({ navigation }: any) {
     }
   }, []);
 
+  // v3.96(A-2): 내 앨범 목록 (GET /albums/my — 비공개 포함)
+  const fetchAlbums = useCallback(async () => {
+    setAlbumsLoading(true);
+    try {
+      const res = await getMyAlbums(1, 50);
+      setAlbums(res.albums);
+    } catch (err: any) {
+      console.error('[MyMusic] fetchAlbums 실패', { status: err?.response?.status });
+    } finally {
+      setAlbumsLoading(false);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (user) {
         fetchTracks();
         fetchMyCharacter();
+        fetchAlbums();
       }
     }, [user])
   );
@@ -343,6 +364,12 @@ export default function MyMusicScreen({ navigation }: any) {
           <AppText style={[styles.tabText, activeTab === 'tracks' && styles.tabTextActive]}>작곡</AppText>
         </TouchableOpacity>
         <TouchableOpacity
+          style={[styles.tab, activeTab === 'albums' && styles.tabActive]}
+          onPress={() => setActiveTab('albums')}
+        >
+          <AppText style={[styles.tabText, activeTab === 'albums' && styles.tabTextActive]}>앨범</AppText>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.tab, activeTab === 'lyrics' && styles.tabActive]}
           onPress={() => setActiveTab('lyrics')}
         >
@@ -369,6 +396,42 @@ export default function MyMusicScreen({ navigation }: any) {
             }
           />
         )
+      )}
+
+      {/* v3.96(A-2): 앨범 탭 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}
+      {activeTab === 'albums' && (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: hasMiniPlayer ? 140 : 100 }}>
+          <TouchableOpacity style={styles.albumCreateBtn} activeOpacity={0.8} onPress={() => setShowAlbumCreate(true)}>
+            <Feather name="plus" size={16} color={colors.accent.primary} />
+            <AppText style={styles.albumCreateText}>새 앨범 만들기</AppText>
+          </TouchableOpacity>
+          {albumsLoading && albums.length === 0 ? (
+            <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
+          ) : albums.length === 0 ? (
+            <EmptyState title="아직 만든 앨범이 없어요." hint="발매한 곡들을 묶어 앨범으로 소개해보세요!" />
+          ) : (
+            albums.map((a) => (
+              <TouchableOpacity
+                key={a.id} style={styles.albumRow} activeOpacity={0.75}
+                onPress={() => navigation.getParent()?.navigate('AlbumDetail', { albumId: String(a.id) })}
+                accessibilityLabel={`앨범 ${a.title}`}
+              >
+                <View style={styles.albumRowCover}>
+                  {albumCoverUri(a.cover_image)
+                    ? <Image source={{ uri: albumCoverUri(a.cover_image)! }} style={styles.albumRowCoverImg} />
+                    : <AppText style={{ fontSize: 20, color: colors.text.muted }}>♪</AppText>}
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <AppText style={styles.albumRowTitle} numberOfLines={1}>{a.title}</AppText>
+                  <AppText style={styles.albumRowMeta}>
+                    {`${a.track_count ?? 0}곡${a.is_public === false ? ' · 비공개' : ''}`}
+                  </AppText>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.text.muted} />
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
       )}
 
       {/* 작사 탭 - DB에 저장된 트랙의 가사 + 현재 작업 중인 가사 */}
@@ -443,6 +506,16 @@ export default function MyMusicScreen({ navigation }: any) {
           ) : null}
         </ScrollView>
       )}
+
+      {/* v3.96(A-2): 앨범 생성 모달 — 생성 성공 시 목록 갱신 + 상세로 이동 */}
+      <AlbumCreateModal
+        visible={showAlbumCreate}
+        onClose={() => setShowAlbumCreate(false)}
+        onCreated={(album) => {
+          fetchAlbums();
+          navigation.getParent()?.navigate('AlbumDetail', { albumId: String(album.id) });
+        }}
+      />
 
       {/* 공유·다운로드 선택지 (쇼츠/릴스/틱톡·화질별 영상·mp3) */}
       <TrackShareDownloadSheet
@@ -770,6 +843,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface2, borderRadius: 8,
   },
   ownActionText: { fontSize: 12, color: colors.text.secondary, fontWeight: '600' },
+  // v3.96(A-2): 앨범 탭
+  albumCreateBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 12, marginBottom: 12,
+    borderWidth: 1, borderColor: colors.accent.primary, borderStyle: 'dashed' as any,
+    borderRadius: 12,
+  },
+  albumCreateText: { fontSize: 13, fontWeight: '700', color: colors.accent.primary },
+  albumRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 12, marginBottom: 10,
+  },
+  albumRowCover: {
+    width: 56, height: 56, borderRadius: 8, overflow: 'hidden',
+    backgroundColor: colors.bg.surface2, justifyContent: 'center', alignItems: 'center',
+  },
+  albumRowCoverImg: { width: 56, height: 56 },
+  albumRowTitle: { fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 3 },
+  albumRowMeta: { fontSize: 12, color: colors.text.muted },
   lyricsSection: { paddingHorizontal: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 10 },
   lyricsCard: { backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: colors.border.subtle },

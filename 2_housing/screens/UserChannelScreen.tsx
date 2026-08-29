@@ -33,7 +33,6 @@ export default function UserChannelScreen() {
   const [tab, setTab] = useState<Tab>('music');
   const [tracks, setTracks] = useState<any[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);
-  const [albumBusy, setAlbumBusy] = useState<string | null>(null); // 트랙 로딩 중인 앨범 id
   const [feeds, setFeeds] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,21 +96,10 @@ export default function UserChannelScreen() {
     navigation.navigate('Player', { track });
   };
 
-  // v3.49: 앨범 탭 → 앨범 상세(트랙 포함) 조회 후 앨범 전체를 큐로 재생
-  const openAlbum = async (album: any) => {
-    if (albumBusy) return;
-    setAlbumBusy(String(album.id));
-    if (__DEV__) console.info('[UserChannel] 앨범 열기', { albumId: album.id });
-    try {
-      const res = await api.get(`/albums/${album.id}`);
-      const albumTracks = res.data?.tracks || [];
-      if (albumTracks.length) playTrack(albumTracks[0], albumTracks);
-      else if (__DEV__) console.warn('[UserChannel] 빈 앨범', { albumId: album.id });
-    } catch (err: any) {
-      console.error('[UserChannel] 앨범 조회 실패', { albumId: album.id, status: err?.response?.status });
-    } finally {
-      setAlbumBusy(null);
-    }
+  // v3.96(A-2): 앨범 탭 → 앨범 상세 화면으로 이동(열람 + 내 앨범이면 관리). 즉시재생은 상세의 '전체 재생'.
+  const openAlbum = (album: any) => {
+    if (__DEV__) console.info('[UserChannel] 앨범 열기 → AlbumDetail', { albumId: album.id });
+    navigation.navigate('AlbumDetail', { albumId: String(album.id) });
   };
 
   // 앨범 cover_image는 '/api/...' 풀경로로 옴 — 절대 URL로 보정
@@ -236,9 +224,6 @@ export default function UserChannelScreen() {
                           {albumCoverUri(a.cover_image)
                             ? <Image source={{ uri: albumCoverUri(a.cover_image)! }} style={styles.albumCoverImg} />
                             : <AppText variant="title2" tone="muted">♪</AppText>}
-                          {albumBusy === String(a.id) ? (
-                            <View style={styles.albumLoading}><ActivityIndicator size="small" color={colors.accent.primary} /></View>
-                          ) : null}
                         </View>
                         <AppText variant="footnote" numberOfLines={1} style={{ marginTop: 6 }}>{a.title}</AppText>
                         <AppText variant="caption" tone="muted">{a.track_count ?? 0}곡</AppText>

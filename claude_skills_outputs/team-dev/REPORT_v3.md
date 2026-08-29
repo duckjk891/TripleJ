@@ -4,6 +4,18 @@
 
 ---
 
+## v3.96 (파리티 Wave 6 — 앨범 관리·홈 최신앨범) — 2026-08-29
+
+**수행** (계약: albums.py 실측 — 트랙 1개+본인 트랙만, 마지막 트랙 제거=앨범 자동삭제, 순서변경=집합 일치 필수, AI 커버 **무료** 확인):
+- albumService(신규): 전체 앨범 API+커버 업로드 분기. AlbumDetailScreen(신규): 열람+소유자 관리(정보수정·트랙 추가/제거/위아래 정렬·커버 업로드/AI 무료/첫곡 자동·삭제) 단일 화면 분기 — 홈/채널/마이페이지 3진입점 수렴. AlbumCreateModal(신규): 트랙 다중선택 생성.
+- MyMusicScreen "앨범" 탭 추가, ChartScreen TOP100에 "최신 앨범" 가로 섹션, UserChannel 앨범 카드=상세 이동으로 교체.
+- 드래그 라이브러리 미도입(위/아래 버튼), MAIDOL 구버전 use_character → 백엔드 기준 include_character로 수정 이식.
+
+**검증**: tsc 0 오류. 실행 테스트 0건 — PENDING_TESTS §2 v3.96 등록.
+**변경**: albumService·AlbumDetailScreen·AlbumCreateModal(신규), MyMusicScreen, ChartScreen, UserChannelScreen, App.tsx.
+
+---
+
 ## v3.95 (파리티 Wave 5 — 소명(Appeal)·CS 공식 DM·피드 딥링크) — 2026-08-29
 
 **수행** (계약: reports.py:341~463·dm.py:115~169·feeds.py:494~515 실측):

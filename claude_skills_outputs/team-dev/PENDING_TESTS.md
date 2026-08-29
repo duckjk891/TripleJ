@@ -85,3 +85,12 @@
 - [ ] [e2e] 웹 /feed/{id} 직접 진입 착지·상호작용; 공유 URL로 열기; (네이티브 빌드 후) aidol://feed/{id}
 - [ ] 회귀 [e2e] **linking 최초 활성화로 웹 URL 동기화 켜짐** — 기존 화면 전환·OAuth 콜백·새로고침 폴백 정상 확인 (중요)
 - [ ] 참고: aidol:// 스킴은 네이티브 빌드 후 유효(Expo Go는 exp:// 경로), https 유니버설 링크는 AASA/assetlinks 서버 배포 필요(미착수)
+
+### v3.96 — 앨범 관리 + 홈 최신앨범 (코드만 완료, tsc 0)
+- [ ] [api] GET /albums/latest — 배열·presigned cover_image로 홈 섹션 렌더
+- [ ] [api] POST /albums/ 타 유저 트랙 포함 → 400 에러 showAlert 표기
+- [ ] [api] 마지막 트랙 제거 → album_deleted 처리(goBack)
+- [ ] [api] AI 커버 POST /albums/cover/generate → PATCH /cover 체인, **⭐ 차감 0 확인(무료 명시)**
+- [ ] [e2e] 마이페이지 앨범 탭→생성(트랙 2곡·순서 변경)→상세 진입→관리(정보수정/트랙추가/순서/커버 업로드 웹·네이티브/삭제)
+- [ ] [e2e] 홈 최신앨범 카드→상세→전체재생→큐가 앨범 순서와 일치
+- [ ] [e2e] 비회원 공개 앨범 열람 가능·관리 버튼 미노출, 타인 앨범 관리 미노출

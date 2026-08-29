@@ -19,6 +19,8 @@ import { AppText, Tag, Button, EmptyState, ScreenLayout } from '../components/ui
 import TrackRow, { trackRowStyles } from '../components/TrackRow';
 import Fab from '../components/Fab';
 import TrackActionSheet from '../components/TrackActionSheet';
+// v3.96(A-20): 홈(차트) 최신 앨범 가로 섹션 — GET /albums/latest, 탭 시 앨범 상세로
+import { Album, getLatestAlbums, albumCoverUri } from '../services/albumService';
 
 interface ChartTrack {
   id: string;
@@ -61,6 +63,7 @@ export default function ChartScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionTrack, setActionTrack] = useState<ChartTrack | null>(null); // ⋮ 오버플로 메뉴 대상
+  const [latestAlbums, setLatestAlbums] = useState<Album[]>([]); // v3.96(A-20): TOP100 상단 최신 앨범
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -96,12 +99,31 @@ export default function ChartScreen() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { fetchChart(activeTab); }, [activeTab]));
+  // v3.96(A-20): 홈 진입점(TOP 100)에만 최신 앨범 섹션 — 실패해도 차트는 그대로(섹션만 미노출)
+  const fetchLatestAlbums = useCallback(async () => {
+    try {
+      const list = await getLatestAlbums(10);
+      if (__DEV__) console.info('[ChartScreen] 최신 앨범 로드', { count: list.length });
+      setLatestAlbums(list);
+    } catch (err: any) {
+      console.error('[ChartScreen] 최신 앨범 로드 실패', { status: err?.response?.status });
+      setLatestAlbums([]);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    fetchChart(activeTab);
+    if (activeTab === 'top100') fetchLatestAlbums();
+  }, [activeTab]));
 
   // 헤더는 App.tsx 탭 공통(tabHeader): 좌 로고 + 우 마이페이지(user) 아이콘.
   // 검색은 별도 '검색' 탭(SearchScreen)으로 이동 — 여기 상단 🔍 제거.
 
-  const handleRefresh = () => { setRefreshing(true); fetchChart(activeTab); };
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchChart(activeTab);
+    if (activeTab === 'top100') fetchLatestAlbums(); // v3.96(A-20): 홈 새로고침 시 최신 앨범도 갱신
+  };
   const handleTabPress = (tab: ChartTab) => { if (tab !== activeTab) setActiveTab(tab); };
 
   const requireLogin = (): boolean => {
@@ -209,6 +231,34 @@ export default function ChartScreen() {
         if (loading) {
           return <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />;
         }
+        // v3.96(A-20): 홈(TOP 100) 상단 최신 앨범 가로 섹션 — 채널 앨범 카드와 동일 스타일
+        const latestAlbumsHeader = (!isQueue && activeTab === 'top100' && latestAlbums.length > 0) ? (
+          <View style={styles.albumSection}>
+            <AppText variant="footnote" tone="secondary" style={styles.albumSectionLabel}>최신 앨범</AppText>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.albumScrollRow}>
+              {latestAlbums.map((a) => (
+                <TouchableOpacity
+                  key={a.id} style={styles.albumCard} activeOpacity={0.75}
+                  onPress={() => {
+                    if (__DEV__) console.info('[ChartScreen] 최신 앨범 탭 → AlbumDetail', { albumId: a.id });
+                    navigation.navigate('AlbumDetail', { albumId: String(a.id) });
+                  }}
+                  accessibilityLabel={`앨범 ${a.title}`}
+                >
+                  <View style={styles.albumCover}>
+                    {albumCoverUri(a.cover_image)
+                      ? <Image source={{ uri: albumCoverUri(a.cover_image)! }} style={styles.albumCoverImg} />
+                      : <AppText variant="title2" tone="muted">{'♪'}</AppText>}
+                  </View>
+                  <AppText variant="footnote" numberOfLines={1} style={{ marginTop: 6 }}>{a.title}</AppText>
+                  <AppText variant="caption" tone="muted" numberOfLines={1}>
+                    {[a.artist_name, `${a.track_count ?? 0}곡`].filter(Boolean).join(' · ')}
+                  </AppText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null;
         if (data.length > 0) {
           return (
             <>
@@ -225,6 +275,7 @@ export default function ChartScreen() {
                 data={data}
                 keyExtractor={(item, i) => `${item.id}-${i}`}
                 renderItem={renderTrack}
+                ListHeaderComponent={latestAlbumsHeader}
                 contentContainerStyle={{ paddingBottom: playerStore.track ? 140 : 80 }}
                 refreshControl={isQueue ? undefined :
                   <RefreshControl refreshing={refreshing} onRefresh={handleRefresh}
@@ -314,6 +365,19 @@ const styles = StyleSheet.create({
   chipBar: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
   chipRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   spinner: { marginTop: spacing.huge },
+  // v3.96(A-20): 최신 앨범 섹션 — UserChannelScreen 앨범 카드와 동일 규격(120px)
+  albumSection: {
+    paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle,
+  },
+  albumSectionLabel: { fontWeight: '700', letterSpacing: 0.3, marginBottom: spacing.sm },
+  albumScrollRow: { gap: spacing.md, paddingVertical: spacing.xs },
+  albumCard: { width: 120 },
+  albumCover: {
+    width: 120, height: 120, borderRadius: radius.lg, overflow: 'hidden',
+    backgroundColor: colors.bg.surface1, alignItems: 'center', justifyContent: 'center',
+  },
+  albumCoverImg: { width: '100%', height: '100%' },
   guestBanner: {
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     backgroundColor: colors.bg.surface1,
