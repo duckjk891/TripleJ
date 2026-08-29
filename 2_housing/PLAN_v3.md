@@ -36,6 +36,16 @@ VoiceManage 버튼·설명("내가 부른 노래로 나만의 목소리를 만�
 
 ---
 
+## v3.89 — 2026-08-29 — 커버 미세조정(refine)·버전 히스토리 이식 (서버 다운 중 코드 선행)
+
+### 요청(원문 요지)
+"서버 부팅 대기 중 프론트만으로 작업" — MAIDOL 파리티 다음 순번(F-3). 서버 다운이라 계약은 로컬 MAIDOL 워크트리의 backend_9004 소스로 확정(upload.py:410-756), 런타임 검증은 서버 복구 후 이월.
+
+### 범위
+CoverGenerationScreen 단일 파일: generate-cover 응답의 cover_session_id 보관 → 결과 단계에 미세조정 입력(refine-cover, 10분 타임아웃) + 버전 내비게이션(◀ 버전 N ▶, refine_prompt 캡션) + 이전 버전 [이 버전 사용](revert-cover — refine의 base가 세션 현재 버전이라 필수) → 확정은 기존 PUT /tracks/{id}. 실패 시 showAlert+기존 버전 유지, defensive 파싱. 참고: MAIDOL 프론트 래퍼의 refine 페이로드 버그(문자열 spread)는 백엔드 모델 기준으로 교정 이식.
+
+---
+
 ## v3.85 — 2026-08-27 — 전 앱 팝업의 앱 내 다이얼로그 전환 (시스템 팝업 전면 금지)
 
 ### 요청(원문)
