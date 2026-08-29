@@ -38,6 +38,21 @@ const LOADING_STEPS = [
 interface ChatMessage { type: 'director' | 'user'; text: string; }
 interface MyTrack { id: string; title: string; cover_image?: string; cover_image_url?: string; genre?: string[]; mood?: string[]; }
 
+// v3.89: 커버 미세조정(refine) 버전 히스토리 엔트리 — 백엔드 cover_sessions.cover_refine_history와 동일 구조
+interface CoverHistoryEntry {
+  version: number;
+  object_name: string;
+  refine_prompt: string | null;
+  image_model?: string;
+  created_at?: string;
+}
+
+// 커버 object_name → 프록시 미리보기 URL (다른 화면들과 동일 관행)
+const coverPreviewUrl = (obj: string) =>
+  `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}`;
+
+const REFINE_PROMPT_MAX_LEN = 500; // 백엔드 REFINE_PROMPT_MAX_LEN과 동일
+
 type Props = NativeStackScreenProps<any, 'CoverGeneration'>;
 
 // 화면 모드
@@ -76,6 +91,16 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
   const [coverObjectName, setCoverObjectName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // v3.89: 미세조정(refine) 세션 — doGenerate는 재진입 mount에서 실행되고 세션 id는
+  // 결과 화면 단계에서만 쓰이므로 로컬 state로 충분 (store 불필요)
+  const [coverSessionId, setCoverSessionId] = useState<string | null>(null);
+  const [coverHistory, setCoverHistory] = useState<CoverHistoryEntry[]>([]);
+  const [currentVersion, setCurrentVersion] = useState(0); // 서버 세션의 현재 버전
+  const [viewVersion, setViewVersion] = useState(0);       // 화면에서 보고 있는 버전
+  const [refineInput, setRefineInput] = useState('');
+  const [refining, setRefining] = useState(false);
+  const [reverting, setReverting] = useState(false);
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
@@ -124,6 +149,13 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     }
     setMode('loading');
     setErrorMsg(null);
+    // v3.89: 새 생성 시작 — 이전 refine 세션/히스토리 폐기 (MAIDOL v58 Q4-a 관행:
+    // 재생성마다 백엔드가 신규 cover_session을 발급하므로 옛 세션은 버림)
+    setCoverSessionId(null);
+    setCoverHistory([]);
+    setCurrentVersion(0);
+    setViewVersion(0);
+    setRefineInput('');
     // v3.80: 로컬 state 대신 musicStore에서 읽음 — 대기 후 재진입해도 "아티스트 포함" 유지.
     // 재생성 시 선택 유지를 위해 ref에 백업 (handleStyleConfirm에서 복원).
     const charObjectName = useMusicStore.getState().coverCharacterObjectName;
@@ -152,8 +184,33 @@ export default function CoverGenerationScreen({ navigation }: Props) {
         timeout: 600000, // GPT Image 2는 캐릭터 ref 포함 시 5분 이상 걸리기도 함 → 10분
       });
       console.log('[Cover] generate-cover OK', Date.now() - t0, 'ms');
-      setCoverImageUrl(`${BACKEND_BASE_URL}${res.data.image_url}`);
-      setCoverObjectName(res.data.object_name);
+      const objectName: string | null = res.data?.object_name ?? null;
+      setCoverImageUrl(
+        res.data?.image_url
+          ? `${BACKEND_BASE_URL}${res.data.image_url}`
+          : objectName
+            ? coverPreviewUrl(objectName)
+            : null
+      );
+      setCoverObjectName(objectName);
+      // v3.89: cover_session_id 보관 → refine 세션 시작 (version 0 = 원본).
+      // 옛 백엔드 응답에 cover_session_id가 없으면 refine UI 비활성 (defensive).
+      const sessionId: string | null = res.data?.cover_session_id ?? null;
+      if (sessionId && objectName) {
+        console.log('[Cover] refine 세션 시작 cover_session_id:', sessionId);
+        setCoverSessionId(sessionId);
+        setCoverHistory([{
+          version: 0,
+          object_name: objectName,
+          refine_prompt: null,
+          image_model: res.data?.image_model,
+          created_at: new Date().toISOString(),
+        }]);
+        setCurrentVersion(0);
+        setViewVersion(0);
+      } else {
+        console.log('[Cover] cover_session_id 없음 — refine 비활성');
+      }
       setMode('result');
     } catch (err: any) {
       console.warn('[Cover] generate-cover FAIL', {
@@ -305,8 +362,105 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     navigation.popToTop();
   };
 
+  // v3.89: 미세조정 — 텍스트 지시로 현재 커버를 다듬어 새 버전 생성 (multi-turn i2i)
+  const handleRefine = async () => {
+    const rp = refineInput.trim();
+    if (!rp || refining || reverting) return;
+    if (!coverSessionId) {
+      showAlert('안내', '커버 세션 정보가 없어요. 다시 생성 후 시도해주세요.');
+      return;
+    }
+    if (rp.length > REFINE_PROMPT_MAX_LEN) {
+      showAlert('입력 확인', `수정 요청은 ${REFINE_PROMPT_MAX_LEN}자 이하로 입력해주세요.`);
+      return;
+    }
+    setRefining(true);
+    console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
+    const t0 = Date.now();
+    try {
+      const res = await api.post(
+        '/upload/refine-cover',
+        { cover_session_id: coverSessionId, refine_prompt: rp },
+        { timeout: 600000 } // 이미지 모델이 느릴 수 있음 — generate와 동일하게 10분
+      );
+      // defensive 파싱 — 서버 응답이 예상과 다르면 기존 버전 유지
+      const newObj: string | null = res.data?.cover_object_name ?? null;
+      const newVer: number | null =
+        typeof res.data?.current_version === 'number' ? res.data.current_version : null;
+      if (!newObj || newVer === null) {
+        throw new Error('서버 응답 형식이 올바르지 않습니다.');
+      }
+      console.log('[Cover] refine-cover OK', Date.now() - t0, 'ms', {
+        cover_session_id: coverSessionId, version: newVer,
+      });
+      setCoverObjectName(newObj);
+      setCoverImageUrl(coverPreviewUrl(newObj));
+      setCurrentVersion(newVer);
+      setViewVersion(newVer);
+      const serverHistory = res.data?.cover_refine_history;
+      if (Array.isArray(serverHistory) && serverHistory.length > 0) {
+        setCoverHistory(serverHistory);
+      } else {
+        // 응답에 히스토리가 없으면 로컬로 push (defensive)
+        setCoverHistory((prev) => [
+          ...prev,
+          { version: newVer, object_name: newObj, refine_prompt: rp, created_at: new Date().toISOString() },
+        ]);
+      }
+      setRefineInput('');
+    } catch (err: any) {
+      console.warn('[Cover] refine-cover FAIL', {
+        cover_session_id: coverSessionId,
+        message: err?.message,
+        code: err?.code,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
+      showAlert(
+        '미세조정 실패',
+        (err?.response?.data?.error || err?.message || '커버 수정에 실패했습니다.') +
+          '\n기존 버전은 그대로 유지돼요.'
+      );
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  // v3.89: 이전 버전으로 되돌리기 — 서버 세션의 current_version을 바꿔야
+  // 이후 refine이 해당 버전을 기반으로 동작 (백엔드 refine은 세션의 cover_object_name을 base로 사용)
+  const handleUseVersion = async (targetVersion: number) => {
+    if (!coverSessionId || refining || reverting || targetVersion === currentVersion) return;
+    setReverting(true);
+    console.log('[Cover] revert-cover 요청', { cover_session_id: coverSessionId, target_version: targetVersion });
+    try {
+      const res = await api.post('/upload/revert-cover', {
+        cover_session_id: coverSessionId,
+        target_version: targetVersion,
+      });
+      const newObj: string | null = res.data?.cover_object_name ?? null;
+      if (!newObj) throw new Error('서버 응답 형식이 올바르지 않습니다.');
+      const newVer: number =
+        typeof res.data?.current_version === 'number' ? res.data.current_version : targetVersion;
+      console.log('[Cover] revert-cover OK', { cover_session_id: coverSessionId, version: newVer });
+      setCoverObjectName(newObj);
+      setCoverImageUrl(coverPreviewUrl(newObj));
+      setCurrentVersion(newVer);
+      setViewVersion(newVer);
+    } catch (err: any) {
+      console.warn('[Cover] revert-cover FAIL', {
+        cover_session_id: coverSessionId,
+        message: err?.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
+      showAlert('버전 변경 실패', err?.response?.data?.error || err?.message || '버전 되돌리기에 실패했습니다.');
+    } finally {
+      setReverting(false);
+    }
+  };
+
   // 결과: 다시 생성 → 스타일 변경 화면
-  const handleRegenerate = () => {
+  const doRegenerate = () => {
     setCoverImageUrl(null);
     setErrorMsg(null);
     setStyleInput('');
@@ -315,6 +469,22 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     setChatHistory([
       { type: 'director', text: '원하시는 커버 이미지의 느낌을 다시 설명해주세요.' },
     ]);
+  };
+
+  const handleRegenerate = () => {
+    // v3.89: 수정 이력이 있으면 폐기 확인 (재생성 시 백엔드가 신규 세션 발급 → 옛 history 폐기)
+    if (coverHistory.length > 1) {
+      showAlert(
+        '다시 생성할까요?',
+        `다시 생성하면 지금까지의 수정 이력 ${coverHistory.length}개가 폐기됩니다. 이 동작은 되돌릴 수 없어요.`,
+        [
+          { text: '취소', style: 'cancel' },
+          { text: '다시 생성', style: 'destructive', onPress: doRegenerate },
+        ]
+      );
+      return;
+    }
+    doRegenerate();
   };
 
   // ─── 로딩 화면 (MusicLoadingScreen과 동일) ───
@@ -374,8 +544,21 @@ export default function CoverGenerationScreen({ navigation }: Props) {
 
   // ─── 결과 화면 (MusicResultScreen과 동일 패턴) ───
   if (mode === 'result') {
+    // v3.89: 버전 히스토리 — 오름차순 정렬 후 보고 있는 버전의 엔트리로 이미지 표시
+    const sortedHistory = [...coverHistory].sort((a, b) => (a.version ?? 0) - (b.version ?? 0));
+    const viewIdx = sortedHistory.findIndex((e) => e.version === viewVersion);
+    const viewedEntry = viewIdx >= 0 ? sortedHistory[viewIdx] : null;
+    const displayedUri = viewedEntry ? coverPreviewUrl(viewedEntry.object_name) : coverImageUrl;
+    const isViewingCurrent = !viewedEntry || viewVersion === currentVersion;
+    const busy = refining || reverting;
+    const canRefine = !!coverSessionId && !errorMsg && !!coverImageUrl;
+
     return (
-      <View style={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+      >
         <ScrollView contentContainerStyle={[styles.resultContent, { paddingTop: insets.top + 16 }]}>
           {/* 디렉터 메시지 */}
           <View style={styles.directorRow}>
@@ -385,7 +568,13 @@ export default function CoverGenerationScreen({ navigation }: Props) {
             <View style={styles.directorBubble}>
               <AppText style={styles.directorName}>이미지 디렉터</AppText>
               <AppText style={styles.directorText}>
-                {errorMsg ? '앗, 문제가 생겼어요. 다시 시도해볼까요?' : '커버 이미지가 완성됐어요!'}
+                {errorMsg
+                  ? '앗, 문제가 생겼어요. 다시 시도해볼까요?'
+                  : refining
+                    ? '요청하신 부분을 다듬는 중이에요. 잠시만요...'
+                    : canRefine
+                      ? '커버 이미지가 완성됐어요! 마음에 안 드는 부분이 있나요? 말해주시면 바로 다듬어 드릴게요.'
+                      : '커버 이미지가 완성됐어요!'}
               </AppText>
             </View>
           </View>
@@ -397,31 +586,126 @@ export default function CoverGenerationScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* 결과 이미지 */}
-          {coverImageUrl && (
+          {/* 결과 이미지 + 버전 표시 */}
+          {displayedUri && !errorMsg && (
             <View style={styles.resultCard}>
-              <Image source={{ uri: coverImageUrl }} style={styles.resultImage} />
+              <Image source={{ uri: displayedUri }} style={styles.resultImage} />
+              {refining && (
+                <View style={styles.refiningOverlay}>
+                  <ActivityIndicator size="large" color={colors.accent.primary} />
+                </View>
+              )}
+              {/* v3.89: 버전 히스토리 내비게이션 (◀ 버전 N ▶) */}
+              {coverSessionId && sortedHistory.length > 0 && (
+                <>
+                  <View style={styles.versionRow}>
+                    <TouchableOpacity
+                      style={[styles.versionArrow, (viewIdx <= 0 || busy) && styles.versionArrowDisabled]}
+                      disabled={viewIdx <= 0 || busy}
+                      onPress={() => setViewVersion(sortedHistory[viewIdx - 1].version)}
+                    >
+                      <AppText style={styles.versionArrowText}>◀</AppText>
+                    </TouchableOpacity>
+                    <AppText style={styles.versionLabel}>
+                      버전 {viewVersion}
+                      {viewVersion === 0 ? ' (원본)' : ''}
+                      {sortedHistory.length > 1 && isViewingCurrent ? ' · 현재' : ''}
+                    </AppText>
+                    <TouchableOpacity
+                      style={[
+                        styles.versionArrow,
+                        (viewIdx < 0 || viewIdx >= sortedHistory.length - 1 || busy) && styles.versionArrowDisabled,
+                      ]}
+                      disabled={viewIdx < 0 || viewIdx >= sortedHistory.length - 1 || busy}
+                      onPress={() => setViewVersion(sortedHistory[viewIdx + 1].version)}
+                    >
+                      <AppText style={styles.versionArrowText}>▶</AppText>
+                    </TouchableOpacity>
+                  </View>
+                  {!!viewedEntry?.refine_prompt && (
+                    <AppText style={styles.versionPrompt} numberOfLines={1}>
+                      "{viewedEntry.refine_prompt}"
+                    </AppText>
+                  )}
+                </>
+              )}
+            </View>
+          )}
+
+          {/* v3.89: 미세조정 입력 — 현재 버전을 보고 있을 때만 (refine은 서버 세션의 현재 커버 기반) */}
+          {canRefine && isViewingCurrent && (
+            <View style={styles.refineBox}>
+              <AppText style={styles.refineTitle}>미세조정</AppText>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.textInput}
+                  value={refineInput}
+                  onChangeText={setRefineInput}
+                  placeholder="예: 배경을 밤하늘로 바꿔줘"
+                  placeholderTextColor={colors.text.muted}
+                  maxLength={REFINE_PROMPT_MAX_LEN}
+                  editable={!busy}
+                  onSubmitEditing={handleRefine}
+                />
+                <TouchableOpacity
+                  style={[styles.sendBtn, (busy || !refineInput.trim()) && { opacity: 0.4 }]}
+                  onPress={handleRefine}
+                  disabled={busy || !refineInput.trim()}
+                >
+                  {refining ? (
+                    <ActivityIndicator size="small" color={colors.text.primary} />
+                  ) : (
+                    <AppText style={styles.sendBtnText}>적용</AppText>
+                  )}
+                </TouchableOpacity>
+              </View>
+              {refining && (
+                <AppText style={styles.refineHint}>
+                  커버를 다듬고 있어요. 몇 분 정도 걸릴 수 있어요.
+                </AppText>
+              )}
             </View>
           )}
 
           {/* 버튼 */}
           <View style={styles.buttonContainer}>
-            <TouchableOpacity style={styles.regenerateButton} onPress={handleRegenerate}>
+            {/* v3.89: 이전 버전을 보는 중 → "이 버전 사용" (서버 세션 되돌리기) */}
+            {canRefine && !isViewingCurrent && (
+              <TouchableOpacity
+                style={[styles.saveButton, busy && { opacity: 0.5 }]}
+                onPress={() => handleUseVersion(viewVersion)}
+                disabled={busy}
+              >
+                <AppText style={styles.saveButtonText}>
+                  {reverting ? '되돌리는 중...' : '이 버전 사용'}
+                </AppText>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.regenerateButton, busy && { opacity: 0.5 }]}
+              onPress={handleRegenerate}
+              disabled={busy}
+            >
               <AppText style={styles.regenerateButtonText}>다시 생성하기</AppText>
             </TouchableOpacity>
 
-            {coverImageUrl && (
-              <TouchableOpacity style={styles.saveButton} onPress={handleConfirm}>
+            {coverImageUrl && isViewingCurrent && (
+              <TouchableOpacity
+                style={[styles.saveButton, busy && { opacity: 0.5 }]}
+                onPress={handleConfirm}
+                disabled={busy}
+              >
                 <AppText style={styles.saveButtonText}>커버 이미지 확정</AppText>
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={styles.backButton} onPress={() => navigation.popToTop()}>
+            <TouchableOpacity style={styles.backButton} onPress={() => navigation.popToTop()} disabled={busy}>
               <AppText style={styles.backButtonText}>맵으로 돌아가기</AppText>
             </TouchableOpacity>
           </View>
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     );
   }
 
@@ -548,6 +832,27 @@ const styles = StyleSheet.create({
   errorText: { color: colors.status.error, fontSize: 13, lineHeight: 20 },
   resultCard: { alignItems: 'center', marginBottom: 24 },
   resultImage: { width: 240, height: 240, borderRadius: 16, borderWidth: 3, borderColor: colors.accent.primary },
+  // v3.89: 미세조정·버전 히스토리
+  refiningOverlay: {
+    position: 'absolute', top: 0, alignSelf: 'center', width: 240, height: 240,
+    borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  versionRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 12 },
+  versionArrow: {
+    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center',
+    backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  versionArrowDisabled: { opacity: 0.3 },
+  versionArrowText: { color: colors.text.primary, fontSize: 13 },
+  versionLabel: { color: colors.text.primary, fontSize: 14, fontWeight: '700', minWidth: 110, textAlign: 'center' },
+  versionPrompt: { color: colors.text.muted, fontSize: 12, marginTop: 6, maxWidth: 260, textAlign: 'center' },
+  refineBox: {
+    backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14,
+    borderWidth: 1, borderColor: colors.border.subtle, marginBottom: 24,
+  },
+  refineTitle: { color: colors.accent.primary, fontSize: 13, fontWeight: 'bold', marginBottom: 10 },
+  refineHint: { color: colors.text.secondary, fontSize: 12, marginTop: 10, textAlign: 'center' },
   buttonContainer: { gap: 12 },
   regenerateButton: { backgroundColor: colors.bg.surface1, borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
   regenerateButtonText: { color: colors.accent.primary, fontSize: 16, fontWeight: 'bold' },
