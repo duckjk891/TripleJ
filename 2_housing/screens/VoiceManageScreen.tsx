@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,7 +10,6 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
@@ -18,13 +17,7 @@ import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
-import {
-  deleteVoicePersona,
-  deleteVoiceClone,
-  personaVocalStreamUrl,
-  VoicePersona,
-  VoiceClone,
-} from '../services/voiceService';
+import { deleteVoiceClone, VoiceClone } from '../services/voiceService';
 
 // v3.83: 클론 상태 배지 (MAIDOL MyVoiceCloneSection STATUS_BADGE 이식 — 기술 용어 최소화)
 const CLONE_STATUS_BADGE: Record<string, string> = {
@@ -41,6 +34,8 @@ const CLONE_STATUS_BADGE: Record<string, string> = {
 // 내 목소리(정식 클로닝: 노래+문장낭독). 서로 배타(하나 설정 시 다른 쪽 자동 해제).
 // 프리셋은 서버 호출 없음 — 곡 생성 때 vocal/vocalStyle 태그로만 쓰인다.
 // route.params.select === 'artist' → 선택 모드: 설정 완료 시 goBack.
+// v3.102: 구 Voice Persona 자산 목록·미리듣기 제거 — v216 서버 /voice-persona/* 삭제,
+// 내 목소리 목록은 voice_clones(정식 클로닝)만 표시(중복 UI 정리).
 
 type Props = NativeStackScreenProps<any, 'VoiceManage'>;
 
@@ -48,10 +43,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const selectMode = (route.params as any)?.select === 'artist';
 
-  const personas = useVoiceStore((s) => s.personas);
-  const loading = useVoiceStore((s) => s.loading);
-  const fetchPersonas = useVoiceStore((s) => s.fetchPersonas);
-  // v3.83: 정식 클로닝 목록 병합
+  // v3.83: 정식 클로닝 목록
   const clones = useVoiceStore((s) => s.clones);
   const clonesLoading = useVoiceStore((s) => s.clonesLoading);
   const fetchClones = useVoiceStore((s) => s.fetchClones);
@@ -81,10 +73,6 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
     artistVoice?.type === 'preset' ? artistVoice.style : ''
   );
 
-  // 미리듣기
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const [playingId, setPlayingId] = useState<string | null>(null);
-
   // v3.79 UX-1: ArtistResult 가 탭 헤더에 주입한 ‹ 가 남아 이중 화살표가 되지 않도록
   // 진입 시 parent 헤더의 headerLeft 를 정리한다 (자체 헤더 ‹ 하나만 남김).
   // ArtistResult 는 focus 시 재주입하므로 복귀하면 원래대로 돌아온다.
@@ -98,57 +86,14 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
   // v3.83: 위저드에서 돌아왔을 때도 최신 목록 반영 — focus 시 재조회
   useFocusEffect(
     useCallback(() => {
-      fetchPersonas();
       fetchClones();
-    }, [fetchPersonas, fetchClones])
+    }, [fetchClones])
   );
 
   useEffect(() => {
     console.log('[VoiceManage] 진입, selectMode=', selectMode, 'artistVoice=', artistVoice?.type ?? null);
-    return () => {
-      // 화면 이탈 시 사운드 정리
-      soundRef.current?.unloadAsync().catch(() => {});
-      soundRef.current = null;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const stopPreview = async () => {
-    const sound = soundRef.current;
-    soundRef.current = null;
-    setPlayingId(null);
-    if (sound) {
-      try {
-        await sound.stopAsync();
-      } catch {}
-      try {
-        await sound.unloadAsync();
-      } catch {}
-    }
-  };
-
-  const handlePreview = async (p: VoicePersona) => {
-    if (playingId === p.persona_id) {
-      await stopPreview();
-      return;
-    }
-    await stopPreview();
-    try {
-      const url = personaVocalStreamUrl(p.persona_id);
-      if (__DEV__) console.log('[VoiceManage] 미리듣기 시작:', p.persona_id);
-      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
-      soundRef.current = sound;
-      setPlayingId(p.persona_id);
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          stopPreview();
-        }
-      });
-    } catch (err: any) {
-      console.error('[VoiceManage] 미리듣기 실패:', err?.message);
-      showAlert('미리듣기 실패', '목소리 샘플을 재생할 수 없어요. 잠시 후 다시 시도해주세요.');
-    }
-  };
 
   // ── v3.84: 간편(프리셋) 목소리 설정 — 서버 호출 없음 ──
   const handleSavePreset = () => {
@@ -189,22 +134,6 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
     );
   };
 
-  // ── 목록 항목 탭: ready면 (선택 모드 아니어도) 아티스트 목소리로 설정 ──
-  const handleSelect = (p: VoicePersona) => {
-    if (p.status !== 'completed' || !p.persona_id) {
-      showAlert('아직 처리 중', '이 목소리는 아직 준비 중이에요. 처리가 끝난 후 선택해주세요.');
-      return;
-    }
-    if (selectMode) {
-      applyCloneAsArtistVoice(p.persona_id, p.name);
-      return;
-    }
-    showAlert(`"${p.name}"`, '이 목소리를 아티스트 목소리로 설정할까요?', [
-      { text: '취소', style: 'cancel' },
-      { text: '설정', onPress: () => applyCloneAsArtistVoice(p.persona_id, p.name) },
-    ]);
-  };
-
   // ── v3.83: 클론 행 탭 — 검증 대기면 위저드 3단계 재개 / ready면 아티스트 목소리 설정 ──
   const handleCloneTap = (c: VoiceClone) => {
     if (c.status === 'awaiting_verify') {
@@ -224,28 +153,6 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
     showAlert(`"${c.voice_name || '이 목소리'}"`, '이 목소리를 아티스트 목소리로 설정할까요?', [
       { text: '취소', style: 'cancel' },
       { text: '설정', onPress: () => applyCloneAsArtistVoice(c.voice_id!, c.voice_name) },
-    ]);
-  };
-
-  // ── 삭제 ──
-  const handleDelete = (p: VoicePersona) => {
-    showAlert('목소리 삭제', `"${p.name}" 목소리를 삭제할까요?`, [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '삭제',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await stopPreview();
-            await deleteVoicePersona(p.persona_id);
-            if (artistCloneId === p.persona_id) clearArtistVoice();
-            await fetchPersonas();
-          } catch (err: any) {
-            const msg = err?.response?.data?.error || err?.message || '알 수 없는 오류';
-            showAlert('삭제 실패', msg);
-          }
-        },
-      },
     ]);
   };
 
@@ -419,71 +326,15 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         <AppText style={[styles.sectionTitle, { marginTop: 20, marginBottom: 8 }]}>
           내 목소리 목록
         </AppText>
-        {(loading || clonesLoading) && personas.length === 0 && clones.length === 0 ? (
+        {clonesLoading && clones.length === 0 ? (
           <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 16 }} />
-        ) : personas.length === 0 && clones.length === 0 ? (
+        ) : clones.length === 0 ? (
           <AppText style={styles.emptyText}>
             아직 만든 목소리가 없어요. 위에서 내 목소리를 만들어보세요.
           </AppText>
-        ) : (
-          personas.map((p) => {
-            const completed = p.status === 'completed' && !!p.persona_id;
-            const isArtist = artistCloneId === p.persona_id;
-            return (
-              <TouchableOpacity
-                key={p.persona_id || p.name}
-                style={[styles.personaRow, completed && styles.personaRowSelectable]}
-                activeOpacity={completed ? 0.7 : 1}
-                onPress={() => handleSelect(p)}
-                disabled={!completed}
-              >
-                <View style={{ flex: 1 }}>
-                  <View style={styles.personaNameRow}>
-                    <AppText style={styles.personaName} numberOfLines={1}>{p.name}</AppText>
-                    {isArtist && (
-                      <View style={styles.artistBadge}>
-                        <AppText style={styles.artistBadgeText}>아티스트 목소리</AppText>
-                      </View>
-                    )}
-                    {!completed && (
-                      <View style={styles.pendingBadge}>
-                        <AppText style={styles.pendingBadgeText}>처리 중</AppText>
-                      </View>
-                    )}
-                  </View>
-                  {!!p.description && (
-                    <AppText style={styles.personaDesc} numberOfLines={1}>{p.description}</AppText>
-                  )}
-                  <AppText style={styles.personaStatus}>
-                    {completed
-                      ? '사용 가능 — 탭하면 아티스트 목소리로 설정'
-                      : `상태: ${p.status || '알 수 없음'}`}
-                  </AppText>
-                </View>
-                {completed && (
-                  <TouchableOpacity
-                    style={styles.iconBtn}
-                    onPress={() => handlePreview(p)}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  >
-                    <AppText style={styles.iconBtnText}>
-                      {playingId === p.persona_id ? '⏹' : '▶'}
-                    </AppText>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={styles.iconBtn}
-                  onPress={() => handleDelete(p)}
-                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                >
-                  <Feather name="trash-2" size={14} color={colors.text.primary} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            );
-          })
-        )}
+        ) : null}
 
-        {/* ── v3.83: 정식 클로닝 목소리 (persona 목록에 이어 병합 렌더) ── */}
+        {/* ── v3.83: 정식 클로닝 목소리 목록 (v3.102: 구 persona 목록 제거 — 클론만) ── */}
         {clones.map((c) => {
           const ready = c.status === 'ready' && !!c.voice_id;
           const awaiting = c.status === 'awaiting_verify';
@@ -705,5 +556,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  iconBtnText: { color: colors.text.primary, fontSize: 14 },
 });

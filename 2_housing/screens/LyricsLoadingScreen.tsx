@@ -11,6 +11,7 @@ import {
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { useMusicStore } from '../stores/musicStore';
 import { generateLyrics } from '../services/lyricsService';
 import { useGemsStore } from '../stores/gemsStore';
 import { usePointsStore } from '../stores/pointsStore';
@@ -89,6 +90,8 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           const title = result.title || '';
           store.setGeneratedTitle(title);
           store.setGeneratedLyrics(lyrics);
+          // v3.102(B-4): 새로 작사한 가사 — 이전 가사 보관함 출처 스냅샷이 남아있지 않게 정리
+          useMusicStore.getState().setLyricsSource(null);
           store.setIsLoading(false);
           // 캐시 보상 지급
           useGemsStore.getState().earn(GEM_REWARDS.TRACK_LYRICS_DONE, 'track_lyrics_done');

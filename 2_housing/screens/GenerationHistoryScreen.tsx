@@ -22,7 +22,6 @@ import {
   generationStreamUrl,
   isGenerationInProgress,
 } from '../services/musicService';
-import { vcStatusLabel } from '../services/voiceConvertService';
 import { GenerationItem } from '../types';
 
 // ── v3.93 생성 이력 화면 ─────────────────────────────────────────────────────
@@ -55,14 +54,7 @@ function statusLabel(g: GenerationItem): string {
   return g.status;
 }
 
-// v3.98(A-8): Kits 음성 변환 진입 라벨 — 변환 이력이 있으면 현재 상태를 보여준다
-// (상태 흐름은 voice_convert.py/kits_service.py: pending→converting→awaiting_merge→merging→completed/failed)
-function vcActionLabel(g: GenerationItem): string {
-  const s = g.voice_conversion_status;
-  if (!s || s === 'failed') return '내 목소리로 변환';
-  const label = vcStatusLabel(s);
-  return label ? `내 목소리: ${label}` : '내 목소리로 변환';
-}
+// v3.102: "내 목소리로 변환"(Kits, v3.98 A-8) 진입 제거 — v216에서 서버 /voice-convert/* 삭제, 기능 제거 확정
 
 export default function GenerationHistoryScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -128,6 +120,9 @@ export default function GenerationHistoryScreen({ navigation }: Props) {
     music.setMood(gen.mood || '');
     lyrics.setGeneratedTitle(gen.title || '');
     lyrics.setGeneratedLyrics(gen.lyrics || '');
+    // v3.102(B-4): 이력 재개는 가사 출처를 알 수 없음 — 이전 흐름의 lyrics_source 스냅샷이
+    // 발매(upload-from-generation lyrics_id)에 잘못 실리지 않도록 정리 (생성 시점 출처는 서버가 이미 보유)
+    music.setLyricsSource(null);
     if (gen.status === 'completed') {
       music.setStatus('completed');
       music.setError(null);
@@ -243,20 +238,6 @@ export default function GenerationHistoryScreen({ navigation }: Props) {
             {inProgress ? '이어보기' : item.status === 'completed' ? '결과 보기' : '자세히'}
           </AppText>
         </View>
-        {/* v3.98(A-8): Kits 음성 변환 진입 — 완료된 생성만 (voice_convert.py:108 completed 필수) */}
-        {item.status === 'completed' && (
-          <TouchableOpacity
-            style={styles.vcBtn}
-            onPress={() => {
-              console.log('[GenHistory] 음성 변환 진입:', JSON.stringify({ id: item.id, vc: item.voice_conversion_status || null }));
-              navigation.navigate('VoiceConvert', { generationId: item.id });
-            }}
-            hitSlop={{ top: 4, bottom: 4 }}
-          >
-            <Feather name="mic" size={12} color={colors.accent.primary} />
-            <AppText style={styles.vcBtnText}>{vcActionLabel(item)}</AppText>
-          </TouchableOpacity>
-        )}
       </TouchableOpacity>
     );
   };
@@ -400,17 +381,4 @@ const styles = StyleSheet.create({
   },
   cardDate: { color: colors.text.muted, fontSize: 11 },
   cardAction: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
-  // v3.98(A-8): 음성 변환 진입 버튼
-  vcBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    marginTop: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.accent.primary,
-  },
-  vcBtnText: { color: colors.accent.primary, fontSize: 12, fontWeight: '700' },
 });

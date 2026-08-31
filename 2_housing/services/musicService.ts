@@ -221,11 +221,16 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
     bpm: params.bpm ? parseInt(params.bpm) : undefined,
     key: params.musicalKey || undefined,
     negative_tags: params.negativeTags || undefined,
-    // 내 목소리 페르소나 — persona_id 있을 때만 서버 기대값('style_persona'|'voice_persona')으로 변환 전송
+    // 내 목소리 — persona_id 있을 때만 서버 기대값('style_persona'|'voice_persona')으로 변환 전송.
+    // v3.102(B-3): 앱은 clone의 Suno voice_id(=persona_voice_id)를 personaId로 보관·전송한다
+    // (VoiceManage/MusicGeneration이 clone.voice_id를 선택값으로 사용 — v216 권장 경로).
+    // clone_id가 실릴 일은 없지만, 실려도 서버가 역매핑으로 흡수한다(v216 보장).
     persona_id: params.personaId || undefined,
     persona_model: params.personaId
       ? (params.personaModel === 'style' ? 'style_persona' : 'voice_persona')
       : undefined,
+    // v3.102(B-4): 가사 보관함 출처 스냅샷 — { lyrics_id(로컬 id), title, is_mine } (서버 무검증 저장)
+    lyrics_source: params.lyricsSource || undefined,
     model: 'suno',
     duration: 120,
     start_music_gen: true,
@@ -304,7 +309,7 @@ export const deleteGeneration = async (genId: string) => {
 /**
  * v3.93: 생성물 클립 스트림 URL — GET /generate/{id}/stream/?variant=N (generate.py:893)
  * variant 0 = 첫 클립(BC: result_audio_url 폴백), 1+ = variants[N].audio_url.
- * expo-av/<audio>는 헤더를 못 붙이므로 ?token= 쿼리 인증(voiceService.personaVocalStreamUrl 관행).
+ * expo-av/<audio>는 헤더를 못 붙이므로 ?token= 쿼리 인증(스트림 URL 공통 관행).
  */
 export const generationStreamUrl = (genId: string, variant = 0): string => {
   const token = useAuthStore.getState().token;
@@ -319,5 +324,5 @@ export const generationStreamUrl = (genId: string, variant = 0): string => {
 export const isGenerationInProgress = (g: Pick<GenerationItem, 'status'>): boolean =>
   g.status === 'pending' || g.status === 'processing';
 
-// v3.98(A-8): 미사용이던 getVoiceModels(/kits/voice-models)는 실계약 주석과 함께
-// voiceConvertService.getKitsVoiceModels로 이전 — 여기서는 제거(중복 방지).
+// v3.102: Kits 음성 변환(/kits/voice-models·/voice-convert/*, v3.98 A-8) 관련 코드는
+// v216 서버 제거·기능 제거 확정에 따라 voiceConvertService와 함께 삭제됨.

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { GenerationStatus } from '../types';
+import { GenerationStatus, LyricsSourceSnapshot } from '../types';
 
 interface MusicState {
   selectedModel: 'suno' | 'wondera';
@@ -20,6 +20,8 @@ interface MusicState {
   negativeTags: string;
   personaModel: '' | 'style' | 'voice';
   personaId: string | null;
+  /** v3.102(B-4): 가사 보관함에서 작곡 진입 시 출처 스냅샷 — 생성 lyrics_source·발매 lyrics_id에 사용 */
+  lyricsSource: LyricsSourceSnapshot | null;
   subVocal: string;
   subVocalStyle: string;
   coverTrackId: string | null;
@@ -50,6 +52,7 @@ interface MusicState {
   setNegativeTags: (negativeTags: string) => void;
   setPersonaModel: (v: '' | 'style' | 'voice') => void;
   setPersonaId: (id: string | null) => void;
+  setLyricsSource: (v: LyricsSourceSnapshot | null) => void;
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
   setCoverTrackId: (v: string | null) => void;
@@ -83,6 +86,7 @@ const initialState = {
   negativeTags: '',
   personaModel: '' as const,
   personaId: null,
+  lyricsSource: null,
   subVocal: '',
   subVocalStyle: '',
   coverTrackId: null,
@@ -116,6 +120,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setNegativeTags: (negativeTags) => set({ negativeTags }),
   setPersonaModel: (personaModel) => set({ personaModel }),
   setPersonaId: (personaId) => set({ personaId }),
+  setLyricsSource: (lyricsSource) => set({ lyricsSource }),
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),
   setCoverTrackId: (coverTrackId) => set({ coverTrackId }),

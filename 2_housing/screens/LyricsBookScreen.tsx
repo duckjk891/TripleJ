@@ -65,6 +65,9 @@ export default function LyricsBookScreen({ navigation }: Props) {
     music.setLyrics(entry.lyrics);
     music.setGenre(entry.genre || '');
     music.setMood(entry.mood || '');
+    // v3.102(B-4): 가사 출처 스냅샷 — 생성 body lyrics_source·발매 lyrics_id로 전송.
+    // 보관함은 순수 로컬 자산 → lyrics_id는 로컬 id 그대로(서버 무검증 저장), is_mine=true.
+    music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
     const lyrics = useLyricsStore.getState();
     lyrics.setGeneratedTitle(entry.title);
     lyrics.setGeneratedLyrics(entry.lyrics);

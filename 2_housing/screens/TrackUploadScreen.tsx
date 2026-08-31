@@ -16,6 +16,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
+import api from '../services/api';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Button } from '../components/ui';
@@ -125,6 +126,15 @@ export default function TrackUploadScreen({ navigation }: any) {
     setUploading(true);
     setProgress(0);
     try {
+      // v3.102(B-4): 출처 기록 — 기본 아티스트 character_id(best-effort, 실패해도 발매 진행)
+      let characterId: string | undefined;
+      try {
+        const res = await api.get('/character/me');
+        const ch = res.data?.character;
+        characterId = ch ? String(ch.character_id ?? ch.id ?? ch._id ?? '') || undefined : undefined;
+      } catch (err: any) {
+        console.warn('[TrackUpload] /character/me 조회 실패 — character_id 생략', { status: err?.response?.status });
+      }
       const track = await uploadTrackFile(
         {
           file: audioFile,
@@ -135,6 +145,7 @@ export default function TrackUploadScreen({ navigation }: any) {
           lyrics,
           aiModel: aiTool || undefined,
           isPublic,
+          characterId,
         },
         setProgress
       );

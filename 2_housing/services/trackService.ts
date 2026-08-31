@@ -36,6 +36,10 @@ export interface TrackUploadParams {
   lyrics?: string;
   aiModel?: string;
   isPublic?: boolean;
+  /** v3.102(B-4): 출처 기록 — 기본 아티스트 character_id (v216: 무효여도 업로드 실패 없음) */
+  characterId?: string;
+  /** v3.102(B-4): 출처 기록 — 가사 보관함 로컬 id (직접 업로드 화면은 현재 미전송) */
+  lyricsId?: string;
 }
 
 export function fileExt(fileName: string): string {
@@ -97,6 +101,9 @@ export async function uploadTrackFile(
   if (params.tags?.trim()) formData.append('tags', params.tags.trim());
   if (params.lyrics?.trim()) formData.append('lyrics', params.lyrics.trim());
   if (params.aiModel) formData.append('ai_model', params.aiModel);
+  // v3.102(B-4): 출처 기록(옵션) — v216 openapi 실측: tracks/upload multipart에 character_id/lyrics_id 존재
+  if (params.characterId) formData.append('character_id', params.characterId);
+  if (params.lyricsId) formData.append('lyrics_id', params.lyricsId);
   formData.append('is_public', String(params.isPublic !== false));
 
   console.info('[trackService] uploadTrackFile 시작', {

@@ -95,6 +95,23 @@ interface TrackData {
   cover_character?: CoverCharacter | null;
   has_music_video?: boolean;
   music_video_url?: string | null;
+  // v3.102(B-4): v216 출처 메타 — 값 있는 키만 온다(null·키부재 생략 규약)
+  source_meta?: {
+    artist_name?: string | null;
+    persona_name?: string | null;
+    lyrics_title?: string | null;
+    lyrics_is_mine?: boolean | null;
+  } | null;
+}
+
+// v3.102(B-4): source_meta 한 줄 요약 — 값 있는 항목만 " · "로 연결, 없으면 null(비표시)
+function buildSourceMetaLine(meta: TrackData['source_meta']): string | null {
+  if (!meta) return null;
+  const parts: string[] = [];
+  if (meta.artist_name) parts.push(`아티스트 ${meta.artist_name}`);
+  if (meta.persona_name) parts.push(`목소리 ${meta.persona_name}`);
+  if (meta.lyrics_title) parts.push(`가사 ${meta.lyrics_title}${meta.lyrics_is_mine ? ' (내 가사)' : ''}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 function formatTime(millis: number): string {
@@ -740,6 +757,15 @@ export default function PlayerScreen({ route, navigation }: any) {
             {track?.artist_name || '알 수 없는 아티스트'} {'›'}
           </AppText>
         </TouchableOpacity>
+        {/* v3.102(B-4): 출처 메타 한 줄 — source_meta 값 있는 항목만 (v216 규약: null·키부재 생략) */}
+        {(() => {
+          const sourceLine = buildSourceMetaLine(track?.source_meta);
+          return sourceLine ? (
+            <AppText variant="caption" tone="muted" center numberOfLines={1} style={{ marginTop: 2 }}>
+              {sourceLine}
+            </AppText>
+          ) : null;
+        })()}
       </View>
 
       {/* Progress Bar */}

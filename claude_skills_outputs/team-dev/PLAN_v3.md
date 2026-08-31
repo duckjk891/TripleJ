@@ -36,6 +36,31 @@ VoiceManage 버튼·설명("내가 부른 노래로 나만의 목소리를 만�
 
 ---
 
+## v3.103 — 2026-08-31 — B-1 연동: 아티스트 N명 체제 전환 (v216 정본 계약)
+
+### 범위
+- MyArtists를 /character/list 기반으로: slots{used,max}, [＋추가]=슬롯 여유 시 신규(무료/⭐15 spend extra_slot→max+1), 개별 삭제 DELETE /character/{cid}, 기본 아티스트(is_default) 표시·변경.
+- 재생성은 반드시 character_id 지정(슬롯 409 방지), 신규 생성은 미지정(409 시 슬롯 안내).
+- **레거시 폴백 필수**: list가 비고 me가 있으면 me 조립 카드 1장(구 계약 유지 — 마이그레이션 전 계정). DELETE /character/me(전체 삭제)는 더 이상 개별 삭제 용도로 쓰지 않음.
+- B-3 연결 UI: 아티스트 상세에서 목소리 연결/해제 PATCH persona_id(ready 클론만), persona_status missing 시 재연결 유도.
+
+---
+
+## v3.102 — 2026-08-31 — 미러링(v216) 대응 1: 소멸 API 정리 + B-3/B-4 배선 (9004 미러링 완료)
+
+### 배경
+백엔드 v216 회신: 9004에 v212~v215 반영. §5 소멸 — /voice-convert/*·/kits/voice-models·/voice-persona/* 제거(404 실측).
+
+### 범위
+1. 음성 변환(v3.98) **완전 제거**(대표 확정: B안 — 백엔드 제거 수용)
+2. 구 voice-persona 잔재 정리(클론 체계로 일원화)
+3. B-4: 생성/업로드에 출처 4필드(character_id·persona_id·persona_model·lyrics_id)+lyrics_source 스냅샷 전송
+4. B-3: 곡 생성 persona 주입을 persona_voice_id 경로로 정합
+- 병행: 회귀 api 스모크(별도 tester)
+- 후속: v3.103 B-1 N-아티스트 전환, v3.104 B-5 커버 보관함+출처 표시
+
+---
+
 ## v3.101 — 2026-08-31 — 만 14세 미만 보호자 동의 (대표 정책 확정: 도입)
 
 ### 범위 (감사 A-19)

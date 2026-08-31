@@ -5,6 +5,16 @@
 
 ---
 
+## v3.102 — 2026-08-31 — v216 미러링 회귀 스모크 (api) — 전 항목 PASS
+
+- 파괴적 변경 0: 생성(variants·stream variant·VC필드 유지)·커버(cover-sessions/history/refine 라우트)·트랙(my·beats·related·daily·click)·피로도·앨범·계정(consents·profile 왕복)·소셜(feeds·dm·reports)·클로닝(list·availability) 전부 기존 계약 유지.
+- **.env MINIO_PUBLIC_HOST 보존 + presign 외부 200 재확인 — CRITICAL 없음.**
+- 소멸 3계열(/kits·/voice-convert·/voice-persona) 404 — v216 §5 일치. 대표 확정: 기능 제거 수용(B안).
+- 신규: /character/* 전체·cover-sessions. **주의: 레거시 계정은 /character/list가 빈 배열(마이그레이션 미실행, v216 §7-5) — me/save 폴백 필수(v3.103 설계 반영).** me의 character_id=null·characters_count=1.
+- B-4: 트랙 응답 출처는 source_meta 단일 키(기존 곡 null 정상).
+
+---
+
 ## v3.101 — 2026-08-31 — 보호자 동의 (서버 플래그 OFF — e2e는 플래그 전환 후)
 
 - 실측: guardian-consent 라우트 4종 실서버 존재, `signup-config.guardian_consent_enabled=false`(OFF) — 런타임 플래그 분기 구현. 보호자 연락은 휴대폰(SMS), 착지 웹은 서버측 제공. ⭐ 지급 로직 서버 부재 → 문구 미표기(백엔드 요청 후보).

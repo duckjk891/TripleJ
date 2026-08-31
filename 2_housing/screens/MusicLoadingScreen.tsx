@@ -224,6 +224,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           // v3.91: 참고 음악(업로드 응답) + 참고음 세기 — generateWithSuno가 reference_audio_*/audio_weight로 전송
           referenceData: referenceData || undefined,
           audioWeight: store.audioWeight ?? undefined,
+          // v3.102(B-4): 가사 보관함 출처 스냅샷 — generateWithSuno가 lyrics_source로 전송
+          lyricsSource: store.lyricsSource || undefined,
         };
         console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
           model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,

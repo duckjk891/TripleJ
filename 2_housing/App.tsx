@@ -62,7 +62,6 @@ import MusicGenerationScreen from './screens/MusicGenerationScreen';
 import MusicLoadingScreen from './screens/MusicLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
 import GenerationHistoryScreen from './screens/GenerationHistoryScreen';
-import VoiceConvertScreen from './screens/VoiceConvertScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
@@ -104,12 +103,10 @@ export type StudioStackParamList = {
   // v3.93: resumeGenerationId — 생성 이력에서 진행 중 생성을 이어볼 때 폴링 재개 모드
   MusicLoading: { resumeGenerationId?: string } | undefined;
   // v3.93: alreadySaved — 이력에서 트랙 확정(발매)된 완료 생성으로 진입 시 재저장 방지
-  // v3.98(A-8): useVoiceConverted — Kits 변환본으로 발매 준비 진입(변환 오디오 미리듣기 + use_voice_converted 저장)
-  MusicResult: { alreadySaved?: boolean; useVoiceConverted?: boolean } | undefined;
+  // v3.102: useVoiceConverted 파라미터 제거 — v216에서 서버 /voice-convert/* 삭제, 기능 제거 확정
+  MusicResult: { alreadySaved?: boolean } | undefined;
   // v3.93: 생성 이력 목록 (진행중 이어보기 / 완료 결과 / 실패 확인·삭제)
   GenerationHistory: undefined;
-  // v3.98(A-8): Kits 음성 변환 — 생성 이력의 완료 항목에서 진입 (모델 선택→변환→MR 피치→병합)
-  VoiceConvert: { generationId: string };
   CoverGeneration: undefined;
   // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
   ArtistInput: { forceKind?: 'real' | 'virtual' } | undefined;
@@ -197,7 +194,6 @@ function StudioNavigator() {
       />
       <StudioStack.Screen name="MusicResult" component={MusicResultScreen} />
       <StudioStack.Screen name="GenerationHistory" component={GenerationHistoryScreen} />
-      <StudioStack.Screen name="VoiceConvert" component={VoiceConvertScreen} />
       <StudioStack.Screen name="CoverGeneration" component={CoverGenerationScreen} />
       <StudioStack.Screen name="ArtistInput" component={ArtistInputScreen} />
       <StudioStack.Screen

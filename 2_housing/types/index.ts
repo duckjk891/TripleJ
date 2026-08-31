@@ -57,6 +57,18 @@ export interface MusicParams {
   audioWeight?: number | null;
   /** v3.91: 생성 직전 업로드된 참고 음악(upload-reference 응답) — reference_audio_* 필드로 전송 */
   referenceData?: ReferenceUploadResult | null;
+  /** v3.102(B-4): 가사 보관함에서 고른 가사 출처 스냅샷 — 생성 body의 lyrics_source */
+  lyricsSource?: LyricsSourceSnapshot | null;
+}
+
+/**
+ * v3.102(B-4): 가사 출처 스냅샷 — 서버 LyricsSourceSnapshot(v216 openapi 실측: lyrics_id/title/is_mine).
+ * 가사 보관함(lyricsBookStore)은 순수 로컬 자산이라 lyrics_id는 로컬 id 문자열 그대로(서버 무검증 저장).
+ */
+export interface LyricsSourceSnapshot {
+  lyrics_id: string;
+  title?: string;
+  is_mine?: boolean;
 }
 
 /** POST /generate/upload-reference/ 응답 (backend_9004 generate.py:305~310) */
@@ -95,15 +107,7 @@ export interface GenerationItem {
   created_at?: string;
   updated_at?: string;
   completed_at?: string | null;
-  // v3.98(A-8): Kits 음성 변환 필드 — generate.py:86 _serialize가 문서 전체를 통과시키고
-  // voice_convert.py·kits_service.py가 이 필드들을 기록한다.
-  voice_conversion_status?: string | null;
-  voice_conversion_progress?: number;
-  voice_conversion_error?: string | null;
-  voice_converted_url?: string | null;
-  voice_converted_vocal_url?: string | null;
-  voice_converted_backing_url?: string | null;
-  voice_model_id?: number | null;
+  // v3.102: Kits 음성 변환 필드(voice_conversion_* 등, v3.98 A-8) 제거 — v216 서버 기능 삭제 확정
 }
 
 /** v3.93: GET /generate/ 응답 (generate.py:649 list_generations) */

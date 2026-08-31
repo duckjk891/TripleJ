@@ -4,6 +4,18 @@
 
 ---
 
+## v3.102 (v216 미러링 대응 1 — 음성 변환 제거·persona 정리·B-3/B-4 배선) — 2026-08-31
+
+**회귀 스모크(api)**: 전 항목 PASS, 파괴적 변경 0, .env 터널 보존(CRITICAL 없음). 레거시 계정은 /character/list 빈 배열(마이그레이션 미실행, v216 §7-5) — v3.103에 me 폴백 설계 반영.
+**수행**:
+1. **음성 변환 완전 제거**(대표 확정 B안): VoiceConvertScreen·voiceConvertService 삭제, 이력 버튼·결과 분기·라우트·VC 타입 제거(잔여 참조 0).
+2. **구 voice-persona 정리**: voiceService persona 함수·voiceStore personas 제거, VoiceManage·작곡 목소리 스텝을 클론(현행)만으로 일원화. persist 비대상이라 migrate 불필요.
+3. **B-4 배선**: 가사 보관함→작곡 시 lyrics_source 스냅샷 전송(+스테일 정리 2지점), 발매/직접 업로드에 character_id(·lyrics_id), 플레이어에 source_meta 출처 1줄(값 있을 때만).
+4. **B-3 정합**: 앱이 이미 Suno voice_id를 전송 중 — v216 권장 경로와 일치(주석 명시만).
+**검증**: tsc 0. e2e·api 확인은 PENDING_TESTS §v3.102.
+
+---
+
 ## v3.101 (만 14세 미만 보호자 동의 — 대표 정책 확정: 도입) — 2026-08-31
 
 **실측**: 실서버에 guardian-consent 라우트 4종 존재하나 `signup-config.guardian_consent_enabled=false`(OFF). 흐름 = 가입정보+보호자 이름·**휴대폰(SMS)** 제출 → pending 계정 선생성(로그인 403) → 보호자가 서버측 웹 착지에서 승인 → active. 토큰 TTL 72h.
