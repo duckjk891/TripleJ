@@ -33,8 +33,13 @@ interface AttachedImage {
   objectName?: string;
 }
 
-export default function FeedComposeScreen({ navigation }: any) {
+export default function FeedComposeScreen({ navigation, route }: any) {
   const user = useAuthStore((s) => s.user);
+  // v3.115: kind 지원 — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입 시 kind='community'.
+  // 계약(백엔드 feeds.py v133 실측): community는 텍스트 블록만 허용(track 400·image 400·bgm 400, title은 무시·null 저장)
+  // → 커뮤니티 모드에선 제목·음악 첨부·사진 첨부 UI를 숨긴다. 가사 복사(클립보드)와 [item] 마커(텍스트 블록)는 계약상 허용이라 유지.
+  const kind: 'feed' | 'community' = route?.params?.kind === 'community' ? 'community' : 'feed';
+  const isCommunity = kind === 'community';
   // v3.73: 상단 공백 제거 — 고정 50 대신 기기 상태바 높이만큼만(웹 0)
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
@@ -216,7 +221,7 @@ export default function FeedComposeScreen({ navigation }: any) {
   const doSubmit = async (readyImages: AttachedImage[]) => {
     const text = body.trim();
     if (!text && !attached && !attachedItems.length && !readyImages.length) {
-      showAlert('알림', '내용을 입력하거나 음악·사진·아이템을 첨부해주세요.');
+      showAlert('알림', isCommunity ? '공지 내용을 입력해주세요.' : '내용을 입력하거나 음악·사진·아이템을 첨부해주세요.');
       return;
     }
     if (posting) return;
@@ -230,18 +235,19 @@ export default function FeedComposeScreen({ navigation }: any) {
     }
     // v3.70: 아이템은 서버 블록 화이트리스트 제약으로 [item]{JSON} 마커 텍스트 블록으로 저장
     for (const it of attachedItems) blocks.push({ type: 'text', text: `[item]${JSON.stringify(it)}` });
-    if (__DEV__) console.info('[FeedCompose] 피드 등록', { blocks: blocks.length, hasTrack: !!attached, images: readyImages.length });
+    if (__DEV__) console.info('[FeedCompose] 등록', { kind, blocks: blocks.length, hasTrack: !!attached, images: readyImages.length });
     try {
       await api.post('/feeds/', {
-        title: title.trim() || null,
+        // v3.115: community는 서버가 title 무시(null 저장) — 입력 UI도 숨겼으니 null 고정
+        title: isCommunity ? null : (title.trim() || null),
         blocks,
         is_public: true,
-        kind: 'feed',
+        kind,
       });
       navigation.goBack();
     } catch (err: any) {
-      console.error('[FeedCompose] 등록 실패', { status: err?.response?.status });
-      showAlert('오류', '피드 등록에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      console.error('[FeedCompose] 등록 실패', { kind, status: err?.response?.status });
+      showAlert('오류', `${isCommunity ? '공지' : '피드'} 등록에 실패했습니다. 잠시 후 다시 시도해주세요.`);
     } finally {
       setPosting(false);
     }
@@ -269,17 +275,20 @@ export default function FeedComposeScreen({ navigation }: any) {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-        <TextInput
-          style={styles.titleInput}
-          placeholder="제목 (선택)"
-          placeholderTextColor={colors.text.muted}
-          value={title}
-          onChangeText={setTitle}
-          maxLength={80}
-        />
+        {/* v3.115: community는 서버가 제목을 무시(null 저장)하므로 입력 자체를 숨김 */}
+        {!isCommunity ? (
+          <TextInput
+            style={styles.titleInput}
+            placeholder="제목 (선택)"
+            placeholderTextColor={colors.text.muted}
+            value={title}
+            onChangeText={setTitle}
+            maxLength={80}
+          />
+        ) : null}
         <TextInput
           style={styles.bodyInput}
-          placeholder="지금 어떤 음악 이야기를 나누고 싶나요?"
+          placeholder={isCommunity ? '구독자에게 알릴 소식을 적어주세요.' : '지금 어떤 음악 이야기를 나누고 싶나요?'}
           placeholderTextColor={colors.text.muted}
           value={body}
           onChangeText={setBody}
@@ -288,8 +297,8 @@ export default function FeedComposeScreen({ navigation }: any) {
           textAlignVertical="top"
         />
 
-        {/* 첨부된 곡 — 차트와 동일한 TrackRow */}
-        {attached ? (
+        {/* 첨부된 곡 — 차트와 동일한 TrackRow. v3.115: community는 track 블록 400 → 첨부 UI 숨김 */}
+        {isCommunity ? null : attached ? (
           <View style={styles.attachedBox}>
             <View style={styles.attachedHead}>
               <AppText variant="footnote" tone="secondary">첨부된 음악</AppText>
@@ -306,11 +315,14 @@ export default function FeedComposeScreen({ navigation }: any) {
           </TouchableOpacity>
         )}
 
-        {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 4장 */}
-        <TouchableOpacity style={styles.attachBtn} onPress={pickImage} accessibilityLabel="사진 첨부">
-          <Feather name="image" size={18} color={colors.accent.primary} />
-          <AppText variant="body" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
-        </TouchableOpacity>
+        {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 4장.
+            v3.115: community는 image 블록 400(텍스트만 허용) → 첨부 UI 숨김 */}
+        {!isCommunity ? (
+          <TouchableOpacity style={styles.attachBtn} onPress={pickImage} accessibilityLabel="사진 첨부">
+            <Feather name="image" size={18} color={colors.accent.primary} />
+            <AppText variant="body" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
+          </TouchableOpacity>
+        ) : null}
 
         {/* 첨부된 사진 미리보기 — 업로드 중 스피너 / 실패 시 탭하여 재시도, X로 제거 */}
         {images.length ? (

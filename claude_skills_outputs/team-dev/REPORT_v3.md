@@ -4,6 +4,13 @@
 
 ---
 
+## v3.115 (마이페이지 구조 개편 — 대표 피드백) — 2026-08-31
+
+**수행**: 상위 탭 곡·앨범/피드/커뮤니티(곡·앨범 내 곡/앨범/작사 칩), 피드 [새 피드 작성]·커뮤니티 [새 공지 작성](FeedCompose kind=community — 서버 계약대로 제목·음악·사진 숨김·텍스트 전용), 앨범 칩=새 앨범 만들기만(커버 보관함 버튼 제거·화면 보존, 앨범 행→AlbumDetail 관리 기존 배선 확인), 프로필 5지표(발매곡/앨범/재생/**팔로워/팔로잉** — follows/summary+following total 재사용, 백엔드 추가 불필요)·**레벨 제거**.
+**검증**: tsc 0. 변경: MyMusicScreen, FeedComposeScreen, App.tsx.
+
+---
+
 ## v3.111/백엔드 v219 (피드 이미지 첨부 — 배포·검증 완료) + 서버 다운 사고 해결 — 2026-08-31
 
 **백엔드 v219(커밋 63fdeb3)**: POST /upload/feed-image(15MB·jpg/png/webp, PIL 재인코딩 — 1600px 초과만 LANCZOS 축소·q85·투명 WebP·EXIF 정리·무손실 스킵·역전 시 원본), feeds image 블록(본인 prefix 강제·4장 상한·실존 검증·purge 정리·hydration image_url). **실서버 검증**: 11.5MB→1.05MB(91% 절감) 201, 15MB 초과 400, 피드 생성→조회 하이드레이션→이미지 GET 200→삭제 정리 전부 PASS.

@@ -24,7 +24,7 @@ import { useLikesStore } from '../stores/likesStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
-import { AppText, EmptyState, Button } from '../components/ui';
+import { AppText, EmptyState, Button, Tag } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import TrackRow from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
@@ -53,8 +53,10 @@ interface Track {
   lyrics?: string;
 }
 
-// v3.114: 피드·커뮤니티 탭 추가 — 내 채널(UserChannelScreen isSelf)과 동일한 구성
-type MyMusicTab = 'tracks' | 'albums' | 'feed' | 'community' | 'lyrics';
+// v3.115: 상위 탭 3개(곡·앨범/피드/커뮤니티 — UserChannel과 동일 탭명)로 재구성.
+// 기존 작곡/앨범/작사 콘텐츠는 '곡·앨범' 안 하위 칩(곡/앨범/작사)으로 그대로 재배치.
+type MyMusicTab = 'music' | 'feed' | 'community';
+type MusicSubTab = 'tracks' | 'albums' | 'lyrics';
 
 // v3.70과 짝(FeedScreen): 텍스트 블록의 [item]{JSON} 마커 → 아이템 카드. 파싱 실패 시 일반 텍스트 폴백.
 interface FeedItemAttach { name?: string; category?: string; url?: string; img?: string }
@@ -81,7 +83,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const lyricsStore = useLyricsStore();
   const { track: playingTrack } = usePlayerStore();
   const hasMiniPlayer = !!playingTrack;
-  const [activeTab, setActiveTab] = useState<MyMusicTab>('tracks');
+  const [activeTab, setActiveTab] = useState<MyMusicTab>('music');
+  const [musicSub, setMusicSub] = useState<MusicSubTab>('tracks'); // v3.115: 곡·앨범 탭 하위 칩
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -101,6 +104,9 @@ export default function MyMusicScreen({ navigation }: any) {
   const [notices, setNotices] = useState<any[]>([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
+  // v3.115: 프로필 팔로워/팔로잉 수 (null=미조회 — '-' 표시)
+  const [followerCount, setFollowerCount] = useState<number | null>(null);
+  const [followingCount, setFollowingCount] = useState<number | null>(null);
 
   const fetchTracks = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -178,13 +184,30 @@ export default function MyMusicScreen({ navigation }: any) {
     }
   }, []);
 
+  // v3.115: 팔로워/팔로잉 수 — 백엔드 실측 계약:
+  //  - 팔로워: GET /follows/summary/{내id} 의 follower_count (UserChannel이 타 유저에 쓰는 것과 동일 라우트)
+  //  - 팔로잉: 전용 카운트 API 없음 → GET /follows/following?page=1&limit=1 의 total 활용
+  const fetchFollowCounts = useCallback(async () => {
+    const uid = useAuthStore.getState().user?.id;
+    if (!uid) return;
+    const [sRes, gRes] = await Promise.allSettled([
+      api.get(`/follows/summary/${uid}`),
+      api.get('/follows/following', { params: { page: 1, limit: 1 } }),
+    ]);
+    if (sRes.status === 'fulfilled') setFollowerCount(sRes.value.data?.follower_count ?? 0);
+    else console.error('[MyMusic] 팔로워 수 조회 실패', { status: (sRes.reason as any)?.response?.status });
+    if (gRes.status === 'fulfilled') setFollowingCount(gRes.value.data?.total ?? 0);
+    else console.error('[MyMusic] 팔로잉 수 조회 실패', { status: (gRes.reason as any)?.response?.status });
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (user) {
         fetchTracks();
         fetchMyCharacter();
         fetchAlbums();
-        fetchFeeds();
+        fetchFeeds(); // FeedCompose에서 작성 후 goBack 복귀 시 focus로 재조회 → 목록 갱신
+        fetchFollowCounts();
       }
     }, [user])
   );
@@ -382,9 +405,7 @@ export default function MyMusicScreen({ navigation }: any) {
     );
   };
 
-  // 성장 지표 계산
-  const level = Math.floor(tracks.length / 3) + 1;
-  const tracksToNext = 3 - (tracks.length % 3);
+  // 성장 지표 계산 — v3.115: 레벨(LV·다음 레벨까지) 표시 제거(대표 지시, 이 화면 한정), 앨범·팔로워·팔로잉 수 추가
   const totalPlays = tracks.reduce((sum, t) => sum + (t.play_count ?? 0), 0);
   const bestTrack = tracks.length > 0
     ? [...tracks].sort((a, b) => (b.play_count ?? 0) - (a.play_count ?? 0))[0]
@@ -407,11 +428,9 @@ export default function MyMusicScreen({ navigation }: any) {
               <AppText style={styles.growthCompany} numberOfLines={1}>{companyLabel}</AppText>
               <AppText style={styles.growthName} numberOfLines={1}>{displayLabel}님</AppText>
             </View>
-            <View style={styles.levelBadge}>
-              <AppText style={styles.levelBadgeLabel}>LV.</AppText>
-              <AppText style={styles.levelBadgeValue}>{level}</AppText>
-            </View>
+            {/* v3.115: LV 배지 제거 — 레벨 표시는 마이페이지에서 뺀다(대표 지시) */}
           </View>
+          {/* v3.115: 지표 5종 — 발매곡/앨범/재생/팔로워/팔로잉 (레벨 지표 제거). 5열이라 라벨은 짧게 */}
           <View style={styles.growthStatsRow}>
             <View style={styles.growthStat}>
               <AppText style={styles.growthStatValue}>{tracks.length}</AppText>
@@ -419,13 +438,23 @@ export default function MyMusicScreen({ navigation }: any) {
             </View>
             <View style={styles.growthStatDivider} />
             <View style={styles.growthStat}>
-              <AppText style={styles.growthStatValue}>{totalPlays.toLocaleString()}</AppText>
-              <AppText style={styles.growthStatLabel}>총 재생수</AppText>
+              <AppText style={styles.growthStatValue}>{albums.length}</AppText>
+              <AppText style={styles.growthStatLabel}>앨범</AppText>
             </View>
             <View style={styles.growthStatDivider} />
             <View style={styles.growthStat}>
-              <AppText style={styles.growthStatValue}>{tracksToNext}</AppText>
-              <AppText style={styles.growthStatLabel}>다음 레벨까지</AppText>
+              <AppText style={styles.growthStatValue}>{totalPlays.toLocaleString()}</AppText>
+              <AppText style={styles.growthStatLabel}>재생</AppText>
+            </View>
+            <View style={styles.growthStatDivider} />
+            <View style={styles.growthStat}>
+              <AppText style={styles.growthStatValue}>{followerCount == null ? '-' : followerCount.toLocaleString()}</AppText>
+              <AppText style={styles.growthStatLabel}>팔로워</AppText>
+            </View>
+            <View style={styles.growthStatDivider} />
+            <View style={styles.growthStat}>
+              <AppText style={styles.growthStatValue}>{followingCount == null ? '-' : followingCount.toLocaleString()}</AppText>
+              <AppText style={styles.growthStatLabel}>팔로잉</AppText>
             </View>
           </View>
           {bestTrack && (
@@ -464,14 +493,12 @@ export default function MyMusicScreen({ navigation }: any) {
         )}
       </View>
 
-      {/* 탭 바 — v3.114: 피드·커뮤니티 추가(내 채널 = MAIDOL 내 채널 구성). 5개가 되어 폰트만 소폭 축소 */}
+      {/* 탭 바 — v3.115: 상위 3탭(곡·앨범/피드/커뮤니티, UserChannel 탭명과 동일) */}
       <View style={styles.tabBar}>
         {([
-          { key: 'tracks', label: '작곡' },
-          { key: 'albums', label: '앨범' },
+          { key: 'music', label: '곡·앨범' },
           { key: 'feed', label: '피드' },
           { key: 'community', label: '커뮤니티' },
-          { key: 'lyrics', label: '작사' },
         ] as { key: MyMusicTab; label: string }[]).map((t) => (
           <TouchableOpacity
             key={t.key}
@@ -483,10 +510,23 @@ export default function MyMusicScreen({ navigation }: any) {
         ))}
       </View>
 
-      {/* 작곡 탭 */}
+      {/* v3.115: 곡·앨범 하위 칩(곡/앨범/작사) — 차트의 Tag 칩 필터 관행 재사용 */}
+      {activeTab === 'music' && (
+        <View style={styles.subTabRow}>
+          {([
+            { key: 'tracks', label: '곡' },
+            { key: 'albums', label: '앨범' },
+            { key: 'lyrics', label: '작사' },
+          ] as { key: MusicSubTab; label: string }[]).map((s) => (
+            <Tag key={s.key} label={s.label} selected={musicSub === s.key} onPress={() => setMusicSub(s.key)} />
+          ))}
+        </View>
+      )}
+
+      {/* 곡(작곡) — v3.115: '곡·앨범 > 곡' 하위 칩으로 재배치(콘텐츠는 기존 작곡 탭 그대로) */}
       {/* v3.114: '음원 파일 올리기' dashed 진입 버튼 제거 — 레퍼런스 업로드는 작곡 대화에 이미 있어
           마이페이지에 둘 성격이 아님(대표 지시). TrackUploadScreen·trackService·라우트는 보존(진입점만 제거). */}
-      {activeTab === 'tracks' && (
+      {activeTab === 'music' && musicSub === 'tracks' && (
         <View style={{ flex: 1 }}>
           {tracks.length === 0 ? (
             <EmptyState title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
@@ -509,6 +549,7 @@ export default function MyMusicScreen({ navigation }: any) {
       )}
 
       {/* v3.114: 피드/커뮤니티 탭 — 내가 쓴 글(비공개 포함) + 당겨새로고침. 카드 탭 시 상세로 */}
+      {/* v3.115: 상단 [새 피드 작성]/[새 공지 작성] — FeedCompose로(공지는 kind='community'), 복귀 시 focus 재조회로 갱신 */}
       {(activeTab === 'feed' || activeTab === 'community') && (
         <FlatList
           data={activeTab === 'feed' ? feeds : notices}
@@ -518,37 +559,42 @@ export default function MyMusicScreen({ navigation }: any) {
           refreshControl={
             <RefreshControl refreshing={feedRefreshing} onRefresh={() => fetchFeeds(true)} tintColor={colors.accent.primary} />
           }
+          ListHeaderComponent={
+            <TouchableOpacity
+              style={styles.composeBtn}
+              activeOpacity={0.8}
+              accessibilityLabel={activeTab === 'feed' ? '새 피드 작성' : '새 공지 작성'}
+              onPress={() => {
+                const kind = activeTab === 'community' ? 'community' : 'feed';
+                if (__DEV__) console.info('[MyMusic] 새 글 작성 진입', { kind });
+                navigation.getParent()?.navigate('FeedCompose', kind === 'community' ? { kind } : undefined);
+              }}
+            >
+              <Feather name="edit-3" size={16} color={colors.accent.primary} />
+              <AppText style={styles.albumCreateText}>{activeTab === 'feed' ? '새 피드 작성' : '새 공지 작성'}</AppText>
+            </TouchableOpacity>
+          }
           ListEmptyComponent={
             feedLoading ? (
               <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
             ) : activeTab === 'feed' ? (
-              <EmptyState title="아직 작성한 피드가 없어요." hint="피드 탭에서 내 곡과 소식을 알려보세요!" />
+              <EmptyState title="아직 작성한 피드가 없어요." hint="[새 피드 작성]으로 내 곡과 소식을 알려보세요!" />
             ) : (
-              <EmptyState title="아직 커뮤니티 글이 없어요." hint="피드 작성 시 커뮤니티 글로 올릴 수 있어요!" />
+              <EmptyState title="아직 커뮤니티 글이 없어요." hint="[새 공지 작성]으로 구독자에게 소식을 전해보세요!" />
             )
           }
         />
       )}
 
-      {/* v3.96(A-2): 앨범 탭 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}
-      {activeTab === 'albums' && (
+      {/* v3.96(A-2): 앨범 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}
+      {/* v3.115: '커버 보관함' 진입 버튼 제거(대표 지시) — 커버는 앨범 상세(관리)에서 다시 만들 수 있어
+          마이페이지 중복 진입점 정리. CoverLibraryScreen·CoverLibrary 라우트는 보존(앨범 관리 내 커버 선택 등에서 사용). */}
+      {activeTab === 'music' && musicSub === 'albums' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: hasMiniPlayer ? 140 : 100 }}>
-          {/* v3.104(B-5): 커버 보관함 진입 — 대시 버튼 관행('음원 파일 올리기'와 동일) 2열 배치 */}
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity style={[styles.albumCreateBtn, { flex: 1 }]} activeOpacity={0.8} onPress={() => setShowAlbumCreate(true)}>
-              <Feather name="plus" size={16} color={colors.accent.primary} />
-              <AppText style={styles.albumCreateText}>새 앨범 만들기</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.albumCreateBtn, { flex: 1 }]}
-              activeOpacity={0.8}
-              onPress={() => navigation.getParent()?.navigate('CoverLibrary')}
-              accessibilityLabel="커버 보관함"
-            >
-              <Feather name="image" size={16} color={colors.accent.primary} />
-              <AppText style={styles.albumCreateText}>커버 보관함</AppText>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.albumCreateBtn} activeOpacity={0.8} onPress={() => setShowAlbumCreate(true)}>
+            <Feather name="plus" size={16} color={colors.accent.primary} />
+            <AppText style={styles.albumCreateText}>새 앨범 만들기</AppText>
+          </TouchableOpacity>
           {albumsLoading && albums.length === 0 ? (
             <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
           ) : albums.length === 0 ? (
@@ -578,8 +624,8 @@ export default function MyMusicScreen({ navigation }: any) {
         </ScrollView>
       )}
 
-      {/* 작사 탭 - DB에 저장된 트랙의 가사 + 현재 작업 중인 가사 */}
-      {activeTab === 'lyrics' && (
+      {/* 작사 — v3.115: '곡·앨범 > 작사' 하위 칩으로 재배치. DB에 저장된 트랙의 가사 + 현재 작업 중인 가사 */}
+      {activeTab === 'music' && musicSub === 'lyrics' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
           {/* 현재 작업 중인 가사 - 완성된 곡이 없을 때만 표시 */}
           {lyricsStore.generatedLyrics && tracks.length === 0 ? (
@@ -710,9 +756,23 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.accent.primary,
   },
   tabText: {
-    fontSize: 14, // v3.114: 탭 5개('커뮤니티' 포함) — 작은 화면에서도 한 줄 유지되게 15→14
+    fontSize: 15, // v3.115: 상위 탭이 3개로 줄어 원래 크기 복원
     color: colors.text.muted,
     fontWeight: '600',
+  },
+  // v3.115: 곡·앨범 하위 칩(곡/앨범/작사) — 차트 chipRow 관행(가로 나열·gap 8)
+  subTabRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  // v3.115: [새 피드 작성]/[새 공지 작성] — '새 앨범 만들기'와 동일한 dashed 버튼 관행
+  composeBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 12, marginBottom: 12, marginHorizontal: 4,
+    borderWidth: 1, borderColor: colors.accent.primary, borderStyle: 'dashed' as any,
+    borderRadius: 12,
   },
   tabTextActive: {
     color: colors.accent.primary,
@@ -751,26 +811,7 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontWeight: '700',
   },
-  levelBadge: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(13,8,32,0.4)',
-    borderRadius: 12,
-    minWidth: 56,
-  },
-  levelBadgeLabel: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.7)',
-    fontWeight: '600',
-  },
-  levelBadgeValue: {
-    fontSize: 22,
-    color: colors.text.primary,
-    fontWeight: '800',
-    lineHeight: 26,
-  },
+  // v3.115: levelBadge* 스타일 제거(레벨 표시 삭제와 짝)
   growthStatsRow: {
     flexDirection: 'row',
     alignItems: 'center',

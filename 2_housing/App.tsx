@@ -135,7 +135,8 @@ export type RootStackParamList = {
   // v3.95(A-14): prefill — CS 오류신고 진입 시 입력창 프리필(자동 전송 X)
   DmChat: { conversation: any; prefill?: string };
   UserChannel: { authorId: string; name?: string };
-  FeedCompose: undefined;
+  // v3.115: kind='community' — 마이페이지 커뮤니티 탭 [새 공지 작성] 진입(작성 payload kind 반영)
+  FeedCompose: { kind?: 'feed' | 'community' } | undefined;
   // v3.95(A-21): 피드 단건 착지(공유/딥링크 목적지)
   FeedDetail: { feedId: string };
   ArtistDetail: { artistId: string; artistName?: string };
@@ -496,10 +497,11 @@ export default function App() {
             />
             <RootStack.Screen name="UserChannel" component={UserChannelScreen} options={{ headerShown: true, headerTitle: '채널', headerStyle: { backgroundColor: colors.bg.deepest }, headerTintColor: colors.text.primary, headerShadowVisible: false }} />
             {/* v3.73: 피드작성도 다른 페이지처럼 상단바에 타이틀 — X(취소)는 좌측, 등록은 화면에서 headerRight로 주입 */}
-            <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={({ navigation }) => ({
+            <RootStack.Screen name="FeedCompose" component={FeedComposeScreen} options={({ navigation, route }) => ({
               presentation: 'modal', animation: 'slide_from_bottom',
               headerShown: true,
-              headerTitle: () => <AppText variant="subtitle">피드 작성</AppText>,
+              // v3.115: 커뮤니티(공지) 모드면 타이틀도 구분
+              headerTitle: () => <AppText variant="subtitle">{route.params?.kind === 'community' ? '공지 작성' : '피드 작성'}</AppText>,
               headerStyle: { backgroundColor: colors.bg.deepest },
               headerTintColor: colors.text.primary,
               headerShadowVisible: false,
