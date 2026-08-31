@@ -246,6 +246,10 @@ export default function MyMusicScreen({ navigation }: any) {
   // v3.117: 탭 시 작업실 스택의 내 아티스트 목록으로(크로스 탭 — 이 화면의 Studio 진입 관행 동일)
   const handleOpenArtist = () => {
     if (__DEV__) console.info('[MyMusic] 내 아티스트 → Studio/MyArtists');
+    // v3.117.1: Studio 스택 중간(MyArtists)으로 바로 점프하면 스택에 Map이 없어
+    // 뒤로가기가 차트(탭 폴백)로 떨어짐 — Map을 먼저 깔고 MyArtists를 얹어
+    // 뒤로가기 = 작업실(Map) 복귀가 되게 한다.
+    navigation.navigate('Studio', { screen: 'Map' });
     navigation.navigate('Studio', { screen: 'MyArtists' });
   };
 
