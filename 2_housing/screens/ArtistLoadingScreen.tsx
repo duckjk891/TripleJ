@@ -257,6 +257,8 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           const jobCid: string | null = targetCid || (res.data?.character_id ? String(res.data.character_id) : null);
           let savedCharacterId: string | null = jobCid;
           const pendingGender = useCharacterTaskStore.getState().pendingGender;
+          // v3.109: 질문 흐름에서 지은 이름 — save의 name 필드로 서버 영속(v216 계약: save·PATCH 수용)
+          const pendingName = useCharacterTaskStore.getState().pendingName;
           try {
             const saveBody: any = {
               sheet_object_name: res.data.object_name,
@@ -274,6 +276,11 @@ export default function ArtistLoadingScreen({ navigation }: any) {
               if (jobCid) saveBody.character_id = jobCid;
               else saveBody.kind = isVirtual ? 'virtual' : 'real';
               if (pendingGender) saveBody.gender = pendingGender;
+              // v3.109: 이름 서버 영속 — 스킵(null)이면 미전송 = 서버 기본 명명 로직 유지
+              if (pendingName) {
+                saveBody.name = pendingName;
+                if (__DEV__) console.info('[ArtistLoading] 이름 영속', { name: pendingName });
+              }
             }
             // 레거시 계정: character_id·kind 둘 다 미전송 = 구버전 계약(슬롯 면제)
             const saveRes = await api.post('/character/save', saveBody);

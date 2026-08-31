@@ -16,8 +16,8 @@ import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
-import api, { BACKEND_BASE_URL } from '../services/api';
-import { listArtists, artistSheetUrl } from '../services/characterService';
+import { BACKEND_BASE_URL } from '../services/api';
+import { listArtists } from '../services/characterService';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -27,13 +27,8 @@ import { colors } from '../theme/colors';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
-// v3.103(B-1): "현재 아티스트" 미리보기 카드 — 서버 다중 체제(cid) 또는 레거시(me) 공용
-interface ExistingPreview {
-  url: string;
-  /** null = 레거시(me 폴백) → ArtistResult 파라미터 없이 진입 */
-  characterId: string | null;
-}
-
+// v3.109: "현재 아티스트" 미리보기 카드 제거 — 이 화면은 생성(추가·재생성) 전용.
+// 꾸미기 진입은 MyArtists → ArtistResult가 담당(대표 피드백: 추가 흐름에 꾸미기 노출 금지).
 interface ChatMessage {
   type: 'director' | 'user';
   text: string;
@@ -43,6 +38,8 @@ type Step = 'welcome' | 'questioning' | 'style';
 
 interface StyleAnswers {
   gender: string;
+  /** v3.109: 아티스트 이름(자유 입력·스킵 가능) — save의 name 필드로 서버 영속 */
+  name: string;
   hair: string;
   face: string;
   skin: string;
@@ -52,7 +49,7 @@ interface StyleAnswers {
 }
 
 const EMPTY_ANSWERS: StyleAnswers = {
-  gender: '', hair: '', face: '', skin: '', body: '', height: '', mood: '',
+  gender: '', name: '', hair: '', face: '', skin: '', body: '', height: '', mood: '',
 };
 
 interface QuestionDef {
@@ -68,9 +65,17 @@ const QUESTIONS: QuestionDef[] = [
   // 생성 성공 시 artistProfileStore에 기록되어 상세 화면에 표시된다.
   {
     key: 'gender', short: '성별',
-    question: '먼저, 우리 아티스트의 성별은 어떻게 할까요?',
+    question: '먼저, 아티스트의 성별은 어떻게 할까요?',
     chips: ['남성', '여성'],
     placeholder: '예: 여성',
+  },
+  // v3.109: 이름 질문(대표 피드백) — 자유 입력, 스킵 시 기존 기본 명명 로직(서버) 유지.
+  // 답변은 pendingName으로 파이프라인에 실려 save의 name 필드로 서버 영속(v216 계약).
+  {
+    key: 'name', short: '이름',
+    question: '아티스트의 이름을 지어주세요. 건너뛰면 나중에 자동으로 정해드려요.',
+    chips: [],
+    placeholder: '예: 루나',
   },
   {
     key: 'hair', short: '머리',
@@ -112,6 +117,8 @@ const QUESTIONS: QuestionDef[] = [
 
 function buildFinalText(answers: StyleAnswers): string {
   const parts: string[] = [];
+  // v3.109: 이름 포함 — "이어서 만들기" 보존(conceptText 요약)에도 이름이 실린다
+  if (answers.name) parts.push(`이름은 ${answers.name}`);
   if (answers.gender) parts.push(`성별은 ${answers.gender}`);
   if (answers.hair) parts.push(`머리는 ${answers.hair}`);
   if (answers.face) parts.push(`얼굴은 ${answers.face}`);
@@ -143,7 +150,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const [chat, setChat] = useState<ChatMessage[]>(() => [
     {
       type: 'director',
-      text: `안녕하세요 ${titleLabel}님! 우리 아티스트의 얼굴 사진을 한 장 올려주세요.`,
+      text: `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`,
     },
   ]);
 
@@ -155,7 +162,6 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const [styleAnswers, setStyleAnswers] = useState<StyleAnswers>(EMPTY_ANSWERS);
   const [currentInput, setCurrentInput] = useState('');
 
-  const [existingPreview, setExistingPreview] = useState<ExistingPreview | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
   // v3.80: 가상화(그림) 캐릭터 모드 + 화풍 선택 스텝 (v3.81: forceKind 진입 시 고정)
@@ -204,9 +210,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   }, [chat, step]);
 
-  // 초기: 목록 실측으로 계약 판정(multi/legacy) + "현재 아티스트" 미리보기 로드
+  // 초기: 목록 실측으로 계약 판정(multi/legacy)
   // v3.103(B-1): /character/list가 characters:[] 인데 slots.used>=1 이면 레거시(마이그레이션
   // 미실행) 계정 → 구 계약(me/save, character_id·kind 미지정)으로 생성해야 함.
+  // v3.109: 미리보기 카드가 사라져 이 이펙트는 계약 판정만 수행.
   useEffect(() => {
     if (__DEV__ && (forceKind || regenCharacterId)) {
       console.info('[ArtistInput] 진입 파라미터', { forceKind, characterId: regenCharacterId ?? null });
@@ -226,18 +233,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         if (characters.length > 0 || slots.used === 0) {
           // 서버 다중 체제(신규 계정 포함) — 신 계약으로 생성
           useCharacterTaskStore.getState().setInput({ legacyContract: false });
-          const def = characters.find((c) => c.is_default) ?? characters[0];
-          if (def?.sheet_object_name) {
-            setExistingPreview({ url: artistSheetUrl(def.sheet_object_name), characterId: def.character_id });
-          }
         } else {
           // 레거시 계정 — 구 계약(슬롯 면제)으로 생성/저장
           useCharacterTaskStore.getState().setInput({ legacyContract: true });
           if (__DEV__) console.info('[ArtistInput] 레거시 계정 판정 — 구 계약(me/save) 사용', { slots });
-          const res = await api.get('/character/me');
-          const ch = res.data?.character;
-          const obj = ch?.sheet_object_name || ch?.virtual_sheet_object_name;
-          if (obj) setExistingPreview({ url: artistSheetUrl(obj), characterId: null });
         }
       } catch (err: any) {
         // 목록 실측 실패 — 계약 판정 불가. 신 계약 기본값 유지(신규 생성은 양 계약 모두 안전)
@@ -432,7 +431,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     const conceptText = userInput || '특별한 컨셉 없음 — 자연스러운 느낌으로';
 
     // v3.82: 성별 답변 보관 — 생성 성공 시(ArtistLoading) 슬롯별 프로필에 기록
-    taskStore.setInput({ pendingGender: answers.gender.trim() || null });
+    // v3.109: 이름 답변 보관 — 생성 성공 시 save의 name 필드로 서버 영속(스킵=null → 기본 명명)
+    taskStore.setInput({
+      pendingGender: answers.gender.trim() || null,
+      pendingName: answers.name.trim() || null,
+    });
 
     // v3.80: 가상화 모드는 화풍 선택 스텝을 거친 뒤 ArtistCody로 (handleStyleConfirm에서 진행)
     if (isVirtualMode) {
@@ -483,10 +486,6 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       </View>
     );
   }
-
-  // 기존 캐릭터 있으면 결과 화면으로 바로 이동 옵션 제공.
-  // v3.103: 재생성(characterId) 진입 시에는 숨김 — "다시 만들기" 흐름과 혼동 방지.
-  const showExistingCard = !!existingPreview && !regenCharacterId;
 
   // v3.105: 이어서 만들기 — Cody 취소(restore) 또는 직전 생성 실패(apiError) 시
   // store에 보존된 컨셉/사진/화풍으로 의상 선택부터 재개 (입력 데이터 보존 — 대표 지적)
@@ -603,8 +602,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               {styleUpload ? `업로드됨: ${styleUpload.name}` : '화풍 이미지 직접 업로드'}
             </AppText>
           </TouchableOpacity>
+          {/* v3.109: 세로 잘림 재수정 — flex:0(웹에서 flex-basis 압축) 대신 grow/shrink만 끄고
+              minHeight 확보(applyBtn 공통). 높이는 내용대로(auto) 유지된다. */}
           <TouchableOpacity
-            style={[styles.applyBtn, { flex: 0 }, !selectedPresetKey && !styleUpload && { opacity: 0.5 }]}
+            style={[styles.applyBtn, styles.styleConfirmBtn, !selectedPresetKey && !styleUpload && { opacity: 0.5 }]}
             onPress={handleStyleConfirm}
           >
             <AppText style={styles.applyBtnText}>이 화풍으로 만들기</AppText>
@@ -623,6 +624,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               {qIndex + 1} / {QUESTIONS.length} · {q.short}
             </AppText>
           </View>
+          {/* v3.109: 칩 없는 질문(이름 등)은 칩 영역 자체를 생략 */}
+          {q.chips.length > 0 && (
           <View style={styles.chipsRow}>
             {q.chips.map((chip) => {
               const sel = tokens.includes(chip);
@@ -637,6 +640,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               );
             })}
           </View>
+          )}
           <TextInput
             style={styles.textInput}
             value={currentInput}
@@ -670,26 +674,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: 16 }}
       >
-        {/* 기존 캐릭터 카드 — v3.103: 서버 다중 체제는 대표 아티스트(cid)로 상세 진입 */}
-        {showExistingCard && step === 'welcome' && (
-          <View style={styles.myArtistCard}>
-            <AppText style={styles.myArtistLabel}>현재 아티스트</AppText>
-            <Image source={{ uri: existingPreview!.url }} style={styles.myArtistImg} />
-            <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'stretch' }}>
-              <TouchableOpacity
-                style={[styles.applyBtn, { flex: 1 }]}
-                onPress={() =>
-                  existingPreview!.characterId
-                    ? navigation.replace('ArtistResult', { characterId: existingPreview!.characterId })
-                    : navigation.replace('ArtistResult')
-                }
-              >
-                <AppText style={styles.applyBtnText}>아티스트 꾸미기</AppText>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
+        {/* v3.109: "현재 아티스트"/꾸미기 카드 제거 — 추가·재생성 흐름 모두 생성 UI만 표시.
+            꾸미기는 MyArtists → ArtistResult 경로가 담당(기능 무변경). */}
         {chat.map((msg, idx) => (
           <View
             key={idx}
@@ -733,13 +719,6 @@ const styles = StyleSheet.create({
     fontSize: 14, color: colors.text.secondary, textAlign: 'center',
     lineHeight: 22, marginBottom: 20,
   },
-  myArtistCard: {
-    backgroundColor: colors.bg.surface1, borderRadius: 16, padding: 14,
-    marginBottom: 16, alignItems: 'center', borderWidth: 1, borderColor: colors.border.subtle,
-  },
-  myArtistLabel: { fontSize: 12, color: colors.accent.primary, fontWeight: '700', marginBottom: 10 },
-  myArtistImg: { width: 160, height: 160, borderRadius: 12, marginBottom: 12 },
-
   msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12 },
   dirRow: { justifyContent: 'flex-start', paddingRight: 40 },
   userRow: { justifyContent: 'flex-end', paddingLeft: 40 },
@@ -824,6 +803,7 @@ const styles = StyleSheet.create({
   styleUploadBtn: {
     borderWidth: 1, borderColor: colors.border.subtle, borderRadius: 12,
     paddingVertical: 11, alignItems: 'center', marginBottom: 8,
+    minHeight: 48, justifyContent: 'center', // v3.109: 같은 스텝 버튼 동일 점검 — 세로 여유 확보
     backgroundColor: colors.bg.surface1,
   },
   styleUploadBtnActive: { borderColor: colors.accent.primary },
@@ -849,15 +829,21 @@ const styles = StyleSheet.create({
   twoBtnRow: { flexDirection: 'row', gap: 10 },
   skipBtn: {
     flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center',
+    minHeight: 48, justifyContent: 'center',
     backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,
   },
   skipBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
+  // v3.109: 버튼 세로 잘림 방지 — minHeight 48 + 세로 중앙정렬, 압축 금지(flexShrink 0)
   applyBtn: {
     flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
+    minHeight: 48, justifyContent: 'center',
     backgroundColor: colors.accent.primary,
   },
+  // v3.109: 화풍 확정 버튼 — 세로 스택에서 flex:1(applyBtn)을 무효화하되 flex:0의
+  // 웹 flex-basis 압축 부작용 없이 내용 높이(auto)로 렌더
+  styleConfirmBtn: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
   applyBtnText: {
     color: colors.text.primary, fontSize: 13, fontWeight: '700',
-    lineHeight: 18,
+    // v3.109: 고정 lineHeight(18) 제거 — OS 글자 확대 시 글리프가 줄박스에 잘리던 원인
   },
 });

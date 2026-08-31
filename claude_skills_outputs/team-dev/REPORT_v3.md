@@ -4,6 +4,14 @@
 
 ---
 
+## v3.109 (대표 피드백 — 아티스트 흐름 5건) — 2026-08-31
+
+**수행**: ①추가/재생성 흐름에서 "현재 아티스트" 카드·꾸미기 진입 전면 제거(꾸미기는 상세 전용 유지) ②아티스트 수식 '우리' 2건 제거("우리 기획사"는 유지) ③화풍 버튼 세로 잘림 근본 수정 — flex 압축(flexBasis auto)+minHeight 48+고정 lineHeight 제거(같은 스텝 버튼 3종) ④이름 질문 추가(성별 다음·스킵 가능) → save name 서버 영속(신 계약), 이어서 만들기 요약 포함 ⑤코디 카드 "판매처 보기"(product_url) — click 로깅+외부 브라우저, 링크 없는/샘플 아이템 미노출.
+**검증**: tsc 0. e2e는 PENDING_TESTS §v3.109.
+**변경**: ArtistInputScreen, ArtistLoadingScreen, ArtistCodyScreen, characterTaskStore.
+
+---
+
 ## v3.108 / 백엔드 v218 (직접 인수 1차 — 클로닝 ⭐5·서버 폴링·album_id + 프론트 v217 대응) — 2026-08-31
 
 **정책 확정**: 클로닝 ⭐5(대표 — 작곡에 포함된 수준, 팀 동의). 백엔드 직접 소유 전환(같은 레포 backend 브랜치 → 워크트리 /Users/pearl/TripleJ-backend, v217 인수).

@@ -10,6 +10,7 @@ import {
   FlatList,
   ActivityIndicator,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
@@ -243,6 +244,19 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     }
     if (__DEV__) console.info('[ArtistCody] wish toggle', { id: item.id });
     useWishlistStore.getState().toggle(item.id);
+  };
+
+  // v3.109: 각 옷(광고 아이템)의 판매처 링크 노출(대표 피드백) —
+  // PlayerScreen 광고 링크 관행(:470대)과 동일: click 로깅 + http 보정 + openURL 실패 시 앱 내 알림.
+  // product_url 없는 아이템(샘플 더미 포함)은 버튼 미노출.
+  const openItemLink = (item: { id: string; product_url?: string }) => {
+    if (!item.product_url) return;
+    if (!item.id.startsWith('sample_')) {
+      api.post(`/business/ads/${item.id}/click`).catch(() => {});
+    }
+    const url = item.product_url.startsWith('http') ? item.product_url : `https://${item.product_url}`;
+    if (__DEV__) console.info('[ArtistCody] 판매처 링크 열기', { id: item.id, url });
+    Linking.openURL(url).catch(() => showAlert('알림', '링크를 열 수 없어요'));
   };
 
   const pickItem = (item: AdItem) => {
@@ -778,6 +792,17 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                       {item.color ? (
                         <AppText style={styles.itemBrand} numberOfLines={1}>{item.color}</AppText>
                       ) : null}
+                      {/* v3.109: 판매처 링크 — product_url 있는 아이템만 노출 */}
+                      {item.product_url ? (
+                        <TouchableOpacity
+                          style={styles.itemLinkBtn}
+                          onPress={() => openItemLink(item)}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Feather name="external-link" size={11} color={colors.accent.primary} />
+                          <AppText style={styles.itemLinkText}>판매처 보기</AppText>
+                        </TouchableOpacity>
+                      ) : null}
                     </TouchableOpacity>
                   );
                 }}
@@ -846,6 +871,17 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                           <AppText style={styles.itemBrand} numberOfLines={1}>
                             {item.advertiser_nickname}
                           </AppText>
+                        ) : null}
+                        {/* v3.109: 판매처 링크 — 위시 탭에도 동일 노출(판매종료 아이템도 링크는 유효) */}
+                        {item.product_url ? (
+                          <TouchableOpacity
+                            style={styles.itemLinkBtn}
+                            onPress={() => openItemLink(item)}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          >
+                            <Feather name="external-link" size={11} color={colors.accent.primary} />
+                            <AppText style={styles.itemLinkText}>판매처 보기</AppText>
+                          </TouchableOpacity>
                         ) : null}
                       </TouchableOpacity>
                     );
@@ -959,6 +995,15 @@ const styles = StyleSheet.create({
   },
   itemBrand: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
   itemCardInactive: { opacity: 0.45 },
+  // v3.109: 판매처 링크 버튼 (아이템 카드 하단)
+  itemLinkBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start', marginTop: 6,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  itemLinkText: { color: colors.accent.primary, fontSize: 11, fontWeight: '700' },
 
   // v3.90: 전체 | 위시리스트 탭
   pickerTabs: {
