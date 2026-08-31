@@ -379,23 +379,35 @@ export default function MyMusicScreen({ navigation }: any) {
 
       {/* 작곡 탭 */}
       {activeTab === 'tracks' && (
-        tracks.length === 0 ? (
-          <EmptyState title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
-        ) : (
-          <FlatList
-            data={tracks}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={renderTrack}
-            contentContainerStyle={[styles.listContent, hasMiniPlayer && { paddingBottom: 140 }]}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => fetchTracks(true)}
-                tintColor={colors.accent.primary}
-              />
-            }
-          />
-        )
+        <View style={{ flex: 1 }}>
+          {/* v3.100(A-10): 직접 음원 파일 업로드 진입 — 앨범 탭 '새 앨범 만들기'와 동일한 dashed 버튼 관행 */}
+          <TouchableOpacity
+            style={[styles.albumCreateBtn, { marginHorizontal: 16 }]}
+            activeOpacity={0.8}
+            onPress={() => navigation.getParent()?.navigate('TrackUpload')}
+            accessibilityLabel="음원 파일 올리기"
+          >
+            <Feather name="upload" size={16} color={colors.accent.primary} />
+            <AppText style={styles.albumCreateText}>음원 파일 올리기</AppText>
+          </TouchableOpacity>
+          {tracks.length === 0 ? (
+            <EmptyState title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
+          ) : (
+            <FlatList
+              data={tracks}
+              keyExtractor={(item) => String(item.id)}
+              renderItem={renderTrack}
+              contentContainerStyle={[styles.listContent, hasMiniPlayer && { paddingBottom: 140 }]}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => fetchTracks(true)}
+                  tintColor={colors.accent.primary}
+                />
+              }
+            />
+          )}
+        </View>
       )}
 
       {/* v3.96(A-2): 앨범 탭 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}

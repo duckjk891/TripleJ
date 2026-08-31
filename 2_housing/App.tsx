@@ -83,6 +83,8 @@ import AgencyProfileScreen from './screens/AgencyProfileScreen';
 import FeedDetailScreen from './screens/FeedDetailScreen';
 import DirectorLineupScreen from './screens/DirectorLineupScreen';
 import AlbumDetailScreen from './screens/AlbumDetailScreen';
+// v3.100(A-10): 직접 음원 파일 업로드
+import TrackUploadScreen from './screens/TrackUploadScreen';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -138,6 +140,8 @@ export type RootStackParamList = {
   ArtistDetail: { artistId: string; artistName?: string };
   // v3.96(A-2): 앨범 상세 — 열람(전체) + 내 앨범이면 관리(수정/삭제/트랙/커버)
   AlbumDetail: { albumId: string };
+  // v3.100(A-10): 직접 음원 파일 업로드 — 마이뮤직 작곡 탭에서 진입
+  TrackUpload: undefined;
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
   Royalty: undefined;
@@ -508,6 +512,8 @@ export default function App() {
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             {/* v3.96(A-2): 앨범 상세/관리 — 홈 최신앨범·채널·마이페이지에서 진입 */}
             <RootStack.Screen name="AlbumDetail" component={AlbumDetailScreen} options={({ navigation }) => stackHeader(navigation, '앨범')} />
+            {/* v3.100(A-10): 직접 음원 파일 업로드 — 마이뮤직 작곡 탭에서 진입 */}
+            <RootStack.Screen name="TrackUpload" component={TrackUploadScreen} options={({ navigation }) => stackHeader(navigation, '음원 파일 올리기')} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             <RootStack.Screen name="Royalty" component={RoyaltyScreen} />

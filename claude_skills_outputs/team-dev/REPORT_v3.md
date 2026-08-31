@@ -4,6 +4,15 @@
 
 ---
 
+## v3.100 (직접 음원 파일 업로드 — 대표 정책 확정: 허용) — 2026-08-31
+
+**수행** (계약: 실서버 9004 openapi 실측 + 스냅샷 tracks.py:1255~): trackService(신규 — 진행률·web/native 분기·50MB/확장자 선검증), TrackUploadScreen(신규 — 파일 선택→메타 입력→커버(발매 후 별도 /upload/image type=cover)→공개 스위치→**저작권 확인 confirm 필수**→진행률→완료 팝업), 마이뮤직 작곡 탭 진입 버튼, App.tsx 라우트. 발매 보상 ⭐+5는 서버 자동. MAIDOL과 달리 저작권 안내 문구 신설(대표 방침: 신고 기반 사후 검열).
+**판단**: MAIDOL 프론트의 upload/image type='track'은 백엔드가 거부하는 값(cover|profile만) — 'cover' 채택, 실서버 검증 항목으로 등록.
+**검증**: tsc 0. api 스모크 즉시 실행 예정, e2e는 PENDING_TESTS §신규.
+**변경**: trackService·TrackUploadScreen(신규), MyMusicScreen, App.tsx.
+
+---
+
 ## v3.99 (서버 복구 후 일괄 테스트 + 버그 2건 픽스) — 2026-08-31
 
 **수행**: ① 인프라 복구(터널 재기동·env 갱신·9004 기동·presign 외부 200) ② PENDING_TESTS 일괄 실행 — [api] 게이트 FAIL 0 → [e2e] 21개 시나리오 전부 PASS. **클로닝 "문구 도착" 최종 검증 성공(28초)** — MINIO_PUBLIC_HOST 인프라 픽스 종결. ③ 발견 버그 2건 수정·재검 PASS:
