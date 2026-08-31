@@ -464,6 +464,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       const res = await api.delete('/character/me');
       console.log('[ArtistResult] 캐릭터 삭제 성공:', res.status);
       taskStore.reset();
+      // v3.116.1: reset()은 legacyContract를 유지하므로(계정 속성) 전체 삭제 후엔 명시 초기화.
+      // 잔존 true 상태로 빠르게 새로 만들면(판정 API 완료 전) 구 계약 save → 신 목록에 안 잡히는
+      // 레이스가 성립(8/31 대표 실사례: 삭제→즉시 재생성→저장했는데 목록 빈 상태).
+      useCharacterTaskStore.getState().setInput({ legacyContract: false, targetCharacterId: null });
       useOutfitStore.getState().clear();
       // v3.82: 서버 전체 삭제와 함께 로컬 프로필(이름·성별)도 정리
       useArtistProfileStore.getState().clearAll();
