@@ -190,7 +190,8 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           appendOutfitObjectNames(form, items);
 
           form.append('user_text', taskStore.userText || '');
-          form.append('image_model', 'gpt_image_2');
+          // v217: image_model 미전송 — 서버가 generate-sheet(-async)=gpt_image_2 /
+          // -cartoon=nb_pro 로 고정하고 요청값은 무시(400 소멸). 보낼 이유 없음.
           // v3.103(B-1): 재생성이면 character_id 지정(기존 아티스트 갱신 — kind 불일치 400),
           // 미지정=신규(슬롯 검사 → used>=max면 409 slot_limit_exceeded, ⭐ 차감 전).
           // 레거시(구 계약) 계정은 character_id 미전송(구버전 경로 유지).
@@ -333,7 +334,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           await appendMinioImageToForm(form, 'file', origObjectName);
           appendOutfitObjectNames(form, items);
           form.append('user_text', taskStore.outfitDesc || '');
-          form.append('image_model', 'gpt_image_2');
+          // v217: image_model 미전송 — generate-sheet-async는 서버가 gpt_image_2 고정(요청값 무시)
           // v3.103(B-1): 코디도 대상 아티스트(cid) 재생성으로 — 미지정이면 신규 생성돼
           // 슬롯을 소모하므로 서버 아티스트에서 진입 시 반드시 character_id 지정.
           const outfitCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
@@ -401,7 +402,16 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           const photoNameOut = effectivePhotoName || (effectivePhotoUri.split('/').pop() ?? 'photo.jpg');
           await appendFileToForm(form, 'photo', effectivePhotoUri, photoNameOut, inferMimeType(photoNameOut));
           form.append('refine_request', reqText);
+          // v217: refine은 character_id(신규 optional Form) 전송이 사실상 필수 —
+          // 미전송+image_model 미전송이면 서버가 nb_pro로 폴백해 실사 화풍이 붕괴한다.
+          // 신 계약 계정은 대상 cid를 지정하고, 레거시(me) 계정은 cid가 없으므로
+          // 기존 image_model echo(gpt_image_2 — refine은 실사 전용)를 안전망으로 유지.
+          const refineCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
+          if (refineCid) form.append('character_id', refineCid);
           form.append('image_model', 'gpt_image_2');
+          if (__DEV__) console.info('[ArtistLoading] refine 요청', {
+            characterId: refineCid, legacyContract: taskStore.legacyContract,
+          });
 
           const res = await api.post('/character/refine', form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요

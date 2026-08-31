@@ -18,6 +18,7 @@ import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
 import { deleteVoiceClone, getVoiceClone, VoiceClone } from '../services/voiceService';
+import api from '../services/api';
 
 // v3.83: 클론 상태 배지 (MAIDOL MyVoiceCloneSection STATUS_BADGE 이식 — 기술 용어 최소화)
 const CLONE_STATUS_BADGE: Record<string, string> = {
@@ -64,6 +65,24 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
     : profileGender.includes('여')
       ? 'female'
       : null;
+
+  // v3.106: 클로닝 ⭐ 비용 캡션 — /points/costs의 voice_clone 키가 있을 때만 표시
+  // (구서버=키 없음=무표시, 하드코딩 금지 — 백엔드 B-9 배포 전 껍데기 방지)
+  const [voiceCloneCost, setVoiceCloneCost] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        const cost = res.data?.costs?.voice_clone;
+        if (alive && typeof cost === 'number') setVoiceCloneCost(cost);
+        if (__DEV__) console.info('[VoiceManage] /points/costs voice_clone =', cost ?? '(키 없음)');
+      } catch (err: any) {
+        console.error('[VoiceManage] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const [presetOpen, setPresetOpen] = useState(false);
   const [presetGender, setPresetGender] = useState<'male' | 'female' | null>(
@@ -356,6 +375,12 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
             <AppText style={styles.wizardBtnDesc}>
               내가 부른 노래로 나만의 목소리를 만들어요. 마지막에 짧은 문구를 따라 읽으면 완성돼요.
             </AppText>
+            {/* v3.106: 비용 캡션 — voice_clone 키 있는 서버에서만(위저드 confirm과 동일 조건) */}
+            {voiceCloneCost != null && (
+              <AppText style={styles.cloneCostCaption}>
+                클로닝 시작 시 ⭐{voiceCloneCost}이 소모돼요. 실패하면 자동 환불돼요.
+              </AppText>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -502,6 +527,8 @@ const styles = StyleSheet.create({
   },
   wizardBtnText: { color: colors.accent.primary, fontSize: 14, fontWeight: '700' },
   wizardBtnDesc: { color: colors.text.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  // v3.106: 클로닝 비용 캡션 (조건부 — /points/costs voice_clone)
+  cloneCostCaption: { color: colors.accent.primary, fontSize: 11, lineHeight: 16, marginTop: 6, fontWeight: '600' },
   createDivider: {
     height: 1,
     backgroundColor: colors.border.subtle,

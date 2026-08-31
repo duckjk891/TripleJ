@@ -16,6 +16,7 @@ import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 import { useVoiceStore } from '../stores/voiceStore';
 import { usePointsStore } from '../stores/pointsStore';
+import api from '../services/api';
 import {
   createVoiceClone,
   getVoiceClone,
@@ -106,6 +107,25 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const [previewing, setPreviewing] = useState(false);
 
   const pollCancelRef = useRef(false);
+
+  // v3.106: 클로닝 ⭐ 비용 — /points/costs의 voice_clone 키가 있을 때만 고지(구서버=키 없음
+  // =무고지, 하드코딩 금지). 백엔드 B-9 배포와 무관하게 안전(껍데기 과금 방지).
+  const [voiceCloneCost, setVoiceCloneCost] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        const cost = res.data?.costs?.voice_clone;
+        if (alive && typeof cost === 'number') setVoiceCloneCost(cost);
+        if (__DEV__) console.info('[VoiceCloneWizard] /points/costs voice_clone =', cost ?? '(키 없음)');
+      } catch (err: any) {
+        console.error('[VoiceCloneWizard] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    usePointsStore.getState().fetchBalance();
+    return () => { alive = false; };
+  }, []);
 
   const phrase = cloneValidatePhrase(validateInfo);
 
@@ -406,6 +426,34 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       showAlert('구간 확인', '보컬 구간을 올바르게 입력해주세요.\n(끝 시각이 시작보다 커야 해요)');
       return;
     }
+    // v3.106: 비용 고지 confirm — /points/costs에 voice_clone 키가 있는 서버에서만.
+    // 잔액 부족이면 사전 차단(서버 402 전에 안내). 구서버(키 없음)는 기존 무고지 흐름.
+    if (voiceCloneCost != null) {
+      const balance = usePointsStore.getState().balance;
+      if (typeof balance === 'number' && balance < voiceCloneCost) {
+        if (__DEV__) console.info('[VoiceCloneWizard] 잔액 부족 차단', { balance, cost: voiceCloneCost });
+        showAlert(
+          '⭐이 부족해요',
+          `클로닝 시작에 ⭐${voiceCloneCost}이 필요해요.\n현재 보유: ⭐${balance}`
+        );
+        return;
+      }
+      showAlert(
+        '클로닝 시작',
+        `클로닝 시작 시 ⭐${voiceCloneCost}이 소모돼요. 실패하면 자동 환불돼요.`,
+        [
+          { text: '취소', style: 'cancel' },
+          { text: '시작', onPress: () => { void startCloneCreate(name, startS, endS); } },
+        ]
+      );
+      return;
+    }
+    await startCloneCreate(name, startS, endS);
+  };
+
+  // 실제 생성 호출 (confirm 이후 진입 — sampleSrc는 handleStep1Next에서 검증됨)
+  const startCloneCreate = async (name: string, startS: number, endS: number) => {
+    if (!sampleSrc) return;
     setBusy(true);
     setErrText('');
     try {
@@ -428,7 +476,13 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       const detail =
         err?.response?.data?.detail || err?.response?.data?.error || err?.message || '알 수 없는 오류';
       console.error('[VoiceCloneWizard] step1 실패:', err?.response?.status, detail);
-      showAlert('만들기 시작 실패', `샘플 등록에 실패했어요.\n${detail}`);
+      if (err?.response?.status === 402) {
+        // v3.106: 서버 과금 도입 후 잔액 부족 — 전용 안내 + 배지 최신화
+        usePointsStore.getState().fetchBalance();
+        showAlert('⭐이 부족해요', `클로닝을 시작할 ⭐이 부족해요.${voiceCloneCost != null ? `\n(필요: ⭐${voiceCloneCost})` : ''}`);
+      } else {
+        showAlert('만들기 시작 실패', `샘플 등록에 실패했어요.\n${detail}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -668,6 +722,12 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                   <AppText style={styles.primaryBtnText}>다음: 만들기 시작</AppText>
                 )}
               </TouchableOpacity>
+              {/* v3.106: 비용 캡션 — /points/costs voice_clone 키 있는 서버에서만 */}
+              {voiceCloneCost != null && (
+                <AppText style={styles.busyNote}>
+                  클로닝 시작 시 ⭐{voiceCloneCost}이 소모돼요. 실패하면 자동 환불돼요.
+                </AppText>
+              )}
               {busy && (
                 <AppText style={styles.busyNote}>
                   음원 업로드·분석 요청 중이에요. 최대 3분 정도 걸릴 수 있어요.
