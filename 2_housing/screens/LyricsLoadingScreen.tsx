@@ -80,7 +80,8 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
         // 장르·분위기·스타일·길이는 별도 필드로만 보내고(prompt 중복 제거),
         // duet=true 시 백엔드 듀엣 전용 시스템 프롬프트([Female]/[Male] 라벨)가 활성화된다.
         const payload = buildLyricsRequest(useLyricsStore.getState());
-        if (__DEV__) console.log('[LyricsLoading] payload', JSON.stringify(payload));
+        // console.info 여야 원격 로그(frontend.log)로 수집됨 — 전송 본문 실측용(v3.117.2)
+        console.info('[LyricsLoading] 전송 payload', JSON.stringify(payload));
         const result = await generateLyrics(payload);
 
         if (isMounted) {
