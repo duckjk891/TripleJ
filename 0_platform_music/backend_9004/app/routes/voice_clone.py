@@ -29,6 +29,7 @@ from ..config import settings
 from ..database.minio import get_minio
 from ..services import voice_clone_service as svc
 from ..services.audio_normalize import normalize_audio_bytes
+from ..services.points_service import POINT_COSTS, spend_points
 
 logger = logging.getLogger(__name__)
 
@@ -223,22 +224,38 @@ async def create(
         vocal_start_s = 0.0
         vocal_end_s = duration_s
 
-    # 정규화 mp3 를 MinIO 에 저장 (확장자는 항상 .mp3 로 강제).
-    object_name = f"voice-clones/{user_id}/{tmp_id}/source.mp3"
-    minio_client = get_minio()
-    minio_client.put_object(
-        bucket_name=settings.minio_bucket_music,
-        object_name=object_name,
-        data=io.BytesIO(norm_bytes),
-        length=len(norm_bytes),
-        content_type="audio/mpeg",
-    )
+    # B-9(대표 확정 ⭐5) — 로컬 검증/정규화 통과 후·Suno validate 시작 전 선차감.
+    # 기존 compose 패턴(generate.py:504) 동일: uuid ref + spend_points, 부족 시 402
+    # (동일 응답 shape). 검증 400/422 는 차감 전이라 환불 이슈 없음.
+    clone_cost = POINT_COSTS["voice_clone"]
+    point_ref = _uuid.uuid4().hex
+    if not await spend_points(user_id, "voice_clone", clone_cost, point_ref):
+        logger.info("[star-econ] voice_clone denied (insufficient) user=%s", user_id[:8])
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(clone_cost)},
+        )
     logger.info(
-        "[voice_clone] create upload user=%s tmp_id=%s object=%s bytes=%d (normalized from ext=%s in_size=%d)",
-        user_id, tmp_id, object_name, len(norm_bytes), ext, len(contents),
+        "[star-econ] voice_clone spend user=%s -%d ref=%s (create)",
+        user_id[:8], clone_cost, point_ref,
     )
 
+    # 정규화 mp3 를 MinIO 에 저장 (확장자는 항상 .mp3 로 강제).
+    object_name = f"voice-clones/{user_id}/{tmp_id}/source.mp3"
     try:
+        minio_client = get_minio()
+        minio_client.put_object(
+            bucket_name=settings.minio_bucket_music,
+            object_name=object_name,
+            data=io.BytesIO(norm_bytes),
+            length=len(norm_bytes),
+            content_type="audio/mpeg",
+        )
+        logger.info(
+            "[voice_clone] create upload user=%s tmp_id=%s object=%s bytes=%d (normalized from ext=%s in_size=%d)",
+            user_id, tmp_id, object_name, len(norm_bytes), ext, len(contents),
+        )
+
         result = await svc.create_voice_clone(
             user_id=user_id,
             voice_name=voice_name,
@@ -248,12 +265,18 @@ async def create(
             vocal_end_s=vocal_end_s,
             language=language,
             style_mode=style_mode,
+            point_ref=point_ref,
+            point_cost=clone_cost,
         )
     except ValueError as e:
-        logger.warning("[voice_clone] create ValueError user=%s err=%s", user_id, e)
+        # 차감 후 실패 — doc 삽입 후 실패는 _set_status(failed)가 이미 원자 환불,
+        # 삽입 전 실패(MinIO/insert/API키)는 by-ref 폴백이 직접 환불 (둘 다 1회 보장).
+        await svc.refund_clone_points_by_ref(user_id, point_ref, clone_cost)
+        logger.warning("[voice_clone] create ValueError user=%s err=%s (refund claimed)", user_id, e)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
-        logger.exception("[voice_clone] create failed user=%s", user_id)
+        await svc.refund_clone_points_by_ref(user_id, point_ref, clone_cost)
+        logger.exception("[voice_clone] create failed user=%s ref=%s (refund claimed)", user_id, point_ref)
         raise HTTPException(status_code=500, detail="voice clone 생성 실패")
 
     return CreateResponse(

@@ -463,6 +463,14 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] mv_jobs attach index ensure failed: %s", _e)
 
+    # B-11 — 트랙→앨범 역조회(tracks._attach_album_info) hot path 멀티키 인덱스 (idempotent)
+    try:
+        from .database.mongodb import get_mongo as _alb_get_mongo
+        await _alb_get_mongo().albums.create_index("track_ids")
+        print("[migration] albums.track_ids index ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] albums.track_ids index ensure failed: %s", _e)
+
     # ArtistV212 — 아티스트 다중화 인덱스 (idempotent). unique 는 partial —
     # legacy 무character_id 문서 공존기 충돌 방지 (PLAN v212 D1).
     try:
@@ -664,12 +672,19 @@ async def lifespan(app: FastAPI):
     from .routes.dm import dm_pubsub_listener
     dm_listener_task = _asyncio.create_task(dm_pubsub_listener())
 
+    # B-10 — voice clone 진행상태(validating/generating) 서버측 주기 폴링 (30초).
+    # 앱 종료로 GET 폴링이 끊겨도 진행/실패(+환불)가 서버에서 완결된다.
+    # 30분 초과 정체 건은 failed 전이(+⭐환불, B-9). 메인 루프 태스크 — get_mongo() 안전.
+    from .services.voice_clone_service import poll_inflight_clones_loop
+    voice_clone_poll_task = _asyncio.create_task(poll_inflight_clones_loop(30))
+
     yield
 
     # Shutdown
     sync_task.cancel()
     asset_cleanup_task.cancel()
     dm_listener_task.cancel()
+    voice_clone_poll_task.cancel()
     await close_postgres()
     await close_mongodb()
     await close_redis()

@@ -52,6 +52,9 @@ def _serialize_track(doc: dict) -> dict:
     doc["artist_id"] = doc.get("uploader_id")
     doc["artist_name"] = doc.get("uploader_nickname", "AI")
     doc["cover_image"] = doc.get("cover_image_url")
+    # B-11 — 소속 앨범 (기본 null, tracks._attach_album_info 배치 첨부가 채움)
+    doc.setdefault("album_id", None)
+    doc.setdefault("album_title", None)
     return doc
 
 
@@ -241,7 +244,10 @@ async def genre_chart(genre: str, limit: int = 50):
         {"is_public": True, "genre": genre}
     ).sort("play_count", -1).limit(limit)
     tracks = await cursor.to_list(length=limit)
-    return [_serialize_track(t) for t in tracks]
+    from .tracks import _attach_album_info
+    serialized = [_serialize_track(t) for t in tracks]
+    await _attach_album_info(mongo, serialized)  # B-11 — 배치 1쿼리
+    return serialized
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +281,10 @@ async def category_chart(category: str, limit: int = 50):
     ).sort("play_count", -1).limit(limit)
     tracks = await cursor.to_list(length=limit)
     logger.info("[charts] category=%s count=%s", category, len(tracks))
-    return [_serialize_track(t) for t in tracks]
+    from .tracks import _attach_album_info
+    serialized = [_serialize_track(t) for t in tracks]
+    await _attach_album_info(mongo, serialized)  # B-11 — 배치 1쿼리
+    return serialized
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +347,10 @@ async def get_chart(chart_type: str, limit: int = 100):
 
     update_time = now.isoformat()
     result = _build_chart_response(ranked, docs_map, chart_type, update_time)
+
+    # B-11 — album 소속 배치 첨부 (1쿼리). 캐시에 포함 — 최대 TTL(300s) 지연 허용.
+    from .tracks import _attach_album_info
+    await _attach_album_info(mongo, result)
 
     # Cache the result
     await redis.setex(cache_key, CHART_CACHE_TTL, json.dumps(result, default=str))

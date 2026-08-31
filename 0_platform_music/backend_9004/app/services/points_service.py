@@ -31,6 +31,7 @@ POINT_COSTS = {
     "fatigue_skip": 5,  # 디렉터 피로 쿨다운 30분 스킵 (fatigue.py)
     "hire_director": 10,  # v193 AIDOL — 디렉터 영입 (points.py /spend)
     "extra_slot": 15,     # v193 AIDOL — 추가 아티스트 슬롯 개방 (points.py /spend)
+    "voice_clone": 5,     # B-9 — 보이스 클로닝 (voice_clone.py /create, failed 전이 시 환불)
 }
 
 _indexes_ready = False

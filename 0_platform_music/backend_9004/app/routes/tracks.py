@@ -43,7 +43,47 @@ def _serialize_track(doc: dict) -> dict:
     doc["cover_image"] = doc.get("cover_image_url")
     # v137 — 신고 블라인드 플래그 (소유자 사유 표시용, 기본 false)
     doc["report_blinded"] = bool(doc.get("report_blinded", False))
+    # B-11 — 소속 앨범 (기본 null, _attach_album_info 가 배치 역조회로 채움)
+    doc.setdefault("album_id", None)
+    doc.setdefault("album_title", None)
     return doc
+
+
+async def _attach_album_info(mongo, tracks: list) -> None:
+    """B-11 — 직렬화된 트랙 dict 목록에 album_id/album_title 배치 첨부.
+
+    albums.track_ids(멀티키 인덱스, main.py 보장) 역조회 **1쿼리** 후 매핑 —
+    목록 직렬화에서 곡당 개별 쿼리 금지 (_attach_uploader_profiles 패턴).
+    곡이 여러 앨범에 속하면 최신(created_at DESC) 앨범 1개, 무소속은 null.
+    best-effort — 실패해도 응답은 깨지 않는다 (null 유지).
+    """
+    items = [t for t in tracks if t and t.get("id")]
+    for t in items:
+        t["album_id"] = None
+        t["album_title"] = None
+    if not items:
+        return
+    ids = list({t["id"] for t in items})
+    try:
+        cursor = mongo.albums.find(
+            {"track_ids": {"$in": ids}},
+            {"track_ids": 1, "title": 1, "created_at": 1},
+        ).sort("created_at", -1)
+        albums = await cursor.to_list(length=1000)
+    except Exception:
+        logger.warning("[tracks] album attach failed n=%d", len(ids))
+        return
+    album_by_track = {}
+    for a in albums:  # 최신 앨범 우선 — 먼저 매핑된 것이 승리
+        aid = str(a["_id"])
+        title = a.get("title") or ""
+        for tid in a.get("track_ids") or []:
+            if tid not in album_by_track:
+                album_by_track[tid] = (aid, title)
+    for t in items:
+        hit = album_by_track.get(t["id"])
+        if hit:
+            t["album_id"], t["album_title"] = hit
 
 
 def _is_hidden_track(t: dict) -> bool:
@@ -258,6 +298,7 @@ async def list_tracks(
 
     serialized = _serialize_tracks(tracks)
     await _attach_uploader_profiles(serialized, pg)
+    await _attach_album_info(mongo, serialized)  # B-11 — 배치 1쿼리
 
     return {
         "tracks": serialized,
@@ -760,8 +801,11 @@ async def get_my_tracks(
     )
     tracks = await cursor.to_list(length=limit)
 
+    serialized = _serialize_tracks(tracks)
+    await _attach_album_info(mongo, serialized)  # B-11 — 배치 1쿼리
+
     return {
-        "tracks": _serialize_tracks(tracks),
+        "tracks": serialized,
         "pagination": {
             "page": page,
             "limit": limit,
@@ -1403,6 +1447,7 @@ async def get_related_tracks(
             logger.exception("[related] track=%s popular stage failed", track_id)
 
     source = sources_used[0] if len(sources_used) == 1 else ("mixed" if sources_used else "popular")
+    await _attach_album_info(mongo, picked)  # B-11 — 배치 1쿼리
     logger.info("[related] track=%s done n=%d source=%s", track_id, len(picked), source)
     return {"tracks": picked, "source": source}
 
@@ -1432,6 +1477,8 @@ async def get_track(
         await redis.incr(f"playcount:buffer:{track_id}")
         # uploader_profile_image 는 캐시 밖에서 항상 fresh 하게 첨부
         await _attach_uploader_profiles([track], pg)
+        # B-11 — album 소속도 캐시 밖 fresh 첨부 (앨범 편집 즉시 반영)
+        await _attach_album_info(mongo, [track])
         return track
 
     doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
@@ -1541,6 +1588,8 @@ async def get_track(
 
     # uploader_profile_image 는 캐시에 넣지 않고 매 요청 fresh 첨부
     await _attach_uploader_profiles([track], pg)
+    # B-11 — album 소속도 캐시에 넣지 않고 매 요청 fresh 첨부
+    await _attach_album_info(mongo, [track])
 
     return track
 

@@ -33,6 +33,7 @@ from ..config import settings
 from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from .media_urls import public_presign
+from .points_service import POINT_COSTS, refund_points
 from .suno_generator import (
     SUNO_VOICE_CHECK_URL,
     SUNO_VOICE_GENERATE_URL,
@@ -53,6 +54,15 @@ STATUS_GENERATING = "generating"          # generate 콜백 대기
 STATUS_READY = "ready"                    # voice_id 확보, 사용 가능
 STATUS_FAILED = "failed"
 STATUS_EXPIRED = "expired"                # 음악 생성 시 Suno 가 만료 보고 → 자동 플래그
+
+# B-10 — 진행중(validating/generating) 클론이 이 시간(분)을 넘기면 failed 전이(+환불).
+# 기준은 updated_at(마지막 상태 전이 시각) — created_at 기준이면 awaiting_verify
+# 에서 사용자가 오래 머문 뒤 generating 진입 직후 억울한 타임아웃이 난다.
+STALE_TIMEOUT_MIN = 30
+
+# B-10 — GET 폴링과 백그라운드 루프의 중복 Suno 호출 방지용 in-flight 가드.
+# 단일 이벤트 루프에서만 접근(체크→등록 사이 await 없음) — 락 불필요.
+_POLL_INFLIGHT: set = set()
 
 
 def _suno_headers() -> dict:
@@ -166,8 +176,13 @@ async def create_voice_clone(
     vocal_end_s: float,
     language: str = "ko",
     style_mode: str = "sing",
+    point_ref: Optional[str] = None,
+    point_cost: int = 0,
 ) -> dict:
     """소스 음성 → Suno voice/validate 요청 → MongoDB insert.
+
+    B-9: point_ref/point_cost 는 라우트 선차감(spend_points)의 영수증 —
+    doc 에 동결해 failed 전이 시 refund_clone_points 가 원자 환불한다.
 
     Returns: {clone_id, validate_task_id}
     """
@@ -192,6 +207,10 @@ async def create_voice_clone(
         "validate_info": None,
         "voice_id": None,
         "error_message": None,
+        # B-9 — 선차감 영수증 (환불 원자 클레임용). 과금 전 레거시 doc 은 None.
+        "point_ref": point_ref,
+        "point_cost": int(point_cost or 0),
+        "refunded": False,
         "created_at": now,
         "updated_at": now,
     }
@@ -460,6 +479,22 @@ async def poll_voice_record(generate_task_id: str) -> dict:
 
 
 async def poll_validate_info(clone_id: str) -> dict | None:
+    """B-10 가드 래퍼 — GET 폴링·백그라운드 루프 동시 진입 시 Suno 중복 호출 방지.
+
+    in-flight 면 현재 doc 만 반환(폴링 스킵). 본체는 _poll_validate_info_inner.
+    """
+    if clone_id in _POLL_INFLIGHT:
+        logger.info("[voice_clone:%s] poll_validate_info skipped (in-flight)", clone_id)
+        doc = await get_mongo()[VOICE_CLONES_COLLECTION].find_one({"_id": ObjectId(clone_id)})
+        return _serialize(doc) if doc else None
+    _POLL_INFLIGHT.add(clone_id)
+    try:
+        return await _poll_validate_info_inner(clone_id)
+    finally:
+        _POLL_INFLIGHT.discard(clone_id)
+
+
+async def _poll_validate_info_inner(clone_id: str) -> dict | None:
     """v76.2: GET /voice/validate-info — 콜백 미수신 환경에서 phrase 폴링.
 
     doc.status == 'validating' 이고 validate_task_id 가 있을 때 호출.
@@ -603,6 +638,19 @@ async def poll_validate_info(clone_id: str) -> dict | None:
 
 
 async def poll_generate_voice(clone_id: str) -> dict | None:
+    """B-10 가드 래퍼 — GET 폴링·백그라운드 루프 동시 진입 시 Suno 중복 호출 방지."""
+    if clone_id in _POLL_INFLIGHT:
+        logger.info("[voice_clone:%s] poll_generate_voice skipped (in-flight)", clone_id)
+        doc = await get_mongo()[VOICE_CLONES_COLLECTION].find_one({"_id": ObjectId(clone_id)})
+        return _serialize(doc) if doc else None
+    _POLL_INFLIGHT.add(clone_id)
+    try:
+        return await _poll_generate_voice_inner(clone_id)
+    finally:
+        _POLL_INFLIGHT.discard(clone_id)
+
+
+async def _poll_generate_voice_inner(clone_id: str) -> dict | None:
     """v76.2: GET /voice/record-info — generate 단계의 voiceId 자동 폴링.
 
     doc.status == 'generating' 이고 generate_task_id 가 있을 때 호출.
@@ -976,10 +1024,147 @@ async def cleanup_expired(user_id: str) -> dict:
         raise
 
 
+# ── B-9: refund (failed 전이 1회 원자 환불) ─────────────────────────────────
+
+
+async def refund_clone_points(clone_id: str, db=None) -> bool:
+    """failed 전이된 클론의 선차감 ⭐를 정확히 1회 환불 (B-9).
+
+    generate.py `refund_generation_points` 패턴 복제 — voice_clones doc 의
+    `refunded` 플래그를 find_one_and_update 로 원자 클레임(absent/False → True)
+    하므로 이중 환불이 구조적으로 불가능하다. `point_ref` 없는 doc(과금 전
+    레거시)은 스킵. Never raises.
+    """
+    try:
+        mongo = db if db is not None else get_mongo()
+        claimed = await mongo[VOICE_CLONES_COLLECTION].find_one_and_update(
+            {
+                "_id": ObjectId(clone_id),
+                "point_ref": {"$ne": None},
+                "refunded": {"$ne": True},
+            },
+            {"$set": {"refunded": True}},
+        )
+        if not claimed:
+            return False
+        user_id = claimed.get("user_id")
+        point_ref = claimed.get("point_ref")
+        cost = int(claimed.get("point_cost") or POINT_COSTS.get("voice_clone", 5))
+        if not user_id or not point_ref:
+            return False
+        await refund_points(user_id, "voice_clone", cost, point_ref, db=db)
+        logger.info(
+            "[star-econ] voice_clone refund clone_id=%s user=%s amount=+%d ref=%s",
+            clone_id, user_id[:8], cost, point_ref,
+        )
+        return True
+    except Exception:
+        logger.exception("[star-econ] voice_clone refund failed clone_id=%s", clone_id)
+        return False
+
+
+async def refund_clone_points_by_ref(user_id: str, point_ref: str, cost: int) -> bool:
+    """create 라우트 실패 폴백 환불 (B-9). Never raises.
+
+    - doc 이 이미 삽입된 실패(Suno 거부 등): _set_status(failed) 가 이미 원자
+      환불 → 여기서 refund_clone_points 재호출해도 클레임 실패로 no-op (1회 보장).
+    - doc 삽입 전 실패(MinIO/insert/API키): doc 이 없으므로 직접 환불.
+    """
+    if not user_id or not point_ref:
+        return False
+    try:
+        mongo = get_mongo()
+        doc = await mongo[VOICE_CLONES_COLLECTION].find_one(
+            {"user_id": user_id, "point_ref": point_ref}, {"_id": 1},
+        )
+        if doc:
+            return await refund_clone_points(str(doc["_id"]))
+        await refund_points(user_id, "voice_clone", int(cost), point_ref)
+        logger.info(
+            "[star-econ] voice_clone refund (pre-insert fallback) user=%s ref=%s amount=+%d",
+            user_id[:8], point_ref, int(cost),
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "[star-econ] voice_clone refund by-ref failed user=%s ref=%s", user_id[:8], point_ref,
+        )
+        return False
+
+
+# ── B-10: 서버측 주기 폴링 (앱 종료 시 진행 정체 방지) ──────────────────────
+
+
+async def poll_inflight_clones_once() -> None:
+    """진행중(validating/generating) 클론 1회 스윕 — 기존 poll 함수 재사용.
+
+    - updated_at(폴백 created_at) 이 STALE_TIMEOUT_MIN 분을 넘긴 건은 failed
+      전이 → _set_status 가 환불까지 원자 수행 (B-9).
+    - 건별 예외는 잡아서 로그만 (스윕/루프 생존).
+    """
+    mongo = get_mongo()
+    cursor = mongo[VOICE_CLONES_COLLECTION].find(
+        {"status": {"$in": [STATUS_VALIDATING, STATUS_GENERATING]}},
+        {"status": 1, "validate_task_id": 1, "generate_task_id": 1,
+         "validate_info": 1, "voice_id": 1, "created_at": 1, "updated_at": 1},
+    )
+    docs = await cursor.to_list(length=500)
+    if not docs:
+        return
+    now = datetime.now(timezone.utc)
+    logger.info("[voice_clone:bg] sweep inflight=%d", len(docs))
+    for doc in docs:
+        clone_id = str(doc["_id"])
+        status = (doc.get("status") or "").strip()
+        try:
+            last = doc.get("updated_at") or doc.get("created_at")
+            if isinstance(last, datetime):
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                age_min = (now - last).total_seconds() / 60.0
+                if age_min > STALE_TIMEOUT_MIN:
+                    logger.warning(
+                        "[voice_clone:%s] bg timeout status=%s age=%.1fmin(>%d) -> failed(+refund)",
+                        clone_id, status, age_min, STALE_TIMEOUT_MIN,
+                    )
+                    await _set_status(
+                        clone_id, STATUS_FAILED,
+                        error_message=f"처리 시간 초과({STALE_TIMEOUT_MIN}분) — 자동 실패 처리",
+                    )
+                    continue
+            if status == STATUS_VALIDATING and doc.get("validate_task_id") and not doc.get("validate_info"):
+                await poll_validate_info(clone_id)
+            elif status == STATUS_GENERATING and doc.get("generate_task_id") and not doc.get("voice_id"):
+                await poll_generate_voice(clone_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[voice_clone:%s] bg poll failed status=%s", clone_id, status)
+
+
+async def poll_inflight_clones_loop(interval_s: int = 30) -> None:
+    """B-10 백그라운드 루프 — main.py lifespan 에서 create_task, 종료 시 cancel."""
+    logger.info("[voice_clone:bg] poll loop start interval=%ds timeout=%dmin", interval_s, STALE_TIMEOUT_MIN)
+    while True:
+        try:
+            await poll_inflight_clones_once()
+        except asyncio.CancelledError:
+            logger.info("[voice_clone:bg] poll loop cancelled")
+            raise
+        except Exception:
+            logger.exception("[voice_clone:bg] sweep failed (loop continues)")
+        await asyncio.sleep(interval_s)
+
+
 # ── internal ────────────────────────────────────────────────────────────────
 
 
 async def _set_status(clone_id: str, status: str, error_message: Optional[str] = None) -> None:
+    # B-9 — failed 전이 = 환불 트리거 단일 지점. status 를 failed 로 노출하기
+    # **전에** 환불 클레임을 끝낸다 — 앱이 failed 를 보고 자동 DELETE(문서 삭제)
+    # 해도 환불이 유실되지 않는 순서 보장. refund_clone_points 는 never raises.
+    if status == STATUS_FAILED:
+        await refund_clone_points(clone_id)
     mongo = get_mongo()
     update: dict[str, Any] = {"status": status, "updated_at": datetime.now(timezone.utc)}
     if error_message is not None:
