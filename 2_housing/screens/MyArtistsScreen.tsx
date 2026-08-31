@@ -119,13 +119,17 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaName: c.persona_name,
                 personaStatus: c.persona_status,
               }));
-          } else if (serverSlots.used >= 1) {
+          } else {
             // 레거시(마이그레이션 미실행) 계정 — /me 구 shape로 조립 카드 표시.
             // 편집/재생성은 구 계약(me/save, character_id 미지정), 개별 삭제 UI 금지(me=전체 삭제).
-            legacy = true;
+            // v3.116: 기존엔 slots.used>=1일 때만 /me 폴백을 시도했는데, 서버 used 집계와
+            // 실제 me 시트가 어긋나는 계정(무cid 잔여 doc 등)은 used=0으로 와서 저장된
+            // 아티스트가 있는데도 빈 상태가 떴다. characters가 빈 배열이면 used와 무관하게
+            // /me를 실측해 시트가 있으면 레거시 카드로 구제한다(조회성 GET 1회 추가 — 무과금).
             const meRes = await api.get('/character/me');
             if (cancelled) return;
             const ch = meRes.data?.character;
+            if (serverSlots.used >= 1) legacy = true;
             if (ch?.sheet_object_name) {
               entries.push({
                 characterId: null,
@@ -152,6 +156,13 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaId: null,
                 personaName: null,
                 personaStatus: null,
+              });
+            }
+            // v3.116 구제: used=0으로 왔지만 me에 시트가 실존 — 레거시로 확정(빈 상태 방지)
+            if (entries.length > 0 && !legacy) {
+              legacy = true;
+              console.warn('[MyArtists] slots.used=0인데 /me 시트 존재 — 레거시 폴백 구제', {
+                used: serverSlots.used,
               });
             }
           }

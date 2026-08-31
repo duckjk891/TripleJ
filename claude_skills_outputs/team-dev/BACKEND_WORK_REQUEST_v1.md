@@ -147,3 +147,7 @@
 
 ## B-12. 작사 API 필드 확장 (v3.110 제안 — 우리 백로그)
 - duration_minutes 4·5분 분량 가이드, structure enum(시스템 프롬프트 STRUCTURAL RULES 주입), english_ratio(0~100), has_rap:bool — 프론트 buildLyricsRequest가 즉시 활용 가능.
+
+## B-13. 캐릭터 레거시 정리 (v3.116 발견 — 우리 백로그)
+- upload-original-photo가 무cid 레거시 문서를 upsert로 계속 생성(2026-08-31 실측, 시트 없어 현재 무해) — cid 문서 체제로 정리.
+- 레거시 계정용 개별 삭제 대체 수단(DELETE /me 전체 삭제 외) 검토.

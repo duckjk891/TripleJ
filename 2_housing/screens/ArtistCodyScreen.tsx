@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Linking,
+  TextInput,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
@@ -182,6 +183,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const [selected, setSelected] = useState<Partial<Record<Cat, AdItem>>>({});
   // 카테고리별 옵션 (핏/기장 등)
   const [itemOptions, setItemOptions] = useState<Partial<Record<Cat, Record<string, string>>>>({});
+  // v3.116: 상세설정 자유 디렉팅 — 칩(핏/기장)으로 못 담는 지시("셔츠는 넣어입지 말기",
+  // "왼쪽만 넣어입기" 등)를 자유 텍스트로 받아 프롬프트에 합성. 서버 계약 변화 없음.
+  const FREE_DIRECTING_MAX = 200;
+  const [freeDirecting, setFreeDirecting] = useState('');
 
   const toggleOption = (cat: Cat, label: string, value: string) => {
     setItemOptions((prev) => {
@@ -373,6 +378,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
       );
     } else if (!isSheetMode) {
       parts.push('【4단계 — 헤어/문신】 현재 시트 그대로 유지.');
+    }
+
+    // v3.116: 자유 디렉팅 합성 — 미입력 시 기존 프롬프트와 완전 동일(추가 블록 없음).
+    const directing = freeDirecting.trim().slice(0, FREE_DIRECTING_MAX);
+    if (directing) {
+      parts.push(
+        `【착장 디렉팅 — 사용자 자유 지시】 ${directing}\n` +
+        '(위 의상 지시와 함께 반드시 반영하세요. 선택된 아이템 자체를 바꾸라는 지시가 아닌 한 아이템 종류는 유지합니다.)'
+      );
     }
 
     if (isSheetMode) {
@@ -590,6 +604,24 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
               })}
           </View>
         )}
+
+        {/* v3.116: 상세설정 자유 디렉팅 — 핏/기장 칩으로 못 담는 착장 지시 자유 입력.
+            미입력 시 프롬프트 불변, 최대 200자. 서버 계약 변화 없음(문자열 합성). */}
+        <View style={styles.optBox}>
+          <AppText style={styles.optBoxTitle}>착장 디렉팅 (선택)</AppText>
+          <TextInput
+            style={styles.directingInput}
+            value={freeDirecting}
+            onChangeText={setFreeDirecting}
+            placeholder="착장 디렉팅을 자유롭게 적어주세요 — 예: 셔츠는 넣어입지 말기"
+            placeholderTextColor={colors.text.muted}
+            multiline
+            maxLength={FREE_DIRECTING_MAX}
+          />
+          <AppText style={styles.directingCount}>
+            {freeDirecting.length}/{FREE_DIRECTING_MAX}
+          </AppText>
+        </View>
 
         {selectedEntries.length > 0 && (
           <View style={styles.summaryBox}>
@@ -1108,4 +1140,15 @@ const styles = StyleSheet.create({
   },
   optChipText: { color: colors.text.secondary, fontSize: 11, fontWeight: '600' },
   optChipTextSelected: { color: colors.text.primary, fontWeight: '800' },
+  // v3.116: 착장 자유 디렉팅 입력
+  directingInput: {
+    minHeight: 64, padding: 10, borderRadius: 10,
+    backgroundColor: colors.bg.surface2,
+    borderWidth: 1, borderColor: colors.border.subtle,
+    color: colors.text.primary, fontSize: 13,
+    textAlignVertical: 'top',
+  },
+  directingCount: {
+    color: colors.text.muted, fontSize: 11, textAlign: 'right', marginTop: 4,
+  },
 });

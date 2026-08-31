@@ -230,6 +230,18 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           const res = await api.get('/character/me');
           if (cancelled) return;
           const ch = res.data?.character;
+          // v3.116: legacyContract는 in-memory store라 JS 리로드 시 초기값(false)으로
+          // 돌아간다(8/31 실사례 — 리로드 후 레거시 계정이 신 계약 save로 갈 뻔).
+          // me 응답의 character_id(레거시 doc은 null)로 위험 방향만 재유도:
+          // 시트는 있는데 cid가 하나도 없으면 레거시 계정 확정 → 구 계약으로 고정.
+          if (!slotParam && ch) {
+            const hasCid = !!(ch.character_id || ch.virtual_character_id);
+            const hasSheet = !!(ch.sheet_object_name || ch.virtual_sheet_object_name);
+            if (!hasCid && hasSheet && !useCharacterTaskStore.getState().legacyContract) {
+              if (__DEV__) console.info('[ArtistResult] 레거시 계정 재판정(me.character_id=null) — legacyContract=true 복구');
+              useCharacterTaskStore.getState().setInput({ legacyContract: true, targetCharacterId: null });
+            }
+          }
           // 진단 로그: 어떤 필드가 비어있는지 한눈에
           console.log('[ArtistResult] /me 응답:', {
             sheet: !!ch?.sheet_object_name,
@@ -455,8 +467,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       useOutfitStore.getState().clear();
       // v3.82: 서버 전체 삭제와 함께 로컬 프로필(이름·성별)도 정리
       useArtistProfileStore.getState().clearAll();
-      // v3.81: 삭제 후엔 목록으로 (목록이 포커스 시 재로드 → 빈 상태 + 추가 버튼)
-      navigation.navigate('MyArtists');
+      // v3.116: 삭제 직후 목록의 "아직 아티스트가 없어요"를 "저장이 사라졌다"로 오인한
+      // 실사례(8/31 대표 계정) — 전체 삭제 결과임을 앱 내 팝업으로 먼저 알리고 이동한다.
+      showAlert('삭제 완료', '아티스트와 코디 기록이 모두 삭제되었어요.\n목록에서 새 아티스트를 만들 수 있어요.', [
+        // v3.81: 삭제 후엔 목록으로 (목록이 포커스 시 재로드 → 빈 상태 + 추가 버튼)
+        { text: '확인', onPress: () => navigation.navigate('MyArtists') },
+      ]);
     } catch (err: any) {
       console.error('[ArtistResult] 캐릭터 삭제 실패:', err?.response?.status, err?.response?.data, err?.message);
       const msg = err.response?.data?.error || err.message || '삭제에 실패했어요.';
