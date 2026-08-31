@@ -153,7 +153,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       type: 'director',
       text: forceKind
         ? `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`
-        : `안녕하세요 ${titleLabel}님! 어떤 스타일의 아티스트를 만들까요? 실사와 그림 중에 골라주세요.`,
+        : `안녕하세요 ${titleLabel}님! 어떤 아티스트를 만들까요? 실사로 만들기와 캐릭터로 만들기 중에 골라주세요.`,
     },
   ]);
 
@@ -324,7 +324,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     });
     if (kind === 'virtual') {
       pushUser('그림으로 만들게요');
-      pushDirector('좋아요! 그림 스타일로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
+      pushDirector('좋아요! 캐릭터로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
     } else {
       pushUser('실사로 만들게요');
       pushDirector('좋아요! 실사 스타일로 만들어드릴게요. 사진을 올리거나, 사진 없이 설명만으로 시작할 수 있어요.');
@@ -336,7 +336,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     if (__DEV__) console.info('[ArtistInput] 스타일 다시 선택');
     setSelectedKind(null);
     pushUser('다른 스타일로 바꿀래요');
-    pushDirector('네! 실사와 그림 중에 다시 골라주세요.');
+    pushDirector('네! 실사로 만들기와 캐릭터로 만들기 중에 다시 골라주세요.');
   };
 
   // ── v3.80: 화풍 샘플 로드 (무인증·무비용 GET) ─────
@@ -535,7 +535,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 <AppText style={styles.kindCardDesc}>사진 또는 설명으로 실제 사람 같은 아티스트를 만들어요</AppText>
               </TouchableOpacity>
               <TouchableOpacity style={styles.kindCard} onPress={() => handleSelectKind('virtual')}>
-                <AppText style={styles.kindCardTitle}>그림으로 만들기</AppText>
+                <AppText style={styles.kindCardTitle}>캐릭터로 만들기</AppText>
                 <AppText style={styles.kindCardDesc}>원하는 화풍(그림체)을 골라 캐릭터 아티스트를 만들어요</AppText>
               </TouchableOpacity>
             </>
@@ -558,7 +558,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               )}
               <AppText style={styles.textOnlyHint}>
                 {isVirtualMode
-                  ? '그림 스타일: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
+                  ? '캐릭터로 만들기: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
                   : '사진 없이 설명만으로 아티스트를 만들 수도 있어요.'}
               </AppText>
             </>
