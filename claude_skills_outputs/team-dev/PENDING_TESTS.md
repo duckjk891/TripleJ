@@ -29,3 +29,8 @@
 - [ ] [api] POST /tracks/upload mp3 201·⭐+5 / .txt·50MB 초과 400 / is_public=false 차트 미노출
 - [ ] [api] POST /upload/image type='cover'+트랙 id → cover_image_url 갱신 (**type 'cover' vs 'track' 실서버 확인 필수**)
 - [ ] [e2e] 마이뮤직→음원 파일 올리기→저작권 confirm(취소 시 차단)→진행률→완료 팝업→보관함 갱신·재생 / 커버 미선택 기본 처리 / web·native FormData / 네트워크 오류 재시도 안내
+
+### v3.101 — 보호자 동의 (코드만 완료, tsc 0 — 서버 플래그 OFF 상태)
+- [ ] [e2e] 만 14세 미만 생년월일 → 현재(플래그 OFF): "준비 중" 차단 화면
+- [ ] (백엔드 guardian_consent_enabled=true 전환 후) [e2e] 보호자 정보 섹션 노출(추천코드·소셜 숨김)→검증 인라인 에러→제출→pending 화면→웹 착지 동의→[동의 상태 확인] 승인 안내→로그인 성공; 거부/만료/승인 전 로그인 403 분기
+- [ ] [e2e] 회귀: 만 14세 이상 가입 기존 동일

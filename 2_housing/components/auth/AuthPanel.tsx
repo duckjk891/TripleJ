@@ -1,11 +1,18 @@
 // [AuthPanel] 로그인/회원가입 패널 — MAIDOL LoginPage/RegisterPage 이식.
 // 로그인: 이메일·비밀번호 + 소셜(구글/카카오/네이버) + 회원가입 이동.
 // 가입: [연령 게이트(생년월일·내외국인·성별)] → [본 폼(이메일·닉네임·기획사명·호칭·비밀번호+확인·추천코드·약관동의)]
-//       만 14세 미만은 보호자 동의 준비 중 안내(blocked) — 백엔드 guardian_consent_enabled=false 기준.
+// v3.101(A-19) 만 14세 미만 분기 — GET /auth/signup-config 실측으로 결정:
+//   플래그 ON  → 본 폼에 보호자(법정대리인) 정보 섹션 추가, 제출 = POST /auth/guardian-consent/request
+//               → pending 화면(동의 요청 발송 안내 + 상태 확인). 승인 전 로그인은 서버가 403으로 차단.
+//   플래그 OFF → 기존 blocked(준비 중) 안내 유지 — 법적 방어(가입 차단).
 // 현행 백엔드는 gender·consents가 필수라 이 패널이 없으면 가입이 항상 400으로 실패한다(v3.43에서 해소).
 import { useMemo, useState } from 'react';
 import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { useAuthStore } from '../../stores/authStore';
+import {
+  getSignupConfig, requestGuardianConsent, getGuardianConsentStatus, guardianTokenFromUrl,
+} from '../../services/authService';
+import { showAlert } from '../../utils/appAlert';
 import { CONSENT_VERSION, SIGNUP_CONSENT_KEYS, REQUIRED_CONSENT_KEYS } from '../../constants/consentTexts';
 import ConsentList, { ConsentState } from './ConsentList';
 import SocialLoginButtons from './SocialLoginButtons';
@@ -13,7 +20,10 @@ import { AppText, Button } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
 
-type Mode = 'login' | 'gate' | 'form' | 'blocked';
+type Mode = 'login' | 'gate' | 'form' | 'blocked' | 'pending';
+
+// 보호자 휴대폰 — 숫자만 10~11자리(서버는 8~20자 허용이나 국내 휴대폰 기준으로 좁힘)
+const GUARDIAN_PHONE_RE = /^[0-9]{10,11}$/;
 
 // 기획사명 자동 접미 — MAIDOL과 동일(끝이 '엔터테인먼트'가 아니면 붙인다)
 const normalizeCompany = (v: string) => {
@@ -58,6 +68,16 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
   const [referralCode, setReferralCode] = useState('');
   const [consents, setConsents] = useState<ConsentState>({});
 
+  // v3.101 보호자 동의 플로우(만 14세 미만 + 서버 플래그 ON)
+  const [isMinor, setIsMinor] = useState(false);
+  const [gateBusy, setGateBusy] = useState(false);
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianPhone, setGuardianPhone] = useState('');
+  const [guardianLoading, setGuardianLoading] = useState(false);
+  const [statusChecking, setStatusChecking] = useState(false);
+  // 요청 접수 응답 — consent_url은 알림 어댑터가 mock(테스트 모드)일 때만 존재
+  const [pendingInfo, setPendingInfo] = useState<{ message: string; consentUrl: string | null } | null>(null);
+
   const showError = localError || error;
   const resetError = () => { setLocalError(''); clearError(); };
 
@@ -89,18 +109,110 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     if (ok) onSuccess?.();
   };
 
-  const handleGateNext = () => {
+  const handleGateNext = async () => {
     resetError();
     const bd = birthDate();
     if (!bd) { setLocalError('생년월일을 모두 선택해주세요.'); return; }
     if (!nationality) { setLocalError('내국인/외국인 여부를 선택해주세요.'); return; }
     if (!gender) { setLocalError('성별을 선택해주세요.'); return; }
     if (koreanAge(bd) < 14) {
-      if (__DEV__) console.info('[AuthPanel] 만14세 미만 → blocked');
-      setMode('blocked');
+      // v3.101 — 서버 플래그(GET /auth/signup-config)로 보호자 동의 플로우 여부 결정
+      setGateBusy(true);
+      let enabled = false;
+      try {
+        enabled = (await getSignupConfig()).guardian_consent_enabled;
+      } catch {
+        // 설정 조회 실패 시 안전 기본값: 차단 안내(강행 금지)
+        enabled = false;
+      }
+      setGateBusy(false);
+      if (__DEV__) console.info('[AuthPanel] 만14세 미만 분기', { guardianConsentEnabled: enabled });
+      setIsMinor(true);
+      setMode(enabled ? 'form' : 'blocked');
       return;
     }
+    setIsMinor(false);
     setMode('form');
+  };
+
+  // v3.101 — 만 14세 미만: register 대신 보호자 동의 요청(서버가 pending 계정 생성)
+  const handleGuardianRequest = async () => {
+    resetError();
+    if (!email.trim() || !password || !nickname.trim()) { setLocalError('모든 필드를 입력해주세요.'); return; }
+    if (!companyName.trim() || !displayTitle.trim()) { setLocalError('모든 필드를 입력해주세요.'); return; }
+    if (password !== passwordConfirm) { setLocalError('비밀번호가 일치하지 않습니다.'); return; }
+    if (!(password.length >= 8 && /[a-zA-Z]/.test(password) && /[0-9]/.test(password))) {
+      setLocalError('비밀번호는 8자 이상이며 영문과 숫자를 모두 포함해야 합니다.'); return;
+    }
+    if (!REQUIRED_CONSENT_KEYS.every((k) => consents[k])) {
+      setLocalError('필수 동의 항목에 모두 동의해야 가입할 수 있습니다.'); return;
+    }
+    const gName = guardianName.trim();
+    const gPhone = guardianPhone.replace(/[^0-9]/g, '');
+    if (!gName) { setLocalError('보호자 이름을 입력해주세요.'); return; }
+    if (!GUARDIAN_PHONE_RE.test(gPhone)) { setLocalError('보호자 휴대폰 번호를 정확히 입력해주세요.'); return; }
+    const bd = birthDate();
+    if (!bd) { setLocalError('생년월일을 다시 확인해주세요.'); setMode('gate'); return; }
+    const consentsBody: Record<string, any> = { version: CONSENT_VERSION };
+    SIGNUP_CONSENT_KEYS.forEach((k) => { consentsBody[k] = !!consents[k]; });
+    if (__DEV__) console.info('[AuthPanel] guardian request 시도', { emailLen: email.length, nameLen: gName.length });
+    setGuardianLoading(true);
+    try {
+      const res = await requestGuardianConsent({
+        email: email.trim(),
+        password,
+        nickname: nickname.trim(),
+        birth_date: bd,
+        nationality,
+        gender,
+        company_name: normalizeCompany(companyName),
+        display_title: displayTitle.trim(),
+        guardian_name: gName,
+        guardian_phone: gPhone,
+        consents: consentsBody,
+      });
+      setPendingInfo({
+        message: res?.message || '보호자 동의 요청이 접수되었습니다. 보호자 동의 완료 후 계정이 활성화됩니다.',
+        consentUrl: res?.consent_url || null,
+      });
+      setMode('pending');
+    } catch (err: any) {
+      if (err?.response?.status === 503) {
+        // 서버 플래그 OFF — 준비 중 안내로 전환
+        setMode('blocked');
+      } else {
+        setLocalError(
+          err?.response?.data?.error || err?.response?.data?.detail || '보호자 동의 요청에 실패했습니다.'
+        );
+      }
+    } finally {
+      setGuardianLoading(false);
+    }
+  };
+
+  // v3.101 — pending 화면 [동의 상태 확인] (mock 모드: consent_url의 토큰으로 조회)
+  const handleCheckGuardianStatus = async () => {
+    const token = guardianTokenFromUrl(pendingInfo?.consentUrl);
+    if (!token) return;
+    setStatusChecking(true);
+    try {
+      const { status } = await getGuardianConsentStatus(token);
+      if (status === 'agreed') {
+        showAlert('보호자 동의 완료', '계정이 활성화되었습니다. 이제 로그인할 수 있습니다.', [
+          { text: '로그인하기', onPress: () => { resetError(); setMode('login'); } },
+        ]);
+      } else if (status === 'rejected') {
+        showAlert('동의가 거부되었습니다', '보호자가 동의를 거부하여 계정이 활성화되지 않았습니다.');
+      } else if (status === 'expired') {
+        showAlert('동의 링크 만료', '동의 링크가 만료되었거나 유효하지 않습니다. 가입을 처음부터 다시 진행해주세요.');
+      } else {
+        showAlert('아직 대기 중이에요', '보호자가 아직 동의를 완료하지 않았습니다. 동의 완료 후 로그인할 수 있습니다.');
+      }
+    } catch {
+      showAlert('상태 확인 실패', '동의 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setStatusChecking(false);
+    }
   };
 
   const handleRegister = async () => {
@@ -169,7 +281,42 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     );
   }
 
-  // ── 가입: 만14세 미만 차단 ──
+  // ── 가입: 보호자 동의 대기(만14세 미만 + 플래그 ON, 요청 접수 후) ──
+  if (mode === 'pending') {
+    const statusToken = guardianTokenFromUrl(pendingInfo?.consentUrl);
+    return (
+      <View>
+        <AppText variant="bodyStrong" style={{ marginBottom: spacing.sm }}>보호자에게 동의 요청을 보냈어요</AppText>
+        <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
+          {pendingInfo?.message || '보호자 동의 요청이 접수되었습니다. 보호자 동의 완료 후 계정이 활성화됩니다.'}
+        </AppText>
+        <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
+          보호자가 동의 링크에서 동의를 완료하면 로그인할 수 있습니다. 동의 링크는 요청 시점부터 72시간 동안 유효합니다.
+        </AppText>
+        {pendingInfo?.consentUrl ? (
+          <View style={styles.consentUrlBox}>
+            <AppText variant="caption" tone="secondary" style={{ marginBottom: spacing.xs }}>
+              테스트 모드 — 아래 링크에서 보호자 동의를 진행할 수 있습니다.
+            </AppText>
+            <AppText variant="caption" tone="accent" selectable>{pendingInfo.consentUrl}</AppText>
+          </View>
+        ) : null}
+        {statusToken ? (
+          <View style={{ marginBottom: spacing.sm }}>
+            <Button
+              label={statusChecking ? '확인 중...' : '동의 상태 확인'}
+              fullWidth
+              disabled={statusChecking}
+              onPress={handleCheckGuardianStatus}
+            />
+          </View>
+        ) : null}
+        <Button label="로그인 화면으로" variant="tonal" fullWidth onPress={() => { resetError(); setMode('login'); }} />
+      </View>
+    );
+  }
+
+  // ── 가입: 만14세 미만 차단(서버 플래그 OFF) ──
   if (mode === 'blocked') {
     return (
       <View>
@@ -214,7 +361,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
           <Radio selected={gender === 'other'} label="기타" onPress={() => setGender('other')} />
         </View>
 
-        <Button label="다음" fullWidth onPress={handleGateNext} />
+        <Button label={gateBusy ? '확인 중...' : '다음'} fullWidth disabled={gateBusy} onPress={handleGateNext} />
         <View style={styles.footer}>
           <AppText variant="footnote" tone="secondary">이미 계정이 있으신가요? </AppText>
           <TouchableOpacity onPress={() => { resetError(); setMode('login'); }}>
@@ -225,9 +372,15 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
     );
   }
 
-  // ── 가입: 본 폼 ──
+  // ── 가입: 본 폼 (만14세 미만이면 보호자 정보 섹션 추가, 제출 = 보호자 동의 요청) ──
   return (
     <View>
+
+      {isMinor ? (
+        <AppText variant="footnote" tone="secondary" style={{ lineHeight: 20, marginBottom: spacing.md }}>
+          만 14세 미만은 보호자(법정대리인) 동의 후 가입이 완료됩니다. 입력한 보호자 연락처로 동의 요청을 보내드려요.
+        </AppText>
+      ) : null}
 
       {/* 게이트 요약 + 수정 */}
       <View style={styles.gateSummary}>
@@ -273,24 +426,47 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
         <AppText variant="caption" style={styles.error}>비밀번호가 일치하지 않습니다.</AppText>
       ) : null}
 
-      <Label>추천코드 (선택)</Label>
-      <TextInput style={styles.input} placeholder="친구에게 받은 4자리 코드" placeholderTextColor={colors.text.muted}
-        maxLength={4} autoCapitalize="characters" value={referralCode}
-        onChangeText={(v) => setReferralCode(v.toUpperCase())} />
+      {/* 추천코드 — 보호자 동의 경로(GuardianConsentRequest)에는 referral_code가 없어 미성년 가입에서는 숨김 */}
+      {!isMinor ? (
+        <>
+          <Label>추천코드 (선택)</Label>
+          <TextInput style={styles.input} placeholder="친구에게 받은 4자리 코드" placeholderTextColor={colors.text.muted}
+            maxLength={4} autoCapitalize="characters" value={referralCode}
+            onChangeText={(v) => setReferralCode(v.toUpperCase())} />
+        </>
+      ) : null}
+
+      {isMinor ? (
+        <>
+          <AppText variant="bodyStrong" style={styles.section}>보호자(법정대리인) 정보</AppText>
+          <Label>보호자 이름</Label>
+          <TextInput style={styles.input} placeholder="보호자 이름을 입력하세요" placeholderTextColor={colors.text.muted}
+            maxLength={60} value={guardianName} onChangeText={setGuardianName} />
+          <Label>보호자 휴대폰 번호</Label>
+          <TextInput style={styles.input} placeholder="숫자만 입력 (예: 01012345678)" placeholderTextColor={colors.text.muted}
+            maxLength={11} keyboardType="number-pad" value={guardianPhone}
+            onChangeText={(v) => setGuardianPhone(v.replace(/\D/g, '').slice(0, 11))} />
+        </>
+      ) : null}
 
       <AppText variant="bodyStrong" style={styles.section}>약관 동의</AppText>
       <ConsentList value={consents} onChange={setConsents} />
 
       <View style={{ marginTop: spacing.lg }}>
         <Button
-          label={isLoading ? '가입 중...' : '회원가입'}
+          label={
+            isMinor
+              ? (guardianLoading ? '요청 중...' : '보호자 동의 요청')
+              : (isLoading ? '가입 중...' : '회원가입')
+          }
           fullWidth
-          disabled={isLoading || !REQUIRED_CONSENT_KEYS.every((k) => consents[k])}
-          onPress={handleRegister}
+          disabled={(isMinor ? guardianLoading : isLoading) || !REQUIRED_CONSENT_KEYS.every((k) => consents[k])}
+          onPress={isMinor ? handleGuardianRequest : handleRegister}
         />
       </View>
 
-      <SocialLoginButtons logPrefix="AuthPanel:register" />
+      {/* 만14세 미만은 소셜 가입으로 보호자 동의 절차를 우회할 수 없도록 소셜 버튼 숨김 */}
+      {!isMinor ? <SocialLoginButtons logPrefix="AuthPanel:register" /> : null}
       <View style={styles.footer}>
         <AppText variant="footnote" tone="secondary">이미 계정이 있으신가요? </AppText>
         <TouchableOpacity onPress={() => { resetError(); setMode('login'); }}>
@@ -326,4 +502,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface1, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md,
   },
   section: { marginTop: spacing.lg, marginBottom: spacing.sm },
+  consentUrlBox: {
+    backgroundColor: colors.bg.surface1, borderRadius: radius.md, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border.subtle, marginBottom: spacing.lg,
+  },
 });

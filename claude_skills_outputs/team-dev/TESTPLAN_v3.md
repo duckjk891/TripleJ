@@ -5,10 +5,17 @@
 
 ---
 
-## v3.100 — 2026-08-31 — 직접 음원 업로드 (구현 직후 — api 스모크는 오케스트레이터 즉시 실행 예정)
+## v3.101 — 2026-08-31 — 보호자 동의 (서버 플래그 OFF — e2e는 플래그 전환 후)
 
-- [api] upload 201/400/공개설정, upload/image type 실검증 — PENDING_TESTS §신규 v3.100
-- [e2e][미실행] 업로드 풀플로우·저작권 confirm·커버 반영
+- 실측: guardian-consent 라우트 4종 실서버 존재, `signup-config.guardian_consent_enabled=false`(OFF) — 런타임 플래그 분기 구현. 보호자 연락은 휴대폰(SMS), 착지 웹은 서버측 제공. ⭐ 지급 로직 서버 부재 → 문구 미표기(백엔드 요청 후보).
+- [e2e][미실행] PENDING_TESTS §신규 v3.101 (플래그 전환 후)
+
+---
+
+## v3.100 — 2026-08-31 — 직접 음원 업로드 (api 스모크 완료)
+
+- [api] **PASS**: upload 201(id·audio_url)·⭐21→26(+5 보상)·`/upload/image type=cover`로 cover_image_url 갱신(판단 ⑤-1 실서버 확정)·.txt 400
+- [e2e][미실행] 업로드 풀플로우·저작권 confirm·커버 반영·is_public=false 차트 미노출
 
 ---
 

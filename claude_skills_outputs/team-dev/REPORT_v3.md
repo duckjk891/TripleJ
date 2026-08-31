@@ -4,6 +4,16 @@
 
 ---
 
+## v3.101 (만 14세 미만 보호자 동의 — 대표 정책 확정: 도입) — 2026-08-31
+
+**실측**: 실서버에 guardian-consent 라우트 4종 존재하나 `signup-config.guardian_consent_enabled=false`(OFF). 흐름 = 가입정보+보호자 이름·**휴대폰(SMS)** 제출 → pending 계정 선생성(로그인 403) → 보호자가 서버측 웹 착지에서 승인 → active. 토큰 TTL 72h.
+**수행**: authService 4함수 추가, AuthPanel 가입 게이트에 만 14세 미만 분기 — 플래그 ON이면 보호자 정보 섹션+요청+pending 화면+[동의 상태 확인](대기/승인/거부/만료 정규화), OFF면 "준비 중" 차단(현재 동작). 미성년 경로 소셜 버튼 숨김(우회 방지). authStore 에러코드 방어.
+**판단**: ⭐ 지급 로직 서버 부재 → 문구 미표기(껍데기 금지), "보호자/본인인증 완료 시 ⭐ 지급"은 백엔드 요청 후보로 이관. 설정 내 상태 표시는 계정 기준 조회 API 부재로 미구현이 타당.
+**검증**: tsc 0. e2e는 백엔드 플래그 전환 후(PENDING_TESTS §신규 v3.101).
+**변경**: authService, AuthPanel, authStore.
+
+---
+
 ## v3.100 (직접 음원 파일 업로드 — 대표 정책 확정: 허용) — 2026-08-31
 
 **수행** (계약: 실서버 9004 openapi 실측 + 스냅샷 tracks.py:1255~): trackService(신규 — 진행률·web/native 분기·50MB/확장자 선검증), TrackUploadScreen(신규 — 파일 선택→메타 입력→커버(발매 후 별도 /upload/image type=cover)→공개 스위치→**저작권 확인 confirm 필수**→진행률→완료 팝업), 마이뮤직 작곡 탭 진입 버튼, App.tsx 라우트. 발매 보상 ⭐+5는 서버 자동. MAIDOL과 달리 저작권 안내 문구 신설(대표 방침: 신고 기반 사후 검열).

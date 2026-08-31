@@ -111,7 +111,13 @@ export const useAuthStore = create<AuthState>((set) => ({
       try { usePlayerStore.getState().claimQueue(String(user?.id)); } catch (err) { console.error('[authStore] claimQueue 실패(register)', { err }); }
       return true;
     } catch (err: any) {
-      set({ error: err.response?.data?.error || err.response?.data?.detail || '회원가입에 실패했습니다.', isLoading: false });
+      // v3.101(A-19) — 서버측 만14세 미만 판정: error 코드 대신 사람이 읽는 message를 표시
+      const data = err.response?.data;
+      const message =
+        data?.error === 'guardian_consent_required'
+          ? (data?.message || '만 14세 미만 가입은 보호자 동의가 필요합니다.')
+          : data?.error || data?.detail || '회원가입에 실패했습니다.';
+      set({ error: message, isLoading: false });
       return false;
     }
   },
