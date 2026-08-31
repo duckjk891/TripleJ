@@ -33,9 +33,9 @@ import { AppText } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
-import { getFatigueStatus, formatCooldown } from '../services/fatigueService';
+import { getFatigueStatusAll, formatCooldown } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
-import { FatigueStatus } from '../types';
+import { FatigueDirector, FatigueStatus } from '../types';
 
 // v3.107: 대기열 타이머(timerStore)·광고 단축 배선 폐지 — 작업은 요청 즉시 로딩 화면으로
 // 직행하고, 재요청 제한은 피로도(작곡만 서버 /fatigue/* 게이트)로 표현한다.
@@ -87,7 +87,19 @@ const DIRECTORS = [
   { type: 'video' as DirectorType,    x: 208, y: 1620 },
 ];
 
-// v3.107: 캐릭터 위에 뜨는 휴식(쿨다운) 티켓 — 작곡 디렉터 전용 (서버 /fatigue/status 기반).
+// v3.118: 맵 디렉터 타입 → 피로 디렉터 키 (video는 미대상, wondera는 composer 표기 호환)
+const FATIGUE_DIRECTOR_BY_TYPE: Partial<Record<DirectorType, FatigueDirector>> = {
+  composer: 'composer',
+  wondera: 'composer',
+  lyricist: 'lyricist',
+  image: 'image',
+  artist: 'artist',
+};
+const FATIGUE_DIRECTORS: FatigueDirector[] = ['composer', 'lyricist', 'image', 'artist'];
+const ZERO_REMAIN: Record<FatigueDirector, number> = { composer: 0, lyricist: 0, image: 0, artist: 0 };
+
+// v3.107→v3.118: 캐릭터 위에 뜨는 휴식(쿨다운) 티켓 — 전 디렉터(작곡·작사·커버·아티스트)로
+// 확장 (서버 /fatigue/status?all=1 기반, 쿨다운 활성 디렉터에만 표시).
 // 외부 가로폭은 글자 길이에 따라 유동적 (onLayout으로 측정 → translateX -width/2로 정중앙 정렬)
 function DirectorRestTicket({
   d, remainingSec, mapScale, onPress,
@@ -299,47 +311,63 @@ export default function MapScreen({ navigation }: Props) {
 
   // 튜토리얼은 헤더 "❓" 버튼으로 수동 오픈 (자동 팝업 제거)
 
-  // ── v3.107: 작곡 디렉터 피로/쿨다운 (v3.94 fatigueService 재사용) ──
-  // 서버 게이트는 작곡에만 존재(v216 fatigue_service.py:5-6) — 작사·커버·아티스트는 즉시 요청 가능.
-  const [fatigue, setFatigue] = useState<FatigueStatus | null>(null);
-  const [fatigueRemainSec, setFatigueRemainSec] = useState(0);
+  // ── v3.107→v3.118: 전 디렉터 피로/쿨다운 (서버 v220 /fatigue/status?all=1 — 1회 조회) ──
+  // 서버 게이트: 작곡·작사·커버·아티스트 4종 (각 생성 엔드포인트 ⭐/슬롯 차감 전 429).
+  const [fatigueAll, setFatigueAll] = useState<Partial<Record<FatigueDirector, FatigueStatus>>>({});
+  const [fatigueRemain, setFatigueRemain] = useState<Record<FatigueDirector, number>>({ ...ZERO_REMAIN });
 
-  const applyFatigueStatus = useCallback((data: FatigueStatus) => {
-    setFatigue(data);
-    setFatigueRemainSec(Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0)));
+  const applyFatigueStatus = useCallback((director: FatigueDirector, data: FatigueStatus) => {
+    setFatigueAll((prev) => ({ ...prev, [director]: data }));
+    setFatigueRemain((prev) => ({
+      ...prev,
+      [director]: Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0)),
+    }));
   }, []);
 
   const refreshFatigue = useCallback(async () => {
     if (!useAuthStore.getState().user) return;
     try {
-      const data = await getFatigueStatus();
-      applyFatigueStatus(data);
+      const data = await getFatigueStatusAll();
+      const dirs = data?.directors || ({} as Record<FatigueDirector, FatigueStatus>);
+      setFatigueAll(dirs);
+      const remain = { ...ZERO_REMAIN };
+      for (const d of FATIGUE_DIRECTORS) {
+        remain[d] = Math.max(0, Math.floor(dirs[d]?.cooldown_remaining_sec ?? 0));
+      }
+      setFatigueRemain(remain);
+      const resting = FATIGUE_DIRECTORS.filter((d) => remain[d] > 0);
+      if (resting.length > 0) console.log('[Map] [fatigue] 휴식 중 디렉터:', resting.join(','));
     } catch (err: any) {
       // 조회 실패는 게이트 오픈 — 서버 게이트(429)가 최종 방어 (MusicGeneration과 동일 정책)
-      console.warn('[Map] [fatigue] 상태 조회 실패:', err?.response?.status, err?.message);
+      console.warn('[Map] [fatigue] 상태(all) 조회 실패:', err?.response?.status, err?.message);
     }
-  }, [applyFatigueStatus]);
+  }, []);
 
-  // 화면 포커스마다 갱신 (작곡 완료 후 Map 복귀 시 휴식 배지 즉시 반영)
+  // 화면 포커스마다 갱신 (생성 완료 후 Map 복귀 시 휴식 티켓 즉시 반영)
   useFocusEffect(
     useCallback(() => {
       if (user) refreshFatigue();
       else {
-        setFatigue(null);
-        setFatigueRemainSec(0);
+        setFatigueAll({});
+        setFatigueRemain({ ...ZERO_REMAIN });
       }
     }, [user, refreshFatigue])
   );
 
-  // 1초 카운트다운 — 0 도달 직전에 서버 재확인 (MusicGeneration 패턴)
+  // 1초 카운트다운(전 디렉터 공용) — 어떤 디렉터든 0 도달 직전에 서버 재확인 (MusicGeneration 패턴)
+  const anyFatigueActive = FATIGUE_DIRECTORS.some((d) => fatigueRemain[d] > 0);
   useEffect(() => {
-    if (fatigueRemainSec <= 0) return undefined;
+    if (!anyFatigueActive) return undefined;
     const t = setInterval(() => {
-      setFatigueRemainSec((s) => Math.max(0, s - 1));
-      if (fatigueRemainSec === 1) refreshFatigue();
+      setFatigueRemain((prev) => {
+        const next = { ...prev };
+        for (const d of FATIGUE_DIRECTORS) next[d] = Math.max(0, prev[d] - 1);
+        return next;
+      });
+      if (FATIGUE_DIRECTORS.some((d) => fatigueRemain[d] === 1)) refreshFatigue();
     }, 1000);
     return () => clearInterval(t);
-  }, [fatigueRemainSec, refreshFatigue]);
+  }, [anyFatigueActive, fatigueRemain, refreshFatigue]);
 
   const openDirectorDialogue = (type: DirectorType) => {
     const director = DIRECTORS.find((d) => d.type === type);
@@ -357,20 +385,29 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // v3.107: 작곡 디렉터 휴식(쿨다운) 게이트 — 탭 시 단축 다이얼로그(⭐/광고권), 해제되면 진행
-    if (type === 'composer' && fatigueRemainSec > 0) {
-      console.log('[Map] [fatigue] 작곡 디렉터 휴식 중 — 남은', fatigueRemainSec, '초');
+    // v3.107→v3.118: 디렉터 휴식(쿨다운) 게이트 — 전 디렉터(작곡·작사·커버·아티스트).
+    // 탭 시 단축 다이얼로그(⭐/광고권), 해제되면 원래 흐름으로 진행.
+    const fatigueKey = FATIGUE_DIRECTOR_BY_TYPE[type];
+    if (fatigueKey && fatigueRemain[fatigueKey] > 0) {
+      console.log(`[Map] [fatigue:${fatigueKey}] 디렉터 휴식 중 — 남은`, fatigueRemain[fatigueKey], '초');
       showFatigueCooldownDialog({
-        status: fatigue,
-        remainingSec: fatigueRemainSec,
-        onStatusUpdate: applyFatigueStatus,
+        status: fatigueAll[fatigueKey] ?? null,
+        remainingSec: fatigueRemain[fatigueKey],
+        director: fatigueKey,
+        onStatusUpdate: (s) => applyFatigueStatus(fatigueKey, s),
         onCleared: () => {
           refreshFatigue();
-          openDirectorDialogue('composer');
+          proceedDirectorPress(type);
         },
       });
       return;
     }
+
+    proceedDirectorPress(type);
+  };
+
+  // v3.118: 휴식 게이트 통과 후의 원래 디렉터 탭 흐름 (기존 handleDirectorPress 본문 분리)
+  const proceedDirectorPress = (type: DirectorType) => {
 
     // 작사 디렉터: 영입한 사람 2명 이상이면 먼저 선택 모달
     if (type === 'lyricist') {
@@ -454,8 +491,10 @@ export default function MapScreen({ navigation }: Props) {
             resizeMode="contain"
           />
           {DIRECTORS.map((d) => {
-            // v3.107: 대기열 티켓 폐지 — 작곡 디렉터의 휴식(쿨다운)만 상태로 표시
-            const isResting = !!user && d.type === 'composer' && fatigueRemainSec > 0;
+            // v3.107→v3.118: 휴식(쿨다운) 티켓 — 전 디렉터(쿨다운 활성인 디렉터에만 표시)
+            const fatigueKey = FATIGUE_DIRECTOR_BY_TYPE[d.type];
+            const restRemain = fatigueKey ? fatigueRemain[fatigueKey] : 0;
+            const isResting = !!user && restRemain > 0;
             const isNext = user && d.type === nextActionDirector && !isResting;
             return (
               // wrapper에 zIndex 20 → 캐릭터 + 티켓이 전경 가구(zIndex 15) 위로 올라옴
@@ -511,11 +550,11 @@ export default function MapScreen({ navigation }: Props) {
                   onPress={() => handleDirectorPress(d.type)}
                   name={user ? DIRECTOR_NAMES[d.type] : undefined}
                 />
-                {/* 휴식(쿨다운) 티켓 — 탭하면 디렉터 클릭과 동일(단축 다이얼로그) */}
+                {/* 휴식(쿨다운) 티켓 — 탭하면 디렉터 클릭과 동일(해당 디렉터 단축 다이얼로그) */}
                 {isResting && (
                   <DirectorRestTicket
                     d={d}
-                    remainingSec={fatigueRemainSec}
+                    remainingSec={restRemain}
                     mapScale={mapScale}
                     onPress={() => handleDirectorPress(d.type)}
                   />
@@ -680,7 +719,7 @@ export default function MapScreen({ navigation }: Props) {
             </View>
             <View style={styles.tutorialItem}>
               <Text style={styles.tutorialNum}>4</Text>
-              <Text style={styles.tutorialText}>곡을 완성하면 작곡 디렉터가 잠시 휴식해요. 휴식 중엔 탭해서 단축할 수 있어요</Text>
+              <Text style={styles.tutorialText}>작업을 완성하면 그 디렉터가 잠시 휴식해요. 휴식 중엔 탭해서 단축할 수 있어요</Text>
             </View>
             <TouchableOpacity style={styles.tutorialBtn} onPress={() => setShowTutorial(false)}>
               <Text style={styles.tutorialBtnText}>시작하기</Text>

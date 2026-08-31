@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -16,6 +16,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useAuthStore } from '../stores/authStore';
+import { getFatigueStatus } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
 import {
   buildLyricsRequest,
@@ -61,11 +63,40 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
   const [editingField, setEditingField] = useState<EditField>(null);
   const [customInput, setCustomInput] = useState('');
 
-  const handleGenerate = () => {
+  // v3.118: 작사 디렉터 피로 게이트 중복 탭 방지
+  const fatigueCheckingRef = useRef(false);
+
+  const startLyricsLoading = () => {
     // 프롬프트 원문은 사용자에게 노출하지 않고 전송 직전 조립 (generatedPrompt 는 세션 플래그 겸 기록)
     store.setGeneratedPrompt(buildLyricsRequest(useLyricsStore.getState()).prompt);
     console.log('[LyricsPromptReview] 작사 생성 시작 — LyricsLoading 직행');
     navigation.navigate('LyricsLoading' as any);
+  };
+
+  // v3.118: 작사 디렉터 휴식(쿨다운) 게이트 — 생성 시작 전 사전 확인(429 무과금과 동일 다이얼로그)
+  const handleGenerate = async () => {
+    if (fatigueCheckingRef.current) return;
+    fatigueCheckingRef.current = true;
+    try {
+      const status = await getFatigueStatus('lyricist');
+      const remain = Math.max(0, Math.floor(status?.cooldown_remaining_sec ?? 0));
+      if (remain > 0) {
+        console.log('[LyricsPromptReview] [fatigue:lyricist] 게이트 — 남은', remain, '초');
+        showFatigueCooldownDialog({
+          status,
+          remainingSec: remain,
+          director: 'lyricist',
+          onCleared: startLyricsLoading,
+        });
+        return;
+      }
+    } catch (err: any) {
+      // 조회 실패는 게이트 오픈 — 서버 429가 최종 방어 (LyricsLoading에서 동일 다이얼로그)
+      console.warn('[LyricsPromptReview] [fatigue:lyricist] 상태 조회 실패:', err?.response?.status, err?.message);
+    } finally {
+      fatigueCheckingRef.current = false;
+    }
+    startLyricsLoading();
   };
 
   const handleFieldEdit = (field: EditField) => {

@@ -129,14 +129,24 @@ export interface GenerationResult {
  * ladder = {"1":2,"2":4,"3":8,"4+":12} — 그날 n곡째 완성 시 쿨다운(시간). KST 자정 리셋.
  * skip_wait_count = AdMob SSV 적립 광고권 잔량 (fatigue.py:33 _skip_wait_count).
  */
+/** v3.118: 피로/쿨다운 디렉터 차원 (backend_9004 v220 fatigue_service.DIRECTORS) — 미지정=composer */
+export type FatigueDirector = 'composer' | 'lyricist' | 'image' | 'artist';
+
 export interface FatigueStatus {
+  director?: FatigueDirector; // v3.118(v220): 응답에 director 키 추가 — 구 서버 호환 optional
   today_completed: number;
   cooldown_active: boolean;
   cooldown_until: string | null;
   cooldown_remaining_sec: number;
-  skip_point_cost: number; // ⭐5 (points_service.py:31 POINT_COSTS.fatigue_skip)
+  skip_point_cost: number; // v220 디렉터별 차등: composer ⭐5 / lyricist ⭐2 / image ⭐2 / artist ⭐3 — status 실값만 표기
   skip_minutes: number; // 30
   ladder: Record<string, number>;
+  skip_wait_count: number;
+}
+
+/** v3.118: GET /api/fatigue/status?all=1 — 4 디렉터 일괄 (Map 휴식 티켓용 1회 조회) */
+export interface FatigueStatusAll {
+  directors: Record<FatigueDirector, FatigueStatus>;
   skip_wait_count: number;
 }
 

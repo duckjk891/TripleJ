@@ -13,6 +13,9 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { generateLyrics } from '../services/lyricsService';
+import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { FatigueStatus } from '../types';
 import { buildLyricsRequest } from '../utils/lyricsPrompt';
 import { useGemsStore } from '../stores/gemsStore';
 import { usePointsStore } from '../stores/pointsStore';
@@ -101,6 +104,33 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
         }
       } catch (err: any) {
         if (isMounted) {
+          // v3.118: 작사 디렉터 피로 429 — 실패 화면(LyricsResult 에러) 미진입·무과금
+          // (서버는 ⭐5 차감 *전* 게이트 — generate.py /lyrics/). 동일 다이얼로그로
+          // 남은 시간 + ⭐/광고권 스킵 안내, 해제되면 생성 재시도 (MusicLoading v3.94 패턴).
+          if (isDirectorFatigued(err)) {
+            const gateRemain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
+            console.log('[LyricsLoading] [fatigue:lyricist] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
+            store.setIsLoading(false);
+            let fatigueStatus: FatigueStatus | null = null;
+            try {
+              fatigueStatus = await getFatigueStatus('lyricist'); // 스킵 비용·광고권 잔량 표시용 (실패해도 기본값 안내)
+            } catch (statusErr: any) {
+              console.warn('[LyricsLoading] [fatigue:lyricist] 상태 조회 실패:', statusErr?.response?.status);
+            }
+            if (!isMounted) return;
+            showFatigueCooldownDialog({
+              status: fatigueStatus,
+              remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+              director: 'lyricist',
+              cancelText: '돌아가기',
+              onCancel: () => navigation.goBack(),
+              onCleared: () => {
+                // 스킵으로 쿨다운 해제 — 생성 재시도 (⭐ 작사 비용은 이 재시도에서 정상 차감)
+                doGenerate();
+              },
+            });
+            return;
+          }
           const status = err?.response?.status;
           let errorMsg: string;
           if (status === 401) {

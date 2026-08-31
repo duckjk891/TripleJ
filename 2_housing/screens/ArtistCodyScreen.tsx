@@ -24,6 +24,8 @@ import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { useWishlistStore, type WishItem } from '../stores/wishlistStore';
 import { useAuthStore } from '../stores/authStore';
+import { getFatigueStatus } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
 
 type Cat = '상의' | '하의' | '신발' | '헤어스타일' | '헤어컬러' | '악세서리' | '안경' | '문신';
@@ -283,7 +285,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     .map((c) => [c, selected[c]] as const)
     .filter(([, item]) => !!item);
 
-  const handleApply = () => {
+  const handleApply = async () => {
     // sheet 모드: 시트 없어도 진행 (옷+사진으로 처음부터 만듦). 옷 미선택은 디폴트 fallback.
     if (!isSheetMode && !apiResult) {
       showAlert('오류', '먼저 캐릭터 시트가 필요해요.');
@@ -292,6 +294,25 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     if (!isSheetMode && selectedEntries.length === 0) {
       showAlert('알림', '입혀줄 아이템을 하나 이상 골라주세요.');
       return;
+    }
+    // v3.118: 아티스트 디렉터 휴식(쿨다운) 게이트 — 적용(생성 요청) 전 사전 확인.
+    // 서버는 generate-sheet* 4종을 슬롯/⭐ 차감 전 429로 게이트(무과금) — character.py v220.
+    try {
+      const fatigueStatus = await getFatigueStatus('artist');
+      const remain = Math.max(0, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0));
+      if (remain > 0) {
+        console.log('[ArtistCody] [fatigue:artist] 게이트 — 남은', remain, '초');
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: remain,
+          director: 'artist',
+          onCleared: () => handleApply(), // 해제 후 같은 선택으로 재시도
+        });
+        return;
+      }
+    } catch (err: any) {
+      // 조회 실패는 게이트 오픈 — 서버 429가 최종 방어 (ArtistLoading에서 동일 다이얼로그)
+      console.warn('[ArtistCody] [fatigue:artist] 상태 조회 실패:', err?.response?.status, err?.message);
     }
     // v3.76: 잔액 사전 체크 — 대기열 소진 후 402로 실패하는 낭패 방지
     const bal = usePointsStore.getState().balance;

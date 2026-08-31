@@ -21,6 +21,9 @@ import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { getFatigueStatus } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { FatigueStatus } from '../types';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
@@ -455,6 +458,34 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           : typeof detail === 'string' ? detail : null;
         // v3.76(MAIDOL v158/v139): 별 부족(402)·생성 제한(403) 전용 안내
         const status = err?.response?.status;
+        // v3.118: 아티스트 디렉터 피로 429(director_fatigue — 슬롯/⭐ 차감 전 거절, 무과금)
+        // → 실패 화면 미진입, Map 복귀 후 동일 휴식 다이얼로그(⭐/광고권 스킵). 입력은
+        // store에 보존 — 해제 후 "이어서 만들기"로 재개 (409 슬롯 패턴과 동일 흐름).
+        if (status === 429 && err.response?.data?.error === 'director_fatigue') {
+          const gateRemain = Math.max(0, Math.floor(err.response?.data?.cooldown_remaining_sec ?? 0));
+          console.log('[ArtistLoading] [fatigue:artist] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
+          let fatigueStatus: FatigueStatus | null = null;
+          try {
+            fatigueStatus = await getFatigueStatus('artist'); // 스킵 비용·광고권 잔량 표시용
+          } catch (statusErr: any) {
+            console.warn('[ArtistLoading] [fatigue:artist] 상태 조회 실패:', statusErr?.response?.status);
+          }
+          if (cancelled) return;
+          taskStore.failApi('아티스트 디렉터가 쉬는 중이에요. 휴식이 끝나면 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+          navigation.goBack();
+          setTimeout(() => {
+            showFatigueCooldownDialog({
+              status: fatigueStatus,
+              remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+              director: 'artist',
+              onCleared: () => {
+                // 스킵으로 해제 — 아티스트 만들기의 "이어서 만들기"로 재개 안내 (409 확장 흐름과 동일 관행)
+                showAlert('휴식 종료', '아티스트 만들기에서 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+              },
+            });
+          }, 100);
+          return;
+        }
         // v3.103(B-1): 슬롯 초과(409 slot_limit_exceeded — ⭐ 차감 전 거절) → 확장 제안 다이얼로그
         if (status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
           const used = err.response?.data?.used;

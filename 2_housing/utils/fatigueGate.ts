@@ -1,18 +1,22 @@
 import { showAlert } from './appAlert';
-import { skipFatigue, formatCooldown } from '../services/fatigueService';
+import { skipFatigue, formatCooldown, FATIGUE_DIRECTOR_LABELS } from '../services/fatigueService';
 import { usePointsStore } from '../stores/pointsStore';
-import { FatigueStatus } from '../types';
+import { FatigueDirector, FatigueStatus } from '../types';
 
 /**
  * v3.94: 디렉터 휴식(쿨다운) 공용 다이얼로그 — MusicGeneration(게이트)·MusicLoading(429 레이스) 공유.
+ * v3.118: 전 디렉터 일반화 — director 파라미터(기본 composer, v3.94 호출부 무수정) +
+ *   문구 「{작곡|작사|커버|아티스트} 디렉터」가 쉬는 중이에요 (대표 방침).
  * MAIDOL StudioTab2 피로 패널의 스킵 흐름을 앱 내 다이얼로그(showAlert)로 이식:
- * - ⭐{skip_point_cost}로 {skip_minutes}분 단축 (반복 가능)
+ * - ⭐{skip_point_cost}로 {skip_minutes}분 단축 (반복 가능 — v220 디렉터별 차등 비용은 status 실값 표기)
  * - 광고권 보유(skip_wait_count>0) 시에만 광고권 단축 노출 — 신규 광고 시청 배선은 미포함(SSV 미연동)
  * - 스킵 후에도 남으면 갱신된 남은 시간으로 재안내, 0 도달 시 onCleared 호출
  */
 export function showFatigueCooldownDialog(opts: {
   status: FatigueStatus | null;
   remainingSec: number;
+  /** v3.118: 대상 디렉터 (미지정=composer — 기존 작곡 호출부 무수정) */
+  director?: FatigueDirector;
   /** 쿨다운이 해제됐을 때(스킵으로 0 도달 또는 서버 409=쿨다운 없음) 호출 */
   onCleared: () => void;
   /** 취소/닫기 시 호출 (미지정 시 다이얼로그만 닫힘) */
@@ -22,7 +26,11 @@ export function showFatigueCooldownDialog(opts: {
   cancelText?: string;
 }): void {
   const { status, remainingSec, onCleared, onCancel, onStatusUpdate, cancelText } = opts;
-  const cost = status?.skip_point_cost ?? 5;
+  const director: FatigueDirector = opts.director ?? 'composer';
+  const label = FATIGUE_DIRECTOR_LABELS[director];
+  // v3.118: ⭐비용은 status 실값(디렉터별 차등 — v220). 폴백은 서버 계약 기본값.
+  const fallbackCost = { composer: 5, lyricist: 2, image: 2, artist: 3 }[director];
+  const cost = status?.skip_point_cost ?? fallbackCost;
   const minutes = status?.skip_minutes ?? 30;
   const adSkips = Math.max(0, Number(status?.skip_wait_count) || 0);
 
@@ -32,17 +40,17 @@ export function showFatigueCooldownDialog(opts: {
       ? status.ladder
       : { '1': 2, '2': 4, '3': 8, '4+': 12 };
   const ladderText = Object.entries(ladder)
-    .map(([count, hours]) => `${count}곡 ${hours}시간`)
+    .map(([count, hours]) => `${count}개 ${hours}시간`)
     .join(' · ');
 
   const doSkip = async (method: 'points' | 'ad') => {
     try {
-      const data = await skipFatigue(method);
+      const data = await skipFatigue(method, director);
       onStatusUpdate?.(data);
       if (method === 'points') usePointsStore.getState().fetchBalance(); // ⭐ 차감 반영
       const remain = Math.max(0, Math.floor(data?.cooldown_remaining_sec ?? 0));
       if (remain <= 0) {
-        showAlert('휴식 종료', '디렉터가 다시 준비됐어요! 이제 작곡을 지시할 수 있어요.', [
+        showAlert('휴식 종료', `「${label} 디렉터」가 다시 준비됐어요! 이제 새 작업을 지시할 수 있어요.`, [
           { text: '확인', onPress: onCleared },
         ]);
       } else {
@@ -52,9 +60,9 @@ export function showFatigueCooldownDialog(opts: {
     } catch (err: any) {
       const st = err?.response?.status;
       const serverError = err?.response?.data?.error;
-      console.error('[fatigue] skip 실패:', method, st, serverError);
+      console.error(`[fatigue:${director}] skip 실패:`, method, st, serverError);
       if (st === 409) {
-        // 활성 쿨다운 없음(무과금 — fatigue.py:87) — 이미 해제된 것
+        // 활성 쿨다운 없음(무과금 — fatigue.py skip 409) — 이미 해제된 것
         onCleared();
         return;
       }
@@ -83,12 +91,13 @@ export function showFatigueCooldownDialog(opts: {
   }
 
   const completedLine =
-    typeof status?.today_completed === 'number' ? `오늘 완성 ${status.today_completed}곡 — ` : '';
+    typeof status?.today_completed === 'number'
+      ? `\n오늘 완성 ${status.today_completed}개 — 완성할 때마다 휴식이 길어져요 (${ladderText} · 매일 자정 리셋).`
+      : '';
   showAlert(
     '디렉터 휴식 중',
-    `${completedLine}남은 휴식 ${formatCooldown(remainingSec)}\n` +
-      `곡이 완성될 때마다 휴식이 길어져요 (${ladderText} · 매일 자정 리셋).\n` +
-      `휴식이 끝나면 새 작곡을 지시할 수 있어요.`,
+    `「${label} 디렉터」가 쉬는 중이에요 — 남은 시간 ${formatCooldown(remainingSec)}\n` +
+      `⭐${cost}로 ${minutes}분 단축할 수 있어요${completedLine}`,
     buttons
   );
 }

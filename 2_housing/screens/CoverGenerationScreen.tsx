@@ -21,6 +21,9 @@ import { useMusicStore } from '../stores/musicStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { FatigueStatus } from '../types';
 import { colors } from '../theme/colors';
 
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
@@ -217,8 +220,37 @@ export default function CoverGenerationScreen({ navigation }: Props) {
         status: err?.response?.status,
         data: err?.response?.data,
       });
-      setErrorMsg(err?.response?.data?.error || err?.message || '커버 생성에 실패했습니다.');
-      setMode('result');
+      // v3.118: 커버(image) 디렉터 피로 429 — 실패 화면 미진입·무과금 (서버 ⭐5 차감 전 게이트).
+      // 동일 다이얼로그로 스킵 안내, 해제되면 같은 인자로 재시도 (아티스트 슬롯 선택은 ref로 복원).
+      if (isDirectorFatigued(err)) {
+        const gateRemain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
+        console.log('[Cover] [fatigue:image] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
+        let fatigueStatus: FatigueStatus | null = null;
+        try {
+          fatigueStatus = await getFatigueStatus('image');
+        } catch (statusErr: any) {
+          console.warn('[Cover] [fatigue:image] 상태 조회 실패:', statusErr?.response?.status);
+        }
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+          director: 'image',
+          cancelText: '돌아가기',
+          onCancel: () => doRegenerate(), // 스타일 대화 화면으로 복귀 (에러 화면 미진입)
+          onCleared: () => {
+            // 스킵으로 해제 — 같은 인자로 재시도 (⭐ 커버 비용은 재시도에서 정상 차감)
+            if (lastCharObjRef.current) musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
+            doGenerate(trackId, title, style);
+          },
+        });
+        // finally에서 store가 정리되므로 mode만 대화로 되돌려 둠 (다이얼로그 위에 표시됨)
+        setMode('dialogue');
+        setStep(2);
+        setChatHistory([{ type: 'director', text: '잠깐 쉬는 중이에요. 휴식이 끝나면 다시 만들어드릴게요!' }]);
+      } else {
+        setErrorMsg(err?.response?.data?.error || err?.message || '커버 생성에 실패했습니다.');
+        setMode('result');
+      }
     } finally {
       musicStore.setCoverTrackId(null);
       musicStore.setCoverTrackTitle(null);
@@ -318,7 +350,9 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   };
 
   // 대화: 스타일 확인 → 즉시 생성 (v3.107: 대기열 폐지 — 이 화면의 loading 모드로 직행)
-  const handleStyleConfirm = (style: string) => {
+  // v3.118: 커버(image) 디렉터 휴식(쿨다운) 사전 게이트 — 서버 429(⭐ 차감 전)와 동일 다이얼로그.
+  // refine/revert는 무과금이라 미게이트 (서버 게이트 정책과 일치 — upload.py v220).
+  const handleStyleConfirm = async (style: string) => {
     setStyleInput(style);
     const trackId = selectedTrack?.id || musicStore.coverTrackId;
     const trackTitle = selectedTrack?.title || musicStore.coverTrackTitle;
@@ -326,6 +360,23 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       showAlert('오류', '곡을 먼저 선택해주세요.');
       setStep(0);
       return;
+    }
+    try {
+      const fatigueStatus = await getFatigueStatus('image');
+      const remain = Math.max(0, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0));
+      if (remain > 0) {
+        console.log('[Cover] [fatigue:image] 게이트 — 남은', remain, '초');
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: remain,
+          director: 'image',
+          onCleared: () => handleStyleConfirm(style), // 해제 후 같은 스타일로 재시도
+        });
+        return;
+      }
+    } catch (err: any) {
+      // 조회 실패는 게이트 오픈 — 서버 429가 최종 방어 (doGenerate catch에서 동일 다이얼로그)
+      console.warn('[Cover] [fatigue:image] 상태 조회 실패:', err?.response?.status, err?.message);
     }
     musicStore.setCoverTrackId(trackId);
     musicStore.setCoverTrackTitle(trackTitle || '');

@@ -34,6 +34,8 @@ import { useOutfitStore } from '../stores/outfitStore';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
+import { getFatigueStatus } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
 
 export default function ArtistResultScreen({ navigation, route }: any) {
@@ -513,9 +515,27 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     setRegenConfirmVisible(true);
   };
 
-  const performRegenerateServerArtist = () => {
+  // v3.118: "다시 만들기" confirm 뒤 아티스트 디렉터 휴식(쿨다운) 게이트 (대표 방침:
+  // 재생성 시 팝업). 해제되면 입력 화면으로 진입 — 서버 429(슬롯/⭐ 전)가 최종 방어.
+  const performRegenerateServerArtist = async () => {
     setRegenConfirmVisible(false);
     if (!serverArtist) return;
+    try {
+      const fatigueStatus = await getFatigueStatus('artist');
+      const remain = Math.max(0, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0));
+      if (remain > 0) {
+        console.log('[ArtistResult] [fatigue:artist] 재생성 게이트 — 남은', remain, '초');
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: remain,
+          director: 'artist',
+          onCleared: () => performRegenerateServerArtist(),
+        });
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[ArtistResult] [fatigue:artist] 상태 조회 실패:', err?.response?.status, err?.message);
+    }
     if (__DEV__) console.info('[ArtistResult] 재생성 진입', { characterId: serverArtist.character_id, kind: serverArtist.kind });
     taskStore.reset();
     navigation.replace('ArtistInput', {
