@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsStore } from '../stores/lyricsStore';
-import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { useLikesStore } from '../stores/likesStore';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
@@ -32,6 +31,8 @@ import TrackShareDownloadSheet, { SheetMode } from '../components/TrackShareDown
 // v3.96(A-2): 내 앨범 관리 — 앨범 탭 + 생성 모달, 상세/관리는 AlbumDetailScreen
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
+// v3.117: 내 아티스트 요약 행 — 다중 아티스트 정본(GET /character/list) + 레거시 /me 폴백
+import { listArtists, artistSheetUrl, ServerArtist } from '../services/characterService';
 // v3.114: 내 채널(피드·커뮤니티) — MAIDOL 내 채널 구성 반영. FeedCard·이미지 블록(v3.111) 재사용
 import FeedCard from '../components/feed/FeedCard';
 import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
@@ -95,6 +96,8 @@ export default function MyMusicScreen({ navigation }: any) {
   const [sdTrack, setSdTrack] = useState<Track | null>(null);   // 공유/다운로드 선택지 대상
   const [sdMode, setSdMode] = useState<SheetMode>('share');
   const [myCharacter, setMyCharacter] = useState<{ preview_url: string; sheet_object_name: string } | null>(null);
+  // v3.117: 다중 아티스트 목록(대표 요약 행용) — 빈 배열이면 myCharacter(/me)로 레거시 폴백
+  const [artists, setArtists] = useState<ServerArtist[]>([]);
   // v3.96(A-2): 내 앨범 탭
   const [albums, setAlbums] = useState<Album[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
@@ -145,6 +148,18 @@ export default function MyMusicScreen({ navigation }: any) {
     } catch (err: any) {
       console.warn('[MyMusic] fetchMyCharacter error:', err?.response?.status, err?.message);
       setMyCharacter(null);
+    }
+  }, []);
+
+  // v3.117: 내 아티스트 목록 — GET /character/list. 빈 배열이면 fetchMyCharacter의
+  // /character/me 시트로 폴백 표시(레거시 미마이그레이션 계정 구제 — MyArtists v3.116과 동일 취지).
+  const fetchArtists = useCallback(async () => {
+    try {
+      const { characters } = await listArtists();
+      setArtists(characters);
+    } catch (err: any) {
+      console.error('[MyMusic] fetchArtists 실패', { status: err?.response?.status });
+      setArtists([]);
     }
   }, []);
 
@@ -205,6 +220,7 @@ export default function MyMusicScreen({ navigation }: any) {
       if (user) {
         fetchTracks();
         fetchMyCharacter();
+        fetchArtists(); // v3.117: 작업실에서 생성/삭제 후 복귀 시 focus로 요약 행 갱신
         fetchAlbums();
         fetchFeeds(); // FeedCompose에서 작성 후 goBack 복귀 시 focus로 재조회 → 목록 갱신
         fetchFollowCounts();
@@ -212,14 +228,25 @@ export default function MyMusicScreen({ navigation }: any) {
     }, [user])
   );
 
-  const handleOpenArtist = () => {
-    // 신선한 데이터로 hydrate되도록 store 초기화 후 Studio 탭 → ArtistResult 진입
-    useCharacterTaskStore.getState().clearResult();
-    navigation.navigate('Studio', { screen: 'ArtistResult' });
-  };
+  // v3.117: 요약 행 데이터 — 대표(is_default) 우선, 없으면 첫 번째. list가 비면 /me 레거시 폴백.
+  // artistSheetUrl은 cache-buster(Date.now) 포함이라 렌더마다 새 URL이 되지 않게 useMemo로 고정.
+  const artistView = useMemo(() => {
+    const def = artists.find((a) => a.is_default) ?? artists[0] ?? null;
+    if (def) {
+      return {
+        name: def.name || '나의 아티스트',
+        thumb: def.sheet_object_name ? artistSheetUrl(def.sheet_object_name) : def.sheet_url,
+        extra: artists.length - 1,
+      };
+    }
+    if (myCharacter) return { name: '나의 아티스트', thumb: myCharacter.preview_url, extra: 0 };
+    return null;
+  }, [artists, myCharacter]);
 
-  const handleCreateArtist = () => {
-    navigation.navigate('Studio', { screen: 'ArtistInput' });
+  // v3.117: 탭 시 작업실 스택의 내 아티스트 목록으로(크로스 탭 — 이 화면의 Studio 진입 관행 동일)
+  const handleOpenArtist = () => {
+    if (__DEV__) console.info('[MyMusic] 내 아티스트 → Studio/MyArtists');
+    navigation.navigate('Studio', { screen: 'MyArtists' });
   };
 
   const handleDeleteTrack = (trackId: string, title: string) => {
@@ -467,28 +494,45 @@ export default function MyMusicScreen({ navigation }: any) {
         </LinearGradient>
       </View>
 
-      {/* 내 아티스트 카드 */}
+      {/* v3.117: 내 아티스트 요약 행 — 대표 아티스트 썸네일+이름(여러 명이면 '외 N명'),
+          탭 시 작업실 > 내 아티스트(MyArtists)로. list 빈 배열이면 /me 레거시 폴백 표시. */}
       <View style={styles.artistSection}>
         <AppText style={styles.artistSectionLabel}>내 아티스트</AppText>
-        {myCharacter ? (
-          <TouchableOpacity style={styles.artistCard} activeOpacity={0.85} onPress={handleOpenArtist}>
-            <Image
-              source={{ uri: myCharacter.preview_url }}
-              style={styles.artistCardImage}
-            />
+        {artistView ? (
+          <TouchableOpacity
+            style={styles.artistCard}
+            activeOpacity={0.85}
+            onPress={handleOpenArtist}
+            accessibilityLabel="내 아티스트 목록 보기"
+          >
+            {artistView.thumb ? (
+              <Image source={{ uri: artistView.thumb }} style={styles.artistCardImage} />
+            ) : (
+              <View style={[styles.artistCardImage, { justifyContent: 'center', alignItems: 'center' }]}>
+                <Feather name="user" size={22} color={colors.text.muted} />
+              </View>
+            )}
             <View style={styles.artistCardBody}>
-              <AppText style={styles.artistCardTitle}>나의 아티스트</AppText>
-              <AppText style={styles.artistCardHint}>탭하여 자세히 보기 · 코디/미세조정</AppText>
+              <AppText style={styles.artistCardTitle} numberOfLines={1}>
+                {artistView.name}
+                {artistView.extra > 0 ? <AppText style={styles.artistCardHint}>{`  외 ${artistView.extra}명`}</AppText> : null}
+              </AppText>
+              <AppText style={styles.artistCardHint}>탭하여 작업실 · 내 아티스트로</AppText>
             </View>
             <AppText style={styles.artistCardArrow}>{'›'}</AppText>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.artistEmpty} activeOpacity={0.85} onPress={handleCreateArtist}>
+          <TouchableOpacity
+            style={styles.artistEmpty}
+            activeOpacity={0.85}
+            onPress={handleOpenArtist}
+            accessibilityLabel="아티스트 만들러 가기"
+          >
             <View style={{ flex: 1 }}>
               <AppText style={styles.artistEmptyTitle}>아직 만든 아티스트가 없어요</AppText>
               <AppText style={styles.artistEmptyHint}>아티스트 디렉터에서 만들어보세요</AppText>
             </View>
-            <AppText style={styles.artistEmptyButton}>만들러 가기</AppText>
+            <AppText style={styles.artistEmptyButton}>아티스트 만들러 가기</AppText>
           </TouchableOpacity>
         )}
       </View>
