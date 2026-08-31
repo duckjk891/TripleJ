@@ -45,6 +45,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // v3.103(B-1): 서버 다중 아티스트(cid) 진입 — slot 대신 /character/{cid}로 하이드레이션.
   // slot 경로는 레거시(마이그레이션 미실행) 계정 전용으로 유지.
   const characterIdParam: string | undefined = route?.params?.characterId;
+  // v3.113: 생성/재생성 완료 직후 진입(ArtistLoading이 전달) — [아티스트 저장하기] 버튼 노출.
+  // 목록(MyArtists)에서의 일반 열람에는 이 파라미터가 없어 버튼이 보이지 않는다.
+  const justCreated: boolean = !!route?.params?.justCreated;
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
   // v3.82: 로컬 프로필(이름·성별) — 서버 /me에 gender가 없어 로컬 persist에서 표시
@@ -57,6 +60,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
 
   const [saving, setSaving] = useState(false);
   const [hydrating, setHydrating] = useState(!apiResult); // apiResult가 비어 있으면 서버에서 가져옴
+  // v3.113: [아티스트 저장하기](생성 완료 직후 확신용 재저장) — 멱등 save 왕복 상태
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualSaved, setManualSaved] = useState(false);
 
   // ── v3.103(B-1/B-3): 서버 아티스트 모드 상태 ──────────────────────────────
   const [serverArtist, setServerArtist] = useState<ServerArtist | null>(null);
@@ -371,6 +377,62 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       showAlert('오류', err.response?.data?.error || '저장에 실패했습니다.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── v3.113: [아티스트 저장하기] — 생성 완료 직후 확신용 재저장(멱등) ─────────
+  // 자동 저장(ArtistLoading)은 그대로 유지. 이 버튼은 같은 시트를 서버에 다시
+  // save(왕복 성공 확인)해 "저장됐다"는 확신을 준다. 신 계약=character_id 재저장,
+  // 레거시(me/save)=구 경로 그대로 재저장. 성공 시 버튼이 "저장 완료"로 비활성 전환.
+  const handleManualSave = async () => {
+    if (manualSaving || manualSaved) return;
+    const st = useCharacterTaskStore.getState();
+    const sheetObj = serverArtist?.sheet_object_name || apiResult?.object_name || null;
+    if (!sheetObj) {
+      console.warn('[ArtistResult] 수동 저장 불가 — 시트 object_name 없음');
+      showAlert('저장 실패', '저장할 시트 정보를 찾지 못했어요. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    setManualSaving(true);
+    const saveBody: any = { sheet_object_name: sheetObj };
+    if (serverArtist) {
+      // 신 계약: cid 지정 재저장 — 서버가 해당 아티스트 문서를 갱신(멱등)
+      saveBody.character_id = serverArtist.character_id;
+      if (serverArtist.kind === 'virtual') {
+        saveBody.variant = 'virtual';
+        if (serverArtist.art_style) saveBody.art_style = serverArtist.art_style;
+      }
+    } else {
+      // 레거시(me/save) 계약 — handleSave와 동일한 페이로드 규칙으로 재저장
+      const isVirtualSave =
+        apiResult?.object_name === virtualSheet?.objectName ||
+        (apiResult?.object_name !== realSheet?.objectName &&
+          st.characterKind === 'virtual');
+      if (isVirtualSave) {
+        saveBody.variant = 'virtual';
+        saveBody.art_style =
+          virtualSheet?.artStyle || (st.styleImageUri ? 'custom' : st.stylePreset) || undefined;
+      }
+      // 신 계약인데 serverArtist 하이드레이션 전(cid 미전달 케이스)이면 계약 규칙 준수
+      if (!st.legacyContract) {
+        if (st.targetCharacterId) saveBody.character_id = st.targetCharacterId;
+        else saveBody.kind = isVirtualSave ? 'virtual' : 'real';
+      }
+    }
+    if (__DEV__) console.info('[ArtistResult] 수동 재저장 요청', {
+      character_id: saveBody.character_id, kind: saveBody.kind, variant: saveBody.variant,
+    });
+    try {
+      await api.post('/character/save', saveBody);
+      if (__DEV__) console.info('[ArtistResult] 수동 재저장 완료');
+      setManualSaved(true);
+    } catch (err: any) {
+      console.error('[ArtistResult] 수동 재저장 실패', {
+        status: err?.response?.status, data: err?.response?.data, message: err?.message,
+      });
+      showAlert('저장 실패', err?.response?.data?.error || '저장에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setManualSaving(false);
     }
   };
 
@@ -763,8 +825,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       </ScrollView>
 
       {/* v3.82: 미니플레이어를 숨기므로 bottomLift 제거 — bottomArea는 탭바 바로 위 고정.
-          저장된 가상 슬롯은 남는 버튼이 없어(꾸미기=실사 전용) bottomArea 자체를 숨김 */}
-      {(isUnsaved || !isVirtualTab) && (
+          저장된 가상 슬롯은 남는 버튼이 없어(꾸미기=실사 전용) bottomArea 자체를 숨김.
+          v3.113: 생성 완료 직후(justCreated)는 가상이라도 [아티스트 저장하기]가 있어 표시 */}
+      {(isUnsaved || !isVirtualTab || justCreated) && (
       <View style={styles.bottomArea}>
         {isUnsaved ? (
           <View style={styles.btnRow}>
@@ -781,6 +844,30 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             >
               <AppText style={styles.applyBtnText}>{saving ? '저장 중...' : '저장'}</AppText>
             </TouchableOpacity>
+          </View>
+        ) : justCreated ? (
+          /* v3.113: 생성 완료 직후 — 주요 버튼 [아티스트 저장하기](멱등 재저장).
+             성공 시 "저장 완료" 비활성 + 확인 문구. 실패 시 showAlert 후 재시도 가능. */
+          <View>
+            {manualSaved && (
+              <AppText style={styles.savedNotice}>아티스트가 저장되었어요</AppText>
+            )}
+            <View style={styles.btnRow}>
+              {!isVirtualTab && (
+                <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
+                  <AppText style={styles.skipBtnText}>꾸미기</AppText>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[styles.applyBtn, (manualSaving || manualSaved) && { opacity: 0.55 }]}
+                onPress={handleManualSave}
+                disabled={manualSaving || manualSaved}
+              >
+                <AppText style={styles.applyBtnText}>
+                  {manualSaving ? '저장 중...' : manualSaved ? '저장 완료' : '아티스트 저장하기'}
+                </AppText>
+              </TouchableOpacity>
+            </View>
           </View>
         ) : (
           <View style={styles.btnRow}>
@@ -1259,6 +1346,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.deepest,
   },
   btnRow: { flexDirection: 'row', gap: 8 },
+  // v3.113: 저장 완료 확인 문구 ([아티스트 저장하기] 성공 시)
+  savedNotice: {
+    color: colors.accent.primary, fontSize: 12, fontWeight: '700',
+    textAlign: 'center', marginBottom: 8,
+  },
   skipBtn: {
     flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center',
     backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,

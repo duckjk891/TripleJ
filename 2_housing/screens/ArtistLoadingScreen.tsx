@@ -310,7 +310,11 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           taskStore.clearMode();
           usePointsStore.getState().fetchBalance(); // v3.76: ⭐10 차감 반영
           // v3.103: 저장된 cid를 알면 서버 아티스트 상세로 진입(목소리 연결·삭제 UI 노출)
-          navigation.replace('ArtistResult', savedCharacterId ? { characterId: savedCharacterId } : undefined);
+          // v3.113: 생성/재생성 완료 컨텍스트 표시 — ArtistResult가 [아티스트 저장하기] 버튼 노출
+          navigation.replace(
+            'ArtistResult',
+            savedCharacterId ? { characterId: savedCharacterId, justCreated: true } : { justCreated: true }
+          );
         } else if (mode === 'outfit') {
           // ── 9004 옷 입히기 = refine 폐기, generate-sheet 재호출 ──
           // photo는 백엔드 영구 저장본 + 옷 이미지는 코디 선택분(MinIO object_name)에서 fetch
