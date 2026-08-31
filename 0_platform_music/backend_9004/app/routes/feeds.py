@@ -16,8 +16,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..auth import get_current_user, get_current_user_optional
+from ..config import settings
+from ..database.minio import get_minio
 from ..database.mongodb import get_mongo
 from ..database.postgres import get_pg
+from ..services.media_urls import browser_image_url
 from .notifications import push_notification, push_notifications_bulk
 
 router = APIRouter(prefix="/api/feeds", tags=["Feeds"])
@@ -27,6 +30,9 @@ logger = logging.getLogger(__name__)
 FEED_KINDS = ("feed", "community")  # v133: community = 채널 공지 글 (텍스트만)
 
 MAX_BLOCKS = 50
+# v3.111: 이미지 블록 — {type:"image", object_name:"feeds/{user_id}/..."} (업로드는 /upload/feed-image)
+MAX_IMAGE_BLOCKS = 4          # 피드당 이미지 상한
+MAX_IMAGE_OBJECT_NAME_LEN = 300
 TIMELINE_CANDIDATES = 200  # v134: 타임라인 랭킹 후보 풀 (is_public 최신순)
 TIMELINE_MAX_LIMIT = 30
 TIMELINE_FOLLOWING_BOOST = 1000.0  # 로그인 시 팔로잉 작성자 글 최우선 블록
@@ -103,6 +109,8 @@ async def _validate_and_normalize(mongo, user_id: str, body: FeedBody, kind: str
     - blocks 1~50개, text 블록 trim 후 비면 제거, 전체 비면 400
     - title ≤ 100자, text 합계 ≤ 10,000자
     - track 블록·bgm 실존 트랙만, 타인 곡은 is_public 필수
+    - v3.111 image 블록: object_name 은 본인 feeds/{user_id}/ prefix 필수 + MinIO 실존,
+      피드당 최대 4장, community 금지
     """
     if kind not in FEED_KINDS:
         return None, JSONResponse(status_code=400, content={"error": "지원하지 않는 글 종류입니다."})
@@ -123,6 +131,8 @@ async def _validate_and_normalize(mongo, user_id: str, body: FeedBody, kind: str
     normalized_blocks = []
     total_text = 0
     track_ids = set()
+    image_objects = []  # v3.111: 이미지 블록 object_name (순서 보존, 상한·실존 검증용)
+    image_prefix = f"feeds/{user_id}/"
     for block in body.blocks:
         if not isinstance(block, dict):
             return None, JSONResponse(status_code=400, content={"error": "블록 형식이 올바르지 않습니다."})
@@ -141,11 +151,30 @@ async def _validate_and_normalize(mongo, user_id: str, body: FeedBody, kind: str
                 return None, JSONResponse(status_code=400, content={"error": "존재하지 않는 트랙이 포함되어 있습니다."})
             track_ids.add(str(track_id))
             normalized_blocks.append({"type": "track", "track_id": str(track_id)})
+        elif btype == "image":
+            # v3.111: 본인 업로드(feeds/{user_id}/) 오브젝트만 수용 — 타인/시스템 경로 참조 차단
+            if is_community:
+                return None, JSONResponse(status_code=400, content={"error": "커뮤니티 글에는 이미지를 넣을 수 없습니다."})
+            object_name = str(block.get("object_name") or "").strip()
+            if (
+                not object_name
+                or ".." in object_name
+                or len(object_name) > MAX_IMAGE_OBJECT_NAME_LEN
+                or not object_name.startswith(image_prefix)
+            ):
+                logger.info("[feed] image_check invalid author=%s obj=%s", _short(user_id), object_name[:40])
+                return None, JSONResponse(status_code=400, content={"error": "이미지 정보가 올바르지 않습니다."})
+            image_objects.append(object_name)
+            normalized_blocks.append({"type": "image", "object_name": object_name})
         else:
             return None, JSONResponse(status_code=400, content={"error": "지원하지 않는 블록 타입입니다."})
 
     if not normalized_blocks:
         return None, JSONResponse(status_code=400, content={"error": "피드 내용이 비어 있습니다."})
+    if len(image_objects) > MAX_IMAGE_BLOCKS:
+        return None, JSONResponse(
+            status_code=400, content={"error": f"이미지는 피드당 최대 {MAX_IMAGE_BLOCKS}장까지 첨부할 수 있습니다."}
+        )
     if total_text > MAX_TEXT_TOTAL:
         return None, JSONResponse(
             status_code=400, content={"error": f"텍스트는 합계 {MAX_TEXT_TOTAL:,}자 이하여야 합니다."}
@@ -176,12 +205,26 @@ async def _validate_and_normalize(mongo, user_id: str, body: FeedBody, kind: str
                 logger.info("[feed] track_check private_denied author=%s track=%s", _short(user_id), _short(tid))
                 return None, JSONResponse(status_code=400, content={"error": "다른 사용자의 비공개 곡은 사용할 수 없습니다."})
 
+    # v3.111: 이미지 실존 확인 (MinIO stat, 최대 4건) — 업로드 안 된/삭제된 오브젝트 참조 차단
+    if image_objects:
+        minio_client = get_minio()
+        for obj in image_objects:
+            try:
+                minio_client.stat_object(
+                    bucket_name=settings.minio_bucket_images, object_name=obj,
+                )
+            except Exception:
+                logger.info("[feed] image_check missing author=%s obj=%s", _short(user_id), obj[-40:])
+                return None, JSONResponse(status_code=400, content={"error": "존재하지 않는 이미지가 포함되어 있습니다."})
+        logger.info("[feed] image_check ok author=%s images=%d", _short(user_id), len(image_objects))
+
     return {
         "title": title,
         "blocks": normalized_blocks,
         "bgm_track_id": bgm_track_id,
         "is_public": bool(body.is_public),
         "text_len": total_text,
+        "image_count": len(image_objects),
     }, None
 
 
@@ -230,6 +273,11 @@ async def _hydrate_feeds(mongo, conn, feeds: list, current_user=None) -> list:
             if b.get("type") == "track":
                 tid = b.get("track_id")
                 b["track"] = track_map.get(tid) or {"id": tid, "deleted": True}
+            elif b.get("type") == "image" and b.get("object_name"):
+                # v3.111: 이미지 블록 URL 서빙 — cover-preview 무인증 프록시/presign (기존 관행)
+                b["image_url"] = browser_image_url(b["object_name"]) or (
+                    "/api/upload/cover-preview/{}".format(b["object_name"])
+                )
         if f.get("bgm_track_id"):
             f["bgm_track"] = track_map.get(f["bgm_track_id"]) or {"id": f["bgm_track_id"], "deleted": True}
         else:
@@ -288,9 +336,9 @@ async def create_feed(body: FeedBody, current_user=Depends(get_current_user), co
     result = await mongo.feeds.insert_one(doc)
     feed_id = str(result.inserted_id)
     logger.info(
-        "[feed] create ok feed=%s author=%s kind=%s blocks=%d text_len=%d bgm=%s",
+        "[feed] create ok feed=%s author=%s kind=%s blocks=%d text_len=%d bgm=%s images=%d",
         _short(feed_id), _short(user_id), body.kind, len(normalized["blocks"]),
-        normalized["text_len"], bool(normalized["bgm_track_id"]),
+        normalized["text_len"], bool(normalized["bgm_track_id"]), normalized["image_count"],
     )
 
     # v192: 공개 피드 업로드 → 팔로워 전원에게 알림 팬아웃
@@ -569,8 +617,9 @@ async def update_feed(feed_id: str, body: FeedBody, current_user=Depends(get_cur
         }},
     )
     logger.info(
-        "[feed] update ok feed=%s author=%s kind=%s blocks=%d text_len=%d",
+        "[feed] update ok feed=%s author=%s kind=%s blocks=%d text_len=%d images=%d",
         _short(feed_id), _short(user_id), stored_kind, len(normalized["blocks"]), normalized["text_len"],
+        normalized["image_count"],
     )
 
     updated = await mongo.feeds.find_one({"_id": doc["_id"]})
@@ -589,6 +638,18 @@ async def purge_feed_document(mongo, conn, doc: dict) -> dict:
     """
     feed_id = str(doc["_id"])
     owner_id = doc.get("author_id")
+    # v3.111: 첨부 이미지 오브젝트 파기 (best-effort — feeds/{owner}/ 전용 경로라 공유 없음)
+    for b in doc.get("blocks", []) or []:
+        if isinstance(b, dict) and b.get("type") == "image" and b.get("object_name"):
+            try:
+                get_minio().remove_object(
+                    bucket_name=settings.minio_bucket_images, object_name=b["object_name"],
+                )
+            except Exception as e:
+                logger.warning(
+                    "[feed] purge image_cleanup_failed feed=%s obj=%s err=%s",
+                    _short(feed_id), b["object_name"][-40:], str(e)[:80],
+                )
     await mongo.feeds.delete_one({"_id": doc["_id"]})
     comments_result = await mongo.feed_comments.delete_many({"feed_id": feed_id})
     try:

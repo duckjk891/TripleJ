@@ -483,6 +483,127 @@ async def generate_cover(
         )
 
 
+# ── v3.111: 피드 이미지 업로드 ──────────────────────────────────────────────
+# 용량 관리(퀄리티 보존): 긴 변 1600px 초과 시만 LANCZOS 축소, JPEG q85
+# (투명 포함 시 WebP q85), EXIF 회전 반영·메타데이터 제거.
+# 원본이 이미 작으면(축소·회전 불필요 + 1MB 이하) 재인코딩 스킵(무손실 유지).
+# 치수 그대로인 순수 재인코딩 결과가 원본보다 커지면 원본 사용.
+# 저장 경로 feeds/{user_id}/{uuid}.{ext} (images 버킷) — 서빙은 cover-preview 프록시 재사용.
+FEED_IMAGE_MAX_SIZE = 15 * 1024 * 1024   # 수신 최대 15MB
+FEED_IMAGE_MAX_EDGE = 1600               # 긴 변 상한(px)
+FEED_IMAGE_QUALITY = 85
+FEED_IMAGE_SKIP_REENCODE_BYTES = 1 * 1024 * 1024  # 이하 + 무보정이면 원본 그대로
+ALLOWED_FEED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_FEED_IMAGE_FMT_META = {  # PIL format → (content_type, ext)
+    "JPEG": ("image/jpeg", ".jpg"),
+    "PNG": ("image/png", ".png"),
+    "WEBP": ("image/webp", ".webp"),
+}
+
+
+def _process_feed_image(contents: bytes):
+    """피드 이미지 재인코딩. (bytes, content_type, ext, width, height) 반환.
+
+    실패(비이미지 등) 시 예외 전파 — 라우트에서 400 처리.
+    """
+    from PIL import Image, ImageOps
+
+    img = Image.open(io.BytesIO(contents))
+    img.load()
+    fmt_meta = _FEED_IMAGE_FMT_META.get((img.format or "").upper())
+    try:
+        orientation = img.getexif().get(0x0112, 1)
+    except Exception:
+        orientation = 1
+    needs_resize = max(img.size) > FEED_IMAGE_MAX_EDGE
+    needs_rotate = orientation not in (None, 1)
+
+    # 이미 작고(≤1MB) 축소·회전 불필요 + 허용 포맷이면 원본 그대로 (무손실 유지)
+    if fmt_meta and not needs_resize and not needs_rotate \
+            and len(contents) <= FEED_IMAGE_SKIP_REENCODE_BYTES:
+        return contents, fmt_meta[0], fmt_meta[1], img.size[0], img.size[1]
+
+    img = ImageOps.exif_transpose(img)
+    if needs_resize:
+        scale = FEED_IMAGE_MAX_EDGE / float(max(img.size))
+        new_size = (max(1, round(img.size[0] * scale)), max(1, round(img.size[1] * scale)))
+        img = img.resize(new_size, Image.LANCZOS)
+
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    buf = io.BytesIO()
+    if has_alpha:
+        # 투명 보존 — WebP q85 (PNG 대비 대폭 절감, 시각 열화 미미)
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+        img.save(buf, format="WEBP", quality=FEED_IMAGE_QUALITY)
+        out_type, out_ext = "image/webp", ".webp"
+    else:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=FEED_IMAGE_QUALITY)
+        out_type, out_ext = "image/jpeg", ".jpg"
+    processed = buf.getvalue()
+
+    # 치수·회전 무변경인 순수 재인코딩이 오히려 커졌으면 원본 유지 (퀄리티 보존)
+    if fmt_meta and not needs_resize and not needs_rotate and len(processed) >= len(contents):
+        return contents, fmt_meta[0], fmt_meta[1], img.size[0], img.size[1]
+
+    return processed, out_type, out_ext, img.size[0], img.size[1]
+
+
+@router.post("/feed-image", status_code=201)
+async def upload_feed_image(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """v3.111 — 피드 첨부 이미지 업로드. 반환 object_name 을 피드 image 블록에 사용."""
+    user_tag = str(current_user["id"])[:8]
+    content_type = (file.content_type or "").lower()
+    ext_in = os.path.splitext(file.filename or "")[1].lower()
+    if content_type not in ALLOWED_FEED_IMAGE_TYPES and ext_in not in ALLOWED_IMAGE_EXT:
+        logger.info("[feed-img] type_invalid user=%s type=%s ext=%s", user_tag, content_type[:32], ext_in[:8])
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 이미지 형식입니다. (jpg/png/webp)"})
+
+    contents = await file.read()
+    if not contents:
+        return JSONResponse(status_code=400, content={"error": "빈 파일입니다."})
+    if len(contents) > FEED_IMAGE_MAX_SIZE:
+        logger.info("[feed-img] too_large user=%s bytes=%d", user_tag, len(contents))
+        return JSONResponse(status_code=400, content={"error": "이미지 크기는 15MB 이하여야 합니다."})
+    logger.info("[feed-img] enter user=%s type=%s bytes=%d", user_tag, content_type or ext_in, len(contents))
+
+    try:
+        processed, out_type, out_ext, width, height = _process_feed_image(contents)
+    except Exception as e:
+        logger.warning("[feed-img] process failed user=%s err=%s", user_tag, str(e)[:120])
+        return JSONResponse(status_code=400, content={"error": "이미지를 처리할 수 없습니다."})
+    logger.info(
+        "[feed-img] processed user=%s in=%d out=%d dim=%dx%d type=%s reencoded=%s",
+        user_tag, len(contents), len(processed), width, height, out_type, processed is not contents,
+    )
+
+    object_name = f"feeds/{current_user['id']}/{uuid_lib.uuid4().hex}{out_ext}"
+    try:
+        get_minio().put_object(
+            bucket_name=settings.minio_bucket_images,
+            object_name=object_name,
+            data=io.BytesIO(processed),
+            length=len(processed),
+            content_type=out_type,
+        )
+    except Exception as e:
+        logger.error("[feed-img] minio put failed user=%s err=%s", user_tag, str(e)[:120])
+        return JSONResponse(status_code=500, content={"error": "이미지 저장에 실패했습니다."})
+    logger.info("[feed-img] ok user=%s obj=%s bytes=%d", user_tag, object_name, len(processed))
+
+    return {
+        "object_name": object_name,
+        "file_url": browser_image_url(object_name),
+        "width": width,
+        "height": height,
+    }
+
+
 @router.get("/cover-preview/{object_name:path}")
 async def cover_preview(object_name: str):
     """Proxy cover image from MinIO for external access.
