@@ -16,6 +16,18 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { colors } from '../theme/colors';
+import {
+  buildLyricsRequest,
+  GENRE_OPTIONS,
+  MOOD_OPTIONS,
+  STYLE_OPTIONS,
+  CONTENT_OPTIONS,
+  KEYWORD_OPTIONS,
+  PERSPECTIVE_OPTIONS,
+  LANGUAGE_OPTIONS,
+  STRUCTURE_OPTIONS,
+  DUET_OPTIONS,
+} from '../utils/lyricsPrompt';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
 
@@ -33,45 +45,46 @@ interface StepConfig {
 }
 
 // step: 0=장르, 1=분위기, 2=스타일, 3=듀엣, 4=내용, 5=키워드, 6=시점, 7=언어, 8=구조, 9=랩, 10=길이, 11=추가요청
+// v3.110 — 선택지는 utils/lyricsPrompt 와 공유 (요약 카드 수정 시에도 동일 목록 사용)
 const STEPS: StepConfig[] = [
   {
     question: '어떤 장르의 곡을 만들까요?',
-    choices: ['댄스', '발라드', '힙합', 'R&B', '트로트', '인디', '록', '포크', '인디팝', '시티팝', '재즈', 'EDM', '클래식'],
+    choices: GENRE_OPTIONS,
   },
   {
     question: '', // dynamic
-    choices: ['밝고 경쾌한', '슬프고 우울한', '몽환적·신비로운', '에너지틱·강렬한', '로맨틱·달콤한', '그리운·따뜻한', '잔잔하고 편안한', '흥겹고 신나는'],
+    choices: MOOD_OPTIONS,
   },
   {
-    question: '어떤 스타일의 곡을 원하세요?',
-    choices: ['어쿠스틱', '피아노 발라드', '일렉트로닉', '밴드 사운드', '오케스트라', '로파이', '레트로', '트로피컬'],
+    question: '어떤 스타일의 사운드가 좋을까요?',
+    choices: STYLE_OPTIONS,
   },
   {
-    question: '듀엣 곡으로 작사하시겠어요?',
-    choices: ['솔로', '듀엣'],
+    question: '혼자 부르는 곡인가요, 둘이 부르는 곡인가요?',
+    choices: DUET_OPTIONS,
   },
   {
-    question: '어떤 내용으로 가사를 쓰시겠어요?',
-    choices: ['사랑', '이별', '짝사랑', '우정', '성장·자기계발', '자유·일탈', '희망·꿈', '외로움·그리움', '일상의 소소함', '청춘·방황'],
+    question: '가사에 담고 싶은 이야기는 무엇인가요?',
+    choices: CONTENT_OPTIONS,
   },
   {
-    question: '가사에 넣고 싶은 키워드나 소재가 있나요?',
-    choices: ['봄', '여름', '가을', '겨울', '바다', '별·밤하늘', '도시·야경', '꿈', '추억·기억', '비·눈', '카페·일상', '여행·길'],
+    question: '가사에 꼭 넣고 싶은 말이나 소재가 있나요?',
+    choices: KEYWORD_OPTIONS,
   },
   {
-    question: '가사의 화자는 어떤 시점이 좋을까요?',
-    choices: ['1인칭 — 나', '2인칭 — 너에게 말하는', '3인칭 — 관찰자', '독백체', '대화체'],
+    question: '가사 속 화자는 어떤 시점이 좋을까요?',
+    choices: PERSPECTIVE_OPTIONS,
   },
   {
-    question: '언어 비율은 어떻게 할까요?',
-    choices: ['한국어 100%', '영어 조금 혼합 (20% 이하)', '영어 많이 혼합 (절반 정도)', '영어 100%'],
+    question: '가사 언어는 어떻게 할까요?',
+    choices: LANGUAGE_OPTIONS,
   },
   {
-    question: '가사 구조를 정해볼까요?',
-    choices: ['절 — 후렴 (2절)', '절 — 후렴 — 브릿지', '절 — 후렴 (3절)', '절 — 후렴 — 절 — 후렴 — 브릿지 — 후렴', '자유 형식'],
+    question: '곡의 흐름(구조)은 어떻게 짜볼까요?',
+    choices: STRUCTURE_OPTIONS,
   },
   {
-    question: '랩 파트를 포함할까요?',
+    question: '랩 파트를 넣을까요?',
     choices: ['포함', '포함하지 않음'],
   },
   {
@@ -79,7 +92,7 @@ const STEPS: StepConfig[] = [
     choices: ['30초', '1분', '2분', '3분', '4분', '5분'],
   },
   {
-    question: '더 추가하고 싶은 내용이 있다면 알려주세요!',
+    question: '마지막이에요! 더 부탁하고 싶은 게 있다면 알려주세요.',
     freeText: true,
     freeTextPlaceholder: '예: IU - 밤편지 느낌, BTS Spring Day처럼',
   },
@@ -141,15 +154,10 @@ export default function LyricsInputScreen({ navigation }: Props) {
       setChatHistory(newHistory);
 
       setTimeout(() => {
-        // rebuildPrompt는 LyricsPromptReviewScreen에서 처리
-        const durationSec = store.duration;
-        const durationText = durationSec >= 60 ? `${Math.floor(durationSec / 60)}분` : `${durationSec}초`;
-        const rapText = store.hasRap ? ', 랩 파트 포함' : '';
-        const duetText = store.isDuet ? '. 듀엣 곡으로 메인 보컬과 서브 보컬 파트를 구분하여 작성해주세요' : '';
-        const refText = store.reference ? ` ${store.reference} 스타일을 참고해주세요.` : '';
-        const kwText = store.keywords ? ` 키워드는 ${store.keywords}입니다.` : '';
-        const prompt = `${store.language} ${store.genre} 장르의 ${store.mood} 분위기 노래 가사를 작성해주세요. 곡 길이는 약 ${durationText}이고, ${store.perspective} 시점으로 ${store.content}에 대한 내용입니다. 구조는 ${store.structure}${rapText}${duetText}.${kwText}${refText}`;
-        store.setGeneratedPrompt(prompt);
+        // v3.110 — 프롬프트 원문은 사용자에게 보여주지 않는다.
+        // buildLyricsRequest 가 백엔드 계약대로 조립한 곡 설명을 세션 플래그 겸 기록으로 저장.
+        const latest = useLyricsStore.getState();
+        latest.setGeneratedPrompt(buildLyricsRequest(latest).prompt);
         navigation.navigate('LyricsPromptReview');
       }, 1500);
       return;
@@ -172,27 +180,31 @@ export default function LyricsInputScreen({ navigation }: Props) {
   };
 
   const handleReselect = (targetStep: number) => {
+    // 자유 입력 스텝(추가요청)은 선택지가 없어 재선택 모달 대상이 아님
+    if (!STEPS[targetStep]?.choices?.length) return;
     setReselectStep(targetStep);
   };
 
   const handleReselectChoice = (choice: string) => {
     if (reselectStep == null) return;
-    // store 업데이트
+    // store 업데이트 — v3.110: processAnswer 와 동일한 스텝 매핑으로 통일 (기존 off-by-one 수정)
     switch (reselectStep) {
       case 0: store.setGenre(choice); break;
       case 1: store.setMood(choice); break;
       case 2: store.setStyle(choice); break;
-      case 3: store.setContent(choice); break;
-      case 4: store.setKeywords(choice); break;
-      case 5: store.setPerspective(choice); break;
-      case 6: store.setLanguage(choice); break;
-      case 7: store.setStructure(choice); break;
-      case 8: {
+      case 3: store.setIsDuet(choice === '듀엣'); break;
+      case 4: store.setContent(choice); break;
+      case 5: store.setKeywords(choice); break;
+      case 6: store.setPerspective(choice); break;
+      case 7: store.setLanguage(choice); break;
+      case 8: store.setStructure(choice); break;
+      case 9: store.setHasRap(choice === '포함'); break;
+      case 10: {
         const durationMap: Record<string, number> = { '30초': 30, '1분': 60, '2분': 120, '3분': 180, '4분': 240, '5분': 300 };
         store.setDuration(durationMap[choice] || 120);
+        setDurationLabel(choice);
         break;
       }
-      case 9: store.setHasRap(choice === '포함'); break;
     }
     // 대화 기록에서 해당 user 메시지 텍스트만 교체
     setChatHistory((prev) =>

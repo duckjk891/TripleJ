@@ -13,6 +13,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { generateLyrics } from '../services/lyricsService';
+import { buildLyricsRequest } from '../utils/lyricsPrompt';
 import { useGemsStore } from '../stores/gemsStore';
 import { usePointsStore } from '../stores/pointsStore';
 import { GEM_REWARDS } from '../data/directors';
@@ -75,14 +76,12 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
       store.setError(null);
 
       try {
-        const result = await generateLyrics({
-          prompt: store.generatedPrompt,
-          genre: store.genre,
-          mood: store.mood,
-          language: store.language,
-          style: store.style || undefined,
-          duration_minutes: store.duration >= 60 ? Math.round(store.duration / 60) : undefined,
-        });
+        // v3.110 — 수집 답변을 백엔드 계약(prompt+구조화 필드)으로 조립해 전송.
+        // 장르·분위기·스타일·길이는 별도 필드로만 보내고(prompt 중복 제거),
+        // duet=true 시 백엔드 듀엣 전용 시스템 프롬프트([Female]/[Male] 라벨)가 활성화된다.
+        const payload = buildLyricsRequest(useLyricsStore.getState());
+        if (__DEV__) console.log('[LyricsLoading] payload', JSON.stringify(payload));
+        const result = await generateLyrics(payload);
 
         if (isMounted) {
           const lyrics =

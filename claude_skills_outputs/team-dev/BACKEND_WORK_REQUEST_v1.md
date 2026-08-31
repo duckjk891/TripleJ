@@ -144,3 +144,6 @@
 ## B-11. 트랙→앨범 역참조 (차트 UX) — **실측 완료, 요청 확정**
 - 실측(2026-08-31): 트랙 직렬화(charts/tracks 단건 포함)에 album 계열 필드 없음, albums 라우트에 track_id 역조회 없음.
 - 요청: `_serialize_track`에 `album_id`(+가능하면 `album_title`) 추가. **앱은 이미 배선 완료** — 필드만 내려주면 프론트 재배포 없이 "앨범 소속 곡 클릭→앨범 페이지 이동"이 즉시 활성화됨(ChartScreen 옵셔널 분기).
+
+## B-12. 작사 API 필드 확장 (v3.110 제안 — 우리 백로그)
+- duration_minutes 4·5분 분량 가이드, structure enum(시스템 프롬프트 STRUCTURAL RULES 주입), english_ratio(0~100), has_rap:bool — 프론트 buildLyricsRequest가 즉시 활용 가능.

@@ -45,7 +45,7 @@ const initialState = {
   mood: '',
   content: '',
   perspective: '',
-  language: '한국어',
+  language: '한국어 100%', // v3.110 — 대화 선택지(LANGUAGE_OPTIONS)와 표기 통일
   structure: '',
   style: '',
   keywords: '',
