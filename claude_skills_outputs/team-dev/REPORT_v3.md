@@ -4,6 +4,19 @@
 
 ---
 
+## v3.99 (서버 복구 후 일괄 테스트 + 버그 2건 픽스) — 2026-08-31
+
+**수행**: ① 인프라 복구(터널 재기동·env 갱신·9004 기동·presign 외부 200) ② PENDING_TESTS 일괄 실행 — [api] 게이트 FAIL 0 → [e2e] 21개 시나리오 전부 PASS. **클로닝 "문구 도착" 최종 검증 성공(28초)** — MINIO_PUBLIC_HOST 인프라 픽스 종결. ③ 발견 버그 2건 수정·재검 PASS:
+- BUG-1 VoiceConvertScreen: merge 직후 stale awaiting_merge 폴링 레이스 → 30초 grace(mergeRequestedAtRef).
+- BUG-2 PlayerScreen: 큐 소진 시 관련곡 이어듣기 미호출 → autoContinueWithRelated 로더 주입형 export + PlayerScreen 자체 사운드 경로 연결.
+
+**백엔드팀 진행 실측**: B-1(v212)·B-3(v213)·B-4(v214)·B-5(v215) 9006 개발서버 구현 완료(/character/list 실존), B-2 미착수, **9004 미배포** — 프론트 N명 체제 전환은 배포 대기. Wondera 경로 과금·피로도 미적용(서버 사각) 전달 필요.
+
+**잔여**: PENDING_TESTS에 실기기·네이티브 빌드 의존 항목과 대기 항목만 남김. 정책 확인 1건(비로그인 검색 차단 여부).
+**변경**: VoiceConvertScreen, playback.ts, PlayerScreen + 문서 4종.
+
+---
+
 ## v3.98 (파리티 Wave 8 — Kits 음성 변환·MR 피치 프리뷰/병합) — 2026-08-29
 
 **수행** (계약: voice_convert.py·kits_service.py 실측 — 입력은 완료된 생성물 고정, ⭐ 과금 없음 확인):

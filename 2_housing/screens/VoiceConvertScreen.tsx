@@ -94,6 +94,7 @@ export default function VoiceConvertScreen({ navigation, route }: Props) {
   const finalSoundRef = useRef<Audio.Sound | null>(null);
 
   const pollCountRef = useRef(0);
+  const mergeRequestedAtRef = useRef(0);
   const previewUriRef = useRef<string | null>(null);
   previewUriRef.current = previewUri;
 
@@ -169,6 +170,15 @@ export default function VoiceConvertScreen({ navigation, route }: Props) {
           status: s.voice_conversion_status,
           progress: s.voice_conversion_progress,
         }));
+        // merge 요청 직후 서버가 잠시 stale 'awaiting_merge'를 돌려주면 로컬 'merging'을 덮지 않음
+        // (30초 grace — 이후에도 awaiting_merge면 서버 상태를 신뢰해 수용)
+        if (
+          s.voice_conversion_status === 'awaiting_merge' &&
+          Date.now() - mergeRequestedAtRef.current < 30000
+        ) {
+          console.warn('[VoiceConvert] merge 직후 stale awaiting_merge 무시(grace)');
+          return;
+        }
         setDoc((prev) =>
           prev
             ? {
@@ -370,6 +380,7 @@ export default function VoiceConvertScreen({ navigation, route }: Props) {
         mrVolume,
       });
       pollCountRef.current = 0;
+      mergeRequestedAtRef.current = Date.now();
       setAdjustAgain(false);
       await stopFinalPlayback(); // 재병합 시 이전 병합본 재생 중지
       setDoc((prev) =>

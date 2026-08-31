@@ -30,6 +30,7 @@ import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
+import { autoContinueWithRelated } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -301,6 +302,30 @@ export default function PlayerScreen({ route, navigation }: any) {
           setIsPlaying(false);
           setPosition(0);
           playerStore.setIsPlaying(false);
+          // v3.99: 큐 소진(반복 off) — 관련곡 자동 이어듣기.
+          // PlayerScreen은 자체 사운드/콜백을 관리하므로 로더를 주입해 이 화면의
+          // onPlaybackStatusUpdate로 재생을 잇는다(스토어 기본 로더를 쓰면 재생바가 멈춤).
+          autoContinueWithRelated(async (nextTrack) => {
+            if (soundRef.current) {
+              await soundRef.current.unloadAsync().catch(() => {});
+            }
+            const audioUrl = await getAudioUri(nextTrack.id);
+            const { sound: newSound } = await Audio.Sound.createAsync(
+              { uri: audioUrl },
+              { shouldPlay: true },
+              onPlaybackStatusUpdate,
+            );
+            soundRef.current = newSound;
+            const store = usePlayerStore.getState();
+            store.setSound(newSound);
+            store.setTrack(nextTrack);
+            store.setIsPlaying(true);
+            if (store.isPlayerScreenOpen) {
+              setSound(newSound);
+              setIsPlaying(true);
+              setPosition(0);
+            }
+          });
         }
       }
     }

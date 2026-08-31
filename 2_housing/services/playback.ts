@@ -26,7 +26,11 @@ let fetchingRelated = false;
  * 무한 반복 방지: 이미 큐에 있는 트랙 id 전부를 exclude로 전달(이어들은 곡도 큐에 누적되므로
  * 재생 이력 제외 세트 역할). related 응답: { tracks: [...], source: "vector"|"genre"|"popular"|"mixed" } — 무인증.
  */
-async function autoContinueWithRelated(): Promise<void> {
+// loadFn 주입: PlayerScreen처럼 자체 사운드/콜백을 관리하는 호출자는 자기 로더로 재생을 잇는다
+// (미주입 시 기본 loadAndPlayTrack — 미니/인라인 재생 경로)
+export async function autoContinueWithRelated(
+  loadFn?: (track: any) => Promise<void>
+): Promise<void> {
   const s = usePlayerStore.getState();
   const endedTrack = s.queue[s.currentIndex] || s.track;
   if (!endedTrack?.id || fetchingRelated) {
@@ -68,7 +72,7 @@ async function autoContinueWithRelated(): Promise<void> {
     }
     console.info('[playerStore] 관련곡 이어재생', { id: nextTrack.id, queue_size: usePlayerStore.getState().queue.length, source: res.data?.source });
     usePlayerStore.getState().playTrackAtIndex(idx);
-    await loadAndPlayTrack(nextTrack);
+    await (loadFn ? loadFn(nextTrack) : loadAndPlayTrack(nextTrack));
   } catch (err: any) {
     console.error('[playerStore] 관련곡 조회 실패', { status: err?.response?.status, message: err?.message });
     usePlayerStore.getState().setIsPlaying(false);

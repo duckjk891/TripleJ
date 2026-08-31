@@ -5,6 +5,32 @@
 
 ---
 
+## v3.99 — 2026-08-31 — 서버 복구 후 일괄 테스트 실행 (1차 게이트 [api] 완료)
+
+### 인프라 복구
+- 재부팅으로 9004·터널 다운 → cloudflared 재기동(신규 주소, .env 갱신·백업 .env.bak-boot-20260831) → 9004 기동 → health 200, 터널 외부 200, Mongo/MinIO/Expo(8081) 정상.
+
+### 1차 게이트 [api] — **전 항목 FAIL 0건 통과** (PENDING_TESTS §1·§2의 api급 전부 실행)
+- PASS: v3.89 cover_session_id / v3.90 위시 toggle·check·404 / v3.91 탈퇴(200·400·401)·upload-reference(정상·480s 초과 400)·translate-tags·search/click(Mongo 기록 실측)·원격로깅(frontend.log 유입·?token=·비로그인 401) / v3.92 프로필 이미지(업로드·5MB·타입·DELETE)·consents 왕복·PATCH profile 3종 / v3.93 목록 페이징·404 / v3.94 status 필드·409 무과금 / v3.95 my-affected·appeal 오류경로·dm official 재사용·feeds 200/404 / v3.96 latest·소유권 400·트랙없음 400·**AI 커버 무과금 실측(⭐40→40)** / v3.97 daily / v3.98 kits 모델 실목록(키 설정됨) / **presign 터널 호스트 외부 200(480KB 전량 수신 — Suno 접근 대리검증)**
+- BLOCKED(실생성 필요→E2E-B로 이월): v3.93 stream·variant·upload-from-generation·doc 삭제 / v3.94 402·429 / v3.96 앨범 CRUD 체인
+- 계약 실측 노트: ① **/character/list 서버 미배포**(v212에도 없음 — B-1 전환은 백엔드 배포 대기) ② profile-image 한도 5MB(프론트 정합) ③ wishlist check 비로그인 401(프론트 스킵 필요 — E2E-C 확인 항목) ④ albums 이미지 URL은 프록시 상대경로(프론트 prefix 렌더 E2E-C 확인) ⑤ _logs context는 object 필수(프론트 정합)
+- 계정: teamdev_test2500 ⭐40→35(cover 정상 차감), 일회용 teamdev_del_836175 가입→탈퇴 소멸. 원복: 프로필 이미지·마케팅 동의·위시. 잔존: region=해외·sns 5개·공식 DM 1건 등(테스트 계정 한정).
+
+### 2차 [e2e] — 완료 (2026-08-31)
+**E2E-B 작업실 실생성 계열: 8/8 PASS** (증적 scratchpad/v399b_*)
+- 참고음악 배선(generate body에 reference_audio_url·audio_weight 실림, ⭐compose 15), 이력·이어보기(21% 재개), A/B 비교→B 저장(tracks.variant_index=1 Mongo 실측·발매보상 +5), 피로도(2h 쿨다운·앱 내 다이얼로그·⭐5 단축 −30분·429 무과금), 비트뷰(85.7BPM 58비트 렌더), 앨범 체인(AI 커버 무료·마지막 트랙 제거 album_deleted), Kits 변환(무과금·MR 프리뷰·병합), **클로닝 문구 28초 도착(무한 스피너 재현 없음 — 인프라 픽스 최종 검증)**. verify 제출은 미실행(사람 목소리 필요).
+- BUG-1 발견·수정·재검 PASS: VoiceConvertScreen merge 직후 stale awaiting_merge 폴링이 phase를 되돌림 → mergeRequestedAtRef 30초 grace로 무시. 실레이스(11ms) 재현 하에 grace 로그 발동·완료 화면 자동 전환 확인.
+- SKIPPED: 저잔액 402(⭐ 절약), 참고: 서버 duration 판독이 바이트 슬라이스 클립에서 Xing 헤더 기준(무해).
+
+**E2E-C 일반 웹 플로우: 13/13 PASS** (증적 scratchpad/v399c_*)
+- linking 회귀 무사(URL 동기화·새로고침 폴백·OAuth 해시 소비), 피드 딥링크/EmptyState, 프로필 이미지 업로드→폴백, 마케팅 동의 왕복, 인구통계(2/30 차단), 회원탈퇴 UI(가사보관함 유지), 소명 탭, 문의 DM 프리필·전송, 차트 일간(+top100 전용 앨범 섹션·커버 실렌더), 위시(게스트 401 노이즈 0), 검색 클릭, 원격 로깅 frontend.log 유입.
+- BUG-2 발견·수정·재검 PASS: PlayerScreen didJustFinish 큐 소진 분기가 관련곡 이어듣기 미호출 → autoContinueWithRelated export+로더 주입으로 연결. 재검: PlayerScreen 경로 이어재생·재생바 갱신, 인라인 회귀·repeat 미호출 모두 정상.
+- 정책 확인 요망: 비로그인 검색 차단(로그인 유도) — MAIDOL은 허용. 사용자 결정 대기.
+
+**종합: API FAIL 0 + E2E 21/21 PASS(수정 2건 반영), 콘솔 에러·비의도 4xx/5xx 0건.**
+
+---
+
 ## v3.98 — 2026-08-29 — 파리티 Wave 8: Kits 음성 변환+MR 피치 (전 시나리오 미실행 — 서버 다운, PENDING_TESTS 이월)
 
 > 실행 테스트 0건(서버 다운). tsc 0 오류만 확인. 시나리오는 PENDING_TESTS.md §2 v3.98.
