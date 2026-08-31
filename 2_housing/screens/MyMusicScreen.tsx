@@ -32,6 +32,10 @@ import TrackShareDownloadSheet, { SheetMode } from '../components/TrackShareDown
 // v3.96(A-2): 내 앨범 관리 — 앨범 탭 + 생성 모달, 상세/관리는 AlbumDetailScreen
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import { Album, getMyAlbums, albumCoverUri } from '../services/albumService';
+// v3.114: 내 채널(피드·커뮤니티) — MAIDOL 내 채널 구성 반영. FeedCard·이미지 블록(v3.111) 재사용
+import FeedCard from '../components/feed/FeedCard';
+import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
+import { playTrackNow } from '../services/playback';
 
 interface Track {
   id: number;
@@ -49,7 +53,15 @@ interface Track {
   lyrics?: string;
 }
 
-type MyMusicTab = 'tracks' | 'albums' | 'lyrics';
+// v3.114: 피드·커뮤니티 탭 추가 — 내 채널(UserChannelScreen isSelf)과 동일한 구성
+type MyMusicTab = 'tracks' | 'albums' | 'feed' | 'community' | 'lyrics';
+
+// v3.70과 짝(FeedScreen): 텍스트 블록의 [item]{JSON} 마커 → 아이템 카드. 파싱 실패 시 일반 텍스트 폴백.
+interface FeedItemAttach { name?: string; category?: string; url?: string; img?: string }
+function parseItemMarker(text?: string): FeedItemAttach | null {
+  if (!text || !text.startsWith('[item]')) return null;
+  try { return JSON.parse(text.slice(6)); } catch { return null; }
+}
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
@@ -84,6 +96,11 @@ export default function MyMusicScreen({ navigation }: any) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
   const [showAlbumCreate, setShowAlbumCreate] = useState(false);
+  // v3.114: 내가 쓴 피드/커뮤니티 글
+  const [feeds, setFeeds] = useState<any[]>([]);
+  const [notices, setNotices] = useState<any[]>([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedRefreshing, setFeedRefreshing] = useState(false);
 
   const fetchTracks = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -138,12 +155,36 @@ export default function MyMusicScreen({ navigation }: any) {
     }
   }, []);
 
+  // v3.114: 내가 쓴 피드·커뮤니티 글 — UserChannelScreen과 동일 계약 GET /feeds/user/{id}?kind=feed|community
+  // (백엔드 v137: viewer==owner면 비공개 글도 포함해 내려온다)
+  const fetchFeeds = useCallback(async (isRefresh = false) => {
+    const uid = useAuthStore.getState().user?.id;
+    if (!uid) return;
+    if (isRefresh) setFeedRefreshing(true);
+    else setFeedLoading(true);
+    if (__DEV__) console.info('[MyMusic] fetchFeeds', { refresh: isRefresh });
+    try {
+      const [fRes, cRes] = await Promise.allSettled([
+        api.get(`/feeds/user/${uid}`, { params: { kind: 'feed', limit: 50 } }),
+        api.get(`/feeds/user/${uid}`, { params: { kind: 'community', limit: 50 } }),
+      ]);
+      if (fRes.status === 'fulfilled') setFeeds(fRes.value.data?.feeds || []);
+      else console.error('[MyMusic] 피드 조회 실패', { status: (fRes.reason as any)?.response?.status });
+      if (cRes.status === 'fulfilled') setNotices(cRes.value.data?.feeds || []);
+      else console.error('[MyMusic] 커뮤니티 조회 실패', { status: (cRes.reason as any)?.response?.status });
+    } finally {
+      setFeedLoading(false);
+      setFeedRefreshing(false);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (user) {
         fetchTracks();
         fetchMyCharacter();
         fetchAlbums();
+        fetchFeeds();
       }
     }, [user])
   );
@@ -273,6 +314,74 @@ export default function MyMusicScreen({ navigation }: any) {
     />
   );
 
+  // v3.114: 내가 쓴 피드/커뮤니티 카드 — 공용 FeedCard 재사용(좋아요·댓글·삭제 등 액션 그대로).
+  // 블록 렌더는 FeedScreen 규칙(텍스트/이미지 v3.111/트랙/[item] 마커). 카드 여백 탭 시 상세(FeedDetail)로.
+  const renderFeed = ({ item }: { item: any }) => {
+    const blocks: any[] = item.blocks || [];
+    const rawText = blocks.filter((b) => b.type === 'text' && b.text);
+    const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
+    const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
+    const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
+    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
+    const queue = trackBlocks.map((b) => b.track);
+    return (
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => {
+          if (__DEV__) console.info('[MyMusic] 피드 상세로', { feedId: item.id });
+          navigation.getParent()?.navigate('FeedDetail', { feedId: String(item.id) });
+        }}
+        accessibilityLabel="피드 상세 보기"
+      >
+        <FeedCard
+          feed={item}
+          requireLogin={() => true}
+          onDeleted={() => fetchFeeds(true)}
+          onPressAuthor={() => navigation.getParent()?.navigate('UserChannel', { authorId: user.id, name: user.nickname })}
+          renderBlocks={() => (
+            <View>
+              {textBlocks.map((b, i) => (
+                <AppText key={`t${i}`} style={styles.feedBody}>{b.text}</AppText>
+              ))}
+              {imageBlocks.map((b, i) => {
+                const uri = feedImageUri(b);
+                return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
+              })}
+              {trackBlocks.map((b, i) => (
+                <View key={`tr${i}`} style={styles.feedTrackWrap}>
+                  <TrackRow
+                    track={{ ...b.track, id: String(b.track.id) }}
+                    liked={!!likedMap[String(b.track.id)]}
+                    onPress={() => playTrackNow(b.track, queue)}
+                  />
+                </View>
+              ))}
+              {itemBlocks.map((it, i) => (
+                <TouchableOpacity
+                  key={`it${i}`}
+                  style={styles.feedItemCard}
+                  activeOpacity={it.url ? 0.7 : 1}
+                  accessibilityLabel={`아이템 ${it.name || ''}`}
+                  onPress={() => {
+                    if (!it.url) return;
+                    Linking.openURL(it.url).catch((err) =>
+                      console.error('[MyMusic] 아이템 링크 실패', { message: err?.message }));
+                  }}
+                >
+                  <Feather name="shopping-bag" size={16} color={colors.text.secondary} />
+                  <View style={{ flex: 1 }}>
+                    <AppText style={{ fontSize: 11, color: colors.accent.primary }}>{it.category || '아이템'}</AppText>
+                    <AppText style={{ fontSize: 13, color: colors.text.secondary }} numberOfLines={2}>{it.name || ''}</AppText>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        />
+      </TouchableOpacity>
+    );
+  };
+
   // 성장 지표 계산
   const level = Math.floor(tracks.length / 3) + 1;
   const tracksToNext = 3 - (tracks.length % 3);
@@ -355,41 +464,30 @@ export default function MyMusicScreen({ navigation }: any) {
         )}
       </View>
 
-      {/* 탭 바 */}
+      {/* 탭 바 — v3.114: 피드·커뮤니티 추가(내 채널 = MAIDOL 내 채널 구성). 5개가 되어 폰트만 소폭 축소 */}
       <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'tracks' && styles.tabActive]}
-          onPress={() => setActiveTab('tracks')}
-        >
-          <AppText style={[styles.tabText, activeTab === 'tracks' && styles.tabTextActive]}>작곡</AppText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'albums' && styles.tabActive]}
-          onPress={() => setActiveTab('albums')}
-        >
-          <AppText style={[styles.tabText, activeTab === 'albums' && styles.tabTextActive]}>앨범</AppText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'lyrics' && styles.tabActive]}
-          onPress={() => setActiveTab('lyrics')}
-        >
-          <AppText style={[styles.tabText, activeTab === 'lyrics' && styles.tabTextActive]}>작사</AppText>
-        </TouchableOpacity>
+        {([
+          { key: 'tracks', label: '작곡' },
+          { key: 'albums', label: '앨범' },
+          { key: 'feed', label: '피드' },
+          { key: 'community', label: '커뮤니티' },
+          { key: 'lyrics', label: '작사' },
+        ] as { key: MyMusicTab; label: string }[]).map((t) => (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.tab, activeTab === t.key && styles.tabActive]}
+            onPress={() => setActiveTab(t.key)}
+          >
+            <AppText style={[styles.tabText, activeTab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* 작곡 탭 */}
+      {/* v3.114: '음원 파일 올리기' dashed 진입 버튼 제거 — 레퍼런스 업로드는 작곡 대화에 이미 있어
+          마이페이지에 둘 성격이 아님(대표 지시). TrackUploadScreen·trackService·라우트는 보존(진입점만 제거). */}
       {activeTab === 'tracks' && (
         <View style={{ flex: 1 }}>
-          {/* v3.100(A-10): 직접 음원 파일 업로드 진입 — 앨범 탭 '새 앨범 만들기'와 동일한 dashed 버튼 관행 */}
-          <TouchableOpacity
-            style={[styles.albumCreateBtn, { marginHorizontal: 16 }]}
-            activeOpacity={0.8}
-            onPress={() => navigation.getParent()?.navigate('TrackUpload')}
-            accessibilityLabel="음원 파일 올리기"
-          >
-            <Feather name="upload" size={16} color={colors.accent.primary} />
-            <AppText style={styles.albumCreateText}>음원 파일 올리기</AppText>
-          </TouchableOpacity>
           {tracks.length === 0 ? (
             <EmptyState title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
           ) : (
@@ -408,6 +506,28 @@ export default function MyMusicScreen({ navigation }: any) {
             />
           )}
         </View>
+      )}
+
+      {/* v3.114: 피드/커뮤니티 탭 — 내가 쓴 글(비공개 포함) + 당겨새로고침. 카드 탭 시 상세로 */}
+      {(activeTab === 'feed' || activeTab === 'community') && (
+        <FlatList
+          data={activeTab === 'feed' ? feeds : notices}
+          keyExtractor={(it: any, i: number) => String(it.id ?? i)}
+          renderItem={renderFeed}
+          contentContainerStyle={[styles.feedList, hasMiniPlayer && { paddingBottom: 140 }]}
+          refreshControl={
+            <RefreshControl refreshing={feedRefreshing} onRefresh={() => fetchFeeds(true)} tintColor={colors.accent.primary} />
+          }
+          ListEmptyComponent={
+            feedLoading ? (
+              <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
+            ) : activeTab === 'feed' ? (
+              <EmptyState title="아직 작성한 피드가 없어요." hint="피드 탭에서 내 곡과 소식을 알려보세요!" />
+            ) : (
+              <EmptyState title="아직 커뮤니티 글이 없어요." hint="피드 작성 시 커뮤니티 글로 올릴 수 있어요!" />
+            )
+          }
+        />
       )}
 
       {/* v3.96(A-2): 앨범 탭 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}
@@ -590,7 +710,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.accent.primary,
   },
   tabText: {
-    fontSize: 15,
+    fontSize: 14, // v3.114: 탭 5개('커뮤니티' 포함) — 작은 화면에서도 한 줄 유지되게 15→14
     color: colors.text.muted,
     fontWeight: '600',
   },
@@ -886,6 +1006,14 @@ const styles = StyleSheet.create({
   albumRowCoverImg: { width: 56, height: 56 },
   albumRowTitle: { fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 3 },
   albumRowMeta: { fontSize: 12, color: colors.text.muted },
+  // v3.114: 피드/커뮤니티 탭 — FeedScreen 리스트 여백(12) 관행. 트랙/아이템 블록은 인셋 배경
+  feedList: { paddingHorizontal: 12, paddingBottom: 100 },
+  feedBody: { marginTop: 8, fontSize: 14, lineHeight: 21, color: colors.text.secondary },
+  feedTrackWrap: { marginTop: 10, backgroundColor: colors.bg.deepest, borderRadius: 12, overflow: 'hidden' },
+  feedItemCard: {
+    marginTop: 10, backgroundColor: colors.bg.deepest, borderRadius: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10,
+  },
   lyricsSection: { paddingHorizontal: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: colors.text.primary, marginBottom: 10 },
   lyricsCard: { backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: colors.border.subtle },
