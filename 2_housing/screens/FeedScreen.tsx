@@ -12,6 +12,7 @@ import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, EmptyState, ScreenLayout, Button } from '../components/ui';
 import LoginPrompt from '../components/LoginPrompt';
 import FeedCard, { feedTheme } from '../components/feed/FeedCard';
+import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import { playTrackNow } from '../services/playback';
 import Fab from '../components/Fab';
 import TrackRow, { RowTrack } from '../components/TrackRow';
@@ -28,10 +29,12 @@ interface FeedTrack {
   like_count?: number;
 }
 interface FeedBlock {
-  type: string; // 'text' | 'track'
+  type: string; // 'text' | 'track' | 'image'(v3.111)
   text?: string;
   track_id?: string;
   track?: FeedTrack | null;
+  object_name?: string; // image 블록 — MinIO 오브젝트명
+  image_url?: string;   // image 블록 — 서버 하이드레이션 URL(상대/절대)
 }
 interface FeedPost {
   id?: string | number;
@@ -207,6 +210,8 @@ export default function FeedScreen() {
     const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
+    // v3.111: 이미지 블록 — 가로폭 맞춤·비율 유지, 다중은 세로 나열
+    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     return (
       <FeedCard
         feed={item}
@@ -221,6 +226,10 @@ export default function FeedScreen() {
             {textBlocks.map((b, i) => (
               <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
             ))}
+            {imageBlocks.map((b, i) => {
+              const uri = feedImageUri(b);
+              return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
+            })}
             {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
             {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
           </View>

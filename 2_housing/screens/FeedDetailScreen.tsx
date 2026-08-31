@@ -15,6 +15,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, EmptyState } from '../components/ui';
 import FeedCard, { feedTheme } from '../components/feed/FeedCard';
+import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import TrackActionSheet from '../components/TrackActionSheet';
 import { playTrackNow } from '../services/playback';
@@ -29,10 +30,12 @@ interface FeedTrack {
   like_count?: number;
 }
 interface FeedBlock {
-  type: string; // 'text' | 'track'
+  type: string; // 'text' | 'track' | 'image'(v3.111)
   text?: string;
   track_id?: string;
   track?: FeedTrack | null;
+  object_name?: string; // image 블록 — MinIO 오브젝트명
+  image_url?: string;   // image 블록 — 서버 하이드레이션 URL(상대/절대)
 }
 
 // v3.70과 짝: 텍스트 블록의 [item]{JSON} 마커 → 아이템 카드. 파싱 실패 시 일반 텍스트 폴백.
@@ -171,11 +174,17 @@ export default function FeedDetailScreen() {
     const textBlocks = rawText.filter((b) => !parseItemMarker(b.text));
     const itemBlocks = rawText.map((b) => parseItemMarker(b.text)).filter(Boolean) as FeedItemAttach[];
     const trackBlocks = blocks.filter((b) => b.type === 'track' && b.track?.id);
+    // v3.111: 이미지 블록 — 가로폭 맞춤·비율 유지, 다중은 세로 나열 (FeedScreen과 동일 규칙)
+    const imageBlocks = blocks.filter((b) => b.type === 'image' && (b.image_url || b.object_name));
     return (
       <View>
         {textBlocks.map((b, i) => (
           <AppText key={`t${i}`} variant="body" style={[styles.body, { color: feedTheme.sub }]}>{b.text}</AppText>
         ))}
+        {imageBlocks.map((b, i) => {
+          const uri = feedImageUri(b);
+          return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
+        })}
         {trackBlocks.map((b, i) => renderTrackBlock(b.track as FeedTrack, `tr${i}`))}
         {itemBlocks.map((it, i) => renderItemBlock(it, `it${i}`))}
       </View>

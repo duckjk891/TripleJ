@@ -1,6 +1,7 @@
 // [FeedCompose] 피드 작성 — v3.61 신설(기존엔 작성 UI 부재, 읽기·댓글만 가능했음).
 // 제목(선택)·내용 입력 + 음악 첨부(내 곡 목록 — 차트와 동일한 공용 TrackRow 디자인) → POST /feeds/.
-// 계약: POST /api/feeds/ { title?, blocks:[{type:'text',text}|{type:'track',track_id}], is_public, kind:'feed' }
+// 계약: POST /api/feeds/ { title?, blocks:[{type:'text',text}|{type:'track',track_id}|{type:'image',object_name}], is_public, kind:'feed' }
+// v3.111: 사진 첨부 — DocumentPicker image/* → POST /upload/feed-image(서버 재인코딩·15MB) → image 블록, 최대 4장.
 import { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, Image,
@@ -10,12 +11,27 @@ import { showAlert } from '../utils/appAlert';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import { AppText, Button } from '../components/ui';
 import TrackRow, { RowTrack } from '../components/TrackRow';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+
+// v3.111: 사진 첨부 클라 선검증 — 백엔드 /upload/feed-image 계약(jpg/png/webp ≤15MB)과 짝
+const FEED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const FEED_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
+const MAX_FEED_IMAGES = 4;
+
+interface AttachedImage {
+  key: string;
+  localUri: string;
+  name: string;
+  mime: string;
+  status: 'uploading' | 'done' | 'failed';
+  objectName?: string;
+}
 
 export default function FeedComposeScreen({ navigation }: any) {
   const user = useAuthStore((s) => s.user);
@@ -25,6 +41,8 @@ export default function FeedComposeScreen({ navigation }: any) {
   const [body, setBody] = useState('');
   const [attached, setAttached] = useState<RowTrack | null>(null);
   const [posting, setPosting] = useState(false);
+  // v3.111: 첨부 사진 — 선택 즉시 업로드(진행 표시), 실패분은 재시도/제거 가능
+  const [images, setImages] = useState<AttachedImage[]>([]);
 
   // 음악 첨부/가사 복사/아이템 첨부 — 내 곡 목록(공용 TrackRow, 차트와 동일 디자인) 피커 공유
   // v3.70: pickerMode 'attach'=곡 첨부, 'lyrics'=선택 곡 가사를 클립보드에 복사, 'item'=곡의 착장 아이템 첨부(공구)
@@ -122,17 +140,97 @@ export default function FeedComposeScreen({ navigation }: any) {
     return () => { alive = false; };
   }, [pickerOpen, pickerMode, myTracks.length, itemTrackMap]);
 
+  // v3.111: 사진 업로드 — SettingsScreen 프로필 업로드와 동일한 web/native FormData 분기 관행
+  const uploadImage = async (entry: AttachedImage) => {
+    if (__DEV__) console.info('[FeedCompose] 사진 업로드 시작', { name: entry.name, mime: entry.mime });
+    try {
+      const formData = new FormData();
+      if (Platform.OS === 'web') {
+        const blob = await (await fetch(entry.localUri)).blob();
+        formData.append('file', blob, entry.name);
+      } else {
+        formData.append('file', { uri: entry.localUri, name: entry.name, type: entry.mime } as any);
+      }
+      const res = await api.post('/upload/feed-image', formData, {
+        headers: Platform.OS === 'web' ? undefined : { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      });
+      const objectName = res.data?.object_name;
+      if (!objectName) throw new Error('object_name 누락');
+      console.info('[FeedCompose] 사진 업로드 성공', { objectName });
+      setImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'done', objectName } : i)));
+    } catch (err: any) {
+      console.error('[FeedCompose] 사진 업로드 실패', { status: err?.response?.status, message: err?.message });
+      setImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'failed' } : i)));
+      showAlert('오류', err?.response?.data?.error || '사진 업로드에 실패했습니다. 사진을 눌러 다시 시도하거나 X로 제거해주세요.');
+    }
+  };
+
+  const pickImage = async () => {
+    if (images.length >= MAX_FEED_IMAGES) {
+      showAlert('안내', `사진은 최대 ${MAX_FEED_IMAGES}장까지 첨부할 수 있어요.`);
+      return;
+    }
+    // expo-image-picker 미설치 — 기존 이미지 선택 관행(SettingsScreen DocumentPicker image/*) 재사용
+    const res = await DocumentPicker.getDocumentAsync({ type: 'image/*' });
+    if (res.canceled || !res.assets || !res.assets[0]) return;
+    const f = res.assets[0];
+    const mime = f.mimeType || '';
+    if (mime && !FEED_IMAGE_TYPES.includes(mime)) {
+      showAlert('안내', '지원하지 않는 이미지 형식입니다. (jpg/png/webp)');
+      return;
+    }
+    if (typeof f.size === 'number' && f.size > FEED_IMAGE_MAX_BYTES) {
+      showAlert('안내', '이미지 크기는 15MB 이하여야 합니다.');
+      return;
+    }
+    const entry: AttachedImage = {
+      key: `${Date.now()}-${images.length}`,
+      localUri: f.uri, name: f.name || 'image.jpg', mime: mime || 'image/jpeg',
+      status: 'uploading',
+    };
+    setImages((prev) => [...prev, entry]);
+    uploadImage(entry);
+  };
+
+  const retryImage = (entry: AttachedImage) => {
+    if (entry.status !== 'failed') return;
+    if (__DEV__) console.info('[FeedCompose] 사진 업로드 재시도', { name: entry.name });
+    setImages((prev) => prev.map((i) => (i.key === entry.key ? { ...i, status: 'uploading' } : i)));
+    uploadImage({ ...entry, status: 'uploading' });
+  };
+
   const submit = async () => {
+    // v3.111: 업로드 미완료(진행 중/실패) 사진이 있으면 사용자 선택 — 제외하고 발행 / 취소
+    const notReady = images.filter((i) => i.status !== 'done');
+    if (notReady.length) {
+      showAlert('안내', `업로드가 끝나지 않았거나 실패한 사진이 ${notReady.length}장 있어요.`, [
+        { text: '사진 제외하고 등록', onPress: () => doSubmit(images.filter((i) => i.status === 'done')) },
+        { text: '취소', style: 'cancel' },
+      ]);
+      return;
+    }
+    doSubmit(images);
+  };
+
+  const doSubmit = async (readyImages: AttachedImage[]) => {
     const text = body.trim();
-    if (!text && !attached && !attachedItems.length) { showAlert('알림', '내용을 입력하거나 음악·아이템을 첨부해주세요.'); return; }
+    if (!text && !attached && !attachedItems.length && !readyImages.length) {
+      showAlert('알림', '내용을 입력하거나 음악·사진·아이템을 첨부해주세요.');
+      return;
+    }
     if (posting) return;
     setPosting(true);
     const blocks: any[] = [];
     if (text) blocks.push({ type: 'text', text });
     if (attached) blocks.push({ type: 'track', track_id: String(attached.id) });
-    // v3.70: 아이템은 서버 블록 화이트리스트(text|track) 제약으로 [item]{JSON} 마커 텍스트 블록으로 저장
+    // v3.111: 업로드 완료된 사진 → image 블록
+    for (const img of readyImages) {
+      if (img.objectName) blocks.push({ type: 'image', object_name: img.objectName });
+    }
+    // v3.70: 아이템은 서버 블록 화이트리스트 제약으로 [item]{JSON} 마커 텍스트 블록으로 저장
     for (const it of attachedItems) blocks.push({ type: 'text', text: `[item]${JSON.stringify(it)}` });
-    if (__DEV__) console.info('[FeedCompose] 피드 등록', { blocks: blocks.length, hasTrack: !!attached });
+    if (__DEV__) console.info('[FeedCompose] 피드 등록', { blocks: blocks.length, hasTrack: !!attached, images: readyImages.length });
     try {
       await api.post('/feeds/', {
         title: title.trim() || null,
@@ -207,6 +305,46 @@ export default function FeedComposeScreen({ navigation }: any) {
             <AppText variant="body" tone="accent">음악 첨부</AppText>
           </TouchableOpacity>
         )}
+
+        {/* v3.111: 사진 첨부 — 서버 재인코딩(긴 변 1600·q85)으로 용량 관리, 최대 4장 */}
+        <TouchableOpacity style={styles.attachBtn} onPress={pickImage} accessibilityLabel="사진 첨부">
+          <Feather name="image" size={18} color={colors.accent.primary} />
+          <AppText variant="body" tone="accent">사진 첨부{images.length ? ` (${images.length}/${MAX_FEED_IMAGES})` : ''}</AppText>
+        </TouchableOpacity>
+
+        {/* 첨부된 사진 미리보기 — 업로드 중 스피너 / 실패 시 탭하여 재시도, X로 제거 */}
+        {images.length ? (
+          <View style={styles.imageRow}>
+            {images.map((img) => (
+              <View key={img.key} style={styles.imageThumbWrap}>
+                <TouchableOpacity
+                  disabled={img.status !== 'failed'}
+                  onPress={() => retryImage(img)}
+                  accessibilityLabel={img.status === 'failed' ? '사진 업로드 재시도' : '첨부된 사진'}
+                >
+                  <Image source={{ uri: img.localUri }} style={[styles.imageThumb, img.status !== 'done' && { opacity: 0.4 }]} />
+                </TouchableOpacity>
+                {img.status === 'uploading' ? (
+                  <View style={styles.imageThumbOverlay} pointerEvents="none">
+                    <ActivityIndicator size="small" color={colors.accent.primary} />
+                  </View>
+                ) : null}
+                {img.status === 'failed' ? (
+                  <View style={styles.imageThumbOverlay} pointerEvents="none">
+                    <Feather name="alert-circle" size={18} color={colors.status.error} />
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.imageRemove}
+                  onPress={() => setImages((prev) => prev.filter((i) => i.key !== img.key))}
+                  accessibilityLabel="사진 제거"
+                >
+                  <Feather name="x" size={12} color={colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         {/* v3.70: 내가 만든 곡의 가사를 클립보드로 복사 */}
         <TouchableOpacity style={styles.attachBtn} onPress={() => { setPickerMode('lyrics'); setPickerOpen(true); }} accessibilityLabel="내 가사 복사">
@@ -354,4 +492,13 @@ const styles = StyleSheet.create({
     padding: spacing.sm, marginTop: spacing.sm,
   },
   itemPreviewImg: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
+  // v3.111: 첨부 사진 미리보기 (썸네일 + 업로드 상태 오버레이 + 제거 버튼)
+  imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.md },
+  imageThumbWrap: { width: 72, height: 72 },
+  imageThumb: { width: 72, height: 72, borderRadius: radius.md, backgroundColor: colors.bg.surface2 },
+  imageThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  imageRemove: {
+    position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center',
+  },
 });

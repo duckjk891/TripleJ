@@ -12,6 +12,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Card, Avatar, Button, EmptyState } from '../components/ui';
+import FeedImageBlock, { feedImageUri } from '../components/feed/FeedImageBlock';
 
 const mediaUri = (obj?: string | null): string | null =>
   obj ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(obj)}` : null;
@@ -134,6 +135,8 @@ export default function UserChannelScreen() {
     const blocks = item.blocks || [];
     const texts = blocks.filter((b: any) => b.type === 'text' && b.text);
     const trackBlocks = blocks.filter((b: any) => b.type === 'track' && b.track?.id);
+    // v3.111: 이미지 블록 — 피드 탭과 동일 렌더(가로폭 맞춤·비율 유지·탭 시 크게 보기)
+    const imageBlocks = blocks.filter((b: any) => b.type === 'image' && (b.image_url || b.object_name));
     const queue = trackBlocks.map((b: any) => b.track);
     return (
       <Card variant="filled" style={styles.card}>
@@ -142,6 +145,10 @@ export default function UserChannelScreen() {
         {texts.map((b: any, i: number) => (
           <AppText key={i} variant="body" tone="secondary" style={{ marginTop: spacing.xs }}>{b.text}</AppText>
         ))}
+        {imageBlocks.map((b: any, i: number) => {
+          const uri = feedImageUri(b);
+          return uri ? <FeedImageBlock key={`im${i}`} uri={uri} /> : null;
+        })}
         {trackBlocks.map((b: any, i: number) => <TrackRow key={`tk${i}`} item={b.track} queue={queue} />)}
         {item.created_at ? (
           <AppText variant="caption" tone="muted" style={{ marginTop: spacing.sm }}>
