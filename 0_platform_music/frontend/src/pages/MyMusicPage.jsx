@@ -228,7 +228,7 @@ function CharacterSection() {
   const [vUserText, setVUserText] = useState('');
   const [vFormOpen, setVFormOpen] = useState(false);
   const [vElapsedSec, setVElapsedSec] = useState(0); // 가상화 생성 경과시간(초)
-  const [imageModel, setImageModel] = useState('gpt_image_2');
+  // v217 — image_model 은 백엔드가 시트 종류로 고정(실사=gpt_image_2/만화=nb_pro) — 선택 state 소멸.
   // v158 — 별 경제 v1.2: 캐릭터 생성 비용(⭐) — /points/costs 단일 소스({ costs } 래핑), 실패 시 10 폴백
   const [characterCost, setCharacterCost] = useState(10);
   const [styleSamples, setStyleSamples] = useState([]);
@@ -552,7 +552,7 @@ function CharacterSection() {
       // v161 — file optional: 사진 첨부 시에만 전송, 외모 텍스트는 있으면 항상 전송(사진+텍스트 보정 겸용)
       if (photoFile) formData.append('file', photoFile);
       if (userText.trim()) formData.append('user_text', userText.trim());
-      formData.append('image_model', imageModel);
+      // v217 — image_model 미전송: 실사 시트는 서버가 gpt_image_2 로 고정(수신값 무시 정책)
       // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만 — 사진 첨부 시에만 의미)
       if (photoFile && portraitConfirmed) formData.append('portrait_confirmed', 'true');
       // v212 D4 — 재생성이면 대상 아티스트 character_id 첨부 (슬롯 검사 없음), 신규면 미첨부(서버 슬롯 검사)
@@ -563,7 +563,7 @@ function CharacterSection() {
           mode: 'real',
           regen_character_id: regenArtist?.character_id || null,
           source: genSource(photoFile, userText),
-          image_model: imageModel,
+          image_model: 'server-pinned', // v217 — 고정 정책 관측용
         });
       }
       // 접수(job_id 즉시 반환) → 5초 폴링 → 완료 시 미리보기
@@ -823,7 +823,7 @@ function CharacterSection() {
       // v161 — file optional: 사진 첨부 시에만 전송, 외모 텍스트는 있으면 항상 전송(사진+텍스트 보정 겸용)
       if (vPhotoFile) formData.append('file', vPhotoFile);
       if (vUserText.trim()) formData.append('user_text', vUserText.trim());
-      formData.append('image_model', imageModel);
+      // v217 — image_model 미전송: 만화(가상) 시트는 서버가 nb_pro 로 고정(수신값 무시 정책)
       // v137 — 사진 확약 체크 상태 전달 (BE 는 로그만 — 사진 첨부 시에만 의미)
       if (vPhotoFile && portraitConfirmed) formData.append('portrait_confirmed', 'true');
       // v212 D4 — 재생성이면 대상 아티스트 character_id 첨부
@@ -840,7 +840,7 @@ function CharacterSection() {
           mode: 'cartoon',
           source: genSource(vPhotoFile, vUserText),
           style: fallbackStyle,
-          image_model: imageModel,
+          image_model: 'server-pinned', // v217 — 고정 정책 관측용
         });
       }
       // 접수(job_id 즉시 반환) → 5초 폴링 → 완료 시 미리보기
@@ -1129,18 +1129,7 @@ function CharacterSection() {
 
         {renderItemSlots()}
 
-        {/* 이미지 모델 선택 (가상화 탭과 동일, 기본 gpt_image_2) */}
-        <div className="mymusic-character__model-row">
-          <label className="mymusic-character__model-label">이미지 모델</label>
-          <select
-            className="mymusic-character__model-select"
-            value={imageModel}
-            onChange={(e) => setImageModel(e.target.value)}
-          >
-            <option value="gpt_image_2">gpt_image_2 (기본)</option>
-            <option value="nb_pro">nb_pro</option>
-          </select>
-        </div>
+        {/* v217 — 이미지 모델 선택 제거: 실사 시트 = gpt_image_2 서버 고정 */}
 
         <button
           className="mymusic-character__generate-btn"
@@ -1322,18 +1311,7 @@ function CharacterSection() {
           )}
         </div>
 
-        {/* 4) 이미지 모델 선택 */}
-        <div className="mymusic-character__model-row">
-          <label className="mymusic-character__model-label">이미지 모델</label>
-          <select
-            className="mymusic-character__model-select"
-            value={imageModel}
-            onChange={(e) => setImageModel(e.target.value)}
-          >
-            <option value="gpt_image_2">gpt_image_2 (기본)</option>
-            <option value="nb_pro">nb_pro</option>
-          </select>
-        </div>
+        {/* v217 — 이미지 모델 선택 제거: 만화(가상) 시트 = nb_pro 서버 고정 */}
 
         {renderItemSlots()}
 

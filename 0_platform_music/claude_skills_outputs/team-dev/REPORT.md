@@ -16946,3 +16946,36 @@ S1 기동 건전성(diff 대조 포함) / S2 기존 핵심 경로(일회용 계�
 
 ## 7. 안전 준수
 실 .env 값 무열람·무출력(키 이름 diff만), 실사용자 데이터 무변조(계수 diff 0·일회용 계정 원복), 유료 외부 도달 0, 실업로드 0, git add -A 미사용·푸시 없음, 백업 tar 확보(5분 내 롤백 가능), 9005 무접촉.
+
+---
+
+# REPORT v217 — 캐릭터 시트 image_model 서버 고정 + 9004 재미러링 (2026-08-31 18:55 KST, planner)
+
+**판정: PASS — tester 1차(9006) 8/8 + 2차(9004) 1/1(N9 — 세부 5/5), 픽스 루프 0회, 실생성 0·⭐ 원장 무변.** 발단: 앱팀 요청("모델 선택 없이 하나로 고정"). 범위: backend_9006 + frontend + **9004 재미러링 포함**(요청 자체가 앱팀발).
+
+## 1. 확정 사양·구현 (B1/F1 — PLAN v217 M1~M4)
+- **서버 고정**: 실사(generate-sheet·-async)=**gpt_image_2** / 만화(-cartoon·-cartoon-async)=**nb_pro**. 수신 image_model 은 **무시**(에러 없이 덮어씀 — 무효 400 분기 소멸), 키 가드는 고정 모델 것만(실사=openai/만화=google — 양 키 .env 존재 실측), 응답 echo=고정값(shape 불변), [ModelPin] 관측 로그
+- **refine 자동 판별 3순위**: ①신규 optional Form `character_id`(아티스트 kind 정본 — real→gpt/virtual→nb, 타인·부재 404) ②미지정 시 수신 image_model 재해석(v55 echo 관행 — 신규 체제에선 자동 수렴) ③nb_pro 폴백. 헬퍼 분리 구현(unit 바인딩)
+- **F1**: MyMusicPage 모델 선택 select 2곳·전송 4곳·imageModel state 제거 — route-abort 캡처로 **필드 미전송** 실증(Q3 정본 일치). 웹 refine 데드 무접촉·커버 모델 선택 범위 외
+- diff: character.py(9006) 142줄 변동 · MyMusicPage -36 상당 · api/index.js 소폭 · 9004 미러 동반(character.py 동일 142)
+
+## 2. 테스트 판정 (9/9)
+- 1차(9006) 8/8: 급소 = **무효 image_model+슬롯 만석 → 409 프로브**(400 소멸을 무과금 실증) / unit 헬퍼 3종(강제·판별 3순위·키 가드 축소) / refine 파라미터 수용(cid 타인 404) / FE abort 캡처 미전송 / 회귀(거절 서열·persist·echo shape·v212~215 스모크+me 키셋). Q1 스트라이크 403은 직삽 실호출 채택, Q4 나머지 2종은 diff 목검 3점 완료
+- 2차(9004) N9 5/5: 기동 건전성·치환 2건 재적용 grep 확인·**[ModelPin] 로그 9004 실동작**·409 프로브 동일·9006 무영향 diff 0
+- **특이 기록(N7)**: 빈 refine_request 프로브가 기대 400 대신 **422 실측** — sheet_image/photo 파일 필수 스키마 검증이 핸들러 400보다 선행(파일 결손 케이스). 계약 취지(거절) 충족 — HANDOFF 추기 §4에 고지, 회귀 기대값 422로 고정
+
+## 3. O1 재미러링 기록
+v216 절차 승계: rsync(동일 제외 목록) → **치환 2건 재적용**(run.sh --port 9004·_logs server_9004.log — 체크리스트+grep 게이트로 누락 방지) → 임포트 게이트 → PID 지정 재기동 — **순단 15.8초, 신 PID 27923**, lifespan 완주·traceback 0. **재백업 생략 근거**: v216 tar + 9004 미러분 git 커밋이 롤백 지점(git checkout 복원 가능) — PLAN M6 명시대로
+
+## 4. D1 — HANDOFF 추기 (앱팀 전달 필요)
+`APP_TEAM_HANDOFF_v216.md` 말미 **「v217 추기」** append: ①고정 매핑 표+무시 정책(구앱 전송 무해·echo 고정값) ②무효 image_model 400 소멸 — **앱팀 회귀표 갱신 요청 명시** ③refine `character_id` 전송 권장(사실상 필수) — **미전송+실사 수정 시 nb_pro 폴백 화풍 붕괴 경고(R1 고지)** ④파일 결손 422 참고
+
+## 5. 운영 기록·리스크
+- **R1**(refine 폴백 오판): HANDOFF §3 고지로 관리 — v55 echo 관행상 저확률, 실사고 발생 시 앱팀 character_id 전송 배선이 근본 해결
+- **R2**(실사 생성 = openai_api_key 단일 의존): 키 부재·장애 시 실사 시트 전면 503 — 운영 모니터링 항목으로 기록(현 키 존재 실측)
+- 관찰: 구앱이 nb_pro 실사 재생성을 기대하는 케이스는 사양상 무시 정책의 의도된 결과(앱팀 발주) — 고지 완료
+
+## 6. 안전 준수
+시트 실생성 0(유료 ⭐10+외부 — 409/402/404/422 거절 경로·unit·abort 캡처로 전 항목 검증), ⭐ 원장 무변, 실데이터 read-only, 실 .env 값 무출력(키 존재 개수만), 9005 무접촉, 재기동 절차 준수(PID 지정), 테스트 계정·픽스처 원복.
+
+**앱팀 전달 대기: HANDOFF v217 추기 + 자체 스모크(v216분 포함) 요청.**

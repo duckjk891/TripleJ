@@ -43,7 +43,19 @@ INSUFFICIENT_POINTS_RESPONSE = {
 }
 
 # v55: image model enum — Nano Banana Pro (default) / GPT Image 2.
+# (v217 이후 용도: refine 판별 재해석·save persist 검증용으로 존치)
 ALLOWED_IMAGE_MODELS = {"nb_pro", "gpt_image_2"}
+
+# ── v217 [ModelPin] — 시트 모델 백엔드 고정 (앱팀 확정 사양) ─────────────────
+# 실사(generate-sheet 계열) = gpt_image_2 / 만화·가상화(cartoon 계열) = nb_pro.
+# 수신 image_model 은 **무시**(에러 불발생 — 400 분기 소멸), 관측 로그만 남긴다.
+REAL_SHEET_MODEL = "gpt_image_2"
+CARTOON_SHEET_MODEL = "nb_pro"
+
+
+def _forced_sheet_model(mode: str) -> str:
+    """v217 — 시트 생성 모델 강제: mode 'cartoon' → nb_pro, 그 외(real) → gpt_image_2."""
+    return CARTOON_SHEET_MODEL if mode == "cartoon" else REAL_SHEET_MODEL
 
 
 def _normalize_image_model(raw: Optional[str]) -> Optional[str]:
@@ -718,20 +730,16 @@ async def generate_sheet(
     """
     # v137 — 확약 체크 수신 기록 (값 강제 없음 — 앱팀 9004 하위호환)
     logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
-    # v55: image_model 검증 (잘못된 값 → 400, 누락/공백 → "nb_pro").
-    norm_image_model = _normalize_image_model(image_model)
-    if norm_image_model is None:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+    # v217 [ModelPin] — 실사 시트 = gpt_image_2 백엔드 고정. 수신 image_model 은
+    # 무시(에러 불발생 — v55 400 분기 소멸). 키 가드는 고정 모델(openai) 것만.
+    norm_image_model = _forced_sheet_model("real")
+    _recv_model = (image_model or "").strip()
+    if _recv_model and _recv_model != norm_image_model:
+        logger.info(
+            "[ModelPin] ignored client value mode=real recv=%s forced=%s user=%s",
+            _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
         )
-
-    if not settings.google_api_key and norm_image_model == "nb_pro":
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Google API 키가 설정되지 않았습니다."},
-        )
-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
+    if not settings.openai_api_key:
         return JSONResponse(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
@@ -924,22 +932,19 @@ async def generate_sheet_cartoon(
     logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
     user_id = current_user["id"]
 
-    # image_model 검증 (실사와 동일 규칙).
-    norm_image_model = _normalize_image_model(image_model)
-    if norm_image_model is None:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+    # v217 [ModelPin] — 만화(가상화) 시트 = nb_pro 백엔드 고정. 수신 image_model
+    # 무시(에러 불발생 — 400 분기 소멸). 키 가드는 고정 모델(google) 것만.
+    norm_image_model = _forced_sheet_model("cartoon")
+    _recv_model = (image_model or "").strip()
+    if _recv_model and _recv_model != norm_image_model:
+        logger.info(
+            "[ModelPin] ignored client value mode=cartoon recv=%s forced=%s user=%s",
+            _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
         )
-    if norm_image_model == "nb_pro" and not settings.google_api_key:
+    if not settings.google_api_key:
         return JSONResponse(
             status_code=503,
             content={"error": "Google API 키가 설정되지 않았습니다."},
-        )
-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
     # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
@@ -1251,18 +1256,15 @@ async def generate_sheet_async(
     immediately; generation runs in the background. Poll GET /job/{job_id}."""
     logger.info("[character] portrait_confirmed=%s user=%s", portrait_confirmed, str(current_user["id"])[:8])
     # Validation — identical to the sync handler.
-    norm_image_model = _normalize_image_model(image_model)
-    if norm_image_model is None:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+    # v217 [ModelPin] — 실사 시트 = gpt_image_2 백엔드 고정 (sync 와 동일 정책).
+    norm_image_model = _forced_sheet_model("real")
+    _recv_model = (image_model or "").strip()
+    if _recv_model and _recv_model != norm_image_model:
+        logger.info(
+            "[ModelPin] ignored client value mode=real(async) recv=%s forced=%s user=%s",
+            _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
         )
-    if not settings.google_api_key and norm_image_model == "nb_pro":
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Google API 키가 설정되지 않았습니다."},
-        )
-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
+    if not settings.openai_api_key:
         return JSONResponse(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
@@ -1408,21 +1410,18 @@ async def generate_sheet_cartoon_async(
     user_id = current_user["id"]
 
     # Validation — identical to the sync cartoon handler.
-    norm_image_model = _normalize_image_model(image_model)
-    if norm_image_model is None:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+    # v217 [ModelPin] — 만화(가상화) 시트 = nb_pro 백엔드 고정 (sync 와 동일 정책).
+    norm_image_model = _forced_sheet_model("cartoon")
+    _recv_model = (image_model or "").strip()
+    if _recv_model and _recv_model != norm_image_model:
+        logger.info(
+            "[ModelPin] ignored client value mode=cartoon(async) recv=%s forced=%s user=%s",
+            _recv_model[:24], norm_image_model, str(current_user["id"])[:8],
         )
-    if norm_image_model == "nb_pro" and not settings.google_api_key:
+    if not settings.google_api_key:
         return JSONResponse(
             status_code=503,
             content={"error": "Google API 키가 설정되지 않았습니다."},
-        )
-    if norm_image_model == "gpt_image_2" and not settings.openai_api_key:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
     # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
@@ -1614,16 +1613,51 @@ async def refine_sheet(
     photo: UploadFile = File(...),
     refine_request: str = Form(...),
     image_model: str = Form("nb_pro"),
+    # v217 — 판별 1순위: 아티스트 kind 정본 (real→gpt_image_2 / virtual→nb_pro). 전송 권장.
+    character_id: Optional[str] = Form(None),
     current_user=Depends(get_current_user),
 ):
-    """Refine an existing character sheet based on user's modification request."""
-    # v55: image_model 검증.
-    norm_image_model = _normalize_image_model(image_model)
-    if norm_image_model is None:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "지원하지 않는 image_model 입니다. (nb_pro, gpt_image_2)"},
+    """Refine an existing character sheet based on user's modification request.
+
+    v217 [ModelPin] — refine 모델 3순위 자동 판별 (수신값 무효여도 400 없음):
+      ① character_id 지정 → (user, cid) 아티스트 kind 가 정본 (부재·타인 404)
+      ② 미지정 → 수신 image_model 정규화값 재해석 (v55 echo 관행 — 고정 체제에선
+        generate 응답 echo 가 곧 고정 모델이라 자동 수렴)
+      ③ 무효·누락 → nb_pro 폴백 (400 분기 소멸)
+    """
+    _refine_cid = (character_id or "").strip()
+    if _refine_cid:
+        _mongo_for_kind = get_mongo()
+        _artist = await _find_artist_by_cid(_mongo_for_kind, current_user["id"], _refine_cid)
+        if not _artist:
+            logger.warning(
+                "[ModelPin] refine cid not found user=%s cid=%s",
+                str(current_user["id"])[:8], _refine_cid[:36],
+            )
+            return JSONResponse(status_code=404, content={"error": "아티스트를 찾을 수 없습니다."})
+        _kind = _artist.get("kind") or "real"
+        norm_image_model = _forced_sheet_model("cartoon" if _kind == "virtual" else "real")
+        logger.info(
+            "[ModelPin] refine model=%s via character_id kind=%s cid=%s user=%s",
+            norm_image_model, _kind, _artist["character_id"], str(current_user["id"])[:8],
         )
+    else:
+        _norm = _normalize_image_model(image_model)
+        if _norm is not None:
+            # ② echo 재해석 (누락/공백은 _normalize 가 nb_pro 로 수렴 — ③과 동일 결과)
+            norm_image_model = _norm
+            logger.info(
+                "[ModelPin] refine model=%s via echo recv=%s user=%s",
+                norm_image_model, (image_model or "")[:24], str(current_user["id"])[:8],
+            )
+        else:
+            # ③ 무효값 → nb_pro 폴백 (구 400 소멸)
+            norm_image_model = CARTOON_SHEET_MODEL
+            logger.warning(
+                "[ModelPin] refine invalid recv=%s -> fallback %s user=%s",
+                (image_model or "")[:24], norm_image_model, str(current_user["id"])[:8],
+            )
+    # 키 가드 — 결정된 모델 것만
     if norm_image_model == "nb_pro" and not settings.google_api_key:
         return JSONResponse(
             status_code=503,

@@ -31119,3 +31119,44 @@ S8 9006 무영향 확인: 스모크 후 9006 헬스+me 키셋 1회(동일 DB 부
 
 ## 5. 리스크·40% 판단
 **진행 (40% 이상 — 불확실성 실측으로 소거된 정형 운영 작업).** R1: 재기동 실패(임포트 결손) — M4 게이트 선행+백업 롤백 5분 내(13M tar). R2: 이중 실행 — 신규 위험 0 실측(기존 루프 동일·신규분 전부 멱등), S8 감시. R3: CORS 값 미확인 — 비밀 아닌 헤더라 S7 실측, 앱은 네이티브라 CORS 무관 가능성 높음. R4: 앱팀 실트래픽 중 재기동 순단 — 사용자 오더 범위, 기록. R5: 스모크 중 실사용자 데이터 — 일회용 계정+read-only+원복. **▲사용자 결정 항목: 현재 0건**(.env 신규 키 없음) — 발생 시 즉시 보고.
+
+---
+
+# PLAN v217 — 캐릭터 시트 image_model 백엔드 고정 (앱팀 요청) + 9004 재미러링 (2026-08-31 16:45 KST, planner)
+
+기준: v216 완료(9004=9006 미러 상태). 확정 사양: 실사=gpt_image_2 고정 / 만화=nb_pro 고정 / refine=원본 종류 따라 자동 / 수신 image_model 무시(에러 없이 덮어씀) / 웹 FE 선택 UI 제거 / **9006 구현·검증 후 9004 재미러링+재기동+경량 스모크까지 본 사이클**.
+
+## 0. 실측 findings
+- **수용 지점 6곳**(character.py HEAD): generate-sheet(:706)·cartoon(:908)·sheet-async(:1245)·cartoon-async(:1398) — 각각 `_normalize_image_model` 후 무효 400(:726/:932/:1258/:1415)+키 가드 2종(nb_pro→google/:gpt→openai) / refine(:1616, 무효 400 :1625) / save(:1816-1819 — echo값 persist). ALLOWED_IMAGE_MODELS(:46). v212 아티스트 게이트가 "image_model 검증 직후" 배치(:740 등) — 400 분기 소멸 시 슬롯 검사가 최선두가 됨(테스트 지렛대)
+- **generator는 단일 분기**: character_generator.py `_generate_image(...image_model)`(:966-991, :977 gpt 분기) — 서비스 무변경, 라우트 강제값 주입만으로 충분. 실생성 검증 불요 판단(▲계상 안 올림)
+- **⚠ refine 판별 난점 실측**: /refine 입력 = sheet_image **UploadFile 원시 바이트**+photo — 서버가 원본의 실사/만화 여부를 알 수단이 **현재 없음**(요청에 종류 정보 부재). 단 v55 계약상 클라이언트는 generate 응답의 image_model을 echo 전송 — 신규 고정 체제에선 이 echo가 곧 고정 모델(실사=gpt/만화=nb)이라 **수신 image_model이 판별자로 자동 수렴**. v212 아티스트 doc의 kind도 활용 가능
+- **키 가드**: 9006 .env에 OPENAI/GOOGLE 키 **양쪽 존재**(개수 확인만 — 값 무출력) — 실사 gpt 고정 시 503 차단 없음
+- **FE**: MyMusicPage `imageModel` state(:231 — 기본 'gpt_image_2', 사양과 이미 동방향)·select UI 2곳(:1137 real 폼·:1330 virtual 폼)·전송 4곳(:555·:566·:826·:843). refineCharacterSheet는 웹 FE **미사용 데드**(v212 실측 불변) — FE refine 무접촉. UploadPage/커버 계열 image_model은 **범위 외**(커버 모델 선택은 별개 사양)
+
+## 1. 설계 결정
+- **M1 상수·헬퍼**: `REAL_SHEET_MODEL="gpt_image_2"` / `CARTOON_SHEET_MODEL="nb_pro"` + `_forced_sheet_model(mode)` — 라우트 수신값은 **무시**(관측 로그만: 수신값≠고정값이면 `[ModelPin] ignored client value` info). ALLOWED/_normalize는 refine 폴백·save persist 검증용으로 존치
+- **M2 generate 4종**: 무효 400 분기 **소멸**(사양 4 — 무시 정책), 키 가드는 **고정 모델 것만** 검사(실사=openai_api_key, cartoon=google_api_key — 반대쪽 가드 제거), 응답 `image_model` echo = 고정값(shape 불변·하위호환), job doc·save persist도 고정값 자연 유입. Form 파라미터는 수용 유지(구앱이 보내도 무해)
+- **M3 refine 자동 판별**: 우선순위 ①신규 optional Form `character_id` — (user, cid) 아티스트 kind: real→gpt/virtual→nb (타인·부재 404, v212 관행) ②미지정 시 **수신 image_model 정규화값을 판별자로 재해석**(신규 체제 echo 수렴·구버전도 원본 생성 모델 일치 관행) ③무효·누락 → nb_pro 폴백(400 소멸 — 화풍 오판 위험은 ②관행상 저확률, PLAN 명시). 키 가드는 결정된 모델 것만
+- **M4 FE 제거**: select UI 2곳·전송 4곳·imageModel state 제거(정리) — 응답 echo 사용부는 무해 존치. 웹 refine 데드라 무접촉
+- **M5 HANDOFF 추기**: APP_TEAM_HANDOFF_v216.md에 **"v217 추기"** 섹션 append — 고정 매핑 표·image_model 무시 정책(에러 불발생)·refine 판별 규칙(character_id 권장)·앱 측 모델 선택 UI 제거 안내
+- **M6 재미러링**(v216 절차 승계): 재백업 생략 근거 = v216 tar + **9004 미러분 git 커밋이 롤백 지점**(git checkout 복원 가능) → rsync(동일 제외 목록) → **치환 2건 재적용 필수**(run.sh 포트·_logs 파일명 — --delete가 덮음) → 임포트 게이트 → PID 지정 재기동 → 경량 스모크
+
+## 2. 변경 매트릭스·할당
+| # | 파일 | 변경 | 담당 |
+|---|---|---|---|
+| B1 | backend_9006/app/routes/character.py | M1~M3 (상수·4종 무시·refine 판별·키 가드 축소·[ModelPin] 로그) | backend-dev |
+| F1 | frontend/src/pages/MyMusicPage.jsx | M4 (UI 2곳·전송 4곳·state 제거) | frontend-dev (소형 — B1과 병렬 가능, 계약 독립) |
+| D1 | claude_skills_outputs/team-dev/APP_TEAM_HANDOFF_v216.md | M5 v217 추기 | planner |
+| O1 | backend_9004/ | M6 재미러링(rsync·재치환·재기동·스모크) | backend-dev (B1 검증 PASS 후) |
+
+순서: B1∥F1 → tester 1차(9006) → O1 → tester 2차(9004 경량) → D1(계약 확정 후 planner).
+
+## 3. test-designer 항목 (유료 0 — 시트 생성 ⭐10+외부: 성공 경로 금지)
+설계 원칙: **모델 강제 로직 = unit(헬퍼 분리 강제: `_forced_sheet_model`·refine 판별 함수) + 거절 경로 실증 + FE는 route-abort 캡처**(API 요청 자체 차단 — ⭐0·외부 0)
+
+회귀: ①생성 4종 정상 거절 경로 불변(402/409/400 payload·얼굴인증 403 — v212 게이트 순서 유지 확인) ②save image_model persist(무효값 무시) ③me/list image_model echo shape ④v212~v215 스모크+me 키셋
+신규: ⑤**무효 image_model+슬롯 만석 계정 → 409**(400 분기 소멸 실증 — 무시 정책의 무과금 프로브, v212 Q3 기법 재활용) ⑥unit: 강제 헬퍼(real→gpt/cartoon→nb)·refine 판별 3순위(cid kind→echo→nb 폴백)·키 가드 축소(고정 모델 것만 — 모킹) ⑦refine api: character_id 타인/부재 404·빈 refine_request 400(파라미터 수용 확인 — 외부 도달 전) ⑧FE e2e: 폼 2종에서 select 부재 + 생성 클릭 시 route-abort 캡처로 **image_model 미전송(또는 무해값) 확인** ⑨O1 후 9004 경량: 기동 건전성+⑤ 동일 프로브 1건+9006 무영향
+▲실생성 검증: **불요 판단**(generator 단일 분기 — unit으로 충분). 필요 대두 시 사전 계상 상신
+
+## 4. 리스크·40% 판단
+**진행 (40% 이상 — 소형·수렴적 변경).** R1: refine 폴백 오판(구앱이 image_model 안 보내는 경우 nb 폴백 — 실사 시트 화풍 붕괴 가능) → HANDOFF 추기에 character_id 전송 권장 명시+v55 echo 관행상 저확률, 기록. R2: 키 가드 축소로 실사=openai 단일 의존 — 키 부재 시 실사 전면 503(현 .env 키 존재 실측 — 운영 리스크 기록만). R3: 재미러링 치환 2건 재적용 누락 → O1 체크리스트 명시+게이트에 run.sh 포트 grep 포함. R4: 앱 구버전이 nb_pro로 실사 재생성 기대 → 사양 자체(무시 정책), HANDOFF 고지로 관리.

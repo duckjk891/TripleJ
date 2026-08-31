@@ -184,3 +184,30 @@ DELETE /api/generate/{id}        # draft 삭제
 - 본 문서 기준 회귀표 갱신(§1~§4 계약이 정본, §5 소멸 목록 확인)
 
 — 웹 백엔드 team-dev (v216). 문의는 기존 채널로.
+
+---
+
+# v217 추기 — 캐릭터 시트 image_model 서버 고정 (2026-08-31)
+
+앱팀 요청("모델 선택 없이 하나로 고정") 반영분. :9004 재미러링 완료 시점부터 적용.
+
+## 1. 시트 생성 — image_model 파라미터 무시 정책
+| API | 서버 고정 모델 |
+|---|---|
+| POST /api/character/generate-sheet, /generate-sheet-async (실사) | **gpt_image_2** |
+| POST /api/character/generate-sheet-cartoon, /generate-sheet-cartoon-async (만화/가상) | **nb_pro** |
+
+- 요청에 `image_model` 을 보내도 **무시하고 서버 고정값으로 생성**합니다 — 구버전 앱이 계속 보내도 에러 없음(무해). 앱의 모델 선택 UI는 제거하시면 됩니다(웹은 제거 완료)
+- 응답의 `image_model` echo 는 유지되며 항상 고정값이 담깁니다(저장·refine 연계용 — 기존 계약 shape 불변)
+
+## 2. 거절 서열 변경 — "지원하지 않는 image_model" 400 소멸
+무효 `image_model` 값도 에러 없이 무시됩니다. **기존 400("지원하지 않는 image_model")은 더 이상 발생하지 않음** — 회귀표에서 해당 케이스를 제거하거나 "무시 후 정상 진행"으로 갱신하세요. 슬롯 409·잔액 402·얼굴인증 403 등 나머지 거절 서열은 불변.
+
+## 3. refine(추가수정) — ⚠ character_id 전송을 권장(사실상 필수)
+POST /api/character/refine 은 **원본 시트 종류에 따라 모델을 자동 결정**합니다:
+1. **`character_id`(신규 optional Form) 전송 시** — 해당 아티스트의 kind 로 결정(real→gpt_image_2 / virtual→nb_pro). **이 방식을 사용하세요** (타인/부재 id 는 404)
+2. 미전송 시 — 요청의 `image_model` 값을 판별자로 사용(generate 응답 echo 를 그대로 보내는 기존 관행이면 자동으로 올바름)
+3. 둘 다 없으면 **nb_pro 폴백** — **실사 시트를 수정하는데 character_id 도 image_model 도 없으면 만화 모델로 수정되어 화풍이 붕괴될 수 있습니다.** 반드시 1 또는 2 를 지키세요
+
+## 4. 참고 — refine 422
+sheet_image·photo 파일이 결손된 요청은 핸들러 진입 전 스키마 검증에서 **422** 로 거절됩니다(400 아님). 파일을 갖춘 상태에서 refine_request 가 비면 400.

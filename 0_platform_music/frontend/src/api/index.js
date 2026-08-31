@@ -410,6 +410,10 @@ export const selectScenario = (jobId, model) => API.post(`/mv/jobs/${jobId}/sele
 export const selectPrompts = (jobId, model) => API.post(`/mv/jobs/${jobId}/select-prompts`, { model });
 
 // Character
+// v217 [ModelPin] — 시트 image_model 은 백엔드 고정: 실사=gpt_image_2 / 만화=nb_pro.
+// FormData 의 image_model 은 서버가 무시(에러 없음) — FE 는 미전송 권장 (선택 UI 제거, F1).
+// refine 은 character_id(아티스트) 동봉 권장 — 서버가 kind 로 모델 자동 판별.
+// 래퍼는 전부 formData 통과형 — 시그니처 변경 없음.
 export const generateCharacterSheet = (formData) =>
   API.post('/character/generate-sheet', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
