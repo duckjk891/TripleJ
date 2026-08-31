@@ -308,6 +308,13 @@ async def generate_cover(
     if denied:
         return denied
 
+    # v220 — 커버(image) 디렉터 피로 게이트 (⭐5 차감 **전** — 429 무과금).
+    # refine/revert 는 무과금이므로 미게이트·미카운트 (서버-FE 정책 일치).
+    from .fatigue import fatigue_gate_response
+    fatigued = await fatigue_gate_response(current_user["id"], director="image")
+    if fatigued:
+        return fatigued
+
     # Points — 커버 AI 생성 선차감 (부족 시 402 차단, 실패 시 환불).
     # StarEcon(v158) — 단가는 POINT_COSTS 단일 소스 (cover: 2 → 5).
     # ref 는 시도당 유니크 uuid (point_events 유니크 인덱스 재시도 충돌 회피).
@@ -464,6 +471,11 @@ async def generate_cover(
                 type(e).__name__,
                 str(e)[:200],
             )
+
+        # v220 — 커버 완성 훅: image 디렉터 카운트 +1 + 사다리 쿨다운 시작
+        # (best-effort — on_generation_completed 는 절대 raise 하지 않음)
+        from ..services.fatigue_service import on_generation_completed
+        await on_generation_completed(current_user["id"], director="image")
 
         response_body = {
             "image_url": "/api/upload/cover-preview/{}".format(object_name),

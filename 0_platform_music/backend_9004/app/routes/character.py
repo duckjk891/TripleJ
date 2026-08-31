@@ -422,6 +422,17 @@ async def _find_artist_by_cid(mongo, user_id: str, character_id: str) -> Optiona
     return await mongo.characters.find_one({"user_id": user_id, "character_id": cid})
 
 
+async def _artist_fatigue_gate(user_id: str):
+    """v220 — 아티스트 디렉터 피로 게이트 (generate-sheet* 4종 공용, 슬롯/⭐ 전).
+
+    활성 쿨다운이면 429 {"error":"director_fatigue","director":"artist",...},
+    아니면 None. 완성 훅은 시트 생성 성공 시점(sync 반환 직전 / async 잡 done).
+    """
+    from .fatigue import fatigue_gate_response
+
+    return await fatigue_gate_response(user_id, director="artist")
+
+
 async def _gate_artist_generation(user_id: str, character_id: Optional[str], expected_kind: str):
     """v212 generate 4종 공용 게이트 (⭐차감 전 — job 미생성 단계에서 호출).
 
@@ -745,6 +756,11 @@ async def generate_sheet(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
+    # v220 — 아티스트 디렉터 피로 게이트 (슬롯/⭐ 검사 **전** — 429 무과금).
+    _fatigued = await _artist_fatigue_gate(current_user["id"])
+    if _fatigued is not None:
+        return _fatigued
+
     # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
     # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
     _gate_err, norm_cid = await _gate_artist_generation(current_user["id"], character_id, "real")
@@ -856,6 +872,11 @@ async def generate_sheet(
         await refund_points(user_id, "character", CHARACTER_POINT_COST, point_ref)
         raise
 
+    # v220 — 아티스트 완성 훅: artist 카운트 +1 + 사다리 쿨다운 시작 (재생성 포함,
+    # best-effort — on_generation_completed 는 절대 raise 하지 않음)
+    from ..services.fatigue_service import on_generation_completed
+    await on_generation_completed(user_id, director="artist")
+
     return {
         "object_name": stored["object_name"],
         "original_object_name": stored["original_object_name"],
@@ -946,6 +967,11 @@ async def generate_sheet_cartoon(
             status_code=503,
             content={"error": "Google API 키가 설정되지 않았습니다."},
         )
+
+    # v220 — 아티스트 디렉터 피로 게이트 (슬롯/⭐ 검사 **전** — 429 무과금).
+    _fatigued = await _artist_fatigue_gate(current_user["id"])
+    if _fatigued is not None:
+        return _fatigued
 
     # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
     # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
@@ -1080,6 +1106,10 @@ async def generate_sheet_cartoon(
         await refund_points(user_id, "character", CHARACTER_POINT_COST, point_ref)
         raise
 
+    # v220 — 아티스트 완성 훅 (가상화 sync — 재생성 포함, best-effort)
+    from ..services.fatigue_service import on_generation_completed
+    await on_generation_completed(user_id, director="artist")
+
     return {
         "object_name": stored["object_name"],
         "original_object_name": stored["original_object_name"],
@@ -1212,6 +1242,11 @@ async def _run_character_job(
             "[CharJob] job=%s mode=%s status=done object=%s",
             job_id, mode, stored["object_name"],
         )
+        # v220 — 아티스트 완성 훅 (async 잡 done — real/cartoon 공통, 재생성 포함).
+        # BackgroundTasks 는 메인 루프에서 돌지만 명시적으로 이 러너의 mongo 를 주입.
+        # best-effort — on_generation_completed 는 절대 raise 하지 않음.
+        from ..services.fatigue_service import on_generation_completed
+        await on_generation_completed(user_id, db=mongo, director="artist")
     except Exception as e:
         logger.error(
             "[CharJob] job=%s mode=%s status=failed err=%s",
@@ -1269,6 +1304,11 @@ async def generate_sheet_async(
             status_code=503,
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
+
+    # v220 — 아티스트 디렉터 피로 게이트 (슬롯/⭐ 검사 **전** — 429 무과금).
+    _fatigued = await _artist_fatigue_gate(current_user["id"])
+    if _fatigued is not None:
+        return _fatigued
 
     # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
     # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).
@@ -1423,6 +1463,11 @@ async def generate_sheet_cartoon_async(
             status_code=503,
             content={"error": "Google API 키가 설정되지 않았습니다."},
         )
+
+    # v220 — 아티스트 디렉터 피로 게이트 (슬롯/⭐ 검사 **전** — 429 무과금).
+    _fatigued = await _artist_fatigue_gate(current_user["id"])
+    if _fatigued is not None:
+        return _fatigued
 
     # v212 — 아티스트 게이트 (image_model 검증 직후·payload 검증 이전 최선두, ⭐차감 전):
     # cid 지정=재생성(404/400), 미지정=슬롯 409 (만석이면 payload 무효여도 409 선행).

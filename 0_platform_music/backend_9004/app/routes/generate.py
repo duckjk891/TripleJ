@@ -155,29 +155,17 @@ def _serialize(doc: dict) -> dict:
     return doc
 
 
-async def _fatigue_gate_response(user_id: str):
-    """StarEcon(v158) — 디렉터 피로 게이트. 활성 쿨다운이면 429 응답, 아니면 None.
+async def _fatigue_gate_response(user_id: str, director: str = "composer"):
+    """StarEcon(v158→v220) — 디렉터 피로 게이트. 활성 쿨다운이면 429 응답, 아니면 None.
 
-    응답: {"error":"director_fatigue", ...} + Retry-After 헤더(남은 초).
+    v220: 공용 구현은 routes/fatigue.py `fatigue_gate_response` 로 이동
+    (upload/character 라우트와 공유) — 이 래퍼는 기존 compose 호출부 하위호환.
+    응답: {"error":"director_fatigue","director":...} + Retry-After 헤더(남은 초).
     게이트 순서는 항상 스트라이크 403 → 피로 429 → 잔액 402.
     """
-    from ..services.fatigue_service import check_gate
+    from .fatigue import fatigue_gate_response
 
-    remaining = await check_gate(user_id)
-    if remaining <= 0:
-        return None
-    until = datetime.now(timezone.utc) + timedelta(seconds=remaining)
-    logger.info("[fatigue] compose gated user=%s remaining=%ds", user_id[:8], remaining)
-    return JSONResponse(
-        status_code=429,
-        content={
-            "error": "director_fatigue",
-            "message": "디렉터가 휴식 중입니다. 쿨다운이 끝난 뒤 다시 시도하거나 스킵을 이용해주세요.",
-            "cooldown_remaining_sec": remaining,
-            "cooldown_until": until.isoformat(),
-        },
-        headers={"Retry-After": str(remaining)},
-    )
+    return await fatigue_gate_response(user_id, director=director)
 
 
 async def refund_generation_points(mongo_db, generation_id: str) -> bool:
@@ -435,10 +423,15 @@ async def generate_lyrics_endpoint(
             content={"error": "OpenAI API 키가 설정되지 않았습니다."},
         )
 
+    # v220 — 작사 디렉터 피로 게이트 (⭐5 차감 **전** — 429 무과금).
+    user_id = current_user["id"]
+    fatigued = await _fatigue_gate_response(user_id, director="lyricist")
+    if fatigued:
+        return fatigued
+
     # StarEcon(v158) — 작사 ⭐-5 선차감 (부족 402, 실패 시 환불).
     lyrics_cost = POINT_COSTS["lyrics"]
     point_ref = uuid_lib.uuid4().hex
-    user_id = current_user["id"]
     if not await spend_points(user_id, "lyrics", lyrics_cost, point_ref):
         logger.info("[star-econ] lyrics denied (insufficient) user=%s", user_id[:8])
         return JSONResponse(
@@ -462,6 +455,9 @@ async def generate_lyrics_endpoint(
             language=body.language or "ko",
             models=body.models,
         )
+        # v220 — 작사 완성 훅: lyricist 카운트 +1 + 사다리 쿨다운 시작 (best-effort)
+        from ..services.fatigue_service import on_generation_completed
+        await on_generation_completed(user_id, director="lyricist")
         return result
     except Exception as e:
         logger.exception("[star-econ] lyrics failed user=%s ref=%s (refunding)", user_id[:8], point_ref)
