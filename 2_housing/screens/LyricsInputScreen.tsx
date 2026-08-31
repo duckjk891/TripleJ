@@ -64,12 +64,18 @@ const STEPS: StepConfig[] = [
     choices: DUET_OPTIONS,
   },
   {
-    question: '가사에 담고 싶은 이야기는 무엇인가요?',
+    // v3.118.1(대표): 추상적 질문 → 구체 질문 + 자유 입력 예시(주제)
+    question: '어떤 주제로 곡을 작곡하고 싶으세요?',
     choices: CONTENT_OPTIONS,
+    freeText: true,
+    freeTextPlaceholder: '예: 30대의 다이어트 고민, 퇴근길의 위로, 첫사랑 고백',
   },
   {
-    question: '가사에 꼭 넣고 싶은 말이나 소재가 있나요?',
+    // v3.118.1(대표): 키워드/문구를 명확히 구분해 질문 + 예시
+    question: '꼭 들어갔으면 하는 키워드나 문구가 있으신가요?',
     choices: KEYWORD_OPTIONS,
+    freeText: true,
+    freeTextPlaceholder: "예: 키워드 '벚꽃', '밤하늘' / 문구 '야호!', '다시 만나자'",
   },
   {
     question: '가사 속 화자는 어떤 시점이 좋을까요?',
