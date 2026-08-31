@@ -40,6 +40,9 @@ export interface TrackUploadParams {
   characterId?: string;
   /** v3.102(B-4): 출처 기록 — 가사 보관함 로컬 id (직접 업로드 화면은 현재 미전송) */
   lyricsId?: string;
+  /** v3.104(B-5): 커버 보관함에서 선택한 cover_object_name — 발매 form 필드로 전송(본인 세션 산출물만 서버 검증 통과).
+   *  이 필드가 있으면 별도 POST /upload/image 불필요 (openapi 실측: tracks/upload multipart에 cover_object_name 존재). */
+  coverObjectName?: string;
 }
 
 export function fileExt(fileName: string): string {
@@ -104,6 +107,8 @@ export async function uploadTrackFile(
   // v3.102(B-4): 출처 기록(옵션) — v216 openapi 실측: tracks/upload multipart에 character_id/lyrics_id 존재
   if (params.characterId) formData.append('character_id', params.characterId);
   if (params.lyricsId) formData.append('lyrics_id', params.lyricsId);
+  // v3.104(B-5): 보관함 커버 재사용 — cover_object_name form 필드로 발매와 동시에 부착
+  if (params.coverObjectName) formData.append('cover_object_name', params.coverObjectName);
   formData.append('is_public', String(params.isPublic !== false));
 
   console.info('[trackService] uploadTrackFile 시작', {

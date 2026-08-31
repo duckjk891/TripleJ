@@ -413,10 +413,22 @@ export default function MyMusicScreen({ navigation }: any) {
       {/* v3.96(A-2): 앨범 탭 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}
       {activeTab === 'albums' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: hasMiniPlayer ? 140 : 100 }}>
-          <TouchableOpacity style={styles.albumCreateBtn} activeOpacity={0.8} onPress={() => setShowAlbumCreate(true)}>
-            <Feather name="plus" size={16} color={colors.accent.primary} />
-            <AppText style={styles.albumCreateText}>새 앨범 만들기</AppText>
-          </TouchableOpacity>
+          {/* v3.104(B-5): 커버 보관함 진입 — 대시 버튼 관행('음원 파일 올리기'와 동일) 2열 배치 */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity style={[styles.albumCreateBtn, { flex: 1 }]} activeOpacity={0.8} onPress={() => setShowAlbumCreate(true)}>
+              <Feather name="plus" size={16} color={colors.accent.primary} />
+              <AppText style={styles.albumCreateText}>새 앨범 만들기</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.albumCreateBtn, { flex: 1 }]}
+              activeOpacity={0.8}
+              onPress={() => navigation.getParent()?.navigate('CoverLibrary')}
+              accessibilityLabel="커버 보관함"
+            >
+              <Feather name="image" size={16} color={colors.accent.primary} />
+              <AppText style={styles.albumCreateText}>커버 보관함</AppText>
+            </TouchableOpacity>
+          </View>
           {albumsLoading && albums.length === 0 ? (
             <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
           ) : albums.length === 0 ? (

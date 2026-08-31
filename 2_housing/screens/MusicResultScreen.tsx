@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +23,8 @@ import { useCompanyStore } from '../stores/companyStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { getGenerationStatus, generationStreamUrl } from '../services/musicService';
+// v3.104(B-5): 커버 보관함 재사용 — 선택 결과는 store 경유(CoverLibrary가 쓰고 goBack)
+import { useCoverLibraryStore, PickedCover } from '../stores/coverLibraryStore';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 
@@ -125,6 +128,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   const [variantCount, setVariantCount] = useState(1);
   const [selectedVariant, setSelectedVariant] = useState(0);
   const pendingPlayRef = useRef(false); // variant 전환 직후 자동 재생 플래그
+  // v3.104(B-5): 보관함에서 선택한 커버 — 미저장이면 발매 body cover_object_name으로 전송
+  const [libraryCover, setLibraryCover] = useState<PickedCover | null>(null);
 
   const portrait = store.selectedModel === 'suno' ? COMPOSER_PORTRAIT : WONDERA_PORTRAIT;
   const composerName = store.selectedModel === 'suno' ? 'Suno 작곡가' : 'Wondera 작곡가';
@@ -250,6 +255,35 @@ export default function MusicResultScreen({ navigation, route }: Props) {
     };
   }, [sound]);
 
+  // v3.104(B-5): 커버 보관함 선택 모드에서 돌아왔을 때 결과 소비.
+  // 이미 저장된 트랙이면 즉시 PUT /tracks/{id} cover_image_url 적용, 미저장이면 발매 body에 실어 보냄.
+  useFocusEffect(
+    useCallback(() => {
+      const picked = useCoverLibraryStore.getState().pickedCover;
+      if (!picked) return;
+      useCoverLibraryStore.getState().setPickedCover(null); // 유령 선택 방지
+      console.info('[MusicResult] 보관함 커버 선택됨', { objectName: picked.objectName });
+      const trackId = useMusicStore.getState().savedTrackId;
+      if (trackId) {
+        (async () => {
+          try {
+            await api.put(`/tracks/${trackId}`, { cover_image_url: picked.objectName });
+            console.info('[MusicResult] 보관함 커버 적용 완료', { trackId });
+            setLibraryCover(picked); // 미리보기 표시용
+            showAlert('완료', '보관함 커버가 곡에 적용되었어요!');
+          } catch (err: any) {
+            console.error('[MusicResult] 보관함 커버 적용 실패', {
+              trackId, status: err?.response?.status, data: err?.response?.data,
+            });
+            showAlert('오류', err?.response?.data?.error || '커버 적용에 실패했어요. 잠시 후 다시 시도해주세요.');
+          }
+        })();
+      } else {
+        setLibraryCover(picked); // 저장 시 cover_object_name으로 전송
+      }
+    }, [])
+  );
+
   const togglePlay = async () => {
     if (!sound) return;
 
@@ -333,6 +367,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       // v216: 무효 값이어도 업로드 실패 없음(서버가 흡수), null/부재는 생략.
       ...(characterId ? { character_id: characterId } : {}),
       ...(store.lyricsSource?.lyrics_id ? { lyrics_id: store.lyricsSource.lyrics_id } : {}),
+      // v3.104(B-5): 보관함 커버 재사용 — 본인 세션 산출물만 서버 검증 통과
+      ...(libraryCover ? { cover_object_name: libraryCover.objectName } : {}),
     };
     console.log('[Save] 저장 요청:', JSON.stringify(payload));
 
@@ -389,6 +425,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           // v3.102(B-4): 출처 기록 — handleSave와 동일 (무효여도 업로드 실패 없음)
           ...(characterId ? { character_id: characterId } : {}),
           ...(store.lyricsSource?.lyrics_id ? { lyrics_id: store.lyricsSource.lyrics_id } : {}),
+          // v3.104(B-5): 보관함 커버 재사용 — handleSave와 동일
+          ...(libraryCover ? { cover_object_name: libraryCover.objectName } : {}),
         };
         const res = await api.post('/tracks/upload-from-generation', payload);
         const trackId = res.data?.id;
@@ -593,6 +631,40 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             >
               <AppText style={styles.coverButtonText}>커버 이미지 생성하기</AppText>
             </TouchableOpacity>
+          )}
+
+          {/* v3.104(B-5): 커버 보관함 재사용 — 선택 모드로 진입, 돌아오면 useFocusEffect가 소비 */}
+          {hasResult && (
+            <TouchableOpacity
+              style={styles.coverButton}
+              onPress={() => navigation.navigate('CoverLibrary' as any, { select: true })}
+            >
+              <AppText style={styles.coverButtonText}>보관함에서 커버 선택</AppText>
+            </TouchableOpacity>
+          )}
+
+          {/* v3.104(B-5): 선택한 보관함 커버 미리보기 (미저장=저장 시 적용 / 저장됨=적용 완료) */}
+          {hasResult && libraryCover && (
+            <View style={styles.libraryCoverRow}>
+              <Image source={{ uri: libraryCover.imageUri }} style={styles.libraryCoverThumb} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <AppText style={styles.libraryCoverTitle} numberOfLines={1}>
+                  {libraryCover.title || '커버'}
+                </AppText>
+                <AppText style={styles.libraryCoverHint}>
+                  {isSaved || store.savedTrackId ? '곡에 적용된 보관함 커버예요.' : '저장하면 이 커버로 발매돼요.'}
+                </AppText>
+              </View>
+              {!(isSaved || store.savedTrackId) && (
+                <TouchableOpacity
+                  onPress={() => setLibraryCover(null)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="보관함 커버 선택 해제"
+                >
+                  <AppText style={styles.libraryCoverRemove}>해제</AppText>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
 
           {/* MV button - future feature */}
@@ -845,6 +917,38 @@ const styles = StyleSheet.create({
     color: colors.accent.primary,
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // v3.104(B-5): 보관함 커버 미리보기 행
+  libraryCoverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bg.surface1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    padding: 10,
+  },
+  libraryCoverThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: colors.bg.surface2,
+  },
+  libraryCoverTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  libraryCoverHint: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  libraryCoverRemove: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text.secondary,
+    paddingHorizontal: 6,
   },
   buttonContainer: {
     gap: 12,

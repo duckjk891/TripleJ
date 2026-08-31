@@ -3,7 +3,7 @@
 //   → 커버 이미지 선택(선택 — 미선택 시 서버 cover_image_url=None 기본) → 저작권 확인(필수)
 //   → POST /tracks/upload(진행률) → (커버 있으면) POST /upload/image type=cover → 완료 팝업.
 // 계약/제한값은 services/trackService.ts 헤더 주석 참조(실서버 openapi 실측 + tracks.py:1238).
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   ScrollView,
@@ -13,6 +13,7 @@ import {
   Image,
   StyleSheet,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
@@ -30,6 +31,8 @@ import {
   COVER_MAX_SIZE_MB,
   PickedFile,
 } from '../services/trackService';
+// v3.104(B-5): 커버 보관함에서 선택 — 파일 선택과 병행(둘 중 하나만, cover_object_name form 필드로 발매)
+import { useCoverLibraryStore, PickedCover } from '../stores/coverLibraryStore';
 
 // MAIDOL UploadPage.jsx:10-11 폼 선택지 관행
 const GENRES = ['발라드', '댄스', '힙합', 'R&B', '인디', '록', 'Electronic', 'Ambient', 'Lo-fi', 'Cinematic', '기타'];
@@ -43,6 +46,8 @@ function formatSize(bytes?: number): string {
 export default function TrackUploadScreen({ navigation }: any) {
   const [audioFile, setAudioFile] = useState<PickedFile | null>(null);
   const [coverFile, setCoverFile] = useState<PickedFile | null>(null);
+  // v3.104(B-5): 커버 보관함 선택 결과 — coverFile과 상호 배타(둘 중 하나만)
+  const [libraryCover, setLibraryCover] = useState<PickedCover | null>(null);
   const [title, setTitle] = useState('');
   const [genre, setGenre] = useState('');
   const [aiTool, setAiTool] = useState('');
@@ -52,6 +57,19 @@ export default function TrackUploadScreen({ navigation }: any) {
   const [isPublic, setIsPublic] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  // v3.104(B-5): 커버 보관함 선택 모드에서 돌아왔을 때 결과 소비 (store에 쓰고 goBack 관행)
+  useFocusEffect(
+    useCallback(() => {
+      const picked = useCoverLibraryStore.getState().pickedCover;
+      if (picked) {
+        console.info('[TrackUpload] 보관함 커버 선택됨', { objectName: picked.objectName });
+        setLibraryCover(picked);
+        setCoverFile(null); // 파일 선택과 상호 배타
+        useCoverLibraryStore.getState().setPickedCover(null); // 유령 선택 방지
+      }
+    }, [])
+  );
 
   // 오디오 파일 선택 — 서버 제한(tracks.py: 확장자 5종·50MB) 클라 선검증
   const handlePickAudio = async () => {
@@ -99,6 +117,7 @@ export default function TrackUploadScreen({ navigation }: any) {
         return;
       }
       setCoverFile({ fileUri: asset.uri, fileName: asset.name, mimeType: asset.mimeType, size: asset.size });
+      setLibraryCover(null); // v3.104(B-5): 보관함 선택과 상호 배타
     } catch (err: any) {
       console.error('[TrackUpload] 커버 선택 실패', { message: err?.message });
       showAlert('오류', '이미지 선택에 실패했습니다.');
@@ -146,6 +165,8 @@ export default function TrackUploadScreen({ navigation }: any) {
           aiModel: aiTool || undefined,
           isPublic,
           characterId,
+          // v3.104(B-5): 보관함 커버 재사용 — form 필드로 발매와 동시에 부착(별도 /upload/image 불필요)
+          coverObjectName: libraryCover?.objectName,
         },
         setProgress
       );
@@ -301,7 +322,7 @@ export default function TrackUploadScreen({ navigation }: any) {
         editable={!uploading}
       />
 
-      {/* 커버 이미지 (선택) */}
+      {/* 커버 이미지 (선택) — 파일 선택 또는 보관함에서 선택(v3.104 B-5, 상호 배타) */}
       <AppText variant="caption" tone="secondary" style={styles.label}>커버 이미지 (선택)</AppText>
       {coverFile ? (
         <View style={styles.fileRow}>
@@ -316,14 +337,40 @@ export default function TrackUploadScreen({ navigation }: any) {
             <Feather name="x" size={18} color={colors.text.muted} />
           </TouchableOpacity>
         </View>
+      ) : libraryCover ? (
+        <View style={styles.fileRow}>
+          <Image source={{ uri: libraryCover.imageUri }} style={styles.coverPreview} />
+          <View style={{ flex: 1, marginLeft: spacing.sm }}>
+            <AppText variant="callout" numberOfLines={1}>{libraryCover.title || '커버'}</AppText>
+            <AppText variant="footnote" tone="muted">보관함에서 선택함</AppText>
+          </View>
+          <TouchableOpacity onPress={() => setLibraryCover(null)} disabled={uploading} accessibilityLabel="보관함 커버 제거">
+            <Feather name="x" size={18} color={colors.text.muted} />
+          </TouchableOpacity>
+        </View>
       ) : (
-        <TouchableOpacity style={styles.pickBtn} activeOpacity={0.8} onPress={handlePickCover} accessibilityLabel="커버 이미지 선택">
-          <Feather name="image" size={20} color={colors.accent.primary} />
-          <AppText style={styles.pickBtnText}>커버 이미지 선택</AppText>
-          <AppText variant="footnote" tone="muted">
-            {COVER_ALLOWED_EXTS.map((e) => '.' + e).join(' ')} · 최대 {COVER_MAX_SIZE_MB}MB · 없으면 기본 커버
-          </AppText>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+          <TouchableOpacity style={[styles.pickBtn, { flex: 1 }]} activeOpacity={0.8} onPress={handlePickCover} accessibilityLabel="커버 이미지 선택">
+            <Feather name="image" size={20} color={colors.accent.primary} />
+            <AppText style={styles.pickBtnText}>파일 선택</AppText>
+            <AppText variant="footnote" tone="muted" style={{ textAlign: 'center' }}>
+              {COVER_ALLOWED_EXTS.map((e) => '.' + e).join(' ')}{'\n'}최대 {COVER_MAX_SIZE_MB}MB
+            </AppText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.pickBtn, { flex: 1 }]}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('CoverLibrary', { select: true })}
+            disabled={uploading}
+            accessibilityLabel="보관함에서 선택"
+          >
+            <Feather name="folder" size={20} color={colors.accent.primary} />
+            <AppText style={styles.pickBtnText}>보관함에서 선택</AppText>
+            <AppText variant="footnote" tone="muted" style={{ textAlign: 'center' }}>
+              생성해둔 커버 재사용{'\n'}없으면 기본 커버
+            </AppText>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* 공개 여부 */}

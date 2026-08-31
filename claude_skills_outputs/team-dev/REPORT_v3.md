@@ -4,6 +4,14 @@
 
 ---
 
+## v3.104 (B-5 연동 — 커버 보관함 UI·재사용 배선) — 2026-08-31
+
+**수행** (v216 계약·openapi 실측): coverLibraryService·coverLibraryStore·CoverLibraryScreen 신규 — 2열 그리드(사용 중 곡 배지·버전 수), 페이지네이션, 크게 보기, 삭제(사용 중이면 곡 제목 나열 안내·409 처리). 진입점: 마이뮤직 앨범 탭 dashed 버튼. 재사용: TrackUpload(파일 선택과 배타)·MusicResult(미저장=발매 body cover_object_name / 저장 후=PUT 즉시 적용). 전달은 store 경유 goBack(기존 관행).
+**검증**: tsc 0. e2e는 PENDING_TESTS §v3.104.
+**변경**: coverLibraryService·coverLibraryStore·CoverLibraryScreen(신규), MyMusicScreen, trackService, TrackUploadScreen, MusicResultScreen, App.tsx.
+
+---
+
 ## v3.103 (B-1 연동 — 아티스트 N명 체제 전환 + B-3 목소리 연결 UI) — 2026-08-31
 
 **수행** (v216 정본 계약): characterService 신규(list/get/patch/delete/spendExtraSlot). MyArtists를 /character/list 기반으로 전환 — 슬롯 used/max, 대표 배지, 목소리 상태 표시, [＋추가]=여유 시 무료·만석 시 ⭐15 영구 확장(서버 max_slots 반영 — 기존 points/history dedupe·최대2 하드코딩 제거). ArtistResult 서버 모드: 개별 삭제(DELETE /character/{cid}), 재생성=character_id 지정(409 방지), 이름·성별 PATCH 편집, **목소리 연결/변경/해제(PATCH persona_id=clone_id, missing 재연결 유도)**. 생성 파이프라인(ArtistLoading)에 character_id 3분기(재생성 지정/신규 미지정/레거시 미전송) + 409 slot_limit_exceeded 전용 다이얼로그(⭐ 차감 전).

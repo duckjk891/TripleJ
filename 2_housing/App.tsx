@@ -84,6 +84,8 @@ import DirectorLineupScreen from './screens/DirectorLineupScreen';
 import AlbumDetailScreen from './screens/AlbumDetailScreen';
 // v3.100(A-10): 직접 음원 파일 업로드
 import TrackUploadScreen from './screens/TrackUploadScreen';
+// v3.104(B-5): 커버 보관함 — 열람/삭제 + 선택 모드({ select: true })로 커버 재사용
+import CoverLibraryScreen from './screens/CoverLibraryScreen';
 
 export type StudioStackParamList = {
   Map: undefined;
@@ -141,6 +143,8 @@ export type RootStackParamList = {
   AlbumDetail: { albumId: string };
   // v3.100(A-10): 직접 음원 파일 업로드 — 마이뮤직 작곡 탭에서 진입
   TrackUpload: undefined;
+  // v3.104(B-5): 커버 보관함 — select=true면 선택 모드(coverLibraryStore.pickedCover에 쓰고 goBack)
+  CoverLibrary: { select?: boolean } | undefined;
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
   Royalty: undefined;
@@ -512,6 +516,7 @@ export default function App() {
             <RootStack.Screen name="AlbumDetail" component={AlbumDetailScreen} options={({ navigation }) => stackHeader(navigation, '앨범')} />
             {/* v3.100(A-10): 직접 음원 파일 업로드 — 마이뮤직 작곡 탭에서 진입 */}
             <RootStack.Screen name="TrackUpload" component={TrackUploadScreen} options={({ navigation }) => stackHeader(navigation, '음원 파일 올리기')} />
+            <RootStack.Screen name="CoverLibrary" component={CoverLibraryScreen} options={({ navigation }) => stackHeader(navigation, '커버 보관함')} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             <RootStack.Screen name="Royalty" component={RoyaltyScreen} />
