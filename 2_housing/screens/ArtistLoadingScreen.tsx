@@ -14,6 +14,7 @@ import { showAlert } from '../utils/appAlert';
 // expo-file-system v19+ : 신 API에서는 cacheDirectory/downloadAsync가 빠짐 → legacy 사용
 import * as FileSystem from 'expo-file-system/legacy';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { spendExtraSlot } from '../services/characterService';
 import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/characterTaskStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
@@ -178,6 +179,11 @@ export default function ArtistLoadingScreen({ navigation }: any) {
 
           form.append('user_text', taskStore.userText || '');
           form.append('image_model', 'gpt_image_2');
+          // v3.103(B-1): 재생성이면 character_id 지정(기존 아티스트 갱신 — kind 불일치 400),
+          // 미지정=신규(슬롯 검사 → used>=max면 409 slot_limit_exceeded, ⭐ 차감 전).
+          // 레거시(구 계약) 계정은 character_id 미전송(구버전 경로 유지).
+          const targetCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
+          if (targetCid) form.append('character_id', targetCid);
           if (isVirtual) {
             // style_image XOR style_preset — 둘 중 하나만
             if (taskStore.styleImageUri) {
@@ -193,6 +199,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           if (__DEV__) console.info('[ArtistLoading] generate-sheet 요청', {
             endpoint, hasPhoto, items: items.length, isVirtual,
             stylePreset: taskStore.stylePreset, hasStyleImage: !!taskStore.styleImageUri,
+            characterId: targetCid, legacyContract: taskStore.legacyContract,
           });
           const startRes = await api.post(endpoint, form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
@@ -232,6 +239,11 @@ export default function ArtistLoadingScreen({ navigation }: any) {
               product_url: it.productUrl,
               category: it.cat,
             }));
+          // v3.103(B-1): 신규 생성 시 잡 결과에 character_id가 실려오면 그 cid로 save(갱신).
+          // 없으면 kind로 신규 save(구 관행 — 서버 슬롯 검사 409 동일 적용).
+          const jobCid: string | null = targetCid || (res.data?.character_id ? String(res.data.character_id) : null);
+          let savedCharacterId: string | null = jobCid;
+          const pendingGender = useCharacterTaskStore.getState().pendingGender;
           try {
             const saveBody: any = {
               sheet_object_name: res.data.object_name,
@@ -244,17 +256,27 @@ export default function ArtistLoadingScreen({ navigation }: any) {
               saveBody.variant = 'virtual';
               saveBody.art_style = res.data.art_style || (taskStore.styleImageUri ? 'custom' : taskStore.stylePreset);
             }
-            await api.post('/character/save', saveBody);
+            if (!taskStore.legacyContract) {
+              // 신 계약: character_id=갱신 / kind=신규. 성별도 서버에 영속(서버 우선 — v3.103)
+              if (jobCid) saveBody.character_id = jobCid;
+              else saveBody.kind = isVirtual ? 'virtual' : 'real';
+              if (pendingGender) saveBody.gender = pendingGender;
+            }
+            // 레거시 계정: character_id·kind 둘 다 미전송 = 구버전 계약(슬롯 면제)
+            const saveRes = await api.post('/character/save', saveBody);
+            if (saveRes.data?.character_id) savedCharacterId = String(saveRes.data.character_id);
+            if (__DEV__) console.info('[ArtistLoading] save 완료', {
+              legacyContract: taskStore.legacyContract, jobCid, savedCharacterId,
+            });
           } catch (saveErr) {
             console.warn('[Artist] auto-save sheet failed:', saveErr);
           }
           if (cancelled) return;
 
-          // v3.82: 생성 확정 — 질문 흐름에서 답한 성별을 슬롯별 로컬 프로필에 기록
-          // (서버 /me에는 gender 필드가 없어 로컬 persist로 표시용 보관)
-          const pendingGender = useCharacterTaskStore.getState().pendingGender;
-          if (pendingGender) {
-            if (__DEV__) console.info('[ArtistLoading] 성별 기록', { slot: isVirtual ? 'virtual' : 'real', gender: pendingGender });
+          // v3.82: 생성 확정 — 성별을 슬롯별 로컬 프로필에 기록.
+          // v3.103: 신 계약 계정은 서버 gender가 진실의 원천 → 로컬 기록은 레거시 계정만.
+          if (pendingGender && taskStore.legacyContract) {
+            if (__DEV__) console.info('[ArtistLoading] 성별 기록(레거시)', { slot: isVirtual ? 'virtual' : 'real', gender: pendingGender });
             useArtistProfileStore.getState().setProfile(isVirtual ? 'virtual' : 'real', { gender: pendingGender });
           }
 
@@ -267,7 +289,8 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           }
           taskStore.clearMode();
           usePointsStore.getState().fetchBalance(); // v3.76: ⭐10 차감 반영
-          navigation.replace('ArtistResult');
+          // v3.103: 저장된 cid를 알면 서버 아티스트 상세로 진입(목소리 연결·삭제 UI 노출)
+          navigation.replace('ArtistResult', savedCharacterId ? { characterId: savedCharacterId } : undefined);
         } else if (mode === 'outfit') {
           // ── 9004 옷 입히기 = refine 폐기, generate-sheet 재호출 ──
           // photo는 백엔드 영구 저장본 + 옷 이미지는 코디 선택분(MinIO object_name)에서 fetch
@@ -299,8 +322,14 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           appendOutfitObjectNames(form, items);
           form.append('user_text', taskStore.outfitDesc || '');
           form.append('image_model', 'gpt_image_2');
+          // v3.103(B-1): 코디도 대상 아티스트(cid) 재생성으로 — 미지정이면 신규 생성돼
+          // 슬롯을 소모하므로 서버 아티스트에서 진입 시 반드시 character_id 지정.
+          const outfitCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
+          if (outfitCid) form.append('character_id', outfitCid);
 
-          if (__DEV__) console.info('[ArtistLoading] outfit generate-sheet-async 요청', { items: items.length });
+          if (__DEV__) console.info('[ArtistLoading] outfit generate-sheet-async 요청', {
+            items: items.length, characterId: outfitCid, legacyContract: taskStore.legacyContract,
+          });
           const startRes = await api.post('/character/generate-sheet-async', form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
@@ -321,11 +350,16 @@ export default function ArtistLoadingScreen({ navigation }: any) {
               product_url: it.productUrl,
               category: it.cat,
             }));
+          // v3.103(B-1): 신 계약이면 대상 cid로 save(갱신) — 잡 결과 cid 폴백
+          const outfitSaveCid: string | null =
+            outfitCid || (!taskStore.legacyContract && res.data?.character_id ? String(res.data.character_id) : null);
           try {
-            await api.post('/character/save', {
+            const outfitSaveBody: any = {
               sheet_object_name: res.data.object_name,
               used_items: usedItems,
-            });
+            };
+            if (outfitSaveCid) outfitSaveBody.character_id = outfitSaveCid;
+            await api.post('/character/save', outfitSaveBody);
           } catch (saveErr) {
             console.warn('[Artist] auto-save outfit failed:', saveErr);
           }
@@ -337,7 +371,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           });
           taskStore.clearMode();
           usePointsStore.getState().fetchBalance(); // v3.76: ⭐ 차감 반영
-          navigation.replace('ArtistResult');
+          navigation.replace('ArtistResult', outfitSaveCid ? { characterId: outfitSaveCid } : undefined);
         } else {
           // ── refine: 얼굴/체형 미세조정 (옷 입히기 아님). 기존 /character/refine 흐름 유지 ──
           const currentSheetUrl = taskStore.apiResult?.preview_url || null;
@@ -388,6 +422,37 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           : typeof detail === 'string' ? detail : null;
         // v3.76(MAIDOL v158/v139): 별 부족(402)·생성 제한(403) 전용 안내
         const status = err?.response?.status;
+        // v3.103(B-1): 슬롯 초과(409 slot_limit_exceeded — ⭐ 차감 전 거절) → 확장 제안 다이얼로그
+        if (status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
+          const used = err.response?.data?.used;
+          const max = err.response?.data?.max;
+          const slotMsg = `아티스트 슬롯이 가득 찼어요${typeof used === 'number' && typeof max === 'number' ? ` (${used}/${max})` : ''}. ⭐15로 슬롯을 영구 확장할 수 있어요.`;
+          if (__DEV__) console.info('[ArtistLoading] 409 slot_limit_exceeded', { used, max });
+          taskStore.failApi(slotMsg);
+          navigation.goBack();
+          setTimeout(() => {
+            showAlert('슬롯이 가득 찼어요', slotMsg, [
+              { text: '다음에', style: 'cancel' },
+              {
+                text: '⭐15로 확장',
+                onPress: async () => {
+                  try {
+                    await spendExtraSlot();
+                    usePointsStore.getState().fetchBalance();
+                    showAlert('확장 완료', '슬롯이 추가됐어요. 아티스트 만들기를 다시 시도해주세요.');
+                  } catch (spendErr: any) {
+                    if (spendErr?.response?.status === 402) {
+                      showAlert('스타가 부족해요', '슬롯 확장에는 ⭐15가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.');
+                    } else {
+                      showAlert('오류', spendErr?.response?.data?.error || '슬롯 확장에 실패했어요. 잠시 후 다시 시도해주세요.');
+                    }
+                  }
+                },
+              },
+            ]);
+          }, 100);
+          return;
+        }
         let msg: string;
         if (status === 402) {
           msg = '별이 부족해요. 캐릭터 시트 생성에는 ⭐10개가 필요합니다.';

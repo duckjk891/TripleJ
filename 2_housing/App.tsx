@@ -109,9 +109,11 @@ export type StudioStackParamList = {
   GenerationHistory: undefined;
   CoverGeneration: undefined;
   // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
-  ArtistInput: { forceKind?: 'real' | 'virtual' } | undefined;
+  // v3.103(B-1): characterId — 서버 다중 아티스트(cid) 진입. slot은 레거시(me 폴백) 전용.
+  //   ArtistInput.characterId = 재생성 대상(kind 불일치 400 → forceKind 동반 필수)
+  ArtistInput: { forceKind?: 'real' | 'virtual'; characterId?: string } | undefined;
   ArtistLoading: undefined;
-  ArtistResult: { slot?: 'real' | 'virtual' } | undefined;
+  ArtistResult: { slot?: 'real' | 'virtual'; characterId?: string } | undefined;
   MyArtists: undefined;
   ArtistCody: undefined;
   VoiceManage: { select?: 'artist' } | undefined;

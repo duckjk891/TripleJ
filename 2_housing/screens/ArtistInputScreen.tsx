@@ -16,6 +16,7 @@ import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { listArtists, artistSheetUrl } from '../services/characterService';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -27,10 +28,11 @@ const MINIPLAYER_HEIGHT = 70;
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
-interface MyCharacter {
-  sheet_object_name?: string;
-  // v3.80: 가상화(그림) 슬롯 — 가상만 있어도 "캐릭터 있음"으로 취급
-  virtual_sheet_object_name?: string;
+// v3.103(B-1): "현재 아티스트" 미리보기 카드 — 서버 다중 체제(cid) 또는 레거시(me) 공용
+interface ExistingPreview {
+  url: string;
+  /** null = 레거시(me 폴백) → ArtistResult 파라미터 없이 진입 */
+  characterId: string | null;
 }
 
 interface ChatMessage {
@@ -127,9 +129,12 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const titleLabel = user?.display_title || '대표';
   const taskStore = useCharacterTaskStore();
 
-  // v3.81: MyArtists에서 슬롯 추가로 진입하면 kind 강제 — 같은 kind로 만들면
-  // 기존 아티스트를 덮어쓰는 서버 제약이 있어 위반 방지가 핵심(토글 숨김 + 초기값 고정).
+  // v3.81: 레거시(구 계약) 슬롯 추가 진입 시 kind 강제(같은 kind 생성=기존 덮어씀 방지).
+  // v3.103(B-1): 재생성(characterId) 진입 시에도 kind 강제 — 서버가 kind 불일치 재생성을 400으로 거부.
   const forceKind: 'real' | 'virtual' | undefined = route?.params?.forceKind;
+  // v3.103(B-1): 재생성 대상 cid — 지정 시 generate/save에 character_id 전달(기존 아티스트 갱신),
+  // 미지정이면 신규 생성(슬롯 검사는 서버 409 slot_limit_exceeded가 백업)
+  const regenCharacterId: string | undefined = route?.params?.characterId;
 
   const scrollRef = useRef<ScrollView>(null);
   const [step, setStep] = useState<Step>('welcome');
@@ -149,7 +154,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const [styleAnswers, setStyleAnswers] = useState<StyleAnswers>(EMPTY_ANSWERS);
   const [currentInput, setCurrentInput] = useState('');
 
-  const [myCharacter, setMyCharacter] = useState<MyCharacter | null>(null);
+  const [existingPreview, setExistingPreview] = useState<ExistingPreview | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
   // v3.80: 가상화(그림) 캐릭터 모드 + 화풍 선택 스텝 (v3.81: forceKind 진입 시 고정)
@@ -189,23 +194,42 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   }, [chat, step]);
 
-  // 초기: 내 캐릭터 로드
+  // 초기: 목록 실측으로 계약 판정(multi/legacy) + "현재 아티스트" 미리보기 로드
+  // v3.103(B-1): /character/list가 characters:[] 인데 slots.used>=1 이면 레거시(마이그레이션
+  // 미실행) 계정 → 구 계약(me/save, character_id·kind 미지정)으로 생성해야 함.
   useEffect(() => {
-    if (__DEV__ && forceKind) console.info('[ArtistInput] forceKind 진입 — kind 고정', { forceKind });
+    if (__DEV__ && (forceKind || regenCharacterId)) {
+      console.info('[ArtistInput] 진입 파라미터', { forceKind, characterId: regenCharacterId ?? null });
+    }
+    // 재생성 대상 cid 세팅(신규 진입이면 이전 잔존값 클리어)
+    useCharacterTaskStore.getState().setInput({ targetCharacterId: regenCharacterId ?? null });
     if (!user) {
       setInitialLoading(false);
       return;
     }
     (async () => {
       try {
-        const res = await api.get('/character/me');
-        const ch = res.data?.character;
-        // v3.80: 실사(sheet_object_name) 또는 가상(virtual_sheet_object_name)이 있으면 "캐릭터 있음"
-        if (ch && (ch.sheet_object_name || ch.virtual_sheet_object_name)) {
-          setMyCharacter(ch);
+        const { characters, slots } = await listArtists();
+        if (characters.length > 0 || slots.used === 0) {
+          // 서버 다중 체제(신규 계정 포함) — 신 계약으로 생성
+          useCharacterTaskStore.getState().setInput({ legacyContract: false });
+          const def = characters.find((c) => c.is_default) ?? characters[0];
+          if (def?.sheet_object_name) {
+            setExistingPreview({ url: artistSheetUrl(def.sheet_object_name), characterId: def.character_id });
+          }
+        } else {
+          // 레거시 계정 — 구 계약(슬롯 면제)으로 생성/저장
+          useCharacterTaskStore.getState().setInput({ legacyContract: true });
+          if (__DEV__) console.info('[ArtistInput] 레거시 계정 판정 — 구 계약(me/save) 사용', { slots });
+          const res = await api.get('/character/me');
+          const ch = res.data?.character;
+          const obj = ch?.sheet_object_name || ch?.virtual_sheet_object_name;
+          if (obj) setExistingPreview({ url: artistSheetUrl(obj), characterId: null });
         }
-      } catch {}
-      finally {
+      } catch (err: any) {
+        // 목록 실측 실패 — 계약 판정 불가. 신 계약 기본값 유지(신규 생성은 양 계약 모두 안전)
+        console.error('[ArtistInput] 아티스트 목록 로드 실패', { status: err?.response?.status, message: err?.message });
+      } finally {
         setInitialLoading(false);
       }
     })();
@@ -445,11 +469,9 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     );
   }
 
-  // 기존 캐릭터 있으면 결과 화면으로 바로 이동 옵션 제공 (v3.80: 실사 없으면 가상 슬롯 미리보기)
-  const existingSheetObjectName = myCharacter?.sheet_object_name || myCharacter?.virtual_sheet_object_name;
-  const existingPreviewUrl = existingSheetObjectName
-    ? `${BACKEND_BASE_URL}/api/character/preview/${existingSheetObjectName}`
-    : null;
+  // 기존 캐릭터 있으면 결과 화면으로 바로 이동 옵션 제공.
+  // v3.103: 재생성(characterId) 진입 시에는 숨김 — "다시 만들기" 흐름과 혼동 방지.
+  const showExistingCard = !!existingPreview && !regenCharacterId;
 
   const renderInputArea = () => {
     if (step === 'welcome') {
@@ -614,17 +636,19 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: 16 }}
       >
-        {/* 기존 캐릭터 카드 */}
-        {myCharacter && step === 'welcome' && (
+        {/* 기존 캐릭터 카드 — v3.103: 서버 다중 체제는 대표 아티스트(cid)로 상세 진입 */}
+        {showExistingCard && step === 'welcome' && (
           <View style={styles.myArtistCard}>
             <AppText style={styles.myArtistLabel}>현재 아티스트</AppText>
-            {existingPreviewUrl ? (
-              <Image source={{ uri: existingPreviewUrl }} style={styles.myArtistImg} />
-            ) : null}
+            <Image source={{ uri: existingPreview!.url }} style={styles.myArtistImg} />
             <View style={{ flexDirection: 'row', gap: 8, alignSelf: 'stretch' }}>
               <TouchableOpacity
                 style={[styles.applyBtn, { flex: 1 }]}
-                onPress={() => navigation.replace('ArtistResult')}
+                onPress={() =>
+                  existingPreview!.characterId
+                    ? navigation.replace('ArtistResult', { characterId: existingPreview!.characterId })
+                    : navigation.replace('ArtistResult')
+                }
               >
                 <AppText style={styles.applyBtnText}>아티스트 꾸미기</AppText>
               </TouchableOpacity>

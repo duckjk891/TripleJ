@@ -4,6 +4,16 @@
 
 ---
 
+## v3.103 (B-1 연동 — 아티스트 N명 체제 전환 + B-3 목소리 연결 UI) — 2026-08-31
+
+**수행** (v216 정본 계약): characterService 신규(list/get/patch/delete/spendExtraSlot). MyArtists를 /character/list 기반으로 전환 — 슬롯 used/max, 대표 배지, 목소리 상태 표시, [＋추가]=여유 시 무료·만석 시 ⭐15 영구 확장(서버 max_slots 반영 — 기존 points/history dedupe·최대2 하드코딩 제거). ArtistResult 서버 모드: 개별 삭제(DELETE /character/{cid}), 재생성=character_id 지정(409 방지), 이름·성별 PATCH 편집, **목소리 연결/변경/해제(PATCH persona_id=clone_id, missing 재연결 유도)**. 생성 파이프라인(ArtistLoading)에 character_id 3분기(재생성 지정/신규 미지정/레거시 미전송) + 409 slot_limit_exceeded 전용 다이얼로그(⭐ 차감 전).
+**레거시 폴백**: 마이그레이션 미실행 계정은 me 조립 카드 + 구 계약 유지(개별 삭제 미노출 — 전체 삭제 위험 회피).
+**미결**: 생성 잡 결과의 character_id 포함 여부(신규 save 중복 위험) — 백엔드 확인 요청 후보. 대표 변경 UI는 배지 표시만(범위 외).
+**검증**: tsc 0. e2e는 PENDING_TESTS §v3.103.
+**변경**: characterService(신규), characterTaskStore, MyArtists·ArtistResult·ArtistInput·ArtistLoading, App.tsx.
+
+---
+
 ## v3.102 (v216 미러링 대응 1 — 음성 변환 제거·persona 정리·B-3/B-4 배선) — 2026-08-31
 
 **회귀 스모크(api)**: 전 항목 PASS, 파괴적 변경 0, .env 터널 보존(CRITICAL 없음). 레거시 계정은 /character/list 빈 배열(마이그레이션 미실행, v216 §7-5) — v3.103에 me 폴백 설계 반영.

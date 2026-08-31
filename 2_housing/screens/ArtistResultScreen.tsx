@@ -14,11 +14,19 @@ import {
   Animated,
   PanResponder,
   Linking,
+  TextInput,
 } from 'react-native';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import {
+  getArtist,
+  patchArtist,
+  deleteArtist,
+  artistSheetUrl,
+  type ServerArtist,
+} from '../services/characterService';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -34,6 +42,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // v3.81: MyArtists 목록에서 카드 탭으로 진입하면 해당 슬롯만 표시(탭 UI 없음).
   // 파라미터 없이 진입(생성 완료 직후)하면 characterKind 기준.
   const slotParam: 'real' | 'virtual' | undefined = route?.params?.slot;
+  // v3.103(B-1): 서버 다중 아티스트(cid) 진입 — slot 대신 /character/{cid}로 하이드레이션.
+  // slot 경로는 레거시(마이그레이션 미실행) 계정 전용으로 유지.
+  const characterIdParam: string | undefined = route?.params?.characterId;
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
   // v3.82: 로컬 프로필(이름·성별) — 서버 /me에 gender가 없어 로컬 persist에서 표시
@@ -45,7 +56,24 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const artistVoice = useVoiceStore((s) => s.artistVoice);
 
   const [saving, setSaving] = useState(false);
-  const [hydrating, setHydrating] = useState(!apiResult); // apiResult가 비어 있으면 /character/me로 가져옴
+  const [hydrating, setHydrating] = useState(!apiResult); // apiResult가 비어 있으면 서버에서 가져옴
+
+  // ── v3.103(B-1/B-3): 서버 아티스트 모드 상태 ──────────────────────────────
+  const [serverArtist, setServerArtist] = useState<ServerArtist | null>(null);
+  const [serverSheetUrl, setServerSheetUrl] = useState<string | null>(null); // cache-buster URL은 state에 고정(렌더마다 재생성 금지)
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // B-3: 목소리 연결 — ready 클론 선택 팝업 + 해제 confirm
+  const [voicePickerVisible, setVoicePickerVisible] = useState(false);
+  const [voiceSaving, setVoiceSaving] = useState(false);
+  const [unlinkConfirmVisible, setUnlinkConfirmVisible] = useState(false);
+  // 프로필(이름·성별) 편집 — 서버 PATCH (로컬 artistProfileStore와 이중화 금지, 서버 우선)
+  const [editVisible, setEditVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editGender, setEditGender] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const clones = useVoiceStore((s) => s.clones);
+  const clonesLoading = useVoiceStore((s) => s.clonesLoading);
   const [zoomVisible, setZoomVisible] = useState(false);
   // 9004: /me 응답의 original_photo_object_name → 미리보기 URL 캐싱
   const [originalPhotoUrl, setOriginalPhotoUrl] = useState<string | null>(null);
@@ -90,8 +118,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             // v3.81: 목록(slot param)에서 온 경우 pop으로 복귀(navigate는 목록을 새로 push해
             // 목록↔상세 핑퐁이 생김), 생성 직후는 기존대로 Map으로
             onPress={() => {
-              if (slotParam && navigation.canGoBack()) navigation.goBack();
-              else navigation.navigate(slotParam ? 'MyArtists' : 'Map');
+              const fromList = !!(slotParam || characterIdParam);
+              if (fromList && navigation.canGoBack()) navigation.goBack();
+              else navigation.navigate(fromList ? 'MyArtists' : 'Map');
             }}
             style={{ paddingHorizontal: 12, paddingVertical: 6 }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -103,7 +132,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       return () => {
         parent.setOptions({ headerLeft: undefined });
       };
-    }, [navigation, slotParam])
+    }, [navigation, slotParam, characterIdParam])
   );
 
   // 화면 포커스마다 /character/me로 최신화
@@ -115,9 +144,64 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         setHydrating(false);
         return;
       }
+      let cancelled = false;
+
+      // ── v3.103(B-1): 서버 아티스트(cid) 모드 — /character/{cid} 하이드레이션 ──
+      if (characterIdParam) {
+        // 이후 꾸미기/재생성 흐름이 이 아티스트를 갱신하도록 대상 cid 고정(신 계약)
+        useCharacterTaskStore.getState().setInput({
+          targetCharacterId: characterIdParam,
+          legacyContract: false,
+        });
+        setHydrating(true);
+        (async () => {
+          try {
+            const artist = await getArtist(characterIdParam);
+            if (cancelled) return;
+            setServerArtist(artist);
+            const sheetUrl = artist.sheet_object_name ? artistSheetUrl(artist.sheet_object_name) : (artist.sheet_url || null);
+            setServerSheetUrl(sheetUrl);
+            // 꾸미기(ArtistCody) 등 하위 흐름이 현재 시트를 베이스로 쓰도록 store에도 반영
+            if (sheetUrl && artist.sheet_object_name) {
+              useCharacterTaskStore.getState().completeApi({
+                preview_url: sheetUrl,
+                object_name: artist.sheet_object_name,
+              });
+            }
+            // used_items → outfit store 동기화 (백엔드 = 진실의 원천)
+            if (Array.isArray(artist.used_items) && artist.used_items.length > 0) {
+              const mapped = artist.used_items.map((it: any) => ({
+                cat: it.category || '',
+                name: it.name || '',
+                productUrl: it.product_url || undefined,
+                imageObjectName: it.image_object_name || undefined,
+                appliedAt: Date.now(),
+              }));
+              useOutfitStore.getState().setItems(mapped);
+            } else {
+              useOutfitStore.getState().clear();
+            }
+            // B-3 표시용 클론 목록(무해 GET) — 연결 팝업에서 재사용
+            useVoiceStore.getState().fetchClones();
+          } catch (err: any) {
+            console.warn('[ArtistResult] /character/{cid} 조회 실패:', err?.response?.status, err?.message);
+            if (!cancelled && err?.response?.status === 404) {
+              setErrorDialog({ title: '아티스트 없음', message: '해당 아티스트를 찾을 수 없어요. 목록에서 다시 선택해주세요.' });
+            }
+          } finally {
+            if (!cancelled) setHydrating(false);
+          }
+        })();
+        return () => { cancelled = true; };
+      }
+
+      // ── 레거시(slot)/생성 직후 경로 — 기존 /character/me 하이드레이션 유지 ──
+      // slot 진입 = 레거시 계정 확정 → 이후 꾸미기 등은 구 계약(me/save)으로
+      if (slotParam) {
+        useCharacterTaskStore.getState().setInput({ targetCharacterId: null, legacyContract: true });
+      }
       const hasCachedSheet = !!useCharacterTaskStore.getState().apiResult;
       setHydrating(!hasCachedSheet);
-      let cancelled = false;
       (async () => {
         try {
           const res = await api.get('/character/me');
@@ -221,7 +305,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         }
       })();
       return () => { cancelled = true; };
-    }, [user, slotParam])
+    }, [user, slotParam, characterIdParam])
   );
 
   const handleSave = async () => {
@@ -241,7 +325,17 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         saveBody.art_style =
           virtualSheet?.artStyle || (taskStore.styleImageUri ? 'custom' : taskStore.stylePreset) || undefined;
       }
-      if (__DEV__) console.info('[ArtistResult] 수동 저장', { isVirtualSave, art_style: saveBody.art_style });
+      // v3.103(B-1): 신 계약 계정은 character_id(갱신) 또는 kind(신규) 지정 —
+      // 레거시 계정은 둘 다 미전송(구버전 계약, 슬롯 면제)
+      const st = useCharacterTaskStore.getState();
+      if (!st.legacyContract) {
+        if (st.targetCharacterId) saveBody.character_id = st.targetCharacterId;
+        else saveBody.kind = isVirtualSave ? 'virtual' : 'real';
+      }
+      if (__DEV__) console.info('[ArtistResult] 수동 저장', {
+        isVirtualSave, art_style: saveBody.art_style,
+        character_id: saveBody.character_id, kind: saveBody.kind,
+      });
       await api.post('/character/save', saveBody);
       showAlert('저장 완료', '아티스트 캐릭터를 저장했어요.', [
         {
@@ -291,6 +385,101 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     }
   };
 
+  // ── v3.103(B-1): 서버 아티스트 개별 삭제 — DELETE /character/{cid} ──────────
+  // (DELETE /character/me는 전체 삭제라 여기서 절대 사용 금지. 레거시 계정은
+  //  개별 삭제 UI 없이 기존 "캐릭터 다시 만들기"만 유지 — 전체 삭제 위험 회피)
+  const performDeleteArtist = async () => {
+    setDeleteConfirmVisible(false);
+    if (!serverArtist || deleting) return;
+    setDeleting(true);
+    console.log('[ArtistResult] 아티스트 개별 삭제 요청', { characterId: serverArtist.character_id });
+    try {
+      await deleteArtist(serverArtist.character_id);
+      taskStore.reset();
+      useOutfitStore.getState().clear();
+      // 목록으로 복귀 — 포커스 시 재로드 (기본 아티스트는 서버가 잔여 중 자동 승계)
+      navigation.navigate('MyArtists');
+    } catch (err: any) {
+      console.error('[ArtistResult] 아티스트 삭제 실패:', err?.response?.status, err?.response?.data, err?.message);
+      setErrorDialog({ title: '삭제 실패', message: err?.response?.data?.error || err?.message || '삭제에 실패했어요.' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // v3.103(B-1): 서버 아티스트 재생성 — character_id 지정 진입(같은 kind 강제, 409 방지)
+  const handleRegenerateServerArtist = () => {
+    if (!serverArtist) return;
+    if (__DEV__) console.info('[ArtistResult] 재생성 진입', { characterId: serverArtist.character_id, kind: serverArtist.kind });
+    taskStore.reset();
+    navigation.replace('ArtistInput', {
+      characterId: serverArtist.character_id,
+      forceKind: serverArtist.kind,
+    });
+  };
+
+  // ── v3.103(B-3): 목소리 연결/변경/해제 — PATCH persona_id ───────────────────
+  // persona_id에는 클론의 clone_id를 넣는다(ready 클론만 — 서버 400 가드).
+  // 서버가 persona_name/persona_voice_id를 조립하며, 곡 생성 주입은 persona_voice_id(기존 방식 유지).
+  const applyPersonaPatch = async (personaId: string, label: string) => {
+    if (!serverArtist || voiceSaving) return;
+    setVoiceSaving(true);
+    if (__DEV__) console.info('[ArtistResult] 목소리 PATCH', { characterId: serverArtist.character_id, personaId: personaId || '(해제)' });
+    try {
+      const updated = await patchArtist(serverArtist.character_id, { persona_id: personaId });
+      setServerArtist(updated);
+      setVoicePickerVisible(false);
+      showAlert('완료', label);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      showAlert(
+        '오류',
+        status === 400
+          ? '아직 준비되지 않은 목소리예요. 클로닝이 완료(ready)된 목소리만 연결할 수 있어요.'
+          : err?.response?.data?.error || '목소리 연결에 실패했어요. 잠시 후 다시 시도해주세요.'
+      );
+    } finally {
+      setVoiceSaving(false);
+    }
+  };
+
+  const performUnlinkVoice = () => {
+    setUnlinkConfirmVisible(false);
+    applyPersonaPatch('', '목소리 연결을 해제했어요.');
+  };
+
+  const openVoicePicker = () => {
+    useVoiceStore.getState().fetchClones();
+    setVoicePickerVisible(true);
+  };
+
+  // ── v3.103: 프로필(이름·성별) 편집 — 서버 PATCH (서버 = 진실의 원천) ─────────
+  const openEditProfile = () => {
+    if (!serverArtist) return;
+    setEditName(serverArtist.name || '');
+    setEditGender(serverArtist.gender || '');
+    setEditVisible(true);
+  };
+
+  const performSaveProfile = async () => {
+    if (!serverArtist || profileSaving) return;
+    setProfileSaving(true);
+    if (__DEV__) console.info('[ArtistResult] 프로필 PATCH', { characterId: serverArtist.character_id });
+    try {
+      // 빈 문자열 = 서버 클리어(계약) — 입력 그대로 전송
+      const updated = await patchArtist(serverArtist.character_id, {
+        name: editName.trim(),
+        gender: editGender.trim(),
+      });
+      setServerArtist(updated);
+      setEditVisible(false);
+    } catch (err: any) {
+      showAlert('오류', err?.response?.data?.error || '프로필 저장에 실패했어요.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   if (hydrating) {
     return (
       <View style={styles.container}>
@@ -301,7 +490,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     );
   }
 
-  if (!apiResult) {
+  if (!apiResult && !serverArtist) {
     return (
       <View style={styles.container}>
         <View style={styles.center}>
@@ -317,21 +506,36 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     );
   }
 
+  // v3.103(B-1): 서버 아티스트 모드 — cid 문서가 진실의 원천 (레거시 슬롯 상태 미사용)
+  const isServerMode = !!serverArtist;
   // v3.80: 슬롯별 표시 — 선택 슬롯 시트 우선, 하이드레이션 전엔 방금 생성분(apiResult) fallback
   const activeSheet = activeSlot === 'virtual' ? virtualSheet : realSheet;
-  const displayUrl = activeSheet?.url || apiResult.preview_url;
-  const isVirtualTab = activeSlot === 'virtual';
+  const displayUrl = isServerMode
+    ? (serverSheetUrl || apiResult?.preview_url || '')
+    : (activeSheet?.url || apiResult?.preview_url || '');
+  const isVirtualTab = isServerMode ? serverArtist!.kind === 'virtual' : activeSlot === 'virtual';
   const bothSlots = !!realSheet && !!virtualSheet;
-  // v3.82: kind 배지 대신 이름·성별 — 이름은 서버 name 우선, 없으면 로컬 프로필
+  // v3.82: kind 배지 대신 이름·성별 — 서버 모드는 서버 name/gender(PATCH로 편집),
+  // 레거시는 서버 name 우선 + 로컬 프로필(artistProfileStore) 폴백
   const profile = profiles[activeSlot];
-  const displayName = meeName || profile?.name || '이름 없는 아티스트';
-  const displayGender = profile?.gender || null;
+  const displayName = isServerMode
+    ? (serverArtist!.name || '이름 없는 아티스트')
+    : (meeName || profile?.name || '이름 없는 아티스트');
+  const displayGender = isServerMode ? (serverArtist!.gender || null) : (profile?.gender || null);
+  // B-3 표시 상태: 연결됨 / 연결 끊김(missing — 클론 삭제됨) / 미연결
+  const personaMissing = !!(serverArtist?.persona_id && serverArtist?.persona_status === 'missing');
+  const personaConnected = !!(serverArtist?.persona_id && !personaMissing);
+  const readyClones = clones.filter((c) => c.status === 'ready' && c.clone_id);
 
   return (
     <View style={styles.container}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
         <AppText style={styles.title}>
-          {isUnsaved ? '완성된 아티스트 시트' : meeName ? `내 아티스트 · ${meeName}` : '내 아티스트'}
+          {isUnsaved
+            ? '완성된 아티스트 시트'
+            : isServerMode && serverArtist!.name
+              ? `내 아티스트 · ${serverArtist!.name}`
+              : meeName ? `내 아티스트 · ${meeName}` : '내 아티스트'}
         </AppText>
         <AppText style={styles.subtitle}>
           {isUnsaved
@@ -339,13 +543,24 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             : '꾸미기로 옷·악세서리·헤어스타일·염색까지 모두 바꿀 수 있어요.'}
         </AppText>
 
-        {/* v3.82: kind 배지·화풍 라벨 제거 — 이름 · 성별만 표시(성별 미상이면 이름만) */}
+        {/* v3.82: kind 배지·화풍 라벨 제거 — 이름 · 성별만 표시(성별 미상이면 이름만)
+            v3.103: 서버 아티스트는 대표 배지 + [수정](PATCH 프로필 편집) 추가 — kind 라벨은 계속 금지 */}
         <View style={styles.kindRow}>
           <View style={styles.kindBadge}>
             <AppText style={styles.kindBadgeText}>
               {displayGender ? `${displayName} · ${displayGender}` : displayName}
             </AppText>
           </View>
+          {isServerMode && serverArtist!.is_default && (
+            <View style={styles.defaultBadge}>
+              <AppText style={styles.defaultBadgeText}>대표</AppText>
+            </View>
+          )}
+          {isServerMode && (
+            <TouchableOpacity style={styles.editProfileBtn} onPress={openEditProfile} activeOpacity={0.7}>
+              <AppText style={styles.editProfileBtnText}>수정</AppText>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* 9004: 캐릭터 생성 시 업로드한 원본 사진 표시 — 실사 슬롯 전용 */}
@@ -415,42 +630,112 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           </View>
         )}
 
-        {/* v3.84: 아티스트 목소리 — 간편(프리셋)/내 목소리(클론)/미설정 3분기 표기 */}
-        <View style={styles.voiceBox}>
-          <AppText style={styles.voiceBoxLabel}>아티스트 목소리</AppText>
-          <AppText style={styles.voiceBoxDesc}>
-            {artistVoice?.type === 'preset'
-              ? `간편 목소리(${artistVoiceLabel(artistVoice)})가 설정되어 있어요. 곡을 만들 때 이 스타일이 적용돼요.`
-              : artistVoice?.type === 'clone'
-                ? `"${artistVoice.name}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
-                : '간편 목소리(스타일 프리셋)를 고르거나 내 목소리를 클로닝해 아티스트에 연결해보세요.'}
-          </AppText>
-          <TouchableOpacity
-            style={styles.voiceBtn}
-            onPress={() => navigation.navigate('VoiceManage', { select: 'artist' })}
-            activeOpacity={0.7}
-          >
-            <AppText style={styles.voiceBtnText}>
-              {artistVoice?.type === 'preset'
-                ? `간편 목소리: ${artistVoiceLabel(artistVoice)}`
-                : artistVoice?.type === 'clone'
-                  ? `내 목소리: ${artistVoice.name}`
-                  : '목소리 설정'}
+        {/* v3.103(B-3): 서버 아티스트 목소리 — PATCH persona_id로 클론 연결/변경/해제.
+            서버 연결값(persona_*)을 우선 표시. 로컬 프리셋(voiceStore.artistVoice preset)은
+            서버 미저장 자산(곡 생성 스타일 태그)이라 미연결일 때만 보조 안내로 노출 — 충돌 없음. */}
+        {isServerMode ? (
+          <View style={styles.voiceBox}>
+            <AppText style={styles.voiceBoxLabel}>목소리</AppText>
+            <AppText style={[styles.voiceBoxDesc, personaMissing && styles.voiceBoxDescWarn]}>
+              {personaMissing
+                ? '연결했던 목소리가 삭제되어 연결이 해제됐어요. 다른 목소리를 다시 연결해주세요.'
+                : personaConnected
+                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.`
+                  : artistVoice?.type === 'preset'
+                    ? `아직 연결된 목소리가 없어요. (간편 목소리 ${artistVoiceLabel(artistVoice)}는 곡 생성 시 스타일로만 적용돼요)`
+                    : '클로닝이 완료된 내 목소리를 이 아티스트에 연결할 수 있어요.'}
             </AppText>
-          </TouchableOpacity>
-        </View>
+            <View style={styles.voiceBtnRow}>
+              <TouchableOpacity
+                style={[styles.voiceBtn, { flex: 1 }, voiceSaving && { opacity: 0.5 }]}
+                onPress={openVoicePicker}
+                disabled={voiceSaving}
+                activeOpacity={0.7}
+              >
+                <AppText style={styles.voiceBtnText}>
+                  {personaConnected ? '목소리 변경' : personaMissing ? '다시 연결하기' : '목소리 연결'}
+                </AppText>
+              </TouchableOpacity>
+              {(personaConnected || personaMissing) && (
+                <TouchableOpacity
+                  style={[styles.voiceUnlinkBtn, voiceSaving && { opacity: 0.5 }]}
+                  onPress={() => setUnlinkConfirmVisible(true)}
+                  disabled={voiceSaving}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={styles.voiceUnlinkBtnText}>해제</AppText>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        ) : (
+          /* v3.84: (레거시/생성 직후) 아티스트 목소리 — 간편(프리셋)/내 목소리(클론)/미설정 3분기 표기 */
+          <View style={styles.voiceBox}>
+            <AppText style={styles.voiceBoxLabel}>아티스트 목소리</AppText>
+            <AppText style={styles.voiceBoxDesc}>
+              {artistVoice?.type === 'preset'
+                ? `간편 목소리(${artistVoiceLabel(artistVoice)})가 설정되어 있어요. 곡을 만들 때 이 스타일이 적용돼요.`
+                : artistVoice?.type === 'clone'
+                  ? `"${artistVoice.name}" 목소리가 연결되어 있어요. 작곡 시 기본으로 제안됩니다.`
+                  : '간편 목소리(스타일 프리셋)를 고르거나 내 목소리를 클로닝해 아티스트에 연결해보세요.'}
+            </AppText>
+            <TouchableOpacity
+              style={styles.voiceBtn}
+              onPress={() => navigation.navigate('VoiceManage', { select: 'artist' })}
+              activeOpacity={0.7}
+            >
+              <AppText style={styles.voiceBtnText}>
+                {artistVoice?.type === 'preset'
+                  ? `간편 목소리: ${artistVoiceLabel(artistVoice)}`
+                  : artistVoice?.type === 'clone'
+                    ? `내 목소리: ${artistVoice.name}`
+                    : '목소리 설정'}
+              </AppText>
+            </TouchableOpacity>
+          </View>
+        )}
 
-        {/* v3.82: 캐릭터 다시 만들기 — 하단 [🗑 삭제] 버튼 제거 후 유일한 삭제 진입점.
-            트러블슈팅 문구 대신 일반 문구, 모든 슬롯에서 노출(발견성 유지) */}
-        <View style={styles.resetBox}>
-          <AppText style={styles.resetBoxLabel}>처음부터 다시 만들고 싶나요?</AppText>
-          <AppText style={styles.resetBoxDesc}>
-            아티스트를 삭제하고 처음부터 다시 만듭니다. (현재 아티스트와 코디 기록은 모두 삭제돼요)
-          </AppText>
-          <TouchableOpacity style={styles.resetBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
-            <AppText style={styles.resetBtnText}>캐릭터 다시 만들기</AppText>
-          </TouchableOpacity>
-        </View>
+        {isServerMode ? (
+          <>
+            {/* v3.103(B-1): 재생성 — character_id 지정 진입(기존 아티스트 갱신, 슬롯 미소모) */}
+            <View style={styles.resetBox}>
+              <AppText style={styles.resetBoxLabel}>처음부터 다시 만들고 싶나요?</AppText>
+              <AppText style={styles.resetBoxDesc}>
+                이 아티스트의 시트를 처음부터 다시 만듭니다. (프로필·목소리 연결은 유지돼요)
+              </AppText>
+              <TouchableOpacity style={styles.resetBtn} onPress={handleRegenerateServerArtist} activeOpacity={0.7}>
+                <AppText style={styles.resetBtnText}>다시 만들기</AppText>
+              </TouchableOpacity>
+            </View>
+            {/* v3.103(B-1): 개별 삭제 — DELETE /character/{cid} (기본이면 잔여 중 자동 승계) */}
+            <View style={[styles.resetBox, { marginTop: 12 }]}>
+              <AppText style={styles.resetBoxLabel}>아티스트 삭제</AppText>
+              <AppText style={styles.resetBoxDesc}>
+                이 아티스트만 삭제합니다. 다른 아티스트는 그대로 남아요.
+              </AppText>
+              <TouchableOpacity
+                style={[styles.resetBtn, deleting && { opacity: 0.5 }]}
+                onPress={() => setDeleteConfirmVisible(true)}
+                disabled={deleting}
+                activeOpacity={0.7}
+              >
+                <AppText style={styles.resetBtnText}>{deleting ? '삭제 중...' : '이 아티스트 삭제'}</AppText>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          /* v3.82: (레거시) 캐릭터 다시 만들기 — DELETE /character/me(전체 삭제) 후 재생성.
+             레거시 계정은 개별 삭제 API가 없어 이 진입점만 유지 */
+          <View style={styles.resetBox}>
+            <AppText style={styles.resetBoxLabel}>처음부터 다시 만들고 싶나요?</AppText>
+            <AppText style={styles.resetBoxDesc}>
+              아티스트를 삭제하고 처음부터 다시 만듭니다. (현재 아티스트와 코디 기록은 모두 삭제돼요)
+            </AppText>
+            <TouchableOpacity style={styles.resetBtn} onPress={handleResetCharacter} activeOpacity={0.7}>
+              <AppText style={styles.resetBtnText}>캐릭터 다시 만들기</AppText>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       {/* v3.82: 미니플레이어를 숨기므로 bottomLift 제거 — bottomArea는 탭바 바로 위 고정.
@@ -515,6 +800,169 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         onConfirm={performResetCharacter}
         onCancel={() => setResetConfirmVisible(false)}
       />
+
+      {/* v3.103(B-1): 서버 아티스트 개별 삭제 confirm */}
+      <ConfirmDialog
+        visible={deleteConfirmVisible}
+        title="아티스트 삭제"
+        message={`"${displayName}"을(를) 삭제할까요? 이 아티스트만 삭제되고 다른 아티스트는 유지돼요.`}
+        confirmText="삭제하기"
+        destructive
+        onConfirm={performDeleteArtist}
+        onCancel={() => setDeleteConfirmVisible(false)}
+      />
+
+      {/* v3.103(B-3): 목소리 연결 해제 confirm */}
+      <ConfirmDialog
+        visible={unlinkConfirmVisible}
+        title="목소리 연결 해제"
+        message="이 아티스트에서 목소리 연결을 해제할까요? 목소리 자산은 삭제되지 않아요."
+        confirmText="해제하기"
+        destructive
+        onConfirm={performUnlinkVoice}
+        onCancel={() => setUnlinkConfirmVisible(false)}
+      />
+
+      {/* v3.103(B-3): ready 클론 선택 팝업 — voiceStore.clones 재사용 (앱 내 다이얼로그) */}
+      <Modal
+        visible={voicePickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setVoicePickerVisible(false)}
+      >
+        <View style={styles.pickerBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setVoicePickerVisible(false)}
+          />
+          <View style={styles.pickerBox}>
+            <AppText style={styles.pickerTitle}>목소리 연결</AppText>
+            <AppText style={styles.pickerDesc}>
+              클로닝이 완료된 목소리만 연결할 수 있어요.
+            </AppText>
+            {clonesLoading ? (
+              <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={colors.accent.primary} />
+              </View>
+            ) : readyClones.length === 0 ? (
+              <View style={{ paddingVertical: 8 }}>
+                <AppText style={styles.pickerEmptyText}>
+                  아직 완료된 목소리가 없어요. 내 목소리를 먼저 클로닝해보세요.
+                </AppText>
+                <TouchableOpacity
+                  style={styles.pickerGoBtn}
+                  onPress={() => {
+                    setVoicePickerVisible(false);
+                    navigation.navigate('VoiceManage');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={styles.pickerGoBtnText}>목소리 만들러 가기</AppText>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 300 }}>
+                {readyClones.map((c) => {
+                  const isCurrent = serverArtist?.persona_id === c.clone_id;
+                  return (
+                    <TouchableOpacity
+                      key={c.clone_id}
+                      style={[styles.pickerRow, isCurrent && styles.pickerRowActive]}
+                      disabled={voiceSaving || isCurrent}
+                      onPress={() => applyPersonaPatch(c.clone_id, `"${c.voice_name || '내 목소리'}" 목소리를 연결했어요.`)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <AppText style={styles.pickerRowName} numberOfLines={1}>
+                          {c.voice_name || '이름 없는 목소리'}
+                        </AppText>
+                        {!!c.description && (
+                          <AppText style={styles.pickerRowDesc} numberOfLines={1}>{c.description}</AppText>
+                        )}
+                      </View>
+                      {isCurrent && <AppText style={styles.pickerRowCurrent}>연결됨</AppText>}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+            <TouchableOpacity
+              style={styles.pickerCloseBtn}
+              onPress={() => setVoicePickerVisible(false)}
+              activeOpacity={0.7}
+            >
+              <AppText style={styles.pickerCloseBtnText}>닫기</AppText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* v3.103: 프로필(이름·성별) 편집 — PATCH /character/{cid} (앱 내 다이얼로그) */}
+      <Modal
+        visible={editVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditVisible(false)}
+      >
+        <View style={styles.pickerBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setEditVisible(false)}
+          />
+          <View style={styles.pickerBox}>
+            <AppText style={styles.pickerTitle}>프로필 수정</AppText>
+            <AppText style={styles.editFieldLabel}>이름</AppText>
+            <TextInput
+              style={styles.editInput}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="아티스트 이름"
+              placeholderTextColor={colors.text.muted}
+            />
+            <AppText style={styles.editFieldLabel}>성별</AppText>
+            <View style={styles.editChipRow}>
+              {['남성', '여성'].map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  style={[styles.editChip, editGender === g && styles.editChipSelected]}
+                  onPress={() => setEditGender(g)}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={[styles.editChipText, editGender === g && styles.editChipTextSelected]}>
+                    {g}
+                  </AppText>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={styles.editInput}
+              value={editGender}
+              onChangeText={setEditGender}
+              placeholder="직접 입력 (비우면 성별 표시 안 함)"
+              placeholderTextColor={colors.text.muted}
+            />
+            <View style={styles.editBtnRow}>
+              <TouchableOpacity
+                style={styles.pickerCloseBtn}
+                onPress={() => setEditVisible(false)}
+                activeOpacity={0.7}
+              >
+                <AppText style={styles.pickerCloseBtnText}>취소</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.editSaveBtn, profileSaving && { opacity: 0.5 }]}
+                onPress={performSaveProfile}
+                disabled={profileSaving}
+                activeOpacity={0.7}
+              >
+                <AppText style={styles.editSaveBtnText}>{profileSaving ? '저장 중...' : '저장'}</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* 에러 알림 (단일 확인 버튼) */}
       <ConfirmDialog
@@ -692,8 +1140,19 @@ const styles = StyleSheet.create({
   title: { color: colors.text.primary, fontSize: 18, fontWeight: '700', marginBottom: 4 },
   subtitle: { color: colors.text.secondary, fontSize: 13, marginBottom: 16, lineHeight: 19 },
 
-  // v3.81: 카드 상단 kind 배지 (탭 대체)
-  kindRow: { flexDirection: 'row', marginBottom: 10 },
+  // v3.81: 카드 상단 kind 배지 (탭 대체) — v3.103: 대표 배지 + 수정 버튼 추가
+  kindRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 6 },
+  defaultBadge: {
+    backgroundColor: colors.accent.primary, borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  defaultBadgeText: { color: colors.text.primary, fontSize: 10, fontWeight: '700' },
+  editProfileBtn: {
+    marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 10, borderWidth: 1, borderColor: colors.border.subtle,
+    backgroundColor: colors.bg.surface1,
+  },
+  editProfileBtnText: { color: colors.text.secondary, fontSize: 11, fontWeight: '700' },
   kindBadge: {
     backgroundColor: colors.bg.surface2, borderRadius: 10,
     paddingHorizontal: 10, paddingVertical: 5,
@@ -859,6 +1318,73 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.accent.primary,
   },
   voiceBtnText: { color: colors.accent.primary, fontSize: 13, fontWeight: '700' },
+  // v3.103(B-3): 연결/해제 버튼 행 + 경고 문구
+  voiceBoxDescWarn: { color: '#cc8844' },
+  voiceBtnRow: { flexDirection: 'row', gap: 8 },
+  voiceUnlinkBtn: {
+    paddingVertical: 11, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center',
+    borderWidth: 1, borderColor: '#a04444',
+  },
+  voiceUnlinkBtnText: { color: '#cc6868', fontSize: 13, fontWeight: '700' },
+
+  // v3.103: 클론 선택/프로필 편집 팝업 (앱 내 다이얼로그 — ConfirmDialog 톤 준수)
+  pickerBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  pickerBox: {
+    alignSelf: 'stretch', backgroundColor: colors.bg.surface1, borderRadius: 16,
+    borderWidth: 1, borderColor: colors.border.subtle, padding: 18,
+  },
+  pickerTitle: { color: colors.text.primary, fontSize: 16, fontWeight: '700', marginBottom: 6 },
+  pickerDesc: { color: colors.text.muted, fontSize: 12, lineHeight: 17, marginBottom: 12 },
+  pickerEmptyText: {
+    color: colors.text.secondary, fontSize: 13, lineHeight: 19,
+    textAlign: 'center', marginBottom: 12,
+  },
+  pickerGoBtn: {
+    paddingVertical: 12, borderRadius: 10, alignItems: 'center',
+    backgroundColor: colors.accent.primary,
+  },
+  pickerGoBtnText: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
+  pickerRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12,
+    borderWidth: 1, borderColor: colors.border.subtle,
+    backgroundColor: colors.bg.surface2, marginBottom: 8, gap: 8,
+  },
+  pickerRowActive: { borderColor: colors.accent.primary },
+  pickerRowName: { color: colors.text.primary, fontSize: 14, fontWeight: '700' },
+  pickerRowDesc: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
+  pickerRowCurrent: { color: colors.accent.primary, fontSize: 11, fontWeight: '700' },
+  pickerCloseBtn: {
+    flex: 1, marginTop: 8, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  pickerCloseBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '700' },
+
+  editFieldLabel: {
+    color: colors.text.secondary, fontSize: 12, fontWeight: '700', marginBottom: 6, marginTop: 4,
+  },
+  editInput: {
+    backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+    color: colors.text.primary, fontSize: 14, marginBottom: 10,
+  },
+  editChipRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  editChip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16,
+    backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  editChipSelected: { backgroundColor: colors.accent.primary, borderColor: colors.accent.primary },
+  editChipText: { color: colors.text.secondary, fontSize: 12, fontWeight: '600' },
+  editChipTextSelected: { color: colors.text.primary },
+  editBtnRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  editSaveBtn: {
+    flex: 1, marginTop: 8, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
+    backgroundColor: colors.accent.primary,
+  },
+  editSaveBtnText: { color: colors.text.primary, fontSize: 13, fontWeight: '700' },
 
   resetBox: {
     marginTop: 32, padding: 14, borderRadius: 12,

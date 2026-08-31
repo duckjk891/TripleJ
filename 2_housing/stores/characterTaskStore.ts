@@ -32,9 +32,15 @@ interface CharacterTaskState {
   styleImageName: string | null;
   /** v3.82: 질문 흐름에서 답한 성별 — 생성 성공 시 artistProfileStore에 슬롯별로 기록 */
   pendingGender: string | null;
+  /** v3.103(B-1): 재생성 대상 character_id — 지정 시 generate/save에 전달(기존 아티스트 갱신),
+   *  null이면 신규 생성(서버 슬롯 검사 → used>=max 시 409 slot_limit_exceeded) */
+  targetCharacterId: string | null;
+  /** v3.103(B-1): 마이그레이션 미실행(레거시) 계정 — /character/list가 비고 slots.used>=1.
+   *  true면 구 계약(me/save, character_id·kind 미지정 = 슬롯 면제)으로 생성/저장 */
+  legacyContract: boolean;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'targetCharacterId' | 'legacyContract'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -61,6 +67,8 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   styleImageUri: null,
   styleImageName: null,
   pendingGender: null,
+  targetCharacterId: null,
+  legacyContract: false,
 
   startTask: (mode) =>
     set({
@@ -97,5 +105,8 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       styleImageUri: null,
       styleImageName: null,
       pendingGender: null,
+      targetCharacterId: null,
+      // legacyContract는 계정 속성(마이그레이션 여부)이라 reset에서 유지 —
+      // ArtistInput 진입 시 목록 실측으로 매번 재판정됨
     }),
 }));
