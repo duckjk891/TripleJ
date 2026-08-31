@@ -18,7 +18,6 @@ import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
-import { useTimerStore } from '../stores/timerStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
@@ -61,7 +60,6 @@ type ScreenMode = 'dialogue' | 'loading' | 'result';
 export default function CoverGenerationScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const musicStore = useMusicStore();
-  const timerStore = useTimerStore();
   const scrollRef = useRef<ScrollView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -319,7 +317,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     setStep(2);
   };
 
-  // 대화: 스타일 확인 → 대기번호
+  // 대화: 스타일 확인 → 즉시 생성 (v3.107: 대기열 폐지 — 이 화면의 loading 모드로 직행)
   const handleStyleConfirm = (style: string) => {
     setStyleInput(style);
     const trackId = selectedTrack?.id || musicStore.coverTrackId;
@@ -337,13 +335,15 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       if (__DEV__) console.info('[Cover] 재생성: 캐릭터 슬롯 선택 복원', { obj: lastCharObjRef.current });
       musicStore.setCoverCharacterObjectName(lastCharObjRef.current);
     }
-    timerStore.startTask('image', '커버 생성');
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: style },
       { type: 'director', text: '커버 작업을 시작할게요! 곧 결과를 보여드릴게요.' },
     ]);
-    setTimeout(() => navigation.popToTop(), 1500);
+    // v3.107: 대기열 타이머 폐지 — 즉시 생성 시작. musicStore의 cover* 필드는 유지해서
+    // 생성 도중 화면 이탈 후 재진입 시 hasPendingGeneration 경로로 이어보기 가능.
+    console.log('[Cover] 커버 생성 시작 — 즉시 doGenerate (대기열 없음)');
+    doGenerate(trackId, trackTitle || '', style);
   };
 
   // 결과: 확정 → PUT /tracks/{id}로 cover_image_url 업데이트

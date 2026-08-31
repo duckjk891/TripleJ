@@ -17,9 +17,7 @@ import { AppText } from '../components/ui';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLyricsStore } from '../stores/lyricsStore';
-import { useTimerStore } from '../stores/timerStore';
 import { useAuthStore } from '../stores/authStore';
-import { useDirectorsStore } from '../stores/directorsStore';
 import { colors } from '../theme/colors';
 
 const LYRICIST_PORTRAIT = require('../assets/portraits/lyricist_director.png');
@@ -51,7 +49,6 @@ type Props = NativeStackScreenProps<any, 'LyricsPromptReview'>;
 export default function LyricsPromptReviewScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const store = useLyricsStore();
-  const timerStore = useTimerStore();
   const { user } = useAuthStore();
   const titleLabel = user?.display_title || '대표';
   const [editablePrompt, setEditablePrompt] = useState(store.generatedPrompt);
@@ -75,11 +72,12 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
     store.setGeneratedPrompt(prompt);
   }, [store.genre, store.mood, store.content, store.perspective, store.language, store.structure, store.duration, store.hasRap, store.isDuet, store.style, store.keywords, store.reference]);
 
+  // v3.107: 대기열 타이머 폐지 — 요청 즉시 LyricsLoading으로 직행해 결과를 바로 보여준다
+  // (작사는 서버 쿨다운 없음 — fatigue_service.py:5-6 미게이트)
   const handleGenerate = () => {
     store.setGeneratedPrompt(editablePrompt);
-    const modelKey = useDirectorsStore.getState().getSelectedModelKey('lyricist');
-    timerStore.startTask('lyricist', '작사', modelKey);
-    navigation.navigate('Map' as any);
+    console.log('[LyricsPromptReview] 작사 생성 시작 — LyricsLoading 직행');
+    navigation.navigate('LyricsLoading' as any);
   };
 
   const handleFieldEdit = (field: EditField) => {

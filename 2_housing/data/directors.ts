@@ -1,6 +1,7 @@
 /**
  * 디렉터 카탈로그 (프론트 하드코딩, 백엔드 반영 전까지)
- * 각 디렉터는 특정 `modelKey` (timerStore.MODEL_QUEUE_CONFIG)에 바인딩됨
+ * modelKey는 디렉터의 모델 식별자 (v3.107: timerStore 대기열 폐지로 큐 설정 바인딩은 소멸,
+ * 식별자 자체는 카탈로그 구분용으로 유지)
  */
 
 import type { DirectorType } from '../components/Character';
@@ -9,7 +10,7 @@ export interface DirectorCatalog {
   id: string;
   name: string;              // 한글 이름 (친근한 별명)
   category: DirectorType;    // lyricist / composer / image / video / artist
-  modelKey: string;          // timerStore와 매핑 (lyrics_gpt4o_mini 등)
+  modelKey: string;          // 모델 식별자 (lyrics_gpt4o_mini 등)
   hireCost: number;          // 영입 캐시 (0이면 신규 지급)
   tier: 1 | 2 | 3 | 4 | 5;
   concept: string;           // 한 줄 소개

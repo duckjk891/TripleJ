@@ -1,3 +1,8 @@
+/**
+ * @deprecated v3.107 — 대기열 타이머 체계 폐지로 미사용 (네비게이터 미등록 상태 유지).
+ * 광고 SDK(react-native-google-mobile-ads) 연동 예시 코드 보존 목적(광고권 등 후속 용도)으로
+ * 파일만 남긴다. 새 흐름: 요청 즉시 로딩 화면 직행 + 작곡 피로도 쿨다운(utils/fatigueGate.ts).
+ */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,

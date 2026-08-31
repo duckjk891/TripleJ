@@ -21,7 +21,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
-import { useTimerStore } from '../stores/timerStore';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
@@ -66,7 +65,6 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const musicStore = useMusicStore();
   const lyricsStore = useLyricsStore();
-  const timerStore = useTimerStore();
 
   // v3.84: 아티스트 목소리(프리셋 XOR 클론) — 프리셋이면 보컬 성별/스타일 기본 선택
   const artistVoice = useVoiceStore((s) => s.artistVoice);
@@ -489,9 +487,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       ...prev,
       { type: 'director', text: '작곡을 시작할게요! 곧 결과를 보여드릴게요.' },
     ]);
-    // Wondera 제거됨 — 항상 composer/suno
-    timerStore.startTask('composer', '작곡', 'composer');
-    setTimeout(() => navigation.navigate('Map' as any), 1500);
+    // v3.107: 대기열 타이머 폐지 — 요청 즉시 MusicLoading으로 직행(폴링·진행 표시는 그쪽이 보유).
+    // 재요청 제한은 피로도(서버 429 게이트 + 위 fatigueRemainSec 게이트)가 담당한다.
+    console.log('[MusicGeneration] 작곡 생성 시작 — MusicLoading 직행');
+    navigation.navigate('MusicLoading' as any);
   };
 
   // v3.94: 생성 버튼 — 디렉터 쿨다운 중이면 앱 내 다이얼로그(남은 시간 + ⭐스킵/광고권/취소)로 게이트.

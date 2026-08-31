@@ -17,7 +17,6 @@ import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
-import { useTimerStore } from '../stores/timerStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
@@ -397,7 +396,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     }
     useOutfitStore.getState().setItems(appliedItems);
 
-    // 작사·작곡 패턴: 큐 등록 후 Map 복귀. 큐 0 도달 후 캐릭터 클릭하면 ArtistLoading에서 API 호출
+    // v3.107: 대기열 타이머 폐지 — 요청 즉시 ArtistLoading으로 직행해 API 호출·결과 표시
     if (isSheetMode) {
       // 신규 시트 생성: ArtistInput에서 받은 컨셉 + 옷 desc를 합쳐 user_text로
       // v3.105: 실패 후 재시도 시 userText에 이전 의상 desc가 섞여 있을 수 있어 순수 컨셉 우선
@@ -407,16 +406,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         : desc;
       taskStore.setInput({ userText: finalText, outfitDesc: desc });
       taskStore.startTask('sheet');
-      useTimerStore.getState().startTask('artist' as any, '아티스트', 'artist');
     } else {
       taskStore.setInput({ outfitDesc: desc });
       taskStore.startTask('outfit');
-      useTimerStore.getState().startTask('artist' as any, '코디', 'artist_outfit');
     }
-    // web에서 시스템 Alert의 onPress 콜백이 호출 안 되므로 바로 navigate
-    // reset으로 Studio Stack을 Map만 남기는 상태로 초기화 → 작업실 탭 다시 눌러도 Map이 보임
-    // (navigate('Map')은 ArtistCody가 stack에 남아서 작업실 재진입 시 Cody가 다시 표시되는 버그)
-    navigation.reset({ index: 0, routes: [{ name: 'Map' }] });
+    // reset으로 스택을 [Map, ArtistLoading]으로 재구성 — ArtistLoading이 실패 시 goBack하면
+    // Map에 착지하고(v3.105 실패 다이얼로그·입력 보존 흐름 유지), 성공 시 replace('ArtistResult').
+    // (navigate('Map')만 남기면 ArtistCody가 stack에 남아 작업실 재진입 시 Cody가 다시 표시되는 버그)
+    console.log('[ArtistCody] 적용 — ArtistLoading 직행 (대기열 없음)');
+    navigation.reset({ index: 1, routes: [{ name: 'Map' }, { name: 'ArtistLoading' }] });
   };
 
   // Tab 헤더 좌측에 ← 버튼 주입

@@ -1,3 +1,10 @@
+/**
+ * @deprecated v3.107 — 대기열 타이머 체계 폐지 (참조 0).
+ * 새 체계: 작업 요청 시 즉시 해당 로딩 화면(LyricsLoading/MusicLoading/ArtistLoading/
+ * CoverGeneration loading 모드)으로 직행해 결과를 바로 보여주고, 재요청 제한은
+ * 피로도 쿨다운(작곡만 — services/fatigueService.ts, 서버 /fatigue/*)으로 표현한다.
+ * 파일은 스토어 삭제로 인한 잔재 이슈 회피를 위해 유지하며, 새 코드에서 import 금지.
+ */
 import { create } from 'zustand';
 import { DirectorType } from '../components/Character';
 

@@ -4,6 +4,14 @@
 
 ---
 
+## v3.107 (디렉터 진행 UI 개편 — 대기열 폐지, 즉시 결과+휴식 체계) — 2026-08-31
+
+**수행** (대표 방침: 결과는 즉시, 재요청만 피로도로 제한): 작사·작곡·커버·아티스트 4경로의 timerStore 대기열(광고 단축 포함)을 전부 폐지하고 요청 즉시 각 로딩 화면 직행. MapScreen에서 tick·광고단축·대기 티켓·단계/보상 팝업 제거(-640줄), 대신 작곡 디렉터에 서버 피로도 기반 "휴식 중" 티켓(1초 카운트다운, 탭=⭐5/광고권 단축 다이얼로그 — v3.94 공용 재사용). 서버 쿨다운 없는 디렉터는 상태 표시 없음(껍데기 금지). timerStore·WaitTimerScreen은 deprecated 주석으로 보존(persist 잔재·광고 SDK 예시). v3.105 입력 보존·409 흐름 위에 충돌 없이 적용.
+**검증**: tsc 0. e2e는 PENDING_TESTS §v3.107.
+**변경**: MapScreen, LyricsPromptReview·MusicGeneration·CoverGeneration·ArtistCody, timerStore·WaitTimerScreen(주석), directors 데이터 주석.
+
+---
+
 ## v3.105 (대표 피드백 — 클로닝 폴링·아티스트 추가 UX·레이아웃·콘솔에러) — 2026-08-31
 
 **수행**:

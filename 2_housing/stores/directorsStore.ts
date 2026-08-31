@@ -14,7 +14,7 @@ interface DirectorsState {
   isHired: (directorId: string) => boolean;
   selectForCategory: (category: DirectorType, directorId: string) => void;
   getSelected: (category: DirectorType) => string | undefined;
-  /** 현재 선택된 디렉터의 modelKey (timerStore와 매핑) */
+  /** 현재 선택된 디렉터의 modelKey (v3.107: 대기열 폐지 후 카탈로그 식별용) */
   getSelectedModelKey: (category: DirectorType) => string | undefined;
 
   /** 신규 유저 초기 지급 (persist hydration 후 비어있을 때만) */
