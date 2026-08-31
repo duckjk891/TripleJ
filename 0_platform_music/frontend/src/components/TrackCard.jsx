@@ -7,7 +7,8 @@ import Avatar from './Avatar';
 import TrackShareButton from './TrackShareButton';
 import './AlbumCard.css';
 
-export default function TrackCard({ track, tracks, queueAll = false }) {
+// v214 — showSourceBadge: 옵션 prop (기본 off — SongItem v207 선례와 동일 규약).
+export default function TrackCard({ track, tracks, queueAll = false, showSourceBadge = false }) {
   const { play } = usePlayer();
   const { user } = useAuth();
 
@@ -43,6 +44,18 @@ export default function TrackCard({ track, tracks, queueAll = false }) {
         </div>
       </div>
       <div className="album-card__title" title={track.title}>{track.title}</div>
+      {/* v214 — 곡 출처 뱃지 (옵션·재료 없으면 생략) */}
+      {showSourceBadge && (() => {
+        const sm = track.source_meta || {};
+        const artistName = sm.artist_name || track.user_character_snapshot?.name || null;
+        const voiceName = sm.persona_name || null;
+        if (!artistName && !voiceName) return null;
+        return (
+          <div className="album-card__source-badge" style={{ fontSize: '11px', color: '#8a8a9a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {[artistName && `🧑‍🎤 ${artistName}`, voiceName && `🎤 ${voiceName}`].filter(Boolean).join(' · ')}
+          </div>
+        );
+      })()}
       <div className="album-card__meta-row">
         {track.uploader_id ? (
           <Link

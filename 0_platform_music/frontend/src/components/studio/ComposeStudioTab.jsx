@@ -732,10 +732,15 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
         setWonderaMelodyData(null);
         setWonderaEnableStream(false);
       } else if (draftId) {
+        // v214 T2 — 가사 출처 스냅샷: draft 삭제 직전 캡처 (문서는 죽고 스냅샷은 산다).
+        // 작사실 AI 작사·직접 작성 모두 draft 경유라 이 분기 하나로 커버 — 발매 시 track.lyrics_id 로 동결.
+        const lyricsSource = { lyrics_id: draftId, title: title.trim() || null, is_mine: true };
+        if (import.meta.env.DEV) console.info('[ComposeStudioTab] lyrics_source captured', { lyrics_id: draftId });
         // 임시저장된 draft 삭제 후 최신 파라미터로 새로 생성
         await api.deleteGeneration(draftId).catch(() => {});
         setDraftId(null);
         const body = {
+          lyrics_source: lyricsSource,
           prompt: description.trim(),
           title: title.trim() || null,
           lyrics: lyrics.trim(),
@@ -766,7 +771,8 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
         await api.createGeneration(body);
         setSuccessMsg('음악 생성이 시작되었습니다! 완료까지 시간이 소요됩니다.');
       } else {
-        // Suno path
+        // Suno path — v214: draftId 없음 = 이 화면에서 직접 입력한 가사 → lyrics_source 미동봉
+        // (출처 표기 생략이 정직 — PLAN T2. 작사실 경유 가사는 위 draft 분기가 항상 담당)
         const body = {
           prompt: description.trim(),
           title: title.trim() || null,
@@ -2213,6 +2219,9 @@ export default function ComposeStudioTab({ onSendToUpload, prefillDraft, onClear
                                       mood: gen.mood,
                                       prompt: gen.prompt,
                                       lyrics: gen.lyrics,
+                                      // v214 T3 — 부른 아티스트 관통 (업로드 프리필 우선 자동선택 재료).
+                                      // persona 는 서버가 gen_doc 에서 승계 — FE 추가 전송 불요.
+                                      characterId: composeArtist?.character_id || null,
                                     });
                                   }}
                                 >

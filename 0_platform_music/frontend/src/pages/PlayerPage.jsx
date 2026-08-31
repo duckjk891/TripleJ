@@ -539,6 +539,7 @@ export default function PlayerPage() {
                   <CharacterCoverCard
                     character={trackDetail?.cover_character ?? null}
                     trackId={trackDetail?.id ?? null}
+                    source={trackDetail?.source_meta ?? null}
                   />
                 </section>
               )}

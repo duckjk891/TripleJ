@@ -30906,3 +30906,84 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
 
 ## 5. 리스크·판단
 **진행 (40% 이상 — 소형·additive·삭제 경로 수렴 확인됨).** R1: 앱팀 persona_id 의미 오해 — 계약서 축적분에 clone_id/persona_voice_id 구분 명시(§V1, REPORT 승계 필수). R2: list 파생 resolve N+1 — 배치 조회 구현 강제. R3: check-availability 자동삭제가 사용자 요청 중 발동 — 훅 best-effort 로 본 흐름 무영향 보장(⑨ never-raise 검증). R4: ComposeStudioTab 제출 2경로 — 주입 누락 방지 위해 body 구성 공통 함수화 권장(기존 중복 구조 존중, 최소 침습).
+
+---
+
+# PLAN v214 — 앱팀 요청 B-4: 곡 출처 기록 + 3곳 표시 (2026-08-27 19:39 KST, planner)
+
+기준: v213 완료(7008e35). 범위: backend_9006 + frontend. 출처 기록 = 무과금 메타데이터(자동 기록·입력 없음). 기존 곡 소급 없음(사양 5).
+
+## 0. 실측 findings
+
+### 0-1. 백엔드 (업로드·응답면)
+- **업로드 양 경로**: upload-from-generation(tracks.py:1625, body :1602-1622 — generation 소유·completed 검증, v210 커버 강검증, SnapFix 스냅샷 사본화, doc insert :1815-1846에 `generation_id`·`user_character_snapshot` 기존재) / 파일 업로드(:1441 Form — categories·스냅샷 없음). **출처 4필드(character_id·persona_id·persona_model·lyrics_id) 양 경로 모두 부재**
+- **응답면 전부 pass-through**: tracks.py `_serialize_track`(:32-46)·charts.py(:43-55) doc 통과+별칭, GET /(:139)·/my(:648)·상세(:1303, Redis `cache:track:v3` — 신필드는 신곡만이라 스키마 범프 불요)·charts(_fetch_tracks_by_ids 전체 doc)·artists/{id}/tracks(:141-147, **is_public 고정·페이징 없음·limit 쿼리만**) — projection 0 → **doc 저장 = 전 응답면 자동 동봉 (뱃지 재료 N+1 원천 부재)**
+- **generation doc**: persona_id·persona_model·title 영속(generate.py :494·:508-513) — 단 **gen_doc.persona_id = Suno voice_id**(FE가 clone→voice_id 변환 전송, v213 실측). v213 계약(clone_id)과 의미 상이 → 서버 역매핑({user_id, voice_id}→voice_clones) 필요
+- **작사실 draft 실체 = generations 무과금 draft**(pending·point_ref=None, LyricsStudioTab이 createGeneration(start_music_gen:false)/updateGeneration로 영속, 제목 보유) — POST /generate/lyrics/ 자체는 무저장(결과 직반환)
+
+### 0-2. 프론트 (표시 3곳 + 인계 체인 — 상세는 조사 전문)
+- **PlayerPage**: 프롬프트 탭 :387-535 info-grid — genDetail이 이미 페르소나 raw id 표시(:502-506, 로그인+본인 generation 한정). CharacterCoverCard는 가사 뒤 :537-544 **단독 소비처**, 라벨 "이 곡의 주인공 캐릭터"("이 곡의 아이돌" 문자열 미존재). cover_character 표시 재료 = user_character_snapshot(gender 포함 — v212 F4 확인)
+- **SongItem**: v207 옵션 prop 선례 명문(:13-14 onEditCover — 미전달 시 렌더 완전 동일), 뱃지 자리 :76(제목-아티스트 행 사이), 소비처 5곳(ArtistDetailPage:247·MainPage:174,202·SearchPage:104·AlbumDetailPage:192·PlaylistDetailPage:122). TrackCard는 옵션 prop 무·소비처 MainPage:221 1곳
+- **ArtistDetailPage**: isSelf(:31), tab 3종(music/feed/community :205-233), getArtistSongs(id, **10 하드코딩**) — 필터 UI 부재
+- **⚠ Break 1 — 가사 출처 소실**: ComposeStudioTab이 작곡 시 가사 draft **삭제 후 신규 generation 생성**(:734-737 deleteGeneration — v209 리스트 오염 방지 설계), 부모 포인터 0 → draft id·제목 모두 소멸
+- **⚠ Break 2 — 아티스트 미인계**: onSendToUpload payload(:2208-2216) = {generationId, variantIndex, title, genre, mood, prompt, lyrics} 뿐 — composeArtist(character_id)·artistVoice 미포함 → UploadPage가 자체 auto-select(:147-163, default 우선) — **부른 아티스트 ≠ 스냅샷 아티스트 무음 어긋남 가능**. UploadPage는 selectedArtist.character_id 보유하나 미전송(0 hits), 스냅샷(:396-404)에 persona 필드 없음, 경로 B는 스냅샷 자체 없음. character_id 배선 선례: MVStudioTab:635→MVProductionSection:408
+
+## 1. 설계 결정
+
+### T1. 저장 필드 (track doc, additive — 양 경로 공통)
+- 앱팀 계약 4필드: `character_id`·`persona_id`·`persona_model`·`lyrics_id` — **받은 값 그대로 저장**(앱팀 원문 준수 — 소유권 불일치·부재여도 400 없음·저장 거부 없음). pydantic str ≤64자 캡만(비정상 입력 422는 프레임워크 기본)
+- **+ `source_meta`(서버 생성 표시 스냅샷, additive)**: `{artist_name, persona_name, lyrics_title, lyrics_is_mine}` — 업로드 시점 서버 resolve, **소유 문서 일치 시에만 생성**(클라 명칭 불신 — 표시 스푸핑 차단)
+- **검증 수준 근거 (택1)**: v210 커버 강검증(400)은 실 스토리지 리소스 경로(경로 인젝션·타인 자산 노출 위험)의 선례. 출처 id는 표시용 역참조 — 저장 무해·표시 재료만 서버 생성으로 통제. "받은 값 그대로"(앱팀)와 스푸핑 방지 양립. 불일치 id → source_meta 없음 → 표기 생략(사양 5와 동일 경로)
+- **승계 규칙(자동 기록)**: body 우선 → 미전송 시 from-generation 경로는 gen_doc 승계 — persona: gen_doc.persona_id(voice_id)를 {user_id, $or:[{voice_id},{_id}]} 역매핑해 **clone_id로 정규화 저장**(실패 시 받은 값 그대로) + persona_name=voice_name / lyrics: gen_doc.lyrics_source(T2) → 그다음 lyrics_id의 generations 소유 문서 resolve(title). character_id: body 전용(FE 관통 — T3). 경로 B(파일)는 body 값만
+- 로그 추적자 `[SongSource]` — 저장 4필드·역매핑 성공/실패·meta 생성 여부
+
+### T2. Break 1 해소 — **draft 삭제 정책 유지 + 작곡 시점 스냅샷 (택1: (b)+(c) 결합)**
+- (a) 삭제 대신 보존 기각: v209 결정(작사실 리스트 오염 방지) 번복 + UX 회귀. (b) 단독 기각: draft 문서가 삭제되므로 id만 남기면 영구 dangling — 표시 재료 없음
+- 채택: **compose 제출 body에 `lyrics_source: {lyrics_id: draftId, title, is_mine: true}` 동봉**(FE는 그 시점 draftId·제목 보유 — :734 삭제 직전) → generate.py create가 수용·영속(길이 캡 — title 100자) → 업로드 시 T1 승계로 track.lyrics_id + source_meta.lyrics_title/lyrics_is_mine 동결. 오염 방지와 출처 보존 양립(문서는 죽고 스냅샷은 산다). draft 없이 직접 입력한 가사 = lyrics_source 없음 = 출처 표기 생략(정직)
+- 서버는 lyrics_source.title을 표시 재료로 쓰되 자기 소유 generation 내 자기 기록이므로 저위험 — 캡 외 검증 없음
+
+### T3. Break 2 해소 — character_id 관통 (compose→upload prefill 우선)
+- ComposeStudioTab onSendToUpload payload에 **`characterId: composeArtist?.character_id || null`** 추가 (persona는 서버 승계가 흡수 — FE 추가 전송 불요)
+- UploadPage: prefill.characterId 존재 시 loadArtists 후 **해당 아티스트 우선 자동선택**(매칭 실패 시 기존 default 폴백 — 삭제된 아티스트 방어), 사용자 수동 변경은 존중(명시 선택은 어긋남 아님). 제출 시 **양 경로에 `character_id: includeCharacter ? selectedArtist?.character_id : null` 전송**(경로 B 포함 — 아티스트 선택 UI 기존재)
+- 경로 B의 user_character_snapshot 미전송은 **범위 외 유지**(cover_character 표시 확장은 별건 기록 — 이번 사양은 출처 4필드만)
+
+### T4. 표시 ⑴ — CharacterCoverCard **확장 택1** (신설 카드 기각 — 중복 2장 금지 사양)
+- 카드에 optional prop `source`({persona_name, lyrics_title, lyrics_is_mine}) 추가 — 프로필 아래 `🎤 {목소리명}`·`📝 {가사 제목} (내 작사)` 행, 재료 없으면 행 생략(기존 곡 무변)
+- **라벨 "이 곡의 주인공 캐릭터" → "이 곡의 아이돌" 개명**(사양 문언·MAIDOL 브랜드 정합 — hero 용어 금지 규약 준수 확인). 캐릭터 미사용+출처만 있는 곡(경로 B 목소리 작곡 등)도 출처 행 표시되도록 empty state 분기 확장
+- PlayerPage 배선: `source={trackDetail?.source_meta ?? null}` — 상세 응답 pass-through라 백엔드 무추가. 스냅샷(cover_character) = 동결 표시 재료 / 4필드 id = 역참조용 — 역할 분리 명문화
+
+### T5. 표시 ⑵ — SongItem·TrackCard 옵션 prop (v207 선례 — 파급 0)
+- `showSourceBadge = false` 신규 prop — true && (source_meta.artist_name || snapshot.name || persona_name) 존재 시에만 제목 밑 한 줄 `🧑‍🎤 {아티스트명} · 🎤 {목소리명}` (없는 요소 생략, 둘 다 없으면 행 자체 생략 — 기존 곡 자동 생략). 재료 = **source_meta 직행**(pass-through 실측 — 읽기 resolve 기각: 클론 삭제·만료 일상(v213)이라 동결본이 생존성 우위 + N+1 0)
+- artist_name 폴백 체인: source_meta.artist_name → user_character_snapshot.name (경로 통일)
+- 이번 on 대상: ArtistDetailPage(:247)·MainPage(:174,202 차트·TrackCard :221) — SearchPage·Album/Playlist는 기본 off(후속). 미전달 소비처 렌더 완전 동일(v207 규약 회귀로 보증)
+
+### T6. 표시 ⑶ — ArtistDetailPage 본인 뷰 아티스트 필터 (**클라이언트 필터 택1**)
+- music 탭에 isSelf 한정 필터 칩(전체 | 아티스트별 — getCharacterList 카드, character_id 매칭으로 songs filter). getArtistSongs limit 10→50 상향(쿼리 파람 기존재 — 서버 무변경)
+- 서버 파라미터 필터 기각 근거: 본인 뷰 한정·데이터 소규모(실측 수십 건)·artists/{id}/tracks는 공개 API라 파라미터 추가 파급 — 데이터 성장 시 서버 필터를 별건 기록
+- 기록 없는 곡(기존 곡)은 "전체"에만 등장 — 필터 칩에 기록 곡 수 표기
+
+## 2. 변경 매트릭스
+
+| # | 파일 | 변경 | 담당 |
+|---|---|---|---|
+| B1 | backend_9006/app/routes/tracks.py | UploadFromGenerationBody+4필드·upload_track Form+4필드·`_resolve_source_meta` 헬퍼(소유권 resolve+voice 역매핑)·승계 규칙·doc insert 확장·[SongSource] | backend-dev |
+| B2 | backend_9006/app/routes/generate.py | create body `lyrics_source` 수용·영속(캡: id 64·title 100) | backend-dev |
+| F1 | frontend/src/components/studio/ComposeStudioTab.jsx | 제출 2경로(공통 함수) body lyrics_source 동봉(draft 삭제 직전 캡처)·onSendToUpload characterId 추가 | frontend-dev |
+| F2 | frontend/src/pages/UploadPage.jsx | prefill.characterId 우선 자동선택·양 경로 제출 character_id 전송 | frontend-dev |
+| F3 | frontend/src/components/CharacterCoverCard.jsx + PlayerPage.jsx | source prop(🎤·📝 행)·라벨 개명·empty 분기 확장·배선(:540) | frontend-dev |
+| F4 | frontend/src/components/SongItem.jsx·TrackCard.jsx + ArtistDetailPage·MainPage | showSourceBadge 옵션 prop+뱃지 행, 2페이지 on | frontend-dev |
+| F5 | frontend/src/pages/ArtistDetailPage.jsx | 본인 뷰 필터 칩+limit 50 | frontend-dev |
+
+## 3. dev 분할
+- backend 선행 B1·B2(소형 — 저장부 집중, 응답면 무작업이 실측으로 보장). FE F1~F5는 B1 계약(4필드+source_meta shape) 고정치로 UI 골격 병렬 가능, 배선·왕복은 B1 후
+- tester 단일 배치(B1+B2 후 백엔드, FE 후 e2e)
+
+## 4. test-designer 항목
+표준 제약: 출처 기록/표시 = 무과금. **실업로드는 OpenAI 인덱싱 2회/건 규약(v211 §0) — e2e 실업로드 최소 산정(경로 A 1·경로 B 1 = 외부 4회 계상·사전 고지), 그 외 트랙 픽스처 전량 mongo 직삽**. 작곡·작사 시작 등 유료 경로 금지(compose lyrics_source 검증은 draft 직삽+body 캡처 또는 무과금 draft 생성 활용 — createGeneration(start:false)는 무과금 실측). 실데이터 read-only(안정 상태 한정 규약).
+
+회귀: ①업로드 양 경로 기존 필드·동작 불변(4필드 미전송 시 doc 동일+source_meta 부재) ②SongItem 옵션 미전달 5소비처 렌더 완전 동일(v207 규약) ③PlayerPage cover_character·프롬프트 탭 기존 표시 ④v212/v213 스모크(me 키셋 상비 포함) ⑤charts/검색/앨범 리스트 응답 무회귀
+
+신규: ⑥4필드 저장(양 경로·받은 값 그대로 — 타인/무효 id도 저장되되 source_meta 없음) ⑦승계 3규칙(body 우선 / gen_doc persona 역매핑 voice_id→clone_id 정규화 / lyrics_source→lyrics_id resolve 순서) ⑧source_meta 소유권 검증(자기 문서만 명칭 생성) ⑨응답면 동봉(my·상세·charts·artists/{id}/tracks — pass-through 실증) ⑩기존 곡 생략(구 doc → 4필드·meta 부재·전 표시면 무표기) ⑪lyrics 체인 e2e: 작사 draft→작곡(삭제 확인+lyrics_source 영속)→업로드→상세 📝 표시 ⑫Break 2 관통: compose 아티스트=업로드 프리필 자동선택=track.character_id 일치, 아티스트 삭제 시 폴백 ⑬표시 3곳 e2e(카드 🎤📝·뱃지 2페이지·필터 칩+기록 곡 수) ⑭경로 B Form 4필드+character_id ⑮persona_id에 voice_id가 온 경우(앱팀 시나리오) 역매핑 정규화
+
+## 5. 리스크·40% 판단
+**진행 (40% 이상).** 저장부 집중·응답면 무작업(실측 보장)·표시부는 옵션 prop 파급 0 패턴. R1: 앱팀 persona_id 의미(voice_id vs clone_id) — 역매핑이 양쪽 흡수, 계약서 축적분에 "track.persona_id는 정규화된 자산 id(clone_id), voice_id 수신 시 서버 정규화" 명시 필수. R2: compose 제출 경로 lyrics_source 누락 — v213 공통 함수 수렴 위에 배선(2경로 캡처 검증 ⑪). R3: SongItem 5소비처 파급 — 기본 off+회귀 ②. R4: 라벨 개명("이 곡의 아이돌")의 스크린샷 회귀류 — 문언 변경 1곳(CSS 무변) 한정.

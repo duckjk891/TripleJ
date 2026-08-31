@@ -12,7 +12,9 @@ import './SongItem.css';
 
 // v207 — onEditCover: 옵션 prop. 전달된 경우에만 「커버 수정」 버튼 렌더 (내 채널 본인 전용).
 // 미전달 시 렌더 결과는 기존과 완전 동일 — 차트·플레이리스트 등 다른 사용처 무영향.
-export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false, onPlay, onEditCover }) {
+// v214 — showSourceBadge: 옵션 prop (기본 off — v207 선례). true 이고 출처 재료(source_meta,
+// 폴백 user_character_snapshot.name)가 있을 때만 제목 밑 한 줄 뱃지 — resolve 호출 0(동봉 스냅샷 직행).
+export default function SongItem({ song, rank, showAlbum = true, songs, isLiked, onToggleLike, queueAll = false, onPlay, onEditCover, showSourceBadge = false }) {
   const { play, addToPlaylist } = usePlayer();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -74,6 +76,18 @@ export default function SongItem({ song, rank, showAlbum = true, songs, isLiked,
         <div className="song-item__title" onClick={handlePlay}>
           {song.title}
         </div>
+        {/* v214 — 곡 출처 뱃지 (옵션·재료 없으면 행 자체 생략 → 기존 곡 자동 생략) */}
+        {showSourceBadge && (() => {
+          const sm = song.source_meta || {};
+          const artistName = sm.artist_name || song.user_character_snapshot?.name || null;
+          const voiceName = sm.persona_name || null;
+          if (!artistName && !voiceName) return null;
+          return (
+            <div className="song-item__source-badge" style={{ fontSize: '11px', color: '#8a8a9a', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {[artistName && `🧑‍🎤 ${artistName}`, voiceName && `🎤 ${voiceName}`].filter(Boolean).join(' · ')}
+            </div>
+          );
+        })()}
         <div className="song-item__artist">
           <Link to={`/artist/${song.artist_id || song.uploader_id}`} title="채널 보기">{song.artist_name || song.uploader_nickname || 'AI'}</Link>
         </div>

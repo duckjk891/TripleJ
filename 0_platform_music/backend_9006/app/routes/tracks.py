@@ -85,6 +85,99 @@ async def _find_attached_mv(mongo, track_id) -> Optional[dict]:
     return mv_job
 
 
+async def _resolve_source_meta(
+    mongo,
+    user_id: str,
+    character_id: Optional[str],
+    persona_id: Optional[str],
+    lyrics_id: Optional[str],
+    lyrics_source: Optional[dict] = None,
+):
+    """v214 — 곡 출처 표시 스냅샷(source_meta) 서버 생성 + persona 정규화.
+
+    원칙 (PLAN v214 T1):
+      - 4필드 id 는 "받은 값 그대로" 저장 (검증 400 없음)
+      - 표시 명칭은 **본인 소유 문서 일치 시에만** 생성 — 불일치·부재면 해당
+        명칭 생략(스푸핑 차단, 표기 생략은 사양 5 기존 곡과 동일 경로)
+      - persona_id 는 clone_id·Suno voice_id 어느 쪽이 와도
+        {user_id, $or:[{_id},{voice_id}]} 역매핑으로 **clone_id 정규화**
+        (실패 시 받은 값 그대로 저장 + 명칭 생략)
+      - lyrics 명칭: lyrics_source(작곡 시점 동결 스냅샷, T2) 우선 →
+        lyrics_id 의 본인 generations 문서 title resolve
+
+    Returns (normalized_persona_id, source_meta | None)
+      source_meta = {artist_name?, persona_name?, lyrics_title?, lyrics_is_mine?}
+    """
+    meta: dict = {}
+
+    # 아티스트 명칭 — 본인 characters 문서 일치 시에만
+    if character_id:
+        try:
+            char = await mongo.characters.find_one(
+                {"user_id": user_id, "character_id": character_id}, {"name": 1},
+            )
+            if char is not None:
+                meta["artist_name"] = char.get("name") or ""
+            else:
+                logger.info(
+                    "[SongSource] character unresolved user=%s cid=%s — 명칭 생략",
+                    user_id[:8], character_id[:36],
+                )
+        except Exception as e:
+            logger.warning("[SongSource] character resolve failed cid=%s: %s", character_id[:36], e)
+
+    # persona — clone_id/voice_id 양쪽 흡수 역매핑 + 명칭
+    normalized_persona_id = persona_id
+    if persona_id:
+        try:
+            ors = [{"voice_id": persona_id}]
+            if ObjectId.is_valid(persona_id):
+                ors.append({"_id": ObjectId(persona_id)})
+            clone = await mongo.voice_clones.find_one(
+                {"user_id": user_id, "$or": ors}, {"voice_name": 1},
+            )
+            if clone is not None:
+                normalized_persona_id = str(clone["_id"])
+                meta["persona_name"] = clone.get("voice_name") or ""
+                if normalized_persona_id != persona_id:
+                    logger.info(
+                        "[SongSource] persona normalized voice_id->clone_id user=%s %s->%s",
+                        user_id[:8], persona_id[:36], normalized_persona_id,
+                    )
+            else:
+                logger.info(
+                    "[SongSource] persona unresolved user=%s pid=%s — 받은 값 유지·명칭 생략",
+                    user_id[:8], persona_id[:36],
+                )
+        except Exception as e:
+            logger.warning("[SongSource] persona resolve failed pid=%s: %s", persona_id[:36], e)
+
+    # 가사 명칭 — 작곡 시점 동결 스냅샷(lyrics_source) 우선 (draft 는 이미 삭제됨)
+    ls = lyrics_source or {}
+    ls_id = (ls.get("lyrics_id") or "").strip() if isinstance(ls, dict) else ""
+    if isinstance(ls, dict) and (ls.get("title") or "").strip() and (not lyrics_id or lyrics_id == ls_id):
+        meta["lyrics_title"] = (ls.get("title") or "").strip()[:100]
+        meta["lyrics_is_mine"] = bool(ls.get("is_mine", True))
+    elif lyrics_id:
+        try:
+            if ObjectId.is_valid(lyrics_id):
+                gen = await mongo.generations.find_one(
+                    {"_id": ObjectId(lyrics_id), "user_id": user_id}, {"title": 1},
+                )
+                if gen is not None and (gen.get("title") or "").strip():
+                    meta["lyrics_title"] = (gen.get("title") or "").strip()[:100]
+                    meta["lyrics_is_mine"] = True
+                elif gen is None:
+                    logger.info(
+                        "[SongSource] lyrics unresolved user=%s lid=%s — 명칭 생략",
+                        user_id[:8], lyrics_id[:36],
+                    )
+        except Exception as e:
+            logger.warning("[SongSource] lyrics resolve failed lid=%s: %s", lyrics_id[:36], e)
+
+    return normalized_persona_id, (meta or None)
+
+
 def _mv_presigned_url(object_name: Optional[str]) -> Optional[str]:
     """v173: MV 비디오 URL — 중앙 헬퍼(media_urls.browser_video_url) 위임.
 
@@ -1456,6 +1549,11 @@ async def upload_track(
     # v210: AI 커버 산출물 — 프론트는 이미 전송 중(UploadPage :425)이었으나 서버가
     # 드롭하던 갭 봉합. 본인 cover_sessions 산출물 증명 실패 시 400 (silent drop 금지).
     cover_object_name: str = Form(None),
+    # v214 곡 출처 4필드 (optional — 받은 값 그대로, 64자 캡. 명칭은 서버 생성)
+    character_id: str = Form(None),
+    persona_id: str = Form(None),
+    persona_model: str = Form(None),
+    lyrics_id: str = Form(None),
     is_public: bool = Form(True),
     current_user=Depends(get_current_user),
 ):
@@ -1535,6 +1633,22 @@ async def upload_track(
     categories_list = filter_categories(cats_raw)
 
     now = datetime.now(timezone.utc)
+    # ── v214 곡 출처 기록 (경로 B — body 값만, gen_doc 승계 없음) ────────────
+    src_character_id = (character_id or "").strip()[:64] or None
+    src_persona_id = (persona_id or "").strip()[:64] or None
+    src_persona_model = (persona_model or "").strip()[:64] or None
+    src_lyrics_id = (lyrics_id or "").strip()[:64] or None
+    src_persona_id_norm, source_meta = await _resolve_source_meta(
+        get_mongo(), uploader_id, src_character_id, src_persona_id, src_lyrics_id,
+    )
+    if src_character_id or src_persona_id or src_lyrics_id:
+        logger.info(
+            "[SongSource] track=%s path=file char=%s persona=%s(norm=%s) lyrics=%s meta=%s",
+            str(track_id), src_character_id or "-", src_persona_id or "-",
+            src_persona_id_norm or "-", src_lyrics_id or "-",
+            sorted(source_meta.keys()) if source_meta else None,
+        )
+
     doc = {
         "_id": track_id,
         "title": title,
@@ -1557,6 +1671,12 @@ async def upload_track(
         "audio_url": object_name,
         # v210: 검증 통과한 AI 커버 산출물 (미전송 시 None — 기존 동작 동일).
         "cover_image_url": validated_cover,
+        # v214 — 곡 출처 4필드 + 표시 스냅샷 (경로 B)
+        "character_id": src_character_id,
+        "persona_id": src_persona_id_norm,
+        "persona_model": src_persona_model,
+        "lyrics_id": src_lyrics_id,
+        "source_meta": source_meta,
         "waveform_data": [],
         "play_count": 0,
         "like_count": 0,
@@ -1613,6 +1733,16 @@ class UploadFromGenerationBody(BaseModel):
     # 부착 API(POST /mv/jobs/{id}/attach) 로 대체. pydantic extra 기본 ignore 라
     # 구 클라이언트가 보내도 무해.
     ai_model: Optional[str] = "Suno"
+    # ── v214 곡 출처 기록 (앱팀 B-4) — 받은 값 그대로 저장(400·422 없음).
+    # 캡은 저장부 수동 [:64] 자름(경로 B 와 통일 — planner 판정: 출처는 부가 메타,
+    # 출처 때문에 업로드 본 동작이 실패하면 안 됨. 잘린 id 는 resolve 실패 →
+    # meta 없음 → 표기 생략으로 자연 무해).
+    # persona_id 는 clone_id 권장이나 Suno voice_id 로 와도 서버가 역매핑 정규화.
+    # 표시 명칭(source_meta)은 본인 소유 문서 일치 시에만 서버 생성 — 스푸핑 차단.
+    character_id: Optional[str] = None
+    persona_id: Optional[str] = None
+    persona_model: Optional[str] = None
+    lyrics_id: Optional[str] = None
     # v71: MV 안 만들고 cover 만 만든 곡도 cover_character 노출 가능하도록
     # publish 시점의 사용자 캐릭터 snapshot 을 트랙 도큐먼트에 박음.
     # 구조는 mv_jobs.user_character_snapshot 와 동일.
@@ -1812,6 +1942,32 @@ async def upload_from_generation(
             "beats_error": None,
         }
 
+    # ── v214 곡 출처 기록 (앱팀 B-4) ─────────────────────────────────────────
+    # 승계 규칙: body 값 > gen_doc 값(persona 는 voice_id→clone_id 역매핑 정규화)
+    # > gen_doc.lyrics_source(작곡 시점 동결 스냅샷). 받은 값 그대로 — 400 없음.
+    src_character_id = (body.character_id or "").strip()[:64] or None
+    src_persona_id = (body.persona_id or "").strip()[:64] or None
+    src_persona_model = (body.persona_model or "").strip()[:64] or None
+    src_lyrics_id = (body.lyrics_id or "").strip()[:64] or None
+    gen_lyrics_source = gen_doc.get("lyrics_source") or None
+    if not src_persona_id and gen_doc.get("persona_id"):
+        # gen_doc.persona_id = Suno voice_id (v213 실측) — 역매핑이 clone_id 로 정규화
+        src_persona_id = str(gen_doc["persona_id"])[:64]
+        if not src_persona_model and gen_doc.get("persona_model"):
+            src_persona_model = str(gen_doc["persona_model"])[:64]
+    if not src_lyrics_id and isinstance(gen_lyrics_source, dict):
+        src_lyrics_id = (gen_lyrics_source.get("lyrics_id") or "").strip()[:64] or None
+    src_persona_id_norm, source_meta = await _resolve_source_meta(
+        mongo, uploader_id, src_character_id, src_persona_id, src_lyrics_id,
+        lyrics_source=gen_lyrics_source,
+    )
+    logger.info(
+        "[SongSource] track=%s path=from-generation char=%s persona=%s(norm=%s) lyrics=%s meta=%s",
+        str(track_id), src_character_id or "-", src_persona_id or "-",
+        src_persona_id_norm or "-", src_lyrics_id or "-",
+        sorted(source_meta.keys()) if source_meta else None,
+    )
+
     doc = {
         "_id": track_id,
         "title": body.title,
@@ -1839,6 +1995,13 @@ async def upload_from_generation(
         "generation_id": str(gen_doc["_id"]),
         "variant_index": variant_index,  # v74
         "user_character_snapshot": user_character_snapshot,
+        # v214 — 곡 출처 4필드(받은 값 그대로, persona 만 정규화) + 서버 생성 표시 스냅샷.
+        # 응답면 전부 pass-through(projection 0) — 저장만으로 my/상세/charts/채널 자동 동봉.
+        "character_id": src_character_id,
+        "persona_id": src_persona_id_norm,
+        "persona_model": src_persona_model,
+        "lyrics_id": src_lyrics_id,
+        "source_meta": source_meta,
         "created_at": now,
         "updated_at": now,
         **beats_fields,

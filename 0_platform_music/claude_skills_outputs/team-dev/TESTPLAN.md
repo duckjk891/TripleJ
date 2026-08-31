@@ -11660,3 +11660,248 @@ N7 캡처 body 3종(자동/수동 오버라이드/해제 — clone_id vs voice_i
   잔존+""·null·'missing' / 연결 실값, R1·N6a 반영·상비 회귀 편입) ⑤ Q4: 2경로 = :711 신규
   POST /generate/·:753 /{id}/start, UI 트리거 F2 보고 기준, **실생성 차단 402 계정(⭐<15) 우선** +
   인터셉트 병행. 시나리오 수·태그 분포 불변(11건).
+
+## v214 — B-4 곡 출처 기록 + 3곳 표시 검증 (2026-08-31 13:14)
+
+### 0. 전제·공통 절차
+
+- **대상**: PLAN v214(:30912~). 백엔드 — track doc 출처 4필드(character_id·persona_id·
+  persona_model·lyrics_id, "받은 값 그대로"·≤64자 캡) + `source_meta` 서버 생성 스냅샷(소유 문서
+  일치 시에만 — T1), 승계 3규칙(body > gen_doc > lyrics_source)·voice_id→clone_id 역매핑,
+  generate.py lyrics_source 수용·영속(T2). 프론트 — onSendToUpload characterId 관통(T3),
+  CharacterCoverCard source prop+라벨 개명 "이 곡의 아이돌"(T4), SongItem/TrackCard
+  showSourceBadge 옵션 prop(T5 — 2페이지만 on), ArtistDetailPage 본인 필터 칩+limit 50(T6).
+- **서버·계정·원복**: v213 §0 승계 — 9006+4000, 계정 A/B 일회용, mongo 직삽 픽스처(tracks·
+  generations·voice_clones·characters)는 테스트 계정 소유만·id 전수 기록·원복(트랙 직삽 시
+  v211 규약 — generation_id 세팅). 실데이터 read-only **안정 상태 한정 규약**: 착수 시
+  characters·voice_clones·tracks 실데이터 계수/스냅샷 → 종료 재계측 동일(변동 = ABORT).
+- **유료 0 — 이번 사이클 산정**:
+  1. **실업로드 e2e 2건 한정** = 경로 A(upload-from-generation) 1건 + 경로 B(파일 업로드) 1건 —
+     **OpenAI 인덱싱 외부 총 4회 사전 계상**(v211 §0 개정 규약 — 사전 고지·총괄표 계상,
+     **초과분 감지 즉시 ABORT**). 그 외 트랙 픽스처는 전량 mongo 직삽.
+  2. 작곡·작사 **시작** 등 유료 경로 금지 — 작곡 시작 2계열(v213 확정: :711 POST /generate/ 신규·
+     :753 /{id}/start) 인터셉트 + **402 계정(⭐<15) 백스톱**(v213 Q4 방식). compose 의
+     lyrics_source 검증은 **body 캡처(인터셉트)** + `createGeneration(start_music_gen:false)`
+     **무과금 실호출**(draft 경로 — lyrics_source 수용·영속의 실서버 검증 가능)로 수행.
+  3. 차단망 전면 승계: translate-tags·시트 생성·클론 생성·check-availability·MV 파이프라인·
+     커버 생성(인터셉트), mv/gen 픽스처 lazy translate 규약.
+- **me 키셋 상비 회귀**: v213 갱신본(persona 5키 포함) 기준 — v214 는 me 무변 전제, 증감 0 판정.
+- **출처 표기 판정 규약(T1·T5)**: "저장은 관대(받은 값 그대로·400 없음), 표시는 엄격(source_meta
+  = 서버가 소유 확인한 명칭만)" — 스푸핑 케이스의 판정 본질은 **"doc 에 남되 화면에 안 나온다"**.
+- **단계 게이트**: B1+B2 후 = unit·api 9건(R1·R4·R5·N1~N5·N10) / F1~F5 후 = e2e 6건(R2·R3·
+  N6~N9).
+
+### 1. 시나리오 (회귀 R1~R5 = PLAN §4 ①~⑤ / 신규 N1~N10 = ⑥~⑮)
+
+#### R1 `[unit]` 업로드 양 경로 기존 동작 불변 (①)
+
+- **When/Then**: (a) tracks.py diff 목검 — upload_track·upload-from-generation 변경이 **additive**
+  (4필드 Form/body + `_resolve_source_meta` 호출 + doc insert 확장)에 국한, 기존 검증(v210 커버
+  강검증·SnapFix·generation 소유/completed)·필드 구성 무변 (b) 4필드 **전부 미전송** 입력으로
+  doc 구성 로직 판정(헬퍼/구성 함수 직접 호출) — **planner Q1 확정 표현 계약**: 신곡 무출처 =
+  4필드 null·source_meta null **키 존재** / 기존 곡 = **키 부재** — 이 구분이 응답에서 유지됨을
+  판정 (c) e2e 실업로드 2건(N6·N9)의 doc 에서 **구 계약 키 전량 보존**(키셋 비교) 교차.
+- **유료 0**: 정적+인메모리. **게이트**: B 후.
+
+#### R2 `[e2e]` SongItem 옵션 미전달 5소비처 렌더 완전 동일 (②)
+
+- **Given**: 트랙 목록 응답 인터셉트 픽스처(source_meta **보유** 신곡 포함 — 미전달 소비처에서도
+  뱃지가 새지 않는지가 핵심).
+- **When/Then**: SearchPage·AlbumDetailPage·PlaylistDetailPage(기본 off 3곳) — `showSourceBadge`
+  미전달로 **뱃지 행 부재·기존 렌더 완전 동일**(v207 옵션 prop 규약) + 콘솔 에러 0. on 대상
+  2페이지는 N8 관할. 정적 grep — 5소비처 호출부에 prop 추가 여부 실측(off 3곳 무변경 확인).
+- **유료 0**: 인터셉트 렌더. **게이트**: F 후.
+
+#### R3 `[e2e]` PlayerPage 기존 표시 회귀 — cover_character·프롬프트 탭 (③)
+
+- **Given**: 트랙 상세 인터셉트 — (i) **기존 곡형**(cover_character 스냅샷 有·source_meta 無)
+  (ii) genDetail 픽스처(프롬프트 탭).
+- **When/Then**: (i) 카드 렌더 기존 동일 — 단 **라벨은 "이 곡의 아이돌"**(T4 개명 — 유일 의도
+  변경, "주인공 캐릭터" 문자열 부재)·🎤📝 행 **생략**(source 無) (ii) 프롬프트 탭 info-grid·
+  페르소나 raw id 표시(본인 generation 한정) 기존 동일.
+- **유료 0**: 인터셉트. **게이트**: F 후.
+
+#### R4 `[api]` v212/v213 스모크 + me 키셋 상비 (④)
+
+- **When/Then**: /character/list(slots·persona 5키 계약값)·PATCH 프로필·persona 연결/해제(""
+  unset) 각 1건 스모크 + **me 키셋 = v213 기준본과 증감 0**(v214 무변 전제). v213 작곡실 우선순위
+  서열은 N6(d) e2e 스모크로 이관 명기.
+- **유료 0**: 무과금 CRUD. **게이트**: B 후.
+
+#### R5 `[api]` charts·검색·앨범 리스트 응답 무회귀 (⑤)
+
+- **Given**: 직삽 신곡(4필드+meta)·구곡(무필드) 공존 상태.
+- **When/Then**: GET /(차트)·/tracks/my·검색·앨범 트랙 리스트 — 200 + 구곡 항목 스키마 기존
+  동일(**Q1 확정: 구곡 = 신 키 부재** / 신곡 무출처 = null 키 존재, N5 교차)·신곡 포함돼도
+  직렬화 오류 0. projection 0(pass-through) 전제의 무회귀 실증.
+- **유료 0**: GET. **게이트**: B 후.
+
+#### N1 `[unit]` 4필드 "받은 값 그대로" — 관대 저장·64자 캡 (⑥)
+
+- **When/Then**: (a) 4필드 길이 계약(**planner 확정 갱신** — backend 통일 수정 반영): 64자
+  통과·저장 / **65자 이상 → 양 경로 공히 201 + 저장값 64자 절단 + source_meta 없음**(422/400
+  아님 — 절단값 doc 실측 확인)·미전송 None (b) 구성 로직에 **타인/무효 id** 입력 —
+  **저장값 = 받은 값 그대로**(400 없음·저장 거부 없음) + source_meta 해당 명칭 **미생성**
+  (c) lyrics_source 캡 — id 64·title 100 경계(+1 초과 거동 실측). e2e 실증은 N9(스푸핑 혼합
+  업로드) 교차.
+- **유료 0**: 인메모리+직삽. **게이트**: B 후.
+
+#### N2 `[unit]` 승계 3규칙 — body > gen_doc > lyrics_source (⑦)
+
+- **Given**: 직삽 — gen_doc(persona_id=Suno voice_id·lyrics_source 보유·title), voice_clones
+  (해당 voice_id 보유 ready 클론), draft generation(가사 제목).
+- **When/Then** (`_resolve_source_meta`/승계 로직 직접 호출):
+  - (a) **body 우선**: body 4필드 존재 시 gen_doc 값 무시(body 값 저장)
+  - (b) body 미전송 + from-generation → gen_doc 승계: persona 는 `{user_id, $or:[{voice_id},
+    {_id}]}` 역매핑 → **clone_id 정규화 저장** + persona_name=voice_name / 역매핑 실패(클론
+    삭제됨) → **받은 값 그대로**+명칭 생략
+  - (c) lyrics: gen_doc.lyrics_source 우선 → 부재 시 lyrics_id 의 generations 소유 문서
+    resolve(title) — 순서 역전 케이스로 우선순위 증명
+  - (d) 경로 B(파일)는 body 값만(gen_doc 승계 없음).
+- **유료 0**: 직접 호출. **게이트**: B 후.
+
+#### N3 `[unit]` source_meta 소유권 — 자기 문서만 명칭 생성 (⑧)
+
+- **Given**: 본인 아티스트/클론/draft + **B 소유** 동종 3건 직삽.
+- **When/Then**: 필드별 독립 판정 — 본인 일치 필드만 `{artist_name, persona_name, lyrics_title,
+  lyrics_is_mine}` 생성, 타인/부재/무효 필드는 **해당 명칭만 생략**(부분 생성 — 전체 무효화
+  아님). 전 필드 타인 → source_meta 자체 부재. 클라가 보낸 명칭류는 **일절 불신**(meta 는 서버
+  resolve 값만 — 스푸핑 차단 본질).
+- **유료 0**: 직접 호출. **게이트**: B 후.
+
+#### N4 `[api]` 응답면 4면 동봉 — pass-through 실증 (⑨)
+
+- **Given**: 4필드+source_meta 보유 track doc 직삽(공개·테스트 아티스트 귀속).
+- **When/Then**: ① GET /tracks/my ② 상세(GET /tracks/{id} — **Redis 캐시 적재 후 재조회에도
+  동봉**: 신곡이라 스키마 범프 불요 전제 실증) ③ charts(GET /) ④ artists/{id}/tracks — **4면
+  모두** 4필드+source_meta 그대로 동봉(pass-through·projection 0 실증, 뱃지 재료 N+1 원천 부재
+  — 추가 쿼리 없이 목록 응답만으로 재료 완비 확인).
+- **유료 0**: GET·직삽. **게이트**: B 후.
+
+#### N5 `[api]`(+e2e 교차) 기존 곡 생략 (⑩)
+
+- **Given**: 구형 doc(4필드·meta 전부 부재 — 기존 곡 모사 직삽).
+- **When/Then**: 4응답면에서 **신 키 부재**(Q1 확정 — 신곡 무출처의 null 키 존재와 구분) +
+  **전 표시면 무표기** —
+  카드 🎤📝 행 생략(R3(i))·뱃지 행 생략(N8 on 페이지에서도)·필터 "전체"에만 등장(N8(c)). 소급
+  없음(사양 5) 실증.
+- **유료 0**: GET·인터셉트. **게이트**: B 후(e2e 교차분은 F 후).
+
+#### N6 `[e2e]` 가사 체인 관통 — 작사실→작곡→업로드→카드 📝 (⑪)
+
+- **Given**: Playwright 계정 A(⭐<15 백스톱 상태), 공통 차단망+작곡 시작 2계열 인터셉트. 아티스트
+  1건+ready 클론 직삽.
+- **When/Then**:
+  - (a) 작사실에서 draft 실생성(무과금 — 제목 `v214-가사제목`) → 작곡실 땡겨오기
+  - (b) 작곡 제출 → 캡처 body 에 **`lyrics_source: {lyrics_id: draftId, title, is_mine:true}`** +
+    **draft 삭제 실발생**(v209 정책 유지 — 리스트에서 소멸, 무과금 DELETE) + 2경로(:711/:753)
+    각 1회 캡처(v213 Q4 재현 조건). **핵심 판정(planner Q3 확정) = "삭제 직전 캡처" 순서**:
+    deleteGeneration 요청 **이전에** 전송된 제출 body 에 lyrics_source 가 이미 완비(네트워크
+    타임라인 순서 증적) + F1 완료 보고·코드 실측(캡처가 :734 삭제 앞에 위치) 병행 — 순서 역전
+    (삭제 후 빈 lyrics_source)이면 FAIL
+  - (c) 영속 실증: `createGeneration(start:false)` 에 lyrics_source 동봉 **실호출**(무과금) →
+    gen doc 영속 확인(B2 수용 — draft 삭제에도 lyrics_source 는 산다)
+  - (d) **v213 우선순위 스모크**(R4 이관분): 수동 클론 선택 시 아티스트 자동 주입 오버라이드 1건
+  - (e) 직삽 completed gen_doc(lyrics_source·voice_id 포함)으로 **경로 A 실업로드 1건**(계상
+    1/2 — OpenAI 2회) → track doc: lyrics_id·persona 정규화(clone_id)·source_meta.lyrics_title/
+    is_mine 동결 → PlayerPage 상세: 카드 라벨 **"이 곡의 아이돌"** + `📝 {가사 제목} (내 작사)` +
+    `🎤 {목소리명}` 행 표시. 직접 입력 가사 곡(lyrics_source 無)은 📝 생략 — 대조군 1건(직삽).
+- **정리**: 트랙 purge(N7·N8 사용 후)·픽스처 원복.
+- **유료 0**: 시작 인터셉트+402 백스톱, 실업로드 계상 1건. **게이트**: F 후.
+
+#### N7 `[e2e]` Break 2 관통 — compose 아티스트 = 업로드 스냅샷 아티스트 (⑫)
+
+- **Given**: N6 세션 — 아티스트 2건(A1 비default·A2 default), 작곡실에서 **A1 선택**.
+- **When/Then**: ① [업로드→] payload 에 `characterId: A1.character_id` 캡처 ② UploadPage 가
+  **A1 자동선택**(default A2 아님 — prefill 우선 규칙) ③ N6(e) 제출에 `character_id: A1` 전송 →
+  track.character_id==A1 + user_character_snapshot 아티스트 일치(**무음 어긋남 해소 판정**)
+  ④ 폴백: prefill.characterId=삭제된 cid 주입(인터셉트/직삽) → default 폴백 + 콘솔 에러 0(제출
+  없이 UI 판정) ⑤ 수동 변경 존중 — 자동선택 후 사용자가 A2 로 변경 시 그 값 전송.
+- **유료 0**: N6 실업로드 겸용(추가 업로드 0). **게이트**: F 후.
+
+#### N8 `[e2e]` 표시 3곳 — 뱃지 2페이지·필터 칩 (⑬)
+
+- **Given**: 목록 응답 인터셉트(또는 N6 트랙+직삽 혼합) — source_meta 완비곡·artist_name 만·
+  persona_name 만·기존 곡 4형.
+- **When/Then**:
+  - (a) **뱃지 on 2페이지**(ArtistDetailPage:247·MainPage 차트/TrackCard): 완비곡
+    `🧑‍🎤 {아티스트명} · 🎤 {목소리명}` / 부분곡 없는 요소 생략 / 기존 곡 행 자체 생략. 재료
+    **source_meta 직행**(추가 네트워크 요청 0 — 캡처로 N+1 부재 실증) + artist_name 폴백 체인
+    (meta→snapshot.name)
+  - (b) 카드 표시는 N6(e) 겸증
+  - (c) **필터 칩**(ArtistDetailPage isSelf): 전체 | 아티스트별(getCharacterList 카드) —
+    character_id 매칭 필터·**기록 곡 수 표기**·기존 곡은 "전체"에만·limit 50 요청 확인(쿼리
+    파람) · **타인 뷰에서 칩 부재**.
+- **유료 0**: 인터셉트·GET. **게이트**: F 후.
+
+#### N9 `[e2e]` 경로 B — Form 4필드+character_id·스푸핑 혼합 실증 (⑭+⑥⑧ 교차)
+
+- **Given**: 계정 A, 파일 업로드 폼(소형 오디오 픽스처). 아티스트 선택 UI 로 본인 아티스트 선택.
+- **When/Then**: **경로 B 실업로드 1건**(계상 2/2 — OpenAI 2회): FormData 에 character_id(본인
+  실값 — UI 경유) + **의도 주입 스푸핑 값**(persona_id=타인/무효 clone_id — **Q4 확정:
+  Playwright route 개서로 삽입, 개서 전/후 요청 원문 증적 기록 의무**) →
+  200(저장 거부 없음) + doc: 4필드 받은 값 그대로 + source_meta **부분 생성**(artist_name 생성·
+  persona_name 생략 — 소유권 판정의 end-to-end 실증) + 표시면에서 🎤 미표기. gen_doc 승계
+  없음(경로 B — body 값만) 교차.
+- **정리**: 트랙 purge → **외부 호출 총괄표**: 실업로드 2건 × 2 = 4회 정합(초과 시 ABORT 사후
+  보고).
+- **유료 0**: 계상 1건 + 나머지 무과금. **게이트**: F 후.
+
+#### N10 `[unit]` persona_id 에 voice_id 수신 — 역매핑 정규화 (⑮)
+
+- **Given**: 직삽 ready 클론(clone_id C·voice_id V).
+- **When/Then**: 승계/resolve 로직에 **body persona_id=V**(앱팀이 Suno id 를 보내는 시나리오)
+  입력 → `{user_id, $or:[{voice_id},{_id}]}` 매칭 → **저장값 = C(clone_id 정규화)** +
+  persona_name 생성. 대조: (i) persona_id=C(정상) → C 유지 (ii) V 가 타인 클론의 voice_id →
+  매칭 실패 취급 — 받은 값 그대로+명칭 생략 (iii) 어느 쪽도 아닌 문자열 → 받은 값 그대로.
+  `[SongSource]` 역매핑 성공/실패 로그 계약 확인. N6(e) 경로 A 실증(gen_doc.persona_id=voice_id
+  형태) 교차.
+- **유료 0**: 직접 호출. **게이트**: B 후.
+
+### 2. 실행 순서·게이트·중단 기준
+
+| 게이트 | 순서 | 비고 |
+|---|---|---|
+| B1+B2 후 | 실데이터 계수/스냅샷 → R1 → N1 → N2 → N3 → N10 → N4 → N5 → R5 → R4 | 전부 unit/직삽/GET — 외부 0 |
+| F1~F5 후 | N6 → N7(동일 세션) → N9 → N8 → R3 → R2 → N5 교차분 | 브라우저 1세션, 실업로드 2건은 N6(e)·N9 뿐 |
+| 종료 | 트랙 purge·픽스처 원복 → 외부 호출 총괄표(4회 정합) → 실데이터 재계측 → 계정 A·B 탈퇴 | |
+
+- **ABORT**: ① **OpenAI 인덱싱 4회 초과**(산정 외 실업로드/재인덱싱 감지) ② 작곡 시작 인터셉트
+  미스(402 백스톱 발동 포함 즉시 점검) ③ 실데이터 변동 ④ 스푸핑 값이 source_meta 에 명칭으로
+  출현(소유권 우회 — 보안 실패) ⑤ 차단망 미스 — 즉시 중단·보고.
+
+### 3. 판정 기록 양식
+
+v205 §4 동일. 첨부: 승계 매트릭스 판정표(N2 — 입력×규칙×저장값), 소유권 판정표(N3·N9 —
+필드별 생성/생략), 역매핑 4케이스 표(N10), 응답 4면 동봉 대조(N4), 캡처 body(N6(b) lyrics_source
+2경로·N7 characterId·N9 FormData), 외부 호출 총괄표(2건×2=4회), me 키셋 증감 0 확인. 시크릿·
+실이메일 0.
+
+### 4. planner/tester 확인 필요 (2026-08-31 planner 회신으로 전건 해소)
+
+- **Q1 [해소]**: 표현 계약 확정 — **신곡 무출처 = 4필드 null·source_meta null 키 존재 / 기존 곡
+  = 키 부재**. R1(b)·R5·N5 판정에 이 구분 고정(본문 반영).
+- **Q2 [해소 — N1(a) 기대값 갱신]**: 64자 초과 = **양 경로 공히 201 + 저장값 64자 절단 +
+  source_meta 없음**(422 아님 — backend 통일 수정, 본문 반영).
+- **Q3 [해소]**: 핵심 판정 = **"삭제 직전 캡처" 순서**(deleteGeneration 이전의 제출 body 에
+  lyrics_source 완비 — 네트워크 타임라인 증적) + F1 보고·코드 실측 병행(N6(b) 반영).
+- **Q4 [해소]**: 요청 변조 = **Playwright route 개서 채택** — 개서 전/후 요청 원문 **증적 기록
+  의무**(N9 판정 첨부에 편입).
+
+### 개정 이력 (v214)
+
+- 2026-08-31 초판 15건(PLAN §4 ①~⑮ 1:1 — 회귀 R1~R5·신규 N1~N10): **[unit] 5(R1·N1·N2·N3·N10)
+  / [api] 4(R4·R5·N4·N5) / [e2e] 6(R2·R3·N6~N9)**. 급소 = ①"저장 관대·표시 엄격" 이원 규약
+  (받은 값 그대로 64캡 + source_meta 소유권 — N1·N3·N9 스푸핑 혼합 실증) ②승계 3규칙·voice_id→
+  clone_id 역매핑(N2·N10 — 앱팀 R1 리스크 방어) ③가사 체인(draft 죽고 lyrics_source 산다 —
+  N6) ④Break 2 관통(compose=업로드 아티스트 일치·폴백 — N7) ⑤pass-through 4면·기존 곡 소급
+  없음(N4·N5). 유료 0 = **실업로드 e2e 2건 한정(경로 A·B 각 1 — OpenAI 4회 사전 계상·초과
+  ABORT)** + 그 외 전량 직삽 + 작곡 시작 인터셉트·402 백스톱 + 차단망·실데이터 안정 상태 규약
+  승계. 게이트: B1+B2 후 9건 → F1~F5 후 6건.
+- 2026-08-31 **확정판(planner 승인 + 확정 4건)**: ① N1(a) 기대값 갱신 — 64자 초과 = **양 경로
+  201 + 64자 절단 저장 + source_meta 없음**(422 아님, backend 통일 수정) ② Q1 해소 — 신곡
+  무출처 = 4필드 null·meta null **키 존재** / 기존 곡 = **키 부재**(R1(b)·R5·N5 판정 고정)
+  ③ Q3 해소 — 핵심 판정 = "삭제 직전 캡처" 순서(deleteGeneration 이전 body 에 lyrics_source
+  완비, 네트워크 타임라인 증적 + F1 보고·코드 실측 병행, 역전 시 FAIL — N6(b)) ④ Q4 해소 —
+  요청 변조 = Playwright route 개서 채택·개서 전/후 원문 증적 의무(N9). 시나리오 수·태그 분포
+  불변(15건).

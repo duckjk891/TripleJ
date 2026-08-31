@@ -52,6 +52,18 @@ class LyricsRequest(BaseModel):
     models: Optional[List[str]] = None  # e.g. ["gpt-4o-mini", "claude-opus-4-6"]
 
 
+class LyricsSourceSnapshot(BaseModel):
+    """v214 — 가사 출처 스냅샷 (Break 1 해법의 서버 반쪽).
+
+    작사실 draft 는 작곡 시 삭제되므로(v209 리스트 오염 방지 설계 유지) FE 가
+    삭제 직전 draftId·제목을 여기 동봉 → generation doc 에 동결 → 업로드 시
+    tracks.py 가 lyrics_id / source_meta.lyrics_title 로 승계한다.
+    """
+    lyrics_id: Optional[str] = None   # 삭제될 draft 의 generation id (영수증 — 문서는 죽고 스냅샷은 산다)
+    title: Optional[str] = None
+    is_mine: Optional[bool] = True
+
+
 class GenerateRequest(BaseModel):
     prompt: str
     title: Optional[str] = None
@@ -82,6 +94,9 @@ class GenerateRequest(BaseModel):
     categories: Optional[List[str]] = None          # v77: 고정 10종 화이트리스트 카테고리
     # v209+: 솔로/듀엣 여부 — draft 저장 시 보존해 작곡실 인계 유실 방지 (PATCH duet 과 대칭).
     duet: Optional[bool] = None
+    # v214 — 가사 출처 스냅샷 (optional). persona_id 는 현행 그대로(voice_id 의미
+    # 유지 — clone_id 정규화는 업로드 시점 tracks.py 에서 수행).
+    lyrics_source: Optional[LyricsSourceSnapshot] = None
 
 
 class UpdateGenerationRequest(BaseModel):
@@ -110,6 +125,24 @@ class UpdateGenerationRequest(BaseModel):
 
 
 # ─── Helpers ─────────────────────────────────────────────────
+
+def _normalize_lyrics_source(src) -> Optional[dict]:
+    """v214 — lyrics_source 정규화 (캡: lyrics_id 64자·title 100자).
+
+    id·title 둘 다 빈값이면 None (출처 없음 = 표기 생략 — 정직).
+    """
+    if not src:
+        return None
+    lyrics_id = (src.lyrics_id or "").strip()[:64]
+    title = (src.title or "").strip()[:100]
+    if not lyrics_id and not title:
+        return None
+    return {
+        "lyrics_id": lyrics_id,
+        "title": title,
+        "is_mine": bool(True if src.is_mine is None else src.is_mine),
+    }
+
 
 def _serialize(doc: dict) -> dict:
     if doc is None:
@@ -518,6 +551,8 @@ async def create_generation(
         "duet_sub_vocal_style": body.duet_sub_vocal_style,
         # v209+: 솔로/듀엣 여부 보존 (draft → 작곡실 인계 유실 방지, PATCH duet 과 대칭).
         "duet": body.duet,
+        # v214 — 가사 출처 스냅샷 영속 (캡: id 64·title 100. 자기 소유 기록이라 캡 외 무검증).
+        "lyrics_source": _normalize_lyrics_source(body.lyrics_source),
         "status": "pending",
         "progress": 0,
         "result_track_id": None,
@@ -539,6 +574,13 @@ async def create_generation(
     gen_id = str(result.inserted_id)
 
     logger.info("[generate] gen_id=%s cats=%s", gen_id, categories)
+    if doc.get("lyrics_source"):
+        logger.info(
+            "[SongSource] gen_id=%s lyrics_source id=%s title_len=%d is_mine=%s",
+            gen_id, doc["lyrics_source"].get("lyrics_id") or "(none)",
+            len(doc["lyrics_source"].get("title") or ""),
+            doc["lyrics_source"].get("is_mine"),
+        )
 
     # Start music generation if requested
     if will_start_music:

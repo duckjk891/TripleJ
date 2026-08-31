@@ -7,7 +7,7 @@ import './CharacterCoverCard.css';
 /**
  * CharacterCoverCard
  *
- * v68 — PlayerPage 의 우측 영역 아래에 노출되는 "이 곡의 주인공 캐릭터" 카드.
+ * v68 — PlayerPage 의 우측 영역 아래에 노출되는 "이 곡의 아이돌" 카드. (v214 라벨 개명)
  *
  * Props:
  *   character: {
@@ -24,7 +24,30 @@ import './CharacterCoverCard.css';
  * PII (name/age/personality_text) 콘솔 출력 금지 — 길이/카운트/존재여부만 로깅.
  * MyMusicPage 의 마크업은 시각 참고이며, 컴포넌트/state 공유 없음 (새 prefix).
  */
-export default function CharacterCoverCard({ character, trackId = null }) {
+// v214 F3 — source: track.source_meta(서버 생성 표시 스냅샷 {artist_name, persona_name, lyrics_title,
+// lyrics_is_mine}) 옵션 prop. 미전달(기존 곡)이면 렌더 완전 동일. 🎤 목소리·📝 가사 출처 행 재료.
+export default function CharacterCoverCard({ character, trackId = null, source = null }) {
+  // v214 — 출처 행 (재료 있을 때만 — 없는 요소 생략, 둘 다 없으면 행 자체 생략)
+  const renderSourceRows = () => {
+    const voiceName = source?.persona_name || null;
+    const lyricsTitle = source?.lyrics_title || null;
+    if (!voiceName && !lyricsTitle) return null;
+    return (
+      <div className="character-cover-card__profile-row" style={{ marginTop: '6px' }}>
+        {voiceName && (
+          <div className="character-cover-card__profile-line">
+            <span>🎤 목소리: <strong>{voiceName}</strong></span>
+          </div>
+        )}
+        {lyricsTitle && (
+          <div className="character-cover-card__profile-line">
+            <span>📝 가사: 「{lyricsTitle}」{source?.lyrics_is_mine ? ' (내 작사)' : ''}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const { user } = useAuth();
   // { [itemId]: true } — 위시리스트에 담긴 아이템
   const [wishlisted, setWishlisted] = useState({});
@@ -89,12 +112,14 @@ export default function CharacterCoverCard({ character, trackId = null }) {
     return (
       <div className="character-cover-card character-cover-card--empty">
         <div className="character-cover-card__header">
-          <h3>이 곡의 주인공 캐릭터</h3>
+          <h3>이 곡의 아이돌</h3>
         </div>
         <p className="character-cover-card__empty-msg">캐릭터 미사용</p>
         <p className="character-cover-card__empty-hint">
           이 곡은 '내 캐릭터 포함' 옵션 없이 생성되었습니다.
         </p>
+        {/* v214 — 캐릭터 미사용이어도 출처(목소리·가사) 재료가 있으면 표시 (경로 B 목소리 작곡 등) */}
+        {renderSourceRows()}
       </div>
     );
   }
@@ -206,7 +231,7 @@ export default function CharacterCoverCard({ character, trackId = null }) {
   return (
     <div className="character-cover-card">
       <div className="character-cover-card__header">
-        <h3>이 곡의 주인공 캐릭터</h3>
+        <h3>이 곡의 아이돌</h3>
       </div>
 
       {/* 시트 이미지 */}
@@ -254,6 +279,9 @@ export default function CharacterCoverCard({ character, trackId = null }) {
           )}
         </div>
       )}
+
+      {/* v214 — 출처 행 (🎤 목소리 · 📝 가사) — source_meta 없으면 생략(기존 곡 무변) */}
+      {renderSourceRows()}
 
       {/* 착용 아이템 — 항상 3 슬롯 */}
       <p className="character-cover-card__outfit-hint">착용 아이템</p>

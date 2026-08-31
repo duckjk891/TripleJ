@@ -16825,3 +16825,45 @@ persona 5키 × 3상태 (me·list·단건 전 응답면 공통, 키 생략 금�
 
 ## 7. 안전 준수
 실사용자 데이터 무변조(§5 외부 변동 1건은 비인과 입증·안정 상태 핵심 전량 보존), 유료 외부 API 도달 0, 실 .env 무접촉, 9004/9005 무접촉, 테스트 계정·픽스처 전량 원복, 재기동 절차 준수.
+
+---
+
+# REPORT v214 — 앱팀 요청 B-4: 곡 출처 기록 + 3곳 표시 (2026-08-31 13:37 KST, planner)
+
+**판정: PASS — 백엔드 9/9 + E2E 6/6, 픽스 루프 0회.** 기준: v213 완료(7008e35) 위 사이클. 범위: backend_9006 + frontend, 9004/9005 무접촉(재부팅 후 tester가 vite dev :4000 재기동 — 유지 중, 9004 무접촉 확인).
+
+## 1. 배경·실측 요지
+앱팀 요청서 B-4: 곡 업로드 시 출처(아티스트·목소리·가사) 자동 기록 + 3곳 표시. 결정적 실측 2건: ①**응답면 전부 pass-through**(tracks·charts 직렬화기 doc 통과·projection 0) → 백엔드 작업이 저장부로 수렴 ②**프론트 체인 단절 2곳** — Break 1: 작곡 시 가사 draft 삭제(v209 오염 방지 설계)로 출처 소실 / Break 2: compose→upload 인계에 아티스트 부재 → 부른 아티스트≠스냅샷 아티스트 무음 어긋남. 부가: gen_doc.persona_id = Suno voice_id(v213 계약 clone_id와 상이), 작사 draft = generations 무과금 draft.
+
+## 2. 설계 결정 (T1~T6 — 상세 PLAN v214)
+- **T1 저장**: 앱팀 4필드(character_id·persona_id·persona_model·lyrics_id) **"받은 값 그대로"**(400 없음·64자 캡) + 서버 생성 **source_meta**{artist_name, persona_name, lyrics_title, lyrics_is_mine} — 소유 문서 일치 시에만 명칭 생성(**저장 관대·표시 엄격** 이원 규약, 스푸핑 차단). 승계: body > gen_doc(persona **voice_id→clone_id 역매핑 정규화**) > gen_doc.lyrics_source
+- **T2 Break 1 해소**: draft 삭제 정책 유지 + **삭제 직전 `lyrics_source {lyrics_id, title, is_mine}` 스냅샷을 compose body 동봉·generation 영속** — 오염 방지와 출처 보존 양립(문서는 죽고 스냅샷은 산다). 직접 입력 가사 = 출처 생략(정직)
+- **T3 Break 2 해소**: characterId를 onSendToUpload→prefill 관통, UploadPage 자동선택 prefill 우선(삭제 시 default 폴백), 양 경로 제출 전송. persona는 서버 승계가 흡수
+- **T4 표시⑴**: CharacterCoverCard **확장**(신설 카드 기각) — source prop으로 🎤 목소리·📝 가사(내 작사) 행, **라벨 "이 곡의 주인공 캐릭터"→"이 곡의 아이돌" 개명**, 무캐릭터+출처만 곡도 표시
+- **T5 표시⑵**: SongItem·TrackCard `showSourceBadge` 옵션 prop(기본 off — v207 파급 0 선례), 재료 = source_meta 직행(동결본 — 클론 삭제 일상 대비 + N+1 0). on: ArtistDetailPage·MainPage
+- **T6 표시⑶**: ArtistDetailPage 본인 뷰 클라이언트 필터 칩(+limit 10→50) — 공개 API 무변경, 데이터 성장 시 서버 필터 별건
+
+### 검토 보강 (구현 중 확정)
+- **Q2 캡 통일**: from-generation의 pydantic 422를 제거하고 양 경로 공히 수동 `[:64]` 절단 — **출처 필드는 업로드 본 동작을 절대 실패시키지 않는다**(best-effort 관행 정합). 잘린 id는 resolve 실패→표기 생략으로 자연 무해
+- lyrics_title 우선순위: body lyrics_id ≠ gen_doc 스냅샷이면 직조회(명시 지정 존중) / 경로 B 승계 no-op(재료 부재) / **신곡 무출처 = 4필드·source_meta null 키 존재, 기존 곡 = 키 부재**(신·구 진단 구분 — FE 옵셔널 체이닝 동일 처리)
+
+## 3. 계약 확정본 — 앱팀 계약서 축적분 (미러링 회귀표 기준)
+- 업로드 양 API(upload-from-generation·/tracks/upload Form) optional 4필드: `character_id`·`persona_id`·`persona_model`·`lyrics_id` — 받은 값 그대로 저장(거부 없음·64자 절단), 초과·무효·타인 id 도 업로드는 성공
+- **R1 역매핑 흡수 명시: `track.persona_id`는 정규화된 목소리 자산 id(= voice_clones.clone_id). 앱이 Suno voice_id를 보내도 서버가 {user_id, $or:[{_id},{voice_id}]} 역매핑으로 clone_id 정규화 저장(실패 시 받은 값 유지·명칭 생략).** v213 R1(persona_id=clone_id ≠ Suno id)과 일관
+- 응답: my·상세·charts·artists/{id}/tracks 전면에 4필드+`source_meta {artist_name, persona_name, lyrics_title, lyrics_is_mine}` 동봉(pass-through). 신곡 무출처=null 키 / 기존 곡=키 부재. source_meta는 서버 생성 표시 재료 — 클라 명칭 전송은 무시됨
+- POST /generate/ body optional `lyrics_source {lyrics_id≤64, title≤100, is_mine}` 영속 — 가사 draft 삭제 워크플로의 출처 스냅샷
+- 표시 정책: 기록 없는 곡은 전 표시면 생략(소급 없음)
+
+## 4. 구현·테스트 판정
+- diff: generate.py +42 · tracks.py +162/-1(Q2 캡 통일 포함) / 프론트 8파일 +168/-11 (CharacterCoverCard 36·SongItem 16·TrackCard 15·ComposeStudioTab 11·ArtistDetailPage 60·MainPage 4·PlayerPage 1·UploadPage 36) — PLAN 매트릭스 B1·B2/F1~F5 정합, 범위 외 0
+- **백엔드 9/9 PASS**: 4필드 저장 관대(양 경로·절단 통일)·승계 3규칙·voice_id→clone_id 역매핑·source_meta 소유권(타인 id → meta 없음)·응답 4면 pass-through 실증·기존 곡 소급 없음·lyrics_source 영속·lyrics_title 우선순위·null 키 정책
+- **E2E 6/6 PASS**: N6 가사 체인 관통(draft 삭제 직전 캡처 확정→정규화→플레이어 「이 곡의 아이돌」 카드 📝(내 작사)+🎤, 직접 입력 대조군 생략 정직) / N7 Break 2 관통(프리필 우선 자동선택·스냅샷 일치 — 무음 어긋남 해소) / N9 스푸핑 end-to-end(Playwright route 개서 주입 → 저장 관대+표시 생략) / N8 뱃지·필터 칩·N+1 부재 / R2·R3 회귀 무변(라벨 개명 확인 포함)
+- 안전: 실업로드 정확 2건(경로 A·B 각 1) — **OpenAI 인덱싱 4회 사전 계상 정합**, ⭐ 원장 증가만(발매보상), 실데이터 diff 0, 픽스처·계정 원복 전량
+
+## 5. 편차·기록
+1. **R2 검색 임베딩 3회 계상 외 발생**: SearchPage `?q=` 진입이 검색 쿼리 임베딩 경로(인덱싱 아님·별도 경로) 외부 3회 유발 — 사전 계상 누락 편차로 정직 기록. **§0 규약 후보 채택 권고: "검색 UI 진입 테스트는 목록 인터셉트 픽스처 기본, 실검색 쿼리는 외부 임베딩 1회/질의 사전 계상"** — 차기 TESTPLAN §0 반영
+2. N7④ 삭제-cid 폴백(프리필 아티스트 삭제 시 default 폴백)은 UI 재현 대신 코드 실측 대체 — 차기 회귀 시 실재현 1회 권장
+3. 잔여: 경로 B user_character_snapshot 미전송(cover_character 확장) 별건 기록 유지 / 필터 서버 파라미터화(데이터 성장 시) / SearchPage·Album/Playlist 뱃지 on(후속) / v212 이월 ▲승인 대기 3건 불변(실데이터 마이그레이션 --apply·구 스토리지 청소·앱팀 409 고지)
+
+## 6. 안전 준수
+실사용자 데이터 무변조(diff 0), 유료 성공 경로 0(작곡 인터셉트+402 백스톱·실업로드 2건 한정 계상), 실 .env 무접촉, 9004/9005 무접촉, 재기동 절차 준수(vite 재기동 기록), me 키셋 상비 회귀 유지.

@@ -178,6 +178,7 @@ export default function MainPage() {
                         songs={categoryTracks}
                         isLiked={likedIds.has(song.id)}
                         onToggleLike={handleToggleLike}
+                        showSourceBadge
                       />
                     ))}
                   </div>
@@ -206,6 +207,7 @@ export default function MainPage() {
                 songs={chartSongs}
                 isLiked={likedIds.has(song.id)}
                 onToggleLike={handleToggleLike}
+                showSourceBadge
               />
             ))}
           </div>
@@ -218,7 +220,7 @@ export default function MainPage() {
           </div>
           <div className="main-albums">
             {latestTracks.map((track) => (
-              <TrackCard key={track.id} track={track} tracks={latestTracks} />
+              <TrackCard key={track.id} track={track} tracks={latestTracks} showSourceBadge />
             ))}
           </div>
         </div>

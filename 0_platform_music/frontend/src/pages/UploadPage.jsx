@@ -62,6 +62,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
   const [includeCharacter, setIncludeCharacter] = useState(false);
   const [artists, setArtists] = useState([]);
   const [selectedArtist, setSelectedArtist] = useState(null);
+  // v214 F2 — 작곡실 인계 아티스트(prefill.characterId): 자동선택 우선 재료.
+  // 목록 로드/프리필 도착 어느 쪽이 먼저여도 매칭되도록 ref 로 보관, 미매칭(삭제) 시 default 폴백 + 안내.
+  const prefillCharacterIdRef = useRef(null);
+  const [prefillArtistMissing, setPrefillArtistMissing] = useState(false);
   const hasAnyArtist = artists.length > 0;
   // 선택 아티스트의 시트 object_name (없으면 null → 기존과 동일하게 null 전송)
   const selectedCharSheet = () => (selectedArtist?.sheet_object_name || null);
@@ -102,10 +106,23 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
       setFromGeneration(generationPrefill.generationId);
       setVariantIndex(Number.isFinite(generationPrefill.variantIndex) ? generationPrefill.variantIndex : 0); // v74
       setAiTool('Suno');
+      // v214 F2 — 작곡실에서 부른 아티스트 우선 자동선택 (스냅샷 아티스트 어긋남 방지 — Break 2)
+      const wantedId = generationPrefill.characterId || null;
+      if (wantedId) {
+        prefillCharacterIdRef.current = wantedId;
+        setPrefillArtistMissing(false);
+        setSelectedArtist((prev) => {
+          const match = artists.find((a) => a.character_id === wantedId);
+          if (match) return match;
+          if (artists.length > 0) setPrefillArtistMissing(true); // 목록은 있는데 미매칭 = 삭제됨
+          return prev; // 목록 미로드면 loadArtists 완료 시 ref 로 재시도
+        });
+      }
       if (import.meta.env.DEV) {
         console.info('[UploadPage] prefill from generation', {
           genId: generationPrefill.generationId,
           variantIndex: generationPrefill.variantIndex,
+          characterId: wantedId,
         });
       }
       if (onClearPrefill) onClearPrefill();
@@ -151,6 +168,13 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
         if (!alive) return;
         setArtists(list);
         setSelectedArtist((prev) => {
+          // v214 F2: 작곡실 인계 아티스트가 있으면 최우선 매칭 (미매칭 = 삭제 → default 폴백 + 안내)
+          const wantedId = prefillCharacterIdRef.current;
+          if (wantedId) {
+            const match = list.find((a) => a.character_id === wantedId);
+            if (match) return match;
+            setPrefillArtistMissing(true);
+          }
           if (prev && list.some((a) => artistKey(a) === artistKey(prev))) return prev;
           return list.find((a) => a.is_default) || list[0] || null;
         });
@@ -392,6 +416,8 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
           // v71: cover 에 '내 캐릭터 포함' 켰으면 그 시점의 캐릭터 snapshot 박음.
           // MV 안 만든 곡도 트랙 디테일에서 cover_character 노출 가능하게.
           // v75: 스냅샷은 "커버에 실제 쓴 캐릭터" 기준 — 선택 variant(실사/가상)의 시트/아이템 사용.
+          // v214 F2 — 곡 출처: 부른 아티스트 id (경로 A. persona/lyrics 는 서버가 gen_doc 에서 승계 — T1)
+          character_id: includeCharacter ? (selectedArtist?.character_id || null) : null,
           // v212 F4: 스냅샷은 선택 아티스트 기준 + gender 포함 (CharacterCoverCard 는 스냅샷 기반이라 자동 추종)
           user_character_snapshot: includeCharacter && selectedArtist ? {
             name: selectedArtist.name || '',
@@ -415,6 +441,10 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
         if (mood.trim()) formData.append('mood', mood.trim());
         if (lyrics.trim()) formData.append('lyrics', lyrics.trim());
         if (aiCoverObjectName) formData.append('cover_object_name', aiCoverObjectName);
+        // v214 F2 — 곡 출처: 경로 B(파일 업로드)도 아티스트 id 전송 (Form 필드, 선택 시에만)
+        if (includeCharacter && selectedArtist?.character_id) {
+          formData.append('character_id', selectedArtist.character_id);
+        }
 
         const { data } = await api.uploadTrack(formData, (progressEvent) => {
           const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -669,6 +699,12 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
               )}
             </label>
 
+            {/* v214 F2 — 작곡실 인계 아티스트가 삭제된 경우 안내 (default 폴백됨) */}
+            {prefillArtistMissing && (
+              <p style={{ fontSize: '12px', color: '#f4a261', margin: '6px 0 0' }}>
+                ⚠ 작곡할 때 사용한 아티스트를 찾을 수 없어(삭제됨) 기본 아티스트로 대체했어요.
+              </p>
+            )}
             {/* v212 F3: 아티스트 선택 — 구 variant 라디오를 공용 ArtistPicker 로 교체 (목록 주입 모드) */}
             {includeCharacter && hasAnyArtist && (
               <ArtistPicker

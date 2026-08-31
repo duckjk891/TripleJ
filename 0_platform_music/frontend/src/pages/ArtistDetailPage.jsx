@@ -8,6 +8,7 @@ import FeedList from '../components/feed/FeedList';
 import CoverEditModal from '../components/CoverEditModal';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
+import { loadArtists } from '../components/ArtistPicker';
 import './ArtistDetailPage.css';
 
 export default function ArtistDetailPage() {
@@ -30,13 +31,31 @@ export default function ArtistDetailPage() {
   // 본인 페이지 여부 (id 는 URL 파라미터 문자열 — 타입 불일치 방지 위해 String 비교)
   const isSelf = !!user && String(user.id) === String(id);
 
+  // v214 F5 — 본인 뷰 한정: 아티스트별 곡 묶어보기 (클라 필터 — track.character_id 매칭, 서버 무변경)
+  const [artistFilter, setArtistFilter] = useState(null); // null=전체 | character_id
+  const [myArtists, setMyArtists] = useState([]);
+
+  useEffect(() => {
+    if (!isSelf) return;
+    loadArtists()
+      .then(({ artists }) => setMyArtists(artists.filter((a) => a.character_id)))
+      .catch((err) => {
+        if (import.meta.env.DEV) console.debug('[ArtistDetailPage] my artists load failed', { status: err?.response?.status });
+      });
+  }, [isSelf]);
+
+  // 필터 적용 (기록 없는 기존 곡은 "전체"에만 등장 — 사양 5 소급 없음)
+  const filteredSongs = artistFilter
+    ? songs.filter((s) => s.character_id === artistFilter)
+    : songs;
+
   useEffect(() => {
     const fetchArtist = async () => {
       setLoading(true);
       try {
         const [artistRes, songsRes, albumsRes] = await Promise.all([
           api.getArtist(id),
-          api.getArtistSongs(id, 10),
+          api.getArtistSongs(id, 50), // v214 F5: 본인 뷰 아티스트 필터용 상향 (쿼리 파람 기존재 — 서버 무변경)
           api.getArtistAlbums(id),
         ]);
         setArtist(artistRes.data);
@@ -242,18 +261,53 @@ export default function ArtistDetailPage() {
               <FiMusic style={{ verticalAlign: 'middle', marginRight: 8 }} />
               인기 트랙
             </h2>
+            {/* v214 F5 — 본인 뷰: 아티스트별 묶어보기 칩 (기록 곡 수 표기, 클라 필터) */}
+            {isSelf && myArtists.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '0 0 12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setArtistFilter(null)}
+                  style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '999px', cursor: 'pointer', border: artistFilter === null ? '1px solid #7C3AED' : '1px solid #333', background: artistFilter === null ? '#7C3AED22' : 'transparent', color: '#ddd' }}
+                >
+                  전체 ({songs.length})
+                </button>
+                {myArtists.map((a) => {
+                  const count = songs.filter((s) => s.character_id === a.character_id).length;
+                  const active = artistFilter === a.character_id;
+                  return (
+                    <button
+                      key={a.character_id}
+                      type="button"
+                      onClick={() => {
+                        setArtistFilter(active ? null : a.character_id);
+                        if (import.meta.env.DEV) console.debug('[ArtistDetailPage] artist filter', { cid: active ? null : a.character_id, count });
+                      }}
+                      style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '999px', cursor: 'pointer', border: active ? '1px solid #7C3AED' : '1px solid #333', background: active ? '#7C3AED22' : 'transparent', color: '#ddd' }}
+                    >
+                      🧑‍🎤 {a.name || (a.kind === 'virtual' ? '가상 아티스트' : '실사 아티스트')} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <div className="artist-detail__songs">
-              {songs.map((song, idx) => (
+              {filteredSongs.map((song, idx) => (
                 <SongItem
                   key={song.id}
                   song={song}
                   rank={idx + 1}
-                  songs={songs}
+                  songs={filteredSongs}
                   isLiked={likedIds.has(song.id)}
                   onToggleLike={handleToggleLike}
                   onEditCover={isSelf ? setEditCoverSong : undefined}
+                  showSourceBadge
                 />
               ))}
+              {filteredSongs.length === 0 && (
+                <p style={{ fontSize: '13px', color: '#888', padding: '8px 0' }}>
+                  이 아티스트로 기록된 곡이 없습니다. (출처 기록은 신곡부터 남습니다)
+                </p>
+              )}
             </div>
           </div>
         )}
