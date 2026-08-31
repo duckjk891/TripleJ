@@ -11905,3 +11905,233 @@ v205 §4 동일. 첨부: 승계 매트릭스 판정표(N2 — 입력×규칙×�
   완비, 네트워크 타임라인 증적 + F1 보고·코드 실측 병행, 역전 시 FAIL — N6(b)) ④ Q4 해소 —
   요청 변조 = Playwright route 개서 채택·개서 전/후 원문 증적 의무(N9). 시나리오 수·태그 분포
   불변(15건).
+
+## v215 — ④ 커버촬영실 탭 신설 (B-5 확장) 검증 (2026-08-31 13:50)
+
+### 0. 전제·공통 절차
+
+- **대상**: PLAN v215(:30993~). 백엔드 — 보관함 = cover_sessions 재활용(C1: title/gen_params/
+  source additive), GET/DELETE /api/upload/cover-sessions(C2: linked_tracks 역조회 $in 1회·
+  409 linked_tracks·미사용 hard delete), purge 커버 삭제 조건화(C3: covers/generated|refined
+  접두 스킵·파일 첨부 covers/{uid}/{tid}.ext 만 삭제), mv cover_object_name 검증 편입(C4).
+  프론트 — CoverStudioTab 신설(제작 이사+보관함 본진), CoverLibraryPicker 공용(4소비처),
+  UploadPage 절제, MVStudioTab generate-cover 직호출 제거(C5), CoverEditModal 4탭.
+- **서버·계정·원복**: 기존 규약 전면 승계 — 9006+4000, 계정 A/B 일회용, mongo 직삽 픽스처
+  (cover_sessions·tracks — v211 규약 generation_id 세팅)는 테스트 계정 소유만·id 전수 기록·원복.
+  MinIO 쓰기는 `covers/generated|refined/{테스트uid}/…`·`covers/{테스트uid}/…` 테스트 오브젝트만
+  (수명·삭제 판정용) — 종료 시 잔존 0.
+- **유료 0 — 이번 사이클 산정**:
+  1. **실업로드 0 목표**: 트랙 연결 픽스처 **전량 mongo 직삽** — OpenAI 인덱싱 **0회 계상**.
+     tracks/upload 실호출은 **400 실패 경로만** 허용(트랙 미생성 = 인덱싱 미발생, R2).
+     DELETE /tracks/{id}(purge)·updateTrack 은 무과금 내부 — 실호출 허용.
+  2. **generate-cover(⭐5+외부 이미지)·refine-cover(외부 이미지) 성공 경로 금지** — 인터셉트
+     (가짜 세션 fulfill·402/403/400 분기 조작)·차감 전 4xx 만. **세션 픽스처 전량 직삽**.
+     revert(무외부)·cover-history GET·보관함 목록/삭제는 무과금 실호출.
+  3. **[§0 정식 채택 — v214 편차 이월 확정] 검색 UI 진입은 목록 인터셉트 기본**, 실검색 쿼리
+     사용 시 외부 임베딩 1회/질의 **사전 계상**(미계상 실검색 = ABORT).
+  4. 차단망 전면 승계(작곡 시작 2계열+402 백스톱·translate-tags·시트/클론 생성·MV 파이프라인·
+     lazy translate 규약). mv create 는 4xx 실패 경로만.
+- **실데이터 read-only(안정 상태 한정)**: cover_sessions **29건**(4 users·이력 전부 v0)·tracks
+  **23건**(19건 AI 커버 연결) — 착수/종료 계수+`updated_at` 스냅샷 대조(변동 = ABORT). 기존
+  29건 "소급 노출"은 실계정 로그인 불가이므로 **구형 스키마 등가 픽스처**(확장 필드 키 부재
+  세션 직삽)로 검증.
+- **me 키셋 상비 회귀**: v213 갱신본 기준 증감 0.
+- **단계 게이트**: Phase 1(B1~B3) 후 = api·unit 10건(R1·R2·R6·R7·N8~N12·N17) / Phase 2(F1~F6)
+  후 = e2e 7건(R3~R5·N13~N16).
+
+### 1. 시나리오 (회귀 R1~R7 = PLAN §4 ①~⑦ / 신규 N8~N17 = ⑧~⑰)
+
+#### R1 `[api]` v207 update_track 검증 4분기 무변 (①)
+
+- **Given**: 직삽 트랙+본인 세션(현재본·이력 v1 보유), MinIO 무접촉(검증은 doc 대조).
+- **When/Then**: update_track cover 로 (a) 세션 현재본 → 200 (b) 이력 object_name → 200(revert
+  분기) (c) 본인 파일 커버 경로 → 200 (d) faces/·`..`·http·타인 세션 → **400**. C1 확장 필드가
+  검증 로직을 건드리지 않음(diff 목검 교차).
+- **유료 0**: 무과금 수정·400. **게이트**: Phase 1.
+
+#### R2 `[api]+[unit]` v210 생성 경로 검증 무변 (②)
+
+- **When/Then**: (a) [api] tracks/upload cover_object_name=faces/… → **400 + 트랙 미생성**
+  (실패 경로 — 인덱싱 0, v210 U2 축약 1건) (b) [unit] `_validate_cover_object_name_for_create`
+  직접 호출 — 세션 소유 증명(현재본+이력 $or) **통과** 분기(실업로드 0 목표라 201 실증은 금지 —
+  헬퍼 단위로 갈음, 사유 기록) (c) 헬퍼 diff 무변 목검.
+- **유료 0**: 400+인메모리. **게이트**: Phase 1.
+
+#### R3 `[e2e]` 업로드 양 경로 회귀 — 커버 미지정·파일 첨부 (③)
+
+- **Given**: 제출 계열 전면 인터셉트(v209 T16 방식 — 서버 미도달·실업로드 0 유지).
+- **When/Then**: (a) 커버 미지정 제출 — 캡처 body 에 cover_object_name 부재(기존 동일) (b) 파일
+  첨부 제출 — 제출 후 **사후 uploadImage 경로**(:456-468 상당) 요청 순서 캡처 불변 (c) AI 피커
+  선택과 파일 첨부 **상호배제** UI(N14 교차).
+- **유료 0**: 전면 인터셉트. **게이트**: Phase 2.
+
+#### R4 `[e2e]` MV track 소스 커버 자동 딸림·onCoverAdopted·notifyCoverChanged (④)
+
+- **Given**: v209 T13/T14 방식 — tracks/my·mv 계열 인터셉트 픽스처(커버 있는 트랙).
+- **When/Then**: track 소스 선택 시 커버 자동 딸림(미지정 경로 무영향 — C4 후에도) +
+  onCoverAdopted 콜백 경유 미리보기 갱신 + notifyCoverChanged 계약 유지(MVProductionSection
+  배선). /mv/create 인터셉트 body 에 cover_object_name 동일값.
+- **유료 0**: 전면 인터셉트. **게이트**: Phase 2.
+
+#### R5 `[e2e]` CoverEditModal 기존 3탭 무변 (⑤)
+
+- **When/Then**: file/character/prompt 3탭 렌더·전환·기존 동작(생성 계열은 인터셉트) — 4탭
+  추가(N16)가 기존 3탭 UI/핸들러를 깨지 않음, 콘솔 에러 0.
+- **유료 0**: 인터셉트. **게이트**: Phase 2.
+
+#### R6 `[api]` purge 파일 첨부 커버 삭제 유지 — C3 반대면 (⑥)
+
+- **Given**: 직삽 트랙 T_f — cover_image_url=`covers/{uid}/{tid}.ext`(파일 첨부형) + 해당 MinIO
+  테스트 오브젝트 실배치.
+- **When/Then**: DELETE /tracks/{T_f} → 트랙 doc 파기 + **오브젝트 삭제됨**(mc 계측 — 트랙 전속
+  자산은 기존대로 파기). N10(a) 접두 스킵과 쌍 판정.
+- **유료 0**: purge 무과금·자기 오브젝트. **게이트**: Phase 1.
+
+#### R7 `[api]` v212~v214 스모크 + me 키셋 상비 (⑦)
+
+- **When/Then**: /character/list(slots·persona 5키)·프로필 PATCH·track 출처 4필드 pass-through
+  (v214 직삽 doc 1건) 각 1건 스모크 + **me 키셋 v213 기준 증감 0**.
+- **유료 0**: 무과금. **게이트**: Phase 1.
+
+#### N8 `[api]` 보관함 목록 API — 페이지네이션·역조회 1회·소급·미사용 (⑧)
+
+- **Given**: 계정 A — 직삽 세션 25건(신형 title/gen_params/source 보유 20 + **구형 키 부재 5** —
+  소급 등가·§0) + 직삽 트랙 3건(2건은 세션 현재본/이력 오브젝트명을 cover_image_url 로 참조,
+  1건 무관).
+- **When/Then**: ① page/limit(기본 20·updated_at 최신순) 페이지네이션 정합 ② 응답 shape —
+  cover_session_id·image_url·history_count·gen_params?·source?·**linked_tracks[{id,title}]**
+  ③ 연결 매핑 — **현재본 참조·이력(비현재 버전) 참조 모두** 매핑, 미사용 세션 = 빈 배열
+  ④ 구형 5건도 목록 등장(키 부재 필드 생략/null 실측 고정 — 소급 노출 등가 실증) ⑤ **N+1
+  판정(v213 방식 2면)**: 코드 정적 — tracks.find `$in` **1회**(uploader 본인 한정) / 기능 —
+  25세션×3트랙 매핑 전원 정확 ⑥ 타 계정(B) 세션·곡 미혼입. `[CoverLib] list` 로그.
+- **유료 0**: GET·직삽. **게이트**: Phase 1.
+
+#### N9 `[api]` 보관함 삭제 — hard delete·409 linked_tracks·404 은닉 (⑨)
+
+- **Given**: A — (i) 미사용 세션(이력 v0·v1 오브젝트 MinIO 실배치) (ii) 연결 세션(직삽 트랙이
+  현재본 참조) (iii) B 소유 세션.
+- **When/Then**: (a) (i) DELETE → 200 + doc 삭제 + **이력 전 버전 오브젝트 MinIO 소멸**(mc 계측
+  — hard delete 범위 실증) + `[CoverLib] delete objects=N` (b) (ii) → **409 {error,
+  linked_tracks:[{id,title}]}** — doc·오브젝트 무손상 (c) (iii) 를 A 토큰으로 → **404 은닉**
+  (d) 무효 id → 404. (b) 후 트랙 삭제→재시도 200 은 N10 흐름과 연계.
+- **유료 0**: 무과금 CRUD·자기 오브젝트. **게이트**: Phase 1.
+
+#### N10 `[api]` 수명 — 커버 1 → 곡 2 재사용, 곡 삭제에도 자산 생존 (⑩, C3 실증)
+
+- **Given**: A — 세션 S(현재본 O=covers/generated/… MinIO 실배치) + 직삽 곡 2건(T_a·T_b 모두
+  cover_image_url=O — 다곡 재사용 상태).
+- **When/Then**: ① DELETE /tracks/{T_a}(실호출) → **O 잔존**(mc 계측 — **C3 접두 스킵 실증**) +
+  T_b.cover_image_url 정상·이미지 접근 가능 + 보관함 목록에서 S 건재(linked_tracks 가 T_b 만으로
+  갱신) ② T_b 도 삭제 → O 여전히 잔존(파기는 보관함 DELETE 단일 통로) + S 는 미사용 전환 →
+  ③ 보관함 DELETE S → 이때 비로소 O 소멸(N9(a) 연계 — 수명 전 주기 완결). R6(파일 첨부 삭제
+  유지)과 쌍으로 조건화의 양면 증명.
+- **유료 0**: purge·보관함 CRUD 무과금. **게이트**: Phase 1.
+
+#### N11 `[api]`(+`[unit]`) 재사용 3소비처 검증 무변경 통과 (⑪)
+
+- **Given**: A 세션 S(현재본+이력).
+- **When/Then**: ① **updateTrack**: 직삽 트랙에 S 현재본 지정 → 200 저장(실호출 — R1 교차)
+  ② **업로드 제출**: 서버 통과는 R2(b) [unit] 헬퍼로 갈음(실업로드 0 — FE 전송은 N13/N14 캡처)
+  ③ **MV create**: body cover=S 현재본 + **소스 둘 다 미전송** → 400 "곡 소스가 필요합니다"
+  (v210 M1 가드가 cover 단계 뒤 — **cover 400 이 아닌 source 400 = 커버 검증 통과의 무진입
+  증명**, 2xx 원천 불가) — 가드 순서는 tester 1회 코드 실측 후 확정(역순이면 [unit] 검증 함수
+  직접 호출로 강등·사유 기록).
+- **유료 0**: 무과금/400 종료. **게이트**: Phase 1.
+
+#### N12 `[api]`(+`[unit]`) mv cover 검증 편입 — 차단 4종·허용 3분기 (⑫, C4)
+
+- **When/Then**: (a) [api] 차단 — faces/·evidence/(또는 `..`)·http(s)·**타인 세션 값** → 각
+  **400**(cover 단계 메시지 — N11③의 source 400 과 구분 판정) (b) 허용 3분기 — 세션 산출물은
+  N11③ 겸증 / 본인 파일 커버(covers/{uid}/)·track 소스 동일값은 **[unit] 검증 함수 직접 호출**
+  로 판정(실호출 시 유효 소스 조합이 2xx 파이프라인 위험 — 원천 회피, 필요 시 본인 무오디오
+  직삽 track 조합의 후단 400 전이로 보강) (c) 미지정·track 자동 딸림 경로 무영향(R4 교차).
+- **유료 0**: 400·인메모리. **게이트**: Phase 1.
+
+#### N13 `[e2e]` 커버촬영실 본진 — 제작 이사·보관함·인계 (⑬)
+
+- **Given**: Playwright A, 공통 차단망. `**/generate-cover**`·`**/refine-cover**` 인터셉트(가짜
+  세션/버전 fulfill — v208 T1 방식), 보관함 목록은 직삽 세션 실호출.
+- **When/Then**: ① 탭 「커버촬영실」(key coverstudio — 작곡실·MV촬영실 사이) 진입 ② **탭 자체
+  입력**(제목 필수 게이트 승계·장르/무드 선택)·아티스트 시트/장소/모델 UI 렌더 ③ 생성 실행 →
+  인터셉트 캡처 body(title·gen_params 재료·N17 교차) — 402(별 부족)·400 분기 fulfill 조작으로
+  UI 문구 판정 ④ 세션 직삽 대체 → **보관함 그리드 등장**(연결 뱃지·미사용 표시) ⑤ refine 이력·
+  되돌리기 UI(직삽 이력 v0/v1 — revert 는 무외부 실호출 허용, refine 실행은 인터셉트 캡처만)
+  ⑥ [업로드에 쓰기] → 새 업로드 탭 전환 + coverPrefill {coverObjectName, coverSessionId} 수신
+  (composePrefill 패턴) → 제출 인터셉트 캡처에 해당 값(서버 미도달) ⑦ 라이트박스 보기.
+- **유료 0**: 생성/refine 전면 인터셉트·revert 무외부·목록 무과금. **게이트**: Phase 2.
+
+#### N14 `[e2e]` UploadPage 절제 후 회귀 (⑭)
+
+- **When/Then**: ① 커버 블록 부재 → **컴팩트 피커** 「커버: 보관함에서 선택 ▼」(직삽 세션 목록·
+  미리보기) ② 보관함 빈 상태 → "커버촬영실에서 만들기 →" 링크 탭 전환 ③ **파일 직접 첨부
+  유지** + AI 선택과 상호배제(R3 교차) ④ coverPrefill 수신 자동 반영 ⑤ 제출 캡처 body — 피커
+  선택 값 + **v214 출처 4필드·character_id·스냅샷 불변**(아티스트 토글·출처 배선은 업로드 잔존
+  — v214 계약 회귀) ⑥ 정적: UploadPage 에서 generate/refine 핸들러 grep 0(이사 완료·복사 이식
+  후 절제 확인).
+- **유료 0**: 전면 인터셉트·목록 무과금. **게이트**: Phase 2.
+
+#### N15 `[e2e]` MVStudioTab 개편 — 직호출 제거·피커·링크 (⑮, C5)
+
+- **When/Then**: ① 커버 없는 곡 선택 → **generate-cover 네트워크 요청 0**(직호출 제거 실증 —
+  방어 인터셉트에 포착 0) ② 보관함 피커 표출 → 선택 시 onCoverAdopted 경유 채택·씬 게이트 해제
+  ③ "커버촬영실에서 만들기 →" 링크 → coverstudio 탭 전환 ④ 커버 있는 곡 자동 딸림 무영향(R4
+  교차).
+- **유료 0**: 인터셉트·무과금 목록. **게이트**: Phase 2.
+
+#### N16 `[e2e]` CoverEditModal 4탭 library — updateTrack 반영 (⑯)
+
+- **When/Then**: 4탭 'library' → CoverLibraryPicker 컴팩트(직삽 세션) → 선택 적용 →
+  **updateTrack 실호출 200**(무과금 — handleApplyAi 재사용·검증 무변경 통과 = R1/N11① 의 FE
+  실증) → 트랙 커버 갱신 표시 + 기존 3탭 무영향(R5 교차).
+- **정리**: 트랙 커버 원복 또는 직삽 트랙 삭제.
+- **유료 0**: updateTrack 무과금. **게이트**: Phase 2.
+
+#### N17 `[api]`(+`[unit]`) 생성 스냅샷 title/gen_params/source 영속 (⑰, C1)
+
+- **When/Then**: (a) [unit] generate-cover 핸들러의 세션 doc 구성부 목검/함수 판정 — body.title
+  스냅샷·gen_params 7키·source 기록(성공 경로 금지라 실행 검증은 불가 — 갈음 사유 기록)
+  (b) [api] 확장 필드 보유 직삽 세션이 목록 응답에 title/gen_params/source 그대로 노출(N8②
+  교차) + 구형 doc 키 부재 허용 (c) [e2e 교차] N13③ 인터셉트 캡처 body 에 FE 가 title·장르/
+  무드·location·모델 등 재료 전송(gen_params 의 입력면 실증).
+- **유료 0**: 인메모리·GET·인터셉트. **게이트**: Phase 1 ((c)는 Phase 2).
+
+### 2. 실행 순서·게이트·중단 기준
+
+| 게이트 | 순서 | 비고 |
+|---|---|---|
+| Phase 1(B1~B3) 후 | 실데이터(세션 29·트랙 23) 스냅샷 → R2 → R1 → N8 → N17(a)(b) → N9 → N10 → R6 → N11 → N12 → R7 | 전부 직삽/무과금/4xx — 외부 0·실업로드 0 |
+| Phase 2(F1~F6) 후 | N13 → N14 → N15 → N16 → R3 → R4 → R5 (+N17(c)) | 브라우저 1세션·차단망 체크리스트 1번 |
+| 종료 | MinIO 테스트 오브젝트 잔존 0 → 실데이터 재계측 → 픽스처 원복 → 계정 A·B 탈퇴 | |
+
+- **ABORT**: ① 실업로드 발생(인덱싱 계상 0 위반 — tracks/upload 2xx 흔적) ② generate-cover/
+  refine 실서버 도달(⭐5/외부 이미지) ③ 실데이터 세션 29·트랙 23 변동 ④ mv create 2xx ⑤ 미계상
+  실검색 쿼리 ⑥ 차단망 미스 — 즉시 중단·보고.
+
+### 3. 판정 기록 양식
+
+v205 §4 동일. 첨부: N8 N+1 2면 증적(정적 grep+매핑 대조표), N9/N10 MinIO 오브젝트 생멸
+타임라인(mc 계측 — 수명 전 주기), N11/N12 cover-vs-source 400 구분 판정표(가드 순서 실측 포함),
+N13/N14 캡처 body(coverPrefill·v214 4필드), 실데이터 전후 스냅샷, 외부 호출 총괄(목표 0 정합).
+시크릿·실이메일 0.
+
+### 4. planner/tester 확인 필요
+
+- **Q1**: mv create 의 cover 검증 ↔ source 가드 순서(N11③·N12 판별 전제) — B3 구현 후 tester
+  1회 코드 실측·확정(역순이면 [unit] 강등 규칙 적용).
+- **Q2**: N8④ 구형 doc 의 확장 필드 표현(키 생략 vs null) 실측 고정(v214 Q1 유형).
+- **Q3**: 보관함 DELETE 의 오브젝트 삭제 범위(이력 전 버전 + 현재본) 구현 실측 — N9(a) mc 계측
+  기대 목록 확정.
+- **Q4**: coverPrefill 수신 시 세션 id 의 용도(제출 body 포함 여부) — F3 계약 실측 후 N13⑥·
+  N14⑤ 캡처 기대값 고정.
+
+### 개정 이력 (v215)
+
+- 2026-08-31 초판 17건(PLAN §4 ①~⑰ 1:1 — 회귀 R1~R7·신규 N8~N17): **[api] 10(R1·R2·R6·R7·
+  N8~N12·N17 — R2/N11/N12/N17 은 [unit] 겸) / [e2e] 7(R3~R5·N13~N16)**. 급소 = ①수명 재설계
+  양면(C3 접두 스킵 N10 ↔ 파일 첨부 삭제 유지 R6 — MinIO 생멸 타임라인) ②보관함 API(N+1 1회·
+  409 linked_tracks·hard delete 범위 — N8·N9) ③재사용 3소비처 무변경 통과(cover-vs-source 400
+  구분 판별 — N11·N12) ④제작 기능 이사·절제 회귀(N13·N14 — v214 4필드 불변 포함) ⑤MV 직호출
+  제거(N15). 유료 0 = **실업로드 0 목표(전량 직삽 — 인덱싱 0 계상, 400 실패 경로만 실호출)** +
+  생성/refine 성공 경로 금지(세션 전량 직삽·인터셉트) + **검색 UI 목록 인터셉트 규약 §0 정식
+  채택(실검색 = 외부 임베딩 1회/질의 사전 계상)** + 실데이터 세션 29·트랙 23 안정 상태 read-only
+  스냅샷. 게이트: Phase 1 후 10건 → Phase 2 후 7건.

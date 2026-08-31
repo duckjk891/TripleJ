@@ -349,6 +349,17 @@ export const updateTrack = (id, data) => API.put(`/tracks/${id}`, data);
 
 // AI Cover
 export const generateCover = (data) => API.post('/upload/generate-cover', data);
+// v215 — 커버 보관함 (커버촬영실). 실경로 /api/upload/cover-sessions (앱팀 가안 /api/covers 아님).
+// 목록: {covers:[{cover_session_id, cover_object_name, image_url, title, image_model,
+//   current_version, history_count, gen_params, source, linked_tracks:[{id,title}], ...}], pagination}
+// 삭제: 연결 곡 존재 시 409 {error, linked_tracks} — 미사용만 hard delete.
+export const getCoverSessions = (params) => API.get('/upload/cover-sessions', { params });
+// alias — PLAN F6 표기(listCoverSessions)와 지시 표기(getCoverSessions) 병존 흡수 (FE 소비 호환)
+export const listCoverSessions = getCoverSessions;
+export const deleteCoverSession = (coverSessionId) =>
+  API.delete(`/upload/cover-sessions/${coverSessionId}`);
+export const getCoverHistory = (coverSessionId) =>
+  API.get(`/upload/cover-history/${coverSessionId}`);
 
 // AI Music Video
 export const generateMV = (data) => API.post('/upload/generate-mv', data);
@@ -863,6 +874,7 @@ export const refineCover = (coverSessionId, payload) =>
   API.post('/upload/refine-cover', { cover_session_id: coverSessionId, ...payload });
 export const revertCover = (coverSessionId, targetVersion) =>
   API.post('/upload/revert-cover', { cover_session_id: coverSessionId, target_version: targetVersion });
+// v215 — 커버 보관함 함수는 generateCover 옆(:351 부근) 단일 선언 — 중복 금지.
 
 // My locations (character locations)
 export const listMyLocations = () =>

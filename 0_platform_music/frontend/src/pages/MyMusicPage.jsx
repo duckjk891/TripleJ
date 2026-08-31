@@ -10,6 +10,7 @@ import StudioTab from '../components/StudioTab';
 import LyricsStudioTab from '../components/studio/LyricsStudioTab';
 import ComposeStudioTab from '../components/studio/ComposeStudioTab';
 import MVStudioTab from '../components/studio/MVStudioTab';
+import CoverStudioTab from '../components/studio/CoverStudioTab';
 import AlbumCreateModal from '../components/AlbumCreateModal';
 import ItemSelectModal from '../components/ItemSelectModal';
 import MyVoiceCloneSection from '../components/MyVoiceCloneSection';
@@ -1895,6 +1896,14 @@ export default function MyMusicPage() {
     setActiveTab('upload');
   };
 
+  // v215 — 커버촬영실 [이 커버로 업로드] 인계 (composePrefill 템플릿 동형)
+  const [coverPrefill, setCoverPrefill] = useState(null);
+  const handleSendCoverToUpload = (coverData) => {
+    if (import.meta.env.DEV) console.info('[MyMusic] sendCoverToUpload', { session_id: coverData?.coverSessionId });
+    setCoverPrefill(coverData);
+    setActiveTab('upload');
+  };
+
   // v209 — 작사실 [작곡하기 →] 인계 (handleSendToUpload 동형 패턴)
   const [composePrefill, setComposePrefill] = useState(null);
   const handleSendToCompose = (draftDoc) => {
@@ -2090,6 +2099,12 @@ export default function MyMusicPage() {
             작곡실
           </button>
           <button
+            className={`mymusic-tab ${activeTab === 'coverstudio' ? 'mymusic-tab--active' : ''}`}
+            onClick={() => setActiveTab('coverstudio')}
+          >
+            커버촬영실
+          </button>
+          <button
             className={`mymusic-tab ${activeTab === 'mvstudio' ? 'mymusic-tab--active' : ''}`}
             onClick={() => setActiveTab('mvstudio')}
           >
@@ -2256,6 +2271,9 @@ export default function MyMusicPage() {
             <UploadPage
               generationPrefill={generationPrefill}
               onClearPrefill={() => setGenerationPrefill(null)}
+              coverPrefill={coverPrefill}
+              onClearCoverPrefill={() => setCoverPrefill(null)}
+              onGoCoverStudio={() => setActiveTab('coverstudio')}
             />
           </div>
         )}
@@ -2278,10 +2296,15 @@ export default function MyMusicPage() {
           />
         )}
 
+        {activeTab === 'coverstudio' && (
+          <CoverStudioTab onSendCoverToUpload={handleSendCoverToUpload} />
+        )}
+
         {activeTab === 'mvstudio' && (
           <MVStudioTab
             draftData={draftData}
             onClearDraft={() => setDraftData(null)}
+            onGoCoverStudio={() => setActiveTab('coverstudio')}
           />
         )}
 

@@ -376,6 +376,44 @@ async def _validate_user_track_source(mongo, raw_track_id, current_user, ctx: st
     return None, raw, duration_sec
 
 
+async def _validate_mv_cover_object_name(mongo, user_id: str, value: str, track_id):
+    """v215 C4 — mv create cover_object_name 검증 (기존 truthiness 만 → 편입).
+
+    허용: 본인 cover_sessions 산출물(v210 헬퍼 재사용 — 보관함 피커 값)
+          / 본인 파일 커버(covers/{uid}/ 접두)
+          / track 소스 선택 시 그 track.cover_image_url 동일값
+    차단: faces/·evidence/ 접두·`..`·http(s)·타인 산출물·임의 문자열 → 400.
+    커버는 MV 생성 재료(보안 목적) — v214 출처류의 관대 저장과 달리 400 거부.
+    MV촬영실이 보관함 피커로 전환되므로 정상 흐름은 전부 허용 3분기 안에 든다.
+    """
+    v = value or ""
+    if v.startswith(("faces/", "evidence/")) or ".." in v or v.startswith(("http://", "https://")):
+        logger.warning("[CoverLib] mv cover rejected(hard) user=%s len=%d", user_id[:8], len(v))
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 커버 이미지입니다."})
+    # 본인 파일 커버 (트랙 전속 경로)
+    if v.startswith("covers/{}/".format(user_id)):
+        return None
+    # track 소스 커버 자동 딸림 — 동일값 허용 (uploader 본인 트랙 한정 — 방어적)
+    if track_id:
+        try:
+            trk = await mongo.tracks.find_one(
+                {"_id": ObjectId(str(track_id)), "uploader_id": user_id},
+                {"cover_image_url": 1},
+            )
+            if trk and trk.get("cover_image_url") == v:
+                return None
+        except Exception as e:
+            logger.warning("[CoverLib] mv cover track lookup failed track=%s: %s", track_id, e)
+    # 본인 세션 산출물 (v210 생성 경로 헬퍼 재사용 — 현재본+이력 $or)
+    from .tracks import _validate_cover_object_name_for_create
+
+    ok, _src = await _validate_cover_object_name_for_create(mongo, v, user_id)
+    if ok:
+        return None
+    logger.warning("[CoverLib] mv cover rejected(unresolved) user=%s len=%d", user_id[:8], len(v))
+    return JSONResponse(status_code=400, content={"error": "유효하지 않은 커버 이미지입니다."})
+
+
 # ── POST /api/mv/create ─────────────────────────────────────────────────────
 
 @router.post("/create")
@@ -434,6 +472,19 @@ async def create_mv(
             content={"error": "커버 이미지가 필요합니다. 먼저 커버를 생성해주세요."},
         )
 
+    mongo = get_mongo()
+
+    # v215 C4 — cover_object_name 검증 (planner 확정: **선두부 — payload 정규화
+    # 직후·곡 소스 해석 이전**). 판별 순서 보장: 무효 cover+무효 source → cover
+    # 400 선행 / 유효 cover+무효 source → 아래 source 400 으로 전이.
+    # track 동일값 분기는 body.track_id 원값 사용 — 소유권은 아래 v209 블록이
+    # 재검증(403)하고, 헬퍼 조회 자체도 uploader 본인 한정이라 우회 불가.
+    _cover_err = await _validate_mv_cover_object_name(
+        mongo, current_user["id"], body.cover_object_name, body.track_id,
+    )
+    if _cover_err is not None:
+        return _cover_err
+
     # v210: 곡 소스 부재 가드 — 소스 없는 job 은 phase1/2 (외부 유료 API) 를
     # 무의미하게 발동시키고 오디오 해석 단계에서 반드시 실패한다 (D4 택지 (a)).
     # DB sourceless job 0건 실측 — 기존 정상 경로 diff 0.
@@ -443,8 +494,6 @@ async def create_mv(
             status_code=400,
             content={"error": "곡 소스가 필요합니다. 곡을 선택한 뒤 다시 시도해주세요."},
         )
-
-    mongo = get_mongo()
 
     # ── v209: track_id 곡 소스 (MV촬영실 — 내 트랙에서 MV 만들기) ──────────
     # 검증은 _validate_user_track_source 공용 헬퍼 (save_draft 와 재사용).

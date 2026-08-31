@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { FiX, FiUploadCloud, FiUser, FiEdit3, FiRotateCcw, FiArrowRight } from 'react-icons/fi';
 import * as api from '../api';
 import ArtistPicker, { loadArtists, artistKey } from './ArtistPicker';
+import CoverLibraryPicker from './CoverLibraryPicker';
 import './CoverEditModal.css';
 
 // v207 — 기존 곡 커버 이미지 수정 공용 모달 (진입점: 내 트랙 / 내 채널)
@@ -453,6 +454,14 @@ export default function CoverEditModal({ track, onClose, onUpdated }) {
           >
             <FiEdit3 /> 프롬프트 AI <span className="cover-edit-modal__cost">⭐{coverCost}</span>
           </button>
+          {/* v215 F5 — 보관함 탭 (무과금 — 기존 세션 산출물 재사용) */}
+          <button
+            type="button"
+            className={`cover-edit-modal__tab ${tab === 'library' ? 'is-active' : ''}`}
+            onClick={() => { setTab('library'); setError(''); }}
+          >
+            🗂 보관함
+          </button>
         </div>
 
         <div className="cover-edit-modal__body">
@@ -513,6 +522,29 @@ export default function CoverEditModal({ track, onClose, onUpdated }) {
                 placeholder={'예: 사이버펑크 네온 도시, 비 오는 밤\n예: 수채화 느낌의 파스텔톤 풍경'}
               />
               {renderAiCommon()}
+              <button
+                type="button"
+                className="cover-edit-modal__apply-btn"
+                onClick={handleApplyAi}
+                disabled={!aiObjectName || busyAny}
+              >
+                {applying ? '교체 중...' : '이 커버로 교체'}
+              </button>
+            </div>
+          )}
+
+          {tab === 'library' && (
+            <div className="cover-edit-modal__tab-panel">
+              {/* v215 F5 — 선택 = aiObjectName 에 적재 → 기존 handleApplyAi(updateTrack) 그대로 재사용 */}
+              <CoverLibraryPicker
+                compact
+                selectedObjectName={aiObjectName}
+                onSelect={(cover) => {
+                  setAiObjectName(cover.cover_object_name);
+                  if (import.meta.env.DEV) console.info('[CoverEditModal] cover picked from library', { session_id: cover.cover_session_id });
+                }}
+                emptyHint="보관함이 비어 있습니다. 마이뮤직 → 커버촬영실에서 커버를 만들어보세요."
+              />
               <button
                 type="button"
                 className="cover-edit-modal__apply-btn"

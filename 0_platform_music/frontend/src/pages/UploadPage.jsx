@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import * as api from '../api';
 import BeatTrackView from '../components/BeatTrackView';
 import ArtistPicker, { loadArtists, artistKey } from '../components/ArtistPicker';
+import CoverLibraryPicker from '../components/CoverLibraryPicker';
 import LyricsTimestampToggle from '../components/LyricsTimestampToggle';
 import './UploadPage.css';
 
@@ -13,14 +14,12 @@ const AI_TOOLS = ['Suno', 'Udio', 'AIVA', 'Stable Audio', 'MusicGen (Meta)', '�
 const AUDIO_ACCEPT = '.mp3,.wav,.ogg,.flac,.m4a';
 const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp';
 
-const COVER_PROMPT_MODELS = [
-  { id: '', name: '기본 (직접 구성)', color: '#666', inPrice: '-', outPrice: '-', perCall: '무료', perCallKRW: '0원' },
-  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', color: '#e11d48', inPrice: '$5.00/M', outPrice: '$25.00/M', perCall: '$0.08', perCallKRW: '≈112원' },
-];
-
 // v209 3단계: MV 흐름(임시저장 draftData 포함)은 MV촬영실(MVStudioTab)로 완전 이관 — draftData/onClearDraft prop 소멸.
 // v212: myCharacterFromParent prop 소멸 — 아티스트 목록은 loadArtists(공용)로 자체 로드.
-export default function UploadPage({ generationPrefill, onClearPrefill }) {
+// v215 F3: AI 커버 제작은 커버촬영실로 이사 — 이 화면은 보관함 선택 + 파일 직접 첨부만.
+//   coverPrefill {coverObjectName, coverSessionId} = 커버촬영실 [이 커버로 업로드] 인계 (composePrefill 패턴).
+//   onGoCoverStudio = 커버촬영실 탭 전환 (MyMusicPage 경유 렌더에서만 — /upload 직접 라우트는 링크 숨김).
+export default function UploadPage({ generationPrefill, onClearPrefill, coverPrefill, onClearCoverPrefill, onGoCoverStudio }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const audioInputRef = useRef(null);
@@ -41,20 +40,11 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
   const [variantIndex, setVariantIndex] = useState(0);
   const [generationDoc, setGenerationDoc] = useState(null);
 
-  const [generatingCover, setGeneratingCover] = useState(false);
+  // v215 F3 — AI 커버 제작(세션·refine·이력) state 는 커버촬영실로 이사.
+  // 잔존 = 보관함 선택 결과 2종 (제출 경로 :415/:443 이 그대로 소비 — 검증 자연 통과).
   const [aiCoverPreview, setAiCoverPreview] = useState(null);
   const [aiCoverObjectName, setAiCoverObjectName] = useState(null);
-  // v158 — 별 경제 v1.2: 커버 생성 비용(⭐) — /points/costs 단일 소스, 실패 시 5 폴백
-  const [coverCost, setCoverCost] = useState(5);
-  // v58: 커버 멀티턴 추가 수정 / 이력 / 되돌리기. 백엔드 cover_sessions 컬렉션 기반.
-  const [coverSessionId, setCoverSessionId] = useState(null);
-  const [coverHistory, setCoverHistory] = useState([]);  // [{version, object_name, refine_prompt, image_model, created_at}, ...]
-  const [coverCurrentVersion, setCoverCurrentVersion] = useState(null);
-  const [showRefinePanel, setShowRefinePanel] = useState(false);
-  const [refinePromptInput, setRefinePromptInput] = useState('');
-  const [refiningCover, setRefiningCover] = useState(false);
-  const [revertingVersion, setRevertingVersion] = useState(null);  // 진행 중 version 번호
-  const [showRegenConfirm, setShowRegenConfirm] = useState(false);  // [다시 생성] 확인 다이얼로그
+  const [showLibPicker, setShowLibPicker] = useState(false);
 
   // Character & Scene Prompt — v212: 다중 아티스트. 구 variant('real'|'virtual') 라디오를
   // 공용 ArtistPicker(선택 결과 = 아티스트 doc)로 교체. artists 목록은 이 페이지가 소유
@@ -71,22 +61,6 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
   const selectedCharSheet = () => (selectedArtist?.sheet_object_name || null);
   const selectedCharItems = () =>
     (Array.isArray(selectedArtist?.used_items) ? selectedArtist.used_items : []);
-  const [coverUserPrompt, setCoverUserPrompt] = useState('');
-
-  // v42: location picker (선택적)
-  const [availableLocations, setAvailableLocations] = useState([]);
-  const [selectedLocationId, setSelectedLocationId] = useState(null);
-
-  // 커버 프롬프트 AI 모델
-  const [coverPromptModel, setCoverPromptModel] = useState('');
-
-  // 보컬 성별 / 관계 — 아직 별도 UI 없음. 백엔드가 기본값 처리하도록 전달.
-  const [vocalGender, setVocalGender] = useState('female');
-
-  // v55: 이미지 생성 모델 — 커버 영역 + 씬 영역(씬+자산 공통).
-  // 기본 "nb_pro" — 기존 동작 100% 보존. 잘못된 enum 은 백엔드가 400.
-  const [coverImageModel, setCoverImageModel] = useState('nb_pro');
-
   // v61: 공용 이미지 라이트박스 — { url, title, subtitle? } 형태. 커버/자산/추후 추가 위치 공통.
   const [selectedImage, setSelectedImage] = useState(null);
 
@@ -186,23 +160,16 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
     return () => { alive = false; };
   }, []);
 
-  // v42: load locations (best-effort, [] fallback)
+  // v215 F3 — 커버촬영실 [이 커버로 업로드] 인계 수신 (composePrefill 패턴)
   useEffect(() => {
-    api.listMyLocations()
-      .then((data) => setAvailableLocations(data.locations || []))
-      .catch(() => setAvailableLocations([]));
-  }, []);
-
-  // v158 — 커버 생성 비용 로드 (응답 { costs: {...} } 래핑 — 실패 시 기본값 5 유지)
-  useEffect(() => {
-    api.getPointCosts()
-      .then(({ data }) => {
-        if (typeof data?.costs?.cover === 'number') setCoverCost(data.costs.cover);
-      })
-      .catch((err) => {
-        console.error('[UploadPage] getPointCosts failed (fallback 5)', { status: err?.response?.status, message: err?.message });
-      });
-  }, []);
+    if (coverPrefill?.coverObjectName) {
+      setAiCoverObjectName(coverPrefill.coverObjectName);
+      setAiCoverPreview(api.coverPreviewUrl(coverPrefill.coverObjectName));
+      setImageFile(null); // 파일 첨부와 상호배제
+      if (import.meta.env.DEV) console.info('[UploadPage] cover prefill received', { session_id: coverPrefill.coverSessionId || null });
+      if (onClearCoverPrefill) onClearCoverPrefill();
+    }
+  }, [coverPrefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const handleDrop = (e) => {
@@ -214,166 +181,18 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
     }
   };
 
-  const handleGenerateCover = async () => {
-    if (!title.trim()) {
-      alert('커버를 생성하려면 먼저 곡 제목을 입력해주세요.');
-      return;
-    }
-    setGeneratingCover(true);
-    try {
-      // v55: 커버 이미지 생성 모델 라디오 값 (기본 "nb_pro").
-      console.info('[UploadPage] cover image_model selected', { value: coverImageModel });
-      // v57: 보컬 성별 — 커버 prompt 4분기에 주입. None 이면 미주입(기존 동작).
-      // v67-pre: cover 호출 시 character 관련 상태도 같이 로그 (frontend.log → 백엔드 추적용)
-      console.info('[UploadPage] generateCover request', {
-        vocal_gender: vocalGender,
-        image_model: coverImageModel,
-        includeCharacter,
-        artists_count: artists.length,
-        selected_artist: artistKey(selectedArtist),
-        selected_kind: selectedArtist?.kind || null,
-        will_send_character_object_name: includeCharacter ? selectedCharSheet() : null,
-      });
-      const { data } = await api.generateCover({
-        title: title.trim(),
-        genre: genre || null,
-        mood: mood || null,
-        style: null,
-        character_object_name: includeCharacter ? selectedCharSheet() : null,
-        user_prompt: coverUserPrompt.trim() || null,
-        prompt_model: coverPromptModel || null,
-        location_id: selectedLocationId || null,
-        image_model: coverImageModel,
-        vocal_gender: vocalGender,
-      });
-      api.notifyPointsRefresh(); // v158 — 커버 ⭐ 차감 즉시 헤더 배지 갱신
-      const proxyUrl = api.coverPreviewUrl(data.object_name);
-      setAiCoverPreview(proxyUrl);
-      setAiCoverObjectName(data.object_name);
-      setImageFile(null);
-      // v58: 신규 cover_session 발급 — 옛 history 폐기 (Q4 a). 백엔드가 매번
-      // 신규 session insert. cover_session_id 없으면 (옛 응답) null 유지 → refine 비활성.
-      if (data.cover_session_id) {
-        setCoverSessionId(data.cover_session_id);
-        setCoverCurrentVersion(0);
-        setCoverHistory([{
-          version: 0,
-          object_name: data.object_name,
-          refine_prompt: null,
-          image_model: data.image_model || 'nb_pro',
-          created_at: new Date().toISOString(),
-        }]);
-      } else {
-        setCoverSessionId(null);
-        setCoverHistory([]);
-        setCoverCurrentVersion(null);
-      }
-      setShowRefinePanel(false);
-      setRefinePromptInput('');
-    } catch (err) {
-      // v139 — 스트라이크 생성 제한 403 공통 처리
-      if (api.isGenerationRestricted(err)) {
-        api.alertGenerationRestricted(err);
-      } else if (api.isInsufficientPoints(err)) {
-        // v158 — 별 부족(402) 분기
-        console.error('[UploadPage] generateCover insufficient points', { status: err?.response?.status });
-        api.notifyPointsRefresh();
-        alert(`별이 부족해요. AI 커버 생성에는 ⭐${coverCost}개가 필요합니다.`);
-      } else {
-        alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
-      }
-    } finally {
-      setGeneratingCover(false);
-    }
-  };
-
-  // v58: [다시 생성] 버튼 핸들러 — history 가 있으면 확인 다이얼로그.
-  const handleRegenerateCoverClick = () => {
-    if (coverHistory && coverHistory.length > 1) {
-      setShowRegenConfirm(true);
-      return;
-    }
-    handleGenerateCover();
-  };
-
-  const handleConfirmRegenerate = () => {
-    setShowRegenConfirm(false);
-    handleGenerateCover();
-  };
-
-  // v58: [추가 수정] 실행.
-  const handleRefineCover = async () => {
-    const rp = (refinePromptInput || '').trim();
-    if (!rp) {
-      alert('수정 요청을 입력해주세요.');
-      return;
-    }
-    if (rp.length > 500) {
-      alert('수정 요청은 500자 이하여야 합니다.');
-      return;
-    }
-    if (!coverSessionId) {
-      alert('커버 세션 정보가 없습니다. [다시 생성] 후 다시 시도해주세요.');
-      return;
-    }
-    setRefiningCover(true);
-    try {
-      if (import.meta.env?.DEV) {
-        console.info('[UploadPage] refine cover', { cover_session_id: coverSessionId, len: rp.length });
-      }
-      // api.refineCover는 payload를 객체로 스프레드하므로 반드시 { refine_prompt } 객체로 전달해야 한다 (문자열 전달 시 422).
-      const { data } = await api.refineCover(coverSessionId, { refine_prompt: rp });
-      const newObjectName = data.cover_object_name;
-      setAiCoverObjectName(newObjectName);
-      setAiCoverPreview(api.coverPreviewUrl(newObjectName));
-      setCoverCurrentVersion(data.current_version);
-      setCoverHistory(Array.isArray(data.cover_refine_history) ? data.cover_refine_history : []);
-      setShowRefinePanel(false);
-      setRefinePromptInput('');
-    } catch (err) {
-      console.error('[UploadPage] refine cover failed', {
-        status: err?.response?.status,
-        err: err?.message,
-      });
-      alert(err.response?.data?.error || '커버 수정에 실패했습니다.');
-    } finally {
-      setRefiningCover(false);
-    }
-  };
-
-  // v58: 특정 버전으로 되돌리기.
-  const handleRevertCover = async (targetVersion) => {
-    if (!coverSessionId) return;
-    setRevertingVersion(targetVersion);
-    try {
-      if (import.meta.env?.DEV) {
-        console.info('[UploadPage] revert cover', { cover_session_id: coverSessionId, version: targetVersion });
-      }
-      const { data } = await api.revertCover(coverSessionId, targetVersion);
-      const newObjectName = data.cover_object_name;
-      setAiCoverObjectName(newObjectName);
-      setAiCoverPreview(api.coverPreviewUrl(newObjectName));
-      setCoverCurrentVersion(data.current_version);
-      // history 자체는 백엔드에서 보존 — refetch 불필요.
-    } catch (err) {
-      if (import.meta.env?.DEV) {
-        console.error('[UploadPage] revert cover failed', { err: err?.message });
-      }
-      alert(err.response?.data?.error || '버전 되돌리기에 실패했습니다.');
-    } finally {
-      setRevertingVersion(null);
-    }
-  };
-
+  // v215 F3 — 보관함 선택 해제 (세션·이력 state 는 커버촬영실 소관으로 이사 — 축소판)
   const handleClearAiCover = () => {
     setAiCoverPreview(null);
     setAiCoverObjectName(null);
-    // v58: 세션 / 이력 / 모달 상태도 함께 초기화.
-    setCoverSessionId(null);
-    setCoverHistory([]);
-    setCoverCurrentVersion(null);
-    setShowRefinePanel(false);
-    setRefinePromptInput('');
+  };
+
+  // v215 F3 — 보관함 피커 선택 (표준 반환 {cover_session_id, cover_object_name, title})
+  const handlePickCover = (cover) => {
+    setAiCoverObjectName(cover.cover_object_name);
+    setAiCoverPreview(api.coverPreviewUrl(cover.cover_object_name));
+    setImageFile(null); // 파일 첨부와 상호배제 (기존 규칙 보존)
+    if (import.meta.env.DEV) console.info('[UploadPage] cover picked from library', { session_id: cover.cover_session_id });
   };
 
 
@@ -714,319 +533,34 @@ export default function UploadPage({ generationPrefill, onClearPrefill }) {
               />
             )}
 
-            <div style={{ marginTop: '10px', marginBottom: '10px' }}>
-              <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>커버 프롬프트 AI</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                {COVER_PROMPT_MODELS.map(model => (
-                  <label key={model.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', padding: '8px 12px', borderRadius: '8px', border: coverPromptModel === model.id ? `2px solid ${model.color}` : '2px solid #333', background: coverPromptModel === model.id ? `${model.color}15` : '#1a1a1a', fontSize: '12px', color: '#ddd' }}>
-                    <input type="radio" name="coverPromptModel" checked={coverPromptModel === model.id} onChange={() => setCoverPromptModel(model.id)} style={{ accentColor: model.color, marginTop: '2px' }} />
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <span style={{ fontWeight: 600 }}>{model.name}</span>
-                      <span style={{ color: '#666', fontSize: '11px' }}>1회 ≈ {model.perCall} ({model.perCallKRW})</span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
+            {/* v215 F3 — AI 커버 제작은 커버촬영실로 이사. 여기는 보관함 선택만. */}
             <div style={{ marginTop: '10px' }}>
-              <label style={{ fontSize: '13px', color: '#888', marginBottom: '4px', display: 'block' }}>
-                커버 스타일 설명 (선택)
-              </label>
-              <textarea
-                value={coverUserPrompt}
-                onChange={(e) => setCoverUserPrompt(e.target.value)}
-                placeholder={"예: 애니메이션 풍, 벚꽃이 흩날리는 도쿄 거리\n예: 사이버펑크 네온 도시, 비 오는 밤\n예: 수채화 느낌의 파스텔톤 풍경"}
-                style={{
-                  width: '100%',
-                  minHeight: '70px',
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid #333',
-                  background: '#1a1a1a',
-                  color: '#ddd',
-                  fontSize: '13px',
-                  resize: 'vertical',
-                  lineHeight: '1.5',
-                }}
-              />
-            </div>
-
-            {/* v55: 커버 이미지 생성 모델 라디오 (Nano Banana Pro / GPT Image 2). 기본 nb_pro. */}
-            <div style={{ marginTop: '10px' }}>
-              <label style={{ fontSize: '13px', color: '#888', marginBottom: '6px', display: 'block' }}>
-                커버 이미지 생성 모델
-              </label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                <label style={{
-                  display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
-                  padding: '8px 12px', borderRadius: '8px',
-                  border: coverImageModel === 'nb_pro' ? '2px solid #7C3AED' : '2px solid #333',
-                  background: coverImageModel === 'nb_pro' ? '#7C3AED15' : '#1a1a1a',
-                  fontSize: '12px', color: '#ddd',
-                }}>
-                  <input
-                    type="radio"
-                    name="coverImageModel"
-                    value="nb_pro"
-                    checked={coverImageModel === 'nb_pro'}
-                    onChange={() => setCoverImageModel('nb_pro')}
-                    style={{ accentColor: '#7C3AED' }}
-                  />
-                  Nano Banana Pro
-                </label>
-                <label style={{
-                  display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
-                  padding: '8px 12px', borderRadius: '8px',
-                  border: coverImageModel === 'gpt_image_2' ? '2px solid #10A37F' : '2px solid #333',
-                  background: coverImageModel === 'gpt_image_2' ? '#10A37F15' : '#1a1a1a',
-                  fontSize: '12px', color: '#ddd',
-                }}>
-                  <input
-                    type="radio"
-                    name="coverImageModel"
-                    value="gpt_image_2"
-                    checked={coverImageModel === 'gpt_image_2'}
-                    onChange={() => setCoverImageModel('gpt_image_2')}
-                    style={{ accentColor: '#10A37F' }}
-                  />
-                  GPT Image 2
-                </label>
-              </div>
-            </div>
-
-            {/* v42: 장소 선택 (보유 장소가 있을 때만) */}
-            {availableLocations.length > 0 && (
-              <div className="upload-page__location-picker">
-                <label className="upload-page__field-label">장소 선택 (선택사항)</label>
-                <div className="upload-page__location-cards">
-                  <button
-                    type="button"
-                    className={`upload-page__location-card ${selectedLocationId === null ? 'is-selected' : ''}`}
-                    onClick={() => setSelectedLocationId(null)}
-                  >
-                    <div className="upload-page__location-none">사용 안함</div>
-                  </button>
-                  {availableLocations.map((loc) => (
-                    <button
-                      key={loc.id}
-                      type="button"
-                      className={`upload-page__location-card ${selectedLocationId === loc.id ? 'is-selected' : ''}`}
-                      onClick={() => setSelectedLocationId(loc.id)}
-                    >
-                      <img
-                        src={api.locationPreviewUrl(loc.object_name)}
-                        alt={loc.name}
-                        className="upload-page__location-thumb"
-                      />
-                      <div className="upload-page__location-label">{loc.name}</div>
-                    </button>
-                  ))}
-                </div>
-                {selectedLocationId && (
-                  <div className="upload-page__location-preview">
-                    <img
-                      src={api.locationPreviewUrl(
-                        availableLocations.find((l) => l.id === selectedLocationId)?.object_name
-                      )}
-                      alt="선택된 장소"
-                      className="upload-page__location-preview-img"
-                    />
-                    <div className="upload-page__location-preview-name">
-                      {availableLocations.find((l) => l.id === selectedLocationId)?.name}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
               <button
                 type="button"
                 className="upload-cover-ai-btn"
-                onClick={handleRegenerateCoverClick}
-                disabled={generatingCover || refiningCover}
+                onClick={() => setShowLibPicker((v) => !v)}
               >
-                {generatingCover ? (
-                  <>
-                    <span className="upload-cover-spinner" />
-                    AI 커버 생성 중...
-                  </>
-                ) : (
-                  <>
-                    {aiCoverPreview ? '다시 생성' : 'AI 커버 생성'}
-                    <span className="upload-cover-cost-badge">⭐{coverCost}</span>
-                  </>
-                )}
+                커버: 보관함에서 선택 {showLibPicker ? '▲' : '▼'}
               </button>
-
-              {/* v58: [추가 수정] 버튼 — 커버가 있고 session 이 있을 때만 노출 */}
-              {aiCoverPreview && coverSessionId && (
+              {onGoCoverStudio && (
                 <button
                   type="button"
-                  className="upload-cover-ai-btn"
-                  style={{
-                    background: 'linear-gradient(135deg, #06B6D4, #0891B2)',
-                    opacity: refiningCover || generatingCover ? 0.6 : 1,
-                  }}
-                  onClick={() => setShowRefinePanel((v) => !v)}
-                  disabled={refiningCover || generatingCover}
+                  className="upload-cover-remove"
+                  style={{ marginLeft: '8px' }}
+                  onClick={onGoCoverStudio}
                 >
-                  {showRefinePanel ? '추가 수정 닫기' : '추가 수정'}
+                  커버촬영실에서 만들기 →
                 </button>
               )}
-
-              <span style={{ fontSize: '11px', color: '#888' }}>
-                ~$0.02
-              </span>
-            </div>
-
-            {/* v58: [추가 수정] 인라인 패널 */}
-            {aiCoverPreview && coverSessionId && showRefinePanel && (
-              <div style={{ marginTop: '10px', padding: '12px', borderRadius: '8px', background: '#1a1a1a', border: '1px solid #333' }}>
-                <label style={{ fontSize: '13px', color: '#06B6D4', marginBottom: '6px', display: 'block' }}>
-                  수정 요청 (1~500자) — 변경할 부분만 명시. 나머지는 보존됩니다.
-                </label>
-                <textarea
-                  value={refinePromptInput}
-                  onChange={(e) => setRefinePromptInput(e.target.value)}
-                  placeholder={"예: 머리 길이를 단발로 바꿔주세요\n예: 배경에 강아지 한 마리 추가\n예: 가디건 색깔을 노란색으로"}
-                  maxLength={500}
-                  style={{
-                    width: '100%',
-                    minHeight: '60px',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #333',
-                    background: '#0d0d0d',
-                    color: '#ddd',
-                    fontSize: '13px',
-                    resize: 'vertical',
-                    lineHeight: '1.5',
-                  }}
-                  disabled={refiningCover}
+              {showLibPicker && (
+                <CoverLibraryPicker
+                  compact
+                  selectedObjectName={aiCoverObjectName}
+                  onSelect={handlePickCover}
+                  emptyHint="보관함이 비어 있습니다. 커버촬영실에서 커버를 만들어보세요."
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                  <span style={{ fontSize: '11px', color: '#666' }}>
-                    {refinePromptInput.length}/500
-                  </span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      type="button"
-                      className="upload-cover-remove"
-                      onClick={() => { setShowRefinePanel(false); setRefinePromptInput(''); }}
-                      disabled={refiningCover}
-                    >
-                      취소
-                    </button>
-                    <button
-                      type="button"
-                      className="upload-cover-ai-btn"
-                      style={{ background: 'linear-gradient(135deg, #06B6D4, #0891B2)' }}
-                      onClick={handleRefineCover}
-                      disabled={refiningCover || !refinePromptInput.trim()}
-                    >
-                      {refiningCover ? (
-                        <>
-                          <span className="upload-cover-spinner" />
-                          수정 중...
-                        </>
-                      ) : '수정 실행'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* v58: 수정 이력 collapsible 패널 */}
-            {aiCoverPreview && coverSessionId && coverHistory && coverHistory.length > 0 && (
-              <details style={{ marginTop: '10px', padding: '8px 12px', borderRadius: '8px', background: '#1a1a1a', border: '1px solid #333' }}>
-                <summary style={{ cursor: 'pointer', fontSize: '13px', color: '#aaa' }}>
-                  📜 수정 이력 ({coverHistory.length}개)
-                </summary>
-                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {[...coverHistory].sort((a, b) => (b.version ?? 0) - (a.version ?? 0)).map((entry) => {
-                    const isCurrent = entry.version === coverCurrentVersion;
-                    const isOrigin = entry.version === 0;
-                    const label = `v${entry.version}${isOrigin ? ' (원본)' : ''}${isCurrent ? ' — 현재' : ''}`;
-                    const promptText = entry.refine_prompt || (isOrigin ? '백지에서 생성' : '');
-                    return (
-                      <div key={entry.version} style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '6px 10px', borderRadius: '6px',
-                        background: isCurrent ? '#06B6D420' : '#0d0d0d',
-                        border: isCurrent ? '1px solid #06B6D4' : '1px solid #2a2a2a',
-                        fontSize: '12px',
-                      }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                          <span style={{ color: '#ddd', fontWeight: isCurrent ? 600 : 400 }}>{label}</span>
-                          {promptText && (
-                            <span style={{ color: '#888', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
-                              "{promptText}"
-                            </span>
-                          )}
-                        </div>
-                        {!isCurrent && (
-                          <button
-                            type="button"
-                            className="upload-cover-remove"
-                            style={{ fontSize: '11px', padding: '4px 10px' }}
-                            onClick={() => handleRevertCover(entry.version)}
-                            disabled={revertingVersion !== null || refiningCover || generatingCover}
-                          >
-                            {revertingVersion === entry.version ? '되돌리는 중...' : '되돌리기'}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            )}
-
-            {/* v58: [다시 생성] 확인 다이얼로그 — history 가 있을 때만 띄움 */}
-            {showRegenConfirm && (
-              <div
-                style={{
-                  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  zIndex: 1000,
-                }}
-                onClick={() => setShowRegenConfirm(false)}
-              >
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    background: '#1a1a1a', borderRadius: '12px', padding: '20px 24px',
-                    border: '1px solid #333', maxWidth: '420px', width: '90%',
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-                  }}
-                >
-                  <h3 style={{ margin: '0 0 12px 0', color: '#fff', fontSize: '16px' }}>
-                    다시 생성하시겠습니까?
-                  </h3>
-                  <p style={{ margin: '0 0 16px 0', color: '#bbb', fontSize: '13px', lineHeight: 1.5 }}>
-                    다시 생성하면 현재 수정 이력 <strong style={{ color: '#fff' }}>{coverHistory.length}개</strong>가 폐기됩니다. 이 동작은 되돌릴 수 없습니다.
-                  </p>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                    <button
-                      type="button"
-                      className="upload-cover-remove"
-                      onClick={() => setShowRegenConfirm(false)}
-                    >
-                      취소
-                    </button>
-                    <button
-                      type="button"
-                      className="upload-cover-ai-btn"
-                      onClick={handleConfirmRegenerate}
-                    >
-                      폐기하고 다시 생성
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* v209 3단계: MV(뮤직비디오) 흐름은 내 음악 → MV촬영실 탭으로 이관 — 업로드 화면에서 제거 */}

@@ -30987,3 +30987,86 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
 
 ## 5. 리스크·40% 판단
 **진행 (40% 이상).** 저장부 집중·응답면 무작업(실측 보장)·표시부는 옵션 prop 파급 0 패턴. R1: 앱팀 persona_id 의미(voice_id vs clone_id) — 역매핑이 양쪽 흡수, 계약서 축적분에 "track.persona_id는 정규화된 자산 id(clone_id), voice_id 수신 시 서버 정규화" 명시 필수. R2: compose 제출 경로 lyrics_source 누락 — v213 공통 함수 수렴 위에 배선(2경로 캡처 검증 ⑪). R3: SongItem 5소비처 파급 — 기본 off+회귀 ②. R4: 라벨 개명("이 곡의 아이돌")의 스크린샷 회귀류 — 문언 변경 1곳(CSS 무변) 한정.
+
+---
+
+# PLAN v215 — ④ 커버촬영실 탭 신설 (B-5 확장) (2026-08-31 13:48 KST, planner)
+
+기준: v214 완료(ec251a8). 범위: backend_9006 + frontend. **대형 사이클 — 2단계 게이트**(backend → frontend). 철학: 자산마다 전용 작업실, 소비처는 보관함에서 땡기기만.
+
+## 0. 실측 findings
+
+### 0-1. 백엔드 — 커버 자산 실체
+- **cover_sessions**(v58): `{user_id, image_model, cover_object_name(현재본), current_version, cover_refine_history[{version, object_name, refine_prompt, image_model, created_at}], created_at, updated_at}` — 생성마다 신규 세션(upload.py:407-430), 경로 `covers/generated/{uid}/{hex}.png`·refine `covers/refined/{uid}/{session}/v{N}.png`. generate-cover ⭐cover=5 선차감(:311-316)·**refine-cover 무과금**(외부 이미지 API만)·revert 무외부. GET /upload/cover-history/{id} 단건 기존재(:777-806) — **목록 API 전무**
+- **검증 통로**: v207 `_validate_cover_image_url`(update_track — revert/file/session 분기, tracks.py:645-700)·v210 `_validate_cover_object_name_for_create`(생성 경로 — **session 분기만**, :704-740) 모두 **세션 소유 증명(현재본+이력 $or) 기반** → 보관함 값이 기존 검증 무변경 통과
+- **⚠ 수명 충돌 실측 확정**: `purge_track_document`(:812-818)가 cover_image_url 오브젝트 best-effort 삭제, **유저 트랙 삭제(:898→:916)·admin 몰수 공용** — 커버 다곡 재사용 시 한 곡 삭제가 타 곡·보관함 자산 파손. 단 refine 이력 비현재 버전 오브젝트는 현행도 잔존(자산 보존 관행의 단초)
+- **mv.py cover_object_name 무검증**(truthiness만) — faces/ 등 백엔드 전용 경로 차단 부재
+- 실데이터: cover_sessions **29건(4 users, 이력 전부 v0 1건 — refine 실사용 0)**, tracks 23건 중 **19건 AI 커버 연결**(covers/generated|refined 매칭) — 소급 노출·연결 뱃지 역조회 재료 실존
+
+### 0-2. 프론트 — 이동 절단선 (상세는 조사 전문)
+- **UploadPage 커버 블록**: state :37-91(커버분)·핸들러 :217-377(generate/regen확인/refine/revert/clear)·JSX **:632-1030 통짜**+공용 라이트박스 :1059-1090. **결합면 = {title, genre, mood} in / {cover_object_name, character_id, user_character_snapshot} out** (lyrics·prompt·tags는 커버 미사용). 파일 첨부 경로(imageFile→제출 후 :456-468 uploadImage)와 AI 경로 상호배제(:664·:253). 제출: Path A :415(aiCoverObjectName)·Path B :443
+- **탭 프레임(MyMusicPage)**: 현행 9탭, 삽입점 버튼 :2091/:2092 사이(작곡실↔MV촬영실)·패널 :2279/:2281 사이. composePrefill(:1899-1904+:2273-2279) = 인계 프롭 템플릿
+- **MVStudioTab**: 커버 스텝 :542-588 — 커버 없음 힌트 :561-563 + generate-cover 직호출 :212-253(최소 payload·**세션 미생성 — refine 불가**), MVProductionSection 계약 = aiCoverObjectName prop(:629)+onCoverAdopted(:638-642)
+- **CoverEditModal**: 3탭(file/character/prompt — 버튼 :434-456·패널 :459-525), 4탭 삽입점 :455/:525, 적용은 handleApplyAi(:267-296, updateTrack) 재사용 가능
+- **보관함 UI 전무**(grep 0) — 수정 이력조차 페이지 이탈 시 접근 불가(29건 잠김 — 보관함 존재 이유 실증). FE cover_session 소비 = UploadPage·CoverEditModal 2파일뿐
+
+## 1. 설계 결정
+
+### C1. 보관함 저장소 = **cover_sessions 재활용 (택1 — 신규 컬렉션 기각)**
+- 근거: ①v207/v210 검증이 세션 소유 증명 기반 — 보관함 선택 값이 생성·수정 양 통로 **무변경 통과** ②기존 29건 자동 소급(보관함에 자연 등장, 19/23 연결 뱃지 역조회 즉시 성립) ③신규 컬렉션 = 이중 진실+마이그레이션 비용
+- **확장 필드(additive, 신규 생성분만 — 기존 doc 키 부재 허용)**: `title`(생성 시 body.title 스냅샷 — 카드 라벨), `gen_params`{genre, mood, user_prompt, prompt_model, location_id, vocal_gender, character_object_name}(앱팀 B-5 "생성 파라미터"), `source`('coverstudio'|'coveredit'|'upload')
+
+### C2. 보관함 API (upload.py — 검증 헬퍼 인접 응집)
+- **GET /api/upload/cover-sessions**?page&limit(기본 20, updated_at 최신순) → `{covers:[{cover_session_id, cover_object_name, image_url, title, image_model, current_version, history_count, gen_params?, source?, linked_tracks:[{id,title}], created_at, updated_at}], pagination}`
+  - **연결 곡 역조회 N+1 회피**: 페이지 세션들의 오브젝트명 전량(현재본+이력) 수집 → `tracks.find({uploader_id: user, cover_image_url: {$in: names}}, {title,cover_image_url})` **1회** → 매핑(미사용 = linked_tracks 빈 배열). uploader 본인 한정 — 타인 곡이 내 세션 커버를 쓸 수 없는 현 검증 체계와 정합
+- **DELETE /api/upload/cover-sessions/{id}**: 본인 소유 404 은닉 / **연결 곡 존재 시 409 {error, linked_tracks}**(안전측 — 미사용만 삭제 가능, 사양 "고아 보존·삭제"와 정합) / 미사용이면 이력 전 버전 오브젝트+doc hard delete
+- 경로 확정: 앱팀 원문 "GET /api/covers"는 그림 가안 — **9006 실경로 /api/upload/cover-sessions**로 계약서 축적분 명시(미러링 기준)
+- 로그 `[CoverLib]` — list(건수)·delete(오브젝트 수)·409 거부
+
+### C3. 수명 정책 재설계 (핵심 — 자산 소유권을 보관함으로 이관)
+- **purge_track_document 커버 삭제 조건화**: cover_image_url이 `covers/generated/`·`covers/refined/` 접두(**세션 산출물 = 보관함 자산**)면 **오브젝트 삭제 스킵**(트랙 doc 파기만) / `covers/{uid}/{tid}.ext` 파일 첨부 커버(트랙 전속)만 기존대로 삭제
+- 근거: ①곡=참조자·보관함=소유자 재정의 — 접두 판정만으로 참조 카운팅 불요(단순·무경합) ②refine 이력 잔존 관행의 자연 확장 ③오브젝트 파기는 보관함 DELETE(미사용 한정) 단일 통로
+- **영향 명시**: admin 몰수(신고 확정 파기)도 세션 커버 오브젝트를 남기게 됨 — 문제 이미지 완전 파기가 필요한 몰수 케이스는 **cover_sessions 몰수 확장 별건**으로 기록·고지(▲사용자 인지 항목)
+
+### C4. mv.py cover_object_name 검증 편입 — 채택
+- CreateMVRequest.cover_object_name 지정 시: 세션 산출물(v210 헬퍼 재사용) 또는 본인 파일 커버(`covers/{user_id}/` 접두) 또는 track 소스 선택 시 그 track.cover_image_url 동일값 → 허용 / faces/·evidence/·`..`·http(s)·타인 → **400**(커버는 MV 생성 재료 — 보안 목적, 관대 불요). 미지정·track 자동 딸림 경로 무영향
+
+### C5. MV 경로 생성 통일 (사양 4 — "generate-cover 유도 대신 보관함 선택")
+- MVStudioTab의 generate-cover 직호출(:212-253) **제거** → 커버 없음 시 **보관함 피커 + "커버촬영실에서 만들기 →" 링크**(탭 전환). 세션 미생성 문제 자연 소멸(생성은 커버촬영실로 일원화 → 항상 세션화·refine 가능)
+
+### C6. 프론트 구조
+- **CoverStudioTab 신설**(components/studio/): UploadPage 커버 블록 전체 이사(state·핸들러 :217-377·JSX :632-1030·라이트박스) + 결합면 대체 — **탭 자체 입력**: 제목(필수 게이트 승계)·장르/무드(선택, 프롬프트 재료) + 아티스트 시트/장소/이미지 모델/프롬프트 AI/refine/이력/되돌리기 그대로 + **보관함 그리드**(연결 곡 뱃지·미사용 표시·보기 라이트박스·삭제 409 안내·[업로드에 쓰기]) + 생성 성공 시 자동 보관함 반영(세션 insert가 곧 보관함 저장 — 사양 2 "자동 저장" 충족)
+- **공용 CoverLibraryPicker 컴포넌트** 신설(그리드/컴팩트 2모드) — 소비처 4곳(커버촬영실 본진·UploadPage·MVStudioTab·CoverEditModal) 공유
+- **UploadPage 절제**: 커버 블록 제거 → 「커버: 보관함에서 선택 ▼」 컴팩트 피커(미리보기·없으면 "커버촬영실에서 만들기 →" 링크) + **파일 직접 첨부 유지**(상호배제·사후 uploadImage 경로 불변). 아티스트 토글·스냅샷·character_id 출처는 업로드 잔존(v214 계약 불변 — 커버 생성용 시트 배선만 이사). 인계 수신: coverPrefill {coverObjectName, coverSessionId} (composePrefill 패턴)
+- **탭 배선**: key `coverstudio` 라벨 「커버촬영실」 — 버튼 :2091/:2092·패널 :2279/:2281, MyMusicPage에 coverPrefill 상태+handleSendToUpload 대칭 핸들러
+- **CoverEditModal**: 4탭 'library'(:455/:525 삽입) — CoverLibraryPicker 컴팩트 → 기존 handleApplyAi 재사용(무변경 통과)
+- **MVStudioTab**: :542-588 개편(C5) — 피커 채택 시 onCoverAdopted·notifyCoverChanged 계약 유지
+
+## 2. 변경 매트릭스
+
+| # | 파일 | 변경 | 담당 |
+|---|---|---|---|
+| B1 | backend_9006/app/routes/upload.py | GET/DELETE cover-sessions(C2)·generate-cover에 title/gen_params/source 스냅샷(C1)·[CoverLib] | backend-dev |
+| B2 | backend_9006/app/routes/tracks.py | purge_track_document 커버 삭제 조건화(C3 — 접두 판정) | backend-dev |
+| B3 | backend_9006/app/routes/mv.py | cover_object_name 검증 편입(C4) | backend-dev |
+| F1 | frontend/src/components/CoverLibraryPicker.jsx(+css) 신설 | 그리드/컴팩트 2모드·연결 뱃지·미사용 표시 | frontend-dev |
+| F2 | frontend/src/components/studio/CoverStudioTab.jsx(+css) 신설 | 제작 이사+보관함 본진(C6) | frontend-dev |
+| F3 | frontend/src/pages/UploadPage.jsx | 커버 블록 절제→피커 드롭인·coverPrefill 수신·파일 첨부 불변 | frontend-dev |
+| F4 | frontend/src/components/studio/MVStudioTab.jsx | 생성 직호출 제거→피커+링크(C5) | frontend-dev |
+| F5 | frontend/src/components/CoverEditModal.jsx | 4탭 library | frontend-dev |
+| F6 | frontend/src/pages/MyMusicPage.jsx + api/index.js | coverstudio 탭 배선·coverPrefill·listCoverSessions/deleteCoverSession/getCoverHistory 래퍼 | frontend-dev |
+
+## 3. dev 분할 (대형 — 2단계 게이트)
+- **Phase 1 backend**: B1(FE 게이트) → B2·B3 병렬. 완료 시 tester 1차 배치(api)
+- **Phase 2 frontend**: F1+F6 래퍼(B1 계약 고정치로 골격 병렬 가능) → F2(본진 이사 — 최대) → F3 → F4·F5 병렬. 완료 시 tester 2차 배치(e2e)
+- F3은 F2 완료 후(이동 원본 보존 원칙 — 복사 이식 검증 후 절제, 동시 진행 금지)
+
+## 4. test-designer 항목
+표준 제약: generate-cover·refine 성공 경로 금지(⭐+외부 이미지 — 인터셉트·402/400 경로만, **세션 픽스처 전량 직삽**). **§0 정식 채택: 검색 UI 진입은 목록 인터셉트 기본, 실검색 쿼리는 외부 임베딩 1회/질의 사전 계상**(v214 편차 이월 확정). 이번 사이클 **실업로드 0 목표**(트랙 연결 픽스처 직삽 — 인덱싱 0회 계상). 실데이터 cover_sessions 29건·tracks 23건 read-only(안정 상태 한정), me 키셋 상비.
+
+회귀: ①v207 update_track 검증 4분기 ②v210 생성 경로 검증 ③업로드 양 경로(커버 미지정·파일 첨부 사후 uploadImage 경로 불변) ④MV track 소스 커버 자동 딸림·onCoverAdopted·notifyCoverChanged ⑤CoverEditModal 기존 3탭 ⑥purge 파일 첨부 커버 삭제 유지(C3 반대면) ⑦v212~v214 스모크
+
+신규: ⑧목록 API(페이지네이션·**tracks 조회 1회 실증**·연결 매핑 현재본+이력·기존 29건 소급 노출·미사용 빈 배열) ⑨삭제(미사용 hard delete 오브젝트 전 버전 확인 / 연결 중 409+linked_tracks / 타인 404 은닉) ⑩**수명 e2e**: 커버 1개→곡 2개 연결(직삽)→곡A 삭제→곡B 커버·보관함 오브젝트 무손상 / 파일 커버 곡 삭제→오브젝트 삭제 ⑪재사용 3소비처 통과(업로드 제출·updateTrack·MV create) ⑫mv 검증 차단 4종(faces/·evidence/·타인·http) 400 + track 동일값 허용 ⑬커버촬영실 e2e(인터셉트 생성→세션 직삽 대체→보관함 등장→refine 이력·되돌리기 UI→[업로드에 쓰기] 인계→제출 통과) ⑭UploadPage 절제 후 회귀(피커 선택·파일 첨부·상호배제·coverPrefill) ⑮MVStudioTab 개편(피커 채택·커버촬영실 링크 탭 전환) ⑯CoverEditModal library 적용(updateTrack 반영) ⑰생성 시 title/gen_params/source 스냅샷 영속(인터셉트 하 body 캡처+직삽 검증)
+
+## 5. 리스크·40% 판단
+**진행 (40% 이상).** 절단선·검증 통로·수명 충돌이 전부 실측 확정 — 설계 불확실성 낮음, 물량이 큰 사이클(2단계 게이트로 관리). R1: UploadPage 대수술 회귀 — 복사 이식→검증→절제 순서 강제(F2→F3), 파일 첨부·제출 경로 불변 회귀 ③⑭. R2: purge 조건화 ↔ admin 몰수 완전 파기 기대 충돌 — 세션 몰수 확장 별건 기록+▲사용자 인지. R3: 보관함 삭제 409 UX — linked_tracks 안내 표준화. R4: MV 생성 직호출 제거로 인한 동선 변화(원클릭→2클릭) — 사양 합의분, 링크로 완화. R5: cover-sessions 목록의 이력 오브젝트명 전량 $in — 세션당 이력 소수(실측 max 1)라 현실 무해, 페이지 20 한정.

@@ -809,15 +809,29 @@ async def purge_track_document(doc: dict, conn) -> dict:
             pass  # Continue even if MinIO deletion fails
 
     # MinIO — 커버 (object name 저장분만 — http(s) 외부 URL 은 스킵)
+    # v215 C3 — 수명 재설계: covers/generated/·covers/refined/ 접두(세션 산출물 =
+    # 보관함 소유 자산)는 **오브젝트 삭제 스킵**(트랙 doc 만 파기). 곡=참조자·
+    # 보관함=소유자 — 커버 다곡 재사용 시 한 곡 삭제가 타 곡·보관함을 파손하지
+    # 않는다. 오브젝트 파기는 보관함 DELETE(미사용 한정, upload.py) 단일 통로.
+    # ⚠ 별건 기록: 이 함수는 유저 삭제·admin 몰수 공용 — 몰수 시에도 세션 커버
+    # 오브젝트가 남는다. 문제 이미지 완전 파기가 필요한 몰수 케이스는
+    # cover_sessions 몰수 확장 별건(▲사용자 인지 항목, v215 REPORT).
     cover = doc.get("cover_image_url")
     if cover and not str(cover).startswith("http"):
-        try:
-            minio_client.remove_object(
-                bucket_name=settings.minio_bucket_images, object_name=cover
+        if str(cover).startswith(("covers/generated/", "covers/refined/")):
+            logger.info(
+                "[CoverLib] purge skip session-cover track=%s obj=%s (보관함 소유 — C3)",
+                str(doc.get("_id")), cover,
             )
-            removed.append("cover")
-        except Exception:
-            pass
+        else:
+            # 파일 첨부 커버(covers/{uid}/{tid}.ext — 트랙 전속)만 기존대로 삭제
+            try:
+                minio_client.remove_object(
+                    bucket_name=settings.minio_bucket_images, object_name=cover
+                )
+                removed.append("cover")
+            except Exception:
+                pass
 
     # MinIO — 공유영상 캐시 (v126/v129 — share/v3/{id}[ _wide|_kakao ].mp4)
     try:

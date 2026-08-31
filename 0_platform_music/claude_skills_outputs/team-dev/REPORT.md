@@ -16867,3 +16867,48 @@ persona 5키 × 3상태 (me·list·단건 전 응답면 공통, 키 생략 금�
 
 ## 6. 안전 준수
 실사용자 데이터 무변조(diff 0), 유료 성공 경로 0(작곡 인터셉트+402 백스톱·실업로드 2건 한정 계상), 실 .env 무접촉, 9004/9005 무접촉, 재기동 절차 준수(vite 재기동 기록), me 키셋 상비 회귀 유지.
+
+---
+
+# REPORT v215 — ④ 커버촬영실 탭 신설 (B-5 확장) (2026-08-31 14:14 KST, planner)
+
+**판정: PASS — Phase 1 10/10 + Phase 2 7/7, 픽스 루프 0회.** 기준: v214 완료(ec251a8) 위 대형 사이클(2단계 게이트). 범위: backend_9006 + frontend, 9004/9005 무접촉.
+
+## 1. 배경·실측 요지
+자산별 전용 작업실 철학의 커버 편: 「새 업로드」에 묶여 있던 커버 제작 전체(생성·refine·이력·되돌리기)를 「커버촬영실」 탭으로 이사하고, 보관함(전량 목록·재사용·연결 뱃지)을 신설. 결정적 실측 3건: ①v207/v210 커버 검증 양 통로가 **cover_sessions 소유 증명 기반** — 보관함 값이 무변경 통과 ②**수명 충돌**: purge_track_document가 커버 오브젝트를 삭제(유저 삭제·admin 몰수 공용) — 다곡 재사용 시 파손 ③보관함 UI·목록 API 전무 — 기존 29건(4 users)이 페이지 이탈 시 접근 불가로 잠겨 있었음(tracks 중 19건 AI 커버 연결).
+
+## 2. 설계 결정 (C1~C6 — 상세 PLAN v215)
+- **C1 저장소 = cover_sessions 재활용**(신규 컬렉션 기각 — 검증 무변경 통과·기존 29건 자동 소급·이중 진실 회피) + additive 확장 title/gen_params/source(신규 생성분만)
+- **C2 보관함 API**: GET/DELETE `/api/upload/cover-sessions` — 페이지네이션·**연결 곡 역조회 tracks $in 1회(N+1 0)**·연결 중 삭제 **409+linked_tracks** 거부·미사용만 전 버전 hard delete·구형 doc은 응답 null 3키 통일
+- **C3 수명 정책 재설계(핵심)**: purge_track_document 커버 삭제를 **접두 조건화** — 세션 산출물(covers/generated|refined)은 보관함 소유 자산으로 **오브젝트 보존**, 파일 첨부 커버(covers/{uid}/{tid}.ext — 트랙 전속)만 기존대로 삭제. **오브젝트 파기 = 보관함 DELETE 단일 통로.** 참조 카운팅 불요(접두 판정)
+- **C4 mv.py cover_object_name 검증 편입**: 핸들러 선두부(곡 소스 해석 이전) 배치 — 세션 산출물/본인 파일 커버/track 동일값 허용, faces/·evidence/·`..`·http·타인 400
+- **C5 MV 생성 직호출 제거** → 보관함 피커+「커버촬영실에서 만들기 →」 링크 — MV 경로 세션 미생성(refine 불가) 문제 자연 소멸, 생성은 커버촬영실로 일원화
+- **C6 프론트**: CoverStudioTab 본진 신설(제작 전체 이사+자체 title/genre/mood 입력+보관함 그리드 — 생성=세션 insert=자동 보관함 저장), 공용 CoverLibraryPicker(그리드/컴팩트 — 4소비처, 표준 반환 `{cover_session_id, cover_object_name, title}`), UploadPage 절제(피커 드롭인·**파일 직접 첨부 유지**·coverPrefill 인계 — coverSessionId는 예약 필드), CoverEditModal 4탭 library(handleApplyAi 재사용), 탭 key `coverstudio`(작곡실↔MV촬영실 사이)
+
+## 3. 계약 확정본 — 앱팀 계약서 축적분 (미러링 회귀표 기준)
+- **보관함 실경로 = `/api/upload/cover-sessions` (앱팀 그림 가안 `/api/covers` 아님 — 미러링 시 이 경로가 정본)**
+  - GET ?page&limit(기본 20, updated_at 역순) → `{covers:[{cover_session_id, cover_object_name, image_url, title, image_model, current_version, history_count, gen_params, source, linked_tracks:[{id,title}], created_at, updated_at}], pagination}` — 구형 doc(확장 필드 부재)은 **title/gen_params/source null 3키 통일 동봉**, 미사용 = linked_tracks []
+  - DELETE /{cover_session_id}: 타인·부재 404 은닉 / **연결 곡 존재 시 409 `{error, linked_tracks:[{id,title}]}`** / 미사용 → 현재본+이력 전 버전 오브젝트+doc hard delete
+- **generate-cover 확장(additive)**: 세션 doc에 title·gen_params{genre,mood,user_prompt,prompt_model,location_id,vocal_gender,character_object_name}·source 스냅샷 영속 — 응답 계약 불변
+- **커버 수명 규약**: 곡 삭제(유저·admin 공용 purge)는 세션 산출물 커버 오브젝트를 보존(곡=참조자·보관함=소유자). 한 커버 여러 곡 재사용 안전. 파일 첨부 커버만 곡과 함께 파기
+- **MV create 검증**: cover_object_name 지정 시 세션 산출물/본인 파일 커버/track 동일값만 허용 — 그 외 400 (기존 무검증 폐지)
+- 재사용 통로: 보관함 값은 업로드 양 경로(v210)·updateTrack(v207)·MV create(신설) 검증을 모두 통과 — 소비처 3곳 계약 불변
+
+## 4. 구현·테스트 판정
+- diff: upload.py +179 · tracks.py +26/-6 · mv.py +53 / CoverStudioTab 721(신설) · CoverLibraryPicker 192+css(신설) · **UploadPage -466(절제)** · MVStudioTab 107± · CoverEditModal +32 · MyMusicPage +23 · api/index.js +12 — PLAN 매트릭스 B1~B3/F1~F6 정합, 범위 외 0
+- **Phase 1 10/10 PASS**: 보관함 API($in 1회 실증·409 linked_tracks·전 버전 hard delete·구형 null 3키·타인 404 은닉), 수명 양면(mc stat 생멸 타임라인 — 세션 커버는 곡 삭제에도 생존·파일 커버는 파기·오브젝트 파기는 보관함 DELETE 단일 통로), cover-vs-source 400 서열 양면(선두 배치 실증), 스냅샷 영속, v207/v210 회귀
+- **Phase 2 7/7 PASS**: 제작 이사 e2e(인터셉트 생성→보관함 등장→이력 이어가기·되돌리기→coverPrefill 인계→제출 통과), UploadPage 절제 회귀(상호배제·파일 첨부·v214 character_id 배선 불변), MV 직호출 제거(**네트워크 0 실증**)+피커 채택, 모달 4탭(updateTrack 200), 탭 배선·연결 뱃지·미사용 표시
+- 안전: **실업로드 0 완주(OpenAI 도달 0)** — 전량 직삽, 유료 외부 도달 0, ⭐ 원장 불변, 실데이터 29(cover_sessions)/24(tracks)/7(characters) 완전 복귀
+
+## 5. §0 규약 채택 확정 (본 사이클부터 정식)
+- **검색 UI 진입 테스트 = 목록 인터셉트 기본, 실검색 쿼리 = 외부 임베딩 1회/질의 사전 계상** (v214 편차 이월 → 정식 채택 완료)
+- 실업로드 0 목표 명문(트랙 픽스처 직삽 기본 — 인덱싱 계상 0) — 실업로드가 필요한 사이클만 예외 산정
+
+## 6. ▲기록·잔여
+1. **▲사용자 인지: admin 몰수 완전 파기 갭** — C3 이후 신고 몰수(purge)도 세션 커버 오브젝트를 보존. 문제 이미지의 완전 파기가 필요한 몰수 케이스는 cover_sessions 몰수 확장(별건) 필요 — 정책 결정 대기
+2. tracks 기준선 24 정정 권고(사이클 간 실사용 +1 — 안정 상태 규약 내 자연 변동, 차기 TESTPLAN 기준선 갱신)
+3. N14⑤ 스냅샷 필드 캡처 절단 — character_id 배선 실증으로 갈음(차기 회귀 1회 권장) / before 스냅샷 tee 관행 교정(tester 프로세스 개선 기록)
+4. 후속 기록: coverSessionId 역링크("커버촬영실에서 이어서 수정")·보관함 서버 필터/검색·admin 세션 몰수 확장·v212 이월 ▲3건 불변(실데이터 마이그레이션 --apply·구 스토리지 청소·앱팀 409 고지)
+
+## 7. 안전 준수
+실사용자 데이터 무변조(29/24/7 복귀 대조), 유료 성공 경로 0(generate-cover·refine 인터셉트, 세션 픽스처 직삽), 실업로드 0, 실 .env 무접촉, 9004/9005 무접촉, me 키셋 상비 회귀 유지, 재기동 절차 준수.

@@ -1,0 +1,122 @@
+/* v215 F6 — 공용 커버 보관함 피커 */
+.cover-lib__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.cover-lib--compact .cover-lib__grid {
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+}
+
+.cover-lib__card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 2px solid #333;
+  border-radius: 10px;
+  padding: 6px;
+  background: #1a1a1a;
+}
+
+.cover-lib__card.is-selected {
+  border-color: #7c3aed;
+  background: #7c3aed15;
+}
+
+.cover-lib__thumb-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+}
+
+.cover-lib__thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #111;
+  display: block;
+}
+
+.cover-lib__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-height: 16px;
+}
+
+.cover-lib__title {
+  width: 100%;
+  font-size: 11px;
+  color: #ddd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cover-lib__badge {
+  font-size: 10px;
+  color: #888;
+  border: 1px solid #333;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.cover-lib__badge--linked {
+  color: #9eff9e;
+  border-color: #2d6a2d;
+}
+
+.cover-lib__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.cover-lib__action-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: transparent;
+  color: #bbb;
+  cursor: pointer;
+}
+
+.cover-lib__action-btn--danger {
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.cover-lib__action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cover-lib__pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.cover-lib__page-label {
+  font-size: 12px;
+  color: #888;
+}
+
+.cover-lib__empty {
+  font-size: 12px;
+  color: #888;
+  padding: 12px;
+  border: 1px dashed #333;
+  border-radius: 8px;
+  margin-top: 8px;
+}

@@ -3,6 +3,7 @@ import { FiClock, FiRefreshCw, FiZap, FiImage, FiArrowLeft, FiCheck } from 'reac
 import * as api from '../../api';
 import MVProductionSection from '../MVProductionSection';
 import ArtistPicker, { artistKey } from '../ArtistPicker';
+import CoverLibraryPicker from '../CoverLibraryPicker';
 import '../../pages/UploadPage.css';
 import '../StudioTab2.css';
 
@@ -11,7 +12,9 @@ import '../StudioTab2.css';
 // - 곡 인계: generation 소스 = audio_generation_id / track 소스 = track_id (+audio_url object name, duration_sec)
 // - track.cover_image_url 은 object name 저장 확정(실측) — cover_object_name 으로 그대로 전달
 // - 임시저장 탭(getMVJobs) [불러오기] → draftData prop 수신 (MyMusicPage handleLoadDraft 리타겟)
-export default function MVStudioTab({ draftData, onClearDraft }) {
+// v215 F4: 커버 생성 직호출 제거(C5 — 생성은 커버촬영실 일원화, 세션 미생성 문제 자연 소멸).
+// onGoCoverStudio = 커버촬영실 탭 전환 링크 (MyMusicPage 배선).
+export default function MVStudioTab({ draftData, onClearDraft, onGoCoverStudio }) {
   // ── 곡 선택 풀 ──
   const [poolGenerations, setPoolGenerations] = useState([]); // status==='completed'
   const [poolTracks, setPoolTracks] = useState([]);
@@ -29,9 +32,9 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
   // ── 커버 확인 스텝 (D4) — MVProductionSection 의 aiCoverObjectName 계약에 대응 ──
   const [coverObjectName, setCoverObjectName] = useState(null);
   const [coverPreview, setCoverPreview] = useState(null);
-  const [generatingCover, setGeneratingCover] = useState(false);
-  const [coverCost, setCoverCost] = useState(5);
+  // v215 F4: 생성 직호출 제거 — coverImageModel 은 드래프트 복원(onCoverImageModelRestore)·createMVJob 용으로 유지
   const [coverImageModel, setCoverImageModel] = useState('nb_pro');
+  const [showCoverLib, setShowCoverLib] = useState(false);
 
   // ── v212 F3: MV 아티스트 선택 — 구 하드 disabled(includeCharacter=false 고정) 해제.
   //    ArtistPicker 자체 로드 모드 (list API 우선, legacy 폴백 내장) ──
@@ -84,17 +87,6 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
     fetchPool();
     // 마운트 1회 의도 — fetchPool 은 비메모이즈 함수 (StudioTab2 fetchHistory 선례)
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 커버 생성 비용 로드 (실패 시 기본 5 — UploadPage v158 관행)
-  useEffect(() => {
-    api.getPointCosts()
-      .then(({ data }) => {
-        if (typeof data?.costs?.cover === 'number') setCoverCost(data.costs.cover);
-      })
-      .catch((err) => {
-        console.error('[MVStudio] getPointCosts failed (fallback 5)', { status: err?.response?.status, message: err?.message });
-      });
-  }, []);
 
   // ── 곡 선택 ──
   const handleSelectGeneration = (gen) => {
@@ -209,47 +201,15 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
     }
   }, [draftData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── D4 커버 확인 스텝: generate-cover 유도 (UploadPage v207 파이프라인의 최소 payload 재사용) ──
-  const handleGenerateCover = async () => {
-    if (!selectedSong?.title?.trim()) {
-      alert('커버를 생성하려면 곡 제목이 필요합니다.');
-      return;
-    }
-    setGeneratingCover(true);
-    try {
-      if (import.meta.env.DEV) {
-        console.info('[MVStudio] generateCover request', { image_model: coverImageModel, source: selectedSong.source });
-      }
-      const { data } = await api.generateCover({
-        title: selectedSong.title.trim(),
-        genre: selectedSong.genre || null,
-        mood: selectedSong.mood || null,
-        style: null,
-        character_object_name: null,
-        user_prompt: null,
-        prompt_model: null,
-        location_id: null,
-        image_model: coverImageModel,
-        vocal_gender: 'female',
-      });
-      api.notifyPointsRefresh(); // 커버 ⭐ 차감 즉시 헤더 배지 갱신
-      setCoverObjectName(data.object_name);
-      setCoverPreview(api.coverPreviewUrl(data.object_name));
-      // 씬이 이미 있는 상태에서 커버가 바뀌면 기존 계약대로 scenesInvalidated 통지
-      mvSectionRef.current?.notifyCoverChanged();
-    } catch (err) {
-      if (api.isGenerationRestricted(err)) {
-        api.alertGenerationRestricted(err);
-      } else if (api.isInsufficientPoints(err)) {
-        console.error('[MVStudio] generateCover insufficient points', { status: err?.response?.status });
-        api.notifyPointsRefresh();
-        alert(`별이 부족해요. AI 커버 생성에는 ⭐${coverCost}개가 필요합니다.`);
-      } else {
-        alert(err.response?.data?.error || 'AI 커버 생성에 실패했습니다.');
-      }
-    } finally {
-      setGeneratingCover(false);
-    }
+  // ── v215 F4 (C5): 커버 준비 = 보관함 선택 — 선택 값은 세션 산출물이라 MV create 400 검증 자연 통과.
+  //    onCoverAdopted(드래프트 역주입)·notifyCoverChanged(씬 무효화) 계약은 그대로 유지.
+  const handlePickCoverFromLibrary = (cover) => {
+    setCoverObjectName(cover.cover_object_name);
+    setCoverPreview(api.coverPreviewUrl(cover.cover_object_name));
+    setShowCoverLib(false);
+    if (import.meta.env.DEV) console.debug('[MVStudio] cover picked from library', { session_id: cover.cover_session_id });
+    // 씬이 이미 있는 상태에서 커버가 바뀌면 기존 계약대로 scenesInvalidated 통지
+    mvSectionRef.current?.notifyCoverChanged();
   };
 
   // ── 임시저장 래퍼 (구 UploadPage handleSaveDraft 동일 분해 — 실행부는 자식 ref.saveDraft) ──
@@ -559,32 +519,35 @@ export default function MVStudioTab({ draftData, onClearDraft }) {
                 </div>
               ) : (
                 <div className="upload-mv-hint" style={{ marginBottom: '8px' }}>
-                  이 곡에는 커버가 없습니다. MV 씬 생성에는 커버 이미지가 필요해요 — 아래 버튼으로 만들어주세요.
+                  이 곡에는 커버가 없습니다. MV 씬 생성에는 커버 이미지가 필요해요 — 보관함에서 고르거나 커버촬영실에서 만들어주세요.
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '8px' }}>
                 <button
                   type="button"
                   className="upload-cover-ai-btn"
-                  onClick={handleGenerateCover}
-                  disabled={generatingCover}
+                  onClick={() => setShowCoverLib((v) => !v)}
                 >
-                  {generatingCover ? (
-                    <>
-                      <span className="upload-cover-spinner" />
-                      AI 커버 생성 중...
-                    </>
-                  ) : (
-                    <>
-                      {coverObjectName ? '커버 다시 생성' : 'AI 커버 생성'}
-                      <span className="upload-cover-cost-badge">⭐{coverCost}</span>
-                    </>
-                  )}
+                  {coverObjectName ? '다른 커버 선택' : '보관함에서 커버 선택'} {showCoverLib ? '▲' : '▼'}
                 </button>
-                <span style={{ fontSize: '11px', color: '#888' }}>
-                  곡 제목·장르·분위기 기반으로 생성됩니다.
-                </span>
+                {onGoCoverStudio && (
+                  <button
+                    type="button"
+                    className="upload-cover-remove"
+                    onClick={onGoCoverStudio}
+                  >
+                    커버촬영실에서 만들기 →
+                  </button>
+                )}
               </div>
+              {showCoverLib && (
+                <CoverLibraryPicker
+                  compact
+                  selectedObjectName={coverObjectName}
+                  onSelect={handlePickCoverFromLibrary}
+                  emptyHint="보관함이 비어 있습니다. 커버촬영실에서 커버를 만들어보세요."
+                />
+              )}
             </div>
 
             {/* ── v212 F3: MV 아티스트 선택 — 구 하드 disabled 해제, 공용 ArtistPicker ── */}

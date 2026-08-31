@@ -114,6 +114,13 @@ class GenerateCoverRequest(BaseModel):
     # v57: 보컬 성별 — 커버 이미지 prompt 에 주입. None 이면 미주입 (기존 동작).
     # 영어 enum ("female","male","neutral") 또는 한국어 별칭(여자/여성/남자/남성/중성/지정 없음).
     vocal_gender: Optional[str] = None
+    # v215 — 보관함(커버촬영실) 출처 표기: 'coverstudio' | 'coveredit' | 'upload'.
+    # 화이트리스트 외/미전송은 None 저장 (additive — 구 클라이언트 무영향).
+    source: Optional[str] = None
+
+
+# v215 — 보관함 source 화이트리스트
+COVER_SOURCE_WHITELIST = {"coverstudio", "coveredit", "upload"}
 
 
 class GenerateMVRequest(BaseModel):
@@ -410,10 +417,23 @@ async def generate_cover(
         try:
             mongo = get_mongo()
             now_utc = datetime.now(timezone.utc)
+            # v215 — 보관함 카드 라벨·재현 재료 스냅샷 (additive, 신규 생성분만)
+            _src = (body.source or "").strip().lower()
             session_doc = {
                 "user_id": current_user["id"],
                 "image_model": norm_image_model,
                 "cover_object_name": object_name,
+                "title": title[:100],
+                "gen_params": {
+                    "genre": body.genre,
+                    "mood": body.mood,
+                    "user_prompt": (body.user_prompt or "")[:500],
+                    "prompt_model": body.prompt_model,
+                    "location_id": body.location_id,
+                    "vocal_gender": norm_vocal_gender,
+                    "character_object_name": body.character_object_name,
+                },
+                "source": _src if _src in COVER_SOURCE_WHITELIST else None,
                 "current_version": 0,
                 "cover_refine_history": [
                     {
@@ -803,6 +823,165 @@ async def get_cover_history(
         "cover_object_name": session.get("cover_object_name"),
         "cover_refine_history": [_serialize_history_entry(e) for e in history],
     }
+
+
+# ── v215: 커버 보관함 (커버촬영실 — PLAN C2) ────────────────────────────────
+# 저장소 = cover_sessions 재활용 (신규 컬렉션 없음 — 기존 29건 자동 소급).
+# 실경로 /api/upload/cover-sessions (앱팀 가안 "GET /api/covers" 아님 — 계약서 명시).
+
+
+def _session_object_names(session: dict) -> set:
+    """세션의 오브젝트명 전량 (현재본 + refine 이력 전 버전)."""
+    names = set()
+    if session.get("cover_object_name"):
+        names.add(session["cover_object_name"])
+    for entry in session.get("cover_refine_history") or []:
+        if entry.get("object_name"):
+            names.add(entry["object_name"])
+    return names
+
+
+@router.get("/cover-sessions")
+async def list_cover_sessions(
+    page: int = 1,
+    limit: int = 20,
+    current_user=Depends(get_current_user),
+):
+    """v215 — 내 커버 보관함 목록 (updated_at 최신순) + 연결 곡 역조회.
+
+    연결 곡은 페이지 세션들의 오브젝트명 전량(현재본+이력)을 모아
+    tracks **$in 1회** 조회로 매핑 (N+1 금지). uploader 본인 한정 —
+    타인 곡이 내 세션 커버를 쓸 수 없는 현 검증 체계와 정합.
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    limit = min(max(limit, 1), 100)
+    skip = (max(page, 1) - 1) * limit
+
+    total = await mongo.cover_sessions.count_documents({"user_id": user_id})
+    sessions = await (
+        mongo.cover_sessions.find({"user_id": user_id})
+        .sort("updated_at", -1).skip(skip).limit(limit)
+    ).to_list(length=limit)
+
+    # 연결 곡 역조회 — 오브젝트명 전량 수집 → tracks $in 1회
+    all_names: set = set()
+    for s in sessions:
+        all_names |= _session_object_names(s)
+    linked_by_object: dict = {}
+    if all_names:
+        async for t in mongo.tracks.find(
+            {"uploader_id": user_id, "cover_image_url": {"$in": list(all_names)}},
+            {"title": 1, "cover_image_url": 1},
+        ):
+            linked_by_object.setdefault(t.get("cover_image_url"), []).append(
+                {"id": str(t["_id"]), "title": t.get("title") or ""}
+            )
+
+    covers = []
+    for s in sessions:
+        linked_tracks = []
+        _seen_track_ids = set()
+        for name in _session_object_names(s):
+            for t in linked_by_object.get(name, []):
+                if t["id"] not in _seen_track_ids:
+                    _seen_track_ids.add(t["id"])
+                    linked_tracks.append(t)
+        obj = s.get("cover_object_name")
+        covers.append({
+            "cover_session_id": str(s["_id"]),
+            "cover_object_name": obj,
+            "image_url": "/api/upload/cover-preview/{}".format(obj) if obj else None,
+            # Q2(planner 확정) — 구형 doc(v215 이전)은 title/gen_params/source
+            # **null 3키 통일 동봉**(키셋 고정). doc 저장은 키 부재 그대로 — 소급 쓰기 없음.
+            "title": s.get("title"),
+            "image_model": s.get("image_model") or "nb_pro",
+            "current_version": s.get("current_version", 0),
+            "history_count": len(s.get("cover_refine_history") or []),
+            "gen_params": s.get("gen_params"),
+            "source": s.get("source"),
+            "linked_tracks": linked_tracks,
+            "created_at": s.get("created_at").isoformat() if s.get("created_at") else None,
+            "updated_at": s.get("updated_at").isoformat() if s.get("updated_at") else None,
+        })
+
+    logger.info(
+        "[CoverLib] list user=%s page=%d count=%d total=%d linked_objs=%d",
+        user_id[:8], page, len(covers), total, len(linked_by_object),
+    )
+    import math as _math
+    return {
+        "covers": covers,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": _math.ceil(total / limit) if limit else 0,
+        },
+    }
+
+
+@router.delete("/cover-sessions/{cover_session_id}")
+async def delete_cover_session(
+    cover_session_id: str,
+    current_user=Depends(get_current_user),
+):
+    """v215 — 보관함 커버 삭제. 연결 곡 존재 시 409 거부 (미사용만 hard delete).
+
+    오브젝트 파기의 **단일 통로** (purge_track_document 는 세션 커버를 스킵 — C3).
+    삭제 = 세션 doc + 오브젝트 전 버전(현재본+이력). 타인/부재/무효 404 은닉.
+    """
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    session = await _load_cover_session(mongo, cover_session_id, user_id)
+    if not session:
+        return JSONResponse(status_code=404, content={"error": "커버 세션을 찾을 수 없습니다."})
+
+    names = _session_object_names(session)
+    linked_tracks = []
+    _seen = set()
+    if names:
+        async for t in mongo.tracks.find(
+            {"uploader_id": user_id, "cover_image_url": {"$in": list(names)}},
+            {"title": 1},
+        ):
+            tid = str(t["_id"])
+            if tid not in _seen:
+                _seen.add(tid)
+                linked_tracks.append({"id": tid, "title": t.get("title") or ""})
+    if linked_tracks:
+        logger.info(
+            "[CoverLib] delete rejected (linked) session=%s user=%s tracks=%d",
+            cover_session_id, user_id[:8], len(linked_tracks),
+        )
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "이 커버를 사용 중인 곡이 있어 삭제할 수 없습니다.",
+                "linked_tracks": linked_tracks,
+            },
+        )
+
+    # 미사용 — 오브젝트 전 버전 + doc hard delete (오브젝트 삭제는 best-effort)
+    minio_client = get_minio()
+    removed = 0
+    for name in names:
+        try:
+            minio_client.remove_object(
+                bucket_name=settings.minio_bucket_images, object_name=name,
+            )
+            removed += 1
+        except Exception as e:
+            logger.warning(
+                "[CoverLib] object delete failed session=%s obj=%s: %s",
+                cover_session_id, name, str(e)[:120],
+            )
+    await mongo.cover_sessions.delete_one({"_id": session["_id"]})
+    logger.info(
+        "[CoverLib] delete session=%s user=%s objects=%d/%d",
+        cover_session_id, user_id[:8], removed, len(names),
+    )
+    return {"message": "커버가 삭제되었습니다.", "deleted_objects": removed}
 
 
 @router.post("/generate-mv")
