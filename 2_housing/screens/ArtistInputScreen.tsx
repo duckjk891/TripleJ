@@ -147,10 +147,13 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   const scrollRef = useRef<ScrollView>(null);
   const [step, setStep] = useState<Step>('welcome');
   // v3.82: forceKind 진입이어도 kind 언급 문구는 표시하지 않음(내부 로직만 유지)
+  // v3.112: 신규 추가(forceKind 없음)는 실사/가상 선택부터 — 첫 인사도 선택 유도로 분기
   const [chat, setChat] = useState<ChatMessage[]>(() => [
     {
       type: 'director',
-      text: `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`,
+      text: forceKind
+        ? `안녕하세요 ${titleLabel}님! 아티스트의 얼굴 사진을 한 장 올려주세요.`
+        : `안녕하세요 ${titleLabel}님! 어떤 스타일의 아티스트를 만들까요? 실사와 그림 중에 골라주세요.`,
     },
   ]);
 
@@ -164,8 +167,11 @@ export default function ArtistInputScreen({ navigation, route }: any) {
 
   const [initialLoading, setInitialLoading] = useState(true);
 
-  // v3.80: 가상화(그림) 캐릭터 모드 + 화풍 선택 스텝 (v3.81: forceKind 진입 시 고정)
-  const [isVirtualMode, setIsVirtualMode] = useState(forceKind === 'virtual');
+  // v3.112(대표): 실사/가상 명시 선택 — 신규 추가(forceKind 없음)는 null로 시작해
+  // welcome에서 두 선택 카드로 고른다. forceKind(재생성·레거시 빈 kind) 진입 시 고정.
+  // 기존 v3.80 토글(isVirtualMode boolean)은 selectedKind 파생값으로 대체.
+  const [selectedKind, setSelectedKind] = useState<'real' | 'virtual' | null>(forceKind ?? null);
+  const isVirtualMode = selectedKind === 'virtual';
   const [styleSamples, setStyleSamples] = useState<StyleSample[]>([]);
   const [styleLoading, setStyleLoading] = useState(false);
   const [styleLoadError, setStyleLoadError] = useState(false);
@@ -305,24 +311,32 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     setTimeout(() => startQuestioning(), 400);
   };
 
-  // ── v3.80: 가상화(그림) 캐릭터 모드 토글 ─────
-  const handleToggleVirtual = () => {
-    const next = !isVirtualMode;
-    if (__DEV__) console.info('[ArtistInput] 가상화 모드 토글', { next });
-    setIsVirtualMode(next);
+  // ── v3.112: 실사/가상 명시 선택(구 v3.80 토글 대체) ─────
+  // 선택 시 characterKind를 store에 반영하고, 화풍 잔존값(이전 선택의 preset/업로드)은 클리어.
+  const handleSelectKind = (kind: 'real' | 'virtual') => {
+    if (__DEV__) console.info('[ArtistInput] 스타일 선택', { kind });
+    setSelectedKind(kind);
     taskStore.setInput({
-      characterKind: next ? 'virtual' : 'real',
+      characterKind: kind,
       stylePreset: null,
       styleImageUri: null,
       styleImageName: null,
     });
-    if (next) {
-      pushUser('그림 스타일로 만들게요');
+    if (kind === 'virtual') {
+      pushUser('그림으로 만들게요');
       pushDirector('좋아요! 그림 스타일로 만들어드릴게요. 사진을 올리면 그 인상을 참고하고, 사진 없이 설명만으로도 만들 수 있어요. 마지막에 화풍(그림체)을 고르게 돼요.');
     } else {
-      pushUser('그림 스타일 없이 만들게요');
-      pushDirector('알겠어요! 사진을 올리거나 사진 없이 시작해주세요.');
+      pushUser('실사로 만들게요');
+      pushDirector('좋아요! 실사 스타일로 만들어드릴게요. 사진을 올리거나, 사진 없이 설명만으로 시작할 수 있어요.');
     }
+  };
+
+  // v3.112: 선택 되돌리기 — forceKind 진입에서는 노출되지 않음(kind 고정)
+  const handleResetKind = () => {
+    if (__DEV__) console.info('[ArtistInput] 스타일 다시 선택');
+    setSelectedKind(null);
+    pushUser('다른 스타일로 바꿀래요');
+    pushDirector('네! 실사와 그림 중에 다시 골라주세요.');
   };
 
   // ── v3.80: 화풍 샘플 로드 (무인증·무비용 GET) ─────
@@ -512,30 +526,43 @@ export default function ArtistInputScreen({ navigation, route }: any) {
               </AppText>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
-            <AppText style={styles.primaryBtnText}>사진 올리기</AppText>
-          </TouchableOpacity>
-          {/* v3.76(MAIDOL v161): 텍스트-only 경로 — 사진 없이 설명만으로 가상 인물 생성 */}
-          <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
-            <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
-          </TouchableOpacity>
-          {/* v3.80: 그림 스타일 토글 — v3.81: forceKind 진입 시 숨김(kind 강제 위반 방지)
-              v3.82: 라벨은 실사/가상 대비가 아닌 "그림 스타일" 중립 표현 */}
-          {!forceKind && (
-            <TouchableOpacity
-              style={[styles.virtualBtn, isVirtualMode && styles.virtualBtnActive]}
-              onPress={handleToggleVirtual}
-            >
-              <AppText style={[styles.virtualBtnText, isVirtualMode && styles.virtualBtnTextActive]}>
-                {isVirtualMode ? '그림 스타일 선택됨 — 취소하려면 탭' : '그림 스타일로 만들기'}
+          {/* v3.112(대표): 실사/가상 선택을 명시 노출 — 신규 추가(forceKind 없음)는
+              두 선택 카드부터. 선택(또는 forceKind 고정) 후에 사진/텍스트-only 버튼 표시. */}
+          {selectedKind === null ? (
+            <>
+              <TouchableOpacity style={styles.kindCard} onPress={() => handleSelectKind('real')}>
+                <AppText style={styles.kindCardTitle}>실사로 만들기</AppText>
+                <AppText style={styles.kindCardDesc}>사진 또는 설명으로 실제 사람 같은 아티스트를 만들어요</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.kindCard} onPress={() => handleSelectKind('virtual')}>
+                <AppText style={styles.kindCardTitle}>그림으로 만들기</AppText>
+                <AppText style={styles.kindCardDesc}>원하는 화풍(그림체)을 골라 캐릭터 아티스트를 만들어요</AppText>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
+                <AppText style={styles.primaryBtnText}>사진 올리기</AppText>
+              </TouchableOpacity>
+              {/* v3.76(MAIDOL v161): 텍스트-only 경로 — 사진 없이 설명만으로 생성 */}
+              <TouchableOpacity style={styles.textOnlyBtn} onPress={handleTextOnly}>
+                <AppText style={styles.textOnlyBtnText}>사진 없이 만들기</AppText>
+              </TouchableOpacity>
+              {/* v3.112: 선택 되돌리기 — forceKind(재생성·레거시) 진입 시 숨김(kind 강제 유지) */}
+              {!forceKind && (
+                <TouchableOpacity style={styles.kindResetBtn} onPress={handleResetKind}>
+                  <AppText style={styles.kindResetBtnText}>
+                    {isVirtualMode ? '그림 선택됨 — 다시 고르기' : '실사 선택됨 — 다시 고르기'}
+                  </AppText>
+                </TouchableOpacity>
+              )}
+              <AppText style={styles.textOnlyHint}>
+                {isVirtualMode
+                  ? '그림 스타일: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
+                  : '사진 없이 설명만으로 아티스트를 만들 수도 있어요.'}
               </AppText>
-            </TouchableOpacity>
+            </>
           )}
-          <AppText style={styles.textOnlyHint}>
-            {isVirtualMode
-              ? '그림 스타일: 위 버튼으로 사진을 올리거나, 사진 없이 시작하세요.'
-              : '사진 없이 설명만으로 아티스트를 만들 수도 있어요.'}
-          </AppText>
         </View>
       );
     }
@@ -768,14 +795,18 @@ const styles = StyleSheet.create({
   resumeBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
   resumeBtnDesc: { color: colors.text.muted, fontSize: 11, lineHeight: 15, marginTop: 4 },
 
-  // v3.80: 가상화(그림) 모드 버튼 + 화풍 선택 스텝
-  virtualBtn: {
-    borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,
-    paddingVertical: 12, alignItems: 'center', marginBottom: 6,
+  // v3.112: 실사/가상 선택 카드(구 v3.80 토글 대체) + 되돌리기
+  kindCard: {
+    borderWidth: 1.5, borderColor: colors.accent.primary, borderRadius: 14,
+    paddingVertical: 14, paddingHorizontal: 14, marginBottom: 8,
+    backgroundColor: colors.bg.surface1,
   },
-  virtualBtnActive: { backgroundColor: colors.accent.primary },
-  virtualBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
-  virtualBtnTextActive: { color: colors.text.primary },
+  kindCardTitle: { color: colors.accent.primary, fontWeight: '700', fontSize: 15, marginBottom: 4 },
+  kindCardDesc: { color: colors.text.secondary, fontSize: 12, lineHeight: 17 },
+  kindResetBtn: {
+    paddingVertical: 8, alignItems: 'center', marginBottom: 4,
+  },
+  kindResetBtnText: { color: colors.text.muted, fontSize: 12, fontWeight: '600' },
   styleLoadingText: { color: colors.text.secondary, fontSize: 12, marginTop: 10 },
   styleErrorText: { color: colors.text.secondary, fontSize: 13, marginBottom: 10, textAlign: 'center' },
   retryBtn: {

@@ -223,12 +223,21 @@ export default function MyArtistsScreen({ navigation }: any) {
     if (isLegacy) {
       // 레거시 구 계약: 같은 kind 생성 = 기존 덮어씀 → 빈 kind로만 추가 가능
       const kinds = artists.map((a) => a.kind);
-      if (kinds.includes('real') && kinds.includes('virtual')) {
+      const hasReal = kinds.includes('real');
+      const hasVirtual = kinds.includes('virtual');
+      if (hasReal && hasVirtual) {
         showAlert('안내', '구버전 계정은 최대 2명까지 만들 수 있어요. 계정 업그레이드 후 더 추가할 수 있어요.');
         return;
       }
-      const emptyKind: SlotKind = kinds.includes('real') ? 'virtual' : 'real';
       if (guardStarShortage()) return;
+      // v3.112: 빈 kind가 둘 다면 강제하지 않음 — 입력 화면에서 실사/가상 선택.
+      // 한쪽만 비었으면 기존대로 forceKind(같은 kind 생성=덮어씀 방지) 유지.
+      if (!hasReal && !hasVirtual) {
+        if (__DEV__) console.info('[MyArtists] 레거시 추가 confirm 표시(빈 kind 둘 다 — 선택 노출)');
+        setAddConfirm({});
+        return;
+      }
+      const emptyKind: SlotKind = hasReal ? 'virtual' : 'real';
       if (__DEV__) console.info('[MyArtists] 레거시 추가 confirm 표시', { emptyKind });
       setAddConfirm({ forceKind: emptyKind });
       return;
