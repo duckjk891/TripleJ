@@ -73,7 +73,7 @@
 ### v3.108/v218 — 백엔드 직접 인수 1차 + 프론트 v217 대응 (배포·검증 진행)
 - [x] [api] costs.voice_clone=5 노출 / ⭐0 계정 create 402 무과금 / 정상 create ⭐21→16 차감 (2026-08-31 실측)
 - [x] [api] charts 응답 album_id/album_title 키 존재(무소속 null) / albums.track_ids 인덱스·bg poll loop 기동 로그 (2026-08-31)
-- [ ] [api] 무보컬 클론 → 서버 폴링만으로 failed 전이 + ⭐5 자동 환불(16→21) — 감시 중
+- [x] [api] 서버 폴링만으로 validating→awaiting_verify→(불일치 낭독)→failed 전이 + ⭐5 자동 환불(16→21, 1회) 실측 (2026-08-31) — B-9/B-10 풀사이클 검증 완료
 - [ ] [e2e] 클로닝 위저드 ⭐5 confirm·잔액 차단·402 분기 / 구서버 무고지 폴백
 - [ ] [e2e] v217: 시트 생성 image_model 미전송 정상, refine character_id 전송(실사 화풍 유지), 레거시 echo 유지
 - [ ] [e2e] 앨범 만든 계정에서 차트/내 곡의 album_id 실값 → 곡 클릭 시 앨범 페이지 이동 자동 활성 확인
