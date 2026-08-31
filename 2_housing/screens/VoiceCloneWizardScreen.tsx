@@ -58,6 +58,11 @@ type AudioSrc = { uri: string; name: string } | null;
 
 const POLL_INTERVAL_MS = 3500;
 const POLL_MAX_TRIES = 120; // 첫 분석 실패→서버 자동 재시도 시나리오 감안(약 7분)
+// v3.105: generating 단계 폴링 — 서버는 GET /voice-clone/{id}가 올 때만 Suno를 폴링하므로
+// 앱이 폴링을 멈추면 영영 진행되지 않는다(2시간 후 문구 만료로 실패). ready/failed까지 유지.
+const GEN_POLL_INTERVAL_MS = 5000;
+const GEN_POLL_MAX_TRIES = 240; // 약 20분
+const GEN_SLOW_TRIES = 24; // 약 2분 경과 안내
 
 export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
@@ -86,6 +91,10 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
   const [verifySrc, setVerifySrc] = useState<AudioSrc>(null);
   const [skill, setSkill] = useState('intermediate');
 
+  // STEP 4 (v3.105): generating 폴링 상태 — ready/failed까지 화면 유지 폴링
+  const [genStatus, setGenStatus] = useState<'generating' | 'ready' | 'timeout'>('generating');
+  const [genSlow, setGenSlow] = useState(false);
+
   // 녹음 (MusicGenerationScreen 288-330행 expo-av 패턴 — step에 따라 sample/verify 대상 분기)
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -111,6 +120,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         setValidateInfo(clone.validate_info ?? null);
         const hasPhrase = !!cloneValidatePhrase(clone.validate_info);
         if (clone.status === 'generating' || clone.status === 'ready') {
+          setGenStatus(clone.status === 'ready' ? 'ready' : 'generating');
           setStep(4);
         } else if (hasPhrase) {
           setStep(3);
@@ -156,7 +166,10 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
           setCloneId(null);
           setValidateInfo(null);
           setSampleSrc(null);
+          setVerifySrc(null);
           setErrText('');
+          setGenStatus('generating');
+          setGenSlow(false);
           setStep(1);
         },
       },
@@ -209,6 +222,56 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, cloneId, validateInfo]);
+
+  // ── STEP 4(v3.105): generating → ready/failed 폴링 (5초 간격) ──
+  // 서버 voice_clone.py는 GET /voice-clone/{id} 수신 시에만 Suno를 auto-poll하므로
+  // "백그라운드" 처리가 존재하지 않음. 화면을 유지한 채 끝까지 GET을 보낸다.
+  useEffect(() => {
+    if (step !== 4 || !cloneId || genStatus !== 'generating') return;
+    let cancelled = false;
+    let tries = 0;
+    setGenSlow(false);
+    const tick = async () => {
+      if (cancelled || pollCancelRef.current) return;
+      tries += 1;
+      if (tries === GEN_SLOW_TRIES) setGenSlow(true);
+      try {
+        const clone = await getVoiceClone(cloneId);
+        if (cancelled) return;
+        if (clone.status === 'ready') {
+          console.log('[VoiceCloneWizard] 학습 완료(ready), clone_id=', cloneId, 'tries=', tries);
+          setGenStatus('ready');
+          useVoiceStore.getState().fetchClones();
+          return;
+        }
+        if (clone.status === 'failed' || clone.status === 'expired') {
+          const raw = clone.error_message || '';
+          console.warn('[VoiceCloneWizard] 학습 실패, clone_id=', cloneId, 'status=', clone.status, raw);
+          const expired = clone.status === 'expired' || /expired|만료/i.test(raw);
+          failBackToStep1(
+            expired ? '인증 문구 만료' : '학습 실패',
+            expired
+              ? '인증 문구가 만료됐어요.\n처음부터 다시 진행해주세요.'
+              : `목소리 학습에 실패했어요.\n처음부터 다시 진행해주세요.${raw ? `\n(${raw})` : ''}`
+          );
+          return;
+        }
+      } catch (err: any) {
+        console.error('[VoiceCloneWizard] 학습 폴링 실패:', cloneId, err?.response?.status, err?.message);
+      }
+      if (tries >= GEN_POLL_MAX_TRIES) {
+        console.warn('[VoiceCloneWizard] 학습 폴링 타임아웃, clone_id=', cloneId);
+        setGenStatus('timeout');
+        return;
+      }
+      setTimeout(tick, GEN_POLL_INTERVAL_MS);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, cloneId, genStatus]);
 
   // ── 미리듣기 ──
   const stopPreview = async () => {
@@ -406,6 +469,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
         singerSkillLevel: skill,
       });
       console.log('[VoiceCloneWizard] step3 ok, clone_id=', cloneId);
+      setGenStatus('generating'); // v3.105: 폴링 재시작 보장 (재시도 경로 포함)
       setStep(4);
     } catch (err: any) {
       const detail =
@@ -683,14 +747,43 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 4 && (
             <View>
-              <AppText style={styles.stepTitle}>4. 완료</AppText>
+              <AppText style={styles.stepTitle}>4. {genStatus === 'ready' ? '완료' : '목소리 학습'}</AppText>
               <View style={styles.doneBox}>
-                <AppText style={styles.doneTitle}>검증이 접수됐어요</AppText>
-                <AppText style={styles.doneDesc}>
-                  목소리 학습이 백그라운드에서 진행돼요.{'\n'}처리가 끝나면 목소리 목록에
-                  "사용 가능"으로 나타나요.
-                </AppText>
-                <AppText style={styles.doneStatus}>{STATUS_LABEL.generating}</AppText>
+                {genStatus === 'ready' ? (
+                  <>
+                    <AppText style={styles.doneTitle}>학습이 끝났어요</AppText>
+                    <AppText style={styles.doneDesc}>
+                      이제 목소리 목록에서 "사용 가능"으로 표시돼요.{'\n'}
+                      아티스트 목소리로 설정해 곡을 만들어보세요.
+                    </AppText>
+                    <AppText style={styles.doneStatus}>{STATUS_LABEL.ready}</AppText>
+                  </>
+                ) : genStatus === 'timeout' ? (
+                  <>
+                    <AppText style={styles.doneTitle}>아직 학습 중이에요</AppText>
+                    <AppText style={styles.doneDesc}>
+                      생각보다 오래 걸리고 있어요.{'\n'}목소리 목록에서 이어서 진행 상태를 확인할 수 있어요.
+                    </AppText>
+                    <AppText style={styles.doneStatus}>{STATUS_LABEL.generating}</AppText>
+                  </>
+                ) : (
+                  <>
+                    <AppText style={styles.doneTitle}>검증이 접수됐어요</AppText>
+                    {/* v3.105: 서버는 앱이 상태를 물어볼 때만 진행되므로 "백그라운드" 안내는 허위 — 문구 교체 */}
+                    <AppText style={styles.doneDesc}>
+                      목소리를 학습하고 있어요.{'\n'}앱을 켜둔 상태로 몇 분 정도 걸려요.
+                    </AppText>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                      <ActivityIndicator size="small" color={colors.accent.primary} />
+                      <AppText style={styles.doneStatus}>{STATUS_LABEL.generating}</AppText>
+                    </View>
+                    {genSlow && (
+                      <AppText style={[styles.doneDesc, { marginTop: 10 }]}>
+                        조금 오래 걸리고 있어요. 이 화면을 나가면 목소리 목록에서 이어서 확인할 수 있어요.
+                      </AppText>
+                    )}
+                  </>
+                )}
               </View>
               <TouchableOpacity style={styles.primaryBtn} onPress={handleDone}>
                 <AppText style={styles.primaryBtnText}>목록으로</AppText>

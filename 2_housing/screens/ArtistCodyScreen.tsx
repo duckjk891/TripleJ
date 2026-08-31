@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   View,
@@ -23,8 +24,6 @@ import { usePointsStore } from '../stores/pointsStore';
 import { useWishlistStore, type WishItem } from '../stores/wishlistStore';
 import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
-
-const MINIPLAYER_HEIGHT = 70;
 
 type Cat = '상의' | '하의' | '신발' | '헤어스타일' | '헤어컬러' | '악세서리' | '안경' | '문신';
 const CATEGORIES: Cat[] = ['상의', '하의', '신발', '헤어스타일', '헤어컬러', '악세서리', '안경', '문신'];
@@ -148,8 +147,17 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const taskStore = useCharacterTaskStore();
   const apiResult = taskStore.apiResult;
-  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
-  const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
+  // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침) —
+  // bottomLift(하단 공백) 제거, ArtistResult 관행(setMiniHidden)으로 통일. blur 시 복원.
+  useFocusEffect(
+    useCallback(() => {
+      usePlayerStore.getState().setMiniHidden(true);
+      if (__DEV__) console.info('[ArtistCody] 미니플레이어 숨김(focus)');
+      return () => {
+        usePlayerStore.getState().setMiniHidden(false);
+      };
+    }, [])
+  );
   // 'sheet' = 초기 캐릭터 생성 흐름 (시트 없음, 옷 함께 만들기) / 'outfit' = 기존 캐릭터 꾸미기
   const isSheetMode = route?.params?.mode === 'sheet';
 
@@ -392,7 +400,8 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     // 작사·작곡 패턴: 큐 등록 후 Map 복귀. 큐 0 도달 후 캐릭터 클릭하면 ArtistLoading에서 API 호출
     if (isSheetMode) {
       // 신규 시트 생성: ArtistInput에서 받은 컨셉 + 옷 desc를 합쳐 user_text로
-      const conceptText = taskStore.userText || '';
+      // v3.105: 실패 후 재시도 시 userText에 이전 의상 desc가 섞여 있을 수 있어 순수 컨셉 우선
+      const conceptText = taskStore.conceptText || taskStore.userText || '';
       const finalText = conceptText
         ? `캐릭터 컨셉: ${conceptText}\n\n${desc}`
         : desc;
@@ -592,14 +601,16 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
         )}
       </ScrollView>
 
-      <View style={[styles.bottomArea, { marginBottom: bottomLift }]}>
+      <View style={styles.bottomArea}>
         <View style={styles.btnRow}>
           <TouchableOpacity
             style={styles.skipBtn}
             onPress={() => {
               if (isSheetMode) {
                 // sheet 모드 취소 → 컨셉 입력 화면으로 복귀
-                navigation.replace('ArtistInput');
+                // v3.105: restore — store에 보존된 컨셉/사진/화풍·재생성 대상(cid)을 버리지 않고
+                // "이어서 만들기"로 재개 가능 (취소해도 입력 데이터 보존 — 대표 지적)
+                navigation.replace('ArtistInput', { restore: true });
               } else {
                 navigation.replace('ArtistResult');
               }

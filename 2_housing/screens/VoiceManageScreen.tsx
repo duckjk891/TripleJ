@@ -17,7 +17,7 @@ import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
-import { deleteVoiceClone, VoiceClone } from '../services/voiceService';
+import { deleteVoiceClone, getVoiceClone, VoiceClone } from '../services/voiceService';
 
 // v3.83: 클론 상태 배지 (MAIDOL MyVoiceCloneSection STATUS_BADGE 이식 — 기술 용어 최소화)
 const CLONE_STATUS_BADGE: Record<string, string> = {
@@ -87,6 +87,43 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
   useFocusEffect(
     useCallback(() => {
       fetchClones();
+    }, [fetchClones])
+  );
+
+  // v3.105: 진행 중(validating/generating) 클론 폴링 — 화면 focus 동안 10초 간격.
+  // 서버는 "단건 GET /voice-clone/{id}"가 올 때만 Suno를 auto-poll하므로(목록 GET은 안 태움)
+  // 반드시 단건 GET을 보내야 학습이 진행된다. 상태가 바뀌면 목록 재조회로 배지 갱신.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      let busy = false;
+      const interval = setInterval(async () => {
+        if (cancelled || busy) return;
+        const inProgress = useVoiceStore
+          .getState()
+          .clones.filter((c) => (c.status === 'generating' || c.status === 'validating') && c.clone_id);
+        if (inProgress.length === 0) return;
+        busy = true;
+        try {
+          for (const c of inProgress) {
+            const fresh = await getVoiceClone(c.clone_id);
+            if (cancelled) return;
+            if (fresh.status !== c.status) {
+              console.log('[VoiceManage] 진행 중 클론 상태 변경:', c.clone_id, c.status, '→', fresh.status);
+              fetchClones();
+              break;
+            }
+          }
+        } catch (err: any) {
+          console.error('[VoiceManage] 진행 중 클론 폴링 실패:', err?.response?.status, err?.message);
+        } finally {
+          busy = false;
+        }
+      }, 10000);
+      return () => {
+        cancelled = true;
+        clearInterval(interval);
+      };
     }, [fetchClones])
   );
 

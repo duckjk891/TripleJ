@@ -49,7 +49,10 @@ export default function Character({
   walkDeltas,
 }: Props) {
   const [animIndex, setAnimIndex] = useState(0);
-  const [direction, setDirection] = useState<Direction>('front');
+  // v3.105: 이동 없음(v37) — 방향은 정면 고정 상수. 이전엔 setAnimIndex updater 안에서
+  // setDirection을 호출했는데, updater는 렌더 단계에서 실행되므로 그 안의 setState는
+  // "Maximum update depth exceeded" 콘솔 경고의 전형 원인(렌더 중 set) → 제거.
+  const direction: Direction = 'front';
 
   const cycle = BEHAVIOR_CYCLES[type];
   const currentAnim = cycle[animIndex];
@@ -64,14 +67,11 @@ export default function Character({
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setAnimIndex((i) => {
-        const next = (i + 1) % cycle.length;
-        // 스프라이트 방향은 정면 고정 (이동 없음)
-        setDirection('front');
-        return next;
-      });
+      // 스프라이트 방향은 정면 고정 (이동 없음) — updater 안에서 다른 setState 호출 금지
+      setAnimIndex((i) => (i + 1) % cycle.length);
     }, 3000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
   const spriteScale = mapScale * 1.5;

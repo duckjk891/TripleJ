@@ -81,6 +81,23 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   // 앱 내부 디자인 다이얼로그 (시스템 Alert 대신)
   const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
+  // v3.105: 재생성(다시 만들기)도 generate-sheet ⭐ 소모 — confirm에 실비용 표기
+  const [regenConfirmVisible, setRegenConfirmVisible] = useState(false);
+  const [characterCost, setCharacterCost] = useState(10);
+
+  // v3.105: /points/costs 실값 (실패 시 10 폴백) — ArtistCody 관행
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        if (alive && res.data?.costs?.character != null) setCharacterCost(res.data.costs.character);
+      } catch (err: any) {
+        console.error('[ArtistResult] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   // v3.80: 실사/가상 2슬롯 — /me 하이드레이션에서 각각 보관
   const [realSheet, setRealSheet] = useState<{ objectName: string; url: string } | null>(null);
@@ -408,7 +425,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   };
 
   // v3.103(B-1): 서버 아티스트 재생성 — character_id 지정 진입(같은 kind 강제, 409 방지)
+  // v3.105: 진입 전 ⭐ 소모 confirm (재생성도 generate-sheet 과금 대상 — 대표 지적)
   const handleRegenerateServerArtist = () => {
+    if (!serverArtist) return;
+    setRegenConfirmVisible(true);
+  };
+
+  const performRegenerateServerArtist = () => {
+    setRegenConfirmVisible(false);
     if (!serverArtist) return;
     if (__DEV__) console.info('[ArtistResult] 재생성 진입', { characterId: serverArtist.character_id, kind: serverArtist.kind });
     taskStore.reset();
@@ -786,14 +810,25 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         onClose={() => setZoomVisible(false)}
       />
 
+      {/* v3.105: 서버 아티스트 재생성 confirm — ⭐ 소모 명시 */}
+      <ConfirmDialog
+        visible={regenConfirmVisible}
+        title="다시 만들기"
+        message={`이 아티스트의 시트를 처음부터 다시 만듭니다. (프로필·목소리 연결은 유지돼요)\n생성 시 ⭐${characterCost}이 소모돼요.`}
+        confirmText="다시 만들기"
+        onConfirm={performRegenerateServerArtist}
+        onCancel={() => setRegenConfirmVisible(false)}
+      />
+
       {/* 캐릭터 삭제 confirm */}
       <ConfirmDialog
         visible={resetConfirmVisible}
         title="캐릭터 다시 만들기"
         message={
-          bothSlots
-            ? '서버 제약으로 현재는 모든 아티스트가 함께 삭제됩니다(개별 삭제는 준비 중이에요). 모든 코디 기록도 함께 삭제돼요. 진행할까요?'
-            : '현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요. 진행할까요?'
+          (bothSlots
+            ? '서버 제약으로 현재는 모든 아티스트가 함께 삭제됩니다(개별 삭제는 준비 중이에요). 모든 코디 기록도 함께 삭제돼요.'
+            : '현재 아티스트와 모든 코디 기록이 삭제됩니다. 새로운 아티스트를 처음부터 만들 수 있어요.'
+          ) + `\n새로 만들 때 ⭐${characterCost}이 소모돼요. 진행할까요?`
         }
         confirmText="삭제하고 다시 만들기"
         destructive

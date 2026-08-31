@@ -155,7 +155,12 @@ function DirectorTicket({
         transform: [{ translateX: -w / 2 }],
         opacity: w > 0 ? 1 : 0,
       }}
-      onLayout={(e) => setW(e.nativeEvent.layout.width)}
+      // v3.105: onLayout→setW→재렌더→onLayout 피드백 방지 — 실제로 변했을 때만 갱신
+      // (매초 티켓 문구가 바뀌는 큐 진행 구간에서 update-depth 경고 방어)
+      onLayout={(e) => {
+        const nw = e.nativeEvent.layout.width;
+        setW((prev) => (Math.abs(prev - nw) < 0.5 ? prev : nw));
+      }}
     >
       <LinearGradient
         colors={gradColors}

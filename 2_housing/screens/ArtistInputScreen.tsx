@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   View,
@@ -23,8 +24,6 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
 import { colors } from '../theme/colors';
-
-const MINIPLAYER_HEIGHT = 70;
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
 
@@ -135,6 +134,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.103(B-1): 재생성 대상 cid — 지정 시 generate/save에 character_id 전달(기존 아티스트 갱신),
   // 미지정이면 신규 생성(슬롯 검사는 서버 409 slot_limit_exceeded가 백업)
   const regenCharacterId: string | undefined = route?.params?.characterId;
+  // v3.105: ArtistCody 취소 복귀 — store에 보존된 입력(컨셉·사진·화풍)을 버리지 않고 이어가기
+  const restoreParam = !!route?.params?.restore;
 
   const scrollRef = useRef<ScrollView>(null);
   const [step, setStep] = useState<Step>('welcome');
@@ -187,8 +188,17 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       parent.setOptions({ headerLeft: undefined });
     };
   }, [navigation]);
-  const hasMiniPlayer = !!usePlayerStore((s) => s.track);
-  const bottomLift = hasMiniPlayer ? MINIPLAYER_HEIGHT : 0;
+  // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침) —
+  // 하단 빈 공간(bottomLift) 대신 ArtistResult 관행(setMiniHidden)으로 통일. blur 시 복원.
+  useFocusEffect(
+    useCallback(() => {
+      usePlayerStore.getState().setMiniHidden(true);
+      if (__DEV__) console.info('[ArtistInput] 미니플레이어 숨김(focus)');
+      return () => {
+        usePlayerStore.getState().setMiniHidden(false);
+      };
+    }, [])
+  );
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
@@ -202,7 +212,10 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       console.info('[ArtistInput] 진입 파라미터', { forceKind, characterId: regenCharacterId ?? null });
     }
     // 재생성 대상 cid 세팅(신규 진입이면 이전 잔존값 클리어)
-    useCharacterTaskStore.getState().setInput({ targetCharacterId: regenCharacterId ?? null });
+    // v3.105: Cody 취소 복귀(restore)면 클리어 금지 — 재생성 흐름 중 취소 시 대상 cid 보존
+    if (!restoreParam) {
+      useCharacterTaskStore.getState().setInput({ targetCharacterId: regenCharacterId ?? null });
+    }
     if (!user) {
       setInitialLoading(false);
       return;
@@ -364,6 +377,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
       photoUri,
       photoName,
       userText: pendingConceptText,
+      conceptText: pendingConceptText, // v3.105: 취소/실패 복원용 순수 컨셉 보존
       stylePreset: styleUpload ? null : selectedPresetKey,
       styleImageUri: styleUpload?.uri ?? null,
       styleImageName: styleUpload?.name ?? null,
@@ -434,7 +448,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     // 새 시트 → 이전 캐릭터의 outfit 정보는 폐기
     useOutfitStore.getState().clear();
     // photoUri + 컨셉만 저장. API 호출은 옷 선택 후 ArtistLoading에서.
-    taskStore.setInput({ photoUri, photoName, userText: conceptText });
+    // v3.105: conceptText = 취소/실패 복원용 순수 컨셉 (Cody가 userText를 의상 desc와 합쳐 덮어씀)
+    taskStore.setInput({ photoUri, photoName, userText: conceptText, conceptText });
 
     setTimeout(() => {
       // 옷 선택 화면으로. mode='sheet' 전달 → ArtistCody가 초기 생성 분기로 동작.
@@ -473,12 +488,31 @@ export default function ArtistInputScreen({ navigation, route }: any) {
   // v3.103: 재생성(characterId) 진입 시에는 숨김 — "다시 만들기" 흐름과 혼동 방지.
   const showExistingCard = !!existingPreview && !regenCharacterId;
 
+  // v3.105: 이어서 만들기 — Cody 취소(restore) 또는 직전 생성 실패(apiError) 시
+  // store에 보존된 컨셉/사진/화풍으로 의상 선택부터 재개 (입력 데이터 보존 — 대표 지적)
+  const canResume =
+    (restoreParam || !!taskStore.apiError) && !!(taskStore.conceptText || taskStore.userText);
+  const handleResume = () => {
+    if (__DEV__) console.info('[ArtistInput] 이어서 만들기 — 의상 선택 재개', {
+      restoreParam, hadError: !!taskStore.apiError,
+    });
+    navigation.replace('ArtistCody', { mode: 'sheet' });
+  };
+
   const renderInputArea = () => {
     if (step === 'welcome') {
       // v3.81: "이미 아티스트가 있어요" 교체 게이트 제거 — 진입 관리는 MyArtists가 담당.
       // 이 화면은 항상 생성 UI (Map 미보유 경로·MyArtists 경유 진입 모두 welcome부터).
       return (
         <View style={styles.inputArea}>
+          {canResume && (
+            <TouchableOpacity style={styles.resumeBtn} onPress={handleResume}>
+              <AppText style={styles.resumeBtnText}>이어서 만들기 — 입력해둔 내용으로 의상 선택</AppText>
+              <AppText style={styles.resumeBtnDesc} numberOfLines={2}>
+                {taskStore.conceptText || taskStore.userText}
+              </AppText>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.primaryBtn} onPress={handlePickPhoto}>
             <AppText style={styles.primaryBtnText}>사진 올리기</AppText>
           </TouchableOpacity>
@@ -682,7 +716,8 @@ export default function ArtistInputScreen({ navigation, route }: any) {
         ))}
       </ScrollView>
 
-      <View style={{ marginBottom: bottomLift }}>
+      {/* v3.105: 미니플레이어 숨김 정책 — bottomLift(하단 공백) 제거 */}
+      <View>
         {renderInputArea()}
       </View>
     </KeyboardAvoidingView>
@@ -744,6 +779,15 @@ const styles = StyleSheet.create({
   },
   textOnlyBtnText: { color: colors.text.secondary, fontWeight: '600', fontSize: 14 },
   textOnlyHint: { color: colors.text.muted, fontSize: 11, textAlign: 'center' },
+
+  // v3.105: 이어서 만들기(입력 보존 재개) 버튼
+  resumeBtn: {
+    borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 14,
+    paddingVertical: 12, paddingHorizontal: 12, marginBottom: 8,
+    backgroundColor: colors.bg.surface1,
+  },
+  resumeBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 14 },
+  resumeBtnDesc: { color: colors.text.muted, fontSize: 11, lineHeight: 15, marginTop: 4 },
 
   // v3.80: 가상화(그림) 모드 버튼 + 화풍 선택 스텝
   virtualBtn: {

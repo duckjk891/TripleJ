@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet,
   View,
@@ -19,6 +20,7 @@ import { useCharacterTaskStore, type CharacterTaskMode } from '../stores/charact
 import { useArtistProfileStore } from '../stores/artistProfileStore';
 import { useOutfitStore, type AppliedItem } from '../stores/outfitStore';
 import { usePointsStore } from '../stores/pointsStore';
+import { usePlayerStore } from '../stores/playerStore';
 import AppScreenLayout from '../components/AppScreenLayout';
 import { colors } from '../theme/colors';
 
@@ -144,6 +146,16 @@ export default function ArtistLoadingScreen({ navigation }: any) {
 
   const [messageIndex, setMessageIndex] = useState(0);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // v3.105: 작업실 화면은 미니플레이어 숨김 + 백그라운드 재생 유지(대표 방침). blur 시 복원.
+  useFocusEffect(
+    useCallback(() => {
+      usePlayerStore.getState().setMiniHidden(true);
+      return () => {
+        usePlayerStore.getState().setMiniHidden(false);
+      };
+    }, [])
+  );
 
   // ── API 호출 (mount 직후 한 번) ──
   useEffect(() => {
@@ -439,7 +451,8 @@ export default function ArtistLoadingScreen({ navigation }: any) {
                   try {
                     await spendExtraSlot();
                     usePointsStore.getState().fetchBalance();
-                    showAlert('확장 완료', '슬롯이 추가됐어요. 아티스트 만들기를 다시 시도해주세요.');
+                    // v3.105: 입력은 store에 보존됨 — 아티스트 만들기 화면의 "이어서 만들기"로 재개 가능
+                    showAlert('확장 완료', '슬롯이 추가됐어요. 아티스트 만들기에서 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
                   } catch (spendErr: any) {
                     if (spendErr?.response?.status === 402) {
                       showAlert('스타가 부족해요', '슬롯 확장에는 ⭐15가 필요해요. 출석체크·앱 추천으로 스타를 모아보세요.');

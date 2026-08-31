@@ -18,6 +18,9 @@ interface CharacterTaskState {
   photoName: string | null;
   /** 모드별 입력 텍스트 — ArtistLoading이 store에서 읽어 API 호출 (params 대신) */
   userText: string | null;       // sheet 모드: 캐릭터 컨셉 텍스트
+  /** v3.105: 옷 desc가 합쳐지기 전의 순수 컨셉 텍스트 — 취소/실패 후 "이어서 만들기" 복원용.
+   *  ArtistCody가 userText를 컨셉+의상으로 덮어쓰므로 원본은 여기 보존한다 */
+  conceptText: string | null;
   refineRequest: string | null;  // refine 모드: 미세조정 요청
   outfitDesc: string | null;     // outfit 모드: 옷 설명
   /** 9004: 백엔드 영구저장된 원본 사진의 MinIO object name. 옷 입히기 시 /preview로 fetch해서 generate-sheet에 첨부 */
@@ -40,7 +43,7 @@ interface CharacterTaskState {
   legacyContract: boolean;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'targetCharacterId' | 'legacyContract'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'targetCharacterId' | 'legacyContract'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -58,6 +61,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   photoUri: null,
   photoName: null,
   userText: null,
+  conceptText: null,
   refineRequest: null,
   outfitDesc: null,
   originalPhotoObjectName: null,
@@ -96,6 +100,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       photoUri: null,
       photoName: null,
       userText: null,
+      conceptText: null,
       refineRequest: null,
       outfitDesc: null,
       originalPhotoObjectName: null,
