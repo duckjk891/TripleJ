@@ -35,6 +35,9 @@ interface ChartTrack {
   audio_url?: string;
   duration_sec?: number;
   lyrics?: string;
+  // v3.106: 트랙→앨범 역참조 필드 — 2026-08 실측 기준 서버 미제공(charts/tracks _serialize_track에 없음).
+  // 백엔드가 album_id를 내려주면 handleTrackPress의 앨범 분기가 그대로 동작한다.
+  album_id?: string;
 }
 
 type ChartTab = 'top100' | 'daily' | 'weekly' | 'monthly' | 'new' | 'queue';
@@ -65,7 +68,7 @@ export default function ChartScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionTrack, setActionTrack] = useState<ChartTrack | null>(null); // ⋮ 오버플로 메뉴 대상
-  const [latestAlbums, setLatestAlbums] = useState<Album[]>([]); // v3.96(A-20): TOP100 상단 최신 앨범
+  const [latestAlbums, setLatestAlbums] = useState<Album[]>([]); // v3.96(A-20)→v3.106: 신곡 탭 상단 최신 앨범
   const likedMap = useLikesStore((s) => s.liked);
   const syncLikes = useLikesStore((s) => s.sync);
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -101,7 +104,7 @@ export default function ChartScreen() {
     }
   }, []);
 
-  // v3.96(A-20): 홈 진입점(TOP 100)에만 최신 앨범 섹션 — 실패해도 차트는 그대로(섹션만 미노출)
+  // v3.96(A-20)→v3.106: 최신 앨범 섹션을 신곡 탭으로 이동 — 실패해도 차트는 그대로(섹션만 미노출)
   const fetchLatestAlbums = useCallback(async () => {
     try {
       const list = await getLatestAlbums(10);
@@ -115,7 +118,7 @@ export default function ChartScreen() {
 
   useFocusEffect(useCallback(() => {
     fetchChart(activeTab);
-    if (activeTab === 'top100') fetchLatestAlbums();
+    if (activeTab === 'new') fetchLatestAlbums(); // v3.106: 최신 앨범 섹션 = 신곡 탭
   }, [activeTab]));
 
   // 헤더는 App.tsx 탭 공통(tabHeader): 좌 로고 + 우 마이페이지(user) 아이콘.
@@ -124,7 +127,7 @@ export default function ChartScreen() {
   const handleRefresh = () => {
     setRefreshing(true);
     fetchChart(activeTab);
-    if (activeTab === 'top100') fetchLatestAlbums(); // v3.96(A-20): 홈 새로고침 시 최신 앨범도 갱신
+    if (activeTab === 'new') fetchLatestAlbums(); // v3.106: 신곡 탭 새로고침 시 최신 앨범도 갱신
   };
   const handleTabPress = (tab: ChartTab) => { if (tab !== activeTab) setActiveTab(tab); };
 
@@ -161,6 +164,15 @@ export default function ChartScreen() {
   };
 
   const handleTrackPress = (track: ChartTrack) => {
+    // v3.106: 앨범 소속 곡은 AlbumDetail로 보내 앨범의 다른 곡도 담아 듣게 한다 — 백엔드 준비 대기 골격.
+    // TODO(백엔드 요청): 2026-08 실측 기준 트랙 응답(GET /api/charts/*, /api/tracks/*)에 album_id가 없고,
+    //   GET /api/albums/ 에 track_id 조회 파라미터도 없어 트랙→앨범 역참조가 불가능하다.
+    //   백엔드가 트랙 응답에 album_id(또는 GET /albums?track_id=)를 추가하면 아래 분기가 활성화된다.
+    if (track.album_id) {
+      if (__DEV__) console.info('[ChartScreen] 앨범 소속 곡 탭 → AlbumDetail', { trackId: track.id, albumId: track.album_id });
+      navigation.navigate('AlbumDetail', { albumId: String(track.album_id) });
+      return;
+    }
     // 곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생
     playerStore.addToQueue(track);
     const q = usePlayerStore.getState().queue;
@@ -233,8 +245,8 @@ export default function ChartScreen() {
         if (loading) {
           return <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />;
         }
-        // v3.96(A-20): 홈(TOP 100) 상단 최신 앨범 가로 섹션 — 채널 앨범 카드와 동일 스타일
-        const latestAlbumsHeader = (!isQueue && activeTab === 'top100' && latestAlbums.length > 0) ? (
+        // v3.96(A-20)→v3.106: 신곡 탭 상단 최신 앨범 가로 섹션 — 채널 앨범 카드와 동일 스타일
+        const latestAlbumsHeader = (!isQueue && activeTab === 'new' && latestAlbums.length > 0) ? (
           <View style={styles.albumSection}>
             <AppText variant="footnote" tone="secondary" style={styles.albumSectionLabel}>최신 앨범</AppText>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.albumScrollRow}>

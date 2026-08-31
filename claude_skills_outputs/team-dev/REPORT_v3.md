@@ -4,6 +4,13 @@
 
 ---
 
+## v3.106 (차트 앨범 UX — 대표 피드백) — 2026-08-31
+
+**수행**: 최신앨범 섹션 TOP100→신곡 탭 이동(새로고침 연동 유지). 곡→앨범 이동은 서버 트랙 응답에 album 필드 부재 실측(charts/단건/역조회 전무) → 강행하지 않고 옵셔널 분기(track.album_id 있으면 AlbumDetail)만 심어 **백엔드가 필드 추가 시 즉시 활성화**되게 함. B-11 요청 확정(요청서 갱신).
+**검증**: tsc 0. 변경: ChartScreen.tsx 1개.
+
+---
+
 ## v3.104 (B-5 연동 — 커버 보관함 UI·재사용 배선) — 2026-08-31
 
 **수행** (v216 계약·openapi 실측): coverLibraryService·coverLibraryStore·CoverLibraryScreen 신규 — 2열 그리드(사용 중 곡 배지·버전 수), 페이지네이션, 크게 보기, 삭제(사용 중이면 곡 제목 나열 안내·409 처리). 진입점: 마이뮤직 앨범 탭 dashed 버튼. 재사용: TrackUpload(파일 선택과 배타)·MusicResult(미저장=발매 body cover_object_name / 저장 후=PUT 즉시 적용). 전달은 store 경유 goBack(기존 관행).

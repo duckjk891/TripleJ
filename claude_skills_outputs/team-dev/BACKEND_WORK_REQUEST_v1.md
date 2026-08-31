@@ -132,3 +132,15 @@
 
 ## 참고 (미러링 관련)
 - 9006→9004 미러링 시 **9004 .env(MINIO_PUBLIC_HOST=터널 주소) 덮어쓰기 금지** — 덮어쓰면 보이스 클로닝 다운로드 실패 재발.
+
+## B-9. 보이스 클로닝 ⭐ 과금 (대표 방침 2026-08-31)
+- "내 목소리 만들기"는 외부 API(Suno persona) 2회 호출 + 영구 목소리 자산 — **⭐20 제안**(compose 15보다 높게, 대표 최종 결정 대기).
+- POST /voice-clone/create 시 차감, status=failed 전이 시 자동 환불(compose refund 패턴). regenerate-phrase는 무료 유지. /points/costs에 voice_clone 항목 추가.
+
+## B-10. 클로닝 generating 서버측 주기 폴링
+- 현재 generate 단계는 GET /voice-clone/{id} 수신 시에만 Suno 폴링 → 앱 종료 시 영구 정체, Suno 문구 만료(실사고 2026-08-31: clone 6a95277f "진주" 2.5h 방치 후 phrase expired 실패).
+- 요청: generating 상태 클론을 서버 백그라운드 태스크로 주기 폴링(예: 30s, 타임아웃 시 failed 전이+환불). 프론트는 v3.105에서 화면 유지 시 폴링을 넣지만 앱 종료 케이스는 서버만 해결 가능.
+
+## B-11. 트랙→앨범 역참조 (차트 UX) — **실측 완료, 요청 확정**
+- 실측(2026-08-31): 트랙 직렬화(charts/tracks 단건 포함)에 album 계열 필드 없음, albums 라우트에 track_id 역조회 없음.
+- 요청: `_serialize_track`에 `album_id`(+가능하면 `album_title`) 추가. **앱은 이미 배선 완료** — 필드만 내려주면 프론트 재배포 없이 "앨범 소속 곡 클릭→앨범 페이지 이동"이 즉시 활성화됨(ChartScreen 옵셔널 분기).

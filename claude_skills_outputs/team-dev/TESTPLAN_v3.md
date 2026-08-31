@@ -5,6 +5,15 @@
 
 ---
 
+## v3.103~104 — 2026-08-31 — 미러링 대응 신규분 E2E — 8/8 PASS (증적 scratchpad/v3104e_*)
+
+- **레거시 폴백 PASS**(구 계정 조립 카드·구 계약 동작·자산 무손상 ⭐26 불변), **신규 멀티 PASS**(가입 보너스 ⭐50 확인, 생성 후 카드 1장 — Mongo characters 1건 실측, 판단① 중복 생성 없음: 잡 결과 cid는 null이지만 잡 단계에서 문서 미생성 구조), 이름·성별 PATCH 반영.
+- **슬롯 ⭐15 실과금 PASS**(spend 200 → max_slots 2 → 2번째 생성 → 카드 2장), 개별 삭제 PASS(대표 승계), B-3 목소리 행 PASS(미연결→VoiceManage 유도), 커버 보관함 PASS(그리드·뷰어·미사용 삭제 — 사용 중 삭제 분기는 데이터 없어 BLOCKED), B-4 PASS(구 곡 미표시 정상 + 신규 작곡 body lyrics_source 실림·Mongo 영속), v3.102 제거 확인 PASS.
+- 신규 계정 ⭐ 소모: +50 −10 −15 −10 −15 = 0 (전 항목 서버 기록 일치).
+- **잔여 버그 [LOW]**: 아티스트 생성 큐~로딩 구간 콘솔 "Maximum update depth exceeded" 1~2회(기능 정상·복구됨) — 픽스 진행 중.
+
+---
+
 ## v3.102 — 2026-08-31 — v216 미러링 회귀 스모크 (api) — 전 항목 PASS
 
 - 파괴적 변경 0: 생성(variants·stream variant·VC필드 유지)·커버(cover-sessions/history/refine 라우트)·트랙(my·beats·related·daily·click)·피로도·앨범·계정(consents·profile 왕복)·소셜(feeds·dm·reports)·클로닝(list·availability) 전부 기존 계약 유지.
