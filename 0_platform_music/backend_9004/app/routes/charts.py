@@ -297,10 +297,20 @@ async def get_chart(chart_type: str, limit: int = 100):
             content={"error": f"chart_type은 {', '.join(sorted(VALID_CHART_TYPES))} 중 하나여야 합니다."},
         )
 
+    # v201-r: limit 클램프 — 422 거부가 아닌 클램프인 이유: 기존 호출자 무영향 +
+    # 앱팀 클라이언트가 임의 값을 보내도 안 깨짐. v201 이후 limit 가 캐시 키에
+    # 들어가므로 무검증 상태면 ?limit=999999999 류로 Redis 키 무한 생성,
+    # 음수 limit 는 음수 슬라이스 오동작. 클램프로 키 공간이 5종×100=최대 500개로 유한.
+    limit = max(1, min(limit, 100))
+
     redis = get_redis()
 
     # --- Check cache ---
-    cache_key = f"cache:chart:{chart_type}"
+    # v201: limit 를 키에 포함 — 빠지면 먼저 온 요청의 limit 로 잘린 목록이
+    # TTL(300s) 동안 다른 limit 요청에도 그대로 서빙된다 (limit=10 이 캐시를
+    # 선점하면 limit=100 사용자가 10곡만 받음). 무효화 2곳(admin.py:868,
+    # tracks.py:651)은 cache:chart:* 패턴 삭제라 새 형식도 잡는다.
+    cache_key = f"cache:chart:{chart_type}:{limit}"
     cached = await redis.get(cache_key)
     if cached:
         return json.loads(cached)

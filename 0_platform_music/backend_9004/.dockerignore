@@ -1,0 +1,65 @@
+# =============================================================================
+# .dockerignore — v198 (2026-08-21) / MAIDOL backend_9006
+# =============================================================================
+# 목적: build context 를 5.5GB+ 에서 30MB 미만으로 줄인다.
+# 최우선은 venv/ (실측 5.5GB) — 이게 들어가면 context 전송만으로 빌드가 사실상
+# 불가능하고, 호스트 venv 는 경로·ABI 가 달라 이미지 안에서 쓸 수도 없다.
+#
+# 🔴 여기에 절대 넣지 말 것 (전부 런타임 의존):
+#   infra/style_samples/  — character.py:74-80,516 이 읽는다 (GET /api/character/style-samples)
+#   app/assets/fonts/     — share_video.py:39-40 이 ass 필터의 fontsdir 로 지정한다
+#   infra/init_*, infra/seed_data.py — EC2 초회 부트스트랩에 쓴다
+#   scripts/              — 운영 중 docker exec 로 돌리는 백필 스크립트
+#   requirements*          — 빌드 입력 (v199: constraints-cpu.txt 는 삭제됨)
+# =============================================================================
+
+# --- 최우선: 가상환경 (실측 5.5GB) ---
+venv/
+.venv/
+
+# --- 크리덴셜 실값. 이미지 레이어·빌드 캐시·빌드 로그 어디에도 들어가면 안 된다 ---
+.env
+.env.*
+*.env
+!.env.example
+
+# --- 런타임 산출물 ---
+logs/
+*.log
+
+# --- 바이트코드 (호스트 3.11 컴파일본. 스테일 캐시가 섞이면 디버깅이 꼬인다) ---
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- 테스트 (런타임 미사용) ---
+tests/
+.pytest_cache/
+_t2_test.py
+_t2c_live.py
+_t2c_probe.py
+
+# --- VCS ---
+.git/
+.gitignore
+.gitattributes
+
+# --- 도커 자기 자신 (이미지 안에서 불필요) ---
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+infra/docker-compose.app.yml.example
+infra/elasticsearch.Dockerfile
+
+# --- 문서 ---
+*.md
+README*
+
+# --- 개발 도구 설정 ---
+.python-version
+.idea/
+.vscode/
+*.swp

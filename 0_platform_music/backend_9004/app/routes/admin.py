@@ -503,6 +503,9 @@ async def delete_track(
     # Clear cache
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
+    # 2026-08-20: 상세 조회 캐시가 v3 키로 승격됐는데(tracks.py:1160/1275) 여기서
+    # 지우지 않아 삭제된 트랙이 최대 600초 계속 조회되던 버그 수정.
+    await redis.delete(f"cache:track:v3:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # v171 — 검색 인덱스 동기화 (best-effort): 관리자 삭제도 사용자 삭제와 동일하게
@@ -554,6 +557,8 @@ async def toggle_visibility(
     # Clear cache
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
+    # 2026-08-20: v3 키 누락 시 비공개 전환이 최대 600초 미반영되던 버그 수정.
+    await redis.delete(f"cache:track:v3:{track_id}")
 
     await _log_admin_action(
         conn, current_admin["id"], "change_visibility", "track", track_id,
@@ -851,10 +856,13 @@ async def handle_report(
         )
 
     async def _invalidate_track_caches(track_oid_str: str):
-        """트랙 캐시(v1/v2) + 차트 캐시 무효화 (blind/restore 공용)."""
+        """트랙 캐시(v1/v2/v3) + 차트 캐시 무효화 (blind/restore 공용)."""
         redis = get_redis()
         await redis.delete(f"cache:track:{track_oid_str}")
         await redis.delete(f"cache:track:v2:{track_oid_str}")
+        # 2026-08-20: 상세 조회가 v3 키를 읽는데(tracks.py:1160) v2 까지만 지워
+        # 신고 블라인드된 트랙이 최대 600초 계속 노출되던 버그 수정.
+        await redis.delete(f"cache:track:v3:{track_oid_str}")
         # v137 BUG-3 — 차트 캐시(TTL 300s)도 즉시 무효화
         try:
             chart_keys = [k async for k in redis.scan_iter(match="cache:chart:*")]
@@ -1113,22 +1121,33 @@ async def get_user_recent_content(
         for d in docs
     ]
 
-    char = await mongo.characters.find_one(
+    # v212 — 아티스트 다중화: 대표 조립(기존 character shape 유지) + artists[] 확장
+    char_docs = await mongo.characters.find(
         {"user_id": user_id},
-        {"original_photo_object_name": 1, "sheet_object_name": 1,
-         "virtual_sheet_object_name": 1, "name": 1},
-    )
+        {"character_id": 1, "kind": 1, "is_default": 1, "name": 1,
+         "original_photo_object_name": 1, "sheet_object_name": 1,
+         "virtual_sheet_object_name": 1, "updated_at": 1},
+    ).sort("updated_at", -1).to_list(length=None)
 
     def _admin_path(object_name):
         return f"/api/admin/media/{object_name}" if object_name else None
 
     character = None
-    if char:
-        original_photo = char.get("original_photo_object_name") or None
-        sheet = char.get("sheet_object_name") or None
-        virtual_sheet = char.get("virtual_sheet_object_name") or None
+    artists = []
+    if char_docs:
+        from .character import resolve_representative_artists
+
+        reps = await resolve_representative_artists(mongo, user_id)
+        real = reps.get("real") or {}
+        virtual = reps.get("virtual") or {}
+        original_photo = (
+            real.get("original_photo_object_name")
+            or virtual.get("original_photo_object_name") or None
+        )
+        sheet = real.get("sheet_object_name") or None
+        virtual_sheet = virtual.get("sheet_object_name") or None
         character = {
-            "name": char.get("name"),
+            "name": real.get("name") or virtual.get("name") or None,
             "has_original_photo": bool(original_photo),
             "has_sheet": bool(sheet),
             "has_virtual_sheet": bool(virtual_sheet),
@@ -1136,12 +1155,35 @@ async def get_user_recent_content(
             "sheet_path": _admin_path(sheet),
             "virtual_sheet_path": _admin_path(virtual_sheet),
         }
+        for d in char_docs:
+            if d.get("character_id"):
+                artists.append({
+                    "character_id": d["character_id"],
+                    "kind": d.get("kind") or "real",
+                    "is_default": bool(d.get("is_default")),
+                    "name": d.get("name") or "",
+                    "sheet_path": _admin_path(d.get("sheet_object_name")),
+                })
+            else:
+                # legacy 무cid 문서 — real/virtual 슬롯 분해 표기
+                if d.get("sheet_object_name"):
+                    artists.append({
+                        "character_id": None, "kind": "real", "is_default": True,
+                        "name": d.get("name") or "",
+                        "sheet_path": _admin_path(d.get("sheet_object_name")),
+                    })
+                if d.get("virtual_sheet_object_name"):
+                    artists.append({
+                        "character_id": None, "kind": "virtual", "is_default": False,
+                        "name": d.get("name") or "",
+                        "sheet_path": _admin_path(d.get("virtual_sheet_object_name")),
+                    })
 
     logger.info(
-        "[admin-report] recent_content admin=%s user=%s tracks=%d character=%s",
-        _short(current_admin["id"]), _short(user_id), len(tracks), bool(character),
+        "[admin-report] recent_content admin=%s user=%s tracks=%d character=%s artists=%d",
+        _short(current_admin["id"]), _short(user_id), len(tracks), bool(character), len(artists),
     )
-    return {"user_id": user_id, "tracks": tracks, "character": character}
+    return {"user_id": user_id, "tracks": tracks, "character": character, "artists": artists}
 
 
 @router.get("/reports/{report_id}/evidence/{idx}")

@@ -197,6 +197,30 @@ async def _resolve_audio_object_name(job: dict, mongo_db) -> Optional[str]:
         except Exception as e:
             logger.warning("Failed to resolve audio from generation %s: %s", gen_id, e)
 
+    # v209: tracks fallback — MV촬영실이 「내 트랙」을 곡 소스로 지정한 경우.
+    # tracks.audio_url 은 MinIO object name ("tracks/{uid}/{id}.ext") 실측 —
+    # Phase0 duration 폴백(audio_track_id → duration_sec)과 동일 키를 읽는다.
+    trk_id = job.get("audio_track_id")
+    if trk_id:
+        try:
+            from bson import ObjectId
+            trk_doc = await mongo_db.tracks.find_one(
+                {"_id": ObjectId(trk_id)},
+                {"audio_url": 1},
+            )
+            if trk_doc and trk_doc.get("audio_url"):
+                logger.info(
+                    "[MVPipeline] audio resolved from track_id=%s job=%s",
+                    trk_id, str(job.get("_id")),
+                )
+                return trk_doc["audio_url"]
+            logger.warning(
+                "[MVPipeline] track_id=%s has no audio_url (job=%s)",
+                trk_id, str(job.get("_id")),
+            )
+        except Exception as e:
+            logger.warning("Failed to resolve audio from track %s: %s", trk_id, e)
+
     return None
 
 

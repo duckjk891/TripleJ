@@ -583,8 +583,9 @@ async def purge_feed_document(mongo, conn, doc: dict) -> dict:
     """v138 — 피드 완전 파기(재사용 함수). 소유자 DELETE 라우트와
     admin confirm_delete 가 공용으로 호출한다.
 
-    파기: feeds 도큐먼트 + 하위 feed_comments 전체 + PG feed_likes.
-    Returns: {"feed_id", "owner_id", "comments_removed"}.
+    파기: feeds 도큐먼트 + 하위 feed_comments 전체 + PG feed_likes
+          + v196 ④ 해당 피드를 가리키는 인앱 알림(best-effort).
+    Returns: {"feed_id", "owner_id", "comments_removed", "notifications_removed"}.
     """
     feed_id = str(doc["_id"])
     owner_id = doc.get("author_id")
@@ -594,14 +595,27 @@ async def purge_feed_document(mongo, conn, doc: dict) -> dict:
         await conn.execute("DELETE FROM feed_likes WHERE feed_id = $1", feed_id)
     except Exception as e:
         logger.error("[feed] delete likes_cleanup_failed feed=%s err=%s", _short(feed_id), e)
+    # v196 ④ — 삭제된 피드를 가리키는 알림 정리(클릭 시 404 빈 화면 방지).
+    # best-effort: 실패해도 삭제 응답은 불변(예외 전파 금지).
+    # type 화이트리스트는 향후 타입 추가 시 오삭제 방어용
+    # (follow 는 target_id=None 이라 피드 id 와 충돌하지 않는다).
+    notifications_removed = 0
+    try:
+        notif_result = await mongo.notifications.delete_many(
+            {"target_id": feed_id, "type": {"$in": ["feed", "like", "comment", "reply"]}}
+        )
+        notifications_removed = notif_result.deleted_count
+    except Exception as e:
+        logger.error("[feed] purge notifications_cleanup_failed feed=%s err=%s", _short(feed_id), e)
     logger.info(
-        "[feed] purge ok feed=%s author=%s comments_removed=%d",
-        _short(feed_id), _short(owner_id), comments_result.deleted_count,
+        "[feed] purge ok feed=%s author=%s comments_removed=%d notifications_removed=%d",
+        _short(feed_id), _short(owner_id), comments_result.deleted_count, notifications_removed,
     )
     return {
         "feed_id": feed_id,
         "owner_id": owner_id,
         "comments_removed": comments_result.deleted_count,
+        "notifications_removed": notifications_removed,
     }
 
 
@@ -743,6 +757,9 @@ async def add_feed_comment(feed_id: str, body: CommentBody, current_user=Depends
 
     # v191: 대댓글 부모 검증 — 같은 피드의 실존 댓글이어야 하고, 대댓글의 대댓글은 1단으로 평탄화
     parent_id = (body.parent_id or "").strip() or None
+    # v196 ③: 알림 대상은 **평탄화 전** 부모 댓글 작성자(= 실제로 답글이 달린 사람).
+    # 저장되는 parent_id 는 v191 트리 계약대로 평탄화 값을 그대로 유지한다.
+    reply_target_author_id = None
     if parent_id:
         if not ObjectId.is_valid(parent_id):
             return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
@@ -750,9 +767,13 @@ async def add_feed_comment(feed_id: str, body: CommentBody, current_user=Depends
         if not parent:
             logger.warning("[feed] comment_add parent_missing feed=%s parent=%s", _short(feed_id), _short(parent_id))
             return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        reply_target_author_id = parent.get("author_id")  # ★ 평탄화 전 = 실제 답글 대상
         if parent.get("parent_id"):
             parent_id = parent["parent_id"]  # 2단 이상은 부모의 부모로 평탄화(인스타 방식)
-        logger.info("[feed] comment_add reply feed=%s parent=%s", _short(feed_id), _short(parent_id))
+        logger.info(
+            "[feed] comment_add reply feed=%s parent_stored=%s notify_to=%s",
+            _short(feed_id), _short(parent_id), _short(reply_target_author_id),
+        )
 
     comment = {
         "feed_id": feed_id,
@@ -770,13 +791,20 @@ async def add_feed_comment(feed_id: str, body: CommentBody, current_user=Depends
         actor_id=user_id, actor_nickname=current_user.get("nickname"),
         target_id=feed_id, preview=text,
     )
-    if parent_id:
-        parent_doc = await mongo.feed_comments.find_one({"_id": ObjectId(parent_id)}, {"author_id": 1})
-        if parent_doc and str(parent_doc.get("author_id")) != str(doc.get("author_id")):
+    # v196 ③: 대상은 평탄화 전 부모 댓글 작성자. 부모 작성자 == 피드 주인이면
+    # 위 comment 알림과 중복이므로 건너뛴다(v192 의도 유지 — 비교 대상만 교정).
+    # push_notification 이 self-skip 을 내장하므로 자기 답글은 자동 미발송.
+    if reply_target_author_id:
+        if str(reply_target_author_id) != str(doc.get("author_id")):
             await push_notification(
-                mongo, user_id=parent_doc.get("author_id"), ntype="reply",
+                mongo, user_id=reply_target_author_id, ntype="reply",
                 actor_id=user_id, actor_nickname=current_user.get("nickname"),
                 target_id=feed_id, preview=text,
+            )
+        else:
+            logger.info(
+                "[feed] comment_add reply notify_skipped (feed owner) feed=%s notify_to=%s",
+                _short(feed_id), _short(reply_target_author_id),
             )
     logger.info(
         "[feed] comment_add ok feed=%s user=%s comment=%s text_len=%d",

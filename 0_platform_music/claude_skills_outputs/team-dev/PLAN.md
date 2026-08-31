@@ -31070,3 +31070,52 @@ MV 초안 리스트는 MV촬영실 안에 내장(진입 화면)한다. 기존 �
 
 ## 5. 리스크·40% 판단
 **진행 (40% 이상).** 절단선·검증 통로·수명 충돌이 전부 실측 확정 — 설계 불확실성 낮음, 물량이 큰 사이클(2단계 게이트로 관리). R1: UploadPage 대수술 회귀 — 복사 이식→검증→절제 순서 강제(F2→F3), 파일 첨부·제출 경로 불변 회귀 ③⑭. R2: purge 조건화 ↔ admin 몰수 완전 파기 기대 충돌 — 세션 몰수 확장 별건 기록+▲사용자 인지. R3: 보관함 삭제 409 UX — linked_tracks 안내 표준화. R4: MV 생성 직호출 제거로 인한 동선 변화(원클릭→2클릭) — 사양 합의분, 링크로 완화. R5: cover-sessions 목록의 이력 오브젝트명 전량 $in — 세션당 이력 소수(실측 max 1)라 현실 무해, 페이지 20 한정.
+
+---
+
+# PLAN v216 — ⑤ 9006→9004 미러링 + 앱팀 회신 문서 (운영 사이클) (2026-08-31 14:27 KST, planner)
+
+기준: v215 완료. 성격: **코드 개발 아님 — 운영 작업**(백업→복사→치환→재기동→스모크→문서). 접촉 규칙: 9004 접촉 허용(본 사이클), **9005 무접촉 불변**. 사용자 확정 절차(feedback_backend_port_scope.md) ①~⑤ 준수, 하위호환 보강은 사용자 판정으로 **제외**(감사·복원 작업 금지).
+
+## 0. 실측 findings
+
+1. **구조 diff**: 9006 대비 9004 잔존분 = 라우트 3종(vocal_repair·voice_convert·voice_persona)+서비스 4종(demucs/kits/lalal/voice_persona_service) — 미러 시 소멸(사용자 판정: 앱팀 미사용). 9006 추가분 = heavy_jobs·slots_service·Dockerfile·requirements.lock·scripts/ 등. 양측 git 추적(9004 146·9006 154 파일), **.env는 untracked**(.env.example만 추적 — 커밋 오염 위험 없음)
+2. **.env 키셋 diff = 공집합** (키 이름만 비교, 값 무접촉) — **9006 코드가 요구하는 신규 키 0 → ▲사용자 결정 항목 없음**. 방침 확정: 9004 기존 .env 그대로 보존(복사 제외 목록에 .env). CORS: 9004 구코드는 `allow_origins=["*"]` 하드코딩, 9006은 .env CORS_ORIGINS(v204, 기본 "*") — 9004 .env에 키 존재하므로 값이 지배. 값은 비밀 아님 — 스모크에서 Origin 헤더 실측으로 확인(파일 열람 불요)
+3. **기동**: 9004 run.sh는 구식 `--reload`(drvfs 재귀 감시 — 9006에서 2026-08-20 제거된 문제), 현행 프로세스 PID 4471(ps 실측 — reload 플래그 없이 가동 중). **재기동 절차: PID 지정 kill(graceful) → nohup ./run.sh — pkill 금지 준용.** run.sh는 9006판(포트 9004 치환) 채택 = --reload 제거 승계(기동 안정 개선 — "포트·설정 치환" 범위 내, REPORT 기록)
+4. **동일 DB 이중 실행 위험**: 9004 구코드도 이미 동일 루프 가동 중(playcount 스케줄러·mv_assets cleanup·dm pubsub listener·chart rebuild·MV/character_jobs stale recovery) → **기존부터 존재하는 상태, 미러링이 신규 위험을 만들지 않음**. 9006 신규 스타트업 = ES ensure+backfill(멱등·force=False)·characters/user_slots/mv_jobs 인덱스 ensure(멱등)·PG ALTER IF NOT EXISTS 계열 — 전부 멱등. stale recovery는 30분 임계(main.py:525) — 재기동 시 상대 인스턴스의 30분 미만 진행 잡 무접촉. characters 마이그레이션 스크립트는 수동 전용(자동 실행 없음). 관찰 기록: playcount 이중 스케줄러는 기존 상태 그대로(변화 없음)
+5. **venv**: 9006 requirements = 9004 − demucs/torch(v199 제거) + madmom 커밋 고정 — **9006 신규 패키지 선언 0**. 9004 venv(5.4GB) 핵심 임포트 실측 OK(elasticsearch·motor·fastapi·minio) → **재사용 확정**, 게이트 = 복사 후 `./venv/bin/python -c "import app.main"` 전체 임포트 검사
+6. **스토리지**: 로컬 uploads 디렉토리 양측 부재 — MinIO 공유(.env endpoint), 코드 내 로컬 참조는 infra/style_samples(3 PNG — 양측 동일 존재)·app/assets 폰트(추적 파일 — 복사에 포함). 문제 없음
+7. **포트 하드코딩**: config.py oauth_callback_base 기본값(.env가 덮음 — 9004 .env 보존으로 해소)·routes/_logs.py 주석+다운로드 파일명 문자열(코스메틱 — server_9004.log 치환 1건만 적용). 웹 프론트 2종(frontend·frontend_admin) 프록시 타겟 모두 9006 — 9004는 순수 앱팀 전용 확인
+8. 백업 규모: venv/logs 제외 시 **13M** — tar 백업 즉시 가능
+
+## 1. 절차 설계 (사용자 절차 ①~⑤ 구체화)
+
+- **M1 백업(①)**: `tar czf backend_9004_backup_2026-08-31.tar.gz --exclude=venv --exclude=logs --exclude=__pycache__ backend_9004/` → `0_platform_music/` 루트(untracked — 명시 add 제도라 커밋 오염 없음). 검증: tar tzf 파일 수 대조
+- **M2 복사(②)**: `rsync -a --delete` 9006/→9004/ **제외 목록: venv/ logs/ .env backups/ __pycache__/ *.pyc** — 9004의 venv·.env·logs 보존, 코드·infra·scripts·requirements* 전량 미러
+- **M3 치환(②)**: run.sh 포트 9006→9004(9006판 기반·--reload 없음) / _logs.py 다운로드 파일명 문자열 server_9004.log / 그 외 치환 0(포트는 uvicorn 인자·설정은 .env가 지배)
+- **M4 게이트**: `backend_9004/venv/bin/python -c "import app.main"` 임포트 전수 통과 → 실패 시 결손 패키지만 venv에 추가 설치(requirements.lock 기준·▲보고 후)
+- **M5 재기동**: `kill <PID 4471>` graceful → 로그로 종료 확인 → `nohup ./run.sh` → 기동 로그에서 lifespan 완주([migration] 계열 멱등 로그·에러 0) 확인. **재기동 순단은 절차 필연(사용자 승인 오더) — REPORT 기록**
+- **M6 스모크(④ — 우리 팀 몫)**: §3 테스트 항목. **앱팀 자체 스모크는 별도 단계 — REPORT에 "앱팀 스모크 대기" 명시**
+- **M7 문서(⑤)**: `claude_skills_outputs/team-dev/APP_TEAM_HANDOFF_v216.md` — §4 목차. 시크릿·실계정 값 금지
+
+## 2. 역할 치환·할당
+- **frontend-dev → 이번 사이클 유휴**(웹 프론트 무접촉 — 프록시 타겟 9006 확인됨). 치환: backend-dev = **미러링 실행 전담**(M1~M5), planner = **앱팀 회신 문서 작성**(M7 — 계약 축적분 보유자), test-designer/tester = 9004 스모크 설계·실행(M6)
+- 순서: M1→M2→M3→M4→M5(backend-dev, 직렬) → M6(tester) ∥ M7(planner — M5와 병렬 가능)
+
+## 3. test-designer 스모크 항목 (9004 대상 — 전부 무과금·목록/CRUD/검증 경로 중심)
+제약: 일회용 계정(가입→스모크→탈퇴), **실업로드 금지**(임베딩 — B-4는 응답면·검증 경로만), 유료 성공 경로 금지(⭐ 생성류는 402/400/409 등 차감 전 거절 경로만), 실사용자 데이터 read-only, 실 .env 값 무출력(CORS는 Origin 헤더 응답 실측)
+
+S1 기동 건전성: lifespan 완주·멱등 마이그레이션 로그·에러 0·헬스(기본 라우트 200)
+S2 기존 핵심 경로: 가입→로그인→GET /auth/me→tracks 목록→charts→(탈퇴)
+S3 B-1: GET /character/list(slots 동봉)·personality-tags·me 키셋(v212 additive 포함)·PATCH 프로필·슬롯 409(만석 픽스처)·extra_slot 스모크(⭐15 내부 — 원장 대조 후 원복 계상) — 생성 API는 409/402 경로만
+S4 B-3: PATCH persona 연결/해제·me/list 5키 3상태·검증 400 — voice_clones 일회용 픽스처 직삽
+S5 B-4: 기존 트랙 응답면 4필드+source_meta pass-through(구형 키 부재/신곡 null — 직삽 픽스처)·64자 절단(경로 B Form 검증 경로만·업로드 완주 없이 가능하면 검증, 불가하면 정적 갈음)
+S6 B-5: GET /upload/cover-sessions(페이지네이션·null 3키·linked_tracks)·DELETE 409/미사용 삭제(픽스처)·MV cover 검증 400
+S7 CORS Origin 헤더 실측(값 열람 없이 curl Origin 프로브) + 소멸 API 3종(vocal_repair 등) 404 확인(고지 문서와 대조)
+S8 9006 무영향 확인: 스모크 후 9006 헬스+me 키셋 1회(동일 DB 부작용 감시)
+
+## 4. 앱팀 회신 문서 목차 (M7 — planner)
+①미러링 안내(9004 = v212~v215 반영본, 앱팀 스모크 요청) ②B-1 계약(아티스트 다중화·슬롯 — v212 §8) ③B-3(persona_id=clone_id·주입은 persona_voice_id — v213 §3 표) ④B-4(4필드+역매핑 흡수·source_meta — v214 §3) ⑤B-5(보관함 **실경로 /api/upload/cover-sessions ≠ 가안 /api/covers**·409 body·수명 규약 — v215 §3) ⑥B-2 미구현 사유 + 작사실 draft = generations API 4종(create(start_music_gen:false)/update/list/delete) 사용 안내 ⑦구앱 주의사항(슬롯 만석 시 미지정 generate 409·DELETE /character/me 전체 삭제 의미·me user_id는 신규 키·소멸 API 3종 목록) ⑧문의 창구·버전 표기
+
+## 5. 리스크·40% 판단
+**진행 (40% 이상 — 불확실성 실측으로 소거된 정형 운영 작업).** R1: 재기동 실패(임포트 결손) — M4 게이트 선행+백업 롤백 5분 내(13M tar). R2: 이중 실행 — 신규 위험 0 실측(기존 루프 동일·신규분 전부 멱등), S8 감시. R3: CORS 값 미확인 — 비밀 아닌 헤더라 S7 실측, 앱은 네이티브라 CORS 무관 가능성 높음. R4: 앱팀 실트래픽 중 재기동 순단 — 사용자 오더 범위, 기록. R5: 스모크 중 실사용자 데이터 — 일회용 계정+read-only+원복. **▲사용자 결정 항목: 현재 0건**(.env 신규 키 없음) — 발생 시 즉시 보고.

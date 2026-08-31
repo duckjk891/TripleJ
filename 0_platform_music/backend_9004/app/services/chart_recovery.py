@@ -118,8 +118,11 @@ async def rebuild_redis_from_mongo(mongo, redis):
         total_downloads += len(dl_logs)
 
     # Clear chart cache so fresh data is served
-    for ct in ["top100", "hot100", "daily", "weekly", "monthly"]:
-        await redis.delete(f"cache:chart:{ct}")
+    # v201: 키에 limit 가 포함되므로(charts.py get_chart) 정확 키 삭제 대신
+    # 패턴 삭제로 전환 — 안 바꾸면 이 삭제가 no-op 이 되어 낡은 캐시가 남는다.
+    chart_cache_keys = [k async for k in redis.scan_iter(match="cache:chart:*")]
+    if chart_cache_keys:
+        await redis.delete(*chart_cache_keys)
 
     # Create indexes on MongoDB collections (idempotent)
     await mongo.play_logs.create_index([("played_at", -1)])

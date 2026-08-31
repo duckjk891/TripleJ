@@ -16912,3 +16912,37 @@ persona 5키 × 3상태 (me·list·단건 전 응답면 공통, 키 생략 금�
 
 ## 7. 안전 준수
 실사용자 데이터 무변조(29/24/7 복귀 대조), 유료 성공 경로 0(generate-cover·refine 인터셉트, 세션 픽스처 직삽), 실업로드 0, 실 .env 무접촉, 9004/9005 무접촉, me 키셋 상비 회귀 유지, 재기동 절차 준수.
+
+---
+
+# REPORT v216 — ⑤ 9006→9004 미러링 + 앱팀 회신 문서 (운영 사이클) (2026-08-31 14:39 KST, planner)
+
+**판정: PASS — 미러링 M1~M5 완주 + 스모크 S1~S8 8/8, 9006과 다른 동작 0건, 복사 결함 신호 0.** 성격: 운영 작업(코드 개발 아님). 접촉: 9004 허용(본 사이클 한정)·**9005 무접촉 준수**. 하위호환 보강은 사용자 판정으로 제외(감사·복원 미수행). **앱팀 자체 스모크 대기 상태.**
+
+## 1. 실측 근거 (0단계 — PLAN v216 §0)
+.env 키셋 diff 공집합(신규 키 0 — ▲사용자 결정 0건), venv 재사용 가능(9006 신규 패키지 선언 0·핵심 임포트 실측), 이중 실행 신규 위험 0(구 9004도 동일 루프 가동 중이었고 9006 신규 스타트업은 전부 멱등), 웹 프론트 2종 프록시 타겟 9006(9004 = 순수 앱팀 전용 — [e2e] 0건 예외 선언 근거), .env untracked(커밋 오염 불가), 백업 규모 13M.
+
+## 2. 실행 기록 (M1~M5 — backend-dev)
+- **M1 백업**: `0_platform_music/backend_9004_backup_2026-08-31.tar.gz` (9.0M·159파일 정합 검증·venv/logs/__pycache__ 제외) — **롤백 보험, untracked 유지(커밋 제외)**. 구 로그는 `backend_9004/logs/server.log.pre-v216` 보존
+- **M2 복사**: rsync -a --delete (제외: venv/·logs/·.env·backups/·__pycache__) — 구 라우트 3종·서비스 4종 소멸, 신규분(slots_service·heavy_jobs·scripts/·requirements.lock 등) 복사 확인
+- **M3 치환 2건**: run.sh `--port 9004`(9006판 기반 — **--reload 부재 승계**, drvfs 감시 문제 해소) / _logs.py 다운로드 파일명 `server_9004.log`
+- **M4 게이트**: `venv/bin/python -c "import app.main"` 통과 (9004 venv 재사용 — 재설치 0)
+- **M5 재기동**: 구 PID 4471 graceful kill → 신 PID 14763, **순단 18.4초**(앱팀 실트래픽 중 — 오더 범위 내, 기록), lifespan 완주·traceback 0·멱등 마이그레이션 로그 정상. 사전 프로브: cover-sessions 401(활성)·character/list 401·voice-persona/list 404·9006 무영향
+
+## 3. 스모크 판정 (S1~S8 — 8/8 PASS, 전부 [api] — e2e 0건 예외 선언)
+S1 기동 건전성(diff 대조 포함) / S2 기존 핵심 경로(일회용 계정 가입→me→tracks→charts→탈퇴) / S3 B-1(list·slots·me 키셋 — **9006 v213 회귀 자산 스냅샷을 기대값 정본 채택**·409·extra_slot 실호출 원장 3면 대조) / S4 B-3(persona 5키 3상태·검증 400) / S5 B-4(pass-through·null vs 키 부재 — 64자 절단은 정적 갈음: 실업로드 금지 제약, v214 기검증 코드+rsync 동일성으로 보증) / S6 B-5(cover-sessions·409 linked_tracks·MV cover 400) / S7 CORS 프로브+소멸 3종 404(회신 문서 §5 대조) / S8 9006 무영향(동일 DB 부작용 감시 — 증감 0). 유료 외부 도달 0·실업로드 0·실데이터 계수 diff 0·스모크 계정 원장·문서 원복 완료.
+
+## 4. 앱팀 회신 문서 (M7)
+**`claude_skills_outputs/team-dev/APP_TEAM_HANDOFF_v216.md`** — B-1~B-5 계약 확정본(엔드포인트·요청/응답 예시), B-2 미구현 사유+generations draft API 4종 안내, **§5 소멸 API 3종 구체 엔드포인트 목록**(백업 tar 실측 기반: /api/vocal-repair 8종·/api/voice-convert 9종(+/api/kits/voice-models)·/api/voice-persona 8종 — 미러 후 404 실측 대조 완료), 구앱 주의 5항(슬롯 만석 409·DELETE /me 전체 삭제·user_id 신규 키·persona 주입 경로·마이그레이션 미실행), 앱팀 스모크 요청. 시크릿·실계정 값 0.
+
+## 5. 판정 2건 (tester 이관분)
+1. **S1③ diff의 `backups/` 항목 — 무해 확정**: 9006측 mv_zombie_cleanup 운영 산출물(비코드)·rsync 제외 목록 명시분 — 미러 대상 아님, 조치 불요
+2. **CORS 전 Origin 반사형 + credentials:true — 별건(보안 검토 후보)로 등재**: 미러링 산물이 아닌 9006 기존 동작(v204 CORS_ORIGINS 기본 "*" + Starlette가 credentials와 결합 시 Origin 반사) 승계. 현 인증이 Bearer 헤더(쿠키 아님)라 CSRF 실효 위험 낮음 → ▲긴급 아님. 단 **쿠키 인증 도입 또는 운영 도메인 확정 시 CORS_ORIGINS 화이트리스트 필수** — 별건 보안 항목으로 기록(9004·9006 공통, .env 값 조정만으로 가능)
+
+## 6. ▲·별건·이월
+- **앱팀 자체 스모크 대기** (§4 문서로 요청 — 우리 손을 떠난 단계)
+- 별건: CORS 화이트리스트화(§5-2) / admin 몰수 완전 파기 갭(v215 이월 — 정책 결정 대기) / v212 이월 ▲3건(실데이터 마이그레이션 --apply[**앱팀 공지와 연동 — HANDOFF §7-5에 미실행 명시됨**]·구 스토리지 청소·앱팀 409 고지[HANDOFF §7-1로 이행 완료 — 종결])
+- 관찰: 9004·9006 동일 루프 병행(playcount 등)은 기존 상태 그대로 — 이상 징후 시 별건
+
+## 7. 안전 준수
+실 .env 값 무열람·무출력(키 이름 diff만), 실사용자 데이터 무변조(계수 diff 0·일회용 계정 원복), 유료 외부 도달 0, 실업로드 0, git add -A 미사용·푸시 없음, 백업 tar 확보(5분 내 롤백 가능), 9005 무접촉.

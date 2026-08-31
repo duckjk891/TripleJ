@@ -24,24 +24,34 @@ logging.basicConfig(
 # GuardSquad — uvicorn access 로그의 요청 라인에 보호자 동의 토큰(URL 경로)이
 # 그대로 남지 않도록 마스킹. 앱 로거는 토큰 앞 8자만 쓰지만 access 로그는
 # 경로 전체를 기록하므로 여기서 걸러야 함.
-class _GuardianTokenMaskFilter(logging.Filter):
-    _pattern = re.compile(r"(/api/auth/guardian-consent/)[^/\s\"?]+")
+# v203: guardian-consent 전용 필터를 일반 토큰 마스킹 필터로 확장 —
+# 쿼리스트링 `?token=...` / `&token=...` 값도 access 로그에서 마스킹.
+class _TokenMaskFilter(logging.Filter):
+    _patterns = [
+        re.compile(r"(/api/auth/guardian-consent/)[^/\s\"?]+"),
+        re.compile(r"([?&]token=)[^&\s\"']+"),  # v203
+    ]
+
+    def _mask(self, text: str) -> str:
+        for pattern in self._patterns:
+            text = pattern.sub(r"\1<masked>", text)
+        return text
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             if record.args:
                 record.args = tuple(
-                    self._pattern.sub(r"\1<masked>", a) if isinstance(a, str) else a
+                    self._mask(a) if isinstance(a, str) else a
                     for a in record.args
                 )
             if isinstance(record.msg, str):
-                record.msg = self._pattern.sub(r"\1<masked>", record.msg)
+                record.msg = self._mask(record.msg)
         except Exception:
             pass
         return True
 
 
-logging.getLogger("uvicorn.access").addFilter(_GuardianTokenMaskFilter())
+logging.getLogger("uvicorn.access").addFilter(_TokenMaskFilter())
 
 load_dotenv()
 
@@ -51,7 +61,45 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, admin_ads, admin_cs, admin_issues, admin_notices, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_persona, voice_clone, voice_convert, vocal_repair, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, issues, _logs
+from .routes import admin, admin_ads, admin_cs, admin_issues, admin_notices, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_clone, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, issues, _logs
+
+logger = logging.getLogger(__name__)
+
+
+def _run_beat_recovery(gen_ids: list, track_ids: list):
+    """
+    v206: pending 박자분석 복구 — 단일 데몬 스레드에서 순차 실행.
+    각 sync 래퍼가 자체 이벤트 루프 + 자체 motor + heavy_job_slot 을 쓰므로
+    메인 FastAPI 루프/anyio 스레드풀을 건드리지 않는다.
+    ⚠️ to_thread × N 으로 바꾸지 말 것 — 슬롯 대기자가 anyio 스레드풀(기본 40)을
+    고갈시켜 share_video·ready 등 다른 to_thread 사용자가 굶는다 (PLAN v206 §0).
+    복구는 살림이지 급무가 아니다 — 순차로 돌려 라이브 사용자용 슬롯 여유를 남긴다.
+    """
+    from .services.beat_extraction import (
+        run_generation_beat_extraction_in_background,
+        run_track_beat_extraction_in_background,
+    )
+
+    logger.info(
+        "[beat-recover] start: generations=%d tracks=%d", len(gen_ids), len(track_ids)
+    )
+    # v206-r: 건별 방탄 — 래퍼는 자체 try/except 이지만, 만에 하나 래퍼 밖에서
+    # 예외가 새면 복구 스레드가 죽어 잔여 건이 통째로 유실된다 (tester 실측 권고).
+    for i, gid in enumerate(gen_ids, 1):
+        logger.info("[beat-recover] generation %d/%d id=%s", i, len(gen_ids), gid)
+        try:
+            run_generation_beat_extraction_in_background(gid)
+        except Exception as e:
+            logger.warning("[beat-recover] generation id=%s failed: %s", gid, e)
+    for i, tid in enumerate(track_ids, 1):
+        logger.info("[beat-recover] track %d/%d id=%s", i, len(track_ids), tid)
+        try:
+            run_track_beat_extraction_in_background(tid)
+        except Exception as e:
+            logger.warning("[beat-recover] track id=%s failed: %s", tid, e)
+    logger.info(
+        "[beat-recover] done: generations=%d tracks=%d", len(gen_ids), len(track_ids)
+    )
 
 
 @asynccontextmanager
@@ -407,6 +455,30 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).error("[migration] issue indexes ensure failed: %s", _e)
 
+    # MVAttach(v211) — 부착 조회 hot path (tracks._find_attached_mv) 인덱스 (idempotent)
+    try:
+        from .database.mongodb import get_mongo as _mvatt_get_mongo
+        await _mvatt_get_mongo().mv_jobs.create_index("attached_track_id")
+        print("[migration] mv_jobs.attached_track_id index ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] mv_jobs attach index ensure failed: %s", _e)
+
+    # ArtistV212 — 아티스트 다중화 인덱스 (idempotent). unique 는 partial —
+    # legacy 무character_id 문서 공존기 충돌 방지 (PLAN v212 D1).
+    try:
+        from .database.mongodb import get_mongo as _char_get_mongo
+        _char_mongo = _char_get_mongo()
+        await _char_mongo.characters.create_index("user_id")
+        await _char_mongo.characters.create_index(
+            [("user_id", 1), ("character_id", 1)],
+            unique=True,
+            partialFilterExpression={"character_id": {"$exists": True}},
+        )
+        await _char_mongo.user_slots.create_index("user_id", unique=True)
+        print("[migration] characters/user_slots indexes ensured")
+    except Exception as _e:
+        logging.getLogger(__name__).error("[migration] characters indexes ensure failed: %s", _e)
+
     # HybridSearch — connect Elasticsearch + ensure the `tracks` index exists
     # (nori analyzer, idempotent), then schedule a non-blocking self-heal backfill:
     # if the ES index emptied/drifted across a restart, re-index public tracks from
@@ -474,9 +546,10 @@ async def lifespan(app: FastAPI):
         print(f"[migration] character_jobs stale recovery failed: {e}")
 
     # v44 — Recover stuck beat extractions (running → pending) and re-trigger
+    # v206: lifespan 은 pending 목록 조회까지만. 처리는 단일 데몬 스레드가
+    # 순차로 sync 래퍼들을 호출한다 (_run_beat_recovery 참조).
     try:
         from .database.mongodb import get_mongo
-        import asyncio as _asyncio
         mongo = get_mongo()
 
         # Reset stuck "running" rows back to pending
@@ -489,15 +562,15 @@ async def lifespan(app: FastAPI):
             {"$set": {"beats_status": "pending"}},
         )
         if gen_reset.modified_count or track_reset.modified_count:
-            print(
-                f"Recovered stuck beat extractions: generations={gen_reset.modified_count}, tracks={track_reset.modified_count} → pending"
+            logger.info(
+                "[beat-recover] recovered stuck beat extractions: generations=%d tracks=%d → pending",
+                gen_reset.modified_count,
+                track_reset.modified_count,
             )
 
-        # Re-trigger pending extractions for completed generations
-        from .services.beat_extraction import (
-            detect_beats_for_generation,
-            detect_beats_for_track,
-        )
+        # Re-trigger pending extractions for completed generations.
+        # v206: 여기(async lifespan)서는 목록 조회만 하고, madmom 실행은
+        # 데몬 스레드에 위임 — 메인 이벤트 루프에 CPU 작업을 걸지 않는다.
         pending_gens = await mongo.generations.find(
             {
                 "beats_status": "pending",
@@ -506,21 +579,26 @@ async def lifespan(app: FastAPI):
             },
             {"_id": 1},
         ).to_list(length=200)
-        for g in pending_gens:
-            _asyncio.create_task(detect_beats_for_generation(str(g["_id"])))
-        if pending_gens:
-            print(f"Re-triggered beat extraction for {len(pending_gens)} pending generations")
 
         pending_tracks = await mongo.tracks.find(
             {"beats_status": "pending", "audio_url": {"$ne": None}},
             {"_id": 1},
         ).to_list(length=200)
-        for t in pending_tracks:
-            _asyncio.create_task(detect_beats_for_track(str(t["_id"])))
-        if pending_tracks:
-            print(f"Re-triggered beat extraction for {len(pending_tracks)} pending tracks")
+
+        if pending_gens or pending_tracks:
+            import threading as _threading
+
+            _threading.Thread(
+                target=_run_beat_recovery,
+                args=(
+                    [str(g["_id"]) for g in pending_gens],
+                    [str(t["_id"]) for t in pending_tracks],
+                ),
+                daemon=True,
+                name="beat-recover",
+            ).start()
     except Exception as e:
-        print(f"Beat extraction recovery failed: {e}")
+        logger.warning("[beat-recover] beat extraction recovery failed: %s", e)
 
     # Recover Redis chart data from MongoDB
     try:
@@ -602,11 +680,30 @@ async def lifespan(app: FastAPI):
     print("All database connections closed.")
 
 
-app = FastAPI(title="MAIDOL Platform API v2", lifespan=lifespan)
+# v204: CORS 허용 Origin 파서 — "*" 면 현행과 동일한 전체 허용(["*"]),
+# 아니면 쉼표 분리 + 공백 트림 + 빈 항목 제거한 명단을 돌려준다.
+# 빈 문자열(.env 에 CORS_ORIGINS= 만 있고 값이 없는 경우)도 "*" 로 취급 —
+# .env.example 을 그대로 복사해도 CORS 가 전부 막히는 사고 방지.
+def _parse_cors_origins(raw: str) -> list:
+    raw = raw.strip()
+    if raw in ("", "*"):
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+# v204: DOCS_ENABLED=false(운영) 면 /docs·/redoc·/openapi.json 전부 비활성.
+# True(기본) 면 kwargs 를 아예 넘기지 않아 현행 기본 경로 그대로.
+_docs_kwargs = (
+    {}
+    if settings.docs_enabled
+    else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+)
+
+app = FastAPI(title="MAIDOL Platform API v2", lifespan=lifespan, **_docs_kwargs)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_parse_cors_origins(settings.cors_origins),  # v204: .env CORS_ORIGINS
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -626,10 +723,7 @@ app.include_router(follows.router)
 app.include_router(generate.router)
 app.include_router(mv.router)
 app.include_router(character.router)
-app.include_router(voice_persona.router)
 app.include_router(voice_clone.router)
-app.include_router(voice_convert.router)
-app.include_router(vocal_repair.router)
 app.include_router(wondera.router)
 app.include_router(rewards.router)
 app.include_router(business.router)
@@ -657,6 +751,90 @@ app.include_router(_logs.router, prefix="/api/_logs", tags=["_logs"])
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+# v204: /api/ready 의 5종 체크 — 모듈 수준 async 함수로 분리 (P4).
+# tester 가 인프라 컨테이너를 건드리지 않고 _READY_CHECKS 항목 교체(몽키패치)로
+# 실패 경로(503)를 주입할 수 있어야 하므로 엔드포인트 안 클로저 금지.
+async def _ready_check_postgres():
+    from .database.postgres import ping_pg
+    await ping_pg()
+
+
+async def _ready_check_mongodb():
+    from .database.mongodb import get_mongo
+    await get_mongo().command("ping")
+
+
+async def _ready_check_redis():
+    from .database.redis import get_redis
+    await get_redis().ping()
+
+
+async def _ready_check_elasticsearch():
+    # AsyncElasticsearch.ping() 은 실패 시 False 를 반환(예외 미발생) — 명시 격상
+    if not await get_es().ping():
+        raise RuntimeError("es ping returned False")
+
+
+async def _ready_check_minio():
+    import asyncio as _asyncio
+    from .database.minio import get_minio
+    # MinIO SDK 는 동기 — 이벤트루프 블로킹 방지 위해 스레드로
+    exists = await _asyncio.to_thread(
+        get_minio().bucket_exists, settings.minio_bucket_images
+    )
+    if not exists:
+        raise RuntimeError("images bucket missing")
+
+
+# v204(P4): 체크 레지스트리 — 키 이름은 TESTPLAN 과 일치(고정).
+# 엔드포인트는 반드시 이 딕셔너리를 순회한다 (직접 호출 금지 — 패치 무력화됨).
+_READY_CHECKS = {
+    "postgres": _ready_check_postgres,
+    "mongodb": _ready_check_mongodb,
+    "redis": _ready_check_redis,
+    "elasticsearch": _ready_check_elasticsearch,
+    "minio": _ready_check_minio,
+}
+
+
+@app.get("/api/ready")
+async def ready():
+    """v204: LB readiness probe — PG/Mongo/Redis/ES/MinIO 5종 병렬 체크.
+
+    각 체크는 2초 타임아웃(asyncio.wait_for), 전체는 gather 병렬. 전부 OK 면
+    200 / 하나라도 실패면 503, 동일 구조 {"status","checks","timestamp"}.
+    무인증(LB 헬스체크용). 에러 원문·호스트·비밀값은 응답에 절대 싣지 않고
+    `[ready]` 태그로 서버 로그에만 남긴다.
+    """
+    import asyncio as _asyncio
+
+    # P4/R1: 반드시 _READY_CHECKS 딕셔너리를 순회 — tester 가 항목 교체(몽키패치)로
+    # 실패를 주입할 수 있어야 하므로 체크 함수 직접 호출 금지.
+    items = list(_READY_CHECKS.items())
+    names = [name for name, _ in items]
+    results = await _asyncio.gather(
+        *(_asyncio.wait_for(check(), timeout=2.0) for _, check in items),
+        return_exceptions=True,
+    )
+
+    checks = {}
+    for name, res in zip(names, results):
+        ok = not isinstance(res, BaseException)
+        if not ok:
+            logging.getLogger(__name__).warning("[ready] %s check failed: %s", name, res)
+        checks[name] = ok
+
+    all_ok = all(checks.values())
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={
+            "status": "ready" if all_ok else "not_ready",
+            "checks": checks,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
 
 @app.exception_handler(Exception)

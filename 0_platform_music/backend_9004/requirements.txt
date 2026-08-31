@@ -1,3 +1,15 @@
+# =============================================================================
+# requirements.txt — 사람이 읽고 고치는 최상위 의존성 선언
+# =============================================================================
+# v199 — 파일 2종의 역할 구분:
+#   requirements.txt   ← 이 파일. 사람이 편집한다. 최상위 선언만 담는다.
+#   requirements.lock  ← 생성물. `pip freeze` 전량 고정. Dockerfile 이 설치하는 건 이쪽.
+#   (v198 의 constraints-cpu.txt 는 torch 제거와 함께 삭제됐다.)
+#
+# 의존성을 바꾼 뒤에는 requirements.lock 을 반드시 다시 뜨세요.
+# 절차는 requirements.lock 최상단 주석에 있습니다.
+# =============================================================================
+
 # 기존 유지
 fastapi
 uvicorn
@@ -27,15 +39,23 @@ cryptography
 # google-genai is used via REST API (httpx) since system Python 3.8 doesn't support the SDK
 pyloudnorm
 soundfile
-demucs
 librosa>=0.10
 # v43: madmom for true downbeat detection (Python 3.11 compat — install from git main).
 # Build deps (Cython, numpy) must precede madmom; pip auto-resolves but --no-build-isolation may be needed.
 Cython
 imageio-ffmpeg
-madmom @ git+https://github.com/CPJKU/madmom.git@main
+# v198 — upstream main 이동에 따른 빌드 비재현성 차단. 현재 설치본의 실측 커밋.
+madmom @ git+https://github.com/CPJKU/madmom.git@27f032e8947204902c675e5e341a3faf5dc86dae
 # v60: Phase 2.5 multimodal 첨부 이미지 압축용 (Claude 5MB base64 제한 우회)
 Pillow
 # v135: FaceGuardSquad — AWS Rekognition CompareFaces/Face Liveness (얼굴 인증)
 boto3
+
+# v199 — torch/torchaudio/demucs 제거. v198 까지는 demucs 의 전이 의존으로 torch 가
+# 딸려와 CPU 휠 강제(--extra-index-url + constraints-cpu.txt)가 필요했으나,
+# 「내 목소리로 변환」(Kits.AI)·「보컬 다듬기」·Demucs 를 전부 걷어내면서 torch 를
+# 요구하는 코드가 0건이 되어 선언 자체를 삭제했다(설치 용량 약 880MB 감소).
+# constraints-cpu.txt 도 존재 이유가 사라져 같은 커밋에서 삭제.
+# 주의: librosa / madmom 은 남는다 — MV 비트 분석(audio_utils.py, beat_extraction.py,
+# mv_pipeline.py)이 사용한다. torch 와 무관하다.
 

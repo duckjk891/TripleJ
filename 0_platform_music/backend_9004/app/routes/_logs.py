@@ -1,12 +1,12 @@
 """
 로그 파일 조회 / 수신 API (앱팀 디버깅 전용).
 
-- 서버 실행 시 `run.sh`가 stdout/stderr 로그를 `backend_9004/logs/server.log`에
+- 서버 실행 시 `run.sh`가 stdout/stderr 로그를 `backend_9006/logs/server.log`에
   타임스탬프와 함께 기록한다. 본 라우터는 해당 파일을 안전하게 조회/다운로드하기
   위한 토큰 기반 GET API 3종(`/tail`, `/download`, `/info`)을 제공한다.
 - v46-pre: 프론트엔드 콘솔 로그 원격 수집을 위해 POST `/frontend` 엔드포인트 추가.
   브라우저에서 발생한 console.error / window.onerror / unhandledrejection 등을
-  배치로 받아 `backend_9004/logs/frontend.log` 에 1 이벤트 = 1 라인 형식으로 기록.
+  배치로 받아 `backend_9006/logs/frontend.log` 에 1 이벤트 = 1 라인 형식으로 기록.
 - GET 계열은 `LOG_ACCESS_TOKEN` 으로 보호 (앱팀 운영용).
 - POST `/frontend` 는 일반 사용자 JWT(`get_current_user`) 로 보호 — 로그인한
   사용자라면 누구나 자기 브라우저의 로그를 송신할 수 있고, 익명은 401.
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# backend_9004/app/routes/_logs.py → backend_9004/logs/{server,frontend}.log
+# backend_9006/app/routes/_logs.py → backend_9006/logs/{server,frontend}.log
 _LOG_DIR: Path = Path(__file__).resolve().parent.parent.parent / "logs"
 LOG_FILE_PATH: Path = _LOG_DIR / "server.log"
 FRONTEND_LOG_FILE_PATH: Path = _LOG_DIR / "frontend.log"
@@ -188,10 +188,29 @@ class FrontendLogBatch(BaseModel):
     events: List[FrontendLogEvent]
 
 
+# v203: 프론트 로그 메시지/스택에 섞여 들어오는 토큰류 마스킹.
+# 길이 절단 전에 적용해야 절단 경계에 토큰 조각이 남지 않는다.
+# _make_fingerprint 가 sanitize 결과를 쓰므로 같은 메시지·다른 토큰이
+# 같은 지문으로 묶이는 것은 의도된 개선.
+_MASK_PATTERNS = [
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]+"), r"\1<masked>"),
+    (re.compile(r"([?&]token=)[^&\s]+"), r"\1<masked>"),
+    (re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"), "<masked-jwt>"),
+]
+
+
+def _mask_secrets(text: str) -> str:
+    """v203: _MASK_PATTERNS 순차 적용."""
+    for pattern, repl in _MASK_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
+
 def _sanitize_message(msg: str) -> str:
     """메시지 길이 제한 + 개행 한 줄로 압축."""
     if not isinstance(msg, str):
         msg = str(msg)
+    msg = _mask_secrets(msg)  # v203: 절단 전 토큰 마스킹
     if len(msg) > _MAX_MESSAGE_LEN:
         msg = msg[:_MAX_MESSAGE_LEN] + "...[truncated]"
     # 한 줄 형식 유지를 위해 개행 치환
@@ -203,6 +222,7 @@ def _sanitize_stack(stack: Optional[str]) -> Optional[str]:
         return None
     if not isinstance(stack, str):
         stack = str(stack)
+    stack = _mask_secrets(stack)  # v203: 절단 전 토큰 마스킹
     if len(stack) > _MAX_STACK_LEN:
         stack = stack[:_MAX_STACK_LEN] + "...[truncated]"
     return stack.replace("\r\n", " ⏎ ").replace("\n", " ⏎ ").replace("\r", " ⏎ ")
@@ -361,7 +381,7 @@ async def receive_frontend_logs(
 
     - 인증: JWT (axios 인터셉터가 자동 첨부; sendBeacon 은 ?token=<jwt> 폴백 사용)
     - 검증: events 1~50개, body ≤256KB, message ≤8KB, stack ≤16KB
-    - 저장: backend_9004/logs/frontend.log 에 1 이벤트 1 라인
+    - 저장: backend_9006/logs/frontend.log 에 1 이벤트 1 라인
     - 응답: {"received": <int>}
     """
     user_id = current_user.get("id") or current_user.get("user_id") or "unknown"

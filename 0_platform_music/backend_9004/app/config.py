@@ -82,6 +82,20 @@ class Settings(BaseSettings):
     minio_secret_key: str = "your_minio_password"
     minio_bucket_music: str = "aimu-music"
     minio_bucket_images: str = "aimu-images"
+    # v202: S3 전환 스위치 — 기본값은 로컬 MinIO 현행과 동일. EC2 는 .env 로
+    # MINIO_SECURE=true(S3 는 HTTPS 필수) / S3_REGION=ap-northeast-2 지정.
+    minio_secure: bool = False
+    # v202: presign SigV4 리전 (bucket location 조회 생략용). 로컬 MinIO 기본값 유지.
+    s3_region: str = "us-east-1"
+
+    # v204: 운영 하드닝 — CORS 허용 Origin / API 문서 노출 스위치
+    cors_origins: str = "*"       # v204: 쉼표 구분 허용 Origin 명단. "*"=전부 허용(로컬 개발 기본).
+                                  # 운영(EC2)은 .env 로 https://www.maidol.ai.kr,https://admin.maidol.ai.kr
+    docs_enabled: bool = True     # v204: false 면 /docs·/redoc·/openapi.json 전부 비활성(운영)
+
+    # v205: 무거운 백그라운드 작업(박자 분석·공유영상 생성) 동시 실행 상한.
+    #       env HEAVY_JOB_CONCURRENCY — 러시 관측 시 숫자만 조정 (services/heavy_jobs.py)
+    heavy_job_concurrency: int = 2
 
     # JWT
     jwt_secret: str = "music-platform-secret-key-2024"
@@ -113,12 +127,8 @@ class Settings(BaseSettings):
     kling_access_key: str = ""
     kling_secret_key: str = ""
 
-    # Kits.AI Voice Conversion
-    kits_api_key: str = ""
-    kits_api_url: str = "https://arpeggi.io/api/kits/v1"
-
-    # LALAL.AI Vocal Enhancement
-    lalal_api_key: str = ""
+    # v199: 「내 목소리로 변환」·「보컬 다듬기」 외부 API 설정 3종 제거 — 기능 삭제됨.
+    #       실 .env 에 해당 키가 남아 있어도 model_config 의 extra="ignore" 로 무시된다.
 
     # Wondera AI Music Generation
     wondera_api_key: str = ""
@@ -146,7 +156,7 @@ class Settings(BaseSettings):
     naver_client_secret: str = ""
 
     # provider 가 인가코드를 돌려보낼 우리 콜백의 베이스 URL.
-    oauth_callback_base: str = "http://localhost:9005"
+    oauth_callback_base: str = "http://localhost:9006"
     # 최종 JWT 를 fragment 로 전달할 프론트엔드 URL.
     frontend_url: str = "https://localhost:4000"
 

@@ -13,6 +13,7 @@ src 로 내려가면 브라우저가 차단한다. 발급 경로를 이 모듈�
   mode=presign 이면 public_presign.
 - browser_video_url: 브라우저 노출 비디오 전용. 대용량이라 프록시 제외 —
   항상 public_presign.
+- internal_presign (v202-r): 내부 endpoint 서명 — tracks 스트림/다운로드 전용.
 
 로그 추적자: `[media-url]` + object_name. 호스트 실값은 debug 레벨에서만 마스킹 출력.
 """
@@ -23,7 +24,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from ..config import settings
-from ..database.minio import get_public_minio
+from ..database.minio import get_minio, get_public_minio
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,8 @@ def public_presign(
             secure=settings.minio_public_secure,
             # region 지정 → bucket location 네트워크 조회 생략 (public host 는
             # 서버 자신에게 도달 불가할 수 있음 — presign 블로킹 방지). MinIO 기본 리전.
-            region="us-east-1",
+            # v202: 설정화 — AWS S3(서울) 는 .env S3_REGION=ap-northeast-2 로 전환.
+            region=settings.s3_region,
         )
         url = client.presigned_get_object(
             bucket_name=bucket or settings.minio_bucket_images,
@@ -88,6 +90,45 @@ def public_presign(
         logger.error(
             "[media-url] presign failed host=%s obj=%s err=%s",
             _mask_host(endpoint), object_name, e,
+        )
+        return None
+
+
+def internal_presign(
+    object_name: Optional[str],
+    bucket: Optional[str] = None,
+    expires: timedelta = PRESIGN_EXPIRES,
+) -> Optional[str]:
+    """내부(기본) endpoint 로 서명하는 중앙 presign — tracks 스트림/다운로드 전용.
+
+    v202-r: public_presign 교체가 MINIO_PUBLIC_HOST 설정 환경에서 스트림 host 를
+    내부→공개로 바꿔 로컬/내부망 재생이 깨졌다(hairpin NAT 도달 불가).
+    스트림/다운로드는 종전대로 내부 endpoint 서명을 유지하되, 발급을 이 모듈로
+    중앙화해 4-1(region)·4-2(secure/자격증명) 스위치는 그대로 탄다.
+    S3 모드에서는 minio_endpoint 자체가 공개 S3 endpoint 라 두 헬퍼가 수렴한다.
+    """
+    if not object_name:
+        return None
+    if object_name.startswith(("http://", "https://")):
+        return object_name
+    try:
+        # init_minio 가 만든 내부 클라이언트 재사용 — secure/region/자격증명
+        # 스위치(v202)가 이미 반영돼 있음.
+        client = get_minio()
+        url = client.presigned_get_object(
+            bucket_name=bucket or settings.minio_bucket_images,
+            object_name=object_name,
+            expires=expires,
+        )
+        logger.debug(
+            "[media-url] internal presign ok host=%s obj=%s",
+            _mask_host(settings.minio_endpoint), object_name,
+        )
+        return url
+    except Exception as e:
+        logger.error(
+            "[media-url] internal presign failed host=%s obj=%s err=%s",
+            _mask_host(settings.minio_endpoint), object_name, e,
         )
         return None
 

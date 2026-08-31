@@ -366,6 +366,24 @@ async def unblock(uid: str, current_user=Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 # WebSocket — 수동 인증 (auth.py 미수정, JWT 상수만 import 재사용)
 # ---------------------------------------------------------------------------
+async def _reject_ws(websocket: WebSocket) -> None:
+    """WS 인증 거절 — 반드시 accept 후 close 한다.
+
+    2026-08-20: accept 이전에 close(4401) 을 호출하면 ASGI 규약상 핸드셰이크가
+    HTTP 403 으로 변환되어 클라이언트는 close code 를 받지 못하고 1006 을 본다.
+    프론트(`dmSocket.js`)의 4401 분기가 사문화되어 만료 토큰 보유 브라우저가
+    30초 간격으로 영구 재접속하던 버그의 원인. accept 후 close 해야 코드가 전달된다.
+    """
+    try:
+        await websocket.accept()
+    except Exception:  # 이미 닫혔거나 accept 불가 — 거절 자체는 성립
+        pass
+    try:
+        await websocket.close(code=4401)
+    except Exception:
+        pass
+
+
 async def authenticate_ws(websocket: WebSocket):
     """`?token=` 또는 Authorization 헤더에서 JWT 추출 → decode → Redis 세션 확인.
     실패 시 websocket.close(code=4401) 후 None 반환. 성공 시 user_id(str) 반환.
@@ -376,27 +394,27 @@ async def authenticate_ws(websocket: WebSocket):
         if auth and auth.startswith("Bearer "):
             token = auth.split(" ")[1]
     if not token:
-        await websocket.close(code=4401)
+        await _reject_ws(websocket)
         return None
     try:
         payload = jwt.decode(
             token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": True}
         )
     except jwt.InvalidTokenError:
-        await websocket.close(code=4401)
+        await _reject_ws(websocket)
         return None
     user_id = payload.get("id")
     if not user_id:
-        await websocket.close(code=4401)
+        await _reject_ws(websocket)
         return None
     try:
         redis = get_redis()
         session = await redis.get(f"session:{user_id}") if redis is not None else None
     except Exception:
-        await websocket.close(code=4401)
+        await _reject_ws(websocket)
         return None
     if not session:
-        await websocket.close(code=4401)
+        await _reject_ws(websocket)
         return None
     return str(user_id)
 

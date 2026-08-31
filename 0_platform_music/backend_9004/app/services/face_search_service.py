@@ -202,9 +202,11 @@ async def search_user_content_by_face(report_id: str, conn) -> dict:
 
     mongo = get_mongo()
 
-    # ── ① characters 문서 (user_id 당 1문서 — 원본·실사 시트·가상 시트) ─────
-    char = await mongo.characters.find_one({"user_id": str(owner_id)})
-    if char:
+    # ── ① characters 문서 순회 — v212 아티스트 다중화: 전 doc 스캔 (안전측).
+    # legacy 단일 doc 은 3필드, cid doc 은 sheet_object_name 만 실릴 수 있으나
+    # 필드 순회가 없는 필드를 자연 스킵하므로 동일 루프로 처리된다.
+    char_docs = await mongo.characters.find({"user_id": str(owner_id)}).to_list(length=None)
+    for char in char_docs:
         best = None  # (similarity, object_name, kind)
         for field, kind in _CHARACTER_IMAGE_FIELDS:
             obj = char.get(field)

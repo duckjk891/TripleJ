@@ -28,9 +28,14 @@ from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
-# ffmpeg/ffprobe 위치 — PATH 또는 사용자 로컬 bin.
-_FFMPEG = shutil.which("ffmpeg") or "/home/duckjk89/.local/bin/ffmpeg"
-_FFPROBE = shutil.which("ffprobe") or "/home/duckjk89/.local/bin/ffprobe"
+# ffmpeg/ffprobe 위치 — 우선순위: 환경변수 → PATH.
+# v198: 개발자 홈 하드코딩 제거(컨테이너/EC2 에서 존재하지 않는 경로였다).
+# 컨테이너에서는 apt ffmpeg 가 /usr/bin 에 있어 PATH 로 해결된다.
+# 최종 폴백을 None 이 아니라 문자열로 두는 이유: subprocess.run([_FFPROBE, ...]) 가
+# None 이면 TypeError 로 죽지만, 문자열이면 FileNotFoundError 가 나서 아래
+# try/except 의 기존 logger.warning 경로를 정상적으로 탄다.
+_FFMPEG = os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
+_FFPROBE = os.environ.get("FFPROBE_BIN") or shutil.which("ffprobe") or "ffprobe"
 
 
 def _ffprobe_meta(path: str) -> dict:

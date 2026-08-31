@@ -19,7 +19,7 @@ from ..database.mongodb import get_mongo
 from ..database.redis import get_redis
 from ..database.minio import get_minio
 from ..database.postgres import get_pg
-from ..services.media_urls import browser_video_url
+from ..services.media_urls import browser_video_url, internal_presign
 
 router = APIRouter(prefix="/api/tracks")
 
@@ -67,16 +67,115 @@ def _can_view_hidden_track(t: dict, current_user) -> bool:
 _TRACK_NOT_FOUND = {"error": "트랙을 찾을 수 없습니다."}
 
 
-async def _find_completed_mv(mongo, generation_id: str) -> Optional[dict]:
-    """Find a completed MV job linked to the given generation_id."""
-    if not generation_id:
+async def _find_attached_mv(mongo, track_id) -> Optional[dict]:
+    """v211 — 트랙에 **명시 부착**된 완성 MV job 조회.
+
+    구 `_find_completed_mv`(generation_id 암묵 자동연결) 전면 대체 — "생성 완료
+    ≠ 마음에 드는 완성" 사양. 부착은 POST /mv/jobs/{id}/attach 로만 성립하며,
+    track 소스 MV(v209 audio_track_id) 노출 갭도 이 경로로 동시 해소.
+    main.py 시동 시 mv_jobs.attached_track_id 인덱스 보장 (플레이어 hot path).
+    """
+    if not track_id:
         return None
     mv_job = await mongo.mv_jobs.find_one({
-        "audio_generation_id": generation_id,
+        "attached_track_id": str(track_id),
         "status": "completed",
         "result_music_video_url": {"$exists": True, "$ne": None},
     })
     return mv_job
+
+
+async def _resolve_source_meta(
+    mongo,
+    user_id: str,
+    character_id: Optional[str],
+    persona_id: Optional[str],
+    lyrics_id: Optional[str],
+    lyrics_source: Optional[dict] = None,
+):
+    """v214 — 곡 출처 표시 스냅샷(source_meta) 서버 생성 + persona 정규화.
+
+    원칙 (PLAN v214 T1):
+      - 4필드 id 는 "받은 값 그대로" 저장 (검증 400 없음)
+      - 표시 명칭은 **본인 소유 문서 일치 시에만** 생성 — 불일치·부재면 해당
+        명칭 생략(스푸핑 차단, 표기 생략은 사양 5 기존 곡과 동일 경로)
+      - persona_id 는 clone_id·Suno voice_id 어느 쪽이 와도
+        {user_id, $or:[{_id},{voice_id}]} 역매핑으로 **clone_id 정규화**
+        (실패 시 받은 값 그대로 저장 + 명칭 생략)
+      - lyrics 명칭: lyrics_source(작곡 시점 동결 스냅샷, T2) 우선 →
+        lyrics_id 의 본인 generations 문서 title resolve
+
+    Returns (normalized_persona_id, source_meta | None)
+      source_meta = {artist_name?, persona_name?, lyrics_title?, lyrics_is_mine?}
+    """
+    meta: dict = {}
+
+    # 아티스트 명칭 — 본인 characters 문서 일치 시에만
+    if character_id:
+        try:
+            char = await mongo.characters.find_one(
+                {"user_id": user_id, "character_id": character_id}, {"name": 1},
+            )
+            if char is not None:
+                meta["artist_name"] = char.get("name") or ""
+            else:
+                logger.info(
+                    "[SongSource] character unresolved user=%s cid=%s — 명칭 생략",
+                    user_id[:8], character_id[:36],
+                )
+        except Exception as e:
+            logger.warning("[SongSource] character resolve failed cid=%s: %s", character_id[:36], e)
+
+    # persona — clone_id/voice_id 양쪽 흡수 역매핑 + 명칭
+    normalized_persona_id = persona_id
+    if persona_id:
+        try:
+            ors = [{"voice_id": persona_id}]
+            if ObjectId.is_valid(persona_id):
+                ors.append({"_id": ObjectId(persona_id)})
+            clone = await mongo.voice_clones.find_one(
+                {"user_id": user_id, "$or": ors}, {"voice_name": 1},
+            )
+            if clone is not None:
+                normalized_persona_id = str(clone["_id"])
+                meta["persona_name"] = clone.get("voice_name") or ""
+                if normalized_persona_id != persona_id:
+                    logger.info(
+                        "[SongSource] persona normalized voice_id->clone_id user=%s %s->%s",
+                        user_id[:8], persona_id[:36], normalized_persona_id,
+                    )
+            else:
+                logger.info(
+                    "[SongSource] persona unresolved user=%s pid=%s — 받은 값 유지·명칭 생략",
+                    user_id[:8], persona_id[:36],
+                )
+        except Exception as e:
+            logger.warning("[SongSource] persona resolve failed pid=%s: %s", persona_id[:36], e)
+
+    # 가사 명칭 — 작곡 시점 동결 스냅샷(lyrics_source) 우선 (draft 는 이미 삭제됨)
+    ls = lyrics_source or {}
+    ls_id = (ls.get("lyrics_id") or "").strip() if isinstance(ls, dict) else ""
+    if isinstance(ls, dict) and (ls.get("title") or "").strip() and (not lyrics_id or lyrics_id == ls_id):
+        meta["lyrics_title"] = (ls.get("title") or "").strip()[:100]
+        meta["lyrics_is_mine"] = bool(ls.get("is_mine", True))
+    elif lyrics_id:
+        try:
+            if ObjectId.is_valid(lyrics_id):
+                gen = await mongo.generations.find_one(
+                    {"_id": ObjectId(lyrics_id), "user_id": user_id}, {"title": 1},
+                )
+                if gen is not None and (gen.get("title") or "").strip():
+                    meta["lyrics_title"] = (gen.get("title") or "").strip()[:100]
+                    meta["lyrics_is_mine"] = True
+                elif gen is None:
+                    logger.info(
+                        "[SongSource] lyrics unresolved user=%s lid=%s — 명칭 생략",
+                        user_id[:8], lyrics_id[:36],
+                    )
+        except Exception as e:
+            logger.warning("[SongSource] lyrics resolve failed lid=%s: %s", lyrics_id[:36], e)
+
+    return normalized_persona_id, (meta or None)
 
 
 def _mv_presigned_url(object_name: Optional[str]) -> Optional[str]:
@@ -540,6 +639,105 @@ class TrackUpdateBody(BaseModel):
     cover_image_url: Optional[str] = None
 
 
+async def _validate_cover_image_url(mongo, value: str, doc: dict, user_id: str):
+    """v207 — update_track `cover_image_url` 서버측 검증.
+
+    기존 곡 커버 수정(CoverEditModal)에서 AI 세션 산출물을 커버로 지정하는
+    경로가 열리면서, 임의 문자열이 그대로 저장되던 구멍(타인 오브젝트·
+    faces/·evidence/ 백엔드 전용 경로·외부 URL 지정 가능)을 막는다.
+
+    허용 (반환 (True, src)):
+      - "revert": 현 track.cover_image_url 과 동일 값 — 되돌리기/유지.
+        (레거시 http(s) 전체 URL 저장분도 "기존 값 유지"로만 통과 —
+        2026-08-26 실측 기준 http 저장분 0건이지만 방어적으로 유지)
+      - "file":   본인 파일 업로드 커버 `covers/{user_id}/{track_id}.{ext}`
+        (/upload/image type=cover 의 결정적 경로 — 파일 커버로 되돌리기용)
+      - "session": 본인 소유 cover_sessions 산출물 (user_id 일치 +
+        cover_object_name 또는 cover_refine_history[].object_name 에 포함)
+
+    차단 (반환 (False, None)) — 호출측에서 400 + [cover-edit] warning:
+      - faces/·evidence/ 접두 (백엔드 전용 경로 — 무조건, 동일값이어도)
+      - `..` 경로 탈출 (cover-preview v173 관행과 정합)
+      - http(s):// 외부 URL (동일 기존값 제외)
+      - 타인 세션 산출물·그 외 임의 문자열
+    """
+    value = value or ""
+    # 백엔드 전용 경로 — 기존값과 동일해도 무조건 차단.
+    if value.startswith(("faces/", "evidence/")):
+        return False, None
+    if ".." in value:
+        return False, None
+
+    # 되돌리기/유지 — 현 커버와 동일 값 (레거시 http 저장분 포함 유일 통로).
+    current = doc.get("cover_image_url")
+    if current and value == current:
+        return True, "revert"
+
+    if value.startswith(("http://", "https://")):
+        return False, None
+    if not value:
+        return False, None
+
+    # 본인 파일 업로드 커버 — /upload/image 가 쓰는 결정적 object name.
+    track_id = str(doc["_id"])
+    if value.startswith(f"covers/{user_id}/{track_id}."):
+        return True, "file"
+
+    # 본인 소유 cover_sessions 산출물 (현재본 + refine 이력 전체).
+    sess = await mongo.cover_sessions.find_one(
+        {
+            "user_id": user_id,
+            "$or": [
+                {"cover_object_name": value},
+                {"cover_refine_history.object_name": value},
+            ],
+        },
+        {"_id": 1},
+    )
+    if sess:
+        return True, "session"
+
+    return False, None
+
+
+async def _validate_cover_object_name_for_create(mongo, value: str, user_id: str):
+    """v210 — 생성 경로(/upload · /upload-from-generation) cover_object_name 검증.
+
+    v207 `_validate_cover_image_url` 의 유효 분기 재사용판: 업로드(생성) 시점엔
+    track doc 이 아직 없어 revert/file 분기가 성립하지 않으므로,
+    **session 분기(본인 cover_sessions 산출물 증명)만** 허용한다.
+
+    허용 (True, "session"): 본인 소유 cover_sessions 의 cover_object_name
+      또는 cover_refine_history[].object_name 과 일치.
+    차단 (False, None): faces/·evidence/ 접두(백엔드 전용 경로) · `..` 경로
+      탈출 · http(s):// 외부 URL · 빈 값 · 타인 세션 산출물·임의 문자열.
+    """
+    value = value or ""
+    if value.startswith(("faces/", "evidence/")):
+        return False, None
+    if ".." in value:
+        return False, None
+    if value.startswith(("http://", "https://")):
+        return False, None
+    if not value:
+        return False, None
+
+    sess = await mongo.cover_sessions.find_one(
+        {
+            "user_id": user_id,
+            "$or": [
+                {"cover_object_name": value},
+                {"cover_refine_history.object_name": value},
+            ],
+        },
+        {"_id": 1},
+    )
+    if sess:
+        return True, "session"
+
+    return False, None
+
+
 @router.get("/my")
 async def get_my_tracks(
     page: int = 1,
@@ -611,15 +809,29 @@ async def purge_track_document(doc: dict, conn) -> dict:
             pass  # Continue even if MinIO deletion fails
 
     # MinIO — 커버 (object name 저장분만 — http(s) 외부 URL 은 스킵)
+    # v215 C3 — 수명 재설계: covers/generated/·covers/refined/ 접두(세션 산출물 =
+    # 보관함 소유 자산)는 **오브젝트 삭제 스킵**(트랙 doc 만 파기). 곡=참조자·
+    # 보관함=소유자 — 커버 다곡 재사용 시 한 곡 삭제가 타 곡·보관함을 파손하지
+    # 않는다. 오브젝트 파기는 보관함 DELETE(미사용 한정, upload.py) 단일 통로.
+    # ⚠ 별건 기록: 이 함수는 유저 삭제·admin 몰수 공용 — 몰수 시에도 세션 커버
+    # 오브젝트가 남는다. 문제 이미지 완전 파기가 필요한 몰수 케이스는
+    # cover_sessions 몰수 확장 별건(▲사용자 인지 항목, v215 REPORT).
     cover = doc.get("cover_image_url")
     if cover and not str(cover).startswith("http"):
-        try:
-            minio_client.remove_object(
-                bucket_name=settings.minio_bucket_images, object_name=cover
+        if str(cover).startswith(("covers/generated/", "covers/refined/")):
+            logger.info(
+                "[CoverLib] purge skip session-cover track=%s obj=%s (보관함 소유 — C3)",
+                str(doc.get("_id")), cover,
             )
-            removed.append("cover")
-        except Exception:
-            pass
+        else:
+            # 파일 첨부 커버(covers/{uid}/{tid}.ext — 트랙 전속)만 기존대로 삭제
+            try:
+                minio_client.remove_object(
+                    bucket_name=settings.minio_bucket_images, object_name=cover
+                )
+                removed.append("cover")
+            except Exception:
+                pass
 
     # MinIO — 공유영상 캐시 (v126/v129 — share/v3/{id}[ _wide|_kakao ].mp4)
     try:
@@ -743,6 +955,27 @@ async def update_track(
         logger.info("[report] track republish_blocked track=%s owner=%s", track_id[:8], current_user["id"][:8])
         return JSONResponse(status_code=400, content={"error": "신고 처리로 제한된 콘텐츠입니다."})
 
+    # v207 — cover_image_url 서버 검증 (body 에 없으면(None) 기존대로 무시 —
+    # 다른 필드만 수정하는 기존 사용처 무영향).
+    if body.cover_image_url is not None:
+        cover_ok, cover_src = await _validate_cover_image_url(
+            mongo, body.cover_image_url, doc, current_user["id"]
+        )
+        if not cover_ok:
+            logger.warning(
+                "[cover-edit] rejected track=%s user=%s value=%s",
+                track_id[:8], current_user["id"][:8],
+                str(body.cover_image_url)[:120],
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "유효하지 않은 커버 이미지입니다."},
+            )
+        logger.info(
+            "[cover-edit] track=%s user=%s src=%s",
+            track_id[:8], current_user["id"][:8], cover_src,
+        )
+
     # Build update dict from non-None fields
     update_data = {k: v for k, v in body.dict().items() if v is not None}
     if not update_data:
@@ -767,17 +1000,30 @@ async def update_track(
 
 
 @router.get("/{track_id}/music-video")
-async def get_track_music_video(track_id: str):
+async def get_track_music_video(
+    track_id: str,
+    current_user=Depends(get_current_user_optional),
+):
     """Return presigned URL for the track's music video, or 404 if none exists."""
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"generation_id": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"generation_id": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+    )
     if not doc:
         return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
 
-    mv_job = await _find_completed_mv(mongo, doc.get("generation_id"))
+    # v196 ① 직링크 가드 — 비공개·블라인드 트랙 MV 는 소유자(또는 admin) 외 404.
+    # 인증은 optional 이므로 공개 곡의 비로그인 접근은 그대로 200 유지.
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
+        logger.info("[report] track mv_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
+
+    # v211 — 명시 부착 기준 조회 (암묵 generation 링크 폐기)
+    mv_job = await _find_attached_mv(mongo, track_id)
     if not mv_job:
         return JSONResponse(status_code=404, content={"error": "뮤직비디오를 찾을 수 없습니다."})
 
@@ -792,21 +1038,32 @@ async def get_track_music_video(track_id: str):
 # Reuses share_video._fetch_lyric_segments (single source of truth) so the
 # playback timing matches the SNS/download burn-in video exactly.
 @router.get("/{track_id}/lyrics-timeline")
-async def get_track_lyrics_timeline(track_id: str):
+async def get_track_lyrics_timeline(
+    track_id: str,
+    current_user=Depends(get_current_user_optional),
+):
     """Return line-level lyric segments for a track (unauthenticated, public playback).
 
     Response: {"has_timestamps": bool, "segments": [{"text","start","end"}], "source": str}
     """
     logger.info("[lyrics-timeline] track=%s", track_id[:8] if track_id else "?")
+    if not ObjectId.is_valid(track_id):
+        return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
+
+    mongo = get_mongo()
+    # v196: _fetch_lyric_segments 가 문서 전체를 요구하므로 프로젝션은 축소하지 않는다.
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
+    if not doc:
+        return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
+
+    # v196 ① 직링크 가드 — 광역 except 진입 **전에** 배치한다.
+    # (아래 try 안에 두면 404 응답이 삼켜져 200 {"has_timestamps": false} 로 바뀔 수 있다)
+    # 인증은 optional 이므로 공개 곡의 비로그인 접근은 그대로 200 유지.
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, current_user):
+        logger.info("[report] track lyrics_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
+
     try:
-        if not ObjectId.is_valid(track_id):
-            return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
-
-        mongo = get_mongo()
-        doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)})
-        if not doc:
-            return JSONResponse(status_code=404, content={"error": "트랙을 찾을 수 없습니다."})
-
         from ..services.share_video import _fetch_lyric_segments
 
         segments = await _fetch_lyric_segments(mongo, doc)
@@ -892,8 +1149,14 @@ async def retry_track_beats(
     )
 
     import asyncio as _asyncio
-    from ..services.beat_extraction import detect_beats_for_track
-    _asyncio.create_task(detect_beats_for_track(track_id))
+    from ..services.beat_extraction import run_track_beat_extraction_in_background
+    # v205: 기존 create_task(detect_beats_for_track(...)) 는 madmom CPU 작업을
+    # 메인 이벤트 루프에서 직접 돌리는 선재 결함(detect_beats 내부에 스레드
+    # 오프로딩 없음 — audio_utils.py 실측). 전체를 to_thread 로 워커 스레드에
+    # 옮기고, 그 안(sync 래퍼)에서 heavy_job_slot 을 획득한다.
+    _asyncio.create_task(
+        _asyncio.to_thread(run_track_beat_extraction_in_background, track_id)
+    )
 
     return {"message": "비트 재추출이 시작되었습니다.", "status": "pending"}
 
@@ -1202,9 +1465,11 @@ async def get_track(
         logger.exception("[track] generation_params merge failed track=%s", track_id[:8])
 
     # Look up linked completed mv_job once; reuse for both music_video and cover_character.
+    # v211 — 명시 부착(attached_track_id) 기준으로 전환. cover_character 1순위
+    # 소스도 부착 job 기준 — 무부착 시 track snapshot 폴백은 현행 유지.
     mv_job = None
     try:
-        mv_job = await _find_completed_mv(mongo, track.get("generation_id"))
+        mv_job = await _find_attached_mv(mongo, track_id)
     except Exception:
         logger.exception("[TrackCoverChar] mv_job lookup failed track=%s", track_id)
         mv_job = None
@@ -1295,6 +1560,14 @@ async def upload_track(
     key: str = Form(None),
     language: str = Form(None),
     lyrics: str = Form(None),
+    # v210: AI 커버 산출물 — 프론트는 이미 전송 중(UploadPage :425)이었으나 서버가
+    # 드롭하던 갭 봉합. 본인 cover_sessions 산출물 증명 실패 시 400 (silent drop 금지).
+    cover_object_name: str = Form(None),
+    # v214 곡 출처 4필드 (optional — 받은 값 그대로, 64자 캡. 명칭은 서버 생성)
+    character_id: str = Form(None),
+    persona_id: str = Form(None),
+    persona_model: str = Form(None),
+    lyrics_id: str = Form(None),
     is_public: bool = Form(True),
     current_user=Depends(get_current_user),
 ):
@@ -1308,6 +1581,30 @@ async def upload_track(
     contents = await file.read()
     if len(contents) > MAX_AUDIO_SIZE:
         return JSONResponse(status_code=400, content={"error": "파일 크기는 50MB 이하여야 합니다."})
+
+    # v210: cover_object_name 검증 — MinIO put/doc insert **이전** 수행 (실패 400,
+    # 불필요 업로드 방지). 미전송(None)은 기존과 동일하게 cover_image_url=None.
+    validated_cover = None
+    if cover_object_name:
+        _mongo_for_cover = get_mongo()
+        cover_ok, cover_src = await _validate_cover_object_name_for_create(
+            _mongo_for_cover, cover_object_name, current_user["id"],
+        )
+        if not cover_ok:
+            # 값 본문은 로그 미출력 (길이만) — 임의 문자열/경로 주입 시도 가능성.
+            logger.warning(
+                "[tracks] upload cover rejected user=%s len=%d",
+                current_user["id"][:8], len(cover_object_name),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "유효하지 않은 커버 이미지입니다."},
+            )
+        validated_cover = cover_object_name
+        logger.info(
+            "[tracks] upload cover accepted src=%s user=%s",
+            cover_src, current_user["id"][:8],
+        )
 
     # Generate track ID
     track_id = ObjectId()
@@ -1350,6 +1647,22 @@ async def upload_track(
     categories_list = filter_categories(cats_raw)
 
     now = datetime.now(timezone.utc)
+    # ── v214 곡 출처 기록 (경로 B — body 값만, gen_doc 승계 없음) ────────────
+    src_character_id = (character_id or "").strip()[:64] or None
+    src_persona_id = (persona_id or "").strip()[:64] or None
+    src_persona_model = (persona_model or "").strip()[:64] or None
+    src_lyrics_id = (lyrics_id or "").strip()[:64] or None
+    src_persona_id_norm, source_meta = await _resolve_source_meta(
+        get_mongo(), uploader_id, src_character_id, src_persona_id, src_lyrics_id,
+    )
+    if src_character_id or src_persona_id or src_lyrics_id:
+        logger.info(
+            "[SongSource] track=%s path=file char=%s persona=%s(norm=%s) lyrics=%s meta=%s",
+            str(track_id), src_character_id or "-", src_persona_id or "-",
+            src_persona_id_norm or "-", src_lyrics_id or "-",
+            sorted(source_meta.keys()) if source_meta else None,
+        )
+
     doc = {
         "_id": track_id,
         "title": title,
@@ -1366,8 +1679,18 @@ async def upload_track(
         "key": key,
         "duration_sec": duration_sec,
         "language": language,
+        # v209: Form 으로 받던 lyrics 가 doc 에 저장되지 않던 갭 봉합 —
+        # upload-from-generation(:1731 "lyrics": body.lyrics) 관행과 동일하게 원값 그대로(None 허용).
+        "lyrics": lyrics,
         "audio_url": object_name,
-        "cover_image_url": None,
+        # v210: 검증 통과한 AI 커버 산출물 (미전송 시 None — 기존 동작 동일).
+        "cover_image_url": validated_cover,
+        # v214 — 곡 출처 4필드 + 표시 스냅샷 (경로 B)
+        "character_id": src_character_id,
+        "persona_id": src_persona_id_norm,
+        "persona_model": src_persona_model,
+        "lyrics_id": src_lyrics_id,
+        "source_meta": source_meta,
         "waveform_data": [],
         "play_count": 0,
         "like_count": 0,
@@ -1420,9 +1743,20 @@ class UploadFromGenerationBody(BaseModel):
     prompt: Optional[str] = None
     lyrics: Optional[str] = None
     cover_object_name: Optional[str] = None
-    mv_object_name: Optional[str] = None
+    # v211: mv_object_name 데드 필드 제거 확정 (v210 유보 종결) — MV→트랙 연결은
+    # 부착 API(POST /mv/jobs/{id}/attach) 로 대체. pydantic extra 기본 ignore 라
+    # 구 클라이언트가 보내도 무해.
     ai_model: Optional[str] = "Suno"
-    use_voice_converted: Optional[bool] = False
+    # ── v214 곡 출처 기록 (앱팀 B-4) — 받은 값 그대로 저장(400·422 없음).
+    # 캡은 저장부 수동 [:64] 자름(경로 B 와 통일 — planner 판정: 출처는 부가 메타,
+    # 출처 때문에 업로드 본 동작이 실패하면 안 됨. 잘린 id 는 resolve 실패 →
+    # meta 없음 → 표기 생략으로 자연 무해).
+    # persona_id 는 clone_id 권장이나 Suno voice_id 로 와도 서버가 역매핑 정규화.
+    # 표시 명칭(source_meta)은 본인 소유 문서 일치 시에만 서버 생성 — 스푸핑 차단.
+    character_id: Optional[str] = None
+    persona_id: Optional[str] = None
+    persona_model: Optional[str] = None
+    lyrics_id: Optional[str] = None
     # v71: MV 안 만들고 cover 만 만든 곡도 cover_character 노출 가능하도록
     # publish 시점의 사용자 캐릭터 snapshot 을 트랙 도큐먼트에 박음.
     # 구조는 mv_jobs.user_character_snapshot 와 동일.
@@ -1455,51 +1789,61 @@ async def upload_from_generation(
     if not gen_doc.get("result_audio_url"):
         return JSONResponse(status_code=400, content={"error": "생성된 오디오 파일이 없습니다."})
 
-    # v74 — Determine audio source: voice converted or specific variant
+    # v74 — Determine audio source: specific variant
+    # v199: 「내 목소리로 변환」 기능 제거에 따라 보이스 변환 분기를 삭제했다.
     import logging as _logging
     _log = _logging.getLogger(__name__)
     variant_index = body.variant_index or 0
     if variant_index < 0:
         return JSONResponse(status_code=400, content={"error": "variant_index는 0 이상이어야 합니다."})
-    if variant_index > 0 and body.use_voice_converted:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "보이스 변환은 첫 번째 클립(variant 0)에만 사용할 수 있습니다."},
-        )
 
-    if body.use_voice_converted:
-        vc_url = gen_doc.get("voice_converted_url")
-        if not vc_url:
-            return JSONResponse(status_code=400, content={"error": "보이스 변환된 오디오 파일이 없습니다."})
-        source_object_name = vc_url
-    else:
-        gen_variants = gen_doc.get("variants") or []
-        if variant_index == 0:
-            if gen_variants and len(gen_variants) > 0:
-                source_object_name = gen_variants[0].get("audio_url") or gen_doc["result_audio_url"]
-            else:
-                source_object_name = gen_doc["result_audio_url"]
+    gen_variants = gen_doc.get("variants") or []
+    if variant_index == 0:
+        if gen_variants and len(gen_variants) > 0:
+            source_object_name = gen_variants[0].get("audio_url") or gen_doc["result_audio_url"]
         else:
-            if not gen_variants or variant_index >= len(gen_variants):
-                _log.warning(
-                    "[UploadVariant] gen=%s variant=%d out of range (have=%d)",
-                    body.generation_id, variant_index, len(gen_variants),
-                )
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"variant {variant_index} 범위를 벗어났습니다."},
-                )
-            source_object_name = gen_variants[variant_index].get("audio_url")
-            if not source_object_name:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "선택한 variant에 오디오가 없습니다."},
-                )
+            source_object_name = gen_doc["result_audio_url"]
+    else:
+        if not gen_variants or variant_index >= len(gen_variants):
+            _log.warning(
+                "[UploadVariant] gen=%s variant=%d out of range (have=%d)",
+                body.generation_id, variant_index, len(gen_variants),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"variant {variant_index} 범위를 벗어났습니다."},
+            )
+        source_object_name = gen_variants[variant_index].get("audio_url")
+        if not source_object_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "선택한 variant에 오디오가 없습니다."},
+            )
 
     _log.info(
-        "[UploadVariant] gen=%s variant=%d source=%s use_vc=%s",
-        body.generation_id, variant_index, source_object_name, bool(body.use_voice_converted),
+        "[UploadVariant] gen=%s variant=%d source=%s",
+        body.generation_id, variant_index, source_object_name,
     )
+
+    # v210: cover_object_name 무검증 저장 구멍 봉합 — /upload(분기 B)와 동일 헬퍼.
+    # MinIO 복사/doc insert 이전 검증. 미전송(None)은 기존대로 None 저장 (400 아님).
+    if body.cover_object_name:
+        cover_ok, cover_src = await _validate_cover_object_name_for_create(
+            mongo, body.cover_object_name, current_user["id"],
+        )
+        if not cover_ok:
+            logger.warning(
+                "[tracks] upload cover rejected user=%s len=%d (from-generation)",
+                current_user["id"][:8], len(body.cover_object_name),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "유효하지 않은 커버 이미지입니다."},
+            )
+        logger.info(
+            "[tracks] upload cover accepted src=%s user=%s (from-generation)",
+            cover_src, current_user["id"][:8],
+        )
 
     track_id = ObjectId()
     uploader_id = current_user["id"]
@@ -1612,6 +1956,32 @@ async def upload_from_generation(
             "beats_error": None,
         }
 
+    # ── v214 곡 출처 기록 (앱팀 B-4) ─────────────────────────────────────────
+    # 승계 규칙: body 값 > gen_doc 값(persona 는 voice_id→clone_id 역매핑 정규화)
+    # > gen_doc.lyrics_source(작곡 시점 동결 스냅샷). 받은 값 그대로 — 400 없음.
+    src_character_id = (body.character_id or "").strip()[:64] or None
+    src_persona_id = (body.persona_id or "").strip()[:64] or None
+    src_persona_model = (body.persona_model or "").strip()[:64] or None
+    src_lyrics_id = (body.lyrics_id or "").strip()[:64] or None
+    gen_lyrics_source = gen_doc.get("lyrics_source") or None
+    if not src_persona_id and gen_doc.get("persona_id"):
+        # gen_doc.persona_id = Suno voice_id (v213 실측) — 역매핑이 clone_id 로 정규화
+        src_persona_id = str(gen_doc["persona_id"])[:64]
+        if not src_persona_model and gen_doc.get("persona_model"):
+            src_persona_model = str(gen_doc["persona_model"])[:64]
+    if not src_lyrics_id and isinstance(gen_lyrics_source, dict):
+        src_lyrics_id = (gen_lyrics_source.get("lyrics_id") or "").strip()[:64] or None
+    src_persona_id_norm, source_meta = await _resolve_source_meta(
+        mongo, uploader_id, src_character_id, src_persona_id, src_lyrics_id,
+        lyrics_source=gen_lyrics_source,
+    )
+    logger.info(
+        "[SongSource] track=%s path=from-generation char=%s persona=%s(norm=%s) lyrics=%s meta=%s",
+        str(track_id), src_character_id or "-", src_persona_id or "-",
+        src_persona_id_norm or "-", src_lyrics_id or "-",
+        sorted(source_meta.keys()) if source_meta else None,
+    )
+
     doc = {
         "_id": track_id,
         "title": body.title,
@@ -1639,6 +2009,13 @@ async def upload_from_generation(
         "generation_id": str(gen_doc["_id"]),
         "variant_index": variant_index,  # v74
         "user_character_snapshot": user_character_snapshot,
+        # v214 — 곡 출처 4필드(받은 값 그대로, persona 만 정규화) + 서버 생성 표시 스냅샷.
+        # 응답면 전부 pass-through(projection 0) — 저장만으로 my/상세/charts/채널 자동 동봉.
+        "character_id": src_character_id,
+        "persona_id": src_persona_id_norm,
+        "persona_model": src_persona_model,
+        "lyrics_id": src_lyrics_id,
+        "source_meta": source_meta,
         "created_at": now,
         "updated_at": now,
         **beats_fields,
@@ -1665,6 +2042,36 @@ async def upload_from_generation(
         {"_id": ObjectId(body.generation_id)},
         {"$set": {"result_track_id": str(track_id), "updated_at": now}},
     )
+
+    # v211 — MV 부착 발매 승계 (promote): 이 generation 에 부착된 MV job 을
+    # attached_track_id 로 승격 → 배지 🕓발매 전 → ✅발매됨 자동 전환.
+    # best-effort (발매보상 훅 관행 — 업로드는 절대 비실패). 같은 generation
+    # 재업로드(variant 포함)는 attached_track_id 기존재 조건으로 no-op.
+    try:
+        _promote = await mongo.mv_jobs.update_one(
+            {
+                "attached_generation_id": body.generation_id,
+                "$or": [
+                    {"attached_track_id": None},
+                    {"attached_track_id": {"$exists": False}},
+                ],
+            },
+            {"$set": {"attached_track_id": str(track_id), "updated_at": now}},
+        )
+        if _promote.modified_count:
+            logger.info(
+                "[MVAttach] promote gen=%s -> track=%s",
+                body.generation_id, str(track_id),
+            )
+            # 방어적 캐시 무효화 — 신생 트랙이라 캐시 無 예상(무해).
+            try:
+                _redis = get_redis()
+                await _redis.delete(f"cache:track:{str(track_id)}")
+                await _redis.delete(f"cache:track:v3:{str(track_id)}")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("[MVAttach] promote failed gen=%s: %s", body.generation_id, e)
 
     # v44 — Trigger background extraction only if we couldn't inherit
     if not inherit_beats:
@@ -1701,14 +2108,10 @@ async def stream_track(
         logger.info("[report] track stream_denied track=%s", track_id[:8])
         return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
-    minio_client = get_minio()
-    try:
-        url = minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_music,
-            object_name=doc["audio_url"],
-            expires=timedelta(hours=1),
-        )
-    except Exception:
+    # v202-r: 중앙 헬퍼 internal_presign — 내부 endpoint 서명 유지(종전 동작),
+    # secure/region/자격증명 스위치만 중앙 반영. (public host 는 hairpin NAT 로 회귀 유발)
+    url = internal_presign(doc["audio_url"], bucket=settings.minio_bucket_music, expires=timedelta(hours=1))
+    if not url:
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     return {"stream_url": url}
@@ -1721,9 +2124,18 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 트랙 ID입니다."})
 
     mongo = get_mongo()
-    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"audio_url": 1, "title": 1})
+    doc = await mongo.tracks.find_one(
+        {"_id": ObjectId(track_id)},
+        {"audio_url": 1, "title": 1, "uploader_id": 1, "is_public": 1, "report_blinded": 1},
+    )
     if not doc or not doc.get("audio_url"):
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
+
+    # v196 ① 직링크 가드 — 비공개·블라인드 트랙 다운로드는 소유자(또는 admin) 외 404.
+    # 반드시 아래 Redis 차트 집계보다 **앞**에 둔다(차단된 다운로드가 차트에 계상되면 안 됨).
+    if _is_hidden_track(doc) and not _can_view_hidden_track(doc, user):
+        logger.info("[report] track download_denied track=%s", track_id[:8])
+        return JSONResponse(status_code=404, content=_TRACK_NOT_FOUND)
 
     # Record download for charts
     redis = get_redis()
@@ -1780,14 +2192,10 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
     )
 
     # Get presigned URL for download
-    minio_client = get_minio()
-    try:
-        url = minio_client.presigned_get_object(
-            bucket_name=settings.minio_bucket_music,
-            object_name=doc["audio_url"],
-            expires=timedelta(hours=1),
-        )
-    except Exception:
+    # v202-r: 중앙 헬퍼 internal_presign — 내부 endpoint 서명 유지(종전 동작),
+    # secure/region/자격증명 스위치만 중앙 반영. (public host 는 hairpin NAT 로 회귀 유발)
+    url = internal_presign(doc["audio_url"], bucket=settings.minio_bucket_music, expires=timedelta(hours=1))
+    if not url:
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     title = doc.get("title", "track")
