@@ -385,10 +385,12 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // v3.107→v3.118: 디렉터 휴식(쿨다운) 게이트 — 전 디렉터(작곡·작사·커버·아티스트).
-    // 탭 시 단축 다이얼로그(⭐/광고권), 해제되면 원래 흐름으로 진행.
+    // v3.107→v3.118: 디렉터 휴식(쿨다운) 게이트 — 탭 시 단축 다이얼로그(⭐/광고권).
+    // v3.122.1: 아티스트 디렉터는 탭 게이트 제외 — 탭이 내 아티스트 열람·관리(무과금)
+    // 진입 경로를 겸하므로 차단이 과함(실테스트 발견). 생성/재생성/꾸미기 시작 지점의
+    // 게이트(ArtistInput·Cody·Loading 429)가 과금 방어를 이미 담당한다.
     const fatigueKey = FATIGUE_DIRECTOR_BY_TYPE[type];
-    if (fatigueKey && fatigueRemain[fatigueKey] > 0) {
+    if (fatigueKey && fatigueKey !== 'artist' && fatigueRemain[fatigueKey] > 0) {
       console.log(`[Map] [fatigue:${fatigueKey}] 디렉터 휴식 중 — 남은`, fatigueRemain[fatigueKey], '초');
       showFatigueCooldownDialog({
         status: fatigueAll[fatigueKey] ?? null,
