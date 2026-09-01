@@ -506,7 +506,12 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   const byBrand = drill.brand ? byPlatform.filter((i) => brandOf(i) === drill.brand) : byPlatform;
   const drillGender = drill.gender;
   const byGender = drillGender ? byBrand.filter((i) => genderMatches(i, drillGender)) : byBrand;
-  const byProduct = drill.product ? byGender.filter((i) => productOf(i) === drill.product) : byGender;
+  const byProductRaw = drill.product ? byGender.filter((i) => productOf(i) === drill.product) : byGender;
+  // v3.123(대표): 기선택 아이템이 있으면 목록 맨 앞에 노출 — 재선택/변경 시 바로 보이게
+  const pickedId = pickerCat ? selected[pickerCat]?.id : undefined;
+  const byProduct = pickedId
+    ? [...byProductRaw].sort((a, b) => (a.id === pickedId ? -1 : b.id === pickedId ? 1 : 0))
+    : byProductRaw;
 
   const currentLevel: DrillLevel | 'color' = !drill.platform
     ? 'platform'
@@ -562,9 +567,13 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   };
 
   // 위시리스트 탭: 현재 카테고리의 내 찜 목록 (store엔 전 카테고리 보관)
-  const wishItemsForCat: WishItem[] = pickerCat
+  const wishItemsForCatRaw: WishItem[] = pickerCat
     ? wishItemsAll.filter((it) => it.category === pickerCat)
     : [];
+  // v3.123: 위시 탭도 기선택 우선 정렬
+  const wishItemsForCat = pickedId
+    ? [...wishItemsForCatRaw].sort((a, b) => (a.id === pickedId ? -1 : b.id === pickedId ? 1 : 0))
+    : wishItemsForCatRaw;
 
   return (
     <View style={styles.container}>
