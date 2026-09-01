@@ -303,16 +303,16 @@ Top:
 - Wrinkles:
 - Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
 
-Skirt:
+Bottom (pants / shorts / skirt):
 - Type:
-- Waist position:
+- Waist position (elastic/belted/etc.):
 - Length:
 - Shape:
 - Structure:
-- Pleats:
+- Pleats/Tucks:
 - Fabric:
 - Movement:
-- Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
+- Logo/Print (exact text spelling, graphic shape, size, COUNT and exact placement — e.g. "one large spiral on left leg only"; copy from reference, never invent, never turn a single graphic into a repeating pattern):
 
 --------------------------------------------------
 
@@ -441,6 +441,10 @@ STEP 2
   텍스트 로고는 정확한 철자·대소문자·서체 느낌·색상으로, 그래픽 도안은 동일한 형태·크기·
   부착 위치로. 읽기 어렵거나 작더라도 **임의의 다른 문자·도안을 만들어 넣지 말고**
   참조의 시각적 형태를 최대한 그대로 모사하라. 참조에 로고가 없으면 로고를 추가하지 말라.
+- **도안 개수·배치 규칙**: 참조에서 도안이 **한 곳에만** 있으면(예: 왼쪽 다리에 큰 나선 1개)
+  결과에서도 **정확히 그 위치에 그 개수만** 그려라. **단일 도안을 여러 개로 복사하거나
+  반복 패턴으로 확산시키는 것을 절대 금지**한다. 반대로 참조가 전면 반복 패턴이면
+  동일한 밀도의 패턴으로 그려라. 이 규칙은 상의·하의·신발 모두에 동일하게 적용된다.
 - 선택된 아이템은 반드시 캐릭터가 착용한 상태로 모든 섹션에 일관되게 표현되어야 한다.
 
 --------------------------------------------------
@@ -688,16 +692,16 @@ Top:
 - Wrinkles:
 - Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
 
-Skirt:
+Bottom (pants / shorts / skirt):
 - Type:
-- Waist position:
+- Waist position (elastic/belted/etc.):
 - Length:
 - Shape:
 - Structure:
-- Pleats:
+- Pleats/Tucks:
 - Fabric:
 - Movement:
-- Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
+- Logo/Print (exact text spelling, graphic shape, size, COUNT and exact placement — e.g. "one large spiral on left leg only"; copy from reference, never invent, never turn a single graphic into a repeating pattern):
 
 --------------------------------------------------
 
@@ -767,7 +771,8 @@ Bracelet:
 [Final Constraint]
 - The selected outfit/footwear items must be converted into {art_style} and worn by the character, not drawn as realistic photos.
 - Only the rendering technique (texture, line work, coloring) converts to {art_style}; the items' colors, patterns/prints, logo placement, silhouette, length, and construction details must match the labeled reference images EXACTLY — no reinterpretation, simplification, or redesign.
-- Logos and prints must be copied verbatim from the reference images: exact text spelling and lettering style for text logos, identical graphic shape/size/placement for graphic prints. Never invent substitute text or artwork; if unreadable, visually mimic the reference shapes. Do not add logos that are not in the reference."""
+- Logos and prints must be copied verbatim from the reference images: exact text spelling and lettering style for text logos, identical graphic shape/size/placement for graphic prints. Never invent substitute text or artwork; if unreadable, visually mimic the reference shapes. Do not add logos that are not in the reference.
+- Print COUNT and placement must match the reference exactly: a single graphic in one location stays a single graphic in that location — never duplicate it or spread it into a repeating pattern; an all-over pattern stays an all-over pattern at the same density. This applies equally to top, bottom, and footwear."""
 
 
 # ── STEP 1 answer: dynamic assembly + role labels ─────────────────────────────
@@ -851,8 +856,10 @@ def _build_step1_answer(
             " 참조 이미지의 색상(구체 색명)·소재 질감·실루엣(와이드/스트레이트 등)·기장·"
             "허리 위치·주름/턱·포켓·워싱 등 디테일을 그대로 추출해 [고정 요소]로 고정하고,"
             " 참조에 없는 디테일을 창작하거나 임의로 바꾸지 말라."
-            " 로고·프린팅이 있으면 Logo/Print 항목에 정확한 철자·도안 형태·크기·위치를"
-            " 별도 기록하고 [고정 요소]로 고정하라."
+            " 로고·프린팅이 있으면 Logo/Print 항목에 정확한 철자·도안 형태·크기와 함께"
+            " **도안의 개수와 정확한 배치(예: 왼쪽 다리 한 곳에만 큰 나선 1개)**를 별도"
+            " 기록하고 [고정 요소]로 고정하라. 참조에서 도안이 한 곳에만 있으면 결과에서도"
+            " 한 곳에만 그려야 하며, 단일 도안을 반복 패턴으로 늘리는 것을 금지한다."
         )
     elif has_photo:
         parts.append("하의는 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
@@ -1197,7 +1204,9 @@ async def generate_character_sheet(
             "참조 이미지의 실제 제품과 동일하게(색상·패턴·로고 위치·실루엣·기장·디테일) "
             "재현하여 착용시켜라 — 임의로 재해석·단순화·변경하지 말 것. "
             "로고·프린팅은 참조의 것을 그대로 복제하라: 텍스트는 정확한 철자·서체 느낌으로, "
-            "그래픽은 동일한 도안·크기·위치로. 임의 대체·창작 금지, 참조에 없는 로고 추가 금지.\n\n"
+            "그래픽은 동일한 도안·크기·위치로. 임의 대체·창작 금지, 참조에 없는 로고 추가 금지. "
+            "도안 개수·배치도 참조와 동일하게 — 단일 도안을 반복 패턴으로 늘리지 말 것 "
+            "(상의·하의·신발 동일 적용).\n\n"
             "=== 캐릭터 시트 프롬프트 ===\n\n"
             "{}"
         ).format(sheet_prompt_text)
@@ -1347,7 +1356,9 @@ async def generate_character_sheet_cartoon(
             "제품 구성 디테일은 각 참조 이미지와 정확히 일치시키고 임의로 재해석하지 말라. "
             "로고·프린팅은 참조 이미지의 것을 그대로 복제하라: 텍스트 로고는 정확한 철자·서체 느낌으로, "
             "그래픽 도안은 동일한 형태·크기·위치로. 임의의 다른 문자·도안으로 대체하지 말고, "
-            "참조에 없는 로고를 추가하지도 말라.{}\n"
+            "참조에 없는 로고를 추가하지도 말라. 도안의 개수와 배치도 참조와 동일하게 — "
+            "한 곳에만 있는 단일 도안을 여러 개로 복사하거나 반복 패턴으로 늘리지 말라. "
+            "이는 상의·하의·신발 모두에 동일 적용된다.{}\n"
             "정체성(얼굴/이목구비/머리/체형)은 [인물 사진]에서만 가져오고, "
             "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만). "
             "얼굴 이목구비의 미세한 형태·비율·표정은 [인물 사진]을 직접 따르고, 텍스트 시트의 "
@@ -1372,7 +1383,9 @@ async def generate_character_sheet_cartoon(
             "제품 구성 디테일은 각 참조 이미지와 정확히 일치시키고 임의로 재해석하지 말라. "
             "로고·프린팅은 참조 이미지의 것을 그대로 복제하라: 텍스트 로고는 정확한 철자·서체 느낌으로, "
             "그래픽 도안은 동일한 형태·크기·위치로. 임의의 다른 문자·도안으로 대체하지 말고, "
-            "참조에 없는 로고를 추가하지도 말라.{}\n"
+            "참조에 없는 로고를 추가하지도 말라. 도안의 개수와 배치도 참조와 동일하게 — "
+            "한 곳에만 있는 단일 도안을 여러 개로 복사하거나 반복 패턴으로 늘리지 말라. "
+            "이는 상의·하의·신발 모두에 동일 적용된다.{}\n"
             "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만 차용). "
             "아래 캐릭터 시트 프롬프트에 명시된 인물의 식별 특징(머리/안경/피부톤/눈동자색 등)을 "
             "반드시 유지하라. 과도한 스타일화로 정체성을 덮지 말고, 설명된 인물의 특징을 "
