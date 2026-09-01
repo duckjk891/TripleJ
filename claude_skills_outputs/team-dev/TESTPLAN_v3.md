@@ -1177,3 +1177,11 @@
 2. [api] v225 프롬프트 실생성 — Given 신규계정(⭐50) / When cartoon-async(webtoon, top/bottom object_name) / Then job done·⭐10 차감·Step A/B 로그 정상 (format placeholder 오류 없음)
 3. [unit] tsc·py_compile 통과
 4. [수동/후속] 의상 충실도 체감 — 대표 재생성 시 실물 대비 색상·패턴·로고 유지 확인 (정성 판정)
+
+---
+
+## v3.125/v226 (2026-09-01)
+
+1. [unit] py_compile + 템플릿 .format() 검증(실사=step1_answer, 만화=+art_style) + tsc
+2. [api] 로고 실생성 — Given 신규계정 / When KODAK 빅그래픽 티(top_object_name)로 cartoon-async / Then job done·⭐10 차감·로고 철자/도안/위치 재현
+3. [회귀] v225 색상·실루엣 재현 유지 (동일 생성물에서 확인)

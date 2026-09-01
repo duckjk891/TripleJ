@@ -2693,3 +2693,19 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **검증 생성물**: 버건디 오버핏 반팔 + 라임옐로 드로스트링 반바지 정확 재현 (v3124e_sheet.png).
 **파일**: 2_housing/screens/ArtistCodyScreen.tsx(배지 UI+desc), backend app/services/character_generator.py(v225).
 **특이**: 테스트 신규계정 teamdev_v3124_* 생성(consent 키=terms/privacy/overseas/age14+version). 백엔드 커밋은 로컬만(push 대기 v218~v225).
+
+---
+
+## v3.125 + 백엔드 v226 — 로고·프린팅 정밀 복제 (2026-09-01)
+
+**결과**: 전 항목 PASS.
+
+| 항목 | 결과 |
+|---|---|
+| [unit] py_compile·템플릿 format 검증(Logo/Print 3곳×2)·tsc | PASS |
+| [api] KODAK 빅그래픽 티 실생성 (webtoon) | PASS — "KODAK" 철자 정확, K-박스 도안·ROCHESTER NEW YORK 소문구·등판 위치 재현, 앞면은 참조대로 무지 (v3125_sheet.png) |
+| [회귀] 의상 색상·실루엣(데님 스커트 기본형·오버핏) | PASS |
+
+**변경**: 시트 템플릿에 Logo/Print 전용 항목 신설(Step A가 반드시 기록), 분석·생성 전 단계에 "정확한 철자·대소문자·서체 느낌·도안 형태·크기·부착 위치 복제, 읽기 어려워도 임의 문자·도안 창작 금지, 참조에 없는 로고 추가 금지" 지시. FE desc에도 동일 블록.
+**파일**: backend app/services/character_generator.py(v226), 2_housing/screens/ArtistCodyScreen.tsx(v3.125).
+**한계 고지**: 화풍 변환 특성상 그래픽 색감·질감은 화풍을 따르므로 100% 픽셀 일치는 아님 — 철자·도안 구조·위치 기준 일치.

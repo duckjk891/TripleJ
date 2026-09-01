@@ -1919,3 +1919,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 - 구조적 약점 발견: ① step1_answer의 아이템 지시가 "참조 이미지를 분석해 반영하라" 한 줄뿐 — 얼굴은 [고정 요소] 잠금 규칙이 있는데 의상은 없음. ② 실사 Step B 프롬프트는 의상 참조 라벨을 언급조차 안 함. ③ 프론트 desc의 "브랜드명·이름에서 연상되는 디테일을 시각화" 문구가 참조 이미지 존재 시 오히려 변형(상상) 유도.
 
 **계획**: FE(ArtistCodyScreen) 기선택 배지+테두리(전체/위시 탭), desc 문구 조건부화. BE(v225) step1 아이템 3종 [고정 요소] 잠금 문구, 만화 화풍변환규칙·Final Constraint·Step B(만화 2종/실사) "질감만 화풍 변환, 색상·패턴·로고·실루엣은 참조와 정확히 일치" 명시. 추적자: [ArtistCody]/[CharGen*].
+
+---
+
+## v3.125 + 백엔드 v226 — 로고·프린팅 정밀 복제 보강 (2026-09-01)
+
+**요청**: "많이 보완됐지만 옷의 로고 같은게 조금씩 다름 — 로고/프린팅도 보완요소에 넣어달라."
+
+**Plan verification findings**: v225는 "로고 종류와 위치"를 고정 요소에 포함했지만 ① 시트 템플릿에 로고 전용 기록 항목이 없어 Step A가 생략 가능 ② 철자·서체·도안 형태 수준의 복제 지시 부재 ③ "읽기 어려우면 유사 문자 창작" 방지 규칙 없음.
+
+**계획**: BE(v226) — 시트 템플릿 Top/Skirt/Footwear에 `Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent)` 항목 신설(실사·만화 각 3곳), step1 아이템별 로고 기록 지시, 만화 [로고·프린팅 복제 규칙] 블록·Final Constraint·Step B 3종에 "정확한 철자·서체·도안·크기·위치 복제, 임의 대체·창작·무단 추가 금지" 명시. FE(v3.125) — desc에 【로고·프린팅 — 매우 중요】 블록 추가.
