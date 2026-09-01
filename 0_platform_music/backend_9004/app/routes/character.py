@@ -95,6 +95,17 @@ STYLE_SAMPLES_DIR = os.path.join(
 # 사용자 업로드 화풍일 때 art_style_label.
 UPLOADED_STYLE_LABEL = "the art style of the attached style reference image"
 
+# v223 — 가상 아티스트 꾸미기(use_saved_sheet) 화풍 복원용 역매핑.
+# doc.art_style 에는 프리셋 키("webtoon"), 한글 라벨("웹툰"),
+# 영문 라벨("Korean webtoon style") 중 무엇이 저장돼 있어도 프리셋으로 매핑한다.
+# (참고: 화풍→모델 매핑은 존재한 적 없음 — v217 이후 cartoon 계열은 nb_pro 고정,
+#  화풍은 style reference 이미지 + art_style_label 프롬프트로만 표현된다.)
+_ART_STYLE_TO_PRESET_KEY = {}
+for _k, _p in STYLE_PRESETS.items():
+    _ART_STYLE_TO_PRESET_KEY[_k] = _k
+    _ART_STYLE_TO_PRESET_KEY[_p["label"]] = _k
+    _ART_STYLE_TO_PRESET_KEY[_p["art_style_label"].lower()] = _k
+
 
 def _load_style_preset_bytes(key: str) -> Optional[bytes]:
     """Read a bundled style-sample PNG by preset key, or None if missing."""
@@ -1444,6 +1455,11 @@ async def generate_sheet_cartoon_async(
     style_preset: str = Form(""),
     style_image: Optional[UploadFile] = File(None),
     character_id: Optional[str] = Form(None),  # v212 — 지정=재생성, 미지정=신규(슬롯 검사)
+    # v223 — 가상 아티스트 꾸미기(outfit): character_id 지정 재생성에서 file 없이
+    # 저장된 doc.sheet_object_name 을 [인물 사진] 기준 입력으로 로드. 화풍
+    # (style_preset/style_image) 미전송 시 doc.art_style 로 복원(프리셋 역매핑,
+    # 미매핑=업로드 화풍이면 저장 시트 자체를 화풍 reference 로 사용 — 화풍 붕괴 금지).
+    use_saved_sheet: Optional[str] = Form(None),
     current_user=Depends(get_current_user),
 ):
     """Async variant of /generate-sheet-cartoon — same form fields, returns a
@@ -1477,10 +1493,19 @@ async def generate_sheet_cartoon_async(
     if _gate_err is not None:
         return _gate_err
 
+    # v223 — use_saved_sheet 플래그 (character_id 지정 재생성 전용, ⭐차감 전 400)
+    use_saved = (use_saved_sheet or "").strip().lower() in ("1", "true", "yes")
+    if use_saved and not norm_cid:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "use_saved_sheet 는 character_id 지정 시에만 사용할 수 있습니다."},
+        )
+
     # v161 — 텍스트-only 경로: 사진(file)과 외모 설명(user_text) 중 하나는 필수.
+    # v223 — use_saved_sheet 는 저장 시트가 기준 이미지가 되므로 이 검사 면제.
     user_text_clean = (user_text or "").strip()
     has_photo = file is not None and bool(file.filename)
-    if not has_photo and len(user_text_clean) < 2:
+    if not has_photo and not use_saved and len(user_text_clean) < 2:
         return JSONResponse(
             status_code=400,
             content={"error": "얼굴 사진 또는 외모 설명 중 하나는 필요합니다."},
@@ -1523,6 +1548,39 @@ async def generate_sheet_cartoon_async(
     bottom_bytes, bottom_mime, bottom_src = await _resolve_item_image(bottom_object_name, bottom_image)
     shoes_bytes, shoes_mime, shoes_src = await _resolve_item_image(shoes_object_name, shoes_image)
 
+    # v223 — 저장 시트 로드 (⭐차감 전 — 실패 시 무과금 에러).
+    # file 미첨부 + use_saved_sheet 이면 doc.sheet_object_name 을 [인물 사진]
+    # 기준 입력으로 사용한다 (가상 꾸미기 = 실사 outfit 의 원본 사진과 등가).
+    saved_doc = None
+    saved_sheet_bytes = None
+    if use_saved:
+        saved_doc = await _find_artist_by_cid(get_mongo(), user_id, norm_cid)
+        sheet_obj = (saved_doc or {}).get("sheet_object_name") or ""
+        if not sheet_obj:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "저장된 캐릭터 시트가 없습니다."},
+            )
+        if has_photo:
+            logger.info(
+                "[ArtistOutfit] use_saved_sheet ignored (file attached) user=%s cid=%s",
+                user_id[:8], norm_cid,
+            )
+        else:
+            saved_sheet_bytes, _sheet_mime = _load_item_image(sheet_obj)
+            if not saved_sheet_bytes:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": "저장된 시트 이미지를 불러오지 못했습니다."},
+                )
+            contents = saved_sheet_bytes
+            mime_type = _sheet_mime or "image/png"
+            ext = os.path.splitext(sheet_obj)[1].lower() or ".png"
+            logger.info(
+                "[ArtistOutfit] base=saved_sheet user=%s cid=%s obj=%s bytes=%d",
+                user_id[:8], norm_cid, sheet_obj[:80], len(saved_sheet_bytes),
+            )
+
     # Resolve style reference in the handler: uploaded image beats preset.
     style_ref_bytes, style_ref_mime = await _read_optional_image(style_image)
     if style_ref_bytes:
@@ -1531,7 +1589,47 @@ async def generate_sheet_cartoon_async(
     else:
         preset_key = (style_preset or "").strip()
         preset = STYLE_PRESETS.get(preset_key)
-        if not preset:
+        if not preset and use_saved and saved_doc is not None:
+            # v223 — 화풍 미전송 시 doc.art_style 로 복원 (화풍 붕괴 금지 — v217 정합):
+            # ① 프리셋 역매핑되면 번들 샘플을 reference 로,
+            # ② 미매핑(업로드 화풍 등)이면 저장 시트 자체를 화풍 reference 로 사용.
+            raw_style = (saved_doc.get("art_style") or "").strip()
+            mapped_key = (
+                _ART_STYLE_TO_PRESET_KEY.get(raw_style)
+                or _ART_STYLE_TO_PRESET_KEY.get(raw_style.lower())
+            )
+            if mapped_key:
+                style_ref_bytes = _load_style_preset_bytes(mapped_key)
+            if style_ref_bytes is not None:
+                style_ref_mime = "image/png"
+                art_style_label = STYLE_PRESETS[mapped_key]["art_style_label"]
+                art_style_key = mapped_key
+                logger.info(
+                    "[ArtistOutfit] style=preset(%s) from art_style=%s user=%s cid=%s",
+                    mapped_key, raw_style[:40], user_id[:8], norm_cid,
+                )
+            elif saved_sheet_bytes is not None:
+                style_ref_bytes = saved_sheet_bytes
+                style_ref_mime = "image/png"
+                art_style_label = (
+                    raw_style
+                    if raw_style and raw_style.lower() not in ("custom", "uploaded")
+                    else UPLOADED_STYLE_LABEL
+                )
+                art_style_key = "saved_sheet"
+                logger.info(
+                    "[ArtistOutfit] style=saved_sheet label=%s user=%s cid=%s",
+                    art_style_label[:40], user_id[:8], norm_cid,
+                )
+            else:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "화풍을 선택하거나 화풍 이미지를 업로드해주세요. "
+                                 "(style_preset: webtoon|anime|manga90 또는 style_image)"
+                    },
+                )
+        elif not preset:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -1539,19 +1637,20 @@ async def generate_sheet_cartoon_async(
                              "(style_preset: webtoon|anime|manga90 또는 style_image)"
                 },
             )
-        style_ref_bytes = _load_style_preset_bytes(preset_key)
-        if style_ref_bytes is None:
-            logger.error(
-                "generate-sheet-cartoon-async: bundled style sample missing key=%s user=%s",
-                preset_key, user_id,
-            )
-            return JSONResponse(
-                status_code=500,
-                content={"error": "화풍 샘플 이미지를 로드하지 못했습니다."},
-            )
-        style_ref_mime = "image/png"
-        art_style_label = preset["art_style_label"]
-        art_style_key = preset_key
+        else:
+            style_ref_bytes = _load_style_preset_bytes(preset_key)
+            if style_ref_bytes is None:
+                logger.error(
+                    "generate-sheet-cartoon-async: bundled style sample missing key=%s user=%s",
+                    preset_key, user_id,
+                )
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": "화풍 샘플 이미지를 로드하지 못했습니다."},
+                )
+            style_ref_mime = "image/png"
+            art_style_label = preset["art_style_label"]
+            art_style_key = preset_key
 
     # Points — 검증 통과 후 job 접수 전 2포인트 선차감 (부족 시 402, job 미생성).
     point_ref = uuid_lib.uuid4().hex
@@ -1892,7 +1991,9 @@ async def save_character(
             set_fields["personality_text"] = personality_text_val
         if body.art_style is not None and (artist.get("kind") or "real") == "virtual":
             set_fields["art_style"] = (body.art_style or "").strip()
-        if body.original_photo_object_name and (artist.get("kind") or "real") == "real":
+        # v223(B-14 잔여 해소) — 원본 사진 persist 의 kind=real 제한 제거:
+        # 가상(virtual) 아티스트도 사진 기반 생성이면 원본 사진을 보존한다.
+        if body.original_photo_object_name:
             set_fields["original_photo_object_name"] = body.original_photo_object_name
         if body.image_model:
             _norm = _normalize_image_model(body.image_model)
@@ -1970,7 +2071,8 @@ async def save_character(
             "used_items": used_items_data,
             "art_style": (body.art_style or "").strip() if kind_val == "virtual" else "",
             "image_model": _normalize_image_model(body.image_model) or "nb_pro",
-            "original_photo_object_name": (body.original_photo_object_name or "") if kind_val == "real" else "",
+            # v223(B-14) — kind 무관 persist (virtual 도 사진 기반 생성이면 보존)
+            "original_photo_object_name": body.original_photo_object_name or "",
             "created_at": now,
             "updated_at": now,
         }
@@ -2019,6 +2121,9 @@ async def save_character(
             }
             if is_virtual:
                 set_fields["art_style"] = (body.art_style or "").strip()
+                # v223(B-14) — virtual 대표(cid doc)도 원본 사진 persist (별도 doc — 안전)
+                if body.original_photo_object_name:
+                    set_fields["original_photo_object_name"] = body.original_photo_object_name
             else:
                 # legacy real semantics — 항상 set (현행과 동일)
                 set_fields.update({
@@ -2060,7 +2165,8 @@ async def save_character(
                 "used_items": used_items_data,
                 "art_style": (body.art_style or "").strip() if is_virtual else "",
                 "image_model": _normalize_image_model(body.image_model) or "nb_pro",
-                "original_photo_object_name": (body.original_photo_object_name or "") if not is_virtual else "",
+                # v223(B-14) — kind 무관 persist (cid 신규 doc — 실사 슬롯과 분리돼 안전)
+                "original_photo_object_name": body.original_photo_object_name or "",
                 "created_at": now,
                 "updated_at": now,
             })
