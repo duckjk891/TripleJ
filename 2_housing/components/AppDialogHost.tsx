@@ -99,10 +99,14 @@ const styles = StyleSheet.create({
   btn: {
     flex: 1,
     paddingVertical: 12,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: 10,
     alignItems: 'center',
   },
-  btnVertical: { flex: 0 },
+  // v3.118.3: 웹에서 flex:0이 flex-basis 압축으로 버튼 높이를 무너뜨려 글자 잘림
+  // (앨범 커버 변경 3버튼 등 세로 스택 전부) — 화풍 버튼(v3.109)과 동일 패턴 수정.
+  btnVertical: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
   cancelBtn: {
     backgroundColor: colors.bg.surface2,
     borderWidth: 1,
