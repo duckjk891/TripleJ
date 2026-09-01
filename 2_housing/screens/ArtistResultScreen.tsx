@@ -265,11 +265,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             }
             // B-3 표시용 클론 목록(무해 GET) — 연결 팝업에서 재사용
             useVoiceStore.getState().fetchClones();
-            // v3.121: 원본 사진 — v216 cid 응답(list·단건)엔 original_photo_object_name이
-            // 없음(실측: _serialize_artist 누락, doc엔 real만 저장). real이면 /me 폴백 —
-            // me.character_id(대표 real doc)가 이 cid와 일치할 때만 표시(비대표 real은 생략).
-            // virtual은 서버가 원본 사진을 저장하지 않음(save 시 kind=real만 persist) → 항상 생략.
-            if (artist.kind === 'real') {
+            // v3.121.1: v222 배포로 cid 응답에 original_photo_object_name 직렬화됨 — 우선 사용.
+            // (구서버/미보유 시 아래 /me 폴백 유지. virtual은 서버가 원본 미저장 → 생략, B-14)
+            const directPhoto = (artist as any).original_photo_object_name;
+            if (directPhoto) {
+              setOriginalPhotoUrl(`${BACKEND_BASE_URL}/api/character/preview/${directPhoto}?t=${Date.now()}`);
+            } else if (artist.kind === 'real') {
               try {
                 const meRes = await api.get('/character/me');
                 if (cancelled) return;
