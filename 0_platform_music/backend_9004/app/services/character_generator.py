@@ -301,6 +301,7 @@ Top:
 - Sleeve:
 - Fabric:
 - Wrinkles:
+- Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
 
 Skirt:
 - Type:
@@ -311,6 +312,7 @@ Skirt:
 - Pleats:
 - Fabric:
 - Movement:
+- Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
 
 --------------------------------------------------
 
@@ -324,6 +326,7 @@ Skirt:
 - Color:
 - Fit:
 - State:
+- Logo/Print (brand mark shape, color, placement — copy from reference, never invent):
 
 --------------------------------------------------
 
@@ -434,6 +437,10 @@ STEP 2
   실루엣·기장·여밈 등 제품의 구성 디테일은 참조 이미지와 정확히 일치시켜야 하며,
   임의로 재해석·단순화·변경하지 말 것.** (제품을 아는 사람이 보면 같은 제품임을
   즉시 알아볼 수 있는 수준으로 재현하라)
+- **로고·프린팅 복제 규칙**: 참조 이미지에 로고나 프린팅이 있으면 그것을 **그대로 복제**하라 —
+  텍스트 로고는 정확한 철자·대소문자·서체 느낌·색상으로, 그래픽 도안은 동일한 형태·크기·
+  부착 위치로. 읽기 어렵거나 작더라도 **임의의 다른 문자·도안을 만들어 넣지 말고**
+  참조의 시각적 형태를 최대한 그대로 모사하라. 참조에 로고가 없으면 로고를 추가하지 말라.
 - 선택된 아이템은 반드시 캐릭터가 착용한 상태로 모든 섹션에 일관되게 표현되어야 한다.
 
 --------------------------------------------------
@@ -679,6 +686,7 @@ Top:
 - Sleeve:
 - Fabric:
 - Wrinkles:
+- Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
 
 Skirt:
 - Type:
@@ -689,6 +697,7 @@ Skirt:
 - Pleats:
 - Fabric:
 - Movement:
+- Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent):
 
 --------------------------------------------------
 
@@ -702,6 +711,7 @@ Skirt:
 - Color:
 - Fit:
 - State:
+- Logo/Print (brand mark shape, color, placement — copy from reference, never invent):
 
 --------------------------------------------------
 
@@ -756,7 +766,8 @@ Bracelet:
 
 [Final Constraint]
 - The selected outfit/footwear items must be converted into {art_style} and worn by the character, not drawn as realistic photos.
-- Only the rendering technique (texture, line work, coloring) converts to {art_style}; the items' colors, patterns/prints, logo placement, silhouette, length, and construction details must match the labeled reference images EXACTLY — no reinterpretation, simplification, or redesign."""
+- Only the rendering technique (texture, line work, coloring) converts to {art_style}; the items' colors, patterns/prints, logo placement, silhouette, length, and construction details must match the labeled reference images EXACTLY — no reinterpretation, simplification, or redesign.
+- Logos and prints must be copied verbatim from the reference images: exact text spelling and lettering style for text logos, identical graphic shape/size/placement for graphic prints. Never invent substitute text or artwork; if unreadable, visually mimic the reference shapes. Do not add logos that are not in the reference."""
 
 
 # ── STEP 1 answer: dynamic assembly + role labels ─────────────────────────────
@@ -825,6 +836,9 @@ def _build_step1_answer(
             " 참조 이미지의 색상(구체 색명)·패턴/프린트·로고 종류와 위치·넥라인·핏·기장·"
             "여밈(단추/지퍼)·스티치 등 디테일을 그대로 추출해 [고정 요소]로 고정하고,"
             " 참조에 없는 디테일을 창작하거나 임의로 바꾸지 말라."
+            " 특히 로고·프린팅은 Logo/Print 항목에 별도로 기록하라: 텍스트 로고는 정확한"
+            " 철자·대소문자·서체 느낌·색상까지, 그래픽 프린트는 도안의 형태·크기·부착 위치"
+            "(가슴 좌/중앙/등판 등)까지 구체적으로 명시하고 [고정 요소]로 고정하라."
         )
     elif has_photo:
         parts.append("상의는 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
@@ -837,6 +851,8 @@ def _build_step1_answer(
             " 참조 이미지의 색상(구체 색명)·소재 질감·실루엣(와이드/스트레이트 등)·기장·"
             "허리 위치·주름/턱·포켓·워싱 등 디테일을 그대로 추출해 [고정 요소]로 고정하고,"
             " 참조에 없는 디테일을 창작하거나 임의로 바꾸지 말라."
+            " 로고·프린팅이 있으면 Logo/Print 항목에 정확한 철자·도안 형태·크기·위치를"
+            " 별도 기록하고 [고정 요소]로 고정하라."
         )
     elif has_photo:
         parts.append("하의는 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
@@ -848,6 +864,8 @@ def _build_step1_answer(
             "[Footwear] 항목은 [신발 참조] 이미지를 분석해 반영하라."
             " 참조 이미지의 색상 조합·소재·굽/밑창 형태·레이스/스트랩·로고 위치 등 디테일을"
             " 그대로 추출해 [고정 요소]로 고정하고, 참조에 없는 디테일을 창작하거나 임의로 바꾸지 말라."
+            " 브랜드 로고·마크가 있으면 Logo/Print 항목에 정확한 형태·색상·부착 위치를"
+            " 별도 기록하고 [고정 요소]로 고정하라."
         )
     elif has_photo:
         parts.append("신발은 [인물 사진]에서 보이면 반영, 안 보이면 자유 생성하라.")
@@ -1177,7 +1195,9 @@ async def generate_character_sheet(
             "생성되는 캐릭터는 반드시 이 참조 사진 속 인물과 동일한 외모를 가져야 한다.\n"
             "[상의 참조]/[하의 참조]/[신발 참조] 라벨 이미지가 첨부된 경우, 해당 의류는 "
             "참조 이미지의 실제 제품과 동일하게(색상·패턴·로고 위치·실루엣·기장·디테일) "
-            "재현하여 착용시켜라 — 임의로 재해석·단순화·변경하지 말 것.\n\n"
+            "재현하여 착용시켜라 — 임의로 재해석·단순화·변경하지 말 것. "
+            "로고·프린팅은 참조의 것을 그대로 복제하라: 텍스트는 정확한 철자·서체 느낌으로, "
+            "그래픽은 동일한 도안·크기·위치로. 임의 대체·창작 금지, 참조에 없는 로고 추가 금지.\n\n"
             "=== 캐릭터 시트 프롬프트 ===\n\n"
             "{}"
         ).format(sheet_prompt_text)
@@ -1324,7 +1344,10 @@ async def generate_character_sheet_cartoon(
             "선택된 아이템([상의 참조]/[하의 참조]/[신발 참조] 라벨 이미지)은 현실 의류 이미지이지만 "
             "그대로 사실적으로 그리지 말고 동일 화풍으로 변환하여 캐릭터가 착용한 상태로 그려라. "
             "단, 화풍으로 바꾸는 것은 질감·선화·채색 방식뿐이다 — 색상·패턴·로고 위치·실루엣·기장 등 "
-            "제품 구성 디테일은 각 참조 이미지와 정확히 일치시키고 임의로 재해석하지 말라.{}\n"
+            "제품 구성 디테일은 각 참조 이미지와 정확히 일치시키고 임의로 재해석하지 말라. "
+            "로고·프린팅은 참조 이미지의 것을 그대로 복제하라: 텍스트 로고는 정확한 철자·서체 느낌으로, "
+            "그래픽 도안은 동일한 형태·크기·위치로. 임의의 다른 문자·도안으로 대체하지 말고, "
+            "참조에 없는 로고를 추가하지도 말라.{}\n"
             "정체성(얼굴/이목구비/머리/체형)은 [인물 사진]에서만 가져오고, "
             "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만). "
             "얼굴 이목구비의 미세한 형태·비율·표정은 [인물 사진]을 직접 따르고, 텍스트 시트의 "
@@ -1346,7 +1369,10 @@ async def generate_character_sheet_cartoon(
             "선택된 아이템([상의 참조]/[하의 참조]/[신발 참조] 라벨 이미지)은 현실 의류 이미지이지만 "
             "그대로 사실적으로 그리지 말고 동일 화풍으로 변환하여 캐릭터가 착용한 상태로 그려라. "
             "단, 화풍으로 바꾸는 것은 질감·선화·채색 방식뿐이다 — 색상·패턴·로고 위치·실루엣·기장 등 "
-            "제품 구성 디테일은 각 참조 이미지와 정확히 일치시키고 임의로 재해석하지 말라.{}\n"
+            "제품 구성 디테일은 각 참조 이미지와 정확히 일치시키고 임의로 재해석하지 말라. "
+            "로고·프린팅은 참조 이미지의 것을 그대로 복제하라: 텍스트 로고는 정확한 철자·서체 느낌으로, "
+            "그래픽 도안은 동일한 형태·크기·위치로. 임의의 다른 문자·도안으로 대체하지 말고, "
+            "참조에 없는 로고를 추가하지도 말라.{}\n"
             "[화풍 참조] 이미지의 인물·얼굴은 절대 복제하지 말 것(스타일만 차용). "
             "아래 캐릭터 시트 프롬프트에 명시된 인물의 식별 특징(머리/안경/피부톤/눈동자색 등)을 "
             "반드시 유지하라. 과도한 스타일화로 정체성을 덮지 말고, 설명된 인물의 특징을 "
