@@ -68,7 +68,7 @@ const STEPS: StepConfig[] = [
     question: '어떤 주제로 곡을 작곡하고 싶으세요?',
     choices: CONTENT_OPTIONS,
     freeText: true,
-    freeTextPlaceholder: '예: 30대의 다이어트 고민, 퇴근길의 위로, 첫사랑 고백',
+    freeTextPlaceholder: '예: 급식 시간이 제일 좋아, 30대의 다이어트 고민, 손주 응원가',
   },
   {
     // v3.118.1(대표): 키워드/문구를 명확히 구분해 질문 + 예시
