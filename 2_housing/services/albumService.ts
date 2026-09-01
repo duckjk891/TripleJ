@@ -199,7 +199,9 @@ export async function updateAlbumCover(
 }
 
 /** POST /albums/cover/generate — AI 커버 생성(v221: ⭐cover 선차감 + image 디렉터 피로 게이트 — 작업실 커버와 동일 정책).
- * 반환된 cover_object_name을 updateAlbumCover({ coverObjectName }) 또는 createAlbum(coverSource=ai)에 전달. */
+ * 반환된 cover_object_name을 updateAlbumCover({ coverObjectName }) 또는 createAlbum(coverSource=ai)에 전달.
+ * v3.120: 클라이언트 미사용 — 앨범 AI 커버는 CoverGenerationScreen 앨범 모드(/upload/generate-cover +
+ * refine/버전)로 대체. 서버 엔드포인트 정리(백엔드 판단) 시 이 함수도 함께 제거. */
 export async function generateAlbumCover(params: {
   title: string;
   description?: string;

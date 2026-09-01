@@ -21,6 +21,7 @@ import { useMusicStore } from '../stores/musicStore';
 import { useGemsStore } from '../stores/gemsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { updateAlbumCover } from '../services/albumService';
 import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { FatigueStatus } from '../types';
@@ -57,16 +58,25 @@ const REFINE_PROMPT_MAX_LEN = 500; // 백엔드 REFINE_PROMPT_MAX_LEN과 동일
 
 type Props = NativeStackScreenProps<any, 'CoverGeneration'>;
 
+// v3.120: 앨범 모드 파라미터 — AlbumDetail '커버 변경 > AI 커버 생성'에서 진입(RootStack
+// 'AlbumCoverGeneration'). 컨텍스트(앨범 제목·수록곡)는 musicStore를 오염시키지 않도록
+// 파라미터로만 받고, 확정 시 트랙 부착 대신 PATCH /albums/{id}/cover(objectName)를 호출.
+interface AlbumModeParams { albumId: string; albumTitle: string; trackTitles?: string[] }
+
 // 화면 모드
 type ScreenMode = 'dialogue' | 'loading' | 'result';
 
-export default function CoverGenerationScreen({ navigation }: Props) {
+export default function CoverGenerationScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const musicStore = useMusicStore();
   const scrollRef = useRef<ScrollView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  const hasPendingGeneration = !!musicStore.coverTrackId;
+  // v3.120: 앨범 모드 — route 파라미터로만 판별 (마운트 후 불변)
+  const albumMode: AlbumModeParams | undefined = route.params?.albumMode;
+
+  // 앨범 모드는 musicStore cover* 재진입 컨텍스트를 쓰지 않음 (트랙 커버 대기 이어보기 전용)
+  const hasPendingGeneration = !albumMode && !!musicStore.coverTrackId;
 
   // 화면 모드: dialogue(대화) / loading(생성중) / result(결과)
   const [mode, setMode] = useState<ScreenMode>(hasPendingGeneration ? 'loading' : 'dialogue');
@@ -74,7 +84,9 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   // 대화 관련
   const [step, setStep] = useState(0);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    { type: 'director', text: '안녕하세요! 이미지 디렉터예요. 어떤 곡의 커버 이미지를 만들어볼까요?' },
+    albumMode
+      ? { type: 'director', text: `안녕하세요! 이미지 디렉터예요. 앨범 "${albumMode.albumTitle}"의 커버 이미지를 만들어볼까요?` }
+      : { type: 'director', text: '안녕하세요! 이미지 디렉터예요. 어떤 곡의 커버 이미지를 만들어볼까요?' },
   ]);
   const [tracks, setTracks] = useState<MyTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<MyTrack | null>(null);
@@ -102,20 +114,32 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   const [refineInput, setRefineInput] = useState('');
   const [refining, setRefining] = useState(false);
   const [reverting, setReverting] = useState(false);
+  // v3.120: 앨범 모드 확정(PATCH /albums/{id}/cover) 진행 중 — 중복 탭 방지
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }, [chatHistory, step]);
 
-  // 트랙 조회
+  // 트랙 조회 (앨범 모드는 곡 선택 단계가 없어 불필요)
   useEffect(() => {
-    if (hasPendingGeneration) return;
+    if (hasPendingGeneration || albumMode) return;
     (async () => {
       try {
         const res = await api.get('/tracks/my', { params: { page: 1, limit: 50, sort: 'created_at' } });
         setTracks(res.data.tracks || []);
       } catch { setTracks([]); }
       finally { setTrackLoading(false); }
+    })();
+  }, []);
+
+  // v3.120: 앨범 모드 — 곡 선택 없이 캐릭터(아티스트 포함) 확인부터 시작.
+  // trackLoading이 스피너를 대신하므로 확인이 끝나면 해제.
+  useEffect(() => {
+    if (!albumMode) return;
+    (async () => {
+      await checkCharacterAndProceed();
+      setTrackLoading(false);
     })();
   }, []);
 
@@ -144,8 +168,8 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   }, []);
 
   const doGenerate = async (trackId: string, title: string, style: string) => {
-    // 재생성 시 사용할 수 있도록 로컬에 보존
-    if (!selectedTrack) {
+    // 재생성 시 사용할 수 있도록 로컬에 보존 (앨범 모드는 트랙 개념 없음)
+    if (!albumMode && !selectedTrack) {
       setSelectedTrack({ id: trackId, title } as MyTrack);
     }
     setMode('loading');
@@ -163,18 +187,30 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     lastCharObjRef.current = charObjectName;
     try {
       let genre = '', mood = '';
-      try {
-        const trackRes = await api.get(`/tracks/${trackId}`);
-        genre = trackRes.data?.genre?.[0] || '';
-        mood = trackRes.data?.mood?.[0] || '';
-      } catch {}
+      if (!albumMode) {
+        try {
+          const trackRes = await api.get(`/tracks/${trackId}`);
+          genre = trackRes.data?.genre?.[0] || '';
+          mood = trackRes.data?.mood?.[0] || '';
+        } catch {}
+      }
 
+      // v3.120: 앨범 모드 — 서버 generate-cover는 곡 기준이라 앨범 정보를 모름 →
+      // 앨범 제목(title)·수록곡 제목들을 user_prompt 힌트로 전달 (트랙 모드는 기존 그대로)
+      const albumHint = albumMode
+        ? [
+            '앨범 커버 이미지',
+            albumMode.trackTitles?.length
+              ? `수록곡: ${albumMode.trackTitles.slice(0, 20).join(', ')}`
+              : '',
+          ].filter(Boolean).join('. ')
+        : '';
       const payload = {
-        title: title || '새로운 곡',
+        title: title || (albumMode ? '새 앨범' : '새로운 곡'),
         genre: genre || undefined,
         mood: mood || undefined,
         style: style || undefined,
-        user_prompt: style || undefined,
+        user_prompt: albumMode ? [style, albumHint].filter(Boolean).join('. ') : (style || undefined),
         // v3.80: 선택한 슬롯(실사/가상)의 object_name — 미포함이면 undefined
         character_object_name: charObjectName || undefined,
         image_model: 'gpt_image_2',
@@ -252,23 +288,21 @@ export default function CoverGenerationScreen({ navigation }: Props) {
         setMode('result');
       }
     } finally {
-      musicStore.setCoverTrackId(null);
-      musicStore.setCoverTrackTitle(null);
-      musicStore.setCoverStyle(null);
+      // v3.120: 앨범 모드는 cover* 컨텍스트를 안 씀 — 진행 중일 수 있는 트랙 커버
+      // 재진입 컨텍스트(coverTrackId 등)를 지우지 않도록 캐릭터 선택만 정리
+      if (!albumMode) {
+        musicStore.setCoverTrackId(null);
+        musicStore.setCoverTrackTitle(null);
+        musicStore.setCoverStyle(null);
+      }
       // v3.80: 다음 커버에 유령처럼 포함되지 않게 정리 (재생성은 lastCharObjRef로 복원)
       musicStore.setCoverCharacterObjectName(null);
     }
   };
 
-  // 대화: 곡 선택 → 캐릭터 시트 보유 여부 확인
-  const handleTrackSelect = async (track: MyTrack) => {
-    setSelectedTrack(track);
-    setChatHistory((prev) => [
-      ...prev,
-      { type: 'user', text: `"${track.title}"` },
-    ]);
-
-    // v3.80: /character/me 조회 — 실사·가상 시트 모두 확보. 하나라도 있으면 "아티스트 포함?" 질문
+  // v3.80: /character/me 조회 — 실사·가상 시트 모두 확보. 하나라도 있으면 "아티스트 포함?" 질문.
+  // v3.120: 트랙 모드(곡 선택 후)·앨범 모드(마운트 직후) 공용으로 추출.
+  const checkCharacterAndProceed = async () => {
     try {
       const res = await api.get('/character/me');
       const ch = res.data?.character;
@@ -300,6 +334,16 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       ]);
       setStep(2);
     }
+  };
+
+  // 대화: 곡 선택 → 캐릭터 시트 보유 여부 확인
+  const handleTrackSelect = async (track: MyTrack) => {
+    setSelectedTrack(track);
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: `"${track.title}"` },
+    ]);
+    await checkCharacterAndProceed();
   };
 
   // 대화: 아티스트 포함 여부 선택 → (둘 다 있으면 슬롯 선택) → 스타일 단계로
@@ -354,9 +398,10 @@ export default function CoverGenerationScreen({ navigation }: Props) {
   // refine/revert는 무과금이라 미게이트 (서버 게이트 정책과 일치 — upload.py v220).
   const handleStyleConfirm = async (style: string) => {
     setStyleInput(style);
-    const trackId = selectedTrack?.id || musicStore.coverTrackId;
-    const trackTitle = selectedTrack?.title || musicStore.coverTrackTitle;
-    if (!trackId) {
+    // v3.120: 앨범 모드는 트랙 선택이 없음 — 컨텍스트는 albumMode 파라미터에서
+    const trackId = albumMode ? null : (selectedTrack?.id || musicStore.coverTrackId);
+    const trackTitle = albumMode ? null : (selectedTrack?.title || musicStore.coverTrackTitle);
+    if (!albumMode && !trackId) {
       showAlert('오류', '곡을 먼저 선택해주세요.');
       setStep(0);
       return;
@@ -378,9 +423,12 @@ export default function CoverGenerationScreen({ navigation }: Props) {
       // 조회 실패는 게이트 오픈 — 서버 429가 최종 방어 (doGenerate catch에서 동일 다이얼로그)
       console.warn('[Cover] [fatigue:image] 상태 조회 실패:', err?.response?.status, err?.message);
     }
-    musicStore.setCoverTrackId(trackId);
-    musicStore.setCoverTrackTitle(trackTitle || '');
-    musicStore.setCoverStyle(style);
+    // v3.120: 앨범 모드는 musicStore cover* 미사용 (이탈 후 재진입 이어보기 없음 — 재진입 시 새 대화)
+    if (!albumMode) {
+      musicStore.setCoverTrackId(trackId);
+      musicStore.setCoverTrackTitle(trackTitle || '');
+      musicStore.setCoverStyle(style);
+    }
     // v3.80: 재생성 경로 — doGenerate 정리부에서 비워진 슬롯 선택을 복원 (재생성은 선택 유지)
     if (useMusicStore.getState().coverCharacterObjectName == null && lastCharObjRef.current) {
       if (__DEV__) console.info('[Cover] 재생성: 캐릭터 슬롯 선택 복원', { obj: lastCharObjRef.current });
@@ -393,12 +441,31 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     ]);
     // v3.107: 대기열 타이머 폐지 — 즉시 생성 시작. musicStore의 cover* 필드는 유지해서
     // 생성 도중 화면 이탈 후 재진입 시 hasPendingGeneration 경로로 이어보기 가능.
-    console.log('[Cover] 커버 생성 시작 — 즉시 doGenerate (대기열 없음)');
-    doGenerate(trackId, trackTitle || '', style);
+    console.log('[Cover] 커버 생성 시작 — 즉시 doGenerate (대기열 없음)', albumMode ? '(앨범 모드)' : '');
+    doGenerate(trackId || '', albumMode ? albumMode.albumTitle : (trackTitle || ''), style);
   };
 
-  // 결과: 확정 → PUT /tracks/{id}로 cover_image_url 업데이트
+  // 결과: 확정 — 트랙 모드: PUT /tracks/{id}로 cover_image_url 업데이트.
+  // v3.120 앨범 모드: PATCH /albums/{id}/cover(objectName=본인 세션 산출물, v216 계약)
+  //   → 성공 시 AlbumDetail로 복귀 (useFocusEffect가 앨범을 재조회해 커버 갱신).
   const handleConfirm = async () => {
+    if (albumMode) {
+      if (!coverObjectName || applying) return;
+      setApplying(true);
+      try {
+        await updateAlbumCover(albumMode.albumId, { coverObjectName });
+        console.log('[Cover] 앨범 커버 적용 성공:', albumMode.albumId, coverObjectName);
+        showAlert('완료', '앨범 커버가 변경되었습니다!', [
+          { text: '확인', onPress: () => navigation.goBack() },
+        ]);
+      } catch (err: any) {
+        console.error('[Cover] 앨범 커버 적용 실패:', err?.response?.status, err?.message);
+        showAlert('오류', err?.response?.data?.error || '앨범 커버 적용에 실패했습니다.');
+      } finally {
+        setApplying(false);
+      }
+      return;
+    }
     const trackId = selectedTrack?.id || musicStore.coverTrackId;
     if (coverObjectName && trackId) {
       try {
@@ -601,7 +668,7 @@ export default function CoverGenerationScreen({ navigation }: Props) {
     const viewedEntry = viewIdx >= 0 ? sortedHistory[viewIdx] : null;
     const displayedUri = viewedEntry ? coverPreviewUrl(viewedEntry.object_name) : coverImageUrl;
     const isViewingCurrent = !viewedEntry || viewVersion === currentVersion;
-    const busy = refining || reverting;
+    const busy = refining || reverting || applying;
     const canRefine = !!coverSessionId && !errorMsg && !!coverImageUrl;
 
     return (
@@ -747,12 +814,19 @@ export default function CoverGenerationScreen({ navigation }: Props) {
                 onPress={handleConfirm}
                 disabled={busy}
               >
-                <AppText style={styles.saveButtonText}>커버 이미지 확정</AppText>
+                <AppText style={styles.saveButtonText}>
+                  {applying ? '적용 중...' : albumMode ? '앨범 커버로 확정' : '커버 이미지 확정'}
+                </AppText>
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={styles.backButton} onPress={() => navigation.popToTop()} disabled={busy}>
-              <AppText style={styles.backButtonText}>맵으로 돌아가기</AppText>
+            {/* v3.120: 앨범 모드는 RootStack 진입 — popToTop 대신 goBack으로 AlbumDetail 복귀 */}
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => (albumMode ? navigation.goBack() : navigation.popToTop())}
+              disabled={busy}
+            >
+              <AppText style={styles.backButtonText}>{albumMode ? '앨범으로 돌아가기' : '맵으로 돌아가기'}</AppText>
             </TouchableOpacity>
           </View>
         </ScrollView>

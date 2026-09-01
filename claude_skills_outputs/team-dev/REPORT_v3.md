@@ -4,6 +4,15 @@
 
 ---
 
+## v3.120 (앨범 AI 커버 — 이미지 디렉터 대화 흐름으로 전환) — 2026-09-01
+
+**대표 지적**: 앨범 커버가 원버튼 자동 생성(서버가 제목만으로 임의 생성) — 디렉터 대화 방식이어야 함.
+**수행**: AlbumDetail의 직접 호출 제거 → CoverGenerationScreen 앨범 모드(AlbumCoverGeneration 라우트) — 이미지 디렉터 대화(아티스트 포함·스타일)·생성(기존 ⭐5·image 게이트 공용)·refine/버전 그대로, 확정 시 PATCH /albums/{id}/cover(objectName)로 앨범 적용 후 복귀. 앨범 컨텍스트는 파라미터로만 전달(트랙 커버 이어보기 컨텍스트 무오염), 프롬프트에 앨범 제목·수록곡 힌트 주입. 백엔드 무수정(PATCH가 objectName 수용 실측). v221의 /albums/cover/generate는 클라 미사용 전환(제거는 백로그).
+**검증**: tsc 0. e2e는 PENDING_TESTS §v3.120.
+**변경**: CoverGenerationScreen, AlbumDetailScreen, App.tsx, albumService(주석).
+
+---
+
 ## v3.119 / 백엔드 v221 (앨범 AI 커버 — 작업실 커버 동일 정책) — 2026-09-01
 
 **대표 방침**: 앨범 AI 커버도 이미지 디렉터의 작업 — 무료 아님. ⭐5 동일 과금 + 이미지 디렉터 휴식 대기.

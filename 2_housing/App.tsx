@@ -142,6 +142,9 @@ export type RootStackParamList = {
   ArtistDetail: { artistId: string; artistName?: string };
   // v3.96(A-2): 앨범 상세 — 열람(전체) + 내 앨범이면 관리(수정/삭제/트랙/커버)
   AlbumDetail: { albumId: string };
+  // v3.120: 앨범 AI 커버 — 작업실 자켓 커버와 동일한 이미지 디렉터 대화 화면(CoverGenerationScreen 앨범 모드).
+  // 확정 시 PATCH /albums/{id}/cover(objectName) 후 goBack → AlbumDetail이 focus에서 재조회.
+  AlbumCoverGeneration: { albumMode: { albumId: string; albumTitle: string; trackTitles?: string[] } };
   // v3.100(A-10): 직접 음원 파일 업로드 — 마이뮤직 작곡 탭에서 진입
   TrackUpload: undefined;
   // v3.104(B-5): 커버 보관함 — select=true면 선택 모드(coverLibraryStore.pickedCover에 쓰고 goBack)
@@ -516,6 +519,9 @@ export default function App() {
             <RootStack.Screen name="ArtistDetail" component={ArtistDetailScreen} />
             {/* v3.96(A-2): 앨범 상세/관리 — 홈 최신앨범·채널·마이페이지에서 진입 */}
             <RootStack.Screen name="AlbumDetail" component={AlbumDetailScreen} options={({ navigation }) => stackHeader(navigation, '앨범')} />
+            {/* v3.120: 앨범 AI 커버 — 이미지 디렉터 대화(작업실 CoverGeneration과 동일 화면·헤더 없음, 앨범 모드).
+                Props가 StudioStack 기준(NativeStackScreenProps<any,'CoverGeneration'>)이라 캐스팅 필요 */}
+            <RootStack.Screen name="AlbumCoverGeneration" component={CoverGenerationScreen as any} />
             {/* v3.100(A-10): 직접 음원 파일 업로드 — 마이뮤직 작곡 탭에서 진입 */}
             <RootStack.Screen name="TrackUpload" component={TrackUploadScreen} options={({ navigation }) => stackHeader(navigation, '음원 파일 올리기')} />
             <RootStack.Screen name="CoverLibrary" component={CoverLibraryScreen} options={({ navigation }) => stackHeader(navigation, '커버 보관함')} />
