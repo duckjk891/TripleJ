@@ -317,6 +317,8 @@ def _serialize_artist(doc: dict, persona_clone: Optional[dict] = None) -> dict:
         "sheet_url": "/api/character/preview/{}".format(sheet) if sheet else None,
         "art_style": doc.get("art_style") or "",
         "used_items": doc.get("used_items") or [],
+        # v222: 앱 아티스트 상세의 "만들 때 사용한 사진" 표시용 — 기존 직렬화 누락 보완
+        "original_photo_object_name": doc.get("original_photo_object_name") or None,
         "image_model": doc.get("image_model") or "nb_pro",
         "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
         "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
