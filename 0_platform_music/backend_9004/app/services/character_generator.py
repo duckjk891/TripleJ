@@ -8,6 +8,7 @@ Two-step process:
           from the prompt + original photo.
 """
 
+import asyncio
 import base64
 import logging
 import re
@@ -936,18 +937,38 @@ async def _call_gemini_text(prompt: str, image_parts: list) -> str:
         },
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            GEMINI_TEXT_API_URL,
-            params={"key": settings.google_api_key},
-            json=payload,
-        )
+    # v224: Gemini 일시 장애(503/429/5xx·타임아웃)에 재시도 — 실사고(2026-09-01
+    # 503 "Deadline expired")로 잡이 3초 만에 failed 처리되던 것 방지. 총 3회, 백오프 2s/5s.
+    last_err = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    GEMINI_TEXT_API_URL,
+                    params={"key": settings.google_api_key},
+                    json=payload,
+                )
+            if resp.status_code == 200:
+                break
+            detail = resp.text[:300]
+            last_err = ValueError(
+                "Gemini text API error (HTTP {}): {}".format(resp.status_code, detail)
+            )
+            if resp.status_code not in (429, 500, 502, 503, 504):
+                raise last_err  # 4xx 등 비일시 오류는 즉시 실패
+            logger.warning(
+                "[gemini-text] transient HTTP %s — retry %d/2", resp.status_code, attempt + 1
+            )
+        except httpx.HTTPError as e:
+            last_err = ValueError("Gemini text API network error: {}".format(e))
+            logger.warning("[gemini-text] network error — retry %d/2: %s", attempt + 1, e)
+        if attempt < 2:
+            await asyncio.sleep(2 if attempt == 0 else 5)
+    else:
+        raise last_err or ValueError("Gemini text API error: retries exhausted")
 
     if resp.status_code != 200:
-        detail = resp.text[:300]
-        raise ValueError(
-            "Gemini text API error (HTTP {}): {}".format(resp.status_code, detail)
-        )
+        raise last_err or ValueError("Gemini text API error (HTTP {})".format(resp.status_code))
 
     data = resp.json()
     candidates = data.get("candidates", [])
@@ -1009,18 +1030,37 @@ async def _call_gemini_image(prompt: str, image_parts: list) -> bytes:
         },
     }
 
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        resp = await client.post(
-            GEMINI_IMAGE_API_URL,
-            params={"key": settings.google_api_key},
-            json=payload,
-        )
+    # v224: 텍스트 단계와 동일한 일시 장애(5xx/429·타임아웃) 재시도 — 3회, 백오프 2s/5s.
+    last_err = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(
+                    GEMINI_IMAGE_API_URL,
+                    params={"key": settings.google_api_key},
+                    json=payload,
+                )
+            if resp.status_code == 200:
+                break
+            detail = resp.text[:300]
+            last_err = ValueError(
+                "Gemini image API error (HTTP {}): {}".format(resp.status_code, detail)
+            )
+            if resp.status_code not in (429, 500, 502, 503, 504):
+                raise last_err
+            logger.warning(
+                "[gemini-image] transient HTTP %s — retry %d/2", resp.status_code, attempt + 1
+            )
+        except httpx.HTTPError as e:
+            last_err = ValueError("Gemini image API network error: {}".format(e))
+            logger.warning("[gemini-image] network error — retry %d/2: %s", attempt + 1, e)
+        if attempt < 2:
+            await asyncio.sleep(2 if attempt == 0 else 5)
+    else:
+        raise last_err or ValueError("Gemini image API error: retries exhausted")
 
     if resp.status_code != 200:
-        detail = resp.text[:300]
-        raise ValueError(
-            "Gemini image API error (HTTP {}): {}".format(resp.status_code, detail)
-        )
+        raise last_err or ValueError("Gemini image API error (HTTP {})".format(resp.status_code))
 
     data = resp.json()
     candidates = data.get("candidates", [])
