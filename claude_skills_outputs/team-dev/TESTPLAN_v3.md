@@ -1185,3 +1185,11 @@
 1. [unit] py_compile + 템플릿 .format() 검증(실사=step1_answer, 만화=+art_style) + tsc
 2. [api] 로고 실생성 — Given 신규계정 / When KODAK 빅그래픽 티(top_object_name)로 cartoon-async / Then job done·⭐10 차감·로고 철자/도안/위치 재현
 3. [회귀] v225 색상·실루엣 재현 유지 (동일 생성물에서 확인)
+
+---
+
+## v3.126/v227 (2026-09-01)
+
+1. [unit] py_compile·템플릿 format·tsc
+2. [api] 동일 실패 케이스 재생성 — Given 신규계정 / When 나선 반바지(대표와 동일 object)+manga90 / Then 나선1+별표2가 한쪽 다리에만, 반복 패턴 없음, 고무줄 허리
+3. [회귀] 상의 로고(PMO 데이지) 재현 유지, 레깅스 금지 규칙 유지(참조 無 분기 원문 보존)

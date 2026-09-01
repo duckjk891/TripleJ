@@ -1929,3 +1929,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: v225는 "로고 종류와 위치"를 고정 요소에 포함했지만 ① 시트 템플릿에 로고 전용 기록 항목이 없어 Step A가 생략 가능 ② 철자·서체·도안 형태 수준의 복제 지시 부재 ③ "읽기 어려우면 유사 문자 창작" 방지 규칙 없음.
 
 **계획**: BE(v226) — 시트 템플릿 Top/Skirt/Footwear에 `Logo/Print (exact text spelling, graphic shape, size, placement — copy from reference, never invent)` 항목 신설(실사·만화 각 3곳), step1 아이템별 로고 기록 지시, 만화 [로고·프린팅 복제 규칙] 블록·Final Constraint·Step B 3종에 "정확한 철자·서체·도안·크기·위치 복제, 임의 대체·창작·무단 추가 금지" 명시. FE(v3.125) — desc에 【로고·프린팅 — 매우 중요】 블록 추가.
+
+---
+
+## v3.126 + 백엔드 v227 — 하의 프린트 재현 실패 원인 수정 (2026-09-01)
+
+**요청**: "상의는 잘 되는데 하의가 잘 반영이 안됨 — 어려운 무늬도 아닌데 프린팅 재현이 왜 안될까."
+
+**Plan verification findings (실측)**: 대표 잡 6a9680d0(manga90) — 참조 하의(블랙 버뮤다, 한쪽 다리 큰 나선1+별표2)의 프린트가 "안 나온" 게 아니라 **양쪽 다리 다수 반복 패턴으로 왜곡**. 원인 3중: ① 프롬프트 전 단계에 도안 **개수·배치** 규칙 부재(단일 도안→패턴화 방지 없음) ② 시트 템플릿 하의 칸이 "Skirt:"(치마 편향, Pleats 필드) ③ FE "하의 특별 지시"가 종류만 강조("일반 데님 바지" 등 제네릭 유도)·프린트 무언급, 최종 점검에도 프린트 항목 없음.
+
+**계획**: BE(v227) 템플릿 "Bottom (pants/shorts/skirt)"로 개칭+Logo/Print에 COUNT·배치("단일 도안 반복 패턴화 금지") 명시, step1 하의·[도안 개수·배치 규칙] 블록·Final Constraint·Step B 3종에 동일 규칙(상·하·신발 공통). FE(v3.126) 하의 특별 지시를 참조 이미지 인지형으로 분기(참조 有=제품 그대로+개수·배치, 無=기존 종류 블록 유지), 최종 점검에 프린트 개수·위치 확인 추가.
