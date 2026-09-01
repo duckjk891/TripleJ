@@ -3,6 +3,9 @@
 Albums are owned by users and contain ordered references to one or more
 tracks. Covers can be auto-borrowed from the first track, uploaded, or
 AI-generated via ``cover_generator``.
+
+v221 — POST /cover/generate 를 작업실 커버(upload.generate-cover v220)와 동일 정책으로:
+image 디렉터 피로 게이트(429, 무과금) → ⭐cover 선차감(402) → 실패 시 환불 → 성공 시 완성 훅.
 """
 
 import io
@@ -670,6 +673,29 @@ async def generate_album_cover(
             )
         tracks = await _load_tracks_ordered(mongo, track_ids)
 
+    # v221 — 앨범 AI 커버를 작업실 커버(upload.generate-cover v220)와 동일 정책으로.
+    # 게이트 순서 관행: 피로 429(무과금) → ⭐ 차감 402 → 생성 실패 시 환불.
+    logger.info("[album-cover] entry user=%s tracks=%d title_len=%d", user_id, len(track_ids), len(body.title or ""))
+
+    # ① 이미지 디렉터 피로 게이트 (⭐ 차감 **전** — 429 무과금)
+    from .fatigue import fatigue_gate_response
+    fatigued = await fatigue_gate_response(user_id, director="image")
+    if fatigued:
+        logger.info("[album-cover] 429 fatigue-gated user=%s", user_id)
+        return fatigued
+
+    # ② ⭐ 선차감 — 작업실 커버와 동일 action "cover" (단가 POINT_COSTS 단일 소스).
+    # ref 는 시도당 유니크 uuid (point_events 유니크 인덱스 재시도 충돌 회피).
+    from ..services.points_service import POINT_COSTS, refund_points, spend_points
+    cover_point_cost = POINT_COSTS["cover"]
+    point_ref = uuid.uuid4().hex
+    if not await spend_points(user_id, "cover", cover_point_cost, point_ref):
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(cover_point_cost)},
+        )
+    logger.info("[album-cover] spend ok user=%s cost=%d ref=%s", user_id, cover_point_cost, point_ref)
+
     genres, moods = aggregate_track_metadata(tracks)
 
     # Optional character sheet bytes
@@ -718,6 +744,9 @@ async def generate_album_cover(
     except Exception as e:  # noqa: BLE001
         err_text = f"{type(e).__name__}: {str(e)[:200] or '(no message)'}"
         logger.error("[AlbumCover] generation failed user=%s err=%s", user_id, err_text)
+        # v221 — 생성 실패 시 선차감분 환불 (upload.generate-cover 실패 환불과 동일).
+        await refund_points(user_id, "cover", cover_point_cost, point_ref)
+        logger.info("[album-cover] refund (generation failed) user=%s ref=%s", user_id, point_ref)
         return JSONResponse(status_code=502, content={"error": "AI 커버 생성에 실패했습니다."})
 
     # Persist as a temporary generated object.
@@ -733,13 +762,22 @@ async def generate_album_cover(
     except Exception as e:  # noqa: BLE001
         err_text = f"{type(e).__name__}: {str(e)[:200] or '(no message)'}"
         logger.error("[AlbumCover] minio put failed user=%s err=%s", user_id, err_text)
+        # v221 — 저장 실패도 결과물 미전달이므로 환불 (생성 예외 경로와 일관).
+        await refund_points(user_id, "cover", cover_point_cost, point_ref)
+        logger.info("[album-cover] refund (minio put failed) user=%s ref=%s", user_id, point_ref)
         return JSONResponse(status_code=500, content={"error": "AI 커버 저장에 실패했습니다."})
+
+    # v221 — 이미지 디렉터 완성 훅: 카운트 +1 + 사다리 쿨다운 시작 (v220과 동일 호출,
+    # on_generation_completed 는 절대 raise 하지 않음 — best-effort).
+    from ..services.fatigue_service import on_generation_completed
+    await on_generation_completed(user_id, director="image")
 
     presigned = _presign_cover(object_name)
     logger.info(
         "[AlbumCover] gen success user=%s object=%s bytes=%d",
         user_id, object_name, len(image_bytes),
     )
+    logger.info("[album-cover] done user=%s cost=%d ref=%s", user_id, cover_point_cost, point_ref)
     return {
         "cover_object_name": object_name,
         "cover_image_url": presigned,
