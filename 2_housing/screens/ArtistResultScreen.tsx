@@ -38,6 +38,39 @@ import { getFatigueStatus } from '../services/fatigueService';
 import { showFatigueCooldownDialog } from '../utils/fatigueGate';
 import { colors } from '../theme/colors';
 
+// ── v3.121: 아티스트 상세 개편 — 착용 제품 매핑 타입 ─────────────────────────
+// used_items 실측(v216): [{id: null(레거시 저장분), name, image_object_name, product_url, category}]
+// → id가 비어 있어 /business/ads/active 전체에서 image_object_name으로 매칭(Cody 아이템 구조 재사용).
+interface AdLite {
+  id: string;
+  name?: string;
+  image_object_name?: string;
+  product_url?: string;
+  brand?: string;
+  advertiser_nickname?: string;
+  category?: string;
+}
+
+// 화면 표시용 착용 아이템 (서버 used_items·레거시 outfitStore 공통 정규화)
+interface WornItem {
+  cat: string;
+  name: string;
+  brand?: string;
+  productUrl?: string;
+  imageObjectName?: string;
+  options?: Record<string, string>;
+  adId?: string;
+}
+
+const mapUsedItemsToWorn = (arr: any[]): WornItem[] =>
+  (Array.isArray(arr) ? arr : []).map((it: any) => ({
+    cat: it.category || '',
+    name: it.name || '',
+    productUrl: it.product_url || undefined,
+    imageObjectName: it.image_object_name || undefined,
+    adId: it.id ? String(it.id) : undefined,
+  }));
+
 export default function ArtistResultScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
@@ -75,6 +108,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const [voicePickerVisible, setVoicePickerVisible] = useState(false);
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [unlinkConfirmVisible, setUnlinkConfirmVisible] = useState(false);
+  // ── v3.121: 착용 제품 매핑용 활성 광고 전체 인덱스 (null=미로드/실패 — 배지 판단 보류) ──
+  const [adItems, setAdItems] = useState<AdLite[] | null>(null);
+  // v3.121: 레거시(me) 가상 슬롯 착용 아이템 — me 응답의 virtual_used_items (기존엔 미사용 버그)
+  const [legacyVirtualWorn, setLegacyVirtualWorn] = useState<WornItem[]>([]);
   // 프로필(이름·성별) 편집 — 서버 PATCH (로컬 artistProfileStore와 이중화 금지, 서버 우선)
   const [editVisible, setEditVisible] = useState(false);
   const [editName, setEditName] = useState('');
@@ -82,7 +119,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const [profileSaving, setProfileSaving] = useState(false);
   const clones = useVoiceStore((s) => s.clones);
   const clonesLoading = useVoiceStore((s) => s.clonesLoading);
-  const [zoomVisible, setZoomVisible] = useState(false);
+  // v3.121: 확대 보기 대상 URL — 시트·원본 사진 모두 같은 ZoomModal 재사용(null=닫힘)
+  const [zoomUri, setZoomUri] = useState<string | null>(null);
   // 9004: /me 응답의 original_photo_object_name → 미리보기 URL 캐싱
   const [originalPhotoUrl, setOriginalPhotoUrl] = useState<string | null>(null);
   const [meeName, setMeName] = useState<string>('');
@@ -102,6 +140,25 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         if (alive && res.data?.costs?.character != null) setCharacterCost(res.data.costs.character);
       } catch (err: any) {
         console.error('[ArtistResult] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // v3.121: 착용 제품 매핑 — /business/ads/active 전체(무인증 GET, 카테고리 미지정=전체).
+  // 실패 시 null 유지 → 판매종료 배지 판단 보류(used_items 자체 정보로만 표시).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/business/ads/active');
+        if (alive) {
+          const items: AdLite[] = Array.isArray(res.data?.items) ? res.data.items : [];
+          setAdItems(items);
+          if (__DEV__) console.info('[ArtistResult] ads/active 로드', { count: items.length });
+        }
+      } catch (err: any) {
+        console.warn('[ArtistResult] /business/ads/active 조회 실패(제품 매핑 보류):', err?.response?.status);
       }
     })();
     return () => { alive = false; };
@@ -208,6 +265,31 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             }
             // B-3 표시용 클론 목록(무해 GET) — 연결 팝업에서 재사용
             useVoiceStore.getState().fetchClones();
+            // v3.121: 원본 사진 — v216 cid 응답(list·단건)엔 original_photo_object_name이
+            // 없음(실측: _serialize_artist 누락, doc엔 real만 저장). real이면 /me 폴백 —
+            // me.character_id(대표 real doc)가 이 cid와 일치할 때만 표시(비대표 real은 생략).
+            // virtual은 서버가 원본 사진을 저장하지 않음(save 시 kind=real만 persist) → 항상 생략.
+            if (artist.kind === 'real') {
+              try {
+                const meRes = await api.get('/character/me');
+                if (cancelled) return;
+                const me = meRes.data?.character;
+                const photoObj = me?.original_photo_object_name;
+                if (photoObj && String(me?.character_id || '') === characterIdParam) {
+                  setOriginalPhotoUrl(`${BACKEND_BASE_URL}/api/character/preview/${photoObj}?t=${Date.now()}`);
+                } else {
+                  setOriginalPhotoUrl(null);
+                  if (photoObj) {
+                    console.log('[ArtistResult] 원본 사진 생략 — /me 대표 real과 cid 불일치(서버 cid 직렬화 미지원)');
+                  }
+                }
+              } catch (meErr: any) {
+                console.warn('[ArtistResult] /me 원본 사진 폴백 실패:', meErr?.response?.status, meErr?.message);
+                if (!cancelled) setOriginalPhotoUrl(null);
+              }
+            } else {
+              setOriginalPhotoUrl(null);
+            }
           } catch (err: any) {
             console.warn('[ArtistResult] /character/{cid} 조회 실패:', err?.response?.status, err?.message);
             if (!cancelled && err?.response?.status === 404) {
@@ -335,6 +417,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             }));
             useOutfitStore.getState().setItems(mapped);
           }
+          // v3.121: 가상 슬롯 착용 아이템 — me 응답의 virtual_used_items(별도 필드, 실측).
+          // 기존 코드는 real used_items만 읽어 가상 탭에서 착용 제품이 누락됐다(대표 지적).
+          setLegacyVirtualWorn(mapUsedItemsToWorn(ch.virtual_used_items));
         } catch (err: any) {
           console.warn('[ArtistResult] /me 조회 실패:', err?.response?.status, err?.message);
         } finally {
@@ -451,6 +536,18 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   };
 
   const handleGoCody = () => {
+    // v3.121: 가상(캐릭터) 아티스트 — 구성은 실사와 통일하되 꾸미기 실행은 미지원 안내.
+    // (실측: 꾸미기 재생성은 원본 사진 필수 + 실사 전용 generate-sheet-async 경로라
+    //  가상은 화풍이 깨진다. 서버가 가상 원본 사진도 저장하지 않음 → 앱 내 팝업으로 안내)
+    const virtualNow = serverArtist ? serverArtist.kind === 'virtual' : activeSlot === 'virtual';
+    if (virtualNow) {
+      console.log('[ArtistResult] 가상 아티스트 꾸미기 미지원 안내');
+      showAlert(
+        '준비 중이에요',
+        '캐릭터(가상) 아티스트의 꾸미기는 아직 준비 중이에요.\n실사 아티스트는 꾸미기에서 옷을 바꿀 수 있어요.'
+      );
+      return;
+    }
     if (!apiResult) return;
     navigation.replace('ArtistCody');
   };
@@ -653,6 +750,51 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const personaConnected = !!(serverArtist?.persona_id && !personaMissing);
   const readyClones = clones.filter((c) => c.status === 'ready' && c.clone_id);
 
+  // ── v3.121: 착용한 제품 — 서버 used_items(cid) / 레거시 슬롯별(me) 공통 정규화 후
+  // ads/active 인덱스로 매핑(브랜드·이미지·판매처 보강). 매칭 키: id(있으면) → image_object_name.
+  // 활성 목록에 없으면 판매종료(이름만+배지) — ads 로드 실패(null) 시 배지 판단 보류.
+  const rawWorn: WornItem[] = isServerMode
+    ? mapUsedItemsToWorn(serverArtist!.used_items)
+    : isVirtualTab
+      ? legacyVirtualWorn
+      : outfitItems.map((it) => ({
+          cat: it.cat,
+          name: it.name,
+          brand: it.brand,
+          productUrl: it.productUrl,
+          imageObjectName: it.imageObjectName,
+          options: it.options,
+        }));
+  const wornDisplay = rawWorn
+    .filter((it) => !!it.name) // 이름조차 없는 매핑 불가 아이템은 생략
+    .map((it) => {
+      const ad = adItems
+        ? adItems.find(
+            (a) =>
+              (!!it.adId && a.id === it.adId) ||
+              (!!it.imageObjectName && a.image_object_name === it.imageObjectName)
+          ) || null
+        : null;
+      const discontinued = adItems !== null && !ad;
+      return {
+        ...it,
+        adId: ad?.id || it.adId,
+        brand: ad?.brand || ad?.advertiser_nickname || it.brand,
+        productUrl: it.productUrl || ad?.product_url,
+        imageObjectName: it.imageObjectName || ad?.image_object_name,
+        discontinued,
+      };
+    });
+
+  // v3.109 판매처 보기 관행(ArtistCody openItemLink): click 로깅 + http 보정 + 실패 시 앱 내 알림
+  const openWornLink = (it: { adId?: string; productUrl?: string }) => {
+    if (!it.productUrl) return;
+    if (it.adId) api.post(`/business/ads/${it.adId}/click`).catch(() => {});
+    const url = it.productUrl.startsWith('http') ? it.productUrl : `https://${it.productUrl}`;
+    if (__DEV__) console.info('[ArtistResult] 판매처 링크 열기', { id: it.adId || '(미매핑)', url });
+    Linking.openURL(url).catch(() => showAlert('알림', '링크를 열 수 없어요'));
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -689,23 +831,30 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           )}
         </View>
 
-        {/* 9004: 캐릭터 생성 시 업로드한 원본 사진 표시 — 실사 슬롯 전용 */}
+        {/* ① v3.121: 아티스트를 만들 때 사용했던 이미지 — 있을 때만(사진 없이 만든 경우 생략).
+            탭하면 시트와 같은 ZoomModal로 크게 보기. (가상은 서버가 원본 사진을 저장하지
+            않아 originalPhotoUrl이 항상 null — 자연 생략) */}
         {!isVirtualTab && originalPhotoUrl && (
-          <View style={styles.originalPhotoBox}>
+          <TouchableOpacity
+            style={styles.originalPhotoBox}
+            activeOpacity={0.85}
+            onPress={() => setZoomUri(originalPhotoUrl)}
+          >
             <View style={{ flex: 1 }}>
-              <AppText style={styles.originalPhotoLabel}>내가 올린 사진</AppText>
+              <AppText style={styles.originalPhotoLabel}>만들 때 사용한 사진</AppText>
               <AppText style={styles.originalPhotoSub}>
-                이 사진을 바탕으로 캐릭터가 생성됐어요. 꾸미기 시에도 이 사진이 다시 사용돼요.
+                이 사진을 바탕으로 아티스트가 만들어졌어요. 탭하면 크게 볼 수 있어요.
               </AppText>
             </View>
             <Image source={{ uri: originalPhotoUrl }} style={styles.originalPhotoImg} />
-          </View>
+          </TouchableOpacity>
         )}
 
+        {/* ② 캐릭터 시트 */}
         <TouchableOpacity
           style={styles.previewBox}
           activeOpacity={0.85}
-          onPress={() => setZoomVisible(true)}
+          onPress={() => setZoomUri(displayUrl)}
         >
           <Image source={{ uri: displayUrl }} style={styles.previewImg} />
           <View style={styles.zoomHint}>
@@ -713,14 +862,32 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           </View>
         </TouchableOpacity>
 
-        {/* 착용 중인 제품 정보 — 실사 슬롯 전용(코디는 실사만) */}
-        {!isVirtualTab && outfitItems.length > 0 && (
+        {/* ③ v3.121: 착용한 제품 — 판매처 링크 포함. 실사·가상 공통(대표 지적: 화면 구성 통일).
+            ads/active 매핑으로 브랜드·이미지 보강, 활성 목록에 없으면 이름만+판매종료 배지,
+            미착용(0개)이면 섹션 생략 */}
+        {wornDisplay.length > 0 && (
           <View style={styles.outfitListBox}>
-            <AppText style={styles.outfitListTitle}>착용 중인 제품</AppText>
-            {outfitItems.map((it, i) => {
+            <AppText style={styles.outfitListTitle}>착용한 제품</AppText>
+            {wornDisplay.map((it, i) => {
               const optStr = it.options && Object.keys(it.options).length > 0
                 ? Object.entries(it.options).map(([k, v]) => `${k}:${v}`).join(' · ')
                 : null;
+              if (it.discontinued) {
+                // 판매종료(활성 광고 목록에 없음) — 이름만 + 배지
+                return (
+                  <View key={`${it.cat}-${i}`} style={styles.outfitRow}>
+                    <View style={{ flex: 1 }}>
+                      <AppText style={styles.outfitRowCat}>{it.cat}</AppText>
+                      <AppText style={styles.outfitRowName} numberOfLines={2}>
+                        {it.brand ? `${it.brand} ` : ''}{it.name}
+                      </AppText>
+                    </View>
+                    <View style={styles.outfitEndedBadge}>
+                      <AppText style={styles.outfitEndedBadgeText}>판매종료</AppText>
+                    </View>
+                  </View>
+                );
+              }
               return (
                 <View key={`${it.cat}-${i}`} style={styles.outfitRow}>
                   {it.imageObjectName ? (
@@ -743,11 +910,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                   {it.productUrl ? (
                     <TouchableOpacity
                       style={styles.outfitLinkBtn}
-                      onPress={() => Linking.openURL(it.productUrl!).catch(() => {
-                        showAlert('링크 열기 실패', '브라우저로 열 수 없는 링크예요.');
-                      })}
+                      onPress={() => openWornLink(it)}
                     >
-                      <AppText style={styles.outfitLinkBtnText}>보러가기</AppText>
+                      <AppText style={styles.outfitLinkBtnText}>판매처 보기</AppText>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -865,18 +1030,15 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       </ScrollView>
 
       {/* v3.82: 미니플레이어를 숨기므로 bottomLift 제거 — bottomArea는 탭바 바로 위 고정.
-          저장된 가상 슬롯은 남는 버튼이 없어(꾸미기=실사 전용) bottomArea 자체를 숨김.
-          v3.113: 생성 완료 직후(justCreated)는 가상이라도 [아티스트 저장하기]가 있어 표시 */}
-      {(isUnsaved || !isVirtualTab || justCreated) && (
+          v3.113: 생성 완료 직후(justCreated)는 [아티스트 저장하기] 주요 버튼.
+          v3.121: 실사·가상 화면 구성 통일(대표 지적) — 가상도 bottomArea·[아티스트 꾸미기]를
+          동일 노출(가상 꾸미기 실행은 handleGoCody가 앱 내 팝업으로 미지원 안내). */}
       <View style={styles.bottomArea}>
         {isUnsaved ? (
           <View style={styles.btnRow}>
-            {/* v3.80: 꾸미기(outfit)는 실사 전용 — 가상 슬롯에서는 숨김 */}
-            {!isVirtualTab && (
-              <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-                <AppText style={styles.skipBtnText}>꾸미기</AppText>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
+              <AppText style={styles.skipBtnText}>꾸미기</AppText>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.applyBtn, saving && { opacity: 0.5 }]}
               onPress={handleSave}
@@ -893,11 +1055,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               <AppText style={styles.savedNotice}>아티스트가 저장되었어요</AppText>
             )}
             <View style={styles.btnRow}>
-              {!isVirtualTab && (
-                <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
-                  <AppText style={styles.skipBtnText}>꾸미기</AppText>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity style={styles.skipBtn} onPress={handleGoCody}>
+                <AppText style={styles.skipBtnText}>꾸미기</AppText>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.applyBtn, (manualSaving || manualSaved) && { opacity: 0.55 }]}
                 onPress={handleManualSave}
@@ -910,31 +1070,34 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             </View>
           </View>
         ) : (
-          <View style={styles.btnRow}>
-            {/* v3.82: [🗑 삭제] 제거 — "캐릭터 다시 만들기"(스크롤 끝)와 동일 기능(DELETE /character/me) 중복 */}
-            <TouchableOpacity
-              style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
-              onPress={handleGoCody}
-            >
-              <AppText
-                style={[
-                  styles.applyBtnText,
-                  { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
-                ]}
+          /* ④ v3.121: 최하단 주요 버튼 [아티스트 꾸미기] + 옷 변경 가능 캡션 */
+          <View>
+            <AppText style={styles.codyCaption}>꾸미기에서 착용한 옷을 바꿀 수 있어요</AppText>
+            <View style={styles.btnRow}>
+              {/* v3.82: [🗑 삭제] 제거 — "캐릭터 다시 만들기"(스크롤 끝)와 동일 기능(DELETE /character/me) 중복 */}
+              <TouchableOpacity
+                style={[styles.applyBtn, { justifyContent: 'center', minHeight: 44 }]}
+                onPress={handleGoCody}
               >
-                아티스트 꾸미기
-              </AppText>
-            </TouchableOpacity>
+                <AppText
+                  style={[
+                    styles.applyBtnText,
+                    { textAlign: 'center', lineHeight: 16, includeFontPadding: false as any },
+                  ]}
+                >
+                  아티스트 꾸미기
+                </AppText>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
-      )}
 
-      {/* 시트 확대 보기 — pinch zoom + pan */}
+      {/* 확대 보기 — 시트·원본 사진 공용(v3.121) */}
       <ZoomModal
-        visible={zoomVisible}
-        uri={displayUrl}
-        onClose={() => setZoomVisible(false)}
+        visible={!!zoomUri}
+        uri={zoomUri || ''}
+        onClose={() => setZoomUri(null)}
       />
 
       {/* v3.105: 서버 아티스트 재생성 confirm — ⭐ 소모 명시 */}
@@ -1465,6 +1628,18 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   outfitLinkBtnText: { fontSize: 11, color: colors.accent.primary, fontWeight: '700' },
+  // v3.121: 판매종료 배지(활성 광고 목록에 없는 착용 아이템 — 이름만 표시)
+  outfitEndedBadge: {
+    backgroundColor: colors.bg.surface2,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.border.subtle,
+    marginLeft: 8,
+  },
+  outfitEndedBadgeText: { fontSize: 10, color: colors.text.muted, fontWeight: '700' },
+  // v3.121: 최하단 [아티스트 꾸미기] 캡션
+  codyCaption: {
+    color: colors.text.muted, fontSize: 11, textAlign: 'center', marginBottom: 8,
+  },
 
   voiceBox: {
     marginTop: 16, padding: 14, borderRadius: 12,

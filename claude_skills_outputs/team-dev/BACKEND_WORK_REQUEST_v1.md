@@ -151,3 +151,8 @@
 ## B-13. 캐릭터 레거시 정리 (v3.116 발견 — 우리 백로그)
 - upload-original-photo가 무cid 레거시 문서를 upsert로 계속 생성(2026-08-31 실측, 시트 없어 현재 무해) — cid 문서 체제로 정리.
 - 레거시 계정용 개별 삭제 대체 수단(DELETE /me 전체 삭제 외) 검토.
+
+## B-14. 가상 아티스트 꾸미기 지원 (v3.121 발견 — 우리 백로그)
+- save가 kind=real만 원본 사진 persist → 가상은 원본 사진 소실. outfit 재생성도 실사(generate-sheet) 전용.
+- 요청: 가상 원본 사진 persist + cartoon 경로 outfit 재생성 지원. 지원 전까지 앱은 가상 꾸미기 "준비 중" 게이트.
+- (즉시 처리) _serialize_artist에 original_photo_object_name 누락 → v222로 수정.
