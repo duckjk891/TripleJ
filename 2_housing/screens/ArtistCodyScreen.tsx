@@ -356,6 +356,9 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     // v3.80: 가상화(그림) 모드 — "사진 기반" 지시문 대신 컨셉 기반 문구.
     // 화풍 지시는 서버가 style_preset/style_image로 처리하므로 프롬프트에 넣지 않음(중복 주입 금지).
     const isVirtualKind = isSheetMode && taskStore.characterKind === 'virtual';
+    // v3.122: 가상(캐릭터) 아티스트 꾸미기 — outfit 모드에서 cartoon 경로(v223 use_saved_sheet).
+    // 기준 이미지는 서버가 저장된 시트에서 로드하므로 프롬프트에는 화풍 유지 지시만 보강.
+    const isVirtualOutfit = !isSheetMode && taskStore.characterKind === 'virtual';
     const parts: string[] = [];
     if (isSheetMode) {
       if (isVirtualKind) {
@@ -419,6 +422,15 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     } else {
       parts.push('【필수 유지】 캐릭터의 얼굴 인상·체형·standing pose는 반드시 유지.');
     }
+    // v3.122: 가상 꾸미기 — 화풍 붕괴 금지(실사화 금지). 서버도 doc.art_style로 화풍을
+    // 복원하지만, 프롬프트 차원에서도 이중 안전망을 둔다.
+    if (isVirtualOutfit) {
+      parts.push(
+        '【화풍 유지 — 매우 중요】 이 캐릭터는 그림(만화) 화풍의 가상 아티스트입니다. ' +
+        '현재 시트의 그림체·화풍·채색 스타일을 그대로 유지하고, 절대 실사(사진) 스타일로 변환하지 마세요. ' +
+        '선택된 의류 아이템 이미지는 현실 제품 사진이지만 동일 화풍으로 변환해 입히세요.'
+      );
+    }
     parts.push('【최종 점검】 결과물 다시 검토 — 사용자가 선택한 의상 종류가 정확히 그려졌는지, 특히 하의가 fitted 옷(레깅스/스판)이 아닌 사용자 선택 의상으로 그려졌는지 확인하세요.');
     const desc = parts.join('\n\n');
 
@@ -462,7 +474,10 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     // reset으로 스택을 [Map, ArtistLoading]으로 재구성 — ArtistLoading이 실패 시 goBack하면
     // Map에 착지하고(v3.105 실패 다이얼로그·입력 보존 흐름 유지), 성공 시 replace('ArtistResult').
     // (navigate('Map')만 남기면 ArtistCody가 stack에 남아 작업실 재진입 시 Cody가 다시 표시되는 버그)
-    console.log('[ArtistCody] 적용 — ArtistLoading 직행 (대기열 없음)');
+    console.log('[ArtistCody] 적용 — ArtistLoading 직행 (대기열 없음)', {
+      mode: isSheetMode ? 'sheet' : 'outfit',
+      virtual: isVirtualKind || isVirtualOutfit,
+    });
     navigation.reset({ index: 1, routes: [{ name: 'Map' }, { name: 'ArtistLoading' }] });
   };
 

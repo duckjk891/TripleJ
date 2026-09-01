@@ -537,19 +537,32 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   };
 
   const handleGoCody = () => {
-    // v3.121: 가상(캐릭터) 아티스트 — 구성은 실사와 통일하되 꾸미기 실행은 미지원 안내.
-    // (실측: 꾸미기 재생성은 원본 사진 필수 + 실사 전용 generate-sheet-async 경로라
-    //  가상은 화풍이 깨진다. 서버가 가상 원본 사진도 저장하지 않음 → 앱 내 팝업으로 안내)
+    // v3.122: 가상(캐릭터) 아티스트 꾸미기 개방 — 백엔드 v223 use_saved_sheet 계약.
+    // 서버가 저장된 시트를 기준 이미지로 로드해 cartoon 경로(nb_pro)로 재생성하므로
+    // 원본 사진이 없어도 되고 화풍(doc.art_style)도 서버가 복원한다.
+    // 단, character_id 재생성 계약이 필요 — 레거시(cid 없는) 가상 슬롯은 기존 안내 유지.
     const virtualNow = serverArtist ? serverArtist.kind === 'virtual' : activeSlot === 'virtual';
     if (virtualNow) {
-      console.log('[ArtistResult] 가상 아티스트 꾸미기 미지원 안내');
-      showAlert(
-        '준비 중이에요',
-        '캐릭터(가상) 아티스트의 꾸미기는 아직 준비 중이에요.\n실사 아티스트는 꾸미기에서 옷을 바꿀 수 있어요.'
-      );
+      const st = useCharacterTaskStore.getState();
+      const cid = serverArtist?.character_id || st.targetCharacterId;
+      if (!cid || st.legacyContract) {
+        console.log('[ArtistResult] 레거시 가상 아티스트 — 꾸미기 미지원 안내(cid 없음)');
+        showAlert(
+          '준비 중이에요',
+          '이 캐릭터(가상) 아티스트는 예전 방식으로 저장되어 꾸미기를 지원하지 않아요.\n새로 만든 캐릭터 아티스트는 꾸미기를 쓸 수 있어요.'
+        );
+        return;
+      }
+      if (!apiResult) return;
+      console.log('[ArtistResult] 가상 아티스트 꾸미기 진입', { characterId: cid });
+      // ArtistCody/ArtistLoading의 outfit 분기가 cartoon 경로를 타도록 kind·대상 cid 고정
+      useCharacterTaskStore.getState().setInput({ characterKind: 'virtual', targetCharacterId: cid });
+      navigation.replace('ArtistCody');
       return;
     }
     if (!apiResult) return;
+    // 실사 꾸미기: 가상 생성 잔존값(characterKind='virtual')이 outfit 분기를 오염시키지 않도록 정규화
+    useCharacterTaskStore.getState().setInput({ characterKind: 'real' });
     navigation.replace('ArtistCody');
   };
 
@@ -833,9 +846,11 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         </View>
 
         {/* ① v3.121: 아티스트를 만들 때 사용했던 이미지 — 있을 때만(사진 없이 만든 경우 생략).
-            탭하면 시트와 같은 ZoomModal로 크게 보기. (가상은 서버가 원본 사진을 저장하지
-            않아 originalPhotoUrl이 항상 null — 자연 생략) */}
-        {!isVirtualTab && originalPhotoUrl && (
+            탭하면 시트와 같은 ZoomModal로 크게 보기.
+            v3.122(B-14 해소): 백엔드 v223부터 가상(cid doc)도 원본 사진을 저장 — 서버 모드는
+            kind 무관 표시(미보존 doc은 null로 자연 생략). 레거시(me)는 원본 사진 필드가 실사
+            슬롯 공유라 가상 탭에서는 기존대로 숨김(실사 사진 오표시 방지). */}
+        {(isServerMode || !isVirtualTab) && originalPhotoUrl && (
           <TouchableOpacity
             style={styles.originalPhotoBox}
             activeOpacity={0.85}
@@ -1033,7 +1048,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       {/* v3.82: 미니플레이어를 숨기므로 bottomLift 제거 — bottomArea는 탭바 바로 위 고정.
           v3.113: 생성 완료 직후(justCreated)는 [아티스트 저장하기] 주요 버튼.
           v3.121: 실사·가상 화면 구성 통일(대표 지적) — 가상도 bottomArea·[아티스트 꾸미기]를
-          동일 노출(가상 꾸미기 실행은 handleGoCody가 앱 내 팝업으로 미지원 안내). */}
+          동일 노출. v3.122: 가상 꾸미기 실행 개방(v223 use_saved_sheet) — cid 없는
+          레거시 가상만 handleGoCody가 앱 내 팝업으로 안내. */}
       <View style={styles.bottomArea}>
         {isUnsaved ? (
           <View style={styles.btnRow}>

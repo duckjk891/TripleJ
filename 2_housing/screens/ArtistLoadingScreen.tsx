@@ -320,44 +320,58 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           );
         } else if (mode === 'outfit') {
           // ── 9004 옷 입히기 = refine 폐기, generate-sheet 재호출 ──
-          // photo는 백엔드 영구 저장본 + 옷 이미지는 코디 선택분(MinIO object_name)에서 fetch
-          //  → 텍스트로만 묘사하지 않고 실제 이미지를 모델에 첨부 → 옷 정확도 ↑
+          // 실사: photo(백엔드 영구 원본) + 옷 이미지(object_name) → generate-sheet-async
+          // v3.122 가상: 원본 사진 대신 서버가 저장된 시트를 기준으로 로드(v223
+          // use_saved_sheet) → generate-sheet-cartoon-async(nb_pro) — 화풍은 서버가
+          // doc.art_style로 복원(화풍 붕괴 금지). character_id 지정 재생성이라 슬롯 미소모.
+          const isVirtualOutfit = taskStore.characterKind === 'virtual';
+          const outfitCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
 
-          // 1) originalPhotoObjectName 확보 (store 캐시 우선, 없으면 /me)
-          let origObjectName = taskStore.originalPhotoObjectName;
-          if (!origObjectName) {
-            try {
-              const meRes = await api.get('/character/me');
-              origObjectName = meRes.data?.character?.original_photo_object_name || null;
-              if (origObjectName) {
-                taskStore.setInput({ originalPhotoObjectName: origObjectName });
-              }
-            } catch (meErr) {
-              console.warn('[Artist] /me 조회 실패:', meErr);
-            }
-          }
-          if (!origObjectName) {
-            throw new Error('원본 사진이 없어요. 캐릭터를 다시 만들어주세요.');
-          }
-
-          // 2) 코디 선택분 — v3.76: 서버 정식 계약(object_name 필드)으로 전송
+          // 코디 선택분 — v3.76: 서버 정식 계약(object_name 필드)으로 전송
           const items: AppliedItem[] = useOutfitStore.getState().items;
-
-          // 3) FormData 구성: photo(원본 영구본) + 옷 object_name
           const form = new FormData();
-          await appendMinioImageToForm(form, 'file', origObjectName);
+          let endpoint: string;
+
+          if (isVirtualOutfit) {
+            // 가상: cid 재생성 계약 필수 (레거시 가상은 ArtistResult에서 사전 차단)
+            if (!outfitCid) {
+              throw new Error('캐릭터 아티스트 정보를 찾지 못했어요. 목록에서 다시 진입해주세요.');
+            }
+            form.append('use_saved_sheet', 'true');
+            endpoint = '/character/generate-sheet-cartoon-async';
+          } else {
+            // 실사: originalPhotoObjectName 확보 (store 캐시 우선, 없으면 /me)
+            let origObjectName = taskStore.originalPhotoObjectName;
+            if (!origObjectName) {
+              try {
+                const meRes = await api.get('/character/me');
+                origObjectName = meRes.data?.character?.original_photo_object_name || null;
+                if (origObjectName) {
+                  taskStore.setInput({ originalPhotoObjectName: origObjectName });
+                }
+              } catch (meErr) {
+                console.warn('[Artist] /me 조회 실패:', meErr);
+              }
+            }
+            if (!origObjectName) {
+              throw new Error('원본 사진이 없어요. 캐릭터를 다시 만들어주세요.');
+            }
+            await appendMinioImageToForm(form, 'file', origObjectName);
+            endpoint = '/character/generate-sheet-async';
+          }
+
           appendOutfitObjectNames(form, items);
           form.append('user_text', taskStore.outfitDesc || '');
-          // v217: image_model 미전송 — generate-sheet-async는 서버가 gpt_image_2 고정(요청값 무시)
+          // v217: image_model 미전송 — 서버가 real=gpt_image_2 / cartoon=nb_pro 고정(요청값 무시)
           // v3.103(B-1): 코디도 대상 아티스트(cid) 재생성으로 — 미지정이면 신규 생성돼
           // 슬롯을 소모하므로 서버 아티스트에서 진입 시 반드시 character_id 지정.
-          const outfitCid = taskStore.legacyContract ? null : taskStore.targetCharacterId;
           if (outfitCid) form.append('character_id', outfitCid);
 
-          if (__DEV__) console.info('[ArtistLoading] outfit generate-sheet-async 요청', {
-            items: items.length, characterId: outfitCid, legacyContract: taskStore.legacyContract,
+          console.log('[ArtistLoading] outfit 요청', {
+            endpoint, virtual: isVirtualOutfit, items: items.length,
+            characterId: outfitCid, legacyContract: taskStore.legacyContract,
           });
-          const startRes = await api.post('/character/generate-sheet-async', form, {
+          const startRes = await api.post(endpoint, form, {
             // web: 브라우저가 FormData boundary 자동 설정 / RN: 명시 필요
             headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
             timeout: 120000,
