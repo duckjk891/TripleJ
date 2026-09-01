@@ -2725,3 +2725,19 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 **변경**: 템플릿 하의 칸 Skirt→Bottom(치마 편향 제거), 도안 개수·배치 규칙 전 단계 신설(단일 도안 복사·반복 패턴화 절대 금지, 전면 패턴은 동일 밀도 — 상·하·신발 공통), FE 하의 특별 지시 참조 인지형 분기 + 최종 점검 프린트 항목.
 **파일**: backend character_generator.py(v227), 2_housing/screens/ArtistCodyScreen.tsx(v3.126).
+
+---
+
+## 분석 — AIDOL 캐릭터 프롬프트 vs MAIDOL 원본 비교 (2026-09-01)
+
+**대상**: AIDOL `TripleJ-backend/.../backend_9004/app/services/character_generator.py` (1454줄, ~v227) vs MAIDOL `TripleJ-maidol/1_MV_wedding/backend_8000/app/services/character_generator.py` (1160줄).
+
+**동일·유래 (이식 확인)**: 시스템 지시문 100% 동일. 실사 MASTER_PROMPT 96.1% 동일(difflib) — 차이는 AIDOL이 오늘 넣은 Logo/Print 3항목+Bottom 개편뿐. 2단계 파이프라인(Step A 시트 텍스트→Step B 이미지)·Step B 실사 지시문·이미지 백엔드(gpt_image_2 기본/nb_pro=gemini-3-pro-image-preview) 동일.
+
+**구조 개선(의미 동등)**: STEP1 답변 — MAIDOL=16종 하드코딩 딕셔너리(첨부 순번 "두번째 이미지" 방식), AIDOL=_build_step1_answer 동적 조립(역할 라벨 [상의 참조] 방식)+v161 텍스트-only.
+
+**AIDOL 독자 확장**: MASTER_PROMPT_CARTOON(만화 화풍 한 벌 — MAIDOL에 없음, 실사 기반 74.4%+화풍 변환·화풍 참조 규칙), use_saved_sheet 꾸미기(v223), Gemini 재시도(v224), 의상 고정(v225), 로고 복제(v226), 도안 개수·배치(v227).
+
+**MAIDOL에만 있는 것 (이식 후보)**: ① REALISTIC_OVERRIDE_BLOCK(v50) — 실사 시 AI 미화(대칭 보정·피부 리터칭·8등신화) 금지 리얼리즘 모드 ② Step A=Claude Opus 4.7(v52, Gemini 쿼터 회피 — AIDOL은 gemini-3.1-pro-preview, 오늘 503 장애 관련 시사점) ③ prompt_variant 파라미터 구조.
+
+**결론**: 실사 경로는 MAIDOL 원본을 충실히 이식(96%)한 위에 의상·로고 충실도만 보강한 상태. 만화 경로는 AIDOL 독자 제작. 회귀 위험 없음.
