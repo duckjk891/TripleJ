@@ -2665,3 +2665,13 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 ### 커밋
 `feat: v3 Wave 0 공용 컴포넌트 라이브러리 + ChartScreen 리스킨 (team-dev)` — 푸시 OFF.
+
+---
+
+## 백엔드 v224 — Gemini 일시 장애 재시도 (2026-09-01)
+
+**계기**: 대표 실사용 중 캐릭터 생성 잡 `6a967202bfbb832420cfbc22`이 3초 만에 실패 — `Gemini text API error (HTTP 503): Deadline expired ... UNAVAILABLE`. 토큰/크레딧 문제 아님(쿼터 소진=429, 키 문제=401/403), 구글 Gemini 서버 일시 과부하.
+
+**실측**: character_jobs에서 status=failed 확인, `refunded: True` — ⭐10 자동 환불 정상 동작(refund_character_job_points 원자 클레임 경로).
+
+**조치**: `app/services/character_generator.py`의 `_call_gemini_text`·`_call_gemini_image`에 재시도 도입 — 5xx/429·네트워크 오류 시 최대 3회(백오프 2s/5s), 그 외 4xx는 즉시 실패 유지. py_compile OK → rsync 배포 → restart_9004.sh(UP after 15s, /docs 200). 로컬 커밋 4803dec(push 안 함 — 대기 커밋 7개: v218~v224).
