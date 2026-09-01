@@ -2675,3 +2675,21 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **실측**: character_jobs에서 status=failed 확인, `refunded: True` — ⭐10 자동 환불 정상 동작(refund_character_job_points 원자 클레임 경로).
 
 **조치**: `app/services/character_generator.py`의 `_call_gemini_text`·`_call_gemini_image`에 재시도 도입 — 5xx/429·네트워크 오류 시 최대 3회(백오프 2s/5s), 그 외 4xx는 즉시 실패 유지. py_compile OK → rsync 배포 → restart_9004.sh(UP after 15s, /docs 200). 로컬 커밋 4803dec(push 안 함 — 대기 커밋 7개: v218~v224).
+
+---
+
+## v3.124 + 백엔드 v225 — 코디 기선택 "선택됨" 표시 + 의상 충실도 보강 (2026-09-01)
+
+**결과**: 전 항목 PASS.
+
+| 항목 | 결과 |
+|---|---|
+| [e2e] 재오픈 시 기선택 카드 최상단+테두리+"✓ 선택됨" 배지 (전체 탭) | PASS (v3124e_04_reopen_badge.png) |
+| [e2e] 첫 오픈 시 배지 없음 | PASS |
+| [api] v225 프롬프트 실생성 (cartoon/webtoon, 상·하의 참조) | PASS — job done 82s, ⭐50→40 |
+| [unit] tsc / py_compile | PASS |
+
+**"옷이 실물과 다름" 원인 보고**: 프롬프트 수정 때문이 아님(백엔드 v216 이후 무변경 실측). 원인은 ① 1990s 레트로 만화 화풍의 강한 스타일화 ② 의상 디테일이 얼굴처럼 [고정 요소]로 잠기지 않던 프롬프트 약점 ③ 프론트 "이름에서 연상" 문구의 변형 유도. → v225에서 ①제외 전부 보강: step1 상·하·신발 각각 색상/패턴/로고 위치/실루엣/기장 [고정 요소] 잠금, 화풍 변환은 질감·선화·채색만, 실사 Step B에 의상 참조 재현 지시 신설, 프론트 desc 조건부(참조 이미지 有 아이템=사진 그대로 재현).
+**검증 생성물**: 버건디 오버핏 반팔 + 라임옐로 드로스트링 반바지 정확 재현 (v3124e_sheet.png).
+**파일**: 2_housing/screens/ArtistCodyScreen.tsx(배지 UI+desc), backend app/services/character_generator.py(v225).
+**특이**: 테스트 신규계정 teamdev_v3124_* 생성(consent 키=terms/privacy/overseas/age14+version). 백엔드 커밋은 로컬만(push 대기 v218~v225).

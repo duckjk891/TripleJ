@@ -372,7 +372,18 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
 
     if (clothingItems) {
       parts.push(`【2단계 — 새 의상 적용 (최우선 명령)】 아래 의상만 정확히 입히세요:\n${clothingItems}`);
-      parts.push('각 아이템의 브랜드명·이름·옵션(핏·기장)에서 연상되는 색상·실루엣·소재·디테일을 충실하게 시각화하세요.');
+      // v3.124: 참조 이미지가 첨부되는 아이템은 제품 사진 그대로 재현하도록 명시 —
+      // 기존 "이름에서 연상해 시각화" 문구가 이미지 있는 아이템의 디자인 변형을 유도(대표 지적).
+      const hasRefImage = selectedEntries.some(
+        ([cat, it]) => ['상의', '하의', '신발'].includes(cat) && it?.image_object_name,
+      );
+      if (hasRefImage) {
+        parts.push(
+          '참조 이미지가 첨부된 아이템(상의/하의/신발)은 첨부된 제품 사진과 동일하게(색상·패턴·로고 위치·실루엣·기장·디테일) 그대로 재현하세요. 사진에 없는 디테일을 상상해서 추가하거나 바꾸지 마세요. 참조 이미지가 없는 아이템만 브랜드명·이름·옵션에서 연상되는 색상·실루엣·소재·디테일로 시각화하세요.'
+        );
+      } else {
+        parts.push('각 아이템의 브랜드명·이름·옵션(핏·기장)에서 연상되는 색상·실루엣·소재·디테일을 충실하게 시각화하세요.');
+      }
     }
 
     // 하의 강력 constraint
@@ -826,9 +837,12 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                 renderItem={({ item }) => {
                   const url = adImageUrl(item.image_object_name);
                   const isSample = item.id.startsWith('sample_');
+                  // v3.124: 기선택 아이템 시각 표시 — 정렬로 맨 앞에 오는 것만으로는
+                  // "내가 고른 것"임을 알 수 없다는 대표 피드백 → 강조 테두리 + ✓ 선택됨 배지
+                  const isPicked = item.id === pickedId;
                   return (
                     <TouchableOpacity
-                      style={styles.itemCard}
+                      style={[styles.itemCard, isPicked && styles.itemCardPicked]}
                       onPress={() => pickItem(item)}
                     >
                       <View style={styles.itemImgWrap}>
@@ -837,6 +851,12 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                         ) : (
                           <View style={[styles.itemImg, styles.itemImgFallback]}>
                             <AppText style={{ fontSize: 28 }}>?</AppText>
+                          </View>
+                        )}
+                        {isPicked && (
+                          <View style={styles.pickedBadge}>
+                            <Feather name="check" size={11} color="#fff" />
+                            <AppText style={styles.pickedBadgeText}>선택됨</AppText>
                           </View>
                         )}
                         {/* 브랜드 배지 — 이미지 좌상단에 강조 */}
@@ -914,9 +934,11 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                   renderItem={({ item }) => {
                     const url = adImageUrl(item.image_object_name);
                     const inactive = item.is_active === false;
+                    // v3.124: 위시 탭에도 동일한 기선택 표시
+                    const isPicked = item.id === pickedId;
                     return (
                       <TouchableOpacity
-                        style={[styles.itemCard, inactive && styles.itemCardInactive]}
+                        style={[styles.itemCard, isPicked && styles.itemCardPicked, inactive && styles.itemCardInactive]}
                         onPress={() => pickItem(item)}
                         disabled={inactive}
                       >
@@ -926,6 +948,12 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                           ) : (
                             <View style={[styles.itemImg, styles.itemImgFallback]}>
                               <AppText style={{ fontSize: 28 }}>?</AppText>
+                            </View>
+                          )}
+                          {isPicked && (
+                            <View style={styles.pickedBadge}>
+                              <Feather name="check" size={11} color="#fff" />
+                              <AppText style={styles.pickedBadgeText}>선택됨</AppText>
                             </View>
                           )}
                           {inactive && (
@@ -1072,6 +1100,18 @@ const styles = StyleSheet.create({
   },
   itemBrand: { color: colors.text.muted, fontSize: 11, marginTop: 2 },
   itemCardInactive: { opacity: 0.45 },
+  // v3.124: 기선택 아이템 강조 — 액센트 테두리 + 살짝 밝은 배경
+  itemCardPicked: {
+    borderWidth: 2, borderColor: colors.accent.primary,
+    backgroundColor: colors.bg.surface2,
+  },
+  pickedBadge: {
+    position: 'absolute', bottom: 6, right: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: colors.accent.primary,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
+  },
+  pickedBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   // v3.109: 판매처 링크 버튼 (아이템 카드 하단)
   itemLinkBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,

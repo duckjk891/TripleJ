@@ -1168,3 +1168,12 @@
 | R1 | 기존 창작 플로우(맵/작사/작곡) 화면 — 웹 번들에 포함·컴파일 성공(전체 tsc 0, 번들 성공) | [e2e] | PASS(간접: 전체 번들·타입 0) |
 
 > 주: R1 개별 화면 클릭 회귀는 Wave 1 이후 화면 추가 시 확대. 현재 ChartScreen 외 화면 미변경.
+
+---
+
+## v3.124/v225 (2026-09-01)
+
+1. [e2e] 기선택 배지 — Given 꾸미기 진입·상의 픽 후 재오픈 / Then 해당 카드 최상단 + 강조 테두리 + "✓ 선택됨" 배지, 첫 오픈 시 배지 없음
+2. [api] v225 프롬프트 실생성 — Given 신규계정(⭐50) / When cartoon-async(webtoon, top/bottom object_name) / Then job done·⭐10 차감·Step A/B 로그 정상 (format placeholder 오류 없음)
+3. [unit] tsc·py_compile 통과
+4. [수동/후속] 의상 충실도 체감 — 대표 재생성 시 실물 대비 색상·패턴·로고 유지 확인 (정성 판정)

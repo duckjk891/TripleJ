@@ -1906,3 +1906,16 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 - test-designer가 TESTPLAN(Wave 0) 작성 → planner 검토 → app-dev 구현 → tester 2단계 → REPORT_v3 기록 → 자동커밋(푸시 OFF).
 
 ---
+
+---
+
+## v3.124 + 백엔드 v225 — 코디 기선택 "선택됨" 표시 + 의상 충실도 프롬프트 보강 (2026-09-01)
+
+**요청**: ① 의상 선택 팝업에서 기선택 아이템(정렬 최상단)이 "내가 고른 것"임을 UI로 구별 표시. ② 옷이 실물과 다르게(디자인 변형) 생성됨 — 프롬프트 수정 여부 확인 요청.
+
+**Plan verification findings (0단계)**:
+- 프롬프트 변경 이력 실측: 백엔드 character_generator.py는 v216 미러(d564de5) 이후 프롬프트 무변경(v224는 재시도 코드만). Step A 비전 모델(gemini-3.1-pro-preview)도 v216 이전(백엔드팀 baab67f)부터 동일. 프론트는 v3.116(자유 디렉팅, 입력 시에만 추가)·v3.122(가상 꾸미기 화풍 유지 블록)만 추가 — **"프롬프트가 바뀌어서"는 아님**.
+- 대표 실측 잡: mode=cartoon, art_style=1990s retro manga, top/bottom/shoes 참조 이미지 3장 모두 첨부(parts=10). 웹툰 대비 강한 스타일화 화풍이라 변형 체감이 커진 요인.
+- 구조적 약점 발견: ① step1_answer의 아이템 지시가 "참조 이미지를 분석해 반영하라" 한 줄뿐 — 얼굴은 [고정 요소] 잠금 규칙이 있는데 의상은 없음. ② 실사 Step B 프롬프트는 의상 참조 라벨을 언급조차 안 함. ③ 프론트 desc의 "브랜드명·이름에서 연상되는 디테일을 시각화" 문구가 참조 이미지 존재 시 오히려 변형(상상) 유도.
+
+**계획**: FE(ArtistCodyScreen) 기선택 배지+테두리(전체/위시 탭), desc 문구 조건부화. BE(v225) step1 아이템 3종 [고정 요소] 잠금 문구, 만화 화풍변환규칙·Final Constraint·Step B(만화 2종/실사) "질감만 화풍 변환, 색상·패턴·로고·실루엣은 참조와 정확히 일치" 명시. 추적자: [ArtistCody]/[CharGen*].
