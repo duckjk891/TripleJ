@@ -12,7 +12,7 @@
 //   PUT    /albums/{id}/tracks/order json { track_ids } (현재 집합과 동일해야 함)
 //   PATCH  /albums/{id}/cover    multipart { cover_file? | cover_object_name? | (빈=첫곡 커버 재적용) }
 //   POST   /albums/cover/generate json { title, description?, track_ids?, gender?, image_model?, include_character? }
-//     → { cover_object_name, cover_image_url }  ※ ⭐ 과금 없음(albums.py에 포인트 로직 없음 — 무료)
+//     → { cover_object_name, cover_image_url }  ※ v221: 작업실 커버와 동일 정책 — ⭐cover 선차감(402)·image 디렉터 피로 게이트(429)·실패 환불
 import { Platform } from 'react-native';
 import api, { BACKEND_BASE_URL } from './api';
 
@@ -198,7 +198,7 @@ export async function updateAlbumCover(
   return res.data;
 }
 
-/** POST /albums/cover/generate — AI 커버 생성(⭐ 과금 없음 — 서버에 포인트 로직 없음).
+/** POST /albums/cover/generate — AI 커버 생성(v221: ⭐cover 선차감 + image 디렉터 피로 게이트 — 작업실 커버와 동일 정책).
  * 반환된 cover_object_name을 updateAlbumCover({ coverObjectName }) 또는 createAlbum(coverSource=ai)에 전달. */
 export async function generateAlbumCover(params: {
   title: string;

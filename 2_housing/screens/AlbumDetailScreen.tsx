@@ -1,9 +1,9 @@
 // [AlbumDetailScreen] v3.96(파리티 Wave 6, A-2): 앨범 상세 열람 + 내 앨범 관리.
 // 열람: 커버·제목·아티스트·설명·트랙 목록·전체 재생 (비회원 포함 공개 앨범 누구나).
 // 관리(소유자만): 정보 수정(제목/설명/공개) · 트랙 추가(내 발매 트랙만 — 서버 규칙) · 제거 ·
-//   순서 위/아래 이동 · 커버 변경(업로드/AI 생성(무료)/첫 곡 자동) · 앨범 삭제.
+//   순서 위/아래 이동 · 커버 변경(업로드/AI 생성(⭐cover·피로 게이트 — v3.119)/첫 곡 자동) · 앨범 삭제.
 // 계약: services/albumService.ts 주석 참조(backend albums.py v69). 팝업은 전부 앱 내(showAlert/Modal).
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   View, ScrollView, Image, TouchableOpacity, ActivityIndicator,
@@ -22,6 +22,12 @@ import {
   Album, getAlbum, updateAlbum, deleteAlbum, addAlbumTracks, removeAlbumTrack,
   reorderAlbumTracks, updateAlbumCover, generateAlbumCover, getMyTracksForAlbum, albumCoverUri,
 } from '../services/albumService';
+// v3.119: 앨범 AI 커버 = 작업실 커버와 동일 정책(⭐cover 소모 + image 디렉터 피로 게이트)
+import api from '../services/api';
+import { usePointsStore } from '../stores/pointsStore';
+import { getFatigueStatus, isDirectorFatigued } from '../services/fatigueService';
+import { showFatigueCooldownDialog } from '../utils/fatigueGate';
+import { FatigueStatus } from '../types';
 
 // 서버 제약(albums.py): 커버 png/jpg/jpeg/webp ≤10MB
 const COVER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
@@ -69,6 +75,21 @@ export default function AlbumDetailScreen() {
 
   const isOwner = !!user && !!album && String(album.owner_id) === String(user.id);
   const tracks = album?.tracks || [];
+
+  // v3.119: AI 커버 ⭐ 비용 — /points/costs의 cover 실값 (기존 화면별 직조회 관행, 실패 시 5 폴백)
+  const [coverCost, setCoverCost] = useState(5);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        if (alive && res.data?.costs?.cover != null) setCoverCost(res.data.costs.cover);
+      } catch (err: any) {
+        console.error('[AlbumDetail] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const fetchAlbum = useCallback(async () => {
     try {
@@ -273,37 +294,78 @@ export default function AlbumDetailScreen() {
     }
   };
 
-  // AI 커버 — 서버 POST /albums/cover/generate 존재, ⭐ 과금 없음(무료). 생성 후 커버에 즉시 적용.
+  // v3.119: 앨범 AI 커버 = 작업실 커버(v220/v221)와 동일 정책 — ⭐cover 소모 + image 디렉터 피로 게이트.
+  // 흐름: 사전 게이트(무과금) → POST /albums/cover/generate(서버 429/402/과금) → 적용 → fetchBalance.
+  const runAiCover = async () => {
+    if (!album || aiCoverLoading) return;
+    // 사전 게이트 — 서버 429(⭐ 차감 전)와 동일 다이얼로그. 해제(스킵) 시 진행.
+    try {
+      const fatigueStatus = await getFatigueStatus('image');
+      const remain = Math.max(0, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0));
+      if (remain > 0) {
+        console.log('[AlbumDetail] [fatigue:image] 사전 게이트 — 남은', remain, '초');
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: remain,
+          director: 'image',
+          onCleared: () => runAiCover(),
+        });
+        return;
+      }
+    } catch (err: any) {
+      // 조회 실패는 게이트 오픈 — 서버 429가 최종 방어 (아래 catch에서 동일 다이얼로그)
+      console.warn('[AlbumDetail] [fatigue:image] 상태 조회 실패:', err?.response?.status, err?.message);
+    }
+    setAiCoverLoading(true);
+    try {
+      const gen = await generateAlbumCover({
+        title: album.title,
+        description: album.description || undefined,
+        trackIds: tracks.map((t: any) => String(t.id)),
+      });
+      if (!gen?.cover_object_name) throw new Error('cover_object_name 없음');
+      const updated = await updateAlbumCover(album.id, { coverObjectName: gen.cover_object_name });
+      setAlbum(updated);
+      usePointsStore.getState().fetchBalance(); // ⭐ 차감 반영
+      console.info('[AlbumDetail] AI 커버 적용 완료', { albumId: album.id, cost: coverCost });
+    } catch (err: any) {
+      const status = err?.response?.status;
+      console.error('[AlbumDetail] AI 커버 실패', { albumId: album.id, status });
+      if (isDirectorFatigued(err)) {
+        // 서버 429 — 무과금·기존 커버 유지. 사전 게이트와 동일 다이얼로그.
+        const gateRemain = Math.max(0, Math.floor(err?.response?.data?.cooldown_remaining_sec ?? 0));
+        console.log('[AlbumDetail] [fatigue:image] 429 게이트 — 남은', gateRemain, '초 (과금 없음)');
+        let fatigueStatus: FatigueStatus | null = null;
+        try {
+          fatigueStatus = await getFatigueStatus('image');
+        } catch (statusErr: any) {
+          console.warn('[AlbumDetail] [fatigue:image] 상태 조회 실패:', statusErr?.response?.status);
+        }
+        showFatigueCooldownDialog({
+          status: fatigueStatus,
+          remainingSec: Math.max(gateRemain, Math.floor(fatigueStatus?.cooldown_remaining_sec ?? 0)),
+          director: 'image',
+          onCleared: () => runAiCover(),
+        });
+      } else if (status === 402) {
+        // ⭐ 잔액 부족 — 서버 안내(필요 수량 포함) 우선
+        showAlert('별이 부족해요', err?.response?.data?.error || `AI 커버 생성에는 ⭐${coverCost}개가 필요해요.`);
+      } else {
+        showAlert('오류', err?.response?.data?.error || 'AI 커버 생성에 실패했어요.');
+      }
+    } finally {
+      setAiCoverLoading(false);
+    }
+  };
+
   const confirmAiCover = () => {
     if (!album) return;
     showAlert(
       'AI 커버 생성',
-      '앨범 제목과 수록곡 분위기로 AI가 커버를 만들어 바로 적용해요. (무료 · 최대 1~2분 소요)',
+      `이미지 디렉터가 새 커버를 만들어드려요. ⭐${coverCost}이 소모돼요.`,
       [
         { text: '취소', style: 'cancel' },
-        {
-          text: '생성하기',
-          onPress: async () => {
-            if (aiCoverLoading) return;
-            setAiCoverLoading(true);
-            try {
-              const gen = await generateAlbumCover({
-                title: album.title,
-                description: album.description || undefined,
-                trackIds: tracks.map((t: any) => String(t.id)),
-              });
-              if (!gen?.cover_object_name) throw new Error('cover_object_name 없음');
-              const updated = await updateAlbumCover(album.id, { coverObjectName: gen.cover_object_name });
-              setAlbum(updated);
-              console.info('[AlbumDetail] AI 커버 적용 완료', { albumId: album.id });
-            } catch (err: any) {
-              console.error('[AlbumDetail] AI 커버 실패', { albumId: album.id, status: err?.response?.status });
-              showAlert('오류', err?.response?.data?.error || 'AI 커버 생성에 실패했어요.');
-            } finally {
-              setAiCoverLoading(false);
-            }
-          },
-        },
+        { text: '생성하기', onPress: () => { runAiCover(); } },
       ]
     );
   };
@@ -326,7 +388,7 @@ export default function AlbumDetailScreen() {
   const openCoverMenu = () => {
     showAlert('앨범 커버 변경', '커버를 어떻게 바꿀까요?', [
       { text: '이미지 업로드', onPress: pickAndUploadCover },
-      { text: 'AI 커버 생성 (무료)', onPress: confirmAiCover },
+      { text: `AI 커버 생성 (⭐${coverCost})`, onPress: confirmAiCover },
       { text: '첫 곡 커버로 자동', onPress: resetCoverAuto },
       { text: '취소', style: 'cancel' },
     ]);
