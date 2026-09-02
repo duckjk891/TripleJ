@@ -1193,3 +1193,12 @@
 1. [unit] py_compile·템플릿 format·tsc
 2. [api] 동일 실패 케이스 재생성 — Given 신규계정 / When 나선 반바지(대표와 동일 object)+manga90 / Then 나선1+별표2가 한쪽 다리에만, 반복 패턴 없음, 고무줄 허리
 3. [회귀] 상의 로고(PMO 데이지) 재현 유지, 레깅스 금지 규칙 유지(참조 無 분기 원문 보존)
+
+---
+
+## v228 (2026-09-02)
+
+1. [unit] py_compile·템플릿 format·override 블록 brace-free 검증
+2. [api] 만화 경로 — Given 신규계정 / When cartoon-async(webtoon+상의 참조) / Then 서버 로그 "calling Claude ... Claude text ok" + job done
+3. [api] 실사 경로 회귀 — Given 신규계정 / When generate-sheet-async(텍스트-only+상의 참조) / Then job done·⭐10 차감
+4. [수동/후속] 실사+사진 첨부 시 REALISTIC OVERRIDE 체감(미화 억제) — 대표 실사용 확인

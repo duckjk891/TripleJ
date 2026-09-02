@@ -1939,3 +1939,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings (실측)**: 대표 잡 6a9680d0(manga90) — 참조 하의(블랙 버뮤다, 한쪽 다리 큰 나선1+별표2)의 프린트가 "안 나온" 게 아니라 **양쪽 다리 다수 반복 패턴으로 왜곡**. 원인 3중: ① 프롬프트 전 단계에 도안 **개수·배치** 규칙 부재(단일 도안→패턴화 방지 없음) ② 시트 템플릿 하의 칸이 "Skirt:"(치마 편향, Pleats 필드) ③ FE "하의 특별 지시"가 종류만 강조("일반 데님 바지" 등 제네릭 유도)·프린트 무언급, 최종 점검에도 프린트 항목 없음.
 
 **계획**: BE(v227) 템플릿 "Bottom (pants/shorts/skirt)"로 개칭+Logo/Print에 COUNT·배치("단일 도안 반복 패턴화 금지") 명시, step1 하의·[도안 개수·배치 규칙] 블록·Final Constraint·Step B 3종에 동일 규칙(상·하·신발 공통). FE(v3.126) 하의 특별 지시를 참조 이미지 인지형으로 분기(참조 有=제품 그대로+개수·배치, 無=기존 종류 블록 유지), 최종 점검에 프린트 개수·위치 확인 추가.
+
+---
+
+## 백엔드 v228 — MAIDOL 2건 이식: REALISTIC OVERRIDE + Step A Claude (2026-09-02)
+
+**요청**: 비교 분석에서 제안한 MAIDOL 이식 후보 2가지("위 2가지 이식해줘").
+
+**Plan verification findings**: AIDOL config.py에 anthropic_api_key 필드·requirements에 anthropic·서버 venv anthropic 0.96.0·.env 키 모두 기존재 — 인프라 작업 불요. MAIDOL v50 블록은 웨딩MV 맥락("documentary candid, 연예인 인상=실패")이라 §4만 AIDOL(아이돌 프로필) 톤으로 조정 필요.
+
+**계획**: ① REALISTIC_OVERRIDE_BLOCK+_REALISTIC_STEP1_SUFFIX 이식 — 실사 경로 **사진 첨부 시 상시 적용**(§1~3·§5 원본 그대로, §4만 "촬영 퀄리티는 프로필급 허용·인물 미화만 금지"로 조정). 텍스트-only는 사진 부재로 미적용. ② Step A 텍스트 모델 디스패처 _call_text_backend — Claude(claude-opus-4-7) 우선, 실패/키 미설정 시 Gemini 폴백(v224 재시도 내장). MAIDOL 대비 개선: 역할 라벨 텍스트 파트를 Claude content에 보존(라벨-이미지 대응 유지), 실사+만화 양 경로 적용. 추적자: [CharGen] Step A 로그.

@@ -2741,3 +2741,18 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **MAIDOL에만 있는 것 (이식 후보)**: ① REALISTIC_OVERRIDE_BLOCK(v50) — 실사 시 AI 미화(대칭 보정·피부 리터칭·8등신화) 금지 리얼리즘 모드 ② Step A=Claude Opus 4.7(v52, Gemini 쿼터 회피 — AIDOL은 gemini-3.1-pro-preview, 오늘 503 장애 관련 시사점) ③ prompt_variant 파라미터 구조.
 
 **결론**: 실사 경로는 MAIDOL 원본을 충실히 이식(96%)한 위에 의상·로고 충실도만 보강한 상태. 만화 경로는 AIDOL 독자 제작. 회귀 위험 없음.
+
+---
+
+## 백엔드 v228 — MAIDOL 이식 2건 (2026-09-02)
+
+**결과**: 전 항목 PASS.
+
+| 항목 | 결과 |
+|---|---|
+| [unit] 컴파일·템플릿 format | PASS |
+| [api] 만화 생성 — Claude Step A | PASS — 로그 "calling Claude text model=claude-opus-4-7 → Claude text ok elapsed_s=57.4", 시트 스펙 9,599자, job done |
+| [api] 실사 생성(텍스트-only) 회귀 | PASS — job done, ⭐50→40 |
+
+**이식 내용**: ① REALISTIC OVERRIDE(미화·이상화 금지) — 실사+사진 경로 상시 적용, §4 출력 톤만 AIDOL 조정(촬영 퀄리티 프로필급 허용, 인물 미화만 금지). ② Step A = Claude 우선+Gemini 폴백 디스패처(실사·만화 공통) — Gemini 503 같은 장애 시에도 이중 안전망(Claude 실패→Gemini v224 재시도).
+**특이**: Claude Step A 소요 ~57s (Gemini 대비 느리지만 품질 우선·비동기 잡이라 UX 영향 없음). anthropic 인프라(패키지·키·config)는 기존재라 .env 변경 없음. 실사+사진 미화 억제 체감은 대표 실사용 시 확인 예정.
