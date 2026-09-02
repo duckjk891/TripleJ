@@ -12,7 +12,10 @@ import asyncio
 import base64
 import logging
 import re
+import time
+from typing import Optional
 
+import anthropic
 import httpx
 
 from ..config import settings
@@ -381,6 +384,59 @@ Bracelet:
 
 [Final Constraint]
 -"""
+
+
+# ── v228 [MAIDOL v50 이식] REALISTIC OVERRIDE — 실사 경로 상시 적용 ───────────
+#
+# MAIDOL(1_MV_wedding backend_8000)의 REALISTIC_OVERRIDE_BLOCK 이식.
+# AI 의 디폴트 idealization (대칭 미화, 매끄러운 피부, 모델급 비율) 거부.
+# 원본과 차이: §4 출력 톤만 AIDOL(아이돌 프로필) 맥락으로 조정 —
+# "documentary candid / 연예인 인상=실패" 대신 "촬영 퀄리티는 프로필급 허용,
+# 인물 자체의 미화만 금지". §1~3·§5 는 원본 그대로.
+REALISTIC_OVERRIDE_BLOCK = r"""
+
+==================================================
+★★★ [REALISTIC OVERRIDE — 우선순위 최고] ★★★
+==================================================
+
+이 시트는 미화·이상화 없이 사진 속 실제 사람의 외모를 그대로 표현해야 한다.
+다음 규칙은 위의 모든 STEP 보다 우선 적용한다:
+
+1. AI 의 디폴트 idealization 거부:
+   - 대칭 보정 금지, 매끄러운 피부 미화 금지, 큰 눈·작은 얼굴 보정 금지
+   - 어깨/허리/다리 비율 미화 금지 (모래시계 체형 강제 금지)
+   - 모델급 sharp jawline / V-line / 8등신 보정 금지
+
+2. 사진 속 실제 특징 그대로 살림:
+   - 비대칭 (눈/입꼬리/귀 높이 등) 그대로 반영
+   - 피부 결: 자연스러운 모공·미세 트러블·홍조 가능, 매끈한 retouch 금지
+   - 일반인 비율 (어깨 폭, 허리/엉덩이 비율, 다리 길이) 사진 그대로
+   - 얼굴 형태(이마/광대/턱) 사진 그대로 — 표준화·세련화 금지
+
+3. 항목별 강조:
+   - [Face > Skin]: 자연스러운 피부결 (모공 보임, 균일하지 않은 톤 OK)
+   - [Face > Eyes/Nose/Lips]: 사진 속 실제 형태 정확 반영
+   - [Face > Shape/Jaw/Chin]: 광대/턱 라인 사진 그대로 — 깎거나 다듬지 X
+   - [Body > Build/Proportion/Shoulder/Waist/Hip]: 사진 비율 그대로
+   - [Makeup]: 사진 속 메이크업 그대로. 추가 미화 메이크업 금지.
+
+4. 출력 톤 (AIDOL 조정):
+   - 조명·구도·선명도 등 촬영 퀄리티는 깔끔한 프로필 사진 수준을 유지해도 좋다
+   - 단, 인물 자체(얼굴 형태·비율·피부·체형)를 사진과 다르게 다듬는 것은 실패
+   - 사진 인물을 아는 사람이 보면 즉시 같은 사람임을 알아보는 결과 = 성공
+
+5. [Final Constraint] 갱신:
+   - 이상화·연예인화·모델화 → 실패
+   - 사진 인물과 다른 "더 예쁜·잘생긴" 결과 → 실패
+   - 사진 인물 그대로 → 성공
+"""
+
+# v228 [MAIDOL v50 이식] — 사진 첨부 실사 경로의 STEP 1 answer 끝에 붙는 강화 안내.
+_REALISTIC_STEP1_SUFFIX = (
+    " ★★ realistic: 사진 분석 시 미화·이상화 없이 인물의 실제 외모를 그대로 반영하라. "
+    "비대칭, 잡티, 모공, 일반인 비율 등 사진의 정직한 정보를 모두 살려라. "
+    "사진 인물보다 \"더 예쁜/잘생긴\" 결과를 만들지 말 것."
+)
 
 
 # ── Master Prompt (CARTOON / 그림·만화 화풍) ──────────────────────────────────
@@ -964,6 +1020,140 @@ CHARACTER_SYSTEM_INSTRUCTION = (
 )
 
 
+# ── v228 [MAIDOL v52 이식] Step A: Claude 우선 + Gemini 폴백 ──────────────────
+
+_CLAUDE_TEXT_MODEL = "claude-opus-4-7"
+_claude_text_client: Optional[anthropic.AsyncAnthropic] = None
+
+
+def _get_claude_text_client() -> anthropic.AsyncAnthropic:
+    global _claude_text_client
+    if _claude_text_client is None:
+        _claude_text_client = anthropic.AsyncAnthropic(
+            api_key=settings.anthropic_api_key
+        )
+    return _claude_text_client
+
+
+def _sniff_image_media_type(data_b64: str, fallback: str = "image/jpeg") -> str:
+    """base64 첫 바이트의 magic 으로 실제 media_type 추론.
+
+    Claude API 는 media_type ↔ 실제 데이터 mismatch 시 400 거부 (Gemini 는 관대).
+    """
+    try:
+        head = base64.b64decode(data_b64[:64] + "===", validate=False)[:16]
+    except Exception:  # noqa: BLE001
+        return fallback
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return fallback
+
+
+def _gemini_parts_to_claude_content(prompt: str, image_parts: list) -> list:
+    """Gemini parts(라벨 텍스트+inlineData 혼합) → Claude messages content.
+
+    역할 라벨 텍스트 파트("[상의 참조]:" 등)는 이미지 앞의 text block 으로
+    그대로 유지해 라벨-이미지 대응이 Claude 에서도 성립하게 한다.
+    """
+    content: list = []
+    for part in image_parts or []:
+        if not isinstance(part, dict):
+            continue
+        if part.get("text"):
+            content.append({"type": "text", "text": part["text"]})
+            continue
+        inline = part.get("inlineData")
+        if not inline:
+            continue
+        declared = inline.get("mimeType") or "image/jpeg"
+        data_b64 = inline.get("data") or ""
+        if not data_b64:
+            continue
+        media_type = _sniff_image_media_type(data_b64, fallback=declared)
+        if media_type != declared:
+            logger.info(
+                "[CharGen] image media_type corrected declared=%s actual=%s",
+                declared, media_type,
+            )
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data_b64,
+            },
+        })
+    content.append({"type": "text", "text": prompt})
+    return content
+
+
+async def _call_claude_text(prompt: str, image_parts: list) -> str:
+    """Step A (v228, MAIDOL v52 이식): Claude 로 캐릭터 시트 prompt 생성.
+
+    `_call_gemini_text` 와 시그니처/반환 형식 호환.
+    """
+    content = _gemini_parts_to_claude_content(prompt, image_parts)
+    logger.info(
+        "[CharGen] Step A: calling Claude text model=%s (parts=%d)",
+        _CLAUDE_TEXT_MODEL, len(image_parts or []),
+    )
+    start = time.monotonic()
+    try:
+        client = _get_claude_text_client()
+        msg = await client.messages.create(
+            model=_CLAUDE_TEXT_MODEL,
+            max_tokens=8192,
+            system=CHARACTER_SYSTEM_INSTRUCTION,
+            messages=[{"role": "user", "content": content}],
+        )
+    except anthropic.APIStatusError as e:
+        logger.warning(
+            "[CharGen] Step A: Claude error status=%s elapsed_s=%.1f",
+            getattr(e, "status_code", "?"), time.monotonic() - start,
+        )
+        raise ValueError(
+            "Claude text API error (HTTP {}): {}".format(
+                getattr(e, "status_code", "?"), str(e)[:300]
+            )
+        )
+    logger.info(
+        "[CharGen] Step A: Claude text ok elapsed_s=%.1f", time.monotonic() - start
+    )
+    text_chunks = [
+        block.text for block in (msg.content or [])
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    ]
+    if not text_chunks:
+        raise ValueError("No text in Claude response")
+    return "".join(text_chunks)
+
+
+async def _call_text_backend(prompt: str, image_parts: list) -> str:
+    """Step A 텍스트 모델 디스패처 — Claude 우선, 실패/키 미설정 시 Gemini 폴백.
+
+    MAIDOL 은 Gemini 쿼터 이슈로 Step A 를 Claude 로 전환(v52)했고, AIDOL 도
+    2026-09-01 Gemini 503 실사고가 있어 동일 구조를 이식하되 폴백을 남긴다
+    (Gemini 경로는 v224 재시도 내장).
+    """
+    if settings.anthropic_api_key:
+        try:
+            return await _call_claude_text(prompt, image_parts)
+        except Exception as e:  # noqa: BLE001 — 어떤 실패든 Gemini 로 폴백
+            logger.warning(
+                "[CharGen] Step A: Claude failed — falling back to Gemini: %s",
+                str(e)[:200],
+            )
+    else:
+        logger.info("[CharGen] Step A: no anthropic key — using Gemini")
+    return await _call_gemini_text(prompt, image_parts)
+
+
 async def _call_gemini_text(prompt: str, image_parts: list) -> str:
     """Step A: Call Gemini text model to generate a character sheet prompt."""
     payload = {
@@ -1179,16 +1369,23 @@ async def generate_character_sheet(
     )
 
     # ── Step A: Generate character sheet prompt via text model ──────────────
+    # v228 [MAIDOL v50 이식] — 실사 경로 상시 REALISTIC OVERRIDE:
+    # 사진 첨부 시 step1 강화 suffix + 마스터 끝 override block (미화·이상화 금지).
+    if has_photo:
+        step1_answer = step1_answer + _REALISTIC_STEP1_SUFFIX
+    master = MASTER_PROMPT.format(step1_answer=step1_answer)
+    if has_photo:
+        master = master + REALISTIC_OVERRIDE_BLOCK
     step_a_prompt = (
         "아래 마스터 프롬프트의 절차를 따라 캐릭터 시트 프롬프트를 생성하라.\n"
         "STEP 1, STEP 2에는 이미 사용자 답변이 포함되어 있으므로 "
         "질문 단계를 건너뛰고 바로 STEP 4부터 진행하여 "
         "최종 캐릭터 시트 프롬프트를 코드블록으로 출력하라.\n\n"
-        + MASTER_PROMPT.format(step1_answer=step1_answer)
+        + master
     )
 
-    logger.info("Step A: Generating character sheet prompt via Gemini text model...")
-    sheet_prompt_text = await _call_gemini_text(step_a_prompt, image_parts)
+    logger.info("Step A: Generating character sheet prompt via text backend...")
+    sheet_prompt_text = await _call_text_backend(step_a_prompt, image_parts)
     sheet_prompt_text = _extract_code_block(sheet_prompt_text)
     logger.info(
         "Step A complete. Generated prompt length: %d chars", len(sheet_prompt_text)
@@ -1327,9 +1524,10 @@ async def generate_character_sheet_cartoon(
         )
     )
 
-    logger.info("[CharGenCartoon] Step A: generating prompt via Gemini text model...")
+    logger.info("[CharGenCartoon] Step A: generating prompt via text backend...")
     try:
-        sheet_prompt_text = await _call_gemini_text(step_a_prompt, image_parts)
+        # v228 — Claude 우선 + Gemini 폴백 (실사와 동일 디스패처).
+        sheet_prompt_text = await _call_text_backend(step_a_prompt, image_parts)
     except Exception as e:
         logger.error("[CharGenCartoon] Step A failed: %s", str(e)[:200])
         raise
