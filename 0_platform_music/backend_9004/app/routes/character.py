@@ -564,7 +564,12 @@ async def upload_original_photo(
 
     # Permanent path. Extension is preserved from the upload so downstream
     # consumers can sniff content correctly.
-    object_name = "characters/{}/original{}".format(user_id, ext)
+    # v229 (B-13): 업로드마다 고유 파일명 — 기존 고정 경로(original.{ext})는
+    # 아티스트가 여러 명일 때 서로의 원본 사진을 덮어썼다. 문서 연결은
+    # /save 의 original_photo_object_name 전송으로만 이뤄진다 (cid 단위 영속).
+    object_name = "characters/{}/original_{}{}".format(
+        user_id, uuid_lib.uuid4().hex[:8], ext
+    )
 
     minio_client = get_minio()
     try:
@@ -582,23 +587,14 @@ async def upload_original_photo(
             content={"error": "이미지 업로드에 실패했습니다."},
         )
 
-    # Upsert characters.original_photo_object_name. We deliberately do NOT
-    # require a previously-saved character — the user can upload an original
-    # photo before saving the sheet, or re-upload later to replace it.
-    mongo = get_mongo()
-    await mongo.characters.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "user_id": user_id,
-                "original_photo_object_name": object_name,
-                "updated_at": datetime.utcnow(),
-            },
-            "$setOnInsert": {
-                "created_at": datetime.utcnow(),
-            },
-        },
-        upsert=True,
+    # v229 (B-13): characters 무cid upsert 제거 — 다중 아티스트(v212) 체제에서
+    # {"user_id"} 매칭 업서트는 ① cid 없는 유령 문서를 계속 생성하고
+    # ② 임의 아티스트 문서를 잘못 갱신할 수 있었다(2026-08-31 실측).
+    # 문서 연결은 FE 가 /save 에 original_photo_object_name 을 보내는 경로가
+    # 유일한 정본이다. 여기서는 스토리지 업로드만 수행한다.
+    logger.info(
+        "[character] original photo uploaded (no doc upsert — v229 B-13) user=%s obj=%s bytes=%d",
+        user_id[:8], object_name, len(contents),
     )
 
     return {

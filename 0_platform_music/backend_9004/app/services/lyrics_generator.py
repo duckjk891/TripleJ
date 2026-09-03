@@ -310,6 +310,9 @@ def _build_user_message(
     duration_minutes: int, duet: bool,
     duet_main_vocal_style: str, duet_sub_vocal_style: str,
     language: str,
+    structure: str = None,
+    english_ratio: int = None,
+    has_rap: bool = None,
 ) -> str:
     """Build user message for lyrics generation (shared by OpenAI and Claude paths)."""
     user_message = f"곡 설명: {prompt}"
@@ -324,13 +327,35 @@ def _build_user_message(
     else:
         user_message += "\n한국어로 가사를 작성해주세요."
 
+    # v229 (B-12) — 4·5분 분량 가이드 추가 (기존 1~3 유지)
     duration_guide = {
         1: "약 1분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 1개 + Chorus + Outro.",
         2: "약 2분 분량의 가사를 작성해주세요. 최소 구성: Intro + Verse 2개 + Chorus 반복 + Outro. 가사를 충분히 길게 작성해주세요.",
         3: "약 3분 분량의 충분히 긴 가사를 작성해주세요. 최소 구성: Intro + Verse 3개 이상 + Pre-Chorus + Chorus 반복 + Bridge + Outro. 각 섹션의 가사를 3~4줄로 충분히 작성해주세요.",
+        4: "약 4분 분량의 긴 가사를 작성해주세요. 최소 구성: Intro + Verse 3개 + Pre-Chorus + Chorus 3회 반복 + Bridge + Outro. 각 섹션 4줄 이상으로 풍성하게 작성해주세요.",
+        5: "약 5분 분량의 매우 긴 가사를 작성해주세요. 최소 구성: Intro + Verse 4개 + Pre-Chorus + Chorus 3회 이상 반복 + Bridge + Final Chorus + Outro. 각 섹션 4줄 이상, 전체적으로 서사가 전개되도록 작성해주세요.",
     }
     guide = duration_guide.get(duration_minutes, duration_guide[2])
     user_message += f"\n{guide}"
+
+    # v229 (B-12) — 곡 구조 강제: 클라이언트가 Suno 태그 시퀀스를 지정하면
+    # 분량 가이드의 "최소 구성"보다 우선해 그 순서를 그대로 따르게 한다.
+    if structure:
+        user_message += (
+            f"\n곡 구조는 반드시 다음 섹션 순서를 그대로 따라주세요 (위 최소 구성보다 우선): {structure}"
+        )
+
+    # v229 (B-12) — 랩 파트 포함
+    if has_rap:
+        user_message += "\n랩 파트를 한 섹션 이상 포함해주세요 ([Verse: rap flow] 태그 활용, 라임과 리듬감 있는 가사로)."
+
+    # v229 (B-12) — 한/영 혼합 비율 (0=한국어만, 100=영어만은 language 필드가 담당;
+    # 중간값일 때만 혼합 지시 문장 주입)
+    if english_ratio is not None and 0 < english_ratio < 100:
+        user_message += (
+            f"\n가사의 약 {english_ratio}%를 영어 표현으로 자연스럽게 섞어주세요"
+            " (후렴 후크나 감탄 표현 위주, 나머지는 한국어)."
+        )
 
     if duet and (duet_main_vocal_style or duet_sub_vocal_style):
         user_message += "\n\n듀엣 보컬 가이드:"
@@ -347,6 +372,9 @@ async def _generate_lyrics_openai(
     duration_minutes: int, duet: bool,
     duet_main_vocal_style: str, duet_sub_vocal_style: str,
     language: str,
+    structure: str = None,
+    english_ratio: int = None,
+    has_rap: bool = None,
     model_name: str = None,
 ) -> dict:
     """Generate lyrics using OpenAI ChatGPT."""
@@ -357,6 +385,7 @@ async def _generate_lyrics_openai(
     user_message = _build_user_message(
         prompt, genre, mood, style, duration_minutes, duet,
         duet_main_vocal_style, duet_sub_vocal_style, language,
+        structure=structure, english_ratio=english_ratio, has_rap=has_rap,
     )
 
     logger.info(
@@ -416,6 +445,9 @@ async def _generate_lyrics_claude(
     duration_minutes: int, duet: bool,
     duet_main_vocal_style: str, duet_sub_vocal_style: str,
     language: str,
+    structure: str = None,
+    english_ratio: int = None,
+    has_rap: bool = None,
     model_name: str = "claude-opus-4-6",
 ) -> dict:
     """Generate lyrics using Anthropic Claude."""
@@ -426,6 +458,7 @@ async def _generate_lyrics_claude(
     user_message = _build_user_message(
         prompt, genre, mood, style, duration_minutes, duet,
         duet_main_vocal_style, duet_sub_vocal_style, language,
+        structure=structure, english_ratio=english_ratio, has_rap=has_rap,
     )
 
     # v77 — 단일 호출로 title+lyrics+categories 를 JSON 한 번에 산출.
@@ -480,6 +513,9 @@ async def generate_lyrics(
     duet_sub_vocal_style: str = None,
     language: str = "ko",
     models: list = None,
+    structure: str = None,
+    english_ratio: int = None,
+    has_rap: bool = None,
 ) -> dict:
     """
     Generate lyrics from a user prompt.
@@ -504,6 +540,9 @@ async def generate_lyrics(
         duet_main_vocal_style=duet_main_vocal_style,
         duet_sub_vocal_style=duet_sub_vocal_style,
         language=language,
+        structure=structure,
+        english_ratio=english_ratio,
+        has_rap=has_rap,
     )
 
     # Default behavior: use existing OpenAI model (backward compatible)

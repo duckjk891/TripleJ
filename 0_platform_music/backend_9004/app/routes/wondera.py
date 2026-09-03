@@ -11,7 +11,26 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/wondera", tags=["Wondera"])
+# v229 (B-7): 디렉터당 단일 모델 정책(대표 확정 2026-09-03) — Wondera 비활성.
+# 이 경로는 ⭐과금·피로 게이트가 없는 과금 사각이기도 해서, 재사용 결정 전까지
+# 라우터 전체를 503으로 차단한다 (코드·계약 보존 — 플래그만 되돌리면 복원).
+WONDERA_ENABLED = False
+
+from fastapi import HTTPException  # noqa: E402 — 게이트 전용 (기존 import 순서 보존)
+
+
+async def _wondera_gate():
+    if not WONDERA_ENABLED:
+        logger.warning("[wondera] blocked — WONDERA_ENABLED=False (B-7 단일 모델 정책)")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "wondera_disabled", "message": "현재 사용할 수 없는 작곡 모델입니다."},
+        )
+
+
+router = APIRouter(
+    prefix="/api/wondera", tags=["Wondera"], dependencies=[Depends(_wondera_gate)]
+)
 
 WONDERA_API_BASE = "https://api.wondera.ai/v1"
 

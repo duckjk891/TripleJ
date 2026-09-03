@@ -44,12 +44,18 @@ class LyricsRequest(BaseModel):
     genre: Optional[str] = None
     mood: Optional[str] = None
     style: Optional[str] = None
-    duration_minutes: Optional[int] = 2  # 기본 2분
+    duration_minutes: Optional[int] = 2  # v229(B-12): 1~5 지원 (기존 1~3)
     duet: Optional[bool] = False
     duet_main_vocal_style: Optional[str] = None
     duet_sub_vocal_style: Optional[str] = None
     language: Optional[str] = "ko"
     models: Optional[List[str]] = None  # e.g. ["gpt-4o-mini", "claude-opus-4-6"]
+    # ── v229 (B-12) 작사 구조화 필드 — FE buildLyricsRequest가 prompt 문장 대신 전송 ──
+    structure: Optional[str] = None       # Suno 섹션 태그 시퀀스 (예: "[Intro] - [Verse 1] - ...")
+    english_ratio: Optional[int] = None   # 0~100 — 중간값일 때만 혼합 지시 주입
+    has_rap: Optional[bool] = None        # 랩 파트 1섹션 이상 포함
+    # v229 (B-2) — true면 생성 즉시 가사 자산으로 저장하고 lyrics_id 반환
+    save: Optional[bool] = None
 
 
 class LyricsSourceSnapshot(BaseModel):
@@ -454,10 +460,25 @@ async def generate_lyrics_endpoint(
             duet_sub_vocal_style=body.duet_sub_vocal_style,
             language=body.language or "ko",
             models=body.models,
+            # v229 (B-12) — 구조화 필드 관통
+            structure=(body.structure or "").strip() or None,
+            english_ratio=body.english_ratio,
+            has_rap=body.has_rap,
         )
         # v220 — 작사 완성 훅: lyricist 카운트 +1 + 사다리 쿨다운 시작 (best-effort)
         from ..services.fatigue_service import on_generation_completed
         await on_generation_completed(user_id, director="lyricist")
+        # v229 (B-2) — save 옵션: 생성 즉시 가사 자산 저장 (best-effort, 실패해도 응답 유지)
+        if body.save and isinstance(result, dict) and result.get("lyrics"):
+            from .lyrics_assets import save_lyrics_asset
+            saved_id = await save_lyrics_asset(
+                user_id,
+                title=result.get("title") or "",
+                content=result.get("lyrics") or "",
+                genre=body.genre, mood=body.mood, source="ai",
+            )
+            if saved_id:
+                result["lyrics_id"] = saved_id
         return result
     except Exception as e:
         logger.exception("[star-econ] lyrics failed user=%s ref=%s (refunding)", user_id[:8], point_ref)

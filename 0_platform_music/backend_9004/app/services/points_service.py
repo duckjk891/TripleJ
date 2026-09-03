@@ -130,6 +130,49 @@ async def award_point(user_id: str, action: str, track_id: str, daily_cap: int =
         return False
 
 
+async def grant_points(user_id: str, action: str, amount: int, note: str = "", db=None) -> bool:
+    """v229 (B-6) — 정액 ⭐ 지급 (이벤트 로그 + 잔액 증가).
+
+    award_point(+1/일일 멱등)와 달리 임의 액수를 1회 지급한다. 멱등성은 호출부가
+    보장한다 (예: guardian decide 는 상태 전이가 1회만 성공). NEVER raises.
+    Returns True on success.
+    """
+    if not user_id or amount <= 0:
+        return False
+    try:
+        import uuid as _uuid
+        await ensure_indexes(db)
+        mongo = db if db is not None else get_mongo()
+        await mongo.point_events.insert_one({
+            "user_id": user_id,
+            "action": action,
+            "track_id": "grant_{}".format(_uuid.uuid4().hex[:12]),
+            "day": _kst_day(),
+            "amount": amount,
+            "note": note,
+            "created_at": datetime.now(timezone.utc),
+        })
+        await mongo.point_balances.update_one(
+            {"user_id": user_id},
+            {
+                "$inc": {"balance": amount},
+                "$setOnInsert": {
+                    "user_id": user_id,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            },
+            upsert=True,
+        )
+        logger.info(
+            "[points] grant user=%s action=%s +%d note=%s",
+            user_id[:8], action, amount, note[:60],
+        )
+        return True
+    except Exception as e:  # noqa: BLE001 — 지급 실패가 호출부 흐름을 깨면 안 됨
+        logger.error("[points] grant failed user=%s action=%s: %s", user_id[:8], action, str(e)[:200])
+        return False
+
+
 async def spend_points(user_id: str, action: str, amount: int, ref: str, db=None) -> bool:
     """Atomically deduct `amount` points from the user's balance.
 

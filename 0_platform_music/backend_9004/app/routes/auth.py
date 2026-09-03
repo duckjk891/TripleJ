@@ -802,6 +802,16 @@ async def guardian_consent_decide(token: str, body: GuardianDecision, conn=Depen
             updated["child_user_id"],
         )
         message = "동의가 완료되었습니다. 아동 계정이 활성화되었습니다."
+        # v229 (B-6) — 보호자 동의 승인 보상 ⭐ (본인인증과 동일 액수, 단일 설정).
+        # decide 는 pending→agreed 전이가 1회만 성공하므로 자연 멱등. best-effort.
+        if settings.verify_reward_points > 0:
+            from ..services.points_service import grant_points
+            await grant_points(
+                str(updated["child_user_id"]),
+                "guardian_consent_reward",
+                settings.verify_reward_points,
+                note="보호자 동의 승인 보상",
+            )
     else:
         # 거부 — 계정은 pending_consent 로 비활성 유지 (로그인 403)
         message = "동의가 거부되었습니다. 아동 계정은 활성화되지 않습니다."

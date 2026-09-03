@@ -167,6 +167,9 @@ class Settings(BaseSettings):
     # GuardSquad — 만14세 미만 보호자 동의 플로우 기능 플래그.
     # 기본 OFF(실서비스 "준비 중" 안내) — 테스트 모드에서만 .env GUARDIAN_CONSENT_ENABLED=true 로 켠다.
     guardian_consent_enabled: bool = False
+    # v229 (B-6) — 인증 보상 ⭐ (대표 방침 2026-09-03: 보호자 동의 = 본인인증과 동일 액수 →
+    # 단일 설정 공유). 0=미지급. PG 본인인증 정책 확정 시 .env VERIFY_REWARD_POINTS 로 설정.
+    verify_reward_points: int = 0
 
     # FaceGuardSquad(v135) — 얼굴 인증(생체 대조) A안: AWS Rekognition CompareFaces(서울)
     # + Face Liveness(도쿄). 키 빈값이면 mock 모드. 기본 OFF — .env FACE_VERIFY_ENABLED=true 로 켠다.

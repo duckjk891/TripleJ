@@ -61,7 +61,7 @@ from .database.mongodb import init_mongodb, close_mongodb
 from .database.redis import init_redis, close_redis
 from .database.minio import init_minio
 from .database.elasticsearch import init_elasticsearch, get_es, close_elasticsearch
-from .routes import admin, admin_ads, admin_cs, admin_issues, admin_notices, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_clone, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, issues, _logs
+from .routes import admin, admin_ads, admin_cs, admin_issues, admin_notices, admin_moderation, admin_points, auth, oauth, tracks, albums, artists, charts, playlists, likes, upload, follows, generate, mv, character, voice_clone, wondera, rewards, business, points, attendance, wishlist, feeds, face_verify, reports, dm, referral, fatigue, issues, _logs, lyrics_assets
 
 logger = logging.getLogger(__name__)
 
@@ -736,6 +736,7 @@ app.include_router(likes.router)
 app.include_router(upload.router)
 app.include_router(follows.router)
 app.include_router(generate.router)
+app.include_router(lyrics_assets.router)  # v229 (B-2) 가사 자산화
 app.include_router(mv.router)
 app.include_router(character.router)
 app.include_router(voice_clone.router)
