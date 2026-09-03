@@ -34,6 +34,10 @@ export interface LyricsRequestPayload {
   duration_minutes?: number;
   duet?: boolean;
   language?: string;
+  // v3.127 (B-12) — 서버 v229 구조화 필드 (prompt 문장 대신 네이티브 전송)
+  structure?: string;
+  english_ratio?: number;
+  has_rap?: boolean;
 }
 
 // ── 공용 선택지 (LyricsInput 대화 · LyricsPromptReview 카드 수정에서 공유) ──
@@ -80,17 +84,25 @@ const PERSPECTIVE_PROMPT_MAP: Record<string, string> = {
 export const mapLanguageField = (language: string): 'ko' | 'en' =>
   language.includes('영어 100%') || language.trim() === '영어' ? 'en' : 'ko';
 
-/** 언어 혼합 비율은 language 필드로 못 보내므로 prompt 문장으로 보강 */
+/** (v3.127 이후 미사용 — 서버 english_ratio 필드로 대체. 폴백 대비 보존) */
+// @ts-ignore -- 보존용
 const languageMixLine = (language: string): string | null => {
   if (language.includes('조금 혼합')) return '가사는 한국어 위주로 하되, 영어 표현을 20% 이하로 자연스럽게 섞어주세요.';
   if (language.includes('많이 혼합')) return '한국어와 영어를 절반 정도씩 자연스럽게 섞어 써주세요.';
   return null;
 };
 
-/** 초 → 백엔드 duration_minutes (가이드가 1·2·3분만 존재 → 1~3으로 클램프) */
+/** 초 → 백엔드 duration_minutes — v3.127(B-12): 서버 v229가 4·5분 가이드 지원 → 1~5 */
 export const mapDurationMinutes = (durationSec: number): number => {
   if (durationSec < 60) return 1;
-  return Math.max(1, Math.min(3, Math.round(durationSec / 60)));
+  return Math.max(1, Math.min(5, Math.round(durationSec / 60)));
+};
+
+/** v3.127 (B-12) — 언어 선택지 → english_ratio (0~100). 중간 혼합만 의미 있음 */
+const mapEnglishRatio = (language: string): number | undefined => {
+  if (language.includes('조금 혼합')) return 20;
+  if (language.includes('많이 혼합')) return 50;
+  return undefined;
 };
 
 /**
@@ -115,29 +127,13 @@ export function buildLyricsRequest(state: LyricsPromptState): LyricsRequestPaylo
     lines.push(PERSPECTIVE_PROMPT_MAP[perspective] || `${perspective} 시점으로 써주세요.`);
   }
 
-  // 곡 구조 → Suno 섹션 태그 시퀀스
+  // v3.127 (B-12): 곡 구조·랩·언어 혼합·4~5분 분량은 서버 v229 네이티브 필드로 전송
+  // (prompt 문장 중복 제거 — 태그 미매핑 구조명만 prompt로 폴백)
   const structure = state.structure?.trim();
-  if (structure && structure !== '자유 형식') {
-    const tagSeq = STRUCTURE_TAG_MAP[structure];
-    if (tagSeq) {
-      lines.push(`곡 구조는 ${tagSeq} 순서로 섹션 태그를 구성해주세요.`);
-    } else {
-      lines.push(`곡 구조: ${structure}`);
-    }
-  }
-
-  // 랩 파트
-  if (state.hasRap) {
-    lines.push('랩 파트를 한 섹션 이상 포함해주세요 ([Verse: rap flow] 태그 활용).');
-  }
-
-  // 언어 혼합 비율 (language 필드는 ko/en 만 받으므로 비율은 문장으로)
-  const mixLine = languageMixLine(state.language || '');
-  if (mixLine) lines.push(mixLine);
-
-  // 4~5분 선택 시 — 백엔드 분량 가이드 최대치(3분)를 넘는 요청 보강
-  if (state.duration >= 240) {
-    lines.push('가사를 최대한 길고 풍성하게, 섹션마다 충분한 분량으로 작성해주세요.');
+  const structureTagSeq =
+    structure && structure !== '자유 형식' ? STRUCTURE_TAG_MAP[structure] : undefined;
+  if (structure && structure !== '자유 형식' && !structureTagSeq) {
+    lines.push(`곡 구조: ${structure}`);
   }
 
   // 추가 요청 (레퍼런스 등 자유 입력)
@@ -154,5 +150,9 @@ export function buildLyricsRequest(state: LyricsPromptState): LyricsRequestPaylo
     duration_minutes: mapDurationMinutes(state.duration),
     duet: state.isDuet || undefined,
     language: mapLanguageField(state.language || ''),
+    // v3.127 (B-12) — 서버 v229 구조화 필드
+    structure: structureTagSeq,
+    english_ratio: mapEnglishRatio(state.language || ''),
+    has_rap: state.hasRap || undefined,
   };
 }

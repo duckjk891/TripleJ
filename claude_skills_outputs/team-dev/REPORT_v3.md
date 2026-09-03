@@ -2778,3 +2778,21 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 | [api] 사진 첨부 재생성(실사 꾸미기·REALISTIC 사진 경로) | **의도된 차단** — FACE_VERIFY_ENABLED=true 서버에서 미인증 사진 403 face_verification_required, **무과금 확인(잔액 28=50-10-12)**. TrustSquad 게이트 정상 동작 = 보안 관점 PASS |
 
 **결론**: 실사+사진 경로(REALISTIC 체감·실사 꾸미기 회귀)는 얼굴 인증(셀피 대조, face-verify/verify)이 선행돼야 해서 자동화 불가 — **대표 실기기 확인 항목으로 이관**. 나머지 자동화 가능 테스트 잔여분은 소진 완료. 미실행 잔여: 실기기(키보드·딥링크), 클로닝 verify(대표 목소리), 레거시 마이그레이션(미실행 상태), 실사+사진 REALISTIC 체감(얼굴 인증 필요).
+
+---
+
+## v3.127 + 백엔드 v229 — Wondera 배제·백로그 일괄·모션 시안 (2026-09-03)
+
+**결과**: 실행 가능 항목 전건 PASS.
+
+| 항목 | 결과 |
+|---|---|
+| B-7 Wondera 배제 | PASS — FE 선택 화면 자동 스킵(suno 확정), BE 전 라우트 503(과금 사각 봉합), 코드 보존 |
+| B-2 가사 자산화 | PASS — /api/lyrics CRUD + 작사 save 옵션 + FE 서버 보관함(로컬 폴백) [e2e]로 목록 표시·작곡 연계 확인 |
+| B-12 작사 필드 확장 | PASS — structure/english_ratio/has_rap/4·5분, FE 네이티브 전송 전환(프롬프트 중복 제거) |
+| B-13 레거시 정리 | PASS(1픽스: uuid_lib 오타) — 고유 파일명·무upsert, 유령 문서 0 확인 |
+| B-6 보상 훅 | 코드 완료 — grant_points+verify_reward_points(본인인증과 동일 단일 설정, 기본 0). 플래그 ON은 실SMS 어댑터 필요로 보류 |
+| B-8 AdMob SSV | **서버 기구현 실측 확인**(서명 검증·중복 방지·적립). 잔여=외부(AWS 도메인→콜백 등록)+광고 시청 화면 재구축(실기기 필요) |
+| 모션 시안 (B안) | 4종 생성 — scratchpad/motion_{composer,lyricist,image,artist}.png (반영 안 함, 대표 확인 대기) |
+
+**특이**: 작사 실호출 1회(⭐5)로 B-2 save+B-12 동시 검증(제목 "여름 바다로", rap 태그·영어 혼합 확인). E2E 착지 = 작곡 진행 1/13 + 제목 자동 주입 (v3127e_04_after_compose.png).

@@ -1202,3 +1202,15 @@
 2. [api] 만화 경로 — Given 신규계정 / When cartoon-async(webtoon+상의 참조) / Then 서버 로그 "calling Claude ... Claude text ok" + job done
 3. [api] 실사 경로 회귀 — Given 신규계정 / When generate-sheet-async(텍스트-only+상의 참조) / Then job done·⭐10 차감
 4. [수동/후속] 실사+사진 첨부 시 REALISTIC OVERRIDE 체감(미화 억제) — 대표 실사용 확인
+
+---
+
+## v3.127/v229 (2026-09-03)
+
+1. [api] B-7 — /wondera/* 호출 → 503 wondera_disabled
+2. [api] B-2 — /lyrics CRUD 풀사이클(201→목록→PATCH→DELETE→404) + generate save:true → lyrics_id 반환·목록 반영
+3. [api] B-12 — structure/english_ratio/has_rap/duration 4분 포함 실작사 → 200·rap 태그·영어 포함
+4. [api] B-13 — 원본사진 2회 업로드 → 경로 상이 + characters 유령 문서 0
+5. [e2e] B-2/B-7 — 로그인→작사 디렉터→가사 보관함(서버 항목 표시)→이 가사로 작곡하기→Wondera 미노출·선택 화면 스킵·작곡 진행 1/13 착지(제목 자동 주입)
+6. [unit] tsc·py_compile 전건
+7. [보류] B-6 지급 훅 — 플래그 OFF(실SMS 부재)라 E2E 불가, 코드 준비 완료 / B-8 — 서버 기구현, AWS 후 콜백 등록+광고 화면 재구축

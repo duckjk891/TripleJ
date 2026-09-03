@@ -50,11 +50,32 @@ const COMPOSERS: ComposerInfo[] = [
   },
 ];
 
+// v3.127 (B-7): 디렉터당 단일 모델 정책 — Wondera를 선택지에서 배제(대표 확정, 추후 재사용
+// 가능성 있어 화면·데이터·API 코드는 보존). false 동안 이 화면은 Suno 자동 확정 후
+// MusicGeneration으로 즉시 replace되어 사용자에게 노출되지 않는다.
+const WONDERA_ENABLED = false;
+
 export default function ComposerSelectScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const musicStore = useMusicStore();
   const lyricsStore = useLyricsStore();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // v3.127: 단일 모델 모드 — 기존 handleSelect와 동일한 검증 후 suno 확정·직행.
+  // (진입점 3곳: ComposerInput·Dialogue·LyricsBook은 무수정 — 라우트 계약 유지)
+  useEffect(() => {
+    if (WONDERA_ENABLED) return;
+    if (!lyricsStore.generatedLyrics && !musicStore.lyrics) {
+      console.warn('[ComposerSelect] 가사 없음 — 작사 유도 후 복귀');
+      showAlert('작사 필요', '먼저 작사 디렉터에게 가사를 만들어주세요!');
+      navigation.goBack();
+      return;
+    }
+    if (__DEV__) console.info('[ComposerSelect] 단일 모델 모드 — suno 자동 확정');
+    musicStore.setSelectedModel('suno');
+    navigation.replace('MusicGeneration');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -63,6 +84,8 @@ export default function ComposerSelectScreen({ navigation }: Props) {
       useNativeDriver: true,
     }).start();
   }, []);
+
+  if (!WONDERA_ENABLED) return null;
 
   const isRecommended = (composer: ComposerInfo) => {
     return composer.recommended.includes(lyricsStore.genre);

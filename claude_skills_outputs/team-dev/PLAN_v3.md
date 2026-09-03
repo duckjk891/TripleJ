@@ -1962,3 +1962,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 - 시트 실물 확인: 현재 미사용 행에 **침대+누워 자는 프레임, zzz 파티클, 폰/타이핑 등 업무 모션, 카트/박스 등** 다수 포함 — LimeZu Modern Interiors 규격. **잠자기·업무 모션은 새 그림 없이 행 매핑 추가만으로 구현 가능**.
 - DM 시스템 기존재(v151-157) — 카운터 클릭→관리자 DM은 대상 계정 ID 지정만 필요.
 - 구현 계획(승인 시): ① SpriteAnimator에 sleep/work(phone·typing) 행 매핑 추가 ② Character 상태머신(잡 진행중=work, 쿨다운=sleep@침대 좌표, 그 외=idle/walk 배회) ③ v37 이동 재활성(walkDeltas waypoint+4방향 전환) ④ 카운터 캐릭터 1종(기존 제작 방식) + 탭→DM(ADMIN_USER_ID 설정).
+
+---
+
+## v3.127 + 백엔드 v229 — Wondera 배제·백로그 일괄(B-2/6/8/12/13)·모션 시안 (2026-09-03)
+
+**요청**: ① 디렉터당 단일 모델 — Wondera 선택지 배제(추후 재사용, 코드 보존) ② B-2~B-13 백로그 작업 ③ 캐릭터 작업 모션 B안 — 반영 말고 시안 먼저.
+
+**Plan verification findings**: ComposerSelect 진입점 3곳(ComposerInput·Dialogue·LyricsBook) — 화면 자체를 suno 자동 확정+replace로 바꾸면 진입점 무수정. 가사 보관함은 로컬 전용에 add() 정상 배선(LyricsResult). B-8 AdMob SSV는 **서버 기구현**(rewards.py admob-callback: Google 키 ECDSA 검증·tx 중복 방지·광고권 적립) — 백로그 노트가 낡았음; 광고 시청 화면(WaitTimerScreen)은 라우트에서 제거된 고아. B-6 보호자 플로우 완비(mock SMS·mock 본인인증) — 남은 건 지급 훅+실SMS. upload-original-photo는 user_id 매칭 upsert로 유령 문서 생성+아티스트 간 원본 사진 덮어쓰기.
+
+**변경 매트릭스**: FE ComposerSelectScreen(WONDERA_ENABLED=false 자동 직행), lyricsService(+B-2 CRUD·B-12 필드), LyricsResultScreen(서버 저장 우선+로컬 폴백), LyricsBookScreen(서버 목록+로컬 병합·서버 삭제), lyricsPrompt(구조/랩/영어비율 네이티브 필드·duration 1~5). BE wondera(라우터 503 게이트), lyrics_assets.py 신설(+main 등록), generate(LyricsRequest+4필드·save 옵션), lyrics_generator(4·5분 가이드·structure/rap/english_ratio 주입), character(upload-original-photo 고유 파일명+무upsert), points_service(grant_points), config(verify_reward_points), auth(보호자 승인 ⭐지급 훅). 추적자: [lyrics-asset]/[wondera]/[points] grant/[character].

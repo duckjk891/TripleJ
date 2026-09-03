@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -14,6 +14,13 @@ import { colors } from '../theme/colors';
 import { useLyricsBookStore, LyricsBookEntry } from '../stores/lyricsBookStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
+import { useAuthStore } from '../stores/authStore';
+import {
+  listLyricsAssets,
+  deleteLyricsAsset,
+  type LyricsAsset,
+} from '../services/lyricsService';
+import { ActivityIndicator } from 'react-native';
 
 // ── 가사 보관함 화면 ──────────────────────────────────────────────────────────
 // 작사 결과 화면에서 저장한 가사를 목록으로 보고, 전체 가사 확인·삭제하거나
@@ -32,10 +39,47 @@ function formatDate(ts: number): string {
 
 export default function LyricsBookScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
-  const entries = useLyricsBookStore((s) => s.entries);
+  const localEntries = useLyricsBookStore((s) => s.entries);
   const remove = useLyricsBookStore((s) => s.remove);
   // 탭 → 전체 가사 확장 (한 번에 하나만)
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // v3.127 (B-2): 로그인 시 서버 가사 자산(/api/lyrics) 목록 사용 — 재설치·타기기 유지.
+  // 비로그인·조회 실패 시 기존 로컬 보관함 표시 (기능 무손실 폴백).
+  const isLoggedIn = !!useAuthStore((s) => s.token);
+  const [serverEntries, setServerEntries] = useState<LyricsBookEntry[] | null>(null);
+  const [loadingServer, setLoadingServer] = useState(false);
+  const [serverIds, setServerIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isLoggedIn) { setServerEntries(null); return; }
+    let mounted = true;
+    (async () => {
+      setLoadingServer(true);
+      try {
+        console.info('[LyricsBook] calling listLyricsAssets');
+        const items = await listLyricsAssets();
+        if (!mounted) return;
+        setServerIds(new Set(items.map((it) => it.lyrics_id)));
+        setServerEntries(items.map((it: LyricsAsset) => ({
+          id: it.lyrics_id,
+          title: it.title,
+          lyrics: it.content,
+          genre: it.genre || undefined,
+          mood: it.mood || undefined,
+          createdAt: Date.parse(it.created_at) || Date.now(),
+        })));
+      } catch (err: any) {
+        console.error('[LyricsBook] listLyricsAssets failed — 로컬 폴백', { status: err?.response?.status });
+        if (mounted) setServerEntries(null);
+      } finally {
+        if (mounted) setLoadingServer(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [isLoggedIn]);
+
+  // 서버 목록 우선 + (이전 버전에서 로컬에만 저장된 항목이 있으면 함께 표시)
+  const entries = serverEntries ? [...serverEntries, ...localEntries] : localEntries;
 
   const handleToggle = (entry: LyricsBookEntry) => {
     setExpandedId((cur) => (cur === entry.id ? null : entry.id));
@@ -47,9 +91,20 @@ export default function LyricsBookScreen({ navigation }: Props) {
       {
         text: '삭제',
         style: 'destructive',
-        onPress: () => {
+        onPress: async () => {
           if (__DEV__) console.log('[LyricsBook] 삭제:', entry.id, entry.title);
-          remove(entry.id);
+          if (serverIds.has(entry.id)) {
+            try {
+              await deleteLyricsAsset(entry.id);
+              setServerEntries((cur) => (cur ? cur.filter((e) => e.id !== entry.id) : cur));
+            } catch (err: any) {
+              console.error('[LyricsBook] deleteLyricsAsset failed', { status: err?.response?.status });
+              showAlert('삭제 실패', '잠시 후 다시 시도해주세요.');
+              return;
+            }
+          } else {
+            remove(entry.id);
+          }
           setExpandedId((cur) => (cur === entry.id ? null : cur));
         },
       },
@@ -90,7 +145,11 @@ export default function LyricsBookScreen({ navigation }: Props) {
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-        {entries.length === 0 ? (
+        {loadingServer && entries.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <ActivityIndicator size="small" color={colors.accent.primary} />
+          </View>
+        ) : entries.length === 0 ? (
           <View style={styles.emptyBox}>
             <AppText style={styles.emptyTitle}>아직 저장한 가사가 없어요</AppText>
             <AppText style={styles.emptyText}>
