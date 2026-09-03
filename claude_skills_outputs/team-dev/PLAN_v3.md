@@ -1949,3 +1949,16 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: AIDOL config.py에 anthropic_api_key 필드·requirements에 anthropic·서버 venv anthropic 0.96.0·.env 키 모두 기존재 — 인프라 작업 불요. MAIDOL v50 블록은 웨딩MV 맥락("documentary candid, 연예인 인상=실패")이라 §4만 AIDOL(아이돌 프로필) 톤으로 조정 필요.
 
 **계획**: ① REALISTIC_OVERRIDE_BLOCK+_REALISTIC_STEP1_SUFFIX 이식 — 실사 경로 **사진 첨부 시 상시 적용**(§1~3·§5 원본 그대로, §4만 "촬영 퀄리티는 프로필급 허용·인물 미화만 금지"로 조정). 텍스트-only는 사진 부재로 미적용. ② Step A 텍스트 모델 디스패처 _call_text_backend — Claude(claude-opus-4-7) 우선, 실패/키 미설정 시 Gemini 폴백(v224 재시도 내장). MAIDOL 대비 개선: 역할 라벨 텍스트 파트를 Claude content에 보존(라벨-이미지 대응 유지), 실사+만화 양 경로 적용. 추적자: [CharGen] Step A 로그.
+
+---
+
+## 기획 검토 — 맵 캐릭터 애니메이션 5종 + 남은 작업 정리 (2026-09-03)
+
+**요청**: 남은 작업 정리 + 디렉터 작업단계별 모션·방안 배회·휴식 잠자기·카운터 캐릭터(업무 모션+관리자 DM) 구현 방향과 캐릭터 제작 툴 추천.
+
+**Plan verification findings (0단계 실측)**:
+- 스프라이트 인프라 기존재: components/SpriteAnimator.tsx(32×64 프레임, 시트 1792×1280=20행, idle/walk(4방향×5)/drink/read/color 매핑) + components/Character.tsx(행동 사이클 3초 로테이션) + assets/sprites/6종 + assets/director_walk_zones.json(TMX flood-fill 방별 이동 가능 좌표 — render_map.py 자동 갱신).
+- **이동 로직은 v37에서 대표 요청으로 비활성화**된 상태(Character.tsx "제자리 고정 — 사용자 요청 v37", walkDeltas 수신만 함). 재활성 대상.
+- 시트 실물 확인: 현재 미사용 행에 **침대+누워 자는 프레임, zzz 파티클, 폰/타이핑 등 업무 모션, 카트/박스 등** 다수 포함 — LimeZu Modern Interiors 규격. **잠자기·업무 모션은 새 그림 없이 행 매핑 추가만으로 구현 가능**.
+- DM 시스템 기존재(v151-157) — 카운터 클릭→관리자 DM은 대상 계정 ID 지정만 필요.
+- 구현 계획(승인 시): ① SpriteAnimator에 sleep/work(phone·typing) 행 매핑 추가 ② Character 상태머신(잡 진행중=work, 쿨다운=sleep@침대 좌표, 그 외=idle/walk 배회) ③ v37 이동 재활성(walkDeltas waypoint+4방향 전환) ④ 카운터 캐릭터 1종(기존 제작 방식) + 탭→DM(ADMIN_USER_ID 설정).
