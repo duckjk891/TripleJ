@@ -1998,3 +1998,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: 기존 흐름 = Dialogue에서 store 가사 유무로 차단/직행(navigate:ComposerSelect). 가사 보관함(v3.127)은 서버 최신순(created_at desc) 반환 + "이 가사로 작곡하기" 완비 → 선택 화면으로 재사용 가능. Dialogue action 파서는 params 미지원 → 별칭(LyricsBookPick) 처리.
 
 **계획**: ① Dialogue composer 분기 재작성 — 차단 제거, "어떤 가사로 곡을 만들까요?" → LyricsBook(pickerMode) 진입(파서 2곳 별칭 처리) ② LyricsBook pickerMode — 헤더 "어떤 가사로 작곡할까요?", 방금 작사한 세션 작업본(__draft__)을 최상단 고정("(방금 작사)" 표기), 빈 상태는 작사 유도 문구 ③ 드래프트 가드 — 삭제 불가 안내·lyricsSource null(신규 작사와 동일)·"(방금 작사)" 표기가 곡 제목에 안 섞이게 store 원제목 유지. 정렬 = 드래프트 → 서버(최신순) → 로컬(최신순).
+
+---
+
+## v3.131 — 기존 작사물 미표시 원인 해소 + 대화형 가사 선택 UI (2026-09-07)
+
+**요청**: ① 기존 작사물이 안 보이고 방금 작사 1건만 보이는 원인 확인 ② "어떤 가사로 작곡할까요?"를 디렉터 대화 형식 UI로.
+
+**Plan verification findings (원인)**: 가사 자산 DB(lyrics_assets)는 v3.127(2026-09-03) 신설 — **그 전에 작사한 가사는 DB에 없음**. 구 가사의 서버 흔적은 ①발매곡 트랙의 lyrics 필드 ②(작곡에 쓰인 draft는 소비·삭제됨)뿐. 로컬 보관함도 v3.127 전엔 저장 버튼 미배선이라 빈 상태. → 버그가 아니라 **데이터 소스 누락**.
+
+**계획**: ① ComposeLyricsPickScreen 신설(대화형) — 작곡 디렉터 말풍선 + 가사 카드 선택지. 소스 통합: 방금 작사(최상단) → 서버 보관함(최신순) → **발매곡 가사(/tracks/my — 기존 작사물 복원 표시)** → 레거시 로컬, 가사 내용 기준 중복 제거, 출처 배지(방금 작사/보관함/발매곡) ② Dialogue composer action → ComposeLyricsPick ③ **작사 성공 시 자동 자산 저장**(LyricsLoading payload save:true) — 앞으로는 작사가 DB에 자동 축적 ④ 선택 시 확인 말풍선 후 작곡 흐름 진입, asset만 lyrics_source 스냅샷.

@@ -2836,3 +2836,19 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 | 가사 없음 차단 제거 | 빈 보관함이어도 진입 — 선택 화면이 작사 유도 안내 |
 
 **파일**: screens/DialogueScreen.tsx, screens/LyricsBookScreen.tsx.
+
+---
+
+## v3.131 — 기존 작사물 표시 + 대화형 가사 선택 (2026-09-07)
+
+**결과**: 전 항목 PASS.
+
+**원인 보고**: 기존 작사물 미표시는 버그가 아니라 데이터 소스 문제 — 가사 DB는 9/3 신설이라 그 전 작사물이 없음(구 가사는 발매곡 트랙 안에만 존재). 해소: 선택 화면이 발매곡 가사까지 통합 표시 + 앞으로 작사하면 자동으로 DB 저장(save:true).
+
+| 항목 | 결과 |
+|---|---|
+| 대화형 가사 선택 화면(ComposeLyricsPick) | PASS — 디렉터 말풍선+가사 카드+출처 배지, 선택 확인 멘트 후 작곡 진행 (v3131e_pick.png/gen.png) |
+| 소스 통합·최신순·중복 제거 | PASS — 방금 작사→보관함→발매곡→로컬 |
+| 작사 자동 자산화 | 구현 — LyricsLoading save:true |
+
+**파일**: screens/ComposeLyricsPickScreen.tsx(신설), App.tsx(라우트), screens/DialogueScreen.tsx, screens/LyricsLoadingScreen.tsx.

@@ -74,6 +74,7 @@ import MyArtistsScreen from './screens/MyArtistsScreen';
 import VoiceManageScreen from './screens/VoiceManageScreen';
 import VoiceCloneWizardScreen from './screens/VoiceCloneWizardScreen';
 import LyricsBookScreen from './screens/LyricsBookScreen';
+import ComposeLyricsPickScreen from './screens/ComposeLyricsPickScreen';
 import ArtistCodyScreen from './screens/ArtistCodyScreen';
 import ArtistDetailScreen from './screens/ArtistDetailScreen';
 import UserChannelScreen from './screens/UserChannelScreen';
@@ -122,6 +123,8 @@ export type StudioStackParamList = {
   // v3.83: 정식 보이스 클로닝(노래+문장낭독) 4단계 위저드 — resumeCloneId로 2/3단계 재개
   VoiceCloneWizard: { resumeCloneId?: string } | undefined;
   LyricsBook: undefined;
+  // v3.131: 작곡 첫 질문 — 대화형 가사 선택
+  ComposeLyricsPick: undefined;
 };
 
 export type RootStackParamList = {
@@ -217,6 +220,7 @@ function StudioNavigator() {
       <StudioStack.Screen name="VoiceManage" component={VoiceManageScreen} />
       <StudioStack.Screen name="VoiceCloneWizard" component={VoiceCloneWizardScreen} />
       <StudioStack.Screen name="LyricsBook" component={LyricsBookScreen} />
+      <StudioStack.Screen name="ComposeLyricsPick" component={ComposeLyricsPickScreen} />
     </StudioStack.Navigator>
   );
 }

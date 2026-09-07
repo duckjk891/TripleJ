@@ -82,7 +82,10 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
         // v3.110 — 수집 답변을 백엔드 계약(prompt+구조화 필드)으로 조립해 전송.
         // 장르·분위기·스타일·길이는 별도 필드로만 보내고(prompt 중복 제거),
         // duet=true 시 백엔드 듀엣 전용 시스템 프롬프트([Female]/[Male] 라벨)가 활성화된다.
-        const payload = buildLyricsRequest(useLyricsStore.getState());
+        const payload: any = buildLyricsRequest(useLyricsStore.getState());
+        // v3.131 (B-2): 작사 성공 시 서버 가사 자산 자동 저장 — "작사 DB" 자동 축적.
+        // (비로그인은 서버가 401이므로 애초에 생성 자체가 로그인 필요 — save 무해)
+        payload.save = true;
         // console.info 여야 원격 로그(frontend.log)로 수집됨 — 전송 본문 실측용(v3.117.2)
         console.info('[LyricsLoading] 전송 payload', JSON.stringify(payload));
         const result = await generateLyrics(payload);

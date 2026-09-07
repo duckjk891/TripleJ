@@ -106,7 +106,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
             id: 2,
             speaker: 'composer',
             text: '작사해둔 가사 중에서 골라주세요. 방금 작사한 가사가 있다면 맨 위에 보여드릴게요!',
-            action: 'navigate:LyricsBookPick',
+            action: 'navigate:ComposeLyricsPick',
           },
         ] as DialogueNode[];
       case 'artist':
