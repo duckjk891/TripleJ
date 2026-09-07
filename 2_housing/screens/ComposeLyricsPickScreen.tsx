@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { colors } from '../theme/colors';
 import { useLyricsStore } from '../stores/lyricsStore';
@@ -55,6 +56,16 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
   const [entries, setEntries] = useState<PickEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [pickedTitle, setPickedTitle] = useState<string | null>(null);
+  // v3.132(대표): 카드 탭=바로 작곡 유지 + [가사 보기] 버튼으로 전체 가사 펼치기
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) => {
+    if (__DEV__) console.info('[ComposeLyricsPick] 가사 보기 토글', { id });
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
   const composingRef = useRef(false);
 
   useEffect(() => {
@@ -183,28 +194,46 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
           <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
         )}
 
-        {/* 가사 카드 선택지 */}
-        {!pickedTitle && entries.map((entry) => (
-          <TouchableOpacity
-            key={entry.id}
-            style={[styles.card, entry.source === 'draft' && styles.cardDraft]}
-            activeOpacity={0.8}
-            onPress={() => handlePick(entry)}
-          >
-            <View style={styles.cardTopRow}>
-              <AppText style={styles.cardTitle} numberOfLines={1}>{entry.title || '제목 없음'}</AppText>
-              <View style={[styles.badge, entry.source === 'draft' && styles.badgeDraft]}>
-                <AppText style={styles.badgeText}>{SOURCE_LABEL[entry.source]}</AppText>
+        {/* 가사 카드 선택지 — 카드 탭=바로 작곡, [가사 보기]=전체 가사 펼치기 */}
+        {!pickedTitle && entries.map((entry) => {
+          const expanded = expandedIds.has(entry.id);
+          return (
+            <TouchableOpacity
+              key={entry.id}
+              style={[styles.card, entry.source === 'draft' && styles.cardDraft]}
+              activeOpacity={0.8}
+              onPress={() => handlePick(entry)}
+            >
+              <View style={styles.cardTopRow}>
+                <AppText style={styles.cardTitle} numberOfLines={1}>{entry.title || '제목 없음'}</AppText>
+                <View style={[styles.badge, entry.source === 'draft' && styles.badgeDraft]}>
+                  <AppText style={styles.badgeText}>{SOURCE_LABEL[entry.source]}</AppText>
+                </View>
               </View>
-            </View>
-            {(entry.genre || entry.mood) && (
-              <AppText style={styles.cardMeta} numberOfLines={1}>
-                {[entry.genre, entry.mood].filter(Boolean).join(' · ')}
-              </AppText>
-            )}
-            <AppText style={styles.cardPreview} numberOfLines={2}>{entry.lyrics}</AppText>
-          </TouchableOpacity>
-        ))}
+              {(entry.genre || entry.mood) && (
+                <AppText style={styles.cardMeta} numberOfLines={1}>
+                  {[entry.genre, entry.mood].filter(Boolean).join(' · ')}
+                </AppText>
+              )}
+              <AppText style={styles.cardPreview} numberOfLines={expanded ? undefined : 2}>{entry.lyrics}</AppText>
+              <View style={styles.cardBtnRow}>
+                <TouchableOpacity
+                  style={styles.viewBtn}
+                  onPress={() => toggleExpand(entry.id)}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Feather name={expanded ? 'chevron-up' : 'eye'} size={12} color={colors.accent.primary} />
+                  <AppText style={styles.viewBtnText}>{expanded ? '접기' : '가사 보기'}</AppText>
+                </TouchableOpacity>
+                {expanded && (
+                  <TouchableOpacity style={styles.composeBtn} onPress={() => handlePick(entry)}>
+                    <AppText style={styles.composeBtnText}>이 가사로 작곡하기</AppText>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
 
         {/* 빈 상태 — 작사 유도 */}
         {!loading && entries.length === 0 && (
@@ -249,6 +278,18 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 10, fontWeight: '800', color: colors.text.primary },
   cardMeta: { fontSize: 11, color: colors.accent.primary, marginTop: 4 },
   cardPreview: { fontSize: 12, color: colors.text.secondary, marginTop: 6, lineHeight: 17 },
+  cardBtnRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  viewBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8,
+    backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  viewBtnText: { fontSize: 11, fontWeight: '700', color: colors.accent.primary },
+  composeBtn: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+    backgroundColor: colors.accent.primary,
+  },
+  composeBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
   emptyBtn: {
     marginTop: 16, alignSelf: 'center', paddingHorizontal: 20, paddingVertical: 12,
     backgroundColor: colors.accent.primary, borderRadius: 10,

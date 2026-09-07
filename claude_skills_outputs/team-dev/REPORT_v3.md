@@ -2852,3 +2852,10 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 | 작사 자동 자산화 | 구현 — LyricsLoading save:true |
 
 **파일**: screens/ComposeLyricsPickScreen.tsx(신설), App.tsx(라우트), screens/DialogueScreen.tsx, screens/LyricsLoadingScreen.tsx.
+
+---
+
+## v3.132 — 가사 선택 카드 [가사 보기] (2026-09-07)
+
+**결과**: 전 항목 PASS — 펼치기/전체 가사/접기/펼친 상태 작곡 진입 [e2e] 확인 (v3132e_expand.png). 카드 탭 바로 작곡 유지.
+**파일**: screens/ComposeLyricsPickScreen.tsx.

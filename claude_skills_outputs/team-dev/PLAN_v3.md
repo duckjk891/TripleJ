@@ -2008,3 +2008,11 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings (원인)**: 가사 자산 DB(lyrics_assets)는 v3.127(2026-09-03) 신설 — **그 전에 작사한 가사는 DB에 없음**. 구 가사의 서버 흔적은 ①발매곡 트랙의 lyrics 필드 ②(작곡에 쓰인 draft는 소비·삭제됨)뿐. 로컬 보관함도 v3.127 전엔 저장 버튼 미배선이라 빈 상태. → 버그가 아니라 **데이터 소스 누락**.
 
 **계획**: ① ComposeLyricsPickScreen 신설(대화형) — 작곡 디렉터 말풍선 + 가사 카드 선택지. 소스 통합: 방금 작사(최상단) → 서버 보관함(최신순) → **발매곡 가사(/tracks/my — 기존 작사물 복원 표시)** → 레거시 로컬, 가사 내용 기준 중복 제거, 출처 배지(방금 작사/보관함/발매곡) ② Dialogue composer action → ComposeLyricsPick ③ **작사 성공 시 자동 자산 저장**(LyricsLoading payload save:true) — 앞으로는 작사가 DB에 자동 축적 ④ 선택 시 확인 말풍선 후 작곡 흐름 진입, asset만 lyrics_source 스냅샷.
+
+---
+
+## v3.132 — 가사 선택 카드 [가사 보기] 버튼 (2026-09-07)
+
+**요청**: 카드 탭=바로 작곡은 유지하되, 버튼으로 가사를 열어볼 수 있게.
+
+**계획**: ComposeLyricsPick 카드에 [가사 보기](눈 아이콘) 토글 — 펼치면 전체 가사 + [이 가사로 작곡하기] 버튼, [접기]로 복원. 카드 탭 동작(바로 작곡)은 그대로.
