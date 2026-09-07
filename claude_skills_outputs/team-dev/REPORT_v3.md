@@ -2821,3 +2821,18 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 | 스텝 인덱스 시프트 (1픽스: 자유입력 숨김 조건 하드코딩) | PASS |
 
 **파일**: screens/LyricsInputScreen.tsx, screens/LyricsPromptReviewScreen.tsx, services/musicService.ts. 증적: v3129e_review.png.
+
+---
+
+## v3.130 — 작곡 첫 질문 = 가사 선택 (2026-09-07)
+
+**결과**: 전 항목 PASS.
+
+| 항목 | 결과 |
+|---|---|
+| 작곡 디렉터 첫 질문 = 가사 선택 화면 | PASS — 대화 "어떤 가사로 곡을 만들까요?" → 선택 화면 (v3130e_pick.png) |
+| 최신 작사가 맨 위 | PASS — 신규 시드("가장 최신 가사")가 기존 항목보다 상단 (서버 created_at desc + 방금 작사 세션본 최상단 고정) |
+| 선택 → 작곡 진행 착지 | PASS (v3130e_gen.png) |
+| 가사 없음 차단 제거 | 빈 보관함이어도 진입 — 선택 화면이 작사 유도 안내 |
+
+**파일**: screens/DialogueScreen.tsx, screens/LyricsBookScreen.tsx.

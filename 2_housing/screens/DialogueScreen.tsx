@@ -93,33 +93,20 @@ export default function DialogueScreen({ route, navigation }: Props) {
       case 'lyricist':
         return lyricistDialogue as DialogueNode[];
       case 'composer':
-        if (!hasLyrics) {
-          return [
-            {
-              id: 1,
-              speaker: 'composer',
-              text: '안녕하세요! 작곡 디렉터입니다.',
-              next: 2,
-            },
-            {
-              id: 2,
-              speaker: 'composer',
-              text: '앗, 아직 가사가 준비되지 않았네요. 먼저 작사 디렉터에게 가사를 만들어 와주세요!',
-            },
-          ] as DialogueNode[];
-        }
+        // v3.130(대표): 작사 DB(가사 보관함) 도입에 따라 작곡의 첫 질문 = 가사 선택.
+        // 가사 유무 차단 제거 — 보관함 선택 화면이 빈 상태 안내까지 담당한다.
         return [
           {
             id: 1,
             speaker: 'composer',
-            text: '안녕하세요! 작곡 디렉터입니다. 가사가 준비됐군요! 어떤 음악을 만들어 볼까요?',
+            text: '안녕하세요! 작곡 디렉터입니다. 어떤 가사로 곡을 만들까요?',
             next: 2,
           },
           {
             id: 2,
             speaker: 'composer',
-            text: '좋아요! 그럼 먼저 몇 가지를 여쭤볼게요. 저를 따라와주세요!',
-            action: 'navigate:ComposerSelect',
+            text: '작사해둔 가사 중에서 골라주세요. 방금 작사한 가사가 있다면 맨 위에 보여드릴게요!',
+            action: 'navigate:LyricsBookPick',
           },
         ] as DialogueNode[];
       case 'artist':
@@ -206,6 +193,11 @@ export default function DialogueScreen({ route, navigation }: Props) {
           navigation.goBack();
           return;
         }
+        // v3.130 — 가사 선택 모드로 보관함 진입 (파서가 params 미지원이라 별칭 처리)
+        if (target === 'LyricsBookPick') {
+          navigation.navigate('LyricsBook' as any, { pickerMode: true });
+          return;
+        }
         // RootStack 라우트는 parent navigator로 이동
         const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];
         if (ROOT_TARGETS.includes(target)) {
@@ -238,6 +230,11 @@ export default function DialogueScreen({ route, navigation }: Props) {
       if (actionType === 'navigate') {
         if (target === 'goBack') {
           navigation.goBack();
+          return;
+        }
+        // v3.130 — 가사 선택 모드 별칭 (탭 진행 경로와 동일 처리)
+        if (target === 'LyricsBookPick') {
+          navigation.navigate('LyricsBook' as any, { pickerMode: true });
           return;
         }
         const ROOT_TARGETS = ['ArtistDetail', 'DirectorLineup', 'Player', 'Settings'];

@@ -37,8 +37,10 @@ function formatDate(ts: number): string {
   return `${d.getFullYear()}.${mm}.${dd} ${hh}:${mi}`;
 }
 
-export default function LyricsBookScreen({ navigation }: Props) {
+export default function LyricsBookScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
+  // v3.130(대표): 작곡 디렉터 첫 질문 = 가사 선택 — pickerMode로 진입하면 선택 UI 문구 적용
+  const pickerMode = !!route?.params?.pickerMode;
   const localEntries = useLyricsBookStore((s) => s.entries);
   const remove = useLyricsBookStore((s) => s.remove);
   // 탭 → 전체 가사 확장 (한 번에 하나만)
@@ -79,13 +81,34 @@ export default function LyricsBookScreen({ navigation }: Props) {
   }, [isLoggedIn]);
 
   // 서버 목록 우선 + (이전 버전에서 로컬에만 저장된 항목이 있으면 함께 표시)
-  const entries = serverEntries ? [...serverEntries, ...localEntries] : localEntries;
+  const baseEntries = serverEntries ? [...serverEntries, ...localEntries] : localEntries;
+
+  // v3.130: 방금 작사한 가사(아직 세션에만 있는 작업본)를 최상단 고정 — 최신이 맨 위 원칙
+  const draftLyrics = useLyricsStore((s) => s.generatedLyrics);
+  const draftTitle = useLyricsStore((s) => s.generatedTitle);
+  const entries: LyricsBookEntry[] = draftLyrics
+    ? [
+        {
+          id: '__draft__',
+          title: draftTitle ? `${draftTitle} (방금 작사)` : '방금 작사한 가사',
+          lyrics: draftLyrics,
+          genre: useLyricsStore.getState().genre || undefined,
+          mood: useLyricsStore.getState().mood || undefined,
+          createdAt: Date.now(),
+        },
+        ...baseEntries,
+      ]
+    : baseEntries;
 
   const handleToggle = (entry: LyricsBookEntry) => {
     setExpandedId((cur) => (cur === entry.id ? null : entry.id));
   };
 
   const handleDelete = (entry: LyricsBookEntry) => {
+    if (entry.id === '__draft__') {
+      showAlert('삭제 불가', '방금 작사한 작업본이에요. 저장하지 않으면 새 작사 시 사라져요.');
+      return;
+    }
     showAlert('가사 삭제', `"${entry.title || '제목 없음'}" 가사를 보관함에서 삭제할까요?`, [
       { text: '취소', style: 'cancel' },
       {
@@ -121,11 +144,19 @@ export default function LyricsBookScreen({ navigation }: Props) {
     music.setGenre(entry.genre || '');
     music.setMood(entry.mood || '');
     // v3.102(B-4): 가사 출처 스냅샷 — 생성 body lyrics_source·발매 lyrics_id로 전송.
-    // 보관함은 순수 로컬 자산 → lyrics_id는 로컬 id 그대로(서버 무검증 저장), is_mine=true.
-    music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
+    // v3.130: 방금 작사한 작업본(__draft__)은 자산 id가 없으므로 스냅샷 없음(신규 작사와 동일 취급).
+    if (entry.id === '__draft__') {
+      music.setLyricsSource(null);
+    } else {
+      music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
+    }
     const lyrics = useLyricsStore.getState();
-    lyrics.setGeneratedTitle(entry.title);
-    lyrics.setGeneratedLyrics(entry.lyrics);
+    // v3.130: 드래프트는 store가 이미 원제목/가사를 들고 있음 — "(방금 작사)" 표기가
+    // 곡 제목에 섞이지 않도록 덮어쓰지 않는다.
+    if (entry.id !== '__draft__') {
+      lyrics.setGeneratedTitle(entry.title);
+      lyrics.setGeneratedLyrics(entry.lyrics);
+    }
     navigation.navigate('ComposerSelect');
   };
 
@@ -140,7 +171,7 @@ export default function LyricsBookScreen({ navigation }: Props) {
         >
           <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <AppText style={styles.headerTitle}>가사 보관함</AppText>
+        <AppText style={styles.headerTitle}>{pickerMode ? '어떤 가사로 작곡할까요?' : '가사 보관함'}</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -151,10 +182,11 @@ export default function LyricsBookScreen({ navigation }: Props) {
           </View>
         ) : entries.length === 0 ? (
           <View style={styles.emptyBox}>
-            <AppText style={styles.emptyTitle}>아직 저장한 가사가 없어요</AppText>
+            <AppText style={styles.emptyTitle}>{pickerMode ? '아직 작사한 가사가 없어요' : '아직 저장한 가사가 없어요'}</AppText>
             <AppText style={styles.emptyText}>
-              작사 디렉터와 가사를 만든 뒤, 결과 화면에서{'\n'}
-              "보관함에 저장"을 누르면 여기에 쌓여요.
+              {pickerMode
+                ? '작사 디렉터에게 먼저 다녀와주세요!\n가사를 만들면 여기서 골라 작곡할 수 있어요.'
+                : '작사 디렉터와 가사를 만든 뒤, 결과 화면에서\n"보관함에 저장"을 누르면 여기에 쌓여요.'}
             </AppText>
           </View>
         ) : (

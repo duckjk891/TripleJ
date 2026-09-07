@@ -1988,3 +1988,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **요청**: "장르에도 어쿠스틱·밴드·로파이 같은 게 다 있잖아. 하나로 통일하는 게 맞다." — v3.128(구별안)을 뒤집는 대표 확정.
 
 **계획**: ① 작사 대화에서 사운드(스타일) 질문 삭제(12→11단계, 스텝 인덱스 시프트 + 자유입력 숨김 조건의 하드코딩 인덱스 동기화) ② 요약 카드에서 스타일 항목 제거 ③ 작곡 품질 유지 장치: musicService에 GENRE_DEFAULT_STYLE(13개 장르→영문 악기·질감 태그) 신설 — style 미선택 시 장르에서 자동 파생해 Suno 스타일 태그 공급, 구버전 draft의 style 값은 그대로 존중(하위 호환) ④ 진입 시 잔존 style 초기화.
+
+---
+
+## v3.130 — 작곡 디렉터 첫 질문 = 가사 선택 (2026-09-07)
+
+**요청**: 작사 DB(가사 자산) 도입에 따라 작곡 디렉터 진입 시 첫 질문은 "어떤 가사로 만들지" 선택이어야 하고, 최신 작사가 맨 위.
+
+**Plan verification findings**: 기존 흐름 = Dialogue에서 store 가사 유무로 차단/직행(navigate:ComposerSelect). 가사 보관함(v3.127)은 서버 최신순(created_at desc) 반환 + "이 가사로 작곡하기" 완비 → 선택 화면으로 재사용 가능. Dialogue action 파서는 params 미지원 → 별칭(LyricsBookPick) 처리.
+
+**계획**: ① Dialogue composer 분기 재작성 — 차단 제거, "어떤 가사로 곡을 만들까요?" → LyricsBook(pickerMode) 진입(파서 2곳 별칭 처리) ② LyricsBook pickerMode — 헤더 "어떤 가사로 작곡할까요?", 방금 작사한 세션 작업본(__draft__)을 최상단 고정("(방금 작사)" 표기), 빈 상태는 작사 유도 문구 ③ 드래프트 가드 — 삭제 불가 안내·lyricsSource null(신규 작사와 동일)·"(방금 작사)" 표기가 곡 제목에 안 섞이게 store 원제목 유지. 정렬 = 드래프트 → 서버(최신순) → 로컬(최신순).
