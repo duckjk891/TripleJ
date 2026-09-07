@@ -250,9 +250,7 @@ export default function LyricsPromptReviewScreen({ navigation }: Props) {
             <TouchableOpacity onPress={() => handleFieldEdit('mood')}>
               <SummaryItem label="분위기" value={displayValue(store.mood)} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => handleFieldEdit('style')}>
-              <SummaryItem label="스타일" value={displayValue(store.style)} />
-            </TouchableOpacity>
+            {/* v3.129: 사운드(스타일) 질문 제거 — 카드도 제거 (장르에서 자동 파생) */}
           </View>
         </View>
 

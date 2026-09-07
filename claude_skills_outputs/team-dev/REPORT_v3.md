@@ -2806,3 +2806,18 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **판단(위임 사항)**: 병합 아님 — 사운드는 작곡 엔진의 악기·질감 태그로 쓰이는 별개 축이라 유지하되, 장르처럼 지어진 명칭이 혼란 원인이어서 **확실히 구별**로 결정. 선택지 8종 악기·질감 중심 개명 + 질문에 "장르=곡의 종류, 사운드=악기와 질감" 명시 + 영문 매핑 신명칭 추가(구명칭 하위 호환 유지).
 **검증**: [e2e] 대화 진행 시 새 질문·"피아노 중심"·"신디사이저 전자음" 노출, 구명칭 미노출 (v3128e_sound_q.png). tsc PASS.
 **파일**: utils/lyricsPrompt.ts, services/musicService.ts, screens/LyricsInputScreen.tsx.
+
+---
+
+## v3.129 — 장르/사운드 질문 통합 (2026-09-07)
+
+**결과**: 전 항목 PASS. 대표 재결정(통일)에 따라 v3.128 구별안을 대체.
+
+| 항목 | 결과 |
+|---|---|
+| 사운드 질문 삭제 (12→11단계) | PASS — [e2e] 분위기→듀엣 직행, 11단계 완주, 요약 도착 |
+| 요약 스타일 카드 제거 | PASS |
+| 장르→사운드 태그 자동 파생 (GENRE_DEFAULT_STYLE 13종) | 구현 — 작곡 시 style 빈값이면 장르 기본 태그 주입, 구 draft style 존중 |
+| 스텝 인덱스 시프트 (1픽스: 자유입력 숨김 조건 하드코딩) | PASS |
+
+**파일**: screens/LyricsInputScreen.tsx, screens/LyricsPromptReviewScreen.tsx, services/musicService.ts. 증적: v3129e_review.png.

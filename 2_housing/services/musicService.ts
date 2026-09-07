@@ -37,6 +37,24 @@ const STYLE_EN: Record<string, string> = {
   '레트로': 'Retro', '트로피컬': 'Tropical',
 };
 
+// v3.129(대표): 사운드(스타일) 질문 제거 — 장르에서 작곡용 악기·질감 태그를 자동 파생.
+// 사용자가 사운드를 따로 고르지 않아도 Suno 스타일 태그 품질을 유지한다.
+const GENRE_DEFAULT_STYLE: Record<string, string> = {
+  '댄스': 'Punchy Dance Pop, Bright Synth',
+  '발라드': 'Piano-driven, Emotional Strings',
+  '힙합': 'Hip-hop Beat, 808 Bass',
+  'R&B': 'Smooth R&B, Silky Groove',
+  '트로트': 'Trot Rhythm, Retro Korean Pop',
+  '인디': 'Indie Band, Raw Warm Texture',
+  '록': 'Live Rock Band, Electric Guitar',
+  '포크': 'Acoustic Guitar, Warm Folk',
+  '인디팝': 'Indie Pop, Dreamy Synth',
+  '시티팝': 'City Pop Groove, Retro Synth',
+  '재즈': 'Jazz Ensemble, Swing Feel',
+  'EDM': 'EDM Drop, Electronic Synthesizer',
+  '클래식': 'Orchestral, Classical Instruments',
+};
+
 // 매핑 테이블에 없는 값은 한국어 그대로 전달 (백엔드 music_generator가 번역)
 function toEnglish(value: string, map: Record<string, string>): string {
   if (!value) return '';
@@ -184,6 +202,12 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
 
   const genreEn = en.genre;
   const moodEn = en.mood;
+  // v3.129 — 사운드 미선택(질문 제거) 시 장르 기본 사운드 태그 자동 파생.
+  // 구버전 draft 등 style 값이 있으면 그대로 존중(하위 호환).
+  if (!en.style && params.genre && GENRE_DEFAULT_STYLE[params.genre]) {
+    en.style = GENRE_DEFAULT_STYLE[params.genre];
+    console.log('[Suno] style 자동 파생(장르 기반):', params.genre, '→', en.style);
+  }
   const styleEn = en.style;
 
   // 보컬 처리

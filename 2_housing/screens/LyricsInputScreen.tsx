@@ -20,7 +20,6 @@ import {
   buildLyricsRequest,
   GENRE_OPTIONS,
   MOOD_OPTIONS,
-  STYLE_OPTIONS,
   CONTENT_OPTIONS,
   KEYWORD_OPTIONS,
   PERSPECTIVE_OPTIONS,
@@ -44,7 +43,10 @@ interface StepConfig {
   freeTextPlaceholder?: string;
 }
 
-// step: 0=장르, 1=분위기, 2=스타일, 3=듀엣, 4=내용, 5=키워드, 6=시점, 7=언어, 8=구조, 9=랩, 10=길이, 11=추가요청
+// step: 0=장르, 1=분위기, 2=듀엣, 3=내용, 4=키워드, 5=시점, 6=언어, 7=구조, 8=랩, 9=길이, 10=추가요청
+// v3.129(대표): 사운드(스타일) 질문 제거 — 장르에 사운드 정체성(록=밴드, 포크=어쿠스틱,
+// EDM=전자음, 클래식=오케스트라)이 이미 포함돼 중복. 작곡용 악기·질감 태그는
+// musicService가 장르에서 자동 파생(GENRE_DEFAULT_STYLE).
 // v3.110 — 선택지는 utils/lyricsPrompt 와 공유 (요약 카드 수정 시에도 동일 목록 사용)
 const STEPS: StepConfig[] = [
   {
@@ -54,11 +56,6 @@ const STEPS: StepConfig[] = [
   {
     question: '', // dynamic
     choices: MOOD_OPTIONS,
-  },
-  {
-    // v3.128(대표): 장르와의 역할 구별을 질문에 명시 — 장르=곡의 종류, 사운드=악기·질감
-    question: '곡을 어떤 사운드로 채울까요? 장르가 곡의 종류라면, 사운드는 중심이 되는 악기와 질감이에요.',
-    choices: STYLE_OPTIONS,
   },
   {
     question: '혼자 부르는 곡인가요, 둘이 부르는 곡인가요?',
@@ -118,6 +115,9 @@ export default function LyricsInputScreen({ navigation }: Props) {
   const scrollRef = useRef<ScrollView>(null);
 
   const [durationLabel, setDurationLabel] = useState('');
+
+  // v3.129: 사운드 질문 제거 — 이전 세션의 style 잔존값이 작곡에 섞이지 않게 진입 시 초기화
+  useEffect(() => { store.setStyle(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   const [reselectStep, setReselectStep] = useState<number | null>(null);
 
   useEffect(() => {
@@ -127,25 +127,24 @@ export default function LyricsInputScreen({ navigation }: Props) {
   }, [chatHistory]);
 
   const processAnswer = (answer: string, currentStep: number) => {
-    // 0=장르, 1=분위기, 2=스타일, 3=듀엣, 4=내용, 5=키워드, 6=시점, 7=언어, 8=구조, 9=랩, 10=길이, 11=추가요청
+    // 0=장르, 1=분위기, 2=듀엣, 3=내용, 4=키워드, 5=시점, 6=언어, 7=구조, 8=랩, 9=길이, 10=추가요청
     switch (currentStep) {
       case 0: store.setGenre(answer); break;
       case 1: store.setMood(answer); break;
-      case 2: store.setStyle(answer); break;
-      case 3: store.setIsDuet(answer === '듀엣'); break;
-      case 4: store.setContent(answer); break;
-      case 5: store.setKeywords(answer); break;
-      case 6: store.setPerspective(answer); break;
-      case 7: store.setLanguage(answer); break;
-      case 8: store.setStructure(answer); break;
-      case 9: store.setHasRap(answer === '포함'); break;
-      case 10: {
+      case 2: store.setIsDuet(answer === '듀엣'); break;
+      case 3: store.setContent(answer); break;
+      case 4: store.setKeywords(answer); break;
+      case 5: store.setPerspective(answer); break;
+      case 6: store.setLanguage(answer); break;
+      case 7: store.setStructure(answer); break;
+      case 8: store.setHasRap(answer === '포함'); break;
+      case 9: {
         setDurationLabel(answer);
         const durationMap: Record<string, number> = { '30초': 30, '1분': 60, '2분': 120, '3분': 180, '4분': 240, '5분': 300 };
         store.setDuration(durationMap[answer] || 120);
         break;
       }
-      case 11: store.setReference(answer); break;
+      case 10: store.setReference(answer); break;
     }
 
     const nextStep = currentStep + 1;
@@ -198,15 +197,14 @@ export default function LyricsInputScreen({ navigation }: Props) {
     switch (reselectStep) {
       case 0: store.setGenre(choice); break;
       case 1: store.setMood(choice); break;
-      case 2: store.setStyle(choice); break;
-      case 3: store.setIsDuet(choice === '듀엣'); break;
-      case 4: store.setContent(choice); break;
-      case 5: store.setKeywords(choice); break;
-      case 6: store.setPerspective(choice); break;
-      case 7: store.setLanguage(choice); break;
-      case 8: store.setStructure(choice); break;
-      case 9: store.setHasRap(choice === '포함'); break;
-      case 10: {
+      case 2: store.setIsDuet(choice === '듀엣'); break;
+      case 3: store.setContent(choice); break;
+      case 4: store.setKeywords(choice); break;
+      case 5: store.setPerspective(choice); break;
+      case 6: store.setLanguage(choice); break;
+      case 7: store.setStructure(choice); break;
+      case 8: store.setHasRap(choice === '포함'); break;
+      case 9: {
         const durationMap: Record<string, number> = { '30초': 30, '1분': 60, '2분': 120, '3분': 180, '4분': 240, '5분': 300 };
         store.setDuration(durationMap[choice] || 120);
         setDurationLabel(choice);
@@ -361,8 +359,8 @@ export default function LyricsInputScreen({ navigation }: Props) {
             </ScrollView>
           )}
 
-          {/* Custom text input - 길이(8), 랩(9)에서는 숨김 */}
-          {step !== 3 && step !== 9 && step !== 10 && (
+          {/* Custom text input - 듀엣(2)·랩(8)·길이(9)에서는 숨김 (v3.129 인덱스 시프트 반영) */}
+          {step !== 2 && step !== 8 && step !== 9 && (
             <View style={styles.inputRow}>
               <TextInput
                 style={styles.textInput}
