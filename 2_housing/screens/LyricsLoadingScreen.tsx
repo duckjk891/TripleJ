@@ -96,8 +96,14 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           const title = result.title || '';
           store.setGeneratedTitle(title);
           store.setGeneratedLyrics(lyrics);
-          // v3.102(B-4): 새로 작사한 가사 — 이전 가사 보관함 출처 스냅샷이 남아있지 않게 정리
-          useMusicStore.getState().setLyricsSource(null);
+          // v3.102(B-4)→v3.134: 새로 작사한 가사 — 자동 자산화(v3.131 save:true)로 받은
+          // lyrics_id 를 출처로 기억해, 작곡 중 제목/가사 수정 시 자산 동기화(PATCH)가 가능하게.
+          // (자산 저장 실패 등으로 id가 없으면 기존대로 출처 없음)
+          if (result.lyrics_id) {
+            useMusicStore.getState().setLyricsSource({ lyrics_id: result.lyrics_id, title: title || undefined, is_mine: true });
+          } else {
+            useMusicStore.getState().setLyricsSource(null);
+          }
           store.setIsLoading(false);
           // 캐시 보상 지급
           useGemsStore.getState().earn(GEM_REWARDS.TRACK_LYRICS_DONE, 'track_lyrics_done');

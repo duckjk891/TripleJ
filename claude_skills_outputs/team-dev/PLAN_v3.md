@@ -2016,3 +2016,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **요청**: 카드 탭=바로 작곡은 유지하되, 버튼으로 가사를 열어볼 수 있게.
 
 **계획**: ComposeLyricsPick 카드에 [가사 보기](눈 아이콘) 토글 — 펼치면 전체 가사 + [이 가사로 작곡하기] 버튼, [접기]로 복원. 카드 탭 동작(바로 작곡)은 그대로.
+
+---
+
+## v3.134 — 작곡 중 제목/가사 수정 → 가사 DB 동기화 (2026-09-07)
+
+**요청(질문)**: 작곡 때 제목·가사 바꾸면 결과에 반영되나? 가사 DB에도 바뀌어야 하지 않나.
+
+**Plan verification findings**: 제목·가사 수정(1·2단계)은 store에 반영돼 생성 요청·결과 화면에는 정상 반영(기존 동작 OK). **가사 DB 동기화는 부재**. 또한 방금 작사분은 자동 자산화(v3.131)로 서버에 저장되지만 lyrics_id를 버려서(lyricsSource null) 출처 추적 불가였음.
+
+**계획**: ① LyricsLoading — 자동 저장 응답의 lyrics_id를 lyricsSource로 기억 ② ComposeLyricsPick — 드래프트 선택 시 기존 lyricsSource 보존 ③ MusicGeneration proceedGenerate — 출처가 내 가사 자산(32-hex id)이면 최종 제목·가사를 PATCH /lyrics/{id} (best-effort, 실패해도 작곡 무영향) ④ lyricsService patchLyricsAsset/isLyricsAssetId 추가. 발매곡(track_)·레거시 로컬 출처는 동기화 대상 아님(원본 곡 가사는 불변).

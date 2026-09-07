@@ -154,6 +154,9 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     music.setMood(entry.mood || '');
     if (entry.source === 'asset') {
       music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
+    } else if (entry.source === 'draft') {
+      // v3.134: 드래프트는 작사 시 자동 저장된 자산 출처(lyricsSource)가 이미 있을 수 있음 — 보존
+      // (없으면 기존 상태 그대로 — LyricsLoading 이 null 로 정리해둠)
     } else {
       music.setLyricsSource(null);
     }

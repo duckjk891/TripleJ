@@ -51,3 +51,15 @@ export const listLyricsAssets = async (): Promise<LyricsAsset[]> => {
 export const deleteLyricsAsset = async (lyricsId: string): Promise<void> => {
   await api.delete(`/lyrics/${lyricsId}`);
 };
+
+// v3.134 — 작곡 중 제목/가사 수정분을 원본 자산에 동기화 (PATCH /lyrics/{id})
+export const patchLyricsAsset = async (
+  lyricsId: string,
+  params: { title?: string; content?: string },
+): Promise<void> => {
+  await api.patch(`/lyrics/${lyricsId}`, params);
+};
+
+/** 가사 자산 id 형식(32-hex) — track_/로컬 id 와 구분 */
+export const isLyricsAssetId = (id?: string | null): boolean =>
+  !!id && /^[0-9a-f]{32}$/.test(id);

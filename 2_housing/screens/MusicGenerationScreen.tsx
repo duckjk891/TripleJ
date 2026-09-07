@@ -19,6 +19,7 @@ import Slider from '@react-native-community/slider';
 import { Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
+import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import * as DocumentPicker from 'expo-document-picker';
@@ -487,6 +488,20 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       ...prev,
       { type: 'director', text: '작곡을 시작할게요! 곧 결과를 보여드릴게요.' },
     ]);
+    // v3.134(대표): 작곡 중 수정한 제목/가사를 가사 DB(자산)에 동기화 — 출처가 내 자산일 때만.
+    // best-effort(실패해도 작곡 진행 무영향), track_/로컬 출처는 대상 아님.
+    const src = musicStore.lyricsSource;
+    if (src?.lyrics_id && src.is_mine !== false && isLyricsAssetId(src.lyrics_id)) {
+      const syncTitle = (editedTitle || lyricsStore.generatedTitle || '').trim();
+      const syncLyrics = editedLyrics.trim();
+      console.info('[MusicGeneration] 가사 자산 동기화 PATCH', { lyricsId: src.lyrics_id, titleLen: syncTitle.length, lyricsLen: syncLyrics.length });
+      patchLyricsAsset(src.lyrics_id, {
+        ...(syncTitle ? { title: syncTitle } : {}),
+        ...(syncLyrics ? { content: syncLyrics } : {}),
+      }).catch((err: any) => {
+        console.error('[MusicGeneration] 가사 자산 동기화 실패(작곡은 계속)', { status: err?.response?.status });
+      });
+    }
     // v3.107: 대기열 타이머 폐지 — 요청 즉시 MusicLoading으로 직행(폴링·진행 표시는 그쪽이 보유).
     // 재요청 제한은 피로도(서버 429 게이트 + 위 fatigueRemainSec 게이트)가 담당한다.
     console.log('[MusicGeneration] 작곡 생성 시작 — MusicLoading 직행');
