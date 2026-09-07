@@ -27,6 +27,11 @@ const MOOD_EN: Record<string, string> = {
 
 // 한국어 스타일 → Suno 영문 태그
 const STYLE_EN: Record<string, string> = {
+  // v3.128 — 개명된 사운드 선택지(악기·질감 중심)
+  '어쿠스틱 기타': 'Acoustic Guitar', '피아노 중심': 'Piano-driven',
+  '신디사이저 전자음': 'Synthesizer, Electronic Texture', '밴드 연주': 'Live Band Sound',
+  '로파이 질감': 'Lo-fi', '레트로 신스': 'Retro Synthwave', '트로피컬 리듬': 'Tropical Rhythm',
+  // 구명칭 하위 호환 (이전 저장 draft·보관함 가사에 남아있을 수 있음)
   '어쿠스틱': 'Acoustic', '피아노 발라드': 'Piano Ballad', '일렉트로닉': 'Electronic',
   '밴드 사운드': 'Band Sound', '오케스트라': 'Orchestral', '로파이': 'Lo-fi',
   '레트로': 'Retro', '트로피컬': 'Tropical',

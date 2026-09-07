@@ -1972,3 +1972,11 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: ComposerSelect 진입점 3곳(ComposerInput·Dialogue·LyricsBook) — 화면 자체를 suno 자동 확정+replace로 바꾸면 진입점 무수정. 가사 보관함은 로컬 전용에 add() 정상 배선(LyricsResult). B-8 AdMob SSV는 **서버 기구현**(rewards.py admob-callback: Google 키 ECDSA 검증·tx 중복 방지·광고권 적립) — 백로그 노트가 낡았음; 광고 시청 화면(WaitTimerScreen)은 라우트에서 제거된 고아. B-6 보호자 플로우 완비(mock SMS·mock 본인인증) — 남은 건 지급 훅+실SMS. upload-original-photo는 user_id 매칭 upsert로 유령 문서 생성+아티스트 간 원본 사진 덮어쓰기.
 
 **변경 매트릭스**: FE ComposerSelectScreen(WONDERA_ENABLED=false 자동 직행), lyricsService(+B-2 CRUD·B-12 필드), LyricsResultScreen(서버 저장 우선+로컬 폴백), LyricsBookScreen(서버 목록+로컬 병합·서버 삭제), lyricsPrompt(구조/랩/영어비율 네이티브 필드·duration 1~5). BE wondera(라우터 503 게이트), lyrics_assets.py 신설(+main 등록), generate(LyricsRequest+4필드·save 옵션), lyrics_generator(4·5분 가이드·structure/rap/english_ratio 주입), character(upload-original-photo 고유 파일명+무upsert), points_service(grant_points), config(verify_reward_points), auth(보호자 승인 ⭐지급 훅). 추적자: [lyrics-asset]/[wondera]/[points] grant/[character].
+
+---
+
+## v3.128 — 작사 대화 장르/사운드 역할 구별 (2026-09-07)
+
+**요청**: "장르랑 사운드가 겹치는 느낌 — 비슷하면 합치고, 아니면 확실히 구별해달라(팀 판단 위임)."
+
+**Plan verification findings + 판단**: style(사운드) 값은 작곡(Suno) 프롬프트의 핵심 악기·질감 태그(musicService STYLE_EN→style 합성)로 쓰이는 별개 축 — 병합하면 작곡 품질 손실. 겹쳐 보인 원인은 선택지 명칭이 장르식("피아노 발라드"↔장르 발라드, "일렉트로닉"↔EDM)이었기 때문. → **합치지 않고 확실히 구별** 결정: ① STYLE_OPTIONS 악기·질감 중심 개명(어쿠스틱 기타/피아노 중심/신디사이저 전자음/밴드 연주/오케스트라/로파이 질감/레트로 신스/트로피컬 리듬) ② 질문에 역할 명시("장르가 곡의 종류라면, 사운드는 중심이 되는 악기와 질감이에요") ③ STYLE_EN 신명칭 매핑 추가 + 구명칭 하위 호환 유지(기존 draft·보관함 가사).

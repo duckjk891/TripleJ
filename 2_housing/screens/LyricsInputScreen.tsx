@@ -56,7 +56,8 @@ const STEPS: StepConfig[] = [
     choices: MOOD_OPTIONS,
   },
   {
-    question: '어떤 스타일의 사운드가 좋을까요?',
+    // v3.128(대표): 장르와의 역할 구별을 질문에 명시 — 장르=곡의 종류, 사운드=악기·질감
+    question: '곡을 어떤 사운드로 채울까요? 장르가 곡의 종류라면, 사운드는 중심이 되는 악기와 질감이에요.',
     choices: STYLE_OPTIONS,
   },
   {
