@@ -2054,3 +2054,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: 가사 DB 실측 — 대표 자산 9건 전부 genre/mood 실값 보유(하우스/트로트/시티팝…). '자동'은 값 미전달 케이스의 v3.135 폴백 표기. → 폴백 폐지: 값 있으면 실값 안내, 없으면 디렉터가 장르(step 300)/분위기(step 301)를 선택지로 질문. 아티스트 gender는 자유 문자열(여성/male 등) → 매핑 헬퍼.
 
 **계획**: ① step 300/301 신설(GENRE/MOOD_OPTIONS 칩) + proceedToArtistStep 함수화 ② 아티스트 카드에 시트 썸네일(artistSheetUrl) + 목소리 상태 서브라벨 ③ 목소리 없는 아티스트 선택 시 성별 매핑되면 성별 질문 스킵→보컬 스타일(step 4) 직행(듀엣도 메인만 자동, 서브는 기존 흐름).
+
+---
+
+## v3.138 — "장르 정보 없음" 원인 규명·드래프트-DB 병합 (2026-09-08)
+
+**요청(추궁)**: DB엔 장르가 다 있는데 왜 "장르 정보가 없네요"가 나오나 — DB 덮어쓰기 의심.
+
+**Plan verification findings**: DB 무결 재확인(9건 전부 genre/mood 보유·updated_at=created_at → PATCH 동기화가 건드린 적 없음). 원격 로그 실측 — 대표가 고른 것은 **__draft__(방금 작사 작업본)**. 작업본은 메모리 잔재라 장르가 비어 있었음. 잔재가 생긴 경로: ① LyricsBookScreen.handleCompose가 genre/mood를 musicStore에만 넣고 lyricsStore 미전파(제목·가사만 전파) ② 유실사고 시기 persist 스냅샷.
+
+**계획**: ① 드래프트-자산 병합 — 같은 내용의 DB 자산이 있으면 장르/분위기/자산 id 승계(DB=기준, 승계된 id는 lyricsSource로 확정되어 수정 동기화도 연결) ② 드래프트 선택 시 승계값을 lyricsStore에 채움 ③ LyricsBook handleCompose에도 lyricsStore 전파 추가(잔재 재발 차단). 진짜 정보가 없을 때만 장르/분위기 질문(v3.137 동작 유지).

@@ -149,6 +149,11 @@ export default function LyricsBookScreen({ navigation, route }: Props) {
     music.setLyrics(entry.lyrics);
     music.setGenre(entry.genre || '');
     music.setMood(entry.mood || '');
+    // v3.138: lyricsStore에도 전파 — 작곡 2단계 안내가 lyricsStore를 읽고,
+    // 여기 미전파가 "드래프트에 장르 없음" 잔재를 만들던 근본 원인 중 하나
+    const ls = useLyricsStore.getState();
+    ls.setGenre(entry.genre || '');
+    ls.setMood(entry.mood || '');
     // v3.102(B-4): 가사 출처 스냅샷 — 생성 body lyrics_source·발매 lyrics_id로 전송.
     // v3.130: 방금 작사한 작업본(__draft__)은 자산 id가 없으므로 스냅샷 없음(신규 작사와 동일 취급).
     if (entry.id === '__draft__') {

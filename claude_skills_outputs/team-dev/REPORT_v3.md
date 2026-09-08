@@ -2921,3 +2921,12 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 | 보컬 성별 = 아티스트 성별 자동(성별 질문 스킵→스타일 직행) | PASS — "아티스트를 따라 여성으로" |
 
 **파일**: screens/MusicGenerationScreen.tsx.
+
+---
+
+## v3.138 — "장르 정보 없음" 규명·드래프트-DB 병합 (2026-09-08)
+
+**결과**: PASS (v3138e_draft_merge.png — "장르는 록(으)로 갈게요. 분위기는 어떻게 할까요?").
+
+**규명**: DB 덮어쓰기 아님(무결 실측). 대표가 고른 항목은 방금 작사 작업본(__draft__)이며 메모리 잔재라 장르가 비어 있었음 — 잔재 유발 경로(보관함 작곡 시 lyricsStore 미전파)까지 봉합. 수정 후: 작업본은 같은 내용의 DB 기록에서 장르/분위기를 자동 승계(+출처 id 확정→수정 동기화 연결), 진짜 없을 때만 질문.
+**파일**: screens/ComposeLyricsPickScreen.tsx, screens/LyricsBookScreen.tsx.

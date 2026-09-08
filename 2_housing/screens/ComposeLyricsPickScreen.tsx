@@ -39,6 +39,8 @@ interface PickEntry {
   mood?: string;
   source: 'draft' | 'asset' | 'track' | 'local';
   createdAt: number;
+  /** v3.138: 드래프트가 DB에 자동 저장된 동일 내용 자산과 매칭될 때 그 자산 id */
+  assetId?: string;
 }
 
 const SOURCE_LABEL: Record<PickEntry['source'], string> = {
@@ -117,6 +119,22 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
       // 정렬: 방금 작사 최상단 고정 → 나머지 최신순 (가사 내용 기준 중복 제거)
       const draft = out.filter((e) => e.source === 'draft');
       const rest = out.filter((e) => e.source !== 'draft').sort((a, b) => b.createdAt - a.createdAt);
+      // v3.138(대표 실사고): 드래프트는 메모리 잔재라 장르/분위기가 빠져있을 수 있음 —
+      // 자동 저장된 동일 내용의 DB 자산에서 장르/분위기/자산 id를 승계 (DB가 기준).
+      if (draft.length > 0) {
+        const match = rest.find(
+          (e) => e.source === 'asset' && e.lyrics.trim() === draft[0].lyrics.trim(),
+        );
+        if (match) {
+          draft[0] = {
+            ...draft[0],
+            genre: draft[0].genre || match.genre,
+            mood: draft[0].mood || match.mood,
+            assetId: match.id,
+          };
+          console.info('[ComposeLyricsPick] 드래프트-자산 병합', { assetId: match.id, genre: draft[0].genre, mood: draft[0].mood });
+        }
+      }
       const seen = new Set(draft.map((e) => e.lyrics.trim()));
       const dedup = rest.filter((e) => {
         const key = e.lyrics.trim();
@@ -144,8 +162,14 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     if (entry.source === 'asset') {
       music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
     } else if (entry.source === 'draft') {
-      // v3.134: 드래프트는 작사 시 자동 저장된 자산 출처(lyricsSource)가 이미 있을 수 있음 — 보존
-      // (없으면 기존 상태 그대로 — LyricsLoading 이 null 로 정리해둠)
+      // v3.138: 병합된 자산 id가 있으면 출처로 확정(수정 동기화 대상), 없으면 기존 출처 보존
+      if (entry.assetId) {
+        music.setLyricsSource({ lyrics_id: entry.assetId, title: entry.title || undefined, is_mine: true });
+      }
+      // v3.138: 드래프트의 장르/분위기(자산 승계분 포함)를 스토어에 채움 — '장르 없음' 질문 방지
+      const ls2 = useLyricsStore.getState();
+      if (entry.genre && !ls2.genre) ls2.setGenre(entry.genre);
+      if (entry.mood && !ls2.mood) ls2.setMood(entry.mood);
     } else {
       music.setLyricsSource(null);
     }
