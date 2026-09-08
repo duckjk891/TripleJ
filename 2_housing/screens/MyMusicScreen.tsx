@@ -243,6 +243,13 @@ export default function MyMusicScreen({ navigation }: any) {
     return null;
   }, [artists, myCharacter]);
 
+  // v3.140(대표): 아티스트 없이 만든 내 목소리(계정 자산)도 접근 가능하게 — 목소리 관리 진입
+  const handleOpenVoices = () => {
+    if (__DEV__) console.info('[MyMusic] 내 목소리 → Studio/VoiceManage');
+    navigation.navigate('Studio', { screen: 'Map' });
+    navigation.navigate('Studio', { screen: 'VoiceManage' });
+  };
+
   // v3.117: 탭 시 작업실 스택의 내 아티스트 목록으로(크로스 탭 — 이 화면의 Studio 진입 관행 동일)
   const handleOpenArtist = () => {
     if (__DEV__) console.info('[MyMusic] 내 아티스트 → Studio/MyArtists');
@@ -539,6 +546,23 @@ export default function MyMusicScreen({ navigation }: any) {
             <AppText style={styles.artistEmptyButton}>아티스트 만들러 가기</AppText>
           </TouchableOpacity>
         )}
+        {/* v3.140: 내 목소리 진입 — 아티스트 없이 작곡 중 만든 목소리도 계정 자산이라
+            여기서 확인·관리(이전엔 아티스트 상세/작곡 중에만 진입 가능했음) */}
+        <TouchableOpacity
+          style={[styles.artistCard, { marginTop: 8 }]}
+          activeOpacity={0.85}
+          onPress={handleOpenVoices}
+          accessibilityLabel="내 목소리 관리"
+        >
+          <View style={[styles.artistCardImage, { justifyContent: 'center', alignItems: 'center' }]}>
+            <Feather name="mic" size={20} color={colors.accent.primary} />
+          </View>
+          <View style={styles.artistCardBody}>
+            <AppText style={styles.artistCardTitle} numberOfLines={1}>내 목소리</AppText>
+            <AppText style={styles.artistCardHint}>클로닝한 목소리 확인·관리 · 아티스트 연결</AppText>
+          </View>
+          <AppText style={styles.artistCardArrow}>{'›'}</AppText>
+        </TouchableOpacity>
       </View>
 
       {/* 탭 바 — v3.115: 상위 3탭(곡·앨범/피드/커뮤니티, UserChannel 탭명과 동일) */}

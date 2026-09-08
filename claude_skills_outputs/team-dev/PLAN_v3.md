@@ -2076,3 +2076,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **⭐ 정책 실측**: 클로닝 '만들기'=⭐5 서버 단일 차감(voice_clone.py create, 진입 경로 무관 → 아티스트 경로와 자동 동일). 목소리 '사용'(작곡에 입히기)=아티스트/내 목소리 모두 compose ⭐15에 포함·추가 과금 없음 — 이미 동일 정책.
 
 **구현**: 성별 선택지에 [🎤 내 목소리로 만들기] 추가 → step 210(ready 클론 목록/없으면 '목소리 만들러 가기(⭐5)'→VoiceCloneWizard/돌아가기) → 클론 선택 시 persona 적용·보컬 설정 스킵(step 5)·내 목소리 단계(12) 자동 통과.
+
+---
+
+## v3.140 — 아티스트 없는 내 목소리 접근성 (2026-09-08)
+
+**요청(우려)**: 아티스트 없이 작곡만 하며 내 목소리를 만들면 파일이 어딘가 저장돼야 하지 않나.
+
+**Plan verification findings**: 저장은 이미 완비 — voice_clones가 **계정(user_id) 자산**이며 녹음 파일 2종(source_object_name=노래, verify_object_name=낭독)이 MinIO에 영구 저장, 아티스트 연결은 별도 선택 포인터(v213, 클론 삭제 시 링크만 정리). 실갭은 **접근성**: VoiceManage 진입로가 아티스트 상세·작곡 중뿐이라 아티스트 없는 사용자는 저장된 목소리를 볼 곳이 없음.
+
+**계획**: 마이페이지(내 아티스트 요약 행 아래)에 "내 목소리" 진입 행 추가 — 크로스 탭 관행(Studio/Map→VoiceManage)으로 이동.
