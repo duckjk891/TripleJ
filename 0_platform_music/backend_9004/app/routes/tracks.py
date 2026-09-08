@@ -1701,6 +1701,18 @@ async def upload_track(
     src_persona_id = (persona_id or "").strip()[:64] or None
     src_persona_model = (persona_model or "").strip()[:64] or None
     src_lyrics_id = (lyrics_id or "").strip()[:64] or None
+    # v230 (가사 DB 단일화, 대표 확정 2026-09-08): 가사가 있는데 자산 출처가 없으면
+    # 발매 시점에 가사 자산으로 자동 등록 — lyrics_assets 가 모든 가사의 단일 저장소.
+    if (lyrics or "").strip() and not src_lyrics_id:
+        from .lyrics_assets import save_lyrics_asset
+        _auto_lid = await save_lyrics_asset(
+            uploader_id, title=title or "", content=lyrics,
+            genre=(genre_list[0] if genre_list else None),
+            mood=(mood_list[0] if mood_list else None), source="manual",
+        )
+        if _auto_lid:
+            src_lyrics_id = _auto_lid
+            logger.info("[SongSource] auto lyrics-asset on upload lid=%s", _auto_lid)
     src_persona_id_norm, source_meta = await _resolve_source_meta(
         get_mongo(), uploader_id, src_character_id, src_persona_id, src_lyrics_id,
     )
@@ -2020,6 +2032,15 @@ async def upload_from_generation(
             src_persona_model = str(gen_doc["persona_model"])[:64]
     if not src_lyrics_id and isinstance(gen_lyrics_source, dict):
         src_lyrics_id = (gen_lyrics_source.get("lyrics_id") or "").strip()[:64] or None
+    # v230 (가사 DB 단일화): 자산 출처 없는 가사는 발매 시 자동 등록 (파일 경로와 동일)
+    if (body.lyrics or "").strip() and not src_lyrics_id:
+        from .lyrics_assets import save_lyrics_asset
+        _auto_lid = await save_lyrics_asset(
+            uploader_id, title=(body.title or ""), content=body.lyrics, source="ai",
+        )
+        if _auto_lid:
+            src_lyrics_id = _auto_lid
+            logger.info("[SongSource] auto lyrics-asset on upload-from-generation lid=%s", _auto_lid)
     src_persona_id_norm, source_meta = await _resolve_source_meta(
         mongo, uploader_id, src_character_id, src_persona_id, src_lyrics_id,
         lyrics_source=gen_lyrics_source,
