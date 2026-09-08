@@ -433,7 +433,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         setChatHistory((prev) => [
           ...prev,
           { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
-          { type: 'director', text: `${artist.name || '아티스트'}는 아직 연결된 목소리가 없어요. 보컬 성별은 아티스트를 따라 ${mapped}으로 맞출게요! ${DIRECTOR_MESSAGES[4]}` },
+          { type: 'director', text: `${artist.name || '아티스트'}은(는) 아직 연결된 목소리가 없어요. 보컬 성별은 아티스트를 따라 ${mapped}으로 맞출게요! ${DIRECTOR_MESSAGES[4]}` },
         ]);
         setStep(4);
         return;
@@ -441,7 +441,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
-        { type: 'director', text: `${artist.name || '아티스트'}는 아직 연결된 목소리가 없어요. ${vocalQuestion}` },
+        { type: 'director', text: `${artist.name || '아티스트'}은(는) 아직 연결된 목소리가 없어요. ${vocalQuestion}` },
       ]);
       setStep(3);
     }
