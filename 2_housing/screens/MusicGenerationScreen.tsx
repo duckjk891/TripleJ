@@ -855,6 +855,13 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                       <AppText style={styles.choiceText}>{c.voice_name || '내 목소리'}</AppText>
                     </TouchableOpacity>
                   ))}
+                  {/* v3.139.1: 생성 중인 클론도 표시 — 위저드 직후 복귀 시 빈 목록 혼란 방지 */}
+                  {voiceClones.filter((c) => c.status === 'generating' || c.status === 'pending').map((c, idx) => (
+                    <View key={`gen_${c.clone_id || idx}`} style={[styles.choiceButton, { opacity: 0.55 }]}>
+                      <AppText style={styles.choiceNumber}>⏳</AppText>
+                      <AppText style={styles.choiceText}>{(c.voice_name || '내 목소리') + ' — 생성 중이에요 (완성되면 선택 가능)'}</AppText>
+                    </View>
+                  ))}
                   {readyClones.length === 0 && (
                     <TouchableOpacity
                       style={styles.choiceButton}
