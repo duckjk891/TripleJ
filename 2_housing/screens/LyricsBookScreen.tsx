@@ -18,6 +18,7 @@ import { useAuthStore } from '../stores/authStore';
 import {
   listLyricsAssets,
   deleteLyricsAsset,
+  migrateLocalLyricsToServer,
   type LyricsAsset,
 } from '../services/lyricsService';
 import { ActivityIndicator } from 'react-native';
@@ -57,6 +58,11 @@ export default function LyricsBookScreen({ navigation, route }: Props) {
     let mounted = true;
     (async () => {
       setLoadingServer(true);
+      // v3.136: 구버전 로컬 잔존분 서버 이관(1회) — 이후 서버가 단일 저장소
+      const locals = useLyricsBookStore.getState().entries;
+      if (locals.length > 0) {
+        await migrateLocalLyricsToServer(locals, useLyricsBookStore.getState().remove);
+      }
       try {
         console.info('[LyricsBook] calling listLyricsAssets');
         const items = await listLyricsAssets();
@@ -80,8 +86,8 @@ export default function LyricsBookScreen({ navigation, route }: Props) {
     return () => { mounted = false; };
   }, [isLoggedIn]);
 
-  // 서버 목록 우선 + (이전 버전에서 로컬에만 저장된 항목이 있으면 함께 표시)
-  const baseEntries = serverEntries ? [...serverEntries, ...localEntries] : localEntries;
+  // v3.136: 로그인=서버 단일 저장소(로컬은 위에서 이관됨), 비로그인=로컬 폴백
+  const baseEntries = serverEntries ? serverEntries : localEntries;
 
   // v3.130: 방금 작사한 가사(아직 세션에만 있는 작업본)를 최상단 고정 — 최신이 맨 위 원칙
   const draftLyrics = useLyricsStore((s) => s.generatedLyrics);

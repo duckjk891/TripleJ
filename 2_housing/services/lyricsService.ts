@@ -63,3 +63,29 @@ export const patchLyricsAsset = async (
 /** 가사 자산 id 형식(32-hex) — track_/로컬 id 와 구분 */
 export const isLyricsAssetId = (id?: string | null): boolean =>
   !!id && /^[0-9a-f]{32}$/.test(id);
+
+// v3.136 (가사 DB 단일화) — 구버전 로컬 보관함 잔존분을 서버 자산으로 1회 이관.
+// 성공한 항목만 로컬에서 제거(실패분은 다음 진입 시 재시도). 반환: 이관 건수.
+export const migrateLocalLyricsToServer = async (
+  entries: Array<{ id: string; title: string; lyrics: string; genre?: string; mood?: string }>,
+  removeLocal: (id: string) => void,
+): Promise<number> => {
+  let moved = 0;
+  for (const e of entries) {
+    try {
+      await saveLyricsAsset({
+        title: e.title || '무제',
+        content: e.lyrics,
+        genre: e.genre,
+        mood: e.mood,
+        source: 'ai',
+      });
+      removeLocal(e.id);
+      moved += 1;
+    } catch (err: any) {
+      console.error('[lyricsService] 로컬→서버 이관 실패(다음에 재시도)', { id: e.id, status: err?.response?.status });
+    }
+  }
+  if (moved > 0) console.info('[lyricsService] 로컬 보관함 이관 완료', { moved });
+  return moved;
+};

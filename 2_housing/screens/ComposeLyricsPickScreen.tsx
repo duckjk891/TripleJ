@@ -25,8 +25,7 @@ import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsBookStore } from '../stores/lyricsBookStore';
-import { listLyricsAssets } from '../services/lyricsService';
-import api from '../services/api';
+import { listLyricsAssets, migrateLocalLyricsToServer } from '../services/lyricsService';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -85,8 +84,13 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
           createdAt: Date.now(),
         });
       }
-      // ② 서버 가사 자산 (최신순)
+      // ② 서버 가사 자산(단일 저장소) — v3.136(대표 확정): 발매곡 가사는 서버 v230에서
+      // lyrics_assets 로 일괄 이관·발매 시 자동 등록되므로 별도 소스 병합 제거.
+      // 구버전 로컬 보관함 잔존분은 서버로 1회 이관 후 정리.
       if (isLoggedIn) {
+        if (localEntries.length > 0) {
+          await migrateLocalLyricsToServer(localEntries, useLyricsBookStore.getState().remove);
+        }
         try {
           console.info('[ComposeLyricsPick] calling listLyricsAssets');
           const items = await listLyricsAssets();
@@ -102,28 +106,13 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
         } catch (err: any) {
           console.error('[ComposeLyricsPick] listLyricsAssets failed', { status: err?.response?.status });
         }
-        // ③ 발매곡 가사 — 보관함 도입 전 기존 작사물의 유일한 서버 흔적
-        try {
-          console.info('[ComposeLyricsPick] calling GET /tracks/my');
-          const res = await api.get('/tracks/my', { params: { page: 1, limit: 100, sort: 'created_at' } });
-          const tracks: any[] = res.data?.tracks ?? res.data?.items ?? [];
-          tracks.filter((t) => (t.lyrics || '').trim()).forEach((t) => out.push({
-            id: `track_${t.id}`,
-            title: t.title || '무제',
-            lyrics: t.lyrics,
-            genre: Array.isArray(t.genre) ? t.genre[0] : t.genre || undefined,
-            source: 'track',
-            createdAt: Date.parse(t.created_at) || 0,
-          }));
-        } catch (err: any) {
-          console.error('[ComposeLyricsPick] tracks/my failed', { status: err?.response?.status });
-        }
+      } else {
+        // 비로그인 폴백 — 로컬 잔존분 표시
+        localEntries.forEach((e) => out.push({
+          id: e.id, title: e.title, lyrics: e.lyrics,
+          genre: e.genre, mood: e.mood, source: 'local', createdAt: e.createdAt,
+        }));
       }
-      // 레거시 로컬 보관함 (구버전 저장분)
-      localEntries.forEach((e) => out.push({
-        id: e.id, title: e.title, lyrics: e.lyrics,
-        genre: e.genre, mood: e.mood, source: 'local', createdAt: e.createdAt,
-      }));
       if (!mounted) return;
       // 정렬: 방금 작사 최상단 고정 → 나머지 최신순 (가사 내용 기준 중복 제거)
       const draft = out.filter((e) => e.source === 'draft');
