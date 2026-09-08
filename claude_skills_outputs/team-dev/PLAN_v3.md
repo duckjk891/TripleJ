@@ -2044,3 +2044,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **요청**: 신규 가사 DB를 유일한 저장소로 — 이전 저장소(발매곡 별도 소스·구 로컬 보관함) 폐지, 기존 것들은 신규 DB로 통합.
 
 **계획·실행**: ① [BE] 일회성 이관 — 전 사용자 tracks.lyrics → lyrics_assets(내용 중복 제거, created_at 보존, 트랙에 lyrics_id 역참조 연결). 결과: 17건 이관/6건 중복 스킵, 총 21 자산 ② [BE v230] 발매 훅 — /upload·/upload-from-generation에서 가사가 있는데 자산 출처 없으면 발매 시 자동 자산 등록(영구 단일화) ③ [FE v3.136] ComposeLyricsPick·LyricsBook에서 발매곡 fetch·로컬 병합 제거 → 서버 DB 단일(+draft 고정). 구버전 로컬 잔존분은 진입 시 서버로 1회 이관 후 제거(실패분 재시도), 비로그인만 로컬 폴백.
+
+---
+
+## v3.137 — '자동' 표기 폐지·아티스트 카드 이미지·보컬 성별 따라가기 (2026-09-08)
+
+**요청**: ① 장르·분위기 '자동' 텍스트 아님 — DB 실값 확인 ② 아티스트 선택 대화에 이미지 표시 ③ 보컬 성별은 선택한 아티스트 성별을 따르도록.
+
+**Plan verification findings**: 가사 DB 실측 — 대표 자산 9건 전부 genre/mood 실값 보유(하우스/트로트/시티팝…). '자동'은 값 미전달 케이스의 v3.135 폴백 표기. → 폴백 폐지: 값 있으면 실값 안내, 없으면 디렉터가 장르(step 300)/분위기(step 301)를 선택지로 질문. 아티스트 gender는 자유 문자열(여성/male 등) → 매핑 헬퍼.
+
+**계획**: ① step 300/301 신설(GENRE/MOOD_OPTIONS 칩) + proceedToArtistStep 함수화 ② 아티스트 카드에 시트 썸네일(artistSheetUrl) + 목소리 상태 서브라벨 ③ 목소리 없는 아티스트 선택 시 성별 매핑되면 성별 질문 스킵→보컬 스타일(step 4) 직행(듀엣도 메인만 자동, 서브는 기존 흐름).

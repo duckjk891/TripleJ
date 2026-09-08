@@ -22,7 +22,8 @@ import { useMusicStore } from '../stores/musicStore';
 import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
-import { listArtists, type ServerArtist } from '../services/characterService';
+import { GENRE_OPTIONS, MOOD_OPTIONS } from '../utils/lyricsPrompt';
+import { listArtists, artistSheetUrl, type ServerArtist } from '../services/characterService';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
@@ -262,9 +263,30 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const genreInfo = lyricsStore.genre || selectedGenre;
     const moodInfo = lyricsStore.mood || selectedMood;
     const styleInfo = lyricsStore.style || '';
-    const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ') || '자동';
-    // v3.135: 빈값은 '자동' 표기 — "장르: , 분위기: " 빈칸 노출 방지 (대표 지적)
-    const autoMsg = `장르: ${genreInfo || '자동'}, 분위기: ${moodInfo || '자동'}${styleInfo ? `, 스타일: ${styleInfo}` : ''}\n작사 디렉터가 넘겨준 대로 설정했어요!`;
+    // v3.137(대표): '자동' 표기 폐지 — 값이 없으면 디렉터가 장르(step 300)/분위기(step 301)를
+    // 직접 질문해 실값을 받는다. 둘 다 있으면 실값 안내 후 진행.
+    if (!genreInfo) {
+      console.warn('[MusicGeneration] 장르 없음 — 선택 질문으로 전환');
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: `가사 확인: "${displayText}"` },
+        { type: 'director', text: '이 가사에는 장르 정보가 없네요. 어떤 장르로 작곡할까요?' },
+      ]);
+      setStep(300);
+      return;
+    }
+    if (!moodInfo) {
+      console.warn('[MusicGeneration] 분위기 없음 — 선택 질문으로 전환');
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: `가사 확인: "${displayText}"` },
+        { type: 'director', text: `장르는 ${genreInfo}(으)로 갈게요. 분위기는 어떻게 할까요?` },
+      ]);
+      setStep(301);
+      return;
+    }
+    const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ');
+    const autoMsg = `장르: ${genreInfo}, 분위기: ${moodInfo}${styleInfo ? `, 스타일: ${styleInfo}` : ''}\n작사 디렉터가 넘겨준 대로 설정했어요!`;
 
     const newHistory: ChatMessage[] = [
       ...chatHistory,
@@ -305,6 +327,69 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }, 1500);
   };
 
+  // v3.137: 장르/분위기 확정 후 아티스트 스텝(또는 보컬)으로 — handleLyricsConfirm 후반부와 동일 로직
+  const proceedToArtistStep = async (announce: string) => {
+    let list: ServerArtist[] = [];
+    try {
+      console.info('[MusicGeneration] calling listArtists (아티스트 선택 단계)');
+      list = (await listArtists()).characters;
+    } catch (err: any) {
+      console.error('[MusicGeneration] listArtists failed — 아티스트 단계 생략', { status: err?.response?.status });
+    }
+    if (list.length > 0) {
+      setArtists(list);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: announce },
+        { type: 'director', text: '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)' },
+      ]);
+      setStep(200);
+      return;
+    }
+    const vocalQuestion = lyricsStore.isDuet
+      ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
+      : DIRECTOR_MESSAGES[3];
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: announce },
+      { type: 'director', text: vocalQuestion },
+    ]);
+    setStep(3);
+  };
+
+  // v3.137: step 300 — 장르 선택 (가사에 장르 정보 없을 때)
+  const handleGenrePick = (genre: string) => {
+    setSelectedGenre(genre);
+    lyricsStore.setGenre(genre);
+    const mood = lyricsStore.mood || selectedMood;
+    if (!mood) {
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: genre },
+        { type: 'director', text: '분위기는 어떻게 할까요?' },
+      ]);
+      setStep(301);
+      return;
+    }
+    proceedToArtistStep(`장르: ${genre}`);
+  };
+
+  // v3.137: step 301 — 분위기 선택
+  const handleMoodPick = (mood: string) => {
+    setSelectedMood(mood);
+    lyricsStore.setMood(mood);
+    proceedToArtistStep(`분위기: ${mood}`);
+  };
+
+  // v3.137: 아티스트 gender 자유 문자열 → 보컬 성별 매핑 (미확정이면 null)
+  const mapArtistGender = (g?: string | null): '남성' | '여성' | null => {
+    const v = (g || '').toLowerCase();
+    if (!v) return null;
+    if (v.includes('남') || v.includes('male') && !v.includes('female')) return '남성';
+    if (v.includes('여') || v.includes('female')) return '여성';
+    return null;
+  };
+
   // v3.135: 아티스트 선택 (null = 건너뛰기)
   const handleArtistPick = (artist: ServerArtist | null) => {
     const vocalQuestion = lyricsStore.isDuet
@@ -338,6 +423,21 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       ]);
       setStep(5);
     } else {
+      // v3.137(대표): 보컬 성별은 아티스트 성별을 따라간다 — 매핑되면 성별 질문 스킵,
+      // 바로 보컬 스타일 선택으로. (듀엣도 메인 성별만 자동, 서브는 기존 흐름)
+      const mapped = mapArtistGender(artist.gender);
+      if (mapped) {
+        setUseVocal(true);
+        setSelectedVocalGender(mapped);
+        console.info('[MusicGeneration] 보컬 성별 자동(아티스트 따름)', { gender: mapped });
+        setChatHistory((prev) => [
+          ...prev,
+          { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
+          { type: 'director', text: `${artist.name || '아티스트'}는 아직 연결된 목소리가 없어요. 보컬 성별은 아티스트를 따라 ${mapped}으로 맞출게요! ${DIRECTOR_MESSAGES[4]}` },
+        ]);
+        setStep(4);
+        return;
+      }
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
@@ -727,10 +827,21 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                     style={[styles.choiceButton, selectedArtistId === a.character_id && styles.choiceButtonSelected]}
                     onPress={() => handleArtistPick(a)}
                   >
-                    <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
-                    <AppText style={styles.choiceText}>
-                      {(a.name || '이름 없는 아티스트') + (hasVoice ? '  🎤 목소리 연결됨' : '  (목소리 없음)')}
-                    </AppText>
+                    {/* v3.137: 아티스트 시트 썸네일 — 텍스트만으로는 식별 어려움(대표) */}
+                    {(a.sheet_object_name || a.sheet_url) ? (
+                      <Image
+                        source={{ uri: a.sheet_object_name ? artistSheetUrl(a.sheet_object_name) : (a.sheet_url as string) }}
+                        style={artistCardStyles.thumb}
+                      />
+                    ) : (
+                      <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <AppText style={styles.choiceText}>{a.name || '이름 없는 아티스트'}</AppText>
+                      <AppText style={artistCardStyles.voiceTag}>
+                        {hasVoice ? '🎤 목소리 연결됨' : '목소리 없음 · 보컬 선택 필요'}
+                      </AppText>
+                    </View>
                   </TouchableOpacity>
                 );
               })}
@@ -738,6 +849,36 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 <AppText style={styles.choiceNumber}>{(artists || []).length + 1}</AppText>
                 <AppText style={styles.choiceText}>아티스트 없이 진행 (건너뛰기)</AppText>
               </TouchableOpacity>
+            </ScrollView>
+          </View>
+        );
+
+      case 300:
+        // v3.137: 장르 선택 (가사에 장르 정보 없음)
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {GENRE_OPTIONS.map((g, idx) => (
+                <TouchableOpacity key={g} style={styles.choiceButton} onPress={() => handleGenrePick(g)}>
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={styles.choiceText}>{g}</AppText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        );
+
+      case 301:
+        // v3.137: 분위기 선택 (가사에 분위기 정보 없음)
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {MOOD_OPTIONS.map((m, idx) => (
+                <TouchableOpacity key={m} style={styles.choiceButton} onPress={() => handleMoodPick(m)}>
+                  <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                  <AppText style={styles.choiceText}>{m}</AppText>
+                </TouchableOpacity>
+              ))}
             </ScrollView>
           </View>
         );
@@ -1582,4 +1723,14 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: 'bold',
   },
+});
+
+// v3.137 — 아티스트 카드 전용 스타일
+const artistCardStyles = StyleSheet.create({
+  thumb: {
+    width: 44, height: 60, borderRadius: 8, marginRight: 10,
+    backgroundColor: colors.bg.surface2,
+    resizeMode: 'cover',
+  } as any,
+  voiceTag: { fontSize: 11, color: colors.text.secondary, marginTop: 2 },
 });
