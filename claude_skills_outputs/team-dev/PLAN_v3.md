@@ -2026,3 +2026,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: 제목·가사 수정(1·2단계)은 store에 반영돼 생성 요청·결과 화면에는 정상 반영(기존 동작 OK). **가사 DB 동기화는 부재**. 또한 방금 작사분은 자동 자산화(v3.131)로 서버에 저장되지만 lyrics_id를 버려서(lyricsSource null) 출처 추적 불가였음.
 
 **계획**: ① LyricsLoading — 자동 저장 응답의 lyrics_id를 lyricsSource로 기억 ② ComposeLyricsPick — 드래프트 선택 시 기존 lyricsSource 보존 ③ MusicGeneration proceedGenerate — 출처가 내 가사 자산(32-hex id)이면 최종 제목·가사를 PATCH /lyrics/{id} (best-effort, 실패해도 작곡 무영향) ④ lyricsService patchLyricsAsset/isLyricsAssetId 추가. 발매곡(track_)·레거시 로컬 출처는 동기화 대상 아님(원본 곡 가사는 불변).
+
+---
+
+## v3.135 — 가사 선택 장르/분위기 빈칸 수정 + 작곡 아티스트 선택 단계 (2026-09-08)
+
+**요청**: ① 가사 선택 후 장르·분위기가 빈칸으로 표시 ② 작곡 흐름에서 가사 다음·보컬 전에 아티스트 선택(선택사항) — 목소리 연결 아티스트면 작곡에 자동 반영, 없으면 보컬 선택.
+
+**Plan verification findings**: ① 원인 — ComposeLyricsPick이 musicStore에만 genre/mood를 넣고 lyricsStore 미전파, 작곡 2단계 안내는 lyricsStore를 읽음 → "장르: , 분위기: " 빈칸. ② 인프라 기존재 — /character/list가 persona_voice_id/persona_status(v213) 포함, MusicGeneration에 personaId 배선(step 12)과 임시 step 트릭(100/101) 관행 존재 → 전면 리넘버링 없이 step 200으로 삽입 가능. ServerArtist 필드는 character_id(인덱스 시그니처 때문에 tsc 미검출 주의 — 1픽스).
+
+**계획**: ① handlePick에서 lyricsStore.setGenre/setMood 전파 + 2단계 안내 빈값 '자동' 표기 ② 가사 확인 후 아티스트 목록 조회 → 있으면 step 200(카드: 이름+🎤 목소리 연결됨/목소리 없음 + 건너뛰기), 없으면 기존 보컬 직행 ③ 목소리 연결(ready) 선택 시 personaId('voice')·자동 반영 → 보컬 성별/스타일 스킵(step 5 직행) + 내 목소리(step 12) 자동 통과 ④ 목소리 없으면 안내 후 보컬 선택(step 3).

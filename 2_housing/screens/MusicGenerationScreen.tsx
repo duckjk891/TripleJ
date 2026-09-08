@@ -22,6 +22,7 @@ import { useMusicStore } from '../stores/musicStore';
 import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
+import { listArtists, type ServerArtist } from '../services/characterService';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
@@ -72,6 +73,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const artistPreset = artistVoice?.type === 'preset' ? artistVoice : null;
 
   const [step, setStep] = useState(0);
+  // v3.135(대표): 가사 다음·보컬 전 아티스트 선택 단계(step 200) — 선택은 선택사항.
+  // 목소리(persona) 연결 아티스트면 작곡에 자동 반영(보컬·내 목소리 단계 스킵).
+  const [artists, setArtists] = useState<ServerArtist[] | null>(null);
+  const [artistVoiceApplied, setArtistVoiceApplied] = useState(false);
+  const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     { type: 'director', text: DIRECTOR_MESSAGES[0] },
   ]);
@@ -199,6 +205,20 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }
   }, [step, artistClone]);
 
+  // v3.135: 아티스트 목소리가 이미 적용된 경우 내 목소리(step 12) 단계 자동 통과
+  useEffect(() => {
+    if (step === 12 && artistVoiceApplied) {
+      console.info('[MusicGeneration] step12 스킵 — 아티스트 목소리 적용됨');
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: '아티스트 목소리 적용됨' },
+        { type: 'director', text: '선택한 아티스트의 목소리로 노래할 거라 이 단계는 건너뛸게요!' },
+      ]);
+      setStep(13);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, artistVoiceApplied]);
+
   const advanceStep = (userAnswer: string, nextStep: number) => {
     if (nextStep >= DIRECTOR_MESSAGES.length) {
       // All steps done - show generate button
@@ -242,8 +262,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const genreInfo = lyricsStore.genre || selectedGenre;
     const moodInfo = lyricsStore.mood || selectedMood;
     const styleInfo = lyricsStore.style || '';
-    const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ');
-    const autoMsg = `장르: ${genreInfo}, 분위기: ${moodInfo}${styleInfo ? `, 스타일: ${styleInfo}` : ''}\n작사 디렉터가 넘겨준 대로 설정했어요!`;
+    const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ') || '자동';
+    // v3.135: 빈값은 '자동' 표기 — "장르: , 분위기: " 빈칸 노출 방지 (대표 지적)
+    const autoMsg = `장르: ${genreInfo || '자동'}, 분위기: ${moodInfo || '자동'}${styleInfo ? `, 스타일: ${styleInfo}` : ''}\n작사 디렉터가 넘겨준 대로 설정했어요!`;
 
     const newHistory: ChatMessage[] = [
       ...chatHistory,
@@ -253,8 +274,25 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setChatHistory(newHistory);
     setStep(2);
 
-    // 자동으로 step 2 → step 3(보컬 선택)으로 넘김
-    setTimeout(() => {
+    // v3.135: step 2 → 아티스트 선택(step 200) — 아티스트가 없으면 기존대로 보컬(step 3)
+    setTimeout(async () => {
+      let list: ServerArtist[] = [];
+      try {
+        console.info('[MusicGeneration] calling listArtists (아티스트 선택 단계)');
+        list = (await listArtists()).characters;
+      } catch (err: any) {
+        console.error('[MusicGeneration] listArtists failed — 아티스트 단계 생략', { status: err?.response?.status });
+      }
+      if (list.length > 0) {
+        setArtists(list);
+        setChatHistory((prev) => [
+          ...prev,
+          { type: 'user', text: `확인! (${infoText})` },
+          { type: 'director', text: '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)' },
+        ]);
+        setStep(200);
+        return;
+      }
       const vocalQuestion = lyricsStore.isDuet
         ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
         : DIRECTOR_MESSAGES[3];
@@ -265,6 +303,48 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       ]);
       setStep(3);
     }, 1500);
+  };
+
+  // v3.135: 아티스트 선택 (null = 건너뛰기)
+  const handleArtistPick = (artist: ServerArtist | null) => {
+    const vocalQuestion = lyricsStore.isDuet
+      ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
+      : DIRECTOR_MESSAGES[3];
+    if (!artist) {
+      console.info('[MusicGeneration] 아티스트 건너뛰기');
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: '아티스트 없이 진행' },
+        { type: 'director', text: vocalQuestion },
+      ]);
+      setStep(3);
+      return;
+    }
+    setSelectedArtistId(artist.character_id);
+    const hasVoice = !!artist.persona_voice_id && artist.persona_status === 'ready';
+    console.info('[MusicGeneration] 아티스트 선택', { cid: artist.character_id, hasVoice });
+    if (hasVoice) {
+      // 목소리 자동 반영 — 보컬 성별/스타일·내 목소리(step 12) 단계 스킵
+      setSelectedPersonaId(artist.persona_voice_id);
+      setPersonaModel('voice');
+      setPersonaModelOn(true);
+      personaDefaultAppliedRef.current = true;
+      setArtistVoiceApplied(true);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
+        { type: 'director', text: `${artist.name || '아티스트'}의 목소리를 자동으로 반영할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+        { type: 'director', text: DIRECTOR_MESSAGES[5] },
+      ]);
+      setStep(5);
+    } else {
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
+        { type: 'director', text: `${artist.name || '아티스트'}는 아직 연결된 목소리가 없어요. ${vocalQuestion}` },
+      ]);
+      setStep(3);
+    }
   };
 
   // Step 3: Vocal select (메인 보컬)
@@ -630,6 +710,34 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   </AppText>
                 </TouchableOpacity>
               ))}
+            </ScrollView>
+          </View>
+        );
+
+      case 200:
+        // v3.135: 아티스트 선택 (가사 다음·보컬 전) — 선택 없이 진행 가능
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {(artists || []).map((a, idx) => {
+                const hasVoice = !!a.persona_voice_id && a.persona_status === 'ready';
+                return (
+                  <TouchableOpacity
+                    key={a.character_id || String(idx)}
+                    style={[styles.choiceButton, selectedArtistId === a.character_id && styles.choiceButtonSelected]}
+                    onPress={() => handleArtistPick(a)}
+                  >
+                    <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                    <AppText style={styles.choiceText}>
+                      {(a.name || '이름 없는 아티스트') + (hasVoice ? '  🎤 목소리 연결됨' : '  (목소리 없음)')}
+                    </AppText>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity style={styles.choiceButton} onPress={() => handleArtistPick(null)}>
+                <AppText style={styles.choiceNumber}>{(artists || []).length + 1}</AppText>
+                <AppText style={styles.choiceText}>아티스트 없이 진행 (건너뛰기)</AppText>
+              </TouchableOpacity>
             </ScrollView>
           </View>
         );

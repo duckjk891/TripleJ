@@ -164,6 +164,10 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     if (entry.source !== 'draft') {
       lyrics.setGeneratedTitle(entry.title);
       lyrics.setGeneratedLyrics(entry.lyrics);
+      // v3.135(버그): 작곡 2단계 안내가 lyricsStore.genre/mood를 읽는데 여기 전파가 없어
+      // "장르: , 분위기: " 빈칸으로 표시됐음 — 선택한 가사의 값으로 동기화(없으면 빈값→'자동' 표기)
+      lyrics.setGenre(entry.genre || '');
+      lyrics.setMood(entry.mood || '');
     }
     // 디렉터 확인 말풍선 잠깐 보여주고 작곡 흐름으로 (ComposerSelect → suno 자동 확정)
     setTimeout(() => navigation.replace('ComposerSelect'), 900);

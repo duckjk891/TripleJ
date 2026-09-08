@@ -2878,3 +2878,18 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 **결과**: 전 항목 PASS — [e2e] 자산 선택→제목/가사 수정→생성 시작 시 PATCH 발신, 서버 자산 제목("여름 바다로 (수정판)")·가사(검증 라인) 갱신 실측. 작곡 요청은 차단(무과금)으로 검증. 방금 작사분도 자동 저장된 자산 id를 lyricsSource로 승계해 동일 동기화. 발매곡/로컬 출처는 대상 제외(원곡 가사 불변).
 **파일**: services/lyricsService.ts, screens/LyricsLoadingScreen.tsx, screens/ComposeLyricsPickScreen.tsx, screens/MusicGenerationScreen.tsx.
+
+---
+
+## v3.135 — 장르/분위기 빈칸 수정 + 아티스트 선택 단계 (2026-09-08)
+
+**결과**: 자동화 항목 전건 PASS (v3135e_artist_step.png / v3135e_after_pick.png).
+
+| 항목 | 결과 |
+|---|---|
+| 빈칸 버그 — lyricsStore 미전파 원인 수정 + 빈값 '자동' 표기 | PASS — "장르: 록, 분위기: 자동" |
+| 아티스트 선택 단계(가사 다음·보컬 전, step 200) | PASS — 카드·목소리 유무 표기·건너뛰기 |
+| 목소리 없는 아티스트 → 안내 후 보컬 선택 | PASS |
+| 목소리 연결 아티스트 → persona 자동 반영·보컬/내목소리 스킵 | 코드 완료 — persona 연결 계정 부재로 자동검증 불가, 대표 실사용 확인 항목 |
+
+**특이**: 듀엣+아티스트 목소리 조합 시 서브 보컬 지정 단계도 스킵됨(메인=persona, 서브=자동) — 필요 시 후속 조정. ServerArtist.character_id 필드명 1픽스.
