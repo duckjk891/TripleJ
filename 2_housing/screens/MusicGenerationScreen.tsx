@@ -190,7 +190,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // 내 목소리 스텝 진입 시(+VoiceManage에서 돌아왔을 때) 목록 갱신
   useFocusEffect(
     useCallback(() => {
-      if (step === 12) {
+      if (step === 12 || step === 210) {
         fetchClones();
       }
     }, [step, fetchClones])
@@ -445,6 +445,47 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       ]);
       setStep(3);
     }
+  };
+
+  // v3.139: 성별 선택지의 '내 목소리로 만들기' 진입 → 클론 선택(step 210)
+  const handleMyVoiceEntry = () => {
+    console.info('[MusicGeneration] 내 목소리 진입 (step 210)');
+    fetchClones();
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: '🎤 내 목소리로 만들기' },
+      { type: 'director', text: '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!' },
+    ]);
+    setStep(210);
+  };
+
+  const handleMyVoicePick = (clone: any) => {
+    if (!clone?.voice_id) return;
+    console.info('[MusicGeneration] 내 목소리 선택', { name: clone.voice_name });
+    setSelectedPersonaId(clone.voice_id);
+    setPersonaModel('voice');
+    setPersonaModelOn(true);
+    personaDefaultAppliedRef.current = true;
+    setArtistVoiceApplied(true); // step 12 자동 통과 재사용
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: `내 목소리: ${clone.voice_name || '선택한 목소리'}` },
+      { type: 'director', text: `${clone.voice_name || '내 목소리'}(으)로 노래할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+      { type: 'director', text: DIRECTOR_MESSAGES[5] },
+    ]);
+    setStep(5);
+  };
+
+  const handleMyVoiceBack = () => {
+    const vocalQuestion = lyricsStore.isDuet
+      ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
+      : DIRECTOR_MESSAGES[3];
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: '돌아가기' },
+      { type: 'director', text: vocalQuestion },
+    ]);
+    setStep(3);
   };
 
   // Step 3: Vocal select (메인 보컬)
@@ -785,6 +826,53 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   </AppText>
                 </TouchableOpacity>
               ))}
+              {/* v3.139(대표): 아티스트 목소리가 없거나 미선택일 때 내 목소리 선택 진입 —
+                  별도 질문 대신 성별 선택지에 통합 (선택 시 성별/스타일 질문 불필요해 스킵) */}
+              <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceEntry}>
+                <AppText style={styles.choiceNumber}>{VOCAL_OPTIONS.length + 1}</AppText>
+                <AppText style={styles.choiceText}>🎤 내 목소리로 만들기</AppText>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        );
+
+      case 210:
+        // v3.139: 내 목소리(클론) 선택 — ready 클론 목록 / 없으면 만들기 안내
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              {clonesLoading && readyClones.length === 0 ? (
+                <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginVertical: 16 }} />
+              ) : (
+                <>
+                  {readyClones.map((c, idx) => (
+                    <TouchableOpacity
+                      key={c.clone_id || c.voice_id || String(idx)}
+                      style={styles.choiceButton}
+                      onPress={() => handleMyVoicePick(c)}
+                    >
+                      <AppText style={styles.choiceNumber}>{idx + 1}</AppText>
+                      <AppText style={styles.choiceText}>{c.voice_name || '내 목소리'}</AppText>
+                    </TouchableOpacity>
+                  ))}
+                  {readyClones.length === 0 && (
+                    <TouchableOpacity
+                      style={styles.choiceButton}
+                      onPress={() => {
+                        console.info('[MusicGeneration] 클론 없음 — VoiceCloneWizard 이동');
+                        navigation.navigate('VoiceCloneWizard' as any);
+                      }}
+                    >
+                      <AppText style={styles.choiceNumber}>1</AppText>
+                      <AppText style={styles.choiceText}>🎙️ 목소리 만들러 가기 (⭐5)</AppText>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceBack}>
+                    <AppText style={styles.choiceNumber}>{(readyClones.length || 1) + 1}</AppText>
+                    <AppText style={styles.choiceText}>돌아가기 (보컬 직접 선택)</AppText>
+                  </TouchableOpacity>
+                </>
+              )}
             </ScrollView>
           </View>
         );

@@ -2064,3 +2064,15 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: DB 무결 재확인(9건 전부 genre/mood 보유·updated_at=created_at → PATCH 동기화가 건드린 적 없음). 원격 로그 실측 — 대표가 고른 것은 **__draft__(방금 작사 작업본)**. 작업본은 메모리 잔재라 장르가 비어 있었음. 잔재가 생긴 경로: ① LyricsBookScreen.handleCompose가 genre/mood를 musicStore에만 넣고 lyricsStore 미전파(제목·가사만 전파) ② 유실사고 시기 persist 스냅샷.
 
 **계획**: ① 드래프트-자산 병합 — 같은 내용의 DB 자산이 있으면 장르/분위기/자산 id 승계(DB=기준, 승계된 id는 lyricsSource로 확정되어 수정 동기화도 연결) ② 드래프트 선택 시 승계값을 lyricsStore에 채움 ③ LyricsBook handleCompose에도 lyricsStore 전파 추가(잔재 재발 차단). 진짜 정보가 없을 때만 장르/분위기 질문(v3.137 동작 유지).
+
+---
+
+## v3.139 — 보컬 단계 '내 목소리' 통합 + ⭐ 정책 확인 (2026-09-08)
+
+**요청**: 아티스트 목소리 없음/미선택 시 내 목소리 선택 위치(성별 선택 통합 vs 별도 질문 — 팀 판단 위임) + 내 목소리 만들기 ⭐는 아티스트 경로와 동일 차감.
+
+**판단**: 성별 선택지에 통합 — 내 목소리 선택 시 성별/스타일 질문이 무의미해져 갈림길이 한 곳에 모이고 단계 증가 없음(별도 질문은 13→14단계). 아티스트 목소리(v3.135)와 동일한 위치 논리.
+
+**⭐ 정책 실측**: 클로닝 '만들기'=⭐5 서버 단일 차감(voice_clone.py create, 진입 경로 무관 → 아티스트 경로와 자동 동일). 목소리 '사용'(작곡에 입히기)=아티스트/내 목소리 모두 compose ⭐15에 포함·추가 과금 없음 — 이미 동일 정책.
+
+**구현**: 성별 선택지에 [🎤 내 목소리로 만들기] 추가 → step 210(ready 클론 목록/없으면 '목소리 만들러 가기(⭐5)'→VoiceCloneWizard/돌아가기) → 클론 선택 시 persona 적용·보컬 설정 스킵(step 5)·내 목소리 단계(12) 자동 통과.
