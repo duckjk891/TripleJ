@@ -254,11 +254,17 @@ async def generate_music_suno(
                 # 만료된 클론을 자동으로 status='expired' 로 플래그 (이 루프의 motor client 사용).
                 if persona_id:
                     try:
-                        res = await mongo_db.voice_clones.update_many(
+                        flagged = await mongo_db.voice_clones.find_one_and_update(
                             {"$or": [{"voice_id": persona_id}, {"generate_task_id": persona_id}], "status": {"$ne": "expired"}},
                             {"$set": {"status": "expired", "expired_at": datetime.now(timezone.utc), "expired_reason": (err_msg or "")[:200]}},
                         )
-                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d", generation_id, persona_id, res.modified_count)
+                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d", generation_id, persona_id, 1 if flagged else 0)
+                        # v232 — 만료 = 외부(Suno) 사정의 실패로 간주, 클론 학습 ⭐ 1회 자동 환불
+                        # (refunded 플래그 원자 클레임이라 이중 환불 불가. 순환 import 회피 위해 지역 import)
+                        if flagged:
+                            from .voice_clone_service import refund_clone_points
+                            _r = await refund_clone_points(str(flagged["_id"]), db=mongo_db)
+                            logger.info("[suno] gen_id=%s expired clone refund clone_id=%s refunded=%s", generation_id, str(flagged["_id"]), _r)
                     except Exception as _flag_exc:
                         logger.warning("[suno] gen_id=%s voice-clone expire-flag failed: %s", generation_id, _flag_exc)
             else:

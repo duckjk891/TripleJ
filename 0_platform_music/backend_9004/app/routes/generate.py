@@ -174,6 +174,69 @@ async def _fatigue_gate_response(user_id: str, director: str = "composer"):
     return await fatigue_gate_response(user_id, director=director)
 
 
+async def _voice_expired_response(user_id: str, persona_id):
+    """v232 — 작곡 ⭐차감 전 클론 보이스 가용성 선체크 (Suno /voice/check-voice).
+
+    배경: 제3자 Suno API의 클론 보이스는 예고 없이 만료될 수 있음(err 553 —
+    2026-09-09 대표 실사고: 생성 2시간 만에 만료 → 곡 생성 실패). 생성 후 실패
+    대신 시작 전에 차단해 대기·혼란을 없앤다.
+
+    persona_id 가 본인 소유 클론이면 check-voice 확인 — 만료 시 클론 expired
+    플래그 + 학습 ⭐ 1회 자동 환불 후 400 반환. 체크 자체가 실패(네트워크 등)하면
+    통과시킨다(생성 루프의 만료 감지가 후방 방어). None=통과.
+    """
+    if not persona_id:
+        return None
+    from ..services import voice_clone_service as vcs
+
+    mongo = get_mongo()
+    doc = await mongo.voice_clones.find_one({
+        "user_id": user_id,
+        "$or": [{"voice_id": persona_id}, {"generate_task_id": persona_id}],
+    })
+    if not doc:
+        return None  # 본인 클론 아님(외부/레거시 값) — 체크 대상 아님
+    clone_id = str(doc["_id"])
+    if doc.get("status") == "expired":
+        refunded = await vcs.refund_clone_points(clone_id)
+        logger.warning(
+            "[star-econ] voice pre-check: already expired user=%s clone=%s refund=%s",
+            user_id[:8], clone_id, refunded,
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"error": "선택한 목소리가 만료되었어요. 목소리를 다시 학습한 뒤 시도해주세요. (학습에 쓴 ⭐는 환불돼요)"},
+        )
+    task_id = doc.get("generate_task_id") or persona_id
+    try:
+        available = await vcs.check_voice_available(task_id)
+    except Exception as exc:
+        logger.warning(
+            "[star-econ] voice pre-check skipped (check error) user=%s clone=%s: %s",
+            user_id[:8], clone_id, exc,
+        )
+        return None
+    if available:
+        return None
+    await mongo.voice_clones.update_one(
+        {"_id": doc["_id"], "status": {"$ne": "expired"}},
+        {"$set": {
+            "status": "expired",
+            "expired_at": datetime.now(timezone.utc),
+            "expired_reason": "pre-check: check-voice isAvailable=false",
+        }},
+    )
+    refunded = await vcs.refund_clone_points(clone_id)
+    logger.warning(
+        "[star-econ] voice pre-check: expired -> block user=%s clone=%s refund=%s",
+        user_id[:8], clone_id, refunded,
+    )
+    return JSONResponse(
+        status_code=400,
+        content={"error": "선택한 목소리가 만료되어 곡을 만들 수 없어요. 목소리를 다시 학습해주세요. (학습에 쓴 ⭐는 환불해 드렸어요)"},
+    )
+
+
 async def refund_generation_points(mongo_db, generation_id: str) -> bool:
     """실패한 작곡의 선차감 ⭐를 정확히 1회 환불 (StarEcon v158).
 
@@ -515,6 +578,10 @@ async def create_generation(
     compose_cost = POINT_COSTS["compose"]
     point_ref = None
     if will_start_music:
+        # v232: 클론 보이스 만료 선체크 — 차감·생성 전에 차단(만료 시 400 + 클론 ⭐ 환불)
+        voice_blocked = await _voice_expired_response(current_user["id"], body.persona_id)
+        if voice_blocked:
+            return voice_blocked
         fatigued = await _fatigue_gate_response(current_user["id"])
         if fatigued:
             return fatigued
@@ -655,7 +722,11 @@ async def start_music_generation(
     if doc.get("status") == "processing":
         return JSONResponse(status_code=409, content={"error": "이미 생성 중입니다."})
 
-    # StarEcon(v158) — 게이트 순서: 스트라이크 403(위) → 피로 429 → 잔액 402.
+    # StarEcon(v158) — 게이트 순서: 스트라이크 403(위) → 보이스 만료 400 → 피로 429 → 잔액 402.
+    # v232: 클론 보이스 만료 선체크 — 차감·생성 전에 차단(만료 시 400 + 클론 ⭐ 환불)
+    voice_blocked = await _voice_expired_response(current_user["id"], doc.get("persona_id"))
+    if voice_blocked:
+        return voice_blocked
     fatigued = await _fatigue_gate_response(current_user["id"])
     if fatigued:
         return fatigued
