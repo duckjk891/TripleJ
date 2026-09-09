@@ -60,6 +60,8 @@ const DIRECTOR_MESSAGES = [
 interface ChatMessage {
   type: 'director' | 'user';
   text: string;
+  /** v3.148 — 이 사용자 답변이 응답한 step. 있으면 말풍선 탭 → 그 단계부터 다시 선택(작사 디렉터와 동일 UX) */
+  step?: number;
 }
 
 type Props = NativeStackScreenProps<any, 'MusicGeneration'>;
@@ -229,7 +231,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       // All steps done - show generate button
       const newHistory: ChatMessage[] = [
         ...chatHistory,
-        { type: 'user', text: userAnswer },
+        { type: 'user', text: userAnswer, step },
         { type: 'director', text: '모든 설정이 완료됐어요! 아래 버튼을 눌러 음악을 만들어볼까요?' },
       ];
       setChatHistory(newHistory);
@@ -237,12 +239,63 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     } else {
       const newHistory: ChatMessage[] = [
         ...chatHistory,
-        { type: 'user', text: userAnswer },
+        { type: 'user', text: userAnswer, step },
         { type: 'director', text: DIRECTOR_MESSAGES[nextStep] },
       ];
       setChatHistory(newHistory);
       setStep(nextStep);
     }
+  };
+
+  // ── v3.148(대표): 작곡 대화도 작사처럼 내 답변 탭 → 그 단계부터 다시 선택 ──
+  const questionForStep = (s: number): string => {
+    switch (s) {
+      case 3:
+        return lyricsStore.isDuet ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.' : DIRECTOR_MESSAGES[3];
+      case 100: return '서브 보컬 성별을 선택해주세요!';
+      case 101: return '서브 보컬 스타일을 선택해주세요!';
+      case 200: return '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)';
+      case 210: return '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!';
+      case 220: return '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!';
+      case 300: return '이 곡은 어떤 장르로 만들까요?';
+      case 301: return '분위기는 어떻게 할까요?';
+      case 302: {
+        const g = lyricsStore.genre || selectedGenre;
+        const m = lyricsStore.mood || selectedMood;
+        return `이 가사는 작사할 때 장르 '${g}' · 분위기 '${m}'(으)로 만들어졌어요. 이 느낌 그대로 작곡할까요? 다른 장르로 바꿔서 만들 수도 있어요!`;
+      }
+      default:
+        return DIRECTOR_MESSAGES[s] || '';
+    }
+  };
+
+  const performRewind = (idx: number, target: number) => {
+    console.info('[MusicGeneration] 대화 되감기', { idx, target });
+    // 되감는 지점 이후의 선택 파생 상태 리셋 — 앞으로 재진행하며 다시 채워진다.
+    repickRef.current = false;
+    const voiceRelated = target <= 3 || target === 200 || target === 210 || target === 220 || target >= 300;
+    if (voiceRelated) {
+      setArtistVoiceApplied(false);
+      personaDefaultAppliedRef.current = false;
+      setPersonaModelOn(false);
+      setSelectedPersonaId(null);
+    }
+    if (target <= 1 || target === 200 || target >= 300) setSelectedArtistId(null);
+    if (target === 210) fetchClones();
+    setChatHistory((prev) => [
+      ...prev.slice(0, idx),
+      { type: 'director', text: questionForStep(target) },
+    ]);
+    setStep(target);
+  };
+
+  const handleUserBubbleTap = (idx: number) => {
+    const msg = chatHistory[idx];
+    if (msg?.type !== 'user' || msg.step == null) return;
+    showAlert('이 답변부터 다시 할까요?', `"${msg.text}"\n\n이후의 선택은 초기화되고, 이 질문부터 다시 진행해요.`, [
+      { text: '취소', style: 'cancel' },
+      { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
+    ]);
   };
 
   // Step 0: Title confirm → step 1(가사 확인)
@@ -273,7 +326,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       console.warn('[MusicGeneration] 장르 없음 — 선택 질문으로 전환');
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: `가사 확인: "${displayText}"` },
+        { type: 'user', text: `가사 확인: "${displayText}"`, step: 1 },
         { type: 'director', text: '이 가사에는 장르 정보가 없네요. 어떤 장르로 작곡할까요?' },
       ]);
       setStep(300);
@@ -283,7 +336,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       console.warn('[MusicGeneration] 분위기 없음 — 선택 질문으로 전환');
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: `가사 확인: "${displayText}"` },
+        { type: 'user', text: `가사 확인: "${displayText}"`, step: 1 },
         { type: 'director', text: `장르는 ${genreInfo}(으)로 갈게요. 분위기는 어떻게 할까요?` },
       ]);
       setStep(301);
@@ -293,7 +346,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     // 완전히 다른 장르의 곡으로 만들 수 있어야 함. 아니오 → 작곡 디렉터 선택이 우선.
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: `가사 확인: "${displayText}"` },
+      { type: 'user', text: `가사 확인: "${displayText}"`, step: 1 },
       { type: 'director', text: `이 가사는 작사할 때 장르 '${genreInfo}' · 분위기 '${moodInfo}'(으)로 만들어졌어요. 이 느낌 그대로 작곡할까요? 다른 장르로 바꿔서 만들 수도 있어요!` },
     ]);
     setStep(302);
@@ -302,7 +355,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   // v3.145: 장르/분위기 확정 공통 — 안내 후 아티스트 단계(구 자동 확정 후반부)
   const announceAndProceed = (genreInfo: string, moodInfo: string, styleInfo: string) => {
     const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ');
-    proceedToArtistStep(`확인! (${infoText})`);
+    proceedToArtistStep(`확인! (${infoText})`, 302);
   };
 
   // v3.145: step 302 — 작사 장르/분위기 그대로 갈지 확인
@@ -310,7 +363,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const genreInfo = lyricsStore.genre || selectedGenre;
     const moodInfo = lyricsStore.mood || selectedMood;
     console.info('[MusicGeneration] 작사 장르/분위기 유지', { genre: genreInfo, mood: moodInfo });
-    setChatHistory((prev) => [...prev, { type: 'user', text: '네, 이대로 갈게요' }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: '네, 이대로 갈게요', step: 302 }]);
     announceAndProceed(genreInfo, moodInfo, lyricsStore.style || '');
   };
 
@@ -319,14 +372,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     repickRef.current = true;
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '아니요, 다르게 고를게요' },
+      { type: 'user', text: '아니요, 다르게 고를게요', step: 302 },
       { type: 'director', text: '좋아요! 이 곡은 어떤 장르로 만들까요?' },
     ]);
     setStep(300);
   };
 
   // v3.137: 장르/분위기 확정 후 아티스트 스텝(또는 보컬)으로 — handleLyricsConfirm 후반부와 동일 로직
-  const proceedToArtistStep = async (announce: string) => {
+  // v3.148: originStep — announce 말풍선이 응답한 step(되감기 태그)
+  const proceedToArtistStep = async (announce: string, originStep?: number) => {
     let list: ServerArtist[] = [];
     try {
       console.info('[MusicGeneration] calling listArtists (아티스트 선택 단계)');
@@ -338,7 +392,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setArtists(list);
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: announce },
+        { type: 'user', text: announce, step: originStep },
         { type: 'director', text: '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)' },
       ]);
       setStep(200);
@@ -349,7 +403,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       : DIRECTOR_MESSAGES[3];
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: announce },
+      { type: 'user', text: announce, step: originStep },
       { type: 'director', text: vocalQuestion },
     ]);
     setStep(3);
@@ -364,13 +418,13 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     if (!mood || repickRef.current) {
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: genre },
+        { type: 'user', text: genre, step: 300 },
         { type: 'director', text: '분위기는 어떻게 할까요?' },
       ]);
       setStep(301);
       return;
     }
-    proceedToArtistStep(`장르: ${genre}`);
+    proceedToArtistStep(`장르: ${genre}`, 300);
   };
 
   // v3.137: step 301 — 분위기 선택
@@ -378,7 +432,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     repickRef.current = false;
     setSelectedMood(mood);
     lyricsStore.setMood(mood);
-    proceedToArtistStep(`분위기: ${mood}`);
+    proceedToArtistStep(`분위기: ${mood}`, 301);
   };
 
   // v3.146: 장르/분위기 직접 입력 제출 — 선택 버튼과 동일 경로 재사용 (30자 제한)
@@ -409,7 +463,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       console.info('[MusicGeneration] 아티스트 건너뛰기');
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: '아티스트 없이 진행' },
+        { type: 'user', text: '아티스트 없이 진행', step: 200 },
         { type: 'director', text: vocalQuestion },
       ]);
       setStep(3);
@@ -440,7 +494,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setArtistVoiceApplied(true);
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
+        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
         { type: 'director', text: `${artist.name || '아티스트'}의 간편 목소리(${preset.gender} · ${preset.style})를 자동으로 반영할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
         { type: 'director', text: DIRECTOR_MESSAGES[5] },
       ]);
@@ -456,7 +510,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setArtistVoiceApplied(true);
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
+        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
         { type: 'director', text: `${artist.name || '아티스트'}의 목소리를 자동으로 반영할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
         { type: 'director', text: DIRECTOR_MESSAGES[5] },
       ]);
@@ -471,7 +525,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     fetchClones();
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '🎤 내 목소리' },
+      { type: 'user', text: '🎤 내 목소리', step: 220 },
       { type: 'director', text: '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!' },
     ]);
     setStep(210);
@@ -487,7 +541,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setArtistVoiceApplied(true); // step 12 자동 통과 재사용
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: `내 목소리: ${clone.voice_name || '선택한 목소리'}` },
+      { type: 'user', text: `내 목소리: ${clone.voice_name || '선택한 목소리'}`, step: 210 },
       { type: 'director', text: `${clone.voice_name || '내 목소리'}(으)로 노래할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
       { type: 'director', text: DIRECTOR_MESSAGES[5] },
     ]);
@@ -498,7 +552,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const handleMyVoiceBack = () => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '돌아가기' },
+      { type: 'user', text: '돌아가기', step: 210 },
       { type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' },
     ]);
     setStep(220);
@@ -510,7 +564,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSelectedVocalGender(vocal);
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: lyricsStore.isDuet ? `메인 보컬: ${vocal}` : vocal },
+      { type: 'user', text: lyricsStore.isDuet ? `메인 보컬: ${vocal}` : vocal, step: 3 },
       { type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' },
     ]);
     setStep(220);
@@ -522,7 +576,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setArtistVoiceApplied(true); // 목소리 결정 완료 — step 12 자동 통과
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '간편 목소리' },
+      { type: 'user', text: '간편 목소리', step: 220 },
       { type: 'director', text: DIRECTOR_MESSAGES[4] },
     ]);
     setStep(4);
@@ -535,7 +589,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       // 듀엣: 메인 스타일 선택 후 서브 보컬 질문
       const newHistory: ChatMessage[] = [
         ...chatHistory,
-        { type: 'user', text: `메인 보컬 스타일: ${style}` },
+        { type: 'user', text: `메인 보컬 스타일: ${style}`, step: 4 },
         { type: 'director', text: '서브 보컬 성별을 선택해주세요!' },
       ];
       setChatHistory(newHistory);
@@ -550,7 +604,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSubVocalGender(vocal);
     const newHistory: ChatMessage[] = [
       ...chatHistory,
-      { type: 'user', text: `서브 보컬: ${vocal}` },
+      { type: 'user', text: `서브 보컬: ${vocal}`, step: 100 },
       { type: 'director', text: '서브 보컬 스타일을 선택해주세요!' },
     ];
     setChatHistory(newHistory);
@@ -1483,11 +1537,15 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 <Image source={COMPOSER_PORTRAIT} style={styles.directorPortraitImage} />
               </View>
             )}
-            <View
+            {/* v3.148: step 태그가 있는 내 답변은 탭 → 그 단계부터 다시 선택 (작사 디렉터 UX) */}
+            <TouchableOpacity
               style={[
                 styles.messageBubble,
                 msg.type === 'user' ? styles.userBubble : styles.directorBubble,
               ]}
+              activeOpacity={msg.type === 'user' && msg.step != null ? 0.6 : 1}
+              disabled={!(msg.type === 'user' && msg.step != null)}
+              onPress={() => handleUserBubbleTap(idx)}
             >
               <AppText
                 style={[
@@ -1497,7 +1555,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               >
                 {msg.text}
               </AppText>
-            </View>
+              {msg.type === 'user' && msg.step != null && (
+                <AppText style={styles.editHint}>탭해서 수정</AppText>
+              )}
+            </TouchableOpacity>
           </View>
         ))}
       </ScrollView>
@@ -1509,6 +1570,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  // v3.148: 내 답변 말풍선 수정 힌트
+  editHint: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 4, textAlign: 'right' },
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,

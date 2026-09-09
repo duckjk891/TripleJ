@@ -2181,3 +2181,20 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 2. [BE v232] generate 양 경로(create/start)에 _voice_expired_response 선체크 — ⭐차감 전 check-voice, 만료면 expired 플래그+환불+400(명확한 안내). 체크 실패는 통과(후방 방어 유지).
 3. [FE] persona_status='expired' 안내: 아티스트 상세 경고 문구+다시 연결하기, 작곡 카드 '목소리 만료' 표기, 선택 차단 다이얼로그 재학습 안내.
 4. 대표 클론 ⭐5 즉시 환불(운영 조치).
+
+---
+
+## v3.148 — 내 목소리 미반영(V5_5 강제 누락) + 만료 TTL 실측 + 작곡 대화 답변 수정 (2026-09-09)
+
+**요청**: ① 목소리 만료까지 걸리는 시간 실측(짧으면 잔여시간 초시계 UI) ② 작곡 디렉터 대화도 작사처럼 내 답변 클릭 → 수정 ③ 완성곡에 내 목소리 미반영 — API 호출 검증.
+
+### Plan verification findings
+- **③ 근본 원인 확정**: suno_generator.py 139 `resolved_model = suno_model or ("V5_5" if upload_cover else "V5")` — voice clone은 V5_5 필요(주석 명시)인데 호출자(suno_model) 전달이 FE·라우트 어디에도 없음 → 대표 완성곡(6aa11cd7, persona 9642bef9=테스트진주) 실로그 `resolved_model=V5`. **MAIDOL 원본(suno_generator.py:219)은 personaId 존재 시 body["model"]="V5_5" 강제** — 이식 과정에서 강제 로직이 조건부 파라미터로 약화된 회귀. V5에서는 Suno가 personaId를 무시 → 일반 보컬로 생성(대표 증상과 정확히 일치).
+- ①: TTL 문서 없음(프로바이더) → 실측 필요. check-voice(read-only)로 5분 간격 폴링해 ready→unavailable 시각 기록.
+- ②: LyricsInputScreen은 reselectStep 모달(내 말풍선 탭→해당 단계 재선택). MusicGenerationScreen ChatMessage에는 step 태그 없음 — 각 답변 append 지점에 step 스탬프 + 말풍선 탭 → 확인 후 해당 단계로 되감기(이후 대화 절단·질문 재출력·관련 플래그 리셋).
+
+### 계획
+1. [BE v233] persona_id 존재 + suno_model 미지정 시 resolved_model="V5_5" 강제(MAIDOL 원본 복원). 배포·재시작. ⭐: 이번 완성곡은 성공 과금이 원칙이나 결함 결과물이므로 compose ⭐15 수동 환불(운영).
+2. [운영] 만료 TTL 워처: 서버 nohup 스크립트 — 대표 최신 ready 클론 task_id를 5분 간격 check-voice, /tmp/voice_ttl_watch.log 기록, 만료 시 수명 산출. 결과 나오면 초시계 UI 여부 결정(만료 짧으면 v후속에서 구현).
+3. [FE] 작곡 대화 수정: ChatMessage.step 스탬프(전 답변 지점) + 사용자 말풍선 탭 → 앱 다이얼로그 확인 → 해당 스텝 되감기(chatHistory 절단, questionForStep 재출력, artistVoiceApplied/persona/repick 등 플래그 리셋). 생성 시작 후(step 13)에는 비활성.
+4. 테스트: [api] V5_5 강제 실호출 확인(테스트 계정 mock은 Suno 불가 — 로그로 body model 확인 위해 디버그 로그 추가), [e2e] 되감기 시나리오(성별 답변 탭→재선택→이후 흐름 정상).
