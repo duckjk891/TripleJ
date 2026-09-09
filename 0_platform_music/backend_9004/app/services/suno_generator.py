@@ -135,9 +135,16 @@ async def generate_music_suno(
     use_upload_cover = bool(reference_audio_url)
 
     # v76.10: 호출자 명시 suno_model 우선 (voice clone 은 V5_5 필요).
-    # 미명시 시 기존 로직 — upload-cover 면 V5_5, 아니면 V5
-    resolved_model = (suno_model or "").strip() or ("V5_5" if use_upload_cover else "V5")
-    logger.info("[suno] generation_id=%s resolved_model=%s (suno_model_in=%s use_upload_cover=%s)", generation_id, resolved_model, suno_model, use_upload_cover)
+    # v233(대표 실사고 2026-09-09): 호출자가 suno_model 을 안 넘기면 voice clone 인데도
+    # V5 로 전송돼 Suno 가 personaId 를 무시(내 목소리 미반영). MAIDOL 원본
+    # (suno_generator.py:219 — personaId 시 model="V5_5" 강제)을 복원한다.
+    resolved_model = (suno_model or "").strip()
+    if not resolved_model:
+        resolved_model = "V5_5" if (persona_id or use_upload_cover) else "V5"
+    logger.info(
+        "[suno] generation_id=%s resolved_model=%s (suno_model_in=%s use_upload_cover=%s persona=%s)",
+        generation_id, resolved_model, suno_model, use_upload_cover, bool(persona_id),
+    )
 
     # Request body
     body = {
