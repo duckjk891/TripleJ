@@ -25,7 +25,7 @@ import { useLyricsStore } from '../stores/lyricsStore';
 import { useMusicStore } from '../stores/musicStore';
 import { useAuthStore } from '../stores/authStore';
 import { useLyricsBookStore } from '../stores/lyricsBookStore';
-import { listLyricsAssets, migrateLocalLyricsToServer } from '../services/lyricsService';
+import { listLyricsAssets, migrateLocalLyricsToServer, saveLyricsAsset } from '../services/lyricsService';
 
 const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 
@@ -144,6 +144,24 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
           console.info('[ComposeLyricsPick] 드래프트-자산 병합', { assetId: match.id, via, genre: draft[0].genre, mood: draft[0].mood });
         } else {
           console.warn('[ComposeLyricsPick] 드래프트-자산 병합 실패 — 매칭 자산 없음', { srcId: srcId || null, title: draft[0].title.slice(0, 20) });
+          // v3.145(대표 케이스): DB에 원본이 아예 없는 고아 작업본(자동저장 v3.131 이전 생성분 등)
+          // → 지금 자산화해 단일 저장소 원칙 복원. 이후 방문부터는 출처 id로 즉시 병합.
+          if (isLoggedIn) {
+            try {
+              const saved = await saveLyricsAsset({
+                title: draft[0].title || '무제',
+                content: draft[0].lyrics,
+                genre: draft[0].genre,
+                mood: draft[0].mood,
+                source: 'ai',
+              });
+              draft[0] = { ...draft[0], assetId: saved.lyrics_id };
+              ls.setSourceAssetId(saved.lyrics_id);
+              console.info('[ComposeLyricsPick] 고아 작업본 자산화', { lyricsId: saved.lyrics_id, title: draft[0].title.slice(0, 20) });
+            } catch (err: any) {
+              console.error('[ComposeLyricsPick] 고아 작업본 자산화 실패(다음 방문 재시도)', { status: err?.response?.status });
+            }
+          }
         }
       }
       const seen = new Set(draft.map((e) => e.lyrics.trim()));

@@ -2133,3 +2133,19 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 1. lyricsStore.sourceAssetId 영속 필드 신설(작사 저장·자산 선택 시 기록, reset 시 초기화).
 2. ComposeLyricsPick 병합 3단계 확장: ① 출처 id ② 내용 일치 ③ 제목 일치(최신순) + 병합 자산 이중 표시 제거 + 드래프트 선택 시 끊긴 출처 복구.
 3. LyricsLoading·LyricsBook에도 출처 기록 전파. E2E: 어긋난 작업본 주입 재현 → 승계·무질문 검증.
+
+---
+
+## v3.145 — 고아 작업본 자산화 + 작곡 장르/분위기 확인 질문 (2026-09-09)
+
+**요청**: ① 아직도 장르/분위기 없음 — 재규명 ② 가사와 장르의 관계 질문 ③ 장르/분위기가 있어도 "이대로 갈까요?" 예/아니오 — 아니오면 작곡 디렉터 선택 우선.
+
+### Plan verification findings
+- v3.144 경고 로그 실측(frontend.log 16:43): 대표 작업본 제목="더 나오려는 것을 막는 것일뿐", srcId=null — **DB에 이 가사가 아예 없음**(9/7 자동저장 v3.131 도입 전 생성분·고아). 승계할 원본 부재 → 제목 폴백도 불가(정상 동작).
+- 가사-장르 관계: lyrics_generator가 장르/분위기를 작사 프롬프트에 참고로 주입(어휘·정서 반영)하나 가사 텍스트에 태그 없음. 곡 사운드는 작곡 단계 genre/mood 스타일 태그가 결정 — 타 장르 작곡 가능.
+- 작곡 중 수정 동기화(PATCH)는 title/content만 — 자산의 작사 장르/분위기는 작곡 재선택으로 오염되지 않음(같은 가사 다장르 재작곡 안전).
+
+### 계획
+1. ComposeLyricsPick: 병합 실패 + 로그인 시 고아 작업본 **자동 자산화**(saveLyricsAsset → sourceAssetId 연결, 실패 시 다음 방문 재시도).
+2. MusicGeneration: 장르/분위기 둘 다 있으면 자동 확정 대신 **step 302 확인 질문** — 네=유지 진행 / 아니요=step 300 장르→301 분위기 강제 재질문(repickRef), 작곡 선택 우선.
+3. E2E: F1 고아 자산화+질문 경로 / F2 '네' 유지 / F3 '아니요' 재선택.

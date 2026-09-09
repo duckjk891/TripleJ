@@ -115,6 +115,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const [personaModelOn, setPersonaModelOn] = useState(false);
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
   const personaDefaultAppliedRef = useRef(false);
+  // v3.145: 장르/분위기 재선택 모드 — 302에서 '아니요' 시 300→301 모두 다시 질문
+  const repickRef = useRef(false);
   const [bpmValue, setBpmValue] = useState(120);
   const [bpmOn, setBpmOn] = useState(false);
   const [musicalKey, setMusicalKey] = useState('');
@@ -285,46 +287,40 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setStep(301);
       return;
     }
-    const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ');
-    const autoMsg = `장르: ${genreInfo}, 분위기: ${moodInfo}${styleInfo ? `, 스타일: ${styleInfo}` : ''}\n작사 디렉터가 넘겨준 대로 설정했어요!`;
-
-    const newHistory: ChatMessage[] = [
-      ...chatHistory,
+    // v3.145(대표): 장르/분위기가 있어도 자동 확정하지 않고 확인 질문 — 같은 가사를
+    // 완전히 다른 장르의 곡으로 만들 수 있어야 함. 아니오 → 작곡 디렉터 선택이 우선.
+    setChatHistory((prev) => [
+      ...prev,
       { type: 'user', text: `가사 확인: "${displayText}"` },
-      { type: 'director', text: autoMsg },
-    ];
-    setChatHistory(newHistory);
-    setStep(2);
+      { type: 'director', text: `이 가사는 작사할 때 장르 '${genreInfo}' · 분위기 '${moodInfo}'(으)로 만들어졌어요. 이 느낌 그대로 작곡할까요? 다른 장르로 바꿔서 만들 수도 있어요!` },
+    ]);
+    setStep(302);
+  };
 
-    // v3.135: step 2 → 아티스트 선택(step 200) — 아티스트가 없으면 기존대로 보컬(step 3)
-    setTimeout(async () => {
-      let list: ServerArtist[] = [];
-      try {
-        console.info('[MusicGeneration] calling listArtists (아티스트 선택 단계)');
-        list = (await listArtists()).characters;
-      } catch (err: any) {
-        console.error('[MusicGeneration] listArtists failed — 아티스트 단계 생략', { status: err?.response?.status });
-      }
-      if (list.length > 0) {
-        setArtists(list);
-        setChatHistory((prev) => [
-          ...prev,
-          { type: 'user', text: `확인! (${infoText})` },
-          { type: 'director', text: '함께할 아티스트를 선택해주세요! 목소리가 연결된 아티스트라면 그 목소리로 노래해요. (건너뛰어도 괜찮아요)' },
-        ]);
-        setStep(200);
-        return;
-      }
-      const vocalQuestion = lyricsStore.isDuet
-        ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
-        : DIRECTOR_MESSAGES[3];
-      setChatHistory((prev) => [
-        ...prev,
-        { type: 'user', text: `확인! (${infoText})` },
-        { type: 'director', text: vocalQuestion },
-      ]);
-      setStep(3);
-    }, 1500);
+  // v3.145: 장르/분위기 확정 공통 — 안내 후 아티스트 단계(구 자동 확정 후반부)
+  const announceAndProceed = (genreInfo: string, moodInfo: string, styleInfo: string) => {
+    const infoText = [genreInfo, moodInfo, styleInfo].filter(Boolean).join(', ');
+    proceedToArtistStep(`확인! (${infoText})`);
+  };
+
+  // v3.145: step 302 — 작사 장르/분위기 그대로 갈지 확인
+  const handleGenreConfirmYes = () => {
+    const genreInfo = lyricsStore.genre || selectedGenre;
+    const moodInfo = lyricsStore.mood || selectedMood;
+    console.info('[MusicGeneration] 작사 장르/분위기 유지', { genre: genreInfo, mood: moodInfo });
+    setChatHistory((prev) => [...prev, { type: 'user', text: '네, 이대로 갈게요' }]);
+    announceAndProceed(genreInfo, moodInfo, lyricsStore.style || '');
+  };
+
+  const handleGenreConfirmNo = () => {
+    console.info('[MusicGeneration] 장르/분위기 재선택 진입 (작곡 선택 우선)');
+    repickRef.current = true;
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: '아니요, 다르게 고를게요' },
+      { type: 'director', text: '좋아요! 이 곡은 어떤 장르로 만들까요?' },
+    ]);
+    setStep(300);
   };
 
   // v3.137: 장르/분위기 확정 후 아티스트 스텝(또는 보컬)으로 — handleLyricsConfirm 후반부와 동일 로직
@@ -357,12 +353,13 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setStep(3);
   };
 
-  // v3.137: step 300 — 장르 선택 (가사에 장르 정보 없을 때)
+  // v3.137: step 300 — 장르 선택 (가사에 장르 정보 없거나 v3.145 재선택)
   const handleGenrePick = (genre: string) => {
     setSelectedGenre(genre);
     lyricsStore.setGenre(genre);
     const mood = lyricsStore.mood || selectedMood;
-    if (!mood) {
+    // v3.145: 재선택 모드면 분위기도 무조건 다시 질문 (작곡 디렉터 선택이 우선)
+    if (!mood || repickRef.current) {
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: genre },
@@ -376,6 +373,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
 
   // v3.137: step 301 — 분위기 선택
   const handleMoodPick = (mood: string) => {
+    repickRef.current = false;
     setSelectedMood(mood);
     lyricsStore.setMood(mood);
     proceedToArtistStep(`분위기: ${mood}`);
@@ -977,6 +975,23 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               <TouchableOpacity style={styles.choiceButton} onPress={() => handleArtistPick(null)}>
                 <AppText style={styles.choiceNumber}>{(artists || []).length + 1}</AppText>
                 <AppText style={styles.choiceText}>아티스트 없이 진행 (건너뛰기)</AppText>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        );
+
+      case 302:
+        // v3.145: 작사 장르/분위기 유지 여부 확인 — 아니오면 작곡 선택 우선
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              <TouchableOpacity style={styles.choiceButton} onPress={handleGenreConfirmYes}>
+                <AppText style={styles.choiceNumber}>1</AppText>
+                <AppText style={styles.choiceText}>네, 이대로 갈게요</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.choiceButton} onPress={handleGenreConfirmNo}>
+                <AppText style={styles.choiceNumber}>2</AppText>
+                <AppText style={styles.choiceText}>아니요, 다른 장르·분위기로 만들래요</AppText>
               </TouchableOpacity>
             </ScrollView>
           </View>
