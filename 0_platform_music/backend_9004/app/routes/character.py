@@ -141,6 +141,9 @@ CID_RE = re.compile(r"^[0-9a-f]{32}$")
 # 곡 생성 주입용 Suno id 는 응답의 파생 필드 persona_voice_id 로만 노출).
 PERSONA_MODEL_WHITELIST = {"voice_persona", "style_persona"}
 PERSONA_MODEL_DEFAULT = "voice_persona"
+# v231 — 간편 목소리(프리셋) 저장 형식 "gender:style" (persona 와 상호 배타)
+VOICE_PRESET_GENDERS = {"male", "female"}
+VOICE_PRESET_STYLE_MAX = 30
 
 
 class UsedItemPayload(BaseModel):
@@ -316,6 +319,8 @@ def _serialize_artist(doc: dict, persona_clone: Optional[dict] = None) -> dict:
     sheet = doc.get("sheet_object_name") or ""
     return {
         **_persona_fields(doc, persona_clone),
+        # v231 — 간편 목소리 프리셋 ("male:소프트" | "") — persona 와 상호 배타
+        "voice_preset": doc.get("voice_preset") or "",
         "character_id": doc.get("character_id"),
         "kind": doc.get("kind") or "real",
         "is_default": bool(doc.get("is_default")),
@@ -2697,6 +2702,8 @@ class PatchArtistRequest(BaseModel):
     # v213 — 목소리 연결: None=유지 / ""=해제 / clone_id=연결 (본인 소유+ready)
     persona_id: Optional[str] = None
     persona_model: Optional[str] = None
+    # v231 — 간편 목소리: None=유지 / ""=해제 / "male:소프트"=설정 (persona 와 배타)
+    voice_preset: Optional[str] = None
 
 
 @router.get("/{character_id}")
@@ -2793,7 +2800,36 @@ async def patch_artist(
             content={"error": "기본 아티스트 해제는 다른 아티스트를 기본으로 지정해 수행하세요."},
         )
 
-    if not set_fields and not make_default and persona_action == "none":
+    # v231 — 간편 목소리(프리셋) per-아티스트 저장: None=유지 / ""=해제 / "male:소프트"=설정.
+    # persona(클론)와 상호 배타 — 한쪽 설정 시 반대쪽 자동 해제, 동시 설정 전송은 400.
+    preset_action = "none"
+    preset_value = None
+    if "voice_preset" in updates:
+        raw = updates.get("voice_preset")
+        if raw is not None and not str(raw).strip():
+            preset_action = "unset"
+        elif raw is not None:
+            if persona_action == "set" and persona_set.get("persona_id"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "간편 목소리와 내 목소리는 동시에 설정할 수 없습니다."},
+                )
+            parts = str(raw).strip().split(":", 1)
+            preset_gender = parts[0].strip().lower()
+            preset_style = parts[1].strip() if len(parts) > 1 else ""
+            if preset_gender not in VOICE_PRESET_GENDERS or not preset_style or len(preset_style) > VOICE_PRESET_STYLE_MAX:
+                logger.warning(
+                    "[VoicePreset] invalid value user=%s cid=%s raw=%s",
+                    user_id[:8], doc["character_id"], str(raw)[:40],
+                )
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "간편 목소리 형식이 올바르지 않습니다. ('male|female:스타일')"},
+                )
+            preset_action = "set"
+            preset_value = "{}:{}".format(preset_gender, preset_style)
+
+    if not set_fields and not make_default and persona_action == "none" and preset_action == "none":
         return JSONResponse(status_code=400, content={"error": "수정할 필드가 없습니다."})
 
     set_fields["updated_at"] = datetime.utcnow()
@@ -2801,9 +2837,21 @@ async def patch_artist(
         set_fields["is_default"] = True
     if persona_action == "set":
         set_fields.update(persona_set)
+    if preset_action == "set":
+        set_fields["voice_preset"] = preset_value
     update_doc = {"$set": set_fields}
+    unset_fields = {}
     if persona_action == "unset":
-        update_doc["$unset"] = {"persona_id": "", "persona_model": ""}
+        unset_fields.update({"persona_id": "", "persona_model": ""})
+    if preset_action == "unset":
+        unset_fields["voice_preset"] = ""
+    # v231 상호 배타: 프리셋 설정 → 기존 persona 해제 / persona 연결 → 기존 프리셋 해제
+    if preset_action == "set" and doc.get("persona_id") and persona_action != "unset":
+        unset_fields.update({"persona_id": "", "persona_model": ""})
+    if persona_action == "set" and persona_set.get("persona_id") and doc.get("voice_preset") and preset_action == "none":
+        unset_fields["voice_preset"] = ""
+    if unset_fields:
+        update_doc["$unset"] = unset_fields
     await mongo.characters.update_one({"_id": doc["_id"]}, update_doc)
     if make_default:
         await mongo.characters.update_many(
@@ -2825,6 +2873,11 @@ async def patch_artist(
         logger.info(
             "[VoiceLink] unlink user=%s cid=%s prev_clone=%s",
             user_id[:8], doc["character_id"], doc.get("persona_id"),
+        )
+    if preset_action != "none":
+        logger.info(
+            "[VoicePreset] %s user=%s cid=%s value=%s",
+            preset_action, user_id[:8], doc["character_id"], preset_value or "(해제)",
         )
     logger.info(
         "[ArtistV212] patch user=%s cid=%s fields=%s default=%s",
