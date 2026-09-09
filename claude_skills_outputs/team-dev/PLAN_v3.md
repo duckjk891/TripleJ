@@ -2149,3 +2149,17 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 1. ComposeLyricsPick: 병합 실패 + 로그인 시 고아 작업본 **자동 자산화**(saveLyricsAsset → sourceAssetId 연결, 실패 시 다음 방문 재시도).
 2. MusicGeneration: 장르/분위기 둘 다 있으면 자동 확정 대신 **step 302 확인 질문** — 네=유지 진행 / 아니요=step 300 장르→301 분위기 강제 재질문(repickRef), 작곡 선택 우선.
 3. E2E: F1 고아 자산화+질문 경로 / F2 '네' 유지 / F3 '아니요' 재선택.
+
+---
+
+## v3.146 — 작곡 디렉터 장르/분위기 직접 입력 UI (2026-09-09)
+
+**요청**: 작곡 디렉터 대화에서 장르/분위기를 정할 때 작사 디렉터처럼 직접 입력 UI 추가.
+
+### Plan verification findings
+- 작사(LyricsInputScreen 340~398): 선택지 목록 아래 inputRow(TextInput+확인 버튼) 상시 노출 — handleCustomSubmit이 선택과 동일 경로(processAnswer)로 흘림.
+- 작곡(MusicGenerationScreen): step 300(장르)/301(분위기)은 GENRE_OPTIONS/MOOD_OPTIONS 버튼만 있고 자유 입력 없음. handleGenrePick/handleMoodPick은 임의 문자열을 그대로 수용(musicStore/lyricsStore에 문자열 저장, 서버 생성 프롬프트 태그로 전달 — 자유값 안전). v3.145의 재선택(step 302→300→301) 경로에도 동일 적용됨.
+
+### 계획
+1. MusicGenerationScreen: customPickInput 상태 + step 300/301 렌더에 입력행(TextInput+확인, 빈값 비활성, 30자 제한) 추가 — 제출 시 handleGenrePick/handleMoodPick(trim) 재사용, 입력 초기화. 로그 [MusicGeneration] 장르/분위기 직접 입력.
+2. E2E: 장르 직접 입력("신스팝")→분위기 직접 입력("쓸쓸한 새벽")→재선택값으로 진행 확인 + 버튼 선택 회귀.

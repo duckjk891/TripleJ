@@ -117,6 +117,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
   const personaDefaultAppliedRef = useRef(false);
   // v3.145: 장르/분위기 재선택 모드 — 302에서 '아니요' 시 300→301 모두 다시 질문
   const repickRef = useRef(false);
+  // v3.146(대표): 장르/분위기 직접 입력 — 작사 디렉터와 동일한 자유 입력 UI (step 300/301 공용)
+  const [customPickInput, setCustomPickInput] = useState('');
   const [bpmValue, setBpmValue] = useState(120);
   const [bpmOn, setBpmOn] = useState(false);
   const [musicalKey, setMusicalKey] = useState('');
@@ -377,6 +379,16 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setSelectedMood(mood);
     lyricsStore.setMood(mood);
     proceedToArtistStep(`분위기: ${mood}`);
+  };
+
+  // v3.146: 장르/분위기 직접 입력 제출 — 선택 버튼과 동일 경로 재사용 (30자 제한)
+  const handleCustomPickSubmit = (kind: 'genre' | 'mood') => {
+    const v = customPickInput.trim().slice(0, 30);
+    if (!v) return;
+    console.info('[MusicGeneration] 직접 입력', { kind, value: v });
+    setCustomPickInput('');
+    if (kind === 'genre') handleGenrePick(v);
+    else handleMoodPick(v);
   };
 
   // v3.137: 아티스트 gender 자유 문자열 → 보컬 성별 매핑 (미확정이면 null)
@@ -1009,6 +1021,25 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {/* v3.146: 직접 입력 — 작사 디렉터와 동일 UX */}
+            <View style={styles.customPickRow}>
+              <TextInput
+                style={styles.customPickInput}
+                placeholder="직접 입력... (예: 신스팝)"
+                placeholderTextColor={colors.text.muted}
+                value={customPickInput}
+                onChangeText={setCustomPickInput}
+                returnKeyType="send"
+                onSubmitEditing={() => handleCustomPickSubmit('genre')}
+              />
+              <TouchableOpacity
+                style={[styles.customPickSend, !customPickInput.trim() && styles.customPickSendDisabled]}
+                onPress={() => handleCustomPickSubmit('genre')}
+                disabled={!customPickInput.trim()}
+              >
+                <AppText style={styles.customPickSendText}>확인</AppText>
+              </TouchableOpacity>
+            </View>
           </View>
         );
 
@@ -1024,6 +1055,25 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {/* v3.146: 직접 입력 — 작사 디렉터와 동일 UX */}
+            <View style={styles.customPickRow}>
+              <TextInput
+                style={styles.customPickInput}
+                placeholder="직접 입력... (예: 쓸쓸한 새벽 감성)"
+                placeholderTextColor={colors.text.muted}
+                value={customPickInput}
+                onChangeText={setCustomPickInput}
+                returnKeyType="send"
+                onSubmitEditing={() => handleCustomPickSubmit('mood')}
+              />
+              <TouchableOpacity
+                style={[styles.customPickSend, !customPickInput.trim() && styles.customPickSendDisabled]}
+                onPress={() => handleCustomPickSubmit('mood')}
+                disabled={!customPickInput.trim()}
+              >
+                <AppText style={styles.customPickSendText}>확인</AppText>
+              </TouchableOpacity>
+            </View>
           </View>
         );
 
@@ -1660,6 +1710,40 @@ const styles = StyleSheet.create({
   vocalChipTextSelected: {
     color: colors.text.primary,
     fontWeight: 'bold',
+  },
+  // v3.146: 장르/분위기 직접 입력 행 (LyricsInput inputRow/textInput/sendButton 미러)
+  customPickRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    gap: 8,
+  },
+  customPickInput: {
+    flex: 1,
+    backgroundColor: colors.bg.surface1,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: colors.text.primary,
+    fontSize: 14,
+    maxHeight: 100,
+  },
+  customPickSend: {
+    backgroundColor: colors.accent.primary,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  customPickSendDisabled: {
+    backgroundColor: colors.border.subtle,
+  },
+  customPickSendText: {
+    color: colors.text.primary,
+    fontSize: 14,
+    fontWeight: '700',
   },
   // Free text input (steps 5, 6)
   freeTextInput: {

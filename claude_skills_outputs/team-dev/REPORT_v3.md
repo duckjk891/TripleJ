@@ -3030,3 +3030,12 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 **대표 질문 답**: 가사 생성 시 장르/분위기는 어휘·정서에 참고로만 반영되고 가사에 태그로 박히지 않음. 곡 사운드는 작곡 단계 선택이 결정하므로 타 장르 작곡에 기술적 문제 없음(정서적 어긋남은 창작 선택).
 **파일**: screens/MusicGenerationScreen.tsx(step 302·repick), screens/ComposeLyricsPickScreen.tsx(고아 자산화).
+
+---
+
+## v3.146 — 작곡 디렉터 장르/분위기 직접 입력 UI (2026-09-09)
+
+**결과**: G1(직접 입력)·G2(버튼 회귀) PASS (v3146e_genre/mood/g1done.png).
+
+**구현**: 작곡 디렉터의 장르(step 300)/분위기(step 301) 질문 화면에 작사 디렉터와 동일한 자유 입력행(TextInput+확인, 빈값 비활성, 30자 제한) 추가 — 선택 버튼과 완전히 같은 경로(handleGenrePick/handleMoodPick)로 흘러 v3.145 재선택·질문 흐름 모두에서 동작. 입력값("신스팝"·"쓸쓸한 새벽 감성")이 대화·생성 파라미터에 그대로 반영됨을 실측.
+**파일**: screens/MusicGenerationScreen.tsx.
