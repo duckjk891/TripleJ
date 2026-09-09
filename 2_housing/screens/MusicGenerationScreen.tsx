@@ -1284,7 +1284,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                 )}
                 <TouchableOpacity
                   style={styles.personaManageBtn}
-                  onPress={() => navigation.navigate('VoiceManage' as any)}
+                  onPress={() => navigation.navigate('VoiceManage' as any, { mode: 'voices' })}
                 >
                   <AppText style={styles.personaManageBtnText}>내 목소리 만들기/관리</AppText>
                 </TouchableOpacity>

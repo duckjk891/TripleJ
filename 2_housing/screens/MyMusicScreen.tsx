@@ -247,7 +247,7 @@ export default function MyMusicScreen({ navigation }: any) {
   const handleOpenVoices = () => {
     if (__DEV__) console.info('[MyMusic] 내 목소리 → Studio/VoiceManage');
     navigation.navigate('Studio', { screen: 'Map' });
-    navigation.navigate('Studio', { screen: 'VoiceManage' });
+    navigation.navigate('Studio', { screen: 'VoiceManage', params: { mode: 'voices' } });
   };
 
   // v3.117: 탭 시 작업실 스택의 내 아티스트 목록으로(크로스 탭 — 이 화면의 Studio 진입 관행 동일)

@@ -43,6 +43,10 @@ type Props = NativeStackScreenProps<any, 'VoiceManage'>;
 export default function VoiceManageScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const selectMode = (route.params as any)?.select === 'artist';
+  // v3.141(대표): '내 목소리'는 계정 자산 — 아티스트와 무관한 순수 모드.
+  // 마이페이지·작곡 중 진입은 mode:'voices' → 아티스트 관련 UI(현재 목소리/간편 만들기/
+  // 연결 배지·설정 프롬프트) 전부 숨기고 [내 목소리 목록 + 만들기]만 노출.
+  const voicesMode = (route.params as any)?.mode === 'voices';
 
   // v3.83: 정식 클로닝 목록
   const clones = useVoiceStore((s) => s.clones);
@@ -202,6 +206,10 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
       return;
     }
     // 작곡 전송 계약(MAIDOL StudioTab2): persona_id = clone.voice_id, persona_model = 'voice_persona'
+    if (voicesMode) {
+      // v3.141: 순수 내 목소리 모드 — 아티스트 설정 프롬프트 없음 (검증 대기 재개는 위에서 처리)
+      return;
+    }
     if (selectMode) {
       applyCloneAsArtistVoice(c.voice_id, c.voice_name);
       return;
@@ -245,7 +253,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
         >
           <AppText style={styles.backBtnText}>‹</AppText>
         </TouchableOpacity>
-        <AppText style={styles.headerTitle}>아티스트 목소리</AppText>
+        <AppText style={styles.headerTitle}>{voicesMode ? '내 목소리' : '아티스트 목소리'}</AppText>
         <View style={styles.backBtn} />
       </View>
 
@@ -258,7 +266,8 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
           </View>
         )}
 
-        {/* ── v3.84: 현재 아티스트 목소리 ── */}
+        {/* ── v3.84: 현재 아티스트 목소리 (voices 모드에선 숨김) ── */}
+        {!voicesMode && (
         <View style={styles.currentBox}>
           <AppText style={styles.sectionTitle}>현재 아티스트 목소리</AppText>
           {artistVoice ? (
@@ -285,15 +294,20 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
             <AppText style={styles.currentEmpty}>아직 설정 안 됨</AppText>
           )}
         </View>
+        )}
 
         {/* ── 만들기 2택: 간편(프리셋) / 내 목소리(클로닝) ── */}
         <View style={styles.createBox}>
-          <AppText style={styles.sectionTitle}>아티스트 목소리 만들기</AppText>
+          <AppText style={styles.sectionTitle}>{voicesMode ? '내 목소리 만들기' : '아티스트 목소리 만들기'}</AppText>
+          {!voicesMode && (
           <AppText style={styles.sectionDesc}>
             간편 목소리(스타일 프리셋)와 내 목소리 중 하나만 아티스트 목소리로 쓸 수 있어요.
           </AppText>
+          )}
 
-          {/* v3.84: 간편 만들기 — 성별+보컬 스타일 프리셋 (서버 호출 없음) */}
+          {/* v3.84: 간편 만들기 — 성별+보컬 스타일 프리셋 (voices 모드에선 숨김 —
+              간편 목소리는 '아티스트 목소리' 개념이지 내 목소리가 아님, 대표 확정) */}
+          {!voicesMode && (<>
           <TouchableOpacity
             style={styles.wizardBtn}
             onPress={() => {
@@ -362,6 +376,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
           )}
 
           <View style={styles.createDivider} />
+          </>)}
 
           {/* v3.83: 정식 클로닝(노래+문장낭독 검증) — 4단계 위저드 진입 */}
           <TouchableOpacity
@@ -416,7 +431,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
                   <AppText style={styles.personaName} numberOfLines={1}>{c.voice_name || '(이름 없음)'}</AppText>
                   {isArtist && (
                     <View style={styles.artistBadge}>
-                      <AppText style={styles.artistBadgeText}>아티스트 목소리</AppText>
+                      {!voicesMode && <AppText style={styles.artistBadgeText}>아티스트 목소리</AppText>}
                     </View>
                   )}
                   {inProgress && (
@@ -436,7 +451,7 @@ export default function VoiceManageScreen({ navigation, route }: Props) {
                 <AppText style={styles.personaStatus}>
                   {CLONE_STATUS_BADGE[c.status] || `상태: ${c.status || '알 수 없음'}`}
                   {awaiting ? ' — 탭해서 검증 녹음 마저 하기' : ''}
-                  {ready ? ' — 탭하면 아티스트 목소리로 설정' : ''}
+                  {ready && !voicesMode ? ' — 탭하면 아티스트 목소리로 설정' : ''}
                 </AppText>
               </View>
               <TouchableOpacity

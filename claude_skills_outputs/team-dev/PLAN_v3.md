@@ -2086,3 +2086,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: 저장은 이미 완비 — voice_clones가 **계정(user_id) 자산**이며 녹음 파일 2종(source_object_name=노래, verify_object_name=낭독)이 MinIO에 영구 저장, 아티스트 연결은 별도 선택 포인터(v213, 클론 삭제 시 링크만 정리). 실갭은 **접근성**: VoiceManage 진입로가 아티스트 상세·작곡 중뿐이라 아티스트 없는 사용자는 저장된 목소리를 볼 곳이 없음.
 
 **계획**: 마이페이지(내 아티스트 요약 행 아래)에 "내 목소리" 진입 행 추가 — 크로스 탭 관행(Studio/Map→VoiceManage)으로 이동.
+
+---
+
+## v3.141 + 서버 스크립트 픽스 — 내 목소리/아티스트 목소리 개념 분리 + 클로닝 422 (2026-09-09)
+
+**요청**: ① 내 목소리=계정 자산, 아티스트 목소리와 개념 분리 — 마이페이지 진입 시 아티스트 관련 UI(간편 만들기·연결) 없이 [목록+만들기]만 ② 정상 샘플인데 /voice-clone/create 422 ③ 작곡 중 목소리 생성 화면도 '내 목소리 만들기'로.
+
+**Plan verification findings**: ② 422 원인 실측 — 서버 로그 "[voice_clone] normalize ValueError ... No such file: 'ffmpeg'". restart_9004.sh가 '로그인 셸' 주석만 있고 실제 PATH 주입이 없어(스크립트 결함) ffmpeg(.local/bin) 유실 재발. ③ VoiceCloneWizard 헤더는 이미 '내 목소리 만들기' — 위저드 무수정, VoiceManage(공유 진입 화면)의 아티스트 색채가 문제.
+
+**실행**: ② restart_9004.sh에 `export PATH="$HOME/.local/bin:..."` 명시(v229.1) → 재시작 → 서버 프로세스 PATH 실측 + 20초 샘플 normalize 실검증 OK ① VoiceManage에 voicesMode(mode:'voices') — 헤더 '내 목소리', 현재 아티스트 목소리 박스·간편 만들기 섹션·2택 설명·아티스트 설정 프롬프트/배지/힌트 숨김. 마이페이지·작곡 진입 2곳에 mode 적용(아티스트 상세 진입은 기존 화면 유지 — 간편 vs 내 목소리 2택은 그 화면의 역할).

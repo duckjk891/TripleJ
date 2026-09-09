@@ -119,7 +119,8 @@ export type StudioStackParamList = {
   ArtistResult: { slot?: 'real' | 'virtual'; characterId?: string } | undefined;
   MyArtists: undefined;
   ArtistCody: undefined;
-  VoiceManage: { select?: 'artist' } | undefined;
+  // v3.141: mode 'voices' = 순수 내 목소리 모드(아티스트 UI 숨김 — 마이페이지·작곡 진입)
+  VoiceManage: { select?: 'artist'; mode?: 'voices' } | undefined;
   // v3.83: 정식 보이스 클로닝(노래+문장낭독) 4단계 위저드 — resumeCloneId로 2/3단계 재개
   VoiceCloneWizard: { resumeCloneId?: string } | undefined;
   LyricsBook: undefined;
