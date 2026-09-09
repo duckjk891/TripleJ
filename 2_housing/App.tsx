@@ -69,6 +69,7 @@ import AppDialogHost from './components/AppDialogHost';
 import RoyaltyScreen from './screens/RoyaltyScreen';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
+import FaceVerifyScreen from './screens/FaceVerifyScreen';
 import ArtistResultScreen from './screens/ArtistResultScreen';
 import MyArtistsScreen from './screens/MyArtistsScreen';
 import VoiceManageScreen from './screens/VoiceManageScreen';
@@ -116,6 +117,7 @@ export type StudioStackParamList = {
   //   ArtistInput.characterId = 재생성 대상(kind 불일치 400 → forceKind 동반 필수)
   ArtistInput: { forceKind?: 'real' | 'virtual'; characterId?: string } | undefined;
   ArtistLoading: undefined;
+  FaceVerify: undefined;
   ArtistResult: { slot?: 'real' | 'virtual'; characterId?: string } | undefined;
   MyArtists: undefined;
   ArtistCody: undefined;
@@ -216,6 +218,8 @@ function StudioNavigator() {
         options={{ gestureEnabled: false }}
       />
       <StudioStack.Screen name="ArtistResult" component={ArtistResultScreen} />
+      {/* v3.154: 얼굴 인증 — 실사+사진 생성 403 face_verification_required 진입 */}
+      <StudioStack.Screen name="FaceVerify" component={FaceVerifyScreen} />
       <StudioStack.Screen name="MyArtists" component={MyArtistsScreen} />
       <StudioStack.Screen name="ArtistCody" component={ArtistCodyScreen} />
       <StudioStack.Screen name="VoiceManage" component={VoiceManageScreen} />

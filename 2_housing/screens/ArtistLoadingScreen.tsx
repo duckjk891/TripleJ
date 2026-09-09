@@ -500,6 +500,14 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           }, 100);
           return;
         }
+        // v3.154: 얼굴 인증 필요(403 face_verification_required — ⭐ 차감 전 거절)
+        // → 얼굴 인증 화면으로 진입. 인증 완료 시 FaceVerify가 ArtistLoading을 replace해
+        // 같은 taskStore 입력으로 생성을 자동 재개한다.
+        if (status === 403 && err.response?.data?.error === 'face_verification_required') {
+          console.info('[ArtistLoading] 얼굴 인증 필요 — FaceVerify 진입 (무과금)');
+          navigation.replace('FaceVerify' as any);
+          return;
+        }
         // v3.103(B-1): 슬롯 초과(409 slot_limit_exceeded — ⭐ 차감 전 거절) → 확장 제안 다이얼로그
         if (status === 409 && err.response?.data?.error === 'slot_limit_exceeded') {
           const used = err.response?.data?.used;

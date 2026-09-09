@@ -3165,3 +3165,18 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 **⑤ 테스트 데이터 (정리 대상 아님 — E2E 재사용 중)**
 - 테스트 계정: 목클론v3143(가짜 클론)·커버검증곡(가짜 트랙)·고아검증 자산은 삭제 완료. 정리 원하면 일괄 삭제 가능.
+
+---
+
+## v3.154 — 얼굴 인증(FaceGuardSquad) 프론트 이식 (2026-09-09)
+
+**결과**: [api] A/B/C·[e2e] L1/L2 PASS. 어제 발견한 "서버 게이트만 있고 앱에 인증 화면이 없어 실사+사진 생성이 사실상 차단"이던 갭 해소.
+
+**구현**(서버 무변경 — FE만):
+- **FaceVerifyScreen 신설** — MAIDOL FaceVerifyFlow(v135~v137) 상태머신 RN 이식: 상태 조회 → 본인인증 안내 / 성인 동의(법정 문구 원문 이식, 체크+동의하기) / 미성년 보호자 동의 문자+3초 폴링 대기 → 셀피 촬영·선택(기존 이미지 선택 관행) → 서버 얼굴 대조 → 통과 시 **아티스트 생성 자동 재개**(입력 보존), 불일치 시 재촬영/차단 분기.
+- ArtistLoading: 403 face_verification_required(⭐ 차감 전 거절) → FaceVerify 진입 배선.
+- constants/faceConsent.ts(동의 전문·버전 2026-07-30.v1·보호자 안내 — planner 원문 자구 유지), services/faceVerifyService.ts(status/consent/guardian/verify).
+- **범위 제외(기존 백로그 유지)**: AWS Face Liveness 실물판별(Amplify — 실기기 통합), 보호자 실 SMS(B-6 업체 미정). 서버는 셀피 파일 경로가 aws 모드에서도 유효함을 실측 확인 후 진행.
+
+**대표 실테스트 필요**: 본인인증된 계정+실제 얼굴이 필요해 자동화 불가한 구간 — 동의→셀피 대조→통과→생성 재개 전체 여정(대표 계정은 인증돼 있어 동의 단계부터 진행될 것).
+**파일**: screens/FaceVerifyScreen.tsx(신설), constants/faceConsent.ts(신설), services/faceVerifyService.ts(신설), screens/ArtistLoadingScreen.tsx, App.tsx.

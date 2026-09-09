@@ -2246,3 +2246,22 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 
 ### 계획
 [BE v235] GenerateCoverRequest에 character_kind/character_art_style 추가(서버에서 화풍 라벨 정규화), cover_generator [A]를 kind 분기 — virtual: 시트 화풍 일러스트 강제·실사 금지·일러스트 연출 지시(+Claude/Gemini 시스템 텍스트 분기), real/미전송: 기존 문구 그대로(무회귀). [FE] coverExtras에 charKind·virtualArtStyle 보관(슬롯 선택·/me에서 채움, 되감기 시 해제) → 페이로드 동봉.
+
+---
+
+## v3.154 — 얼굴 인증(FaceGuardSquad) 프론트 이식 (2026-09-09)
+
+**요청**: 얼굴 인증 기능 이식 진행.
+
+### Plan verification findings
+- 서버는 완비·가동(FACE_VERIFY_ENABLED=true, mode=aws): GET /face-verify/status {enabled,mode,is_verified,minor,consent_needed,guardian_needed,guardian_status,registered} / POST consent{version} / POST guardian/request / POST verify(multipart photo+selfie?+session_id?) / DELETE. **verify는 session_id 없이 selfie 파일 경로가 aws 모드에서도 유효**(face_verify.py 322~ — 세션은 aws Liveness 전용 옵션) → Liveness(Amplify)는 기존 백로그(실기기)대로 제외하고 셀피 대조 흐름만 이식 가능.
+- AIDOL FE에 인증 UI 전무 — generate-sheet 403 face_verification_required가 일반 오류로만 표시(신규 사용자 실사+사진 사실상 차단).
+- MAIDOL 원본: FaceVerifyFlow.jsx(681줄, 상태머신 loading→need_identity/consent/guardian/guardian_waiting(3s 폴링)/capture→verifying→verified/stored_mismatch(재촬영)/live_mismatch(차단)) + consentTexts(face_biometric 전문·FACE_GUARDIAN_NOTICE·CONSENT_VERSION 2026-07-30.v1 — planner 원문 자구 유지).
+- ArtistLoading 403 처리 관행: 429/409는 차감 전 거절 → goBack+다이얼로그. 얼굴인증도 차감 전 거절(gate가 spend 앞) — 인증 후 재생성 자동 재개 가능(taskStore 입력 보존, photoUri/photoName).
+
+### 계획
+1. constants/faceConsent.ts — 동의 전문·버전·보호자 안내 이식(원문 그대로).
+2. services/faceVerifyService.ts — status/consent/guardianRequest/verify(multipart) + 로그.
+3. screens/FaceVerifyScreen.tsx — 상태머신 RN 이식(셀피=이미지 선택/촬영 DocumentPicker image/* — 기존 관행, Liveness 제외). verified → ArtistLoading replace(자동 재생성).
+4. App.tsx StudioStack 'FaceVerify' 라우트 + ArtistLoading 403 face_verification_required → FaceVerify replace.
+5. 테스트: [api] status/consent 계약·verify 게이트 체인(미인증 403 identity), [e2e] 실사+사진 생성 → 403 → FaceVerify 화면 진입(need_identity 안내 — 테스트 계정 is_verified=false 실측), 회귀(가상 생성 무영향).

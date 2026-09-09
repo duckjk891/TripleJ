@@ -1412,3 +1412,14 @@
 - [unit] P2(회귀): kind 미전송 → 기존 실사 문구 바이트 동일 경로
 - [e2e] K1/K2 재실행: 페이로드 character_kind='real' 동봉 + v3.151 흐름 무회귀
 - [비고] 가상 E2E는 테스트 계정에 가상 아티스트 부재로 미실행 — FE 로직은 슬롯값 직결(단순), 서버 분기는 P1로 검증
+
+---
+
+## v3.154 — 얼굴 인증 프론트 이식 (2026-09-09)
+
+- [api] B: POST /face-verify/consent (미인증 계정) → 403 identity_verification_required
+- [api] C: POST /face-verify/verify (미인증 계정) → 403 identity_verification_required (게이트 순서: flag→본인인증→동의→대조)
+- [api] A: GET /face-verify/status 계약 필드(enabled/mode/is_verified/consent_needed/guardian_needed/registered) 실측
+- [e2e] L1: 실사+사진 생성 → 403 face_verification_required(라우트 목 — 서버 미호출·무과금) → FaceVerify 화면 진입 + 실서버 status 조회 → need_identity 안내 표시
+- [e2e] L2: 닫기 → 생성 중단 안내와 함께 이전 화면 복귀
+- [잔여 — 실계정 필요] 동의→셀피 대조→인증 완료→생성 자동 재개 / stored_mismatch 재촬영 / 미성년 보호자 대기 폴링: 본인인증된 실계정+실제 얼굴 필요 — 대표 실테스트 항목 (자동화 불가 사유 명시)
