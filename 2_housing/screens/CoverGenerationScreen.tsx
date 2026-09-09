@@ -45,10 +45,12 @@ const PALETTE_OPTIONS = ['파스텔', '비비드', '다크 무디', '흑백'];
 const coverExtras: {
   shot: string | null; palette: string | null;
   bgPrompt: string | null; bgObjectName: string | null; lyricsExcerpt: string | null;
-} = { shot: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null };
+  charKind: 'real' | 'virtual' | null; virtualArtStyle: string | null;
+} = { shot: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null, charKind: null, virtualArtStyle: null };
 const resetCoverExtras = () => {
   coverExtras.shot = null; coverExtras.palette = null;
   coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; coverExtras.lyricsExcerpt = null;
+  coverExtras.charKind = null; coverExtras.virtualArtStyle = null;
 };
 
 const LOADING_STEPS = [
@@ -246,6 +248,10 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         background_prompt: coverExtras.bgPrompt || undefined,
         background_object_name: coverExtras.bgObjectName || undefined,
         lyrics_excerpt: coverExtras.lyricsExcerpt || undefined,
+        // v3.152: 실사/가상 분기 — 가상이면 화풍 라벨 동봉 (서버가 일러스트 강제 프롬프트로 전환)
+        character_kind: charObjectName ? (coverExtras.charKind || 'real') : undefined,
+        character_art_style: charObjectName && coverExtras.charKind === 'virtual'
+          ? (coverExtras.virtualArtStyle || undefined) : undefined,
       };
       console.log('[Cover] generate-cover payload:', JSON.stringify(payload));
       const t0 = Date.now();
@@ -342,7 +348,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       const virtualObj: string | null = ch?.virtual_sheet_object_name || null;
       setRealObjName(realObj);
       setVirtualObjName(virtualObj);
-      if (__DEV__) console.info('[Cover] 캐릭터 슬롯 확인', { hasReal: !!realObj, hasVirtual: !!virtualObj });
+      // v3.152: 가상 화풍 보관 — 가상 슬롯 선택 시 프롬프트 분기(character_art_style)에 사용
+      coverExtras.virtualArtStyle = ch?.virtual_art_style || null;
+      if (__DEV__) console.info('[Cover] 캐릭터 슬롯 확인', { hasReal: !!realObj, hasVirtual: !!virtualObj, vStyle: ch?.virtual_art_style || null });
       if (realObj || virtualObj) {
         setChatHistory((prev) => [
           ...prev,
@@ -364,6 +372,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   //    전부 선택사항(건너뛰기 가능). 답변은 coverExtras(모듈 스코프)에 보관돼 재진입에도 유지. ──
   const goWardrobe = (slot: 'real' | 'virtual') => {
     setChosenSlot(slot);
+    coverExtras.charKind = slot; // v3.152: 실사/가상 프롬프트 분기용
     setChatHistory((prev) => [
       ...prev,
       { type: 'director', text: '지금 아티스트가 입고 있는 의상이에요. 이 의상 그대로 커버를 만들까요? 바꾸고 싶으면 아티스트 꾸미기로 다녀올 수 있어요!' },
@@ -548,7 +557,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (target <= 1.8) coverExtras.shot = null;
     if (target <= 1.85) { coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; }
     if (target <= 1.9) coverExtras.palette = null;
-    if (target <= 1) { musicStore.setCoverCharacterObjectName(null); setChosenSlot(null); }
+    if (target <= 1) { musicStore.setCoverCharacterObjectName(null); setChosenSlot(null); coverExtras.charKind = null; }
     if (target === 0) setSelectedTrack(null);
     setChatHistory((prev) => [
       ...prev.slice(0, idx),
@@ -588,6 +597,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const handleArtistChoice = (include: boolean) => {
     if (!include) {
       musicStore.setCoverCharacterObjectName(null);
+      coverExtras.charKind = null;
       setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 빼고', step: 1 }]);
       proceedToLyricsQ(); // v3.151: 미포함도 가사 질문부터
       return;

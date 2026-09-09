@@ -2233,3 +2233,16 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 1. 흐름 재배선: 의상 유지/아티스트 미포함/아티스트 없음 → proceedToLyricsQ(1.75) — 반영 시 proceedToFinal(디테일 생략), 미반영 시 구도(1.8)→배경(1.85)→색감(1.9)→최종. 1.95 제거.
 2. 최종 자유 입력: 멀티라인+예시 placeholder+디렉터 예시 멘트("합쳐서 반영돼요" 명시).
 3. 되감기: ChatMessage.step 스탬프 전 답변 + 말풍선 탭→확인→절단·재질문·하류 상태 리셋(coverExtras 단조 번호 활용) — v3.148 패턴 이식.
+
+---
+
+## v3.152 — 커버 프롬프트 실사/가상 분기 (2026-09-09)
+
+**요청**: 실사/가상 아티스트가 DB에 구분 저장되면 프롬프팅도 달라야 하지 않나.
+
+### Plan verification findings
+- DB 구분 실재: characters.kind('real'|'virtual') + art_style(프리셋 키/한글/영문 라벨 혼재 — character.py _ART_STYLE_TO_PRESET_KEY 역매핑 존재), /character/me는 virtual_art_style 노출.
+- **결함 확인**: cover_generator [A] 분기가 캐릭터 포함 시 무조건 photorealistic 강제("must be photorealistic, not illustrated") — 가상 시트를 넣으면 화풍 파괴 지시가 됨. generate-cover는 kind를 아예 수신하지 않았음.
+
+### 계획
+[BE v235] GenerateCoverRequest에 character_kind/character_art_style 추가(서버에서 화풍 라벨 정규화), cover_generator [A]를 kind 분기 — virtual: 시트 화풍 일러스트 강제·실사 금지·일러스트 연출 지시(+Claude/Gemini 시스템 텍스트 분기), real/미전송: 기존 문구 그대로(무회귀). [FE] coverExtras에 charKind·virtualArtStyle 보관(슬롯 선택·/me에서 채움, 되감기 시 해제) → 페이로드 동봉.
