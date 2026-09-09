@@ -123,6 +123,9 @@ class GenerateCoverRequest(BaseModel):
     background_prompt: Optional[str] = None       # 배경·장소 텍스트 설명 (≤300자)
     background_object_name: Optional[str] = None  # 배경·장소 참조 사진 (POST /upload/cover-background 결과)
     lyrics_excerpt: Optional[str] = None          # 가사 발췌 (≤400자) — 장면 영감, LLM 추가 호출 없음
+    # v235(대표 지적) — 캐릭터 종류별 프롬프트 분기: 'real'(기본·기존 동작) | 'virtual'(일러스트 강제)
+    character_kind: Optional[str] = None
+    character_art_style: Optional[str] = None     # 가상 화풍 (프리셋 키/한글/영문 라벨 혼재 허용 — 서버 정규화)
 
 
 # v215 — 보관함 source 화이트리스트
@@ -451,6 +454,25 @@ async def generate_cover(
                     body.background_object_name, str(e)[:200],
                 )
 
+    # v235: character_kind 정규화 + 가상 화풍 라벨 해석 (프리셋 키/한글/영문 → 영문 라벨)
+    norm_char_kind = (body.character_kind or "").strip().lower()
+    if norm_char_kind not in ("real", "virtual"):
+        norm_char_kind = None
+    char_art_label = None
+    if norm_char_kind == "virtual":
+        raw_style = (body.character_art_style or "").strip()
+        if raw_style:
+            try:
+                from .character import STYLE_PRESETS, _ART_STYLE_TO_PRESET_KEY
+                key = _ART_STYLE_TO_PRESET_KEY.get(raw_style) or _ART_STYLE_TO_PRESET_KEY.get(raw_style.lower())
+                char_art_label = STYLE_PRESETS[key]["art_style_label"] if key else raw_style[:60]
+            except Exception:
+                char_art_label = raw_style[:60]
+        logger.info(
+            "[CoverGenEntry] character_kind=virtual art_style=%s -> label=%s",
+            (body.character_art_style or "(none)")[:30], char_art_label or "(none)",
+        )
+
     try:
         from ..services.cover_generator import generate_cover_image
 
@@ -480,6 +502,8 @@ async def generate_cover(
             background_prompt=body.background_prompt,
             background_image_bytes=background_image_bytes,
             lyrics_excerpt=body.lyrics_excerpt,
+            character_kind=norm_char_kind,
+            character_art_style=char_art_label,
         )
 
         # Save to MinIO

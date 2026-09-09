@@ -41,6 +41,9 @@ async def generate_cover_image(
     background_prompt: str = None,  # 배경·장소 텍스트 설명
     background_image_bytes: bytes = None,  # 배경·장소 참조 사진
     lyrics_excerpt: str = None,     # 가사 발췌 — 장면 영감용 (LLM 추가 호출 없이 이미지 모델에 직접 전달)
+    # v235(대표 지적 2026-09-09): 가상(만화) 아티스트에 실사 강제 프롬프트가 걸리던 결함 분기
+    character_kind: str = None,       # 'real' | 'virtual' — None 은 기존(실사) 동작 유지
+    character_art_style: str = None,  # 가상 화풍 영문 라벨 (예: "Korean webtoon style")
 ) -> bytes:
     """Generate album cover image using Gemini. Returns PNG bytes.
 
@@ -127,6 +130,11 @@ async def generate_cover_image(
         # v234: 대화 보강 절도 Claude 보강 경로에 동일 반영
         for _p in _extra_parts:
             basic_info += f"\n{_p}"
+        # v235: 가상 캐릭터 화풍 명시 — 실사 변환 금지
+        if character_image_bytes and (character_kind or "").strip().lower() == "virtual":
+            basic_info += "\nCharacter: illustrated in {} — the cover must stay illustrated in this style, never photorealistic.".format(
+                (character_art_style or "").strip() or "the reference sheet's art style"
+            )
 
         enhance_system = (
             "You are a world-class album cover art director. "
@@ -200,23 +208,44 @@ async def generate_cover_image(
         if mood:
             prompt_parts.append("Mood/atmosphere: {}".format(mood))
 
+        _is_virtual_char = (character_kind or "").strip().lower() == "virtual"
         if character_image_bytes:
-            # [A] With character sheet — enforce photorealistic style
-            prompt_parts.append(
-                "The image MUST be in photorealistic style — like a real photograph "
-                "taken with a high-end camera. Use realistic lighting, textures, and "
-                "depth of field. The image should be square (1:1 aspect ratio), "
-                "visually striking, suitable as a music album cover. "
-                "Do NOT include any text or letters in the image."
-            )
-            prompt_parts.append(
-                "IMPORTANT: The provided character reference sheet shows the main character. "
-                "Feature this person prominently in the album cover as the main subject. "
-                "Maintain the person's exact appearance (face, hair, features) from the reference. "
-                "Also PRESERVE THE WARDROBE / OUTFIT (top, bottom, shoes, accessories) shown in "
-                "the reference sheet — do not change clothing items even if the cover theme suggests otherwise. "
-                "The character must be photorealistic, not illustrated or stylized."
-            )
+            if _is_virtual_char:
+                # [A-v] v235: 가상(만화) 캐릭터 시트 — 시트의 화풍을 따르는 일러스트 강제
+                _style_label = (character_art_style or "").strip() or "the illustrated art style of the character reference sheet"
+                prompt_parts.append(
+                    "The image MUST be fully illustrated in {style} — matching the character "
+                    "reference sheet's art style exactly. Do NOT render the character or the scene "
+                    "as a photograph or photorealistic/live-action image. The image should be square "
+                    "(1:1 aspect ratio), visually striking, suitable as a music album cover. "
+                    "Do NOT include any text or letters in the image.".format(style=_style_label)
+                )
+                prompt_parts.append(
+                    "IMPORTANT: The provided character reference sheet shows the main character. "
+                    "Feature this character prominently in the album cover as the main subject. "
+                    "Maintain the character's exact design (face, hair, features) from the reference. "
+                    "Also PRESERVE THE WARDROBE / OUTFIT (top, bottom, shoes, accessories) shown in "
+                    "the reference sheet — do not change clothing items even if the cover theme suggests otherwise. "
+                    "The character must stay illustrated in the same art style as the reference — "
+                    "never photorealistic."
+                )
+            else:
+                # [A] With character sheet — enforce photorealistic style
+                prompt_parts.append(
+                    "The image MUST be in photorealistic style — like a real photograph "
+                    "taken with a high-end camera. Use realistic lighting, textures, and "
+                    "depth of field. The image should be square (1:1 aspect ratio), "
+                    "visually striking, suitable as a music album cover. "
+                    "Do NOT include any text or letters in the image."
+                )
+                prompt_parts.append(
+                    "IMPORTANT: The provided character reference sheet shows the main character. "
+                    "Feature this person prominently in the album cover as the main subject. "
+                    "Maintain the person's exact appearance (face, hair, features) from the reference. "
+                    "Also PRESERVE THE WARDROBE / OUTFIT (top, bottom, shoes, accessories) shown in "
+                    "the reference sheet — do not change clothing items even if the cover theme suggests otherwise. "
+                    "The character must be photorealistic, not illustrated or stylized."
+                )
             # v57: protagonist gender clause (branch 2 — programmatic [A] character 有).
             # neutral 일 때는 캐릭터 시트로 위임함을 명시.
             if _vg_label:
@@ -226,12 +255,20 @@ async def generate_cover_image(
                     )
                 else:
                     prompt_parts.append("Protagonist gender: {}.".format(_vg_label))
-            prompt_parts.append(
-                "Use cinematic photography techniques: choose an appropriate focal length "
-                "(50mm for natural, 85mm for portrait, 35mm for environmental), "
-                "apply professional lighting (key light, fill, rim/hair light), "
-                "and use intentional depth of field to separate subject from background."
-            )
+            if _is_virtual_char:
+                # v235: 가상은 촬영 기법 대신 일러스트 연출 지시
+                prompt_parts.append(
+                    "Use intentional illustrated composition: dynamic framing and angles, "
+                    "expressive lighting and shading consistent with the art style, and a "
+                    "deliberate color design that makes the cover visually striking."
+                )
+            else:
+                prompt_parts.append(
+                    "Use cinematic photography techniques: choose an appropriate focal length "
+                    "(50mm for natural, 85mm for portrait, 35mm for environmental), "
+                    "apply professional lighting (key light, fill, rim/hair light), "
+                    "and use intentional depth of field to separate subject from background."
+                )
             # v234: 대화 보강 절(구도/색감/배경/가사) — 사용자 지시가 고정 문구보다 뒤에 오도록
             prompt_parts.extend(_extra_parts)
             if user_prompt:
@@ -307,7 +344,16 @@ async def generate_cover_image(
             }
         })
 
-    if character_image_bytes:
+    if character_image_bytes and (character_kind or "").strip().lower() == "virtual":
+        # v235: 가상 캐릭터 — 일러스트 아트 디렉터 페르소나
+        system_text = (
+            "You are a world-class album cover art director and illustrator. "
+            "You specialize in creating iconic, visually striking illustrated album covers "
+            "that match a given character's art style exactly — never converting "
+            "illustrated characters into photorealistic imagery. You have deep expertise "
+            "in composition, lighting, color design, and visual storytelling for the music industry."
+        )
+    elif character_image_bytes:
         system_text = (
             "You are a world-class album cover art director and photographer. "
             "You specialize in creating iconic, visually striking album covers "
