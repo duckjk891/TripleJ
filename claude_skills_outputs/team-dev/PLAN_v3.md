@@ -2163,3 +2163,21 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 ### 계획
 1. MusicGenerationScreen: customPickInput 상태 + step 300/301 렌더에 입력행(TextInput+확인, 빈값 비활성, 30자 제한) 추가 — 제출 시 handleGenrePick/handleMoodPick(trim) 재사용, 입력 초기화. 로그 [MusicGeneration] 장르/분위기 직접 입력.
 2. E2E: 장르 직접 입력("신스팝")→분위기 직접 입력("쓸쓸한 새벽")→재선택값으로 진행 확인 + 버튼 선택 회귀.
+
+---
+
+## v3.147 — 보이스 만료(Suno 553) 대응: 선차단·자동환불·안내 (2026-09-09)
+
+**요청**: "보이스를 오늘 만들었는데 왜 만료되었다고 뜨는거야?" (작곡 실패 화면)
+
+### Plan verification findings
+- 실측: 대표 클론 '다시진주' 15:11 생성→15:12 ready→17:14 작곡 시 Suno err 553 "The voice has expired" → 서버가 expired 플래그(suno_generator 252~). **약 2시간 만에 프로바이더(api.sunoapi.org) 측 만료** — 우리 코드가 지운 게 아님.
+- 프로바이더 문서(docs.sunoapi.org)에 TTL 명시는 없으나 check-voice(가용성 확인) 엔드포인트가 존재 = 보이스가 예고 없이 만료될 수 있는 구조(제3자 API가 Suno 계정 풀 프록시).
+- ⭐ 처리: 작곡 15는 자동 환불됨(로그 확인). 클론 학습 5는 만료 시 환불 로직 부재(refunded=False 방치).
+- 기존 check_voice_available(POST /voice/check-voice) 헬퍼 존재하나 작곡 경로에서 미사용.
+
+### 계획
+1. [BE v232] suno_generator 만료 플래그 시 refund_clone_points 호출 — 학습 ⭐ 1회 원자 환불(정책 "실패 시 환불" 준용).
+2. [BE v232] generate 양 경로(create/start)에 _voice_expired_response 선체크 — ⭐차감 전 check-voice, 만료면 expired 플래그+환불+400(명확한 안내). 체크 실패는 통과(후방 방어 유지).
+3. [FE] persona_status='expired' 안내: 아티스트 상세 경고 문구+다시 연결하기, 작곡 카드 '목소리 만료' 표기, 선택 차단 다이얼로그 재학습 안내.
+4. 대표 클론 ⭐5 즉시 환불(운영 조치).

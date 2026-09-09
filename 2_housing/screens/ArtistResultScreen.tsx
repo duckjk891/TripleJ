@@ -812,6 +812,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const displayGender = isServerMode ? (serverArtist!.gender || null) : (profile?.gender || null);
   // B-3 표시 상태: 연결됨 / 연결 끊김(missing — 클론 삭제됨) / 미연결
   const personaMissing = !!(serverArtist?.persona_id && serverArtist?.persona_status === 'missing');
+  // v3.147: 만료(expired — Suno측 사정으로 클론 보이스 소멸, 재학습 필요)도 경고 표시
+  const personaExpired = !!(serverArtist?.persona_id && serverArtist?.persona_status === 'expired');
   const personaConnected = !!(serverArtist?.persona_id && !personaMissing);
   const readyClones = clones.filter((c) => c.status === 'ready' && c.clone_id);
   // v3.143: 간편 목소리(서버 voice_preset) — persona와 상호 배타. 목소리 필수(대표 확정).
@@ -997,10 +999,12 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         {isServerMode ? (
           <View style={styles.voiceBox}>
             <AppText style={styles.voiceBoxLabel}>목소리</AppText>
-            <AppText style={[styles.voiceBoxDesc, (personaMissing || !voiceLinked) && styles.voiceBoxDescWarn]}>
+            <AppText style={[styles.voiceBoxDesc, (personaMissing || personaExpired || !voiceLinked) && styles.voiceBoxDescWarn]}>
               {personaMissing
                 ? '연결했던 목소리가 삭제되어 연결이 해제됐어요. 다른 목소리를 다시 연결해주세요.'
-                : personaConnected
+                : personaExpired
+                  ? `"${serverArtist!.persona_name || '연결된 목소리'}"가 만료됐어요. 외부 AI 사정으로 목소리가 만료될 수 있어요 — 다시 학습해서 새 목소리를 연결해주세요. (학습에 쓴 ⭐는 환불돼요)`
+                  : personaConnected
                   ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.`
                   : serverPreset
                     ? `간편 목소리(${serverPreset.gender} · ${serverPreset.style})가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 스타일이 적용돼요.`
@@ -1014,7 +1018,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 activeOpacity={0.7}
               >
                 <AppText style={styles.voiceBtnText}>
-                  {voiceLinked ? '목소리 변경' : personaMissing ? '다시 연결하기' : '목소리 연결 (필수)'}
+                  {personaExpired ? '다시 연결하기' : voiceLinked ? '목소리 변경' : personaMissing ? '다시 연결하기' : '목소리 연결 (필수)'}
                 </AppText>
               </TouchableOpacity>
               {(voiceLinked || personaMissing) && (

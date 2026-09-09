@@ -420,10 +420,13 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     const hasClone = !!artist.persona_voice_id && artist.persona_status === 'ready';
     const preset = parseVoicePreset(artist.voice_preset);
     if (!hasClone && !preset) {
-      console.warn('[MusicGeneration] 목소리 미연결 아티스트 선택 차단', { cid: artist.character_id });
+      console.warn('[MusicGeneration] 목소리 미연결 아티스트 선택 차단', { cid: artist.character_id, status: artist.persona_status });
+      // v3.147: 만료(Suno측 사정)면 재학습 안내로 구분
       showAlert(
-        '목소리 연결이 필요해요',
-        `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
+        artist.persona_status === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
+        artist.persona_status === 'expired'
+          ? `${artist.name || '이 아티스트'}에 연결된 목소리가 만료됐어요. 외부 AI 사정으로 목소리가 만료될 수 있어요 — 목소리를 다시 학습해서 연결해주세요. (학습에 쓴 ⭐는 환불돼요)`
+          : `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
       );
       return;
     }
@@ -978,7 +981,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                           ? preset
                             ? `🎤 간편 목소리 · ${preset.gender} ${preset.style}`
                             : '🎤 내 목소리 연결됨'
-                          : '목소리 미연결 — 연결해야 선택할 수 있어요'}
+                          : a.persona_status === 'expired'
+                            ? '목소리 만료 — 다시 학습이 필요해요'
+                            : '목소리 미연결 — 연결해야 선택할 수 있어요'}
                       </AppText>
                     </View>
                   </TouchableOpacity>
