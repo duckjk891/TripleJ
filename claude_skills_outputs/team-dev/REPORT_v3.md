@@ -2963,3 +2963,18 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 | 작곡 중 진입도 동일 모드 적용 | 적용 (mode:'voices') |
 | 위저드 문구 | 기확인 — 헤더 '내 목소리 만들기' (아티스트 문구 없음) |
 | 아티스트 상세 진입 | 기존 화면 유지(간편 vs 내 목소리 2택 = 아티스트 목소리 화면의 역할) |
+
+---
+
+## v3.142 — 클로닝 "분석 실패" 복구: Cloudflare 터널 사망 (2026-09-09)
+
+**결과**: 인프라 복구 완료 — **대표 재시도 가능**. ⭐5 자동 환불 확인(clone 6aa0e3a4).
+
+**원인**: 422 수정 후에도 실패한 진짜 원인은 코드가 아니라 인프라. Suno가 우리 음원(MinIO)을 받아가는 Cloudflare quick tunnel(dance-suffering-…)이 **9/1 cloudflared 자동업데이트로 종료된 채 8일 방치** → Suno voice/validate가 음원 다운로드 불가 → "Internal Error, Please try again later" 반환.
+
+**조치**:
+1. `--no-autoupdate`로 새 터널 발급: `rand-learning-alignment-upc.trycloudflare.com`
+2. 서버 `.env` MINIO_PUBLIC_HOST 갱신 + restart_9004.sh 재시작(UP 확인)
+3. 검증: 정식 presign 경로(media_urls.public_presign)로 발급한 URL을 외부(Mac)에서 curl — **200, 25.4MB 음원 실수신**
+
+**교훈/리스크**: quick tunnel은 임시 주소라 언제든 재사망 가능(이번처럼 자동업데이트·재부팅·네트워크 단절 시 주소 자체가 소멸). 근본 대책은 AWS 이전 시 고정 도메인화. 임시 대책으로 cloudflared 생존 감시 + 자동 재발급·.env 갱신 스크립트 도입 여지 있음(대표 판단).
