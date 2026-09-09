@@ -35,6 +35,12 @@ async def generate_cover_image(
     user_location_name: str = None,
     image_model: str = "nb_pro",
     vocal_gender: str = None,
+    # v234(대표 확정 2026-09-09): 이미지 디렉터 대화 보강 — 전부 선택사항(None=미주입)
+    shot: str = None,               # 구도 (한국어 라벨 또는 자유 문자열)
+    palette: str = None,            # 색감·톤
+    background_prompt: str = None,  # 배경·장소 텍스트 설명
+    background_image_bytes: bytes = None,  # 배경·장소 참조 사진
+    lyrics_excerpt: str = None,     # 가사 발췌 — 장면 영감용 (LLM 추가 호출 없이 이미지 모델에 직접 전달)
 ) -> bytes:
     """Generate album cover image using Gemini. Returns PNG bytes.
 
@@ -59,13 +65,51 @@ async def generate_cover_image(
     _vg_label = (
         "neutral / unspecified" if _vg == "neutral" else _vg
     )  # "female"|"male"|"neutral / unspecified"|None
+    # v234: 배경 참조 사진은 기존 location 파이프라인(참조 이미지 동봉 + systemInstruction)을
+    # 그대로 재사용 — 문구는 아래 _extra_parts 의 배경 절이 담당(anchor_clause 는 name 필요라 미사용).
+    if background_image_bytes and not user_location_image_bytes:
+        user_location_image_bytes = background_image_bytes
+
     logger.info(
-        "[CoverGen] vocal_gender=%s has_char_ref=%s char_bytes_len=%d has_loc_ref=%s",
+        "[CoverGen] vocal_gender=%s has_char_ref=%s char_bytes_len=%d has_loc_ref=%s shot=%s palette=%s bg_prompt=%s lyrics=%s",
         _vg,
         bool(character_image_bytes),
         len(character_image_bytes) if character_image_bytes else 0,
         bool(user_location_image_bytes),
+        (shot or "")[:12], (palette or "")[:12], bool(background_prompt), bool(lyrics_excerpt),
     )
+
+    # ── v234: 대화 보강 항목 → 영어 절 (전부 선택 — None 은 미주입, 한국어 라벨 매핑·자유 문자열 통과) ──
+    _SHOT_MAP = {
+        "클로즈업": "Close-up portrait framing, the face filling most of the frame",
+        "반신": "Half-body (waist-up) shot",
+        "전신": "Full-body shot showing the entire figure",
+        "뒷모습": "Shot from behind (back view of the subject)",
+        "인물 없이": "No people in the image — object/landscape centered composition",
+    }
+    _PALETTE_MAP = {
+        "파스텔": "soft pastel color palette",
+        "비비드": "vivid, highly saturated colors",
+        "다크 무디": "dark, moody tones with low-key lighting",
+        "흑백": "black and white monochrome",
+    }
+    _extra_parts = []
+    if shot and shot.strip():
+        _extra_parts.append("Composition: {}.".format(_SHOT_MAP.get(shot.strip(), shot.strip())))
+    if palette and palette.strip():
+        _extra_parts.append("Color palette: {}.".format(_PALETTE_MAP.get(palette.strip(), palette.strip())))
+    if background_prompt and background_prompt.strip():
+        _extra_parts.append("Background / scene: {}.".format(background_prompt.strip()[:300]))
+    if background_image_bytes:
+        _extra_parts.append(
+            "A background reference photo is provided — set the scene in this exact place: "
+            "match its scenery/architecture, lighting, time of day, and color tone."
+        )
+    if lyrics_excerpt and lyrics_excerpt.strip():
+        _extra_parts.append(
+            "Scene inspiration from the song lyrics (use mood and imagery only — "
+            "do NOT render any of these words as text in the image): {}".format(lyrics_excerpt.strip()[:400])
+        )
 
     # ── Optional: AI-enhanced prompt via Claude ──
     enhanced_prompt = None
@@ -80,6 +124,9 @@ async def generate_cover_image(
             basic_info += f"\nMood: {mood}"
         if user_prompt:
             basic_info += f"\nUser direction: {user_prompt}"
+        # v234: 대화 보강 절도 Claude 보강 경로에 동일 반영
+        for _p in _extra_parts:
+            basic_info += f"\n{_p}"
 
         enhance_system = (
             "You are a world-class album cover art director. "
@@ -185,6 +232,8 @@ async def generate_cover_image(
                 "apply professional lighting (key light, fill, rim/hair light), "
                 "and use intentional depth of field to separate subject from background."
             )
+            # v234: 대화 보강 절(구도/색감/배경/가사) — 사용자 지시가 고정 문구보다 뒤에 오도록
+            prompt_parts.extend(_extra_parts)
             if user_prompt:
                 prompt_parts.append("Additional direction: {}".format(user_prompt))
             # v42: append user-location anchor when supplied
@@ -209,6 +258,8 @@ async def generate_cover_image(
                 "depth of field, lighting direction and quality, and color palette "
                 "to create a visually compelling image."
             )
+            # v234: 대화 보강 절(구도/색감/배경/가사)
+            prompt_parts.extend(_extra_parts)
             if user_prompt:
                 prompt_parts.append("Style and direction: {}".format(user_prompt))
             # v42: append user-location anchor when supplied (no character)

@@ -117,6 +117,12 @@ class GenerateCoverRequest(BaseModel):
     # v215 — 보관함(커버촬영실) 출처 표기: 'coverstudio' | 'coveredit' | 'upload'.
     # 화이트리스트 외/미전송은 None 저장 (additive — 구 클라이언트 무영향).
     source: Optional[str] = None
+    # v234(대표 확정) — 이미지 디렉터 대화 보강 (전부 선택사항, None=미주입)
+    shot: Optional[str] = None                    # 구도 (클로즈업/반신/전신/뒷모습/인물 없이 또는 자유)
+    palette: Optional[str] = None                 # 색감·톤
+    background_prompt: Optional[str] = None       # 배경·장소 텍스트 설명 (≤300자)
+    background_object_name: Optional[str] = None  # 배경·장소 참조 사진 (POST /upload/cover-background 결과)
+    lyrics_excerpt: Optional[str] = None          # 가사 발췌 (≤400자) — 장면 영감, LLM 추가 호출 없음
 
 
 # v215 — 보관함 source 화이트리스트
@@ -132,6 +138,43 @@ class GenerateMVRequest(BaseModel):
 
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+# ── v234(대표 확정): 커버 배경·장소 참조 사진 업로드 ─────────────────────────
+# 이미지 디렉터 대화의 '배경·장소' 질문 — 사진 업로드 답변용. generate-cover 의
+# background_object_name 으로 전달돼 참조 이미지로 동봉된다. 소유 prefix 로 저장.
+@router.post("/cover-background", status_code=201)
+async def upload_cover_background(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_IMAGE_EXT:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"허용되지 않는 이미지 형식입니다. ({', '.join(ALLOWED_IMAGE_EXT)})"},
+        )
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        return JSONResponse(status_code=400, content={"error": "이미지 크기는 10MB 이하여야 합니다."})
+    if not contents:
+        return JSONResponse(status_code=400, content={"error": "빈 파일입니다."})
+
+    object_name = "covers/bg/{}/{}{}".format(current_user["id"], uuid_lib.uuid4().hex, ext)
+    content_type = mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    minio_client = get_minio()
+    minio_client.put_object(
+        bucket_name=settings.minio_bucket_images,
+        object_name=object_name,
+        data=io.BytesIO(contents),
+        length=len(contents),
+        content_type=content_type,
+    )
+    logger.info(
+        "[upload] cover-background user=%s obj=%s len=%d",
+        current_user["id"][:8], object_name, len(contents),
+    )
+    return {"object_name": object_name}
 
 
 @router.post("/image", status_code=201)
@@ -379,6 +422,35 @@ async def generate_cover(
         except Exception as e:
             logger.warning("generate_cover: failed to load user location: %s", e)
 
+    # v234: 배경·장소 참조 사진 로드 (본인 업로드 prefix 만 허용 — 타 사용자 객체 참조 차단)
+    background_image_bytes = None
+    if body.background_object_name:
+        _bg_prefix = "covers/bg/{}/".format(current_user["id"])
+        if not body.background_object_name.startswith(_bg_prefix):
+            logger.warning(
+                "[CoverGenEntry] background object prefix mismatch user=%s obj=%s",
+                current_user["id"][:8], body.background_object_name[:60],
+            )
+        else:
+            try:
+                minio_client = get_minio()
+                _resp = minio_client.get_object(
+                    bucket_name=settings.minio_bucket_images,
+                    object_name=body.background_object_name,
+                )
+                background_image_bytes = _resp.read()
+                _resp.close()
+                _resp.release_conn()
+                logger.info(
+                    "[CoverGenEntry] background bytes loaded len=%d from %s",
+                    len(background_image_bytes), body.background_object_name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[CoverGenEntry] background image LOAD FAILED object=%s err=%s",
+                    body.background_object_name, str(e)[:200],
+                )
+
     try:
         from ..services.cover_generator import generate_cover_image
 
@@ -402,6 +474,12 @@ async def generate_cover(
             user_location_name=user_location_name,
             image_model=norm_image_model,
             vocal_gender=norm_vocal_gender,
+            # v234 — 대화 보강(전부 선택)
+            shot=body.shot,
+            palette=body.palette,
+            background_prompt=body.background_prompt,
+            background_image_bytes=background_image_bytes,
+            lyrics_excerpt=body.lyrics_excerpt,
         )
 
         # Save to MinIO
