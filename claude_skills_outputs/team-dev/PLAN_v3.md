@@ -2222,3 +2222,14 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 ### 구현
 - [BE v234] upload.py: POST /upload/cover-background(이미지 ≤10MB, covers/bg/{uid}/ 소유 prefix), GenerateCoverRequest에 shot/palette/background_prompt/background_object_name/lyrics_excerpt(전부 선택), 배경 객체 소유 prefix 검증 후 로드. cover_generator: 한국어 라벨→영어 절 매핑(_SHOT_MAP/_PALETTE_MAP·자유 문자열 통과), 배경 사진은 기존 location 참조 파이프라인 재사용+전용 절, 가사 발췌는 "무텍스트 렌더" 지시와 함께 동봉, Claude 보강 경로에도 동일 반영.
 - [FE] CoverGenerationScreen: 대화 3→7단계 — 곡→아티스트(포함/슬롯)→의상 확인(1.7: 시트 미리보기+[그대로]/[꾸미기 연동], focus 복귀 시 시트 최신화)→구도(1.8: 4종+미포함 시 '인물 없이'+건너뛰기)→배경(1.85: 사진 업로드/텍스트/건너뛰기)→색감(1.9)→가사(1.95: 트랙 모드만)→자유 서술(2: '이대로 만들기' 추가). 답변은 모듈 스코프 coverExtras(재진입 유지). 장르/분위기 자동 주입 제거. trackService.uploadCoverBackground 신설.
+
+---
+
+## v3.151 — 이미지 디렉터 질문 순서 재편·자유입력 예시·답변 수정 (2026-09-09)
+
+**요청**: ① 가사 반영 유지 + 질문 순서 변경: 아티스트→의상→**가사 포함?** — 포함 시 디테일 질문 생략, 미포함 시 구도~색감 진행 ② 자유 서술이 앞 답변을 덮는지? (답: 덮지 않고 전부 누적 합산 — v234 프롬프트 조립 구조) ③ 작사처럼 예시를 주는 자유 입력창 ④ 답변 클릭 수정(타 디렉터 통일).
+
+### 계획
+1. 흐름 재배선: 의상 유지/아티스트 미포함/아티스트 없음 → proceedToLyricsQ(1.75) — 반영 시 proceedToFinal(디테일 생략), 미반영 시 구도(1.8)→배경(1.85)→색감(1.9)→최종. 1.95 제거.
+2. 최종 자유 입력: 멀티라인+예시 placeholder+디렉터 예시 멘트("합쳐서 반영돼요" 명시).
+3. 되감기: ChatMessage.step 스탬프 전 답변 + 말풍선 탭→확인→절단·재질문·하류 상태 리셋(coverExtras 단조 번호 활용) — v3.148 패턴 이식.

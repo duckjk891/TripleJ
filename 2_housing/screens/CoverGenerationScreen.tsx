@@ -58,7 +58,12 @@ const LOADING_STEPS = [
   { label: '마무리', message: '마무리 중이에요...' },
 ];
 
-interface ChatMessage { type: 'director' | 'user'; text: string; }
+interface ChatMessage {
+  type: 'director' | 'user';
+  text: string;
+  /** v3.151 — 이 답변이 응답한 step. 있으면 말풍선 탭 → 그 단계부터 다시 선택(타 디렉터 UX 통일) */
+  step?: number;
+}
 interface MyTrack { id: string; title: string; cover_image?: string; cover_image_url?: string; genre?: string[]; mood?: string[]; }
 
 // v3.89: 커버 미세조정(refine) 버전 히스토리 엔트리 — 백엔드 cover_sessions.cover_refine_history와 동일 구조
@@ -346,12 +351,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         setStep(1); // 아티스트 포함 여부 단계
       } else {
         musicStore.setCoverCharacterObjectName(null);
-        proceedToShot(); // v3.150: 아티스트 없어도 구도/배경/색감 질문은 진행
+        proceedToLyricsQ(); // v3.151: 아티스트 없어도 가사 질문부터
       }
     } catch (err) {
       console.warn('[Cover] /character/me 조회 실패, 캐릭터 없이 진행:', err);
       musicStore.setCoverCharacterObjectName(null);
-      proceedToShot();
+      proceedToLyricsQ();
     }
   };
 
@@ -367,15 +372,29 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   };
 
   const handleWardrobeKeep = () => {
-    setChatHistory((prev) => [...prev, { type: 'user', text: '이 의상 그대로' }]);
-    proceedToShot();
+    setChatHistory((prev) => [...prev, { type: 'user', text: '이 의상 그대로', step: 1.7 }]);
+    proceedToLyricsQ(); // v3.151(대표): 의상 다음은 가사 포함 여부
+  };
+
+  // v3.151(대표): 가사 포함 질문을 앞으로 — 포함하면 디테일(구도~색감) 질문 생략,
+  // 미포함이면 디테일 질문 진행. 앨범 모드/곡 없음은 가사 개념이 없어 디테일로 직행.
+  const proceedToLyricsQ = () => {
+    if (albumMode || !(selectedTrack?.id || musicStore.coverTrackId)) {
+      proceedToShot();
+      return;
+    }
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'director', text: '이 곡의 가사 내용을 반영해서 만들까요? 가사를 반영하면 장면은 가사에 맡기고, 아니면 구도·배경·색감을 하나씩 여쭤볼게요. (추가 비용 없어요)' },
+    ]);
+    setStep(1.75);
   };
 
   const handleWardrobeChange = () => {
     console.info('[Cover] 의상 변경 — ArtistCody 연동 이동');
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '의상 바꾸러 가기' },
+      { type: 'user', text: '의상 바꾸러 가기', step: 1.7 },
       { type: 'director', text: '아티스트 꾸미기로 이동할게요! 꾸미기를 마치고 돌아오면 바뀐 의상으로 이어서 진행해요.' },
     ]);
     try {
@@ -404,7 +423,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     console.info('[Cover] 구도 선택', { shot });
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: shot || '건너뛰기' },
+      { type: 'user', text: shot || '건너뛰기', step: 1.8 },
       { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!' },
     ]);
     setStep(1.85);
@@ -428,7 +447,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       coverExtras.bgObjectName = data.object_name;
       coverExtras.bgPrompt = null;
       console.info('[Cover] 배경 사진 업로드 완료', { object: data.object_name });
-      setChatHistory((prev) => [...prev, { type: 'user', text: '📷 배경 사진을 올렸어요' }]);
+      setChatHistory((prev) => [...prev, { type: 'user', text: '📷 배경 사진을 올렸어요', step: 1.85 }]);
       proceedToPalette();
     } catch (err: any) {
       console.error('[Cover] 배경 사진 업로드 실패', { status: err?.response?.status, message: err?.message });
@@ -444,14 +463,14 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     coverExtras.bgPrompt = v;
     coverExtras.bgObjectName = null;
     setBgText('');
-    setChatHistory((prev) => [...prev, { type: 'user', text: v }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: v, step: 1.85 }]);
     proceedToPalette();
   };
 
   const handleBgSkip = () => {
     coverExtras.bgPrompt = null;
     coverExtras.bgObjectName = null;
-    setChatHistory((prev) => [...prev, { type: 'user', text: '건너뛰기' }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: '건너뛰기', step: 1.85 }]);
     proceedToPalette();
   };
 
@@ -466,22 +485,13 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const handlePalettePick = (palette: string | null) => {
     coverExtras.palette = palette;
     console.info('[Cover] 색감 선택', { palette });
-    setChatHistory((prev) => [...prev, { type: 'user', text: palette || '건너뛰기' }]);
-    // 가사 질문은 트랙 모드에서만 (앨범 모드는 특정 곡 가사가 없음)
-    if (!albumMode && (selectedTrack?.id || musicStore.coverTrackId)) {
-      setChatHistory((prev) => [
-        ...prev,
-        { type: 'director', text: '이 곡 가사의 장면을 참고해서 만들까요? (추가 비용 없어요)' },
-      ]);
-      setStep(1.95);
-      return;
-    }
-    proceedToFinal();
+    setChatHistory((prev) => [...prev, { type: 'user', text: palette || '건너뛰기', step: 1.9 }]);
+    proceedToFinal(); // v3.151: 가사 질문은 앞(1.75)으로 이동
   };
 
   // 가사 반영 — LLM 추가 호출 없이 가사 발췌를 이미지 프롬프트에 직접 동봉 (무비용)
   const handleLyricsUse = async () => {
-    setChatHistory((prev) => [...prev, { type: 'user', text: '가사 장면 반영' }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: '가사 내용 반영', step: 1.75 }]);
     try {
       const trackId = selectedTrack?.id || musicStore.coverTrackId;
       const trackRes = await api.get(`/tracks/${trackId}`);
@@ -512,14 +522,54 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   const handleLyricsSkip = () => {
     coverExtras.lyricsExcerpt = null;
-    setChatHistory((prev) => [...prev, { type: 'user', text: '건너뛰기' }]);
-    proceedToFinal();
+    setChatHistory((prev) => [...prev, { type: 'user', text: '아니요, 직접 정할게요', step: 1.75 }]);
+    proceedToShot(); // v3.151: 미포함 → 디테일 질문(구도~색감)
+  };
+
+  // ── v3.151: 답변 말풍선 탭 → 그 단계부터 다시 선택 (작곡 디렉터 v3.148과 동일 UX) ──
+  const questionForStep = (t: number): string => {
+    switch (t) {
+      case 0: return '어떤 곡의 커버 이미지를 만들어볼까요?';
+      case 1: return '내 아티스트가 있네요! 이 아티스트가 포함된 커버 이미지로 만드시겠어요?';
+      case 1.5: return '아티스트가 두 명 있네요! 어느 아티스트로 넣을까요?';
+      case 1.7: return '지금 아티스트가 입고 있는 의상이에요. 이 의상 그대로 커버를 만들까요? 바꾸고 싶으면 아티스트 꾸미기로 다녀올 수 있어요!';
+      case 1.75: return '이 곡의 가사 내용을 반영해서 만들까요? 가사를 반영하면 장면은 가사에 맡기고, 아니면 구도·배경·색감을 하나씩 여쭤볼게요. (추가 비용 없어요)';
+      case 1.8: return '어떤 구도로 담을까요? 딱히 없으면 건너뛰어도 좋아요!';
+      case 1.85: return '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!';
+      case 1.9: return '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!';
+      default: return '마지막이에요! 원하는 느낌이나 장면을 자유롭게 적어주세요. 지금까지 고른 것들과 합쳐서 반영돼요.';
+    }
+  };
+
+  const performRewind = (idx: number, target: number) => {
+    console.info('[Cover] 대화 되감기', { idx, target });
+    // 되감는 단계 이후의 답변은 초기화 (앞으로 재진행하며 다시 채움 — step 번호가 흐름 순서와 단조)
+    if (target <= 1.75) coverExtras.lyricsExcerpt = null;
+    if (target <= 1.8) coverExtras.shot = null;
+    if (target <= 1.85) { coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; }
+    if (target <= 1.9) coverExtras.palette = null;
+    if (target <= 1) { musicStore.setCoverCharacterObjectName(null); setChosenSlot(null); }
+    if (target === 0) setSelectedTrack(null);
+    setChatHistory((prev) => [
+      ...prev.slice(0, idx),
+      { type: 'director', text: questionForStep(target) },
+    ]);
+    setStep(target);
+  };
+
+  const handleUserBubbleTap = (idx: number) => {
+    const msg = chatHistory[idx];
+    if (msg?.type !== 'user' || msg.step == null || mode !== 'dialogue') return;
+    showAlert('이 답변부터 다시 할까요?', `"${msg.text}"\n\n이후의 선택은 초기화되고, 이 질문부터 다시 진행해요.`, [
+      { text: '취소', style: 'cancel' },
+      { text: '다시 선택', onPress: () => performRewind(idx, msg.step!) },
+    ]);
   };
 
   const proceedToFinal = () => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '마지막이에요! 원하는 느낌이나 장면을 자유롭게 말해주세요. (예: "보라색 배경에 아티스트가 점프하는 모습") 이대로 충분하면 바로 만들 수도 있어요.' },
+      { type: 'director', text: '마지막이에요! 원하는 느낌이나 장면을 자유롭게 적어주세요. 지금까지 고른 것들과 합쳐서 반영돼요.\n예) "보라색 배경에 아티스트가 점프하는 모습"\n예) "비 오는 창밖을 바라보는 쓸쓸한 뒷모습"\n이대로 충분하면 바로 만들어도 좋아요!' },
     ]);
     setStep(2);
   };
@@ -529,7 +579,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setSelectedTrack(track);
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: `"${track.title}"` },
+      { type: 'user', text: `"${track.title}"`, step: 0 },
     ]);
     await checkCharacterAndProceed();
   };
@@ -538,15 +588,15 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const handleArtistChoice = (include: boolean) => {
     if (!include) {
       musicStore.setCoverCharacterObjectName(null);
-      setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 빼고' }]);
-      proceedToShot(); // v3.150: 미포함도 구도/배경/색감 질문 진행 ('인물 없이' 구도 노출)
+      setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 빼고', step: 1 }]);
+      proceedToLyricsQ(); // v3.151: 미포함도 가사 질문부터
       return;
     }
     // v3.81: 아티스트 1명=슬롯 1개 모델 — 두 명 있으면 아티스트 선택(step 1.5), 한 명이면 자동 선택
     if (realObjName && virtualObjName) {
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: '아티스트 포함' },
+        { type: 'user', text: '아티스트 포함', step: 1 },
         { type: 'director', text: '아티스트가 두 명 있네요! 어느 아티스트로 넣을까요?' },
       ]);
       setStep(1.5);
@@ -555,7 +605,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     const obj = realObjName || virtualObjName;
     musicStore.setCoverCharacterObjectName(obj);
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 자동 선택', { slot: realObjName ? 'real' : 'virtual', obj });
-    setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 포함' }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: '아티스트 포함', step: 1 }]);
     goWardrobe(realObjName ? 'real' : 'virtual'); // v3.150: 의상 확인 단계
   };
 
@@ -565,7 +615,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     if (!obj) return;
     musicStore.setCoverCharacterObjectName(obj);
     if (__DEV__) console.info('[Cover] 캐릭터 슬롯 선택', { slot, obj });
-    setChatHistory((prev) => [...prev, { type: 'user', text: slot === 'real' ? '아티스트①로' : '아티스트②로' }]);
+    setChatHistory((prev) => [...prev, { type: 'user', text: slot === 'real' ? '아티스트①로' : '아티스트②로', step: 1.5 }]);
     goWardrobe(slot); // v3.150: 의상 확인 단계
   };
 
@@ -637,7 +687,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     }
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: style || '이대로 만들어주세요' },
+      { type: 'user', text: style || '이대로 만들어주세요', step: 2 },
       { type: 'director', text: '커버 작업을 시작할게요! 곧 결과를 보여드릴게요.' },
     ]);
     // v3.107: 대기열 타이머 폐지 — 즉시 생성 시작. musicStore의 cover* 필드는 유지해서
@@ -1044,9 +1094,18 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             {msg.type === 'director' && (
               <View style={styles.smallPortrait}><Image source={IMAGE_PORTRAIT} style={styles.smallPortraitImg} /></View>
             )}
-            <View style={[styles.bubble, msg.type === 'user' ? styles.userBubble : styles.dirBubble]}>
+            {/* v3.151: step 태그 답변은 탭 → 그 단계부터 다시 선택 */}
+            <TouchableOpacity
+              style={[styles.bubble, msg.type === 'user' ? styles.userBubble : styles.dirBubble]}
+              activeOpacity={msg.type === 'user' && msg.step != null ? 0.6 : 1}
+              disabled={!(msg.type === 'user' && msg.step != null)}
+              onPress={() => handleUserBubbleTap(idx)}
+            >
               <AppText style={[styles.bubbleText, msg.type === 'user' ? { color: colors.text.primary } : { color: colors.bg.deepest }]}>{msg.text}</AppText>
-            </View>
+              {msg.type === 'user' && msg.step != null && (
+                <AppText style={styles.editHint}>탭해서 수정</AppText>
+              )}
+            </TouchableOpacity>
           </View>
         ))}
       </ScrollView>
@@ -1169,14 +1228,14 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <AppText style={styles.chipText}>건너뛰기</AppText>
             </TouchableOpacity>
           </ScrollView>
-        ) : step === 1.95 ? (
-          // v3.150: 가사 장면 참고 — LLM 추가 호출 없이 가사 발췌 동봉(무비용)
+        ) : step === 1.75 ? (
+          // v3.151: 가사 내용 반영 여부 — 반영 시 디테일 질문(구도~색감) 생략, 미반영 시 진행
           <>
             <TouchableOpacity style={styles.optionBtn} onPress={handleLyricsUse} activeOpacity={0.8}>
-              <AppText style={styles.optionBtnText}>🎵 가사 장면 반영하기</AppText>
+              <AppText style={styles.optionBtnText}>🎵 가사 내용 반영하기</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.optionBtnOutline} onPress={handleLyricsSkip} activeOpacity={0.8}>
-              <AppText style={styles.optionBtnOutlineText}>건너뛰기</AppText>
+              <AppText style={styles.optionBtnOutlineText}>아니요, 직접 정할게요 (구도·배경·색감)</AppText>
             </TouchableOpacity>
           </>
         ) : step === 2 ? (
@@ -1189,7 +1248,14 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               ))}
             </ScrollView>
             <View style={styles.inputRow}>
-              <TextInput style={styles.textInput} value={styleInput} onChangeText={setStyleInput} placeholder="자유롭게 입력..." placeholderTextColor={colors.text.muted} onSubmitEditing={() => styleInput.trim() && handleStyleConfirm(styleInput.trim())} />
+              <TextInput
+                style={[styles.textInput, styles.freeSceneInput]}
+                value={styleInput}
+                onChangeText={setStyleInput}
+                multiline
+                placeholder={'자유롭게 적어주세요…\n예) 보라색 배경에 아티스트가 점프하는 모습\n예) 비 오는 창밖을 바라보는 쓸쓸한 뒷모습'}
+                placeholderTextColor={colors.text.muted}
+              />
               <TouchableOpacity style={[styles.sendBtn, !styleInput.trim() && { opacity: 0.4 }]} onPress={() => styleInput.trim() && handleStyleConfirm(styleInput.trim())} disabled={!styleInput.trim()}>
                 <AppText style={styles.sendBtnText}>확인</AppText>
               </TouchableOpacity>
@@ -1223,6 +1289,9 @@ const styles = StyleSheet.create({
     width: 180, height: 180, borderRadius: 12, alignSelf: 'center', marginBottom: 10,
     borderWidth: 1, borderColor: colors.border.subtle, resizeMode: 'cover',
   },
+  // v3.151: 답변 수정 힌트·자유 서술 멀티라인 입력
+  editHint: { fontSize: 10, color: 'rgba(255,255,255,0.55)', marginTop: 4, textAlign: 'right' },
+  freeSceneInput: { minHeight: 84, textAlignVertical: 'top', paddingTop: 10 },
   // 로딩
   loadingContent: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
   loadingPortrait: { width: 120, height: 120, borderRadius: 60, overflow: 'hidden', borderWidth: 3, borderColor: colors.accent.primary, marginBottom: 32 },
