@@ -2198,3 +2198,17 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 2. [운영] 만료 TTL 워처: 서버 nohup 스크립트 — 대표 최신 ready 클론 task_id를 5분 간격 check-voice, /tmp/voice_ttl_watch.log 기록, 만료 시 수명 산출. 결과 나오면 초시계 UI 여부 결정(만료 짧으면 v후속에서 구현).
 3. [FE] 작곡 대화 수정: ChatMessage.step 스탬프(전 답변 지점) + 사용자 말풍선 탭 → 앱 다이얼로그 확인 → 해당 스텝 되감기(chatHistory 절단, questionForStep 재출력, artistVoiceApplied/persona/repick 등 플래그 리셋). 생성 시작 후(step 13)에는 비활성.
 4. 테스트: [api] V5_5 강제 실호출 확인(테스트 계정 mock은 Suno 불가 — 로그로 body model 확인 위해 디버그 로그 추가), [e2e] 되감기 시나리오(성별 답변 탭→재선택→이후 흐름 정상).
+
+---
+
+## v3.149 — 이미지 디렉터 커버 프롬프트 분석·대화 보강 제안 (2026-09-09, 분석/제안 — 구현 대기)
+
+**요청**: 커버 프롬프트 전개 방식 설명 + 대화가 짧은데 추가 고려사항 제안.
+
+### Plan verification findings (프롬프트 전개 실측)
+- FE(CoverGenerationScreen): 대화 3문항 — ①곡 선택 ②아티스트 포함(실사/가상 슬롯) ③스타일(8칩+자유입력) → 즉시 생성. 장르/분위기는 트랙에서 자동 취득(질문 없음).
+- BE(cover_generator.generate_cover_image): 프로그래매틱 조립 — "album cover art" + 제목/장르/분위기 + [아티스트 포함 시] 실사 강제·시트 인물 외모/의상 유지·시네마틱 촬영 기법 / [미포함 시] 스타일 자유 + 공통 1:1·무텍스트 강제 + user_prompt(=스타일 답변) 말미 첨부. 모델 gpt_image_2(캐릭터 ref 이미지 동봉).
+- **미사용 백엔드 능력 3종**: prompt_model(Claude 프롬프트 보강 — 기구현·FE 미전달), vocal_gender, location_id(장소 사진 앵커 — v42 기구현). 가사(lyrics)는 파이프라인에 아예 없음.
+
+### 제안(대표 선택 대기) — 상세는 REPORT v3.149
+질문 후보 7종(가사 장면/구도/배경·장소/색감 톤/의상 유지vs컨셉/타이포 여부/분위기 컨펌) + Claude 프롬프트 보강 활성화. 질문 추가는 무과금(생성 1회 ⭐5 불변).
