@@ -2117,3 +2117,19 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 6. tsc + E2E(Playwright): 무아티스트 성별→목소리 2질문 흐름, 아티스트 미연결 차단.
 
 리스크: artistVoiceApplied 재사용(스킵 게이트) — 멘트만 일반화, 로직 동일. 듀엣 서브 흐름 불변.
+
+---
+
+## v3.144 — 작업본 장르/분위기 소실 규명·출처 고리 영속화 (2026-09-09)
+
+**요청**: "가장 최근에 만든 곡(더 나오려는 것을 막는 것일뿐) 장르랑 분위기 정보 왜 없는거야"
+
+### Plan verification findings (원인 규명)
+- DB 무결: 해당 가사 자산 『서른의 리듬 다이어트』 = 장르 '하우스'·분위기 '밝고 경쾌한' 실재. 목록 API도 정상 반환.
+- 원격 로그(frontend.log 09-09 16:00): 대표 세션에서 '드래프트-자산 병합' 로그 없음 → 기기 작업본이 어떤 자산과도 **내용 완전 일치 실패** → 장르 승계 못 함 → "장르 없음" 질문.
+- 구조 결함: 작업본(lyricsStore)은 영속인데 출처 자산 id(musicStore.lyricsSource)는 **비영속** — 리로드 시 연결 소실 → 이후 작곡 중 수정이 DB에 PATCH되지 않아 사본-DB 내용 드리프트 → "내용 완전 일치" 병합(v3.138)이 구조적으로 깨짐.
+
+### 계획
+1. lyricsStore.sourceAssetId 영속 필드 신설(작사 저장·자산 선택 시 기록, reset 시 초기화).
+2. ComposeLyricsPick 병합 3단계 확장: ① 출처 id ② 내용 일치 ③ 제목 일치(최신순) + 병합 자산 이중 표시 제거 + 드래프트 선택 시 끊긴 출처 복구.
+3. LyricsLoading·LyricsBook에도 출처 기록 전파. E2E: 어긋난 작업본 주입 재현 → 승계·무질문 검증.

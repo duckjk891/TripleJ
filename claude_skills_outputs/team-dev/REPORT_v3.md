@@ -3002,3 +3002,16 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 **특이사항**: 테스트 계정에 목 클론(목클론v3143, ready·가짜 voice_id) DB 직삽입 — XOR·E2E용, 실 Suno 미호출. 실기기 확인 권장: 대표 계정 실제 클론으로 연결→작곡 자동 반영 체감.
 **파일**: BE app/routes/character.py(v231, rsync+재시작) / FE services/characterService.ts, screens/ArtistResultScreen.tsx, screens/MusicGenerationScreen.tsx, screens/MyArtistsScreen.tsx.
+
+---
+
+## v3.144 — "장르/분위기 왜 없냐" 규명 + 출처 고리 영속화 (2026-09-09)
+
+**결과**: 원인 규명 완료 + 수정 PASS (v3144e_list/after.png, 병합 로그 via:title 실측).
+
+**답변(원인)**: DB에는 값이 멀쩡히 있음(『서른의 리듬 다이어트』= 하우스·밝고 경쾌한). 문제는 대표 기기의 "방금 작사" 작업본 — 출처 자산 id가 **비영속 스토어(musicStore)에만 있어 리로드에 끊기고**, 이후 작곡 중 수정이 DB에 동기화되지 않아 사본과 DB 내용이 어긋남 → "내용 완전 일치"만 보던 병합(v3.138)이 실패 → 장르/분위기 승계 불발 → 디렉터가 장르 질문.
+
+**수정**: ① 출처 자산 id를 작업본과 함께 영속화(lyricsStore.sourceAssetId — 작사 저장·보관함 선택 시 기록, 곡 저장 reset 시 초기화) ② 병합 3단계(출처 id → 내용 일치 → 제목 일치 최신순) ③ 병합 시 해당 자산 이중 표시 제거 ④ 드래프트 선택 시 끊긴 출처 자동 복구(이후 수정은 다시 DB 동기화됨).
+
+**대표 기기 효과**: 지금 깨져 있는 작업본도 제목이 자산과 같으면 ③으로 즉시 승계(작곡 디렉터 재진입만 하면 됨). 제목까지 다르면 기존대로 디렉터가 질문(정상 폴백).
+**파일**: stores/lyricsStore.ts, screens/ComposeLyricsPickScreen.tsx, screens/LyricsLoadingScreen.tsx, screens/LyricsBookScreen.tsx.

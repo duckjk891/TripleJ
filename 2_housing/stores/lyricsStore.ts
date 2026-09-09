@@ -19,6 +19,9 @@ interface LyricsState {
   generatedPrompt: string;
   generatedTitle: string;
   generatedLyrics: string;
+  /** v3.144 — 작업본의 출처 가사 자산 id(lyrics_assets). 작업본과 함께 영속 —
+   *  musicStore.lyricsSource(비영속)가 리로드로 끊겨도 DB 연결·장르/분위기 승계 유지 */
+  sourceAssetId: string;
   isLoading: boolean;
   error: string | null;
   setGenre: (v: string) => void;
@@ -37,6 +40,7 @@ interface LyricsState {
   setGeneratedPrompt: (v: string) => void;
   setGeneratedTitle: (v: string) => void;
   setGeneratedLyrics: (v: string) => void;
+  setSourceAssetId: (v: string) => void;
   setIsLoading: (v: boolean) => void;
   setError: (v: string | null) => void;
   reset: () => void;
@@ -59,6 +63,7 @@ const initialState = {
   generatedPrompt: '',
   generatedTitle: '',
   generatedLyrics: '',
+  sourceAssetId: '',
   isLoading: false,
   error: null,
 };
@@ -87,6 +92,7 @@ export const useLyricsStore = create<LyricsState>()(
       setGeneratedPrompt: (generatedPrompt) => set({ generatedPrompt }),
       setGeneratedTitle: (generatedTitle) => set({ generatedTitle }),
       setGeneratedLyrics: (generatedLyrics) => set({ generatedLyrics }),
+      setSourceAssetId: (sourceAssetId) => set({ sourceAssetId }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setError: (error) => set({ error }),
       reset: () => set(initialState),
@@ -100,6 +106,7 @@ export const useLyricsStore = create<LyricsState>()(
         language: s.language, structure: s.structure, keywords: s.keywords,
         duration: s.duration, hasRap: s.hasRap, isDuet: s.isDuet, reference: s.reference,
         tempo: s.tempo, generatedTitle: s.generatedTitle, generatedLyrics: s.generatedLyrics,
+        sourceAssetId: s.sourceAssetId,
       }),
     }
   )

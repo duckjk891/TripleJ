@@ -104,6 +104,9 @@ export default function LyricsLoadingScreen({ navigation }: Props) {
           } else {
             useMusicStore.getState().setLyricsSource(null);
           }
+          // v3.144: 출처 id를 작업본(lyricsStore, 영속)에도 기록 — 리로드로
+          // musicStore(비영속)가 초기화돼도 DB 연결이 안 끊기게 (대표 실사고 2026-09-09)
+          store.setSourceAssetId(result.lyrics_id || '');
           store.setIsLoading(false);
           // 캐시 보상 지급
           useGemsStore.getState().earn(GEM_REWARDS.TRACK_LYRICS_DONE, 'track_lyrics_done');

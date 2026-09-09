@@ -19,6 +19,7 @@ import {
   listLyricsAssets,
   deleteLyricsAsset,
   migrateLocalLyricsToServer,
+  isLyricsAssetId,
   type LyricsAsset,
 } from '../services/lyricsService';
 import { ActivityIndicator } from 'react-native';
@@ -160,6 +161,8 @@ export default function LyricsBookScreen({ navigation, route }: Props) {
       music.setLyricsSource(null);
     } else {
       music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
+      // v3.144: 서버 자산 id면 영속 출처로도 기록 (리로드 후 동기화·장르 승계 유지)
+      if (isLyricsAssetId(entry.id)) ls.setSourceAssetId(entry.id);
     }
     const lyrics = useLyricsStore.getState();
     // v3.130: 드래프트는 store가 이미 원제목/가사를 들고 있음 — "(방금 작사)" 표기가

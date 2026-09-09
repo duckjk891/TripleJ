@@ -119,24 +119,37 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
       // 정렬: 방금 작사 최상단 고정 → 나머지 최신순 (가사 내용 기준 중복 제거)
       const draft = out.filter((e) => e.source === 'draft');
       const rest = out.filter((e) => e.source !== 'draft').sort((a, b) => b.createdAt - a.createdAt);
-      // v3.138(대표 실사고): 드래프트는 메모리 잔재라 장르/분위기가 빠져있을 수 있음 —
-      // 자동 저장된 동일 내용의 DB 자산에서 장르/분위기/자산 id를 승계 (DB가 기준).
+      // v3.138→v3.144(대표 실사고 2026-09-09): 드래프트의 장르/분위기·자산 연결 승계.
+      // 기존 "내용 완전 일치"만으로는 작곡 중 가사 수정 등으로 사본이 조금만 어긋나도
+      // 병합이 실패해 '장르 없음' 질문이 났다. 매칭을 3단계로 확장(DB가 기준):
+      //   ① 영속 출처 id(lyricsStore.sourceAssetId) ② 내용 완전 일치 ③ 제목 일치(최신순)
+      let mergedAssetId: string | null = null;
       if (draft.length > 0) {
-        const match = rest.find(
-          (e) => e.source === 'asset' && e.lyrics.trim() === draft[0].lyrics.trim(),
-        );
+        const assets = rest.filter((e) => e.source === 'asset');
+        const srcId = ls.sourceAssetId;
+        const match =
+          (srcId && assets.find((e) => e.id === srcId)) ||
+          assets.find((e) => e.lyrics.trim() === draft[0].lyrics.trim()) ||
+          (draft[0].title.trim() && assets.find((e) => e.title.trim() === draft[0].title.trim())) ||
+          null;
         if (match) {
+          mergedAssetId = match.id;
           draft[0] = {
             ...draft[0],
             genre: draft[0].genre || match.genre,
             mood: draft[0].mood || match.mood,
             assetId: match.id,
           };
-          console.info('[ComposeLyricsPick] 드래프트-자산 병합', { assetId: match.id, genre: draft[0].genre, mood: draft[0].mood });
+          const via = srcId && match.id === srcId ? 'sourceId' : match.lyrics.trim() === draft[0].lyrics.trim() ? 'content' : 'title';
+          console.info('[ComposeLyricsPick] 드래프트-자산 병합', { assetId: match.id, via, genre: draft[0].genre, mood: draft[0].mood });
+        } else {
+          console.warn('[ComposeLyricsPick] 드래프트-자산 병합 실패 — 매칭 자산 없음', { srcId: srcId || null, title: draft[0].title.slice(0, 20) });
         }
       }
       const seen = new Set(draft.map((e) => e.lyrics.trim()));
       const dedup = rest.filter((e) => {
+        // v3.144: 병합된 자산은 목록에서 제외 — 드래프트가 그 자산의 최신 작업본(같은 제목 이중 표시 방지)
+        if (mergedAssetId && e.id === mergedAssetId) return false;
         const key = e.lyrics.trim();
         if (seen.has(key)) return false;
         seen.add(key);
@@ -161,10 +174,13 @@ export default function ComposeLyricsPickScreen({ navigation }: Props) {
     music.setMood(entry.mood || '');
     if (entry.source === 'asset') {
       music.setLyricsSource({ lyrics_id: entry.id, title: entry.title || undefined, is_mine: true });
+      // v3.144: 출처 id를 영속 스토어에도 기록 — 리로드 후에도 수정 동기화·장르 승계 유지
+      useLyricsStore.getState().setSourceAssetId(entry.id);
     } else if (entry.source === 'draft') {
       // v3.138: 병합된 자산 id가 있으면 출처로 확정(수정 동기화 대상), 없으면 기존 출처 보존
       if (entry.assetId) {
         music.setLyricsSource({ lyrics_id: entry.assetId, title: entry.title || undefined, is_mine: true });
+        useLyricsStore.getState().setSourceAssetId(entry.assetId); // v3.144: 끊긴 연결 복구
       }
       // v3.138: 드래프트의 장르/분위기(자산 승계분 포함)를 스토어에 채움 — '장르 없음' 질문 방지
       const ls2 = useLyricsStore.getState();
