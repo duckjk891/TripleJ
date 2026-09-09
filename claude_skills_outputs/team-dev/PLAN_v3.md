@@ -2212,3 +2212,13 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 
 ### 제안(대표 선택 대기) — 상세는 REPORT v3.149
 질문 후보 7종(가사 장면/구도/배경·장소/색감 톤/의상 유지vs컨셉/타이포 여부/분위기 컨펌) + Claude 프롬프트 보강 활성화. 질문 추가는 무과금(생성 1회 ⭐5 불변).
+
+---
+
+## v3.150 — 이미지 디렉터 대화 개편 구현 (2026-09-09)
+
+**대표 확정**: 의상 확인+꾸미기 연동 / 구도·색감 반영 / 배경=사진 업로드 또는 텍스트 / 제목 타이포 제외 / 장르·분위기 자동 주입 제거 / 전 항목 선택사항. 가사(1)는 무비용 대안 채택 — LLM 추가 호출 없이 가사 발췌를 이미지 프롬프트에 직접 동봉(gpt_image_2 호출은 어차피 발생, 추가 API 비용 0).
+
+### 구현
+- [BE v234] upload.py: POST /upload/cover-background(이미지 ≤10MB, covers/bg/{uid}/ 소유 prefix), GenerateCoverRequest에 shot/palette/background_prompt/background_object_name/lyrics_excerpt(전부 선택), 배경 객체 소유 prefix 검증 후 로드. cover_generator: 한국어 라벨→영어 절 매핑(_SHOT_MAP/_PALETTE_MAP·자유 문자열 통과), 배경 사진은 기존 location 참조 파이프라인 재사용+전용 절, 가사 발췌는 "무텍스트 렌더" 지시와 함께 동봉, Claude 보강 경로에도 동일 반영.
+- [FE] CoverGenerationScreen: 대화 3→7단계 — 곡→아티스트(포함/슬롯)→의상 확인(1.7: 시트 미리보기+[그대로]/[꾸미기 연동], focus 복귀 시 시트 최신화)→구도(1.8: 4종+미포함 시 '인물 없이'+건너뛰기)→배경(1.85: 사진 업로드/텍스트/건너뛰기)→색감(1.9)→가사(1.95: 트랙 모드만)→자유 서술(2: '이대로 만들기' 추가). 답변은 모듈 스코프 coverExtras(재진입 유지). 장르/분위기 자동 주입 제거. trackService.uploadCoverBackground 신설.

@@ -132,6 +132,21 @@ export async function uploadTrackFile(
  * POST /upload/image (type='cover') — 발매된 트랙에 커버 이미지 부착.
  * 서버가 트랙 cover_image_url을 갱신하고 presigned URL을 반환한다.
  */
+/**
+ * v3.150 — POST /upload/cover-background (multipart file) — 커버 배경·장소 참조 사진 업로드.
+ * 반환 {object_name}: generate-cover의 background_object_name으로 전달.
+ */
+export async function uploadCoverBackground(file: PickedFile): Promise<{ object_name: string }> {
+  const formData = new FormData();
+  await appendFile(formData, 'file', file, file.mimeType || guessImageMime(file.fileName));
+  console.info('[trackService] uploadCoverBackground', { fileName: file.fileName, size: file.size ?? -1 });
+  const res = await api.post('/upload/cover-background', formData, {
+    headers: multipartHeaders(),
+    timeout: 120000,
+  });
+  return res.data;
+}
+
 export async function uploadTrackCover(trackId: string, file: PickedFile): Promise<any> {
   const formData = new FormData();
   await appendFile(formData, 'file', file, file.mimeType || guessImageMime(file.fileName));
