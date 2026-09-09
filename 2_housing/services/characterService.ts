@@ -35,6 +35,8 @@ export interface ServerArtist {
   persona_voice_id: string | null;
   /** 'ready' | 'missing'(연결된 클론 삭제됨 → 미연결 표시 + 재연결 유도) | null */
   persona_status: string | null;
+  /** v3.143(서버 v231) 간편 목소리 프리셋 "male:소프트" | "" — persona와 상호 배타 */
+  voice_preset: string;
   created_at?: string;
   updated_at?: string;
   [key: string]: any;
@@ -54,6 +56,25 @@ export interface PatchArtistBody {
   is_default?: boolean;
   persona_id?: string;
   persona_model?: string;
+  /** v3.143: "male:소프트"=설정 · ""=해제 (서버가 persona와 배타 처리) */
+  voice_preset?: string;
+}
+
+/** v3.143 — voice_preset 파싱: "male:소프트" → {gender:'남성', style:'소프트'} (무효면 null) */
+export function parseVoicePreset(v?: string | null): { gender: '남성' | '여성'; style: string } | null {
+  const raw = (v || '').trim();
+  if (!raw) return null;
+  const idx = raw.indexOf(':');
+  if (idx <= 0) return null;
+  const g = raw.slice(0, idx).trim().toLowerCase();
+  const style = raw.slice(idx + 1).trim();
+  if (!style || (g !== 'male' && g !== 'female')) return null;
+  return { gender: g === 'male' ? '남성' : '여성', style };
+}
+
+/** v3.143 — 아티스트에 목소리(클론 ready 또는 간편 프리셋)가 연결되어 있는가 (필수 등록 판정) */
+export function artistHasVoice(a: Pick<ServerArtist, 'persona_voice_id' | 'persona_status' | 'voice_preset'>): boolean {
+  return (!!a.persona_voice_id && a.persona_status === 'ready') || !!parseVoicePreset(a.voice_preset);
 }
 
 function normalizeArtist(raw: any): ServerArtist {
@@ -77,6 +98,7 @@ function normalizeArtist(raw: any): ServerArtist {
     persona_name: raw?.persona_name ?? null,
     persona_voice_id: raw?.persona_voice_id ?? null,
     persona_status: raw?.persona_status ?? null,
+    voice_preset: typeof raw?.voice_preset === 'string' ? raw.voice_preset : '',
   };
 }
 

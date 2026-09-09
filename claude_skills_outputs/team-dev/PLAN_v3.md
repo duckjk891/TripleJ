@@ -2096,3 +2096,24 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 **Plan verification findings**: ② 422 원인 실측 — 서버 로그 "[voice_clone] normalize ValueError ... No such file: 'ffmpeg'". restart_9004.sh가 '로그인 셸' 주석만 있고 실제 PATH 주입이 없어(스크립트 결함) ffmpeg(.local/bin) 유실 재발. ③ VoiceCloneWizard 헤더는 이미 '내 목소리 만들기' — 위저드 무수정, VoiceManage(공유 진입 화면)의 아티스트 색채가 문제.
 
 **실행**: ② restart_9004.sh에 `export PATH="$HOME/.local/bin:..."` 명시(v229.1) → 재시작 → 서버 프로세스 PATH 실측 + 20초 샘플 normalize 실검증 OK ① VoiceManage에 voicesMode(mode:'voices') — 헤더 '내 목소리', 현재 아티스트 목소리 박스·간편 만들기 섹션·2택 설명·아티스트 설정 프롬프트/배지/힌트 숨김. 마이페이지·작곡 진입 2곳에 mode 적용(아티스트 상세 진입은 기존 화면 유지 — 간편 vs 내 목소리 2택은 그 화면의 역할).
+
+---
+
+## v3.143 — 아티스트 목소리 2택 복원·필수화 + 작곡 목소리 질문 재편 (2026-09-09)
+
+**요청 원문 요지**: ① 내 아티스트 목소리 연결 = 간편 목소리+내 목소리 2택 복원 ② 아티스트 목소리 등록 필수(동일 아티스트=동일 목소리) ③ 작곡: 아티스트 선택 시 성별·목소리 질문 생략 / 미선택 시 성별+목소리(간편/내목소리) 선택 필수.
+
+### Plan verification findings
+- ArtistResultScreen.tsx:944(서버 모드 목소리 박스)·1170(픽커 모달): v3.103(B-3)에서 **클론 연결 전용**으로 바뀜 — 간편(프리셋) 선택지 소실(대표 지적 재현). 레거시 분기(1189~)만 VoiceManage 2택 진입 유지.
+- 간편 목소리는 현재 **기기 로컬·전역 1개**(voiceStore.artistVoice) — 아티스트별 저장 아님 → "동일 아티스트=동일 목소리" 보장 불가. 서버 characters 문서에 프리셋 필드 없음(persona_id=clone_id 전용, _validate_persona_link ready 검증).
+- MusicGenerationScreen.tsx: step 3 성별 선택지에 v3.139 '내 목소리로 만들기' 통합(817~838) — 대표 신규 지시(성별과 목소리를 분리 질문)와 충돌. handleArtistPick(394~): 클론 연결 아티스트만 스킵, 목소리 없는 아티스트는 성별만 자동.
+
+### 계획
+1. **[BE v231]** characters.voice_preset 필드(additive, "male:소프트" 형식): PATCH 규약 None=유지/""=해제/값=설정(성별 male|female·스타일≤30자 검증), persona와 상호 배타(XOR — 한쪽 설정 시 다른 쪽 $unset), _serialize_artist에 voice_preset 동봉. rsync 배포(--reload).
+2. **[FE] characterService**: ServerArtist.voice_preset + PatchArtistBody.voice_preset + parseVoicePreset 헬퍼.
+3. **[FE] ArtistResultScreen**: 픽커 모달 3모드(choice=간편/내목소리 2택 → preset=성별·스타일 칩 → clone=기존 목록). 현재 상태 표시(간편 라벨/클론명), 해제는 설정된 쪽 해제. 미연결 시 "목소리 연결은 필수" 경고 문구.
+4. **[FE] MusicGenerationScreen**: ⓐ step 200 카드에 목소리 상태 표시, 미연결 아티스트 탭 시 차단 다이얼로그(필수 안내) ⓑ handleArtistPick preset 분기(성별+스타일 자동, step 12 스킵, step 5 직행) ⓒ step 3 = 성별만(내 목소리 버튼 제거) → 신규 step 220 목소리 질문(간편→step 4 스타일 / 내 목소리→step 210) ⓓ 간편·내목소리 선택 시 step 12 자동 통과(스킵 멘트 일반화).
+5. **[FE] MyArtistsScreen**: 카드 목소리 상태에 간편 프리셋 표시.
+6. tsc + E2E(Playwright): 무아티스트 성별→목소리 2질문 흐름, 아티스트 미연결 차단.
+
+리스크: artistVoiceApplied 재사용(스킵 게이트) — 멘트만 일반화, 로직 동일. 듀엣 서브 흐름 불변.

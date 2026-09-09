@@ -25,8 +25,10 @@ import {
   patchArtist,
   deleteArtist,
   artistSheetUrl,
+  parseVoicePreset,
   type ServerArtist,
 } from '../services/characterService';
+import { VOCAL_STYLES, VOCAL_OPTIONS } from './MusicGenerationScreen';
 import { useAuthStore } from '../stores/authStore';
 import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -108,6 +110,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const [voicePickerVisible, setVoicePickerVisible] = useState(false);
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [unlinkConfirmVisible, setUnlinkConfirmVisible] = useState(false);
+  // v3.143(대표): 목소리 연결 2택 복원 — 픽커 단계 choice(간편/내목소리) → preset | clone
+  const [pickerStage, setPickerStage] = useState<'choice' | 'preset' | 'clone'>('choice');
+  const [presetPickGender, setPresetPickGender] = useState<'male' | 'female' | null>(null);
+  const [presetPickStyle, setPresetPickStyle] = useState<string>('');
   // ── v3.121: 착용 제품 매핑용 활성 광고 전체 인덱스 (null=미로드/실패 — 배지 판단 보류) ──
   const [adItems, setAdItems] = useState<AdLite[] | null>(null);
   // v3.121: 레거시(me) 가상 슬롯 착용 아이템 — me 응답의 virtual_used_items (기존엔 미사용 버그)
@@ -680,13 +686,58 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     }
   };
 
+  // v3.143: 간편 목소리(프리셋) PATCH — voice_preset "male:소프트" (서버가 persona와 배타 처리)
+  const applyPresetPatch = async (gender: 'male' | 'female', style: string) => {
+    if (!serverArtist || voiceSaving) return;
+    setVoiceSaving(true);
+    if (__DEV__) console.info('[ArtistResult] 간편 목소리 PATCH', { characterId: serverArtist.character_id, gender, style });
+    try {
+      const updated = await patchArtist(serverArtist.character_id, { voice_preset: `${gender}:${style}` });
+      setServerArtist(updated);
+      setVoicePickerVisible(false);
+      showAlert('완료', `간편 목소리(${gender === 'male' ? '남성' : '여성'} · ${style})를 연결했어요.\n이 아티스트로 곡을 만들 때 이 스타일이 적용돼요.`);
+    } catch (err: any) {
+      console.error('[ArtistResult] 간편 목소리 PATCH 실패', { status: err?.response?.status });
+      showAlert('오류', err?.response?.data?.error || '간편 목소리 설정에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setVoiceSaving(false);
+    }
+  };
+
   const performUnlinkVoice = () => {
     setUnlinkConfirmVisible(false);
+    // v3.143: 설정된 쪽 해제 — 프리셋만 연결돼 있으면 voice_preset 해제, 아니면 persona 해제
+    const presetOnly = !!parseVoicePreset(serverArtist?.voice_preset) && !serverArtist?.persona_id;
+    if (presetOnly) {
+      (async () => {
+        if (!serverArtist || voiceSaving) return;
+        setVoiceSaving(true);
+        try {
+          const updated = await patchArtist(serverArtist.character_id, { voice_preset: '' });
+          setServerArtist(updated);
+          showAlert('완료', '목소리 연결을 해제했어요.');
+        } catch (err: any) {
+          console.error('[ArtistResult] 간편 목소리 해제 실패', { status: err?.response?.status });
+          showAlert('오류', err?.response?.data?.error || '해제에 실패했어요.');
+        } finally {
+          setVoiceSaving(false);
+        }
+      })();
+      return;
+    }
     applyPersonaPatch('', '목소리 연결을 해제했어요.');
   };
 
   const openVoicePicker = () => {
     useVoiceStore.getState().fetchClones();
+    // v3.143: 항상 2택(간편/내 목소리)부터 — 기존 값이 있으면 프리셋 초기값 프리필
+    const cur = parseVoicePreset(serverArtist?.voice_preset);
+    const g = (serverArtist?.gender || '').toLowerCase();
+    const genderDefault: 'male' | 'female' | null =
+      g.includes('여') || g.includes('female') ? 'female' : g.includes('남') || g.includes('male') ? 'male' : null;
+    setPresetPickGender(cur ? (cur.gender === '남성' ? 'male' : 'female') : genderDefault);
+    setPresetPickStyle(cur ? cur.style : '');
+    setPickerStage('choice');
     setVoicePickerVisible(true);
   };
 
@@ -763,6 +814,9 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const personaMissing = !!(serverArtist?.persona_id && serverArtist?.persona_status === 'missing');
   const personaConnected = !!(serverArtist?.persona_id && !personaMissing);
   const readyClones = clones.filter((c) => c.status === 'ready' && c.clone_id);
+  // v3.143: 간편 목소리(서버 voice_preset) — persona와 상호 배타. 목소리 필수(대표 확정).
+  const serverPreset = parseVoicePreset(serverArtist?.voice_preset);
+  const voiceLinked = personaConnected || !!serverPreset;
 
   // ── v3.121: 착용한 제품 — 서버 used_items(cid) / 레거시 슬롯별(me) 공통 정규화 후
   // ads/active 인덱스로 매핑(브랜드·이미지·판매처 보강). 매칭 키: id(있으면) → image_object_name.
@@ -943,14 +997,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         {isServerMode ? (
           <View style={styles.voiceBox}>
             <AppText style={styles.voiceBoxLabel}>목소리</AppText>
-            <AppText style={[styles.voiceBoxDesc, personaMissing && styles.voiceBoxDescWarn]}>
+            <AppText style={[styles.voiceBoxDesc, (personaMissing || !voiceLinked) && styles.voiceBoxDescWarn]}>
               {personaMissing
                 ? '연결했던 목소리가 삭제되어 연결이 해제됐어요. 다른 목소리를 다시 연결해주세요.'
                 : personaConnected
                   ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.`
-                  : artistVoice?.type === 'preset'
-                    ? `아직 연결된 목소리가 없어요. (간편 목소리 ${artistVoiceLabel(artistVoice)}는 곡 생성 시 스타일로만 적용돼요)`
-                    : '클로닝이 완료된 내 목소리를 이 아티스트에 연결할 수 있어요.'}
+                  : serverPreset
+                    ? `간편 목소리(${serverPreset.gender} · ${serverPreset.style})가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 스타일이 적용돼요.`
+                    : '목소리 연결은 필수예요! 간편 목소리 또는 내 목소리를 연결하면, 같은 아티스트는 항상 같은 목소리로 노래해요.'}
             </AppText>
             <View style={styles.voiceBtnRow}>
               <TouchableOpacity
@@ -960,10 +1014,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 activeOpacity={0.7}
               >
                 <AppText style={styles.voiceBtnText}>
-                  {personaConnected ? '목소리 변경' : personaMissing ? '다시 연결하기' : '목소리 연결'}
+                  {voiceLinked ? '목소리 변경' : personaMissing ? '다시 연결하기' : '목소리 연결 (필수)'}
                 </AppText>
               </TouchableOpacity>
-              {(personaConnected || personaMissing) && (
+              {(voiceLinked || personaMissing) && (
                 <TouchableOpacity
                   style={[styles.voiceUnlinkBtn, voiceSaving && { opacity: 0.5 }]}
                   onPress={() => setUnlinkConfirmVisible(true)}
@@ -1180,6 +1234,100 @@ export default function ArtistResultScreen({ navigation, route }: any) {
           />
           <View style={styles.pickerBox}>
             <AppText style={styles.pickerTitle}>목소리 연결</AppText>
+            {/* v3.143(대표): 2택 복원 — 간편 목소리 / 내 목소리 */}
+            {pickerStage === 'choice' && (
+              <View>
+                <AppText style={styles.pickerDesc}>
+                  아티스트 목소리는 필수예요. 어떤 목소리를 연결할까요?
+                </AppText>
+                <TouchableOpacity
+                  style={styles.voiceChoiceBtn}
+                  onPress={() => setPickerStage('preset')}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={styles.voiceChoiceTitle}>간편 목소리</AppText>
+                  <AppText style={styles.voiceChoiceDesc}>
+                    성별과 보컬 스타일을 골라 바로 연결해요. 곡을 만들 때 이 스타일이 적용돼요.
+                  </AppText>
+                  {serverPreset && (
+                    <AppText style={styles.voiceChoiceCurrent}>
+                      현재: {serverPreset.gender} · {serverPreset.style}
+                    </AppText>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.voiceChoiceBtn}
+                  onPress={() => setPickerStage('clone')}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={styles.voiceChoiceTitle}>내 목소리</AppText>
+                  <AppText style={styles.voiceChoiceDesc}>
+                    클로닝이 완료된 내 목소리를 연결해요. 이 아티스트가 그 목소리로 노래해요.
+                  </AppText>
+                  {personaConnected && (
+                    <AppText style={styles.voiceChoiceCurrent}>
+                      현재: {serverArtist?.persona_name || '내 목소리'}
+                    </AppText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+            {pickerStage === 'preset' && (
+              <View>
+                <AppText style={styles.pickerDesc}>성별과 보컬 스타일을 골라주세요.</AppText>
+                <AppText style={styles.presetPickLabel}>성별</AppText>
+                <View style={styles.presetChipRow}>
+                  {VOCAL_OPTIONS.map((label) => {
+                    const value: 'male' | 'female' = label === '남성' ? 'male' : 'female';
+                    const selected = presetPickGender === value;
+                    return (
+                      <TouchableOpacity
+                        key={label}
+                        style={[styles.presetChip, selected && styles.presetChipSelected]}
+                        onPress={() => setPresetPickGender(value)}
+                      >
+                        <AppText style={[styles.presetChipText, selected && styles.presetChipTextSelected]}>
+                          {label}
+                        </AppText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <AppText style={[styles.presetPickLabel, { marginTop: 10 }]}>보컬 스타일</AppText>
+                <View style={styles.presetChipRow}>
+                  {VOCAL_STYLES.map((style) => {
+                    const selected = presetPickStyle === style;
+                    return (
+                      <TouchableOpacity
+                        key={style}
+                        style={[styles.presetChip, selected && styles.presetChipSelected]}
+                        onPress={() => setPresetPickStyle(style)}
+                      >
+                        <AppText style={[styles.presetChipText, selected && styles.presetChipTextSelected]}>
+                          {style}
+                        </AppText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TouchableOpacity
+                  style={[styles.pickerGoBtn, { marginTop: 14 }, (!presetPickGender || !presetPickStyle || voiceSaving) && { opacity: 0.4 }]}
+                  disabled={!presetPickGender || !presetPickStyle || voiceSaving}
+                  onPress={() => presetPickGender && presetPickStyle && applyPresetPatch(presetPickGender, presetPickStyle)}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={styles.pickerGoBtnText}>이 목소리로 연결</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.pickerBackBtn}
+                  onPress={() => setPickerStage('choice')}
+                  activeOpacity={0.7}
+                >
+                  <AppText style={styles.pickerBackBtnText}>‹ 뒤로</AppText>
+                </TouchableOpacity>
+              </View>
+            )}
+            {pickerStage === 'clone' && (<>
             <AppText style={styles.pickerDesc}>
               클로닝이 완료된 목소리만 연결할 수 있어요.
             </AppText>
@@ -1229,6 +1377,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 })}
               </ScrollView>
             )}
+            <TouchableOpacity
+              style={styles.pickerBackBtn}
+              onPress={() => setPickerStage('choice')}
+              activeOpacity={0.7}
+            >
+              <AppText style={styles.pickerBackBtnText}>‹ 뒤로</AppText>
+            </TouchableOpacity>
+            </>)}
             <TouchableOpacity
               style={styles.pickerCloseBtn}
               onPress={() => setVoicePickerVisible(false)}
@@ -1721,6 +1877,25 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
   },
   pickerCloseBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '700' },
+  // v3.143: 목소리 연결 2택 + 간편 프리셋 픽커
+  voiceChoiceBtn: {
+    borderWidth: 1, borderColor: colors.accent.primary, borderRadius: 12,
+    backgroundColor: colors.bg.surface2, padding: 14, marginBottom: 10,
+  },
+  voiceChoiceTitle: { color: colors.accent.primary, fontSize: 14, fontWeight: '700' },
+  voiceChoiceDesc: { color: colors.text.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  voiceChoiceCurrent: { color: colors.text.primary, fontSize: 11, fontWeight: '700', marginTop: 6 },
+  presetPickLabel: { color: colors.text.secondary, fontSize: 12, fontWeight: '700', marginBottom: 6 },
+  presetChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
+  presetChip: {
+    backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.border.subtle,
+    borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
+  },
+  presetChipSelected: { backgroundColor: colors.accent.primary, borderColor: colors.accent.primary },
+  presetChipText: { color: colors.text.secondary, fontSize: 13 },
+  presetChipTextSelected: { color: colors.text.primary, fontWeight: '700' },
+  pickerBackBtn: { marginTop: 10, paddingVertical: 8, alignItems: 'center' },
+  pickerBackBtnText: { color: colors.text.secondary, fontSize: 13, fontWeight: '600' },
 
   editFieldLabel: {
     color: colors.text.secondary, fontSize: 12, fontWeight: '700', marginBottom: 6, marginTop: 4,

@@ -23,7 +23,7 @@ import { patchLyricsAsset, isLyricsAssetId } from '../services/lyricsService';
 import { useVoiceStore, artistVoiceLabel } from '../stores/voiceStore';
 import { useLyricsStore } from '../stores/lyricsStore';
 import { GENRE_OPTIONS, MOOD_OPTIONS } from '../utils/lyricsPrompt';
-import { listArtists, artistSheetUrl, type ServerArtist } from '../services/characterService';
+import { listArtists, artistSheetUrl, parseVoicePreset, artistHasVoice, type ServerArtist } from '../services/characterService';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
@@ -212,8 +212,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       console.info('[MusicGeneration] step12 스킵 — 아티스트 목소리 적용됨');
       setChatHistory((prev) => [
         ...prev,
-        { type: 'user', text: '아티스트 목소리 적용됨' },
-        { type: 'director', text: '선택한 아티스트의 목소리로 노래할 거라 이 단계는 건너뛸게요!' },
+        { type: 'user', text: '목소리 결정 완료' },
+        { type: 'director', text: '목소리는 이미 정해져 있어서 이 단계는 건너뛸게요!' },
       ]);
       setStep(13);
     }
@@ -405,10 +405,36 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setStep(3);
       return;
     }
+    // v3.143(대표): 아티스트 목소리 필수 — 미연결 아티스트는 선택 차단 + 연결 안내.
+    // (동일 아티스트 = 동일 목소리 보장. 성별·목소리 질문은 아티스트 선택 시 전부 생략)
+    const hasClone = !!artist.persona_voice_id && artist.persona_status === 'ready';
+    const preset = parseVoicePreset(artist.voice_preset);
+    if (!hasClone && !preset) {
+      console.warn('[MusicGeneration] 목소리 미연결 아티스트 선택 차단', { cid: artist.character_id });
+      showAlert(
+        '목소리 연결이 필요해요',
+        `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
+      );
+      return;
+    }
     setSelectedArtistId(artist.character_id);
-    const hasVoice = !!artist.persona_voice_id && artist.persona_status === 'ready';
-    console.info('[MusicGeneration] 아티스트 선택', { cid: artist.character_id, hasVoice });
-    if (hasVoice) {
+    console.info('[MusicGeneration] 아티스트 선택', { cid: artist.character_id, hasClone, preset: preset ? `${preset.gender}·${preset.style}` : null });
+    if (preset && !hasClone) {
+      // v3.143: 간편 목소리 아티스트 — 성별·스타일 프리셋 자동 반영, 보컬/내 목소리 단계 전부 스킵
+      setUseVocal(true);
+      setSelectedVocalGender(preset.gender);
+      setSelectedVocalStyle(preset.style);
+      setArtistVoiceApplied(true);
+      setChatHistory((prev) => [
+        ...prev,
+        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
+        { type: 'director', text: `${artist.name || '아티스트'}의 간편 목소리(${preset.gender} · ${preset.style})를 자동으로 반영할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+        { type: 'director', text: DIRECTOR_MESSAGES[5] },
+      ]);
+      setStep(5);
+      return;
+    }
+    if (hasClone) {
       // 목소리 자동 반영 — 보컬 성별/스타일·내 목소리(step 12) 단계 스킵
       setSelectedPersonaId(artist.persona_voice_id);
       setPersonaModel('voice');
@@ -422,29 +448,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
         { type: 'director', text: DIRECTOR_MESSAGES[5] },
       ]);
       setStep(5);
-    } else {
-      // v3.137(대표): 보컬 성별은 아티스트 성별을 따라간다 — 매핑되면 성별 질문 스킵,
-      // 바로 보컬 스타일 선택으로. (듀엣도 메인 성별만 자동, 서브는 기존 흐름)
-      const mapped = mapArtistGender(artist.gender);
-      if (mapped) {
-        setUseVocal(true);
-        setSelectedVocalGender(mapped);
-        console.info('[MusicGeneration] 보컬 성별 자동(아티스트 따름)', { gender: mapped });
-        setChatHistory((prev) => [
-          ...prev,
-          { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
-          { type: 'director', text: `${artist.name || '아티스트'}은(는) 아직 연결된 목소리가 없어요. 보컬 성별은 아티스트를 따라 ${mapped}으로 맞출게요! ${DIRECTOR_MESSAGES[4]}` },
-        ]);
-        setStep(4);
-        return;
-      }
-      setChatHistory((prev) => [
-        ...prev,
-        { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}` },
-        { type: 'director', text: `${artist.name || '아티스트'}은(는) 아직 연결된 목소리가 없어요. ${vocalQuestion}` },
-      ]);
-      setStep(3);
     }
+    // v3.143: 목소리 미연결 아티스트는 위에서 선택 차단 — 성별 추정 폴백(v3.137) 제거
   };
 
   // v3.139: 성별 선택지의 '내 목소리로 만들기' 진입 → 클론 선택(step 210)
@@ -453,7 +458,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     fetchClones();
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '🎤 내 목소리로 만들기' },
+      { type: 'user', text: '🎤 내 목소리' },
       { type: 'director', text: '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!' },
     ]);
     setStep(210);
@@ -476,27 +481,38 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setStep(5);
   };
 
+  // v3.143: 내 목소리 목록에서 돌아가면 목소리 방식 질문(step 220)으로 복귀
   const handleMyVoiceBack = () => {
-    const vocalQuestion = lyricsStore.isDuet
-      ? '듀엣 곡이네요! 메인 보컬 성별을 선택해주세요.'
-      : DIRECTOR_MESSAGES[3];
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: '돌아가기' },
-      { type: 'director', text: vocalQuestion },
+      { type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' },
     ]);
-    setStep(3);
+    setStep(220);
   };
 
-  // Step 3: Vocal select (메인 보컬)
+  // Step 3: Vocal select (메인 보컬) — v3.143: 성별 다음은 목소리 방식 질문(step 220)
   const handleVocalSelect = (vocal: string) => {
     setUseVocal(true);
     setSelectedVocalGender(vocal);
-    if (lyricsStore.isDuet) {
-      advanceStep(`메인 보컬: ${vocal}`, 4);
-    } else {
-      advanceStep(vocal, 4);
-    }
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: lyricsStore.isDuet ? `메인 보컬: ${vocal}` : vocal },
+      { type: 'director', text: '목소리는 어떻게 할까요? 간편 목소리(보컬 스타일 선택) 또는 내 목소리(클로닝한 목소리)로 만들 수 있어요!' },
+    ]);
+    setStep(220);
+  };
+
+  // v3.143: step 220 — 목소리 방식 선택 (아티스트 없이 작곡할 때 필수)
+  const handleVoiceModeQuick = () => {
+    console.info('[MusicGeneration] 목소리 방식: 간편 목소리');
+    setArtistVoiceApplied(true); // 목소리 결정 완료 — step 12 자동 통과
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: '간편 목소리' },
+      { type: 'director', text: DIRECTOR_MESSAGES[4] },
+    ]);
+    setStep(4);
   };
 
   // Step 4: Vocal style select (메인 보컬 스타일)
@@ -826,11 +842,23 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   </AppText>
                 </TouchableOpacity>
               ))}
-              {/* v3.139(대표): 아티스트 목소리가 없거나 미선택일 때 내 목소리 선택 진입 —
-                  별도 질문 대신 성별 선택지에 통합 (선택 시 성별/스타일 질문 불필요해 스킵) */}
+              {/* v3.143(대표): 성별과 목소리는 분리 질문 — 내 목소리 진입은 step 220으로 이동 */}
+            </ScrollView>
+          </View>
+        );
+
+      case 220:
+        // v3.143: 목소리 방식 선택 — 간편 목소리(스타일) / 내 목소리(클론)
+        return (
+          <View style={styles.inputArea}>
+            <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
+              <TouchableOpacity style={styles.choiceButton} onPress={handleVoiceModeQuick}>
+                <AppText style={styles.choiceNumber}>1</AppText>
+                <AppText style={styles.choiceText}>간편 목소리 (보컬 스타일 선택)</AppText>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceEntry}>
-                <AppText style={styles.choiceNumber}>{VOCAL_OPTIONS.length + 1}</AppText>
-                <AppText style={styles.choiceText}>🎤 내 목소리로 만들기</AppText>
+                <AppText style={styles.choiceNumber}>2</AppText>
+                <AppText style={styles.choiceText}>🎤 내 목소리 (클로닝한 목소리)</AppText>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -876,7 +904,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                   )}
                   <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceBack}>
                     <AppText style={styles.choiceNumber}>{(readyClones.length || 1) + 1}</AppText>
-                    <AppText style={styles.choiceText}>돌아가기 (보컬 직접 선택)</AppText>
+                    <AppText style={styles.choiceText}>돌아가기 (목소리 다시 선택)</AppText>
                   </TouchableOpacity>
                 </>
               )}
@@ -915,7 +943,9 @@ export default function MusicGenerationScreen({ navigation }: Props) {
           <View style={styles.inputArea}>
             <ScrollView style={styles.choicesScroll} contentContainerStyle={styles.choicesContainer} showsVerticalScrollIndicator={false}>
               {(artists || []).map((a, idx) => {
-                const hasVoice = !!a.persona_voice_id && a.persona_status === 'ready';
+                // v3.143: 클론(ready) 또는 간편 프리셋 연결 여부 — 미연결은 탭 시 차단(필수 안내)
+                const hasVoice = artistHasVoice(a);
+                const preset = parseVoicePreset(a.voice_preset);
                 return (
                   <TouchableOpacity
                     key={a.character_id || String(idx)}
@@ -934,7 +964,11 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                     <View style={{ flex: 1 }}>
                       <AppText style={styles.choiceText}>{a.name || '이름 없는 아티스트'}</AppText>
                       <AppText style={artistCardStyles.voiceTag}>
-                        {hasVoice ? '🎤 목소리 연결됨' : '목소리 없음 · 보컬 선택 필요'}
+                        {hasVoice
+                          ? preset
+                            ? `🎤 간편 목소리 · ${preset.gender} ${preset.style}`
+                            : '🎤 내 목소리 연결됨'
+                          : '목소리 미연결 — 연결해야 선택할 수 있어요'}
                       </AppText>
                     </View>
                   </TouchableOpacity>

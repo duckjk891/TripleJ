@@ -17,6 +17,7 @@ import {
   listArtists,
   spendExtraSlot,
   artistSheetUrl,
+  parseVoicePreset,
   type ArtistSlots,
 } from '../services/characterService';
 import { useAuthStore } from '../stores/authStore';
@@ -48,6 +49,8 @@ interface ArtistEntry {
   personaId: string | null;
   personaName: string | null;
   personaStatus: string | null; // 'ready' | 'missing' | null
+  /** v3.143 — 간편 목소리 프리셋 "male:소프트" | '' (persona와 배타) */
+  voicePreset: string;
 }
 
 const EXTRA_SLOT_COST_FALLBACK = 15;
@@ -118,6 +121,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaId: c.persona_id,
                 personaName: c.persona_name,
                 personaStatus: c.persona_status,
+                voicePreset: c.voice_preset || '',
               }));
           } else {
             // 레거시(마이그레이션 미실행) 계정 — /me 구 shape로 조립 카드 표시.
@@ -142,6 +146,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaId: null,
                 personaName: null,
                 personaStatus: null,
+                voicePreset: '',
               });
             }
             if (ch?.virtual_sheet_object_name) {
@@ -156,6 +161,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                 personaId: null,
                 personaName: null,
                 personaStatus: null,
+                voicePreset: '',
               });
             }
             // v3.116 구제: used=0으로 왔지만 me에 시트가 실존 — 레거시로 확정(빈 상태 방지)
@@ -315,11 +321,14 @@ export default function MyArtistsScreen({ navigation }: any) {
         : '＋ 아티스트 추가';
 
   // 카드 목소리 상태 문구 — persona_status 'missing'이면 미연결 표시 + 재연결 유도(상세에서)
+  // v3.143: 간편 목소리(voice_preset)도 연결 상태로 표시. 미연결은 필수 안내.
   const voiceLabelOf = (a: ArtistEntry): string | null => {
     if (a.characterId === null) return null; // 레거시 카드 — 서버 연결 정보 없음
     if (a.personaId && a.personaStatus === 'missing') return '목소리 연결 끊김';
     if (a.personaName) return `목소리 · ${a.personaName}`;
-    return '목소리 미연결';
+    const preset = parseVoicePreset(a.voicePreset);
+    if (preset) return `간편 목소리 · ${preset.gender} ${preset.style}`;
+    return '목소리 미연결 (연결 필수)';
   };
 
   return (
