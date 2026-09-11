@@ -658,7 +658,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 1 && (
             <View>
-              <AppText style={styles.stepTitle}>1. 노래 샘플 입력</AppText>
+              <AppText style={styles.stepTitle}>노래 샘플 입력</AppText>
               <AppText style={styles.stepHint}>
                 최소 15초 ~ 2분 길이로 직접 부른 노래 음원이 필요해요. 잡음이 적을수록 결과가 좋아져요.
               </AppText>
@@ -738,7 +738,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 2 && (
             <View>
-              <AppText style={styles.stepTitle}>2. 낭독 문구 받기</AppText>
+              <AppText style={styles.stepTitle}>낭독 문구 받기</AppText>
               <AppText style={styles.stepHint}>{guidanceText}</AppText>
               {renderPhraseBox(false)}
               <View style={styles.twoBtnRow}>
@@ -758,7 +758,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 3 && (
             <View>
-              <AppText style={styles.stepTitle}>3. 검증 녹음</AppText>
+              <AppText style={styles.stepTitle}>검증 녹음</AppText>
               <AppText style={styles.stepHint}>
                 아래 문구를 말로 따라 읽어 녹음해주세요.
               </AppText>
@@ -807,7 +807,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
 
           {step === 4 && (
             <View>
-              <AppText style={styles.stepTitle}>4. {genStatus === 'ready' ? '완료' : '목소리 학습'}</AppText>
+              <AppText style={styles.stepTitle}>{genStatus === 'ready' ? '완료' : '목소리 학습'}</AppText>
               <View style={styles.doneBox}>
                 {genStatus === 'ready' ? (
                   <>
@@ -817,9 +817,9 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                     <AppText style={styles.doneDesc}>
                       이제 목소리 목록에서 "사용 가능"으로 표시돼요.{'\n'}
                       아티스트 목소리로 설정해 곡을 만들어보세요.{'\n\n'}
-                      ⏱️ 외부 AI 사정으로 목소리는 오래 보관되지 않아요.{'\n'}
-                      최대 2시간 이내에 작곡에 사용해 주세요!{'\n'}
-                      (만료되면 다시 학습해서 쓸 수 있어요 — 재학습 ⭐5)
+                      ⏱️ 목소리는 만든 후 2시간 동안 사용할 수 있어요.{'\n'}
+                      2시간이 지나면 만료돼요 — 그 전에 작곡에 사용해 주세요!{'\n'}
+                      (만료되면 다시 학습해서 쓰면 돼요 — 재학습 ⭐5)
                     </AppText>
                     <AppText style={styles.doneStatus}>{STATUS_LABEL.ready}</AppText>
                   </>
