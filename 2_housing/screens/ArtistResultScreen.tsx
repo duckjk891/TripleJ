@@ -1344,7 +1344,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
             ) : readyClones.length === 0 ? (
               <View style={{ paddingVertical: 8 }}>
                 <AppText style={styles.pickerEmptyText}>
-                  아직 완료된 목소리가 없어요. 내 목소리를 먼저 클로닝해보세요.
+                  {'아직 완료된 목소리가 없어요.\n내 목소리를 먼저 클로닝해보세요.'}
                 </AppText>
                 <TouchableOpacity
                   style={styles.pickerGoBtn}
