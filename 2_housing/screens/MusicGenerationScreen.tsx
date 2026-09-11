@@ -139,6 +139,12 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     }, 100);
   }, [chatHistory, step]);
 
+  // v3.156a: 작곡 대화는 마운트 시 처음부터 시작하므로 이전 작곡의 아티스트 선택이
+  // store에 남아 새 곡에 오염되지 않도록 초기화 (musicStore.reset()은 호출처가 없음).
+  useEffect(() => {
+    useMusicStore.getState().setArtistCharacterId(null);
+  }, []);
+
   // v3.94: 디렉터 피로/쿨다운 — GET /fatigue/status (사다리: 그날 1곡 2h/2곡 4h/3곡 8h/4곡+ 12h, 자정 리셋)
   const [fatigue, setFatigue] = useState<FatigueStatus | null>(null);
   const [fatigueRemainSec, setFatigueRemainSec] = useState(0);

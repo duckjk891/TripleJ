@@ -3222,3 +3222,15 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **미결/한계**: 이미 발매된 다른 과거 곡들은 character_id가 없어 기획사명으로 표기(정상 폴백) — 필요 시 개별 소급 가능. SnapFix 서버측 copy가 원격 MinIO 클라이언트 None으로 실패(원본 경로 유지 — 표시엔 무영향, 원본 캐릭터 삭제 시에만 유실 리스크).
 
 **파일**: (BE) app/routes/tracks.py, charts.py, generate.py (+캐시키 v4 일괄) / (FE) screens/PlayerScreen.tsx, MusicGenerationScreen.tsx, MusicLoadingScreen.tsx, MusicResultScreen.tsx, VoiceCloneWizardScreen.tsx, ArtistResultScreen.tsx, ArtistCodyScreen.tsx, CoverGenerationScreen.tsx, components/LyricSyncView.tsx, stores/musicStore.ts, services/musicService.ts.
+
+---
+
+## v3.156a — Fable 재검증 후속 픽스 (2026-09-11)
+
+**경위**: 대표 지시로 v3.156 전체 diff 라인 단위 재감사. 기능 동작(PASS)과 별개로 결함 2건 + 갭 1건 발견·수정.
+
+1. **[FE 결함] 아티스트 선택 세션 오염** — musicStore.reset()은 호출처가 없어 artistCharacterId가 다음 작곡까지 잔존. 아티스트 질문이 스킵되는 경로(전부 삭제 후·이어하기)에서 이전 곡 아티스트가 새 곡에 붙을 수 있었음 → MusicGeneration 마운트 시 null 초기화(대화는 마운트마다 처음부터라 정확히 안전).
+2. **[BE 갭] 가수명 검색 불가** — 검색이 title/tags/prompt/닉네임만 봄 → ①regex 폴백에 artist_name 추가 ②ES 색인 artist 필드에 artist_name+닉네임 병기(레거시 곡은 닉네임만 — 무해) ③대표 곡 ES 재색인. 실검증: "펄킴" 검색 → 해당 곡 1위.
+3. 재감사 통과 확인: 직렬화 doc 변형의 DB 역기록 경로 없음, PUT은 Pydantic 화이트리스트라 artist_name 조작 불가, ArtistCody returnToCover는 인스턴스 pop으로 stale 불가, from-generation 순서(gen_doc 폴백→resolve→스냅샷 우선) 정상.
+
+**파일**: (FE) MusicGenerationScreen.tsx / (BE) tracks.py(_regex_search_tracks), search_service.py(_track_to_doc). 서버 배포·재시작·재색인 완료.
