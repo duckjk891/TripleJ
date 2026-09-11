@@ -77,8 +77,8 @@ const styles = StyleSheet.create({
   // v3.160(대표): 커버와 함께 가로 꽉 차는 풀블리드 — 라운드 제거
   wrap: { width: '100%', overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
   bgImg: {},
-  // v3.161g(대표): 어둠막만 살짝 더 어둡게 (0.32 → 0.42) — 블러 없음 유지
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13,8,32,0.42)' },
+  // v3.161h(대표 확정): 어둠막 0.55 — 블러 없음 유지
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13,8,32,0.55)' },
   // 세로 가운데 정렬 + 가로 패딩(박스폭에 맞춰 개행)
   lyricsCol: { width: '100%', alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xl, gap: 10 },
   // v3.160: 스크림을 연하게 유지하면서도 가독성 확보 — 가사에 어두운 텍스트 섀도
