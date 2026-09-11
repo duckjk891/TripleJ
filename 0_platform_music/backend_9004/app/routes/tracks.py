@@ -408,6 +408,8 @@ async def _regex_search_tracks(mongo, q: str, page: int, limit: int) -> dict:
             {"tags": {"$regex": q, "$options": "i"}},
             {"prompt": {"$regex": q, "$options": "i"}},
             {"uploader_nickname": {"$regex": q, "$options": "i"}},
+            # v236a — 곡에 기록된 아티스트명(가수)으로도 검색 매치 (필드 없는 레거시 곡은 미매치 — 무해)
+            {"artist_name": {"$regex": q, "$options": "i"}},
         ],
     }
     total = await mongo.tracks.count_documents(query)

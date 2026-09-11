@@ -201,8 +201,10 @@ def _track_to_doc(doc: dict) -> dict:
         "mood": _as_text(doc.get("mood")),
         # HybridSearch — concept keywords shared with the pgvector embedding text.
         "keywords": _as_text(doc.get("search_keywords")),
-        # v169 — artist name (uploader_nickname) + play_count popularity signal.
-        "artist": _as_text(doc.get("uploader_nickname")),
+        # v169 — artist name + play_count popularity signal.
+        # v236a — 곡에 기록된 아티스트명(가수, 예: 펄킴)도 함께 색인 — 기획사명(닉네임)과
+        # 어느 쪽으로 검색해도 매치 (필드 없는 레거시 곡은 닉네임만).
+        "artist": _as_text([x for x in (doc.get("artist_name"), doc.get("uploader_nickname")) if x]),
         "play_count": int(doc.get("play_count") or 0),
         "is_public": bool(doc.get("is_public", False)),
     }
