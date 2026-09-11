@@ -36,7 +36,9 @@ def _serialize_track(doc: dict) -> dict:
             doc[key] = doc[key].isoformat()
     # 프론트(SongItem 등) 호환 별칭
     doc["artist_id"] = doc.get("uploader_id")
-    doc["artist_name"] = doc.get("uploader_nickname") or "AI"
+    # v238 — tracks/charts 직렬화와 동일: 곡 기록 아티스트명 우선, 없으면 기획사명 폴백
+    doc["agency_name"] = doc.get("uploader_nickname") or "AI"
+    doc["artist_name"] = doc.get("artist_name") or doc.get("uploader_nickname") or "AI"
     doc["cover_image"] = doc.get("cover_image_url")
     return doc
 
@@ -141,10 +143,16 @@ async def get_artist(artist_id: str, conn=Depends(get_pg)):
 
 
 @router.get("/{artist_id}/tracks")
-async def get_artist_tracks(artist_id: str, limit: int = 20):
-    """Get tracks by a specific creator."""
+async def get_artist_tracks(artist_id: str, limit: int = 20, character_id: str = Query(None)):
+    """Get tracks by a specific creator.
+
+    v238 — character_id 쿼리 필터(선택): 채널 아티스트 탭에서 "그 아티스트로 만든 곡"만 조회.
+    """
     mongo = get_mongo()
-    cursor = mongo.tracks.find({"uploader_id": artist_id, "is_public": True}).sort("play_count", -1).limit(limit)
+    q: dict = {"uploader_id": artist_id, "is_public": True}
+    if character_id:
+        q["character_id"] = character_id.strip()[:64]
+    cursor = mongo.tracks.find(q).sort("play_count", -1).limit(limit)
     tracks = await cursor.to_list(length=limit)
     return [_serialize_track(t) for t in tracks]
 
@@ -153,33 +161,63 @@ async def get_artist_tracks(artist_id: str, limit: int = 20):
 async def get_artist_characters(artist_id: str, limit: int = Query(20, ge=1, le=50)):
     """v237 — 기획사 채널 '아티스트' 탭: 해당 유저의 아티스트(캐릭터) 공개 목록.
 
-    공개 범위 최소화: 이름·종류(kind)·시트 미리보기 경로만 (착장/성격/보이스 등 비공개).
-    시트는 기존 공개 프록시(/api/character/preview/)를 그대로 사용 — faces/ 등은 그쪽에서 차단.
+    v238(대표): 시트 이미지 대신 발매 실적 중심 —
+      · track_count / album_count: 이 아티스트(character_id)로 발매한 공개 곡·소속 앨범 수
+      · latest_cover_image: 최신 발매곡 커버(대표 이미지) — 없으면 null
+    공개 범위 최소화 유지: 이름·kind·실적·최신 커버만 (시트/착장/보이스 비공개).
     """
     mongo = get_mongo()
     logger.info("[artists] characters list artist=%s", artist_id[:8])
     cursor = (
         mongo.characters.find(
             {"user_id": artist_id},
-            {"character_id": 1, "name": 1, "kind": 1, "sheet_object_name": 1, "created_at": 1},
+            {"character_id": 1, "name": 1, "kind": 1, "created_at": 1},
         )
         .sort("created_at", 1)
         .limit(limit)
     )
     docs = await cursor.to_list(length=limit)
+
+    # 공개 곡 1회 조회 → 파이썬에서 character_id별 그룹(곡 수·최신 커버·트랙 id 집합)
+    pub_tracks = await mongo.tracks.find(
+        {"uploader_id": artist_id, "is_public": True, "character_id": {"$ne": None}},
+        {"character_id": 1, "cover_image_url": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(length=500)
+    by_char: dict = {}
+    for t in pub_tracks:
+        cid = t.get("character_id")
+        g = by_char.setdefault(cid, {"count": 0, "latest_cover": None, "track_ids": set()})
+        g["count"] += 1
+        g["track_ids"].add(str(t["_id"]))
+        if g["latest_cover"] is None and t.get("cover_image_url"):
+            g["latest_cover"] = t["cover_image_url"]  # created_at DESC — 첫 값이 최신
+    # 공개 앨범 1회 조회 → 트랙 소속 기준 아티스트별 distinct 앨범 수
+    pub_albums = await mongo.albums.find(
+        {"owner_id": artist_id, "is_public": True}, {"track_ids": 1},
+    ).to_list(length=200)
+    album_count: dict = {cid: 0 for cid in by_char}
+    for a in pub_albums:
+        tids = set(a.get("track_ids") or [])
+        for cid, g in by_char.items():
+            if tids & g["track_ids"]:
+                album_count[cid] = album_count.get(cid, 0) + 1
+
     out = []
     for d in docs:
         # 이름 없는 레거시/작업중 문서는 공개 목록에서 제외
         if not (d.get("name") or "").strip():
             continue
-        sheet = d.get("sheet_object_name")
+        cid = d.get("character_id")
+        g = by_char.get(cid) or {}
         out.append({
-            "character_id": d.get("character_id"),
+            "character_id": cid,
             "name": d.get("name") or "",
             "kind": d.get("kind") or "real",
-            "sheet_preview_path": f"/api/character/preview/{sheet}" if sheet else None,
+            "track_count": g.get("count", 0),
+            "album_count": album_count.get(cid, 0),
+            "latest_cover_image": g.get("latest_cover"),
         })
-    logger.info("[artists] characters list artist=%s n=%d", artist_id[:8], len(out))
+    logger.info("[artists] characters list artist=%s n=%d tracks=%d", artist_id[:8], len(out), len(pub_tracks))
     return {"characters": out}
 
 
