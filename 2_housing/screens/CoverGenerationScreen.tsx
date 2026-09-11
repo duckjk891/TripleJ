@@ -19,6 +19,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMusicStore } from '../stores/musicStore';
 import { useGemsStore } from '../stores/gemsStore';
+import { usePointsStore } from '../stores/pointsStore';
 import { GEM_REWARDS } from '../data/directors';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { updateAlbumCover } from '../services/albumService';
@@ -43,15 +44,18 @@ const PALETTE_OPTIONS = ['파스텔', '비비드', '다크 무디', '흑백'];
 // v3.150: 보강 답변 — 생성 도중 이탈·재진입(remount)에도 유지되도록 모듈 스코프 보관
 // (musicStore cover* 재진입 계약을 안 건드리는 최소 침습)
 const coverExtras: {
-  shot: string | null; palette: string | null;
+  shot: string | null; expression: string | null; palette: string | null;
   bgPrompt: string | null; bgObjectName: string | null; lyricsExcerpt: string | null;
   charKind: 'real' | 'virtual' | null; virtualArtStyle: string | null;
-} = { shot: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null, charKind: null, virtualArtStyle: null };
+} = { shot: null, expression: null, palette: null, bgPrompt: null, bgObjectName: null, lyricsExcerpt: null, charKind: null, virtualArtStyle: null };
 const resetCoverExtras = () => {
-  coverExtras.shot = null; coverExtras.palette = null;
+  coverExtras.shot = null; coverExtras.expression = null; coverExtras.palette = null;
   coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; coverExtras.lyricsExcerpt = null;
   coverExtras.charKind = null; coverExtras.virtualArtStyle = null;
 };
+
+// v3.169(대표): 인물 표정 선택지 — 아티스트 포함 시 구도 다음 질문
+const EXPRESSION_OPTIONS = ['환하게 웃는', '은은한 미소', '시크한 무표정', '아련한 눈빛', '강렬한 카리스마'];
 
 const LOADING_STEPS = [
   { label: '구상', message: '커버 이미지를 구상하고 있어요...' },
@@ -139,6 +143,21 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const [currentVersion, setCurrentVersion] = useState(0); // 서버 세션의 현재 버전
   const [viewVersion, setViewVersion] = useState(0);       // 화면에서 보고 있는 버전
   const [refineInput, setRefineInput] = useState('');
+  // v3.169(대표): 미세조정 ⭐ 비용 — /points/costs의 cover_refine 키가 있을 때만 고지·confirm
+  const [refineCost, setRefineCost] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        const c = res.data?.costs?.cover_refine;
+        if (alive && typeof c === 'number') setRefineCost(c);
+      } catch (err: any) {
+        console.error('[Cover] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
   const [refining, setRefining] = useState(false);
   const [reverting, setReverting] = useState(false);
   // v3.120: 앨범 모드 확정(PATCH /albums/{id}/cover) 진행 중 — 중복 탭 방지
@@ -148,6 +167,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const [bgText, setBgText] = useState('');
   // v3.168(대표): 구도·색감도 직접 입력 가능해야 함
   const [shotText, setShotText] = useState('');
+  const [expressionText, setExpressionText] = useState('');
   const [paletteText, setPaletteText] = useState('');
   const [bgUploading, setBgUploading] = useState(false);
 
@@ -247,6 +267,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
         image_model: 'gpt_image_2',
         // v3.150: 대화 보강 답변 — 전부 선택사항 (undefined=미주입)
         shot: coverExtras.shot || undefined,
+        expression: coverExtras.expression || undefined, // v3.169 — 인물 표정
         palette: coverExtras.palette || undefined,
         background_prompt: coverExtras.bgPrompt || undefined,
         background_object_name: coverExtras.bgObjectName || undefined,
@@ -435,9 +456,26 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     setShotText('');
     coverExtras.shot = shot;
     console.info('[Cover] 구도 선택', { shot });
+    // v3.169(대표): 아티스트 포함이면 표정 질문(1.82) 경유, 아니면 바로 배경(1.85)
+    const hasPerson = !!useMusicStore.getState().coverCharacterObjectName;
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: shot || '건너뛰기', step: 1.8 },
+      { type: 'director', text: hasPerson
+        ? '인물의 표정은 어떻게 할까요? 딱히 없으면 건너뛰어도 좋아요!'
+        : '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!' },
+    ]);
+    setStep(hasPerson ? 1.82 : 1.85);
+  };
+
+  // v3.169: 표정 선택/직접 입력 → 배경 질문으로
+  const handleExpressionPick = (expression: string | null) => {
+    setExpressionText('');
+    coverExtras.expression = expression;
+    console.info('[Cover] 표정 선택', { expression });
+    setChatHistory((prev) => [
+      ...prev,
+      { type: 'user', text: expression || '건너뛰기', step: 1.82 },
       { type: 'director', text: '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!' },
     ]);
     setStep(1.85);
@@ -550,6 +588,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       case 1.7: return '지금 아티스트가 입고 있는 의상이에요. 이 의상 그대로 커버를 만들까요? 바꾸고 싶으면 아티스트 꾸미기로 다녀올 수 있어요!';
       case 1.75: return '이 곡의 가사 내용을 반영해서 만들까요? 가사를 반영하면 장면은 가사에 맡기고, 아니면 구도·배경·색감을 하나씩 여쭤볼게요. (추가 비용 없어요)';
       case 1.8: return '어떤 구도로 담을까요? 딱히 없으면 건너뛰어도 좋아요!';
+      case 1.82: return '인물의 표정은 어떻게 할까요? 딱히 없으면 건너뛰어도 좋아요!';
       case 1.85: return '배경이나 장소 생각이 있나요? 사진을 올려도 되고, 말로 설명해도 돼요. 없으면 건너뛰어요!';
       case 1.9: return '색감이나 톤은 어떻게 할까요? 이것도 건너뛸 수 있어요!';
       default: return '마지막이에요! 원하는 느낌이나 장면을 자유롭게 적어주세요. 지금까지 고른 것들과 합쳐서 반영돼요.';
@@ -561,6 +600,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
     // 되감는 단계 이후의 답변은 초기화 (앞으로 재진행하며 다시 채움 — step 번호가 흐름 순서와 단조)
     if (target <= 1.75) coverExtras.lyricsExcerpt = null;
     if (target <= 1.8) coverExtras.shot = null;
+    if (target <= 1.82) coverExtras.expression = null;
     if (target <= 1.85) { coverExtras.bgPrompt = null; coverExtras.bgObjectName = null; }
     if (target <= 1.9) coverExtras.palette = null;
     if (target <= 1) { musicStore.setCoverCharacterObjectName(null); setChosenSlot(null); coverExtras.charKind = null; }
@@ -662,7 +702,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
 
   // 대화: 스타일 확인 → 즉시 생성 (v3.107: 대기열 폐지 — 이 화면의 loading 모드로 직행)
   // v3.118: 커버(image) 디렉터 휴식(쿨다운) 사전 게이트 — 서버 429(⭐ 차감 전)와 동일 다이얼로그.
-  // refine/revert는 무과금이라 미게이트 (서버 게이트 정책과 일치 — upload.py v220).
+  // v3.169(대표 확정): refine도 ⭐ 과금(서버 v244) — 피로 게이트는 여전히 미적용(생성만 카운트).
   const handleStyleConfirm = async (style: string) => {
     setStyleInput(style);
     // v3.120: 앨범 모드는 트랙 선택이 없음 — 컨텍스트는 albumMode 파라미터에서
@@ -759,6 +799,16 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       showAlert('입력 확인', `수정 요청은 ${REFINE_PROMPT_MAX_LEN}자 이하로 입력해주세요.`);
       return;
     }
+    // v3.169(대표 확정): 미세조정도 ⭐ 소모 — 실행 전 confirm (서버에 키 없으면 무고지·바로 진행)
+    if (typeof refineCost === 'number') {
+      const ok = await new Promise<boolean>((resolve) => {
+        showAlert('미세조정', `미세조정 시 ⭐${refineCost}이 소모돼요. 진행할까요?`, [
+          { text: '취소', style: 'cancel', onPress: () => resolve(false) },
+          { text: '진행', onPress: () => resolve(true) },
+        ]);
+      });
+      if (!ok) return;
+    }
     setRefining(true);
     console.log('[Cover] refine-cover 요청', { cover_session_id: coverSessionId, len: rp.length });
     const t0 = Date.now();
@@ -792,6 +842,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           { version: newVer, object_name: newObj, refine_prompt: rp, created_at: new Date().toISOString() },
         ]);
       }
+      usePointsStore.getState().fetchBalance(); // v3.169: ⭐ 차감 반영
       setRefineInput('');
     } catch (err: any) {
       console.warn('[Cover] refine-cover FAIL', {
@@ -1216,6 +1267,26 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             <View style={styles.inputRow}>
               <TextInput style={styles.textInput} value={shotText} onChangeText={setShotText} placeholder="직접 입력 (예: 로우앵글에서 올려다본 전신 샷)" placeholderTextColor={colors.text.muted} onSubmitEditing={() => shotText.trim() && handleShotPick(shotText.trim())} />
               <TouchableOpacity style={[styles.sendBtn, !shotText.trim() && { opacity: 0.4 }]} onPress={() => shotText.trim() && handleShotPick(shotText.trim())} disabled={!shotText.trim()}>
+                <AppText style={styles.sendBtnText}>확인</AppText>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : step === 1.82 ? (
+          // v3.169(대표): 인물 표정 — 선택사항 + 직접 입력
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              {EXPRESSION_OPTIONS.map((ex) => (
+                <TouchableOpacity key={ex} style={styles.chip} onPress={() => handleExpressionPick(ex)}>
+                  <AppText style={styles.chipText}>{ex}</AppText>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.chip} onPress={() => handleExpressionPick(null)}>
+                <AppText style={styles.chipText}>건너뛰기</AppText>
+              </TouchableOpacity>
+            </ScrollView>
+            <View style={styles.inputRow}>
+              <TextInput style={styles.textInput} value={expressionText} onChangeText={setExpressionText} placeholder="직접 입력 (예: 장난기 가득한 윙크)" placeholderTextColor={colors.text.muted} onSubmitEditing={() => expressionText.trim() && handleExpressionPick(expressionText.trim())} />
+              <TouchableOpacity style={[styles.sendBtn, !expressionText.trim() && { opacity: 0.4 }]} onPress={() => expressionText.trim() && handleExpressionPick(expressionText.trim())} disabled={!expressionText.trim()}>
                 <AppText style={styles.sendBtnText}>확인</AppText>
               </TouchableOpacity>
             </View>

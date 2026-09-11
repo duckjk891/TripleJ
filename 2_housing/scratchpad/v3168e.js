@@ -32,6 +32,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await page.screenshot({path:SCRATCH+'/v3168e_shot.png'});
   await page.getByPlaceholder('직접 입력 (예: 로우앵글에서 올려다본 전신 샷)').fill('아주 낮은 로우앵글 테스트');
   await clickT('확인');await sleep(2000);
+  // v3.169: 표정 질문 (아티스트 포함이므로 노출) — 칩+직접입력
+  const exprQ=await visible('인물의 표정은 어떻게 할까요',4000,false);
+  const exprChip=await visible('은은한 미소',3000,true);
+  const exprInput=await page.getByPlaceholder('직접 입력 (예: 장난기 가득한 윙크)').isVisible().catch(()=>false);
+  await page.screenshot({path:SCRATCH+'/v3169e_expr.png'});
+  await page.getByPlaceholder('직접 입력 (예: 장난기 가득한 윙크)').fill('한쪽 눈 윙크하며 웃는');
+  await clickT('확인');await sleep(2000);
+  const echoExpr=await visible('한쪽 눈 윙크하며 웃는',3000,false);
+  log('EXPR:',{exprQ,exprChip,exprInput,echoExpr});
   // 배경 — 건너뛰기
   await clickT('건너뛰기');await sleep(2000);
   // 색감 — 직접 입력창
@@ -43,7 +52,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const echoShot=await visible('아주 낮은 로우앵글 테스트',3000,false); // 내 답변 말풍선
   const echoPal=await visible('몽환적인 퍼플 그라데이션',3000,false);
   await page.screenshot({path:SCRATCH+'/v3168e_final.png'});
-  const pass=shotInput&&palInput&&finalStep&&echoShot&&echoPal;
+  const pass=shotInput&&palInput&&finalStep&&echoShot&&echoPal&&exprQ&&exprChip&&exprInput&&echoExpr;
   log('RESULTS:',{pass:pass?'PASS':'FAIL',shotInput,palInput,finalStep,echoShot,echoPal});
   await browser.close();
 })().catch(e=>{log('ERR',String(e).slice(0,400));process.exit(1);});
