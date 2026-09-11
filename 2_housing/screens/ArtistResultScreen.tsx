@@ -122,6 +122,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
   const [editVisible, setEditVisible] = useState(false);
   const [editName, setEditName] = useState('');
   const [editGender, setEditGender] = useState('');
+  const [editAge, setEditAge] = useState(''); // v3.164
   const [profileSaving, setProfileSaving] = useState(false);
   const clones = useVoiceStore((s) => s.clones);
   const clonesLoading = useVoiceStore((s) => s.clonesLoading);
@@ -746,6 +747,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     if (!serverArtist) return;
     setEditName(serverArtist.name || '');
     setEditGender(serverArtist.gender || '');
+    setEditAge(serverArtist.age || ''); // v3.164
     setEditVisible(true);
   };
 
@@ -758,6 +760,7 @@ export default function ArtistResultScreen({ navigation, route }: any) {
       const updated = await patchArtist(serverArtist.character_id, {
         name: editName.trim(),
         gender: editGender.trim(),
+        age: editAge.trim(), // v3.164: 빈 문자열 = 서버 클리어(계약)
       });
       setServerArtist(updated);
       setEditVisible(false);
@@ -810,6 +813,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
     ? (serverArtist!.name || '이름 없는 아티스트')
     : (meeName || profile?.name || '이름 없는 아티스트');
   const displayGender = isServerMode ? (serverArtist!.gender || null) : (profile?.gender || null);
+  // v3.164(대표): 이름 · 나이 · 성별 표시
+  const displayAge = isServerMode ? (serverArtist!.age || null) : null;
   // B-3 표시 상태: 연결됨 / 연결 끊김(missing — 클론 삭제됨) / 미연결
   const personaMissing = !!(serverArtist?.persona_id && serverArtist?.persona_status === 'missing');
   // v3.147: 만료(expired — Suno측 사정으로 클론 보이스 소멸, 재학습 필요)도 경고 표시
@@ -886,14 +891,10 @@ export default function ArtistResultScreen({ navigation, route }: any) {
         <View style={styles.kindRow}>
           <View style={styles.kindBadge}>
             <AppText style={styles.kindBadgeText}>
-              {displayGender ? `${displayName} · ${displayGender}` : displayName}
+              {[displayName, displayAge, displayGender].filter(Boolean).join(' · ')}
             </AppText>
           </View>
-          {isServerMode && serverArtist!.is_default && (
-            <View style={styles.defaultBadge}>
-              <AppText style={styles.defaultBadgeText}>대표</AppText>
-            </View>
-          )}
+          {/* v3.164(대표): 대표 지정 개념 제거 — 배지 표시 안 함 */}
           {isServerMode && (
             <TouchableOpacity style={styles.editProfileBtn} onPress={openEditProfile} activeOpacity={0.7}>
               <AppText style={styles.editProfileBtnText}>수정</AppText>
@@ -1422,6 +1423,14 @@ export default function ArtistResultScreen({ navigation, route }: any) {
               value={editName}
               onChangeText={setEditName}
               placeholder="아티스트 이름"
+              placeholderTextColor={colors.text.muted}
+            />
+            <AppText style={styles.editFieldLabel}>나이</AppText>
+            <TextInput
+              style={styles.editInput}
+              value={editAge}
+              onChangeText={setEditAge}
+              placeholder="예: 23세 (비우면 표시 안 함)"
               placeholderTextColor={colors.text.muted}
             />
             <AppText style={styles.editFieldLabel}>성별</AppText>

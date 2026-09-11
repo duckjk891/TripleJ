@@ -260,6 +260,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
           const jobCid: string | null = targetCid || (res.data?.character_id ? String(res.data.character_id) : null);
           let savedCharacterId: string | null = jobCid;
           const pendingGender = useCharacterTaskStore.getState().pendingGender;
+          const pendingAge = useCharacterTaskStore.getState().pendingAge;
           // v3.109: 질문 흐름에서 지은 이름 — save의 name 필드로 서버 영속(v216 계약: save·PATCH 수용)
           const pendingName = useCharacterTaskStore.getState().pendingName;
           try {
@@ -279,6 +280,7 @@ export default function ArtistLoadingScreen({ navigation }: any) {
               if (jobCid) saveBody.character_id = jobCid;
               else saveBody.kind = isVirtual ? 'virtual' : 'real';
               if (pendingGender) saveBody.gender = pendingGender;
+              if (pendingAge) saveBody.age = pendingAge; // v3.164: 나이 서버 영속
               // v3.109: 이름 서버 영속 — 스킵(null)이면 미전송 = 서버 기본 명명 로직 유지
               if (pendingName) {
                 saveBody.name = pendingName;

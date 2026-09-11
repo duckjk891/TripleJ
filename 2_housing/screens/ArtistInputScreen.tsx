@@ -41,6 +41,7 @@ interface StyleAnswers {
   gender: string;
   /** v3.109: 아티스트 이름(자유 입력·스킵 가능) — save의 name 필드로 서버 영속 */
   name: string;
+  age: string;
   hair: string;
   face: string;
   skin: string;
@@ -50,7 +51,7 @@ interface StyleAnswers {
 }
 
 const EMPTY_ANSWERS: StyleAnswers = {
-  gender: '', name: '', hair: '', face: '', skin: '', body: '', height: '', mood: '',
+  gender: '', name: '', age: '', hair: '', face: '', skin: '', body: '', height: '', mood: '',
 };
 
 interface QuestionDef {
@@ -78,6 +79,13 @@ const QUESTIONS: QuestionDef[] = [
     chips: [],
     placeholder: '예: 루나',
   },
+  // v3.164(대표): 나이 — 시트 외모(연령대 인상)에 반영되고 상세 화면에 이름·나이·성별로 표시
+  {
+    key: 'age', short: '나이',
+    question: '나이는 몇 살로 할까요? 외모 인상에도 반영돼요.',
+    chips: ['10대', '20대 초반', '20대 중반', '20대 후반', '30대'],
+    placeholder: '예: 23세',
+  },
   {
     key: 'hair', short: '머리',
     question: '머리 스타일과 색은 어떤 느낌이 좋을까요?',
@@ -98,9 +106,10 @@ const QUESTIONS: QuestionDef[] = [
   },
   {
     key: 'body', short: '체형',
-    question: '체형은요?',
-    chips: ['마른', '보통', '글래머', '근육질'],
-    placeholder: '예: 슬림한 체형',
+    // v3.164(대표): 골격 진단 3타입(스트레이트/웨이브/내추럴)으로도 표현
+    question: '체형은요? 골격 타입(스트레이트·웨이브·내추럴)으로 골라도 좋아요.',
+    chips: ['스트레이트', '웨이브', '내추럴', '마른', '보통', '근육질'],
+    placeholder: '예: 웨이브 타입, 슬림한 체형',
   },
   {
     key: 'height', short: '키',
@@ -121,6 +130,7 @@ function buildFinalText(answers: StyleAnswers): string {
   // v3.109: 이름 포함 — "이어서 만들기" 보존(conceptText 요약)에도 이름이 실린다
   if (answers.name) parts.push(`이름은 ${answers.name}`);
   if (answers.gender) parts.push(`성별은 ${answers.gender}`);
+  if (answers.age) parts.push(`나이는 ${answers.age}`);
   if (answers.hair) parts.push(`머리는 ${answers.hair}`);
   if (answers.face) parts.push(`얼굴은 ${answers.face}`);
   if (answers.skin) parts.push(`피부는 ${answers.skin}`);
@@ -463,6 +473,7 @@ export default function ArtistInputScreen({ navigation, route }: any) {
     taskStore.setInput({
       pendingGender: answers.gender.trim() || null,
       pendingName: answers.name.trim() || null,
+      pendingAge: answers.age.trim() || null, // v3.164: 나이 서버 영속
     });
 
     // v3.80: 가상화 모드는 화풍 선택 스텝을 거친 뒤 ArtistCody로 (handleStyleConfirm에서 진행)

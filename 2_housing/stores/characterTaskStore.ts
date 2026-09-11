@@ -38,6 +38,8 @@ interface CharacterTaskState {
   /** v3.109: 질문 흐름에서 지은 아티스트 이름 — 생성 성공 시 save의 name 필드로 서버 영속.
    *  null(스킵)이면 서버 기본 명명 로직 유지 */
   pendingName: string | null;
+  /** v3.164: 생성 대화의 나이 답변 — save 시 서버 age로 영속 */
+  pendingAge: string | null;
   /** v3.103(B-1): 재생성 대상 character_id — 지정 시 generate/save에 전달(기존 아티스트 갱신),
    *  null이면 신규 생성(서버 슬롯 검사 → used>=max 시 409 slot_limit_exceeded) */
   targetCharacterId: string | null;
@@ -46,7 +48,7 @@ interface CharacterTaskState {
   legacyContract: boolean;
 
   startTask: (mode: CharacterTaskMode) => void;
-  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'targetCharacterId' | 'legacyContract'>>) => void;
+  setInput: (data: Partial<Pick<CharacterTaskState, 'photoUri' | 'photoName' | 'userText' | 'conceptText' | 'refineRequest' | 'outfitDesc' | 'originalPhotoObjectName' | 'portraitConfirmed' | 'characterKind' | 'stylePreset' | 'styleImageUri' | 'styleImageName' | 'pendingGender' | 'pendingName' | 'pendingAge' | 'targetCharacterId' | 'legacyContract'>>) => void;
   completeApi: (result: CharacterTaskResult) => void;
   failApi: (msg: string) => void;
   /** 결과 소비 후 (ArtistResult 진입 후) 초기화 */
@@ -75,6 +77,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
   styleImageName: null,
   pendingGender: null,
   pendingName: null,
+  pendingAge: null,
   targetCharacterId: null,
   legacyContract: false,
 
@@ -115,6 +118,7 @@ export const useCharacterTaskStore = create<CharacterTaskState>((set) => ({
       styleImageName: null,
       pendingGender: null,
       pendingName: null,
+      pendingAge: null,
       targetCharacterId: null,
       // legacyContract는 계정 속성(마이그레이션 여부)이라 reset에서 유지 —
       // ArtistInput 진입 시 목록 실측으로 매번 재판정됨
