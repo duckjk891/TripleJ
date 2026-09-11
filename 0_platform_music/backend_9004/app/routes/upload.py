@@ -123,6 +123,8 @@ class GenerateCoverRequest(BaseModel):
     background_prompt: Optional[str] = None       # 배경·장소 텍스트 설명 (≤300자)
     background_object_name: Optional[str] = None  # 배경·장소 참조 사진 (POST /upload/cover-background 결과)
     lyrics_excerpt: Optional[str] = None          # 가사 발췌 (≤400자) — 장면 영감, LLM 추가 호출 없음
+    # v245(대표) — 인물 표정 (선택, ≤100자)
+    expression: Optional[str] = None
     # v235(대표 지적) — 캐릭터 종류별 프롬프트 분기: 'real'(기본·기존 동작) | 'virtual'(일러스트 강제)
     character_kind: Optional[str] = None
     character_art_style: Optional[str] = None     # 가상 화풍 (프리셋 키/한글/영문 라벨 혼재 허용 — 서버 정규화)
@@ -547,6 +549,7 @@ async def generate_cover(
             vocal_gender=norm_vocal_gender,
             # v234 — 대화 보강(전부 선택)
             shot=body.shot,
+            expression=body.expression,  # v245 — 인물 표정
             palette=body.palette,
             background_prompt=body.background_prompt,
             background_image_bytes=background_image_bytes,
@@ -924,6 +927,20 @@ async def refine_cover(
             content={"error": "현재 커버 이미지를 불러올 수 없습니다."},
         )
 
+    # v244(대표 확정): 미세조정도 ⭐ 소모 — 모든 사전 검증 통과 후 차감, 생성 실패 시 환불.
+    from ..services.points_service import POINT_COSTS, refund_points, spend_points
+    refine_cost = POINT_COSTS["cover_refine"]
+    refine_point_ref = f"cover_refine:{body.cover_session_id}:{uuid_lib.uuid4().hex[:8]}"
+    if not await spend_points(current_user["id"], "cover_refine", refine_cost, refine_point_ref):
+        return JSONResponse(
+            status_code=402,
+            content={"error": "포인트가 부족합니다 (필요: {})".format(refine_cost)},
+        )
+    logger.info(
+        "[star-econ] cover_refine spend user=%s -%d ref=%s session=%s",
+        current_user["id"][:8], refine_cost, refine_point_ref, body.cover_session_id,
+    )
+
     # refine 호출
     try:
         from ..services.cover_generator import refine_cover_image
@@ -934,6 +951,11 @@ async def refine_cover(
             image_model=image_model,
         )
     except Exception as e:  # noqa: BLE001
+        await refund_points(current_user["id"], "cover_refine", refine_cost, refine_point_ref)
+        logger.warning(
+            "[star-econ] cover_refine refund (generation failed) user=%s ref=%s",
+            current_user["id"][:8], refine_point_ref,
+        )
         return JSONResponse(
             status_code=500,
             content={"error": "커버 수정 실패: {}".format(str(e)[:200])},

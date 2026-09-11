@@ -37,6 +37,7 @@ async def generate_cover_image(
     vocal_gender: str = None,
     # v234(대표 확정 2026-09-09): 이미지 디렉터 대화 보강 — 전부 선택사항(None=미주입)
     shot: str = None,               # 구도 (한국어 라벨 또는 자유 문자열)
+    expression: str = None,         # v245(대표) — 인물 표정 (자유 문자열)
     palette: str = None,            # 색감·톤
     background_prompt: str = None,  # 배경·장소 텍스트 설명
     background_image_bytes: bytes = None,  # 배경·장소 참조 사진
@@ -103,6 +104,9 @@ async def generate_cover_image(
     _extra_parts = []
     if shot and shot.strip():
         _extra_parts.append("Composition: {}.".format(_SHOT_MAP.get(shot.strip(), shot.strip())))
+    if expression and expression.strip():
+        # v245 — 인물 표정 (한국어 그대로 전달 — enhance/이미지 모델 모두 처리 가능)
+        _extra_parts.append("Facial expression of the main subject: {}.".format(expression.strip()[:100]))
     if palette and palette.strip():
         _extra_parts.append("Color palette: {}.".format(_PALETTE_MAP.get(palette.strip(), palette.strip())))
     if background_prompt and background_prompt.strip():
