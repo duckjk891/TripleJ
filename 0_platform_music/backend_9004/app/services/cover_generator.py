@@ -44,6 +44,10 @@ async def generate_cover_image(
     # v235(대표 지적 2026-09-09): 가상(만화) 아티스트에 실사 강제 프롬프트가 걸리던 결함 분기
     character_kind: str = None,       # 'real' | 'virtual' — None 은 기존(실사) 동작 유지
     character_art_style: str = None,  # 가상 화풍 영문 라벨 (예: "Korean webtoon style")
+    # v239(대표 지적 2026-09-11): 시트만으론 의상 디테일(백프린트 등)이 누락 — 착장 아이템
+    # 제품컷을 추가 참조로 동봉 + 의상 충실도 강제 절 주입
+    outfit_item_images: list = None,   # 착장 아이템 제품컷 bytes 목록 (최대 3)
+    outfit_item_names: list = None,    # 위와 짝 — 아이템명(프롬프트 표기용)
 ) -> bytes:
     """Generate album cover image using Gemini. Returns PNG bytes.
 
@@ -147,7 +151,10 @@ async def generate_cover_image(
             enhance_system += (
                 " The cover must be photorealistic since it includes a character reference. "
                 "PRESERVE the wardrobe / outfit (top, bottom, shoes, accessories) shown in the "
-                "reference sheet — do not change clothing items even if the cover theme suggests otherwise."
+                "reference sheet — do not change clothing items even if the cover theme suggests otherwise. "
+                # v239 — 프린트/그래픽 충실도(백프린트 포함): 단순화·누락 금지
+                "Explicitly instruct that every print, graphic, logo and pattern on the garments "
+                "(including on the back of tops) must be reproduced exactly as in the reference."
             )
         else:
             enhance_system += " You may use any artistic style that fits the song's mood."
@@ -307,6 +314,30 @@ async def generate_cover_image(
 
         prompt = " ".join(prompt_parts)
 
+    # v239(대표): 의상 충실도 강제 — Claude 보강/프로그래매틱 어느 경로든 최종 프롬프트에 항상 부착.
+    # 핵심: ①옷의 프린트·그래픽·로고·패턴(상의 '뒷면' 포함)을 단순화/누락 없이 그대로 재현
+    #      ②"텍스트 금지"는 타이틀/오버레이 한정 — 옷 그래픽에 포함된 글자는 의상의 일부로 재현.
+    if character_image_bytes:
+        prompt += (
+            "\nSTRICT WARDROBE FIDELITY: reproduce the character's outfit EXACTLY as shown in the "
+            "reference images — every print, graphic, logo, pattern and lettering on each garment "
+            "(including graphics on the BACK of tops) must appear precisely as in the references, "
+            "never simplified, altered or omitted. The no-text rule applies only to overlay/title "
+            "text: lettering that is part of the clothing graphics in the references is part of the "
+            "wardrobe and MUST be reproduced faithfully."
+        )
+        if outfit_item_images:
+            _names = ", ".join([str(n)[:60] for n in (outfit_item_names or []) if n][:3])
+            prompt += (
+                "\nClose-up product photos of the exact outfit items are attached as additional "
+                "references{names} — match the garments' colors, cuts, prints and graphics to these "
+                "product photos precisely."
+            ).format(names=f" ({_names})" if _names else "")
+        logger.info(
+            "[CoverGen] wardrobe fidelity clause on, outfit_item_refs=%d",
+            len(outfit_item_images or []),
+        )
+
     # v55: branch by image_model. nb_pro (default) keeps the existing Gemini
     # path bit-for-bit. gpt_image_2 forwards prompt + ref bytes to OpenAI.
     logger.info("[CoverGen] image_model=%s", image_model)
@@ -316,6 +347,10 @@ async def generate_cover_image(
         _refs: list = []
         if character_image_bytes:
             _refs.append(character_image_bytes)
+        # v239 — 착장 아이템 제품컷 (최대 3): 시트에 작게 보이는 프린트/그래픽의 고해상 근거
+        for _it in (outfit_item_images or [])[:3]:
+            if _it:
+                _refs.append(_it)
         if user_location_image_bytes:
             _refs.append(user_location_image_bytes)
         return await _openai_generate_image(

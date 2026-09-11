@@ -405,6 +405,52 @@ async def generate_cover(
     else:
         logger.info("[CoverGenEntry] no character_object_name in request payload")
 
+    # v239(대표): 착장 아이템 제품컷을 추가 참조로 동봉 — 시트에 작게 보이는 프린트(백프린트 등)의
+    # 고해상 근거. 시트 경로로 캐릭터 문서를 역조회(본인 소유), 실패해도 커버 생성은 계속(best-effort).
+    outfit_item_images: list = []
+    outfit_item_names: list = []
+    if character_image_bytes:
+        try:
+            _mongo = get_mongo()
+            char_doc = await _mongo.characters.find_one(
+                {"user_id": current_user["id"], "sheet_object_name": body.character_object_name},
+                {"used_items": 1, "name": 1},
+            )
+            if not char_doc:
+                # 스냅샷 경로(character_snapshots/...) 등 — 경로에서 character_id 추출 폴백
+                _segs = (body.character_object_name or "").split("/")
+                _cid = _segs[2] if len(_segs) >= 4 else None
+                if _cid:
+                    char_doc = await _mongo.characters.find_one(
+                        {"user_id": current_user["id"], "character_id": _cid},
+                        {"used_items": 1, "name": 1},
+                    )
+            _items = (char_doc or {}).get("used_items") or []
+            _minio = get_minio()
+            for _it in _items[:3]:
+                _obj = (_it or {}).get("image_object_name")
+                if not _obj:
+                    continue
+                try:
+                    _r = _minio.get_object(
+                        bucket_name=settings.minio_bucket_images, object_name=_obj,
+                    )
+                    outfit_item_images.append(_r.read())
+                    _r.close()
+                    _r.release_conn()
+                    outfit_item_names.append((_it.get("name") or "")[:80])
+                except Exception as _e:
+                    logger.warning(
+                        "[CoverGenEntry] outfit item load failed obj=%s err=%s",
+                        _obj[:60], str(_e)[:120],
+                    )
+            logger.info(
+                "[CoverGenEntry] outfit item refs loaded n=%d (char=%s items=%d)",
+                len(outfit_item_images), (char_doc or {}).get("name") or "?", len(_items),
+            )
+        except Exception:
+            logger.exception("[CoverGenEntry] outfit item ref stage failed — continuing without")
+
     # v42: Load user-saved location anchor (Mode B) if requested.
     user_location_image_bytes = None
     user_location_name = None
@@ -490,6 +536,9 @@ async def generate_cover(
             mood=body.mood,
             style=body.style,
             character_image_bytes=character_image_bytes,
+            # v239 — 착장 아이템 제품컷 참조 (의상 프린트 충실도)
+            outfit_item_images=outfit_item_images or None,
+            outfit_item_names=outfit_item_names or None,
             user_prompt=body.user_prompt,
             prompt_model=body.prompt_model,
             user_location_image_bytes=user_location_image_bytes,
