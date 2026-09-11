@@ -146,6 +146,9 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   // v3.150: 대화 보강 상태 — 선택 슬롯(의상 새로고침용)·배경 텍스트 버퍼·업로드 중 표시
   const [chosenSlot, setChosenSlot] = useState<'real' | 'virtual' | null>(null);
   const [bgText, setBgText] = useState('');
+  // v3.168(대표): 구도·색감도 직접 입력 가능해야 함
+  const [shotText, setShotText] = useState('');
+  const [paletteText, setPaletteText] = useState('');
   const [bgUploading, setBgUploading] = useState(false);
 
   useEffect(() => {
@@ -429,6 +432,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   };
 
   const handleShotPick = (shot: string | null) => {
+    setShotText('');
     coverExtras.shot = shot;
     console.info('[Cover] 구도 선택', { shot });
     setChatHistory((prev) => [
@@ -493,6 +497,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   };
 
   const handlePalettePick = (palette: string | null) => {
+    setPaletteText('');
     coverExtras.palette = palette;
     console.info('[Cover] 색감 선택', { palette });
     setChatHistory((prev) => [...prev, { type: 'user', text: palette || '건너뛰기', step: 1.9 }]);
@@ -1196,17 +1201,25 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             </TouchableOpacity>
           </>
         ) : step === 1.8 ? (
-          // v3.150: 구도 — 선택사항
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {[...SHOT_OPTIONS, ...(musicStore.coverCharacterObjectName ? [] : [SHOT_NO_PERSON])].map((s) => (
-              <TouchableOpacity key={s} style={styles.chip} onPress={() => handleShotPick(s)}>
-                <AppText style={styles.chipText}>{s}</AppText>
+          // v3.150: 구도 — 선택사항. v3.168(대표): 직접 입력창 추가
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              {[...SHOT_OPTIONS, ...(musicStore.coverCharacterObjectName ? [] : [SHOT_NO_PERSON])].map((s) => (
+                <TouchableOpacity key={s} style={styles.chip} onPress={() => handleShotPick(s)}>
+                  <AppText style={styles.chipText}>{s}</AppText>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.chip} onPress={() => handleShotPick(null)}>
+                <AppText style={styles.chipText}>건너뛰기</AppText>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.chip} onPress={() => handleShotPick(null)}>
-              <AppText style={styles.chipText}>건너뛰기</AppText>
-            </TouchableOpacity>
-          </ScrollView>
+            </ScrollView>
+            <View style={styles.inputRow}>
+              <TextInput style={styles.textInput} value={shotText} onChangeText={setShotText} placeholder="직접 입력 (예: 로우앵글에서 올려다본 전신 샷)" placeholderTextColor={colors.text.muted} onSubmitEditing={() => shotText.trim() && handleShotPick(shotText.trim())} />
+              <TouchableOpacity style={[styles.sendBtn, !shotText.trim() && { opacity: 0.4 }]} onPress={() => shotText.trim() && handleShotPick(shotText.trim())} disabled={!shotText.trim()}>
+                <AppText style={styles.sendBtnText}>확인</AppText>
+              </TouchableOpacity>
+            </View>
+          </>
         ) : step === 1.85 ? (
           // v3.150: 배경·장소 — 사진 업로드 / 텍스트 설명 / 건너뛰기
           <>
@@ -1228,17 +1241,25 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
             </View>
           </>
         ) : step === 1.9 ? (
-          // v3.150: 색감·톤 — 선택사항
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {PALETTE_OPTIONS.map((p) => (
-              <TouchableOpacity key={p} style={styles.chip} onPress={() => handlePalettePick(p)}>
-                <AppText style={styles.chipText}>{p}</AppText>
+          // v3.150: 색감·톤 — 선택사항. v3.168(대표): 직접 입력창 추가
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              {PALETTE_OPTIONS.map((p) => (
+                <TouchableOpacity key={p} style={styles.chip} onPress={() => handlePalettePick(p)}>
+                  <AppText style={styles.chipText}>{p}</AppText>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.chip} onPress={() => handlePalettePick(null)}>
+                <AppText style={styles.chipText}>건너뛰기</AppText>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.chip} onPress={() => handlePalettePick(null)}>
-              <AppText style={styles.chipText}>건너뛰기</AppText>
-            </TouchableOpacity>
-          </ScrollView>
+            </ScrollView>
+            <View style={styles.inputRow}>
+              <TextInput style={styles.textInput} value={paletteText} onChangeText={setPaletteText} placeholder="직접 입력 (예: 파스텔 톤, 빛바랜 필름 느낌)" placeholderTextColor={colors.text.muted} onSubmitEditing={() => paletteText.trim() && handlePalettePick(paletteText.trim())} />
+              <TouchableOpacity style={[styles.sendBtn, !paletteText.trim() && { opacity: 0.4 }]} onPress={() => paletteText.trim() && handlePalettePick(paletteText.trim())} disabled={!paletteText.trim()}>
+                <AppText style={styles.sendBtnText}>확인</AppText>
+              </TouchableOpacity>
+            </View>
+          </>
         ) : step === 1.75 ? (
           // v3.151: 가사 내용 반영 여부 — 반영 시 디테일 질문(구도~색감) 생략, 미반영 시 진행
           <>

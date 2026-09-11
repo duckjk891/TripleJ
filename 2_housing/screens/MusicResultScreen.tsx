@@ -308,6 +308,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
   };
 
   const formatTime = (ms: number) => {
+    // v3.168(대표): 스트리밍 소스는 duration이 Infinity/NaN으로 오는 경우가 있음 — "Infinity:NaN" 방지
+    if (!Number.isFinite(ms) || ms < 0) return '--:--';
     const totalSec = Math.floor(ms / 1000);
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
@@ -486,7 +488,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
                 {lyricsStore.generatedTitle || `${store.genre} - ${store.mood}`}
               </AppText>
               <AppText style={styles.compareHint}>
-                두 가지 버전이 만들어졌어요. 들어보고 마음에 드는 버전을 선택하세요.{'\n'}
+                두 가지 버전이 만들어졌어요.{'\n'}
+                들어보고 마음에 드는 버전을 선택하세요.{'\n'}
                 선택한 버전이 트랙으로 저장돼요.
               </AppText>
               {Array.from({ length: variantCount }).map((_, i) => {
