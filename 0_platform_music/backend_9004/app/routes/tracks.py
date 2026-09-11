@@ -2115,6 +2115,25 @@ async def upload_from_generation(
         src_persona_id_norm or "-", src_lyrics_id or "-",
         sorted(source_meta.keys()) if source_meta else None,
     )
+    # v243(대표) — '이야기' 서버 폴백: FE가 prompt(이야기 요약)를 못 실었을 때
+    # (기기 변경·store 유실 등) 가사 자산의 story 필드로 서버가 구성한다.
+    release_prompt = (body.prompt or "").strip() or None
+    if not release_prompt and src_lyrics_id:
+        try:
+            _asset = await mongo.lyrics_assets.find_one(
+                {"lyrics_id": src_lyrics_id, "user_id": uploader_id}, {"story": 1},
+            )
+            _st = (_asset or {}).get("story") or {}
+            _lines = []
+            for _label, _key in (("주제", "topic"), ("꼭 들어갈 말", "keywords"), ("시점", "perspective"), ("추가 요청", "reference")):
+                if _st.get(_key):
+                    _lines.append(f"{_label}: {_st[_key]}")
+            if _lines:
+                release_prompt = "\n".join(_lines)
+                logger.info("[SongSource] story fallback from lyrics asset lid=%s lines=%d", src_lyrics_id, len(_lines))
+        except Exception:
+            logger.warning("[SongSource] story fallback failed lid=%s", src_lyrics_id)
+
     # v236 — 아티스트 지정 곡: 곡의 아티스트명 동결 + 스냅샷은 "그 아티스트" 기준 서버 생성이
     # body 스냅샷(레거시: /character/me 대표 캐릭터 기준 — 선택 아티스트와 다를 수 있음)보다 우선.
     release_artist_name = (source_meta or {}).get("artist_name") or None
@@ -2129,7 +2148,7 @@ async def upload_from_generation(
         "uploader_id": uploader_id,
         "uploader_nickname": current_user.get("nickname", ""),
         "ai_model": body.ai_model,
-        "prompt": body.prompt,
+        "prompt": release_prompt,  # v243 — body.prompt 또는 가사 자산 story 폴백
         "ai_model_version": None,
         "genre": genre_list,
         "mood": mood_list,

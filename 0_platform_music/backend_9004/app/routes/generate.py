@@ -54,6 +54,11 @@ class LyricsRequest(BaseModel):
     structure: Optional[str] = None       # Suno 섹션 태그 시퀀스 (예: "[Intro] - [Verse 1] - ...")
     english_ratio: Optional[int] = None   # 0~100 — 중간값일 때만 혼합 지시 주입
     has_rap: Optional[bool] = None        # 랩 파트 1섹션 이상 포함
+    # v243(대표) — 이야기 필드: 가사 자산에 함께 저장 → 발매 시 '이야기' 섹션 서버측 근거
+    story_topic: Optional[str] = None
+    story_keywords: Optional[str] = None
+    story_perspective: Optional[str] = None
+    story_reference: Optional[str] = None
     # v229 (B-2) — true면 생성 즉시 가사 자산으로 저장하고 lyrics_id 반환
     save: Optional[bool] = None
 
@@ -558,11 +563,15 @@ async def generate_lyrics_endpoint(
         # v229 (B-2) — save 옵션: 생성 즉시 가사 자산 저장 (best-effort, 실패해도 응답 유지)
         if body.save and isinstance(result, dict) and result.get("lyrics"):
             from .lyrics_assets import save_lyrics_asset
+            _story = {k: (getattr(body, f"story_{k}") or "").strip()[:200] or None
+                      for k in ("topic", "keywords", "perspective", "reference")}
+            _story = {k: v for k, v in _story.items() if v}
             saved_id = await save_lyrics_asset(
                 user_id,
                 title=result.get("title") or "",
                 content=result.get("lyrics") or "",
                 genre=body.genre, mood=body.mood, source="ai",
+                story=_story or None,  # v243 — 이야기 필드 영속
             )
             if saved_id:
                 result["lyrics_id"] = saved_id

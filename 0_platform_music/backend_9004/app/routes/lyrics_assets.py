@@ -53,6 +53,7 @@ def _serialize(doc: dict) -> dict:
         "genre": doc.get("genre"),
         "mood": doc.get("mood"),
         "source": doc.get("source") or "ai",
+        "story": doc.get("story") or None,  # v243
         "created_at": str(doc.get("created_at") or ""),
         "updated_at": str(doc.get("updated_at") or ""),
     }
@@ -61,6 +62,7 @@ def _serialize(doc: dict) -> dict:
 async def save_lyrics_asset(
     user_id: str, title: str, content: str,
     genre: str = None, mood: str = None, source: str = "ai",
+    story: dict = None,  # v243 — {topic, keywords, perspective, reference} (있는 키만)
 ) -> Optional[str]:
     """공용 저장 헬퍼 — generate.py의 save 옵션도 이 함수를 사용. 실패 시 None."""
     title = (title or "").strip()[:TITLE_MAX]
@@ -79,6 +81,8 @@ async def save_lyrics_asset(
             "genre": (genre or "").strip() or None,
             "mood": (mood or "").strip() or None,
             "source": source if source in ("ai", "manual") else "ai",
+            # v243 — 이야기(주제/꼭 들어갈 말/시점/추가 요청): 발매 '이야기' 섹션의 서버측 근거
+            "story": story or None,
             "created_at": now,
             "updated_at": now,
         })
