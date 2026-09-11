@@ -64,7 +64,7 @@ export default function LyricSyncView({ segments, positionMillis, coverUri, heig
 
   if (coverUri) {
     return (
-      <ImageBackground source={{ uri: coverUri }} style={[styles.wrap, { height }]} imageStyle={styles.bgImg} blurRadius={2}>
+      <ImageBackground source={{ uri: coverUri }} style={[styles.wrap, { height }]} imageStyle={styles.bgImg}>
         <View style={styles.scrim} />
         {Inner}
       </ImageBackground>
