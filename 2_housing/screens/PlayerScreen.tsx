@@ -706,11 +706,10 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const coverUri = getCoverUri();
 
-  // v3.160(대표): 커버 가로 꽉 차게 + 세로 UI(하단 상세 토글까지) 절대 안 밀리게 —
-  // 화면 높이에서 고정 UI 몫(헤더·탭·곡정보·진행바·컨트롤·액션·토글 ≈ 560)을 뺀 값을
-  // 이미지 높이로. 최소 180 보장, 최대는 가로폭(정사각 이상 확대 금지).
+  // v3.161(대표 확정): 커버 = 곡 제목 텍스트 영역과 같은 가로폭(winW-64)의 정사각.
+  // 세로 여백 압축(v3.161)으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
   const { width: winW, height: winH } = useWindowDimensions();
-  const coverH = Math.max(180, Math.min(winW, winH - 560));
+  const coverH = Math.max(180, Math.min(winW - 64, winH - 500));
 
   // v3.160(대표): 가사 공유 — 네이티브 공유 시트 우선, 미지원(웹 등)이면 클립보드 복사 폴백
   const shareLyrics = async () => {
@@ -1241,7 +1240,7 @@ const styles = StyleSheet.create({
     color: colors.border.subtle,
   },
   trackInfoContainer: {
-    marginTop: 32,
+    marginTop: 16, // v3.161: 커버 확대 몫 확보(32→16)
     alignItems: 'center',
     paddingHorizontal: 32,
     width: '100%',
@@ -1266,7 +1265,7 @@ const styles = StyleSheet.create({
   progressContainer: {
     width: '100%',
     paddingHorizontal: 24,
-    marginTop: 32,
+    marginTop: 16, // v3.161: 커버 확대 몫 확보(32→16)
   },
   slider: {
     width: '100%',
@@ -1371,8 +1370,8 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     width: '100%',
     paddingHorizontal: 8,
-    marginTop: 20,
-    marginBottom: 8,
+    marginTop: 12, // v3.161: 커버 확대 몫 확보(20→12)
+    marginBottom: 6,
   },
   // 재생목록(큐) 모달
   queueOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
