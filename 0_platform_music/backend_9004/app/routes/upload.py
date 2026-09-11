@@ -249,7 +249,7 @@ async def upload_image(
         try:
             redis = get_redis()
             await redis.delete(f"cache:track:{id}")
-            await redis.delete(f"cache:track:v3:{id}")
+            await redis.delete(f"cache:track:v4:{id}")
         except Exception:
             logger.warning("[upload] image cover cache_invalidate_failed track=%s", id[:8])
         logger.info("[upload] image cover_ok track=%s obj=%s matched=%d",

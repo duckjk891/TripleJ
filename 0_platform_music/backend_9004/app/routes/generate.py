@@ -103,6 +103,9 @@ class GenerateRequest(BaseModel):
     # v214 — 가사 출처 스냅샷 (optional). persona_id 는 현행 그대로(voice_id 의미
     # 유지 — clone_id 정규화는 업로드 시점 tracks.py 에서 수행).
     lyrics_source: Optional[LyricsSourceSnapshot] = None
+    # v236 — 작곡 시 선택한 아티스트(characters.character_id). 발매 시 tracks 로 승계되어
+    # 차트 아티스트명·착장 스냅샷의 근거가 된다 (미선택 작곡은 None — 기획사명 폴백).
+    character_id: Optional[str] = None
 
 
 class UpdateGenerationRequest(BaseModel):
@@ -623,6 +626,8 @@ async def create_generation(
         "model": body.model or "suno",
         "suno_model": body.suno_model,
         "persona_id": body.persona_id,
+        # v236 — 선택 아티스트 승계용 (64자 캡, 존재 검증은 발매 시점 tracks.py)
+        "character_id": (body.character_id or "").strip()[:64] or None,
         "negative_tags": body.negative_tags,
         "style_weight": body.style_weight,
         "weirdness": body.weirdness,

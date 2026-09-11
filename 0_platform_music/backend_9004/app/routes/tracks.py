@@ -39,7 +39,10 @@ def _serialize_track(doc: dict) -> dict:
             doc[key] = doc[key].isoformat()
     # Add aliases for frontend compatibility
     doc["artist_id"] = doc.get("uploader_id")
-    doc["artist_name"] = doc.get("uploader_nickname", "AI")
+    # v236 — 곡에 기록된 아티스트명(발매 시 character 해석값) 우선, 없으면 기획사명(닉네임) 폴백
+    #        (대표 확정 2026-09-11: 아티스트 미지정 곡은 기획사명으로 차트 표기가 맞다).
+    doc["agency_name"] = doc.get("uploader_nickname", "AI")
+    doc["artist_name"] = doc.get("artist_name") or doc.get("uploader_nickname", "AI")
     doc["cover_image"] = doc.get("cover_image_url")
     # v137 — 신고 블라인드 플래그 (소유자 사유 표시용, 기본 false)
     doc["report_blinded"] = bool(doc.get("report_blinded", False))
@@ -84,6 +87,52 @@ async def _attach_album_info(mongo, tracks: list) -> None:
         hit = album_by_track.get(t["id"])
         if hit:
             t["album_id"], t["album_title"] = hit
+
+
+async def _build_character_snapshot(mongo, user_id: str, character_id: str):
+    """v236 — 발매/업로드 시점의 아티스트 착장 스냅샷을 characters 도큐먼트로부터 생성.
+
+    mv_jobs.user_character_snapshot 과 동일 shape (get_track 의 cover_character
+    폴백이 그대로 읽는다). 시트는 SnapFix 관행대로 불변 경로로 복사(best-effort).
+    실패/미발견 시 None — 발매는 절대 막지 않는다.
+    """
+    try:
+        from .character import _find_artist_by_cid
+        artist = await _find_artist_by_cid(mongo, user_id, character_id)
+        if not artist:
+            logger.warning(
+                "[SongSource] snapshot char not found user=%s cid=%s",
+                user_id[:8], character_id[:36],
+            )
+            return None
+        sheet = artist.get("sheet_object_name")
+        copied = None
+        if sheet:
+            try:
+                from ..services.snapshot_service import snapshot_sheet_copy
+                copied = snapshot_sheet_copy(get_minio(), user_id, sheet)
+            except Exception:
+                logger.warning("[SongSource] snapshot sheet copy failed cid=%s", character_id[:36])
+        snap = {
+            "name": artist.get("name") or "",
+            "age": artist.get("age") or "",
+            "gender": artist.get("gender") or "",
+            "personality_tags": artist.get("personality_tags") or [],
+            "personality_text": artist.get("personality_text") or "",
+            "sheet_object_name": copied or sheet,
+            "used_items": artist.get("used_items") or [],
+            "character_id": character_id,
+        }
+        if copied:
+            snap["sheet_object_name_origin"] = sheet
+        logger.info(
+            "[SongSource] snapshot built cid=%s items=%d has_sheet=%s",
+            character_id[:36], len(snap["used_items"]), bool(snap["sheet_object_name"]),
+        )
+        return snap
+    except Exception:
+        logger.exception("[SongSource] snapshot build failed cid=%s", (character_id or "")[:36])
+        return None
 
 
 def _is_hidden_track(t: dict) -> bool:
@@ -899,7 +948,7 @@ async def purge_track_document(doc: dict, conn) -> dict:
     # Redis 캐시 (legacy v1 + current v2) + playcount 버퍼
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
-    await redis.delete(f"cache:track:v3:{track_id}")
+    await redis.delete(f"cache:track:v4:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # 차트 캐시(TTL 300s) 즉시 무효화 — 삭제 곡 차트 잔존 방지
@@ -1035,7 +1084,7 @@ async def update_track(
     # Clear Redis cache (both legacy v1 and current v2 keys)
     redis = get_redis()
     await redis.delete(f"cache:track:{track_id}")
-    await redis.delete(f"cache:track:v3:{track_id}")
+    await redis.delete(f"cache:track:v4:{track_id}")
     await redis.delete(f"playcount:buffer:{track_id}")
 
     # Fetch and return updated document
@@ -1465,7 +1514,7 @@ async def get_track(
     mongo = get_mongo()
 
     # Check Redis cache (v2: schema bumped to include cover_character)
-    cached = await redis.get(f"cache:track:v3:{track_id}")
+    cached = await redis.get(f"cache:track:v4:{track_id}")
     if cached:
         track = json.loads(cached)
         # v138 직링크 가드 — 캐시 히트 경로에도 동일 적용 (캐시 데이터는 전체
@@ -1584,7 +1633,7 @@ async def get_track(
     await redis.incr(f"playcount:buffer:{track_id}")
 
     # Cache for 10 minutes (v2 key)
-    await redis.setex(f"cache:track:v3:{track_id}", 600, json.dumps(track, default=str))
+    await redis.setex(f"cache:track:v4:{track_id}", 600, json.dumps(track, default=str))
 
     # uploader_profile_image 는 캐시에 넣지 않고 매 요청 fresh 첨부
     await _attach_uploader_profiles([track], pg)
@@ -1723,6 +1772,13 @@ async def upload_track(
             src_persona_id_norm or "-", src_lyrics_id or "-",
             sorted(source_meta.keys()) if source_meta else None,
         )
+    # v236 — 아티스트 지정 곡: 표시용 아티스트명 + 착장 스냅샷을 곡에 동결
+    # (차트/플레이어 아티스트 표기와 착장 탭의 근거. 미지정은 둘 다 None — 기획사명 폴백).
+    upload_artist_name = (source_meta or {}).get("artist_name") or None
+    upload_char_snapshot = (
+        await _build_character_snapshot(get_mongo(), uploader_id, src_character_id)
+        if src_character_id else None
+    )
 
     doc = {
         "_id": track_id,
@@ -1752,6 +1808,9 @@ async def upload_track(
         "persona_model": src_persona_model,
         "lyrics_id": src_lyrics_id,
         "source_meta": source_meta,
+        # v236 — 아티스트 표기·착장 (미지정 시 None: 직렬화가 기획사명 폴백)
+        "artist_name": upload_artist_name,
+        "user_character_snapshot": upload_char_snapshot,
         "waveform_data": [],
         "play_count": 0,
         "like_count": 0,
@@ -2032,6 +2091,9 @@ async def upload_from_generation(
             src_persona_model = str(gen_doc["persona_model"])[:64]
     if not src_lyrics_id and isinstance(gen_lyrics_source, dict):
         src_lyrics_id = (gen_lyrics_source.get("lyrics_id") or "").strip()[:64] or None
+    # v236 — 작곡 시 선택한 아티스트 승계 (body 미전송 시 gen_doc.character_id 폴백)
+    if not src_character_id and gen_doc.get("character_id"):
+        src_character_id = str(gen_doc["character_id"]).strip()[:64] or None
     # v230 (가사 DB 단일화): 자산 출처 없는 가사는 발매 시 자동 등록 (파일 경로와 동일)
     if (body.lyrics or "").strip() and not src_lyrics_id:
         from .lyrics_assets import save_lyrics_asset
@@ -2051,6 +2113,13 @@ async def upload_from_generation(
         src_persona_id_norm or "-", src_lyrics_id or "-",
         sorted(source_meta.keys()) if source_meta else None,
     )
+    # v236 — 아티스트 지정 곡: 곡의 아티스트명 동결 + 스냅샷은 "그 아티스트" 기준 서버 생성이
+    # body 스냅샷(레거시: /character/me 대표 캐릭터 기준 — 선택 아티스트와 다를 수 있음)보다 우선.
+    release_artist_name = (source_meta or {}).get("artist_name") or None
+    if src_character_id:
+        _server_snap = await _build_character_snapshot(mongo, uploader_id, src_character_id)
+        if _server_snap:
+            user_character_snapshot = _server_snap
 
     doc = {
         "_id": track_id,
@@ -2079,6 +2148,8 @@ async def upload_from_generation(
         "generation_id": str(gen_doc["_id"]),
         "variant_index": variant_index,  # v74
         "user_character_snapshot": user_character_snapshot,
+        # v236 — 아티스트 표기 (미지정 시 None: 직렬화가 기획사명 폴백)
+        "artist_name": release_artist_name,
         # v214 — 곡 출처 4필드(받은 값 그대로, persona 만 정규화) + 서버 생성 표시 스냅샷.
         # 응답면 전부 pass-through(projection 0) — 저장만으로 my/상세/charts/채널 자동 동봉.
         "character_id": src_character_id,
@@ -2137,7 +2208,7 @@ async def upload_from_generation(
             try:
                 _redis = get_redis()
                 await _redis.delete(f"cache:track:{str(track_id)}")
-                await _redis.delete(f"cache:track:v3:{str(track_id)}")
+                await _redis.delete(f"cache:track:v4:{str(track_id)}")
             except Exception:
                 pass
     except Exception as e:

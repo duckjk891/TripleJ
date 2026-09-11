@@ -50,7 +50,9 @@ def _serialize_track(doc: dict) -> dict:
             doc[key] = doc[key].isoformat()
     # Add aliases for frontend compatibility
     doc["artist_id"] = doc.get("uploader_id")
-    doc["artist_name"] = doc.get("uploader_nickname", "AI")
+    # v236 — 곡에 기록된 아티스트명 우선, 없으면 기획사명(닉네임) 폴백 (tracks._serialize_track 동일)
+    doc["agency_name"] = doc.get("uploader_nickname", "AI")
+    doc["artist_name"] = doc.get("artist_name") or doc.get("uploader_nickname", "AI")
     doc["cover_image"] = doc.get("cover_image_url")
     # B-11 — 소속 앨범 (기본 null, tracks._attach_album_info 배치 첨부가 채움)
     doc.setdefault("album_id", None)

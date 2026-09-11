@@ -228,7 +228,7 @@ async def _get_job_with_ownership(mongo_db, oid: ObjectId, user_id: str) -> dict
 async def _invalidate_track_cache(track_id) -> None:
     """v211 — 부착/떼기/교체/삭제 시 트랙 상세 캐시 무효화 (tracks.py :744-745 관행).
 
-    상세 응답이 has_music_video 를 포함한 채 redis `cache:track:v3` 600s 캐시되므로
+    상세 응답이 has_music_video 를 포함한 채 redis `cache:track:v4` 600s 캐시되므로
     부착 상태 변화 시 즉시 반영을 위해 delete. best-effort — 실패해도 본 동작 유지.
     """
     if not track_id:
@@ -236,7 +236,7 @@ async def _invalidate_track_cache(track_id) -> None:
     try:
         redis = get_redis()
         await redis.delete(f"cache:track:{track_id}")
-        await redis.delete(f"cache:track:v3:{track_id}")
+        await redis.delete(f"cache:track:v4:{track_id}")
     except Exception as e:
         logger.warning("[MVAttach] cache invalidate failed track=%s: %s", track_id, e)
 
