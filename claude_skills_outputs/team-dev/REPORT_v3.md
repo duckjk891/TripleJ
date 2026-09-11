@@ -3193,3 +3193,32 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 - 되감기용 questionForStep(step 2)은 원래 예시 없음 — 변경 불필요(일관성 확보됨).
 
 **검증**: tsc --noEmit PASS. 문자열 2건 수정으로 로직 무변경 — E2E 생략(v3.152 커버 대화 E2E가 해당 흐름 커버).
+
+---
+
+## v3.156 — 업로드 곡 아티스트/기획사 표기·가사 마커·플레이어 정리·보이스 2시간·꾸미기 내비 (2026-09-11)
+
+**요청(8건)**: ①업로드 곡(가상 캐릭터)에 착장 정보 표시 ②가사의 [] 섹션 마커 숨김 ③차트=가수명(펄킴)/NowPlaying=제목·가수·기획사(+앨범 고려), 아티스트명 없으면 기획사명 폴백 ④"비트" 기능 규명 ⑤가사영상 배경 가로폭 텍스트 따라 변하는 것 고정 + 배경 투명도 완화 ⑥프롬프트 탭 상단 표시 정리(중복 제거·작성분 노출) ⑦핵심 파라미터에서 재생수·좋아요 제거 ⑧보이스 만료→초시계 폐기, "최대 2시간 이내 사용" 안내 ⑨꾸미기에서 닫기 시 이미지 디렉터 대화로 복귀(현재 무관 페이지로 튐).
+
+**결과**: [api] 업로드 승계·직렬화 검증 + [e2e] L1~L7 전부 PASS.
+
+**백엔드**(tracks.py·charts.py·generate.py, 캐시키 v3→v4 버전업으로 기존 캐시 무효화):
+- **아티스트 표기**: `_serialize_track`에 `artist_name`(곡 기록값 우선, 없으면 기획사명 폴백)+`agency_name`(기획사명) 동봉. charts.py도 동일. → 아티스트 지정 곡은 가수명, 미지정 곡은 기획사명이 차트/플레이어에 노출.
+- **아티스트 승계 파이프라인**: `GenerateRequest.character_id` 추가 → generation 문서 저장 → 발매(upload/upload-from-generation) 시 body>gen_doc 폴백으로 `character_id` 확정 → `_build_character_snapshot()`(characters 도큐먼트 기준 착장 스냅샷, SnapFix 복사 best-effort)으로 곡에 `artist_name`+`user_character_snapshot` 동결. from-generation은 서버 스냅샷이 레거시 body 스냅샷(대표 캐릭터 기준)보다 우선 — "선택한 아티스트" 착장이 정확히 반영.
+- 착장 표시: get_track의 기존 cover_character 폴백이 곡에 동결된 스냅샷을 그대로 읽음(추가 배선 불필요) → 업로드/가상 캐릭터 곡도 착장 탭 노출.
+- 앨범: album_id/album_title은 기존 `_attach_album_info` 배치 첨부 유지 — 플레이어에서 " · 앨범명" 접미.
+
+**프론트엔드**:
+- musicStore `artistCharacterId` 추가(작곡 대화 아티스트 선택 시 승계, 되감기/미선택 시 null), musicService/MusicLoading이 `character_id`로 전송, MusicResult 발매 payload는 선택 아티스트 최우선(미선택 시 /character/me 기본 폴백).
+- PlayerScreen: NowPlaying 3단 표기(제목/가수/기획사·앨범, 아티스트=기획사면 1줄로 축약해 중복 방지), source_meta 줄에서 아티스트 제거(상단과 중복), 가사 [] 마커 숨김(상세 탭+동영상 타임라인 세그먼트 필터), 프롬프트 탭 `promptExtraText`(핵심 파라미터 칩과 중복되는 라벨 줄 제거·자유 서술만 유지), 핵심 파라미터에서 재생수·좋아요·다운로드(통계) 제거, 동영상 모드 커버 래퍼 `alignSelf:stretch`+고정 패딩(텍스트 길이 무관 배경폭 고정).
+- LyricSyncView: 스크림 0.74→0.55(배경 커버 더 잘 보임).
+- 보이스 수명: VoiceCloneWizard 완료 화면·ArtistResult 목소리 박스에 "외부 AI 사정으로 오래 보관 안 됨, 최대 2시간 이내 작곡 사용, 만료 시 ⭐ 자동환불" 안내(실측 2h2m~6h18m 편차로 정확한 초시계 불가 — 대표 확정으로 폐기).
+- ArtistCody: 커버 대화에서 진입 시 `returnToCover` param → 헤더 ← 가 Map이 아닌 goBack(커버 대화 복귀). CoverGeneration goWardrobe가 param 전달.
+
+**"비트" 기능 답(대표 질문)**: v3.97(A-9)에 이식된 **비트 시각화(BeatTrackView)** — 곡의 박자(비트/마디 첫 박=다운비트)를 재생 위치에 맞춰 흘러가는 스트립으로 보여주는 기능. 플레이어 진행바 아래 "비트" 칩으로 토글. 서버가 곡 업로드 후 백그라운드로 박자를 추출(beats_status)하며, 새 시각화 라이브러리 없이 RN View로 구현. 실사용 영향 없는 부가 시각 효과라 그대로 두거나 숨김 처리 가능 — 대표 결정 대기.
+
+**과거 곡 소급**: 대표 곡 "더 나오려는 것을 막는 것일뿐"(펄킴/lovvepearl)에 character_id·artist_name·착장 스냅샷 백필 완료(차트=펄킴, NowPlaying 3단, 착장 3종 확인).
+
+**미결/한계**: 이미 발매된 다른 과거 곡들은 character_id가 없어 기획사명으로 표기(정상 폴백) — 필요 시 개별 소급 가능. SnapFix 서버측 copy가 원격 MinIO 클라이언트 None으로 실패(원본 경로 유지 — 표시엔 무영향, 원본 캐릭터 삭제 시에만 유실 리스크).
+
+**파일**: (BE) app/routes/tracks.py, charts.py, generate.py (+캐시키 v4 일괄) / (FE) screens/PlayerScreen.tsx, MusicGenerationScreen.tsx, MusicLoadingScreen.tsx, MusicResultScreen.tsx, VoiceCloneWizardScreen.tsx, ArtistResultScreen.tsx, ArtistCodyScreen.tsx, CoverGenerationScreen.tsx, components/LyricSyncView.tsx, stores/musicStore.ts, services/musicService.ts.

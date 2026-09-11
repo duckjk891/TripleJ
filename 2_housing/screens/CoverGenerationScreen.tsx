@@ -407,11 +407,12 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       { type: 'director', text: '아티스트 꾸미기로 이동할게요! 꾸미기를 마치고 돌아오면 바뀐 의상으로 이어서 진행해요.' },
     ]);
     try {
+      // v3.156: returnToCover — Cody의 ←(닫기)가 Map이 아니라 이 대화로 goBack하도록 표식
       if (albumMode) {
         // 앨범 모드(RootStack)는 Studio 스택 중첩 진입
-        (navigation as any).navigate('MainTabs', { screen: 'Studio', params: { screen: 'ArtistCody' } });
+        (navigation as any).navigate('MainTabs', { screen: 'Studio', params: { screen: 'ArtistCody', params: { returnToCover: true } } });
       } else {
-        navigation.navigate('ArtistCody' as any);
+        (navigation as any).navigate('ArtistCody', { returnToCover: true });
       }
     } catch (err) {
       console.error('[Cover] ArtistCody 이동 실패', err);

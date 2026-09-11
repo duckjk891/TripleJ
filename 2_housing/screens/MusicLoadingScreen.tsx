@@ -226,6 +226,8 @@ export default function MusicLoadingScreen({ navigation, route }: Props) {
           audioWeight: store.audioWeight ?? undefined,
           // v3.102(B-4): 가사 보관함 출처 스냅샷 — generateWithSuno가 lyrics_source로 전송
           lyricsSource: store.lyricsSource || undefined,
+          // v3.156: 작곡에서 선택한 아티스트 — 발매 시 곡 아티스트명·착장 근거
+          characterId: store.artistCharacterId || undefined,
         };
         console.log('[MusicLoading] 생성 파라미터:', JSON.stringify({
           model: store.selectedModel, title: params.title, genre: params.genre, mood: params.mood,

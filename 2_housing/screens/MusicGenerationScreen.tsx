@@ -280,7 +280,10 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setPersonaModelOn(false);
       setSelectedPersonaId(null);
     }
-    if (target <= 1 || target === 200 || target >= 300) setSelectedArtistId(null);
+    if (target <= 1 || target === 200 || target >= 300) {
+      setSelectedArtistId(null);
+      musicStore.setArtistCharacterId(null); // v3.156: 아티스트 재선택 되감기 시 store도 초기화
+    }
     if (target === 210) fetchClones();
     setChatHistory((prev) => [
       ...prev.slice(0, idx),
@@ -461,6 +464,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       : DIRECTOR_MESSAGES[3];
     if (!artist) {
       console.info('[MusicGeneration] 아티스트 건너뛰기');
+      musicStore.setArtistCharacterId(null); // v3.156: 미선택 곡은 기획사명 폴백
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: '아티스트 없이 진행', step: 200 },
@@ -485,6 +489,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       return;
     }
     setSelectedArtistId(artist.character_id);
+    // v3.156: 선택 아티스트를 store로 승계 — 생성 body character_id → 발매 시 곡 아티스트명·착장 근거
+    musicStore.setArtistCharacterId(artist.character_id || null);
     console.info('[MusicGeneration] 아티스트 선택', { cid: artist.character_id, hasClone, preset: preset ? `${preset.gender}·${preset.style}` : null });
     if (preset && !hasClone) {
       // v3.143: 간편 목소리 아티스트 — 성별·스타일 프리셋 자동 반영, 보컬/내 목소리 단계 전부 스킵

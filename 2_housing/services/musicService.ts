@@ -260,6 +260,8 @@ export const generateWithSuno = async (params: Partial<MusicParams>) => {
       : undefined,
     // v3.102(B-4): 가사 보관함 출처 스냅샷 — { lyrics_id(로컬 id), title, is_mine } (서버 무검증 저장)
     lyrics_source: params.lyricsSource || undefined,
+    // v3.156: 작곡 대화에서 선택한 아티스트 — 발매 시 곡 아티스트명·착장 스냅샷의 근거 (generate.py v236)
+    character_id: (params as any).characterId || undefined,
     model: 'suno',
     duration: 120,
     start_music_gen: true,

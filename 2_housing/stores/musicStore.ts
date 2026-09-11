@@ -20,6 +20,9 @@ interface MusicState {
   negativeTags: string;
   personaModel: '' | 'style' | 'voice';
   personaId: string | null;
+  /** v3.156: 작곡 대화에서 선택한 아티스트(character_id) — 생성 body·발매 출처로 승계되어
+   *  차트 아티스트명·착장 스냅샷의 근거가 된다. 미선택 작곡은 null(기획사명 폴백). */
+  artistCharacterId: string | null;
   /** v3.102(B-4): 가사 보관함에서 작곡 진입 시 출처 스냅샷 — 생성 lyrics_source·발매 lyrics_id에 사용 */
   lyricsSource: LyricsSourceSnapshot | null;
   subVocal: string;
@@ -52,6 +55,7 @@ interface MusicState {
   setNegativeTags: (negativeTags: string) => void;
   setPersonaModel: (v: '' | 'style' | 'voice') => void;
   setPersonaId: (id: string | null) => void;
+  setArtistCharacterId: (id: string | null) => void;
   setLyricsSource: (v: LyricsSourceSnapshot | null) => void;
   setSubVocal: (v: string) => void;
   setSubVocalStyle: (v: string) => void;
@@ -86,6 +90,7 @@ const initialState = {
   negativeTags: '',
   personaModel: '' as const,
   personaId: null,
+  artistCharacterId: null,
   lyricsSource: null,
   subVocal: '',
   subVocalStyle: '',
@@ -120,6 +125,7 @@ export const useMusicStore = create<MusicState>((set) => ({
   setNegativeTags: (negativeTags) => set({ negativeTags }),
   setPersonaModel: (personaModel) => set({ personaModel }),
   setPersonaId: (personaId) => set({ personaId }),
+  setArtistCharacterId: (artistCharacterId) => set({ artistCharacterId }),
   setLyricsSource: (lyricsSource) => set({ lyricsSource }),
   setSubVocal: (subVocal) => set({ subVocal }),
   setSubVocalStyle: (subVocalStyle) => set({ subVocalStyle }),

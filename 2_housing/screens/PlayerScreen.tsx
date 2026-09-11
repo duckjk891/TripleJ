@@ -74,6 +74,10 @@ interface TrackData {
   id: string;
   title: string;
   artist_name?: string;
+  /** v3.156: 기획사명(=업로더 닉네임). artist_name은 곡에 기록된 가수명(없으면 서버가 기획사명 폴백) */
+  agency_name?: string;
+  album_id?: string | null;
+  album_title?: string | null;
   uploader_id?: string;
   uploader_nickname?: string;
   cover_image?: string;
@@ -105,10 +109,10 @@ interface TrackData {
 }
 
 // v3.102(B-4): source_meta 한 줄 요약 — 값 있는 항목만 " · "로 연결, 없으면 null(비표시)
+// v3.156(대표): 아티스트명은 상단 3단 표기에 이미 나오므로 이 줄에서는 제외(중복 방지) — 목소리·가사만.
 function buildSourceMetaLine(meta: TrackData['source_meta']): string | null {
   if (!meta) return null;
   const parts: string[] = [];
-  if (meta.artist_name) parts.push(`아티스트 ${meta.artist_name}`);
   if (meta.persona_name) parts.push(`목소리 ${meta.persona_name}`);
   if (meta.lyrics_title) parts.push(`가사 ${meta.lyrics_title}${meta.lyrics_is_mine ? ' (내 가사)' : ''}`);
   return parts.length > 0 ? parts.join(' · ') : null;
@@ -238,14 +242,44 @@ export default function PlayerScreen({ route, navigation }: any) {
       { label: 'AI 모델', value: t.ai_model },
       { label: '길이', value: secs },
       { label: '태그', value: t.tags?.length ? t.tags.join(', ') : null },
-      { label: '재생 수', value: t.play_count?.toLocaleString?.() },
-      { label: '좋아요', value: t.like_count?.toLocaleString?.() },
-      { label: '다운로드', value: t.download_count?.toLocaleString?.() },
+      // v3.156(대표): 재생 수·좋아요·다운로드는 곡 "생성 파라미터"가 아니라 통계 — 프롬프트 탭에서 제외
     ];
     return rows
       .filter((r) => r.value !== null && r.value !== undefined && r.value !== '' && !(Array.isArray(r.value) && !r.value.length))
       .map((r) => ({ label: r.label, value: String(r.value) }));
   })();
+
+  // v3.156: 프롬프트 텍스트(발매 시 저장된 "라벨: 값" 요약)에서 핵심 파라미터 칩과
+  // 중복되는 줄을 제거 — 추가로 작성한 내용(칩에 없는 항목·자유 서술)만 남긴다.
+  const promptExtraText = (() => {
+    const p = (track?.prompt || '').trim();
+    if (!p) return '';
+    const LABEL_TO_CHIP: Record<string, string> = {
+      '장르': '장르', '분위기': '분위기', '템포': '템포', '스타일': '스타일', '보컬': '보컬',
+      'BPM': 'BPM', '키': '키', '레퍼런스 스타일': '참조 스타일', '네거티브 태그': '제외 스타일',
+      'Persona Model': '페르소나',
+    };
+    const chipLabels = new Set(promptParams.map((x) => x.label));
+    return p
+      .split('\n')
+      .filter((line) => {
+        const m = line.match(/^\s*([^:]{1,20}):\s*(.+)$/);
+        if (!m) return line.trim().length > 0; // 자유 서술은 유지
+        const mapped = LABEL_TO_CHIP[m[1].trim()];
+        return !(mapped && chipLabels.has(mapped)); // 칩과 중복되는 라벨 줄만 제거
+      })
+      .join('\n')
+      .trim();
+  })();
+
+  // v3.156(대표): 가사의 [Verse]/[Chorus] 같은 섹션 마커 줄은 표시에서 숨긴다 (원본 데이터는 유지)
+  const stripLyricMarkers = (s: string): string =>
+    s
+      .split('\n')
+      .filter((line) => !/^\s*\[[^\]\n]*\]\s*$/.test(line))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
 
   const getCoverUri = (): string | null => {
     const img = track?.cover_image || track?.cover_image_url;
@@ -448,7 +482,8 @@ export default function PlayerScreen({ route, navigation }: any) {
     try {
       const res = await api.get(`/tracks/${tid}/lyrics-timeline`);
       const segs = res.data?.has_timestamps ? (res.data?.segments || []) : [];
-      setLyricsTimeline(segs);
+      // v3.156(대표): [Verse]/[Chorus] 같은 섹션 마커 세그먼트는 가사 싱크에서 숨김
+      setLyricsTimeline(segs.filter((s: LyricSegment) => !/^\s*\[[^\]]*\]\s*$/.test(s?.text || '')));
     } catch (err: any) {
       console.error('[PlayerScreen] lyrics-timeline 실패', { status: err?.response?.status });
       setLyricsTimeline([]);
@@ -704,7 +739,9 @@ export default function PlayerScreen({ route, navigation }: any) {
       </View>
 
       {/* Cover Art / 동영상(가사 싱크) */}
-      <View style={styles.coverWrapper}>
+      {/* v3.156(대표): 동영상(가사 싱크) 모드는 컨테이너 가로를 stretch로 고정 —
+          텍스트 길이에 따라 배경 이미지 폭이 늘었다 줄었다 하던 문제 해결 */}
+      <View style={[styles.coverWrapper, mediaTab === 'video' && styles.coverWrapperVideo]}>
         {mediaTab === 'video' ? (
           (fullTrack as any)?.music_video_url ? (
             // v3.48(B5): 뮤직비디오 실재생 — MV 자체 오디오가 있어 곡 오디오와 병행 금지(진입 시 일시정지는 openVideoTab에서)
@@ -736,9 +773,15 @@ export default function PlayerScreen({ route, navigation }: any) {
         <AppText variant="title1" center numberOfLines={1}>
           {track?.title || '알 수 없는 곡'}
         </AppText>
-        <TouchableOpacity
-          onPress={() => {
-            const nickname = track?.uploader_nickname || track?.artist_name;
+        {/* v3.156(대표): 곡 제목 / 가수(아티스트) / 기획사(·앨범) 3단 표기.
+            아티스트 미지정 곡은 서버가 artist_name=기획사명 폴백 → 한 줄만 표시(중복 방지). */}
+        {(() => {
+          const artistName = track?.artist_name || '알 수 없는 아티스트';
+          const agencyName = track?.agency_name || track?.uploader_nickname || '';
+          const hasSeparateAgency = !!agencyName && agencyName !== artistName;
+          const albumSuffix = track?.album_title ? ` · ${track.album_title}` : '';
+          const goAgencyChannel = () => {
+            const nickname = agencyName || artistName;
             const uploaderId = track?.uploader_id;
             if (!nickname) return;
             // v3.49: 팔로우·곡·앨범·피드·커뮤니티가 있는 채널로 이동(MAIDOL ArtistDetail 동일).
@@ -750,13 +793,28 @@ export default function PlayerScreen({ route, navigation }: any) {
               if (__DEV__) console.info('[Player] 기획사 → AgencyProfile 폴백(구형: uploader_id 없음)');
               navigation.navigate('AgencyProfile', { uploaderNickname: nickname, uploaderId });
             }
-          }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.trackArtistSpacing}>
-            {track?.artist_name || '알 수 없는 아티스트'} {'›'}
-          </AppText>
-        </TouchableOpacity>
+          };
+          return (
+            <>
+              {hasSeparateAgency ? (
+                <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.trackArtistSpacing}>
+                  {artistName}
+                </AppText>
+              ) : null}
+              <TouchableOpacity onPress={goAgencyChannel} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                {hasSeparateAgency ? (
+                  <AppText variant="caption" tone="muted" center numberOfLines={1} style={{ marginTop: 2 }}>
+                    {agencyName}{albumSuffix} {'›'}
+                  </AppText>
+                ) : (
+                  <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.trackArtistSpacing}>
+                    {artistName}{albumSuffix} {'›'}
+                  </AppText>
+                )}
+              </TouchableOpacity>
+            </>
+          );
+        })()}
         {/* v3.102(B-4): 출처 메타 한 줄 — source_meta 값 있는 항목만 (v216 규약: null·키부재 생략) */}
         {(() => {
           const sourceLine = buildSourceMetaLine(track?.source_meta);
@@ -980,7 +1038,7 @@ export default function PlayerScreen({ route, navigation }: any) {
             <ScrollView style={styles.sheetContent} showsVerticalScrollIndicator={false}>
               {detailTab === 'lyrics' && (
                 track?.lyrics ? (
-                  <AppText style={styles.sheetText}>{track.lyrics}</AppText>
+                  <AppText style={styles.sheetText}>{stripLyricMarkers(track.lyrics)}</AppText>
                 ) : fullTrack === null ? (
                   <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
                 ) : (
@@ -992,7 +1050,8 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <View>
                     <AppText style={styles.detailSectionTitle}>작곡 프롬프트</AppText>
                     <AppText style={styles.detailHelperText}>곡을 만들 때 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</AppText>
-                    {track?.prompt ? <AppText style={styles.sheetText}>{track.prompt}</AppText> : null}
+                    {/* v3.156(대표): 핵심 파라미터 칩과 중복되는 줄은 제거 — 추가 작성분만 표시 */}
+                    {promptExtraText ? <AppText style={styles.sheetText}>{promptExtraText}</AppText> : null}
 
                     {/* 곡에 저장된 값 + (내 곡이면) 생성 설정까지 합쳐서 표시 */}
                     <View style={styles.promptChipsBox}>
@@ -1158,6 +1217,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.6,
     shadowRadius: 16,
     elevation: 12,
+  },
+  // v3.156: 가사 싱크 모드 — 부모(container alignItems:center)의 콘텐츠 수축을 끊고 고정폭 확보
+  coverWrapperVideo: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
   },
   coverArt: {
     width: 210,

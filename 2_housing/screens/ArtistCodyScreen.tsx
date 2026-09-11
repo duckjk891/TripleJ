@@ -508,13 +508,22 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
   };
 
   // Tab 헤더 좌측에 ← 버튼 주입
+  // v3.156(대표): 이미지 디렉터(커버 대화)에서 "의상 바꾸러" 들어온 경우(returnToCover),
+  // ←는 Map이 아니라 진행 중이던 커버 대화로 복귀해야 한다 — goBack 우선.
   useLayoutEffect(() => {
     const parent = navigation.getParent();
     if (!parent) return;
     parent.setOptions({
       headerLeft: () => (
         <TouchableOpacity
-          onPress={() => navigation.navigate('Map')}
+          onPress={() => {
+            if (route?.params?.returnToCover && navigation.canGoBack()) {
+              console.info('[ArtistCody] ← 커버 대화로 복귀 (returnToCover)');
+              navigation.goBack();
+            } else {
+              navigation.navigate('Map');
+            }
+          }}
           style={{ paddingHorizontal: 12, paddingVertical: 6 }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
@@ -525,7 +534,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
     return () => {
       parent.setOptions({ headerLeft: undefined });
     };
-  }, [navigation]);
+  }, [navigation, route?.params?.returnToCover]);
 
   // ── v3.90 5단계 드릴다운 파생값 (MAIDOL ItemSelectModal 이식) ──
   const byPlatform = drill.platform ? pickerItems.filter((i) => platformOf(i) === drill.platform) : pickerItems;

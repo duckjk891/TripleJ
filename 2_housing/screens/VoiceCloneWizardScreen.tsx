@@ -812,9 +812,14 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
                 {genStatus === 'ready' ? (
                   <>
                     <AppText style={styles.doneTitle}>학습이 끝났어요</AppText>
+                    {/* v3.156(대표): 외부 AI 보이스는 수명이 짧다(실측 2~6시간, 편차 큼) —
+                        "최대 2시간 이내 사용" 기준으로 안내해 만료 전 작곡을 유도 */}
                     <AppText style={styles.doneDesc}>
                       이제 목소리 목록에서 "사용 가능"으로 표시돼요.{'\n'}
-                      아티스트 목소리로 설정해 곡을 만들어보세요.
+                      아티스트 목소리로 설정해 곡을 만들어보세요.{'\n\n'}
+                      ⏱️ 외부 AI 사정으로 목소리는 오래 보관되지 않아요.{'\n'}
+                      최대 2시간 이내에 작곡에 사용해 주세요!{'\n'}
+                      (만료돼도 ⭐는 자동 환불되고, 다시 학습할 수 있어요)
                     </AppText>
                     <AppText style={styles.doneStatus}>{STATUS_LABEL.ready}</AppText>
                   </>

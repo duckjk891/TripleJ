@@ -1005,7 +1005,8 @@ export default function ArtistResultScreen({ navigation, route }: any) {
                 : personaExpired
                   ? `"${serverArtist!.persona_name || '연결된 목소리'}"가 만료됐어요. 외부 AI 사정으로 목소리가 만료될 수 있어요 — 다시 학습해서 새 목소리를 연결해주세요. (학습에 쓴 ⭐는 환불돼요)`
                   : personaConnected
-                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.`
+                  // v3.156(대표): 외부 AI 보이스 수명 안내 — 최대 2시간 이내 사용 권장
+                  ? `"${serverArtist!.persona_name || '내 목소리'}" 목소리가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 목소리가 쓰여요.\n⏱️ 학습된 목소리는 외부 AI 사정으로 오래 보관되지 않아요 — 학습 후 최대 2시간 이내에 작곡에 사용해 주세요. (만료 시 ⭐ 자동 환불)`
                   : serverPreset
                     ? `간편 목소리(${serverPreset.gender} · ${serverPreset.style})가 연결되어 있어요. 이 아티스트로 곡을 만들 때 이 스타일이 적용돼요.`
                     : '목소리 연결은 필수예요! 간편 목소리 또는 내 목소리를 연결하면, 같은 아티스트는 항상 같은 목소리로 노래해요.'}

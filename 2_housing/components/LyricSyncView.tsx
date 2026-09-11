@@ -76,7 +76,8 @@ export default function LyricSyncView({ segments, positionMillis, coverUri, heig
 const styles = StyleSheet.create({
   wrap: { width: '100%', borderRadius: 16, overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
   bgImg: { borderRadius: 16 },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13,8,32,0.74)' },
+  // v3.156(대표): 배경 커버가 더 잘 보이도록 스크림 투명도 완화 (0.74 → 0.55)
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13,8,32,0.55)' },
   // 세로 가운데 정렬 + 가로 패딩(박스폭에 맞춰 개행)
   lyricsCol: { width: '100%', alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xl, gap: 10 },
   lyricLine: { width: '100%', lineHeight: 24 },

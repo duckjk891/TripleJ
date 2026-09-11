@@ -363,9 +363,9 @@ export default function MusicResultScreen({ navigation, route }: Props) {
       ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
       // v3.93: 2-variant 확정 — 선택한 클립이 트랙이 됨 (tracks.py:1386 variant_index, 0=BC)
       variant_index: selectedVariant,
-      // v3.102(B-4): 출처 기록 — 기본 아티스트 character_id + 가사 보관함 lyrics_id(로컬 id).
+      // v3.156: 작곡에서 "선택한" 아티스트 최우선(곡의 가수) — 미선택 시에만 기본 아티스트 폴백.
       // v216: 무효 값이어도 업로드 실패 없음(서버가 흡수), null/부재는 생략.
-      ...(characterId ? { character_id: characterId } : {}),
+      ...((store.artistCharacterId || characterId) ? { character_id: store.artistCharacterId || characterId } : {}),
       ...(store.lyricsSource?.lyrics_id ? { lyrics_id: store.lyricsSource.lyrics_id } : {}),
       // v3.104(B-5): 보관함 커버 재사용 — 본인 세션 산출물만 서버 검증 통과
       ...(libraryCover ? { cover_object_name: libraryCover.objectName } : {}),
@@ -422,8 +422,8 @@ export default function MusicResultScreen({ navigation, route }: Props) {
           ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
           // v3.93: 커버 경유 저장도 동일하게 선택 variant로 확정
           variant_index: selectedVariant,
-          // v3.102(B-4): 출처 기록 — handleSave와 동일 (무효여도 업로드 실패 없음)
-          ...(characterId ? { character_id: characterId } : {}),
+          // v3.156: handleSave와 동일 — 선택 아티스트 최우선, 미선택 시 기본 아티스트 폴백
+          ...((store.artistCharacterId || characterId) ? { character_id: store.artistCharacterId || characterId } : {}),
           ...(store.lyricsSource?.lyrics_id ? { lyrics_id: store.lyricsSource.lyrics_id } : {}),
           // v3.104(B-5): 보관함 커버 재사용 — handleSave와 동일
           ...(libraryCover ? { cover_object_name: libraryCover.objectName } : {}),
