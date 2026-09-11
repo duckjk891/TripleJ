@@ -48,6 +48,7 @@ export default function UserChannelScreen() {
   const [tracks, setTracks] = useState<any[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);
   const [characters, setCharacters] = useState<any[]>([]);
+  const [expandedArtist, setExpandedArtist] = useState<string | null>(null); // v3.160: 아티스트 곡 목록 펼침
   const [feeds, setFeeds] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -317,23 +318,50 @@ export default function UserChannelScreen() {
         </View>
       )}
 
-      {/* 아티스트 — v3.159 신설: 이 기획사의 아티스트(캐릭터) 공개 목록 */}
+      {/* 아티스트 — v3.160(대표): 대표이미지=최신곡 커버, 메타=발매 실적(곡·앨범 수),
+          행 탭 시 그 아티스트로 만든 곡 목록 펼침(공용 TrackRow) */}
       {tab === 'artists' && (
         <View style={styles.tabContent}>
           {characters.length ? (
             characters.map((c, i) => {
-              const img = c.sheet_preview_path ? `${BACKEND_BASE_URL}${c.sheet_preview_path}` : null;
+              const img = mediaUri(c.latest_cover_image);
+              const cid = c.character_id;
+              const opened = !!cid && expandedArtist === cid;
+              const artistTracks = tracks.filter((t) => t.character_id && String(t.character_id) === String(cid));
               return (
-                <View key={c.character_id || i} style={styles.albumRow}>
-                  <View style={styles.artistCover}>
-                    {img
-                      ? <Image source={{ uri: img }} style={styles.artistCoverImg} />
-                      : <Feather name="user" size={22} color={colors.text.muted} />}
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <AppText style={styles.albumRowTitle} numberOfLines={1}>{c.name || '이름 없음'}</AppText>
-                    <AppText style={styles.albumRowMeta}>{c.kind === 'virtual' ? '가상 아티스트' : '아티스트'}</AppText>
-                  </View>
+                <View key={cid || i}>
+                  <TouchableOpacity
+                    style={styles.albumRow}
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      if (!cid) return;
+                      if (__DEV__) console.info('[UserChannel] 아티스트 곡 목록 토글', { cid, open: !opened });
+                      setExpandedArtist(opened ? null : cid);
+                    }}
+                    accessibilityLabel={`아티스트 ${c.name}`}
+                  >
+                    <View style={styles.albumRowCover}>
+                      {img
+                        ? <Image source={{ uri: img }} style={styles.albumRowCoverImg} />
+                        : <Feather name="user" size={22} color={colors.text.muted} />}
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <AppText style={styles.albumRowTitle} numberOfLines={1}>{c.name || '이름 없음'}</AppText>
+                      <AppText style={styles.albumRowMeta}>{`곡 ${c.track_count ?? 0} · 앨범 ${c.album_count ?? 0}`}</AppText>
+                    </View>
+                    <Feather name={opened ? 'chevron-up' : 'chevron-down'} size={18} color={colors.text.muted} />
+                  </TouchableOpacity>
+                  {opened ? (
+                    artistTracks.length ? (
+                      artistTracks.map((t) => (
+                        <TrackRow
+                          key={String(t.id)}
+                          track={{ ...t, id: String(t.id) }}
+                          onPress={() => playTrack(t, artistTracks)}
+                        />
+                      ))
+                    ) : <EmptyState title="이 아티스트로 발매한 공개 곡이 없어요." />
+                  ) : null}
                 </View>
               );
             })
@@ -408,12 +436,7 @@ const styles = StyleSheet.create({
   albumRowCoverImg: { width: 56, height: 56 },
   albumRowTitle: { fontSize: 15, fontWeight: '600', color: colors.text.primary, marginBottom: 3 },
   albumRowMeta: { fontSize: 12, color: colors.text.muted },
-  // v3.159: 아티스트 카드 — 시트는 세로 비율이라 원형 크롭
-  artistCover: {
-    width: 56, height: 56, borderRadius: 28, overflow: 'hidden',
-    backgroundColor: colors.bg.surface2, justifyContent: 'center', alignItems: 'center',
-  },
-  artistCoverImg: { width: 56, height: 56, resizeMode: 'cover' },
+  // v3.160: 아티스트 대표이미지는 최신곡 커버(albumRowCover 재사용) — 시트 스타일 제거
   // v3.159: 피드 리스트/블록 — MyMusicScreen 관행
   feedList: { paddingHorizontal: 12, paddingBottom: 40 },
   feedBody: { marginTop: 8, fontSize: 14, lineHeight: 21, color: colors.text.secondary },

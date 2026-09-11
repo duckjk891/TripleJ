@@ -13,7 +13,10 @@ import {
   Linking,
   FlatList,
   Platform,
+  Share,
+  useWindowDimensions,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { showAlert } from '../utils/appAlert';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
@@ -703,6 +706,31 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const coverUri = getCoverUri();
 
+  // v3.160(대표): 커버 가로 꽉 차게 + 세로 UI(하단 상세 토글까지) 절대 안 밀리게 —
+  // 화면 높이에서 고정 UI 몫(헤더·탭·곡정보·진행바·컨트롤·액션·토글 ≈ 560)을 뺀 값을
+  // 이미지 높이로. 최소 180 보장, 최대는 가로폭(정사각 이상 확대 금지).
+  const { width: winW, height: winH } = useWindowDimensions();
+  const coverH = Math.max(180, Math.min(winW, winH - 560));
+
+  // v3.160(대표): 가사 공유 — 네이티브 공유 시트 우선, 미지원(웹 등)이면 클립보드 복사 폴백
+  const shareLyrics = async () => {
+    const body = stripLyricMarkers(track?.lyrics || '');
+    if (!body) { showAlert('안내', '공유할 가사가 없어요.'); return; }
+    const msg = `${track?.title || ''} — ${track?.artist_name || ''}\n\n${body}`;
+    console.info('[PlayerScreen] 가사 공유 시도', { len: msg.length });
+    try {
+      await Share.share({ message: msg });
+    } catch (err: any) {
+      try {
+        await Clipboard.setStringAsync(msg);
+        showAlert('가사 복사 완료', '가사가 클립보드에 복사됐어요. 원하는 곳에 붙여넣어 공유하세요!');
+      } catch (err2: any) {
+        console.error('[PlayerScreen] 가사 공유 실패', { message: err2?.message });
+        showAlert('안내', '가사를 공유하지 못했어요.');
+      }
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Background gradient simulation */}
@@ -710,8 +738,9 @@ export default function PlayerScreen({ route, navigation }: any) {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <AppText variant="title2">{'✕'}</AppText>
+        {/* v3.160(대표): 닫기가 아니라 미니플레이어로 내려가는 동작 — ✕ 대신 아래 화살표 */}
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} accessibilityLabel="미니플레이어로 내려가기">
+          <Feather name="chevron-down" size={26} color={colors.text.primary} />
         </TouchableOpacity>
         <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.headerTitleFlex}>Now Playing</AppText>
         <View style={styles.backButton} />
@@ -729,31 +758,31 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Cover Art / 동영상(가사 싱크) */}
-      {/* v3.156(대표): 동영상(가사 싱크) 모드는 컨테이너 가로를 stretch로 고정 —
-          텍스트 길이에 따라 배경 이미지 폭이 늘었다 줄었다 하던 문제 해결 */}
-      <View style={[styles.coverWrapper, mediaTab === 'video' && styles.coverWrapperVideo]}>
+      {/* Cover Art / 동영상(가사 싱크) — v3.160(대표): 가로 꽉 차게(엣지-투-엣지).
+          높이는 화면 세로에서 하단 UI(정보·진행바·컨트롤·액션·상세 토글) 몫을 빼고 계산 —
+          세로 UI가 절대 밀리지 않는 것이 우선(작은 화면에선 이미지가 낮아짐). */}
+      <View style={styles.coverWrapper}>
         {mediaTab === 'video' ? (
           (fullTrack as any)?.music_video_url ? (
             // v3.48(B5): 뮤직비디오 실재생 — MV 자체 오디오가 있어 곡 오디오와 병행 금지(진입 시 일시정지는 openVideoTab에서)
             <Video
               source={{ uri: (fullTrack as any).music_video_url }}
-              style={styles.coverArt}
+              style={[styles.coverArt, { height: coverH }]}
               useNativeControls
               resizeMode={ResizeMode.CONTAIN}
               onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
             />
           ) : lyricsTimeline.length > 0 ? (
-            <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={210} />
+            <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={coverH} />
           ) : (
-            <View style={[styles.coverArt, styles.coverPlaceholder]}>
+            <View style={[styles.coverArt, styles.coverPlaceholder, { height: coverH }]}>
               <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
             </View>
           )
         ) : coverUri ? (
-          <Image source={{ uri: coverUri }} style={styles.coverArt} />
+          <Image source={{ uri: coverUri }} style={[styles.coverArt, { height: coverH }]} resizeMode="cover" />
         ) : (
-          <View style={[styles.coverArt, styles.coverPlaceholder]}>
+          <View style={[styles.coverArt, styles.coverPlaceholder, { height: coverH }]}>
             <AppText style={styles.coverPlaceholderIcon}>{'♪'}</AppText>
           </View>
         )}
@@ -1002,7 +1031,14 @@ export default function PlayerScreen({ route, navigation }: any) {
             <ScrollView style={styles.sheetContent} showsVerticalScrollIndicator={false}>
               {detailTab === 'lyrics' && (
                 track?.lyrics ? (
-                  <AppText style={styles.sheetText}>{stripLyricMarkers(track.lyrics)}</AppText>
+                  <View>
+                    {/* v3.160(대표): 가사 공유 */}
+                    <TouchableOpacity style={styles.lyricsShareBtn} onPress={shareLyrics} activeOpacity={0.8} accessibilityLabel="가사 공유">
+                      <Feather name="share-2" size={14} color={colors.accent.primary} />
+                      <AppText style={styles.lyricsShareText}>가사 공유</AppText>
+                    </TouchableOpacity>
+                    <AppText style={styles.sheetText}>{stripLyricMarkers(track.lyrics)}</AppText>
+                  </View>
                 ) : fullTrack === null ? (
                   <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
                 ) : (
@@ -1182,24 +1218,14 @@ const styles = StyleSheet.create({
   },
   mediaTab: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 16, borderRadius: radius.pill },
   mediaTabActive: { backgroundColor: colors.bg.surface3 },
+  // v3.160(대표): 커버 가로 꽉 차게(엣지-투-엣지) — stretch + 패딩/라운드 없음, 높이는 coverH 인라인
   coverWrapper: {
-    marginTop: 16,
-    shadowColor: colors.bg.deepest,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.6,
-    shadowRadius: 16,
-    elevation: 12,
-  },
-  // v3.156: 가사 싱크 모드 — 부모(container alignItems:center)의 콘텐츠 수축을 끊고 고정폭 확보
-  coverWrapperVideo: {
+    marginTop: 12,
     alignSelf: 'stretch',
     alignItems: 'center',
-    paddingHorizontal: spacing.xl,
   },
   coverArt: {
-    width: 210,
-    height: 210,
-    borderRadius: 16,
+    width: '100%',
   },
   coverPlaceholder: {
     backgroundColor: colors.bg.surface1,
@@ -1516,6 +1542,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
   },
   outfitDetailBtnTextDisabled: { color: colors.text.muted, fontSize: 11, fontWeight: '600' },
+  // v3.160: 가사 공유 버튼(상세 시트 가사 탭 상단)
+  lyricsShareBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    alignSelf: 'flex-end', paddingHorizontal: 12, paddingVertical: 6, marginBottom: 8,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.accent.primary,
+  },
+  lyricsShareText: { fontSize: 12, fontWeight: '700', color: colors.accent.primary },
   promptChipsBox: {
     marginTop: 16,
     padding: 12,
