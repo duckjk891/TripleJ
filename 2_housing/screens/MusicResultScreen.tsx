@@ -35,8 +35,9 @@ const COMPOSER_PORTRAIT = require('../assets/portraits/composer_director.png');
 const WONDERA_PORTRAIT = require('../assets/portraits/wondera_director.png');
 const IMAGE_PORTRAIT = require('../assets/portraits/image_director.png');
 
-// 작곡 디렉터에서 받은 풍부한 파라미터를 한 줄 한 줄 요약 텍스트로 변환.
-// PlayerScreen의 prompt 탭에 그대로 표시되도록 한국어 라벨 + 줄바꿈 구분.
+// v3.166(대표): 사운드 파라미터(장르/BPM 등)는 플레이어 '핵심 파라미터' 칩이 담당 —
+// prompt 필드에는 작사 요약 화면의 "이야기"(주제·꼭 들어갈 말·시점·추가 요청)를 저장한다.
+// PlayerScreen 프롬프트 탭의 '이야기' 섹션에 그대로 표시된다.
 function buildPromptSummary(music: any, lyrics: any): string | undefined {
   const lines: string[] = [];
   const add = (label: string, val: any) => {
@@ -45,19 +46,10 @@ function buildPromptSummary(music: any, lyrics: any): string | undefined {
     if (!s) return;
     lines.push(`${label}: ${s}`);
   };
-  add('장르', music.genre || lyrics.genre);
-  add('분위기', music.mood || lyrics.mood);
-  add('템포', music.tempo);
-  add('스타일', music.style || lyrics.style);
-  add('보컬', music.vocal);
-  add('보컬 스타일', music.vocalStyle);
-  add('서브 보컬', music.subVocal);
-  add('서브 보컬 스타일', music.subVocalStyle);
-  add('BPM', music.bpm);
-  add('키', music.musicalKey);
-  add('레퍼런스 스타일', music.referenceStyle);
-  add('네거티브 태그', music.negativeTags);
-  add('Persona Model', music.personaModel);
+  add('주제', lyrics.content);
+  add('꼭 들어갈 말', lyrics.keywords);
+  add('시점', lyrics.perspective);
+  add('추가 요청', lyrics.reference);
   return lines.length > 0 ? lines.join('\n') : undefined;
 }
 
@@ -417,7 +409,7 @@ export default function MusicResultScreen({ navigation, route }: Props) {
             || (store.genre && store.mood ? `${store.genre} - ${store.mood}` : store.genre || store.mood || '새로운 곡'),
           genre: store.genre || undefined,
           mood: store.mood || undefined,
-          prompt: store.lyrics || undefined,
+          prompt: buildPromptSummary(store, lyricsStore), // v3.166: 커버 경유 저장도 '이야기' 요약으로 통일
           lyrics: lyricsStore.generatedLyrics || store.lyrics || undefined,
           ai_model: store.selectedModel === 'suno' ? 'Suno' : 'Wondera',
           // v3.93: 커버 경유 저장도 동일하게 선택 variant로 확정

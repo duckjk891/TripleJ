@@ -1051,8 +1051,8 @@ export default function PlayerScreen({ route, navigation }: any) {
               {detailTab === 'prompt' && (
                 (track?.prompt || promptParams.length) ? (
                   <View>
-                    <AppText style={styles.detailSectionTitle}>작곡 프롬프트</AppText>
-                    <AppText style={styles.detailHelperText}>곡을 만들 때 설정한 장르·분위기·보컬·레퍼런스·BPM 등 작곡 파라미터입니다.</AppText>
+                    <AppText style={styles.detailSectionTitle}>이야기</AppText>
+                    <AppText style={styles.detailHelperText}>이 곡이 담고 있는 이야기 — 주제, 꼭 들어갈 말, 시점, 추가 요청이에요.</AppText>
                     {/* v3.156(대표): 핵심 파라미터 칩과 중복되는 줄은 제거 — 추가 작성분만 표시 */}
                     {promptExtraText ? <AppText style={styles.sheetText}>{promptExtraText}</AppText> : null}
 
@@ -1078,7 +1078,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <AppText style={styles.sheetEmptyText}>불러오는 중...</AppText>
                 ) : (
                   <View>
-                    <AppText style={styles.sheetEmptyText}>이 곡은 작곡 프롬프트가 없습니다</AppText>
+                    <AppText style={styles.sheetEmptyText}>이 곡은 이야기 정보가 없습니다</AppText>
                     <AppText style={[styles.sheetEmptyText, { fontSize: 12, marginTop: 8 }]}>
                       AI가 자동으로 생성했거나, 외부 업로드 곡일 수 있어요.
                     </AppText>
