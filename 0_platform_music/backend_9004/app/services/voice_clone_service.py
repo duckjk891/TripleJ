@@ -46,6 +46,9 @@ from .suno_generator import (
 logger = logging.getLogger(__name__)
 
 VOICE_CLONES_COLLECTION = "voice_clones"
+# v242(대표 확정 2026-09-11): 보이스 수명 = 생성 후 2시간 고정 타이머.
+# 2시간 경과 시 외부 API 확인 없이 만료 처리(작곡 선체크·목록 갱신 공통 기준).
+VOICE_TTL_HOURS = 2
 PRESIGN_HOURS = 24
 
 STATUS_VALIDATING = "validating"          # validate 콜백 대기
@@ -918,15 +921,35 @@ async def list_voice_clones(user_id: str) -> list[dict]:
     logger.info("[voice_clone] list user=%s count=%d", user_id, len(docs))
     # v240(대표 지적 2026-09-11): "만든 지 22시간인데 아직 사용 가능으로 보임" —
     # 기존엔 작곡 시작 직전에만 check-voice 를 했고 목록 표시는 DB status 그대로였다.
-    # 목록 조회 시에도 ready 클론을 lazy 재확인(10분 스로틀·요청당 최대 3개):
-    # 만료면 expired 마킹만 (대표 확정 2026-09-11: 만료는 환불 대상 아님 — 실패 시에만 환불).
+    # v242(대표 확정): **2시간 하드 타이머** — 만든 지 2시간이 지나면 외부 API 확인 없이
+    # 즉시 만료 처리. 2시간 이내인 것만 lazy check-voice(10분 스로틀·요청당 최대 3개).
+    # 만료는 무환불(실패 시에만 환불 — v240).
     try:
         now = datetime.now(timezone.utc)
         checked = 0
         for d in docs:
-            if checked >= 3:
-                break
             if (d.get("status") or "") != "ready":
+                continue
+            cid = str(d["_id"])
+            # ── 2시간 하드 만료 (API 확인 불필요) ──
+            created = d.get("created_at")
+            if created is not None:
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if (now - created) > timedelta(hours=VOICE_TTL_HOURS):
+                    await mongo[VOICE_CLONES_COLLECTION].update_one(
+                        {"_id": d["_id"], "status": {"$ne": "expired"}},
+                        {"$set": {
+                            "status": "expired",
+                            "expired_at": now,
+                            "expired_reason": f"ttl: {VOICE_TTL_HOURS}h hard expiry",
+                        }},
+                    )
+                    logger.warning("[VoiceList] ttl expired user=%s clone=%s (2h 초과 — API 미확인)", user_id[:8], cid)
+                    d["status"] = "expired"
+                    d["expired_at"] = now
+                    continue
+            if checked >= 3:
                 continue
             task_id = d.get("generate_task_id") or d.get("voice_id")
             if not task_id:
@@ -935,7 +958,6 @@ async def list_voice_clones(user_id: str) -> list[dict]:
             if last and (now - last) < timedelta(minutes=10):
                 continue
             checked += 1
-            cid = str(d["_id"])
             try:
                 available = await check_voice_available(task_id)
             except Exception as exc:

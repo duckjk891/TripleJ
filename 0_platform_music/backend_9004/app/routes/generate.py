@@ -210,6 +210,28 @@ async def _voice_expired_response(user_id: str, persona_id):
             status_code=400,
             content={"error": "선택한 목소리가 만료되었어요. 목소리를 다시 학습한 뒤 시도해주세요."},
         )
+    # v242(대표 확정): 2시간 하드 타이머 — 생성 후 2시간 경과면 외부 API 확인 없이 만료 처리
+    _created = doc.get("created_at")
+    if _created is not None:
+        if _created.tzinfo is None:
+            _created = _created.replace(tzinfo=timezone.utc)
+        if (datetime.now(timezone.utc) - _created) > timedelta(hours=vcs.VOICE_TTL_HOURS):
+            await mongo.voice_clones.update_one(
+                {"_id": doc["_id"], "status": {"$ne": "expired"}},
+                {"$set": {
+                    "status": "expired",
+                    "expired_at": datetime.now(timezone.utc),
+                    "expired_reason": f"ttl: {vcs.VOICE_TTL_HOURS}h hard expiry (pre-check)",
+                }},
+            )
+            logger.warning(
+                "[star-econ] voice pre-check: ttl expired user=%s clone=%s (2h 초과 — API 미확인·무환불)",
+                user_id[:8], clone_id,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"error": "목소리는 만든 후 2시간까지만 사용할 수 있어요. 목소리를 다시 학습한 뒤 시도해주세요."},
+            )
     task_id = doc.get("generate_task_id") or persona_id
     try:
         available = await vcs.check_voice_available(task_id)
