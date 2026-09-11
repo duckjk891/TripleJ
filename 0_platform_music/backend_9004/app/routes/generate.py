@@ -201,14 +201,14 @@ async def _voice_expired_response(user_id: str, persona_id):
         return None  # 본인 클론 아님(외부/레거시 값) — 체크 대상 아님
     clone_id = str(doc["_id"])
     if doc.get("status") == "expired":
-        refunded = await vcs.refund_clone_points(clone_id)
+        # v240(대표 확정): 만료는 무환불 — 다시 학습(⭐5)하면 됨. 실패 시에만 환불.
         logger.warning(
-            "[star-econ] voice pre-check: already expired user=%s clone=%s refund=%s",
-            user_id[:8], clone_id, refunded,
+            "[star-econ] voice pre-check: already expired user=%s clone=%s (무환불)",
+            user_id[:8], clone_id,
         )
         return JSONResponse(
             status_code=400,
-            content={"error": "선택한 목소리가 만료되었어요. 목소리를 다시 학습한 뒤 시도해주세요. (학습에 쓴 ⭐는 환불돼요)"},
+            content={"error": "선택한 목소리가 만료되었어요. 목소리를 다시 학습한 뒤 시도해주세요."},
         )
     task_id = doc.get("generate_task_id") or persona_id
     try:
@@ -229,14 +229,13 @@ async def _voice_expired_response(user_id: str, persona_id):
             "expired_reason": "pre-check: check-voice isAvailable=false",
         }},
     )
-    refunded = await vcs.refund_clone_points(clone_id)
     logger.warning(
-        "[star-econ] voice pre-check: expired -> block user=%s clone=%s refund=%s",
-        user_id[:8], clone_id, refunded,
+        "[star-econ] voice pre-check: expired -> block user=%s clone=%s (무환불 — 대표 확정)",
+        user_id[:8], clone_id,
     )
     return JSONResponse(
         status_code=400,
-        content={"error": "선택한 목소리가 만료되어 곡을 만들 수 없어요. 목소리를 다시 학습해주세요. (학습에 쓴 ⭐는 환불해 드렸어요)"},
+        content={"error": "선택한 목소리가 만료되어 곡을 만들 수 없어요. 목소리를 다시 학습해주세요."},
     )
 
 

@@ -265,13 +265,9 @@ async def generate_music_suno(
                             {"$or": [{"voice_id": persona_id}, {"generate_task_id": persona_id}], "status": {"$ne": "expired"}},
                             {"$set": {"status": "expired", "expired_at": datetime.now(timezone.utc), "expired_reason": (err_msg or "")[:200]}},
                         )
-                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d", generation_id, persona_id, 1 if flagged else 0)
-                        # v232 — 만료 = 외부(Suno) 사정의 실패로 간주, 클론 학습 ⭐ 1회 자동 환불
-                        # (refunded 플래그 원자 클레임이라 이중 환불 불가. 순환 import 회피 위해 지역 import)
-                        if flagged:
-                            from .voice_clone_service import refund_clone_points
-                            _r = await refund_clone_points(str(flagged["_id"]), db=mongo_db)
-                            logger.info("[suno] gen_id=%s expired clone refund clone_id=%s refunded=%s", generation_id, str(flagged["_id"]), _r)
+                        # v240(대표 확정 2026-09-11): 만료는 무환불 — 다시 학습(⭐5)하면 됨.
+                        # 학습 "실패"(B-9 failed 전이) 환불만 유지.
+                        logger.warning("[suno] gen_id=%s voice expired -> flag clone persona_id=%s matched=%d (무환불)", generation_id, persona_id, 1 if flagged else 0)
                     except Exception as _flag_exc:
                         logger.warning("[suno] gen_id=%s voice-clone expire-flag failed: %s", generation_id, _flag_exc)
             else:

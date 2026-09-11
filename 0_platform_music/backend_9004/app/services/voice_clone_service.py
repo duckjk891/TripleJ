@@ -916,6 +916,52 @@ async def list_voice_clones(user_id: str) -> list[dict]:
     ).sort("created_at", -1)
     docs = await cursor.to_list(length=500)
     logger.info("[voice_clone] list user=%s count=%d", user_id, len(docs))
+    # v240(대표 지적 2026-09-11): "만든 지 22시간인데 아직 사용 가능으로 보임" —
+    # 기존엔 작곡 시작 직전에만 check-voice 를 했고 목록 표시는 DB status 그대로였다.
+    # 목록 조회 시에도 ready 클론을 lazy 재확인(10분 스로틀·요청당 최대 3개):
+    # 만료면 expired 마킹만 (대표 확정 2026-09-11: 만료는 환불 대상 아님 — 실패 시에만 환불).
+    try:
+        now = datetime.now(timezone.utc)
+        checked = 0
+        for d in docs:
+            if checked >= 3:
+                break
+            if (d.get("status") or "") != "ready":
+                continue
+            task_id = d.get("generate_task_id") or d.get("voice_id")
+            if not task_id:
+                continue
+            last = d.get("availability_checked_at")
+            if last and (now - last) < timedelta(minutes=10):
+                continue
+            checked += 1
+            cid = str(d["_id"])
+            try:
+                available = await check_voice_available(task_id)
+            except Exception as exc:
+                logger.warning("[VoiceList] check skipped clone=%s: %s", cid, str(exc)[:120])
+                continue
+            await mongo[VOICE_CLONES_COLLECTION].update_one(
+                {"_id": d["_id"]}, {"$set": {"availability_checked_at": now}},
+            )
+            d["availability_checked_at"] = now
+            if not available:
+                await mongo[VOICE_CLONES_COLLECTION].update_one(
+                    {"_id": d["_id"], "status": {"$ne": "expired"}},
+                    {"$set": {
+                        "status": "expired",
+                        "expired_at": now,
+                        "expired_reason": "list refresh: check-voice isAvailable=false",
+                    }},
+                )
+                logger.warning(
+                    "[VoiceList] expired -> marked user=%s clone=%s (만료는 무환불 — 대표 확정)",
+                    user_id[:8], cid,
+                )
+                d["status"] = "expired"
+                d["expired_at"] = now
+    except Exception:
+        logger.exception("[VoiceList] availability refresh failed — returning list as-is")
     return [_serialize(d) for d in docs]
 
 
