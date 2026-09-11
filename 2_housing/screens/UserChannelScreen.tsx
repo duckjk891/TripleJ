@@ -242,6 +242,21 @@ export default function UserChannelScreen() {
             </>
           ) : <EmptyState icon="🎵" title="아직 만든 음악이 없어요" />
         )}
+        {/* v3.158(대표 확정): 내 채널이어도 작성은 마이페이지에서 — 채널은 보기 전용 유지, 숏컷으로 유도만 */}
+        {isSelf && (tab === 'feed' || tab === 'community') ? (
+          <TouchableOpacity
+            style={styles.writeShortcut}
+            activeOpacity={0.8}
+            onPress={() => {
+              if (__DEV__) console.info('[UserChannel] 작성 숏컷 → MyMusic(마이페이지)', { tab });
+              // UserChannel은 RootStack, MyMusic은 MainTabs 소속 — 중첩 경로로 진입
+              navigation.navigate('MainTabs', { screen: 'MyMusic' });
+            }}
+            accessibilityLabel="마이페이지에서 작성하기"
+          >
+            <AppText variant="footnote" tone="accent">✏️ {tab === 'feed' ? '피드' : '공지'} 작성은 마이페이지에서 — 작성하러 가기 ›</AppText>
+          </TouchableOpacity>
+        ) : null}
         {tab === 'feed' && (
           feeds.length ? feeds.map((f, i) => <FeedCard key={f.id ?? i} item={f} />)
             : <EmptyState icon="📝" title="아직 작성한 피드가 없어요" />
@@ -257,6 +272,15 @@ export default function UserChannelScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
+  // v3.158: 내 채널 작성 유도 숏컷(보기 전용 원칙 유지 — 마이페이지로 점프만)
+  writeShortcut: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border.subtle,
+  },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.deepest },
   header: { alignItems: 'center', padding: spacing.xl, paddingBottom: spacing.lg },
   stats: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.lg, gap: spacing.lg },

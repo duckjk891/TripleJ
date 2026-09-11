@@ -784,25 +784,26 @@ export default function PlayerScreen({ route, navigation }: any) {
               navigation.navigate('AgencyProfile', { uploaderNickname: nickname, uploaderId });
             }
           };
+          // v3.158(대표): 가수·기획사 한 줄 병기 — "펄킴 · lovvepearl ›" (기획사 부분 탭 → 채널)
           return (
-            <>
+            <View style={styles.artistRow}>
               {hasSeparateAgency ? (
-                <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.trackArtistSpacing}>
+                <AppText variant="callout" tone="accent" numberOfLines={1}>
                   {artistName}
                 </AppText>
               ) : null}
               <TouchableOpacity onPress={goAgencyChannel} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 {hasSeparateAgency ? (
-                  <AppText variant="caption" tone="muted" center numberOfLines={1} style={{ marginTop: 2 }}>
-                    {agencyName}{albumSuffix} {'›'}
+                  <AppText variant="callout" tone="muted" numberOfLines={1}>
+                    {' · '}{agencyName}{albumSuffix} {'›'}
                   </AppText>
                 ) : (
-                  <AppText variant="callout" tone="accent" center numberOfLines={1} style={styles.trackArtistSpacing}>
+                  <AppText variant="callout" tone="accent" numberOfLines={1}>
                     {artistName}{albumSuffix} {'›'}
                   </AppText>
                 )}
               </TouchableOpacity>
-            </>
+            </View>
           );
         })()}
         {/* v3.157(대표): 출처 메타 한 줄(목소리·가사) 제거 — 제목/가수/기획사만 표기 */}
@@ -1136,6 +1137,14 @@ const styles = StyleSheet.create({
   },
   headerTitleFlex: { flex: 1 },
   trackArtistSpacing: { marginTop: spacing.xs },
+  // v3.158: 가수·기획사 한 줄 병기 행
+  artistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+    maxWidth: '92%',
+  },
   actionLabelSpacing: { marginTop: spacing.xxs },
   bgOverlay: {
     ...StyleSheet.absoluteFillObject,
