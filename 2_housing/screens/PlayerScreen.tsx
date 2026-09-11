@@ -34,6 +34,7 @@ import { useAuthStore } from '../stores/authStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
+import Marquee from '../components/Marquee';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -760,9 +761,10 @@ export default function PlayerScreen({ route, navigation }: any) {
 
       {/* Track Info */}
       <View style={styles.trackInfoContainer}>
-        <AppText variant="title1" center numberOfLines={1}>
-          {track?.title || '알 수 없는 곡'}
-        </AppText>
+        {/* v3.159(대표): 긴 제목은 말줄임 대신 차트와 동일하게 가로로 흘러가며 전체 표시 */}
+        <View style={styles.titleMarqueeWrap}>
+          <Marquee text={track?.title || '알 수 없는 곡'} variant="title1" center />
+        </View>
         {/* v3.156(대표): 곡 제목 / 가수(아티스트) / 기획사(·앨범) 3단 표기.
             아티스트 미지정 곡은 서버가 artist_name=기획사명 폴백 → 한 줄만 표시(중복 방지). */}
         {(() => {
@@ -1214,6 +1216,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     width: '100%',
   },
+  // v3.159: 제목 마퀴 — 컨테이너 폭 기준으로 넘침 판정하도록 stretch
+  titleMarqueeWrap: { alignSelf: 'stretch' },
   trackTitle: {
     fontSize: 22,
     fontWeight: 'bold',

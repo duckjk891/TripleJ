@@ -12,11 +12,13 @@ interface Props {
   style?: TextProps['style'];
   gap?: number;       // 반복 사이 간격
   speed?: number;     // px/sec
+  /** v3.159: 넘치지 않을 땐 가운데 정렬(플레이어 제목처럼 center 레이아웃용). 기본 false(좌측 — 차트 행 관행) */
+  center?: boolean;
 }
 
 const NOWRAP = Platform.OS === 'web' ? ({ whiteSpace: 'nowrap' } as any) : {};
 
-export default function Marquee({ text, variant = 'bodyStrong', tone = 'primary', style, gap = 36, speed = 40 }: Props) {
+export default function Marquee({ text, variant = 'bodyStrong', tone = 'primary', style, gap = 36, speed = 40, center = false }: Props) {
   const [containerW, setContainerW] = useState(0);
   const [textW, setTextW] = useState(0);
   const x = useRef(new Animated.Value(0)).current;
@@ -43,7 +45,7 @@ export default function Marquee({ text, variant = 'bodyStrong', tone = 'primary'
 
   return (
     <View style={styles.container} onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}>
-      <Animated.View style={[styles.track, overflow ? { transform: [{ translateX: x }] } : null]}>
+      <Animated.View style={[styles.track, center && !overflow ? { justifyContent: 'center' } : null, overflow ? { transform: [{ translateX: x }] } : null]}>
         {/* 실제 표시 = 측정 대상. flexShrink:0(+web nowrap) → 한 줄 자연폭, 말줄임 없음 */}
         <AppText
           variant={variant}
