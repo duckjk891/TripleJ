@@ -780,7 +780,9 @@ export default function PlayerScreen({ route, navigation }: any) {
             </View>
           )
         ) : coverUri ? (
-          <Image source={{ uri: coverUri }} style={[styles.coverArt, { height: coverH }]} resizeMode="cover" />
+          // v3.161(대표 확정): 원본 커버는 2048×2048 정사각 — 잘림 없이 정사각 유지하되,
+          // 세로 여유가 허용하는 최대 크기(coverH)로 기존(210)보다 크게 표시.
+          <Image source={{ uri: coverUri }} style={[styles.coverSquare, { width: coverH, height: coverH }]} resizeMode="cover" />
         ) : (
           <View style={[styles.coverArt, styles.coverPlaceholder, { height: coverH }]}>
             <AppText style={styles.coverPlaceholderIcon}>{'♪'}</AppText>
@@ -1227,6 +1229,8 @@ const styles = StyleSheet.create({
   coverArt: {
     width: '100%',
   },
+  // v3.161: 노래 탭 커버 — 잘림 없는 정사각(크기는 coverH 인라인), 라운드 복원
+  coverSquare: { borderRadius: 16 },
   coverPlaceholder: {
     backgroundColor: colors.bg.surface1,
     justifyContent: 'center',
