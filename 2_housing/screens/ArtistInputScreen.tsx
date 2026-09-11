@@ -23,6 +23,7 @@ import { useCharacterTaskStore } from '../stores/characterTaskStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useOutfitStore } from '../stores/outfitStore';
 import { fetchStyleSamples, resolveArtStyleLabel, type StyleSample } from '../utils/artStyle';
+import { getFaceVerifyStatus } from '../services/faceVerifyService';
 import { colors } from '../theme/colors';
 
 const ARTIST_PORTRAIT = require('../assets/portraits/artist_director.png');
@@ -289,6 +290,19 @@ export default function ArtistInputScreen({ navigation, route }: any) {
                 taskStore.setInput({ portraitConfirmed: true, characterKind: isVirtualMode ? 'virtual' : 'real' });
                 pushUser(`사진 선택: ${file.name}`);
                 startQuestioning();
+                // v3.163(대표): 얼굴인증 수집·이용 동의는 "만들기" 클릭이 아니라 사진 업로드
+                // 시점에 미리 — 실사+본인인증 완료+미동의 사용자만 동의 화면(consentOnly)으로.
+                // best-effort: 상태 조회 실패해도 입력 흐름은 계속(생성 시점 게이트가 후방 방어).
+                if (!isVirtualMode) {
+                  getFaceVerifyStatus()
+                    .then((st) => {
+                      if (st?.enabled && st.is_verified && st.consent_needed) {
+                        console.info('[ArtistInput] 얼굴인증 동의 선진행 → FaceVerify(consentOnly)');
+                        (navigation as any).navigate('FaceVerify', { consentOnly: true });
+                      }
+                    })
+                    .catch((err: any) => console.warn('[ArtistInput] face status 확인 실패(계속 진행)', err?.response?.status));
+                }
               },
             },
           ]

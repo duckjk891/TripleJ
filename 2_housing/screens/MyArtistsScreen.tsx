@@ -385,11 +385,7 @@ export default function MyArtistsScreen({ navigation }: any) {
                     <AppText style={styles.cardName} numberOfLines={1}>
                       {displayGender ? `${displayName} · ${displayGender}` : displayName}
                     </AppText>
-                    {a.isDefault && (
-                      <View style={styles.defaultBadge}>
-                        <AppText style={styles.defaultBadgeText}>대표</AppText>
-                      </View>
-                    )}
+                    {/* v3.163(대표): 대표 지정 개념 제거 — 배지 표시 안 함 */}
                   </View>
                   {voiceLabel && (
                     <AppText

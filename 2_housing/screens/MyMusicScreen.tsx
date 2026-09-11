@@ -231,7 +231,12 @@ export default function MyMusicScreen({ navigation }: any) {
   // v3.117: 요약 행 데이터 — 대표(is_default) 우선, 없으면 첫 번째. list가 비면 /me 레거시 폴백.
   // artistSheetUrl은 cache-buster(Date.now) 포함이라 렌더마다 새 URL이 되지 않게 useMemo로 고정.
   const artistView = useMemo(() => {
-    const def = artists.find((a) => a.is_default) ?? artists[0] ?? null;
+    // v3.163(대표): 대표 지정 개념 제거 — 마이페이지에는 "가장 최근에 만든" 아티스트 표시
+    const def = artists.length
+      ? [...artists].sort((a, b) =>
+          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        )[0]
+      : null;
     if (def) {
       return {
         name: def.name || '나의 아티스트',

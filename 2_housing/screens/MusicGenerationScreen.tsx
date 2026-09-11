@@ -489,7 +489,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       showAlert(
         artist.persona_status === 'expired' ? '목소리가 만료됐어요' : '목소리 연결이 필요해요',
         artist.persona_status === 'expired'
-          ? `${artist.name || '이 아티스트'}에 연결된 목소리가 만료됐어요. 외부 AI 사정으로 목소리가 만료될 수 있어요 — 목소리를 다시 학습해서 연결해주세요. (학습에 쓴 ⭐는 환불돼요)`
+          ? `${artist.name || '이 아티스트'}에 연결된 목소리가 만료됐어요. 외부 AI 사정으로 목소리가 만료될 수 있어요 — 목소리를 다시 학습해서 연결해주세요. (재학습 ⭐5)`
           : `${artist.name || '이 아티스트'}에게 아직 연결된 목소리가 없어요.\n내 아티스트 화면에서 간편 목소리 또는 내 목소리를 연결하면 선택할 수 있어요.`
       );
       return;

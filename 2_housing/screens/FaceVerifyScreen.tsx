@@ -31,8 +31,11 @@ type Step =
 
 type Props = NativeStackScreenProps<any, 'FaceVerify'>;
 
-export default function FaceVerifyScreen({ navigation }: Props) {
+export default function FaceVerifyScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
+  // v3.163(대표): consentOnly — 사진 업로드 직후 "동의만" 미리 받는 모드.
+  // 동의 완료(또는 이미 동의됨)면 셀피/대조 없이 이전 화면으로 복귀한다.
+  const consentOnly = !!(route?.params as any)?.consentOnly;
   const taskStore = useCharacterTaskStore();
   const photoUri = taskStore.photoUri;
   const photoName = taskStore.photoName || (photoUri?.split('/').pop() ?? 'photo.jpg');
@@ -87,9 +90,17 @@ export default function FaceVerifyScreen({ navigation }: Props) {
   }, [photoUri, photoName, navigation]);
 
   const proceedAfterConsent = useCallback((registered: boolean) => {
+    if (consentOnly) {
+      // v3.163: 동의만 받는 모드 — 셀피/대조는 생성 시점에 진행
+      console.info('[FaceVerify] consentOnly 완료 — 복귀');
+      showAlert('동의 완료', '얼굴 인증 동의가 저장됐어요.\n아티스트 생성 시 본인 확인(셀피 대조)만 진행하면 돼요.', [
+        { text: '확인', onPress: () => navigation.goBack() },
+      ]);
+      return;
+    }
     if (registered) runVerify();
     else setStep('capture');
-  }, [runVerify]);
+  }, [runVerify, consentOnly, navigation]);
 
   // ── status → 단계 라우팅 ─────────────────────────────────────────────────
   const routeFromStatus = useCallback((st: FaceVerifyStatus | null) => {
@@ -100,6 +111,12 @@ export default function FaceVerifyScreen({ navigation }: Props) {
       return;
     }
     if (!st.is_verified) { setStep('need_identity'); return; }
+    // v3.163: consentOnly인데 이미 동의돼 있으면 할 일 없음 — 조용히 복귀
+    if (consentOnly && !st.consent_needed) {
+      console.info('[FaceVerify] consentOnly — 이미 동의됨, 복귀');
+      navigation.goBack();
+      return;
+    }
     if (st.consent_needed) {
       if (st.guardian_needed) {
         const pending = st.guardian_status === 'pending' || st.guardian_status === 'requested';
@@ -218,8 +235,11 @@ export default function FaceVerifyScreen({ navigation }: Props) {
 
   const handleClose = () => {
     if (busy) return;
-    console.info('[FaceVerify] 닫기', { step });
-    taskStore.failApi('얼굴 인증이 필요해 생성을 중단했어요. 인증 후 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+    console.info('[FaceVerify] 닫기', { step, consentOnly });
+    // v3.163: consentOnly(사진 업로드 직후 동의 선진행)는 생성 태스크가 없음 — failApi 금지
+    if (!consentOnly) {
+      taskStore.failApi('얼굴 인증이 필요해 생성을 중단했어요. 인증 후 "이어서 만들기"로 다시 시도해주세요. 입력한 내용은 유지돼요.');
+    }
     navigation.goBack();
   };
 
