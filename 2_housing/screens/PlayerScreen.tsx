@@ -757,27 +757,28 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Cover Art / 동영상(가사 싱크) — v3.160(대표): 가로 꽉 차게(엣지-투-엣지).
-          높이는 화면 세로에서 하단 UI(정보·진행바·컨트롤·액션·상세 토글) 몫을 빼고 계산 —
-          세로 UI가 절대 밀리지 않는 것이 우선(작은 화면에선 이미지가 낮아짐). */}
+      {/* Cover Art / 동영상(가사 싱크) — v3.161d(대표): 동영상 탭도 노래 탭과 동일한
+          정사각 프레임(coverH×coverH, 라운드) — 두 탭 전환 시 크기·위치가 완전히 일치. */}
       <View style={styles.coverWrapper}>
         {mediaTab === 'video' ? (
-          (fullTrack as any)?.music_video_url ? (
-            // v3.48(B5): 뮤직비디오 실재생 — MV 자체 오디오가 있어 곡 오디오와 병행 금지(진입 시 일시정지는 openVideoTab에서)
-            <Video
-              source={{ uri: (fullTrack as any).music_video_url }}
-              style={[styles.coverArt, { height: coverH }]}
-              useNativeControls
-              resizeMode={ResizeMode.CONTAIN}
-              onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
-            />
-          ) : lyricsTimeline.length > 0 ? (
-            <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={coverH} />
-          ) : (
-            <View style={[styles.coverArt, styles.coverPlaceholder, { height: coverH }]}>
-              <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
-            </View>
-          )
+          <View style={[styles.videoSquare, { width: coverH, height: coverH }]}>
+            {(fullTrack as any)?.music_video_url ? (
+              // v3.48(B5): 뮤직비디오 실재생 — MV 자체 오디오가 있어 곡 오디오와 병행 금지(진입 시 일시정지는 openVideoTab에서)
+              <Video
+                source={{ uri: (fullTrack as any).music_video_url }}
+                style={{ width: '100%', height: '100%' }}
+                useNativeControls
+                resizeMode={ResizeMode.CONTAIN}
+                onError={(e: any) => console.error('[PlayerScreen] MV 재생 실패', { message: e?.message || String(e) })}
+              />
+            ) : lyricsTimeline.length > 0 ? (
+              <LyricSyncView segments={lyricsTimeline} positionMillis={position} coverUri={coverUri} height={coverH} />
+            ) : (
+              <View style={[styles.coverPlaceholder, { width: '100%', height: '100%' }]}>
+                <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
+              </View>
+            )}
+          </View>
         ) : coverUri ? (
           // v3.161(대표 확정): 원본 커버는 2048×2048 정사각 — 잘림 없이 정사각 유지하되,
           // 세로 여유가 허용하는 최대 크기(coverH)로 기존(210)보다 크게 표시.
@@ -1231,6 +1232,8 @@ const styles = StyleSheet.create({
   },
   // v3.161: 노래 탭 커버 — 잘림 없는 정사각(크기는 coverH 인라인), 라운드 복원
   coverSquare: { borderRadius: 16 },
+  // v3.161d: 동영상 탭 정사각 프레임 — 노래 탭과 동일 크기·라운드
+  videoSquare: { borderRadius: 16, overflow: 'hidden' },
   coverPlaceholder: {
     backgroundColor: colors.bg.surface1,
     justifyContent: 'center',
