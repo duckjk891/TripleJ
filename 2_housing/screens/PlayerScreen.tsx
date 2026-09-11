@@ -706,10 +706,10 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const coverUri = getCoverUri();
 
-  // v3.161(대표 확정): 커버 = 곡 제목 텍스트 영역과 같은 가로폭(winW-64)의 정사각.
-  // 세로 여백 압축(v3.161)으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
+  // v3.161b(대표 확정): 커버 = 음악재생바(슬라이더)와 같은 가로폭(winW-48)의 정사각.
+  // 세로 여백 압축으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
   const { width: winW, height: winH } = useWindowDimensions();
-  const coverH = Math.max(180, Math.min(winW - 64, winH - 500));
+  const coverH = Math.max(180, Math.min(winW - 48, winH - 472));
 
   // v3.160(대표): 가사 공유 — 네이티브 공유 시트 우선, 미지원(웹 등)이면 클립보드 복사 폴백
   const shareLyrics = async () => {
@@ -842,7 +842,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       </View>
 
       {/* Progress Bar */}
-      <View style={styles.progressContainer}>
+      {/* v3.161b: 어떤 화면에서든 재생바 폭 == 커버 폭 보장 — 패딩을 커버 크기에 동기화 */}
+      <View style={[styles.progressContainer, { paddingHorizontal: Math.max(24, (winW - coverH) / 2) }]}>
         <Slider
           style={styles.slider}
           minimumValue={0}
@@ -1221,7 +1222,7 @@ const styles = StyleSheet.create({
   mediaTabActive: { backgroundColor: colors.bg.surface3 },
   // v3.160(대표): 커버 가로 꽉 차게(엣지-투-엣지) — stretch + 패딩/라운드 없음, 높이는 coverH 인라인
   coverWrapper: {
-    marginTop: 12,
+    marginTop: 8, // v3.161b: 커버 확대 몫 확보(12→8)
     alignSelf: 'stretch',
     alignItems: 'center',
   },
@@ -1240,7 +1241,7 @@ const styles = StyleSheet.create({
     color: colors.border.subtle,
   },
   trackInfoContainer: {
-    marginTop: 16, // v3.161: 커버 확대 몫 확보(32→16)
+    marginTop: 18, // v3.161c(대표): 이미지와 곡 제목 사이 숨 쉴 공간
     alignItems: 'center',
     paddingHorizontal: 32,
     width: '100%',
@@ -1265,7 +1266,7 @@ const styles = StyleSheet.create({
   progressContainer: {
     width: '100%',
     paddingHorizontal: 24,
-    marginTop: 16, // v3.161: 커버 확대 몫 확보(32→16)
+    marginTop: 8, // v3.161b: 커버 확대 몫 확보(32→8)
   },
   slider: {
     width: '100%',
@@ -1285,7 +1286,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
+    marginTop: 10, // v3.161b: 커버 확대 몫 확보(16→10)
     gap: 18,
   },
   controlButton: {
@@ -1370,8 +1371,8 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     width: '100%',
     paddingHorizontal: 8,
-    marginTop: 12, // v3.161: 커버 확대 몫 확보(20→12)
-    marginBottom: 6,
+    marginTop: 8, // v3.161b: 커버 확대 몫 확보(20→8)
+    marginBottom: 4,
   },
   // 재생목록(큐) 모달
   queueOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },

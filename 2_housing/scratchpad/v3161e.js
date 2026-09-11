@@ -12,12 +12,14 @@ async function checkAt(browser,H){
   for(const t of ['✕','닫기','나중에']){try{await page.getByText(t,{exact:true}).last().click({timeout:700});await sleep(400);}catch{}}
   await page.getByText('더 나오려는 것을 막는 것일뿐',{exact:false}).last().click();await sleep(4000);
   const img=await page.evaluate(()=>{const im=[...document.querySelectorAll('img')].filter(i=>i.src.includes('cover-preview')&&i.clientWidth>100);return im.length?{w:im[0].clientWidth,h:im[0].clientHeight}:null;});
+  const sliderW=await page.evaluate(()=>{const els=[...document.querySelectorAll('input[type=range],[role=slider],[role=adjustable]')];const w=els.map(e=>e.clientWidth).filter(x=>x>100);return w.length?Math.max(...w):null;});
   const toggle=await page.getByText('가사 · 프롬프트 · 착장',{exact:false}).last().boundingBox();
   await page.screenshot({path:SCRATCH+`/v3161e_${H}.png`});
   const square=img&&Math.abs(img.w-img.h)<4;
   const bigger=img&&img.w>210;
   const toggleOk=!!toggle&&toggle.y+toggle.height<=H;
-  return {H,img,square,bigger,toggleOk,toggleY:toggle&&Math.round(toggle.y)};
+  const widthMatch=sliderW==null||!img?null:Math.abs(sliderW-img.w)<=4;
+  return {H,img,sliderW,widthMatch,square,bigger,toggleOk,toggleY:toggle&&Math.round(toggle.y)};
 }
 (async()=>{
   fs.writeFileSync(SCRATCH+'/v3161e.log','');
