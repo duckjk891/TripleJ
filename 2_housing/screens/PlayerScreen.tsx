@@ -24,8 +24,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { applyPlaybackAudioMode, updateMediaSession } from '../services/audioMode';
 import { usePointsStore } from '../stores/pointsStore';
 import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
-// v3.97(A-9): 비트뷰/메트로놈 — MAIDOL BeatTrackView 이식(RN View 시각화)
-import BeatTrackView from '../components/BeatTrackView';
+// v3.157(대표): 비트뷰 토글 제거 — components/BeatTrackView·beatsService는 보존(재도입 대비, 미사용)
 import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import ReportModal from '../components/ReportModal';
@@ -108,15 +107,7 @@ interface TrackData {
   } | null;
 }
 
-// v3.102(B-4): source_meta 한 줄 요약 — 값 있는 항목만 " · "로 연결, 없으면 null(비표시)
-// v3.156(대표): 아티스트명은 상단 3단 표기에 이미 나오므로 이 줄에서는 제외(중복 방지) — 목소리·가사만.
-function buildSourceMetaLine(meta: TrackData['source_meta']): string | null {
-  if (!meta) return null;
-  const parts: string[] = [];
-  if (meta.persona_name) parts.push(`목소리 ${meta.persona_name}`);
-  if (meta.lyrics_title) parts.push(`가사 ${meta.lyrics_title}${meta.lyrics_is_mine ? ' (내 가사)' : ''}`);
-  return parts.length > 0 ? parts.join(' · ') : null;
-}
+// v3.157(대표): 출처 메타 한 줄(buildSourceMetaLine) 제거 — NowPlaying은 제목/가수/기획사만.
 
 function formatTime(millis: number): string {
   const totalSec = Math.floor(millis / 1000);
@@ -181,7 +172,6 @@ export default function PlayerScreen({ route, navigation }: any) {
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
   const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
   const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
-  const [showBeats, setShowBeats] = useState(false);                    // v3.97(A-9): 진행바 아래 비트 시각화 토글
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
@@ -815,15 +805,7 @@ export default function PlayerScreen({ route, navigation }: any) {
             </>
           );
         })()}
-        {/* v3.102(B-4): 출처 메타 한 줄 — source_meta 값 있는 항목만 (v216 규약: null·키부재 생략) */}
-        {(() => {
-          const sourceLine = buildSourceMetaLine(track?.source_meta);
-          return sourceLine ? (
-            <AppText variant="caption" tone="muted" center numberOfLines={1} style={{ marginTop: 2 }}>
-              {sourceLine}
-            </AppText>
-          ) : null;
-        })()}
+        {/* v3.157(대표): 출처 메타 한 줄(목소리·가사) 제거 — 제목/가수/기획사만 표기 */}
       </View>
 
       {/* Progress Bar */}
@@ -840,32 +822,11 @@ export default function PlayerScreen({ route, navigation }: any) {
           maximumTrackTintColor={colors.border.subtle}
           thumbTintColor={colors.accent.primary}
         />
+        {/* v3.157(대표): 비트뷰 토글 제거 — 실사용 가치 낮음 판단. 컴포넌트/서버 추출은 보존(재도입 대비) */}
         <View style={styles.timeRow}>
           <AppText variant="caption" tone="muted">{formatTime(isSeeking ? seekValue : position)}</AppText>
-          {/* v3.97(A-9): 비트뷰 토글 — 진행바 근처(MAIDOL은 생성 결과에 상시 노출, AIDOL은 토글로 자연스럽게) */}
-          <TouchableOpacity
-            style={[styles.beatToggleBtn, showBeats && styles.beatToggleBtnActive]}
-            onPress={() => {
-              if (__DEV__) console.info('[PlayerScreen] 비트뷰 토글', { open: !showBeats, id: track?.id });
-              setShowBeats((v) => !v);
-            }}
-            accessibilityLabel="비트 보기"
-          >
-            <Feather name="activity" size={12} color={showBeats ? colors.accent.primary : colors.text.muted} />
-            <AppText variant="caption" tone={showBeats ? 'accent' : 'muted'}>비트</AppText>
-          </TouchableOpacity>
           <AppText variant="caption" tone="muted">{formatTime(duration)}</AppText>
         </View>
-        {/* 토글 시에만 mount — 폴링/틱도 그때만 돈다(성능). key로 곡 전환 시 내부 상태 리셋 */}
-        {showBeats && track?.id ? (
-          <BeatTrackView
-            key={String(track.id)}
-            trackId={String(track.id)}
-            positionMillis={position}
-            isPlaying={isPlaying}
-            isOwner={isMyTrack}
-          />
-        ) : null}
       </View>
 
       {/* Controls — 유튜브 뮤직 패턴: 셔플 | 이전 | 재생 | 다음 | 반복 */}
@@ -1278,18 +1239,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.text.muted,
   },
-  // v3.97(A-9): 비트뷰 토글 버튼 — 시간 표시 가운데의 작은 칩
-  beatToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-  },
-  beatToggleBtnActive: { borderColor: colors.accent.primary },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',

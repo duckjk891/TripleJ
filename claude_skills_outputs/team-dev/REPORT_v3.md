@@ -3234,3 +3234,15 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 3. 재감사 통과 확인: 직렬화 doc 변형의 DB 역기록 경로 없음, PUT은 Pydantic 화이트리스트라 artist_name 조작 불가, ArtistCody returnToCover는 인스턴스 pop으로 stale 불가, from-generation 순서(gen_doc 폴백→resolve→스냅샷 우선) 정상.
 
 **파일**: (FE) MusicGenerationScreen.tsx / (BE) tracks.py(_regex_search_tracks), search_service.py(_track_to_doc). 서버 배포·재시작·재색인 완료.
+
+---
+
+## v3.157 — NowPlaying 정리: 출처줄·비트 토글 제거 (2026-09-11)
+
+**요청**: ①제목 아래 "목소리 ~ · 가사 ~ (내 가사)" 줄 제거(가수/기획사만) ②lovvepearl 클릭 시 내 계정이면 채널에서 피드·커뮤니티 작성 허용 vs 마이페이지 고정 — 의견 요청 ③비트 기능 제거.
+
+**수행**(PlayerScreen 단독, E2E PASS·스크린샷 확인):
+- 출처 메타 한 줄(buildSourceMetaLine) 완전 제거 — v3.102에서 곡 출처(어느 목소리·어느 가사로 만들었는지)를 보여주려 넣었던 것인데, 3단 표기 도입으로 역할이 끝남.
+- 비트 토글·BeatTrackView 마운트·관련 스타일 제거. components/BeatTrackView·beatsService·서버 박자 추출은 보존(미사용) — 재도입 원하면 UI만 복원하면 됨.
+
+**②에 대한 권고(구현 보류 — 대표 결정 대기)**: **작성은 마이페이지 고정 유지**를 권합니다. 이유: ⑴채널 화면은 "남들이 보는 내 모습"과 동일한 게 혼동이 없음(작성 버튼이 내 계정일 때만 생기면 화면이 두 가지 모드가 됨) ⑵작성 진입점이 한 곳이어야 학습·유지보수 비용이 낮음(유튜브의 시청 채널/스튜디오 분리와 같은 패턴). 절충안: 내 채널을 볼 때 "여기서 작성은 마이페이지에서 해요" 수준의 숏컷 버튼 하나만 두어 마이페이지 작성 화면으로 점프 — 원하시면 이 절충안으로 구현하겠습니다.
