@@ -38,6 +38,11 @@ export interface LyricsRequestPayload {
   structure?: string;
   english_ratio?: number;
   has_rap?: boolean;
+  // v3.167 — 이야기 필드 서버 영속(가사 자산에 저장 → 발매 시 '이야기' 소급/폴백 근거)
+  story_topic?: string;
+  story_keywords?: string;
+  story_perspective?: string;
+  story_reference?: string;
 }
 
 // ── 공용 선택지 (LyricsInput 대화 · LyricsPromptReview 카드 수정에서 공유) ──
@@ -80,7 +85,8 @@ const PERSPECTIVE_PROMPT_MAP: Record<string, string> = {
   '2인칭 — 너에게 말하는': "'너'에게 직접 말을 건네는 시점으로 써주세요.",
   '3인칭 — 관찰자': '3인칭 관찰자 시점으로 담담하게 그려주세요.',
   '독백체': '혼잣말하듯 독백체로 써주세요.',
-  '대화체': '두 사람이 대화하듯 주고받는 어투로 써주세요.',
+  // v3.167(대표): "나:", "너:" 같은 화자 이름표가 가사에 그대로 찍히던 문제 — 라벨 금지 명시
+  '대화체': "두 사람이 대화하듯 주고받는 어투로 써주세요. 단 '나:', '너:', 'A:' 같은 화자 이름표는 절대 쓰지 말고, 자연스러운 가사 문장으로만 표현하세요.",
 };
 
 /** 언어 선택지 → 백엔드 language 필드('ko'|'en') */
@@ -157,5 +163,10 @@ export function buildLyricsRequest(state: LyricsPromptState): LyricsRequestPaylo
     structure: structureTagSeq,
     english_ratio: mapEnglishRatio(state.language || ''),
     has_rap: state.hasRap || undefined,
+    // v3.167 — 이야기 필드(가사 자산에 함께 저장 → 발매 '이야기' 섹션의 서버측 근거)
+    story_topic: state.content?.trim() || undefined,
+    story_keywords: (state.keywords?.trim() && state.keywords.trim() !== '없음') ? state.keywords.trim() : undefined,
+    story_perspective: state.perspective?.trim() || undefined,
+    story_reference: (state.reference?.trim() && state.reference.trim() !== '없음') ? state.reference.trim() : undefined,
   };
 }
