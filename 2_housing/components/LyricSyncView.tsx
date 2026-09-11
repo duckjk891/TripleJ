@@ -64,7 +64,7 @@ export default function LyricSyncView({ segments, positionMillis, coverUri, heig
 
   if (coverUri) {
     return (
-      <ImageBackground source={{ uri: coverUri }} style={[styles.wrap, { height }]} imageStyle={styles.bgImg} blurRadius={14}>
+      <ImageBackground source={{ uri: coverUri }} style={[styles.wrap, { height }]} imageStyle={styles.bgImg} blurRadius={2}>
         <View style={styles.scrim} />
         {Inner}
       </ImageBackground>
@@ -77,8 +77,8 @@ const styles = StyleSheet.create({
   // v3.160(대표): 커버와 함께 가로 꽉 차는 풀블리드 — 라운드 제거
   wrap: { width: '100%', overflow: 'hidden', justifyContent: 'center', alignItems: 'center' },
   bgImg: {},
-  // v3.156(대표): 배경 커버가 더 잘 보이도록 스크림 투명도 완화 (0.74 → 0.55)
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13,8,32,0.55)' },
+  // v3.161e(대표): 배경 커버가 또렷이 보이게 스크림 추가 완화 (0.55 → 0.32)
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(13,8,32,0.32)' },
   // 세로 가운데 정렬 + 가로 패딩(박스폭에 맞춰 개행)
   lyricsCol: { width: '100%', alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xl, gap: 10 },
   // v3.160: 스크림을 연하게 유지하면서도 가독성 확보 — 가사에 어두운 텍스트 섀도
