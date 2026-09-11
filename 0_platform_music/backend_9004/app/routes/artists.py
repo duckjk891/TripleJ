@@ -4,6 +4,7 @@ These endpoints provide backward compatibility by aggregating data from
 MongoDB tracks and PostgreSQL users.
 """
 
+import logging
 import math
 import uuid
 from datetime import datetime, timedelta
@@ -18,6 +19,7 @@ from ..database.mongodb import get_mongo
 from ..services.media_urls import browser_image_url
 
 router = APIRouter(prefix="/api/artists")
+logger = logging.getLogger(__name__)
 
 
 def _presign_cover(object_name):
@@ -145,6 +147,40 @@ async def get_artist_tracks(artist_id: str, limit: int = 20):
     cursor = mongo.tracks.find({"uploader_id": artist_id, "is_public": True}).sort("play_count", -1).limit(limit)
     tracks = await cursor.to_list(length=limit)
     return [_serialize_track(t) for t in tracks]
+
+
+@router.get("/{artist_id}/characters")
+async def get_artist_characters(artist_id: str, limit: int = Query(20, ge=1, le=50)):
+    """v237 — 기획사 채널 '아티스트' 탭: 해당 유저의 아티스트(캐릭터) 공개 목록.
+
+    공개 범위 최소화: 이름·종류(kind)·시트 미리보기 경로만 (착장/성격/보이스 등 비공개).
+    시트는 기존 공개 프록시(/api/character/preview/)를 그대로 사용 — faces/ 등은 그쪽에서 차단.
+    """
+    mongo = get_mongo()
+    logger.info("[artists] characters list artist=%s", artist_id[:8])
+    cursor = (
+        mongo.characters.find(
+            {"user_id": artist_id},
+            {"character_id": 1, "name": 1, "kind": 1, "sheet_object_name": 1, "created_at": 1},
+        )
+        .sort("created_at", 1)
+        .limit(limit)
+    )
+    docs = await cursor.to_list(length=limit)
+    out = []
+    for d in docs:
+        # 이름 없는 레거시/작업중 문서는 공개 목록에서 제외
+        if not (d.get("name") or "").strip():
+            continue
+        sheet = d.get("sheet_object_name")
+        out.append({
+            "character_id": d.get("character_id"),
+            "name": d.get("name") or "",
+            "kind": d.get("kind") or "real",
+            "sheet_preview_path": f"/api/character/preview/{sheet}" if sheet else None,
+        })
+    logger.info("[artists] characters list artist=%s n=%d", artist_id[:8], len(out))
+    return {"characters": out}
 
 
 @router.get("/{artist_id}/albums")
