@@ -3180,3 +3180,16 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 
 **대표 실테스트 필요**: 본인인증된 계정+실제 얼굴이 필요해 자동화 불가한 구간 — 동의→셀피 대조→통과→생성 재개 전체 여정(대표 계정은 인증돼 있어 동의 단계부터 진행될 것).
 **파일**: screens/FaceVerifyScreen.tsx(신설), constants/faceConsent.ts(신설), services/faceVerifyService.ts(신설), screens/ArtistLoadingScreen.tsx, App.tsx.
+
+---
+
+## v3.155 — 이미지 디렉터 마지막 질문 예시 정리 (2026-09-11)
+
+**요청**: "마지막이에요!" 질문 말풍선에서 예시 전부 제거, 입력창 placeholder에는 예시 하나만 유지.
+
+**구현**(FE 단건 — CoverGenerationScreen.tsx):
+- proceedToFinal 말풍선: 예) 2줄 삭제 → "마지막이에요! …합쳐서 반영돼요. / 이대로 충분하면 바로 만들어도 좋아요!"만 유지.
+- step 2 자유서술 입력창 placeholder: 예시 2개 → 1개("예) 보라색 배경에 아티스트가 점프하는 모습")로 축소.
+- 되감기용 questionForStep(step 2)은 원래 예시 없음 — 변경 불필요(일관성 확보됨).
+
+**검증**: tsc --noEmit PASS. 문자열 2건 수정으로 로직 무변경 — E2E 생략(v3.152 커버 대화 E2E가 해당 흐름 커버).

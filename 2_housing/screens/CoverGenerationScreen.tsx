@@ -578,7 +578,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
   const proceedToFinal = () => {
     setChatHistory((prev) => [
       ...prev,
-      { type: 'director', text: '마지막이에요! 원하는 느낌이나 장면을 자유롭게 적어주세요. 지금까지 고른 것들과 합쳐서 반영돼요.\n예) "보라색 배경에 아티스트가 점프하는 모습"\n예) "비 오는 창밖을 바라보는 쓸쓸한 뒷모습"\n이대로 충분하면 바로 만들어도 좋아요!' },
+      { type: 'director', text: '마지막이에요! 원하는 느낌이나 장면을 자유롭게 적어주세요. 지금까지 고른 것들과 합쳐서 반영돼요.\n이대로 충분하면 바로 만들어도 좋아요!' },
     ]);
     setStep(2);
   };
@@ -1263,7 +1263,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
                 value={styleInput}
                 onChangeText={setStyleInput}
                 multiline
-                placeholder={'자유롭게 적어주세요…\n예) 보라색 배경에 아티스트가 점프하는 모습\n예) 비 오는 창밖을 바라보는 쓸쓸한 뒷모습'}
+                placeholder={'자유롭게 적어주세요…\n예) 보라색 배경에 아티스트가 점프하는 모습'}
                 placeholderTextColor={colors.text.muted}
               />
               <TouchableOpacity style={[styles.sendBtn, !styleInput.trim() && { opacity: 0.4 }]} onPress={() => styleInput.trim() && handleStyleConfirm(styleInput.trim())} disabled={!styleInput.trim()}>
