@@ -709,7 +709,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   // v3.161b(대표 확정): 커버 = 음악재생바(슬라이더)와 같은 가로폭(winW-48)의 정사각.
   // 세로 여백 압축으로 확보한 공간 기준, 화면이 그래도 작으면 정사각을 줄여 토글 보존.
   const { width: winW, height: winH } = useWindowDimensions();
-  const coverH = Math.max(180, Math.min(winW - 48, winH - 472));
+  const coverH = Math.max(180, Math.min(winW - 48, winH - 460));
 
   // v3.160(대표): 가사 공유 — 네이티브 공유 시트 우선, 미지원(웹 등)이면 클립보드 복사 폴백
   const shareLyrics = async () => {
@@ -1266,7 +1266,7 @@ const styles = StyleSheet.create({
   progressContainer: {
     width: '100%',
     paddingHorizontal: 24,
-    marginTop: 8, // v3.161b: 커버 확대 몫 확보(32→8)
+    marginTop: 6, // v3.161c: 제목 여백 몫 회수(8→6)
   },
   slider: {
     width: '100%',
@@ -1286,7 +1286,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 10, // v3.161b: 커버 확대 몫 확보(16→10)
+    marginTop: 6, // v3.161c: 제목 여백 몫 회수(10→6)
     gap: 18,
   },
   controlButton: {
@@ -1371,8 +1371,8 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     width: '100%',
     paddingHorizontal: 8,
-    marginTop: 8, // v3.161b: 커버 확대 몫 확보(20→8)
-    marginBottom: 4,
+    marginTop: 6, // v3.161c: 제목 여백 몫 회수(8→6)
+    marginBottom: 2,
   },
   // 재생목록(큐) 모달
   queueOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },

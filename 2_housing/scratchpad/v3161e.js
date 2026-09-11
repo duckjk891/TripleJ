@@ -25,8 +25,9 @@ async function checkAt(browser,H){
   fs.writeFileSync(SCRATCH+'/v3161e.log','');
   const browser=await chromium.launch({headless:true});
   const a=await checkAt(browser,920); log('920:',a);
+  const c=await checkAt(browser,892); log('892:',c);
   const b=await checkAt(browser,760); log('760:',b);
-  const pass=a.square&&a.bigger&&a.toggleOk&&b.square&&b.toggleOk;
+  const pass=a.square&&a.bigger&&a.toggleOk&&a.widthMatch&&c.widthMatch&&c.img.w>=430&&b.square&&b.toggleOk&&b.widthMatch;
   log('RESULTS:',{pass:pass?'PASS':'FAIL'});
   await browser.close();
 })().catch(e=>{log('ERR',String(e).slice(0,300));process.exit(1);});
