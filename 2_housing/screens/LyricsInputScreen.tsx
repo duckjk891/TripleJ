@@ -69,11 +69,11 @@ const STEPS: StepConfig[] = [
     freeTextPlaceholder: '예: 급식 시간이 제일 좋아, 30대의 다이어트 고민, 손주 응원가',
   },
   {
-    // v3.118.1(대표): 키워드/문구를 명확히 구분해 질문 + 예시
+    // v3.165a(대표): 입력창 예시가 선택 칩과 중복 — 칩에 없는 예시 하나로 정리
     question: '꼭 들어갔으면 하는 키워드나 문구가 있으신가요?',
     choices: KEYWORD_OPTIONS,
     freeText: true,
-    freeTextPlaceholder: "예: 키워드 '벚꽃', '밤하늘' / 문구 '야호!', '다시 만나자'",
+    freeTextPlaceholder: "예: 키워드 '여름밤' / 문구 '우리 다시 시작해'",
   },
   {
     question: '가사 속 화자는 어떤 시점이 좋을까요?',
