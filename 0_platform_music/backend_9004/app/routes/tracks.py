@@ -2369,8 +2369,8 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
 # ── v126: SNS 공유영상 (커버+음원 9:16 스틸 mp4) ──────────────────────────────
 
 @router.post("/{track_id}/share-video")
-async def create_share_video(track_id: str, format: str = Query("sns")):
-    """공유영상 생성 (무인증 — 공개 트랙만). 캐시 있으면 즉시 반환.
+async def create_share_video(track_id: str, format: str = Query("sns"), current_user=Depends(get_current_user)):
+    """공유영상 생성 (v247: 로그인 필수 — 신규 생성 시 ⭐ 과금, 캐시 히트는 무과금). 공개 트랙만.
 
     format(v129): sns(9:16 전체) / wide(16:9 블러배경) / kakao(1080x2340 15s).
     """
@@ -2420,6 +2420,14 @@ async def create_share_video(track_id: str, format: str = Query("sns")):
         return {"video_url": video_url, "cached": True, "subtitles": subtitles,
                 "format": format}
 
+    # v247(대표 확정): 신규 생성만 ⭐ 과금(캐시 히트는 위에서 무과금 반환) — 실패 시 자동 환불
+    from ..services.points_service import POINT_COSTS, refund_points, spend_points
+    _sv_cost = POINT_COSTS["share_video"]
+    _sv_ref = f"share_video:{track_id}:{format}"
+    if not await spend_points(current_user["id"], "share_video", _sv_cost, _sv_ref):
+        return JSONResponse(status_code=402, content={"error": "포인트가 부족합니다 (필요: {})".format(_sv_cost)})
+    logger.info("[star-econ] share_video spend user=%s -%d ref=%s", current_user["id"][:8], _sv_cost, _sv_ref)
+
     logger.info("[share-video] cache miss track=%s format=%s — generating", track_id, format)
     try:
         await asyncio.to_thread(
@@ -2427,9 +2435,12 @@ async def create_share_video(track_id: str, format: str = Query("sns")):
             doc["audio_url"], segments, format,
         )
     except ShareVideoError:
+        await refund_points(current_user["id"], "share_video", _sv_cost, _sv_ref)
+        logger.warning("[star-econ] share_video refund (failed) user=%s ref=%s", current_user["id"][:8], _sv_ref)
         return JSONResponse(status_code=502, content={"error": "영상 생성에 실패했습니다."})
     except Exception:
-        logger.exception("[share-video] unexpected failure track=%s format=%s", track_id, format)
+        await refund_points(current_user["id"], "share_video", _sv_cost, _sv_ref)
+        logger.exception("[share-video] unexpected failure track=%s format=%s (refunded)", track_id, format)
         return JSONResponse(status_code=502, content={"error": "영상 생성에 실패했습니다."})
 
     return {"video_url": video_url, "cached": False, "subtitles": subtitles,

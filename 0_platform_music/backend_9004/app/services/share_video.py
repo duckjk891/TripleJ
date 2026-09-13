@@ -90,7 +90,7 @@ def share_object_name(track_id: str, fmt: str = "sns") -> str:
     # v152: 스크롤 자막 도입으로 시각 출력 변경 → v3 → v4 승격 (기존 v3 캐시는
     #       구버전 단일 줄 자막이므로 서빙 금지, 자동으로 v4 신규 생성됨).
     suffix = FORMATS.get(fmt, FORMATS["sns"])["suffix"]
-    return f"share/v4/{track_id}{suffix}.mp4"
+    return f"share/v5/{track_id}{suffix}.mp4"
 
 
 def _filter_segments(raw: list) -> list:

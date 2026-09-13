@@ -28,6 +28,7 @@ POINT_COSTS = {
     "compose": 15,      # 작곡 (generate.py create/start)
     "cover": 5,         # 커버 이미지 (upload.py, 기존 2 → 5)
     "cover_refine": 5,  # v244(대표 확정 2026-09-11): 커버 미세조정 — 생성과 동일 이미지 호출이라 동가
+    "share_video": 5,   # v247(대표 확정 2026-09-13): 공유영상(기본 뮤비) 신규 생성 — 캐시 히트는 무과금
     "character": 10,    # 캐릭터 시트 (character.py, 기존 2 → 10)
     "fatigue_skip": 5,  # 디렉터 피로 쿨다운 30분 스킵 (fatigue.py)
     "hire_director": 10,  # v193 AIDOL — 디렉터 영입 (points.py /spend)
