@@ -56,7 +56,7 @@ export function CompanyFooter({ onOpenPolicy }: { onOpenPolicy?: (key: 'terms' |
         </TouchableOpacity>
       </View>
       <AppText variant="caption" tone="muted" style={styles.companyText}>
-        AIDOL | My AI Idol{'\n'}
+        MAIDOL | My AI Idol{'\n'}
         AI로 만든 음악을 공유하는 플랫폼{'\n'}
         주식회사 로터스에이아이 | 대표 이재규 | 사업자등록번호 334-87-04045{'\n'}
         서울시 중구 퇴계로36길 2, 10층 16호·18호{'\n'}

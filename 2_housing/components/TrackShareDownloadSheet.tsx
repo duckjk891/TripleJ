@@ -57,7 +57,8 @@ export default function TrackShareDownloadSheet({ visible, mode, track, onClose 
       const status = err?.response?.status;
       console.error('[TrackShareDownloadSheet] share-video 실패', { trackId, format, status });
       showAlert('오류',
-        status === 404 ? '공개된 곡만 공유할 수 있습니다.'
+        status === 402 ? '스타가 부족합니다. (새 영상 생성 시 ⭐ 소모)'
+        : status === 404 ? '공개된 곡만 공유할 수 있습니다.'
         : status === 400 ? '커버 이미지가 없어 공유 영상을 만들 수 없습니다.'
         : '영상 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
       return null;

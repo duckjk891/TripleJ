@@ -14,6 +14,7 @@ import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
 import api, { BACKEND_BASE_URL } from '../services/api';
+import { usePointsStore } from '../stores/pointsStore';
 
 const VIDEO_PORTRAIT = require('../assets/portraits/video_director.png');
 
@@ -48,6 +49,21 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [madeFormat, setMadeFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
   const [saving, setSaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  // v3.172(대표 확정): 영상 신규 생성 ⭐ 과금 — /points/costs의 share_video 키가 있을 때만 고지
+  const [videoCost, setVideoCost] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get('/points/costs');
+        const c = res.data?.costs?.share_video;
+        if (alive && typeof c === 'number') setVideoCost(c);
+      } catch (err: any) {
+        console.error('[VideoDirector] /points/costs 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
@@ -89,6 +105,17 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const handlePickFormat = async (fmt: 'sns' | 'wide' | 'kakao') => {
     if (!selected || step === 'making') return;
     const f = FORMATS.find((x) => x.key === fmt)!;
+    // v3.172: 신규 생성 시 ⭐ 소모 confirm (같은 곡·형식을 이미 만들었다면 서버가 무과금 캐시 반환)
+    if (typeof videoCost === 'number') {
+      const ok = await new Promise<boolean>((resolve) => {
+        showAlert('영상 만들기', `새 영상 생성 시 ⭐${videoCost}이 소모돼요.
+(같은 곡·형식을 이미 만들었다면 무료로 다시 받아요)`, [
+          { text: '취소', style: 'cancel', onPress: () => resolve(false) },
+          { text: '진행', onPress: () => resolve(true) },
+        ]);
+      });
+      if (!ok) return;
+    }
     pushUser(f.label);
     pushDirector('영상을 만들고 있어요! 커버와 가사를 엮는 중… 잠시만 기다려주세요. 🎞️');
     setStep('making');
@@ -103,12 +130,14 @@ export default function VideoDirectorScreen({ navigation }: any) {
       setVideoUrl(url);
       setMadeFormat(fmt);
       pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요. 🎉');
+      usePointsStore.getState().fetchBalance(); // v3.172: ⭐ 차감 반영
       setStep('done');
     } catch (err: any) {
       const status = err?.response?.status;
       console.error('[VideoDirector] share-video 실패', { trackId: selected.id, fmt, status });
       pushDirector(
-        status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
+        status === 402 ? '스타가 부족해요. ⭐를 모은 뒤 다시 시도해주세요!'
+        : status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
         : status === 400 ? '커버 이미지가 없어 영상을 만들 수 없었어요. 이미지 디렉터에게 커버를 먼저 부탁해보세요!'
         : '영상 생성에 실패했어요. 잠시 후 다시 시도해주세요.'
       );

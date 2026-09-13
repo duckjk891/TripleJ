@@ -424,7 +424,7 @@ export default function PlayerScreen({ route, navigation }: any) {
       const img = target?.cover_image || target?.cover_image_url;
       updateMediaSession(
         {
-          title: target?.title || 'AIDOL',
+          title: target?.title || 'MAIDOL',
           artist: target?.artist_name || target?.uploader_nickname,
           artworkUrl: img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null,
         },

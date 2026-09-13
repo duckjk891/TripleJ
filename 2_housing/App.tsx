@@ -249,7 +249,7 @@ function MiniPlayerWrapper() {
 
 // 상단 헤더 로고 (차트=홈 전용)
 function LogoTitle() {
-  return <AppText variant="title2" tone="accent" style={{ letterSpacing: 1 }}>AIDOL</AppText>;
+  return <AppText variant="title2" tone="accent" style={{ letterSpacing: 1 }}>MAIDOL</AppText>;
 }
 
 // 이전으로 돌아가기(←) → 홈(차트)
@@ -270,7 +270,7 @@ const homeHeader = (navigation: any) => ({
 });
 
 // v3.75: 탭 헤더 = 좌측 페이지명 텍스트 + 우측은 차트와 동일한 액션(HomeHeaderActions).
-// 차트만 좌측이 AIDOL 로고, 작업실은 MapScreen이 기획사명+ⓘ로 headerTitle을 덮는다.
+// 차트만 좌측이 MAIDOL 로고, 작업실은 MapScreen이 기획사명+ⓘ로 headerTitle을 덮는다.
 const titleHeader = (navigation: any, title: string) => ({
   headerShown: true,
   headerTitle: () => <AppText variant="subtitle">{title}</AppText>,

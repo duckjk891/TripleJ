@@ -50,7 +50,11 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   log('L3 형식 카드:',R.L3,{f1,f2,f3});
 
   // ── L4: SNS용 세로 생성 → 완료 + 저장 버튼 (실생성 — ffmpeg, 최대 5분 대기) ──
-  await clickT('SNS용 세로');await sleep(1500);
+  await clickT('SNS용 세로');await sleep(1200);
+  // v3.172: ⭐ 과금 confirm
+  const costConfirm=await visible('소모돼요',3000,false);
+  if(costConfirm){await clickT('진행');await sleep(1200);}
+  log('COST confirm:',costConfirm);
   const making=await visible('영상을 만들고 있어요',5000,false);
   const done=await visible('완성됐어요',300000,false);
   const saveBtn=await visible('기기에 저장 / 공유하기',5000,false);
@@ -69,6 +73,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   R.L5=badgeSong&&badgeVideo;
   log('L5 AI 생성 뱃지:',R.L5,{badgeSong,badgeVideo});
 
+  // ── L6: 헤더 로고 MAIDOL ──
+  await page.getByLabel('미니플레이어로 내려가기').last().click().catch(()=>{});await sleep(2000);
+  R.L6=await visible('MAIDOL',3000,true);
+  log('L6 헤더 MAIDOL:',R.L6);
   log('RESULTS:',Object.fromEntries(Object.entries(R).map(([k,v])=>[k,v?'PASS':'FAIL'])));
   await browser.close();
 })().catch(e=>{log('SCRIPT ERROR:',String(e&&e.stack||e).slice(0,500));process.exit(1);});

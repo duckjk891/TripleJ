@@ -49,7 +49,7 @@ export default function AppShareModal() {
   const inviteUrl = code ? `${BACKEND_BASE_URL}/invite/${code}` : '';
   // v160 — URL 중복 방지: 네이티브 시트엔 base 메시지, 복사엔 URL 포함 full.
   // v3.58 — 베타 이벤트 문구 삽입(공유 메시지에 이벤트가 함께 전달되도록)
-  const shareTextBase = `AIDOL — AI가 만든 음악의 새로운 세계\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: ${code}`;
+  const shareTextBase = `MAIDOL — AI가 만든 음악의 새로운 세계\n베타 테스트 기간 가입 시 스타 50 추가 증정!\n추천코드: ${code}`;
   const shareTextFull = `${shareTextBase}\n${inviteUrl}`;
 
   const showMsg = (m: string) => { setMessage(m); setTimeout(() => setMessage(''), 4000); };
@@ -77,7 +77,7 @@ export default function AppShareModal() {
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={close}>
         <TouchableOpacity style={styles.modal} activeOpacity={1} onPress={() => {}}>
           <View style={styles.head}>
-            <AppText variant="title2">AIDOL 추천하기</AppText>
+            <AppText variant="title2">MAIDOL 추천하기</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
               <AppText variant="title3" tone="muted">✕</AppText>
             </TouchableOpacity>
