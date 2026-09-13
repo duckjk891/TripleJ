@@ -778,11 +778,16 @@ export default function PlayerScreen({ route, navigation }: any) {
                 <AppText tone="muted" center>{lyricsLoading ? '불러오는 중…' : 'MV·가사 싱크가\n준비되면 제공돼요'}</AppText>
               </View>
             )}
+            {/* v3.171(대표): AI 생성 뱃지 — MAIDOL v137 플랫폼 고지, 전 곡 공통 */}
+            <View style={styles.aiBadge}><AppText style={styles.aiBadgeText}>AI 생성</AppText></View>
           </View>
         ) : coverUri ? (
-          // v3.161(대표 확정): 원본 커버는 2048×2048 정사각 — 잘림 없이 정사각 유지하되,
-          // 세로 여유가 허용하는 최대 크기(coverH)로 기존(210)보다 크게 표시.
-          <Image source={{ uri: coverUri }} style={[styles.coverSquare, { width: coverH, height: coverH }]} resizeMode="cover" />
+          // v3.161(대표 확정): 원본 커버는 2048×2048 정사각 — 잘림 없이 정사각 유지.
+          // v3.171: AI 생성 뱃지 오버레이를 위해 프레임 View로 감쌈.
+          <View style={[styles.videoSquare, { width: coverH, height: coverH }]}>
+            <Image source={{ uri: coverUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            <View style={styles.aiBadge}><AppText style={styles.aiBadgeText}>AI 생성</AppText></View>
+          </View>
         ) : (
           <View style={[styles.coverArt, styles.coverPlaceholder, { height: coverH }]}>
             <AppText style={styles.coverPlaceholderIcon}>{'♪'}</AppText>
@@ -1234,6 +1239,13 @@ const styles = StyleSheet.create({
   coverSquare: { borderRadius: 16 },
   // v3.161d: 동영상 탭 정사각 프레임 — 노래 탭과 동일 크기·라운드
   videoSquare: { borderRadius: 16, overflow: 'hidden' },
+  // v3.171: AI 생성 뱃지 (커버 우하단 — MAIDOL v137 관행)
+  aiBadge: {
+    position: 'absolute', right: 8, bottom: 8,
+    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 6,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  aiBadgeText: { color: 'rgba(255,255,255,0.85)', fontSize: 10, fontWeight: '700' },
   coverPlaceholder: {
     backgroundColor: colors.bg.surface1,
     justifyContent: 'center',

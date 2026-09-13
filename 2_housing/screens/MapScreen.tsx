@@ -440,9 +440,9 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // 비디오 디렉터: 준비 중
+    // v3.171(대표): 영상 디렉터 — 공유영상(기본 뮤비) 대화형 제작·내보내기
     if (type === 'video') {
-      showAlert('안내', 'MV 제작 기능은 준비 중입니다.');
+      navigation.navigate('VideoDirector' as any);
       return;
     }
 

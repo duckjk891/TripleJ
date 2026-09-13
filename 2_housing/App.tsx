@@ -63,6 +63,7 @@ import MusicLoadingScreen from './screens/MusicLoadingScreen';
 import MusicResultScreen from './screens/MusicResultScreen';
 import GenerationHistoryScreen from './screens/GenerationHistoryScreen';
 import CoverGenerationScreen from './screens/CoverGenerationScreen';
+import VideoDirectorScreen from './screens/VideoDirectorScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
 import AppDialogHost from './components/AppDialogHost';
@@ -112,6 +113,7 @@ export type StudioStackParamList = {
   // v3.93: 생성 이력 목록 (진행중 이어보기 / 완료 결과 / 실패 확인·삭제)
   GenerationHistory: undefined;
   CoverGeneration: undefined;
+  VideoDirector: undefined;
   // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록(MyArtists)에서 slot/forceKind 파라미터로 진입
   // v3.103(B-1): characterId — 서버 다중 아티스트(cid) 진입. slot은 레거시(me 폴백) 전용.
   //   ArtistInput.characterId = 재생성 대상(kind 불일치 400 → forceKind 동반 필수)
@@ -211,6 +213,7 @@ function StudioNavigator() {
       <StudioStack.Screen name="MusicResult" component={MusicResultScreen} />
       <StudioStack.Screen name="GenerationHistory" component={GenerationHistoryScreen} />
       <StudioStack.Screen name="CoverGeneration" component={CoverGenerationScreen} />
+      <StudioStack.Screen name="VideoDirector" component={VideoDirectorScreen} />
       <StudioStack.Screen name="ArtistInput" component={ArtistInputScreen} />
       <StudioStack.Screen
         name="ArtistLoading"

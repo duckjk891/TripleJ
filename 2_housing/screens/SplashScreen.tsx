@@ -3,6 +3,7 @@ import {
   StyleSheet,
   View,
   Text,
+  Image,
   Animated,
 } from 'react-native';
 import { AppText } from '../components/ui';
@@ -59,7 +60,14 @@ export default function SplashScreen({ navigation }: Props) {
           },
         ]}
       >
-        <AppText style={styles.title}>AIDOL</AppText>
+        {/* v3.171(대표): MAIDOL = MY AI IDOL — 심볼 로고(대표 제공 시안, 스플래시 색감 보정) + 텍스트 로고 */}
+        <Image source={require('../assets/branding/maidol_logo.png')} style={styles.logoMark} />
+        <View style={styles.logoRow}>
+          <AppText style={styles.title}>M</AppText>
+          <AppText style={[styles.title, styles.titleAi]}>AI</AppText>
+          <AppText style={styles.title}>DOL</AppText>
+        </View>
+        <AppText style={styles.tagline}>MY AI IDOL</AppText>
         <AppText style={styles.subtitle}>당신의 1인 기획사</AppText>
       </Animated.View>
     </LinearGradient>
@@ -75,15 +83,25 @@ const styles = StyleSheet.create({
   content: {
     alignItems: 'center',
   },
+  // v3.171: MAIDOL 로고 — 흰색 M/DOL + 액센트 박스 AI (MY AI IDOL 의미 강조)
+  logoMark: { width: 132, height: 140, marginBottom: 22 },
+  logoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   title: {
-    fontSize: 48,
-    fontWeight: 'bold',
+    fontSize: 52,
+    fontWeight: '900',
+    color: colors.text.primary,
+    letterSpacing: 3,
+  },
+  titleAi: { color: colors.accent.primary },
+  tagline: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 6,
     color: colors.accent.primary,
-    letterSpacing: 4,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 13,
     color: colors.text.secondary,
     letterSpacing: 2,
   },
