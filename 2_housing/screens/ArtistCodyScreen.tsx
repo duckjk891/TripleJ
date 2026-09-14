@@ -13,7 +13,7 @@ import {
   Linking,
   TextInput,
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -894,15 +894,16 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                         {/* 위시 하트 — 샘플 더미는 서버에 없어 담기 불가 → 숨김 */}
                         {!isSample && (
                           <TouchableOpacity
-                            style={styles.wishBtn}
+                            style={[styles.wishBtn, wished[item.id] && styles.wishBtnOn]}
                             onPress={() => handleWishToggle(item)}
                             disabled={!!wishBusy[item.id]}
                             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                           >
-                            <Feather
-                              name="heart"
-                              size={16}
-                              color={wished[item.id] ? colors.accent.primary : '#fff'}
+                            {/* v3.175: 담기면 채워진 핑크 하트 (플레이어 착장 카드와 통일) */}
+                            <MaterialCommunityIcons
+                              name={wished[item.id] ? 'heart' : 'heart-outline'}
+                              size={17}
+                              color={wished[item.id] ? '#FF4D6D' : '#fff'}
                             />
                           </TouchableOpacity>
                         )}
@@ -985,14 +986,14 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
                               <AppText style={styles.inactiveBadgeText}>판매종료</AppText>
                             </View>
                           )}
-                          {/* 하트 = 위시 해제 */}
+                          {/* 하트 = 위시 해제 (위시 탭이므로 항상 담긴 상태 = 채워진 핑크) */}
                           <TouchableOpacity
-                            style={styles.wishBtn}
+                            style={[styles.wishBtn, styles.wishBtnOn]}
                             onPress={() => handleWishToggle(item)}
                             disabled={!!wishBusy[item.id]}
                             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                           >
-                            <Feather name="heart" size={16} color={colors.accent.primary} />
+                            <MaterialCommunityIcons name="heart" size={17} color="#FF4D6D" />
                           </TouchableOpacity>
                         </View>
                         <AppText style={styles.itemName} numberOfLines={2}>{item.name}</AppText>
@@ -1201,6 +1202,11 @@ const styles = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center', alignItems: 'center',
+  },
+  // v3.175: 담긴 상태 강조 — 플레이어 착장 카드와 통일
+  wishBtnOn: {
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    borderWidth: 1.5, borderColor: '#FF4D6D',
   },
   inactiveBadge: {
     position: 'absolute', bottom: 6, left: 6,

@@ -2283,3 +2283,18 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 
 ### 테스트 지시(요지)
 [unit] tsc. [api] toggle+track_id→200·wishlisted, 서버 로그 "event recorded", check/list 반영, 원복. [e2e] 착장 탭 하트 토글·재진입 유지, 회귀: ArtistCody 위시 탭.
+
+## v3.175 — 2026-09-14 — 위시 하트 색상 대비 + 내 위시리스트 전용 화면
+**요청**: ①하트 누른 UI가 색상 때문에 눌린 건지 잘 안 보인다(색 변경 필요) ②위시리스트 담은 건 어디서 확인?
+
+### findings
+- 하트가 Feather(외곽선 전용) — 담김=보라 외곽선/미담김=흰 외곽선이라 '채워짐' 신호가 없어 대비 약함.
+- 위시 목록 확인 경로가 ArtistCody 피커의 카테고리별 '내 위시리스트' 탭뿐 — 플레이어에서 담으면 사실상 볼 곳 없음(갭). 웹 MAIDOL의 wishlist는 광고주 대시보드라 소비자 목록 화면 없음.
+
+### 변경 (FE-only)
+| 파일 | 변경 |
+|---|---|
+| screens/PlayerScreen.tsx, ArtistCodyScreen.tsx | 하트 Feather→MaterialCommunityIcons: 담김='heart'(채움)+#FF4D6D+버튼 테두리 강조, 미담김='heart-outline'+흰색 |
+| screens/WishlistScreen.tsx (신규) | 내 위시리스트 2열 그리드(이미지·카테고리·이름·브랜드·판매처 링크·해제 하트), fetchList, 당겨서 새로고침, 미로그인/빈 목록 안내 |
+| App.tsx | RootStack 'Wishlist' 라우트(+stackHeader '내 위시리스트') |
+| screens/MyMusicScreen.tsx | 마이페이지 '내 목소리' 아래 '내 위시리스트' 진입 카드(핑크 하트 아이콘) |

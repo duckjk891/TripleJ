@@ -21,7 +21,7 @@ import { showAlert } from '../utils/appAlert';
 import { Audio, Video, ResizeMode } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import Svg, { Path } from 'react-native-svg';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { usePlayerStore } from '../stores/playerStore';
 import { applyPlaybackAudioMode, updateMediaSession } from '../services/audioMode';
@@ -1150,16 +1150,17 @@ export default function PlayerScreen({ route, navigation }: any) {
                               {/* v3.174: 위시 하트 — 서버에 없는 아이템(id 없음/샘플)은 숨김 (ArtistCody 관행) */}
                               {item.id && !String(item.id).startsWith('sample_') ? (
                                 <TouchableOpacity
-                                  style={styles.outfitWishBtn}
+                                  style={[styles.outfitWishBtn, wished[item.id] && styles.outfitWishBtnOn]}
                                   onPress={() => handleOutfitWish(item)}
                                   disabled={!!wishBusy[item.id]}
                                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                                   accessibilityLabel={`착장 위시 ${item.name || ''}`}
                                 >
-                                  <Feather
-                                    name="heart"
-                                    size={16}
-                                    color={wished[item.id] ? colors.accent.primary : '#fff'}
+                                  {/* v3.175: 담기면 '채워진' 하트 + 선명한 핑크로 확실히 구분 (외곽선 색만 바뀌던 문제) */}
+                                  <MaterialCommunityIcons
+                                    name={wished[item.id] ? 'heart' : 'heart-outline'}
+                                    size={17}
+                                    color={wished[item.id] ? '#FF4D6D' : '#fff'}
                                   />
                                 </TouchableOpacity>
                               ) : null}
@@ -1581,6 +1582,11 @@ const styles = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center', alignItems: 'center',
+  },
+  // v3.175: 담긴 상태 — 어두운 배경 + 핑크 하트로 확실히 대비 (테두리로 한 번 더 강조)
+  outfitWishBtnOn: {
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    borderWidth: 1.5, borderColor: '#FF4D6D',
   },
   // v3.55: 레일 좌우 화살표 — 이미지 세로 중앙 부근에 반투명 원형 버튼
   outfitArrow: {

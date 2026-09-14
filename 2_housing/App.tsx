@@ -68,6 +68,7 @@ import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
 import AppDialogHost from './components/AppDialogHost';
 import RoyaltyScreen from './screens/RoyaltyScreen';
+import WishlistScreen from './screens/WishlistScreen';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import FaceVerifyScreen from './screens/FaceVerifyScreen';
@@ -160,6 +161,8 @@ export type RootStackParamList = {
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
   Royalty: undefined;
+  // v3.175: 내 위시리스트 — 플레이어 착장/꾸미기에서 담은 광고 상품 모아보기
+  Wishlist: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -540,6 +543,7 @@ export default function App() {
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
             <RootStack.Screen name="Royalty" component={RoyaltyScreen} />
+            <RootStack.Screen name="Wishlist" component={WishlistScreen} options={({ navigation }) => stackHeader(navigation, '내 위시리스트')} />
           </RootStack.Navigator>
           {/* 미니 플레이어 - 탭 바 위에 absolute 배치. 설정 등 모달 라우트에선 숨김(재생은 유지) */}
           {!HIDE_MINIPLAYER_ROUTES.includes(currentRoute ?? '') ? <MiniPlayerWrapper /> : null}
