@@ -34,6 +34,7 @@ import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
 import { autoContinueWithRelated } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
+import { useWishlistStore } from '../stores/wishlistStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
@@ -207,6 +208,27 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   // 본인 곡이면 신고 버튼을 숨긴다 (MAIDOL 규칙과 동일)
   const isMyTrack = !!user && !!track?.uploader_id && String(track.uploader_id) === String(user.id);
+
+  // v3.174: 착장 카드 위시리스트 (웹 CharacterCoverCard 패리티)
+  const wished = useWishlistStore((s) => s.wished);
+  const wishBusy = useWishlistStore((s) => s.busy);
+  const outfitIdsKey = (track?.cover_character?.used_items || [])
+    .map((it: any) => it?.id).filter(Boolean).join(',');
+  useEffect(() => {
+    // 착장 탭 열람 + 로그인 상태에서만 일괄 조회 (sample_/미로그인은 store가 스킵·무해)
+    if (!showDetails || detailTab !== 'outfit' || !user || !outfitIdsKey) return;
+    if (__DEV__) console.info('[PlayerScreen] 착장 위시 sync', { count: outfitIdsKey.split(',').length });
+    useWishlistStore.getState().sync(outfitIdsKey.split(','));
+  }, [showDetails, detailTab, user, outfitIdsKey]);
+  const handleOutfitWish = (item: { id?: string }) => {
+    if (!item?.id) return;
+    if (!user) {
+      showAlert('알림', '로그인 후 이용할 수 있습니다.');
+      return;
+    }
+    if (__DEV__) console.info('[PlayerScreen] 착장 위시 toggle', { id: item.id, trackId: track?.id });
+    useWishlistStore.getState().toggle(item.id, track?.id ? String(track.id) : undefined);
+  };
 
   // 프롬프트 탭에 보여줄 파라미터 — 트랙 필드 + (내 곡이면) 생성 설정(genDetail)을 합친다.
   // 값이 없는 항목은 아예 노출하지 않는다(빈 '-' 나열 방지).
@@ -1119,11 +1141,29 @@ export default function PlayerScreen({ route, navigation }: any) {
                         const hasUrl = !!item.product_url;
                         return (
                           <View key={item.id || i} style={styles.outfitItem}>
-                            {img ? (
-                              <Image source={{ uri: img }} style={styles.outfitItemImg} />
-                            ) : (
-                              <View style={[styles.outfitItemImg, styles.outfitItemImgPh]} />
-                            )}
+                            <View>
+                              {img ? (
+                                <Image source={{ uri: img }} style={styles.outfitItemImg} />
+                              ) : (
+                                <View style={[styles.outfitItemImg, styles.outfitItemImgPh]} />
+                              )}
+                              {/* v3.174: 위시 하트 — 서버에 없는 아이템(id 없음/샘플)은 숨김 (ArtistCody 관행) */}
+                              {item.id && !String(item.id).startsWith('sample_') ? (
+                                <TouchableOpacity
+                                  style={styles.outfitWishBtn}
+                                  onPress={() => handleOutfitWish(item)}
+                                  disabled={!!wishBusy[item.id]}
+                                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                  accessibilityLabel={`착장 위시 ${item.name || ''}`}
+                                >
+                                  <Feather
+                                    name="heart"
+                                    size={16}
+                                    color={wished[item.id] ? colors.accent.primary : '#fff'}
+                                  />
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
                             <AppText style={styles.outfitItemCat}>{item.category || '아이템'}</AppText>
                             <AppText style={styles.outfitItemName} numberOfLines={2}>{item.name || ''}</AppText>
                             {hasUrl ? (
@@ -1535,6 +1575,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
   },
   outfitItemImg: { width: 150, height: 150, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  // v3.174: 착장 카드 위시 하트 — ArtistCody wishBtn과 동일 규격
+  outfitWishBtn: {
+    position: 'absolute', top: 6, right: 6,
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center', alignItems: 'center',
+  },
   // v3.55: 레일 좌우 화살표 — 이미지 세로 중앙 부근에 반투명 원형 버튼
   outfitArrow: {
     position: 'absolute', top: 78,

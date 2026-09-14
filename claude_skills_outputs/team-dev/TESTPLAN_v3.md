@@ -1423,3 +1423,12 @@
 - [e2e] L1: 실사+사진 생성 → 403 face_verification_required(라우트 목 — 서버 미호출·무과금) → FaceVerify 화면 진입 + 실서버 status 조회 → need_identity 안내 표시
 - [e2e] L2: 닫기 → 생성 중단 안내와 함께 이전 화면 복귀
 - [잔여 — 실계정 필요] 동의→셀피 대조→인증 완료→생성 자동 재개 / stored_mismatch 재촬영 / 미성년 보호자 대기 폴링: 본인인증된 실계정+실제 얼굴 필요 — 대표 실테스트 항목 (자동화 불가 사유 명시)
+
+## v3.174 — 플레이어 착장 위시리스트
+- U1 [unit] tsc --noEmit 통과 (2_housing에서 실행)
+- A1 [api] Given 로그인 토큰+실존 ad_items id / When POST /wishlist/{id}/toggle body {track_id} / Then 200 + wishlisted 반영, 서버 로그 "[wishlist] event recorded" (track 실존 시 star 어트리뷰션)
+- A2 [api] When GET /wishlist/check?item_ids=... / Then wishlisted_ids에 A1 결과 반영
+- A3 [api] When GET /wishlist/ / Then items에 포함 → 재토글로 원복(테스트 데이터 청소)
+- A4 [api] 무바디 토글(ArtistCody 경로 회귀) — 200, 계약 불변
+- E1 [e2e] Given 착장 보유 곡 재생 → 상세시트 착장 탭 / Then 카드 이미지 우상단 하트 노출 / When 하트 탭 / Then 액센트 색 전환, 재진입 시 상태 유지(sync)
+- E2 [e2e] 회귀: ArtistCody 아이템 피커 "내 위시리스트" 탭에 E1에서 담은 아이템 노출

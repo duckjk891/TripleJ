@@ -3467,3 +3467,17 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **요청**: ①"MY / AI / IDOL"이 위에서부터 한 줄씩 나타났다가 모두 사라지면 MAIDOL 등장 ②MAIDOL 위 응원봉은 더 작게, 둥근사각 배경 없이.
 
 **수행**: SplashScreen 전면 개편 — 1막: 세 워드 순차 등장(320ms 스태거, 위→아래 슬라이드+페이드, AI는 액센트 컬러) → 잠시 유지 → 전체 페이드아웃. 2막: 응원봉 심볼(배경 사각 제거·흰 심볼만 추출한 maidol_symbol.png, 64px 소형) + MAIDOL 로고 + 태그라인이 스프링 스케일로 등장. 총 4초 후 메인 진입. 심볼 추출 시 사각 테두리 안티앨리어싱 잔여(코너 아크)까지 제거. 스크린샷 증적: 1막(v3173_act1)·2막(v3173_act2).
+
+## v3.174 — 2026-09-14 — 플레이어 착장 카드 위시리스트(웹 MAIDOL 패리티)
+
+**요청**: nowplaying 하단 토글의 착장 정보, 그리고 아티스트 만들기 꾸미기 아이템 화면에 기존 웹 MAIDOL의 위시리스트가 앱엔 없는 것 같다.
+
+**조사 결과(0단계)**: 꾸미기 아이템 화면(ArtistCodyScreen)은 v3.90에서 이미 위시리스트 완비(하트+"내 위시리스트" 탭). 실제 빠진 곳은 **플레이어 착장 탭**뿐이었음 — 웹 원본 `CharacterCoverCard.jsx`엔 하트 토글(+곡 문맥 `track_id` 전송)이 있었으나 앱 PlayerScreen 착장 카드엔 하트가 없었음. 백엔드 `/api/wishlist/*`는 완비 상태(변경 없음).
+
+**수행(FE 전용)**:
+- `stores/wishlistStore.ts`: `toggle(itemId, trackId?)` — trackId 있으면 `{track_id}` body 전송(웹 계약 동일, ArtistCody 무바디 호출과 호환). 서버 `ad_wish_events` 어트리뷰션(star_user_id) 연계.
+- `screens/PlayerScreen.tsx`: 착장 탭 진입 시 보이는 아이템 `sync()` 일괄 조회, 각 카드 이미지 우상단에 위시 하트(ArtistCody `wishBtn` 규격 재사용), 미로그인은 `showAlert` 게이트, 토글에 `track_id` 전달. **서버에 없는 아이템(id 없음/`sample_`)은 하트 미노출**.
+
+**테스트**: tsc 통과. [api] toggle+track_id → 200·`wishlisted:true`, 서버 로그 `[wishlist] event recorded ... star=c3202520` 확인, check/list 반영·원복, 무바디 토글(ArtistCody 회귀) 200. [e2e] 3/3 PASS — E1 착장 하트 토글(track_id body 확인)·재열람 유지, E1b id 없는 곡(냥냥냥)은 착장 카드 뜨되 하트 숨김, E2 회귀 꾸미기 상의 피커 "내 위시리스트(1)"에 담은 후드집업 노출. 테스트 위시 데이터 청소 완료. 증적: v3174e_02_outfit/03_wished/05_noid/06_codywish.png.
+
+**특이사항**: 백엔드·꾸미기 화면은 무변경(이미 완비). 실질 갭은 플레이어 착장 탭 하트 1곳이었고 FE만 수정. 곡 문맥 담기는 웹처럼 `track_id`를 실어 광고주 어트리뷰션 이벤트가 남도록 했음.

@@ -28,7 +28,9 @@ interface WishlistState {
   listError: boolean;
   isWished: (itemId: string) => boolean;
   sync: (itemIds: string[]) => Promise<void>;       // 보이는 아이템 위시 여부 일괄 조회
-  toggle: (itemId: string) => Promise<boolean>;     // 낙관적 토글 → 실패 시 롤백. 반환=최종 상태
+  // 낙관적 토글 → 실패 시 롤백. 반환=최종 상태.
+  // trackId: 곡 문맥(플레이어 착장 카드)에서 담을 때 전달 — 서버 ad_wish_events 어트리뷰션용(웹 MAIDOL 계약 동일)
+  toggle: (itemId: string, trackId?: string) => Promise<boolean>;
   fetchList: (force?: boolean) => Promise<void>;    // 위시리스트 목록 로드(카테고리 필터는 클라이언트에서)
 }
 
@@ -64,15 +66,18 @@ export const useWishlistStore = create<WishlistState>((set, get) => ({
     }
   },
 
-  toggle: async (itemId) => {
+  toggle: async (itemId, trackId) => {
     if (!itemId || get().busy[itemId]) return get().isWished(itemId);
     const prev = get().isWished(itemId);
     const next = !prev;
     // 낙관적 반영
     set((s) => ({ wished: { ...s.wished, [itemId]: next }, busy: { ...s.busy, [itemId]: true } }));
-    if (__DEV__) console.info('[wishlistStore] toggle', { itemId, next });
+    if (__DEV__) console.info('[wishlistStore] toggle', { itemId, next, trackId });
     try {
-      const { data } = await api.post(`/wishlist/${itemId}/toggle`);
+      const { data } = await api.post(
+        `/wishlist/${itemId}/toggle`,
+        trackId ? { track_id: trackId } : undefined,
+      );
       const serverState = typeof data?.wishlisted === 'boolean' ? data.wishlisted : next;
       if (serverState !== next) {
         console.warn('[wishlistStore] 서버 상태 불일치 → 서버값 채택', { itemId, next, serverState });

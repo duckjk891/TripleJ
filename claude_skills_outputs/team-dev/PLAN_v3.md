@@ -2265,3 +2265,21 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 3. screens/FaceVerifyScreen.tsx — 상태머신 RN 이식(셀피=이미지 선택/촬영 DocumentPicker image/* — 기존 관행, Liveness 제외). verified → ArtistLoading replace(자동 재생성).
 4. App.tsx StudioStack 'FaceVerify' 라우트 + ArtistLoading 403 face_verification_required → FaceVerify replace.
 5. 테스트: [api] status/consent 계약·verify 게이트 체인(미인증 403 identity), [e2e] 실사+사진 생성 → 403 → FaceVerify 화면 진입(need_identity 안내 — 테스트 계정 is_verified=false 실측), 회귀(가상 생성 무영향).
+
+## v3.174 — 2026-09-14 — 플레이어 착장 카드 위시리스트(웹 MAIDOL 패리티)
+**요청 원문**: nowplaying 하단 토글의 착장 정보 / 아티스트 만들기 꾸미기 아이템 화면에 기존 웹 maidol의 위시리스트 기능이 앱에는 없는 것 같다.
+
+### Plan verification findings (0단계)
+- **꾸미기 아이템 화면 = ArtistCodyScreen**: v3.90에서 이미 완비 — 아이템 카드 하트(wishBtn, :893~908) + "전체|내 위시리스트" 탭(:777~) + 미로그인 게이트(showAlert, :247). → 추가 작업 불요, 회귀 확인만.
+- **플레이어 착장 탭 = PlayerScreen :1093~1168**: `track.cover_character.used_items[]`(id/name/category/image_object_name/product_url) 가로 카드 레일 — **하트 없음**. 웹 원본 `CharacterCoverCard.jsx`는 checkWishlist 일괄 조회 + 하트 토글(+`track_id` 컨텍스트 전송)이 있었음 → 이것이 실제 갭.
+- **wishlistStore.toggle(itemId)**: 현재 무바디 POST — 웹은 곡 문맥에서 `{track_id}` body를 보내 백엔드 `_record_wish_event`(ad_wish_events, star_user_id 어트리뷰션)를 남김. 백엔드 `WishToggleBody`는 이미 optional body 수용(9004 배포본 확인).
+- **백엔드**: routes/wishlist.py 완비(toggle/check/list, PG ad_wishlist + Mongo ad_items) — 변경 없음.
+
+### 변경 매트릭스 (FE-only)
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| stores/wishlistStore.ts | toggle(itemId, trackId?) — trackId 있으면 `{track_id}` body 전송 (기존 호출 호환) | [wishlistStore] |
+| screens/PlayerScreen.tsx | 착장 탭 진입 시 sync(ids), 카드 이미지 우상단 하트(ArtistCody wishBtn 관행), 미로그인 showAlert 게이트, toggle에 track_id 전달, id 없는/sample_ 아이템 하트 숨김 | [PlayerScreen] |
+
+### 테스트 지시(요지)
+[unit] tsc. [api] toggle+track_id→200·wishlisted, 서버 로그 "event recorded", check/list 반영, 원복. [e2e] 착장 탭 하트 토글·재진입 유지, 회귀: ArtistCody 위시 탭.
