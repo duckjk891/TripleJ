@@ -32,7 +32,7 @@ import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
-import { autoContinueWithRelated } from '../services/playback';
+import { autoContinueWithRelated, invalidatePlayback } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useWishlistStore } from '../stores/wishlistStore';
 import { colors } from '../theme/colors';
@@ -976,12 +976,10 @@ export default function PlayerScreen({ route, navigation }: any) {
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>좋아요</AppText>
         </TouchableOpacity>
 
-        {/* v3.178(대표): 댓글 = 하단 상세토글을 댓글 탭으로 연다 */}
+        {/* v3.178(대표): 댓글 = 하단 상세토글을 댓글 탭으로 연다. v3.180: 숫자는 패널 상단으로 */}
         <TouchableOpacity style={styles.actionBtn} onPress={openComments} accessibilityLabel="댓글">
           <Feather name="message-circle" size={23} color={colors.text.muted} />
-          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>
-            {commentCount != null && commentCount > 0 ? `댓글 ${commentCount}` : '댓글'}
-          </AppText>
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>댓글</AppText>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlaylist}>
@@ -1006,56 +1004,6 @@ export default function PlayerScreen({ route, navigation }: any) {
         ) : null}
       </View>
 
-      {/* 비회원 담기 안내 — 로그인 화면으로 튕기지 않고 선택하게 함 */}
-      <GuestQueueNoticeModal
-        visible={showGuestNotice}
-        onLogin={() => { setShowGuestNotice(false); navigation.navigate('Settings'); }}
-        onContinue={() => {
-          setShowGuestNotice(false);
-          playerStore.setGuestNoticeAck(true);
-          addCurrentToQueue();
-        }}
-        onClose={() => setShowGuestNotice(false)}
-      />
-
-      {/* 콘텐츠 신고 (본인 곡 제외) */}
-      <ReportModal
-        visible={showReport}
-        targetType="track"
-        targetId={String(track?.id ?? '')}
-        onClose={() => setShowReport(false)}
-      />
-
-      {/* 재생목록(큐) 모달 — 현재 재생 큐를 보고 곡 선택/삭제 */}
-      <Modal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>
-        <TouchableOpacity style={styles.queueOverlay} activeOpacity={1} onPress={() => setShowQueue(false)}>
-          <TouchableOpacity style={styles.queueSheet} activeOpacity={1} onPress={() => {}}>
-            <View style={styles.queueHead}>
-              <AppText variant="title3">재생목록 {playerStore.queue.length}</AppText>
-              <TouchableOpacity onPress={() => setShowQueue(false)} accessibilityLabel="닫기">
-                <Feather name="x" size={22} color={colors.text.muted} />
-              </TouchableOpacity>
-            </View>
-            {playerStore.queue.length === 0 ? (
-              <AppText tone="muted" center style={{ paddingVertical: 40 }}>재생목록이 비어있어요</AppText>
-            ) : (
-              <>
-                <AppText variant="caption" tone="muted" style={{ marginBottom: spacing.sm }}>≡ 손잡이를 잡고 끌어 순서를 바꿀 수 있어요</AppText>
-                <ScrollView style={{ maxHeight: 420 }}>
-                  <DraggableQueue
-                    data={playerStore.queue}
-                    currentIndex={playerStore.currentIndex}
-                    onReorder={(from, to) => playerStore.reorderQueue(from, to)}
-                    onPress={(i) => { setShowQueue(false); switchToTrack(i); }}
-                    onRemove={(i) => playerStore.removeFromQueue(i)}
-                  />
-                </ScrollView>
-              </>
-            )}
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-
 
       {/* 남는 세로 공간 흡수(콘텐츠가 짧을 때) — 토글은 아래 절대배치로 항상 노출 */}
       <View style={{ flex: 1 }} />
@@ -1076,25 +1024,52 @@ export default function PlayerScreen({ route, navigation }: any) {
           핸들/미니바 탭 = 큰 플레이어로 복귀("토글 내리기"). */}
       {showDetails && (
         <View style={styles.detailWrap}>
-          {/* 축소된 미니 플레이어 — 탭하면 큰 플레이어로 복귀 */}
-          <TouchableOpacity style={styles.miniPlayer} activeOpacity={0.9} onPress={() => setShowDetails(false)} accessibilityLabel="큰 플레이어로">
-            {coverUri ? (
-              <Image source={{ uri: coverUri }} style={styles.miniCover} resizeMode="cover" />
-            ) : (
-              <View style={[styles.miniCover, styles.coverPlaceholder]} />
-            )}
-            <View style={styles.miniInfo}>
-              <AppText variant="callout" numberOfLines={1}>{track?.title || '알 수 없는 곡'}</AppText>
-              <AppText variant="caption" tone="muted" numberOfLines={1}>{track?.artist_name || track?.agency_name || ''}</AppText>
+          {/* v3.180(대표): 축소 미니 플레이어 = 하단 MiniPlayer와 동일 UI —
+              2px 프로그레스바 + 커버40 + 제목/아티스트 + ⏮ ▶ ⏭ + 재생목록 + ✕.
+              정보 영역 탭 = 큰 플레이어 복귀 */}
+          <View style={styles.miniPlayerWrap}>
+            <View style={styles.miniProgressBar}>
+              <View style={[styles.miniProgressFill, { width: `${duration > 0 ? (position / duration) * 100 : 0}%` }]} />
             </View>
-            <TouchableOpacity style={styles.miniPlayBtn} onPress={togglePlayPause} accessibilityLabel={isPlaying ? '일시정지' : '재생'}>
-              {isPlaying ? (
-                <View style={styles.miniPauseIcon}><View style={styles.miniPauseBar} /><View style={styles.miniPauseBar} /></View>
-              ) : (
-                <View style={styles.miniPlayTriangle} />
-              )}
-            </TouchableOpacity>
-          </TouchableOpacity>
+            <View style={styles.miniPlayer}>
+              <TouchableOpacity style={styles.miniInfoTap} activeOpacity={0.8} onPress={() => setShowDetails(false)} accessibilityLabel="큰 플레이어로">
+                {coverUri ? (
+                  <Image source={{ uri: coverUri }} style={styles.miniCover} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.miniCover, styles.coverPlaceholder]} />
+                )}
+                <View style={styles.miniInfo}>
+                  <AppText style={styles.miniTitle} numberOfLines={1}>{track?.title || '알 수 없는 곡'}</AppText>
+                  <AppText style={styles.miniArtist} numberOfLines={1}>{track?.artist_name || track?.agency_name || 'AI'}</AppText>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handlePrev} style={styles.miniSkipBtn} accessibilityLabel="이전 곡">
+                <AppText style={styles.miniSkipIcon}>{'⏮'}</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.miniPlayBtn} onPress={togglePlayPause} accessibilityLabel={isPlaying ? '일시정지' : '재생'}>
+                <AppText style={styles.miniPlayIcon}>{isPlaying ? '❚❚' : '▶'}</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleNext} style={styles.miniSkipBtn} accessibilityLabel="다음 곡">
+                <AppText style={styles.miniSkipIcon}>{'⏭'}</AppText>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowQueue(true)} style={styles.miniSkipBtn} accessibilityLabel="재생목록 열기">
+                <Feather name="list" size={18} color={colors.text.secondary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  // 하단 MiniPlayer ✕ 관행: 재생 종료 + 플레이어 닫기
+                  if (__DEV__) console.info('[PlayerScreen] 미니바 ✕ — 재생 종료');
+                  invalidatePlayback();
+                  await playerStore.cleanup();
+                  navigation.goBack();
+                }}
+                style={styles.miniSkipBtn}
+                accessibilityLabel="재생 종료"
+              >
+                <AppText style={styles.miniCloseIcon}>{'✕'}</AppText>
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* 핸들 — 내리면 큰 플레이어로 복귀 */}
           <TouchableOpacity
@@ -1108,10 +1083,8 @@ export default function PlayerScreen({ route, navigation }: any) {
             {/* Tab bar */}
             <View style={styles.sheetTabBar}>
               {(['lyrics', 'prompt', 'outfit', 'comments'] as const).map((tab) => {
-                const labels = {
-                  lyrics: '가사', prompt: '프롬프트', outfit: '착장',
-                  comments: commentCount != null ? `댓글 ${commentCount}` : '댓글',
-                };
+                // v3.180: 탭 라벨 숫자 제거 — 댓글 수는 패널 상단 "댓글 N개"로
+                const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장', comments: '댓글' };
                 return (
                   <Tag key={tab} label={labels[tab]} selected={detailTab === tab} onPress={() => setDetailTab(tab)} />
                 );
@@ -1269,18 +1242,67 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <AppText style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</AppText>
                 )
               )}
-              {/* v3.177: 곡 댓글 */}
+              {/* v3.177: 곡 댓글 — v3.180: 탭 라벨 숫자 대신 패널 상단에 "댓글 N개" */}
               {detailTab === 'comments' && (
-                <TrackComments
-                  trackId={track?.id ? String(track.id) : undefined}
-                  trackOwnerId={track?.uploader_id ? String(track.uploader_id) : undefined}
-                  onCountChange={setCommentCount}
-                />
+                <View>
+                  <AppText style={styles.commentsHeader}>댓글 {commentCount ?? 0}개</AppText>
+                  <TrackComments
+                    trackId={track?.id ? String(track.id) : undefined}
+                    trackOwnerId={track?.uploader_id ? String(track.uploader_id) : undefined}
+                    onCountChange={setCommentCount}
+                  />
+                </View>
               )}
               <View style={{ height: 40 }} />
             </ScrollView>
         </View>
       )}
+
+      {/* v3.180: 모달 3종 — fragment 밖 상시 렌더 (상단 미니바에서도 재생목록 접근) */}
+      <GuestQueueNoticeModal
+        visible={showGuestNotice}
+        onLogin={() => { setShowGuestNotice(false); navigation.navigate('Settings'); }}
+        onContinue={() => {
+          setShowGuestNotice(false);
+          playerStore.setGuestNoticeAck(true);
+          addCurrentToQueue();
+        }}
+        onClose={() => setShowGuestNotice(false)}
+      />
+      <ReportModal
+        visible={showReport}
+        targetType="track"
+        targetId={String(track?.id ?? '')}
+        onClose={() => setShowReport(false)}
+      />
+      <Modal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>
+        <TouchableOpacity style={styles.queueOverlay} activeOpacity={1} onPress={() => setShowQueue(false)}>
+          <TouchableOpacity style={styles.queueSheet} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.queueHead}>
+              <AppText variant="title3">재생목록 {playerStore.queue.length}</AppText>
+              <TouchableOpacity onPress={() => setShowQueue(false)} accessibilityLabel="닫기">
+                <Feather name="x" size={22} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+            {playerStore.queue.length === 0 ? (
+              <AppText tone="muted" center style={{ paddingVertical: 40 }}>재생목록이 비어있어요</AppText>
+            ) : (
+              <>
+                <AppText variant="caption" tone="muted" style={{ marginBottom: spacing.sm }}>≡ 손잡이를 잡고 끌어 순서를 바꿀 수 있어요</AppText>
+                <ScrollView style={{ maxHeight: 420 }}>
+                  <DraggableQueue
+                    data={playerStore.queue}
+                    currentIndex={playerStore.currentIndex}
+                    onReorder={(from, to) => playerStore.reorderQueue(from, to)}
+                    onPress={(i) => { setShowQueue(false); switchToTrack(i); }}
+                    onRemove={(i) => playerStore.removeFromQueue(i)}
+                  />
+                </ScrollView>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1567,11 +1589,14 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: colors.border.default,
   },
+  // v3.180(대표): 탭 하단 가로줄 제거
   sheetTabBar: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
     paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  commentsHeader: {
+    fontSize: 15, fontWeight: '700', color: colors.text.primary, marginBottom: 12,
   },
   sheetTab: {
     flex: 1,
@@ -1602,33 +1627,35 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'stretch',
   },
-  // 축소된 미니 플레이어 바 (상단)
-  miniPlayer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  // v3.180: 축소 미니 플레이어 — components/MiniPlayer.tsx 와 동일 규격
+  miniPlayerWrap: {
+    backgroundColor: colors.bg.surface1,
     borderBottomWidth: 1,
     borderBottomColor: colors.border.subtle,
   },
-  miniCover: {
-    width: 52, height: 52, borderRadius: 8,
-    backgroundColor: colors.bg.surface2,
+  miniProgressBar: { height: 2, backgroundColor: colors.border.subtle },
+  miniProgressFill: { height: 2, backgroundColor: colors.accent.primary },
+  miniPlayer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
+  miniInfoTap: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  miniCover: { width: 40, height: 40, borderRadius: 6, backgroundColor: colors.bg.deepest },
   miniInfo: { flex: 1, marginHorizontal: 12 },
+  miniTitle: { color: colors.text.primary, fontSize: 14, fontWeight: '600' },
+  miniArtist: { color: colors.text.secondary, fontSize: 12, marginTop: 1 },
+  miniSkipBtn: { width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
+  miniSkipIcon: { color: colors.text.primary, fontSize: 14 },
   miniPlayBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: colors.accent.primary,
     justifyContent: 'center', alignItems: 'center',
+    marginHorizontal: 4,
   },
-  miniPlayTriangle: {
-    width: 0, height: 0,
-    borderTopWidth: 8, borderBottomWidth: 8, borderLeftWidth: 13,
-    borderTopColor: 'transparent', borderBottomColor: 'transparent',
-    borderLeftColor: '#fff', marginLeft: 3,
-  },
-  miniPauseIcon: { flexDirection: 'row', gap: 4 },
-  miniPauseBar: { width: 4, height: 15, borderRadius: 1, backgroundColor: '#fff' },
+  miniPlayIcon: { color: colors.text.primary, fontSize: 12 },
+  miniCloseIcon: { color: colors.text.muted, fontSize: 16 },
   sheetText: {
     fontSize: 15,
     color: colors.text.secondary,
@@ -1666,7 +1693,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.surface1,
     borderWidth: 1, borderColor: colors.border.subtle,
   },
-  outfitItemImg: { width: 150, height: 150, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  // v3.180(대표): 투명 png 제품컷이 어두운 배경에 묻힘 — 흰 배경으로 옷이 잘 보이게
+  outfitItemImg: { width: 150, height: 150, borderRadius: 8, backgroundColor: '#fff' },
   // v3.174: 착장 카드 위시 하트 — ArtistCody wishBtn과 동일 규격
   outfitWishBtn: {
     position: 'absolute', top: 6, right: 6,

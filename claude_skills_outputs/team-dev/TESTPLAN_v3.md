@@ -1474,3 +1474,11 @@
 - L2 [e2e] 맵 영상 디렉터 → Dialogue(캐릭터+흰 대화창) → 탭 → VideoDirector, 인사말 이모지 없음, 아바타 얼굴 크롭
 - L3 [e2e] 스타일 대화: 형식→화면채움(꽉/플레이어)→모양(네모/원)→가사(흐름/한줄) 카드 전 단계 노출, 비용 confirm
 - 검증픽스 [unit] tsc / [api] 백엔드 ast — 6건(스텁 트랙 역주입, keyboardShouldPersistTaps, 삭제 deleted_count, TrackComments 스피너, 죽은 스타일 제거, V5→V6 방어 매핑)
+
+## v3.180 — 플레이어 토글·댓글 UI 다듬기
+- A1 [api] GET comments 응답에 author_profile_image 필드(PG join, 이미지 없으면 null)
+- L1 [e2e] 탭바 borderBottom 0px(계측) + 댓글 패널 상단 "댓글 N개" 헤더, 탭/액션줄 라벨 숫자 없음
+- L2 [e2e] 상단 미니바 = 하단 MiniPlayer 동등: ⏮·▶·⏭·재생목록·✕ 존재(aria), 프로그레스바, 재생목록 탭 시 큐 모달
+- L3 [e2e] 내 곡에 댓글 → '아티스트' 배지+강조 배경, 아바타(이니셜 폴백), 헤더 "댓글 1개" 갱신
+- L4 [e2e] 착장 카드 이미지 배경 rgb(255,255,255) 계측 (Cody 피커도 동일 스타일 적용)
+- 회귀: 댓글 작성/삭제 정상(L3 내 수행), 테스트 데이터 정리 확인

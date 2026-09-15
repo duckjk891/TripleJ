@@ -1104,7 +1104,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border.subtle,
   },
   itemImgWrap: { position: 'relative', marginBottom: 8 },
-  itemImg: { width: '100%', aspectRatio: 1, borderRadius: 8 },
+  // v3.180(대표): 투명 png 제품컷 흰 배경 — 어두운 테마에서 옷이 잘 보이게 (플레이어 착장과 통일)
+  itemImg: { width: '100%', aspectRatio: 1, borderRadius: 8, backgroundColor: '#fff' },
   itemImgFallback: {
     backgroundColor: colors.bg.surface2,
     justifyContent: 'center', alignItems: 'center',

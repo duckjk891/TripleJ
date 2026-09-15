@@ -2382,3 +2382,17 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 | BE share_video.py | layout/shape/lyrics 파라미터, center 조성+마스크 사전패스, lyrics=line→_build_ass, 캐시명 스타일 suffix | [share-video] |
 | BE routes/tracks.py | share-video 라우트/파일 프록시 스타일 파라미터+검증+과금 ref 확장 | [share-video] |
 | 검증 | v3.174~178(FE)+87295ae(BE) diff 리뷰 에이전트(별도 보고) | - |
+
+## v3.180 — 2026-09-15 — 플레이어 토글·댓글 UI 다듬기(대표 6건)
+**요청**: ①토글 탭(가사·프롬프트·착장·댓글) 하단 가로줄 제거 ②착장 아이템 투명 png에 흰 배경 ③토글 상단 미니플레이어를 하단 MiniPlayer와 동일 UI로(빠진 요소 보완) ④댓글 탭 옆 숫자 대신 댓글 패널 상단에 "댓글 N개" ⑤댓글 작성·표시에 프로필 이미지(내 아바타+작성자 아바타) ⑥곡 주인이 쓴 댓글은 UI로 구분.
+
+### Plan verification findings
+- 탭 가로줄 = PlayerScreen sheetTabBar borderBottomWidth:1. 착장 이미지 bg = outfitItemImg(surface2)·Cody itemImg(투명). 하단 MiniPlayer(components/MiniPlayer.tsx) 구성 = 상단 2px 프로그레스바 + 커버40 + 제목/아티스트 + ⏮ + ▶(36 accent 원) + ⏭ + 재생목록(list) + ✕ — 현재 상단 미니바엔 커버/제목/재생버튼뿐. 큐 Modal이 !showDetails fragment 안이라 상단에서 재생목록 열려면 **Modal을 fragment 밖으로 이동** 필요. 프로필 이미지 인프라 = PG users.profile_image + FE profileImageUrl()(무인증 프록시), 댓글 doc엔 이미지 없음 → **BE 목록 조회 시 PG join으로 author_profile_image 첨부**(_attach_uploader_profiles 관행, fresh). 곡 주인 판별 = FE trackOwnerId 이미 보유.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| BE routes/tracks.py | list_track_comments: PG join author_profile_image 첨부(best-effort) | [track-comment] |
+| FE PlayerScreen | 탭 밑줄 제거, 착장 흰배경, 상단 미니플레이어 완전판(프로그레스+prev/next+큐+✕), 큐 Modal fragment 밖 이동, 탭 라벨 '댓글' 고정+패널 헤더 "댓글 N개", 액션줄 라벨 정리 | [PlayerScreen] |
+| FE ArtistCodyScreen | itemImg 흰 배경 | [ArtistCody] |
+| FE TrackComments | 입력줄 내 아바타, 작성자 아바타, 곡 주인 댓글 구분(아티스트 배지+강조 배경) | [TrackComments] |

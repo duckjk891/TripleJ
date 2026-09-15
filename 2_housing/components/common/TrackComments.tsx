@@ -3,21 +3,41 @@
 //   피드 댓글(FeedCard) 패턴과 동일: 최상위 댓글 + 1단 대댓글(parent_id) 스레드,
 //   작성자 또는 곡 주인만 삭제, 미로그인은 작성 게이트.
 import { useCallback, useEffect, useState } from 'react';
-import { View, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import api from '../../services/api';
 import { showAlert } from '../../utils/appAlert';
 import { useAuthStore } from '../../stores/authStore';
+import { profileImageUrl } from '../../services/authService';
 
 export interface TrackComment {
   id: string;
   author_id: string;
   author_nickname?: string;
+  author_profile_image?: string | null; // v3.180: 서버 목록 조회 시 PG join 첨부
   text: string;
   parent_id?: string | null;
   created_at?: string;
+}
+
+// v3.180: 작은 프로필 아바타 — 이미지 없으면 닉네임 첫 글자 이니셜 원
+function CommentAvatar({ image, nickname, size = 24 }: { image?: string | null; nickname?: string; size?: number }) {
+  const uri = profileImageUrl(image);
+  if (uri) {
+    return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.bg.surface2 }} />;
+  }
+  return (
+    <View style={{
+      width: size, height: size, borderRadius: size / 2,
+      backgroundColor: colors.bg.surface2, justifyContent: 'center', alignItems: 'center',
+    }}>
+      <AppText style={{ fontSize: size * 0.45, color: colors.text.secondary, fontWeight: '700' }}>
+        {(nickname || '?').slice(0, 1)}
+      </AppText>
+    </View>
+  );
 }
 
 interface Props {
@@ -110,10 +130,23 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
   const roots = comments.filter((c) => !c.parent_id);
   const childrenOf = (pid: string) => comments.filter((c) => c.parent_id === pid);
 
+  // v3.180: 곡 주인(아티스트) 댓글은 UI로 구분 — 강조 배경 + '아티스트' 배지
+  const isOwnerComment = (c: TrackComment) =>
+    !!trackOwnerId && String(c.author_id) === String(trackOwnerId);
+
   const renderComment = (c: TrackComment, isReply = false) => (
-    <View key={c.id} style={[styles.comment, isReply && styles.replyComment]}>
+    <View key={c.id} style={[styles.comment, isReply && styles.replyComment, isOwnerComment(c) && styles.ownerComment]}>
       <View style={styles.commentHead}>
-        <AppText style={styles.author} numberOfLines={1}>{c.author_nickname || '익명'}</AppText>
+        <CommentAvatar image={c.author_profile_image} nickname={c.author_nickname} />
+        <AppText style={[styles.author, isOwnerComment(c) && styles.ownerAuthor]} numberOfLines={1}>
+          {c.author_nickname || '익명'}
+        </AppText>
+        {isOwnerComment(c) && (
+          <View style={styles.ownerBadge}>
+            <AppText style={styles.ownerBadgeText}>아티스트</AppText>
+          </View>
+        )}
+        <View style={{ flex: 1 }} />
         <AppText style={styles.time}>{fmtTime(c.created_at)}</AppText>
       </View>
       <AppText style={styles.commentText}>{c.text}</AppText>
@@ -147,6 +180,8 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
           </View>
         ) : null}
         <View style={styles.inputRow}>
+          {/* v3.180: 작성자(나) 프로필 아바타 */}
+          {user ? <CommentAvatar image={user.profile_image} nickname={user.nickname} size={30} /> : null}
           <TextInput
             style={styles.input}
             value={text}
@@ -216,10 +251,23 @@ const styles = StyleSheet.create({
     marginLeft: 18, paddingLeft: 10, borderBottomWidth: 0,
     borderLeftWidth: 2, borderLeftColor: colors.border.subtle,
   },
-  commentHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 },
-  author: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.text.primary, marginRight: 8 },
+  commentHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 7 },
+  author: { fontSize: 13, fontWeight: '700', color: colors.text.primary, flexShrink: 1 },
   time: { fontSize: 11, color: colors.text.muted },
   commentText: { fontSize: 14, color: colors.text.primary, lineHeight: 19 },
+  // v3.180: 곡 주인 댓글 구분 — 은은한 액센트 배경 + 좌측 라인 + 배지
+  ownerComment: {
+    backgroundColor: colors.accent.primary + '14',
+    borderLeftWidth: 3, borderLeftColor: colors.accent.primary,
+    borderRadius: 10, paddingHorizontal: 10, borderBottomWidth: 0,
+    marginBottom: 4,
+  },
+  ownerAuthor: { color: colors.accent.primary },
+  ownerBadge: {
+    backgroundColor: colors.accent.primary, borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  ownerBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff' },
   commentActions: { flexDirection: 'row', gap: 16, marginTop: 6 },
   actionText: { fontSize: 12, color: colors.text.secondary, fontWeight: '600' },
   deleteText: { color: colors.text.muted },
