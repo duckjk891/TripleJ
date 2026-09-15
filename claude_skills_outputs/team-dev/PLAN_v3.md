@@ -2334,3 +2334,26 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 
 ### 테스트 지시(요지)
 [api] 댓글 POST/GET/DELETE 계약·comment_count 증감·부모평탄화·권한403·알림 event, Suno: 기본 모델 V6 전송(로그/유닛). 회귀: 피드 댓글·알림 무영향. [e2e] 플레이어 댓글 탭 작성→표시→삭제, 미로그인 게이트.
+
+## v3.178 — 2026-09-15 — 곡 댓글 진입 개편 + 상세토글=미니플레이어 축소 방식
+**요청 원문**: 곡 댓글은 하단 토글 열었을 때 나오는 게 낫다. 액션 줄은 좋아요·댓글·담기·재생목록으로 가고, 댓글 클릭 시 하단 토글이 열리게. 단 토글이 열릴 때 nowplaying을 덮는 게 아니라 상단 미니플레이어로 축소되면서 토글이 열리고, 토글을 내리면 다시 큰 플레이어로.
+
+### Plan verification findings (0단계, screens/PlayerScreen.tsx)
+- 액션 줄(actionsRow, :932-964): 좋아요(로컬 state만)·담기·재생목록·[신고]. **댓글 버튼 없음** — 댓글은 상세시트 탭에만 존재(v3.177).
+- 상세 토글: `showDetails` **Modal**(:1030-, transparent slide) 이 화면을 **덮는** 구조. sheetOverlay+dismissArea+sheetContainer+핸들+탭바(가사/프롬프트/착장/댓글)+ScrollView.
+- 상세시트 진입: 하단 swipeUpButton(:1021-1028) `setShowDetails(true)`. 헤더 chevron-down(:765)=앱 미니플레이어(navigation.goBack).
+- 댓글 탭: detailTab==='comments' → <TrackComments> (v3.177). commentCount state(:184)는 탭 렌더 시에만 onCountChange로 채워짐.
+- 커버/타이틀/컨트롤: coverWrapper(:786), Marquee 제목(:826), controlsRow(:897), togglePlayPause·isPlaying·coverUri·coverH 모두 스코프 내.
+
+### 설계 (FE only, PlayerScreen 단일 파일)
+- 액션 줄: **좋아요 · 댓글 · 담기 · 재생목록** 순(+본인 곡 아니면 신고 유지). 댓글 클릭 → detailTab='comments' + showDetails(true). 댓글 수 배지.
+- 상세 토글을 **Modal → 인라인 전환**: `showDetails=false`면 기존 풀 플레이어(mediaTabs~컨트롤~액션~swipeUp). `showDetails=true`면 상단은 **미니플레이어 바**(작은 커버+제목/아티스트+재생/일시정지, 탭 시 큰 화면 복귀)로 축소되고 그 아래 상세 패널(핸들+탭바+ScrollView)이 flex:1로 채움. 핸들/미니바 탭 = setShowDetails(false)=큰 플레이어 복귀("토글 내리기").
+- 댓글 수 선표시: track.id 변경 시 GET /tracks/{id}/comments?limit=1 로 total 조회해 배지(액션 버튼·탭 공용 commentCount).
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| FE screens/PlayerScreen.tsx | 액션줄 댓글 추가·순서, 상세토글 Modal→인라인 미니플레이어 축소, 댓글수 선조회 | [PlayerScreen] |
+
+### 테스트 지시
+[e2e] ①액션줄 좋아요·댓글·담기·재생목록 노출 ②댓글 탭 클릭→상세 열림+댓글 탭 활성+상단 미니바 축소(큰 커버 숨김) ③핸들/미니바 탭→큰 플레이어 복귀 ④댓글 작성 여전히 동작(회귀) ⑤가사/프롬프트/착장 탭 회귀. [unit] tsc.

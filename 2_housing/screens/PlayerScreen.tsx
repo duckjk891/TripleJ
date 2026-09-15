@@ -232,6 +232,29 @@ export default function PlayerScreen({ route, navigation }: any) {
     useWishlistStore.getState().toggle(item.id, track?.id ? String(track.id) : undefined);
   };
 
+  // v3.178: 댓글 수 선조회 — 액션 버튼·탭 배지가 상세 열기 전에도 보이도록 (곡 바뀌면 재조회)
+  const trackIdForComments = track?.id ? String(track.id) : '';
+  useEffect(() => {
+    if (!trackIdForComments) { setCommentCount(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get(`/tracks/${trackIdForComments}/comments`, { params: { page: 1, limit: 1 } });
+        if (alive) setCommentCount(res.data?.pagination?.total ?? 0);
+      } catch (err: any) {
+        if (__DEV__) console.warn('[PlayerScreen] 댓글 수 조회 실패', { status: err?.response?.status });
+      }
+    })();
+    return () => { alive = false; };
+  }, [trackIdForComments]);
+
+  // v3.178(대표): 댓글 액션 → 하단 상세토글을 댓글 탭으로 연다(미니플레이어 축소 형태)
+  const openComments = () => {
+    if (__DEV__) console.info('[PlayerScreen] openComments', { trackId: trackIdForComments });
+    setDetailTab('comments');
+    setShowDetails(true);
+  };
+
   // 프롬프트 탭에 보여줄 파라미터 — 트랙 필드 + (내 곡이면) 생성 설정(genDetail)을 합친다.
   // 값이 없는 항목은 아예 노출하지 않는다(빈 '-' 나열 방지).
   const promptParams = (() => {
@@ -769,6 +792,9 @@ export default function PlayerScreen({ route, navigation }: any) {
         <View style={styles.backButton} />
       </View>
 
+      {/* v3.178(대표): 상세토글이 열리면(showDetails) 아래 풀 플레이어를 숨기고 상단 미니바+패널로 전환 */}
+      {!showDetails && (
+      <>
       {/* 노래 / 동영상 미디어 전환 (MAIDOL media-tabs) */}
       <View style={styles.mediaTabs}>
         <TouchableOpacity style={[styles.mediaTab, mediaTab === 'song' && styles.mediaTabActive]} onPress={() => setMediaTab('song')} accessibilityLabel="노래">
@@ -929,7 +955,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Action Buttons */}
+      {/* Action Buttons — v3.178(대표): 좋아요 · 댓글 · 담기 · 재생목록 순 */}
       <View style={styles.actionsRow}>
         <TouchableOpacity
           style={styles.actionBtn}
@@ -939,6 +965,14 @@ export default function PlayerScreen({ route, navigation }: any) {
             {isLiked ? '♥' : '♡'}
           </AppText>
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>좋아요</AppText>
+        </TouchableOpacity>
+
+        {/* v3.178(대표): 댓글 = 하단 상세토글을 댓글 탭으로 연다 */}
+        <TouchableOpacity style={styles.actionBtn} onPress={openComments} accessibilityLabel="댓글">
+          <Feather name="message-circle" size={23} color={colors.text.muted} />
+          <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>
+            {commentCount != null && commentCount > 0 ? `댓글 ${commentCount}` : '댓글'}
+          </AppText>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlaylist}>
@@ -1024,30 +1058,43 @@ export default function PlayerScreen({ route, navigation }: any) {
         accessibilityLabel="가사 프롬프트 착장"
       >
         <View style={styles.swipeUpHandle} />
-        <AppText variant="footnote" tone="secondary">가사 · 프롬프트 · 착장</AppText>
+        <AppText variant="footnote" tone="secondary">가사 · 프롬프트 · 착장 · 댓글</AppText>
       </TouchableOpacity>
+      </>
+      )}
 
-      {/* Bottom Sheet Modal (YouTube Music style) */}
-      <Modal
-        visible={showDetails}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowDetails(false)}
-      >
-        <View style={styles.sheetOverlay}>
-          <TouchableOpacity
-            style={styles.sheetDismissArea}
-            activeOpacity={1}
-            onPress={() => setShowDetails(false)}
-          />
-          <View style={styles.sheetContainer}>
-            {/* Handle bar */}
-            <TouchableOpacity
-              style={styles.sheetHandleArea}
-              onPress={() => setShowDetails(false)}
-            >
-              <View style={styles.sheetHandle} />
+      {/* v3.178(대표): 상세토글 = 화면 덮는 모달 대신, 플레이어를 상단 미니바로 축소하고 아래로 패널 확장.
+          핸들/미니바 탭 = 큰 플레이어로 복귀("토글 내리기"). */}
+      {showDetails && (
+        <View style={styles.detailWrap}>
+          {/* 축소된 미니 플레이어 — 탭하면 큰 플레이어로 복귀 */}
+          <TouchableOpacity style={styles.miniPlayer} activeOpacity={0.9} onPress={() => setShowDetails(false)} accessibilityLabel="큰 플레이어로">
+            {coverUri ? (
+              <Image source={{ uri: coverUri }} style={styles.miniCover} resizeMode="cover" />
+            ) : (
+              <View style={[styles.miniCover, styles.coverPlaceholder]} />
+            )}
+            <View style={styles.miniInfo}>
+              <AppText variant="callout" numberOfLines={1}>{track?.title || '알 수 없는 곡'}</AppText>
+              <AppText variant="caption" tone="muted" numberOfLines={1}>{track?.artist_name || track?.agency_name || ''}</AppText>
+            </View>
+            <TouchableOpacity style={styles.miniPlayBtn} onPress={togglePlayPause} accessibilityLabel={isPlaying ? '일시정지' : '재생'}>
+              {isPlaying ? (
+                <View style={styles.miniPauseIcon}><View style={styles.miniPauseBar} /><View style={styles.miniPauseBar} /></View>
+              ) : (
+                <View style={styles.miniPlayTriangle} />
+              )}
             </TouchableOpacity>
+          </TouchableOpacity>
+
+          {/* 핸들 — 내리면 큰 플레이어로 복귀 */}
+          <TouchableOpacity
+            style={styles.sheetHandleArea}
+            onPress={() => setShowDetails(false)}
+            accessibilityLabel="토글 내리기"
+          >
+            <View style={styles.sheetHandle} />
+          </TouchableOpacity>
 
             {/* Tab bar */}
             <View style={styles.sheetTabBar}>
@@ -1222,9 +1269,8 @@ export default function PlayerScreen({ route, navigation }: any) {
               )}
               <View style={{ height: 40 }} />
             </ScrollView>
-          </View>
         </View>
-      </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -1549,8 +1595,43 @@ const styles = StyleSheet.create({
     color: colors.accent.primary,
   },
   sheetContent: {
+    flex: 1,
     padding: 20,
   },
+  // v3.178: 상세토글 인라인 패널(모달 아님) — 헤더 아래 화면을 flex로 채움
+  // container 가 alignItems:'center' 라 명시적 전체폭 필요
+  detailWrap: {
+    flex: 1,
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  // 축소된 미니 플레이어 바 (상단)
+  miniPlayer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.subtle,
+  },
+  miniCover: {
+    width: 52, height: 52, borderRadius: 8,
+    backgroundColor: colors.bg.surface2,
+  },
+  miniInfo: { flex: 1, marginHorizontal: 12 },
+  miniPlayBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: colors.accent.primary,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  miniPlayTriangle: {
+    width: 0, height: 0,
+    borderTopWidth: 8, borderBottomWidth: 8, borderLeftWidth: 13,
+    borderTopColor: 'transparent', borderBottomColor: 'transparent',
+    borderLeftColor: '#fff', marginLeft: 3,
+  },
+  miniPauseIcon: { flexDirection: 'row', gap: 4 },
+  miniPauseBar: { width: 4, height: 15, borderRadius: 1, backgroundColor: '#fff' },
   sheetText: {
     fontSize: 15,
     color: colors.text.secondary,
