@@ -3501,3 +3501,27 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **수행**: 착장·꾸미기 하트 색을 #FF4D6D→플랫폼 보라(#a855f7)로 변경하고 담김 버튼의 핑크 테두리 스타일 제거(채움/외곽선 전환만으로 구분). v3.175에서 만든 전용 WishlistScreen·마이페이지 진입 카드·App 라우트는 모두 제거. 위시 확인은 아티스트 꾸미기 피커의 '내 위시리스트' 탭으로 일원화.
 
 **테스트**: tsc 통과, 잔여 참조(WishlistScreen/Wishlist 라우트/FF4D6D) 0건. E2E 2/2 PASS — L1 착장 하트 흰(255,255,255)→보라(168,85,247)+테두리 0px 계측, L2 마이페이지에 위시 카드 없음 확인. 테스트 데이터 정리 완료. 증적 v3176e_01_heart.png.
+
+## v3.177 — 2026-09-15 — 곡 댓글 기능 + Suno V5.5→V6 이전(보이스클로닝 유지)
+
+### 요청
+①곡에 댓글 다는 기능 ②Suno 구버전 폐기 파악 — v6 전환 시 보이스클로닝 포함 여부, v5.5 완전 폐기 여부.
+
+### ② Suno 폐기 — 파악 결과(핵심)
+- 공급자=비공식 래퍼 api.sunoapi.org(httpx). 우리 코드는 모델을 하드코딩(`suno_generator.py`): 기본 V5, 보이스클론/커버면 V5_5. 프론트는 버전 미전송 → 백엔드 기본값이 실제 결정.
+- **웹 확정(2026-09)**: sunoapi.org 기본 모델 V6, **V5_5·V5·V4.5계열 전부 Deprecated(하위호환용)**. 공식 Suno는 9/9자로 v5.5 신규 생성 폐기(기존 곡·보이스클론·커스텀모델은 v6에서 계속 사용). **voice_persona(=우리 보이스클론)는 V6/V6_WILD/V6_MINI 지원**, upload-cover도 V6 지원.
+- **답**: v5.5는 신규 생성용으로 폐기 수순 → v6로 가야 함. **v6에서 보이스클로닝 포함(유지) 확정.**
+- **조치**: config `suno_model_default='V6'` 추가, suno_generator 기본값을 V6로 이전(구버전 강제 분기 제거, 호출자 override·구곡 재생성 doc 값은 존중). 서버 로드 확인(settings.suno_model_default=V6). **실생성 스모크는 Suno 크레딧/외부 API라 자동검증 불가 → 대표 실테스트 위임.**
+
+### ① 곡 댓글
+- BE(tracks.py, 피드 댓글 패턴 이식): Mongo `track_comments`, GET(무인증·페이지네이션)/POST(인증·부모 1단 평탄화·comment_count+1·알림)/DELETE(작성자|곡주인, **최상위 삭제 시 하위 답글 cascade + count 정합**). 알림 target_type='track'.
+- BE notifications.py: push_notification/bulk에 target_type 옵션(기본 None=피드 하위호환).
+- FE: components/common/TrackComments.tsx 신설(목록/작성/답글/삭제, 미로그인 게이트), PlayerScreen 상세시트 '댓글 N' 탭 추가, NotificationsScreen 곡 댓글 라벨('내 곡에')·라우팅(target_type='track'→Player) 분기.
+
+### 테스트
+- API 전부 PASS: CRUD·count 증감·부모평탄화·권한403·401·404·cascade 삭제(3→0)·owner comment 알림(target_type=track)·Suno V6 로드. 회귀(피드 댓글 무영향) 확인.
+- E2E 4/4 PASS(v3177e): 댓글 탭·작성+카운트·답글 스레드·삭제. 증적 v3177e_01~04.png. 테스트 댓글 정리 완료.
+
+### 특이사항
+- 발견·수정 버그: 최상위 댓글 삭제 시 하위 답글이 고아로 남아 count/목록 불일치 → track 삭제 경로에 cascade 추가로 해결(피드 쪽은 기존 동작 유지, 이번 범위 밖).
+- track.comment_count는 redis 10분 캐시라 배지 즉시성은 GET /comments의 total(프론트 onCountChange)로 보장 — 캐시 값은 자연 만료로 수렴.

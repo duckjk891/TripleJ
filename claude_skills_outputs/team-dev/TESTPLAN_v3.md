@@ -1443,3 +1443,17 @@
 - L1 [e2e] 착장 하트 담기 전 흰→담은 뒤 보라(rgb 168,85,247), 버튼 테두리 0px(색칠 없음)
 - L2 [e2e] 마이페이지에 '내 위시리스트' 카드 미노출(제거 확인)
 - [unit] tsc 통과 + 잔여 참조(WishlistScreen/Wishlist/FF4D6D) grep 0건
+
+## v3.177 — 곡 댓글 + Suno V6 이전
+- A1 [api] POST /tracks/{id}/comments (인증) → 201 + comment, comment_count +1
+- A2 [api] 대댓글 parent_id → 저장(2단은 부모의 부모로 평탄화), reply 알림(자기답글 self-skip)
+- A3 [api] GET /tracks/{id}/comments → created_at asc, pagination.total 정확
+- A4 [api] 빈 텍스트 400 / 미인증 401 / 없는 곡 404
+- A5 [api] DELETE /tracks/comments/{cid} — 작성자|곡주인만(그 외 403), 최상위 삭제 시 하위 답글 cascade + count 정합(음수가드)
+- A6 [api] 알림 target_type='track' 저장 + owner에게 comment push
+- A7 [api][suno] settings.suno_model_default='V6' 로드, suno_model 미지정 시 resolved_model=V6 (실생성은 대표 위임)
+- 회귀 [api] 피드 댓글/알림 무영향(push_notification target_type 기본 None)
+- E1 [e2e] 플레이어 상세시트 '댓글' 탭 노출
+- E2 [e2e] 댓글 작성 → 표시 + 탭 카운트 '댓글 N' 반영
+- E3 [e2e] 답글 작성 → 스레드 표시
+- E4 [e2e] 삭제(확인 다이얼로그) → 목록에서 제거

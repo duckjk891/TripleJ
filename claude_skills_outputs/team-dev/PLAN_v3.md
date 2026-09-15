@@ -2305,3 +2305,32 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 - PlayerScreen/ArtistCodyScreen 하트 색 #FF4D6D→colors.accent.primary(#a855f7), 담김 버튼 테두리 스타일(outfitWishBtnOn/wishBtnOn) 제거.
 - WishlistScreen.tsx 삭제, App.tsx Wishlist 라우트·import·param 제거, MyMusicScreen 위시 진입 카드·handleOpenWishlist·MaterialCommunityIcons import 제거.
 - **유지**: 플레이어 착장 카드 담기 하트 + 꾸미기 아이템 피커 '내 위시리스트' 탭(위시 확인 경로).
+
+## v3.177 — 2026-09-15 — 곡 댓글 기능 + Suno V5.5→V6 이전(보이스클로닝 유지)
+**요청 원문**: ①곡에 대한 댓글을 달 수 있는 기능 ②Suno 구버전 폐기 문제 정확히 파악 — v6를 써야 한다면 보이스클로닝도 확실히 포함되는지, v5.5가 아예 없어지는지.
+
+### Plan verification findings (0단계, 코드/웹 조사)
+**A) 댓글**
+- 곡 댓글 = BE/FE 전무. **피드 댓글이 완성 청사진**: feeds.py `feed_comments`(Mongo) + `comment_count $inc`, `CommentBody{text,parent_id}`, GET(무인증·페이지네이션)/POST(인증·부모 1단 평탄화·알림)/DELETE(작성자|글주인). FeedCard.tsx 인라인 댓글 UI.
+- tracks 문서엔 이미 `comment_count:0` 필드 존재하나 아무도 증감 안 함(upload_track:1817, upload_from_generation:2165). GET /tracks/{id}=_serialize_track 통과 → 응답에 이미 포함(단 redis v4 10분 캐시).
+- 알림 push_notification VALID_TYPES에 comment/reply 이미 포함. target_type 필드는 없음(피드 전용 가정) → **target_type 추가(옵션, 기본 None=피드 하위호환)** 필요.
+- FE: PlayerScreen 상세시트 탭(lyrics/prompt/outfit)에 'comments' 추가. api.ts=순수 axios, `api.get('/tracks/${id}/comments')` 직접 호출 관행.
+
+**B) Suno 폐기 (웹 조사 + 코드)**
+- 공급자=비공식 래퍼 **api.sunoapi.org**(httpx 직접). 모델 필드=`model`, 값 하드코딩 `suno_generator.py:141-143`: 기본 `V5`, persona(보이스클론)/upload-cover면 `V5_5`. 프론트는 suno_model 미전송 → **백엔드 기본값이 실제 버전 결정**.
+- **웹 확정(2026-09)**: sunoapi.org 문서 — 기본 모델 `V6`, **V5_5·V5·V4.5계열 전부 Deprecated("하위호환용만, 신규는 V6계열")**. 공식 Suno는 9/9자로 v5.5 신규 생성 폐기(기존 곡·보이스는 유지). **voice_persona(=우리 보이스클론)는 V6/V6_WILD/V6_MINI 지원**, upload-cover도 V6 지원.
+- → **결론: v5.5는 신규 생성용으로 폐기 수순. V6로 올리면 보이스클로닝 포함(유지)됨.** 우리 코드가 폐기 모델에 하드코딩돼 있어 **백엔드 기본값을 V6로 이전**해야 함(FE 변경 불요).
+- **한계**: 실제 생성은 Suno 크레딧·외부 API라 자동 E2E로 실검증 불가 → 요청 body가 V6를 싣는지(로그/유닛)만 검증, 실생성 스모크는 대표 위임.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| BE routes/tracks.py | track_comments: GET/POST/DELETE(피드 패턴 이식), comment_count $inc, 알림(comment/reply, target_type='track') | [track-comment] |
+| BE routes/notifications.py | push_notification/bulk에 target_type 옵션 추가(기본 None) | [notify] |
+| BE config.py | suno_model_default='V6'(env SUNO_MODEL_DEFAULT) | - |
+| BE services/suno_generator.py | 하드코딩 V5/V5_5 → settings.suno_model_default(V6) (호출자 override 유지) | [suno] |
+| FE screens/PlayerScreen.tsx | 상세시트 'comments' 탭 + 댓글 목록/작성/삭제/답글 UI | [PlayerComments] |
+| FE screens/NotificationsScreen.tsx | comment/reply 라벨·라우팅 target_type='track'→Player 분기 | [Notifications] |
+
+### 테스트 지시(요지)
+[api] 댓글 POST/GET/DELETE 계약·comment_count 증감·부모평탄화·권한403·알림 event, Suno: 기본 모델 V6 전송(로그/유닛). 회귀: 피드 댓글·알림 무영향. [e2e] 플레이어 댓글 탭 작성→표시→삭제, 미로그인 게이트.

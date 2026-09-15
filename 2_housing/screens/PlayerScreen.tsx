@@ -39,6 +39,7 @@ import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
 import { AppText, Tag } from '../components/ui';
 import Marquee from '../components/Marquee';
+import TrackComments from '../components/common/TrackComments';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -181,7 +182,8 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const lyricsFetchedRef = useRef<string | null>(null);                 // timeline 조회한 트랙
   const [showDetails, setShowDetails] = useState(false);
-  const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit'>('lyrics'); // v3.49: 상세정보 탭 제거
+  const [detailTab, setDetailTab] = useState<'lyrics' | 'prompt' | 'outfit' | 'comments'>('lyrics'); // v3.49: 상세정보 탭 제거 / v3.177: 댓글 탭 추가
+  const [commentCount, setCommentCount] = useState<number | null>(null); // v3.177: 곡 댓글 수
   // v3.55: 착장 가로 레일 화살표 내비 — 스크롤 위치/크기를 추적해 좌우 화살표 노출 판단
   const outfitScrollRef = useRef<ScrollView>(null);
   const [outfitScroll, setOutfitScroll] = useState({ x: 0, contentW: 0, visibleW: 0 });
@@ -1049,8 +1051,11 @@ export default function PlayerScreen({ route, navigation }: any) {
 
             {/* Tab bar */}
             <View style={styles.sheetTabBar}>
-              {(['lyrics', 'prompt', 'outfit'] as const).map((tab) => {
-                const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장' };
+              {(['lyrics', 'prompt', 'outfit', 'comments'] as const).map((tab) => {
+                const labels = {
+                  lyrics: '가사', prompt: '프롬프트', outfit: '착장',
+                  comments: commentCount != null ? `댓글 ${commentCount}` : '댓글',
+                };
                 return (
                   <Tag key={tab} label={labels[tab]} selected={detailTab === tab} onPress={() => setDetailTab(tab)} />
                 );
@@ -1206,6 +1211,14 @@ export default function PlayerScreen({ route, navigation }: any) {
                 ) : (
                   <AppText style={styles.sheetEmptyText}>이 곡은 착장 정보가 없습니다</AppText>
                 )
+              )}
+              {/* v3.177: 곡 댓글 */}
+              {detailTab === 'comments' && (
+                <TrackComments
+                  trackId={track?.id ? String(track.id) : undefined}
+                  trackOwnerId={track?.uploader_id ? String(track.uploader_id) : undefined}
+                  onCountChange={setCommentCount}
+                />
               )}
               <View style={{ height: 40 }} />
             </ScrollView>
