@@ -928,14 +928,18 @@ async def purge_track_document(doc: dict, conn) -> dict:
             except Exception:
                 pass
 
-    # MinIO — 공유영상 캐시 (v126/v129 — share/v3/{id}[ _wide|_kakao ].mp4)
+    # MinIO — 공유영상 캐시. v3.179: 스타일 변형 다수 → prefix 목록 삭제로 전 변형 정리
     try:
-        from ..services.share_video import FORMATS, share_object_name
-        for fmt in FORMATS:
+        objs = minio_client.list_objects(
+            bucket_name=settings.minio_bucket_music,
+            prefix=f"share/v5/{track_id}",
+            recursive=True,
+        )
+        for obj in objs:
             try:
                 minio_client.remove_object(
                     bucket_name=settings.minio_bucket_music,
-                    object_name=share_object_name(track_id, fmt),
+                    object_name=obj.object_name,
                 )
             except Exception:
                 pass
@@ -2369,13 +2373,25 @@ async def download_track(track_id: str, user: dict = Depends(get_current_user)):
 # ── v126: SNS 공유영상 (커버+음원 9:16 스틸 mp4) ──────────────────────────────
 
 @router.post("/{track_id}/share-video")
-async def create_share_video(track_id: str, format: str = Query("sns"), current_user=Depends(get_current_user)):
+async def create_share_video(
+    track_id: str,
+    format: str = Query("sns"),
+    layout: str = Query("full"),
+    shape: str = Query("square"),
+    lyrics: str = Query("scroll"),
+    current_user=Depends(get_current_user),
+):
     """공유영상 생성 (v247: 로그인 필수 — 신규 생성 시 ⭐ 과금, 캐시 히트는 무과금). 공개 트랙만.
 
     format(v129): sns(9:16 전체) / wide(16:9 블러배경) / kakao(1080x2340 15s).
+    v3.179 스타일: layout(full|center) / shape(square|circle) / lyrics(scroll|line) —
+    스타일 조합별 별도 캐시·별도 1회 과금(같은 조합 재요청은 무과금).
     """
     from ..services.share_video import (
         FORMATS,
+        STYLE_LAYOUTS,
+        STYLE_LYRICS,
+        STYLE_SHAPES,
         ShareVideoError,
         _fetch_lyric_segments,
         generate_share_video,
@@ -2384,8 +2400,13 @@ async def create_share_video(track_id: str, format: str = Query("sns"), current_
 
     if format not in FORMATS:
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 형식입니다."})
+    if layout not in STYLE_LAYOUTS or shape not in STYLE_SHAPES or lyrics not in STYLE_LYRICS:
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 스타일입니다."})
 
-    logger.info("[share-video] enter track=%s format=%s", track_id, format)
+    logger.info(
+        "[share-video] enter track=%s format=%s layout=%s shape=%s lyrics=%s",
+        track_id, format, layout, shape, lyrics,
+    )
 
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
@@ -2404,8 +2425,13 @@ async def create_share_video(track_id: str, format: str = Query("sns"), current_
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     video_url = f"/api/tracks/{track_id}/share-video/file"
+    _q = []
     if format != "sns":
-        video_url += f"?format={format}"
+        _q.append(f"format={format}")
+    if (layout, shape, lyrics) != ("full", "square", "scroll"):
+        _q += [f"layout={layout}", f"shape={shape}", f"lyrics={lyrics}"]
+    if _q:
+        video_url += "?" + "&".join(_q)
 
     # v128: 가사 타임스탬프 조회 (없으면 자막 없이 진행)
     segments = await _fetch_lyric_segments(mongo, doc)
@@ -2415,24 +2441,29 @@ async def create_share_video(track_id: str, format: str = Query("sns"), current_
         len(segments), subtitles, track_id, format,
     )
 
-    if await asyncio.to_thread(share_video_exists, track_id, format):
-        logger.info("[share-video] cache hit track=%s format=%s", track_id, format)
+    if await asyncio.to_thread(share_video_exists, track_id, format, layout, shape, lyrics):
+        logger.info("[share-video] cache hit track=%s format=%s style=%s/%s/%s",
+                    track_id, format, layout, shape, lyrics)
         return {"video_url": video_url, "cached": True, "subtitles": subtitles,
                 "format": format}
 
     # v247(대표 확정): 신규 생성만 ⭐ 과금(캐시 히트는 위에서 무과금 반환) — 실패 시 자동 환불
     from ..services.points_service import POINT_COSTS, refund_points, spend_points
     _sv_cost = POINT_COSTS["share_video"]
+    # v3.179: 스타일 조합별 별도 과금 ref (기본 조합은 기존 ref 유지 — 환불 멱등 하위호환)
     _sv_ref = f"share_video:{track_id}:{format}"
+    if (layout, shape, lyrics) != ("full", "square", "scroll"):
+        _sv_ref += f":{layout}:{shape}:{lyrics}"
     if not await spend_points(current_user["id"], "share_video", _sv_cost, _sv_ref):
         return JSONResponse(status_code=402, content={"error": "포인트가 부족합니다 (필요: {})".format(_sv_cost)})
     logger.info("[star-econ] share_video spend user=%s -%d ref=%s", current_user["id"][:8], _sv_cost, _sv_ref)
 
-    logger.info("[share-video] cache miss track=%s format=%s — generating", track_id, format)
+    logger.info("[share-video] cache miss track=%s format=%s style=%s/%s/%s — generating",
+                track_id, format, layout, shape, lyrics)
     try:
         await asyncio.to_thread(
             generate_share_video, track_id, doc["cover_image_url"],
-            doc["audio_url"], segments, format,
+            doc["audio_url"], segments, format, layout, shape, lyrics,
         )
     except ShareVideoError:
         await refund_points(current_user["id"], "share_video", _sv_cost, _sv_ref)
@@ -2448,12 +2479,22 @@ async def create_share_video(track_id: str, format: str = Query("sns"), current_
 
 
 @router.get("/{track_id}/share-video/file")
-async def get_share_video_file(track_id: str, format: str = Query("sns")):
-    """공유영상 파일 프록시 (무인증). MinIO share/v2/{track_id}[_{format}].mp4 스트리밍."""
-    from ..services.share_video import FORMATS, share_object_name
+async def get_share_video_file(
+    track_id: str,
+    format: str = Query("sns"),
+    layout: str = Query("full"),
+    shape: str = Query("square"),
+    lyrics: str = Query("scroll"),
+):
+    """공유영상 파일 프록시 (무인증). MinIO share/v5/{track_id}[_{format}][_style].mp4 스트리밍."""
+    from ..services.share_video import (
+        FORMATS, STYLE_LAYOUTS, STYLE_LYRICS, STYLE_SHAPES, share_object_name,
+    )
 
     if format not in FORMATS:
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 형식입니다."})
+    if layout not in STYLE_LAYOUTS or shape not in STYLE_SHAPES or lyrics not in STYLE_LYRICS:
+        return JSONResponse(status_code=400, content={"error": "지원하지 않는 스타일입니다."})
 
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
@@ -2462,7 +2503,7 @@ async def get_share_video_file(track_id: str, format: str = Query("sns")):
     try:
         response = minio_client.get_object(
             bucket_name=settings.minio_bucket_music,
-            object_name=share_object_name(track_id, format),
+            object_name=share_object_name(track_id, format, layout, shape, lyrics),
         )
     except Exception:
         return JSONResponse(status_code=404, content={"error": "공유 영상을 찾을 수 없습니다."})
@@ -2691,11 +2732,13 @@ async def delete_track_comment(comment_id: str, current_user=Depends(get_current
         return JSONResponse(status_code=403, content={"error": "댓글을 삭제할 권한이 없습니다."})
 
     # 최상위 댓글 삭제 시 하위 답글까지 함께 삭제(고아 방지 — count/UI 정합).
-    removed = 1
+    # v3.179(검증픽스): 동시 삭제 경합 시 과차감 방지 — 실제 deleted_count 만큼만 차감.
+    removed = 0
     if not comment.get("parent_id"):
         child_del = await mongo.track_comments.delete_many({"track_id": track_id, "parent_id": str(comment["_id"])})
         removed += child_del.deleted_count
-    await mongo.track_comments.delete_one({"_id": comment["_id"]})
+    own_del = await mongo.track_comments.delete_one({"_id": comment["_id"]})
+    removed += own_del.deleted_count
     if track and removed:
         # 음수 방지 — 남은 카운트만큼만 차감
         fresh = await mongo.tracks.find_one({"_id": track["_id"]}, {"comment_count": 1})

@@ -143,6 +143,14 @@ async def generate_music_suno(
     resolved_model = (suno_model or "").strip()
     if not resolved_model:
         resolved_model = (settings.suno_model_default or "V6").strip()
+    # v3.179(검증픽스): 구곡 재생성 doc 등에 저장된 폐기 모델(V5/V5_5/V4계열)이 명시 전달돼도
+    # Suno가 하드 거부하는 시점에 깨지지 않도록 기본 모델로 방어 매핑 (V6 계열 명시는 존중).
+    if resolved_model.upper() in {"V4", "V4_5", "V4_5PLUS", "V4_5ALL", "V5", "V5_5"}:
+        logger.info(
+            "[suno] generation_id=%s deprecated model %s → %s (defensive remap)",
+            generation_id, resolved_model, settings.suno_model_default or "V6",
+        )
+        resolved_model = (settings.suno_model_default or "V6").strip()
     logger.info(
         "[suno] generation_id=%s resolved_model=%s (suno_model_in=%s use_upload_cover=%s persona=%s)",
         generation_id, resolved_model, suno_model, use_upload_cover, bool(persona_id),

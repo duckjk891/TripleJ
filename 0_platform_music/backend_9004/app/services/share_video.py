@@ -85,12 +85,34 @@ _WATERMARK = {
 }
 
 
-def share_object_name(track_id: str, fmt: str = "sns") -> str:
+# v3.179(대표): 영상 스타일 축 — 영상 디렉터 대화에서 선택.
+#   layout: full(현행 포맷별 기본 조성 — 캐시·과금 하위호환) | center(플레이어 느낌:
+#           블러+어둠막 배경 위 정사각 커버를 중앙 상단에 오버레이)
+#   shape:  square(둥근 모서리) | circle(원형) — center 레이아웃에서만 의미
+#   lyrics: scroll(v152 스크롤 스택) | line(한 줄씩 — 기존 _build_ass 재사용)
+STYLE_LAYOUTS = {"full", "center"}
+STYLE_SHAPES = {"square", "circle"}
+STYLE_LYRICS = {"scroll", "line"}
+_DEFAULT_STYLE = ("full", "square", "scroll")
+
+
+def _style_suffix(layout: str, shape: str, lyrics: str) -> str:
+    """기본 조합은 빈 suffix(기존 캐시 그대로), 그 외엔 조합별 고유 suffix."""
+    if (layout, shape, lyrics) == _DEFAULT_STYLE:
+        return ""
+    return f"_{layout[0]}{shape[0]}{lyrics[0]}"  # 예: _css = center+square+scroll
+
+
+def share_object_name(
+    track_id: str, fmt: str = "sns",
+    layout: str = "full", shape: str = "square", lyrics: str = "scroll",
+) -> str:
     # v137: 워터마크 도입으로 캐시 버전 v2 → v3 승격 (기존 v2 객체는 일괄 삭제됨).
     # v152: 스크롤 자막 도입으로 시각 출력 변경 → v3 → v4 승격 (기존 v3 캐시는
     #       구버전 단일 줄 자막이므로 서빙 금지, 자동으로 v4 신규 생성됨).
+    # v3.179: 스타일 조합 suffix — 기본 조합은 기존 이름 유지(하위호환).
     suffix = FORMATS.get(fmt, FORMATS["sns"])["suffix"]
-    return f"share/v5/{track_id}{suffix}.mp4"
+    return f"share/v5/{track_id}{suffix}{_style_suffix(layout, shape, lyrics)}.mp4"
 
 
 def _filter_segments(raw: list) -> list:
@@ -334,13 +356,16 @@ def _build_ass_scroll(segments: list, fmt: str = "sns") -> str:
     return header + "".join(events)
 
 
-def share_video_exists(track_id: str, fmt: str = "sns") -> bool:
+def share_video_exists(
+    track_id: str, fmt: str = "sns",
+    layout: str = "full", shape: str = "square", lyrics: str = "scroll",
+) -> bool:
     """MinIO 에 캐시된 공유영상이 있는지 확인 (blocking)."""
     minio_client = get_minio()
     try:
         minio_client.stat_object(
             bucket_name=settings.minio_bucket_music,
-            object_name=share_object_name(track_id, fmt),
+            object_name=share_object_name(track_id, fmt, layout, shape, lyrics),
         )
         return True
     except Exception:
@@ -403,17 +428,51 @@ def _filter_path(path: str) -> str:
     return path.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
 
 
+def _make_center_cover(ffmpeg: str, cover_path: str, out_path: str, size: int, shape: str) -> None:
+    """v3.179: center 레이아웃용 마스킹된 정사각 커버 PNG 사전 생성 (1프레임 — geq 를
+    본 영상 인코딩(프레임당)에 태우지 않기 위한 사전 패스).
+
+    shape circle=원형 알파, square=둥근 모서리(반지름 10%) 알파.
+    """
+    half = size / 2.0
+    if shape == "circle":
+        alpha = (
+            f"if(lte(pow(X-{half},2)+pow(Y-{half},2),pow({half},2)),255,0)"
+        )
+    else:  # rounded square
+        r = max(4, int(size * 0.10))
+        inner = half - r
+        alpha = (
+            f"if(lte(pow(max(abs(X-{half})-{inner},0),2)+"
+            f"pow(max(abs(Y-{half})-{inner},0),2),pow({r},2)),255,0)"
+        )
+    vf = (
+        f"scale={size}:{size}:force_original_aspect_ratio=increase,"
+        f"crop={size}:{size},format=rgba,"
+        f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'"
+    )
+    cmd = [ffmpeg, "-y", "-i", cover_path, "-frames:v", "1", "-vf", vf, out_path]
+    proc = subprocess.run(cmd, capture_output=True, timeout=60)
+    if proc.returncode != 0 or not os.path.exists(out_path):
+        tail = (proc.stderr or b"").decode("utf-8", errors="replace")[-300:]
+        raise ShareVideoError(f"center cover mask failed rc={proc.returncode}: {tail}")
+
+
 def generate_share_video(
     track_id: str,
     cover_image_url: str,
     audio_url: str,
     segments: list | None = None,
     fmt: str = "sns",
+    layout: str = "full",
+    shape: str = "square",
+    lyrics_mode: str = "scroll",
 ) -> int:
     """커버+음원 다운로드 → ffmpeg 스틸영상 생성 → MinIO 업로드 (blocking).
 
     segments(v128): 가사 타임스탬프 목록 — 있으면 ASS 자막 burn-in(-r 10).
     fmt(v129): sns(9:16 전체) / wide(16:9 블러배경) / kakao(1080x2340 15s 클립).
+    v3.179: layout(full|center)·shape(square|circle)·lyrics_mode(scroll|line) 스타일 축.
     Returns: 생성된 mp4 크기(bytes). 실패 시 ShareVideoError.
 
     v205: heavy_job_slot 안에서 실행 (동시 상한). 이 함수는 blocking 이라
@@ -423,8 +482,10 @@ def generate_share_video(
     """
     from .heavy_jobs import heavy_job_slot
 
-    with heavy_job_slot("share_video", f"{track_id}:{fmt}"):
-        return _generate_share_video_impl(track_id, cover_image_url, audio_url, segments, fmt)
+    with heavy_job_slot("share_video", f"{track_id}:{fmt}:{layout}:{shape}:{lyrics_mode}"):
+        return _generate_share_video_impl(
+            track_id, cover_image_url, audio_url, segments, fmt, layout, shape, lyrics_mode
+        )
 
 
 def _generate_share_video_impl(
@@ -433,6 +494,9 @@ def _generate_share_video_impl(
     audio_url: str,
     segments: list | None = None,
     fmt: str = "sns",
+    layout: str = "full",
+    shape: str = "square",
+    lyrics_mode: str = "scroll",
 ) -> int:
     ffmpeg = _get_ffmpeg_path()
     if not ffmpeg:
@@ -479,7 +543,30 @@ def _generate_share_video_impl(
             raise ShareVideoError(f"audio download failed: {e}") from e
 
         width, height = spec["width"], spec["height"]
-        if fmt == "wide":
+        center_cover_path = None
+        if layout == "center":
+            # v3.179: 플레이어 느낌 — 블러+어둠막 배경 + 마스킹 정사각 커버 중앙 상단 오버레이.
+            # 마스크(geq)는 사전 1프레임 패스로 PNG 생성(본 인코딩 프레임당 geq 회피).
+            size = int(min(width, height) * (0.60 if fmt == "wide" else 0.68))
+            size -= size % 2  # 짝수 보정
+            center_cover_path = os.path.join(tmp_dir, "cover_center.png")
+            _make_center_cover(ffmpeg, cover_path, center_cover_path, size, shape)
+            # 세로 포맷: 커버 중심을 화면 32% 높이에(하단은 가사 영역), 가로: 정중앙
+            if fmt == "wide":
+                oy = f"(H-h)/2"
+            else:
+                oy = str(int(height * 0.32 - size / 2))
+            vf = (
+                f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},boxblur=24:2,drawbox=c=black@0.45:t=fill[b];"
+                "[2:v]format=rgba[f];"
+                f"[b][f]overlay=(W-w)/2:{oy}"
+            )
+            logger.info(
+                "[share-video] center layout track=%s fmt=%s shape=%s size=%d",
+                track_id, fmt, shape, size,
+            )
+        elif fmt == "wide":
             # 커버 split → (배경) 확대 crop-fill + 블러, (전경) 세로 900 중앙 overlay
             vf = (
                 "[0:v]split=2[bg][fg];"
@@ -497,19 +584,27 @@ def _generate_share_video_impl(
         if subtitled:
             ass_path = os.path.join(tmp_dir, "subs.ass")
             # v152: 스크롤 자막 우선 — 실패 시 기존 단일 줄(_build_ass) 로 폴백.
+            # v3.179: lyrics_mode='line' 이면 처음부터 단일 줄(_build_ass — 한 줄씩 표시).
             try:
-                ass_body = _build_ass_scroll(segments, fmt)
-                events_count = ass_body.count("Dialogue:")
-                logger.info(
-                    "[share-video] ass-scroll track=%s format=%s segments=%d "
-                    "events=%d fps=20",
-                    track_id, fmt, len(segments), events_count,
-                )
+                if lyrics_mode == "line":
+                    ass_body = _build_ass(segments, fmt)
+                    logger.info(
+                        "[share-video] ass-line track=%s format=%s segments=%d",
+                        track_id, fmt, len(segments),
+                    )
+                else:
+                    ass_body = _build_ass_scroll(segments, fmt)
+                    events_count = ass_body.count("Dialogue:")
+                    logger.info(
+                        "[share-video] ass-scroll track=%s format=%s segments=%d "
+                        "events=%d fps=20",
+                        track_id, fmt, len(segments), events_count,
+                    )
             except Exception:
                 logger.exception(
-                    "[share-video] ass-scroll failed, fallback to single-line "
-                    "track=%s format=%s",
-                    track_id, fmt,
+                    "[share-video] ass build failed, fallback to single-line "
+                    "track=%s format=%s mode=%s",
+                    track_id, fmt, lyrics_mode,
                 )
                 ass_body = _build_ass(segments, fmt)
             with open(ass_path, "w", encoding="utf-8") as f:
@@ -532,8 +627,10 @@ def _generate_share_video_impl(
         cmd = [ffmpeg, "-y", "-loop", "1", "-i", cover_path]
         if clip_len and clip_t0 > 0:
             cmd += ["-ss", f"{clip_t0:.3f}"]  # 음원 입력 seek (kakao 클립 시작점)
+        cmd += ["-i", audio_path]
+        if center_cover_path:
+            cmd += ["-loop", "1", "-i", center_cover_path]  # v3.179: [2:v] 마스킹 커버
         cmd += [
-            "-i", audio_path,
             "-filter_complex", vf,
             "-map", "[v]", "-map", "1:a",
             "-c:v", "libx264", "-tune", "stillimage", "-preset", "veryfast",
@@ -579,7 +676,7 @@ def _generate_share_video_impl(
         )
 
         # 동시 중복 생성 가드: 업로드 직전 재확인 — 이미 다른 요청이 올렸으면 스킵.
-        if share_video_exists(track_id, fmt):
+        if share_video_exists(track_id, fmt, layout, shape, lyrics_mode):
             logger.info(
                 "[share-video] concurrent cache detected track=%s format=%s — skip upload",
                 track_id, fmt,
@@ -589,7 +686,7 @@ def _generate_share_video_impl(
         with open(out_path, "rb") as f:
             minio_client.put_object(
                 bucket_name=settings.minio_bucket_music,
-                object_name=share_object_name(track_id, fmt),
+                object_name=share_object_name(track_id, fmt, layout, shape, lyrics_mode),
                 data=f,
                 length=size,
                 content_type="video/mp4",
