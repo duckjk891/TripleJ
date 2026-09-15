@@ -29,6 +29,7 @@ export interface FeedComment {
   id: string;
   author_id: string;
   author_nickname: string;
+  author_profile_image?: string | null; // v3.181: 서버 목록 조회 시 PG join 첨부
   text: string;
   parent_id?: string | null; // v191+ 대댓글 부모
   created_at?: string;
@@ -319,10 +320,16 @@ export default function FeedCard({ feed, onPressAuthor, onDeleted, renderBlocks,
                 const canDelete = !!user && (String(cc.author_id) === String(user.id) || isMine);
                 return (
                   <View key={cc.id} style={[styles.commentRow, nested && styles.commentReply]}>
-                    <Avatar name={cc.author_nickname || '?'} size={nested ? 22 : 26} />
+                    <Avatar
+                      name={cc.author_nickname || '?'}
+                      uri={cc.author_profile_image ? `${BACKEND_BASE_URL}/api/auth/profile-image/${cc.author_profile_image}` : null}
+                      seed={cc.author_id}
+                      size={nested ? 28 : 32}
+                      ring={String(cc.author_id) === String(feed.author_id)}
+                    />
                     <View style={{ flex: 1, marginLeft: spacing.sm }}>
                       <View style={styles.commentHead}>
-                        <AppText variant="caption" style={{ fontWeight: '600', color: feedTheme.text }}>{cc.author_nickname}</AppText>
+                        <AppText variant="caption" style={{ fontWeight: String(cc.author_id) === String(feed.author_id) ? '800' : '600', color: String(cc.author_id) === String(feed.author_id) ? colors.accent.primary : feedTheme.text }}>{cc.author_nickname}</AppText>
                         <AppText variant="caption" style={{ color: feedTheme.muted }}> · {fmtTime(cc.created_at)}</AppText>
                       </View>
                       <AppText variant="footnote" style={{ color: feedTheme.sub }}>{cbody}</AppText>
@@ -419,10 +426,8 @@ const styles = StyleSheet.create({
   action: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   comments: { marginTop: spacing.md },
   commentRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.md },
-  commentReply: {
-    marginLeft: spacing.xl, paddingLeft: spacing.md,
-    borderLeftWidth: 2, borderLeftColor: feedTheme.line, // 스레드 연결선
-  },
+  // v3.181(대표): 스레드 연결선 제거 — 들여쓰기만
+  commentReply: { marginLeft: spacing.xl },
   replyBanner: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: feedTheme.field, borderRadius: radius.sm,

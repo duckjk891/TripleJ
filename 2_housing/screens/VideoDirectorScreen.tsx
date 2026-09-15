@@ -45,12 +45,16 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [loadingTracks, setLoadingTracks] = useState(true);
   const [selected, setSelected] = useState<MyTrack | null>(null);
   // v3.179(대표): 형식 → 화면 채움 → (중앙이면) 이미지 모양 → 가사 방식 순으로 대화 선택
-  const [step, setStep] = useState<'pick' | 'format' | 'layout' | 'shape' | 'lyricsMode' | 'making' | 'done'>('pick');
+  const [step, setStep] = useState<'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'font' | 'fontColor' | 'lyricsMode' | 'making' | 'done'>('pick');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [madeFormat, setMadeFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
   const [pickedFormat, setPickedFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
   const [pickedLayout, setPickedLayout] = useState<'full' | 'center'>('full');
   const [pickedShape, setPickedShape] = useState<'square' | 'circle'>('square');
+  // v3.181(대표): 추가 스타일 — 배경 블러 on/off, 폰트, 글자색
+  const [pickedBg, setPickedBg] = useState<'blur' | 'clean'>('blur');
+  const [pickedFont, setPickedFont] = useState<'basic' | 'round' | 'serif'>('basic');
+  const [pickedColor, setPickedColor] = useState<'white' | 'yellow' | 'pink' | 'sky'>('white');
   const [saving, setSaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   // v3.172(대표 확정): 영상 신규 생성 ⭐ 과금 — /points/costs의 share_video 키가 있을 때만 고지
@@ -124,8 +128,8 @@ export default function VideoDirectorScreen({ navigation }: any) {
       pushDirector('중앙 이미지는 어떤 모양으로 할까요?');
       setStep('shape');
     } else {
-      pushDirector('가사는 어떻게 보여드릴까요?\n여러 줄이 흘러가는 방식과 한 줄씩 나오는 방식이 있어요.');
-      setStep('lyricsMode');
+      pushDirector('가사 폰트는 어떤 걸로 할까요?');
+      setStep('font');
     }
   };
 
@@ -133,6 +137,32 @@ export default function VideoDirectorScreen({ navigation }: any) {
     if (step === 'making') return;
     setPickedShape(shape);
     pushUser(shape === 'square' ? '둥근 네모' : '동그라미');
+    pushDirector('배경은 흐리게 처리할까요, 원본 그대로 둘까요?');
+    setStep('bg');
+  };
+
+  // v3.181: 배경 블러 on/off (플레이어 스타일 전용)
+  const handlePickBg = (bg: 'blur' | 'clean') => {
+    if (step === 'making') return;
+    setPickedBg(bg);
+    pushUser(bg === 'blur' ? '흐린 배경' : '원본 배경');
+    pushDirector('가사 폰트는 어떤 걸로 할까요?');
+    setStep('font');
+  };
+
+  // v3.181: 폰트 → 글자색 → 가사 방식
+  const handlePickFont = (font: 'basic' | 'round' | 'serif') => {
+    if (step === 'making') return;
+    setPickedFont(font);
+    pushUser(font === 'basic' ? '기본 고딕' : font === 'round' ? '둥근 고딕' : '명조체');
+    pushDirector('가사 글자 색은요?');
+    setStep('fontColor');
+  };
+
+  const handlePickColor = (color: 'white' | 'yellow' | 'pink' | 'sky') => {
+    if (step === 'making') return;
+    setPickedColor(color);
+    pushUser(color === 'white' ? '흰색' : color === 'yellow' ? '노랑' : color === 'pink' ? '핑크' : '하늘');
     pushDirector('가사는 어떻게 보여드릴까요?\n여러 줄이 흘러가는 방식과 한 줄씩 나오는 방식이 있어요.');
     setStep('lyricsMode');
   };
@@ -140,7 +170,7 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const handlePickLyrics = (lyricsMode: 'scroll' | 'line') => {
     if (step === 'making') return;
     pushUser(lyricsMode === 'scroll' ? '흐르는 가사' : '한 줄씩');
-    startGeneration(pickedFormat!, pickedLayout, pickedShape, lyricsMode);
+    startGeneration(pickedFormat!, pickedLayout, pickedShape, lyricsMode, pickedBg, pickedFont, pickedColor);
   };
 
   const startGeneration = async (
@@ -148,6 +178,9 @@ export default function VideoDirectorScreen({ navigation }: any) {
     layout: 'full' | 'center',
     shape: 'square' | 'circle',
     lyricsMode: 'scroll' | 'line',
+    bg: 'blur' | 'clean' = 'blur',
+    font: 'basic' | 'round' | 'serif' = 'basic',
+    fontColor: 'white' | 'yellow' | 'pink' | 'sky' = 'white',
   ) => {
     if (!selected) return;
     // v3.172: 신규 생성 시 ⭐ 소모 confirm (같은 곡·형식·스타일을 이미 만들었다면 서버가 무과금 캐시 반환)
@@ -163,10 +196,10 @@ export default function VideoDirectorScreen({ navigation }: any) {
     }
     pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 잠시만 기다려주세요.');
     setStep('making');
-    console.info('[VideoDirector] share-video 생성', { trackId: selected.id, fmt, layout, shape, lyricsMode });
+    console.info('[VideoDirector] share-video 생성', { trackId: selected.id, fmt, layout, shape, lyricsMode, bg, font, fontColor });
     try {
       const res = await api.post(`/tracks/${selected.id}/share-video`, null, {
-        params: { format: fmt, layout, shape, lyrics: lyricsMode }, timeout: 300000,
+        params: { format: fmt, layout, shape, lyrics: lyricsMode, bg, font, fontcolor: fontColor }, timeout: 300000,
       });
       const path = res.data?.video_url;
       if (!path) throw new Error('video_url 없음');
@@ -359,6 +392,56 @@ export default function VideoDirectorScreen({ navigation }: any) {
               <AppText style={styles.formatLabel}>동그라미</AppText>
               <AppText style={styles.formatDesc}>원형으로 잘라 넣어요</AppText>
             </TouchableOpacity>
+          </View>
+        )}
+        {/* v3.181: 배경 블러 on/off (플레이어 스타일) */}
+        {step === 'bg' && (
+          <View style={styles.formatRow}>
+            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickBg('blur')} activeOpacity={0.8}>
+              <View style={styles.ratioBoxWrap}><View style={[styles.shapeSquareDemo, { opacity: 0.45 }]} /></View>
+              <AppText style={styles.formatLabel}>흐린 배경</AppText>
+              <AppText style={styles.formatDesc}>배경을 부드럽게 흐림</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickBg('clean')} activeOpacity={0.8}>
+              <View style={styles.ratioBoxWrap}><View style={styles.shapeSquareDemo} /></View>
+              <AppText style={styles.formatLabel}>원본 배경</AppText>
+              <AppText style={styles.formatDesc}>커버 원본 그대로</AppText>
+            </TouchableOpacity>
+          </View>
+        )}
+        {/* v3.181: 폰트 선택 */}
+        {step === 'font' && (
+          <View style={styles.formatRow}>
+            {([
+              { key: 'basic', label: '기본 고딕', sample: '가나다', weight: '700' },
+              { key: 'round', label: '둥근 고딕', sample: '가나다', weight: '400' },
+              { key: 'serif', label: '명조체', sample: '가나다', weight: '400', serif: true },
+            ] as any[]).map((f) => (
+              <TouchableOpacity key={f.key} style={styles.formatCard} onPress={() => handlePickFont(f.key)} activeOpacity={0.8}>
+                <View style={styles.ratioBoxWrap}>
+                  <AppText style={{ fontSize: 24, color: colors.text.primary, fontWeight: f.weight, fontStyle: f.serif ? 'italic' : 'normal' }}>{f.sample}</AppText>
+                </View>
+                <AppText style={styles.formatLabel}>{f.label}</AppText>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+        {/* v3.181: 글자색 선택 — 색 견본 원 */}
+        {step === 'fontColor' && (
+          <View style={styles.formatRow}>
+            {([
+              { key: 'white', label: '흰색', hex: '#FFFFFF' },
+              { key: 'yellow', label: '노랑', hex: '#FFD700' },
+              { key: 'pink', label: '핑크', hex: '#FF6FA5' },
+              { key: 'sky', label: '하늘', hex: '#7FD7FF' },
+            ] as any[]).map((c) => (
+              <TouchableOpacity key={c.key} style={styles.formatCard} onPress={() => handlePickColor(c.key)} activeOpacity={0.8}>
+                <View style={styles.ratioBoxWrap}>
+                  <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c.hex, borderWidth: 1, borderColor: colors.border.subtle }} />
+                </View>
+                <AppText style={styles.formatLabel}>{c.label}</AppText>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
         {/* v3.179: 가사 표시 방식 */}

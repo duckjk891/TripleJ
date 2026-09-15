@@ -2396,3 +2396,24 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 | FE PlayerScreen | 탭 밑줄 제거, 착장 흰배경, 상단 미니플레이어 완전판(프로그레스+prev/next+큐+✕), 큐 Modal fragment 밖 이동, 탭 라벨 '댓글' 고정+패널 헤더 "댓글 N개", 액션줄 라벨 정리 | [PlayerScreen] |
 | FE ArtistCodyScreen | itemImg 흰 배경 | [ArtistCody] |
 | FE TrackComments | 입력줄 내 아바타, 작성자 아바타, 곡 주인 댓글 구분(아티스트 배지+강조 배경) | [TrackComments] |
+
+## v3.181 — 2026-09-15 — 영상 스타일 확장(폰트·색·블러) + 댓글 UI 정리(대표)
+**요청**: ①플레이어느낌 영상 선택지 확대 — 폰트, 블러 on/off, 폰트 색상 ②댓글 프로필 이미지 조금 키우기 ③댓글 박스/라인 구분 제거(아래로 쭉) — 다른 댓글창(피드)도 동일 ④기본 아바타 원형 색상을 사용자별 랜덤으로 ⑤내 글(내 곡·내 피드·내 공지) 작성자 표시 = 아이디 굵게/색상/이미지 테두리 방식 — 댓글 창 자체 UI 변경 금지(v3.180 박스 강조 롤백).
+
+### findings
+- ASS 빌더 2종(_build_ass/_build_ass_scroll) 헤더에 NanumGothic·&H00FFFFFF 하드코딩 → 파라미터화. 폰트는 OFL 2종 추가 다운로드(Gowun Dodum, NanumMyeongjo — family명 확인). center 배경 블러 = vf 내 boxblur — bg=clean이면 생략(어둠막은 유지, 가사 가독).
+- 공용 ui/Avatar 존재(이니셜 폴백 단색) — FeedCard가 사용, TrackComments는 자체 구현. → **Avatar에 seed(사용자 id 해시→팔레트 색)·ring(액센트 테두리) 확장**, TrackComments도 공용 Avatar로 통일.
+- FeedCard 댓글: 이미지 없음(피드 댓글 API에 프로필 미첨부) → feeds.py list_feed_comments에도 PG join 추가(트랙 댓글과 동일 관행). 답글 borderLeft(연결선)·TrackComments borderBottom/borderLeft 제거.
+- 내 글 구분: TrackComments ownerComment 박스·배지 제거 → 이름 bold+accent + 아바타 ring. FeedCard도 author_id===feed.author_id 동일 처리.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| BE assets/fonts | GowunDodum·NanumMyeongjo ttf 추가(OFL) | - |
+| BE share_video.py | font/fontcolor/bg 스타일 축(맵·suffix·빌더 파라미터화·clean bg) | [share-video] |
+| BE routes/tracks.py | share-video 라우트/프록시에 3파라미터 | [share-video] |
+| BE routes/feeds.py | 피드 댓글 목록 author_profile_image join | [feed] |
+| FE ui/Avatar | seed 팔레트 폴백 + ring | - |
+| FE TrackComments | 공용 Avatar(32/입력38)·라인 제거·owner=이름 accent+ring(박스·배지 롤백) | [TrackComments] |
+| FE FeedCard | 댓글 아바타 확대+uri+seed·연결선 제거·owner 표시 | [FeedCard] |
+| FE VideoDirectorScreen | 단계 추가: (center)블러 on/off → 폰트 3종 → 글자색 4종 | [VideoDirector] |
