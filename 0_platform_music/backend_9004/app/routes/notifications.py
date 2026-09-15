@@ -29,8 +29,12 @@ def _short(v) -> str:
     return s[:8]
 
 
-async def push_notification(mongo, *, user_id, ntype, actor_id, actor_nickname, target_id=None, preview=None):
-    """단건 알림 발행 — 자기 자신에게는 보내지 않는다. 실패해도 예외를 올리지 않음."""
+async def push_notification(mongo, *, user_id, ntype, actor_id, actor_nickname, target_id=None, preview=None, target_type=None):
+    """단건 알림 발행 — 자기 자신에게는 보내지 않는다. 실패해도 예외를 올리지 않음.
+
+    target_type(v3.177): 대상 종류('track' 등). None=피드(기존 하위호환) —
+    프론트가 클릭 시 목적지(피드 탭 vs 플레이어)를 분기하는 데 쓴다.
+    """
     try:
         if not user_id or str(user_id) == str(actor_id):
             return
@@ -43,6 +47,7 @@ async def push_notification(mongo, *, user_id, ntype, actor_id, actor_nickname, 
             "actor_id": str(actor_id),
             "actor_nickname": actor_nickname,
             "target_id": str(target_id) if target_id else None,
+            "target_type": target_type,
             "preview": (preview or "")[:120] or None,
             "read": False,
             "created_at": datetime.utcnow(),

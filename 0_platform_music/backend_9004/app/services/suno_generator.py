@@ -134,13 +134,15 @@ async def generate_music_suno(
     # Determine whether to use upload-cover endpoint (reference audio)
     use_upload_cover = bool(reference_audio_url)
 
-    # v76.10: 호출자 명시 suno_model 우선 (voice clone 은 V5_5 필요).
-    # v233(대표 실사고 2026-09-09): 호출자가 suno_model 을 안 넘기면 voice clone 인데도
-    # V5 로 전송돼 Suno 가 personaId 를 무시(내 목소리 미반영). MAIDOL 원본
-    # (suno_generator.py:219 — personaId 시 model="V5_5" 강제)을 복원한다.
+    # v76.10: 호출자 명시 suno_model 우선.
+    # v233(대표 실사고 2026-09-09): 호출자가 suno_model 을 안 넘기면 personaId 가 무시되던 문제 대응.
+    # v3.177(대표 2026-09-15): Suno V5/V5_5 폐기(Deprecated) — sunoapi.org 기본이 V6 로 이전됨.
+    #   voice_persona(보이스클론)·upload-cover 전부 V6 계열에서 지원 → 미지정 시 기본 모델을
+    #   settings.suno_model_default(=V6) 로 통일한다. 구버전 강제(V5_5) 분기 제거.
+    #   (호출자가 명시적으로 suno_model 을 넘기면 — 예: 구곡 재생성 doc — 그 값을 그대로 존중)
     resolved_model = (suno_model or "").strip()
     if not resolved_model:
-        resolved_model = "V5_5" if (persona_id or use_upload_cover) else "V5"
+        resolved_model = (settings.suno_model_default or "V6").strip()
     logger.info(
         "[suno] generation_id=%s resolved_model=%s (suno_model_in=%s use_upload_cover=%s persona=%s)",
         generation_id, resolved_model, suno_model, use_upload_cover, bool(persona_id),

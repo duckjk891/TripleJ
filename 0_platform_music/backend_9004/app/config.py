@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # Suno API
     suno_api_key: str = ""
     suno_api_url: str = "https://api.sunoapi.org"
+    # v3.177(대표 2026-09-15): Suno 구버전(V5/V5_5) 폐기 대응 — sunoapi.org 기본 모델이 V6로 바뀌고
+    #   V5·V5_5·V4.5계열은 전부 Deprecated(하위호환용만). voice_persona(보이스클론)·upload-cover 모두
+    #   V6/V6_WILD/V6_MINI 지원 확인 → 신규 생성 기본 모델을 V6 로 이전(호출자 명시 suno_model 은 여전히 우선).
+    #   변형(V6_WILD/V6_MINI)으로 바꾸거나 롤백 시 .env SUNO_MODEL_DEFAULT 만 조정.
+    suno_model_default: str = "V6"
 
     # Kling Video Generation
     kling_access_key: str = ""

@@ -2533,3 +2533,179 @@ async def recognize_track_timestamps_route(
         short, result.get("cached"), result.get("segments", 0),
     )
     return result
+
+
+# ==================================================================
+# v3.177 — 곡 댓글 (track_comments) : 피드 댓글(feeds.py) 패턴 이식
+#   Mongo `track_comments` + tracks.comment_count $inc, 대댓글 1단 평탄화,
+#   알림(comment/reply, target_type='track'). 로그 prefix [track-comment].
+# ==================================================================
+from .notifications import push_notification  # noqa: E402  (지연 import — 순환 방지)
+
+MAX_TRACK_COMMENT_LEN = 1_000
+
+
+class TrackCommentBody(BaseModel):
+    text: str
+    parent_id: Optional[str] = None  # 같은 곡 내 부모 댓글 id (None=최상위)
+
+
+def _serialize_track_comment(doc: dict) -> dict:
+    doc["id"] = str(doc.pop("_id"))
+    if isinstance(doc.get("created_at"), datetime):
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+async def _get_track_or_404(mongo, track_id: str):
+    """(doc, None) 또는 (None, JSONResponse404)."""
+    if not ObjectId.is_valid(track_id):
+        return None, JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"uploader_id": 1})
+    if not doc:
+        return None, JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
+    return doc, None
+
+
+@router.get("/{track_id}/comments")
+async def list_track_comments(track_id: str, page: int = 1, limit: int = 20):
+    """곡 댓글 목록 — 무인증 열람, created_at 오름차순 페이지네이션."""
+    mongo = get_mongo()
+    page = max(1, page)
+    limit = max(1, min(limit, 100))
+    short = str(track_id)[:8]
+    logger.info("[track-comment] list enter track=%s page=%d limit=%d", short, page, limit)
+
+    doc, err = await _get_track_or_404(mongo, track_id)
+    if err:
+        return err
+
+    query = {"track_id": track_id}
+    total = await mongo.track_comments.count_documents(query)
+    docs = (
+        await mongo.track_comments.find(query)
+        .sort("created_at", 1)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .to_list(length=limit)
+    )
+    comments = [_serialize_track_comment(d) for d in docs]
+    logger.info("[track-comment] list ok track=%s returned=%d total=%d", short, len(comments), total)
+    return {
+        "comments": comments,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": math.ceil(total / limit) if limit else 0,
+        },
+    }
+
+
+@router.post("/{track_id}/comments", status_code=201)
+async def add_track_comment(track_id: str, body: TrackCommentBody, current_user=Depends(get_current_user)):
+    """곡 댓글 작성 — 인증 필수, 대댓글 1단 평탄화, comment_count +1, 알림 발행."""
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    text = (body.text or "").strip()
+    short = str(track_id)[:8]
+    logger.info("[track-comment] add enter track=%s user=%s text_len=%d", short, str(user_id)[:8], len(text))
+
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "댓글 내용을 입력해주세요."})
+    if len(text) > MAX_TRACK_COMMENT_LEN:
+        return JSONResponse(status_code=400, content={"error": f"댓글은 {MAX_TRACK_COMMENT_LEN:,}자 이하여야 합니다."})
+
+    doc, err = await _get_track_or_404(mongo, track_id)
+    if err:
+        return err
+
+    # 대댓글 부모 검증 — 같은 곡의 실존 댓글, 2단 이상은 부모의 부모로 평탄화(인스타 방식)
+    parent_id = (body.parent_id or "").strip() or None
+    reply_target_author_id = None
+    if parent_id:
+        if not ObjectId.is_valid(parent_id):
+            return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        parent = await mongo.track_comments.find_one({"_id": ObjectId(parent_id), "track_id": track_id})
+        if not parent:
+            logger.warning("[track-comment] add parent_missing track=%s parent=%s", short, str(parent_id)[:8])
+            return JSONResponse(status_code=400, content={"error": "답글 대상 댓글을 찾을 수 없습니다."})
+        reply_target_author_id = parent.get("author_id")  # 평탄화 전 = 실제 답글 대상
+        if parent.get("parent_id"):
+            parent_id = parent["parent_id"]
+
+    comment = {
+        "track_id": track_id,
+        "author_id": user_id,
+        "author_nickname": current_user.get("nickname"),
+        "text": text,
+        "parent_id": parent_id,
+        "created_at": datetime.utcnow(),
+    }
+    result = await mongo.track_comments.insert_one(comment)
+    await mongo.tracks.update_one({"_id": doc["_id"]}, {"$inc": {"comment_count": 1}})
+
+    # 알림 — 곡 주인에게 comment, 답글이면 부모 댓글 작성자에게 reply (target_type='track')
+    await push_notification(
+        mongo, user_id=doc.get("uploader_id"), ntype="comment",
+        actor_id=user_id, actor_nickname=current_user.get("nickname"),
+        target_id=track_id, preview=text, target_type="track",
+    )
+    if reply_target_author_id and str(reply_target_author_id) != str(doc.get("uploader_id")):
+        await push_notification(
+            mongo, user_id=reply_target_author_id, ntype="reply",
+            actor_id=user_id, actor_nickname=current_user.get("nickname"),
+            target_id=track_id, preview=text, target_type="track",
+        )
+    logger.info(
+        "[track-comment] add ok track=%s user=%s comment=%s text_len=%d",
+        short, str(user_id)[:8], str(result.inserted_id)[:8], len(text),
+    )
+    return {"comment": _serialize_track_comment(comment)}
+
+
+@router.delete("/comments/{comment_id}")
+async def delete_track_comment(comment_id: str, current_user=Depends(get_current_user)):
+    """곡 댓글 삭제 — 댓글 작성자 또는 곡 주인만. comment_count -1(음수 가드)."""
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    short = str(comment_id)[:8]
+    logger.info("[track-comment] delete enter comment=%s user=%s", short, str(user_id)[:8])
+
+    if not ObjectId.is_valid(comment_id):
+        return JSONResponse(status_code=404, content={"error": "댓글을 찾을 수 없습니다."})
+    comment = await mongo.track_comments.find_one({"_id": ObjectId(comment_id)})
+    if not comment:
+        logger.info("[track-comment] delete not_found comment=%s", short)
+        return JSONResponse(status_code=404, content={"error": "댓글을 찾을 수 없습니다."})
+
+    track_id = comment.get("track_id")
+    track = None
+    if track_id and ObjectId.is_valid(track_id):
+        track = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"uploader_id": 1})
+
+    is_comment_author = comment.get("author_id") == user_id
+    is_track_owner = bool(track) and track.get("uploader_id") == user_id
+    if not (is_comment_author or is_track_owner):
+        logger.info("[track-comment] delete forbidden comment=%s user=%s", short, str(user_id)[:8])
+        return JSONResponse(status_code=403, content={"error": "댓글을 삭제할 권한이 없습니다."})
+
+    # 최상위 댓글 삭제 시 하위 답글까지 함께 삭제(고아 방지 — count/UI 정합).
+    removed = 1
+    if not comment.get("parent_id"):
+        child_del = await mongo.track_comments.delete_many({"track_id": track_id, "parent_id": str(comment["_id"])})
+        removed += child_del.deleted_count
+    await mongo.track_comments.delete_one({"_id": comment["_id"]})
+    if track and removed:
+        # 음수 방지 — 남은 카운트만큼만 차감
+        fresh = await mongo.tracks.find_one({"_id": track["_id"]}, {"comment_count": 1})
+        cur = int((fresh or {}).get("comment_count") or 0)
+        dec = min(removed, cur)
+        if dec:
+            await mongo.tracks.update_one({"_id": track["_id"]}, {"$inc": {"comment_count": -dec}})
+    logger.info(
+        "[track-comment] delete ok comment=%s track=%s removed=%d by=%s",
+        short, str(track_id)[:8] if track_id else "?", removed,
+        "author" if is_comment_author else "track_owner",
+    )
+    return {"message": "댓글이 삭제되었습니다."}
