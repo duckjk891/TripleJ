@@ -1150,17 +1150,17 @@ export default function PlayerScreen({ route, navigation }: any) {
                               {/* v3.174: 위시 하트 — 서버에 없는 아이템(id 없음/샘플)은 숨김 (ArtistCody 관행) */}
                               {item.id && !String(item.id).startsWith('sample_') ? (
                                 <TouchableOpacity
-                                  style={[styles.outfitWishBtn, wished[item.id] && styles.outfitWishBtnOn]}
+                                  style={styles.outfitWishBtn}
                                   onPress={() => handleOutfitWish(item)}
                                   disabled={!!wishBusy[item.id]}
                                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                                   accessibilityLabel={`착장 위시 ${item.name || ''}`}
                                 >
-                                  {/* v3.175: 담기면 '채워진' 하트 + 선명한 핑크로 확실히 구분 (외곽선 색만 바뀌던 문제) */}
+                                  {/* v3.176: 담기면 '채워진' 하트+플랫폼 보라로 구분 (원 테두리 색칠은 불필요) */}
                                   <MaterialCommunityIcons
                                     name={wished[item.id] ? 'heart' : 'heart-outline'}
                                     size={17}
-                                    color={wished[item.id] ? '#FF4D6D' : '#fff'}
+                                    color={wished[item.id] ? colors.accent.primary : '#fff'}
                                   />
                                 </TouchableOpacity>
                               ) : null}
@@ -1582,11 +1582,6 @@ const styles = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center', alignItems: 'center',
-  },
-  // v3.175: 담긴 상태 — 어두운 배경 + 핑크 하트로 확실히 대비 (테두리로 한 번 더 강조)
-  outfitWishBtnOn: {
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    borderWidth: 1.5, borderColor: '#FF4D6D',
   },
   // v3.55: 레일 좌우 화살표 — 이미지 세로 중앙 부근에 반투명 원형 버튼
   outfitArrow: {

@@ -14,7 +14,7 @@ import {
   Linking,
 } from 'react-native';
 import { showAlert } from '../utils/appAlert';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '../stores/authStore';
@@ -253,12 +253,6 @@ export default function MyMusicScreen({ navigation }: any) {
     if (__DEV__) console.info('[MyMusic] 내 목소리 → Studio/VoiceManage');
     navigation.navigate('Studio', { screen: 'Map' });
     navigation.navigate('Studio', { screen: 'VoiceManage', params: { mode: 'voices' } });
-  };
-
-  // v3.175(대표): 내 위시리스트 — 플레이어 착장/꾸미기에서 담은 아이템 모아보기
-  const handleOpenWishlist = () => {
-    if (__DEV__) console.info('[MyMusic] 내 위시리스트 → Wishlist');
-    navigation.navigate('Wishlist');
   };
 
   // v3.117: 탭 시 작업실 스택의 내 아티스트 목록으로(크로스 탭 — 이 화면의 Studio 진입 관행 동일)
@@ -571,22 +565,6 @@ export default function MyMusicScreen({ navigation }: any) {
           <View style={styles.artistCardBody}>
             <AppText style={styles.artistCardTitle} numberOfLines={1}>내 목소리</AppText>
             <AppText style={styles.artistCardHint}>클로닝한 목소리 확인·관리 · 아티스트 연결</AppText>
-          </View>
-          <AppText style={styles.artistCardArrow}>{'›'}</AppText>
-        </TouchableOpacity>
-        {/* v3.175: 내 위시리스트 — 착장/꾸미기에서 하트로 담은 상품 모아보기 */}
-        <TouchableOpacity
-          style={[styles.artistCard, { marginTop: 8 }]}
-          activeOpacity={0.85}
-          onPress={handleOpenWishlist}
-          accessibilityLabel="내 위시리스트"
-        >
-          <View style={[styles.artistCardImage, { justifyContent: 'center', alignItems: 'center' }]}>
-            <MaterialCommunityIcons name="heart" size={20} color="#FF4D6D" />
-          </View>
-          <View style={styles.artistCardBody}>
-            <AppText style={styles.artistCardTitle} numberOfLines={1}>내 위시리스트</AppText>
-            <AppText style={styles.artistCardHint}>담아둔 옷·아이템 모아보기 · 판매처 이동</AppText>
           </View>
           <AppText style={styles.artistCardArrow}>{'›'}</AppText>
         </TouchableOpacity>

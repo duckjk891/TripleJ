@@ -2298,3 +2298,10 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 | screens/WishlistScreen.tsx (신규) | 내 위시리스트 2열 그리드(이미지·카테고리·이름·브랜드·판매처 링크·해제 하트), fetchList, 당겨서 새로고침, 미로그인/빈 목록 안내 |
 | App.tsx | RootStack 'Wishlist' 라우트(+stackHeader '내 위시리스트') |
 | screens/MyMusicScreen.tsx | 마이페이지 '내 목소리' 아래 '내 위시리스트' 진입 카드(핑크 하트 아이콘) |
+
+## v3.176 — 2026-09-15 — 위시 하트 색상 플랫폼 보라로 + 마이페이지 위시 화면 제거(대표 정정)
+**요청**: ①핑크 말고 플랫폼 색상(보라)으로 ②원 테두리 색칠 불필요 ③마이페이지에서 위시 볼 필요 없음 — 위시는 아티스트 옷 입히기(꾸미기)에서만 보이면 됨.
+### 변경 (FE-only, v3.175 일부 되돌림)
+- PlayerScreen/ArtistCodyScreen 하트 색 #FF4D6D→colors.accent.primary(#a855f7), 담김 버튼 테두리 스타일(outfitWishBtnOn/wishBtnOn) 제거.
+- WishlistScreen.tsx 삭제, App.tsx Wishlist 라우트·import·param 제거, MyMusicScreen 위시 진입 카드·handleOpenWishlist·MaterialCommunityIcons import 제거.
+- **유지**: 플레이어 착장 카드 담기 하트 + 꾸미기 아이템 피커 '내 위시리스트' 탭(위시 확인 경로).
