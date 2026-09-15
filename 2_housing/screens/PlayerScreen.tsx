@@ -500,7 +500,16 @@ export default function PlayerScreen({ route, navigation }: any) {
     (async () => {
       try {
         const res = await api.get(`/tracks/${currentId}`);
-        if (!cancelled && res.data) setFullTrack(res.data);
+        if (!cancelled && res.data) {
+          setFullTrack(res.data);
+          // v3.179(검증픽스): 알림 등에서 id만 있는 스텁 트랙으로 진입한 경우 —
+          // store에 스텁이 남아 미니플레이어 제목/커버가 비는 문제 → 풀 트랙으로 역주입
+          const st = usePlayerStore.getState().track;
+          if (st && String(st.id) === String(res.data.id) && !st.title) {
+            if (__DEV__) console.info('[PlayerScreen] 스텁 트랙 → 풀 트랙 역주입', { id: res.data.id });
+            usePlayerStore.getState().setTrack(res.data);
+          }
+        }
       } catch (err) {
         console.warn('[Player] 풀 트랙 조회 실패:', err);
       }
@@ -1110,7 +1119,8 @@ export default function PlayerScreen({ route, navigation }: any) {
             </View>
 
             {/* Content */}
-            <ScrollView style={styles.sheetContent} showsVerticalScrollIndicator={false}>
+            {/* v3.179(검증픽스): 키보드 열린 채 댓글 전송/답글 버튼 첫 탭이 먹도록 */}
+            <ScrollView style={styles.sheetContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {detailTab === 'lyrics' && (
                 track?.lyrics ? (
                   <View>
@@ -1545,20 +1555,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text.secondary,
   },
-  sheetOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheetDismissArea: {
-    flex: 1,
-  },
-  sheetContainer: {
-    backgroundColor: colors.bg.surface1,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: '70%',
-  },
+  // v3.179(검증픽스): v3.178 Modal→인라인 전환으로 미사용된 sheetOverlay/sheetDismissArea/sheetContainer 제거
   sheetHandleArea: {
     alignItems: 'center',
     paddingTop: 12,

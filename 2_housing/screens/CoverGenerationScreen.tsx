@@ -499,7 +499,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
       coverExtras.bgObjectName = data.object_name;
       coverExtras.bgPrompt = null;
       console.info('[Cover] 배경 사진 업로드 완료', { object: data.object_name });
-      setChatHistory((prev) => [...prev, { type: 'user', text: '📷 배경 사진을 올렸어요', step: 1.85 }]);
+      setChatHistory((prev) => [...prev, { type: 'user', text: '배경 사진을 올렸어요', step: 1.85 }]);
       proceedToPalette();
     } catch (err: any) {
       console.error('[Cover] 배경 사진 업로드 실패', { status: err?.response?.status, message: err?.message });
@@ -1248,7 +1248,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <AppText style={styles.optionBtnText}>이 의상 그대로 갈게요</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.optionBtnOutline} onPress={handleWardrobeChange} activeOpacity={0.8}>
-              <AppText style={styles.optionBtnOutlineText}>👗 의상 바꾸러 가기 (아티스트 꾸미기)</AppText>
+              <AppText style={styles.optionBtnOutlineText}>의상 바꾸러 가기 (아티스트 꾸미기)</AppText>
             </TouchableOpacity>
           </>
         ) : step === 1.8 ? (
@@ -1298,7 +1298,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
               <TouchableOpacity style={[styles.optionBtnOutline, { flex: 1, marginTop: 0 }]} onPress={handleBgPhoto} disabled={bgUploading} activeOpacity={0.8}>
                 {bgUploading
                   ? <ActivityIndicator size="small" color={colors.accent.primary} />
-                  : <AppText style={styles.optionBtnOutlineText}>📷 사진 올리기</AppText>}
+                  : <AppText style={styles.optionBtnOutlineText}>사진 올리기</AppText>}
               </TouchableOpacity>
               <TouchableOpacity style={[styles.optionBtnOutline, { flex: 1, marginTop: 0 }]} onPress={handleBgSkip} activeOpacity={0.8}>
                 <AppText style={styles.optionBtnOutlineText}>건너뛰기</AppText>
@@ -1335,7 +1335,7 @@ export default function CoverGenerationScreen({ navigation, route }: Props) {
           // v3.151: 가사 내용 반영 여부 — 반영 시 디테일 질문(구도~색감) 생략, 미반영 시 진행
           <>
             <TouchableOpacity style={styles.optionBtn} onPress={handleLyricsUse} activeOpacity={0.8}>
-              <AppText style={styles.optionBtnText}>🎵 가사 내용 반영하기</AppText>
+              <AppText style={styles.optionBtnText}>가사 내용 반영하기</AppText>
             </TouchableOpacity>
             <TouchableOpacity style={styles.optionBtnOutline} onPress={handleLyricsSkip} activeOpacity={0.8}>
               <AppText style={styles.optionBtnOutlineText}>아니요, 직접 정할게요 (구도·배경·색감)</AppText>

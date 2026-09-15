@@ -440,11 +440,8 @@ export default function MapScreen({ navigation }: Props) {
       return;
     }
 
-    // v3.171(대표): 영상 디렉터 — 공유영상(기본 뮤비) 대화형 제작·내보내기
-    if (type === 'video') {
-      navigation.navigate('VideoDirector' as any);
-      return;
-    }
+    // v3.179(대표): 영상 디렉터도 다른 디렉터처럼 Dialogue(캐릭터+하단 대화창) 경유 →
+    // DialogueScreen video 노드의 action 이 VideoDirector 상세 대화로 넘긴다 (직행 분기 제거)
 
     // 아티스트 디렉터: 이미 아티스트가 있으면 목록(MyArtists)으로, 없으면 Dialogue → ArtistInput
     if (type === 'artist') {

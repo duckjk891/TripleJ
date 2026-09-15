@@ -507,7 +507,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
-        { type: 'director', text: `${artist.name || '아티스트'}의 간편 목소리(${preset.gender} · ${preset.style})를 자동으로 반영할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+        { type: 'director', text: `${artist.name || '아티스트'}의 간편 목소리(${preset.gender} · ${preset.style})를 자동으로 반영할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
         { type: 'director', text: DIRECTOR_MESSAGES[5] },
       ]);
       setStep(5);
@@ -523,7 +523,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
       setChatHistory((prev) => [
         ...prev,
         { type: 'user', text: `아티스트: ${artist.name || '이름 없음'}`, step: 200 },
-        { type: 'director', text: `${artist.name || '아티스트'}의 목소리를 자동으로 반영할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+        { type: 'director', text: `${artist.name || '아티스트'}의 목소리를 자동으로 반영할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
         { type: 'director', text: DIRECTOR_MESSAGES[5] },
       ]);
       setStep(5);
@@ -537,7 +537,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     fetchClones();
     setChatHistory((prev) => [
       ...prev,
-      { type: 'user', text: '🎤 내 목소리', step: 220 },
+      { type: 'user', text: '내 목소리', step: 220 },
       { type: 'director', text: '어떤 목소리로 노래할까요? 만들어둔 목소리를 골라주세요!' },
     ]);
     setStep(210);
@@ -554,7 +554,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
     setChatHistory((prev) => [
       ...prev,
       { type: 'user', text: `내 목소리: ${clone.voice_name || '선택한 목소리'}`, step: 210 },
-      { type: 'director', text: `${clone.voice_name || '내 목소리'}(으)로 노래할게요! 🎤 보컬 설정은 건너뛰고 다음으로 갈게요.` },
+      { type: 'director', text: `${clone.voice_name || '내 목소리'}(으)로 노래할게요! 보컬 설정은 건너뛰고 다음으로 갈게요.` },
       { type: 'director', text: DIRECTOR_MESSAGES[5] },
     ]);
     setStep(5);
@@ -937,7 +937,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
               </TouchableOpacity>
               <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceEntry}>
                 <AppText style={styles.choiceNumber}>2</AppText>
-                <AppText style={styles.choiceText}>🎤 내 목소리 (클로닝한 목소리)</AppText>
+                <AppText style={styles.choiceText}>내 목소리 (클로닝한 목소리)</AppText>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -978,7 +978,7 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                       }}
                     >
                       <AppText style={styles.choiceNumber}>1</AppText>
-                      <AppText style={styles.choiceText}>🎙️ 목소리 만들러 가기 (⭐5)</AppText>
+                      <AppText style={styles.choiceText}>목소리 만들러 가기 (⭐5)</AppText>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity style={styles.choiceButton} onPress={handleMyVoiceBack}>
@@ -1045,8 +1045,8 @@ export default function MusicGenerationScreen({ navigation }: Props) {
                       <AppText style={artistCardStyles.voiceTag}>
                         {hasVoice
                           ? preset
-                            ? `🎤 간편 목소리 · ${preset.gender} ${preset.style}`
-                            : '🎤 내 목소리 연결됨'
+                            ? `간편 목소리 · ${preset.gender} ${preset.style}`
+                            : '내 목소리 연결됨'
                           : a.persona_status === 'expired'
                             ? '목소리 만료 — 다시 학습이 필요해요'
                             : '목소리 미연결 — 연결해야 선택할 수 있어요'}

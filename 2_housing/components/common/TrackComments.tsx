@@ -46,7 +46,7 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
   const [replyTo, setReplyTo] = useState<TrackComment | null>(null);
 
   const load = useCallback(async () => {
-    if (!trackId) return;
+    if (!trackId) { setLoading(false); return; } // v3.179(검증픽스): 영구 스피너 방지
     if (__DEV__) console.info('[TrackComments] load', { trackId });
     setLoading(true);
     try {

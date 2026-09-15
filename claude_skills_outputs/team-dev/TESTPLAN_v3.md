@@ -1465,3 +1465,12 @@
 - L4 [e2e] 미니 패널에서 댓글 작성 회귀 정상
 - 회귀 [e2e] 가사/프롬프트/착장 탭 동일 동작
 - [unit] tsc
+
+## v3.179 — 마이페이지 스크롤·영상 디렉터 스타일
+- A1 [api] share-video 잘못된 스타일 파라미터 400
+- A2 [api] center+circle+line 실생성(ffmpeg) → 200 + 스타일 쿼리 video_url, 프레임 추출 시각 확인(블러 배경+원형 커버+한 줄 가사)
+- A3 [api] 같은 조합 재요청 cached:true(무과금), 과금 ref에 스타일 포함, 기본 조합 ref 하위호환
+- L1 [e2e] 마이페이지: '내 목소리' 카드 없음, 스크롤 시 성장카드 접힘, 탭바 position:sticky
+- L2 [e2e] 맵 영상 디렉터 → Dialogue(캐릭터+흰 대화창) → 탭 → VideoDirector, 인사말 이모지 없음, 아바타 얼굴 크롭
+- L3 [e2e] 스타일 대화: 형식→화면채움(꽉/플레이어)→모양(네모/원)→가사(흐름/한줄) 카드 전 단계 노출, 비용 confirm
+- 검증픽스 [unit] tsc / [api] 백엔드 ast — 6건(스텁 트랙 역주입, keyboardShouldPersistTaps, 삭제 deleted_count, TrackComments 스피너, 죽은 스타일 제거, V5→V6 방어 매핑)

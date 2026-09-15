@@ -248,12 +248,7 @@ export default function MyMusicScreen({ navigation }: any) {
     return null;
   }, [artists, myCharacter]);
 
-  // v3.140(대표): 아티스트 없이 만든 내 목소리(계정 자산)도 접근 가능하게 — 목소리 관리 진입
-  const handleOpenVoices = () => {
-    if (__DEV__) console.info('[MyMusic] 내 목소리 → Studio/VoiceManage');
-    navigation.navigate('Studio', { screen: 'Map' });
-    navigation.navigate('Studio', { screen: 'VoiceManage', params: { mode: 'voices' } });
-  };
+  // v3.179(대표): 내 목소리 진입 카드 제거에 따라 handleOpenVoices 삭제 — VoiceManage는 아티스트 흐름에서 접근
 
   // v3.117: 탭 시 작업실 스택의 내 아티스트 목록으로(크로스 탭 — 이 화면의 Studio 진입 관행 동일)
   const handleOpenArtist = () => {
@@ -458,6 +453,25 @@ export default function MyMusicScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
+      {/* v3.179(대표): 콘텐츠가 하단 슬리버에 갇히는 문제 해결 — 화면 전체를 하나의
+          ScrollView로 묶고, 성장카드·내 아티스트는 스크롤과 함께 접히며 탭바(+칩)만
+          상단에 고정(sticky). 내부 FlatList/ScrollView는 inline 렌더로 전환(목록 소규모). */}
+      <ScrollView
+        stickyHeaderIndices={[2]}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: hasMiniPlayer ? 140 : 80 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing || feedRefreshing}
+            onRefresh={() => {
+              if (__DEV__) console.info('[MyMusic] pull-refresh', { activeTab });
+              if (activeTab === 'music') { fetchTracks(true); fetchAlbums(); }
+              else fetchFeeds(true);
+            }}
+            tintColor={colors.accent.primary}
+          />
+        }
+      >
       {/* 성장 카드 */}
       <View style={styles.growthWrap}>
         <LinearGradient
@@ -551,92 +565,62 @@ export default function MyMusicScreen({ navigation }: any) {
             <AppText style={styles.artistEmptyButton}>아티스트 만들러 가기</AppText>
           </TouchableOpacity>
         )}
-        {/* v3.140: 내 목소리 진입 — 아티스트 없이 작곡 중 만든 목소리도 계정 자산이라
-            여기서 확인·관리(이전엔 아티스트 상세/작곡 중에만 진입 가능했음) */}
-        <TouchableOpacity
-          style={[styles.artistCard, { marginTop: 8 }]}
-          activeOpacity={0.85}
-          onPress={handleOpenVoices}
-          accessibilityLabel="내 목소리 관리"
-        >
-          <View style={[styles.artistCardImage, { justifyContent: 'center', alignItems: 'center' }]}>
-            <Feather name="mic" size={20} color={colors.accent.primary} />
-          </View>
-          <View style={styles.artistCardBody}>
-            <AppText style={styles.artistCardTitle} numberOfLines={1}>내 목소리</AppText>
-            <AppText style={styles.artistCardHint}>클로닝한 목소리 확인·관리 · 아티스트 연결</AppText>
-          </View>
-          <AppText style={styles.artistCardArrow}>{'›'}</AppText>
-        </TouchableOpacity>
+        {/* v3.179(대표): '내 목소리' 카드 제거 — 목소리는 아티스트 생성/상세의 목소리 연결에서
+            관리(중복 진입점 정리). VoiceManage 라우트·화면은 보존(ArtistResult 등에서 사용). */}
       </View>
 
-      {/* 탭 바 — v3.115: 상위 3탭(곡·앨범/피드/커뮤니티, UserChannel 탭명과 동일) */}
-      <View style={styles.tabBar}>
-        {([
-          { key: 'music', label: '곡·앨범' },
-          { key: 'feed', label: '피드' },
-          { key: 'community', label: '커뮤니티' },
-        ] as { key: MyMusicTab; label: string }[]).map((t) => (
-          <TouchableOpacity
-            key={t.key}
-            style={[styles.tab, activeTab === t.key && styles.tabActive]}
-            onPress={() => setActiveTab(t.key)}
-          >
-            <AppText style={[styles.tabText, activeTab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* v3.115: 곡·앨범 하위 칩(곡/앨범/작사) — 차트의 Tag 칩 필터 관행 재사용 */}
-      {activeTab === 'music' && (
-        <View style={styles.subTabRow}>
+      {/* 탭 바 — v3.115 3탭. v3.179: sticky 블록(칩 포함) — 스크롤해도 상단 고정 */}
+      <View style={styles.stickyTabs}>
+        <View style={styles.tabBar}>
           {([
-            { key: 'tracks', label: '곡' },
-            { key: 'albums', label: '앨범' },
-            { key: 'lyrics', label: '작사' },
-          ] as { key: MusicSubTab; label: string }[]).map((s) => (
-            <Tag key={s.key} label={s.label} selected={musicSub === s.key} onPress={() => setMusicSub(s.key)} />
+            { key: 'music', label: '곡·앨범' },
+            { key: 'feed', label: '피드' },
+            { key: 'community', label: '커뮤니티' },
+          ] as { key: MyMusicTab; label: string }[]).map((t) => (
+            <TouchableOpacity
+              key={t.key}
+              style={[styles.tab, activeTab === t.key && styles.tabActive]}
+              onPress={() => setActiveTab(t.key)}
+            >
+              <AppText style={[styles.tabText, activeTab === t.key && styles.tabTextActive]} numberOfLines={1}>{t.label}</AppText>
+            </TouchableOpacity>
           ))}
         </View>
-      )}
+
+        {/* v3.115: 곡·앨범 하위 칩(곡/앨범/작사) — 차트의 Tag 칩 필터 관행 재사용 */}
+        {activeTab === 'music' && (
+          <View style={styles.subTabRow}>
+            {([
+              { key: 'tracks', label: '곡' },
+              { key: 'albums', label: '앨범' },
+              { key: 'lyrics', label: '작사' },
+            ] as { key: MusicSubTab; label: string }[]).map((s) => (
+              <Tag key={s.key} label={s.label} selected={musicSub === s.key} onPress={() => setMusicSub(s.key)} />
+            ))}
+          </View>
+        )}
+      </View>
 
       {/* 곡(작곡) — v3.115: '곡·앨범 > 곡' 하위 칩으로 재배치(콘텐츠는 기존 작곡 탭 그대로) */}
       {/* v3.114: '음원 파일 올리기' dashed 진입 버튼 제거 — 레퍼런스 업로드는 작곡 대화에 이미 있어
           마이페이지에 둘 성격이 아님(대표 지시). TrackUploadScreen·trackService·라우트는 보존(진입점만 제거). */}
       {activeTab === 'music' && musicSub === 'tracks' && (
-        <View style={{ flex: 1 }}>
+        <View>
           {tracks.length === 0 ? (
             <EmptyState title="아직 생성한 곡이 없어요." hint="작업실에서 곡을 만들어보세요!" />
           ) : (
-            <FlatList
-              data={tracks}
-              keyExtractor={(item) => String(item.id)}
-              renderItem={renderTrack}
-              contentContainerStyle={[styles.listContent, hasMiniPlayer && { paddingBottom: 140 }]}
-              refreshControl={
-                <RefreshControl
-                  refreshing={refreshing}
-                  onRefresh={() => fetchTracks(true)}
-                  tintColor={colors.accent.primary}
-                />
-              }
-            />
+            // v3.179: 부모 ScrollView inline 렌더 (당겨새로고침은 부모가 담당)
+            tracks.map((item) => <View key={String(item.id)}>{renderTrack({ item })}</View>)
           )}
         </View>
       )}
 
       {/* v3.114: 피드/커뮤니티 탭 — 내가 쓴 글(비공개 포함) + 당겨새로고침. 카드 탭 시 상세로 */}
       {/* v3.115: 상단 [새 피드 작성]/[새 공지 작성] — FeedCompose로(공지는 kind='community'), 복귀 시 focus 재조회로 갱신 */}
-      {(activeTab === 'feed' || activeTab === 'community') && (
-        <FlatList
-          data={activeTab === 'feed' ? feeds : notices}
-          keyExtractor={(it: any, i: number) => String(it.id ?? i)}
-          renderItem={renderFeed}
-          contentContainerStyle={[styles.feedList, hasMiniPlayer && { paddingBottom: 140 }]}
-          refreshControl={
-            <RefreshControl refreshing={feedRefreshing} onRefresh={() => fetchFeeds(true)} tintColor={colors.accent.primary} />
-          }
-          ListHeaderComponent={
+      {(activeTab === 'feed' || activeTab === 'community') && (() => {
+        const list = activeTab === 'feed' ? feeds : notices;
+        return (
+          <View style={styles.feedList}>
             <TouchableOpacity
               style={styles.composeBtn}
               activeOpacity={0.8}
@@ -650,24 +634,26 @@ export default function MyMusicScreen({ navigation }: any) {
               <Feather name="edit-3" size={16} color={colors.accent.primary} />
               <AppText style={styles.albumCreateText}>{activeTab === 'feed' ? '새 피드 작성' : '새 공지 작성'}</AppText>
             </TouchableOpacity>
-          }
-          ListEmptyComponent={
-            feedLoading ? (
-              <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
-            ) : activeTab === 'feed' ? (
-              <EmptyState title="아직 작성한 피드가 없어요." hint="[새 피드 작성]으로 내 곡과 소식을 알려보세요!" />
+            {list.length === 0 ? (
+              feedLoading ? (
+                <ActivityIndicator size="small" color={colors.accent.primary} style={{ marginTop: 24 }} />
+              ) : activeTab === 'feed' ? (
+                <EmptyState title="아직 작성한 피드가 없어요." hint="[새 피드 작성]으로 내 곡과 소식을 알려보세요!" />
+              ) : (
+                <EmptyState title="아직 커뮤니티 글이 없어요." hint="[새 공지 작성]으로 구독자에게 소식을 전해보세요!" />
+              )
             ) : (
-              <EmptyState title="아직 커뮤니티 글이 없어요." hint="[새 공지 작성]으로 구독자에게 소식을 전해보세요!" />
-            )
-          }
-        />
-      )}
+              list.map((item: any, i: number) => <View key={String(item.id ?? i)}>{renderFeed({ item })}</View>)
+            )}
+          </View>
+        );
+      })()}
 
       {/* v3.96(A-2): 앨범 — 내 앨범 목록 + 새 앨범 만들기. 탭하면 앨범 상세(관리 포함)로 */}
       {/* v3.115: '커버 보관함' 진입 버튼 제거(대표 지시) — 커버는 앨범 상세(관리)에서 다시 만들 수 있어
           마이페이지 중복 진입점 정리. CoverLibraryScreen·CoverLibrary 라우트는 보존(앨범 관리 내 커버 선택 등에서 사용). */}
       {activeTab === 'music' && musicSub === 'albums' && (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: hasMiniPlayer ? 140 : 100 }}>
+        <View style={{ paddingHorizontal: 16 }}>
           <TouchableOpacity style={styles.albumCreateBtn} activeOpacity={0.8} onPress={() => setShowAlbumCreate(true)}>
             <Feather name="plus" size={16} color={colors.accent.primary} />
             <AppText style={styles.albumCreateText}>새 앨범 만들기</AppText>
@@ -698,12 +684,12 @@ export default function MyMusicScreen({ navigation }: any) {
               </TouchableOpacity>
             ))
           )}
-        </ScrollView>
+        </View>
       )}
 
       {/* 작사 — v3.115: '곡·앨범 > 작사' 하위 칩으로 재배치. DB에 저장된 트랙의 가사 + 현재 작업 중인 가사 */}
       {activeTab === 'music' && musicSub === 'lyrics' && (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
+        <View style={{ padding: 20 }}>
           {/* 현재 작업 중인 가사 - 완성된 곡이 없을 때만 표시 */}
           {lyricsStore.generatedLyrics && tracks.length === 0 ? (
             <TouchableOpacity
@@ -771,8 +757,9 @@ export default function MyMusicScreen({ navigation }: any) {
           {tracks.filter((t) => t.lyrics).length === 0 && !lyricsStore.generatedLyrics ? (
             <EmptyState title="아직 작사한 기록이 없어요." hint="작업실에서 작사 디렉터와 대화해보세요!" />
           ) : null}
-        </ScrollView>
+        </View>
       )}
+      </ScrollView>
 
       {/* v3.96(A-2): 앨범 생성 모달 — 생성 성공 시 목록 갱신 + 상세로 이동 */}
       <AlbumCreateModal
@@ -816,6 +803,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg.deepest,
+  },
+  // v3.179: sticky 탭 블록 — 스크롤 시 아래 콘텐츠가 비치지 않도록 배경 필수
+  stickyTabs: {
+    backgroundColor: colors.bg.deepest,
+    zIndex: 10,
   },
   tabBar: {
     flexDirection: 'row',

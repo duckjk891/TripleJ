@@ -3538,3 +3538,20 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **테스트**: tsc 통과. E2E 4/4 PASS(v3178e) — 액션줄·큰커버, 댓글 열림+미니축소(DOM 계측: 큰 img 1→0, 미니 img 0→1), 핸들 복귀, 미니 패널 댓글 작성 회귀. 증적 v3178e_01_full/02_comments/03_restored.png. 테스트 댓글 정리 완료.
 
 **특이사항**: 백엔드 무변경(댓글 API는 v3.177 그대로). container가 alignItems:center라 인라인 패널에 width:100% 명시 필요했음(반영).
+
+## v3.179 — 2026-09-15 — 마이페이지 정리·스크롤 + 영상 디렉터 대화 진입·스타일 선택 + Fable 검증
+
+**요청**: ①마이페이지 '내 목소리' 카드 제거 ②곡앨범·피드·커뮤니티 하단 고정 UI 개선 ③Opus 작업분 Fable 검증 ④영상 디렉터 맵 대화(캐릭터+흰 대화창) 경유 ⑤대화 이모지 제거 ⑥디렉터 아바타 얼굴 크롭 ⑦미리보기 왜곡 수정 ⑧결과 영상을 플레이어 느낌 등 다양한 스타일로 — 디렉터와 대화하며 선택.
+
+**수행**:
+- ①② MyMusic: 내 목소리 카드·핸들러 제거(목소리는 아티스트 흐름에서). 화면 전체를 단일 ScrollView+stickyHeaderIndices로 재구성 — 성장카드·내 아티스트는 스크롤과 함께 접히고 탭바(+칩)만 상단 고정, 내부 FlatList/ScrollView는 inline 렌더(당겨새로고침은 부모, 탭별 분기).
+- ④ MapScreen video 직행 분기 제거 → 다른 디렉터와 동일하게 Dialogue(캐릭터 우측+하단 흰 대화창, "탭하여 계속") 경유 후 VideoDirector 상세 대화 진입(DialogueScreen video 노드 개편).
+- ⑤ 대화·선택지 이모지 전수 제거(VideoDirector 🎬🎞️🎉, CoverGeneration 📷👗🎵, MusicGeneration 🎤🎙️). ⭐비용 표기·✓기호는 UI 관행 유지.
+- ⑥ VideoDirector 아바타를 CoverGeneration portraitCircle 관행으로 — 원형 클리핑+전신 스프라이트 top 정렬 = 얼굴 노출.
+- ⑦ 미리보기: 포맷별 실제 비율(9:16, 16:9, 1080:2340) aspectRatio 박스 + CONTAIN + 웹 videoStyle objectFit 명시.
+- ⑧ **영상 스타일 축 신설(BE+FE)**: layout(full=현행|center=플레이어 느낌: 블러+어둠막 배경 위 정사각 커버 중앙 상단), shape(square 둥근모서리|circle 원형 — ffmpeg geq 알파 마스크 1프레임 사전 패스), lyrics(scroll=흐르는 스택|line=한 줄씩 — 기존 _build_ass 재사용). 스타일 조합별 별도 캐시(share/v5 suffix)·별도 1회 과금(기본 조합은 기존 캐시·ref 하위호환), 파일 프록시·트랙 삭제 purge(prefix 목록 삭제)까지 연동. FE 대화 단계: 형식→화면 채움→(중앙이면)모양→가사 방식→비용 confirm→생성, 각 단계 도식 카드.
+- ③ **Fable 검증(에이전트)**: v3.174~178 + BE 87295ae 전수 리뷰 — 결함 6건 발견, 전부 이번 버전에서 수정: (1)알림 스텁 트랙으로 미니플레이어 제목 비는 문제→풀 트랙 역주입 (2)댓글 키보드 열림 시 첫 탭 무시→keyboardShouldPersistTaps (3)댓글 동시 삭제 카운트 과차감→deleted_count 기반 (4)TrackComments 영구 스피너 가드 (5)v3.178 죽은 시트 스타일 제거 (6)구곡 재생성 doc의 폐기 모델(V5/V5_5) 명시 전송→suno_generator에서 V6 방어 매핑. 그 외 라우팅 충돌·revert 잔재·모달 접근성 등 "이상 없음" 확인.
+
+**테스트**: FE tsc·BE ast 통과. [api] 스타일 400/실생성(center+circle+line, 프레임 추출로 플레이어 느낌 시각 확인)/캐시 무과금/스타일 과금 ref PASS. [e2e] 3/3 PASS — 마이페이지 정리+접힘+sticky, Dialogue 경유+무이모지+얼굴 아바타, 스타일 4단계 카드. 증적 v3179e_01~06.png, v3179_ccl_frame.png.
+
+**특이사항**: 실기기(네이티브) 미리보기·스크롤 체감, wide/kakao×center 등 나머지 스타일 조합 실렌더 품질은 대표 실테스트 위임(과금 주의: 새 조합 생성마다 ⭐5, 같은 조합 재요청 무료). center 생성은 곡 길이에 비례(테스트 곡 4분≈3분50초 소요).

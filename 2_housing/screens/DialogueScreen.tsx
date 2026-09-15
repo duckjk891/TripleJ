@@ -125,6 +125,7 @@ export default function DialogueScreen({ route, navigation }: Props) {
           },
         ] as DialogueNode[];
       case 'video':
+        // v3.179(대표): 준비 중 안내 → 실제 영상 디렉터 상세 대화(VideoDirector)로 연결
         return [
           {
             id: 1,
@@ -135,7 +136,8 @@ export default function DialogueScreen({ route, navigation }: Props) {
           {
             id: 2,
             speaker: 'video',
-            text: '아직 서비스 준비 중이에요. 조금만 기다려주세요! 곧 멋진 뮤직비디오를 만들어드릴게요.',
+            text: '발매한 곡의 커버와 가사로 공유 영상을 만들어 드려요. 스타일도 골라보실 수 있어요.',
+            action: 'navigate:VideoDirector',
           },
         ] as DialogueNode[];
       default:

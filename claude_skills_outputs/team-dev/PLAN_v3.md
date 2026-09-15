@@ -2357,3 +2357,28 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 
 ### 테스트 지시
 [e2e] ①액션줄 좋아요·댓글·담기·재생목록 노출 ②댓글 탭 클릭→상세 열림+댓글 탭 활성+상단 미니바 축소(큰 커버 숨김) ③핸들/미니바 탭→큰 플레이어 복귀 ④댓글 작성 여전히 동작(회귀) ⑤가사/프롬프트/착장 탭 회귀. [unit] tsc.
+
+## v3.179 — 2026-09-15 — 마이페이지 정리·스크롤 개선 + 영상 디렉터 대화 진입·스타일 선택(플레이어 느낌) + Fable 검증
+**요청 원문**: ①마이페이지 '내 목소리' 카드 제거(아티스트 생성 시 목소리에서 보임) ②곡앨범·피드·커뮤니티 UI가 하단 고정이라 내용 보기 힘듦 — 해결안 ③Opus 4.8 작업분 이상 여부 Fable로 검증 ④영상 디렉터도 다른 디렉터처럼 맵 클릭→캐릭터+하단 흰 대화창→상세 대화창 ⑤대화 이모지 전부 제거 ⑥대화창 프로필에 디렉터 몸통이 보임→얼굴 보이게 ⑦미리보기 왜곡(첨부: 확대된 벽면) ⑧결과 영상 스타일 다양화 — 꽉채움/중앙(플레이어 느낌), 이미지 동그라미/네모, 가사 스크롤/한줄씩 — 디렉터와 대화로 선택.
+
+### Plan verification findings (0단계)
+- **MyMusic 구조**: container에 성장카드+내 아티스트 섹션(+내 목소리 카드)이 **고정**, 그 아래 탭바·칩 고정, 콘텐츠(FlatList/ScrollView)만 flex:1 — 작은 화면에서 콘텐츠가 하단 슬리버. 해결 = **부모 ScrollView + stickyHeaderIndices** 패턴: 성장카드·아티스트 섹션은 스크롤과 함께 접히고 탭바(+칩)는 상단 고정, 콘텐츠는 inline map 렌더(목록 소규모라 가상화 불필요). 내부 FlatList 제거, RefreshControl은 부모로.
+- **영상 디렉터 진입**: MapScreen proceedDirectorPress에 `type==='video'` 직행 분기(:444) — 다른 디렉터의 Dialogue 흐름(openDirectorDialogue→DialogueScreen 캐릭터+흰 대화창→action navigate)과 다름. DialogueScreen 'video' 노드는 "준비 중"(:127-140) 구버전. 수정: 직행 분기 제거, video 노드를 2문장+`action:'navigate:VideoDirector'`로.
+- **이모지**: VideoDirectorScreen 대화 문자열에 🎬🎞️🎉⭐ 등. 다른 대화(DialogueScreen data, CoverGeneration)도 grep 후 대화 텍스트 내 이모지 제거(⭐ 비용 표기는 UI 관행이라 유지 여부: 대화 문장 속 이모지는 제거, 비용 confirm의 ⭐N은 통화 표기로 유지).
+- **프로필 몸통 문제**: VideoDirectorScreen portrait 스타일 40×40 라운드에 전신 스프라이트 원본을 그대로 → 상반신/몸통 노출. 수정: 40×40 원형 컨테이너(overflow hidden) 안에 이미지 크게(≈80高) 넣고 top 정렬로 얼굴 크롭. CoverGeneration 등 동일 패턴 화면도 점검.
+- **미리보기 왜곡(첨부)**: kakao 포맷(1080×2340)인데 previewTall 200×356(9:16) 고정 + RN-web expo-av의 objectFit 기본값 문제 가능 → 포맷별 정확한 aspect 박스 + videoStyle objectFit contain 명시.
+- **BE share_video.py**: 포맷 3종, sns/kakao=crop-fill, wide=블러+중앙(이미 '중앙' 조성 존재), 자막 v152 스크롤(_build_ass_scroll)·단일줄 폴백(_build_ass 보존) — **가사 한줄씩 = _build_ass 재사용 가능**. 캐시 share/v5/{id}{suffix}.mp4, 라우트 v247 ⭐과금(ref=share_video:{id}:{fmt}).
+- **스타일 확장 설계**: 쿼리 layout(full|center, 기본 full=현행 포맷별 조성 → 캐시·과금 하위호환), shape(square|circle — center에서만 의미), lyrics(scroll|line). center = 커버 blur+어둠막 배경 + 정사각 커버(둥근모서리/원형 마스크) 중앙 상단 오버레이(플레이어 느낌). 마스크는 1패스 사전 처리(ffmpeg geq alpha→rgba png, 프레임당 geq 회피). 캐시 object명에 비기본 조합 suffix, 과금 ref에도 포함(스타일별 신규 1회 과금·캐시 무과금). 파일 프록시도 스타일 파라미터.
+- **FE 대화 단계 확장**: pick→format→layout(꽉 채우기/플레이어 스타일)→(center면)shape(둥근 네모/동그라미)→lyrics(흐르는 가사/한 줄씩)→비용 confirm→생성.
+- **한계**: circle/rounded 실렌더 품질은 ffmpeg 실행 검증(서버)으로 확인, 실기기 재생 체감은 대표 위임.
+
+### 변경 매트릭스
+| 파일 | 변경 | 추적자 |
+|---|---|---|
+| FE MyMusicScreen | 내 목소리 카드 제거, 부모 ScrollView+sticky 탭바 재구성(내부 리스트 inline화) | [MyMusic] |
+| FE MapScreen | video 직행 분기 제거→Dialogue 경유 | [Map] |
+| FE DialogueScreen | video 노드 개편(이모지 없음, navigate:VideoDirector) | [Dialogue] |
+| FE VideoDirectorScreen | 이모지 제거, 얼굴 크롭 아바타, 미리보기 aspect 수정, 스타일 3단계 대화+파라미터 전송 | [VideoDirector] |
+| BE share_video.py | layout/shape/lyrics 파라미터, center 조성+마스크 사전패스, lyrics=line→_build_ass, 캐시명 스타일 suffix | [share-video] |
+| BE routes/tracks.py | share-video 라우트/파일 프록시 스타일 파라미터+검증+과금 ref 확장 | [share-video] |
+| 검증 | v3.174~178(FE)+87295ae(BE) diff 리뷰 에이전트(별도 보고) | - |
