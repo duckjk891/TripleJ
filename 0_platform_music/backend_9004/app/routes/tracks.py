@@ -2609,8 +2609,12 @@ async def _get_track_or_404(mongo, track_id: str):
 
 
 @router.get("/{track_id}/comments")
-async def list_track_comments(track_id: str, page: int = 1, limit: int = 20):
-    """곡 댓글 목록 — 무인증 열람, created_at 오름차순 페이지네이션."""
+async def list_track_comments(track_id: str, page: int = 1, limit: int = 20, conn=Depends(get_pg)):
+    """곡 댓글 목록 — 무인증 열람, created_at 오름차순 페이지네이션.
+
+    v3.180: 작성자 프로필 이미지(author_profile_image) PG join 첨부 —
+    _attach_uploader_profiles 관행(1쿼리 배치, best-effort, 항상 fresh).
+    """
     mongo = get_mongo()
     page = max(1, page)
     limit = max(1, min(limit, 100))
@@ -2631,6 +2635,21 @@ async def list_track_comments(track_id: str, page: int = 1, limit: int = 20):
         .to_list(length=limit)
     )
     comments = [_serialize_track_comment(d) for d in docs]
+
+    # v3.180: 작성자 프로필 이미지 배치 join (실패해도 목록은 깨지 않음)
+    author_ids = sorted({c.get("author_id") for c in comments if c.get("author_id")})
+    if author_ids:
+        try:
+            rows = await conn.fetch(
+                "SELECT id::text, profile_image FROM users WHERE id::text = ANY($1)", author_ids
+            )
+            img_by_id = {r["id"]: r["profile_image"] for r in rows}
+            for c in comments:
+                c["author_profile_image"] = img_by_id.get(c.get("author_id"))
+        except Exception:
+            logger.warning("[track-comment] profile join failed track=%s ids=%d", short, len(author_ids))
+            for c in comments:
+                c.setdefault("author_profile_image", None)
     logger.info("[track-comment] list ok track=%s returned=%d total=%d", short, len(comments), total)
     return {
         "comments": comments,
