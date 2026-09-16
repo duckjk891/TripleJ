@@ -3,7 +3,7 @@
 // 서버 계약: text 1~2000자, 신고당 1회(중복 409 · 비소유 403 · blind 아님 400 · 성공 201 {appeal_id}).
 // 주의: 소명 텍스트 원문은 절대 콘솔에 출력하지 않는다(길이만 기록).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import api from '../services/api';
 import { AppText, Button } from './ui';
 import { colors } from '../theme/colors';
@@ -91,6 +91,8 @@ export default function AppealModal({ report, onClose, onSubmitted }: Props) {
 
   return (
     <Modal visible={!!report} transparent animationType="fade" onRequestClose={close}>
+      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close}>
         <TouchableOpacity style={styles.card} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>소명하기</AppText>
@@ -161,7 +163,8 @@ export default function AppealModal({ report, onClose, onSubmitted }: Props) {
           )}
         </TouchableOpacity>
       </TouchableOpacity>
-    </Modal>
+    
+      </KeyboardAvoidingView></Modal>
   );
 }
 

@@ -459,6 +459,8 @@ export default function MyMusicScreen({ navigation }: any) {
       <ScrollView
         stickyHeaderIndices={[2]}
         showsVerticalScrollIndicator={false}
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingBottom: hasMiniPlayer ? 140 : 80 }}
         refreshControl={
           <RefreshControl

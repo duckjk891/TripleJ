@@ -649,7 +649,7 @@ export default function VoiceCloneWizardScreen({ navigation, route }: Props) {
       {resuming ? (
         <ActivityIndicator size="large" color={colors.accent.primary} style={{ marginTop: 40 }} />
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
           {!!errText && (
             <View style={styles.errBox}>
               <AppText style={styles.errBoxText}>{errText}</AppText>

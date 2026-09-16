@@ -240,7 +240,7 @@ export default function TrackUploadScreen({ navigation }: any) {
   );
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
       {/* 오디오 파일 선택 */}
       <AppText variant="caption" tone="secondary">음원 파일 (필수)</AppText>
       {audioFile ? (

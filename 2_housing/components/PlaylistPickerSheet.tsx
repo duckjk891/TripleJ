@@ -1,7 +1,7 @@
 // [PlaylistPickerSheet] 곡(들)을 플레이리스트에 담는 바텀시트 — 기존 목록 선택 또는 새로 만들어 담기.
 // 단일 곡·여러 곡(검색 결과 전체 담기) 모두 지원. trackIds 길이에 따라 문구만 달라진다.
 import { useEffect, useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { showAlert } from '../utils/appAlert';
 import api from '../services/api';
 import { AppText, Button } from './ui';
@@ -82,6 +82,8 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
         <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>
@@ -111,7 +113,8 @@ export default function PlaylistPickerSheet({ visible, trackIds, onClose }: Prop
           </View>
         </TouchableOpacity>
       </TouchableOpacity>
-    </Modal>
+    
+      </KeyboardAvoidingView></Modal>
   );
 }
 

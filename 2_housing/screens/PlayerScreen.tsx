@@ -15,6 +15,7 @@ import {
   Platform,
   Share,
   useWindowDimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { showAlert } from '../utils/appAlert';
@@ -32,7 +33,7 @@ import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
-import { autoContinueWithRelated, invalidatePlayback } from '../services/playback';
+import { autoContinueWithRelated } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
 import { useWishlistStore } from '../stores/wishlistStore';
 import { colors } from '../theme/colors';
@@ -1023,7 +1024,11 @@ export default function PlayerScreen({ route, navigation }: any) {
       {/* v3.178(대표): 상세토글 = 화면 덮는 모달 대신, 플레이어를 상단 미니바로 축소하고 아래로 패널 확장.
           핸들/미니바 탭 = 큰 플레이어로 복귀("토글 내리기"). */}
       {showDetails && (
-        <View style={styles.detailWrap}>
+        // v3.182(대표): 키보드가 입력창을 가리지 않도록 — 패널 전체를 KAV로 (iOS padding/Android height)
+        <KeyboardAvoidingView
+          style={styles.detailWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           {/* v3.180(대표): 축소 미니 플레이어 = 하단 MiniPlayer와 동일 UI —
               2px 프로그레스바 + 커버40 + 제목/아티스트 + ⏮ ▶ ⏭ + 재생목록 + ✕.
               정보 영역 탭 = 큰 플레이어 복귀 */}
@@ -1055,19 +1060,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               <TouchableOpacity onPress={() => setShowQueue(true)} style={styles.miniSkipBtn} accessibilityLabel="재생목록 열기">
                 <Feather name="list" size={18} color={colors.text.secondary} />
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  // 하단 MiniPlayer ✕ 관행: 재생 종료 + 플레이어 닫기
-                  if (__DEV__) console.info('[PlayerScreen] 미니바 ✕ — 재생 종료');
-                  invalidatePlayback();
-                  await playerStore.cleanup();
-                  navigation.goBack();
-                }}
-                style={styles.miniSkipBtn}
-                accessibilityLabel="재생 종료"
-              >
-                <AppText style={styles.miniCloseIcon}>{'✕'}</AppText>
-              </TouchableOpacity>
+              {/* v3.182(대표): 상단 미니바에서는 ✕(재생 종료) 제거 — 재생목록까지만 */}
             </View>
           </View>
 
@@ -1255,7 +1248,7 @@ export default function PlayerScreen({ route, navigation }: any) {
               )}
               <View style={{ height: 40 }} />
             </ScrollView>
-        </View>
+        </KeyboardAvoidingView>
       )}
 
       {/* v3.180: 모달 3종 — fragment 밖 상시 렌더 (상단 미니바에서도 재생목록 접근) */}

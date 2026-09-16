@@ -2,7 +2,7 @@
 // 사유 5종 라디오 선택 + '기타'일 때만 상세 입력(최대 500자) → POST /reports/
 // 주의: reason_text 원문은 절대 콘솔에 출력하지 않는다(길이만 기록).
 import { useState } from 'react';
-import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
@@ -73,6 +73,8 @@ export default function ReportModal({ visible, targetType, targetId, onClose }: 
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={close}>
         <TouchableOpacity style={styles.card} activeOpacity={1} onPress={() => {}}>
           <AppText variant="title3" style={styles.title}>신고하기</AppText>
@@ -134,7 +136,8 @@ export default function ReportModal({ visible, targetType, targetId, onClose }: 
           )}
         </TouchableOpacity>
       </TouchableOpacity>
-    </Modal>
+    
+      </KeyboardAvoidingView></Modal>
   );
 }
 

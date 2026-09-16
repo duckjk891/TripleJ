@@ -1,7 +1,8 @@
-// [VideoDirector] v3.171(대표) — 영상 디렉터 대화: 공유영상(기본 뮤비) 생성·내보내기.
-// 백엔드 share-video(v129/v137 이식 완료)를 대화형 UI로 노출 — 곡 선택 → 형식 선택(비율
-// 미리보기 카드) → 생성 → 미리보기 + 저장/공유. 서버 무변경(공개 곡 전용·무과금·워터마크 번인).
-// 대화 관행은 CoverGenerationScreen(이미지 디렉터)과 동일.
+// [VideoDirector] v3.171→v3.182(대표) — 영상 디렉터 대화: 공유영상 생성·보관함·내보내기.
+// v3.182: ①말풍선 UI를 작곡 디렉터(첨부 이미지) 스타일로 — 보라 링 아바타 + 버블 안 이름 라벨
+//   ②내 답변(user 버블) 탭 → 그 단계로 되돌아가 다시 선택 ③배경 3모드(원본/블러 강도/색+투명도,
+//   커버 실사 미리보기) ④폰트 5종+볼드/기울임 ⑤글자색 컬러 팔레트(+hex 표시) ⑥기기 저장(MediaLibrary)과
+//   공유(OS 시트) 분리 ⑦보관함(서버 캐시 목록). 추적자 [VideoDirector].
 import { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Platform, Linking,
@@ -9,6 +10,7 @@ import {
 import { Video, ResizeMode } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
 import { Feather } from '@expo/vector-icons';
 import { AppText } from '../components/ui';
 import { showAlert } from '../utils/appAlert';
@@ -23,42 +25,76 @@ interface MyTrack {
   is_public?: boolean;
 }
 
-interface ChatMessage { type: 'director' | 'user'; text: string }
+type Step =
+  | 'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
+  | 'font' | 'fontStyle' | 'fontColor' | 'lyricsMode' | 'making' | 'done' | 'library';
 
-// 형식 3종 — 서버 share-video format과 1:1. ratioW/H는 미리보기 도식용.
+// user 버블에 step 을 기록 — 탭하면 그 단계로 되돌아가 수정(v3.182)
+interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step }
+
 const FORMATS: { key: 'sns' | 'wide' | 'kakao'; label: string; desc: string; ratioW: number; ratioH: number }[] = [
   { key: 'sns', label: 'SNS용 세로', desc: '9:16 · 릴스/쇼츠/틱톡', ratioW: 36, ratioH: 64 },
   { key: 'wide', label: '와이드 가로', desc: '16:9 · 유튜브/PC', ratioW: 64, ratioH: 36 },
   { key: 'kakao', label: '카톡 프로필 배경', desc: '15초 · 프로필 배경용', ratioW: 42, ratioH: 64 },
 ];
 
-const coverUri = (t: MyTrack): string | null => {
-  const img = t.cover_image || t.cover_image_url;
+const FONTS: { key: string; label: string }[] = [
+  { key: 'basic', label: '기본 고딕' },
+  { key: 'round', label: '둥근 고딕' },
+  { key: 'serif', label: '명조체' },
+  { key: 'dohyeon', label: '도현체' },
+  { key: 'jua', label: '주아체' },
+];
+
+// 글자·배경 색 공용 팔레트 (hex — 선택 시 코드 표시)
+const PALETTE = [
+  'FFFFFF', 'FFD700', 'FF6FA5', '7FD7FF',
+  'A855F7', 'FF5C5C', '7CFF9B', 'FFA94D',
+  '9BA8FF', 'F5E6C8', '1B1035', '000000',
+];
+
+const BG_ALPHAS = ['25', '45', '70'];
+const BLUR_LEVELS: { key: string; label: string; radius: number }[] = [
+  { key: 'light', label: '살짝 흐림', radius: 2 },
+  { key: 'mid', label: '중간 흐림', radius: 6 },
+  { key: 'strong', label: '많이 흐림', radius: 12 },
+];
+
+const coverUriOf = (t: MyTrack | null): string | null => {
+  const img = t && (t.cover_image || t.cover_image_url);
   return img ? `${BACKEND_BASE_URL}/api/upload/cover-preview/${encodeURIComponent(img)}` : null;
 };
 
 export default function VideoDirectorScreen({ navigation }: any) {
   const [chat, setChat] = useState<ChatMessage[]>([
-    { type: 'director', text: '안녕하세요! 영상 디렉터예요.\n곡을 고르면 커버와 가사가 어우러진 영상을 만들어 드릴게요. 어떤 곡으로 만들까요?' },
+    { type: 'director', text: '안녕하세요! 영상 디렉터예요.\n곡을 고르면 커버와 가사가 어우러진 영상을 만들어 드릴게요. 어떤 곡으로 만들까요?\n\n선택한 답변을 탭하면 그 단계부터 다시 고를 수 있어요.' },
   ]);
   const [tracks, setTracks] = useState<MyTrack[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(true);
   const [selected, setSelected] = useState<MyTrack | null>(null);
-  // v3.179(대표): 형식 → 화면 채움 → (중앙이면) 이미지 모양 → 가사 방식 순으로 대화 선택
-  const [step, setStep] = useState<'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'font' | 'fontColor' | 'lyricsMode' | 'making' | 'done'>('pick');
+  const [step, setStep] = useState<Step>('pick');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [madeFormat, setMadeFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
+  // 스타일 선택값
   const [pickedFormat, setPickedFormat] = useState<'sns' | 'wide' | 'kakao' | null>(null);
   const [pickedLayout, setPickedLayout] = useState<'full' | 'center'>('full');
   const [pickedShape, setPickedShape] = useState<'square' | 'circle'>('square');
-  // v3.181(대표): 추가 스타일 — 배경 블러 on/off, 폰트, 글자색
-  const [pickedBg, setPickedBg] = useState<'blur' | 'clean'>('blur');
-  const [pickedFont, setPickedFont] = useState<'basic' | 'round' | 'serif'>('basic');
-  const [pickedColor, setPickedColor] = useState<'white' | 'yellow' | 'pink' | 'sky'>('white');
+  const [pickedBg, setPickedBg] = useState<'blur' | 'clean' | 'color'>('blur');
+  const [pickedBgBlur, setPickedBgBlur] = useState<'light' | 'mid' | 'strong'>('mid');
+  const [pickedBgColor, setPickedBgColor] = useState<string>('1B1035');
+  const [pickedBgAlpha, setPickedBgAlpha] = useState<string>('45');
+  const [pickedFont, setPickedFont] = useState<string>('basic');
+  const [pickedBold, setPickedBold] = useState(false);
+  const [pickedItalic, setPickedItalic] = useState(false);
+  const [pickedColor, setPickedColor] = useState<string>('FFFFFF');
   const [saving, setSaving] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  // v3.182: 보관함
+  const [library, setLibrary] = useState<any[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-  // v3.172(대표 확정): 영상 신규 생성 ⭐ 과금 — /points/costs의 share_video 키가 있을 때만 고지
   const [videoCost, setVideoCost] = useState<number | null>(null);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -96,34 +132,41 @@ export default function VideoDirectorScreen({ navigation }: any) {
   }, []);
 
   const pushDirector = (text: string) => setChat((p) => [...p, { type: 'director', text }]);
-  const pushUser = (text: string) => setChat((p) => [...p, { type: 'user', text }]);
+  // user 답변엔 되돌아갈 step 을 기록
+  const pushUser = (text: string, fromStep: Step) => setChat((p) => [...p, { type: 'user', text, step: fromStep }]);
+
+  // v3.182: 내 답변 탭 → 그 단계로 롤백 (해당 답변 포함 이후 대화 제거)
+  const handleEditChoice = (msgIndex: number) => {
+    const msg = chat[msgIndex];
+    if (!msg || msg.type !== 'user' || !msg.step || step === 'making') return;
+    if (__DEV__) console.info('[VideoDirector] 답변 수정 — 롤백', { toStep: msg.step });
+    setChat(chat.slice(0, msgIndex));
+    setVideoUrl(null);
+    setStep(msg.step);
+  };
 
   const handlePickTrack = (t: MyTrack) => {
     if (t.is_public === false) {
-      // share-video는 공개 곡 전용(서버 정책) — 비공개는 안내
       showAlert('공개 곡만 가능해요', '공유 영상은 차트에 공개된 곡으로만 만들 수 있어요.\n마이페이지에서 곡을 공개로 전환한 뒤 다시 시도해주세요.');
       return;
     }
     setSelected(t);
-    pushUser(t.title);
-    pushDirector('좋아요! 어떤 형태의 영상으로 만들까요?\n어느 것이든 가사 자막과 AI 생성 표시가 함께 들어가요.');
+    pushUser(t.title, 'pick');
+    pushDirector('좋아요! 어떤 형태의 영상으로 만들까요?');
     setStep('format');
   };
 
-  // v3.179: 형식 선택 → 스타일(화면 채움) 질문으로
   const handlePickFormat = (fmt: 'sns' | 'wide' | 'kakao') => {
     if (!selected || step === 'making') return;
-    const f = FORMATS.find((x) => x.key === fmt)!;
     setPickedFormat(fmt);
-    pushUser(f.label);
-    pushDirector('커버 이미지를 화면에 어떻게 넣을까요?\n꽉 채우거나, 플레이어처럼 중앙에 이미지가 놓인 스타일로 만들 수 있어요.');
+    pushUser(FORMATS.find((x) => x.key === fmt)!.label, 'format');
+    pushDirector('커버 이미지를 화면에 어떻게 넣을까요?');
     setStep('layout');
   };
 
   const handlePickLayout = (layout: 'full' | 'center') => {
-    if (step === 'making') return;
     setPickedLayout(layout);
-    pushUser(layout === 'full' ? '화면 꽉 채우기' : '플레이어 스타일 (중앙 이미지)');
+    pushUser(layout === 'full' ? '화면 꽉 채우기' : '플레이어 스타일 (중앙 이미지)', 'layout');
     if (layout === 'center') {
       pushDirector('중앙 이미지는 어떤 모양으로 할까요?');
       setStep('shape');
@@ -134,56 +177,85 @@ export default function VideoDirectorScreen({ navigation }: any) {
   };
 
   const handlePickShape = (shape: 'square' | 'circle') => {
-    if (step === 'making') return;
     setPickedShape(shape);
-    pushUser(shape === 'square' ? '둥근 네모' : '동그라미');
-    pushDirector('배경은 흐리게 처리할까요, 원본 그대로 둘까요?');
+    pushUser(shape === 'square' ? '둥근 네모' : '동그라미', 'shape');
+    pushDirector('배경은 어떻게 할까요?\n원본 그대로, 흐리게(정도 선택), 색으로 덮기(색·투명도 선택) 중에 골라주세요.');
     setStep('bg');
   };
 
-  // v3.181: 배경 블러 on/off (플레이어 스타일 전용)
-  const handlePickBg = (bg: 'blur' | 'clean') => {
-    if (step === 'making') return;
+  const handlePickBg = (bg: 'clean' | 'blur' | 'color') => {
     setPickedBg(bg);
-    pushUser(bg === 'blur' ? '흐린 배경' : '원본 배경');
+    pushUser(bg === 'clean' ? '원본 배경' : bg === 'blur' ? '흐린 배경' : '색으로 덮기', 'bg');
+    if (bg === 'blur') {
+      pushDirector('얼마나 흐리게 할까요? 미리보기를 참고해 골라주세요.');
+      setStep('bgBlurLevel');
+    } else if (bg === 'color') {
+      pushDirector('어떤 색으로 덮을까요? 색을 고르면 색상 코드도 보여드릴게요.');
+      setStep('bgColor');
+    } else {
+      pushDirector('가사 폰트는 어떤 걸로 할까요?');
+      setStep('font');
+    }
+  };
+
+  const handlePickBgBlur = (level: 'light' | 'mid' | 'strong') => {
+    setPickedBgBlur(level);
+    pushUser(BLUR_LEVELS.find((b) => b.key === level)!.label, 'bgBlurLevel');
     pushDirector('가사 폰트는 어떤 걸로 할까요?');
     setStep('font');
   };
 
-  // v3.181: 폰트 → 글자색 → 가사 방식
-  const handlePickFont = (font: 'basic' | 'round' | 'serif') => {
-    if (step === 'making') return;
+  const handlePickBgColor = (hex: string) => {
+    setPickedBgColor(hex);
+    pushUser(`배경색 #${hex}`, 'bgColor');
+    pushDirector('색을 얼마나 진하게 덮을까요?');
+    setStep('bgAlpha');
+  };
+
+  const handlePickBgAlpha = (alpha: string) => {
+    setPickedBgAlpha(alpha);
+    pushUser(`진하기 ${alpha}%`, 'bgAlpha');
+    pushDirector('가사 폰트는 어떤 걸로 할까요?');
+    setStep('font');
+  };
+
+  const handlePickFont = (font: string) => {
     setPickedFont(font);
-    pushUser(font === 'basic' ? '기본 고딕' : font === 'round' ? '둥근 고딕' : '명조체');
-    pushDirector('가사 글자 색은요?');
+    pushUser(FONTS.find((f) => f.key === font)!.label, 'font');
+    pushDirector('굵게/기울임 효과도 넣을까요?');
+    setStep('fontStyle');
+  };
+
+  const handlePickFontStyle = (bold: boolean, italic: boolean) => {
+    setPickedBold(bold); setPickedItalic(italic);
+    const label = bold && italic ? '굵게 + 기울임' : bold ? '굵게' : italic ? '기울임' : '기본';
+    pushUser(label, 'fontStyle');
+    pushDirector('가사 글자 색은요? 팔레트에서 골라주세요.');
     setStep('fontColor');
   };
 
-  const handlePickColor = (color: 'white' | 'yellow' | 'pink' | 'sky') => {
-    if (step === 'making') return;
-    setPickedColor(color);
-    pushUser(color === 'white' ? '흰색' : color === 'yellow' ? '노랑' : color === 'pink' ? '핑크' : '하늘');
+  const handlePickColor = (hex: string) => {
+    setPickedColor(hex);
+    pushUser(`글자색 #${hex}`, 'fontColor');
     pushDirector('가사는 어떻게 보여드릴까요?\n여러 줄이 흘러가는 방식과 한 줄씩 나오는 방식이 있어요.');
     setStep('lyricsMode');
   };
 
   const handlePickLyrics = (lyricsMode: 'scroll' | 'line') => {
-    if (step === 'making') return;
-    pushUser(lyricsMode === 'scroll' ? '흐르는 가사' : '한 줄씩');
-    startGeneration(pickedFormat!, pickedLayout, pickedShape, lyricsMode, pickedBg, pickedFont, pickedColor);
+    pushUser(lyricsMode === 'scroll' ? '흐르는 가사' : '한 줄씩', 'lyricsMode');
+    startGeneration(lyricsMode);
   };
 
-  const startGeneration = async (
-    fmt: 'sns' | 'wide' | 'kakao',
-    layout: 'full' | 'center',
-    shape: 'square' | 'circle',
-    lyricsMode: 'scroll' | 'line',
-    bg: 'blur' | 'clean' = 'blur',
-    font: 'basic' | 'round' | 'serif' = 'basic',
-    fontColor: 'white' | 'yellow' | 'pink' | 'sky' = 'white',
-  ) => {
+  const styleParams = (lyricsMode: 'scroll' | 'line') => ({
+    format: pickedFormat!, layout: pickedLayout, shape: pickedShape, lyrics: lyricsMode,
+    font: pickedFont, fontcolor: pickedColor === 'FFFFFF' ? 'white' : pickedColor,
+    bg: pickedLayout === 'center' ? pickedBg : 'blur',
+    bgblur: pickedBgBlur, bgcolor: pickedBg === 'color' ? pickedBgColor : '',
+    bgalpha: pickedBgAlpha, fontbold: pickedBold ? '1' : '0', fontitalic: pickedItalic ? '1' : '0',
+  });
+
+  const startGeneration = async (lyricsMode: 'scroll' | 'line') => {
     if (!selected) return;
-    // v3.172: 신규 생성 시 ⭐ 소모 confirm (같은 곡·형식·스타일을 이미 만들었다면 서버가 무과금 캐시 반환)
     if (typeof videoCost === 'number') {
       const ok = await new Promise<boolean>((resolve) => {
         showAlert('영상 만들기', `새 영상 생성 시 ⭐${videoCost}이 소모돼요.
@@ -196,22 +268,20 @@ export default function VideoDirectorScreen({ navigation }: any) {
     }
     pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 잠시만 기다려주세요.');
     setStep('making');
-    console.info('[VideoDirector] share-video 생성', { trackId: selected.id, fmt, layout, shape, lyricsMode, bg, font, fontColor });
+    const params = styleParams(lyricsMode);
+    console.info('[VideoDirector] share-video 생성', { trackId: selected.id, ...params });
     try {
-      const res = await api.post(`/tracks/${selected.id}/share-video`, null, {
-        params: { format: fmt, layout, shape, lyrics: lyricsMode, bg, font, fontcolor: fontColor }, timeout: 300000,
-      });
+      const res = await api.post(`/tracks/${selected.id}/share-video`, null, { params, timeout: 300000 });
       const path = res.data?.video_url;
       if (!path) throw new Error('video_url 없음');
-      const url = path.startsWith('http') ? path : `${BACKEND_BASE_URL}${path}`;
-      setVideoUrl(url);
-      setMadeFormat(fmt);
+      setVideoUrl(path.startsWith('http') ? path : `${BACKEND_BASE_URL}${path}`);
+      setMadeFormat(params.format);
       pushDirector('완성됐어요! 아래에서 미리 보고, 저장하거나 공유해보세요.');
-      usePointsStore.getState().fetchBalance(); // v3.172: ⭐ 차감 반영
+      usePointsStore.getState().fetchBalance();
       setStep('done');
     } catch (err: any) {
       const status = err?.response?.status;
-      console.error('[VideoDirector] share-video 실패', { trackId: selected.id, fmt, layout, shape, lyricsMode, status });
+      console.error('[VideoDirector] share-video 실패', { trackId: selected.id, status });
       pushDirector(
         status === 402 ? '스타가 부족해요. 스타를 모은 뒤 다시 시도해주세요.'
         : status === 404 ? '이 곡은 공개 상태가 아니라 영상을 만들 수 없었어요. 공개로 전환 후 다시 시도해주세요.'
@@ -222,26 +292,87 @@ export default function VideoDirectorScreen({ navigation }: any) {
     }
   };
 
-  // TrackShareDownloadSheet 관행 — 네이티브는 기기 저장+OS 공유 시트, 웹은 링크 열기
-  const handleSave = async () => {
-    if (!videoUrl || !selected || saving) return;
+  // v3.182: 기기 저장(사진 앨범) — 공유와 분리
+  const downloadToCache = async (): Promise<string | null> => {
+    if (!videoUrl) return null;
+    const base = (selected?.title || 'maidol').replace(/[^\w가-힣]/g, '_');
+    const dest = `${FileSystem.cacheDirectory}${base}_${madeFormat || 'video'}.mp4`;
+    const res = await FileSystem.downloadAsync(videoUrl, dest);
+    return res.uri;
+  };
+
+  const handleSaveToDevice = async () => {
+    if (!videoUrl || saving) return;
     setSaving(true);
     try {
       if (Platform.OS === 'web') {
-        await Linking.openURL(videoUrl);
+        await Linking.openURL(videoUrl); // 웹: 브라우저 다운로드
       } else {
-        const dest = `${FileSystem.cacheDirectory}${selected.title.replace(/[^\w가-힣]/g, '_')}_${madeFormat}.mp4`;
-        console.info('[VideoDirector] 기기 저장 시작', { dest: dest.slice(-40) });
-        const res = await FileSystem.downloadAsync(videoUrl, dest);
-        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri);
-        else showAlert('저장 완료', '영상이 저장되었습니다.');
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') {
+          showAlert('권한 필요', '사진 보관함 접근 권한을 허용해야 영상을 저장할 수 있어요.');
+          return;
+        }
+        const uri = await downloadToCache();
+        if (!uri) throw new Error('download failed');
+        await MediaLibrary.saveToLibraryAsync(uri);
+        showAlert('저장 완료', '영상이 사진 앨범에 저장됐어요.');
       }
     } catch (err: any) {
-      console.error('[VideoDirector] 저장/공유 실패', { message: err?.message });
+      console.error('[VideoDirector] 기기 저장 실패', { message: err?.message });
       showAlert('오류', '영상을 저장하지 못했어요. 잠시 후 다시 시도해주세요.');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleShare = async () => {
+    if (!videoUrl || sharing) return;
+    setSharing(true);
+    try {
+      if (Platform.OS === 'web') {
+        await Linking.openURL(videoUrl);
+      } else {
+        const uri = await downloadToCache();
+        if (uri && (await Sharing.isAvailableAsync())) await Sharing.shareAsync(uri);
+        else showAlert('안내', '이 기기에서는 공유 시트를 열 수 없어요.');
+      }
+    } catch (err: any) {
+      console.error('[VideoDirector] 공유 실패', { message: err?.message });
+      showAlert('오류', '공유에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  // v3.182: 보관함 — 서버에 캐시된 내 공유영상 목록
+  const openLibrary = async () => {
+    setStep('library');
+    setLibraryLoading(true);
+    pushUser('내 영상 보관함', 'pick');
+    try {
+      console.info('[VideoDirector] calling /tracks/my/share-videos');
+      const res = await api.get('/tracks/my/share-videos');
+      setLibrary(res.data?.items || []);
+      pushDirector(
+        (res.data?.items || []).length
+          ? '지금까지 만든 영상들이에요. 탭하면 다시 보고 저장할 수 있어요.'
+          : '아직 만든 영상이 없어요. 곡을 골라 첫 영상을 만들어볼까요?'
+      );
+    } catch (err: any) {
+      console.error('[VideoDirector] 보관함 로드 실패', { status: err?.response?.status });
+      pushDirector('보관함을 불러오지 못했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  const openLibraryItem = (item: any) => {
+    setVideoUrl(`${BACKEND_BASE_URL}/api/tracks/share-video/object/${item.object_name}`);
+    setMadeFormat(item.format);
+    pushUser(`${item.title} (${item.format})`, 'library');
+    pushDirector('불러왔어요! 아래에서 다시 보고, 저장하거나 공유해보세요.');
+    setStep('done');
   };
 
   const handleAnotherFormat = () => {
@@ -257,22 +388,45 @@ export default function VideoDirectorScreen({ navigation }: any) {
     setStep('pick');
   };
 
+  const coverUri = coverUriOf(selected);
+
+  const Card = ({ onPress, children, label, desc }: any) => (
+    <TouchableOpacity style={styles.formatCard} onPress={onPress} activeOpacity={0.8}>
+      <View style={styles.ratioBoxWrap}>{children}</View>
+      <AppText style={styles.formatLabel}>{label}</AppText>
+      {desc ? <AppText style={styles.formatDesc}>{desc}</AppText> : null}
+    </TouchableOpacity>
+  );
+
   return (
     <View style={styles.container}>
       <ScrollView ref={scrollRef} style={styles.chatArea} contentContainerStyle={{ paddingBottom: 16 }}>
         {chat.map((m, i) => (
-          <View key={i} style={[styles.msgRow, m.type === 'user' && styles.msgRowUser]}>
-            {/* v3.179(대표): 전신 스프라이트를 40×40에 그대로 넣으면 몸통이 보임 —
-                CoverGeneration portraitCircle 관행: 원형 클리핑 + 세로로 크게 + top 정렬 = 얼굴 크롭 */}
-            {m.type === 'director' && (
-              <View style={styles.portraitCircle}>
-                <Image source={VIDEO_PORTRAIT} style={styles.portraitFace} />
+          m.type === 'director' ? (
+            // v3.182(대표 첨부): 작곡 디렉터와 동일 — 보라 링 아바타(얼굴) + 버블 안 이름 라벨
+            <View key={i} style={styles.directorRow}>
+              <View style={styles.portraitContainer}>
+                <Image source={VIDEO_PORTRAIT} style={styles.portraitImage} />
               </View>
-            )}
-            <View style={[styles.bubble, m.type === 'user' ? styles.bubbleUser : styles.bubbleDirector]}>
-              <AppText style={m.type === 'user' ? styles.bubbleUserText : styles.bubbleText}>{m.text}</AppText>
+              <View style={styles.directorBubble}>
+                <AppText style={styles.directorName}>영상 디렉터</AppText>
+                <AppText style={styles.directorText}>{m.text}</AppText>
+              </View>
             </View>
-          </View>
+          ) : (
+            <TouchableOpacity
+              key={i}
+              style={[styles.msgRow, styles.msgRowUser]}
+              activeOpacity={m.step ? 0.7 : 1}
+              onPress={() => handleEditChoice(i)}
+              accessibilityLabel={`선택 수정 ${m.text}`}
+            >
+              <View style={[styles.bubble, styles.bubbleUser]}>
+                <AppText style={styles.bubbleUserText}>{m.text}</AppText>
+                {m.step ? <Feather name="edit-2" size={11} color="rgba(255,255,255,0.7)" style={{ marginLeft: 6 }} /> : null}
+              </View>
+            </TouchableOpacity>
+          )
         ))}
         {step === 'making' && (
           <View style={styles.makingRow}>
@@ -282,8 +436,6 @@ export default function VideoDirectorScreen({ navigation }: any) {
         )}
         {step === 'done' && videoUrl ? (
           <View style={styles.resultBox}>
-            {/* v3.179(대표 첨부 이슈): 미리보기가 확대·왜곡되던 문제 — 포맷별 실제 비율 박스 +
-                CONTAIN + (웹) videoStyle objectFit 명시로 원본 비율 그대로 보이게 */}
             <Video
               source={{ uri: videoUrl }}
               style={[
@@ -299,10 +451,17 @@ export default function VideoDirectorScreen({ navigation }: any) {
               videoStyle={Platform.OS === 'web' ? ({ width: '100%', height: '100%', objectFit: 'contain' } as any) : undefined}
               onError={(e: any) => console.error('[VideoDirector] 미리보기 실패', { message: e?.message || String(e) })}
             />
-            <TouchableOpacity style={styles.primaryBtn} onPress={handleSave} disabled={saving} activeOpacity={0.8}>
-              {saving ? <ActivityIndicator size="small" color={colors.text.primary} />
-                : <AppText style={styles.primaryBtnText}>기기에 저장 / 공유하기</AppText>}
-            </TouchableOpacity>
+            {/* v3.182(대표): 기기 저장(사진 앨범) / 공유 — 서로 다른 기능이라 분리 */}
+            <View style={{ flexDirection: 'row', gap: 8, width: 300, maxWidth: '100%' }}>
+              <TouchableOpacity style={[styles.primaryBtn, { flex: 1 }]} onPress={handleSaveToDevice} disabled={saving} activeOpacity={0.8}>
+                {saving ? <ActivityIndicator size="small" color="#fff" />
+                  : <AppText style={styles.primaryBtnText}>기기에 저장</AppText>}
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryBtn, { flex: 1, backgroundColor: colors.bg.surface2, borderWidth: 1, borderColor: colors.accent.primary }]} onPress={handleShare} disabled={sharing} activeOpacity={0.8}>
+                {sharing ? <ActivityIndicator size="small" color={colors.accent.primary} />
+                  : <AppText style={[styles.primaryBtnText, { color: colors.accent.primary }]}>공유하기</AppText>}
+              </TouchableOpacity>
+            </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity style={[styles.outlineBtn, { flex: 1 }]} onPress={handleAnotherFormat} activeOpacity={0.8}>
                 <AppText style={styles.outlineBtnText}>다른 형식으로</AppText>
@@ -319,18 +478,48 @@ export default function VideoDirectorScreen({ navigation }: any) {
       <View style={styles.inputArea}>
         {step === 'pick' && (
           loadingTracks ? <ActivityIndicator size="small" color={colors.accent.primary} />
-          : tracks.length === 0 ? (
-            <AppText variant="footnote" tone="muted" center>아직 발매한 곡이 없어요. 작곡 디렉터에게 먼저 곡을 부탁해보세요!</AppText>
-          ) : (
+          : (
+            <View>
+              {/* v3.182: 보관함 진입 */}
+              <TouchableOpacity style={styles.libraryBtn} onPress={openLibrary} activeOpacity={0.8}>
+                <Feather name="folder" size={14} color={colors.accent.primary} />
+                <AppText style={styles.libraryBtnText}>내 영상 보관함</AppText>
+              </TouchableOpacity>
+              {tracks.length === 0 ? (
+                <AppText variant="footnote" tone="muted" center>아직 발매한 곡이 없어요. 작곡 디렉터에게 먼저 곡을 부탁해보세요!</AppText>
+              ) : (
+                <ScrollView style={{ maxHeight: 220 }}>
+                  {tracks.map((t) => (
+                    <TouchableOpacity key={t.id} style={styles.trackRow} onPress={() => handlePickTrack(t)} activeOpacity={0.75}>
+                      {coverUriOf(t)
+                        ? <Image source={{ uri: coverUriOf(t)! }} style={styles.trackCover} />
+                        : <View style={[styles.trackCover, styles.trackCoverPh]}><AppText tone="muted">♪</AppText></View>}
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <AppText style={styles.trackTitle} numberOfLines={1}>{t.title}</AppText>
+                        {t.is_public === false ? <AppText variant="caption" tone="muted">비공개 — 공유 영상 불가</AppText> : null}
+                      </View>
+                      <Feather name="chevron-right" size={16} color={colors.text.muted} />
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )
+        )}
+        {step === 'library' && (
+          libraryLoading ? <ActivityIndicator size="small" color={colors.accent.primary} />
+          : (
             <ScrollView style={{ maxHeight: 240 }}>
-              {tracks.map((t) => (
-                <TouchableOpacity key={t.id} style={styles.trackRow} onPress={() => handlePickTrack(t)} activeOpacity={0.75}>
-                  {coverUri(t)
-                    ? <Image source={{ uri: coverUri(t)! }} style={styles.trackCover} />
-                    : <View style={[styles.trackCover, styles.trackCoverPh]}><AppText tone="muted">♪</AppText></View>}
+              {library.length === 0 ? (
+                <TouchableOpacity style={styles.outlineBtn} onPress={handleAnotherTrack}>
+                  <AppText style={styles.outlineBtnText}>곡 고르러 가기</AppText>
+                </TouchableOpacity>
+              ) : library.map((it, i) => (
+                <TouchableOpacity key={i} style={styles.trackRow} onPress={() => openLibraryItem(it)} activeOpacity={0.75}>
+                  <Feather name="film" size={18} color={colors.accent.primary} />
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <AppText style={styles.trackTitle} numberOfLines={1}>{t.title}</AppText>
-                    {t.is_public === false ? <AppText variant="caption" tone="muted">비공개 — 공유 영상 불가</AppText> : null}
+                    <AppText style={styles.trackTitle} numberOfLines={1}>{it.title}</AppText>
+                    <AppText variant="caption" tone="muted">{it.format === 'wide' ? '와이드 가로' : it.format === 'kakao' ? '카톡 프로필' : 'SNS 세로'}</AppText>
                   </View>
                   <Feather name="chevron-right" size={16} color={colors.text.muted} />
                 </TouchableOpacity>
@@ -341,132 +530,133 @@ export default function VideoDirectorScreen({ navigation }: any) {
         {step === 'format' && (
           <View style={styles.formatRow}>
             {FORMATS.map((f) => (
-              <TouchableOpacity key={f.key} style={styles.formatCard} onPress={() => handlePickFormat(f.key)} activeOpacity={0.8}>
-                {/* 비율 도식 — 어떤 모양의 영상인지 눈으로 보이게 */}
-                <View style={styles.ratioBoxWrap}>
-                  <View style={[styles.ratioBox, { width: f.ratioW, height: f.ratioH }]}>
-                    <Feather name="music" size={12} color={colors.accent.primary} />
-                  </View>
+              <Card key={f.key} onPress={() => handlePickFormat(f.key)} label={f.label} desc={f.desc}>
+                <View style={[styles.ratioBox, { width: f.ratioW, height: f.ratioH }]}>
+                  <Feather name="music" size={12} color={colors.accent.primary} />
                 </View>
-                <AppText style={styles.formatLabel}>{f.label}</AppText>
-                <AppText style={styles.formatDesc}>{f.desc}</AppText>
-              </TouchableOpacity>
+              </Card>
             ))}
           </View>
         )}
-        {/* v3.179: 화면 채움 선택 — 도식으로 차이가 보이게 */}
         {step === 'layout' && (
           <View style={styles.formatRow}>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickLayout('full')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}>
-                <View style={[styles.ratioBox, styles.layoutFullDemo]} />
+            <Card onPress={() => handlePickLayout('full')} label="화면 꽉 채우기" desc="커버가 배경 전체를 채워요">
+              <View style={[styles.ratioBox, styles.layoutFullDemo]} />
+            </Card>
+            <Card onPress={() => handlePickLayout('center')} label="플레이어 스타일" desc="배경 위 중앙 이미지">
+              <View style={[styles.ratioBox, styles.layoutCenterDemo]}>
+                <View style={styles.layoutCenterInner} />
               </View>
-              <AppText style={styles.formatLabel}>화면 꽉 채우기</AppText>
-              <AppText style={styles.formatDesc}>커버가 배경 전체를 채워요</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickLayout('center')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}>
-                <View style={[styles.ratioBox, styles.layoutCenterDemo]}>
-                  <View style={styles.layoutCenterInner} />
-                </View>
-              </View>
-              <AppText style={styles.formatLabel}>플레이어 스타일</AppText>
-              <AppText style={styles.formatDesc}>흐린 배경 위 중앙 이미지</AppText>
-            </TouchableOpacity>
+            </Card>
           </View>
         )}
-        {/* v3.179: 중앙 이미지 모양 */}
         {step === 'shape' && (
           <View style={styles.formatRow}>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickShape('square')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}>
-                <View style={styles.shapeSquareDemo} />
-              </View>
-              <AppText style={styles.formatLabel}>둥근 네모</AppText>
-              <AppText style={styles.formatDesc}>모서리가 둥근 정사각</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickShape('circle')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}>
-                <View style={styles.shapeCircleDemo} />
-              </View>
-              <AppText style={styles.formatLabel}>동그라미</AppText>
-              <AppText style={styles.formatDesc}>원형으로 잘라 넣어요</AppText>
-            </TouchableOpacity>
+            <Card onPress={() => handlePickShape('square')} label="둥근 네모">
+              {coverUri ? <Image source={{ uri: coverUri }} style={styles.shapeSquarePreview} /> : <View style={styles.shapeSquareDemo} />}
+            </Card>
+            <Card onPress={() => handlePickShape('circle')} label="동그라미">
+              {coverUri ? <Image source={{ uri: coverUri }} style={styles.shapeCirclePreview} /> : <View style={styles.shapeCircleDemo} />}
+            </Card>
           </View>
         )}
-        {/* v3.181: 배경 블러 on/off (플레이어 스타일) */}
+        {/* v3.182: 배경 3모드 — 커버 실사 미리보기(대표: "직접 보면서 고르게" — 서버 실렌더 전 근사 미리보기) */}
         {step === 'bg' && (
           <View style={styles.formatRow}>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickBg('blur')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}><View style={[styles.shapeSquareDemo, { opacity: 0.45 }]} /></View>
-              <AppText style={styles.formatLabel}>흐린 배경</AppText>
-              <AppText style={styles.formatDesc}>배경을 부드럽게 흐림</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickBg('clean')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}><View style={styles.shapeSquareDemo} /></View>
-              <AppText style={styles.formatLabel}>원본 배경</AppText>
-              <AppText style={styles.formatDesc}>커버 원본 그대로</AppText>
-            </TouchableOpacity>
+            <Card onPress={() => handlePickBg('clean')} label="원본 배경">
+              {coverUri ? <Image source={{ uri: coverUri }} style={styles.bgPreview} /> : <View style={styles.bgPreviewPh} />}
+            </Card>
+            <Card onPress={() => handlePickBg('blur')} label="흐린 배경" desc="정도 선택 가능">
+              {coverUri ? <Image source={{ uri: coverUri }} style={styles.bgPreview} blurRadius={6} /> : <View style={styles.bgPreviewPh} />}
+            </Card>
+            <Card onPress={() => handlePickBg('color')} label="색으로 덮기" desc="색·투명도 선택">
+              <View>
+                {coverUri ? <Image source={{ uri: coverUri }} style={styles.bgPreview} /> : <View style={styles.bgPreviewPh} />}
+                <View style={[styles.bgColorOverlay, { backgroundColor: '#1B1035', opacity: 0.6 }]} />
+              </View>
+            </Card>
           </View>
         )}
-        {/* v3.181: 폰트 선택 */}
-        {step === 'font' && (
+        {step === 'bgBlurLevel' && (
           <View style={styles.formatRow}>
-            {([
-              { key: 'basic', label: '기본 고딕', sample: '가나다', weight: '700' },
-              { key: 'round', label: '둥근 고딕', sample: '가나다', weight: '400' },
-              { key: 'serif', label: '명조체', sample: '가나다', weight: '400', serif: true },
-            ] as any[]).map((f) => (
-              <TouchableOpacity key={f.key} style={styles.formatCard} onPress={() => handlePickFont(f.key)} activeOpacity={0.8}>
-                <View style={styles.ratioBoxWrap}>
-                  <AppText style={{ fontSize: 24, color: colors.text.primary, fontWeight: f.weight, fontStyle: f.serif ? 'italic' : 'normal' }}>{f.sample}</AppText>
+            {BLUR_LEVELS.map((b) => (
+              <Card key={b.key} onPress={() => handlePickBgBlur(b.key as any)} label={b.label}>
+                {coverUri ? <Image source={{ uri: coverUri }} style={styles.bgPreview} blurRadius={b.radius} /> : <View style={styles.bgPreviewPh} />}
+              </Card>
+            ))}
+          </View>
+        )}
+        {step === 'bgColor' && (
+          <View style={styles.paletteWrap}>
+            {PALETTE.map((hex) => (
+              <TouchableOpacity key={hex} style={styles.paletteItem} onPress={() => handlePickBgColor(hex)} activeOpacity={0.8} accessibilityLabel={`배경색 ${hex}`}>
+                <View style={[styles.paletteSwatch, { backgroundColor: `#${hex}` }]} />
+                <AppText style={styles.paletteHex}>#{hex}</AppText>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+        {step === 'bgAlpha' && (
+          <View style={styles.formatRow}>
+            {BG_ALPHAS.map((a) => (
+              <Card key={a} onPress={() => handlePickBgAlpha(a)} label={`${a}%`} desc={a === '25' ? '은은하게' : a === '45' ? '중간' : '진하게'}>
+                <View>
+                  {coverUri ? <Image source={{ uri: coverUri }} style={styles.bgPreview} /> : <View style={styles.bgPreviewPh} />}
+                  <View style={[styles.bgColorOverlay, { backgroundColor: `#${pickedBgColor}`, opacity: Number(a) / 100 }]} />
                 </View>
+              </Card>
+            ))}
+          </View>
+        )}
+        {step === 'font' && (
+          <View style={styles.paletteWrap}>
+            {FONTS.map((f) => (
+              <TouchableOpacity key={f.key} style={styles.fontCard} onPress={() => handlePickFont(f.key)} activeOpacity={0.8}>
+                <AppText style={{ fontSize: 20, color: colors.text.primary }}>가나다</AppText>
                 <AppText style={styles.formatLabel}>{f.label}</AppText>
               </TouchableOpacity>
             ))}
           </View>
         )}
-        {/* v3.181: 글자색 선택 — 색 견본 원 */}
-        {step === 'fontColor' && (
-          <View style={styles.formatRow}>
-            {([
-              { key: 'white', label: '흰색', hex: '#FFFFFF' },
-              { key: 'yellow', label: '노랑', hex: '#FFD700' },
-              { key: 'pink', label: '핑크', hex: '#FF6FA5' },
-              { key: 'sky', label: '하늘', hex: '#7FD7FF' },
-            ] as any[]).map((c) => (
-              <TouchableOpacity key={c.key} style={styles.formatCard} onPress={() => handlePickColor(c.key)} activeOpacity={0.8}>
-                <View style={styles.ratioBoxWrap}>
-                  <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c.hex, borderWidth: 1, borderColor: colors.border.subtle }} />
-                </View>
-                <AppText style={styles.formatLabel}>{c.label}</AppText>
+        {step === 'fontStyle' && (
+          <View style={styles.paletteWrap}>
+            {[
+              { b: false, i: false, label: '기본', style: {} },
+              { b: true, i: false, label: '굵게', style: { fontWeight: '800' as const } },
+              { b: false, i: true, label: '기울임', style: { fontStyle: 'italic' as const } },
+              { b: true, i: true, label: '굵게+기울임', style: { fontWeight: '800' as const, fontStyle: 'italic' as const } },
+            ].map((o) => (
+              <TouchableOpacity key={o.label} style={styles.fontCard} onPress={() => handlePickFontStyle(o.b, o.i)} activeOpacity={0.8}>
+                <AppText style={[{ fontSize: 18, color: colors.text.primary }, o.style]}>가사 Aa</AppText>
+                <AppText style={styles.formatLabel}>{o.label}</AppText>
               </TouchableOpacity>
             ))}
           </View>
         )}
-        {/* v3.179: 가사 표시 방식 */}
+        {step === 'fontColor' && (
+          <View style={styles.paletteWrap}>
+            {PALETTE.map((hex) => (
+              <TouchableOpacity key={hex} style={styles.paletteItem} onPress={() => handlePickColor(hex)} activeOpacity={0.8} accessibilityLabel={`글자색 ${hex}`}>
+                <View style={[styles.paletteSwatch, { backgroundColor: `#${hex}` }]} />
+                <AppText style={styles.paletteHex}>#{hex}</AppText>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         {step === 'lyricsMode' && (
           <View style={styles.formatRow}>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickLyrics('scroll')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}>
-                <View style={styles.lyricsDemoCol}>
-                  <View style={[styles.lyricsDemoLine, { width: 34, opacity: 0.4 }]} />
-                  <View style={[styles.lyricsDemoLine, { width: 46 }]} />
-                  <View style={[styles.lyricsDemoLine, { width: 34, opacity: 0.4 }]} />
-                </View>
+            <Card onPress={() => handlePickLyrics('scroll')} label="흐르는 가사" desc="여러 줄이 흘러가며 강조">
+              <View style={styles.lyricsDemoCol}>
+                <View style={[styles.lyricsDemoLine, { width: 34, opacity: 0.4 }]} />
+                <View style={[styles.lyricsDemoLine, { width: 46 }]} />
+                <View style={[styles.lyricsDemoLine, { width: 34, opacity: 0.4 }]} />
               </View>
-              <AppText style={styles.formatLabel}>흐르는 가사</AppText>
-              <AppText style={styles.formatDesc}>여러 줄이 흘러가며 강조</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.formatCard} onPress={() => handlePickLyrics('line')} activeOpacity={0.8}>
-              <View style={styles.ratioBoxWrap}>
-                <View style={styles.lyricsDemoCol}>
-                  <View style={[styles.lyricsDemoLine, { width: 46 }]} />
-                </View>
+            </Card>
+            <Card onPress={() => handlePickLyrics('line')} label="한 줄씩" desc="지금 부르는 한 줄만">
+              <View style={styles.lyricsDemoCol}>
+                <View style={[styles.lyricsDemoLine, { width: 46 }]} />
               </View>
-              <AppText style={styles.formatLabel}>한 줄씩</AppText>
-              <AppText style={styles.formatDesc}>지금 부르는 한 줄만</AppText>
-            </TouchableOpacity>
+            </Card>
           </View>
         )}
       </View>
@@ -477,31 +667,31 @@ export default function VideoDirectorScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.deepest },
   chatArea: { flex: 1, paddingHorizontal: 14, paddingTop: 12 },
+  // v3.182(대표 첨부 스타일): 디렉터 행 — 보라 링 원형 아바타(얼굴 크롭) + 이름 라벨 버블
+  directorRow: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-start' },
+  portraitContainer: {
+    width: 56, height: 56, borderRadius: 28, overflow: 'hidden',
+    borderWidth: 2, borderColor: colors.accent.primary, marginRight: 10,
+    backgroundColor: colors.bg.surface1,
+  },
+  portraitImage: { width: 56, height: 140, resizeMode: 'cover', position: 'absolute', top: 0, left: 0 },
+  directorBubble: {
+    flex: 1, backgroundColor: colors.bg.surface1, borderRadius: 14,
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  directorName: { fontSize: 12, fontWeight: '700', color: colors.accent.primary, marginBottom: 4 },
+  directorText: { fontSize: 14, color: colors.text.primary, lineHeight: 20 },
   msgRow: { flexDirection: 'row', marginBottom: 10, alignItems: 'flex-end' },
   msgRowUser: { justifyContent: 'flex-end' },
-  // v3.179: 얼굴 크롭 — 원형 클리핑 + 전신 스프라이트(161×405)를 세로 100으로 키워 top 정렬
-  portraitCircle: { width: 40, height: 40, borderRadius: 20, overflow: 'hidden', marginRight: 8, backgroundColor: colors.bg.surface1 },
-  portraitFace: { width: 40, height: 100, resizeMode: 'cover', position: 'absolute', top: 0, left: 0 },
   bubble: { maxWidth: '78%', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 9 },
-  bubbleDirector: { backgroundColor: colors.bg.surface1 },
-  bubbleUser: { backgroundColor: colors.accent.primary },
-  bubbleText: { color: colors.text.primary, fontSize: 14, lineHeight: 20 },
+  bubbleUser: { backgroundColor: colors.accent.primary, flexDirection: 'row', alignItems: 'center' },
   bubbleUserText: { color: '#fff', fontSize: 14, lineHeight: 20 },
-  makingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 48, marginBottom: 10 },
-  resultBox: { paddingLeft: 48, gap: 10, marginBottom: 12 },
-  // v3.179: 미리보기 공통 — 크기는 인라인(포맷별 aspectRatio)으로
+  makingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 66, marginBottom: 10 },
+  resultBox: { paddingLeft: 66, gap: 10, marginBottom: 12 },
   previewBase: { borderRadius: 12, backgroundColor: colors.bg.surface1, overflow: 'hidden' },
-  // v3.179: 스타일 선택 도식들
-  layoutFullDemo: { width: 36, height: 64, backgroundColor: colors.accent.primary + '55' },
-  layoutCenterDemo: { width: 36, height: 64, justifyContent: 'center', alignItems: 'center' },
-  layoutCenterInner: { width: 20, height: 20, borderRadius: 4, backgroundColor: colors.accent.primary + '88' },
-  shapeSquareDemo: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.accent.primary + '66', borderWidth: 1.5, borderColor: colors.accent.primary },
-  shapeCircleDemo: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.accent.primary + '66', borderWidth: 1.5, borderColor: colors.accent.primary },
-  lyricsDemoCol: { gap: 5, alignItems: 'center' },
-  lyricsDemoLine: { height: 5, borderRadius: 2, backgroundColor: colors.accent.primary },
   primaryBtn: {
     backgroundColor: colors.accent.primary, borderRadius: 12, paddingVertical: 12,
-    alignItems: 'center', width: 300, maxWidth: '100%',
+    alignItems: 'center',
   },
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   outlineBtn: {
@@ -510,6 +700,12 @@ const styles = StyleSheet.create({
   },
   outlineBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 13 },
   inputArea: { borderTopWidth: 1, borderTopColor: colors.border.subtle, padding: 12, paddingBottom: 20 },
+  libraryBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    borderWidth: 1, borderColor: colors.accent.primary, borderStyle: 'dashed',
+    borderRadius: 10, paddingVertical: 9, marginBottom: 10,
+  },
+  libraryBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 13 },
   trackRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 8,
     borderBottomWidth: 1, borderBottomColor: colors.border.subtle,
@@ -522,11 +718,33 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: colors.bg.surface1, borderRadius: 12, padding: 10,
     alignItems: 'center', borderWidth: 1, borderColor: colors.border.subtle,
   },
-  ratioBoxWrap: { height: 70, justifyContent: 'center', marginBottom: 6 },
+  ratioBoxWrap: { height: 74, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
   ratioBox: {
     borderWidth: 1.5, borderColor: colors.accent.primary, borderRadius: 6,
     alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.surface2,
   },
-  formatLabel: { color: colors.text.primary, fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  formatLabel: { color: colors.text.primary, fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 4 },
   formatDesc: { color: colors.text.muted, fontSize: 10, marginTop: 2, textAlign: 'center' },
+  layoutFullDemo: { width: 36, height: 64, backgroundColor: colors.accent.primary + '55' },
+  layoutCenterDemo: { width: 36, height: 64, justifyContent: 'center', alignItems: 'center' },
+  layoutCenterInner: { width: 20, height: 20, borderRadius: 4, backgroundColor: colors.accent.primary + '88' },
+  shapeSquareDemo: { width: 44, height: 44, borderRadius: 9, backgroundColor: colors.accent.primary + '66', borderWidth: 1.5, borderColor: colors.accent.primary },
+  shapeCircleDemo: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accent.primary + '66', borderWidth: 1.5, borderColor: colors.accent.primary },
+  // v3.182: 커버 실사 미리보기
+  shapeSquarePreview: { width: 52, height: 52, borderRadius: 10 },
+  shapeCirclePreview: { width: 52, height: 52, borderRadius: 26 },
+  bgPreview: { width: 44, height: 70, borderRadius: 8 },
+  bgPreviewPh: { width: 44, height: 70, borderRadius: 8, backgroundColor: colors.bg.surface2 },
+  bgColorOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 8 },
+  // 컬러 팔레트 그리드
+  paletteWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  paletteItem: { alignItems: 'center', width: 64, paddingVertical: 4 },
+  paletteSwatch: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, borderColor: colors.border.subtle },
+  paletteHex: { fontSize: 9, color: colors.text.muted, marginTop: 3 },
+  fontCard: {
+    width: 84, alignItems: 'center', backgroundColor: colors.bg.surface1,
+    borderRadius: 10, paddingVertical: 10, borderWidth: 1, borderColor: colors.border.subtle,
+  },
+  lyricsDemoCol: { gap: 5, alignItems: 'center' },
+  lyricsDemoLine: { height: 5, borderRadius: 2, backgroundColor: colors.accent.primary },
 });

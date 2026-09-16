@@ -3,10 +3,7 @@
 //   cover_source=auto면 첫 곡 커버 자동 차용. 커버 업로드/AI 생성은 생성 후 앨범 상세 '관리 > 커버 변경'에서.
 // 순서는 선택 순서 + 위/아래 버튼(드래그 라이브러리 신규 도입 금지 — dnd-kit 대체).
 import { useState, useEffect } from 'react';
-import {
-  View, Modal, ScrollView, TouchableOpacity, TextInput, Switch,
-  ActivityIndicator, StyleSheet,
-} from 'react-native';
+import { View, Modal, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
 import { colors } from '../theme/colors';
@@ -89,6 +86,8 @@ export default function AlbumCreateModal({ visible, onClose, onCreated }: Props)
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      {/* v3.182: iOS 키보드가 입력창을 가리지 않도록 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <View style={styles.headRow}>
@@ -183,7 +182,8 @@ export default function AlbumCreateModal({ visible, onClose, onCreated }: Props)
           </View>
         </View>
       </View>
-    </Modal>
+    
+      </KeyboardAvoidingView></Modal>
   );
 }
 

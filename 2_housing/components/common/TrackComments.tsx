@@ -48,6 +48,8 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [replyTo, setReplyTo] = useState<TrackComment | null>(null);
+  // v3.182(대표): 입력창 auto-grow — 초기 38(아바타·보내기와 동일), 개행 시 위로 늘어남(최대 120)
+  const [inputHeight, setInputHeight] = useState(38);
 
   const load = useCallback(async () => {
     if (!trackId) { setLoading(false); return; } // v3.179(검증픽스): 영구 스피너 방지
@@ -151,9 +153,8 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
     </View>
   );
 
-  return (
-    <View>
-      {/* 작성 입력 */}
+  // v3.182(대표): 입력창을 목록 아래(하단)로 이동
+  const inputBlock = (
       <View style={styles.inputWrap}>
         {replyTo ? (
           <View style={styles.replyBanner}>
@@ -169,9 +170,15 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
           {/* v3.180→v3.181: 작성자(나) 프로필 아바타 — 공용 Avatar, 조금 키움 */}
           {user ? <Avatar uri={profileImageUrl(user.profile_image)} name={user.nickname} seed={user.id} size={38} /> : null}
           <TextInput
-            style={styles.input}
+            style={[styles.input, { height: inputHeight }]}
             value={text}
-            onChangeText={setText}
+            onChangeText={(v) => { setText(v); if (!v) setInputHeight(38); }}
+            onContentSizeChange={(e) => {
+              // RN-web은 마운트 직후 기본 rows 기준 큰 값을 보고 → 텍스트 없으면 38 고정
+              if (!text) { setInputHeight(38); return; }
+              const h = Math.ceil(e.nativeEvent.contentSize.height) + 18; // 패딩 보정
+              setInputHeight(Math.min(120, Math.max(38, h)));
+            }}
             placeholder={user ? '댓글을 남겨보세요' : '로그인 후 댓글을 남길 수 있어요'}
             placeholderTextColor={colors.text.muted}
             multiline
@@ -188,7 +195,10 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
           </TouchableOpacity>
         </View>
       </View>
+  );
 
+  return (
+    <View>
       {/* 목록 */}
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={colors.accent.primary} /></View>
@@ -204,12 +214,14 @@ export default function TrackComments({ trackId, trackOwnerId, onCountChange }: 
           ))}
         </View>
       )}
+      {/* 작성 입력 — 하단 배치 */}
+      {inputBlock}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  inputWrap: { marginBottom: 14 },
+  inputWrap: { marginTop: 14 },
   replyBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: colors.bg.surface2, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 6,
@@ -217,14 +229,14 @@ const styles = StyleSheet.create({
   replyBannerText: { flex: 1, fontSize: 12, color: colors.accent.primary, marginRight: 8 },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   input: {
-    flex: 1, minHeight: 40, maxHeight: 120,
+    flex: 1, minHeight: 38, maxHeight: 120,
     backgroundColor: colors.bg.surface1, borderRadius: 10,
     borderWidth: 1, borderColor: colors.border.subtle,
-    paddingHorizontal: 12, paddingVertical: 9,
+    paddingHorizontal: 12, paddingVertical: 8,
     color: colors.text.primary, fontSize: 14,
   },
   sendBtn: {
-    width: 40, height: 40, borderRadius: 10,
+    width: 38, height: 38, borderRadius: 10,
     backgroundColor: colors.accent.primary,
     justifyContent: 'center', alignItems: 'center',
   },

@@ -621,7 +621,7 @@ export default function ArtistCodyScreen({ navigation, route }: any) {
           : '원하는 카테고리를 골라보세요. 여러 개 동시에 선택할 수 있어요.'}
       </AppText>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
         <View style={styles.grid}>
           {CATEGORIES.map((cat) => {
             const sel = selected[cat];

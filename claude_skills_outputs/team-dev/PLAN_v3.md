@@ -2417,3 +2417,14 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 | FE TrackComments | 공용 Avatar(32/입력38)·라인 제거·owner=이름 accent+ring(박스·배지 롤백) | [TrackComments] |
 | FE FeedCard | 댓글 아바타 확대+uri+seed·연결선 제거·owner 표시 | [FeedCard] |
 | FE VideoDirectorScreen | 단계 추가: (center)블러 on/off → 폰트 3종 → 글자색 4종 | [VideoDirector] |
+
+## v3.182 — 2026-09-16 — 입력창 UX 전면·영상 디렉터 v2(팔레트·폰트·배경·보관함)·로고 워터마크
+**요청 원문 요약**: ①댓글 input 초기 높이=프로필·보내기와 동일, 하단 배치 ②모든 작성창 키보드 위 배치(가림 금지) ③개행 시 위로 늘어남 ④상단 미니플레이어 ✕ 제거 ⑤아티스트 디렉터도 캐릭터 대화 먼저 ⑥영상 디렉터 대화 UI=첨부(이름 라벨 버블) ⑦배경: 원본/블러(정도)/색+투명도(+눈으로 보며) ⑧선택한 대화 탭→수정 ⑨폰트·배경 색 컬러 팔레트+색상코드 ⑩폰트 다양+볼드/기울임 ⑪워터마크=첫 페이지 보라·흰 로고 형태 ⑫완성 영상 보관함? 내 앨범 저장? ⑬기기 저장/공유 분리 ⑭공유(카카오·인스타·페북·링크복사)·추천하기 실구현 조사.
+
+### findings/설계
+- 입력 전수: Android=app.json softwareKeyboardLayoutMode 'resize' 명시(전역), iOS=KAV(플레이어 패널·모달 4종) + automaticallyAdjustKeyboardInsets(TrackUpload·Settings·Cody·VoiceWizard·Feed·MyMusic 스크롤). 검색류(상단 입력)는 비대상.
+- TrackComments: 입력 하단 이동, 초기 38(RN-web 초기 contentSize 오보 → 텍스트 없으면 38 고정), onContentSizeChange auto-grow(≤120).
+- 아티스트 디렉터: Map 직행 제거 → Dialogue(hasArtist 파라미터) — 기보유면 "보러 가실까요"→MyArtists, 미보유면 기존 ArtistInput.
+- VideoDirector 전면 재작성: ComposeLyricsPick 스타일(보라 링 56px 얼굴 아바타+버블 내 '영상 디렉터' 라벨), user 버블에 step 기록→탭 시 롤백(chat truncate), 배경 3모드(원본/블러 light·mid·strong=10·24·44/색 hex+25·45·70%) — 커버 실사 미리보기(Image blurRadius·색 오버레이)로 "보면서 선택"(서버 실렌더 전 근사; 실시간 조절 슬라이더는 서버 렌더 구조상 불가 — 근사 미리보기로 대체), 폰트 5종(도현·주아 OFL 추가)+굵게/기울임(ASS Bold/Italic), 글자·배경색 12색 팔레트+#hex 표시(BE hex 수용), 기기 저장(expo-media-library 사진 앨범)/공유(OS 시트) 분리, 보관함(GET /tracks/my/share-videos + object 스트리밍 프록시).
+- 워터마크: drawtext → 로고 록업 PNG(스플래시 로고+MAIDOL+AI 생성, PIL 합성 2x) overlay. **가시 변경 → 캐시 share/v5→v6 승격 + 스타일 md5 suffix**(구 캐시 무효 — 재수령 시 신규 과금 주의). 트랙 삭제 purge v5·v6 겸용.
+- 공유 조사(⑭): 곡 링크복사=`BACKEND_URL/player?track=` — **백엔드에 해당 웹 페이지 없음(무효 링크, 웹 배포 후 도메인 필요)**. 추천하기(AppShareModal)=추천코드 발급 정상, 카카오/인스타/페북 버튼은 **셋 다 동일하게 OS 공유 시트만 염**(앱별 직행·SDK 미구현), 링크복사=코드+`/invite/{code}` URL(착지 웹페이지 역시 미배포). → 기능적 실체: OS 시트+클립보드. SDK 연동은 외부의존 보류 목록.

@@ -56,6 +56,7 @@ type StudioStackParamList = {
     directorName: string;
     directorRole: string;
     directorY: number;
+    hasArtist?: boolean; // v3.182: 아티스트 디렉터 — 기보유 시 대화에서 내 아티스트로 안내
   };
   LyricsInput: undefined;
   ComposerInput: undefined;
@@ -66,7 +67,7 @@ type StudioStackParamList = {
 type Props = NativeStackScreenProps<StudioStackParamList, 'Dialogue'>;
 
 export default function DialogueScreen({ route, navigation }: Props) {
-  const { directorType, directorName, directorRole, directorY } = route.params;
+  const { directorType, directorName, directorRole, directorY, hasArtist } = route.params;
   const lyricsStore = useLyricsStore();
   const musicStore = useMusicStore();
   const hasLyrics = !!(lyricsStore.generatedLyrics || musicStore.lyrics);
@@ -110,6 +111,23 @@ export default function DialogueScreen({ route, navigation }: Props) {
           },
         ] as DialogueNode[];
       case 'artist':
+        // v3.182(대표): 기보유 계정도 대화 경유 — 캐릭터 인사 후 내 아티스트 목록으로
+        if (hasArtist) {
+          return [
+            {
+              id: 1,
+              speaker: 'artist',
+              text: '안녕하세요! 아티스트 디렉터입니다.',
+              next: 2,
+            },
+            {
+              id: 2,
+              speaker: 'artist',
+              text: '우리 기획사 아티스트를 보러 가실까요? 꾸미기나 재생성도 거기서 할 수 있어요.',
+              action: 'navigate:MyArtists',
+            },
+          ] as DialogueNode[];
+        }
         return [
           {
             id: 1,

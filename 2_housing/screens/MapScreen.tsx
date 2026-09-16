@@ -185,6 +185,7 @@ type StudioStackParamList = {
     directorName: string;
     directorRole: string;
     directorY: number;
+    hasArtist?: boolean; // v3.182: 아티스트 디렉터 분기
   };
   LyricsLoading: undefined;
   MusicLoading: undefined;
@@ -443,14 +444,17 @@ export default function MapScreen({ navigation }: Props) {
     // v3.179(대표): 영상 디렉터도 다른 디렉터처럼 Dialogue(캐릭터+하단 대화창) 경유 →
     // DialogueScreen video 노드의 action 이 VideoDirector 상세 대화로 넘긴다 (직행 분기 제거)
 
-    // 아티스트 디렉터: 이미 아티스트가 있으면 목록(MyArtists)으로, 없으면 Dialogue → ArtistInput
+    // v3.182(대표): 아티스트 디렉터도 항상 Dialogue(캐릭터+대화) 경유 — 기보유면 대화에서
+    // 내 아티스트 목록으로 안내(직행 분기 제거). hasArtist는 Dialogue 노드 분기용으로 전달.
     if (type === 'artist') {
-      if (hasArtistCharacter) {
-        // v3.81: 아티스트 1명=슬롯 1개 모델 — 목록에서 카드 탭 시 상세(ArtistResult) 진입
-        navigation.navigate('MyArtists' as any);
-        return;
-      }
-      openDirectorDialogue('artist');
+      const director = DIRECTORS.find((d) => d.type === 'artist');
+      navigation.navigate('Dialogue', {
+        directorType: 'artist',
+        directorName: DIRECTOR_NAMES.artist,
+        directorRole: DIRECTOR_ROLES.artist,
+        directorY: director?.y ?? 0,
+        hasArtist: hasArtistCharacter,
+      });
       return;
     }
 

@@ -444,7 +444,7 @@ export default function SettingsScreen({ navigation }: any) {
 
   if (user) {
     return (
-      <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent}>
+      <ScrollView style={[styles.container, { paddingTop: insets.top + 16 }]} contentContainerStyle={styles.scrollContent} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
         {TitleRow}
         <View style={styles.profileCard}>
           {/* v3.92(A-16): 아바타 탭 → 앱 내 선택지(사진 선택/기본 이미지로/취소) */}
@@ -681,7 +681,7 @@ export default function SettingsScreen({ navigation }: any) {
           <View style={styles.modalOverlay}>
             <View style={styles.modalBox}>
               <AppText style={styles.modalTitle}>기획사 정보 편집</AppText>
-              <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
+              <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
                 <AppText style={styles.modalLabel}>기획사명</AppText>
                 <TextInput
                   style={styles.input}

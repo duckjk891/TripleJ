@@ -32,7 +32,8 @@
         "backgroundColor": "#0a0a1a"
       },
       "package": "com.triplej.studio",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "favicon": "./assets/favicon.png"

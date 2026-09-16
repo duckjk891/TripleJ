@@ -244,6 +244,8 @@ export default function FeedScreen() {
         <ActivityIndicator size="large" color={colors.accent.primary} style={styles.spinner} />
       ) : posts.length > 0 ? (
         <FlatList
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
           data={posts}
           keyExtractor={(it, i) => String(it.id ?? i)}
           renderItem={renderPost}
