@@ -2428,3 +2428,12 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 - VideoDirector 전면 재작성: ComposeLyricsPick 스타일(보라 링 56px 얼굴 아바타+버블 내 '영상 디렉터' 라벨), user 버블에 step 기록→탭 시 롤백(chat truncate), 배경 3모드(원본/블러 light·mid·strong=10·24·44/색 hex+25·45·70%) — 커버 실사 미리보기(Image blurRadius·색 오버레이)로 "보면서 선택"(서버 실렌더 전 근사; 실시간 조절 슬라이더는 서버 렌더 구조상 불가 — 근사 미리보기로 대체), 폰트 5종(도현·주아 OFL 추가)+굵게/기울임(ASS Bold/Italic), 글자·배경색 12색 팔레트+#hex 표시(BE hex 수용), 기기 저장(expo-media-library 사진 앨범)/공유(OS 시트) 분리, 보관함(GET /tracks/my/share-videos + object 스트리밍 프록시).
 - 워터마크: drawtext → 로고 록업 PNG(스플래시 로고+MAIDOL+AI 생성, PIL 합성 2x) overlay. **가시 변경 → 캐시 share/v5→v6 승격 + 스타일 md5 suffix**(구 캐시 무효 — 재수령 시 신규 과금 주의). 트랙 삭제 purge v5·v6 겸용.
 - 공유 조사(⑭): 곡 링크복사=`BACKEND_URL/player?track=` — **백엔드에 해당 웹 페이지 없음(무효 링크, 웹 배포 후 도메인 필요)**. 추천하기(AppShareModal)=추천코드 발급 정상, 카카오/인스타/페북 버튼은 **셋 다 동일하게 OS 공유 시트만 염**(앱별 직행·SDK 미구현), 링크복사=코드+`/invite/{code}` URL(착지 웹페이지 역시 미배포). → 기능적 실체: OS 시트+클립보드. SDK 연동은 외부의존 보류 목록.
+
+## v3.183 — 2026-09-16 — 영상 자막 위치 선택 + center 기본 위치를 이미지 가깝게
+**요청**: 자막 위치 조정 가능하게. 기본 위치가 네모/원형(중앙 이미지) 기준 너무 아래 → 기본을 이미지와 적당히 가깝게.
+
+### findings
+- 자막 y = line 모드 FORMATS[fmt].ass.margin_v(sns 380/wide 80 하단 기준, kakao 600 상단 기준), scroll 모드 SCROLL_LAYOUT.cy(sns 1380/wide 720/kakao 820). center 이미지 하단: sns≈981, kakao≈1116(0.32H+size/2) — sns 자막(y≈1540)이 이미지에서 ~560px 아래(대표 지적), **kakao는 상단 정렬이라 자막이 이미지 위에 겹침**(v3.182 프레임 실증).
+### 설계
+- 새 축 subpos: near(이미지 가까이)/mid/low(현행) + 라우트 'auto'(기본)=center→near, full→low(현행 캐시·출력 불변). 포맷×subpos 매핑 테이블(line margin_v, scroll cy) — kakao near는 이미지 아래(1180)로 겹침 해소. 캐시 튜플에 subpos 포함(기본 튜플=low).
+- FE: 가사 방식 선택 후 '자막 위치' 3카드(위쪽·이미지 가까이/중간/아래쪽) — 롤백 메커니즘 그대로.

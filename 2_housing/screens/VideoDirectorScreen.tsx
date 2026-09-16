@@ -27,7 +27,7 @@ interface MyTrack {
 
 type Step =
   | 'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
-  | 'font' | 'fontStyle' | 'fontColor' | 'lyricsMode' | 'making' | 'done' | 'library';
+  | 'font' | 'fontStyle' | 'fontColor' | 'lyricsMode' | 'subPos' | 'making' | 'done' | 'library';
 
 // user 버블에 step 을 기록 — 탭하면 그 단계로 되돌아가 수정(v3.182)
 interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step }
@@ -87,6 +87,8 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [pickedBold, setPickedBold] = useState(false);
   const [pickedItalic, setPickedItalic] = useState(false);
   const [pickedColor, setPickedColor] = useState<string>('FFFFFF');
+  // v3.183(대표): 자막 위치 — near(이미지 가까이)/mid/low. 플레이어 스타일 기본=near
+  const [pickedLyricsMode, setPickedLyricsMode] = useState<'scroll' | 'line'>('scroll');
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   // v3.182: 보관함
@@ -242,19 +244,35 @@ export default function VideoDirectorScreen({ navigation }: any) {
   };
 
   const handlePickLyrics = (lyricsMode: 'scroll' | 'line') => {
+    setPickedLyricsMode(lyricsMode);
     pushUser(lyricsMode === 'scroll' ? '흐르는 가사' : '한 줄씩', 'lyricsMode');
-    startGeneration(lyricsMode);
+    pushDirector(
+      pickedLayout === 'center'
+        ? '자막(가사)은 어디에 둘까요? 기본은 중앙 이미지 바로 아래예요.'
+        : '자막(가사)은 어디에 둘까요?'
+    );
+    setStep('subPos');
   };
 
-  const styleParams = (lyricsMode: 'scroll' | 'line') => ({
+  // v3.183: 자막 위치 선택 → 생성
+  const handlePickSubPos = (subpos: 'near' | 'mid' | 'low') => {
+    const label = subpos === 'near'
+      ? (pickedLayout === 'center' ? '이미지 가까이' : '위쪽')
+      : subpos === 'mid' ? '중간' : '아래쪽';
+    pushUser(label, 'subPos');
+    startGeneration(pickedLyricsMode, subpos);
+  };
+
+  const styleParams = (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => ({
     format: pickedFormat!, layout: pickedLayout, shape: pickedShape, lyrics: lyricsMode,
     font: pickedFont, fontcolor: pickedColor === 'FFFFFF' ? 'white' : pickedColor,
     bg: pickedLayout === 'center' ? pickedBg : 'blur',
     bgblur: pickedBgBlur, bgcolor: pickedBg === 'color' ? pickedBgColor : '',
     bgalpha: pickedBgAlpha, fontbold: pickedBold ? '1' : '0', fontitalic: pickedItalic ? '1' : '0',
+    subpos,
   });
 
-  const startGeneration = async (lyricsMode: 'scroll' | 'line') => {
+  const startGeneration = async (lyricsMode: 'scroll' | 'line', subpos: 'near' | 'mid' | 'low') => {
     if (!selected) return;
     if (typeof videoCost === 'number') {
       const ok = await new Promise<boolean>((resolve) => {
@@ -264,11 +282,11 @@ export default function VideoDirectorScreen({ navigation }: any) {
           { text: '진행', onPress: () => resolve(true) },
         ]);
       });
-      if (!ok) { setStep('lyricsMode'); return; }
+      if (!ok) { setStep('subPos'); return; }
     }
     pushDirector('영상을 만들고 있어요. 커버와 가사를 엮는 중… 잠시만 기다려주세요.');
     setStep('making');
-    const params = styleParams(lyricsMode);
+    const params = styleParams(lyricsMode, subpos);
     console.info('[VideoDirector] share-video 생성', { trackId: selected.id, ...params });
     try {
       const res = await api.post(`/tracks/${selected.id}/share-video`, null, { params, timeout: 300000 });
@@ -643,6 +661,23 @@ export default function VideoDirectorScreen({ navigation }: any) {
             ))}
           </View>
         )}
+        {step === 'subPos' && (
+          <View style={styles.formatRow}>
+            {(['near', 'mid', 'low'] as const).map((sp) => (
+              <Card
+                key={sp}
+                onPress={() => handlePickSubPos(sp)}
+                label={sp === 'near' ? (pickedLayout === 'center' ? '이미지 가까이' : '위쪽') : sp === 'mid' ? '중간' : '아래쪽'}
+                desc={sp === 'near' && pickedLayout === 'center' ? '기본 추천' : undefined}
+              >
+                <View style={styles.subPosFrame}>
+                  {pickedLayout === 'center' ? <View style={styles.subPosImg} /> : null}
+                  <View style={[styles.subPosLine, sp === 'near' ? { top: 30 } : sp === 'mid' ? { top: 42 } : { top: 54 }]} />
+                </View>
+              </Card>
+            ))}
+          </View>
+        )}
         {step === 'lyricsMode' && (
           <View style={styles.formatRow}>
             <Card onPress={() => handlePickLyrics('scroll')} label="흐르는 가사" desc="여러 줄이 흘러가며 강조">
@@ -745,6 +780,10 @@ const styles = StyleSheet.create({
     width: 84, alignItems: 'center', backgroundColor: colors.bg.surface1,
     borderRadius: 10, paddingVertical: 10, borderWidth: 1, borderColor: colors.border.subtle,
   },
+  // v3.183: 자막 위치 도식 — 세로 프레임 + 이미지 사각 + 자막 막대
+  subPosFrame: { width: 36, height: 64, borderRadius: 6, borderWidth: 1.5, borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2, alignItems: 'center' },
+  subPosImg: { width: 20, height: 20, borderRadius: 4, backgroundColor: colors.accent.primary + '88', marginTop: 6 },
+  subPosLine: { position: 'absolute', width: 24, height: 4, borderRadius: 2, backgroundColor: colors.accent.primary },
   lyricsDemoCol: { gap: 5, alignItems: 'center' },
   lyricsDemoLine: { height: 5, borderRadius: 2, backgroundColor: colors.accent.primary },
 });

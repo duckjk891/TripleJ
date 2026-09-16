@@ -1498,3 +1498,9 @@
 - L3 [e2e] 영상 디렉터: 이름 라벨 버블·보관함 버튼·배경 3모드→블러 강도(커버 미리보기)→폰트 5종→굵게/기울임→팔레트(#hex)→가사 방식 + user 버블 탭 롤백
 - L4 [e2e] 보관함(route mock+실존 v6 object) → 기기에 저장/공유 버튼 분리 노출
 - [unit] tsc / BE ast. 모바일 키보드 체감(iOS KAV·Android resize)은 실기기 위임
+
+## v3.183 — 자막 위치
+- A1 [api] subpos=top 400 / auto(center)→near 해석: video_url에 subpos=near, 같은 조합 재요청 cached:true
+- A2 [api] kakao·center·circle·line near 실생성 프레임 — 자막이 원형 이미지 '바로 아래'(기존 이미지 위 겹침 해소) 시각 확인
+- E1 [e2e] 가사 방식 선택 후 '자막 위치' 3카드(이미지 가까이=기본 추천/중간/아래쪽) 노출 + 도식 + confirm
+- 회귀: full 레이아웃 기본(subpos=low)은 기존 캐시·출력 불변
