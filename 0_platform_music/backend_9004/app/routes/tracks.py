@@ -2390,6 +2390,7 @@ async def create_share_video(
     bgalpha: str = Query("45"),
     fontbold: str = Query("0"),
     fontitalic: str = Query("0"),
+    subpos: str = Query("auto"),
     current_user=Depends(get_current_user),
 ):
     """공유영상 생성 (v247: 로그인 필수 — 신규 생성 시 ⭐ 과금, 캐시 히트는 무과금). 공개 트랙만.
@@ -2407,6 +2408,7 @@ async def create_share_video(
         STYLE_LAYOUTS,
         STYLE_LYRICS,
         STYLE_SHAPES,
+        STYLE_SUBPOS,
         _HEX6_RE,
         ShareVideoError,
         _fetch_lyric_segments,
@@ -2421,11 +2423,15 @@ async def create_share_video(
             or font not in STYLE_FONTS or not valid_fontcolor(fontcolor) or bg not in STYLE_BGS
             or bgblur not in STYLE_BGBLURS or bgalpha not in STYLE_BGALPHAS
             or fontbold not in ("0", "1") or fontitalic not in ("0", "1")
+            or (subpos != "auto" and subpos not in STYLE_SUBPOS)
             or (bg == "color" and not _HEX6_RE.match(bgcolor or ""))):
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 스타일입니다."})
+    # v3.183: subpos 기본(auto) — center 레이아웃이면 이미지 가까이(near), full 은 기존 하단(low)
+    if subpos == "auto":
+        subpos = "near" if layout == "center" else "low"
     _style_kw = dict(layout=layout, shape=shape, lyrics=lyrics, font=font, fontcolor=fontcolor,
                      bg=bg, bgblur=bgblur, bgcolor=bgcolor, bgalpha=bgalpha,
-                     fontbold=fontbold, fontitalic=fontitalic)
+                     fontbold=fontbold, fontitalic=fontitalic, subpos=subpos)
 
     logger.info(
         "[share-video] enter track=%s format=%s layout=%s shape=%s lyrics=%s font=%s color=%s bg=%s",
@@ -2451,7 +2457,7 @@ async def create_share_video(
     video_url = f"/api/tracks/{track_id}/share-video/file"
     _defaults = dict(format="sns", layout="full", shape="square", lyrics="scroll", font="basic",
                      fontcolor="white", bg="blur", bgblur="mid", bgcolor="", bgalpha="45",
-                     fontbold="0", fontitalic="0")
+                     fontbold="0", fontitalic="0", subpos="low")
     _cur = dict(format=format, **_style_kw)
     _q = [f"{k}={v}" for k, v in _cur.items() if v != _defaults[k]]
     if _q:
@@ -2490,7 +2496,7 @@ async def create_share_video(
             lambda: generate_share_video(
                 track_id, doc["cover_image_url"], doc["audio_url"], segments, format,
                 layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha,
-                fontbold, fontitalic,
+                fontbold, fontitalic, subpos,
             )
         )
     except ShareVideoError:
@@ -2521,12 +2527,13 @@ async def get_share_video_file(
     bgalpha: str = Query("45"),
     fontbold: str = Query("0"),
     fontitalic: str = Query("0"),
+    subpos: str = Query("low"),
 ):
     """공유영상 파일 프록시 (무인증). MinIO share/v6/{track_id}[_{format}][_style].mp4 스트리밍."""
     from ..services.share_video import (
         FORMATS, STYLE_BGALPHAS, STYLE_BGBLURS, STYLE_BGS, STYLE_FONTS,
-        STYLE_LAYOUTS, STYLE_LYRICS, STYLE_SHAPES, _HEX6_RE, share_object_name,
-        valid_fontcolor,
+        STYLE_LAYOUTS, STYLE_LYRICS, STYLE_SHAPES, STYLE_SUBPOS, _HEX6_RE,
+        share_object_name, valid_fontcolor,
     )
 
     if format not in FORMATS:
@@ -2535,11 +2542,15 @@ async def get_share_video_file(
             or font not in STYLE_FONTS or not valid_fontcolor(fontcolor) or bg not in STYLE_BGS
             or bgblur not in STYLE_BGBLURS or bgalpha not in STYLE_BGALPHAS
             or fontbold not in ("0", "1") or fontitalic not in ("0", "1")
+            or (subpos != "auto" and subpos not in STYLE_SUBPOS)
             or (bg == "color" and not _HEX6_RE.match(bgcolor or ""))):
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 스타일입니다."})
+    # v3.183: subpos 기본(auto) — center 레이아웃이면 이미지 가까이(near), full 은 기존 하단(low)
+    if subpos == "auto":
+        subpos = "near" if layout == "center" else "low"
     _style_kw = dict(layout=layout, shape=shape, lyrics=lyrics, font=font, fontcolor=fontcolor,
                      bg=bg, bgblur=bgblur, bgcolor=bgcolor, bgalpha=bgalpha,
-                     fontbold=fontbold, fontitalic=fontitalic)
+                     fontbold=fontbold, fontitalic=fontitalic, subpos=subpos)
 
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
@@ -2550,7 +2561,7 @@ async def get_share_video_file(
             bucket_name=settings.minio_bucket_music,
             object_name=share_object_name(
                 track_id, format, layout, shape, lyrics, font, fontcolor, bg,
-                bgblur, bgcolor, bgalpha, fontbold, fontitalic,
+                bgblur, bgcolor, bgalpha, fontbold, fontitalic, subpos,
             ),
         )
     except Exception:

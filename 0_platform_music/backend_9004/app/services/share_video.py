@@ -114,7 +114,22 @@ STYLE_BGS = {"clean", "blur", "color"}
 STYLE_BGBLURS = {"light", "mid", "strong"}
 _BGBLUR_RADIUS = {"light": 10, "mid": 24, "strong": 44}
 STYLE_BGALPHAS = {"25", "45", "70"}
-_DEFAULT_STYLE_TUPLE = ("full", "square", "scroll", "basic", "white", "blur", "mid", "", "45", "0", "0")
+# v3.183(대표): 자막 위치 — near(중앙 이미지 가까이)/mid/low(기존 하단). 라우트 'auto' 기본:
+#   center 레이아웃이면 near(이미지 바로 아래 — 기존이 너무 아래라는 지적), full이면 low(현행 유지).
+STYLE_SUBPOS = {"near", "mid", "low"}
+# line 모드 margin_v (sns/wide=하단 기준, kakao=상단 기준 — alignment 유지)
+_SUBPOS_MARGIN_V = {
+    "sns": {"near": 760, "mid": 560, "low": 380},
+    "wide": {"near": 150, "mid": 110, "low": 80},
+    "kakao": {"near": 1180, "mid": 900, "low": 600},  # near=중앙 이미지(하단≈1116) 겹침 해소
+}
+# scroll 모드 중앙 y
+_SUBPOS_SCROLL_CY = {
+    "sns": {"near": 1150, "mid": 1265, "low": 1380},
+    "wide": {"near": 650, "mid": 685, "low": 720},
+    "kakao": {"near": 1180, "mid": 1000, "low": 820},
+}
+_DEFAULT_STYLE_TUPLE = ("full", "square", "scroll", "basic", "white", "blur", "mid", "", "45", "0", "0", "low")
 
 # ASS Fontname 은 폰트 파일의 family 명과 일치해야 함 (assets/fonts 번들, OFL)
 _FONT_NAME = {
@@ -144,8 +159,8 @@ def valid_fontcolor(fontcolor: str) -> bool:
     return fontcolor in STYLE_FONTCOLORS or bool(_HEX6_RE.match(fontcolor or ""))
 
 
-def _style_tuple(layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic):
-    return (layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor or "", bgalpha, fontbold, fontitalic)
+def _style_tuple(layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic, subpos="low"):
+    return (layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor or "", bgalpha, fontbold, fontitalic, subpos)
 
 
 def _style_suffix(*style) -> str:
@@ -161,11 +176,11 @@ def share_object_name(
     layout: str = "full", shape: str = "square", lyrics: str = "scroll",
     font: str = "basic", fontcolor: str = "white", bg: str = "blur",
     bgblur: str = "mid", bgcolor: str = "", bgalpha: str = "45",
-    fontbold: str = "0", fontitalic: str = "0",
+    fontbold: str = "0", fontitalic: str = "0", subpos: str = "low",
 ) -> str:
     # v3.182: 로고 워터마크 도입(가시 출력 변경) → 캐시 v5 → v6 승격 + 스타일 md5 suffix.
     suffix = FORMATS.get(fmt, FORMATS["sns"])["suffix"]
-    st = _style_tuple(layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic)
+    st = _style_tuple(layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic, subpos)
     return f"share/v6/{track_id}{suffix}{_style_suffix(*st)}.mp4"
 
 
@@ -265,7 +280,7 @@ def _ass_time(seconds: float) -> str:
 def _build_ass(
     segments: list, fmt: str = "sns",
     fontname: str = "NanumGothic", colour: str = "&H00FFFFFF",
-    bold: int = 0, italic: int = 0,
+    bold: int = 0, italic: int = 0, subpos: str = "low",
 ) -> str:
     """세그먼트 → ASS 자막 문자열 (포맷별 PlayRes/Alignment/MarginV).
 
@@ -287,7 +302,8 @@ def _build_ass(
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{fontname},{ass['fontsize']},{colour},{colour},&H00000000,"
-        f"&H00000000,{-1 if bold else 0},{-1 if italic else 0},0,0,100,100,0,0,1,3,0,{ass['alignment']},40,40,{ass['margin_v']},1\n"
+        f"&H00000000,{-1 if bold else 0},{-1 if italic else 0},0,0,100,100,0,0,1,3,0,{ass['alignment']},40,40,"
+        f"{_SUBPOS_MARGIN_V.get(fmt, _SUBPOS_MARGIN_V['sns']).get(subpos, ass['margin_v'])},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -333,7 +349,7 @@ def _emph_state(mag: int) -> tuple:
 def _build_ass_scroll(
     segments: list, fmt: str = "sns",
     fontname: str = "NanumGothic", colour: str = "&H00FFFFFF",
-    bold: int = 0, italic: int = 0,
+    bold: int = 0, italic: int = 0, subpos: str = "low",
 ) -> str:
     """세그먼트 → 스크롤 ASS 자막 문자열 (v152, 브라우저 가사 뷰 v150 미러).
 
@@ -345,7 +361,9 @@ def _build_ass_scroll(
     spec = FORMATS.get(fmt, FORMATS["sns"])
     ass = spec["ass"]
     layout = SCROLL_LAYOUT.get(fmt, SCROLL_LAYOUT["sns"])
-    cy, rh, window = layout["cy"], layout["rh"], layout["window"]
+    # v3.183: 자막 위치(subpos)에 따라 스크롤 중앙 y 조정
+    cy = _SUBPOS_SCROLL_CY.get(fmt, _SUBPOS_SCROLL_CY["sns"]).get(subpos, layout["cy"])
+    rh, window = layout["rh"], layout["window"]
     x = spec["width"] // 2
     # v3.181: 이벤트 인라인 색 재지정용 — "&H00BBGGRR" → "&HBBGGRR&"
     inline_colour = "&H" + colour[4:] + "&"
@@ -539,6 +557,7 @@ def generate_share_video(
     bgalpha: str = "45",
     fontbold: str = "0",
     fontitalic: str = "0",
+    subpos: str = "low",
 ) -> int:
     """커버+음원 다운로드 → ffmpeg 스틸영상 생성 → MinIO 업로드 (blocking).
 
@@ -554,10 +573,10 @@ def generate_share_video(
     """
     from .heavy_jobs import heavy_job_slot
 
-    with heavy_job_slot("share_video", f"{track_id}:{fmt}:{layout}:{shape}:{lyrics_mode}:{font}:{fontcolor}:{bg}:{bgblur}:{bgcolor}:{bgalpha}:{fontbold}:{fontitalic}"):
+    with heavy_job_slot("share_video", f"{track_id}:{fmt}:{layout}:{shape}:{lyrics_mode}:{font}:{fontcolor}:{bg}:{bgblur}:{bgcolor}:{bgalpha}:{fontbold}:{fontitalic}:{subpos}"):
         return _generate_share_video_impl(
             track_id, cover_image_url, audio_url, segments, fmt, layout, shape, lyrics_mode,
-            font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic,
+            font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic, subpos,
         )
 
 
@@ -578,10 +597,11 @@ def _generate_share_video_impl(
     bgalpha: str = "45",
     fontbold: str = "0",
     fontitalic: str = "0",
+    subpos: str = "low",
 ) -> int:
     _style_kw = dict(layout=layout, shape=shape, lyrics=lyrics_mode, font=font,
                      fontcolor=fontcolor, bg=bg, bgblur=bgblur, bgcolor=bgcolor,
-                     bgalpha=bgalpha, fontbold=fontbold, fontitalic=fontitalic)
+                     bgalpha=bgalpha, fontbold=fontbold, fontitalic=fontitalic, subpos=subpos)
     ffmpeg = _get_ffmpeg_path()
     if not ffmpeg:
         raise ShareVideoError("ffmpeg not available")
@@ -683,13 +703,13 @@ def _generate_share_video_impl(
                 _fc = font_colour_ass(fontcolor)
                 _fb, _fi = int(fontbold == "1"), int(fontitalic == "1")
                 if lyrics_mode == "line":
-                    ass_body = _build_ass(segments, fmt, _fn, _fc, _fb, _fi)
+                    ass_body = _build_ass(segments, fmt, _fn, _fc, _fb, _fi, subpos)
                     logger.info(
                         "[share-video] ass-line track=%s format=%s segments=%d",
                         track_id, fmt, len(segments),
                     )
                 else:
-                    ass_body = _build_ass_scroll(segments, fmt, _fn, _fc, _fb, _fi)
+                    ass_body = _build_ass_scroll(segments, fmt, _fn, _fc, _fb, _fi, subpos)
                     events_count = ass_body.count("Dialogue:")
                     logger.info(
                         "[share-video] ass-scroll track=%s format=%s segments=%d "
@@ -705,7 +725,7 @@ def _generate_share_video_impl(
                 ass_body = _build_ass(
                     segments, fmt,
                     _FONT_NAME.get(font, "NanumGothic"), font_colour_ass(fontcolor),
-                    int(fontbold == "1"), int(fontitalic == "1"),
+                    int(fontbold == "1"), int(fontitalic == "1"), subpos,
                 )
             with open(ass_path, "w", encoding="utf-8") as f:
                 f.write(ass_body)
