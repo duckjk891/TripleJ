@@ -45,12 +45,12 @@ FONTS_DIR = os.path.join(
 WATERMARK_LOGO = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "watermark_logo.png"
 )
-# v3.184(대표): 심볼 없는 텍스트 록업 — 항상 '최하단' 우측(자막과 별개 영역).
-#   kakao 도 하단으로 통일(카톡 프로필 하단 UI에 일부 가릴 수 있으나 대표 지시 우선).
+# v3.185(대표): 워터마크 = 플레이어 UI 'AI 생성' 뱃지와 동일(검은 라운드 칩+흰 텍스트).
+#   크기·여백도 UI 비율(뱃지높이≈커버폭의 3.7%, 여백≈2%)로 — 항상 우측 최하단.
 _WATERMARK_LOGO_SPEC = {
-    "sns": {"h": 40, "x": "W-w-36", "y": "H-h-36"},
-    "wide": {"h": 44, "x": "W-w-36", "y": "H-h-24"},
-    "kakao": {"h": 40, "x": "W-w-36", "y": "H-h-60"},
+    "sns": {"h": 40, "x": "W-w-20", "y": "H-h-20"},
+    "wide": {"h": 40, "x": "W-w-20", "y": "H-h-20"},
+    "kakao": {"h": 40, "x": "W-w-20", "y": "H-h-56"},
 }
 
 # `[Verse]`, `[Chorus]` 등 전체가 대괄호인 섹션 태그 줄 — 가사 아님, 자막 스킵
