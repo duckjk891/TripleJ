@@ -30,7 +30,7 @@ import httpx
 from ..config import settings
 from ..database.minio import get_minio
 from .mv_generator import _get_ffmpeg_path
-from .watermark import build_drawtext, video_metadata_args
+from .watermark import video_metadata_args
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,17 @@ SHARE_VIDEO_TIMEOUT = 300  # seconds
 FONTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts"
 )
+
+# v3.182: 가시 워터마크 = 로고 록업 PNG(보라 사각 심볼 + MAIDOL + AI 생성) 오버레이
+WATERMARK_LOGO = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "watermark_logo.png"
+)
+# 포맷별 로고 높이(px)·우하단 여백 — kakao 는 상단 자막권 밖 y=h*0.55 유지
+_WATERMARK_LOGO_SPEC = {
+    "sns": {"h": 56, "x": "W-w-40", "y": "H-h-40"},
+    "wide": {"h": 60, "x": "W-w-40", "y": "H-h-24"},
+    "kakao": {"h": 56, "x": "W-w-40", "y": "H*0.55"},
+}
 
 # `[Verse]`, `[Chorus]` 등 전체가 대괄호인 섹션 태그 줄 — 가사 아님, 자막 스킵
 _SECTION_TAG_RE = re.compile(r"^\[.*\]$")
@@ -94,14 +105,22 @@ STYLE_LAYOUTS = {"full", "center"}
 STYLE_SHAPES = {"square", "circle"}
 STYLE_LYRICS = {"scroll", "line"}
 # v3.181(대표): 추가 스타일 축 — 폰트/글자색/배경 블러
-STYLE_FONTS = {"basic", "round", "serif"}
+STYLE_FONTS = {"basic", "round", "serif", "dohyeon", "jua"}
+# v3.182: 글자색 = 키워드 4종 또는 hex6 (컬러 팔레트 — FE가 'FFD700' 형태로 전송)
 STYLE_FONTCOLORS = {"white", "yellow", "pink", "sky"}
-STYLE_BGS = {"blur", "clean"}  # center 레이아웃 배경 — blur=흐림(기본), clean=원본(어둠막만)
-_DEFAULT_STYLE = ("full", "square", "scroll")
-_DEFAULT_STYLE2 = ("basic", "white", "blur")
+_HEX6_RE = re.compile(r"^[0-9a-fA-F]{6}$")
+# v3.182: 배경 3모드 — clean(원본+어둠막) | blur(강도 light/mid/strong) | color(색+투명도)
+STYLE_BGS = {"clean", "blur", "color"}
+STYLE_BGBLURS = {"light", "mid", "strong"}
+_BGBLUR_RADIUS = {"light": 10, "mid": 24, "strong": 44}
+STYLE_BGALPHAS = {"25", "45", "70"}
+_DEFAULT_STYLE_TUPLE = ("full", "square", "scroll", "basic", "white", "blur", "mid", "", "45", "0", "0")
 
 # ASS Fontname 은 폰트 파일의 family 명과 일치해야 함 (assets/fonts 번들, OFL)
-_FONT_NAME = {"basic": "NanumGothic", "round": "Gowun Dodum", "serif": "NanumMyeongjo"}
+_FONT_NAME = {
+    "basic": "NanumGothic", "round": "Gowun Dodum", "serif": "NanumMyeongjo",
+    "dohyeon": "Do Hyeon", "jua": "Jua",
+}
 # ASS PrimaryColour — &H00BBGGRR (알파 00 = 불투명)
 _FONT_COLOUR = {
     "white": "&H00FFFFFF",
@@ -111,31 +130,43 @@ _FONT_COLOUR = {
 }
 
 
-def _style_suffix(
-    layout: str, shape: str, lyrics: str,
-    font: str = "basic", fontcolor: str = "white", bg: str = "blur",
-) -> str:
-    """기본 조합은 빈 suffix(기존 캐시 그대로).
-    v3.179 3축만 비기본 → 기존 3글자 suffix 유지(캐시 호환),
-    v3.181 축까지 비기본 → 6글자 suffix (예: _cclrys)."""
-    if (layout, shape, lyrics) == _DEFAULT_STYLE and (font, fontcolor, bg) == _DEFAULT_STYLE2:
+def font_colour_ass(fontcolor: str) -> str:
+    """키워드 또는 hex6(RRGGBB) → ASS &H00BBGGRR."""
+    if fontcolor in _FONT_COLOUR:
+        return _FONT_COLOUR[fontcolor]
+    if _HEX6_RE.match(fontcolor or ""):
+        rr, gg, bb = fontcolor[0:2], fontcolor[2:4], fontcolor[4:6]
+        return f"&H00{bb.upper()}{gg.upper()}{rr.upper()}"
+    return "&H00FFFFFF"
+
+
+def valid_fontcolor(fontcolor: str) -> bool:
+    return fontcolor in STYLE_FONTCOLORS or bool(_HEX6_RE.match(fontcolor or ""))
+
+
+def _style_tuple(layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic):
+    return (layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor or "", bgalpha, fontbold, fontitalic)
+
+
+def _style_suffix(*style) -> str:
+    """v3.182: 캐시 v6 — 전축 기본이면 빈 suffix, 아니면 스타일 튜플 md5 8자리."""
+    import hashlib
+    if tuple(style) == _DEFAULT_STYLE_TUPLE:
         return ""
-    if (font, fontcolor, bg) == _DEFAULT_STYLE2:
-        return f"_{layout[0]}{shape[0]}{lyrics[0]}"  # v3.179 캐시 호환
-    return f"_{layout[0]}{shape[0]}{lyrics[0]}{font[0]}{fontcolor[0]}{bg[0]}"
+    return "_" + hashlib.md5("|".join(style).encode()).hexdigest()[:8]
 
 
 def share_object_name(
     track_id: str, fmt: str = "sns",
     layout: str = "full", shape: str = "square", lyrics: str = "scroll",
     font: str = "basic", fontcolor: str = "white", bg: str = "blur",
+    bgblur: str = "mid", bgcolor: str = "", bgalpha: str = "45",
+    fontbold: str = "0", fontitalic: str = "0",
 ) -> str:
-    # v137: 워터마크 도입으로 캐시 버전 v2 → v3 승격 (기존 v2 객체는 일괄 삭제됨).
-    # v152: 스크롤 자막 도입으로 시각 출력 변경 → v3 → v4 승격 (기존 v3 캐시는
-    #       구버전 단일 줄 자막이므로 서빙 금지, 자동으로 v4 신규 생성됨).
-    # v3.179: 스타일 조합 suffix — 기본 조합은 기존 이름 유지(하위호환).
+    # v3.182: 로고 워터마크 도입(가시 출력 변경) → 캐시 v5 → v6 승격 + 스타일 md5 suffix.
     suffix = FORMATS.get(fmt, FORMATS["sns"])["suffix"]
-    return f"share/v5/{track_id}{suffix}{_style_suffix(layout, shape, lyrics, font, fontcolor, bg)}.mp4"
+    st = _style_tuple(layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic)
+    return f"share/v6/{track_id}{suffix}{_style_suffix(*st)}.mp4"
 
 
 def _filter_segments(raw: list) -> list:
@@ -234,6 +265,7 @@ def _ass_time(seconds: float) -> str:
 def _build_ass(
     segments: list, fmt: str = "sns",
     fontname: str = "NanumGothic", colour: str = "&H00FFFFFF",
+    bold: int = 0, italic: int = 0,
 ) -> str:
     """세그먼트 → ASS 자막 문자열 (포맷별 PlayRes/Alignment/MarginV).
 
@@ -255,7 +287,7 @@ def _build_ass(
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{fontname},{ass['fontsize']},{colour},{colour},&H00000000,"
-        f"&H00000000,0,0,0,0,100,100,0,0,1,3,0,{ass['alignment']},40,40,{ass['margin_v']},1\n"
+        f"&H00000000,{-1 if bold else 0},{-1 if italic else 0},0,0,100,100,0,0,1,3,0,{ass['alignment']},40,40,{ass['margin_v']},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -301,6 +333,7 @@ def _emph_state(mag: int) -> tuple:
 def _build_ass_scroll(
     segments: list, fmt: str = "sns",
     fontname: str = "NanumGothic", colour: str = "&H00FFFFFF",
+    bold: int = 0, italic: int = 0,
 ) -> str:
     """세그먼트 → 스크롤 ASS 자막 문자열 (v152, 브라우저 가사 뷰 v150 미러).
 
@@ -332,7 +365,7 @@ def _build_ass_scroll(
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         # Alignment=5 (\an5, 중앙 앵커) — 줄별로 \pos/\move 의 Y 가 세로 중앙점.
         f"Style: Default,{fontname},{ass['fontsize']},{colour},{colour},&H00000000,"
-        f"&H00000000,0,0,0,0,100,100,0,0,1,3,0,5,40,40,0,1\n"
+        f"&H00000000,{-1 if bold else 0},{-1 if italic else 0},0,0,100,100,0,0,1,3,0,5,40,40,0,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -390,17 +423,13 @@ def _build_ass_scroll(
     return header + "".join(events)
 
 
-def share_video_exists(
-    track_id: str, fmt: str = "sns",
-    layout: str = "full", shape: str = "square", lyrics: str = "scroll",
-    font: str = "basic", fontcolor: str = "white", bg: str = "blur",
-) -> bool:
-    """MinIO 에 캐시된 공유영상이 있는지 확인 (blocking)."""
+def share_video_exists(track_id: str, fmt: str = "sns", **style) -> bool:
+    """MinIO 에 캐시된 공유영상이 있는지 확인 (blocking). style=share_object_name 키워드."""
     minio_client = get_minio()
     try:
         minio_client.stat_object(
             bucket_name=settings.minio_bucket_music,
-            object_name=share_object_name(track_id, fmt, layout, shape, lyrics, font, fontcolor, bg),
+            object_name=share_object_name(track_id, fmt, **style),
         )
         return True
     except Exception:
@@ -505,6 +534,11 @@ def generate_share_video(
     font: str = "basic",
     fontcolor: str = "white",
     bg: str = "blur",
+    bgblur: str = "mid",
+    bgcolor: str = "",
+    bgalpha: str = "45",
+    fontbold: str = "0",
+    fontitalic: str = "0",
 ) -> int:
     """커버+음원 다운로드 → ffmpeg 스틸영상 생성 → MinIO 업로드 (blocking).
 
@@ -520,10 +554,10 @@ def generate_share_video(
     """
     from .heavy_jobs import heavy_job_slot
 
-    with heavy_job_slot("share_video", f"{track_id}:{fmt}:{layout}:{shape}:{lyrics_mode}:{font}:{fontcolor}:{bg}"):
+    with heavy_job_slot("share_video", f"{track_id}:{fmt}:{layout}:{shape}:{lyrics_mode}:{font}:{fontcolor}:{bg}:{bgblur}:{bgcolor}:{bgalpha}:{fontbold}:{fontitalic}"):
         return _generate_share_video_impl(
             track_id, cover_image_url, audio_url, segments, fmt, layout, shape, lyrics_mode,
-            font, fontcolor, bg,
+            font, fontcolor, bg, bgblur, bgcolor, bgalpha, fontbold, fontitalic,
         )
 
 
@@ -539,7 +573,15 @@ def _generate_share_video_impl(
     font: str = "basic",
     fontcolor: str = "white",
     bg: str = "blur",
+    bgblur: str = "mid",
+    bgcolor: str = "",
+    bgalpha: str = "45",
+    fontbold: str = "0",
+    fontitalic: str = "0",
 ) -> int:
+    _style_kw = dict(layout=layout, shape=shape, lyrics=lyrics_mode, font=font,
+                     fontcolor=fontcolor, bg=bg, bgblur=bgblur, bgcolor=bgcolor,
+                     bgalpha=bgalpha, fontbold=fontbold, fontitalic=fontitalic)
     ffmpeg = _get_ffmpeg_path()
     if not ffmpeg:
         raise ShareVideoError("ffmpeg not available")
@@ -598,8 +640,15 @@ def _generate_share_video_impl(
                 oy = f"(H-h)/2"
             else:
                 oy = str(int(height * 0.32 - size / 2))
-            # v3.181: bg=clean 이면 블러 생략(원본 배경 + 어둠막만 — 가사 가독 유지)
-            bg_chain = "boxblur=24:2,drawbox=c=black@0.45:t=fill" if bg == "blur" else "drawbox=c=black@0.45:t=fill"
+            # v3.182: 배경 3모드 — blur(강도별) / clean(원본+어둠막) / color(선택 색+투명도)
+            if bg == "blur":
+                radius = _BGBLUR_RADIUS.get(bgblur, 24)
+                bg_chain = f"boxblur={radius}:2,drawbox=c=black@0.45:t=fill"
+            elif bg == "color" and _HEX6_RE.match(bgcolor or ""):
+                alpha = int(bgalpha) / 100.0 if bgalpha in STYLE_BGALPHAS else 0.45
+                bg_chain = f"drawbox=c=0x{bgcolor}@{alpha:.2f}:t=fill"
+            else:  # clean
+                bg_chain = "drawbox=c=black@0.45:t=fill"
             vf = (
                 f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
                 f"crop={width}:{height},{bg_chain}[b];"
@@ -631,15 +680,16 @@ def _generate_share_video_impl(
             # v3.179: lyrics_mode='line' 이면 처음부터 단일 줄(_build_ass — 한 줄씩 표시).
             try:
                 _fn = _FONT_NAME.get(font, "NanumGothic")
-                _fc = _FONT_COLOUR.get(fontcolor, "&H00FFFFFF")
+                _fc = font_colour_ass(fontcolor)
+                _fb, _fi = int(fontbold == "1"), int(fontitalic == "1")
                 if lyrics_mode == "line":
-                    ass_body = _build_ass(segments, fmt, _fn, _fc)
+                    ass_body = _build_ass(segments, fmt, _fn, _fc, _fb, _fi)
                     logger.info(
                         "[share-video] ass-line track=%s format=%s segments=%d",
                         track_id, fmt, len(segments),
                     )
                 else:
-                    ass_body = _build_ass_scroll(segments, fmt, _fn, _fc)
+                    ass_body = _build_ass_scroll(segments, fmt, _fn, _fc, _fb, _fi)
                     events_count = ass_body.count("Dialogue:")
                     logger.info(
                         "[share-video] ass-scroll track=%s format=%s segments=%d "
@@ -654,7 +704,8 @@ def _generate_share_video_impl(
                 )
                 ass_body = _build_ass(
                     segments, fmt,
-                    _FONT_NAME.get(font, "NanumGothic"), _FONT_COLOUR.get(fontcolor, "&H00FFFFFF"),
+                    _FONT_NAME.get(font, "NanumGothic"), font_colour_ass(fontcolor),
+                    int(fontbold == "1"), int(fontitalic == "1"),
                 )
             with open(ass_path, "w", encoding="utf-8") as f:
                 f.write(ass_body)
@@ -663,12 +714,13 @@ def _generate_share_video_impl(
                 track_id, fmt, len(segments), FONTS_DIR,
             )
             vf += f",ass='{_filter_path(ass_path)}':fontsdir='{_filter_path(FONTS_DIR)}'"
-        # v137 [watermark]: 가시 워터마크 — 자막 유무와 무관하게 항상 마지막에 적용.
-        wm = _WATERMARK[fmt]
-        vf += "," + build_drawtext(wm["fontsize"], x=wm["x"], y=wm["y"])
+        # v3.182 [watermark]: 가시 워터마크 = 로고 록업 PNG 오버레이(스플래시 로고와 동일 브랜딩).
+        wm_idx = 3 if center_cover_path else 2
+        wms = _WATERMARK_LOGO_SPEC[fmt]
+        vf += f"[b9];[{wm_idx}:v]scale=-1:{wms['h']}[wm9];[b9][wm9]overlay={wms['x']}:{wms['y']}"
         logger.info(
-            "[watermark] share drawtext track=%s format=%s fontsize=%d y=%s",
-            track_id, fmt, wm["fontsize"], wm["y"],
+            "[watermark] share logo-overlay track=%s format=%s h=%d idx=%d",
+            track_id, fmt, wms["h"], wm_idx,
         )
         vf += "[v]"
         # 자막 있으면 -r 20 (v152 스크롤 glide 부드럽게), 없으면 기존 -r 2 (스틸) — 3포맷 공통
@@ -679,6 +731,7 @@ def _generate_share_video_impl(
         cmd += ["-i", audio_path]
         if center_cover_path:
             cmd += ["-loop", "1", "-i", center_cover_path]  # v3.179: [2:v] 마스킹 커버
+        cmd += ["-loop", "1", "-i", WATERMARK_LOGO]  # v3.182: 워터마크 로고
         cmd += [
             "-filter_complex", vf,
             "-map", "[v]", "-map", "1:a",
@@ -725,7 +778,7 @@ def _generate_share_video_impl(
         )
 
         # 동시 중복 생성 가드: 업로드 직전 재확인 — 이미 다른 요청이 올렸으면 스킵.
-        if share_video_exists(track_id, fmt, layout, shape, lyrics_mode, font, fontcolor, bg):
+        if share_video_exists(track_id, fmt, **_style_kw):
             logger.info(
                 "[share-video] concurrent cache detected track=%s format=%s — skip upload",
                 track_id, fmt,
@@ -735,7 +788,7 @@ def _generate_share_video_impl(
         with open(out_path, "rb") as f:
             minio_client.put_object(
                 bucket_name=settings.minio_bucket_music,
-                object_name=share_object_name(track_id, fmt, layout, shape, lyrics_mode, font, fontcolor, bg),
+                object_name=share_object_name(track_id, fmt, **_style_kw),
                 data=f,
                 length=size,
                 content_type="video/mp4",

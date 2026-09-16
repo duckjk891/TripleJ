@@ -1,4 +1,5 @@
 import asyncio
+import re
 import io
 import json
 import logging
@@ -930,11 +931,13 @@ async def purge_track_document(doc: dict, conn) -> dict:
 
     # MinIO — 공유영상 캐시. v3.179: 스타일 변형 다수 → prefix 목록 삭제로 전 변형 정리
     try:
-        objs = minio_client.list_objects(
-            bucket_name=settings.minio_bucket_music,
-            prefix=f"share/v5/{track_id}",
-            recursive=True,
-        )
+        objs = []
+        for _pfx in (f"share/v5/{track_id}", f"share/v6/{track_id}"):
+            objs += list(minio_client.list_objects(
+                bucket_name=settings.minio_bucket_music,
+                prefix=_pfx,
+                recursive=True,
+            ))
         for obj in objs:
             try:
                 minio_client.remove_object(
@@ -2382,6 +2385,11 @@ async def create_share_video(
     font: str = Query("basic"),
     fontcolor: str = Query("white"),
     bg: str = Query("blur"),
+    bgblur: str = Query("mid"),
+    bgcolor: str = Query(""),
+    bgalpha: str = Query("45"),
+    fontbold: str = Query("0"),
+    fontitalic: str = Query("0"),
     current_user=Depends(get_current_user),
 ):
     """공유영상 생성 (v247: 로그인 필수 — 신규 생성 시 ⭐ 과금, 캐시 히트는 무과금). 공개 트랙만.
@@ -2392,23 +2400,32 @@ async def create_share_video(
     """
     from ..services.share_video import (
         FORMATS,
+        STYLE_BGALPHAS,
+        STYLE_BGBLURS,
         STYLE_BGS,
-        STYLE_FONTCOLORS,
         STYLE_FONTS,
         STYLE_LAYOUTS,
         STYLE_LYRICS,
         STYLE_SHAPES,
+        _HEX6_RE,
         ShareVideoError,
         _fetch_lyric_segments,
         generate_share_video,
         share_video_exists,
+        valid_fontcolor,
     )
 
     if format not in FORMATS:
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 형식입니다."})
     if (layout not in STYLE_LAYOUTS or shape not in STYLE_SHAPES or lyrics not in STYLE_LYRICS
-            or font not in STYLE_FONTS or fontcolor not in STYLE_FONTCOLORS or bg not in STYLE_BGS):
+            or font not in STYLE_FONTS or not valid_fontcolor(fontcolor) or bg not in STYLE_BGS
+            or bgblur not in STYLE_BGBLURS or bgalpha not in STYLE_BGALPHAS
+            or fontbold not in ("0", "1") or fontitalic not in ("0", "1")
+            or (bg == "color" and not _HEX6_RE.match(bgcolor or ""))):
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 스타일입니다."})
+    _style_kw = dict(layout=layout, shape=shape, lyrics=lyrics, font=font, fontcolor=fontcolor,
+                     bg=bg, bgblur=bgblur, bgcolor=bgcolor, bgalpha=bgalpha,
+                     fontbold=fontbold, fontitalic=fontitalic)
 
     logger.info(
         "[share-video] enter track=%s format=%s layout=%s shape=%s lyrics=%s font=%s color=%s bg=%s",
@@ -2432,13 +2449,11 @@ async def create_share_video(
         return JSONResponse(status_code=404, content={"error": "오디오 파일을 찾을 수 없습니다."})
 
     video_url = f"/api/tracks/{track_id}/share-video/file"
-    _q = []
-    if format != "sns":
-        _q.append(f"format={format}")
-    if (layout, shape, lyrics) != ("full", "square", "scroll"):
-        _q += [f"layout={layout}", f"shape={shape}", f"lyrics={lyrics}"]
-    if (font, fontcolor, bg) != ("basic", "white", "blur"):
-        _q += [f"font={font}", f"fontcolor={fontcolor}", f"bg={bg}"]
+    _defaults = dict(format="sns", layout="full", shape="square", lyrics="scroll", font="basic",
+                     fontcolor="white", bg="blur", bgblur="mid", bgcolor="", bgalpha="45",
+                     fontbold="0", fontitalic="0")
+    _cur = dict(format=format, **_style_kw)
+    _q = [f"{k}={v}" for k, v in _cur.items() if v != _defaults[k]]
     if _q:
         video_url += "?" + "&".join(_q)
 
@@ -2450,7 +2465,7 @@ async def create_share_video(
         len(segments), subtitles, track_id, format,
     )
 
-    if await asyncio.to_thread(share_video_exists, track_id, format, layout, shape, lyrics, font, fontcolor, bg):
+    if await asyncio.to_thread(lambda: share_video_exists(track_id, format, **_style_kw)):
         logger.info("[share-video] cache hit track=%s format=%s style=%s/%s/%s",
                     track_id, format, layout, shape, lyrics)
         return {"video_url": video_url, "cached": True, "subtitles": subtitles,
@@ -2461,10 +2476,9 @@ async def create_share_video(
     _sv_cost = POINT_COSTS["share_video"]
     # v3.179: 스타일 조합별 별도 과금 ref (기본 조합은 기존 ref 유지 — 환불 멱등 하위호환)
     _sv_ref = f"share_video:{track_id}:{format}"
-    if (layout, shape, lyrics) != ("full", "square", "scroll"):
-        _sv_ref += f":{layout}:{shape}:{lyrics}"
-    if (font, fontcolor, bg) != ("basic", "white", "blur"):
-        _sv_ref += f":{font}:{fontcolor}:{bg}"
+    _nondef = [f"{k}={v}" for k, v in _style_kw.items() if v != _defaults[k]]
+    if _nondef:
+        _sv_ref += ":" + ",".join(_nondef)
     if not await spend_points(current_user["id"], "share_video", _sv_cost, _sv_ref):
         return JSONResponse(status_code=402, content={"error": "포인트가 부족합니다 (필요: {})".format(_sv_cost)})
     logger.info("[star-econ] share_video spend user=%s -%d ref=%s", current_user["id"][:8], _sv_cost, _sv_ref)
@@ -2473,9 +2487,11 @@ async def create_share_video(
                 track_id, format, layout, shape, lyrics)
     try:
         await asyncio.to_thread(
-            generate_share_video, track_id, doc["cover_image_url"],
-            doc["audio_url"], segments, format, layout, shape, lyrics,
-            font, fontcolor, bg,
+            lambda: generate_share_video(
+                track_id, doc["cover_image_url"], doc["audio_url"], segments, format,
+                layout, shape, lyrics, font, fontcolor, bg, bgblur, bgcolor, bgalpha,
+                fontbold, fontitalic,
+            )
         )
     except ShareVideoError:
         await refund_points(current_user["id"], "share_video", _sv_cost, _sv_ref)
@@ -2500,18 +2516,30 @@ async def get_share_video_file(
     font: str = Query("basic"),
     fontcolor: str = Query("white"),
     bg: str = Query("blur"),
+    bgblur: str = Query("mid"),
+    bgcolor: str = Query(""),
+    bgalpha: str = Query("45"),
+    fontbold: str = Query("0"),
+    fontitalic: str = Query("0"),
 ):
-    """공유영상 파일 프록시 (무인증). MinIO share/v5/{track_id}[_{format}][_style].mp4 스트리밍."""
+    """공유영상 파일 프록시 (무인증). MinIO share/v6/{track_id}[_{format}][_style].mp4 스트리밍."""
     from ..services.share_video import (
-        FORMATS, STYLE_BGS, STYLE_FONTCOLORS, STYLE_FONTS,
-        STYLE_LAYOUTS, STYLE_LYRICS, STYLE_SHAPES, share_object_name,
+        FORMATS, STYLE_BGALPHAS, STYLE_BGBLURS, STYLE_BGS, STYLE_FONTS,
+        STYLE_LAYOUTS, STYLE_LYRICS, STYLE_SHAPES, _HEX6_RE, share_object_name,
+        valid_fontcolor,
     )
 
     if format not in FORMATS:
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 형식입니다."})
     if (layout not in STYLE_LAYOUTS or shape not in STYLE_SHAPES or lyrics not in STYLE_LYRICS
-            or font not in STYLE_FONTS or fontcolor not in STYLE_FONTCOLORS or bg not in STYLE_BGS):
+            or font not in STYLE_FONTS or not valid_fontcolor(fontcolor) or bg not in STYLE_BGS
+            or bgblur not in STYLE_BGBLURS or bgalpha not in STYLE_BGALPHAS
+            or fontbold not in ("0", "1") or fontitalic not in ("0", "1")
+            or (bg == "color" and not _HEX6_RE.match(bgcolor or ""))):
         return JSONResponse(status_code=400, content={"error": "지원하지 않는 스타일입니다."})
+    _style_kw = dict(layout=layout, shape=shape, lyrics=lyrics, font=font, fontcolor=fontcolor,
+                     bg=bg, bgblur=bgblur, bgcolor=bgcolor, bgalpha=bgalpha,
+                     fontbold=fontbold, fontitalic=fontitalic)
 
     if not ObjectId.is_valid(track_id):
         return JSONResponse(status_code=404, content={"error": "곡을 찾을 수 없습니다."})
@@ -2520,7 +2548,10 @@ async def get_share_video_file(
     try:
         response = minio_client.get_object(
             bucket_name=settings.minio_bucket_music,
-            object_name=share_object_name(track_id, format, layout, shape, lyrics, font, fontcolor, bg),
+            object_name=share_object_name(
+                track_id, format, layout, shape, lyrics, font, fontcolor, bg,
+                bgblur, bgcolor, bgalpha, fontbold, fontitalic,
+            ),
         )
     except Exception:
         return JSONResponse(status_code=404, content={"error": "공유 영상을 찾을 수 없습니다."})
@@ -2788,3 +2819,82 @@ async def delete_track_comment(comment_id: str, current_user=Depends(get_current
         "author" if is_comment_author else "track_owner",
     )
     return {"message": "댓글이 삭제되었습니다."}
+
+
+# ==================================================================
+# v3.182 — 공유영상 보관함: 내 곡들의 캐시된 영상 목록 + object 직접 스트리밍
+#   (스타일 suffix가 md5 해시라 파라미터 역산 불가 → object명 기반 재생 프록시 제공)
+# ==================================================================
+_SHARE_OBJ_RE = re.compile(r"^share/v[56]/([a-f0-9]{24})[A-Za-z0-9_\-]*\.mp4$")
+
+
+@router.get("/my/share-videos")
+async def list_my_share_videos(current_user=Depends(get_current_user)):
+    """내 곡들의 캐시된 공유영상 목록 (영상 디렉터 보관함)."""
+    mongo = get_mongo()
+    user_id = current_user["id"]
+    logger.info("[share-video] library enter user=%s", str(user_id)[:8])
+    docs = (
+        await mongo.tracks.find({"uploader_id": user_id}, {"title": 1})
+        .sort("created_at", -1).limit(50).to_list(length=50)
+    )
+    title_by_id = {str(d["_id"]): d.get("title") or "무제" for d in docs}
+    minio_client = get_minio()
+
+    def _scan():
+        items = []
+        for tid, title in title_by_id.items():
+            for pfx in (f"share/v6/{tid}",):
+                try:
+                    for obj in minio_client.list_objects(
+                        bucket_name=settings.minio_bucket_music, prefix=pfx, recursive=True,
+                    ):
+                        name = obj.object_name
+                        fmt = "wide" if "_wide" in name else "kakao" if "_kakao" in name else "sns"
+                        items.append({
+                            "track_id": tid, "title": title, "object_name": name,
+                            "format": fmt, "size": obj.size,
+                            "last_modified": obj.last_modified.isoformat() if obj.last_modified else None,
+                        })
+                except Exception:
+                    logger.warning("[share-video] library scan failed track=%s", tid[:8])
+        return items
+
+    items = await asyncio.to_thread(_scan)
+    items.sort(key=lambda x: x.get("last_modified") or "", reverse=True)
+    logger.info("[share-video] library ok user=%s items=%d", str(user_id)[:8], len(items))
+    return {"items": items}
+
+
+@router.get("/share-video/object/{object_name:path}")
+async def get_share_video_by_object(object_name: str):
+    """보관함 재생/저장용 — 검증된 share object 직접 스트리밍 (공개 곡만, 무인증)."""
+    m = _SHARE_OBJ_RE.match(object_name or "")
+    if not m:
+        return JSONResponse(status_code=404, content={"error": "영상을 찾을 수 없습니다."})
+    track_id = m.group(1)
+    mongo = get_mongo()
+    doc = await mongo.tracks.find_one({"_id": ObjectId(track_id)}, {"is_public": 1})
+    if not doc or not doc.get("is_public", True):
+        return JSONResponse(status_code=404, content={"error": "영상을 찾을 수 없습니다."})
+    minio_client = get_minio()
+    try:
+        response = minio_client.get_object(
+            bucket_name=settings.minio_bucket_music, object_name=object_name,
+        )
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": "영상을 찾을 수 없습니다."})
+    logger.info("[share-video] object proxy served track=%s obj=%s", track_id[:8], object_name[-24:])
+
+    def _iter():
+        try:
+            for chunk in response.stream(64 * 1024):
+                yield chunk
+        finally:
+            response.close()
+            response.release_conn()
+
+    return StreamingResponse(
+        _iter(), media_type="video/mp4",
+        headers={"Content-Disposition": f'attachment; filename="maidol_{track_id}.mp4"'},
+    )
