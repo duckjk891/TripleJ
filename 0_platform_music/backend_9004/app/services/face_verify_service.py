@@ -60,8 +60,10 @@ def _aws_error_code(e: Exception) -> str:
 
 
 def get_mode() -> str:
-    """aws(키 쌍 모두 존재) | mock."""
+    """aws(키 쌍 모두 존재 또는 IAM 역할 스위치) | mock."""
     if settings.aws_face_access_key_id and settings.aws_face_secret_access_key:
+        return "aws"
+    if settings.aws_face_use_iam_role:
         return "aws"
     return "mock"
 
@@ -85,7 +87,12 @@ def startup_check() -> None:
         logger.warning(
             "[face-verify] FACE_DATA_KEY 미설정 — 저장 얼굴 암호화 불가, 등록이 필요한 플로우는 동작하지 않습니다"
         )
-    logger.info("[face-verify] startup enabled=%s mode=%s", settings.face_verify_enabled, mode)
+    cred = (
+        "key"
+        if (settings.aws_face_access_key_id and settings.aws_face_secret_access_key)
+        else ("iam-role" if settings.aws_face_use_iam_role else "-")
+    )
+    logger.info("[face-verify] startup enabled=%s mode=%s cred=%s", settings.face_verify_enabled, mode, cred)
 
 
 def photo_sha256(photo_bytes: bytes) -> str:
@@ -100,12 +107,15 @@ def photo_sha256(photo_bytes: bytes) -> str:
 def _rekognition_client(region: str):
     import boto3
 
-    return boto3.client(
-        "rekognition",
-        region_name=region,
-        aws_access_key_id=settings.aws_face_access_key_id,
-        aws_secret_access_key=settings.aws_face_secret_access_key,
-    )
+    # 키 쌍이 있으면 명시 사용, 없으면(IAM 역할 모드) boto3 기본 자격증명 체인(EC2 IMDSv2).
+    if settings.aws_face_access_key_id and settings.aws_face_secret_access_key:
+        return boto3.client(
+            "rekognition",
+            region_name=region,
+            aws_access_key_id=settings.aws_face_access_key_id,
+            aws_secret_access_key=settings.aws_face_secret_access_key,
+        )
+    return boto3.client("rekognition", region_name=region)
 
 
 async def compare_faces(source_bytes: bytes, target_bytes: bytes) -> dict:

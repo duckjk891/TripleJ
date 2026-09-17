@@ -181,6 +181,9 @@ class Settings(BaseSettings):
     face_verify_enabled: bool = False
     aws_face_access_key_id: str = ""
     aws_face_secret_access_key: str = ""
+    # AWS 이전(2026-09-17): 키 없이 EC2 인스턴스 IAM 역할(maidol-ec2)로 Rekognition 호출.
+    # true 면 키 빈값이어도 aws 모드 — boto3 기본 자격증명 체인(IMDSv2) 사용. EC2 전용 스위치.
+    aws_face_use_iam_role: bool = False
     face_compare_region: str = "ap-northeast-2"
     face_liveness_region: str = "ap-northeast-1"
     face_match_threshold: int = 90
