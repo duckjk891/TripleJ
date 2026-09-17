@@ -174,10 +174,13 @@ RUN set -eux; \
     python -c "import importlib.util, sys; sys.exit(0) if importlib.util.find_spec('torch') is None else sys.exit('torch leaked back into image (v199 removed it)')"
 
 # --- Non-root ----------------------------------------------------------------
-# Nothing is written to the image filesystem at runtime: every temporary file
-# goes through tempfile.TemporaryDirectory() (i.e. /tmp) and every artefact is
-# uploaded to MinIO/S3. So a read-only, unprivileged rootfs is sufficient.
-RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
+# Almost nothing is written to the image filesystem at runtime: temporary files
+# go through tempfile.TemporaryDirectory() (i.e. /tmp) and artefacts are
+# uploaded to MinIO/S3. Exception: routes/_logs.py appends frontend logs to
+# /srv/app/logs/frontend.log — pre-create it writable or every POST
+# /api/_logs/frontend 500s (found on AWS 2026-09-17).
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /srv/app/logs && chown app:app /srv/app/logs
 USER app
 
 EXPOSE 9006
