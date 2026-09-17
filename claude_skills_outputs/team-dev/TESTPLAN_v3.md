@@ -1509,3 +1509,14 @@
 - A1 [api] 재생성 프레임: 심볼 없음·텍스트형(MAIDOL 보라 AI)·우측 최하단·자막과 분리 시각 확인 (kakao center near)
 - A2 [api] 다중 시점 프레임(-ss 1/7/14) 및 코너 크롭 — 워터마크 1개뿐(이중 아님) 픽셀 검증
 - 회귀: 구 v6 캐시 삭제 후 동일 조합 재생성 정상, 캐시명 불변
+
+---
+
+## v3.187 — 2026-09-17 — 영상 디렉터 보관함 제거
+
+| # | 시나리오 (Given/When/Then) | 태그 | 결과 |
+|---|---|---|---|
+| 1 | Given VideoDirectorScreen 소스 When 'library' 참조 grep Then Step 타입·상태·핸들러·스타일 0건(MediaLibrary 제외) | [unit] | PASS |
+| 2 | Given 전체 FE When tsc --noEmit Then 에러 0 | [unit] | PASS |
+| 3 | Given 로그인 상태 When 작업실→영상 디렉터→대화 진행 Then 곡 선택 단계 도달·곡 목록 표시·'내 영상 보관함' 버튼 부재 | [e2e] | PASS (v3187_3_pick.png) |
+| 4 | (회귀) Given 곡 선택 단계 When 화면 렌더 Then 기존 곡 행 UI(커버·제목·chevron) 유지 | [e2e] | PASS (동일 스크린샷) |

@@ -1,8 +1,8 @@
-// [VideoDirector] v3.171→v3.182(대표) — 영상 디렉터 대화: 공유영상 생성·보관함·내보내기.
+// [VideoDirector] v3.171→v3.187(대표) — 영상 디렉터 대화: 공유영상 생성·내보내기.
 // v3.182: ①말풍선 UI를 작곡 디렉터(첨부 이미지) 스타일로 — 보라 링 아바타 + 버블 안 이름 라벨
 //   ②내 답변(user 버블) 탭 → 그 단계로 되돌아가 다시 선택 ③배경 3모드(원본/블러 강도/색+투명도,
 //   커버 실사 미리보기) ④폰트 5종+볼드/기울임 ⑤글자색 컬러 팔레트(+hex 표시) ⑥기기 저장(MediaLibrary)과
-//   공유(OS 시트) 분리 ⑦보관함(서버 캐시 목록). 추적자 [VideoDirector].
+//   공유(OS 시트) 분리. v3.187: 보관함 제거(대표 확정 — 서버 API 는 존치). 추적자 [VideoDirector].
 import { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Platform, Linking,
@@ -27,7 +27,7 @@ interface MyTrack {
 
 type Step =
   | 'pick' | 'format' | 'layout' | 'shape' | 'bg' | 'bgBlurLevel' | 'bgColor' | 'bgAlpha'
-  | 'font' | 'fontStyle' | 'fontColor' | 'lyricsMode' | 'subPos' | 'making' | 'done' | 'library';
+  | 'font' | 'fontStyle' | 'fontColor' | 'lyricsMode' | 'subPos' | 'making' | 'done';
 
 // user 버블에 step 을 기록 — 탭하면 그 단계로 되돌아가 수정(v3.182)
 interface ChatMessage { type: 'director' | 'user'; text: string; step?: Step }
@@ -91,9 +91,6 @@ export default function VideoDirectorScreen({ navigation }: any) {
   const [pickedLyricsMode, setPickedLyricsMode] = useState<'scroll' | 'line'>('scroll');
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
-  // v3.182: 보관함
-  const [library, setLibrary] = useState<any[]>([]);
-  const [libraryLoading, setLibraryLoading] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const [videoCost, setVideoCost] = useState<number | null>(null);
 
@@ -363,36 +360,6 @@ export default function VideoDirectorScreen({ navigation }: any) {
     }
   };
 
-  // v3.182: 보관함 — 서버에 캐시된 내 공유영상 목록
-  const openLibrary = async () => {
-    setStep('library');
-    setLibraryLoading(true);
-    pushUser('내 영상 보관함', 'pick');
-    try {
-      console.info('[VideoDirector] calling /tracks/my/share-videos');
-      const res = await api.get('/tracks/my/share-videos');
-      setLibrary(res.data?.items || []);
-      pushDirector(
-        (res.data?.items || []).length
-          ? '지금까지 만든 영상들이에요. 탭하면 다시 보고 저장할 수 있어요.'
-          : '아직 만든 영상이 없어요. 곡을 골라 첫 영상을 만들어볼까요?'
-      );
-    } catch (err: any) {
-      console.error('[VideoDirector] 보관함 로드 실패', { status: err?.response?.status });
-      pushDirector('보관함을 불러오지 못했어요. 잠시 후 다시 시도해주세요.');
-    } finally {
-      setLibraryLoading(false);
-    }
-  };
-
-  const openLibraryItem = (item: any) => {
-    setVideoUrl(`${BACKEND_BASE_URL}/api/tracks/share-video/object/${item.object_name}`);
-    setMadeFormat(item.format);
-    pushUser(`${item.title} (${item.format})`, 'library');
-    pushDirector('불러왔어요! 아래에서 다시 보고, 저장하거나 공유해보세요.');
-    setStep('done');
-  };
-
   const handleAnotherFormat = () => {
     setVideoUrl(null);
     pushDirector('다른 형태로도 만들어 볼까요? 형식을 골라주세요!');
@@ -498,11 +465,6 @@ export default function VideoDirectorScreen({ navigation }: any) {
           loadingTracks ? <ActivityIndicator size="small" color={colors.accent.primary} />
           : (
             <View>
-              {/* v3.182: 보관함 진입 */}
-              <TouchableOpacity style={styles.libraryBtn} onPress={openLibrary} activeOpacity={0.8}>
-                <Feather name="folder" size={14} color={colors.accent.primary} />
-                <AppText style={styles.libraryBtnText}>내 영상 보관함</AppText>
-              </TouchableOpacity>
               {tracks.length === 0 ? (
                 <AppText variant="footnote" tone="muted" center>아직 발매한 곡이 없어요. 작곡 디렉터에게 먼저 곡을 부탁해보세요!</AppText>
               ) : (
@@ -522,27 +484,6 @@ export default function VideoDirectorScreen({ navigation }: any) {
                 </ScrollView>
               )}
             </View>
-          )
-        )}
-        {step === 'library' && (
-          libraryLoading ? <ActivityIndicator size="small" color={colors.accent.primary} />
-          : (
-            <ScrollView style={{ maxHeight: 240 }}>
-              {library.length === 0 ? (
-                <TouchableOpacity style={styles.outlineBtn} onPress={handleAnotherTrack}>
-                  <AppText style={styles.outlineBtnText}>곡 고르러 가기</AppText>
-                </TouchableOpacity>
-              ) : library.map((it, i) => (
-                <TouchableOpacity key={i} style={styles.trackRow} onPress={() => openLibraryItem(it)} activeOpacity={0.75}>
-                  <Feather name="film" size={18} color={colors.accent.primary} />
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <AppText style={styles.trackTitle} numberOfLines={1}>{it.title}</AppText>
-                    <AppText variant="caption" tone="muted">{it.format === 'wide' ? '와이드 가로' : it.format === 'kakao' ? '카톡 프로필' : 'SNS 세로'}</AppText>
-                  </View>
-                  <Feather name="chevron-right" size={16} color={colors.text.muted} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
           )
         )}
         {step === 'format' && (
@@ -735,12 +676,6 @@ const styles = StyleSheet.create({
   },
   outlineBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 13 },
   inputArea: { borderTopWidth: 1, borderTopColor: colors.border.subtle, padding: 12, paddingBottom: 20 },
-  libraryBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    borderWidth: 1, borderColor: colors.accent.primary, borderStyle: 'dashed',
-    borderRadius: 10, paddingVertical: 9, marginBottom: 10,
-  },
-  libraryBtnText: { color: colors.accent.primary, fontWeight: '700', fontSize: 13 },
   trackRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 8,
     borderBottomWidth: 1, borderBottomColor: colors.border.subtle,

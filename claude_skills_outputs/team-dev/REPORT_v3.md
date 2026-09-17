@@ -3620,3 +3620,13 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **요청**: 공유영상에 찍히는 것이 플레이어 UI 뱃지와 동일하게 보여야 함(다르게 보인다).
 
 **수행**: 워터마크 PNG를 UI 뱃지 스펙 그대로 재현 — 검은 55% 라운드 칩 + 흰 85% 볼드 "AI 생성"(MAIDOL 텍스트 제거), 크기·우하단 여백도 UI 비율(높이≈폭의 3.7%, 여백≈2%)로. 3포맷 공통, 직전 v6 캐시 정리 후 재생성 프레임으로 우하단 뱃지 확인(v3185_frame.png).
+
+---
+
+## v3.187 — 2026-09-17 — 영상 디렉터 보관함 제거
+
+**요청**: 보관함이 따로 필요 없을 것 같으니 영상 디렉터에서 안 보이게.
+
+**수행**: VideoDirectorScreen.tsx에서 보관함 전면 제거 — Step 'library' 타입, library/libraryLoading 상태, openLibrary/openLibraryItem 핸들러, pick 단계 '내 영상 보관함' 진입 버튼, library 단계 렌더 블록, libraryBtn 스타일 2종. 백엔드 API(GET /tracks/my/share-videos 등)는 존치(다른 호출처 없음·무해, 추후 재노출 대비). tsc 0에러, E2E로 곡 선택 단계 도달 + 보관함 문구 부재 확인.
+
+**특이(별건, AWS 이사 잔재 2건 동시 수정)**: E2E 중 발견 — ①POST /api/_logs/frontend 500(컨테이너 비루트가 /srv/app/logs 생성 불가) → Dockerfile에 logs 디렉토리 사전 생성+chown ②/api/dm/ws 웹소켓 404(nginx 업그레이드 헤더 미전달) → websocket_upgrade.conf map + proxy_http_version 1.1/Upgrade/Connection 헤더 추가, EC2 재빌드·reload 반영.

@@ -2443,3 +2443,18 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 ### findings/조치
 - 커버 이미지의 가시 워터마크는 없음(비가시 메타만) — 대표 의도 = 예전 drawtext형 "MAIDOL · AI 생성" 스타일. → 워터마크 PNG 재합성: 심볼 제거, MAIDOL(AI만 보라)+' · AI 생성' 텍스트만(그림자 포함, 2x 렌더). 배치: 3포맷 모두 우측 '최하단'(kakao 포함 — 기존 y=0.55H에서 이동, 자막권과 분리), 높이 40~44로 축소. 구 심볼 v6 캐시 4개 수동 삭제(이름 유지 재생성).
 - 검증 중 '우상단 이중 워터마크' 의심 → 프레임 원본 픽셀 크롭으로 **부재 확인**(뷰어 아티팩트) — 실영상은 우하단 1개.
+
+---
+
+## v3.187 — 2026-09-17 — 영상 디렉터 보관함 제거 (팀데브 엔터테인먼트)
+
+**요청 원문**: "보관함이 따로 필요할것같진 않아서 지금 영상 디렉터쪽에서 안보여도 좋을것 같아"
+
+### Plan verification findings
+- `2_housing/screens/VideoDirectorScreen.tsx` — v3.182에서 추가한 보관함: Step 'library', state library/libraryLoading(95-96행), openLibrary/openLibraryItem(366-394행), pick 단계 진입 버튼(501-505행), library 단계 렌더 블록(527-547행), styles.libraryBtn/libraryBtnText.
+- 백엔드 `GET /tracks/my/share-videos` + `GET /tracks/share-video/object/{name}` — 프론트 보관함 외 호출처 없음. **제거하지 않고 존치**(무해, 추후 마이페이지 등 재활용 여지·대표 "지금 영상 디렉터쪽에서"라는 한정 표현 반영).
+- 기존 기능 영향 지점: pick 단계 곡 목록 렌더(동일 View 내), done 단계 저장/공유(무관), handleEditChoice 롤백(step 'library'는 user 버블에 기록 안 되던 구조 → 안전).
+
+### 계획
+1. FE 단독: 보관함 관련 타입·상태·핸들러·UI·스타일 제거(위 6개 지점). 백엔드 무변경.
+2. 검증: tsc, E2E(로그인→작업실→영상 디렉터 대화→곡 선택 단계 도달 + '내 영상 보관함' 문구 부재).
