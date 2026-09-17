@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// 백엔드 서버 — 기본값은 Tailscale 내부망(개발), 배포/AWS 이전 시 EXPO_PUBLIC_API_URL 로 교체(재빌드만으로 전환)
-// 포트 9004: image_model 선택 + upload-original-photo + used_items 영속화 지원
-export const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://100.127.225.55:9004';
+// 백엔드 서버 — AWS 이전 완료(2026-09-17): 기본값 = AWS EC2 (api.maidol.ai.kr, backend_9004 동일 코드).
+// 로컬/구서버로 되돌리려면 EXPO_PUBLIC_API_URL=http://100.127.225.55:9004 로 실행(재빌드만으로 전환).
+export const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.maidol.ai.kr';
 
 const baseURL = `${BACKEND_BASE_URL}/api`;
 console.log('[API] Base URL:', baseURL);
