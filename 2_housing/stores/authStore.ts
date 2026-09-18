@@ -50,7 +50,8 @@ interface AuthState {
     displayTitle?: string,
     extra?: Record<string, any>  // birth_date/nationality/gender/region/consents/referral_code (현행 백엔드 필수 필드 포함)
   ) => Promise<boolean>;
-  updateProfile: (patch: ProfilePatch) => Promise<boolean>;
+  // v3.190: starGranted — 프로필 완성 보상 ⭐10 이 이번 저장으로 지급됐는지(1회성)
+  updateProfile: (patch: ProfilePatch) => Promise<{ ok: boolean; starGranted?: boolean }>;
   /** v3.92: 서버 반영 후 로컬 user 부분 갱신(프로필 이미지·getMe 보강 등) */
   setUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
@@ -130,18 +131,19 @@ export const useAuthStore = create<AuthState>((set) => ({
         if (patch[key] !== undefined) body[key] = patch[key];
       });
       const res = await api.patch('/auth/me/profile', body);
-      const updated = res.data?.user ?? res.data;
+      // v3.190: profile_bonus_granted 는 1회성 응답 플래그 — user 상태에 섞지 않고 분리
+      const { profile_bonus_granted, ...updated } = res.data?.user ?? res.data ?? {};
       set((state) => ({
         user: state.user ? { ...state.user, ...updated } : state.user,
         isLoading: false,
       }));
-      return true;
+      return { ok: true, starGranted: !!profile_bonus_granted };
     } catch (err: any) {
       set({
         error: err.response?.data?.detail || err.response?.data?.error || '프로필 수정에 실패했습니다.',
         isLoading: false,
       });
-      return false;
+      return { ok: false };
     }
   },
   setUser: (patch) =>

@@ -175,12 +175,17 @@ export default function SettingsScreen({ navigation }: any) {
       console.info('[SettingsScreen] profile save start', { snsCount: snsLinks.length, verifiedLocked });
     }
     setEditSaving(true);
-    const ok = await updateProfile(patch);
+    const { ok, starGranted } = await updateProfile(patch);
     setEditSaving(false);
     if (ok) {
-      console.info('[SettingsScreen] profile save success');
+      console.info('[SettingsScreen] profile save success', { starGranted });
       setShowProfileEdit(false);
-      showAlert('완료', '프로필이 업데이트되었습니다.');
+      // v3.190: 프로필 완성 보상 — 생년월일·성별·지역 3종 완성 시 1회 ⭐10
+      if (starGranted) {
+        showAlert('⭐10 지급 완료!', '프로필을 완성해주셔서 감사합니다. 스타 10개를 드렸어요.');
+      } else {
+        showAlert('완료', '프로필이 업데이트되었습니다.');
+      }
     } else {
       console.error('[SettingsScreen] profile save failed');
       showAlert('오류', useAuthStore.getState().error || '저장에 실패했습니다. 잠시 후 다시 시도해주세요.');
@@ -476,6 +481,12 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.emailText}>{user.email}</AppText>
           <TouchableOpacity style={styles.profileEditBtn} onPress={openProfileEdit}>
             <AppText style={styles.profileEditBtnText}>기획사 정보 편집</AppText>
+            {/* v3.190: 프로필(생년월일·성별·지역) 미완성 시 ⭐10 보상 배지 노출 */}
+            {!(user.birth_date && user.gender && user.region) ? (
+              <View style={styles.verifyBadge}>
+                <AppText variant="caption" style={styles.verifyBadgeText}>완성하고 ⭐10 받기</AppText>
+              </View>
+            ) : null}
           </TouchableOpacity>
         </View>
 
@@ -1120,6 +1131,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   profileEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 12,
     paddingHorizontal: 14,
     paddingVertical: 8,

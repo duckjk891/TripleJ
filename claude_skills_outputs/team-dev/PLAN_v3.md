@@ -2474,3 +2474,18 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 ### 변경
 - FE SettingsScreen: 내 정산 행 삭제 → 본인인증 행(미인증: 보라 배지 "인증하고 ⭐30 받기"+준비 중 팝업 / 인증: "완료"). App.tsx Royalty 라우트 3처 제거, RoyaltyScreen.tsx 삭제.
 - BE oauth.py: VERIFIED_PROVIDERS = set() (소셜 자동승격 폐지 — 인증은 다날/포트원 PASS 연동 시). EC2 배포 완료.
+
+---
+
+## v3.190 — 2026-09-17 — 프로필 완성 보상 ⭐10 (선택동의 스타 채우기)
+
+**요청 원문**: "선택동의 스타 채우기 진행해줘. 아직 다날 인증은 마무리된게 아니니까 지금은 인증하지 않게 해두는게 맞아"
+
+### Plan verification findings
+- 저장 경로: FE SettingsScreen 기획사 정보 편집 → authStore.updateProfile → PATCH /auth/me/profile(auth.py:413) — 인구통계 3종(birth_date/gender/region) 선택 입력·검증·인증잠금 기존재.
+- 보상 인프라: points_service.credit_points(user, action, amount, ref, day) — (user,action,ref,day) 멱등, True=신규 지급. signup_bonus/verify_bonus 와 동일 패턴 재사용.
+- 본인인증은 v3.189 상태 유지(준비 중 팝업) — 이번 작업에서 인증 활성화 없음(대표 지시 부합).
+
+### 변경
+- BE auth.py update_profile: 저장 후 3종 모두 채워지면 credit_points("profile_bonus", 10, ref="-", day="-") best-effort + 응답에 profile_bonus_granted. EC2 배포.
+- FE authStore.updateProfile: 반환 {ok, starGranted}(플래그는 user 상태에서 분리). SettingsScreen: 저장 성공+지급 시 "⭐10 지급 완료!" 팝업, 기획사 정보 편집 버튼에 미완성 시 "완성하고 ⭐10 받기" 배지.
