@@ -39,8 +39,10 @@ router = APIRouter(prefix="/api/auth/oauth")
 
 OAUTH_STATE_TTL = 300  # 5분
 
-# 본인인증으로 취급하는 provider (실명 기반 가입 — 인증 트랙 분리)
-VERIFIED_PROVIDERS = {"naver", "kakao"}
+# v3.189(대표 확정): 소셜 로그인은 본인인증 트랙이 아님 — 인증(is_verified 승격,
+# verify_bonus ⭐30, 얼굴 등록 게이트 해제)은 별도 휴대폰 본인인증(다날/포트원 PASS,
+# 연동 예정)으로만 수행한다. (변경 전: {"naver", "kakao"} 로그인 시 자동 승격)
+VERIFIED_PROVIDERS: set = set()
 
 SELECT_COLS = "id, email, nickname, profile_image, role, is_verified, verify_provider"
 
