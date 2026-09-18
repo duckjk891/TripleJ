@@ -3630,3 +3630,13 @@ AIDOL 전 화면(맵 제외)이 공용 컴포넌트 `AppText` 기반으로 통�
 **수행**: VideoDirectorScreen.tsx에서 보관함 전면 제거 — Step 'library' 타입, library/libraryLoading 상태, openLibrary/openLibraryItem 핸들러, pick 단계 '내 영상 보관함' 진입 버튼, library 단계 렌더 블록, libraryBtn 스타일 2종. 백엔드 API(GET /tracks/my/share-videos 등)는 존치(다른 호출처 없음·무해, 추후 재노출 대비). tsc 0에러, E2E로 곡 선택 단계 도달 + 보관함 문구 부재 확인.
 
 **특이(별건, AWS 이사 잔재 2건 동시 수정)**: E2E 중 발견 — ①POST /api/_logs/frontend 500(컨테이너 비루트가 /srv/app/logs 생성 불가) → Dockerfile에 logs 디렉토리 사전 생성+chown ②/api/dm/ws 웹소켓 404(nginx 업그레이드 헤더 미전달) → websocket_upgrade.conf map + proxy_http_version 1.1/Upgrade/Connection 헤더 추가, EC2 재빌드·reload 반영.
+
+---
+
+## v3.189 — 2026-09-17 — 본인인증 정책 정리(내 정산 제거·⭐30 노출·소셜 자동인증 폐지)
+
+**요청**: 나이·지역 필드 사유 확인 / 내 정산 제거 / 소셜 가입과 본인인증 분리(얼굴 등록 게이트) / 인증 ⭐ 보상 노출.
+
+**수행**: ①나이·지역 = v3.92 마케팅용 선택 인구통계로 확인(인증 시 생년월일·성별 잠금 로직 기존재, 유지) ②내 정산 화면·메뉴·라우트 전면 제거 ③카카오/네이버 로그인 자동 is_verified 승격 폐지(VERIFIED_PROVIDERS 빈 set, EC2 반영) — 얼굴 등록은 face_verify 기존 게이트(is_verified 선행)로 별도 본인인증 완료자만 가능 ④설정>계정 관리에 본인인증 행 신설: 미인증 시 "인증하고 ⭐30 받기" 배지 + 준비 중 팝업(보상·얼굴 등록 고지), 인증 시 "완료". verify_bonus ⭐30은 기존 백엔드 로직 재사용(PASS 연동 시 자동 지급).
+
+**특이**: 실제 휴대폰 본인인증은 다날/포트원 계약 진행 중 — 연동정보 수령 후 후속 버전에서 인증 플로우 연결 예정.

@@ -2458,3 +2458,19 @@ Agency/ArtistDetail/ArtistResult/Settings/WaitTimer/Map/Splash/Dialogue/MusicGen
 ### 계획
 1. FE 단독: 보관함 관련 타입·상태·핸들러·UI·스타일 제거(위 6개 지점). 백엔드 무변경.
 2. 검증: tsc, E2E(로그인→작업실→영상 디렉터 대화→곡 선택 단계 도달 + '내 영상 보관함' 문구 부재).
+
+---
+
+## v3.189 — 2026-09-17 — 본인인증 정책 정리(내 정산 제거·⭐30 노출·소셜 자동인증 폐지)
+
+**요청 원문**: 본인인증은 14세 미만용이자 얼굴 등록·개인정보(마케팅) 목적. ①기획사 정보 편집의 나이·지역은 왜 있나 ②내 정산 제거 ③구글/카카오 가입 시 본인인증 별도(그래야 얼굴 등록) ④본인인증 ⭐ 보상 잘 보이게.
+
+### Plan verification findings
+- ①답변: 생년월일·성별·지역은 v3.92(A-18)에서 **마케팅용 인구통계(전부 선택 입력)** 로 의도 추가된 것. 이미 `user.is_verified`면 생년월일·성별 잠금(인증값 우선) 로직 존재 — 대표 의도와 정합, 유지.
+- ③은 백엔드에 이미 구조 존재: face_verify.py 게이트 순서 = flag → **is_verified** → 동의 → 대조(얼굴 등록은 본인인증 선행 필수). 단 oauth.py VERIFIED_PROVIDERS={"naver","kakao"}로 카카오 로그인 시 자동 is_verified 승격 — 대표 방침(소셜≠인증)과 충돌 → 빈 set으로 변경.
+- ④보상도 기존 존재: verify_bonus ⭐30(oauth._promote_verification, 영구 1회 멱등) — UI 노출만 부재.
+- ②내 정산 = RoyaltyScreen + SettingsScreen 502행 메뉴 + App.tsx 라우트.
+
+### 변경
+- FE SettingsScreen: 내 정산 행 삭제 → 본인인증 행(미인증: 보라 배지 "인증하고 ⭐30 받기"+준비 중 팝업 / 인증: "완료"). App.tsx Royalty 라우트 3처 제거, RoyaltyScreen.tsx 삭제.
+- BE oauth.py: VERIFIED_PROVIDERS = set() (소셜 자동승격 폐지 — 인증은 다날/포트원 PASS 연동 시). EC2 배포 완료.

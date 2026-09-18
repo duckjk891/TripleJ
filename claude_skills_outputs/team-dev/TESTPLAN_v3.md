@@ -1520,3 +1520,16 @@
 | 2 | Given 전체 FE When tsc --noEmit Then 에러 0 | [unit] | PASS |
 | 3 | Given 로그인 상태 When 작업실→영상 디렉터→대화 진행 Then 곡 선택 단계 도달·곡 목록 표시·'내 영상 보관함' 버튼 부재 | [e2e] | PASS (v3187_3_pick.png) |
 | 4 | (회귀) Given 곡 선택 단계 When 화면 렌더 Then 기존 곡 행 UI(커버·제목·chevron) 유지 | [e2e] | PASS (동일 스크린샷) |
+
+---
+
+## v3.189 — 2026-09-17 — 본인인증 정책 정리
+
+| # | 시나리오 | 태그 | 결과 |
+|---|---|---|---|
+| 1 | Given FE 소스 When Royalty grep Then App.tsx·Settings 참조 0건, 스크린 삭제 | [unit] | PASS |
+| 2 | Given FE When tsc --noEmit Then 0에러 | [unit] | PASS |
+| 3 | Given oauth.py When py_compile+배포 Then EC2 ready 200 | [api] | PASS |
+| 4 | Given 로그인 상태 When 마이페이지→설정 Then '내 정산' 부재·'본인인증'+⭐30 배지 노출 | [e2e] | PASS (v3189_settings.png) |
+| 5 | Given 미인증 계정 When 본인인증 탭 Then 준비 중 팝업(⭐30·얼굴 등록 고지) | [e2e] | PASS (동일 캡처) |
+| 6 | (회귀) 계정 관리 섹션 나머지 행(닉네임·비번·신고 내역) 유지 | [e2e] | PASS (동일 캡처) |

@@ -495,12 +495,32 @@ export default function SettingsScreen({ navigation }: any) {
           <AppText style={styles.settingLabel}>비밀번호 변경</AppText>
           <AppText style={styles.settingArrow}>{'>'}</AppText>
         </TouchableOpacity>
+        {/* v3.189(대표): 내 정산 제거 → 본인인증 진입(미인증이면 ⭐30 보상 노출).
+            실제 PASS 연동 전이라 미인증 탭은 준비 중 안내 — 얼굴 등록의 선행 조건임을 함께 고지 */}
         <TouchableOpacity
           style={styles.settingRow}
-          onPress={() => navigation.navigate('Royalty' as never)}
+          onPress={() => {
+            if (user?.is_verified) {
+              showAlert('본인인증 완료', '본인인증이 완료된 계정입니다. 얼굴 등록 등 인증이 필요한 기능을 모두 사용할 수 있어요.');
+            } else {
+              showAlert(
+                '본인인증 (준비 중)',
+                '휴대폰 본인인증 기능을 준비하고 있어요.\n\n인증을 완료하면 ⭐30을 드리고, 내 얼굴로 아티스트를 만드는 얼굴 등록 기능을 사용할 수 있게 됩니다.'
+              );
+            }
+          }}
         >
-          <AppText style={styles.settingLabel}>내 정산</AppText>
-          <AppText style={styles.settingArrow}>{'>'}</AppText>
+          <AppText style={styles.settingLabel}>본인인증</AppText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {user?.is_verified ? (
+              <AppText variant="footnote" tone="accent">완료</AppText>
+            ) : (
+              <View style={styles.verifyBadge}>
+                <AppText variant="caption" style={styles.verifyBadgeText}>인증하고 ⭐30 받기</AppText>
+              </View>
+            )}
+            <AppText style={styles.settingArrow}>{'>'}</AppText>
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.settingRow, styles.settingRowLast]}
@@ -966,6 +986,17 @@ const styles = StyleSheet.create({
   settingArrow: {
     fontSize: 16,
     color: colors.text.muted,
+  },
+  // v3.189: 본인인증 보상 배지 — 미인증 사용자에게 ⭐30 인센티브 상시 노출
+  verifyBadge: {
+    backgroundColor: colors.accent.primary,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  verifyBadgeText: {
+    color: '#fff',
+    fontWeight: '700',
   },
   logoutButton: {
     marginTop: 30,

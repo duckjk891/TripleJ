@@ -67,7 +67,6 @@ import VideoDirectorScreen from './screens/VideoDirectorScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import LevelUpModal from './components/LevelUpModal';
 import AppDialogHost from './components/AppDialogHost';
-import RoyaltyScreen from './screens/RoyaltyScreen';
 import ArtistInputScreen from './screens/ArtistInputScreen';
 import ArtistLoadingScreen from './screens/ArtistLoadingScreen';
 import FaceVerifyScreen from './screens/FaceVerifyScreen';
@@ -159,7 +158,6 @@ export type RootStackParamList = {
   CoverLibrary: { select?: boolean } | undefined;
   AgencyProfile: { uploaderNickname: string; uploaderId?: string };
   DirectorLineup: undefined;
-  Royalty: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -539,7 +537,6 @@ export default function App() {
             <RootStack.Screen name="CoverLibrary" component={CoverLibraryScreen} options={({ navigation }) => stackHeader(navigation, '커버 보관함')} />
             <RootStack.Screen name="AgencyProfile" component={AgencyProfileScreen} />
             <RootStack.Screen name="DirectorLineup" component={DirectorLineupScreen} />
-            <RootStack.Screen name="Royalty" component={RoyaltyScreen} />
           </RootStack.Navigator>
           {/* 미니 플레이어 - 탭 바 위에 absolute 배치. 설정 등 모달 라우트에선 숨김(재생은 유지) */}
           {!HIDE_MINIPLAYER_ROUTES.includes(currentRoute ?? '') ? <MiniPlayerWrapper /> : null}
