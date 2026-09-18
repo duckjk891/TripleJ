@@ -504,7 +504,21 @@ async def update_profile(
             "[profile] sns_links updated user=%s count=%d",
             str(row["id"])[:8], len(sns_links_value),
         )
+    # v3.190(대표): 프로필 완성 보상 — 생년월일·성별·지역 3종이 모두 채워지면 영구 1회 ⭐10.
+    # (본인인증 verify_bonus ⭐30 과 별개. day="-"+ref="-" → (유저, profile_bonus) 멱등 —
+    #  값을 지웠다 다시 채워도 재지급되지 않는다. best-effort: 실패해도 저장 응답은 정상)
+    profile_bonus_granted = False
+    if row["birth_date"] and row["gender"] and row["region"]:
+        try:
+            profile_bonus_granted = await credit_points(
+                str(row["id"]), "profile_bonus", 10, ref="-", day="-"
+            )
+            if profile_bonus_granted:
+                logger.info("[star-econ] profile_bonus +10 user=%s", str(row["id"])[:8])
+        except Exception:
+            logger.exception("[star-econ] profile_bonus failed user=%s", str(row["id"])[:8])
     return {
+        "profile_bonus_granted": profile_bonus_granted,
         "id": str(row["id"]),
         "email": row["email"],
         "nickname": row["nickname"],
