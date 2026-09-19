@@ -1936,3 +1936,34 @@ v38 설계 문서 기반 Phase 1 MVP 전체 구현.
 2. Settings → 내 정산 → 가격 분해 카드에 동일 분배 확인
 3. 작곡 디렉터 흐름 — 키(case 11) 다음에 **페르소나 모델 단계(case 12)** 등장. Style/Voice 라디오 + 자동/적용
 4. 페르소나 선택 후 곡 만들기 → musicStore에 personaModel 저장, /generate API에 persona_model 전달
+
+---
+
+## v3.191 — 2026-09-19 — NowPlaying(PlayerScreen) 안전 영역 준수 — 상·하단 시스템 UI 겹침 해소
+
+**요청 원문**: "nowplaying 플레이어 화면에서 상단, 하단에 모바일 ui를 넘어서서 앱 ui가 배치되어있어. 이거 안전 영역 안으로 배치해줘야지 모바일 ui랑 겹치면 안되잖아"
+
+### 수행 결과
+- **원인**: PlayerScreen이 전 화면 중 유일하게 RN 코어 `SafeAreaView`(iOS 전용) 사용 + `app.json` `edgeToEdgeEnabled: true`(Expo SDK 54 기본) → Android에서 헤더가 상태바 아래로, 하단 상세토글이 제스처 바와 겹침.
+- **수정**: `2_housing/screens/PlayerScreen.tsx` 단독(11+/4-), 프로젝트 관행(useSafeAreaInsets) 준수.
+  | 지점 | 변경 |
+  |---|---|
+  | import(19행) | 코어 SafeAreaView 제거 → `useSafeAreaInsets`(safe-area-context ~5.6.0) |
+  | 루트(797행) | `<View style=[container, { paddingTop: insets.top, paddingBottom: insets.bottom }]>` |
+  | 재생목록 Modal 시트(1280행) | RN Modal은 루트 패딩 미상속 → `paddingBottom: insets.bottom + spacing.xxl` 인라인 보강 |
+  | 디버그 추적자(170행) | `__DEV__` 시 `[PlayerScreen] safe-area insets { top, bottom }` |
+- 이중 여백 방지: header/swipeUpButton 기존 상수 패딩 무변경, insets 사용처는 로그·루트·Modal 시트 3곳뿐. MiniPlayer는 App.tsx 래퍼가 이미 인셋 반영(무변경). 백엔드 무변경.
+
+### 테스트 결과 요약 (TESTPLAN.md v3.191, tester 2026-09-19)
+- **1차 게이트(머지) 통과**: [unit] U-1~U-10 전건 PASS (`tsc --noEmit` 기준선 0건 → 수정 후 0건, 변경 범위 PlayerScreen.tsx 단독 격리 확인). 버그 0건.
+- **[e2e] 정적 대체 실행**: adb·maestro·에뮬레이터·시뮬레이터 전무 → 계획된 다운그레이드 절차 적용. E-1~E-4 PASS(정적 근거), **UNVERIFIED 2건**:
+  - E-5 소형 기기(≈640dp) 토글 밀림 — coverH 산식(winH-460, 하한 180)이 인셋 패딩(48~72px)만큼 세로 슬랙 부족 가능. 기존 산식의 한계(이번 변경으로 신설된 위험 아님) — 실기기 실측 필요.
+  - E-6② 동영상 탭 렌더 — 실기기 스크린샷 1장 필요.
+
+### 특이사항
+- **릴리즈 게이트는 실기기 스크린샷 확인 후 확정** 필요(에뮬레이터 부재로 E2E가 정적 대체 검증으로 다운그레이드됨 — 명기). 확인 요청: ①Android 제스처 기기 플레이어 풀샷 ②재생목록 시트 하단 ③iPhone 노치 3장(기본/상세패널/재생목록) ④소형 기기 하단 토글 ⑤동영상 탭.
+- E-5는 FAIL이어도 후속 픽스 티켓 분류(기존 coverH 산식 한계) — 단독 릴리즈 보류 사유 아님.
+- 산출물 정리: 2_housing/PLAN.md·REPORT.md → claude_skills_outputs/team-dev/ `git mv` 완료(v3.191부터 이 파일에 누적).
+
+### 판정
+- planner 최종 확인: **승인** — PLAN v3.191 변경 매트릭스 대비 구현 충실(diff 직접 검토), 머지 게이트 통과. preview APK 빌드 진행 가능. 릴리즈 확정은 위 실기기 확인 목록 회신 후.

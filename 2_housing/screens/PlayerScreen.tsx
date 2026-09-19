@@ -9,7 +9,6 @@ import {
   ScrollView,
   Modal,
   Animated,
-  SafeAreaView,
   Linking,
   FlatList,
   Platform,
@@ -17,6 +16,7 @@ import {
   useWindowDimensions,
   KeyboardAvoidingView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { showAlert } from '../utils/appAlert';
 import { Audio, Video, ResizeMode } from 'expo-av';
@@ -164,6 +164,12 @@ function RepeatIcon({ mode }: { mode: 'off' | 'all' | 'one' }) {
 
 export default function PlayerScreen({ route, navigation }: any) {
   const routeTrack: TrackData = route.params?.track;
+  // RN 코어 SafeAreaView는 iOS 전용이라 Android(edge-to-edge)에서 인셋 미적용 → insets 패딩으로 대체
+  const insets = useSafeAreaInsets();
+  useEffect(() => {
+    if (__DEV__) console.info('[PlayerScreen] safe-area insets', { top: insets.top, bottom: insets.bottom });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const playerStore = usePlayerStore();
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -788,7 +794,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       {/* Background gradient simulation */}
       <View style={styles.bgOverlay} />
 
@@ -1270,7 +1276,8 @@ export default function PlayerScreen({ route, navigation }: any) {
       />
       <Modal visible={showQueue} transparent animationType="slide" onRequestClose={() => setShowQueue(false)}>
         <TouchableOpacity style={styles.queueOverlay} activeOpacity={1} onPress={() => setShowQueue(false)}>
-          <TouchableOpacity style={styles.queueSheet} activeOpacity={1} onPress={() => {}}>
+          {/* Modal은 루트 인셋 패딩 미상속 → 하단 인셋을 시트에 직접 보강(styles.queueSheet의 paddingBottom 대체) */}
+          <TouchableOpacity style={[styles.queueSheet, { paddingBottom: insets.bottom + spacing.xxl }]} activeOpacity={1} onPress={() => {}}>
             <View style={styles.queueHead}>
               <AppText variant="title3">재생목록 {playerStore.queue.length}</AppText>
               <TouchableOpacity onPress={() => setShowQueue(false)} accessibilityLabel="닫기">
@@ -1296,7 +1303,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

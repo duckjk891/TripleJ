@@ -2410,3 +2410,29 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 ### 다음 작업 메모 (v46 후보)
 - **아티스트 의상/악세서리 잠금해제** (Phase 4 sub 3 정정) — ArtistCody 8 카테고리 안의 SAMPLE_ITEMS에 `unlockLevel` 필드 추가, 아티스트 레벨 미달이면 잠금 표시 + 미선택. 디렉터 의상/스킨은 범위에서 제외 (사용자 정책)
 
+
+---
+
+## v3.191 — 2026-09-19 — NowPlaying(PlayerScreen) 안전 영역 준수 — 상·하단 시스템 UI 겹침 해소
+
+**요청 원문**: "nowplaying 플레이어 화면에서 상단, 하단에 모바일 ui를 넘어서서 앱 ui가 배치되어있어. 이거 안전 영역 안으로 배치해줘야지 모바일 ui랑 겹치면 안되잖아"
+
+### Plan verification findings (0단계 사전 코드 분석)
+- **원인(핵심)**: `2_housing/screens/PlayerScreen.tsx:12` — `SafeAreaView`를 **`react-native` 코어**에서 import(791행 루트 래퍼, 1299행 닫힘). RN 코어 SafeAreaView는 **iOS 전용**(Android에서는 일반 View와 동일, 인셋 미적용).
+- **Android edge-to-edge**: `2_housing/app.json:35` `"android": { "edgeToEdgeEnabled": true }` — 앱이 상태바·내비게이션 바 밑까지 그려짐(Expo SDK 54 기본). 그 결과:
+  - 상단: 헤더(796행 렌더, styles.header 1324행 `paddingTop: 10`)가 상태바/노치 아래로 파고듦.
+  - 하단: 상세 토글 버튼(1013행, styles.swipeUpButton 1554행 `paddingBottom: 18`)이 제스처 바/내비게이션 바와 겹침. showDetails 패널(detailWrap, 1026행~)·재생목록 Modal 시트(1271행 queueSheet)도 하단 인셋 미반영.
+- **마운트 방식**: `App.tsx:502-505` — RootStack `presentation: 'modal'`, `animation: 'slide_from_bottom'`, headerShown:false. Android native-stack modal은 풀스크린 → 인셋 처리 전적으로 화면 책임.
+- **Provider/버전**: `App.tsx:29,483` SafeAreaProvider 정상 래핑. `react-native-safe-area-context ~5.6.0`(package.json:39).
+- **프로젝트 관행**: 전 화면이 `useSafeAreaInsets` 패턴 — 예: `FaceVerifyScreen.tsx:355` `paddingTop: insets.top + 8`(헤더), `DmChatScreen.tsx:158` 컨테이너 `paddingTop: insets.top`. **RN 코어 SafeAreaView를 쓰는 화면은 PlayerScreen이 유일**(관행 이탈 지점).
+- **MiniPlayer.tsx**: 자체 인셋 불필요 — `App.tsx:234-245` MiniPlayerWrapper가 `bottom: 49 + insets.bottom`(탭바 높이+인셋)으로 이미 안전 영역 반영. 이번 범위 제외.
+
+### 변경 매트릭스
+| 파일 | 변경 | 디버깅 추적자 |
+|------|------|--------------|
+| FE screens/PlayerScreen.tsx | ①import: RN 코어 SafeAreaView 제거 → `useSafeAreaInsets`(safe-area-context) ②루트: `<SafeAreaView styles.container>` → `<View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>` ③재생목록 Modal(RN Modal은 컨테이너 패딩 미상속): queueSheet에 `paddingBottom: insets.bottom + spacing.xxl` 인라인 보강 ④마운트 시 `__DEV__` 인셋 로그 | `[PlayerScreen] safe-area insets { top, bottom }` |
+
+### 특이사항
+- iOS pageSheet 모달에서는 safe-area-context가 모달 컨텍스트 인셋을 정확히 반환 — 이중 패딩 없음(코어 SafeAreaView 제거로 단일 소스화).
+- KeyboardAvoidingView(상세 패널)·swipeUpButton은 루트 paddingBottom 안쪽에 있으므로 개별 수정 불요 — 루트 1곳 + Modal 시트 1곳만.
+- 기존 파일 정리: `2_housing/PLAN.md`·`REPORT.md` → `claude_skills_outputs/team-dev/PLAN.md`·`REPORT.md` `git mv` 완료(v3.191, 본 엔트리부터 이 파일에 누적). TESTPLAN.md는 test-designer 산출 시 생성 예정.
