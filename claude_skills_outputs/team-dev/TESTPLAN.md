@@ -790,3 +790,6 @@
 **게이트 판정: 조건부 통과** — 코드 품질 게이트(U-1~U-13·U-15, API 3건, E 정적 대체) 전부 PASS. 유일 FAIL = U-14(커밋 스코프): 코드 결함 아님, **커밋 시 app.json은 expo-web-browser plugin 라인만 스테이징**(bundleId 변경·expo-media-library plugin·eas.json·metro.config.js·authService.ts 등 잔존분은 별도 커밋으로 분리 또는 리드 승인 후 동반 커밋 명시) 조건으로 통과. U-6 조건부: 백엔드 client=app 지원 확인을 릴리스 노트에 미해결로 명기.
 
 **프로브 기록**: google 프로브가 도구 호출 중복으로 GET 2회 발생(state 2건 생성 — 소모 없음·콜백 미호출로 오염 없음, 이후 kakao·naver는 각 1회 준수). /callback 직접 호출 0회.
+
+## v3.195 — 수정일 2026-09-20
+해당 없음 — 분석·DB 정리 전용 사이클(코드 수정 없음). DB 실행분 검증은 REPORT v3.195 사후 검증 항목으로 갈음.

@@ -2706,3 +2706,49 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
   1) `styles.companyBox`의 marginTop을 spacing.xl 이상으로 확대 — 소셜 버튼 블록과 시각·터치 분리.
   2) `CompanyFooter.openMail`: 즉시 `Linking.openURL('mailto:...')` 대신 `showAlert('고객센터', '고객센터(kimpearl@lotusai.co.kr)로 메일을 보낼까요?', [취소, 메일 열기])` 확인 다이얼로그 경유 — 오발송 차단 핵심 가드. utils/appAlert의 showAlert 사용(시스템 팝업 금지 방침 v3.85 준수).
 - 테스트(test-designer 추가): 로그인 화면·설정 화면 각각에서 고객센터 탭→다이얼로그 노출, 취소=무동작, "메일 열기"=메일 앱 오픈. 소셜 버튼과 고객센터 간 여백 확대 확인. 이용약관/개인정보처리방침 링크 동작 무회귀.
+
+## v3.195 — 2026-09-20 — [분석 전용] 카카오 콘솔 계정 단서 + 중복 곡 삭제 후보 조사 + 얼굴없이/커버 로직 분석 + 착장 크롤링 여부
+
+> 이번 사이클은 코드 수정 없음. DB는 조회만(삭제 후보 목록화) — 실제 삭제는 오케스트레이터가 사용자 확인 후 별도 실행.
+
+### A. 카카오 개발자 콘솔 계정 — 결론: 문서상 확인 불가 (등록 완료 정황은 확인됨)
+- 로컬 문서 전수 조사(2_housing/docs/OAUTH_SETUP.md, 백엔드_요청_소셜로그인_앱복귀.md, PLAN/REPORT v3.194, git log): 콘솔 등록 **절차 안내만 있고 어떤 계정으로 했는지 기록 없음**. REPORT v3.194에 "콘솔 설정은 사용자 작업 필요(코드로 해결 불가)"로 사용자에게 이관한 기록만 존재.
+- Gmail(kimpearl3599@gmail.com) 검색: Kakao Developers 발신 메일 0건 → 이 구글 메일 계정은 아닐 가능성 높음.
+- 서버 정황: 프로덕션 `/api/auth/oauth/kakao/login` → **302**(구글도 302) = KAKAO_CLIENT_ID `.env` 설정 완료(.env 최종 수정 2026-09-18 06:52 UTC). 즉 누군가(=사용자 본인 추정) 콘솔에서 REST API 키를 발급받아 전달/설정함.
+- **결론**: 카카오 개발자 콘솔은 카카오 계정으로 로그인하므로, 사용자가 developers.kakao.com 접속 시 자동 로그인되는 본인 카카오톡 계정일 가능성이 가장 높음. 확정은 developers.kakao.com → 우상단 프로필(계정 이메일)에서 직접 확인 필요.
+
+### B. "제목 끝 숫자" 중복 곡 삭제 후보 (Mongo aimu.tracks — 전체 28곡 중 7곡 해당, 조회만 수행)
+
+| # | track_id | 제목 | 생성일 | 소유자(닉네임) | 재생수 | 비고 |
+|---|---|---|---|---|---|---|
+| 1 | 69ce4c72b3d9beab06ce01f9 | 벚꽃피는 날 1 | 2026-04-02 | 오리쟁이 (18bd8131…) | 66 | 동일 generation_id 69cdf591… 6형제 |
+| 2 | 69ce559c95664045e593cc18 | 벚꽃피는 날 2 | 2026-04-02 | 오리쟁이 | 18 | 〃 |
+| 3 | 69ce5b1595664045e593cc1b | 벚꽃피는 날 3 | 2026-04-02 | 오리쟁이 | 16 | 〃 |
+| 4 | 69ce5cd4874e73f0eb1b07af | 벚꽃피는 날 4 | 2026-04-02 | 오리쟁이 | 65 | 〃 |
+| 5 | 69ce5f49d7bdcd377ca0e5e8 | 벚꽃피는 날 5 | 2026-04-02 | 오리쟁이 | 24 | 〃 |
+| 6 | 69ce6fa83e517ff3cdc103b0 | 벚꽃피는 날 6 | 2026-04-02 | 오리쟁이 | 16 | 〃 |
+| 7 | 6a718658fcd44fc403b85340 | starecon v158 upload test 1785824819 | 2026-08-04 | stareconA24819 (QA 계정) | 0 | 비공개 QA 업로드 테스트 잔재 |
+
+- **오삭제 위험군(전량 해당)**: 숫자 없는 원본 "벚꽃피는 날"이 **존재하지 않음** — 1~6 전부 지우면 곡 자체가 소멸. 6곡은 같은 generation_id의 변형이므로 "중복 정리"라면 **1곡은 남기는 안**(재생수 최다 = "벚꽃피는 날 1", 66회)을 권고. 몇 번을 남길지 사용자 확인 필요.
+- #7은 제목 끝 숫자가 붙었지만 중복 넘버링이 아닌 QA 테스트 곡(비공개·재생 0) — 삭제해도 무방하나 성격이 다르므로 별도 확인 항목.
+- 참고(패턴 밖 실제 중복): "Cherry Blossom Day" 2곡(6a126e48…/6a127418…, 무신사, 같은 generation_id) — 숫자 미부착이라 이번 후보에서 제외했으나 진짜 중복이므로 사용자에게 고지 권장.
+
+**안전 삭제 절차** — 백엔드에 완전 파기 공용 함수 기존재: `app/routes/tracks.py:870 purge_track_document()` (v138). 처리 범위: MinIO 오디오+전속 커버+공유영상 캐시(share/v5·v6), Mongo tracks, Redis 캐시(cache:track*·playcount buffer·차트 캐시 전체 무효화), ES 색인(es_delete_track), PG track_embeddings·likes, 소유자 앨범 카스케이드(빈 앨범 삭제). 관리자 API `DELETE /api/admin/tracks/{id}`(admin.py:477)도 있으나 **커버·공유영상·likes·앨범 카스케이드가 빠져 있어 purge 함수 직접 호출이 더 완전**함.
+- 권고 실행안(오케스트레이터): ① 사용자에게 위 표 확인(남길 곡 지정) → ② 서버 docker(maidol-app) 내부에서 purge_track_document 호출하는 1회성 스크립트 실행 → ③ purge가 안 지우는 잔여 2종 수동 정리: Mongo `track_comments.delete_many({track_id})`, PG `DELETE FROM playlist_tracks WHERE track_id=…`(조회 시 자동 skip되지만 orphan row 정리) → ④ 차트/검색에서 잔존 확인.
+
+### C. 얼굴 없이 만들기 · 캐릭터 시트 · 커버 이미지 로직 (파일:라인 근거)
+1) **앱 UI 존재함**: `2_housing/screens/ArtistInputScreen.tsx:574` "사진 없이 만들기" 버튼(v3.76/MAIDOL v161) → `handleTextOnly()`(:327) photoUri=null로 질문 플로우 진입. 실사/캐릭터(가상) 모드 모두 지원(:351,354).
+2) **캐릭터 시트 생성(얼굴 유/무 분기)**: 서버 `app/services/character_generator.py`. 2단계 파이프라인 — Step A 텍스트 모델(claude-opus-4-7 기본, :1025)이 시트 프롬프트 작성 → Step B 이미지 모델(gemini-3-pro-image-preview, 옵션 gpt_image_2, :1228)이 시트 이미지 생성. 분기는 :848 `has_photo`: **사진 있으면** [인물 사진] 정밀 분석(이목구비는 사진이 직접 기준) / **사진 없으면(v161)** "사용자 외모 설명이 유일한 정체성 소스 — 성별/나이/체형/얼굴형/머리/눈/피부톤을 설명에서 확정, 없는 요소는 K-pop 아이돌 프로필풍 자유 생성"(:880-892). 확정 특징은 [고정 요소]로 잠가 화풍 변환에도 보존. 인라인 이미지 파트에서 인물 사진만 생략(:947-961) — 이후 화풍·의상 참조 로직은 동일.
+3) **커버 디렉터 — 아티스트 없이**: 앱 `CoverGenerationScreen.tsx:645` "아티스트 빼고" → character_object_name null 전송. 서버 `app/routes/upload.py:387` character_object_name 없으면 시트 미로드 → `app/services/cover_generator.py:293` **[B] character-無 분기**: 스타일 제약 없음(사진·일러스트·애니 등 자유), 구도/초점 등 아트디렉션 지시 중심, 성별 절만 명시. 시스템 프롬프트도 "any artistic style" 아트디렉터 페르소나(:405).
+4) **얼굴 없이 만든 캐릭터로 커버**: 커버 파이프라인은 **원본 얼굴 사진을 전혀 쓰지 않고 캐릭터 "시트" 이미지만 참조** — upload.py:388-397이 MinIO에서 `characters.sheet_object_name`(실사)/`virtual_sheet_object_name`(가상) 오브젝트를 읽어 cover_generator [A] character-有 분기(:223)로 전달. 시트가 canonical(얼굴·머리·의상 그대로 유지 강제, :235-258; 착장 제품컷 추가 참조 v239, upload.py:414-430). 따라서 얼굴 없이(텍스트만) 만든 캐릭터도 **시트가 생성돼 있는 한 커버 생성 경로는 사진 기반 캐릭터와 100% 동일**. 가상 캐릭터는 화풍 라벨을 이어받아 일러스트 강제(:226-231), 실사는 photorealistic 강제(:244-258).
+
+### D. 착장(상의/하의/신발) 데이터 — 크롤링 코드 없음, 1회성 시드만
+- 데이터 소스: 서버 `seed_item_store.py`(v148) — **크롤러 아님**. 사전 준비된 item_images CSV(무신사·29cm·W컨셉·에이블리·지그재그·크림 6개 플랫폼)에서 이미지 URL을 받아 MinIO 업로드 + Mongo `ad_items` 시드하는 1회성 스크립트(seed_source 태깅 멱등). CSV 원본을 만든 크롤링 코드는 서버·로컬 어디에도 없음(수동 수집/외부 작업 추정). 현재 ad_items 455건 = 상의 157·하의 145·신발 153 — 카테고리도 이 3종뿐(악세서리·아우터 등 없음).
+- 서빙 경로: `app/routes/business.py`·`wishlist.py`·`admin_ads.py`가 ad_items 사용.
+- **자동화 주기 제안**: 패션 커머스 랭킹은 시즌/트렌드 회전이 주 단위 — **주 1회(예: 월요일 새벽) 갱신 + 시즌 전환기(3·6·9·12월) 전량 리프레시** 권장. 단, 대상 플랫폼들이 공식 API를 제공하지 않아 스크레이핑은 약관·robots 이슈가 있으므로, 자동화 전에 제휴/광고 계약(ad_items 구조가 이미 광고 모델임) 기반 피드 수급을 우선 검토할 것.
+- **관리자 페이지**: 백엔드에 admin API 7종(`app/routes/admin.py`·admin_ads·admin_cs·admin_points·admin_issues·admin_notices·admin_moderation, get_admin_user 인증)이 이미 있으나 **웹 프론트(관리자 화면)는 서버·로컬 어디에도 없음**(StaticFiles 마운트·admin 호출 프론트 코드 0건) — 현재는 API 직호출만 가능. 착장 데이터 갱신 자동화는 admin_ads(아이템 CRUD)와 직접 연관되므로, **관리자 페이지 구축 + 크롤링/피드 자동화는 사용자 요청대로 별도 세션으로 분리**할 것을 권고(범위: admin 웹 UI 신설, 아이템 스토어 관리 탭, 수동 트리거 + 스케줄 갱신).
+
+### 다음 액션 (오케스트레이터)
+1. 사용자에게 B 표 제시 → 남길 곡(벚꽃피는 날 중 1곡 권장)·QA 곡·Cherry Blossom Day 중복 처리 확인 후 삭제 실행.
+2. 카카오 콘솔 계정은 사용자 본인 확인(developers.kakao.com 프로필).
+3. 관리자 페이지 + 착장 자동화는 별도 세션 발제.
