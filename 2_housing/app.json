@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.triplej.studio",
+      "bundleIdentifier": "com.maidol.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
@@ -31,7 +31,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a1a"
       },
-      "package": "com.triplej.studio",
+      "package": "com.maidol.app",
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize"
     },
@@ -55,6 +55,13 @@
           "android": {
             "usesCleartextTraffic": true
           }
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "만든 공유 영상을 사진 앨범에 저장하기 위해 접근 권한이 필요합니다.",
+          "isAccessMediaLocationEnabled": false
         }
       ],
       [
