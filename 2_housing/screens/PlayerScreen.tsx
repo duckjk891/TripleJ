@@ -31,10 +31,12 @@ import LyricSyncView, { LyricSegment } from '../components/LyricSyncView';
 // v3.157(대표): 비트뷰 토글 제거 — components/BeatTrackView·beatsService는 보존(재도입 대비, 미사용)
 import DraggableQueue from '../components/DraggableQueue';
 import GuestQueueNoticeModal from '../components/GuestQueueNoticeModal';
+import PlaylistPickerSheet from '../components/PlaylistPickerSheet';
 import ReportModal from '../components/ReportModal';
 import { useArtistStore } from '../stores/artistStore';
 import { autoContinueWithRelated } from '../services/playback';
 import { useAuthStore } from '../stores/authStore';
+import { useLikesStore } from '../stores/likesStore';
 import { useWishlistStore } from '../stores/wishlistStore';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
@@ -175,11 +177,11 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showQueue, setShowQueue] = useState(!!route.params?.openQueue); // 미니플레이어에서 재생목록 바로열기
   const [showGuestNotice, setShowGuestNotice] = useState(false); // 비회원 담기 안내 팝업
+  const [showPlaylistPicker, setShowPlaylistPicker] = useState(false); // v3.193: 플레이리스트 담기 시트(회원)
   const [showReport, setShowReport] = useState(false);           // 신고 모달
   const user = useAuthStore((s) => s.user);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isLiked, setIsLiked] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);       // 드래그 중 슬라이더 위치(웹 리셋 방지)
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
@@ -242,6 +244,26 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   // v3.178: 댓글 수 선조회 — 액션 버튼·탭 배지가 상세 열기 전에도 보이도록 (곡 바뀌면 재조회)
   const trackIdForComments = track?.id ? String(track.id) : '';
+
+  // v3.193: 좋아요 = 전역 likesStore 구독(차트/검색 ⋮와 상태 공유) — 로컬 state 제거
+  const isLiked = useLikesStore((s) => !!s.liked[trackIdForComments]);
+  useEffect(() => {
+    // 곡 진입/전환 시 서버 좋아요 여부 동기화 (착장 위시 sync와 같은 로그인 가드 패턴)
+    if (!trackIdForComments || !user) return;
+    useLikesStore.getState().sync([trackIdForComments]);
+  }, [trackIdForComments, user]);
+  const handleToggleLike = () => {
+    if (!trackIdForComments) return;
+    if (!user) {
+      showAlert('알림', '로그인 후 이용할 수 있습니다.');
+      return;
+    }
+    if (__DEV__) console.info('[PlayerScreen] toggle like', { trackId: trackIdForComments });
+    // 낙관적 토글+실패 롤백은 store가 담당
+    useLikesStore.getState().toggle(trackIdForComments).catch((err: any) => {
+      console.error('[PlayerScreen] toggle like 실패', { message: err?.message });
+    });
+  };
   useEffect(() => {
     if (!trackIdForComments) { setCommentCount(null); return; }
     let alive = true;
@@ -780,8 +802,15 @@ export default function PlayerScreen({ route, navigation }: any) {
     showAlert(ok ? '재생목록 추가' : '알림', ok ? '재생목록에 추가되었어요.' : '이미 재생목록에 있어요.');
   };
 
+  // v3.193: 담기 = 회원이면 플레이리스트 담기 시트(공용 PlaylistPickerSheet), 비회원은 기존 큐 담기 폴백 유지
   const handleAddToPlaylist = () => {
-    if (!user && !playerStore.guestNoticeAck) {
+    if (user) {
+      if (!track?.id) return;
+      if (__DEV__) console.info('[PlayerScreen] open playlist picker', { trackId: String(track.id) });
+      setShowPlaylistPicker(true);
+      return;
+    }
+    if (!playerStore.guestNoticeAck) {
       if (__DEV__) console.info('[PlayerScreen] 비회원 담기 → 안내 팝업');
       setShowGuestNotice(true);
       return;
@@ -995,30 +1024,39 @@ export default function PlayerScreen({ route, navigation }: any) {
 
       {/* Action Buttons — v3.178(대표): 좋아요 · 댓글 · 담기 · 재생목록 순 */}
       <View style={styles.actionsRow}>
-        <TouchableOpacity
-          style={styles.actionBtn}
-          onPress={() => setIsLiked(!isLiked)}
-        >
-          <AppText variant="title2" tone={isLiked ? 'accent' : 'muted'}>
-            {isLiked ? '♥' : '♡'}
-          </AppText>
+        {/* v3.193: 좋아요 = likesStore 서버 연동 + 벡터 아이콘(텍스트 글리프 폐지, 정렬 통일) */}
+        <TouchableOpacity style={styles.actionBtn} onPress={handleToggleLike} accessibilityLabel="좋아요">
+          <View style={styles.actionIconBox}>
+            <MaterialCommunityIcons
+              name={isLiked ? 'heart' : 'heart-outline'}
+              size={24}
+              color={isLiked ? colors.accent.primary : colors.text.muted}
+            />
+          </View>
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>좋아요</AppText>
         </TouchableOpacity>
 
         {/* v3.178(대표): 댓글 = 하단 상세토글을 댓글 탭으로 연다. v3.180: 숫자는 패널 상단으로 */}
         <TouchableOpacity style={styles.actionBtn} onPress={openComments} accessibilityLabel="댓글">
-          <Feather name="message-circle" size={23} color={colors.text.muted} />
+          <View style={styles.actionIconBox}>
+            <Feather name="message-circle" size={24} color={colors.text.muted} />
+          </View>
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>댓글</AppText>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlaylist}>
-          <AppText variant="title2" tone="muted">+</AppText>
+        {/* v3.193: 담기 = 플레이리스트 담기(회원) / 비회원은 기존 안내 팝업 → 큐 폴백 */}
+        <TouchableOpacity style={styles.actionBtn} onPress={handleAddToPlaylist} accessibilityLabel="담기">
+          <View style={styles.actionIconBox}>
+            <Feather name="folder-plus" size={24} color={colors.text.muted} />
+          </View>
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>담기</AppText>
         </TouchableOpacity>
 
         {/* 재생목록(큐) */}
         <TouchableOpacity style={styles.actionBtn} onPress={() => setShowQueue(true)} accessibilityLabel="재생목록">
-          <Feather name="list" size={24} color={colors.text.muted} />
+          <View style={styles.actionIconBox}>
+            <Feather name="list" size={24} color={colors.text.muted} />
+          </View>
           <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>재생목록</AppText>
         </TouchableOpacity>
 
@@ -1027,7 +1065,9 @@ export default function PlayerScreen({ route, navigation }: any) {
         {/* 신고 — 본인 곡에는 표시하지 않는다 */}
         {!isMyTrack ? (
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowReport(true)} accessibilityLabel="신고">
-            <Feather name="flag" size={22} color={colors.text.muted} />
+            <View style={styles.actionIconBox}>
+              <Feather name="flag" size={24} color={colors.text.muted} />
+            </View>
             <AppText variant="caption" tone="muted" style={styles.actionLabelSpacing}>신고</AppText>
           </TouchableOpacity>
         ) : null}
@@ -1041,10 +1081,10 @@ export default function PlayerScreen({ route, navigation }: any) {
       <TouchableOpacity
         style={styles.swipeUpButton}
         onPress={() => setShowDetails(true)}
-        accessibilityLabel="가사 프롬프트 착장"
+        accessibilityLabel="가사 제작 노트 스타일링 댓글"
       >
         <View style={styles.swipeUpHandle} />
-        <AppText variant="footnote" tone="secondary">가사 · 프롬프트 · 착장 · 댓글</AppText>
+        <AppText variant="footnote" tone="secondary">가사 · 제작 노트 · 스타일링 · 댓글</AppText>
       </TouchableOpacity>
       </>
       )}
@@ -1105,7 +1145,7 @@ export default function PlayerScreen({ route, navigation }: any) {
             <View style={styles.sheetTabBar}>
               {(['lyrics', 'prompt', 'outfit', 'comments'] as const).map((tab) => {
                 // v3.180: 탭 라벨 숫자 제거 — 댓글 수는 패널 상단 "댓글 N개"로
-                const labels = { lyrics: '가사', prompt: '프롬프트', outfit: '착장', comments: '댓글' };
+                const labels = { lyrics: '가사', prompt: '제작 노트', outfit: '스타일링', comments: '댓글' };
                 return (
                   <Tag key={tab} label={labels[tab]} selected={detailTab === tab} onPress={() => setDetailTab(tab)} />
                 );
@@ -1290,6 +1330,12 @@ export default function PlayerScreen({ route, navigation }: any) {
         }}
         onClose={() => setShowGuestNotice(false)}
       />
+      {/* v3.193: 담기(회원) → 공용 플레이리스트 담기 시트 */}
+      <PlaylistPickerSheet
+        visible={showPlaylistPicker}
+        trackIds={track?.id ? [String(track.id)] : []}
+        onClose={() => setShowPlaylistPicker(false)}
+      />
       <ReportModal
         visible={showReport}
         targetType="track"
@@ -1346,6 +1392,8 @@ const styles = StyleSheet.create({
     maxWidth: '92%',
   },
   actionLabelSpacing: { marginTop: spacing.xxs },
+  // v3.193: 액션행 아이콘 고정 높이 박스 — 버튼별 라벨 시작 Y를 동일하게(정렬 통일)
+  actionIconBox: { height: 28, alignItems: 'center', justifyContent: 'center' },
   bgOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: colors.bg.deepest,

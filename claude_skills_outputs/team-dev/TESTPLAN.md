@@ -392,3 +392,203 @@
 1. 냥냥냥 재생: 1:31을 넘겨 계속 재생되는지 + 총시간 표시가 1:32, 1:33…으로 늘어나는 순간 스크린샷 1장, 끝(≈2:38)까지 재생되는지 여부
 2. 긴 제목 곡("더 나오려는 것을 막는 것일뿐") 플레이어 화면 풀샷 1장(제목 1줄 흐름 + 하단 컨트롤 위치) + 짧은 제목 곡 1장(가운데 정렬 확인)
 3. 차트 화면에서 긴 제목 행이 1줄로 흐르는지(행 높이 불변) 확인
+
+## v3.193 — 수정일 2026-09-20
+
+> 대상: NowPlaying 좋아요 서버 연동(A) · 담기→플레이리스트 담기(B) · 액션행 정렬 통일(C) · 비로그인 CTA 통일(E) · 스플래시 타이포 축소(F) · 상단바 로고 분절(G) + 무변경 확인(D) + v3.191/v3.192 무회귀(H).
+> 실행 환경 관행(v3.191~192 계승): 에뮬레이터/adb/maestro 부재 → [e2e]는 각 항목에 "정적 대체 검증"을 병기하고, 네이티브 실측은 실기기 확인 요청으로 이관. 코드 경로는 `/Users/pearl/TripleJ/2_housing` 기준.
+> 변경 허용 파일(격리 기준): `screens/PlayerScreen.tsx`, `screens/PlaylistScreen.tsx`, `screens/SearchScreen.tsx`, `screens/SplashScreen.tsx`, `App.tsx` — 이 5개 외 diff는 FAIL(단 v3.192 커밋 잔여분은 제외 판단).
+
+### [unit] 정적 검증 (머지 게이트)
+
+**U-1. 타입 무결성 [unit]**
+- Given: v3.193 변경이 적용된 워킹트리.
+- When: `cd 2_housing && npx tsc --noEmit`.
+- Then: exit 0, 오류 0건. (특히 B의 `trackIds: string[]` — `track.id`가 number일 가능성 대비 `[String(track.id)]` 변환 여부가 여기서 걸러짐.)
+
+**U-2. (A) 로컬 좋아요 state 완전 제거 [unit]**
+- Given: 변경 전 기준 `PlayerScreen.tsx:182` `const [isLiked, setIsLiked] = useState(false);`, `:1000` `setIsLiked(!isLiked)`.
+- When: `grep -n "setIsLiked\|\[isLiked" screens/PlayerScreen.tsx`.
+- Then: **0건**. `isLiked`라는 식별자가 남는다면 `useLikesStore` 파생값(예: `const liked = useLikesStore(...)`)만 허용 — `useState` 기반 잔존은 FAIL.
+
+**U-3. (A) useLikesStore 배선 3점 세트 [unit]**
+- Given: `stores/likesStore.ts`의 공개 API — `liked: Record<string,boolean>`, `sync(trackIds)`, `toggle(trackId)`(낙관적+롤백+busy 가드 내장).
+- When: PlayerScreen에서 ① 구독 `useLikesStore((s)=>!!s.liked[trackId])`(또는 `s.isLiked(trackId)` 동등식), ② trackId effect 내 로그인 시 `sync([trackId])`, ③ 하트 onPress 로그인 분기 `toggle(trackId)` / 비로그인 `showAlert('알림','로그인 후 이용할 수 있습니다.')`(착장 위시 관행) 존재를 grep으로 확인.
+- Then: 3점 모두 존재. 하트 렌더는 store 값만 참조(로컬 낙관적 state 중복 관리 금지 — 스토어가 낙관적 반영 담당). 로그 추적자 `[PlayerScreen] 좋아요 toggle` 존재.
+
+**U-4. (A·경계) 네트워크 실패 롤백 — store 로직 무변경 정적 검증 [unit]**
+- Given: `likesStore.ts` toggle의 catch 절 — 실패 시 `liked[trackId]=prev` 롤백, 단 `next && status===400`(이미 좋아요 중복)은 성공 취급, `busy` 가드로 중복 클릭 차단, sync의 401은 조용히 무시.
+- When: `git diff -- stores/likesStore.ts`.
+- Then: **diff 0건**(v3.193은 소비자만 추가, 스토어 무변경). 이것으로 "네트워크 실패 시 하트 롤백"·"401 시 무소음"·"연타 방지"가 기존 검증 범위로 보장됨. diff가 있으면 롤백/중복 시나리오 재검증 필요로 승격.
+
+**U-5. (A·경계) trackId 전환 시 sync 재호출 [unit]**
+- Given: 큐에서 다음 곡으로 전환하면 PlayerScreen은 언마운트 없이 trackId만 바뀜.
+- When: sync를 호출하는 effect의 의존성 배열 확인.
+- Then: `[trackId]`(또는 trackId 포함) — 곡 전환마다 새 곡 좋아요 상태 조회. 댓글 수 조회 effect(:245-257)와 동일 패턴이면 PASS. 의존성 `[]`(마운트 1회)면 FAIL(전환 곡 하트 오표시).
+
+**U-6. (B) PlaylistPickerSheet 마운트·prop 타입 일치 [unit]**
+- Given: `components/PlaylistPickerSheet.tsx:11-17` — `{ visible: boolean; trackIds: string[]; onClose: () => void }`.
+- When: PlayerScreen 모달 구역(:1282-1298 인근)에 `<PlaylistPickerSheet visible={showPlaylistPicker} trackIds={[String(track.id)]} onClose={...} />` 렌더 여부 확인 + import 확인.
+- Then: 3개 prop 모두 배선, trackIds는 문자열 배열 1개. `showPlaylistPicker` state 추가 확인. track이 null일 수 있는 시점 가드(옵셔널/조건부 렌더) 존재.
+
+**U-7. (B·경계) 담기 onPress 회원/비회원 분기 [unit]**
+- Given: 기존 비회원 폴백 GuestQueueNoticeModal(:1283-1292)과 '계속 담기'=큐 담기 흐름.
+- When: 담기 버튼 onPress 분기 코드 확인.
+- Then: 로그인 → `setShowPlaylistPicker(true)`(+로그 `[PlayerScreen] 담기 → PlaylistPicker`), 비로그인 → 기존 GuestQueueNoticeModal 경로 **그대로**(모달 컴포넌트·문구 diff 0). 기존 `addCurrentToQueue`가 비회원 폴백('계속 담기')에서만 살아있고 회원 경로에서 호출되지 않음.
+
+**U-8. (B·경계) 중복 플레이리스트 담기 — 기존 시트 동작 확인 [unit]**
+- Given: PlaylistPickerSheet는 `POST /playlists/{id}/tracks`로 담기(:40 인근 trackIds 루프).
+- When: `git diff -- components/PlaylistPickerSheet.tsx` + 시트의 중복/실패 처리 코드 열람(성공·실패 안내 로직).
+- Then: **diff 0건**(재사용, 무변경). 같은 곡을 같은 플레이리스트에 2회 담기 시의 처리(서버 4xx 허용 또는 안내)는 기존 컴포넌트 책임 — ⋮ 액션시트·'모두 담기'에서 이미 운용 중인 코드와 동일 경로임을 확인하면 신규 회귀 없음으로 판정.
+
+**U-9. (C) 아이콘 벡터 24 통일 + height 28 박스 [unit]**
+- Given: 변경 전 혼재 — 좋아요/담기 텍스트 글리프(♥/♡/+, title2 라인박스 ≈32px), 댓글 23, 재생목록 24, 신고 22.
+- When: actionsRow 구간(:996-1034 인근) grep — ① 텍스트 글리프 `'♥'|'♡'|>\+<` **0건**, ② 좋아요 `MaterialCommunityIcons heart/heart-outline` size 24(liked 시 accent), 담기 Feather(`folder-plus` 또는 `plus`) 24, 댓글·재생목록·신고 Feather **모두 size={24}**(23·22 잔존 0건), ③ `actionIconBox` 스타일 `{ height: 28, alignItems:'center', justifyContent:'center' }` 정의 + 5버튼 전부 래핑.
+- Then: ①②③ 전부 충족. 라벨 `actionLabelSpacing` 공통 유지(라벨 시작 Y 동일화의 두 축).
+
+**U-10. (C·경계) 본인 곡 4버튼 레이아웃 [unit]**
+- Given: 신고 버튼은 `!isMyTrack` 조건부(:1028-1033) — 본인 곡은 4버튼.
+- When: 조건부 렌더 유지 여부 + actionsRow의 정렬 방식(justify/space 계열) diff 확인.
+- Then: `!isMyTrack` 조건 무변경. 아이콘 박스 통일이 버튼 개수와 무관하게 적용(박스가 버튼 내부 요소이므로 4/5버튼 모두 라벨 Y 동일). 5버튼일 때 360dp 오버플로는 E-4에서 검증.
+
+**U-11. (E) CTA 통일 — PlaylistScreen icon 제거 + SearchScreen 오버레이 교체 [unit]**
+- Given: 기준 스펙 = `MapScreen.tsx` styles.loginOverlay(:992-997, absoluteFill·rgba(0,0,0,0.75)·center) + 아이콘 없는 LoginPrompt. 변경 전 PlaylistScreen `icon="♫"`(:223), SearchScreen은 flex 잔여공간 중앙 + title 없음(:231-238, styles.loginCta:318).
+- When: ① `grep -n 'icon=' screens/PlaylistScreen.tsx` → LoginPrompt icon prop **0건**(title·desc·onPress만), ② SearchScreen gated 분기가 absoluteFill 딤 오버레이(TouchableOpacity, rgba(0,0,0,0.75), center, 배경 탭 `setGated(false)`)로 교체, ③ `LoginPrompt title="AI 음악 검색"` + 기존 desc 유지, ④ 기존 `styles.loginCta`(flex 중앙) 사용처 제거.
+- Then: ①~④ 충족 + MapScreen·FeedScreen·LoginPrompt.tsx **diff 0건**(기준 화면 무접촉). 상단바 헤더 타이틀 '검색'(App.tsx:355)은 무변경(범위 밖 — G 항목과 혼동 금지). 로그 `[SearchScreen] 미로그인 게이트` 유지.
+
+**U-12. (F) 스플래시 폰트 수치 [unit]**
+- Given: 변경 전 `SplashScreen.tsx` styles.word fontSize 56/lineHeight 74/letterSpacing 6, styles.title 52/60/3.
+- When: 수치 grep.
+- Then: word **40/54**(letterSpacing 6 유지), title **36/44**(letterSpacing 3 유지). fontWeight '900'·색상·wordAi/titleAi(accent) 무변경. 심볼(64×66)·subtitle·애니메이션 타이밍 코드 diff 0(축소 외 무접촉 — 타이밍 회귀 방지의 정적 근거). lineHeight ≥ fontSize×1.2 유지로 글리프 상하 잘림 없음.
+
+**U-13. (G) LogoTitle 분절 구조 [unit]**
+- Given: 변경 전 `App.tsx:249-251` — 전체 `tone="accent"` MAIDOL. 목표 = 스플래시 2막(:87-89)과 동일한 M(흰)+AI(accent)+DOL(흰).
+- When: LogoTitle 함수 확인.
+- Then: 외곽 `AppText variant="title2"`는 tone 미지정(기본 primary=흰) 또는 명시 primary, 내부 중첩 `<AppText variant="title2" tone="accent">AI</AppText>`만 accent, 텍스트가 정확히 `M`+`AI`+`DOL` 3분절. letterSpacing 1·variant 기존 유지(크기 회귀 금지). `tone="accent"`가 외곽에 잔존하면 FAIL.
+
+**U-14. (D) 토글 라벨 무변경 확인 [unit]**
+- Given: D는 사용자 결정 대기 — 이번 릴리즈 변경 금지.
+- When: `grep -n "가사 · 프롬프트 · 착장 · 댓글" screens/PlayerScreen.tsx` + 탭 라벨 객체(:1108) `{ lyrics:'가사', prompt:'프롬프트', outfit:'착장', comments:'댓글' }` 확인.
+- Then: 두 곳 모두 **원문 그대로 1건씩 존재**, diff 0. 변경돼 있으면 범위 위반 FAIL.
+
+**U-15. (H) v3.192 마퀴 무회귀 [unit]**
+- Given: 차트 마퀴는 v3.192 `components/Marquee.tsx`(수평 ScrollView+numberOfLines=1)로 완결, TrackRow가 공용.
+- When: `git diff -- components/Marquee.tsx components/TrackRow.tsx` (v3.192 반영 상태 기준).
+- Then: v3.193에 의한 추가 diff **0건**. 사용자 폰 미적용 증상은 미배포가 원인이므로 코드 변경 없이 v3.193 빌드 포함으로 해소 — 릴리즈 노트에 명시.
+
+**U-16. diff 범위 격리 [unit]**
+- Given: 변경 매트릭스 5파일(PlayerScreen·PlaylistScreen·SearchScreen·SplashScreen·App.tsx).
+- When: `git status`/`git diff --stat`으로 v3.193 변경분 목록화.
+- Then: 5파일 외 v3.193 기인 diff 0건. 특히 `stores/likesStore.ts`·`components/PlaylistPickerSheet.tsx`·`components/LoginPrompt.tsx`·`components/Marquee.tsx`·`services/playback.ts`·`screens/MapScreen.tsx`·`screens/FeedScreen.tsx` 무접촉. (주의 계승: 워킹트리에 v3.192 이전 무관 변경 잔존 — 커밋 시 5파일 스코프 한정.)
+
+### [api] 엔드포인트 검증
+
+**A-1. likes 엔드포인트 — 무인증 거동만 실측, 인증 시나리오는 스킵 [api]**
+- Given: `GET /likes/check?song_ids=`·`POST/DELETE /likes/{id}`는 로그인 토큰 필요(스토어가 401을 조용히 처리하는 설계).
+- When: 공개 무인증으로 `GET https://api.maidol.ai.kr/api/likes/check?song_ids=<임의id>` 1회 호출.
+- Then: **401**(또는 403) 확인 — 비로그인 하트 비활성 유지의 서버측 전제 성립. **POST/DELETE 및 인증 상태 조회는 명시적 스킵**: 테스트 계정 토큰이 로컬에 없고 실사용자 자격증명 사용은 금지(민감정보 원칙). 서버 계약 자체는 기존 likesStore 운용(차트 ⋮ 좋아요)으로 프로덕션 검증 완료 — v3.193은 신규 엔드포인트 0건.
+
+**A-2. playlists 엔드포인트 — 스킵 사유 명시 [api]**
+- Given: `GET /playlists/`·`POST /playlists/`·`POST /playlists/{id}/tracks` 전부 기존재(PlaylistPickerSheet가 ⋮ 액션시트·'모두 담기'에서 이미 사용 중), v3.193 신규 API 없음.
+- When: 공개 무인증 `GET /api/playlists/` 1회로 401 확인만 수행.
+- Then: 401 확인 시 PASS. **인증 CRUD 시나리오(생성·담기·중복 담기)는 스킵** — 사유: 인증 필요 + 쓰기 부수효과(실서버에 테스트 플레이리스트 생성) 금지. 정적 대체는 U-8(시트 무변경 diff 0).
+
+### [e2e] 핵심 여정 (각 항목 정적 대체 검증 병기 — 에뮬레이터 부재 관행)
+
+**E-1. 좋아요 유지·상호반영 여정 [e2e]**
+- Given: 로그인 상태, 차트에서 곡 재생 → NowPlaying.
+- When: 하트 탭(채워짐·accent) → 미니플레이어로 내림 → 재진입 → 앱 재시작 후 재진입. 이어서 차트 ⋮ 액션시트에서 같은 곡 좋아요 해제 → NowPlaying 재확인.
+- Then: 재진입·재시작 후에도 하트 유지(서버 sync 복원), ⋮ 해제가 NowPlaying 하트에 즉시(전역 스토어) 또는 재진입 sync 시 반영 — 양방향 일관.
+- 정적 대체: U-2(로컬 state 0건)+U-3(구독·sync·toggle 배선)+U-4(스토어 무변경). 전역 zustand 단일 소스이므로 상호반영은 구조적으로 보장 — 실기기는 스크린샷 확인 요청으로 이관.
+
+**E-2. 비로그인 하트 탭 (경계) [e2e]**
+- Given: 비로그인 상태, NowPlaying 진입.
+- When: 하트 탭.
+- Then: '로그인 후 이용할 수 있습니다' 얼럿 1회, 하트 시각 상태 무변화, 네트워크 요청 0건(콘솔에 `[likesStore] toggle` 미출력).
+- 정적 대체: U-3 ③ 분기(비로그인 경로에 toggle 호출 없음을 코드로 확인) + sync는 401 무소음(U-4).
+
+**E-3. 담기 여정 — 회원 시트/비회원 폴백 [e2e]**
+- Given: (a) 로그인 / (b) 비로그인, NowPlaying.
+- When: '담기' 탭. (a) 기존 플레이리스트 선택 담기 → 같은 플레이리스트에 한 번 더 담기(중복) → '새 플레이리스트 만들기'로도 담기. (b) 담기 탭.
+- Then: (a) PlaylistPickerSheet 표시("플레이리스트에 담기" 단수 문구), 담기 성공 안내, 중복 시 크래시 없이 기존 처리(안내/무시), 플레이리스트 화면에서 곡 확인. 큐에는 **추가되지 않음**(회원 경로에서 addCurrentToQueue 미호출). (b) 기존 GuestQueueNoticeModal 그대로 — '계속 담기' 시 큐 추가 폴백 동작.
+- 정적 대체: U-6(마운트·prop)+U-7(분기)+U-8(시트 diff 0 — 중복 처리 기존 검증분 승계).
+
+**E-4. 액션행 정렬·360dp 오버플로 (경계 포함) [e2e]**
+- Given: 타인 곡(5버튼)과 본인 곡(4버튼, 신고 숨김), 소형 기기(폭 360dp) 포함.
+- When: NowPlaying 액션행 육안/스크린샷 확인.
+- Then: 5개 라벨('좋아요·댓글·담기·재생목록·신고')의 상단 Y가 픽셀 단위 동일, 아이콘 5종 모두 동일 크기(24) 체감, 360dp에서 줄바꿈·잘림·가로 오버플로 없음, 본인 곡 4버튼도 정렬 동일.
+- 정적 대체: U-9(24 통일+height 28 박스)+U-10(조건부 유지). 오버플로는 라벨 최장('재생목록' 4자 caption)×5 + 기존 actionsRow 정렬 방식 무변경으로 v3.178 이후 실배포에서 검증된 폭 — 아이콘 박스는 폭 불변(높이만 고정)이므로 신규 오버플로 요인 없음을 diff로 확인.
+
+**E-5. 비로그인 CTA Y좌표 일치 3화면 [e2e]**
+- Given: 비로그인 상태.
+- When: 작업실(기준)·플레이리스트·검색 3화면 진입, 같은 기기에서 스크린샷 3장 → 타이틀("AI 음악 작업실"/"나만의 플레이리스트"/"AI 음악 검색") 상단 Y 비교. 검색 화면에서 딤 배경 탭.
+- Then: 3화면 타이틀 Y 오차 ≤ 수 px(콘텐츠 영역 차이 허용), 검색은 딤 오버레이 스타일이 작업실과 동일(0.75 딤), 배경 탭 시 게이트 닫힘(검색바·MoodBar 노출 유지). 플레이리스트는 ♫ 아이콘 부재로 그룹 구성이 작업실과 동일.
+- 정적 대체: U-11 — 세 화면이 동일 LoginPrompt(아이콘 없음·title+desc+버튼) + 동일 앵커(absoluteFill center / flex center)를 쓰므로 그룹 내부 오프셋 소멸이 스타일 수치로 증명됨. 검색의 세로 중심 이동은 flex 잔여공간 중앙→absoluteFill 중앙 교체로 구조 보장.
+
+**E-6. 스플래시 축소·타이밍 무회귀 + 로고 분절 [e2e]**
+- Given: 콜드 스타트.
+- When: 스플래시 1막(MY/AI/IDOL)→2막(심볼+MAIDOL) 관찰 → 홈 진입 후 상단바 로고 확인.
+- Then: 1막 40pt·2막 36pt로 축소 렌더(잘림·겹침 없음), 막 전환 타이밍·페이드 기존과 동일, 2막 심볼 대비 로고 비중 육안 과대 시에만 심볼 56 미세조정(허용 범위). 상단바 로고 M(흰)+AI(보라)+DOL(흰), 크기·자간 기존 동일.
+- 정적 대체: U-12(수치+애니메이션 코드 무접촉)+U-13(분절 구조). 타이밍 무회귀는 styles 외 diff 0건이 근거.
+
+**E-7. v3.191·v3.192 무회귀 [e2e]**
+- Given: v3.193 빌드.
+- When: ① NowPlaying 상·하단이 상태바/제스처바와 겹치지 않는지(v3.191 인셋), ② 냥냥냥 재생 시 총시간 확장 방어 동작(v3.192 duration), ③ 긴 제목 곡("더 나오려는 것을 막는 것일뿐") 플레이어·차트 1줄 마퀴(v3.192).
+- Then: 3항목 모두 기존 동작 유지. 특히 (C) 액션행 박스 변경이 세로 공간을 바꾸므로 하단 토글(절대배치) 겹침 없는지 확인.
+- 정적 대체: ① PlayerScreen diff가 액션행·좋아요·담기 구간에 한정되고 insets 배선 미접촉(grep `useSafeAreaInsets` 무변경), ② `services/playback.ts`·duration 보정 구간 diff 0, ③ U-15(Marquee·TrackRow diff 0).
+
+### 태그 집계
+- [unit] 16건 (U-1~U-16: 배선·수치·구조 검증 9 / 경계 5(U-4 롤백, U-5 trackId 전환, U-7 비회원 분기, U-8 중복 담기, U-10 본인 곡) / 무변경·격리 2(U-14 D, U-15~16))
+- [api] 2건 (A-1 likes·A-2 playlists — 무인증 401 실측만, 인증·쓰기 시나리오는 자격증명 부재+실서버 부수효과 금지로 명시적 스킵, 정적 대체 병기)
+- [e2e] 7건 (E-1~E-3 핵심 여정, E-4~E-6 시각 검증, E-7 무회귀 — 전 항목 정적 대체 검증 병기, 실기기 확인 요청 이관 전제)
+
+### 설계 주의점 (tester·app-dev 참고)
+1. **U-3/E-1**: 하트 낙관적 반영은 likesStore가 담당 — PlayerScreen에 별도 로컬 낙관 state를 두면 이중 소스로 v3.193 이전 버그가 재발한다. 렌더는 store 구독값 단일 참조 필수.
+2. **U-5**: sync effect 의존성에 trackId 누락 시 곡 전환에서 이전 곡 하트가 그대로 보이는 회귀 — grep만으로 놓치기 쉬우니 effect 블록 열람 필수.
+3. **U-6**: `track.id` 타입이 화면 경로별로 string/number 혼재 가능 — `String()` 캐스팅 없으면 tsc(U-1)에서 걸리지 않고 런타임 join만 이상해질 수 있으므로 명시 확인.
+4. **E-3**: 회원 경로에서 큐 추가가 사라지는 것은 **의도된 스펙 변경**(큐는 곡 클릭 시 자동 추가 — v3.192 분석) — "담았는데 재생목록에 없다"는 QA 오탐 주의.
+5. **A-1/A-2**: 실서버 쓰기 호출 절대 금지(테스트 플레이리스트/좋아요 오염). 무인증 401 프로브 2회만 허용.
+
+### v3.193 테스트 결과 (tester, 2026-09-20)
+
+**환경**: 정적 검증 + 무인증 API 프로브. 에뮬레이터/adb/maestro 부재 → e2e 전 항목 정적 대체 검증. `npx tsc --noEmit` exit 0.
+
+| ID | 항목 | 판정 | 근거 요약 |
+|---|---|---|---|
+| U-1 | 타입 무결성 | PASS | tsc exit 0, 오류 0건 |
+| U-2 | 로컬 좋아요 state 제거 | PASS | `setIsLiked`/`[isLiked` 0건. `isLiked`는 store 파생값만(:249) |
+| U-3 | useLikesStore 배선 3점 | PASS | ①구독 `useLikesStore((s)=>!!s.liked[trackIdForComments])`(:249) ②sync effect(:250-254, 로그인 가드) ③toggle 로그인 분기+비로그인 showAlert(:255-266). 렌더 단일 소스(:1031·1033 store값만). 로그는 `[PlayerScreen] toggle like`(:261) — 계획 문구와 다르나 기능 동등 |
+| U-4 | likesStore 무변경 | PASS | `git diff -- stores/likesStore.ts` 0건 — 롤백·400 중복 성공취급·busy 가드·401 무소음 기존 검증 승계 |
+| U-5 | trackId 전환 sync 재호출 | PASS | 의존성 `[trackIdForComments, user]`(:254) — 곡 전환·로그인 전환 모두 재조회 |
+| U-6 | PlaylistPickerSheet 마운트·타입 | PASS | import(:34), `visible/trackIds/onClose` 3prop 배선(:1334-1338), `track?.id ? [String(track.id)] : []` — String() 캐스팅+null 방어 동시 충족 |
+| U-7 | 담기 회원/비회원 분기 | PASS | 회원→`setShowPlaylistPicker(true)`(:806-811, `track?.id` 방어), 비회원→기존 guestNoticeAck/GuestQueueNoticeModal 경로 그대로(:813-818), `addCurrentToQueue`는 비회원 폴백('계속 담기' :1329, ack후 :818)만 호출. GuestQueueNoticeModal diff 0. 로그는 `open playlist picker` — 문구 상이·기능 동등 |
+| U-8 | 중복 담기 기존 시트 승계 | PASS | `git diff -- components/PlaylistPickerSheet.tsx` 0건. addAll이 중복 실패 skip+안내(added/failed 집계) 기존 로직 그대로 |
+| U-9 | 아이콘 24 통일+height28 박스 | PASS | 액션행 텍스트 글리프(♥/♡/+) 0건, heart/heart-outline 24(liked시 accent), folder-plus/message-circle/list/flag 전부 24(액션행 내 22·23 잔존 0 — :1290/1295/1352의 22는 착장레일·모달 X로 범위 밖), `actionIconBox {height:28, center}`(:1396) 5버튼 전부 래핑 |
+| U-10 | 본인 곡 4버튼 | PASS | `!isMyTrack` 조건 무변경(:1066), actionsRow 스타일 diff 0 — 박스는 버튼 내부 요소로 4/5버튼 무관 |
+| U-11 | CTA 통일 | PASS | PlaylistScreen LoginPrompt icon prop 제거(diff -1줄뿐, :264 EmptyState icon="♫"는 로그인 상태 빈목록용으로 범위 밖), SearchScreen absoluteFill+rgba(0,0,0,0.75)+center 오버레이(MapScreen :992-997과 수치 동일)+배경탭 setGated(false)+title="AI 음악 검색"+기존 desc 유지+loginCta 스타일 삭제. MapScreen·FeedScreen·LoginPrompt.tsx diff 0. 로그 `[SearchScreen] 미로그인 게이트`(:89) 유지 |
+| U-12 | 스플래시 수치 | PASS | word 40/54(letterSpacing 6 유지), title 36/44(letterSpacing 3 유지), fontWeight 900·wordAi/titleAi·심볼 64×66·애니메이션 무접촉(diff 4줄×2뿐). lineHeight/fontSize = 1.35·1.22 ≥1.2 |
+| U-13 | LogoTitle 분절 | PASS | 외곽 AppText title2 tone 미지정(기본 primary), 내부 `<AppText variant="title2" tone="accent">AI</AppText>`만 accent, M+AI+DOL 3분절, letterSpacing 1 유지. 외곽 tone="accent" 제거 확인(diff) |
+| U-14 | (D) 토글 라벨 무변경 | PASS | '가사 · 프롬프트 · 착장 · 댓글'(:1087)·labels 객체(:1148) 원문 1건씩, diff 0 |
+| U-15 | (H) 마퀴 무회귀 | PASS | Marquee.tsx·TrackRow.tsx diff 0 |
+| U-16 | diff 범위 격리 | PASS(주의) | v3.193 기인 diff는 5파일 한정. 가드 7파일(likesStore·PlaylistPickerSheet·LoginPrompt·Marquee·playback·MapScreen·FeedScreen) 전부 diff 0. 잔존 무관 diff: eas.json·metro.config.js·package(-lock).json·authService.ts(주석 1줄)·바이너리 자산 다수 — v3.193 이전 잔존분으로 판단, 커밋 시 5파일 스코프 한정 필수 |
+| A-1 | likes 무인증 401 | PASS | `GET /api/likes/check?song_ids=…` → **401**. POST/DELETE·인증 조회 스킵(토큰 부재+실서버 쓰기 금지, 계획 명시) |
+| A-2 | playlists 무인증 401 | PASS | `GET /api/playlists/` → **401**. 인증 CRUD 스킵(쓰기 부수효과 금지) — 정적 대체 U-8 diff 0 |
+| E-1 | 좋아요 유지·상호반영 | PASS(정적) | U-2+U-3+U-4 — 전역 zustand 단일 소스로 구조 보장. 실기기 이관 |
+| E-2 | 비로그인 하트 탭 | PASS(정적) | 비로그인 경로 toggle 미호출·showAlert만(:257-260), sync도 user 가드(:252)로 요청 0건 |
+| E-3 | 담기 여정 | PASS(정적) | U-6+U-7+U-8. 회원 경로 addCurrentToQueue 미호출 = 의도된 스펙(주의점 4) |
+| E-4 | 액션행 정렬·360dp | PASS(정적) | U-9+U-10. actionsRow 정렬 방식 diff 0 — 박스는 높이만 고정, 폭 요인 무변경 |
+| E-5 | CTA Y좌표 3화면 | PASS(정적) | U-11 — 동일 LoginPrompt(아이콘 無)+동일 오버레이 수치. 실기기 스크린샷 이관 |
+| E-6 | 스플래시·로고 | PASS(정적) | U-12(수치+타이밍 무접촉)+U-13 |
+| E-7 | v3.191/192 무회귀 | PASS(정적) | ①PlayerScreen diff에 useSafeAreaInsets/인셋 배선 무접촉(diff 전문 확인) ②services/playback.ts diff 0, duration 보정 구간 무접촉 ③Marquee·TrackRow diff 0. 액션행 박스(height 28)는 기존 title2 라인박스(~32px)보다 작아 세로 공간 증가 없음 → 하단 토글 겹침 요인 없음 |
+
+**집계**: unit 16/16 PASS · api 2/2 PASS · e2e 7/7 PASS(정적 대체) — **1차 게이트 통과**.
+
+**경미 편차(수정 불요)**: 로그 추적자 문구 2건이 계획과 상이하나 기능 동등 — `[PlayerScreen] toggle like`(계획: `좋아요 toggle`), `[PlayerScreen] open playlist picker`(계획: `담기 → PlaylistPicker`).
+
+**실기기 확인 잔여**(빌드 배포 후):
+1. E-1 하트 유지·차트 ⋮ 상호반영 스크린샷
+2. E-3(a) 시트 담기·중복 담기·새 플레이리스트 실동작
+3. E-4 360dp 5버튼 라벨 Y 정렬·오버플로
+4. E-5 3화면 CTA Y좌표 비교 스크린샷
+5. E-6 스플래시 축소 체감·심볼 대비(필요시 심볼 56 미세조정)
+6. E-7 냥냥냥 duration·긴 제목 마퀴·인셋 실측

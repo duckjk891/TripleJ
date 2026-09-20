@@ -220,7 +220,6 @@ export default function PlaylistScreen({ navigation }: any) {
       ) : !user ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <LoginPrompt
-            icon="♫"
             title="나만의 플레이리스트"
             desc={'좋아하는 곡을 모아서\n나만의 플레이리스트를 만들어보세요!'}
             onPress={() => navigation.navigate('Settings')}

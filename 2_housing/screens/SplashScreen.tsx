@@ -108,19 +108,19 @@ const styles = StyleSheet.create({
   },
   // 1막 워드 타이포
   word: {
-    fontSize: 56,
+    fontSize: 40, // v3.193: 56→40 축소(타이포 과대 완화)
     fontWeight: '900',
     color: colors.text.primary,
     letterSpacing: 6,
-    lineHeight: 74,
+    lineHeight: 54, // v3.193: 74→54 (비례)
   },
   wordAi: { color: colors.accent.primary },
   // 2막 — 심볼은 배경 없는 흰 응원봉, 기존보다 작게
   symbol: { width: 64, height: 66, marginBottom: 20, resizeMode: 'contain' },
   logoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   title: {
-    fontSize: 52,
-    lineHeight: 60,
+    fontSize: 36, // v3.193: 52→36 축소
+    lineHeight: 44, // v3.193: 60→44 (비례)
     fontWeight: '900',
     color: colors.text.primary,
     letterSpacing: 3,

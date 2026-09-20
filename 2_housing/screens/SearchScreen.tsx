@@ -229,13 +229,19 @@ export default function SearchScreen() {
       <MoodBar />
 
       {gated ? (
-        // 로그인 CTA는 피드/플레이리스트/작업실과 동일하게 공통 LoginPrompt + 세로 중앙 정렬로 통일
-        <View style={styles.loginCta}>
+        // v3.193: 로그인 CTA = 작업실(MapScreen loginOverlay)과 동일한 absoluteFill 딤 오버레이 + 정중앙.
+        // 배경 탭 = 게이트 해제.
+        <TouchableOpacity
+          style={styles.loginOverlay}
+          activeOpacity={1}
+          onPress={() => setGated(false)}
+        >
           <LoginPrompt
+            title="AI 음악 검색"
             desc={'검색 기능은 로그인 후\n이용할 수 있어요'}
             onPress={() => navigation.navigate('Settings')}
           />
-        </View>
+        </TouchableOpacity>
       ) : loading ? (
         <View style={styles.loadingWrap}>
           <AppText variant="title3">🎧</AppText>
@@ -315,5 +321,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
     borderRadius: radius.pill, borderWidth: 1, borderColor: colors.accent.primary,
   },
-  loginCta: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  // v3.193: 작업실(MapScreen)의 loginOverlay와 동일 스펙 — 화면 전체 딤 + 정중앙 CTA
+  loginOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });

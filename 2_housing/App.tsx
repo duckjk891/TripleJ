@@ -245,9 +245,13 @@ function MiniPlayerWrapper() {
   );
 }
 
-// 상단 헤더 로고 (차트=홈 전용)
+// 상단 헤더 로고 (차트=홈 전용) — v3.193: 스플래시 2막과 동일한 M|AI|DOL 분절(AI만 강조색)
 function LogoTitle() {
-  return <AppText variant="title2" tone="accent" style={{ letterSpacing: 1 }}>MAIDOL</AppText>;
+  return (
+    <AppText variant="title2" style={{ letterSpacing: 1 }}>
+      M<AppText variant="title2" tone="accent">AI</AppText>DOL
+    </AppText>
+  );
 }
 
 // 이전으로 돌아가기(←) → 홈(차트)

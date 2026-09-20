@@ -2499,3 +2499,92 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - 진단 실측은 공개 무인증 엔드포인트(`/tracks/search`, `/tracks/stream-proxy`)만 사용. 민감정보 없음.
 - 이슈 A 프론트 방어는 "표시 보정"이며 seek 정확도(바이트-선형 오매핑)는 파일 수정 전까지 이 곡에서 부정확할 수 있음을 사용자 안내에 포함.
 - v3.191(안전영역 insets) 직후라 PlayerScreen 하단 잘림 관측에 인셋 회귀가 섞였을 가능성은 코드상 없음(루트 padding 유지) — 테스트로 무회귀 확인.
+
+## v3.193 — 2026-09-20 — NowPlaying 좋아요 서버 연동 + 담기→플레이리스트 담기 + 액션행 정렬 + 비로그인 CTA 통일 + 스플래시/로고 타이포
+
+### Plan verification findings (0단계 — 파일 직접 확인)
+
+**[이슈 A] 좋아요 하트 리셋 — 원인 확정: 서버 연동 자체가 없음(로컬 state 전용)**
+- `screens/PlayerScreen.tsx:182` `const [isLiked, setIsLiked] = useState(false);` — 초기값 무조건 false.
+- `:998-1006` 하트 onPress = `setIsLiked(!isLiked)` **한 줄뿐. API 호출·스토어 연동 전무.**
+- PlayerScreen은 미니플레이어로 내리면 언마운트(goBack) → 재진입 시 재마운트되어 state가 false로 초기화. 서버에 좋아요가 기록된 적도 없으므로 "복원"할 대상도 없음. 사용자가 본 증상과 정확히 일치.
+- 반면 전역 `stores/likesStore.ts`(v 기존)는 이미 완비: `POST/DELETE /likes/{id}`, `GET /likes/check?song_ids=`(:25,49-50), 낙관적 토글+롤백, busy 가드. 차트/검색/피드의 ⋮ 액션시트(`components/TrackActionSheet.tsx:41,58-61,105-107`)가 이 스토어로 좋아요를 수행 중. **PlayerScreen만 미접속.**
+
+**[이슈 B] '담기' 버튼 현황 + 플레이리스트 담기 UI 존재 여부**
+- NowPlaying '담기'(PlayerScreen.tsx:1014-1017) → `handleAddToPlaylist`(:783-790, 이름과 달리 실제로는) → `addCurrentToQueue`(:776-781) = **재생목록(큐)에 추가**. 비회원 첫 담기 시 GuestQueueNoticeModal(:1283-1292).
+- 큐 추가는 이미 자동(차트 클릭 시 addToQueue — v3.192 분석 확정)이라 이 버튼은 사실상 중복 기능. 사용자 기대(플레이리스트 담기)와 불일치.
+- **"플레이리스트에 담기" UI는 이미 존재**: ① `components/PlaylistPickerSheet.tsx` — 기존 목록 선택/새로 만들기 바텀시트, `GET /playlists/`·`POST /playlists/`·`POST /playlists/{id}/tracks` 사용(**백엔드 API 기존재 — 신규 요청 불필요**). ② 진입 경로 2곳: 곡 목록의 ⋮ 더보기 → "플레이리스트에 담기"(TrackActionSheet.tsx:115, 차트·검색·피드·마이뮤직·플레이리스트 공용), 검색 결과 헤더 "모두 담기"(SearchScreen.tsx:258-261). **NowPlaying에만 없음.**
+
+**[이슈 C] 액션행(좋아요~신고) 정렬 불일치 — 원인: 아이콘 렌더 방식 혼재**
+- PlayerScreen.tsx:997-1034 — 좋아요 `AppText variant="title2"` ♥/♡(24pt bold, lineHeight 24×1.35≈32px), 담기 `AppText title2` '+', 댓글 Feather 23, 재생목록 Feather 24, 신고 Feather 22. 텍스트 글리프(라인박스 ~32px)와 벡터 아이콘(22~24px 박스)의 높이가 제각각 → 라벨(caption, actionLabelSpacing=marginTop xxs) 시작 Y가 버튼마다 다름 = 사용자가 본 정렬 붕괴.
+
+**[이슈 D] 상세 토글 라벨 — 현황**
+- 하단 토글 문구: PlayerScreen.tsx:1047 `가사 · 프롬프트 · 착장 · 댓글`, 탭바 라벨: :1108 `{ lyrics:'가사', prompt:'프롬프트', outfit:'착장', comments:'댓글' }`.
+- 탭 실제 내용: 가사=가사 전문+공유, 프롬프트=곡의 "이야기"+핵심 파라미터 칩(:1137-1158), 착장=발매 시점 아티스트 의상 카드+위시/구매링크(:1171-1258), 댓글=곡 댓글(:1267-1276). → '프롬프트'는 개발 용어라 일반 사용자에게 낯섦, '착장'은 K-pop 용어로 통용되나 대체 가능.
+
+**[이슈 E] 비로그인 CTA 3화면 비교 — 위치가 다른 원인 2가지**
+- 작업실(기준): `screens/MapScreen.tsx:613-625` — absoluteFill 딤 오버레이(styles.loginOverlay:992-997, rgba 0.75, 콘텐츠 영역 정중앙) + 공용 `LoginPrompt`(**아이콘 없음**, title="AI 음악 작업실"+desc+버튼).
+- 플레이리스트: `screens/PlaylistScreen.tsx:220-228` — flex:1 중앙 View + LoginPrompt(**icon="♫" 있음**, title="나만의 플레이리스트"). 중앙 앵커는 동일하지만 **아이콘 48pt+마진 16이 그룹 상단에 추가**되어 타이틀 Y가 작업실보다 ~32px 아래로 밀림.
+- 검색: `screens/SearchScreen.tsx:231-238` — 검색바+느낌칩 **아래 남은 공간**의 flex:1 중앙(styles.loginCta:318) + LoginPrompt(**타이틀·아이콘 없음**, desc만). 상단 ~110px가 소비된 뒤의 중앙이라 세로 중심이 아래로 치우침 + 타이틀 부재.
+- 참고: 피드(FeedScreen.tsx:301-312)는 이미 작업실과 같은 absoluteFill 오버레이 패턴(타이틀 없음). 사용자 언급 밖이라 이번엔 미변경, 보고만.
+
+**[이슈 F] 스플래시 타이포 크기**
+- `screens/SplashScreen.tsx` — 1막 MY/AI/IDOL: styles.word(:110-116) fontSize **56**/lineHeight 74/letterSpacing 6. 2막 MAIDOL: styles.title(:121-127) fontSize **52**/lineHeight 60/letterSpacing 3. (참고: 1막 문구는 'MY/AI/IDOL' — 사용자 표기 'DOL'은 2막 로고 분절 M|AI|DOL 기준.)
+
+**[이슈 G] 상단바 MAIDOL 로고색**
+- `App.tsx:249-251` LogoTitle = `<AppText variant="title2" tone="accent">MAIDOL</AppText>` — **전체가 강조색(보라)**. 스플래시 2막(:87-89)은 이미 M(흰)+AI(보라)+DOL(흰) 분리 렌더 → 같은 패턴으로 통일하면 됨.
+
+**[이슈 H] 차트 마퀴 — v3.192 수정으로 코드상 완결 확인(변경 불필요)**
+- `components/Marquee.tsx`(현 워킹트리) — v3.192 수평 ScrollView 래핑+numberOfLines=1 반영 확인(:52-76). 차트 행(`components/TrackRow.tsx:65`)이 동일 컴포넌트 사용 → 코드상 치유 완료. **사용자 폰에서 미적용으로 보이는 것은 v3.192가 아직 빌드/배포되지 않은 정상 상황.** v3.193 빌드에 포함되어 함께 나감. 추가 수정 없음, 테스트 항목만 유지.
+
+### 이슈별 수정 방안 (코드 변경은 app-dev)
+
+**A. PlayerScreen 좋아요 → likesStore 서버 연동** (`screens/PlayerScreen.tsx`)
+- 로컬 `isLiked` state 제거, `useLikesStore` 구독: `const liked = useLikesStore((s)=>!!s.liked[trackId])`.
+- 곡 진입/전환 시 동기화: trackId 변경 effect에서 로그인 상태면 `useLikesStore.getState().sync([trackId])` (댓글 수 조회 effect(:245-257)와 같은 패턴).
+- 하트 onPress → 비로그인: `showAlert('알림','로그인 후 이용할 수 있습니다.')`(착장 위시 :235-237 관행) / 로그인: `useLikesStore.getState().toggle(trackId)` (낙관적+롤백은 스토어가 담당).
+- 효과: 미니플레이어 전환·재진입에도 전역 스토어라 하트 유지 + 차트/검색 ⋮ 좋아요와 상태 공유(양방향 일관).
+- 로그 추적자: 기존 `[likesStore] toggle/sync` 재사용 + `[PlayerScreen] 좋아요 toggle` 1줄.
+
+**B. '담기' → 플레이리스트에 담기** (`screens/PlayerScreen.tsx` + 기존 `PlaylistPickerSheet` 재사용, 신규 백엔드 없음)
+- state `showPlaylistPicker` 추가, 모달 3종 구역(:1282-1298)에 `<PlaylistPickerSheet visible trackIds={[String(track.id)]} onClose/>` 추가.
+- 담기 onPress 분기: 로그인 → PlaylistPickerSheet 열기. 비로그인 → 기존 GuestQueueNoticeModal 유지(플레이리스트는 서버 저장이라 비회원 불가; '계속 담기'=기존 큐 담기 폴백 유지, 문구는 현행 유지 — 큐 설명이므로 여전히 유효).
+- 아이콘/라벨: '+' 텍스트 글리프 → Feather `folder-plus`(또는 `plus`) 24, 라벨 '담기' 유지(사용자 멘탈모델상 담기=플레이리스트).
+- 로그: `[PlayerScreen] 담기 → PlaylistPicker`(회원) / 기존 비회원 로그 유지.
+
+**C. 액션행 정렬 통일** (`screens/PlayerScreen.tsx`)
+- 텍스트 글리프 전폐: 좋아요 = `MaterialCommunityIcons heart/heart-outline` 24(이미 import, 착장 위시와 동일 아이콘 계열 — liked면 accent), 담기 = Feather 24(위 B), 댓글/재생목록/신고 = Feather 모두 **24**로 통일.
+- 각 버튼 아이콘을 고정 높이 박스(`height:28, alignItems:'center', justifyContent:'center'`) `styles.actionIconBox`로 감싸 라벨 시작 Y 완전 동일화. 라벨은 기존 actionLabelSpacing 공통 유지.
+
+**D. 토글 라벨 — 제안만(코드 변경 없음, 사용자 결정 대기)** — 아래 '사용자 보고' 참조.
+
+**E. 비로그인 CTA 위치·타이틀 통일 (기준=작업실)**
+- `screens/PlaylistScreen.tsx:222-227` LoginPrompt에서 `icon="♫"` 제거 → 그룹 구성(title+desc+버튼)이 작업실과 동일해져 타이틀 Y 일치(중앙 앵커는 이미 동일).
+- `screens/SearchScreen.tsx` gated 분기(:231-238)를 작업실 패턴으로 교체: 남은 공간 flex 중앙 대신 **absoluteFill 딤 오버레이**(MapScreen styles.loginOverlay와 동일 스펙: rgba(0,0,0,0.75)·center, 배경 탭=닫기 `setGated(false)`) + `LoginPrompt title="AI 음악 검색"` + 기존 desc. → 세로 중심·타이틀 스타일이 작업실과 픽셀 단위 일치.
+- 상단바 헤더 타이틀('검색', App.tsx:355)은 변경하지 않음(사용자 요청은 CTA 타이틀 문맥 — 보고에 명시, 헤더 변경 원하면 후속).
+- 로그: `[SearchScreen] 미로그인 게이트` 기존 유지.
+
+**F. 스플래시 타이포 축소** (`screens/SplashScreen.tsx`)
+- 1막 word: fontSize 56→**40**, lineHeight 74→**54**, letterSpacing 6 유지 (약 0.71배).
+- 2막 title(MAIDOL): fontSize 52→**36**, lineHeight 60→**44**, letterSpacing 3 유지 (약 0.69배). 심볼(64×66)·subtitle 유지 — 로고 대비 심볼 비중이 커지므로 QA에서 육안 확인, 과하면 심볼 56으로 미세조정 허용.
+
+**G. 상단바 로고 부분 강조색** (`App.tsx:249-251`)
+- LogoTitle을 스플래시 2막과 동일한 분절 렌더로: `<AppText variant="title2" style={{letterSpacing:1}}>M<AppText variant="title2" tone="accent">AI</AppText>DOL</AppText>` (중첩 Text — 기본 tone primary=흰색, AI만 accent). 크기·자간 기존 유지.
+
+**H. 변경 없음** — v3.192 Marquee 수정이 TrackRow(차트)를 이미 커버. 테스트 재확인만.
+
+### 변경 매트릭스
+| 파일 | 변경 | 디버깅 추적자 |
+|------|------|--------------|
+| FE screens/PlayerScreen.tsx | (A) isLiked→likesStore 연동+sync (B) 담기→PlaylistPickerSheet(회원)/GuestNotice(비회원) (C) 액션행 아이콘 24 통일+고정높이 박스 | `[likesStore] toggle/sync`, `[PlayerScreen] 좋아요 toggle`, `[PlayerScreen] 담기 → PlaylistPicker` |
+| FE screens/PlaylistScreen.tsx | (E) LoginPrompt icon 제거 | — |
+| FE screens/SearchScreen.tsx | (E) gated 분기 → absoluteFill 오버레이 + title="AI 음악 검색" | `[SearchScreen] 미로그인 게이트` |
+| FE screens/SplashScreen.tsx | (F) word 56→40, title 52→36 (+lineHeight 비례) | — |
+| FE App.tsx | (G) LogoTitle M/AI/DOL 분절 — AI만 accent | — |
+| (변경 없음) components/Marquee.tsx·TrackRow.tsx | (H) v3.192 수정 유지 확인만 | — |
+
+### 특이사항
+- 이슈 B는 **백엔드 신규 API 불필요**(플레이리스트 CRUD 전부 기존재) — 요청 문서 없음.
+- D는 코드 변경 없이 라벨 후보만 사용자 보고(결정 후 반영은 1줄×2곳: PlayerScreen.tsx:1047·1108).
+- 피드 비로그인 CTA는 이미 오버레이 패턴이나 타이틀 없음 — 이번 범위 밖, 사용자 보고에 포함.
+- 민감정보 없음. 원격 로깅은 기존 콘솔→/_logs/frontend 배치(App.tsx:18) 경유.
