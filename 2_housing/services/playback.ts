@@ -19,6 +19,9 @@ export function invalidatePlayback(): void {
 // v3.91: 관련곡 자동 이어듣기 중복 조회 가드 (MAIDOL PlayerContext fetchingRelatedRef 관행)
 let fetchingRelated = false;
 
+// v3.192: duration 괴리 경고 1회 가드(트랙당) — Xing 헤더 없는 VBR MP3 진단용
+let durationWarnedTrackId: string | null = null;
+
 /**
  * v3.91: 관련곡 자동 이어듣기 — 큐 마지막 곡이 끝나면(getNextIndex()<0, 수동 큐 우선)
  * GET /tracks/{id}/related?exclude=...&limit=1 로 1곡을 받아 큐 뒤에 붙이고 이어 재생.
@@ -100,7 +103,21 @@ export async function loadAndPlayTrack(newTrack: any): Promise<void> {
           const s = usePlayerStore.getState();
           s.setIsPlaying(status.isPlaying);
           s.setPosition(status.positionMillis || 0);
-          s.setDuration(status.durationMillis || 0);
+          // v3.192: duration 방어 보정 — Xing 헤더 없는 VBR MP3는 엔진이 duration을 짧게 오판.
+          // 실측 우선: 엔진값·현재 위치·API duration_sec 중 최대값(진행바 조기 고정 방지).
+          const apiDurationMs = (newTrack?.duration_sec ?? 0) * 1000;
+          const engineDurationMs = status.durationMillis || 0;
+          const effectiveDuration = Math.max(engineDurationMs, status.positionMillis || 0, apiDurationMs);
+          if (__DEV__ && effectiveDuration - engineDurationMs >= 5000 && newTrack?.id && durationWarnedTrackId !== newTrack.id) {
+            durationWarnedTrackId = newTrack.id;
+            console.warn('[playback] duration mismatch', {
+              trackId: newTrack.id,
+              apiSec: newTrack?.duration_sec ?? 0,
+              engineMs: engineDurationMs,
+              positionMs: status.positionMillis || 0,
+            });
+          }
+          s.setDuration(effectiveDuration);
           if (status.didJustFinish) {
             const nextIdx = s.getNextIndex();
             if (nextIdx >= 0 && s.queue[nextIdx]) {

@@ -184,6 +184,7 @@ export default function PlayerScreen({ route, navigation }: any) {
   const [seekValue, setSeekValue] = useState(0);       // 드래그 중 슬라이더 위치(웹 리셋 방지)
   const isSeekingRef = useRef(false);                  // 콜백 클로저 stale 방지(라이브 값)
   const recordedTrackRef = useRef<string | null>(null); // 70% 재생 기록 완료한 트랙(중복 방지)
+  const durationWarnedRef = useRef<string | null>(null); // v3.192: duration 괴리 경고 1회 가드(트랙당)
   const [mediaTab, setMediaTab] = useState<'song' | 'video'>('song');   // 노래/동영상 전환
   const [lyricsTimeline, setLyricsTimeline] = useState<LyricSegment[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
@@ -357,12 +358,33 @@ export default function PlayerScreen({ route, navigation }: any) {
         setPosition(status.positionMillis);
         playerStore.setPosition(status.positionMillis);
       }
-      setDuration(status.durationMillis || 0);
-      playerStore.setDuration(status.durationMillis || 0);
+      // v3.192: duration 방어 보정 — Xing 헤더 없는 VBR MP3는 엔진이 durationMillis를 짧게 오판
+      // (냥냥냥: 실제 158s → 91s 보고). 실측 우선: 엔진값·현재 위치·API duration_sec 중 최대값 사용.
+      // position이 엉터리 duration을 넘어서면 슬라이더 max·총시간 라벨이 실시간 확장(조기 고정 방지).
+      // 의도적으로 래칫(단조 확장) 아님: seek 되감기 시 총시간이 원래 추정치로 수축할 수 있으나,
+      // 래칫 방식은 곡 전환 시 이전 곡 duration이 새는 회귀 위험이 있어 단발 max를 택함.
+      const liveTrack = usePlayerStore.getState().track as TrackData | null; // 콜백 클로저 stale 방지
+      const apiDurationMs = (liveTrack?.duration_sec ?? track?.duration_sec ?? 0) * 1000;
+      const engineDurationMs = status.durationMillis ?? 0;
+      const effectiveDuration = Math.max(engineDurationMs, status.positionMillis ?? 0, apiDurationMs);
+      if (__DEV__ && effectiveDuration - engineDurationMs >= 5000) {
+        const tid = liveTrack?.id ?? track?.id;
+        if (tid && durationWarnedRef.current !== tid) {
+          durationWarnedRef.current = tid;
+          console.warn('[PlayerScreen] duration mismatch', {
+            trackId: tid,
+            apiSec: liveTrack?.duration_sec ?? track?.duration_sec ?? 0,
+            engineMs: engineDurationMs,
+            positionMs: status.positionMillis ?? 0,
+          });
+        }
+      }
+      setDuration(effectiveDuration);
+      playerStore.setDuration(effectiveDuration);
       setIsPlaying(status.isPlaying);
       playerStore.setIsPlaying(status.isPlaying);
-      // 70% 도달(또는 seek로 넘김) 시 재생 기록 — 위치 기반
-      recordPlayIfNeeded(status.positionMillis, status.durationMillis || 0);
+      // 70% 도달(또는 seek로 넘김) 시 재생 기록 — 위치 기반(v3.192: effectiveDuration 기준 — 조기 기록 방지)
+      recordPlayIfNeeded(status.positionMillis, effectiveDuration);
       if (status.didJustFinish) {
         // 재생 완료 EXP — 내 아티스트 +1
         useArtistStore.getState().addExp(1, 'play');

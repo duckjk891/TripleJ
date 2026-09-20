@@ -2436,3 +2436,66 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - iOS pageSheet 모달에서는 safe-area-context가 모달 컨텍스트 인셋을 정확히 반환 — 이중 패딩 없음(코어 SafeAreaView 제거로 단일 소스화).
 - KeyboardAvoidingView(상세 패널)·swipeUpButton은 루트 paddingBottom 안쪽에 있으므로 개별 수정 불요 — 루트 1곳 + Modal 시트 1곳만.
 - 기존 파일 정리: `2_housing/PLAN.md`·`REPORT.md` → `claude_skills_outputs/team-dev/PLAN.md`·`REPORT.md` `git mv` 완료(v3.191, 본 엔트리부터 이 파일에 누적). TESTPLAN.md는 test-designer 산출 시 생성 예정.
+
+---
+
+## v3.192 — 2026-09-20 — 냥냥냥 duration 오표시(진행바 조기 종료·가사 싱크 정지) + 곡 제목 marquee 개행 수정 + 큐 자동추가 동작 분석
+
+**요청 원문**: "모바일에서 확인하고 있는데 냥냥냥 음악이 음악 시간보다 재생시간이 짧게 보이네. 다른 음악은 안그런데 냥냥냥만 그렇고 음악 재생진행바가 중간에 끊어지니까 노래가 남아있는데 동영상 탭에서 남아있는 가사도 안뜨고 멈춰있어. 그리고 더 나오는 것을 막는 것일뿐 음악은 곡 제목이 흘러가는 형태로 나와야하는데 개행이 되버려서 전체적인 ui가 하단으로 밀려서 하단이 잘려보이는 상황이야. 그리고 담기를 안해도 곡을 클릭하면 자동으로 재생목록에 추가가 되는 형태인가?"
+
+> 주: 요청문 중 "더 나오려는 것을 막는 것일뿐"은 실제 곡 제목(duration 201초, 긴 제목)이다 — 이슈 B의 재현 곡.
+
+### Plan verification findings (0단계 사전 코드 분석 — 2026-09-20 실측)
+
+**[이슈 A] 냥냥냥 duration 불일치 — 원인: 해당 MP3 파일에 VBR(Xing) 헤더 누락 (백엔드 데이터 문제)**
+- **duration 소스 추적**: 진행바·시간표시는 100% 재생 엔진(expo-av `~16.0.8`) 값. `screens/PlayerScreen.tsx:353-361` `onPlaybackStatusUpdate`가 `status.durationMillis`를 local `duration`+`playerStore.duration`에 기록 → 슬라이더 `maximumValue={duration||1}`(:922), 총시간 라벨(:934), showDetails 미니 진행바(:1043). 미니 경로도 동일: `services/playback.ts:103` `setDuration(status.durationMillis||0)`. **API의 `duration_sec`은 재생바에 전혀 쓰이지 않음**(프롬프트 탭 표기 :273에만 사용).
+- **가사 싱크 정지 구조**: 동영상 탭 = `components/LyricSyncView.tsx` — `positionMillis`(PlayerScreen `position` state, :841에서 전달) 기준 이진탐색(:26-34)으로 활성 라인 결정. 엔진이 이 파일의 위치/길이를 91초 스케일로 잘못 보고하면 91초 지점 이후 가사가 진행되지 않고 멈춘 것으로 보임(가사 timeline 자체는 실제 초 단위 정상).
+- **냥냥냥 데이터 실측(공개 API, 무인증)**: `GET /api/tracks/search?q=냥냥냥` → track id `6aa3ec295f11b57ba518f5e8`, **`duration_sec: 91`**. `stream-proxy`로 파일 수신(3,650,646B) 후 분석:
+  - 실제 오디오 길이 **157.86초(2:38)** (48kHz, 평균 ~179kbps).
+  - 파일은 **VBR**(프레임 비트레이트 128~320kbps 혼재)인데 **Xing/Info/VBRI 헤더가 없음**. 첫 프레임이 320kbps → CBR 가정 추정 = 3,650,496B×8÷320kbps = **91.26초 = API의 91과 정확히 일치**.
+  - 대조군(정상 곡) 2곡 실측: `사랑의 김장`(Xing 있음, 실측 144.3s = API 144), `더 나오려는 것을 막는 것일뿐`(Xing 있음, 실측 201.2s = API 201) — **냥냥냥만 헤더 누락**.
+- **결론**: 백엔드에 저장된 이 곡의 MP3 자체가 VBR 헤더 없는 비정상 파일 → ① 백엔드 duration_sec 계산(91)도, ② 모바일 재생 엔진(ExoPlayer ConstantBitrateSeeker/AVFoundation의 첫 프레임 비트레이트 추정)도 똑같이 91초로 오판. 진행바 조기 종료·가사 싱크 정지·seek 좌표 왜곡(바이트-선형 매핑) 전부 이 파일 하나의 문제. **근본 수정은 백엔드(파일 리먹스+duration 재계산), 프론트는 방어 로직만 가능.**
+
+**[이슈 B] 긴 곡 제목 개행 — 원인: Marquee가 네이티브에서 한 줄 강제가 안 됨**
+- 제목은 이미 Marquee 적용(v3.159): `screens/PlayerScreen.tsx:868` `<Marquee text={track?.title} variant="title1" center />`. 차트 행도 동일 컴포넌트(`components/TrackRow.tsx:65`).
+- **버그**: `components/Marquee.tsx:19` nowrap이 **web 전용**(`Platform.OS==='web'`), 네이티브는 `copy: { flexShrink: 0 }`(:73)뿐. RN(yoga)에서 Text는 flexShrink:0이어도 **부모 폭 제약으로 측정되어 개행됨** → 긴 제목이 2줄+로 렌더, 측정 폭 textW≈containerW라 overflow 판정(:26)도 false → 마퀴 미발동. title1 2줄만큼 아래 UI(재생바·컨트롤·상세 토글)가 밀리고, 루트가 비스크롤 View(PlayerScreen.tsx:797)라 하단이 잘림.
+- MiniPlayer는 `numberOfLines={1}`(MiniPlayer.tsx:85)라 무관. 이슈 재현 곡: "더 나오려는 것을 막는 것일뿐".
+- marquee 외부 라이브러리 없음(package.json 확인) — 자체 Marquee.tsx 수정으로 해결(한 파일 수정으로 PlayerScreen+TrackRow 동시 치유).
+
+**[이슈 C] 큐 자동 추가 — 현재 동작 사실 확인 (코드 변경 없음)**
+- **맞다. 의도된 설계**: `screens/ChartScreen.tsx:176-182` — 주석 "곡 클릭 → 재생목록(큐)에 추가(중복 방지) 후 그 곡 재생". `addToQueue`(stores/playerStore.ts:88-95, id 중복이면 추가 안 함) → `setCurrentIndex` → Player 진입. 즉 차트에서 곡을 클릭만 해도 큐에 **누적** 추가됨.
+- 그 외 경로: 검색 결과 클릭은 큐를 검색결과 목록으로 **교체**(ChartScreen.tsx:185-191 `setQueue(searchResults)`), 피드/내음악은 `playTrackNow`가 컨텍스트 목록으로 큐 **교체**(services/playback.ts:131-139), 큐 소진 시 관련곡 자동 이어듣기(v3.91)도 큐에 **추가**(playback.ts:66). '담기' 버튼(PlayerScreen.tsx:753-757)은 현재 곡 명시 추가 + 비회원 첫 담기 안내 모달.
+- 사용자 답변만 전달, 변경 여부는 사용자 결정 대기.
+
+### 이슈별 수정 방안
+
+**A. 프론트 방어(v3.192 범위)** — 엔진 duration을 그대로 믿지 않고 "실측 우선" 보정:
+- `onPlaybackStatusUpdate`(PlayerScreen.tsx:353-361)와 playback.ts:98-115 상태 콜백에서 `effectiveDuration = Math.max(status.durationMillis||0, status.positionMillis||0, 직전 duration)` 로 기록 — 재생 위치가 엉터리 duration을 넘어서는 순간부터 슬라이더 max·총시간 라벨이 실시간 확장되어 진행바가 "끝에 박혀 끊긴" 표시를 방지. `track.duration_sec*1000`도 하한으로 병용(이번 곡은 91로 같이 틀렸지만 일반 방어로 유효).
+- 70% 재생 기록(recordPlayIfNeeded :340-351)도 effectiveDuration 기준 사용(조기 기록 방지, 트랙당 1회 가드는 기존 유지).
+- 한계 명시: 엔진이 position 자체를 91s에서 멈춰 보고하는 플랫폼이라면(가사 정지 증상) 프론트로는 완치 불가 — **근본 해결은 백엔드 파일 수정**. 방어 로직은 오표시 완화 + 타 곡 일반 방어.
+- `__DEV__` 경고 로그: durationMillis와 duration_sec*1000 괴리가 5초 이상이면 `[PlayerScreen] duration 불일치 감지 {engine, api}` 1회 출력(재현 진단용).
+
+**B. Marquee 네이티브 한 줄 보장** — `components/Marquee.tsx` 단일 파일 수정:
+- 트랙(복사본 나열 Row)을 `<ScrollView horizontal scrollEnabled={false} showsHorizontalScrollIndicator={false}>`로 감싸 **폭 제약 없는 수평 컨텍스트**에서 자연폭 측정·렌더(RN marquee 정석). 복사본 AppText에 `numberOfLines={1}` 이중 안전장치.
+- 기존 동작 보존: 넘치지 않으면 정적 + `center` 옵션 시 가운데(v3.159), 넘치면 loop translate. 웹 경로(nowrap) 무회귀.
+- 효과: PlayerScreen 제목 1줄 고정 → 하단 밀림/잘림 소멸, TrackRow(차트) 잠재 버그 동시 해결.
+
+**C. 분석 보고만** — 코드 변경 없음. 위 사실 확인을 사용자에게 전달.
+
+### 변경 매트릭스
+| 파일 | 변경 | 디버깅 추적자 |
+|------|------|--------------|
+| FE screens/PlayerScreen.tsx | onPlaybackStatusUpdate duration 보정(max(engine, position, api)), recordPlayIfNeeded effectiveDuration 기준, 불일치 감지 __DEV__ 로그 | `[PlayerScreen] duration 불일치 감지` |
+| FE services/playback.ts | 상태 콜백 동일 보정(미니/인라인 재생 경로) | `[playback]` |
+| FE components/Marquee.tsx | 수평 ScrollView 래핑 + numberOfLines=1 — 네이티브 한 줄 자연폭 보장 | `[Marquee]`(측정 __DEV__ 로그 선택) |
+| 문서 2_housing/백엔드_요청_트랙duration.md (신규) | 아래 백엔드 수정요청 — 관행(백엔드_수정요청.md 등 곡별 요청서) 준수 | — |
+
+### 백엔드 수정요청 문서 내용 (MAIDOL 음악 API는 로컬 저장소에 없음 — 0_platform/backend에는 minihompi-api·office-game-api뿐이라 문서로 요청)
+1. **개별 데이터 수정**: track `6aa3ec295f11b57ba518f5e8`(냥냥냥)의 MP3가 VBR인데 Xing/Info/VBRI 헤더 없음 → `ffmpeg -i in.mp3 -c:a copy out.mp3` 재먹싱(Xing 헤더 재작성)으로 교체 저장, `duration_sec`을 실측 158(157.86s)로 갱신. (원인 추정: 생성/업로드 파이프라인에서 헤더가 잘린 파일이 그대로 저장됨)
+2. **파이프라인 하드닝**: 트랙 저장 시 항상 재먹싱(또는 ffprobe 디코드 실측)으로 duration 산출 — 첫 프레임 비트레이트 기반 추정 금지. 동일 증상 트랙 전수 점검 쿼리(파일 크기×8÷duration_sec 대비 실측 비트레이트 괴리) 권장.
+3. 하위 호환: 파일 교체는 동일 object key로 — 앱/캐시 영향 없음.
+
+### 특이사항
+- 진단 실측은 공개 무인증 엔드포인트(`/tracks/search`, `/tracks/stream-proxy`)만 사용. 민감정보 없음.
+- 이슈 A 프론트 방어는 "표시 보정"이며 seek 정확도(바이트-선형 오매핑)는 파일 수정 전까지 이 곡에서 부정확할 수 있음을 사용자 안내에 포함.
+- v3.191(안전영역 insets) 직후라 PlayerScreen 하단 잘림 관측에 인셋 회귀가 섞였을 가능성은 코드상 없음(루트 padding 유지) — 테스트로 무회귀 확인.

@@ -170,3 +170,225 @@
 - 머지 게이트: **통과** (U-1~U-10 전부 PASS). 버그 0건.
 - 릴리즈 게이트: 정적 대체 PASS — 사용자 실기기 스크린샷 확인 후 확정 (다운그레이드 사실 명기).
 - 실기기 확인 요청 목록: ① Android 제스처 기기 — 플레이어 최초 화면 풀샷(헤더+하단 토글) ② 동일 기기 — 재생목록 시트 하단 샷 ③ iPhone 노치 기기 — 기본/상세패널/재생목록 3장 ④ (가능 시) 소형 기기 — 하단 토글 노출 여부 ⑤ Android — 동영상 탭 1장
+
+---
+
+## v3.192 — 수정일 2026-09-20 — duration 방어 보정 + Marquee 네이티브 1줄 수정 + 백엔드 duration 수정요청 문서
+
+### 변경 요약 (테스트 대상)
+1. **duration 방어 보정** — `2_housing/screens/PlayerScreen.tsx`(onPlaybackStatusUpdate + recordPlayIfNeeded) / `2_housing/services/playback.ts`(createAsync status 콜백): `effectiveDuration = max(engine durationMillis, positionMillis, api duration_sec*1000)`. 배경: 냥냥냥(Xing 헤더 없는 VBR MP3)은 엔진·API 모두 91초로 오판, 실제 157.86초 → 진행바가 1:31에 조기 고정. 70% 재생기록도 동일 기준. 괴리 5초+ 시 `__DEV__` 경고 로그.
+2. **Marquee 네이티브 수정** — `2_housing/components/Marquee.tsx`: 측정 트랙을 `horizontal ScrollView(scrollEnabled=false)`로 감싸 자연폭 측정 + `numberOfLines={1}`. 긴 제목("더 나오려는 것을 막는 것일뿐" 등)이 네이티브에서 개행 → 하단 컨트롤 밀림 해소. **웹 무회귀 요건**(NOWRAP·useNativeDriver 웹 분기 보존).
+3. **백엔드 수정요청 문서 신규** — `2_housing/백엔드_요청_트랙duration.md` (코드 아님 — 존재·내용 검증만. 작성 시점 현재 미존재 확인됨).
+- **변경 금지**: 큐 자동 추가 동작(이슈 C — `ChartScreen.tsx:177 addToQueue`, `playerStore.addToQueue` 중복 거부) 무변경 확인 대상.
+
+### 코드 기준점 (변경 전 좌표 — 정적 검증 시 대조)
+- `screens/PlayerScreen.tsx`: `PLAY_RECORD_RATIO = 0.7`(339행), `recordPlayIfNeeded(positionMillis, durationMillis)`(340~351행, `recordedTrackRef` 186행 — 트랙당 1회 가드), `onPlaybackStatusUpdate`(353행) 내 `setDuration(status.durationMillis || 0)`(360~361행)·`recordPlayIfNeeded(..., status.durationMillis || 0)`(365행), 제목 Marquee(868행 `variant="title1" center`)
+- `services/playback.ts`: `loadAndPlayTrack` createAsync 콜백(98~115행) 내 `s.setDuration(status.durationMillis || 0)`(103행) — **여기도 보정 필요**(미니/인라인 재생 경로)
+- `components/Marquee.tsx`: 컨테이너 onLayout(47행)·텍스트 onLayout(54행) 측정, `overflow = textW > containerW + 1`(26행), `copy: { flexShrink: 0, ...NOWRAP }`(73행, NOWRAP은 웹 전용 19행), `useNativeDriver: Platform.OS !== 'web'`(39행)
+- `components/TrackRow.tsx`: 65행 `<Marquee text={track.title} .../>`(차트 행)
+- 트랙 스키마: `duration_sec?: number`(PlayerScreen 99행 — optional, 없는 트랙 존재 가능)
+
+---
+
+### 1단계 — [unit] 정적·코드 레벨 검증 (에뮬레이터 불필요, 머지 게이트)
+
+> 재생 엔진(expo-av) 실동작이 필요한 검증은 2단계로 분리. 1단계는 보정식·배선·경계 케이스를 코드 레벨(식 대입·grep·diff)로 판정한다. `effectiveDuration` 계산이 순수 함수/식으로 분리돼 있으면 표의 케이스를 그대로 대입 검토, 인라인이면 코드 리딩으로 동치 확인.
+
+#### U-1. [unit] 타입 무결성
+- Given: v3.192 변경이 반영된 워킹트리
+- When: `2_housing`에서 `npx tsc --noEmit`
+- Then: 오류 0건 (exit 0)
+
+#### U-2. [unit] 보정식 이중 배선 (정상 — 핵심)
+- Given: `screens/PlayerScreen.tsx` + `services/playback.ts`
+- When: `grep -n "effectiveDuration\|duration_sec" screens/PlayerScreen.tsx services/playback.ts`
+- Then: **두 파일 모두** status 콜백에서 `max(status.durationMillis, status.positionMillis, track.duration_sec*1000)` 동치의 보정값으로 `setDuration`을 호출. 한쪽(특히 playback.ts 103행 경로 — 미니플레이어/피드 재생)만 고치고 다른 쪽이 `status.durationMillis || 0` 원형으로 남아 있으면 FAIL
+
+#### U-3. [unit] 경계 — engine duration null/undefined/0
+- Given: 보정식에 `status.durationMillis = undefined`(스트리밍 초기 상태에서 실제 발생), `= null`, `= 0` 각각 대입
+- When: `positionMillis = 3000`, `duration_sec = 91` 가정
+- Then: `effectiveDuration = 91000` (api 폴백). `undefined`가 `Math.max`에 직접 들어가 `NaN`이 되는 구조면 FAIL — `?? 0` 또는 `|| 0` 정규화 후 max 필수. NaN이 setDuration에 흘러가면 진행바 분모가 깨진다
+
+#### U-4. [unit] 경계 — 시작 직후 position=0 + 메타데이터 전무
+- Given: `durationMillis = 0/undefined`, `positionMillis = 0`, `duration_sec` 없음(optional 필드 — 구 업로드 트랙)
+- When: 보정식 대입
+- Then: `effectiveDuration = 0` → 기존 `setDuration(0)`과 동일 거동(진행바 0/0 가드는 기존 로직 유지), `recordPlayIfNeeded`는 341행 `durationMillis <= 0` 가드로 무기록. 0 대신 NaN/음수가 나오면 FAIL
+
+#### U-5. [unit] 경계 — 3값 대소 조합 매트릭스
+- Given: 보정식에 아래 조합 대입 (단위 ms)
+  | # | engine | position | api*1000 | 기대 effectiveDuration | 비고 |
+  |---|---|---|---|---|---|
+  | a | 91000 | 45000 | 91000 | 91000 | 냥냥냥 전반부 — 보정 무발동 |
+  | b | 91000 | 95000 | 91000 | 95000 | 냥냥냥 91초 초과 — position 추종 확장 |
+  | c | 91000 | 150000 | 157860 | 157860 | 백엔드 수정 후 — api가 상한 제공 |
+  | d | 144000 | 30000 | 144000 | 144000 | 정상곡(사랑의 김장) — 무해성 |
+  | e | 144000 | 30000 | 0/없음 | 144000 | api 결측 정상곡 — 무해성 |
+  | f | 91000 | 100000 | 157860 | 157860 | position이 api보다 작고 engine보다 클 때 |
+  | g | 157860 | 100000 | 91000 | 157860 | api가 과소일 때 engine 우선 |
+- Then: 전 행 일치. 특히 d·e에서 **정상곡 duration이 1ms도 변하지 않음**(보정 무해성 — planner 항목 2의 코드 레벨 절반)
+
+#### U-6. [unit] 경계 — seek 점프와 단조성
+- Given: 사용자가 seek로 `positionMillis`를 96000 → 40000으로 되돌린 직후의 status
+- When: 보정식이 **status 단발 입력만** 쓰는지, 이전 확장값을 상태로 유지하는지 확인
+- Then: 구현 방식 판정 기록 — ① status 단발식이면 position 40000에서 effectiveDuration이 91000으로 **수축**해 진행바 총시간이 뒤로 줄어드는 깜빡임 발생 가능(수축 허용 여부를 diff 주석/구현 근거로 확인; `max(이전 duration, ...)` 래칫이면 수축 없음) ② 래칫 구현이면 U-7의 곡 전환 리셋이 필수 짝 — 둘 다 없으면 FAIL. 진행바 ratio(`position/duration`)가 1을 초과하는 프레임이 구조적으로 불가능한지 확인
+
+#### U-7. [unit] 경계 — 곡 전환 시 상태 리셋
+- Given: 냥냥냥(확장된 duration ≈157s) 재생 중 → 다음 곡(91s 정상곡) 전환 (didJustFinish 자동·수동 스킵·큐 탭 3경로)
+- When: 전환 경로에서 duration 관련 상태(래칫 ref/스토어 duration)가 리셋되는지 코드 추적 — PlayerScreen didJustFinish(366행~)·`loadAndPlayTrack` 진입부·`playTrackAtIndex`
+- Then: 새 곡 첫 status에서 이전 곡의 확장값(157s)이 **잔존해 max에 섞이지 않음**. 잔존하면 다음 곡 총시간이 157s로 표시되는 회귀 — FAIL. `recordedTrackRef`는 트랙 id 비교(343행)라 리셋 불요이나, 보정용 ref를 새로 추가했다면 곡 전환 시 초기화 코드 필수
+
+#### U-8. [unit] 70% 재생기록 기준 통일 (정상 + 한계 명시)
+- Given: `recordPlayIfNeeded` 호출부(365행)와 시그니처
+- When: 보정 후 코드 확인
+- Then: ① 기록 판정 분모가 `effectiveDuration`(setDuration에 넣는 값과 동일 기준)으로 통일 — 진행바와 기록이 다른 duration을 보면 FAIL ② `recordedTrackRef` 트랙당 1회 가드 유지, `durationMillis <= 0` 가드 유지 ③ **한계 명시(REPORT 기재 의무)**: 백엔드 미수정 상태의 냥냥냥은 engine·api 모두 91s이므로 position 63.7s(=91×0.7) 시점 조기 기록이 **보정만으로는 해소되지 않음**(입력 3값 중 어느 것도 157.86을 모름). 이는 버그가 아니라 백엔드 수정(문서 U-12) 대기 항목 — 보정의 책임 범위는 "과소 duration으로 인한 진행바 고정 + 정상곡 기록 무변화"까지
+
+#### U-9. [unit] 괴리 경고 로그 (정상)
+- Given: 보정식 인접 코드
+- When: `grep -n "__DEV__" screens/PlayerScreen.tsx services/playback.ts` 중 duration 관련 신규 로그 확인
+- Then: `effectiveDuration - durationMillis > 5000`(5초+) 조건에서만 경고 출력, `__DEV__` 가드 필수(프로덕션 무로그), 매 status 틱(≈500ms)마다 반복 출력되지 않도록 1회성 가드(트랙당) 권장 — 무가드 반복 로그면 PASS(주의)로 기록. 로그에 트랙 제목 등만 — 사용자 식별정보 금지
+
+#### U-10. [unit] Marquee 구조 변경 (정상)
+- Given: `components/Marquee.tsx`
+- When: `grep -n "ScrollView\|numberOfLines\|scrollEnabled" components/Marquee.tsx`
+- Then: ① 측정 트랙이 `horizontal` + `scrollEnabled={false}` ScrollView로 래핑 ② 표시 텍스트에 `numberOfLines={1}` ③ 텍스트 onLayout 측정(구 54행)과 overflow 판정식(구 26행 `textW > containerW + 1`) 로직 보존 ④ `showsHorizontalScrollIndicator={false}` 권장(없으면 PASS(주의))
+
+#### U-11. [unit] Marquee 웹 무회귀 (경계 — 명시 요건)
+- Given: 동일 파일 diff
+- When: 웹 분기 3종 확인
+- Then: ① `NOWRAP`(19행 `whiteSpace: 'nowrap'` 웹 전용) 유지 ② `useNativeDriver: Platform.OS !== 'web'`(39행) 유지 ③ ScrollView 래핑이 웹에서 스크롤바·포커스 트랩을 만들지 않는 구조(scrollEnabled=false + indicator 숨김). 검증: `npx tsc --noEmit` + (의심 시) `npx expo export --platform web` 스모크 빌드 성공. 짧은 텍스트(overflow=false) 경로에서 `center` prop 정렬(48행) 보존 — 플레이어 제목 가운데 정렬 회귀 방지
+
+#### U-12. [unit] 백엔드 수정요청 문서 존재·내용 (정상)
+- Given: `2_housing/백엔드_요청_트랙duration.md` (현재 미존재 — 신규 생성 확인)
+- When: `test -f` + 내용 리뷰
+- Then: ① 파일 존재 ② 필수 내용: 증상(냥냥냥 duration_sec=91 vs 실제 157.86초), 원인(Xing/Info 헤더 없는 VBR MP3 — 첫 프레임 비트레이트×파일크기 추정 오차), 요청사항(전수 재스캔 또는 해당 트랙 duration_sec 갱신 — 정확 산출 방법 제안 포함), 앱 측 임시 보정(v3.192)의 한계(70% 조기 기록은 서버 수정 필요) ③ 코드 변경 아님 — 이 문서로 인한 앱 diff 없음 ④ 민감정보(계정·토큰·개인 이메일·실사용자 데이터) 미포함
+
+#### U-13. [unit] 변경 범위 격리 + 이슈 C 무변경 (회귀)
+- Given: `git diff --stat` (v3.192 커밋 범위)
+- When: 변경 파일 목록 확인
+- Then: ① 코드 변경은 `screens/PlayerScreen.tsx`·`services/playback.ts`·`components/Marquee.tsx` 3파일 + 신규 문서 1건으로 한정 ② **이슈 C**: `screens/ChartScreen.tsx`(177행 `addToQueue`)·`stores/playerStore.ts`(88행~ addToQueue 중복 거부 로직)·`components/TrackRow.tsx` diff 0 — 큐 자동 누적 추가(중복 방지) 동작 코드 무변경 ③ `autoContinueWithRelated`(playback.ts 31~82행) 무변경 — 관련곡 이어듣기 회귀 방지. 다른 파일이 섞였으면 해당 회귀 시나리오 추가
+
+---
+
+### [api] 보조 검증
+
+#### A-1. [api] 트랙 duration_sec 스키마·냥냥냥 현황 확인 (보정 입력값 근거)
+- Given: 로컬/개발 백엔드 기동 상태
+- When: `GET /api/tracks/{냥냥냥 id}` (또는 차트 응답에서 해당 트랙)
+- Then: ① `duration_sec` 필드 존재·number 타입 ② 백엔드 미수정 시점 값 = 91 기록(보정식 c/f 케이스의 전제 데이터) ③ **백엔드 수정 후 재실행 항목**: 값이 158(±1)로 갱신되면 E-1의 "수정 후" 분기 실측 개시. 서버 미기동 시 스키마 grep(`duration_sec` — 백엔드 serializer)으로 대체하고 UNVERIFIED(환경) 기록
+
+---
+
+### 2단계 — [e2e] 핵심 사용자 여정
+
+> 공통 전제: v3.191과 동일(Android 제스처+edge-to-edge / iOS 노치, 실계정 크리덴셜 금지, 샘플·공개 트랙 사용). 에뮬레이터 부재 시 각 항목 "정적 대체 검증"으로 다운그레이드 + 사용자 실기기 확인 요청(v3.191 관행).
+
+#### E-1. [e2e] 냥냥냥 재생 — 진행바 조기 고정 해소 (핵심 여정 1/3, planner 항목 1)
+- Given: 냥냥냥 트랙 재생 시작 (백엔드 **미수정** 상태)
+- When: 1:31(91s) 경과 지점까지 재생 지속
+- Then: ① 총시간 표시가 1:31에 **박히지 않고** position이 91s를 넘는 순간부터 재생 진행에 따라 확장(1:32, 1:33, …) ② 진행바 thumb이 우측 끝에 고정되어 떨리지 않음(ratio ≤ 1 유지) ③ 재생이 91s에서 끊기지 않고 실제 끝(≈2:38)까지 지속 ④ `__DEV__` 콘솔에 괴리 경고 1건
+- **백엔드 미수정 한계 명시**: 이 상태에서 검증 가능한 것은 "position 초과 시 확장"뿐. 총시간 2:38 선표시·가사 싱크 끝까지·임의 지점 seek 정확도는 **백엔드 duration_sec 갱신 후**(A-1 ③ 확인 후) 재실측 항목으로 분리 기록
+- 정적 대체 검증: U-2(이중 배선)+U-5 b행(확장식)+U-6(ratio ≤ 1 구조) PASS 근거. 사용자 실기기에서 "냥냥냥 1:31 초과 시점 스크린샷(총시간 표시 포함) + 끝까지 재생 여부" 요청
+
+#### E-2. [e2e] 정상곡 무해성 — 사랑의 김장(144s) (planner 항목 2)
+- Given: duration 정상 트랙(사랑의 김장 144s 등) 재생
+- When: 시작 직후·중반·종료 직전 3시점 관찰
+- Then: 총시간 2:24 고정 표시(변경 전과 동일), 진행바·시간 라벨 이상 없음, 괴리 경고 로그 없음
+- 정적 대체 검증: U-5 d·e행 PASS. 실기기 요청 불요(위험도 낮음 — 정적으로 종결 가능)
+
+#### E-3. [e2e] 70% 재생기록 — 트랙당 1회·중복 없음 (planner 항목 3)
+- Given: 정상곡 재생 + `__DEV__` 콘솔 관찰
+- When: ① 70% 지점 통과 ② seek로 70% 앞뒤 왕복 3회 ③ 같은 곡 이어서 끝까지
+- Then: `[PlayerScreen] 70% 재생 기록` 로그·`POST /charts/record-play` **정확히 1회**(네트워크 로그 확인), seek 왕복에도 중복 발화 없음. 곡을 바꿨다가 같은 곡 재진입 시 재기록 여부는 기존 정책(recordedTrackRef 생존 범위) 그대로 — 변경되었으면 FAIL
+- 정적 대체 검증: U-8 ①② PASS + `recordedTrackRef` 가드 diff 무변경. 냥냥냥 조기 기록 건은 U-8 ③ 한계로 REPORT 이관
+
+#### E-4. [e2e] 긴 제목 플레이어 — 1줄 마퀴·레이아웃 무밀림 (핵심 여정 2/3, planner 항목 4)
+- Given: 긴 제목 곡("더 나오려는 것을 막는 것일뿐" 등) PlayerScreen 진입 (네이티브)
+- When: 진입 직후 + 5초 관찰
+- Then: ① 제목이 **1줄** 유지(개행 없음) + 좌우 흐름 애니메이션 반복 ② 제목 아래 아티스트·재생바·컨트롤·하단 토글이 변경 전 위치 — 하단 컨트롤/토글 잘림·밀림 없음(v3.191 E-1 스크린샷과 비교) ③ 짧은 제목 곡으로 전환 → 애니메이션 **없이** 정적 가운데 정렬(center prop) ④ 마퀴 영역 좌우 스와이프해도 수동 스크롤되지 않음(scrollEnabled=false)
+- 정적 대체 검증: U-10(구조)+U-11 ③(center 보존) PASS. 사용자 실기기 "긴 제목 곡 플레이어 풀샷 + 짧은 제목 곡 1장" 요청
+
+#### E-5. [e2e] 차트 TrackRow 마퀴 + 웹 무회귀 (핵심 여정 3/3, planner 항목 5)
+- Given: ① 네이티브 차트 화면에 긴 제목 곡 노출 ② 웹 빌드(`expo start --web` 또는 export) 동일 화면
+- When: 차트 리스트 스크롤·정지 관찰
+- Then: ① 네이티브 TrackRow 제목 1줄 마퀴, 행 높이 불변(개행으로 행이 두꺼워지지 않음) ② 웹: 기존과 동일하게 마퀴 동작(nowrap·JS 드라이버), 스크롤바 미노출, 리스트 세로 스크롤 방해 없음
+- 정적 대체 검증: U-10+U-11 PASS + `npx expo export --platform web` 빌드 성공. 웹은 로컬 브라우저로 실측 가능(에뮬레이터 불요) — **웹 실측은 다운그레이드 대상 아님**, 네이티브 절반만 실기기 샷 요청
+
+#### E-6. [e2e] v3.191 안전영역 무회귀 (planner 항목 6)
+- Given: Android 제스처 기기(또는 정적 대체) PlayerScreen
+- When: ① 기본 화면 ② 하단 토글로 상세패널 ③ 재생목록 시트
+- Then: 헤더 상태바 겹침 없음·하단 토글 제스처 바 위 노출·시트 하단 인셋 유지 — v3.191 E-1·E-2·E-3 기준 동일
+- 정적 대체 검증: v3.192 diff에서 PlayerScreen의 insets 배선 3곳(19·168·797·1280행 상당)이 **건드려지지 않았는지** diff 라인 대조(duration·Marquee 변경이 레이아웃 코드와 교차하지 않음). 교차 시에만 실기기 재확인 요청
+
+#### E-7. [e2e] 이슈 C 무변경 — 차트 클릭 큐 누적 (planner 항목 7)
+- Given: 차트 화면, 빈 큐(또는 기존 큐 확인)
+- When: ① 곡 A 탭 → 재생 ② 곡 B 탭 ③ 곡 A 다시 탭
+- Then: ① A 재생 + 큐에 A ② B 재생 + 큐 [A, B] 누적(교체 아님) ③ A 중복 추가 없음(addToQueue false 경로) — 재생목록 시트에서 큐 내용으로 확인. 변경 전과 완전 동일 동작
+- 정적 대체 검증: U-13 ②(ChartScreen 177행·playerStore addToQueue diff 0) PASS면 코드 근거로 PASS 처리 가능
+
+---
+
+### 판정 기준
+- 머지 게이트(필수): U-1 ~ U-13 전부 PASS (PASS(주의) 허용 항목: U-9 반복 로그, U-10 ④)
+- 릴리즈 게이트: E-1(미수정 분기)·E-4·E-5(웹 절반 실측 필수) PASS. 에뮬레이터 부재 시 정적 대체 PASS + 사용자 실기기 확인으로 대체(REPORT에 다운그레이드 명기, v3.191 관행)
+- E-2·E-3·E-6·E-7은 회귀 스모크 — 정적 대체로 종결 가능. 단 E-3 중복 기록 FAIL·E-7 큐 동작 변경 FAIL은 릴리즈 보류
+- 후속(백엔드 수정 후): A-1 ③ 재확인 → E-1 "수정 후" 분기(총시간 2:38 선표시, 가사 끝까지, seek 정확) 재실측 — 본 버전 게이트에는 미포함
+
+### 태그 집계
+- [unit] 13건 (U-1~U-13: 정상 5 / 경계 6 / 회귀 2 — duration 보정 경계 케이스 U-3~U-7 매트릭스 포함)
+- [api] 1건 (A-1: duration_sec 스키마·냥냥냥 현황 — 백엔드 수정 후 재실행 항목 겸용)
+- [e2e] 7건 (핵심 여정 E-1·E-4·E-5, 무해성 E-2, 기록 E-3, 무회귀 E-6·E-7 — 전 항목 정적 대체 검증 병기, E-5 웹 절반은 로컬 실측 가능)
+
+---
+
+### v3.192 테스트 결과 (tester — 2026-09-20 실행)
+
+> 실행 환경: 에뮬레이터/adb/maestro 부재 확인(adb·emulator·maestro not found, 부팅된 iOS 시뮬레이터 없음) → e2e 네이티브 항목은 계획된 "정적 대체 검증"으로 다운그레이드. 웹은 `expo export --platform web` 실빌드 + 로컬 서빙 브라우저 실측 수행.
+
+#### [unit] 판정 표 (머지 게이트)
+
+| 항목 | 판정 | 근거 요약 |
+|---|---|---|
+| U-1 타입 무결성 | PASS | `npx tsc --noEmit` exit 0, 오류 0건 |
+| U-2 보정식 이중 배선 | PASS | PlayerScreen.tsx:365~367 + playback.ts:108~110 두 콜백 모두 `Math.max(engine, position, apiSec*1000)` → `setDuration(effectiveDuration)`. 원형 `status.durationMillis \|\| 0` 잔존 없음 |
+| U-3 engine null/undefined/0 | PASS | PlayerScreen `?? 0`·playback `\|\| 0` 정규화 후 max → (und/null/0, 3000, 91000)=91000. NaN 유입 불가 |
+| U-4 전무 케이스 | PASS | max(0,0,0)=0 → setDuration(0) 기존 거동. recordPlayIfNeeded 342행 `!durationMillis \|\| <=0` 가드로 무기록 |
+| U-5 3값 매트릭스 a~g | PASS | 전 행 일치(a 91000/b 95000/c 157860/d 144000/e 144000/f 157860/g 157860). d·e 정상곡 duration 불변(무해성) — 양 파일 동일식 |
+| U-6 seek 되감기 | PASS(주의) | **status 단발식(래칫 아님)** 확정. 96000→40000 되감기 시 max(91000,40000,91000)=91000으로 **수축 발생**(총시간 라벨 1:36→1:31 복귀 깜빡임 — 오판 트랙+확장 후 되감기에서만). ratio≤1은 구조 보장(duration=max(...,position)≥position, 동일 status 틱에서 position·duration 동시 갱신). FAIL 조건(래칫인데 리셋 없음)에 비해당. 주의: 수축 허용을 명시한 주석은 없음(주석은 "실시간 확장"만 언급) |
+| U-7 곡 전환 리셋 | PASS | 래칫 상태 없음 → 이전 확장값이 max에 섞일 경로 자체가 없음. 3경로(didJustFinish 394행·switchToTrack 718행·playback playTrackAtIndex→loadAndPlayTrack) 모두 사운드 생성 **전에** `playTrackAtIndex`가 store.track 교체 → 새 곡 첫 status의 `liveTrack.duration_sec`은 새 곡 값. durationWarnedRef/durationWarnedTrackId는 트랙 id 비교식이라 리셋 불요 |
+| U-8 70% 기준 통일 | PASS | ① 385행 `recordPlayIfNeeded(status.positionMillis, effectiveDuration)` — setDuration과 동일 분모 ② recordedTrackRef(344행)·durationMillis<=0(342행) 가드 무변경 ③ **한계(REPORT 기재)**: 백엔드 미수정 냥냥냥은 3값 모두 91000 → 63.7s 조기 기록 잔존(보정 입력 중 어느 것도 157.86 미인지 — 문서 U-12 백엔드 수정 대기) |
+| U-9 괴리 경고 로그 | PASS | 양 파일 `__DEV__` 가드 + `effectiveDuration-engineDurationMs >= 5000` + 트랙당 1회 가드(PlayerScreen durationWarnedRef 187행 / playback durationWarnedTrackId 23행). 로그 내용 trackId·apiSec·engineMs·positionMs — 개인정보 없음 |
+| U-10 Marquee 구조 | PASS | horizontal+scrollEnabled={false} ScrollView 래핑(52~57행), numberOfLines={1} 양쪽 카피(63·72행), 텍스트 onLayout(65행)·overflow 판정식(29행 `textW > containerW + 1`) 보존, showsHorizontalScrollIndicator={false}(55행) 포함 — ④까지 충족 |
+| U-11 Marquee 웹 무회귀 | PASS | NOWRAP 웹 전용(22행)·useNativeDriver `Platform.OS !== 'web'`(42행) 유지. `expo export --platform web` 성공 + 브라우저 실측: 스크롤바 미노출·세로 스크롤 정상. center 경로: scrollContent/track flexGrow:1(84~85행)로 짧은 텍스트 시 컨테이너 폭 유지 → center 정렬 보존 |
+| U-12 백엔드 문서 | **FAIL(경미 — 문서 1줄 보강)** | 파일 존재 ✓, 증상(91 vs 157.86) ✓, 원인(Xing/Info 없는 VBR — 첫 프레임 320kbps CBR 추정=91.26s 역산 일치) ✓, 요청(재먹싱+duration 158 갱신·ffprobe 실측 파이프라인·전수 5초+ 괴리 점검) ✓, 민감정보 없음 ✓, 코드 diff 없음 ✓. **누락**: 필수 내용 중 "앱 보정 한계 — 70% 재생기록 조기 발화(63.7s)는 서버 수정 필요" 미기재(15행은 seek 정확도·엔진 인식만 언급) |
+| U-13 변경 범위 격리 | PASS(주의) | v3.192 diff: PlayerScreen.tsx(+24/-4)·playback.ts(+18/-1)·Marquee.tsx(+34/-20) + 신규 문서 1건. **이슈 C 대상 ChartScreen.tsx·playerStore.ts·TrackRow.tsx diff 0** ✓. autoContinueWithRelated(34~85행) 무변경 ✓. 주의: 워킹트리에 v3.192와 무관한 기존 변경 잔존(app.json 번들ID·eas.json·metro.config.js·package.json/lock·authService.ts 주석 1줄·다수 mode-only 변경) — **커밋 시 4파일로 스코프 한정 필요** |
+
+#### [api] 판정 표
+
+| 항목 | 판정 | 실행 방식 |
+|---|---|---|
+| A-1 duration_sec 현황 | PASS | 공개 무인증 `GET https://api.maidol.ai.kr/api/tracks/6aa3ec295f11b57ba518f5e8` 200 → `duration_sec: 91` (int) — 백엔드 미수정 기준값 실측 확인(U-5 c/f 전제 성립). ③ 백엔드 수정 후 158(±1) 재확인 항목으로 존치 |
+
+#### [e2e] 판정 표 (에뮬레이터 부재 — 정적 대체, v3.191 관행)
+
+| 항목 | 판정 | 실행 방식 |
+|---|---|---|
+| E-1 냥냥냥 확장 | PASS(정적 대체) | U-2+U-5 b행+U-6(ratio≤1 구조) 근거. 실기기 확인 요청 잔여 |
+| E-2 정상곡 무해성 | PASS(정적 종결) | U-5 d·e행 — 실기기 불요 |
+| E-3 70% 기록 1회 | PASS(정적 종결) | U-8 ①② + recordedTrackRef diff 무변경. 냥냥냥 조기 기록은 U-8 ③ 한계로 이관 |
+| E-4 긴 제목 1줄 마퀴 | PASS(정적 대체) | U-10+U-11(center 보존) 근거. 실기기 스크린샷 요청 잔여 |
+| E-5 차트 마퀴+웹 | 웹 절반 **PASS(실측)** / 네이티브 절반 정적 대체 | 웹: export 빌드 서빙 → 375px 모바일 뷰포트에서 TOP100 3위 "더 나오려는 것을 막는 것일뿐" **1줄 마퀴 애니메이션 동작 실측**(두 시점 스크린샷에서 텍스트 위치 이동 확인), 행 높이 균일(개행 없음), 가로 스크롤바 미노출, 세로 리스트 스크롤 정상, 콘솔 에러 0건 |
+| E-6 안전영역 무회귀 | PASS(정적 종결) | PlayerScreen diff가 184~188행(ref 선언)·357~385행(status 콜백)에 한정 — insets 배선 코드 미접촉 |
+| E-7 이슈 C 무변경 | PASS(정적 종결) | U-13 ② diff 0 근거 |
+
+#### 발견 이슈
+1. **[U-12 FAIL — app-dev 조치]** `2_housing/백엔드_요청_트랙duration.md` 15행 부근에 앱 보정 한계 1줄 추가: "70% 재생기록(별 적립)도 duration_sec=91 기준으로 63.7초에 조기 발화 — 서버 duration 갱신 전까지 해소 불가". 코드 변경 아님.
+2. **[U-6 주의 — 기록만, 수정 불요]** seek 되감기 시 총시간 라벨 수축(1:36→1:31) 깜빡임 가능 — duration 오판 트랙에서 91s 초과 재생 후 되감을 때만. 래칫 미채택의 트레이드오프(래칫이면 곡 전환 리셋 필요)로 허용 판정. 원하면 주석 1줄로 의도 명시 권장.
+3. **[U-13 주의 — 커밋 위생]** v3.192 커밋은 `screens/PlayerScreen.tsx`·`services/playback.ts`·`components/Marquee.tsx`·`백엔드_요청_트랙duration.md` 4파일로 한정할 것(워킹트리의 무관 변경 혼입 방지).
+
+#### 1차 게이트 판정
+- **조건부 통과**: U-1~U-11·U-13 PASS(허용 범위 내 주의 2건 — U-6은 U-9 유형의 기록성 주의로 처리). **U-12 경미 FAIL 1건**(문서 1줄 누락 — 코드 무관)만 보강되면 머지 게이트 충족. 릴리즈 게이트는 E-5 웹 절반 실측 PASS 확보, E-1·E-4 네이티브는 실기기 확인 대기.
+
+#### 실기기 확인 요청 (사용자 안내)
+1. 냥냥냥 재생: 1:31을 넘겨 계속 재생되는지 + 총시간 표시가 1:32, 1:33…으로 늘어나는 순간 스크린샷 1장, 끝(≈2:38)까지 재생되는지 여부
+2. 긴 제목 곡("더 나오려는 것을 막는 것일뿐") 플레이어 화면 풀샷 1장(제목 1줄 흐름 + 하단 컨트롤 위치) + 짧은 제목 곡 1장(가운데 정렬 확인)
+3. 차트 화면에서 긴 제목 행이 1줄로 흐르는지(행 높이 불변) 확인
