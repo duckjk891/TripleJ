@@ -1,11 +1,10 @@
 // [Splash] v3.173(대표) — 2막 브랜드 인트로:
 //   1막: "MY / AI / IDOL" 세 줄이 위에서부터 순차 등장 → 함께 사라짐
-//   2막: 응원봉 심볼(배경 없는 흰 심볼, 소형) + MAIDOL 로고 등장
+//   2막: MAIDOL 로고 등장 (v3.194: 응원봉 심볼 제거 — 에셋 maidol_symbol.png 은 보존)
 import { useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
-  Image,
   Animated,
   Easing,
 } from 'react-native';
@@ -20,8 +19,6 @@ type RootStackParamList = {
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Splash'>;
-
-const SYMBOL = require('../assets/branding/maidol_symbol.png');
 
 export default function SplashScreen({ navigation }: Props) {
   // 1막 — MY / AI / IDOL 순차 등장 (각 줄 opacity + 아래로 살짝 내려오는 translateY)
@@ -80,9 +77,8 @@ export default function SplashScreen({ navigation }: Props) {
         ))}
       </Animated.View>
 
-      {/* 2막 — 응원봉 심볼(배경 없음·소형) + MAIDOL */}
+      {/* 2막 — MAIDOL 로고 (v3.194: 응원봉 심볼 제거, 절대배치 중앙정렬이라 자동 재중앙) */}
       <Animated.View style={[styles.act, { opacity: act2Opacity, transform: [{ scale: act2Scale }] }]}>
-        <Image source={SYMBOL} style={styles.symbol} />
         <View style={styles.logoRow}>
           <AppText style={styles.title}>M</AppText>
           <AppText style={[styles.title, styles.titleAi]}>AI</AppText>
@@ -115,8 +111,6 @@ const styles = StyleSheet.create({
     lineHeight: 54, // v3.193: 74→54 (비례)
   },
   wordAi: { color: colors.accent.primary },
-  // 2막 — 심볼은 배경 없는 흰 응원봉, 기존보다 작게
-  symbol: { width: 64, height: 66, marginBottom: 20, resizeMode: 'contain' },
   logoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   title: {
     fontSize: 36, // v3.193: 52→36 축소

@@ -76,7 +76,7 @@ export default function MiniPlayer() {
           <Image source={{ uri: getCoverUrl(coverImg) }} style={styles.cover} />
         ) : (
           <View style={[styles.cover, styles.coverPlaceholder]}>
-            <Text style={{ fontSize: 16, color: colors.text.muted }}>{'♪'}</Text>
+            <Feather name="music" size={16} color={colors.text.muted} />
           </View>
         )}
 
@@ -86,19 +86,19 @@ export default function MiniPlayer() {
           <Text style={styles.artist} numberOfLines={1}>{track.artist_name || track.uploader_nickname || 'AI'}</Text>
         </View>
 
-        {/* 이전곡 */}
+        {/* 이전곡 — v3.194: 텍스트 글리프 → Feather 벡터 */}
         <TouchableOpacity onPress={handlePrev} style={styles.skipButton} disabled={!hasPrev}>
-          <Text style={[styles.skipIcon, !hasPrev && { opacity: 0.3 }]}>{'⏮'}</Text>
+          <Feather name="skip-back" size={16} color={colors.text.primary} style={!hasPrev ? { opacity: 0.3 } : undefined} />
         </TouchableOpacity>
 
         {/* 재생/정지 */}
         <TouchableOpacity onPress={togglePlay} style={styles.playButton}>
-          <Text style={styles.playIcon}>{isPlaying ? '❚❚' : '▶'}</Text>
+          <Feather name={isPlaying ? 'pause' : 'play'} size={16} color={colors.text.primary} />
         </TouchableOpacity>
 
         {/* 다음곡 */}
         <TouchableOpacity onPress={handleNext} style={styles.skipButton} disabled={!hasNext}>
-          <Text style={[styles.skipIcon, !hasNext && { opacity: 0.3 }]}>{'⏭'}</Text>
+          <Feather name="skip-forward" size={16} color={colors.text.primary} style={!hasNext ? { opacity: 0.3 } : undefined} />
         </TouchableOpacity>
 
         {/* 재생목록 바로가기 — 곡 클릭 없이 큐를 한 번에 열기 */}
@@ -112,7 +112,7 @@ export default function MiniPlayer() {
 
         {/* 닫기 */}
         <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-          <Text style={styles.closeIcon}>{'✕'}</Text>
+          <Feather name="x" size={18} color={colors.text.muted} />
         </TouchableOpacity>
       </TouchableOpacity>
     </View>
@@ -169,10 +169,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  skipIcon: {
-    color: colors.text.primary,
-    fontSize: 14,
-  },
   playButton: {
     width: 36,
     height: 36,
@@ -182,18 +178,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 4,
   },
-  playIcon: {
-    color: colors.text.primary,
-    fontSize: 12,
-  },
   closeButton: {
     width: 28,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  closeIcon: {
-    color: colors.text.muted,
-    fontSize: 16,
   },
 });

@@ -90,7 +90,9 @@ export default function DraggableQueue({ data, currentIndex, onReorder, onPress,
         return (
           <Animated.View key={`${q?.id}-${i}`} style={[styles.row, isDragging && styles.rowDragging, rowStyle]}>
             <TouchableOpacity style={styles.main} activeOpacity={0.7} onPress={() => onPress(i)}>
-              <AppText variant="footnote" tone={playing ? 'accent' : 'muted'} style={styles.idx}>{playing ? '▶' : i + 1}</AppText>
+              {playing
+                ? <View style={[styles.idx, { alignItems: 'center' }]}><Feather name="play" size={12} color={colors.accent.primary} /></View>
+                : <AppText variant="footnote" tone="muted" style={styles.idx}>{i + 1}</AppText>}
               <View style={{ flex: 1 }}>
                 <AppText variant="body" tone={playing ? 'accent' : 'primary'} numberOfLines={1}>{q?.title || '제목 없음'}</AppText>
                 <AppText variant="caption" tone="muted" numberOfLines={1}>{q?.artist_name || q?.uploader_nickname || '아티스트'}</AppText>

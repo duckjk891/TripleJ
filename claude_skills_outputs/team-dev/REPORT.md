@@ -2068,3 +2068,61 @@ v38 설계 문서 기반 Phase 1 MVP 전체 구현.
 
 ### 판정
 - planner 최종 확인: **승인** — PLAN v3.193 변경 매트릭스 대비 5파일 구현 충실(diff 직접 검토), 이슈 D 2안 반영 확인, 테스트 게이트 통과. 커밋 진행 가능(5파일 스코프 한정). 릴리즈 확정은 실기기 잔여 6건 확인 후.
+
+## v3.194 — 2026-09-20 — 소셜 로그인 APK 분석·앱 복귀 경로 + 네이버 버튼 제거 + 이모지 아이콘 1차 벡터화 + 스플래시 응원봉 제거
+
+### 사용자 요청 원문
+"지금 apk 파일로 구글 로그인 시도를 해봤는데. 로그인을 하려니까 갑자기 메일 창이 뜨길래 보내기 버튼을 한번 눌렀어. 그 다음에 다시 로그인을 누르니까 null 에 접근할 수 없습니다. 이렇게 뜨네? 카카오도 앱 관리자 설정 오류라고 뜨고. 앱스토어에서 실행하지 않아서 생기는 문제일까? 그리고 네이버로 계속하기 버튼은 우선 제거해줘. 그리고 방금 수정한 하트 아이콘은 하트누르면 아이콘 내부가 칠해지는 식으로만 되어야지. 이모지 형태로 바뀌면 안되. 이제부터 우리 앱에서는 이모지는 아이콘으로 안쓸꺼야."
+- 추가 지시: ⭐(재화 '스타')는 이모지 유지 / 스플래시 응원봉(라이트스틱) 제거.
+
+### 수행 결과
+
+**이슈 A — 소셜 로그인(APK)**
+- 원인 분석(코드 실측): 소셜 로그인은 SDK 없이 브라우저 리다이렉트 방식이었고, 콜백 수신이 웹 전용(App.tsx useOAuthCallback `Platform.OS==='web'` 가드)이라 **APK에서는 OAuth가 성공해도 토큰이 앱으로 돌아올 수 없는 구조**였음.
+- "메일 창": 구글 버튼→메일 경로는 코드에 없음. 앱에서 메일을 여는 유일한 지점은 로그인 화면 소셜 버튼 바로 아래 CompanyFooter "고객센터" 링크(PolicySheet.tsx, mailto:kimpearl@lotusai.co.kr) — **오탭 가설이 최우선**. 검증법: 고객센터 수신함에서 해당 시각 빈 메일 수신 여부 확인. 차순위: 브라우저의 구글 "미인증 앱" 차단 페이지 내 개발자 문의 링크.
+- "null 에 접근할 수 없습니다": 프론트 코드에 없는 문자열(전수 grep 0건). 출처 후보 ① SocialLoginButtons가 서버 503 detail을 무검증 표출 ② 구(舊) 프리플라이트 api.get()이 OAuth 302를 앱 내 XHR로 끝까지 따라가 서버 state 선점/오류 유발 ③ 백엔드 frontend_url 미설정 시 `null/oauth/callback` 류 리다이렉트. 확정은 사용자 재현 시각대 /_logs/frontend 서버 로그로(후속).
+- 수정(app-dev 완료): SocialLoginButtons 전면 재작성 — 프리플라이트 제거, sanitizeServerMessage(80자·문자열 검증), 네이티브는 expo-web-browser `openAuthSessionAsync('?client=app', 'aidol://oauth/callback')` + null 가드(result?.type==='success' && result.url일 때만 파싱). App.tsx useOAuthCallback 네이티브 확장(getInitialURL+URL 리스너+dedupe). expo-web-browser ~15.0.11 설치. 백엔드 요청 문서 `백엔드_요청_소셜로그인_앱복귀.md` 발행(client=app 시 aidol:// 리다이렉트).
+- "앱스토어 미설치 때문?" 답변(사용자 전달): 아니요 — APK 사이드로드 자체는 원인이 아님. 원인은 ① 구글/카카오 콘솔에 서버·리다이렉트 미등록(카카오 "앱 관리자 설정 오류"가 그 증상) ② 앱이 브라우저에서 토큰을 돌려받는 통로 부재(이번 버전에서 수정). 스토어 게시 후에도 동일하게 실패했을 문제라 미리 발견된 것이 다행. "메일 창"은 로그인 버튼 바로 아래 "고객센터" 링크 오탭 가능성이 큼.
+
+**콘솔 설정 안내(사용자 작업 필요 — 코드로 해결 불가)**
+- 구글(Google Cloud Console → API 및 서비스 → 사용자 인증 정보):
+  1) OAuth 동의 화면이 "테스트" 상태면 테스트 사용자에 본인 구글 계정 추가(또는 프로덕션 게시).
+  2) 웹 클라이언트 승인된 리디렉션 URI에 `https://<백엔드도메인>/api/auth/oauth/google/callback` 등록.
+  3) (향후 네이티브 SDK 전환 시에만) Android 클라이언트: 패키지 `com.maidol.app` + SHA-1(`eas credentials`로 확인 — 실행은 사용자/tester).
+- 카카오(developers.kakao.com → 내 애플리케이션):
+  1) 제품 설정 → 카카오 로그인 **활성화 ON** + Redirect URI `https://<백엔드도메인>/api/auth/oauth/kakao/callback` 등록.
+  2) 앱 설정 → 플랫폼: Web에 `https://<백엔드도메인>` 등록(Android 플랫폼 등록은 네이티브 SDK 전환 시 필요).
+  3) REST API 키가 백엔드 env의 카카오 client_id와 일치하는지 확인 — "앱 관리자 설정 오류(KOE101)" 전형 원인.
+
+**이슈 B — 네이버 버튼 제거**: SocialLoginButtons PROVIDERS에서 naver 제거(UI만, 백엔드 라우트 무변경). 완료.
+
+**이슈 C — 이모지 아이콘**: 하트는 v3.193에서 이미 벡터(MCI heart/heart-outline 채움 토글) — APK의 이모지 하트는 구 빌드(4a313a5) 탓, 재빌드로 해소. 1차 교체 완료: 미니플레이어·플레이어·차트·플레이리스트·검색·피드 CTA·로그인·공유/출석/스타 모달의 글리프(♪♫▶❚❚✕←✓ 및 EmptyState/LoginPrompt 이모지) 전부 벡터화, EmptyState·LoginPrompt icon prop ReactNode 확장. **⭐(재화) 전량 보존**, 콘텐츠 문자열(AI 프롬프트·공유 메시지) 제외. 2차 잔여 목록은 PLAN v3.194에 기록(다음 버전).
+
+**이슈 D — 스플래시 응원봉**: 응원봉 = assets/branding/maidol_symbol.png, 사용처 SplashScreen.tsx 단일(2막 심볼) 확인 후 3점(require·Image·스타일) 제거. 절대배치 중앙정렬이라 로고+서브타이틀 자동 재중앙 — 빈 공간·타이밍 변화 없음. 네이티브 splash-icon.png는 "MAIDOL" 텍스트뿐이라 무관. 에셋은 디스크 보존.
+
+### 테스트 결과 (tester, TESTPLAN v3.194)
+- unit 14/15 PASS, api 3/3 PASS, 정적 검증 PASS, tsc 0건.
+- U-14 FAIL: 코드 결함 아님 — app.json에 9/18 빌드 세션 잔존 diff(bundleId/package com.triplej.studio→com.maidol.app, expo-media-library plugin, EOF 개행) 혼입으로 기대 스냅샷 불일치. **처리 방침(planner 판정)**: 커밋 A(v3.194)는 app.json의 expo-web-browser plugin 라인만 add -p 스테이징, 잔존분은 커밋 B(chore)로 분리 기록 — 승인(아래 판정 참조).
+- E-1/E-2(구글·카카오 실로그인 왕복) UNVERIFIED-예정: ① 콘솔 설정(사용자) ② 백엔드 client=app 리다이렉트 반영 ③ 실기기 재빌드 APK — 3조건 충족 후 검증.
+
+### planner 판정
+1. **U-14/커밋 B — 승인.** 근거: 잔존분은 9/18 EAS 빌드에 실사용된 의도적 변경(사용자가 테스트한 APK 자체가 com.maidol.app 패키지·apk buildType 산물이고, 카카오 콘솔 안내도 이 패키지명 기준). 미커밋 장기화는 빌드-저장소 괴리 위험. **포함 파일 확정: app.json(커밋 A 스테이징분 제외 나머지 hunk), eas.json(preview android.buildType=apk), metro.config.js(zustand ESM→CJS 웹 치환 재작성).** 제외: .easignore(퍼미션 변경만), services/authService.ts 주석 1줄(v3.194 코드 커밋에 자연 포함되면 그쪽으로), 바이너리 에셋·맵/스프라이트 등 불명확 변경 전부. eas.json·metro.config.js의 mode 644→755 변경은 내용과 함께 커밋(메시지에 명기).
+2. **P1-4(고객센터 오탭 방지) — 이번 버전 최소 수정으로 반영 지시.** 범위 2점: ① 로그인 화면에서 소셜 버튼 블록과 CompanyFooter 사이 여백 확대(companyBox marginTop을 spacing.xl 이상으로 — 스타일 1곳) ② "고객센터" 탭 시 즉시 mailto 대신 showAlert 확인 다이얼로그("고객센터에 메일을 보낼까요?" 취소/메일 열기) — 오발송 자체를 차단하는 핵심 가드. 둘 다 스타일/1함수 수준의 저위험 변경. 테스트: 로그인 화면에서 고객센터 탭→다이얼로그 노출→취소 시 무동작, 확인 시 메일 앱 오픈.
+
+### 커밋 메시지 제안
+- 커밋 A: `feat: v3.194 소셜 로그인 APK 복귀 경로(openAuthSessionAsync·aidol 딥링크)·네이버 버튼 제거·이모지 아이콘 1차 벡터화(⭐ 보존)·스플래시 응원봉 제거 (team-dev)`
+- 커밋 B: `chore: 빌드 설정 잔존분 정리 — 패키지 com.maidol.app 전환·expo-media-library 플러그인, eas preview apk buildType, metro zustand ESM→CJS 웹 치환(9/18 빌드 세션 실사용분, 파일 mode 변경 포함) (team-dev)`
+- 두 커밋 모두 말미에 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` 추가.
+
+### 실기기/후속 (6건)
+1. 사용자: 구글 콘솔 테스트 사용자/Redirect URI, 카카오 로그인 활성화/Redirect URI/Web 플랫폼 등록(위 안내대로, 민감정보는 콘솔에서만).
+2. 백엔드: `백엔드_요청_소셜로그인_앱복귀.md` 반영(client=app → aidol://oauth/callback#token=) + frontend_url env 값 확인("null" 리다이렉트 후보 배제).
+3. tester: 사용자 재현 시각대 /_logs/frontend 서버 로그에서 "null 에 접근할 수 없습니다" 출처 확정.
+4. 실기기 재빌드 APK로 E-1/E-2(구글·카카오 로그인 왕복·취소 복귀) + 하트 벡터 렌더 + 스플래시 확인.
+5. 고객센터 수신함(kimpearl@lotusai.co.kr)에서 사용자 발신 빈 메일 확인 — "메일 창" 오탭 가설 검증.
+6. 이모지 아이콘 2차 목록(PLAN v3.194 기록분) 다음 버전 처리 + P1-4 반영분 회귀 확인.
+
+### 특이사항
+- APK 소셜 로그인은 콘솔 등록·백엔드 client=app 반영 전까지는 여전히 완결 불가 — 코드 준비는 끝났고 외부 조건 대기 상태임을 사용자에게 고지 필요.
+- 커밋 B는 과거 세션 산출물의 사후 기록이라 v3.194 버전 번호를 붙이지 않음(chore).
+- 민감정보 없음(콘솔 키·SHA-1은 플레이스홀더/확인 명령 안내만).

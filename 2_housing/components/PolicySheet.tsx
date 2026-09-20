@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from './ui';
 import { colors } from '../theme/colors';
 import { spacing, radius } from '../theme/spacing';
+import { showAlert } from '../utils/appAlert';
 
 interface Props {
   visible: boolean;
@@ -37,9 +38,18 @@ export default function PolicySheet({ visible, title, body, onClose }: Props) {
 // 사업자 정보(전자상거래법 표기) — MAIDOL Footer 구성(정보 + 이용약관/개인정보처리방침/고객센터 링크).
 // 설정 하단·로그인 하단에 공용 표기. 통신판매업 신고 면제 문구는 표시 의무 아님 → 미표기.
 export function CompanyFooter({ onOpenPolicy }: { onOpenPolicy?: (key: 'terms' | 'privacy') => void }) {
+  // v3.194: 로그인 화면에서 소셜 버튼 바로 아래라 오탭으로 메일 앱이 열리는 사고 방지 — 확인 다이얼로그 경유
   const openMail = () => {
-    Linking.openURL('mailto:kimpearl@lotusai.co.kr').catch((err) =>
-      console.error('[CompanyFooter] 고객센터 메일 열기 실패', { message: err?.message }));
+    showAlert('고객센터', '고객센터로 메일을 보낼까요?', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '메일 열기',
+        onPress: () => {
+          Linking.openURL('mailto:kimpearl@lotusai.co.kr').catch((err) =>
+            console.error('[CompanyFooter] 고객센터 메일 열기 실패', { message: err?.message }));
+        },
+      },
+    ]);
   };
   return (
     <View style={styles.companyBox}>
@@ -78,7 +88,8 @@ const styles = StyleSheet.create({
   body: { flex: 1, paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
   text: { lineHeight: 20 },
   companyBox: {
-    marginTop: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.md,
+    // v3.194: 소셜 로그인 버튼과의 간격 확대 — 고객센터 링크 오탭 방지
+    marginTop: spacing.xxl, paddingTop: spacing.lg, paddingBottom: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle,
   },
   companyText: { lineHeight: 18 },

@@ -46,7 +46,7 @@ export async function getMe(): Promise<Record<string, any>> {
 
 /**
  * POST /auth/me/profile-image — 멀티파트 필드명 `image`(서버가 512x512 자동 크롭).
- * web/native FormData 분기: voiceService.createVoicePersona 관행 재사용.
+ * web/native FormData 분기: voiceService.appendAudioFile 관행 재사용.
  */
 export async function uploadProfileImage(
   fileUri: string,

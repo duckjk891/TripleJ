@@ -1,10 +1,16 @@
-// [SocialLoginButtons] 소셜 로그인 3종(구글/카카오/네이버) — MAIDOL SocialLoginButtons 이식.
+// [SocialLoginButtons] 소셜 로그인 2종(구글/카카오) — MAIDOL SocialLoginButtons 이식. (v3.194: 네이버 제거)
 // 구분선 "또는" + 프로바이더 색상 버튼. SDK 미사용: 백엔드 /auth/oauth/{p}/login 리다이렉트 방식.
-// 서버에 OAuth 키가 미설정이면 503 → 서버 안내 문구를 그대로 보여준다(키 설정 시 자동 활성).
+// v3.194: 유해한 프리플라이트 api.get 제거(백엔드 OAuth state 선점/소모 방지) + 네이티브 앱 복귀 경로:
+//   웹    → 전체 페이지 이동, 콜백은 App.tsx 해시(#token=) 처리.
+//   네이티브 → expo-web-browser openAuthSessionAsync + `aidol://oauth/callback#token=` 딥링크 복귀.
+//   백엔드가 client=app 리다이렉트를 지원하기 전에는 콜백이 안 와도 취소/닫힘으로 조용히 복귀(크래시·무한 busy 없음).
+//   백엔드 요청 문서: 2_housing/백엔드_요청_소셜로그인_앱복귀.md
 import { useState } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Linking } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, StyleSheet, Linking, Platform } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { showAlert } from '../../utils/appAlert';
-import api, { BACKEND_BASE_URL } from '../../services/api';
+import { BACKEND_BASE_URL } from '../../services/api';
+import { useAuthStore } from '../../stores/authStore';
 import { AppText } from '../ui';
 import { colors } from '../../theme/colors';
 import { spacing, radius } from '../../theme/spacing';
@@ -12,8 +18,18 @@ import { spacing, radius } from '../../theme/spacing';
 const PROVIDERS = [
   { key: 'google', label: 'Google 로 계속하기', bg: '#ffffff', fg: '#1f1f1f', border: '#dadce0' },
   { key: 'kakao', label: '카카오로 계속하기', bg: '#FEE500', fg: '#191600', border: '#FEE500' },
-  { key: 'naver', label: '네이버로 계속하기', bg: '#03C75A', fg: '#ffffff', border: '#03C75A' },
 ] as const;
+
+// 앱 복귀 딥링크(스킴 aidol 은 app.json 기존재) — 백엔드 요청 문서와 동일해야 한다.
+const OAUTH_REDIRECT_URL = 'aidol://oauth/callback';
+
+const GENERIC_FAIL_MSG = '소셜 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.';
+
+// 서버가 내려준 오류 문구는 검증 후에만 그대로 노출 — 문자열이 아니거나(null/객체) 과도하게 길면 고정 문구.
+function sanitizeServerMessage(value: unknown): string {
+  if (typeof value === 'string' && value.trim().length > 0 && value.length <= 80) return value.trim();
+  return GENERIC_FAIL_MSG;
+}
 
 export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logPrefix?: string }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -21,24 +37,46 @@ export default function SocialLoginButtons({ logPrefix = 'SocialLogin' }: { logP
   const handlePress = async (provider: string) => {
     if (busy) return;
     setBusy(provider);
-    if (__DEV__) console.info(`[${logPrefix}] 소셜 로그인 시도`, { provider });
+    if (__DEV__) console.info(`[${logPrefix}] 소셜 로그인 시도`, { provider, platform: Platform.OS });
+    const loginUrl = `${BACKEND_BASE_URL}/api/auth/oauth/${provider}/login`;
     try {
-      // 키 미설정이면 503 JSON을 돌려준다 — 이 경우 서버 안내 문구를 표시.
-      await api.get(`/auth/oauth/${provider}/login`);
-      // 2xx JSON이 오는 경우는 없지만, 도달하면 리다이렉트 방식으로 폴백
-      await Linking.openURL(`${BACKEND_BASE_URL}/api/auth/oauth/${provider}/login`);
-    } catch (err: any) {
-      const status = err?.response?.status;
-      if (status === 503) {
-        const msg = err?.response?.data?.detail || err?.response?.data?.error || '소셜 로그인은 현재 사용할 수 없습니다.';
-        console.error(`[${logPrefix}] 소셜 로그인 비활성`, { provider, status });
-        showAlert('알림', msg);
-      } else {
-        // 302 리다이렉트를 axios가 따라가다 CORS 등으로 실패한 케이스 → 전체 페이지 이동으로 진행
-        if (__DEV__) console.info(`[${logPrefix}] 리다이렉트 진행`, { provider, status });
-        await Linking.openURL(`${BACKEND_BASE_URL}/api/auth/oauth/${provider}/login`).catch((e) =>
-          console.error(`[${logPrefix}] 소셜 로그인 이동 실패`, { provider, message: e?.message }));
+      if (Platform.OS === 'web') {
+        // 웹 — 전체 페이지 이동. 콜백(#token=)은 App.tsx useOAuthCallback(웹 해시)이 처리.
+        await Linking.openURL(loginUrl).catch((e) => {
+          console.error(`[${logPrefix}] 소셜 로그인 이동 실패`, { provider, message: e?.message });
+          showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
+        });
+        return;
       }
+
+      // 네이티브 — 인증 세션 브라우저를 열고 aidol://oauth/callback 복귀를 기다린다.
+      // 백엔드 미지원(콜백 미수신) 시 사용자가 브라우저를 닫으면 dismiss 로 복귀 — 조용히 종료.
+      const result = await WebBrowser.openAuthSessionAsync(`${loginUrl}?client=app`, OAUTH_REDIRECT_URL);
+      if (result?.type === 'success' && result.url) {
+        // 토큰 값은 로그 금지 — 수신 여부만 기록한다.
+        const tokenMatch = result.url.match(/[#&?]token=([^&]+)/);
+        if (__DEV__) console.info(`[${logPrefix}] 콜백 수신`, { provider, hasToken: !!tokenMatch });
+        if (tokenMatch) {
+          const ok = await useAuthStore.getState().loginWithToken(decodeURIComponent(tokenMatch[1]));
+          if (!ok) {
+            console.error(`[${logPrefix}] 콜백 토큰 세션 열기 실패`, { provider });
+            showAlert('알림', GENERIC_FAIL_MSG);
+          }
+        } else {
+          // 콜백은 왔지만 토큰이 없음 — 서버 error 파라미터는 검증 후에만 노출.
+          const errMatch = result.url.match(/[#&?](?:error|detail)=([^&]+)/);
+          let serverMsg: string | null = null;
+          try { serverMsg = errMatch ? decodeURIComponent(errMatch[1]) : null; } catch { serverMsg = null; }
+          console.error(`[${logPrefix}] 콜백에 토큰 없음`, { provider, hasError: !!errMatch });
+          showAlert('알림', sanitizeServerMessage(serverMsg));
+        }
+      } else {
+        // cancel/dismiss — 사용자가 닫았거나 백엔드 앱 복귀 미지원. 에러 alert 없이 조용히 복귀.
+        if (__DEV__) console.info(`[${logPrefix}] 콜백 미수신(취소/닫힘)`, { provider, type: result?.type });
+      }
+    } catch (err: any) {
+      console.error(`[${logPrefix}] 소셜 로그인 실패`, { provider, message: err?.message });
+      showAlert('알림', '로그인 페이지를 열 수 없습니다. 잠시 후 다시 시도해주세요.');
     } finally {
       setBusy(null);
     }

@@ -31,7 +31,7 @@ export function TrackCover({ track, left }: { track: RowTrack; left?: boolean })
   return (
     <View style={[styles.cover, left && styles.coverFirst]}>
       {uri ? <Image source={{ uri }} style={styles.coverImg} />
-        : <View style={styles.coverPlaceholder}><AppText variant="title2" tone="muted">{'♪'}</AppText></View>}
+        : <View style={styles.coverPlaceholder}><Feather name="music" size={20} color={colors.text.muted} /></View>}
     </View>
   );
 }

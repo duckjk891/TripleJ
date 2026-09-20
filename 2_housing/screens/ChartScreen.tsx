@@ -201,7 +201,7 @@ export default function ChartScreen() {
     return (
       <View style={styles.cover}>
         {uri ? <Image source={{ uri }} style={styles.coverImg} />
-          : <View style={styles.coverPlaceholder}><AppText variant="title2" tone="muted">{'♪'}</AppText></View>}
+          : <View style={styles.coverPlaceholder}><Feather name="music" size={20} color={colors.text.muted} /></View>}
       </View>
     );
   };
@@ -213,7 +213,9 @@ export default function ChartScreen() {
     const left = activeTab === 'new'
       ? <View style={trackRowStyles.newBadge}><AppText variant="caption" tone="primary">NEW</AppText></View>
       : activeTab === 'queue'
-      ? <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone={index === playerStore.currentIndex ? 'accent' : 'muted'}>{index === playerStore.currentIndex ? '▶' : rank}</AppText>
+      ? (index === playerStore.currentIndex
+        ? <View style={[trackRowStyles.rank, { alignItems: 'center' }]}><Feather name="play" size={14} color={colors.accent.primary} /></View>
+        : <AppText variant="bodyStrong" center style={trackRowStyles.rank} tone="muted">{rank}</AppText>)
       : <AppText variant="bodyStrong" center style={[trackRowStyles.rank, { color: rankColor }]}>{rank}</AppText>;
 
     return (
@@ -262,7 +264,7 @@ export default function ChartScreen() {
                   <View style={styles.albumCover}>
                     {albumCoverUri(a.cover_image)
                       ? <Image source={{ uri: albumCoverUri(a.cover_image)! }} style={styles.albumCoverImg} />
-                      : <AppText variant="title2" tone="muted">{'♪'}</AppText>}
+                      : <Feather name="music" size={20} color={colors.text.muted} />}
                   </View>
                   <AppText variant="footnote" numberOfLines={1} style={{ marginTop: 6 }}>{a.title}</AppText>
                   <AppText variant="caption" tone="muted" numberOfLines={1}>
@@ -301,7 +303,7 @@ export default function ChartScreen() {
         }
         return isQueue
           ? <EmptyState title="재생목록이 비어있어요" hint="차트나 검색에서 곡을 재생하면 여기에 쌓여요" />
-          : <EmptyState icon="📊" title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />;
+          : <EmptyState icon={<Feather name="bar-chart-2" size={44} color={colors.text.muted} />} title="차트 데이터가 없습니다" hint="곡이 등록되면 차트가 표시됩니다" />;
       })()}
 
       {/* v3.63: 재생 중에도 항상 노출 — Fab이 스스로 미니플레이어 위로 올라감 */}
@@ -314,7 +316,7 @@ export default function ChartScreen() {
         <View style={[styles.searchModal, { paddingTop: insets.top }]}>
           <View style={styles.searchHeader}>
             <TouchableOpacity onPress={closeSearchModal} style={styles.searchBack}>
-              <AppText variant="title2">{'←'}</AppText>
+              <Feather name="arrow-left" size={22} color={colors.text.primary} />
             </TouchableOpacity>
             <TextInput
               style={styles.searchInput}
@@ -328,7 +330,7 @@ export default function ChartScreen() {
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); setSearchSubmitted(false); }} style={styles.searchClear}>
-                <AppText variant="callout" tone="secondary">{'✕'}</AppText>
+                <Feather name="x" size={18} color={colors.text.secondary} />
               </TouchableOpacity>
             )}
           </View>
@@ -352,9 +354,9 @@ export default function ChartScreen() {
               )}
             />
           ) : searchSubmitted ? (
-            <EmptyState icon="🔍" title="검색 결과가 없습니다" hint="다른 검색어로 시도해보세요" />
+            <EmptyState icon={<Feather name="search" size={44} color={colors.text.muted} />} title="검색 결과가 없습니다" hint="다른 검색어로 시도해보세요" />
           ) : (
-            <EmptyState icon="🎵" title="곡을 검색해보세요" hint="제목, 아티스트, 태그로 검색 가능" />
+            <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title="곡을 검색해보세요" hint="제목, 아티스트, 태그로 검색 가능" />
           )}
         </View>
       </Modal>

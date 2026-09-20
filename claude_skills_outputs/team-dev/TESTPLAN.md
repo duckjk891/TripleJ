@@ -592,3 +592,201 @@
 4. E-5 3화면 CTA Y좌표 비교 스크린샷
 5. E-6 스플래시 축소 체감·심볼 대비(필요시 심볼 56 미세조정)
 6. E-7 냥냥냥 duration·긴 제목 마퀴·인셋 실측
+
+## v3.194 — 수정일 2026-09-20
+
+대상: /Users/pearl/TripleJ/2_housing (React Native Expo). 범위 = (A) 소셜 로그인 프리플라이트 제거·detail 검증·openAuthSessionAsync+딥링크 콜백(조건부)·백엔드 요청 문서, (B) 네이버 버튼 제거, (C) 이모지 아이콘 1차 ~25곳 벡터 교체(⭐ 재화·콘텐츠 문자열 제외), (D) SplashScreen 응원봉 심볼 제거. 검증 기조: [unit] 정적 검증 위주(에뮬레이터 부재 관행 승계), [api] 무인증 프로브만, [e2e] 정적 대체 병기 — 단 OAuth 실왕복은 **콘솔 설정+실기기 필요 → UNVERIFIED-예정** 처리 기준을 본문에 명시.
+
+### [unit] 정적 검증
+
+**U-1. 타입 무결성 [unit]**
+- Given: v3.194 전체 반영 워킹트리.
+- When: `npx tsc --noEmit`.
+- Then: exit 0, 오류 0건. 특히 (C) EmptyState/LoginPrompt icon prop 타입 확장 후 전 호출부(2차 목록 미교체 화면 포함) 통과.
+
+**U-2. (B) PROVIDERS naver 0건 + 주석 갱신 [unit]**
+- Given: `components/auth/SocialLoginButtons.tsx` — 현행 :15에 naver 항목, :1 주석 "3종(구글/카카오/네이버)", `components/auth/AuthPanel.tsx:2` 주석에 "네이버".
+- When: `grep -n "naver\|네이버" components/auth/SocialLoginButtons.tsx components/auth/AuthPanel.tsx`.
+- Then: PROVIDERS 배열 내 naver 항목 **0건**, 두 파일 주석의 "3종"·"네이버" 표기 갱신(2종 또는 구글/카카오). 백엔드 `/auth/oauth/naver/*` 라우트는 무접촉(서버 diff 0 — UI만 제거 스펙).
+
+**U-3. (A-2) 프리플라이트 api.get 잔존 0건 [unit]**
+- Given: 현행 SocialLoginButtons.tsx:27 `await api.get(\`/auth/oauth/${provider}/login\`)` 프리플라이트(RN XHR이 302를 앱 안에서 따라가 서버 state를 선점/소모하는 유해 호출 — PLAN A-2).
+- When: `grep -n "api.get" components/auth/SocialLoginButtons.tsx` + 파일 전문 열람.
+- Then: `api.get(...oauth...)` **잔존 0건** — 버튼 탭 → 즉시 브라우저/AuthSession 오픈 1회로 단순화. `api` import가 미사용으로 남으면 제거 확인(tsc가 noUnusedLocals 미설정 시 못 잡음 — grep으로 별도 확인, 주의점 3). `BACKEND_BASE_URL` import는 유지.
+
+**U-4. (A-2) 서버 detail 표출 검증 가드 [unit]**
+- Given: 현행 :33-35는 `err?.response?.data?.detail || ...error`를 무검증 alert 표출 — "null 에 접근할 수 없습니다" 노출 경로 후보 1순위.
+- When: 오류 표출 분기 코드 열람.
+- Then: detail이 ① `typeof === 'string'` ② 길이 ≤ 80자(계획 기준)일 때만 표출, 아니면 고정 안내문("소셜 로그인에 실패했습니다…" 계열)으로 대체. null/undefined/객체가 문자열화되어 alert에 찍히는 경로 0건.
+
+**U-5. (A-2) openURL/AuthSession 실패 시 사용자 alert [unit]**
+- Given: 현행 :40-41은 `Linking.openURL` reject 시 `console.error`만(사용자 무안내).
+- When: 실패 catch 분기 열람.
+- Then: 브라우저 오픈 실패 시 `showAlert` 사용자 안내 존재. busy 상태는 finally에서 해제(무한 busy 금지 — 재탭 가능).
+
+**U-6. (A-3, 조건부) openAuthSessionAsync 전환 + null 가드 [unit]**
+- Given: PLAN A-3 — 백엔드 응답 확인 시에만 같은 버전 내 전환, 미준비 시 문서만 발행하고 전환 코드는 이월.
+- When: [전환 반영 시] SocialLoginButtons.tsx 열람 + `grep -n "openAuthSessionAsync\|expo-web-browser" components/ App.tsx`.
+- Then: ① `expo-web-browser` import + package.json 의존성 추가, ② `WebBrowser.openAuthSessionAsync(loginUrl, 'aidol://oauth/callback')`(스킴 `aidol`은 app.json 기존재 — 확인), ③ **null 가드**: `result?.type === 'success' && result.url`일 때만 토큰 파싱 → `useAuthStore.getState().loginWithToken(token)`(stores/authStore.ts:82 기존재 확인), ④ cancel/dismiss 시 조용히 복귀 — 에러 alert 호출 0건. [미전환 시] 본 항목 N/A 판정 + U-8(문서)만으로 A-3 게이트 — E-1/E-2는 자동 UNVERIFIED-예정.
+
+**U-7. (A-3) App.tsx 콜백 가드 확장 [unit]**
+- Given: 현행 App.tsx:442 `useOAuthCallback`은 `Platform.OS !== 'web'` 조기 return(네이티브 무경로), :467 linking config는 FeedDetail만.
+- When: App.tsx의 useOAuthCallback·linking 블록 열람.
+- Then: ① [전환 반영 시] 콜드 스타트 딥링크 `aidol://oauth/callback#token=` 처리 경로 존재(linking config 라우트 추가 또는 `Linking.getInitialURL`/`addEventListener` 파싱) + hash·token null 가드(match 실패 시 무동작·무크래시), ② 웹 경로(기존 useOAuthCallback)는 동작 무변경 — 해시 토큰 즉시 제거(replaceState) 로직 보존, ③ 기존 `FeedDetail: 'feed/:feedId'` 라우트·prefixes(`aidol://`·BACKEND_BASE_URL) 보존. [미전환 시] ①은 N/A, ②③만 무변경 diff 0으로 확인.
+
+**U-8. (A-3) 백엔드 요청 문서 발행 [unit]**
+- Given: 지시 명칭 2안 — PLAN: `백엔드_요청_소셜로그인_앱복귀.md` / 팀 지시: `백엔드_요청_oauth콜백.md` (동일 실체, 파일명은 app-dev 산출 기준으로 판정).
+- When: `ls`로 문서 존재 확인 + 전문 열람.
+- Then: 문서 1건 존재하고 다음 명세 포함 — ① `/auth/oauth/{p}/login?client=app` 시 최종 리다이렉트 `aidol://oauth/callback#token=JWT`, ② redirect를 따라가지 않는 상태 조회용 별도 status 엔드포인트 요청(503 안내 대체 — PLAN A-2 수정안 1), ③ `frontend_url` env 미설정 시 `null/oauth/callback` 리다이렉트 가능성 확인 요청("null" 문구 후보 — A-4).
+
+**U-9. (C) 1차 교체 목록 — 파일:라인별 글리프 0건 + 벡터 존재 [unit]**
+- Given: PLAN C 1차 목록(라인 번호는 교체 전 기준 — 교체 후 시프트 허용, 글리프 grep은 파일 단위).
+- When: 아래 각 파일에 대해 대상 글리프 grep(0건 기대) + Feather/MCI 컴포넌트 grep(존재 기대). ⭐ 및 콘텐츠 문자열은 검사 대상 제외.
+- Then: 전 항목 충족 —
+  - `components/MiniPlayer.tsx`: ♪·❚❚·▶·✕ 0건 → Feather music/pause/play/x
+  - `screens/PlayerScreen.tsx`: :910 ♪(커버 플레이스홀더)·:1123 ❚❚·▶(상단 미니바) 0건 (⋯ 파일 내 다른 벡터 하트류는 v3.193 완료분 — 무접촉)
+  - `screens/ChartScreen.tsx`: ♪(204·265)·▶(216)·←(317)·✕(331)·📊(304)·🔍(355)·🎵(357) 0건 → arrow-left/x 등 벡터
+  - `screens/PlaylistScreen.tsx`: ♫(181·264)·←(233) 0건
+  - `components/DraggableQueue.tsx`: ▶(93) 0건 / `components/TrackRow.tsx`: ♪(34) 0건
+  - `screens/SearchScreen.tsx`: 🎧(247)·🔍(272)·🎵(274) 0건
+  - `screens/FeedScreen.tsx`: :275 LoginPrompt `icon="👥"` 0건 → 벡터 또는 prop 제거
+  - `components/auth/AuthPanel.tsx`: :417 ✓ → Feather check (미충족 '·'는 현행 유지 허용)
+  - `components/AppShareModal.tsx`(:82)·`components/StarGuideModal.tsx`(:50)·`components/AttendanceModal.tsx`(:88): ✕ 0건
+  - `components/StarGuideModal.tsx`(:16-21): 🎉🛡️👥📅🎧🚀 0건 → gift/shield/users/calendar/headphones/rocket 계열
+  - `components/AttendanceModal.tsx`(:123): ✅/🎁/🔒 0건 → check-circle/gift/lock
+  - 색·크기: 교체 벡터가 기존 텍스트 스타일의 color/fontSize에 상응(대표 3곳 스팟 열람 — MiniPlayer 재생/닫기, ChartScreen 뒤로가기).
+
+**U-10. (C) ⭐ 보존 + 콘텐츠 문자열 무접촉 (경계) [unit]**
+- Given: 교체 금지 목록 — ⭐ 재화 표기 전부(ChartScreen:283, GuestQueueNoticeModal:25, 각종 비용 문구), 콘텐츠 문자열(ArtistCodyScreen.tsx:401-412 AI 프롬프트 ✓/❌, FeedCard.tsx:207 공유 메시지 🎁, 가사·대화 텍스트).
+- When: `grep -rn "⭐"` 결과의 v3.194 전후 diff 비교 + ArtistCodyScreen·FeedCard·GuestQueueNoticeModal `git diff` 확인. ⭐ 검사 시 VS16 변형(⭐️) 포함 grep(주의점 5).
+- Then: ⭐ 출현 건수 **감소 0건**(전부 보존), 위 3파일 diff 0(또는 C와 무관한 diff 없음). AttendanceModal :67·:134 문구 내 ✅는 2차 목록 — 이번 버전 무접촉 확인(‌:123 아이콘 3종만 교체).
+
+**U-11. (C) EmptyState/LoginPrompt icon prop 확장 [unit]**
+- Given: `components/ui/EmptyState.tsx` `icon?: string`(Text 렌더), `components/LoginPrompt.tsx` `icon?: string`(:17·27).
+- When: 두 파일 열람 + 전 호출부 grep(`icon=`).
+- Then: prop이 `ReactNode`(또는 Feather name) 수용으로 확장, **string 전달 시 기존 Text 렌더 하위호환 유지**(2차 미교체 화면의 문자열 호출부가 남아있어도 렌더 무손상 — 주의점 6), 1차 목록 호출부는 벡터 전달로 전환.
+
+**U-12. (D) 스플래시 심볼 제거 3점 + 애니메이션 무변경 [unit]**
+- Given: `screens/SplashScreen.tsx` — :24 `const SYMBOL = require('../assets/branding/maidol_symbol.png')`, :85 `<Image source={SYMBOL} style={styles.symbol} />`, :119 `symbol` 스타일(64×66).
+- When: `grep -n "SYMBOL\|symbol\|maidol_symbol" screens/SplashScreen.tsx` + `git diff -- screens/SplashScreen.tsx` 전문.
+- Then: ① require·Image·symbol 스타일 **3점 모두 0건**, ② 에셋 `assets/branding/maidol_symbol.png`는 디스크 보존(삭제 금지 — 재사용 대비), ③ diff가 위 3점 삭제에 한정 — `act2Opacity`/`act2Scale`/4000ms 타이밍·1막 lineAnims·act1Opacity 무접촉, ④ v3.193 타이포 수치 보존: word 40/54·title 36/44·letterSpacing 6/3·fontWeight 900, ⑤ `logoRow.marginBottom: 16` 유지, `styles.act`(absoluteFill center)가 재중앙 정렬 담당 — 별도 레이아웃 보정 diff 없음(있다면 사유 주석 확인).
+
+**U-13. 무회귀 diff 가드 — v3.191/192/193 [unit]**
+- Given: (C)가 PlayerScreen·SearchScreen·FeedScreen 등 v3.193 접촉 파일과 겹침(주의점 1).
+- When: `git diff` 파일·라인 단위 검사.
+- Then:
+  - **v3.191(안전영역)**: PlayerScreen diff에 `useSafeAreaInsets`/인셋 배선 라인 무접촉(grep 무변경).
+  - **v3.192(duration/마퀴)**: `services/playback.ts` diff 0, `components/Marquee.tsx` diff 0, TrackRow diff는 :34 ♪ 교체 1점 한정(마퀴/레이아웃 라인 무접촉).
+  - **v3.193(좋아요/담기/CTA/로고)**: `stores/likesStore.ts`·`components/PlaylistPickerSheet.tsx` diff 0. PlayerScreen 하트(1030-1034·1256)·담기 분기(806-811)·actionIconBox(:1396) 라인 무접촉 — diff는 :910·:1123 글리프 교체 한정. SearchScreen diff는 아이콘 3점 한정(absoluteFill 0.75 딤 오버레이·setGated 배선 무접촉). FeedScreen diff는 :275 icon prop 한정. LogoTitle(M+AI+DOL 분절) diff 0. SplashScreen 타이포 수치 무변경(U-12 ④와 교차).
+
+**U-14. diff 범위 격리 [unit]**
+- Given: v3.194 대상 파일 = SocialLoginButtons·AuthPanel·App.tsx·SplashScreen + (C) 1차 목록 파일들 + EmptyState·LoginPrompt + 백엔드 요청 문서 + [전환 시] package.json(expo-web-browser).
+- When: `git status`/`git diff --stat`으로 목록화.
+- Then: 위 목록 외 v3.194 기인 diff 0건. (주의 계승: 워킹트리에 v3.193 이전 무관 잔존 diff — eas.json·metro.config.js·package(-lock).json·바이너리 자산 등 — 커밋 시 v3.194 스코프 한정 필수.)
+
+**U-15. 버전 문자열 [unit]**
+- Given: 변경 파일 헤더 주석 관례.
+- When: 변경 파일 상단 주석·버전 표기 grep.
+- Then: v3.194·수정일 2026-09-20 표기 정합.
+
+### [api] 엔드포인트 검증 (무인증 프로브만)
+
+**API-1. 구글 OAuth login 엔드포인트 무인증 프로브 [api]**
+- Given: `GET https://api.maidol.ai.kr/api/auth/oauth/google/login` — redirect **미추적** 필수(`curl -sI --max-redirs 0` 또는 axios maxRedirects:0). 서버 state를 생성할 수 있으므로 **1회 한정**(주의점 4).
+- When: 무인증 1회 호출, status·Location·body만 기록.
+- Then: ① 302면 Location이 `accounts.google.com` 도메인(정상 배선) — Location에 `null` 문자열 포함 시 `frontend_url` env 미설정 증거로 백엔드 팀 즉시 전달(A-4), ② 503이면 JSON detail이 사용자용 문자열인지 확인(80자 이내·"null" 아님 — U-4 서버측 짝). **콜백 URL(`/callback`) 직접 호출 금지**(state 오염).
+
+**API-2. 카카오 OAuth login 엔드포인트 무인증 프로브 [api]**
+- Given/When: API-1과 동일 절차, `/auth/oauth/kakao/login`, 1회 한정.
+- Then: 302 시 Location이 `kauth.kakao.com` 도메인. KOE101("앱 관리자 설정 오류")은 서버가 아닌 카카오 콘솔 설정 사안 — 프로브로는 302 배선까지만 판정하고 콘솔 항목(로그인 활성화 ON·Redirect URI·Web 플랫폼 등록)은 tester 체크리스트로 이관(A-4).
+
+**API-3. 네이버 라우트 존치 확인 [api]**
+- Given: (B)는 UI만 제거 — 백엔드 `/auth/oauth/naver/*` 무접촉 스펙.
+- When: `GET /api/auth/oauth/naver/login` 무인증 1회(redirect 미추적).
+- Then: 404가 **아님**(302 또는 503) — 서버측 우발 제거 없음 확인. 인증·쓰기·콜백 시나리오는 전부 스킵(자격증명 부재+state 오염 금지).
+
+### [e2e] 핵심 여정 (각 항목 정적 대체 검증 병기)
+
+> **UNVERIFIED-예정 처리 기준(공통)**: OAuth 실왕복(E-1·E-2)은 ① 구글/카카오 개발자 콘솔 설정(테스트 사용자 등록 또는 프로덕션 게시, Redirect URI `https://api.maidol.ai.kr/api/auth/oauth/{p}/callback` 등록, 카카오 로그인 활성화 ON) ② 실기기 APK 빌드 ③ [전환 반영 시] 백엔드 `client=app` 지원 — 3조건 충족 전에는 실행 불가. 조건 미충족 시 판정은 **UNVERIFIED-예정**(FAIL 아님)으로 기록하고 정적 대체(U-3~U-8) PASS + 콘솔 설정 체크리스트 전달로 게이트 통과. 백엔드 미준비로 openAuthSessionAsync 미전환이면 E-1·E-2의 "앱 자동 복귀" 절은 자동 UNVERIFIED-예정.
+
+**E-1. 구글 로그인 왕복 [e2e]**
+- Given: 실기기 APK, 콘솔 3조건 충족(위 기준).
+- When: 로그인 화면 → "Google 로 계속하기" 탭 → 브라우저/AuthSession 1회 오픈 → 구글 계정 인증 → 앱 복귀.
+- Then: ① 탭 즉시 브라우저 **1회만** 오픈 — 이중 요청(프리플라이트) 없음(리모트 로거 `/_logs/frontend`·네트워크 로그로 `/auth/oauth/google/login` GET이 브라우저 1건뿐인지 확인), ② [전환 시] 인증 성공 → 앱 자동 복귀 → 설정 화면 프로필 표시(로그인 상태), 콜드 스타트 딥링크 `aidol://oauth/callback#token=`도 처리, ③ 실패 시 alert가 사용자용 문장(원시 오류/"null" 노출 금지), ④ "메일 창" 재현 없음 — 고객센터 링크 오탭 가설은 tester가 kimpearl@lotusai.co.kr 수신함 빈 메일로 별도 검증(PLAN A-1).
+- 정적 대체: U-3(프리플라이트 0건)+U-4(detail 가드)+U-6(null 가드·loginWithToken 배선)+U-7(콜백 가드)+API-1(302 배선). 미충족 시 UNVERIFIED-예정.
+
+**E-2. 카카오 로그인 왕복 [e2e]**
+- Given/When: E-1과 동일 여정, 카카오 버튼. 콘솔 선행조건: 카카오 로그인 활성화 ON + Redirect URI + Web 플랫폼 등록.
+- Then: "앱 관리자 설정 오류"(KOE101) 미재현, 인증 성공 → 앱 복귀 → 로그인 반영. 나머지 판정 E-1과 동일.
+- 정적 대체: E-1과 동일 세트 + API-2. 미충족 시 UNVERIFIED-예정(콘솔 설정은 코드 밖 — 체크리스트 전달로 완료 처리).
+
+**E-3. 로그인 취소·복귀 (경계) [e2e]**
+- Given: 실기기, 소셜 버튼 탭 → 브라우저 오픈 상태.
+- When: 인증 미완료로 뒤로가기/닫기 → 앱 복귀 → 같은 버튼 재탭.
+- Then: 복귀 시 에러 alert 0건·무한 busy 없음(버튼 스피너 해제)·크래시 없음, 재탭 시 브라우저 재오픈 정상.
+- 정적 대체: U-5(finally busy 해제)+U-6 ④(cancel/dismiss 무알럿 분기). 실기기 미가용 시 정적 대체로 PASS 판정 가능(콘솔 설정 불요 항목 — UNVERIFIED 아님).
+
+**E-4. 스플래시 콜드 스타트 [e2e]**
+- Given: 콜드 스타트(앱 완전 종료 후 실행).
+- When: 스플래시 1막(MY/AI/IDOL) → 2막 관찰.
+- Then: 2막에 응원봉 심볼 **미노출**, MAIDOL 로고 행+서브타이틀("당신의 1인 기획사")이 자연 중앙 정렬(빈 공간·위 치우침 없음), 1막→2막 페이드/스케일 전환 기존 동일, 4초 후 MainTabs 진입 정상. 네이티브 스플래시(splash-icon.png, 보라 MAIDOL 텍스트)는 원래 응원봉 없음 — 무변경 확인.
+- 정적 대체: U-12(3점 제거+애니메이션·타이밍 diff 무접촉+absoluteFill center 재정렬 구조). 실기기는 스크린샷 확인 요청으로 이관.
+
+**E-5. 아이콘 화면 스팟체크 [e2e]**
+- Given: 실기기 Android(이모지 렌더 차이가 드러나는 환경), 로그인/비로그인 각 1회.
+- When: 미니플레이어·플레이어·차트·플레이리스트·검색·피드 CTA·로그인 화면·공유/출석/스타 모달 스크린샷.
+- Then: ① 1차 교체 화면에 이모지·텍스트 글리프 아이콘 잔존 0(스크린샷 대조), ② ⭐ 재화 표기는 그대로(차트 비용·출석 보상·스타 가이드 금액), ③ 교체 아이콘의 크기·색이 주변 텍스트와 정합(과대/과소 없음), ④ **기능 무회귀**: 미니플레이어 재생/일시정지/닫기(아이콘 교체 후) 동작 동일, 차트 뒤로가기·검색 진입 정상, 모달 ✕→x 닫기 정상, ⑤ 하트는 v3.193 벡터 그대로 — 구 빌드(4a313a5)의 이모지 하트가 재빌드로 해소됐는지 확인(코드 무변경 — 빌드 산출물 검증).
+- 정적 대체: U-9(파일별 글리프 0+벡터 존재)+U-10(⭐ 보존)+U-11(prop 확장). 동작 무회귀는 교체가 렌더 노드 치환뿐(핸들러 무접촉)임을 diff로 확인.
+
+**E-6. v3.191~193 무회귀 스팟 [e2e]**
+- Given: v3.194 빌드.
+- When: ① NowPlaying 상·하단 상태바/제스처바 겹침(3.191), ② 냥냥냥 등 VBR 곡 진행바 조기 고정 없음·긴 제목 마퀴 1줄(3.192), ③ 좋아요 서버 연동(재시작 후 유지)·담기→PlaylistPickerSheet·비로그인 CTA 3화면 Y 일치·상단바 로고 M+AI(보라)+DOL(3.193).
+- Then: 전 항목 기존 동작 유지. 특히 (C) 교체가 스친 PlayerScreen·SearchScreen·FeedScreen에서 v3.193 동작 무손상.
+- 정적 대체: U-13(파일·라인 단위 diff 가드). 실기기 확인 요청 이관.
+
+### 태그 집계
+- [unit] 15건 (U-1~U-15: A 배선·가드 6(U-3~U-8, 이 중 U-6·U-7 일부는 백엔드 준비 조건부) / B 1(U-2) / C 3(U-9~U-11, 경계 1=U-10 ⭐ 보존) / D 1(U-12) / 무회귀·격리·버전 4(U-13~U-15, U-1))
+- [api] 3건 (API-1~3 — 무인증·redirect 미추적 프로브 각 1회만. 콜백 호출·인증·쓰기 전면 스킵: state 오염+자격증명 부재. 정적 대체 병기)
+- [e2e] 6건 (E-1·E-2 OAuth 왕복 — 콘솔 설정+실기기+백엔드 3조건 미충족 시 **UNVERIFIED-예정** 기준 명시 / E-3 취소 경계 / E-4 스플래시 / E-5 아이콘 스팟체크 / E-6 무회귀 — 전 항목 정적 대체 검증 병기)
+
+### 설계 주의점 (tester·app-dev 참고)
+1. **(C)×v3.193 파일 중첩**: PlayerScreen·SearchScreen·FeedScreen·TrackRow는 v3.193 접촉 파일 — 아이콘 교체 diff가 하트 배선(:1030-1034)·담기 분기(:806-811)·CTA 오버레이·마퀴 라인에 침투하지 않는지 **라인 단위**로 확인(U-13). 파일 단위 diff 0 가드는 이번 버전에 못 씀.
+2. **A-3 조건 분기**: openAuthSessionAsync 전환은 백엔드 `client=app` 준비 확인 후에만 — 미전환 상태에서 U-6·U-7 ①을 FAIL로 찍지 말 것(N/A). 반대로 전환됐는데 백엔드 미준비면 복귀 URL이 영원히 안 와서 세션이 dismiss로만 끝남 — 이 조합은 FAIL(스펙 위반)로 기록.
+3. **미사용 import 잔존**: 프리플라이트 제거 후 `api` import가 남아도 tsc는 통과할 수 있음(noUnusedLocals 설정 확인) — U-3에서 grep으로 별도 판정.
+4. **OAuth 프로브 부수효과**: `/login` GET은 서버측 OAuth state를 생성/소모할 수 있음 — 프로브는 redirect 미추적·항목당 1회 한정, `/callback` 직접 호출 절대 금지. PLAN A-2의 "프리플라이트가 state를 선점"한 것과 같은 오염을 테스트가 재현하지 말 것.
+5. **⭐ grep 유니코드**: ⭐(U+2B50)와 ⭐️(U+2B50+VS16)를 모두 커버하는 grep 필요. 하트도 동일 — ♥(U+2665)·❤️ 변형 구분. 글리프 검사는 파일별 개별 문자로 수행(정규식 클래스에 이모지 뭉치면 누락 위험).
+6. **EmptyState/LoginPrompt 하위호환**: 2차 목록 화면(AgencyProfile·ArtistDetail 등)이 여전히 문자열 icon을 넘김 — prop 확장이 string 렌더를 깨면 이번 버전 범위 밖 화면이 무더기 회귀. string→기존 Text 렌더 유지 필수(U-11).
+7. **"메일 창"·"null" 출처 확정은 코드 밖**: A-1 빈 메일 수신함 확인, `/_logs/frontend` 서버 로그의 `[API Error] /auth/oauth/google/login` 본문 확인, `eas credentials` SHA-1 확인(실행은 tester/사용자)은 테스트플랜 판정 항목이 아닌 tester 체크리스트 — E-1 ④에 참조만 연결.
+
+### v3.194 테스트 결과 (tester, 2026-09-20)
+
+| 항목 | 판정 | 근거 요약 |
+|---|---|---|
+| U-1 타입 무결성 | PASS | `npx tsc --noEmit` exit 0·오류 0건 (icon prop ReactNode 확장 포함 전 호출부 통과) |
+| U-2 naver 0건+주석 | PASS | PROVIDERS 2종(google/kakao)만. "naver/네이버"는 두 파일 모두 "v3.194 네이버 제거" 주석뿐. 백엔드 라우트 무접촉(API-3 존치 확인) |
+| U-3 프리플라이트 0건 | PASS | `api.get` 코드 0건(주석 1건뿐)·`api` import 제거·`BACKEND_BASE_URL`만 import. noUnusedLocals 미설정 → grep으로 판정(주의점 3 이행) |
+| U-4 detail 검증 가드 | PASS | `sanitizeServerMessage`: string+trim>0+길이≤80만 노출, 아니면 고정 문구. decodeURIComponent도 try/catch — null/객체 문자열화 노출 경로 0건 |
+| U-5 오픈 실패 alert+busy | PASS | 웹 openURL `.catch`→showAlert, 네이티브 catch→showAlert, `finally { setBusy(null) }` — 무한 busy 없음 |
+| U-6 openAuthSessionAsync+null 가드 | PASS(조건부) | ①import+package.json `~15.0.11` ②`openAuthSessionAsync(loginUrl+'?client=app', 'aidol://oauth/callback')`·스킴 aidol=app.json:5 기존재 ③`result?.type==='success' && result.url` 가드+`loginWithToken`(authStore:82) 배선 ④cancel/dismiss 무알럿. **주의점 2 조합 미해소**: 백엔드 client=app 준비 미확인 상태 전환 — 단 미수신 시 dismiss 조용복귀로 현행 UX와 동일(악화 없음)·문서 발행 완료. 백엔드 미지원 확정 시 주의점 2에 따라 FAIL 전환 대상 |
+| U-7 App.tsx 콜백 가드 확장 | PASS | ①네이티브 getInitialURL+url 리스너, url null·`oauth/callback` 미포함·token match 실패 시 무동작, `handledTokenRef` dedupe ②웹 경로 로직 무변경(replaceState 보존, 로그 프리픽스만 [SocialLogin]) ③FeedDetail 라우트·prefixes(aidol://·BACKEND_BASE_URL) 보존 |
+| U-8 백엔드 요청 문서 | PASS | `백엔드_요청_소셜로그인_앱복귀.md`(PLAN 명칭안) 존재. ①client=app→`aidol://oauth/callback#token=JWT` ②status 엔드포인트 요청(§3) ③frontend_url null 점검(§4) + 실패 시 #error= 복귀(§2)까지 포함 |
+| U-9 1차 글리프 0건+벡터 | PASS | 12개 파일 전부 렌더 글리프 0건(잔존 hit는 주석/문구뿐)·Feather 벡터 존재. 색·크기 정합 스팟 3곳 확인(MiniPlayer play/x 16/18 primary/muted, ChartScreen arrow-left 22 primary, PlayerScreen 커버 64 border.subtle=구 스타일 동일). PlayerScreen ⏮⏭·MiniPlayer ⏮⏭도 함께 교체(계획 초과분·무해) |
+| U-10 ⭐ 보존 경계 | PASS | ⭐ 출현 HEAD 111→워킹 113(감소 0·증가 2는 신규 주석). VS16 변형 0건. ArtistCodyScreen·FeedCard·GuestQueueNoticeModal diff 0. AttendanceModal :68/:70/:142 문구 이모지 무접촉(:123 아이콘 3종만 교체) |
+| U-11 icon prop 확장 | PASS | 두 파일 모두 `icon?: ReactNode`+`typeof icon === 'string'`→기존 Text 렌더 하위호환. 1차 호출부 전부 벡터 전달 전환. LoginPrompt 현 호출부 5곳은 icon 미전달(무영향) |
+| U-12 스플래시 심볼 3점 | PASS | require·Image·symbol 스타일 3점 0건+Image import 제거. 에셋 디스크 보존. diff는 3점+주석 한정 — act2Opacity/Scale·4000ms·lineAnims 무접촉, 타이포 40/54·36/44·ls6/3·900·logoRow mb16 보존, styles.act absoluteFill center 재중앙(별도 레이아웃 diff 없음) |
+| U-13 무회귀 diff 가드 | PASS | v3.191: PlayerScreen 인셋 라인 diff 0. v3.192: playback.ts·Marquee diff 0, TrackRow :34 1점 한정. v3.193: likesStore·PlaylistPickerSheet·LogoTitle diff 0, PlayerScreen 하트/담기/actionIconBox 무접촉(diff=:910·:1119-1131 글리프+사(死)스타일 3건 제거 한정), SearchScreen 3점 한정(딤 오버레이·setGated 무접촉), FeedScreen :275 한정 |
+| U-14 diff 범위 격리 | **FAIL** | app.json diff가 expo-web-browser plugin 추가 외 변경 포함: bundleId/package `com.triplej.studio→com.maidol.app`·expo-media-library plugin·EOF 개행. (정황상 v3.182 이후 잔존 diff — expo-media-library 의존성은 기커밋, app.json 최종 커밋=v3.182 — 이나 게이트 규칙상 FAIL.) package.json도 expo·constants·file-system 패치 범프 동반(expo install 부수 — 허용 범위 판단). 그 외 eas.json·metro.config.js·authService.ts 주석 1줄·바이너리 에셋 등 잔존 diff 계승 — 커밋 시 v3.194 스코프 한정 필수 |
+| U-15 버전 문자열 | PASS | 변경 파일 주석 v3.194 표기 정합(SocialLoginButtons·AuthPanel·App.tsx·SplashScreen·MiniPlayer·PlayerScreen·AttendanceModal·EmptyState·LoginPrompt), 문서 작성일 2026-09-20 |
+| API-1 google login 프로브 | PASS | 302 → `accounts.google.com/o/oauth2/v2/auth`, redirect_uri=`api.maidol.ai.kr/api/auth/oauth/google/callback`, state 발급 정상, Location에 "null" 없음 |
+| API-2 kakao login 프로브 | PASS | 302 → `kauth.kakao.com/oauth/authorize`, redirect_uri 정상, scope=account_email+profile_nickname+profile_image, "null" 없음. KOE101 여부는 콘솔 사안 → 체크리스트 이관 |
+| API-3 naver 라우트 존치 | PASS | 503(404 아님) — 라우트 존치, 서버측 우발 제거 없음. detail="naver 소셜 로그인은 현재 사용할 수 없습니다…"(사용자용 문자열·80자 이내·"null" 아님 — U-4 서버측 짝도 양호) |
+| E-1 구글 왕복 | UNVERIFIED-예정 | 3조건(콘솔 설정·실기기 APK·백엔드 client=app) 미충족. 정적 대체 U-3·U-4·U-6·U-7+API-1 전부 PASS → 기준상 게이트 통과 처리 |
+| E-2 카카오 왕복 | UNVERIFIED-예정 | 동일 기준 + API-2 PASS. 카카오 콘솔 체크리스트(로그인 활성화 ON·Redirect URI·Web 플랫폼) 잔여 목록 전달 |
+| E-3 취소·복귀 경계 | PASS(정적 대체) | U-5(finally busy 해제)+U-6④(cancel/dismiss 무알럿) — 콘솔 설정 불요 항목 기준 적용 |
+| E-4 스플래시 콜드 스타트 | PASS(정적 대체) | U-12 충족(3점 제거·타이밍/애니 무접촉·absoluteFill center 자동 재중앙). 실기기 스크린샷 확인 이관 |
+| E-5 아이콘 스팟체크 | PASS(정적 대체) | U-9+U-10+U-11 충족, diff상 교체 전부 렌더 노드 치환뿐(핸들러·disabled·accessibilityLabel 무접촉). 실기기 Android 스팟 이관 |
+| E-6 v3.191~193 무회귀 | PASS(정적 대체) | U-13 라인 단위 가드 충족. 실기기 확인 이관 |
+
+**게이트 판정: 조건부 통과** — 코드 품질 게이트(U-1~U-13·U-15, API 3건, E 정적 대체) 전부 PASS. 유일 FAIL = U-14(커밋 스코프): 코드 결함 아님, **커밋 시 app.json은 expo-web-browser plugin 라인만 스테이징**(bundleId 변경·expo-media-library plugin·eas.json·metro.config.js·authService.ts 등 잔존분은 별도 커밋으로 분리 또는 리드 승인 후 동반 커밋 명시) 조건으로 통과. U-6 조건부: 백엔드 client=app 지원 확인을 릴리스 노트에 미해결로 명기.
+
+**프로브 기록**: google 프로브가 도구 호출 중복으로 GET 2회 발생(state 2건 생성 — 소모 없음·콜백 미호출로 오염 없음, 이후 kakao·naver는 각 1회 준수). /callback 직접 호출 0회.

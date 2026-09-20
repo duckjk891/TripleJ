@@ -3,6 +3,7 @@
 // 백엔드 계약: GET /referral/my-code → {referral_code, invite_url:"/invite/{code}"}
 import { useState, useEffect } from 'react';
 import { Modal, View, TouchableOpacity, ActivityIndicator, Share, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useUiStore } from '../stores/uiStore';
@@ -79,7 +80,7 @@ export default function AppShareModal() {
           <View style={styles.head}>
             <AppText variant="title2">MAIDOL 추천하기</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
-              <AppText variant="title3" tone="muted">✕</AppText>
+              <Feather name="x" size={20} color={colors.text.muted} />
             </TouchableOpacity>
           </View>
 

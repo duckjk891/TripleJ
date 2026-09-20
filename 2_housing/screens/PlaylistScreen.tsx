@@ -12,6 +12,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { showAlert } from '../utils/appAlert';
 import api, { BACKEND_BASE_URL } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
@@ -178,7 +179,7 @@ export default function PlaylistScreen({ navigation }: any) {
           </View>
         ) : (
           <View style={styles.playlistIcon}>
-            <AppText style={styles.playlistIconText}>{'♫'}</AppText>
+            <Feather name="music" size={22} color={colors.accent.primary} />
           </View>
         )}
         <View style={styles.playlistInfo}>
@@ -229,8 +230,9 @@ export default function PlaylistScreen({ navigation }: any) {
         // 플레이리스트 상세 - 곡 목록
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}>
-            <TouchableOpacity onPress={() => { setSelectedPlaylist(null); setPlaylistTracks([]); }}>
-              <AppText style={{ color: colors.accent.primary, fontSize: 14 }}>{'← 목록으로'}</AppText>
+            <TouchableOpacity onPress={() => { setSelectedPlaylist(null); setPlaylistTracks([]); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Feather name="arrow-left" size={16} color={colors.accent.primary} />
+              <AppText style={{ color: colors.accent.primary, fontSize: 14 }}>목록으로</AppText>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => { setRenameText(selectedPlaylist.name || selectedPlaylist.title || ''); setShowRenameModal(true); }}>
               <AppText style={{ color: colors.text.secondary, fontSize: 13 }}>이름 변경</AppText>
@@ -261,7 +263,7 @@ export default function PlaylistScreen({ navigation }: any) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.accent.primary} colors={[colors.accent.primary]} />}
         />
       ) : (
-        <EmptyState icon="♫" title="담은 곡이 없습니다" hint="차트에서 곡을 담아보세요!" />
+        <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title="담은 곡이 없습니다" hint="차트에서 곡을 담아보세요!" />
       )}
       {/* 이름 변경 모달 */}
       <Modal visible={showRenameModal} transparent animationType="fade" onRequestClose={() => setShowRenameModal(false)}>
@@ -327,10 +329,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
-  },
-  playlistIconText: {
-    fontSize: 22,
-    color: colors.accent.primary,
   },
   playlistMosaic: {
     width: 52,

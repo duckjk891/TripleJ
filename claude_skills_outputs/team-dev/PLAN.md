@@ -2588,3 +2588,121 @@ v35에서 방별 walk 반경을 임의값(35/20, 30/18)으로 줬던 접근은 �
 - D는 코드 변경 없이 라벨 후보만 사용자 보고(결정 후 반영은 1줄×2곳: PlayerScreen.tsx:1047·1108).
 - 피드 비로그인 CTA는 이미 오버레이 패턴이나 타이틀 없음 — 이번 범위 밖, 사용자 보고에 포함.
 - 민감정보 없음. 원격 로깅은 기존 콘솔→/_logs/frontend 배치(App.tsx:18) 경유.
+
+## v3.194 — 2026-09-20 — 소셜 로그인(APK) 버그 분석 + 네이버 버튼 제거 + 이모지 아이콘 전수 교체(1차) + 스플래시 응원봉 제거
+
+### 사용자 요청 요약
+1. APK에서 구글 로그인 시 "메일 창"이 뜨고, 두 번째 시도에 "null 에 접근할 수 없습니다" 표시. 카카오는 "앱 관리자 설정 오류".
+2. "네이버로 계속하기" 버튼 제거.
+3. 하트 아이콘은 벡터(내부 채움 토글)만 — 이모지 금지. 앞으로 앱 전체에서 이모지를 아이콘으로 쓰지 않음.
+4. (추가 지시) ⭐(재화 '스타' 표기)는 이모지 유지 — 교체 제외.
+5. (추가 지시) 앱 시작 스플래시의 응원봉(라이트스틱) 요소 제거.
+
+---
+
+### 이슈 A — 소셜 로그인(APK) 분석
+
+#### A-0. 현재 구조 (코드 실측)
+- 소셜 로그인은 **SDK 미사용, 순수 브라우저 리다이렉트 방식** (package.json에 expo-auth-session/google-signin/kakao/naver SDK 전무).
+- 진입점: 로그인 화면 = `screens/SettingsScreen.tsx` 비로그인 모드(877행 `AuthPanel`) → `components/auth/AuthPanel.tsx:273` → `components/auth/SocialLoginButtons.tsx`.
+- 흐름(SocialLoginButtons.tsx:21-45): ① `api.get('/auth/oauth/{p}/login')` (axios 프리플라이트) → ② 503이면 서버 안내 alert, 아니면 `Linking.openURL('${BACKEND_BASE_URL}/api/auth/oauth/{p}/login')` → 외부 브라우저에서 OAuth 진행.
+- 콜백: 백엔드가 `{frontend_url}/oauth/callback#token=JWT`로 리다이렉트 → **App.tsx:442 `useOAuthCallback`은 `Platform.OS === 'web'` 전용**. App.tsx:467 `linking` config에도 `oauth/callback` 라우트 없음(FeedDetail만 존재).
+
+#### A-1. "메일 창" 원인 (파일:라인)
+- 앱 코드에서 메일 작성 창을 여는 곳은 **단 한 곳**: `components/PolicySheet.tsx:41-43` `CompanyFooter`의 "고객센터" 링크 → `Linking.openURL('mailto:kimpearl@lotusai.co.kr')`.
+- `CompanyFooter`는 로그인 화면에서 **소셜 로그인 버튼 바로 아래** 렌더됨(SettingsScreen.tsx:881). 구글 버튼과 근접해 오탭 가능성 높음 — 사용자가 누른 "보내기"는 **고객센터로 빈 메일 발송**이었을 가능성이 가장 큼(수신함 kimpearl@lotusai.co.kr에서 빈 메일 수신 여부로 검증 가능).
+- 차순위 가설: 브라우저에서 구글 OAuth 동의화면이 "테스트 모드/미인증 앱" 차단 페이지를 띄우고, 그 페이지의 "개발자에게 문의"(개발자 이메일 링크)를 탭 → 메일 창. 이 경우도 코드가 아닌 **구글 콘솔 설정** 문제.
+- 결론: 코드상 구글 버튼이 mailto로 폴백하는 경로는 없음. UI 개선(P1-4, 고객센터 오탭 방지)과 콘솔 안내로 대응.
+
+#### A-2. "null 에 접근할 수 없습니다" 원인
+- 이 문자열은 **프론트 코드에 존재하지 않음**(전수 grep 0건). 표시 경로 후보:
+  - `SocialLoginButtons.tsx:33-35` — 503 응답의 `detail/error`를 **검증 없이 그대로 alert에 표출**. 백엔드/프록시가 내려준 오류 문구가 그대로 노출됐을 가능성이 최우선(첫 시도에서 백엔드 OAuth state/세션이 소모·잔존된 뒤 두 번째 GET에서 서버측 null 참조 오류 응답).
+  - 프리플라이트 `api.get()`(27행)은 RN XHR이 302를 **앱 안에서 끝까지 따라가** 구글/카카오 HTML까지 받아버리는 무의미+유해한 호출 — 백엔드가 세션 기반 state를 쓰면 이 호출이 state를 선점/소모해 이후 브라우저 흐름과 어긋남(두 번째 탭 오류의 유력 트리거).
+- 확정 절차(tester): `utils/remoteLogger.ts`가 콘솔을 `/_logs/frontend`로 배치 전송 중 — 사용자 세션 시각대 서버 로그에서 `[API Error] /auth/oauth/google/login` status와 본문을 확인해 문자열 출처 확정. 필요 시 `adb logcat` 병행.
+- 코드 수정안(원인과 무관하게 필요한 방어):
+  1) `SocialLoginButtons.tsx:27` 프리플라이트 `api.get()` **삭제** — 바로 브라우저 오픈으로 단순화(503 안내가 필요하면 redirect를 따라가지 않는 별도 status 엔드포인트 요청을 백엔드에 문서로 요청).
+  2) 서버 detail 표출 시 문자열 타입·길이 검증 후 아니면 고정 안내문("소셜 로그인에 실패했습니다…")으로 대체(null/객체가 그대로 찍히는 것 차단).
+  3) `err?.response` 계열 optional chaining은 이미 적용돼 있으나, `Linking.openURL` reject 시 사용자 안내 alert 추가(현재는 콘솔만).
+
+#### A-3. 구조적 결함 — **APK에서는 성공해도 로그인이 완결될 수 없음** (이번 버전 핵심)
+- 네이티브에는 토큰 복귀 경로가 없음: 콜백 수신이 웹 전용(App.tsx:442-458)이고 딥링크 라우트도 없어, OAuth가 성공해도 토큰은 **외부 브라우저의 웹 프론트에 남고 앱은 로그인되지 않음**. "다시 로그인을 누르니까"가 반복된 이유.
+- 수정안(app-dev):
+  1) `expo-web-browser` 추가, `WebBrowser.openAuthSessionAsync(loginUrl, 'aidol://oauth/callback')`로 교체(스킴 `aidol`은 app.json에 기존재).
+  2) 백엔드에 앱 복귀 지원 요청(문서화): `/auth/oauth/{p}/login?client=app` 시 최종 리다이렉트를 `aidol://oauth/callback#token=JWT`로.
+  3) 복귀 URL 파싱 시 **null 가드 필수**: `result?.type === 'success' && result.url`일 때만 토큰 추출 → `useAuthStore.getState().loginWithToken(token)`(stores/authStore.ts:82 기존재). 취소/dismiss 시 조용히 복귀(에러 alert 금지).
+  4) 백엔드 준비 전까지는(백엔드 수정이 이번 버전에 안 들어오면) 현행 브라우저 오픈 유지 + A-2 방어만 반영하고, 버튼 하단에 "브라우저에서 로그인 후 앱으로 돌아와 주세요" 임시 문구 없이 **웹 프론트 로그인 유도 문구** 검토 — planner 판단: 백엔드 요청 문서를 이번 버전에 발행하고, 앱측 openAuthSessionAsync 전환은 백엔드 응답 확인 후 같은 버전 내 반영.
+
+#### A-4. 콘솔 설정 안내 (코드로 해결 불가 — 사용자 전달용)
+- 공통: 현재 방식은 **브라우저 리다이렉트(웹) 방식**이라 네이티브 SDK용 SHA-1/키 해시가 필수는 아님. 필요한 것은 각 콘솔의 **Redirect URI·플랫폼 등록·앱 상태**.
+- 구글 (Google Cloud Console → API 및 서비스 → 사용자 인증 정보):
+  1) OAuth 동의 화면이 "테스트" 상태면: 테스트 사용자에 로그인할 구글 계정 추가, 또는 "프로덕션으로 게시".
+  2) 웹 클라이언트의 승인된 리디렉션 URI에 `https://api.maidol.ai.kr/api/auth/oauth/google/callback` (실제 백엔드 콜백 경로 — tester가 백엔드 팀에 정확 경로 확인) 등록.
+  3) (향후 네이티브 SDK 전환 시에만) Android 클라이언트 생성: 패키지 `com.maidol.app` + SHA-1(`eas credentials` → Android → production keystore에서 확인 — 확인 명령까지만, 실행은 사용자/tester).
+- 카카오 (developers.kakao.com → 내 애플리케이션):
+  1) "앱 관리자 설정 오류"는 KOE101 계열 — 카카오 로그인 **활성화 OFF** 또는 잘못된 앱 키/플랫폼 미등록이 전형 원인.
+  2) 제품 설정 → 카카오 로그인: 활성화 ON + Redirect URI `https://api.maidol.ai.kr/api/auth/oauth/kakao/callback` 등록.
+  3) 앱 설정 → 플랫폼: Web 플랫폼에 `https://api.maidol.ai.kr` 등록. Android 플랫폼(패키지명 `com.maidol.app` + 키 해시)은 네이티브 SDK 전환 시 필요 — 지금 등록해두어도 무방.
+- 백엔드측 확인 요청: `/auth/oauth/{google|kakao}/login·callback`의 client_id/secret env, `frontend_url` 설정값(미설정 시 `null/oauth/callback` 같은 리다이렉트가 만들어질 수 있음 — "null" 문구의 또 다른 후보).
+
+#### A-5. "앱스토어에서 실행하지 않아서 생기는 문제인가?" — 사용자 전달용 답변
+> 아니에요. APK를 직접 설치(사이드로드)한 것 자체는 구글/카카오 로그인 실패의 원인이 아닙니다. 원인은 두 가지입니다. ① 구글·카카오 개발자 콘솔에 이 앱(서버 주소·리다이렉트 주소)이 아직 제대로 등록되지 않아 로그인 페이지가 차단/오류를 띄우는 것(카카오 "앱 관리자 설정 오류"가 바로 그 증상), ② 앱이 브라우저에서 로그인 성공 토큰을 되돌려받는 통로가 아직 없어서, 설령 로그인에 성공해도 앱이 그걸 모르는 구조적 문제입니다. 둘 다 이번 버전에서 콘솔 등록 안내 + 앱/서버 수정으로 해결합니다. 플레이스토어에 올린 뒤에도 지금 상태로는 동일하게 실패했을 문제라, 오히려 미리 발견된 게 다행입니다. 참고로 "메일 창"은 로그인 버튼 바로 아래 있는 "고객센터" 링크(문의 메일)가 눌렸을 가능성이 큽니다 — 보내기를 누르셨다면 고객센터 주소로 빈 메일이 갔을 수 있어요.
+
+---
+
+### 이슈 B — "네이버로 계속하기" 제거
+- 위치: `components/auth/SocialLoginButtons.tsx:15` PROVIDERS 배열의 naver 항목 1줄.
+- 제거 범위(최소): 해당 1줄 삭제. 핸들러는 provider 제네릭이라 추가 정리 불필요, naver 전용 import/SDK 없음. 파일 상단 주석(1행 "3종")과 AuthPanel.tsx:2 주석의 "네이버" 표기만 함께 갱신.
+- 백엔드 `/auth/oauth/naver/*`는 건드리지 않음(UI만 제거).
+
+---
+
+### 이슈 C — 이모지/텍스트 글리프 아이콘 전수 조사 및 교체
+- 하트 확인: v3.193에서 이미 벡터 전환 완료 — PlayerScreen.tsx:1030-1034 `MaterialCommunityIcons heart/heart-outline 24`(좋아요), 1256(위시), TrackRow.tsx:78, TrackActionSheet.tsx:106, FeedCard.tsx:298 모두 Feather/MCI 벡터. **APK에서 이모지 하트가 보인 것은 구 빌드(4a313a5, ♥/♡ 텍스트 글리프) 때문 — 코드 수정 불필요, 재빌드로 해소.**
+- 예외(교체 금지): ① **⭐ = 재화 '스타' 표기 — 전부 유지**(ChartScreen:283, GuestQueueNoticeModal:25, 각종 비용 안내 문구 등). ② 콘텐츠 문자열(ArtistCodyScreen.tsx:401-412 AI 프롬프트 내 ✓/❌, FeedCard.tsx:207 공유 메시지 🎁, 가사·대화 텍스트).
+- 전수 목록 — **1차(이번 버전, 사용자 노출 빈도 높은 화면)**:
+  - components/MiniPlayer.tsx:79 ♪ → Feather "music" / :96 ❚❚·▶ → "pause"/"play" / :115 ✕ → "x"
+  - screens/PlayerScreen.tsx:910 ♪(커버 플레이스홀더) / :1123 ❚❚·▶(상단 미니바)
+  - screens/ChartScreen.tsx:204·265 ♪ / :216 ▶(재생중 행 표시) / :317 ← → "arrow-left" / :331 ✕ / :304 📊·:355 🔍·:357 🎵(EmptyState icon)
+  - screens/PlaylistScreen.tsx:181 ♫ / :233 ← / :264 ♫(EmptyState)
+  - components/DraggableQueue.tsx:93 ▶(재생중 행)
+  - components/TrackRow.tsx:34 ♪
+  - screens/SearchScreen.tsx:247 🎧 / :272 🔍 / :274 🎵
+  - screens/FeedScreen.tsx:275 LoginPrompt icon="👥"
+  - components/auth/AuthPanel.tsx:417 ✓(비밀번호 힌트) → Feather "check"(미충족은 현행 '·' 유지 가능)
+  - components/AppShareModal.tsx:82 ✕ / components/StarGuideModal.tsx:50 ✕ / components/AttendanceModal.tsx:88 ✕
+  - components/StarGuideModal.tsx:16-21 행 아이콘 🎉🛡️👥📅🎧🚀 → Feather(gift/shield/users/calendar/headphones/rocket 계열, ⭐ 금액 표기는 유지)
+  - components/AttendanceModal.tsx:123 ✅/🎁/🔒 → Feather check-circle/gift/lock
+  - 공통 인프라: `components/ui/EmptyState.tsx`의 `icon?: string`을 `icon?: ReactNode`(또는 Feather name 문자열)로 확장, `components/LoginPrompt.tsx`의 `icon?: string`(Text 렌더, :17·27) 동일 처리 — 호출부가 벡터를 넘기도록.
+- **2차(목록만 기록, 다음 버전)**: AgencyProfileScreen 111 ♪·125 ▶·126 ♥·179 🎤 / ArtistDetailScreen 51 CATEGORY_ICON(👕👖👟📍)·147 ←·155 ♪·181 🎵·194 ♪·200 ▶♥·212 💼·221 🛍 / PlayerScreen 61 CATEGORY_ICON / MyMusicScreen 521 ★·523 ▶·677 ♪ / FaceVerifyScreen 272 ✓·316 📷 / VoiceManageScreen 318 ▲▼ / VoiceCloneWizardScreen 577 ⏹▶·643 ✓·746 ↺ / MusicLoadingScreen 370 ✓ / ArtistLoadingScreen 617 ✓ / LyricsLoadingScreen 196 ✓ / CoverGenerationScreen 953 ✓·1043 ◀·1058 ▶ / LyricsPromptReviewScreen 416 ✎ / NotificationsScreen 134 "팔로잉 ✓" / MapScreen 543 ▸·642 ✕·688 → / DirectorLineupScreen 139 ★(티어 표시) / WaitTimerScreen 266 ▶ / VideoDirectorScreen 476 ♪ / AlbumDetailScreen 361 ♪ / PurchaseModal 44 💿·74 ↳·80 🎤·91 ✓ / LevelUpModal 85 🎉 / AttendanceModal 67·134 문구 내 ✅.
+
+---
+
+### 이슈 D — 스플래시 응원봉(라이트스틱) 제거
+- 실체 확인: 응원봉 = `assets/branding/maidol_symbol.png`(141×172, 흰 실루엣) — **`screens/SplashScreen.tsx`에서만 사용**(24행 require, 85행 `<Image>`, 119행 `symbol` 스타일 64×66). 네이티브 스플래시 `assets/splash-icon.png`는 보라 "MAIDOL" 텍스트뿐이라 응원봉 없음 → 제거 범위는 SplashScreen.tsx 2막 심볼로 확정.
+- 수정안: 24행 SYMBOL require·85행 Image·119행 symbol 스타일 삭제. 2막 컨테이너(`styles.act`)가 절대배치 중앙정렬이라 심볼 제거 시 로고 행+서브타이틀이 자동 재중앙 정렬 — 빈 공간 없음. 애니메이션(act2Opacity/act2Scale)·타이밍(4000ms)은 로고 행에 그대로 적용되므로 무변경. `logoRow.marginBottom: 16` 유지, 시각 확인 후 필요 시만 미세 조정. 에셋 파일은 디스크에 보존(재사용 대비).
+
+---
+
+### app-dev 작업 지시 (v3.194)
+1. **B**: SocialLoginButtons.tsx PROVIDERS에서 naver 1줄 제거 + 주석 2곳("3종"·AuthPanel 헤더) 갱신.
+2. **A-2 방어**: 프리플라이트 `api.get()` 제거, 서버 detail 표출 검증(문자열 아니거나 80자 초과 시 고정 문구), openURL 실패 시 사용자 alert.
+3. **A-3**: 백엔드 요청 문서(`백엔드_요청_소셜로그인_앱복귀.md` — client=app 시 `aidol://oauth/callback#token=` 리다이렉트) 작성. 백엔드 준비 확인되면 expo-web-browser `openAuthSessionAsync` 전환 + null 가드(result?.type==='success' && result.url일 때만 파싱) + loginWithToken 연결. 미준비 시 전환 코드는 다음 버전으로 이월하고 문서만 발행.
+4. **C 1차**: 위 1차 목록 전부 Feather/MCI 벡터 교체(색·크기는 기존 텍스트 스타일의 color/fontSize에 맞춤, 좋아요류 채움 토글은 heart/heart-outline 패턴 준수). EmptyState·LoginPrompt icon prop을 ReactNode로 확장. ⭐·콘텐츠 문자열은 손대지 않음.
+5. **D**: SplashScreen.tsx 심볼 제거(24·85·119행), 레이아웃 자연스러움 확인.
+6. 버전 문자열/주석 v3.194, 수정일 2026-09-20.
+
+### test-designer 테스트 항목 (v3.194)
+- [B] 로그인·회원가입 화면에 구글/카카오 버튼만 노출, 네이버 부재. 버튼 간격·구분선 정상.
+- [A] 구글/카카오 버튼 탭 시 즉시 브라우저(또는 AuthSession) 1회만 열림 — 이중 요청(프리플라이트) 없음(네트워크 로그로 확인). 실패 시 alert 문구가 사용자용 문장인지(원시 오류/null 노출 금지). 브라우저에서 취소 후 복귀 시 앱 정상(무한 busy·크래시 없음), 재탭 정상 동작.
+- [A-3 반영 시] OAuth 성공 → 앱 자동 복귀 → 로그인 상태 반영(설정 화면 프로필 표시), 취소 시 무반응 복귀. 콜드 스타트 딥링크 aidol://oauth/callback 처리.
+- [C] 1차 교체 화면(플레이어·미니플레이어·차트·플레이리스트·검색·피드 CTA·로그인·공유/출석/스타 모달)에 이모지·글리프 문자 아이콘 잔존 없음(스크린샷 대조). ⭐ 표기는 그대로. 좋아요 하트: 탭 시 outline→filled 채움 토글, 이모지 렌더 없음(Android 실기기).
+- [D] 스플래시 2막에 응원봉 미노출, MAIDOL 로고+서브타이틀 중앙 정렬, 1막→2막 전환 애니메이션·4초 후 MainTabs 진입 정상.
+- [무회귀 v3.191~193] NowPlaying 상·하단 안전영역 겹침 없음(3.191) / VBR 곡 진행바·가사 싱크 정상, 제목 marquee 개행 없음(3.192) / 좋아요 서버 연동·담기→플레이리스트 시트·비로그인 CTA·타이포 축소 유지(3.193). 미니플레이어 재생/일시정지/닫기(아이콘 교체 후) 동작 동일.
+- [tester 추가] 사용자 재현 세션 시각대 `/_logs/frontend` 서버 로그에서 "null" 오류 출처 확정, `eas credentials` SHA-1 확인(실행은 tester/사용자), kimpearl@lotusai.co.kr 수신함에서 빈 문의 메일 수신 여부 확인(메일 창 가설 검증).
+
+### v3.194 추가 지시 (planner 판정 후속) — P1-4 고객센터 오탭 방지
+- 배경: "메일 창" 최우선 가설 = 로그인 화면 소셜 버튼 바로 아래 CompanyFooter "고객센터"(mailto) 오탭. PLAN 본문에 구현 정의가 없어 미반영 상태였음 → 이번 버전 반영으로 판정.
+- 구현 정의(최소 범위 2점, components/PolicySheet.tsx):
+  1) `styles.companyBox`의 marginTop을 spacing.xl 이상으로 확대 — 소셜 버튼 블록과 시각·터치 분리.
+  2) `CompanyFooter.openMail`: 즉시 `Linking.openURL('mailto:...')` 대신 `showAlert('고객센터', '고객센터(kimpearl@lotusai.co.kr)로 메일을 보낼까요?', [취소, 메일 열기])` 확인 다이얼로그 경유 — 오발송 차단 핵심 가드. utils/appAlert의 showAlert 사용(시스템 팝업 금지 방침 v3.85 준수).
+- 테스트(test-designer 추가): 로그인 화면·설정 화면 각각에서 고객센터 탭→다이얼로그 노출, 취소=무동작, "메일 열기"=메일 앱 오픈. 소셜 버튼과 고객센터 간 여백 확대 확인. 이용약관/개인정보처리방침 링크 동작 무회귀.

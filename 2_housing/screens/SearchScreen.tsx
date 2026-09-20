@@ -244,7 +244,7 @@ export default function SearchScreen() {
         </TouchableOpacity>
       ) : loading ? (
         <View style={styles.loadingWrap}>
-          <AppText variant="title3">🎧</AppText>
+          <Feather name="headphones" size={28} color={colors.text.secondary} />
           <AppText variant="body" tone="secondary" center style={{ marginTop: spacing.sm }}>
             최적의 음악을 찾고 있습니다…
           </AppText>
@@ -269,9 +269,9 @@ export default function SearchScreen() {
           }
         />
       ) : submitted ? (
-        <EmptyState icon="🔍" title="결과가 없습니다" hint="다른 검색어/느낌으로 시도해보세요" />
+        <EmptyState icon={<Feather name="search" size={44} color={colors.text.muted} />} title="결과가 없습니다" hint="다른 검색어/느낌으로 시도해보세요" />
       ) : (
-        <EmptyState icon="🎵" title="느낌을 선택하거나 검색해보세요" hint="위의 느낌을 눌러보세요" />
+        <EmptyState icon={<Feather name="music" size={44} color={colors.text.muted} />} title="느낌을 선택하거나 검색해보세요" hint="위의 느낌을 눌러보세요" />
       )}
 
       {/* 결과 전체 담기 — 공용 플레이리스트 시트 */}

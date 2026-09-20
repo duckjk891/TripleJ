@@ -437,23 +437,48 @@ function GlobalModals() {
   );
 }
 
-// [App] 웹 전용 — 소셜 로그인 콜백 수신: 백엔드가 `{frontend_url}/oauth/callback#token=JWT`로
-// 리다이렉트하면 해시에서 토큰을 꺼내 세션을 연다(해시라 서버로그/Referer에 남지 않음).
+// [App] 소셜 로그인 콜백 수신 (v3.194: 웹 전용 → 네이티브 포함으로 확장)
+//   웹: 백엔드가 `{frontend_url}/oauth/callback#token=JWT`로 리다이렉트하면 해시에서 토큰을
+//       꺼내 세션을 연다(해시라 서버로그/Referer에 남지 않음).
+//   네이티브: `aidol://oauth/callback#token=JWT` 딥링크(콜드 스타트 + 실행 중) 수신 시 세션을 연다.
+//       버튼 측 openAuthSessionAsync(SocialLoginButtons)와 중복 수신될 수 있어 같은 토큰은 1회만 처리.
 function useOAuthCallback() {
+  const handledTokenRef = useRef<string | null>(null);
   useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    try {
-      const hash = (globalThis as any)?.location?.hash || '';
-      const m = hash.match(/[#&]token=([^&]+)/);
-      if (!m) return;
-      const token = decodeURIComponent(m[1]);
-      // URL에서 토큰 즉시 제거(히스토리 노출 방지)
-      try { (globalThis as any).history?.replaceState?.(null, '', (globalThis as any).location.pathname); } catch {}
-      if (__DEV__) console.info('[App] OAuth 콜백 토큰 수신 — 세션 열기');
-      useAuthStore.getState().loginWithToken(token);
-    } catch (err: any) {
-      console.error('[App] OAuth 콜백 처리 실패', { message: err?.message });
+    if (Platform.OS === 'web') {
+      try {
+        const hash = (globalThis as any)?.location?.hash || '';
+        const m = hash.match(/[#&]token=([^&]+)/);
+        if (!m) return;
+        const token = decodeURIComponent(m[1]);
+        // URL에서 토큰 즉시 제거(히스토리 노출 방지)
+        try { (globalThis as any).history?.replaceState?.(null, '', (globalThis as any).location.pathname); } catch {}
+        if (__DEV__) console.info('[SocialLogin] OAuth 콜백 토큰 수신(웹) — 세션 열기');
+        useAuthStore.getState().loginWithToken(token);
+      } catch (err: any) {
+        console.error('[SocialLogin] OAuth 콜백 처리 실패(웹)', { message: err?.message });
+      }
+      return;
     }
+    // 네이티브 — 딥링크 콜백. 토큰 값은 로그에 남기지 않는다(수신 여부만).
+    const handleUrl = (url: string | null) => {
+      try {
+        if (!url || !url.includes('oauth/callback')) return;
+        const m = url.match(/[#&?]token=([^&]+)/);
+        if (__DEV__) console.info('[SocialLogin] OAuth 딥링크 콜백 수신', { hasToken: !!m });
+        if (!m) return;
+        const token = decodeURIComponent(m[1]);
+        if (handledTokenRef.current === token) return; // openAuthSessionAsync 경로와 중복 방지
+        handledTokenRef.current = token;
+        useAuthStore.getState().loginWithToken(token);
+      } catch (err: any) {
+        console.error('[SocialLogin] OAuth 딥링크 처리 실패', { message: err?.message });
+      }
+    };
+    Linking.getInitialURL().then(handleUrl).catch((err: any) =>
+      console.error('[SocialLogin] 초기 딥링크 조회 실패', { message: err?.message }));
+    const sub = Linking.addEventListener('url', ({ url }) => handleUrl(url));
+    return () => sub.remove();
   }, []);
 }
 

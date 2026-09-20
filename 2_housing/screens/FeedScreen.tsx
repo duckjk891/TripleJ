@@ -272,7 +272,7 @@ export default function FeedScreen() {
         <View style={{ flex: 1 }} />
       ) : (
         <EmptyState
-          icon="👥"
+          icon={<Feather name="users" size={44} color={colors.text.muted} />}
           title="아직 소식이 없어요"
           hint="마음에 드는 아티스트를 팔로우하면 소식이 여기 가장 먼저 떠요."
           action={<Button label="아티스트 둘러보기" onPress={() => navigation.navigate('Chart')} />}

@@ -907,7 +907,7 @@ export default function PlayerScreen({ route, navigation }: any) {
           </View>
         ) : (
           <View style={[styles.coverArt, styles.coverPlaceholder, { height: coverH }]}>
-            <AppText style={styles.coverPlaceholderIcon}>{'♪'}</AppText>
+            <Feather name="music" size={64} color={colors.border.subtle} />
           </View>
         )}
       </View>
@@ -1116,14 +1116,15 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <AppText style={styles.miniArtist} numberOfLines={1}>{track?.artist_name || track?.agency_name || 'AI'}</AppText>
                 </View>
               </TouchableOpacity>
+              {/* v3.194: 텍스트 글리프(⏮ ❚❚ ▶ ⏭) → Feather 벡터 */}
               <TouchableOpacity onPress={handlePrev} style={styles.miniSkipBtn} accessibilityLabel="이전 곡">
-                <AppText style={styles.miniSkipIcon}>{'⏮'}</AppText>
+                <Feather name="skip-back" size={16} color={colors.text.primary} />
               </TouchableOpacity>
               <TouchableOpacity style={styles.miniPlayBtn} onPress={togglePlayPause} accessibilityLabel={isPlaying ? '일시정지' : '재생'}>
-                <AppText style={styles.miniPlayIcon}>{isPlaying ? '❚❚' : '▶'}</AppText>
+                <Feather name={isPlaying ? 'pause' : 'play'} size={14} color={colors.text.primary} />
               </TouchableOpacity>
               <TouchableOpacity onPress={handleNext} style={styles.miniSkipBtn} accessibilityLabel="다음 곡">
-                <AppText style={styles.miniSkipIcon}>{'⏭'}</AppText>
+                <Feather name="skip-forward" size={16} color={colors.text.primary} />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setShowQueue(true)} style={styles.miniSkipBtn} accessibilityLabel="재생목록 열기">
                 <Feather name="list" size={18} color={colors.text.secondary} />
@@ -1453,10 +1454,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  coverPlaceholderIcon: {
-    fontSize: 64,
-    color: colors.border.subtle,
-  },
   trackInfoContainer: {
     marginTop: 18, // v3.161c(대표): 이미지와 곡 제목 사이 숨 쉴 공간
     alignItems: 'center',
@@ -1717,14 +1714,12 @@ const styles = StyleSheet.create({
   miniTitle: { color: colors.text.primary, fontSize: 14, fontWeight: '600' },
   miniArtist: { color: colors.text.secondary, fontSize: 12, marginTop: 1 },
   miniSkipBtn: { width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
-  miniSkipIcon: { color: colors.text.primary, fontSize: 14 },
   miniPlayBtn: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: colors.accent.primary,
     justifyContent: 'center', alignItems: 'center',
     marginHorizontal: 4,
   },
-  miniPlayIcon: { color: colors.text.primary, fontSize: 12 },
   miniCloseIcon: { color: colors.text.muted, fontSize: 16 },
   sheetText: {
     fontSize: 15,

@@ -3,6 +3,7 @@
 //             POST /attendance/check-in → {awarded, cycle_day, already, balance}
 import { useState, useEffect, useCallback } from 'react';
 import { Modal, View, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import api from '../services/api';
 import { useUiStore } from '../stores/uiStore';
 import { usePointsStore } from '../stores/pointsStore';
@@ -85,7 +86,7 @@ export default function AttendanceModal() {
           <View style={styles.head}>
             <AppText variant="title2">⭐ 출석체크</AppText>
             <TouchableOpacity onPress={close} accessibilityLabel="닫기">
-              <AppText variant="title3" tone="muted">✕</AppText>
+              <Feather name="x" size={20} color={colors.text.muted} />
             </TouchableOpacity>
           </View>
 
@@ -120,7 +121,14 @@ export default function AttendanceModal() {
                     >
                       <AppText variant="caption" tone="muted">{c.day}일차</AppText>
                       <AppText variant="footnote" tone={isBonus ? 'accent' : 'primary'}>⭐{c.reward}</AppText>
-                      <AppText variant="body">{c.claimed ? '✅' : isNext ? '🎁' : '🔒'}</AppText>
+                      {/* v3.194: 상태 이모지 → Feather 벡터 (⭐ 재화 표기는 유지) */}
+                      <View style={styles.cellStateIcon}>
+                        {c.claimed
+                          ? <Feather name="check-circle" size={15} color={colors.status.success} />
+                          : isNext
+                            ? <Feather name="gift" size={15} color={colors.accent.primary} />
+                            : <Feather name="lock" size={15} color={colors.text.muted} />}
+                      </View>
                     </View>
                   );
                 })}
@@ -162,6 +170,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.deepest, borderRadius: radius.md,
     borderWidth: 1, borderColor: colors.border.subtle,
   },
+  cellStateIcon: { height: 20, justifyContent: 'center' }, // 기존 body 텍스트 줄높이와 맞춤
   cellClaimed: { borderColor: colors.status.success, opacity: 0.6 },
   cellNext: { borderColor: colors.accent.primary, backgroundColor: colors.bg.surface2 },
   cellBonus: { borderColor: colors.accent.secondary },

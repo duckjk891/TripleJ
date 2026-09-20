@@ -1,5 +1,5 @@
 // [AuthPanel] 로그인/회원가입 패널 — MAIDOL LoginPage/RegisterPage 이식.
-// 로그인: 이메일·비밀번호 + 소셜(구글/카카오/네이버) + 회원가입 이동.
+// 로그인: 이메일·비밀번호 + 소셜(구글/카카오 — v3.194 네이버 제거) + 회원가입 이동.
 // 가입: [연령 게이트(생년월일·내외국인·성별)] → [본 폼(이메일·닉네임·기획사명·호칭·비밀번호+확인·추천코드·약관동의)]
 // v3.101(A-19) 만 14세 미만 분기 — GET /auth/signup-config 실측으로 결정:
 //   플래그 ON  → 본 폼에 보호자(법정대리인) 정보 섹션 추가, 제출 = POST /auth/guardian-consent/request
@@ -8,6 +8,7 @@
 // 현행 백엔드는 gender·consents가 필수라 이 패널이 없으면 가입이 항상 400으로 실패한다(v3.43에서 해소).
 import { useMemo, useState } from 'react';
 import { View, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../stores/authStore';
 import {
   getSignupConfig, requestGuardianConsent, getGuardianConsentStatus, guardianTokenFromUrl,
@@ -414,7 +415,7 @@ export default function AuthPanel({ onSuccess, onModeChange }: AuthPanelProps) {
         <View style={styles.hintRow}>
           {pwHints.map((h) => (
             <AppText key={h.label} variant="caption" tone={h.ok ? 'accent' : 'muted'}>
-              {h.ok ? '✓' : '·'} {h.label}
+              {h.ok ? <Feather name="check" size={10} color={colors.accent.primary} /> : '·'} {h.label}
             </AppText>
           ))}
         </View>

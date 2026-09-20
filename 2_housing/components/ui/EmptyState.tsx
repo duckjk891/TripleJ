@@ -5,7 +5,8 @@ import AppText from './AppText';
 import { spacing } from '../../theme/spacing';
 
 export interface EmptyStateProps {
-  icon?: string;
+  /** v3.194: 이모지 금지 — 벡터 아이콘(ReactNode) 권장. 문자열도 렌더는 되지만 신규 사용 금지. */
+  icon?: ReactNode;
   title: string;
   hint?: string;
   action?: ReactNode;
@@ -14,7 +15,11 @@ export interface EmptyStateProps {
 export default function EmptyState({ icon, title, hint, action }: EmptyStateProps) {
   return (
     <View style={styles.wrap}>
-      {icon ? <AppText variant="display" center style={styles.icon}>{icon}</AppText> : null}
+      {icon
+        ? (typeof icon === 'string'
+          ? <AppText variant="display" center style={styles.icon}>{icon}</AppText>
+          : <View style={styles.icon}>{icon}</View>)
+        : null}
       <AppText variant="callout" tone="muted" center>{title}</AppText>
       {hint ? <AppText variant="footnote" tone="muted" center style={styles.hint}>{hint}</AppText> : null}
       {action ? <View style={styles.action}>{action}</View> : null}
